@@ -1,0 +1,29 @@
+{
+  "name": "inventory-management-system",
+  "version": "1.0.0",
+  "description": "进销存管理系统 - 采购/库存/成本/付款全流程",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "seed": "node insert_demo_data.js"
+  },
+  "engines": {
+    "node": ">=18.x",
+    "npm": ">=9.x"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.7.0",
+    "dotenv": "^16.4.0",
+    "express": "^4.21.0",
+    "xlsx": "^0.18.5"
+  },
+  "keywords": [
+    "inventory",
+    "purchasing",
+    "warehouse",
+    "cost",
+    "payment"
+  ],
+  "license": "MIT"
+}

@@ -1,0 +1,21 @@
+# Render 部署配置（进销存管理系统）
+# 用法：在 Render 新建 Web Service，连接本仓库，选择「Use render.yaml」即可一键部署。
+services:
+  - type: web
+    name: inventory-app
+    runtime: node
+    plan: free
+    region: oregon          # 亚洲用户可改为 singapore
+    branch: main            # 请改为你的默认分支（main 或 master）
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /
+    envVars:
+      - key: NODE_ENV
+        value: production
+    # 持久化磁盘：避免每次部署后 SQLite 数据被清空
+    # （服务读取的端口由 Render 自动注入，无需手动设置）
+    disk:
+      name: inventory-data
+      mountPath: /opt/render/project/src/data
+      sizeGB: 1
