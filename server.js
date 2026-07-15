@@ -24,6 +24,7 @@
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
+const crypto = require('crypto');
 const { query, queryOne, run, transaction, genId, initDatabase } = require('./db');
 
 // ==================== 配置 ====================
@@ -4418,6 +4419,521 @@ app.get('/api/cost-allocations', requireApiPermission('cost_view'), (req, res) =
 });
 
 // ==================== 付款管理 ====================
+class SettlementError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+}
+
+const SETTLEMENT_RATE_TYPE = 'realtime';
+const ACTIVE_GOODS_PAYMENT_STATUSES = [
+  'pending_approval', 'approved', 'pending_payment', 'partial_paid', 'partial_deduction',
+  'partial_rounding', 'partial_payment_partial_deduction', 'deduction_settled', 'reversed', 'paid'
+];
+
+function settlementMoney(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return NaN;
+  return Math.round((amount + Number.EPSILON) * 100) / 100;
+}
+
+function settlementDate(value) {
+  const date = String(value || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new SettlementError(400, '实际付款日期必须为 YYYY-MM-DD');
+  const parsed = new Date(date + 'T00:00:00Z');
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) {
+    throw new SettlementError(400, '实际付款日期无效');
+  }
+  return date;
+}
+
+function settlementOperator(req) {
+  const user = req.currentUserId ? queryOne('SELECT name FROM users WHERE id = ?', [req.currentUserId]) : null;
+  return {
+    id: req.currentUserId || '',
+    name: req.currentUserName || (user ? user.name : '') || ''
+  };
+}
+
+function settlementIdempotencyKey(value) {
+  const key = String(value || '').trim();
+  if (!key) throw new SettlementError(400, '付款幂等键不能为空');
+  if (key.length > 200) throw new SettlementError(400, '付款幂等键长度不能超过200个字符');
+  return key;
+}
+
+function bulkPaymentIdempotencyKey(item) {
+  const supplied = String(item.idempotency_key || '').trim();
+  if (supplied) return settlementIdempotencyKey(supplied);
+  const normalized = JSON.stringify({
+    request_no: String(item.request_no || '').trim(),
+    paid_amount: settlementMoney(item.paid_amount),
+    paid_date: String(item.paid_date || '').trim(),
+    payment_voucher: String(item.payment_voucher || '').trim()
+  });
+  return `bulk:${crypto.createHash('sha256').update(normalized).digest('hex')}`;
+}
+
+function paymentSettlementLogs(paymentRequestId) {
+  return query(`SELECT * FROM payment_settlement_logs
+                WHERE payment_request_id = ?
+                ORDER BY created_at, id`, [paymentRequestId]).rows;
+}
+
+function ensureSettlementLegacyBaselines(payment) {
+  const logs = paymentSettlementLogs(payment.id);
+  const hasPaymentLogs = logs.some(log => log.event_type === 'payment');
+  const hasDeductionLogs = logs.some(log => log.event_type === 'deduction');
+  const hasRoundingLogs = logs.some(log => log.event_type === 'rounding');
+  const legacyPaid = settlementMoney(payment.paid_amount || 0);
+  const legacyDeduction = settlementMoney(payment.deduction_amount || 0);
+  const legacyRounding = settlementMoney(payment.rounding_amount || 0);
+
+  if (!hasPaymentLogs && legacyPaid > 0) {
+    run(`INSERT INTO payment_settlement_logs
+         (id, payment_request_id, event_type, amount, status, reason, paid_date,
+          original_currency, operator_name, is_legacy, created_at)
+         VALUES (?, ?, 'payment', ?, 'applied', ?, ?, ?, 'system', 1, ?)`,
+      [genId('settle'), payment.id, legacyPaid, '历史付款基线（迁移前数据）', payment.paid_date || '', payment.currency || '', payment.updated_at || payment.created_at || new Date().toISOString()]);
+  }
+  if (!hasDeductionLogs && legacyDeduction > 0) {
+    const legacyReason = payment.deduction_source_desc || payment.deduction_source_type || '历史抵扣基线（迁移前数据）';
+    run(`INSERT INTO payment_settlement_logs
+         (id, payment_request_id, event_type, amount, status, reason,
+          original_currency, operator_name, is_legacy, created_at)
+         VALUES (?, ?, 'deduction', ?, 'applied', ?, ?, 'system', 1, ?)`,
+      [genId('settle'), payment.id, legacyDeduction, legacyReason, payment.currency || '', payment.updated_at || payment.created_at || new Date().toISOString()]);
+  }
+  if (!hasRoundingLogs && legacyRounding > 0) {
+    run(`INSERT INTO payment_settlement_logs
+         (id, payment_request_id, event_type, amount, status, reason,
+          original_currency, operator_name, is_legacy, created_at)
+         VALUES (?, ?, 'rounding', ?, 'applied', ?, ?, 'system', 1, ?)`,
+      [genId('settle'), payment.id, legacyRounding, payment.rounding_reason || '历史抹零基线', payment.currency || '', payment.updated_at || payment.created_at || new Date().toISOString()]);
+  }
+}
+
+function paymentSettlementFacts(payment) {
+  const logs = paymentSettlementLogs(payment.id);
+  const paymentLogs = logs.filter(log => log.event_type === 'payment');
+  const deductionLogs = logs.filter(log => log.event_type === 'deduction');
+  const roundingLogs = logs.filter(log => log.event_type === 'rounding');
+  const activePayments = paymentLogs.filter(log => log.status === 'applied');
+  const activeDeductions = deductionLogs.filter(log => log.status === 'applied');
+  const activeRoundings = roundingLogs.filter(log => log.status === 'applied');
+  const effectivePaid = settlementMoney(paymentLogs.length
+    ? activePayments.reduce((sum, log) => sum + Number(log.amount || 0), 0)
+    : Number(payment.paid_amount || 0));
+  const effectiveDeduction = settlementMoney(deductionLogs.length
+    ? activeDeductions.reduce((sum, log) => sum + Number(log.amount || 0), 0)
+    : Number(payment.deduction_amount || 0));
+  const effectiveRounding = settlementMoney(roundingLogs.length
+    ? activeRoundings.reduce((sum, log) => sum + Number(log.amount || 0), 0)
+    : Number(payment.rounding_amount || 0));
+  const grossPayable = settlementMoney(payment.payable_amount || 0);
+  const outstanding = settlementMoney(grossPayable - effectivePaid - effectiveDeduction - effectiveRounding);
+  const latestPayment = activePayments.slice().sort((a, b) => {
+    const dateCompare = String(b.paid_date || '').localeCompare(String(a.paid_date || ''));
+    return dateCompare || String(b.created_at || '').localeCompare(String(a.created_at || '')) || String(b.id).localeCompare(String(a.id));
+  })[0] || null;
+  return {
+    logs,
+    activePayments,
+    activeDeductions,
+    activeRoundings,
+    grossPayable,
+    effectivePaid,
+    effectiveDeduction,
+    effectiveRounding,
+    outstanding,
+    latestPayment,
+    hasReversal: logs.some(log => log.status === 'reversed' || log.event_type === 'rounding_reversal')
+  };
+}
+
+function derivePaymentStatus(payment, facts) {
+  if (payment.payment_status === 'cancelled') return 'cancelled';
+  if (payment.approval_status === 'rejected') return 'rejected';
+  if (facts.outstanding <= 0) return facts.effectivePaid > 0 || facts.effectiveRounding > 0 ? 'paid' : 'deduction_settled';
+  if (facts.effectivePaid > 0 && facts.effectiveDeduction > 0) return 'partial_payment_partial_deduction';
+  if (facts.effectivePaid > 0) return 'partial_paid';
+  if (facts.effectiveDeduction > 0) return 'partial_deduction';
+  if (facts.effectiveRounding > 0) return 'partial_rounding';
+  if (facts.hasReversal) return 'reversed';
+  return payment.approval_status === 'approved' ? 'approved' : 'pending_approval';
+}
+
+function aggregateSourceSettlement(rows) {
+  const entries = rows.map(row => ({ row, facts: paymentSettlementFacts(row) }));
+  const effectivePaid = settlementMoney(entries.reduce((sum, entry) => sum + entry.facts.effectivePaid, 0));
+  const effectiveDeduction = settlementMoney(entries.reduce((sum, entry) => sum + entry.facts.effectiveDeduction, 0));
+  const effectiveRounding = settlementMoney(entries.reduce((sum, entry) => sum + entry.facts.effectiveRounding, 0));
+  const outstanding = settlementMoney(entries.reduce((sum, entry) => sum + Math.max(0, entry.facts.outstanding), 0));
+  const allSettled = entries.length > 0 && entries.every(entry => entry.facts.outstanding <= 0);
+  const hasSettlement = effectivePaid > 0 || effectiveDeduction > 0 || effectiveRounding > 0;
+  const hasPendingApproval = rows.some(row => row.approval_status === 'pending');
+  return {
+    effectivePaid,
+    effectiveDeduction,
+    effectiveRounding,
+    outstanding,
+    allSettled,
+    hasSettlement,
+    sourcePayStatus: allSettled ? 'paid' : (hasSettlement ? 'partial_paid' : (hasPendingApproval ? 'pending_approval' : 'unpaid'))
+  };
+}
+
+function sourceGoodsPaymentRows(sourceType, sourceId, subcategory) {
+  const relation = sourceType === 'ci'
+    ? `((source_type = 'ci' AND source_id = ?) OR related_ci_id = ?)`
+    : `(source_type = ? AND source_id = ?)`;
+  const params = sourceType === 'ci' ? [sourceId, sourceId] : [sourceType, sourceId];
+  return query(`SELECT * FROM payment_requests
+                WHERE payment_category = 'goods' AND payment_subcategory = ?
+                  AND approval_status != 'rejected'
+                  AND payment_status NOT IN ('rejected', 'cancelled')
+                  AND ${relation}`,
+    [subcategory, ...params]).rows;
+}
+
+function syncPaymentSource(payment, facts, paymentStatus) {
+  const isSettled = facts.outstanding <= 0;
+  const hasSettlement = facts.effectivePaid > 0 || facts.effectiveDeduction > 0 || facts.effectiveRounding > 0;
+
+  if (payment.payment_category === 'goods' && payment.payment_subcategory === 'deposit' && payment.source_type === 'pi' && payment.source_id) {
+    const aggregate = aggregateSourceSettlement(sourceGoodsPaymentRows('pi', payment.source_id, 'deposit'));
+    const pi = queryOne('SELECT pi_status FROM proforma_invoices WHERE id = ?', [payment.source_id]);
+    if (pi) {
+      let piStatus = pi.pi_status;
+      if (aggregate.allSettled && ['pending', 'uploaded', 'confirmed', 'pending_deposit'].includes(piStatus)) piStatus = 'deposit_paid';
+      if (!aggregate.allSettled && piStatus === 'deposit_paid') piStatus = 'pending_deposit';
+      run(`UPDATE proforma_invoices
+           SET deposit_payment_status = ?, paid_deposit = ?, pi_status = ?, updated_at = datetime('now')
+           WHERE id = ?`, [aggregate.sourcePayStatus, aggregate.effectivePaid, piStatus, payment.source_id]);
+    }
+  }
+
+  const balanceCiId = payment.source_type === 'ci' ? payment.source_id : payment.related_ci_id;
+  if (payment.payment_category === 'goods' && payment.payment_subcategory === 'balance' && balanceCiId) {
+    const aggregate = aggregateSourceSettlement(sourceGoodsPaymentRows('ci', balanceCiId, 'balance'));
+    run(`UPDATE commercial_invoices
+         SET balance_payment_status = ?, paid_balance = ?, unpaid_balance = ?, updated_at = datetime('now')
+         WHERE id = ?`, [aggregate.sourcePayStatus, aggregate.effectivePaid, aggregate.outstanding, balanceCiId]);
+  }
+
+  if (payment.source_type === 'logistics' && payment.source_id) {
+    run('UPDATE logistics_batches SET fee_status = ? WHERE id = ?', [isSettled ? 'paid' : (hasSettlement ? 'partial_paid' : 'unpaid'), payment.source_id]);
+  }
+
+  run('UPDATE ci_cost_items SET paid_amount = ? WHERE payment_request_id = ?', [facts.effectivePaid, payment.id]);
+}
+
+function recalculatePaymentSettlement(paymentRequestId) {
+  const payment = queryOne('SELECT * FROM payment_requests WHERE id = ?', [paymentRequestId]);
+  if (!payment) throw new SettlementError(404, '付款申请不存在');
+  const facts = paymentSettlementFacts(payment);
+  if (facts.outstanding < 0 || settlementMoney(facts.effectivePaid + facts.effectiveDeduction + facts.effectiveRounding) > facts.grossPayable) {
+    throw new SettlementError(409, '有效付款、抵扣与抹零金额之和不能超过应付总额');
+  }
+  const paymentStatus = derivePaymentStatus(payment, facts);
+  const latest = facts.latestPayment;
+  const latestRounding = facts.activeRoundings.slice().sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')) || String(b.id).localeCompare(String(a.id)))[0] || null;
+  const localAmount = settlementMoney(facts.activePayments.reduce((sum, log) => sum + Number(log.local_amount || 0), 0));
+  const rmbAmount = settlementMoney(facts.activePayments.reduce((sum, log) => sum + Number(log.rmb_amount || 0), 0));
+  const usdAmount = payment.currency === 'USD' ? facts.effectivePaid : 0;
+  run(`UPDATE payment_requests
+       SET paid_amount = ?, deduction_amount = ?, has_deduction = ?, rounding_amount = ?, rounding_reason = ?, actual_pay_amount = ?,
+           unpaid_amount = ?, payment_status = ?, paid_date = ?, actual_rate = ?,
+           local_amount = ?, rmb_amount = ?, usd_amount = ?, payment_voucher = ?, updated_at = datetime('now')
+       WHERE id = ?`,
+    [facts.effectivePaid, facts.effectiveDeduction, facts.effectiveDeduction > 0 ? 1 : 0, facts.effectiveRounding, latestRounding ? latestRounding.reason || '' : '',
+      settlementMoney(facts.grossPayable - facts.effectiveDeduction - facts.effectiveRounding), Math.max(0, facts.outstanding), paymentStatus,
+      latest ? latest.paid_date || '' : '', latest ? Number(latest.local_rate || 0) : 0,
+      localAmount, rmbAmount, usdAmount, latest ? latest.payment_voucher || '' : '', payment.id]);
+  syncPaymentSource(payment, facts, paymentStatus);
+  return { ...facts, outstanding: Math.max(0, facts.outstanding), payment_status: paymentStatus };
+}
+
+function activeExpenseCountry(value) {
+  const requested = String(value || '').trim();
+  if (!requested) throw new SettlementError(400, '无来源手工非货款必须选择费用归属国家');
+  let country = queryOne("SELECT * FROM countries WHERE status = 'active' AND (name = ? OR code = ?)", [requested, requested]);
+  if (!country) {
+    const alias = COUNTRY_ALIAS_MAP[requested];
+    if (alias) country = queryOne("SELECT * FROM countries WHERE status = 'active' AND name = ?", [alias]);
+  }
+  if (!country) throw new SettlementError(400, `费用归属国家“${requested}”不存在或已停用`);
+  return country.name;
+}
+
+function sourceExpenseCountry(value, sourceLabel) {
+  const country = String(value || '').trim();
+  if (!country) throw new SettlementError(400, `${sourceLabel}未设置国家，不能创建非货款付款申请`);
+  return country;
+}
+
+function existingActiveGoodsPayment(sourceType, sourceId, subcategory) {
+  return queryOne(
+    `SELECT id, request_no, payment_status FROM payment_requests
+     WHERE payment_category = 'goods' AND payment_subcategory = ?
+       AND source_type = ? AND source_id = ?
+       AND payment_status IN (${ACTIVE_GOODS_PAYMENT_STATUSES.map(() => '?').join(',')})`,
+    [subcategory, sourceType, sourceId, ...ACTIVE_GOODS_PAYMENT_STATUSES]
+  );
+}
+
+function isActiveGoodsPaymentUniqueError(error) {
+  return String(error && error.message || '').includes('uq_payment_request_active_goods_source') ||
+    String(error && error.message || '').includes('payment_requests.source_type, payment_requests.source_id, payment_requests.payment_subcategory');
+}
+
+function resolveSettlementCountry(payment) {
+  const countryName = String(payment.expense_country || '').trim();
+  if (!countryName) throw new SettlementError(400, `付款申请 ${payment.request_no} 未设置费用归属国家，请先由财务补录后再付款`);
+
+  let country = queryOne('SELECT * FROM countries WHERE name = ? OR code = ?', [countryName, countryName]);
+  if (!country) {
+    const alias = COUNTRY_ALIAS_MAP[countryName];
+    if (alias) country = queryOne('SELECT * FROM countries WHERE name = ?', [alias]);
+  }
+  if (!country) {
+    const standardName = Object.keys(COUNTRY_ALIAS_MAP).find(name => COUNTRY_ALIAS_MAP[name] === countryName);
+    if (standardName) country = queryOne('SELECT * FROM countries WHERE name = ?', [standardName]);
+  }
+  if (!country || !country.default_currency) {
+    throw new SettlementError(400, `来源国家“${countryName}”未配置本国货币，不能完成付款折算`);
+  }
+  return { name: country.name, currency: country.default_currency };
+}
+
+function exactSettlementRate(fromCurrency, toCurrency, paidDate) {
+  if (fromCurrency === toCurrency) {
+    return { rate: 1, rate_date: paidDate, rate_type: 'identity', direction: 'identity' };
+  }
+  const direct = queryOne(`SELECT * FROM exchange_rates
+                           WHERE from_currency = ? AND to_currency = ? AND rate_date = ? AND rate_type = ?
+                           ORDER BY created_at DESC, id DESC LIMIT 1`, [fromCurrency, toCurrency, paidDate, SETTLEMENT_RATE_TYPE]);
+  if (direct && Number(direct.rate) > 0) {
+    return { rate: Number(direct.rate), rate_date: direct.rate_date, rate_type: direct.rate_type || '', direction: 'direct' };
+  }
+  const reverse = queryOne(`SELECT * FROM exchange_rates
+                            WHERE from_currency = ? AND to_currency = ? AND rate_date = ? AND rate_type = ?
+                            ORDER BY created_at DESC, id DESC LIMIT 1`, [toCurrency, fromCurrency, paidDate, SETTLEMENT_RATE_TYPE]);
+  if (reverse && Number(reverse.rate) > 0) {
+    return { rate: 1 / Number(reverse.rate), rate_date: reverse.rate_date, rate_type: reverse.rate_type || '', direction: 'reverse' };
+  }
+  throw new SettlementError(400, `缺少 ${paidDate} ${fromCurrency}→${toCurrency} 的 realtime 付款汇率`);
+}
+
+function buildPaymentRateSnapshot(payment, amount, paidDate) {
+  if (payment.payment_category === 'goods') {
+    return {
+      settlement_country: '', local_currency: '', local_rate: 0, local_rate_date: '', local_rate_type: '', local_rate_direction: '', local_amount: 0,
+      rmb_rate: 0, rmb_rate_date: '', rmb_rate_type: '', rmb_rate_direction: '', rmb_amount: 0
+    };
+  }
+  const country = resolveSettlementCountry(payment);
+  const originalCurrency = String(payment.currency || '').trim();
+  if (!originalCurrency) throw new SettlementError(400, `付款申请 ${payment.request_no} 未配置原币币种`);
+  const localRate = exactSettlementRate(originalCurrency, country.currency, paidDate);
+  const rmbRate = exactSettlementRate(originalCurrency, 'RMB', paidDate);
+  return {
+    settlement_country: country.name,
+    local_currency: country.currency,
+    local_rate: localRate.rate,
+    local_rate_date: localRate.rate_date,
+    local_rate_type: localRate.rate_type,
+    local_rate_direction: localRate.direction,
+    local_amount: settlementMoney(amount * localRate.rate),
+    rmb_rate: rmbRate.rate,
+    rmb_rate_date: rmbRate.rate_date,
+    rmb_rate_type: rmbRate.rate_type,
+    rmb_rate_direction: rmbRate.direction,
+    rmb_amount: settlementMoney(amount * rmbRate.rate)
+  };
+}
+
+function recordInitialDeduction(paymentRequestId, amount, reason, operator) {
+  const deduction = settlementMoney(amount);
+  if (!(deduction > 0)) return;
+  const payment = queryOne('SELECT * FROM payment_requests WHERE id = ?', [paymentRequestId]);
+  if (!payment) throw new SettlementError(404, '付款申请不存在');
+  run(`INSERT INTO payment_settlement_logs
+       (id, payment_request_id, event_type, amount, status, reason, original_currency, operator_id, operator_name)
+       VALUES (?, ?, 'deduction', ?, 'applied', ?, ?, ?, ?)`,
+    [genId('settle'), payment.id, deduction, reason || '创建付款申请时应用抵扣', payment.currency || '', operator.id, operator.name]);
+  return recalculatePaymentSettlement(payment.id);
+}
+
+function paymentIdempotencyResult(existing, payment, requestedAmount, paidDate, voucher) {
+  const sameAmount = requestedAmount === null || settlementMoney(existing.amount) === requestedAmount;
+  const sameContent = existing.payment_request_id === payment.id && sameAmount &&
+    String(existing.paid_date || '') === paidDate && String(existing.payment_voucher || '') === voucher;
+  if (!sameContent) {
+    throw new SettlementError(409, '该付款幂等键已用于不同的付款申请、金额、付款日期或凭证，不能重复使用');
+  }
+  const facts = paymentSettlementFacts(payment);
+  return {
+    idempotent: true,
+    log_id: existing.id,
+    ...facts,
+    outstanding: Math.max(0, facts.outstanding),
+    payment_status: derivePaymentStatus(payment, facts)
+  };
+}
+
+function applyPaymentSettlement(paymentRequestId, rawAmount, rawPaidDate, voucher, req, rawIdempotencyKey) {
+  return transaction(() => {
+    const payment = queryOne('SELECT * FROM payment_requests WHERE id = ?', [paymentRequestId]);
+    if (!payment) throw new SettlementError(404, '付款申请不存在');
+    if (payment.approval_status !== 'approved') throw new SettlementError(409, '付款申请尚未审批通过，不能确认付款');
+    if (['cancelled', 'rejected'].includes(payment.payment_status)) throw new SettlementError(409, '当前付款申请状态不允许确认付款');
+    const idempotencyKey = settlementIdempotencyKey(rawIdempotencyKey);
+    const requestedAmount = rawAmount === null || rawAmount === undefined || rawAmount === '' ? null : settlementMoney(rawAmount);
+    if (requestedAmount !== null && !(requestedAmount > 0)) throw new SettlementError(400, '本次实际付款金额必须大于0');
+    const paidDate = settlementDate(rawPaidDate);
+    const normalizedVoucher = String(voucher || '').trim();
+    const existing = queryOne(`SELECT * FROM payment_settlement_logs
+                               WHERE event_type = 'payment' AND idempotency_key = ?`, [idempotencyKey]);
+    if (existing) return paymentIdempotencyResult(existing, payment, requestedAmount, paidDate, normalizedVoucher);
+    ensureSettlementLegacyBaselines(payment);
+    const before = paymentSettlementFacts(payment);
+    if (before.outstanding <= 0) throw new SettlementError(409, '该付款申请已结清，无需重复付款');
+    const amount = requestedAmount === null ? before.outstanding : requestedAmount;
+    if (!(amount > 0)) throw new SettlementError(400, '本次实际付款金额必须大于0');
+    if (amount > before.outstanding) throw new SettlementError(400, '本次实际付款金额不能大于当前未付金额');
+    const snapshot = buildPaymentRateSnapshot(payment, amount, paidDate);
+    const operator = settlementOperator(req);
+    const logId = genId('settle');
+    try {
+      run(`INSERT INTO payment_settlement_logs
+           (id, payment_request_id, event_type, amount, status, reason, paid_date, payment_voucher,
+            original_currency, settlement_country, local_currency, local_rate, local_rate_date, local_rate_type,
+            local_rate_direction, local_amount, rmb_rate, rmb_rate_date, rmb_rate_type, rmb_rate_direction,
+            rmb_amount, operator_id, operator_name, idempotency_key)
+           VALUES (?, ?, 'payment', ?, 'applied', '付款确认', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [logId, payment.id, amount, paidDate, normalizedVoucher, payment.currency || '', snapshot.settlement_country,
+          snapshot.local_currency, snapshot.local_rate, snapshot.local_rate_date, snapshot.local_rate_type,
+          snapshot.local_rate_direction, snapshot.local_amount, snapshot.rmb_rate, snapshot.rmb_rate_date,
+          snapshot.rmb_rate_type, snapshot.rmb_rate_direction, snapshot.rmb_amount, operator.id, operator.name, idempotencyKey]);
+    } catch (e) {
+      const raced = queryOne(`SELECT * FROM payment_settlement_logs
+                              WHERE event_type = 'payment' AND idempotency_key = ?`, [idempotencyKey]);
+      if (raced) return paymentIdempotencyResult(raced, payment, amount, paidDate, normalizedVoucher);
+      throw e;
+    }
+    return { idempotent: false, log_id: logId, ...recalculatePaymentSettlement(payment.id) };
+  });
+}
+
+function applyDeductionSettlement(paymentRequestId, body, req) {
+  return transaction(() => {
+    const payment = queryOne('SELECT * FROM payment_requests WHERE id = ?', [paymentRequestId]);
+    if (!payment) throw new SettlementError(404, '付款申请不存在');
+    ensureSettlementLegacyBaselines(payment);
+    const before = paymentSettlementFacts(payment);
+    if (before.effectivePaid > 0) throw new SettlementError(409, '该付款申请已产生有效付款，不能通过普通编辑修改抵扣；如需调整请先冲销付款');
+    if (before.effectiveDeduction > 0) throw new SettlementError(409, '该付款申请已有生效抵扣，不能直接覆盖；请先冲销原抵扣');
+    if (before.outstanding <= 0) throw new SettlementError(409, '该付款申请已结清，不能编辑抵扣');
+    const hasDeduction = Number(body.has_deduction) === 1;
+    const amount = hasDeduction ? settlementMoney(body.deduction_amount) : 0;
+    if (!hasDeduction || amount === 0) {
+      run(`UPDATE payment_requests SET has_deduction = 0, deduction_amount = 0,
+           deduction_source_type = '', deduction_source_desc = '', deduction_ref_no = '',
+           deduction_attachment = '', updated_at = datetime('now') WHERE id = ?`, [payment.id]);
+      return recalculatePaymentSettlement(payment.id);
+    }
+    if (!(amount > 0)) throw new SettlementError(400, '抵扣金额必须大于0');
+    if (amount > before.outstanding) throw new SettlementError(400, '抵扣金额不能大于当前未付金额');
+    const sourceType = String(body.deduction_source_type || '').trim();
+    const description = String(body.deduction_source_desc || '').trim();
+    if (!sourceType || !description) throw new SettlementError(400, '抵扣金额大于0时必须填写抵扣来源类型和说明');
+    const operator = settlementOperator(req);
+    run(`INSERT INTO payment_settlement_logs
+         (id, payment_request_id, event_type, amount, status, reason, original_currency, operator_id, operator_name)
+         VALUES (?, ?, 'deduction', ?, 'applied', ?, ?, ?, ?)`,
+      [genId('settle'), payment.id, amount, description, payment.currency || '', operator.id, operator.name]);
+    run(`UPDATE payment_requests SET deduction_source_type = ?, deduction_source_desc = ?,
+         deduction_ref_no = ?, deduction_attachment = ?, updated_at = datetime('now') WHERE id = ?`,
+      [sourceType, description, String(body.deduction_ref_no || ''), String(body.deduction_attachment || ''), payment.id]);
+    return recalculatePaymentSettlement(payment.id);
+  });
+}
+
+function applyRoundingSettlement(paymentRequestId, rawAmount, reason, req) {
+  return transaction(() => {
+    const payment = queryOne('SELECT * FROM payment_requests WHERE id = ?', [paymentRequestId]);
+    if (!payment) throw new SettlementError(404, '付款申请不存在');
+    if (payment.approval_status !== 'approved') throw new SettlementError(409, '付款申请尚未审批通过，不能执行抹零');
+    ensureSettlementLegacyBaselines(payment);
+    const before = paymentSettlementFacts(payment);
+    if (before.activeRoundings.length) throw new SettlementError(409, '该付款申请已有生效抹零，不能直接覆盖；请先撤销原抹零');
+    if (before.outstanding <= 0) throw new SettlementError(409, '该付款申请已结清，无需抹零');
+    const amount = settlementMoney(rawAmount);
+    if (!Number.isFinite(amount) || amount < 0) throw new SettlementError(400, '抹零金额不能小于0');
+    if (!(amount > 0)) throw new SettlementError(400, '抹零金额必须大于0');
+    if (amount > before.outstanding) throw new SettlementError(400, '抹零金额不能超过当前剩余未结金额');
+    const roundingReason = String(reason || '').trim();
+    if (!roundingReason) throw new SettlementError(400, '抹零原因或备注不能为空');
+    const operator = settlementOperator(req);
+    const logId = genId('settle');
+    run(`INSERT INTO payment_settlement_logs
+         (id, payment_request_id, event_type, amount, status, reason, original_currency, operator_id, operator_name)
+         VALUES (?, ?, 'rounding', ?, 'applied', ?, ?, ?, ?)`,
+      [logId, payment.id, amount, roundingReason, payment.currency || '', operator.id, operator.name]);
+    run(`UPDATE payment_requests SET rounding_reason = ?, updated_at = datetime('now') WHERE id = ?`, [roundingReason, payment.id]);
+    return { log_id: logId, ...recalculatePaymentSettlement(payment.id) };
+  });
+}
+
+function reverseSettlementEvent(paymentRequestId, rawLogId, eventType, reason, req) {
+  return transaction(() => {
+    const payment = queryOne('SELECT * FROM payment_requests WHERE id = ?', [paymentRequestId]);
+    if (!payment) throw new SettlementError(404, '付款申请不存在');
+    const reversalReason = String(reason || '').trim();
+    if (!reversalReason) throw new SettlementError(400, '冲销原因不能为空');
+    ensureSettlementLegacyBaselines(payment);
+    let logId = String(rawLogId || '').trim();
+    if (logId === 'legacy-payment' || logId === 'legacy-deduction' || logId === 'legacy-rounding') {
+      const legacyType = logId === 'legacy-payment' ? 'payment' : (logId === 'legacy-deduction' ? 'deduction' : 'rounding');
+      const legacy = queryOne(`SELECT id FROM payment_settlement_logs
+                               WHERE payment_request_id = ? AND event_type = ? AND is_legacy = 1`, [payment.id, legacyType]);
+      logId = legacy ? legacy.id : '';
+    }
+    if (!logId) throw new SettlementError(400, '必须指定要冲销的结算事件');
+    const log = queryOne('SELECT * FROM payment_settlement_logs WHERE id = ? AND payment_request_id = ?', [logId, payment.id]);
+    if (!log) throw new SettlementError(404, '结算事件不存在');
+    if (log.event_type !== eventType) throw new SettlementError(409, eventType === 'payment' ? '该事件不是付款记录，不能作为付款冲销' : '该事件不是抵扣记录，不能作为抵扣冲销');
+    if (log.status !== 'applied') throw new SettlementError(409, '该结算事件已经冲销，不能重复操作');
+    const operator = settlementOperator(req);
+    run(`UPDATE payment_settlement_logs
+         SET status = 'reversed', reversed_at = datetime('now'), reversed_by = ?, reversal_reason = ?
+         WHERE id = ?`, [operator.name || operator.id, reversalReason, log.id]);
+    if (eventType === 'rounding') {
+      run(`INSERT INTO payment_settlement_logs
+           (id, payment_request_id, event_type, amount, status, reason, original_currency,
+            operator_id, operator_name, reversal_of)
+           VALUES (?, ?, 'rounding_reversal', ?, 'applied', ?, ?, ?, ?, ?)`,
+        [genId('settle'), payment.id, log.amount, reversalReason, payment.currency || '', operator.id, operator.name, log.id]);
+    }
+    return { reversed_log_id: log.id, ...recalculatePaymentSettlement(payment.id) };
+  });
+}
+
+function paymentSettlementDisplayLogs(payment) {
+  const logs = paymentSettlementLogs(payment.id);
+  if (!logs.some(log => log.event_type === 'payment') && Number(payment.paid_amount || 0) > 0) {
+    logs.push({ id: 'legacy-payment', payment_request_id: payment.id, event_type: 'payment', amount: payment.paid_amount, status: 'applied', reason: '历史付款基线（迁移前数据）', paid_date: payment.paid_date || '', operator_name: 'system', is_legacy: 1, created_at: payment.updated_at || payment.created_at });
+  }
+  if (!logs.some(log => log.event_type === 'deduction') && Number(payment.deduction_amount || 0) > 0) {
+    logs.push({ id: 'legacy-deduction', payment_request_id: payment.id, event_type: 'deduction', amount: payment.deduction_amount, status: 'applied', reason: payment.deduction_source_desc || '历史抵扣基线（迁移前数据）', operator_name: 'system', is_legacy: 1, created_at: payment.updated_at || payment.created_at });
+  }
+  if (!logs.some(log => log.event_type === 'rounding') && Number(payment.rounding_amount || 0) > 0) {
+    logs.push({ id: 'legacy-rounding', payment_request_id: payment.id, event_type: 'rounding', amount: payment.rounding_amount, status: 'applied', reason: payment.rounding_reason || '历史抹零基线', operator_name: 'system', is_legacy: 1, created_at: payment.updated_at || payment.created_at });
+  }
+  return logs.sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')) || String(a.id).localeCompare(String(b.id)));
+}
 app.get('/api/payment-requests', requireApiPermission('payment_view'), (req, res) => {
   const { status, category, keyword } = req.query;
   let sql = 'SELECT * FROM payment_requests WHERE 1=1';
@@ -4481,8 +4997,27 @@ app.get('/api/payment-requests/:id', requireApiPermission('payment_view'), (req,
     } else if (pr.related_ci_id) {
       ci_summary = queryOne('SELECT id, ci_no, supplier_name, brand, country, target_warehouse, goods_amount, currency, ci_status, ci_date, related_po_no FROM commercial_invoices WHERE id = ?', [pr.related_ci_id]);
     }
-    res.json({ ...pr, pi_summary, ci_summary });
+    const settlement_logs = paymentSettlementDisplayLogs(pr);
+    const settlement = paymentSettlementFacts(pr);
+    res.json({ ...pr, pi_summary, ci_summary, settlement_logs, effective_paid: settlement.effectivePaid, effective_deduction: settlement.effectiveDeduction, effective_rounding: settlement.effectiveRounding, outstanding: Math.max(0, settlement.outstanding) });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/payment-requests/:id/expense-country', requireApiPermission('payment_approve'), (req, res) => {
+  try {
+    const payment = queryOne('SELECT * FROM payment_requests WHERE id = ?', [req.params.id]);
+    if (!payment) return res.status(404).json({ error: '付款申请不存在' });
+    if (payment.payment_category === 'goods') return res.status(409).json({ error: '货款付款申请不需要补录费用归属国家' });
+    const country = activeExpenseCountry(req.body.expense_country);
+    const existing = String(payment.expense_country || '').trim();
+    if (existing && existing !== country) {
+      return res.status(409).json({ error: `费用归属国家已快照为“${existing}”，不能直接修改` });
+    }
+    if (!existing) {
+      run("UPDATE payment_requests SET expense_country = ?, updated_at = datetime('now') WHERE id = ?", [country, payment.id]);
+    }
+    res.json({ success: true, expense_country: existing || country, idempotent: Boolean(existing) });
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
 // 付款申请附件上传（attachment 列：JSON 结构，与 PI/CI 附件同机制）
@@ -4504,23 +5039,33 @@ app.post('/api/payment-requests/from-pi-deposit', requireApiPermission('payment_
     if (!pi.need_deposit || (pi.payable_deposit || 0) <= 0) {
       return res.status(400).json({ error: '该PI不需要定金，无需发起定金付款审批' });
     }
+    if (existingActiveGoodsPayment('pi', pi_id, 'deposit')) {
+      return res.status(409).json({ error: '该 PI 已存在有效的定金付款申请，不能重复生成' });
+    }
 
     const payableAmount = pi.payable_deposit || 0;
-    const dedAmount = parseFloat(deduction_amount) || 0;
-    if (has_deduction && dedAmount > 0) {
+    const deductionEnabled = Number(has_deduction) === 1;
+    const dedAmount = deductionEnabled ? settlementMoney(deduction_amount) : 0;
+    if (!Number.isFinite(dedAmount) || dedAmount < 0) return res.status(400).json({ error: '抵扣金额不能小于0' });
+    if (deductionEnabled && dedAmount > 0) {
       if (dedAmount > payableAmount) return res.status(400).json({ error: '抵扣金额不能大于应付金额' });
       if (!deduction_source_type || !deduction_source_desc) return res.status(400).json({ error: '抵扣金额大于0时必须填写抵扣来源类型和说明' });
     }
-    const actualPay = payableAmount - (has_deduction ? dedAmount : 0);
+    const actualPay = settlementMoney(payableAmount - dedAmount);
 
     const prId = genId('pay');
     const prNo = `PAY-DEP-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
-    run(`INSERT INTO payment_requests (id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no, payee_type, supplier_name, payable_amount, paid_amount, unpaid_amount, currency, payment_terms, payment_status, approval_status, remark, has_deduction, deduction_amount, deduction_source_type, deduction_source_desc, deduction_ref_no, actual_pay_amount, related_po_no) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [prId, prNo, 'goods', 'deposit', 'pi', pi_id, pi.pi_no, 'factory', pi.supplier_name, payableAmount, 0, payableAmount, pi.currency || 'USD', pi.payment_terms || '', 'pending_approval', 'pending', `PI定金 ${pi.pi_no}`, has_deduction ? 1 : 0, has_deduction ? dedAmount : 0, deduction_source_type || '', deduction_source_desc || '', deduction_ref_no || '', actualPay, pi.related_po_no || '']);
-
-    run('UPDATE proforma_invoices SET deposit_payment_status = ? WHERE id = ?', ['pending_approval', pi_id]);
+    transaction(() => {
+      run(`INSERT INTO payment_requests (id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no, payee_type, supplier_name, payable_amount, paid_amount, unpaid_amount, currency, payment_terms, payment_status, approval_status, remark, has_deduction, deduction_amount, deduction_source_type, deduction_source_desc, deduction_ref_no, actual_pay_amount, related_po_no, expense_country) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [prId, prNo, 'goods', 'deposit', 'pi', pi_id, pi.pi_no, 'factory', pi.supplier_name, payableAmount, 0, actualPay, pi.currency || 'USD', pi.payment_terms || '', 'pending_approval', 'pending', `PI定金 ${pi.pi_no}`, deductionEnabled ? 1 : 0, dedAmount, deduction_source_type || '', deduction_source_desc || '', deduction_ref_no || '', actualPay, pi.related_po_no || '', String(pi.country || '').trim()]);
+      if (deductionEnabled && dedAmount > 0) recordInitialDeduction(prId, dedAmount, deduction_source_desc, settlementOperator(req));
+      run('UPDATE proforma_invoices SET deposit_payment_status = ? WHERE id = ?', ['pending_approval', pi_id]);
+    });
     res.json({ id: prId, request_no: prNo, payable_amount: payableAmount, actual_pay_amount: actualPay });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    if (isActiveGoodsPaymentUniqueError(e)) return res.status(409).json({ error: '该 PI 已存在有效的定金付款申请，不能重复生成' });
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // 生成付款申请（从CI尾款）— 货款/尾款
@@ -4546,69 +5091,86 @@ app.post('/api/payment-requests/from-ci-balance', requireApiPermission('payment_
     }
 
     // 二、有效尾款防重：明确白名单（不含 rejected），兼容 source_type/source_id 与 related_ci_id 两种关联
-    const ACTIVE_BALANCE_STATUSES = ['pending_approval', 'approved', 'pending_payment', 'partial_payment_partial_deduction', 'paid'];
     const existingBalance = queryOne(
       `SELECT id, request_no, payment_status FROM payment_requests
        WHERE payment_subcategory = 'balance'
-         AND payment_status IN (${ACTIVE_BALANCE_STATUSES.map(() => '?').join(',')})
+         AND payment_status IN (${ACTIVE_GOODS_PAYMENT_STATUSES.map(() => '?').join(',')})
          AND ((source_type = 'ci' AND source_id = ?) OR related_ci_id = ?)`,
-      [...ACTIVE_BALANCE_STATUSES, ci_id, ci_id]
+      [...ACTIVE_GOODS_PAYMENT_STATUSES, ci_id, ci_id]
     );
     if (existingBalance) {
       return res.status(409).json({ error: '该 CI 已存在有效的尾款付款申请，不能重复生成' });
     }
 
-    const dedAmount = parseFloat(deduction_amount) || 0;
-    if (has_deduction && dedAmount > 0) {
+    const deductionEnabled = Number(has_deduction) === 1;
+    const dedAmount = deductionEnabled ? settlementMoney(deduction_amount) : 0;
+    if (!Number.isFinite(dedAmount) || dedAmount < 0) return res.status(400).json({ error: '抵扣金额不能小于0' });
+    if (deductionEnabled && dedAmount > 0) {
       if (dedAmount > unpaidBalance) return res.status(400).json({ error: '抵扣金额不能大于应付金额' });
       if (!deduction_source_type || !deduction_source_desc) return res.status(400).json({ error: '抵扣金额大于0时必须填写抵扣来源类型和说明' });
     }
-    const actualPay = unpaidBalance - (has_deduction ? dedAmount : 0);
+    const actualPay = settlementMoney(unpaidBalance - dedAmount);
 
     const prId = genId('pay');
     const prNo = `PAY-BAL-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
 
     // 三、INSERT 付款申请 + 更新 CI 状态，必须处于同一事务（任一步失败整体回滚）
     transaction(() => {
-      run(`INSERT INTO payment_requests (id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no, payee_type, supplier_name, payable_amount, paid_amount, unpaid_amount, currency, payment_terms, payment_status, approval_status, remark, has_deduction, deduction_amount, deduction_source_type, deduction_source_desc, deduction_ref_no, actual_pay_amount, related_ci_id, related_ci_no, related_po_no) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [prId, prNo, 'goods', 'balance', 'ci', ci_id, ci.ci_no, 'factory', ci.supplier_name, unpaidBalance, 0, unpaidBalance, ci.currency || 'USD', '', 'pending_approval', 'pending', `CI尾款 ${ci.ci_no}`, has_deduction ? 1 : 0, has_deduction ? dedAmount : 0, deduction_source_type || '', deduction_source_desc || '', deduction_ref_no || '', actualPay, ci_id, ci.ci_no, ci.related_po_no || '']);
+      run(`INSERT INTO payment_requests (id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no, payee_type, supplier_name, payable_amount, paid_amount, unpaid_amount, currency, payment_terms, payment_status, approval_status, remark, has_deduction, deduction_amount, deduction_source_type, deduction_source_desc, deduction_ref_no, actual_pay_amount, related_ci_id, related_ci_no, related_po_no, expense_country) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [prId, prNo, 'goods', 'balance', 'ci', ci_id, ci.ci_no, 'factory', ci.supplier_name, unpaidBalance, 0, actualPay, ci.currency || 'USD', '', 'pending_approval', 'pending', `CI尾款 ${ci.ci_no}`, deductionEnabled ? 1 : 0, dedAmount, deduction_source_type || '', deduction_source_desc || '', deduction_ref_no || '', actualPay, ci_id, ci.ci_no, ci.related_po_no || '', String(ci.country || '').trim()]);
+      if (deductionEnabled && dedAmount > 0) recordInitialDeduction(prId, dedAmount, deduction_source_desc, settlementOperator(req));
       run('UPDATE commercial_invoices SET balance_payment_status = ? WHERE id = ?', ['pending_approval', ci_id]);
     });
     res.json({ id: prId, request_no: prNo, payable_amount: unpaidBalance, actual_pay_amount: actualPay });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    if (isActiveGoodsPaymentUniqueError(e)) return res.status(409).json({ error: '该 CI 已存在有效的尾款付款申请，不能重复生成' });
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // 生成付款申请（到仓费用）— 可关联CI
 app.post('/api/payment-requests/warehouse-arrival', requireApiPermission('payment_create'), (req, res) => {
   try {
-    const { ci_id, subcategory, payee_name, payable_amount, currency, remark, has_deduction, deduction_amount, deduction_source_type, deduction_source_desc, deduction_ref_no, include_in_landing_cost } = req.body;
+    const { ci_id, subcategory, payee_name, payable_amount, currency, remark, has_deduction, deduction_amount, deduction_source_type, deduction_source_desc, deduction_ref_no, include_in_landing_cost, expense_country } = req.body;
     if (!payable_amount || payable_amount <= 0) return res.status(400).json({ error: '应付金额必须大于0' });
     const validSubs = ['freight', 'customs_clearance', 'port_charges', 'delivery', 'warehouse', 'other_local'];
     if (!validSubs.includes(subcategory)) return res.status(400).json({ error: '无效的到仓费用小类' });
 
-    const dedAmount = parseFloat(deduction_amount) || 0;
-    if (has_deduction && dedAmount > 0) {
+    const deductionEnabled = Number(has_deduction) === 1;
+    const dedAmount = deductionEnabled ? settlementMoney(deduction_amount) : 0;
+    if (!Number.isFinite(dedAmount) || dedAmount < 0) return res.status(400).json({ error: '抵扣金额不能小于0' });
+    if (deductionEnabled && dedAmount > 0) {
       if (dedAmount > payable_amount) return res.status(400).json({ error: '抵扣金额不能大于应付金额' });
       if (!deduction_source_type || !deduction_source_desc) return res.status(400).json({ error: '抵扣金额大于0时必须填写抵扣来源类型和说明' });
     }
-    const actualPay = payable_amount - (has_deduction ? dedAmount : 0);
+    const actualPay = settlementMoney(Number(payable_amount) - dedAmount);
 
     let ci = null, ciNo = '', poNo = '';
-    if (ci_id) { ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [ci_id]); if (ci) { ciNo = ci.ci_no; poNo = ci.related_po_no || ''; } }
+    if (ci_id) {
+      ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [ci_id]);
+      if (!ci) return res.status(400).json({ error: 'CI不存在' });
+      ciNo = ci.ci_no;
+      poNo = ci.related_po_no || '';
+    }
+    const expenseCountrySnapshot = ci
+      ? sourceExpenseCountry(ci.country, `CI“${ci.ci_no}”`)
+      : activeExpenseCountry(expense_country);
 
     const prId = genId('pay');
     const prNo = `PAY-WAR-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
-    run(`INSERT INTO payment_requests (id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no, payee_type, supplier_name, payable_amount, paid_amount, unpaid_amount, currency, payment_status, approval_status, remark, has_deduction, deduction_amount, deduction_source_type, deduction_source_desc, deduction_ref_no, actual_pay_amount, related_ci_id, related_ci_no, related_po_no, include_in_landing_cost) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [prId, prNo, 'warehouse_arrival', subcategory, ci_id ? 'ci' : 'manual', ci_id || '', ciNo, 'service_provider', payee_name || '', payable_amount, 0, payable_amount, currency || 'USD', 'pending_approval', 'pending', remark || '', has_deduction ? 1 : 0, has_deduction ? dedAmount : 0, deduction_source_type || '', deduction_source_desc || '', deduction_ref_no || '', actualPay, ci_id || '', ciNo, poNo, include_in_landing_cost === false ? 0 : 1]);
-
-    // 如果关联了CI，同时创建 ci_cost_items 记录
-    if (ci) {
-      run(`INSERT INTO ci_cost_items (id, ci_id, ci_no, payment_request_id, request_no, cost_category, cost_subcategory, payable_amount, paid_amount, include_in_landing_cost, payee_name, currency, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [genId('cci'), ci_id, ciNo, prId, prNo, 'warehouse_arrival', subcategory, payable_amount, 0, include_in_landing_cost === false ? 0 : 1, payee_name || '', currency || 'USD', remark || '']);
-    }
+    transaction(() => {
+      run(`INSERT INTO payment_requests (id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no, payee_type, supplier_name, payable_amount, paid_amount, unpaid_amount, currency, payment_status, approval_status, remark, has_deduction, deduction_amount, deduction_source_type, deduction_source_desc, deduction_ref_no, actual_pay_amount, related_ci_id, related_ci_no, related_po_no, include_in_landing_cost, expense_country) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [prId, prNo, 'warehouse_arrival', subcategory, ci_id ? 'ci' : 'manual', ci_id || '', ciNo, 'service_provider', payee_name || '', payable_amount, 0, actualPay, currency || 'USD', 'pending_approval', 'pending', remark || '', deductionEnabled ? 1 : 0, dedAmount, deduction_source_type || '', deduction_source_desc || '', deduction_ref_no || '', actualPay, ci_id || '', ciNo, poNo, include_in_landing_cost === false ? 0 : 1, expenseCountrySnapshot]);
+      if (deductionEnabled && dedAmount > 0) recordInitialDeduction(prId, dedAmount, deduction_source_desc, settlementOperator(req));
+      // 如果关联了CI，同时创建 ci_cost_items 记录
+      if (ci) {
+        run(`INSERT INTO ci_cost_items (id, ci_id, ci_no, payment_request_id, request_no, cost_category, cost_subcategory, payable_amount, paid_amount, include_in_landing_cost, payee_name, currency, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [genId('cci'), ci_id, ciNo, prId, prNo, 'warehouse_arrival', subcategory, payable_amount, 0, include_in_landing_cost === false ? 0 : 1, payee_name || '', currency || 'USD', remark || '']);
+      }
+    });
 
     res.json({ id: prId, request_no: prNo, actual_pay_amount: actualPay });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
 // 生成付款申请（关税）— 只有CI选择"有关税"时才允许
@@ -4620,24 +5182,29 @@ app.post('/api/payment-requests/customs-duty', requireApiPermission('payment_cre
     if (!ci) return res.status(400).json({ error: 'CI不存在' });
     if (!ci.has_customs_duty) return res.status(400).json({ error: '该CI未标记为有关税，无法创建关税付款申请' });
     if (!payable_amount || payable_amount <= 0) return res.status(400).json({ error: '应付金额必须大于0' });
+    const expenseCountrySnapshot = sourceExpenseCountry(ci.country, `CI“${ci.ci_no}”`);
 
-    const dedAmount = parseFloat(deduction_amount) || 0;
-    if (has_deduction && dedAmount > 0) {
+    const deductionEnabled = Number(has_deduction) === 1;
+    const dedAmount = deductionEnabled ? settlementMoney(deduction_amount) : 0;
+    if (!Number.isFinite(dedAmount) || dedAmount < 0) return res.status(400).json({ error: '抵扣金额不能小于0' });
+    if (deductionEnabled && dedAmount > 0) {
       if (dedAmount > payable_amount) return res.status(400).json({ error: '抵扣金额不能大于应付金额' });
       if (!deduction_source_type || !deduction_source_desc) return res.status(400).json({ error: '抵扣金额大于0时必须填写抵扣来源类型和说明' });
     }
-    const actualPay = payable_amount - (has_deduction ? dedAmount : 0);
+    const actualPay = settlementMoney(Number(payable_amount) - dedAmount);
 
     const prId = genId('pay');
     const prNo = `PAY-DUT-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
-    run(`INSERT INTO payment_requests (id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no, payee_type, supplier_name, payable_amount, paid_amount, unpaid_amount, currency, payment_status, approval_status, remark, has_deduction, deduction_amount, deduction_source_type, deduction_source_desc, deduction_ref_no, actual_pay_amount, related_ci_id, related_ci_no, related_po_no, include_in_landing_cost) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [prId, prNo, 'customs_duty', 'duty', 'ci', ci_id, ci.ci_no, 'customs', payee_name || '', payable_amount, 0, payable_amount, currency || ci.currency || 'USD', 'pending_approval', 'pending', remark || `关税 ${ci.ci_no}`, has_deduction ? 1 : 0, has_deduction ? dedAmount : 0, deduction_source_type || '', deduction_source_desc || '', deduction_ref_no || '', actualPay, ci_id, ci.ci_no, ci.related_po_no || '', 1]);
-
-    run(`INSERT INTO ci_cost_items (id, ci_id, ci_no, payment_request_id, request_no, cost_category, cost_subcategory, payable_amount, paid_amount, include_in_landing_cost, payee_name, currency, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [genId('cci'), ci_id, ci.ci_no, prId, prNo, 'customs_duty', 'duty', payable_amount, 0, 1, payee_name || '', currency || ci.currency || 'USD', remark || '']);
+    transaction(() => {
+      run(`INSERT INTO payment_requests (id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no, payee_type, supplier_name, payable_amount, paid_amount, unpaid_amount, currency, payment_status, approval_status, remark, has_deduction, deduction_amount, deduction_source_type, deduction_source_desc, deduction_ref_no, actual_pay_amount, related_ci_id, related_ci_no, related_po_no, include_in_landing_cost, expense_country) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [prId, prNo, 'customs_duty', 'duty', 'ci', ci_id, ci.ci_no, 'customs', payee_name || '', payable_amount, 0, actualPay, currency || ci.currency || 'USD', 'pending_approval', 'pending', remark || `关税 ${ci.ci_no}`, deductionEnabled ? 1 : 0, dedAmount, deduction_source_type || '', deduction_source_desc || '', deduction_ref_no || '', actualPay, ci_id, ci.ci_no, ci.related_po_no || '', 1, expenseCountrySnapshot]);
+      if (deductionEnabled && dedAmount > 0) recordInitialDeduction(prId, dedAmount, deduction_source_desc, settlementOperator(req));
+      run(`INSERT INTO ci_cost_items (id, ci_id, ci_no, payment_request_id, request_no, cost_category, cost_subcategory, payable_amount, paid_amount, include_in_landing_cost, payee_name, currency, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [genId('cci'), ci_id, ci.ci_no, prId, prNo, 'customs_duty', 'duty', payable_amount, 0, 1, payee_name || '', currency || ci.currency || 'USD', remark || '']);
+    });
 
     res.json({ id: prId, request_no: prNo, actual_pay_amount: actualPay });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
 // 生成付款申请（商检费用）— 只有CI选择"有商检费用"时才允许
@@ -4649,126 +5216,126 @@ app.post('/api/payment-requests/inspection-fee', requireApiPermission('payment_c
     if (!ci) return res.status(400).json({ error: 'CI不存在' });
     if (!ci.has_inspection_fee) return res.status(400).json({ error: '该CI未标记为有商检费用，无法创建商检费用付款申请' });
     if (!payable_amount || payable_amount <= 0) return res.status(400).json({ error: '应付金额必须大于0' });
+    const expenseCountrySnapshot = sourceExpenseCountry(ci.country, `CI“${ci.ci_no}”`);
 
-    const dedAmount = parseFloat(deduction_amount) || 0;
-    if (has_deduction && dedAmount > 0) {
+    const deductionEnabled = Number(has_deduction) === 1;
+    const dedAmount = deductionEnabled ? settlementMoney(deduction_amount) : 0;
+    if (!Number.isFinite(dedAmount) || dedAmount < 0) return res.status(400).json({ error: '抵扣金额不能小于0' });
+    if (deductionEnabled && dedAmount > 0) {
       if (dedAmount > payable_amount) return res.status(400).json({ error: '抵扣金额不能大于应付金额' });
       if (!deduction_source_type || !deduction_source_desc) return res.status(400).json({ error: '抵扣金额大于0时必须填写抵扣来源类型和说明' });
     }
-    const actualPay = payable_amount - (has_deduction ? dedAmount : 0);
+    const actualPay = settlementMoney(Number(payable_amount) - dedAmount);
 
     const prId = genId('pay');
     const prNo = `PAY-INS-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
-    run(`INSERT INTO payment_requests (id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no, payee_type, supplier_name, payable_amount, paid_amount, unpaid_amount, currency, payment_status, approval_status, remark, has_deduction, deduction_amount, deduction_source_type, deduction_source_desc, deduction_ref_no, actual_pay_amount, related_ci_id, related_ci_no, related_po_no, include_in_landing_cost) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [prId, prNo, 'inspection_fee', 'inspection', 'ci', ci_id, ci.ci_no, 'inspection_org', payee_name || '', payable_amount, 0, payable_amount, currency || ci.currency || 'USD', 'pending_approval', 'pending', remark || `商检费用 ${ci.ci_no}`, has_deduction ? 1 : 0, has_deduction ? dedAmount : 0, deduction_source_type || '', deduction_source_desc || '', deduction_ref_no || '', actualPay, ci_id, ci.ci_no, ci.related_po_no || '', 1]);
-
-    run(`INSERT INTO ci_cost_items (id, ci_id, ci_no, payment_request_id, request_no, cost_category, cost_subcategory, payable_amount, paid_amount, include_in_landing_cost, payee_name, currency, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [genId('cci'), ci_id, ci.ci_no, prId, prNo, 'inspection_fee', 'inspection', payable_amount, 0, 1, payee_name || '', currency || ci.currency || 'USD', remark || '']);
+    transaction(() => {
+      run(`INSERT INTO payment_requests (id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no, payee_type, supplier_name, payable_amount, paid_amount, unpaid_amount, currency, payment_status, approval_status, remark, has_deduction, deduction_amount, deduction_source_type, deduction_source_desc, deduction_ref_no, actual_pay_amount, related_ci_id, related_ci_no, related_po_no, include_in_landing_cost, expense_country) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [prId, prNo, 'inspection_fee', 'inspection', 'ci', ci_id, ci.ci_no, 'inspection_org', payee_name || '', payable_amount, 0, actualPay, currency || ci.currency || 'USD', 'pending_approval', 'pending', remark || `商检费用 ${ci.ci_no}`, deductionEnabled ? 1 : 0, dedAmount, deduction_source_type || '', deduction_source_desc || '', deduction_ref_no || '', actualPay, ci_id, ci.ci_no, ci.related_po_no || '', 1, expenseCountrySnapshot]);
+      if (deductionEnabled && dedAmount > 0) recordInitialDeduction(prId, dedAmount, deduction_source_desc, settlementOperator(req));
+      run(`INSERT INTO ci_cost_items (id, ci_id, ci_no, payment_request_id, request_no, cost_category, cost_subcategory, payable_amount, paid_amount, include_in_landing_cost, payee_name, currency, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [genId('cci'), ci_id, ci.ci_no, prId, prNo, 'inspection_fee', 'inspection', payable_amount, 0, 1, payee_name || '', currency || ci.currency || 'USD', remark || '']);
+    });
 
     res.json({ id: prId, request_no: prNo, actual_pay_amount: actualPay });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
 // 更新付款申请抵扣信息
 app.put('/api/payment-requests/:id/deduction', requireApiPermission('payment_create'), (req, res) => {
   try {
-    const { has_deduction, deduction_amount, deduction_source_type, deduction_source_desc, deduction_ref_no, deduction_attachment } = req.body;
-    const payment = queryOne('SELECT * FROM payment_requests WHERE id = ?', [req.params.id]);
-    if (!payment) return res.status(404).json({ error: '付款申请不存在' });
-
-    const dedAmount = parseFloat(deduction_amount) || 0;
-    if (has_deduction && dedAmount > 0) {
-      if (dedAmount > payment.payable_amount) return res.status(400).json({ error: '抵扣金额不能大于应付金额' });
-      if (!deduction_source_type || !deduction_source_desc) return res.status(400).json({ error: '抵扣金额大于0时必须填写抵扣来源类型和说明' });
-    }
-    if (dedAmount < 0) return res.status(400).json({ error: '抵扣金额不能小于0' });
-
-    const actualPay = payment.payable_amount - (has_deduction ? dedAmount : 0);
-    let newStatus = payment.payment_status;
-    if (has_deduction && dedAmount >= payment.payable_amount) {
-      newStatus = 'deduction_settled';
-    }
-
-    run(`UPDATE payment_requests SET has_deduction = ?, deduction_amount = ?, deduction_source_type = ?, deduction_source_desc = ?, deduction_ref_no = ?, deduction_attachment = ?, actual_pay_amount = ?, unpaid_amount = ?, payment_status = ?, updated_at = datetime('now') WHERE id = ?`,
-      [has_deduction ? 1 : 0, has_deduction ? dedAmount : 0, deduction_source_type || '', deduction_source_desc || '', deduction_ref_no || '', deduction_attachment || '', actualPay, actualPay, newStatus, req.params.id]);
-
-    res.json({ success: true, actual_pay_amount: actualPay, payment_status: newStatus });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    const result = applyDeductionSettlement(req.params.id, req.body || {}, req);
+    res.json({ success: true, actual_pay_amount: settlementMoney(result.grossPayable - result.effectiveDeduction), outstanding: result.outstanding, payment_status: result.payment_status });
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
 // 付款审批
 app.post('/api/payment-requests/:id/approve', requireApiPermission('payment_approve'), (req, res) => {
   try {
-    const { action, remark, actual_rate } = req.body;
+    const { action, remark } = req.body;
     const payment = queryOne('SELECT * FROM payment_requests WHERE id = ?', [req.params.id]);
     if (!payment) return res.status(404).json({ error: '付款申请不存在' });
 
-    const user = queryOne('SELECT name FROM users WHERE id = ?', [req.currentUserId]);
-    const userName = user ? user.name : '';
+    const userName = settlementOperator(req).name;
 
     // 审批意见（财务类审批）持久化到独立列 approval_remark，不覆盖申请备注 remark
     const apprRemark = (remark || '').toString();
     if (action === 'approve') {
-      const updateFields = ['payment_status = ?', 'approval_status = ?', 'approval_remark = ?', 'approver_name = ?', 'approved_at = datetime(\'now\')', 'updated_at = datetime(\'now\')'];
-      const updateValues = ['approved', 'approved', apprRemark, userName];
-      if (actual_rate) { updateFields.push('actual_rate = ?'); updateValues.push(parseFloat(actual_rate)); }
-      updateValues.push(req.params.id);
-      run(`UPDATE payment_requests SET ${updateFields.join(', ')} WHERE id = ?`, updateValues);
+      if (payment.approval_status !== 'pending') return res.status(409).json({ error: '该付款申请已完成审批，不能重复操作' });
+      transaction(() => {
+        ensureSettlementLegacyBaselines(payment);
+        run(`UPDATE payment_requests SET approval_status = ?, approval_remark = ?, approver_name = ?,
+             approved_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`,
+          ['approved', apprRemark, userName, req.params.id]);
+        recalculatePaymentSettlement(req.params.id);
+      });
     } else if (action === 'reject') {
-      run('UPDATE payment_requests SET payment_status = ?, approval_status = ?, approval_remark = ?, approver_name = ?, approved_at = datetime(\'now\'), updated_at = datetime(\'now\') WHERE id = ?', ['rejected', 'rejected', apprRemark, userName, req.params.id]);
+      if (payment.approval_status !== 'pending') return res.status(409).json({ error: '该付款申请已完成审批，不能重复操作' });
+      transaction(() => {
+        ensureSettlementLegacyBaselines(payment);
+        run(`UPDATE payment_requests SET approval_status = ?, approval_remark = ?, approver_name = ?,
+             approved_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`,
+          ['rejected', apprRemark, userName, req.params.id]);
+        recalculatePaymentSettlement(req.params.id);
+      });
     } else if (action === 'confirm-paid') {
-      const paidAmount = req.body.paid_amount || payment.actual_pay_amount || payment.payable_amount;
-      const dedAmount = payment.deduction_amount || 0;
-      let payStatus = 'paid';
-      if (dedAmount > 0 && paidAmount < (payment.payable_amount - dedAmount)) {
-        payStatus = 'partial_payment_partial_deduction';
-      } else if (dedAmount > 0 && paidAmount >= (payment.payable_amount - dedAmount)) {
-        payStatus = 'partial_deduction';
-      }
-      run('UPDATE payment_requests SET payment_status = ?, paid_amount = ?, unpaid_amount = ?, updated_at = datetime(\'now\') WHERE id = ?',
-        [payStatus, paidAmount, Math.max(0, (payment.actual_pay_amount || payment.payable_amount) - paidAmount), req.params.id]);
-      // 更新来源单据状态
-      if (payment.source_type === 'pi') {
-        run('UPDATE proforma_invoices SET deposit_payment_status = ?, paid_deposit = ?, pi_status = ? WHERE id = ?', ['paid', paidAmount, 'deposit_paid', payment.source_id]);
-      } else if (payment.source_type === 'ci') {
-        run('UPDATE commercial_invoices SET balance_payment_status = ?, paid_balance = ?, unpaid_balance = ? WHERE id = ?',
-          ['paid', paidAmount, 0, payment.source_id]);
-      }
-      // 同步 ci_cost_items 的 paid_amount
-      run('UPDATE ci_cost_items SET paid_amount = ? WHERE payment_request_id = ?', [paidAmount, req.params.id]);
+      const result = applyPaymentSettlement(req.params.id, req.body.paid_amount, req.body.paid_date, req.body.payment_voucher, req, req.body.idempotency_key);
+      return res.json({ success: true, idempotent: result.idempotent, log_id: result.log_id, paid_amount: result.effectivePaid, outstanding: result.outstanding, payment_status: result.payment_status });
+    } else {
+      return res.status(400).json({ error: '无效的审批操作' });
     }
     res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
+app.post('/api/payment-requests/:id/reverse-payment', requireApiPermission('payment_approve'), (req, res) => {
+  try {
+    const result = reverseSettlementEvent(req.params.id, req.body.settlement_log_id, 'payment', req.body.reason, req);
+    res.json({ success: true, reversed_log_id: result.reversed_log_id, paid_amount: result.effectivePaid, outstanding: result.outstanding, payment_status: result.payment_status });
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
+app.post('/api/payment-requests/:id/reverse-deduction', requireApiPermission('payment_approve'), (req, res) => {
+  try {
+    const result = reverseSettlementEvent(req.params.id, req.body.settlement_log_id, 'deduction', req.body.reason, req);
+    res.json({ success: true, reversed_log_id: result.reversed_log_id, deduction_amount: result.effectiveDeduction, outstanding: result.outstanding, payment_status: result.payment_status });
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
+app.post('/api/payment-requests/:id/rounding', requireApiPermission('payment_approve'), (req, res) => {
+  try {
+    const result = applyRoundingSettlement(req.params.id, req.body.amount, req.body.reason, req);
+    res.json({ success: true, log_id: result.log_id, rounding_amount: result.effectiveRounding, outstanding: result.outstanding, payment_status: result.payment_status });
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
+app.post('/api/payment-requests/:id/reverse-rounding', requireApiPermission('payment_approve'), (req, res) => {
+  try {
+    const result = reverseSettlementEvent(req.params.id, req.body.settlement_log_id, 'rounding', req.body.reason, req);
+    res.json({ success: true, reversed_log_id: result.reversed_log_id, rounding_amount: result.effectiveRounding, outstanding: result.outstanding, payment_status: result.payment_status });
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
 // 导入付款结果
 app.post('/api/payment-requests/bulk-import-result', requireApiPermission('payment_import'), (req, res) => {
   try {
     const items = req.body.items || [];
-    const result = { updated: 0, failed: 0, errors: [] };
-    transaction(() => {
-      items.forEach((item, i) => {
-        try {
-          if (!item.request_no) { result.failed++; result.errors.push({ row: i + 2, reason: '付款申请号为空' }); return; }
-          const payment = queryOne('SELECT * FROM payment_requests WHERE request_no = ?', [item.request_no]);
-          if (!payment) { result.failed++; result.errors.push({ row: i + 2, reason: `付款申请号 ${item.request_no} 不存在` }); return; }
-          const paidAmount = parseFloat(item.paid_amount) || payment.payable_amount;
-          run('UPDATE payment_requests SET payment_status = ?, paid_amount = ?, unpaid_amount = ?, actual_rate = ?, payment_voucher = ?, updated_at = datetime(\'now\') WHERE id = ?',
-            ['paid', paidAmount, payment.payable_amount - paidAmount, parseFloat(item.actual_rate) || 0, item.payment_voucher || '', payment.id]);
-
-          if (payment.source_type === 'pi') {
-            run('UPDATE proforma_invoices SET deposit_payment_status = ?, paid_deposit = ? WHERE id = ?', ['paid', paidAmount, payment.source_id]);
-          } else if (payment.source_type === 'ci') {
-            run('UPDATE commercial_invoices SET balance_payment_status = ?, paid_balance = ? WHERE id = ?', ['paid', paidAmount, payment.source_id]);
-          } else if (payment.source_type === 'logistics') {
-            run('UPDATE logistics_batches SET fee_status = ? WHERE id = ?', ['paid', payment.source_id]);
-          }
-          result.updated++;
-        } catch (e) { result.failed++; result.errors.push({ row: i + 2, reason: e.message }); }
-      });
+    const result = { updated: 0, idempotent: 0, failed: 0, errors: [] };
+    items.forEach((item, i) => {
+      try {
+        if (!item.request_no) throw new SettlementError(400, '付款申请号为空');
+        const payment = queryOne('SELECT * FROM payment_requests WHERE request_no = ?', [item.request_no]);
+        if (!payment) throw new SettlementError(404, `付款申请号 ${item.request_no} 不存在`);
+        const paymentResult = applyPaymentSettlement(payment.id, item.paid_amount, item.paid_date, item.payment_voucher, req, bulkPaymentIdempotencyKey(item));
+        if (paymentResult.idempotent) result.idempotent++;
+        else result.updated++;
+      } catch (e) {
+        result.failed++;
+        result.errors.push({ row: i + 2, reason: e.message });
+      }
     });
     res.json(result);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
 // ==================== CI 费用归集 ====================
@@ -5413,15 +5980,15 @@ app.get('/api/dashboard', requireApiPermission('dashboard_view'), (req, res) => 
     // 7天内待付款金额
     const now = new Date();
     const d7 = new Date(now.getTime() + 7 * 86400000).toISOString().split('T')[0];
-    const pay7 = queryOne(`SELECT COALESCE(SUM(unpaid_amount), 0) as val FROM payment_requests WHERE payment_status IN ('approved', 'pending_approval') AND payable_date != '' AND payable_date <= ?`, [d7])?.val || 0;
+    const pay7 = queryOne(`SELECT COALESCE(SUM(unpaid_amount), 0) as val FROM payment_requests WHERE approval_status IN ('pending', 'approved') AND payment_status NOT IN ('paid', 'deduction_settled', 'rejected', 'cancelled') AND unpaid_amount > 0 AND payable_date != '' AND payable_date <= ?`, [d7])?.val || 0;
 
     // 30天内待付款金额
     const d30 = new Date(now.getTime() + 30 * 86400000).toISOString().split('T')[0];
-    const pay30 = queryOne(`SELECT COALESCE(SUM(unpaid_amount), 0) as val FROM payment_requests WHERE payment_status IN ('approved', 'pending_approval') AND payable_date != '' AND payable_date <= ?`, [d30])?.val || 0;
+    const pay30 = queryOne(`SELECT COALESCE(SUM(unpaid_amount), 0) as val FROM payment_requests WHERE approval_status IN ('pending', 'approved') AND payment_status NOT IN ('paid', 'deduction_settled', 'rejected', 'cancelled') AND unpaid_amount > 0 AND payable_date != '' AND payable_date <= ?`, [d30])?.val || 0;
 
     // 逾期付款金额
     const today = now.toISOString().split('T')[0];
-    const overdue = queryOne(`SELECT COALESCE(SUM(unpaid_amount), 0) as val FROM payment_requests WHERE payment_status IN ('approved', 'pending_approval') AND payable_date != '' AND payable_date < ?`, [today])?.val || 0;
+    const overdue = queryOne(`SELECT COALESCE(SUM(unpaid_amount), 0) as val FROM payment_requests WHERE approval_status IN ('pending', 'approved') AND payment_status NOT IN ('paid', 'deduction_settled', 'rejected', 'cancelled') AND unpaid_amount > 0 AND payable_date != '' AND payable_date < ?`, [today])?.val || 0;
 
     // PO/PI/CI 未完成数量
     const poPending = queryOne("SELECT COUNT(*) as cnt FROM purchase_orders WHERE po_status NOT IN ('cancelled', 'transferred_pi')")?.cnt || 0;

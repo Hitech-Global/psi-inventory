@@ -1314,10 +1314,75 @@ function initDatabase() {
     'attachment TEXT DEFAULT \'\'',
     'approval_remark TEXT DEFAULT \'\'',
     'approver_name TEXT DEFAULT \'\'',
-    'approved_at TEXT DEFAULT \'\''
+    'approved_at TEXT DEFAULT \'\'',
+    'paid_date TEXT DEFAULT \'\'',
+    'rounding_amount REAL DEFAULT 0',
+    'rounding_reason TEXT DEFAULT \'\'',
+    'expense_country TEXT DEFAULT \'\''
   ].forEach(col => {
     try { d.exec(`ALTER TABLE payment_requests ADD COLUMN ${col}`); } catch(e) {}
   });
+
+  // 付款与抵扣的最小结算事件日志。payment_requests 仍是运营主表，本表仅保存累计事实、汇率快照与冲销证据。
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS payment_settlement_logs (
+      id TEXT PRIMARY KEY,
+      payment_request_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      amount REAL NOT NULL,
+      status TEXT NOT NULL DEFAULT 'applied',
+      reason TEXT DEFAULT '',
+      paid_date TEXT DEFAULT '',
+      payment_voucher TEXT DEFAULT '',
+      original_currency TEXT DEFAULT '',
+      settlement_country TEXT DEFAULT '',
+      local_currency TEXT DEFAULT '',
+      local_rate REAL DEFAULT 0,
+      local_rate_date TEXT DEFAULT '',
+      local_rate_type TEXT DEFAULT '',
+      local_rate_direction TEXT DEFAULT '',
+      local_amount REAL DEFAULT 0,
+      rmb_rate REAL DEFAULT 0,
+      rmb_rate_date TEXT DEFAULT '',
+      rmb_rate_type TEXT DEFAULT '',
+      rmb_rate_direction TEXT DEFAULT '',
+      rmb_amount REAL DEFAULT 0,
+      operator_id TEXT DEFAULT '',
+      operator_name TEXT DEFAULT '',
+      idempotency_key TEXT DEFAULT '',
+      is_legacy INTEGER NOT NULL DEFAULT 0,
+      reversal_of TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now')),
+      reversed_at TEXT DEFAULT '',
+      reversed_by TEXT DEFAULT '',
+      reversal_reason TEXT DEFAULT '',
+      CHECK (event_type IN ('payment','deduction','rounding','rounding_reversal')),
+      CHECK (status IN ('applied','reversed')),
+      CHECK (amount > 0),
+      CHECK (is_legacy IN (0,1)),
+      FOREIGN KEY (payment_request_id) REFERENCES payment_requests(id) ON DELETE RESTRICT
+    )
+  `);
+  try { d.exec(`ALTER TABLE payment_settlement_logs ADD COLUMN idempotency_key TEXT DEFAULT ''`); } catch(e) {}
+  d.exec(`CREATE INDEX IF NOT EXISTS ix_payment_settlement_request ON payment_settlement_logs(payment_request_id, event_type, status)`);
+  d.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_payment_settlement_legacy_baseline
+      ON payment_settlement_logs(payment_request_id, event_type)
+      WHERE is_legacy = 1
+  `);
+  d.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_payment_settlement_payment_idempotency
+      ON payment_settlement_logs(idempotency_key)
+      WHERE event_type = 'payment' AND idempotency_key != ''
+  `);
+  d.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_payment_request_active_goods_source
+      ON payment_requests(source_type, source_id, payment_subcategory)
+      WHERE payment_category = 'goods'
+        AND payment_subcategory IN ('deposit', 'balance')
+        AND source_id != ''
+        AND payment_status NOT IN ('rejected', 'cancelled')
+  `);
 
   // cost_allocations 表新增字段
   [

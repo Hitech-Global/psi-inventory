@@ -5798,12 +5798,16 @@ async function toggleCiCostFlag(id,duty,insp){
   try{await api('/api/commercial-invoices/'+id+'/cost-flags','PUT',d);showToast('费用标记已更新','success');viewCICost(id)}catch(e){showToast(e.message,'danger')}
 }
 async function createWarehousePay(ciId){
+  try{
+  let countryField='';
+  if(!ciId){const countries=(await api('/api/countries')).filter(c=>c.status==='active');countryField='<div class="form-group"><label>费用归属国家 <span class="required">*</span></label><select id="war-country"><option value="">请选择</option>'+countries.map(c=>'<option value="'+esc(c.name)+'">'+esc(c.name)+'（'+esc(c.code)+'）</option>').join('')+'</select></div>'}
   openModal('创建到仓费用付款',
     '<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid">'+
     '<div class="form-group"><label>费用小类</label><select id="war-sub"><option value="freight">运费</option><option value="customs_clearance">清关费</option><option value="port_charges">港口费</option><option value="delivery">派送费</option><option value="warehouse">仓储费</option><option value="other_local">其他本地费</option></select></div>'+
     '<div class="form-group"><label>付款对象</label><input type="text" id="war-payee" placeholder="货代/服务商名称"></div>'+
     '<div class="form-group"><label>应付金额</label><input type="number" step="0.01" id="war-amt"></div>'+
     '<div class="form-group"><label>币种</label><select id="war-cur"><option>USD</option><option>RMB</option><option>IDR</option><option>MYR</option><option>THB</option></select></div>'+
+    countryField+
     '<div class="form-group"><label>计入落地成本</label><select id="war-lic"><option value="1">是</option><option value="0">否</option></select></div>'+
     '<div class="form-group"><label>备注</label><input type="text" id="war-rem"></div>'+
     '<div class="form-group"><label>是否抵扣</label><select id="war-ded" onchange="document.getElementById(\'war-ded-amt\').disabled=this.value===\'0\'"><option value="0">否</option><option value="1">是</option></select></div>'+
@@ -5812,9 +5816,11 @@ async function createWarehousePay(ciId){
     '<div class="form-group form-group-full"><label>抵扣说明</label><input type="text" id="war-ded-desc"></div>'+
     '</div></div>',
     '<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveWarehousePay(\''+ciId+'\')">创建</button>');
+  }catch(e){showToast(e.message,'danger')}
 }
 async function saveWarehousePay(ciId){
-  const d={ci_id:ciId,subcategory:document.getElementById('war-sub').value,payee_name:document.getElementById('war-payee').value,payable_amount:parseFloat(document.getElementById('war-amt').value)||0,currency:document.getElementById('war-cur').value,remark:document.getElementById('war-rem').value,has_deduction:parseInt(document.getElementById('war-ded').value),deduction_amount:parseFloat(document.getElementById('war-ded-amt').value)||0,deduction_source_type:document.getElementById('war-ded-type').value,deduction_source_desc:document.getElementById('war-ded-desc').value,include_in_landing_cost:parseInt(document.getElementById('war-lic').value)};
+  const countryEl=document.getElementById('war-country');if(!ciId&&(!countryEl||!countryEl.value)){showToast('请选择费用归属国家','warning');return}
+  const d={ci_id:ciId,subcategory:document.getElementById('war-sub').value,payee_name:document.getElementById('war-payee').value,payable_amount:parseFloat(document.getElementById('war-amt').value)||0,currency:document.getElementById('war-cur').value,expense_country:countryEl?countryEl.value:'',remark:document.getElementById('war-rem').value,has_deduction:parseInt(document.getElementById('war-ded').value),deduction_amount:parseFloat(document.getElementById('war-ded-amt').value)||0,deduction_source_type:document.getElementById('war-ded-type').value,deduction_source_desc:document.getElementById('war-ded-desc').value,include_in_landing_cost:parseInt(document.getElementById('war-lic').value)};
   try{await api('/api/payment-requests/warehouse-arrival','POST',d);showToast('到仓费用付款申请已创建','success');closeModal()}catch(e){showToast(e.message,'danger')}
 }
 async function createCustomsDutyPay(ciId){
@@ -6384,7 +6390,7 @@ const PAY_SUBCATS={
   customs_duty:{duty:'关税'},
   inspection_fee:{inspection:'商检费'}
 };
-const PAY_STATUS_MAP={pending_approval:'待审批',approved:'已审批',paid:'已付款',rejected:'已驳回',partial_paid:'部分付款',partial_deduction:'部分抵扣',deduction_settled:'全额抵扣',partial_payment_partial_deduction:'部分付款+部分抵扣',cancelled:'已取消'};
+const PAY_STATUS_MAP={pending_approval:'待审批',approved:'已审批',paid:'已付款',rejected:'已驳回',partial_paid:'部分付款',partial_deduction:'部分抵扣',partial_rounding:'部分抹零',deduction_settled:'全额抵扣',partial_payment_partial_deduction:'部分付款+部分抵扣',reversed:'已冲销',cancelled:'已取消'};
 
 async function renderPayment(){
   document.getElementById('content-inner').innerHTML='<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>状态</label><select id="pay-fs"><option value="">全部</option><option value="pending_approval">待审批</option><option value="approved">已审批</option><option value="paid">已付款</option><option value="partial_paid">部分付款</option><option value="rejected">已驳回</option></select></div><div class="filter-group"><label>类别</label><select id="pay-fc"><option value="">全部</option><option value="goods">货款</option><option value="warehouse_arrival">到仓费用</option><option value="customs_duty">关税</option><option value="inspection_fee">商检费用</option></select></div><div class="filter-group"><label>关键词</label><input type="text" id="pay-fk" placeholder="申请号/供应商/来源单号" onkeypress="if(event.key===\'Enter\')loadPay()"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadPay()">搜索</button>'+(hasPermission('payment_import')?'<button class="btn btn-secondary btn-sm" onclick="importPayResult()">📥 导入付款结果</button>':'')+'</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">💳 付款申请</div></div><div id="pay-table"></div></div>';
@@ -6423,7 +6429,10 @@ async function viewPayment(id, mode){
       + fld('已付', fmtMoney(p.paid_amount, cur))
       + fld('未付', fmtMoney(p.unpaid_amount, cur))
       + (p.deduction_amount>0?fld('抵扣金额', fmtMoney(p.deduction_amount, cur)):'')
+      + (p.rounding_amount>0?fld('抹零金额', fmtMoney(p.rounding_amount, cur)):'')
+      + fld('实际付款日期', esc(p.paid_date||'—'))
       + fld('币种', esc(cur||'—'))
+      + (p.payment_category!=='goods'?fld('费用归属国家', esc(p.expense_country||'未设置')):'')
       + fld('总数量', qtyHtml)
       + fld('状态', esc(stLabel))
       + fld('审批状态', esc(p.approval_status||'—'))
@@ -6459,6 +6468,18 @@ async function viewPayment(id, mode){
         + fld('关联PO', esc(ci.related_po_no||'—'))
         +'</div></div>';
     }
+    const settlementLogs=p.settlement_logs||[];
+    const settlementSection='<div class="detail-section"><h3>结算记录</h3>'+(settlementLogs.length
+      ? '<div class="table-container" style="box-shadow:none;border:1px solid #eee"><table class="data-table"><thead><tr><th>类型</th><th>金额</th><th>付款日期</th><th>汇率快照</th><th>操作人/时间</th><th>状态</th><th>操作</th></tr></thead><tbody>'+settlementLogs.map(log=>{
+          const isPayment=log.event_type==='payment',isRounding=log.event_type==='rounding',isRoundingReversal=log.event_type==='rounding_reversal';
+          const rateText=isPayment&&log.local_currency?(esc(log.original_currency||cur)+'→'+esc(log.local_currency)+' '+Number(log.local_rate||0)+'；'+esc(log.original_currency||cur)+'→RMB '+Number(log.rmb_rate||0)):'—';
+          const state=isRoundingReversal?'撤销证据':(log.status==='applied'?'有效':'已冲销');
+          const action=log.status==='applied'&&!isRoundingReversal&&hasPermission('payment_approve')
+            ? '<button class="btn btn-danger btn-sm" onclick="reversePaymentSettlement(\''+id+'\',\''+String(log.id).replace(/'/g,'')+'\',\''+log.event_type+'\')">'+(isRounding?'撤销抹零':'冲销'+(isPayment?'付款':'抵扣'))+'</button>' : '';
+          const typeLabel=isPayment?'付款':(isRounding?'抹零':(isRoundingReversal?'抹零撤销':'抵扣'));
+          return '<tr><td>'+typeLabel+(log.is_legacy?'（历史基线）':'')+'</td><td class="text-right">'+fmtMoney(log.amount,cur)+'</td><td>'+esc(log.paid_date||'—')+'</td><td style="font-size:12px">'+rateText+(isPayment&&log.local_currency?'<br>本币 '+fmtMoney(log.local_amount,log.local_currency)+'；人民币 '+fmtMoney(log.rmb_amount,'RMB'):'')+'</td><td>'+esc(log.operator_name||'—')+'<br><span style="font-size:12px;color:#999">'+esc((log.created_at||'').replace('T',' ').slice(0,19))+'</span></td><td><span class="status-badge '+(log.status==='applied'?'status-paid':'status-rejected')+'">'+state+'</span>'+(log.reversal_reason?'<br><span style="font-size:12px;color:#999">'+esc(log.reversal_reason)+'</span>':'')+'</td><td>'+action+'</td></tr>';
+        }).join('')+'</tbody></table></div>'
+      : '<div style="color:#999;font-size:13px">暂无结算记录</div>')+'</div>';
     // 附件（多文件）：归一化为数组
     let attaches=[];
     try{ const pv=(typeof p.attachment==='string'&&p.attachment)?JSON.parse(p.attachment):p.attachment; attaches=Array.isArray(pv)?pv:(pv&&pv.dataUrl?[{name:pv.name,type:pv.type,size:pv.size,dataUrl:pv.dataUrl}]:[]); }catch(e){ attaches=[]; }
@@ -6484,7 +6505,7 @@ async function viewPayment(id, mode){
     const opinionHtml=(mode==='finance'&&isPendingApproval&&canApprove)
       ? '<div class="detail-section"><h3>审批意见</h3><textarea id="pay-appr-remark" rows="3" placeholder="填写审批意见（驳回时必填）；在框内粘贴图片可自动上传为附件" style="width:100%;box-sizing:border-box" onpaste="onPayRemarkPaste(event)"></textarea></div>'
       : '';
-    const body='<div class="detail-card" style="box-shadow:none;padding:0"><div class="detail-section"><h3>付款申请摘要</h3>'+summary+'</div>'+relHtml+attSection+opinionHtml+'</div>';
+    const body='<div class="detail-card" style="box-shadow:none;padding:0"><div class="detail-section"><h3>付款申请摘要</h3>'+summary+'</div>'+relHtml+settlementSection+attSection+opinionHtml+'</div>';
     // footer：finance 模式待审 → 通过/驳回；否则仅关闭
     let footer='<button class="btn btn-secondary" onclick="closeModal()">关闭</button>';
     if(mode==='finance'&&isPendingApproval&&canApprove){
@@ -6603,12 +6624,59 @@ async function loadPay(){
       const subLabel=(PAY_SUBCATS[p.payment_category]&&PAY_SUBCATS[p.payment_category][p.payment_subcategory])||p.payment_subcategory||'';
       const stLabel=PAY_STATUS_MAP[p.payment_status]||p.payment_status;
       const stClass=p.payment_status==='paid'?'status-paid':p.payment_status==='approved'?'status-approved':p.payment_status==='rejected'?'status-rejected':p.payment_status.includes('partial')?'status-pending':'status-pending';
-      return '<tr><td class="cell-id">'+esc(p.request_no)+'</td><td>'+esc(catLabel)+'</td><td>'+esc(subLabel)+'</td><td class="cell-id">'+esc(p.source_no)+'</td><td class="cell-id">'+esc(p.related_ci_no||'')+'</td><td>'+esc(p.supplier_name)+'</td><td class="text-right font-bold">'+fmtMoney(p.payable_amount)+'</td><td class="text-right '+(p.deduction_amount>0?'text-warning':'')+'">'+(p.deduction_amount>0?fmtMoney(p.deduction_amount):'-')+'</td><td class="text-right font-bold">'+fmtMoney(p.actual_pay_amount||p.payable_amount)+'</td><td class="text-right">'+fmtMoney(p.paid_amount)+'</td><td class="text-right '+(p.unpaid_amount>0?'text-danger':'')+'">'+fmtMoney(p.unpaid_amount)+'</td><td>'+esc(p.currency)+'</td><td><span class="status-badge '+stClass+'">'+esc(stLabel)+'</span></td><td class="cell-actions">'+(hasPermission('payment_view')?'<button class="action-btn" onclick="viewPayment(\''+p.id+'\')" title="查看详情">👁️</button>':'')+(p.payment_status==='pending_approval'&&hasPermission('payment_approve')?'<button class="action-btn action-edit" onclick="apprPay(\''+p.id+'\',\'approve\')" title="通过">✅</button><button class="action-btn action-delete" onclick="apprPay(\''+p.id+'\',\'reject\')" title="驳回">❌</button>':'')+(p.payment_status==='approved'&&hasPermission('payment_approve')?'<button class="action-btn action-edit" onclick="confirmPaid(\''+p.id+'\')" title="确认已付">💵</button>':'')+(p.payment_status==='pending_approval'&&hasPermission('payment_create')?'<button class="action-btn" onclick="editDeduction(\''+p.id+'\')" title="编辑抵扣">✂️</button>':'')+'</td></tr>';
+      const canPay=p.approval_status==='approved'&&Number(p.unpaid_amount||0)>0&&!['rejected','cancelled'].includes(p.payment_status);
+      const canDeduct=p.approval_status==='pending'&&Number(p.paid_amount||0)<=0&&Number(p.deduction_amount||0)<=0&&Number(p.unpaid_amount||0)>0;
+      const canRound=p.approval_status==='approved'&&Number(p.unpaid_amount||0)>0&&Number(p.rounding_amount||0)<=0&&!['rejected','cancelled'].includes(p.payment_status);
+      const needsExpenseCountry=p.payment_category!=='goods'&&!String(p.expense_country||'').trim();
+      const actualDisplay=Number(p.actual_pay_amount||0)>0||Number(p.deduction_amount||0)>0||Number(p.rounding_amount||0)>0?p.actual_pay_amount:p.payable_amount;
+      return '<tr><td class="cell-id">'+esc(p.request_no)+'</td><td>'+esc(catLabel)+'</td><td>'+esc(subLabel)+'</td><td class="cell-id">'+esc(p.source_no)+'</td><td class="cell-id">'+esc(p.related_ci_no||'')+'</td><td>'+esc(p.supplier_name)+'</td><td class="text-right font-bold">'+fmtMoney(p.payable_amount)+'</td><td class="text-right '+(p.deduction_amount>0?'text-warning':'')+'">'+(p.deduction_amount>0?fmtMoney(p.deduction_amount):'-')+'</td><td class="text-right font-bold">'+fmtMoney(actualDisplay)+'</td><td class="text-right">'+fmtMoney(p.paid_amount)+'</td><td class="text-right '+(p.unpaid_amount>0?'text-danger':'')+'">'+fmtMoney(p.unpaid_amount)+'</td><td>'+esc(p.currency)+'</td><td><span class="status-badge '+stClass+'">'+esc(stLabel)+'</span></td><td class="cell-actions">'+(hasPermission('payment_view')?'<button class="action-btn" onclick="viewPayment(\''+p.id+'\')" title="查看详情">👁️</button>':'')+(needsExpenseCountry&&hasPermission('payment_approve')?'<button class="action-btn" onclick="openPaymentExpenseCountry(\''+p.id+'\')" title="补录费用归属国家">补国家</button>':'')+(p.approval_status==='pending'&&hasPermission('payment_approve')?'<button class="action-btn action-edit" onclick="apprPay(\''+p.id+'\',\'approve\')" title="通过">✅</button><button class="action-btn action-delete" onclick="apprPay(\''+p.id+'\',\'reject\')" title="驳回">❌</button>':'')+(canPay&&hasPermission('payment_approve')?'<button class="action-btn action-edit" onclick="confirmPaid(\''+p.id+'\')" title="确认付款">💵</button>':'')+(canRound&&hasPermission('payment_approve')?'<button class="action-btn" onclick="openPaymentRounding(\''+p.id+'\')" title="手动抹零">抹零</button>':'')+(canDeduct&&hasPermission('payment_create')?'<button class="action-btn" onclick="editDeduction(\''+p.id+'\')" title="编辑抵扣">✂️</button>':'')+'</td></tr>';
     }).join('')+'</tbody></table></div>';
   }catch(e){showFlash(e.message,'danger')}
 }
 async function apprPay(id,act){const rem=act==='reject'?(prompt('驳回原因：')||''):'';try{await api('/api/payment-requests/'+id+'/approve','POST',{action:act,remark:rem});showToast(act==='approve'?'已通过':'已驳回','success');loadPay()}catch(e){showToast(e.message,'danger')}}
-async function confirmPaid(id){const v=prompt('实际付款金额（留空全付）：');try{await api('/api/payment-requests/'+id+'/approve','POST',{action:'confirm-paid',paid_amount:v?parseFloat(v):null});showToast('已确认付款','success');loadPay()}catch(e){showToast(e.message,'danger')}}
+async function confirmPaid(id){
+  try{
+    const p=await api('/api/payment-requests/'+id);
+    const now=new Date(),today=new Date(now.getTime()-now.getTimezoneOffset()*60000).toISOString().slice(0,10);
+    const idempotencyKey='pay:'+(window.crypto&&window.crypto.randomUUID?window.crypto.randomUUID():(Date.now()+'-'+Math.random().toString(36).slice(2)));
+    openModal('确认付款 - '+esc(p.request_no),
+      '<div class="form-card" style="box-shadow:none;padding:0"><input type="hidden" id="pay-settle-idempotency" value="'+idempotencyKey+'"><div class="detail-grid mb-16"><div class="detail-item"><span class="detail-label">当前未付</span><span class="detail-value">'+fmtMoney(p.outstanding,p.currency)+'</span></div><div class="detail-item"><span class="detail-label">币种</span><span class="detail-value">'+esc(p.currency||'')+'</span></div></div><div class="form-grid"><div class="form-group"><label>本次实际付款金额 <span class="required">*</span></label><input type="number" min="0.01" step="0.01" id="pay-settle-amount" value="'+Number(p.outstanding||0).toFixed(2)+'"></div><div class="form-group"><label>实际付款日期 <span class="required">*</span></label><input type="date" id="pay-settle-date" value="'+today+'"></div><div class="form-group form-group-full"><label>付款凭证号</label><input type="text" id="pay-settle-voucher"></div></div><div style="font-size:12px;color:#999">非货款费用将严格按实际付款日期读取系统 realtime 汇率并保存快照；缺少汇率时不会确认付款。</div></div>',
+      '<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" id="pay-settle-save" onclick="saveConfirmedPayment(\''+id+'\')">确认付款</button>');
+  }catch(e){showToast(e.message,'danger')}
+}
+async function saveConfirmedPayment(id){
+  const btn=document.getElementById('pay-settle-save');if(!btn||btn.disabled)return;
+  const amount=parseFloat(document.getElementById('pay-settle-amount').value),paidDate=document.getElementById('pay-settle-date').value,voucher=document.getElementById('pay-settle-voucher').value,idempotencyKey=document.getElementById('pay-settle-idempotency').value;
+  if(!(amount>0)){showToast('本次实际付款金额必须大于0','warning');return}if(!paidDate){showToast('请选择实际付款日期','warning');return}
+  btn.disabled=true;btn.textContent='保存中…';
+  try{await api('/api/payment-requests/'+id+'/approve','POST',{action:'confirm-paid',paid_amount:amount,paid_date:paidDate,payment_voucher:voucher,idempotency_key:idempotencyKey});showToast('付款结果已保存','success');closeModal();loadPay()}catch(e){showToast(e.message,'danger');if(document.getElementById('pay-settle-save')){btn.disabled=false;btn.textContent='确认付款'}}
+}
+async function reversePaymentSettlement(paymentId,logId,eventType){
+  const isRounding=eventType==='rounding',label=eventType==='payment'?'付款':(isRounding?'抹零':'抵扣');const reason=prompt('请输入'+(isRounding?'撤销':'冲销')+label+'原因：');if(reason===null)return;if(!reason.trim()){showToast((isRounding?'撤销':'冲销')+'原因不能为空','warning');return}
+  const route=eventType==='payment'?'/reverse-payment':(isRounding?'/reverse-rounding':'/reverse-deduction');
+  try{await api('/api/payment-requests/'+paymentId+route,'POST',{settlement_log_id:logId,reason:reason.trim()});showToast(label+(isRounding?'已撤销':'已冲销'),'success');closeModal();loadPay()}catch(e){showToast(e.message,'danger')}
+}
+async function openPaymentRounding(id){
+  try{const p=await api('/api/payment-requests/'+id);openModal('手动抹零 - '+esc(p.request_no),'<div class="form-card" style="box-shadow:none;padding:0"><div class="detail-grid mb-16"><div class="detail-item"><span class="detail-label">原始应付</span><span class="detail-value">'+fmtMoney(p.payable_amount,p.currency)+'</span></div><div class="detail-item"><span class="detail-label">当前未结</span><span class="detail-value">'+fmtMoney(p.outstanding,p.currency)+'</span></div></div><div class="form-grid"><div class="form-group"><label>抹零金额 <span class="required">*</span></label><input type="number" min="0.01" step="0.01" id="pay-rounding-amount" placeholder="请手动填写"></div><div class="form-group form-group-full"><label>原因或备注 <span class="required">*</span></label><textarea id="pay-rounding-reason" rows="2"></textarea></div></div><div style="font-size:12px;color:#999">抹零只影响本付款申请的结清状态，不修改原始应付金额，也不参与采购成本、WAC 或趋势换算。</div></div>','<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" id="pay-rounding-save" onclick="savePaymentRounding(\''+id+'\')">确认抹零</button>')}catch(e){showToast(e.message,'danger')}
+}
+async function savePaymentRounding(id){
+  const btn=document.getElementById('pay-rounding-save');if(!btn||btn.disabled)return;const amount=parseFloat(document.getElementById('pay-rounding-amount').value),reason=document.getElementById('pay-rounding-reason').value.trim();
+  if(!Number.isFinite(amount)||amount<0){showToast('抹零金额不能小于0','warning');return}if(!(amount>0)){showToast('抹零金额必须大于0','warning');return}if(!reason){showToast('抹零原因或备注不能为空','warning');return}
+  btn.disabled=true;btn.textContent='保存中…';try{await api('/api/payment-requests/'+id+'/rounding','POST',{amount,reason});showToast('抹零已生效','success');closeModal();loadPay()}catch(e){showToast(e.message,'danger');if(document.getElementById('pay-rounding-save')){btn.disabled=false;btn.textContent='确认抹零'}}
+}
+async function openPaymentExpenseCountry(id){
+  try{
+    const results=await Promise.all([api('/api/payment-requests/'+id),api('/api/countries')]),p=results[0],countries=results[1].filter(c=>c.status==='active');
+    if(p.payment_category==='goods'){showToast('货款付款申请不需要费用归属国家','warning');return}
+    if(p.expense_country){showToast('费用归属国家已快照为 '+p.expense_country,'warning');return}
+    openModal('补录费用归属国家 - '+esc(p.request_no),'<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid"><div class="form-group form-group-full"><label>费用归属国家 <span class="required">*</span></label><select id="pay-expense-country"><option value="">请选择</option>'+countries.map(c=>'<option value="'+esc(c.name)+'">'+esc(c.name)+'（'+esc(c.code)+'）</option>').join('')+'</select></div></div><div style="font-size:12px;color:#999">保存后作为付款申请快照，不会随付款主体或来源主数据变化；如需更正需另行受控处理。</div></div>','<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" id="pay-country-save" onclick="savePaymentExpenseCountry(\''+id+'\')">保存</button>');
+  }catch(e){showToast(e.message,'danger')}
+}
+async function savePaymentExpenseCountry(id){
+  const btn=document.getElementById('pay-country-save');if(!btn||btn.disabled)return;const country=document.getElementById('pay-expense-country').value;
+  if(!country){showToast('请选择费用归属国家','warning');return}
+  btn.disabled=true;btn.textContent='保存中…';try{await api('/api/payment-requests/'+id+'/expense-country','PUT',{expense_country:country});showToast('费用归属国家已保存','success');closeModal();loadPay()}catch(e){showToast(e.message,'danger');if(document.getElementById('pay-country-save')){btn.disabled=false;btn.textContent='保存'}}
+}
 async function editDeduction(id){
   try{
     const p=await api('/api/payment-requests/'+id.replace(/'/g,''));
