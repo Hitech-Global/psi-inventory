@@ -726,6 +726,40 @@ function initDatabase() {
     )
   `);
 
+  // 历史 CI 财务导入：与运营 CI 完全隔离，只承载历史货款及其应付结算。
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS historical_commercial_invoices (
+      id TEXT PRIMARY KEY,
+      historical_ci_no TEXT NOT NULL,
+      supplier_id TEXT DEFAULT '',
+      supplier_name TEXT NOT NULL,
+      supplier_identity TEXT NOT NULL,
+      brand_id TEXT DEFAULT '',
+      brand_name TEXT NOT NULL,
+      country TEXT NOT NULL,
+      ci_date TEXT NOT NULL,
+      currency TEXT NOT NULL,
+      gross_goods_amount REAL NOT NULL,
+      historical_paid_amount REAL NOT NULL DEFAULT 0,
+      historical_paid_date TEXT DEFAULT NULL,
+      payment_terms TEXT DEFAULT '',
+      due_date TEXT DEFAULT '',
+      source_note TEXT DEFAULT '',
+      source_mode TEXT NOT NULL DEFAULT 'historical',
+      idempotency_key TEXT NOT NULL,
+      payload_hash TEXT NOT NULL,
+      payment_request_id TEXT DEFAULT '',
+      created_by TEXT DEFAULT '',
+      created_by_name TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      CHECK (source_mode = 'historical'),
+      CHECK (gross_goods_amount > 0),
+      CHECK (historical_paid_amount >= 0),
+      CHECK (historical_paid_amount <= gross_goods_amount)
+    )
+  `);
+
   // CI 明细
   d.exec(`
     CREATE TABLE IF NOT EXISTS commercial_invoice_items (
@@ -1595,6 +1629,13 @@ function initDatabase() {
   d.exec(`CREATE INDEX IF NOT EXISTS idx_po_status ON purchase_orders(po_status)`);
   d.exec(`CREATE INDEX IF NOT EXISTS idx_pi_status ON proforma_invoices(pi_status)`);
   d.exec(`CREATE INDEX IF NOT EXISTS idx_ci_status ON commercial_invoices(ci_status)`);
+  d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_historical_ci_idempotency ON historical_commercial_invoices(idempotency_key)`);
+  d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_historical_ci_identity
+    ON historical_commercial_invoices(historical_ci_no COLLATE NOCASE, supplier_identity, country COLLATE NOCASE)`);
+  d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_historical_ci_payment_request
+    ON historical_commercial_invoices(payment_request_id) WHERE payment_request_id != ''`);
+  d.exec(`CREATE INDEX IF NOT EXISTS ix_historical_ci_date ON historical_commercial_invoices(ci_date)`);
+  d.exec(`CREATE INDEX IF NOT EXISTS ix_historical_ci_supplier ON historical_commercial_invoices(supplier_identity)`);
   d.exec(`CREATE INDEX IF NOT EXISTS idx_log_status ON logistics_batches(logistics_status)`);
   d.exec(`CREATE INDEX IF NOT EXISTS idx_inbound_ci ON inbound_records(source_ci_no)`);
   d.exec(`CREATE INDEX IF NOT EXISTS idx_payment_status ON payment_requests(payment_status)`);

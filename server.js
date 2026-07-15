@@ -4934,6 +4934,264 @@ function paymentSettlementDisplayLogs(payment) {
   }
   return logs.sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')) || String(a.id).localeCompare(String(b.id)));
 }
+
+function historicalCIField(body, ...keys) {
+  for (const key of keys) {
+    if (body && body[key] !== undefined && body[key] !== null) return body[key];
+  }
+  return '';
+}
+
+function historicalCIDate(value, label, required) {
+  const date = String(value || '').trim().slice(0, 10);
+  if (!date && !required) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new SettlementError(400, `${label}必须为 YYYY-MM-DD`);
+  const parsed = new Date(date + 'T00:00:00Z');
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) {
+    throw new SettlementError(400, `${label}无效`);
+  }
+  return date;
+}
+
+function normalizeHistoricalCI(body) {
+  const historicalCiNo = String(historicalCIField(body, 'historical_ci_no', '历史CI编号', 'CI编号') || '').trim();
+  if (!historicalCiNo) throw new SettlementError(400, '历史 CI 编号不能为空');
+  const sourceMode = String(historicalCIField(body, 'source_mode', '来源模式') || 'historical').trim();
+  if (sourceMode !== 'historical') throw new SettlementError(400, '历史 CI 的 source_mode 必须为 historical');
+
+  const supplierId = String(historicalCIField(body, 'supplier_id', '供应商ID') || '').trim();
+  const suppliedName = String(historicalCIField(body, 'supplier_name', 'supplier', '供应商') || '').trim();
+  let supplierName = suppliedName;
+  if (supplierId) {
+    const supplier = queryOne('SELECT id, name FROM suppliers WHERE id = ?', [supplierId]);
+    if (!supplier) throw new SettlementError(400, `供应商 ${supplierId} 不存在`);
+    supplierName = supplier.name;
+  }
+  if (!supplierName) throw new SettlementError(400, '供应商或供应商快照不能为空');
+
+  const brandId = String(historicalCIField(body, 'brand_id', '品牌ID') || '').trim();
+  const brandName = String(historicalCIField(body, 'brand_name', 'brand', '品牌') || '').trim();
+  if (!brandId && !brandName) throw new SettlementError(400, '品牌或品牌快照不能为空');
+
+  const country = String(historicalCIField(body, 'country', '国家') || '').trim();
+  if (!country) throw new SettlementError(400, '采购归属国家不能为空');
+  const ciDate = historicalCIDate(historicalCIField(body, 'ci_date', 'CI日期'), '历史 CI 日期', true);
+  const historicalPaidDate = historicalCIDate(historicalCIField(body, 'historical_paid_date', '历史付款日期'), '历史已付款日期', false);
+  const dueDate = historicalCIDate(historicalCIField(body, 'due_date', '到期日'), '到期日', false);
+
+  const currency = String(historicalCIField(body, 'currency', '币种') || '').trim().toUpperCase();
+  const currencyRow = currency ? queryOne("SELECT code FROM currencies WHERE code = ? AND status = 'active'", [currency]) : null;
+  if (!currencyRow) throw new SettlementError(400, `币种 ${currency || '（空）'} 不存在或已停用`);
+
+  const grossGoodsAmount = settlementMoney(historicalCIField(body, 'gross_goods_amount', '历史货款总金额', '总货款'));
+  const historicalPaidAmount = settlementMoney(historicalCIField(body, 'historical_paid_amount', '历史已付款', '已付款') || 0);
+  if (!(grossGoodsAmount > 0)) throw new SettlementError(400, '历史货款总金额必须大于0');
+  if (!Number.isFinite(historicalPaidAmount) || historicalPaidAmount < 0) throw new SettlementError(400, '历史已付款金额不能小于0');
+  if (historicalPaidAmount > grossGoodsAmount) throw new SettlementError(400, '历史已付款金额不能超过历史货款总金额');
+
+  const normalized = {
+    historical_ci_no: historicalCiNo,
+    supplier_id: supplierId,
+    supplier_name: supplierName,
+    supplier_identity: supplierName.trim().toLowerCase(),
+    brand_id: brandId,
+    brand_name: brandName || brandId,
+    country,
+    ci_date: ciDate,
+    currency,
+    gross_goods_amount: grossGoodsAmount,
+    historical_paid_amount: historicalPaidAmount,
+    historical_paid_date: historicalPaidDate,
+    payment_terms: String(historicalCIField(body, 'payment_terms', '付款条件') || '').trim(),
+    due_date: dueDate || '',
+    source_note: String(historicalCIField(body, 'source_note', '原始凭证或备注', '备注') || '').trim(),
+    source_mode: 'historical'
+  };
+  const fingerprint = crypto.createHash('sha256').update(JSON.stringify(normalized)).digest('hex');
+  const suppliedKey = String(historicalCIField(body, 'idempotency_key', '幂等键') || '').trim();
+  const idempotencyKey = suppliedKey || `historical-ci:${fingerprint}`;
+  if (idempotencyKey.length > 200) throw new SettlementError(400, '历史 CI 幂等键长度不能超过200个字符');
+  return { ...normalized, idempotency_key: idempotencyKey, payload_hash: fingerprint };
+}
+
+function historicalCIIdempotencyResult(existing, normalized) {
+  if (existing.payload_hash !== normalized.payload_hash) {
+    throw new SettlementError(409, '该历史 CI 幂等键已用于不同的单据内容，不能重复使用');
+  }
+  return {
+    idempotent: true,
+    id: existing.id,
+    historical_ci_no: existing.historical_ci_no,
+    payment_request_id: existing.payment_request_id
+  };
+}
+
+function createHistoricalCI(body, req) {
+  const normalized = normalizeHistoricalCI(body);
+  const idempotent = queryOne('SELECT * FROM historical_commercial_invoices WHERE idempotency_key = ?', [normalized.idempotency_key]);
+  if (idempotent) return historicalCIIdempotencyResult(idempotent, normalized);
+  const duplicate = queryOne(`SELECT id, historical_ci_no FROM historical_commercial_invoices
+                              WHERE historical_ci_no = ? COLLATE NOCASE AND supplier_identity = ? AND country = ? COLLATE NOCASE`,
+    [normalized.historical_ci_no, normalized.supplier_identity, normalized.country]);
+  if (duplicate) throw new SettlementError(409, `历史 CI“${normalized.historical_ci_no}”在该供应商和国家下已存在，不能重复导入`);
+
+  return transaction(() => {
+    const racedKey = queryOne('SELECT * FROM historical_commercial_invoices WHERE idempotency_key = ?', [normalized.idempotency_key]);
+    if (racedKey) return historicalCIIdempotencyResult(racedKey, normalized);
+    const racedIdentity = queryOne(`SELECT id FROM historical_commercial_invoices
+                                    WHERE historical_ci_no = ? COLLATE NOCASE AND supplier_identity = ? AND country = ? COLLATE NOCASE`,
+      [normalized.historical_ci_no, normalized.supplier_identity, normalized.country]);
+    if (racedIdentity) throw new SettlementError(409, `历史 CI“${normalized.historical_ci_no}”在该供应商和国家下已存在，不能重复导入`);
+
+    const operator = settlementOperator(req);
+    const historicalId = genId('hci');
+    const paymentRequestId = genId('pay');
+    const paymentRequestNo = `PAY-HCI-${String(paymentRequestId).replace(/^pay_/, '').toUpperCase()}`;
+    run(`INSERT INTO historical_commercial_invoices
+         (id, historical_ci_no, supplier_id, supplier_name, supplier_identity, brand_id, brand_name,
+          country, ci_date, currency, gross_goods_amount, historical_paid_amount, historical_paid_date,
+          payment_terms, due_date, source_note, source_mode, idempotency_key, payload_hash,
+          created_by, created_by_name)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'historical', ?, ?, ?, ?)`,
+      [historicalId, normalized.historical_ci_no, normalized.supplier_id, normalized.supplier_name,
+        normalized.supplier_identity, normalized.brand_id, normalized.brand_name, normalized.country,
+        normalized.ci_date, normalized.currency, normalized.gross_goods_amount, normalized.historical_paid_amount,
+        normalized.historical_paid_date, normalized.payment_terms, normalized.due_date, normalized.source_note,
+        normalized.idempotency_key, normalized.payload_hash, operator.id, operator.name]);
+
+    run(`INSERT INTO payment_requests
+         (id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no,
+          payee_type, supplier_name, payable_amount, paid_amount, unpaid_amount, currency, payment_terms,
+          payable_date, approval_status, approver_name, approved_at, remark, expense_country)
+         VALUES (?, ?, 'goods', 'balance', 'historical_ci', ?, ?, 'factory', ?, ?, 0, ?, ?, ?, ?,
+                 'approved', ?, datetime('now'), ?, ?)`,
+      [paymentRequestId, paymentRequestNo, historicalId, normalized.historical_ci_no, normalized.supplier_name,
+        normalized.gross_goods_amount, normalized.gross_goods_amount, normalized.currency, normalized.payment_terms,
+        normalized.due_date, operator.name, normalized.source_note, normalized.country]);
+
+    run('UPDATE historical_commercial_invoices SET payment_request_id = ?, updated_at = datetime(\'now\') WHERE id = ?',
+      [paymentRequestId, historicalId]);
+
+    if (normalized.historical_paid_amount > 0) {
+      run(`INSERT INTO payment_settlement_logs
+           (id, payment_request_id, event_type, amount, status, reason, paid_date, original_currency,
+            operator_id, operator_name, idempotency_key, is_legacy)
+           VALUES (?, ?, 'payment', ?, 'applied', ?, ?, ?, ?, ?, ?, 1)`,
+        [genId('settle'), paymentRequestId, normalized.historical_paid_amount,
+          normalized.source_note || `历史 CI ${normalized.historical_ci_no} 已付款导入`,
+          normalized.historical_paid_date, normalized.currency, operator.id,
+          operator.name || 'historical_import', `historical-ci-payment:${normalized.idempotency_key}`]);
+    }
+
+    const settlement = recalculatePaymentSettlement(paymentRequestId);
+    return {
+      idempotent: false,
+      id: historicalId,
+      historical_ci_no: normalized.historical_ci_no,
+      payment_request_id: paymentRequestId,
+      outstanding: settlement.outstanding,
+      payment_status: settlement.payment_status
+    };
+  });
+}
+
+function historicalCISelectSql() {
+  return `SELECT h.*, pr.request_no, pr.payable_amount, pr.paid_amount, pr.deduction_amount,
+                 pr.rounding_amount, pr.unpaid_amount, pr.payment_status, pr.approval_status,
+                 COALESCE((SELECT SUM(l.amount) FROM payment_settlement_logs l
+                           WHERE l.payment_request_id = h.payment_request_id AND l.event_type = 'payment'
+                             AND l.is_legacy = 1 AND l.status = 'applied'), 0) AS historical_paid_effective,
+                 COALESCE((SELECT SUM(l.amount) FROM payment_settlement_logs l
+                           WHERE l.payment_request_id = h.payment_request_id AND l.event_type = 'payment'
+                             AND l.is_legacy = 0 AND l.status = 'applied'), 0) AS subsequent_paid_amount
+          FROM historical_commercial_invoices h
+          JOIN payment_requests pr ON pr.id = h.payment_request_id`;
+}
+
+app.get('/api/historical-commercial-invoices', requireApiPermission('ci_view'), (req, res) => {
+  try {
+    let sql = historicalCISelectSql() + ' WHERE 1=1';
+    const params = [];
+    if (req.query.status) { sql += ' AND pr.payment_status = ?'; params.push(req.query.status); }
+    if (req.query.keyword) {
+      sql += ' AND (h.historical_ci_no LIKE ? OR h.supplier_name LIKE ? OR h.brand_name LIKE ?)';
+      const pattern = `%${req.query.keyword}%`;
+      params.push(pattern, pattern, pattern);
+    }
+    sql += ' ORDER BY h.ci_date DESC, h.created_at DESC';
+    res.json(query(sql, params).rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/historical-commercial-invoices/:id', requireApiPermission('ci_view'), (req, res) => {
+  try {
+    const historical = queryOne(historicalCISelectSql() + ' WHERE h.id = ?', [req.params.id]);
+    if (!historical) return res.status(404).json({ error: '历史 CI 不存在' });
+    res.json(historical);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/historical-commercial-invoices',
+  requireApiPermission('ci_create'), requireApiPermission('payment_create'), requireApiPermission('payment_approve'),
+  (req, res) => {
+    try {
+      const result = createHistoricalCI(req.body || {}, req);
+      res.json({ success: true, ...result });
+    } catch (e) { res.status(e.status || 500).json({ error: e.status ? e.message : '历史 CI 导入失败' }); }
+  });
+
+app.post('/api/historical-commercial-invoices/batch-import',
+  requireApiPermission('ci_create'), requireApiPermission('payment_create'), requireApiPermission('payment_approve'),
+  (req, res) => {
+    try {
+      const items = Array.isArray(req.body.items) ? req.body.items : [];
+      if (!items.length) return res.status(400).json({ error: '没有可导入的历史 CI 数据' });
+      if (items.length > 2000) return res.status(400).json({ error: '单次最多导入 2000 条历史 CI' });
+      const result = { success: 0, idempotent: 0, failed: 0, errors: [], messages: [] };
+      items.forEach((item, index) => {
+        try {
+          const created = createHistoricalCI(item, req);
+          if (created.idempotent) result.idempotent++;
+          else result.success++;
+        } catch (e) {
+          result.failed++;
+          result.errors.push({ row: index + 2, reason: e.status ? e.message : '历史 CI 导入失败' });
+        }
+      });
+      if (result.idempotent) result.messages.push(`幂等识别 ${result.idempotent} 条，未重复记账`);
+      res.json(result);
+    } catch (e) { res.status(e.status || 500).json({ error: e.status ? e.message : '历史 CI 批量导入失败' }); }
+  });
+
+function purchaseAmountScope(rows) {
+  const byCurrency = {};
+  let count = 0;
+  rows.forEach(row => {
+    const currency = String(row.currency || '').trim() || 'UNKNOWN';
+    const amount = settlementMoney(row.amount || 0);
+    byCurrency[currency] = settlementMoney((byCurrency[currency] || 0) + amount);
+    count++;
+  });
+  const currencies = Object.keys(byCurrency).sort().map(currency => ({ currency, amount: byCurrency[currency] }));
+  const rmbKnownAmount = byCurrency.RMB || 0;
+  const rmbPendingCount = rows.filter(row => String(row.currency || '').trim() !== 'RMB').length;
+  return { count, by_currency: currencies, rmb_known_amount: rmbKnownAmount, rmb_pending_count: rmbPendingCount };
+}
+
+app.get('/api/purchase-amount-summary', requireApiPermission('ci_view'), (req, res) => {
+  try {
+    const operationalRows = query(`SELECT currency, goods_amount AS amount FROM commercial_invoices
+                                   WHERE ci_status != 'cancelled'`).rows;
+    const historicalRows = query(`SELECT currency, gross_goods_amount AS amount FROM historical_commercial_invoices`).rows;
+    res.json({
+      operational: purchaseAmountScope(operationalRows),
+      historical: purchaseAmountScope(historicalRows),
+      total: purchaseAmountScope(operationalRows.concat(historicalRows)),
+      rmb_note: '仅原币为 RMB 的单据计入已知人民币总额；其他币种未提供明确汇率证据时标记为待补，不做跨币种裸加。'
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/payment-requests', requireApiPermission('payment_view'), (req, res) => {
   const { status, category, keyword } = req.query;
   let sql = 'SELECT * FROM payment_requests WHERE 1=1';
@@ -4988,7 +5246,7 @@ app.get('/api/payment-requests/:id', requireApiPermission('payment_view'), (req,
     const pr = queryOne('SELECT * FROM payment_requests WHERE id = ?', [req.params.id]);
     if (!pr) return res.status(404).json({ error: '付款申请不存在' });
     pr.total_qty = computePaymentTotalQty(pr);
-    let pi_summary = null, ci_summary = null;
+    let pi_summary = null, ci_summary = null, historical_ci_summary = null;
     if (pr.source_type === 'pi' && pr.source_id) {
       pi_summary = queryOne('SELECT id, pi_no, supplier_name, brand, country, target_warehouse, total_amount, currency, pi_status, pi_date FROM proforma_invoices WHERE id = ?', [pr.source_id]);
     }
@@ -4997,9 +5255,15 @@ app.get('/api/payment-requests/:id', requireApiPermission('payment_view'), (req,
     } else if (pr.related_ci_id) {
       ci_summary = queryOne('SELECT id, ci_no, supplier_name, brand, country, target_warehouse, goods_amount, currency, ci_status, ci_date, related_po_no FROM commercial_invoices WHERE id = ?', [pr.related_ci_id]);
     }
+    if (pr.source_type === 'historical_ci' && pr.source_id) {
+      historical_ci_summary = queryOne(`SELECT id, historical_ci_no, supplier_name, brand_name, country,
+                                               gross_goods_amount, historical_paid_amount, historical_paid_date,
+                                               currency, ci_date, payment_terms, due_date, source_note, source_mode
+                                        FROM historical_commercial_invoices WHERE id = ?`, [pr.source_id]);
+    }
     const settlement_logs = paymentSettlementDisplayLogs(pr);
     const settlement = paymentSettlementFacts(pr);
-    res.json({ ...pr, pi_summary, ci_summary, settlement_logs, effective_paid: settlement.effectivePaid, effective_deduction: settlement.effectiveDeduction, effective_rounding: settlement.effectiveRounding, outstanding: Math.max(0, settlement.outstanding) });
+    res.json({ ...pr, pi_summary, ci_summary, historical_ci_summary, settlement_logs, effective_paid: settlement.effectivePaid, effective_deduction: settlement.effectiveDeduction, effective_rounding: settlement.effectiveRounding, outstanding: Math.max(0, settlement.outstanding) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
