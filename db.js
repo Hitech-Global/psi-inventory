@@ -1785,6 +1785,15 @@ function initDatabase() {
   d.exec(`CREATE INDEX IF NOT EXISTS idx_oplog_page ON operation_logs(page)`);
   d.exec(`CREATE INDEX IF NOT EXISTS idx_batchtask_status ON batch_tasks(status)`);
 
+  // HCI-ATTACH-01：历史 CI 附件（复用既有 dataUrl-in-DB 机制，attachment 列存 JSON 数组）
+  (function hciAttachmentMigration() {
+    const d = getDB();
+    const cols = d.prepare(`PRAGMA table_info(historical_commercial_invoices)`).all().map(c => c.name);
+    if (!cols.includes('attachment')) {
+      d.exec(`ALTER TABLE historical_commercial_invoices ADD COLUMN attachment TEXT NOT NULL DEFAULT ''`);
+    }
+  })();
+
   // ==================== 插入默认数据 ====================
 
   // 默认角色

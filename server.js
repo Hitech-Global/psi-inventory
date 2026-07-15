@@ -5190,6 +5190,97 @@ app.post('/api/historical-commercial-invoices/batch-import',
     } catch (e) { res.status(e.status || 500).json({ error: e.status ? e.message : '历史 CI 批量导入失败' }); }
   });
 
+  // ==================== HCI-ATTACH-01 历史 CI 附件（复用 PI/CI 既有 dataUrl-in-DB 机制） ====================
+  // 默认技术配置参数（非业务规则冻结，可后续配置调整）：单个附件 base64 解码后的技术安全大小上限。
+  const HCI_ATTACH_MAX_BYTES = 10 * 1024 * 1024;
+  const HCI_ATTACH_ALLOWED = {
+    'application/pdf': ['.pdf'],
+    'application/msword': ['.doc'],
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
+    'application/vnd.ms-excel': ['.xls'],
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
+    'image/jpeg': ['.jpg', '.jpeg'],
+    'image/png': ['.png'],
+    'image/webp': ['.webp']
+  };
+  const HCI_ATTACH_CATEGORIES = ['ci_document', 'payment_proof', 'statement', 'terms_proof', 'other'];
+
+  function sanitizeAttachmentName(name) {
+    if (!name) return '未命名附件';
+    return String(name).replace(/[\/\\]/g, '_').replace(/\.{2,}/g, '_').slice(0, 200);
+  }
+  function parseStoredAttachments(str) {
+    if (!str) return [];
+    try { const v = typeof str === 'string' ? JSON.parse(str) : str; return Array.isArray(v) ? v : (v && typeof v === 'object' ? [v] : []); }
+    catch (e) { return []; }
+  }
+  function normalizeAttachmentInput(v) {
+    if (!v) return [];
+    if (Array.isArray(v)) return v;
+    if (typeof v === 'string') { if (v === '') return []; try { const p = JSON.parse(v); return Array.isArray(p) ? p : [p]; } catch (e) { return null; } }
+    if (typeof v === 'object') return [v];
+    return null;
+  }
+  function validateAttachmentItem(item) {
+    if (!item || typeof item !== 'object') return { ok: false, reason: '附件对象缺失' };
+    const raw = typeof item.dataUrl === 'string' ? item.dataUrl : '';
+    if (!raw.startsWith('data:')) return { ok: false, reason: '附件数据格式非法（须为 data URL）' };
+    const comma = raw.indexOf(',');
+    if (comma < 0) return { ok: false, reason: '附件 data URL 非法' };
+    const meta = raw.slice(5, comma);
+    if (!/;base64/i.test(meta)) return { ok: false, reason: '附件必须为 base64 编码' };
+    const mime = meta.split(';')[0].toLowerCase();
+    const allowedExts = HCI_ATTACH_ALLOWED[mime];
+    if (!allowedExts) return { ok: false, reason: '不支持的文件类型：' + mime };
+    const name = sanitizeAttachmentName(item.name);
+    const lower = name.toLowerCase();
+    const ext = lower.indexOf('.') >= 0 ? lower.slice(lower.lastIndexOf('.')) : '';
+    if (!allowedExts.includes(ext)) return { ok: false, reason: '文件扩展名与类型不匹配：' + (ext || '(无扩展名)') };
+    const b64 = raw.slice(comma + 1);
+    let bytes; try { bytes = Buffer.from(b64, 'base64').length; } catch (e) { return { ok: false, reason: '附件 base64 解码失败' }; }
+    if (bytes > HCI_ATTACH_MAX_BYTES) return { ok: false, reason: '文件超过 ' + (HCI_ATTACH_MAX_BYTES / 1024 / 1024) + ' MB 技术上限' };
+    const category = HCI_ATTACH_CATEGORIES.includes(item.category) ? item.category : 'other';
+    return { ok: true, item: { name, type: mime, size: bytes, dataUrl: raw, category } };
+  }
+
+  // 上传（支持单个对象或数组；相同 CI + 同名同内容自动幂等）
+  app.post('/api/historical-commercial-invoices/:id/attachment', requireApiPermission('ci_edit'), (req, res) => {
+    try {
+      const hci = queryOne('SELECT id, attachment FROM historical_commercial_invoices WHERE id = ?', [req.params.id]);
+      if (!hci) return res.status(404).json({ error: '历史 CI 不存在' });
+      const incoming = normalizeAttachmentInput(req.body && req.body.attachment);
+      if (incoming === null) return res.status(400).json({ error: '附件格式不合法' });
+      const existing = parseStoredAttachments(hci.attachment);
+      const result = { success: true, added: 0, idempotent: 0, rejected: 0, errors: [] };
+      for (const it of incoming) {
+        const v = validateAttachmentItem(it);
+        if (!v.ok) { result.rejected++; result.errors.push(v.reason); continue; }
+        const hash = crypto.createHash('sha256').update(v.item.dataUrl + '|' + v.item.name).digest('hex');
+        if (existing.some(a => !a.deleted && a.hash === hash)) { result.idempotent++; continue; }
+        existing.push({ ...v.item, hash, uploaded_by: req.currentUserId || '', uploaded_by_name: req.currentUserName || '', uploaded_at: new Date().toISOString() });
+        result.added++;
+      }
+      run('UPDATE historical_commercial_invoices SET attachment = ?, updated_at = datetime(\'now\') WHERE id = ?', [JSON.stringify(existing), hci.id]);
+      res.json(result);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // 软删除（单条）
+  app.post('/api/historical-commercial-invoices/:id/attachment/:index/delete', requireApiPermission('ci_edit'), (req, res) => {
+    try {
+      const hci = queryOne('SELECT id, attachment FROM historical_commercial_invoices WHERE id = ?', [req.params.id]);
+      if (!hci) return res.status(404).json({ error: '历史 CI 不存在' });
+      const list = parseStoredAttachments(hci.attachment);
+      const idx = parseInt(req.params.index, 10);
+      if (isNaN(idx) || idx < 0 || idx >= list.length) return res.status(404).json({ error: '附件不存在' });
+      list[idx].deleted = true;
+      list[idx].deleted_by = req.currentUserId || '';
+      list[idx].deleted_at = new Date().toISOString();
+      run('UPDATE historical_commercial_invoices SET attachment = ?, updated_at = datetime(\'now\') WHERE id = ?', [JSON.stringify(list), hci.id]);
+      res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
 function purchaseAmountScope(rows) {
   const byCurrency = {};
   let count = 0;
