@@ -323,6 +323,7 @@ function initDatabase() {
       standard_purchase_price REAL DEFAULT 0,
       purchase_price_rmb REAL DEFAULT 0,
       purchase_price_usd REAL DEFAULT 0,
+      reference_customs_rate REAL DEFAULT NULL,
       weighted_avg_cost REAL DEFAULT 0,
       carton_spec TEXT DEFAULT '',
       qty_per_carton INTEGER DEFAULT 0,
@@ -718,6 +719,8 @@ function initDatabase() {
       paid_balance REAL DEFAULT 0,
       unpaid_balance REAL DEFAULT 0,
       balance_payment_status TEXT DEFAULT 'unpaid',
+      transport_basis TEXT DEFAULT NULL,
+      import_duty_total REAL DEFAULT 0,
       attachment TEXT DEFAULT '',
       pl_attachment TEXT DEFAULT '',
       remark TEXT DEFAULT '',
@@ -771,6 +774,7 @@ function initDatabase() {
       shipped_qty INTEGER DEFAULT 0,
       unit_price REAL DEFAULT 0,
       ci_amount REAL DEFAULT 0,
+      actual_customs_rate REAL DEFAULT NULL,
       inbound_qty INTEGER DEFAULT 0,
       uninbound_qty INTEGER DEFAULT 0,
       created_at TEXT DEFAULT (datetime('now'))
@@ -903,6 +907,7 @@ function initDatabase() {
       inbound_id TEXT DEFAULT '',
       inbound_no TEXT DEFAULT '',
       logistics_batch_no TEXT DEFAULT '',
+      allocation_run_id TEXT DEFAULT '',
       ci_no TEXT DEFAULT '',
       sku_code TEXT NOT NULL,
       allocation_basis TEXT DEFAULT '',
@@ -915,6 +920,35 @@ function initDatabase() {
       unit_landing_cost REAL DEFAULT 0,
       currency TEXT DEFAULT 'USD',
       created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  // 每笔费用按 SKU 的分摊证据。cost_allocations 仍保留 SKU 汇总结果供 WAC 使用。
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS cost_allocation_details (
+      id TEXT PRIMARY KEY,
+      allocation_run_id TEXT NOT NULL,
+      ci_id TEXT NOT NULL,
+      ci_no TEXT DEFAULT '',
+      source_cost_item_id TEXT DEFAULT '',
+      fee_key TEXT NOT NULL,
+      cost_category TEXT DEFAULT '',
+      cost_subcategory TEXT DEFAULT '',
+      fee_total REAL NOT NULL DEFAULT 0,
+      currency TEXT DEFAULT 'USD',
+      sku_code TEXT NOT NULL,
+      allocation_basis TEXT NOT NULL,
+      basis_value REAL NOT NULL DEFAULT 0,
+      basis_total REAL NOT NULL DEFAULT 0,
+      ratio REAL NOT NULL DEFAULT 0,
+      theoretical_amount REAL NOT NULL DEFAULT 0,
+      rounded_amount REAL NOT NULL DEFAULT 0,
+      rounding_adjustment REAL NOT NULL DEFAULT 0,
+      final_allocated_amount REAL NOT NULL DEFAULT 0,
+      is_rounding_anchor INTEGER NOT NULL DEFAULT 0,
+      stable_sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(ci_id, fee_key, sku_code)
     )
   `);
 
@@ -1300,6 +1334,8 @@ function initDatabase() {
     'cost_confirmed INTEGER DEFAULT 0',
     'cost_allocated INTEGER DEFAULT 0',
     'landing_total_cost REAL DEFAULT 0',
+    'transport_basis TEXT DEFAULT NULL',
+    'import_duty_total REAL DEFAULT 0',
     'original_inventory_imported INTEGER DEFAULT 0',
     'wac_version_id TEXT DEFAULT \'\''
   ].forEach(col => {
@@ -1640,6 +1676,8 @@ function initDatabase() {
   d.exec(`CREATE INDEX IF NOT EXISTS idx_inbound_ci ON inbound_records(source_ci_no)`);
   d.exec(`CREATE INDEX IF NOT EXISTS idx_payment_status ON payment_requests(payment_status)`);
   d.exec(`CREATE INDEX IF NOT EXISTS idx_ci_cost_items_ci ON ci_cost_items(ci_id)`);
+  d.exec(`CREATE INDEX IF NOT EXISTS idx_cost_allocation_details_ci ON cost_allocation_details(ci_id)`);
+  d.exec(`CREATE INDEX IF NOT EXISTS idx_cost_allocation_details_run ON cost_allocation_details(allocation_run_id)`);
   d.exec(`CREATE INDEX IF NOT EXISTS idx_cost_logs_sku ON cost_update_logs(sku_code)`);
   d.exec(`CREATE INDEX IF NOT EXISTS idx_orig_inv_ci ON original_inventory_imports(ci_id)`);
   d.exec(`CREATE INDEX IF NOT EXISTS idx_orig_inv_sku ON original_inventory_imports(sku_code)`);
@@ -1718,6 +1756,30 @@ function initDatabase() {
         d.exec("ALTER TABLE skus ADD COLUMN " + col.name + " " + col.sql);
       }
     }
+  })();
+
+  // P1-WAC-07：仅补运营 CI 分摊输入与证据列，不回填历史值。
+  (function p1Wac07Migration() {
+    const d = getDB();
+    const addColumns = (table, columns) => {
+      const existing = d.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
+      for (const col of columns) {
+        if (!existing.includes(col.name)) d.exec(`ALTER TABLE ${table} ADD COLUMN ${col.name} ${col.sql}`);
+      }
+    };
+    addColumns('skus', [
+      { name: 'reference_customs_rate', sql: 'REAL DEFAULT NULL' }
+    ]);
+    addColumns('commercial_invoices', [
+      { name: 'transport_basis', sql: 'TEXT DEFAULT NULL' },
+      { name: 'import_duty_total', sql: 'REAL DEFAULT 0' }
+    ]);
+    addColumns('commercial_invoice_items', [
+      { name: 'actual_customs_rate', sql: 'REAL DEFAULT NULL' }
+    ]);
+    addColumns('cost_allocations', [
+      { name: 'allocation_run_id', sql: "TEXT DEFAULT ''" }
+    ]);
   })();
 
   d.exec(`CREATE INDEX IF NOT EXISTS idx_oplog_page ON operation_logs(page)`);

@@ -1108,9 +1108,13 @@ app.post('/api/skus', requireApiPermission('sku_create'), (req, res) => {
         if (isNaN(v) || v < 0) return res.status(400).json({ error: '采购单价必须为不小于0的数字' });
       }
     }
+    if (d.reference_customs_rate !== undefined && d.reference_customs_rate !== '' && d.reference_customs_rate !== null) {
+      const rate = Number(d.reference_customs_rate);
+      if (!Number.isFinite(rate) || rate < 0) return res.status(400).json({ error: '参考关税税率必须为不小于0的数字' });
+    }
     const sId = d.id || genId('sku');
-    run(`INSERT INTO skus (id, sku_code, product_name, brand, category, model, color_spec, barcode, default_supplier_id, default_supplier_name, purchase_currency, standard_purchase_price, purchase_price_rmb, purchase_price_usd, carton_spec, qty_per_carton, unit_weight, unit_cbm, is_new_product, launch_date, new_product_protection_days, lifecycle_status, auto_replenish, status, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [sId, d.sku_code, d.product_name || '', d.brand || '', d.category || '', d.model || '', d.color_spec || '', d.barcode || '', d.default_supplier_id || '', d.default_supplier_name || '', d.purchase_currency || 'USD', d.standard_purchase_price || 0, parseFloat(d.purchase_price_rmb) || 0, parseFloat(d.purchase_price_usd) || 0, d.carton_spec || '', d.qty_per_carton || 0, d.unit_weight || 0, d.unit_cbm || 0, d.is_new_product || 0, d.launch_date || '', d.new_product_protection_days || 90, d.lifecycle_status || 'new_test', d.auto_replenish !== undefined ? d.auto_replenish : 1, d.status || 'normal', d.remark || '']);
+    run(`INSERT INTO skus (id, sku_code, product_name, brand, category, model, color_spec, barcode, default_supplier_id, default_supplier_name, purchase_currency, standard_purchase_price, purchase_price_rmb, purchase_price_usd, reference_customs_rate, carton_spec, qty_per_carton, unit_weight, unit_cbm, is_new_product, launch_date, new_product_protection_days, lifecycle_status, auto_replenish, status, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [sId, d.sku_code, d.product_name || '', d.brand || '', d.category || '', d.model || '', d.color_spec || '', d.barcode || '', d.default_supplier_id || '', d.default_supplier_name || '', d.purchase_currency || 'USD', d.standard_purchase_price || 0, parseFloat(d.purchase_price_rmb) || 0, parseFloat(d.purchase_price_usd) || 0, d.reference_customs_rate === '' || d.reference_customs_rate == null ? null : Number(d.reference_customs_rate), d.carton_spec || '', d.qty_per_carton || 0, d.unit_weight || 0, d.unit_cbm || 0, d.is_new_product || 0, d.launch_date || '', d.new_product_protection_days || 90, d.lifecycle_status || 'new_test', d.auto_replenish !== undefined ? d.auto_replenish : 1, d.status || 'normal', d.remark || '']);
     res.json({ id: sId, ...d });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1119,9 +1123,13 @@ app.put('/api/skus/:id', requireApiPermission('sku_edit'), (req, res) => {
   try {
     const d = req.body;
     const { id } = req.params;
+    if (d.reference_customs_rate !== undefined && d.reference_customs_rate !== '' && d.reference_customs_rate !== null) {
+      const rate = Number(d.reference_customs_rate);
+      if (!Number.isFinite(rate) || rate < 0) return res.status(400).json({ error: '参考关税税率必须为不小于0的数字' });
+    }
     const fields = [];
     const values = [];
-    const allowed = ['product_name', 'brand', 'category', 'model', 'color_spec', 'barcode', 'default_supplier_id', 'default_supplier_name', 'purchase_currency', 'standard_purchase_price', 'purchase_price_rmb', 'purchase_price_usd', 'weighted_avg_cost', 'carton_spec', 'qty_per_carton', 'unit_weight', 'unit_cbm', 'is_new_product', 'launch_date', 'new_product_protection_days', 'lifecycle_status', 'auto_replenish', 'status', 'remark'];
+    const allowed = ['product_name', 'brand', 'category', 'model', 'color_spec', 'barcode', 'default_supplier_id', 'default_supplier_name', 'purchase_currency', 'standard_purchase_price', 'purchase_price_rmb', 'purchase_price_usd', 'reference_customs_rate', 'weighted_avg_cost', 'carton_spec', 'qty_per_carton', 'unit_weight', 'unit_cbm', 'is_new_product', 'launch_date', 'new_product_protection_days', 'lifecycle_status', 'auto_replenish', 'status', 'remark'];
     allowed.forEach(f => {
       if (d[f] !== undefined) {
         let val = d[f];
@@ -1129,6 +1137,7 @@ app.put('/api/skus/:id', requireApiPermission('sku_edit'), (req, res) => {
           val = (d[f] === '' || d[f] === null) ? 0 : Number(d[f]);
           if (isNaN(val) || val < 0) throw new Error('采购单价必须为不小于0的数字');
         }
+        if (f === 'reference_customs_rate') val = (d[f] === '' || d[f] === null) ? null : Number(d[f]);
         fields.push(`${f} = ?`); values.push(val);
       }
     });
@@ -3364,7 +3373,10 @@ app.get('/api/proforma-invoices', requireApiPermission('pi_view'), (req, res) =>
 app.get('/api/proforma-invoices/:id', requireApiPermission('pi_view'), (req, res) => {
   const pi = queryOne('SELECT * FROM proforma_invoices WHERE id = ?', [req.params.id]);
   if (!pi) return res.status(404).json({ error: 'PI不存在' });
-  const items = query('SELECT * FROM proforma_invoice_items WHERE pi_id = ? ORDER BY created_at', [req.params.id]).rows;
+  const items = query(`SELECT pii.*, s.reference_customs_rate
+    FROM proforma_invoice_items pii
+    LEFT JOIN skus s ON s.sku_code = pii.sku_code
+    WHERE pii.pi_id = ? ORDER BY pii.created_at, pii.id`, [req.params.id]).rows;
   const lr = getPILockReason(pi);
   res.json({ ...pi, items, locked: !!lr, lock_reason: lr || '' });
 });
@@ -3640,9 +3652,17 @@ app.post('/api/commercial-invoices', requireApiPermission('ci_create'), (req, re
       if (d.items && d.items.length > 0) {
         d.items.forEach(item => {
           const amount = (item.shipped_qty || 0) * (item.unit_price || 0);
+          const sku = queryOne('SELECT reference_customs_rate FROM skus WHERE sku_code = ?', [item.sku_code]);
+          const rateInput = item.actual_customs_rate;
+          const actualCustomsRate = rateInput === '' || rateInput === null || rateInput === undefined
+            ? (sku && sku.reference_customs_rate !== null ? Number(sku.reference_customs_rate) : null)
+            : Number(rateInput);
+          if (actualCustomsRate !== null && (!Number.isFinite(actualCustomsRate) || actualCustomsRate < 0)) {
+            throw new Error(`SKU ${item.sku_code} 的实际关税税率必须为不小于0的数字`);
+          }
           goodsAmount += amount;
-          run(`INSERT INTO commercial_invoice_items (id, ci_id, ci_no, pi_no, sku_code, shipped_qty, unit_price, ci_amount, inbound_qty, uninbound_qty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [genId('cii'), ciId, ciNo, item.pi_no || d.related_pi_no || '', item.sku_code, item.shipped_qty || 0, item.unit_price || 0, amount, 0, item.shipped_qty || 0]);
+          run(`INSERT INTO commercial_invoice_items (id, ci_id, ci_no, pi_no, sku_code, shipped_qty, unit_price, ci_amount, actual_customs_rate, inbound_qty, uninbound_qty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [genId('cii'), ciId, ciNo, item.pi_no || d.related_pi_no || '', item.sku_code, item.shipped_qty || 0, item.unit_price || 0, amount, actualCustomsRate, 0, item.shipped_qty || 0]);
 
           // 更新PI明细的已发货数量
           if (d.related_pi_id) {
@@ -3852,14 +3872,21 @@ app.post('/api/commercial-invoices/batch-import', requireApiPermission('ci_creat
           const qty = n(pick(row, ['数量', 'CI数量', 'shipped_qty', 'qty']), 0);
           const price = n(pick(row, ['单价', 'unit_price']), 0);
           const amount = qty * price;
+          const rateRaw = pick(row, ['实际关税税率', 'actual_customs_rate']);
+          const skuRate = queryOne('SELECT reference_customs_rate FROM skus WHERE sku_code = ?', [sku]);
+          const actualCustomsRate = rateRaw === '' || rateRaw === null || rateRaw === undefined
+            ? (skuRate && skuRate.reference_customs_rate !== null ? Number(skuRate.reference_customs_rate) : null)
+            : Number(rateRaw);
+          if (actualCustomsRate !== null && (!Number.isFinite(actualCustomsRate) || actualCustomsRate < 0)) throw new Error('实际关税税率必须为不小于0的数字：' + sku);
           const exist = queryOne('SELECT * FROM commercial_invoices WHERE ci_no = ?', [ciNo]);
+          if (exist && exist.cost_confirmed) throw new Error('该CI费用已确认，不能继续追加或修改CI明细：' + ciNo);
           let ciId = exist ? exist.id : genId('ci');
           if (!exist) {
             run(`INSERT INTO commercial_invoices (id, ci_no, related_po_id, related_po_no, related_pi_id, related_pi_no, supplier_id, supplier_name, brand, country, target_warehouse, ci_date, currency, goods_amount, pi_total_amount, amount_difference, difference_reason, ci_status, attachment, pl_attachment, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
               [ciId, ciNo, po.id, po.po_no, pi ? pi.id : '', pi ? pi.pi_no : '', po.supplier_id || '', po.supplier_name || '', po.brand || '', po.country || '', po.target_warehouse || '', s(pick(row, ['CI日期', 'ci_date'])) || new Date().toISOString().split('T')[0], s(pick(row, ['币种', 'currency'])) || po.currency || 'USD', 0, pi ? (pi.total_amount || 0) : 0, 0, s(pick(row, ['差异原因', 'difference_reason'])), 'uploaded', parseAttachment(row.attachment || ''), parseAttachment(row.pl_attachment || ''), s(pick(row, ['备注', 'remark']))]);
           }
-          run(`INSERT INTO commercial_invoice_items (id, ci_id, ci_no, pi_no, sku_code, shipped_qty, unit_price, ci_amount, inbound_qty, uninbound_qty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [genId('cii'), ciId, ciNo, pi ? pi.pi_no : '', sku, qty, price, amount, 0, qty]);
+          run(`INSERT INTO commercial_invoice_items (id, ci_id, ci_no, pi_no, sku_code, shipped_qty, unit_price, ci_amount, actual_customs_rate, inbound_qty, uninbound_qty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [genId('cii'), ciId, ciNo, pi ? pi.pi_no : '', sku, qty, price, amount, actualCustomsRate, 0, qty]);
           const totals = queryOne('SELECT COALESCE(SUM(ci_amount),0) as total FROM commercial_invoice_items WHERE ci_id = ?', [ciId]);
           const goodsAmount = totals.total || 0;
           const piTotal = pi ? (pi.total_amount || 0) : 0;
@@ -5413,6 +5440,7 @@ app.post('/api/payment-requests/warehouse-arrival', requireApiPermission('paymen
     if (ci_id) {
       ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [ci_id]);
       if (!ci) return res.status(400).json({ error: 'CI不存在' });
+      if (ci.cost_confirmed) return res.status(409).json({ error: '该CI费用已确认，不能继续新增计入落地成本的到仓费用' });
       ciNo = ci.ci_no;
       poNo = ci.related_po_no || '';
     }
@@ -5444,6 +5472,7 @@ app.post('/api/payment-requests/customs-duty', requireApiPermission('payment_cre
     if (!ci_id) return res.status(400).json({ error: '关税付款必须关联CI' });
     const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [ci_id]);
     if (!ci) return res.status(400).json({ error: 'CI不存在' });
+    if (ci.cost_confirmed) return res.status(409).json({ error: '该CI费用已确认，不能继续新增Import Duty' });
     if (!ci.has_customs_duty) return res.status(400).json({ error: '该CI未标记为有关税，无法创建关税付款申请' });
     if (!payable_amount || payable_amount <= 0) return res.status(400).json({ error: '应付金额必须大于0' });
     const expenseCountrySnapshot = sourceExpenseCountry(ci.country, `CI“${ci.ci_no}”`);
@@ -5459,12 +5488,15 @@ app.post('/api/payment-requests/customs-duty', requireApiPermission('payment_cre
 
     const prId = genId('pay');
     const prNo = `PAY-DUT-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
+    const existingDuty = queryOne("SELECT id FROM ci_cost_items WHERE ci_id = ? AND cost_category = 'customs_duty'", [ci_id]);
+    if (existingDuty) return res.status(409).json({ error: '该CI已存在Import Duty费用，请勿重复创建' });
     transaction(() => {
       run(`INSERT INTO payment_requests (id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no, payee_type, supplier_name, payable_amount, paid_amount, unpaid_amount, currency, payment_status, approval_status, remark, has_deduction, deduction_amount, deduction_source_type, deduction_source_desc, deduction_ref_no, actual_pay_amount, related_ci_id, related_ci_no, related_po_no, include_in_landing_cost, expense_country) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [prId, prNo, 'customs_duty', 'duty', 'ci', ci_id, ci.ci_no, 'customs', payee_name || '', payable_amount, 0, actualPay, currency || ci.currency || 'USD', 'pending_approval', 'pending', remark || `关税 ${ci.ci_no}`, deductionEnabled ? 1 : 0, dedAmount, deduction_source_type || '', deduction_source_desc || '', deduction_ref_no || '', actualPay, ci_id, ci.ci_no, ci.related_po_no || '', 1, expenseCountrySnapshot]);
       if (deductionEnabled && dedAmount > 0) recordInitialDeduction(prId, dedAmount, deduction_source_desc, settlementOperator(req));
       run(`INSERT INTO ci_cost_items (id, ci_id, ci_no, payment_request_id, request_no, cost_category, cost_subcategory, payable_amount, paid_amount, include_in_landing_cost, payee_name, currency, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [genId('cci'), ci_id, ci.ci_no, prId, prNo, 'customs_duty', 'duty', payable_amount, 0, 1, payee_name || '', currency || ci.currency || 'USD', remark || '']);
+      run('UPDATE commercial_invoices SET import_duty_total = ?, updated_at = datetime(\'now\') WHERE id = ?', [costMoney(payable_amount), ci.id]);
     });
 
     res.json({ id: prId, request_no: prNo, actual_pay_amount: actualPay });
@@ -5478,6 +5510,7 @@ app.post('/api/payment-requests/inspection-fee', requireApiPermission('payment_c
     if (!ci_id) return res.status(400).json({ error: '商检费用付款必须关联CI' });
     const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [ci_id]);
     if (!ci) return res.status(400).json({ error: 'CI不存在' });
+    if (ci.cost_confirmed) return res.status(409).json({ error: '该CI费用已确认，不能继续新增商检费用' });
     if (!ci.has_inspection_fee) return res.status(400).json({ error: '该CI未标记为有商检费用，无法创建商检费用付款申请' });
     if (!payable_amount || payable_amount <= 0) return res.status(400).json({ error: '应付金额必须大于0' });
     const expenseCountrySnapshot = sourceExpenseCountry(ci.country, `CI“${ci.ci_no}”`);
@@ -5604,6 +5637,147 @@ app.post('/api/payment-requests/bulk-import-result', requireApiPermission('payme
 
 // ==================== CI 费用归集 ====================
 
+const TRANSPORT_COST_SUBCATEGORIES = new Set([
+  'freight', 'port', 'port_charges', 'customs_agent', 'customs_clearance',
+  'delivery', 'warehouse', 'other_local'
+]);
+
+class CostAllocationError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+}
+
+function costMoney(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return NaN;
+  return Math.round((amount + Number.EPSILON) * 100) / 100;
+}
+
+function getCiSkuCostFacts(ciId) {
+  const rows = query(`SELECT cii.*, s.id AS sku_id
+    FROM commercial_invoice_items cii
+    LEFT JOIN skus s ON s.sku_code = cii.sku_code
+    WHERE cii.ci_id = ? ORDER BY cii.created_at, cii.id`, [ciId]).rows;
+  if (!rows.length) throw new CostAllocationError(400, 'CI明细为空，无法确认或分摊成本');
+
+  const grouped = new Map();
+  rows.forEach((row, index) => {
+    const skuCode = String(row.sku_code || '').trim();
+    if (!skuCode) throw new CostAllocationError(400, 'CI明细存在空SKU，无法分摊成本');
+    if (!grouped.has(skuCode)) {
+      grouped.set(skuCode, {
+        sku_code: skuCode,
+        sku_id: row.sku_id || '',
+        stable_sort_order: index,
+        product_cost: 0,
+        inbound_qty: 0,
+        customs_weight: 0
+      });
+    }
+    const fact = grouped.get(skuCode);
+    const amount = Number(row.ci_amount);
+    const qty = Number(row.shipped_qty);
+    if (!Number.isFinite(amount) || amount < 0 || !Number.isFinite(qty) || qty < 0) {
+      throw new CostAllocationError(400, `SKU ${skuCode} 缺少有效的CI实际金额或数量`);
+    }
+    fact.product_cost += amount;
+    fact.inbound_qty += qty;
+    if (row.actual_customs_rate !== null && row.actual_customs_rate !== '') {
+      const rate = Number(row.actual_customs_rate);
+      if (!Number.isFinite(rate) || rate < 0) throw new CostAllocationError(400, `SKU ${skuCode} 的实际关税税率必须为不小于0的数字`);
+      fact.customs_weight += amount * rate;
+    }
+  });
+  return { itemRows: rows, skuFacts: [...grouped.values()] };
+}
+
+function getCiPlBasisFacts(ciId, basis, skuFacts) {
+  const field = basis === 'cbm' ? 'cbm' : 'gross_weight';
+  const rows = query(`SELECT pli.sku_code, COUNT(*) AS row_count, SUM(pli.${field}) AS basis_value
+    FROM packing_list_items pli
+    JOIN packing_lists pl ON pl.id = pli.pl_id
+    WHERE pl.related_ci_id = ?
+    GROUP BY pli.sku_code`, [ciId]).rows;
+  const bySku = new Map(rows.map(row => [String(row.sku_code || '').trim(), row]));
+  const missing = [];
+  const values = new Map();
+  skuFacts.forEach(fact => {
+    const row = bySku.get(fact.sku_code);
+    const value = row ? Number(row.basis_value) : NaN;
+    if (!row || !Number.isFinite(value) || value < 0) missing.push(fact.sku_code);
+    else values.set(fact.sku_code, value);
+  });
+  if (missing.length) {
+    throw new CostAllocationError(400, `运输类费用使用${basis.toUpperCase()}分摊，以下SKU缺少PL实际${basis === 'cbm' ? 'CBM' : '毛重'}：${missing.join('、')}`);
+  }
+  const basisTotal = skuFacts.reduce((sum, fact) => sum + (values.get(fact.sku_code) || 0), 0);
+  if (!(basisTotal > 0)) throw new CostAllocationError(400, `运输类费用使用${basis.toUpperCase()}分摊，但PL明细basis_total为0`);
+  return { values, basisTotal };
+}
+
+function validateCiCostInputs(ci) {
+  const facts = getCiSkuCostFacts(ci.id);
+  const costItems = query('SELECT * FROM ci_cost_items WHERE ci_id = ? AND include_in_landing_cost = 1 ORDER BY created_at, id', [ci.id]).rows;
+  const transportItems = costItems.filter(item => item.cost_category === 'warehouse_arrival' && TRANSPORT_COST_SUBCATEGORIES.has(item.cost_subcategory) && Number(item.payable_amount) > 0);
+  const unsupportedTransport = costItems.filter(item => item.cost_category === 'warehouse_arrival' && !TRANSPORT_COST_SUBCATEGORIES.has(item.cost_subcategory) && Number(item.payable_amount) > 0);
+  if (unsupportedTransport.length) {
+    throw new CostAllocationError(400, `不支持的运输费用小类：${unsupportedTransport.map(item => item.cost_subcategory || '(空)').join('、')}`);
+  }
+
+  let plBasis = null;
+  if (transportItems.length) {
+    if (!['cbm', 'kg'].includes(ci.transport_basis)) {
+      throw new CostAllocationError(400, '该CI存在运输类费用，请先明确选择本票实际运输计费基础（CBM或KG）');
+    }
+    plBasis = getCiPlBasisFacts(ci.id, ci.transport_basis, facts.skuFacts);
+  }
+
+  const dutyTotal = costMoney(ci.import_duty_total || 0);
+  if (!Number.isFinite(dutyTotal) || dutyTotal < 0) throw new CostAllocationError(400, 'CI Import Duty总金额必须为不小于0的数字');
+  if (dutyTotal > 0) {
+    const missingRates = facts.itemRows.filter(row => row.actual_customs_rate === null || row.actual_customs_rate === '').map(row => row.sku_code);
+    if (missingRates.length) throw new CostAllocationError(400, `CI Import Duty大于0，以下SKU未填写本票实际关税税率：${[...new Set(missingRates)].join('、')}`);
+    const totalWeight = facts.skuFacts.reduce((sum, fact) => sum + fact.customs_weight, 0);
+    if (!(totalWeight > 0)) throw new CostAllocationError(400, 'CI Import Duty大于0，但全部SKU的关税权重合计为0');
+  }
+
+  const goodsTotal = facts.skuFacts.reduce((sum, fact) => sum + fact.product_cost, 0);
+  if (!(goodsTotal > 0)) throw new CostAllocationError(400, 'CI实际商品金额合计为0，无法分摊成本');
+  return { ...facts, costItems, transportItems, plBasis, dutyTotal, goodsTotal };
+}
+
+function allocateFeeWithRemainder(fee, skuFacts, basisValues) {
+  const feeTotal = costMoney(fee.total);
+  if (!Number.isFinite(feeTotal) || feeTotal < 0) throw new CostAllocationError(400, `${fee.label}金额必须为不小于0的数字`);
+  const basisTotal = skuFacts.reduce((sum, fact) => sum + Number(basisValues.get(fact.sku_code) || 0), 0);
+  if (!(basisTotal > 0)) throw new CostAllocationError(400, `${fee.label}使用${fee.basis}分摊，但basis_total为0`);
+
+  const rows = skuFacts.map(fact => {
+    const basisValue = Number(basisValues.get(fact.sku_code) || 0);
+    const ratio = basisValue / basisTotal;
+    const theoretical = feeTotal * ratio;
+    const rounded = costMoney(theoretical);
+    return { fact, basisValue, ratio, theoretical, rounded, final: rounded, adjustment: 0, anchor: 0 };
+  });
+  const anchor = rows.slice().sort((a, b) => {
+    const theoreticalDiff = b.theoretical - a.theoretical;
+    if (Math.abs(theoreticalDiff) > 1e-12) return theoreticalDiff;
+    if (a.fact.stable_sort_order !== b.fact.stable_sort_order) return a.fact.stable_sort_order - b.fact.stable_sort_order;
+    return String(a.fact.sku_id || a.fact.sku_code).localeCompare(String(b.fact.sku_id || b.fact.sku_code));
+  })[0];
+  const roundedTotalCents = rows.reduce((sum, row) => sum + Math.round(row.rounded * 100), 0);
+  const remainderCents = Math.round(feeTotal * 100) - roundedTotalCents;
+  anchor.adjustment = remainderCents / 100;
+  anchor.final = costMoney(anchor.rounded + anchor.adjustment);
+  anchor.anchor = 1;
+  if (rows.some(row => row.final < 0)) throw new CostAllocationError(400, `${fee.label}分摊产生负金额，已拒绝`);
+  const finalCents = rows.reduce((sum, row) => sum + Math.round(row.final * 100), 0);
+  if (finalCents !== Math.round(feeTotal * 100)) throw new CostAllocationError(500, `${fee.label}分摊未守恒`);
+  return { rows, basisTotal, feeTotal, remainder: remainderCents / 100 };
+}
+
 // 获取CI费用归集汇总
 app.get('/api/commercial-invoices/:id/cost-summary', requireApiPermission('ci_view'), (req, res) => {
   try {
@@ -5621,11 +5795,13 @@ app.get('/api/commercial-invoices/:id/cost-summary', requireApiPermission('ci_vi
       goods_paid: ci.paid_balance || 0,
       goods_unpaid: (ci.payable_balance || 0) - (ci.paid_balance || 0),
       warehouse_arrival_total: 0,
-      customs_duty_total: 0,
+      customs_duty_total: costMoney(ci.import_duty_total || 0),
       inspection_fee_total: 0,
       landing_cost_total: 0,
       has_customs_duty: ci.has_customs_duty || 0,
       has_inspection_fee: ci.has_inspection_fee || 0,
+      transport_basis: ci.transport_basis || '',
+      import_duty_total: costMoney(ci.import_duty_total || 0),
       cost_confirmed: ci.cost_confirmed || 0,
       cost_allocated: ci.cost_allocated || 0,
       original_inventory_imported: ci.original_inventory_imported || 0,
@@ -5639,12 +5815,13 @@ app.get('/api/commercial-invoices/:id/cost-summary', requireApiPermission('ci_vi
       if (!item.include_in_landing_cost) return;
       const amt = item.payable_amount || 0;
       if (item.cost_category === 'warehouse_arrival') summary.warehouse_arrival_total += amt;
-      else if (item.cost_category === 'customs_duty') summary.customs_duty_total += amt;
+      else if (item.cost_category === 'customs_duty') { /* Import Duty使用CI快照，避免与付款费用项双算 */ }
       else if (item.cost_category === 'inspection_fee') summary.inspection_fee_total += amt;
     });
 
     summary.landing_cost_total = summary.goods_amount + summary.warehouse_arrival_total + summary.customs_duty_total + summary.inspection_fee_total;
     summary.cost_items = costItems;
+    summary.ci_items = query('SELECT id, sku_code, shipped_qty, unit_price, ci_amount, actual_customs_rate FROM commercial_invoice_items WHERE ci_id = ? ORDER BY created_at, id', [req.params.id]).rows;
 
     res.json(summary);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -5656,6 +5833,7 @@ app.put('/api/commercial-invoices/:id/cost-flags', requireApiPermission('ci_edit
     const { has_customs_duty, has_inspection_fee } = req.body;
     const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [req.params.id]);
     if (!ci) return res.status(404).json({ error: 'CI不存在' });
+    if (ci.cost_confirmed) return res.status(409).json({ error: '该CI费用已确认，费用标记已锁定' });
 
     const updates = [];
     const params = [];
@@ -5670,14 +5848,46 @@ app.put('/api/commercial-invoices/:id/cost-flags', requireApiPermission('ci_edit
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// 保存运营 CI 的本票运输计费基础、Import Duty 总额和明细实际税率；成本确认后锁定。
+app.put('/api/commercial-invoices/:id/cost-inputs', requireApiPermission('ci_edit'), (req, res) => {
+  try {
+    const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [req.params.id]);
+    if (!ci) return res.status(404).json({ error: 'CI不存在' });
+    if (ci.cost_confirmed) return res.status(409).json({ error: '该CI费用已确认，运输计费基础和实际关税税率已锁定' });
+
+    const basisRaw = req.body.transport_basis;
+    const transportBasis = basisRaw === '' || basisRaw === null || basisRaw === undefined ? null : String(basisRaw).trim();
+    if (transportBasis !== null && !['cbm', 'kg'].includes(transportBasis)) return res.status(400).json({ error: '运输计费基础只允许cbm或kg' });
+    const importDutyTotal = costMoney(req.body.import_duty_total || 0);
+    if (!Number.isFinite(importDutyTotal) || importDutyTotal < 0) return res.status(400).json({ error: 'CI Import Duty总金额必须为不小于0的数字' });
+    const items = Array.isArray(req.body.items) ? req.body.items : [];
+
+    transaction(() => {
+      run('UPDATE commercial_invoices SET transport_basis = ?, import_duty_total = ?, has_customs_duty = ?, updated_at = datetime(\'now\') WHERE id = ?',
+        [transportBasis, importDutyTotal, importDutyTotal > 0 ? 1 : ci.has_customs_duty, ci.id]);
+      items.forEach(item => {
+        const current = queryOne('SELECT id, sku_code FROM commercial_invoice_items WHERE id = ? AND ci_id = ?', [item.id, ci.id]);
+        if (!current) throw new CostAllocationError(400, 'CI明细不存在或不属于当前CI');
+        const raw = item.actual_customs_rate;
+        const rate = raw === '' || raw === null || raw === undefined ? null : Number(raw);
+        if (rate !== null && (!Number.isFinite(rate) || rate < 0)) throw new CostAllocationError(400, `SKU ${current.sku_code} 的实际关税税率必须为不小于0的数字`);
+        run('UPDATE commercial_invoice_items SET actual_customs_rate = ? WHERE id = ?', [rate, current.id]);
+      });
+    });
+    res.json({ success: true, transport_basis: transportBasis, import_duty_total: importDutyTotal });
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
 // 确认CI费用完整
 app.post('/api/commercial-invoices/:id/confirm-costs', requireApiPermission('ci_edit'), (req, res) => {
   try {
     const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [req.params.id]);
     if (!ci) return res.status(404).json({ error: 'CI不存在' });
+    if (ci.cost_confirmed) return res.json({ success: true, already_confirmed: true });
+    validateCiCostInputs(ci);
     run('UPDATE commercial_invoices SET cost_confirmed = 1, updated_at = datetime(\'now\') WHERE id = ?', [req.params.id]);
     res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
 // ==================== 原库存数量导入 ====================
@@ -5799,8 +6009,8 @@ app.get('/api/original-inventory/:ci_id/check', requireApiPermission('cost_view'
 
 // ==================== 费用分摊 & 加权平均成本 ====================
 
-// 费用分摊（按商品金额分摊到SKU）
-app.post('/api/cost-allocation/allocate/:ci_id', requireApiPermission('cost_view'), (req, res) => {
+// P1-WAC-07：每笔费用按其冻结依据独立分摊，两位小数守恒后汇总到 SKU。
+app.post('/api/cost-allocation/allocate/:ci_id', requireApiPermission('ci_edit'), (req, res) => {
   try {
     const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [req.params.ci_id]);
     if (!ci) return res.status(400).json({ error: 'CI不存在' });
@@ -5809,60 +6019,137 @@ app.post('/api/cost-allocation/allocate/:ci_id', requireApiPermission('cost_view
     if (!ci.cost_confirmed) {
       return res.status(400).json({ error: '请先确认该 CI 的到仓费用、关税、商检费用是否已录入完整。未录入的费用将不会计入落地成本。' });
     }
+    if (ci.cost_allocated) return res.status(409).json({ error: '该CI已完成费用分摊，请勿重复执行' });
 
-    const ciItems = query('SELECT * FROM commercial_invoice_items WHERE ci_id = ?', [req.params.ci_id]).rows;
-    if (ciItems.length === 0) return res.status(400).json({ error: 'CI明细为空' });
+    const inputs = validateCiCostInputs(ci);
+    const amountBasis = new Map(inputs.skuFacts.map(fact => [fact.sku_code, fact.product_cost]));
+    const customsBasis = new Map(inputs.skuFacts.map(fact => [fact.sku_code, fact.customs_weight]));
+    const feeEvents = [];
+    inputs.costItems.forEach(item => {
+      const total = costMoney(item.payable_amount || 0);
+      if (!(total > 0)) return;
+      if (item.cost_category === 'warehouse_arrival') {
+        feeEvents.push({
+          key: `cost:${item.id}`,
+          source_cost_item_id: item.id,
+          category: item.cost_category,
+          subcategory: item.cost_subcategory,
+          label: `运输费用 ${item.cost_subcategory}`,
+          total,
+          currency: item.currency || ci.currency || 'USD',
+          basis: ci.transport_basis,
+          basisValues: inputs.plBasis.values
+        });
+      } else if (item.cost_category === 'inspection_fee') {
+        feeEvents.push({
+          key: `cost:${item.id}`,
+          source_cost_item_id: item.id,
+          category: item.cost_category,
+          subcategory: item.cost_subcategory,
+          label: '商检费',
+          total,
+          currency: item.currency || ci.currency || 'USD',
+          basis: 'amount',
+          basisValues: amountBasis
+        });
+      } else if (item.cost_category !== 'customs_duty') {
+        throw new CostAllocationError(400, `费用 ${item.cost_category}/${item.cost_subcategory} 尚未配置分摊规则`);
+      }
+    });
+    if (inputs.dutyTotal > 0) {
+      feeEvents.push({
+        key: `import-duty:${ci.id}`,
+        source_cost_item_id: '',
+        category: 'customs_duty',
+        subcategory: 'duty',
+        label: 'Import Duty',
+        total: inputs.dutyTotal,
+        currency: ci.currency || 'USD',
+        basis: 'customs_weight',
+        basisValues: customsBasis
+      });
+    }
 
-    // 获取CI费用归集
-    const costItems = query('SELECT * FROM ci_cost_items WHERE ci_id = ? AND include_in_landing_cost = 1', [req.params.ci_id]).rows;
-    const totalWarehouseArrival = costItems.filter(c => c.cost_category === 'warehouse_arrival').reduce((s, c) => s + (c.payable_amount || 0), 0);
-    const totalCustomsDuty = costItems.filter(c => c.cost_category === 'customs_duty').reduce((s, c) => s + (c.payable_amount || 0), 0);
-    const totalInspectionFee = costItems.filter(c => c.cost_category === 'inspection_fee').reduce((s, c) => s + (c.payable_amount || 0), 0);
-
-    const totalGoodsAmount = ci.goods_amount || 0;
-    if (totalGoodsAmount <= 0) return res.status(400).json({ error: 'CI商品金额为0，无法分摊' });
-
-    // 清除旧分摊记录
-    run('DELETE FROM cost_allocations WHERE ci_id = ?', [req.params.ci_id]);
-
+    const allocationRunId = genId('car');
     const allocations = [];
+    const details = [];
     transaction(() => {
-      ciItems.forEach(item => {
-        const skuGoodsAmount = item.ci_amount || 0;
-        const ratio = skuGoodsAmount / totalGoodsAmount;
+      run('DELETE FROM cost_allocation_details WHERE ci_id = ?', [ci.id]);
+      run('DELETE FROM cost_allocations WHERE ci_id = ?', [ci.id]);
 
-        // 按商品金额分摊
-        const allocatedWarehouse = totalWarehouseArrival * ratio;
-        const allocatedDuty = totalCustomsDuty * ratio;
-        const allocatedInspection = totalInspectionFee * ratio;
-        const allocatedOther = 0;
+      const summaryBySku = new Map(inputs.skuFacts.map(fact => [fact.sku_code, {
+        fact,
+        allocated_freight: 0,
+        allocated_duty: 0,
+        allocated_other: 0
+      }]));
 
-        const productCost = skuGoodsAmount;
-        const totalLandingCost = productCost + allocatedWarehouse + allocatedDuty + allocatedInspection + allocatedOther;
-        const inboundQty = item.shipped_qty || 0;
-        const unitProductCost = inboundQty > 0 ? productCost / inboundQty : 0;
-        const unitAllocatedCost = inboundQty > 0 ? (allocatedWarehouse + allocatedDuty + allocatedInspection + allocatedOther) / inboundQty : 0;
-        const unitLandingCost = inboundQty > 0 ? totalLandingCost / inboundQty : 0;
+      feeEvents.forEach(fee => {
+        const result = allocateFeeWithRemainder(fee, inputs.skuFacts, fee.basisValues);
+        result.rows.forEach(row => {
+          const summary = summaryBySku.get(row.fact.sku_code);
+          if (fee.category === 'warehouse_arrival') summary.allocated_freight = costMoney(summary.allocated_freight + row.final);
+          else if (fee.category === 'customs_duty') summary.allocated_duty = costMoney(summary.allocated_duty + row.final);
+          else summary.allocated_other = costMoney(summary.allocated_other + row.final);
 
-        const allocId = genId('cost');
-        run(`INSERT INTO cost_allocations (id, inbound_id, inbound_no, logistics_batch_no, ci_no, ci_id, related_po_no, related_pi_no, sku_code, allocation_basis, product_cost, allocated_freight, allocated_duty, allocated_other, total_landing_cost, inbound_qty, unit_landing_cost, currency, unit_product_cost, unit_allocated_cost, unit_landing_cost_with_fees, original_qty, original_avg_cost) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [allocId, '', '', '', ci.ci_no, req.params.ci_id, ci.related_po_no || '', ci.related_pi_no || '', item.sku_code, 'amount', productCost, allocatedWarehouse, allocatedDuty, allocatedInspection + allocatedOther, totalLandingCost, inboundQty, unitLandingCost, ci.currency || 'USD', unitProductCost, unitAllocatedCost, unitLandingCost, 0, 0]);
-
-        allocations.push({ sku_code: item.sku_code, product_cost: productCost, allocated_warehouse: allocatedWarehouse, allocated_duty: allocatedDuty, allocated_inspection: allocatedInspection, total_landing_cost: totalLandingCost, inbound_qty: inboundQty, unit_landing_cost: unitLandingCost });
+          const detail = {
+            id: genId('cad'),
+            allocation_run_id: allocationRunId,
+            ci_id: ci.id,
+            ci_no: ci.ci_no,
+            source_cost_item_id: fee.source_cost_item_id,
+            fee_key: fee.key,
+            cost_category: fee.category,
+            cost_subcategory: fee.subcategory,
+            fee_total: result.feeTotal,
+            currency: fee.currency,
+            sku_code: row.fact.sku_code,
+            allocation_basis: fee.basis,
+            basis_value: row.basisValue,
+            basis_total: result.basisTotal,
+            ratio: row.ratio,
+            theoretical_amount: row.theoretical,
+            rounded_amount: row.rounded,
+            rounding_adjustment: row.adjustment,
+            final_allocated_amount: row.final,
+            is_rounding_anchor: row.anchor,
+            stable_sort_order: row.fact.stable_sort_order
+          };
+          run(`INSERT INTO cost_allocation_details (id, allocation_run_id, ci_id, ci_no, source_cost_item_id, fee_key, cost_category, cost_subcategory, fee_total, currency, sku_code, allocation_basis, basis_value, basis_total, ratio, theoretical_amount, rounded_amount, rounding_adjustment, final_allocated_amount, is_rounding_anchor, stable_sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [detail.id, detail.allocation_run_id, detail.ci_id, detail.ci_no, detail.source_cost_item_id, detail.fee_key, detail.cost_category, detail.cost_subcategory, detail.fee_total, detail.currency, detail.sku_code, detail.allocation_basis, detail.basis_value, detail.basis_total, detail.ratio, detail.theoretical_amount, detail.rounded_amount, detail.rounding_adjustment, detail.final_allocated_amount, detail.is_rounding_anchor, detail.stable_sort_order]);
+          details.push(detail);
+        });
       });
 
-      // 更新CI的落地总成本和分摊状态
-      const landingTotal = totalGoodsAmount + totalWarehouseArrival + totalCustomsDuty + totalInspectionFee;
-      run('UPDATE commercial_invoices SET cost_allocated = 1, landing_total_cost = ?, updated_at = datetime(\'now\') WHERE id = ?', [landingTotal, req.params.ci_id]);
+      inputs.skuFacts.forEach(fact => {
+        const summary = summaryBySku.get(fact.sku_code);
+        const productCost = costMoney(fact.product_cost);
+        const allocatedFees = costMoney(summary.allocated_freight + summary.allocated_duty + summary.allocated_other);
+        const totalLandingCost = costMoney(productCost + allocatedFees);
+        const inboundQty = fact.inbound_qty || 0;
+        const unitProductCost = inboundQty > 0 ? costMoney(productCost / inboundQty) : 0;
+        const unitAllocatedCost = inboundQty > 0 ? costMoney(allocatedFees / inboundQty) : 0;
+        const unitLandingCost = inboundQty > 0 ? costMoney(totalLandingCost / inboundQty) : 0;
+        const bases = [...new Set(feeEvents.map(fee => fee.basis))];
+        const allocationBasis = bases.length === 0 ? 'amount' : (bases.length === 1 ? bases[0] : 'mixed');
+        const allocId = genId('cost');
+        run(`INSERT INTO cost_allocations (id, inbound_id, inbound_no, logistics_batch_no, allocation_run_id, ci_no, ci_id, related_po_no, related_pi_no, sku_code, allocation_basis, product_cost, allocated_freight, allocated_duty, allocated_other, total_landing_cost, inbound_qty, unit_landing_cost, currency, unit_product_cost, unit_allocated_cost, unit_landing_cost_with_fees, original_qty, original_avg_cost) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [allocId, '', '', '', allocationRunId, ci.ci_no, ci.id, ci.related_po_no || '', ci.related_pi_no || '', fact.sku_code, allocationBasis, productCost, summary.allocated_freight, summary.allocated_duty, summary.allocated_other, totalLandingCost, inboundQty, unitLandingCost, ci.currency || 'USD', unitProductCost, unitAllocatedCost, unitLandingCost, 0, 0]);
+        allocations.push({ sku_code: fact.sku_code, product_cost: productCost, allocated_warehouse: summary.allocated_freight, allocated_duty: summary.allocated_duty, allocated_inspection: summary.allocated_other, total_landing_cost: totalLandingCost, inbound_qty: inboundQty, unit_landing_cost: unitLandingCost });
+      });
+
+      const landingTotal = costMoney(inputs.skuFacts.reduce((sum, fact) => sum + fact.product_cost, 0) + feeEvents.reduce((sum, fee) => sum + fee.total, 0));
+      run('UPDATE commercial_invoices SET cost_allocated = 1, landing_total_cost = ?, updated_at = datetime(\'now\') WHERE id = ?', [landingTotal, ci.id]);
     });
 
-    res.json({ success: true, allocations, landing_total_cost: ci.goods_amount + totalWarehouseArrival + totalCustomsDuty + totalInspectionFee });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    const updated = queryOne('SELECT landing_total_cost FROM commercial_invoices WHERE id = ?', [ci.id]);
+    res.json({ success: true, allocation_run_id: allocationRunId, allocations, details, landing_total_cost: updated.landing_total_cost });
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
 // 更新加权平均成本（需要原库存数量已导入 + 费用已分摊）
 // 确认加权平均成本（P1-03-B：只生成并锁定 WAC 版本，不修改库存总表）
-app.post('/api/cost-allocation/update-weighted-avg/:ci_id', requireApiPermission('cost_view'), (req, res) => {
+app.post('/api/cost-allocation/update-weighted-avg/:ci_id', requireApiPermission('ci_edit'), (req, res) => {
   try {
     const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [req.params.ci_id]);
     if (!ci) return res.status(400).json({ error: 'CI不存在' });
@@ -6005,6 +6292,13 @@ app.get('/api/wac-history', requireApiPermission('cost_view'), (req, res) => {
 app.get('/api/cost-allocation/:ci_id', requireApiPermission('cost_view'), (req, res) => {
   try {
     const rows = query('SELECT * FROM cost_allocations WHERE ci_id = ? ORDER BY sku_code', [req.params.ci_id]).rows;
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/cost-allocation/:ci_id/details', requireApiPermission('cost_view'), (req, res) => {
+  try {
+    const rows = query('SELECT * FROM cost_allocation_details WHERE ci_id = ? ORDER BY fee_key, stable_sort_order, sku_code', [req.params.ci_id]).rows;
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
