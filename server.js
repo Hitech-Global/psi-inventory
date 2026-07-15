@@ -57,12 +57,12 @@ app.get('/', (req, res) => sendNoCacheHtml(res, 'index.html'));
 app.get('/index.html', (req, res) => sendNoCacheHtml(res, 'index.html'));
 app.use(express.static(path.join(__dirname), {
   index: false,
+  // 所有静态资源（含 app.js / db.js / index.html）一律禁用缓存，
+  // 避免浏览器复用旧构建导致“前端已改、页面仍跑旧代码”的诡异现象。
   setHeaders(res, filePath) {
-    if (filePath.endsWith('.html')) {
-      res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-      res.set('Pragma', 'no-cache');
-      res.set('Expires', '0');
-    }
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
   }
 }));
 
@@ -260,6 +260,29 @@ app.get('/api/brands/all', requireLogin, (req, res) => {
   `).rows.map(r => r.brand);
   res.json(rows);
 });
+// 品牌采购状态（停采品牌系统级规则）：读取/保存品牌级 可采购/停采
+app.get('/api/brand-settings', requireApiPermission('system_config'), (req, res) => {
+  try {
+    const rows = query('SELECT brand, procurement_status, note FROM brand_settings ORDER BY brand').rows;
+    res.json(rows);
+  } catch (e) { res.json([]); }
+});
+app.post('/api/brand-settings', requireApiPermission('system_config'), (req, res) => {
+  try {
+    const items = Array.isArray(req.body && req.body.items) ? req.body.items : [];
+    const valid = items.filter(it => it && it.brand && (it.procurement_status === 'active' || it.procurement_status === 'stopped'));
+    if (!valid.length) return res.json({ success: false, message: '没有有效的品牌状态记录' });
+    transaction(() => {
+      const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+      for (const it of valid) {
+        run(`INSERT INTO brand_settings (brand, procurement_status, note, updated_at) VALUES (?, ?, ?, ?)
+             ON CONFLICT(brand) DO UPDATE SET procurement_status=excluded.procurement_status, note=excluded.note, updated_at=excluded.updated_at`,
+          [String(it.brand).trim(), it.procurement_status, (it.note || '').toString(), now]);
+      }
+    });
+    res.json({ success: true, count: valid.length });
+  } catch (e) { res.json({ success: false, message: e.message }); }
+});
 app.delete('/api/warehouses/:id', requireApiPermission('system_config'), (req, res) => {
   run('DELETE FROM warehouses WHERE id = ?', [req.params.id]);
   res.json({ success: true });
@@ -276,11 +299,67 @@ app.post('/api/suppliers', requireApiPermission('system_config'), (req, res) => 
   run(`INSERT INTO suppliers (id, name, short_name, contact_person, phone, email, address, associated_brands, default_currency, payment_terms, remark, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET name=excluded.name, short_name=excluded.short_name, contact_person=excluded.contact_person, phone=excluded.phone, email=excluded.email, address=excluded.address, associated_brands=excluded.associated_brands, default_currency=excluded.default_currency, payment_terms=excluded.payment_terms, remark=excluded.remark, status=excluded.status`,
     [sId, d.name, d.short_name || '', d.contact_person || '', d.phone || '', d.email || '', d.address || '', associatedBrands, d.default_currency || 'USD', d.payment_terms || '', d.remark || '', d.status || 'active']);
-  res.json({ success: true });
+  res.json({ success: true, id: sId });
 });
 app.delete('/api/suppliers/:id', requireApiPermission('system_config'), (req, res) => {
+  run('DELETE FROM supplier_payment_terms WHERE supplier_id = ?', [req.params.id]);
   run('DELETE FROM suppliers WHERE id = ?', [req.params.id]);
   res.json({ success: true });
+});
+// PI 保存时回写"上一次实际使用的付款条件"，供下次新建 PI 默认带出
+app.post('/api/suppliers/:id/last-payment-term', requireApiPermission('pi_create'), (req, res) => {
+  const termId = req.body && req.body.payment_term_id ? String(req.body.payment_term_id) : '';
+  run('UPDATE suppliers SET last_used_payment_term_id = ? WHERE id = ?', [termId, req.params.id]);
+  res.json({ success: true, last_used_payment_term_id: termId });
+});
+
+// ==================== 供应商付款条件（结构化多条，独立于付款申请 payment_terms 目录表） ====================
+app.get('/api/suppliers/:id/payment-terms', requireLogin, (req, res) => {
+  const rows = query('SELECT * FROM supplier_payment_terms WHERE supplier_id = ? ORDER BY display_order ASC, created_at ASC', [req.params.id]).rows;
+  res.json(rows);
+});
+app.post('/api/supplier-payment-terms', requireApiPermission('system_config'), (req, res) => {
+  const d = req.body;
+  if (!d.supplier_id) { res.status(400).json({ error: 'supplier_id 必填' }); return; }
+  const tId = d.id || genId('spt');
+  const termType = ['advance', 'credit', 'other'].includes(d.term_type) ? d.term_type : 'advance';
+  const isDefault = d.is_default ? 1 : 0;
+  if (isDefault) run('UPDATE supplier_payment_terms SET is_default = 0 WHERE supplier_id = ?', [d.supplier_id]);
+  run(`INSERT INTO supplier_payment_terms (id, supplier_id, term_name, term_type, credit_days, is_default, display_order, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET term_name=excluded.term_name, term_type=excluded.term_type, credit_days=excluded.credit_days, is_default=excluded.is_default, display_order=excluded.display_order, status=excluded.status`,
+    [tId, d.supplier_id, d.term_name || '', termType, d.credit_days || 0, isDefault, d.display_order || 0, d.status || 'active']);
+  res.json({ success: true, id: tId });
+});
+app.put('/api/supplier-payment-terms/:id', requireApiPermission('system_config'), (req, res) => {
+  const d = req.body;
+  const existing = queryOne('SELECT * FROM supplier_payment_terms WHERE id = ?', [req.params.id]);
+  if (!existing) { res.status(404).json({ error: '未找到该付款条件' }); return; }
+  const termType = ['advance', 'credit', 'other'].includes(d.term_type) ? d.term_type : existing.term_type;
+  const isDefault = d.is_default ? 1 : 0;
+  if (isDefault) run('UPDATE supplier_payment_terms SET is_default = 0 WHERE supplier_id = ?', [existing.supplier_id]);
+  run(`UPDATE supplier_payment_terms SET term_name=?, term_type=?, credit_days=?, is_default=?, display_order=?, status=? WHERE id = ?`,
+    [d.term_name || '', termType, d.credit_days || 0, isDefault, d.display_order != null ? d.display_order : existing.display_order, d.status || existing.status, req.params.id]);
+  res.json({ success: true });
+});
+app.delete('/api/supplier-payment-terms/:id', requireApiPermission('system_config'), (req, res) => {
+  run('DELETE FROM supplier_payment_terms WHERE id = ?', [req.params.id]);
+  res.json({ success: true });
+});
+// 整供应商替换付款条件（保存供应商时调用：先删后插，保持数据纯净且支持新增/改名/删除/改默认）
+app.post('/api/suppliers/:id/payment-terms', requireApiPermission('system_config'), (req, res) => {
+  const supplierId = req.params.id;
+  const list = Array.isArray(req.body) ? req.body : (req.body.list || []);
+  run('DELETE FROM supplier_payment_terms WHERE supplier_id = ?', [supplierId]);
+  let hasDefault = false;
+  list.forEach((t, idx) => {
+    const isDefault = t.is_default ? 1 : 0;
+    if (isDefault) hasDefault = true;
+    const termType = ['advance', 'credit', 'other'].includes(t.term_type) ? t.term_type : 'advance';
+    const tId = (t.id && !String(t.id).startsWith('_new_')) ? t.id : genId('spt');
+    run(`INSERT INTO supplier_payment_terms (id, supplier_id, term_name, term_type, credit_days, is_default, display_order, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [tId, supplierId, t.term_name || '', termType, t.credit_days || 0, isDefault, idx, t.status || 'active']);
+  });
+  res.json({ success: true, count: list.length });
 });
 
 // ==================== 货代管理 ====================
@@ -546,6 +625,438 @@ app.post('/api/allocation-rules', requireApiPermission('system_config'), (req, r
   res.json({ success: true });
 });
 
+// ==================== 付款类目管理（L1B：独立两表，复用 system_config 权限） ====================
+// 大类：列表
+app.get('/api/payment-categories', requireLogin, (req, res) => {
+  const { status } = req.query;
+  let sql = 'SELECT * FROM payment_categories WHERE 1=1';
+  const args = [];
+  if (status) { sql += ' AND status = ?'; args.push(status); }
+  sql += ' ORDER BY sort_order, created_at';
+  res.json(query(sql, args).rows);
+});
+// 大类：新增/编辑（不提供物理删除，停用走 status=inactive）
+app.post('/api/payment-categories', requireApiPermission('system_config'), (req, res) => {
+  const d = req.body || {};
+  const code = (d.code || '').trim();
+  const name = (d.name || '').trim();
+  const status = d.status || 'active';
+  if (!code) return res.status(400).json({ error: '类目编码(code)不能为空' });
+  if (!name) return res.status(400).json({ error: '类目名称(name)不能为空' });
+  if (!['active', 'inactive'].includes(status)) return res.status(400).json({ error: 'status 只允许 active 或 inactive' });
+  try {
+    if (d.id) {
+      const exist = queryOne('SELECT id, code FROM payment_categories WHERE id = ?', [d.id]);
+      if (!exist) return res.status(404).json({ error: '类目不存在' });
+      // code 稳定性保护：一旦被业务数据引用，禁止改 code（只允许改 name/sort_order/status）
+      if (code !== exist.code) {
+        const ref = queryOne('SELECT 1 FROM payment_requests WHERE payment_category = ? LIMIT 1', [exist.code])
+                 || queryOne('SELECT 1 FROM payable_items WHERE category_code = ? LIMIT 1', [exist.code]);
+        if (ref) return res.status(409).json({ error: '该类目code已被业务数据引用，不允许修改code（可改名称/排序/状态）' });
+      }
+      run(`UPDATE payment_categories SET code=?, name=?, sort_order=?, status=?, updated_at=datetime('now') WHERE id=?`,
+        [code, name, d.sort_order || 0, status, d.id]);
+      return res.json({ success: true, id: d.id });
+    }
+    const id = genId('paycat');
+    run(`INSERT INTO payment_categories (id, code, name, sort_order, status, created_by, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+      [id, code, name, d.sort_order || 0, status, req.currentUserId || '']);
+    res.json({ success: true, id });
+  } catch (e) {
+    if (String(e.message).includes('UNIQUE')) return res.status(409).json({ error: '类目编码(code)已存在' });
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 子类：列表（可按 category_id / status 过滤；source_type 过滤按"拥有该 active 来源映射"匹配）
+app.get('/api/payment-subcategories', requireLogin, (req, res) => {
+  const { category_id, status, source_type } = req.query;
+  let sql = 'SELECT * FROM payment_subcategories WHERE 1=1';
+  const args = [];
+  if (category_id) { sql += ' AND category_id = ?'; args.push(category_id); }
+  if (status) { sql += ' AND status = ?'; args.push(status); }
+  if (source_type) { sql += ` AND id IN (SELECT subcategory_id FROM payment_subcategory_sources WHERE source_type = ? AND status = 'active')`; args.push(source_type); }
+  sql += ' ORDER BY sort_order, created_at';
+  const rows = query(sql, args).rows;
+  const ids = rows.map(r => r.id);
+  const srcMap = {};
+  if (ids.length) {
+    query(`SELECT id, subcategory_id, source_type, fee_type, status FROM payment_subcategory_sources WHERE subcategory_id IN (${ids.map(() => '?').join(',')})`, ids).rows
+      .forEach(s => { (srcMap[s.subcategory_id] = srcMap[s.subcategory_id] || []).push({ id: s.id, source_type: s.source_type, fee_type: s.fee_type, status: s.status }); });
+  }
+  res.json(rows.map(r => ({ ...r, sources: srcMap[r.id] || [] })));
+});
+// 子类：新增/编辑（不提供物理删除，停用走 status=inactive）
+// 注意：来源映射(source_type/fee_type)已分离到 payment_subcategory_sources，本接口只管理类目属性
+app.post('/api/payment-subcategories', requireApiPermission('system_config'), (req, res) => {
+  const d = req.body || {};
+  const category_id = (d.category_id || '').trim();
+  const code = (d.code || '').trim();
+  const name = (d.name || '').trim();
+  const status = d.status || 'active';
+  if (!category_id) return res.status(400).json({ error: '所属大类(category_id)不能为空' });
+  if (!code) return res.status(400).json({ error: '子类编码(code)不能为空' });
+  if (!name) return res.status(400).json({ error: '子类名称(name)不能为空' });
+  if (!['active', 'inactive'].includes(status)) return res.status(400).json({ error: 'status 只允许 active 或 inactive' });
+  const cat = queryOne('SELECT id FROM payment_categories WHERE id = ?', [category_id]);
+  if (!cat) return res.status(400).json({ error: '所属大类(category_id)不存在' });
+  try {
+    if (d.id) {
+      const exist = queryOne('SELECT id, code FROM payment_subcategories WHERE id = ?', [d.id]);
+      if (!exist) return res.status(404).json({ error: '子类不存在' });
+      // code 稳定性保护：一旦被业务数据引用，禁止改 code（只允许改名称/排序/状态/映射）
+      if (code !== exist.code) {
+        const ref = queryOne('SELECT 1 FROM payment_requests WHERE payment_subcategory = ? LIMIT 1', [exist.code])
+                 || queryOne('SELECT 1 FROM payable_items WHERE subcategory_code = ? LIMIT 1', [exist.code]);
+        if (ref) return res.status(409).json({ error: '该子类code已被业务数据引用，不允许修改code（可改名称/排序/状态/映射）' });
+      }
+      run(`UPDATE payment_subcategories SET category_id=?, code=?, name=?, payee_type_default=?, sort_order=?, status=?, updated_at=datetime('now') WHERE id=?`,
+        [category_id, code, name, d.payee_type_default || '', d.sort_order || 0, status, d.id]);
+      return res.json({ success: true, id: d.id });
+    }
+    const id = genId('paysub');
+    run(`INSERT INTO payment_subcategories (id, category_id, code, name, payee_type_default, sort_order, status, created_by, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+      [id, category_id, code, name, d.payee_type_default || '', d.sort_order || 0, status, req.currentUserId || '']);
+    res.json({ success: true, id });
+  } catch (e) {
+    const msg = String(e.message);
+    if (msg.includes('category_id') || msg.includes('code') || msg.includes('UNIQUE')) return res.status(409).json({ error: '同一大类下子类编码(code)已存在' });
+    res.status(500).json({ error: msg });
+  }
+});
+
+// 启用类目嵌套（供后续付款申请使用）：仅返回真正可用的数据
+// 过滤规则：
+//   小类须同时满足 payment_subcategories.status='active' 且至少存在一条 status='active' 来源映射
+//   大类须同时满足 payment_categories.status='active' 且过滤后至少还剩一个有效小类
+// 每个小类只返回其 active 来源映射(source_mappings)；不返回 inactive 映射；不返回旧标量字段
+app.get('/api/payment-categories/active', requireLogin, (req, res) => {
+  const cats = query(`SELECT id, code, name, sort_order FROM payment_categories WHERE status='active' ORDER BY sort_order, created_at`).rows;
+  const subs = query(`SELECT id, category_id, code, name, payee_type_default, sort_order FROM payment_subcategories WHERE status='active' ORDER BY sort_order, created_at`).rows;
+  const srcs = query(`SELECT subcategory_id, source_type, fee_type FROM payment_subcategory_sources WHERE status='active' ORDER BY source_type, fee_type`).rows;
+  const bySub = {};
+  srcs.forEach(s => { (bySub[s.subcategory_id] = bySub[s.subcategory_id] || []).push({ source_type: s.source_type, fee_type: s.fee_type }); });
+  // 仅保留“有至少一条 active 来源映射”的小类
+  const validSubs = subs.filter(s => (bySub[s.id] || []).length > 0);
+  const byCat = {};
+  validSubs.forEach(s => {
+    (byCat[s.category_id] = byCat[s.category_id] || []).push({
+      id: s.id, code: s.code, name: s.name, payee_type_default: s.payee_type_default,
+      source_mappings: bySub[s.id] || [],
+    });
+  });
+  // 仅保留“过滤后至少还剩一个有效小类”的大类
+  const result = cats
+    .filter(c => (byCat[c.id] || []).length > 0)
+    .map(c => ({
+      id: c.id, code: c.code, name: c.name,
+      subcategories: byCat[c.id],
+    }));
+  res.json(result);
+});
+
+// ==================== 付款主体主数据维护（L2A-2A-3：仅主数据，不接入采购业务链） ====================
+// 权限复用 system_config，不新增权限码；不提供物理删除；引用计数结构预留（当前未接入 PI/CI/payable_item）
+
+// 引用计数：本轮付款主体尚未接入任何业务表，统一返回 0；
+// 未来接入 PI/CI/payable_item 时，在 refSources 中追加 {table, col}（以 payer_entities.id 关联）即可自动累计
+function payerEntityRefCount(id) {
+  const refSources = []; // 例如 {table:'proforma_invoices', col:'payer_entity_id'}
+  let total = 0;
+  for (const s of refSources) {
+    try { total += queryOne(`SELECT COUNT(*) AS c FROM ${s.table} WHERE ${s.col} = ?`, [id]).c || 0; } catch (e) {}
+  }
+  return total;
+}
+
+// 列表：可按 status / country_id 过滤；返回 country_name 与引用数量；按 sort_order、entity_name 排序
+app.get('/api/payer-entities', requireLogin, (req, res) => {
+  const { status, country_id } = req.query;
+  let sql = `SELECT p.*, c.name AS country_name
+             FROM payer_entities p
+             LEFT JOIN countries c ON c.id = p.country_id
+             WHERE 1=1`;
+  const args = [];
+  if (status) { sql += ' AND p.status = ?'; args.push(status); }
+  if (country_id) { sql += ' AND p.country_id = ?'; args.push(country_id); }
+  sql += ' ORDER BY p.sort_order, p.entity_name';
+  const rows = query(sql, args).rows;
+  res.json(rows.map(r => ({ ...r, ref_count: payerEntityRefCount(r.id) })));
+});
+
+// 新增（不提供物理删除；entity_key 唯一；默认主体唯一；写权限需 system_config）
+app.post('/api/payer-entities', requireApiPermission('system_config'), (req, res) => {
+  const d = req.body || {};
+  if (d.id) return res.status(400).json({ error: '新增操作不应携带 id，更新请使用 PUT /api/payer-entities/:id' });
+  const entity_key = String(d.entity_key || '').trim();
+  const entity_name = String(d.entity_name || '').trim();
+  const country_id = String(d.country_id || '').trim();
+  const default_currency = String(d.default_currency || '').trim();
+  const is_default = d.is_default ? 1 : 0;
+  const status = String(d.status || 'active').trim();
+  const sort_order = Number.isInteger(d.sort_order) ? d.sort_order : (Number(d.sort_order) || 0);
+  // 基础校验
+  if (!entity_key) return res.status(400).json({ error: '付款主体代码(entity_key)不能为空' });
+  if (!entity_name) return res.status(400).json({ error: '法人名称(entity_name)不能为空' });
+  if (!['active', 'inactive'].includes(status)) return res.status(400).json({ error: 'status 只允许 active 或 inactive' });
+  if (!country_id) return res.status(400).json({ error: '所属国家(country_id)不能为空' });
+  const country = queryOne('SELECT id, status FROM countries WHERE id = ?', [country_id]);
+  if (!country) return res.status(400).json({ error: '所属国家不存在（country_id 无效）' });
+  if (default_currency) {
+    const cur = queryOne('SELECT code, status FROM currencies WHERE code = ?', [default_currency]);
+    if (!cur) return res.status(400).json({ error: '默认币种(default_currency)不存在' });
+    if (cur.status !== 'active') return res.status(400).json({ error: '默认币种(default_currency)已停用，不可选为默认币种' });
+  }
+  // 停用主体不能设为默认
+  if (is_default === 1 && status === 'inactive') {
+    return res.status(400).json({ error: '停用(inactive)的主体不能设为默认(is_default=1)' });
+  }
+  try {
+    // 同国家 active 默认主体冲突
+    if (is_default === 1 && status === 'active') {
+      const conflict = queryOne(
+        'SELECT id FROM payer_entities WHERE country_id = ? AND is_default = 1 AND status = \'active\'',
+        [country_id]
+      );
+      if (conflict) return res.status(409).json({ error: '该国家已存在一个启用中的默认付款主体，请先取消原默认主体再设置' });
+    }
+    const id = genId('payer');
+    run(`INSERT INTO payer_entities (id, entity_key, entity_name, country_id, default_currency, is_default, status, sort_order, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+      [id, entity_key, entity_name, country_id, default_currency, is_default, status, sort_order]);
+    res.json({ success: true, id });
+  } catch (e) {
+    const msg = String(e.message || e);
+    if (msg.includes('UNIQUE') || msg.includes('uq_payer_entity_key')) {
+      return res.status(409).json({ error: '付款主体代码(entity_key)已存在' });
+    }
+    if (msg.includes('uq_payer_entity_default_per_country')) {
+      return res.status(409).json({ error: '该国家已存在一个启用中的默认付款主体，请先取消原默认主体再设置' });
+    }
+    if (msg.includes('FOREIGN KEY') || msg.includes('country_id')) {
+      return res.status(400).json({ error: '所属国家(country_id)不存在' });
+    }
+    res.status(500).json({ error: msg });
+  }
+});
+
+// 编辑（不提供物理删除；entity_key 未被引用时允许修改，已引用返回 409；默认主体唯一；写权限需 system_config）
+app.put('/api/payer-entities/:id', requireApiPermission('system_config'), (req, res) => {
+  const id = req.params.id;
+  const d = req.body || {};
+  const entity_key = String(d.entity_key || '').trim();
+  const entity_name = String(d.entity_name || '').trim();
+  const country_id = String(d.country_id || '').trim();
+  const default_currency = String(d.default_currency || '').trim();
+  const is_default = d.is_default ? 1 : 0;
+  const status = String(d.status || 'active').trim();
+  const sort_order = Number.isInteger(d.sort_order) ? d.sort_order : (Number(d.sort_order) || 0);
+  // 基础校验
+  if (!entity_key) return res.status(400).json({ error: '付款主体代码(entity_key)不能为空' });
+  if (!entity_name) return res.status(400).json({ error: '法人名称(entity_name)不能为空' });
+  if (!['active', 'inactive'].includes(status)) return res.status(400).json({ error: 'status 只允许 active 或 inactive' });
+  if (!country_id) return res.status(400).json({ error: '所属国家(country_id)不能为空' });
+  const country = queryOne('SELECT id, status FROM countries WHERE id = ?', [country_id]);
+  if (!country) return res.status(400).json({ error: '所属国家不存在（country_id 无效）' });
+  if (default_currency) {
+    const cur = queryOne('SELECT code, status FROM currencies WHERE code = ?', [default_currency]);
+    if (!cur) return res.status(400).json({ error: '默认币种(default_currency)不存在' });
+    if (cur.status !== 'active') return res.status(400).json({ error: '默认币种(default_currency)已停用，不可选为默认币种' });
+  }
+  // 停用主体不能设为默认
+  if (is_default === 1 && status === 'inactive') {
+    return res.status(400).json({ error: '停用(inactive)的主体不能设为默认(is_default=1)' });
+  }
+  try {
+    const exist = queryOne('SELECT id, entity_key, country_id, status, is_default FROM payer_entities WHERE id = ?', [id]);
+    if (!exist) return res.status(404).json({ error: '付款主体不存在' });
+    // entity_key 稳定性保护：一旦被业务数据引用，禁止修改
+    if (entity_key !== exist.entity_key) {
+      if (payerEntityRefCount(exist.id) > 0) {
+        return res.status(409).json({ error: '该付款主体代码(entity_key)已被业务数据引用，不允许修改' });
+      }
+      const dup = queryOne('SELECT id FROM payer_entities WHERE entity_key = ? AND id != ?', [entity_key, id]);
+      if (dup) return res.status(409).json({ error: '付款主体代码(entity_key)已存在' });
+    }
+    // 同国家第二个 active 默认主体冲突（排除自身）
+    if (is_default === 1 && status === 'active') {
+      const conflict = queryOne(
+        'SELECT id FROM payer_entities WHERE country_id = ? AND is_default = 1 AND status = \'active\' AND id != ?',
+        [country_id, id]
+      );
+      if (conflict) return res.status(409).json({ error: '该国家已存在一个启用中的默认付款主体，请先取消原默认主体再设置' });
+    }
+    run(`UPDATE payer_entities SET entity_key=?, entity_name=?, country_id=?, default_currency=?, is_default=?, status=?, sort_order=?, updated_at=datetime('now') WHERE id=?`,
+      [entity_key, entity_name, country_id, default_currency, is_default, status, sort_order, id]);
+    res.json({ success: true, id });
+  } catch (e) {
+    const msg = String(e.message || e);
+    if (msg.includes('UNIQUE') || msg.includes('uq_payer_entity_key')) {
+      return res.status(409).json({ error: '付款主体代码(entity_key)已存在' });
+    }
+    if (msg.includes('uq_payer_entity_default_per_country')) {
+      return res.status(409).json({ error: '该国家已存在一个启用中的默认付款主体，请先取消原默认主体再设置' });
+    }
+    if (msg.includes('FOREIGN KEY') || msg.includes('country_id')) {
+      return res.status(400).json({ error: '所属国家(country_id)不存在' });
+    }
+    res.status(500).json({ error: msg });
+  }
+});
+
+// 启用 / 停用（独立状态接口，无物理删除；当前 active 默认主体不可直接停用）
+app.post('/api/payer-entities/:id/status', requireApiPermission('system_config'), (req, res) => {
+  const id = req.params.id;
+  const entity = queryOne('SELECT id, entity_key, status, is_default FROM payer_entities WHERE id = ?', [id]);
+  if (!entity) return res.status(404).json({ error: '付款主体不存在' });
+  const newStatus = String(req.body && req.body.status ? req.body.status : '').trim();
+  if (!['active', 'inactive'].includes(newStatus)) return res.status(400).json({ error: 'status 只允许 active 或 inactive' });
+  if (newStatus === entity.status) return res.json({ success: true, id });
+  // 当前 active 默认主体不可直接停用
+  if (newStatus === 'inactive' && entity.is_default === 1 && entity.status === 'active') {
+    return res.status(409).json({ error: '该付款主体为当前启用中的默认主体，不能直接停用。请先取消其默认设置或改设其他默认主体后再停用。' });
+  }
+  try {
+    run(`UPDATE payer_entities SET status=?, updated_at=datetime('now') WHERE id=?`, [newStatus, id]);
+    res.json({ success: true, id });
+  } catch (e) {
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
+// 来源映射列表（只读，供维护页与校验使用；可按 subcategory_id / source_type / status 过滤）
+app.get('/api/payment-subcategory-sources', requireLogin, (req, res) => {
+  const { subcategory_id, source_type, status } = req.query;
+  let sql = 'SELECT * FROM payment_subcategory_sources WHERE 1=1';
+  const args = [];
+  if (subcategory_id) { sql += ' AND subcategory_id = ?'; args.push(subcategory_id); }
+  if (source_type) { sql += ' AND source_type = ?'; args.push(source_type); }
+  if (status) { sql += ' AND status = ?'; args.push(status); }
+  sql += ' ORDER BY subcategory_id, source_type, fee_type';
+  res.json(query(sql, args).rows);
+});
+
+// 来源映射：新增/编辑/启用/停用（不提供物理删除；停用走 status=inactive）
+// 唯一事实来源为 payment_subcategory_sources；唯一约束由部分唯一索引 uq_payment_subcategory_source_mapping
+// (source_type, fee_type) WHERE status='active' 保证“同一有效来源组合只能映射到一个小类”
+// 冲突统一转换为 409 明确提示；无效 subcategory_id 返回 400；写权限需 system_config
+const PAYMENT_SOURCE_FEE_MATRIX = Object.freeze({
+  pi: Object.freeze(['deposit']),
+  ci: Object.freeze(['balance', 'freight', 'customs_clearance', 'port_charges', 'delivery', 'warehouse', 'other_local', 'duty', 'inspection']),
+  manual: Object.freeze(['freight', 'customs_clearance', 'port_charges', 'delivery', 'warehouse', 'other_local']),
+});
+const PAYMENT_SOURCE_LABEL = Object.freeze({ pi: 'PI', ci: 'CI', manual: '手动录入' });
+const PAYMENT_FEE_LABEL = Object.freeze({
+  deposit: '定金', balance: '尾款', freight: '运费', customs_clearance: '清关费',
+  port_charges: '港口费', delivery: '派送费', warehouse: '仓储费', other_local: '其他本地费',
+  duty: '关税', inspection: '商检费',
+});
+app.post('/api/payment-subcategory-sources', requireApiPermission('system_config'), (req, res) => {
+  const d = req.body || {};
+  const subcategory_id = String(d.subcategory_id || '').trim();
+  const source_type = String(d.source_type || '').trim();
+  const fee_type = String(d.fee_type || '').trim();
+  const status = String(d.status || 'active').trim();
+  if (!subcategory_id) return res.status(400).json({ error: '所属小类(subcategory_id)不能为空' });
+  if (!source_type) return res.status(400).json({ error: 'source_type 不能为空' });
+  if (!fee_type) return res.status(400).json({ error: 'fee_type 不能为空' });
+  if (!['active', 'inactive'].includes(status)) return res.status(400).json({ error: 'status 只允许 active 或 inactive' });
+  if (!PAYMENT_SOURCE_FEE_MATRIX[source_type]) {
+    return res.status(400).json({ error: `不支持的来源类型：${source_type}` });
+  }
+  if (!PAYMENT_SOURCE_FEE_MATRIX[source_type].includes(fee_type)) {
+    return res.status(400).json({ error: `${PAYMENT_SOURCE_LABEL[source_type]}（${source_type}）不支持费用事件${fee_type}` });
+  }
+  let exist = null;
+  if (d.id) {
+    exist = queryOne('SELECT id, subcategory_id, source_type, fee_type FROM payment_subcategory_sources WHERE id = ?', [d.id]);
+    if (!exist) return res.status(404).json({ error: '来源映射不存在' });
+    if (exist.subcategory_id !== subcategory_id || exist.source_type !== source_type || exist.fee_type !== fee_type) {
+      return res.status(409).json({ error: '来源映射的所属小类、来源类型和费用事件不能直接修改。请停用旧映射后新增正确映射。' });
+    }
+  }
+  const sub = queryOne(`SELECT s.id, s.name AS subcategory_name, s.code AS subcategory_code, s.status AS subcategory_status,
+                               c.id AS category_id, c.name AS category_name, c.code AS category_code, c.status AS category_status
+                          FROM payment_subcategories s
+                          LEFT JOIN payment_categories c ON c.id = s.category_id
+                         WHERE s.id = ?`, [subcategory_id]);
+  if (!sub) return res.status(400).json({ error: '所属小类(subcategory_id)不存在' });
+  if (!sub.category_id) return res.status(400).json({ error: '所属一级类目不存在' });
+  if (status === 'active' && sub.category_status !== 'active') {
+    return res.status(400).json({ error: `所属一级类目“${sub.category_name}（${sub.category_code}）”已停用，来源映射只能保存为停用状态。` });
+  }
+  if (status === 'active' && sub.subcategory_status !== 'active') {
+    return res.status(400).json({ error: `所属二级类目“${sub.subcategory_name}（${sub.subcategory_code}）”已停用，来源映射只能保存为停用状态。` });
+  }
+  // 冲突预检（仅对将要成为 active 的映射）：查是否已有其他 active 行占用同一 (source_type, fee_type)
+  const conflictCheck = (excludeId) => {
+    let sql = `SELECT m.id, m.subcategory_id, s.name AS subcategory_name, s.code AS subcategory_code
+                 FROM payment_subcategory_sources m
+                 LEFT JOIN payment_subcategories s ON s.id = m.subcategory_id
+                WHERE m.source_type = ? AND m.fee_type = ? AND m.status = 'active'`;
+    const args = [source_type, fee_type];
+    if (excludeId) { sql += ' AND m.id != ?'; args.push(excludeId); }
+    return queryOne(sql, args);
+  };
+  const conflictError = (conflict) => {
+    const targetName = conflict.subcategory_name || conflict.subcategory_id;
+    const targetCode = conflict.subcategory_code || conflict.subcategory_id;
+    const message = `${PAYMENT_SOURCE_LABEL[source_type]}（${source_type}）+ ${PAYMENT_FEE_LABEL[fee_type]}（${fee_type}）已经映射到‘${targetName}（${targetCode}）’，不能重复启用。`;
+    return res.status(409).json({
+      error: message,
+      message,
+      conflict_mapping_id: conflict.id,
+      conflict_subcategory_id: conflict.subcategory_id,
+      conflict_subcategory_name: targetName,
+      conflict_subcategory_code: targetCode,
+      source_type,
+      fee_type,
+    });
+  };
+  try {
+    if (d.id) {
+      if (status === 'active') {
+        const conflict = conflictCheck(d.id);
+        if (conflict) return conflictError(conflict);
+      }
+      run(`UPDATE payment_subcategory_sources SET status=?, updated_at=datetime('now') WHERE id=?`, [status, d.id]);
+      return res.json({ success: true, id: d.id });
+    }
+    if (status === 'inactive') {
+      const duplicateInactive = queryOne(`SELECT id FROM payment_subcategory_sources
+                                           WHERE subcategory_id = ? AND source_type = ? AND fee_type = ? AND status = 'inactive'`,
+        [subcategory_id, source_type, fee_type]);
+      if (duplicateInactive) {
+        const message = '该停用来源映射已经存在，请直接重新启用原映射。';
+        return res.status(409).json({ error: message, message, existing_mapping_id: duplicateInactive.id });
+      }
+    }
+    if (status === 'active') {
+      const conflict = conflictCheck(null);
+      if (conflict) return conflictError(conflict);
+    }
+    const id = genId('paysrc');
+    run(`INSERT INTO payment_subcategory_sources (id, subcategory_id, source_type, fee_type, status, created_by, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+      [id, subcategory_id, source_type, fee_type, status, req.currentUserId || '']);
+    res.json({ success: true, id });
+  } catch (e) {
+    const msg = String(e.message);
+    // 兜底：部分唯一索引 / 主键唯一；以及外键拒绝
+    if (msg.includes('UNIQUE') || msg.includes('uq_payment_subcategory_source_mapping')) {
+      const conflict = conflictCheck(d.id || null);
+      if (conflict) return conflictError(conflict);
+      return res.status(409).json({ error: `有效来源映射冲突：${PAYMENT_SOURCE_LABEL[source_type]}（${source_type}）+ ${PAYMENT_FEE_LABEL[fee_type]}（${fee_type}）已被其他有效映射占用。` });
+    }
+    if (msg.includes('FOREIGN KEY')) {
+      return res.status(400).json({ error: '所属小类(subcategory_id)不存在或外键校验失败' });
+    }
+    res.status(500).json({ error: msg });
+  }
+});
+
 // ==================== 系统配置 ====================
 app.get('/api/system-config', requireLogin, (req, res) => {
   res.json(query('SELECT * FROM system_config').rows);
@@ -590,9 +1101,15 @@ app.post('/api/skus', requireApiPermission('sku_create'), (req, res) => {
     if (!d.sku_code) return res.status(400).json({ error: 'SKU编码不能为空' });
     const exist = queryOne('SELECT id FROM skus WHERE sku_code = ?', [d.sku_code]);
     if (exist) return res.status(400).json({ error: 'SKU编码已存在' });
+    for (const f of ['purchase_price_rmb', 'purchase_price_usd']) {
+      if (d[f] !== undefined && d[f] !== '' && d[f] !== null) {
+        const v = Number(d[f]);
+        if (isNaN(v) || v < 0) return res.status(400).json({ error: '采购单价必须为不小于0的数字' });
+      }
+    }
     const sId = d.id || genId('sku');
-    run(`INSERT INTO skus (id, sku_code, product_name, brand, category, model, color_spec, barcode, default_supplier_id, default_supplier_name, purchase_currency, standard_purchase_price, carton_spec, qty_per_carton, unit_weight, unit_cbm, is_new_product, launch_date, new_product_protection_days, lifecycle_status, auto_replenish, status, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [sId, d.sku_code, d.product_name || '', d.brand || '', d.category || '', d.model || '', d.color_spec || '', d.barcode || '', d.default_supplier_id || '', d.default_supplier_name || '', d.purchase_currency || 'USD', d.standard_purchase_price || 0, d.carton_spec || '', d.qty_per_carton || 0, d.unit_weight || 0, d.unit_cbm || 0, d.is_new_product || 0, d.launch_date || '', d.new_product_protection_days || 90, d.lifecycle_status || 'new_test', d.auto_replenish !== undefined ? d.auto_replenish : 1, d.status || 'normal', d.remark || '']);
+    run(`INSERT INTO skus (id, sku_code, product_name, brand, category, model, color_spec, barcode, default_supplier_id, default_supplier_name, purchase_currency, standard_purchase_price, purchase_price_rmb, purchase_price_usd, carton_spec, qty_per_carton, unit_weight, unit_cbm, is_new_product, launch_date, new_product_protection_days, lifecycle_status, auto_replenish, status, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [sId, d.sku_code, d.product_name || '', d.brand || '', d.category || '', d.model || '', d.color_spec || '', d.barcode || '', d.default_supplier_id || '', d.default_supplier_name || '', d.purchase_currency || 'USD', d.standard_purchase_price || 0, parseFloat(d.purchase_price_rmb) || 0, parseFloat(d.purchase_price_usd) || 0, d.carton_spec || '', d.qty_per_carton || 0, d.unit_weight || 0, d.unit_cbm || 0, d.is_new_product || 0, d.launch_date || '', d.new_product_protection_days || 90, d.lifecycle_status || 'new_test', d.auto_replenish !== undefined ? d.auto_replenish : 1, d.status || 'normal', d.remark || '']);
     res.json({ id: sId, ...d });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -603,9 +1120,16 @@ app.put('/api/skus/:id', requireApiPermission('sku_edit'), (req, res) => {
     const { id } = req.params;
     const fields = [];
     const values = [];
-    const allowed = ['product_name', 'brand', 'category', 'model', 'color_spec', 'barcode', 'default_supplier_id', 'default_supplier_name', 'purchase_currency', 'standard_purchase_price', 'weighted_avg_cost', 'carton_spec', 'qty_per_carton', 'unit_weight', 'unit_cbm', 'is_new_product', 'launch_date', 'new_product_protection_days', 'lifecycle_status', 'auto_replenish', 'status', 'remark'];
+    const allowed = ['product_name', 'brand', 'category', 'model', 'color_spec', 'barcode', 'default_supplier_id', 'default_supplier_name', 'purchase_currency', 'standard_purchase_price', 'purchase_price_rmb', 'purchase_price_usd', 'weighted_avg_cost', 'carton_spec', 'qty_per_carton', 'unit_weight', 'unit_cbm', 'is_new_product', 'launch_date', 'new_product_protection_days', 'lifecycle_status', 'auto_replenish', 'status', 'remark'];
     allowed.forEach(f => {
-      if (d[f] !== undefined) { fields.push(`${f} = ?`); values.push(d[f]); }
+      if (d[f] !== undefined) {
+        let val = d[f];
+        if (f === 'purchase_price_rmb' || f === 'purchase_price_usd') {
+          val = (d[f] === '' || d[f] === null) ? 0 : Number(d[f]);
+          if (isNaN(val) || val < 0) throw new Error('采购单价必须为不小于0的数字');
+        }
+        fields.push(`${f} = ?`); values.push(val);
+      }
     });
     fields.push(`updated_at = datetime('now')`);
     values.push(id);
@@ -670,6 +1194,12 @@ app.post('/api/skus/bulk-import', requireApiPermission('sku_import'), (req, res)
           const sku = String(item.sku_code || '').trim();
           if (!sku) { result.failed++; result.errors.push({ row: i + 2, reason: 'SKU编码为空' }); return; }
           if (!item.brand || !String(item.brand).trim()) { result.failed++; result.errors.push({ row: i + 2, reason: '品牌为空' }); return; }
+          const rmbRaw = item.purchase_price_rmb, usdRaw = item.purchase_price_usd;
+          const rmbVal = (rmbRaw === undefined || rmbRaw === '' || rmbRaw === null) ? 0 : parseFloat(rmbRaw);
+          const usdVal = (usdRaw === undefined || usdRaw === '' || usdRaw === null) ? 0 : parseFloat(usdRaw);
+          if (isNaN(rmbVal) || rmbVal < 0 || isNaN(usdVal) || usdVal < 0) {
+            result.failed++; result.errors.push({ row: i + 2, reason: '采购单价必须为不小于0的数字' }); return;
+          }
 
           // 映射生命周期和状态
           const lifecycle = LIFECYCLE_MAP[String(item.lifecycle_status||'').trim()] || (item.lifecycle_status || 'new_test');
@@ -677,12 +1207,12 @@ app.post('/api/skus/bulk-import', requireApiPermission('sku_import'), (req, res)
 
           const exist = queryOne('SELECT id FROM skus WHERE sku_code = ?', [sku]);
           if (exist) {
-            run(`UPDATE skus SET product_name=?, brand=?, category=?, model=?, color_spec=?, barcode=?, purchase_currency=?, standard_purchase_price=?, carton_spec=?, qty_per_carton=?, unit_weight=?, unit_cbm=?, lifecycle_status=?, launch_date=?, remark=?, status=?, updated_at=datetime('now') WHERE id=?`,
-              [item.product_name || '', item.brand || '', item.category || '', item.model || '', item.color_spec || '', item.barcode || '', item.purchase_currency || 'USD', parseFloat(item.standard_purchase_price) || 0, item.carton_spec || '', parseInt(item.qty_per_carton) || 0, parseFloat(item.unit_weight) || 0, parseFloat(item.unit_cbm) || 0, lifecycle, item.launch_date || '', item.remark || '', status, exist.id]);
+            run(`UPDATE skus SET product_name=?, brand=?, category=?, model=?, color_spec=?, barcode=?, purchase_price_rmb=?, purchase_price_usd=?, carton_spec=?, qty_per_carton=?, unit_weight=?, unit_cbm=?, lifecycle_status=?, launch_date=?, remark=?, status=?, updated_at=datetime('now') WHERE id=?`,
+              [item.product_name || '', item.brand || '', item.category || '', item.model || '', item.color_spec || '', item.barcode || '', parseFloat(item.purchase_price_rmb) || 0, parseFloat(item.purchase_price_usd) || 0, item.carton_spec || '', parseInt(item.qty_per_carton) || 0, parseFloat(item.unit_weight) || 0, parseFloat(item.unit_cbm) || 0, lifecycle, item.launch_date || '', item.remark || '', status, exist.id]);
             result.updated++;
           } else {
-            run(`INSERT INTO skus (id, sku_code, product_name, brand, category, model, color_spec, barcode, purchase_currency, standard_purchase_price, carton_spec, qty_per_carton, unit_weight, unit_cbm, lifecycle_status, launch_date, remark, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              [genId('sku'), sku, item.product_name || '', item.brand || '', item.category || '', item.model || '', item.color_spec || '', item.barcode || '', item.purchase_currency || 'USD', parseFloat(item.standard_purchase_price) || 0, item.carton_spec || '', parseInt(item.qty_per_carton) || 0, parseFloat(item.unit_weight) || 0, parseFloat(item.unit_cbm) || 0, lifecycle, item.launch_date || '', item.remark || '', status]);
+            run(`INSERT INTO skus (id, sku_code, product_name, brand, category, model, color_spec, barcode, purchase_price_rmb, purchase_price_usd, carton_spec, qty_per_carton, unit_weight, unit_cbm, lifecycle_status, launch_date, remark, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [genId('sku'), sku, item.product_name || '', item.brand || '', item.category || '', item.model || '', item.color_spec || '', item.barcode || '', parseFloat(item.purchase_price_rmb) || 0, parseFloat(item.purchase_price_usd) || 0, item.carton_spec || '', parseInt(item.qty_per_carton) || 0, parseFloat(item.unit_weight) || 0, parseFloat(item.unit_cbm) || 0, lifecycle, item.launch_date || '', item.remark || '', status]);
             result.created++;
           }
         } catch (e) { result.failed++; result.errors.push({ row: i + 2, reason: e.message }); }
@@ -801,16 +1331,25 @@ app.post('/api/inventory-imports/bulk-import', requireApiPermission('inventory_i
       items.forEach((item, i) => {
         try {
           if (!item.sku_code || !item.import_date) { result.failed++; result.errors.push({ row: i + 2, reason: 'SKU或导入日期为空' }); return; }
+          // P1-INBOUND-01: 可用数量必须是严格非负整数；拒绝小数/带尾随字符/空/null/undefined/负数；禁止截断或静默变 0
+          const rawAvailQty = item.available_qty;
+          if (rawAvailQty === null || rawAvailQty === undefined || String(rawAvailQty).trim() === '') {
+            result.failed++; result.errors.push({ row: i + 2, reason: '可用数量必须为非负整数' }); return;
+          }
+          const availQty = Number(rawAvailQty);
+          if (!Number.isFinite(availQty) || !Number.isInteger(availQty) || availQty < 0) {
+            result.failed++; result.errors.push({ row: i + 2, reason: '可用数量必须为非负整数' }); return;
+          }
           const id = genId('inv_imp');
           run(`INSERT INTO inventory_imports (id, import_date, country, warehouse, channel, sku_code, available_qty, remark, snapshot_cutoff_date, brand, weighted_avg_cost, last_inbound_date, first_inbound_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [id, item.import_date, item.country || '', item.warehouse || '', item.channel || '', item.sku_code, parseInt(item.available_qty) || 0, item.remark || '', snapshotCutoffDate, item.brand || '', parseFloat(item.weighted_avg_cost) || 0, item.last_inbound_date || '', item.first_inbound_date || '']);
+            [id, item.import_date, item.country || '', item.warehouse || '', item.channel || '', item.sku_code, availQty, item.remark || '', snapshotCutoffDate, item.brand || '', parseFloat(item.weighted_avg_cost) || 0, item.last_inbound_date || '', item.first_inbound_date || '']);
           result.created++;
         } catch (e) { result.failed++; result.errors.push({ row: i + 2, reason: e.message }); }
       });
     });
     // 更新库存总表，传入 snapshotCutoffDate
-    refreshInventoryTotals(snapshotCutoffDate);
-    res.json({ ...result, snapshot_cutoff_date: snapshotCutoffDate });
+    const refreshResult = refreshInventoryTotals(snapshotCutoffDate);
+    res.json({ ...result, snapshot_cutoff_date: snapshotCutoffDate, wac_warnings: refreshResult.warnings || [] });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -877,9 +1416,54 @@ function getSnapshotCutoffMap() {
   return map;
 }
 
+// P1-03-B: 查询最新已确认且锁定的 WAC 版本（唯一读取规则）
+function latestConfirmedWac(skuCode, country, warehouse) {
+  return queryOne(`
+    SELECT * FROM wac_history
+    WHERE sku_code = ? AND country = ? AND warehouse = ?
+      AND confirmation_status = 'confirmed' AND is_locked = 1
+    ORDER BY version_no DESC
+    LIMIT 1
+  `, [skuCode, country, warehouse]);
+}
+
+// P1-03-B: 在事务内生成下一版本号并插入锁定的 WAC 历史
+function generateWacVersion(params) {
+  const { ci_id, ci_no, po_id, po_no, pi_id, pi_no, sku_code, model, brand, country, warehouse,
+          original_qty, original_avg_cost, original_inventory_value,
+          inbound_qty, unit_landing_cost, inbound_total_cost, new_avg_cost,
+          settlement_date, confirmed_by } = params;
+
+  // 在事务内获取当前最大版本号
+  const maxVersion = queryOne(`
+    SELECT MAX(version_no) as max_ver FROM wac_history
+    WHERE sku_code = ? AND country = ? AND warehouse = ?
+  `, [sku_code, country, warehouse]);
+  const nextVersionNo = (maxVersion && maxVersion.max_ver != null) ? maxVersion.max_ver + 1 : 1;
+
+  const id = genId('wac');
+  const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+
+  run(`INSERT INTO wac_history (id, version_no, ci_id, ci_no, po_id, po_no, pi_id, pi_no,
+      sku_code, model, brand, country, warehouse,
+      original_qty, original_avg_cost, original_inventory_value,
+      inbound_qty, unit_landing_cost, inbound_total_cost, new_avg_cost,
+      settlement_date, confirmation_status, is_locked, confirmed_by, confirmed_at, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, nextVersionNo, ci_id || '', ci_no || '', po_id || '', po_no || '', pi_id || '', pi_no || '',
+     sku_code, model || '', brand || '', country || '', warehouse || '',
+     original_qty || 0, original_avg_cost || 0, original_inventory_value || 0,
+     inbound_qty || 0, unit_landing_cost || 0, inbound_total_cost || 0, new_avg_cost || 0,
+     settlement_date || '', 'confirmed', 1, confirmed_by || '', now, now]);
+
+  return { id, version_no: nextVersionNo };
+}
+
 // 刷新库存总表（根据导入记录和业务数据重新计算）
 function refreshInventoryTotals(snapshotCutoffDate) {
-  // 获取每个 SKU+国家+仓库 的最新可用库存（连同 snapshot_cutoff_date、weighted_avg_cost）
+  // P1-03-B: WAC 不再从文件列读取，改为查 latest confirmed locked WAC 版本
+  const warnings = [];
+  // 获取每个 SKU+国家+仓库 的最新可用库存（连同 snapshot_cutoff_date）
   const latestImports = query(`
     SELECT sku_code, country, warehouse, available_qty, import_date, snapshot_cutoff_date, weighted_avg_cost, last_inbound_date, first_inbound_date
     FROM inventory_imports i1
@@ -889,10 +1473,36 @@ function refreshInventoryTotals(snapshotCutoffDate) {
   transaction(() => {
     latestImports.forEach(imp => {
       const cutoff = imp.snapshot_cutoff_date || snapshotCutoffDate || '';
-      const wac = parseFloat(imp.weighted_avg_cost) || 0;
-      const invValue = (parseInt(imp.available_qty) || 0) * wac;
-      const existing = queryOne('SELECT id, last_inbound_date, first_inbound_date FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
+      const existing = queryOne('SELECT id, weighted_avg_cost, last_inbound_date, first_inbound_date FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
         [imp.sku_code, imp.country, imp.warehouse]);
+
+      // P1-03-B: 查最新已确认 WAC
+      const wacRecord = latestConfirmedWac(imp.sku_code, imp.country, imp.warehouse);
+      let wac, wacSource;
+      if (wacRecord) {
+        wac = wacRecord.new_avg_cost || 0;
+        wacSource = 'confirmed';
+      } else if (existing && (existing.weighted_avg_cost || 0) !== 0) {
+        // 保留旧 WAC
+        wac = existing.weighted_avg_cost || 0;
+        wacSource = 'legacy';
+        warnings.push({
+          sku_code: imp.sku_code, country: imp.country, warehouse: imp.warehouse,
+          priority: 'warning',
+          message: '未找到最新已确认加权平均成本，已保留原成本，请完成成本确认。'
+        });
+      } else {
+        // 无 WAC，使用 0
+        wac = 0;
+        wacSource = 'none';
+        warnings.push({
+          sku_code: imp.sku_code, country: imp.country, warehouse: imp.warehouse,
+          priority: 'high',
+          message: '未找到已确认加权平均成本，成本与金额暂为 0，请尽快完成成本确认。'
+        });
+      }
+      const invValue = (parseInt(imp.available_qty) || 0) * wac;
+
       // last_inbound_date 更新规则：导入文件有值则更新，否则保留原值
       const newLastInbound = (imp.last_inbound_date && String(imp.last_inbound_date).trim()) ? imp.last_inbound_date : (existing ? existing.last_inbound_date : '');
       // first_inbound_date 更新规则：导入文件填写新日期才更新；为空则保留旧值
@@ -908,13 +1518,18 @@ function refreshInventoryTotals(snapshotCutoffDate) {
     // 更新在途、PI未发货、PO未确认等
     updateInventoryTransitData();
   });
+  return { warnings };
 }
 
 // 更新库存的在途数据
 function updateInventoryTransitData() {
-  // 采购链只记录单据流转，不自动回写库存总表；库存总表由用户通过导入维护。
-  return;
+  // 采购链状态变化自动回写库存总表的在途类字段：
+  //   po_unconfirmed_pi_qty / pi_confirmed_unshipped_qty / in_transit_qty
+  // 全量重算（SET 聚合值，非 +=），幂等，与导入流程不冲突。
+  // 注：本函数只更新已存在的 inventory 行；新采购 SKU 若无 inventory 行则 transit 字段保持原值。
   // CI已发货未入库 = 在途
+  // 先全量清零（保证被作废/删除后贡献降为 0 的 SKU 也能回落，而非残留旧值），再按活跃单据聚合写入
+  run('UPDATE inventory SET in_transit_qty = 0');
   const transitData = query(`
     SELECT cii.sku_code, l.target_country as country, l.target_warehouse as warehouse,
            SUM(cii.shipped_qty - cii.inbound_qty) as in_transit_qty
@@ -934,6 +1549,7 @@ function updateInventoryTransitData() {
   });
 
   // PI已确认未发货
+  run('UPDATE inventory SET pi_confirmed_unshipped_qty = 0');
   const piData = query(`
     SELECT pii.sku_code, po.country, po.target_warehouse as warehouse,
            SUM(pii.pi_confirmed_qty - pii.shipped_qty) as pi_unshipped
@@ -953,6 +1569,7 @@ function updateInventoryTransitData() {
   });
 
   // PO已生成未确认PI
+  run('UPDATE inventory SET po_unconfirmed_pi_qty = 0');
   const poData = query(`
     SELECT poi.sku_code, po.country, po.target_warehouse as warehouse,
            SUM(poi.po_qty - poi.transferred_pi_qty) as po_unconfirmed
@@ -1228,6 +1845,7 @@ app.get('/api/sales-records/filter-options', requireApiPermission('outbound_view
   res.json({ source_systems, shop_platforms, brands });
 });
 
+
 // 销售明细导入预览
 app.post('/api/sales-records/bulk-import-preview', requireApiPermission('outbound_view'), (req, res) => {
   try {
@@ -1235,9 +1853,15 @@ app.post('/api/sales-records/bulk-import-preview', requireApiPermission('outboun
     const preview = items.map((item, i) => {
       const errors = [];
       if (!item.sku_code) errors.push('SKU不能为空');
-      if (!item.order_date) errors.push('下单日期不能为空');
+      if (!item.order_date && item.order_date !== 0) errors.push('下单日期不能为空');
       if (!item.source_system) errors.push('来源系统不能为空');
       if (!item.order_no) errors.push('订单号不能为空');
+      // 后端兜底：日期标准化（前端结果为准，后端再次校验）
+      let normalizedDate = null;
+      if (item.order_date || item.order_date === 0) {
+        normalizedDate = normalizeOrderDate(item.order_date);
+        if (!normalizedDate) errors.push('下单日期格式无法识别：' + item.order_date);
+      }
       // is_valid_order 转换
       let isValid = 1;
       if (item.is_valid_order !== undefined && item.is_valid_order !== '') {
@@ -1296,9 +1920,16 @@ app.post('/api/sales-records/bulk-import', requireApiPermission('outbound_import
       items.forEach((item, i) => {
         try {
           if (!item.sku_code) { result.failed++; result.errors.push({ row: i + 2, reason: 'SKU不能为空' }); return; }
-          if (!item.order_date) { result.failed++; result.errors.push({ row: i + 2, reason: '下单日期不能为空' }); return; }
           if (!item.source_system) { result.failed++; result.errors.push({ row: i + 2, reason: '来源系统不能为空' }); return; }
           if (!item.order_no) { result.failed++; result.errors.push({ row: i + 2, reason: '订单号不能为空' }); return; }
+          // 后端兜底：日期标准化，无法识别则导入失败（保留行号+原始值+原因）
+          const normalizedDate = normalizeOrderDate(item.order_date);
+          if (!normalizedDate) {
+            result.failed++;
+            result.errors.push({ row: i + 2, reason: '下单日期格式无法识别：' + item.order_date });
+            return;
+          }
+          item.order_date = normalizedDate;
 
           // is_valid_order 转换
           let isValid = 1;
@@ -1368,15 +1999,123 @@ app.post('/api/sales-records/bulk-import', requireApiPermission('outbound_import
 
 // ==================== 补货建议 ====================
 
+// 销售日期统一规范化：写入数据库前必须调用，统一为 YYYY-MM-DD
+// 兼容：Date对象 / YYYY-MM-DD / YYYY-MM / YYYY/M/D / YYYY/MM/DD / M/D/YYYY / M/D/YY / Excel序列号(20000-80000)
+// 返回 null 表示无法识别（导入时应标记失败）
+function normalizeOrderDate(value) {
+  if (value === null || value === undefined || value === '') return null;
+  // Date 对象
+  if (value instanceof Date) {
+    if (isNaN(value.getTime())) return null;
+    const y = value.getFullYear();
+    const m = String(value.getMonth() + 1).padStart(2, '0');
+    const d = String(value.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  const s = String(value).trim();
+  if (!s) return null;
+  // Excel 日期序列号（限制范围 20000-80000，对应 1954-2119 年）
+  if (/^\d+$/.test(s)) {
+    const num = parseInt(s, 10);
+    if (num >= 20000 && num <= 80000) {
+      // Excel 序列号：1 = 1900-01-01（含闰年bug，1900-02-29 占位）
+      // JS epoch: 1970-01-01 = Excel 25569
+      const epochMs = (num - 25569) * 86400000;
+      const dt = new Date(epochMs);
+      if (!isNaN(dt.getTime())) {
+        const y = dt.getUTCFullYear();
+        const m = String(dt.getUTCMonth() + 1).padStart(2, '0');
+        const d = String(dt.getUTCDate()).padStart(2, '0');
+        return `${y}-${m}-${d}`;
+      }
+    }
+    return null;
+  }
+  // 标准 YYYY-MM-DD
+  const isoMatch = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (isoMatch) {
+    return _buildValidDate(isoMatch[1], isoMatch[2], isoMatch[3]);
+  }
+  // YYYY-MM（补 -01）
+  const ymMatch = s.match(/^(\d{4})-(\d{1,2})$/);
+  if (ymMatch) {
+    return _buildValidDate(ymMatch[1], ymMatch[2], '01');
+  }
+  // 含斜杠的格式
+  if (s.indexOf('/') >= 0) {
+    const parts = s.split('/').map(p => p.trim());
+    if (parts.length !== 3) return null;
+    const a = parts[0], b = parts[1], c = parts[2];
+    // 第一个段是4位 → YYYY/M/D 或 YYYY/MM/DD
+    if (/^\d{4}$/.test(a)) {
+      return _buildValidDate(a, b, c);
+    }
+    // 第一个段不是4位 → M/D/YYYY 或 M/D/YY
+    if (/^\d{1,2}$/.test(a) && /^\d{1,2}$/.test(b)) {
+      let year;
+      if (/^\d{4}$/.test(c)) {
+        year = c;
+      } else if (/^\d{2}$/.test(c)) {
+        const yy = parseInt(c, 10);
+        year = String(yy <= 69 ? 2000 + yy : 1900 + yy);
+      } else {
+        return null;
+      }
+      return _buildValidDate(year, a, b);
+    }
+    return null;
+  }
+  return null;
+}
+
+// 内部：构造并校验真实日期（月份1-12，日期1-当月最大天数），非法返回 null
+function _buildValidDate(yStr, mStr, dStr) {
+  const y = parseInt(yStr, 10);
+  const m = parseInt(mStr, 10);
+  const d = parseInt(dStr, 10);
+  if (isNaN(y) || isNaN(m) || isNaN(d)) return null;
+  if (m < 1 || m > 12) return null;
+  if (d < 1 || d > 31) return null;
+  const dt = new Date(y, m - 1, d);
+  // 校验是否回滚了（如 2月30日 会变成 3月2日）
+  if (dt.getFullYear() !== y || dt.getMonth() !== m - 1 || dt.getDate() !== d) return null;
+  return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+}
+
+// 历史脏数据兼容兜底：在 SQL 中动态把各种日期格式转成 YYYY-MM-DD
+// 新数据写入前已由 normalizeOrderDate 统一，此函数仅用于兼容历史数据
+// 判断逻辑：
+//   1. 标准 YYYY-MM-DD → 直接返回前10位
+//   2. YYYY-MM → 补 -01
+//   3. 含 / 且第一段4位 → YYYY/M/D 或 YYYY/MM/DD
+//   4. 含 / 且第一段非4位 → M/D/YYYY 或 M/D/YY（两位年份 00-69→2000s，70-99→1900s）
 function salesOrderDateExpr(col = 'order_date') {
-  const rest = `substr(${col}, instr(${col}, '/') + 1)`;
+  // 截取第一段（到第一个 / 之前），用于判断年份在前还是后
+  const firstSeg = `substr(${col}, 1, instr(${col} || '/', '/') - 1)`;
+  // 第二段：去掉第一段后的剩余，取到下一个 / 之前
+  const afterFirst = `substr(${col}, instr(${col} || '/', '/') + 1)`;
+  const secondSeg = `substr(${afterFirst}, 1, instr(${afterFirst} || '/', '/') - 1)`;
+  // 第三段：去掉第二段后的剩余
+  const afterSecond = `substr(${afterFirst}, instr(${afterFirst} || '/', '/') + 1)`;
   return `CASE
-    WHEN ${col} LIKE '%/%' THEN printf(
-      '20%02d-%02d-%02d',
-      CAST(substr(${rest}, instr(${rest}, '/') + 1) AS INTEGER),
-      CAST(substr(${col}, 1, instr(${col}, '/') - 1) AS INTEGER),
-      CAST(substr(${rest}, 1, instr(${rest}, '/') - 1) AS INTEGER)
-    )
+    WHEN ${col} GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' THEN substr(${col}, 1, 10)
+    WHEN length(${col}) = 7 AND substr(${col}, 5, 1) = '-' THEN ${col} || '-01'
+    WHEN ${col} LIKE '%/%' AND length(${firstSeg}) = 4 THEN
+      printf('%04d-%02d-%02d',
+        CAST(${firstSeg} AS INTEGER),
+        CAST(${secondSeg} AS INTEGER),
+        CAST(${afterSecond} AS INTEGER))
+    WHEN ${col} LIKE '%/%' AND length(${firstSeg}) <= 2 AND length(${afterSecond}) = 4 THEN
+      printf('%04d-%02d-%02d',
+        CAST(${afterSecond} AS INTEGER),
+        CAST(${firstSeg} AS INTEGER),
+        CAST(${secondSeg} AS INTEGER))
+    WHEN ${col} LIKE '%/%' AND length(${firstSeg}) <= 2 AND length(${afterSecond}) = 2 THEN
+      printf('%s%02d-%02d-%02d',
+        CASE WHEN CAST(${afterSecond} AS INTEGER) <= 69 THEN '20' ELSE '19' END,
+        CAST(${afterSecond} AS INTEGER),
+        CAST(${firstSeg} AS INTEGER),
+        CAST(${secondSeg} AS INTEGER))
     ELSE substr(${col}, 1, 10)
   END`;
 }
@@ -1403,6 +2142,53 @@ function getBrandTargetMonths(brand, skuTargetTurnover, cfg) {
   const found = Object.keys(c).find(k => k && k.toLowerCase() === b.toLowerCase());
   if (found) return parseFloat(c[found]);
   return parseFloat(c['__default__'] != null ? c['__default__'] : 3);
+}
+
+// A-Step1：多维目标周转配置（品牌/国家/仓库 命中）
+// 读取 dim_default_config（JSON 数组），每条 = {brand,country,warehouse,online_turnover,offline_turnover}，空字符串=通配
+function getDimTurnoverConfig() {
+  try {
+    const row = queryOne("SELECT value FROM system_config WHERE key = 'dim_default_config'");
+    if (row && row.value) {
+      const arr = JSON.parse(row.value);
+      if (Array.isArray(arr) && arr.length) return arr;
+    }
+  } catch (e) {}
+  return null; // 返回 null → 调用方回退旧逻辑（兼容）
+}
+
+// 多维命中：评分法 brand=4/country=2/warehouse=1，8 组合得分 0~7 无平局
+// 返回最高分规则对象，或 null（无匹配 → 回退旧逻辑）
+function getDimTurnover(brand, country, warehouse, rules) {
+  if (!rules || !rules.length) return null;
+  const b = (brand || '').trim();
+  const c = (country || '').trim();
+  const w = (warehouse || '').trim();
+  let best = null, bestScore = -1;
+  for (const r of rules) {
+    const rb = (r.brand || '').trim();
+    const rc = (r.country || '').trim();
+    const rw = (r.warehouse || '').trim();
+    if ((rb === '' || rb === b) && (rc === '' || rc === c) && (rw === '' || rw === w)) {
+      let score = 0;
+      if (rb !== '') score += 4;
+      if (rc !== '') score += 2;
+      if (rw !== '') score += 1;
+      if (score > bestScore) { bestScore = score; best = r; }
+    }
+  }
+  return best;
+}
+
+// 品牌采购状态映射（停采品牌系统级规则）：一次查询，返回 { [brand]: 'active'|'stopped' }
+// 未出现在 brand_settings 中的品牌一律视为 'active'（可采购）
+function getBrandStatusMap() {
+  const rows = query('SELECT brand, procurement_status FROM brand_settings').rows;
+  const map = {};
+  for (const r of rows) {
+    map[(r.brand || '').trim()] = (r.procurement_status || 'active');
+  }
+  return map;
 }
 
 // 是否已过新品保护期。参考日期优先级：launch_date > first_inbound_date > first_sale_date
@@ -1443,6 +2229,47 @@ function buildAiAdvice(sales_status, risk_tags, passedProtection) {
     advice += ' ' + risk_tags.map(t => RISK[t] || '').filter(Boolean).join(' ');
   }
   return advice.trim();
+}
+
+// 缺货销量失真检测（纯函数）
+// 判断近期销量骤降是否由缺货导致，返回修正基准销量
+function detectStockoutDistortion(m1, m2, m3, m4, available) {
+  const months = [m1, m2, m3, m4];   // m1=本月, m2=上月, m3=上上月, m4=4个月前
+  const maxSales = Math.max(...months);
+  const avg = (m1 + m2 + m3 + m4) / 4;
+  const recentAvg = (m1 + m2) / 2;   // 最近2个月平均
+  const earlyMax = Math.max(m3, m4); // 早期最高
+
+  const isDistorted =
+    available <= 0              &&  // 当前可用库存=0
+    avg > 0                     &&  // 有销量数据（排除无销量SKU）
+    maxSales >= avg * 2         &&  // 最高月销量 >= 月均×2
+    recentAvg < earlyMax * 0.5;     // 最近销量 < 前期最高×50%
+
+  return {
+    isDistorted,
+    adjustedAvg: isDistorted ? maxSales : avg,
+    maxSales,
+    reason: isDistorted
+      ? '销量失真：当前可用库存为0，近期销量可能被缺货压低，已按过去4个月最高月销量作为补货参考。'
+      : ''
+  };
+}
+
+// 规范化 risk_tags（兼容数组和逗号字符串）
+function normalizeRiskTags(risk_tags) {
+  if (Array.isArray(risk_tags)) return risk_tags.map(t => String(t).trim()).filter(Boolean);
+  if (typeof risk_tags === 'string') return risk_tags.split(',').map(t => t.trim()).filter(Boolean);
+  return [];
+}
+
+// 业务拦截：判断是否应该阻止自动补货
+function shouldBlockReplenish(sales_status, risk_tags) {
+  const tags = normalizeRiskTags(risk_tags);
+  if (['清仓','停采/停产','无有效销售','呆滞','慢销'].includes(sales_status)) return true;
+  if (tags.includes('高库存严重') || tags.includes('高库存关注') || tags.includes('高库龄风险')) return true;
+  if (tags.includes('新品无销量')) return true;
+  return false;
 }
 
 // 统一动销状态判定（纯函数，不查库）
@@ -1528,10 +2355,13 @@ app.get('/api/replenishment-suggestions/summary', requireApiPermission('replenis
   const totalPool = rows.reduce((s, r) => s + (r.total_inventory_pool || 0), 0);
   const totalSales4m = rows.reduce((s, r) => s + (r.sales_m1 || 0) + (r.sales_m2 || 0) + (r.sales_m3 || 0) + (r.sales_m4 || 0), 0);
   const avgSales4m = rows.length > 0 ? rows.reduce((s, r) => s + (r.avg_sales_4m || 0), 0) / rows.length : 0;
-  // 预计周转月数：只统计月均销量>0的动销SKU，排除无销量SKU避免失真
-  const activeSkus = rows.filter(r => (r.avg_sales_4m || 0) > 0);
+  // D1：按销量统计周期计算的月均销量（仅展示层使用）；预计周转月数仍沿用 4 个月口径
+  const avgSalesPeriod = rows.length > 0 ? rows.reduce((s, r) => s + (r.avg_sales_period || 0), 0) / rows.length : 0;
+  // 预计周转月数（展示口径=销量统计周期 period）：只统计月均销量>0的动销SKU，排除无销量SKU避免失真
+  // ⚠️ 仅改展示口径，不影响 target_stock / suggested_qty / PUT 重算 / PO 链路（采购仍按 4 个月口径）
+  const activeSkus = rows.filter(r => (r.avg_sales_period || 0) > 0);
   const activePool = activeSkus.reduce((s, r) => s + (r.total_inventory_pool || 0), 0);
-  const activeAvgSales = activeSkus.reduce((s, r) => s + (r.avg_sales_4m || 0), 0);
+  const activeAvgSales = activeSkus.reduce((s, r) => s + (r.avg_sales_period || 0), 0);
   const overallTurnover = activeAvgSales > 0 ? activePool / activeAvgSales : 99;
   const needReplenish = rows.filter(r => (r.suggested_qty || 0) > 0 && (r.lifecycle_status || '') !== 'clearance').length;
   const stockoutRisk = rows.filter(r => (r.risk_level || '') === '严重缺货' || (r.risk_level || '') === '缺货风险').length;
@@ -1539,6 +2369,7 @@ app.get('/api/replenishment-suggestions/summary', requireApiPermission('replenis
   res.json({
     totalSkus, totalPool, totalSales4m,
     avgSales4m: Math.round(avgSales4m * 100) / 100,
+    avgSalesPeriod: Math.round(avgSalesPeriod * 100) / 100,
     overallTurnover: Math.round(overallTurnover * 10) / 10,
     needReplenish, stockoutRisk, highStock
   });
@@ -1620,7 +2451,12 @@ app.get('/api/replenishment-suggestions/daily-sales', requireApiPermission('repl
 
 app.get('/api/replenishment-suggestions', requireApiPermission('replenishment_view'), (req, res) => {
   const { country, warehouse, brand, keyword } = req.query;
-  let sql = `SELECT rs.*, s.product_name, s.brand, s.category, s.model, s.standard_purchase_price, s.qty_per_carton, s.purchase_currency, i.last_inbound_date FROM replenishment_suggestions rs LEFT JOIN skus s ON rs.sku_code = s.sku_code LEFT JOIN inventory i ON rs.sku_code = i.sku_code AND rs.country = i.country AND rs.target_warehouse = i.warehouse WHERE 1=1`;
+  let sql = `SELECT rs.*, s.product_name, s.brand, s.category, s.model, s.standard_purchase_price, s.qty_per_carton, s.purchase_currency, i.last_inbound_date,
+    i.available_qty AS inv_available_qty,
+    i.in_transit_qty AS inv_in_transit_qty,
+    i.pi_confirmed_unshipped_qty AS inv_pi_confirmed_unshipped_qty,
+    i.po_unconfirmed_pi_qty AS inv_po_unconfirmed_pi_qty
+    FROM replenishment_suggestions rs LEFT JOIN skus s ON rs.sku_code = s.sku_code LEFT JOIN inventory i ON rs.sku_code = i.sku_code AND rs.country = i.country AND rs.target_warehouse = i.warehouse WHERE 1=1`;
   const params = [];
   if (country) { sql += ' AND rs.country = ?'; params.push(country); }
   if (warehouse) { sql += ' AND rs.target_warehouse = ?'; params.push(warehouse); }
@@ -1638,6 +2474,18 @@ app.get('/api/replenishment-suggestions', requireApiPermission('replenishment_vi
       }
     }
     r.days_since_last_inbound = daysSince;
+    // 方案B（2026-07-11）：订单预测页 4 字段直接读 inventory 实时值，不再依赖 generate 快照。
+    // 仅覆盖 PO未确认PI / PI已确认未发货 / 在途 / 总库存池；inventory 行缺失时回退 rs 快照（兼容 D3 无库存行）。
+    // 不动 available_qty 列显示（仍读 rs 快照，归属逻辑不变），但总库存池用实时 available 作基数重算。
+    const liveAvail = (r.inv_available_qty != null) ? r.inv_available_qty : r.available_qty;
+    const liveTransit = (r.inv_in_transit_qty != null) ? r.inv_in_transit_qty : r.in_transit_qty;
+    const livePi = (r.inv_pi_confirmed_unshipped_qty != null) ? r.inv_pi_confirmed_unshipped_qty : r.pi_confirmed_unshipped_qty;
+    const livePo = (r.inv_po_unconfirmed_pi_qty != null) ? r.inv_po_unconfirmed_pi_qty : r.po_unconfirmed_pi_qty;
+    r.in_transit_qty = liveTransit;
+    r.pi_confirmed_unshipped_qty = livePi;
+    r.po_unconfirmed_pi_qty = livePo;
+    r.total_inventory_pool = (liveAvail || 0) + (liveTransit || 0) + (livePi || 0) + (livePo || 0);
+    delete r.inv_available_qty; delete r.inv_in_transit_qty; delete r.inv_pi_confirmed_unshipped_qty; delete r.inv_po_unconfirmed_pi_qty;
     return r;
   });
   res.json(rows);
@@ -1649,7 +2497,13 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
     const { country, warehouse, brand } = req.body;
     const targetMonths = parseFloat(queryOne("SELECT value FROM system_config WHERE key = 'target_stock_months'")?.value || '4');
     const leadTimeMonths = parseFloat(queryOne("SELECT value FROM system_config WHERE key = 'lead_time_months'")?.value || '2');
-    const brandTargetCfg = loadBrandTargetConfig(); // 品牌目标周转配置（Redragon=4,Netac=2,默认3）
+    // D1：销量统计周期（天），仅用于计算 period 月均（展示层），默认 90
+    const salesStatsDays = parseInt(queryOne("SELECT value FROM system_config WHERE key = 'sales_stats_days'")?.value || '90');
+    // 全局默认目标周转（预测参数设置维护），为空时回退品牌默认值
+    const onlineDefault = parseFloat(queryOne("SELECT value FROM system_config WHERE key = 'online_target_turnover_default'")?.value || '0');
+    const offlineDefault = parseFloat(queryOne("SELECT value FROM system_config WHERE key = 'offline_target_turnover_default'")?.value || '0');
+    const brandTargetCfg = loadBrandTargetConfig(); // 品牌目标周转配置（Redragon=4,Netac=2,默认3）— 兼容回退用
+    const dimCfg = getDimTurnoverConfig(); // A-Step1：多维目标周转配置（优先命中，未命中回退旧逻辑）
 
     // 获取所有有库存记录的SKU
     let invSql = `SELECT DISTINCT i.sku_code, i.country, i.warehouse, i.available_qty, i.in_transit_qty, i.pi_confirmed_unshipped_qty, i.po_unconfirmed_pi_qty, i.last_inbound_date, i.first_inbound_date, i.target_turnover_months FROM inventory i LEFT JOIN skus s ON i.sku_code = s.sku_code WHERE 1=1`;
@@ -1673,11 +2527,33 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
       });
     }
 
+    // 品牌采购状态映射（停采品牌系统级规则）：品牌停采的 SKU 不要求命中 dim 规则、不阻止整页重算
+    const bstatus = getBrandStatusMap();
+    // A-Step1 收口：预检——所有待处理 SKU 必须命中 dim_default_config，未命中则阻止重算（不偷偷用兜底值）
+    const unmatchedMap = {};
+    for (const inv of inventoryItems) {
+      const skuPre = queryOne('SELECT brand, status FROM skus WHERE sku_code = ?', [inv.sku_code]);
+      if (!skuPre || skuPre.status === 'stopped') continue;
+      if ((bstatus[(skuPre.brand || '').trim()] || 'active') === 'stopped') continue; // 品牌停采跳过预检
+      const hit = getDimTurnover(skuPre.brand, inv.country, inv.warehouse, dimCfg);
+      if (!hit) {
+        const key = (skuPre.brand || '(无品牌)') + '|' + (inv.country || '') + '|' + (inv.warehouse || '');
+        if (!unmatchedMap[key]) unmatchedMap[key] = { brand: skuPre.brand || '', country: inv.country || '', warehouse: inv.warehouse || '', count: 0 };
+        unmatchedMap[key].count++;
+      }
+    }
+    const unmatchedList = Object.values(unmatchedMap);
+    if (unmatchedList.length) {
+      return res.json({ success: false, unmatched: unmatchedList });
+    }
+
     transaction(() => {
       inventoryItems.forEach(inv => {
         const sku = queryOne('SELECT * FROM skus WHERE sku_code = ?', [inv.sku_code]);
         if (!sku) return;
         if (sku.status === 'stopped') return;
+        // 品牌停采（系统级规则）：仍写入预测表保持可见，但建议采购强制为 0、不参与补货、不要求命中 dim 规则
+        const brandStopped = (bstatus[(sku.brand || '').trim()] || 'active') === 'stopped';
 
         // 计算近4个月销量（从销售明细表汇总，is_valid_order=1）
         const salesMap = {};
@@ -1722,6 +2598,25 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
         const offline_sales_m4 = offlineSalesMap.m4 || 0;
         const offline_avg_sales_4m = (offline_sales_m1 + offline_sales_m2 + offline_sales_m3 + offline_sales_m4) / 4;
 
+        // D1：销量统计周期月均（近 salesStatsDays 天有效销量 ÷ 天数 × 30），仅用于展示层
+        const periodStart = new Date(now.getTime() - salesStatsDays * 86400000).toISOString().split('T')[0];
+        const periodEnd = now.toISOString().split('T')[0];
+        const totalPeriodSales = queryOne(
+          `SELECT COALESCE(SUM(quantity), 0) as cnt FROM sales_records WHERE sku_code = ? AND ${salesDate} >= ? AND ${salesDate} <= ? AND is_valid_order = 1`,
+          [inv.sku_code, periodStart, periodEnd]
+        )?.cnt || 0;
+        const onlinePeriodSales = queryOne(
+          `SELECT COALESCE(SUM(quantity), 0) as cnt FROM sales_records WHERE sku_code = ? AND ${salesDate} >= ? AND ${salesDate} <= ? AND is_valid_order = 1 AND (shop_platform LIKE '%线上%' OR lower(COALESCE(shop_platform, '')) = 'online')`,
+          [inv.sku_code, periodStart, periodEnd]
+        )?.cnt || 0;
+        const offlinePeriodSales = queryOne(
+          `SELECT COALESCE(SUM(quantity), 0) as cnt FROM sales_records WHERE sku_code = ? AND ${salesDate} >= ? AND ${salesDate} <= ? AND is_valid_order = 1 AND (shop_platform LIKE '%线下%' OR lower(COALESCE(shop_platform, '')) = 'offline')`,
+          [inv.sku_code, periodStart, periodEnd]
+        )?.cnt || 0;
+        const avg_sales_period = salesStatsDays > 0 ? totalPeriodSales / salesStatsDays * 30 : 0;
+        const online_avg_sales_period = salesStatsDays > 0 ? onlinePeriodSales / salesStatsDays * 30 : 0;
+        const offline_avg_sales_period = salesStatsDays > 0 ? offlinePeriodSales / salesStatsDays * 30 : 0;
+
         const avail = inv.available_qty || 0;
         const transit = inv.in_transit_qty || 0;
         const piUnshipped = inv.pi_confirmed_unshipped_qty || 0;
@@ -1744,8 +2639,12 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
           const ld = new Date(last_inbound_date);
           if (!isNaN(ld.getTime())) days_since_last_inbound = Math.floor((now - ld) / 86400000);
         }
-        // 品牌目标周转：SKU手动 > 品牌默认 > 系统默认3
-        const brand_target_months = getBrandTargetMonths(sku.brand, inv.target_turnover_months, brandTargetCfg);
+        // A-Step1 收口：目标周转值来源——dim 命中（预检已保证非 null，不再回退旧逻辑/兜底值）
+        // 品牌停采时可能无命中规则（预检已跳过），用中性兜底仅供展示列，不影响采购（建议采购会强制为 0）
+        const dimHit = getDimTurnover(sku.brand, inv.country, inv.warehouse, dimCfg) || { online_turnover: 3, offline_turnover: 3 };
+        const online_target_turnover = dimHit.online_turnover;
+        const offline_target_turnover = dimHit.offline_turnover;
+        const classifyTarget = dimHit.online_turnover;
 
         // 生命周期策略系数
         const lifecycle = sku.lifecycle_status || 'stable';
@@ -1759,31 +2658,34 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
         // 当前周转（总月均=0时显示99，前端会处理为"无销量"）
         const current_turnover_months = avg_sales_4m > 0 ? total_inventory_pool / avg_sales_4m : 99;
 
-        // 线上/线下目标周转月数（默认2，保留用户已设置的值）
+        // existing_rs：读取历史 other_target_stock / final_order_qty（目标周转已在上文按维度命中/回退确定）
         const existing_rs = queryOne('SELECT id, online_target_turnover, offline_target_turnover, other_target_stock, final_order_qty, user_adjusted_qty FROM replenishment_suggestions WHERE sku_code = ? AND country = ? AND target_warehouse = ?', [inv.sku_code, inv.country, inv.warehouse]);
-        const online_target_turnover = (existing_rs && existing_rs.online_target_turnover != null && existing_rs.online_target_turnover > 0) ? existing_rs.online_target_turnover : brand_target_months;
-        const offline_target_turnover = (existing_rs && existing_rs.offline_target_turnover != null && existing_rs.offline_target_turnover > 0) ? existing_rs.offline_target_turnover : brand_target_months;
         const other_target_stock = (existing_rs && existing_rs.other_target_stock != null) ? existing_rs.other_target_stock : 0;
 
-        // 目标库存计算
-        const online_target_stock = Math.round(online_avg_sales_4m * online_target_turnover);
-        const offline_target_stock = Math.round(offline_avg_sales_4m * offline_target_turnover);
+        // 缺货销量失真检测：如果近期销量骤降由缺货导致，用断货前最高月销量修正基准
+        const onlineDist = detectStockoutDistortion(online_sales_m1, online_sales_m2, online_sales_m3, online_sales_m4, avail);
+        const offlineDist = detectStockoutDistortion(offline_sales_m1, offline_sales_m2, offline_sales_m3, offline_sales_m4, avail);
+
+        // 目标库存计算：基数取销量统计周期月均；若命中缺货销量失真，则用断货前峰值修正基准（回归修复：P4 统一口径时误删的特殊分支）
+        const online_base_avg = onlineDist.isDistorted ? onlineDist.adjustedAvg : online_avg_sales_period;
+        const offline_base_avg = offlineDist.isDistorted ? offlineDist.adjustedAvg : offline_avg_sales_period;
+        const online_target_stock = Math.round(online_base_avg * online_target_turnover);
+        const offline_target_stock = Math.round(offline_base_avg * offline_target_turnover);
         const total_target_stock = online_target_stock + offline_target_stock + other_target_stock;
 
-        // 系统建议补货 = MAX(总目标库存 - 总库存池, 0) × 生命周期系数
-        const rawSuggested = Math.max(0, total_target_stock - total_inventory_pool);
-        const suggested_qty = Math.round(rawSuggested * lifecycleCoeff);
+        // suggested_qty 在 classifyResult 之后经过业务拦截重新计算，此处先用临时值
+        let suggested_qty = Math.round(Math.max(0, total_target_stock - total_inventory_pool));
 
         // MOQ和箱规修正
-        const moqQty = (sku.qty_per_carton > 0 && suggested_qty > 0) ? Math.ceil(suggested_qty / sku.qty_per_carton) * sku.qty_per_carton : suggested_qty;
+        let moqQty = (sku.qty_per_carton > 0 && suggested_qty > 0) ? Math.ceil(suggested_qty / sku.qty_per_carton) * sku.qty_per_carton : suggested_qty;
 
         // 最终下单数量（默认=系统建议补货，保留用户已设置的值）
-        const final_order_qty = (existing_rs && existing_rs.final_order_qty != null && existing_rs.final_order_qty >= 0) ? existing_rs.final_order_qty : suggested_qty;
+        let final_order_qty = (existing_rs && existing_rs.final_order_qty != null && existing_rs.final_order_qty >= 0) ? existing_rs.final_order_qty : suggested_qty;
 
         // 订单后周转 = (总库存池 + 最终下单数量) ÷ 总月均
-        const after_order_turnover_months = avg_sales_4m > 0 ? (total_inventory_pool + final_order_qty) / avg_sales_4m : 99;
-        const onlineAfterOrder = online_avg_sales_4m > 0 ? (total_inventory_pool + final_order_qty) / online_avg_sales_4m : 99;
-        const offlineAfterOrder = offline_avg_sales_4m > 0 ? (total_inventory_pool + final_order_qty) / offline_avg_sales_4m : 99;
+        let after_order_turnover_months = avg_sales_period > 0 ? (total_inventory_pool + final_order_qty) / avg_sales_period : 99;
+        let onlineAfterOrder = online_avg_sales_period > 0 ? (total_inventory_pool + final_order_qty) / online_avg_sales_period : 99;
+        let offlineAfterOrder = offline_avg_sales_period > 0 ? (total_inventory_pool + final_order_qty) / offline_avg_sales_period : 99;
 
         // 风险等级
         let risk_level = '';
@@ -1807,25 +2709,8 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
         const arrDate = new Date(now.getFullYear(), now.getMonth() + Math.ceil(leadTimeMonths), 1);
         const arrival_month = `${arrDate.getFullYear()}-${String(arrDate.getMonth() + 1).padStart(2, '0')}`;
 
-        // 建议动作
+        // 建议动作（suggested_qty 确定后再计算）
         let suggestion = '';
-        if (lifecycle === 'new_test') {
-          suggestion = '新品导入，不直接生成PO';
-        } else if (lifecycle === 'new_launch') {
-          suggestion = suggested_qty > 0 ? `新品启动，建议备货 ${suggested_qty}` : '新品启动，库存观察中';
-        } else if (lifecycle === 'stagnant') {
-          suggestion = '滞销SKU，暂缓补货';
-        } else if (lifecycle === 'clearance' || sku.status === 'clearance') {
-          suggestion = '清仓中，不建议补货';
-        } else if (lifecycle === 'stopped') {
-          suggestion = '停采/停产，不参与补货建议';
-        } else if (avg_sales_4m === 0) {
-          suggestion = '无销量数据';
-        } else if (suggested_qty > 0) {
-          suggestion = `建议采购 ${suggested_qty}`;
-        } else {
-          suggestion = '库存充足';
-        }
 
         // 动销分组
         let sales_group = '';
@@ -1849,21 +2734,94 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
           total_sales_ever,
           days_since_last_inbound: days_since_last_inbound,
           last_inbound_date,
-          target_months: brand_target_months
+          target_months: classifyTarget
         });
-        const sales_status = classifyResult.sales_status;
+        let sales_status = classifyResult.sales_status;
+        // 缺货销量失真后处理：追加标签和说明
+        if (onlineDist.isDistorted || offlineDist.isDistorted) {
+          classifyResult.risk_tags.push('销量失真');
+          classifyResult.sales_reason = onlineDist.isDistorted
+            ? onlineDist.reason
+            : offlineDist.reason;
+        }
+        // 新品无销量标记
+        if (sales_status === '新品/销售数据不足' && sales_30d === 0 && sales_90d === 0) {
+          classifyResult.risk_tags.push('新品无销量');
+        }
         const risk_tags = classifyResult.risk_tags.join(',');
-        const sales_reason = classifyResult.sales_reason;
-        const action_text = classifyResult.action;
+        let sales_reason = classifyResult.sales_reason;
+        let action_text = classifyResult.action;
         const ai_business_advice = classifyResult.ai_business_advice;
+
+        // === 最终建议采购数量（经过业务拦截）===
+        // 单源口径：拆成 线上/线下/其他 三个分量落库，suggested_qty = 三分量之和。
+        // 这样 总预测页(Σ suggested_qty) = 线上页(Σ online_suggested_qty) + 线下页(Σ offline_suggested_qty) + 其他页(Σ other_suggested_qty) 严格成立；
+        // other=0 时即满足「总预测 = 线上 + 线下」（整型分量分别取整后相加，无取整误差）。
+        const blocked = shouldBlockReplenish(sales_status, classifyResult.risk_tags);
+        let online_suggested_qty = 0, offline_suggested_qty = 0, other_suggested_qty = 0;
+        if (!blocked) {
+          // 渠道分摊库存（按销量占比分摊，与前端口径一致）
+          const online_pct = avg_sales_period > 0 ? (online_avg_sales_period / avg_sales_period) : 0;
+          const offline_pct = avg_sales_period > 0 ? (offline_avg_sales_period / avg_sales_period) : 0;
+          const online_allocated = Math.round(total_inventory_pool * online_pct);
+          const offline_allocated = Math.round(total_inventory_pool * offline_pct);
+          const online_base = Math.max(0, online_target_stock - online_allocated);
+          const offline_base = Math.max(0, offline_target_stock - offline_allocated);
+          const other_final = other_target_stock || 0;
+          online_suggested_qty = Math.round(online_base);
+          offline_suggested_qty = Math.round(offline_base);
+          other_suggested_qty = Math.round(other_final);
+        }
+        suggested_qty = online_suggested_qty + offline_suggested_qty + other_suggested_qty;
+        // 重新计算依赖 suggested_qty 的字段
+        moqQty = (sku.qty_per_carton > 0 && suggested_qty > 0) ? Math.ceil(suggested_qty / sku.qty_per_carton) * sku.qty_per_carton : suggested_qty;
+        final_order_qty = (existing_rs && existing_rs.final_order_qty != null && existing_rs.final_order_qty >= 0) ? existing_rs.final_order_qty : suggested_qty;
+        after_order_turnover_months = avg_sales_period > 0 ? (total_inventory_pool + final_order_qty) / avg_sales_period : 99;
+        onlineAfterOrder = online_avg_sales_period > 0 ? (total_inventory_pool + final_order_qty) / online_avg_sales_period : 99;
+        offlineAfterOrder = offline_avg_sales_period > 0 ? (total_inventory_pool + final_order_qty) / offline_avg_sales_period : 99;
+        // 重新计算 suggestion
+        if (lifecycle === 'new_test') {
+          suggestion = '新品导入，不直接生成PO';
+        } else if (lifecycle === 'new_launch') {
+          suggestion = suggested_qty > 0 ? `新品启动，建议备货 ${suggested_qty}` : '新品启动，库存观察中';
+        } else if (lifecycle === 'stagnant') {
+          suggestion = '滞销SKU，暂缓补货';
+        } else if (lifecycle === 'clearance' || sku.status === 'clearance') {
+          suggestion = '清仓中，不建议补货';
+        } else if (lifecycle === 'stopped') {
+          suggestion = '停采/停产，不参与补货建议';
+        } else if (avg_sales_4m === 0) {
+          suggestion = '无销量数据';
+        } else if (suggested_qty > 0) {
+          suggestion = `建议采购 ${suggested_qty}`;
+        } else {
+          suggestion = '库存充足';
+        }
+
+        // 品牌停采（系统级规则）后置覆盖：强制不补货、保持可见便于清库存
+        if (brandStopped) {
+          sales_status = '停采/清库存';
+          sales_reason = '品牌已设为停采（停止合作），不参与补货建议，优先消化库存';
+          action_text = '停止采购，优先清库存';
+          suggested_qty = 0;
+          online_suggested_qty = 0;
+          offline_suggested_qty = 0;
+          other_suggested_qty = 0;
+          final_order_qty = 0;
+          moqQty = 0;
+          suggestion = '品牌已停采，不参与补货建议，优先消化库存';
+          after_order_turnover_months = avg_sales_period > 0 ? total_inventory_pool / avg_sales_period : 99;
+          onlineAfterOrder = online_avg_sales_period > 0 ? total_inventory_pool / online_avg_sales_period : 99;
+          offlineAfterOrder = offline_avg_sales_period > 0 ? total_inventory_pool / offline_avg_sales_period : 99;
+        }
 
         if (existing_rs) {
           run(`UPDATE replenishment_suggestions SET
             available_qty=?, in_transit_qty=?, pi_confirmed_unshipped_qty=?, po_unconfirmed_pi_qty=?,
-            total_inventory_pool=?, sales_m1=?, sales_m2=?, sales_m3=?, sales_m4=?, avg_sales_4m=?,
+            total_inventory_pool=?, sales_m1=?, sales_m2=?, sales_m3=?, sales_m4=?, avg_sales_4m=?, avg_sales_period=?, online_avg_sales_period=?, offline_avg_sales_period=?,
             online_sales_m1=?, online_sales_m2=?, online_sales_m3=?, online_sales_m4=?, online_avg_sales_4m=?,
             offline_sales_m1=?, offline_sales_m2=?, offline_sales_m3=?, offline_sales_m4=?, offline_avg_sales_4m=?,
-            current_turnover_months=?, suggested_qty=?, moq_qty=?, carton_adjusted_qty=?,
+            current_turnover_months=?, suggested_qty=?, online_suggested_qty=?, offline_suggested_qty=?, other_suggested_qty=?, moq_qty=?, carton_adjusted_qty=?,
             after_order_turnover_months=?, online_after_order_turnover_months=?, offline_after_order_turnover_months=?,
             target_stock_months=?, risk_level=?, arrival_month=?,
             suggestion=?, is_new_product=?, lifecycle_status=?, sales_group=?,
@@ -1873,10 +2831,10 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
             sales_status=?, risk_tags=?, sales_reason=?, action=?, ai_business_advice=?
             WHERE id=?`,
             [avail, transit, piUnshipped, poUnconfirmed,
-             total_inventory_pool, sales_m1, sales_m2, sales_m3, sales_m4, Math.round(avg_sales_4m * 100) / 100,
+             total_inventory_pool, sales_m1, sales_m2, sales_m3, sales_m4, Math.round(avg_sales_4m * 100) / 100, Math.round(avg_sales_period * 100) / 100, Math.round(online_avg_sales_period * 100) / 100, Math.round(offline_avg_sales_period * 100) / 100,
              online_sales_m1, online_sales_m2, online_sales_m3, online_sales_m4, Math.round(online_avg_sales_4m * 100) / 100,
              offline_sales_m1, offline_sales_m2, offline_sales_m3, offline_sales_m4, Math.round(offline_avg_sales_4m * 100) / 100,
-             Math.round(current_turnover_months * 10) / 10, suggested_qty, moqQty, moqQty,
+             Math.round(current_turnover_months * 10) / 10, suggested_qty, online_suggested_qty, offline_suggested_qty, other_suggested_qty, moqQty, moqQty,
              Math.round(after_order_turnover_months * 10) / 10, Math.round(onlineAfterOrder * 10) / 10, Math.round(offlineAfterOrder * 10) / 10,
              targetMonths, risk_level, arrival_month,
              suggestion, sku.is_new_product === 1 ? 1 : 0, sku.lifecycle_status || '', sales_group,
@@ -1889,10 +2847,11 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
           const insertColumns = [
             'id', 'sku_code', 'country', 'target_warehouse', 'available_qty', 'in_transit_qty',
             'pi_confirmed_unshipped_qty', 'po_unconfirmed_pi_qty', 'total_inventory_pool',
-            'sales_m1', 'sales_m2', 'sales_m3', 'sales_m4', 'avg_sales_4m',
+            'sales_m1', 'sales_m2', 'sales_m3', 'sales_m4', 'avg_sales_4m', 'avg_sales_period', 'online_avg_sales_period', 'offline_avg_sales_period',
             'online_sales_m1', 'online_sales_m2', 'online_sales_m3', 'online_sales_m4', 'online_avg_sales_4m',
             'offline_sales_m1', 'offline_sales_m2', 'offline_sales_m3', 'offline_sales_m4', 'offline_avg_sales_4m',
             'current_turnover_months', 'suggested_qty', 'moq_qty', 'carton_adjusted_qty',
+            'online_suggested_qty', 'offline_suggested_qty', 'other_suggested_qty',
             'after_order_turnover_months', 'online_after_order_turnover_months', 'offline_after_order_turnover_months',
             'target_stock_months', 'risk_level', 'arrival_month', 'suggestion',
             'is_new_product', 'lifecycle_status', 'sales_group', 'user_adjusted_qty', 'generate_po',
@@ -1903,10 +2862,11 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
           const insertValues = [
             genId('rs'), inv.sku_code, inv.country, inv.warehouse, avail, transit,
             piUnshipped, poUnconfirmed, total_inventory_pool,
-            sales_m1, sales_m2, sales_m3, sales_m4, Math.round(avg_sales_4m * 100) / 100,
+            sales_m1, sales_m2, sales_m3, sales_m4, Math.round(avg_sales_4m * 100) / 100, Math.round(avg_sales_period * 100) / 100, Math.round(online_avg_sales_period * 100) / 100, Math.round(offline_avg_sales_period * 100) / 100,
             online_sales_m1, online_sales_m2, online_sales_m3, online_sales_m4, Math.round(online_avg_sales_4m * 100) / 100,
             offline_sales_m1, offline_sales_m2, offline_sales_m3, offline_sales_m4, Math.round(offline_avg_sales_4m * 100) / 100,
             Math.round(current_turnover_months * 10) / 10, suggested_qty, moqQty, moqQty,
+            online_suggested_qty, offline_suggested_qty, other_suggested_qty,
             Math.round(after_order_turnover_months * 10) / 10, Math.round(onlineAfterOrder * 10) / 10, Math.round(offlineAfterOrder * 10) / 10,
             targetMonths, risk_level, arrival_month, suggestion,
             sku.is_new_product === 1 ? 1 : 0, sku.lifecycle_status || '', sales_group, -1, 0,
@@ -1936,52 +2896,114 @@ app.put('/api/replenishment-suggestions/:id', requireApiPermission('replenishmen
     // generate_po
     if (d.generate_po !== undefined) { fields.push('generate_po = ?'); values.push(parseInt(d.generate_po) || 0); }
 
-    // 线上目标周转 → 重算线上目标库存 + 总目标库存 + 系统建议补货 + 订单后周转
+    // 线上目标周转 → 重算线上目标库存 + 三分量 + 系统建议补货 + 订单后周转（与 generate 同源）
     if (d.online_target_turnover !== undefined) {
-      const rs = queryOne('SELECT online_avg_sales_4m, offline_avg_sales_4m, offline_target_stock, other_target_stock, total_inventory_pool, avg_sales_4m, lifecycle_status, final_order_qty FROM replenishment_suggestions WHERE id = ?', [req.params.id]);
+      const rs = queryOne('SELECT online_avg_sales_period, offline_avg_sales_period, offline_target_stock, other_target_stock, total_inventory_pool, avg_sales_period, sales_status, risk_tags, final_order_qty FROM replenishment_suggestions WHERE id = ?', [req.params.id]);
       const onlineTurn = parseFloat(d.online_target_turnover) || 0;
-      const onlineStock = Math.round((rs.online_avg_sales_4m || 0) * onlineTurn);
-      const totalTarget = onlineStock + (rs.offline_target_stock || 0) + (rs.other_target_stock || 0);
+      const onlineStock = Math.round((rs.online_avg_sales_period || 0) * onlineTurn);
       const pool = rs.total_inventory_pool || 0;
-      const lifecycle = rs.lifecycle_status || 'stable';
-      const LIFECYCLE_COEFF = {'new_test':0,'new_launch':0.5,'growth':0.8,'stable':1.0,'slow':0.5,'stagnant':0,'clearance':0,'stopped':0};
-      const coeff = LIFECYCLE_COEFF[lifecycle] !== undefined ? LIFECYCLE_COEFF[lifecycle] : 1.0;
-      const rawSuggested = Math.max(0, totalTarget - pool);
-      const suggestedQty = Math.round(rawSuggested * coeff);
+      const avgPeriod = rs.avg_sales_period || 0;
+      const onlinePct = avgPeriod > 0 ? (rs.online_avg_sales_period || 0) / avgPeriod : 0;
+      const offlinePct = avgPeriod > 0 ? (rs.offline_avg_sales_period || 0) / avgPeriod : 0;
+      const blocked = shouldBlockReplenish(rs.sales_status || '', rs.risk_tags || '');
+      const isStopped = (rs.sales_status || '') === '停采/清库存';
+      let onComp, offComp, otherComp;
+      if (blocked || isStopped) { onComp = 0; offComp = 0; otherComp = 0; }
+      else {
+        onComp = Math.round(Math.max(0, onlineStock - Math.round(pool * onlinePct)));
+        offComp = Math.round(Math.max(0, (rs.offline_target_stock || 0) - Math.round(pool * offlinePct)));
+        otherComp = Math.round(rs.other_target_stock || 0);
+      }
+      const suggestedQty = onComp + offComp + otherComp;
       const foq = (rs.final_order_qty != null && rs.final_order_qty >= 0) ? rs.final_order_qty : suggestedQty;
-      const afterOrder = (rs.avg_sales_4m || 0) > 0 ? (pool + foq) / rs.avg_sales_4m : 99;
-      fields.push('online_target_turnover = ?', 'online_target_stock = ?', 'suggested_qty = ?', 'after_order_turnover_months = ?');
-      values.push(onlineTurn, onlineStock, suggestedQty, Math.round(afterOrder * 10) / 10);
+      const afterOrder = avgPeriod > 0 ? (pool + foq) / avgPeriod : 99;
+      fields.push('online_target_turnover = ?', 'online_target_stock = ?', 'online_suggested_qty = ?', 'offline_suggested_qty = ?', 'other_suggested_qty = ?', 'suggested_qty = ?', 'after_order_turnover_months = ?');
+      values.push(onlineTurn, onlineStock, onComp, offComp, otherComp, suggestedQty, Math.round(afterOrder * 10) / 10);
     }
 
-    // 线下目标周转 → 重算线下目标库存 + 总目标库存 + 系统建议补货 + 订单后周转
+    // 线下目标周转 → 重算线下目标库存 + 三分量 + 系统建议补货 + 订单后周转（与 generate 同源）
     if (d.offline_target_turnover !== undefined) {
-      const rs = queryOne('SELECT offline_avg_sales_4m, online_avg_sales_4m, online_target_stock, other_target_stock, total_inventory_pool, avg_sales_4m, lifecycle_status, final_order_qty FROM replenishment_suggestions WHERE id = ?', [req.params.id]);
+      const rs = queryOne('SELECT offline_avg_sales_period, online_avg_sales_period, online_target_stock, other_target_stock, total_inventory_pool, avg_sales_period, sales_status, risk_tags, final_order_qty FROM replenishment_suggestions WHERE id = ?', [req.params.id]);
       const offlineTurn = parseFloat(d.offline_target_turnover) || 0;
-      const offlineStock = Math.round((rs.offline_avg_sales_4m || 0) * offlineTurn);
-      const totalTarget = (rs.online_target_stock || 0) + offlineStock + (rs.other_target_stock || 0);
+      const offlineStock = Math.round((rs.offline_avg_sales_period || 0) * offlineTurn);
       const pool = rs.total_inventory_pool || 0;
-      const lifecycle = rs.lifecycle_status || 'stable';
-      const LIFECYCLE_COEFF = {'new_test':0,'new_launch':0.5,'growth':0.8,'stable':1.0,'slow':0.5,'stagnant':0,'clearance':0,'stopped':0};
-      const coeff = LIFECYCLE_COEFF[lifecycle] !== undefined ? LIFECYCLE_COEFF[lifecycle] : 1.0;
-      const rawSuggested = Math.max(0, totalTarget - pool);
-      const suggestedQty = Math.round(rawSuggested * coeff);
+      const avgPeriod = rs.avg_sales_period || 0;
+      const onlinePct = avgPeriod > 0 ? (rs.online_avg_sales_period || 0) / avgPeriod : 0;
+      const offlinePct = avgPeriod > 0 ? (rs.offline_avg_sales_period || 0) / avgPeriod : 0;
+      const blocked = shouldBlockReplenish(rs.sales_status || '', rs.risk_tags || '');
+      const isStopped = (rs.sales_status || '') === '停采/清库存';
+      let onComp, offComp, otherComp;
+      if (blocked || isStopped) { onComp = 0; offComp = 0; otherComp = 0; }
+      else {
+        onComp = Math.round(Math.max(0, (rs.online_target_stock || 0) - Math.round(pool * onlinePct)));
+        offComp = Math.round(Math.max(0, offlineStock - Math.round(pool * offlinePct)));
+        otherComp = Math.round(rs.other_target_stock || 0);
+      }
+      const suggestedQty = onComp + offComp + otherComp;
       const foq = (rs.final_order_qty != null && rs.final_order_qty >= 0) ? rs.final_order_qty : suggestedQty;
-      const afterOrder = (rs.avg_sales_4m || 0) > 0 ? (pool + foq) / rs.avg_sales_4m : 99;
-      fields.push('offline_target_turnover = ?', 'offline_target_stock = ?', 'suggested_qty = ?', 'after_order_turnover_months = ?');
-      values.push(offlineTurn, offlineStock, suggestedQty, Math.round(afterOrder * 10) / 10);
+      const afterOrder = avgPeriod > 0 ? (pool + foq) / avgPeriod : 99;
+      fields.push('offline_target_turnover = ?', 'offline_target_stock = ?', 'online_suggested_qty = ?', 'offline_suggested_qty = ?', 'other_suggested_qty = ?', 'suggested_qty = ?', 'after_order_turnover_months = ?');
+      values.push(offlineTurn, offlineStock, onComp, offComp, otherComp, suggestedQty, Math.round(afterOrder * 10) / 10);
     }
 
     // 最终下单数量 → 重算订单后周转
     if (d.final_order_qty !== undefined) {
-      const rs = queryOne('SELECT total_inventory_pool, avg_sales_4m, online_avg_sales_4m, offline_avg_sales_4m FROM replenishment_suggestions WHERE id = ?', [req.params.id]);
+      const rs = queryOne('SELECT total_inventory_pool, avg_sales_period, online_avg_sales_period, offline_avg_sales_period FROM replenishment_suggestions WHERE id = ?', [req.params.id]);
       const foq = parseInt(d.final_order_qty) || 0;
       const pool = rs.total_inventory_pool || 0;
-      const afterOrder = (rs.avg_sales_4m || 0) > 0 ? (pool + foq) / rs.avg_sales_4m : 99;
-      const onlineAfter = (rs.online_avg_sales_4m || 0) > 0 ? (pool + foq) / rs.online_avg_sales_4m : 99;
-      const offlineAfter = (rs.offline_avg_sales_4m || 0) > 0 ? (pool + foq) / rs.offline_avg_sales_4m : 99;
+      const afterOrder = (rs.avg_sales_period || 0) > 0 ? (pool + foq) / rs.avg_sales_period : 99;
+      const onlineAfter = (rs.online_avg_sales_period || 0) > 0 ? (pool + foq) / rs.online_avg_sales_period : 99;
+      const offlineAfter = (rs.offline_avg_sales_period || 0) > 0 ? (pool + foq) / rs.offline_avg_sales_period : 99;
       fields.push('final_order_qty = ?', 'after_order_turnover_months = ?', 'online_after_order_turnover_months = ?', 'offline_after_order_turnover_months = ?');
       values.push(foq, Math.round(afterOrder * 10) / 10, Math.round(onlineAfter * 10) / 10, Math.round(offlineAfter * 10) / 10);
+    }
+
+    // 线上建议采购数量（手动改线上目标库存）→ 重算线上分量 + 三分量（与 generate 同源）
+    if (d.online_target_stock !== undefined) {
+      const rs = queryOne('SELECT online_avg_sales_period, offline_avg_sales_period, avg_sales_period, total_inventory_pool, offline_target_stock, other_target_stock, sales_status, risk_tags, final_order_qty FROM replenishment_suggestions WHERE id = ?', [req.params.id]);
+      const newOnlineStock = parseInt(d.online_target_stock) || 0;
+      const pool = rs.total_inventory_pool || 0;
+      const avgPeriod = rs.avg_sales_period || 0;
+      const onlinePct = avgPeriod > 0 ? (rs.online_avg_sales_period || 0) / avgPeriod : 0;
+      const offlinePct = avgPeriod > 0 ? (rs.offline_avg_sales_period || 0) / avgPeriod : 0;
+      const blocked = shouldBlockReplenish(rs.sales_status || '', rs.risk_tags || '');
+      const isStopped = (rs.sales_status || '') === '停采/清库存';
+      let onComp, offComp, otherComp;
+      if (blocked || isStopped) { onComp = 0; offComp = 0; otherComp = 0; }
+      else {
+        onComp = Math.round(Math.max(0, newOnlineStock - Math.round(pool * onlinePct)));
+        offComp = Math.round(Math.max(0, (rs.offline_target_stock || 0) - Math.round(pool * offlinePct)));
+        otherComp = Math.round(rs.other_target_stock || 0);
+      }
+      const suggestedQty = onComp + offComp + otherComp;
+      const foq = (rs.final_order_qty != null && rs.final_order_qty >= 0) ? rs.final_order_qty : suggestedQty;
+      const afterOrder = avgPeriod > 0 ? (pool + foq) / avgPeriod : 99;
+      fields.push('online_target_stock = ?', 'online_suggested_qty = ?', 'offline_suggested_qty = ?', 'other_suggested_qty = ?', 'suggested_qty = ?', 'after_order_turnover_months = ?');
+      values.push(newOnlineStock, onComp, offComp, otherComp, suggestedQty, Math.round(afterOrder * 10) / 10);
+    }
+
+    // 线下建议采购数量（手动改线下目标库存）→ 重算线下分量 + 三分量（与 generate 同源）
+    if (d.offline_target_stock !== undefined) {
+      const rs = queryOne('SELECT online_avg_sales_period, offline_avg_sales_period, avg_sales_period, total_inventory_pool, online_target_stock, other_target_stock, sales_status, risk_tags, final_order_qty FROM replenishment_suggestions WHERE id = ?', [req.params.id]);
+      const newOfflineStock = parseInt(d.offline_target_stock) || 0;
+      const pool = rs.total_inventory_pool || 0;
+      const avgPeriod = rs.avg_sales_period || 0;
+      const onlinePct = avgPeriod > 0 ? (rs.online_avg_sales_period || 0) / avgPeriod : 0;
+      const offlinePct = avgPeriod > 0 ? (rs.offline_avg_sales_period || 0) / avgPeriod : 0;
+      const blocked = shouldBlockReplenish(rs.sales_status || '', rs.risk_tags || '');
+      const isStopped = (rs.sales_status || '') === '停采/清库存';
+      let onComp, offComp, otherComp;
+      if (blocked || isStopped) { onComp = 0; offComp = 0; otherComp = 0; }
+      else {
+        onComp = Math.round(Math.max(0, (rs.online_target_stock || 0) - Math.round(pool * onlinePct)));
+        offComp = Math.round(Math.max(0, newOfflineStock - Math.round(pool * offlinePct)));
+        otherComp = Math.round(rs.other_target_stock || 0);
+      }
+      const suggestedQty = onComp + offComp + otherComp;
+      const foq = (rs.final_order_qty != null && rs.final_order_qty >= 0) ? rs.final_order_qty : suggestedQty;
+      const afterOrder = avgPeriod > 0 ? (pool + foq) / avgPeriod : 99;
+      fields.push('offline_target_stock = ?', 'online_suggested_qty = ?', 'offline_suggested_qty = ?', 'other_suggested_qty = ?', 'suggested_qty = ?', 'after_order_turnover_months = ?');
+      values.push(newOfflineStock, onComp, offComp, otherComp, suggestedQty, Math.round(afterOrder * 10) / 10);
     }
 
     // 调整原因
@@ -2014,6 +3036,39 @@ app.get('/api/purchase-orders', requireApiPermission('po_view'), (req, res) => {
   res.json(query(sql, params).rows);
 });
 
+// PO 待审批列表（审批中心 / 待我审批）
+// 仅列表查询，JOIN approval_records + purchase_orders + 明细累加总数量；
+// 不动 submit-approval / approve 端点，不写任何状态。
+// 注册在 GET /api/purchase-orders/:id 之前，避免被 :id 参数路由抢匹配。
+app.get('/api/purchase-orders/pending-approval', requireApiPermission('po_approve'), (req, res) => {
+  try {
+    const rows = query(`
+      SELECT
+        ar.id              AS approval_id,
+        ar.business_id     AS po_id,
+        ar.business_code   AS po_no,
+        ar.submitter_name,
+        ar.current_level,
+        ar.max_level,
+        ar.approvers,
+        ar.approval_history,
+        ar.created_at      AS submitted_at,
+        po.brand,
+        po.country,
+        po.target_warehouse,
+        po.total_amount,
+        po.currency,
+        po.po_status,
+        (SELECT COALESCE(SUM(poi.po_qty), 0) FROM purchase_order_items poi WHERE poi.po_id = po.id) AS total_qty
+      FROM approval_records ar
+      JOIN purchase_orders po ON po.id = ar.business_id
+      WHERE ar.business_type = 'po' AND ar.status = 'pending'
+      ORDER BY ar.created_at DESC
+    `).rows;
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/purchase-orders/:id', requireApiPermission('po_view'), (req, res) => {
   const po = queryOne('SELECT * FROM purchase_orders WHERE id = ?', [req.params.id]);
   if (!po) return res.status(404).json({ error: 'PO不存在' });
@@ -2025,24 +3080,48 @@ app.post('/api/purchase-orders', requireApiPermission('po_create'), (req, res) =
   try {
     const d = req.body;
     if (!d.supplier_name) return res.status(400).json({ error: '供应商不能为空' });
+    const currency = d.currency;
+    if (currency !== 'RMB' && currency !== 'USD') {
+      return res.status(400).json({ error: '采购币种必须为 RMB 或 USD' });
+    }
+    const priceCol = currency === 'RMB' ? 'purchase_price_rmb' : 'purchase_price_usd';
     const poId = genId('po');
     const poNo = d.po_no || `PO-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
-    let totalAmount = 0;
 
+    // 价格校验：SKU 必须存在且对应币种采购价有效>0；不信任客户端 unit_price
+    const invalidItems = [];
+    const itemRows = [];
+    if (d.items && d.items.length > 0) {
+      for (const item of d.items) {
+        const sku = queryOne('SELECT sku_code, ' + priceCol + ' FROM skus WHERE sku_code = ?', [item.sku_code]);
+        if (!sku) { invalidItems.push({ sku_code: item.sku_code, currency, reason: 'SKU不存在' }); continue; }
+        const price = Number(sku[priceCol]);
+        if (isNaN(price) || price <= 0) { invalidItems.push({ sku_code: item.sku_code, currency, reason: currency + '采购价缺失' }); continue; }
+        itemRows.push({ sku_code: item.sku_code, po_qty: item.po_qty || 0, unit_price: price, remark: item.remark || '', forecast: item.forecast_turnover_months || 0 });
+      }
+    }
+    if (invalidItems.length > 0) {
+      return res.status(400).json({ error: 'PO创建失败：存在价格问题', invalid_items: invalidItems });
+    }
+
+    let totalAmount = 0;
     transaction(() => {
       run(`INSERT INTO purchase_orders (id, po_no, supplier_id, supplier_name, brand, country, target_warehouse, po_date, expected_delivery, currency, total_amount, created_by, created_by_name, po_status, approval_status, from_suggestion, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [poId, poNo, d.supplier_id || '', d.supplier_name, d.brand || '', d.country || '', d.target_warehouse || '', d.po_date || new Date().toISOString().split('T')[0], d.expected_delivery || '', d.currency || 'USD', 0, d.created_by || '', d.created_by_name || '', 'draft', 'pending', d.from_suggestion || 0, d.remark || '']);
+        [poId, poNo, d.supplier_id || '', d.supplier_name, d.brand || '', d.country || '', d.target_warehouse || '', d.po_date || new Date().toISOString().split('T')[0], d.expected_delivery || '', currency, 0, d.created_by || '', d.created_by_name || '', 'draft', 'pending', d.from_suggestion || 0, d.remark || '']);
 
-      if (d.items && d.items.length > 0) {
-        d.items.forEach(item => {
-          const amount = 0;
+      if (itemRows.length > 0) {
+        itemRows.forEach(it => {
+          const amount = (it.po_qty || 0) * it.unit_price;
+          totalAmount += amount;
           run(`INSERT INTO purchase_order_items (id, po_id, po_no, sku_code, po_qty, unit_price, po_amount, transferred_pi_qty, untransferred_pi_qty, forecast_turnover_months, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [genId('poi'), poId, poNo, item.sku_code, item.po_qty || 0, 0, amount, 0, item.po_qty || 0, item.forecast_turnover_months || 0, item.remark || '']);
+            [genId('poi'), poId, poNo, it.sku_code, it.po_qty, it.unit_price, amount, 0, it.po_qty, it.forecast, it.remark]);
         });
         run('UPDATE purchase_orders SET total_amount = ? WHERE id = ?', [totalAmount, poId]);
       }
+      // 新建 PO 后刷新在途字段（po_unconfirmed_pi_qty 等）
+      updateInventoryTransitData();
     });
-    res.json({ id: poId, po_no: poNo, ...d, total_amount: totalAmount });
+    res.json({ id: poId, po_no: poNo, ...d, currency, total_amount: totalAmount });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -2050,9 +3129,18 @@ app.put('/api/purchase-orders/:id', requireApiPermission('po_create'), (req, res
   try {
     const d = req.body;
     const { id } = req.params;
+    // 读取已存在 PO 表头币种：币种属于价格快照，必须锁定；任何抓价均以数据库已锁定币种为准
+    const origPo = queryOne('SELECT id, currency FROM purchase_orders WHERE id = ?', [id]);
+    if (!origPo) return res.status(404).json({ error: 'PO不存在' });
+    const origCurrency = origPo.currency;
+    // 表头币种锁定：已创建 PO 的币种不可修改，写操作前拒绝（防止 RMB/USD 价格快照错配）
+    if (d.currency !== undefined && d.currency !== origCurrency) {
+      return res.status(400).json({ error: 'PO 创建后币种不可修改，如需更换币种请新建 PO' });
+    }
     const fields = [];
     const values = [];
-    ['supplier_id', 'supplier_name', 'brand', 'country', 'target_warehouse', 'expected_delivery', 'currency', 'remark'].forEach(f => {
+    // 注意：currency 已从可更新字段中移除，PUT 永远沿用数据库已锁定的 origCurrency
+    ['supplier_id', 'supplier_name', 'brand', 'country', 'target_warehouse', 'expected_delivery', 'remark'].forEach(f => {
       if (d[f] !== undefined) { fields.push(`${f} = ?`); values.push(d[f]); }
     });
     fields.push(`updated_at = datetime('now')`);
@@ -2060,12 +3148,56 @@ app.put('/api/purchase-orders/:id', requireApiPermission('po_create'), (req, res
     run(`UPDATE purchase_orders SET ${fields.join(', ')} WHERE id = ?`, values);
 
     if (d.items) {
-      run('DELETE FROM purchase_order_items WHERE po_id = ?', [id]);
+      // 币种来源：始终使用数据库已锁定的 PO 币种，绝不信任请求体 currency
+      const poCurrency = origCurrency;
+      const priceCol = poCurrency === 'RMB' ? 'purchase_price_rmb' : (poCurrency === 'USD' ? 'purchase_price_usd' : null);
+      // 读取现有明细，用稳定 id 识别原明细
+      const existing = query('SELECT id, sku_code, unit_price, transferred_pi_qty FROM purchase_order_items WHERE po_id = ?', [id]).rows;
+      const existMap = {};
+      existing.forEach(e => { existMap[e.id] = e; });
+      const invalidItems = [];
+      const toUpsert = [];
+      const seenIds = new Set();
+      for (const item of d.items) {
+        const ex = (item.id && existMap[item.id]) ? existMap[item.id] : null;
+        let unitPrice, rowId;
+        if (ex && ex.sku_code === item.sku_code) {
+          // 同 SKU：保留历史快照，不重新抓价
+          unitPrice = ex.unit_price;
+          rowId = ex.id;
+          seenIds.add(ex.id);
+        } else {
+          // 新增 SKU 或 更换 SKU：按 PO 表头币种抓当前对应采购价
+          if (!priceCol) { invalidItems.push({ sku_code: item.sku_code, reason: 'PO币种缺失' }); continue; }
+          const sku = queryOne('SELECT sku_code, ' + priceCol + ' FROM skus WHERE sku_code = ?', [item.sku_code]);
+          if (!sku) { invalidItems.push({ sku_code: item.sku_code, currency: poCurrency, reason: 'SKU不存在' }); continue; }
+          const price = Number(sku[priceCol]);
+          if (isNaN(price) || price <= 0) { invalidItems.push({ sku_code: item.sku_code, currency: poCurrency, reason: (poCurrency || '') + '采购价缺失' }); continue; }
+          unitPrice = price;
+          rowId = genId('poi'); // 换新行，旧行稍后删除
+        }
+        toUpsert.push({ id: rowId, sku_code: item.sku_code, po_qty: item.po_qty || 0, unit_price: unitPrice, remark: item.remark || '', forecast: item.forecast_turnover_months || 0 });
+      }
+      if (invalidItems.length > 0) {
+        return res.status(400).json({ error: 'PO更新失败：存在价格问题', invalid_items: invalidItems });
+      }
+      // 删除被移除的明细（原 id 未出现）
+      const removeIds = existing.filter(e => !seenIds.has(e.id)).map(e => e.id);
+      if (removeIds.length > 0) {
+        run('DELETE FROM purchase_order_items WHERE id IN (' + removeIds.map(() => '?').join(',') + ')', removeIds);
+      }
       let totalAmount = 0;
-      d.items.forEach(item => {
-        const amount = 0;
-        run(`INSERT INTO purchase_order_items (id, po_id, po_no, sku_code, po_qty, unit_price, po_amount, transferred_pi_qty, untransferred_pi_qty, forecast_turnover_months, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [genId('poi'), id, d.po_no || '', item.sku_code, item.po_qty || 0, 0, amount, item.transferred_pi_qty || 0, (item.po_qty || 0) - (item.transferred_pi_qty || 0), item.forecast_turnover_months || 0, item.remark || '']);
+      toUpsert.forEach(it => {
+        const amount = (it.po_qty || 0) * it.unit_price;
+        totalAmount += amount;
+        if (existMap[it.id]) {
+          const transferred = existMap[it.id].transferred_pi_qty || 0;
+          run('UPDATE purchase_order_items SET po_qty=?, unit_price=?, po_amount=?, untransferred_pi_qty=?, forecast_turnover_months=?, remark=? WHERE id=?',
+            [it.po_qty, it.unit_price, amount, (it.po_qty || 0) - transferred, it.forecast, it.remark, it.id]);
+        } else {
+          run(`INSERT INTO purchase_order_items (id, po_id, po_no, sku_code, po_qty, unit_price, po_amount, transferred_pi_qty, untransferred_pi_qty, forecast_turnover_months, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [it.id, id, d.po_no || '', it.sku_code, it.po_qty, it.unit_price, amount, 0, it.po_qty, it.forecast, it.remark]);
+        }
       });
       run('UPDATE purchase_orders SET total_amount = ? WHERE id = ?', [totalAmount, id]);
     }
@@ -2074,11 +3206,42 @@ app.put('/api/purchase-orders/:id', requireApiPermission('po_create'), (req, res
 });
 
 app.delete('/api/purchase-orders/:id', requireApiPermission('po_create'), (req, res) => {
-  transaction(() => {
-    run('DELETE FROM purchase_order_items WHERE po_id = ?', [req.params.id]);
-    run('DELETE FROM purchase_orders WHERE id = ?', [req.params.id]);
-  });
-  res.json({ success: true });
+  try {
+    const po = queryOne('SELECT * FROM purchase_orders WHERE id = ?', [req.params.id]);
+    if (!po) return res.status(404).json({ error: 'PO不存在' });
+    // 守卫：仅允许 draft，或 transferred_pi/partial_pi 且无活跃(非cancelled/completed) PI
+    let allow = po.po_status === 'draft';
+    if (!allow) {
+      const hasActivePi = queryOne("SELECT 1 FROM proforma_invoices WHERE related_po_id = ? AND pi_status NOT IN ('cancelled', 'completed')", [po.id]);
+      allow = ['transferred_pi', 'partial_pi'].includes(po.po_status) && !hasActivePi;
+    }
+    if (!allow) {
+      return res.status(400).json({ error: '该 PO 当前状态不允许硬删除；请先作废，或先作废其关联的活跃 PI' });
+    }
+    transaction(() => {
+      run('DELETE FROM purchase_order_items WHERE po_id = ?', [req.params.id]);
+      run('DELETE FROM purchase_orders WHERE id = ?', [req.params.id]);
+    });
+    updateInventoryTransitData(); // 删除后回落 po_unconfirmed_pi_qty
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PO 软作废（置 cancelled + 必填原因 + 回写在途）
+app.post('/api/purchase-orders/:id/void', requireApiPermission('po_create'), (req, res) => {
+  try {
+    const { void_reason } = req.body;
+    if (!void_reason) return res.status(400).json({ error: '作废原因不能为空' });
+    const po = queryOne('SELECT * FROM purchase_orders WHERE id = ?', [req.params.id]);
+    if (!po) return res.status(404).json({ error: 'PO不存在' });
+    if (po.po_status === 'cancelled') return res.status(400).json({ error: '该 PO 已作废，不能重复作废' });
+    const ts = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    const newRemark = (po.remark ? po.remark + '\n' : '') + `[作废 ${ts} by ${req.currentUserName || ''}] 原因: ${void_reason}`;
+    run("UPDATE purchase_orders SET po_status = 'cancelled', remark = ?, updated_at = datetime('now') WHERE id = ?", [newRemark, po.id]);
+    updateInventoryTransitData();
+    logOperation({ operator_id: req.currentUserId, operator_name: req.currentUserName, page: 'purchase_order', operation_type: 'void', target_ids: [po.id], affected_count: 1, old_values: { po_status: po.po_status }, new_values: { po_status: 'cancelled', void_reason }, reason: void_reason, triggered_recalc: 0, is_rollbackable: 0 });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // PO 提交审批
@@ -2171,6 +3334,19 @@ function parseAttachment(value) {
   return typeof value === 'string' ? value : JSON.stringify(value);
 }
 
+// 判断 PI 是否锁定（不可编辑）：CI/PL 已生成、已付定金、已作废
+function getPILockReason(pi) {
+  if (!pi) return null;
+  if (pi.pi_status === 'cancelled') return '已作废';
+  const ci = queryOne('SELECT id FROM commercial_invoices WHERE related_pi_id = ? OR related_pi_no = ? LIMIT 1', [pi.id, pi.pi_no]);
+  if (ci) return '已生成CI';
+  const pl = queryOne('SELECT id FROM packing_lists WHERE related_pi_id = ? OR related_pi_no = ? LIMIT 1', [pi.id, pi.pi_no]);
+  if (pl) return '已生成PL';
+  if (pi.deposit_payment_status === 'paid') return '已付定金';
+  if (n(pi.paid_deposit, 0) > 0) return '已付定金';
+  return null;
+}
+
 // ==================== PI 管理 ====================
 app.get('/api/proforma-invoices', requireApiPermission('pi_view'), (req, res) => {
   const { status, keyword, related_po } = req.query;
@@ -2180,20 +3356,40 @@ app.get('/api/proforma-invoices', requireApiPermission('pi_view'), (req, res) =>
   if (related_po) { sql += ' AND related_po_no = ?'; params.push(related_po); }
   if (keyword) { sql += ' AND (pi_no LIKE ? OR supplier_name LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`); }
   sql += ' ORDER BY created_at DESC';
-  res.json(query(sql, params).rows);
+  const rows = query(sql, params).rows;
+  res.json(rows.map(r => { const lr = getPILockReason(r); return { ...r, locked: !!lr, lock_reason: lr || '' }; }));
 });
 
 app.get('/api/proforma-invoices/:id', requireApiPermission('pi_view'), (req, res) => {
   const pi = queryOne('SELECT * FROM proforma_invoices WHERE id = ?', [req.params.id]);
   if (!pi) return res.status(404).json({ error: 'PI不存在' });
   const items = query('SELECT * FROM proforma_invoice_items WHERE pi_id = ? ORDER BY created_at', [req.params.id]).rows;
-  res.json({ ...pi, items });
+  const lr = getPILockReason(pi);
+  res.json({ ...pi, items, locked: !!lr, lock_reason: lr || '' });
 });
 
 app.post('/api/proforma-invoices', requireApiPermission('pi_create'), (req, res) => {
   try {
     const d = req.body;
     if (!d.supplier_name) return res.status(400).json({ error: '供应商不能为空' });
+    let poCurrency = null;
+    if (d.related_po_id) {
+      const po = queryOne(
+        'SELECT id, approval_status, currency FROM purchase_orders WHERE id = ?',
+        [d.related_po_id]
+      );
+      if (!po) {
+        return res.status(400).json({ error: '关联的PO不存在' });
+      }
+      if (po.approval_status !== 'approved') {
+        return res.status(400).json({
+          error: 'PO 尚未审批通过，不能生成 PI'
+        });
+      }
+      poCurrency = po.currency || 'USD';
+    }
+    // 关联 PO 时锁定币种为 PO 币种，避免跨币种比较；独立 PI 用请求币种
+    const finalCurrency = d.related_po_id ? poCurrency : (d.currency || 'USD');
     const piId = genId('pi');
     const piNo = d.pi_no || `PI-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
     let totalAmount = 0;
@@ -2201,15 +3397,18 @@ app.post('/api/proforma-invoices', requireApiPermission('pi_create'), (req, res)
     const depositRatio = needDeposit ? n(d.deposit_ratio, 0) : 0;
 
     transaction(() => {
-      run(`INSERT INTO proforma_invoices (id, pi_no, related_po_id, related_po_no, supplier_id, supplier_name, brand, country, target_warehouse, pi_date, currency, total_amount, payment_terms, need_deposit, deposit_ratio, balance_ratio, payable_deposit, pi_status, expected_delivery, attachment, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [piId, piNo, d.related_po_id || '', d.related_po_no || '', d.supplier_id || '', d.supplier_name, d.brand || '', d.country || '', d.target_warehouse || '', d.pi_date || new Date().toISOString().split('T')[0], d.currency || 'USD', 0, d.payment_terms || '', needDeposit, depositRatio, 100 - depositRatio, 0, d.pi_status || 'pending', d.expected_delivery || '', parseAttachment(d.attachment), d.remark || '']);
+      run(`INSERT INTO proforma_invoices (id, pi_no, related_po_id, related_po_no, supplier_id, supplier_name, brand, country, target_warehouse, pi_date, currency, total_amount, payment_terms, payment_term_id, need_deposit, deposit_ratio, balance_ratio, payable_deposit, pi_status, expected_delivery, attachment, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [piId, piNo, d.related_po_id || '', d.related_po_no || '', d.supplier_id || '', d.supplier_name, d.brand || '', d.country || '', d.target_warehouse || '', d.pi_date || new Date().toISOString().split('T')[0], finalCurrency, 0, d.payment_terms || '', d.payment_term_id || '', needDeposit, depositRatio, 100 - depositRatio, 0, d.pi_status || 'pending', d.expected_delivery || '', parseAttachment(d.attachment), d.remark || '']);
 
       if (d.items && d.items.length > 0) {
         d.items.forEach(item => {
-          const amount = (item.pi_confirmed_qty || 0) * (item.unit_price || 0);
+          const discount = n(item.discount, 0);
+          const baseAmount = (item.pi_confirmed_qty || 0) * (item.unit_price || 0);
+          // 金额口径含折扣：显式带 pi_amount 时以显式值为准（导入优先），否则反算 qty×price×(1-discount)
+          const amount = (item.pi_amount !== undefined && item.pi_amount !== null && item.pi_amount !== '') ? n(item.pi_amount, 0) : baseAmount * (1 - discount);
           totalAmount += amount;
-          run(`INSERT INTO proforma_invoice_items (id, pi_id, pi_no, po_no, sku_code, po_qty, pi_confirmed_qty, unit_price, pi_amount, shipped_qty, unshipped_qty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [genId('pii'), piId, piNo, item.po_no || d.related_po_no || '', item.sku_code, item.po_qty || 0, item.pi_confirmed_qty || 0, item.unit_price || 0, amount, 0, item.pi_confirmed_qty || 0]);
+          run(`INSERT INTO proforma_invoice_items (id, pi_id, pi_no, po_no, sku_code, po_qty, pi_confirmed_qty, unit_price, discount, pi_amount, shipped_qty, unshipped_qty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [genId('pii'), piId, piNo, item.po_no || d.related_po_no || '', item.sku_code, item.po_qty || 0, item.pi_confirmed_qty || 0, item.unit_price || 0, discount, amount, 0, item.pi_confirmed_qty || 0]);
 
           // 更新PO明细的已转PI数量
           if (d.related_po_id) {
@@ -2249,33 +3448,140 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), (req, res
   try {
     const d = req.body;
     const { id } = req.params;
+    const pi = queryOne('SELECT * FROM proforma_invoices WHERE id = ?', [id]);
+    if (!pi) return res.status(404).json({ error: 'PI不存在' });
+
+    // 锁定守卫：CI/PL 已生成 / 已付定金 / 已作废 → 拒绝编辑
+    const lockReason = getPILockReason(pi);
+    if (lockReason) return res.status(409).json({ error: '该 PI 当前不可编辑（' + lockReason + '）', locked: true, lock_reason: lockReason });
+
+    // 定金/比例口径（优先取请求值，否则保持原值）
+    const needDeposit = d.need_deposit !== undefined
+      ? (d.need_deposit === false || d.need_deposit === 0 || d.need_deposit === '0' ? 0 : 1)
+      : (pi.need_deposit ? 1 : 0);
+    const depositRatio = needDeposit
+      ? (d.deposit_ratio !== undefined ? n(d.deposit_ratio, 0) : n(pi.deposit_ratio, 0))
+      : 0;
+    const balanceRatio = 100 - depositRatio;
+
     const fields = [];
     const values = [];
-    ['payment_terms', 'need_deposit', 'deposit_ratio', 'balance_ratio', 'pi_status', 'expected_delivery', 'attachment', 'remark'].forEach(f => {
+    ['payment_terms', 'payment_term_id', 'expected_delivery', 'remark'].forEach(f => {
       if (d[f] !== undefined) { fields.push(`${f} = ?`); values.push(d[f]); }
     });
+    if (d.need_deposit !== undefined) { fields.push('need_deposit = ?'); values.push(needDeposit); }
+    if (d.deposit_ratio !== undefined) { fields.push('deposit_ratio = ?'); values.push(depositRatio); }
+    fields.push('balance_ratio = ?'); values.push(balanceRatio);
+    if (d.attachment !== undefined) { fields.push('attachment = ?'); values.push(parseAttachment(d.attachment)); }
 
-    // 重新计算应付定金
-    if (d.deposit_ratio !== undefined || d.need_deposit !== undefined) {
-      const pi = queryOne('SELECT total_amount FROM proforma_invoices WHERE id = ?', [id]);
-      if (pi) {
-        const needDeposit = d.need_deposit === false || d.need_deposit === 0 || d.need_deposit === '0' ? 0 : 1;
-        const ratio = needDeposit ? n(d.deposit_ratio, 0) : 0;
-        const payableDeposit = needDeposit ? pi.total_amount * ratio / 100 : 0;
-        fields.push('payable_deposit = ?', 'available_deduct_deposit = ?');
-        values.push(payableDeposit, payableDeposit);
+    const oldItems = query('SELECT * FROM proforma_invoice_items WHERE pi_id = ? ORDER BY created_at', [id]).rows;
+    let totalAmount = pi.total_amount || 0;
+    let payableDeposit = 0;
+
+    transaction(() => {
+      // 明细全量替换
+      if (d.items && Array.isArray(d.items)) {
+        run('DELETE FROM proforma_invoice_items WHERE pi_id = ?', [id]);
+        totalAmount = 0;
+        d.items.forEach(item => {
+          const discount = n(item.discount, 0);
+          const baseAmount = (item.pi_confirmed_qty || 0) * (item.unit_price || 0);
+          // 金额口径与创建一致：显式带 pi_amount 以显式值为准，否则 qty×price×(1-discount)
+          const amount = (item.pi_amount !== undefined && item.pi_amount !== null && item.pi_amount !== '') ? n(item.pi_amount, 0) : baseAmount * (1 - discount);
+          totalAmount += amount;
+          run(`INSERT INTO proforma_invoice_items (id, pi_id, pi_no, po_no, sku_code, po_qty, pi_confirmed_qty, unit_price, discount, pi_amount, shipped_qty, unshipped_qty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [genId('pii'), id, pi.pi_no, item.po_no || pi.related_po_no || '', item.sku_code, item.po_qty || 0, item.pi_confirmed_qty || 0, item.unit_price || 0, discount, amount, 0, item.pi_confirmed_qty || 0]);
+        });
       }
-    }
-    fields.push(`updated_at = datetime('now')`);
-    values.push(id);
-    run(`UPDATE proforma_invoices SET ${fields.join(', ')} WHERE id = ?`, values);
-    res.json({ success: true });
+
+      // 总额 + 应付定金 + 可用抵扣定金 重算
+      payableDeposit = needDeposit ? totalAmount * depositRatio / 100 : 0;
+      fields.push('total_amount = ?', 'payable_deposit = ?', 'available_deduct_deposit = ?');
+      values.push(totalAmount, payableDeposit, payableDeposit);
+
+      // PO transferred_pi_qty delta 同步（先回滚旧明细，再应用新明细）
+      if (pi.related_po_id) {
+        oldItems.forEach(it => {
+          const poItem = queryOne('SELECT id, po_qty, transferred_pi_qty FROM purchase_order_items WHERE po_id = ? AND sku_code = ?', [pi.related_po_id, it.sku_code]);
+          if (poItem) {
+            const nt = Math.max(0, (poItem.transferred_pi_qty || 0) - (it.pi_confirmed_qty || 0));
+            run('UPDATE purchase_order_items SET transferred_pi_qty = ?, untransferred_pi_qty = ? WHERE id = ?',
+              [nt, (poItem.po_qty || 0) - nt, poItem.id]);
+          }
+        });
+        if (d.items && Array.isArray(d.items)) {
+          d.items.forEach(it => {
+            const poItem = queryOne('SELECT id, po_qty, transferred_pi_qty FROM purchase_order_items WHERE po_id = ? AND sku_code = ?', [pi.related_po_id, it.sku_code]);
+            if (poItem) {
+              const nt = (poItem.transferred_pi_qty || 0) + (it.pi_confirmed_qty || 0);
+              run('UPDATE purchase_order_items SET transferred_pi_qty = ?, untransferred_pi_qty = ? WHERE id = ?',
+                [nt, (poItem.po_qty || 0) - nt, poItem.id]);
+            }
+          });
+        }
+        // 刷新 PO 状态
+        const poItems = query('SELECT po_qty, transferred_pi_qty FROM purchase_order_items WHERE po_id = ?', [pi.related_po_id]).rows;
+        if (poItems.length) {
+          const allTransferred = poItems.every(i => i.transferred_pi_qty >= i.po_qty);
+          const anyTransferred = poItems.some(i => i.transferred_pi_qty > 0);
+          const newStatus = allTransferred ? 'transferred_pi' : (anyTransferred ? 'partial_pi' : 'approved');
+          run('UPDATE purchase_orders SET po_status = ? WHERE id = ?', [newStatus, pi.related_po_id]);
+        }
+      }
+
+      // 回写供应商 last_used_payment_term_id（仅当付款条件变更）
+      if (d.payment_term_id !== undefined && d.payment_term_id && d.payment_term_id !== pi.payment_term_id) {
+        run('UPDATE suppliers SET last_used_payment_term_id = ? WHERE id = ?', [d.payment_term_id, pi.supplier_id]);
+      }
+
+      fields.push(`updated_at = datetime('now')`);
+      values.push(id);
+      run(`UPDATE proforma_invoices SET ${fields.join(', ')} WHERE id = ?`, values);
+
+      // 库存 PI 未发货数量重算
+      updateInventoryTransitData();
+    });
+
+    // 操作日志（编辑痕迹）
+    logOperation({
+      operator_id: req.currentUserId,
+      operator_name: req.currentUserName,
+      page: 'proforma_invoice',
+      operation_type: 'edit',
+      target_ids: [id],
+      affected_count: (d.items && d.items.length) || oldItems.length,
+      old_values: { total_amount: pi.total_amount, payable_deposit: pi.payable_deposit, deposit_ratio: pi.deposit_ratio },
+      new_values: { total_amount: totalAmount, payable_deposit: payableDeposit, deposit_ratio: depositRatio, balance_ratio: balanceRatio, items_count: (d.items ? d.items.length : oldItems.length) },
+      reason: d.edit_reason || '',
+      triggered_recalc: 1,
+      is_rollbackable: 0
+    });
+
+    res.json({ success: true, id, total_amount: totalAmount, payable_deposit: payableDeposit });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/proforma-invoices/:id/attachment', requireApiPermission('pi_edit'), (req, res) => {
   try {
     run('UPDATE proforma_invoices SET attachment = ?, pi_status = ?, updated_at = datetime(\'now\') WHERE id = ?', [parseAttachment(req.body.attachment), req.body.attachment ? 'uploaded' : 'pending', req.params.id]);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PI 软作废（置 cancelled + 必填原因 + 回写在途）
+app.post('/api/proforma-invoices/:id/void', requireApiPermission('pi_edit'), (req, res) => {
+  try {
+    const { void_reason } = req.body;
+    if (!void_reason) return res.status(400).json({ error: '作废原因不能为空' });
+    const pi = queryOne('SELECT * FROM proforma_invoices WHERE id = ?', [req.params.id]);
+    if (!pi) return res.status(404).json({ error: 'PI不存在' });
+    if (pi.pi_status === 'cancelled') return res.status(400).json({ error: '该 PI 已作废，不能重复作废' });
+    if (pi.pi_status === 'completed') return res.status(400).json({ error: '已完结的 PI 不允许作废' });
+    const ts = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    const newRemark = (pi.remark ? pi.remark + '\n' : '') + `[作废 ${ts} by ${req.currentUserName || ''}] 原因: ${void_reason}`;
+    run("UPDATE proforma_invoices SET pi_status = 'cancelled', remark = ?, updated_at = datetime('now') WHERE id = ?", [newRemark, pi.id]);
+    updateInventoryTransitData();
+    logOperation({ operator_id: req.currentUserId, operator_name: req.currentUserName, page: 'proforma_invoice', operation_type: 'void', target_ids: [pi.id], affected_count: 1, old_values: { pi_status: pi.pi_status }, new_values: { pi_status: 'cancelled', void_reason }, reason: void_reason, triggered_recalc: 0, is_rollbackable: 0 });
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -2315,6 +3621,13 @@ app.post('/api/commercial-invoices', requireApiPermission('ci_create'), (req, re
     const ciNo = d.ci_no || `CI-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
     let goodsAmount = 0;
     const pi = d.related_pi_id ? queryOne('SELECT * FROM proforma_invoices WHERE id = ?', [d.related_pi_id]) : null;
+    // P1-STATE-01B 守卫①：运营链路 CI 必须关联 PI（在任何 INSERT/UPDATE 之前）
+    if (!d.related_pi_id) return res.status(400).json({ error: 'CI 必须关联 PI，不能直接创建' });
+    if (!pi) return res.status(400).json({ error: '关联的PI不存在' });
+    // P1-STATE-01B 守卫②：需定金且定金未付清，禁止生成 CI
+    if (pi.need_deposit && pi.deposit_payment_status !== 'paid') {
+      return res.status(400).json({ error: 'PI 定金尚未付清，不能生成 CI' });
+    }
     const relatedPoId = d.related_po_id || (pi ? pi.related_po_id : '');
     const relatedPoNo = d.related_po_no || (pi ? pi.related_po_no : '');
     const piTotalAmount = pi ? (pi.total_amount || 0) : 0;
@@ -2393,6 +3706,24 @@ app.post('/api/commercial-invoices/:id/attachment', requireApiPermission('ci_edi
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// CI 软作废（置 cancelled + 必填原因 + 回写在途）
+app.post('/api/commercial-invoices/:id/void', requireApiPermission('ci_edit'), (req, res) => {
+  try {
+    const { void_reason } = req.body;
+    if (!void_reason) return res.status(400).json({ error: '作废原因不能为空' });
+    const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [req.params.id]);
+    if (!ci) return res.status(404).json({ error: 'CI不存在' });
+    if (ci.ci_status === 'cancelled') return res.status(400).json({ error: '该 CI 已作废，不能重复作废' });
+    if (ci.ci_status === 'completed' || ci.ci_status === 'partial_inbound') return res.status(400).json({ error: '已发货/入库的 CI 不允许作废' });
+    const ts = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    const newRemark = (ci.remark ? ci.remark + '\n' : '') + `[作废 ${ts} by ${req.currentUserName || ''}] 原因: ${void_reason}`;
+    run("UPDATE commercial_invoices SET ci_status = 'cancelled', remark = ?, updated_at = datetime('now') WHERE id = ?", [newRemark, ci.id]);
+    updateInventoryTransitData();
+    logOperation({ operator_id: req.currentUserId, operator_name: req.currentUserName, page: 'commercial_invoice', operation_type: 'void', target_ids: [ci.id], affected_count: 1, old_values: { ci_status: ci.ci_status }, new_values: { ci_status: 'cancelled', void_reason }, reason: void_reason, triggered_recalc: 0, is_rollbackable: 0 });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ==================== PL 管理 ====================
 app.post('/api/packing-lists', requireApiPermission('ci_create'), (req, res) => {
   try {
@@ -2401,6 +3732,10 @@ app.post('/api/packing-lists', requireApiPermission('ci_create'), (req, res) => 
     const plNo = d.pl_no || `PL-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
     let totalCartons = 0, totalQtyAll = 0, totalGross = 0, totalNet = 0, totalCbm = 0;
     const ci = d.related_ci_id ? queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [d.related_ci_id]) : null;
+    // P1-STATE-01C 守卫：运营链路 PL 必须关联真实存在的 CI，且 CI 不得为 cancelled（在任何 INSERT/UPDATE 之前）
+    if (!d.related_ci_id) return res.status(400).json({ error: 'PL 必须关联 CI，不能直接创建' });
+    if (!ci) return res.status(400).json({ error: '关联的CI不存在' });
+    if (ci.ci_status === 'cancelled') return res.status(400).json({ error: '该 CI 已作废，不能创建 PL' });
 
     transaction(() => {
       run(`INSERT INTO packing_lists (id, pl_no, related_po_id, related_po_no, related_pi_id, related_pi_no, related_ci_id, related_ci_no, supplier_id, supplier_name, brand, country, target_warehouse, pl_date, total_qty, total_cartons, total_gross_weight, total_net_weight, total_cbm, attachment, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -2452,6 +3787,11 @@ app.post('/api/proforma-invoices/batch-import', requireApiPermission('pi_create'
           if (!poNo) throw new Error('无法匹配PO：PO编号为空');
           const po = queryOne('SELECT * FROM purchase_orders WHERE po_no = ?', [poNo]);
           if (!po) throw new Error('无法匹配PO：' + poNo);
+          if (po.approval_status !== 'approved') {
+            throw new Error(
+              'PO 尚未审批通过，不能生成 PI：' + poNo
+            );
+          }
           if (!skuExists(sku)) throw new Error('SKU不存在：' + sku);
           const piNo = s(pick(row, ['PI编号', 'pi_no'])) || `PI-${new Date().getFullYear()}-${String(Date.now() + idx).slice(-6)}`;
           const qty = n(pick(row, ['数量', 'PI数量', 'pi_confirmed_qty', 'qty']), 0);
@@ -2479,6 +3819,8 @@ app.post('/api/proforma-invoices/batch-import', requireApiPermission('pi_create'
           result.errors.push({ row: idx + 2, reason: e.message });
         }
       });
+      // PI 批量导入后刷新在途字段（po_unconfirmed_pi_qty / pi_confirmed_unshipped_qty）
+      updateInventoryTransitData();
     });
     res.json(importResultWithMessages(result));
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -2498,6 +3840,11 @@ app.post('/api/commercial-invoices/batch-import', requireApiPermission('ci_creat
           let po = poNo ? queryOne('SELECT * FROM purchase_orders WHERE po_no = ?', [poNo]) : null;
           if (poNo && !po) throw new Error('无法匹配PO：' + poNo);
           const pi = piNo ? queryOne('SELECT * FROM proforma_invoices WHERE pi_no = ?', [piNo]) : null;
+          // P1-STATE-01B 守卫①：运营链路 CI 必须关联 PI（在任何 INSERT/UPDATE 之前）
+          if (!piNo) throw new Error('CI 必须关联 PI，不能直接创建');
+          if (!pi) throw new Error('关联的PI不存在：' + piNo);
+          // P1-STATE-01B 守卫②：需定金且定金未付清，禁止生成 CI
+          if (pi.need_deposit && pi.deposit_payment_status !== 'paid') throw new Error('PI 定金尚未付清，不能生成 CI：' + (pi.pi_no || pi.id));
           if (!po && pi?.related_po_no) po = queryOne('SELECT * FROM purchase_orders WHERE po_no = ?', [pi.related_po_no]);
           if (!po) throw new Error('无法匹配PO：PO编号为空或PI未关联PO');
           const ciNo = s(pick(row, ['CI编号', 'ci_no'])) || `CI-${new Date().getFullYear()}-${String(Date.now() + idx).slice(-6)}`;
@@ -2523,6 +3870,8 @@ app.post('/api/commercial-invoices/batch-import', requireApiPermission('ci_creat
           result.errors.push({ row: idx + 2, reason: e.message });
         }
       });
+      // CI 批量导入（发货）后刷新在途字段（in_transit_qty / pi_confirmed_unshipped_qty）
+      updateInventoryTransitData();
     });
     res.json(importResultWithMessages(result));
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -2543,6 +3892,8 @@ app.post('/api/packing-lists/batch-import', requireApiPermission('ci_create'), (
           const po = poNo ? queryOne('SELECT * FROM purchase_orders WHERE po_no = ?', [poNo]) : null;
           if (poNo && !po) throw new Error('无法匹配PO：' + poNo);
           if (!ci) throw new Error('无法匹配CI：' + ciNo);
+          // P1-STATE-01C 守卫：CI 已作废(cancelled)不允许创建 PL（保持逐行容忍，失败计入 errors）
+          if (ci.ci_status === 'cancelled') throw new Error('该 CI 已作废，不能创建 PL：' + ciNo);
           const plNo = s(pick(row, ['PL编号', 'pl_no'])) || `PL-${new Date().getFullYear()}-${String(Date.now() + idx).slice(-6)}`;
           let pl = queryOne('SELECT * FROM packing_lists WHERE pl_no = ?', [plNo]);
           const plId = pl ? pl.id : genId('pl');
@@ -2635,7 +3986,7 @@ app.put('/api/logistics-batches/:id', requireApiPermission('logistics_edit'), (r
 // ==================== 入库管理 ====================
 app.get('/api/inbound-records', requireApiPermission('inbound_view'), (req, res) => {
   const { status, keyword, source_ci } = req.query;
-  let sql = `SELECT ir.*, s.product_name, s.brand FROM inbound_records ir LEFT JOIN skus s ON ir.sku_code = s.sku_code WHERE 1=1`;
+  let sql = `SELECT ir.*, s.product_name, s.brand, pl.pl_no AS source_pl_no FROM inbound_records ir LEFT JOIN skus s ON ir.sku_code = s.sku_code LEFT JOIN packing_lists pl ON ir.source_pl_id = pl.id WHERE 1=1`;
   const params = [];
   if (status) { sql += ' AND ir.inbound_status = ?'; params.push(status); }
   if (source_ci) { sql += ' AND ir.source_ci_no = ?'; params.push(source_ci); }
@@ -2644,28 +3995,135 @@ app.get('/api/inbound-records', requireApiPermission('inbound_view'), (req, res)
   res.json(query(sql, params).rows);
 });
 
+// P1-STATE-01D：只读 PL 列表（入库页面选择 PL 用，使用现有 ci_view 权限，不增加新业务状态）
+app.get('/api/packing-lists', requireApiPermission('ci_view'), (req, res) => {
+  try {
+    const rows = query(`SELECT p.id, p.pl_no, p.related_ci_id, p.related_ci_no, p.supplier_name, p.brand, p.country, p.target_warehouse, p.pl_date, p.total_qty,
+      (SELECT COUNT(*) FROM packing_list_items WHERE pl_id = p.id) AS item_count
+      FROM packing_lists p ORDER BY p.created_at DESC`).rows;
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// P1-STATE-01D：只读 PL 明细（含 item.id 与已入库/剩余累计，供入库选择定位 PL 明细）
+app.get('/api/packing-lists/:id', requireApiPermission('ci_view'), (req, res) => {
+  try {
+    const pl = queryOne('SELECT * FROM packing_lists WHERE id = ?', [req.params.id]);
+    if (!pl) return res.status(404).json({ error: 'PL不存在' });
+    const items = query('SELECT * FROM packing_list_items WHERE pl_id = ? ORDER BY created_at', [req.params.id]).rows;
+    items.forEach(it => {
+      const r = queryOne('SELECT COALESCE(SUM(actual_qty),0) AS s FROM inbound_records WHERE source_pl_item_id = ?', [it.id]);
+      it.received_qty = r ? r.s : 0;
+      it.remaining_qty = (it.total_qty || 0) - it.received_qty;
+    });
+    res.json({ ...pl, items });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// P1-STATE-01D：单笔入库——强制关联真实 PL 明细，写入前完成 18 步守卫
 app.post('/api/inbound-records', requireApiPermission('inbound_create'), (req, res) => {
   try {
     const d = req.body;
     if (!d.sku_code || !d.inbound_date) return res.status(400).json({ error: 'SKU和入库日期不能为空' });
+
+    // ===== P1-STATE-01D 守卫（任何 INSERT/UPDATE 前完成）=====
+    // 1. actual_qty 必须 > 0
+    const rawActualQty = d.actual_qty;
+    if (rawActualQty === null || rawActualQty === undefined || String(rawActualQty).trim() === '') {
+      return res.status(400).json({ error: '实际入库数量必须为正整数（大于0）' });
+    }
+    const actualQty = Number(rawActualQty);
+    if (!Number.isFinite(actualQty) || !Number.isInteger(actualQty) || actualQty <= 0) {
+      return res.status(400).json({ error: '实际入库数量必须为正整数（大于0）' });
+    }
+
+    // 2. source_pl_item_id 必填
+    const sourcePlItemId = String(d.source_pl_item_id || '').trim();
+    if (!sourcePlItemId) {
+      return res.status(400).json({ error: '必须关联 PL 明细（source_pl_item_id 必填）' });
+    }
+
+    // 3. packing_list_items.id 必须存在
+    const plItem = queryOne('SELECT * FROM packing_list_items WHERE id = ?', [sourcePlItemId]);
+    if (!plItem) {
+      return res.status(400).json({ error: 'PL明细不存在（source_pl_item_id 无效）' });
+    }
+
+    // 4. source_pl_id 由 pl_item.pl_id 获取或校验一致（不信任客户端传入值，若传了则须一致）
+    const sourcePlId = String(plItem.pl_id || '').trim();
+    if (!sourcePlId) {
+      return res.status(400).json({ error: 'PL明细缺少所属 PL（pl_id 为空）' });
+    }
+    if (d.source_pl_id && String(d.source_pl_id).trim() && String(d.source_pl_id).trim() !== sourcePlId) {
+      return res.status(400).json({ error: 'source_pl_id 与 PL明细所属 PL 不一致' });
+    }
+
+    // 5. packing_lists.id 必须存在
+    const pl = queryOne('SELECT * FROM packing_lists WHERE id = ?', [sourcePlId]);
+    if (!pl) {
+      return res.status(400).json({ error: 'PL不存在（source_pl_id 无效）' });
+    }
+
+    // 6. sku_code 必须与 pl_item.sku_code 一致
+    if (String(plItem.sku_code || '').trim() !== String(d.sku_code || '').trim()) {
+      return res.status(400).json({ error: 'SKU与PL明细不一致' });
+    }
+
+    // 7. source_ci_id 必须由 packing_lists.related_ci_id 后端派生
+    // 8. 不信任客户端传入的 source_ci_id/source_ci_no
+    const sourceCiId = String(pl.related_ci_id || '').trim();
+    const sourceCiNo = String(pl.related_ci_no || '').trim();
+    if (!sourceCiId) {
+      return res.status(400).json({ error: 'PL未关联CI（related_ci_id 为空），无法入库' });
+    }
+
+    // 9. CI 必须存在
+    const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [sourceCiId]);
+    if (!ci) {
+      return res.status(400).json({ error: '关联CI不存在' });
+    }
+
+    // 10. CI 状态为 cancelled 时拒绝
+    if (ci.ci_status === 'cancelled') {
+      return res.status(400).json({ error: '关联CI已作废（cancelled），不可入库' });
+    }
+
+    // 11. 对应 commercial_invoice_items 必须存在
+    const ciItem = queryOne('SELECT * FROM commercial_invoice_items WHERE ci_id = ? AND sku_code = ?', [sourceCiId, d.sku_code]);
+    if (!ciItem) {
+      return res.status(400).json({ error: 'CI明细中不存在该SKU' });
+    }
+
+    // 12. PL 明细已入库累计 SUM(actual_qty) WHERE source_pl_item_id = 当前明细
+    const plAcc = queryOne('SELECT COALESCE(SUM(actual_qty),0) AS s FROM inbound_records WHERE source_pl_item_id = ?', [sourcePlItemId]);
+    const plReceived = plAcc ? plAcc.s : 0;
+    // 13. PL 明细剩余
+    const plRemaining = (plItem.total_qty || 0) - plReceived;
+    // 14. CI 明细剩余
+    const ciRemaining = (ciItem.shipped_qty || 0) - (ciItem.inbound_qty || 0);
+    // 15. 本次最大可入库数量
+    const maxInbound = Math.min(plRemaining, ciRemaining);
+    // 16. 最大可入库数量 <= 0 时拒绝
+    if (maxInbound <= 0) {
+      return res.status(409).json({ error: '该SKU无可入库余量（PL或CI已收满）' });
+    }
+    // 17. actual_qty 超过最大可入库数量时拒绝
+    if (actualQty > maxInbound) {
+      return res.status(409).json({ error: `入库数量超过可入库余量（最大 ${maxInbound}）` });
+    }
+    // 18. 所有守卫通过 → 写入
+
     const iId = genId('inbound');
     const iNo = d.inbound_no || `IN-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
 
     transaction(() => {
-      // 获取CI明细的累计入库信息
-      let ciItemId = null;
-      if (d.source_ci_id) {
-        const ciItem = queryOne('SELECT id, shipped_qty, inbound_qty FROM commercial_invoice_items WHERE ci_id = ? AND sku_code = ?', [d.source_ci_id, d.sku_code]);
-        if (ciItem) {
-          ciItemId = ciItem.id;
-          const accumulated = (ciItem.inbound_qty || 0) + (d.actual_qty || 0);
-          const uninbound = (ciItem.shipped_qty || 0) - accumulated;
-          run('UPDATE commercial_invoice_items SET inbound_qty = ?, uninbound_qty = ? WHERE id = ?', [accumulated, uninbound, ciItem.id]);
-        }
-      }
+      // 更新 CI 明细累计入库（异常件按全额 actual_qty 计入，与既有语义一致）
+      const accumulated = (ciItem.inbound_qty || 0) + actualQty;
+      const uninbound = (ciItem.shipped_qty || 0) - accumulated;
+      run('UPDATE commercial_invoice_items SET inbound_qty = ?, uninbound_qty = ? WHERE id = ?', [accumulated, uninbound, ciItem.id]);
 
-      run(`INSERT INTO inbound_records (id, inbound_no, source_ci_id, source_ci_no, source_pi_no, source_logistics_batch_no, delivery_batch_no, country, warehouse, inbound_date, sku_code, ci_shipped_qty, expected_qty, actual_qty, accumulated_qty, uninbound_qty, abnormal_qty, abnormal_reason, inbound_status, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [iId, iNo, d.source_ci_id || '', d.source_ci_no || '', d.source_pi_no || '', d.source_logistics_batch_no || '', d.delivery_batch_no || '', d.country || '', d.warehouse || '', d.inbound_date, d.sku_code, d.ci_shipped_qty || 0, d.expected_qty || 0, d.actual_qty || 0, d.actual_qty || 0, (d.ci_shipped_qty || 0) - (d.actual_qty || 0), d.abnormal_qty || 0, d.abnormal_reason || '', d.abnormal_qty > 0 ? 'abnormal' : 'completed', d.remark || '']);
+      run(`INSERT INTO inbound_records (id, inbound_no, source_ci_id, source_ci_no, source_pl_id, source_pl_item_id, source_pi_no, source_logistics_batch_no, delivery_batch_no, country, warehouse, inbound_date, sku_code, ci_shipped_qty, expected_qty, actual_qty, accumulated_qty, uninbound_qty, abnormal_qty, abnormal_reason, inbound_status, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [iId, iNo, sourceCiId, sourceCiNo, sourcePlId, sourcePlItemId, d.source_pi_no || '', d.source_logistics_batch_no || '', d.delivery_batch_no || '', d.country || '', d.warehouse || '', d.inbound_date, d.sku_code, ciItem.shipped_qty || 0, d.expected_qty || 0, actualQty, actualQty, (ciItem.shipped_qty || 0) - actualQty, d.abnormal_qty || 0, d.abnormal_reason || '', d.abnormal_qty > 0 ? 'abnormal' : 'completed', d.remark || '']);
 
       // 成本分摊和加权平均成本更新已改为手动触发（CI费用确认 → 费用分摊 → 原库存导入 → 更新加权平均成本）
 
@@ -2673,26 +4131,25 @@ app.post('/api/inbound-records', requireApiPermission('inbound_create'), (req, r
       // updateInventoryAfterInbound 已禁用（采购链不自动改库存总表数量）
 
       // 更新CI状态
-      if (d.source_ci_id) {
-        const ciItems = query('SELECT shipped_qty, inbound_qty FROM commercial_invoice_items WHERE ci_id = ?', [d.source_ci_id]).rows;
-        const allInbound = ciItems.every(i => i.inbound_qty >= i.shipped_qty);
-        const anyInbound = ciItems.some(i => i.inbound_qty > 0);
-        if (allInbound) {
-          run('UPDATE commercial_invoices SET ci_status = ? WHERE id = ?', ['completed', d.source_ci_id]);
-        } else if (anyInbound) {
-          run('UPDATE commercial_invoices SET ci_status = ? WHERE id = ?', ['partial_inbound', d.source_ci_id]);
-        }
+      const ciItems = query('SELECT shipped_qty, inbound_qty FROM commercial_invoice_items WHERE ci_id = ?', [sourceCiId]).rows;
+      const allInbound = ciItems.every(i => i.inbound_qty >= i.shipped_qty);
+      const anyInbound = ciItems.some(i => i.inbound_qty > 0);
+      if (allInbound) {
+        run('UPDATE commercial_invoices SET ci_status = ? WHERE id = ?', ['completed', sourceCiId]);
+      } else if (anyInbound) {
+        run('UPDATE commercial_invoices SET ci_status = ? WHERE id = ?', ['partial_inbound', sourceCiId]);
       }
 
       // 更新在途数据
       updateInventoryTransitData();
     });
 
-    res.json({ id: iId, inbound_no: iNo, ...d });
+    res.json({ id: iId, inbound_no: iNo, source_pl_id: sourcePlId, source_pl_item_id: sourcePlItemId, source_ci_id: sourceCiId, source_ci_no: sourceCiNo, ...d });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // 批量导入入库记录
+// P1-STATE-01D：逐行容忍（单行失败计 failed，不整体回滚），但每行写入前完成与单笔一致的 PL 关联守卫
 app.post('/api/inbound-records/batch-import', requireApiPermission('inbound_create'), (req, res) => {
   try {
     const records = Array.isArray(req.body?.records) ? req.body.records : [];
@@ -2702,7 +4159,6 @@ app.post('/api/inbound-records/batch-import', requireApiPermission('inbound_crea
     const errors = [];
     let success = 0;
     let failed = 0;
-    const ciCache = new Map(); // 缓存 ci_id -> 状态信息，避免重复查询
 
     transaction(() => {
       records.forEach((rec, idx) => {
@@ -2711,30 +4167,74 @@ app.post('/api/inbound-records/batch-import', requireApiPermission('inbound_crea
           const sku = String(rec.sku_code || '').trim();
           const date = String(rec.inbound_date || '').trim().slice(0, 10);
           const actualQty = parseInt(rec.actual_qty);
+
+          // 基础校验
           if (!sku) throw new Error('SKU编码不能为空');
           if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('入库日期格式错误（应为 YYYY-MM-DD）');
-          if (isNaN(actualQty) || actualQty < 0) throw new Error('实际入库数量必须为非负整数');
+          if (isNaN(actualQty) || actualQty <= 0) throw new Error('实际入库数量必须为正整数（大于0）');
 
-          // 解析 source_ci_id
-          let sourceCiId = '';
-          let sourceCiNo = String(rec.source_ci_no || '').trim();
-          let sourcePiNo = '';
-          if (sourceCiNo) {
-            if (ciCache.has(sourceCiNo)) {
-              sourceCiId = ciCache.get(sourceCiNo).id;
-            } else {
-              const ci = queryOne('SELECT id, ci_status FROM commercial_invoices WHERE ci_no = ?', [sourceCiNo]);
-              if (ci) {
-                sourceCiId = ci.id;
-                ciCache.set(sourceCiNo, { id: ci.id, status: ci.ci_status });
-              } else {
-                sourceCiNo = ''; // 找不到的CI号清空，不阻断导入
-              }
-            }
+          // ===== P1-STATE-01D 守卫（逐行，写入前完成）=====
+          // 解析 source_pl_item_id（优先）；兼容 source_pl_no + sku_code 唯一解析（0→失败，1→解析，>1→不唯一失败）
+          let sourcePlItemId = String(rec.source_pl_item_id || '').trim();
+          if (!sourcePlItemId && rec.source_pl_no) {
+            const plNo = String(rec.source_pl_no || '').trim();
+            const plByNo = queryOne('SELECT id FROM packing_lists WHERE pl_no = ?', [plNo]);
+            if (!plByNo) throw new Error('PL不存在（source_pl_no 无效）');
+            const plItems = query('SELECT id FROM packing_list_items WHERE pl_id = ? AND sku_code = ?', [plByNo.id, sku]).rows;
+            if (plItems.length === 0) throw new Error('PL明细不存在（source_pl_no+sku 无匹配）');
+            if (plItems.length > 1) throw new Error('PL明细不唯一（source_pl_no+sku 命中多条）');
+            sourcePlItemId = plItems[0].id;
           }
+          if (!sourcePlItemId) throw new Error('必须关联 PL 明细（source_pl_item_id 或 source_pl_no+sku）');
 
-          const ciShippedQty = parseInt(rec.ci_shipped_qty) || 0;
-          const expectedQty = parseInt(rec.expected_qty) || 0;
+          // 3. packing_list_items.id 必须存在
+          const plItem = queryOne('SELECT * FROM packing_list_items WHERE id = ?', [sourcePlItemId]);
+          if (!plItem) throw new Error('PL明细不存在（source_pl_item_id 无效）');
+          // 6. sku_code 必须与 pl_item.sku_code 一致
+          if (String(plItem.sku_code || '').trim() !== sku) throw new Error('SKU与PL明细不一致');
+
+          // 4/5. source_pl_id 由 pl_item.pl_id 获取并校验 PL 存在
+          const sourcePlId = String(plItem.pl_id || '').trim();
+          if (!sourcePlId) throw new Error('PL明细缺少所属 PL（pl_id 为空）');
+          const pl = queryOne('SELECT id, related_ci_id, related_ci_no FROM packing_lists WHERE id = ?', [sourcePlId]);
+          if (!pl) throw new Error('PL不存在（source_pl_id 无效）');
+
+          // 7/8. source_ci_id 由 packing_lists.related_ci_id 派生；不信任客户端传入
+          const sourceCiId = String(pl.related_ci_id || '').trim();
+          const sourceCiNo = String(pl.related_ci_no || '').trim();
+          if (!sourceCiId) throw new Error('PL未关联CI，无法入库');
+
+          // 9. CI 必须存在
+          const ci = queryOne('SELECT id, ci_status FROM commercial_invoices WHERE id = ?', [sourceCiId]);
+          if (!ci) throw new Error('关联CI不存在');
+          // 10. CI 状态为 cancelled 时拒绝
+          if (ci.ci_status === 'cancelled') throw new Error('关联CI已作废（cancelled），不可入库');
+
+          // 11. 对应 commercial_invoice_items 必须存在
+          const ciItem = queryOne('SELECT id, shipped_qty, inbound_qty FROM commercial_invoice_items WHERE ci_id = ? AND sku_code = ?', [sourceCiId, sku]);
+          if (!ciItem) throw new Error('CI明细中不存在该SKU');
+
+          // 12/13. PL 明细已入库累计 + 剩余
+          const plAcc = queryOne('SELECT COALESCE(SUM(actual_qty),0) AS s FROM inbound_records WHERE source_pl_item_id = ?', [sourcePlItemId]);
+          const plRemaining = (plItem.total_qty || 0) - (plAcc ? plAcc.s : 0);
+          // 14. CI 明细剩余
+          const ciRemaining = (ciItem.shipped_qty || 0) - (ciItem.inbound_qty || 0);
+          // 15. 本次最大可入库数量
+          const maxInbound = Math.min(plRemaining, ciRemaining);
+          // 16. <=0 拒绝
+          if (maxInbound <= 0) throw new Error('该SKU无可入库余量（PL或CI已收满）');
+          // 17. 超量拒绝
+          if (actualQty > maxInbound) throw new Error(`入库数量超过可入库余量（最大 ${maxInbound}）`);
+          // 18. 守卫通过 → 写入
+
+          const iId = genId('inbound');
+          const iNo = `IN-${new Date().getFullYear()}-${String(Date.now() + rowNum).slice(-6)}`;
+
+          // 更新 CI 明细累计入库（异常件按全额计入）
+          const accumulated = (ciItem.inbound_qty || 0) + actualQty;
+          const uninbound = (ciItem.shipped_qty || 0) - accumulated;
+          run('UPDATE commercial_invoice_items SET inbound_qty = ?, uninbound_qty = ? WHERE id = ?', [accumulated, uninbound, ciItem.id]);
+
           const abnormalQty = parseInt(rec.abnormal_qty) || 0;
           const abnormalReason = String(rec.abnormal_reason || '').trim();
           const country = String(rec.country || '').trim();
@@ -2743,40 +4243,20 @@ app.post('/api/inbound-records/batch-import', requireApiPermission('inbound_crea
           const deliveryBatchNo = String(rec.delivery_batch_no || '').trim();
           const remark = String(rec.remark || '').trim();
 
-          const iId = genId('inbound');
-          const iNo = `IN-${new Date().getFullYear()}-${String(Date.now() + rowNum).slice(-6)}`;
-
-          // 更新 CI 明细累计入库
-          if (sourceCiId) {
-            const ciItem = queryOne('SELECT id, shipped_qty, inbound_qty FROM commercial_invoice_items WHERE ci_id = ? AND sku_code = ?', [sourceCiId, sku]);
-            if (ciItem) {
-              const accumulated = (ciItem.inbound_qty || 0) + actualQty;
-              const uninbound = (ciItem.shipped_qty || 0) - accumulated;
-              run('UPDATE commercial_invoice_items SET inbound_qty = ?, uninbound_qty = ? WHERE id = ?', [accumulated, uninbound, ciItem.id]);
-            }
-          }
-
-          run(`INSERT INTO inbound_records (id, inbound_no, source_ci_id, source_ci_no, source_pi_no, source_logistics_batch_no, delivery_batch_no, country, warehouse, inbound_date, sku_code, ci_shipped_qty, expected_qty, actual_qty, accumulated_qty, uninbound_qty, abnormal_qty, abnormal_reason, inbound_status, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [iId, iNo, sourceCiId, sourceCiNo, sourcePiNo, sourceLogisticsBatchNo, deliveryBatchNo, country, warehouse, date, sku, ciShippedQty, expectedQty, actualQty, actualQty, ciShippedQty - actualQty, abnormalQty, abnormalReason, abnormalQty > 0 ? 'abnormal' : 'completed', remark]);
+          run(`INSERT INTO inbound_records (id, inbound_no, source_ci_id, source_ci_no, source_pl_id, source_pl_item_id, source_pi_no, source_logistics_batch_no, delivery_batch_no, country, warehouse, inbound_date, sku_code, ci_shipped_qty, expected_qty, actual_qty, accumulated_qty, uninbound_qty, abnormal_qty, abnormal_reason, inbound_status, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [iId, iNo, sourceCiId, sourceCiNo, sourcePlId, sourcePlItemId, '', sourceLogisticsBatchNo, deliveryBatchNo, country, warehouse, date, sku, ciItem.shipped_qty || 0, 0, actualQty, actualQty, (ciItem.shipped_qty || 0) - actualQty, abnormalQty, abnormalReason, abnormalQty > 0 ? 'abnormal' : 'completed', remark]);
 
           // 成本分摊和加权平均成本更新已改为手动触发（CI费用确认 → 费用分摊 → 原库存导入 → 更新加权平均成本）
           // 入库记录只做单据跟踪，不自动触发成本计算
 
-          // 更新库存
-          if (actualQty > 0) {
-            try { updateInventoryAfterInbound(sku, country, warehouse, actualQty, date); } catch (e) { /* 库存更新失败不影响入库 */ }
-          }
-
           // 更新CI状态
-          if (sourceCiId) {
-            const ciItems = query('SELECT shipped_qty, inbound_qty FROM commercial_invoice_items WHERE ci_id = ?', [sourceCiId]).rows;
-            const allInbound = ciItems.every(i => i.inbound_qty >= i.shipped_qty);
-            const anyInbound = ciItems.some(i => i.inbound_qty > 0);
-            if (allInbound) {
-              run('UPDATE commercial_invoices SET ci_status = ? WHERE id = ?', ['completed', sourceCiId]);
-            } else if (anyInbound) {
-              run('UPDATE commercial_invoices SET ci_status = ? WHERE id = ?', ['partial_inbound', sourceCiId]);
-            }
+          const ciItems = query('SELECT shipped_qty, inbound_qty FROM commercial_invoice_items WHERE ci_id = ?', [sourceCiId]).rows;
+          const allInbound = ciItems.every(i => i.inbound_qty >= i.shipped_qty);
+          const anyInbound = ciItems.some(i => i.inbound_qty > 0);
+          if (allInbound) {
+            run('UPDATE commercial_invoices SET ci_status = ? WHERE id = ?', ['completed', sourceCiId]);
+          } else if (anyInbound) {
+            run('UPDATE commercial_invoices SET ci_status = ? WHERE id = ?', ['partial_inbound', sourceCiId]);
           }
 
           success++;
@@ -2863,11 +4343,13 @@ function allocateCosts(ciId, inboundId, inboundNo, skuCode, inboundQty) {
   run(`INSERT INTO cost_allocations (id, inbound_id, inbound_no, logistics_batch_no, ci_no, sku_code, allocation_basis, product_cost, allocated_freight, allocated_duty, allocated_other, total_landing_cost, inbound_qty, unit_landing_cost, currency) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [genId('cost'), inboundId, inboundNo, logistics ? logistics.batch_no : '', ci.ci_no, skuCode, allocationBasis, productCost, allocatedFreight, allocatedDuty, allocatedOther, totalLandingCost, inboundQty, unitLandingCost, ci.currency || 'USD']);
 
-  // 更新加权平均成本
-  updateWeightedAvgCost(skuCode, inboundQty, unitLandingCost);
+  // P1-03-B: 已废弃 — 不再调用 updateWeightedAvgCost（该方法直接写 inventory/skus，违反正式库存口径）
+  // updateWeightedAvgCost(skuCode, inboundQty, unitLandingCost);
 }
 
-// 更新加权平均成本（采购链入库后同步成本，但不改库存数量）
+// @deprecated P1-03-B: 该函数直接写 inventory.weighted_avg_cost/inventory_value 和 skus.weighted_avg_cost，
+// 违反正式库存口径。已移除 allocateCosts 对它的调用。成本确认改为生成 wac_history 版本。
+// 不做物理删除（本轮不做无关代码清理），但全项目不再有调用方。
 function updateWeightedAvgCost(skuCode, inboundQty, unitLandingCost) {
   const sku = queryOne('SELECT weighted_avg_cost FROM skus WHERE sku_code = ?', [skuCode]);
   if (!sku) return;
@@ -2947,6 +4429,72 @@ app.get('/api/payment-requests', requireApiPermission('payment_view'), (req, res
   res.json(query(sql, params).rows);
 });
 
+// 计算付款申请"总数量"（按已确认口径：以 payment_category 为准）
+// - 定金(goods+deposit, source pi)：proforma_invoice_items 按 pi_id=source_id 聚合 pi_confirmed_qty，全为 0 回退 po_qty
+// - 尾款(goods+balance, source ci)：commercial_invoice_items 按 ci_id=source_id 聚合 shipped_qty
+// - 费用类(warehouse_arrival/customs_duty/inspection_fee 等)及兜底：留空(null)
+function computePaymentTotalQty(pr) {
+  if (!pr) return null;
+  if (pr.payment_category === 'goods') {
+    if (pr.payment_subcategory === 'deposit' && pr.source_type === 'pi') {
+      const items = query('SELECT pi_confirmed_qty, po_qty FROM proforma_invoice_items WHERE pi_id = ?', [pr.source_id]).rows;
+      let sum = items.reduce((a, x) => a + (Number(x.pi_confirmed_qty) || 0), 0);
+      if (sum === 0) sum = items.reduce((a, x) => a + (Number(x.po_qty) || 0), 0);
+      return sum;
+    }
+    if (pr.payment_subcategory === 'balance' && pr.source_type === 'ci') {
+      const items = query('SELECT shipped_qty FROM commercial_invoice_items WHERE ci_id = ?', [pr.source_id]).rows;
+      return items.reduce((a, x) => a + (Number(x.shipped_qty) || 0), 0);
+    }
+  }
+  return null;
+}
+
+// 待审付款申请（供审批中心 → 财务类审批读取）
+app.get('/api/payment-requests/pending', requireApiPermission('payment_approve'), (req, res) => {
+  try {
+    const rows = query(`
+      SELECT id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no,
+             payee_type, supplier_name, payable_amount, currency, related_ci_no, related_po_no,
+             approval_status, payment_status, remark, created_at
+      FROM payment_requests
+      WHERE approval_status = 'pending'
+      ORDER BY created_at DESC
+    `).rows;
+    rows.forEach(r => { r.total_qty = computePaymentTotalQty(r); });
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 付款申请详情（含按口径计算的 total_qty + 关联 PI/CI 摘要）
+app.get('/api/payment-requests/:id', requireApiPermission('payment_view'), (req, res) => {
+  try {
+    const pr = queryOne('SELECT * FROM payment_requests WHERE id = ?', [req.params.id]);
+    if (!pr) return res.status(404).json({ error: '付款申请不存在' });
+    pr.total_qty = computePaymentTotalQty(pr);
+    let pi_summary = null, ci_summary = null;
+    if (pr.source_type === 'pi' && pr.source_id) {
+      pi_summary = queryOne('SELECT id, pi_no, supplier_name, brand, country, target_warehouse, total_amount, currency, pi_status, pi_date FROM proforma_invoices WHERE id = ?', [pr.source_id]);
+    }
+    if (pr.source_type === 'ci' && pr.source_id) {
+      ci_summary = queryOne('SELECT id, ci_no, supplier_name, brand, country, target_warehouse, goods_amount, currency, ci_status, ci_date, related_po_no FROM commercial_invoices WHERE id = ?', [pr.source_id]);
+    } else if (pr.related_ci_id) {
+      ci_summary = queryOne('SELECT id, ci_no, supplier_name, brand, country, target_warehouse, goods_amount, currency, ci_status, ci_date, related_po_no FROM commercial_invoices WHERE id = ?', [pr.related_ci_id]);
+    }
+    res.json({ ...pr, pi_summary, ci_summary });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 付款申请附件上传（attachment 列：JSON 结构，与 PI/CI 附件同机制）
+app.post('/api/payment-requests/:id/attachment', requireApiPermission('payment_create', 'payment_approve'), (req, res) => {
+  try {
+    const pr = queryOne('SELECT id FROM payment_requests WHERE id = ?', [req.params.id]);
+    if (!pr) return res.status(404).json({ error: '付款申请不存在' });
+    run('UPDATE payment_requests SET attachment = ?, updated_at = datetime(\'now\') WHERE id = ?', [parseAttachment(req.body.attachment), req.params.id]);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // 生成付款申请（从PI定金）— 货款/定金
 app.post('/api/payment-requests/from-pi-deposit', requireApiPermission('payment_create'), (req, res) => {
   try {
@@ -2982,21 +4530,51 @@ app.post('/api/payment-requests/from-ci-balance', requireApiPermission('payment_
     const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [ci_id]);
     if (!ci) return res.status(400).json({ error: 'CI不存在' });
 
-    const payableAmount = ci.payable_balance || 0;
+    // 一、未付金额校验：优先使用 unpaid_balance，否则用 payable_balance - paid_balance
+    const unpaidBalance =
+      ci.unpaid_balance !== null &&
+      ci.unpaid_balance !== undefined &&
+      Number.isFinite(Number(ci.unpaid_balance))
+        ? Number(ci.unpaid_balance)
+        : Math.max(
+            0,
+            Number(ci.payable_balance || 0) -
+            Number(ci.paid_balance || 0)
+          );
+    if (unpaidBalance <= 0) {
+      return res.status(409).json({ error: '该 CI 已无待付尾款，不能重复生成尾款申请' });
+    }
+
+    // 二、有效尾款防重：明确白名单（不含 rejected），兼容 source_type/source_id 与 related_ci_id 两种关联
+    const ACTIVE_BALANCE_STATUSES = ['pending_approval', 'approved', 'pending_payment', 'partial_payment_partial_deduction', 'paid'];
+    const existingBalance = queryOne(
+      `SELECT id, request_no, payment_status FROM payment_requests
+       WHERE payment_subcategory = 'balance'
+         AND payment_status IN (${ACTIVE_BALANCE_STATUSES.map(() => '?').join(',')})
+         AND ((source_type = 'ci' AND source_id = ?) OR related_ci_id = ?)`,
+      [...ACTIVE_BALANCE_STATUSES, ci_id, ci_id]
+    );
+    if (existingBalance) {
+      return res.status(409).json({ error: '该 CI 已存在有效的尾款付款申请，不能重复生成' });
+    }
+
     const dedAmount = parseFloat(deduction_amount) || 0;
     if (has_deduction && dedAmount > 0) {
-      if (dedAmount > payableAmount) return res.status(400).json({ error: '抵扣金额不能大于应付金额' });
+      if (dedAmount > unpaidBalance) return res.status(400).json({ error: '抵扣金额不能大于应付金额' });
       if (!deduction_source_type || !deduction_source_desc) return res.status(400).json({ error: '抵扣金额大于0时必须填写抵扣来源类型和说明' });
     }
-    const actualPay = payableAmount - (has_deduction ? dedAmount : 0);
+    const actualPay = unpaidBalance - (has_deduction ? dedAmount : 0);
 
     const prId = genId('pay');
     const prNo = `PAY-BAL-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
-    run(`INSERT INTO payment_requests (id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no, payee_type, supplier_name, payable_amount, paid_amount, unpaid_amount, currency, payment_terms, payment_status, approval_status, remark, has_deduction, deduction_amount, deduction_source_type, deduction_source_desc, deduction_ref_no, actual_pay_amount, related_ci_id, related_ci_no, related_po_no) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [prId, prNo, 'goods', 'balance', 'ci', ci_id, ci.ci_no, 'factory', ci.supplier_name, payableAmount, 0, payableAmount, ci.currency || 'USD', '', 'pending_approval', 'pending', `CI尾款 ${ci.ci_no}`, has_deduction ? 1 : 0, has_deduction ? dedAmount : 0, deduction_source_type || '', deduction_source_desc || '', deduction_ref_no || '', actualPay, ci_id, ci.ci_no, ci.related_po_no || '']);
 
-    run('UPDATE commercial_invoices SET balance_payment_status = ? WHERE id = ?', ['pending_approval', ci_id]);
-    res.json({ id: prId, request_no: prNo, payable_amount: payableAmount, actual_pay_amount: actualPay });
+    // 三、INSERT 付款申请 + 更新 CI 状态，必须处于同一事务（任一步失败整体回滚）
+    transaction(() => {
+      run(`INSERT INTO payment_requests (id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no, payee_type, supplier_name, payable_amount, paid_amount, unpaid_amount, currency, payment_terms, payment_status, approval_status, remark, has_deduction, deduction_amount, deduction_source_type, deduction_source_desc, deduction_ref_no, actual_pay_amount, related_ci_id, related_ci_no, related_po_no) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [prId, prNo, 'goods', 'balance', 'ci', ci_id, ci.ci_no, 'factory', ci.supplier_name, unpaidBalance, 0, unpaidBalance, ci.currency || 'USD', '', 'pending_approval', 'pending', `CI尾款 ${ci.ci_no}`, has_deduction ? 1 : 0, has_deduction ? dedAmount : 0, deduction_source_type || '', deduction_source_desc || '', deduction_ref_no || '', actualPay, ci_id, ci.ci_no, ci.related_po_no || '']);
+      run('UPDATE commercial_invoices SET balance_payment_status = ? WHERE id = ?', ['pending_approval', ci_id]);
+    });
+    res.json({ id: prId, request_no: prNo, payable_amount: unpaidBalance, actual_pay_amount: actualPay });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -3128,14 +4706,16 @@ app.post('/api/payment-requests/:id/approve', requireApiPermission('payment_appr
     const user = queryOne('SELECT name FROM users WHERE id = ?', [req.currentUserId]);
     const userName = user ? user.name : '';
 
+    // 审批意见（财务类审批）持久化到独立列 approval_remark，不覆盖申请备注 remark
+    const apprRemark = (remark || '').toString();
     if (action === 'approve') {
-      const updateFields = ['payment_status = ?', 'approval_status = ?', 'updated_at = datetime(\'now\')'];
-      const updateValues = ['approved', 'approved'];
+      const updateFields = ['payment_status = ?', 'approval_status = ?', 'approval_remark = ?', 'approver_name = ?', 'approved_at = datetime(\'now\')', 'updated_at = datetime(\'now\')'];
+      const updateValues = ['approved', 'approved', apprRemark, userName];
       if (actual_rate) { updateFields.push('actual_rate = ?'); updateValues.push(parseFloat(actual_rate)); }
       updateValues.push(req.params.id);
       run(`UPDATE payment_requests SET ${updateFields.join(', ')} WHERE id = ?`, updateValues);
     } else if (action === 'reject') {
-      run('UPDATE payment_requests SET payment_status = ?, approval_status = ?, updated_at = datetime(\'now\') WHERE id = ?', ['rejected', 'rejected', req.params.id]);
+      run('UPDATE payment_requests SET payment_status = ?, approval_status = ?, approval_remark = ?, approver_name = ?, approved_at = datetime(\'now\'), updated_at = datetime(\'now\') WHERE id = ?', ['rejected', 'rejected', apprRemark, userName, req.params.id]);
     } else if (action === 'confirm-paid') {
       const paidAmount = req.body.paid_amount || payment.actual_pay_amount || payment.payable_amount;
       const dedAmount = payment.deduction_amount || 0;
@@ -3149,7 +4729,7 @@ app.post('/api/payment-requests/:id/approve', requireApiPermission('payment_appr
         [payStatus, paidAmount, Math.max(0, (payment.actual_pay_amount || payment.payable_amount) - paidAmount), req.params.id]);
       // 更新来源单据状态
       if (payment.source_type === 'pi') {
-        run('UPDATE proforma_invoices SET deposit_payment_status = ?, pi_status = ? WHERE id = ?', ['paid', 'deposit_paid', payment.source_id]);
+        run('UPDATE proforma_invoices SET deposit_payment_status = ?, paid_deposit = ?, pi_status = ? WHERE id = ?', ['paid', paidAmount, 'deposit_paid', payment.source_id]);
       } else if (payment.source_type === 'ci') {
         run('UPDATE commercial_invoices SET balance_payment_status = ?, paid_balance = ?, unpaid_balance = ? WHERE id = ?',
           ['paid', paidAmount, 0, payment.source_id]);
@@ -3217,7 +4797,11 @@ app.get('/api/commercial-invoices/:id/cost-summary', requireApiPermission('ci_vi
       has_inspection_fee: ci.has_inspection_fee || 0,
       cost_confirmed: ci.cost_confirmed || 0,
       cost_allocated: ci.cost_allocated || 0,
-      original_inventory_imported: ci.original_inventory_imported || 0
+      original_inventory_imported: ci.original_inventory_imported || 0,
+      wac_version_id: ci.wac_version_id || '',
+      wac_confirmed: ci.wac_confirmed || 0,
+      wac_confirmed_at: ci.wac_confirmed_at || '',
+      wac_confirmed_by: ci.wac_confirmed_by || ''
     };
 
     costItems.forEach(item => {
@@ -3274,53 +4858,71 @@ app.post('/api/original-inventory/import', requireApiPermission('cost_view'), (r
     if (!ci_id) return res.status(400).json({ error: '必须关联CI' });
     const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [ci_id]);
     if (!ci) return res.status(400).json({ error: 'CI不存在' });
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: '导入数据不能为空' });
+    }
 
-    const result = { success: 0, failed: 0, total: items.length, errors: [] };
+    // ===== 阶段1：DELETE 前全量预校验（只读，不写库）=====
+    const errors = [];
+    const parsed = [];
+    items.forEach((item, i) => {
+      const rowNo = i + 2; // 表头占第1行
+      const skuCode = item.sku_code || item['SKU'];
+      const origQty = parseFloat(item.original_qty || item['原库存数量'] || 0);
+      const country = item.country || item['国家'] || ci.country || '';
+      const warehouse = item.warehouse || item['仓库'] || ci.target_warehouse || '';
+      const remark = item.remark || item['备注'] || '';
+
+      if (!skuCode) { errors.push({ row: rowNo, reason: 'SKU编码为空' }); return; }
+
+      // 校验SKU存在
+      const sku = queryOne('SELECT sku_code FROM skus WHERE sku_code = ?', [skuCode]);
+      if (!sku) { errors.push({ row: rowNo, reason: `SKU ${skuCode} 不存在` }); return; }
+
+      // 校验SKU属于CI明细
+      const ciItem = queryOne('SELECT id FROM commercial_invoice_items WHERE ci_id = ? AND sku_code = ?', [ci_id, skuCode]);
+      if (!ciItem) { errors.push({ row: rowNo, reason: `SKU ${skuCode} 不属于该CI明细` }); return; }
+
+      // 校验非负数
+      if (origQty < 0) { errors.push({ row: rowNo, reason: `SKU ${skuCode} 原库存数量不能为负数` }); return; }
+
+      parsed.push({ skuCode, origQty, country, warehouse, remark });
+    });
+
+    // 任一行校验失败 → 整体返回 400，完全不执行 DELETE（避免 DELETE-first 数据丢失）
+    if (errors.length > 0) {
+      return res.status(400).json({ success: 0, failed: errors.length, total: items.length, errors });
+    }
+
+    // ===== 阶段2：校验通过 → 事务内 DELETE → INSERT → UPDATE =====
+    // 移除原逐行 try/catch：任一 INSERT 或后续 UPDATE 失败将自然抛出并整体回滚
     transaction(() => {
       // 先清除该CI之前的导入记录
       run('DELETE FROM original_inventory_imports WHERE ci_id = ?', [ci_id]);
 
-      items.forEach((item, i) => {
-        try {
-          const skuCode = item.sku_code || item['SKU'];
-          const origQty = parseFloat(item.original_qty || item['原库存数量'] || 0);
-          const country = item.country || item['国家'] || ci.country || '';
-          const warehouse = item.warehouse || item['仓库'] || ci.target_warehouse || '';
-          const remark = item.remark || item['备注'] || '';
-
-          if (!skuCode) { result.failed++; result.errors.push({ row: i + 2, reason: 'SKU编码为空' }); return; }
-
-          // 校验SKU存在
-          const sku = queryOne('SELECT sku_code FROM skus WHERE sku_code = ?', [skuCode]);
-          if (!sku) { result.failed++; result.errors.push({ row: i + 2, reason: `SKU ${skuCode} 不存在` }); return; }
-
-          // 校验SKU属于CI明细
-          const ciItem = queryOne('SELECT id FROM commercial_invoice_items WHERE ci_id = ? AND sku_code = ?', [ci_id, skuCode]);
-          if (!ciItem) { result.failed++; result.errors.push({ row: i + 2, reason: `SKU ${skuCode} 不属于该CI明细` }); return; }
-
-          // 校验非负数
-          if (origQty < 0) { result.failed++; result.errors.push({ row: i + 2, reason: `SKU ${skuCode} 原库存数量不能为负数` }); return; }
-
-          run(`INSERT INTO original_inventory_imports (id, ci_id, ci_no, po_no, sku_code, country, warehouse, original_qty, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [genId('ori'), ci_id, ci.ci_no, ci.related_po_no || '', skuCode, country, warehouse, origQty, remark]);
-          result.success++;
-        } catch (e) { result.failed++; result.errors.push({ row: i + 2, reason: e.message }); }
+      parsed.forEach(p => {
+        run(`INSERT INTO original_inventory_imports (id, ci_id, ci_no, po_no, sku_code, country, warehouse, original_qty, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [genId('ori'), ci_id, ci.ci_no, ci.related_po_no || '', p.skuCode, p.country, p.warehouse, p.origQty, p.remark]);
       });
 
       // 检查CI明细中所有SKU是否都已导入
       const ciItems = query('SELECT sku_code FROM commercial_invoice_items WHERE ci_id = ?', [ci_id]).rows;
-      const importedSkus = query('SELECT sku_code FROM original_inventory_imports WHERE ci_id = ?', [ci_id]).rows.map(r => r.sku_code);
+      const importedSkus = parsed.map(p => p.skuCode);
       const missingSkus = ciItems.filter(ci => !importedSkus.includes(ci.sku_code)).map(ci => ci.sku_code);
 
-      const allImported = missingSkus.length === 0 && result.success > 0;
+      const allImported = missingSkus.length === 0;
       run('UPDATE commercial_invoices SET original_inventory_imported = ? WHERE id = ?', [allImported ? 1 : 0, ci_id]);
-
-      if (missingSkus.length > 0) {
-        result.warnings = [`部分 SKU 缺少原库存数量，请补充后再更新加权平均成本: ${missingSkus.join(', ')}`];
-      }
     });
 
-    res.json(result);
+    // 事务提交后计算业务警告（部分 SKU 未导入为业务提示，不阻断）
+    const ciItems = query('SELECT sku_code FROM commercial_invoice_items WHERE ci_id = ?', [ci_id]).rows;
+    const importedRows = query('SELECT sku_code FROM original_inventory_imports WHERE ci_id = ?', [ci_id]).rows.map(r => r.sku_code);
+    const missingSkus = ciItems.filter(ci => !importedRows.includes(ci.sku_code)).map(ci => ci.sku_code);
+    const warnings = missingSkus.length > 0
+      ? [`部分 SKU 缺少原库存数量，请补充后再更新加权平均成本: ${missingSkus.join(', ')}`]
+      : [];
+
+    res.json({ success: items.length, failed: 0, total: items.length, warnings });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -3428,6 +5030,7 @@ app.post('/api/cost-allocation/allocate/:ci_id', requireApiPermission('cost_view
 });
 
 // 更新加权平均成本（需要原库存数量已导入 + 费用已分摊）
+// 确认加权平均成本（P1-03-B：只生成并锁定 WAC 版本，不修改库存总表）
 app.post('/api/cost-allocation/update-weighted-avg/:ci_id', requireApiPermission('cost_view'), (req, res) => {
   try {
     const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [req.params.ci_id]);
@@ -3443,18 +5046,16 @@ app.post('/api/cost-allocation/update-weighted-avg/:ci_id', requireApiPermission
       return res.status(400).json({ error: '请先完成费用分摊' });
     }
 
-    // 检查原库存数量是否已导入
-    const ciItems = query('SELECT sku_code FROM commercial_invoice_items WHERE ci_id = ?', [req.params.ci_id]).rows;
-    const importedSkus = query('SELECT sku_code, original_qty, country, warehouse FROM original_inventory_imports WHERE ci_id = ?', [req.params.ci_id]).rows;
-    const importedSkuCodes = importedSkus.map(r => r.sku_code);
-    const missingSkus = ciItems.filter(ci => !importedSkuCodes.includes(ci.sku_code)).map(ci => ci.sku_code);
-
-    if (missingSkus.length > 0 || ciItems.length === 0) {
-      return res.status(400).json({ error: '请先导入原库存数量，用于计算本次采购入库后的加权平均成本。', missing_skus: missingSkus });
+    // P1-03-C: 重复确认检查 — 改用汇总状态 wac_confirmed
+    if (ci.wac_confirmed) {
+      return res.status(409).json({ error: '该 CI 已完成 WAC 确认，请勿重复确认。如需调整请使用冲销版本（尚未实现）。' });
     }
 
-    // 获取分摊记录
-    const allocations = query('SELECT * FROM cost_allocations WHERE ci_id = ?', [req.params.ci_id]).rows;
+    // 获取原库存导入记录（供循环内按 SKU 匹配；缺失校验在事务内 throw）
+    const importedSkus = query('SELECT sku_code, original_qty, country, warehouse FROM original_inventory_imports WHERE ci_id = ?', [req.params.ci_id]).rows;
+
+    // 获取分摊记录（稳定业务排序，保证多 SKU 迭代顺序确定）
+    const allocations = query('SELECT * FROM cost_allocations WHERE ci_id = ? ORDER BY sku_code ASC', [req.params.ci_id]).rows;
     if (allocations.length === 0) {
       return res.status(400).json({ error: '未找到费用分摊记录，请先执行费用分摊' });
     }
@@ -3462,20 +5063,26 @@ app.post('/api/cost-allocation/update-weighted-avg/:ci_id', requireApiPermission
     const user = queryOne('SELECT name FROM users WHERE id = ?', [req.currentUserId]);
     const userName = user ? user.name : '';
     const logs = [];
+    const today = new Date().toISOString().split('T')[0];
 
     transaction(() => {
       allocations.forEach(alloc => {
         const origInv = importedSkus.find(s => s.sku_code === alloc.sku_code);
-        if (!origInv) return;
+        // P1-03-C: 缺失原库存导入记录必须在事务内抛出，触发整体回滚（而非事务外 400 拦截）
+        if (!origInv) {
+          throw new Error(`SKU ${alloc.sku_code} 缺少原库存导入记录，WAC 确认已整体回滚`);
+        }
 
         const originalQty = origInv.original_qty || 0;
         const inboundQty = alloc.inbound_qty || 0;
         const unitLandingCost = alloc.unit_landing_cost_with_fees || alloc.unit_landing_cost || 0;
+        const inboundTotalCost = inboundQty * unitLandingCost;
 
-        // 获取旧加权平均成本
+        // 读取旧加权平均成本（仅读取，不写入）
         const invRecord = queryOne('SELECT id, available_qty, weighted_avg_cost FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
           [alloc.sku_code, origInv.country, origInv.warehouse]);
         const oldAvgCost = invRecord ? (invRecord.weighted_avg_cost || 0) : 0;
+        const originalInventoryValue = originalQty * oldAvgCost;
 
         // 计算新加权平均成本
         const newQty = originalQty + inboundQty;
@@ -3484,19 +5091,34 @@ app.post('/api/cost-allocation/update-weighted-avg/:ci_id', requireApiPermission
           : unitLandingCost;
         const roundedAvgCost = Math.round(newAvgCost * 10000) / 10000;
 
-        // 更新库存总表：数量 + 加权平均成本
-        if (invRecord) {
-          run('UPDATE inventory SET available_qty = ?, weighted_avg_cost = ?, inventory_value = available_qty * ?, last_inbound_date = ?, updated_at = datetime(\'now\') WHERE id = ?',
-            [newQty, roundedAvgCost, roundedAvgCost, new Date().toISOString().split('T')[0], invRecord.id]);
-        } else {
-          run(`INSERT OR IGNORE INTO inventory (id, sku_code, country, warehouse, available_qty, weighted_avg_cost, inventory_value, last_inbound_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            [genId('inv'), alloc.sku_code, origInv.country, origInv.warehouse, newQty, roundedAvgCost, Math.round(newQty * roundedAvgCost * 100) / 100, new Date().toISOString().split('T')[0]]);
-        }
+        // P1-03-B: 获取 SKU 的 model 信息
+        const skuInfo = queryOne('SELECT model, brand FROM skus WHERE sku_code = ?', [alloc.sku_code]);
 
-        // 更新SKU表
-        run('UPDATE skus SET weighted_avg_cost = ? WHERE sku_code = ?', [roundedAvgCost, alloc.sku_code]);
+        // P1-03-B: 生成并锁定 WAC 历史版本（不写 inventory/skus）
+        const wacVer = generateWacVersion({
+          ci_id: ci.id,
+          ci_no: ci.ci_no,
+          po_id: ci.related_po_id || '',
+          po_no: ci.related_po_no || '',
+          pi_id: ci.related_pi_id || '',
+          pi_no: ci.related_pi_no || '',
+          sku_code: alloc.sku_code,
+          model: skuInfo ? (skuInfo.model || '') : '',
+          brand: ci.brand || (skuInfo ? (skuInfo.brand || '') : ''),
+          country: origInv.country || '',
+          warehouse: origInv.warehouse || '',
+          original_qty: originalQty,
+          original_avg_cost: oldAvgCost,
+          original_inventory_value: originalInventoryValue,
+          inbound_qty: inboundQty,
+          unit_landing_cost: unitLandingCost,
+          inbound_total_cost: inboundTotalCost,
+          new_avg_cost: roundedAvgCost,
+          settlement_date: today,
+          confirmed_by: req.currentUserId
+        });
 
-        // 更新分摊记录的原库存信息
+        // 更新分摊记录的原库存信息（不改 inventory）
         run('UPDATE cost_allocations SET original_qty = ?, original_avg_cost = ? WHERE id = ?', [originalQty, oldAvgCost, alloc.id]);
 
         // 记录成本更新日志
@@ -3504,11 +5126,18 @@ app.post('/api/cost-allocation/update-weighted-avg/:ci_id', requireApiPermission
         run(`INSERT INTO cost_update_logs (id, sku_code, country, warehouse, related_po_no, related_pi_no, related_ci_no, original_qty, old_avg_cost, inbound_qty, ci_unit_cost, unit_landing_cost, new_qty, new_avg_cost, operator_id, operator_name, import_file, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [logId, alloc.sku_code, origInv.country, origInv.warehouse, ci.related_po_no || '', ci.related_pi_no || '', ci.ci_no, originalQty, oldAvgCost, inboundQty, alloc.unit_product_cost || 0, unitLandingCost, newQty, roundedAvgCost, req.currentUserId, userName, '', req.body.remark || '']);
 
-        logs.push({ sku_code: alloc.sku_code, original_qty: originalQty, old_avg_cost: oldAvgCost, inbound_qty: inboundQty, unit_landing_cost: unitLandingCost, new_qty: newQty, new_avg_cost: roundedAvgCost });
+        logs.push({ sku_code: alloc.sku_code, version_no: wacVer.version_no, wac_id: wacVer.id, original_qty: originalQty, old_avg_cost: oldAvgCost, inbound_qty: inboundQty, unit_landing_cost: unitLandingCost, new_avg_cost: roundedAvgCost });
       });
+
+      // P1-03-C: 全部 SKU 成功才置汇总确认状态；否则整体回滚
+      if (logs.length !== allocations.length) {
+        throw new Error('WAC 确认 SKU 数量不一致，已整体回滚');
+      }
+      // 注意：不再写入 wac_version_id（P1-03-C 已废弃一对一版本关联）
+      run('UPDATE commercial_invoices SET wac_confirmed = 1, wac_confirmed_at = datetime(\'now\'), wac_confirmed_by = ? WHERE id = ?', [req.currentUserId || userName, ci.id]);
     });
 
-    res.json({ success: true, updated_count: logs.length, logs });
+    res.json({ success: true, updated_count: logs.length, logs, wac_confirmed: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -3522,6 +5151,21 @@ app.get('/api/cost-update-logs', requireApiPermission('cost_view'), (req, res) =
     if (sku_code) { sql += ' AND sku_code = ?'; params.push(sku_code); }
     if (keyword) { sql += ' AND (related_ci_no LIKE ? OR sku_code LIKE ? OR related_po_no LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`); }
     sql += ' ORDER BY created_at DESC';
+    res.json(query(sql, params).rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// P1-03-B: WAC 历史版本查询（只读，按 CI 或 SKU+国家+仓库）
+app.get('/api/wac-history', requireApiPermission('cost_view'), (req, res) => {
+  try {
+    const { ci_id, sku_code, country, warehouse } = req.query;
+    let sql = 'SELECT * FROM wac_history WHERE 1=1';
+    const params = [];
+    if (ci_id) { sql += ' AND ci_id = ?'; params.push(ci_id); }
+    if (sku_code) { sql += ' AND sku_code = ?'; params.push(sku_code); }
+    if (country) { sql += ' AND country = ?'; params.push(country); }
+    if (warehouse) { sql += ' AND warehouse = ?'; params.push(warehouse); }
+    sql += ' ORDER BY version_no DESC';
     res.json(query(sql, params).rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

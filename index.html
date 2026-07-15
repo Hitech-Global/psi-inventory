@@ -112,6 +112,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 .filter-group input,.filter-group select{padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--card-bg);outline:none;font-family:inherit;height:30px}
 .filter-actions{display:flex;gap:6px;align-items:center;margin-left:auto}
 .status-badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:12px;font-weight:500;white-space:nowrap}
+/* 动销判断列：主标签 + 风险小标签分层展示 */
+.sales-judgement{display:flex;flex-direction:column;align-items:flex-start;gap:2px;line-height:1.35}
+.sj-status{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px;font-weight:600;background:#eef2f7;color:#1a1a2e;white-space:nowrap}
+.sj-tags{display:flex;flex-wrap:wrap;gap:3px}
+.sj-tag{display:inline-block;padding:0 6px;border-radius:8px;font-size:10px;line-height:1.5;background:#fde8e8;color:#b71c1c;white-space:nowrap}
 .status-normal{background:#e8f5e9;color:#2e7d32}
 .status-pending{background:#fff3e0;color:#e65100}
 .status-approved{background:#e8f5e9;color:#2e7d32}
@@ -138,6 +143,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 .modal-close{background:none;border:none;font-size:24px;cursor:pointer;color:var(--text-muted);padding:0 8px}
 .modal-body{padding:24px}
 .modal-footer{padding:16px 24px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:12px}
+.modal-lg{max-width:1120px;width:96%;max-height:94vh;display:flex;flex-direction:column;overflow:hidden}
+.modal-lg .modal-header{flex:0 0 auto}
+.modal-lg .modal-body{flex:1 1 auto;overflow-y:auto}
+.modal-lg .modal-footer{flex:0 0 auto}
+.pc-modal{max-width:560px}
+.pc-modal-hint{font-size:12px;color:var(--text-muted);margin-top:4px;line-height:1.5}
+.pc-modal-error{display:none;margin-top:14px;padding:10px 12px;border-radius:8px;background:#fff1f0;border:1px solid #ffccc7;color:#cf1322;font-size:13px;line-height:1.6}
+.pe-modal-error{display:none;margin-top:14px;padding:10px 12px;border-radius:8px;background:#fff1f0;border:1px solid #ffccc7;color:#cf1322;font-size:13px;line-height:1.6}
+.pi-cmp-table thead th{position:sticky;top:0;z-index:2;background:#fafbfc}
 /* ===== 订单预测：字段配置面板 ===== */
 .rp-cfg-panel{padding:0 4px}
 .rp-cfg-toolbar{display:flex;gap:8px;margin-bottom:10px;align-items:center}
@@ -244,6 +258,44 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 .rp-monthly-table thead th{position:sticky;top:0;z-index:3;background:#fafbfc}
 .rp-monthly-table .rp-summary-row td{position:sticky;top:34px;z-index:2;background:#e8edf3;font-weight:700;font-size:12px;border-bottom:2px solid var(--border,#c5cad3)!important;box-shadow:0 2px 4px rgba(0,0,0,.08)}
 .rp-monthly-table tbody tr:hover td{background:#f8f9ff}
+/* 渠道表格冻结列（动态设置 left，此处仅定义基础样式） */
+.rp-monthly-table .rp-freeze-cell{position:sticky;z-index:1;background:var(--bg-card,#fff)}
+.rp-monthly-table thead .rp-freeze-cell{z-index:5;background:#fafbfc}
+.rp-monthly-table .rp-summary-row .rp-freeze-cell{z-index:4;background:#e8edf3}
+.rp-monthly-table tbody tr:hover .rp-freeze-cell{background:#f8f9ff}
+/* 冻结区最右侧字段：常驻右侧阴影，作为冻结区与滚动区的唯一视觉分隔（不叠 border-right，避免双线） */
+.rp-monthly-table .rp-freeze-last{box-shadow:2px 0 6px rgba(0,0,0,0.12)}
+.rp-monthly-table thead .rp-freeze-last{box-shadow:2px 0 6px rgba(0,0,0,0.12)}
+.rp-monthly-table .rp-summary-row .rp-freeze-last{box-shadow:2px 0 6px rgba(0,0,0,0.12)}
+.rp-monthly-table tbody tr:hover .rp-freeze-last{box-shadow:2px 0 6px rgba(0,0,0,0.12)}
+/* 渠道表格容器需 relative，作为冻结线 absolute 定位基准 */
+#rp-table .table-container{position:relative}
+/* 订单预测建议采购输入框：去掉 number input 默认上下箭头 */
+.rp-target-stock-input::-webkit-outer-spin-button,
+.rp-target-stock-input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.rp-target-stock-input{-moz-appearance:textfield}
+/* 字段说明 tooltip（Shopee 风格问号图标 + 气泡）
+   说明气泡渲染到 body 下的 #global-tooltip，避免被 table-container overflow 裁剪 */
+.rp-th-help{display:inline-block;width:14px;height:14px;margin-left:3px;vertical-align:middle;cursor:help;position:relative}
+.rp-th-help::before{content:'?';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:14px;height:14px;line-height:14px;text-align:center;border-radius:50%;background:#e0e4ea;color:#8a94a6;font-size:10px;font-weight:700;transition:background .15s,color .15s}
+.rp-th-help:hover::before{background:#3370ff;color:#fff}
+#global-tooltip{position:fixed;z-index:10000;max-width:280px;background:#1f2329;color:#fff;padding:8px 12px;border-radius:6px;font-size:12px;line-height:1.5;box-shadow:0 4px 16px rgba(0,0,0,0.24);opacity:0;visibility:hidden;transition:opacity .15s,visibility .15s;pointer-events:none}
+#global-tooltip.visible{opacity:1;visibility:visible}
+#global-tooltip::after{content:'';position:absolute;left:50%;transform:translateX(-50%);border:6px solid transparent}
+#global-tooltip.tip-above::after{top:100%;border-top-color:#1f2329}
+#global-tooltip.tip-below::after{bottom:100%;border-bottom-color:#1f2329}
+/* 飞书风格冻结拖拽线：透明载体（仅作拖拽热区+蓝柄载体，不承担灰线视觉，避免与 box-shadow 双线） */
+.rp-freeze-line{position:absolute;top:0;bottom:0;width:1px;background:transparent;z-index:8;cursor:col-resize}
+.rp-freeze-line::before{content:'';position:absolute;top:50%;left:-3px;width:6px;height:36px;border-radius:4px;background:#3370ff;opacity:0;transform:translateY(-50%);transition:opacity .15s,width .15s;pointer-events:none}
+.rp-freeze-line::after{content:'';position:absolute;top:0;bottom:0;left:-5px;width:10px}
+.rp-freeze-line:hover::before,.rp-freeze-line.dragging::before{opacity:1;width:7px;left:-3px}
+.rp-freeze-line.hidden{display:none}
+.rp-freeze-line-tooltip{position:absolute;top:50%;left:10px;transform:translateY(-50%);background:#3370ff;color:#fff;padding:3px 8px;border-radius:4px;font-size:11px;white-space:nowrap;opacity:0;transition:opacity .15s;pointer-events:none}
+.rp-freeze-line:hover .rp-freeze-line-tooltip{opacity:1}
+/* 拖动落点提示线（拖动过程中显示，吸附到列边界） */
+.rp-freeze-drop-line{position:absolute;top:0;bottom:0;width:2px;background:#3370ff;z-index:9;pointer-events:none;opacity:0;transition:opacity .1s}
+.rp-freeze-drop-line.visible{opacity:1}
+@keyframes rpFadeOut{from{opacity:1}to{opacity:0}}
 /* 生命周期标签 */
 .lifecycle-tag{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;line-height:1.5;white-space:nowrap}
 .lc-new_test{background:#e3f2fd;color:#1565c0;border:1px solid #bbdefb}
@@ -256,6 +308,63 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 .lc-stopped{background:#eceff1;color:#455a64;border:1px solid #cfd8dc}
 .link-text{color:var(--primary);text-decoration:none}
 .link-text:hover{text-decoration:underline}
+/* 审批中心 */
+.approval-tabs{display:flex;gap:6px;padding:14px 16px 0;flex-wrap:wrap;border-bottom:1px solid #eee}
+.approval-tab{padding:8px 14px;cursor:pointer;border-radius:6px 6px 0 0;font-size:14px;color:#666;border:1px solid transparent;border-bottom:none}
+.approval-tab:hover{background:#f5f5f5}
+.approval-tab.active{color:var(--primary);font-weight:600;border-color:#e0e0e0;background:#fff;border-bottom:2px solid #fff;margin-bottom:-1px}
+.muted-hint{font-size:12px;color:#999}
+.approval-timeline{list-style:none;margin:0;padding:0}
+.approval-timeline .tl-item{padding:10px 0;border-bottom:1px dashed #eee}
+.approval-timeline .tl-item:last-child{border-bottom:none}
+.approval-timeline .tl-action{font-size:14px}
+.approval-timeline .tl-meta{font-size:12px;color:#888;margin-top:2px}
+.approval-timeline .tl-remark{font-size:13px;color:#555;margin-top:4px}
+/* 供应商付款条件子表 */
+.sup-terms-section{margin-top:18px;border-top:1px dashed var(--border);padding-top:14px}
+.sup-terms-head{font-size:14px;font-weight:600;margin-bottom:10px;color:var(--text)}
+.sup-terms-empty{color:#999;font-size:13px;padding:10px 0 12px}
+.sup-term-card{display:flex;align-items:flex-start;gap:8px;background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:10px}
+.sup-term-idx{flex:0 0 20px;height:20px;line-height:20px;text-align:center;background:var(--accent,#3b7ddd);color:#fff;border-radius:50%;font-size:12px;margin-top:18px}
+.sup-term-fields{flex:1;display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}
+.sup-term-field{display:flex;flex-direction:column;gap:3px}
+.sup-term-field>label{font-size:12px;color:#888}
+.sup-term-field input[type=text],.sup-term-field input[type=number],.sup-term-field select{height:32px;padding:0 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px;min-width:150px}
+.sup-term-field.st-credit-box>input{min-width:110px}
+.sup-term-default,.sup-term-del{justify-content:flex-end;padding-bottom:2px}
+.sup-term-del .action-del{border:none;background:transparent;font-size:16px;cursor:pointer}
+.hidden{display:none!important}
+/* ===== 付款类目管理（L1B-2 三栏骨架） ===== */
+.pc-head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;gap:16px}
+.pc-title{font-size:20px;font-weight:700}
+.pc-desc{font-size:13px;color:var(--text-secondary);margin-top:4px;max-width:900px;line-height:1.5}
+.pc-head-actions{display:flex;gap:10px;flex-shrink:0;align-items:center}
+.payment-category-columns{display:grid;grid-template-columns:minmax(280px,24%) minmax(380px,38%) minmax(380px,38%);gap:14px;width:100%;max-width:none;align-items:start}
+.col-pc-card{background:var(--card-bg);border-radius:var(--radius);box-shadow:var(--shadow);display:flex;flex-direction:column;overflow:hidden;min-width:0}
+.col-pc-head{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--border)}
+.col-pc-title{font-size:15px;font-weight:600}
+.col-pc-title .pc-sub{font-size:13px;color:var(--text-muted);font-weight:500}
+.col-pc-body{padding:8px 8px 12px;overflow-y:auto;max-height:calc(100vh - 230px)}
+.pc-row{display:flex;align-items:center;gap:8px;padding:9px 10px;border-radius:6px;margin-bottom:4px;border-left:3px solid transparent;background:#fff;cursor:pointer}
+.pc-row:hover{background:var(--bg)}
+.pc-row.selected{border-left-color:var(--primary);background:var(--primary-light)}
+.pc-main{flex:1;min-width:0}
+.pc-name{font-size:14px;font-weight:500;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pc-code{font-size:11px;color:var(--text-muted);font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pc-code-inline{font-size:11px;color:var(--text-muted);font-family:monospace}
+.pc-meta{font-size:11px;color:var(--text-secondary);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pc-actions{display:flex;gap:4px;flex-shrink:0;align-items:center}
+.pc-edit{font-size:12px;padding:3px 9px;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--text-secondary);cursor:pointer;white-space:nowrap}
+.pc-edit:hover{background:var(--bg);color:var(--primary)}
+.pc-toggle{font-size:12px;padding:3px 9px;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--text-secondary);cursor:pointer;white-space:nowrap}
+.pc-toggle:hover{background:var(--bg)}
+.pc-hint{margin:10px 12px 6px;padding:8px 12px;background:var(--bg);border-radius:8px;font-size:12px;color:var(--text-secondary);line-height:1.5}
+.pc-hint b{color:var(--text)}
+.status-disabled{background:#f0f0f0;color:#999}
+.pc-loading{padding:28px;text-align:center;color:var(--text-muted);font-size:13px}
+.pc-empty{padding:28px 14px;text-align:center;color:var(--text-muted);font-size:13px}
+.pc-empty .pc-empty-icon{font-size:26px;margin-bottom:6px;display:block}
+.pc-readonly-banner{display:flex;align-items:center;gap:8px;padding:8px 14px;background:#fff8e6;border:1px solid #f0e0b0;border-radius:8px;color:#8a6d1a;font-size:12px;margin-bottom:12px}
 </style>
 </head>
 <body>
@@ -290,6 +399,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 </div>
 <div class="toast-container" id="toast-container"></div>
 <div class="modal-overlay" id="modal-overlay" onclick="if(event.target===this)closeModal()"><div class="modal" id="modal-content"></div></div>
+<div id="global-tooltip"></div>
 <script src="app.js"></script>
 </body>
 </html>

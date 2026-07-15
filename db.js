@@ -152,6 +152,32 @@ function initDatabase() {
     )
   `);
 
+  // 供应商付款条件（结构化多条，独立于付款申请模块的 payment_terms 目录表）
+  // term_type: advance(预付) / credit(信用) / other(其他)；credit/other 可填 credit_days（信用天数，手动输入）
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS supplier_payment_terms (
+      id TEXT PRIMARY KEY,
+      supplier_id TEXT NOT NULL,
+      term_name TEXT DEFAULT '',
+      term_type TEXT DEFAULT 'advance',
+      credit_days INTEGER DEFAULT 0,
+      is_default INTEGER DEFAULT 0,
+      display_order INTEGER DEFAULT 0,
+      status TEXT DEFAULT 'active',
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  // 品牌采购状态主数据（停采品牌系统级规则）：brand=品牌名(主键)，procurement_status=active(可采购)/stopped(停采)
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS brand_settings (
+      brand TEXT PRIMARY KEY,
+      procurement_status TEXT DEFAULT 'active',
+      note TEXT DEFAULT '',
+      updated_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
   // 货代
   d.exec(`
     CREATE TABLE IF NOT EXISTS freight_forwarders (
@@ -295,6 +321,8 @@ function initDatabase() {
       default_supplier_name TEXT DEFAULT '',
       purchase_currency TEXT DEFAULT 'USD',
       standard_purchase_price REAL DEFAULT 0,
+      purchase_price_rmb REAL DEFAULT 0,
+      purchase_price_usd REAL DEFAULT 0,
       weighted_avg_cost REAL DEFAULT 0,
       carton_spec TEXT DEFAULT '',
       qty_per_carton INTEGER DEFAULT 0,
@@ -544,6 +572,23 @@ function initDatabase() {
   ].forEach(col => {
     try { d.exec(`ALTER TABLE replenishment_suggestions ADD COLUMN ${col}`); } catch(e) {}
   });
+  // D1 新增：销量统计周期月均字段（按 sales_stats_days 计算的月均销量，仅用于展示层）
+  ['avg_sales_period REAL DEFAULT 0',
+   'online_avg_sales_period REAL DEFAULT 0',
+   'offline_avg_sales_period REAL DEFAULT 0'
+  ].forEach(col => {
+    try { d.exec(`ALTER TABLE replenishment_suggestions ADD COLUMN ${col}`); } catch(e) {}
+  });
+  // 三页建议采购口径统一：渠道分量列（单源口径；suggested_qty = 三分量之和）
+  ['online_suggested_qty INTEGER DEFAULT 0',
+   'offline_suggested_qty INTEGER DEFAULT 0',
+   'other_suggested_qty INTEGER DEFAULT 0'
+  ].forEach(col => {
+    try { d.exec(`ALTER TABLE replenishment_suggestions ADD COLUMN ${col}`); } catch(e) {}
+  });
+
+  // PI 明细：折扣列（比例 0~1，默认 0；向后兼容，已有明细折扣=0 行为不变）
+  try { d.exec(`ALTER TABLE proforma_invoice_items ADD COLUMN discount REAL DEFAULT 0`); } catch(e) {}
 
   // PO 主表
   d.exec(`
@@ -872,6 +917,298 @@ function initDatabase() {
     )
   `);
 
+  // ==================== 付款闭环核心表（L1A：仅建表与约束，不改任何现有流程） ====================
+  // 费用单主表：统一承载 PI定金 / CI尾款 / 运费 / 关税 / 商检 等应付费用
+  // 金额统一用 INTEGER 最小单位（分），不保存 paid_amount / settlement_status 等派生缓存
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS payable_items (
+      id TEXT PRIMARY KEY,
+      fee_no TEXT NOT NULL UNIQUE,
+      source_type TEXT NOT NULL,
+      source_id TEXT NOT NULL,
+      source_no TEXT DEFAULT '',
+      fee_type TEXT NOT NULL,
+      category_code TEXT DEFAULT '',
+      subcategory_code TEXT DEFAULT '',
+      payee_type TEXT DEFAULT '',
+      payee_key TEXT NOT NULL,
+      payee_name_snapshot TEXT DEFAULT '',
+      payer_entity_key TEXT NOT NULL,
+      payer_name_snapshot TEXT DEFAULT '',
+      currency TEXT NOT NULL,
+      payable_amount_minor INTEGER NOT NULL,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_by TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now')),
+      cancelled_by TEXT DEFAULT '',
+      cancelled_at TEXT DEFAULT '',
+      cancel_reason TEXT DEFAULT '',
+      CHECK (currency != ''),
+      CHECK (payee_key != ''),
+      CHECK (payer_entity_key != ''),
+      CHECK (payable_amount_minor > 0),
+      CHECK (is_active IN (0,1))
+    )
+  `);
+
+  // 有效费用单唯一约束（部分唯一索引）：同一 (source_type, source_id, fee_type) 只允许一张 is_active=1
+  // 作废（is_active=0）不进入索引，可无限累积历史并允许重建
+  d.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_payable_active
+      ON payable_items(source_type, source_id, fee_type)
+      WHERE is_active = 1
+  `);
+
+  // 按来源 / 费用单定位的普通索引
+  d.exec(`CREATE INDEX IF NOT EXISTS ix_payable_src ON payable_items(source_type, source_id)`);
+
+  // 付款申请明细：一笔付款申请关联多张费用单行
+  // 提交审批后明细冻结、驳回/撤回只改父申请状态，故无 is_active 软删列
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS payment_request_items (
+      id TEXT PRIMARY KEY,
+      payment_request_id TEXT NOT NULL,
+      payable_item_id TEXT NOT NULL,
+      requested_amount_minor INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now')),
+      CHECK (requested_amount_minor >= 0),
+      FOREIGN KEY (payment_request_id) REFERENCES payment_requests(id),
+      FOREIGN KEY (payable_item_id) REFERENCES payable_items(id)
+    )
+  `);
+
+  // 同一付款申请内费用单唯一（普通唯一，非 partial）
+  d.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_pri
+      ON payment_request_items(payment_request_id, payable_item_id)
+  `);
+
+  d.exec(`CREATE INDEX IF NOT EXISTS ix_pri_req ON payment_request_items(payment_request_id)`);
+  d.exec(`CREATE INDEX IF NOT EXISTS ix_pri_item ON payment_request_items(payable_item_id)`);
+
+  // 实际付款记录
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS payment_transactions (
+      id TEXT PRIMARY KEY,
+      trans_no TEXT NOT NULL UNIQUE,
+      payment_request_id TEXT NOT NULL,
+      paid_amount_minor INTEGER NOT NULL DEFAULT 0,
+      paid_date TEXT DEFAULT '',
+      payment_account TEXT DEFAULT '',
+      bank_ref_no TEXT DEFAULT '',
+      trans_status TEXT NOT NULL DEFAULT 'registered',
+      operator_id TEXT DEFAULT '',
+      operator_name TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now')),
+      CHECK (paid_amount_minor >= 0),
+      CHECK (trans_status IN ('registered','reconciled','cancelled')),
+      FOREIGN KEY (payment_request_id) REFERENCES payment_requests(id)
+    )
+  `);
+
+  d.exec(`CREATE INDEX IF NOT EXISTS ix_tx_req ON payment_transactions(payment_request_id)`);
+
+  // 付款分摊核销：经 payment_request_items 定位费用单，不冗余存 payable_item_id
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS payment_allocations (
+      id TEXT PRIMARY KEY,
+      transaction_id TEXT NOT NULL,
+      payment_request_item_id TEXT NOT NULL,
+      allocated_amount_minor INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'reconciled',
+      created_at TEXT DEFAULT (datetime('now')),
+      CHECK (allocated_amount_minor >= 0),
+      CHECK (status IN ('reconciled','cancelled')),
+      FOREIGN KEY (transaction_id) REFERENCES payment_transactions(id),
+      FOREIGN KEY (payment_request_item_id) REFERENCES payment_request_items(id)
+    )
+  `);
+
+  d.exec(`CREATE INDEX IF NOT EXISTS ix_alloc_tx ON payment_allocations(transaction_id)`);
+  d.exec(`CREATE INDEX IF NOT EXISTS ix_alloc_item ON payment_allocations(payment_request_item_id)`);
+
+  // ==================== 付款类目（L1B：独立两表，不改动 expense_types） ====================
+  // 付款大类：用于付款闭环费用单归类，仅启用/停用，不提供物理删除
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS payment_categories (
+      id TEXT PRIMARY KEY,
+      code TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_by TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      CHECK (code != ''),
+      CHECK (name != ''),
+      CHECK (status IN ('active','inactive'))
+    )
+  `);
+
+  // 付款子类：仅承载类目属性（名称/编码/默认收款方等）；来源映射已分离到 payment_subcategory_sources
+  // 外键 ON DELETE RESTRICT：大类被引用时禁止删除（大类本就不提供物理删除）
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS payment_subcategories (
+      id TEXT PRIMARY KEY,
+      category_id TEXT NOT NULL,
+      code TEXT NOT NULL,
+      name TEXT NOT NULL,
+      payee_type_default TEXT DEFAULT '',
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_by TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      CHECK (code != ''),
+      CHECK (name != ''),
+      CHECK (status IN ('active','inactive')),
+      FOREIGN KEY (category_id) REFERENCES payment_categories(id) ON DELETE RESTRICT
+    )
+  `);
+
+  // 同一大类下子类编码唯一
+  d.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_payment_subcategory_code
+      ON payment_subcategories(category_id, code)
+  `);
+
+  d.exec(`CREATE INDEX IF NOT EXISTS ix_payment_subcat_cat ON payment_subcategories(category_id)`);
+
+  // ==================== 付款子类来源映射（L1B 结构修正：类目与来源映射分离） ====================
+  // 一个子类可对应多组 (source_type, fee_type) 来源映射，解决到仓费用等「ci / manual 双来源」问题
+  // 费用自动匹配以本表为准（按 active 映射定位 subcategory）；停用(inactive)不进入部分唯一索引，可保留历史
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS payment_subcategory_sources (
+      id TEXT PRIMARY KEY,
+      subcategory_id TEXT NOT NULL,
+      source_type TEXT NOT NULL,
+      fee_type TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_by TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      CHECK (source_type != ''),
+      CHECK (fee_type != ''),
+      CHECK (status IN ('active','inactive')),
+      FOREIGN KEY (subcategory_id) REFERENCES payment_subcategories(id) ON DELETE RESTRICT
+    )
+  `);
+
+  // 有效映射唯一约束（部分唯一索引）：同一 (source_type, fee_type) 只允许一条 active，避免自动匹配歧义
+  d.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_payment_subcategory_source_mapping
+      ON payment_subcategory_sources(source_type, fee_type)
+      WHERE status = 'active'
+  `);
+
+  d.exec(`CREATE INDEX IF NOT EXISTS ix_pay_src_sub ON payment_subcategory_sources(subcategory_id)`);
+
+  // ==================== 付款主体主数据（L2A-2A-3：基础维护层，仅主数据，不接入采购业务链） ====================
+  // entity_key：稳定业务代码，唯一；创建后若被业务引用则不可修改（编辑时由 API 引用计数保护）
+  // country_id：稳定关联 countries.id，不使用国家名称/code 作为长期键（FK RESTRICT 保护）
+  // default_currency：仅默认提示，允许空；非空时由 API 校验存在于 currencies 且 active
+  // is_default：同一 country_id 至多一个 status='active' 且 is_default=1 的主体（partial unique index 保护）
+  // status：active/inactive，仅软停，不提供物理删除
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS payer_entities (
+      id TEXT PRIMARY KEY,
+      entity_key TEXT NOT NULL,
+      entity_name TEXT NOT NULL,
+      country_id TEXT NOT NULL,
+      default_currency TEXT DEFAULT '',
+      is_default INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'active',
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      CHECK (entity_key != ''),
+      CHECK (entity_name != ''),
+      CHECK (is_default IN (0,1)),
+      CHECK (status IN ('active','inactive')),
+      FOREIGN KEY (country_id) REFERENCES countries(id) ON DELETE RESTRICT
+    )
+  `);
+
+  d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_payer_entity_key ON payer_entities(entity_key)`);
+  d.exec(`CREATE INDEX IF NOT EXISTS ix_payer_entity_country ON payer_entities(country_id)`);
+  d.exec(`CREATE INDEX IF NOT EXISTS ix_payer_entity_status ON payer_entities(status)`);
+  // 同一国家至多一个 active 默认主体（partial unique index）
+  d.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_payer_entity_default_per_country
+      ON payer_entities(country_id)
+      WHERE is_default = 1 AND status = 'active'
+  `);
+
+  // 迁移：既有库 payment_subcategories 仍含 source_type/fee_type 列（且带对应 CHECK），
+  // SQLite 的 DROP COLUMN 不支持删除被 CHECK 引用的列，故采用"重建表"方式剥离旧列（幂等：仅旧库存在）
+  // 注意：SQLite 的 DDL 会隐式提交事务，故此处用顺序 d.exec（每条 DDL 各自提交），不套事务包装
+  try {
+    const cols = d.pragma('table_info(payment_subcategories)').map(r => r.name);
+    if (cols.includes('source_type')) {
+      d.exec(`DROP INDEX IF EXISTS uq_payment_subcategory_mapping`);
+      d.exec(`DROP INDEX IF EXISTS uq_payment_subcategory_code`);
+      d.exec(`DROP INDEX IF EXISTS ix_payment_subcat_cat`);
+      d.exec(`ALTER TABLE payment_subcategories RENAME TO payment_subcategories_old`);
+      d.exec(`
+        CREATE TABLE payment_subcategories (
+          id TEXT PRIMARY KEY,
+          category_id TEXT NOT NULL,
+          code TEXT NOT NULL,
+          name TEXT NOT NULL,
+          payee_type_default TEXT DEFAULT '',
+          sort_order INTEGER NOT NULL DEFAULT 0,
+          status TEXT NOT NULL DEFAULT 'active',
+          created_by TEXT DEFAULT '',
+          created_at TEXT DEFAULT (datetime('now')),
+          updated_at TEXT DEFAULT (datetime('now')),
+          CHECK (code != ''),
+          CHECK (name != ''),
+          CHECK (status IN ('active','inactive')),
+          FOREIGN KEY (category_id) REFERENCES payment_categories(id) ON DELETE RESTRICT
+        )
+      `);
+      d.exec(`INSERT INTO payment_subcategories (id, category_id, code, name, payee_type_default, sort_order, status, created_by, created_at, updated_at)
+              SELECT id, category_id, code, name, payee_type_default, sort_order, status, created_by, created_at, updated_at FROM payment_subcategories_old`);
+      d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_payment_subcategory_code ON payment_subcategories(category_id, code)`);
+      d.exec(`CREATE INDEX IF NOT EXISTS ix_payment_subcat_cat ON payment_subcategories(category_id)`);
+
+      // 重建 payment_subcategory_sources：RENAME payment_subcategories 时，本表的 FK 会被 SQLite 自动改写为
+      // 指向 payment_subcategories_old（悬空引用，导致后续 seed 报 no such table）。此处重建该表，使其 FK 重新
+      // 指向新的 payment_subcategories。迁移时该表仅由后续 seed 填充（空表）；若存在极少量数据则先备份再回拷
+      // （subcategory_id 在新 payment_subcategories 中同名存在）。无任何表引用本表，重建安全。
+      const srcCount = d.prepare('SELECT COUNT(*) AS c FROM payment_subcategory_sources').get().c;
+      if (srcCount > 0) {
+        d.exec(`ALTER TABLE payment_subcategory_sources RENAME TO payment_subcategory_sources_old`);
+      }
+      d.exec(`DROP TABLE IF EXISTS payment_subcategory_sources`);
+      d.exec(`
+        CREATE TABLE IF NOT EXISTS payment_subcategory_sources (
+          id TEXT PRIMARY KEY,
+          subcategory_id TEXT NOT NULL,
+          source_type TEXT NOT NULL,
+          fee_type TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'active',
+          created_by TEXT DEFAULT '',
+          created_at TEXT DEFAULT (datetime('now')),
+          updated_at TEXT DEFAULT (datetime('now')),
+          CHECK (source_type != ''),
+          CHECK (fee_type != ''),
+          CHECK (status IN ('active','inactive')),
+          FOREIGN KEY (subcategory_id) REFERENCES payment_subcategories(id) ON DELETE RESTRICT
+        )
+      `);
+      d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_payment_subcategory_source_mapping
+        ON payment_subcategory_sources(source_type, fee_type) WHERE status = 'active'`);
+      d.exec(`CREATE INDEX IF NOT EXISTS ix_pay_src_sub ON payment_subcategory_sources(subcategory_id)`);
+      if (srcCount > 0) {
+        d.exec(`INSERT INTO payment_subcategory_sources (id, subcategory_id, source_type, fee_type, status, created_by, created_at, updated_at)
+                SELECT id, subcategory_id, source_type, fee_type, status, created_by, created_at, updated_at FROM payment_subcategory_sources_old`);
+        d.exec(`DROP TABLE payment_subcategory_sources_old`);
+      }
+      d.exec(`DROP TABLE payment_subcategories_old`);
+    }
+  } catch (e) { console.warn('[DB] payment_subcategories 旧列迁移跳过:', e.message); }
+
   // 库存盘点
   d.exec(`
     CREATE TABLE IF NOT EXISTS inventory_checks (
@@ -897,7 +1234,8 @@ function initDatabase() {
 
   // inventory_imports 表新增字段
   ['associated_brands TEXT DEFAULT \'[]\'',
-   'remark TEXT DEFAULT \'\''
+   'remark TEXT DEFAULT \'\'',
+   'last_used_payment_term_id TEXT DEFAULT \'\''
   ].forEach(col => {
     try { d.exec(`ALTER TABLE suppliers ADD COLUMN ${col}`); } catch(e) {}
   });
@@ -907,7 +1245,8 @@ function initDatabase() {
     'country TEXT DEFAULT \'\'',
     'target_warehouse TEXT DEFAULT \'\'',
     'need_deposit INTEGER DEFAULT 1',
-    'expected_delivery TEXT DEFAULT \'\''
+    'expected_delivery TEXT DEFAULT \'\'',
+    'payment_term_id TEXT DEFAULT \'\''
   ].forEach(col => {
     try { d.exec(`ALTER TABLE proforma_invoices ADD COLUMN ${col}`); } catch(e) {}
   });
@@ -927,7 +1266,8 @@ function initDatabase() {
     'cost_confirmed INTEGER DEFAULT 0',
     'cost_allocated INTEGER DEFAULT 0',
     'landing_total_cost REAL DEFAULT 0',
-    'original_inventory_imported INTEGER DEFAULT 0'
+    'original_inventory_imported INTEGER DEFAULT 0',
+    'wac_version_id TEXT DEFAULT \'\''
   ].forEach(col => {
     try { d.exec(`ALTER TABLE commercial_invoices ADD COLUMN ${col}`); } catch(e) {}
   });
@@ -970,7 +1310,11 @@ function initDatabase() {
     'related_ci_id TEXT DEFAULT \'\'',
     'related_ci_no TEXT DEFAULT \'\'',
     'related_po_no TEXT DEFAULT \'\'',
-    'include_in_landing_cost INTEGER DEFAULT 1'
+    'include_in_landing_cost INTEGER DEFAULT 1',
+    'attachment TEXT DEFAULT \'\'',
+    'approval_remark TEXT DEFAULT \'\'',
+    'approver_name TEXT DEFAULT \'\'',
+    'approved_at TEXT DEFAULT \'\''
   ].forEach(col => {
     try { d.exec(`ALTER TABLE payment_requests ADD COLUMN ${col}`); } catch(e) {}
   });
@@ -1141,6 +1485,38 @@ function initDatabase() {
     )
   `);
 
+  // 加权平均成本历史（P1-03-B：每次成本确认生成并锁定的版本）
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS wac_history (
+      id TEXT PRIMARY KEY,
+      version_no INTEGER NOT NULL,
+      ci_id TEXT DEFAULT '',
+      ci_no TEXT DEFAULT '',
+      po_id TEXT DEFAULT '',
+      po_no TEXT DEFAULT '',
+      pi_id TEXT DEFAULT '',
+      pi_no TEXT DEFAULT '',
+      sku_code TEXT NOT NULL,
+      model TEXT DEFAULT '',
+      brand TEXT DEFAULT '',
+      country TEXT DEFAULT '',
+      warehouse TEXT DEFAULT '',
+      original_qty REAL DEFAULT 0,
+      original_avg_cost REAL DEFAULT 0,
+      original_inventory_value REAL DEFAULT 0,
+      inbound_qty REAL DEFAULT 0,
+      unit_landing_cost REAL DEFAULT 0,
+      inbound_total_cost REAL DEFAULT 0,
+      new_avg_cost REAL DEFAULT 0,
+      settlement_date TEXT DEFAULT '',
+      confirmation_status TEXT DEFAULT 'confirmed',
+      is_locked INTEGER DEFAULT 1,
+      confirmed_by TEXT DEFAULT '',
+      confirmed_at TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
   // ==================== 创建索引 ====================
   d.exec(`CREATE INDEX IF NOT EXISTS idx_inv_sku ON inventory(sku_code)`);
   d.exec(`CREATE INDEX IF NOT EXISTS idx_inv_country_wh ON inventory(country, warehouse)`);
@@ -1161,7 +1537,83 @@ function initDatabase() {
   d.exec(`CREATE INDEX IF NOT EXISTS idx_cost_logs_sku ON cost_update_logs(sku_code)`);
   d.exec(`CREATE INDEX IF NOT EXISTS idx_orig_inv_ci ON original_inventory_imports(ci_id)`);
   d.exec(`CREATE INDEX IF NOT EXISTS idx_orig_inv_sku ON original_inventory_imports(sku_code)`);
+  // wac_history 索引
+  d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_wac_history_version ON wac_history(sku_code, country, warehouse, version_no)`);
+  d.exec(`CREATE INDEX IF NOT EXISTS idx_wac_history_latest ON wac_history(sku_code, country, warehouse, confirmation_status, is_locked)`);
+  d.exec(`CREATE INDEX IF NOT EXISTS idx_wac_history_ci ON wac_history(ci_id)`);
   d.exec(`CREATE INDEX IF NOT EXISTS idx_approval_business ON approval_records(business_type, business_id)`);
+
+  // ==================== P1-03-C 严格 migration（禁止静默吞错） ====================
+  (function p1cStrictMigration() {
+    const d = getDB();
+    // 1. 探测并新增 commercial_invoices 汇总字段（仅"列已存在"才跳过，绝不静默吞错）
+    const ciCols = d.prepare("PRAGMA table_info(commercial_invoices)").all().map(c => c.name);
+    const p103cCols = [
+      { name: 'wac_confirmed', sql: 'INTEGER DEFAULT 0' },
+      { name: 'wac_confirmed_at', sql: "TEXT DEFAULT ''" },
+      { name: 'wac_confirmed_by', sql: "TEXT DEFAULT ''" }
+    ];
+    for (const col of p103cCols) {
+      if (!ciCols.includes(col.name)) {
+        d.exec("ALTER TABLE commercial_invoices ADD COLUMN " + col.name + " " + col.sql);
+      }
+    }
+    // 2. 创建 locked 版本不可变触发器（IF NOT EXISTS；创建失败必须抛错停机）
+    d.exec(`
+      CREATE TRIGGER IF NOT EXISTS trg_wac_history_block_update
+      BEFORE UPDATE ON wac_history
+      WHEN OLD.is_locked = 1
+      BEGIN
+        SELECT RAISE(ABORT, 'LOCKED_WAC_HISTORY_UPDATE_FORBIDDEN');
+      END;
+    `);
+    d.exec(`
+      CREATE TRIGGER IF NOT EXISTS trg_wac_history_block_delete
+      BEFORE DELETE ON wac_history
+      WHEN OLD.is_locked = 1
+      BEGIN
+        SELECT RAISE(ABORT, 'LOCKED_WAC_HISTORY_DELETE_FORBIDDEN');
+      END;
+    `);
+    // 3. 完成后查 sqlite_master 校验两触发器真实存在，缺失即中止启动
+    const triggers = d.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name IN ('trg_wac_history_block_update','trg_wac_history_block_delete')").all().map(t => t.name);
+    if (triggers.length !== 2) {
+      throw new Error('P1-03-C migration failed: wac_history triggers missing. Found=' + JSON.stringify(triggers));
+    }
+  })();
+
+  // ==================== P1-STATE-01D migration：入库关联 PL 明细 ====================
+  // 仅在 inbound_records 新增 source_pl_id / source_pl_item_id 两列（DEFAULT ''），不回填、不修改历史。
+  // 历史 6 条 legacy 入库记录保持 source_pl_id/source_pl_item_id 为空，继续允许读取与展示。
+  (function p1State01dMigration() {
+    const d = getDB();
+    const irCols = d.prepare("PRAGMA table_info(inbound_records)").all().map(c => c.name);
+    const p1State01dCols = [
+      { name: 'source_pl_id', sql: "TEXT DEFAULT ''" },
+      { name: 'source_pl_item_id', sql: "TEXT DEFAULT ''" }
+    ];
+    for (const col of p1State01dCols) {
+      if (!irCols.includes(col.name)) {
+        d.exec("ALTER TABLE inbound_records ADD COLUMN " + col.name + " " + col.sql);
+      }
+    }
+    d.exec(`CREATE INDEX IF NOT EXISTS idx_inbound_pl_item ON inbound_records(source_pl_item_id)`);
+  })();
+
+  (function skuDualPriceMigration() {
+    const d = getDB();
+    const skuCols = d.prepare("PRAGMA table_info(skus)").all().map(c => c.name);
+    const dualCols = [
+      { name: 'purchase_price_rmb', sql: "REAL DEFAULT 0" },
+      { name: 'purchase_price_usd', sql: "REAL DEFAULT 0" }
+    ];
+    for (const col of dualCols) {
+      if (!skuCols.includes(col.name)) {
+        d.exec("ALTER TABLE skus ADD COLUMN " + col.name + " " + col.sql);
+      }
+    }
+  })();
+
   d.exec(`CREATE INDEX IF NOT EXISTS idx_oplog_page ON operation_logs(page)`);
   d.exec(`CREATE INDEX IF NOT EXISTS idx_batchtask_status ON batch_tasks(status)`);
 
@@ -1324,6 +1776,14 @@ function initDatabase() {
     console.log('[DB] 已插入默认品牌目标周转配置');
   }
 
+  // D1 新增：销量统计周期（默认 90 天；仅影响月均销量与当前可用周转的展示口径，不影响建议采购/采购重算）
+  const statsDaysExist = queryOne("SELECT COUNT(*) as cnt FROM system_config WHERE key = 'sales_stats_days'").cnt;
+  if (statsDaysExist === 0) {
+    run(`INSERT INTO system_config (key, value, description) VALUES (?, ?, ?)`,
+      ['sales_stats_days', '90', '销量统计周期(天)：60/90/120，仅影响月均销量与当前可用周转显示']);
+    console.log('[DB] 已插入销量统计周期配置');
+  }
+
   // 默认审批流
   const flowCount = queryOne('SELECT COUNT(*) as cnt FROM approval_flows').cnt;
   if (flowCount === 0) {
@@ -1342,6 +1802,78 @@ function initDatabase() {
     flowTypes.forEach(f => run(`INSERT INTO approval_flows (id, name, business_type, levels) VALUES (?, ?, ?, ?)`, f));
     console.log('[DB] 已插入默认审批流');
   }
+
+  // 默认品牌采购状态：BOYA 已停合作但仍有库存在售，预设为停采（仅首次插入，不覆盖用户后续手动修改）
+  try {
+    run(`INSERT OR IGNORE INTO brand_settings (brand, procurement_status, note) VALUES ('BOYA', 'stopped', '已停止合作，仍售库存，不参与补货')`);
+  } catch(e) {}
+
+  // L1B 付款类目种子：幂等初始化现有前端硬编码类目到新表（不覆盖人工修改，不删除）
+  // 推导依据：仅从现有真实付款接口写入的 source_type / payment_subcategory 反推，不猜测
+  //   from-pi-deposit      -> goods/deposit,  source_type='pi',    payee=factory
+  //   from-ci-balance      -> goods/balance,  source_type='ci',    payee=factory
+  //   customs-duty         -> customs_duty/duty,     source_type='ci', payee=customs
+  //   inspection-fee       -> inspection_fee/inspection, source_type='ci', payee=inspection_org
+  //   warehouse-arrival    -> warehouse_arrival/*, source_type = ci_id ? 'ci' : 'manual'
+  //                          旧接口同一小类既可能 ci 也可能 manual，故来源映射表同时 seed 两组 (ci / manual)，解决"双来源"无法匹配问题
+  // 注意：子类表只存类目属性；来源映射写入 payment_subcategory_sources（确定性 id：src_<cat>_<sub>_<source_type>）
+  //       使用 INSERT OR IGNORE：重复启动不新增、不改写已人工修改、改名(子类 id 不变)不重建重复行
+  try {
+    const seedCats = [
+      { code: 'goods', name: '货款', sort_order: 1 },
+      { code: 'warehouse_arrival', name: '到仓费用', sort_order: 2 },
+      { code: 'customs_duty', name: '关税', sort_order: 3 },
+      { code: 'inspection_fee', name: '商检费用', sort_order: 4 },
+    ];
+    const seedSubs = [
+      { cat: 'goods', code: 'deposit', name: '定金', payee_type_default: 'factory', sort_order: 1 },
+      { cat: 'goods', code: 'balance', name: '尾款', payee_type_default: 'factory', sort_order: 2 },
+      { cat: 'warehouse_arrival', code: 'freight', name: '运费', payee_type_default: 'service_provider', sort_order: 1 },
+      { cat: 'warehouse_arrival', code: 'customs_clearance', name: '清关费', payee_type_default: 'service_provider', sort_order: 2 },
+      { cat: 'warehouse_arrival', code: 'port_charges', name: '港口费', payee_type_default: 'service_provider', sort_order: 3 },
+      { cat: 'warehouse_arrival', code: 'delivery', name: '派送费', payee_type_default: 'service_provider', sort_order: 4 },
+      { cat: 'warehouse_arrival', code: 'warehouse', name: '仓储费', payee_type_default: 'service_provider', sort_order: 5 },
+      { cat: 'warehouse_arrival', code: 'other_local', name: '其他本地费', payee_type_default: 'service_provider', sort_order: 6 },
+      { cat: 'customs_duty', code: 'duty', name: '关税', payee_type_default: 'customs', sort_order: 1 },
+      { cat: 'inspection_fee', code: 'inspection', name: '商检费', payee_type_default: 'inspection_org', sort_order: 1 },
+    ];
+    // 来源映射：warehouse_arrival 每个子类同时有 ci 与 manual 两组；其余仅一组
+    const seedSources = [
+      { cat: 'goods', sub: 'deposit', source_type: 'pi', fee_type: 'deposit' },
+      { cat: 'goods', sub: 'balance', source_type: 'ci', fee_type: 'balance' },
+      { cat: 'warehouse_arrival', sub: 'freight', source_type: 'ci', fee_type: 'freight' },
+      { cat: 'warehouse_arrival', sub: 'freight', source_type: 'manual', fee_type: 'freight' },
+      { cat: 'warehouse_arrival', sub: 'customs_clearance', source_type: 'ci', fee_type: 'customs_clearance' },
+      { cat: 'warehouse_arrival', sub: 'customs_clearance', source_type: 'manual', fee_type: 'customs_clearance' },
+      { cat: 'warehouse_arrival', sub: 'port_charges', source_type: 'ci', fee_type: 'port_charges' },
+      { cat: 'warehouse_arrival', sub: 'port_charges', source_type: 'manual', fee_type: 'port_charges' },
+      { cat: 'warehouse_arrival', sub: 'delivery', source_type: 'ci', fee_type: 'delivery' },
+      { cat: 'warehouse_arrival', sub: 'delivery', source_type: 'manual', fee_type: 'delivery' },
+      { cat: 'warehouse_arrival', sub: 'warehouse', source_type: 'ci', fee_type: 'warehouse' },
+      { cat: 'warehouse_arrival', sub: 'warehouse', source_type: 'manual', fee_type: 'warehouse' },
+      { cat: 'warehouse_arrival', sub: 'other_local', source_type: 'ci', fee_type: 'other_local' },
+      { cat: 'warehouse_arrival', sub: 'other_local', source_type: 'manual', fee_type: 'other_local' },
+      { cat: 'customs_duty', sub: 'duty', source_type: 'ci', fee_type: 'duty' },
+      { cat: 'inspection_fee', sub: 'inspection', source_type: 'ci', fee_type: 'inspection' },
+    ];
+    seedCats.forEach(c => {
+      run(`INSERT OR IGNORE INTO payment_categories (id, code, name, sort_order, status, created_by, created_at, updated_at)
+           VALUES (?, ?, ?, ?, 'active', 'seed', datetime('now'), datetime('now'))`,
+        ['cat_' + c.code, c.code, c.name, c.sort_order]);
+    });
+    seedSubs.forEach(s => {
+      const catId = 'cat_' + s.cat;
+      run(`INSERT OR IGNORE INTO payment_subcategories (id, category_id, code, name, payee_type_default, sort_order, status, created_by, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, 'active', 'seed', datetime('now'), datetime('now'))`,
+        ['sub_' + s.cat + '_' + s.code, catId, s.code, s.name, s.payee_type_default, s.sort_order]);
+    });
+    seedSources.forEach(s => {
+      const subId = 'sub_' + s.cat + '_' + s.sub;
+      run(`INSERT OR IGNORE INTO payment_subcategory_sources (id, subcategory_id, source_type, fee_type, status, created_by, created_at, updated_at)
+           VALUES (?, ?, ?, ?, 'active', 'seed', datetime('now'), datetime('now'))`,
+        ['src_' + s.cat + '_' + s.sub + '_' + s.source_type, subId, s.source_type, s.fee_type]);
+    });
+  } catch (e) { console.warn('[DB] 付款类目种子部分失败(可忽略):', e.message); }
 
   console.log('[DB] 数据库表初始化完成');
   return true;
