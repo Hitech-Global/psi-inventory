@@ -48,4 +48,4 @@ services:
     disk:
       name: inventory-data
       mountPath: /data           # SQLite 主库 + 备份均存于此，跨部署/重启持久化
-      sizeGb: 1                  # 按数据增长调整；备份也占用此空间
+      sizeGB: 1                 # 按数据增长调整；备份也占用此空间
