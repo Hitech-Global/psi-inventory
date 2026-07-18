@@ -348,6 +348,12 @@ initDatabase();
 
 // ==================== Express 初始化 ====================
 const app = express();
+
+function asyncHandler(fn) {
+  return function (req, res, next) {
+    return Promise.resolve(fn(req, res, next)).catch(next);
+  };
+}
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
@@ -359,8 +365,8 @@ function sendNoCacheHtml(res, fileName) {
   res.sendFile(path.join(__dirname, fileName));
 }
 
-app.get('/', (req, res) => sendNoCacheHtml(res, 'index.html'));
-app.get('/index.html', (req, res) => sendNoCacheHtml(res, 'index.html'));
+app.get('/', asyncHandler((req, res) => sendNoCacheHtml(res, 'index.html')));
+app.get('/index.html', asyncHandler((req, res) => sendNoCacheHtml(res, 'index.html')));
 app.use(express.static(path.join(__dirname), {
   index: false,
   // 所有静态资源（含 app.js / db.js / index.html）一律禁用缓存，
@@ -372,9 +378,9 @@ app.use(express.static(path.join(__dirname), {
   }
 }));
 
-app.get('/api/version', (req, res) => {
+app.get('/api/version', asyncHandler((req, res) => {
   res.json({ version: APP_VERSION, app: 'inventory-management-system', timestamp: new Date().toISOString() });
-});
+}));
 
 // ==================== 认证与权限中间件 ====================
 // 写请求可信 Origin 校验（CSRF 防护；test 环境自动绕过）
@@ -458,17 +464,17 @@ app.use('/api', apiAuth);
 // ==================== 认证：飞书 OAuth + break-glass 本地登录 ====================
 
 // 飞书授权入口（生成一次性 state，跳转飞书；test 环境返回 state 供驱动）
-app.get('/api/auth/feishu/login', (req, res) => {
+app.get('/api/auth/feishu/login', asyncHandler((req, res) => {
   const state = crypto.randomBytes(16).toString('hex');
   run("INSERT INTO oauth_states (state, created_at, expires_at) VALUES (?, datetime('now'), datetime('now', '+10 minutes'))", [state]);
   const redirect = 'https://accounts.feishu.cn/open-apis/authen/v1/authorize?client_id=' + encodeURIComponent(FEISHU_APP_ID)
     + '&redirect_uri=' + encodeURIComponent(FEISHU_REDIRECT_URI) + '&state=' + encodeURIComponent(state) + '&response_type=code';
   if (process.env.NODE_ENV === 'test') return res.json({ state, authorize_url: redirect });
   res.redirect(redirect);
-});
+}));
 
 // 飞书回调：校验 state → 换身份 → 按 union_id 匹配/创建 → 建 Session
-app.get('/api/auth/feishu/callback', async (req, res) => {
+app.get('/api/auth/feishu/callback', asyncHandler(async (req, res) => {
   try {
     const { code, state } = req.query;
     if (!state) { auditLogin(null, '', 'feishu', false, 'missing_state'); return res.status(401).json({ error: '缺少 state' }); }
@@ -503,16 +509,16 @@ app.get('/api/auth/feishu/callback', async (req, res) => {
     auditLogin(null, '', 'feishu', false, 'exception');
     return res.status(401).json({ error: '飞书登录失败' });
   }
-});
+}));
 
 // 飞书通知演练记录查询（仅测试/演练模式可用；生产恒 404，不暴露任何内部状态）
-app.get('/api/feishu/notify/dryrun-log', (req, res) => {
+app.get('/api/feishu/notify/dryrun-log', asyncHandler((req, res) => {
   if (process.env.NODE_ENV !== 'test' && process.env.FEISHU_NOTIFY_DRYRUN !== '1') return res.status(404).json({ error: 'not available' });
   res.json({ log: __feishuDryRunLog });
-});
+}));
 
 // break-glass 本地应急登录（独立接口，强密码哈希校验，安全审计，防暴力破解）
-app.post('/api/auth/local/login', (req, res) => {
+app.post('/api/auth/local/login', asyncHandler((req, res) => {
   const { username, password } = req.body || {};
   const ua = req.headers['user-agent'] || '';
   const ip = req.headers['x-forwarded-for'] || req.ip || '';
@@ -531,10 +537,10 @@ app.post('/api/auth/local/login', (req, res) => {
   const role = queryOne('SELECT * FROM roles WHERE id=?', [user.role_id]);
   const perms = role ? JSON.parse(role.permissions || '[]') : [];
   res.json({ id: user.id, username: user.username, name: user.name, role_id: user.role_id, role_name: role ? role.name : '', status: user.status, permissions: perms });
-});
+}));
 
 // 当前登录用户（pending 仅返回自身状态，业务接口由 apiAuth 拦截）
-app.get('/api/me', (req, res) => {
+app.get('/api/me', asyncHandler((req, res) => {
   if (!req.currentUserId) return res.status(401).json({ error: '未登录' });
   const user = queryOne('SELECT id,username,name,role_id,status,email,auth_source,last_login_at FROM users WHERE id=?', [req.currentUserId]);
   if (!user) return res.status(401).json({ error: '账号不存在' });
@@ -545,10 +551,10 @@ app.get('/api/me', (req, res) => {
     status: user.status, email: user.email, auth_source: user.auth_source,
     permissions: req.currentUserPermissions || (role ? JSON.parse(role.permissions || '[]') : [])
   });
-});
+}));
 
 // 登出：销毁 Session + 清除 Cookie
-app.post('/api/logout', (req, res) => {
+app.post('/api/logout', asyncHandler((req, res) => {
   const token = parseCookies(req)[SESSION_COOKIE_NAME];
   if (token) {
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
@@ -556,10 +562,10 @@ app.post('/api/logout', (req, res) => {
   }
   res.clearCookie(SESSION_COOKIE_NAME, { httpOnly: true, secure: COOKIE_SECURE, sameSite: 'Lax', path: '/' });
   res.json({ success: true });
-});
+}));
 
 // ==================== 用户管理 ====================
-app.get('/api/users', requireApiPermission('user_manage'), (req, res) => {
+app.get('/api/users', requireApiPermission('user_manage'), asyncHandler((req, res) => {
   try {
     const rows = query('SELECT id, username, name, role_id, status, email, auth_source, feishu_open_id, feishu_union_id, last_login_at, created_at FROM users ORDER BY created_at DESC').rows;
     const masked = rows.map(u => ({
@@ -569,9 +575,9 @@ app.get('/api/users', requireApiPermission('user_manage'), (req, res) => {
     }));
     res.json(masked);
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
-app.post('/api/users', requireApiPermission('user_manage'), (req, res) => {
+app.post('/api/users', requireApiPermission('user_manage'), asyncHandler((req, res) => {
   try {
     const { id, username, name, role_id, status, email, auth_source, password, password_hash } = req.body;
     if (!username || !name) return res.status(400).json({ error: '用户名和姓名不能为空' });
@@ -586,9 +592,9 @@ app.post('/api/users', requireApiPermission('user_manage'), (req, res) => {
       [userId, username, name, null, status || 'pending', email || '']);
     res.json({ id: userId, username, name, role_id: null, status: status || 'pending', email: email || '' });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
-app.put('/api/users/:id', requireApiPermission('user_manage'), (req, res) => {
+app.put('/api/users/:id', requireApiPermission('user_manage'), asyncHandler((req, res) => {
   try {
     const { id } = req.params;
     const { username, name, role_id, status, email, password, auth_source } = req.body;
@@ -608,9 +614,9 @@ app.put('/api/users/:id', requireApiPermission('user_manage'), (req, res) => {
       [username, name, role_id || user.role_id, status || user.status, email || '', id]);
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
-app.delete('/api/users/:id', requireApiPermission('user_manage'), (req, res) => {
+app.delete('/api/users/:id', requireApiPermission('user_manage'), asyncHandler((req, res) => {
   try {
     if (req.params.id === 'user_admin') return res.status(400).json({ error: '不能删除超级管理员' });
     const user = queryOne('SELECT * FROM users WHERE id = ?', [req.params.id]);
@@ -620,7 +626,7 @@ app.delete('/api/users/:id', requireApiPermission('user_manage'), (req, res) => 
     run('DELETE FROM sessions WHERE user_id = ?', [req.params.id]);
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // ==================== 角色管理 ====================
 // 权限目录（仅展示用 label 映射，非权限模型；key 集合必须与 db.js allPerms 完全一致）
@@ -686,21 +692,21 @@ const PERM_LABELS = {
 const ROLE_CRITICAL_PERMS = ['role_manage', 'user_manage', 'system_config'];
 
 // 只读：暴露权限目录给角色管理 UI（不改变 RBAC 模型，不增表）
-app.get('/api/permissions', requireApiPermission('role_manage'), (req, res) => {
+app.get('/api/permissions', requireApiPermission('role_manage'), asyncHandler((req, res) => {
   try {
     const list = Object.keys(PERM_LABELS).map(k => ({ key: k, label: PERM_LABELS[k].label, module: PERM_LABELS[k].module }));
     res.json(list);
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
-app.get('/api/roles', requireApiPermission('role_manage'), (req, res) => {
+app.get('/api/roles', requireApiPermission('role_manage'), asyncHandler((req, res) => {
   try {
     const result = query('SELECT * FROM roles ORDER BY created_at');
     res.json(result.rows.map(r => ({ ...r, permissions: JSON.parse(r.permissions || '[]') })));
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
-app.post('/api/roles', requireApiPermission('role_manage'), (req, res) => {
+app.post('/api/roles', requireApiPermission('role_manage'), asyncHandler((req, res) => {
   try {
     const { id, name, description, permissions } = req.body;
     const roleId = id || genId('role');
@@ -714,66 +720,66 @@ app.post('/api/roles', requireApiPermission('role_manage'), (req, res) => {
       [roleId, name, description || '', JSON.stringify(permsArr)]);
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
-app.delete('/api/roles/:id', requireApiPermission('role_manage'), (req, res) => {
+app.delete('/api/roles/:id', requireApiPermission('role_manage'), asyncHandler((req, res) => {
   try {
     if (req.params.id === 'role_admin') return res.status(400).json({ error: '不能删除超级管理员角色' });
     run('DELETE FROM roles WHERE id = ? AND is_system = 0', [req.params.id]);
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // ==================== 国家管理 ====================
-app.get('/api/countries', requireLogin, (req, res) => {
+app.get('/api/countries', requireLogin, asyncHandler((req, res) => {
   res.json(query('SELECT * FROM countries ORDER BY sort_order').rows);
-});
-app.post('/api/countries', requireApiPermission('system_config'), (req, res) => {
+}));
+app.post('/api/countries', requireApiPermission('system_config'), asyncHandler((req, res) => {
   const { id, name, code, default_currency, status, sort_order } = req.body;
   const cId = id || genId('country');
   run(`INSERT INTO countries (id, name, code, default_currency, status, sort_order) VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET name=excluded.name, code=excluded.code, default_currency=excluded.default_currency, status=excluded.status, sort_order=excluded.sort_order`,
     [cId, name, code, default_currency || '', status || 'active', sort_order || 0]);
   res.json({ success: true });
-});
-app.delete('/api/countries/:id', requireApiPermission('system_config'), (req, res) => {
+}));
+app.delete('/api/countries/:id', requireApiPermission('system_config'), asyncHandler((req, res) => {
   run('DELETE FROM countries WHERE id = ?', [req.params.id]);
   res.json({ success: true });
-});
+}));
 
 // ==================== 仓库管理 ====================
-app.get('/api/warehouses', requireLogin, (req, res) => {
+app.get('/api/warehouses', requireLogin, asyncHandler((req, res) => {
   const { country_id } = req.query;
   let sql = 'SELECT * FROM warehouses';
   const params = [];
   if (country_id) { sql += ' WHERE country_id = ?'; params.push(country_id); }
   sql += ' ORDER BY sort_order';
   res.json(query(sql, params).rows);
-});
-app.post('/api/warehouses', requireApiPermission('system_config'), (req, res) => {
+}));
+app.post('/api/warehouses', requireApiPermission('system_config'), asyncHandler((req, res) => {
   const { id, name, country_id, country_name, warehouse_type, address, status, brands, sort_order } = req.body;
   const wId = id || genId('wh');
   run(`INSERT INTO warehouses (id, name, country_id, country_name, warehouse_type, address, status, brands, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET name=excluded.name, country_id=excluded.country_id, country_name=excluded.country_name, warehouse_type=excluded.warehouse_type, address=excluded.address, status=excluded.status, brands=excluded.brands, sort_order=excluded.sort_order`,
     [wId, name, country_id || '', country_name || '', warehouse_type || 'self', address || '', status || 'active', brands || '', sort_order || 0]);
   res.json({ success: true, id: wId });
-});
+}));
 // 获取仓库所属国家列表（用于下拉联动，数据来源为 warehouses 表）
-app.get('/api/warehouses/countries', requireLogin, (req, res) => {
+app.get('/api/warehouses/countries', requireLogin, asyncHandler((req, res) => {
   const rows = query("SELECT DISTINCT country_name FROM warehouses WHERE status = 'active' AND country_name IS NOT NULL AND country_name != '' ORDER BY country_name").rows.map(r => r.country_name);
   res.json(rows);
-});
+}));
 // 按国家筛选仓库（用于订单预测等页面的下拉联动）
-app.get('/api/warehouses/by-country', requireLogin, (req, res) => {
+app.get('/api/warehouses/by-country', requireLogin, asyncHandler((req, res) => {
   const { country } = req.query;
   let sql = "SELECT id, name, country_name, brands, warehouse_type FROM warehouses WHERE status = 'active'";
   const params = [];
   if (country) { sql += ' AND country_name = ?'; params.push(country); }
   sql += ' ORDER BY sort_order, name';
   res.json(query(sql, params).rows);
-});
+}));
 // 按 (国家, 品牌) 筛选仓库
-app.get('/api/warehouses/by-country-brand', requireLogin, (req, res) => {
+app.get('/api/warehouses/by-country-brand', requireLogin, asyncHandler((req, res) => {
   const { country, brand } = req.query;
   let sql = `SELECT id, name, country_name, brands, warehouse_type FROM warehouses WHERE status = 'active'`;
   const params = [];
@@ -784,9 +790,9 @@ app.get('/api/warehouses/by-country-brand', requireLogin, (req, res) => {
   }
   sql += ' ORDER BY sort_order, name';
   res.json(query(sql, params).rows);
-});
+}));
 // 获取系统中所有出现过的品牌（从 skus + po + pi + ci 聚合）
-app.get('/api/brands/all', requireLogin, (req, res) => {
+app.get('/api/brands/all', requireLogin, asyncHandler((req, res) => {
   const rows = query(`
     SELECT DISTINCT brand FROM (
       SELECT brand FROM skus WHERE brand IS NOT NULL AND brand != ''
@@ -796,15 +802,15 @@ app.get('/api/brands/all', requireLogin, (req, res) => {
     ) ORDER BY brand
   `).rows.map(r => r.brand);
   res.json(rows);
-});
+}));
 // 品牌采购状态（停采品牌系统级规则）：读取/保存品牌级 可采购/停采
-app.get('/api/brand-settings', requireApiPermission('system_config'), (req, res) => {
+app.get('/api/brand-settings', requireApiPermission('system_config'), asyncHandler((req, res) => {
   try {
     const rows = query('SELECT brand, procurement_status, note FROM brand_settings ORDER BY brand').rows;
     res.json(rows);
   } catch (e) { res.json([]); }
-});
-app.post('/api/brand-settings', requireApiPermission('system_config'), (req, res) => {
+}));
+app.post('/api/brand-settings', requireApiPermission('system_config'), asyncHandler((req, res) => {
   try {
     const items = Array.isArray(req.body && req.body.items) ? req.body.items : [];
     const valid = items.filter(it => it && it.brand && (it.procurement_status === 'active' || it.procurement_status === 'stopped'));
@@ -819,17 +825,17 @@ app.post('/api/brand-settings', requireApiPermission('system_config'), (req, res
     });
     res.json({ success: true, count: valid.length });
   } catch (e) { res.json({ success: false, message: e.message }); }
-});
-app.delete('/api/warehouses/:id', requireApiPermission('system_config'), (req, res) => {
+}));
+app.delete('/api/warehouses/:id', requireApiPermission('system_config'), asyncHandler((req, res) => {
   run('DELETE FROM warehouses WHERE id = ?', [req.params.id]);
   res.json({ success: true });
-});
+}));
 
 // ==================== 供应商管理 ====================
-app.get('/api/suppliers', requireLogin, (req, res) => {
+app.get('/api/suppliers', requireLogin, asyncHandler((req, res) => {
   res.json(query('SELECT * FROM suppliers ORDER BY created_at DESC').rows);
-});
-app.post('/api/suppliers', requireApiPermission('system_config'), (req, res) => {
+}));
+app.post('/api/suppliers', requireApiPermission('system_config'), asyncHandler((req, res) => {
   const d = req.body;
   const sId = d.id || genId('supplier');
   const associatedBrands = Array.isArray(d.associated_brands) ? JSON.stringify(d.associated_brands) : (d.associated_brands || '[]');
@@ -837,25 +843,25 @@ app.post('/api/suppliers', requireApiPermission('system_config'), (req, res) => 
        ON CONFLICT(id) DO UPDATE SET name=excluded.name, short_name=excluded.short_name, contact_person=excluded.contact_person, phone=excluded.phone, email=excluded.email, address=excluded.address, associated_brands=excluded.associated_brands, default_currency=excluded.default_currency, payment_terms=excluded.payment_terms, remark=excluded.remark, status=excluded.status`,
     [sId, d.name, d.short_name || '', d.contact_person || '', d.phone || '', d.email || '', d.address || '', associatedBrands, d.default_currency || 'USD', d.payment_terms || '', d.remark || '', d.status || 'active']);
   res.json({ success: true, id: sId });
-});
-app.delete('/api/suppliers/:id', requireApiPermission('system_config'), (req, res) => {
+}));
+app.delete('/api/suppliers/:id', requireApiPermission('system_config'), asyncHandler((req, res) => {
   run('DELETE FROM supplier_payment_terms WHERE supplier_id = ?', [req.params.id]);
   run('DELETE FROM suppliers WHERE id = ?', [req.params.id]);
   res.json({ success: true });
-});
+}));
 // PI 保存时回写"上一次实际使用的付款条件"，供下次新建 PI 默认带出
-app.post('/api/suppliers/:id/last-payment-term', requireApiPermission('pi_create'), (req, res) => {
+app.post('/api/suppliers/:id/last-payment-term', requireApiPermission('pi_create'), asyncHandler((req, res) => {
   const termId = req.body && req.body.payment_term_id ? String(req.body.payment_term_id) : '';
   run('UPDATE suppliers SET last_used_payment_term_id = ? WHERE id = ?', [termId, req.params.id]);
   res.json({ success: true, last_used_payment_term_id: termId });
-});
+}));
 
 // ==================== 供应商付款条件（结构化多条，独立于付款申请 payment_terms 目录表） ====================
-app.get('/api/suppliers/:id/payment-terms', requireLogin, (req, res) => {
+app.get('/api/suppliers/:id/payment-terms', requireLogin, asyncHandler((req, res) => {
   const rows = query('SELECT * FROM supplier_payment_terms WHERE supplier_id = ? ORDER BY display_order ASC, created_at ASC', [req.params.id]).rows;
   res.json(rows);
-});
-app.post('/api/supplier-payment-terms', requireApiPermission('system_config'), (req, res) => {
+}));
+app.post('/api/supplier-payment-terms', requireApiPermission('system_config'), asyncHandler((req, res) => {
   const d = req.body;
   if (!d.supplier_id) { res.status(400).json({ error: 'supplier_id 必填' }); return; }
   const tId = d.id || genId('spt');
@@ -866,8 +872,8 @@ app.post('/api/supplier-payment-terms', requireApiPermission('system_config'), (
        ON CONFLICT(id) DO UPDATE SET term_name=excluded.term_name, term_type=excluded.term_type, credit_days=excluded.credit_days, is_default=excluded.is_default, display_order=excluded.display_order, status=excluded.status`,
     [tId, d.supplier_id, d.term_name || '', termType, d.credit_days || 0, isDefault, d.display_order || 0, d.status || 'active']);
   res.json({ success: true, id: tId });
-});
-app.put('/api/supplier-payment-terms/:id', requireApiPermission('system_config'), (req, res) => {
+}));
+app.put('/api/supplier-payment-terms/:id', requireApiPermission('system_config'), asyncHandler((req, res) => {
   const d = req.body;
   const existing = queryOne('SELECT * FROM supplier_payment_terms WHERE id = ?', [req.params.id]);
   if (!existing) { res.status(404).json({ error: '未找到该付款条件' }); return; }
@@ -877,13 +883,13 @@ app.put('/api/supplier-payment-terms/:id', requireApiPermission('system_config')
   run(`UPDATE supplier_payment_terms SET term_name=?, term_type=?, credit_days=?, is_default=?, display_order=?, status=? WHERE id = ?`,
     [d.term_name || '', termType, d.credit_days || 0, isDefault, d.display_order != null ? d.display_order : existing.display_order, d.status || existing.status, req.params.id]);
   res.json({ success: true });
-});
-app.delete('/api/supplier-payment-terms/:id', requireApiPermission('system_config'), (req, res) => {
+}));
+app.delete('/api/supplier-payment-terms/:id', requireApiPermission('system_config'), asyncHandler((req, res) => {
   run('DELETE FROM supplier_payment_terms WHERE id = ?', [req.params.id]);
   res.json({ success: true });
-});
+}));
 // 整供应商替换付款条件（保存供应商时调用：先删后插，保持数据纯净且支持新增/改名/删除/改默认）
-app.post('/api/suppliers/:id/payment-terms', requireApiPermission('system_config'), (req, res) => {
+app.post('/api/suppliers/:id/payment-terms', requireApiPermission('system_config'), asyncHandler((req, res) => {
   const supplierId = req.params.id;
   const list = Array.isArray(req.body) ? req.body : (req.body.list || []);
   run('DELETE FROM supplier_payment_terms WHERE supplier_id = ?', [supplierId]);
@@ -897,61 +903,61 @@ app.post('/api/suppliers/:id/payment-terms', requireApiPermission('system_config
       [tId, supplierId, t.term_name || '', termType, t.credit_days || 0, isDefault, idx, t.status || 'active']);
   });
   res.json({ success: true, count: list.length });
-});
+}));
 
 // ==================== 货代管理 ====================
-app.get('/api/freight-forwarders', requireLogin, (req, res) => {
+app.get('/api/freight-forwarders', requireLogin, asyncHandler((req, res) => {
   res.json(query('SELECT * FROM freight_forwarders ORDER BY created_at DESC').rows);
-});
-app.post('/api/freight-forwarders', requireApiPermission('system_config'), (req, res) => {
+}));
+app.post('/api/freight-forwarders', requireApiPermission('system_config'), asyncHandler((req, res) => {
   const d = req.body;
   const fId = d.id || genId('ff');
   run(`INSERT INTO freight_forwarders (id, name, short_name, contact_person, phone, email, service_types, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET name=excluded.name, short_name=excluded.short_name, contact_person=excluded.contact_person, phone=excluded.phone, email=excluded.email, service_types=excluded.service_types, status=excluded.status`,
     [fId, d.name, d.short_name || '', d.contact_person || '', d.phone || '', d.email || '', d.service_types || '', d.status || 'active']);
   res.json({ success: true });
-});
-app.delete('/api/freight-forwarders/:id', requireApiPermission('system_config'), (req, res) => {
+}));
+app.delete('/api/freight-forwarders/:id', requireApiPermission('system_config'), asyncHandler((req, res) => {
   run('DELETE FROM freight_forwarders WHERE id = ?', [req.params.id]);
   res.json({ success: true });
-});
+}));
 
 // ==================== 币种管理 ====================
-app.get('/api/currencies', requireLogin, (req, res) => {
+app.get('/api/currencies', requireLogin, asyncHandler((req, res) => {
   res.json(query('SELECT * FROM currencies ORDER BY sort_order').rows);
-});
-app.post('/api/currencies', requireApiPermission('system_config'), (req, res) => {
+}));
+app.post('/api/currencies', requireApiPermission('system_config'), asyncHandler((req, res) => {
   const d = req.body;
   const cId = d.id || genId('cur');
   run(`INSERT INTO currencies (id, code, name, symbol, is_base, sort_order, status) VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET code=excluded.code, name=excluded.name, symbol=excluded.symbol, is_base=excluded.is_base, sort_order=excluded.sort_order, status=excluded.status`,
     [cId, d.code, d.name, d.symbol || '', d.is_base || 0, d.sort_order || 0, d.status || 'active']);
   res.json({ success: true });
-});
-app.delete('/api/currencies/:id', requireApiPermission('system_config'), (req, res) => {
+}));
+app.delete('/api/currencies/:id', requireApiPermission('system_config'), asyncHandler((req, res) => {
   run('DELETE FROM currencies WHERE id = ?', [req.params.id]);
   res.json({ success: true });
-});
+}));
 
 // ==================== 汇率管理 ====================
-app.get('/api/exchange-rates', requireLogin, (req, res) => {
+app.get('/api/exchange-rates', requireLogin, asyncHandler((req, res) => {
   const { from, to } = req.query;
   let sql = 'SELECT * FROM exchange_rates';
   const params = [];
   if (from && to) { sql += ' WHERE from_currency = ? AND to_currency = ?'; params.push(from, to); }
   sql += ' ORDER BY rate_date DESC LIMIT 100';
   res.json(query(sql, params).rows);
-});
-app.post('/api/exchange-rates', requireApiPermission('system_config'), (req, res) => {
+}));
+app.post('/api/exchange-rates', requireApiPermission('system_config'), asyncHandler((req, res) => {
   const d = req.body;
   const rId = d.id || genId('rate');
   run(`INSERT INTO exchange_rates (id, from_currency, to_currency, rate, rate_date, rate_type) VALUES (?, ?, ?, ?, ?, ?)`,
     [rId, d.from_currency, d.to_currency, d.rate, d.rate_date, d.rate_type || 'realtime']);
   res.json({ success: true });
-});
+}));
 
 // 获取最新汇率
-app.get('/api/exchange-rates/latest', requireLogin, (req, res) => {
+app.get('/api/exchange-rates/latest', requireLogin, asyncHandler((req, res) => {
   const { from, to } = req.query;
   if (!from || !to) return res.json({ rate: 1 });
   if (from === to) return res.json({ rate: 1 });
@@ -961,7 +967,7 @@ app.get('/api/exchange-rates/latest', requireLogin, (req, res) => {
   const reverse = queryOne('SELECT * FROM exchange_rates WHERE from_currency = ? AND to_currency = ? ORDER BY rate_date DESC LIMIT 1', [to, from]);
   if (reverse) return res.json({ ...reverse, rate: 1 / reverse.rate, from_currency: from, to_currency: to });
   return res.json({ rate: 1 });
-});
+}));
 
 // 获取库存相关国家的货币信息 + 对人民币汇率（自动从免费API获取实时汇率并缓存）
 const CURRENCY_API_MAP = { 'RMB': 'CNY' }; // 系统内部用RMB，API用CNY
@@ -971,7 +977,7 @@ const COUNTRY_ALIAS_MAP = {
   '马来西亚': '马来', '马来西亚联邦': '马来',
   '泰王国': '泰国',
 };
-app.get('/api/inventory/currency-rates', requireLogin, async (req, res) => {
+app.get('/api/inventory/currency-rates', requireLogin, asyncHandler(async (req, res) => {
   try {
     // 0. 获取countries表的标准国家名→货币映射
     const allCountries = query('SELECT name, default_currency FROM countries WHERE status = ? AND default_currency IS NOT NULL AND default_currency != ?', ['active', '']).rows;
@@ -1060,10 +1066,10 @@ app.get('/api/inventory/currency-rates', requireLogin, async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
-});
+}));
 
 // 强制刷新汇率（删除今天的缓存，重新从API获取）
-app.post('/api/exchange-rates/refresh', requireApiPermission('inventory_view'), async (req, res) => {
+app.post('/api/exchange-rates/refresh', requireApiPermission('inventory_view'), asyncHandler(async (req, res) => {
   try {
     const today = new Date().toISOString().split('T')[0];
     // 删除今天的汇率缓存
@@ -1100,30 +1106,30 @@ app.post('/api/exchange-rates/refresh', requireApiPermission('inventory_view'), 
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
-});
+}));
 
 // ==================== 付款条件管理 ====================
-app.get('/api/payment-terms', requireLogin, (req, res) => {
+app.get('/api/payment-terms', requireLogin, asyncHandler((req, res) => {
   res.json(query('SELECT * FROM payment_terms ORDER BY created_at').rows);
-});
-app.post('/api/payment-terms', requireApiPermission('system_config'), (req, res) => {
+}));
+app.post('/api/payment-terms', requireApiPermission('system_config'), asyncHandler((req, res) => {
   const d = req.body;
   const pId = d.id || genId('pt');
   run(`INSERT INTO payment_terms (id, name, payee_type, payment_type, payment_stage, payment_node, ratio, remind_days_before, is_enabled) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET name=excluded.name, payee_type=excluded.payee_type, payment_type=excluded.payment_type, payment_stage=excluded.payment_stage, payment_node=excluded.payment_node, ratio=excluded.ratio, remind_days_before=excluded.remind_days_before, is_enabled=excluded.is_enabled`,
     [pId, d.name, d.payee_type || 'factory', d.payment_type || 'goods', d.payment_stage || 'deposit', d.payment_node || 'after_pi', d.ratio || 0, d.remind_days_before || 7, d.is_enabled !== undefined ? d.is_enabled : 1]);
   res.json({ success: true });
-});
-app.delete('/api/payment-terms/:id', requireApiPermission('system_config'), (req, res) => {
+}));
+app.delete('/api/payment-terms/:id', requireApiPermission('system_config'), asyncHandler((req, res) => {
   run('DELETE FROM payment_terms WHERE id = ?', [req.params.id]);
   res.json({ success: true });
-});
+}));
 
 // ==================== 审批流管理 ====================
-app.get('/api/approval-flows', requireApiPermission('system_config'), (req, res) => {
+app.get('/api/approval-flows', requireApiPermission('system_config'), asyncHandler((req, res) => {
   res.json(query('SELECT * FROM approval_flows ORDER BY created_at').rows.map(f => ({ ...f, levels: JSON.parse(f.levels || '[]') })));
-});
-app.post('/api/approval-flows', requireApiPermission('system_config'), (req, res) => {
+}));
+app.post('/api/approval-flows', requireApiPermission('system_config'), asyncHandler((req, res) => {
   const d = req.body;
   const fId = d.id || genId('flow');
   const name = (d.name || '').trim();
@@ -1165,10 +1171,10 @@ app.post('/api/approval-flows', requireApiPermission('system_config'), (req, res
        ON CONFLICT(id) DO UPDATE SET name=excluded.name, business_type=excluded.business_type, levels=excluded.levels, is_enabled=excluded.is_enabled`,
     [fId, name, businessType, JSON.stringify(validated), isEnabled]);
   res.json({ success: true, id: fId });
-});
+}));
 
 // N5: 审批流配置页下拉数据源——仅返回具备 po_approve 的 active 系统用户（复用系统管理用户）
-app.get('/api/approval-candidates', requireApiPermission('system_config'), (req, res) => {
+app.get('/api/approval-candidates', requireApiPermission('system_config'), asyncHandler((req, res) => {
   try {
     const users = query(`SELECT u.id, u.name, u.username, u.role_id, r.name AS role_name, r.permissions
       FROM users u LEFT JOIN roles r ON r.id = u.role_id
@@ -1182,61 +1188,61 @@ app.get('/api/approval-candidates', requireApiPermission('system_config'), (req,
       .map(u => ({ id: u.id, name: u.name, username: u.username, role_id: u.role_id, role_name: u.role_name || u.role_id || '' }));
     res.json(out);
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // CC 抄送候选：返回全部 active 系统用户（复用 users 表，不新建账号体系）
 // 不要求 po_approve；供提交审批时选择抄送人。仅数据记录，不触发任何通知。
-app.get('/api/cc-candidates', requireLogin, (req, res) => {
+app.get('/api/cc-candidates', requireLogin, asyncHandler((req, res) => {
   try {
     const users = query(`SELECT u.id, u.name, u.username, u.role_id, r.name AS role_name
       FROM users u LEFT JOIN roles r ON r.id = u.role_id
       WHERE u.status = 'active'`).rows;
     res.json(users.map(u => ({ id: u.id, name: u.name, username: u.username, role_id: u.role_id, role_name: u.role_name || u.role_id || '' })));
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // ==================== 费用类型管理 ====================
-app.get('/api/expense-types', requireLogin, (req, res) => {
+app.get('/api/expense-types', requireLogin, asyncHandler((req, res) => {
   res.json(query('SELECT * FROM expense_types ORDER BY sort_order').rows);
-});
-app.post('/api/expense-types', requireApiPermission('system_config'), (req, res) => {
+}));
+app.post('/api/expense-types', requireApiPermission('system_config'), asyncHandler((req, res) => {
   const d = req.body;
   const eId = d.id || genId('exp');
   run(`INSERT INTO expense_types (id, name, code, is_freight, is_cost, sort_order, status) VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET name=excluded.name, code=excluded.code, is_freight=excluded.is_freight, is_cost=excluded.is_cost, sort_order=excluded.sort_order, status=excluded.status`,
     [eId, d.name, d.code || '', d.is_freight || 0, d.is_cost || 1, d.sort_order || 0, d.status || 'active']);
   res.json({ success: true });
-});
-app.delete('/api/expense-types/:id', requireApiPermission('system_config'), (req, res) => {
+}));
+app.delete('/api/expense-types/:id', requireApiPermission('system_config'), asyncHandler((req, res) => {
   run('DELETE FROM expense_types WHERE id = ?', [req.params.id]);
   res.json({ success: true });
-});
+}));
 
 // ==================== 分摊规则管理 ====================
-app.get('/api/allocation-rules', requireLogin, (req, res) => {
+app.get('/api/allocation-rules', requireLogin, asyncHandler((req, res) => {
   res.json(query('SELECT * FROM allocation_rules ORDER BY created_at').rows);
-});
-app.post('/api/allocation-rules', requireApiPermission('system_config'), (req, res) => {
+}));
+app.post('/api/allocation-rules', requireApiPermission('system_config'), asyncHandler((req, res) => {
   const d = req.body;
   const aId = d.id || genId('alloc');
   run(`INSERT INTO allocation_rules (id, name, transport_mode, expense_type, allocation_basis, is_enabled) VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET name=excluded.name, transport_mode=excluded.transport_mode, expense_type=excluded.expense_type, allocation_basis=excluded.allocation_basis, is_enabled=excluded.is_enabled`,
     [aId, d.name, d.transport_mode || 'sea', d.expense_type || 'freight', d.allocation_basis || 'cbm', d.is_enabled !== undefined ? d.is_enabled : 1]);
   res.json({ success: true });
-});
+}));
 
 // ==================== 付款类目管理（L1B：独立两表，复用 system_config 权限） ====================
 // 大类：列表
-app.get('/api/payment-categories', requireLogin, (req, res) => {
+app.get('/api/payment-categories', requireLogin, asyncHandler((req, res) => {
   const { status } = req.query;
   let sql = 'SELECT * FROM payment_categories WHERE 1=1';
   const args = [];
   if (status) { sql += ' AND status = ?'; args.push(status); }
   sql += ' ORDER BY sort_order, created_at';
   res.json(query(sql, args).rows);
-});
+}));
 // 大类：新增/编辑（不提供物理删除，停用走 status=inactive）
-app.post('/api/payment-categories', requireApiPermission('system_config'), (req, res) => {
+app.post('/api/payment-categories', requireApiPermission('system_config'), asyncHandler((req, res) => {
   const d = req.body || {};
   const code = (d.code || '').trim();
   const name = (d.name || '').trim();
@@ -1267,10 +1273,10 @@ app.post('/api/payment-categories', requireApiPermission('system_config'), (req,
     if (String(e.message).includes('UNIQUE')) return res.status(409).json({ error: '类目编码(code)已存在' });
     res.status(500).json({ error: e.message });
   }
-});
+}));
 
 // 子类：列表（可按 category_id / status 过滤；source_type 过滤按"拥有该 active 来源映射"匹配）
-app.get('/api/payment-subcategories', requireLogin, (req, res) => {
+app.get('/api/payment-subcategories', requireLogin, asyncHandler((req, res) => {
   const { category_id, status, source_type } = req.query;
   let sql = 'SELECT * FROM payment_subcategories WHERE 1=1';
   const args = [];
@@ -1286,10 +1292,10 @@ app.get('/api/payment-subcategories', requireLogin, (req, res) => {
       .forEach(s => { (srcMap[s.subcategory_id] = srcMap[s.subcategory_id] || []).push({ id: s.id, source_type: s.source_type, fee_type: s.fee_type, status: s.status }); });
   }
   res.json(rows.map(r => ({ ...r, sources: srcMap[r.id] || [] })));
-});
+}));
 // 子类：新增/编辑（不提供物理删除，停用走 status=inactive）
 // 注意：来源映射(source_type/fee_type)已分离到 payment_subcategory_sources，本接口只管理类目属性
-app.post('/api/payment-subcategories', requireApiPermission('system_config'), (req, res) => {
+app.post('/api/payment-subcategories', requireApiPermission('system_config'), asyncHandler((req, res) => {
   const d = req.body || {};
   const category_id = (d.category_id || '').trim();
   const code = (d.code || '').trim();
@@ -1325,14 +1331,14 @@ app.post('/api/payment-subcategories', requireApiPermission('system_config'), (r
     if (msg.includes('category_id') || msg.includes('code') || msg.includes('UNIQUE')) return res.status(409).json({ error: '同一大类下子类编码(code)已存在' });
     res.status(500).json({ error: msg });
   }
-});
+}));
 
 // 启用类目嵌套（供后续付款申请使用）：仅返回真正可用的数据
 // 过滤规则：
 //   小类须同时满足 payment_subcategories.status='active' 且至少存在一条 status='active' 来源映射
 //   大类须同时满足 payment_categories.status='active' 且过滤后至少还剩一个有效小类
 // 每个小类只返回其 active 来源映射(source_mappings)；不返回 inactive 映射；不返回旧标量字段
-app.get('/api/payment-categories/active', requireLogin, (req, res) => {
+app.get('/api/payment-categories/active', requireLogin, asyncHandler((req, res) => {
   const cats = query(`SELECT id, code, name, sort_order FROM payment_categories WHERE status='active' ORDER BY sort_order, created_at`).rows;
   const subs = query(`SELECT id, category_id, code, name, payee_type_default, sort_order FROM payment_subcategories WHERE status='active' ORDER BY sort_order, created_at`).rows;
   const srcs = query(`SELECT subcategory_id, source_type, fee_type FROM payment_subcategory_sources WHERE status='active' ORDER BY source_type, fee_type`).rows;
@@ -1355,7 +1361,7 @@ app.get('/api/payment-categories/active', requireLogin, (req, res) => {
       subcategories: byCat[c.id],
     }));
   res.json(result);
-});
+}));
 
 // ==================== 付款主体主数据维护（L2A-2A-3：仅主数据，不接入采购业务链） ====================
 // 权限复用 system_config，不新增权限码；不提供物理删除；引用计数结构预留（当前未接入 PI/CI/payable_item）
@@ -1372,7 +1378,7 @@ function payerEntityRefCount(id) {
 }
 
 // 列表：可按 status / country_id 过滤；返回 country_name 与引用数量；按 sort_order、entity_name 排序
-app.get('/api/payer-entities', requireLogin, (req, res) => {
+app.get('/api/payer-entities', requireLogin, asyncHandler((req, res) => {
   const { status, country_id } = req.query;
   let sql = `SELECT p.*, c.name AS country_name
              FROM payer_entities p
@@ -1384,10 +1390,10 @@ app.get('/api/payer-entities', requireLogin, (req, res) => {
   sql += ' ORDER BY p.sort_order, p.entity_name';
   const rows = query(sql, args).rows;
   res.json(rows.map(r => ({ ...r, ref_count: payerEntityRefCount(r.id) })));
-});
+}));
 
 // 新增（不提供物理删除；entity_key 唯一；默认主体唯一；写权限需 system_config）
-app.post('/api/payer-entities', requireApiPermission('system_config'), (req, res) => {
+app.post('/api/payer-entities', requireApiPermission('system_config'), asyncHandler((req, res) => {
   const d = req.body || {};
   if (d.id) return res.status(400).json({ error: '新增操作不应携带 id，更新请使用 PUT /api/payer-entities/:id' });
   const entity_key = String(d.entity_key || '').trim();
@@ -1440,10 +1446,10 @@ app.post('/api/payer-entities', requireApiPermission('system_config'), (req, res
     }
     res.status(500).json({ error: msg });
   }
-});
+}));
 
 // 编辑（不提供物理删除；entity_key 未被引用时允许修改，已引用返回 409；默认主体唯一；写权限需 system_config）
-app.put('/api/payer-entities/:id', requireApiPermission('system_config'), (req, res) => {
+app.put('/api/payer-entities/:id', requireApiPermission('system_config'), asyncHandler((req, res) => {
   const id = req.params.id;
   const d = req.body || {};
   const entity_key = String(d.entity_key || '').trim();
@@ -1504,10 +1510,10 @@ app.put('/api/payer-entities/:id', requireApiPermission('system_config'), (req, 
     }
     res.status(500).json({ error: msg });
   }
-});
+}));
 
 // 启用 / 停用（独立状态接口，无物理删除；当前 active 默认主体不可直接停用）
-app.post('/api/payer-entities/:id/status', requireApiPermission('system_config'), (req, res) => {
+app.post('/api/payer-entities/:id/status', requireApiPermission('system_config'), asyncHandler((req, res) => {
   const id = req.params.id;
   const entity = queryOne('SELECT id, entity_key, status, is_default FROM payer_entities WHERE id = ?', [id]);
   if (!entity) return res.status(404).json({ error: '付款主体不存在' });
@@ -1524,10 +1530,10 @@ app.post('/api/payer-entities/:id/status', requireApiPermission('system_config')
   } catch (e) {
     res.status(500).json({ error: String(e.message || e) });
   }
-});
+}));
 
 // 来源映射列表（只读，供维护页与校验使用；可按 subcategory_id / source_type / status 过滤）
-app.get('/api/payment-subcategory-sources', requireLogin, (req, res) => {
+app.get('/api/payment-subcategory-sources', requireLogin, asyncHandler((req, res) => {
   const { subcategory_id, source_type, status } = req.query;
   let sql = 'SELECT * FROM payment_subcategory_sources WHERE 1=1';
   const args = [];
@@ -1536,7 +1542,7 @@ app.get('/api/payment-subcategory-sources', requireLogin, (req, res) => {
   if (status) { sql += ' AND status = ?'; args.push(status); }
   sql += ' ORDER BY subcategory_id, source_type, fee_type';
   res.json(query(sql, args).rows);
-});
+}));
 
 // 来源映射：新增/编辑/启用/停用（不提供物理删除；停用走 status=inactive）
 // 唯一事实来源为 payment_subcategory_sources；唯一约束由部分唯一索引 uq_payment_subcategory_source_mapping
@@ -1553,7 +1559,7 @@ const PAYMENT_FEE_LABEL = Object.freeze({
   port_charges: '港口费', delivery: '派送费', warehouse: '仓储费', other_local: '其他本地费',
   duty: '关税', inspection: '商检费',
 });
-app.post('/api/payment-subcategory-sources', requireApiPermission('system_config'), (req, res) => {
+app.post('/api/payment-subcategory-sources', requireApiPermission('system_config'), asyncHandler((req, res) => {
   const d = req.body || {};
   const subcategory_id = String(d.subcategory_id || '').trim();
   const source_type = String(d.source_type || '').trim();
@@ -1655,13 +1661,13 @@ app.post('/api/payment-subcategory-sources', requireApiPermission('system_config
     }
     res.status(500).json({ error: msg });
   }
-});
+}));
 
 // ==================== 系统配置 ====================
-app.get('/api/system-config', requireApiPermission('system_config'), (req, res) => {
+app.get('/api/system-config', requireApiPermission('system_config'), asyncHandler((req, res) => {
   res.json(query('SELECT * FROM system_config').rows);
-});
-app.post('/api/system-config', requireApiPermission('system_config'), (req, res) => {
+}));
+app.post('/api/system-config', requireApiPermission('system_config'), asyncHandler((req, res) => {
   const { configs } = req.body;
   if (Array.isArray(configs)) {
     transaction(() => {
@@ -1673,10 +1679,10 @@ app.post('/api/system-config', requireApiPermission('system_config'), (req, res)
     });
   }
   res.json({ success: true });
-});
+}));
 
 // ==================== SKU 主数据 ====================
-app.get('/api/skus', requireApiPermission('sku_view'), (req, res) => {
+app.get('/api/skus', requireApiPermission('sku_view'), asyncHandler((req, res) => {
   const { keyword, status, brand, lifecycle_status, category } = req.query;
   let sql = 'SELECT * FROM skus WHERE 1=1';
   const params = [];
@@ -1687,15 +1693,15 @@ app.get('/api/skus', requireApiPermission('sku_view'), (req, res) => {
   if (category) { sql += ' AND category = ?'; params.push(category); }
   sql += ' ORDER BY created_at DESC';
   res.json(query(sql, params).rows);
-});
+}));
 
-app.get('/api/skus/:id', requireApiPermission('sku_view'), (req, res) => {
+app.get('/api/skus/:id', requireApiPermission('sku_view'), asyncHandler((req, res) => {
   const sku = queryOne('SELECT * FROM skus WHERE id = ?', [req.params.id]);
   if (!sku) return res.status(404).json({ error: 'SKU不存在' });
   res.json(sku);
-});
+}));
 
-app.post('/api/skus', requireApiPermission('sku_create'), (req, res) => {
+app.post('/api/skus', requireApiPermission('sku_create'), asyncHandler((req, res) => {
   try {
     const d = req.body;
     if (!d.sku_code) return res.status(400).json({ error: 'SKU编码不能为空' });
@@ -1716,9 +1722,9 @@ app.post('/api/skus', requireApiPermission('sku_create'), (req, res) => {
       [sId, d.sku_code, d.product_name || '', d.brand || '', d.category || '', d.model || '', d.color_spec || '', d.barcode || '', d.default_supplier_id || '', d.default_supplier_name || '', d.purchase_currency || 'USD', d.standard_purchase_price || 0, parseFloat(d.purchase_price_rmb) || 0, parseFloat(d.purchase_price_usd) || 0, d.reference_customs_rate === '' || d.reference_customs_rate == null ? null : Number(d.reference_customs_rate), d.carton_spec || '', d.qty_per_carton || 0, d.unit_weight || 0, d.unit_cbm || 0, d.is_new_product || 0, d.launch_date || '', d.new_product_protection_days || 90, d.lifecycle_status || 'new_test', d.auto_replenish !== undefined ? d.auto_replenish : 1, d.status || 'normal', d.remark || '']);
     res.json({ id: sId, ...d });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
-app.put('/api/skus/:id', requireApiPermission('sku_edit'), (req, res) => {
+app.put('/api/skus/:id', requireApiPermission('sku_edit'), asyncHandler((req, res) => {
   try {
     const d = req.body;
     const { id } = req.params;
@@ -1745,9 +1751,9 @@ app.put('/api/skus/:id', requireApiPermission('sku_edit'), (req, res) => {
     run(`UPDATE skus SET ${fields.join(', ')} WHERE id = ?`, values);
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
-app.delete('/api/skus/:id', requireApiPermission('sku_delete'), (req, res) => {
+app.delete('/api/skus/:id', requireApiPermission('sku_delete'), asyncHandler((req, res) => {
   try {
     const sku = queryOne('SELECT sku_code FROM skus WHERE id = ?', [req.params.id]);
     if (!sku) return res.status(404).json({ error: 'SKU不存在' });
@@ -1776,10 +1782,10 @@ app.delete('/api/skus/:id', requireApiPermission('sku_delete'), (req, res) => {
     run('DELETE FROM skus WHERE id = ?', [req.params.id]);
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // SKU 批量导入
-app.post('/api/skus/bulk-import', requireApiPermission('sku_import'), (req, res) => {
+app.post('/api/skus/bulk-import', requireApiPermission('sku_import'), asyncHandler((req, res) => {
   try {
     const items = req.body.items || [];
     const result = { created: 0, updated: 0, failed: 0, errors: [] };
@@ -1829,10 +1835,10 @@ app.post('/api/skus/bulk-import', requireApiPermission('sku_import'), (req, res)
     });
     res.json(result);
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // SKU 批量更新
-app.post('/api/skus/batch-update', requireApiPermission('sku_edit'), (req, res) => {
+app.post('/api/skus/batch-update', requireApiPermission('sku_edit'), asyncHandler((req, res) => {
   try {
     const { ids, data } = req.body;
     if (!ids || !Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: '未选择SKU' });
@@ -1863,10 +1869,10 @@ app.post('/api/skus/batch-update', requireApiPermission('sku_edit'), (req, res) 
     const result = run(`UPDATE skus SET ${fields.join(', ')} WHERE id IN (${placeholders})`, values);
     res.json({ success: true, updated: result.changes || ids.length });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // SKU 批量删除（带业务数据检查）
-app.post('/api/skus/batch-delete', requireApiPermission('sku_delete'), (req, res) => {
+app.post('/api/skus/batch-delete', requireApiPermission('sku_delete'), asyncHandler((req, res) => {
   try {
     const { ids } = req.body;
     if (!ids || !Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: '未选择SKU' });
@@ -1905,10 +1911,10 @@ app.post('/api/skus/batch-delete', requireApiPermission('sku_delete'), (req, res
     });
     res.json(result);
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // SKU 导入记录
-app.get('/api/skus/import-records', requireApiPermission('sku_view'), (req, res) => {
+app.get('/api/skus/import-records', requireApiPermission('sku_view'), asyncHandler((req, res) => {
   try {
     const records = query(`
       SELECT 'sku_import' as type, 'SKU导入' as label, 
@@ -1919,8 +1925,8 @@ app.get('/api/skus/import-records', requireApiPermission('sku_view'), (req, res)
     `).rows;
     res.json(records);
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
-app.get('/api/inventory-imports', requireApiPermission('inventory_view'), (req, res) => {
+}));
+app.get('/api/inventory-imports', requireApiPermission('inventory_view'), asyncHandler((req, res) => {
   const { country, warehouse, import_date } = req.query;
   let sql = 'SELECT * FROM inventory_imports WHERE 1=1';
   const params = [];
@@ -1929,9 +1935,9 @@ app.get('/api/inventory-imports', requireApiPermission('inventory_view'), (req, 
   if (import_date) { sql += ' AND import_date = ?'; params.push(import_date); }
   sql += ' ORDER BY import_date DESC, created_at DESC LIMIT 500';
   res.json(query(sql, params).rows);
-});
+}));
 
-app.post('/api/inventory-imports/bulk-import', requireApiPermission('inventory_import'), (req, res) => {
+app.post('/api/inventory-imports/bulk-import', requireApiPermission('inventory_import'), asyncHandler((req, res) => {
   try {
     const items = req.body.items || [];
     const snapshotCutoffDate = req.body.snapshot_cutoff_date || '';
@@ -1960,10 +1966,10 @@ app.post('/api/inventory-imports/bulk-import', requireApiPermission('inventory_i
     const refreshResult = refreshInventoryTotals(snapshotCutoffDate);
     res.json({ ...result, snapshot_cutoff_date: snapshotCutoffDate, wac_warnings: refreshResult.warnings || [] });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // ==================== 库存总表 ====================
-app.get('/api/inventory', requireApiPermission('inventory_view'), (req, res) => {
+app.get('/api/inventory', requireApiPermission('inventory_view'), asyncHandler((req, res) => {
   const { country, warehouse, brand, keyword } = req.query;
   let sql = `SELECT i.*, s.product_name, s.brand, s.category, s.model, s.lifecycle_status, s.is_new_product FROM inventory i LEFT JOIN skus s ON i.sku_code = s.sku_code WHERE 1=1`;
   const params = [];
@@ -1973,19 +1979,19 @@ app.get('/api/inventory', requireApiPermission('inventory_view'), (req, res) => 
   if (keyword) { sql += ' AND (i.sku_code LIKE ? OR s.product_name LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`); }
   sql += ' ORDER BY i.sku_code';
   res.json(query(sql, params).rows);
-});
+}));
 
 // 库存总表筛选下拉选项（从实际数据动态聚合）
-app.get('/api/inventory/filter-options', requireApiPermission('inventory_view'), (req, res) => {
+app.get('/api/inventory/filter-options', requireApiPermission('inventory_view'), asyncHandler((req, res) => {
   const countries = query(`SELECT DISTINCT country FROM inventory WHERE country IS NOT NULL AND country != '' ORDER BY country`).rows.map(r => r.country);
   const warehouses = query(`SELECT DISTINCT warehouse FROM inventory WHERE warehouse IS NOT NULL AND warehouse != '' ORDER BY warehouse`).rows.map(r => r.warehouse);
   // 品牌来自 inventory 关联到的 skus 表（有 LEFT JOIN，可能是 NULL）
   const brands = query(`SELECT DISTINCT s.brand FROM inventory i JOIN skus s ON i.sku_code = s.sku_code WHERE s.brand IS NOT NULL AND s.brand != '' ORDER BY s.brand`).rows.map(r => r.brand);
   res.json({ countries, warehouses, brands });
-});
+}));
 
 // 获取库存快照截止日期（按 国家+仓库 维度返回）
-app.get('/api/inventory/snapshot-cutoff-date', requireApiPermission('inventory_view'), (req, res) => {
+app.get('/api/inventory/snapshot-cutoff-date', requireApiPermission('inventory_view'), asyncHandler((req, res) => {
   const rows = query(`
     SELECT country, warehouse, snapshot_cutoff_date
     FROM inventory
@@ -2008,7 +2014,7 @@ app.get('/api/inventory/snapshot-cutoff-date', requireApiPermission('inventory_v
     cutoffList.push({ country, warehouse, snapshot_cutoff_date: date });
   });
   res.json({ cutoff_dates: cutoffList, cutoff_map: cutoffMap });
-});
+}));
 
 // 按 国家+仓库 获取 snapshot_cutoff_date 的辅助函数
 function getSnapshotCutoffMap() {
@@ -2198,7 +2204,7 @@ function updateInventoryTransitData() {
 }
 
 // ==================== 出库数据 ====================
-app.get('/api/outbound-records', requireApiPermission('outbound_view'), (req, res) => {
+app.get('/api/outbound-records', requireApiPermission('outbound_view'), asyncHandler((req, res) => {
   const { country, warehouse, brand, outbound_type, outbound_status, channel, start_date, end_date, inventory_effect, import_batch_id } = req.query;
   let sql = `SELECT o.*, s.brand FROM outbound_records o LEFT JOIN skus s ON o.sku_code = s.sku_code WHERE 1=1`;
   const params = [];
@@ -2214,17 +2220,17 @@ app.get('/api/outbound-records', requireApiPermission('outbound_view'), (req, re
   if (import_batch_id) { sql += ' AND o.import_batch_id = ?'; params.push(import_batch_id); }
   sql += ' ORDER BY o.outbound_date DESC, o.created_at DESC LIMIT 500';
   res.json(query(sql, params).rows);
-});
+}));
 
 // 出库数据筛选下拉选项（从实际数据动态聚合）
-app.get('/api/outbound-records/filter-options', requireApiPermission('outbound_view'), (req, res) => {
+app.get('/api/outbound-records/filter-options', requireApiPermission('outbound_view'), asyncHandler((req, res) => {
   const countries = query(`SELECT DISTINCT country FROM outbound_records WHERE country IS NOT NULL AND country != '' ORDER BY country`).rows.map(r => r.country);
   const warehouses = query(`SELECT DISTINCT warehouse FROM outbound_records WHERE warehouse IS NOT NULL AND warehouse != '' ORDER BY warehouse`).rows.map(r => r.warehouse);
   const brands = query(`SELECT DISTINCT s.brand FROM outbound_records o JOIN skus s ON o.sku_code = s.sku_code WHERE s.brand IS NOT NULL AND s.brand != '' ORDER BY s.brand`).rows.map(r => r.brand);
   res.json({ countries, warehouses, brands });
-});
+}));
 
-app.post('/api/outbound-records', requireApiPermission('outbound_create'), (req, res) => {
+app.post('/api/outbound-records', requireApiPermission('outbound_create'), asyncHandler((req, res) => {
   try {
     const d = req.body;
     if (!d.sku_code || !d.outbound_date) return res.status(400).json({ error: 'SKU和出库日期不能为空' });
@@ -2244,7 +2250,7 @@ app.post('/api/outbound-records', requireApiPermission('outbound_create'), (req,
     }
     res.json({ id: oId, outbound_no: oNo, ...d });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // 出库类型中文映射
 const OB_TYPE_MAP = {'线上销售':'online_sale','线下销售':'offline_sale','MDF达人':'mdf_influencer','MDF活动':'mdf_event','调拨':'transfer','报废':'scrap','样品':'sample','损坏':'damage','退货':'return_out','手工调整':'manual_adjustment'};
@@ -2282,7 +2288,7 @@ function checkDuplicateOutbound(item) {
 }
 
 // 预览导入（不执行写入）
-app.post('/api/outbound-records/bulk-import-preview', requireApiPermission('outbound_view'), (req, res) => {
+app.post('/api/outbound-records/bulk-import-preview', requireApiPermission('outbound_view'), asyncHandler((req, res) => {
   try {
     const items = req.body.items || [];
     const importMode = req.body.import_mode || 'auto_by_snapshot_date'; // historical / auto_by_snapshot_date / operational
@@ -2316,10 +2322,10 @@ app.post('/api/outbound-records/bulk-import-preview', requireApiPermission('outb
     });
     res.json(stats);
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // 正式导入
-app.post('/api/outbound-records/bulk-import', requireApiPermission('outbound_create'), (req, res) => {
+app.post('/api/outbound-records/bulk-import', requireApiPermission('outbound_create'), asyncHandler((req, res) => {
   try {
     const items = req.body.items || [];
     const importMode = req.body.import_mode || 'auto_by_snapshot_date'; // historical / auto_by_snapshot_date / operational
@@ -2392,10 +2398,10 @@ app.post('/api/outbound-records/bulk-import', requireApiPermission('outbound_cre
     logOperation({operator_id:req.currentUserId, operator_name:req.currentUserName, page:'outbound', operation_type:'bulk_import', target_ids:[], affected_count:result.created, old_values:{}, new_values:{import_mode:importMode, batch_id:batchId}, reason:'', triggered_recalc:1, is_rollbackable:0});
     res.json(result);
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // ==================== 销量数据 ====================
-app.get('/api/sales-data', requireApiPermission('outbound_view'), (req, res) => {
+app.get('/api/sales-data', requireApiPermission('outbound_view'), asyncHandler((req, res) => {
   const { sku_code, country, channel, start_date, end_date } = req.query;
   let sql = 'SELECT * FROM sales_data WHERE 1=1';
   const params = [];
@@ -2406,9 +2412,9 @@ app.get('/api/sales-data', requireApiPermission('outbound_view'), (req, res) => 
   if (end_date) { sql += ' AND date <= ?'; params.push(end_date); }
   sql += ' ORDER BY date DESC LIMIT 1000';
   res.json(query(sql, params).rows);
-});
+}));
 
-app.post('/api/sales-data/bulk-import', requireApiPermission('outbound_create'), (req, res) => {
+app.post('/api/sales-data/bulk-import', requireApiPermission('outbound_create'), asyncHandler((req, res) => {
   try {
     const items = req.body.items || [];
     const result = { created: 0, failed: 0, errors: [] };
@@ -2424,12 +2430,12 @@ app.post('/api/sales-data/bulk-import', requireApiPermission('outbound_create'),
     });
     res.json(result);
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // ==================== 销售明细数据（新） ====================
 
 // 销售明细列表
-app.get('/api/sales-records', requireApiPermission('outbound_view'), (req, res) => {
+app.get('/api/sales-records', requireApiPermission('outbound_view'), asyncHandler((req, res) => {
   const { source_system, order_no, shop_platform, brand, sku_code, is_valid, start_date, end_date, import_batch_id } = req.query;
   let sql = `SELECT sr.*, s.product_name FROM sales_records sr LEFT JOIN skus s ON sr.sku_code = s.sku_code WHERE 1=1`;
   const params = [];
@@ -2444,19 +2450,19 @@ app.get('/api/sales-records', requireApiPermission('outbound_view'), (req, res) 
   if (import_batch_id) { sql += ' AND sr.import_batch_id = ?'; params.push(import_batch_id); }
   sql += ' ORDER BY sr.order_date DESC, sr.created_at DESC LIMIT 500';
   res.json(query(sql, params).rows);
-});
+}));
 
 // 销售明细筛选下拉选项
-app.get('/api/sales-records/filter-options', requireApiPermission('outbound_view'), (req, res) => {
+app.get('/api/sales-records/filter-options', requireApiPermission('outbound_view'), asyncHandler((req, res) => {
   const source_systems = query(`SELECT DISTINCT source_system FROM sales_records WHERE source_system IS NOT NULL AND source_system != '' ORDER BY source_system`).rows.map(r => r.source_system);
   const shop_platforms = query(`SELECT DISTINCT shop_platform FROM sales_records WHERE shop_platform IS NOT NULL AND shop_platform != '' ORDER BY shop_platform`).rows.map(r => r.shop_platform);
   const brands = query(`SELECT DISTINCT brand FROM sales_records WHERE brand IS NOT NULL AND brand != '' ORDER BY brand`).rows.map(r => r.brand);
   res.json({ source_systems, shop_platforms, brands });
-});
+}));
 
 
 // 销售明细导入预览
-app.post('/api/sales-records/bulk-import-preview', requireApiPermission('outbound_view'), (req, res) => {
+app.post('/api/sales-records/bulk-import-preview', requireApiPermission('outbound_view'), asyncHandler((req, res) => {
   try {
     const items = req.body.items || [];
     const preview = items.map((item, i) => {
@@ -2516,10 +2522,10 @@ app.post('/api/sales-records/bulk-import-preview', requireApiPermission('outboun
     });
     res.json({ preview });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // 销售明细导入（upsert）
-app.post('/api/sales-records/bulk-import', requireApiPermission('outbound_import'), (req, res) => {
+app.post('/api/sales-records/bulk-import', requireApiPermission('outbound_import'), asyncHandler((req, res) => {
   try {
     const items = req.body.items || [];
     const batchId = genId('batch');
@@ -2604,7 +2610,7 @@ app.post('/api/sales-records/bulk-import', requireApiPermission('outbound_import
 
     res.json(result);
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // ==================== 补货建议 ====================
 
@@ -2952,7 +2958,7 @@ function classifySkuState(o) {
 }
 
 // 补货建议汇总统计（用于SKU动销与订单预测页面顶部指标卡）
-app.get('/api/replenishment-suggestions/summary', requireApiPermission('replenishment_view'), (req, res) => {
+app.get('/api/replenishment-suggestions/summary', requireApiPermission('replenishment_view'), asyncHandler((req, res) => {
   const { country, warehouse, brand } = req.query;
   let where = '';
   const params = [];
@@ -2982,10 +2988,10 @@ app.get('/api/replenishment-suggestions/summary', requireApiPermission('replenis
     overallTurnover: Math.round(overallTurnover * 10) / 10,
     needReplenish, stockoutRisk, highStock
   });
-});
+}));
 
 // 按天销量明细
-app.get('/api/replenishment-suggestions/daily-sales', requireApiPermission('replenishment_view'), (req, res) => {
+app.get('/api/replenishment-suggestions/daily-sales', requireApiPermission('replenishment_view'), asyncHandler((req, res) => {
   const { country, warehouse, brand, keyword } = req.query;
   // 取近30天每天的日期
   const now = new Date();
@@ -3056,9 +3062,9 @@ app.get('/api/replenishment-suggestions/daily-sales', requireApiPermission('repl
   });
 
   res.json({ dates, skus: result });
-});
+}));
 
-app.get('/api/replenishment-suggestions', requireApiPermission('replenishment_view'), (req, res) => {
+app.get('/api/replenishment-suggestions', requireApiPermission('replenishment_view'), asyncHandler((req, res) => {
   const { country, warehouse, brand, keyword } = req.query;
   let sql = `SELECT rs.*, s.product_name, s.brand, s.category, s.model, s.standard_purchase_price, s.qty_per_carton, s.purchase_currency, i.last_inbound_date,
     i.available_qty AS inv_available_qty,
@@ -3098,10 +3104,10 @@ app.get('/api/replenishment-suggestions', requireApiPermission('replenishment_vi
     return r;
   });
   res.json(rows);
-});
+}));
 
 // 生成/刷新补货建议
-app.post('/api/replenishment-suggestions/generate', requireApiPermission('replenishment_edit'), (req, res) => {
+app.post('/api/replenishment-suggestions/generate', requireApiPermission('replenishment_edit'), asyncHandler((req, res) => {
   try {
     const { country, warehouse, brand } = req.body;
     const targetMonths = parseFloat(queryOne("SELECT value FROM system_config WHERE key = 'target_stock_months'")?.value || '4');
@@ -3493,10 +3499,10 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
 
     res.json({ success: true, count: inventoryItems.length });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // 更新补货建议（目标周转、最终下单数量、备注等）
-app.put('/api/replenishment-suggestions/:id', requireApiPermission('replenishment_edit'), (req, res) => {
+app.put('/api/replenishment-suggestions/:id', requireApiPermission('replenishment_edit'), asyncHandler((req, res) => {
   try {
     const d = req.body;
     const fields = [];
@@ -3631,10 +3637,10 @@ app.put('/api/replenishment-suggestions/:id', requireApiPermission('replenishmen
     const updated = queryOne('SELECT * FROM replenishment_suggestions WHERE id = ?', [req.params.id]);
     res.json({ success: true, data: updated });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // ==================== PO 管理 ====================
-app.get('/api/purchase-orders', requireApiPermission('po_view'), (req, res) => {
+app.get('/api/purchase-orders', requireApiPermission('po_view'), asyncHandler((req, res) => {
   const { status, keyword, supplier_id } = req.query;
   let sql = `SELECT po.*, (SELECT COUNT(*) FROM purchase_order_items WHERE po_id = po.id) as item_count FROM purchase_orders po WHERE 1=1`;
   const params = [];
@@ -3643,13 +3649,13 @@ app.get('/api/purchase-orders', requireApiPermission('po_view'), (req, res) => {
   if (keyword) { sql += ' AND (po.po_no LIKE ? OR po.supplier_name LIKE ? OR po.brand LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`); }
   sql += ' ORDER BY po.created_at DESC';
   res.json(query(sql, params).rows);
-});
+}));
 
 // PO 待审批列表（审批中心 / 待我审批）
 // 仅列表查询，JOIN approval_records + purchase_orders + 明细累加总数量；
 // 不动 submit-approval / approve 端点，不写任何状态。
 // 注册在 GET /api/purchase-orders/:id 之前，避免被 :id 参数路由抢匹配。
-app.get('/api/purchase-orders/pending-approval', requireApiPermission('po_approve'), (req, res) => {
+app.get('/api/purchase-orders/pending-approval', requireApiPermission('po_approve'), asyncHandler((req, res) => {
   try {
     const rows = query(`
       SELECT
@@ -3700,16 +3706,16 @@ app.get('/api/purchase-orders/pending-approval', requireApiPermission('po_approv
     }
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
-app.get('/api/purchase-orders/:id', requireApiPermission('po_view'), (req, res) => {
+app.get('/api/purchase-orders/:id', requireApiPermission('po_view'), asyncHandler((req, res) => {
   const po = queryOne('SELECT * FROM purchase_orders WHERE id = ?', [req.params.id]);
   if (!po) return res.status(404).json({ error: 'PO不存在' });
   const items = query('SELECT * FROM purchase_order_items WHERE po_id = ? ORDER BY created_at', [req.params.id]).rows;
   res.json({ ...po, items });
-});
+}));
 
-app.post('/api/purchase-orders', requireApiPermission('po_create'), (req, res) => {
+app.post('/api/purchase-orders', requireApiPermission('po_create'), asyncHandler((req, res) => {
   try {
     const d = req.body;
     if (!d.supplier_name) return res.status(400).json({ error: '供应商不能为空' });
@@ -3756,9 +3762,9 @@ app.post('/api/purchase-orders', requireApiPermission('po_create'), (req, res) =
     });
     res.json({ id: poId, po_no: poNo, ...d, currency, total_amount: totalAmount });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
-app.put('/api/purchase-orders/:id', requireApiPermission('po_create'), (req, res) => {
+app.put('/api/purchase-orders/:id', requireApiPermission('po_create'), asyncHandler((req, res) => {
   try {
     const d = req.body;
     const { id } = req.params;
@@ -3836,9 +3842,9 @@ app.put('/api/purchase-orders/:id', requireApiPermission('po_create'), (req, res
     }
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
-app.delete('/api/purchase-orders/:id', requireApiPermission('po_create'), (req, res) => {
+app.delete('/api/purchase-orders/:id', requireApiPermission('po_create'), asyncHandler((req, res) => {
   try {
     const po = queryOne('SELECT * FROM purchase_orders WHERE id = ?', [req.params.id]);
     if (!po) return res.status(404).json({ error: 'PO不存在' });
@@ -3858,10 +3864,10 @@ app.delete('/api/purchase-orders/:id', requireApiPermission('po_create'), (req, 
     updateInventoryTransitData(); // 删除后回落 po_unconfirmed_pi_qty
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // PO 软作废（置 cancelled + 必填原因 + 回写在途）
-app.post('/api/purchase-orders/:id/void', requireApiPermission('po_create'), (req, res) => {
+app.post('/api/purchase-orders/:id/void', requireApiPermission('po_create'), asyncHandler((req, res) => {
   try {
     const { void_reason } = req.body;
     if (!void_reason) return res.status(400).json({ error: '作废原因不能为空' });
@@ -3875,10 +3881,10 @@ app.post('/api/purchase-orders/:id/void', requireApiPermission('po_create'), (re
     logOperation({ operator_id: req.currentUserId, operator_name: req.currentUserName, page: 'purchase_order', operation_type: 'void', target_ids: [po.id], affected_count: 1, old_values: { po_status: po.po_status }, new_values: { po_status: 'cancelled', void_reason }, reason: void_reason, triggered_recalc: 0, is_rollbackable: 0 });
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // PO 提交审批
-app.post('/api/purchase-orders/:id/submit-approval', requireApiPermission('po_create'), (req, res) => {
+app.post('/api/purchase-orders/:id/submit-approval', requireApiPermission('po_create'), asyncHandler((req, res) => {
   try {
     const po = queryOne('SELECT * FROM purchase_orders WHERE id = ?', [req.params.id]);
     if (!po) return res.status(404).json({ error: 'PO不存在' });
@@ -3953,10 +3959,10 @@ app.post('/api/purchase-orders/:id/submit-approval', requireApiPermission('po_cr
     notifyApprovalParticipants(approvalId, 'submit', { po_no: po.po_no }).catch(() => {});
     res.json({ success: true, approval_id: approvalId });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // PO 审批操作
-app.post('/api/purchase-orders/:id/approve', requireApiPermission('po_approve'), (req, res) => {
+app.post('/api/purchase-orders/:id/approve', requireApiPermission('po_approve'), asyncHandler((req, res) => {
   try {
     const { action, remark } = req.body; // action: approve / reject / withdraw
     if (!['approve', 'reject', 'withdraw'].includes(action)) {
@@ -4020,13 +4026,13 @@ app.post('/api/purchase-orders/:id/approve', requireApiPermission('po_approve'),
     }
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // PO 标记为已发工厂
-app.post('/api/purchase-orders/:id/send-to-factory', requireApiPermission('po_create'), (req, res) => {
+app.post('/api/purchase-orders/:id/send-to-factory', requireApiPermission('po_create'), asyncHandler((req, res) => {
   run('UPDATE purchase_orders SET po_status = ? WHERE id = ? AND po_status = ?', ['sent_factory', req.params.id, 'approved']);
   res.json({ success: true });
-});
+}));
 
 function n(v, fallback = 0) {
   const x = Number(v);
@@ -4067,7 +4073,7 @@ function getPILockReason(pi) {
 }
 
 // ==================== PI 管理 ====================
-app.get('/api/proforma-invoices', requireApiPermission('pi_view'), (req, res) => {
+app.get('/api/proforma-invoices', requireApiPermission('pi_view'), asyncHandler((req, res) => {
   const { status, keyword, related_po } = req.query;
   let sql = 'SELECT * FROM proforma_invoices WHERE 1=1';
   const params = [];
@@ -4077,9 +4083,9 @@ app.get('/api/proforma-invoices', requireApiPermission('pi_view'), (req, res) =>
   sql += ' ORDER BY created_at DESC';
   const rows = query(sql, params).rows;
   res.json(rows.map(r => { const lr = getPILockReason(r); return { ...r, locked: !!lr, lock_reason: lr || '' }; }));
-});
+}));
 
-app.get('/api/proforma-invoices/:id', requireApiPermission('pi_view'), (req, res) => {
+app.get('/api/proforma-invoices/:id', requireApiPermission('pi_view'), asyncHandler((req, res) => {
   const pi = queryOne('SELECT * FROM proforma_invoices WHERE id = ?', [req.params.id]);
   if (!pi) return res.status(404).json({ error: 'PI不存在' });
   const items = query(`SELECT pii.*, s.reference_customs_rate
@@ -4088,9 +4094,9 @@ app.get('/api/proforma-invoices/:id', requireApiPermission('pi_view'), (req, res
     WHERE pii.pi_id = ? ORDER BY pii.created_at, pii.id`, [req.params.id]).rows;
   const lr = getPILockReason(pi);
   res.json({ ...pi, items, locked: !!lr, lock_reason: lr || '' });
-});
+}));
 
-app.post('/api/proforma-invoices', requireApiPermission('pi_create'), (req, res) => {
+app.post('/api/proforma-invoices', requireApiPermission('pi_create'), asyncHandler((req, res) => {
   try {
     const d = req.body;
     if (!d.supplier_name) return res.status(400).json({ error: '供应商不能为空' });
@@ -4164,9 +4170,9 @@ app.post('/api/proforma-invoices', requireApiPermission('pi_create'), (req, res)
     const payableDeposit = (d.items && d.items.length > 0) ? (needDeposit ? totalAmount * depositRatio / 100 : 0) : 0;
     res.json({ id: piId, pi_no: piNo, ...d, total_amount: totalAmount, need_deposit: needDeposit, deposit_ratio: depositRatio, payable_deposit: payableDeposit });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
-app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), (req, res) => {
+app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHandler((req, res) => {
   try {
     const d = req.body;
     const { id } = req.params;
@@ -4281,17 +4287,17 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), (req, res
 
     res.json({ success: true, id, total_amount: totalAmount, payable_deposit: payableDeposit });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
-app.post('/api/proforma-invoices/:id/attachment', requireApiPermission('pi_edit'), (req, res) => {
+app.post('/api/proforma-invoices/:id/attachment', requireApiPermission('pi_edit'), asyncHandler((req, res) => {
   try {
     run('UPDATE proforma_invoices SET attachment = ?, pi_status = ?, updated_at = datetime(\'now\') WHERE id = ?', [parseAttachment(req.body.attachment), req.body.attachment ? 'uploaded' : 'pending', req.params.id]);
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // PI 软作废（置 cancelled + 必填原因 + 回写在途）
-app.post('/api/proforma-invoices/:id/void', requireApiPermission('pi_edit'), (req, res) => {
+app.post('/api/proforma-invoices/:id/void', requireApiPermission('pi_edit'), asyncHandler((req, res) => {
   try {
     const { void_reason } = req.body;
     if (!void_reason) return res.status(400).json({ error: '作废原因不能为空' });
@@ -4306,10 +4312,10 @@ app.post('/api/proforma-invoices/:id/void', requireApiPermission('pi_edit'), (re
     logOperation({ operator_id: req.currentUserId, operator_name: req.currentUserName, page: 'proforma_invoice', operation_type: 'void', target_ids: [pi.id], affected_count: 1, old_values: { pi_status: pi.pi_status }, new_values: { pi_status: 'cancelled', void_reason }, reason: void_reason, triggered_recalc: 0, is_rollbackable: 0 });
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // ==================== CI/PL 管理 ====================
-app.get('/api/commercial-invoices', requireApiPermission('ci_view'), (req, res) => {
+app.get('/api/commercial-invoices', requireApiPermission('ci_view'), asyncHandler((req, res) => {
   const { status, keyword, related_pi } = req.query;
   let sql = 'SELECT * FROM commercial_invoices WHERE 1=1';
   const params = [];
@@ -4318,9 +4324,9 @@ app.get('/api/commercial-invoices', requireApiPermission('ci_view'), (req, res) 
   if (keyword) { sql += ' AND (ci_no LIKE ? OR supplier_name LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`); }
   sql += ' ORDER BY created_at DESC';
   res.json(query(sql, params).rows);
-});
+}));
 
-app.get('/api/commercial-invoices/:id', requireApiPermission('ci_view'), (req, res) => {
+app.get('/api/commercial-invoices/:id', requireApiPermission('ci_view'), asyncHandler((req, res) => {
   const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [req.params.id]);
   if (!ci) return res.status(404).json({ error: 'CI不存在' });
   const items = query('SELECT * FROM commercial_invoice_items WHERE ci_id = ? ORDER BY created_at', [req.params.id]).rows;
@@ -4333,9 +4339,9 @@ app.get('/api/commercial-invoices/:id', requireApiPermission('ci_view'), (req, r
   const checkSkus = [...new Set(Object.keys(ciQtyBySku).concat(Object.keys(plQtyBySku)))];
   const pl_check = checkSkus.map(sku => ({ sku_code: sku, ci_qty: ciQtyBySku[sku] || 0, pl_qty: plQtyBySku[sku] || 0, diff_qty: (plQtyBySku[sku] || 0) - (ciQtyBySku[sku] || 0) }));
   res.json({ ...ci, items, packing_list: pl ? { ...pl, items: plItems } : null, pl_check });
-});
+}));
 
-app.post('/api/commercial-invoices', requireApiPermission('ci_create'), (req, res) => {
+app.post('/api/commercial-invoices', requireApiPermission('ci_create'), asyncHandler((req, res) => {
   try {
     const d = req.body;
     if (!d.supplier_name) return res.status(400).json({ error: '供应商不能为空' });
@@ -4432,18 +4438,18 @@ app.post('/api/commercial-invoices', requireApiPermission('ci_create'), (req, re
     const amountDiffResp = goodsAmount - piTotalResp;
     res.json({ id: ciId, ci_no: ciNo, ...d, goods_amount: goodsAmount, pi_total_amount: piTotalResp, amount_difference: amountDiffResp, should_deduct_deposit: shouldDeductResp, payable_balance: payableBalanceResp });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
-app.post('/api/commercial-invoices/:id/attachment', requireApiPermission('ci_edit'), (req, res) => {
+app.post('/api/commercial-invoices/:id/attachment', requireApiPermission('ci_edit'), asyncHandler((req, res) => {
   try {
     const field = req.body.field === 'pl_attachment' ? 'pl_attachment' : 'attachment';
     run(`UPDATE commercial_invoices SET ${field} = ?, ci_status = ?, updated_at = datetime('now') WHERE id = ?`, [parseAttachment(req.body.attachment), req.body.attachment ? 'uploaded' : 'draft', req.params.id]);
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // CI 软作废（置 cancelled + 必填原因 + 回写在途）
-app.post('/api/commercial-invoices/:id/void', requireApiPermission('ci_edit'), (req, res) => {
+app.post('/api/commercial-invoices/:id/void', requireApiPermission('ci_edit'), asyncHandler((req, res) => {
   try {
     const { void_reason } = req.body;
     if (!void_reason) return res.status(400).json({ error: '作废原因不能为空' });
@@ -4458,10 +4464,10 @@ app.post('/api/commercial-invoices/:id/void', requireApiPermission('ci_edit'), (
     logOperation({ operator_id: req.currentUserId, operator_name: req.currentUserName, page: 'commercial_invoice', operation_type: 'void', target_ids: [ci.id], affected_count: 1, old_values: { ci_status: ci.ci_status }, new_values: { ci_status: 'cancelled', void_reason }, reason: void_reason, triggered_recalc: 0, is_rollbackable: 0 });
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // CI-SHIP-DATE-01：仅补充/更正运营 CI 的实际出货日期（不触发 payable_date、不动 due_date、不创建/修改 payment_request）
-app.put('/api/commercial-invoices/:id/actual-ship-date', requireApiPermission('ci_edit'), (req, res) => {
+app.put('/api/commercial-invoices/:id/actual-ship-date', requireApiPermission('ci_edit'), asyncHandler((req, res) => {
   try {
     const ci = queryOne('SELECT id, actual_ship_date FROM commercial_invoices WHERE id = ?', [req.params.id]);
     if (!ci) return res.status(404).json({ error: 'CI不存在' });
@@ -4469,10 +4475,10 @@ app.put('/api/commercial-invoices/:id/actual-ship-date', requireApiPermission('c
     run('UPDATE commercial_invoices SET actual_ship_date = ?, updated_at = datetime(\'now\') WHERE id = ?', [shipDate, ci.id]);
     res.json({ success: true, id: ci.id, actual_ship_date: shipDate });
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
-});
+}));
 
 // ==================== PL 管理 ====================
-app.post('/api/packing-lists', requireApiPermission('ci_create'), (req, res) => {
+app.post('/api/packing-lists', requireApiPermission('ci_create'), asyncHandler((req, res) => {
   try {
     const d = req.body;
     const plId = genId('pl');
@@ -4511,7 +4517,7 @@ app.post('/api/packing-lists', requireApiPermission('ci_create'), (req, res) => 
     });
     res.json({ id: plId, pl_no: plNo, ...d, total_qty: totalQtyAll, total_cartons: totalCartons, total_gross_weight: totalGross, total_net_weight: totalNet, total_cbm: totalCbm });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 function importResultWithMessages(result) {
   result.messages = [];
@@ -4521,7 +4527,7 @@ function importResultWithMessages(result) {
   return result;
 }
 
-app.post('/api/proforma-invoices/batch-import', requireApiPermission('pi_create'), (req, res) => {
+app.post('/api/proforma-invoices/batch-import', requireApiPermission('pi_create'), asyncHandler((req, res) => {
   try {
     const rows = Array.isArray(req.body.items) ? req.body.items : [];
     const result = { success: 0, failed: 0, total: rows.length, errors: [] };
@@ -4571,9 +4577,9 @@ app.post('/api/proforma-invoices/batch-import', requireApiPermission('pi_create'
     });
     res.json(importResultWithMessages(result));
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
-app.post('/api/commercial-invoices/batch-import', requireApiPermission('ci_create'), (req, res) => {
+app.post('/api/commercial-invoices/batch-import', requireApiPermission('ci_create'), asyncHandler((req, res) => {
   try {
     const rows = Array.isArray(req.body.items) ? req.body.items : [];
     const result = { success: 0, failed: 0, total: rows.length, errors: [] };
@@ -4633,9 +4639,9 @@ app.post('/api/commercial-invoices/batch-import', requireApiPermission('ci_creat
     });
     res.json(importResultWithMessages(result));
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
-app.post('/api/packing-lists/batch-import', requireApiPermission('ci_create'), (req, res) => {
+app.post('/api/packing-lists/batch-import', requireApiPermission('ci_create'), asyncHandler((req, res) => {
   try {
     const rows = Array.isArray(req.body.items) ? req.body.items : [];
     const result = { success: 0, failed: 0, total: rows.length, errors: [] };
@@ -4679,10 +4685,10 @@ app.post('/api/packing-lists/batch-import', requireApiPermission('ci_create'), (
     });
     res.json(importResultWithMessages(result));
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // ==================== 物流批次 ====================
-app.get('/api/logistics-batches', requireApiPermission('logistics_view'), (req, res) => {
+app.get('/api/logistics-batches', requireApiPermission('logistics_view'), asyncHandler((req, res) => {
   const { status, keyword, forwarder_id } = req.query;
   let sql = 'SELECT * FROM logistics_batches WHERE 1=1';
   const params = [];
@@ -4691,15 +4697,15 @@ app.get('/api/logistics-batches', requireApiPermission('logistics_view'), (req, 
   if (keyword) { sql += ' AND (batch_no LIKE ? OR forwarder_name LIKE ? OR related_ci_no LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`); }
   sql += ' ORDER BY created_at DESC';
   res.json(query(sql, params).rows);
-});
+}));
 
-app.get('/api/logistics-batches/:id', requireApiPermission('logistics_view'), (req, res) => {
+app.get('/api/logistics-batches/:id', requireApiPermission('logistics_view'), asyncHandler((req, res) => {
   const batch = queryOne('SELECT * FROM logistics_batches WHERE id = ?', [req.params.id]);
   if (!batch) return res.status(404).json({ error: '物流批次不存在' });
   res.json(batch);
-});
+}));
 
-app.post('/api/logistics-batches', requireApiPermission('logistics_create'), (req, res) => {
+app.post('/api/logistics-batches', requireApiPermission('logistics_create'), asyncHandler((req, res) => {
   try {
     const d = req.body;
     const bId = genId('log');
@@ -4709,9 +4715,9 @@ app.post('/api/logistics-batches', requireApiPermission('logistics_create'), (re
       [bId, bNo, d.related_ci_id || '', d.related_ci_no || '', d.forwarder_id || '', d.forwarder_name || '', d.transport_mode || 'sea', d.origin_port || '', d.dest_port || '', d.target_country || '', d.target_warehouse || '', d.pickup_date || '', d.depart_date || '', d.eta_date || '', d.actual_arrival_date || '', d.customs_start_date || '', d.customs_end_date || '', d.delivery_date || '', d.inbound_complete_date || '', d.logistics_status || 'pending', d.total_cartons || 0, d.total_weight || 0, d.total_cbm || 0, d.freight_currency || 'USD', d.international_freight || 0, d.local_charges || 0, d.customs_service_fee || 0, d.delivery_fee || 0, totalFreight, d.customs_duty || 0, d.vat_gst || 0, d.other_fees || 0, d.fee_status || 'unpaid', d.remark || '']);
     res.json({ id: bId, batch_no: bNo, ...d, total_freight: totalFreight });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
-app.put('/api/logistics-batches/:id', requireApiPermission('logistics_edit'), (req, res) => {
+app.put('/api/logistics-batches/:id', requireApiPermission('logistics_edit'), asyncHandler((req, res) => {
   try {
     const d = req.body;
     const { id } = req.params;
@@ -4739,10 +4745,10 @@ app.put('/api/logistics-batches/:id', requireApiPermission('logistics_edit'), (r
     run(`UPDATE logistics_batches SET ${fields.join(', ')} WHERE id = ?`, values);
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // ==================== 入库管理 ====================
-app.get('/api/inbound-records', requireApiPermission('inbound_view'), (req, res) => {
+app.get('/api/inbound-records', requireApiPermission('inbound_view'), asyncHandler((req, res) => {
   const { status, keyword, source_ci } = req.query;
   let sql = `SELECT ir.*, s.product_name, s.brand, pl.pl_no AS source_pl_no FROM inbound_records ir LEFT JOIN skus s ON ir.sku_code = s.sku_code LEFT JOIN packing_lists pl ON ir.source_pl_id = pl.id WHERE 1=1`;
   const params = [];
@@ -4751,20 +4757,20 @@ app.get('/api/inbound-records', requireApiPermission('inbound_view'), (req, res)
   if (keyword) { sql += ' AND (ir.inbound_no LIKE ? OR ir.sku_code LIKE ? OR s.product_name LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`); }
   sql += ' ORDER BY ir.inbound_date DESC, ir.created_at DESC';
   res.json(query(sql, params).rows);
-});
+}));
 
 // P1-STATE-01D：只读 PL 列表（入库页面选择 PL 用，使用现有 ci_view 权限，不增加新业务状态）
-app.get('/api/packing-lists', requireApiPermission('ci_view'), (req, res) => {
+app.get('/api/packing-lists', requireApiPermission('ci_view'), asyncHandler((req, res) => {
   try {
     const rows = query(`SELECT p.id, p.pl_no, p.related_ci_id, p.related_ci_no, p.supplier_name, p.brand, p.country, p.target_warehouse, p.pl_date, p.total_qty,
       (SELECT COUNT(*) FROM packing_list_items WHERE pl_id = p.id) AS item_count
       FROM packing_lists p ORDER BY p.created_at DESC`).rows;
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // P1-STATE-01D：只读 PL 明细（含 item.id 与已入库/剩余累计，供入库选择定位 PL 明细）
-app.get('/api/packing-lists/:id', requireApiPermission('ci_view'), (req, res) => {
+app.get('/api/packing-lists/:id', requireApiPermission('ci_view'), asyncHandler((req, res) => {
   try {
     const pl = queryOne('SELECT * FROM packing_lists WHERE id = ?', [req.params.id]);
     if (!pl) return res.status(404).json({ error: 'PL不存在' });
@@ -4776,10 +4782,10 @@ app.get('/api/packing-lists/:id', requireApiPermission('ci_view'), (req, res) =>
     });
     res.json({ ...pl, items });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // P1-STATE-01D：单笔入库——强制关联真实 PL 明细，写入前完成 18 步守卫
-app.post('/api/inbound-records', requireApiPermission('inbound_create'), (req, res) => {
+app.post('/api/inbound-records', requireApiPermission('inbound_create'), asyncHandler((req, res) => {
   try {
     const d = req.body;
     if (!d.sku_code || !d.inbound_date) return res.status(400).json({ error: 'SKU和入库日期不能为空' });
@@ -4904,11 +4910,11 @@ app.post('/api/inbound-records', requireApiPermission('inbound_create'), (req, r
 
     res.json({ id: iId, inbound_no: iNo, source_pl_id: sourcePlId, source_pl_item_id: sourcePlItemId, source_ci_id: sourceCiId, source_ci_no: sourceCiNo, ...d });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // 批量导入入库记录
 // P1-STATE-01D：逐行容忍（单行失败计 failed，不整体回滚），但每行写入前完成与单笔一致的 PL 关联守卫
-app.post('/api/inbound-records/batch-import', requireApiPermission('inbound_create'), (req, res) => {
+app.post('/api/inbound-records/batch-import', requireApiPermission('inbound_create'), asyncHandler((req, res) => {
   try {
     const records = Array.isArray(req.body?.records) ? req.body.records : [];
     if (records.length === 0) return res.status(400).json({ error: '没有可导入的数据' });
@@ -5030,7 +5036,7 @@ app.post('/api/inbound-records/batch-import', requireApiPermission('inbound_crea
 
     res.json({ success, failed, total: records.length, errors: errors.slice(0, 50) });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // 成本分摊核心逻辑
 function allocateCosts(ciId, inboundId, inboundNo, skuCode, inboundQty) {
@@ -5164,7 +5170,7 @@ function updateInventoryAfterInbound(skuCode, country, warehouse, qty, inboundDa
 }
 
 // ==================== 成本管理 ====================
-app.get('/api/cost-allocations', requireApiPermission('cost_view'), (req, res) => {
+app.get('/api/cost-allocations', requireApiPermission('cost_view'), asyncHandler((req, res) => {
   const { ci_no, sku_code, inbound_no } = req.query;
   let sql = `SELECT ca.*, s.product_name, s.brand FROM cost_allocations ca LEFT JOIN skus s ON ca.sku_code = s.sku_code WHERE 1=1`;
   const params = [];
@@ -5173,7 +5179,7 @@ app.get('/api/cost-allocations', requireApiPermission('cost_view'), (req, res) =
   if (inbound_no) { sql += ' AND ca.inbound_no = ?'; params.push(inbound_no); }
   sql += ' ORDER BY ca.created_at DESC';
   res.json(query(sql, params).rows);
-});
+}));
 
 // ==================== 付款管理 ====================
 class SettlementError extends Error {
@@ -5909,7 +5915,7 @@ function historicalCISelectSql() {
           JOIN payment_requests pr ON pr.id = h.payment_request_id`;
 }
 
-app.get('/api/historical-commercial-invoices', requireApiPermission('ci_view'), (req, res) => {
+app.get('/api/historical-commercial-invoices', requireApiPermission('ci_view'), asyncHandler((req, res) => {
   try {
     let sql = historicalCISelectSql() + ' WHERE 1=1';
     const params = [];
@@ -5922,28 +5928,28 @@ app.get('/api/historical-commercial-invoices', requireApiPermission('ci_view'), 
     sql += ' ORDER BY h.ci_date DESC, h.created_at DESC';
     res.json(query(sql, params).rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
-app.get('/api/historical-commercial-invoices/:id', requireApiPermission('ci_view'), (req, res) => {
+app.get('/api/historical-commercial-invoices/:id', requireApiPermission('ci_view'), asyncHandler((req, res) => {
   try {
     const historical = queryOne(historicalCISelectSql() + ' WHERE h.id = ?', [req.params.id]);
     if (!historical) return res.status(404).json({ error: '历史 CI 不存在' });
     res.json(historical);
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 app.post('/api/historical-commercial-invoices',
   requireApiPermission('ci_create'), requireApiPermission('payment_create'), requireApiPermission('payment_approve'),
-  (req, res) => {
+  asyncHandler((req, res) => {
     try {
       const result = createHistoricalCI(req.body || {}, req);
       res.json({ success: true, ...result });
     } catch (e) { res.status(e.status || 500).json({ error: e.status ? e.message : '历史 CI 导入失败' }); }
-  });
+  }));
 
 app.post('/api/historical-commercial-invoices/batch-import',
   requireApiPermission('ci_create'), requireApiPermission('payment_create'), requireApiPermission('payment_approve'),
-  (req, res) => {
+  asyncHandler((req, res) => {
     try {
       const items = Array.isArray(req.body.items) ? req.body.items : [];
       if (!items.length) return res.status(400).json({ error: '没有可导入的历史 CI 数据' });
@@ -5962,7 +5968,7 @@ app.post('/api/historical-commercial-invoices/batch-import',
       if (result.idempotent) result.messages.push(`幂等识别 ${result.idempotent} 条，未重复记账`);
       res.json(result);
     } catch (e) { res.status(e.status || 500).json({ error: e.status ? e.message : '历史 CI 批量导入失败' }); }
-  });
+  }));
 
   // ==================== HCI-ATTACH-01 历史 CI 附件（复用 PI/CI 既有 dataUrl-in-DB 机制） ====================
   // 默认技术配置参数（非业务规则冻结，可后续配置调整）：单个附件 base64 解码后的技术安全大小上限。
@@ -6018,7 +6024,7 @@ app.post('/api/historical-commercial-invoices/batch-import',
   }
 
   // 上传（支持单个对象或数组；相同 CI + 同名同内容自动幂等）
-  app.post('/api/historical-commercial-invoices/:id/attachment', requireApiPermission('ci_edit'), (req, res) => {
+  app.post('/api/historical-commercial-invoices/:id/attachment', requireApiPermission('ci_edit'), asyncHandler((req, res) => {
     try {
       const hci = queryOne('SELECT id, attachment FROM historical_commercial_invoices WHERE id = ?', [req.params.id]);
       if (!hci) return res.status(404).json({ error: '历史 CI 不存在' });
@@ -6037,10 +6043,10 @@ app.post('/api/historical-commercial-invoices/batch-import',
       run('UPDATE historical_commercial_invoices SET attachment = ?, updated_at = datetime(\'now\') WHERE id = ?', [JSON.stringify(existing), hci.id]);
       res.json(result);
     } catch (e) { res.status(500).json({ error: e.message }); }
-  });
+  }));
 
   // 软删除（单条）
-  app.post('/api/historical-commercial-invoices/:id/attachment/:index/delete', requireApiPermission('ci_edit'), (req, res) => {
+  app.post('/api/historical-commercial-invoices/:id/attachment/:index/delete', requireApiPermission('ci_edit'), asyncHandler((req, res) => {
     try {
       const hci = queryOne('SELECT id, attachment FROM historical_commercial_invoices WHERE id = ?', [req.params.id]);
       if (!hci) return res.status(404).json({ error: '历史 CI 不存在' });
@@ -6053,10 +6059,10 @@ app.post('/api/historical-commercial-invoices/batch-import',
       run('UPDATE historical_commercial_invoices SET attachment = ?, updated_at = datetime(\'now\') WHERE id = ?', [JSON.stringify(list), hci.id]);
       res.json({ success: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
-  });
+  }));
 
   // CI-SHIP-DATE-01：仅补充/更正历史 CI 的实际出货日期（不触发 payable_date、不动 due_date、不创建/修改 payment_request）
-  app.put('/api/historical-commercial-invoices/:id/actual-ship-date', requireApiPermission('ci_edit'), (req, res) => {
+  app.put('/api/historical-commercial-invoices/:id/actual-ship-date', requireApiPermission('ci_edit'), asyncHandler((req, res) => {
     try {
       const hci = queryOne('SELECT id, due_date, actual_ship_date FROM historical_commercial_invoices WHERE id = ?', [req.params.id]);
       if (!hci) return res.status(404).json({ error: '历史 CI 不存在' });
@@ -6064,7 +6070,7 @@ app.post('/api/historical-commercial-invoices/batch-import',
       run('UPDATE historical_commercial_invoices SET actual_ship_date = ?, updated_at = datetime(\'now\') WHERE id = ?', [shipDate, hci.id]);
       res.json({ success: true, id: hci.id, actual_ship_date: shipDate });
     } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
-  });
+  }));
 
 function purchaseAmountScope(rows) {
   const byCurrency = {};
@@ -6081,7 +6087,7 @@ function purchaseAmountScope(rows) {
   return { count, by_currency: currencies, rmb_known_amount: rmbKnownAmount, rmb_pending_count: rmbPendingCount };
 }
 
-app.get('/api/purchase-amount-summary', requireApiPermission('ci_view'), (req, res) => {
+app.get('/api/purchase-amount-summary', requireApiPermission('ci_view'), asyncHandler((req, res) => {
   try {
     const operationalRows = query(`SELECT currency, goods_amount AS amount FROM commercial_invoices
                                    WHERE ci_status != 'cancelled'`).rows;
@@ -6093,9 +6099,9 @@ app.get('/api/purchase-amount-summary', requireApiPermission('ci_view'), (req, r
       rmb_note: '仅原币为 RMB 的单据计入已知人民币总额；其他币种未提供明确汇率证据时标记为待补，不做跨币种裸加。'
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
-app.get('/api/payment-requests', requireApiPermission('payment_view'), (req, res) => {
+app.get('/api/payment-requests', requireApiPermission('payment_view'), asyncHandler((req, res) => {
   const { status, category, keyword } = req.query;
   let sql = 'SELECT * FROM payment_requests WHERE 1=1';
   const params = [];
@@ -6104,7 +6110,7 @@ app.get('/api/payment-requests', requireApiPermission('payment_view'), (req, res
   if (keyword) { sql += ' AND (request_no LIKE ? OR supplier_name LIKE ? OR source_no LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`); }
   sql += ' ORDER BY payable_date ASC, created_at DESC';
   res.json(query(sql, params).rows);
-});
+}));
 
 // ==================== FIN-DASHBOARD-01：财务应付驾驶舱（只读聚合，不改任何业务规则/表结构/付款链）====================
 // 口径全部复用已冻结实现：
@@ -6119,7 +6125,7 @@ const PAYABLE_SUBCAT_LABELS = { deposit: '定金', balance: '尾款', duty: '关
 const PAYABLE_PAYEE_LABELS = { factory: '工厂', customs: '海关', inspection_org: '检验机构', service_provider: '服务商' };
 const PAYABLE_STATUS_LABELS = { pending_approval: '待审批', approved: '已审批', paid: '已付款', rejected: '已驳回', partial_paid: '部分付款', partial_deduction: '部分抵扣', partial_rounding: '部分抹零', deduction_settled: '全额抵扣', partial_payment_partial_deduction: '部分付款+部分抵扣', reversed: '已冲销', cancelled: '已取消' };
 
-app.get('/api/finance/payable-cockpit', requireApiPermission('payment_view'), (req, res) => {
+app.get('/api/finance/payable-cockpit', requireApiPermission('payment_view'), asyncHandler((req, res) => {
   try {
     const today = new Date().toISOString().split('T')[0];
     // 付款提前提醒天数改读 system_config（payment_remind_days，缺省 7）；30 天展示桶保持固定，不配置化
@@ -6278,7 +6284,7 @@ app.get('/api/finance/payable-cockpit', requireApiPermission('payment_view'), (r
       }
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // 计算付款申请"总数量"（按已确认口径：以 payment_category 为准）
 // - 定金(goods+deposit, source pi)：proforma_invoice_items 按 pi_id=source_id 聚合 pi_confirmed_qty，全为 0 回退 po_qty
@@ -6302,7 +6308,7 @@ function computePaymentTotalQty(pr) {
 }
 
 // 待审付款申请（供审批中心 → 财务类审批读取）
-app.get('/api/payment-requests/pending', requireApiPermission('payment_approve'), (req, res) => {
+app.get('/api/payment-requests/pending', requireApiPermission('payment_approve'), asyncHandler((req, res) => {
   try {
     const rows = query(`
       SELECT id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no,
@@ -6315,10 +6321,10 @@ app.get('/api/payment-requests/pending', requireApiPermission('payment_approve')
     rows.forEach(r => { r.total_qty = computePaymentTotalQty(r); });
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // 付款申请详情（含按口径计算的 total_qty + 关联 PI/CI 摘要）
-app.get('/api/payment-requests/:id', requireApiPermission('payment_view'), (req, res) => {
+app.get('/api/payment-requests/:id', requireApiPermission('payment_view'), asyncHandler((req, res) => {
   try {
     const pr = queryOne('SELECT * FROM payment_requests WHERE id = ?', [req.params.id]);
     if (!pr) return res.status(404).json({ error: '付款申请不存在' });
@@ -6342,9 +6348,9 @@ app.get('/api/payment-requests/:id', requireApiPermission('payment_view'), (req,
     const settlement = paymentSettlementFacts(pr);
     res.json({ ...pr, pi_summary, ci_summary, historical_ci_summary, settlement_logs, effective_paid: settlement.effectivePaid, effective_deduction: settlement.effectiveDeduction, effective_rounding: settlement.effectiveRounding, outstanding: Math.max(0, settlement.outstanding) });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
-app.put('/api/payment-requests/:id/expense-country', requireApiPermission('payment_approve'), (req, res) => {
+app.put('/api/payment-requests/:id/expense-country', requireApiPermission('payment_approve'), asyncHandler((req, res) => {
   try {
     const payment = queryOne('SELECT * FROM payment_requests WHERE id = ?', [req.params.id]);
     if (!payment) return res.status(404).json({ error: '付款申请不存在' });
@@ -6359,20 +6365,20 @@ app.put('/api/payment-requests/:id/expense-country', requireApiPermission('payme
     }
     res.json({ success: true, expense_country: existing || country, idempotent: Boolean(existing) });
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
-});
+}));
 
 // 付款申请附件上传（attachment 列：JSON 结构，与 PI/CI 附件同机制）
-app.post('/api/payment-requests/:id/attachment', requireApiPermission('payment_create', 'payment_approve'), (req, res) => {
+app.post('/api/payment-requests/:id/attachment', requireApiPermission('payment_create', 'payment_approve'), asyncHandler((req, res) => {
   try {
     const pr = queryOne('SELECT id FROM payment_requests WHERE id = ?', [req.params.id]);
     if (!pr) return res.status(404).json({ error: '付款申请不存在' });
     run('UPDATE payment_requests SET attachment = ?, updated_at = datetime(\'now\') WHERE id = ?', [parseAttachment(req.body.attachment), req.params.id]);
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // 生成付款申请（从PI定金）— 货款/定金
-app.post('/api/payment-requests/from-pi-deposit', requireApiPermission('payment_create'), (req, res) => {
+app.post('/api/payment-requests/from-pi-deposit', requireApiPermission('payment_create'), asyncHandler((req, res) => {
   try {
     const { pi_id, has_deduction, deduction_amount, deduction_source_type, deduction_source_desc, deduction_ref_no } = req.body;
     const pi = queryOne('SELECT * FROM proforma_invoices WHERE id = ?', [pi_id]);
@@ -6407,10 +6413,10 @@ app.post('/api/payment-requests/from-pi-deposit', requireApiPermission('payment_
     if (isActiveGoodsPaymentUniqueError(e)) return res.status(409).json({ error: '该 PI 已存在有效的定金付款申请，不能重复生成' });
     res.status(500).json({ error: e.message });
   }
-});
+}));
 
 // 生成付款申请（从CI尾款）— 货款/尾款
-app.post('/api/payment-requests/from-ci-balance', requireApiPermission('payment_create'), (req, res) => {
+app.post('/api/payment-requests/from-ci-balance', requireApiPermission('payment_create'), asyncHandler((req, res) => {
   try {
     const { ci_id, has_deduction, deduction_amount, deduction_source_type, deduction_source_desc, deduction_ref_no } = req.body;
     const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [ci_id]);
@@ -6469,10 +6475,10 @@ app.post('/api/payment-requests/from-ci-balance', requireApiPermission('payment_
     if (isActiveGoodsPaymentUniqueError(e)) return res.status(409).json({ error: '该 CI 已存在有效的尾款付款申请，不能重复生成' });
     res.status(500).json({ error: e.message });
   }
-});
+}));
 
 // 生成付款申请（到仓费用）— 可关联CI
-app.post('/api/payment-requests/warehouse-arrival', requireApiPermission('payment_create'), (req, res) => {
+app.post('/api/payment-requests/warehouse-arrival', requireApiPermission('payment_create'), asyncHandler((req, res) => {
   try {
     const { ci_id, subcategory, payee_name, payable_amount, currency, remark, has_deduction, deduction_amount, deduction_source_type, deduction_source_desc, deduction_ref_no, include_in_landing_cost, expense_country } = req.body;
     if (!payable_amount || payable_amount <= 0) return res.status(400).json({ error: '应付金额必须大于0' });
@@ -6515,10 +6521,10 @@ app.post('/api/payment-requests/warehouse-arrival', requireApiPermission('paymen
 
     res.json({ id: prId, request_no: prNo, actual_pay_amount: actualPay });
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
-});
+}));
 
 // 生成付款申请（关税）— 只有CI选择"有关税"时才允许
-app.post('/api/payment-requests/customs-duty', requireApiPermission('payment_create'), (req, res) => {
+app.post('/api/payment-requests/customs-duty', requireApiPermission('payment_create'), asyncHandler((req, res) => {
   try {
     const { ci_id, payee_name, payable_amount, currency, remark, has_deduction, deduction_amount, deduction_source_type, deduction_source_desc, deduction_ref_no } = req.body;
     if (!ci_id) return res.status(400).json({ error: '关税付款必须关联CI' });
@@ -6553,10 +6559,10 @@ app.post('/api/payment-requests/customs-duty', requireApiPermission('payment_cre
 
     res.json({ id: prId, request_no: prNo, actual_pay_amount: actualPay });
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
-});
+}));
 
 // 生成付款申请（商检费用）— 只有CI选择"有商检费用"时才允许
-app.post('/api/payment-requests/inspection-fee', requireApiPermission('payment_create'), (req, res) => {
+app.post('/api/payment-requests/inspection-fee', requireApiPermission('payment_create'), asyncHandler((req, res) => {
   try {
     const { ci_id, payee_name, payable_amount, currency, remark, has_deduction, deduction_amount, deduction_source_type, deduction_source_desc, deduction_ref_no } = req.body;
     if (!ci_id) return res.status(400).json({ error: '商检费用付款必须关联CI' });
@@ -6588,18 +6594,18 @@ app.post('/api/payment-requests/inspection-fee', requireApiPermission('payment_c
 
     res.json({ id: prId, request_no: prNo, actual_pay_amount: actualPay });
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
-});
+}));
 
 // 更新付款申请抵扣信息
-app.put('/api/payment-requests/:id/deduction', requireApiPermission('payment_create'), (req, res) => {
+app.put('/api/payment-requests/:id/deduction', requireApiPermission('payment_create'), asyncHandler((req, res) => {
   try {
     const result = applyDeductionSettlement(req.params.id, req.body || {}, req);
     res.json({ success: true, actual_pay_amount: settlementMoney(result.grossPayable - result.effectiveDeduction), outstanding: result.outstanding, payment_status: result.payment_status });
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
-});
+}));
 
 // 付款审批
-app.post('/api/payment-requests/:id/approve', requireApiPermission('payment_approve'), (req, res) => {
+app.post('/api/payment-requests/:id/approve', requireApiPermission('payment_approve'), asyncHandler((req, res) => {
   try {
     const { action, remark } = req.body;
     const payment = queryOne('SELECT * FROM payment_requests WHERE id = ?', [req.params.id]);
@@ -6635,38 +6641,38 @@ app.post('/api/payment-requests/:id/approve', requireApiPermission('payment_appr
     }
     res.json({ success: true });
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
-});
+}));
 
-app.post('/api/payment-requests/:id/reverse-payment', requireApiPermission('payment_approve'), (req, res) => {
+app.post('/api/payment-requests/:id/reverse-payment', requireApiPermission('payment_approve'), asyncHandler((req, res) => {
   try {
     const result = reverseSettlementEvent(req.params.id, req.body.settlement_log_id, 'payment', req.body.reason, req);
     res.json({ success: true, reversed_log_id: result.reversed_log_id, paid_amount: result.effectivePaid, outstanding: result.outstanding, payment_status: result.payment_status });
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
-});
+}));
 
-app.post('/api/payment-requests/:id/reverse-deduction', requireApiPermission('payment_approve'), (req, res) => {
+app.post('/api/payment-requests/:id/reverse-deduction', requireApiPermission('payment_approve'), asyncHandler((req, res) => {
   try {
     const result = reverseSettlementEvent(req.params.id, req.body.settlement_log_id, 'deduction', req.body.reason, req);
     res.json({ success: true, reversed_log_id: result.reversed_log_id, deduction_amount: result.effectiveDeduction, outstanding: result.outstanding, payment_status: result.payment_status });
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
-});
+}));
 
-app.post('/api/payment-requests/:id/rounding', requireApiPermission('payment_approve'), (req, res) => {
+app.post('/api/payment-requests/:id/rounding', requireApiPermission('payment_approve'), asyncHandler((req, res) => {
   try {
     const result = applyRoundingSettlement(req.params.id, req.body.amount, req.body.reason, req);
     res.json({ success: true, log_id: result.log_id, rounding_amount: result.effectiveRounding, outstanding: result.outstanding, payment_status: result.payment_status });
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
-});
+}));
 
-app.post('/api/payment-requests/:id/reverse-rounding', requireApiPermission('payment_approve'), (req, res) => {
+app.post('/api/payment-requests/:id/reverse-rounding', requireApiPermission('payment_approve'), asyncHandler((req, res) => {
   try {
     const result = reverseSettlementEvent(req.params.id, req.body.settlement_log_id, 'rounding', req.body.reason, req);
     res.json({ success: true, reversed_log_id: result.reversed_log_id, rounding_amount: result.effectiveRounding, outstanding: result.outstanding, payment_status: result.payment_status });
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
-});
+}));
 
 // 导入付款结果
-app.post('/api/payment-requests/bulk-import-result', requireApiPermission('payment_import'), (req, res) => {
+app.post('/api/payment-requests/bulk-import-result', requireApiPermission('payment_import'), asyncHandler((req, res) => {
   try {
     const items = req.body.items || [];
     const result = { updated: 0, idempotent: 0, failed: 0, errors: [] };
@@ -6685,7 +6691,7 @@ app.post('/api/payment-requests/bulk-import-result', requireApiPermission('payme
     });
     res.json(result);
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
-});
+}));
 
 // ==================== CI 费用归集 ====================
 
@@ -6831,7 +6837,7 @@ function allocateFeeWithRemainder(fee, skuFacts, basisValues) {
 }
 
 // 获取CI费用归集汇总
-app.get('/api/commercial-invoices/:id/cost-summary', requireApiPermission('ci_view'), (req, res) => {
+app.get('/api/commercial-invoices/:id/cost-summary', requireApiPermission('ci_view'), asyncHandler((req, res) => {
   try {
     const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [req.params.id]);
     if (!ci) return res.status(404).json({ error: 'CI不存在' });
@@ -6877,10 +6883,10 @@ app.get('/api/commercial-invoices/:id/cost-summary', requireApiPermission('ci_vi
 
     res.json(summary);
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // 设置CI是否有关税/商检费用
-app.put('/api/commercial-invoices/:id/cost-flags', requireApiPermission('ci_edit'), (req, res) => {
+app.put('/api/commercial-invoices/:id/cost-flags', requireApiPermission('ci_edit'), asyncHandler((req, res) => {
   try {
     const { has_customs_duty, has_inspection_fee } = req.body;
     const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [req.params.id]);
@@ -6898,10 +6904,10 @@ app.put('/api/commercial-invoices/:id/cost-flags', requireApiPermission('ci_edit
     run(`UPDATE commercial_invoices SET ${updates.join(', ')} WHERE id = ?`, params);
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // 保存运营 CI 的本票运输计费基础、Import Duty 总额和明细实际税率；成本确认后锁定。
-app.put('/api/commercial-invoices/:id/cost-inputs', requireApiPermission('ci_edit'), (req, res) => {
+app.put('/api/commercial-invoices/:id/cost-inputs', requireApiPermission('ci_edit'), asyncHandler((req, res) => {
   try {
     const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [req.params.id]);
     if (!ci) return res.status(404).json({ error: 'CI不存在' });
@@ -6928,10 +6934,10 @@ app.put('/api/commercial-invoices/:id/cost-inputs', requireApiPermission('ci_edi
     });
     res.json({ success: true, transport_basis: transportBasis, import_duty_total: importDutyTotal });
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
-});
+}));
 
 // 确认CI费用完整
-app.post('/api/commercial-invoices/:id/confirm-costs', requireApiPermission('ci_edit'), (req, res) => {
+app.post('/api/commercial-invoices/:id/confirm-costs', requireApiPermission('ci_edit'), asyncHandler((req, res) => {
   try {
     const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [req.params.id]);
     if (!ci) return res.status(404).json({ error: 'CI不存在' });
@@ -6940,12 +6946,12 @@ app.post('/api/commercial-invoices/:id/confirm-costs', requireApiPermission('ci_
     run('UPDATE commercial_invoices SET cost_confirmed = 1, updated_at = datetime(\'now\') WHERE id = ?', [req.params.id]);
     res.json({ success: true });
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
-});
+}));
 
 // ==================== 原库存数量导入 ====================
 
 // 原库存数量导入
-app.post('/api/original-inventory/import', requireApiPermission('cost_view'), (req, res) => {
+app.post('/api/original-inventory/import', requireApiPermission('cost_view'), asyncHandler((req, res) => {
   try {
     const { ci_id, items } = req.body;
     if (!ci_id) return res.status(400).json({ error: '必须关联CI' });
@@ -7017,10 +7023,10 @@ app.post('/api/original-inventory/import', requireApiPermission('cost_view'), (r
 
     res.json({ success: items.length, failed: 0, total: items.length, warnings });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // 原库存数量导入模板下载（必须在 /:ci_id 路由之前）
-app.get('/api/original-inventory/template', requireApiPermission('cost_view'), (req, res) => {
+app.get('/api/original-inventory/template', requireApiPermission('cost_view'), asyncHandler((req, res) => {
   res.json({
     columns: ['SKU', '原库存数量', '备注'],
     sample: [
@@ -7029,18 +7035,18 @@ app.get('/api/original-inventory/template', requireApiPermission('cost_view'), (
     ],
     note: '如果当前采购单已绑定国家和仓库，模板只需 SKU、原库存数量、备注三列。'
   });
-});
+}));
 
 // 获取CI的原库存数量导入记录
-app.get('/api/original-inventory/:ci_id', requireApiPermission('cost_view'), (req, res) => {
+app.get('/api/original-inventory/:ci_id', requireApiPermission('cost_view'), asyncHandler((req, res) => {
   try {
     const rows = query('SELECT * FROM original_inventory_imports WHERE ci_id = ? ORDER BY sku_code', [req.params.ci_id]).rows;
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // 检查CI是否所有SKU都已导入原库存数量
-app.get('/api/original-inventory/:ci_id/check', requireApiPermission('cost_view'), (req, res) => {
+app.get('/api/original-inventory/:ci_id/check', requireApiPermission('cost_view'), asyncHandler((req, res) => {
   try {
     const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [req.params.ci_id]);
     if (!ci) return res.status(404).json({ error: 'CI不存在' });
@@ -7057,12 +7063,12 @@ app.get('/api/original-inventory/:ci_id/check', requireApiPermission('cost_view'
       missing_skus: missing
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // ==================== 费用分摊 & 加权平均成本 ====================
 
 // P1-WAC-07：每笔费用按其冻结依据独立分摊，两位小数守恒后汇总到 SKU。
-app.post('/api/cost-allocation/allocate/:ci_id', requireApiPermission('ci_edit'), (req, res) => {
+app.post('/api/cost-allocation/allocate/:ci_id', requireApiPermission('ci_edit'), asyncHandler((req, res) => {
   try {
     const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [req.params.ci_id]);
     if (!ci) return res.status(400).json({ error: 'CI不存在' });
@@ -7197,11 +7203,11 @@ app.post('/api/cost-allocation/allocate/:ci_id', requireApiPermission('ci_edit')
     const updated = queryOne('SELECT landing_total_cost FROM commercial_invoices WHERE id = ?', [ci.id]);
     res.json({ success: true, allocation_run_id: allocationRunId, allocations, details, landing_total_cost: updated.landing_total_cost });
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
-});
+}));
 
 // 更新加权平均成本（需要原库存数量已导入 + 费用已分摊）
 // 确认加权平均成本（P1-03-B：只生成并锁定 WAC 版本，不修改库存总表）
-app.post('/api/cost-allocation/update-weighted-avg/:ci_id', requireApiPermission('ci_edit'), (req, res) => {
+app.post('/api/cost-allocation/update-weighted-avg/:ci_id', requireApiPermission('ci_edit'), asyncHandler((req, res) => {
   try {
     const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [req.params.ci_id]);
     if (!ci) return res.status(400).json({ error: 'CI不存在' });
@@ -7309,13 +7315,13 @@ app.post('/api/cost-allocation/update-weighted-avg/:ci_id', requireApiPermission
 
     res.json({ success: true, updated_count: logs.length, logs, wac_confirmed: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // ==================== PUR-OPS-COLLAB-01：电商运营上架准备（V1） ====================
 // 仅新增/挂载，不修改 ci_status 机、采购链、WAC、库存逻辑；「CI 确认」门槛 = wac_confirmed = 1。
 
 // 读取某 CI 的上架准备状态（含 CC 列表）
-app.get('/api/commercial-invoices/:id/ops-prep', requireApiPermission('ci_view'), (req, res) => {
+app.get('/api/commercial-invoices/:id/ops-prep', requireApiPermission('ci_view'), asyncHandler((req, res) => {
   try {
     const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [req.params.id]);
     if (!ci) return res.status(404).json({ error: 'CI 不存在' });
@@ -7331,10 +7337,10 @@ app.get('/api/commercial-invoices/:id/ops-prep', requireApiPermission('ci_view')
       cc: cc.map(r => ({ user_id: r.user_id, user_name: r.user_name }))
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // 保存上架准备（分配负责人 + CC + 计划上架日期），事务内写库 + 通知
-app.post('/api/commercial-invoices/:id/ops-prep', requireApiPermission('ci_edit'), (req, res) => {
+app.post('/api/commercial-invoices/:id/ops-prep', requireApiPermission('ci_edit'), asyncHandler((req, res) => {
   try {
     const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [req.params.id]);
     if (!ci) return res.status(404).json({ error: 'CI 不存在' });
@@ -7373,10 +7379,10 @@ app.post('/api/commercial-invoices/:id/ops-prep', requireApiPermission('ci_edit'
     notifyBusinessParticipants('ci', ci.id, 'ci_ops_assigned', { code: ci.ci_no, plan_date: planDate }).catch(() => {});
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // 标记上架准备完成（Ready）——仅负责人或管理员
-app.post('/api/commercial-invoices/:id/ops-ready', requireApiPermission('ci_edit'), (req, res) => {
+app.post('/api/commercial-invoices/:id/ops-ready', requireApiPermission('ci_edit'), asyncHandler((req, res) => {
   try {
     const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [req.params.id]);
     if (!ci) return res.status(404).json({ error: 'CI 不存在' });
@@ -7391,10 +7397,10 @@ app.post('/api/commercial-invoices/:id/ops-ready', requireApiPermission('ci_edit
     notifyBusinessParticipants('ci', ci.id, 'ci_ops_ready', { code: ci.ci_no }).catch(() => {});
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // 成本更新日志查询
-app.get('/api/cost-update-logs', requireApiPermission('cost_view'), (req, res) => {
+app.get('/api/cost-update-logs', requireApiPermission('cost_view'), asyncHandler((req, res) => {
   try {
     const { ci_no, sku_code, keyword } = req.query;
     let sql = 'SELECT * FROM cost_update_logs WHERE 1=1';
@@ -7405,10 +7411,10 @@ app.get('/api/cost-update-logs', requireApiPermission('cost_view'), (req, res) =
     sql += ' ORDER BY created_at DESC';
     res.json(query(sql, params).rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // P1-03-B: WAC 历史版本查询（只读，按 CI 或 SKU+国家+仓库）
-app.get('/api/wac-history', requireApiPermission('cost_view'), (req, res) => {
+app.get('/api/wac-history', requireApiPermission('cost_view'), asyncHandler((req, res) => {
   try {
     const { ci_id, sku_code, country, warehouse } = req.query;
     let sql = 'SELECT * FROM wac_history WHERE 1=1';
@@ -7420,25 +7426,25 @@ app.get('/api/wac-history', requireApiPermission('cost_view'), (req, res) => {
     sql += ' ORDER BY version_no DESC';
     res.json(query(sql, params).rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // 获取CI的费用分摊明细
-app.get('/api/cost-allocation/:ci_id', requireApiPermission('cost_view'), (req, res) => {
+app.get('/api/cost-allocation/:ci_id', requireApiPermission('cost_view'), asyncHandler((req, res) => {
   try {
     const rows = query('SELECT * FROM cost_allocations WHERE ci_id = ? ORDER BY sku_code', [req.params.ci_id]).rows;
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
-app.get('/api/cost-allocation/:ci_id/details', requireApiPermission('cost_view'), (req, res) => {
+app.get('/api/cost-allocation/:ci_id/details', requireApiPermission('cost_view'), asyncHandler((req, res) => {
   try {
     const rows = query('SELECT * FROM cost_allocation_details WHERE ci_id = ? ORDER BY fee_key, stable_sort_order, sku_code', [req.params.ci_id]).rows;
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // ==================== 库存盘点 ====================
-app.get('/api/inventory-checks', requireApiPermission('check_view'), (req, res) => {
+app.get('/api/inventory-checks', requireApiPermission('check_view'), asyncHandler((req, res) => {
   const { country, warehouse, status } = req.query;
   let sql = `SELECT ic.*, s.product_name, s.brand FROM inventory_checks ic LEFT JOIN skus s ON ic.sku_code = s.sku_code WHERE 1=1`;
   const params = [];
@@ -7447,10 +7453,10 @@ app.get('/api/inventory-checks', requireApiPermission('check_view'), (req, res) 
   if (status) { sql += ' AND ic.approval_status = ?'; params.push(status); }
   sql += ' ORDER BY ic.check_date DESC, ic.created_at DESC';
   res.json(query(sql, params).rows);
-});
+}));
 
 // 生成盘点模板数据
-app.get('/api/inventory-checks/template', requireApiPermission('check_view'), (req, res) => {
+app.get('/api/inventory-checks/template', requireApiPermission('check_view'), asyncHandler((req, res) => {
   const { country, warehouse } = req.query;
   let sql = `SELECT i.sku_code, s.product_name, s.brand, i.country, i.warehouse, i.available_qty as system_qty FROM inventory i LEFT JOIN skus s ON i.sku_code = s.sku_code WHERE 1=1`;
   const params = [];
@@ -7458,10 +7464,10 @@ app.get('/api/inventory-checks/template', requireApiPermission('check_view'), (r
   if (warehouse) { sql += ' AND i.warehouse = ?'; params.push(warehouse); }
   sql += ' ORDER BY i.sku_code';
   res.json(query(sql, params).rows);
-});
+}));
 
 // 导入盘点数据
-app.post('/api/inventory-checks/bulk-import', requireApiPermission('check_create'), (req, res) => {
+app.post('/api/inventory-checks/bulk-import', requireApiPermission('check_create'), asyncHandler((req, res) => {
   try {
     const items = req.body.items || [];
     const result = { created: 0, failed: 0, errors: [] };
@@ -7482,10 +7488,10 @@ app.post('/api/inventory-checks/bulk-import', requireApiPermission('check_create
     });
     res.json(result);
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // 盘点审批通过后调整库存
-app.post('/api/inventory-checks/:id/approve', requireApiPermission('check_approve'), (req, res) => {
+app.post('/api/inventory-checks/:id/approve', requireApiPermission('check_approve'), asyncHandler((req, res) => {
   try {
     const check = queryOne('SELECT * FROM inventory_checks WHERE id = ?', [req.params.id]);
     if (!check) return res.status(404).json({ error: '盘点记录不存在' });
@@ -7502,10 +7508,10 @@ app.post('/api/inventory-checks/:id/approve', requireApiPermission('check_approv
     }
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // ==================== 呆滞库存分析 ====================
-app.get('/api/stagnant-analysis', requireApiPermission('stagnant_view'), (req, res) => {
+app.get('/api/stagnant-analysis', requireApiPermission('stagnant_view'), asyncHandler((req, res) => {
   const { country, warehouse, level } = req.query;
   const now = new Date();
   const d30 = new Date(now.getTime() - 30 * 86400000).toISOString().split('T')[0];
@@ -7588,10 +7594,10 @@ app.get('/api/stagnant-analysis', requireApiPermission('stagnant_view'), (req, r
     filtered = result.filter(r => r.stagnant_level !== 'normal');
   }
   res.json(filtered);
-});
+}));
 
 // ==================== 货代分析 ====================
-app.get('/api/freight-forwarder-analysis', requireApiPermission('forwarder_view'), (req, res) => {
+app.get('/api/freight-forwarder-analysis', requireApiPermission('forwarder_view'), asyncHandler((req, res) => {
   const { country, forwarder_id, transport_mode } = req.query;
   let sql = `SELECT forwarder_id, forwarder_name, target_country, transport_mode,
     COUNT(*) as batch_count,
@@ -7634,10 +7640,10 @@ app.get('/api/freight-forwarder-analysis', requireApiPermission('forwarder_view'
     };
   });
   res.json(result);
-});
+}));
 
 // ==================== 首页看板 ====================
-app.get('/api/dashboard', requireApiPermission('dashboard_view'), (req, res) => {
+app.get('/api/dashboard', requireApiPermission('dashboard_view'), asyncHandler((req, res) => {
   try {
     // 总库存金额
     const totalInv = queryOne('SELECT COALESCE(SUM(available_qty * weighted_avg_cost), 0) as val FROM inventory')?.val || 0;
@@ -7724,7 +7730,7 @@ app.get('/api/dashboard', requireApiPermission('dashboard_view'), (req, res) => 
       ci_pending: ciPending
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // ==================== 批量操作辅助函数 ====================
 
@@ -7806,7 +7812,7 @@ function recalcInventoryForSku(sku_code, country, warehouse, options = {}) {
 // ==================== 库存总表批量操作 ====================
 
 // 批量设置库存状态
-app.post('/api/inventory/batch-set-status', requireApiPermission('inventory_import'), (req, res) => {
+app.post('/api/inventory/batch-set-status', requireApiPermission('inventory_import'), asyncHandler((req, res) => {
   try {
     const { ids, status, reason } = req.body;
     if (!ids || !Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: '未选择记录' });
@@ -7834,10 +7840,10 @@ app.post('/api/inventory/batch-set-status', requireApiPermission('inventory_impo
     finishBatchTask(taskId, {success, failed, skipped, errors, is_rollbackable:true});
     res.json({success, failed, skipped, errors, task_id:taskId});
   } catch(e) { res.status(500).json({error:e.message}); }
-});
+}));
 
 // 批量设置是否重点关注
-app.post('/api/inventory/batch-set-focused', requireApiPermission('inventory_import'), (req, res) => {
+app.post('/api/inventory/batch-set-focused', requireApiPermission('inventory_import'), asyncHandler((req, res) => {
   try {
     const { ids, is_focused, reason } = req.body;
     if (!ids || !Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: '未选择记录' });
@@ -7859,10 +7865,10 @@ app.post('/api/inventory/batch-set-focused', requireApiPermission('inventory_imp
     finishBatchTask(taskId, {success, failed, skipped, errors, is_rollbackable:true});
     res.json({success, failed, skipped, errors, task_id:taskId});
   } catch(e) { res.status(500).json({error:e.message}); }
-});
+}));
 
 // 批量设置安全库存
-app.post('/api/inventory/batch-set-safety-stock', requireApiPermission('inventory_import'), (req, res) => {
+app.post('/api/inventory/batch-set-safety-stock', requireApiPermission('inventory_import'), asyncHandler((req, res) => {
   try {
     const { ids, safety_stock, reason } = req.body;
     if (!ids || !Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: '未选择记录' });
@@ -7887,10 +7893,10 @@ app.post('/api/inventory/batch-set-safety-stock', requireApiPermission('inventor
     finishBatchTask(taskId, {success, failed, skipped, errors, is_rollbackable:true});
     res.json({success, failed, skipped, errors, task_id:taskId});
   } catch(e) { res.status(500).json({error:e.message}); }
-});
+}));
 
 // 批量设置目标周转月数
-app.post('/api/inventory/batch-set-turnover', requireApiPermission('inventory_import'), (req, res) => {
+app.post('/api/inventory/batch-set-turnover', requireApiPermission('inventory_import'), asyncHandler((req, res) => {
   try {
     const { ids, target_turnover_months, reason } = req.body;
     if (!ids || !Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: '未选择记录' });
@@ -7915,10 +7921,10 @@ app.post('/api/inventory/batch-set-turnover', requireApiPermission('inventory_im
     finishBatchTask(taskId, {success, failed, skipped, errors, is_rollbackable:true});
     res.json({success, failed, skipped, errors, task_id:taskId});
   } catch(e) { res.status(500).json({error:e.message}); }
-});
+}));
 
 // 批量设置补货规则
-app.post('/api/inventory/batch-set-replenish-rule', requireApiPermission('inventory_import'), (req, res) => {
+app.post('/api/inventory/batch-set-replenish-rule', requireApiPermission('inventory_import'), asyncHandler((req, res) => {
   try {
     const { ids, replenishment_rule, reason } = req.body;
     if (!ids || !Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: '未选择记录' });
@@ -7940,10 +7946,10 @@ app.post('/api/inventory/batch-set-replenish-rule', requireApiPermission('invent
     finishBatchTask(taskId, {success, failed, skipped, errors, is_rollbackable:true});
     res.json({success, failed, skipped, errors, task_id:taskId});
   } catch(e) { res.status(500).json({error:e.message}); }
-});
+}));
 
 // 批量设置库存备注
-app.post('/api/inventory/batch-set-remark', requireApiPermission('inventory_import'), (req, res) => {
+app.post('/api/inventory/batch-set-remark', requireApiPermission('inventory_import'), asyncHandler((req, res) => {
   try {
     const { ids, inventory_remark, reason } = req.body;
     if (!ids || !Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: '未选择记录' });
@@ -7965,10 +7971,10 @@ app.post('/api/inventory/batch-set-remark', requireApiPermission('inventory_impo
     finishBatchTask(taskId, {success, failed, skipped, errors, is_rollbackable:true});
     res.json({success, failed, skipped, errors, task_id:taskId});
   } catch(e) { res.status(500).json({error:e.message}); }
-});
+}));
 
 // 批量发起库存调整单
-app.post('/api/inventory/batch-adjust', requireApiPermission('inventory_import'), (req, res) => {
+app.post('/api/inventory/batch-adjust', requireApiPermission('inventory_import'), asyncHandler((req, res) => {
   try {
     const { ids, adjust_type, reason } = req.body;
     if (!ids || !Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: '未选择记录' });
@@ -7993,10 +7999,10 @@ app.post('/api/inventory/batch-adjust', requireApiPermission('inventory_import')
     finishBatchTask(taskId, {success, failed, skipped, errors, is_rollbackable:false});
     res.json({success, failed, skipped, errors, task_id:taskId});
   } catch(e) { res.status(500).json({error:e.message}); }
-});
+}));
 
 // 库存批量删除（带关联数据检查，强制 reason）
-app.post('/api/inventory/batch-delete', requireApiPermission('inventory_import'), (req, res) => {
+app.post('/api/inventory/batch-delete', requireApiPermission('inventory_import'), asyncHandler((req, res) => {
   try {
     const { ids, reason } = req.body;
     if (!ids || !Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: '未选择记录' });
@@ -8039,10 +8045,10 @@ app.post('/api/inventory/batch-delete', requireApiPermission('inventory_import')
     });
     res.json(result);
   } catch(e) { res.status(500).json({error:e.message}); }
-});
+}));
 
 // 库存批量操作预览
-app.post('/api/inventory/batch-preview', requireApiPermission('inventory_view'), (req, res) => {
+app.post('/api/inventory/batch-preview', requireApiPermission('inventory_view'), asyncHandler((req, res) => {
   try {
     const { ids } = req.body;
     if (!ids || !Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: '未选择记录' });
@@ -8059,12 +8065,12 @@ app.post('/api/inventory/batch-preview', requireApiPermission('inventory_view'),
       warehouses: [...new Set(rows.map(r=>r.warehouse))]
     });
   } catch(e) { res.status(500).json({error:e.message}); }
-});
+}));
 
 // ==================== 出库数据批量操作 ====================
 
 // 批量作废
-app.post('/api/outbound-records/batch-void', requireApiPermission('outbound_create'), (req, res) => {
+app.post('/api/outbound-records/batch-void', requireApiPermission('outbound_create'), asyncHandler((req, res) => {
   try {
     const { ids, void_reason } = req.body;
     if (!ids || !Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: '未选择记录' });
@@ -8101,10 +8107,10 @@ app.post('/api/outbound-records/batch-void', requireApiPermission('outbound_crea
     finishBatchTask(taskId, {success, failed, skipped, errors, is_rollbackable:false});
     res.json({success, failed, skipped, errors, task_id:taskId, recalc_count: affectedSkus.length});
   } catch(e) { res.status(500).json({error:e.message}); }
-});
+}));
 
 // 批量修改出库类型
-app.post('/api/outbound-records/batch-set-type', requireApiPermission('outbound_create'), (req, res) => {
+app.post('/api/outbound-records/batch-set-type', requireApiPermission('outbound_create'), asyncHandler((req, res) => {
   try {
     const { ids, outbound_type, reason } = req.body;
     if (!ids || !Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: '未选择记录' });
@@ -8133,10 +8139,10 @@ app.post('/api/outbound-records/batch-set-type', requireApiPermission('outbound_
     finishBatchTask(taskId, {success, failed, skipped, errors, is_rollbackable:true});
     res.json({success, failed, skipped, errors, task_id:taskId});
   } catch(e) { res.status(500).json({error:e.message}); }
-});
+}));
 
 // 批量修改渠道
-app.post('/api/outbound-records/batch-set-channel', requireApiPermission('outbound_create'), (req, res) => {
+app.post('/api/outbound-records/batch-set-channel', requireApiPermission('outbound_create'), asyncHandler((req, res) => {
   try {
     const { ids, channel, reason } = req.body;
     if (!ids || !Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: '未选择记录' });
@@ -8159,10 +8165,10 @@ app.post('/api/outbound-records/batch-set-channel', requireApiPermission('outbou
     finishBatchTask(taskId, {success, failed, skipped, errors, is_rollbackable:true});
     res.json({success, failed, skipped, errors, task_id:taskId});
   } catch(e) { res.status(500).json({error:e.message}); }
-});
+}));
 
 // 批量修改平台
-app.post('/api/outbound-records/batch-set-platform', requireApiPermission('outbound_create'), (req, res) => {
+app.post('/api/outbound-records/batch-set-platform', requireApiPermission('outbound_create'), asyncHandler((req, res) => {
   try {
     const { ids, platform, reason } = req.body;
     if (!ids || !Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: '未选择记录' });
@@ -8185,10 +8191,10 @@ app.post('/api/outbound-records/batch-set-platform', requireApiPermission('outbo
     finishBatchTask(taskId, {success, failed, skipped, errors, is_rollbackable:true});
     res.json({success, failed, skipped, errors, task_id:taskId});
   } catch(e) { res.status(500).json({error:e.message}); }
-});
+}));
 
 // 批量设置是否参与预测
-app.post('/api/outbound-records/batch-set-forecast', requireApiPermission('outbound_create'), (req, res) => {
+app.post('/api/outbound-records/batch-set-forecast', requireApiPermission('outbound_create'), asyncHandler((req, res) => {
   try {
     const { ids, count_for_forecast, reason } = req.body;
     if (!ids || !Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: '未选择记录' });
@@ -8215,10 +8221,10 @@ app.post('/api/outbound-records/batch-set-forecast', requireApiPermission('outbo
     finishBatchTask(taskId, {success, failed, skipped, errors, is_rollbackable:true});
     res.json({success, failed, skipped, errors, task_id:taskId});
   } catch(e) { res.status(500).json({error:e.message}); }
-});
+}));
 
 // 批量修改备注
-app.post('/api/outbound-records/batch-set-remark', requireApiPermission('outbound_create'), (req, res) => {
+app.post('/api/outbound-records/batch-set-remark', requireApiPermission('outbound_create'), asyncHandler((req, res) => {
   try {
     const { ids, remark, reason } = req.body;
     if (!ids || !Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: '未选择记录' });
@@ -8241,10 +8247,10 @@ app.post('/api/outbound-records/batch-set-remark', requireApiPermission('outboun
     finishBatchTask(taskId, {success, failed, skipped, errors, is_rollbackable:true});
     res.json({success, failed, skipped, errors, task_id:taskId});
   } catch(e) { res.status(500).json({error:e.message}); }
-});
+}));
 
 // 出库批量操作预览
-app.post('/api/outbound-records/batch-preview', requireApiPermission('outbound_view'), (req, res) => {
+app.post('/api/outbound-records/batch-preview', requireApiPermission('outbound_view'), asyncHandler((req, res) => {
   try {
     const { ids } = req.body;
     if (!ids || !Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: '未选择记录' });
@@ -8262,11 +8268,11 @@ app.post('/api/outbound-records/batch-preview', requireApiPermission('outbound_v
       forecast_count: forecastCount
     });
   } catch(e) { res.status(500).json({error:e.message}); }
-});
+}));
 
 // ==================== 批量任务中心 & 操作日志 ====================
 
-app.get('/api/batch-tasks', requireApiPermission('inventory_view'), (req, res) => {
+app.get('/api/batch-tasks', requireApiPermission('inventory_view'), asyncHandler((req, res) => {
   try {
     const { page, limit } = req.query;
     let sql = 'SELECT * FROM batch_tasks';
@@ -8277,17 +8283,17 @@ app.get('/api/batch-tasks', requireApiPermission('inventory_view'), (req, res) =
     else { sql += ' LIMIT 100'; }
     res.json(query(sql, params).rows);
   } catch(e) { res.status(500).json({error:e.message}); }
-});
+}));
 
-app.get('/api/batch-tasks/:id', requireApiPermission('inventory_view'), (req, res) => {
+app.get('/api/batch-tasks/:id', requireApiPermission('inventory_view'), asyncHandler((req, res) => {
   try {
     const task = queryOne('SELECT * FROM batch_tasks WHERE id=?', [req.params.id]);
     if (!task) return res.status(404).json({ error: '任务不存在' });
     res.json(task);
   } catch(e) { res.status(500).json({error:e.message}); }
-});
+}));
 
-app.get('/api/operation-logs', requireApiPermission('inventory_view'), (req, res) => {
+app.get('/api/operation-logs', requireApiPermission('inventory_view'), asyncHandler((req, res) => {
   try {
     const { page, operation_type, limit } = req.query;
     let sql = 'SELECT * FROM operation_logs';
@@ -8300,9 +8306,9 @@ app.get('/api/operation-logs', requireApiPermission('inventory_view'), (req, res
     params.push(parseInt(limit) || 100);
     res.json(query(sql, params).rows);
   } catch(e) { res.status(500).json({error:e.message}); }
-});
+}));
 
-app.get('/api/inventory-adjustments', requireApiPermission('inventory_view'), (req, res) => {
+app.get('/api/inventory-adjustments', requireApiPermission('inventory_view'), asyncHandler((req, res) => {
   try {
     const { approval_status } = req.query;
     let sql = 'SELECT * FROM inventory_adjustments';
@@ -8311,10 +8317,10 @@ app.get('/api/inventory-adjustments', requireApiPermission('inventory_view'), (r
     sql += ' ORDER BY created_at DESC LIMIT 100';
     res.json(query(sql, params).rows);
   } catch(e) { res.status(500).json({error:e.message}); }
-});
+}));
 
 // 库存调整单审批
-app.post('/api/inventory-adjustments/:id/approve', requireApiPermission('inventory_import'), (req, res) => {
+app.post('/api/inventory-adjustments/:id/approve', requireApiPermission('inventory_import'), asyncHandler((req, res) => {
   try {
     const adj = queryOne('SELECT * FROM inventory_adjustments WHERE id=?', [req.params.id]);
     if (!adj) return res.status(404).json({ error: '调整单不存在' });
@@ -8334,7 +8340,7 @@ app.post('/api/inventory-adjustments/:id/approve', requireApiPermission('invento
     logOperation({operator_id:req.currentUserId, operator_name:req.currentUserName, page:'inventory', operation_type:'adjust_approve', target_ids:[adj.id], affected_count:1, old_values:{approval_status:'pending'}, new_values:{approval_status:req.body.action==='approve'?'approved':'rejected'}, reason:req.body.reason||'', triggered_recalc:req.body.action==='approve'?1:0, is_rollbackable:0});
     res.json({success:true});
   } catch(e) { res.status(500).json({error:e.message}); }
-});
+}));
 
 // ==================== 启动服务 ====================
 // 顶层异常保护：避免未捕获异常导致进程静默退出（进程退出后前端会 Failed to fetch）
