@@ -1,21 +1,51 @@
-# Render 部署配置（进销存管理系统）
-# 用法：在 Render 新建 Web Service，连接本仓库，选择「Use render.yaml」即可一键部署。
+# Render 部署配置（Infrastructure as Code）
+# 配套文档：RELEASE-PREP-01-RENDER-CHECKLIST.md
+#
+# 安全：本文件不含任何密钥。密钥/域名相关变量用 sync:false 交由 Render 后台注入，
+#       绝不在 git 提交真实值（.env 已被 .gitignore 保护）。
+#
+# 技术选型（用户确认 2026-07-18）：
+#   Render Web Service + SQLite V1（better-sqlite3，单文件库）+ backup/restore
+#   暂不迁移 PostgreSQL。
+
 services:
   - type: web
     name: inventory-app
     runtime: node
-    plan: free
-    region: oregon          # 亚洲用户可改为 singapore
-    branch: main            # 请改为你的默认分支（main 或 master）
-    buildCommand: npm install
+    # 区域：可选 oregon / ohio / virginia / frankfurt / singapore
+    # 面向国内访问延迟较高，可评估 singapore；按实际用户分布选择。
+    region: oregon
+    branch: main                 # GitHub 自动部署分支
+    buildCommand: npm install    # 触发 better-sqlite3 原生模块编译
     startCommand: node server.js
-    healthCheckPath: /
+    plan: starter                # 免费版不支持持久磁盘，需 starter 及以上
+    numInstances: 1              # 必须=1：SQLite 单文件库不支持多进程并发写
+    healthCheckPath: /api/version  # server.js 内置轻量版本端点，返回 200
     envVars:
+      # —— 固定值（写入 yaml）——
       - key: NODE_ENV
-        value: production
-    # 持久化磁盘：避免每次部署后 SQLite 数据被清空
-    # （服务读取的端口由 Render 自动注入，无需手动设置）
+        value: production        # CSRF 强制 + 错误栈不外露
+      - key: DB_PATH
+        value: /data/inventory.db  # 指向持久磁盘
+      - key: COOKIE_SECURE
+        value: "1"               # 生产 HTTPS 必须，会话 Cookie 带 Secure
+      - key: SESSION_TTL_HOURS
+        value: "12"
+      - key: BACKUP_DIR
+        value: /data/backups     # 备份落持久磁盘，避免 ephemeral 丢失
+      # —— 密钥/域名相关（sync:false → Render 后台填写，不入库）——
+      - key: BREAKGLASS_ADMIN_PASSWORD
+        sync: false              # 强密码；缺失/弱值 fail-closed 拒绝启动
+      - key: FEISHU_APP_ID
+        sync: false
+      - key: FEISHU_APP_SECRET
+        sync: false
+      - key: FEISHU_REDIRECT_URI
+        sync: false              # 部署后填 https://<render-domain>/api/auth/feishu/callback
+      - key: TRUSTED_ORIGINS
+        sync: false              # 部署后填 https://<render-domain>（CSRF 写请求必须，否则 403）
+      # FEISHU_NOTIFY_DRYRUN 可选：演练期置 1（仅内存记录不真实发送）；L1 完成后删除或置 0
     disk:
       name: inventory-data
-      mountPath: /opt/render/project/src/data
-      sizeGB: 1
+      mountPath: /data           # SQLite 主库 + 备份均存于此，跨部署/重启持久化
+      sizeGb: 1                  # 按数据增长调整；备份也占用此空间
