@@ -195,20 +195,26 @@ function normalizeSql(sql) {
   s = s.replace(/datetime\(\s*'now'\s*\)/g, 'NOW()');
   s = s.replace(/datetime\(\s*'now'\s*,\s*'\+(\d+)\s+(\w+)'\s*\)/g, "NOW() + INTERVAL '$1 $2'");
 
-  // 3. date('now') / date('now', '-N days|months')
+  // 3. date('now') / date('now', '[+-]N days|months')
+  //    - 偏移符号与 INTERVAL 幅度分离，避免双重负号变成未来日期（修复 F2）。
+  //    - 带修饰符的 date() 返回 TEXT 'YYYY-MM-DD'（与 SQLite 的 date() 返回类型一致），
+  //      使结果可直接与 TEXT 日期列（order_date / depart_date 等）比较，
+  //      对应 server.js:7666/7702/7780 的 `col >= date('now','-N days')` 写法。
   s = s.replace(/date\(\s*'now'\s*\)/g, 'CURRENT_DATE');
-  s = s.replace(/date\(\s*'now'\s*,\s*'(-\d+)\s+(days|months)'\s*\)/g, "CURRENT_DATE - INTERVAL '$1 $2'");
+  s = s.replace(/date\(\s*'now'\s*,\s*'([+-]?)(\d+)\s+(days|months)'\s*\)/g,
+    (m, sign, num, unit) => `TO_CHAR(CURRENT_DATE ${sign === '-' ? '-' : '+'} INTERVAL '${num} ${unit}', 'YYYY-MM-DD')`);
 
   // 4. julianday(x) -> EXTRACT(EPOCH FROM (CAST(x AS timestamp)))/86400.0（天数差）
   s = replaceBalanced(s, 'julianday', (inner) =>
     `EXTRACT(EPOCH FROM (CAST(${inner} AS timestamp)))/86400.0`);
 
-  // 5. strftime('fmt', col) -> TO_CHAR(col, 'PGfmt')
+  // 5. strftime('fmt', col) -> TO_CHAR(CAST(NULLIF(col,'') AS timestamp), 'PGfmt')
+  //    包一层 CAST(NULLIF(col,'')) 以兼容 TEXT 日期列（含空字符串 '' -> NULL），避免 to_char(text,unknown) 重载歧义
   s = replaceBalanced(s, 'strftime', (inner) => {
     const parts = splitTopLevelCommas(inner).map((x) => x.trim());
     const fmt = parts[0].replace(/^'|'$/g, '');
     const col = parts[1] || '';
-    return `TO_CHAR(${col}, '${convertStrftimeFmt(fmt)}')`;
+    return `TO_CHAR(CAST(NULLIF(${col}, '') AS timestamp), '${convertStrftimeFmt(fmt)}')`;
   });
 
   // 6. instr(a, b) -> strpos(a, b)
