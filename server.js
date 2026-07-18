@@ -27,6 +27,311 @@ const path = require('path');
 const crypto = require('crypto');
 const { query, queryOne, run, transaction, genId, initDatabase } = require('./db');
 
+// ==================== AUTH-FEISHU-CORE 配置与工具 ====================
+const FEISHU_APP_ID = process.env.FEISHU_APP_ID || '';
+const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET || '';
+const FEISHU_REDIRECT_URI = process.env.FEISHU_REDIRECT_URI || '';
+const COOKIE_SECURE = process.env.COOKIE_SECURE ? process.env.COOKIE_SECURE !== 'false' : true;
+const SESSION_TTL_HOURS = parseInt(process.env.SESSION_TTL_HOURS || '12', 10);
+const SESSION_TTL_SECONDS = (isNaN(SESSION_TTL_HOURS) ? 12 : SESSION_TTL_HOURS) * 3600;
+const BREAKGLASS_ADMIN_PASSWORD = process.env.BREAKGLASS_ADMIN_PASSWORD || '';
+const TRUSTED_ORIGINS = (process.env.TRUSTED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
+const NODE_ENV = process.env.NODE_ENV || '';
+// 飞书 mock 仅允许测试环境；非 test 环境绝不允许通过 FEISHU_MOCK 启用 mock（fail-closed 拒绝启动）
+if (NODE_ENV !== 'test' && process.env.FEISHU_MOCK === '1') {
+  throw new Error('[AUTH] FEISHU_MOCK=1 仅在测试环境(NODE_ENV=test)允许；非测试环境启用飞书 mock 被拒绝启动(fail-closed)');
+}
+// CSRF 强制测试开关：仅 NODE_ENV=test 时才可被 CSRF_FORCE=1 显式启用（用于生产等价隔离测试）；
+// 其他环境（含 production）绝不允许用 CSRF_FORCE 关闭或绕过 CSRF 防护。
+const CSRF_FORCE = process.env.CSRF_FORCE === '1' && NODE_ENV === 'test';
+// 正式生产环境(NODE_ENV='production')强制开启 CSRF 且不可关闭；
+// test 默认关闭(除非 CSRF_FORCE=1 显式开启)；其余环境保留 CSRF_DISABLE 逃生舱。
+const CSRF_DISABLE = (NODE_ENV === 'production') ? false
+  : (NODE_ENV === 'test') ? !CSRF_FORCE
+  : (process.env.CSRF_DISABLE === 'true');
+const SESSION_COOKIE_NAME = 'session_token';
+
+// 公共鉴权免拦截前缀（登录/OAuth/登出/健康检查）
+const PUBLIC_AUTH_PREFIXES = [
+  '/api/auth/feishu/login',
+  '/api/auth/feishu/callback',
+  '/api/auth/local/login',
+  '/api/logout',
+  '/api/health',
+  '/api/version'
+];
+function reqPath(req) { return (req.originalUrl || req.url || '').split('?')[0]; }
+
+// --- 密码哈希（仅 break-glass 本地管理员，scrypt）---
+function hashPassword(plain) {
+  const salt = crypto.randomBytes(16);
+  const hash = crypto.scryptSync(plain, salt, 64);
+  return 'scrypt$v1$16384$8$1$' + salt.toString('hex') + '$' + hash.toString('hex');
+}
+function verifyPassword(plain, stored) {
+  if (!stored || typeof stored !== 'string' || stored.indexOf('scrypt$v1$') !== 0) return false;
+  const parts = stored.split('$');
+  if (parts.length < 7) return false;
+  const salt = Buffer.from(parts[5], 'hex');
+  const expected = Buffer.from(parts[6], 'hex');
+  let actual;
+  try { actual = crypto.scryptSync(plain, salt, 64); } catch (e) { return false; }
+  if (expected.length !== actual.length) return false;
+  return crypto.timingSafeEqual(expected, actual);
+}
+function isStrongPassword(pw) {
+  if (typeof pw !== 'string' || pw.length < 12) return false;
+  if (!/[a-z]/.test(pw)) return false;
+  if (!/[A-Z]/.test(pw)) return false;
+  if (!/[0-9]/.test(pw)) return false;
+  return true;
+}
+
+// --- Cookie / Session 工具 ---
+function parseCookies(req) {
+  const out = {};
+  const raw = req.headers.cookie;
+  if (!raw) return out;
+  raw.split(';').forEach(pair => {
+    const idx = pair.indexOf('=');
+    if (idx < 0) return;
+    const k = pair.slice(0, idx).trim();
+    const v = pair.slice(idx + 1).trim();
+    out[k] = decodeURIComponent(v);
+  });
+  return out;
+}
+function sessionCookieOpts() {
+  return { httpOnly: true, secure: COOKIE_SECURE, sameSite: 'Lax', path: '/', maxAge: SESSION_TTL_SECONDS * 1000 };
+}
+function genSessionToken() { return crypto.randomBytes(32).toString('hex'); }
+function createSessionForUser(res, user, userAgent, ip) {
+  const token = genSessionToken();
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  const now = new Date().toISOString();
+  const expires = new Date(Date.now() + SESSION_TTL_SECONDS * 1000).toISOString().replace('T', ' ').replace(/\.\d+Z$/, '');
+  try {
+    run("DELETE FROM sessions WHERE expires_at < datetime('now')");
+    const count = queryOne('SELECT COUNT(*) AS c FROM sessions WHERE user_id=?', [user.id]);
+    if (count && count.c >= 10) {
+      run("DELETE FROM sessions WHERE user_id=? AND id IN (SELECT id FROM sessions WHERE user_id=? ORDER BY created_at ASC LIMIT ?)",
+        [user.id, user.id, count.c - 9]);
+    }
+  } catch (e) {}
+  run('INSERT INTO sessions (id, token_hash, user_id, created_at, expires_at, user_agent, ip_address) VALUES (?,?,?,?,?,?,?)',
+    [genId('sess'), tokenHash, user.id, now, expires, userAgent || '', ip || '']);
+  run("UPDATE users SET last_login_at=? WHERE id=?", [now, user.id]);
+  res.cookie(SESSION_COOKIE_NAME, token, sessionCookieOpts());
+  return token;
+}
+
+// --- 登录审计 ---
+function auditLogin(userId, username, authSource, success, failReason, userAgent, ip) {
+  try {
+    run('INSERT INTO login_audit (id, user_id, username, auth_source, success, fail_reason, ip, user_agent, created_at) VALUES (?,?,?,?,?,?,?,?,?)',
+      [genId('la'), userId || null, username || '', authSource || '', success ? 1 : 0, failReason || '', ip || '', userAgent || '', new Date().toISOString()]);
+  } catch (e) {}
+}
+
+// --- 飞书 OAuth 身份交换（test 环境使用内存 mock，绝不触真实飞书）---
+async function exchangeFeishuCode(code) {
+  if (process.env.NODE_ENV === 'test' && global.__FEISHU_TEST__) {
+    const t = global.__FEISHU_TEST__;
+    if (t.failExchange) throw new Error('mock: code exchange failed');
+    return t.userinfo;
+  }
+  if (!FEISHU_APP_ID || !FEISHU_APP_SECRET || !code) throw new Error('飞书配置或 code 缺失');
+  // Web 应用授权码流程：以 client_id + client_secret 直接换取 user_access_token（无需 app_access_token 层）
+  const tokenResp = await fetch('https://open.feishu.cn/open-apis/authen/v2/oauth/token', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      grant_type: 'authorization_code',
+      client_id: FEISHU_APP_ID,
+      client_secret: FEISHU_APP_SECRET,
+      code,
+      redirect_uri: FEISHU_REDIRECT_URI
+    })
+  });
+  const tokenData = await tokenResp.json();
+  const accessToken = tokenData.access_token || (tokenData.data && tokenData.data.access_token);
+  if (!accessToken) throw new Error('获取 user_access_token 失败: ' + (tokenData.msg || tokenData.code || 'unknown'));
+  // Web 应用流程 user_info 端点（响应包在 data 内）
+  const infoResp = await fetch('https://open.feishu.cn/open-apis/authen/v1/user_info', {
+    method: 'GET', headers: { Authorization: 'Bearer ' + accessToken }
+  });
+  const infoData = await infoResp.json();
+  const info = infoData.data || infoData;
+  return {
+    open_id: info.open_id, union_id: info.union_id, user_id: info.user_id,
+    name: info.name, email: info.email || '', mobile: info.mobile || '', avatar: info.avatar_url || info.avatar || ''
+  };
+}
+
+// ==================== FEISHU-NOTIFY-01：应用级通知能力（复用同一独立飞书应用 FEISHU_APP_ID/SECRET） ====================
+// 与登录链路隔离：登录用 user_access_token；通知用 tenant_access_token（应用级）。token 仅进程内存缓存，不落库。
+let __feishuTenantToken = null;
+let __feishuTenantTokenExpireAt = 0;
+const __feishuDryRunLog = []; // 仅测试/演练模式（NODE_ENV=test 或 FEISHU_NOTIFY_DRYRUN=1）记录 payload；生产恒为空且不可经接口读出
+
+// 获取应用级 tenant_access_token（带内存缓存，提前 5 分钟过期刷新）
+async function getFeishuTenantToken() {
+  if (__feishuTenantToken && Date.now() < __feishuTenantTokenExpireAt) return __feishuTenantToken;
+  if (!FEISHU_APP_ID || !FEISHU_APP_SECRET) throw new Error('飞书应用配置缺失（FEISHU_APP_ID/FEISHU_APP_SECRET）');
+  const resp = await fetch('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ app_id: FEISHU_APP_ID, app_secret: FEISHU_APP_SECRET })
+  });
+  const data = await resp.json();
+  const token = data.tenant_access_token || (data.data && data.data.tenant_access_token);
+  if (!token) throw new Error('获取 tenant_access_token 失败: ' + (data.msg || data.code || 'unknown'));
+  const ttl = (Number(data.expire) || 7200) - 300;
+  __feishuTenantToken = token;
+  __feishuTenantTokenExpireAt = Date.now() + ttl * 1000;
+  return token;
+}
+
+// 发送文本消息到指定 open_id。best-effort：测试/演练模式只记录不真实发送；真实模式带 5s 超时。
+async function sendFeishuTextMessage(openId, text) {
+  if (process.env.NODE_ENV === 'test' || process.env.FEISHU_NOTIFY_DRYRUN === '1' || process.env.FEISHU_NOTIFY_FORCE_FAIL === '1') {
+    __feishuDryRunLog.push({ open_id: openId, text, at: new Date().toISOString(), forced_fail: process.env.FEISHU_NOTIFY_FORCE_FAIL === '1' });
+    if (process.env.FEISHU_NOTIFY_FORCE_FAIL === '1') throw new Error('forced feishu failure (test)');
+    return { dryrun: true, open_id: openId };
+  }
+  if (!openId) throw new Error('open_id 为空');
+  const token = await getFeishuTenantToken();
+  const resp = await fetch('https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+    body: JSON.stringify({ receive_id: openId, msg_type: 'text', content: JSON.stringify({ text }) }),
+    signal: AbortSignal.timeout(5000)
+  });
+  const data = await resp.json();
+  if (data.code !== 0) throw new Error('飞书消息发送失败: ' + (data.msg || data.code || 'unknown'));
+  return data;
+}
+
+// V1 固定文案模板（不建模板管理）
+const FEISHU_NOTIFY_TEMPLATES = {
+  submit: (poNo) => `【审批通知】PO ${poNo} 已提交审批，请您审批。`,
+  approved_intermediate: (poNo, level) => `【审批通知】PO ${poNo} 第${level}级已通过，请您审批。`,
+  approved_final: (poNo) => `【审批通知】PO ${poNo} 审批已全部通过。`,
+  reject: (poNo) => `【审批通知】PO ${poNo} 已被驳回。`,
+  ci_ops_assigned: (ciNo, planDate) => `【上架准备】CI ${ciNo} 已分配上架准备任务，计划上架日期：${planDate || '待定'}。`,
+  ci_ops_ready: (ciNo) => `【上架准备】CI ${ciNo} 上架准备已完成（Ready），可安排上架。`
+};
+
+// 审批通知：事务外 best-effort；飞书异常不影响审批结果；仅向有 feishu_open_id 的用户发送；无收件人则静默返回。
+async function notifyApprovalParticipants(approvalId, eventType, ctx) {
+  try {
+    const approval = queryOne('SELECT * FROM approval_records WHERE id = ?', [approvalId]);
+    if (!approval) return;
+    const poNo = (ctx && ctx.po_no) || approval.business_code || '';
+    const recipients = new Map(); // open_id -> name
+    const addUser = (userId) => {
+      if (!userId) return;
+      const u = queryOne('SELECT id, name, feishu_open_id FROM users WHERE id = ?', [userId]);
+      if (u && u.feishu_open_id) recipients.set(u.feishu_open_id, u.name || '');
+    };
+    const ccRows = query('SELECT user_id FROM business_participants WHERE business_type=? AND business_id=? AND participant_type=?', ['approval', approvalId, 'cc']).rows;
+    for (const r of ccRows) addUser(r.user_id);
+    let approvers = [];
+    try { approvers = JSON.parse(approval.approvers || '[]'); } catch (e) { approvers = []; }
+    if (eventType === 'submit') {
+      const first = approvers.find(a => a.level === 1);
+      if (first) addUser(first.approver_user_id);
+    } else if (eventType === 'approved_intermediate') {
+      // 触发本通知时 current_level 已递增到“下一级待审”级次，故直接按该级次定位下一审批人
+      const next = approvers.find(a => a.level === (approval.current_level || 1));
+      if (next) addUser(next.approver_user_id);
+    } else if (eventType === 'approved_final' || eventType === 'reject') {
+      addUser(approval.submitter_id);
+    }
+    if (recipients.size === 0) return;
+    const build = FEISHU_NOTIFY_TEMPLATES[eventType];
+    const text = build ? build(poNo, approval.current_level) : `【审批通知】PO ${poNo} 状态更新。`;
+    for (const [openId] of recipients) {
+      try { await sendFeishuTextMessage(openId, text); }
+      catch (e) { console.error('[FEISHU-NOTIFY] 发送失败 open_id=' + openId + ' event=' + eventType + ':', e.message); }
+    }
+  } catch (e) {
+    console.error('[FEISHU-NOTIFY] 通知流程异常 event=' + eventType + ' approvalId=' + approvalId + ':', e.message);
+  }
+}
+
+// PUR-OPS-COLLAB-01：通用业务参与人通知（复用 business_participants，支持 business_type='ci' 等；与审批通知解耦）
+async function notifyBusinessParticipants(businessType, businessId, eventType, ctx) {
+  try {
+    const code = (ctx && ctx.code) || businessId || '';
+    const recipients = new Map(); // open_id -> name
+    const addUser = (userId) => {
+      if (!userId) return;
+      const u = queryOne('SELECT id, name, feishu_open_id FROM users WHERE id = ?', [userId]);
+      if (u && u.feishu_open_id) recipients.set(u.feishu_open_id, u.name || '');
+    };
+    const rows = query('SELECT user_id FROM business_participants WHERE business_type=? AND business_id=? AND participant_type IN (?,?)', [businessType, businessId, 'cc', 'owner']).rows;
+    for (const r of rows) addUser(r.user_id);
+    if (recipients.size === 0) return;
+    const build = FEISHU_NOTIFY_TEMPLATES[eventType];
+    if (!build) return;
+    const text = build(code, ctx && ctx.plan_date);
+    for (const [openId] of recipients) {
+      try { await sendFeishuTextMessage(openId, text); }
+      catch (e) { console.error('[FEISHU-NOTIFY] 发送失败 open_id=' + openId + ' event=' + eventType + ':', e.message); }
+    }
+  } catch (e) {
+    console.error('[FEISHU-NOTIFY] 业务通知异常 event=' + eventType + ' businessType=' + businessType + ' businessId=' + businessId + ':', e.message);
+  }
+}
+
+// --- break-glass 启动初始化（fail-closed；保留原 user id，仅密码变化时安全更新）---
+function bootstrapBreakGlass() {
+  if (!BREAKGLASS_ADMIN_PASSWORD || !isStrongPassword(BREAKGLASS_ADMIN_PASSWORD)) {
+    throw new Error('[AUTH] 未配置强密码 BREAKGLASS_ADMIN_PASSWORD（≥12位且含大小写与数字），启动失败（fail-closed）');
+  }
+  // 优先按固定 id 定位，其次按唯一本地账号定位；绝不以“删除后重建”方式处理
+  const existing = queryOne("SELECT * FROM users WHERE id='user_admin' OR (auth_source='local' AND username='admin') LIMIT 1");
+  if (existing) {
+    // 密码未变化（用 verifyPassword 校验哈希，忽略随机盐）：不重新生成哈希、不清除旧 Session、不改变 user id
+    if (existing.password_hash && verifyPassword(BREAKGLASS_ADMIN_PASSWORD, existing.password_hash)) {
+      return;
+    }
+    // 密码已变化（或首次设置）：安全 UPDATE（保留原 user id），并使旧 Session 立即失效
+    const hash = hashPassword(BREAKGLASS_ADMIN_PASSWORD);
+    run("UPDATE users SET password_hash=?, password='', name=?, status=?, auth_source='local' WHERE id=?",
+      [hash, existing.name || '超级管理员', existing.status || 'active', existing.id]);
+    run("DELETE FROM sessions WHERE user_id=?", [existing.id]);
+    console.log('[AUTH] break-glass 密码已更新，旧 Session 已失效（user id 保持不变: ' + existing.id + '）');
+    return;
+  }
+  // 首次：仅 INSERT，绝不替换（保留指定 user id）
+  const hash = hashPassword(BREAKGLASS_ADMIN_PASSWORD);
+  run("INSERT INTO users (id, username, name, password, role_id, status, email, auth_source, password_hash) VALUES (?,?,?,?,?,?,?,?,?)",
+    ['user_admin', 'admin', '超级管理员', '', 'role_admin', 'active', '', 'local', hash]);
+  console.log('[AUTH] break-glass 本地管理员已初始化（首次 INSERT，user id=user_admin）');
+}
+
+// --- break-glass 防暴力破解（仅保护唯一本地应急接口；内存计数，进程重启清零；不建设普通本地账号锁定体系）---
+const bgFailTracker = new Map(); // key: ip|username -> { fails, cooldownUntil }
+const BG_MAX_FAILS = 5;
+const BG_COOLDOWN_MS = 15 * 60 * 1000; // 连续失败冷却 15 分钟
+function bgFailKey(ip, username) { return (ip || 'unknown') + '|' + (username || ''); }
+function bgIsCooling(ip, username) {
+  const e = bgFailTracker.get(bgFailKey(ip, username));
+  if (!e) return false;
+  if (Date.now() < e.cooldownUntil) return true;
+  if (e.fails < BG_MAX_FAILS) return false;
+  bgFailTracker.delete(bgFailKey(ip, username)); // 冷却自然到期后自动复位
+  return false;
+}
+function bgRegisterFail(ip, username) {
+  const k = bgFailKey(ip, username);
+  const e = bgFailTracker.get(k) || { fails: 0, cooldownUntil: 0 };
+  e.fails += 1;
+  if (e.fails >= BG_MAX_FAILS) e.cooldownUntil = Date.now() + BG_COOLDOWN_MS;
+  bgFailTracker.set(k, e);
+}
+function bgClear(ip, username) { bgFailTracker.delete(bgFailKey(ip, username)); }
+
 // ==================== 配置 ====================
 const PORT = process.env.PORT || 3001;
 const APP_VERSION = '1.0.0';
@@ -72,17 +377,64 @@ app.get('/api/version', (req, res) => {
 });
 
 // ==================== 认证与权限中间件 ====================
+// 写请求可信 Origin 校验（CSRF 防护；test 环境自动绕过）
+function csrfGuard(req, res, next) {
+  if (CSRF_DISABLE) return next();
+  const m = req.method;
+  if (m === 'GET' || m === 'HEAD' || m === 'OPTIONS') return next();
+  const url = reqPath(req);
+  if (PUBLIC_AUTH_PREFIXES.some(p => url === p || url.indexOf(p + '?') === 0)) return next();
+  const origin = req.headers.origin;
+  if (!origin) return next();
+  const selfOrigin = (req.secure ? 'https' : 'http') + '://' + (req.headers.host || '');
+  const allowed = TRUSTED_ORIGINS.concat([selfOrigin]);
+  let ok = false;
+  try { ok = allowed.includes(new URL(origin).origin); } catch (e) { ok = false; }
+  if (!ok) return res.status(403).json({ error: '跨站请求被拒绝（CSRF 防护）' });
+  next();
+}
+app.use(csrfGuard);
+
+// 服务端会话鉴权：完全忽略 X-User-* 头，身份来自 HttpOnly Cookie → session → users → roles
 function apiAuth(req, res, next) {
-  const userId = req.headers['x-user-id'];
-  const userName = req.headers['x-user-name'] ? decodeURIComponent(req.headers['x-user-name']) : '';
-  const userRole = req.headers['x-user-role'];
-  const userPerms = req.headers['x-user-permissions'] || '';
-  if (userId) {
-    req.currentUserId = userId;
-    req.currentUserName = userName;
-    req.currentUserRole = userRole || '';
-    req.currentUserPermissions = userPerms ? userPerms.split(',').map(s => s.trim()).filter(Boolean) : [];
+  const url = reqPath(req);
+  if (PUBLIC_AUTH_PREFIXES.some(p => url === p || url.indexOf(p + '?') === 0)) return next();
+
+  const token = parseCookies(req)[SESSION_COOKIE_NAME];
+  if (!token) return res.status(401).json({ error: '未登录' });
+
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  const sess = queryOne("SELECT * FROM sessions WHERE token_hash=? AND expires_at > datetime('now')", [tokenHash]);
+  if (!sess) return res.status(401).json({ error: '会话无效或已过期' });
+
+  const user = queryOne('SELECT * FROM users WHERE id=?', [sess.user_id]);
+  if (!user) {
+    run('DELETE FROM sessions WHERE token_hash=?', [tokenHash]);
+    return res.status(401).json({ error: '账号不存在' });
   }
+  if (user.status === 'disabled') {
+    run('DELETE FROM sessions WHERE token_hash=?', [tokenHash]);
+    return res.status(401).json({ error: '账号已停用' });
+  }
+  if (user.status === 'pending') {
+    // 已认证但零权限：仅允许 /api/me 探活
+    if (url === '/api/me') {
+      req.currentUserId = user.id;
+      req.currentUserName = user.name;
+      req.currentUserRole = user.role_id || '';
+      req.currentUserPermissions = [];
+      return next();
+    }
+    return res.status(403).json({ error: '账号待管理员授权' });
+  }
+  // active：每次从 DB 读角色/权限（角色变更即时生效）
+  const role = queryOne('SELECT * FROM roles WHERE id=?', [user.role_id]);
+  let perms = [];
+  try { perms = role ? JSON.parse(role.permissions || '[]') : []; } catch (e) { perms = []; }
+  req.currentUserId = user.id;
+  req.currentUserName = user.name;
+  req.currentUserRole = user.role_id || '';
+  req.currentUserPermissions = perms;
   next();
 }
 
@@ -100,55 +452,160 @@ function requireLogin(req, res, next) {
   next();
 }
 
-// 所有 /api 路由需要认证
+// 所有 /api 路由需要认证（公共鉴权前缀已在 apiAuth 内放行）
 app.use('/api', apiAuth);
 
-// ==================== 登录 ====================
-app.post('/api/auth/login', (req, res) => {
-  const { username, password } = req.body;
-  const user = queryOne('SELECT * FROM users WHERE username = ? AND password = ? AND status = ?', [username, password, 'active']);
-  if (!user) return res.status(401).json({ error: '用户名或密码错误' });
-  const role = queryOne('SELECT * FROM roles WHERE id = ?', [user.role_id]);
-  const permissions = role ? JSON.parse(role.permissions || '[]') : [];
+// ==================== 认证：飞书 OAuth + break-glass 本地登录 ====================
+
+// 飞书授权入口（生成一次性 state，跳转飞书；test 环境返回 state 供驱动）
+app.get('/api/auth/feishu/login', (req, res) => {
+  const state = crypto.randomBytes(16).toString('hex');
+  run("INSERT INTO oauth_states (state, created_at, expires_at) VALUES (?, datetime('now'), datetime('now', '+10 minutes'))", [state]);
+  const redirect = 'https://accounts.feishu.cn/open-apis/authen/v1/authorize?client_id=' + encodeURIComponent(FEISHU_APP_ID)
+    + '&redirect_uri=' + encodeURIComponent(FEISHU_REDIRECT_URI) + '&state=' + encodeURIComponent(state) + '&response_type=code';
+  if (process.env.NODE_ENV === 'test') return res.json({ state, authorize_url: redirect });
+  res.redirect(redirect);
+});
+
+// 飞书回调：校验 state → 换身份 → 按 union_id 匹配/创建 → 建 Session
+app.get('/api/auth/feishu/callback', async (req, res) => {
+  try {
+    const { code, state } = req.query;
+    if (!state) { auditLogin(null, '', 'feishu', false, 'missing_state'); return res.status(401).json({ error: '缺少 state' }); }
+    const st = queryOne("SELECT * FROM oauth_states WHERE state=? AND expires_at > datetime('now')", [state]);
+    if (!st) { auditLogin(null, '', 'feishu', false, 'bad_or_expired_state'); return res.status(401).json({ error: 'state 无效或已过期' }); }
+    run('DELETE FROM oauth_states WHERE state=?', [state]); // 一次性使用，防重放
+    let info;
+    try { info = await exchangeFeishuCode(code); }
+    catch (e) { auditLogin(null, '', 'feishu', false, 'exchange_failed'); return res.status(401).json({ error: '飞书身份校验失败' }); }
+    if (!info || !info.union_id) { auditLogin(null, '', 'feishu', false, 'no_union_id'); return res.status(401).json({ error: '飞书未返回有效用户标识' }); }
+
+    // 匹配：union_id 主键 → open_id 回退（不使用 email，避免误合并）
+    let user = queryOne('SELECT * FROM users WHERE feishu_union_id=? AND feishu_union_id<>?', [info.union_id, '']);
+    if (!user) user = queryOne('SELECT * FROM users WHERE feishu_open_id=? AND feishu_open_id<>?', [info.open_id || '', '']);
+    if (!user) {
+      const userId = genId('user');
+      run(`INSERT INTO users (id, username, name, role_id, status, email, auth_source, feishu_open_id, feishu_union_id, feishu_user_id)
+           VALUES (?,?,?,?,?,?,?,?,?,?)`,
+        [userId, info.user_id || info.union_id, info.name || '飞书用户', null, 'pending', info.email || '', 'feishu', info.open_id || '', info.union_id || '', info.user_id || '']);
+      user = queryOne('SELECT * FROM users WHERE id=?', [userId]);
+    } else {
+      run('UPDATE users SET feishu_open_id=?, feishu_union_id=?, feishu_user_id=?, name=?, email=? WHERE id=?',
+        [info.open_id || '', info.union_id || '', info.user_id || '', info.name || user.name, info.email || user.email, user.id]);
+    }
+    createSessionForUser(res, user, req.headers['user-agent'], req.headers['x-forwarded-for'] || req.ip);
+    auditLogin(user.id, user.username, 'feishu', true, '');
+    if (process.env.NODE_ENV === 'test') {
+      return res.json({ ok: true, user: { id: user.id, status: user.status, role_id: user.role_id, username: user.username } });
+    }
+    res.redirect('/');
+  } catch (e) {
+    auditLogin(null, '', 'feishu', false, 'exception');
+    return res.status(401).json({ error: '飞书登录失败' });
+  }
+});
+
+// 飞书通知演练记录查询（仅测试/演练模式可用；生产恒 404，不暴露任何内部状态）
+app.get('/api/feishu/notify/dryrun-log', (req, res) => {
+  if (process.env.NODE_ENV !== 'test' && process.env.FEISHU_NOTIFY_DRYRUN !== '1') return res.status(404).json({ error: 'not available' });
+  res.json({ log: __feishuDryRunLog });
+});
+
+// break-glass 本地应急登录（独立接口，强密码哈希校验，安全审计，防暴力破解）
+app.post('/api/auth/local/login', (req, res) => {
+  const { username, password } = req.body || {};
+  const ua = req.headers['user-agent'] || '';
+  const ip = req.headers['x-forwarded-for'] || req.ip || '';
+  // P0-3 防暴力破解：冷却期内统一返回 429，不暴露账号是否存在
+  if (bgIsCooling(ip, username)) {
+    return res.status(429).json({ error: '请求过于频繁，请稍后再试' });
+  }
+  const user = queryOne("SELECT * FROM users WHERE username=? AND auth_source='local'", [username]);
+  if (!user) { auditLogin(null, username || '', 'local', false, 'no_local_user', ua, ip); bgRegisterFail(ip, username); return res.status(401).json({ error: '账号或密码错误' }); }
+  if (!user.password_hash) { auditLogin(user.id, username || '', 'local', false, 'no_password_hash', ua, ip); bgRegisterFail(ip, username); return res.status(401).json({ error: '本地账号未初始化' }); }
+  if (!verifyPassword(password || '', user.password_hash)) { auditLogin(user.id, username || '', 'local', false, 'bad_password', ua, ip); bgRegisterFail(ip, username); return res.status(401).json({ error: '账号或密码错误' }); }
+  if (user.status !== 'active') { auditLogin(user.id, username || '', 'local', false, 'not_active', ua, ip); bgRegisterFail(ip, username); return res.status(401).json({ error: '账号未启用' }); }
+  bgClear(ip, username); // 成功：清除失败计数
+  auditLogin(user.id, username || '', 'local', true, '', ua, ip);
+  createSessionForUser(res, user, ua, ip);
+  const role = queryOne('SELECT * FROM roles WHERE id=?', [user.role_id]);
+  const perms = role ? JSON.parse(role.permissions || '[]') : [];
+  res.json({ id: user.id, username: user.username, name: user.name, role_id: user.role_id, role_name: role ? role.name : '', status: user.status, permissions: perms });
+});
+
+// 当前登录用户（pending 仅返回自身状态，业务接口由 apiAuth 拦截）
+app.get('/api/me', (req, res) => {
+  if (!req.currentUserId) return res.status(401).json({ error: '未登录' });
+  const user = queryOne('SELECT id,username,name,role_id,status,email,auth_source,last_login_at FROM users WHERE id=?', [req.currentUserId]);
+  if (!user) return res.status(401).json({ error: '账号不存在' });
+  const role = queryOne('SELECT * FROM roles WHERE id=?', [user.role_id]);
   res.json({
     id: user.id, username: user.username, name: user.name,
     role_id: user.role_id, role_name: role ? role.name : '',
-    permissions
+    status: user.status, email: user.email, auth_source: user.auth_source,
+    permissions: req.currentUserPermissions || (role ? JSON.parse(role.permissions || '[]') : [])
   });
 });
 
+// 登出：销毁 Session + 清除 Cookie
+app.post('/api/logout', (req, res) => {
+  const token = parseCookies(req)[SESSION_COOKIE_NAME];
+  if (token) {
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    run('DELETE FROM sessions WHERE token_hash=?', [tokenHash]);
+  }
+  res.clearCookie(SESSION_COOKIE_NAME, { httpOnly: true, secure: COOKIE_SECURE, sameSite: 'Lax', path: '/' });
+  res.json({ success: true });
+});
+
 // ==================== 用户管理 ====================
-app.get('/api/users', requireLogin, (req, res) => {
+app.get('/api/users', requireApiPermission('user_manage'), (req, res) => {
   try {
-    const result = query('SELECT * FROM users ORDER BY created_at DESC');
-    res.json(result.rows);
+    const rows = query('SELECT id, username, name, role_id, status, email, auth_source, feishu_open_id, feishu_union_id, last_login_at, created_at FROM users ORDER BY created_at DESC').rows;
+    const masked = rows.map(u => ({
+      ...u,
+      feishu_union_id: u.feishu_union_id ? ('****' + u.feishu_union_id.slice(-4)) : '',
+      feishu_open_id: u.feishu_open_id ? ('****' + u.feishu_open_id.slice(-4)) : ''
+    }));
+    res.json(masked);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/users', requireApiPermission('user_manage'), (req, res) => {
   try {
-    const { id, username, name, password, role_id, status, email } = req.body;
+    const { id, username, name, role_id, status, email, auth_source, password, password_hash } = req.body;
     if (!username || !name) return res.status(400).json({ error: '用户名和姓名不能为空' });
+    if (password || password_hash || auth_source === 'local') {
+      return res.status(400).json({ error: '不允许创建本地密码账号' });
+    }
     const exist = queryOne('SELECT id FROM users WHERE username = ?', [username]);
     if (exist) return res.status(400).json({ error: '用户名已存在' });
     const userId = id || genId('user');
-    run(`INSERT INTO users (id, username, name, password, role_id, status, email) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [userId, username, name, password || '', role_id || 'role_viewer', status || 'active', email || '']);
-    res.json({ id: userId, ...req.body });
+    // 新建用户默认 pending + role_id=NULL（待管理员启用并分配角色）；仅飞书来源
+    run(`INSERT INTO users (id, username, name, role_id, status, email, auth_source) VALUES (?, ?, ?, ?, ?, ?, 'feishu')`,
+      [userId, username, name, null, status || 'pending', email || '']);
+    res.json({ id: userId, username, name, role_id: null, status: status || 'pending', email: email || '' });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.put('/api/users/:id', requireApiPermission('user_manage'), (req, res) => {
   try {
     const { id } = req.params;
-    const { username, name, password, role_id, status, email } = req.body;
+    const { username, name, role_id, status, email, password, auth_source } = req.body;
     if (!username || !name) return res.status(400).json({ error: '用户名和姓名不能为空' });
+    const user = queryOne('SELECT * FROM users WHERE id = ?', [id]);
+    if (!user) return res.status(404).json({ error: '用户不存在' });
+    if (auth_source === 'local') return res.status(400).json({ error: '不允许设置为本地账号' });
+    if (password) return res.status(400).json({ error: '不允许修改密码' });
+    // 保护唯一 break-glass：不可停用/删除
+    if (user.auth_source === 'local' && status && status !== 'active') {
+      return res.status(400).json({ error: '不能停用 break-glass 应急账号' });
+    }
     const exist = queryOne('SELECT id FROM users WHERE username = ? AND id != ?', [username, id]);
     if (exist) return res.status(400).json({ error: '用户名已存在' });
-    const user = queryOne('SELECT password FROM users WHERE id = ?', [id]);
-    if (!user) return res.status(404).json({ error: '用户不存在' });
-    run(`UPDATE users SET username=?, name=?, password=?, role_id=?, status=?, email=? WHERE id=?`,
-      [username, name, password || user.password, role_id || 'role_viewer', status || 'active', email || '', id]);
+    // 仅更新安全字段；auth_source / 飞书身份字段 / 密码 一律不由此接口改动
+    run('UPDATE users SET username=?, name=?, role_id=?, status=?, email=? WHERE id=?',
+      [username, name, role_id || user.role_id, status || user.status, email || '', id]);
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -156,13 +613,87 @@ app.put('/api/users/:id', requireApiPermission('user_manage'), (req, res) => {
 app.delete('/api/users/:id', requireApiPermission('user_manage'), (req, res) => {
   try {
     if (req.params.id === 'user_admin') return res.status(400).json({ error: '不能删除超级管理员' });
+    const user = queryOne('SELECT * FROM users WHERE id = ?', [req.params.id]);
+    if (!user) return res.status(404).json({ error: '用户不存在' });
+    if (user.auth_source === 'local') return res.status(400).json({ error: '不能删除 break-glass 应急账号' });
     run('DELETE FROM users WHERE id = ?', [req.params.id]);
+    run('DELETE FROM sessions WHERE user_id = ?', [req.params.id]);
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ==================== 角色管理 ====================
-app.get('/api/roles', requireLogin, (req, res) => {
+// 权限目录（仅展示用 label 映射，非权限模型；key 集合必须与 db.js allPerms 完全一致）
+const PERM_LABELS = {
+  // 系统管理
+  user_manage: { label: '用户管理', module: '系统管理' },
+  role_manage: { label: '角色管理', module: '系统管理' },
+  system_config: { label: '系统配置', module: '系统管理' },
+  // 采购
+  po_view: { label: 'PO 查看', module: '采购' },
+  po_create: { label: 'PO 创建', module: '采购' },
+  po_edit: { label: 'PO 编辑', module: '采购' },
+  po_approve: { label: 'PO 审批', module: '采购' },
+  po_export: { label: 'PO 导出', module: '采购' },
+  pi_view: { label: 'PI 查看', module: '采购' },
+  pi_create: { label: 'PI 创建', module: '采购' },
+  pi_edit: { label: 'PI 编辑', module: '采购' },
+  ci_view: { label: 'CI 查看', module: '采购' },
+  ci_create: { label: 'CI 创建', module: '采购' },
+  ci_edit: { label: 'CI 编辑', module: '采购' },
+  logistics_view: { label: '物流查看', module: '采购' },
+  logistics_create: { label: '物流创建', module: '采购' },
+  logistics_edit: { label: '物流编辑', module: '采购' },
+  inbound_view: { label: '入库查看', module: '采购' },
+  inbound_create: { label: '入库创建', module: '采购' },
+  inbound_edit: { label: '入库编辑', module: '采购' },
+  inbound_confirm: { label: '入库确认', module: '采购' },
+  // 库存
+  sku_view: { label: 'SKU 查看', module: '库存' },
+  sku_create: { label: 'SKU 创建', module: '库存' },
+  sku_edit: { label: 'SKU 编辑', module: '库存' },
+  sku_delete: { label: 'SKU 删除', module: '库存' },
+  sku_import: { label: 'SKU 导入', module: '库存' },
+  sku_export: { label: 'SKU 导出', module: '库存' },
+  inventory_view: { label: '库存查看', module: '库存' },
+  inventory_import: { label: '库存导入', module: '库存' },
+  inventory_export: { label: '库存导出', module: '库存' },
+  replenishment_view: { label: '补货查看', module: '库存' },
+  replenishment_edit: { label: '补货编辑', module: '库存' },
+  check_view: { label: '盘点查看', module: '库存' },
+  check_create: { label: '盘点创建', module: '库存' },
+  check_approve: { label: '盘点审批', module: '库存' },
+  check_import: { label: '盘点导入', module: '库存' },
+  check_export: { label: '盘点导出', module: '库存' },
+  stagnant_view: { label: '呆滞查看', module: '库存' },
+  stagnant_export: { label: '呆滞导出', module: '库存' },
+  // 销售
+  outbound_view: { label: '出库查看', module: '销售' },
+  outbound_create: { label: '出库创建', module: '销售' },
+  outbound_import: { label: '出库导入', module: '销售' },
+  // 财务
+  cost_view: { label: '成本查看', module: '财务' },
+  payment_view: { label: '付款查看', module: '财务' },
+  payment_create: { label: '付款创建', module: '财务' },
+  payment_approve: { label: '付款审批', module: '财务' },
+  payment_import: { label: '付款导入', module: '财务' },
+  payment_export: { label: '付款导出', module: '财务' },
+  // 报表
+  dashboard_view: { label: '仪表盘查看', module: '报表' },
+  forwarder_view: { label: '货代查看', module: '报表' },
+  forwarder_export: { label: '货代导出', module: '报表' }
+};
+const ROLE_CRITICAL_PERMS = ['role_manage', 'user_manage', 'system_config'];
+
+// 只读：暴露权限目录给角色管理 UI（不改变 RBAC 模型，不增表）
+app.get('/api/permissions', requireApiPermission('role_manage'), (req, res) => {
+  try {
+    const list = Object.keys(PERM_LABELS).map(k => ({ key: k, label: PERM_LABELS[k].label, module: PERM_LABELS[k].module }));
+    res.json(list);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/roles', requireApiPermission('role_manage'), (req, res) => {
   try {
     const result = query('SELECT * FROM roles ORDER BY created_at');
     res.json(result.rows.map(r => ({ ...r, permissions: JSON.parse(r.permissions || '[]') })));
@@ -173,9 +704,14 @@ app.post('/api/roles', requireApiPermission('role_manage'), (req, res) => {
   try {
     const { id, name, description, permissions } = req.body;
     const roleId = id || genId('role');
+    let permsArr = Array.isArray(permissions) ? permissions.slice() : [];
+    // 安全护栏：超级管理员角色必须保留关键管理权限，避免系统失去管理入口
+    if (roleId === 'role_admin') {
+      ROLE_CRITICAL_PERMS.forEach(p => { if (!permsArr.includes(p)) permsArr.push(p); });
+    }
     run(`INSERT INTO roles (id, name, description, permissions) VALUES (?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET name=excluded.name, description=excluded.description, permissions=excluded.permissions`,
-      [roleId, name, description || '', JSON.stringify(permissions || [])]);
+      [roleId, name, description || '', JSON.stringify(permsArr)]);
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -584,16 +1120,79 @@ app.delete('/api/payment-terms/:id', requireApiPermission('system_config'), (req
 });
 
 // ==================== 审批流管理 ====================
-app.get('/api/approval-flows', requireLogin, (req, res) => {
+app.get('/api/approval-flows', requireApiPermission('system_config'), (req, res) => {
   res.json(query('SELECT * FROM approval_flows ORDER BY created_at').rows.map(f => ({ ...f, levels: JSON.parse(f.levels || '[]') })));
 });
 app.post('/api/approval-flows', requireApiPermission('system_config'), (req, res) => {
   const d = req.body;
   const fId = d.id || genId('flow');
+  const name = (d.name || '').trim();
+  const businessType = (d.business_type || '').trim();
+  const isEnabled = d.is_enabled !== undefined ? d.is_enabled : 1;
+  if (!name) return res.status(400).json({ error: '审批流名称不能为空' });
+  if (!businessType) return res.status(400).json({ error: '业务类型不能为空' });
+
+  // N5: 不可信前端提交的姓名/角色/状态/权限，必须从 DB 重新读取并校验
+  let levels = d.levels;
+  if (!Array.isArray(levels) || levels.length === 0) {
+    return res.status(400).json({ error: '审批流至少需要配置一个审批级次' });
+  }
+  // 级次按升序校验：必须连续从 1 开始、无重复、无缺漏
+  const sorted = levels.slice().sort((a, b) => Number(a.level) - Number(b.level));
+  const validated = [];
+  let expected = 1;
+  for (const lv of sorted) {
+    const lvl = Number(lv.level);
+    if (!Number.isInteger(lvl) || lvl < 1) return res.status(400).json({ error: '审批级次必须为正整数' });
+    if (lvl !== expected) return res.status(400).json({ error: '审批级次必须连续（从 1 开始，无重复/缺漏）' });
+    expected++;
+    const uid = (lv.approver_user_id || '').trim();
+    if (!uid) return res.status(400).json({ error: '第 ' + lvl + ' 级审批人不能为空' });
+    const u = queryOne('SELECT id, name, role_id, status FROM users WHERE id = ?', [uid]);
+    if (!u) return res.status(400).json({ error: '第 ' + lvl + ' 级审批用户不存在（可能已被删除）' });
+    if (u.status !== 'active') return res.status(400).json({ error: '第 ' + lvl + ' 级审批用户「' + u.name + '」状态非 active，不可选为审批人' });
+    if (!u.role_id) return res.status(400).json({ error: '第 ' + lvl + ' 级审批用户「' + u.name + '」未绑定有效角色' });
+    const role = queryOne('SELECT id, name, permissions FROM roles WHERE id = ?', [u.role_id]);
+    if (!role) return res.status(400).json({ error: '第 ' + lvl + ' 级审批用户「' + u.name + '」绑定的角色不存在' });
+    let perms = [];
+    try { perms = JSON.parse(role.permissions || '[]'); } catch (e) { perms = []; }
+    if (!perms.includes('po_approve')) return res.status(400).json({ error: '第 ' + lvl + ' 级审批用户「' + u.name + '」的角色「' + role.name + '」不具备 po_approve 权限，不可选为审批人' });
+    // 后端写入真实快照，丢弃前端伪造的姓名/角色
+    validated.push({ level: lvl, approver_user_id: u.id, approver_name: u.name, approver_role_id: u.role_id });
+  }
+
   run(`INSERT INTO approval_flows (id, name, business_type, levels, is_enabled) VALUES (?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET name=excluded.name, business_type=excluded.business_type, levels=excluded.levels, is_enabled=excluded.is_enabled`,
-    [fId, d.name, d.business_type, JSON.stringify(d.levels || []), d.is_enabled !== undefined ? d.is_enabled : 1]);
-  res.json({ success: true });
+    [fId, name, businessType, JSON.stringify(validated), isEnabled]);
+  res.json({ success: true, id: fId });
+});
+
+// N5: 审批流配置页下拉数据源——仅返回具备 po_approve 的 active 系统用户（复用系统管理用户）
+app.get('/api/approval-candidates', requireApiPermission('system_config'), (req, res) => {
+  try {
+    const users = query(`SELECT u.id, u.name, u.username, u.role_id, r.name AS role_name, r.permissions
+      FROM users u LEFT JOIN roles r ON r.id = u.role_id
+      WHERE u.status = 'active' AND u.role_id IS NOT NULL AND u.role_id != ''`).rows;
+    const out = users
+      .filter(u => {
+        let perms = [];
+        try { perms = JSON.parse(u.permissions || '[]'); } catch (e) { perms = []; }
+        return perms.includes('po_approve');
+      })
+      .map(u => ({ id: u.id, name: u.name, username: u.username, role_id: u.role_id, role_name: u.role_name || u.role_id || '' }));
+    res.json(out);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// CC 抄送候选：返回全部 active 系统用户（复用 users 表，不新建账号体系）
+// 不要求 po_approve；供提交审批时选择抄送人。仅数据记录，不触发任何通知。
+app.get('/api/cc-candidates', requireLogin, (req, res) => {
+  try {
+    const users = query(`SELECT u.id, u.name, u.username, u.role_id, r.name AS role_name
+      FROM users u LEFT JOIN roles r ON r.id = u.role_id
+      WHERE u.status = 'active'`).rows;
+    res.json(users.map(u => ({ id: u.id, name: u.name, username: u.username, role_id: u.role_id, role_name: u.role_name || u.role_id || '' })));
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ==================== 费用类型管理 ====================
@@ -1059,7 +1658,7 @@ app.post('/api/payment-subcategory-sources', requireApiPermission('system_config
 });
 
 // ==================== 系统配置 ====================
-app.get('/api/system-config', requireLogin, (req, res) => {
+app.get('/api/system-config', requireApiPermission('system_config'), (req, res) => {
   res.json(query('SELECT * FROM system_config').rows);
 });
 app.post('/api/system-config', requireApiPermission('system_config'), (req, res) => {
@@ -3075,6 +3674,30 @@ app.get('/api/purchase-orders/pending-approval', requireApiPermission('po_approv
       WHERE ar.business_type = 'po' AND ar.status = 'pending'
       ORDER BY ar.created_at DESC
     `).rows;
+    // —— CC V1：组装每个审批实例的抄送人（通用参与人表，participant_type='cc'；仅展示，不影响审批逻辑/权限/状态机） ——
+    const ccIds = rows.map(r => r.approval_id);
+    const ccMap = {};
+    if (ccIds.length > 0) {
+      const ph = ccIds.map(() => '?').join(',');
+      const ccRows = query(`SELECT business_id, user_id, user_name FROM business_participants WHERE business_type='approval' AND participant_type='cc' AND business_id IN (${ph})`, ccIds).rows;
+      for (const c of ccRows) {
+        (ccMap[c.business_id] = ccMap[c.business_id] || []).push({ user_id: c.user_id, user_name: c.user_name });
+      }
+    }
+    for (const r of rows) { r.cc_users = ccMap[r.approval_id] || []; }
+    // —— N3: 待我审批按当前登录用户 ID 过滤（仅可见性，不改状态机/权限） ——
+    // 仅当前级次节点的 approver_user_id 等于当前用户时才可见；旧数据缺 approver_user_id 不进入“待我审批”，避免静默错绑。
+    if (req.query.mine === '1' && req.currentUserId) {
+      const uid = req.currentUserId;
+      const filtered = [];
+      for (const r of rows) {
+        let approverList = [];
+        try { approverList = JSON.parse(r.approvers || '[]'); } catch (e) { approverList = []; }
+        const cur = approverList.find(a => a.level === r.current_level);
+        if (cur && cur.approver_user_id === uid) filtered.push(r);
+      }
+      return res.json(filtered);
+    }
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -3261,16 +3884,73 @@ app.post('/api/purchase-orders/:id/submit-approval', requireApiPermission('po_cr
     if (!po) return res.status(404).json({ error: 'PO不存在' });
     if (po.po_status !== 'draft') return res.status(400).json({ error: '只有草稿状态才能提交审批' });
 
-    const approverId = req.body.approver_id || req.currentUserId;
-    const approverName = req.body.approver_name || '';
-    const user = queryOne('SELECT name FROM users WHERE id = ?', [approverId]);
-    const finalApproverName = approverName || (user ? user.name : '');
+    // —— N1/N2: 读取审批流配置，生成「具体审批用户」快照（不新增引擎/条件/金额规则） ——
+    // 审批责任主体是具体系统用户（approver_user_id）；approver_role_id 仅作快照辅助，不用于责任判断。
+    const flow = queryOne("SELECT id, levels, is_enabled FROM approval_flows WHERE business_type = 'po' AND is_enabled = 1 LIMIT 1");
+    let maxLevel = 0, approvers = [];
+    if (flow && flow.levels) {
+      let levels = [];
+      try { levels = JSON.parse(flow.levels); } catch (e) { levels = []; }
+      if (Array.isArray(levels) && levels.length > 0) {
+        // 提交时再次校验每个配置审批用户仍有效（存在/active/已绑定角色/po_approve）；不信任历史快照
+        const built = [];
+        let ok = true, badMsg = '';
+        for (const lv of levels) {
+          const lvl = Number(lv.level);
+          const uid = (lv.approver_user_id || '').trim();
+          if (!uid) { ok = false; badMsg = '第 ' + lvl + ' 级审批人未配置具体用户'; break; }
+          const u = queryOne('SELECT id, name, role_id, status FROM users WHERE id = ?', [uid]);
+          if (!u) { ok = false; badMsg = '第 ' + lvl + ' 级审批用户不存在'; break; }
+          if (u.status !== 'active') { ok = false; badMsg = '第 ' + lvl + ' 级审批用户「' + u.name + '」已停用'; break; }
+          if (!u.role_id) { ok = false; badMsg = '第 ' + lvl + ' 级审批用户「' + u.name + '」未绑定角色'; break; }
+          const role = queryOne('SELECT id, name, permissions FROM roles WHERE id = ?', [u.role_id]);
+          if (!role) { ok = false; badMsg = '第 ' + lvl + ' 级审批用户「' + u.name + '」绑定的角色不存在'; break; }
+          let perms = [];
+          try { perms = JSON.parse(role.permissions || '[]'); } catch (e) { perms = []; }
+          if (!perms.includes('po_approve')) { ok = false; badMsg = '第 ' + lvl + ' 级审批用户「' + u.name + '」当前不具备 po_approve 权限'; break; }
+          built.push({ level: lvl, approver_user_id: u.id, approver_name: u.name, approver_role_id: u.role_id });
+        }
+        if (ok) { maxLevel = built.length; approvers = built; }
+        else {
+          return res.status(400).json({ error: '审批流配置无效，无法提交：' + badMsg + '。请先在系统管理修正 PO 审批流配置（指定具体审批人）。' });
+        }
+      }
+    }
+    // 无有效启用配置时拒绝提交，不回退为“任意 po_approve 用户可审”（不重新引入角色池审批作为兜底）
+    if (!approvers || maxLevel < 1) {
+      return res.status(400).json({ error: 'PO 审批流未配置或未启用，无法提交审批。请先在系统管理（审批流管理）完成 PO 审批流的具体审批人配置。' });
+    }
+
+    // —— CC V1：可选抄送人；仅接受存在且 active 的系统用户，非法值直接拒绝（保证数据干净）；空数组即无抄送 ——
+    const ccUserIds = Array.isArray(req.body.cc_user_ids) ? req.body.cc_user_ids : [];
+    const ccList = [];
+    if (ccUserIds.length > 0) {
+      const seen = new Set();
+      for (const raw of ccUserIds) {
+        const uid = (raw || '').toString().trim();
+        if (!uid || seen.has(uid)) continue;
+        const u = queryOne('SELECT id, name, status FROM users WHERE id = ?', [uid]);
+        if (!u) return res.status(400).json({ error: '抄送人「' + uid + '」不存在' });
+        if (u.status !== 'active') return res.status(400).json({ error: '抄送人「' + (u.name || uid) + '」已停用，无法抄送' });
+        seen.add(uid);
+        ccList.push({ id: u.id, name: u.name });
+      }
+    }
 
     const approvalId = genId('appr');
-    run(`INSERT INTO approval_records (id, business_type, business_id, business_code, submitter_id, submitter_name, current_level, max_level, approvers, approval_history, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [approvalId, 'po', req.params.id, po.po_no, req.currentUserId, req.body.submitter_name || '', 1, 2, JSON.stringify([{ level: 1, approver_id: approverId, approver_name: finalApproverName }]), JSON.stringify([{ level: 0, action: 'submit', user_id: req.currentUserId, user_name: req.body.submitter_name || '', time: new Date().toISOString(), remark: '提交审批' }]), 'pending']);
-
-    run(`UPDATE purchase_orders SET po_status = ?, approval_status = ? WHERE id = ?`, ['pending_approval', 'pending', req.params.id]);
+    // 同事务原子写入：审批实例 + CC 关系 + PO 状态；任一步失败整体回滚，避免半截数据
+    transaction(() => {
+      run(`INSERT INTO approval_records (id, business_type, business_id, business_code, submitter_id, submitter_name, current_level, max_level, approvers, approval_history, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [approvalId, 'po', req.params.id, po.po_no, req.currentUserId, req.body.submitter_name || '', 1, maxLevel, JSON.stringify(approvers), JSON.stringify([{ level: 0, action: 'submit', user_id: req.currentUserId, user_name: req.body.submitter_name || '', time: new Date().toISOString(), remark: '提交审批' }]), 'pending']);
+      // CC 关系落通用参与人表（participant_type='cc'）；无 CC 时跳过，保持原审批体验
+      for (const c of ccList) {
+        run(`INSERT INTO business_participants (id, business_type, business_id, participant_type, user_id, user_name) VALUES (?, ?, ?, ?, ?, ?)`,
+          [genId('bp'), 'approval', approvalId, 'cc', c.id, c.name]);
+      }
+      run(`UPDATE purchase_orders SET po_status = ?, approval_status = ? WHERE id = ?`, ['pending_approval', 'pending', req.params.id]);
+    });
+    // —— FEISHU-NOTIFY-01：事务完成后 best-effort 通知（不阻塞、不影响审批结果）——
+    notifyApprovalParticipants(approvalId, 'submit', { po_no: po.po_no }).catch(() => {});
     res.json({ success: true, approval_id: approvalId });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -3279,11 +3959,34 @@ app.post('/api/purchase-orders/:id/submit-approval', requireApiPermission('po_cr
 app.post('/api/purchase-orders/:id/approve', requireApiPermission('po_approve'), (req, res) => {
   try {
     const { action, remark } = req.body; // action: approve / reject / withdraw
+    if (!['approve', 'reject', 'withdraw'].includes(action)) {
+      return res.status(400).json({ error: '非法的审批动作' });
+    }
     const po = queryOne('SELECT * FROM purchase_orders WHERE id = ?', [req.params.id]);
     if (!po) return res.status(404).json({ error: 'PO不存在' });
 
     const approval = queryOne('SELECT * FROM approval_records WHERE business_id = ? AND business_type = ? ORDER BY created_at DESC LIMIT 1', [req.params.id, 'po']);
     if (!approval) return res.status(400).json({ error: '未找到审批记录' });
+
+    // —— N4: PO approve/reject 双重校验（仅 PO 入口；不扩展到付款/其他业务；不重构状态模型；withdraw 保持历史现状不加节点校验） ——
+    if (action === 'approve' || action === 'reject') {
+      if (approval.status !== 'pending') {
+        return res.status(403).json({ error: '当前审批实例不在可审批状态' });
+      }
+      const curLevel = approval.current_level;
+      if (!Number.isInteger(curLevel) || curLevel < 1 || curLevel > approval.max_level) {
+        return res.status(403).json({ error: '当前审批级次无效' });
+      }
+      let approverList = [];
+      try { approverList = JSON.parse(approval.approvers || '[]'); } catch (e) { approverList = []; }
+      const curNode = approverList.find(a => a.level === curLevel);
+      if (!curNode || !curNode.approver_user_id) {
+        return res.status(403).json({ error: '当前级次未配置具体审批人，无法审批' });
+      }
+      if (curNode.approver_user_id !== req.currentUserId) {
+        return res.status(403).json({ error: '您不是当前审批级次的指定审批人，无权审批' });
+      }
+    }
 
     const history = JSON.parse(approval.approval_history || '[]');
     const user = queryOne('SELECT name FROM users WHERE id = ?', [req.currentUserId]);
@@ -3296,14 +3999,20 @@ app.post('/api/purchase-orders/:id/approve', requireApiPermission('po_approve'),
         history.push({ level: approval.current_level, action: 'approve', user_id: req.currentUserId, user_name: userName, time: new Date().toISOString(), remark: remark || '' });
         run('UPDATE approval_records SET status = ?, approval_history = ?, updated_at = datetime(\'now\') WHERE id = ?', ['approved', JSON.stringify(history), approval.id]);
         run('UPDATE purchase_orders SET po_status = ?, approval_status = ? WHERE id = ?', ['approved', 'approved', req.params.id]);
+        // —— FEISHU-NOTIFY-01：事务外 best-effort 通知提交人 + CC ——
+        notifyApprovalParticipants(approval.id, 'approved_final', { po_no: po.po_no }).catch(() => {});
       } else {
         history.push({ level: approval.current_level, action: 'approve', user_id: req.currentUserId, user_name: userName, time: new Date().toISOString(), remark: remark || '' });
         run('UPDATE approval_records SET current_level = ?, approval_history = ?, updated_at = datetime(\'now\') WHERE id = ?', [nextLevel, JSON.stringify(history), approval.id]);
+        // —— FEISHU-NOTIFY-01：事务外 best-effort 通知下一级审批人 + CC ——
+        notifyApprovalParticipants(approval.id, 'approved_intermediate', { po_no: po.po_no }).catch(() => {});
       }
     } else if (action === 'reject') {
       history.push({ level: approval.current_level, action: 'reject', user_id: req.currentUserId, user_name: userName, time: new Date().toISOString(), remark: remark || '' });
       run('UPDATE approval_records SET status = ?, approval_history = ?, updated_at = datetime(\'now\') WHERE id = ?', ['rejected', JSON.stringify(history), approval.id]);
       run('UPDATE purchase_orders SET po_status = ?, approval_status = ? WHERE id = ?', ['draft', 'rejected', req.params.id]);
+      // —— FEISHU-NOTIFY-01：事务外 best-effort 通知提交人 + CC ——
+      notifyApprovalParticipants(approval.id, 'reject', { po_no: po.po_no }).catch(() => {});
     } else if (action === 'withdraw') {
       history.push({ level: 0, action: 'withdraw', user_id: req.currentUserId, user_name: userName, time: new Date().toISOString(), remark: remark || '' });
       run('UPDATE approval_records SET status = ?, approval_history = ?, updated_at = datetime(\'now\') WHERE id = ?', ['withdrawn', JSON.stringify(history), approval.id]);
@@ -3630,10 +4339,16 @@ app.post('/api/commercial-invoices', requireApiPermission('ci_create'), (req, re
   try {
     const d = req.body;
     if (!d.supplier_name) return res.status(400).json({ error: '供应商不能为空' });
+    // CI-SHIP-DATE-01：实际出货日期必填（不允许默认填充今天）
+    let actualShipDate;
+    try { actualShipDate = historicalCIDate(d.actual_ship_date, '实际出货日期', true); }
+    catch (e) { return res.status(e.status || 400).json({ error: e.message }); }
     const ciId = genId('ci');
     const ciNo = d.ci_no || `CI-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
     let goodsAmount = 0;
     const pi = d.related_pi_id ? queryOne('SELECT * FROM proforma_invoices WHERE id = ?', [d.related_pi_id]) : null;
+    // PAY-CREDIT-DUE-01：从 PI 已选付款条款快照 Credit 天数（运营 CI 仅此来源，不读实时供应商配置）
+    const ciCredit = resolveOperationalCiCreditSnapshot(d.related_pi_id);
     // P1-STATE-01B 守卫①：运营链路 CI 必须关联 PI（在任何 INSERT/UPDATE 之前）
     if (!d.related_pi_id) return res.status(400).json({ error: 'CI 必须关联 PI，不能直接创建' });
     if (!pi) return res.status(400).json({ error: '关联的PI不存在' });
@@ -3646,8 +4361,8 @@ app.post('/api/commercial-invoices', requireApiPermission('ci_create'), (req, re
     const piTotalAmount = pi ? (pi.total_amount || 0) : 0;
 
     transaction(() => {
-      run(`INSERT INTO commercial_invoices (id, ci_no, related_po_id, related_po_no, related_pi_id, related_pi_no, supplier_id, supplier_name, brand, country, target_warehouse, ci_date, shipment_batch, currency, goods_amount, pi_total_amount, amount_difference, difference_reason, ci_status, attachment, pl_attachment, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [ciId, ciNo, relatedPoId || '', relatedPoNo || '', d.related_pi_id || '', d.related_pi_no || '', d.supplier_id || '', d.supplier_name, d.brand || (pi ? pi.brand : ''), d.country || (pi ? pi.country : ''), d.target_warehouse || (pi ? pi.target_warehouse : ''), d.ci_date || new Date().toISOString().split('T')[0], d.shipment_batch || 1, d.currency || 'USD', 0, piTotalAmount, 0, d.difference_reason || '', d.ci_status || 'uploaded', parseAttachment(d.attachment), parseAttachment(d.pl_attachment), d.remark || '']);
+      run(`INSERT INTO commercial_invoices (id, ci_no, related_po_id, related_po_no, related_pi_id, related_pi_no, supplier_id, supplier_name, brand, country, target_warehouse, ci_date, actual_ship_date, payment_term_id, credit_days, shipment_batch, currency, goods_amount, pi_total_amount, amount_difference, difference_reason, ci_status, attachment, pl_attachment, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [ciId, ciNo, relatedPoId || '', relatedPoNo || '', d.related_pi_id || '', d.related_pi_no || '', d.supplier_id || '', d.supplier_name, d.brand || (pi ? pi.brand : ''), d.country || (pi ? pi.country : ''), d.target_warehouse || (pi ? pi.target_warehouse : ''), d.ci_date || new Date().toISOString().split('T')[0], actualShipDate, ciCredit.paymentTermId, ciCredit.creditDays, d.shipment_batch || 1, d.currency || 'USD', 0, piTotalAmount, 0, d.difference_reason || '', d.ci_status || 'uploaded', parseAttachment(d.attachment), parseAttachment(d.pl_attachment), d.remark || '']);
 
       if (d.items && d.items.length > 0) {
         d.items.forEach(item => {
@@ -3743,6 +4458,17 @@ app.post('/api/commercial-invoices/:id/void', requireApiPermission('ci_edit'), (
     logOperation({ operator_id: req.currentUserId, operator_name: req.currentUserName, page: 'commercial_invoice', operation_type: 'void', target_ids: [ci.id], affected_count: 1, old_values: { ci_status: ci.ci_status }, new_values: { ci_status: 'cancelled', void_reason }, reason: void_reason, triggered_recalc: 0, is_rollbackable: 0 });
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// CI-SHIP-DATE-01：仅补充/更正运营 CI 的实际出货日期（不触发 payable_date、不动 due_date、不创建/修改 payment_request）
+app.put('/api/commercial-invoices/:id/actual-ship-date', requireApiPermission('ci_edit'), (req, res) => {
+  try {
+    const ci = queryOne('SELECT id, actual_ship_date FROM commercial_invoices WHERE id = ?', [req.params.id]);
+    if (!ci) return res.status(404).json({ error: 'CI不存在' });
+    const shipDate = historicalCIDate(req.body.actual_ship_date, '实际出货日期', true);
+    run('UPDATE commercial_invoices SET actual_ship_date = ?, updated_at = datetime(\'now\') WHERE id = ?', [shipDate, ci.id]);
+    res.json({ success: true, id: ci.id, actual_ship_date: shipDate });
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
 // ==================== PL 管理 ====================
@@ -3858,12 +4584,16 @@ app.post('/api/commercial-invoices/batch-import', requireApiPermission('ci_creat
           const piNo = s(pick(row, ['关联PI编号', 'PI编号', 'related_pi_no', 'pi_no']));
           const sku = s(pick(row, ['SKU', 'sku_code']));
           if (!skuExists(sku)) throw new Error('SKU不存在：' + sku);
+          // CI-SHIP-DATE-01：实际出货日期必填（批量导入也不得静默通过）
+          const actualShipDate = historicalCIDate(s(pick(row, ['实际出货日期', 'actual_ship_date'])), '实际出货日期', true);
           let po = poNo ? queryOne('SELECT * FROM purchase_orders WHERE po_no = ?', [poNo]) : null;
           if (poNo && !po) throw new Error('无法匹配PO：' + poNo);
           const pi = piNo ? queryOne('SELECT * FROM proforma_invoices WHERE pi_no = ?', [piNo]) : null;
           // P1-STATE-01B 守卫①：运营链路 CI 必须关联 PI（在任何 INSERT/UPDATE 之前）
           if (!piNo) throw new Error('CI 必须关联 PI，不能直接创建');
           if (!pi) throw new Error('关联的PI不存在：' + piNo);
+          // PAY-CREDIT-DUE-01：从 PI 已选付款条款快照 Credit 天数
+          const ciCredit = resolveOperationalCiCreditSnapshot(pi ? pi.id : null);
           // P1-STATE-01B 守卫②：需定金且定金未付清，禁止生成 CI
           if (pi.need_deposit && pi.deposit_payment_status !== 'paid') throw new Error('PI 定金尚未付清，不能生成 CI：' + (pi.pi_no || pi.id));
           if (!po && pi?.related_po_no) po = queryOne('SELECT * FROM purchase_orders WHERE po_no = ?', [pi.related_po_no]);
@@ -3882,8 +4612,8 @@ app.post('/api/commercial-invoices/batch-import', requireApiPermission('ci_creat
           if (exist && exist.cost_confirmed) throw new Error('该CI费用已确认，不能继续追加或修改CI明细：' + ciNo);
           let ciId = exist ? exist.id : genId('ci');
           if (!exist) {
-            run(`INSERT INTO commercial_invoices (id, ci_no, related_po_id, related_po_no, related_pi_id, related_pi_no, supplier_id, supplier_name, brand, country, target_warehouse, ci_date, currency, goods_amount, pi_total_amount, amount_difference, difference_reason, ci_status, attachment, pl_attachment, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              [ciId, ciNo, po.id, po.po_no, pi ? pi.id : '', pi ? pi.pi_no : '', po.supplier_id || '', po.supplier_name || '', po.brand || '', po.country || '', po.target_warehouse || '', s(pick(row, ['CI日期', 'ci_date'])) || new Date().toISOString().split('T')[0], s(pick(row, ['币种', 'currency'])) || po.currency || 'USD', 0, pi ? (pi.total_amount || 0) : 0, 0, s(pick(row, ['差异原因', 'difference_reason'])), 'uploaded', parseAttachment(row.attachment || ''), parseAttachment(row.pl_attachment || ''), s(pick(row, ['备注', 'remark']))]);
+            run(`INSERT INTO commercial_invoices (id, ci_no, related_po_id, related_po_no, related_pi_id, related_pi_no, supplier_id, supplier_name, brand, country, target_warehouse, ci_date, actual_ship_date, payment_term_id, credit_days, currency, goods_amount, pi_total_amount, amount_difference, difference_reason, ci_status, attachment, pl_attachment, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [ciId, ciNo, po.id, po.po_no, pi ? pi.id : '', pi ? pi.pi_no : '', po.supplier_id || '', po.supplier_name || '', po.brand || '', po.country || '', po.target_warehouse || '', s(pick(row, ['CI日期', 'ci_date'])) || new Date().toISOString().split('T')[0], actualShipDate, ciCredit.paymentTermId, ciCredit.creditDays, s(pick(row, ['币种', 'currency'])) || po.currency || 'USD', 0, pi ? (pi.total_amount || 0) : 0, 0, s(pick(row, ['差异原因', 'difference_reason'])), 'uploaded', parseAttachment(row.attachment || ''), parseAttachment(row.pl_attachment || ''), s(pick(row, ['备注', 'remark']))]);
           }
           run(`INSERT INTO commercial_invoice_items (id, ci_id, ci_no, pi_no, sku_code, shipped_qty, unit_price, ci_amount, actual_customs_rate, inbound_qty, uninbound_qty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [genId('cii'), ciId, ciNo, pi ? pi.pi_no : '', sku, qty, price, amount, actualCustomsRate, 0, qty]);
@@ -4980,6 +5710,39 @@ function historicalCIDate(value, label, required) {
   return date;
 }
 
+// PAY-CREDIT-DUE-01：日期加 n 天（基于 YYYY-MM-DD，无时区，返回 YYYY-MM-DD）
+function addDays(dateStr, n) {
+  if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return '';
+  const d = new Date(dateStr + 'T00:00:00Z');
+  if (Number.isNaN(d.getTime())) return '';
+  d.setUTCDate(d.getUTCDate() + Number(n));
+  return d.toISOString().slice(0, 10);
+}
+
+// PAY-CREDIT-DUE-01：运营 CI 从 PI 已选付款条款快照 Credit 天数（仅 term_type='credit'）；历史 CI 不调用此函数（避免用供应商当前默认配置回推）
+function resolveOperationalCiCreditSnapshot(relatedPiId) {
+  let paymentTermId = '';
+  let creditDays = 0;
+  if (relatedPiId) {
+    const pi = queryOne('SELECT payment_term_id FROM proforma_invoices WHERE id = ?', [relatedPiId]);
+    if (pi && pi.payment_term_id) {
+      const term = queryOne("SELECT id, credit_days FROM supplier_payment_terms WHERE id = ? AND term_type = 'credit'", [pi.payment_term_id]);
+      if (term) {
+        paymentTermId = term.id;
+        creditDays = Number(term.credit_days) || 0;
+      }
+    }
+  }
+  return { paymentTermId, creditDays };
+}
+
+// PAY-CREDIT-DUE-01：应付日期 = 实际出货日期 + Credit 天数；仅 goods+Credit（credit_days>0 且 actual_ship_date 合法），否则留空（待补充）
+function computePayableDate(actualShipDate, creditDays) {
+  if (!actualShipDate || !/^\d{4}-\d{2}-\d{2}$/.test(actualShipDate)) return '';
+  if (!creditDays || Number(creditDays) <= 0) return '';
+  return addDays(actualShipDate, Number(creditDays));
+}
+
 function normalizeHistoricalCI(body) {
   const historicalCiNo = String(historicalCIField(body, 'historical_ci_no', '历史CI编号', 'CI编号') || '').trim();
   if (!historicalCiNo) throw new SettlementError(400, '历史 CI 编号不能为空');
@@ -5005,6 +5768,12 @@ function normalizeHistoricalCI(body) {
   const ciDate = historicalCIDate(historicalCIField(body, 'ci_date', 'CI日期'), '历史 CI 日期', true);
   const historicalPaidDate = historicalCIDate(historicalCIField(body, 'historical_paid_date', '历史付款日期'), '历史已付款日期', false);
   const dueDate = historicalCIDate(historicalCIField(body, 'due_date', '到期日'), '到期日', false);
+  // CI-SHIP-DATE-01：实际出货日期必填（历史 CI 与运营 CI 同名字段，不允许默认填充今天）
+  const actualShipDate = historicalCIDate(historicalCIField(body, 'actual_ship_date', '实际出货日期'), '实际出货日期', true);
+  // PAY-CREDIT-DUE-01：历史 CI 仅接受导入时**明确提供**的 Credit 天数；不自动用供应商当前默认配置回推历史应付日期
+  const explicitPaymentTermId = String(historicalCIField(body, 'payment_term_id', '付款条款ID') || '').trim();
+  const rawCreditDays = historicalCIField(body, 'credit_days', 'Credit天数', '信用天数');
+  const creditDays = (rawCreditDays !== '' && rawCreditDays !== null && rawCreditDays !== undefined && Number(rawCreditDays) > 0) ? Number(rawCreditDays) : 0;
 
   const currency = String(historicalCIField(body, 'currency', '币种') || '').trim().toUpperCase();
   const currencyRow = currency ? queryOne("SELECT code FROM currencies WHERE code = ? AND status = 'active'", [currency]) : null;
@@ -5025,12 +5794,15 @@ function normalizeHistoricalCI(body) {
     brand_name: brandName || brandId,
     country,
     ci_date: ciDate,
+    actual_ship_date: actualShipDate,
     currency,
     gross_goods_amount: grossGoodsAmount,
     historical_paid_amount: historicalPaidAmount,
     historical_paid_date: historicalPaidDate,
     payment_terms: String(historicalCIField(body, 'payment_terms', '付款条件') || '').trim(),
     due_date: dueDate || '',
+    payment_term_id: explicitPaymentTermId,
+    credit_days: creditDays,
     source_note: String(historicalCIField(body, 'source_note', '原始凭证或备注', '备注') || '').trim(),
     source_mode: 'historical'
   };
@@ -5074,15 +5846,17 @@ function createHistoricalCI(body, req) {
     const historicalId = genId('hci');
     const paymentRequestId = genId('pay');
     const paymentRequestNo = `PAY-HCI-${String(paymentRequestId).replace(/^pay_/, '').toUpperCase()}`;
+    // PAY-CREDIT-DUE-01：应付日期 = 实际出货日期 + Credit 天数（仅 goods+Credit）；否则留空（待补充），due_date 仅作证据
+    const historicalPayableDate = computePayableDate(normalized.actual_ship_date, normalized.credit_days);
     run(`INSERT INTO historical_commercial_invoices
          (id, historical_ci_no, supplier_id, supplier_name, supplier_identity, brand_id, brand_name,
-          country, ci_date, currency, gross_goods_amount, historical_paid_amount, historical_paid_date,
+          country, ci_date, actual_ship_date, payment_term_id, credit_days, currency, gross_goods_amount, historical_paid_amount, historical_paid_date,
           payment_terms, due_date, source_note, source_mode, idempotency_key, payload_hash,
           created_by, created_by_name)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'historical', ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'historical', ?, ?, ?, ?)`,
       [historicalId, normalized.historical_ci_no, normalized.supplier_id, normalized.supplier_name,
         normalized.supplier_identity, normalized.brand_id, normalized.brand_name, normalized.country,
-        normalized.ci_date, normalized.currency, normalized.gross_goods_amount, normalized.historical_paid_amount,
+        normalized.ci_date, normalized.actual_ship_date, normalized.payment_term_id, normalized.credit_days, normalized.currency, normalized.gross_goods_amount, normalized.historical_paid_amount,
         normalized.historical_paid_date, normalized.payment_terms, normalized.due_date, normalized.source_note,
         normalized.idempotency_key, normalized.payload_hash, operator.id, operator.name]);
 
@@ -5094,7 +5868,7 @@ function createHistoricalCI(body, req) {
                  'approved', ?, datetime('now'), ?, ?)`,
       [paymentRequestId, paymentRequestNo, historicalId, normalized.historical_ci_no, normalized.supplier_name,
         normalized.gross_goods_amount, normalized.gross_goods_amount, normalized.currency, normalized.payment_terms,
-        normalized.due_date, operator.name, normalized.source_note, normalized.country]);
+        historicalPayableDate, operator.name, normalized.source_note, normalized.country]);
 
     run('UPDATE historical_commercial_invoices SET payment_request_id = ?, updated_at = datetime(\'now\') WHERE id = ?',
       [paymentRequestId, historicalId]);
@@ -5281,6 +6055,17 @@ app.post('/api/historical-commercial-invoices/batch-import',
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
+  // CI-SHIP-DATE-01：仅补充/更正历史 CI 的实际出货日期（不触发 payable_date、不动 due_date、不创建/修改 payment_request）
+  app.put('/api/historical-commercial-invoices/:id/actual-ship-date', requireApiPermission('ci_edit'), (req, res) => {
+    try {
+      const hci = queryOne('SELECT id, due_date, actual_ship_date FROM historical_commercial_invoices WHERE id = ?', [req.params.id]);
+      if (!hci) return res.status(404).json({ error: '历史 CI 不存在' });
+      const shipDate = historicalCIDate(req.body.actual_ship_date, '实际出货日期', true);
+      run('UPDATE historical_commercial_invoices SET actual_ship_date = ?, updated_at = datetime(\'now\') WHERE id = ?', [shipDate, hci.id]);
+      res.json({ success: true, id: hci.id, actual_ship_date: shipDate });
+    } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+  });
+
 function purchaseAmountScope(rows) {
   const byCurrency = {};
   let count = 0;
@@ -5319,6 +6104,180 @@ app.get('/api/payment-requests', requireApiPermission('payment_view'), (req, res
   if (keyword) { sql += ' AND (request_no LIKE ? OR supplier_name LIKE ? OR source_no LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`); }
   sql += ' ORDER BY payable_date ASC, created_at DESC';
   res.json(query(sql, params).rows);
+});
+
+// ==================== FIN-DASHBOARD-01：财务应付驾驶舱（只读聚合，不改任何业务规则/表结构/付款链）====================
+// 口径全部复用已冻结实现：
+//  - 未结清 = paymentSettlementFacts().outstanding（payable - 有效付款 - 有效抵扣 - 有效抹零，仅 status='applied'）
+//  - 状态   = derivePaymentStatus()
+//  - 到期日 = 持久化 payable_date（由 computePayableDate 在建单时写入；空则归入"无到期日"桶，不臆造）
+//  - 币种   = 严格按币种分组，绝不跨币种裸加/臆造 RMB 折算
+//  - 供应商 = supplier_name（冗余快照，全行可用；无 supplier_id 外键，不臆造）
+//  - 费用类型 = payment_category；付款主体 = payee_type
+const PAYABLE_CATEGORY_LABELS = { goods: '货款', warehouse_arrival: '到仓费用', customs_duty: '关税', inspection_fee: '商检费用' };
+const PAYABLE_SUBCAT_LABELS = { deposit: '定金', balance: '尾款', duty: '关税', inspection: '商检', freight: '运费' };
+const PAYABLE_PAYEE_LABELS = { factory: '工厂', customs: '海关', inspection_org: '检验机构', service_provider: '服务商' };
+const PAYABLE_STATUS_LABELS = { pending_approval: '待审批', approved: '已审批', paid: '已付款', rejected: '已驳回', partial_paid: '部分付款', partial_deduction: '部分抵扣', partial_rounding: '部分抹零', deduction_settled: '全额抵扣', partial_payment_partial_deduction: '部分付款+部分抵扣', reversed: '已冲销', cancelled: '已取消' };
+
+app.get('/api/finance/payable-cockpit', requireApiPermission('payment_view'), (req, res) => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    // 付款提前提醒天数改读 system_config（payment_remind_days，缺省 7）；30 天展示桶保持固定，不配置化
+    const remindDays = parseInt(queryOne("SELECT value FROM system_config WHERE key = 'payment_remind_days'")?.value || '7', 10);
+    const d7 = addDays(today, remindDays);
+    const d30 = addDays(today, 30);
+    // 应付实体：payment_requests 全量，排除已驳回/已取消（非应付义务）；含 pending（待审仍是应付义务）
+    const rows = query(`SELECT * FROM payment_requests
+                        WHERE approval_status != 'rejected'
+                          AND payment_status NOT IN ('rejected', 'cancelled')`).rows;
+
+    const m2 = (v) => settlementMoney(v);
+    const enriched = rows.map(pr => {
+      const facts = paymentSettlementFacts(pr);
+      const status = derivePaymentStatus(pr, facts);
+      const outstanding = Math.max(0, facts.outstanding);
+      const settled = m2(facts.effectivePaid + facts.effectiveDeduction + facts.effectiveRounding);
+      // 到期日：持久化字段优先；空归入"无到期日"桶
+      const payableDate = String(pr.payable_date || '').trim();
+      const hasDue = /^\d{4}-\d{2}-\d{2}$/.test(payableDate);
+      const overdueDays = (hasDue && outstanding > 0 && payableDate < today)
+        ? Math.max(0, Math.floor((new Date(today + 'T00:00:00Z') - new Date(payableDate + 'T00:00:00Z')) / 86400000))
+        : 0;
+      return {
+        id: pr.id,
+        request_no: pr.request_no,
+        supplier_name: pr.supplier_name || '（未填供应商）',
+        country: (pr.expense_country || '').trim(),
+        source_type: pr.source_type || '',
+        related_pi_no: pr.source_type === 'pi' ? (pr.source_no || '') : '',
+        related_ci_no: pr.related_ci_no || (pr.source_type === 'ci' ? pr.source_no : '') || '',
+        payment_category: pr.payment_category || '',
+        category_label: PAYABLE_CATEGORY_LABELS[pr.payment_category] || pr.payment_category || '',
+        subcategory: pr.payment_subcategory || '',
+        subcategory_label: PAYABLE_SUBCAT_LABELS[pr.payment_subcategory] || pr.payment_subcategory || '',
+        payee_type: pr.payee_type || '',
+        payee_label: PAYABLE_PAYEE_LABELS[pr.payee_type] || pr.payee_type || '',
+        currency: pr.currency || '',
+        gross_payable: m2(facts.grossPayable),
+        settled,
+        outstanding,
+        last_payment_date: (facts.latestPayment && facts.latestPayment.paid_date) || pr.paid_date || '',
+        local_amount: Number(pr.local_amount || 0),
+        rmb_amount: Number(pr.rmb_amount || 0),
+        payable_date: hasDue ? payableDate : '',
+        has_due: hasDue,
+        overdue_days: overdueDays,
+        status,
+        status_label: PAYABLE_STATUS_LABELS[status] || status,
+        approval_status: pr.approval_status || '',
+        source_mode: pr.source_type === 'historical_ci' ? 'historical' : 'operational'
+      };
+    });
+
+    // 顶部核心指标：按币种分组（绝不跨币种合并）
+    const metrics = {};
+    const bump = (cur) => {
+      if (!metrics[cur]) metrics[cur] = {
+        currency: cur, request_count: 0, gross_payable: 0, settled: 0, outstanding: 0,
+        due_7: 0, due_30: 0, overdue_amount: 0, overdue_count: 0, no_due_outstanding: 0
+      };
+      return metrics[cur];
+    };
+    enriched.forEach(r => {
+      const mm = bump(r.currency);
+      mm.request_count += 1;
+      mm.gross_payable = m2(mm.gross_payable + r.gross_payable);
+      mm.settled = m2(mm.settled + r.settled);
+      mm.outstanding = m2(mm.outstanding + r.outstanding);
+      if (r.outstanding > 0) {
+        if (!r.has_due) {
+          mm.no_due_outstanding = m2(mm.no_due_outstanding + r.outstanding);
+        } else if (r.payable_date < today) {
+          mm.overdue_amount = m2(mm.overdue_amount + r.outstanding);
+          mm.overdue_count += 1;
+        } else {
+          if (r.payable_date <= d7) mm.due_7 = m2(mm.due_7 + r.outstanding);
+          if (r.payable_date <= d30) mm.due_30 = m2(mm.due_30 + r.outstanding);
+        }
+      }
+    });
+
+    // 按供应商汇总（供应商 + 币种为聚合键，可下钻）
+    const supMap = {};
+    enriched.forEach(r => {
+      const key = r.supplier_name + '||' + r.currency;
+      if (!supMap[key]) supMap[key] = {
+        supplier_name: r.supplier_name, currency: r.currency,
+        gross_payable: 0, settled: 0, outstanding: 0, due_soon: 0, overdue_amount: 0,
+        earliest_due_date: '', outstanding_count: 0, request_count: 0, ids: [], last_payment_date: ''
+      };
+      const s = supMap[key];
+      s.request_count += 1;
+      s.ids.push(r.id);
+      s.gross_payable = m2(s.gross_payable + r.gross_payable);
+      s.settled = m2(s.settled + r.settled);
+      s.outstanding = m2(s.outstanding + r.outstanding);
+      if (r.outstanding > 0) {
+        s.outstanding_count += 1;
+        if (r.has_due) {
+          if (r.payable_date < today) s.overdue_amount = m2(s.overdue_amount + r.outstanding);
+          else if (r.payable_date <= d30) s.due_soon = m2(s.due_soon + r.outstanding);
+          if (!s.earliest_due_date || r.payable_date < s.earliest_due_date) s.earliest_due_date = r.payable_date;
+        }
+      }
+      if (r.last_payment_date && (!s.last_payment_date || r.last_payment_date > s.last_payment_date)) s.last_payment_date = r.last_payment_date;
+    });
+    const by_supplier = Object.values(supMap).sort((a, b) => b.outstanding - a.outstanding);
+
+    // 按费用类型汇总（费用类型 + 币种）
+    const catMap = {};
+    enriched.forEach(r => {
+      const key = r.payment_category + '||' + r.currency;
+      if (!catMap[key]) catMap[key] = {
+        payment_category: r.payment_category, category_label: r.category_label, currency: r.currency,
+        gross_payable: 0, settled: 0, outstanding: 0, request_count: 0
+      };
+      const c = catMap[key];
+      c.request_count += 1;
+      c.gross_payable = m2(c.gross_payable + r.gross_payable);
+      c.settled = m2(c.settled + r.settled);
+      c.outstanding = m2(c.outstanding + r.outstanding);
+    });
+    const by_category = Object.values(catMap).sort((a, b) => b.outstanding - a.outstanding);
+
+    // 供应商关联品牌（仅展示用，不影响任何金额/状态/结算计算；空 associated_brands 解析为 ''）
+    const supRows = query('SELECT name, associated_brands FROM suppliers').rows;
+    const supplier_brands = {};
+    supRows.forEach(s => {
+      let arr = [];
+      try { arr = JSON.parse(s.associated_brands || '[]'); } catch (e) { arr = []; }
+      supplier_brands[s.name] = (Array.isArray(arr) && arr.length) ? arr.join(', ') : '';
+    });
+
+    // 明细：未结清优先 + 到期日升序
+    const details = enriched.slice().sort((a, b) => {
+      if ((b.outstanding > 0) !== (a.outstanding > 0)) return (b.outstanding > 0) - (a.outstanding > 0);
+      const ad = a.payable_date || '9999-12-31', bd = b.payable_date || '9999-12-31';
+      return ad.localeCompare(bd);
+    });
+
+    res.json({
+      generated_at: new Date().toISOString(),
+      today,
+      currencies: Object.keys(metrics).sort(),
+      metrics,
+      by_supplier,
+      by_category,
+      supplier_brands,
+      details,
+      notes: {
+        currency: '各币种独立汇总，未提供 USD→RMB 等锁定汇率证据时不做跨币种折算或裸加',
+        due_date: '到期日=CI实际出货日+Credit天数（computePayableDate 建单时写入 payable_date）；底层出货日/账期未录入的单据归入"无到期日"',
+        outstanding: '未结清=应付-有效付款-有效抵扣-有效抹零（仅计 status=applied 的结算事件，与付款管理页/落库 unpaid_amount 同口径）',
+        scope: '仅口径展示，未修改任何付款/审批/抵扣/冲销/汇率/WAC 业务规则与数据'
+      }
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // 计算付款申请"总数量"（按已确认口径：以 payment_category 为准）
@@ -5492,14 +6451,16 @@ app.post('/api/payment-requests/from-ci-balance', requireApiPermission('payment_
       if (!deduction_source_type || !deduction_source_desc) return res.status(400).json({ error: '抵扣金额大于0时必须填写抵扣来源类型和说明' });
     }
     const actualPay = settlementMoney(unpaidBalance - dedAmount);
+    // PAY-CREDIT-DUE-01：应付日期 = 实际出货日期 + Credit 天数（仅 goods+Credit）；否则留空（待补充）
+    const balancePayableDate = computePayableDate(ci.actual_ship_date, ci.credit_days);
 
     const prId = genId('pay');
     const prNo = `PAY-BAL-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
 
     // 三、INSERT 付款申请 + 更新 CI 状态，必须处于同一事务（任一步失败整体回滚）
     transaction(() => {
-      run(`INSERT INTO payment_requests (id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no, payee_type, supplier_name, payable_amount, paid_amount, unpaid_amount, currency, payment_terms, payment_status, approval_status, remark, has_deduction, deduction_amount, deduction_source_type, deduction_source_desc, deduction_ref_no, actual_pay_amount, related_ci_id, related_ci_no, related_po_no, expense_country) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [prId, prNo, 'goods', 'balance', 'ci', ci_id, ci.ci_no, 'factory', ci.supplier_name, unpaidBalance, 0, actualPay, ci.currency || 'USD', '', 'pending_approval', 'pending', `CI尾款 ${ci.ci_no}`, deductionEnabled ? 1 : 0, dedAmount, deduction_source_type || '', deduction_source_desc || '', deduction_ref_no || '', actualPay, ci_id, ci.ci_no, ci.related_po_no || '', String(ci.country || '').trim()]);
+      run(`INSERT INTO payment_requests (id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no, payee_type, supplier_name, payable_amount, paid_amount, unpaid_amount, currency, payment_terms, payable_date, payment_status, approval_status, remark, has_deduction, deduction_amount, deduction_source_type, deduction_source_desc, deduction_ref_no, actual_pay_amount, related_ci_id, related_ci_no, related_po_no, expense_country) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [prId, prNo, 'goods', 'balance', 'ci', ci_id, ci.ci_no, 'factory', ci.supplier_name, unpaidBalance, 0, actualPay, ci.currency || 'USD', '', balancePayableDate, 'pending_approval', 'pending', `CI尾款 ${ci.ci_no}`, deductionEnabled ? 1 : 0, dedAmount, deduction_source_type || '', deduction_source_desc || '', deduction_ref_no || '', actualPay, ci_id, ci.ci_no, ci.related_po_no || '', String(ci.country || '').trim()]);
       if (deductionEnabled && dedAmount > 0) recordInitialDeduction(prId, dedAmount, deduction_source_desc, settlementOperator(req));
       run('UPDATE commercial_invoices SET balance_payment_status = ? WHERE id = ?', ['pending_approval', ci_id]);
     });
@@ -6350,6 +7311,88 @@ app.post('/api/cost-allocation/update-weighted-avg/:ci_id', requireApiPermission
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ==================== PUR-OPS-COLLAB-01：电商运营上架准备（V1） ====================
+// 仅新增/挂载，不修改 ci_status 机、采购链、WAC、库存逻辑；「CI 确认」门槛 = wac_confirmed = 1。
+
+// 读取某 CI 的上架准备状态（含 CC 列表）
+app.get('/api/commercial-invoices/:id/ops-prep', requireApiPermission('ci_view'), (req, res) => {
+  try {
+    const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [req.params.id]);
+    if (!ci) return res.status(404).json({ error: 'CI 不存在' });
+    const cc = query('SELECT user_id, user_name FROM business_participants WHERE business_type=? AND business_id=? AND participant_type=?', ['ci', ci.id, 'cc']).rows;
+    const ownerName = ci.ops_owner_id ? ((queryOne('SELECT name FROM users WHERE id=?', [ci.ops_owner_id]) || {}).name || '') : '';
+    res.json({
+      ci_no: ci.ci_no,
+      wac_confirmed: ci.wac_confirmed === 1,
+      ops_owner_id: ci.ops_owner_id || '',
+      ops_owner_name: ownerName,
+      ops_plan_listing_date: ci.ops_plan_listing_date || '',
+      ops_ready_status: ci.ops_ready_status || 'pending',
+      cc: cc.map(r => ({ user_id: r.user_id, user_name: r.user_name }))
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 保存上架准备（分配负责人 + CC + 计划上架日期），事务内写库 + 通知
+app.post('/api/commercial-invoices/:id/ops-prep', requireApiPermission('ci_edit'), (req, res) => {
+  try {
+    const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [req.params.id]);
+    if (!ci) return res.status(404).json({ error: 'CI 不存在' });
+    if (ci.wac_confirmed !== 1) return res.status(400).json({ error: 'CI 尚未确认（wac_confirmed=1），无法安排上架准备' });
+
+    const ownerId = (req.body.owner_user_id || '').toString().trim();
+    const planDate = (req.body.plan_listing_date || '').toString().trim();
+    const ccIds = Array.isArray(req.body.cc_user_ids) ? req.body.cc_user_ids : [];
+    if (!ownerId) return res.status(400).json({ error: '负责人不能为空' });
+    const owner = queryOne('SELECT id, name, status FROM users WHERE id = ?', [ownerId]);
+    if (!owner) return res.status(400).json({ error: '负责人不存在' });
+    if (owner.status !== 'active') return res.status(400).json({ error: '负责人已停用' });
+
+    const ccList = [];
+    const seen = new Set();
+    for (const raw of ccIds) {
+      const uid = (raw || '').toString().trim();
+      if (!uid || seen.has(uid)) continue;
+      const u = queryOne('SELECT id, name, status FROM users WHERE id = ?', [uid]);
+      if (!u) return res.status(400).json({ error: '抄送人「' + uid + '」不存在' });
+      if (u.status !== 'active') return res.status(400).json({ error: '抄送人「' + (u.name || uid) + '」已停用，无法抄送' });
+      seen.add(uid);
+      ccList.push({ id: u.id, name: u.name });
+    }
+
+    transaction(() => {
+      run('UPDATE commercial_invoices SET ops_owner_id = ?, ops_plan_listing_date = ?, ops_ready_status = ? WHERE id = ?', [ownerId, planDate, 'pending', ci.id]);
+      run('DELETE FROM business_participants WHERE business_type=? AND business_id=? AND participant_type IN (?,?)', ['ci', ci.id, 'cc', 'owner']);
+      run('INSERT INTO business_participants (id, business_type, business_id, participant_type, user_id, user_name) VALUES (?, ?, ?, ?, ?, ?)', [genId('bp'), 'ci', ci.id, 'owner', ownerId, owner.name]);
+      for (const c of ccList) {
+        run('INSERT INTO business_participants (id, business_type, business_id, participant_type, user_id, user_name) VALUES (?, ?, ?, ?, ?, ?)', [genId('bp'), 'ci', ci.id, 'cc', c.id, c.name]);
+      }
+    });
+
+    // 事务外 best-effort 通知负责人 + CC（不阻塞、不影响写库结果）
+    notifyBusinessParticipants('ci', ci.id, 'ci_ops_assigned', { code: ci.ci_no, plan_date: planDate }).catch(() => {});
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 标记上架准备完成（Ready）——仅负责人或管理员
+app.post('/api/commercial-invoices/:id/ops-ready', requireApiPermission('ci_edit'), (req, res) => {
+  try {
+    const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [req.params.id]);
+    if (!ci) return res.status(404).json({ error: 'CI 不存在' });
+    if (ci.wac_confirmed !== 1) return res.status(400).json({ error: 'CI 尚未确认，无法标记上架准备' });
+    if (!ci.ops_owner_id) return res.status(400).json({ error: '尚未分配负责人，无法标记就绪' });
+    const isOwner = ci.ops_owner_id === req.currentUserId;
+    const isAdmin = (req.currentUserRole === 'role_admin') || (req.currentUserPermissions && req.currentUserPermissions.includes('*'));
+    if (!isOwner && !isAdmin) return res.status(403).json({ error: '仅负责人或管理员可标记上架准备完成' });
+
+    run('UPDATE commercial_invoices SET ops_ready_status = ? WHERE id = ?', ['ready', ci.id]);
+    // best-effort 通知 CC
+    notifyBusinessParticipants('ci', ci.id, 'ci_ops_ready', { code: ci.ci_no }).catch(() => {});
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // 成本更新日志查询
 app.get('/api/cost-update-logs', requireApiPermission('cost_view'), (req, res) => {
   try {
@@ -6495,19 +7538,24 @@ app.get('/api/stagnant-analysis', requireApiPermission('stagnant_view'), (req, r
 
     let stagnantLevel = '';
     let suggestion = '';
+    // 呆滞阈值改读 system_config（保持原有分级规则，仅让配置生效；缺省兜底原硬编码值）
+    const cDead = parseInt(queryOne("SELECT value FROM system_config WHERE key = 'stagnant_dead_days'")?.value || '180', 10);
+    const cHeavy = parseInt(queryOne("SELECT value FROM system_config WHERE key = 'stagnant_heavy_days'")?.value || '90', 10);
+    const cMedium = parseInt(queryOne("SELECT value FROM system_config WHERE key = 'stagnant_medium_days'")?.value || '60', 10);
+    const cLight = parseInt(queryOne("SELECT value FROM system_config WHERE key = 'stagnant_light_days'")?.value || '30', 10);
     if (item.is_new_product === 1) {
       stagnantLevel = 'new_product';
       suggestion = '新品数据不足，需人工判断';
-    } else if (daysSinceSale >= 180) {
+    } else if (daysSinceSale >= cDead) {
       stagnantLevel = 'dead';
       suggestion = '死亡库存，建议报废或清仓';
-    } else if (daysSinceSale >= 90) {
+    } else if (daysSinceSale >= cHeavy) {
       stagnantLevel = 'heavy';
       suggestion = '重度呆滞，建议清仓处理';
-    } else if (daysSinceSale >= 60) {
+    } else if (daysSinceSale >= cMedium) {
       stagnantLevel = 'medium';
       suggestion = '中度呆滞，建议促销清仓';
-    } else if (daysSinceSale >= 30) {
+    } else if (daysSinceSale >= cLight) {
       stagnantLevel = 'light';
       suggestion = '轻度呆滞，关注销售趋势';
     } else if (turnoverMonths > 12) {
@@ -7297,10 +8345,13 @@ process.on('unhandledRejection', (reason) => {
   console.error('[FATAL] 未处理的 Promise 拒绝:', reason);
 });
 
+// break-glass 本地管理员初始化（fail-closed：缺强密码则启动失败）
+bootstrapBreakGlass();
+
 const server = app.listen(PORT, () => {
   console.log(`\n[Server] 进销存管理系统已启动: http://localhost:${PORT}`);
-  console.log(`[Server] 本地账号入口: http://localhost:${PORT}?admin`);
-  console.log(`[Server] 默认账号: admin / admin\n`);
+  console.log(`[Server] 登录方式：飞书 OAuth（中国/印尼团队统一）；应急入口：登录页底部“应急登录入口”`);
+  console.log(`[Server] 默认账号 admin/admin 已停用；break-glass 本地管理员须通过 BREAKGLASS_ADMIN_PASSWORD 初始化\n`);
 });
 
 server.on('error', (err) => {

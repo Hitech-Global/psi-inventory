@@ -80,8 +80,7 @@ function showFatalNotice(msg){
 // --- API ---
 async function api(url,method='GET',body=null){
   const h={'Content-Type':'application/json'};
-  if(currentUser){h['X-User-Id']=currentUser.id;h['X-User-Name']=encodeURIComponent(currentUser.name||'');h['X-User-Role']=currentUser.role_id||'';h['X-User-Permissions']=(currentUser.permissions||[]).join(',')}
-  const o={method,headers:h};if(body)o.body=JSON.stringify(body);
+  const o={method,headers:h,credentials:'same-origin'};if(body)o.body=JSON.stringify(body);
   let r;
   try{
     r=await fetch(url,o);
@@ -100,24 +99,38 @@ async function api(url,method='GET',body=null){
   return d;
 }
 
-// --- 登录 ---
-async function doLogin(){
+// --- 登录（飞书 OAuth 主入口 + break-glass 应急）---
+// 飞书登录：直接跳转后端授权端点（生产环境由后端 302 到飞书；test 环境由测试脚本驱动）
+function doFeishuLogin(){ window.location.href='/api/auth/feishu/login'; }
+function toggleBreakGlass(){ const f=document.getElementById('bg-form'); if(f) f.style.display = (f.style.display==='none'||!f.style.display)?'block':'none'; }
+async function doBreakGlassLogin(){
+  const u=document.getElementById('bg-username');
+  const p=document.getElementById('bg-password');
+  if(!u||!p){alert('登录控件未加载');return}
+  if(!u.value||!p.value){showToast('请输入应急账号和密码','warning');return}
   try{
-    const u=document.getElementById('login-username');
-    const p=document.getElementById('login-password');
-    if(!u||!p){alert('登录控件未加载');return}
-    if(!u.value||!p.value){showToast('请输入用户名和密码','warning');return}
-    console.log('[login] 调用 /api/auth/login', u.value);
-    const d=await api('/api/auth/login','POST',{username:u.value,password:p.value});
-    console.log('[login] 成功', d);
-    currentUser=d;localStorage.setItem('inv_user',JSON.stringify(d));showApp();
+    const d=await api('/api/auth/local/login','POST',{username:u.value,password:p.value});
+    currentUser=d;showApp();
   }catch(e){
-    console.error('[login] 失败', e);
-    showToast('登录失败: '+(e.message||e),'danger');
+    showToast('应急登录失败: '+(e.message||e),'danger');
   }
 }
-function doLogout(){currentUser=null;localStorage.removeItem('inv_user');document.getElementById('login-page').style.display='flex';document.getElementById('app').style.display='none'}
-function showApp(){document.getElementById('login-page').style.display='none';document.getElementById('app').style.display='flex';document.getElementById('user-name').textContent=currentUser.name;document.getElementById('user-role').textContent=currentUser.role_name||'';document.getElementById('user-avatar').textContent=currentUser.name.charAt(0).toUpperCase();renderTopNav();renderSidebar();initSidebarCollapse();showPage('dashboard')}
+// pending 落地页：仅显示"账号已识别，等待管理员授权"，业务接口由后端 apiAuth 拦截
+function showPendingPage(data){
+  const lp=document.getElementById('login-page'); if(lp) lp.style.display='none';
+  const app=document.getElementById('app'); if(app) app.style.display='none';
+  const pp=document.getElementById('pending-page');
+  if(pp){ const nm=document.getElementById('pending-name'); if(nm) nm.textContent=(data&&(data.name||data.username))||''; pp.style.display='flex'; }
+}
+function doLogout(){
+  api('/api/logout','POST').catch(()=>{}).finally(()=>{
+    currentUser=null;
+    const lp=document.getElementById('login-page'); if(lp) lp.style.display='flex';
+    const pp=document.getElementById('pending-page'); if(pp) pp.style.display='none';
+    const app=document.getElementById('app'); if(app) app.style.display='none';
+  });
+}
+function showApp(){const lp=document.getElementById('login-page');if(lp)lp.style.display='none';const pp=document.getElementById('pending-page');if(pp)pp.style.display='none';document.getElementById('app').style.display='flex';document.getElementById('user-name').textContent=currentUser.name;document.getElementById('user-role').textContent=currentUser.role_name||'';document.getElementById('user-avatar').textContent=(currentUser.name||'U').charAt(0).toUpperCase();renderTopNav();renderSidebar();initSidebarCollapse();showPage('dashboard')}
 
 // --- 导航结构定义 ---
 const NAV_MODULES=[
@@ -145,6 +158,7 @@ const NAV_MODULES=[
     {id:'approval-center',icon:'✅',label:'审批中心',perm:'po_approve'},
   ]},
   {id:'finance',label:'财务',items:[
+    {id:'payable-cockpit',icon:'🧭',label:'应付驾驶舱',perm:'payment_view'},
     {id:'payment',icon:'💳',label:'付款管理',perm:'payment_view'},
     {id:'cost',icon:'💰',label:'成本管理',perm:'cost_view'},
   ]},
@@ -155,7 +169,7 @@ const NAV_MODULES=[
     {id:'warehouses',icon:'🏭',label:'仓库管理',perm:'system_config'},
     {id:'brand-settings',icon:'🏷️',label:'品牌设置',perm:'system_config'},
     {id:'currencies',icon:'💱',label:'币种设置',perm:'system_config'},
-    {id:'operation-logs',icon:'📝',label:'操作日志',perm:'system_config'},
+    {id:'operation-logs',icon:'📝',label:'操作日志',perm:'inventory_view'},
     {id:'config',icon:'⚙️',label:'系统参数',perm:'system_config'},
     {id:'suppliers',icon:'🏢',label:'供应商管理',perm:'system_config'},
     {id:'freight-forwarders',icon:'🚛',label:'货代管理',perm:'system_config'},
@@ -165,7 +179,7 @@ const NAV_MODULES=[
     {id:'approval-flows',icon:'✅',label:'审批流管理',perm:'system_config'},
     {id:'expense-types',icon:'📊',label:'费用类型',perm:'system_config'},
     {id:'allocation-rules',icon:'📐',label:'分摊规则',perm:'system_config'},
-    {id:'batch-tasks',icon:'📋',label:'批量任务中心',perm:'system_config'},
+    {id:'batch-tasks',icon:'📋',label:'批量任务中心',perm:'inventory_view'},
     {id:'forwarder',icon:'📈',label:'货代分析',perm:'forwarder_view'},
   ]},
 ];
@@ -243,9 +257,9 @@ function showPage(page){
   }
   document.querySelectorAll('.sidebar-item').forEach(el=>el.classList.toggle('active',el.dataset.page===page));
   document.querySelectorAll('.topnav-item').forEach((el,i)=>{if(NAV_MODULES[i]&&NAV_MODULES[i].id===currentModule)el.classList.add('active');else el.classList.remove('active')});
-  const titles={dashboard:'首页看板',skus:'SKU主数据',inventory:'库存总表',outbound:'销售数据',replenishment:'订单预测',stagnant:'呆滞分析',check:'库存盘点',po:'PO管理',pi:'PI管理',ci:'CI/PL管理',logistics:'物流管理',inbound:'入库管理',cost:'成本管理',payment:'付款管理',forwarder:'货代分析',countries:'国家管理',warehouses:'仓库管理',suppliers:'供应商管理','freight-forwarders':'货代管理',currencies:'币种设置',config:'系统参数','payment-terms':'付款条件','approval-flows':'审批流管理','approval-center':'审批中心','expense-types':'费用类型','allocation-rules':'分摊规则',users:'用户管理',roles:'角色权限','batch-tasks':'批量任务中心','brand-settings':'品牌设置','operation-logs':'操作日志','payment-categories':'付款类目管理','payer-entities':'付款主体'};
+  const titles={dashboard:'首页看板',skus:'SKU主数据',inventory:'库存总表',outbound:'销售数据',replenishment:'订单预测',stagnant:'呆滞分析',check:'库存盘点',po:'PO管理',pi:'PI管理',ci:'CI/PL管理',logistics:'物流管理',inbound:'入库管理',cost:'成本管理',payment:'付款管理','payable-cockpit':'应付驾驶舱',forwarder:'货代分析',countries:'国家管理',warehouses:'仓库管理',suppliers:'供应商管理','freight-forwarders':'货代管理',currencies:'币种设置',config:'系统参数','payment-terms':'付款条件','approval-flows':'审批流管理','approval-center':'审批中心','expense-types':'费用类型','allocation-rules':'分摊规则',users:'用户管理',roles:'角色权限','batch-tasks':'批量任务中心','brand-settings':'品牌设置','operation-logs':'操作日志','payment-categories':'付款类目管理','payer-entities':'付款主体'};
   document.getElementById('content-inner').innerHTML='<div id="flash-container"></div>';
-  const R={dashboard:renderDashboard,skus:renderSKUs,inventory:renderInventory,outbound:renderOutbound,replenishment:renderReplenishment,stagnant:renderStagnant,check:renderCheck,po:renderPO,pi:renderPI,ci:renderCI,logistics:renderLogistics,inbound:renderInbound,cost:renderCost,payment:renderPayment,forwarder:renderForwarderAnalysis,countries:renderCountries,warehouses:renderWarehouses,suppliers:renderSuppliers,'freight-forwarders':renderFreightForwarders,currencies:renderCurrencies,config:renderConfig,'payment-terms':renderPaymentTerms,'approval-flows':renderApprovalFlows,'approval-center':renderApprovalCenter,'expense-types':renderExpenseTypes,'allocation-rules':renderAllocationRules,users:renderUsers,roles:renderRoles,'batch-tasks':renderBatchTasks,'brand-settings':renderBrandSettings,'operation-logs':renderOperationLogs,'payment-categories':renderPaymentCategories,'payer-entities':renderPayerEntities};
+  const R={dashboard:renderDashboard,skus:renderSKUs,inventory:renderInventory,outbound:renderOutbound,replenishment:renderReplenishment,stagnant:renderStagnant,check:renderCheck,po:renderPO,pi:renderPI,ci:renderCI,logistics:renderLogistics,inbound:renderInbound,cost:renderCost,payment:renderPayment,'payable-cockpit':renderPayableCockpit,forwarder:renderForwarderAnalysis,countries:renderCountries,warehouses:renderWarehouses,suppliers:renderSuppliers,'freight-forwarders':renderFreightForwarders,currencies:renderCurrencies,config:renderConfig,'payment-terms':renderPaymentTerms,'approval-flows':renderApprovalFlows,'approval-center':renderApprovalCenter,'expense-types':renderExpenseTypes,'allocation-rules':renderAllocationRules,users:renderUsers,roles:renderRoles,'batch-tasks':renderBatchTasks,'brand-settings':renderBrandSettings,'operation-logs':renderOperationLogs,'payment-categories':renderPaymentCategories,'payer-entities':renderPayerEntities};
   if(R[page])R[page]();
 }
 
@@ -466,7 +480,7 @@ async function loadBatchTasks(){
 }
 
 function downloadTaskErrors(taskId){
-  fetch('/api/batch-tasks/'+taskId, {headers:{'X-User-Id':currentUser.id,'X-User-Name':encodeURIComponent(currentUser.name||''),'X-User-Permissions':(currentUser.permissions||[]).join(',')}})
+  fetch('/api/batch-tasks/'+taskId, {headers:{'Content-Type':'application/json'},credentials:'same-origin'})
     .then(r=>r.json())
     .then(task=>{
       let errors=[];
@@ -634,15 +648,79 @@ function renderFreightForwarders(){renderSimpleMgr('货代管理','/api/freight-
 function renderCurrencies(){renderSimpleMgr('币种管理','/api/currencies',[{name:'code',label:'代码',req:1},{name:'name',label:'名称',req:1},{name:'symbol',label:'符号'},{name:'is_base',label:'基础币种',bool:1},{name:'sort_order',label:'排序',num:1},{name:'status',label:'状态',sel:1,opts:['active','disabled']}],'💱')}
 function renderPaymentTerms(){renderSimpleMgr('付款条件','/api/payment-terms',[{name:'name',label:'名称',req:1},{name:'payee_type',label:'付款对象',sel:1,opts:['factory','forwarder','customs']},{name:'payment_type',label:'付款类型',sel:1,opts:['goods','logistics','tax']},{name:'payment_stage',label:'付款阶段',sel:1,opts:['deposit','balance','full','monthly']},{name:'payment_node',label:'付款节点',sel:1,opts:['after_pi','before_ship','after_ci','after_arrival','after_inbound','monthly']},{name:'ratio',label:'比例(%)',num:1},{name:'remind_days_before',label:'提醒提前天',num:1},{name:'is_enabled',label:'启用',bool:1}],'📋')}
 function renderApprovalFlows(){
-  document.getElementById('content-inner').innerHTML='<div id="flash-container"></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">✅ 审批流管理</div></div><div id="simple-table"></div></div>';
+  document.getElementById('content-inner').innerHTML='<div id="flash-container"></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">✅ 审批流管理</div></div><div id="approval-flow-editor"></div></div>';
   loadApprovalFlows();
 }
+// N5: 审批流最小配置界面（仅 PO 类型可编辑；责任主体为具体系统用户）
+let _afState={};
+let _afCandidates=[];
+function afSafeId(id){return String(id).replace(/[^a-zA-Z0-9_]/g,'_');}
+function afSetEnable(flowId,checked){if(_afState[flowId])_afState[flowId].is_enabled=checked?1:0;}
+function afSetUser(flowId,level,uid){const st=_afState[flowId];if(!st)return;const lv=st.levels.find(l=>l.level===level);if(lv)lv.approver_user_id=uid;}
 async function loadApprovalFlows(){
   try{
     const data=await api('/api/approval-flows');
-    const html=!data.length?'<div class="empty-state"><div class="empty-icon">✅</div>暂无审批流</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>名称</th><th>业务类型</th><th>审批层级</th><th>启用</th></tr></thead><tbody>'+data.map(f=>'<tr><td>'+esc(f.name)+'</td><td>'+esc(f.business_type)+'</td><td>'+esc(JSON.stringify(f.levels))+'</td><td>'+(f.is_enabled?'✅':'❌')+'</td></tr>').join('')+'</tbody></table></div>';
-    document.getElementById('simple-table').innerHTML=html;
+    const cands=await api('/api/approval-candidates');
+    _afCandidates=cands;
+    _afState={};
+    const wrap=document.getElementById('approval-flow-editor');
+    if(!data.length){wrap.innerHTML='<div class="empty-state"><div class="empty-icon">✅</div>暂无审批流</div>';return;}
+    let html='';
+    for(const f of data){
+      const isPO=f.business_type==='po';
+      _afState[f.id]={name:f.name,business_type:f.business_type,is_enabled:!!f.is_enabled,
+        levels:(Array.isArray(f.levels)?f.levels:[]).map(l=>({level:Number(l.level),approver_user_id:l.approver_user_id||''}))};
+      html+='<div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px;margin-bottom:14px">'+
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">'+
+          '<div><b>'+esc(f.name)+'</b> <span class="muted-hint">('+esc(f.business_type)+')</span></div>'+
+          (isPO?'<label style="display:inline-flex;gap:6px;align-items:center"><input type="checkbox" '+(f.is_enabled?'checked':'')+' onchange="afSetEnable(\''+esc(f.id)+'\',this.checked)"> 启用</label>':'<span class="muted-hint">非PO类型本轮只读</span>')+
+        '</div>';
+      if(isPO){
+        html+='<div id="aflevels_'+afSafeId(f.id)+'"></div>'+
+          '<div style="margin-top:10px;display:flex;gap:8px">'+
+            '<button class="btn btn-secondary" onclick="afAddLevel(\''+esc(f.id)+'\')">＋ 添加审批级次</button>'+
+            '<button class="btn btn-primary" onclick="afSaveFlow(\''+esc(f.id)+'\')">💾 保存</button>'+
+          '</div>';
+      }else{
+        html+='<div class="muted-hint">'+esc(JSON.stringify(f.levels))+'</div>';
+      }
+      html+='</div>';
+    }
+    wrap.innerHTML=html;
+    for(const f of data){ if(f.business_type==='po') afRenderLevels(f.id); }
   }catch(e){showFlash(e.message,'danger')}
+}
+function afRenderLevels(flowId){
+  const st=_afState[flowId]; if(!st)return;
+  const box=document.getElementById('aflevels_'+afSafeId(flowId)); if(!box)return;
+  const sorted=st.levels.slice().sort((a,b)=>a.level-b.level);
+  let html='';
+  sorted.forEach(lv=>{
+    const opts=_afCandidates.map(u=>'<option value="'+esc(u.id)+'" '+(u.id===lv.approver_user_id?'selected':'')+'>'+esc(u.name)+'（'+(u.role_name||u.role_id||'')+'）</option>').join('');
+    html+='<div style="display:flex;gap:8px;align-items:center;margin:6px 0">'+
+      '<span style="min-width:64px">第 '+lv.level+' 级</span>'+
+      '<select data-af-user="'+lv.level+'" onchange="afSetUser(\''+esc(flowId)+'\','+lv.level+',this.value)" style="flex:1">'+opts+'</select>'+
+      '<button class="btn btn-secondary" onclick="afMoveLevel(\''+esc(flowId)+'\','+lv.level+',-1)" title="上移">↑</button>'+
+      '<button class="btn btn-secondary" onclick="afMoveLevel(\''+esc(flowId)+'\','+lv.level+',1)" title="下移">↓</button>'+
+      '<button class="btn btn-secondary" onclick="afRemoveLevel(\''+esc(flowId)+'\','+lv.level+')" title="删除">✕</button>'+
+    '</div>';
+  });
+  box.innerHTML=html;
+}
+function afAddLevel(flowId){const st=_afState[flowId];if(!st)return;const maxL=st.levels.reduce((m,l)=>Math.max(m,l.level),0);st.levels.push({level:maxL+1,approver_user_id:_afCandidates[0]?_afCandidates[0].id:''});afRenderLevels(flowId);}
+function afRemoveLevel(flowId,level){const st=_afState[flowId];if(!st)return;if(st.levels.length<=1){showToast('至少保留一个审批级次','warning');return;}st.levels=st.levels.filter(l=>l.level!==level);st.levels.sort((a,b)=>a.level-b.level).forEach((l,i)=>l.level=i+1);afRenderLevels(flowId);}
+function afMoveLevel(flowId,level,dir){const st=_afState[flowId];if(!st)return;const sorted=st.levels.slice().sort((a,b)=>a.level-b.level);const idx=sorted.findIndex(l=>l.level===level);const j=idx+dir;if(j<0||j>=sorted.length)return;const t=sorted[idx].level;sorted[idx].level=sorted[j].level;sorted[j].level=t;afRenderLevels(flowId);}
+async function afSaveFlow(flowId){
+  const st=_afState[flowId];if(!st)return;
+  const sorted=st.levels.slice().sort((a,b)=>a.level-b.level);
+  for(let i=0;i<sorted.length;i++){
+    if(sorted[i].level!==i+1){showToast('审批级次必须连续（1,2,3...）','danger');return;}
+    if(!sorted[i].approver_user_id){showToast('第 '+(i+1)+' 级审批人不能为空','danger');return;}
+  }
+  const payload={id:flowId,name:st.name,business_type:st.business_type,is_enabled:st.is_enabled?1:0,
+    levels:sorted.map(l=>({level:l.level,approver_user_id:l.approver_user_id}))};
+  try{await api('/api/approval-flows','POST',payload);showToast('审批流已保存','success');loadApprovalFlows();}
+  catch(e){showToast(e.message,'danger')}
 }
 // ==================== 审批中心（PO 审批人侧补齐，最小范围） ====================
 // 信息架构预留：待我审批 / 全部待审批 / 采购类 / 财务类 / 确认任务 / 抄送我的 / 已处理
@@ -713,7 +791,8 @@ async function loadFinanceApprovalList(){
 function tabLabel(id){const m={mine:'待我审批',all:'全部待审批',purchase:'采购类审批',finance:'财务类审批',confirm:'确认任务',cc:'抄送我的',done:'已处理'};return m[id]||id;}
 async function loadApprovalCenterList(){
   try{
-    const data=await api('/api/purchase-orders/pending-approval');
+    // M3: 待我审批 tab 按当前用户过滤；其余 tab 保持原逻辑
+    const data=await api('/api/purchase-orders/pending-approval' + (_approvalTab === 'mine' ? '?mine=1' : ''));
     _approvalListData=data;
     const html=!data.length?'<div class="empty-state"><div class="empty-icon">✅</div>暂无待审批 PO</div>':
       '<div class="table-container"><table class="data-table"><thead><tr>'+
@@ -808,6 +887,7 @@ async function openApprovalDetail(approvalId,poId){
         row('审批级次',r.current_level+' / '+r.max_level)+
       '</div></div>'+
       itemsHtml+
+      (function(){let cc=Array.isArray(r.cc_users)?r.cc_users:[];return '<div class="detail-section"><h3>抄送人 (CC)</h3><div class="detail-grid">'+(cc.length?cc.map(c=>'<div class="detail-item"><span class="detail-label">抄送</span><span class="detail-value">'+esc(c.user_name||c.user_id)+'</span></div>').join(''):'<div class="muted-hint" style="padding:4px 0">无抄送人</div>')+'</div></div>';})()+
       '<div class="detail-section"><h3>审批轨迹</h3><ul class="approval-timeline">'+tl+'</ul></div>'+
     '</div>');
 }
@@ -830,17 +910,111 @@ async function saveConfig(){
   document.querySelectorAll('[id^="cfg-"]').forEach(el=>{configs.push({key:el.dataset.key,value:el.value,description:el.dataset.desc})});
   try{await api('/api/system-config','POST',{configs});showToast('配置已保存','success')}catch(e){showToast(e.message,'danger')}
 }
-function renderUsers(){renderSimpleMgr('用户管理','/api/users',[{name:'username',label:'用户名',req:1},{name:'name',label:'姓名',req:1},{name:'password',label:'密码'},{name:'role_id',label:'角色ID',sel:1,opts:[{v:'role_admin',l:'超级管理员'},{v:'role_operator',l:'运营人员'},{v:'role_viewer',l:'普通用户'}]},{name:'status',label:'状态',sel:1,opts:['active','disabled']},{name:'email',label:'邮箱'}],'👤')}
+// 用户管理最小闭环：查看（脱敏飞书标识）、启用/停用、分配角色；不允许建本地密码账号、改密码、改飞书标识、停用/删应急账号
+async function renderUsers(){
+  document.getElementById('content-inner').innerHTML='<div id="flash-container"></div><div id="user-mgr-loading" class="pc-loading">加载用户列表…</div>';
+  try{
+    const [users, roles]=await Promise.all([api('/api/users'), api('/api/roles')]);
+    window.__userCache=users;
+    const rows=users.map(u=>{
+      const isBG = u.auth_source==='local';
+      const statusBadge = u.status==='active'?'<span class="status-active">active</span>':(u.status==='pending'?'<span class="status-pending">pending</span>':'<span class="status-disabled">disabled</span>');
+      const roleSel = '<select class="user-role-sel" data-uid="'+u.id+'"'+(isBG?' disabled title="应急账号角色固定"':'')+'>'+roles.map(r=>'<option value="'+r.id+'"'+(r.id===u.role_id?' selected':'')+'>'+esc(r.name||r.id)+'</option>').join('')+'</select>';
+      const actionBtn = isBG
+        ? '<button class="btn btn-xs btn-secondary" disabled title="应急账号不可停用">停用</button>'
+        : (u.status==='active'
+            ? '<button class="btn btn-xs btn-warning" onclick="setUserStatus(\''+u.id+'\',\'disabled\')">停用</button>'
+            : '<button class="btn btn-xs btn-success" onclick="setUserStatus(\''+u.id+'\',\'active\')">启用</button>');
+      return '<tr>'
+        +'<td>'+esc(u.name||'')+'</td>'
+        +'<td>'+esc(u.username||'')+'</td>'
+        +'<td>'+esc(u.feishu_union_id||'')+'</td>'
+        +'<td>'+esc(u.email||'')+'</td>'
+        +'<td>'+(isBG?'本地应急':'飞书')+'</td>'
+        +'<td>'+statusBadge+'</td>'
+        +'<td>'+roleSel+'</td>'
+        +'<td>'+actionBtn+'</td>'
+        +'</tr>';
+    }).join('');
+    document.getElementById('content-inner').innerHTML=
+      '<div id="flash-container"></div>'
+      +'<div class="table-section"><div class="table-section-title"><div class="table-section-title-left">👤 用户管理</div></div>'
+      +'<div class="table-container"><table class="data-table"><thead><tr><th>姓名</th><th>用户名</th><th>飞书标识(脱敏)</th><th>邮箱</th><th>来源</th><th>状态</th><th>角色</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table></div>'
+      +'<div class="pc-hint">用户由飞书首次登录自动创建（默认 <b>pending</b>，无角色、无权限）。管理员启用并分配角色后，用户方可进入业务。不允许创建本地密码账号、不允许修改密码、不允许编辑飞书标识、不允许停用/删除应急账号。</div>'
+      +'</div>';
+    document.querySelectorAll('.user-role-sel').forEach(sel=>{ sel.addEventListener('change',()=>setUserRole(sel.dataset.uid, sel.value)); });
+  }catch(e){ showFlash(e.message,'danger'); }
+}
+async function setUserRole(uid, roleId){
+  const u=(window.__userCache||[]).find(x=>x.id===uid);
+  if(!u){ renderUsers(); return; }
+  try{ await api('/api/users/'+uid,'PUT',{username:u.username, name:u.name, role_id:roleId}); showToast('角色已更新','success'); }catch(e){ showToast(e.message,'danger'); renderUsers(); }
+}
+async function setUserStatus(uid, status){
+  const u=(window.__userCache||[]).find(x=>x.id===uid);
+  if(!u){ renderUsers(); return; }
+  try{ await api('/api/users/'+uid,'PUT',{username:u.username, name:u.name, status}); showToast(status==='active'?'已启用':'已停用','success'); renderUsers(); }catch(e){ showToast(e.message,'danger'); }
+}
 function renderRoles(){
   document.getElementById('content-inner').innerHTML='<div id="flash-container"></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🛡️ 角色管理</div></div><div id="simple-table"></div></div>';
   loadRoles();
 }
+let roleListData=[];
 async function loadRoles(){
   try{
     const data=await api('/api/roles');
-    const html=!data.length?'<div class="empty-state">暂无角色</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>角色名</th><th>描述</th><th>权限数</th><th>系统</th></tr></thead><tbody>'+data.map(r=>'<tr><td>'+esc(r.name)+'</td><td>'+esc(r.description)+'</td><td>'+(r.permissions||[]).length+'</td><td>'+(r.is_system?'✅':'❌')+'</td></tr>').join('')+'</tbody></table></div>';
+    roleListData=data;
+    const html=!data.length?'<div class="empty-state">暂无角色</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>角色名</th><th>描述</th><th>权限数</th><th>系统</th><th>操作</th></tr></thead><tbody>'+data.map(r=>'<tr style="cursor:pointer" onclick="openRoleEditor('+JSON.stringify(r.id)+')" title="点击编辑权限"><td>'+esc(r.name)+'</td><td>'+esc(r.description)+'</td><td>'+(r.permissions||[]).length+'</td><td>'+(r.is_system?'✅':'❌')+'</td><td><button class="btn btn-sm btn-primary" onclick="event.stopPropagation();openRoleEditor('+JSON.stringify(r.id)+')">编辑权限</button></td></tr>').join('')+'</tbody></table></div>';
     document.getElementById('simple-table').innerHTML=html;
   }catch(e){showFlash(e.message,'danger')}
+}
+
+// 角色权限编辑：点击角色 → 弹窗勾选权限 → 保存（复用 POST /api/roles upsert）
+const ROLE_CRITICAL_PERMS=['role_manage','user_manage','system_config'];
+const ROLE_MODULE_ORDER=['系统管理','采购','库存','销售','财务','报表'];
+async function openRoleEditor(roleId){
+  try{
+    const role=roleListData.find(r=>r.id===roleId);
+    if(!role){showToast('未找到该角色','danger');return;}
+    const catalog=await api('/api/permissions');
+    const own=role.permissions||[];
+    const groups={};
+    catalog.forEach(p=>{ (groups[p.module]=groups[p.module]||[]).push(p); });
+    let body='<div style="font-size:12px;color:var(--text-secondary,#999);margin-bottom:10px">角色名称（只读）：<b>'+esc(role.name)+'</b> ｜ 角色说明（只读）：'+esc(role.description||'（无）')+'</div>';
+    if(role.id==='role_admin'){
+      body+='<div class="flash flash-warning show" style="margin-bottom:12px">超级管理员角色：关键管理权限（角色管理 / 用户管理 / 系统配置）已被锁定，不可取消，以避免系统失去管理入口。</div>';
+    }
+    ROLE_MODULE_ORDER.forEach(mod=>{
+      const items=groups[mod]; if(!items||!items.length)return;
+      body+='<div style="font-weight:600;margin:12px 0 6px;font-size:13px">'+esc(mod)+'</div><div style="display:flex;flex-wrap:wrap;gap:8px 16px">';
+      items.forEach(p=>{
+        const checked=own.includes(p.key)?'checked':'';
+        const locked=(role.id==='role_admin'&&ROLE_CRITICAL_PERMS.includes(p.key));
+        const dis=locked?'disabled':'';
+        const lockIco=locked?' 🔒':'';
+        body+='<label style="font-size:13px;display:flex;align-items:center;gap:4px;min-width:140px"><input type="checkbox" data-perm="'+esc(p.key)+'" '+checked+' '+dis+'>'+esc(p.label)+lockIco+'</label>';
+      });
+      body+='</div>';
+    });
+    const footer='<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveRolePermissions('+JSON.stringify(role.id)+')">保存</button>';
+    openModal('编辑角色权限 · '+role.name, body, footer, 'modal-lg');
+  }catch(e){showToast(e.message||'打开失败','danger')}
+}
+async function saveRolePermissions(roleId){
+  try{
+    const role=roleListData.find(r=>r.id===roleId);
+    if(!role){showToast('未找到该角色','danger');return;}
+    const boxes=[...document.querySelectorAll('#modal-content input[type=checkbox][data-perm]')];
+    let perms=boxes.filter(b=>b.checked).map(b=>b.getAttribute('data-perm'));
+    // 安全护栏（前端锁定 + 后端再次强制）：role_admin 始终保留关键管理权限
+    if(roleId==='role_admin'){
+      ROLE_CRITICAL_PERMS.forEach(p=>{ if(!perms.includes(p)) perms.push(p); });
+    }
+    await api('/api/roles','POST',{id:roleId,name:role.name,description:role.description||'',permissions:perms});
+    showToast('角色权限已保存','success');
+    closeModal();
+    loadRoles();
+  }catch(e){showToast(e.message||'保存失败','danger')}
 }
 
 // ==================== 品牌设置 ====================
@@ -1185,8 +1359,7 @@ function pcCatModalErrorClear(){ const el=document.getElementById('pc-cat-modal-
 async function pcFetchJSON(url, method, body, scopeLabel){
   scopeLabel=scopeLabel||'付款大类';
   const h={'Content-Type':'application/json'};
-  if(currentUser){h['X-User-Id']=currentUser.id;h['X-User-Name']=encodeURIComponent(currentUser.name||'');h['X-User-Role']=currentUser.role_id||'';h['X-User-Permissions']=(currentUser.permissions||[]).join(',')}
-  const o={method,headers:h}; if(body)o.body=JSON.stringify(body);
+  const o={method,headers:h,credentials:'same-origin'}; if(body)o.body=JSON.stringify(body);
   try{
     const r=await fetch(url,o);
     if(r.status===401){doLogout(); return {status:401, error:'未登录，请重新登录'};}
@@ -1388,13 +1561,7 @@ function peModalErrorClear(){ const el = document.getElementById('pe-modal-error
 // 专用请求（不抛出，返回结构化结果，弹窗内优先显示错误；403 固定中文文案）
 async function peFetchJSON(url, method, body) {
   const h = { 'Content-Type': 'application/json' };
-  if (currentUser) {
-    h['X-User-Id'] = currentUser.id;
-    h['X-User-Name'] = encodeURIComponent(currentUser.name || '');
-    h['X-User-Role'] = currentUser.role_id || '';
-    h['X-User-Permissions'] = (currentUser.permissions || []).join(',');
-  }
-  const o = { method, headers: h }; if (body) o.body = JSON.stringify(body);
+  const o = { method, headers: h, credentials: 'same-origin' }; if (body) o.body = JSON.stringify(body);
   try {
     const r = await fetch(url, o);
     if (r.status === 401) { doLogout(); return { status: 401, error: '未登录，请重新登录' }; }
@@ -5307,7 +5474,24 @@ async function saveNewPO(){
   const d={supplier_id:sel.value,supplier_name:sel.options[sel.selectedIndex].dataset.name,brand:document.getElementById('npo-brand').value,country:document.getElementById('npo-country').value,target_warehouse:document.getElementById('npo-wh').value,po_date:document.getElementById('npo-date').value,currency:document.getElementById('npo-cur').value,items};
   try{await api('/api/purchase-orders','POST',d);showToast('PO创建成功','success');closeModal();loadPO()}catch(e){showToast(e.message,'danger')}
 }
-async function submitPO(id){if(!confirm('确认提交审批？'))return;try{await api('/api/purchase-orders/'+id+'/submit-approval','POST',{submitter_name:currentUser.name});showToast('已提交审批','success');loadPO()}catch(e){showToast(e.message,'danger')}}
+async function submitPO(id){
+  try{
+    const users=await api('/api/cc-candidates');
+    const opts=users.map(u=>'<label style="display:flex;align-items:center;gap:6px;font-size:13px;margin:4px 0;min-width:160px"><input type="checkbox" class="cc-chk" value="'+esc(u.id)+'">'+esc(u.name)+'（'+(u.role_name||u.role_id||'')+'）</label>').join('');
+    const body='<div style="font-size:13px;color:#888;margin-bottom:8px">提交后将进入审批流程。可选：勾选需要知会的抄送人（仅记录，不阻塞审批、不发送通知）。</div>'
+      +'<div style="max-height:280px;overflow:auto;display:flex;flex-wrap:wrap;gap:4px 18px;padding:6px 2px;border:1px solid #eee;border-radius:6px">'+(opts||'<div class="muted-hint">暂无可用抄送人</div>')+'</div>';
+    const footer='<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="confirmSubmitApproval(\''+id+'\')">确认提交</button>';
+    openModal('提交审批 · 选择抄送人（可选）', body, footer, 'modal-lg');
+  }catch(e){showToast(e.message,'danger')}
+}
+async function confirmSubmitApproval(id){
+  const chk=[...document.querySelectorAll('#modal-content .cc-chk')].filter(c=>c.checked).map(c=>c.value);
+  try{
+    await api('/api/purchase-orders/'+id+'/submit-approval','POST',{submitter_name:currentUser.name, cc_user_ids:chk});
+    showToast('已提交审批'+(chk.length?'，已记录 '+chk.length+' 位抄送人':''),'success');
+    closeModal();loadPO();
+  }catch(e){showToast(e.message,'danger')}
+}
 async function sendFactory(id){if(!confirm('确认已发工厂？'))return;try{await api('/api/purchase-orders/'+id+'/send-to-factory','POST');showToast('已标记发工厂','success');loadPO()}catch(e){showToast(e.message,'danger')}}
 async function exportPO(id){
   try{
@@ -5662,9 +5846,9 @@ async function saveDepPay(id){
 const DOC_TEMPLATES={
   pi:{file:'PI导入模板.xlsx',sheet:'PI',url:'/api/proforma-invoices/batch-import',headers:['PI编号','关联PO编号','供应商','品牌','国家','仓库','币种','PI日期','是否需要定金','定金比例','预计交期','付款条件','SKU','数量','单价','备注'],sample:['PI-2026-001','PO-2026-001','','','','','USD',todayStr(),'是',30,'','','SKU001',100,1.5,'']},
   supplierPI:{file:'供应商PI导入模板.xlsx',sheet:'PI',headers:['SKU','PI确认数量','PI确认单价','PI折扣'],sample:['SKU001',100,2,0]},
-  ci:{file:'CI导入模板.xlsx',sheet:'CI',url:'/api/commercial-invoices/batch-import',headers:['CI编号','关联PO编号','关联PI编号','供应商','品牌','国家','仓库','币种','CI日期','SKU','数量','单价','实际关税税率','差异原因','备注'],sample:['CI-2026-001','PO-2026-001','PI-2026-001','','','','','USD',todayStr(),'SKU001',100,1.5,10,'','']},
+  ci:{file:'CI导入模板.xlsx',sheet:'CI',url:'/api/commercial-invoices/batch-import',headers:['CI编号','关联PO编号','关联PI编号','供应商','品牌','国家','仓库','币种','CI日期','实际出货日期','SKU','数量','单价','实际关税税率','差异原因','备注'],sample:['CI-2026-001','PO-2026-001','PI-2026-001','','','','','USD',todayStr(),todayStr(),'SKU001',100,1.5,10,'','']},
   pl:{file:'PL导入模板.xlsx',sheet:'PL',url:'/api/packing-lists/batch-import',headers:['PL编号','关联PO编号','关联CI编号','PL日期','箱号','SKU','每箱数量','箱数','总数量','单箱毛重','单箱净重','单箱体积','备注'],sample:['PL-2026-001','PO-2026-001','CI-2026-001',todayStr(),'CTN-001','SKU001',10,10,100,12,10,0.08,'']},
-  historicalCI:{file:'历史CI财务导入模板.xlsx',sheet:'历史CI',url:'/api/historical-commercial-invoices/batch-import',headers:['历史CI编号','供应商ID','供应商','品牌','国家','CI日期','币种','历史货款总金额','历史已付款','历史付款日期','付款条件','到期日','原始凭证或备注','幂等键'],sample:['HCI-2025-001','','历史供应商','Redragon','印度尼西亚','2025-12-31','USD',100000,70000,'','30天','2026-01-30','历史凭证编号或备注','']}
+  historicalCI:{file:'历史CI财务导入模板.xlsx',sheet:'历史CI',url:'/api/historical-commercial-invoices/batch-import',headers:['历史CI编号','供应商ID','供应商','品牌','国家','CI日期','实际出货日期','币种','历史货款总金额','历史已付款','历史付款日期','付款条件','到期日','原始凭证或备注','幂等键'],sample:['HCI-2025-001','','历史供应商','Redragon','印度尼西亚','2025-12-31','2025-12-31','USD',100000,70000,'','30天','2026-01-30','历史凭证编号或备注','']}
 };
 function downloadDocTemplate(type){
   const t=DOC_TEMPLATES[type]; if(!t)return;
@@ -5732,15 +5916,30 @@ async function createHistoricalCI(){
     if(!canImportHistoricalCI()){showToast('历史 CI 导入需要 CI 创建、付款创建和付款审批权限','danger');return}
     const results=await Promise.all([api('/api/suppliers'),api('/api/countries'),api('/api/currencies'),api('/api/brands/all')]),suppliers=results[0],countries=results[1].filter(x=>x.status==='active'),currencies=results[2].filter(x=>x.status==='active'),brands=results[3];
     const idempotency='historical-ci-ui:'+(window.crypto&&window.crypto.randomUUID?window.crypto.randomUUID():(Date.now()+'-'+Math.random().toString(36).slice(2)));
-    openModal('历史 CI 导入','<div class="form-card" style="box-shadow:none;padding:0"><input type="hidden" id="hci-idempotency" value="'+idempotency+'"><div style="background:#f6ffed;border:1px solid #b7eb8f;border-radius:6px;padding:10px;margin-bottom:14px;font-size:13px">仅用于历史采购金额和应付管理，不影响库存、WAC及订单预测。</div><div class="form-grid"><div class="form-group"><label>历史 CI 编号 <span class="required">*</span></label><input id="hci-no"></div><div class="form-group"><label>供应商</label><select id="hci-supplier" onchange="onHistoricalSupplierChange()"><option value="">手工填写快照</option>'+suppliers.map(s=>'<option value="'+esc(s.id)+'" data-name="'+esc(s.name)+'">'+esc(s.name)+'</option>').join('')+'</select></div><div class="form-group"><label>供应商快照 <span class="required">*</span></label><input id="hci-supplier-name"></div><div class="form-group"><label>品牌快照 <span class="required">*</span></label><input id="hci-brand" list="hci-brand-list"><datalist id="hci-brand-list">'+brands.map(b=>'<option value="'+esc(b)+'"></option>').join('')+'</datalist></div><div class="form-group"><label>采购归属国家 <span class="required">*</span></label><select id="hci-country"><option value="">请选择</option>'+countries.map(c=>'<option value="'+esc(c.name)+'">'+esc(c.name)+'（'+esc(c.code)+'）</option>').join('')+'</select></div><div class="form-group"><label>历史 CI 日期 <span class="required">*</span></label><input type="date" id="hci-date"></div><div class="form-group"><label>币种 <span class="required">*</span></label><select id="hci-currency">'+currencies.map(c=>'<option value="'+esc(c.code)+'">'+esc(c.name)+'（'+esc(c.code)+'）</option>').join('')+'</select></div><div class="form-group"><label>历史货款总金额 <span class="required">*</span></label><input type="number" min="0.01" step="0.01" id="hci-gross"></div><div class="form-group"><label>导入前历史已付款</label><input type="number" min="0" step="0.01" id="hci-paid" value="0"></div><div class="form-group"><label>历史已付款日期</label><input type="date" id="hci-paid-date"><div style="font-size:12px;color:#999">未知时保持为空，不会用导入日期代替。</div></div><div class="form-group"><label>付款条件 / 账期</label><input id="hci-terms"></div><div class="form-group"><label>到期日</label><input type="date" id="hci-due"></div><div class="form-group form-group-full"><label>原始文件、凭证或备注</label><textarea id="hci-note" rows="2"></textarea></div></div></div>','<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" id="hci-save" onclick="saveHistoricalCI()">导入</button>','modal-lg');
+    openModal('历史 CI 导入','<div class="form-card" style="box-shadow:none;padding:0"><input type="hidden" id="hci-idempotency" value="'+idempotency+'"><div style="background:#f6ffed;border:1px solid #b7eb8f;border-radius:6px;padding:10px;margin-bottom:14px;font-size:13px">仅用于历史采购金额和应付管理，不影响库存、WAC及订单预测。</div><div class="form-grid"><div class="form-group"><label>历史 CI 编号 <span class="required">*</span></label><input id="hci-no"></div><div class="form-group"><label>供应商</label><select id="hci-supplier" onchange="onHistoricalSupplierChange()"><option value="">手工填写快照</option>'+suppliers.map(s=>'<option value="'+esc(s.id)+'" data-name="'+esc(s.name)+'">'+esc(s.name)+'</option>').join('')+'</select></div><div class="form-group"><label>供应商快照 <span class="required">*</span></label><input id="hci-supplier-name"></div><div class="form-group"><label>品牌快照 <span class="required">*</span></label><input id="hci-brand" list="hci-brand-list"><datalist id="hci-brand-list">'+brands.map(b=>'<option value="'+esc(b)+'"></option>').join('')+'</datalist></div><div class="form-group"><label>采购归属国家 <span class="required">*</span></label><select id="hci-country"><option value="">请选择</option>'+countries.map(c=>'<option value="'+esc(c.name)+'">'+esc(c.name)+'（'+esc(c.code)+'）</option>').join('')+'</select></div><div class="form-group"><label>历史 CI 日期 <span class="required">*</span></label><input type="date" id="hci-date"></div><div class="form-group"><label>实际出货日期 <span class="required">*</span></label><input type="date" id="hci-ship-date"></div><div class="form-group"><label>币种 <span class="required">*</span></label><select id="hci-currency">'+currencies.map(c=>'<option value="'+esc(c.code)+'">'+esc(c.name)+'（'+esc(c.code)+'）</option>').join('')+'</select></div><div class="form-group"><label>历史货款总金额 <span class="required">*</span></label><input type="number" min="0.01" step="0.01" id="hci-gross"></div><div class="form-group"><label>导入前历史已付款</label><input type="number" min="0" step="0.01" id="hci-paid" value="0"></div><div class="form-group"><label>历史已付款日期</label><input type="date" id="hci-paid-date"><div style="font-size:12px;color:#999">未知时保持为空，不会用导入日期代替。</div></div><div class="form-group"><label>付款条件 / 账期</label><input id="hci-terms"></div><div class="form-group"><label>到期日</label><input type="date" id="hci-due"></div><div class="form-group form-group-full"><label>原始文件、凭证或备注</label><textarea id="hci-note" rows="2"></textarea></div></div></div>','<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" id="hci-save" onclick="saveHistoricalCI()">导入</button>','modal-lg');
   }catch(e){showToast(e.message,'danger')}
 }
 function onHistoricalSupplierChange(){const select=document.getElementById('hci-supplier'),name=document.getElementById('hci-supplier-name');if(select&&name){const option=select.options[select.selectedIndex];name.value=option&&option.dataset.name||'';name.readOnly=Boolean(select.value)}}
 async function saveHistoricalCI(){
   const btn=document.getElementById('hci-save');if(!btn||btn.disabled)return;const supplier=document.getElementById('hci-supplier'),gross=parseFloat(document.getElementById('hci-gross').value),paid=parseFloat(document.getElementById('hci-paid').value||0);
-  const body={historical_ci_no:document.getElementById('hci-no').value.trim(),supplier_id:supplier.value,supplier_name:document.getElementById('hci-supplier-name').value.trim(),brand_name:document.getElementById('hci-brand').value.trim(),country:document.getElementById('hci-country').value,ci_date:document.getElementById('hci-date').value,currency:document.getElementById('hci-currency').value,gross_goods_amount:gross,historical_paid_amount:paid,historical_paid_date:document.getElementById('hci-paid-date').value,payment_terms:document.getElementById('hci-terms').value.trim(),due_date:document.getElementById('hci-due').value,source_note:document.getElementById('hci-note').value.trim(),source_mode:'historical',idempotency_key:document.getElementById('hci-idempotency').value};
+  const body={historical_ci_no:document.getElementById('hci-no').value.trim(),supplier_id:supplier.value,supplier_name:document.getElementById('hci-supplier-name').value.trim(),brand_name:document.getElementById('hci-brand').value.trim(),country:document.getElementById('hci-country').value,ci_date:document.getElementById('hci-date').value,actual_ship_date:document.getElementById('hci-ship-date').value,currency:document.getElementById('hci-currency').value,gross_goods_amount:gross,historical_paid_amount:paid,historical_paid_date:document.getElementById('hci-paid-date').value,payment_terms:document.getElementById('hci-terms').value.trim(),due_date:document.getElementById('hci-due').value,source_note:document.getElementById('hci-note').value.trim(),source_mode:'historical',idempotency_key:document.getElementById('hci-idempotency').value};
   if(!body.historical_ci_no||!body.supplier_name||!body.brand_name||!body.country||!body.ci_date||!body.currency){showToast('请填写历史 CI 编号、供应商、品牌、国家、日期和币种','warning');return}if(!(gross>0)){showToast('历史货款总金额必须大于0','warning');return}if(!Number.isFinite(paid)||paid<0){showToast('历史已付款金额不能小于0','warning');return}if(paid>gross){showToast('历史已付款金额不能超过历史货款总金额','warning');return}
   btn.disabled=true;btn.textContent='导入中…';try{const result=await api('/api/historical-commercial-invoices','POST',body);showToast(result.idempotent?'已识别为重复请求，未重复记账':'历史 CI 已导入','success');closeModal();const mode=document.getElementById('ci-source-mode');if(mode)mode.value='historical';loadCI()}catch(e){showToast(e.message,'danger');if(document.getElementById('hci-save')){btn.disabled=false;btn.textContent='导入'}}
+}
+// CI-SHIP-DATE-01：补充/更正实际出货日期（明确操作按钮 + 最小化弹窗，避免误改）
+async function editActualShipDate(type, id, current){
+  const url = type === 'historical' ? '/api/historical-commercial-invoices/'+id+'/actual-ship-date' : '/api/commercial-invoices/'+id+'/actual-ship-date';
+  window._asdUrl = url;
+  openModal('补充/更正实际出货日期', '<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid"><div class="form-group"><label>实际出货日期 (YYYY-MM-DD) <span class="required">*</span></label><input type="date" id="asd-input" value="'+(current||'')+'"></div></div><div style="font-size:12px;color:#999">仅记录真实实际出货日期；不影响 due_date、付款、应付日期、库存或 WAC。</div></div>', '<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="submitActualShipDate()">保存</button>');
+}
+async function submitActualShipDate(){
+  const val = document.getElementById('asd-input').value;
+  try{
+    await api(window._asdUrl, 'PUT', { actual_ship_date: val });
+    showToast('实际出货日期已保存','success');
+    closeModal();
+    loadCI();
+  }catch(e){ showToast(e.message,'danger'); }
 }
 async function viewHistoricalCI(id,backPay,backMode){
   try{
@@ -5753,7 +5952,7 @@ async function viewHistoricalCI(id,backPay,backMode){
       (canEdit?'<div class="flex gap-8 mb-8"><select id="hci-att-type" class="form-control" style="max-width:180px"><option value="ci_document">原始 CI</option><option value="payment_proof">历史付款凭证</option><option value="statement">对账单</option><option value="terms_proof">账期证明</option><option value="other">其他说明</option></select><button class="btn btn-primary btn-sm" onclick="uploadHistoricalAttachment()">上传附件</button></div>':'')+
       '<div id="hci-att-list">'+historicalAttachmentListHtml(attaches,canEdit)+'</div>'+
       '<div style="font-size:12px;color:#999;margin-top:8px">附件仅作为原始证据与审计留痕，不参与应付、抵扣、抹零、未结、WAC、库存或订单预测。</div></div>';
-    openModal('历史 CI - '+esc(h.historical_ci_no),'<div class="detail-card" style="box-shadow:none;padding:0"><div style="background:#f6ffed;border:1px solid #b7eb8f;border-radius:6px;padding:10px;margin-bottom:14px;font-size:13px">source_mode = historical；仅参与采购金额和应付统计，不进入 PO/PI/PL/Inbound、库存、WAC 或订单预测。</div><div class="detail-grid">'+[['历史CI编号',h.historical_ci_no],['供应商',h.supplier_name],['品牌',h.brand_name],['国家',h.country],['CI日期',fmtDate(h.ci_date)],['币种',h.currency],['总货款',fmtMoney(h.gross_goods_amount,h.currency)],['导入历史已付',fmtMoney(h.historical_paid_amount,h.currency)],['历史付款日期',h.historical_paid_date||'未知'],['后续已付',fmtMoney(h.subsequent_paid_amount,h.currency)],['抵扣',fmtMoney(h.deduction_amount,h.currency)],['抹零',fmtMoney(h.rounding_amount,h.currency)],['未结金额',fmtMoney(h.unpaid_amount,h.currency)],['付款状态',PAY_STATUS_MAP[h.payment_status]||h.payment_status],['付款条件',h.payment_terms||'—'],['到期日',fmtDate(h.due_date)],['原始凭证或备注',h.source_note||'—']].map(x=>'<div class="detail-item"><span class="detail-label">'+x[0]+'</span><span class="detail-value">'+esc(x[1])+'</span></div>').join('')+'</div>'+attachSection+'</div>',back+(hasPermission('payment_view')?'<button class="btn btn-primary" onclick="viewPayment(\''+h.payment_request_id+'\')">付款与结算</button>':'')+'<button class="btn btn-secondary" onclick="closeModal()">关闭</button>')
+    openModal('历史 CI - '+esc(h.historical_ci_no),'<div class="detail-card" style="box-shadow:none;padding:0"><div style="background:#f6ffed;border:1px solid #b7eb8f;border-radius:6px;padding:10px;margin-bottom:14px;font-size:13px">source_mode = historical；仅参与采购金额和应付统计，不进入 PO/PI/PL/Inbound、库存、WAC 或订单预测。</div><div class="detail-grid">'+[['历史CI编号',h.historical_ci_no],['供应商',h.supplier_name],['品牌',h.brand_name],['国家',h.country],['CI日期',fmtDate(h.ci_date)],['币种',h.currency],['总货款',fmtMoney(h.gross_goods_amount,h.currency)],['导入历史已付',fmtMoney(h.historical_paid_amount,h.currency)],['历史付款日期',h.historical_paid_date||'未知'],['后续已付',fmtMoney(h.subsequent_paid_amount,h.currency)],['抵扣',fmtMoney(h.deduction_amount,h.currency)],['抹零',fmtMoney(h.rounding_amount,h.currency)],['未结金额',fmtMoney(h.unpaid_amount,h.currency)],['付款状态',PAY_STATUS_MAP[h.payment_status]||h.payment_status],['付款条件',h.payment_terms||'—'],['到期日',fmtDate(h.due_date)],['原始凭证或备注',h.source_note||'—']].map(x=>'<div class="detail-item"><span class="detail-label">'+x[0]+'</span><span class="detail-value">'+esc(x[1])+'</span></div>').join('')+'<div class="detail-item"><span class="detail-label">实际出货日期</span><span class="detail-value'+(!h.actual_ship_date?' text-warning':'')+'">'+(h.actual_ship_date?esc(fmtDate(h.actual_ship_date)):'待补充')+'</span></div>'+(canEdit?'<div class="detail-item" style="grid-column:1/-1"><button class="btn btn-secondary btn-sm" onclick="editActualShipDate(\'historical\',\''+h.id+'\',\''+(h.actual_ship_date||'')+'\')">补充/更正实际出货日期</button></div>':'')+'</div>'+attachSection+'</div>',back+(hasPermission('payment_view')?'<button class="btn btn-primary" onclick="viewPayment(\''+h.payment_request_id+'\')">付款与结算</button>':'')+'<button class="btn btn-secondary" onclick="closeModal()">关闭</button>')
   }catch(e){showToast(e.message,'danger')}
 }
 function parseHistoricalAttachments(val){ if(!val)return[]; try{ const v=typeof val==='string'?JSON.parse(val):val; return Array.isArray(v)?v:(v&&typeof v==='object'?[v]:[]); }catch(e){ return []; } }
@@ -5768,12 +5967,97 @@ async function viewCI(id, backPay, backMode){
     const pl=ci.packing_list||{};const plItems=pl.items||[];
     // 若来自付款申请详情，提供【← 返回付款申请详情】入口，保留原上下文（含 mode）
     const ciBackFooter=backPay?'<button class="btn btn-secondary" onclick="viewPayment(\''+backPay+'\',\''+(backMode||'view')+'\')">← 返回付款申请详情</button><button class="btn btn-secondary" onclick="closeModal()">关闭</button>':'';
-    openModal('CI/PL详情 - '+ci.ci_no,'<div class="detail-card" style="box-shadow:none;padding:0"><div class="detail-section"><h3>基本信息</h3><div class="detail-grid">'+['ci_no','related_po_no','related_pi_no','supplier_name','brand','country','target_warehouse','ci_date','currency','goods_amount','pi_total_amount','amount_difference','difference_reason','actual_deducted_deposit','payable_balance','transport_basis','import_duty_total','ci_status','balance_payment_status'].map(f=>'<div class="detail-item"><span class="detail-label">'+f+'</span><span class="detail-value">'+esc(ci[f])+'</span></div>').join('')+attachmentHtml('ci',ci.id,'attachment',ci.attachment,'CI附件')+attachmentHtml('ci',ci.id,'pl_attachment',ci.pl_attachment,'PL附件')+'</div></div><div class="detail-section"><h3>CI明细</h3><div class="table-container"><table class="data-table"><thead><tr><th>SKU</th><th>数量</th><th>单价</th><th>金额</th><th>实际关税税率(%)</th><th>已入库</th><th>未入库</th></tr></thead><tbody>'+(ci.items||[]).map(i=>'<tr><td class="cell-id">'+esc(i.sku_code)+'</td><td class="text-right">'+i.shipped_qty+'</td><td class="text-right">'+fmtMoney(i.unit_price)+'</td><td class="text-right">'+fmtMoney(i.ci_amount)+'</td><td class="text-right">'+(i.actual_customs_rate===null||i.actual_customs_rate===''?'—':esc(i.actual_customs_rate))+'</td><td class="text-right">'+(i.inbound_qty||0)+'</td><td class="text-right">'+(i.uninbound_qty||0)+'</td></tr>').join('')+'</tbody></table></div></div><div class="detail-section"><h3>PL明细</h3>'+(plItems.length?'<div class="table-container"><table class="data-table"><thead><tr><th>SKU</th><th>每箱数量</th><th>箱数</th><th>总数量</th><th>总毛重</th><th>总净重</th><th>总体积</th></tr></thead><tbody>'+plItems.map(i=>'<tr><td class="cell-id">'+esc(i.sku_code)+'</td><td class="text-right">'+i.qty_per_carton+'</td><td class="text-right">'+i.cartons+'</td><td class="text-right">'+i.total_qty+'</td><td class="text-right">'+i.gross_weight+'</td><td class="text-right">'+i.net_weight+'</td><td class="text-right">'+i.cbm+'</td></tr>').join('')+'</tbody></table></div>':'<div class="empty-state"><div class="empty-icon">📦</div>暂无PL明细</div>')+'</div><div class="detail-section"><h3>CI vs PL 数量核对</h3><div class="table-container"><table class="data-table"><thead><tr><th>SKU</th><th>CI数量</th><th>PL数量</th><th>差异</th></tr></thead><tbody>'+(ci.pl_check||[]).map(r=>'<tr><td class="cell-id">'+esc(r.sku_code)+'</td><td class="text-right">'+r.ci_qty+'</td><td class="text-right">'+r.pl_qty+'</td><td class="text-right '+(r.diff_qty!==0?'text-danger':'')+'">'+r.diff_qty+'</td></tr>').join('')+'</tbody></table></div></div></div>',ciBackFooter);
+    openModal('CI/PL详情 - '+ci.ci_no,'<div class="detail-card" style="box-shadow:none;padding:0"><div class="detail-section"><h3>基本信息</h3><div class="detail-grid">'+['ci_no','related_po_no','related_pi_no','supplier_name','brand','country','target_warehouse','ci_date','currency','goods_amount','pi_total_amount','amount_difference','difference_reason','actual_deducted_deposit','payable_balance','transport_basis','import_duty_total','ci_status','balance_payment_status'].map(f=>'<div class="detail-item"><span class="detail-label">'+f+'</span><span class="detail-value">'+esc(ci[f])+'</span></div>').join('')+'<div class="detail-item"><span class="detail-label">实际出货日期</span><span class="detail-value'+(!ci.actual_ship_date?' text-warning':'')+'">'+(ci.actual_ship_date?esc(fmtDate(ci.actual_ship_date)):'待补充')+'</span></div>'+(hasPermission('ci_edit')?'<div class="detail-item" style="grid-column:1/-1"><button class="btn btn-secondary btn-sm" onclick="editActualShipDate(\'commercial\',\''+ci.id+'\',\''+(ci.actual_ship_date||'')+'\')">补充/更正实际出货日期</button></div>':'')+attachmentHtml('ci',ci.id,'attachment',ci.attachment,'CI附件')+attachmentHtml('ci',ci.id,'pl_attachment',ci.pl_attachment,'PL附件')+'</div></div><div class="detail-section"><h3>CI明细</h3><div class="table-container"><table class="data-table"><thead><tr><th>SKU</th><th>数量</th><th>单价</th><th>金额</th><th>实际关税税率(%)</th><th>已入库</th><th>未入库</th></tr></thead><tbody>'+(ci.items||[]).map(i=>'<tr><td class="cell-id">'+esc(i.sku_code)+'</td><td class="text-right">'+i.shipped_qty+'</td><td class="text-right">'+fmtMoney(i.unit_price)+'</td><td class="text-right">'+fmtMoney(i.ci_amount)+'</td><td class="text-right">'+(i.actual_customs_rate===null||i.actual_customs_rate===''?'—':esc(i.actual_customs_rate))+'</td><td class="text-right">'+(i.inbound_qty||0)+'</td><td class="text-right">'+(i.uninbound_qty||0)+'</td></tr>').join('')+'</tbody></table></div></div><div class="detail-section"><h3>PL明细</h3>'+(plItems.length?'<div class="table-container"><table class="data-table"><thead><tr><th>SKU</th><th>每箱数量</th><th>箱数</th><th>总数量</th><th>总毛重</th><th>总净重</th><th>总体积</th></tr></thead><tbody>'+plItems.map(i=>'<tr><td class="cell-id">'+esc(i.sku_code)+'</td><td class="text-right">'+i.qty_per_carton+'</td><td class="text-right">'+i.cartons+'</td><td class="text-right">'+i.total_qty+'</td><td class="text-right">'+i.gross_weight+'</td><td class="text-right">'+i.net_weight+'</td><td class="text-right">'+i.cbm+'</td></tr>').join('')+'</tbody></table></div>':'<div class="empty-state"><div class="empty-icon">📦</div>暂无PL明细</div>')+'</div><div class="detail-section"><h3>CI vs PL 数量核对</h3><div class="table-container"><table class="data-table"><thead><tr><th>SKU</th><th>CI数量</th><th>PL数量</th><th>差异</th></tr></thead><tbody>'+(ci.pl_check||[]).map(r=>'<tr><td class="cell-id">'+esc(r.sku_code)+'</td><td class="text-right">'+r.ci_qty+'</td><td class="text-right">'+r.pl_qty+'</td><td class="text-right '+(r.diff_qty!==0?'text-danger':'')+'">'+r.diff_qty+'</td></tr>').join('')+'</tbody></table></div></div></div>',ciBackFooter);
+    // PUR-OPS-COLLAB-01：注入上架准备分区（DOM 注入，避免改动上方大字符串）
+    let opsState=null; try{ opsState=await api('/api/commercial-invoices/'+id+'/ops-prep'); }catch(e){ opsState=null; }
+    let opsCands=[]; try{ opsCands=await api('/api/cc-candidates'); }catch(e){ opsCands=[]; }
+    const opsMb=document.querySelector('#modal-content .modal-body');
+    if(opsMb) opsMb.insertAdjacentHTML('beforeend', renderOpsPrepSection(ci.id, opsState, opsCands));
   }catch(e){showToast(e.message,'danger')}
+}
+// ==================== PUR-OPS-COLLAB-01：电商运营上架准备（V1）前端 ====================
+// 仅展示/编辑：负责人、抄送(CC)、计划上架日期、就绪(Ready)状态；不含图片/Listing/广告/活动。
+function renderOpsPrepSection(ciId, opsState, opsCands){
+  if(!opsState) return '<div class="detail-section"><h3>上架准备（电商运营）</h3><div class="empty-state" style="padding:12px">无法读取上架准备状态。</div></div>';
+  if(opsState.wac_confirmed !== true){
+    return '<div class="detail-section"><h3>上架准备（电商运营）</h3><div style="font-size:13px;color:#fa8c16;background:#fff7e6;border:1px solid #ffd591;border-radius:6px;padding:10px">CI 尚未完成成本确认（wac_confirmed=1），上架准备将在确认后开启。</div></div>';
+  }
+  const canEdit = hasPermission('ci_edit');
+  const ownerId = opsState.ops_owner_id || '';
+  const ownerName = opsState.ops_owner_name || '';
+  const planDate = opsState.ops_plan_listing_date || '';
+  const ready = opsState.ops_ready_status === 'ready';
+  const ccList = opsState.cc || [];
+  const isOwner = !!(ownerId && currentUser && currentUser.id === ownerId);
+  const isAdmin = hasPermission('*');
+  const canSetReady = canEdit && (isOwner || isAdmin) && !!ownerId;
+  const cands = opsCands || [];
+
+  if(!canEdit){
+    // 只读：仅展示当前状态
+    let html = '<div class="detail-section" id="ops-prep-section"><h3>上架准备（电商运营）</h3>';
+    html += '<div class="detail-grid">';
+    html += '<div class="detail-item"><span class="detail-label">负责人</span><span class="detail-value">'+(ownerName||ownerId||'未分配')+'</span></div>';
+    html += '<div class="detail-item"><span class="detail-label">计划上架日期</span><span class="detail-value">'+(planDate||'待定')+'</span></div>';
+    html += '<div class="detail-item"><span class="detail-label">就绪状态</span><span class="detail-value">'+(ready?'<span class="badge badge-success">Ready</span>':'<span class="badge badge-warning">Pending</span>')+'</span></div>';
+    html += '</div>';
+    html += '<div class="detail-item" style="grid-column:1/-1"><span class="detail-label">抄送(CC)</span><span class="detail-value">'+(ccList.length?ccList.map(c=>esc(c.user_name)).join('、'):'无')+'</span></div>';
+    if(ready) html += '<div style="margin-top:8px;font-size:13px;color:#52c41a;background:#f6ffed;border:1px solid #b7eb8f;border-radius:6px;padding:8px">✔ 上架准备已完成（Ready），可安排上架。</div>';
+    html += '</div>';
+    return html;
+  }
+
+  // 可编辑
+  const ownerOpts = '<option value="">未分配</option>' + cands.map(u=>'<option value="'+u.id+'"'+(u.id===ownerId?' selected':'')+'>'+esc(u.name)+'（'+(u.role_name||'')+'）</option>').join('');
+  const ccChecks = cands.length ? cands.map(u=>{
+    const chk = ccList.some(c=>c.user_id===u.id) ? ' checked' : '';
+    return '<label class="cc-check"><input type="checkbox" class="ops-cc-cb" value="'+u.id+'"'+chk+'> '+esc(u.name)+'</label>';
+  }).join('') : '<span class="empty-state">无可选项</span>';
+
+  let html = '<div class="detail-section" id="ops-prep-section"><h3>上架准备（电商运营）</h3>';
+  html += '<div style="font-size:12px;color:#999;margin-bottom:8px">仅管理负责人、抄送、计划上架日期与就绪状态；不含图片、Listing、广告或活动。</div>';
+  html += '<div class="form-grid" id="ops-prep-form">';
+  html += '<div class="form-group"><label>负责人 <span class="required">*</span></label><select id="ops-owner" class="form-control">'+ownerOpts+'</select></div>';
+  html += '<div class="form-group"><label>计划上架日期</label><input type="date" id="ops-plan-date" class="form-control" value="'+planDate+'"></div>';
+  html += '<div class="form-group" style="grid-column:1/-1"><label>抄送(CC)</label><div class="cc-list" id="ops-cc-list">'+ccChecks+'</div></div>';
+  html += '</div>';
+  html += '<div class="ops-prep-actions" style="margin-top:8px">';
+  html += '<button class="btn btn-primary btn-sm" onclick="saveOpsPrep(\''+ciId+'\')">保存上架准备</button> ';
+  if(canSetReady) html += '<button class="btn btn-success btn-sm" onclick="setOpsReady(\''+ciId+'\')">标记上架准备完成（Ready）</button>';
+  html += '</div>';
+  if(ready) html += '<div style="margin-top:8px;font-size:13px;color:#52c41a;background:#f6ffed;border:1px solid #b7eb8f;border-radius:6px;padding:8px">✔ 上架准备已完成（Ready），可安排上架。</div>';
+  html += '</div>';
+  return html;
+}
+async function saveOpsPrep(ciId){
+  try{
+    const owner = (document.getElementById('ops-owner')||{}).value || '';
+    const planDate = (document.getElementById('ops-plan-date')||{}).value || '';
+    const ccs = Array.from(document.querySelectorAll('.ops-cc-cb')).filter(cb=>cb.checked).map(cb=>cb.value);
+    if(!owner){ showToast('请选择负责人','warning'); return; }
+    await api('/api/commercial-invoices/'+ciId+'/ops-prep','POST',{ owner_user_id: owner, cc_user_ids: ccs, plan_listing_date: planDate });
+    showToast('上架准备已保存','success');
+    await refreshOpsPrep(ciId);
+  }catch(e){ showToast(e.message,'danger'); }
+}
+async function setOpsReady(ciId){
+  try{
+    await api('/api/commercial-invoices/'+ciId+'/ops-ready','POST',{});
+    showToast('已标记上架准备完成（Ready）','success');
+    await refreshOpsPrep(ciId);
+  }catch(e){ showToast(e.message,'danger'); }
+}
+async function refreshOpsPrep(ciId){
+  try{
+    const opsState = await api('/api/commercial-invoices/'+ciId+'/ops-prep');
+    const opsCands = await api('/api/cc-candidates');
+    const container = document.getElementById('ops-prep-section');
+    if(container) container.outerHTML = renderOpsPrepSection(ciId, opsState, opsCands);
+  }catch(e){ showToast(e.message,'danger'); }
 }
 async function createCI(){
   const suppliers=await api('/api/suppliers');const pis=await api('/api/proforma-invoices');
-  openModal('新建CI','<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid"><div class="form-group"><label>关联PI</label><select id="nci-pi" onchange="loadPIForCI()"><option value="">无关联</option>'+pis.map(p=>'<option value="'+p.id+'" data-no="'+p.pi_no+'" data-supid="'+p.supplier_id+'" data-supname="'+esc(p.supplier_name)+'" data-cur="'+p.currency+'">'+esc(p.pi_no)+' - '+esc(p.supplier_name)+'</option>').join('')+'</select></div><div class="form-group"><label>供应商 <span class="required">*</span></label><select id="nci-sup">'+suppliers.map(s=>'<option value="'+s.id+'" data-name="'+esc(s.name)+'">'+esc(s.name)+'</option>').join('')+'</select></div><div class="form-group"><label>CI日期</label><input type="date" id="nci-date" value="'+todayStr()+'"></div><div class="form-group"><label>发货批次</label><input type="number" id="nci-batch" value="1"></div><div class="form-group"><label>币种</label><select id="nci-cur"><option>USD</option><option>RMB</option><option>IDR</option><option>MYR</option><option>THB</option></select></div></div><h4 style="margin:16px 0 8px">CI明细 <button class="btn btn-secondary btn-sm" onclick="addCIRow()">➕ 添加</button></h4><div id="ci-items"></div></div>','<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveNewCI()">创建</button>');
+  openModal('新建CI','<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid"><div class="form-group"><label>关联PI</label><select id="nci-pi" onchange="loadPIForCI()"><option value="">无关联</option>'+pis.map(p=>'<option value="'+p.id+'" data-no="'+p.pi_no+'" data-supid="'+p.supplier_id+'" data-supname="'+esc(p.supplier_name)+'" data-cur="'+p.currency+'">'+esc(p.pi_no)+' - '+esc(p.supplier_name)+'</option>').join('')+'</select></div><div class="form-group"><label>供应商 <span class="required">*</span></label><select id="nci-sup">'+suppliers.map(s=>'<option value="'+s.id+'" data-name="'+esc(s.name)+'">'+esc(s.name)+'</option>').join('')+'</select></div><div class="form-group"><label>CI日期</label><input type="date" id="nci-date" value="'+todayStr()+'"></div><div class="form-group"><label>实际出货日期 <span class="required">*</span></label><input type="date" id="nci-ship-date"></div><div class="form-group"><label>发货批次</label><input type="number" id="nci-batch" value="1"></div><div class="form-group"><label>币种</label><select id="nci-cur"><option>USD</option><option>RMB</option><option>IDR</option><option>MYR</option><option>THB</option></select></div></div><h4 style="margin:16px 0 8px">CI明细 <button class="btn btn-secondary btn-sm" onclick="addCIRow()">➕ 添加</button></h4><div id="ci-items"></div></div>','<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveNewCI()">创建</button>');
   window._ciR=0;addCIRow();
 }
 function addCIRow(){const c=document.getElementById('ci-items');const i=window._ciR++;c.innerHTML+='<div class="flex gap-8 mb-8" id="ci-r-'+i+'"><input type="text" placeholder="SKU" id="ci-rs-'+i+'" style="flex:1"><input type="number" placeholder="发货量" id="ci-rq-'+i+'" style="width:105px"><input type="number" step="0.01" placeholder="单价" id="ci-rp-'+i+'" style="width:110px"><input type="number" min="0" step="0.01" placeholder="实际关税税率(%)" id="ci-rr-'+i+'" style="width:145px"><button class="btn btn-danger btn-sm" onclick="document.getElementById(\'ci-r-'+i+'\').remove()">🗑️</button></div>'}
@@ -5781,7 +6065,7 @@ async function loadPIForCI(){const piSel=document.getElementById('nci-pi');if(!p
 async function saveNewCI(){
   const piSel=document.getElementById('nci-pi'),supSel=document.getElementById('nci-sup');const items=[];
   for(let i=0;i<window._ciR;i++){const sku=document.getElementById('ci-rs-'+i)?.value,rateEl=document.getElementById('ci-rr-'+i);if(sku)items.push({sku_code:sku,shipped_qty:parseInt(document.getElementById('ci-rq-'+i).value)||0,unit_price:parseFloat(document.getElementById('ci-rp-'+i).value)||0,actual_customs_rate:rateEl&&rateEl.value!==''?parseFloat(rateEl.value):null})}
-  const d={related_pi_id:piSel.value||'',related_pi_no:piSel.options[piSel.selectedIndex]?.dataset.no||'',supplier_id:supSel.value,supplier_name:supSel.options[supSel.selectedIndex].dataset.name,ci_date:document.getElementById('nci-date').value,shipment_batch:parseInt(document.getElementById('nci-batch').value)||1,currency:document.getElementById('nci-cur').value,items};
+  const d={related_pi_id:piSel.value||'',related_pi_no:piSel.options[piSel.selectedIndex]?.dataset.no||'',supplier_id:supSel.value,supplier_name:supSel.options[supSel.selectedIndex].dataset.name,ci_date:document.getElementById('nci-date').value,actual_ship_date:document.getElementById('nci-ship-date').value,shipment_batch:parseInt(document.getElementById('nci-batch').value)||1,currency:document.getElementById('nci-cur').value,items};
   try{await api('/api/commercial-invoices','POST',d);showToast('CI创建成功','success');closeModal();loadCI()}catch(e){showToast(e.message,'danger')}
 }
 async function createBalPay(id){
@@ -6465,6 +6749,396 @@ const PAY_SUBCATS={
 };
 const PAY_STATUS_MAP={pending_approval:'待审批',approved:'已审批',paid:'已付款',rejected:'已驳回',partial_paid:'部分付款',partial_deduction:'部分抵扣',partial_rounding:'部分抹零',deduction_settled:'全额抵扣',partial_payment_partial_deduction:'部分付款+部分抵扣',reversed:'已冲销',cancelled:'已取消'};
 
+// ==================== FIN-DASHBOARD-01：财务应付驾驶舱（只读）====================
+let _cockpitData=null;
+async function renderPayableCockpit(){
+  const el=document.getElementById('content-inner');
+  el.innerHTML='<div id="flash-container"></div><div style="padding:20px;color:var(--text-secondary,#888)">加载中…</div>';
+  try{
+    const data=await api('/api/finance/payable-cockpit');
+    _cockpitData=data;
+    renderCockpitView();
+  }catch(e){
+    el.innerHTML='<div id="flash-container"></div><div class="flash flash-danger show">加载应付驾驶舱失败：'+esc(e.message)+'</div>';
+  }
+}
+
+function cockpitCard(label,valueHtml,tone,sub){
+  const toneColor={total:'var(--text-primary,#222)',settled:'#2e7d32',outstanding:'#1565c0',warn:'#f57f17',danger:'#c62828',info:'#6a1b9a'}[tone]||'var(--text-primary,#222)';
+  return '<div style="flex:1;min-width:150px;padding:14px 16px;background:var(--bg-card,#fff);border:1px solid var(--border,#e6e6e6);border-radius:10px">'
+    +'<div style="font-size:12px;color:var(--text-secondary,#888);margin-bottom:6px">'+esc(label)+'</div>'
+    +'<div style="font-size:20px;font-weight:700;color:'+toneColor+'">'+valueHtml+'</div>'
+    +(sub?'<div style="font-size:11px;color:var(--text-secondary,#999);margin-top:4px">'+sub+'</div>':'')
+    +'</div>';
+}
+function cockpitCurBreakdown(d,field){
+  return (d.currencies||[]).map(cur=>{
+    const m=d.metrics[cur];if(!m)return '';
+    return '<div style="font-size:15px;line-height:1.5"><span style="color:var(--text-secondary,#999);font-size:11px;margin-right:4px">'+esc(cur)+'</span>'+esc(fmtMoney(m[field]))+'</div>';
+  }).join('');
+}
+function cockpitSupplierStatus(s){
+  if(s.overdue_amount>0) return '<span style="color:#c62828">已逾期</span>';
+  if(s.due_soon>0) return '<span style="color:#f57f17">即将到期</span>';
+  if(s.outstanding>0 && !s.earliest_due_date) return '<span style="color:#999">无到期日</span>';
+  return '<span style="color:#2e7d32">正常</span>';
+}
+// 费用类型展示别名（仅展示用，底层 payment_category / 计算逻辑不变）
+const COCKPIT_CAT_ALIAS={goods:'货款',warehouse_arrival:'运输费',customs_duty:'关税',inspection_fee:'检验费'};
+function cockpitCatAlias(cat){return COCKPIT_CAT_ALIAS[cat]||'其他费用';}
+function toggleCockpitDetail(){
+  const body=document.getElementById('cockpit-detail-body');
+  const tog=document.getElementById('cockpit-detail-toggle');
+  if(!body)return;
+  const open=body.style.display==='none';
+  body.style.display=open?'':'none';
+  if(tog)tog.textContent=open?'收起 ▲':'展开查看 ▼';
+  if(open)renderCockpitDetails();
+}
+function cockpitShowAnomaly(){
+  const only=document.getElementById('cockpit-only-outstanding');if(only)only.checked=true;
+  const nd=document.getElementById('cockpit-only-nodue');if(nd)nd.checked=true;
+  const kw=document.getElementById('cockpit-detail-kw');if(kw)kw.value='';
+  const body=document.getElementById('cockpit-detail-body');if(body)body.style.display='';
+  const tog=document.getElementById('cockpit-detail-toggle');if(tog)tog.textContent='收起 ▲';
+  renderCockpitDetails();
+  const box=document.getElementById('cockpit-detail-table');if(box)box.scrollIntoView({behavior:'smooth',block:'start'});
+}
+
+// ===== FIN-DASHBOARD-UX-02：筛选与展示增强（纯展示层，不改动任何业务计算/结算/汇率规则） =====
+function isoAddDays(iso,n){ const dt=new Date(iso+'T00:00:00Z'); dt.setUTCDate(dt.getUTCDate()+n); return dt.toISOString().split('T')[0]; }
+function cockpitActiveFilters(){
+  const g=id=>document.getElementById(id);
+  return {
+    country:(g('cockpit-f-country')?g('cockpit-f-country').value:''),
+    supplier:(g('cockpit-f-supplier')?g('cockpit-f-supplier').value:''),
+    currency:(g('cockpit-f-currency')?g('cockpit-f-currency').value:''),
+    category:(g('cockpit-f-category')?g('cockpit-f-category').value:'')
+  };
+}
+function cockpitFilteredDetails(){
+  const d=_cockpitData; if(!d) return [];
+  const f=cockpitActiveFilters();
+  let rows=d.details;
+  if(f.country==='__NONE__') rows=rows.filter(r=>!(r.country||''));
+  else if(f.country) rows=rows.filter(r=>(r.country||'')===f.country);
+  if(f.supplier) rows=rows.filter(r=>r.supplier_name===f.supplier);
+  if(f.currency) rows=rows.filter(r=>r.currency===f.currency);
+  if(f.category) rows=rows.filter(r=>r.payment_category===f.category);
+  return rows;
+}
+// 从（过滤后）details 客户端重算聚合：仅分组求和 + 到期桶划分，不触碰 paymentSettlementFacts/unpaid_amount/payable_date/payment status/汇率
+function cockpitAggregate(rows){
+  const d=_cockpitData; const today=d.today;
+  const d7=isoAddDays(today,7), d30=isoAddDays(today,30);
+  const metrics={};
+  const bump=cur=>{ if(!metrics[cur]) metrics[cur]={currency:cur,request_count:0,gross_payable:0,settled:0,outstanding:0,due_7:0,due_30:0,overdue_amount:0,overdue_count:0,no_due_outstanding:0}; return metrics[cur]; };
+  rows.forEach(r=>{
+    const m=bump(r.currency);
+    m.request_count++; m.gross_payable+=r.gross_payable; m.settled+=r.settled; m.outstanding+=r.outstanding;
+    if(r.outstanding>0){
+      if(!r.has_due){ m.no_due_outstanding+=r.outstanding; }
+      else if(r.payable_date<today){ m.overdue_amount+=r.outstanding; m.overdue_count++; }
+      else { if(r.payable_date<=d7) m.due_7+=r.outstanding; if(r.payable_date<=d30) m.due_30+=r.outstanding; }
+    }
+  });
+  const supMap={};
+  rows.forEach(r=>{
+    const key=r.supplier_name+'||'+r.currency;
+    if(!supMap[key]) supMap[key]={supplier_name:r.supplier_name,currency:r.currency,country_set:{},gross_payable:0,settled:0,outstanding:0,due_soon:0,overdue_amount:0,earliest_due_date:'',outstanding_count:0,request_count:0,ids:[],last_payment_date:''};
+    const s=supMap[key];
+    s.request_count++; s.ids.push(r.id); s.gross_payable+=r.gross_payable; s.settled+=r.settled; s.outstanding+=r.outstanding;
+    if(r.country) s.country_set[r.country]=1;
+    if(r.outstanding>0){
+      s.outstanding_count++;
+      if(r.has_due){ if(r.payable_date<today) s.overdue_amount+=r.outstanding; else if(r.payable_date<=d30) s.due_soon+=r.outstanding; if(!s.earliest_due_date||r.payable_date<s.earliest_due_date) s.earliest_due_date=r.payable_date; }
+    }
+    if(r.last_payment_date&&(!s.last_payment_date||r.last_payment_date>s.last_payment_date)) s.last_payment_date=r.last_payment_date;
+  });
+  const by_supplier=Object.values(supMap).map(s=>{
+    s.brands=(d.supplier_brands&&d.supplier_brands[s.supplier_name])||'';
+    s.country=Object.keys(s.country_set).join(', '); delete s.country_set;
+    return s;
+  }).sort((a,b)=>b.outstanding-a.outstanding);
+  const catMap={};
+  rows.forEach(r=>{
+    const key=r.payment_category+'||'+r.currency;
+    if(!catMap[key]) catMap[key]={payment_category:r.payment_category,category_label:r.category_label,currency:r.currency,gross_payable:0,settled:0,outstanding:0,request_count:0};
+    const c=catMap[key]; c.request_count++; c.gross_payable+=r.gross_payable; c.settled+=r.settled; c.outstanding+=r.outstanding;
+  });
+  const by_category=Object.values(catMap).sort((a,b)=>b.outstanding-a.outstanding);
+  const curs=Object.keys(metrics).sort();
+  return {metrics,by_supplier,by_category,details:rows,curs};
+}
+// 无筛选：沿用服务端聚合（零回归），仅补充 brands/country 展示字段
+function cockpitBaselineView(){
+  const d=_cockpitData;
+  const cm={};
+  d.details.forEach(r=>{ if(r.country){ const k=r.supplier_name+'||'+r.currency; (cm[k]=cm[k]||{}); cm[k][r.country]=1; } });
+  const by_supplier=d.by_supplier.map(s=>{ const k=s.supplier_name+'||'+s.currency; return Object.assign({},s,{brands:(d.supplier_brands&&d.supplier_brands[s.supplier_name])||'', country: cm[k]?Object.keys(cm[k]).join(', '):''}); });
+  return {metrics:d.metrics,by_supplier,by_category:d.by_category,details:d.details,curs:d.currencies};
+}
+function getCockpitView(){
+  const d=_cockpitData; if(!d) return null;
+  const f=cockpitActiveFilters();
+  const hasFilter=f.country||f.supplier||f.currency||f.category;
+  return hasFilter?cockpitAggregate(cockpitFilteredDetails()):cockpitBaselineView();
+}
+function cockpitResetFilters(){
+  ['cockpit-f-country','cockpit-f-supplier','cockpit-f-currency','cockpit-f-category'].forEach(id=>{ const e=document.getElementById(id); if(e)e.value=''; });
+  renderCockpitLayers();
+}
+
+// 外壳：标题 + 口径说明 + 顶部筛选栏 + #cockpit-layers 容器
+function renderCockpitView(){
+  const d=_cockpitData;if(!d)return;
+  const el=document.getElementById('content-inner');
+  const allDetails=d.details||[];
+  // 筛选下拉选项（来自全量 details，不受筛选影响，始终完整）
+  const countrySet={}; allDetails.forEach(r=>{ countrySet[r.country||'']=1; });
+  let countryOpts=''; if(countrySet['']) countryOpts+='<option value="__NONE__">未设置(-)</option>';
+  Object.keys(countrySet).filter(c=>c).sort().forEach(c=>{ countryOpts+='<option value="'+esc(c)+'">'+esc(c)+'</option>'; });
+  const supSet={}; allDetails.forEach(r=>{ supSet[r.supplier_name]=1; });
+  const supplierOpts=Object.keys(supSet).sort().map(s=>'<option value="'+esc(s)+'">'+esc(s)+'</option>').join('');
+  const curSet={}; allDetails.forEach(r=>{ if(r.currency) curSet[r.currency]=1; });
+  const currencyOpts=Object.keys(curSet).sort().map(c=>'<option value="'+esc(c)+'">'+esc(c)+'</option>').join('');
+  const catSet={}; allDetails.forEach(r=>{ if(r.payment_category) catSet[r.payment_category]=1; });
+  const categoryOpts=Object.keys(catSet).sort().map(c=>'<option value="'+esc(c)+'">'+esc(cockpitCatAlias(c))+'</option>').join('');
+
+  let html='<div id="flash-container"></div>';
+  html+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><div style="font-size:15px;font-weight:700">🧭 财务应付驾驶舱</div>'
+    +'<div style="font-size:12px;color:var(--text-secondary,#999)">数据时间 '+esc(fmtDate(d.generated_at))+' ｜ 今天 '+esc(d.today)+'</div></div>';
+  html+='<details style="font-size:12px;color:var(--text-secondary,#999);margin-bottom:14px"><summary style="cursor:pointer">口径说明</summary><div style="line-height:1.7;padding:6px 0 0 14px">'
+    +esc(d.notes.outstanding)+'<br>'+esc(d.notes.currency)+'<br>'+esc(d.notes.due_date)+'</div></details>';
+
+  if(!d.currencies.length){
+    html+='<div class="flash flash-info show">当前无有效应付单据。</div>';
+    el.innerHTML=html; return;
+  }
+  // 顶部筛选栏（纯展示层，切换仅重渲染 #cockpit-layers，不请求后端）
+  html+='<div class="filter-bar" style="margin:6px 0 10px"><div class="filter-form" style="flex-wrap:wrap">'
+    +'<div class="filter-group"><label>国家</label><select id="cockpit-f-country" onchange="renderCockpitLayers()"><option value="">全部</option>'+countryOpts+'</select></div>'
+    +'<div class="filter-group"><label>供应商</label><select id="cockpit-f-supplier" onchange="renderCockpitLayers()"><option value="">全部</option>'+supplierOpts+'</select></div>'
+    +'<div class="filter-group"><label>币种</label><select id="cockpit-f-currency" onchange="renderCockpitLayers()"><option value="">全部</option>'+currencyOpts+'</select></div>'
+    +'<div class="filter-group"><label>费用类型</label><select id="cockpit-f-category" onchange="renderCockpitLayers()"><option value="">全部</option>'+categoryOpts+'</select></div>'
+    +'<div class="filter-actions"><button class="btn btn-secondary btn-sm" onclick="cockpitResetFilters()">重置</button></div>'
+    +'</div></div>';
+  html+='<div id="cockpit-layers"></div>';
+  el.innerHTML=html;
+  renderCockpitLayers();
+}
+
+// 分层渲染（随筛选联动）：应付概览 / 费用构成 / 供应商总览 / 费用类型 / 应付明细
+function renderCockpitLayers(){
+  const d=_cockpitData;if(!d)return;
+  const box=document.getElementById('cockpit-layers');if(!box)return;
+  const v=getCockpitView();
+  const curs=v.curs;
+  let html='';
+  // Layer 1 — 应付概览
+  html+='<div style="font-size:13px;font-weight:600;margin:6px 0 8px">应付概览</div>';
+  html+='<div style="display:flex;flex-wrap:wrap;gap:10px">';
+  curs.forEach(cur=>{
+    const m=v.metrics[cur]; if(!m)return;
+    html+=cockpitCard(cur+' 未结清',esc(fmtMoney(m.outstanding)),'outstanding',esc(cur)+' '+m.request_count+' 笔');
+  });
+  html+=cockpitCard('未来7天付款压力',cockpitCurBreakdown(v,'due_7'),'warn','');
+  html+=cockpitCard('未来30天付款压力',cockpitCurBreakdown(v,'due_30'),'warn','');
+  const ovCount=curs.reduce((a,cur)=>a+((v.metrics[cur]&&v.metrics[cur].overdue_count)||0),0);
+  html+=cockpitCard('已逾期',cockpitCurBreakdown(v,'overdue_amount'),'danger',ovCount+' 笔');
+  const noDueCount=v.details.filter(r=>r.outstanding>0&&!r.has_due).length;
+  const noDueSub=noDueCount>0?'<span style="color:#f57f17;cursor:pointer" onclick="cockpitShowAnomaly()">CI出货日/Credit未录入，点击查看 ▼</span>':'无';
+  html+=cockpitCard('数据异常提醒','<span style="font-size:22px">'+noDueCount+'</span><span style="font-size:13px;font-weight:400"> 笔缺少应付日期</span>','info',noDueSub);
+  html+='</div>';
+
+  // Layer 2 — 金额构成
+  html+='<div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:10px">';
+  curs.forEach(cur=>{ const m=v.metrics[cur]; html+=cockpitCard(cur+' 总应付',esc(fmtMoney(m.gross_payable)),'total',''); html+=cockpitCard(cur+' 已结清',esc(fmtMoney(m.settled)),'settled',''); });
+  html+='</div>';
+
+  // Layer 1.5 — 应付费用构成
+  const catAgg={};
+  (v.by_category||[]).forEach(c=>{
+    const alias=cockpitCatAlias(c.payment_category);
+    if(!catAgg[alias])catAgg[alias]={};
+    if(!catAgg[alias][c.currency])catAgg[alias][c.currency]={outstanding:0};
+    catAgg[alias][c.currency].outstanding+=c.outstanding;
+  });
+  const catOrder=['货款','运输费','关税','检验费','其他费用'];
+  const catCurs=curs.slice().sort();
+  html+='<div style="margin-top:14px"><div style="font-size:13px;font-weight:600;margin:6px 0 8px">应付费用构成</div><div style="display:flex;flex-wrap:wrap;gap:10px">';
+  catOrder.forEach(alias=>{
+    const curMap=catAgg[alias]||{};
+    const curParts=catCurs.map(cur=>{
+      const t=curMap[cur]||{outstanding:0};
+      return '<div style="font-size:12px;line-height:1.5"><span style="color:var(--text-secondary,#999);font-size:11px;margin-right:4px">'+esc(cur)+'</span>'+esc(fmtMoney(t.outstanding))+'</div>';
+    }).join('');
+    html+='<div style="flex:1;min-width:150px;padding:12px 14px;background:var(--bg-card,#fff);border:1px solid var(--border,#e6e6e6);border-radius:10px">'
+      +'<div style="font-size:12px;color:var(--text-secondary,#888);margin-bottom:6px">'+alias+'</div>'+curParts+'</div>';
+  });
+  html+='</div></div>';
+
+  // Layer 3 — 供应商应付总览（含品牌/国家展示列，品牌仅关联展示）
+  if((v.by_supplier||[]).length){
+    html+='<div class="table-section" style="margin-top:16px"><div class="table-section-title"><div class="table-section-title-left">🏢 按供应商应付总览</div><div style="font-size:12px;color:var(--text-secondary,#999)">点击任意行查看该供应商费用组成与付款明细</div></div>';
+    html+='<table class="data-table"><thead><tr><th>供应商</th><th>品牌</th><th>国家</th><th>币种</th><th style="text-align:right">总应付</th><th style="text-align:right">已结清</th><th style="text-align:right">未结清</th><th>状态</th></tr></thead><tbody>';
+    (v.by_supplier||[]).forEach(s=>{
+      html+='<tr style="cursor:pointer" onclick="cockpitSupplierDrawer(\''+encodeURIComponent(s.supplier_name)+'\',\''+esc(s.currency)+'\')" title="点击查看该供应商费用组成与付款明细">'
+        +'<td>'+esc(s.supplier_name)+'</td>'
+        +'<td>'+(s.brands?'<span title="'+esc(s.brands)+'">'+esc(s.brands)+'</span>':'<span style="color:#999">—</span>')+'</td>'
+        +'<td>'+(s.country?esc(s.country):'<span style="color:#999">—</span>')+'</td>'
+        +'<td>'+esc(s.currency)+'</td>'
+        +'<td style="text-align:right">'+fmtMoney(s.gross_payable)+'</td>'
+        +'<td style="text-align:right;color:#2e7d32">'+fmtMoney(s.settled)+'</td>'
+        +'<td style="text-align:right;color:#1565c0;font-weight:600">'+fmtMoney(s.outstanding)+'</td>'
+        +'<td>'+cockpitSupplierStatus(s)+'</td></tr>';
+    });
+    html+='</tbody></table></div>';
+  }
+
+  // Layer 4 — 按费用类型汇总
+  if((v.by_category||[]).length){
+    html+='<div class="table-section" style="margin-top:16px"><div class="table-section-title"><div class="table-section-title-left">📊 按费用类型汇总</div></div>';
+    html+='<table class="data-table"><thead><tr><th>费用类型</th><th>币种</th><th style="text-align:right">总应付</th><th style="text-align:right">已结清</th><th style="text-align:right">未结清</th><th style="text-align:right">笔数</th></tr></thead><tbody>';
+    v.by_category.forEach(c=>{
+      html+='<tr><td>'+esc(c.category_label||c.payment_category)+'</td><td>'+esc(c.currency)+'</td>'
+        +'<td style="text-align:right">'+fmtMoney(c.gross_payable)+'</td>'
+        +'<td style="text-align:right;color:#2e7d32">'+fmtMoney(c.settled)+'</td>'
+        +'<td style="text-align:right;color:#1565c0;font-weight:600">'+fmtMoney(c.outstanding)+'</td>'
+        +'<td style="text-align:right">'+c.request_count+'</td></tr>';
+    });
+    html+='</tbody></table></div>';
+  }
+
+  // Layer 5 — 应付明细（默认折叠，保持原字段结构，不增加国家列）
+  const totalCnt=v.details.length;
+  const outCnt=v.details.filter(r=>r.outstanding>0).length;
+  html+='<div class="table-section" style="margin-top:16px"><div class="table-section-title" style="cursor:pointer" onclick="toggleCockpitDetail()">'
+    +'<div class="table-section-title-left">📋 应付明细（共 '+totalCnt+' 条，未结清 '+outCnt+' 条）</div>'
+    +'<div style="font-size:12px;color:var(--text-secondary,#999)" id="cockpit-detail-toggle">展开查看 ▼</div></div>'
+    +'<div id="cockpit-detail-body" style="display:none">'
+    +'<div class="filter-actions" style="margin:8px 0">'
+    +'<label style="font-size:12px;margin-right:6px"><input type="checkbox" id="cockpit-only-outstanding" onchange="renderCockpitDetails()" checked> 仅看未结清</label>'
+    +'<label style="font-size:12px;margin-right:6px"><input type="checkbox" id="cockpit-only-nodue" onchange="renderCockpitDetails()"> 仅看无到期日</label>'
+    +'<input type="text" id="cockpit-detail-kw" placeholder="供应商/申请号/CI" style="width:180px" oninput="renderCockpitDetails()">'
+    +'</div><div id="cockpit-detail-table"></div></div></div>';
+  box.innerHTML=html;
+}
+
+function cockpitStatusBadge(r){
+  const color={paid:'#2e7d32',approved:'#1565c0',pending_approval:'#f57f17',rejected:'#c62828',reversed:'#c62828'}[r.status]||'#666';
+  return '<span style="color:'+color+'">'+esc(r.status_label)+'</span>';
+}
+
+function renderCockpitDetails(preSupplier,preCurrency){
+  const d=_cockpitData;if(!d)return;
+  const box=document.getElementById('cockpit-detail-table');if(!box)return;
+  const onlyOut=document.getElementById('cockpit-only-outstanding');
+  const onlyNoDue=document.getElementById('cockpit-only-nodue');
+  const kwEl=document.getElementById('cockpit-detail-kw');
+  const kw=(kwEl?kwEl.value:'').trim().toLowerCase();
+  let rows=getCockpitView().details.slice();
+  if(onlyOut&&onlyOut.checked)rows=rows.filter(r=>r.outstanding>0);
+  if(onlyNoDue&&onlyNoDue.checked)rows=rows.filter(r=>!r.has_due);
+  if(preSupplier!==undefined){
+    rows=rows.filter(r=>r.supplier_name===preSupplier&&r.currency===preCurrency);
+  }
+  if(kw)rows=rows.filter(r=>(r.supplier_name+' '+r.request_no+' '+(r.related_ci_no||'')+' '+(r.related_pi_no||'')).toLowerCase().includes(kw));
+  let html='<table class="data-table"><thead><tr><th>付款申请编号</th><th>供应商</th><th>来源</th><th>关联PI/CI</th><th>费用类型</th><th>付款主体</th><th>币种</th><th style="text-align:right">应付</th><th style="text-align:right">已核销</th><th style="text-align:right">未结清</th><th>到期日</th><th style="text-align:right">逾期天数</th><th>状态</th></tr></thead><tbody>';
+  if(!rows.length)html+='<tr><td colspan="13" style="text-align:center;color:#999;padding:20px">无匹配记录</td></tr>';
+  rows.forEach(r=>{
+    const rel=[r.related_pi_no,r.related_ci_no].filter(Boolean).join(' / ')||'—';
+    const catTxt=(r.category_label||'')+(r.subcategory_label?' / '+r.subcategory_label:'');
+    html+='<tr style="cursor:pointer" onclick="viewPayment(\''+r.id+'\')">'
+      +'<td style="color:#1d6fd3">'+esc(r.request_no)+(r.source_mode==='historical'?' <span style="font-size:10px;color:#999">(历史)</span>':'')+'</td>'
+      +'<td>'+esc(r.supplier_name)+'</td>'
+      +'<td>'+esc(r.source_type||'—')+'</td>'
+      +'<td>'+esc(rel)+'</td>'
+      +'<td>'+esc(catTxt||'—')+'</td>'
+      +'<td>'+esc(r.payee_label||'—')+'</td>'
+      +'<td>'+esc(r.currency)+'</td>'
+      +'<td style="text-align:right">'+fmtMoney(r.gross_payable)+'</td>'
+      +'<td style="text-align:right;color:#2e7d32">'+fmtMoney(r.settled)+'</td>'
+      +'<td style="text-align:right;color:#1565c0;font-weight:600">'+fmtMoney(r.outstanding)+'</td>'
+      +'<td>'+(r.payable_date||'<span style="color:#999">无到期日</span>')+'</td>'
+      +'<td style="text-align:right;color:'+(r.overdue_days>0?'#c62828':'inherit')+'">'+(r.overdue_days>0?r.overdue_days:'—')+'</td>'
+      +'<td>'+cockpitStatusBadge(r)+'</td></tr>';
+  });
+  html+='</tbody></table>';
+  box.innerHTML=html;
+}
+
+function openCockpitDrawer(){
+  const ov=document.getElementById('cockpit-drawer-overlay');
+  const dr=document.getElementById('cockpit-drawer');
+  if(ov)ov.classList.add('show');
+  if(dr)dr.classList.add('open');
+  document.addEventListener('keydown',cockpitDrawerEsc);
+}
+function closeCockpitDrawer(){
+  const ov=document.getElementById('cockpit-drawer-overlay');
+  const dr=document.getElementById('cockpit-drawer');
+  if(ov)ov.classList.remove('show');
+  if(dr)dr.classList.remove('open');
+  document.removeEventListener('keydown',cockpitDrawerEsc);
+}
+function cockpitDrawerEsc(e){if(e.key==='Escape')closeCockpitDrawer();}
+function cockpitSupplierDrawer(supplierEnc,currency){
+  const supplier=decodeURIComponent(supplierEnc);
+  const d=_cockpitData;if(!d)return;
+  const rows=getCockpitView().details.filter(r=>r.supplier_name===supplier&&r.currency===currency);
+  const brands=(d.supplier_brands&&d.supplier_brands[supplier])||'';
+  const _cset={}; rows.forEach(r=>{ if(r.country) _cset[r.country]=1; });
+  const countries=Object.keys(_cset).join(', ');
+  const order=['货款','运输费','关税','检验费','其他费用'];
+  const buckets={};let totalOut=0;
+  rows.forEach(r=>{
+    const alias=cockpitCatAlias(r.payment_category);
+    if(!buckets[alias])buckets[alias]={outstanding:0};
+    buckets[alias].outstanding+=r.outstanding;
+    totalOut+=r.outstanding;
+  });
+  const maxOut=Math.max(1,...order.map(k=>(buckets[k]||{outstanding:0}).outstanding));
+  const compHtml=order.map(k=>{
+    const b=buckets[k]||{outstanding:0};
+    const pct=Math.round(b.outstanding/maxOut*100);
+    const dim=b.outstanding===0;
+    return '<div style="margin-bottom:10px">'
+      +'<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span>'+k+'</span>'
+      +'<span style="font-weight:600'+(dim?';color:#bbb':'')+'">'+esc(fmtMoney(b.outstanding))+' <span style="font-size:11px;color:#999">'+esc(currency)+'</span></span></div>'
+      +'<div style="height:6px;background:#eef0f3;border-radius:4px;overflow:hidden"><div style="height:100%;width:'+pct+'%;background:'+(dim?'#e0e0e0':'#3370ff')+';border-radius:4px"></div></div></div>';
+  }).join('');
+  const detailHtml=rows.length?rows.map(r=>{
+    const rel=[r.related_pi_no,r.related_ci_no].filter(Boolean).join(' / ')||'—';
+    const catTxt=(r.category_label||'')+(r.subcategory_label?' / '+r.subcategory_label:'')||'—';
+    return '<tr style="cursor:pointer" onclick="closeCockpitDrawer();viewPayment(\''+r.id+'\')">'
+      +'<td style="color:#1d6fd3">'+esc(r.request_no)+(r.source_mode==='historical'?' <span style="font-size:10px;color:#999">(历史)</span>':'')+'</td>'
+      +'<td>'+esc(rel)+'</td>'
+      +'<td>'+esc(catTxt||'—')+'</td>'
+      +'<td style="text-align:right">'+fmtMoney(r.gross_payable)+'</td>'
+      +'<td style="text-align:right;color:#2e7d32">'+fmtMoney(r.settled)+'</td>'
+      +'<td style="text-align:right;color:#1565c0;font-weight:600">'+fmtMoney(r.outstanding)+'</td>'
+      +'<td>'+(r.payable_date||'<span style="color:#999">无到期日</span>')+'</td>'
+      +'<td>'+cockpitStatusBadge(r)+'</td></tr>';
+  }).join('') : '<tr><td colspan="8" style="text-align:center;color:#999;padding:18px">无付款记录</td></tr>';
+  const html='<div class="drawer-header"><div>'
+    +'<div style="font-size:15px;font-weight:700">'+esc(supplier)+'</div>'
+    +'<div style="font-size:12px;color:var(--text-secondary,#999);margin-top:2px">'+esc(currency)
+    +(brands?' ｜ 品牌 '+esc(brands):'')
+    +(countries?' ｜ 国家 '+esc(countries):'')
+    +'</div>'
+    +'<div style="font-size:12px;color:var(--text-secondary,#999);margin-top:8px">未结清金额</div>'
+    +'<div style="font-size:24px;font-weight:700;color:#1565c0">'+esc(fmtMoney(totalOut))+' <span style="font-size:14px;color:#999">'+esc(currency)+'</span></div>'
+    +'</div><button class="modal-close" onclick="closeCockpitDrawer()">×</button></div>'
+    +'<div class="drawer-body">'
+    +'<div style="font-size:13px;font-weight:600;margin-bottom:10px">费用组成</div>'+compHtml
+    +'<div style="font-size:13px;font-weight:600;margin:18px 0 8px">付款明细（'+rows.length+' 笔）</div>'
+    +'<table class="data-table"><thead><tr><th>付款编号</th><th>来源</th><th>费用类型</th><th style="text-align:right">应付</th><th style="text-align:right">已付</th><th style="text-align:right">未付</th><th>到期日</th><th>状态</th></tr></thead><tbody>'+detailHtml+'</tbody></table>'
+    +'</div>';
+  const dr=document.getElementById('cockpit-drawer');
+  if(dr){dr.innerHTML=html;openCockpitDrawer();}
+}
+
 async function renderPayment(){
   document.getElementById('content-inner').innerHTML='<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>状态</label><select id="pay-fs"><option value="">全部</option><option value="pending_approval">待审批</option><option value="approved">已审批</option><option value="paid">已付款</option><option value="partial_paid">部分付款</option><option value="rejected">已驳回</option></select></div><div class="filter-group"><label>类别</label><select id="pay-fc"><option value="">全部</option><option value="goods">货款</option><option value="warehouse_arrival">到仓费用</option><option value="customs_duty">关税</option><option value="inspection_fee">商检费用</option></select></div><div class="filter-group"><label>关键词</label><input type="text" id="pay-fk" placeholder="申请号/供应商/来源单号" onkeypress="if(event.key===\'Enter\')loadPay()"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadPay()">搜索</button>'+(hasPermission('payment_import')?'<button class="btn btn-secondary btn-sm" onclick="importPayResult()">📥 导入付款结果</button>':'')+'</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">💳 付款申请</div></div><div id="pay-table"></div></div>';
   loadPay();
@@ -6837,9 +7511,20 @@ async function apprChk(id){if(!confirm('确认审批通过？将调整库存。'
 window.addEventListener('DOMContentLoaded',()=>{
   // 直开 HTML 文件（file://）时后端不可达，先给出醒目指引
   if(isFileProtocol()){
-    showFatalNotice('⚠️ 检测到您直接打开了 HTML 文件（file://）。进销存系统需要后端服务，请：<br>① 在终端运行 <b>node server.js</b><br>② 浏览器访问 <b>http://localhost:3001</b>（默认账号 admin / admin）<br>不要直接双击 index.html。');
+    showFatalNotice('⚠️ 检测到您直接打开了 HTML 文件（file://）。进销存系统需要后端服务，请：<br>① 在终端运行 <b>node server.js</b><br>② 浏览器访问 <b>http://localhost:3001</b><br>不要直接双击 index.html。');
     return;
   }
-  const saved=localStorage.getItem('inv_user');
-  if(saved){try{currentUser=JSON.parse(saved);showApp()}catch(e){}}
+  // 凭证基于 HttpOnly Cookie（Session），启动即从 /api/me 探活；无有效会话则显示登录页
+  bootFromSession();
 });
+// 启动探活：有效会话 → 进入业务（pending 显示待授权页）；无效 → 登录页
+async function bootFromSession(){
+  try{
+    const me=await api('/api/me','GET');
+    if(me&&me.status==='pending'){ showPendingPage(me); }
+    else { currentUser=me; showApp(); }
+  }catch(e){
+    // 未登录 / 会话失效：api 已在 401 时调用 doLogout 显示登录页
+    const lp=document.getElementById('login-page'); if(lp) lp.style.display='flex';
+  }
+}

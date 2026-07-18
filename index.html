@@ -147,6 +147,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 .modal-lg .modal-header{flex:0 0 auto}
 .modal-lg .modal-body{flex:1 1 auto;overflow-y:auto}
 .modal-lg .modal-footer{flex:0 0 auto}
+.drawer-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.35);z-index:1100}
+.drawer-overlay.show{display:block}
+.drawer{position:fixed;top:0;right:0;width:440px;max-width:92vw;height:100%;background:var(--card-bg,#fff);box-shadow:-8px 0 30px rgba(0,0,0,.18);z-index:1101;transform:translateX(100%);transition:transform .25s ease;overflow:hidden;display:flex;flex-direction:column}
+.drawer.open{transform:translateX(0)}
+.drawer-header{padding:16px 20px;border-bottom:1px solid var(--border,#e6e6e6);display:flex;justify-content:space-between;align-items:flex-start}
+.drawer-body{padding:16px 20px;flex:1 1 auto;overflow-y:auto}
 .pc-modal{max-width:560px}
 .pc-modal-hint{font-size:12px;color:var(--text-muted);margin-top:4px;line-height:1.5}
 .pc-modal-error{display:none;margin-top:14px;padding:10px 12px;border-radius:8px;background:#fff1f0;border:1px solid #ffccc7;color:#cf1322;font-size:13px;line-height:1.6}
@@ -365,6 +371,23 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 .pc-empty{padding:28px 14px;text-align:center;color:var(--text-muted);font-size:13px}
 .pc-empty .pc-empty-icon{font-size:26px;margin-bottom:6px;display:block}
 .pc-readonly-banner{display:flex;align-items:center;gap:8px;padding:8px 14px;background:#fff8e6;border:1px solid #f0e0b0;border-radius:8px;color:#8a6d1a;font-size:12px;margin-bottom:12px}
+.login-card .btn-feishu{background:#3370ff;border:none}
+.login-card .btn-feishu:hover{background:#285ce0}
+.login-card .bg-toggle{margin-top:18px;font-size:13px}
+.login-card .bg-toggle a{color:var(--text-secondary);text-decoration:none;border-bottom:1px dashed var(--border)}
+.login-card .bg-toggle a:hover{color:var(--primary)}
+.login-card #bg-form{margin-top:14px}
+.login-card .btn-secondary{background:#eeeeee;color:#333;border:none}
+.login-card .btn-secondary:hover{background:#e0e0e0}
+.status-active{background:#e8f5e9;color:#2e7d32;padding:2px 8px;border-radius:6px;font-size:12px}
+.status-pending{background:#fff3cd;color:#f57f17;padding:2px 8px;border-radius:6px;font-size:12px}
+.user-role-sel{padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;font-family:inherit}
+/* PUR-OPS-COLLAB-01：上架准备分区 */
+.badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:12px;font-weight:500;white-space:nowrap}
+.badge-success{background:#e8f5e9;color:#2e7d32}
+.badge-warning{background:#fff3cd;color:#f57f17}
+.cc-list{display:flex;flex-wrap:wrap;gap:8px;max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:8px;background:var(--bg-card,#fff)}
+.cc-check{display:inline-flex;align-items:center;gap:4px;font-size:13px;font-weight:400;margin:0;cursor:pointer}
 </style>
 </head>
 <body>
@@ -372,10 +395,23 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
   <div class="login-container"><div class="login-card">
     <h1>📦 进销存管理系统</h1>
     <p>采购 · 库存 · 成本 · 付款全流程管理</p>
-    <input type="text" id="login-username" placeholder="用户名" value="admin" onkeydown="if(event.key==='Enter')doLogin()">
-    <input type="password" id="login-password" placeholder="密码" value="admin" onkeydown="if(event.key==='Enter')doLogin()">
-    <button onclick="doLogin()" id="login-btn">登 录</button>
-    <div class="login-hint"><strong>本地开发模式</strong><br>默认账号：admin / admin<br>超级管理员拥有全部权限</div>
+    <button onclick="doFeishuLogin()" id="login-btn" class="btn-feishu">🔵 使用飞书登录</button>
+    <div class="login-hint"><strong>推荐使用飞书账号登录</strong><br>首次登录将由管理员启用并分配权限。</div>
+    <div class="bg-toggle"><a href="javascript:void(0)" onclick="toggleBreakGlass()">本地应急登录</a></div>
+    <div id="bg-form" style="display:none">
+      <input type="text" id="bg-username" placeholder="应急账号" onkeydown="if(event.key==='Enter')doBreakGlassLogin()">
+      <input type="password" id="bg-password" placeholder="应急密码" onkeydown="if(event.key==='Enter')doBreakGlassLogin()">
+      <button onclick="doBreakGlassLogin()" class="btn-secondary">应急登录</button>
+    </div>
+  </div></div>
+</div>
+<div id="pending-page" class="login-page" style="display:none">
+  <div class="login-container"><div class="login-card">
+    <h1>⏳ 账号待授权</h1>
+    <p>您的飞书账号已成功识别</p>
+    <p id="pending-name" style="font-weight:600;color:var(--text);margin-bottom:8px"></p>
+    <div class="login-hint"><strong>账号已识别，等待管理员授权</strong><br>管理员启用并分配角色后，您即可进入业务系统。如有疑问请联系系统管理员。</div>
+    <button onclick="doLogout()" class="btn-secondary">退出登录</button>
   </div></div>
 </div>
 <div id="app" class="app-shell" style="display:none">
@@ -399,6 +435,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 </div>
 <div class="toast-container" id="toast-container"></div>
 <div class="modal-overlay" id="modal-overlay" onclick="if(event.target===this)closeModal()"><div class="modal" id="modal-content"></div></div>
+<div class="drawer-overlay" id="cockpit-drawer-overlay" onclick="if(event.target===this)closeCockpitDrawer()"></div>
+<aside class="drawer" id="cockpit-drawer"></aside>
 <div id="global-tooltip"></div>
 <script src="app.js"></script>
 </body>

@@ -102,6 +102,55 @@ function initDatabase() {
     )
   `);
 
+  // ==================== AUTH-FEISHU 认证扩展（幂等迁移） ====================
+  (function authFeishuMigration(){
+    const userCols = [
+      "ALTER TABLE users ADD COLUMN auth_source TEXT NOT NULL DEFAULT 'feishu'",
+      "ALTER TABLE users ADD COLUMN feishu_open_id TEXT NOT NULL DEFAULT ''",
+      "ALTER TABLE users ADD COLUMN feishu_union_id TEXT NOT NULL DEFAULT ''",
+      "ALTER TABLE users ADD COLUMN feishu_user_id TEXT NOT NULL DEFAULT ''",
+      "ALTER TABLE users ADD COLUMN password_hash TEXT NOT NULL DEFAULT ''",
+      "ALTER TABLE users ADD COLUMN last_login_at TEXT NOT NULL DEFAULT ''"
+    ];
+    for (const sql of userCols) { try { d.exec(sql); } catch(e) {} }
+
+    try { d.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_union_id ON users(feishu_union_id) WHERE feishu_union_id <> ''"); } catch(e) {}
+    try { d.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_open_id ON users(feishu_open_id) WHERE feishu_open_id <> ''"); } catch(e) {}
+
+    d.exec(`CREATE TABLE IF NOT EXISTS sessions (
+      id TEXT PRIMARY KEY,
+      token_hash TEXT NOT NULL UNIQUE,
+      user_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      user_agent TEXT DEFAULT '',
+      ip_address TEXT DEFAULT ''
+    )`);
+    d.exec("CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)");
+    d.exec("CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at)");
+
+    d.exec(`CREATE TABLE IF NOT EXISTS oauth_states (
+      state TEXT PRIMARY KEY,
+      created_at TEXT DEFAULT (datetime('now')),
+      expires_at TEXT NOT NULL
+    )`);
+    d.exec("CREATE INDEX IF NOT EXISTS idx_oauth_states_expires ON oauth_states(expires_at)");
+
+    d.exec(`CREATE TABLE IF NOT EXISTS login_audit (
+      id TEXT PRIMARY KEY,
+      user_id TEXT,
+      username TEXT DEFAULT '',
+      auth_source TEXT NOT NULL,
+      success INTEGER NOT NULL,
+      fail_reason TEXT DEFAULT '',
+      ip TEXT DEFAULT '',
+      user_agent TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now'))
+    )`);
+    d.exec("CREATE INDEX IF NOT EXISTS idx_login_audit_user ON login_audit(user_id)");
+    d.exec("CREATE INDEX IF NOT EXISTS idx_login_audit_created ON login_audit(created_at)");
+  })();
+
   // 国家
   d.exec(`
     CREATE TABLE IF NOT EXISTS countries (
@@ -301,6 +350,21 @@ function initDatabase() {
       status TEXT DEFAULT 'pending',
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  // 业务参与人（通用 CC / Owner 模型；V1 仅实现 participant_type='cc'，owner 仅预留列、不进任何代码逻辑）
+  // business_type 区分业务对象（V1='approval'；预留 'ci_prep'/'payment_reminder'），business_id 为业务对象主键；
+  // 不绑定 approval 专属，为 CI 运营准备 / 付款提醒等未来场景预留复用。
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS business_participants (
+      id TEXT PRIMARY KEY,
+      business_type TEXT NOT NULL,
+      business_id TEXT NOT NULL,
+      participant_type TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      user_name TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now'))
     )
   `);
 
@@ -1686,6 +1750,7 @@ function initDatabase() {
   d.exec(`CREATE INDEX IF NOT EXISTS idx_wac_history_latest ON wac_history(sku_code, country, warehouse, confirmation_status, is_locked)`);
   d.exec(`CREATE INDEX IF NOT EXISTS idx_wac_history_ci ON wac_history(ci_id)`);
   d.exec(`CREATE INDEX IF NOT EXISTS idx_approval_business ON approval_records(business_type, business_id)`);
+  d.exec(`CREATE INDEX IF NOT EXISTS idx_business_participants ON business_participants(business_type, business_id, participant_type)`);
 
   // ==================== P1-03-C 严格 migration（禁止静默吞错） ====================
   (function p1cStrictMigration() {
@@ -1794,6 +1859,53 @@ function initDatabase() {
     }
   })();
 
+  // CI-SHIP-DATE-01：运营 CI 与历史 CI 实际出货日期（冻结：同名字段 actual_ship_date；不允许默认填充今天）
+  (function ciShipDateMigration() {
+    const d = getDB();
+    const opCols = d.prepare(`PRAGMA table_info(commercial_invoices)`).all().map(c => c.name);
+    if (!opCols.includes('actual_ship_date')) {
+      d.exec(`ALTER TABLE commercial_invoices ADD COLUMN actual_ship_date TEXT NOT NULL DEFAULT ''`);
+    }
+    const hCols = d.prepare(`PRAGMA table_info(historical_commercial_invoices)`).all().map(c => c.name);
+    if (!hCols.includes('actual_ship_date')) {
+      d.exec(`ALTER TABLE historical_commercial_invoices ADD COLUMN actual_ship_date TEXT NOT NULL DEFAULT ''`);
+    }
+  })();
+
+  // PAY-CREDIT-DUE-01：Credit 天数快照（运营/历史 CI 各自独立快照，与实时供应商配置解耦）
+  (function payCreditDueMigration() {
+    const d = getDB();
+    const opCols = d.prepare(`PRAGMA table_info(commercial_invoices)`).all().map(c => c.name);
+    if (!opCols.includes('payment_term_id')) {
+      d.exec(`ALTER TABLE commercial_invoices ADD COLUMN payment_term_id TEXT NOT NULL DEFAULT ''`);
+    }
+    if (!opCols.includes('credit_days')) {
+      d.exec(`ALTER TABLE commercial_invoices ADD COLUMN credit_days INTEGER NOT NULL DEFAULT 0`);
+    }
+    const hCols = d.prepare(`PRAGMA table_info(historical_commercial_invoices)`).all().map(c => c.name);
+    if (!hCols.includes('payment_term_id')) {
+      d.exec(`ALTER TABLE historical_commercial_invoices ADD COLUMN payment_term_id TEXT NOT NULL DEFAULT ''`);
+    }
+    if (!hCols.includes('credit_days')) {
+      d.exec(`ALTER TABLE historical_commercial_invoices ADD COLUMN credit_days INTEGER NOT NULL DEFAULT 0`);
+    }
+  })();
+
+  // PUR-OPS-COLLAB-01：电商运营上架准备（V1）— commercial_invoices 新增 3 列；CC/owner 存 business_participants(business_type='ci')
+  (function opsPrepMigration() {
+    const d = getDB();
+    const opCols = d.prepare(`PRAGMA table_info(commercial_invoices)`).all().map(c => c.name);
+    if (!opCols.includes('ops_owner_id')) {
+      d.exec(`ALTER TABLE commercial_invoices ADD COLUMN ops_owner_id TEXT NOT NULL DEFAULT ''`);
+    }
+    if (!opCols.includes('ops_plan_listing_date')) {
+      d.exec(`ALTER TABLE commercial_invoices ADD COLUMN ops_plan_listing_date TEXT NOT NULL DEFAULT ''`);
+    }
+    if (!opCols.includes('ops_ready_status')) {
+      d.exec(`ALTER TABLE commercial_invoices ADD COLUMN ops_ready_status TEXT NOT NULL DEFAULT 'pending'`);
+    }
+  })();
+
   // ==================== 插入默认数据 ====================
 
   // 默认角色
@@ -1848,8 +1960,8 @@ function initDatabase() {
       ['role_viewer', '普通用户', '只读查看权限', viewerPerms]);
 
     // 默认管理员
-    run(`INSERT INTO users (id, username, name, password, role_id, status) VALUES (?, ?, ?, ?, ?, ?)`,
-      ['user_admin', 'admin', '超级管理员', 'admin', 'role_admin', 'active']);
+    run(`INSERT INTO users (id, username, name, password, role_id, status, auth_source, password_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ['user_admin', 'admin', '超级管理员', '', 'role_admin', 'active', 'local', '']);
 
     console.log('[DB] 已插入默认角色和管理员账号');
   }
