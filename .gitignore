@@ -11,6 +11,14 @@ data/*.sqlite
 data/*.sqlite-shm
 data/*.sqlite-wal
 
+# 备份产物（本地/持久盘，不入库）
+backups/
+.backup-*/
+.env.backup.*
+
+# PM2 / 运行日志
+logs/
+
 # 系统/临时文件
 .DS_Store
 .workbuddy/
