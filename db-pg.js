@@ -188,6 +188,18 @@ function normalizeSql(sql) {
   if (!sql) return sql;
   let s = sql;
 
+  // 0. INSERT OR IGNORE INTO xxx -> INSERT INTO xxx ON CONFLICT DO NOTHING
+  //    （server.js:5137 inbound/ERP 导入路径：库存总表无该 SKU 记录时创建一条仅含成本的记录；
+  //     须在所有转换前处理，并在语句末尾追加冲突子句以对齐 SQLite OR IGNORE 语义）
+  let isInsertIgnore = false;
+  s = s.replace(/^\s*INSERT\s+OR\s+IGNORE\s+INTO\b/i, (m) => {
+    isInsertIgnore = true;
+    return m.replace(/OR\s+IGNORE\s+/i, '');
+  });
+  if (isInsertIgnore) {
+    s = s.replace(/;\s*$/, '') + ' ON CONFLICT DO NOTHING';
+  }
+
   // 1. COLLATE NOCASE 谓词 -> lower() 比较（保留 ? 占位符，须在 ?->$N 之前）
   s = s.replace(/\b(\w+)\s*=\s*\?\s+COLLATE\s+NOCASE/g, 'lower($1) = lower(?)');
 
