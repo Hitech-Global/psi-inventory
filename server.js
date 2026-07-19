@@ -5277,8 +5277,8 @@ async function ensureSettlementLegacyBaselines(payment) {
   }
 }
 
-function paymentSettlementFacts(payment) {
-  const logs = paymentSettlementLogs(payment.id);
+async function paymentSettlementFacts(payment) {
+  const logs = await paymentSettlementLogs(payment.id);
   const paymentLogs = logs.filter(log => log.event_type === 'payment');
   const deductionLogs = logs.filter(log => log.event_type === 'deduction');
   const roundingLogs = logs.filter(log => log.event_type === 'rounding');
@@ -5687,8 +5687,8 @@ async function reverseSettlementEvent(paymentRequestId, rawLogId, eventType, rea
   });
 }
 
-function paymentSettlementDisplayLogs(payment) {
-  const logs = paymentSettlementLogs(payment.id);
+async function paymentSettlementDisplayLogs(payment) {
+  const logs = await paymentSettlementLogs(payment.id);
   if (!logs.some(log => log.event_type === 'payment') && Number(payment.paid_amount || 0) > 0) {
     logs.push({ id: 'legacy-payment', payment_request_id: payment.id, event_type: 'payment', amount: payment.paid_amount, status: 'applied', reason: '历史付款基线（迁移前数据）', paid_date: payment.paid_date || '', operator_name: 'system', is_legacy: 1, created_at: payment.updated_at || payment.created_at });
   }
@@ -6132,7 +6132,7 @@ const PAYABLE_SUBCAT_LABELS = { deposit: '定金', balance: '尾款', duty: '关
 const PAYABLE_PAYEE_LABELS = { factory: '工厂', customs: '海关', inspection_org: '检验机构', service_provider: '服务商' };
 const PAYABLE_STATUS_LABELS = { pending_approval: '待审批', approved: '已审批', paid: '已付款', rejected: '已驳回', partial_paid: '部分付款', partial_deduction: '部分抵扣', partial_rounding: '部分抹零', deduction_settled: '全额抵扣', partial_payment_partial_deduction: '部分付款+部分抵扣', reversed: '已冲销', cancelled: '已取消' };
 
-app.get('/api/finance/payable-cockpit', requireApiPermission('payment_view'), asyncHandler((req, res) => {
+app.get('/api/finance/payable-cockpit', requireApiPermission('payment_view'), asyncHandler(async (req, res) => {
   try {
     const today = new Date().toISOString().split('T')[0];
     // 付款提前提醒天数改读 system_config（payment_remind_days，缺省 7）；30 天展示桶保持固定，不配置化
@@ -6145,8 +6145,9 @@ app.get('/api/finance/payable-cockpit', requireApiPermission('payment_view'), as
                           AND payment_status NOT IN ('rejected', 'cancelled')`).rows;
 
     const m2 = (v) => settlementMoney(v);
-    const enriched = rows.map(pr => {
-      const facts = paymentSettlementFacts(pr);
+    const enriched = [];
+    for (const pr of rows) {
+      const facts = await paymentSettlementFacts(pr);
       const status = derivePaymentStatus(pr, facts);
       const outstanding = Math.max(0, facts.outstanding);
       const settled = m2(facts.effectivePaid + facts.effectiveDeduction + facts.effectiveRounding);
@@ -6156,7 +6157,7 @@ app.get('/api/finance/payable-cockpit', requireApiPermission('payment_view'), as
       const overdueDays = (hasDue && outstanding > 0 && payableDate < today)
         ? Math.max(0, Math.floor((new Date(today + 'T00:00:00Z') - new Date(payableDate + 'T00:00:00Z')) / 86400000))
         : 0;
-      return {
+      enriched.push({
         id: pr.id,
         request_no: pr.request_no,
         supplier_name: pr.supplier_name || '（未填供应商）',
@@ -6184,8 +6185,8 @@ app.get('/api/finance/payable-cockpit', requireApiPermission('payment_view'), as
         status_label: PAYABLE_STATUS_LABELS[status] || status,
         approval_status: pr.approval_status || '',
         source_mode: pr.source_type === 'historical_ci' ? 'historical' : 'operational'
-      };
-    });
+      });
+    }
 
     // 顶部核心指标：按币种分组（绝不跨币种合并）
     const metrics = {};
@@ -6331,7 +6332,7 @@ app.get('/api/payment-requests/pending', requireApiPermission('payment_approve')
 }));
 
 // 付款申请详情（含按口径计算的 total_qty + 关联 PI/CI 摘要）
-app.get('/api/payment-requests/:id', requireApiPermission('payment_view'), asyncHandler((req, res) => {
+app.get('/api/payment-requests/:id', requireApiPermission('payment_view'), asyncHandler(async (req, res) => {
   try {
     const pr = queryOne('SELECT * FROM payment_requests WHERE id = ?', [req.params.id]);
     if (!pr) return res.status(404).json({ error: '付款申请不存在' });
@@ -6351,8 +6352,8 @@ app.get('/api/payment-requests/:id', requireApiPermission('payment_view'), async
                                                currency, ci_date, payment_terms, due_date, source_note, source_mode
                                         FROM historical_commercial_invoices WHERE id = ?`, [pr.source_id]);
     }
-    const settlement_logs = paymentSettlementDisplayLogs(pr);
-    const settlement = paymentSettlementFacts(pr);
+    const settlement_logs = await paymentSettlementDisplayLogs(pr);
+    const settlement = await paymentSettlementFacts(pr);
     res.json({ ...pr, pi_summary, ci_summary, historical_ci_summary, settlement_logs, effective_paid: settlement.effectivePaid, effective_deduction: settlement.effectiveDeduction, effective_rounding: settlement.effectiveRounding, outstanding: Math.max(0, settlement.outstanding) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
