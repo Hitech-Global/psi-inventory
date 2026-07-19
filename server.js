@@ -2747,10 +2747,10 @@ function loadBrandTargetConfig() {
 
 // 品牌目标周转月数：优先级 SKU手动目标 > 品牌默认 > 系统默认3
 // cfg 可选：传入已读取的品牌配置避免重复查库
-function getBrandTargetMonths(brand, skuTargetTurnover, cfg) {
+async function getBrandTargetMonths(brand, skuTargetTurnover, cfg) {
   if (skuTargetTurnover != null && !isNaN(skuTargetTurnover) && skuTargetTurnover > 0) return parseFloat(skuTargetTurnover);
   let c = cfg;
-  if (!c) c = loadBrandTargetConfig();
+  if (!c) c = await loadBrandTargetConfig();
   c = c || {};
   const b = (brand || '').trim();
   if (b && c[b] != null) return parseFloat(c[b]);
@@ -5244,8 +5244,8 @@ function paymentSettlementLogs(paymentRequestId) {
                 ORDER BY created_at, id`, [paymentRequestId]).rows;
 }
 
-function ensureSettlementLegacyBaselines(payment) {
-  const logs = paymentSettlementLogs(payment.id);
+async function ensureSettlementLegacyBaselines(payment) {
+  const logs = await paymentSettlementLogs(payment.id);
   const hasPaymentLogs = logs.some(log => log.event_type === 'payment');
   const hasDeductionLogs = logs.some(log => log.event_type === 'deduction');
   const hasRoundingLogs = logs.some(log => log.event_type === 'rounding');
@@ -5254,26 +5254,26 @@ function ensureSettlementLegacyBaselines(payment) {
   const legacyRounding = settlementMoney(payment.rounding_amount || 0);
 
   if (!hasPaymentLogs && legacyPaid > 0) {
-    run(`INSERT INTO payment_settlement_logs
+    await run(`INSERT INTO payment_settlement_logs
          (id, payment_request_id, event_type, amount, status, reason, paid_date,
           original_currency, operator_name, is_legacy, created_at)
          VALUES (?, ?, 'payment', ?, 'applied', ?, ?, ?, 'system', 1, ?)`,
-      [genId('settle'), payment.id, legacyPaid, '历史付款基线（迁移前数据）', payment.paid_date || '', payment.currency || '', payment.updated_at || payment.created_at || new Date().toISOString()]);
+      [await genId('settle'), payment.id, legacyPaid, '历史付款基线（迁移前数据）', payment.paid_date || '', payment.currency || '', payment.updated_at || payment.created_at || new Date().toISOString()]);
   }
   if (!hasDeductionLogs && legacyDeduction > 0) {
     const legacyReason = payment.deduction_source_desc || payment.deduction_source_type || '历史抵扣基线（迁移前数据）';
-    run(`INSERT INTO payment_settlement_logs
+    await run(`INSERT INTO payment_settlement_logs
          (id, payment_request_id, event_type, amount, status, reason,
           original_currency, operator_name, is_legacy, created_at)
          VALUES (?, ?, 'deduction', ?, 'applied', ?, ?, 'system', 1, ?)`,
-      [genId('settle'), payment.id, legacyDeduction, legacyReason, payment.currency || '', payment.updated_at || payment.created_at || new Date().toISOString()]);
+      [await genId('settle'), payment.id, legacyDeduction, legacyReason, payment.currency || '', payment.updated_at || payment.created_at || new Date().toISOString()]);
   }
   if (!hasRoundingLogs && legacyRounding > 0) {
-    run(`INSERT INTO payment_settlement_logs
+    await run(`INSERT INTO payment_settlement_logs
          (id, payment_request_id, event_type, amount, status, reason,
           original_currency, operator_name, is_legacy, created_at)
          VALUES (?, ?, 'rounding', ?, 'applied', ?, ?, 'system', 1, ?)`,
-      [genId('settle'), payment.id, legacyRounding, payment.rounding_reason || '历史抹零基线', payment.currency || '', payment.updated_at || payment.created_at || new Date().toISOString()]);
+      [await genId('settle'), payment.id, legacyRounding, payment.rounding_reason || '历史抹零基线', payment.currency || '', payment.updated_at || payment.created_at || new Date().toISOString()]);
   }
 }
 
@@ -5492,18 +5492,18 @@ function exactSettlementRate(fromCurrency, toCurrency, paidDate) {
   throw new SettlementError(400, `缺少 ${paidDate} ${fromCurrency}→${toCurrency} 的 realtime 付款汇率`);
 }
 
-function buildPaymentRateSnapshot(payment, amount, paidDate) {
+async function buildPaymentRateSnapshot(payment, amount, paidDate) {
   if (payment.payment_category === 'goods') {
     return {
       settlement_country: '', local_currency: '', local_rate: 0, local_rate_date: '', local_rate_type: '', local_rate_direction: '', local_amount: 0,
       rmb_rate: 0, rmb_rate_date: '', rmb_rate_type: '', rmb_rate_direction: '', rmb_amount: 0
     };
   }
-  const country = resolveSettlementCountry(payment);
+  const country = await resolveSettlementCountry(payment);
   const originalCurrency = String(payment.currency || '').trim();
   if (!originalCurrency) throw new SettlementError(400, `付款申请 ${payment.request_no} 未配置原币币种`);
-  const localRate = exactSettlementRate(originalCurrency, country.currency, paidDate);
-  const rmbRate = exactSettlementRate(originalCurrency, 'RMB', paidDate);
+  const localRate = await exactSettlementRate(originalCurrency, country.currency, paidDate);
+  const rmbRate = await exactSettlementRate(originalCurrency, 'RMB', paidDate);
   return {
     settlement_country: country.name,
     local_currency: country.currency,
