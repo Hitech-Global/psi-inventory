@@ -1937,7 +1937,7 @@ app.get('/api/inventory-imports', requireApiPermission('inventory_view'), asyncH
   res.json(query(sql, params).rows);
 }));
 
-app.post('/api/inventory-imports/bulk-import', requireApiPermission('inventory_import'), asyncHandler((req, res) => {
+app.post('/api/inventory-imports/bulk-import', requireApiPermission('inventory_import'), asyncHandler(async (req, res) => {
   try {
     const items = req.body.items || [];
     const snapshotCutoffDate = req.body.snapshot_cutoff_date || '';
@@ -1963,7 +1963,7 @@ app.post('/api/inventory-imports/bulk-import', requireApiPermission('inventory_i
       });
     });
     // 更新库存总表，传入 snapshotCutoffDate
-    const refreshResult = refreshInventoryTotals(snapshotCutoffDate);
+    const refreshResult = await refreshInventoryTotals(snapshotCutoffDate);
     res.json({ ...result, snapshot_cutoff_date: snapshotCutoffDate, wac_warnings: refreshResult.warnings || [] });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
@@ -2032,8 +2032,8 @@ function getSnapshotCutoffMap() {
 }
 
 // P1-03-B: 查询最新已确认且锁定的 WAC 版本（唯一读取规则）
-function latestConfirmedWac(skuCode, country, warehouse) {
-  return queryOne(`
+async function latestConfirmedWac(skuCode, country, warehouse) {
+  return await queryOne(`
     SELECT * FROM wac_history
     WHERE sku_code = ? AND country = ? AND warehouse = ?
       AND confirmation_status = 'confirmed' AND is_locked = 1
@@ -2075,7 +2075,7 @@ function generateWacVersion(params) {
 }
 
 // 刷新库存总表（根据导入记录和业务数据重新计算）
-function refreshInventoryTotals(snapshotCutoffDate) {
+async function refreshInventoryTotals(snapshotCutoffDate) {
   // P1-03-B: WAC 不再从文件列读取，改为查 latest confirmed locked WAC 版本
   const warnings = [];
   // 获取每个 SKU+国家+仓库 的最新可用库存（连同 snapshot_cutoff_date）
@@ -2085,14 +2085,14 @@ function refreshInventoryTotals(snapshotCutoffDate) {
     WHERE import_date = (SELECT MAX(import_date) FROM inventory_imports i2 WHERE i2.sku_code = i1.sku_code AND i2.country = i1.country AND i2.warehouse = i1.warehouse)
   `).rows;
 
-  transaction(() => {
-    latestImports.forEach(imp => {
+  transaction(async () => {
+    for (const imp of latestImports) {
       const cutoff = imp.snapshot_cutoff_date || snapshotCutoffDate || '';
       const existing = queryOne('SELECT id, weighted_avg_cost, last_inbound_date, first_inbound_date FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
         [imp.sku_code, imp.country, imp.warehouse]);
 
       // P1-03-B: 查最新已确认 WAC
-      const wacRecord = latestConfirmedWac(imp.sku_code, imp.country, imp.warehouse);
+      const wacRecord = await latestConfirmedWac(imp.sku_code, imp.country, imp.warehouse);
       let wac, wacSource;
       if (wacRecord) {
         wac = wacRecord.new_avg_cost || 0;
@@ -2129,7 +2129,7 @@ function refreshInventoryTotals(snapshotCutoffDate) {
         run(`INSERT INTO inventory (id, sku_code, country, warehouse, available_qty, weighted_avg_cost, inventory_value, last_import_date, snapshot_cutoff_date, last_inbound_date, first_inbound_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [genId('inv'), imp.sku_code, imp.country, imp.warehouse, imp.available_qty, wac, invValue, imp.import_date, cutoff, newLastInbound, newFirstInbound]);
       }
-    });
+    }
     // 更新在途、PI未发货、PO未确认等
     updateInventoryTransitData();
   });
