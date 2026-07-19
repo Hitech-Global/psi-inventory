@@ -55,10 +55,60 @@ function run(sql, params = []) {
 
 /**
  * 批量执行（事务）
+ *
+ * 统一 SQLite 与 PG 的 async transaction 语义：
+ * - sync 回调：开启事务后同步执行回调，成功 COMMIT / 失败 ROLLBACK（与原 better-sqlite3 行为一致，零回归）。
+ * - async 回调：开启事务后 await 回调，成功 COMMIT / 失败 ROLLBACK（支持 PG 化的 async DAL）。
+ * - 嵌套事务：若已在事务内（含外层 SAVEPOINT），则使用 SAVEPOINT 而非 BEGIN，回滚到保存点，
+ *   保留 better-sqlite3 原生嵌套/savepoint 语义。
+ * 注意：本函数对回调仅调用一次（同步执行以取其返回值/ Promise），不会重复执行。
  */
+let _txSavepointSeq = 0;
+
+function isThenable(v) {
+  return v && (typeof v === 'object' || typeof v === 'function') && typeof v.then === 'function';
+}
+
 function transaction(fn) {
   const d = getDB();
-  return d.transaction(fn)();
+  const inTx = d.inTransaction;
+  const spName = inTx ? `inv_tx_sp_${++_txSavepointSeq}` : null;
+
+  if (inTx) {
+    d.exec(`SAVEPOINT ${spName}`);
+  } else {
+    d.exec('BEGIN');
+  }
+
+  let result;
+  try {
+    result = fn();
+  } catch (err) {
+    if (inTx) d.exec(`ROLLBACK TO ${spName}`);
+    else d.exec('ROLLBACK');
+    throw err;
+  }
+
+  // 同步回调：立即提交并返回结果（含回调的返回值）
+  if (!isThenable(result)) {
+    if (inTx) d.exec(`RELEASE SAVEPOINT ${spName}`);
+    else d.exec('COMMIT');
+    return result;
+  }
+
+  // 异步回调：等待 Promise 完成后再提交
+  return result.then(
+    (val) => {
+      if (inTx) d.exec(`RELEASE SAVEPOINT ${spName}`);
+      else d.exec('COMMIT');
+      return val;
+    },
+    (err) => {
+      if (inTx) d.exec(`ROLLBACK TO ${spName}`);
+      else d.exec('ROLLBACK');
+      throw err;
+    }
+  );
 }
 
 /**
