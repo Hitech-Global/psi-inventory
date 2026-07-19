@@ -2131,21 +2131,21 @@ async function refreshInventoryTotals(snapshotCutoffDate) {
       }
     }
     // 更新在途、PI未发货、PO未确认等
-    updateInventoryTransitData();
+    await updateInventoryTransitData();
   });
   return { warnings };
 }
 
 // 更新库存的在途数据
-function updateInventoryTransitData() {
+async function updateInventoryTransitData() {
   // 采购链状态变化自动回写库存总表的在途类字段：
   //   po_unconfirmed_pi_qty / pi_confirmed_unshipped_qty / in_transit_qty
   // 全量重算（SET 聚合值，非 +=），幂等，与导入流程不冲突。
   // 注：本函数只更新已存在的 inventory 行；新采购 SKU 若无 inventory 行则 transit 字段保持原值。
   // CI已发货未入库 = 在途
   // 先全量清零（保证被作废/删除后贡献降为 0 的 SKU 也能回落，而非残留旧值），再按活跃单据聚合写入
-  run('UPDATE inventory SET in_transit_qty = 0');
-  const transitData = query(`
+  await run('UPDATE inventory SET in_transit_qty = 0');
+  const transitData = (await query(`
     SELECT cii.sku_code, l.target_country as country, l.target_warehouse as warehouse,
            SUM(cii.shipped_qty - cii.inbound_qty) as in_transit_qty
     FROM commercial_invoice_items cii
@@ -2153,19 +2153,19 @@ function updateInventoryTransitData() {
     JOIN logistics_batches l ON l.related_ci_id = ci.id
     WHERE ci.ci_status NOT IN ('cancelled') AND (cii.shipped_qty - cii.inbound_qty) > 0
     GROUP BY cii.sku_code, l.target_country, l.target_warehouse
-  `).rows;
+  `)).rows;
 
-  transitData.forEach(td => {
-    const inv = queryOne('SELECT id FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
+  for (const td of transitData) {
+    const inv = await queryOne('SELECT id FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
       [td.sku_code, td.country, td.warehouse]);
     if (inv) {
-      run('UPDATE inventory SET in_transit_qty = ? WHERE id = ?', [td.in_transit_qty || 0, inv.id]);
+      await run('UPDATE inventory SET in_transit_qty = ? WHERE id = ?', [td.in_transit_qty || 0, inv.id]);
     }
-  });
+  }
 
   // PI已确认未发货
-  run('UPDATE inventory SET pi_confirmed_unshipped_qty = 0');
-  const piData = query(`
+  await run('UPDATE inventory SET pi_confirmed_unshipped_qty = 0');
+  const piData = (await query(`
     SELECT pii.sku_code, po.country, po.target_warehouse as warehouse,
            SUM(pii.pi_confirmed_qty - pii.shipped_qty) as pi_unshipped
     FROM proforma_invoice_items pii
@@ -2173,34 +2173,34 @@ function updateInventoryTransitData() {
     JOIN purchase_orders po ON pi.related_po_id = po.id
     WHERE pi.pi_status NOT IN ('cancelled', 'completed') AND (pii.pi_confirmed_qty - pii.shipped_qty) > 0
     GROUP BY pii.sku_code, po.country, po.target_warehouse
-  `).rows;
+  `)).rows;
 
-  piData.forEach(pd => {
-    const inv = queryOne('SELECT id FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
+  for (const pd of piData) {
+    const inv = await queryOne('SELECT id FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
       [pd.sku_code, pd.country, pd.warehouse]);
     if (inv) {
-      run('UPDATE inventory SET pi_confirmed_unshipped_qty = ? WHERE id = ?', [pd.pi_unshipped || 0, inv.id]);
+      await run('UPDATE inventory SET pi_confirmed_unshipped_qty = ? WHERE id = ?', [pd.pi_unshipped || 0, inv.id]);
     }
-  });
+  }
 
   // PO已生成未确认PI
-  run('UPDATE inventory SET po_unconfirmed_pi_qty = 0');
-  const poData = query(`
+  await run('UPDATE inventory SET po_unconfirmed_pi_qty = 0');
+  const poData = (await query(`
     SELECT poi.sku_code, po.country, po.target_warehouse as warehouse,
            SUM(poi.po_qty - poi.transferred_pi_qty) as po_unconfirmed
     FROM purchase_order_items poi
     JOIN purchase_orders po ON poi.po_id = po.id
     WHERE po.po_status NOT IN ('cancelled', 'transferred_pi') AND (poi.po_qty - poi.transferred_pi_qty) > 0
     GROUP BY poi.sku_code, po.country, po.target_warehouse
-  `).rows;
+  `)).rows;
 
-  poData.forEach(pd => {
-    const inv = queryOne('SELECT id FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
+  for (const pd of poData) {
+    const inv = await queryOne('SELECT id FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
       [pd.sku_code, pd.country, pd.warehouse]);
     if (inv) {
-      run('UPDATE inventory SET po_unconfirmed_pi_qty = ? WHERE id = ?', [pd.po_unconfirmed || 0, inv.id]);
+      await run('UPDATE inventory SET po_unconfirmed_pi_qty = ? WHERE id = ?', [pd.po_unconfirmed || 0, inv.id]);
     }
-  });
+  }
 }
 
 // ==================== 出库数据 ====================
@@ -3744,7 +3744,7 @@ app.post('/api/purchase-orders', requireApiPermission('po_create'), asyncHandler
     }
 
     let totalAmount = 0;
-    transaction(() => {
+    transaction(async () => {
       run(`INSERT INTO purchase_orders (id, po_no, supplier_id, supplier_name, brand, country, target_warehouse, po_date, expected_delivery, currency, total_amount, created_by, created_by_name, po_status, approval_status, from_suggestion, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [poId, poNo, d.supplier_id || '', d.supplier_name, d.brand || '', d.country || '', d.target_warehouse || '', d.po_date || new Date().toISOString().split('T')[0], d.expected_delivery || '', currency, 0, d.created_by || '', d.created_by_name || '', 'draft', 'pending', d.from_suggestion || 0, d.remark || '']);
 
@@ -3758,7 +3758,7 @@ app.post('/api/purchase-orders', requireApiPermission('po_create'), asyncHandler
         run('UPDATE purchase_orders SET total_amount = ? WHERE id = ?', [totalAmount, poId]);
       }
       // 新建 PO 后刷新在途字段（po_unconfirmed_pi_qty 等）
-      updateInventoryTransitData();
+      await updateInventoryTransitData();
     });
     res.json({ id: poId, po_no: poNo, ...d, currency, total_amount: totalAmount });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -3844,7 +3844,7 @@ app.put('/api/purchase-orders/:id', requireApiPermission('po_create'), asyncHand
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
-app.delete('/api/purchase-orders/:id', requireApiPermission('po_create'), asyncHandler((req, res) => {
+app.delete('/api/purchase-orders/:id', requireApiPermission('po_create'), asyncHandler(async (req, res) => {
   try {
     const po = queryOne('SELECT * FROM purchase_orders WHERE id = ?', [req.params.id]);
     if (!po) return res.status(404).json({ error: 'PO不存在' });
@@ -3861,13 +3861,13 @@ app.delete('/api/purchase-orders/:id', requireApiPermission('po_create'), asyncH
       run('DELETE FROM purchase_order_items WHERE po_id = ?', [req.params.id]);
       run('DELETE FROM purchase_orders WHERE id = ?', [req.params.id]);
     });
-    updateInventoryTransitData(); // 删除后回落 po_unconfirmed_pi_qty
+    await updateInventoryTransitData(); // 删除后回落 po_unconfirmed_pi_qty
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
 // PO 软作废（置 cancelled + 必填原因 + 回写在途）
-app.post('/api/purchase-orders/:id/void', requireApiPermission('po_create'), asyncHandler((req, res) => {
+app.post('/api/purchase-orders/:id/void', requireApiPermission('po_create'), asyncHandler(async (req, res) => {
   try {
     const { void_reason } = req.body;
     if (!void_reason) return res.status(400).json({ error: '作废原因不能为空' });
@@ -3877,7 +3877,7 @@ app.post('/api/purchase-orders/:id/void', requireApiPermission('po_create'), asy
     const ts = new Date().toISOString().slice(0, 19).replace('T', ' ');
     const newRemark = (po.remark ? po.remark + '\n' : '') + `[作废 ${ts} by ${req.currentUserName || ''}] 原因: ${void_reason}`;
     run("UPDATE purchase_orders SET po_status = 'cancelled', remark = ?, updated_at = datetime('now') WHERE id = ?", [newRemark, po.id]);
-    updateInventoryTransitData();
+    await updateInventoryTransitData();
     logOperation({ operator_id: req.currentUserId, operator_name: req.currentUserName, page: 'purchase_order', operation_type: 'void', target_ids: [po.id], affected_count: 1, old_values: { po_status: po.po_status }, new_values: { po_status: 'cancelled', void_reason }, reason: void_reason, triggered_recalc: 0, is_rollbackable: 0 });
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -4124,7 +4124,7 @@ app.post('/api/proforma-invoices', requireApiPermission('pi_create'), asyncHandl
     const needDeposit = d.need_deposit === false || d.need_deposit === 0 || d.need_deposit === '0' ? 0 : 1;
     const depositRatio = needDeposit ? n(d.deposit_ratio, 0) : 0;
 
-    transaction(() => {
+    transaction(async () => {
       run(`INSERT INTO proforma_invoices (id, pi_no, related_po_id, related_po_no, supplier_id, supplier_name, brand, country, target_warehouse, pi_date, currency, total_amount, payment_terms, payment_term_id, need_deposit, deposit_ratio, balance_ratio, payable_deposit, pi_status, expected_delivery, attachment, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [piId, piNo, d.related_po_id || '', d.related_po_no || '', d.supplier_id || '', d.supplier_name, d.brand || '', d.country || '', d.target_warehouse || '', d.pi_date || new Date().toISOString().split('T')[0], finalCurrency, 0, d.payment_terms || '', d.payment_term_id || '', needDeposit, depositRatio, 100 - depositRatio, 0, d.pi_status || 'pending', d.expected_delivery || '', parseAttachment(d.attachment), d.remark || '']);
 
@@ -4164,7 +4164,7 @@ app.post('/api/proforma-invoices', requireApiPermission('pi_create'), asyncHandl
         }
 
         // 更新库存的PI未发货数量
-        updateInventoryTransitData();
+        await updateInventoryTransitData();
       }
     });
     const payableDeposit = (d.items && d.items.length > 0) ? (needDeposit ? totalAmount * depositRatio / 100 : 0) : 0;
@@ -4206,7 +4206,7 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
     let totalAmount = pi.total_amount || 0;
     let payableDeposit = 0;
 
-    transaction(() => {
+    transaction(async () => {
       // 明细全量替换
       if (d.items && Array.isArray(d.items)) {
         run('DELETE FROM proforma_invoice_items WHERE pi_id = ?', [id]);
@@ -4267,7 +4267,7 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
       run(`UPDATE proforma_invoices SET ${fields.join(', ')} WHERE id = ?`, values);
 
       // 库存 PI 未发货数量重算
-      updateInventoryTransitData();
+      await updateInventoryTransitData();
     });
 
     // 操作日志（编辑痕迹）
@@ -4297,7 +4297,7 @@ app.post('/api/proforma-invoices/:id/attachment', requireApiPermission('pi_edit'
 }));
 
 // PI 软作废（置 cancelled + 必填原因 + 回写在途）
-app.post('/api/proforma-invoices/:id/void', requireApiPermission('pi_edit'), asyncHandler((req, res) => {
+app.post('/api/proforma-invoices/:id/void', requireApiPermission('pi_edit'), asyncHandler(async (req, res) => {
   try {
     const { void_reason } = req.body;
     if (!void_reason) return res.status(400).json({ error: '作废原因不能为空' });
@@ -4308,7 +4308,7 @@ app.post('/api/proforma-invoices/:id/void', requireApiPermission('pi_edit'), asy
     const ts = new Date().toISOString().slice(0, 19).replace('T', ' ');
     const newRemark = (pi.remark ? pi.remark + '\n' : '') + `[作废 ${ts} by ${req.currentUserName || ''}] 原因: ${void_reason}`;
     run("UPDATE proforma_invoices SET pi_status = 'cancelled', remark = ?, updated_at = datetime('now') WHERE id = ?", [newRemark, pi.id]);
-    updateInventoryTransitData();
+    await updateInventoryTransitData();
     logOperation({ operator_id: req.currentUserId, operator_name: req.currentUserName, page: 'proforma_invoice', operation_type: 'void', target_ids: [pi.id], affected_count: 1, old_values: { pi_status: pi.pi_status }, new_values: { pi_status: 'cancelled', void_reason }, reason: void_reason, triggered_recalc: 0, is_rollbackable: 0 });
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -4366,7 +4366,7 @@ app.post('/api/commercial-invoices', requireApiPermission('ci_create'), asyncHan
     const relatedPoNo = d.related_po_no || (pi ? pi.related_po_no : '');
     const piTotalAmount = pi ? (pi.total_amount || 0) : 0;
 
-    transaction(() => {
+    transaction(async () => {
       run(`INSERT INTO commercial_invoices (id, ci_no, related_po_id, related_po_no, related_pi_id, related_pi_no, supplier_id, supplier_name, brand, country, target_warehouse, ci_date, actual_ship_date, payment_term_id, credit_days, shipment_batch, currency, goods_amount, pi_total_amount, amount_difference, difference_reason, ci_status, attachment, pl_attachment, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [ciId, ciNo, relatedPoId || '', relatedPoNo || '', d.related_pi_id || '', d.related_pi_no || '', d.supplier_id || '', d.supplier_name, d.brand || (pi ? pi.brand : ''), d.country || (pi ? pi.country : ''), d.target_warehouse || (pi ? pi.target_warehouse : ''), d.ci_date || new Date().toISOString().split('T')[0], actualShipDate, ciCredit.paymentTermId, ciCredit.creditDays, d.shipment_batch || 1, d.currency || 'USD', 0, piTotalAmount, 0, d.difference_reason || '', d.ci_status || 'uploaded', parseAttachment(d.attachment), parseAttachment(d.pl_attachment), d.remark || '']);
 
@@ -4429,7 +4429,7 @@ app.post('/api/commercial-invoices', requireApiPermission('ci_create'), asyncHan
         }
 
         // 更新库存的在途数据
-        updateInventoryTransitData();
+        await updateInventoryTransitData();
       }
     });
     const shouldDeductResp = pi ? (pi.need_deposit ? Math.min(pi.payable_deposit || 0, pi.available_deduct_deposit || 0, goodsAmount) : 0) : 0;
@@ -4449,7 +4449,7 @@ app.post('/api/commercial-invoices/:id/attachment', requireApiPermission('ci_edi
 }));
 
 // CI 软作废（置 cancelled + 必填原因 + 回写在途）
-app.post('/api/commercial-invoices/:id/void', requireApiPermission('ci_edit'), asyncHandler((req, res) => {
+app.post('/api/commercial-invoices/:id/void', requireApiPermission('ci_edit'), asyncHandler(async (req, res) => {
   try {
     const { void_reason } = req.body;
     if (!void_reason) return res.status(400).json({ error: '作废原因不能为空' });
@@ -4460,7 +4460,7 @@ app.post('/api/commercial-invoices/:id/void', requireApiPermission('ci_edit'), a
     const ts = new Date().toISOString().slice(0, 19).replace('T', ' ');
     const newRemark = (ci.remark ? ci.remark + '\n' : '') + `[作废 ${ts} by ${req.currentUserName || ''}] 原因: ${void_reason}`;
     run("UPDATE commercial_invoices SET ci_status = 'cancelled', remark = ?, updated_at = datetime('now') WHERE id = ?", [newRemark, ci.id]);
-    updateInventoryTransitData();
+    await updateInventoryTransitData();
     logOperation({ operator_id: req.currentUserId, operator_name: req.currentUserName, page: 'commercial_invoice', operation_type: 'void', target_ids: [ci.id], affected_count: 1, old_values: { ci_status: ci.ci_status }, new_values: { ci_status: 'cancelled', void_reason }, reason: void_reason, triggered_recalc: 0, is_rollbackable: 0 });
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -4531,7 +4531,7 @@ app.post('/api/proforma-invoices/batch-import', requireApiPermission('pi_create'
   try {
     const rows = Array.isArray(req.body.items) ? req.body.items : [];
     const result = { success: 0, failed: 0, total: rows.length, errors: [] };
-    transaction(() => {
+    transaction(async () => {
       rows.forEach((row, idx) => {
         try {
           const rowNo = idx + 2;
@@ -4573,7 +4573,7 @@ app.post('/api/proforma-invoices/batch-import', requireApiPermission('pi_create'
         }
       });
       // PI 批量导入后刷新在途字段（po_unconfirmed_pi_qty / pi_confirmed_unshipped_qty）
-      updateInventoryTransitData();
+      await updateInventoryTransitData();
     });
     res.json(importResultWithMessages(result));
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -4583,7 +4583,7 @@ app.post('/api/commercial-invoices/batch-import', requireApiPermission('ci_creat
   try {
     const rows = Array.isArray(req.body.items) ? req.body.items : [];
     const result = { success: 0, failed: 0, total: rows.length, errors: [] };
-    transaction(() => {
+    transaction(async () => {
       rows.forEach((row, idx) => {
         try {
           const poNo = s(pick(row, ['关联PO编号', 'PO编号', 'related_po_no', 'po_no']));
@@ -4635,7 +4635,7 @@ app.post('/api/commercial-invoices/batch-import', requireApiPermission('ci_creat
         }
       });
       // CI 批量导入（发货）后刷新在途字段（in_transit_qty / pi_confirmed_unshipped_qty）
-      updateInventoryTransitData();
+      await updateInventoryTransitData();
     });
     res.json(importResultWithMessages(result));
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -4880,7 +4880,7 @@ app.post('/api/inbound-records', requireApiPermission('inbound_create'), asyncHa
     const iId = genId('inbound');
     const iNo = d.inbound_no || `IN-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
 
-    transaction(() => {
+    transaction(async () => {
       // 更新 CI 明细累计入库（异常件按全额 actual_qty 计入，与既有语义一致）
       const accumulated = (ciItem.inbound_qty || 0) + actualQty;
       const uninbound = (ciItem.shipped_qty || 0) - accumulated;
@@ -4905,7 +4905,7 @@ app.post('/api/inbound-records', requireApiPermission('inbound_create'), asyncHa
       }
 
       // 更新在途数据
-      updateInventoryTransitData();
+      await updateInventoryTransitData();
     });
 
     res.json({ id: iId, inbound_no: iNo, source_pl_id: sourcePlId, source_pl_item_id: sourcePlItemId, source_ci_id: sourceCiId, source_ci_no: sourceCiNo, ...d });
@@ -4924,7 +4924,7 @@ app.post('/api/inbound-records/batch-import', requireApiPermission('inbound_crea
     let success = 0;
     let failed = 0;
 
-    transaction(() => {
+    transaction(async () => {
       records.forEach((rec, idx) => {
         const rowNum = idx + 1;
         try {
@@ -5031,7 +5031,7 @@ app.post('/api/inbound-records/batch-import', requireApiPermission('inbound_crea
       });
 
       // 最后更新一次在途数据
-      try { updateInventoryTransitData(); } catch (e) { /* ignore */ }
+      try { await updateInventoryTransitData(); } catch (e) { /* ignore */ }
     });
 
     res.json({ success, failed, total: records.length, errors: errors.slice(0, 50) });
