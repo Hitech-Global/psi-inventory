@@ -5327,8 +5327,11 @@ function derivePaymentStatus(payment, facts) {
   return payment.approval_status === 'approved' ? 'approved' : 'pending_approval';
 }
 
-function aggregateSourceSettlement(rows) {
-  const entries = rows.map(row => ({ row, facts: paymentSettlementFacts(row) }));
+async function aggregateSourceSettlement(rows) {
+    const entries = [];
+  for (const row of rows) {
+    entries.push({ row, facts: await paymentSettlementFacts(row) });
+  }
   const effectivePaid = settlementMoney(entries.reduce((sum, entry) => sum + entry.facts.effectivePaid, 0));
   const effectiveDeduction = settlementMoney(entries.reduce((sum, entry) => sum + entry.facts.effectiveDeduction, 0));
   const effectiveRounding = settlementMoney(entries.reduce((sum, entry) => sum + entry.facts.effectiveRounding, 0));
@@ -5360,18 +5363,18 @@ function sourceGoodsPaymentRows(sourceType, sourceId, subcategory) {
     [subcategory, ...params]).rows;
 }
 
-function syncPaymentSource(payment, facts, paymentStatus) {
+async function syncPaymentSource(payment, facts, paymentStatus) {
   const isSettled = facts.outstanding <= 0;
   const hasSettlement = facts.effectivePaid > 0 || facts.effectiveDeduction > 0 || facts.effectiveRounding > 0;
 
   if (payment.payment_category === 'goods' && payment.payment_subcategory === 'deposit' && payment.source_type === 'pi' && payment.source_id) {
-    const aggregate = aggregateSourceSettlement(sourceGoodsPaymentRows('pi', payment.source_id, 'deposit'));
-    const pi = queryOne('SELECT pi_status FROM proforma_invoices WHERE id = ?', [payment.source_id]);
+    const aggregate = await aggregateSourceSettlement(await sourceGoodsPaymentRows('pi', payment.source_id, 'deposit'));
+    const pi = await queryOne('SELECT pi_status FROM proforma_invoices WHERE id = ?', [payment.source_id]);
     if (pi) {
       let piStatus = pi.pi_status;
       if (aggregate.allSettled && ['pending', 'uploaded', 'confirmed', 'pending_deposit'].includes(piStatus)) piStatus = 'deposit_paid';
       if (!aggregate.allSettled && piStatus === 'deposit_paid') piStatus = 'pending_deposit';
-      run(`UPDATE proforma_invoices
+      await run(`UPDATE proforma_invoices
            SET deposit_payment_status = ?, paid_deposit = ?, pi_status = ?, updated_at = datetime('now')
            WHERE id = ?`, [aggregate.sourcePayStatus, aggregate.effectivePaid, piStatus, payment.source_id]);
     }
@@ -5379,17 +5382,17 @@ function syncPaymentSource(payment, facts, paymentStatus) {
 
   const balanceCiId = payment.source_type === 'ci' ? payment.source_id : payment.related_ci_id;
   if (payment.payment_category === 'goods' && payment.payment_subcategory === 'balance' && balanceCiId) {
-    const aggregate = aggregateSourceSettlement(sourceGoodsPaymentRows('ci', balanceCiId, 'balance'));
-    run(`UPDATE commercial_invoices
+    const aggregate = await aggregateSourceSettlement(await sourceGoodsPaymentRows('ci', balanceCiId, 'balance'));
+    await run(`UPDATE commercial_invoices
          SET balance_payment_status = ?, paid_balance = ?, unpaid_balance = ?, updated_at = datetime('now')
          WHERE id = ?`, [aggregate.sourcePayStatus, aggregate.effectivePaid, aggregate.outstanding, balanceCiId]);
   }
 
   if (payment.source_type === 'logistics' && payment.source_id) {
-    run('UPDATE logistics_batches SET fee_status = ? WHERE id = ?', [isSettled ? 'paid' : (hasSettlement ? 'partial_paid' : 'unpaid'), payment.source_id]);
+    await run('UPDATE logistics_batches SET fee_status = ? WHERE id = ?', [isSettled ? 'paid' : (hasSettlement ? 'partial_paid' : 'unpaid'), payment.source_id]);
   }
 
-  run('UPDATE ci_cost_items SET paid_amount = ? WHERE payment_request_id = ?', [facts.effectivePaid, payment.id]);
+  await run('UPDATE ci_cost_items SET paid_amount = ? WHERE payment_request_id = ?', [facts.effectivePaid, payment.id]);
 }
 
 async function recalculatePaymentSettlement(paymentRequestId) {
@@ -5529,14 +5532,14 @@ async function recordInitialDeduction(paymentRequestId, amount, reason, operator
   return await recalculatePaymentSettlement(payment.id);
 }
 
-function paymentIdempotencyResult(existing, payment, requestedAmount, paidDate, voucher) {
+async function paymentIdempotencyResult(existing, payment, requestedAmount, paidDate, voucher) {
   const sameAmount = requestedAmount === null || settlementMoney(existing.amount) === requestedAmount;
   const sameContent = existing.payment_request_id === payment.id && sameAmount &&
     String(existing.paid_date || '') === paidDate && String(existing.payment_voucher || '') === voucher;
   if (!sameContent) {
     throw new SettlementError(409, '该付款幂等键已用于不同的付款申请、金额、付款日期或凭证，不能重复使用');
   }
-  const facts = paymentSettlementFacts(payment);
+  const facts = await paymentSettlementFacts(payment);
   return {
     idempotent: true,
     log_id: existing.id,
