@@ -2128,15 +2128,9 @@ function initDatabase() {
   if (flowCount === 0) {
     const flowTypes = [
       ['flow_po', 'PO审批', 'po', '[{"level":1,"name":"一级审批","approver_role":"role_operator"},{"level":2,"name":"二级审批","approver_role":"role_admin"}]'],
-      ['flow_pay_deposit', '货款定金付款审批', 'payment_deposit', '[{"level":1,"name":"一级审批","approver_role":"role_operator"},{"level":2,"name":"二级审批","approver_role":"role_admin"}]'],
-      ['flow_pay_balance', '货款尾款付款审批', 'payment_balance', '[{"level":1,"name":"一级审批","approver_role":"role_operator"},{"level":2,"name":"二级审批","approver_role":"role_admin"}]'],
-      ['flow_pay_freight', '运费付款审批', 'payment_freight', '[{"level":1,"name":"一级审批","approver_role":"role_operator"},{"level":2,"name":"二级审批","approver_role":"role_admin"}]'],
-      ['flow_pay_duty', '关税付款审批', 'payment_duty', '[{"level":1,"name":"一级审批","approver_role":"role_operator"},{"level":2,"name":"二级审批","approver_role":"role_admin"}]'],
-      ['flow_inbound_abnormal', '入库异常审批', 'inbound_abnormal', '[{"level":1,"name":"一级审批","approver_role":"role_operator"}]'],
-      ['flow_check_diff', '盘点差异审批', 'check_diff', '[{"level":1,"name":"一级审批","approver_role":"role_operator"},{"level":2,"name":"二级审批","approver_role":"role_admin"}]'],
-      ['flow_scrap', '报废审批', 'scrap', '[{"level":1,"name":"一级审批","approver_role":"role_operator"},{"level":2,"name":"二级审批","approver_role":"role_admin"}]'],
-      ['flow_mdf_outbound', 'MDF出库审批', 'mdf_outbound', '[{"level":1,"name":"一级审批","approver_role":"role_operator"}]'],
-      ['flow_transfer', '调拨审批', 'transfer', '[{"level":1,"name":"一级审批","approver_role":"role_operator"}]']
+      // V1 仅 PO 审批由运行时真正读取驱动。其余业务类型（付款定金/尾款/运费/关税、
+      // 入库异常/盘点差异/报废/MDF出库/调拨）各自走独立模型（如付款单步硬编码），其审批流
+      // 配置为 inert 死数据，故不写入以避免"已配置却不生效"的误导。待后续阶段统一接线。
     ];
     flowTypes.forEach(f => run(`INSERT INTO approval_flows (id, name, business_type, levels) VALUES (?, ?, ?, ?)`, f));
     console.log('[DB] 已插入默认审批流');
