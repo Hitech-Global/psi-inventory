@@ -6802,6 +6802,11 @@ function cockpitShowAnomaly(){
   const body=document.getElementById('cockpit-detail-body');if(body)body.style.display='';
   const tog=document.getElementById('cockpit-detail-toggle');if(tog)tog.textContent='收起 ▲';
   renderCockpitDetails();
+  // ④ UX：异常卡片联动同步提示（纯展示，不改动任何筛选/聚合逻辑）
+  const ndRows=getCockpitView().details.filter(r=>!r.has_due);
+  let note=document.getElementById('cockpit-anomaly-note');
+  if(!note){ note=document.createElement('div'); note.id='cockpit-anomaly-note'; note.style='font-size:12px;color:#f57f17;margin:4px 0 8px'; const body=document.getElementById('cockpit-detail-body'); if(body) body.insertBefore(note, body.firstChild); }
+  note.textContent='已自动筛选：仅显示无到期日单据（共 '+ndRows.length+' 笔）。可在上方筛选栏调整。';
   const box=document.getElementById('cockpit-detail-table');if(box)box.scrollIntoView({behavior:'smooth',block:'start'});
 }
 
@@ -6913,7 +6918,7 @@ function renderCockpitView(){
 
   if(!d.currencies.length){
     html+='<div class="flash flash-info show">当前无有效应付单据。</div>';
-    el.innerHTML=html; return;
+    el.innerHTML='<div class="cockpit-page">'+html+'</div>'; return;
   }
   // 顶部筛选栏（纯展示层，切换仅重渲染 #cockpit-layers，不请求后端）
   html+='<div class="filter-bar" style="margin:6px 0 10px"><div class="filter-form" style="flex-wrap:wrap">'
@@ -6924,7 +6929,7 @@ function renderCockpitView(){
     +'<div class="filter-actions"><button class="btn btn-secondary btn-sm" onclick="cockpitResetFilters()">重置</button></div>'
     +'</div></div>';
   html+='<div id="cockpit-layers"></div>';
-  el.innerHTML=html;
+  el.innerHTML='<div class="cockpit-page">'+html+'</div>';
   renderCockpitLayers();
 }
 
@@ -6935,20 +6940,20 @@ function renderCockpitLayers(){
   const v=getCockpitView();
   const curs=v.curs;
   let html='';
-  // Layer 1 — 应付概览
+  // Layer 1 — 应付概览（④ UX：高优先信号前置——已逾期 / 未来压力 / 数据异常 排在各币种未结清之前）
+  const ovCount=curs.reduce((a,cur)=>a+((v.metrics[cur]&&v.metrics[cur].overdue_count)||0),0);
+  const noDueCount=v.details.filter(r=>r.outstanding>0&&!r.has_due).length;
+  const noDueSub=noDueCount>0?'<span style="color:#f57f17;cursor:pointer" onclick="cockpitShowAnomaly()">CI出货日/Credit未录入，点击查看 ▼</span>':'无';
   html+='<div style="font-size:13px;font-weight:600;margin:6px 0 8px">应付概览</div>';
   html+='<div style="display:flex;flex-wrap:wrap;gap:10px">';
+  html+=cockpitCard('已逾期',cockpitCurBreakdown(v,'overdue_amount'),'danger',ovCount+' 笔');
+  html+=cockpitCard('未来7天付款压力',cockpitCurBreakdown(v,'due_7'),'warn','');
+  html+=cockpitCard('未来30天付款压力',cockpitCurBreakdown(v,'due_30'),'warn','');
+  html+=cockpitCard('数据异常提醒','<span style="font-size:22px">'+noDueCount+'</span><span style="font-size:13px;font-weight:400"> 笔缺少应付日期</span>','info',noDueSub);
   curs.forEach(cur=>{
     const m=v.metrics[cur]; if(!m)return;
     html+=cockpitCard(cur+' 未结清',esc(fmtMoney(m.outstanding)),'outstanding',esc(cur)+' '+m.request_count+' 笔');
   });
-  html+=cockpitCard('未来7天付款压力',cockpitCurBreakdown(v,'due_7'),'warn','');
-  html+=cockpitCard('未来30天付款压力',cockpitCurBreakdown(v,'due_30'),'warn','');
-  const ovCount=curs.reduce((a,cur)=>a+((v.metrics[cur]&&v.metrics[cur].overdue_count)||0),0);
-  html+=cockpitCard('已逾期',cockpitCurBreakdown(v,'overdue_amount'),'danger',ovCount+' 笔');
-  const noDueCount=v.details.filter(r=>r.outstanding>0&&!r.has_due).length;
-  const noDueSub=noDueCount>0?'<span style="color:#f57f17;cursor:pointer" onclick="cockpitShowAnomaly()">CI出货日/Credit未录入，点击查看 ▼</span>':'无';
-  html+=cockpitCard('数据异常提醒','<span style="font-size:22px">'+noDueCount+'</span><span style="font-size:13px;font-weight:400"> 笔缺少应付日期</span>','info',noDueSub);
   html+='</div>';
 
   // Layer 2 — 金额构成
