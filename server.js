@@ -217,7 +217,9 @@ const FEISHU_NOTIFY_TEMPLATES = {
   approved_final: (poNo) => `【审批通知】PO ${poNo} 审批已全部通过。`,
   reject: (poNo) => `【审批通知】PO ${poNo} 已被驳回。`,
   ci_ops_assigned: (ciNo, planDate) => `【上架准备】CI ${ciNo} 已分配上架准备任务，计划上架日期：${planDate || '待定'}。`,
-  ci_ops_ready: (ciNo) => `【上架准备】CI ${ciNo} 上架准备已完成（Ready），可安排上架。`
+  ci_ops_ready: (ciNo) => `【上架准备】CI ${ciNo} 上架准备已完成（Ready），可安排上架。`,
+  payment_due: (prNo, dueDate, amt) => `【付款提醒】付款申请 ${prNo} 将于 ${dueDate} 到期，应付金额 ${amt}，请及时安排付款。`,
+  payment_overdue: (prNo, dueDate, amt) => `【付款逾期】付款申请 ${prNo} 已于 ${dueDate} 逾期，应付金额 ${amt}，请尽快处理。`
 };
 
 // 审批通知：事务外 best-effort；飞书异常不影响审批结果；仅向有 feishu_open_id 的用户发送；无收件人则静默返回。
@@ -281,6 +283,59 @@ async function notifyBusinessParticipants(businessType, businessId, eventType, c
   } catch (e) {
     console.error('[FEISHU-NOTIFY] 业务通知异常 event=' + eventType + ' businessType=' + businessType + ' businessId=' + businessId + ':', e.message);
   }
+}
+
+// ③ 应付到期/逾期提醒扫描（仅 server.js；复用 sendFeishuTextMessage；best-effort；不改付款状态）
+// 收件人 = 具 payment_approve 权限的 active 用户（有 feishu_open_id）+ business_participants(payment_reminder) CC
+// 去重 = 复用 remind_date 作"最后一次提醒日期"哨兵；同一天同一付款申请不重复发送
+async function scanPaymentReminders() {
+  const result = { due_count: 0, overdue_count: 0, sent_count: 0, skipped: 0 };
+  try {
+    const now = new Date();
+    const today = now.toISOString().split('T')[0];
+    const d7 = new Date(now.getTime() + 7 * 86400000).toISOString().split('T')[0];
+
+    // 收件人：具 payment_approve 权限的 active 用户
+    const recipients = new Map(); // open_id -> name
+    const addUser = (userId) => {
+      if (!userId) return;
+      const u = queryOne('SELECT id, name, feishu_open_id, status FROM users WHERE id = ?', [userId]);
+      if (u && u.feishu_open_id && u.status === 'active') recipients.set(u.feishu_open_id, u.name || '');
+    };
+    const financeUsers = query(`SELECT u.id, r.permissions AS role_permissions FROM users u LEFT JOIN roles r ON u.role_id = r.id WHERE u.status = 'active'`).rows;
+    for (const fu of financeUsers) {
+      let perms = [];
+      try { perms = perms.concat(JSON.parse(fu.role_permissions || '[]')); } catch (e) {}
+      if (perms.includes('payment_approve') || perms.includes('*')) addUser(fu.id);
+    }
+
+    // 待提醒付款申请：逾期 或 7 日内到期，且今日未提醒
+    const rows = query(`SELECT * FROM payment_requests WHERE approval_status IN ('pending','approved') AND payment_status NOT IN ('paid','deduction_settled','rejected','cancelled') AND unpaid_amount > 0 AND payable_date != '' AND remind_date != ? AND (payable_date < ? OR payable_date <= ?) ORDER BY payable_date ASC`, [today, today, d7]).rows;
+    for (const pr of rows) {
+      const isOverdue = pr.payable_date < today;
+      result[isOverdue ? 'overdue_count' : 'due_count'] += 1;
+      // CC（business_participants payment_reminder）
+      const ccRows = query('SELECT user_id FROM business_participants WHERE business_type=? AND business_id=? AND participant_type=?', ['payment_reminder', pr.id, 'cc']).rows;
+      for (const r of ccRows) addUser(r.user_id);
+      if (recipients.size === 0) { result.skipped += 1; continue; }
+      const amt = (pr.rmb_amount || pr.unpaid_amount || 0);
+      const text = isOverdue
+        ? FEISHU_NOTIFY_TEMPLATES.payment_overdue(pr.request_no, pr.payable_date, amt)
+        : FEISHU_NOTIFY_TEMPLATES.payment_due(pr.request_no, pr.payable_date, amt);
+      let sentAny = false;
+      for (const [openId] of recipients) {
+        try { await sendFeishuTextMessage(openId, text); sentAny = true; }
+        catch (e) { console.error('[FEISHU-NOTIFY] 付款提醒发送失败 open_id=' + openId + ' pr=' + pr.id + ':', e.message); }
+      }
+      if (sentAny) {
+        run('UPDATE payment_requests SET remind_date = ? WHERE id = ?', [today, pr.id]);
+        result.sent_count += 1;
+      }
+    }
+  } catch (e) {
+    console.error('[FEISHU-NOTIFY] 付款提醒扫描异常:', e.message);
+  }
+  return result;
 }
 
 // --- break-glass 启动初始化（fail-closed；保留原 user id，仅密码变化时安全更新）---
@@ -7652,6 +7707,14 @@ app.get('/api/freight-forwarder-analysis', requireApiPermission('forwarder_view'
     };
   });
   res.json(result);
+}));
+
+// ③ 应付到期/逾期提醒手动/外部 cron 触发端点（不增加定时任务/进程内 cron；best-effort）
+app.post('/api/finance/payment-reminders/scan', requireApiPermission('payment_approve'), asyncHandler(async (req, res) => {
+  try {
+    const result = await scanPaymentReminders();
+    res.json({ success: true, ...result });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
 // ==================== 首页看板 ====================
