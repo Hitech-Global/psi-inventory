@@ -6,7 +6,7 @@
 
   var I18N = {
     lang: 'zh',
-    // zh 故意留空：t(key,'中文') 的中文即回退源，无需维护 zh 字典
+    // zh 默认回退源为 t(key,'中文') 字面量；仅系统名称品牌需全局统一为「PSI系统」，故在此显式覆盖 2 个 key 的 zh。
     dict: { zh: {}, en: {}, id: {} }
   };
 
@@ -74,13 +74,17 @@
   window.setLang = setLang;
   window.applyI18n = applyI18n;
 
+  // 系统名称品牌统一：中文亦显示「PSI系统」（避免沿用旧「进销存系统」），不改动 app.js / index.html。
+  I18N.dict.zh['nav.app_title'] = 'PSI系统';
+  I18N.dict.zh['auth.login_title'] = '📦 PSI系统';
+
   // ===================== 翻译字典 =====================
   // 注意：以下 en/id 为 ChatGPT 起草译文，待用户（印尼团队）审校。
   // key 使用点号业务 key（与 app.js 中 t('common.save',...) 等一致）；zh 不在此维护（运行时用 t(key,'中文') 字面量回退）。
 
   // ---- 登录 / 待授权页 ----
-  I18N.dict.en['auth.login_title'] = '📦 Inventory Management System';
-  I18N.dict.id['auth.login_title'] = '📦 Sistem Manajemen Inventaris';
+  I18N.dict.en['auth.login_title'] = '📦 PSI System';
+  I18N.dict.id['auth.login_title'] = '📦 PSI System';
   I18N.dict.en['auth.login_subtitle'] = 'Procurement · Inventory · Cost · Payment Management';
   I18N.dict.id['auth.login_subtitle'] = 'Manajemen Pengadaan · Inventaris · Biaya · Pembayaran';
   I18N.dict.en['auth.feishu_login'] = '🔵 Sign in with Feishu';
@@ -125,7 +129,7 @@
   I18N.dict.id['common.no_data'] = 'Tidak ada data';
   I18N.dict.en['common.confirm_delete'] = 'Delete this item?';
   I18N.dict.id['common.confirm_delete'] = 'Hapus item ini?';
-  I18N.dict.en['common.deleted'] = 'Deleted';
+  I18N.dict.en['common.deleted'] = 'Deleted successfully';
   I18N.dict.id['common.deleted'] = 'Terhapus';
   I18N.dict.en['common.invalid_params'] = 'Invalid parameters';
   I18N.dict.id['common.invalid_params'] = 'Parameter tidak valid';
@@ -136,9 +140,9 @@
   I18N.dict.en['common.search'] = 'Search';
   I18N.dict.id['common.search'] = 'Cari';
   I18N.dict.en['common.reset'] = 'Reset';
-  I18N.dict.id['common.reset'] = 'Atur ulang';
+  I18N.dict.id['common.reset'] = 'Reset';
   I18N.dict.en['common.refresh'] = 'Refresh';
-  I18N.dict.id['common.refresh'] = 'Segarkan';
+  I18N.dict.id['common.refresh'] = 'Muat Ulang';
   I18N.dict.en['common.import'] = 'Import';
   I18N.dict.id['common.import'] = 'Impor';
   I18N.dict.en['common.export'] = 'Export';
@@ -161,7 +165,7 @@
   I18N.dict.id['common.no_permission'] = 'Tidak memiliki izin';
   I18N.dict.en['common.network_error'] = 'Network error';
   I18N.dict.id['common.network_error'] = 'Kesalahan jaringan';
-  I18N.dict.en['common.empty'] = 'Nothing here';
+  I18N.dict.en['common.empty'] = 'No data available';
   I18N.dict.id['common.empty'] = 'Tidak ada konten';
   I18N.dict.en['common.load_fail'] = 'Failed to load. Please retry.';
   I18N.dict.id['common.load_fail'] = 'Gagal memuat. Coba lagi.';
@@ -173,13 +177,13 @@
   I18N.dict.id['common.no'] = 'Tidak';
 
   // ---- 导航（Sidebar / Topnav） ----
-  I18N.dict.en['nav.app_title'] = 'Inventory System';
-  I18N.dict.id['nav.app_title'] = 'Sistem Inventaris';
+  I18N.dict.en['nav.app_title'] = 'PSI System';
+  I18N.dict.id['nav.app_title'] = 'PSI System';
   // 模块
   I18N.dict.en['nav.home'] = 'Dashboard';
   I18N.dict.id['nav.home'] = 'Dasbor';
   I18N.dict.en['nav.inventory'] = 'Inventory';
-  I18N.dict.id['nav.inventory'] = 'Inventaris';
+  I18N.dict.id['nav.inventory'] = 'Persediaan';
   I18N.dict.en['nav.sales'] = 'Sales';
   I18N.dict.id['nav.sales'] = 'Penjualan';
   I18N.dict.en['nav.procurement'] = 'Procurement';
@@ -196,7 +200,7 @@
   I18N.dict.en['nav.skus'] = 'SKU Master';
   I18N.dict.id['nav.skus'] = 'Data Induk SKU';
   I18N.dict.en['nav.inventory_total'] = 'Inventory List';
-  I18N.dict.id['nav.inventory_total'] = 'Daftar Inventaris';
+  I18N.dict.id['nav.inventory_total'] = 'Daftar Persediaan';
   I18N.dict.en['nav.stock_check'] = 'Stock Check';
   I18N.dict.id['nav.stock_check'] = 'Cek Stok';
   I18N.dict.en['nav.stagnant'] = 'Slow-Moving Analysis';
@@ -204,7 +208,7 @@
   I18N.dict.en['nav.sales_data'] = 'Sales Data';
   I18N.dict.id['nav.sales_data'] = 'Data Penjualan';
   I18N.dict.en['nav.forecast'] = 'Demand Forecast';
-  I18N.dict.id['nav.forecast'] = 'Peramalan Pesanan';
+  I18N.dict.id['nav.forecast'] = 'Perkiraan Permintaan';
   I18N.dict.en['nav.po'] = 'Purchase Orders';
   I18N.dict.id['nav.po'] = 'Purchase Order';
   I18N.dict.en['nav.pi'] = 'Proforma Invoices';
@@ -218,7 +222,7 @@
   I18N.dict.en['nav.approval_center'] = 'Approval Center';
   I18N.dict.id['nav.approval_center'] = 'Pusat Persetujuan';
   I18N.dict.en['nav.payable_cockpit'] = 'Payables Cockpit';
-  I18N.dict.id['nav.payable_cockpit'] = 'Kokpit Hutang';
+  I18N.dict.id['nav.payable_cockpit'] = 'Dashboard Utang Usaha';
   I18N.dict.en['nav.payment'] = 'Payments';
   I18N.dict.id['nav.payment'] = 'Pembayaran';
   I18N.dict.en['nav.cost'] = 'Cost Management';
@@ -242,7 +246,7 @@
   I18N.dict.en['nav.suppliers'] = 'Suppliers';
   I18N.dict.id['nav.suppliers'] = 'Supplier';
   I18N.dict.en['nav.freight_forwarders'] = 'Freight Forwarders';
-  I18N.dict.id['nav.freight_forwarders'] = 'Forwarder Kargo';
+  I18N.dict.id['nav.freight_forwarders'] = 'Forwarder';
   I18N.dict.en['nav.payment_terms'] = 'Payment Terms';
   I18N.dict.id['nav.payment_terms'] = 'Syarat Pembayaran';
   I18N.dict.en['nav.payment_categories'] = 'Payment Categories';
