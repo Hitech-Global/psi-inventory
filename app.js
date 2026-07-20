@@ -715,7 +715,7 @@ async function afSaveFlow(flowId){
   const sorted=st.levels.slice().sort((a,b)=>a.level-b.level);
   for(let i=0;i<sorted.length;i++){
     if(sorted[i].level!==i+1){showToast('审批级次必须连续（1,2,3...）','danger');return;}
-    if(!sorted[i].approver_user_id){showToast('第 '+(i+1)+' 级审批人不能为空','danger');return;}
+    if(!sorted[i].approver_user_id){showToast(t('validation.approverLevelRequired','第 {n} 级审批人不能为空',{n:(i+1)}),'danger');return;}
   }
   const payload={id:flowId,name:st.name,business_type:st.business_type,is_enabled:st.is_enabled?1:0,
     levels:sorted.map(l=>({level:l.level,approver_user_id:l.approver_user_id}))};
@@ -2084,17 +2084,17 @@ function confirmBatchSkuUpdate(field){
   var data={};data[field]=val;
   api('/api/skus/batch-update','POST',{ids:ids,data:data}).then(function(res){
     closeModal();
-    showToast('已更新'+(res.updated||ids.length)+'个SKU','success');
+    showToast(t('toast.skuUpdated','已更新{count}个SKU',{count:res.updated||ids.length}),'success');
     loadSKUs();
   }).catch(function(e){showToast(e.message,'danger')});
 }
 function batchSkuUpdate(field,val){
   var ids=Object.keys(window._skuSelected||{});
   if(ids.length===0)return;
-  if(!confirm('你正在修改 '+ids.length+' 个SKU的状态为"'+val+'"，是否确认？'))return;
+  if(!confirm(t('confirm.modifySkuStatus','你正在修改 {n} 个SKU的状态为"{val}"，是否确认？',{n:ids.length, val:val})))return;
   var data={};data[field]=val;
   api('/api/skus/batch-update','POST',{ids:ids,data:data}).then(function(res){
-    showToast('已更新'+(res.updated||ids.length)+'个SKU','success');
+    showToast(t('toast.skuUpdated','已更新{count}个SKU',{count:res.updated||ids.length}),'success');
     loadSKUs();
   }).catch(function(e){showToast(e.message,'danger')});
 }
@@ -2113,13 +2113,13 @@ function batchSkuExport(){
   var wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,ws,t("app.580", "SKU\u5bfc\u51fa"));
   XLSX.writeFile(wb,'SKU批量导出_'+ids.length+'条.xlsx');
-  showToast('已导出'+selected.length+'条SKU','success');
+  showToast(t('toast.skuExported','已导出{count}条SKU',{count:selected.length}),'success');
 }
 function batchSkuDelete(){
   var ids=Object.keys(window._skuSelected||{});
   if(ids.length===0)return;
-  if(!confirm('⚠️ 删除后可能影响库存、出库、PO、PI、CI/PL等关联数据。\n如果SKU已有业务数据，将不允许删除，只能停用。\n\n确认删除选中的 '+ids.length+' 个SKU吗？'))return;
-  if(!confirm('二次确认：真的要删除这 '+ids.length+' 个SKU吗？此操作不可逆！'))return;
+  if(!confirm(t('confirm.deleteSkusBatch','⚠️ 删除后可能影响库存、出库、PO、PI、CI/PL等关联数据。\n如果SKU已有业务数据，将不允许删除，只能停用。\n\n确认删除选中的 {n} 个SKU吗？',{n:ids.length})))return;
+  if(!confirm(t('confirm.deleteSkusIrreversible','二次确认：真的要删除这 {n} 个SKU吗？此操作不可逆！',{n:ids.length})))return;
   api('/api/skus/batch-delete','POST',{ids:ids}).then(function(res){
     var msg='已删除'+res.deleted+'个';
     if(res.failed>0)msg+='，失败'+res.failed+'个（有关联业务数据）';
@@ -2164,7 +2164,7 @@ async function deleteSKU(id){
 // --- 通用导入函数 ---
 function importFile(url,callback){
   const inp=document.createElement('input');inp.type='file';inp.accept='.xlsx,.xls';
-  inp.onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=async ev=>{try{const wb=XLSX.read(ev.target.result,{type:'array'});const ws=wb.Sheets[wb.SheetNames[0]];const items=XLSX.utils.sheet_to_json(ws);const result=await api(url,'POST',{items});showToast('导入完成：新增'+(result.created||0)+'，更新'+(result.updated||0)+'，失败'+(result.failed||0),'success');if(callback)callback()}catch(err){showToast(err.message,'danger')}};r.readAsArrayBuffer(f)};
+  inp.onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=async ev=>{try{const wb=XLSX.read(ev.target.result,{type:'array'});const ws=wb.Sheets[wb.SheetNames[0]];const items=XLSX.utils.sheet_to_json(ws);const result=await api(url,'POST',{items});showToast(t('toast.importDone3','导入完成：新增{c}，更新{u}，失败{f}',{c:result.created||0, u:result.updated||0, f:result.failed||0}),'success');if(callback)callback()}catch(err){showToast(err.message,'danger')}};r.readAsArrayBuffer(f)};
   inp.click();
 }
 
@@ -2343,7 +2343,7 @@ async function submitSkuBatchImport(){
     }
     html+='</div>';
     document.getElementById('si-result').innerHTML=html;
-    showToast('导入完成：新增'+(res.created||0)+'，更新'+(res.updated||0)+'，失败'+(res.failed||0),res.failed>0?'warning':'success');
+    showToast(t('toast.importDone3','导入完成：新增{c}，更新{u}，失败{f}',{c:res.created||0, u:res.updated||0, f:res.failed||0}),res.failed>0?'warning':'success');
     loadSKUs();
   }catch(e){
     showToast(e.message||'导入失败','danger');
@@ -2574,7 +2574,7 @@ async function submitInvBatchImport(){
     }
     html+='</div>';
     document.getElementById('inv-result').innerHTML=html;
-    showToast('导入完成：新增'+(res.created||0)+'，失败'+(res.failed||0),res.failed>0?'warning':'success');
+    showToast(t('toast.importDone2','导入完成：新增{c}，失败{f}',{c:res.created||0, f:res.failed||0}),res.failed>0?'warning':'success');
     loadInv();
   }catch(e){
     showToast(e.message||'导入失败','danger');
@@ -2803,7 +2803,7 @@ async function submitSalesBatchImport(){
     }
     html+='</div>';
     document.getElementById('sales-result').innerHTML=html;
-    showToast('导入完成：新增'+(res.inserted||0)+'，更新'+(res.updated||0)+'，重复'+(res.skipped||0)+'，失败'+(res.failed||0),res.failed>0?'warning':'success');
+    showToast(t('toast.importDone4','导入完成：新增{c}，更新{u}，重复{s}，失败{f}',{c:res.inserted||0, u:res.updated||0, s:res.skipped||0, f:res.failed||0}),res.failed>0?'warning':'success');
     loadSales();
   }catch(e){
     showToast(e.message||'导入失败','danger');
@@ -5134,7 +5134,7 @@ async function genRp(){
       else{ showToast('重新计算失败：'+(r&&r.message||t("app.831", "\u672a\u77e5\u9519\u8bef")),'danger'); }
       return;
     }
-    showToast('已生成'+r.count+'条建议','success');
+    showToast(t('toast.suggestionsGenerated','已生成{count}条建议',{count:r.count}),'success');
     await loadRpSummary();
     await loadRp();
   }catch(e){
@@ -5488,7 +5488,7 @@ async function confirmSubmitApproval(id){
   const chk=[...document.querySelectorAll('#modal-content .cc-chk')].filter(c=>c.checked).map(c=>c.value);
   try{
     await api('/api/purchase-orders/'+id+'/submit-approval','POST',{submitter_name:currentUser.name, cc_user_ids:chk});
-    showToast('已提交审批'+(chk.length?'，已记录 '+chk.length+' 位抄送人':''),'success');
+    showToast(t('toast.approvalSubmitted','已提交审批{extra}',{extra:chk.length?'，已记录 '+chk.length+' 位抄送人':''}),'success');
     closeModal();loadPO();
   }catch(e){showToast(e.message,'danger')}
 }
@@ -5631,7 +5631,7 @@ async function saveEditPI(id){
     };
     // 调用第1层已落地的 PUT：内置锁定守卫 + 金额/PO transferred_pi_qty 同步 + 付款条件变更自动回写供应商 last_used
     const res=await api('/api/proforma-invoices/'+id,'PUT',d);
-    showToast('PI 保存成功（总额 '+fmtMoney(res.total_amount)+'）','success');
+    showToast(t('toast.piSaved','PI 保存成功（总额 {amt}）',{amt:fmtMoney(res.total_amount)}),'success');
     closeModal();
     loadPI(); // 刷新 PI 列表
   }catch(e){showToast(e.message,'danger')}
@@ -5794,7 +5794,7 @@ async function submitSupplierPIImport(){
     }
     html+='</div>';
     const resEl=document.getElementById('sup-pi-result');if(resEl)resEl.innerHTML=html;
-    showToast('导入完成：匹配'+matched+'，新增'+added+'，跳过'+skipped,'success');
+    showToast(t('toast.importMatch3','导入完成：匹配{m}，新增{a}，跳过{s}',{m:matched, a:added, s:skipped}),'success');
   }catch(e){showToast(e.message||'导入失败','danger');}
   finally{if(btn){btn.disabled=false;btn.textContent=t("app.067", "\u5f00\u59cb\u5bfc\u5165");}}
 }
@@ -6650,7 +6650,7 @@ async function importOriginInventory(){
         }
         if(!items.length){showToast('未找到有效数据','danger');return}
         const result=await api('/api/original-inventory/import','POST',{ci_id:ciId,items});
-        showToast('导入完成: 成功'+result.success+'条, 失败'+result.failed+'条','success');
+        showToast(t('toast.importSuccessFail','导入完成: 成功{s}条, 失败{f}条',{s:result.success, f:result.failed}),'success');
         if(result.errors&&result.errors.length)console.log(t("app.1081", "\u5bfc\u5165\u9519\u8bef:"),result.errors);
         loadOriginRecords();
       }catch(err){showToast('导入失败: '+err.message,'danger')}
@@ -6711,13 +6711,13 @@ async function confirmCiCosts(ciId){
   try{await api('/api/commercial-invoices/'+ciId+'/confirm-costs','POST');showToast('费用已确认完整，运输依据和实际税率已锁定','success');closeModal();loadWacDetail()}catch(e){showToast(e.message,'danger')}
 }
 async function allocateCosts(ciId){
-  try{const r=await api('/api/cost-allocation/allocate/'+ciId,'POST');showToast('费用分摊完成，共'+(r.allocations?.length||0)+'条','success');loadWacDetail()}catch(e){showToast(e.message,'danger')}
+  try{const r=await api('/api/cost-allocation/allocate/'+ciId,'POST');showToast(t('toast.costAllocated','费用分摊完成，共{n}条',{n:r.allocations?.length||0}),'success');loadWacDetail()}catch(e){showToast(e.message,'danger')}
 }
 async function updateWeightedAvg(ciId){
   if(!confirm('确认生成加权平均成本版本？\n\n这将生成并锁定的 WAC 历史版本，不会修改库存总表的数量、成本和金额。\n库存总表的加权平均成本将在 ERP 库存导入时自动匹配最新已确认版本。'))return;
   try{
     const r=await api('/api/cost-allocation/update-weighted-avg/'+ciId,'POST',{remark:'成本确认'});
-    showToast('加权平均成本版本已生成并锁定，共'+r.updated_count+'条','success');
+    showToast(t('toast.wacVersionLocked','加权平均成本版本已生成并锁定，共{n}条',{n:r.updated_count}),'success');
     // 显示详细结果
     if(r.logs&&r.logs.length){
       let logHtml='<div class="table-container"><table class="data-table"><thead><tr><th>SKU</th><th>版本号</th><th>原库存</th><th>旧成本</th><th>入库量</th><th>单位落地成本</th><th>新加权平均成本</th></tr></thead><tbody>'+r.logs.map(l=>'<tr><td class="cell-id">'+esc(l.sku_code)+'</td><td class="text-center font-bold">v'+l.version_no+'</td><td class="text-right">'+l.original_qty+'</td><td class="text-right">'+fmtMoney(l.old_avg_cost)+'</td><td class="text-right">'+l.inbound_qty+'</td><td class="text-right">'+fmtMoney(l.unit_landing_cost)+'</td><td class="text-right font-bold">'+fmtMoney(l.new_avg_cost)+'</td></tr>').join('')+'</tbody></table></div>';
@@ -7305,7 +7305,7 @@ async function payUploadFiles(id, files){
     for(const f of files){ const du=await readFileAsDataURL(f); arr.push({name:f.name,type:f.type,size:f.size,dataUrl:du,uploaded_at:new Date().toISOString()}); }
     await api('/api/payment-requests/'+id+'/attachment','POST',{attachment:arr});
     window._payAttachments=arr; renderPayAttachmentList();
-    showToast('附件已上传（'+files.length+'）','success');
+    showToast(t('toast.attachmentUploaded','附件已上传（{n}）',{n:files.length}),'success');
   }catch(e){ showToast(e.message,'danger'); }
 }
 async function payDeleteAttachment(id, idx){
@@ -7434,7 +7434,7 @@ async function openPaymentExpenseCountry(id){
   try{
     const results=await Promise.all([api('/api/payment-requests/'+id),api('/api/countries')]),p=results[0],countries=results[1].filter(c=>c.status==='active');
     if(p.payment_category==='goods'){showToast('货款付款申请不需要费用归属国家','warning');return}
-    if(p.expense_country){showToast('费用归属国家已快照为 '+p.expense_country,'warning');return}
+    if(p.expense_country){showToast(t('toast.expenseCountrySnapshot','费用归属国家已快照为 {country}',{country:p.expense_country}),'warning');return}
     openModal('补录费用归属国家 - '+esc(p.request_no),'<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid"><div class="form-group form-group-full"><label>费用归属国家 <span class="required">*</span></label><select id="pay-expense-country"><option value="">请选择</option>'+countries.map(c=>'<option value="'+esc(c.name)+'">'+esc(c.name)+'（'+esc(c.code)+'）</option>').join('')+'</select></div></div><div style="font-size:12px;color:#999">保存后作为付款申请快照，不会随付款主体或来源主数据变化；如需更正需另行受控处理。</div></div>','<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" id="pay-country-save" onclick="savePaymentExpenseCountry(\''+id+'\')">保存</button>');
   }catch(e){showToast(e.message,'danger')}
 }

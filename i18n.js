@@ -2037,4 +2037,24 @@
   I18N.dict.en["system.018"] = "Not set (-)"; I18N.dict.id["system.018"] = "Belum diatur (-)";
   I18N.dict.en["system.019"] = "Cost attribution country saved"; I18N.dict.id["system.019"] = "Negara atribusi biaya tersimpan";
 
+  // ---- Phase 2-A dynamic Toast / Confirm (semantic keys, parameterized) ----
+  I18N.dict.en["validation.approverLevelRequired"] = "Level {n} approver is required"; I18N.dict.id["validation.approverLevelRequired"] = "Approver level {n} wajib diisi";
+  I18N.dict.en["toast.skuUpdated"] = "{count} SKUs updated"; I18N.dict.id["toast.skuUpdated"] = "{count} SKU diperbarui";
+  I18N.dict.en["confirm.modifySkuStatus"] = "You are changing the status of {n} SKU(s) to \"{val}\". Confirm?"; I18N.dict.id["confirm.modifySkuStatus"] = "Anda mengubah status {n} SKU menjadi \"{val}\". Konfirmasi?";
+  I18N.dict.en["toast.skuExported"] = "{count} SKUs exported"; I18N.dict.id["toast.skuExported"] = "{count} SKU diekspor";
+  I18N.dict.en["confirm.deleteSkusBatch"] = "⚠️ Deletion may affect inventory, outbound, PO, PI, CI/PL and other related data.\\nIf the SKU already has business data, deletion is not allowed and it can only be disabled.\\n\\nConfirm deleting the {n} selected SKU(s)?"; I18N.dict.id["confirm.deleteSkusBatch"] = "⚠️ Penghapusan dapat memengaruhi inventaris, outbound, PO, PI, CI/PL, dan data terkait lainnya.\\nJika SKU sudah memiliki data bisnis, penghapusan tidak diizinkan dan hanya dapat dinonaktifkan.\\n\\nKonfirmasi menghapus {n} SKU yang dipilih?";
+  I18N.dict.en["confirm.deleteSkusIrreversible"] = "Second confirmation: Are you sure you want to delete these {n} SKU(s)? This action is irreversible!"; I18N.dict.id["confirm.deleteSkusIrreversible"] = "Konfirmasi kedua: Yakin ingin menghapus {n} SKU ini? Tindakan ini tidak dapat dibatalkan!";
+  I18N.dict.en["toast.importDone3"] = "Import complete: {c} added, {u} updated, {f} failed"; I18N.dict.id["toast.importDone3"] = "Impor selesai: {c} ditambah, {u} diperbarui, {f} gagal";
+  I18N.dict.en["toast.importDone2"] = "Import complete: {c} added, {f} failed"; I18N.dict.id["toast.importDone2"] = "Impor selesai: {c} ditambah, {f} gagal";
+  I18N.dict.en["toast.importDone4"] = "Import complete: {c} added, {u} updated, {s} skipped, {f} failed"; I18N.dict.id["toast.importDone4"] = "Impor selesai: {c} ditambah, {u} diperbarui, {s} dilewati, {f} gagal";
+  I18N.dict.en["toast.suggestionsGenerated"] = "{count} suggestion(s) generated"; I18N.dict.id["toast.suggestionsGenerated"] = "{count} saran dibuat";
+  I18N.dict.en["toast.approvalSubmitted"] = "Approval submitted{extra}"; I18N.dict.id["toast.approvalSubmitted"] = "Persetujuan diajukan{extra}";
+  I18N.dict.en["toast.piSaved"] = "PI saved successfully (total {amt})"; I18N.dict.id["toast.piSaved"] = "PI berhasil disimpan (total {amt})";
+  I18N.dict.en["toast.importMatch3"] = "Import complete: {m} matched, {a} added, {s} skipped"; I18N.dict.id["toast.importMatch3"] = "Impor selesai: {m} cocok, {a} ditambah, {s} dilewati";
+  I18N.dict.en["toast.importSuccessFail"] = "Import complete: {s} succeeded, {f} failed"; I18N.dict.id["toast.importSuccessFail"] = "Impor selesai: {s} berhasil, {f} gagal";
+  I18N.dict.en["toast.costAllocated"] = "Cost allocation complete, {n} record(s)"; I18N.dict.id["toast.costAllocated"] = "Alokasi biaya selesai, {n} catatan";
+  I18N.dict.en["toast.wacVersionLocked"] = "WAC version generated and locked, {n} record(s)"; I18N.dict.id["toast.wacVersionLocked"] = "Versi WAC dibuat dan dikunci, {n} catatan";
+  I18N.dict.en["toast.attachmentUploaded"] = "Attachment uploaded ({n})"; I18N.dict.id["toast.attachmentUploaded"] = "Lampiran diunggah ({n})";
+  I18N.dict.en["toast.expenseCountrySnapshot"] = "Expense attribution country snapshotted as {country}"; I18N.dict.id["toast.expenseCountrySnapshot"] = "Negara atribusi biaya di-snapshot menjadi {country}";
+
 })();
