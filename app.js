@@ -585,13 +585,13 @@ function renderSupTerms(){
     return '<div class="sup-term-card" data-i="'+i+'">'
       +'<span class="sup-term-idx">'+(i+1)+'</span>'
       +'<div class="sup-term-fields">'
-        +'<div class="sup-term-field"><label>名称</label><input type="text" class="st-name" data-i="'+i+'" value="'+esc(t.term_name)+'" placeholder=t("app.367", "\u5982 T/T 100% in advance")></div>'
+        +'<div class="sup-term-field"><label>名称</label><input type="text" class="st-name" data-i="'+i+'" value="'+esc(t.term_name)+'" placeholder="\u5982 T/T 100% in advance"></div>'
         +'<div class="sup-term-field"><label>类型</label><select class="st-type" data-i="'+i+'">'
           +'<option value="advance"'+((t.term_type||'advance')==='advance'?' selected':'')+'>预付 advance</option>'
           +'<option value="credit"'+((t.term_type||'advance')==='credit'?' selected':'')+'>信用 credit</option>'
           +'<option value="other"'+((t.term_type||'advance')==='other'?' selected':'')+'>其他 other</option>'
         +'</select></div>'
-        +'<div class="sup-term-field st-credit-box" style="display:'+(creditVisible?'flex':'none')+'"><label>信用天数</label><input type="number" class="st-days" data-i="'+i+'" value="'+esc(t.credit_days||0)+'" min="0" placeholder=t("app.369", "\u624b\u52a8\u586b\u5199\u5929\u6570")></div>'
+        +'<div class="sup-term-field st-credit-box" style="display:'+(creditVisible?'flex':'none')+'"><label>信用天数</label><input type="number" class="st-days" data-i="'+i+'" value="'+esc(t.credit_days||0)+'" min="0" placeholder="\u624b\u52a8\u586b\u5199\u5929\u6570"></div>'
         +'<div class="sup-term-field sup-term-default"><label>默认</label><input type="radio" name="sup-term-default" class="st-default" data-i="'+i+'"'+(isDefault?' checked':'')+'></div>'
         +'<div class="sup-term-field sup-term-del"><button type="button" class="action-btn action-del" title="删除" onclick="delSupTermRow('+i+')">🗑️</button></div>'
       +'</div>'
@@ -700,8 +700,8 @@ function afRenderLevels(flowId){
     html+='<div style="display:flex;gap:8px;align-items:center;margin:6px 0">'+
       '<span style="min-width:64px">第 '+lv.level+' 级</span>'+
       '<select data-af-user="'+lv.level+'" onchange="afSetUser(\''+esc(flowId)+'\','+lv.level+',this.value)" style="flex:1">'+opts+'</select>'+
-      '<button class="btn btn-secondary" onclick="afMoveLevel(\''+esc(flowId)+'\','+lv.level+',-1)" title=t("app.373", "\u4e0a\u79fb")>↑</button>'+
-      '<button class="btn btn-secondary" onclick="afMoveLevel(\''+esc(flowId)+'\','+lv.level+',1)" title=t("app.374", "\u4e0b\u79fb")>↓</button>'+
+      '<button class="btn btn-secondary" onclick="afMoveLevel(\''+esc(flowId)+'\','+lv.level+',-1)" title="\u4e0a\u79fb">↑</button>'+
+      '<button class="btn btn-secondary" onclick="afMoveLevel(\''+esc(flowId)+'\','+lv.level+',1)" title="\u4e0b\u79fb">↓</button>'+
       '<button class="btn btn-secondary" onclick="afRemoveLevel(\''+esc(flowId)+'\','+lv.level+')" title="删除">✕</button>'+
     '</div>';
   });
@@ -808,9 +808,9 @@ async function loadApprovalCenterList(){
         '<td>'+esc((r.submitted_at||'').replace('T',' ').slice(0,19))+'</td>'+
         '<td>'+esc(r.current_level)+'/'+esc(r.max_level)+'</td>'+
         '<td class="cell-actions">'+
-          '<button class="action-btn" onclick="openApprovalDetail(\''+r.approval_id+'\',\''+r.po_id+'\')" title=t("app.389", "\u67e5\u770b\u8be6\u60c5")>👁️</button>'+
+          '<button class="action-btn" onclick="openApprovalDetail(\''+r.approval_id+'\',\''+r.po_id+'\')" title="\u67e5\u770b\u8be6\u60c5">👁️</button>'+
           '<button class="action-btn" onclick="approvePO(\''+r.po_id+'\')" title="通过审批">✅ 通过</button>'+
-          '<button class="action-btn" onclick="rejectPO(\''+r.po_id+'\')" title=t("app.404", "\u9a73\u56de")>⛔ 驳回</button>'+
+          '<button class="action-btn" onclick="rejectPO(\''+r.po_id+'\')" title="\u9a73\u56de">⛔ 驳回</button>'+
         '</td>'+
       '</tr>').join('')+'</tbody></table></div>';
     document.getElementById('approval-list').innerHTML=html;
@@ -919,7 +919,7 @@ async function renderUsers(){
     const rows=users.map(u=>{
       const isBG = u.auth_source==='local';
       const statusBadge = u.status==='active'?'<span class="status-active">active</span>':(u.status==='pending'?'<span class="status-pending">pending</span>':'<span class="status-disabled">disabled</span>');
-      const roleSel = '<select class="user-role-sel" data-uid="'+u.id+'"'+(isBG?' disabled title=t("system.004", "\u5e94\u6025\u8d26\u53f7\u89d2\u8272\u56fa\u5b9a")':'')+'>'+roles.map(r=>'<option value="'+r.id+'"'+(r.id===u.role_id?' selected':'')+'>'+esc(r.name||r.id)+'</option>').join('')+'</select>';
+      const roleSel = '<select class="user-role-sel" data-uid="'+u.id+'"'+(isBG?' disabled title="\u5e94\u6025\u8d26\u53f7\u89d2\u8272\u56fa\u5b9a"':'')+'>'+roles.map(r=>'<option value="'+r.id+'"'+(r.id===u.role_id?' selected':'')+'>'+esc(r.name||r.id)+'</option>').join('')+'</select>';
       const actionBtn = isBG
         ? '<button class="btn btn-xs btn-secondary" disabled title="应急账号不可停用">停用</button>'
         : (u.status==='active'
@@ -964,7 +964,7 @@ async function loadRoles(){
   try{
     const data=await api('/api/roles');
     roleListData=data;
-    const html=!data.length?'<div class="empty-state">暂无角色</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>角色名</th><th>描述</th><th>权限数</th><th>系统</th><th>操作</th></tr></thead><tbody>'+data.map(r=>'<tr style="cursor:pointer" onclick="openRoleEditor('+JSON.stringify(r.id)+')" title=t("app.423", "\u70b9\u51fb\u7f16\u8f91\u6743\u9650")><td>'+esc(r.name)+'</td><td>'+esc(r.description)+'</td><td>'+(r.permissions||[]).length+'</td><td>'+(r.is_system?'✅':'❌')+'</td><td><button class="btn btn-sm btn-primary" onclick="event.stopPropagation();openRoleEditor('+JSON.stringify(r.id)+')">编辑权限</button></td></tr>').join('')+'</tbody></table></div>';
+    const html=!data.length?'<div class="empty-state">暂无角色</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>角色名</th><th>描述</th><th>权限数</th><th>系统</th><th>操作</th></tr></thead><tbody>'+data.map(r=>'<tr style="cursor:pointer" onclick="openRoleEditor('+JSON.stringify(r.id)+')" title="\u70b9\u51fb\u7f16\u8f91\u6743\u9650"><td>'+esc(r.name)+'</td><td>'+esc(r.description)+'</td><td>'+(r.permissions||[]).length+'</td><td>'+(r.is_system?'✅':'❌')+'</td><td><button class="btn btn-sm btn-primary" onclick="event.stopPropagation();openRoleEditor('+JSON.stringify(r.id)+')">编辑权限</button></td></tr>').join('')+'</tbody></table></div>';
     document.getElementById('simple-table').innerHTML=html;
   }catch(e){showFlash(e.message,'danger')}
 }
@@ -1337,7 +1337,7 @@ function pcOpenCategoryModal(id){
   const body =
     '<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid">'+
       '<div class="form-group form-group-full"><label>大类名称 <span class="required">*</span></label>'+
-        '<input type="text" id="pc-cat-name" placeholder=t("app.467", "\u4f8b\u5982\uff1a\u8d27\u6b3e\u3001\u5230\u4ed3\u8d39\u7528") value="'+name+'"></div>'+
+        '<input type="text" id="pc-cat-name" placeholder="\u4f8b\u5982\uff1a\u8d27\u6b3e\u3001\u5230\u4ed3\u8d39\u7528" value="'+name+'"></div>'+
       '<div class="form-group form-group-full"><label>大类code <span class="required">*</span></label>'+
         '<input type="text" id="pc-cat-code" placeholder="例如：warehouse_arrival" value="'+code+'">'+codeHint+'</div>'+
       '<div class="form-group"><label>排序</label>'+
@@ -1500,7 +1500,7 @@ function peRenderTable(list) {
           '<button class="action-btn action-edit" title="编辑" onclick="peOpenModal(\''+e.id+'\')">✏️</button>' +
           (e.status==='active'
             ? '<button class="action-btn action-delete" title="停用" onclick="peToggleStatus(\''+e.id+'\')">⏸️</button>'
-            : '<button class="action-btn action-edit" title=t("common.enable", "\u542f\u7528") onclick="peToggleStatus(\''+e.id+'\')">▶️</button>')
+            : '<button class="action-btn action-edit" title="\u542f\u7528" onclick="peToggleStatus(\''+e.id+'\')">▶️</button>')
         ) +
       '</td>' +
     '</tr>').join('') +
@@ -1536,7 +1536,7 @@ function peOpenModal(id) {
     '<div class="form-group form-group-full"><label>付款主体代码(entity_key) <span class="required">*</span></label>' +
       '<input type="text" id="pe-key" placeholder="例如：id_company_a" value="'+esc(entity_key)+'" '+keyDisabled+'>'+keyHint+'</div>' +
     '<div class="form-group form-group-full"><label>法人名称(entity_name) <span class="required">*</span></label>' +
-      '<input type="text" id="pe-name" placeholder=t("app.493", "\u6cd5\u4eba\u6b63\u5f0f\u540d\u79f0") value="'+esc(entity_name)+'"></div>' +
+      '<input type="text" id="pe-name" placeholder="\u6cd5\u4eba\u6b63\u5f0f\u540d\u79f0" value="'+esc(entity_name)+'"></div>' +
     '<div class="form-group"><label>所属国家 <span class="required">*</span></label>' +
       '<select id="pe-country">'+countryOpts+'</select></div>' +
     '<div class="form-group"><label>默认币种</label>' +
@@ -1674,7 +1674,7 @@ function pcOpenSubModal(id){
     : '<div class="pc-modal-hint">code用于系统关联，建议使用英文小写和下划线，例如 customs_clearance。</div>';
   const body='<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid">'+
     catHtml+
-    '<div class="form-group form-group-full"><label>小类名称 <span class="required">*</span></label><input type="text" id="pc-sub-name" placeholder=t("app.513", "\u4f8b\u5982\uff1a\u5b9a\u91d1\u3001\u5c3e\u6b3e\u3001\u8fd0\u8d39\u3001\u6e05\u5173\u8d39") value="'+esc(sub?sub.name:'')+'"></div>'+
+    '<div class="form-group form-group-full"><label>小类名称 <span class="required">*</span></label><input type="text" id="pc-sub-name" placeholder="\u4f8b\u5982\uff1a\u5b9a\u91d1\u3001\u5c3e\u6b3e\u3001\u8fd0\u8d39\u3001\u6e05\u5173\u8d39" value="'+esc(sub?sub.name:'')+'"></div>'+
     '<div class="form-group form-group-full"><label>小类code <span class="required">*</span></label><input type="text" id="pc-sub-code" placeholder="例如：customs_clearance" value="'+esc(sub?sub.code:'')+'">'+codeHint+'</div>'+
     '<div class="form-group"><label>默认收款对象类型</label><select id="pc-sub-payee">'+pcPayeeOptions(sub?sub.payee_type_default:'')+'</select></div>'+
     '<div class="form-group"><label>排序</label><input type="number" id="pc-sub-sort" step="1" value="'+(sub?Number(sub.sort_order||0):0)+'"><div class="pc-modal-hint">数字越小越靠前</div></div>'+
@@ -1913,7 +1913,7 @@ async function renderSKUs(){
   if (stOpts === '<option value="">全部状态</option>') {
     stOpts += '<option value="normal">启用</option><option value="stopped">停用</option><option value="clearance">清仓</option><option value="discontinued">停产</option>';
   }
-  document.getElementById('content-inner').innerHTML='<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>关键词</label><input type="text" id="sku-kw" placeholder=t("app.558", "SKU/\u4ea7\u54c1\u540d/Model/EAN") onkeypress="if(event.key===\'Enter\')loadSKUs()"></div><div class="filter-group"><label>品牌</label><select id="sku-brand">'+brandOpts+'</select></div><div class="filter-group"><label>状态</label><select id="sku-st">'+stOpts+'</select></div><div class="filter-group"><label>生命周期</label><select id="sku-lc">'+lcOpts+'</select></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadSKUs()">搜索</button></div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🏷️ SKU列表</div><div class="table-section-actions">'+
+  document.getElementById('content-inner').innerHTML='<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>关键词</label><input type="text" id="sku-kw" placeholder="SKU/\u4ea7\u54c1\u540d/Model/EAN" onkeypress="if(event.key===\'Enter\')loadSKUs()"></div><div class="filter-group"><label>品牌</label><select id="sku-brand">'+brandOpts+'</select></div><div class="filter-group"><label>状态</label><select id="sku-st">'+stOpts+'</select></div><div class="filter-group"><label>生命周期</label><select id="sku-lc">'+lcOpts+'</select></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadSKUs()">搜索</button></div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🏷️ SKU列表</div><div class="table-section-actions">'+
     '<div style="position:relative;display:inline-block">'+
       (hasPermission('sku_import')?'<button class="btn btn-secondary btn-sm" id="sku-import-trigger" onclick="toggleSkuImportMenu(event)">📥 导入/更新SKU ▾</button>':'')+
     '</div>'+
@@ -2017,7 +2017,7 @@ async function loadSKUs(){
           '<td class="cell-actions">'+(hasPermission('sku_edit')?'<button class="action-btn action-edit" onclick="editSKU(\''+s.id+'\')">✏️</button>':'')+(hasPermission('sku_delete')?'<button class="action-btn action-delete" onclick="deleteSKU(\''+s.id+'\')">🗑️</button>':'')+'</td>'+
         '</tr>';
       }).join('');
-    var emptyTip='<tr><td colspan="13" style="text-align:center;color:#999;padding:40px">📭 暂无SKU数据，点击右上角"导入/更新SKU"或t("app.598", "\u65b0\u589eSKU")开始</td></tr>';
+    var emptyTip='<tr><td colspan="13" style="text-align:center;color:#999;padding:40px">📭 暂无SKU数据，点击右上角"导入/更新SKU"或"\u65b0\u589eSKU"开始</td></tr>';
     document.getElementById('sku-table').innerHTML='<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table">'+thead+'<tbody>'+(tbody||emptyTip)+'</tbody></table></div>';
     updateSkuBatchBar();
   }catch(e){showFlash(e.message,'danger')}
@@ -2844,7 +2844,7 @@ async function renderInventory(){
     +'<div class="filter-group"><label>国家</label><select id="inv-c"><option value="">全部</option></select></div>'
     +'<div class="filter-group"><label>仓库</label><select id="inv-w"><option value="">全部</option></select></div>'
     +'<div class="filter-group"><label>品牌</label><select id="inv-b"><option value="">全部</option></select></div>'
-    +'<div class="filter-group"><label>关键词</label><input type="text" id="inv-k" placeholder=t("shell.040", "SKU/\u4ea7\u54c1\u540d") onkeypress="if(event.key===\'Enter\')loadInv()"></div>'
+    +'<div class="filter-group"><label>关键词</label><input type="text" id="inv-k" placeholder="SKU/\u4ea7\u54c1\u540d" onkeypress="if(event.key===\'Enter\')loadInv()"></div>'
     +'<div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadInv()">搜索</button>'
     +(hasPermission('inventory_import')?'<button class="btn btn-secondary btn-sm" onclick="openInvBatchImport()">📥 导入库存</button>':'')
     +'</div></div></div>'
@@ -3090,16 +3090,16 @@ function invBuildBatchModal(action, preview){
     inputHtml = '<div class="form-group"><label>是否重点关注</label><select id="batch-val" class="form-control"><option value="1">⭐ 设为重点关注</option><option value="0">取消重点关注</option></select></div>';
   } else if(action === 'set_safety_stock'){
     title = t("app.689", "\u6279\u91cf\u8bbe\u7f6e\u5b89\u5168\u5e93\u5b58");
-    inputHtml = '<div class="form-group"><label>安全库存数量</label><input type="number" id="batch-val" class="form-control" min="0" placeholder=t("app.691", "\u8bf7\u8f93\u5165\u5b89\u5168\u5e93\u5b58\u6570\u91cf")></div>';
+    inputHtml = '<div class="form-group"><label>安全库存数量</label><input type="number" id="batch-val" class="form-control" min="0" placeholder="\u8bf7\u8f93\u5165\u5b89\u5168\u5e93\u5b58\u6570\u91cf"></div>';
   } else if(action === 'set_turnover'){
     title = t("app.692", "\u6279\u91cf\u8bbe\u7f6e\u76ee\u6807\u5468\u8f6c\u6708\u6570");
-    inputHtml = '<div class="form-group"><label>目标周转月数</label><input type="number" id="batch-val" class="form-control" min="0" step="0.5" placeholder=t("app.694", "\u5982: 2, 3, 4")></div>';
+    inputHtml = '<div class="form-group"><label>目标周转月数</label><input type="number" id="batch-val" class="form-control" min="0" step="0.5" placeholder="\u5982: 2, 3, 4"></div>';
   } else if(action === 'set_replenish_rule'){
     title = t("app.695", "\u6279\u91cf\u8bbe\u7f6e\u8865\u8d27\u89c4\u5219");
     inputHtml = '<div class="form-group"><label>补货规则</label><select id="batch-val" class="form-control"><option value="auto">自动补货</option><option value="manual">手动补货</option><option value="stop">停止补货</option><option value="">清空规则</option></select></div>';
   } else if(action === 'set_remark'){
     title = t("app.701", "\u6279\u91cf\u8bbe\u7f6e\u5e93\u5b58\u5907\u6ce8");
-    inputHtml = '<div class="form-group"><label>库存备注</label><textarea id="batch-val" class="form-control" rows="3" placeholder=t("app.703", "\u8bf7\u8f93\u5165\u5907\u6ce8\u5185\u5bb9")></textarea></div>';
+    inputHtml = '<div class="form-group"><label>库存备注</label><textarea id="batch-val" class="form-control" rows="3" placeholder="\u8bf7\u8f93\u5165\u5907\u6ce8\u5185\u5bb9"></textarea></div>';
   } else if(action === 'inventory_adjust'){
     title = t("app.704", "\u6279\u91cf\u53d1\u8d77\u5e93\u5b58\u8c03\u6574\u5355");
     danger = true;
@@ -3108,11 +3108,11 @@ function invBuildBatchModal(action, preview){
   } else if(action === 'delete'){
     title = '批量删除库存';
     danger = true;
-    inputHtml = '<div class="form-group"><label>删除原因（必填，将记录到操作日志）</label><textarea id="batch-reason" class="form-control" rows="3" placeholder=t("app.707", "\u5982\uff1a\u6e05\u7406\u6d4b\u8bd5\u6570\u636e") required></textarea></div>'
+    inputHtml = '<div class="form-group"><label>删除原因（必填，将记录到操作日志）</label><textarea id="batch-reason" class="form-control" rows="3" placeholder="\u5982\uff1a\u6e05\u7406\u6d4b\u8bd5\u6570\u636e" required></textarea></div>'
       +'<div style="background:#fff1f0;border:1px solid #ffccc7;border-radius:6px;padding:10px;font-size:12px;color:#a8071a">⚠️ 若记录已关联库存导入/出库/调整单，将被跳过不允许删除。</div>';
   }
 
-  const reasonHtml = action !== 'inventory_adjust' ? '<div class="form-group"><label>操作原因（选填）</label><input type="text" id="batch-reason" class="form-control" placeholder=t("app.710", "\u64cd\u4f5c\u539f\u56e0")></div>' : '';
+  const reasonHtml = action !== 'inventory_adjust' ? '<div class="form-group"><label>操作原因（选填）</label><input type="text" id="batch-reason" class="form-control" placeholder="\u64cd\u4f5c\u539f\u56e0"></div>' : '';
 
   return '<div class="modal-header"><h3>'+(danger?'⚠️ ':'')+title+'</h3><button class="modal-close" onclick="closeModal()">×</button></div>'
     +'<div class="modal-body">'
@@ -3628,7 +3628,7 @@ function buildRpCfgItem(c, tabKey){
   var checked = (c.visible || c.fixed) ? 'checked' : '';
   var disabled = c.fixed ? 'disabled' : '';
   return '<div class="rp-cfg-item'+dimmedClass+'" data-key="'+c.key+'" data-fixed="'+(c.fixed?1:0)+'" draggable="true">'
-    + '<span class="rp-cfg-handle" title=t("app.770", "\u62d6\u62fd\u6392\u5e8f")>⠿</span>'
+    + '<span class="rp-cfg-handle" title="\u62d6\u62fd\u6392\u5e8f">⠿</span>'
     + '<span class="rp-cfg-name">'+esc(c.label||t("app.771", "(\u7a7a)"))+'</span>'
     + fixedBadge
     + '<label class="rp-cfg-switch">'
@@ -3645,7 +3645,7 @@ function openRpFieldConfig(tabKey){
   var totalCount = config.length;
   var html='<div class="rp-cfg-panel">'
     +'<div class="rp-cfg-toolbar">'
-    +'<input type="text" class="rp-cfg-search" id="rp-cfg-search" placeholder=t("app.775", "\u641c\u7d22\u5b57\u6bb5...") oninput="filterRpCfgFields()">'
+    +'<input type="text" class="rp-cfg-search" id="rp-cfg-search" placeholder="\u641c\u7d22\u5b57\u6bb5..." oninput="filterRpCfgFields()">'
     +'<button class="btn btn-default btn-sm" onclick="showAllRpFields(\''+tabKey+'\')">全部显示</button>'
     +'</div>'
     +'<div class="rp-cfg-stats" id="rp-cfg-stats">显示 '+visibleCount+' / '+totalCount+' 个字段</div>'
@@ -3908,7 +3908,7 @@ async function renderReplenishment(){
     +'</div>'
     +'<div class="table-section"><div class="table-section-title"><div class="table-section-title-left" id="rp-tab-title">📊 SKU动销与订单预测（总预测）</div>'
     +'<div class="table-section-actions">'
-    +'<input type="text" id="rp-s" placeholder=t("shell.069", "SKU\u641c\u7d22") onkeypress="if(event.key===\'Enter\')loadRp()" style="width:140px;height:28px;padding:4px 8px;border:1px solid #d0d7de;border-radius:4px;font-size:13px;margin-right:8px">'
+    +'<input type="text" id="rp-s" placeholder="SKU\u641c\u7d22" onkeypress="if(event.key===\'Enter\')loadRp()" style="width:140px;height:28px;padding:4px 8px;border:1px solid #d0d7de;border-radius:4px;font-size:13px;margin-right:8px">'
     +(hasPermission('replenishment_edit')?'<button class="btn btn-success btn-sm rp-gen-btn" onclick="genRp()" style="margin-right:8px">🔄 重新计算</button>':'')
     +(hasPermission('po_create')?'<button class="btn btn-primary btn-sm" id="rp-po-btn" onclick="genPOModal()">🛒 生成PO</button>':'')
     +'<button class="btn btn-default btn-sm" id="rp-field-config-btn" onclick="openRpFieldConfig(rpTab)" title="字段显示与排序" style="margin-left:8px">⚙ 字段配置</button>'
@@ -4245,7 +4245,7 @@ async function loadRp(){
         td:function(r,c){return '<td>'+esc(r.suggestion||'')+'</td>';},
         sum:function(t){return '<td></td>';}},
       actions:{th:'<th>操作</th>',
-        td:function(r,c){return '<td class="cell-actions"><button class="action-btn" onclick="toggleGenPO(\''+r.id+'\')" title=t("app.810", "\u52a0\u5165PO")>🛒</button></td>';},
+        td:function(r,c){return '<td class="cell-actions"><button class="action-btn" onclick="toggleGenPO(\''+r.id+'\')" title="\u52a0\u5165PO">🛒</button></td>';},
         sum:function(t){return '<td></td>';}}
     };
     // 按配置过滤+排序
@@ -4458,7 +4458,7 @@ async function loadRpChannelMonthly(channel){
       td:function(r,c){return '<td><input type="text" class="rp-channel-remark" data-rid="'+r.id+'" data-channel="'+channel+'" value="'+esc(c.remark)+'" onblur="onChannelRemarkBlur(this)" style="width:110px;padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px"></td>';},
       sum:function(t){return '<td></td>';}};
     Cols.actions={th:'<th>操作</th>',
-      td:function(r,c){return '<td class="cell-actions"><button class="action-btn" onclick="saveChannelChanges(\''+r.id+'\',\''+channel+'\')" title=t("common.save", "\u4fdd\u5b58")>💾</button></td>';},
+      td:function(r,c){return '<td class="cell-actions"><button class="action-btn" onclick="saveChannelChanges(\''+r.id+'\',\''+channel+'\')" title="\u4fdd\u5b58">💾</button></td>';},
       sum:function(t){return '<td></td>';}};
     // 按配置过滤+排序：可见或固定的列才显示
     var tabKey=isOnline?'online':'offline';
@@ -5269,9 +5269,9 @@ async function openRpParams(){
         +'<div style="font-weight:600;color:#2c5d8a;margin-bottom:6px">② 本次保存的规则对象（可编辑，默认预填当前筛选）</div>'
         +'<div style="font-size:12px;color:#888;margin-bottom:8px">空白=通配（不限该维度）。命中优先级：品牌+国家+仓库 &gt; 品牌+国家 &gt; 品牌+仓库 &gt; 品牌 &gt; 国家+仓库 &gt; 国家 &gt; 仓库 &gt; 全通配。<b>无兜底值</b>——未命中的 SKU 会阻止重新计算。保存以此处为准。</div>'
         +'<div style="display:flex;gap:10px;align-items:flex-end;margin-bottom:8px">'
-          +'<div><label style="font-size:12px;color:#666">品牌</label><input type="text" id="rp-rule-brand" class="form-control input-sm" value="'+esc(ctx.brand)+'" placeholder=t("app.863", "(\u7a7a=\u901a\u914d)") style="width:120px"></div>'
-          +'<div><label style="font-size:12px;color:#666">国家</label><input type="text" id="rp-rule-country" class="form-control input-sm" value="'+esc(ctx.country)+'" placeholder=t("app.863", "(\u7a7a=\u901a\u914d)") style="width:120px"></div>'
-          +'<div><label style="font-size:12px;color:#666">仓库</label><input type="text" id="rp-rule-warehouse" class="form-control input-sm" value="'+esc(ctx.warehouse)+'" placeholder=t("app.863", "(\u7a7a=\u901a\u914d)") style="width:130px"></div>'
+          +'<div><label style="font-size:12px;color:#666">品牌</label><input type="text" id="rp-rule-brand" class="form-control input-sm" value="'+esc(ctx.brand)+'" placeholder="(\u7a7a=\u901a\u914d)" style="width:120px"></div>'
+          +'<div><label style="font-size:12px;color:#666">国家</label><input type="text" id="rp-rule-country" class="form-control input-sm" value="'+esc(ctx.country)+'" placeholder="(\u7a7a=\u901a\u914d)" style="width:120px"></div>'
+          +'<div><label style="font-size:12px;color:#666">仓库</label><input type="text" id="rp-rule-warehouse" class="form-control input-sm" value="'+esc(ctx.warehouse)+'" placeholder="(\u7a7a=\u901a\u914d)" style="width:130px"></div>'
         +'</div>'
         +'<div style="display:flex;gap:12px;align-items:flex-end">'
           +'<div><label style="font-size:12px;color:#666">线上周转</label><input type="number" id="rp-param-online" class="form-control input-sm" value="'+esc(String(prefillOnline!=null?prefillOnline:''))+'" min="0" step="0.5" style="width:90px"></div>'
@@ -5310,9 +5310,9 @@ async function openRpParams(){
 function addRpDimRow(brand,country,warehouse,online,offline){
   _rpDimRowCount++;
   var tr=document.createElement('tr');
-  tr.innerHTML='<td><input class="form-control input-sm rp-dim-brand" value="'+esc(brand||'')+'" placeholder=t("app.863", "(\u7a7a=\u901a\u914d)") style="min-width:90px"></td>'
-    +'<td><input class="form-control input-sm rp-dim-country" value="'+esc(country||'')+'" placeholder=t("app.863", "(\u7a7a=\u901a\u914d)") style="min-width:90px"></td>'
-    +'<td><input class="form-control input-sm rp-dim-warehouse" value="'+esc(warehouse||'')+'" placeholder=t("app.863", "(\u7a7a=\u901a\u914d)") style="min-width:100px"></td>'
+  tr.innerHTML='<td><input class="form-control input-sm rp-dim-brand" value="'+esc(brand||'')+'" placeholder="(\u7a7a=\u901a\u914d)" style="min-width:90px"></td>'
+    +'<td><input class="form-control input-sm rp-dim-country" value="'+esc(country||'')+'" placeholder="(\u7a7a=\u901a\u914d)" style="min-width:90px"></td>'
+    +'<td><input class="form-control input-sm rp-dim-warehouse" value="'+esc(warehouse||'')+'" placeholder="(\u7a7a=\u901a\u914d)" style="min-width:100px"></td>'
     +'<td><input type="number" class="form-control input-sm rp-dim-online" value="'+esc(String(online!=null?online:4))+'" min="0" step="0.5" style="width:80px"></td>'
     +'<td><input type="number" class="form-control input-sm rp-dim-offline" value="'+esc(String(offline!=null?offline:4))+'" min="0" step="0.5" style="width:80px"></td>'
     +'<td style="text-align:center;vertical-align:middle"><button class="btn btn-xs btn-danger" onclick="this.closest(\'tr\').remove()">×</button></td>';
@@ -5453,7 +5453,7 @@ async function loadPO(){
   try{
     const s=document.getElementById('po-fs')?.value||'',k=document.getElementById('po-fk')?.value||'';
     const data=await api('/api/purchase-orders?status='+s+'&keyword='+encodeURIComponent(k));
-    document.getElementById('po-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">🛒</div>暂无PO</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>PO号</th><th>供应商</th><th>品牌</th><th>国家</th><th>仓库</th><th>PO日期</th><th>币种</th><th>明细</th><th>PO状态</th><th>审批</th><th>操作</th></tr></thead><tbody>'+data.map(p=>'<tr><td class="cell-id"><span class="link-text" onclick="viewPO(\''+p.id+'\')">'+esc(p.po_no)+'</span></td><td>'+esc(p.supplier_name)+'</td><td>'+esc(p.brand)+'</td><td>'+esc(p.country)+'</td><td>'+esc(p.target_warehouse)+'</td><td class="cell-date">'+fmtDate(p.po_date)+'</td><td>'+esc(p.currency)+'</td><td class="text-center">'+(p.item_count||0)+'</td><td><span class="status-badge '+((p.po_status==='approved'||p.po_status==='transferred_pi')?'status-completed':p.po_status==='pending_approval'?'status-pending':'status-draft')+'">'+esc(p.po_status)+'</span></td><td><span class="status-badge '+(p.approval_status==='approved'?'status-approved':p.approval_status==='rejected'?'status-rejected':'status-pending')+'">'+esc(p.approval_status)+'</span></td><td class="cell-actions"><button class="action-btn" onclick="viewPO(\''+p.id+'\')">👁️</button>'+(p.po_status==='draft'&&hasPermission('po_create')?'<button class="action-btn" onclick="submitPO(\''+p.id+'\')" title="提交审批">📤</button>':'')+(p.po_status==='approved'&&hasPermission('po_create')?'<button class="action-btn" onclick="sendFactory(\''+p.id+'\')" title=t("app.883", "\u53d1\u5de5\u5382")>📨</button>':'')+((hasPermission('po_export')||hasPermission('po_create'))?'<button class="action-btn" onclick="exportPO(\''+p.id+'\')" title=t("app.884", "\u5bfc\u51faExcel")>📊</button>':'')+(hasPermission('po_create')?'<button class="action-btn" onclick="voidPO(\''+p.id+'\')" title=t("app.907", "\u4f5c\u5e9f")>作废</button>':'')+(hasPermission('po_create')&&p.po_status==='draft'?'<button class="action-btn" style="color:#d4380d" onclick="deletePO(\''+p.id+'\')" title="删除">删除</button>':'')+'</td></tr>').join('')+'</tbody></table></div>';
+    document.getElementById('po-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">🛒</div>暂无PO</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>PO号</th><th>供应商</th><th>品牌</th><th>国家</th><th>仓库</th><th>PO日期</th><th>币种</th><th>明细</th><th>PO状态</th><th>审批</th><th>操作</th></tr></thead><tbody>'+data.map(p=>'<tr><td class="cell-id"><span class="link-text" onclick="viewPO(\''+p.id+'\')">'+esc(p.po_no)+'</span></td><td>'+esc(p.supplier_name)+'</td><td>'+esc(p.brand)+'</td><td>'+esc(p.country)+'</td><td>'+esc(p.target_warehouse)+'</td><td class="cell-date">'+fmtDate(p.po_date)+'</td><td>'+esc(p.currency)+'</td><td class="text-center">'+(p.item_count||0)+'</td><td><span class="status-badge '+((p.po_status==='approved'||p.po_status==='transferred_pi')?'status-completed':p.po_status==='pending_approval'?'status-pending':'status-draft')+'">'+esc(p.po_status)+'</span></td><td><span class="status-badge '+(p.approval_status==='approved'?'status-approved':p.approval_status==='rejected'?'status-rejected':'status-pending')+'">'+esc(p.approval_status)+'</span></td><td class="cell-actions"><button class="action-btn" onclick="viewPO(\''+p.id+'\')">👁️</button>'+(p.po_status==='draft'&&hasPermission('po_create')?'<button class="action-btn" onclick="submitPO(\''+p.id+'\')" title="提交审批">📤</button>':'')+(p.po_status==='approved'&&hasPermission('po_create')?'<button class="action-btn" onclick="sendFactory(\''+p.id+'\')" title="\u53d1\u5de5\u5382">📨</button>':'')+((hasPermission('po_export')||hasPermission('po_create'))?'<button class="action-btn" onclick="exportPO(\''+p.id+'\')" title="\u5bfc\u51faExcel">📊</button>':'')+(hasPermission('po_create')?'<button class="action-btn" onclick="voidPO(\''+p.id+'\')" title="\u4f5c\u5e9f">作废</button>':'')+(hasPermission('po_create')&&p.po_status==='draft'?'<button class="action-btn" style="color:#d4380d" onclick="deletePO(\''+p.id+'\')" title="删除">删除</button>':'')+'</td></tr>').join('')+'</tbody></table></div>';
   }catch(e){showFlash(e.message,'danger')}
 }
 async function viewPO(id){
@@ -5524,7 +5524,7 @@ function openVoidModal(title, type, id){
     '<div class="form-card" style="box-shadow:none;padding:0">'+
     '<p style="margin:0 0 12px;color:#666;font-size:13px">确认作废该'+typeName+'？作废后状态将置为「已取消」，且订单预测页对应的在途字段会自动回落（无需重新计算）。</p>'+
     '<div class="form-group"><label>作废原因 <span class="required">*</span></label>'+
-    '<textarea id="void-reason" rows="3" placeholder=t("app.901", "\u8bf7\u586b\u5199\u4f5c\u5e9f\u539f\u56e0\uff08\u5fc5\u586b\uff09") style="width:100%;box-sizing:border-box"></textarea></div></div>',
+    '<textarea id="void-reason" rows="3" placeholder="\u8bf7\u586b\u5199\u4f5c\u5e9f\u539f\u56e0\uff08\u5fc5\u586b\uff09" style="width:100%;box-sizing:border-box"></textarea></div></div>',
     '<button class="btn btn-secondary" onclick="closeModal()">取消</button>'+
     '<button class="btn btn-danger" onclick="confirmVoid(\''+type+'\',\''+id+'\')">确认作废</button>');
 }
@@ -5559,7 +5559,7 @@ async function loadPI(){
   try{
     const s=document.getElementById('pi-fs')?.value||'',k=document.getElementById('pi-fk')?.value||'';
     const data=await api('/api/proforma-invoices?status='+s+'&keyword='+encodeURIComponent(k));
-    document.getElementById('pi-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">📄</div>暂无PI</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>PI号</th><th>关联PO</th><th>供应商</th><th>品牌</th><th>国家</th><th>仓库</th><th>日期</th><th>币种</th><th>总金额</th><th>是否定金</th><th>定金比例</th><th>定金金额</th><th>定金状态</th><th>PI状态</th><th>操作</th></tr></thead><tbody>'+data.map(p=>'<tr><td class="cell-id"><span class="link-text" onclick="viewPI(\''+p.id+'\')">'+esc(p.pi_no)+'</span></td><td class="cell-id">'+esc(p.related_po_no)+'</td><td>'+esc(p.supplier_name)+'</td><td>'+esc(p.brand)+'</td><td>'+esc(p.country)+'</td><td>'+esc(p.target_warehouse)+'</td><td class="cell-date">'+fmtDate(p.pi_date)+'</td><td>'+esc(p.currency)+'</td><td class="text-right">'+fmtMoney(p.total_amount)+'</td><td>'+(p.need_deposit?'<span class="status-badge status-pending">是</span>':'<span class="status-badge status-completed">否</span>')+'</td><td class="text-right">'+(p.deposit_ratio||0)+'%</td><td class="text-right">'+fmtMoney(p.payable_deposit)+'</td><td><span class="status-badge '+(p.deposit_payment_status==='paid'?'status-paid':'status-unpaid')+'">'+esc(p.deposit_payment_status)+'</span></td><td><span class="status-badge status-pending">'+esc(p.pi_status)+'</span></td><td class="cell-actions"><button class="action-btn" onclick="viewPI(\''+p.id+'\')">👁️</button>'+(hasPermission('pi_edit')?('<button class="action-btn" '+(p.locked?('disabled title="已锁定，不可编辑：'+esc(p.lock_reason||'已锁定')+'" style="opacity:.3;cursor:not-allowed">✏️</button>'):('onclick="editPI(\''+p.id+'\')" title="编辑">✏️</button>'))):'')+'<button class="action-btn" onclick="uploadDocAttachment(\'pi\',\''+p.id+'\',\'attachment\')" title=t("app.905", "\u4e0a\u4f20PI\u9644\u4ef6")>📎</button>'+(p.need_deposit&&p.payable_deposit>0&&p.deposit_payment_status==='unpaid'&&hasPermission('payment_create')?'<button class="action-btn" onclick="createDepPay(\''+p.id+'\')" title="定金付款">💰</button>':'')+(hasPermission('pi_edit')?'<button class="action-btn" '+(p.pi_status==='completed'?'disabled title=t("app.906", "\u5df2\u5b8c\u6210\u72b6\u6001\u4e0d\u53ef\u4f5c\u5e9f") style="opacity:.3;cursor:not-allowed"':'onclick="voidPI(\''+p.id+'\')" title=t("app.907", "\u4f5c\u5e9f")')+'>作废</button>':'')+'</td></tr>').join('')+'</tbody></table></div>';
+    document.getElementById('pi-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">📄</div>暂无PI</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>PI号</th><th>关联PO</th><th>供应商</th><th>品牌</th><th>国家</th><th>仓库</th><th>日期</th><th>币种</th><th>总金额</th><th>是否定金</th><th>定金比例</th><th>定金金额</th><th>定金状态</th><th>PI状态</th><th>操作</th></tr></thead><tbody>'+data.map(p=>'<tr><td class="cell-id"><span class="link-text" onclick="viewPI(\''+p.id+'\')">'+esc(p.pi_no)+'</span></td><td class="cell-id">'+esc(p.related_po_no)+'</td><td>'+esc(p.supplier_name)+'</td><td>'+esc(p.brand)+'</td><td>'+esc(p.country)+'</td><td>'+esc(p.target_warehouse)+'</td><td class="cell-date">'+fmtDate(p.pi_date)+'</td><td>'+esc(p.currency)+'</td><td class="text-right">'+fmtMoney(p.total_amount)+'</td><td>'+(p.need_deposit?'<span class="status-badge status-pending">是</span>':'<span class="status-badge status-completed">否</span>')+'</td><td class="text-right">'+(p.deposit_ratio||0)+'%</td><td class="text-right">'+fmtMoney(p.payable_deposit)+'</td><td><span class="status-badge '+(p.deposit_payment_status==='paid'?'status-paid':'status-unpaid')+'">'+esc(p.deposit_payment_status)+'</span></td><td><span class="status-badge status-pending">'+esc(p.pi_status)+'</span></td><td class="cell-actions"><button class="action-btn" onclick="viewPI(\''+p.id+'\')">👁️</button>'+(hasPermission('pi_edit')?('<button class="action-btn" '+(p.locked?('disabled title="已锁定，不可编辑：'+esc(p.lock_reason||'已锁定')+'" style="opacity:.3;cursor:not-allowed">✏️</button>'):('onclick="editPI(\''+p.id+'\')" title="编辑">✏️</button>'))):'')+'<button class="action-btn" onclick="uploadDocAttachment(\'pi\',\''+p.id+'\',\'attachment\')" title="\u4e0a\u4f20PI\u9644\u4ef6">📎</button>'+(p.need_deposit&&p.payable_deposit>0&&p.deposit_payment_status==='unpaid'&&hasPermission('payment_create')?'<button class="action-btn" onclick="createDepPay(\''+p.id+'\')" title="定金付款">💰</button>':'')+(hasPermission('pi_edit')?'<button class="action-btn" '+(p.pi_status==='completed'?'disabled title="\u5df2\u5b8c\u6210\u72b6\u6001\u4e0d\u53ef\u4f5c\u5e9f" style="opacity:.3;cursor:not-allowed"':'onclick="voidPI(\''+p.id+'\')" title="\u4f5c\u5e9f"')+'>作废</button>':'')+'</td></tr>').join('')+'</tbody></table></div>';
   }catch(e){showFlash(e.message,'danger')}
 }
 async function viewPI(id, backPay, backMode){
@@ -5891,10 +5891,10 @@ async function renderCI(){
 }
 function onCISourceModeChange(){const mode=document.getElementById('ci-source-mode')?.value||'operational',status=document.getElementById('ci-fs');if(status)status.disabled=mode==='historical';loadCI()}
 function renderOperationalCITable(data){
-  return !data.length?'<div class="empty-state"><div class="empty-icon">🚚</div>暂无运营CI</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>CI号</th><th>关联PO</th><th>关联PI</th><th>供应商</th><th>品牌</th><th>国家</th><th>仓库</th><th>日期</th><th>币种</th><th>CI金额</th><th>已付定金</th><th>应付尾款</th><th>差异</th><th>状态</th><th>操作</th></tr></thead><tbody>'+data.map(c=>'<tr><td class="cell-id"><span class="link-text" onclick="viewCI(\''+c.id+'\')">'+esc(c.ci_no)+'</span></td><td class="cell-id">'+esc(c.related_po_no)+'</td><td class="cell-id">'+esc(c.related_pi_no)+'</td><td>'+esc(c.supplier_name)+'</td><td>'+esc(c.brand)+'</td><td>'+esc(c.country)+'</td><td>'+esc(c.target_warehouse)+'</td><td class="cell-date">'+fmtDate(c.ci_date)+'</td><td>'+esc(c.currency)+'</td><td class="text-right">'+fmtMoney(c.goods_amount)+'</td><td class="text-right">'+fmtMoney(c.actual_deducted_deposit)+'</td><td class="text-right">'+fmtMoney(c.payable_balance)+'</td><td class="text-right">'+fmtMoney(c.amount_difference)+'</td><td><span class="status-badge status-pending">'+esc(c.ci_status)+'</span></td><td class="cell-actions"><button class="action-btn" onclick="viewCI(\''+c.id+'\')">👁️</button><button class="action-btn" onclick="uploadDocAttachment(\'ci\',\''+c.id+'\',\'attachment\')" title=t("shell.107", "\u4e0a\u4f20CI\u9644\u4ef6")>📎</button><button class="action-btn" onclick="uploadDocAttachment(\'ci\',\''+c.id+'\',\'pl_attachment\')" title=t("shell.108", "\u4e0a\u4f20PL\u9644\u4ef6")>📦</button>'+(c.payable_balance>0&&c.balance_payment_status==='unpaid'&&hasPermission('payment_create')?'<button class="action-btn" onclick="createBalPay(\''+c.id+'\')" title="尾款付款">💰</button>':'')+(hasPermission('cost_view')?'<button class="action-btn" onclick="viewCICost(\''+c.id+'\')" title="费用管理">📊</button>':'')+(hasPermission('ci_edit')?'<button class="action-btn" '+((c.ci_status==='completed'||c.ci_status==='partial_inbound')?'disabled title=t("shell.109", "\u8be5\u72b6\u6001\u4e0d\u53ef\u4f5c\u5e9f") style="opacity:.3;cursor:not-allowed"':'onclick="voidCI(\''+c.id+'\')" title=t("app.907", "\u4f5c\u5e9f")')+'>作废</button>':'')+'</td></tr>').join('')+'</tbody></table></div>';
+  return !data.length?'<div class="empty-state"><div class="empty-icon">🚚</div>暂无运营CI</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>CI号</th><th>关联PO</th><th>关联PI</th><th>供应商</th><th>品牌</th><th>国家</th><th>仓库</th><th>日期</th><th>币种</th><th>CI金额</th><th>已付定金</th><th>应付尾款</th><th>差异</th><th>状态</th><th>操作</th></tr></thead><tbody>'+data.map(c=>'<tr><td class="cell-id"><span class="link-text" onclick="viewCI(\''+c.id+'\')">'+esc(c.ci_no)+'</span></td><td class="cell-id">'+esc(c.related_po_no)+'</td><td class="cell-id">'+esc(c.related_pi_no)+'</td><td>'+esc(c.supplier_name)+'</td><td>'+esc(c.brand)+'</td><td>'+esc(c.country)+'</td><td>'+esc(c.target_warehouse)+'</td><td class="cell-date">'+fmtDate(c.ci_date)+'</td><td>'+esc(c.currency)+'</td><td class="text-right">'+fmtMoney(c.goods_amount)+'</td><td class="text-right">'+fmtMoney(c.actual_deducted_deposit)+'</td><td class="text-right">'+fmtMoney(c.payable_balance)+'</td><td class="text-right">'+fmtMoney(c.amount_difference)+'</td><td><span class="status-badge status-pending">'+esc(c.ci_status)+'</span></td><td class="cell-actions"><button class="action-btn" onclick="viewCI(\''+c.id+'\')">👁️</button><button class="action-btn" onclick="uploadDocAttachment(\'ci\',\''+c.id+'\',\'attachment\')" title="\u4e0a\u4f20CI\u9644\u4ef6">📎</button><button class="action-btn" onclick="uploadDocAttachment(\'ci\',\''+c.id+'\',\'pl_attachment\')" title="\u4e0a\u4f20PL\u9644\u4ef6">📦</button>'+(c.payable_balance>0&&c.balance_payment_status==='unpaid'&&hasPermission('payment_create')?'<button class="action-btn" onclick="createBalPay(\''+c.id+'\')" title="尾款付款">💰</button>':'')+(hasPermission('cost_view')?'<button class="action-btn" onclick="viewCICost(\''+c.id+'\')" title="费用管理">📊</button>':'')+(hasPermission('ci_edit')?'<button class="action-btn" '+((c.ci_status==='completed'||c.ci_status==='partial_inbound')?'disabled title="\u8be5\u72b6\u6001\u4e0d\u53ef\u4f5c\u5e9f" style="opacity:.3;cursor:not-allowed"':'onclick="voidCI(\''+c.id+'\')" title="\u4f5c\u5e9f"')+'>作废</button>':'')+'</td></tr>').join('')+'</tbody></table></div>';
 }
 function renderHistoricalCITable(data){
-  return !data.length?'<div class="empty-state"><div class="empty-icon">📚</div>暂无历史CI</div>':'<div style="font-size:12px;color:#666;padding:10px 0">仅用于历史采购金额和应付管理，不影响库存、WAC及订单预测。</div><div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>历史CI号</th><th>供应商</th><th>品牌</th><th>国家</th><th>日期</th><th>币种</th><th>总货款</th><th>导入历史已付</th><th>后续已付</th><th>抵扣</th><th>抹零</th><th>未结金额</th><th>付款状态</th><th>到期日</th><th>操作</th></tr></thead><tbody>'+data.map(h=>{const st=h.payment_status==='paid'?'status-paid':String(h.payment_status||'').includes('partial')?'status-pending':'status-unpaid';return '<tr><td class="cell-id"><span class="link-text" onclick="viewHistoricalCI(\''+h.id+'\')">'+esc(h.historical_ci_no)+'</span></td><td>'+esc(h.supplier_name)+'</td><td>'+esc(h.brand_name)+'</td><td>'+esc(h.country)+'</td><td class="cell-date">'+fmtDate(h.ci_date)+'</td><td>'+esc(h.currency)+'</td><td class="text-right font-bold">'+fmtMoney(h.gross_goods_amount)+'</td><td class="text-right">'+fmtMoney(h.historical_paid_amount)+'</td><td class="text-right">'+fmtMoney(h.subsequent_paid_amount)+'</td><td class="text-right">'+fmtMoney(h.deduction_amount)+'</td><td class="text-right">'+fmtMoney(h.rounding_amount)+'</td><td class="text-right '+(Number(h.unpaid_amount||0)>0?'text-danger':'')+'">'+fmtMoney(h.unpaid_amount)+'</td><td><span class="status-badge '+st+'">'+esc(PAY_STATUS_MAP[h.payment_status]||h.payment_status)+'</span></td><td class="cell-date">'+fmtDate(h.due_date)+'</td><td class="cell-actions"><button class="action-btn" onclick="viewHistoricalCI(\''+h.id+'\')" title=t("app.974", "\u67e5\u770b\u5386\u53f2CI")>👁️</button>'+(hasPermission('payment_view')?'<button class="action-btn" onclick="viewPayment(\''+h.payment_request_id+'\')" title=t("app.975", "\u4ed8\u6b3e\u4e0e\u7ed3\u7b97")>💳</button>':'')+'</td></tr>'}).join('')+'</tbody></table></div>';
+  return !data.length?'<div class="empty-state"><div class="empty-icon">📚</div>暂无历史CI</div>':'<div style="font-size:12px;color:#666;padding:10px 0">仅用于历史采购金额和应付管理，不影响库存、WAC及订单预测。</div><div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>历史CI号</th><th>供应商</th><th>品牌</th><th>国家</th><th>日期</th><th>币种</th><th>总货款</th><th>导入历史已付</th><th>后续已付</th><th>抵扣</th><th>抹零</th><th>未结金额</th><th>付款状态</th><th>到期日</th><th>操作</th></tr></thead><tbody>'+data.map(h=>{const st=h.payment_status==='paid'?'status-paid':String(h.payment_status||'').includes('partial')?'status-pending':'status-unpaid';return '<tr><td class="cell-id"><span class="link-text" onclick="viewHistoricalCI(\''+h.id+'\')">'+esc(h.historical_ci_no)+'</span></td><td>'+esc(h.supplier_name)+'</td><td>'+esc(h.brand_name)+'</td><td>'+esc(h.country)+'</td><td class="cell-date">'+fmtDate(h.ci_date)+'</td><td>'+esc(h.currency)+'</td><td class="text-right font-bold">'+fmtMoney(h.gross_goods_amount)+'</td><td class="text-right">'+fmtMoney(h.historical_paid_amount)+'</td><td class="text-right">'+fmtMoney(h.subsequent_paid_amount)+'</td><td class="text-right">'+fmtMoney(h.deduction_amount)+'</td><td class="text-right">'+fmtMoney(h.rounding_amount)+'</td><td class="text-right '+(Number(h.unpaid_amount||0)>0?'text-danger':'')+'">'+fmtMoney(h.unpaid_amount)+'</td><td><span class="status-badge '+st+'">'+esc(PAY_STATUS_MAP[h.payment_status]||h.payment_status)+'</span></td><td class="cell-date">'+fmtDate(h.due_date)+'</td><td class="cell-actions"><button class="action-btn" onclick="viewHistoricalCI(\''+h.id+'\')" title="\u67e5\u770b\u5386\u53f2CI">👁️</button>'+(hasPermission('payment_view')?'<button class="action-btn" onclick="viewPayment(\''+h.payment_request_id+'\')" title="\u4ed8\u6b3e\u4e0e\u7ed3\u7b97">💳</button>':'')+'</td></tr>'}).join('')+'</tbody></table></div>';
 }
 function renderPurchaseAmountSummary(summary){
   const scope=(label,data)=>'<div class="stat-card"><div class="stat-label">'+label+'</div><div class="stat-number" style="font-size:17px">'+((data.by_currency||[]).map(x=>esc(x.currency)+' '+Number(x.amount||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})).join(' · ')||'0.00')+'</div><div style="font-size:12px;color:#999;margin-top:4px">'+data.count+' 张；人民币待补 '+data.rmb_pending_count+' 张</div></div>';
@@ -6060,7 +6060,7 @@ async function createCI(){
   openModal(t("pi.018", "\u65b0\u5efaCI"),'<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid"><div class="form-group"><label>关联PI</label><select id="nci-pi" onchange="loadPIForCI()"><option value="">无关联</option>'+pis.map(p=>'<option value="'+p.id+'" data-no="'+p.pi_no+'" data-supid="'+p.supplier_id+'" data-supname="'+esc(p.supplier_name)+'" data-cur="'+p.currency+'">'+esc(p.pi_no)+' - '+esc(p.supplier_name)+'</option>').join('')+'</select></div><div class="form-group"><label>供应商 <span class="required">*</span></label><select id="nci-sup">'+suppliers.map(s=>'<option value="'+s.id+'" data-name="'+esc(s.name)+'">'+esc(s.name)+'</option>').join('')+'</select></div><div class="form-group"><label>CI日期</label><input type="date" id="nci-date" value="'+todayStr()+'"></div><div class="form-group"><label>实际出货日期 <span class="required">*</span></label><input type="date" id="nci-ship-date"></div><div class="form-group"><label>发货批次</label><input type="number" id="nci-batch" value="1"></div><div class="form-group"><label>币种</label><select id="nci-cur"><option>USD</option><option>RMB</option><option>IDR</option><option>MYR</option><option>THB</option></select></div></div><h4 style="margin:16px 0 8px">CI明细 <button class="btn btn-secondary btn-sm" onclick="addCIRow()">➕ 添加</button></h4><div id="ci-items"></div></div>','<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveNewCI()">创建</button>');
   window._ciR=0;addCIRow();
 }
-function addCIRow(){const c=document.getElementById('ci-items');const i=window._ciR++;c.innerHTML+='<div class="flex gap-8 mb-8" id="ci-r-'+i+'"><input type="text" placeholder="SKU" id="ci-rs-'+i+'" style="flex:1"><input type="number" placeholder=t("app.1011", "\u53d1\u8d27\u91cf") id="ci-rq-'+i+'" style="width:105px"><input type="number" step="0.01" placeholder="单价" id="ci-rp-'+i+'" style="width:110px"><input type="number" min="0" step="0.01" placeholder=t("ci.006", "\u5b9e\u9645\u5173\u7a0e\u7a0e\u7387(%)") id="ci-rr-'+i+'" style="width:145px"><button class="btn btn-danger btn-sm" onclick="document.getElementById(\'ci-r-'+i+'\').remove()">🗑️</button></div>'}
+function addCIRow(){const c=document.getElementById('ci-items');const i=window._ciR++;c.innerHTML+='<div class="flex gap-8 mb-8" id="ci-r-'+i+'"><input type="text" placeholder="SKU" id="ci-rs-'+i+'" style="flex:1"><input type="number" placeholder="\u53d1\u8d27\u91cf" id="ci-rq-'+i+'" style="width:105px"><input type="number" step="0.01" placeholder="单价" id="ci-rp-'+i+'" style="width:110px"><input type="number" min="0" step="0.01" placeholder="\u5b9e\u9645\u5173\u7a0e\u7a0e\u7387(%)" id="ci-rr-'+i+'" style="width:145px"><button class="btn btn-danger btn-sm" onclick="document.getElementById(\'ci-r-'+i+'\').remove()">🗑️</button></div>'}
 async function loadPIForCI(){const piSel=document.getElementById('nci-pi');if(!piSel.value)return;const opt=piSel.options[piSel.selectedIndex];document.getElementById('nci-sup').value=opt.dataset.supid;document.getElementById('nci-cur').value=opt.dataset.cur;try{const pi=await api('/api/proforma-invoices/'+piSel.value);document.getElementById('ci-items').innerHTML='';window._ciR=0;(pi.items||[]).forEach(item=>{addCIRow();const i=window._ciR-1;document.getElementById('ci-rs-'+i).value=item.sku_code;document.getElementById('ci-rq-'+i).value=item.unshipped_qty||0;document.getElementById('ci-rp-'+i).value=item.unit_price;if(item.reference_customs_rate!==null&&item.reference_customs_rate!==undefined)document.getElementById('ci-rr-'+i).value=item.reference_customs_rate})}catch(e){}}
 async function saveNewCI(){
   const piSel=document.getElementById('nci-pi'),supSel=document.getElementById('nci-sup');const items=[];
@@ -6156,7 +6156,7 @@ async function createWarehousePay(ciId){
   openModal('创建到仓费用付款',
     '<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid">'+
     '<div class="form-group"><label>费用小类</label><select id="war-sub"><option value="freight">运费</option><option value="customs_clearance">清关费</option><option value="port_charges">港口费</option><option value="delivery">派送费</option><option value="warehouse">仓储费</option><option value="other_local">其他本地费</option></select></div>'+
-    '<div class="form-group"><label>付款对象</label><input type="text" id="war-payee" placeholder=t("app.1019", "\u8d27\u4ee3/\u670d\u52a1\u5546\u540d\u79f0")></div>'+
+    '<div class="form-group"><label>付款对象</label><input type="text" id="war-payee" placeholder="\u8d27\u4ee3/\u670d\u52a1\u5546\u540d\u79f0"></div>'+
     '<div class="form-group"><label>应付金额</label><input type="number" step="0.01" id="war-amt"></div>'+
     '<div class="form-group"><label>币种</label><select id="war-cur"><option>USD</option><option>RMB</option><option>IDR</option><option>MYR</option><option>THB</option></select></div>'+
     countryField+
@@ -6196,7 +6196,7 @@ async function saveCustomsDutyPay(ciId){
 async function createInspectionFeePay(ciId){
   openModal(t("app.1023", "\u521b\u5efa\u5546\u68c0\u8d39\u7528\u4ed8\u6b3e"),
     '<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid">'+
-    '<div class="form-group"><label>付款对象</label><input type="text" id="ins-payee" placeholder=t("app.443", "\u5546\u68c0\u673a\u6784")></div>'+
+    '<div class="form-group"><label>付款对象</label><input type="text" id="ins-payee" placeholder="\u5546\u68c0\u673a\u6784"></div>'+
     '<div class="form-group"><label>应付金额</label><input type="number" step="0.01" id="ins-amt"></div>'+
     '<div class="form-group"><label>币种</label><select id="ins-cur"><option>USD</option><option>RMB</option></select></div>'+
     '<div class="form-group"><label>备注</label><input type="text" id="ins-rem"></div>'+
@@ -6221,7 +6221,7 @@ async function loadLog(){
   try{
     const s=document.getElementById('log-fs')?.value||'';
     const data=await api('/api/logistics-batches?status='+s);
-    document.getElementById('log-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">🚢</div>暂无物流数据</div>':'<div class="table-container" style="box-shadow:none;border-radius:0;overflow-x:auto"><table class="data-table"><thead><tr><th>批次号</th><th>关联CI</th><th>货代</th><th>方式</th><th>起运港</th><th>目的港</th><th>国家</th><th>提货</th><th>出发</th><th>到港</th><th>清关完成</th><th>入库完成</th><th>箱数</th><th>CBM</th><th>综合运费</th><th>关税</th><th>状态</th><th>费用</th><th>操作</th></tr></thead><tbody>'+data.map(l=>'<tr><td class="cell-id">'+esc(l.batch_no)+'</td><td class="cell-id">'+esc(l.related_ci_no)+'</td><td>'+esc(l.forwarder_name)+'</td><td>'+esc(l.transport_mode)+'</td><td>'+esc(l.origin_port)+'</td><td>'+esc(l.dest_port)+'</td><td>'+esc(l.target_country)+'</td><td class="cell-date">'+fmtDate(l.pickup_date)+'</td><td class="cell-date">'+fmtDate(l.depart_date)+'</td><td class="cell-date">'+fmtDate(l.actual_arrival_date)+'</td><td class="cell-date">'+fmtDate(l.customs_end_date)+'</td><td class="cell-date">'+fmtDate(l.inbound_complete_date)+'</td><td class="text-right">'+(l.total_cartons||0)+'</td><td class="text-right">'+(l.total_cbm||0)+'</td><td class="text-right">'+fmtMoney(l.total_freight,l.freight_currency)+'</td><td class="text-right">'+fmtMoney(l.customs_duty,l.freight_currency)+'</td><td><span class="status-badge '+(l.logistics_status==='completed'?'status-completed':'status-pending')+'">'+esc(l.logistics_status)+'</span></td><td><span class="status-badge '+(l.fee_status==='paid'?'status-paid':'status-unpaid')+'">'+esc(l.fee_status)+'</span></td><td class="cell-actions"><button class="action-btn" onclick="viewLog(\''+l.id+'\')">👁️</button>'+(l.total_freight>0&&l.fee_status==='unpaid'&&hasPermission('payment_create')?'<button class="action-btn" onclick="createFrtPay(\''+l.id+'\')" title=t("app.1026", "\u8fd0\u8d39\u4ed8\u6b3e")>💰</button>':'')+(l.customs_duty>0&&l.fee_status==='unpaid'&&hasPermission('payment_create')?'<button class="action-btn" onclick="createDutyPay(\''+l.id+'\')" title=t("app.1027", "\u5173\u7a0e\u4ed8\u6b3e")>🏛️</button>':'')+'</td></tr>').join('')+'</tbody></table></div>';
+    document.getElementById('log-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">🚢</div>暂无物流数据</div>':'<div class="table-container" style="box-shadow:none;border-radius:0;overflow-x:auto"><table class="data-table"><thead><tr><th>批次号</th><th>关联CI</th><th>货代</th><th>方式</th><th>起运港</th><th>目的港</th><th>国家</th><th>提货</th><th>出发</th><th>到港</th><th>清关完成</th><th>入库完成</th><th>箱数</th><th>CBM</th><th>综合运费</th><th>关税</th><th>状态</th><th>费用</th><th>操作</th></tr></thead><tbody>'+data.map(l=>'<tr><td class="cell-id">'+esc(l.batch_no)+'</td><td class="cell-id">'+esc(l.related_ci_no)+'</td><td>'+esc(l.forwarder_name)+'</td><td>'+esc(l.transport_mode)+'</td><td>'+esc(l.origin_port)+'</td><td>'+esc(l.dest_port)+'</td><td>'+esc(l.target_country)+'</td><td class="cell-date">'+fmtDate(l.pickup_date)+'</td><td class="cell-date">'+fmtDate(l.depart_date)+'</td><td class="cell-date">'+fmtDate(l.actual_arrival_date)+'</td><td class="cell-date">'+fmtDate(l.customs_end_date)+'</td><td class="cell-date">'+fmtDate(l.inbound_complete_date)+'</td><td class="text-right">'+(l.total_cartons||0)+'</td><td class="text-right">'+(l.total_cbm||0)+'</td><td class="text-right">'+fmtMoney(l.total_freight,l.freight_currency)+'</td><td class="text-right">'+fmtMoney(l.customs_duty,l.freight_currency)+'</td><td><span class="status-badge '+(l.logistics_status==='completed'?'status-completed':'status-pending')+'">'+esc(l.logistics_status)+'</span></td><td><span class="status-badge '+(l.fee_status==='paid'?'status-paid':'status-unpaid')+'">'+esc(l.fee_status)+'</span></td><td class="cell-actions"><button class="action-btn" onclick="viewLog(\''+l.id+'\')">👁️</button>'+(l.total_freight>0&&l.fee_status==='unpaid'&&hasPermission('payment_create')?'<button class="action-btn" onclick="createFrtPay(\''+l.id+'\')" title="\u8fd0\u8d39\u4ed8\u6b3e">💰</button>':'')+(l.customs_duty>0&&l.fee_status==='unpaid'&&hasPermission('payment_create')?'<button class="action-btn" onclick="createDutyPay(\''+l.id+'\')" title="\u5173\u7a0e\u4ed8\u6b3e">🏛️</button>':'')+'</td></tr>').join('')+'</tbody></table></div>';
   }catch(e){showFlash(e.message,'danger')}
 }
 async function viewLog(id){
@@ -6988,7 +6988,7 @@ function renderCockpitLayers(){
     html+='<div class="table-section" style="margin-top:16px"><div class="table-section-title"><div class="table-section-title-left">🏢 按供应商应付总览</div><div style="font-size:12px;color:var(--text-secondary,#999)">点击任意行查看该供应商费用组成与付款明细</div></div>';
     html+='<table class="data-table"><thead><tr><th>供应商</th><th>品牌</th><th>国家</th><th>币种</th><th style="text-align:right">总应付</th><th style="text-align:right">已结清</th><th style="text-align:right">未结清</th><th>状态</th></tr></thead><tbody>';
     (v.by_supplier||[]).forEach(s=>{
-      html+='<tr style="cursor:pointer" onclick="cockpitSupplierDrawer(\''+encodeURIComponent(s.supplier_name)+'\',\''+esc(s.currency)+'\')" title=t("app.1117", "\u70b9\u51fb\u67e5\u770b\u8be5\u4f9b\u5e94\u5546\u8d39\u7528\u7ec4\u6210\u4e0e\u4ed8\u6b3e\u660e\u7ec6")>'
+      html+='<tr style="cursor:pointer" onclick="cockpitSupplierDrawer(\''+encodeURIComponent(s.supplier_name)+'\',\''+esc(s.currency)+'\')" title="\u70b9\u51fb\u67e5\u770b\u8be5\u4f9b\u5e94\u5546\u8d39\u7528\u7ec4\u6210\u4e0e\u4ed8\u6b3e\u660e\u7ec6">'
         +'<td>'+esc(s.supplier_name)+'</td>'
         +'<td>'+(s.brands?'<span title="'+esc(s.brands)+'">'+esc(s.brands)+'</span>':'<span style="color:#999">—</span>')+'</td>'
         +'<td>'+(s.country?esc(s.country):'<span style="color:#999">—</span>')+'</td>'
@@ -7025,7 +7025,7 @@ function renderCockpitLayers(){
     +'<div class="filter-actions" style="margin:8px 0">'
     +'<label style="font-size:12px;margin-right:6px"><input type="checkbox" id="cockpit-only-outstanding" onchange="renderCockpitDetails()" checked> 仅看未结清</label>'
     +'<label style="font-size:12px;margin-right:6px"><input type="checkbox" id="cockpit-only-nodue" onchange="renderCockpitDetails()"> 仅看无到期日</label>'
-    +'<input type="text" id="cockpit-detail-kw" placeholder=t("app.1123", "\u4f9b\u5e94\u5546/\u7533\u8bf7\u53f7/CI") style="width:180px" oninput="renderCockpitDetails()">'
+    +'<input type="text" id="cockpit-detail-kw" placeholder="\u4f9b\u5e94\u5546/\u7533\u8bf7\u53f7/CI" style="width:180px" oninput="renderCockpitDetails()">'
     +'</div><div id="cockpit-detail-table"></div></div></div>';
   box.innerHTML=html;
 }
@@ -7269,7 +7269,7 @@ async function viewPayment(id, mode){
     const isPendingApproval=(p.payment_status==='pending_approval'||p.approval_status==='pending');
     const canApprove=hasPermission('payment_approve');
     const opinionHtml=(mode==='finance'&&isPendingApproval&&canApprove)
-      ? '<div class="detail-section"><h3>审批意见</h3><textarea id="pay-appr-remark" rows="3" placeholder=t("pi.024", "\u586b\u5199\u5ba1\u6279\u610f\u89c1\uff08\u9a73\u56de\u65f6\u5fc5\u586b\uff09\uff1b\u5728\u6846\u5185\u7c98\u8d34\u56fe\u7247\u53ef\u81ea\u52a8\u4e0a\u4f20\u4e3a\u9644\u4ef6") style="width:100%;box-sizing:border-box" onpaste="onPayRemarkPaste(event)"></textarea></div>'
+      ? '<div class="detail-section"><h3>审批意见</h3><textarea id="pay-appr-remark" rows="3" placeholder="\u586b\u5199\u5ba1\u6279\u610f\u89c1\uff08\u9a73\u56de\u65f6\u5fc5\u586b\uff09\uff1b\u5728\u6846\u5185\u7c98\u8d34\u56fe\u7247\u53ef\u81ea\u52a8\u4e0a\u4f20\u4e3a\u9644\u4ef6" style="width:100%;box-sizing:border-box" onpaste="onPayRemarkPaste(event)"></textarea></div>'
       : '';
     const body='<div class="detail-card" style="box-shadow:none;padding:0"><div class="detail-section"><h3>付款申请摘要</h3>'+summary+'</div>'+relHtml+settlementSection+attSection+opinionHtml+'</div>';
     // footer：finance 模式待审 → 通过/驳回；否则仅关闭
@@ -7395,7 +7395,7 @@ async function loadPay(){
       const canRound=p.approval_status==='approved'&&Number(p.unpaid_amount||0)>0&&Number(p.rounding_amount||0)<=0&&!['rejected','cancelled'].includes(p.payment_status);
       const needsExpenseCountry=p.payment_category!=='goods'&&!String(p.expense_country||'').trim();
       const actualDisplay=Number(p.actual_pay_amount||0)>0||Number(p.deduction_amount||0)>0||Number(p.rounding_amount||0)>0?p.actual_pay_amount:p.payable_amount;
-      return '<tr><td class="cell-id">'+esc(p.request_no)+'</td><td>'+esc(catLabel)+'</td><td>'+esc(subLabel)+'</td><td class="cell-id">'+esc(p.source_no)+'</td><td class="cell-id">'+esc(p.related_ci_no||'')+'</td><td>'+esc(p.supplier_name)+'</td><td class="text-right font-bold">'+fmtMoney(p.payable_amount)+'</td><td class="text-right '+(p.deduction_amount>0?'text-warning':'')+'">'+(p.deduction_amount>0?fmtMoney(p.deduction_amount):'-')+'</td><td class="text-right font-bold">'+fmtMoney(actualDisplay)+'</td><td class="text-right">'+fmtMoney(p.paid_amount)+'</td><td class="text-right '+(p.unpaid_amount>0?'text-danger':'')+'">'+fmtMoney(p.unpaid_amount)+'</td><td>'+esc(p.currency)+'</td><td><span class="status-badge '+stClass+'">'+esc(stLabel)+'</span></td><td class="cell-actions">'+(hasPermission('payment_view')?'<button class="action-btn" onclick="viewPayment(\''+p.id+'\')" title=t("app.389", "\u67e5\u770b\u8be6\u60c5")>👁️</button>':'')+(needsExpenseCountry&&hasPermission('payment_approve')?'<button class="action-btn" onclick="openPaymentExpenseCountry(\''+p.id+'\')" title="补录费用归属国家">补国家</button>':'')+(p.approval_status==='pending'&&hasPermission('payment_approve')?'<button class="action-btn action-edit" onclick="apprPay(\''+p.id+'\',\'approve\')" title="通过">✅</button><button class="action-btn action-delete" onclick="apprPay(\''+p.id+'\',\'reject\')" title="驳回">❌</button>':'')+(canPay&&hasPermission('payment_approve')?'<button class="action-btn action-edit" onclick="confirmPaid(\''+p.id+'\')" title="确认付款">💵</button>':'')+(canRound&&hasPermission('payment_approve')?'<button class="action-btn" onclick="openPaymentRounding(\''+p.id+'\')" title="手动抹零">抹零</button>':'')+(canDeduct&&hasPermission('payment_create')?'<button class="action-btn" onclick="editDeduction(\''+p.id+'\')" title="编辑抵扣">✂️</button>':'')+'</td></tr>';
+      return '<tr><td class="cell-id">'+esc(p.request_no)+'</td><td>'+esc(catLabel)+'</td><td>'+esc(subLabel)+'</td><td class="cell-id">'+esc(p.source_no)+'</td><td class="cell-id">'+esc(p.related_ci_no||'')+'</td><td>'+esc(p.supplier_name)+'</td><td class="text-right font-bold">'+fmtMoney(p.payable_amount)+'</td><td class="text-right '+(p.deduction_amount>0?'text-warning':'')+'">'+(p.deduction_amount>0?fmtMoney(p.deduction_amount):'-')+'</td><td class="text-right font-bold">'+fmtMoney(actualDisplay)+'</td><td class="text-right">'+fmtMoney(p.paid_amount)+'</td><td class="text-right '+(p.unpaid_amount>0?'text-danger':'')+'">'+fmtMoney(p.unpaid_amount)+'</td><td>'+esc(p.currency)+'</td><td><span class="status-badge '+stClass+'">'+esc(stLabel)+'</span></td><td class="cell-actions">'+(hasPermission('payment_view')?'<button class="action-btn" onclick="viewPayment(\''+p.id+'\')" title="\u67e5\u770b\u8be6\u60c5">👁️</button>':'')+(needsExpenseCountry&&hasPermission('payment_approve')?'<button class="action-btn" onclick="openPaymentExpenseCountry(\''+p.id+'\')" title="补录费用归属国家">补国家</button>':'')+(p.approval_status==='pending'&&hasPermission('payment_approve')?'<button class="action-btn action-edit" onclick="apprPay(\''+p.id+'\',\'approve\')" title="通过">✅</button><button class="action-btn action-delete" onclick="apprPay(\''+p.id+'\',\'reject\')" title="驳回">❌</button>':'')+(canPay&&hasPermission('payment_approve')?'<button class="action-btn action-edit" onclick="confirmPaid(\''+p.id+'\')" title="确认付款">💵</button>':'')+(canRound&&hasPermission('payment_approve')?'<button class="action-btn" onclick="openPaymentRounding(\''+p.id+'\')" title="手动抹零">抹零</button>':'')+(canDeduct&&hasPermission('payment_create')?'<button class="action-btn" onclick="editDeduction(\''+p.id+'\')" title="编辑抵扣">✂️</button>':'')+'</td></tr>';
     }).join('')+'</tbody></table></div>';
   }catch(e){showFlash(e.message,'danger')}
 }
@@ -7503,12 +7503,12 @@ async function loadChk(){
   try{
     const c=document.getElementById('chk-c')?.value||'',w=document.getElementById('chk-w')?.value||'';
     const data=await api('/api/inventory-checks?country='+encodeURIComponent(c)+'&warehouse='+encodeURIComponent(w));
-    document.getElementById('chk-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">🔍</div>暂无盘点数据</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>盘点单号</th><th>国家</th><th>仓库</th><th>日期</th><th>SKU</th><th>系统库存</th><th>实盘</th><th>差异</th><th>差异金额</th><th>原因</th><th>处理</th><th>审批</th><th>操作</th></tr></thead><tbody>'+data.map(c=>'<tr><td class="cell-id">'+esc(c.check_no)+'</td><td>'+esc(c.country)+'</td><td>'+esc(c.warehouse)+'</td><td class="cell-date">'+fmtDate(c.check_date)+'</td><td class="cell-id">'+esc(c.sku_code)+'</td><td class="text-right">'+c.system_qty+'</td><td class="text-right font-bold">'+c.actual_qty+'</td><td class="text-right '+(c.diff_qty!==0?'text-danger':'')+'">'+(c.diff_qty>0?'+':'')+c.diff_qty+'</td><td class="text-right">'+fmtMoney(c.diff_amount)+'</td><td>'+esc(c.diff_reason)+'</td><td>'+esc(c.handle_method)+'</td><td><span class="status-badge '+(c.approval_status==='approved'?'status-approved':'status-pending')+'">'+esc(c.approval_status)+'</span></td><td>'+(c.approval_status==='pending'&&hasPermission('check_approve')?'<button class="action-btn action-edit" onclick="apprChk(\''+c.id+'\')" title=t("app.121", "\u5ba1\u6279")>✅</button>':'')+'</td></tr>').join('')+'</tbody></table></div>';
+    document.getElementById('chk-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">🔍</div>暂无盘点数据</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>盘点单号</th><th>国家</th><th>仓库</th><th>日期</th><th>SKU</th><th>系统库存</th><th>实盘</th><th>差异</th><th>差异金额</th><th>原因</th><th>处理</th><th>审批</th><th>操作</th></tr></thead><tbody>'+data.map(c=>'<tr><td class="cell-id">'+esc(c.check_no)+'</td><td>'+esc(c.country)+'</td><td>'+esc(c.warehouse)+'</td><td class="cell-date">'+fmtDate(c.check_date)+'</td><td class="cell-id">'+esc(c.sku_code)+'</td><td class="text-right">'+c.system_qty+'</td><td class="text-right font-bold">'+c.actual_qty+'</td><td class="text-right '+(c.diff_qty!==0?'text-danger':'')+'">'+(c.diff_qty>0?'+':'')+c.diff_qty+'</td><td class="text-right">'+fmtMoney(c.diff_amount)+'</td><td>'+esc(c.diff_reason)+'</td><td>'+esc(c.handle_method)+'</td><td><span class="status-badge '+(c.approval_status==='approved'?'status-approved':'status-pending')+'">'+esc(c.approval_status)+'</span></td><td>'+(c.approval_status==='pending'&&hasPermission('check_approve')?'<button class="action-btn action-edit" onclick="apprChk(\''+c.id+'\')" title="\u5ba1\u6279">✅</button>':'')+'</td></tr>').join('')+'</tbody></table></div>';
   }catch(e){showFlash(e.message,'danger')}
 }
 async function exportChkTpl(){
   const c=document.getElementById('chk-c')?.value||'',w=document.getElementById('chk-w')?.value||'';
-  try{const data=await api('/api/inventory-checks/template?country='+encodeURIComponent(c)+'&warehouse='+encodeURIComponent(w));const ws=XLSX.utils.json_to_sheet(data.map(d=>({国家:d.country,仓库:d.warehouse,SKU:d.sku_code,产品名:d.product_name,品牌:d.brand,系统库存:d.system_qty,实盘库存:'t("app.1185", ",\u5dee\u5f02\u539f\u56e0:")t("app.1186", ",\u5904\u7406\u65b9\u5f0f:")',盘点日期:todayStr()})));const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'盘点模板');XLSX.writeFile(wb,'盘点模板_'+(c||'all')+'.xlsx')}catch(e){showToast(e.message,'danger')}
+  try{const data=await api('/api/inventory-checks/template?country='+encodeURIComponent(c)+'&warehouse='+encodeURIComponent(w));const ws=XLSX.utils.json_to_sheet(data.map(d=>({国家:d.country,仓库:d.warehouse,SKU:d.sku_code,产品名:d.product_name,品牌:d.brand,系统库存:d.system_qty,实盘库存:'",\u5dee\u5f02\u539f\u56e0:"",\u5904\u7406\u65b9\u5f0f:"',盘点日期:todayStr()})));const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'盘点模板');XLSX.writeFile(wb,'盘点模板_'+(c||'all')+'.xlsx')}catch(e){showToast(e.message,'danger')}
 }
 async function apprChk(id){if(!confirm(t("app.1187", "\u786e\u8ba4\u5ba1\u6279\u901a\u8fc7\uff1f\u5c06\u8c03\u6574\u5e93\u5b58\u3002")))return;try{await api('/api/inventory-checks/'+id+'/approve','POST');showToast('已审批','success');loadChk()}catch(e){showToast(e.message,'danger')}}
 
