@@ -6787,9 +6787,9 @@ function getCiPlBasisFacts(ciId, basis, skuFacts) {
   return { values, basisTotal };
 }
 
-function validateCiCostInputs(ci) {
+async function validateCiCostInputs(ci) {
   const facts = getCiSkuCostFacts(ci.id);
-  const costItems = query('SELECT * FROM ci_cost_items WHERE ci_id = ? AND include_in_landing_cost = 1 ORDER BY created_at, id', [ci.id]).rows;
+  const costItems = (await query('SELECT * FROM ci_cost_items WHERE ci_id = ? AND include_in_landing_cost = 1 ORDER BY created_at, id', [ci.id])).rows;
   const transportItems = costItems.filter(item => item.cost_category === 'warehouse_arrival' && TRANSPORT_COST_SUBCATEGORIES.has(item.cost_subcategory) && Number(item.payable_amount) > 0);
   const unsupportedTransport = costItems.filter(item => item.cost_category === 'warehouse_arrival' && !TRANSPORT_COST_SUBCATEGORIES.has(item.cost_subcategory) && Number(item.payable_amount) > 0);
   if (unsupportedTransport.length) {
@@ -6949,12 +6949,12 @@ app.put('/api/commercial-invoices/:id/cost-inputs', requireApiPermission('ci_edi
 }));
 
 // 确认CI费用完整
-app.post('/api/commercial-invoices/:id/confirm-costs', requireApiPermission('ci_edit'), asyncHandler((req, res) => {
+app.post('/api/commercial-invoices/:id/confirm-costs', requireApiPermission('ci_edit'), asyncHandler(async (req, res) => {
   try {
     const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [req.params.id]);
     if (!ci) return res.status(404).json({ error: 'CI不存在' });
     if (ci.cost_confirmed) return res.json({ success: true, already_confirmed: true });
-    validateCiCostInputs(ci);
+    await validateCiCostInputs(ci);
     run('UPDATE commercial_invoices SET cost_confirmed = 1, updated_at = datetime(\'now\') WHERE id = ?', [req.params.id]);
     res.json({ success: true });
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
@@ -7080,7 +7080,7 @@ app.get('/api/original-inventory/:ci_id/check', requireApiPermission('cost_view'
 // ==================== 费用分摊 & 加权平均成本 ====================
 
 // P1-WAC-07：每笔费用按其冻结依据独立分摊，两位小数守恒后汇总到 SKU。
-app.post('/api/cost-allocation/allocate/:ci_id', requireApiPermission('ci_edit'), asyncHandler((req, res) => {
+app.post('/api/cost-allocation/allocate/:ci_id', requireApiPermission('ci_edit'), asyncHandler(async (req, res) => {
   try {
     const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [req.params.ci_id]);
     if (!ci) return res.status(400).json({ error: 'CI不存在' });
@@ -7091,7 +7091,7 @@ app.post('/api/cost-allocation/allocate/:ci_id', requireApiPermission('ci_edit')
     }
     if (ci.cost_allocated) return res.status(409).json({ error: '该CI已完成费用分摊，请勿重复执行' });
 
-    const inputs = validateCiCostInputs(ci);
+    const inputs = await validateCiCostInputs(ci);
     const amountBasis = new Map(inputs.skuFacts.map(fact => [fact.sku_code, fact.product_cost]));
     const customsBasis = new Map(inputs.skuFacts.map(fact => [fact.sku_code, fact.customs_weight]));
     const feeEvents = [];
