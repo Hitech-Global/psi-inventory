@@ -134,53 +134,53 @@ function showApp(){const lp=document.getElementById('login-page');if(lp)lp.style
 
 // --- 导航结构定义 ---
 const NAV_MODULES=[
-  {id:'home',label:'首页看板',items:[
-    {id:'dashboard',icon:'📊',label:'首页看板',perm:'dashboard_view'},
+  {id:'home',key:'nav.home',label:'首页看板',items:[
+    {id:'dashboard',key:'nav.dashboard',icon:'📊',label:'首页看板',perm:'dashboard_view'},
   ]},
-  {id:'inventory',label:'库存管理',items:[
-    {id:'skus',icon:'🏷️',label:'SKU主数据',perm:'sku_view'},
-    {id:'inventory',icon:'📦',label:'库存总表',perm:'inventory_view'},
-    {id:'check',icon:'🔍',label:'库存盘点',perm:'check_view'},
-    {id:'stagnant',icon:'⚠️',label:'呆滞分析',perm:'stagnant_view'},
+  {id:'inventory',key:'nav.inventory',label:'库存管理',items:[
+    {id:'skus',key:'nav.skus',icon:'🏷️',label:'SKU主数据',perm:'sku_view'},
+    {id:'inventory',key:'nav.inventory_total',icon:'📦',label:'库存总表',perm:'inventory_view'},
+    {id:'check',key:'nav.stock_check',icon:'🔍',label:'库存盘点',perm:'check_view'},
+    {id:'stagnant',key:'nav.stagnant',icon:'⚠️',label:'呆滞分析',perm:'stagnant_view'},
   ]},
-  {id:'sales',label:'销售',items:[
-    {id:'outbound',icon:'🛒',label:'销售数据',perm:'outbound_view'},
-    {id:'replenishment',icon:'📈',label:'订单预测',perm:'replenishment_view'},
+  {id:'sales',key:'nav.sales',label:'销售',items:[
+    {id:'outbound',key:'nav.sales_data',icon:'🛒',label:'销售数据',perm:'outbound_view'},
+    {id:'replenishment',key:'nav.forecast',icon:'📈',label:'订单预测',perm:'replenishment_view'},
   ]},
-  {id:'procurement',label:'采购链',items:[
-    {id:'po',icon:'🛒',label:'PO管理',perm:'po_view'},
-    {id:'pi',icon:'📄',label:'PI管理',perm:'pi_view'},
-    {id:'ci',icon:'🚚',label:'CI/PL管理',perm:'ci_view'},
-    {id:'logistics',icon:'🚢',label:'物流管理',perm:'logistics_view'},
-    {id:'inbound',icon:'📥',label:'入库管理',perm:'inbound_view'},
+  {id:'procurement',key:'nav.procurement',label:'采购链',items:[
+    {id:'po',key:'nav.po',icon:'🛒',label:'PO管理',perm:'po_view'},
+    {id:'pi',key:'nav.pi',icon:'📄',label:'PI管理',perm:'pi_view'},
+    {id:'ci',key:'nav.ci',icon:'🚚',label:'CI/PL管理',perm:'ci_view'},
+    {id:'logistics',key:'nav.logistics',icon:'🚢',label:'物流管理',perm:'logistics_view'},
+    {id:'inbound',key:'nav.inbound',icon:'📥',label:'入库管理',perm:'inbound_view'},
   ]},
-  {id:'approval',label:'审批中心',items:[
-    {id:'approval-center',icon:'✅',label:'审批中心',perm:'po_approve'},
+  {id:'approval',key:'nav.approval',label:'审批中心',items:[
+    {id:'approval-center',key:'nav.approval_center',icon:'✅',label:'审批中心',perm:'po_approve'},
   ]},
-  {id:'finance',label:'财务',items:[
-    {id:'payable-cockpit',icon:'🧭',label:'应付驾驶舱',perm:'payment_view'},
-    {id:'payment',icon:'💳',label:'付款管理',perm:'payment_view'},
-    {id:'cost',icon:'💰',label:'成本管理',perm:'cost_view'},
+  {id:'finance',key:'nav.finance',label:'财务',items:[
+    {id:'payable-cockpit',key:'nav.payable_cockpit',icon:'🧭',label:'应付驾驶舱',perm:'payment_view'},
+    {id:'payment',key:'nav.payment',icon:'💳',label:'付款管理',perm:'payment_view'},
+    {id:'cost',key:'nav.cost',icon:'💰',label:'成本管理',perm:'cost_view'},
   ]},
-  {id:'system',label:'系统管理',items:[
-    {id:'users',icon:'👤',label:'用户管理',perm:'user_manage'},
-    {id:'roles',icon:'🛡️',label:'角色权限',perm:'role_manage'},
-    {id:'countries',icon:'🌍',label:'国家管理',perm:'system_config'},
-    {id:'warehouses',icon:'🏭',label:'仓库管理',perm:'system_config'},
-    {id:'brand-settings',icon:'🏷️',label:'品牌设置',perm:'system_config'},
-    {id:'currencies',icon:'💱',label:'币种设置',perm:'system_config'},
-    {id:'operation-logs',icon:'📝',label:'操作日志',perm:'inventory_view'},
-    {id:'config',icon:'⚙️',label:'系统参数',perm:'system_config'},
-    {id:'suppliers',icon:'🏢',label:'供应商管理',perm:'system_config'},
-    {id:'freight-forwarders',icon:'🚛',label:'货代管理',perm:'system_config'},
-    {id:'payment-terms',icon:'📋',label:'付款条件',perm:'system_config'},
-    {id:'payment-categories',icon:'🗂️',label:'付款类目管理',perm:'system_config'},
-    {id:'payer-entities',icon:'🏦',label:'付款主体',perm:'system_config'},
-    {id:'approval-flows',icon:'✅',label:'审批流管理',perm:'system_config'},
-    {id:'expense-types',icon:'📊',label:'费用类型',perm:'system_config'},
-    {id:'allocation-rules',icon:'📐',label:'分摊规则',perm:'system_config'},
-    {id:'batch-tasks',icon:'📋',label:'批量任务中心',perm:'inventory_view'},
-    {id:'forwarder',icon:'📈',label:'货代分析',perm:'forwarder_view'},
+  {id:'system',key:'nav.system',label:'系统管理',items:[
+    {id:'users',key:'nav.users',icon:'👤',label:'用户管理',perm:'user_manage'},
+    {id:'roles',key:'nav.roles',icon:'🛡️',label:'角色权限',perm:'role_manage'},
+    {id:'countries',key:'nav.countries',icon:'🌍',label:'国家管理',perm:'system_config'},
+    {id:'warehouses',key:'nav.warehouses',icon:'🏭',label:'仓库管理',perm:'system_config'},
+    {id:'brand-settings',key:'nav.brand_settings',icon:'🏷️',label:'品牌设置',perm:'system_config'},
+    {id:'currencies',key:'nav.currencies',icon:'💱',label:'币种设置',perm:'system_config'},
+    {id:'operation-logs',key:'nav.operation_logs',icon:'📝',label:'操作日志',perm:'inventory_view'},
+    {id:'config',key:'nav.config',icon:'⚙️',label:'系统参数',perm:'system_config'},
+    {id:'suppliers',key:'nav.suppliers',icon:'🏢',label:'供应商管理',perm:'system_config'},
+    {id:'freight-forwarders',key:'nav.freight_forwarders',icon:'🚛',label:'货代管理',perm:'system_config'},
+    {id:'payment-terms',key:'nav.payment_terms',icon:'📋',label:'付款条件',perm:'system_config'},
+    {id:'payment-categories',key:'nav.payment_categories',icon:'🗂️',label:'付款类目管理',perm:'system_config'},
+    {id:'payer-entities',key:'nav.payer_entities',icon:'🏦',label:'付款主体',perm:'system_config'},
+    {id:'approval-flows',key:'nav.approval_flows',icon:'✅',label:'审批流管理',perm:'system_config'},
+    {id:'expense-types',key:'nav.expense_types',icon:'📊',label:'费用类型',perm:'system_config'},
+    {id:'allocation-rules',key:'nav.allocation_rules',icon:'📐',label:'分摊规则',perm:'system_config'},
+    {id:'batch-tasks',key:'nav.batch_tasks',icon:'📋',label:'批量任务中心',perm:'inventory_view'},
+    {id:'forwarder',key:'nav.forwarder_analysis',icon:'📈',label:'货代分析',perm:'forwarder_view'},
   ]},
 ];
 // 构建页面→模块映射
@@ -196,7 +196,7 @@ function renderTopNav(){
     // 只显示有权限访问至少一项的模块
     const hasAny=m.items.some(it=>hasPermission(it.perm));
     if(!hasAny)return;
-    html+='<a class="topnav-item'+(currentModule===m.id?' active':'')+'" onclick="switchModule(\''+m.id+'\')">'+m.label+'</a>';
+    html+='<a class="topnav-item'+(currentModule===m.id?' active':'')+'" onclick="switchModule(\''+m.id+'\')">'+t(m.key,m.label)+'</a>';
   });
   document.getElementById('topnav').innerHTML=html;
 }
@@ -219,10 +219,10 @@ function switchModule(modId){
 function renderSidebar(){
   const mod=NAV_MODULES.find(m=>m.id===currentModule)||NAV_MODULES[0];
   const titleEl=document.getElementById('sidebar-module-title');
-  if(titleEl)titleEl.textContent='进销存系统';
+  if(titleEl)titleEl.textContent=t('nav.app_title','进销存系统');
   const vis=mod.items.filter(i=>hasPermission(i.perm));
   let html='';
-  vis.forEach(i=>{html+='<div class="sidebar-item" data-page="'+i.id+'" onclick="showPage(\''+i.id+'\')" title="'+i.label+'"><span class="icon">'+i.icon+'</span><span>'+i.label+'</span></div>'});
+  vis.forEach(i=>{html+='<div class="sidebar-item" data-page="'+i.id+'" onclick="showPage(\''+i.id+'\')" title="'+t(i.key,i.label)+'"><span class="icon">'+i.icon+'</span><span>'+t(i.key,i.label)+'</span></div>'});
   document.getElementById('sidebar-nav').innerHTML=html;
 }
 // --- 侧边栏折叠/展开（状态持久化到 localStorage）---
@@ -305,7 +305,7 @@ function simpleMgrTarget(mySeq){
 }
 function renderSimpleMgr(title,apiUrl,fields,icon){
   const mySeq=++simpleMgrLoadSeq;
-  document.getElementById('content-inner').innerHTML='<div id="flash-container"></div><div id="simple-manager-page" data-load-seq="'+mySeq+'"><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">'+icon+' '+title+'</div><div class="table-section-actions">'+(hasPermission('system_config')?'<button class="btn btn-primary btn-sm" onclick="editSimple(\''+apiUrl+'\','+encodeURIComponent(JSON.stringify(fields))+')">➕ 新增</button>':'')+'</div></div><div id="simple-table"></div></div></div>';
+  document.getElementById('content-inner').innerHTML='<div id="flash-container"></div><div id="simple-manager-page" data-load-seq="'+mySeq+'"><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">'+icon+' '+title+'</div><div class="table-section-actions">'+(hasPermission('system_config')?'<button class="btn btn-primary btn-sm" onclick="editSimple(\''+apiUrl+'\','+encodeURIComponent(JSON.stringify(fields))+')">'+t('common.add','➕ 新增')+'</button>':'')+'</div></div><div id="simple-table"></div></div></div>';
   loadSimple(apiUrl,fields,mySeq);
 }
 async function loadSimple(apiUrl,fields,mySeq){
@@ -319,7 +319,7 @@ async function loadSimple(apiUrl,fields,mySeq){
         try { mf.opts = await api(mf.source || (apiUrl.replace(/\/[^/]*$/,'') + '/brands/all')); } catch(e) { mf.opts = []; }
       }
     }
-    const html=!data.length?'<div class="empty-state"><div class="empty-icon">📭</div>暂无数据</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr>'+df.map(f=>'<th>'+f.label+'</th>').join('')+'<th>操作</th></tr></thead><tbody>'+data.map(item=>'<tr>'+df.map(f=>{
+    const html=!data.length?'<div class="empty-state"><div class="empty-icon">📭</div>'+t('common.no_data','暂无数据')+'</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr>'+df.map(f=>'<th>'+f.label+'</th>').join('')+'<th>'+t('common.actions','操作')+'</th></tr></thead><tbody>'+data.map(item=>'<tr>'+df.map(f=>{
       if (f.multi) {
         const vals = String(item[f.name]||'').split(',').map(s=>s.trim()).filter(Boolean);
         return '<td>'+(vals.length ? vals.map(v=>'<span class="badge badge-sm" style="margin:2px;background:#e3f2fd;color:#1565c0">'+esc(v)+'</span>').join('') : '<span style="color:#999">全部品牌</span>')+'</td>';
@@ -335,7 +335,7 @@ async function loadSimple(apiUrl,fields,mySeq){
 }
 function editSimple(apiUrl,fieldsStr,id){
   let fields;
-  try{fields=JSON.parse(fieldsStr)}catch(e){try{fields=JSON.parse(b64DecodeUnicode(fieldsStr))}catch(e2){showToast('参数错误','danger');return}}
+  try{fields=JSON.parse(fieldsStr)}catch(e){try{fields=JSON.parse(b64DecodeUnicode(fieldsStr))}catch(e2){showToast(t('common.invalid_params','参数错误'),'danger');return}}
   const body='<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid" id="simple-form-grid">'+fields.map(f=>{
     if(f.hide)return '';
     let inp;
@@ -358,7 +358,7 @@ function editSimple(apiUrl,fieldsStr,id){
     else inp='<input type="text" name="'+f.name+'">';
     return '<div class="form-group '+(f.full?'form-group-full':'')+'"><label>'+f.label+(f.req?' <span class="required">*</span>':'')+'</label>'+inp+'</div>';
   }).join('')+'</div></div>';
-  openModal(id?'编辑':'新增',body,'<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveSimple(\''+apiUrl+'\',\''+(id||'')+'\')">保存</button>');
+  openModal(id?'编辑':'新增',body,'<button class="btn btn-secondary" onclick="closeModal()">'+t('common.cancel','取消')+'</button><button class="btn btn-primary" onclick="saveSimple(\''+apiUrl+'\',\''+(id||'')+'\')">'+t('common.save','保存')+'</button>');
   if(id){
     Promise.all([api(apiUrl), ...(fields.filter(f=>f.multi && !f.opts).map(f => api(f.source || (apiUrl.replace(/\/[^/]*$/,'') + '/brands/all'))))]).then(results => {
       const all = results[0];
@@ -424,7 +424,7 @@ async function saveSimple(apiUrl,id){
   if(id)data.id=id;
   try{await api(apiUrl,'POST',data);showToast('保存成功','success');closeModal();loadSimple(apiUrl,Object.keys(data).map(k=>({name:k,label:k})))}catch(e){showToast(e.message,'danger')}
 }
-async function deleteSimple(apiUrl,id){if(!confirm('确认删除？'))return;try{await api(apiUrl+'/'+id,'DELETE');showToast('已删除','success');location.reload()}catch(e){showToast(e.message,'danger')}}
+async function deleteSimple(apiUrl,id){if(!confirm(t('common.confirm_delete','确认删除？')))return;try{await api(apiUrl+'/'+id,'DELETE');showToast(t('common.deleted','已删除'),'success');location.reload()}catch(e){showToast(e.message,'danger')}}
 
 // --- 系统管理页面 ---
 
@@ -7514,6 +7514,9 @@ async function apprChk(id){if(!confirm('确认审批通过？将调整库存。'
 
 // ==================== 初始化 ====================
 window.addEventListener('DOMContentLoaded',()=>{
+  // 多语言：启动时回填静态文本 + 同步语言切换器
+  if (typeof applyI18n==='function') applyI18n();
+  var _sw=document.getElementById('lang-switcher'); if(_sw&&typeof getLang==='function') _sw.value=getLang();
   // 直开 HTML 文件（file://）时后端不可达，先给出醒目指引
   if(isFileProtocol()){
     showFatalNotice('⚠️ 检测到您直接打开了 HTML 文件（file://）。进销存系统需要后端服务，请：<br>① 在终端运行 <b>node server.js</b><br>② 浏览器访问 <b>http://localhost:3001</b><br>不要直接双击 index.html。');

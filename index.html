@@ -397,25 +397,25 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 <body>
 <div id="login-page" class="login-page">
   <div class="login-container"><div class="login-card">
-    <h1>📦 进销存管理系统</h1>
-    <p>采购 · 库存 · 成本 · 付款全流程管理</p>
-    <button onclick="doFeishuLogin()" id="login-btn" class="btn-feishu">🔵 使用飞书登录</button>
-    <div class="login-hint"><strong>推荐使用飞书账号登录</strong><br>首次登录将由管理员启用并分配权限。</div>
-    <div class="bg-toggle"><a href="javascript:void(0)" onclick="toggleBreakGlass()">本地应急登录</a></div>
+    <h1 data-i18n="auth.login_title">📦 进销存管理系统</h1>
+    <p data-i18n="auth.login_subtitle">采购 · 库存 · 成本 · 付款全流程管理</p>
+    <button onclick="doFeishuLogin()" id="login-btn" class="btn-feishu" data-i18n="auth.feishu_login">🔵 使用飞书登录</button>
+    <div class="login-hint"><strong data-i18n="auth.recommend_title">推荐使用飞书账号登录</strong><br><span data-i18n="auth.recommend_hint">首次登录将由管理员启用并分配权限。</span></div>
+    <div class="bg-toggle"><a href="javascript:void(0)" onclick="toggleBreakGlass()" data-i18n="auth.breakglass_link">本地应急登录</a></div>
     <div id="bg-form" style="display:none">
-      <input type="text" id="bg-username" placeholder="应急账号" onkeydown="if(event.key==='Enter')doBreakGlassLogin()">
-      <input type="password" id="bg-password" placeholder="应急密码" onkeydown="if(event.key==='Enter')doBreakGlassLogin()">
-      <button onclick="doBreakGlassLogin()" class="btn-secondary">应急登录</button>
+      <input type="text" id="bg-username" placeholder="应急账号" data-i18n="auth.bg_username_ph" data-i18n-attr="placeholder" onkeydown="if(event.key==='Enter')doBreakGlassLogin()">
+      <input type="password" id="bg-password" placeholder="应急密码" data-i18n="auth.bg_password_ph" data-i18n-attr="placeholder" onkeydown="if(event.key==='Enter')doBreakGlassLogin()">
+      <button onclick="doBreakGlassLogin()" class="btn-secondary" data-i18n="auth.breakglass_login_btn">应急登录</button>
     </div>
   </div></div>
 </div>
 <div id="pending-page" class="login-page" style="display:none">
   <div class="login-container"><div class="login-card">
-    <h1>⏳ 账号待授权</h1>
-    <p>您的飞书账号已成功识别</p>
+    <h1 data-i18n="pending.title">⏳ 账号待授权</h1>
+    <p data-i18n="pending.recognized">您的飞书账号已成功识别</p>
     <p id="pending-name" style="font-weight:600;color:var(--text);margin-bottom:8px"></p>
-    <div class="login-hint"><strong>账号已识别，等待管理员授权</strong><br>管理员启用并分配角色后，您即可进入业务系统。如有疑问请联系系统管理员。</div>
-    <button onclick="doLogout()" class="btn-secondary">退出登录</button>
+    <div class="login-hint"><strong data-i18n="pending.wait_title">账号已识别，等待管理员授权</strong><br><span data-i18n="pending.wait_hint">管理员启用并分配角色后，您即可进入业务系统。如有疑问请联系系统管理员。</span></div>
+    <button onclick="doLogout()" class="btn-secondary" data-i18n="pending.logout_btn">退出登录</button>
   </div></div>
 </div>
 <div id="app" class="app-shell" style="display:none">
@@ -431,7 +431,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
         <div class="user-menu"><div class="user-avatar" id="user-avatar">A</div>
           <div class="user-info"><span class="user-name" id="user-name">admin</span><span class="user-role" id="user-role">超级管理员</span></div>
         </div>
-        <button class="logout-btn" onclick="doLogout()">退出</button>
+        <select id="lang-switcher" class="user-role-sel" onchange="setLang(this.value)" title="语言 / Language / Bahasa">
+          <option value="zh">中文</option>
+          <option value="en">English</option>
+          <option value="id">Bahasa</option>
+        </select>
+        <button class="logout-btn" onclick="doLogout()" data-i18n="common.logout">退出</button>
       </div>
     </header>
     <div class="content"><div class="content-inner" id="content-inner"></div></div>
@@ -442,6 +447,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 <div class="drawer-overlay" id="cockpit-drawer-overlay" onclick="if(event.target===this)closeCockpitDrawer()"></div>
 <aside class="drawer" id="cockpit-drawer"></aside>
 <div id="global-tooltip"></div>
+<script src="i18n.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
