@@ -5707,7 +5707,7 @@ async function createDepPay(id){
 }
 async function saveDepPay(id){
   const d={pi_id:id,has_deduction:parseInt(document.getElementById('dep-ded').value),deduction_amount:parseFloat(document.getElementById('dep-ded-amt').value)||0,deduction_source_type:document.getElementById('dep-ded-type').value,deduction_source_desc:document.getElementById('dep-ded-desc').value,deduction_ref_no:document.getElementById('dep-ded-ref').value};
-  try{await api('/api/payment-requests/from-pi-deposit','POST',d);showToast('定金付款申请已生成','success');closeModal()}catch(e){showToast(e.message,'danger')}
+  try{await api('/api/payment-requests/from-pi-deposit','POST',d);showToast(t('toast.depPayCreated','定金付款申请已生成'),'success');closeModal()}catch(e){showToast(e.message,'danger')}
 }
 
 const DOC_TEMPLATES={
@@ -5945,7 +5945,7 @@ async function createBalPay(id){
 }
 async function saveBalPay(id){
   const d={ci_id:id,has_deduction:parseInt(document.getElementById('bal-ded').value),deduction_amount:parseFloat(document.getElementById('bal-ded-amt').value)||0,deduction_source_type:document.getElementById('bal-ded-type').value,deduction_source_desc:document.getElementById('bal-ded-desc').value,deduction_ref_no:document.getElementById('bal-ded-ref').value};
-  try{await api('/api/payment-requests/from-ci-balance','POST',d);showToast('尾款付款申请已生成','success');closeModal()}catch(e){showToast(e.message,'danger')}
+  try{await api('/api/payment-requests/from-ci-balance','POST',d);showToast(t('toast.balPayCreated','尾款付款申请已生成'),'success');closeModal()}catch(e){showToast(e.message,'danger')}
 }
 // CI费用管理入口
 async function viewCICost(id){
@@ -5972,20 +5972,20 @@ async function saveCiCostInputs(id,quiet){
 async function createWarehousePay(ciId){
   try{
   let countryField='';
-  if(!ciId){const countries=(await api('/api/countries')).filter(c=>c.status==='active');countryField='<div class="form-group"><label>费用归属国家 <span class="required">*</span></label><select id="war-country"><option value="">请选择</option>'+countries.map(c=>'<option value="'+esc(c.name)+'">'+esc(c.name)+'（'+esc(c.code)+'）</option>').join('')+'</select></div>'}
-  openModal('创建到仓费用付款',
+  if(!ciId){const countries=(await api('/api/countries')).filter(c=>c.status==='active');countryField='<div class="form-group"><label>'+t('term.fin.expense_country','费用归属国家')+' <span class="required">*</span></label><select id="war-country"><option value="">请选择</option>'+countries.map(c=>'<option value="'+esc(c.name)+'">'+esc(c.name)+'（'+esc(c.code)+'）</option>').join('')+'</select></div>'}
+  openModal(t('modal.title.createWarehousePay','创建到仓费用付款'),
     t('modal.body.createWarehousePay', `<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid"><div class="form-group"><label>费用小类</label><select id="war-sub"><option value="freight">运费</option><option value="customs_clearance">清关费</option><option value="port_charges">港口费</option><option value="delivery">派送费</option><option value="warehouse">仓储费</option><option value="other_local">其他本地费</option></select></div><div class="form-group"><label>付款对象</label><input type="text" id="war-payee" placeholder="货代/服务商名称"></div><div class="form-group"><label>应付金额</label><input type="number" step="0.01" id="war-amt"></div><div class="form-group"><label>币种</label><select id="war-cur"><option>USD</option><option>RMB</option><option>IDR</option><option>MYR</option><option>THB</option></select></div>{v1}<div class="form-group"><label>计入落地成本</label><select id="war-lic"><option value="1">是</option><option value="0">否</option></select></div><div class="form-group"><label>备注</label><input type="text" id="war-rem"></div><div class="form-group"><label>是否抵扣</label><select id="war-ded" onchange="document.getElementById('war-ded-amt').disabled=this.value==='0'"><option value="0">否</option><option value="1">是</option></select></div><div class="form-group"><label>抵扣金额</label><input type="number" step="0.01" id="war-ded-amt" value="0" disabled></div><div class="form-group"><label>抵扣来源类型</label><select id="war-ded-type"><option value="">选择</option><option value="other_payment">其他付款多付</option><option value="price_diff">价格差异</option><option value="quality_claim">质量索赔</option><option value="other">其他</option></select></div><div class="form-group form-group-full"><label>抵扣说明</label><input type="text" id="war-ded-desc"></div></div></div>`, {v1: countryField}),
     t('modal.footer.createWarehousePay', `<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveWarehousePay('{v1}')">创建</button>`, {v1: ciId}));
   }catch(e){showToast(e.message,'danger')}
 }
 async function saveWarehousePay(ciId){
-  const countryEl=document.getElementById('war-country');if(!ciId&&(!countryEl||!countryEl.value)){showToast('请选择费用归属国家','warning');return}
+  const countryEl=document.getElementById('war-country');if(!ciId&&(!countryEl||!countryEl.value)){showToast(t('validation.expenseCountryRequired','请选择费用归属国家'),'warning');return}
   const d={ci_id:ciId,subcategory:document.getElementById('war-sub').value,payee_name:document.getElementById('war-payee').value,payable_amount:parseFloat(document.getElementById('war-amt').value)||0,currency:document.getElementById('war-cur').value,expense_country:countryEl?countryEl.value:'',remark:document.getElementById('war-rem').value,has_deduction:parseInt(document.getElementById('war-ded').value),deduction_amount:parseFloat(document.getElementById('war-ded-amt').value)||0,deduction_source_type:document.getElementById('war-ded-type').value,deduction_source_desc:document.getElementById('war-ded-desc').value,include_in_landing_cost:parseInt(document.getElementById('war-lic').value)};
-  try{await api('/api/payment-requests/warehouse-arrival','POST',d);showToast('到仓费用付款申请已创建','success');closeModal()}catch(e){showToast(e.message,'danger')}
+  try{await api('/api/payment-requests/warehouse-arrival','POST',d);showToast(t('toast.warehousePayCreated','到仓费用付款申请已创建'),'success');closeModal()}catch(e){showToast(e.message,'danger')}
 }
 async function createCustomsDutyPay(ciId){
   openModal(t("app.1021", "\u521b\u5efa\u5173\u7a0e\u4ed8\u6b3e"),
-    '<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid">'+
+    t('modal.body.createCustomsDutyPay', '<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid">'+
     '<div class="form-group"><label>付款对象</label><input type="text" id="dut-payee" value="海关"></div>'+
     '<div class="form-group"><label>应付金额</label><input type="number" step="0.01" id="dut-amt"></div>'+
     '<div class="form-group"><label>币种</label><select id="dut-cur"><option>USD</option><option>RMB</option></select></div>'+
@@ -5994,16 +5994,16 @@ async function createCustomsDutyPay(ciId){
     '<div class="form-group"><label>抵扣金额</label><input type="number" step="0.01" id="dut-ded-amt" value="0" disabled></div>'+
     '<div class="form-group"><label>抵扣来源类型</label><select id="dut-ded-type"><option value="">选择</option><option value="other_payment">其他付款多付</option><option value="price_diff">价格差异</option><option value="other">其他</option></select></div>'+
     '<div class="form-group form-group-full"><label>抵扣说明</label><input type="text" id="dut-ded-desc"></div>'+
-    '</div></div>',
+    '</div></div>'),
     t('modal.footer.createCustomsDutyPay', `<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveCustomsDutyPay('{v1}')">创建</button>`, {v1: ciId}));
 }
 async function saveCustomsDutyPay(ciId){
   const d={ci_id:ciId,payee_name:document.getElementById('dut-payee').value,payable_amount:parseFloat(document.getElementById('dut-amt').value)||0,currency:document.getElementById('dut-cur').value,remark:document.getElementById('dut-rem').value,has_deduction:parseInt(document.getElementById('dut-ded').value),deduction_amount:parseFloat(document.getElementById('dut-ded-amt').value)||0,deduction_source_type:document.getElementById('dut-ded-type').value,deduction_source_desc:document.getElementById('dut-ded-desc').value};
-  try{await api('/api/payment-requests/customs-duty','POST',d);showToast('关税付款申请已创建','success');closeModal()}catch(e){showToast(e.message,'danger')}
+  try{await api('/api/payment-requests/customs-duty','POST',d);showToast(t('toast.customsDutyPayCreated','关税付款申请已创建'),'success');closeModal()}catch(e){showToast(e.message,'danger')}
 }
 async function createInspectionFeePay(ciId){
   openModal(t("app.1023", "\u521b\u5efa\u5546\u68c0\u8d39\u7528\u4ed8\u6b3e"),
-    '<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid">'+
+    t('modal.body.createInspectionFeePay', '<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid">'+
     '<div class="form-group"><label>付款对象</label><input type="text" id="ins-payee" placeholder="\u5546\u68c0\u673a\u6784"></div>'+
     '<div class="form-group"><label>应付金额</label><input type="number" step="0.01" id="ins-amt"></div>'+
     '<div class="form-group"><label>币种</label><select id="ins-cur"><option>USD</option><option>RMB</option></select></div>'+
@@ -6012,12 +6012,12 @@ async function createInspectionFeePay(ciId){
     '<div class="form-group"><label>抵扣金额</label><input type="number" step="0.01" id="ins-ded-amt" value="0" disabled></div>'+
     '<div class="form-group"><label>抵扣来源类型</label><select id="ins-ded-type"><option value="">选择</option><option value="other_payment">其他付款多付</option><option value="price_diff">价格差异</option><option value="other">其他</option></select></div>'+
     '<div class="form-group form-group-full"><label>抵扣说明</label><input type="text" id="ins-ded-desc"></div>'+
-    '</div></div>',
+    '</div></div>'),
     t('modal.footer.createInspectionFeePay', `<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveInspectionFeePay('{v1}')">创建</button>`, {v1: ciId}));
 }
 async function saveInspectionFeePay(ciId){
   const d={ci_id:ciId,payee_name:document.getElementById('ins-payee').value,payable_amount:parseFloat(document.getElementById('ins-amt').value)||0,currency:document.getElementById('ins-cur').value,remark:document.getElementById('ins-rem').value,has_deduction:parseInt(document.getElementById('ins-ded').value),deduction_amount:parseFloat(document.getElementById('ins-ded-amt').value)||0,deduction_source_type:document.getElementById('ins-ded-type').value,deduction_source_desc:document.getElementById('ins-ded-desc').value};
-  try{await api('/api/payment-requests/inspection-fee','POST',d);showToast('商检费用付款申请已创建','success');closeModal()}catch(e){showToast(e.message,'danger')}
+  try{await api('/api/payment-requests/inspection-fee','POST',d);showToast(t('toast.inspectionFeePayCreated','商检费用付款申请已创建'),'success');closeModal()}catch(e){showToast(e.message,'danger')}
 }
 
 // ==================== 物流管理 ====================
@@ -6049,7 +6049,7 @@ async function saveNewLog(){
 async function createFrtPay(id){
   try{
     const log=await api('/api/logistics-batches/'+id);
-    if(!log.related_ci_id){showToast('该物流批次未关联CI，请从CI费用管理页面创建到仓费用付款','warning');return}
+    if(!log.related_ci_id){showToast(t('toast.frtPayNoCI','该物流批次未关联CI，请从CI费用管理页面创建到仓费用付款'),'warning');return}
     // 跳转到CI费用管理
     viewCICost(log.related_ci_id);
   }catch(e){showToast(e.message,'danger')}
@@ -6992,7 +6992,7 @@ async function viewPayment(id, mode){
       + (p.rounding_amount>0?fld(t("app.1138", "\u62b9\u96f6\u91d1\u989d"), fmtMoney(p.rounding_amount, cur)):'')
       + fld(t("app.1139", "\u5b9e\u9645\u4ed8\u6b3e\u65e5\u671f"), esc(p.paid_date||'—'))
       + fld(t("app.118", "\u5e01\u79cd"), esc(cur||'—'))
-      + (p.payment_category!=='goods'?fld('费用归属国家', esc(p.expense_country||t("app.445", "\u672a\u8bbe\u7f6e"))):'')
+      + (p.payment_category!=='goods'?fld(t('term.fin.expense_country','费用归属国家'), esc(p.expense_country||t("app.445", "\u672a\u8bbe\u7f6e"))):'')
       + fld(t("app.195", "\u603b\u6570\u91cf"), qtyHtml)
       + fld(t("status.label", "\u72b6\u6001"), esc(stLabel))
       + fld(t("app.1140", "\u5ba1\u6279\u72b6\u6001"), statusLabel(p.approval_status))
@@ -7059,7 +7059,7 @@ async function viewPayment(id, mode){
     try{ const pv=(typeof p.attachment==='string'&&p.attachment)?JSON.parse(p.attachment):p.attachment; attaches=Array.isArray(pv)?pv:(pv&&pv.dataUrl?[{name:pv.name,type:pv.type,size:pv.size,dataUrl:pv.dataUrl}]:[]); }catch(e){ attaches=[]; }
     window._payId=id; window._payAttachments=attaches; window._payCanUpload=(hasPermission('payment_create')||hasPermission('payment_approve'));
     // 附件展示 + 上传区（view 与 finance 模式均显示）
-    const attSection='<div class="detail-section"><h3>付款申请附件</h3>'
+    const attSection='<div class="detail-section"><h3>'+t('payment.attachments','付款申请附件')+'</h3>'
       +'<div id="pay-att-list">'+renderPayAttachmentListInner()+'</div>'
       +(window._payCanUpload
         ? '<div id="pay-drop-zone" style="border:2px dashed #d9d9d9;border-radius:8px;padding:22px 16px;text-align:center;cursor:pointer;background:#fafafa;transition:all .2s;margin-top:10px" '
@@ -7095,19 +7095,19 @@ function fmtSize(b){ if(b==null)return ''; if(b<1024)return b+'B'; if(b<1024*102
 function readFileAsDataURL(f){ return new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=rej; r.readAsDataURL(f); }); }
 function renderPayAttachmentListInner(){
   const arr=window._payAttachments||[];
-  if(!arr.length) return '<div style="color:#999;font-size:13px">暂无附件</div>';
+  if(!arr.length) return '<div style="color:#999;font-size:13px">'+t('empty.noAttachment','暂无附件')+'</div>';
   return '<div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:6px">'+arr.map((a,idx)=>{
     const isImg=(a.type&&a.type.indexOf('image/')===0)||/\.(png|jpe?g|gif|webp|bmp)$/i.test(a.name||'');
     const thumb=isImg?'<img src="'+a.dataUrl+'" style="width:54px;height:54px;object-fit:cover;border-radius:6px;border:1px solid #eee;vertical-align:middle;cursor:pointer" onclick="openPayAttachmentUrl('+idx+')">':'';
-    const nameLink='<a href="javascript:void(0)" style="color:#1d6fd3;cursor:pointer;text-decoration:underline;word-break:break-all" onclick="openPayAttachmentUrl('+idx+')">'+esc(a.name||('附件'+(idx+1)))+'</a>';
-    const del=window._payCanUpload?'<button class="btn btn-danger btn-sm" style="margin-left:4px" onclick="payDeleteAttachment(window._payId,'+idx+')">删除</button>':'';
+    const nameLink='<a href="javascript:void(0)" style="color:#1d6fd3;cursor:pointer;text-decoration:underline;word-break:break-all" onclick="openPayAttachmentUrl('+idx+')">'+esc(a.name||(t('common.attachment','附件')+(idx+1)))+'</a>';
+    const del=window._payCanUpload?'<button class="btn btn-danger btn-sm" style="margin-left:4px" onclick="payDeleteAttachment(window._payId,'+idx+')">'+t('action.delete','删除')+'</button>':'';
     return '<div style="border:1px solid #eee;border-radius:8px;padding:8px;display:flex;align-items:center;gap:8px;background:#fff;max-width:280px">'+thumb+'<div style="min-width:0">'+nameLink+'<div style="font-size:11px;color:#999">'+(a.size?fmtSize(a.size):'')+(a.uploaded_at?' · '+a.uploaded_at.slice(0,10):'')+'</div></div>'+del+'</div>';
   }).join('')+'</div>';
 }
 function renderPayAttachmentList(){ const el=document.getElementById('pay-att-list'); if(el) el.innerHTML=renderPayAttachmentListInner(); }
 async function payUploadFiles(id, files){
   if(!files||!files.length)return;
-  if(!(hasPermission('payment_create')||hasPermission('payment_approve'))){showToast('无附件上传权限','danger');return}
+  if(!(hasPermission('payment_create')||hasPermission('payment_approve'))){showToast(t('toast.uploadNoPermission','无附件上传权限'),'danger');return}
   const arr=window._payAttachments||[];
   try{
     for(const f of files){ const du=await readFileAsDataURL(f); arr.push({name:f.name,type:f.type,size:f.size,dataUrl:du,uploaded_at:new Date().toISOString()}); }
@@ -7120,7 +7120,7 @@ async function payDeleteAttachment(id, idx){
   const arr=window._payAttachments||[];
   if(idx<0||idx>=arr.length)return;
   arr.splice(idx,1);
-  try{ await api('/api/payment-requests/'+id+'/attachment','POST',{attachment:arr}); window._payAttachments=arr; renderPayAttachmentList(); showToast('附件已删除','success'); }
+  try{ await api('/api/payment-requests/'+id+'/attachment','POST',{attachment:arr}); window._payAttachments=arr; renderPayAttachmentList(); showToast(t('toast.attachmentDeleted','附件已删除'),'success'); }
   catch(e){ showToast(e.message,'danger'); }
 }
 // 附件 dataUrl → blob URL（PDF/其他文件用，避免 data: 协议在新标签/下载时受限）
@@ -7193,7 +7193,7 @@ async function loadPay(){
   try{
     const s=document.getElementById('pay-fs')?.value||'',c=document.getElementById('pay-fc')?.value||'',k=document.getElementById('pay-fk')?.value||'';
     const data=await api('/api/payment-requests?status='+s+'&category='+c+'&keyword='+encodeURIComponent(k));
-    document.getElementById('pay-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">💳</div>暂无付款数据</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>'+t("html.pay.th.applyNo","申请号")+'</th><th>'+t("html.pay.th.category","大类")+'</th><th>'+t("html.pay.th.subcategory","小类")+'</th><th>'+t("html.pay.th.sourceNo","来源单号")+'</th><th>'+t("html.pay.th.relCI","关联CI")+'</th><th>'+t("html.pay.th.payee","付款对象")+'</th><th>'+t("html.pay.th.payable","应付金额")+'</th><th>'+t("html.pay.th.deduct","抵扣金额")+'</th><th>'+t("html.pay.th.actualPayable","实际应付")+'</th><th>'+t("html.pay.th.paid","已付")+'</th><th>'+t("html.pay.th.unpaid","未付")+'</th><th>'+t("html.pay.th.currency","币种")+'</th><th>'+t("html.pay.th.status","状态")+'</th><th>'+t("html.pay.th.action","操作")+'</th></tr></thead><tbody>'+data.map(p=>{
+    document.getElementById('pay-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">💳</div>'+t('empty.noPaymentData','暂无付款数据')+'</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>'+t("html.pay.th.applyNo","申请号")+'</th><th>'+t("html.pay.th.category","大类")+'</th><th>'+t("html.pay.th.subcategory","小类")+'</th><th>'+t("html.pay.th.sourceNo","来源单号")+'</th><th>'+t("html.pay.th.relCI","关联CI")+'</th><th>'+t("html.pay.th.payee","付款对象")+'</th><th>'+t("html.pay.th.payable","应付金额")+'</th><th>'+t("html.pay.th.deduct","抵扣金额")+'</th><th>'+t("html.pay.th.actualPayable","实际应付")+'</th><th>'+t("html.pay.th.paid","已付")+'</th><th>'+t("html.pay.th.unpaid","未付")+'</th><th>'+t("html.pay.th.currency","币种")+'</th><th>'+t("html.pay.th.status","状态")+'</th><th>'+t("html.pay.th.action","操作")+'</th></tr></thead><tbody>'+data.map(p=>{
       const catLabel=PAY_CATEGORIES[p.payment_category]||p.payment_category;
       const subLabel=(PAY_SUBCATS[p.payment_category]&&PAY_SUBCATS[p.payment_category][p.payment_subcategory])||p.payment_subcategory||'';
       const stLabel=PAY_STATUS_MAP[p.payment_status]||p.payment_status;
@@ -7203,7 +7203,7 @@ async function loadPay(){
       const canRound=p.approval_status==='approved'&&Number(p.unpaid_amount||0)>0&&Number(p.rounding_amount||0)<=0&&!['rejected','cancelled'].includes(p.payment_status);
       const needsExpenseCountry=p.payment_category!=='goods'&&!String(p.expense_country||'').trim();
       const actualDisplay=Number(p.actual_pay_amount||0)>0||Number(p.deduction_amount||0)>0||Number(p.rounding_amount||0)>0?p.actual_pay_amount:p.payable_amount;
-      return '<tr><td class="cell-id">'+esc(p.request_no)+'</td><td>'+esc(catLabel)+'</td><td>'+esc(subLabel)+'</td><td class="cell-id">'+esc(p.source_no)+'</td><td class="cell-id">'+esc(p.related_ci_no||'')+'</td><td>'+esc(p.supplier_name)+'</td><td class="text-right font-bold">'+fmtMoney(p.payable_amount)+'</td><td class="text-right '+(p.deduction_amount>0?'text-warning':'')+'">'+(p.deduction_amount>0?fmtMoney(p.deduction_amount):'-')+'</td><td class="text-right font-bold">'+fmtMoney(actualDisplay)+'</td><td class="text-right">'+fmtMoney(p.paid_amount)+'</td><td class="text-right '+(p.unpaid_amount>0?'text-danger':'')+'">'+fmtMoney(p.unpaid_amount)+'</td><td>'+esc(p.currency)+'</td><td><span class="status-badge '+stClass+'">'+esc(stLabel)+'</span></td><td class="cell-actions">'+(hasPermission('payment_view')?'<button class="action-btn" onclick="viewPayment(\''+p.id+'\')" title="\u67e5\u770b\u8be6\u60c5">👁️</button>':'')+(needsExpenseCountry&&hasPermission('payment_approve')?'<button class="action-btn" onclick="openPaymentExpenseCountry(\''+p.id+'\')" title="补录费用归属国家">补国家</button>':'')+(p.approval_status==='pending'&&hasPermission('payment_approve')?'<button class="action-btn action-edit" onclick="apprPay(\''+p.id+'\',\'approve\')" title="通过">✅</button><button class="action-btn action-delete" onclick="apprPay(\''+p.id+'\',\'reject\')" title="驳回">❌</button>':'')+(canPay&&hasPermission('payment_approve')?'<button class="action-btn action-edit" onclick="confirmPaid(\''+p.id+'\')" title="确认付款">💵</button>':'')+(canRound&&hasPermission('payment_approve')?'<button class="action-btn" onclick="openPaymentRounding(\''+p.id+'\')" title="手动抹零">抹零</button>':'')+(canDeduct&&hasPermission('payment_create')?'<button class="action-btn" onclick="editDeduction(\''+p.id+'\')" title="编辑抵扣">✂️</button>':'')+'</td></tr>';
+      return '<tr><td class="cell-id">'+esc(p.request_no)+'</td><td>'+esc(catLabel)+'</td><td>'+esc(subLabel)+'</td><td class="cell-id">'+esc(p.source_no)+'</td><td class="cell-id">'+esc(p.related_ci_no||'')+'</td><td>'+esc(p.supplier_name)+'</td><td class="text-right font-bold">'+fmtMoney(p.payable_amount)+'</td><td class="text-right '+(p.deduction_amount>0?'text-warning':'')+'">'+(p.deduction_amount>0?fmtMoney(p.deduction_amount):'-')+'</td><td class="text-right font-bold">'+fmtMoney(actualDisplay)+'</td><td class="text-right">'+fmtMoney(p.paid_amount)+'</td><td class="text-right '+(p.unpaid_amount>0?'text-danger':'')+'">'+fmtMoney(p.unpaid_amount)+'</td><td>'+esc(p.currency)+'</td><td><span class="status-badge '+stClass+'">'+esc(stLabel)+'</span></td><td class="cell-actions">'+(hasPermission('payment_view')?'<button class="action-btn" onclick="viewPayment(\''+p.id+'\')" title="'+t('title.viewDetail','查看详情')+'">👁️</button>':'')+(needsExpenseCountry&&hasPermission('payment_approve')?'<button class="action-btn" onclick="openPaymentExpenseCountry(\''+p.id+'\')" title="'+t('term.fin.supplement_expense_country','补录费用归属国家')+'">补国家</button>':'')+(p.approval_status==='pending'&&hasPermission('payment_approve')?'<button class="action-btn action-edit" onclick="apprPay(\''+p.id+'\',\'approve\')" title="通过">✅</button><button class="action-btn action-delete" onclick="apprPay(\''+p.id+'\',\'reject\')" title="驳回">❌</button>':'')+(canPay&&hasPermission('payment_approve')?'<button class="action-btn action-edit" onclick="confirmPaid(\''+p.id+'\')" title="确认付款">💵</button>':'')+(canRound&&hasPermission('payment_approve')?'<button class="action-btn" onclick="openPaymentRounding(\''+p.id+'\')" title="手动抹零">抹零</button>':'')+(canDeduct&&hasPermission('payment_create')?'<button class="action-btn" onclick="editDeduction(\''+p.id+'\')" title="'+t('title.editDeduction','编辑抵扣')+'">✂️</button>':'')+'</td></tr>';
     }).join('')+'</tbody></table></div>';
   }catch(e){showFlash(e.message,'danger')}
 }
@@ -7257,7 +7257,7 @@ async function editDeduction(id){
     // Since there's no GET by id endpoint, use the list
     const data=await api('/api/payment-requests?keyword='+id);
     const pay=data.find(x=>x.id===id);
-    if(!pay){showToast('未找到付款申请','danger');return}
+    if(!pay){showToast(t('toast.paymentNotFound','未找到付款申请'),'danger');return}
     openModal(t('modal.title.editDeduction', '编辑抵扣 - {v1}', {v1: pay.request_no}),
       t('modal.body.editDeduction', `<div class="form-card" style="box-shadow:none;padding:0"><div class="detail-grid mb-16"><div class="detail-item"><span class="detail-label">应付金额</span><span class="detail-value">{v1} {v2}</span></div><div class="detail-item"><span class="detail-label">付款对象</span><span class="detail-value">{v3}</span></div></div><div class="form-grid"><div class="form-group"><label>是否抵扣</label><select id="ded-has" onchange="document.getElementById('ded-amt').disabled=!this.value"><option value="0">否</option><option value="1" {v4}>是</option></select></div><div class="form-group"><label>抵扣金额</label><input type="number" step="0.01" id="ded-amt" value="{v5}" {v6}></div><div class="form-group"><label>抵扣来源类型</label><select id="ded-type"><option value="">选择</option><option value="other_payment" {v7}>其他付款多付</option><option value="price_diff" {v8}>价格差异</option><option value="quality_claim" {v9}>质量索赔</option><option value="advance_payment" {v10}>预付款抵扣</option><option value="other" {v11}>其他</option></select></div><div class="form-group"><label>抵扣参考号</label><input type="text" id="ded-ref" value="{v12}"></div><div class="form-group form-group-full"><label>抵扣说明</label><textarea id="ded-desc" rows="2">{v13}</textarea></div></div></div>`, {v1: fmtMoney(pay.payable_amount), v2: esc(pay.currency||''), v3: esc(pay.supplier_name), v4: pay.has_deduction?'selected':'', v5: pay.deduction_amount||0, v6: pay.has_deduction?'':'disabled', v7: pay.deduction_source_type==='other_payment'?'selected':'', v8: pay.deduction_source_type==='price_diff'?'selected':'', v9: pay.deduction_source_type==='quality_claim'?'selected':'', v10: pay.deduction_source_type==='advance_payment'?'selected':'', v11: pay.deduction_source_type==='other'?'selected':'', v12: esc(pay.deduction_ref_no||''), v13: esc(pay.deduction_source_desc||'')}),
       t('modal.footer.editDeduction', `<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveDeduction('{v1}')">保存</button>`, {v1: id}));
@@ -7265,7 +7265,7 @@ async function editDeduction(id){
 }
 async function saveDeduction(id){
   const d={has_deduction:parseInt(document.getElementById('ded-has').value),deduction_amount:parseFloat(document.getElementById('ded-amt').value)||0,deduction_source_type:document.getElementById('ded-type').value,deduction_source_desc:document.getElementById('ded-desc').value,deduction_ref_no:document.getElementById('ded-ref').value};
-  try{await api('/api/payment-requests/'+id+'/deduction','PUT',d);showToast('抵扣信息已保存','success');closeModal();loadPay()}catch(e){showToast(e.message,'danger')}
+  try{await api('/api/payment-requests/'+id+'/deduction','PUT',d);showToast(t('toast.deductionSaved','抵扣信息已保存'),'success');closeModal();loadPay()}catch(e){showToast(e.message,'danger')}
 }
 function importPayResult(){importFile('/api/payment-requests/bulk-import-result',loadPay)}
 

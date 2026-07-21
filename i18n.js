@@ -2582,4 +2582,46 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.en['term.fin.supplement_expense_country'] = 'Supplement expense country';
   I18N.dict.id['term.fin.supplement_expense_country'] = 'Tambah negara biaya';
 
+  /* Phase 3-C-4B-1b-1 Payment Request page user-visible text localization */
+  I18N.dict.en['modal.title.createWarehousePay'] = 'Create Warehouse-Arrival Payment';
+  I18N.dict.id['modal.title.createWarehousePay'] = 'Buat Pembayaran Biaya Gudang';
+  I18N.dict.en['toast.warehousePayCreated'] = 'Warehouse-arrival payment request created';
+  I18N.dict.id['toast.warehousePayCreated'] = 'Permintaan pembayaran biaya gudang dibuat';
+  I18N.dict.en['toast.customsDutyPayCreated'] = 'Customs duty payment request created';
+  I18N.dict.id['toast.customsDutyPayCreated'] = 'Permintaan pembayaran bea cukai dibuat';
+  I18N.dict.en['toast.inspectionFeePayCreated'] = 'Inspection fee payment request created';
+  I18N.dict.id['toast.inspectionFeePayCreated'] = 'Permintaan pembayaran biaya pemeriksaan dibuat';
+  I18N.dict.en['toast.depPayCreated'] = 'Deposit payment request generated';
+  I18N.dict.id['toast.depPayCreated'] = 'Permintaan pembayaran uang muka dibuat';
+  I18N.dict.en['toast.balPayCreated'] = 'Balance payment request generated';
+  I18N.dict.id['toast.balPayCreated'] = 'Permintaan pembayaran sisa dibuat';
+  I18N.dict.en['toast.frtPayNoCI'] = 'This logistics batch is not linked to a CI. Please create the warehouse-arrival payment from the CI Expense Management page.';
+  I18N.dict.id['toast.frtPayNoCI'] = 'Batch logistik ini tidak terhubung dengan CI. Silakan buat pembayaran biaya gudang dari halaman Manajemen Biaya CI.';
+  I18N.dict.en['toast.paymentNotFound'] = 'Payment request not found';
+  I18N.dict.id['toast.paymentNotFound'] = 'Permintaan pembayaran tidak ditemukan';
+  I18N.dict.en['toast.deductionSaved'] = 'Deduction info saved';
+  I18N.dict.id['toast.deductionSaved'] = 'Info potongan disimpan';
+  I18N.dict.en['toast.uploadNoPermission'] = 'No attachment upload permission';
+  I18N.dict.id['toast.uploadNoPermission'] = 'Tidak ada izin unggah lampiran';
+  I18N.dict.en['toast.attachmentDeleted'] = 'Attachment deleted';
+  I18N.dict.id['toast.attachmentDeleted'] = 'Lampiran dihapus';
+  I18N.dict.en['validation.expenseCountryRequired'] = 'Please select expense country';
+  I18N.dict.id['validation.expenseCountryRequired'] = 'Pilih negara biaya';
+  I18N.dict.en['empty.noPaymentData'] = 'No payment data';
+  I18N.dict.id['empty.noPaymentData'] = 'Tidak ada data pembayaran';
+  I18N.dict.en['payment.attachments'] = 'Payment Request Attachments';
+  I18N.dict.id['payment.attachments'] = 'Lampiran Permintaan Pembayaran';
+  I18N.dict.en['empty.noAttachment'] = 'No attachments';
+  I18N.dict.id['empty.noAttachment'] = 'Tidak ada lampiran';
+  I18N.dict.en['common.attachment'] = 'Attachment';
+  I18N.dict.id['common.attachment'] = 'Lampiran';
+  I18N.dict.en['title.viewDetail'] = 'View details';
+  I18N.dict.id['title.viewDetail'] = 'Lihat detail';
+  I18N.dict.en['title.editDeduction'] = 'Edit deduction';
+  I18N.dict.id['title.editDeduction'] = 'Edit potongan';
+  I18N.dict.en["modal.body.createCustomsDutyPay"] = "<div class=\"form-card\" style=\"box-shadow:none;padding:0\"><div class=\"form-grid\"><div class=\"form-group\"><label>Payee</label><input type=\"text\" id=\"dut-payee\" value=\"海关\"></div><div class=\"form-group\"><label>Payable Amount</label><input type=\"number\" step=\"0.01\" id=\"dut-amt\"></div><div class=\"form-group\"><label>Currency</label><select id=\"dut-cur\"><option>USD</option><option>RMB</option></select></div><div class=\"form-group\"><label>Remark</label><input type=\"text\" id=\"dut-rem\"></div><div class=\"form-group\"><label>Deduct?</label><select id=\"dut-ded\" onchange=\"document.getElementById('dut-ded-amt').disabled=this.value==='0'\"><option value=\"0\">No</option><option value=\"1\">Yes</option></select></div><div class=\"form-group\"><label>Deduction Amount</label><input type=\"number\" step=\"0.01\" id=\"dut-ded-amt\" value=\"0\" disabled></div><div class=\"form-group\"><label>Deduction Source Type</label><select id=\"dut-ded-type\"><option value=\"\">Select</option><option value=\"other_payment\">Other Overpayment</option><option value=\"price_diff\">Price Variance</option><option value=\"other\">Other</option></select></div><div class=\"form-group form-group-full\"><label>Deduction Note</label><input type=\"text\" id=\"dut-ded-desc\"></div></div></div>";
+  I18N.dict.id["modal.body.createCustomsDutyPay"] = "<div class=\"form-card\" style=\"box-shadow:none;padding:0\"><div class=\"form-grid\"><div class=\"form-group\"><label>Penerima Pembayaran</label><input type=\"text\" id=\"dut-payee\" value=\"海关\"></div><div class=\"form-group\"><label>Jumlah Payable</label><input type=\"number\" step=\"0.01\" id=\"dut-amt\"></div><div class=\"form-group\"><label>Mata Uang</label><select id=\"dut-cur\"><option>USD</option><option>RMB</option></select></div><div class=\"form-group\"><label>Keterangan</label><input type=\"text\" id=\"dut-rem\"></div><div class=\"form-group\"><label>Potong?</label><select id=\"dut-ded\" onchange=\"document.getElementById('dut-ded-amt').disabled=this.value==='0'\"><option value=\"0\">Tidak</option><option value=\"1\">Ya</option></select></div><div class=\"form-group\"><label>Jumlah Potongan</label><input type=\"number\" step=\"0.01\" id=\"dut-ded-amt\" value=\"0\" disabled></div><div class=\"form-group\"><label>Tipe Sumber Potongan</label><select id=\"dut-ded-type\"><option value=\"\">Pilih</option><option value=\"other_payment\">Pembayaran Lain Lebih Bayar</option><option value=\"price_diff\">Selisih Harga</option><option value=\"other\">Lainnya</option></select></div><div class=\"form-group form-group-full\"><label>Keterangan Potongan</label><input type=\"text\" id=\"dut-ded-desc\"></div></div></div>";
+  I18N.dict.en["modal.body.createInspectionFeePay"] = "<div class=\"form-card\" style=\"box-shadow:none;padding:0\"><div class=\"form-grid\"><div class=\"form-group\"><label>Payee</label><input type=\"text\" id=\"ins-payee\" placeholder=\"Inspection Authority\"></div><div class=\"form-group\"><label>Payable Amount</label><input type=\"number\" step=\"0.01\" id=\"ins-amt\"></div><div class=\"form-group\"><label>Currency</label><select id=\"ins-cur\"><option>USD</option><option>RMB</option></select></div><div class=\"form-group\"><label>Remark</label><input type=\"text\" id=\"ins-rem\"></div><div class=\"form-group\"><label>Deduct?</label><select id=\"ins-ded\" onchange=\"document.getElementById('ins-ded-amt').disabled=this.value==='0'\"><option value=\"0\">No</option><option value=\"1\">Yes</option></select></div><div class=\"form-group\"><label>Deduction Amount</label><input type=\"number\" step=\"0.01\" id=\"ins-ded-amt\" value=\"0\" disabled></div><div class=\"form-group\"><label>Deduction Source Type</label><select id=\"ins-ded-type\"><option value=\"\">Select</option><option value=\"other_payment\">Other Overpayment</option><option value=\"price_diff\">Price Variance</option><option value=\"other\">Other</option></select></div><div class=\"form-group form-group-full\"><label>Deduction Note</label><input type=\"text\" id=\"ins-ded-desc\"></div></div></div>";
+  I18N.dict.id["modal.body.createInspectionFeePay"] = "<div class=\"form-card\" style=\"box-shadow:none;padding:0\"><div class=\"form-grid\"><div class=\"form-group\"><label>Penerima Pembayaran</label><input type=\"text\" id=\"ins-payee\" placeholder=\"Otoritas Pemeriksaan\"></div><div class=\"form-group\"><label>Jumlah Payable</label><input type=\"number\" step=\"0.01\" id=\"ins-amt\"></div><div class=\"form-group\"><label>Mata Uang</label><select id=\"ins-cur\"><option>USD</option><option>RMB</option></select></div><div class=\"form-group\"><label>Keterangan</label><input type=\"text\" id=\"ins-rem\"></div><div class=\"form-group\"><label>Potong?</label><select id=\"ins-ded\" onchange=\"document.getElementById('ins-ded-amt').disabled=this.value==='0'\"><option value=\"0\">Tidak</option><option value=\"1\">Ya</option></select></div><div class=\"form-group\"><label>Jumlah Potongan</label><input type=\"number\" step=\"0.01\" id=\"ins-ded-amt\" value=\"0\" disabled></div><div class=\"form-group\"><label>Tipe Sumber Potongan</label><select id=\"ins-ded-type\"><option value=\"\">Pilih</option><option value=\"other_payment\">Pembayaran Lain Lebih Bayar</option><option value=\"price_diff\">Selisih Harga</option><option value=\"other\">Lainnya</option></select></div><div class=\"form-group form-group-full\"><label>Keterangan Potongan</label><input type=\"text\" id=\"ins-ded-desc\"></div></div></div>";
+
 })();
