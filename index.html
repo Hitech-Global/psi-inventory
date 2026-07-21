@@ -142,7 +142,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 .modal-title{font-size:18px;font-weight:700}
 .modal-close{background:none;border:none;font-size:24px;cursor:pointer;color:var(--text-muted);padding:0 8px}
 .modal-body{padding:24px}
-.modal-footer{padding:16px 24px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:12px}
+.modal-footer{padding:16px 24px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:12px;flex-wrap:wrap;row-gap:8px}
+/* RC-C 英文布局兼容：仅新增规则，不删除既有 nowrap / 不改结构 / 不隐藏内容 */
+.modal-footer .btn{white-space:normal;word-break:break-word;overflow-wrap:anywhere;min-width:0;text-align:center}
+.modal-body{overflow-wrap:anywhere;word-break:break-word}
+/* 长文本按钮（如顶部/侧边/筛选区）在窄屏允许换行，避免撑破容器 */
+.btn{max-width:100%}
+.topnav{overflow-x:auto}
+.sidebar-item,.topnav-item{overflow:hidden}
 .modal-lg{max-width:1120px;width:96%;max-height:94vh;display:flex;flex-direction:column;overflow:hidden}
 .modal-lg .modal-header{flex:0 0 auto}
 .modal-lg .modal-body{flex:1 1 auto;overflow-y:auto}
