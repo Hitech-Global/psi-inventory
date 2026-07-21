@@ -689,7 +689,7 @@ async function toggleSupplierStatus(id,status){
 }
 function renderFreightForwarders(){renderSimpleMgr(t("nav.freight_forwarders", "\u8d27\u4ee3\u7ba1\u7406"),'/api/freight-forwarders',[{name:'name',label:t("col.name", "名称"),req:1},{name:'short_name',label:t("shell.010", "\u7b80\u79f0")},{name:'contact_person',label:t("app.023", "\u8054\u7cfb\u4eba")},{name:'phone',label:t("shell.011", "\u7535\u8bdd")},{name:'email',label:t("shell.012", "\u90ae\u7bb1")},{name:'service_types',label:t("shell.013", "\u670d\u52a1\u7c7b\u578b")},{name:'status',label:t("status.label", "\u72b6\u6001"),sel:1,opts:['active','disabled']}],'🚛')}
 function renderCurrencies(){renderSimpleMgr(t("shell.014", "\u5e01\u79cd\u7ba1\u7406"),'/api/currencies',[{name:'code',label:t("shell.002", "\u4ee3\u7801"),req:1},{name:'name',label:t("col.name", "名称"),req:1},{name:'symbol',label:t("shell.015", "\u7b26\u53f7")},{name:'is_base',label:t("shell.016", "\u57fa\u7840\u5e01\u79cd"),bool:1},{name:'sort_order',label:t("shell.003", "\u6392\u5e8f"),num:1},{name:'status',label:t("status.label", "\u72b6\u6001"),sel:1,opts:['active','disabled']}],'💱')}
-function renderPaymentTerms(){renderSimpleMgr(t("nav.payment_terms", "\u4ed8\u6b3e\u6761\u4ef6"),'/api/payment-terms',[{name:'name',label:'名称',req:1},{name:'payee_type',label:t("app.209", "\u4ed8\u6b3e\u5bf9\u8c61"),sel:1,opts:['factory','forwarder','customs']},{name:'payment_type',label:t("shell.017", "\u4ed8\u6b3e\u7c7b\u578b"),sel:1,opts:['goods','logistics','tax']},{name:'payment_stage',label:t("shell.018", "\u4ed8\u6b3e\u9636\u6bb5"),sel:1,opts:['deposit','balance','full','monthly']},{name:'payment_node',label:t("shell.019", "\u4ed8\u6b3e\u8282\u70b9"),sel:1,opts:['after_pi','before_ship','after_ci','after_arrival','after_inbound','monthly']},{name:'ratio',label:t("shell.020", "\u6bd4\u4f8b(%)"),num:1},{name:'remind_days_before',label:t("shell.021", "\u63d0\u9192\u63d0\u524d\u5929"),num:1},{name:'is_enabled',label:t("common.enable", "\u542f\u7528"),bool:1}],'📋')}
+function renderPaymentTerms(){renderSimpleMgr(t("nav.payment_terms", "\u4ed8\u6b3e\u6761\u4ef6"),'/api/payment-terms',[{name:'name',label:`${t("col.name","名称")}`,req:1},{name:'payee_type',label:t("app.209", "\u4ed8\u6b3e\u5bf9\u8c61"),sel:1,opts:['factory','forwarder','customs']},{name:'payment_type',label:t("shell.017", "\u4ed8\u6b3e\u7c7b\u578b"),sel:1,opts:['goods','logistics','tax']},{name:'payment_stage',label:t("shell.018", "\u4ed8\u6b3e\u9636\u6bb5"),sel:1,opts:['deposit','balance','full','monthly']},{name:'payment_node',label:t("shell.019", "\u4ed8\u6b3e\u8282\u70b9"),sel:1,opts:['after_pi','before_ship','after_ci','after_arrival','after_inbound','monthly']},{name:'ratio',label:t("shell.020", "\u6bd4\u4f8b(%)"),num:1},{name:'remind_days_before',label:t("shell.021", "\u63d0\u9192\u63d0\u524d\u5929"),num:1},{name:'is_enabled',label:t("common.enable", "\u542f\u7528"),bool:1}],'📋')}
 function renderApprovalFlows(){
   document.getElementById('content-inner').innerHTML='<div id="flash-container"></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">✅ 审批流管理</div></div><div id="approval-flow-editor"></div></div>';
   loadApprovalFlows();
@@ -1131,13 +1131,13 @@ const PC_PAYEE_LABEL={
   other:'其他'
 };
 function pcPayeeLabel(code){
-  if(!code) return '未设置';
+  if(!code) return `${t("status.not_set","未设置")}`;
   return (PC_PAYEE_LABEL[code]||code)+'（'+code+'）';
 }
 function pcPayeeOptions(selected){
   const vals=[...new Set(pcState.subcategories.map(s=>s.payee_type_default).filter(Boolean))].sort();
   if(selected && !vals.includes(selected)) vals.push(selected);
-  return '<option value=""'+(!selected?' selected':'')+'>未设置</option>'+vals.map(v=>'<option value="'+esc(v)+'"'+(selected===v?' selected':'')+'>'+esc(pcPayeeLabel(v))+'</option>').join('');
+  return '<option value=""'+(!selected?' selected':'')+`>${t("status.not_set","未设置")}</option>`+vals.map(v=>'<option value="'+esc(v)+'"'+(selected===v?' selected':'')+'>'+esc(pcPayeeLabel(v))+'</option>').join('');
 }
 function pcCatLabel(cat){
   return cat ? cat.name+'（'+cat.code+'）' : '';
@@ -1146,7 +1146,7 @@ function pcCatLabel(cat){
 async function renderPaymentCategories(){
   pcState.readOnly=!hasPermission('system_config');
   document.getElementById('content-inner').innerHTML=
-    t('html.renderPaymentCategories', '<div id="flash-container"></div>{v1}<div class="pc-head"><div><div class="pc-title">付款类目管理</div><div class="pc-desc">维护付款大类、小类及其费用来源映射。停用项目不会出现在新的付款申请中，但不影响历史记录。</div></div><div class="pc-head-actions"><button class="btn btn-secondary btn-sm" id="pc-refresh-btn" onclick="renderPaymentCategories()">🔄 刷新</button><button class="btn btn-secondary btn-sm" onclick="pcShowHelp()">❔ 页面说明</button></div></div><div id="payment-categories-page"><div class="payment-category-columns" id="pc-cols">{v2}{v3}{v4}</div></div>', {v1: pcState.readOnly?'<div class="pc-readonly-banner">🔒 只读模式：当前账号无「系统配置」权限，仅可查看付款类目，不能新增 / 编辑 / 启停。</div>':'', v2: pcColShell('付款大类',t("shell.032", "\uff0b \u65b0\u589e\u5927\u7c7b"),'pcOpenCategoryModal()','pc-cat-body',null), v3: pcColShell(t("shell.033", "\u4ed8\u6b3e\u5c0f\u7c7b"),t("shell.034", "\uff0b \u65b0\u589e\u5c0f\u7c7b"),'pcOpenSubModal()','pc-sub-body','pc-sub-title'), v4: pcColShell(t("shell.035", "\u6765\u6e90\u6620\u5c04"),t("shell.036", "\uff0b \u65b0\u589e\u6620\u5c04"),'pcOpenMapModal()','pc-map-body','pc-map-title')});
+    t('html.renderPaymentCategories', `<div id="flash-container"></div>{v1}<div class="pc-head"><div><div class="pc-title">${t("term.fin.payment_category_mgmt","付款类目管理")}</div><div class="pc-desc">${t("action.manage_category","维护付款大类")}、${t("term.fin.subcategory_source_map","小类及其费用来源映射")}。${t("term.fin.disabled_not_in_new","停用项目不会出现在新的付款申请中")}，${t("term.fin.no_impact_history","但不影响历史记录")}。</div></div><div class="pc-head-actions"><button class="btn btn-secondary btn-sm" id="pc-refresh-btn" onclick="renderPaymentCategories()">🔄 ${t("action.refresh","刷新")}</button><button class="btn btn-secondary btn-sm" onclick="pcShowHelp()">❔ ${t("term.fin.page_note","页面说明")}</button></div></div><div id="payment-categories-page"><div class="payment-category-columns" id="pc-cols">{v2}{v3}{v4}</div></div>`, {v1: pcState.readOnly?`<div class="pc-readonly-banner">🔒 ${t("term.fin.readonly_mode","只读模式")}：${t("term.fin.current_account_no","当前账号无")}「${t("term.fin.system_config","系统配置")}」${t("term.fin.permission","权限")}，${t("term.fin.view_only_category","仅可查看付款类目")}，${t("term.fin.cannot_add","不能新增")} / ${t("action.edit","编辑")} / ${t("action.toggle_enable","启停")}。</div>`:'', v2: pcColShell(`${t("col.payment_category","付款大类")}`,t("shell.032", "\uff0b \u65b0\u589e\u5927\u7c7b"),'pcOpenCategoryModal()','pc-cat-body',null), v3: pcColShell(t("shell.033", "\u4ed8\u6b3e\u5c0f\u7c7b"),t("shell.034", "\uff0b \u65b0\u589e\u5c0f\u7c7b"),'pcOpenSubModal()','pc-sub-body','pc-sub-title'), v4: pcColShell(t("shell.035", "\u6765\u6e90\u6620\u5c04"),t("shell.036", "\uff0b \u65b0\u589e\u6620\u5c04"),'pcOpenMapModal()','pc-map-body','pc-map-title')});
   await pcLoadAll();
 }
 
@@ -1274,7 +1274,7 @@ function pcCatRow(c){
     pcStatusBadge(c.status)+(pcState.readOnly?'':pcRowActions(c.status, c.id))+'</div>';
 }
 function pcSubRow(s){
-  const recip='默认收款对象：'+esc(pcPayeeLabel(s.payee_type_default));
+  const recip=`${t("term.fin.default_payee","默认收款对象")}：`+esc(pcPayeeLabel(s.payee_type_default));
   return '<div class="pc-row'+(s.id===pcState.selSubId?' selected':'')+'" data-id="'+esc(s.id)+'" onclick="pcSelectSub(\''+esc(s.id)+'\')">'+
     '<div class="pc-main"><div class="pc-name" title="'+esc(s.name)+'">'+esc(s.name)+'</div>'+
     '<div class="pc-code" title="'+esc(s.code)+'">'+esc(s.code)+'</div>'+
@@ -1287,51 +1287,51 @@ function pcMapRow(m){
   return '<div class="pc-row" data-id="'+esc(m.id)+'">'+
     '<div class="pc-main"><div class="pc-name" title="'+esc(srcLabel)+'">'+esc(srcLabel)+
       ' <span class="pc-code-inline">'+esc(m.source_type)+'</span></div>'+
-      '<div class="pc-code" title="'+esc(feeLabel)+'">费用事件：'+esc(feeLabel)+'</div></div>'+
+      '<div class="pc-code" title="'+esc(feeLabel)+`">${t("col.expense_event","费用事件")}：`+esc(feeLabel)+'</div></div>'+
     pcStatusBadge(m.status)+(pcState.readOnly?'':pcMapRowActions(m.status,m.id))+'</div>';
 }
 function pcStatusBadge(status){
   return status==='active'
-    ? '<span class="status-badge status-normal">启用</span>'
-    : '<span class="status-badge status-disabled">停用</span>';
+    ? `<span class="status-badge status-normal">${t("action.enable","启用")}</span>`
+    : `<span class="status-badge status-disabled">${t("action.disable","停用")}</span>`;
 }
 // 已启用只显示「停用」，已停用只显示「启用」；绝不出现删除 / 垃圾桶按钮。点击不触发行选中。
 // 仅左栏大类行传入 id → 真实 编辑/启停；中/右栏无 id → 仍走 pcStub()（后续开放）。
 function pcRowActions(status, id){
   const editFn = id ? 'pcOpenCategoryModal(\''+esc(id)+'\')' : 'pcStub()';
   const toggleFn = id ? 'pcToggleCategory(\''+esc(id)+'\')' : 'pcStub()';
-  return '<div class="pc-actions"><button class="pc-edit" onclick="event.stopPropagation();'+editFn+'">编辑</button>'+
+  return '<div class="pc-actions"><button class="pc-edit" onclick="event.stopPropagation();'+editFn+`">${t("action.edit","编辑")}</button>`+
     (status==='active'
-      ? '<button class="pc-toggle" onclick="event.stopPropagation();'+toggleFn+'">停用</button>'
-      : '<button class="pc-toggle" onclick="event.stopPropagation();'+toggleFn+'">启用</button>')+'</div>';
+      ? '<button class="pc-toggle" onclick="event.stopPropagation();'+toggleFn+`">${t("action.disable","停用")}</button>`
+      : '<button class="pc-toggle" onclick="event.stopPropagation();'+toggleFn+`">${t("action.enable","启用")}</button>`)+'</div>';
 }
 function pcSubRowActions(status, id){
-  return '<div class="pc-actions"><button class="pc-edit" onclick="event.stopPropagation();pcOpenSubModal(\''+esc(id)+'\')">编辑</button>'+
+  return '<div class="pc-actions"><button class="pc-edit" onclick="event.stopPropagation();pcOpenSubModal(\''+esc(id)+`\')">${t("action.edit","编辑")}</button>`+
     (status==='active'
-      ? '<button class="pc-toggle" onclick="event.stopPropagation();pcToggleSub(\''+esc(id)+'\')">停用</button>'
-      : '<button class="pc-toggle" onclick="event.stopPropagation();pcToggleSub(\''+esc(id)+'\')">启用</button>')+'</div>';
+      ? '<button class="pc-toggle" onclick="event.stopPropagation();pcToggleSub(\''+esc(id)+`\')">${t("action.disable","停用")}</button>`
+      : '<button class="pc-toggle" onclick="event.stopPropagation();pcToggleSub(\''+esc(id)+`\')">${t("action.enable","启用")}</button>`)+'</div>';
 }
 function pcMapRowActions(status,id){
   return '<div class="pc-actions">'+(status==='active'
-    ? '<button class="pc-toggle" onclick="event.stopPropagation();pcToggleMap(\''+esc(id)+'\')">停用</button>'
-    : '<button class="pc-toggle" onclick="event.stopPropagation();pcToggleMap(\''+esc(id)+'\')">启用</button>')+'</div>';
+    ? '<button class="pc-toggle" onclick="event.stopPropagation();pcToggleMap(\''+esc(id)+`\')">${t("action.disable","停用")}</button>`
+    : '<button class="pc-toggle" onclick="event.stopPropagation();pcToggleMap(\''+esc(id)+`\')">${t("action.enable","启用")}</button>`)+'</div>';
 }
 function pcHint(){
-  return '<div class="pc-hint">同一个有效的「<b>来源类型 + 费用类型</b>」，只能映射到一个付款小类。</div>';
+  return `<div class="pc-hint">${t("term.fin.same_valid","同一个有效的")}「<b>${t("col.source_type","来源类型")} + ${t("col.expense_type","费用类型")}</b>」，${t("term.fin.map_one_subcategory","只能映射到一个付款小类")}。</div>`;
 }
 function pcEmpty(msg){ return '<div class="pc-empty"><span class="pc-empty-icon">📭</span>'+esc(msg)+'</div>'; }
-function pcError(msg){ return '<div class="pc-empty" style="color:#c0392b"><span class="pc-empty-icon">⚠️</span>加载失败：'+esc(msg)+'<br><button class="btn btn-secondary btn-sm" style="margin-top:8px" onclick="renderPaymentCategories()">重新加载</button></div>'; }
+function pcError(msg){ return `<div class="pc-empty" style="color:#c0392b"><span class="pc-empty-icon">⚠️</span>${t("term.fin.load_failed","加载失败")}：`+esc(msg)+`<br><button class="btn btn-secondary btn-sm" style="margin-top:8px" onclick="renderPaymentCategories()">${t("action.reload","重新加载")}</button></div>`; }
 // 本层占位：点击新增 / 编辑 / 启停仅提示，真实提交在 L1B-2-3~2-5 实现
-function pcStub(){ showToast('该层级功能将在后续开发中开放','info'); }
+function pcStub(){ showToast(`${t("term.fin.tier_future","该层级功能将在后续开发中开放")}`,'info'); }
 function pcShowHelp(){
   openModal(t("app.458", "\u4ed8\u6b3e\u7c7b\u76ee\u7ba1\u7406 \u00b7 \u9875\u9762\u8bf4\u660e"),
     '<div style="font-size:13px;line-height:1.9;color:var(--text-secondary)">'+
-    '本页维护三层结构：<br>'+
-    '① <b>付款大类</b>（如货款、到仓费用、关税）<br>'+
-    '② <b>付款小类</b>（如运费、清关费，归属某个大类）<br>'+
-    '③ <b>来源映射</b>（小类绑定「来源类型 + 费用类型」，如 CI + freight）<br><br>'+
-    '规则：同一个有效的「来源类型 + 费用类型」只能映射到一个付款小类。<br>'+
-    '停用项目不会出现在新的付款申请中，但不影响历史记录。</div>');
+    `${t("term.fin.three_tier","本页维护三层结构")}：<br>`+
+    `① <b>${t("col.payment_category","付款大类")}</b>（${t("term.fin.eg_goods_payment","如货款")}、${t("term.fin.to_warehouse_cost","到仓费用")}、${t("term.fin.tariff","关税")}）<br>`+
+    `② <b>${t("col.payment_subcategory","付款小类")}</b>（${t("term.fin.eg_freight","如运费")}、${t("term.fin.clearance_fee","清关费")}，${t("term.fin.belongs_to_category","归属某个大类")}）<br>`+
+    `③ <b>${t("col.source_mapping","来源映射")}</b>（${t("term.fin.subcategory_binding","小类绑定")}「${t("col.source_type","来源类型")} + ${t("col.expense_type","费用类型")}」，${t("term.fin.such_as","如")} CI + freight）<br><br>`+
+    `${t("term.fin.rules","规则")}：${t("term.fin.same_valid","同一个有效的")}「${t("col.source_type","来源类型")} + ${t("col.expense_type","费用类型")}」${t("term.fin.map_one_subcategory","只能映射到一个付款小类")}。<br>`+
+    `${t("term.fin.disabled_not_in_new","停用项目不会出现在新的付款申请中")}，${t("term.fin.no_impact_history","但不影响历史记录")}。</div>`);
 }
 
 // ==================== 付款大类 CRUD（L1B-2-3，仅调 POST /api/payment-categories） ====================
@@ -1346,24 +1346,24 @@ function pcOpenCategoryModal(id){
   const sort = c?Number(c.sort_order||0):0;
   const status = c?c.status:'active';
   const codeHint = isEdit
-    ? '<div class="pc-modal-hint">已被业务数据引用的code不能修改；如被引用，保存时系统会明确提示。</div>'
-    : '<div class="pc-modal-hint">code用于系统关联，建议使用英文小写和下划线，例如 warehouse_arrival。</div>';
+    ? `<div class="pc-modal-hint">${t("term.fin.referenced_by_biz","已被业务数据引用的")}code${t("term.fin.cannot_modify","不能修改")}；${t("term.fin.if_referenced","如被引用")}，${t("term.fin.save_prompt","保存时系统会明确提示")}。</div>`
+    : `<div class="pc-modal-hint">code${t("term.fin.for_system_link","用于系统关联")}，${t("term.fin.use_snake_case2","建议使用英文小写和下划线")}，${t("term.fin.eg","例如")} warehouse_arrival。</div>`;
   const body =
     '<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid">'+
-      '<div class="form-group form-group-full"><label>大类名称 <span class="required">*</span></label>'+
+      `<div class="form-group form-group-full"><label>${t("col.category_name","大类名称")} <span class="required">*</span></label>`+
         '<input type="text" id="pc-cat-name" placeholder="\u4f8b\u5982\uff1a\u8d27\u6b3e\u3001\u5230\u4ed3\u8d39\u7528" value="'+name+'"></div>'+
-      '<div class="form-group form-group-full"><label>大类code <span class="required">*</span></label>'+
-        '<input type="text" id="pc-cat-code" placeholder="例如：warehouse_arrival" value="'+code+'">'+codeHint+'</div>'+
-      '<div class="form-group"><label>排序</label>'+
-        '<input type="number" id="pc-cat-sort" step="1" value="'+sort+'"><div class="pc-modal-hint">数字越小越靠前</div></div>'+
-      '<div class="form-group"><label>状态</label>'+
-        '<select id="pc-cat-status"><option value="active"'+(status==='active'?' selected':'')+'>启用</option>'+
-        '<option value="inactive"'+(status==='inactive'?' selected':'')+'>停用</option></select></div>'+
+      `<div class="form-group form-group-full"><label>${t("col.category","大类")}code <span class="required">*</span></label>`+
+        `<input type="text" id="pc-cat-code" placeholder="${t("term.fin.eg","例如")}：warehouse_arrival" value="`+code+'">'+codeHint+'</div>'+
+      `<div class="form-group"><label>${t("col.sort","排序")}</label>`+
+        '<input type="number" id="pc-cat-sort" step="1" value="'+sort+`"><div class="pc-modal-hint">${t("term.fin.smaller_first","数字越小越靠前")}</div></div>`+
+      `<div class="form-group"><label>${t("col.status","状态")}</label>`+
+        '<select id="pc-cat-status"><option value="active"'+(status==='active'?' selected':'')+`>${t("action.enable","启用")}</option>`+
+        '<option value="inactive"'+(status==='inactive'?' selected':'')+`>${t("action.disable","停用")}</option></select></div>`+
     '</div>'+
     '<div id="pc-cat-modal-error" class="pc-modal-error" style="display:none"></div></div>';
-  const footer='<button class="btn btn-secondary" onclick="closeModal()">取消</button>'+
-    '<button class="btn btn-primary" id="pc-cat-save-btn" onclick="pcSaveCategory()">保存</button>';
-  openModal(isEdit?'编辑付款大类':t("app.470", "\u65b0\u589e\u4ed8\u6b3e\u5927\u7c7b"), body, footer, 'pc-modal');
+  const footer=`<button class="btn btn-secondary" onclick="closeModal()">${t("action.cancel","取消")}</button>`+
+    `<button class="btn btn-primary" id="pc-cat-save-btn" onclick="pcSaveCategory()">${t("action.save","保存")}</button>`;
+  openModal(isEdit?`${t("action.edit_payment_category","编辑付款大类")}`:t("app.470", "\u65b0\u589e\u4ed8\u6b3e\u5927\u7c7b"), body, footer, 'pc-modal');
 }
 
 function pcCatModalError(msg){ const el=document.getElementById('pc-cat-modal-error'); if(el){ el.textContent=msg; el.style.display='block'; } }
@@ -1398,13 +1398,13 @@ async function pcSaveCategory(){
   if(!nameEl||!codeEl||!sortEl||!statusEl) return;
   const name=(nameEl.value||'').trim();
   const code=(codeEl.value||'').trim();           // 只 trim 首尾，绝不改/翻译用户输入
-  if(!name){ pcCatModalError('大类名称不能为空'); return; }
-  if(!code){ pcCatModalError('大类code不能为空'); return; }
+  if(!name){ pcCatModalError(`${t("term.fin.category_name_required","大类名称不能为空")}`); return; }
+  if(!code){ pcCatModalError(`${t("col.category","大类")}code${t("term.fin.cannot_be_empty","不能为空")}`); return; }
   let sortRaw=(sortEl.value||'').trim();
   let sortOrder=0;
-  if(sortRaw!==''){ const n=Number(sortRaw); if(!Number.isInteger(n)){ pcCatModalError('排序必须为整数'); return; } sortOrder=n; }
+  if(sortRaw!==''){ const n=Number(sortRaw); if(!Number.isInteger(n)){ pcCatModalError(`${t("term.fin.sort_must_integer","排序必须为整数")}`); return; } sortOrder=n; }
   const status=statusEl.value;
-  if(!['active','inactive'].includes(status)){ pcCatModalError('状态值无效'); return; }
+  if(!['active','inactive'].includes(status)){ pcCatModalError(`${t("term.fin.invalid_status","状态值无效")}`); return; }
   const body={name,code,sort_order:sortOrder,status};
   if(pcState.editingId) body.id=pcState.editingId;   // 编辑必须携带真实 id
   const btn=document.getElementById('pc-cat-save-btn');
@@ -1418,10 +1418,10 @@ async function pcSaveCategory(){
     closeModal();
     if(!pcState.editingId && res.data && res.data.id) pcState.selCatId=res.data.id; // 新增大类优先选中
     await pcLoadAll();
-    showToast(pcState.editingId?'付款大类已更新':t("app.478", "\u4ed8\u6b3e\u5927\u7c7b\u5df2\u521b\u5efa"),'success');
+    showToast(pcState.editingId?`${t("term.fin.category_updated","付款大类已更新")}`:t("app.478", "\u4ed8\u6b3e\u5927\u7c7b\u5df2\u521b\u5efa"),'success');
   }else{
     let msg=res.error||t("app.429", "\u4fdd\u5b58\u5931\u8d25");
-    if(res.status===403) msg='没有系统配置权限，无法维护付款大类。';
+    if(res.status===403) msg=`${t("term.fin.no_system_config_perm","没有系统配置权限")}，${t("term.fin.cannot_maintain_category","无法维护付款大类")}。`;
     pcCatModalError(msg);                              // 弹窗保持打开，输入不丢失
   }
 }
@@ -1445,10 +1445,10 @@ async function pcToggleCategory(id){
     if(res.status>=200 && res.status<300){
       pcState.selCatId=cat.id;        // 保持该大类选中（停用后仍显示，不自动跳走）
       await pcLoadAll();
-      showToast(willDisable?'已停用该付款大类':t("app.483", "\u5df2\u542f\u7528\u8be5\u4ed8\u6b3e\u5927\u7c7b"),'success');
+      showToast(willDisable?`${t("term.fin.disabled_category","已停用该付款大类")}`:t("app.483", "\u5df2\u542f\u7528\u8be5\u4ed8\u6b3e\u5927\u7c7b"),'success');
     }else{
-      let msg=res.error||'操作失败';
-      if(res.status===403) msg='没有系统配置权限，无法维护付款大类。';
+      let msg=res.error||`${t("term.fin.operation_failed","操作失败")}`;
+      if(res.status===403) msg=`${t("term.fin.no_system_config_perm","没有系统配置权限")}，${t("term.fin.cannot_maintain_category","无法维护付款大类")}。`;
       showToast(msg,'danger');
     }
   }finally{ pcState.toggling=false; }
@@ -1460,7 +1460,7 @@ let peState = { readOnly: false, saving: false, toggling: false, list: [], count
 async function renderPayerEntities() {
   peState.readOnly = !hasPermission('system_config');
   document.getElementById('content-inner').innerHTML =
-    t('html.renderPayerEntities', '<div id="flash-container"></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🏦 付款主体管理</div><div class="table-section-actions">{v1}<button class="btn btn-secondary btn-sm" onclick="renderPayerEntities()">🔄 刷新</button></div></div>{v2}<div id="pe-table"></div></div>', {v1: peState.readOnly ? '' : '<button class="btn btn-primary btn-sm" onclick="peOpenModal()">➕ 新增付款主体</button>', v2: peState.readOnly ? '<div class="pc-readonly-banner">🔒 只读模式：当前账号无「系统配置」权限，仅可查看付款主体，不能新增 / 编辑 / 启停。</div>' : ''});
+    t('html.renderPayerEntities', `<div id="flash-container"></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🏦 ${t("term.fin.payer_entity_mgmt","付款主体管理")}</div><div class="table-section-actions">{v1}<button class="btn btn-secondary btn-sm" onclick="renderPayerEntities()">🔄 ${t("action.refresh","刷新")}</button></div></div>{v2}<div id="pe-table"></div></div>`, {v1: peState.readOnly ? '' : `<button class="btn btn-primary btn-sm" onclick="peOpenModal()">➕ ${t("action.add_payer_entity","新增付款主体")}</button>`, v2: peState.readOnly ? `<div class="pc-readonly-banner">🔒 ${t("term.fin.readonly_mode","只读模式")}：${t("term.fin.current_account_no","当前账号无")}「${t("term.fin.system_config","系统配置")}」${t("term.fin.permission","权限")}，${t("term.fin.view_only_payer","仅可查看付款主体")}，${t("term.fin.cannot_add","不能新增")} / ${t("action.edit","编辑")} / ${t("action.toggle_enable","启停")}。</div>` : ''});
   try {
     const [list, countries, currencies] = await Promise.all([
       api('/api/payer-entities'),
@@ -1473,7 +1473,7 @@ async function renderPayerEntities() {
     peRenderTable(peState.list);
   } catch (e) {
     const t = document.getElementById('pe-table');
-    if (t) t.innerHTML = t('html.renderPayerEntities.2', '<div class="empty-state"><div class="empty-icon">⚠️</div>加载失败：{v1}</div>', {v1: esc(e.message || e)});
+    if (t) t.innerHTML = t('html.renderPayerEntities.2', `<div class="empty-state"><div class="empty-icon">⚠️</div>${t("term.fin.load_failed","加载失败")}：{v1}</div>`, {v1: esc(e.message || e)});
   }
 }
 
@@ -1481,7 +1481,7 @@ function peRenderTable(list) {
   const t = document.getElementById('pe-table');
   if (!t) return;
   if (!list.length) {
-    t.innerHTML = '<div class="empty-state"><div class="empty-icon">📭</div>暂无付款主体数据</div>';
+    t.innerHTML = `<div class="empty-state"><div class="empty-icon">📭</div>${t("term.fin.no_payer_data","暂无付款主体数据")}</div>`;
     return;
   }
   const countryName = id => { const c = peState.countries.find(x => x.id === id); return c ? c.name : (id || '-'); };
@@ -1490,20 +1490,20 @@ function peRenderTable(list) {
     const c = peState.currencies.find(x => x.code === code);
     return esc(code) + (c ? '（' + esc(c.name) + '）' : '');
   };
-  t.innerHTML = t('html.peRenderTable', '<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>主体代码</th><th>法人名称</th><th>所属国家</th><th>默认币种</th><th>是否默认</th><th>状态</th><th>引用数量</th><th>排序</th><th>操作</th></tr></thead><tbody>{v1}</tbody></table></div>', {v1: list.map(e => '<tr>' +
+  t.innerHTML = t('html.peRenderTable', `<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>${t("col.entity_code","主体代码")}</th><th>${t("col.legal_name","法人名称")}</th><th>${t("col.country","所属国家")}</th><th>${t("col.default_currency","默认币种")}</th><th>${t("col.is_default","是否默认")}</th><th>${t("col.status","状态")}</th><th>${t("col.reference_count","引用数量")}</th><th>${t("col.sort","排序")}</th><th>${t("col.actions","操作")}</th></tr></thead><tbody>{v1}</tbody></table></div>`, {v1: list.map(e => '<tr>' +
       '<td><code>'+esc(e.entity_key)+'</code></td>' +
       '<td>'+esc(e.entity_name)+'</td>' +
       '<td>'+esc(countryName(e.country_id))+'</td>' +
       '<td>'+curLabel(e.default_currency)+'</td>' +
       '<td>'+(e.is_default ? t("app.489", "\u2705 \u9ed8\u8ba4") : '—')+'</td>' +
-      '<td><span class="status-badge '+(e.status==='active'?'status-normal':'status-warning')+'">'+esc(e.status==='active'?'启用':'停用')+'</span></td>' +
+      '<td><span class="status-badge '+(e.status==='active'?'status-normal':'status-warning')+'">'+esc(e.status==='active'?`${t("action.enable","启用")}`:`${t("action.disable","停用")}`)+'</span></td>' +
       '<td class="text-right">'+ (e.ref_count || 0) +'</td>' +
       '<td class="text-right">'+ (e.sort_order || 0) +'</td>' +
       '<td class="cell-actions">' +
         (peState.readOnly ? '' :
-          '<button class="action-btn action-edit" title="编辑" onclick="peOpenModal(\''+e.id+'\')">✏️</button>' +
+          `<button class="action-btn action-edit" title="${t("action.edit","编辑")}" onclick="peOpenModal(\'`+e.id+'\')">✏️</button>' +
           (e.status==='active'
-            ? '<button class="action-btn action-delete" title="停用" onclick="peToggleStatus(\''+e.id+'\')">⏸️</button>'
+            ? `<button class="action-btn action-delete" title="${t("action.disable","停用")}" onclick="peToggleStatus(\'`+e.id+'\')">⏸️</button>'
             : '<button class="action-btn action-edit" title="\u542f\u7528" onclick="peToggleStatus(\''+e.id+'\')">▶️</button>')
         ) +
       '</td>' +
@@ -1523,38 +1523,38 @@ function peOpenModal(id) {
   const sort_order = e ? Number(e.sort_order || 0) : 0;
   const refCount = e ? (e.ref_count || 0) : 0;
 
-  const countryOpts = '<option value="">请选择国家</option>' + peState.countries.map(c =>
+  const countryOpts = `<option value="">${t("term.fin.please_select_country","请选择国家")}</option>` + peState.countries.map(c =>
     '<option value="'+esc(c.id)+'"'+(c.id===country_id?' selected':'')+'>'+esc(c.name)+'</option>').join('');
-  const curOpts = '<option value="">— 不指定 —</option>' + peState.currencies.map(c =>
+  const curOpts = `<option value="">— ${t("enum.not_specified","不指定")} —</option>` + peState.currencies.map(c =>
     '<option value="'+esc(c.code)+'"'+(c.code===default_currency?' selected':'')+'>'+esc(c.code)+'（'+esc(c.name)+'）</option>').join('');
 
   const keyDisabled = (isEdit && refCount > 0) ? 'disabled' : '';
   const keyHint = isEdit
     ? (refCount > 0
-        ? '<div class="pc-modal-hint" style="color:#b26a00">该付款主体代码已被业务数据引用，不可修改。</div>'
-        : '<div class="pc-modal-hint">实体代码为稳定标识；当前无引用，允许修改。一旦被引用将锁定。</div>')
-    : '<div class="pc-modal-hint">实体代码为稳定业务标识，建议使用英文小写加下划线，例如 id_company_a。</div>';
+        ? `<div class="pc-modal-hint" style="color:#b26a00">${t("term.fin.payer_code_referenced","该付款主体代码已被业务数据引用")}，${t("term.fin.not_modifiable","不可修改")}。</div>`
+        : `<div class="pc-modal-hint">${t("term.fin.entity_code_stable2","实体代码为稳定标识")}；${t("status.no_reference","当前无引用")}，${t("term.fin.allow_modify","允许修改")}。${t("term.fin.locked_when_referenced","一旦被引用将锁定")}。</div>`)
+    : `<div class="pc-modal-hint">${t("term.fin.entity_code_stable","实体代码为稳定业务标识")}，${t("term.fin.use_snake_case","建议使用英文小写加下划线")}，${t("term.fin.eg","例如")} id_company_a。</div>`;
 
   const body = '<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid">' +
-    '<div class="form-group form-group-full"><label>付款主体代码(entity_key) <span class="required">*</span></label>' +
-      '<input type="text" id="pe-key" placeholder="例如：id_company_a" value="'+esc(entity_key)+'" '+keyDisabled+'>'+keyHint+'</div>' +
-    '<div class="form-group form-group-full"><label>法人名称(entity_name) <span class="required">*</span></label>' +
+    `<div class="form-group form-group-full"><label>${t("col.payer_code","付款主体代码")}(entity_key) <span class="required">*</span></label>` +
+      `<input type="text" id="pe-key" placeholder="${t("term.fin.eg","例如")}：id_company_a" value="`+esc(entity_key)+'" '+keyDisabled+'>'+keyHint+'</div>' +
+    `<div class="form-group form-group-full"><label>${t("col.legal_name","法人名称")}(entity_name) <span class="required">*</span></label>` +
       '<input type="text" id="pe-name" placeholder="\u6cd5\u4eba\u6b63\u5f0f\u540d\u79f0" value="'+esc(entity_name)+'"></div>' +
-    '<div class="form-group"><label>所属国家 <span class="required">*</span></label>' +
+    `<div class="form-group"><label>${t("col.country","所属国家")} <span class="required">*</span></label>` +
       '<select id="pe-country">'+countryOpts+'</select></div>' +
-    '<div class="form-group"><label>默认币种</label>' +
-      '<select id="pe-currency">'+curOpts+'</select><div class="pc-modal-hint">仅作为默认提示，不覆盖实际付款币种。</div></div>' +
-    '<div class="form-group"><label>是否默认</label>' +
-      '<select id="pe-default"><option value="0"'+(is_default?'':' selected')+'>否</option><option value="1"'+(is_default?' selected':'')+'>是（该国默认付款主体）</option></select></div>' +
-    '<div class="form-group"><label>状态</label>' +
-      '<select id="pe-status"><option value="active"'+(status==='active'?' selected':'')+'>启用</option><option value="inactive"'+(status==='inactive'?' selected':'')+'>停用</option></select></div>' +
-    '<div class="form-group"><label>排序</label>' +
-      '<input type="number" id="pe-sort" step="1" value="'+sort_order+'"><div class="pc-modal-hint">数字越小越靠前</div></div>' +
+    `<div class="form-group"><label>${t("col.default_currency","默认币种")}</label>` +
+      '<select id="pe-currency">'+curOpts+`</select><div class="pc-modal-hint">${t("term.fin.only_default_hint","仅作为默认提示")}，${t("term.fin.not_override_currency","不覆盖实际付款币种")}。</div></div>` +
+    `<div class="form-group"><label>${t("col.is_default","是否默认")}</label>` +
+      '<select id="pe-default"><option value="0"'+(is_default?'':' selected')+`>${t("enum.no","否")}</option><option value="1"`+(is_default?' selected':'')+`>${t("enum.yes","是")}（${t("term.fin.country_default_payer","该国默认付款主体")}）</option></select></div>` +
+    `<div class="form-group"><label>${t("col.status","状态")}</label>` +
+      '<select id="pe-status"><option value="active"'+(status==='active'?' selected':'')+`>${t("action.enable","启用")}</option><option value="inactive"`+(status==='inactive'?' selected':'')+`>${t("action.disable","停用")}</option></select></div>` +
+    `<div class="form-group"><label>${t("col.sort","排序")}</label>` +
+      '<input type="number" id="pe-sort" step="1" value="'+sort_order+`"><div class="pc-modal-hint">${t("term.fin.smaller_first","数字越小越靠前")}</div></div>` +
     '</div>' +
     '<div id="pe-modal-error" class="pe-modal-error" style="display:none"></div></div>';
 
-  const footer = '<button class="btn btn-secondary" onclick="closeModal()">取消</button>' +
-    '<button class="btn btn-primary" id="pe-save-btn" onclick="peSave(\''+(id||'')+'\')">保存</button>';
+  const footer = `<button class="btn btn-secondary" onclick="closeModal()">${t("action.cancel","取消")}</button>` +
+    '<button class="btn btn-primary" id="pe-save-btn" onclick="peSave(\''+(id||'')+`\')">${t("action.save","保存")}</button>`;
   openModal(isEdit ? t("app.495", "\u7f16\u8f91\u4ed8\u6b3e\u4e3b\u4f53") : t("app.496", "\u65b0\u589e\u4ed8\u6b3e\u4e3b\u4f53"), body, footer);
 }
 
@@ -1597,13 +1597,13 @@ async function peSave(id) {
   const status = statusEl.value;
   let sort_order = 0;
   const sortRaw = (sortEl.value || '').trim();
-  if (sortRaw !== '') { const n = Number(sortRaw); if (!Number.isInteger(n)) { peModalError('排序必须为整数'); return; } sort_order = n; }
+  if (sortRaw !== '') { const n = Number(sortRaw); if (!Number.isInteger(n)) { peModalError(`${t("term.fin.sort_must_integer","排序必须为整数")}`); return; } sort_order = n; }
 
-  if (!entity_key) { peModalError('付款主体代码(entity_key)不能为空'); return; }
-  if (!entity_name) { peModalError('法人名称(entity_name)不能为空'); return; }
-  if (!country_id) { peModalError('请选择所属国家'); return; }
-  if (!['active', 'inactive'].includes(status)) { peModalError('状态值无效'); return; }
-  if (is_default === 1 && status === 'inactive') { peModalError('停用主体不能设为默认'); return; }
+  if (!entity_key) { peModalError(`${t("col.payer_code","付款主体代码")}(entity_key)${t("term.fin.cannot_be_empty","不能为空")}`); return; }
+  if (!entity_name) { peModalError(`${t("col.legal_name","法人名称")}(entity_name)${t("term.fin.cannot_be_empty","不能为空")}`); return; }
+  if (!country_id) { peModalError(`${t("term.fin.please_select_belong_country","请选择所属国家")}`); return; }
+  if (!['active', 'inactive'].includes(status)) { peModalError(`${t("term.fin.invalid_status","状态值无效")}`); return; }
+  if (is_default === 1 && status === 'inactive') { peModalError(`${t("term.fin.disabled_cannot_default","停用主体不能设为默认")}`); return; }
 
   const body = { entity_key, entity_name, country_id, default_currency, is_default, status, sort_order };
   const btn = document.getElementById('pe-save-btn');
@@ -1621,7 +1621,7 @@ async function peSave(id) {
     showToast(id ? t("app.502", "\u4ed8\u6b3e\u4e3b\u4f53\u5df2\u66f4\u65b0") : t("app.503", "\u4ed8\u6b3e\u4e3b\u4f53\u5df2\u521b\u5efa"), 'success');
   } else {
     let msg = res.error || t("app.429", "\u4fdd\u5b58\u5931\u8d25");
-    if (res.status === 403) msg = '没有系统配置权限，无法维护付款主体。';
+    if (res.status === 403) msg = `${t("term.fin.no_system_config_perm","没有系统配置权限")}，${t("term.fin.cannot_maintain_payer","无法维护付款主体")}。`;
     peModalError(msg); // 弹窗保持打开，输入不丢
   }
 }
@@ -1643,8 +1643,8 @@ async function peToggleStatus(id) {
       await renderPayerEntities();
       showToast(willDisable ? t("app.506", "\u5df2\u505c\u7528\u8be5\u4ed8\u6b3e\u4e3b\u4f53") : t("app.507", "\u5df2\u542f\u7528\u8be5\u4ed8\u6b3e\u4e3b\u4f53"), 'success');
     } else {
-      let msg = res.error || '操作失败';
-      if (res.status === 403) msg = '没有系统配置权限，无法维护付款主体。';
+      let msg = res.error || `${t("term.fin.operation_failed","操作失败")}`;
+      if (res.status === 403) msg = `${t("term.fin.no_system_config_perm","没有系统配置权限")}，${t("term.fin.cannot_maintain_payer","无法维护付款主体")}。`;
       showToast(msg, 'danger');
     }
   } finally { peState.toggling = false; }
@@ -1882,11 +1882,11 @@ async function pcToggleMap(id){
 
 // ==================== 操作日志 ====================
 async function renderOperationLogs(){
-  document.getElementById('content-inner').innerHTML='<div id="flash-container"></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">📝 操作日志</div><div class="table-section-actions"><button class="btn btn-secondary btn-sm" onclick="renderOperationLogs()">🔄 刷新</button></div></div><div id="op-logs-table"></div></div>';
+  document.getElementById('content-inner').innerHTML=`<div id="flash-container"></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">📝 ${t("term.fin.operation_log","操作日志")}</div><div class="table-section-actions"><button class="btn btn-secondary btn-sm" onclick="renderOperationLogs()">🔄 ${t("action.refresh","刷新")}</button></div></div><div id="op-logs-table"></div></div>`;
   try{
     const data=await api('/api/operation-logs?page=&limit=100');
     const rows=Array.isArray(data)?data:(data.rows||data.data||[]);
-    const html=!rows.length?'<div class="empty-state"><div class="empty-icon">📝</div>暂无操作日志</div>':'<div class="table-container" style="box-shadow:none;border-radius:0;max-height:600px;overflow:auto"><table class="data-table"><thead><tr><th>时间</th><th>操作人</th><th>页面</th><th>操作类型</th><th>影响数量</th><th>原因</th></tr></thead><tbody>'+rows.map(r=>'<tr><td class="cell-date">'+esc((r.created_at||'').replace('T',' ').slice(0,19))+'</td><td>'+esc(r.operator_name||'-')+'</td><td>'+esc(r.page||'-')+'</td><td>'+esc(r.operation_type||'-')+'</td><td class="text-right">'+(r.affected_count||0)+'</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis" title="'+esc(r.reason||'')+'">'+esc(r.reason||'-')+'</td></tr>').join('')+'</tbody></table></div>';
+    const html=!rows.length?`<div class="empty-state"><div class="empty-icon">📝</div>${t("term.fin.no_operation_log","暂无操作日志")}</div>`:`<div class="table-container" style="box-shadow:none;border-radius:0;max-height:600px;overflow:auto"><table class="data-table"><thead><tr><th>${t("col.time","时间")}</th><th>${t("col.operator","操作人")}</th><th>${t("term.fin.page","页面")}</th><th>${t("col.operation_type","操作类型")}</th><th>${t("col.affected_count","影响数量")}</th><th>${t("col.reason","原因")}</th></tr></thead><tbody>`+rows.map(r=>'<tr><td class="cell-date">'+esc((r.created_at||'').replace('T',' ').slice(0,19))+'</td><td>'+esc(r.operator_name||'-')+'</td><td>'+esc(r.page||'-')+'</td><td>'+esc(r.operation_type||'-')+'</td><td class="text-right">'+(r.affected_count||0)+'</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis" title="'+esc(r.reason||'')+'">'+esc(r.reason||'-')+'</td></tr>').join('')+'</tbody></table></div>';
     document.getElementById('op-logs-table').innerHTML=html;
   }catch(e){showFlash(e.message,'danger')}
 }
@@ -7241,15 +7241,15 @@ async function savePaymentRounding(id){
 async function openPaymentExpenseCountry(id){
   try{
     const results=await Promise.all([api('/api/payment-requests/'+id),api('/api/countries')]),p=results[0],countries=results[1].filter(c=>c.status==='active');
-    if(p.payment_category==='goods'){showToast('货款付款申请不需要费用归属国家','warning');return}
-    if(p.expense_country){showToast(t('toast.expenseCountrySnapshot','费用归属国家已快照为 {country}',{country:p.expense_country}),'warning');return}
-    openModal(t('modal.title.openPaymentExpenseCountry', '补录费用归属国家 - {v1}', {v1: esc(p.request_no)}),t('modal.body.openPaymentExpenseCountry', '<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid"><div class="form-group form-group-full"><label>费用归属国家 <span class="required">*</span></label><select id="pay-expense-country"><option value="">请选择</option>{v1}</select></div></div><div style="font-size:12px;color:#999">保存后作为付款申请快照，不会随付款主体或来源主数据变化；如需更正需另行受控处理。</div></div>', {v1: countries.map(c=>'<option value="'+esc(c.name)+'">'+esc(c.name)+'（'+esc(c.code)+'）</option>').join('')}),t('modal.footer.openPaymentExpenseCountry', `<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" id="pay-country-save" onclick="savePaymentExpenseCountry('{v1}')">保存</button>`, {v1: id}));
+    if(p.payment_category==='goods'){showToast(`${t("term.fin.goods_no_expense_country","货款付款申请不需要费用归属国家")}`,'warning');return}
+    if(p.expense_country){showToast(t('toast.expenseCountrySnapshot',`${t("term.fin.expense_country_snapshotted","费用归属国家已快照为")} {country}`,{country:p.expense_country}),'warning');return}
+    openModal(t('modal.title.openPaymentExpenseCountry', `${t("term.fin.supplement_expense_country","补录费用归属国家")} - {v1}`, {v1: esc(p.request_no)}),t('modal.body.openPaymentExpenseCountry', `<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid"><div class="form-group form-group-full"><label>${t("term.fin.expense_country","费用归属国家")} <span class="required">*</span></label><select id="pay-expense-country"><option value="">${t("term.fin.please_select","请选择")}</option>{v1}</select></div></div><div style="font-size:12px;color:#999">${t("term.fin.save_as_snapshot","保存后作为付款申请快照")}，${t("term.fin.not_change_with_master","不会随付款主体或来源主数据变化")}；${t("term.fin.correction_controlled","如需更正需另行受控处理")}。</div></div>`, {v1: countries.map(c=>'<option value="'+esc(c.name)+'">'+esc(c.name)+'（'+esc(c.code)+'）</option>').join('')}),t('modal.footer.openPaymentExpenseCountry', `<button class="btn btn-secondary" onclick="closeModal()">${t("action.cancel","取消")}</button><button class="btn btn-primary" id="pay-country-save" onclick="savePaymentExpenseCountry('{v1}')">${t("action.save","保存")}</button>`, {v1: id}));
   }catch(e){showToast(e.message,'danger')}
 }
 async function savePaymentExpenseCountry(id){
   const btn=document.getElementById('pay-country-save');if(!btn||btn.disabled)return;const country=document.getElementById('pay-expense-country').value;
-  if(!country){showToast('请选择费用归属国家','warning');return}
-  btn.disabled=true;btn.textContent=t("app.476", "\u4fdd\u5b58\u4e2d\u2026");try{await api('/api/payment-requests/'+id+'/expense-country','PUT',{expense_country:country});showToast('费用归属国家已保存','success');closeModal();loadPay()}catch(e){showToast(e.message,'danger');if(document.getElementById('pay-country-save')){btn.disabled=false;btn.textContent=t("common.save", "\u4fdd\u5b58")}}
+  if(!country){showToast(`${t("term.fin.please_select_expense_country","请选择费用归属国家")}`,'warning');return}
+  btn.disabled=true;btn.textContent=t("app.476", "\u4fdd\u5b58\u4e2d\u2026");try{await api('/api/payment-requests/'+id+'/expense-country','PUT',{expense_country:country});showToast(`${t("term.fin.expense_country_saved","费用归属国家已保存")}`,'success');closeModal();loadPay()}catch(e){showToast(e.message,'danger');if(document.getElementById('pay-country-save')){btn.disabled=false;btn.textContent=t("common.save", "\u4fdd\u5b58")}}
 }
 async function editDeduction(id){
   try{
