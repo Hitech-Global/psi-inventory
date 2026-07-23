@@ -10,8 +10,9 @@ function b64EncodeUnicode(s){return btoa(unescape(encodeURIComponent(String(s||'
 function b64DecodeUnicode(s){return decodeURIComponent(escape(atob(String(s||''))))}
 function showToast(msg,type='info'){const c=document.getElementById('toast-container');const t=document.createElement('div');t.className='toast toast-'+type;t.innerHTML='<div>'+esc(msg)+'</div>';c.appendChild(t);setTimeout(()=>{t.style.opacity='0';setTimeout(()=>t.remove(),300)},3500)}
 function showFlash(msg,type='info'){const c=document.getElementById('flash-container');if(!c)return;c.innerHTML='<div class="flash flash-'+type+' show">'+esc(msg)+'</div>';setTimeout(()=>{if(c)c.innerHTML=''},4000)}
-function openModal(title,body,footer='',size=''){const mc=document.getElementById('modal-content');mc.className='modal'+(size?' '+size:'');mc.innerHTML='<div class="modal-header"><span class="modal-title">'+esc(title)+'</span><button class="modal-close" onclick="closeModal()">&times;</button></div><div class="modal-body">'+body+'</div>'+(footer?'<div class="modal-footer">'+footer+'</div>':'');document.getElementById('modal-overlay').classList.add('show')}
+function openModal(title,body,footer='',size=''){const mc=document.getElementById('modal-content');mc.className='modal'+(size?' '+size:'');if(size&&size.indexOf('modal-pi')!==-1){const sb=document.querySelector('.sidebar');if(sb&&sb.classList.contains('collapsed')){mc.classList.add('pi-sidebar-collapsed')}else{mc.classList.add('pi-sidebar-expanded')}}mc.innerHTML='<div class="modal-header"><span class="modal-title">'+esc(title)+'</span><button class="modal-close" onclick="closeModal()">&times;</button></div><div class="modal-body">'+body+'</div>'+(footer?'<div class="modal-footer">'+footer+'</div>':'');document.getElementById('modal-overlay').classList.add('show')}
 function closeModal(){document.getElementById('modal-overlay').classList.remove('show')}
+function rowClickView(e,fn){var t=e.target;if(t.closest('button,a,input,select,textarea,label,[contenteditable="true"],[role="button"],[data-row-click-ignore],.link-text,.action-btn,.checkbox,[onclick]:not(tr)'))return;var args=Array.prototype.slice.call(arguments,2);if(typeof window[fn]==='function')window[fn].apply(null,args);}
 // 语言切换刷新守卫：modal 打开时不刷新当前页（避免丢失 modal 内未提交内容）
 function isModalOpen(){const ov=document.getElementById('modal-overlay');return !!(ov&&ov.classList.contains('show'));}
 // 最小未保存标志：仅 Brand Settings 的 inline 编辑使用，不构建全局 pageDirty 系统
@@ -58,26 +59,26 @@ function showBatchResultModal(result, page){
   let errors = [];
   try { errors = typeof result.errors === 'string' ? JSON.parse(result.errors) : (result.errors||[]); } catch(e) { errors = []; }
 
-  const html = '<div class="modal-header"><h3>📊 批量操作结果报告</h3><button class="modal-close" onclick="closeModal()">×</button></div>'
+  const html = '<div class="modal-header"><h3>'+t("modal.batch_result.title", "📊 批量操作结果报告")+'</h3><button class="modal-close" onclick="closeModal()">×</button></div>'
     +'<div class="modal-body">'
     +'<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;margin-bottom:16px">'
-    +'<div style="text-align:center;padding:12px;background:#e8f5e9;border-radius:8px"><div style="font-size:24px;font-weight:700;color:#2e7d32">'+(result.success||0)+'</div><div style="font-size:12px;color:#666">成功</div></div>'
-    +'<div style="text-align:center;padding:12px;background:#ffebee;border-radius:8px"><div style="font-size:24px;font-weight:700;color:#c62828">'+(result.failed||0)+'</div><div style="font-size:12px;color:#666">失败</div></div>'
-    +'<div style="text-align:center;padding:12px;background:#fff3cd;border-radius:8px"><div style="font-size:24px;font-weight:700;color:#f57f17">'+(result.skipped||0)+'</div><div style="font-size:12px;color:#666">跳过</div></div>'
-    +'<div style="text-align:center;padding:12px;background:var(--bg-hover,#f5f5f5);border-radius:8px"><div style="font-size:24px;font-weight:700">'+successRate+'%</div><div style="font-size:12px;color:#666">成功率</div></div>'
+    +'<div style="text-align:center;padding:12px;background:#e8f5e9;border-radius:8px"><div style="font-size:24px;font-weight:700;color:#2e7d32">'+(result.success||0)+'</div><div style="font-size:12px;color:#666">'+t("modal.batch.success", "成功")+'</div></div>'
+    +'<div style="text-align:center;padding:12px;background:#ffebee;border-radius:8px"><div style="font-size:24px;font-weight:700;color:#c62828">'+(result.failed||0)+'</div><div style="font-size:12px;color:#666">'+t("modal.batch.fail", "失败")+'</div></div>'
+    +'<div style="text-align:center;padding:12px;background:#fff3cd;border-radius:8px"><div style="font-size:24px;font-weight:700;color:#f57f17">'+(result.skipped||0)+'</div><div style="font-size:12px;color:#666">'+t("modal.batch.skip", "跳过")+'</div></div>'
+    +'<div style="text-align:center;padding:12px;background:var(--bg-hover,#f5f5f5);border-radius:8px"><div style="font-size:24px;font-weight:700">'+successRate+'%</div><div style="font-size:12px;color:#666">'+t("modal.batch.rate", "成功率")+'</div></div>'
     +'</div>'
-    +(result.recalc_count !== undefined ? '<div style="margin-bottom:12px;padding:8px 12px;background:#e3f2fd;border-radius:6px;font-size:13px;color:#1565c0">🔄 已触发 '+result.recalc_count+' 条SKU库存重算（周转月/库存状态/预测）</div>' : '')
+    +(result.recalc_count !== undefined ? t('gen.L69.1','<div style="margin-bottom:12px;padding:8px 12px;background:#e3f2fd;border-radius:6px;font-size:13px;color:#1565c0">🔄 已触发 ')+result.recalc_count+t('gen.L69.2',' 条SKU库存重算（周转月/库存状态/预测）</div>') : '')
     +(errors.length > 0 ?
-      '<div style="margin-bottom:12px"><div style="font-weight:600;margin-bottom:8px">失败明细：</div>'
+      t('gen.L71.1','<div style="margin-bottom:12px"><div style="font-weight:600;margin-bottom:8px">失败明细：</div>')
       +'<div style="max-height:200px;overflow-y:auto;border:1px solid var(--border,#e0e0e0);border-radius:6px">'
       +errors.map(e=>'<div style="padding:6px 12px;border-bottom:1px solid var(--border,#eee);font-size:13px"><span style="color:#c62828">✗</span> '+(e.sku_code||e.id||'')+' — '+esc(e.reason||'')+'</div>').join('')
       +'</div></div>'
-      +'<button class="btn btn-sm btn-secondary" onclick="downloadBatchErrors()">📥 下载错误报告</button>'
-    : '<div style="text-align:center;padding:20px;color:#2e7d32">✅ 全部执行成功</div>')
+      +t('gen.L75.1','<button class="btn btn-sm btn-secondary" onclick="downloadBatchErrors()">📥 下载错误报告</button>')
+    : t('gen.L76.1','<div style="text-align:center;padding:20px;color:#2e7d32">✅ 全部执行成功</div>'))
     +'</div>'
     +'<div class="modal-footer">'
-    +'<button class="btn btn-secondary" onclick="closeModal()">关闭</button>'
-    +'<button class="btn btn-primary" onclick="closeModal();showPage(\'batch-tasks\')">查看任务中心</button>'
+    +'<button class="btn btn-secondary" onclick="closeModal()">'+t("action.close", "关闭")+'</button>'
+    +'<button class="btn btn-primary" onclick="closeModal();showPage(\'batch-tasks\')">'+t("modal.batch.task_center", "查看任务中心")+'</button>'
     +'</div>';
 
   // 存储错误数据供下载
@@ -88,13 +89,13 @@ function showBatchResultModal(result, page){
 function downloadBatchErrors(){
   const errors = window._lastBatchErrors || [];
   if(!errors.length) return;
-  if(typeof XLSX === 'undefined'){ showFlash('XLSX库未加载','danger'); return; }
-  const headers = ['ID','SKU','失败原因'];
+  if(typeof XLSX === 'undefined'){ showFlash(t("toast.xlsx_missing", "XLSX库未加载"),'danger'); return; }
+  const headers = ['ID','SKU',t("html.batch.err_reason", "失败原因")];
   const rows = errors.map(e=>[e.id||'', e.sku_code||'', e.reason||'']);
   const ws = XLSX.utils.aoa_to_sheet([headers].concat(rows));
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, t("app.013", "\u9519\u8bef\u62a5\u544a"));
-  XLSX.writeFile(wb, '批量操作错误报告_'+new Date().toISOString().slice(0,10)+'.xlsx');
+  XLSX.writeFile(wb, t('gen.L97.1','批量操作错误报告_')+new Date().toISOString().slice(0,10)+'.xlsx');
 }
 function hasPermission(p){if(!currentUser||!currentUser.permissions)return false;return currentUser.permissions.includes('*')||currentUser.permissions.includes(p)}
 function hasAny(perms){if(!Array.isArray(perms))perms=[perms];return perms.some(p=>hasPermission(p))}
@@ -116,7 +117,7 @@ function showFatalNotice(msg){
 
 // --- API ---
 async function api(url,method='GET',body=null){
-  const h={'Content-Type':'application/json'};
+  const h={'Content-Type':'application/json','Accept-Language':(typeof getLang==='function'?getLang():'zh')};
   const o={method,headers:h,credentials:'same-origin'};if(body)o.body=JSON.stringify(body);
   let r;
   try{
@@ -124,21 +125,21 @@ async function api(url,method='GET',body=null){
   }catch(err){
     // fetch 网络层失败：服务未启动 / 地址不可达 / 以 file:// 打开 —— 正是 "Failed to fetch" 的根因
     const tip=isFileProtocol()
-      ? '⚠️ 检测到您直接打开了 HTML 文件（file://）。本系统必须通过后端服务访问，请：<br>① 在终端运行 <b>node server.js</b><br>② 浏览器打开 <b>http://localhost:3001</b>（默认账号 admin / admin）<br>不要直接双击 index.html。'
-      : '⚠️ 无法连接服务器（Failed to fetch）。请确认已运行 <b>node server.js</b>，并通过 <b>http://localhost:3001</b> 访问本系统（不要使用静态文件服务器或 file:// 打开）。';
+      ? t('err.file_protocol','⚠️ 检测到您直接打开了 HTML 文件（file://）。本系统必须通过后端服务访问，请：<br>① 在终端运行 <b>node server.js</b><br>② 浏览器打开 <b>http://localhost:3001</b>（默认账号 admin / admin）<br>不要直接双击 index.html。')
+      : t('err.fetch_failed','⚠️ 无法连接服务器（Failed to fetch）。请确认已运行 <b>node server.js</b>，并通过 <b>http://localhost:3001</b> 访问本系统（不要使用静态文件服务器或 file:// 打开）。');
     throw new Error(tip);
   }
-  if(r.status===401){doLogout();throw new Error('未登录，请重新登录')}
-  if(r.status===403){showToast('没有操作权限','danger');throw new Error('没有该操作的权限')}
+  if(r.status===401){doLogout();throw new Error(t('err.not_logged_in','未登录，请重新登录'))}
+  if(r.status===403){showToast(t('err.no_permission_toast','没有操作权限'),'danger');throw new Error(t('err.no_permission','没有该操作的权限'))}
   let d;
-  try{ d=await r.json(); }catch(e){ throw new Error('服务器返回了非 JSON 响应，可能后端服务未正常启动。请检查终端中 <b>node server.js</b> 是否在运行。'); }
+  try{ d=await r.json(); }catch(e){ throw new Error(t('err.non_json','服务器返回了非 JSON 响应，可能后端服务未正常启动。请检查终端中 <b>node server.js</b> 是否在运行。')); }
   if(d&&d.error)throw new Error(d.error);
   return d;
 }
 
 // --- 登录（飞书 OAuth 主入口 + break-glass 应急）---
 // 飞书登录：直接跳转后端授权端点（生产环境由后端 302 到飞书；test 环境由测试脚本驱动）
-function doFeishuLogin(){ window.location.href='/api/auth/feishu/login'; }
+function doFeishuLogin(){ window.location.href='/api/auth/feishu/login?lang='+encodeURIComponent(typeof getLang==='function'?getLang():'zh'); }
 function toggleBreakGlass(){ const f=document.getElementById('bg-form'); if(f) f.style.display = (f.style.display==='none'||!f.style.display)?'block':'none'; }
 async function doBreakGlassLogin(){
   const u=document.getElementById('bg-username');
@@ -300,7 +301,7 @@ function showPage(page){
   }
   document.querySelectorAll('.sidebar-item').forEach(el=>el.classList.toggle('active',el.dataset.page===page));
   document.querySelectorAll('.topnav-item').forEach((el,i)=>{if(NAV_MODULES[i]&&NAV_MODULES[i].id===currentModule)el.classList.add('active');else el.classList.remove('active')});
-  const titles={dashboard:t("nav.dashboard", "\u9996\u9875\u770b\u677f"),skus:t("nav.skus", "SKU\u4e3b\u6570\u636e"),inventory:'库存总表',outbound:'销售数据',replenishment:'订单预测',stagnant:t("nav.stagnant", "\u5446\u6ede\u5206\u6790"),check:t("nav.stock_check", "\u5e93\u5b58\u76d8\u70b9"),po:t("nav.po", "PO\u7ba1\u7406"),pi:t("nav.pi", "PI\u7ba1\u7406"),ci:t("nav.ci", "CI/PL\u7ba1\u7406"),logistics:t("nav.logistics", "\u7269\u6d41\u7ba1\u7406"),inbound:t("nav.inbound", "\u5165\u5e93\u7ba1\u7406"),cost:t("nav.cost", "\u6210\u672c\u7ba1\u7406"),payment:t("nav.payment", "\u4ed8\u6b3e\u7ba1\u7406"),'payable-cockpit':'应付驾驶舱',forwarder:t("nav.forwarder_analysis", "\u8d27\u4ee3\u5206\u6790"),countries:t("nav.countries", "\u56fd\u5bb6\u7ba1\u7406"),warehouses:t("nav.warehouses", "\u4ed3\u5e93\u7ba1\u7406"),suppliers:t("nav.suppliers", "\u4f9b\u5e94\u5546\u7ba1\u7406"),'freight-forwarders':t("nav.freight_forwarders", "\u8d27\u4ee3\u7ba1\u7406"),currencies:t("nav.currencies", "\u5e01\u79cd\u8bbe\u7f6e"),config:t("nav.config", "\u7cfb\u7edf\u53c2\u6570"),'payment-terms':t("nav.payment_terms", "\u4ed8\u6b3e\u6761\u4ef6"),'approval-flows':t("nav.approval_flows", "\u5ba1\u6279\u6d41\u7ba1\u7406"),'approval-center':t("nav.approval_center", "\u5ba1\u6279\u4e2d\u5fc3"),'expense-types':t("nav.expense_types", "\u8d39\u7528\u7c7b\u578b"),'allocation-rules':t("nav.allocation_rules", "\u5206\u644a\u89c4\u5219"),users:t("nav.users", "\u7528\u6237\u7ba1\u7406"),roles:'角色权限','batch-tasks':t("nav.batch_tasks", "\u6279\u91cf\u4efb\u52a1\u4e2d\u5fc3"),'brand-settings':t("nav.brand_settings", "\u54c1\u724c\u8bbe\u7f6e"),'operation-logs':t("nav.operation_logs", "\u64cd\u4f5c\u65e5\u5fd7"),'payment-categories':t("nav.payment_categories", "\u4ed8\u6b3e\u7c7b\u76ee\u7ba1\u7406"),'payer-entities':t("nav.payer_entities", "\u4ed8\u6b3e\u4e3b\u4f53")};
+  const titles={dashboard:t("nav.dashboard", "\u9996\u9875\u770b\u677f"),skus:t("nav.skus", "SKU\u4e3b\u6570\u636e"),inventory:t("page.inventory_total","库存总表"),outbound:t("nav.outbound","销售数据"),replenishment:t("nav.replenishment","订单预测"),stagnant:t("nav.stagnant", "\u5446\u6ede\u5206\u6790"),check:t("nav.stock_check", "\u5e93\u5b58\u76d8\u70b9"),po:t("nav.po", "PO\u7ba1\u7406"),pi:t("nav.pi", "PI\u7ba1\u7406"),ci:t("nav.ci", "CI/PL\u7ba1\u7406"),logistics:t("nav.logistics", "\u7269\u6d41\u7ba1\u7406"),inbound:t("nav.inbound", "\u5165\u5e93\u7ba1\u7406"),cost:t("nav.cost", "\u6210\u672c\u7ba1\u7406"),payment:t("nav.payment", "\u4ed8\u6b3e\u7ba1\u7406"),'payable-cockpit':t("nav.payable_cockpit","应付驾驶舱"),forwarder:t("nav.forwarder_analysis", "\u8d27\u4ee3\u5206\u6790"),countries:t("nav.countries", "\u56fd\u5bb6\u7ba1\u7406"),warehouses:t("nav.warehouses", "\u4ed3\u5e93\u7ba1\u7406"),suppliers:t("nav.suppliers", "\u4f9b\u5e94\u5546\u7ba1\u7406"),'freight-forwarders':t("nav.freight_forwarders", "\u8d27\u4ee3\u7ba1\u7406"),currencies:t("nav.currencies", "\u5e01\u79cd\u8bbe\u7f6e"),config:t("nav.config", "\u7cfb\u7edf\u53c2\u6570"),'payment-terms':t("nav.payment_terms", "\u4ed8\u6b3e\u6761\u4ef6"),'approval-flows':t("nav.approval_flows", "\u5ba1\u6279\u6d41\u7ba1\u7406"),'approval-center':t("nav.approval_center", "\u5ba1\u6279\u4e2d\u5fc3"),'expense-types':t("nav.expense_types", "\u8d39\u7528\u7c7b\u578b"),'allocation-rules':t("nav.allocation_rules", "\u5206\u644a\u89c4\u5219"),users:t("nav.users", "\u7528\u6237\u7ba1\u7406"),roles:t("nav.roles","角色权限"),'batch-tasks':t("nav.batch_tasks", "\u6279\u91cf\u4efb\u52a1\u4e2d\u5fc3"),'brand-settings':t("nav.brand_settings", "\u54c1\u724c\u8bbe\u7f6e"),'operation-logs':t("nav.operation_logs", "\u64cd\u4f5c\u65e5\u5fd7"),'payment-categories':t("nav.payment_categories", "\u4ed8\u6b3e\u7c7b\u76ee\u7ba1\u7406"),'payer-entities':t("nav.payer_entities", "\u4ed8\u6b3e\u4e3b\u4f53")};
   document.getElementById('content-inner').innerHTML='<div id="flash-container"></div>';
   const R={dashboard:renderDashboard,skus:renderSKUs,inventory:renderInventory,outbound:renderOutbound,replenishment:renderReplenishment,stagnant:renderStagnant,check:renderCheck,po:renderPO,pi:renderPI,ci:renderCI,logistics:renderLogistics,inbound:renderInbound,cost:renderCost,payment:renderPayment,'payable-cockpit':renderPayableCockpit,forwarder:renderForwarderAnalysis,countries:renderCountries,warehouses:renderWarehouses,suppliers:renderSuppliers,'freight-forwarders':renderFreightForwarders,currencies:renderCurrencies,config:renderConfig,'payment-terms':renderPaymentTerms,'approval-flows':renderApprovalFlows,'approval-center':renderApprovalCenter,'expense-types':renderExpenseTypes,'allocation-rules':renderAllocationRules,users:renderUsers,roles:renderRoles,'batch-tasks':renderBatchTasks,'brand-settings':renderBrandSettings,'operation-logs':renderOperationLogs,'payment-categories':renderPaymentCategories,'payer-entities':renderPayerEntities};
   if(R[page])R[page]();
@@ -308,7 +309,7 @@ function showPage(page){
 
 // ==================== 首页看板 ====================
 async function renderDashboard(){
-  document.getElementById('content-inner').innerHTML='<div id="flash-container"></div><div class="stats-grid" id="dash-stats"><div class="empty-state"><div class="empty-icon">⏳</div>加载中...</div></div><div class="chart-container"><h3 style="margin-bottom:12px">运费占比趋势</h3><div class="chart-canvas-wrapper"><canvas id="chart-freight"></canvas></div></div><div class="stats-grid" id="dash-pending"></div>';
+  document.getElementById('content-inner').innerHTML='<div id="flash-container"></div><div class="stats-grid" id="dash-stats"><div class="empty-state"><div class="empty-icon">⏳</div>'+t("html.dash.loading", "加载中...")+'</div></div><div class="chart-container"><h3 style="margin-bottom:12px">'+t("html.dash.freight_trend", "运费占比趋势")+'</h3><div class="chart-canvas-wrapper"><canvas id="chart-freight"></canvas></div></div><div class="stats-grid" id="dash-pending"></div>';
   try{
     const d=await api('/api/dashboard');
     // 竞态防护：页面已切走则静默结束，不向已销毁 DOM 写入（避免跨页面 null 错误）
@@ -365,7 +366,7 @@ async function loadSimple(apiUrl,fields,mySeq){
     const html=!data.length?'<div class="empty-state"><div class="empty-icon">📭</div>'+t('common.no_data','暂无数据')+'</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr>'+df.map(f=>'<th>'+f.label+'</th>').join('')+'<th>'+t('common.actions','操作')+'</th></tr></thead><tbody>'+data.map(item=>'<tr>'+df.map(f=>{
       if (f.multi) {
         const vals = String(item[f.name]||'').split(',').map(s=>s.trim()).filter(Boolean);
-        return '<td>'+(vals.length ? vals.map(v=>'<span class="badge badge-sm" style="margin:2px;background:#e3f2fd;color:#1565c0">'+esc(v)+'</span>').join('') : '<span style="color:#999">全部品牌</span>')+'</td>';
+        return '<td>'+(vals.length ? vals.map(v=>'<span class="badge badge-sm" style="margin:2px;background:#e3f2fd;color:#1565c0">'+esc(v)+'</span>').join('') : '<span style="color:#999">'+t('term.all_brands','全部品牌')+'</span>')+'</td>';
       }
       return '<td>'+(f.bool?(item[f.name]?'✅':'❌'):esc(item[f.name]))+'</td>';
     }).join('')+'<td class="cell-actions">'+(hasPermission('system_config')?'<button class="action-btn action-edit" onclick=\'editSimple("'+apiUrl+'","'+b64EncodeUnicode(JSON.stringify(fields))+'","'+item.id+'")\'>✏️</button><button class="action-btn action-delete" onclick="deleteSimple(\''+apiUrl+'\',\''+item.id+'\')">🗑️</button>':'')+'</td></tr>').join('')+'</tbody></table></div>';
@@ -385,12 +386,12 @@ function editSimple(apiUrl,fieldsStr,id){
     if(f.area) inp='<textarea name="'+f.name+'" rows="2"></textarea>';
     else if(f.sel) inp='<select name="'+f.name+'">'+(f.opts||[]).map(o=>{const v=typeof o==='object'?o.v:o;const l=typeof o==='object'?o.l:o;return '<option value="'+v+'">'+l+'</option>'}).join('')+'</select>';
     else if(f.num) inp='<input type="number" step="0.01" name="'+f.name+'">';
-    else if(f.bool) inp='<select name="'+f.name+'"><option value="1">是</option><option value="0">否</option></select>';
+    else if(f.bool) inp='<select name="'+f.name+'"><option value="1">'+t('term.yes','是')+'</option><option value="0">'+t('term.no','否')+'</option></select>';
     else if(f.multi) {
       // 渲染多选框：checkbox 列表 + 隐藏 input 存逗号分隔值
       const opts = f.opts || [];
       inp='<div class="multi-select-box" data-name="'+f.name+'" style="border:1px solid var(--border);border-radius:6px;padding:8px;max-height:160px;overflow-y:auto;background:#fafbfc">' +
-        '<div style="margin-bottom:6px;display:flex;gap:8px"><button type="button" class="btn btn-xs btn-secondary" onclick="multiSelectAll(this,\''+f.name+'\')">全选</button><button type="button" class="btn btn-xs btn-secondary" onclick="multiSelectNone(this,\''+f.name+'\')">清空</button><span style="color:#999;font-size:12px;align-self:center">不选 = 适用于所有品牌</span></div>' +
+        '<div style="margin-bottom:6px;display:flex;gap:8px"><button type="button" class="btn btn-xs btn-secondary" onclick="multiSelectAll(this,\''+f.name+'\')">'+t('action.select_all','全选')+'</button><button type="button" class="btn btn-xs btn-secondary" onclick="multiSelectNone(this,\''+f.name+'\')">'+t('action.clear','清空')+'</button><span style="color:#999;font-size:12px;align-self:center">'+t('term.multi_select_hint','不选 = 适用于所有品牌')+'</span></div>' +
         opts.map(o => {
           const v = typeof o==='object'?o.v:o; const l = typeof o==='object'?o.l:o;
           return '<label style="display:inline-flex;align-items:center;margin:3px 10px 3px 0;cursor:pointer"><input type="checkbox" class="multi-ck" data-name="'+f.name+'" value="'+v+'" style="margin-right:4px"> '+l+'</label>';
@@ -465,7 +466,7 @@ async function saveSimple(apiUrl,id){
     if (el.name) data[el.name] = el.value;
   });
   if(id)data.id=id;
-  try{await api(apiUrl,'POST',data);showToast('保存成功','success');closeModal();loadSimple(apiUrl,Object.keys(data).map(k=>({name:k,label:k})))}catch(e){showToast(e.message,'danger')}
+  try{await api(apiUrl,'POST',data);showToast(t('gen.L468.1','保存成功'),'success');closeModal();loadSimple(apiUrl,Object.keys(data).map(k=>({name:k,label:k})))}catch(e){showToast(e.message,'danger')}
 }
 async function deleteSimple(apiUrl,id){if(!confirm(t('common.confirm_delete','确认删除？')))return;try{await api(apiUrl+'/'+id,'DELETE');showToast(t('common.deleted','已删除'),'success');location.reload()}catch(e){showToast(e.message,'danger')}}
 
@@ -476,12 +477,12 @@ async function renderBatchTasks(){
   document.getElementById('content-inner').innerHTML=
     '<div id="flash-container"></div>'
     +'<div class="filter-bar"><div class="filter-form">'
-    +'<div class="filter-group"><label>页面</label><select id="bt-page" onchange="loadBatchTasks()"><option value="">全部</option><option value="inventory">库存总表</option><option value="outbound">销售数据</option><option value="skus">SKU主数据</option></select></div>'
-    +'<div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadBatchTasks()">刷新</button></div>'
+    +t('gen.L479.1','<div class="filter-group"><label>页面</label><select id="bt-page" onchange="loadBatchTasks()"><option value="">全部</option><option value="inventory">库存总表</option><option value="outbound">销售数据</option><option value="skus">SKU主数据</option></select></div>')
+    +t('gen.L480.1','<div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadBatchTasks()">刷新</button></div>')
     +'</div></div></div>'
     +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">'
-    +'<div class="table-section"><div class="table-section-title"><div class="table-section-title-left">📋 批量任务</div></div><div id="bt-tasks"></div></div>'
-    +'<div class="table-section"><div class="table-section-title"><div class="table-section-title-left">📜 操作日志</div></div><div id="bt-logs"></div></div>'
+    +t('gen.L483.1','<div class="table-section"><div class="table-section-title"><div class="table-section-title-left">📋 批量任务</div></div><div id="bt-tasks"></div></div>')
+    +t('gen.L484.1','<div class="table-section"><div class="table-section-title"><div class="table-section-title-left">📜 操作日志</div></div><div id="bt-logs"></div></div>')
     +'</div>';
   loadBatchTasks();
 }
@@ -493,8 +494,8 @@ async function loadBatchTasks(){
     const logUrl='/api/operation-logs'+(page?('?page='+page):'');
     const [tasks, logs] = await Promise.all([api(taskUrl), api(logUrl)]);
 
-    document.getElementById('bt-tasks').innerHTML = !tasks.length ? '<div class="empty-state"><div class="empty-icon">📭</div>暂无批量任务</div>' :
-      '<div style="max-height:500px;overflow-y:auto"><table class="data-table"><thead><tr><th>任务名称</th><th>操作人</th><th>页面</th><th>状态</th><th>总数</th><th>成功</th><th>失败</th><th>跳过</th><th>开始时间</th><th>错误报告</th></tr></thead><tbody>'
+    document.getElementById('bt-tasks').innerHTML = !tasks.length ? t('gen.L496.1','<div class="empty-state"><div class="empty-icon">📭</div>暂无批量任务</div>') :
+      t('gen.L497.1','<div style="max-height:500px;overflow-y:auto"><table class="data-table"><thead><tr><th>任务名称</th><th>操作人</th><th>页面</th><th>状态</th><th>总数</th><th>成功</th><th>失败</th><th>跳过</th><th>开始时间</th><th>错误报告</th></tr></thead><tbody>')
       +tasks.map(t=>'<tr>'
         +'<td>'+esc(t.task_name)+'</td>'
         +'<td>'+esc(t.operator_name||'-')+'</td>'
@@ -505,11 +506,11 @@ async function loadBatchTasks(){
         +'<td class="text-right" style="color:#c62828">'+t.failed_count+'</td>'
         +'<td class="text-right" style="color:#f57f17">'+t.skipped_count+'</td>'
         +'<td class="cell-date">'+fmtDate(t.started_at)+'</td>'
-        +'<td>'+(t.failed_count>0?'<button class="btn btn-sm btn-secondary" onclick="downloadTaskErrors(\''+t.id+'\')">📥 下载</button>':'-')+'</td>'
+        +'<td>'+(t.failed_count>0?'<button class="btn btn-sm btn-secondary" onclick="downloadTaskErrors(\''+t.id+'\')">'+t('action.download','📥 下载')+'</button>':'-')+'</td>'
       +'</tr>').join('')+'</tbody></table></div>';
 
-    document.getElementById('bt-logs').innerHTML = !logs.length ? '<div class="empty-state"><div class="empty-icon">📭</div>暂无操作日志</div>' :
-      '<div style="max-height:500px;overflow-y:auto"><table class="data-table"><thead><tr><th>时间</th><th>操作人</th><th>页面</th><th>操作</th><th>影响数</th><th>原因</th><th>重算</th></tr></thead><tbody>'
+    document.getElementById('bt-logs').innerHTML = !logs.length ? t('gen.L511.1','<div class="empty-state"><div class="empty-icon">📭</div>暂无操作日志</div>') :
+      t('gen.L512.1','<div style="max-height:500px;overflow-y:auto"><table class="data-table"><thead><tr><th>时间</th><th>操作人</th><th>页面</th><th>操作</th><th>影响数</th><th>原因</th><th>重算</th></tr></thead><tbody>')
       +logs.map(l=>'<tr>'
         +'<td class="cell-date">'+fmtDate(l.created_at)+'</td>'
         +'<td>'+esc(l.operator_name||'-')+'</td>'
@@ -523,21 +524,21 @@ async function loadBatchTasks(){
 }
 
 function downloadTaskErrors(taskId){
-  fetch('/api/batch-tasks/'+taskId, {headers:{'Content-Type':'application/json'},credentials:'same-origin'})
+  fetch('/api/batch-tasks/'+taskId, {headers:{'Content-Type':'application/json','Accept-Language':(typeof getLang==='function'?getLang():'zh')},credentials:'same-origin'})
     .then(r=>r.json())
     .then(task=>{
       let errors=[];
       try{errors=typeof task.error_report==='string'?JSON.parse(task.error_report):(task.error_report||[]);}catch(e){}
-      if(!errors.length){showToast('无错误数据','info');return;}
-      if(typeof XLSX==='undefined'){showFlash('XLSX库未加载','danger');return;}
-      const headers=['ID','SKU','失败原因'];
+      if(!errors.length){showToast(t('msg.no_error_data','无错误数据'),'info');return;}
+      if(typeof XLSX==='undefined'){showFlash(t('msg.xlsx_not_loaded','XLSX库未加载'),'danger');return;}
+      const headers=['ID','SKU',t('col.fail_reason','失败原因')];
       const rows=errors.map(e=>[e.id||'',e.sku_code||'',e.reason||'']);
       const ws=XLSX.utils.aoa_to_sheet([headers].concat(rows));
       const wb=XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb,ws,t("app.013", "\u9519\u8bef\u62a5\u544a"));
-      XLSX.writeFile(wb,'任务错误报告_'+taskId+'.xlsx');
+      XLSX.writeFile(wb,t('term.error_report_prefix','任务错误报告_')+taskId+'.xlsx');
     })
-    .catch(e=>showFlash('下载失败: '+e.message,'danger'));
+    .catch(e=>showFlash(t('msg.download_failed_prefix','下载失败: ')+e.message,'danger'));
 }
 
 function renderCountries(){renderSimpleMgr(t("nav.countries", "\u56fd\u5bb6\u7ba1\u7406"),'/api/countries',[{name:'name',label:t("col.name", "名称"),req:1},{name:'code',label:t("shell.002", "\u4ee3\u7801"),req:1},{name:'default_currency',label:t("app.022", "\u9ed8\u8ba4\u5e01\u79cd")},{name:'sort_order',label:t("shell.003", "\u6392\u5e8f"),num:1},{name:'status',label:t("status.label", "\u72b6\u6001"),sel:1,opts:['active','disabled']}],'🌍')}
@@ -561,7 +562,7 @@ function supplierTarget(mySeq){
 }
 async function renderSuppliers(){
   const mySeq=++supplierLoadSeq;
-  document.getElementById('content-inner').innerHTML=t('html.renderSuppliers', '<div id="flash-container"></div><div id="supplier-manager-page" data-load-seq="{v1}"><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🏢 供应商管理</div><div class="table-section-actions">{v2}</div></div><div id="supplier-table"></div></div></div>', {v1: mySeq, v2: hasPermission('system_config')?'<button class="btn btn-primary btn-sm" onclick="openSupplierModal()">➕ 新增</button>':''});
+  document.getElementById('content-inner').innerHTML=t('html.renderSuppliers', '<div id="flash-container"></div><div id="supplier-manager-page" data-load-seq="{v1}"><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🏢 供应商管理</div><div class="table-section-actions">{v2}</div></div><div id="supplier-table"></div></div></div>', {v1: mySeq, v2: hasPermission('system_config')?t('gen.L564.1','<button class="btn btn-primary btn-sm" onclick="openSupplierModal()">➕ 新增</button>'):''});
   loadSuppliers(mySeq);
 }
 function parseSupplierBrands(s){
@@ -578,9 +579,9 @@ async function loadSuppliers(mySeq){
     const data=await api('/api/suppliers');
     const table=supplierTarget(mySeq);
     if(!table)return;
-    table.innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">🏢</div>暂无供应商</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>供应商名称</th><th>关联品牌</th><th>默认币种</th><th>联系人</th><th>联系方式</th><th>备注</th><th>状态</th><th>操作</th></tr></thead><tbody>'+data.map(s=>{
+    table.innerHTML=!data.length?t('gen.L581.1','<div class="empty-state"><div class="empty-icon">🏢</div>暂无供应商</div>'):t('gen.L581.2','<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>供应商名称</th><th>关联品牌</th><th>默认币种</th><th>联系人</th><th>联系方式</th><th>备注</th><th>状态</th><th>操作</th></tr></thead><tbody>')+data.map(s=>{
       const brands=parseSupplierBrands(s);
-      return '<tr><td class="cell-name">'+esc(s.name)+'</td><td>'+esc(brands.join(', '))+'</td><td>'+esc(s.default_currency||'USD')+'</td><td>'+esc(s.contact_person||'')+'</td><td>'+esc(s.phone||'')+'</td><td style="max-width:180px;overflow:hidden;text-overflow:ellipsis" title="'+esc(s.remark||'')+'">'+esc(s.remark||'')+'</td><td><span class="status-badge '+(s.status==='active'?'status-normal':'status-cancelled')+'">'+(s.status==='active'?'启用':'停用')+'</span></td><td class="cell-actions">'+(hasPermission('system_config')?'<button class="action-btn action-edit" onclick="openSupplierModal(\''+s.id+'\')">✏️</button><button class="action-btn" onclick="toggleSupplierStatus(\''+s.id+'\',\''+(s.status==='active'?'disabled':'active')+'\')" title="'+(s.status==='active'?'停用':'启用')+'">'+(s.status==='active'?'⏸️':'▶️')+'</button>':'')+'</td></tr>';
+      return '<tr><td class="cell-name">'+esc(s.name)+'</td><td>'+esc(brands.join(', '))+'</td><td>'+esc(s.default_currency||'USD')+'</td><td>'+esc(s.contact_person||'')+'</td><td>'+esc(s.phone||'')+'</td><td style="max-width:180px;overflow:hidden;text-overflow:ellipsis" title="'+esc(s.remark||'')+'">'+esc(s.remark||'')+'</td><td><span class="status-badge '+(s.status==='active'?'status-normal':'status-cancelled')+'">'+(s.status==='active'?t('status.active','启用'):t('status.disabled','停用'))+'</span></td><td class="cell-actions">'+(hasPermission('system_config')?'<button class="action-btn action-edit" onclick="openSupplierModal(\''+s.id+'\')">✏️</button><button class="action-btn" onclick="toggleSupplierStatus(\''+s.id+'\',\''+(s.status==='active'?'disabled':'active')+'\')" title="'+(s.status==='active'?t('action.disable','停用'):t('action.enable','启用'))+'">'+(s.status==='active'?'⏸️':'▶️')+'</button>':'')+'</td></tr>';
     }).join('')+'</tbody></table></div>';
   }catch(e){
     if(supplierTarget(mySeq))showFlash(e.message,'danger');
@@ -592,27 +593,27 @@ async function openSupplierModal(id){
     const supplier=id?suppliers.find(s=>s.id===id):{};
     const brands=[...new Set(skus.map(s=>s.brand).filter(b=>b&&String(b).trim()))].sort();
     const selected=new Set(parseSupplierBrands(supplier||{}));
-    const brandChecks=brands.map(b=>'<label style="display:inline-flex;align-items:center;gap:4px;margin:4px 10px 4px 0;font-size:13px"><input type="checkbox" class="sup-brand" value="'+esc(b)+'" '+(selected.has(b)?'checked':'')+'> '+esc(b)+'</label>').join('')||'<span style="color:#999">暂无品牌，请先维护 SKU 品牌</span>';
+    const brandChecks=brands.map(b=>'<label style="display:inline-flex;align-items:center;gap:4px;margin:4px 10px 4px 0;font-size:13px"><input type="checkbox" class="sup-brand" value="'+esc(b)+'" '+(selected.has(b)?'checked':'')+'> '+esc(b)+'</label>').join('')||t('gen.L595.1','<span style="color:#999">暂无品牌，请先维护 SKU 品牌</span>');
     // 加载该供应商已有付款条件（结构化多条）
     let terms=[];
     if(id){ try{ terms=await api('/api/suppliers/'+encodeURIComponent(id)+'/payment-terms'); }catch(e){ terms=[]; } }
     window._supTerms=(terms||[]).map(t=>({id:t.id,term_name:t.term_name||'',term_type:t.term_type||'advance',credit_days:t.credit_days||0,is_default:!!t.is_default,display_order:t.display_order||0,status:t.status||'active'}));
     const html='<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid">'
-      +'<div class="form-group"><label>供应商名称 <span class="required">*</span></label><input type="text" id="sup-name" value="'+esc(supplier?.name||'')+'"></div>'
-      +'<div class="form-group"><label>默认币种</label><select id="sup-cur">'+['USD','RMB','IDR','MYR','THB'].map(c=>'<option value="'+c+'"'+((supplier?.default_currency||'USD')===c?' selected':'')+'>'+c+'</option>').join('')+'</select></div>'
-      +'<div class="form-group"><label>联系人</label><input type="text" id="sup-contact" value="'+esc(supplier?.contact_person||'')+'"></div>'
-      +'<div class="form-group"><label>联系方式</label><input type="text" id="sup-phone" value="'+esc(supplier?.phone||'')+'"></div>'
-      +'<div class="form-group"><label>状态</label><select id="sup-status"><option value="active"'+((supplier?.status||'active')==='active'?' selected':'')+'>启用</option><option value="disabled"'+(supplier?.status==='disabled'?' selected':'')+'>停用</option></select></div>'
-      +'<div class="form-group form-group-full"><label>关联品牌</label><div style="border:1px solid var(--border);border-radius:6px;padding:8px;max-height:150px;overflow:auto">'+brandChecks+'</div></div>'
-      +'<div class="form-group form-group-full"><label>备注</label><textarea id="sup-remark" rows="3">'+esc(supplier?.remark||'')+'</textarea></div>'
+      +t('gen.L601.1','<div class="form-group"><label>供应商名称 <span class="required">*</span></label><input type="text" id="sup-name" value="')+esc(supplier?.name||'')+'"></div>'
+      +t('gen.L602.1','<div class="form-group"><label>默认币种</label><select id="sup-cur">')+['USD','RMB','IDR','MYR','THB'].map(c=>'<option value="'+c+'"'+((supplier?.default_currency||'USD')===c?' selected':'')+'>'+c+'</option>').join('')+'</select></div>'
+      +t('gen.L603.1','<div class="form-group"><label>联系人</label><input type="text" id="sup-contact" value="')+esc(supplier?.contact_person||'')+'"></div>'
+      +t('gen.L604.1','<div class="form-group"><label>联系方式</label><input type="text" id="sup-phone" value="')+esc(supplier?.phone||'')+'"></div>'
+      +t('gen.L605.1','<div class="form-group"><label>状态</label><select id="sup-status"><option value="active"')+((supplier?.status||'active')==='active'?' selected':'')+t('gen.L605.2','>启用</option><option value="disabled"')+(supplier?.status==='disabled'?' selected':'')+t('gen.L605.3','>停用</option></select></div>')
+      +t('gen.L606.1','<div class="form-group form-group-full"><label>关联品牌</label><div style="border:1px solid var(--border);border-radius:6px;padding:8px;max-height:150px;overflow:auto">')+brandChecks+'</div></div>'
+      +t('gen.L607.1','<div class="form-group form-group-full"><label>备注</label><textarea id="sup-remark" rows="3">')+esc(supplier?.remark||'')+'</textarea></div>'
       +'</div>'
       +'<div class="sup-terms-section">'
-        +'<div class="sup-terms-head"><span>💳 付款条件（可维护多条）</span></div>'
+        +t('gen.L610.1','<div class="sup-terms-head"><span>💳 付款条件（可维护多条）</span></div>')
         +'<div id="sup-terms-list"></div>'
-        +'<button type="button" class="btn btn-secondary btn-sm" onclick="addSupTermRow()">➕ 添加付款条件</button>'
+        +t('gen.L612.1','<button type="button" class="btn btn-secondary btn-sm" onclick="addSupTermRow()">➕ 添加付款条件</button>')
       +'</div>'
       +'</div>';
-    openModal(id?'编辑供应商':t("app.365", "\u65b0\u589e\u4f9b\u5e94\u5546"),html,t('modal.footer.openSupplierModal', `<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveSupplier('{v1}')">保存</button>`, {v1: id||''}));
+    openModal(id?t('gen.L615.1','编辑供应商'):t("app.365", "\u65b0\u589e\u4f9b\u5e94\u5546"),html,t('modal.footer.openSupplierModal', `<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveSupplier('{v1}')">保存</button>`, {v1: id||''}));
     renderSupTerms();
   }catch(e){showToast(e.message,'danger')}
 }
@@ -621,22 +622,22 @@ function renderSupTerms(){
   const box=document.getElementById('sup-terms-list');
   if(!box) return;
   const arr=window._supTerms||(window._supTerms=[]);
-  if(!arr.length){ box.innerHTML='<div class="sup-terms-empty">暂无付款条件，点击下方“添加付款条件”新增</div>'; return; }
+  if(!arr.length){ box.innerHTML='<div class="sup-terms-empty">'+t('msg.no_pay_terms','暂无付款条件，点击下方“添加付款条件”新增')+'</div>'; return; }
   box.innerHTML=arr.map((t,i)=>{
     const isDefault=!!t.is_default;
     const creditVisible=(t.term_type==='credit'||t.term_type==='other');
     return '<div class="sup-term-card" data-i="'+i+'">'
       +'<span class="sup-term-idx">'+(i+1)+'</span>'
       +'<div class="sup-term-fields">'
-        +'<div class="sup-term-field"><label>名称</label><input type="text" class="st-name" data-i="'+i+'" value="'+esc(t.term_name)+'" placeholder="\u5982 T/T 100% in advance"></div>'
-        +'<div class="sup-term-field"><label>类型</label><select class="st-type" data-i="'+i+'">'
-          +'<option value="advance"'+((t.term_type||'advance')==='advance'?' selected':'')+'>预付 advance</option>'
-          +'<option value="credit"'+((t.term_type||'advance')==='credit'?' selected':'')+'>信用 credit</option>'
-          +'<option value="other"'+((t.term_type||'advance')==='other'?' selected':'')+'>其他 other</option>'
+        +'<div class="sup-term-field"><label>'+t('col.name','名称')+'</label><input type="text" class="st-name" data-i="'+i+'" value="'+esc(t.term_name)+t('gen.L631.1','" placeholder="\u5982 T/T 100% in advance"></div>')
+        +'<div class="sup-term-field"><label>'+t('col.type','类型')+'</label><select class="st-type" data-i="'+i+'">'
+          +'<option value="advance"'+((t.term_type||'advance')==='advance'?' selected':'')+'>'+t('term.payterm_advance','预付 advance')+'</option>'
+          +'<option value="credit"'+((t.term_type||'advance')==='credit'?' selected':'')+'>'+t('term.payterm_credit','信用 credit')+'</option>'
+          +'<option value="other"'+((t.term_type||'advance')==='other'?' selected':'')+'>'+t('term.payterm_other','其他 other')+'</option>'
         +'</select></div>'
-        +'<div class="sup-term-field st-credit-box" style="display:'+(creditVisible?'flex':'none')+'"><label>信用天数</label><input type="number" class="st-days" data-i="'+i+'" value="'+esc(t.credit_days||0)+'" min="0" placeholder="\u624b\u52a8\u586b\u5199\u5929\u6570"></div>'
-        +'<div class="sup-term-field sup-term-default"><label>默认</label><input type="radio" name="sup-term-default" class="st-default" data-i="'+i+'"'+(isDefault?' checked':'')+'></div>'
-        +'<div class="sup-term-field sup-term-del"><button type="button" class="action-btn action-del" title="删除" onclick="delSupTermRow('+i+')">🗑️</button></div>'
+        +'<div class="sup-term-field st-credit-box" style="display:'+(creditVisible?'flex':'none')+'"><label>'+t('col.credit_days','信用天数')+'</label><input type="number" class="st-days" data-i="'+i+'" value="'+esc(t.credit_days||0)+t('gen.L637.1','" min="0" placeholder="\u624b\u52a8\u586b\u5199\u5929\u6570"></div>')
+        +'<div class="sup-term-field sup-term-default"><label>'+t('term.default','默认')+'</label><input type="radio" name="sup-term-default" class="st-default" data-i="'+i+'"'+(isDefault?' checked':'')+'></div>'
+        +'<div class="sup-term-field sup-term-del"><button type="button" class="action-btn action-del" title="'+t('action.delete','删除')+'" onclick="delSupTermRow('+i+')">🗑️</button></div>'
       +'</div>'
     +'</div>';
   }).join('');
@@ -672,7 +673,7 @@ function delSupTermRow(i){
 async function saveSupplier(id){
   const brands=Array.from(document.querySelectorAll('.sup-brand:checked')).map(el=>el.value);
   const d={id:id||undefined,name:document.getElementById('sup-name').value.trim(),associated_brands:brands,default_currency:document.getElementById('sup-cur').value,contact_person:document.getElementById('sup-contact').value,phone:document.getElementById('sup-phone').value,remark:document.getElementById('sup-remark').value,status:document.getElementById('sup-status').value};
-  if(!d.name){showToast('供应商名称不能为空','warning');return;}
+  if(!d.name){showToast(t('gen.L675.1','供应商名称不能为空'),'warning');return;}
   try{
     const r=await api('/api/suppliers','POST',d);
     const supId=r.id||id;
@@ -681,17 +682,17 @@ async function saveSupplier(id){
       const terms=(window._supTerms||[]).map((t,i)=>({id:t.id,term_name:t.term_name,term_type:t.term_type,credit_days:t.credit_days,is_default:t.is_default,display_order:i,status:t.status||'active'}));
       await api('/api/suppliers/'+encodeURIComponent(supId)+'/payment-terms','POST',terms);
     }
-    showToast('保存成功','success');closeModal();loadSuppliers();
+    showToast(t('gen.L684.1','保存成功'),'success');closeModal();loadSuppliers();
   }catch(e){showToast(e.message,'danger')}
 }
 async function toggleSupplierStatus(id,status){
-  try{const suppliers=await api('/api/suppliers');const s=suppliers.find(x=>x.id===id);if(!s)return;await api('/api/suppliers','POST',{...s,associated_brands:parseSupplierBrands(s),status});showToast(status==='active'?'已启用':'已停用','success');loadSuppliers()}catch(e){showToast(e.message,'danger')}
+  try{const suppliers=await api('/api/suppliers');const s=suppliers.find(x=>x.id===id);if(!s)return;await api('/api/suppliers','POST',{...s,associated_brands:parseSupplierBrands(s),status});showToast(status==='active'?t('gen.L688.1','已启用'):t('gen.L688.2','已停用'),'success');loadSuppliers()}catch(e){showToast(e.message,'danger')}
 }
 function renderFreightForwarders(){renderSimpleMgr(t("nav.freight_forwarders", "\u8d27\u4ee3\u7ba1\u7406"),'/api/freight-forwarders',[{name:'name',label:t("col.name", "名称"),req:1},{name:'short_name',label:t("shell.010", "\u7b80\u79f0")},{name:'contact_person',label:t("app.023", "\u8054\u7cfb\u4eba")},{name:'phone',label:t("shell.011", "\u7535\u8bdd")},{name:'email',label:t("shell.012", "\u90ae\u7bb1")},{name:'service_types',label:t("shell.013", "\u670d\u52a1\u7c7b\u578b")},{name:'status',label:t("status.label", "\u72b6\u6001"),sel:1,opts:['active','disabled']}],'🚛')}
 function renderCurrencies(){renderSimpleMgr(t("shell.014", "\u5e01\u79cd\u7ba1\u7406"),'/api/currencies',[{name:'code',label:t("shell.002", "\u4ee3\u7801"),req:1},{name:'name',label:t("col.name", "名称"),req:1},{name:'symbol',label:t("shell.015", "\u7b26\u53f7")},{name:'is_base',label:t("shell.016", "\u57fa\u7840\u5e01\u79cd"),bool:1},{name:'sort_order',label:t("shell.003", "\u6392\u5e8f"),num:1},{name:'status',label:t("status.label", "\u72b6\u6001"),sel:1,opts:['active','disabled']}],'💱')}
 function renderPaymentTerms(){renderSimpleMgr(t("nav.payment_terms", "\u4ed8\u6b3e\u6761\u4ef6"),'/api/payment-terms',[{name:'name',label:`${t("col.name","名称")}`,req:1},{name:'payee_type',label:t("app.209", "\u4ed8\u6b3e\u5bf9\u8c61"),sel:1,opts:['factory','forwarder','customs']},{name:'payment_type',label:t("shell.017", "\u4ed8\u6b3e\u7c7b\u578b"),sel:1,opts:['goods','logistics','tax']},{name:'payment_stage',label:t("shell.018", "\u4ed8\u6b3e\u9636\u6bb5"),sel:1,opts:['deposit','balance','full','monthly']},{name:'payment_node',label:t("shell.019", "\u4ed8\u6b3e\u8282\u70b9"),sel:1,opts:['after_pi','before_ship','after_ci','after_arrival','after_inbound','monthly']},{name:'ratio',label:t("shell.020", "\u6bd4\u4f8b(%)"),num:1},{name:'remind_days_before',label:t("shell.021", "\u63d0\u9192\u63d0\u524d\u5929"),num:1},{name:'is_enabled',label:t("common.enable", "\u542f\u7528"),bool:1}],'📋')}
 function renderApprovalFlows(){
-  document.getElementById('content-inner').innerHTML='<div id="flash-container"></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">✅ 审批流管理</div></div><div id="approval-flow-editor"></div></div>';
+  document.getElementById('content-inner').innerHTML=t('gen.L694.1','<div id="flash-container"></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">✅ 审批流管理</div></div><div id="approval-flow-editor"></div></div>');
   loadApprovalFlows();
 }
 // N5: 审批流最小配置界面（仅 PO 类型可编辑；责任主体为具体系统用户）
@@ -707,7 +708,7 @@ async function loadApprovalFlows(){
     _afCandidates=cands;
     _afState={};
     const wrap=document.getElementById('approval-flow-editor');
-    if(!data.length){wrap.innerHTML='<div class="empty-state"><div class="empty-icon">✅</div>暂无审批流</div>';return;}
+    if(!data.length){wrap.innerHTML=t('gen.L710.1','<div class="empty-state"><div class="empty-icon">✅</div>暂无审批流</div>');return;}
     let html='';
     for(const f of data){
       const isPO=f.business_type==='po';
@@ -716,13 +717,13 @@ async function loadApprovalFlows(){
       html+='<div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px;margin-bottom:14px">'+
         '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">'+
           '<div><b>'+esc(f.name)+'</b> <span class="muted-hint">('+esc(f.business_type)+')</span></div>'+
-          (isPO?'<label style="display:inline-flex;gap:6px;align-items:center"><input type="checkbox" '+(f.is_enabled?'checked':'')+' onchange="afSetEnable(\''+esc(f.id)+'\',this.checked)"> 启用</label>':'<span class="muted-hint">非PO类型本轮只读</span>')+
+          (isPO?'<label style="display:inline-flex;gap:6px;align-items:center"><input type="checkbox" '+(f.is_enabled?'checked':'')+' onchange="afSetEnable(\''+esc(f.id)+t('gen.L719.1','\',this.checked)"> 启用</label>'):t('gen.L719.2','<span class="muted-hint">非PO类型本轮只读</span>'))+
         '</div>';
       if(isPO){
         html+='<div id="aflevels_'+afSafeId(f.id)+'"></div>'+
           '<div style="margin-top:10px;display:flex;gap:8px">'+
-            '<button class="btn btn-secondary" onclick="afAddLevel(\''+esc(f.id)+'\')">＋ 添加审批级次</button>'+
-            '<button class="btn btn-primary" onclick="afSaveFlow(\''+esc(f.id)+'\')">💾 保存</button>'+
+            '<button class="btn btn-secondary" onclick="afAddLevel(\''+esc(f.id)+t('gen.L724.1','\')">＋ 添加审批级次</button>')+
+            '<button class="btn btn-primary" onclick="afSaveFlow(\''+esc(f.id)+t('gen.L725.1','\')">💾 保存</button>')+
           '</div>';
       }else{
         html+='<div class="muted-hint">'+esc(JSON.stringify(f.levels))+'</div>';
@@ -741,28 +742,28 @@ function afRenderLevels(flowId){
   sorted.forEach(lv=>{
     const opts=_afCandidates.map(u=>'<option value="'+esc(u.id)+'" '+(u.id===lv.approver_user_id?'selected':'')+'>'+esc(u.name)+'（'+(u.role_name||u.role_id||'')+'）</option>').join('');
     html+='<div style="display:flex;gap:8px;align-items:center;margin:6px 0">'+
-      '<span style="min-width:64px">第 '+lv.level+' 级</span>'+
+      t('gen.L744.1','<span style="min-width:64px">第 ')+lv.level+t('gen.L744.2',' 级</span>')+
       '<select data-af-user="'+lv.level+'" onchange="afSetUser(\''+esc(flowId)+'\','+lv.level+',this.value)" style="flex:1">'+opts+'</select>'+
-      '<button class="btn btn-secondary" onclick="afMoveLevel(\''+esc(flowId)+'\','+lv.level+',-1)" title="\u4e0a\u79fb">↑</button>'+
-      '<button class="btn btn-secondary" onclick="afMoveLevel(\''+esc(flowId)+'\','+lv.level+',1)" title="\u4e0b\u79fb">↓</button>'+
-      '<button class="btn btn-secondary" onclick="afRemoveLevel(\''+esc(flowId)+'\','+lv.level+')" title="删除">✕</button>'+
+      '<button class="btn btn-secondary" onclick="afMoveLevel(\''+esc(flowId)+'\','+lv.level+t('gen.L746.1',',-1)" title="\u4e0a\u79fb">↑</button>')+
+      '<button class="btn btn-secondary" onclick="afMoveLevel(\''+esc(flowId)+'\','+lv.level+t('gen.L747.1',',1)" title="\u4e0b\u79fb">↓</button>')+
+      '<button class="btn btn-secondary" onclick="afRemoveLevel(\''+esc(flowId)+'\','+lv.level+t('gen.L748.1',')" title="删除">✕</button>')+
     '</div>';
   });
   box.innerHTML=html;
 }
 function afAddLevel(flowId){const st=_afState[flowId];if(!st)return;const maxL=st.levels.reduce((m,l)=>Math.max(m,l.level),0);st.levels.push({level:maxL+1,approver_user_id:_afCandidates[0]?_afCandidates[0].id:''});afRenderLevels(flowId);}
-function afRemoveLevel(flowId,level){const st=_afState[flowId];if(!st)return;if(st.levels.length<=1){showToast('至少保留一个审批级次','warning');return;}st.levels=st.levels.filter(l=>l.level!==level);st.levels.sort((a,b)=>a.level-b.level).forEach((l,i)=>l.level=i+1);afRenderLevels(flowId);}
+function afRemoveLevel(flowId,level){const st=_afState[flowId];if(!st)return;if(st.levels.length<=1){showToast(t('gen.L754.1','至少保留一个审批级次'),'warning');return;}st.levels=st.levels.filter(l=>l.level!==level);st.levels.sort((a,b)=>a.level-b.level).forEach((l,i)=>l.level=i+1);afRenderLevels(flowId);}
 function afMoveLevel(flowId,level,dir){const st=_afState[flowId];if(!st)return;const sorted=st.levels.slice().sort((a,b)=>a.level-b.level);const idx=sorted.findIndex(l=>l.level===level);const j=idx+dir;if(j<0||j>=sorted.length)return;const t=sorted[idx].level;sorted[idx].level=sorted[j].level;sorted[j].level=t;afRenderLevels(flowId);}
 async function afSaveFlow(flowId){
   const st=_afState[flowId];if(!st)return;
   const sorted=st.levels.slice().sort((a,b)=>a.level-b.level);
   for(let i=0;i<sorted.length;i++){
-    if(sorted[i].level!==i+1){showToast('审批级次必须连续（1,2,3...）','danger');return;}
+    if(sorted[i].level!==i+1){showToast(t('gen.L760.1','审批级次必须连续（1,2,3...）'),'danger');return;}
     if(!sorted[i].approver_user_id){showToast(t('validation.approverLevelRequired','第 {n} 级审批人不能为空',{n:(i+1)}),'danger');return;}
   }
   const payload={id:flowId,name:st.name,business_type:st.business_type,is_enabled:st.is_enabled?1:0,
     levels:sorted.map(l=>({level:l.level,approver_user_id:l.approver_user_id}))};
-  try{await api('/api/approval-flows','POST',payload);showToast('审批流已保存','success');loadApprovalFlows();}
+  try{await api('/api/approval-flows','POST',payload);showToast(t('gen.L765.1','审批流已保存'),'success');loadApprovalFlows();}
   catch(e){showToast(e.message,'danger')}
 }
 // ==================== 审批中心（PO 审批人侧补齐，最小范围） ====================
@@ -801,13 +802,13 @@ async function loadFinanceApprovalList(){
   if(!wrap)return;
   try{
     const data=await api('/api/payment-requests/pending');
-    if(!data.length){wrap.innerHTML='<div class="empty-state"><div class="empty-icon">✅</div>暂无待审付款申请</div>';return}
+    if(!data.length){wrap.innerHTML=t('gen.L804.1','<div class="empty-state"><div class="empty-icon">✅</div>暂无待审付款申请</div>');return}
     const canApprove=hasPermission('payment_approve');
     wrap.innerHTML=t('html.loadFinanceApprovalList', '<div class="table-container"><table class="data-table"><thead><tr><th>申请号</th><th>大类</th><th>小类</th><th>来源单号</th><th>关联CI</th><th>付款对象</th><th class="text-right">总数量</th><th class="text-right">应付金额</th><th>币种</th><th>提交时间</th><th>操作</th></tr></thead><tbody>{v1}</tbody></table></div>', {v1: data.map(p=>{
         const catLabel=PAY_CATEGORIES[p.payment_category]||p.payment_category;
         const subLabel=(PAY_SUBCATS[p.payment_category]&&PAY_SUBCATS[p.payment_category][p.payment_subcategory])||p.payment_subcategory||'';
         const qtyTxt=(p.total_qty!==null&&p.total_qty!==undefined)?Number(p.total_qty).toLocaleString('en-US'):'—';
-        return '<tr>'+
+        return '<tr class="clickable-detail-row" onclick="rowClickView(event,\'viewPayment\',\''+p.id+'\',\'finance\')">'+
           '<td class="cell-id">'+esc(p.request_no)+'</td>'+
           '<td>'+esc(catLabel)+'</td>'+
           '<td>'+esc(subLabel)+'</td>'+
@@ -819,7 +820,7 @@ async function loadFinanceApprovalList(){
           '<td>'+esc(p.currency||'')+'</td>'+
           '<td>'+esc((p.created_at||'').replace('T',' ').slice(0,19))+'</td>'+
           '<td class="cell-actions">'+
-            '<button class="action-btn" onclick="viewPayment(\''+p.id+'\',\'finance\')" title="'+(canApprove?'查看/审批':t("app.389", "\u67e5\u770b\u8be6\u60c5"))+'">👁️</button>'+
+            '<button class="action-btn" onclick="viewPayment(\''+p.id+'\',\'finance\')" title="'+(canApprove?t('gen.L822.1','查看/审批'):t("app.389", "\u67e5\u770b\u8be6\u60c5"))+'">👁️</button>'+
           '</td>'+
         '</tr>';
       }).join('')});
@@ -831,10 +832,10 @@ async function loadApprovalCenterList(){
     // M3: 待我审批 tab 按当前用户过滤；其余 tab 保持原逻辑
     const data=await api('/api/purchase-orders/pending-approval' + (_approvalTab === 'mine' ? '?mine=1' : ''));
     _approvalListData=data;
-    const html=!data.length?'<div class="empty-state"><div class="empty-icon">✅</div>暂无待审批 PO</div>':
+    const html=!data.length?t('gen.L834.1','<div class="empty-state"><div class="empty-icon">✅</div>暂无待审批 PO</div>'):
       '<div class="table-container"><table class="data-table"><thead><tr>'+
-      '<th>PO号</th><th>提交人</th><th>品牌</th><th>国家</th><th>仓库</th><th class="text-right">总数量</th><th class="text-right">总金额</th><th>提交时间</th><th>审批级次</th><th>操作</th>'+
-      '</tr></thead><tbody>'+data.map(r=>'<tr>'+
+      t('gen.L836.1','<th>PO号</th><th>提交人</th><th>品牌</th><th>国家</th><th>仓库</th><th class="text-right">总数量</th><th class="text-right">总金额</th><th>提交时间</th><th>审批级次</th><th>操作</th>')+
+      '</tr></thead><tbody>'+data.map(r=>'<tr class="clickable-detail-row" onclick="rowClickView(event,\'openApprovalDetail\',\''+r.approval_id+'\',\''+r.po_id+'\')">'+
         '<td class="cell-id">'+esc(r.po_no)+'</td>'+
         '<td>'+esc(r.submitter_name)+'</td>'+
         '<td>'+esc(r.brand)+'</td>'+
@@ -845,9 +846,9 @@ async function loadApprovalCenterList(){
         '<td>'+esc((r.submitted_at||'').replace('T',' ').slice(0,19))+'</td>'+
         '<td>'+esc(r.current_level)+'/'+esc(r.max_level)+'</td>'+
         '<td class="cell-actions">'+
-          '<button class="action-btn" onclick="openApprovalDetail(\''+r.approval_id+'\',\''+r.po_id+'\')" title="\u67e5\u770b\u8be6\u60c5">👁️</button>'+
-          '<button class="action-btn" onclick="approvePO(\''+r.po_id+'\')" title="通过审批">✅ 通过</button>'+
-          '<button class="action-btn" onclick="rejectPO(\''+r.po_id+'\')" title="\u9a73\u56de">⛔ 驳回</button>'+
+          '<button class="action-btn" onclick="openApprovalDetail(\''+r.approval_id+'\',\''+r.po_id+t('gen.L848.1','\')" title="\u67e5\u770b\u8be6\u60c5">👁️</button>')+
+          '<button class="action-btn" onclick="approvePO(\''+r.po_id+t('gen.L849.1','\')" title="通过审批">✅ 通过</button>')+
+          '<button class="action-btn" onclick="rejectPO(\''+r.po_id+t('gen.L850.1','\')" title="\u9a73\u56de">⛔ 驳回</button>')+
         '</td>'+
       '</tr>').join('')+'</tbody></table></div>';
     document.getElementById('approval-list').innerHTML=html;
@@ -855,7 +856,7 @@ async function loadApprovalCenterList(){
 }
 async function approvePO(id){
   const r=_approvalListData.find(x=>x.po_id===id);
-  if(!r){showToast('未找到该审批记录','danger');return;}
+  if(!r){showToast(t('gen.L858.1','未找到该审批记录'),'danger');return;}
   let approvers=[];
   try{approvers=JSON.parse(r.approvers||'[]')||[];}catch(e){}
   const curLevel=r.current_level;
@@ -865,13 +866,13 @@ async function approvePO(id){
   const nextA=approvers.find(a=>a.level===nextLevel);
   const row=(l,v)=>'<div class="detail-item"><span class="detail-label">'+l+'</span><span class="detail-value">'+esc(v ?? '')+'</span></div>';
   const body='<div class="detail-card" style="box-shadow:none;padding:0">'+
-    '<div class="detail-section"><h3>审批人信息</h3><div class="detail-grid">'+
+    t('gen.L868.1','<div class="detail-section"><h3>审批人信息</h3><div class="detail-grid">')+
       row(t("app.395", "\u5f53\u524d\u5ba1\u6279\u7ea7\u6b21"), curLevel+' / '+r.max_level)+
       row(t("app.396", "\u5f53\u524d\u5ba1\u6279\u4eba"), curA?(curA.approver_name||'—'):t("app.397", "\uff08\u672a\u914d\u7f6e\uff09"))+
       (isLast?'':row(t("app.398", "\u4e0b\u4e00\u5ba1\u6279\u7ea7\u6b21"), nextLevel+' / '+r.max_level))+
       (isLast?'':row(t("app.399", "\u4e0b\u4e00\u5ba1\u6279\u4eba"), nextA?(nextA.approver_name||'—'):t("app.400", "\uff08\u672a\u914d\u7f6e / \u5f85\u6307\u5b9a\uff09")))+
     '</div></div>'+
-    '<p class="muted-hint" style="margin:6px 0 0">'+(isLast?'通过后将最终生效。':'通过后仍需第 '+nextLevel+' 级审批才最终生效。')+'</p>'+
+    '<p class="muted-hint" style="margin:6px 0 0">'+(isLast?t('gen.L874.1','通过后将最终生效。'):t('gen.L874.2','通过后仍需第 ')+nextLevel+t('gen.L874.3',' 级审批才最终生效。'))+'</p>'+
   '</div>';
   openModal(t('modal.title.approvePO', '确认通过审批 · {v1}', {v1: r.po_no}), body,
     t('modal.footer.approvePO', `<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="confirmApprovePO('{v1}')">✅ 确认通过</button>`, {v1: id}));
@@ -880,48 +881,48 @@ async function confirmApprovePO(id){
   try{
     await api('/api/purchase-orders/'+id+'/approve','POST',{action:'approve'});
     closeModal();
-    showToast('已通过（待后续级次）','success');
+    showToast(t('gen.L883.1','已通过（待后续级次）'),'success');
     if(_approvalTab==='mine'||_approvalTab==='all'||_approvalTab==='purchase')loadApprovalCenterList();
   }catch(e){showToast(e.message,'danger')}
 }
 function rejectPO(id){
-  const reason=prompt('请输入驳回原因（必填）：');
+  const reason=prompt(t('gen.L888.1','请输入驳回原因（必填）：'));
   if(reason===null)return;
-  if(!reason.trim()){showToast('驳回原因必填','warning');return;}
+  if(!reason.trim()){showToast(t('gen.L890.1','驳回原因必填'),'warning');return;}
   doRejectPO(id,reason.trim());
 }
 async function doRejectPO(id,reason){
   try{
     await api('/api/purchase-orders/'+id+'/approve','POST',{action:'reject',remark:reason});
-    showToast('已驳回，PO 已退回草稿','success');
+    showToast(t('gen.L896.1','已驳回，PO 已退回草稿'),'success');
     if(_approvalTab==='mine'||_approvalTab==='all'||_approvalTab==='purchase')loadApprovalCenterList();
   }catch(e){showToast(e.message,'danger')}
 }
 async function openApprovalDetail(approvalId,poId){
   const r=(_approvalListData.find(x=>x.approval_id===approvalId))||(_approvalListData.find(x=>x.po_id===poId));
-  if(!r){showToast('未找到该审批记录','danger');return;}
+  if(!r){showToast(t('gen.L902.1','未找到该审批记录'),'danger');return;}
   let hist=[];
   try{hist=JSON.parse(r.approval_history||'[]');}catch(e){}
-  const actionLabel=m=>m==='submit'?'提交审批':m==='approve'?'通过':m==='reject'?'驳回':m==='withdraw'?'撤回':(m||'');
-  const tl=hist.length?hist.map(h=>'<li class="tl-item"><div class="tl-action"><b>'+esc(actionLabel(h.action))+'</b></div><div class="tl-meta">'+(h.user_name||'')+' · '+esc((h.time||'').replace('T',' ').slice(0,19))+'</div>'+(h.remark?'<div class="tl-remark">备注：'+esc(h.remark)+'</div>':'')+'</li>').join(''):'<li class="tl-item"><div class="tl-meta">暂无审批轨迹</div></li>';
+  const actionLabel=m=>m==='submit'?t('gen.L905.1','提交审批'):m==='approve'?t('gen.L905.2','通过'):m==='reject'?t('gen.L905.3','驳回'):m==='withdraw'?t('gen.L905.4','撤回'):(m||'');
+  const tl=hist.length?hist.map(h=>'<li class="tl-item"><div class="tl-action"><b>'+esc(actionLabel(h.action))+'</b></div><div class="tl-meta">'+(h.user_name||'')+' · '+esc((h.time||'').replace('T',' ').slice(0,19))+'</div>'+(h.remark?t('gen.L906.1','<div class="tl-remark">备注：')+esc(h.remark)+'</div>':'')+'</li>').join(''):t('gen.L906.2','<li class="tl-item"><div class="tl-meta">暂无审批轨迹</div></li>');
   const row=(l,v)=>'<div class="detail-item"><span class="detail-label">'+l+'</span><span class="detail-value">'+esc(v ?? '')+'</span></div>';
   // 复用 PO 详情接口获取 SKU 明细（与 viewPO 同源，不新造逻辑）
   let items=[];
   try{const po=await api('/api/purchase-orders/'+poId); items=po.items||[];}catch(e){}
   const itemsHtml=items.length?
-    '<div class="detail-section"><h3>PO明细</h3><div class="table-container"><table class="data-table"><thead><tr>'+
-      '<th>SKU</th><th class="text-right">数量</th><th class="text-right">单价</th><th class="text-right">小计</th></tr></thead><tbody>'+
+    t('gen.L912.1','<div class="detail-section"><h3>PO明细</h3><div class="table-container"><table class="data-table"><thead><tr>')+
+      t('gen.L913.1','<th>SKU</th><th class="text-right">数量</th><th class="text-right">单价</th><th class="text-right">小计</th></tr></thead><tbody>')+
       items.map(i=>'<tr><td class="cell-id">'+esc(i.sku_code)+'</td><td class="text-right">'+(i.po_qty||0)+'</td><td class="text-right">'+fmtMoney(i.unit_price,r.currency)+'</td><td class="text-right">'+fmtMoney(i.po_amount,r.currency)+'</td></tr>').join('')+
     '</tbody></table></div></div>'
-    :'<div class="detail-section"><h3>PO明细</h3><div class="muted-hint" style="padding:8px 0">无明细数据</div></div>';
+    :t('gen.L916.1','<div class="detail-section"><h3>PO明细</h3><div class="muted-hint" style="padding:8px 0">无明细数据</div></div>');
   openModal(t('modal.title.openApprovalDetail', 'PO 审批详情 · {v1}', {v1: r.po_no}),
-    t('modal.body.openApprovalDetail', '<div class="detail-card" style="box-shadow:none;padding:0"><div class="detail-section"><h3>基本信息</h3><div class="detail-grid">{v1}{v2}{v3}{v4}{v5}{v6}{v7}{v8}{v9}</div></div>{v10}{v11}<div class="detail-section"><h3>审批轨迹</h3><ul class="approval-timeline">{v12}</ul></div></div>', {v1: row(t("app.115", "PO\u53f7"),r.po_no), v2: row(t("app.112", "\u54c1\u724c"),r.brand), v3: row(t("app.113", "\u56fd\u5bb6"),r.country), v4: row(t("app.114", "\u4ed3\u5e93"),r.target_warehouse), v5: row(t("app.195", "\u603b\u6570\u91cf"),(r.total_qty||0).toLocaleString()), v6: row(t("app.129", "\u603b\u91d1\u989d"),fmtMoney(r.total_amount,r.currency)), v7: row(t("app.391", "\u63d0\u4ea4\u4eba"),r.submitter_name), v8: row(t("approval.001", "\u63d0\u4ea4\u65f6\u95f4"),(r.submitted_at||'').replace('T',' ').slice(0,19)), v9: row(t("app.392", "\u5ba1\u6279\u7ea7\u6b21"),r.current_level+' / '+r.max_level), v10: itemsHtml, v11: (function(){let cc=Array.isArray(r.cc_users)?r.cc_users:[];return '<div class="detail-section"><h3>抄送人 (CC)</h3><div class="detail-grid">'+(cc.length?cc.map(c=>'<div class="detail-item"><span class="detail-label">抄送</span><span class="detail-value">'+esc(c.user_name||c.user_id)+'</span></div>').join(''):'<div class="muted-hint" style="padding:4px 0">无抄送人</div>')+'</div></div>';})(), v12: tl}));
+    t('modal.body.openApprovalDetail', '<div class="detail-card" style="box-shadow:none;padding:0"><div class="detail-section"><h3>基本信息</h3><div class="detail-grid">{v1}{v2}{v3}{v4}{v5}{v6}{v7}{v8}{v9}</div></div>{v10}{v11}<div class="detail-section"><h3>审批轨迹</h3><ul class="approval-timeline">{v12}</ul></div></div>', {v1: row(t("app.115", "PO\u53f7"),r.po_no), v2: row(t("app.112", "\u54c1\u724c"),r.brand), v3: row(t("app.113", "\u56fd\u5bb6"),r.country), v4: row(t("app.114", "\u4ed3\u5e93"),r.target_warehouse), v5: row(t("app.195", "\u603b\u6570\u91cf"),(r.total_qty||0).toLocaleString()), v6: row(t("app.129", "\u603b\u91d1\u989d"),fmtMoney(r.total_amount,r.currency)), v7: row(t("app.391", "\u63d0\u4ea4\u4eba"),r.submitter_name), v8: row(t("approval.001", "\u63d0\u4ea4\u65f6\u95f4"),(r.submitted_at||'').replace('T',' ').slice(0,19)), v9: row(t("app.392", "\u5ba1\u6279\u7ea7\u6b21"),r.current_level+' / '+r.max_level), v10: itemsHtml, v11: (function(){let cc=Array.isArray(r.cc_users)?r.cc_users:[];return t('gen.L918.1','<div class="detail-section"><h3>抄送人 (CC)</h3><div class="detail-grid">')+(cc.length?cc.map(c=>t('gen.L918.2','<div class="detail-item"><span class="detail-label">抄送</span><span class="detail-value">')+esc(c.user_name||c.user_id)+'</span></div>').join(''):t('gen.L918.3','<div class="muted-hint" style="padding:4px 0">无抄送人</div>'))+'</div></div>';})(), v12: tl}));
 }
 
 function renderExpenseTypes(){renderSimpleMgr(t("nav.expense_types", "\u8d39\u7528\u7c7b\u578b"),'/api/expense-types',[{name:'name',label:t("col.name", "名称"),req:1},{name:'code',label:t("shell.002", "\u4ee3\u7801")},{name:'is_freight',label:t("shell.023", "\u8ba1\u5165\u7efc\u5408\u8fd0\u8d39"),bool:1},{name:'is_cost',label:t("shell.024", "\u8ba1\u5165\u6210\u672c"),bool:1},{name:'sort_order',label:t("shell.003", "\u6392\u5e8f"),num:1},{name:'status',label:t("status.label", "\u72b6\u6001"),sel:1,opts:['active','disabled']}],'📊')}
-function renderAllocationRules(){renderSimpleMgr(t("nav.allocation_rules", "\u5206\u644a\u89c4\u5219"),'/api/allocation-rules',[{name:'name',label:t("col.name", "名称"),req:1},{name:'transport_mode',label:t("shell.025", "\u8fd0\u8f93\u65b9\u5f0f"),sel:1,opts:['sea','air','express','land']},{name:'expense_type',label:t("nav.expense_types", "\u8d39\u7528\u7c7b\u578b"),sel:1,opts:['freight','duty']},{name:'allocation_basis',label:'分摊依据',sel:1,opts:['cbm','weight','amount']},{name:'is_enabled',label:t("common.enable", "\u542f\u7528"),bool:1}],'📐')}
+function renderAllocationRules(){renderSimpleMgr(t("nav.allocation_rules", "\u5206\u644a\u89c4\u5219"),'/api/allocation-rules',[{name:'name',label:t("col.name", "名称"),req:1},{name:'transport_mode',label:t("shell.025", "\u8fd0\u8f93\u65b9\u5f0f"),sel:1,opts:['sea','air','express','land']},{name:'expense_type',label:t("nav.expense_types", "\u8d39\u7528\u7c7b\u578b"),sel:1,opts:['freight','duty']},{name:'allocation_basis',label:t('gen.L922.1','分摊依据'),sel:1,opts:['cbm','weight','amount']},{name:'is_enabled',label:t("common.enable", "\u542f\u7528"),bool:1}],'📐')}
 function renderConfig(){
-  document.getElementById('content-inner').innerHTML=t('html.renderConfig', '<div id="flash-container"></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">⚙️ 系统配置</div><div class="table-section-actions">{v1}</div></div><div id="config-table" style="padding:20px"></div></div>', {v1: hasPermission('system_config')?'<button class="btn btn-primary btn-sm" onclick="saveConfig()">💾 保存</button>':''});
+  document.getElementById('content-inner').innerHTML=t('html.renderConfig', '<div id="flash-container"></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">⚙️ 系统配置</div><div class="table-section-actions">{v1}</div></div><div id="config-table" style="padding:20px"></div></div>', {v1: hasPermission('system_config')?t('gen.L924.1','<button class="btn btn-primary btn-sm" onclick="saveConfig()">💾 保存</button>'):''});
   loadConfig();
 }
 async function loadConfig(){
@@ -934,29 +935,29 @@ async function loadConfig(){
 async function saveConfig(){
   const configs=[];
   document.querySelectorAll('[id^="cfg-"]').forEach(el=>{configs.push({key:el.dataset.key,value:el.value,description:el.dataset.desc})});
-  try{await api('/api/system-config','POST',{configs});showToast('配置已保存','success')}catch(e){showToast(e.message,'danger')}
+  try{await api('/api/system-config','POST',{configs});showToast(t('gen.L937.1','配置已保存'),'success')}catch(e){showToast(e.message,'danger')}
 }
 // 用户管理最小闭环：查看（脱敏飞书标识）、启用/停用、分配角色；不允许建本地密码账号、改密码、改飞书标识、停用/删应急账号
 async function renderUsers(){
-  document.getElementById('content-inner').innerHTML='<div id="flash-container"></div><div id="user-mgr-loading" class="pc-loading">加载用户列表…</div>';
+  document.getElementById('content-inner').innerHTML=t('gen.L941.1','<div id="flash-container"></div><div id="user-mgr-loading" class="pc-loading">加载用户列表…</div>');
   try{
     const [users, roles]=await Promise.all([api('/api/users'), api('/api/roles')]);
     window.__userCache=users;
     const rows=users.map(u=>{
       const isBG = u.auth_source==='local';
       const statusBadge = '<span class="status-'+(u.status==='active'?'active':(u.status==='pending'?'pending':'disabled'))+'">'+statusLabel(u.status)+'</span>';
-      const roleSel = '<select class="user-role-sel" data-uid="'+u.id+'"'+(isBG?' disabled title="\u5e94\u6025\u8d26\u53f7\u89d2\u8272\u56fa\u5b9a"':'')+'>'+roles.map(r=>'<option value="'+r.id+'"'+(r.id===u.role_id?' selected':'')+'>'+esc(r.name||r.id)+'</option>').join('')+'</select>';
+      const roleSel = '<select class="user-role-sel" data-uid="'+u.id+'"'+(isBG?t('gen.L948.1',' disabled title="\u5e94\u6025\u8d26\u53f7\u89d2\u8272\u56fa\u5b9a"'):'')+'>'+roles.map(r=>'<option value="'+r.id+'"'+(r.id===u.role_id?' selected':'')+'>'+esc(r.name||r.id)+'</option>').join('')+'</select>';
       const actionBtn = isBG
-        ? '<button class="btn btn-xs btn-secondary" disabled title="应急账号不可停用">停用</button>'
+        ? t('gen.L950.1','<button class="btn btn-xs btn-secondary" disabled title="应急账号不可停用">停用</button>')
         : (u.status==='active'
-            ? '<button class="btn btn-xs btn-warning" onclick="setUserStatus(\''+u.id+'\',\'disabled\')">停用</button>'
-            : '<button class="btn btn-xs btn-success" onclick="setUserStatus(\''+u.id+'\',\'active\')">启用</button>');
+            ? '<button class="btn btn-xs btn-warning" onclick="setUserStatus(\''+u.id+t('gen.L952.1','\',\'disabled\')">停用</button>')
+            : '<button class="btn btn-xs btn-success" onclick="setUserStatus(\''+u.id+t('gen.L953.1','\',\'active\')">启用</button>'));
       return '<tr>'
         +'<td>'+esc(u.name||'')+'</td>'
         +'<td>'+esc(u.username||'')+'</td>'
         +'<td>'+esc(u.feishu_union_id||'')+'</td>'
         +'<td>'+esc(u.email||'')+'</td>'
-        +'<td>'+(isBG?'本地应急':t("app.415", "\u98de\u4e66"))+'</td>'
+        +'<td>'+(isBG?t('gen.L959.1','本地应急'):t("app.415", "\u98de\u4e66"))+'</td>'
         +'<td>'+statusBadge+'</td>'
         +'<td>'+roleSel+'</td>'
         +'<td>'+actionBtn+'</td>'
@@ -970,15 +971,15 @@ async function renderUsers(){
 async function setUserRole(uid, roleId){
   const u=(window.__userCache||[]).find(x=>x.id===uid);
   if(!u){ renderUsers(); return; }
-  try{ await api('/api/users/'+uid,'PUT',{username:u.username, name:u.name, role_id:roleId}); showToast('角色已更新','success'); }catch(e){ showToast(e.message,'danger'); renderUsers(); }
+  try{ await api('/api/users/'+uid,'PUT',{username:u.username, name:u.name, role_id:roleId}); showToast(t('gen.L973.1','角色已更新'),'success'); }catch(e){ showToast(e.message,'danger'); renderUsers(); }
 }
 async function setUserStatus(uid, status){
   const u=(window.__userCache||[]).find(x=>x.id===uid);
   if(!u){ renderUsers(); return; }
-  try{ await api('/api/users/'+uid,'PUT',{username:u.username, name:u.name, status}); showToast(status==='active'?'已启用':'已停用','success'); renderUsers(); }catch(e){ showToast(e.message,'danger'); }
+  try{ await api('/api/users/'+uid,'PUT',{username:u.username, name:u.name, status}); showToast(status==='active'?t('gen.L978.1','已启用'):t('gen.L978.2','已停用'),'success'); renderUsers(); }catch(e){ showToast(e.message,'danger'); }
 }
 function renderRoles(){
-  document.getElementById('content-inner').innerHTML='<div id="flash-container"></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🛡️ 角色管理</div></div><div id="simple-table"></div></div>';
+  document.getElementById('content-inner').innerHTML=t('gen.L981.1','<div id="flash-container"></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🛡️ 角色管理</div></div><div id="simple-table"></div></div>');
   loadRoles();
 }
 let roleListData=[];
@@ -986,7 +987,7 @@ async function loadRoles(){
   try{
     const data=await api('/api/roles');
     roleListData=data;
-    const html=!data.length?'<div class="empty-state">暂无角色</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>角色名</th><th>描述</th><th>权限数</th><th>系统</th><th>操作</th></tr></thead><tbody>'+data.map(r=>'<tr style="cursor:pointer" onclick="openRoleEditor('+JSON.stringify(r.id)+')" title="\u70b9\u51fb\u7f16\u8f91\u6743\u9650"><td>'+esc(r.name)+'</td><td>'+esc(r.description)+'</td><td>'+(r.permissions||[]).length+'</td><td>'+(r.is_system?'✅':'❌')+'</td><td><button class="btn btn-sm btn-primary" onclick="event.stopPropagation();openRoleEditor('+JSON.stringify(r.id)+')">编辑权限</button></td></tr>').join('')+'</tbody></table></div>';
+    const html=!data.length?t('gen.L989.1','<div class="empty-state">暂无角色</div>'):t('gen.L989.2','<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>角色名</th><th>描述</th><th>权限数</th><th>系统</th><th>操作</th></tr></thead><tbody>')+data.map(r=>'<tr style="cursor:pointer" onclick="openRoleEditor('+JSON.stringify(r.id)+t('gen.L989.3',')" title="\u70b9\u51fb\u7f16\u8f91\u6743\u9650"><td>')+esc(r.name)+'</td><td>'+esc(r.description)+'</td><td>'+(r.permissions||[]).length+'</td><td>'+(r.is_system?'✅':'❌')+'</td><td><button class="btn btn-sm btn-primary" onclick="event.stopPropagation();openRoleEditor('+JSON.stringify(r.id)+t('gen.L989.4',')">编辑权限</button></td></tr>')).join('')+'</tbody></table></div>';
     document.getElementById('simple-table').innerHTML=html;
   }catch(e){showFlash(e.message,'danger')}
 }
@@ -997,14 +998,14 @@ const ROLE_MODULE_ORDER=['系统管理','采购','库存','销售','财务','报
 async function openRoleEditor(roleId){
   try{
     const role=roleListData.find(r=>r.id===roleId);
-    if(!role){showToast('未找到该角色','danger');return;}
+    if(!role){showToast(t('gen.L1000.1','未找到该角色'),'danger');return;}
     const catalog=await api('/api/permissions');
     const own=role.permissions||[];
     const groups={};
     catalog.forEach(p=>{ (groups[p.module]=groups[p.module]||[]).push(p); });
-    let body='<div style="font-size:12px;color:var(--text-secondary,#999);margin-bottom:10px">角色名称（只读）：<b>'+esc(role.name)+'</b> ｜ 角色说明（只读）：'+esc(role.description||t("app.425", "\uff08\u65e0\uff09"))+'</div>';
+    let body=t('gen.L1005.1','<div style="font-size:12px;color:var(--text-secondary,#999);margin-bottom:10px">角色名称（只读）：<b>')+esc(role.name)+t('gen.L1005.2','</b> ｜ 角色说明（只读）：')+esc(role.description||t("app.425", "\uff08\u65e0\uff09"))+'</div>';
     if(role.id==='role_admin'){
-      body+='<div class="flash flash-warning show" style="margin-bottom:12px">超级管理员角色：关键管理权限（角色管理 / 用户管理 / 系统配置）已被锁定，不可取消，以避免系统失去管理入口。</div>';
+      body+=t('gen.L1007.1','<div class="flash flash-warning show" style="margin-bottom:12px">超级管理员角色：关键管理权限（角色管理 / 用户管理 / 系统配置）已被锁定，不可取消，以避免系统失去管理入口。</div>');
     }
     ROLE_MODULE_ORDER.forEach(mod=>{
       const items=groups[mod]; if(!items||!items.length)return;
@@ -1018,14 +1019,14 @@ async function openRoleEditor(roleId){
       });
       body+='</div>';
     });
-    const footer='<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveRolePermissions('+JSON.stringify(role.id)+')">保存</button>';
+    const footer=t('gen.L1021.1','<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveRolePermissions(')+JSON.stringify(role.id)+t('gen.L1021.2',')">保存</button>');
     openModal(t('modal.title.openRoleEditor', '编辑角色权限 · {v1}', {v1: role.name}), body, footer, 'modal-lg');
   }catch(e){showToast(e.message||t("app.427", "\u6253\u5f00\u5931\u8d25"),'danger')}
 }
 async function saveRolePermissions(roleId){
   try{
     const role=roleListData.find(r=>r.id===roleId);
-    if(!role){showToast('未找到该角色','danger');return;}
+    if(!role){showToast(t('gen.L1028.1','未找到该角色'),'danger');return;}
     const boxes=[...document.querySelectorAll('#modal-content input[type=checkbox][data-perm]')];
     let perms=boxes.filter(b=>b.checked).map(b=>b.getAttribute('data-perm'));
     // 安全护栏（前端锁定 + 后端再次强制）：role_admin 始终保留关键管理权限
@@ -1033,7 +1034,7 @@ async function saveRolePermissions(roleId){
       ROLE_CRITICAL_PERMS.forEach(p=>{ if(!perms.includes(p)) perms.push(p); });
     }
     await api('/api/roles','POST',{id:roleId,name:role.name,description:role.description||'',permissions:perms});
-    showToast('角色权限已保存','success');
+    showToast(t('gen.L1036.1','角色权限已保存'),'success');
     closeModal();
     loadRoles();
   }catch(e){showToast(e.message||t("app.429", "\u4fdd\u5b58\u5931\u8d25"),'danger')}
@@ -1042,7 +1043,7 @@ async function saveRolePermissions(roleId){
 // ==================== 品牌设置 ====================
 // 品牌采购状态（停采品牌系统级规则）：在品牌设置页维护 可采购/停采
 async function renderBrandSettings(){
-  document.getElementById('content-inner').innerHTML=t('html.renderBrandSettings', '<div id="flash-container"></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🏷️ 品牌设置</div><div class="table-section-actions">{v1}</div></div><div id="brand-settings-table"></div></div>', {v1: hasPermission('system_config')?'<button class="btn btn-primary btn-sm" onclick="saveBrandSettings()">💾 保存采购状态</button>':''});
+  document.getElementById('content-inner').innerHTML=t('html.renderBrandSettings', '<div id="flash-container"></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🏷️ 品牌设置</div><div class="table-section-actions">{v1}</div></div><div id="brand-settings-table"></div></div>', {v1: hasPermission('system_config')?t('gen.L1045.1','<button class="btn btn-primary btn-sm" onclick="saveBrandSettings()">💾 保存采购状态</button>'):''});
   try{
     const brands=await api('/api/brands/all');
     let settings=[];
@@ -1115,7 +1116,7 @@ const PC_SOURCE_FEE_MATRIX=Object.freeze({
   manual:Object.freeze(['freight','customs_clearance','port_charges','delivery','warehouse','other_local'])
 });
 const PC_FEE_LABEL={
-  deposit:'定金',balance:'尾款',freight:'运费',customs_clearance:t("app.434", "\u6e05\u5173\u8d39"),port_charges:t("app.435", "\u6e2f\u53e3\u8d39"),
+  deposit:t('term.deposit','定金'),balance:t('term.balance','尾款'),freight:t('term.freight','运费'),customs_clearance:t("app.434", "\u6e05\u5173\u8d39"),port_charges:t("app.435", "\u6e2f\u53e3\u8d39"),
   delivery:t("app.436", "\u6d3e\u9001\u8d39"),warehouse:t("app.437", "\u4ed3\u50a8\u8d39"),other_local:t("app.438", "\u5176\u4ed6\u672c\u5730\u8d39"),duty:t("app.224", "\u5173\u7a0e"),inspection:t("app.439", "\u5546\u68c0\u8d39")
 };
 const PC_SOURCE_ORDER=['pi','ci','manual'];
@@ -1128,7 +1129,7 @@ const PC_PAYEE_LABEL={
   inspection_org:t("app.443", "\u5546\u68c0\u673a\u6784"),
   warehouse:t("app.114", "\u4ed3\u5e93"),
   port:t("app.444", "\u6e2f\u53e3"),
-  other:'其他'
+  other:t('term.other','其他')
 };
 function pcPayeeLabel(code){
   if(!code) return `${t("status.not_set","未设置")}`;
@@ -1191,7 +1192,7 @@ async function pcLoadAll(){
 }
 function pcSetLoading(loading){
   const btn=document.getElementById('pc-refresh-btn');
-  if(btn){ btn.disabled=loading; btn.style.opacity=loading?'0.6':'1'; btn.textContent=loading?'⏳ 加载中…':t("app.080", "\ud83d\udd04 \u5237\u65b0"); }
+  if(btn){ btn.disabled=loading; btn.style.opacity=loading?'0.6':'1'; btn.textContent=loading?t('gen.L1194.1','⏳ 加载中…'):t("app.080", "\ud83d\udd04 \u5237\u65b0"); }
 }
 
 // —— 内存关联辅助 ——
@@ -1351,8 +1352,8 @@ function pcOpenCategoryModal(id){
   const body =
     '<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid">'+
       `<div class="form-group form-group-full"><label>${t("col.category_name","大类名称")} <span class="required">*</span></label>`+
-        '<input type="text" id="pc-cat-name" placeholder="\u4f8b\u5982\uff1a\u8d27\u6b3e\u3001\u5230\u4ed3\u8d39\u7528" value="'+name+'"></div>'+
-      `<div class="form-group form-group-full"><label>${t("col.category","大类")}code <span class="required">*</span></label>`+
+        t('gen.L1354.1','<input type="text" id="pc-cat-name" placeholder="\u4f8b\u5982\uff1a\u8d27\u6b3e\u3001\u5230\u4ed3\u8d39\u7528" value="')+name+'"></div>'+
+      `<div class="form-group form-group-full"><label>${t("col.sku_category","大类")}code <span class="required">*</span></label>`+
         `<input type="text" id="pc-cat-code" placeholder="${t("term.fin.eg","例如")}：warehouse_arrival" value="`+code+'">'+codeHint+'</div>'+
       `<div class="form-group"><label>${t("col.sort","排序")}</label>`+
         '<input type="number" id="pc-cat-sort" step="1" value="'+sort+`"><div class="pc-modal-hint">${t("term.fin.smaller_first","数字越小越靠前")}</div></div>`+
@@ -1371,16 +1372,16 @@ function pcCatModalErrorClear(){ const el=document.getElementById('pc-cat-modal-
 
 // 专用 POST（不抛出，返回结构化结果，弹窗内优先显示错误；403 固定中文文案）
 async function pcFetchJSON(url, method, body, scopeLabel){
-  scopeLabel=scopeLabel||'付款大类';
-  const h={'Content-Type':'application/json'};
+  scopeLabel=scopeLabel||t('gen.L1374.1','付款大类');
+  const h={'Content-Type':'application/json','Accept-Language':(typeof getLang==='function'?getLang():'zh')};
   const o={method,headers:h,credentials:'same-origin'}; if(body)o.body=JSON.stringify(body);
   try{
     const r=await fetch(url,o);
     if(r.status===401){doLogout(); return {status:401, error:t("app.342", "\u672a\u767b\u5f55\uff0c\u8bf7\u91cd\u65b0\u767b\u5f55")};}
     let d=null; try{d=await r.json();}catch(e){}
     if(r.ok) return {status:r.status, data:d};
-    let err='服务器错误（'+r.status+'）';
-    if(r.status===403) err='没有系统配置权限，无法维护'+scopeLabel+'。';
+    let err=t('gen.L1382.1','服务器错误（')+r.status+'）';
+    if(r.status===403) err=t('gen.L1383.1','没有系统配置权限，无法维护')+scopeLabel+'。';
     else if(d&&d.error) err=d.error;
     return {status:r.status, error:err};
   }catch(e){
@@ -1399,7 +1400,7 @@ async function pcSaveCategory(){
   const name=(nameEl.value||'').trim();
   const code=(codeEl.value||'').trim();           // 只 trim 首尾，绝不改/翻译用户输入
   if(!name){ pcCatModalError(`${t("term.fin.category_name_required","大类名称不能为空")}`); return; }
-  if(!code){ pcCatModalError(`${t("col.category","大类")}code${t("term.fin.cannot_be_empty","不能为空")}`); return; }
+  if(!code){ pcCatModalError(`${t("col.sku_category","大类")}code${t("term.fin.cannot_be_empty","不能为空")}`); return; }
   let sortRaw=(sortEl.value||'').trim();
   let sortOrder=0;
   if(sortRaw!==''){ const n=Number(sortRaw); if(!Number.isInteger(n)){ pcCatModalError(`${t("term.fin.sort_must_integer","排序必须为整数")}`); return; } sortOrder=n; }
@@ -1504,7 +1505,7 @@ function peRenderTable(list) {
           `<button class="action-btn action-edit" title="${t("action.edit","编辑")}" onclick="peOpenModal(\'`+e.id+'\')">✏️</button>' +
           (e.status==='active'
             ? `<button class="action-btn action-delete" title="${t("action.disable","停用")}" onclick="peToggleStatus(\'`+e.id+'\')">⏸️</button>'
-            : '<button class="action-btn action-edit" title="\u542f\u7528" onclick="peToggleStatus(\''+e.id+'\')">▶️</button>')
+            : t('gen.L1507.1','<button class="action-btn action-edit" title="\u542f\u7528" onclick="peToggleStatus(\'')+e.id+'\')">▶️</button>')
         ) +
       '</td>' +
     '</tr>').join('')});
@@ -1539,7 +1540,7 @@ function peOpenModal(id) {
     `<div class="form-group form-group-full"><label>${t("col.payer_code","付款主体代码")}(entity_key) <span class="required">*</span></label>` +
       `<input type="text" id="pe-key" placeholder="${t("term.fin.eg","例如")}：id_company_a" value="`+esc(entity_key)+'" '+keyDisabled+'>'+keyHint+'</div>' +
     `<div class="form-group form-group-full"><label>${t("col.legal_name","法人名称")}(entity_name) <span class="required">*</span></label>` +
-      '<input type="text" id="pe-name" placeholder="\u6cd5\u4eba\u6b63\u5f0f\u540d\u79f0" value="'+esc(entity_name)+'"></div>' +
+      t('gen.L1542.1','<input type="text" id="pe-name" placeholder="\u6cd5\u4eba\u6b63\u5f0f\u540d\u79f0" value="')+esc(entity_name)+'"></div>' +
     `<div class="form-group"><label>${t("col.country","所属国家")} <span class="required">*</span></label>` +
       '<select id="pe-country">'+countryOpts+'</select></div>' +
     `<div class="form-group"><label>${t("col.default_currency","默认币种")}</label>` +
@@ -1563,15 +1564,15 @@ function peModalErrorClear(){ const el = document.getElementById('pe-modal-error
 
 // 专用请求（不抛出，返回结构化结果，弹窗内优先显示错误；403 固定中文文案）
 async function peFetchJSON(url, method, body) {
-  const h = { 'Content-Type': 'application/json' };
+  const h = { 'Content-Type': 'application/json', 'Accept-Language': (typeof getLang === 'function' ? getLang() : 'zh') };
   const o = { method, headers: h, credentials: 'same-origin' }; if (body) o.body = JSON.stringify(body);
   try {
     const r = await fetch(url, o);
     if (r.status === 401) { doLogout(); return { status: 401, error: t("app.342", "\u672a\u767b\u5f55\uff0c\u8bf7\u91cd\u65b0\u767b\u5f55") }; }
     let d = null; try { d = await r.json(); } catch (e) {}
     if (r.ok) return { status: r.status, data: d };
-    let err = '服务器错误（' + r.status + '）';
-    if (r.status === 403) err = '没有系统配置权限，无法维护付款主体。';
+    let err = t('gen.L1573.1','服务器错误（') + r.status + '）';
+    if (r.status === 403) err = t('gen.L1574.1','没有系统配置权限，无法维护付款主体。');
     else if (d && d.error) err = d.error;
     return { status: r.status, error: err };
   } catch (e) {
@@ -1665,26 +1666,26 @@ function pcOpenSubModal(id){
   pcState.editingSubId=id||null;
   const isEdit=!!pcState.editingSubId;
   const sub=isEdit?(pcState.subcategories.find(s=>s.id===pcState.editingSubId)||null):null;
-  if(isEdit&&!sub){showToast('付款小类不存在','danger');return;}
+  if(isEdit&&!sub){showToast(t('gen.L1668.1','付款小类不存在'),'danger');return;}
   const currentCat=isEdit?pcCatById(sub.category_id):(pcCatById(pcState.selCatId)||pcActiveFirst(pcState.categories));
   const catValue=currentCat?currentCat.id:'';
-  const catOptions='<option value="">请选择付款大类</option>'+pcState.categories.map(c=>'<option value="'+esc(c.id)+'"'+(c.id===catValue?' selected':'')+'>'+esc(pcCatLabel(c))+'</option>').join('');
+  const catOptions=t('gen.L1671.1','<option value="">请选择付款大类</option>')+pcState.categories.map(c=>'<option value="'+esc(c.id)+'"'+(c.id===catValue?' selected':'')+'>'+esc(pcCatLabel(c))+'</option>').join('');
   const catHtml=isEdit
-    ? '<div class="form-group form-group-full"><label>所属付款大类</label><input type="text" value="'+esc(pcCatLabel(currentCat))+'" readonly><div class="pc-modal-hint">编辑状态下不允许移动小类到其他大类。</div>'+(currentCat&&currentCat.status==='inactive'?'<div class="pc-modal-hint" style="color:#b26a00">该付款大类当前已停用，新小类不会出现在新的付款申请中。</div>':'')+'</div>'
-    : '<div class="form-group form-group-full"><label>所属付款大类 <span class="required">*</span></label><select id="pc-sub-category" onchange="pcUpdateSubCatInactiveHint()">'+catOptions+'</select><div id="pc-sub-cat-inactive-hint" class="pc-modal-hint" style="display:none;color:#b26a00">该付款大类当前已停用，新小类不会出现在新的付款申请中。</div></div>';
+    ? t('gen.L1673.1','<div class="form-group form-group-full"><label>所属付款大类</label><input type="text" value="')+esc(pcCatLabel(currentCat))+t('gen.L1673.2','" readonly><div class="pc-modal-hint">编辑状态下不允许移动小类到其他大类。</div>')+(currentCat&&currentCat.status==='inactive'?t('gen.L1673.3','<div class="pc-modal-hint" style="color:#b26a00">该付款大类当前已停用，新小类不会出现在新的付款申请中。</div>'):'')+'</div>'
+    : t('gen.L1674.1','<div class="form-group form-group-full"><label>所属付款大类 <span class="required">*</span></label><select id="pc-sub-category" onchange="pcUpdateSubCatInactiveHint()">')+catOptions+t('gen.L1674.2','</select><div id="pc-sub-cat-inactive-hint" class="pc-modal-hint" style="display:none;color:#b26a00">该付款大类当前已停用，新小类不会出现在新的付款申请中。</div></div>');
   const codeHint=isEdit
-    ? '<div class="pc-modal-hint">已被业务数据引用的code不能修改；如被引用，保存时系统会明确提示。</div>'
-    : '<div class="pc-modal-hint">code用于系统关联，建议使用英文小写和下划线，例如 customs_clearance。</div>';
+    ? t('gen.L1676.1','<div class="pc-modal-hint">已被业务数据引用的code不能修改；如被引用，保存时系统会明确提示。</div>')
+    : t('gen.L1677.1','<div class="pc-modal-hint">code用于系统关联，建议使用英文小写和下划线，例如 customs_clearance。</div>');
   const body='<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid">'+
     catHtml+
-    '<div class="form-group form-group-full"><label>小类名称 <span class="required">*</span></label><input type="text" id="pc-sub-name" placeholder="\u4f8b\u5982\uff1a\u5b9a\u91d1\u3001\u5c3e\u6b3e\u3001\u8fd0\u8d39\u3001\u6e05\u5173\u8d39" value="'+esc(sub?sub.name:'')+'"></div>'+
-    '<div class="form-group form-group-full"><label>小类code <span class="required">*</span></label><input type="text" id="pc-sub-code" placeholder="例如：customs_clearance" value="'+esc(sub?sub.code:'')+'">'+codeHint+'</div>'+
-    '<div class="form-group"><label>默认收款对象类型</label><select id="pc-sub-payee">'+pcPayeeOptions(sub?sub.payee_type_default:'')+'</select></div>'+
-    '<div class="form-group"><label>排序</label><input type="number" id="pc-sub-sort" step="1" value="'+(sub?Number(sub.sort_order||0):0)+'"><div class="pc-modal-hint">数字越小越靠前</div></div>'+
-    '<div class="form-group"><label>状态</label><select id="pc-sub-status"><option value="active"'+((sub?sub.status:'active')==='active'?' selected':'')+'>启用</option><option value="inactive"'+((sub?sub.status:'active')==='inactive'?' selected':'')+'>停用</option></select></div>'+
+    t('gen.L1680.1','<div class="form-group form-group-full"><label>小类名称 <span class="required">*</span></label><input type="text" id="pc-sub-name" placeholder="\u4f8b\u5982\uff1a\u5b9a\u91d1\u3001\u5c3e\u6b3e\u3001\u8fd0\u8d39\u3001\u6e05\u5173\u8d39" value="')+esc(sub?sub.name:'')+'"></div>'+
+    t('gen.L1681.1','<div class="form-group form-group-full"><label>小类code <span class="required">*</span></label><input type="text" id="pc-sub-code" placeholder="例如：customs_clearance" value="')+esc(sub?sub.code:'')+'">'+codeHint+'</div>'+
+    t('gen.L1682.1','<div class="form-group"><label>默认收款对象类型</label><select id="pc-sub-payee">')+pcPayeeOptions(sub?sub.payee_type_default:'')+'</select></div>'+
+    t('gen.L1683.1','<div class="form-group"><label>排序</label><input type="number" id="pc-sub-sort" step="1" value="')+(sub?Number(sub.sort_order||0):0)+t('gen.L1683.2','"><div class="pc-modal-hint">数字越小越靠前</div></div>')+
+    t('gen.L1684.1','<div class="form-group"><label>状态</label><select id="pc-sub-status"><option value="active"')+((sub?sub.status:'active')==='active'?' selected':'')+t('gen.L1684.2','>启用</option><option value="inactive"')+((sub?sub.status:'active')==='inactive'?' selected':'')+t('gen.L1684.3','>停用</option></select></div>')+
     '</div><div id="pc-sub-modal-error" class="pc-modal-error" style="display:none"></div></div>';
-  const footer='<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" id="pc-sub-save-btn" onclick="pcSaveSub()">保存</button>';
-  openModal(isEdit?'编辑付款小类':t("app.516", "\u65b0\u589e\u4ed8\u6b3e\u5c0f\u7c7b"),body,footer,'pc-modal');
+  const footer=t('gen.L1686.1','<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" id="pc-sub-save-btn" onclick="pcSaveSub()">保存</button>');
+  openModal(isEdit?t('gen.L1687.1','编辑付款小类'):t("app.516", "\u65b0\u589e\u4ed8\u6b3e\u5c0f\u7c7b"),body,footer,'pc-modal');
   if(!isEdit) pcUpdateSubCatInactiveHint();
 }
 async function pcSaveSub(){
@@ -1697,12 +1698,12 @@ async function pcSaveSub(){
   const payee=document.getElementById('pc-sub-payee')?.value||'';
   const sortRaw=(document.getElementById('pc-sub-sort')?.value||'').trim();
   const status=document.getElementById('pc-sub-status')?.value||'active';
-  if(!catId){pcSubModalError('所属付款大类不能为空');return;}
-  if(!name){pcSubModalError('小类名称不能为空');return;}
-  if(!code){pcSubModalError('小类code不能为空');return;}
+  if(!catId){pcSubModalError(t('gen.L1700.1','所属付款大类不能为空'));return;}
+  if(!name){pcSubModalError(t('gen.L1701.1','小类名称不能为空'));return;}
+  if(!code){pcSubModalError(t('gen.L1702.1','小类code不能为空'));return;}
   let sortOrder=0;
-  if(sortRaw!==''){const n=Number(sortRaw);if(!Number.isInteger(n)){pcSubModalError('排序必须为整数');return;}sortOrder=n;}
-  if(!['active','inactive'].includes(status)){pcSubModalError('status无效');return;}
+  if(sortRaw!==''){const n=Number(sortRaw);if(!Number.isInteger(n)){pcSubModalError(t('gen.L1704.1','排序必须为整数'));return;}sortOrder=n;}
+  if(!['active','inactive'].includes(status)){pcSubModalError(t('gen.L1705.1','status无效'));return;}
   const body={category_id:catId,name,code,payee_type_default:payee,sort_order:sortOrder,status};
   if(isEdit) body.id=pcState.editingSubId;
   const btn=document.getElementById('pc-sub-save-btn');
@@ -1718,10 +1719,10 @@ async function pcSaveSub(){
     if(isEdit) pcState.selSubId=pcState.editingSubId;
     else if(res.data&&res.data.id) pcState.selSubId=res.data.id;
     await pcLoadAll();
-    showToast(isEdit?'付款小类已更新':t("app.522", "\u4ed8\u6b3e\u5c0f\u7c7b\u5df2\u521b\u5efa"),'success');
+    showToast(isEdit?t('gen.L1721.1','付款小类已更新'):t("app.522", "\u4ed8\u6b3e\u5c0f\u7c7b\u5df2\u521b\u5efa"),'success');
   }else{
     let msg=res.error||t("app.429", "\u4fdd\u5b58\u5931\u8d25");
-    if(res.status===403) msg='没有系统配置权限，无法维护付款小类。';
+    if(res.status===403) msg=t('gen.L1724.1','没有系统配置权限，无法维护付款小类。');
     pcSubModalError(msg);
   }
 }
@@ -1748,10 +1749,10 @@ async function pcToggleSub(id){
       pcState.selCatId=sub.category_id;
       pcState.selSubId=sub.id;
       await pcLoadAll();
-      showToast(willDisable?'已停用该付款小类':t("app.527", "\u5df2\u542f\u7528\u8be5\u4ed8\u6b3e\u5c0f\u7c7b"),'success');
+      showToast(willDisable?t('gen.L1751.1','已停用该付款小类'):t("app.527", "\u5df2\u542f\u7528\u8be5\u4ed8\u6b3e\u5c0f\u7c7b"),'success');
     }else{
-      let msg=res.error||'操作失败';
-      if(res.status===403) msg='没有系统配置权限，无法维护付款小类。';
+      let msg=res.error||t('gen.L1753.1','操作失败');
+      if(res.status===403) msg=t('gen.L1754.1','没有系统配置权限，无法维护付款小类。');
       showToast(msg,'danger');
     }
   }finally{pcState.togglingSub=false;}
@@ -1768,8 +1769,8 @@ function pcMapModalErrorClear(){
 }
 function pcMapFeeOptions(sourceType,selected){
   const allowed=PC_SOURCE_FEE_MATRIX[sourceType]||[];
-  if(!allowed.length) return '<option value="">请先选择来源类型</option>';
-  return '<option value="">请选择费用事件</option>'+allowed.map(code=>
+  if(!allowed.length) return t('gen.L1771.1','<option value="">请先选择来源类型</option>');
+  return t('gen.L1772.1','<option value="">请选择费用事件</option>')+allowed.map(code=>
     '<option value="'+esc(code)+'"'+(selected===code?' selected':'')+'>'+esc(pcFeeLabel(code)+'（'+code+'）')+'</option>'
   ).join('');
 }
@@ -1785,45 +1786,45 @@ function pcOpenMapModal(){
   if(pcState.readOnly||!hasPermission('system_config')) return;
   const cat=pcCatById(pcState.selCatId);
   const sub=pcState.subcategories.find(s=>s.id===pcState.selSubId&&s.category_id===pcState.selCatId)||null;
-  if(!cat){showToast('请先选择付款大类','warning');return;}
-  if(!sub){showToast('请先选择付款小类','warning');return;}
+  if(!cat){showToast(t('gen.L1788.1','请先选择付款大类'),'warning');return;}
+  if(!sub){showToast(t('gen.L1789.1','请先选择付款小类'),'warning');return;}
   const inactiveReasons=[];
-  if(cat.status!=='active') inactiveReasons.push('所属一级类目“'+pcCatLabel(cat)+'”已停用');
-  if(sub.status!=='active') inactiveReasons.push('所属二级类目“'+sub.name+'（'+sub.code+'）”已停用');
+  if(cat.status!=='active') inactiveReasons.push(t('gen.L1791.1','所属一级类目“')+pcCatLabel(cat)+t('gen.L1791.2','”已停用'));
+  if(sub.status!=='active') inactiveReasons.push(t('gen.L1792.1','所属二级类目“')+sub.name+'（'+sub.code+t('gen.L1792.2','）”已停用'));
   const parentInactive=inactiveReasons.length>0;
   const statusHtml=parentInactive
-    ? '<select id="pc-map-status" disabled><option value="inactive" selected>停用</option></select>'+
-      '<div class="pc-modal-hint" style="color:#b26a00">'+esc(inactiveReasons.join('；'))+'。该映射只能保存为停用状态，暂时不会进入新的付款业务；父级重新启用后，需要手动启用该映射。</div>'
-    : '<select id="pc-map-status"><option value="active" selected>启用</option><option value="inactive">停用</option></select>';
+    ? t('gen.L1795.1','<select id="pc-map-status" disabled><option value="inactive" selected>停用</option></select>')+
+      '<div class="pc-modal-hint" style="color:#b26a00">'+esc(inactiveReasons.join('；'))+t('gen.L1796.1','。该映射只能保存为停用状态，暂时不会进入新的付款业务；父级重新启用后，需要手动启用该映射。</div>')
+    : t('gen.L1797.1','<select id="pc-map-status"><option value="active" selected>启用</option><option value="inactive">停用</option></select>');
   const body='<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid">'+
-    '<div class="form-group form-group-full"><label>所属一级类目</label><input type="text" value="'+esc(pcCatLabel(cat))+'" readonly></div>'+
-    '<div class="form-group form-group-full"><label>所属二级类目</label><input type="text" value="'+esc(sub.name+'（'+sub.code+'）')+'" readonly></div>'+
-    '<div class="form-group"><label>来源类型 <span class="required">*</span></label><select id="pc-map-source" onchange="pcUpdateMapFeeOptions()">'+
-      '<option value="">请选择来源类型</option><option value="pi">PI（pi）</option><option value="ci">CI（ci）</option><option value="manual">手动录入（manual）</option></select></div>'+
-    '<div class="form-group"><label>费用事件 <span class="required">*</span></label><select id="pc-map-fee" disabled>'+pcMapFeeOptions('','')+'</select></div>'+
-    '<div class="form-group form-group-full"><label>状态</label>'+statusHtml+'</div>'+
-    '</div><div class="pc-modal-hint" style="margin-top:12px">来源映射仅决定业务来源对应的付款小类；成本、分摊、统计和预测规则将在相关模块中单独配置。</div>'+
+    t('gen.L1799.1','<div class="form-group form-group-full"><label>所属一级类目</label><input type="text" value="')+esc(pcCatLabel(cat))+'" readonly></div>'+
+    t('gen.L1800.1','<div class="form-group form-group-full"><label>所属二级类目</label><input type="text" value="')+esc(sub.name+'（'+sub.code+'）')+'" readonly></div>'+
+    t('gen.L1801.1','<div class="form-group"><label>来源类型 <span class="required">*</span></label><select id="pc-map-source" onchange="pcUpdateMapFeeOptions()">')+
+      t('gen.L1802.1','<option value="">请选择来源类型</option><option value="pi">PI（pi）</option><option value="ci">CI（ci）</option><option value="manual">手动录入（manual）</option></select></div>')+
+    t('gen.L1803.1','<div class="form-group"><label>费用事件 <span class="required">*</span></label><select id="pc-map-fee" disabled>')+pcMapFeeOptions('','')+'</select></div>'+
+    t('gen.L1804.1','<div class="form-group form-group-full"><label>状态</label>')+statusHtml+'</div>'+
+    t('gen.L1805.1','</div><div class="pc-modal-hint" style="margin-top:12px">来源映射仅决定业务来源对应的付款小类；成本、分摊、统计和预测规则将在相关模块中单独配置。</div>')+
     '<div id="pc-map-modal-error" class="pc-modal-error" style="display:none"></div></div>';
-  const footer='<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" id="pc-map-save-btn" onclick="pcSaveMap()">保存</button>';
+  const footer=t('gen.L1807.1','<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" id="pc-map-save-btn" onclick="pcSaveMap()">保存</button>');
   openModal(t("app.535", "\u65b0\u589e\u6765\u6e90\u6620\u5c04"),body,footer,'pc-modal');
 }
 async function pcSaveMap(){
   if(pcState.readOnly||!hasPermission('system_config')||pcState.savingMap) return;
   const cat=pcCatById(pcState.selCatId);
   const sub=pcState.subcategories.find(s=>s.id===pcState.selSubId&&s.category_id===pcState.selCatId)||null;
-  if(!cat){pcMapModalError('当前付款大类不存在，请关闭弹窗后重新选择');return;}
-  if(!sub){pcMapModalError('当前付款小类不存在，请关闭弹窗后重新选择');return;}
+  if(!cat){pcMapModalError(t('gen.L1814.1','当前付款大类不存在，请关闭弹窗后重新选择'));return;}
+  if(!sub){pcMapModalError(t('gen.L1815.1','当前付款小类不存在，请关闭弹窗后重新选择'));return;}
   const sourceType=document.getElementById('pc-map-source')?.value||'';
   const feeType=document.getElementById('pc-map-fee')?.value||'';
   const status=document.getElementById('pc-map-status')?.value||'';
-  if(!sourceType){pcMapModalError('请选择来源类型');return;}
-  if(!feeType){pcMapModalError('请选择费用事件');return;}
+  if(!sourceType){pcMapModalError(t('gen.L1819.1','请选择来源类型'));return;}
+  if(!feeType){pcMapModalError(t('gen.L1820.1','请选择费用事件'));return;}
   if(!PC_SOURCE_FEE_MATRIX[sourceType]||!PC_SOURCE_FEE_MATRIX[sourceType].includes(feeType)){
     pcMapModalError(pcSrcLabel(sourceType)+'（'+sourceType+t("app.538", "\uff09\u4e0d\u652f\u6301\u8d39\u7528\u4e8b\u4ef6")+feeType);return;
   }
-  if(!['active','inactive'].includes(status)){pcMapModalError('状态值无效');return;}
+  if(!['active','inactive'].includes(status)){pcMapModalError(t('gen.L1824.1','状态值无效'));return;}
   if((cat.status!=='active'||sub.status!=='active')&&status!=='inactive'){
-    pcMapModalError('所属一级类目或二级类目已停用，来源映射只能保存为停用状态');return;
+    pcMapModalError(t('gen.L1826.1','所属一级类目或二级类目已停用，来源映射只能保存为停用状态'));return;
   }
   pcMapModalErrorClear();
   pcState.savingMap=true;
@@ -1842,9 +1843,9 @@ async function pcSaveMap(){
     pcState.selCatId=catId;
     pcState.selSubId=subId;
     await pcLoadAll();
-    showToast('来源映射已创建','success');
+    showToast(t('gen.L1845.1','来源映射已创建'),'success');
   }else{
-    pcMapModalError(res.error||'保存失败');
+    pcMapModalError(res.error||t('gen.L1847.1','保存失败'));
   }
 }
 async function pcToggleMap(id){
@@ -1873,9 +1874,9 @@ async function pcToggleMap(id){
       pcState.selCatId=cat.id;
       pcState.selSubId=sub.id;
       await pcLoadAll();
-      showToast(willDisable?'来源映射已停用':t("app.544", "\u6765\u6e90\u6620\u5c04\u5df2\u542f\u7528"),'success');
+      showToast(willDisable?t('gen.L1876.1','来源映射已停用'):t("app.544", "\u6765\u6e90\u6620\u5c04\u5df2\u542f\u7528"),'success');
     }else{
-      showToast(res.error||'操作失败','danger');
+      showToast(res.error||t('gen.L1878.1','操作失败'),'danger');
     }
   }finally{pcState.togglingMap=false;}
 }
@@ -1892,9 +1893,9 @@ async function renderOperationLogs(){
 }
 async function renderSKUs(){
   // 动态从已有SKU中提取品牌、生命周期、状态选项
-  let brandOpts = '<option value="">全部品牌</option>';
-  let lcOpts = '<option value="">全部生命周期</option>';
-  let stOpts = '<option value="">全部状态</option>';
+  let brandOpts = t('gen.L1895.1','<option value="">全部品牌</option>');
+  let lcOpts = t('gen.L1896.1','<option value="">全部生命周期</option>');
+  let stOpts = t('gen.L1897.1','<option value="">全部状态</option>');
   try {
     const all = await api('/api/skus');
     const brands = [...new Set(all.map(s => s.brand).filter(b => b && b.trim()))].sort();
@@ -1911,12 +1912,12 @@ async function renderSKUs(){
     brandOpts += '<option value="Redragon">Redragon</option><option value="Logitech">Logitech</option><option value="Razer">Razer</option><option value="CoolerMaster">CoolerMaster</option>';
   }
   if (lcOpts === '<option value="">全部生命周期</option>') {
-    lcOpts += '<option value="new_test">新品导入</option><option value="new_launch">新品启动</option><option value="growth">成长期</option><option value="stable">成熟期</option><option value="slow">衰退期</option><option value="stagnant">滞销</option><option value="clearance">清仓期</option><option value="stopped">停采/停产</option>';
+    lcOpts += t('gen.L1914.1','<option value="new_test">新品导入</option><option value="new_launch">新品启动</option><option value="growth">成长期</option><option value="stable">成熟期</option><option value="slow">衰退期</option><option value="stagnant">滞销</option><option value="clearance">清仓期</option><option value="stopped">停采/停产</option>');
   }
   if (stOpts === '<option value="">全部状态</option>') {
-    stOpts += '<option value="normal">启用</option><option value="stopped">停用</option><option value="clearance">清仓</option><option value="discontinued">停产</option>';
+    stOpts += t('gen.L1917.1','<option value="normal">启用</option><option value="stopped">停用</option><option value="clearance">清仓</option><option value="discontinued">停产</option>');
   }
-  document.getElementById('content-inner').innerHTML=t('html.renderSKUs', `<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>关键词</label><input type="text" id="sku-kw" placeholder="SKU/产品名/Model/EAN" onkeypress="if(event.key==='Enter')loadSKUs()"></div><div class="filter-group"><label>品牌</label><select id="sku-brand">{v1}</select></div><div class="filter-group"><label>状态</label><select id="sku-st">{v2}</select></div><div class="filter-group"><label>生命周期</label><select id="sku-lc">{v3}</select></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadSKUs()">搜索</button></div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🏷️ SKU列表</div><div class="table-section-actions"><div style="position:relative;display:inline-block">{v4}</div>{v5}</div></div><div id="sku-batch-bar" style="display:none"></div><div id="sku-table"></div></div>`, {v1: brandOpts, v2: stOpts, v3: lcOpts, v4: hasPermission('sku_import')?'<button class="btn btn-secondary btn-sm" id="sku-import-trigger" onclick="toggleSkuImportMenu(event)">📥 导入/更新SKU ▾</button>':'', v5: hasPermission('sku_create')?'<button class="btn btn-primary btn-sm" onclick="editSKU()">➕ 新增SKU</button>':''});
+  document.getElementById('content-inner').innerHTML=t('html.renderSKUs', `<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>关键词</label><input type="text" id="sku-kw" placeholder="SKU/产品名/Model/EAN" onkeypress="if(event.key==='Enter')loadSKUs()"></div><div class="filter-group"><label>品牌</label><select id="sku-brand">{v1}</select></div><div class="filter-group"><label>状态</label><select id="sku-st">{v2}</select></div><div class="filter-group"><label>生命周期</label><select id="sku-lc">{v3}</select></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadSKUs()">搜索</button></div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🏷️ SKU列表</div><div class="table-section-actions"><div style="position:relative;display:inline-block">{v4}</div>{v5}</div></div><div id="sku-batch-bar" style="display:none"></div><div id="sku-table"></div></div>`, {v1: brandOpts, v2: stOpts, v3: lcOpts, v4: hasPermission('sku_import')?t('gen.L1919.1','<button class="btn btn-secondary btn-sm" id="sku-import-trigger" onclick="toggleSkuImportMenu(event)">📥 导入/更新SKU ▾</button>'):'', v5: hasPermission('sku_create')?t('gen.L1919.2','<button class="btn btn-primary btn-sm" onclick="editSKU()">➕ 新增SKU</button>'):''});
   // 将下拉菜单挂到 body，避免被父容器 overflow:hidden 截断
   ensureSkuImportMenu();
   loadSKUs();
@@ -1929,8 +1930,8 @@ function ensureSkuImportMenu(){
   menu.id='sku-import-menu';
   menu.style.cssText='display:none;position:fixed;background:#fff;border:1px solid #e0e0e0;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.18);z-index:1100;min-width:160px';
   menu.innerHTML=
-    '<div style="padding:8px 16px;cursor:pointer;font-size:13px;border-bottom:1px solid #f0f0f0" onmouseover="this.style.background=\'#f5f5f5\'" onmouseout="this.style.background=\'#fff\'" onclick="toggleSkuImportMenu();openSkuBatchImport()">📥 新增/更新导入</div>'+
-    '<div style="padding:8px 16px;cursor:pointer;font-size:13px" onmouseover="this.style.background=\'#f5f5f5\'" onmouseout="this.style.background=\'#fff\'" onclick="toggleSkuImportMenu();showSkuImportRecords()">📋 查看导入记录</div>';
+    t('gen.L1932.1','<div style="padding:8px 16px;cursor:pointer;font-size:13px;border-bottom:1px solid #f0f0f0" onmouseover="this.style.background=\'#f5f5f5\'" onmouseout="this.style.background=\'#fff\'" onclick="toggleSkuImportMenu();openSkuBatchImport()">📥 新增/更新导入</div>')+
+    t('gen.L1933.1','<div style="padding:8px 16px;cursor:pointer;font-size:13px" onmouseover="this.style.background=\'#f5f5f5\'" onmouseout="this.style.background=\'#fff\'" onclick="toggleSkuImportMenu();showSkuImportRecords()">📋 查看导入记录</div>');
   document.body.appendChild(menu);
   // 点击其他地方关闭
   if(!window._skuMenuDocListener){
@@ -1960,22 +1961,22 @@ function toggleSkuImportMenu(evt){
 function showSkuImportRecords(){
   openModal(t("po.004", "SKU\u5bfc\u5165\u8bb0\u5f55"),
     '<div class="form-card" style="box-shadow:none;padding:0">'+
-      '<div id="sku-import-records-list" style="min-height:100px"><div style="text-align:center;color:#999;padding:20px">加载中...</div></div>'+
+      t('gen.L1963.1','<div id="sku-import-records-list" style="min-height:100px"><div style="text-align:center;color:#999;padding:20px">加载中...</div></div>')+
     '</div>',
-    '<button class="btn btn-secondary" onclick="closeModal()">关闭</button>'
+    t('gen.L1965.1','<button class="btn btn-secondary" onclick="closeModal()">关闭</button>')
   );
   // 简单展示当前SKU统计
   api('/api/skus?keyword=').then(function(data){
-    var html='<div style="background:#f0f8ff;padding:14px;border-radius:6px;margin-bottom:12px;font-size:13px"><b>当前SKU主数据概况</b></div>';
-    html+='<div class="table-container" style="box-shadow:none;border:1px solid #f0f0f0"><table class="data-table"><thead><tr><th>指标</th><th>数量</th></tr></thead><tbody>';
-    html+='<tr><td>SKU总数</td><td class="text-right font-bold">'+data.length+'</td></tr>';
-    html+='<tr><td>启用状态</td><td class="text-right">'+data.filter(function(s){return s.status==='normal'}).length+'</td></tr>';
-    html+='<tr><td>停用状态</td><td class="text-right">'+data.filter(function(s){return s.status==='stopped'||s.status==='discontinued'}).length+'</td></tr>';
-    html+='<tr><td>清仓状态</td><td class="text-right">'+data.filter(function(s){return s.status==='clearance'}).length+'</td></tr>';
-    html+='<tr><td>有品牌</td><td class="text-right">'+data.filter(function(s){return s.brand&&s.brand.trim()}).length+'</td></tr>';
-    html+='<tr><td>有EAN/条码</td><td class="text-right">'+data.filter(function(s){return s.barcode&&s.barcode.trim()}).length+'</td></tr>';
+    var html=t('gen.L1969.1','<div style="background:#f0f8ff;padding:14px;border-radius:6px;margin-bottom:12px;font-size:13px"><b>当前SKU主数据概况</b></div>');
+    html+=t('gen.L1970.1','<div class="table-container" style="box-shadow:none;border:1px solid #f0f0f0"><table class="data-table"><thead><tr><th>指标</th><th>数量</th></tr></thead><tbody>');
+    html+=t('gen.L1971.1','<tr><td>SKU总数</td><td class="text-right font-bold">')+data.length+'</td></tr>';
+    html+=t('gen.L1972.1','<tr><td>启用状态</td><td class="text-right">')+data.filter(function(s){return s.status==='normal'}).length+'</td></tr>';
+    html+=t('gen.L1973.1','<tr><td>停用状态</td><td class="text-right">')+data.filter(function(s){return s.status==='stopped'||s.status==='discontinued'}).length+'</td></tr>';
+    html+=t('gen.L1974.1','<tr><td>清仓状态</td><td class="text-right">')+data.filter(function(s){return s.status==='clearance'}).length+'</td></tr>';
+    html+=t('gen.L1975.1','<tr><td>有品牌</td><td class="text-right">')+data.filter(function(s){return s.brand&&s.brand.trim()}).length+'</td></tr>';
+    html+=t('gen.L1976.1','<tr><td>有EAN/条码</td><td class="text-right">')+data.filter(function(s){return s.barcode&&s.barcode.trim()}).length+'</td></tr>';
     html+='</tbody></table></div>';
-    html+='<div style="margin-top:12px;padding:10px;background:#fffbe6;border-radius:4px;font-size:12px;color:#666">💡 导入说明：使用"新增/更新导入"功能上传Excel，系统会自动根据SKU编码判断是新增还是更新。SKU编码已存在则更新，不存在则新增。</div>';
+    html+=t('gen.L1978.1','<div style="margin-top:12px;padding:10px;background:#fffbe6;border-radius:4px;font-size:12px;color:#666">💡 导入说明：使用"新增/更新导入"功能上传Excel，系统会自动根据SKU编码判断是新增还是更新。SKU编码已存在则更新，不存在则新增。</div>');
     document.getElementById('sku-import-records-list').innerHTML=html;
   }).catch(function(e){
     document.getElementById('sku-import-records-list').innerHTML='<div style="color:#ff4d4f;text-align:center;padding:20px">'+e.message+'</div>';
@@ -1988,12 +1989,12 @@ async function loadSKUs(){
     const data=await api('/api/skus?keyword='+encodeURIComponent(kw)+'&status='+st+'&brand='+encodeURIComponent(br)+'&lifecycle_status='+lc);
     window._skuData=data;
     window._skuSelected={};
-    var lcLabels={'new_test':'新品导入','new_launch':t("app.548", "\u65b0\u54c1\u542f\u52a8"),'growth':t("app.549", "\u6210\u957f\u671f"),'stable':t("app.550", "\u6210\u719f\u671f"),'slow':t("app.551", "\u8870\u9000\u671f"),'stagnant':t("app.552", "\u6ede\u9500"),'clearance':t("app.553", "\u6e05\u4ed3\u671f"),'stopped':t("app.554", "\u505c\u91c7/\u505c\u4ea7"),'discontinued':t("app.554", "\u505c\u91c7/\u505c\u4ea7")};
+    var lcLabels={'new_test':t('gen.L1991.1','新品导入'),'new_launch':t("app.548", "\u65b0\u54c1\u542f\u52a8"),'growth':t("app.549", "\u6210\u957f\u671f"),'stable':t("app.550", "\u6210\u719f\u671f"),'slow':t("app.551", "\u8870\u9000\u671f"),'stagnant':t("app.552", "\u6ede\u9500"),'clearance':t("app.553", "\u6e05\u4ed3\u671f"),'stopped':t("app.554", "\u505c\u91c7/\u505c\u4ea7"),'discontinued':t("app.554", "\u505c\u91c7/\u505c\u4ea7")};
     var lcBadge={'new_test':'status-pending','new_launch':'status-pending','growth':'status-info','stable':'status-normal','slow':'status-warning','stagnant':'status-warning','clearance':'status-warning','stopped':'status-danger','discontinued':'status-danger'};
     var thead='<thead><tr>'+
       '<th style="width:36px"><input type="checkbox" onchange="toggleAllSku(this)"></th>'+
-      '<th>品牌</th><th>Category</th><th>Model</th><th>SKU</th><th>产品名称</th><th>EAN</th>'+
-      '<th>状态</th><th>生命周期</th><th>是否停采</th><th>创建时间</th><th>更新时间</th><th>操作</th>'+
+      t('gen.L1995.1','<th>品牌</th><th>Category</th><th>Model</th><th>SKU</th><th>产品名称</th><th>EAN</th>')+
+      t('gen.L1996.1','<th>状态</th><th>生命周期</th><th>是否停采</th><th>创建时间</th><th>更新时间</th><th>操作</th>')+
       '</tr></thead>';
     var tbody=data.map(function(s){
         var isEnabled=s.status==='normal';
@@ -2008,15 +2009,15 @@ async function loadSKUs(){
           '<td class="cell-id">'+esc(s.sku_code)+'</td>'+
           '<td>'+esc(s.product_name||'-')+'</td>'+
           '<td>'+esc(s.barcode||'-')+'</td>'+
-          '<td><span class="status-badge '+(isEnabled?'status-normal':'status-danger')+'">'+(isEnabled?'启用':t("common.disable", "\u505c\u7528"))+'</span></td>'+
+          '<td><span class="status-badge '+(isEnabled?'status-normal':'status-danger')+'">'+(isEnabled?t('gen.L2011.1','启用'):t("common.disable", "\u505c\u7528"))+'</span></td>'+
           '<td><span class="status-badge '+lcCls+'">'+lcText+'</span></td>'+
-          '<td>'+(isStopped?'<span style="color:#ff4d4f">是</span>':t("action.no", "否"))+'</td>'+
+          '<td>'+(isStopped?t('gen.L2013.1','<span style="color:#ff4d4f">是</span>'):t("action.no", "否"))+'</td>'+
           '<td class="cell-date">'+(s.created_at||'').slice(0,19)+'</td>'+
           '<td class="cell-date">'+(s.updated_at||'').slice(0,19)+'</td>'+
           '<td class="cell-actions">'+(hasPermission('sku_edit')?'<button class="action-btn action-edit" onclick="editSKU(\''+s.id+'\')">✏️</button>':'')+(hasPermission('sku_delete')?'<button class="action-btn action-delete" onclick="deleteSKU(\''+s.id+'\')">🗑️</button>':'')+'</td>'+
         '</tr>';
       }).join('');
-    var emptyTip='<tr><td colspan="13" style="text-align:center;color:#999;padding:40px">📭 暂无SKU数据，点击右上角"导入/更新SKU"或"\u65b0\u589eSKU"开始</td></tr>';
+    var emptyTip=t('gen.L2019.1','<tr><td colspan="13" style="text-align:center;color:#999;padding:40px">📭 暂无SKU数据，点击右上角"导入/更新SKU"或"\u65b0\u589eSKU"开始</td></tr>');
     document.getElementById('sku-table').innerHTML='<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table">'+thead+'<tbody>'+(tbody||emptyTip)+'</tbody></table></div>';
     updateSkuBatchBar();
   }catch(e){showFlash(e.message,'danger')}
@@ -2041,7 +2042,7 @@ function updateSkuBatchBar(){
   bar.style.border='1px solid #91d5ff';
   bar.style.borderRadius='4px';
   bar.style.marginBottom='8px';
-  bar.innerHTML=t('html.updateSkuBatchBar', '<span style="font-size:13px;font-weight:600;margin-right:16px">已选择 {v1} 个SKU</span>{v2}{v3}{v4}{v5}{v6}{v7}{v8}<button class="btn btn-sm btn-secondary" style="margin-right:6px" onclick="batchSkuExport()">📤 批量导出</button>{v9}', {v1: count, v2: hasPermission('sku_edit')?'<button class="btn btn-sm btn-secondary" style="margin-right:6px" onclick="batchSkuUpdate(\'status\',\'启用\')">✅ 批量启用</button>':'', v3: hasPermission('sku_edit')?'<button class="btn btn-sm btn-secondary" style="margin-right:6px" onclick="batchSkuUpdate(\'status\',\'停用\')">⏸️ 批量停用</button>':'', v4: hasPermission('sku_edit')?'<button class="btn btn-sm btn-secondary" style="margin-right:6px" onclick="openBatchSkuEditModal(\'brand\')">批量修改品牌</button>':'', v5: hasPermission('sku_edit')?'<button class="btn btn-sm btn-secondary" style="margin-right:6px" onclick="openBatchSkuEditModal(\'category\')">批量修改Category</button>':'', v6: hasPermission('sku_edit')?'<button class="btn btn-sm btn-secondary" style="margin-right:6px" onclick="openBatchSkuEditModal(\'model\')">批量修改Model</button>':'', v7: hasPermission('sku_edit')?'<button class="btn btn-sm btn-secondary" style="margin-right:6px" onclick="openBatchSkuEditModal(\'lifecycle_status\')">批量修改生命周期</button>':'', v8: hasPermission('sku_edit')?'<button class="btn btn-sm btn-secondary" style="margin-right:6px" onclick="openBatchSkuEditModal(\'status\')">批量修改状态</button>':'', v9: hasPermission('sku_delete')?'<button class="btn btn-sm" style="margin-right:6px;background:#ff4d4f;color:#fff;border:none" onclick="batchSkuDelete()">🗑️ 批量删除</button>':''});
+  bar.innerHTML=t('html.updateSkuBatchBar', '<span style="font-size:13px;font-weight:600;margin-right:16px">已选择 {v1} 个SKU</span>{v2}{v3}{v4}{v5}{v6}{v7}{v8}<button class="btn btn-sm btn-secondary" style="margin-right:6px" onclick="batchSkuExport()">📤 批量导出</button>{v9}', {v1: count, v2: hasPermission('sku_edit')?t('gen.L2044.1','<button class="btn btn-sm btn-secondary" style="margin-right:6px" onclick="batchSkuUpdate(\'status\',\'启用\')">✅ 批量启用</button>'):'', v3: hasPermission('sku_edit')?t('gen.L2044.2','<button class="btn btn-sm btn-secondary" style="margin-right:6px" onclick="batchSkuUpdate(\'status\',\'停用\')">⏸️ 批量停用</button>'):'', v4: hasPermission('sku_edit')?t('gen.L2044.3','<button class="btn btn-sm btn-secondary" style="margin-right:6px" onclick="openBatchSkuEditModal(\'brand\')">批量修改品牌</button>'):'', v5: hasPermission('sku_edit')?t('gen.L2044.4','<button class="btn btn-sm btn-secondary" style="margin-right:6px" onclick="openBatchSkuEditModal(\'category\')">批量修改Category</button>'):'', v6: hasPermission('sku_edit')?t('gen.L2044.5','<button class="btn btn-sm btn-secondary" style="margin-right:6px" onclick="openBatchSkuEditModal(\'model\')">批量修改Model</button>'):'', v7: hasPermission('sku_edit')?t('gen.L2044.6','<button class="btn btn-sm btn-secondary" style="margin-right:6px" onclick="openBatchSkuEditModal(\'lifecycle_status\')">批量修改生命周期</button>'):'', v8: hasPermission('sku_edit')?t('gen.L2044.7','<button class="btn btn-sm btn-secondary" style="margin-right:6px" onclick="openBatchSkuEditModal(\'status\')">批量修改状态</button>'):'', v9: hasPermission('sku_delete')?t('gen.L2044.8','<button class="btn btn-sm" style="margin-right:6px;background:#ff4d4f;color:#fff;border:none" onclick="batchSkuDelete()">🗑️ 批量删除</button>'):''});
 }
 function openBatchSkuEditModal(field){
   var count=Object.keys(window._skuSelected||{}).length;
@@ -2050,11 +2051,11 @@ function openBatchSkuEditModal(field){
   var label=fieldLabels[field]||field;
   var options='';
   if(field==='lifecycle_status'){
-    options='<select name="val" style="width:100%;padding:6px"><option value="new_test">新品导入</option><option value="new_launch">新品启动</option><option value="growth">成长期</option><option value="stable">成熟期</option><option value="slow">衰退期</option><option value="stagnant">滞销</option><option value="clearance">清仓期</option><option value="stopped">停采/停产</option></select>';
+    options=t('gen.L2053.1','<select name="val" style="width:100%;padding:6px"><option value="new_test">新品导入</option><option value="new_launch">新品启动</option><option value="growth">成长期</option><option value="stable">成熟期</option><option value="slow">衰退期</option><option value="stagnant">滞销</option><option value="clearance">清仓期</option><option value="stopped">停采/停产</option></select>');
   }else if(field==='status'){
-    options='<select name="val" style="width:100%;padding:6px"><option value="启用">启用</option><option value="停用">停用</option><option value="清仓">清仓</option><option value="停产">停产</option></select>';
+    options=t('gen.L2055.1','<select name="val" style="width:100%;padding:6px"><option value="启用">启用</option><option value="停用">停用</option><option value="清仓">清仓</option><option value="停产">停产</option></select>');
   }else{
-    options='<input type="text" name="val" style="width:100%;padding:6px" placeholder="请输入新的'+label+'">';
+    options=t('gen.L2057.1','<input type="text" name="val" style="width:100%;padding:6px" placeholder="请输入新的')+label+'">';
   }
   openModal(t('modal.title.openBatchSkuEditModal', '批量修改{v1}', {v1: label}),
     t('modal.body.openBatchSkuEditModal', '<div style="padding:16px"><div style="margin-bottom:12px;padding:10px;background:#fffbe6;border-radius:4px;font-size:13px;color:#666">你正在修改 <b>{v1}</b> 个SKU的{v2}，是否确认？</div><div class="form-group"><label>{v3}</label>{v4}</div></div>', {v1: count, v2: label, v3: label, v4: options}),
@@ -2065,7 +2066,7 @@ function confirmBatchSkuUpdate(field){
   var el=document.querySelector('[name="val"]');
   if(!el)return;
   var val=el.value;
-  if(!val||!val.trim()){showToast('值不能为空','danger');return}
+  if(!val||!val.trim()){showToast(t('gen.L2068.1','值不能为空'),'danger');return}
   var ids=Object.keys(window._skuSelected||{});
   if(ids.length===0)return;
   var data={};data[field]=val;
@@ -2099,7 +2100,7 @@ function batchSkuExport(){
   ws['!cols']=SKU_IMPORT_COLUMNS.map(function(c){return {wch:c.label.length*2+6}});
   var wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,ws,t("app.580", "SKU\u5bfc\u51fa"));
-  XLSX.writeFile(wb,'SKU批量导出_'+ids.length+'条.xlsx');
+  XLSX.writeFile(wb,t('gen.L2102.1','SKU批量导出_')+ids.length+t('gen.L2102.2','条.xlsx'));
   showToast(t('toast.skuExported','已导出{count}条SKU',{count:selected.length}),'success');
 }
 function batchSkuDelete(){
@@ -2108,24 +2109,24 @@ function batchSkuDelete(){
   if(!confirm(t('confirm.deleteSkusBatch','⚠️ 删除后可能影响库存、出库、PO、PI、CI/PL等关联数据。\n如果SKU已有业务数据，将不允许删除，只能停用。\n\n确认删除选中的 {n} 个SKU吗？',{n:ids.length})))return;
   if(!confirm(t('confirm.deleteSkusIrreversible','二次确认：真的要删除这 {n} 个SKU吗？此操作不可逆！',{n:ids.length})))return;
   api('/api/skus/batch-delete','POST',{ids:ids}).then(function(res){
-    var msg='已删除'+res.deleted+'个';
-    if(res.failed>0)msg+='，失败'+res.failed+'个（有关联业务数据）';
+    var msg=t('gen.L2111.1','已删除')+res.deleted+t('gen.L2111.2','个');
+    if(res.failed>0)msg+=t('gen.L2112.1','，失败')+res.failed+t('gen.L2112.2','个（有关联业务数据）');
     showToast(msg,res.failed>0?'warning':'success');
     if(res.errors&&res.errors.length>0){
-      var html='<div style="max-height:300px;overflow:auto"><div style="font-weight:600;margin-bottom:8px">删除失败的SKU：</div>';
+      var html=t('gen.L2115.1','<div style="max-height:300px;overflow:auto"><div style="font-weight:600;margin-bottom:8px">删除失败的SKU：</div>');
       res.errors.forEach(function(e){html+='<div style="color:#666;padding:2px 0">'+esc(e.sku_code||e.id)+'：'+esc(e.reason)+'</div>'});
       html+='</div>';
-      openModal(t("app.582", "\u5220\u9664\u7ed3\u679c"),html,'<button class="btn btn-secondary" onclick="closeModal()">关闭</button>');
+      openModal(t("app.582", "\u5220\u9664\u7ed3\u679c"),html,t('gen.L2118.1','<button class="btn btn-secondary" onclick="closeModal()">关闭</button>'));
     }
     loadSKUs();
   }).catch(function(e){showToast(e.message,'danger')});
 }
 function editSKU(id){
-  const F=[{n:'sku_code',l:t("app.583", "SKU\u7f16\u7801"),r:1},{n:'product_name',l:t("app.566", "\u4ea7\u54c1\u540d\u79f0")},{n:'brand',l:t("app.112", "\u54c1\u724c"),r:1},{n:'category',l:'类目'},{n:'model',l:t("app.584", "\u578b\u53f7")},{n:'color_spec',l:t("app.585", "\u989c\u8272/\u89c4\u683c")},{n:'barcode',l:t("app.586", "EAN/\u6761\u7801")},{n:'purchase_price_rmb',l:t("app.587", "RMB\u91c7\u8d2d\u5355\u4ef7"),t:'num'},{n:'purchase_price_usd',l:t("app.588", "USD\u91c7\u8d2d\u5355\u4ef7"),t:'num'},{n:'carton_spec',l:t("app.589", "\u7bb1\u89c4")},{n:'qty_per_carton',l:t("app.590", "\u5355\u7bb1\u6570\u91cf"),t:'num'},{n:'unit_weight',l:t("app.591", "\u5355\u4f4d\u91cd\u91cf(KG)"),t:'num'},{n:'unit_cbm',l:t("app.592", "\u5355\u4f4d\u4f53\u79ef(CBM)"),t:'num'},{n:'is_new_product',l:t("app.593", "\u662f\u5426\u65b0\u54c1"),t:'sel',o:[{v:0,l:t("action.no", "否")},{v:1,l:t("action.yes", "是")}]},{n:'launch_date',l:t("app.594", "\u4e0a\u5e02\u65e5\u671f"),t:'date'},{n:'new_product_protection_days',l:t("app.595", "\u65b0\u54c1\u4fdd\u62a4\u671f(\u5929)"),t:'num'},{n:'lifecycle_status',l:t("app.559", "\u751f\u547d\u5468\u671f"),t:'sel',o:[{v:'new_test',l:t("app.547", "\u65b0\u54c1\u5bfc\u5165")},{v:'new_launch',l:t("app.548", "\u65b0\u54c1\u542f\u52a8")},{v:'growth',l:t("app.549", "\u6210\u957f\u671f")},{v:'stable',l:t("app.550", "\u6210\u719f\u671f")},{v:'slow',l:t("app.551", "\u8870\u9000\u671f")},{v:'stagnant',l:t("app.552", "\u6ede\u9500")},{v:'clearance',l:t("app.553", "\u6e05\u4ed3\u671f")},{v:'stopped',l:t("app.554", "\u505c\u91c7/\u505c\u4ea7")}]},{n:'auto_replenish',l:t("app.596", "\u5141\u8bb8\u81ea\u52a8\u8865\u8d27"),t:'sel',o:[{v:1,l:t("action.yes", "是")},{v:0,l:t("action.no", "否")}]},{n:'status',l:t("status.label", "\u72b6\u6001"),t:'sel',o:[{v:'normal',l:t("common.enable", "\u542f\u7528")},{v:'stopped',l:t("common.disable", "\u505c\u7528")},{v:'clearance',l:t("app.555", "\u6e05\u4ed3")},{v:'discontinued',l:t("app.556", "\u505c\u4ea7")}]},{n:'remark',l:t("app.025", "\u5907\u6ce8"),t:'area',f:1}];
+  const F=[{n:'sku_code',l:t("app.583", "SKU\u7f16\u7801"),r:1},{n:'product_name',l:t("app.566", "\u4ea7\u54c1\u540d\u79f0")},{n:'brand',l:t("app.112", "\u54c1\u724c"),r:1},{n:'category',l:t('gen.L2124.1','类目')},{n:'model',l:t("app.584", "\u578b\u53f7")},{n:'color_spec',l:t("app.585", "\u989c\u8272/\u89c4\u683c")},{n:'barcode',l:t("app.586", "EAN/\u6761\u7801")},{n:'purchase_price_rmb',l:t("app.587", "RMB\u91c7\u8d2d\u5355\u4ef7"),t:'num'},{n:'purchase_price_usd',l:t("app.588", "USD\u91c7\u8d2d\u5355\u4ef7"),t:'num'},{n:'carton_spec',l:t("app.589", "\u7bb1\u89c4")},{n:'qty_per_carton',l:t("app.590", "\u5355\u7bb1\u6570\u91cf"),t:'num'},{n:'unit_weight',l:t("app.591", "\u5355\u4f4d\u91cd\u91cf(KG)"),t:'num'},{n:'unit_cbm',l:t("app.592", "\u5355\u4f4d\u4f53\u79ef(CBM)"),t:'num'},{n:'is_new_product',l:t("app.593", "\u662f\u5426\u65b0\u54c1"),t:'sel',o:[{v:0,l:t("action.no", "否")},{v:1,l:t("action.yes", "是")}]},{n:'launch_date',l:t("app.594", "\u4e0a\u5e02\u65e5\u671f"),t:'date'},{n:'new_product_protection_days',l:t("app.595", "\u65b0\u54c1\u4fdd\u62a4\u671f(\u5929)"),t:'num'},{n:'lifecycle_status',l:t("app.559", "\u751f\u547d\u5468\u671f"),t:'sel',o:[{v:'new_test',l:t("app.547", "\u65b0\u54c1\u5bfc\u5165")},{v:'new_launch',l:t("app.548", "\u65b0\u54c1\u542f\u52a8")},{v:'growth',l:t("app.549", "\u6210\u957f\u671f")},{v:'stable',l:t("app.550", "\u6210\u719f\u671f")},{v:'slow',l:t("app.551", "\u8870\u9000\u671f")},{v:'stagnant',l:t("app.552", "\u6ede\u9500")},{v:'clearance',l:t("app.553", "\u6e05\u4ed3\u671f")},{v:'stopped',l:t("app.554", "\u505c\u91c7/\u505c\u4ea7")}]},{n:'auto_replenish',l:t("app.596", "\u5141\u8bb8\u81ea\u52a8\u8865\u8d27"),t:'sel',o:[{v:1,l:t("action.yes", "是")},{v:0,l:t("action.no", "否")}]},{n:'status',l:t("status.label", "\u72b6\u6001"),t:'sel',o:[{v:'normal',l:t("common.enable", "\u542f\u7528")},{v:'stopped',l:t("common.disable", "\u505c\u7528")},{v:'clearance',l:t("app.555", "\u6e05\u4ed3")},{v:'discontinued',l:t("app.556", "\u505c\u4ea7")}]},{n:'remark',l:t("app.025", "\u5907\u6ce8"),t:'area',f:1}];
   let body='<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid">';
   F.forEach(f=>{const inp=f.t==='area'?'<textarea name="'+f.n+'" rows="2"></textarea>':f.t==='sel'?'<select name="'+f.n+'">'+(f.o||[]).map(o=>{const v=typeof o==='object'?o.v:o;const l=typeof o==='object'?o.l:o;return '<option value="'+v+'">'+l+'</option>'}).join('')+'</select>':f.t==='date'?'<input type="date" name="'+f.n+'">':f.t==='num'?'<input type="number" step="0.0001" name="'+f.n+'">':'<input type="text" name="'+f.n+'">';body+='<div class="form-group '+(f.f?'form-group-full':'')+'"><label>'+f.l+(f.r?' <span class="required">*</span>':'')+'</label>'+inp+'</div>'});
   body+='</div></div>';
-  openModal(id?'编辑SKU':t("app.598", "\u65b0\u589eSKU"),body,t('modal.footer.editSKU', `<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveSKU('{v1}')">保存</button>`, {v1: id||''}));
+  openModal(id?t('gen.L2128.1','编辑SKU'):t("app.598", "\u65b0\u589eSKU"),body,t('modal.footer.editSKU', `<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveSKU('{v1}')">保存</button>`, {v1: id||''}));
   if(id)api('/api/skus/'+id).then(s=>{F.forEach(f=>{const el=document.querySelector('[name="'+f.n+'"]');if(el)el.value=s[f.n]!==undefined?s[f.n]:''})}).catch(()=>{});
 }
 async function saveSKU(id){
@@ -2135,13 +2136,13 @@ async function saveSKU(id){
   data.purchase_price_usd=parseFloat(data.purchase_price_usd)||0;
   data.qty_per_carton=parseInt(data.qty_per_carton)||0;data.unit_weight=parseFloat(data.unit_weight)||0;data.unit_cbm=parseFloat(data.unit_cbm)||0;
   data.is_new_product=parseInt(data.is_new_product)||0;data.new_product_protection_days=parseInt(data.new_product_protection_days)||90;data.auto_replenish=parseInt(data.auto_replenish)||0;
-  try{if(id){await api('/api/skus/'+id,'PUT',data);showToast('保存成功','success')}else{await api('/api/skus','POST',data);showToast('创建成功','success')}closeModal();loadSKUs()}catch(e){showToast(e.message,'danger')}
+  try{if(id){await api('/api/skus/'+id,'PUT',data);showToast(t('gen.L2138.1','保存成功'),'success')}else{await api('/api/skus','POST',data);showToast(t('gen.L2138.2','创建成功'),'success')}closeModal();loadSKUs()}catch(e){showToast(e.message,'danger')}
 }
 async function deleteSKU(id){
-  if(!confirm('⚠️ 删除SKU可能影响库存、出库、PO、PI、CI/PL等关联数据。\n如果SKU已有业务数据，将不允许删除，只能停用。\n\n确认删除吗？'))return;
+  if(!confirm(t('gen.L2141.1','⚠️ 删除SKU可能影响库存、出库、PO、PI、CI/PL等关联数据。\n如果SKU已有业务数据，将不允许删除，只能停用。\n\n确认删除吗？')))return;
   try{
     await api('/api/skus/'+id,'DELETE');
-    showToast('已删除','success');
+    showToast(t('gen.L2144.1','已删除'),'success');
     loadSKUs();
   }catch(e){
     showToast(e.message||t("inventory.003", "\u5220\u9664\u5931\u8d25"),'danger');
@@ -2160,7 +2161,7 @@ const SKU_IMPORT_COLUMNS=[
   {key:'sku_code',label:t("app.583", "SKU\u7f16\u7801"),required:true},
   {key:'product_name',label:t("app.566", "\u4ea7\u54c1\u540d\u79f0")},
   {key:'brand',label:t("app.112", "\u54c1\u724c")},
-  {key:'category',label:'类目'},
+  {key:'category',label:t('col.payment_category','类目')},
   {key:'model',label:t("app.584", "\u578b\u53f7")},
   {key:'color_spec',label:t("app.585", "\u989c\u8272/\u89c4\u683c")},
   {key:'barcode',label:t("po.005", "\u6761\u7801")},
@@ -2188,16 +2189,16 @@ function openSkuBatchImport(){
         'ondragleave="this.style.borderColor=\'#d9d9d9\';this.style.background=\'#fafafa\'" '+
         'ondrop="event.preventDefault();this.style.borderColor=\'#d9d9d9\';this.style.background=\'#fafafa\';handleSkuFile(event.dataTransfer.files[0])">'+
         '<div style="font-size:48px;color:#1890ff;margin-bottom:8px">📤</div>'+
-        '<div style="font-size:14px;color:#333;margin-bottom:4px">点击上传或拖拽文件到此处</div>'+
-        '<div style="font-size:12px;color:#999">支持 .xlsx / .xls / .csv 格式</div>'+
+        '<div style="font-size:14px;color:#333;margin-bottom:4px">'+t("html.inv.drop_hint", "点击上传或拖拽文件到此处")+'</div>'+
+        '<div style="font-size:12px;color:#999">'+t("html.inv.support_fmt", "支持 .xlsx / .xls / .csv 格式")+'</div>'+
       '</div>'+
       '<input type="file" id="si-file-input" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleSkuFile(this.files[0])">'+
       '<div id="si-preview" style="margin-top:16px"></div>'+
       '<div id="si-result" style="margin-top:16px"></div>'+
     '</div>',
-    '<button class="btn btn-secondary" onclick="downloadSkuTemplate()">下载模板</button>'+
-    '<button class="btn btn-secondary" onclick="closeModal()">关闭</button>'+
-    '<button class="btn btn-primary" id="si-import-btn" onclick="submitSkuBatchImport()" disabled>开始导入</button>'
+    '<button class="btn btn-secondary" onclick="downloadSkuTemplate()">'+t("html.inv.download_tpl", "下载模板")+'</button>'+
+    '<button class="btn btn-secondary" onclick="closeModal()">'+t("action.close", "关闭")+'</button>'+
+    '<button class="btn btn-primary" id="si-import-btn" onclick="submitSkuBatchImport()" disabled>'+t("html.inv.start_import", "开始导入")+'</button>'
   );
   window._skuImportData=[];
 }
@@ -2205,7 +2206,7 @@ function openSkuBatchImport(){
 function handleSkuFile(file){
   if(!file)return;
   var ext=file.name.split('.').pop().toLowerCase();
-  if(!['xlsx','xls','csv'].includes(ext)){showToast('仅支持 .xlsx / .xls / .csv 格式','danger');return}
+  if(!['xlsx','xls','csv'].includes(ext)){showToast(t("toast.only_xlsx", "仅支持 .xlsx / .xls / .csv 格式"),'danger');return}
   var reader=new FileReader();
   reader.onload=function(e){
     try{
@@ -2215,7 +2216,7 @@ function handleSkuFile(file){
       else{wb=XLSX.read(new Uint8Array(data),{type:'array',cellDates:true})}
       var ws=wb.Sheets[wb.SheetNames[0]];
       var rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:'',raw:false,dateNF:'yyyy-mm-dd'});
-      if(rows.length<2){showToast('文件为空或缺少数据行','danger');return}
+      if(rows.length<2){showToast(t("toast.file_empty", "文件为空或缺少数据行"),'danger');return}
       var headers=rows[0].map(function(h){return String(h||'').trim()});
       var records=[];
       for(var i=1;i<rows.length;i++){
@@ -2232,7 +2233,7 @@ function handleSkuFile(file){
           }
         });
         // 校验必填
-        if(!rec.sku_code||!String(rec.sku_code).trim())rec._errors.push('SKU编码不能为空');
+        if(!rec.sku_code||!String(rec.sku_code).trim())rec._errors.push(t("toast.sku_code_required", "SKU编码不能为空"));
         // 映射生命周期
         if(rec.lifecycle_status&&typeof rec.lifecycle_status==='string'){
           rec.lifecycle_status=SKU_LIFECYCLE_MAP[rec.lifecycle_status]||rec.lifecycle_status;
@@ -2261,8 +2262,8 @@ function handleSkuFile(file){
 function renderSkuPreview(records){
   var valid=records.filter(function(r){return r._errors.length===0}).length;
   var invalid=records.length-valid;
-  var html='<div style="background:#f0f8ff;padding:10px 14px;border-radius:6px;margin-bottom:10px;font-size:13px"><b>共 '+records.length+' 条数据</b>，<span style="color:#52c41a">有效 '+valid+' 条</span>'+(invalid>0?'，<span style="color:#ff4d4f">无效 '+invalid+' 条</span>':'')+'</div>';
-  html+='<div class="table-container" style="max-height:300px;overflow:auto;box-shadow:none;border:1px solid #f0f0f0"><table class="data-table"><thead><tr><th>行</th><th>SKU编码</th><th>产品名称</th><th>品牌</th><th>型号</th><th>生命周期</th><th>状态</th><th>校验</th></tr></thead><tbody>';
+  var html=t('gen.L2264.1','<div style="background:#f0f8ff;padding:10px 14px;border-radius:6px;margin-bottom:10px;font-size:13px"><b>共 ')+records.length+t('gen.L2264.2',' 条数据</b>，<span style="color:#52c41a">有效 ')+valid+t('gen.L2264.3',' 条</span>')+(invalid>0?t('gen.L2264.4','，<span style="color:#ff4d4f">无效 ')+invalid+t('gen.L2264.5',' 条</span>'):'')+'</div>';
+  html+='<div class="table-container" style="max-height:300px;overflow:auto;box-shadow:none;border:1px solid #f0f0f0"><table class="data-table"><thead><tr><th>'+t("col.row", "行")+'</th><th>'+t("col.sku_code", "SKU编码")+'</th><th>'+t("col.product_name", "产品名称")+'</th><th>'+t("app.112", "品牌")+'</th><th>'+t("col.model", "型号")+'</th><th>'+t("app.559", "生命周期")+'</th><th>'+t("col.status", "状态")+'</th><th>'+t("col.verify", "校验")+'</th></tr></thead><tbody>';
   var preview=records.slice(0,20);
   preview.forEach(function(r){
     var ok=r._errors.length===0;
@@ -2277,11 +2278,11 @@ function renderSkuPreview(records){
       '<td>'+(ok?'<span class="status-badge status-completed">✓</span>':'<span class="status-badge status-danger" title="'+esc(r._errors.join('; '))+'">✗ '+r._errors.length+'</span>')+'</td>'+
     '</tr>';
   });
-  if(records.length>20)html+='<tr><td colspan="8" style="text-align:center;color:#999;padding:8px">... 还有 '+(records.length-20)+' 条</td></tr>';
+  if(records.length>20)html+=t('gen.L2280.1','<tr><td colspan="8" style="text-align:center;color:#999;padding:8px">... 还有 ')+(records.length-20)+t('gen.L2280.2',' 条</td></tr>');
   html+='</tbody></table></div>';
   if(invalid>0){
-    html+='<div style="margin-top:10px;padding:10px;background:#fffbe6;border-radius:4px;font-size:12px;color:#666"><b>无效行明细：</b><br>'+
-      records.filter(function(r){return r._errors.length>0}).slice(0,10).map(function(r){return '第 '+r._rowNum+' 行：'+r._errors.join('、')}).join('<br>')+
+    html+='<div style="margin-top:10px;padding:10px;background:#fffbe6;border-radius:4px;font-size:12px;color:#666"><b>'+t("html.preview.invalid_detail", "无效行明细：")+'</b><br>'+
+      records.filter(function(r){return r._errors.length>0}).slice(0,10).map(function(r){return t("html.preview.row_pre", "第 ")+r._rowNum+t("html.preview.row_suffix", " 行：")+r._errors.join('、')}).join('<br>')+
       (invalid>10?'<br>...':'')+'</div>';
   }
   document.getElementById('si-preview').innerHTML=html;
@@ -2290,8 +2291,8 @@ function renderSkuPreview(records){
 function downloadSkuTemplate(){
   var headers=SKU_IMPORT_COLUMNS.map(function(c){return c.label});
   var sample=[
-    ['RD-K585-RGB',t("app.604", "K585 RGB\u673a\u68b0\u952e\u76d8"),'Redragon',t("app.605", "\u673a\u68b0\u952e\u76d8"),'K585',t("app.606", "\u9ed1\u8272"),'6959368123456','USD','18.50','48x32x12cm',20,0.85,0.012,t("app.549", "\u6210\u957f\u671f"),'2025-03-15',t("inventory.005", "\u6b63\u5e38"),'热销款'],
-    ['RD-M601-BK',t("app.608", "M601\u6e38\u620f\u9f20\u6807"),'Redragon',t("app.609", "\u6e38\u620f\u9f20\u6807"),'M601',t("app.606", "\u9ed1\u8272"),'6959368789012','USD','6.20','30x20x8cm',50,0.25,0.005,t("app.550", "\u6210\u719f\u671f"),'2024-06-01',t("inventory.005", "\u6b63\u5e38"),'常规款']
+    ['RD-K585-RGB',t("app.604", "K585 RGB\u673a\u68b0\u952e\u76d8"),'Redragon',t("app.605", "\u673a\u68b0\u952e\u76d8"),'K585',t("app.606", "\u9ed1\u8272"),'6959368123456','USD','18.50','48x32x12cm',20,0.85,0.012,t("app.549", "\u6210\u957f\u671f"),'2025-03-15',t("inventory.005", "\u6b63\u5e38"),t("sample.hot_seller", "热销款")],
+    ['RD-M601-BK',t("app.608", "M601\u6e38\u620f\u9f20\u6807"),'Redragon',t("app.609", "\u6e38\u620f\u9f20\u6807"),'M601',t("app.606", "\u9ed1\u8272"),'6959368789012','USD','6.20','30x20x8cm',50,0.25,0.005,t("app.550", "\u6210\u719f\u671f"),'2024-06-01',t("inventory.005", "\u6b63\u5e38"),t("sample.normal_style", "常规款")]
   ];
   var ws=XLSX.utils.aoa_to_sheet([headers].concat(sample));
   ws['!cols']=SKU_IMPORT_COLUMNS.map(function(c){return {wch:c.label.length*2+6}});
@@ -2303,7 +2304,7 @@ function downloadSkuTemplate(){
 async function submitSkuBatchImport(){
   var records=window._skuImportData||[];
   var valid=records.filter(function(r){return r._errors.length===0});
-  if(valid.length===0){showToast('没有可导入的有效数据','danger');return}
+  if(valid.length===0){showToast(t("toast.no_valid_data", "没有可导入的有效数据"),'danger');return}
   var btn=document.getElementById('si-import-btn');
   btn.disabled=true;btn.textContent=t("app.613", "\u5bfc\u5165\u4e2d...");
   try{
@@ -2316,24 +2317,24 @@ async function submitSkuBatchImport(){
     var res=await api('/api/skus/bulk-import','POST',{items:items});
     window._lastSkuImportErrors=res.errors||[];
     var html='<div style="background:'+(res.failed>0?'#fffbe6':'#f6ffed')+';border:1px solid '+(res.failed>0?'#ffe58f':'#b7eb8f')+';border-radius:8px;padding:14px 16px;font-size:13px">'+
-      '<div style="font-weight:600;margin-bottom:8px">导入完成</div>'+
+      '<div style="font-weight:600;margin-bottom:8px">'+t("toast.import_done", "导入完成")+'</div>'+
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'+
-        '<span>已新增：'+(res.created||0)+' 条</span>'+
-        '<span>已更新：'+(res.updated||0)+' 条</span>'+
-        '<span>失败：'+(res.failed||0)+' 条</span>'+
+        t("html.import.added_open", "<span>已新增：")+(res.created||0)+t("html.unit.tiao_close", " 条</span>")+
+        t("html.import.updated_open", "<span>已更新：")+(res.updated||0)+t("html.unit.tiao_close", " 条</span>")+
+        t("html.import.fail_open", "<span>失败：")+(res.failed||0)+t("html.unit.tiao_close", " 条</span>")+
       '</div>';
     if(window._lastSkuImportErrors.length>0){
-      html+='<div style="margin-top:10px"><div style="font-weight:600;color:#ff3b30;margin-bottom:6px">失败明细</div>';
-      html+=window._lastSkuImportErrors.slice(0,20).map(function(e){return '<div style="color:#666">第 '+e.row+' 行：'+esc(e.reason)+'</div>'}).join('');
-      if(window._lastSkuImportErrors.length>20)html+='<div style="color:#999">还有 '+(window._lastSkuImportErrors.length-20)+' 条失败...</div>';
-      html+='<button type="button" class="btn btn-secondary" style="margin-top:10px" onclick="downloadSkuImportErrors()">下载失败明细</button></div>';
+      html+='<div style="margin-top:10px"><div style="font-weight:600;color:#ff3b30;margin-bottom:6px">'+t("html.inv.fail_detail", "失败明细")+'</div>';
+      html+=window._lastSkuImportErrors.slice(0,20).map(function(e){return t('gen.L2327.1','<div style="color:#666">第 ')+e.row+t('gen.L2327.2',' 行：')+esc(e.reason)+'</div>'}).join('');
+      if(window._lastSkuImportErrors.length>20)html+=t('gen.L2328.1','<div style="color:#999">还有 ')+(window._lastSkuImportErrors.length-20)+t('gen.L2328.2',' 条失败...</div>');
+      html+='<button type="button" class="btn btn-secondary" style="margin-top:10px" onclick="downloadSkuImportErrors()">'+t("html.inv.download_fail", "下载失败明细")+'</button></div>';
     }
     html+='</div>';
     document.getElementById('si-result').innerHTML=html;
     showToast(t('toast.importDone3','导入完成：新增{c}，更新{u}，失败{f}',{c:res.created||0, u:res.updated||0, f:res.failed||0}),res.failed>0?'warning':'success');
     loadSKUs();
   }catch(e){
-    showToast(e.message||'导入失败','danger');
+    showToast(e.message||t("toast.import_failed", "导入失败"),'danger');
   }finally{
     btn.disabled=false;btn.textContent=t("app.067", "\u5f00\u59cb\u5bfc\u5165");
   }
@@ -2341,9 +2342,9 @@ async function submitSkuBatchImport(){
 
 function downloadSkuImportErrors(){
   if(!window._lastSkuImportErrors||window._lastSkuImportErrors.length===0)return;
-  var ws=XLSX.utils.aoa_to_sheet([['行号','失败原因']].concat(window._lastSkuImportErrors.map(function(e){return [e.row,e.reason]})));
+  var ws=XLSX.utils.aoa_to_sheet([[t("col.row_no", "行号"),t("html.batch.err_reason", "失败原因")]].concat(window._lastSkuImportErrors.map(function(e){return [e.row,e.reason]})));
   var wb=XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb,ws,'失败明细');
+  XLSX.utils.book_append_sheet(wb,ws,t("html.inv.fail_detail", "失败明细"));
   XLSX.writeFile(wb,t("app.617", "SKU\u5bfc\u5165\u5931\u8d25\u660e\u7ec6.xlsx"));
 }
 
@@ -2366,7 +2367,7 @@ const INV_IMPORT_COLUMNS=[
   {key:'import_date',label:t("po.009", "\u5bfc\u5165\u65e5\u671f"),required:true},
   {key:'country',label:t("app.113", "\u56fd\u5bb6")},
   {key:'warehouse',label:t("app.114", "\u4ed3\u5e93")},
-  {key:'channel',label:'渠道'},
+  {key:'channel',label:t('col.channel','渠道')},
   {key:'available_qty',label:t("po.010", "\u53ef\u7528\u6570\u91cf"),format:parseInt},
   {key:'weighted_avg_cost',label:t("po.011", "\u52a0\u6743\u6210\u672c(\u5ffd\u7565)"),format:parseFloat},
   {key:'last_inbound_date',label:t("po.012", "\u6700\u540e\u5165\u5e93\u65e5\u671f"),format:parseDateStr},
@@ -2377,13 +2378,13 @@ function openInvBatchImport(){
   openModal(t("po.013", "\u6279\u91cf\u5bfc\u5165\u5e93\u5b58\u6570\u636e"),
     '<div class="form-card" style="box-shadow:none;padding:0">'+
       '<div style="margin-bottom:12px;padding:12px 14px;background:#fff7e6;border:1px solid #ffd591;border-radius:6px;font-size:12px;color:#333">'+
-        '<div style="font-weight:600;margin-bottom:6px">库存快照截止日期</div>'+
-        '<div style="margin-bottom:8px;color:#666">当前导入的可用库存已经完整扣除出库数据的最后一天。例如今天是7月5日但当天还没结束，截止日期应填7月4日。<b style="color:#ff3b30">必填，不填写不允许导入。</b></div>'+
+        '<div style="font-weight:600;margin-bottom:6px">'+t("html.inv.snapshot_cutoff", "库存快照截止日期")+'</div>'+
+        t('gen.L2381.1','<div style="margin-bottom:8px;color:#666">当前导入的可用库存已经完整扣除出库数据的最后一天。例如今天是7月5日但当天还没结束，截止日期应填7月4日。<b style="color:#ff3b30">')+t("html.inv.required_note", "必填，不填写不允许导入。")+'</b></div>'+
         '<input type="date" id="inv-snapshot-cutoff" style="padding:6px 10px;border:1px solid #d9d9d9;border-radius:4px;width:200px" onchange="window._invSnapshotDate=this.value;updateInvImportBtnState()">'+
       '</div>'+
       '<div style="margin-bottom:12px;padding:10px 14px;background:#e6f7ff;border:1px solid #91d5ff;border-radius:6px;font-size:12px;color:#333">'+
-        '<div style="font-weight:600;margin-bottom:4px">加权平均成本说明</div>'+
-        '<div style="color:#666">加权平均成本由系统按最新已确认成本版本自动匹配，导入文件中的加权成本列将被忽略。</div>'+
+        '<div style="font-weight:600;margin-bottom:4px">'+t("html.inv.wac_note", "加权平均成本说明")+'</div>'+
+        '<div style="color:#666">'+t("html.inv.wac_auto", "加权平均成本由系统按最新已确认成本版本自动匹配，导入文件中的加权成本列将被忽略。")+'</div>'+
       '</div>'+
       '<div id="inv-drop-zone" style="border:2px dashed #d9d9d9;border-radius:8px;padding:40px 20px;text-align:center;cursor:pointer;background:#fafafa;transition:all .2s" '+
         'onclick="document.getElementById(\'inv-file-input\').click()" '+
@@ -2391,16 +2392,16 @@ function openInvBatchImport(){
         'ondragleave="this.style.borderColor=\'#d9d9d9\';this.style.background=\'#fafafa\'" '+
         'ondrop="event.preventDefault();this.style.borderColor=\'#d9d9d9\';this.style.background=\'#fafafa\';handleInvFile(event.dataTransfer.files[0])">'+
         '<div style="font-size:48px;color:#1890ff;margin-bottom:8px">📦</div>'+
-        '<div style="font-size:14px;color:#333;margin-bottom:4px">点击上传或拖拽文件到此处</div>'+
-        '<div style="font-size:12px;color:#999">支持 .xlsx / .xls / .csv 格式</div>'+
+        '<div style="font-size:14px;color:#333;margin-bottom:4px">'+t("html.inv.drop_hint", "点击上传或拖拽文件到此处")+'</div>'+
+        '<div style="font-size:12px;color:#999">'+t("html.inv.support_fmt", "支持 .xlsx / .xls / .csv 格式")+'</div>'+
       '</div>'+
       '<input type="file" id="inv-file-input" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleInvFile(this.files[0])">'+
       '<div id="inv-preview" style="margin-top:16px"></div>'+
       '<div id="inv-result" style="margin-top:16px"></div>'+
     '</div>',
-    '<button class="btn btn-secondary" onclick="downloadInvTemplate()">下载模板</button>'+
-    '<button class="btn btn-secondary" onclick="closeModal()">关闭</button>'+
-    '<button class="btn btn-primary" id="inv-import-btn" onclick="submitInvBatchImport()" disabled>开始导入</button>'
+    '<button class="btn btn-secondary" onclick="downloadInvTemplate()">'+t("html.inv.download_tpl", "下载模板")+'</button>'+
+    '<button class="btn btn-secondary" onclick="closeModal()">'+t("action.close", "关闭")+'</button>'+
+    '<button class="btn btn-primary" id="inv-import-btn" onclick="submitInvBatchImport()" disabled>'+t("html.inv.start_import", "开始导入")+'</button>'
   );
   window._invImportData=[];
   window._invSnapshotDate='';
@@ -2409,7 +2410,7 @@ function openInvBatchImport(){
 function handleInvFile(file){
   if(!file)return;
   var ext=file.name.split('.').pop().toLowerCase();
-  if(!['xlsx','xls','csv'].includes(ext)){showToast('仅支持 .xlsx / .xls / .csv 格式','danger');return}
+  if(!['xlsx','xls','csv'].includes(ext)){showToast(t("toast.only_xlsx", "仅支持 .xlsx / .xls / .csv 格式"),'danger');return}
   var reader=new FileReader();
   reader.onload=function(e){
     try{
@@ -2419,7 +2420,7 @@ function handleInvFile(file){
       else{wb=XLSX.read(new Uint8Array(data),{type:'array',cellDates:true})}
       var ws=wb.Sheets[wb.SheetNames[0]];
       var rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:'',raw:false,dateNF:'yyyy-mm-dd'});
-      if(rows.length<2){showToast('文件为空或缺少数据行','danger');return}
+      if(rows.length<2){showToast(t("toast.file_empty", "文件为空或缺少数据行"),'danger');return}
       var headers=rows[0].map(function(h){return String(h||'').trim()});
       var records=[];
       for(var i=1;i<rows.length;i++){
@@ -2435,7 +2436,7 @@ function handleInvFile(file){
             rec[col.key]=val;
           }
         });
-        if(!rec.sku_code||!String(rec.sku_code).trim())rec._errors.push('SKU编码不能为空');
+        if(!rec.sku_code||!String(rec.sku_code).trim())rec._errors.push(t("toast.sku_code_required", "SKU编码不能为空"));
         if(!rec.import_date)rec._errors.push(t("app.618", "\u5bfc\u5165\u65e5\u671f\u4e0d\u80fd\u4e3a\u7a7a"));
         else{
           if(rec.import_date instanceof Date)rec.import_date=formatDateISO(rec.import_date);
@@ -2455,8 +2456,8 @@ function handleInvFile(file){
 function renderInvPreview(records){
   var valid=records.filter(function(r){return r._errors.length===0}).length;
   var invalid=records.length-valid;
-  var html='<div style="background:#f0f8ff;padding:10px 14px;border-radius:6px;margin-bottom:10px;font-size:13px"><b>共 '+records.length+' 条数据</b>，<span style="color:#52c41a">有效 '+valid+' 条</span>'+(invalid>0?'，<span style="color:#ff4d4f">无效 '+invalid+' 条</span>':'')+'</div>';
-  html+='<div class="table-container" style="max-height:300px;overflow:auto;box-shadow:none;border:1px solid #f0f0f0"><table class="data-table"><thead><tr><th>行</th><th>SKU编码</th><th>品牌</th><th>导入日期</th><th>国家</th><th>仓库</th><th>可用数量</th><th>加权成本</th><th>最后入库日期</th><th>校验</th></tr></thead><tbody>';
+  var html=t('gen.L2458.1','<div style="background:#f0f8ff;padding:10px 14px;border-radius:6px;margin-bottom:10px;font-size:13px"><b>共 ')+records.length+t('gen.L2458.2',' 条数据</b>，<span style="color:#52c41a">有效 ')+valid+t('gen.L2458.3',' 条</span>')+(invalid>0?t('gen.L2458.4','，<span style="color:#ff4d4f">无效 ')+invalid+t('gen.L2458.5',' 条</span>'):'')+'</div>';
+  html+='<div class="table-container" style="max-height:300px;overflow:auto;box-shadow:none;border:1px solid #f0f0f0"><table class="data-table"><thead><tr><th>'+t("col.row", "行")+'</th><th>'+t("col.sku_code", "SKU编码")+'</th><th>'+t("app.112", "品牌")+'</th><th>'+t("po.009", "导入日期")+'</th><th>'+t("app.113", "国家")+'</th><th>'+t("app.114", "仓库")+'</th><th>'+t("po.010", "可用数量")+'</th><th>'+t("app.619", "加权成本")+'</th><th>'+t("col.last_inbound_date", "最后入库日期")+'</th><th>'+t("col.verify", "校验")+'</th></tr></thead><tbody>';
   records.slice(0,20).forEach(function(r){
     var ok=r._errors.length===0;
     html+='<tr style="'+(ok?'':'background:#fff1f0')+'">'+
@@ -2472,11 +2473,11 @@ function renderInvPreview(records){
       '<td>'+(ok?'<span class="status-badge status-completed">✓</span>':'<span class="status-badge status-danger" title="'+esc(r._errors.join('; '))+'">✗ '+r._errors.length+'</span>')+'</td>'+
     '</tr>';
   });
-  if(records.length>20)html+='<tr><td colspan="10" style="text-align:center;color:#999;padding:8px">... 还有 '+(records.length-20)+' 条</td></tr>';
+  if(records.length>20)html+=t('gen.L2475.1','<tr><td colspan="10" style="text-align:center;color:#999;padding:8px">... 还有 ')+(records.length-20)+t('gen.L2475.2',' 条</td></tr>');
   html+='</tbody></table></div>';
   if(invalid>0){
-    html+='<div style="margin-top:10px;padding:10px;background:#fffbe6;border-radius:4px;font-size:12px;color:#666"><b>无效行明细：</b><br>'+
-      records.filter(function(r){return r._errors.length>0}).slice(0,10).map(function(r){return '第 '+r._rowNum+' 行：'+r._errors.join('、')}).join('<br>')+
+    html+='<div style="margin-top:10px;padding:10px;background:#fffbe6;border-radius:4px;font-size:12px;color:#666"><b>'+t("html.preview.invalid_detail", "无效行明细：")+'</b><br>'+
+      records.filter(function(r){return r._errors.length>0}).slice(0,10).map(function(r){return t("html.preview.row_pre", "第 ")+r._rowNum+t("html.preview.row_suffix", " 行：")+r._errors.join('、')}).join('<br>')+
       (invalid>10?'<br>...':'')+'</div>';
   }
   document.getElementById('inv-preview').innerHTML=html;
@@ -2500,8 +2501,8 @@ function updateInvImportBtnState(){
 function downloadInvTemplate(){
   var headers=INV_IMPORT_COLUMNS.map(function(c){return c.label});
   var sample=[
-    ['RD-K585-RGB','Redragon','2026-07-05',t("app.621", "\u5370\u5c3c"),t("app.622", "Jakarta\u4ed3"),'线上','350','85.50','2026-06-20',''],
-    ['RD-M601-BK','Redragon','2026-07-05',t("app.621", "\u5370\u5c3c"),t("app.622", "Jakarta\u4ed3"),'线下','120','92.00','','']
+    ['RD-K585-RGB','Redragon','2026-07-05',t("app.621", "\u5370\u5c3c"),t("app.622", "Jakarta\u4ed3"),t("col.online", "线上"),'350','85.50','2026-06-20',''],
+    ['RD-M601-BK','Redragon','2026-07-05',t("app.621", "\u5370\u5c3c"),t("app.622", "Jakarta\u4ed3"),t("col.offline", "线下"),'120','92.00','','']
   ];
   var ws=XLSX.utils.aoa_to_sheet([headers].concat(sample));
   ws['!cols']=INV_IMPORT_COLUMNS.map(function(c){return {wch:c.label.length*2+6}});
@@ -2513,9 +2514,9 @@ function downloadInvTemplate(){
 async function submitInvBatchImport(){
   var records=window._invImportData||[];
   var valid=records.filter(function(r){return r._errors.length===0});
-  if(valid.length===0){showToast('没有可导入的有效数据','danger');return}
+  if(valid.length===0){showToast(t("toast.no_valid_data", "没有可导入的有效数据"),'danger');return}
   var snapshotDate=window._invSnapshotDate||'';
-  if(!snapshotDate){showToast('请填写库存快照截止日期','danger');return}
+  if(!snapshotDate){showToast(t("toast.fill_snapshot_date", "请填写库存快照截止日期"),'danger');return}
   var btn=document.getElementById('inv-import-btn');
   btn.disabled=true;btn.textContent=t("app.613", "\u5bfc\u5165\u4e2d...");
   try{
@@ -2527,26 +2528,26 @@ async function submitInvBatchImport(){
     var res=await api('/api/inventory-imports/bulk-import','POST',{items:items,snapshot_cutoff_date:snapshotDate});
     window._lastInvImportErrors=res.errors||[];
     var html='<div style="background:'+(res.failed>0?'#fffbe6':'#f6ffed')+';border:1px solid '+(res.failed>0?'#ffe58f':'#b7eb8f')+';border-radius:8px;padding:14px 16px;font-size:13px">'+
-      '<div style="font-weight:600;margin-bottom:8px">导入完成</div>'+
+      '<div style="font-weight:600;margin-bottom:8px">'+t("toast.import_done", "导入完成")+'</div>'+
       '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">'+
-        '<span>已新增：'+(res.created||0)+' 条</span>'+
-        '<span>失败：'+(res.failed||0)+' 条</span>'+
-        '<span style="color:#1890ff">快照截止日期：'+esc(res.snapshot_cutoff_date||snapshotDate)+'</span>'+
+        t("html.import.added_open", "<span>已新增：")+(res.created||0)+t("html.unit.tiao_close", " 条</span>")+
+        t("html.import.fail_open", "<span>失败：")+(res.failed||0)+t("html.unit.tiao_close", " 条</span>")+
+        t('gen.L2534.1','<span style="color:#1890ff">快照截止日期：')+esc(res.snapshot_cutoff_date||snapshotDate)+'</span>'+
       '</div>';
     // P1-03-B: WAC warnings 展示
     if(res.wac_warnings&&res.wac_warnings.length>0){
       var highWarnings=res.wac_warnings.filter(function(w){return w.priority==='high'});
       var normalWarnings=res.wac_warnings.filter(function(w){return w.priority!=='high'});
       html+='<div style="margin-top:10px;padding:10px 12px;border-radius:6px;background:'+(highWarnings.length>0?'#fff1f0':'#fffbe6')+';border:1px solid '+(highWarnings.length>0?'#ffa39e':'#ffe58f')+'">'+
-        '<div style="font-weight:600;color:'+(highWarnings.length>0?'#ff3b30':'#faad14')+';margin-bottom:6px">加权平均成本匹配结果</div>';
+        '<div style="font-weight:600;color:'+(highWarnings.length>0?'#ff3b30':'#faad14')+t('gen.L2541.1',';margin-bottom:6px">加权平均成本匹配结果</div>');
       if(highWarnings.length>0){
-        html+='<div style="color:#ff3b30;margin-bottom:4px;font-weight:600">⚠️ 高优先级（成本为 0，请尽快完成成本确认）</div>';
+        html+='<div style="color:#ff3b30;margin-bottom:4px;font-weight:600">'+t("html.inv.high_priority", "⚠️ 高优先级（成本为 0，请尽快完成成本确认）")+'</div>';
         highWarnings.forEach(function(w){
           html+='<div style="color:#666;margin-left:12px">'+esc(w.sku_code)+' / '+esc(w.country||'')+' / '+esc(w.warehouse||'')+'：'+esc(w.message)+'</div>';
         });
       }
       if(normalWarnings.length>0){
-        html+='<div style="color:#faad14;margin-bottom:4px;margin-top:'+(highWarnings.length>0?'6px':'0')+'">ℹ️ 已保留原成本（请完成成本确认以更新）</div>';
+        html+='<div style="color:#faad14;margin-bottom:4px;margin-top:'+(highWarnings.length>0?'6px':'0')+t('gen.L2549.1','">ℹ️ 已保留原成本（请完成成本确认以更新）</div>');
         normalWarnings.forEach(function(w){
           html+='<div style="color:#666;margin-left:12px">'+esc(w.sku_code)+' / '+esc(w.country||'')+' / '+esc(w.warehouse||'')+'：'+esc(w.message)+'</div>';
         });
@@ -2554,17 +2555,17 @@ async function submitInvBatchImport(){
       html+='</div>';
     }
     if(window._lastInvImportErrors.length>0){
-      html+='<div style="margin-top:10px"><div style="font-weight:600;color:#ff3b30;margin-bottom:6px">失败明细</div>';
-      html+=window._lastInvImportErrors.slice(0,20).map(function(e){return '<div style="color:#666">第 '+e.row+' 行：'+esc(e.reason)+'</div>'}).join('');
-      if(window._lastInvImportErrors.length>20)html+='<div style="color:#999">还有 '+(window._lastInvImportErrors.length-20)+' 条失败...</div>';
-      html+='<button type="button" class="btn btn-secondary" style="margin-top:10px" onclick="downloadInvImportErrors()">下载失败明细</button></div>';
+      html+='<div style="margin-top:10px"><div style="font-weight:600;color:#ff3b30;margin-bottom:6px">'+t("html.inv.fail_detail", "失败明细")+'</div>';
+      html+=window._lastInvImportErrors.slice(0,20).map(function(e){return t('gen.L2558.1','<div style="color:#666">第 ')+e.row+t('gen.L2558.2',' 行：')+esc(e.reason)+'</div>'}).join('');
+      if(window._lastInvImportErrors.length>20)html+=t('gen.L2559.1','<div style="color:#999">还有 ')+(window._lastInvImportErrors.length-20)+t('gen.L2559.2',' 条失败...</div>');
+      html+='<button type="button" class="btn btn-secondary" style="margin-top:10px" onclick="downloadInvImportErrors()">'+t("html.inv.download_fail", "下载失败明细")+'</button></div>';
     }
     html+='</div>';
     document.getElementById('inv-result').innerHTML=html;
     showToast(t('toast.importDone2','导入完成：新增{c}，失败{f}',{c:res.created||0, f:res.failed||0}),res.failed>0?'warning':'success');
     loadInv();
   }catch(e){
-    showToast(e.message||'导入失败','danger');
+    showToast(e.message||t("toast.import_failed", "导入失败"),'danger');
   }finally{
     btn.disabled=false;btn.textContent=t("app.067", "\u5f00\u59cb\u5bfc\u5165");
   }
@@ -2572,9 +2573,9 @@ async function submitInvBatchImport(){
 
 function downloadInvImportErrors(){
   if(!window._lastInvImportErrors||window._lastInvImportErrors.length===0)return;
-  var ws=XLSX.utils.aoa_to_sheet([['行号','失败原因']].concat(window._lastInvImportErrors.map(function(e){return [e.row,e.reason]})));
+  var ws=XLSX.utils.aoa_to_sheet([[t("col.row_no", "行号"),t("html.batch.err_reason", "失败原因")]].concat(window._lastInvImportErrors.map(function(e){return [e.row,e.reason]})));
   var wb=XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb,ws,'失败明细');
+  XLSX.utils.book_append_sheet(wb,ws,t("html.inv.fail_detail", "失败明细"));
   XLSX.writeFile(wb,t("app.628", "\u5e93\u5b58\u5bfc\u5165\u5931\u8d25\u660e\u7ec6.xlsx"));
 }
 
@@ -2583,8 +2584,8 @@ const SALES_IMPORT_COLUMNS=[
   {key:'source_system',label:t("po.018", "\u6765\u6e90\u7cfb\u7edf"),required:true},
   {key:'order_no',label:t("po.019", "\u8ba2\u5355\u53f7"),required:true},
   {key:'order_detail_id',label:t("po.020", "\u8ba2\u5355\u660e\u7ec6ID")},
-  {key:'order_date',label:'下单日期',required:true},
-  {key:'shop_platform',label:'渠道'},
+  {key:'order_date',label:t('col.order_date','下单日期'),required:true},
+  {key:'shop_platform',label:t('col.channel','渠道')},
   {key:'brand',label:t("app.112", "\u54c1\u724c")},
   {key:'sku_code',label:'SKU',required:true},
   {key:'quantity',label:t("col.quantity", "数量"),required:true,format:parseInt},
@@ -2602,27 +2603,27 @@ function openSalesBatchImport(){
         'ondragleave="this.style.borderColor=\'#d9d9d9\';this.style.background=\'#fafafa\'" '+
         'ondrop="event.preventDefault();this.style.borderColor=\'#d9d9d9\';this.style.background=\'#fafafa\';handleSalesFile(event.dataTransfer.files[0])">'+
         '<div style="font-size:48px;color:#1890ff;margin-bottom:8px">🛒</div>'+
-        '<div style="font-size:14px;color:#333;margin-bottom:4px">点击上传或拖拽文件到此处</div>'+
-        '<div style="font-size:12px;color:#999">支持 .xlsx / .xls / .csv 格式</div>'+
+        '<div style="font-size:14px;color:#333;margin-bottom:4px">'+t("html.inv.drop_hint", "点击上传或拖拽文件到此处")+'</div>'+
+        '<div style="font-size:12px;color:#999">'+t("html.inv.support_fmt", "支持 .xlsx / .xls / .csv 格式")+'</div>'+
       '</div>'+
       '<input type="file" id="sales-file-input" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleSalesFile(this.files[0])">'+
       '<div style="margin-top:12px;padding:12px 14px;background:#f0f5ff;border:1px solid #adc6ff;border-radius:6px;font-size:12px;color:#333">'+
-        '<div style="font-weight:600;margin-bottom:6px">导入说明</div>'+
+        '<div style="font-weight:600;margin-bottom:6px">'+t("html.sales.import_note", "导入说明")+'</div>'+
         '<div style="line-height:1.8">'+
-          '• <b>来源系统+订单号+SKU+渠道</b> 为唯一键，重复导入将自动更新而非新增<br>'+
-          '• <b>是否有效订单=true</b> 的订单计入销量预测、周转月、补货建议<br>'+
-          '• <b>是否有效订单=false</b> 的订单不计入预测，仅保留记录用于追溯<br>'+
-          '• <b>原始订单状态</b> 仅用于追溯，不参与系统计算<br>'+
-          '• 销售数据导入<b>不扣减库存</b>，库存以库存快照导入为准<br>'+
-          '• 如有<b>订单明细ID</b>，优先按 来源系统+订单明细ID 去重'+
+          t("html.sales.bullet1", "• <b>来源系统+订单号+SKU+渠道</b> 为唯一键，重复导入将自动更新而非新增<br>")+
+          t("html.sales.bullet2", "• <b>是否有效订单=true</b> 的订单计入销量预测、周转月、补货建议<br>")+
+          t("html.sales.bullet3", "• <b>是否有效订单=false</b> 的订单不计入预测，仅保留记录用于追溯<br>")+
+          t("html.sales.bullet4", "• <b>原始订单状态</b> 仅用于追溯，不参与系统计算<br>")+
+          t("html.sales.bullet5", "• 销售数据导入<b>不扣减库存</b>，库存以库存快照导入为准<br>")+
+          t("html.sales.bullet6", "• 如有<b>订单明细ID</b>，优先按 来源系统+订单明细ID 去重")+
         '</div>'+
       '</div>'+
       '<div id="sales-preview-stats" style="margin-top:16px"></div>'+
       '<div id="sales-result" style="margin-top:16px"></div>'+
     '</div>',
-    '<button class="btn btn-secondary" onclick="downloadSalesTemplate()">下载模板</button>'+
-    '<button class="btn btn-secondary" onclick="closeModal()">关闭</button>'+
-    '<button class="btn btn-primary" id="sales-import-btn" onclick="submitSalesBatchImport()" disabled>开始导入</button>'
+    '<button class="btn btn-secondary" onclick="downloadSalesTemplate()">'+t("html.inv.download_tpl", "下载模板")+'</button>'+
+    '<button class="btn btn-secondary" onclick="closeModal()">'+t("action.close", "关闭")+'</button>'+
+    '<button class="btn btn-primary" id="sales-import-btn" onclick="submitSalesBatchImport()" disabled>'+t("html.inv.start_import", "开始导入")+'</button>'
   );
   window._salesImportData=[];
 }
@@ -2630,7 +2631,7 @@ function openSalesBatchImport(){
 function handleSalesFile(file){
   if(!file)return;
   var ext=file.name.split('.').pop().toLowerCase();
-  if(!['xlsx','xls','csv'].includes(ext)){showToast('仅支持 .xlsx / .xls / .csv 格式','danger');return}
+  if(!['xlsx','xls','csv'].includes(ext)){showToast(t("toast.only_xlsx", "仅支持 .xlsx / .xls / .csv 格式"),'danger');return}
   var reader=new FileReader();
   reader.onload=function(e){
     try{
@@ -2640,7 +2641,7 @@ function handleSalesFile(file){
       else{wb=XLSX.read(new Uint8Array(data),{type:'array',cellDates:true})}
       var ws=wb.Sheets[wb.SheetNames[0]];
       var rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:'',raw:false,dateNF:'yyyy-mm-dd'});
-      if(rows.length<2){showToast('文件为空或缺少数据行','danger');return}
+      if(rows.length<2){showToast(t("toast.file_empty", "文件为空或缺少数据行"),'danger');return}
       var headers=rows[0].map(function(h){return String(h||'').trim()});
       var records=[];
       for(var i=1;i<rows.length;i++){
@@ -2656,14 +2657,14 @@ function handleSalesFile(file){
             rec[col.key]=val;
           }
         });
-        if(!rec.source_system||!String(rec.source_system).trim())rec._errors.push('来源系统不能为空');
-        if(!rec.order_no||!String(rec.order_no).trim())rec._errors.push('订单号不能为空');
-        if(!rec.sku_code||!String(rec.sku_code).trim())rec._errors.push('SKU不能为空');
+        if(!rec.source_system||!String(rec.source_system).trim())rec._errors.push(t("toast.src_required", "来源系统不能为空"));
+        if(!rec.order_no||!String(rec.order_no).trim())rec._errors.push(t("toast.order_required", "订单号不能为空"));
+        if(!rec.sku_code||!String(rec.sku_code).trim())rec._errors.push(t("toast.sku_required", "SKU不能为空"));
         if(!rec.order_date)rec._errors.push(t("app.632", "\u4e0b\u5355\u65e5\u671f\u4e0d\u80fd\u4e3a\u7a7a"));
         else{
           var normalizedDate=normalizeOrderDate(rec.order_date);
           if(normalizedDate)rec.order_date=normalizedDate;
-          else rec._errors.push('下单日期格式无法识别：'+rec.order_date);
+          else rec._errors.push(t("toast.date_unknown", "下单日期格式无法识别：")+rec.order_date);
         }
         if(rec.quantity===undefined||rec.quantity===null||isNaN(rec.quantity)||rec.quantity<=0)rec._errors.push(t("app.633", "\u6570\u91cf\u5fc5\u987b\u4e3a\u6b63\u6570"));
         // is_valid_order 默认true
@@ -2696,13 +2697,13 @@ async function requestSalesPreview(){
   try{
     var res=await api('/api/sales-records/bulk-import-preview','POST',{items:items});
     var html='<div style="background:#f6ffed;border:1px solid #b7eb8f;border-radius:8px;padding:14px 16px;font-size:13px">'+
-      '<div style="font-weight:600;margin-bottom:8px">导入预览统计</div>'+
+      '<div style="font-weight:600;margin-bottom:8px">'+t("html.sales.preview_stats", "导入预览统计")+'</div>'+
       '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">'+
-        '<span>总记录数：'+(res.preview.length)+'</span>'+
-        '<span style="color:#52c41a">将新增：'+res.preview.filter(function(p){return p.action==='insert'}).length+'</span>'+
-        '<span style="color:#1890ff">将更新：'+res.preview.filter(function(p){return p.action==='update'}).length+'</span>'+
-        '<span style="color:#faad14">重复无变化：'+res.preview.filter(function(p){return p.action==='skip'}).length+'</span>'+
-        '<span style="color:#ff3b30">异常失败：'+res.preview.filter(function(p){return p.errors.length>0}).length+'</span>'+
+        t("html.sales.preview_total_open", "<span>总记录数：")+(res.preview.length)+'</span>'+
+        t('gen.L2702.1','<span style="color:#52c41a">将新增：')+res.preview.filter(function(p){return p.action==='insert'}).length+'</span>'+
+        t('gen.L2703.1','<span style="color:#1890ff">将更新：')+res.preview.filter(function(p){return p.action==='update'}).length+'</span>'+
+        t('gen.L2704.1','<span style="color:#faad14">重复无变化：')+res.preview.filter(function(p){return p.action==='skip'}).length+'</span>'+
+        t('gen.L2705.1','<span style="color:#ff3b30">异常失败：')+res.preview.filter(function(p){return p.errors.length>0}).length+'</span>'+
       '</div>';
     html+='</div>';
     var el=document.getElementById('sales-preview-stats');
@@ -2719,8 +2720,8 @@ async function requestSalesPreview(){
 function renderSalesPreview(records){
   var valid=records.filter(function(r){return r._errors.length===0}).length;
   var invalid=records.length-valid;
-  var html='<div style="background:#f0f8ff;padding:10px 14px;border-radius:6px;margin-bottom:10px;font-size:13px"><b>共 '+records.length+' 条数据</b>，<span style="color:#52c41a">有效 '+valid+' 条</span>'+(invalid>0?'，<span style="color:#ff4d4f">无效 '+invalid+' 条</span>':'')+'</div>';
-  html+='<div class="table-container" style="max-height:300px;overflow:auto;box-shadow:none;border:1px solid #f0f0f0"><table class="data-table"><thead><tr><th>行</th><th>来源系统</th><th>订单号</th><th>下单日期</th><th>SKU</th><th>数量</th><th>有效订单</th><th>校验</th></tr></thead><tbody>';
+  var html=t('gen.L2722.1','<div style="background:#f0f8ff;padding:10px 14px;border-radius:6px;margin-bottom:10px;font-size:13px"><b>共 ')+records.length+t('gen.L2722.2',' 条数据</b>，<span style="color:#52c41a">有效 ')+valid+t('gen.L2722.3',' 条</span>')+(invalid>0?t('gen.L2722.4','，<span style="color:#ff4d4f">无效 ')+invalid+t('gen.L2722.5',' 条</span>'):'')+'</div>';
+  html+='<div class="table-container" style="max-height:300px;overflow:auto;box-shadow:none;border:1px solid #f0f0f0"><table class="data-table"><thead><tr><th>'+t("col.row", "行")+'</th><th>'+t("po.018", "来源系统")+'</th><th>'+t("po.019", "订单号")+'</th><th>'+t("col.order_date", "下单日期")+'</th><th>SKU</th><th>'+t("col.qty", "数量")+'</th><th>'+t("col.effective_order", "有效订单")+'</th><th>'+t("col.verify", "校验")+'</th></tr></thead><tbody>';
   records.slice(0,20).forEach(function(r){
     var ok=r._errors.length===0;
     html+='<tr style="'+(ok?'':'background:#fff1f0')+'">'+
@@ -2730,15 +2731,15 @@ function renderSalesPreview(records){
       '<td>'+esc(r.order_date||'-')+'</td>'+
       '<td class="cell-id">'+esc(r.sku_code||'-')+'</td>'+
       '<td class="text-right">'+(r.quantity!==undefined?r.quantity:'-')+'</td>'+
-      '<td>'+(r.is_valid_order?'<span style="color:#52c41a">是</span>':'<span style="color:#999">否</span>')+'</td>'+
+      '<td>'+(r.is_valid_order?t('gen.L2733.1','<span style="color:#52c41a">是</span>'):t('gen.L2733.2','<span style="color:#999">否</span>'))+'</td>'+
       '<td>'+(ok?'<span class="status-badge status-completed">✓</span>':'<span class="status-badge status-danger" title="'+esc(r._errors.join('; '))+'">✗ '+r._errors.length+'</span>')+'</td>'+
     '</tr>';
   });
-  if(records.length>20)html+='<tr><td colspan="8" style="text-align:center;color:#999;padding:8px">... 还有 '+(records.length-20)+' 条</td></tr>';
+  if(records.length>20)html+=t('gen.L2737.1','<tr><td colspan="8" style="text-align:center;color:#999;padding:8px">... 还有 ')+(records.length-20)+t('gen.L2737.2',' 条</td></tr>');
   html+='</tbody></table></div>';
   if(invalid>0){
-    html+='<div style="margin-top:10px;padding:10px;background:#fffbe6;border-radius:4px;font-size:12px;color:#666"><b>无效行明细：</b><br>'+
-      records.filter(function(r){return r._errors.length>0}).slice(0,10).map(function(r){return '第 '+r._rowNum+' 行：'+r._errors.join('、')}).join('<br>')+
+    html+='<div style="margin-top:10px;padding:10px;background:#fffbe6;border-radius:4px;font-size:12px;color:#666"><b>'+t("html.preview.invalid_detail", "无效行明细：")+'</b><br>'+
+      records.filter(function(r){return r._errors.length>0}).slice(0,10).map(function(r){return t("html.preview.row_pre", "第 ")+r._rowNum+t("html.preview.row_suffix", " 行：")+r._errors.join('、')}).join('<br>')+
       (invalid>10?'<br>...':'')+'</div>';
   }
   document.getElementById('sales-preview-stats').innerHTML=html;
@@ -2748,21 +2749,21 @@ function renderSalesPreview(records){
 function downloadSalesTemplate(){
   var headers=SALES_IMPORT_COLUMNS.map(function(c){return c.label});
   var sample=[
-    ['BigSeller','BS-2026-001234','','2026-06-15',t("app.641", "Shopee\u5370\u5c3c\u5e97"),'BOYA','BY-M1',30,'true','Shipped','正常订单'],
-    ['至速','ZS-2026-005678','','2026-06-15',t("app.644", "Lazada\u9a6c\u6765\u5e97"),'BOYA','BY-M1000',15,'true','Delivered',''],
-    ['EDA','EDA-2026-009999','DTL-001','2026-06-14',t("app.645", "TikTok\u6cf0\u56fd\u5e97"),'BOYA','BY-WM8 Pro',8,'false','Cancelled','取消订单不计入预测']
+    ['BigSeller','BS-2026-001234','','2026-06-15',t("app.641", "Shopee\u5370\u5c3c\u5e97"),'BOYA','BY-M1',30,'true','Shipped',t("sample.normal_order", "正常订单")],
+    [t("sample.zhisu", "至速"),'ZS-2026-005678','','2026-06-15',t("app.644", "Lazada\u9a6c\u6765\u5e97"),'BOYA','BY-M1000',15,'true','Delivered',''],
+    ['EDA','EDA-2026-009999','DTL-001','2026-06-14',t("app.645", "TikTok\u6cf0\u56fd\u5e97"),'BOYA','BY-WM8 Pro',8,'false','Cancelled',t("sample.sales_remark", "取消订单不计入预测")]
   ];
   var ws=XLSX.utils.aoa_to_sheet([headers].concat(sample));
   ws['!cols']=SALES_IMPORT_COLUMNS.map(function(c){return {wch:c.label.length*2+6}});
   var wb=XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb,ws,'销售数据');
+  XLSX.utils.book_append_sheet(wb,ws,t("nav.sales_data", "销售数据"));
   XLSX.writeFile(wb,t("app.647", "\u9500\u552e\u6570\u636e_\u5bfc\u5165\u6a21\u677f.xlsx"));
 }
 
 async function submitSalesBatchImport(){
   var records=window._salesImportData||[];
   var valid=records.filter(function(r){return r._errors.length===0});
-  if(valid.length===0){showToast('没有可导入的有效数据','danger');return}
+  if(valid.length===0){showToast(t("toast.no_valid_data", "没有可导入的有效数据"),'danger');return}
   var btn=document.getElementById('sales-import-btn');
   btn.disabled=true;btn.textContent=t("app.613", "\u5bfc\u5165\u4e2d...");
   try{
@@ -2774,26 +2775,26 @@ async function submitSalesBatchImport(){
     var res=await api('/api/sales-records/bulk-import','POST',{items:items});
     window._lastSalesImportErrors=res.errors||[];
     var html='<div style="background:'+(res.failed>0?'#fffbe6':'#f6ffed')+';border:1px solid '+(res.failed>0?'#ffe58f':'#b7eb8f')+';border-radius:8px;padding:14px 16px;font-size:13px">'+
-      '<div style="font-weight:600;margin-bottom:8px">导入完成报告</div>'+
+      '<div style="font-weight:600;margin-bottom:8px">'+t("html.sales.import_done_report", "导入完成报告")+'</div>'+
       '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">'+
-        '<span>总行数：'+(res.total||0)+' 条</span>'+
-        '<span style="color:#52c41a">新增：'+(res.inserted||0)+' 条</span>'+
-        '<span style="color:#1890ff">更新：'+(res.updated||0)+' 条</span>'+
-        '<span style="color:#faad14">重复无变化：'+(res.skipped||0)+' 条</span>'+
-        '<span style="color:#ff3b30">失败：'+(res.failed||0)+' 条</span>'+
+        t("html.sales.total_rows_open", "<span>总行数：")+(res.total||0)+t("html.unit.tiao_close", " 条</span>")+
+        t('gen.L2780.1','<span style="color:#52c41a">新增：')+(res.inserted||0)+t('gen.L2780.2',' 条</span>')+
+        t('gen.L2781.1','<span style="color:#1890ff">更新：')+(res.updated||0)+t('gen.L2781.2',' 条</span>')+
+        t('gen.L2782.1','<span style="color:#faad14">重复无变化：')+(res.skipped||0)+t('gen.L2782.2',' 条</span>')+
+        t('gen.L2783.1','<span style="color:#ff3b30">失败：')+(res.failed||0)+t('gen.L2783.2',' 条</span>')+
       '</div>';
     if(window._lastSalesImportErrors.length>0){
-      html+='<div style="margin-top:10px"><div style="font-weight:600;color:#ff3b30;margin-bottom:6px">失败明细</div>';
-      html+=window._lastSalesImportErrors.slice(0,20).map(function(e){return '<div style="color:#666">第 '+e.row+' 行：'+esc(e.reason)+'</div>'}).join('');
-      if(window._lastSalesImportErrors.length>20)html+='<div style="color:#999">还有 '+(window._lastSalesImportErrors.length-20)+' 条失败...</div>';
-      html+='<button type="button" class="btn btn-secondary" style="margin-top:10px" onclick="downloadSalesImportErrors()">下载失败明细</button></div>';
+      html+='<div style="margin-top:10px"><div style="font-weight:600;color:#ff3b30;margin-bottom:6px">'+t("html.inv.fail_detail", "失败明细")+'</div>';
+      html+=window._lastSalesImportErrors.slice(0,20).map(function(e){return t('gen.L2787.1','<div style="color:#666">第 ')+e.row+t('gen.L2787.2',' 行：')+esc(e.reason)+'</div>'}).join('');
+      if(window._lastSalesImportErrors.length>20)html+=t('gen.L2788.1','<div style="color:#999">还有 ')+(window._lastSalesImportErrors.length-20)+t('gen.L2788.2',' 条失败...</div>');
+      html+='<button type="button" class="btn btn-secondary" style="margin-top:10px" onclick="downloadSalesImportErrors()">'+t("html.inv.download_fail", "下载失败明细")+'</button></div>';
     }
     html+='</div>';
     document.getElementById('sales-result').innerHTML=html;
     showToast(t('toast.importDone4','导入完成：新增{c}，更新{u}，重复{s}，失败{f}',{c:res.inserted||0, u:res.updated||0, s:res.skipped||0, f:res.failed||0}),res.failed>0?'warning':'success');
     loadSales();
   }catch(e){
-    showToast(e.message||'导入失败','danger');
+    showToast(e.message||t("toast.import_failed", "导入失败"),'danger');
   }finally{
     btn.disabled=false;btn.textContent=t("app.067", "\u5f00\u59cb\u5bfc\u5165");
   }
@@ -2801,9 +2802,9 @@ async function submitSalesBatchImport(){
 
 function downloadSalesImportErrors(){
   if(!window._lastSalesImportErrors||window._lastSalesImportErrors.length===0)return;
-  var ws=XLSX.utils.aoa_to_sheet([['行号','失败原因']].concat(window._lastSalesImportErrors.map(function(e){return [e.row,e.reason]})));
+  var ws=XLSX.utils.aoa_to_sheet([[t("col.row_no", "行号"),t("html.batch.err_reason", "失败原因")]].concat(window._lastSalesImportErrors.map(function(e){return [e.row,e.reason]})));
   var wb=XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb,ws,'失败明细');
+  XLSX.utils.book_append_sheet(wb,ws,t("html.inv.fail_detail", "失败明细"));
   XLSX.writeFile(wb,t("app.650", "\u9500\u552e\u5bfc\u5165\u5931\u8d25\u660e\u7ec6.xlsx"));
 }
 
@@ -2826,7 +2827,7 @@ function invStatusBadge(v){
 async function renderInventory(){
   invDataCache = []; invAllFilteredIds = []; invSelectAllMode = false;
   document.getElementById('content-inner').innerHTML=
-    t('html.renderInventory', `<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>国家</label><select id="inv-c"><option value="">全部</option></select></div><div class="filter-group"><label>仓库</label><select id="inv-w"><option value="">全部</option></select></div><div class="filter-group"><label>品牌</label><select id="inv-b"><option value="">全部</option></select></div><div class="filter-group"><label>关键词</label><input type="text" id="inv-k" placeholder="SKU/产品名" onkeypress="if(event.key==='Enter')loadInv()"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadInv()">搜索</button>{v1}</div></div></div><div id="inv-batch-bar" style="display:none;background:var(--bg-card,#fff);border:1px solid var(--border,#e0e0e0);border-radius:8px;padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span id="inv-batch-count" style="font-weight:600;margin-right:8px"></span><button class="btn btn-sm btn-secondary" onclick="invBatchAction('export')">📊 导出</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_status')">🏷️ 库存状态</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_focused')">⭐ 重点关注</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_safety_stock')">🛡️ 安全库存</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_turnover')">🎯 目标周转</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_replenish_rule')">📋 补货规则</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_remark')">📝 库存备注</button><button class="btn btn-sm btn-warning" onclick="invBatchAction('inventory_adjust')">🔧 发起调整单</button><button class="btn btn-sm btn-danger" onclick="invBatchAction('delete')" style="background:#ff4d4f;color:#fff;border:none">🗑️ 删除</button><button class="btn btn-sm btn-secondary" onclick="invClearSelection()" style="margin-left:auto">取消选择</button></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">📦 库存总表</div><div class="table-section-title-right" id="inv-rate-display" style="font-size:12px;color:#666;display:flex;gap:12px;align-items:center"></div></div><div id="inv-table"></div></div>`, {v1: hasPermission('inventory_import')?'<button class="btn btn-secondary btn-sm" onclick="openInvBatchImport()">📥 导入库存</button>':''});
+    t('html.renderInventory', `<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>国家</label><select id="inv-c"><option value="">全部</option></select></div><div class="filter-group"><label>仓库</label><select id="inv-w"><option value="">全部</option></select></div><div class="filter-group"><label>品牌</label><select id="inv-b"><option value="">全部</option></select></div><div class="filter-group"><label>关键词</label><input type="text" id="inv-k" placeholder="SKU/产品名" onkeypress="if(event.key==='Enter')loadInv()"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadInv()">搜索</button>{v1}</div></div></div><div id="inv-batch-bar" style="display:none;background:var(--bg-card,#fff);border:1px solid var(--border,#e0e0e0);border-radius:8px;padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span id="inv-batch-count" style="font-weight:600;margin-right:8px"></span><button class="btn btn-sm btn-secondary" onclick="invBatchAction('export')">📊 导出</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_status')">🏷️ 库存状态</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_focused')">⭐ 重点关注</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_safety_stock')">🛡️ 安全库存</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_turnover')">🎯 目标周转</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_replenish_rule')">📋 补货规则</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_remark')">📝 库存备注</button><button class="btn btn-sm btn-warning" onclick="invBatchAction('inventory_adjust')">🔧 发起调整单</button><button class="btn btn-sm btn-danger" onclick="invBatchAction('delete')" style="background:#ff4d4f;color:#fff;border:none">🗑️ 删除</button><button class="btn btn-sm btn-secondary" onclick="invClearSelection()" style="margin-left:auto">取消选择</button></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">📦 库存总表</div><div class="table-section-title-right" id="inv-rate-display" style="font-size:12px;color:#666;display:flex;gap:12px;align-items:center"></div></div><div id="inv-table"></div></div>`, {v1: hasPermission('inventory_import')?t('gen.L2829.1','<button class="btn btn-secondary btn-sm" onclick="openInvBatchImport()">📥 导入库存</button>'):''});
   // 加载下拉选项
   try{
     const opts=await api('/api/inventory/filter-options');
@@ -2876,14 +2877,14 @@ async function loadInv(){
           var rateStr = Number(ci.rate).toLocaleString('en-US',{maximumFractionDigits:4});
           rateRowsHtml += '<div style="background:#f0f8ff;padding:3px 10px;border-radius:12px;white-space:nowrap">CNY:' + esc(ci.code) + '　1 ¥ = ' + rateStr + ' ' + esc(ci.symbol||ci.code) + '</div>';
         } else {
-          rateRowsHtml += '<div style="background:#fff4e6;padding:3px 10px;border-radius:12px;white-space:nowrap;color:#ff4d4f">CNY:' + esc(ci.code) + '　无汇率</div>';
+          rateRowsHtml += '<div style="background:#fff4e6;padding:3px 10px;border-radius:12px;white-space:nowrap;color:#ff4d4f">CNY:' + esc(ci.code) + t('gen.L2879.1','　无汇率</div>');
         }
       }
     });
     if(rateRowsHtml){
-      rateRowsHtml = '<span style="color:#999;margin-right:4px;align-self:center">汇率(' + (rateInfo.rate_date||'') + '):</span>'
+      rateRowsHtml = t('gen.L2884.1','<span style="color:#999;margin-right:4px;align-self:center">汇率(') + (rateInfo.rate_date||'') + '):</span>'
         + '<div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end">' + rateRowsHtml + '</div>'
-        + '<button class="btn btn-sm btn-secondary" style="padding:2px 8px;font-size:11px;margin-left:6px;align-self:center" onclick="refreshInvRates()">🔄 刷新</button>';
+        + '<button class="btn btn-sm btn-secondary" style="padding:2px 8px;font-size:11px;margin-left:6px;align-self:center" onclick="refreshInvRates()">'+'🔄 '+t("action.refresh", "刷新")+'</button>';
     }
     var rateEl = document.getElementById('inv-rate-display');
     if(rateEl) rateEl.innerHTML = rateRowsHtml;
@@ -2904,8 +2905,8 @@ async function loadInv(){
 
     // 列顺序：复选框 | SKU | 国家 | 仓库 | 品牌 | 可用 | 安全库存 | 在途 | PI未发 | PO未确 | 加权成本 | 库存金额(本币) | 库存金额(¥) | 目标周转 | 实际周转 | 最后入库 | 距最后入库天数 | 库龄风险 | 库存快照截止 | 最后出库 | 库存状态 | 重点关注 | 备注
     // (产品名从列表移除——SKU已可识别，可悬停tooltip或在详情中看)
-    const cols = ['SKU',t("app.113", "\u56fd\u5bb6"),t("app.114", "\u4ed3\u5e93"),t("app.112", "\u54c1\u724c"),'可用',t("app.655", "\u5b89\u5168\u5e93\u5b58"),'在途',t("app.656", "PI\u672a\u53d1"),t("app.657", "PO\u672a\u786e"),t("app.619", "\u52a0\u6743\u6210\u672c"),t("app.658", "\u5e93\u5b58\u91d1\u989d(\u672c\u5e01)"),t("app.659", "\u5e93\u5b58\u91d1\u989d(\u00a5)"),t("app.660", "\u76ee\u6807\u5468\u8f6c"),t("app.661", "\u5b9e\u9645\u5468\u8f6c"),t("app.662", "\u6700\u540e\u5165\u5e93"),t("app.663", "\u8ddd\u6700\u540e\u5165\u5e93\u5929\u6570"),t("app.664", "\u5e93\u9f84\u98ce\u9669"),t("app.665", "\u9996\u6b21\u5165\u5e93"),t("app.666", "\u5e93\u5b58\u5feb\u7167\u622a\u6b62"),t("app.667", "\u6700\u540e\u51fa\u5e93"),'库存状态',t("app.668", "\u91cd\u70b9\u5173\u6ce8"),t("col.remark", "备注")];
-    document.getElementById('inv-table').innerHTML=t('html.loadInv', '<div class="table-container" style="box-shadow:none;border-radius:0;max-width:100%"><table class="data-table"><thead><tr><th class="col-sticky" style="width:32px;left:0;background:#fafbfc"><input type="checkbox" id="inv-check-all" onchange="toggleAllInv(this.checked)"></th><th class="col-sticky" style="white-space:nowrap;left:32px;background:#fafbfc">SKU<br><a href="javascript:void(0)" onclick="selectAllInvFiltered()" style="font-size:11px;color:var(--primary,#2e7d32)">全选全部({v1})</a></th>{v2}</tr></thead><tbody>{v3}</tbody></table></div>', {v1: invAllFilteredIds.length, v2: cols.slice(1).map(h=>'<th>'+h+'</th>').join(''), v3: !data.length?'<tr><td colspan="'+(cols.length+1)+'" style="text-align:center;padding:30px;color:#999">暂无库存数据</td></tr>'
+    const cols = ['SKU',t("app.113", "\u56fd\u5bb6"),t("app.114", "\u4ed3\u5e93"),t("app.112", "\u54c1\u724c"),t("col.available", "可用"),t("app.655", "\u5b89\u5168\u5e93\u5b58"),t("col.in_transit", "在途"),t("app.656", "PI\u672a\u53d1"),t("app.657", "PO\u672a\u786e"),t("app.619", "\u52a0\u6743\u6210\u672c"),t("app.658", "\u5e93\u5b58\u91d1\u989d(\u672c\u5e01)"),t("app.659", "\u5e93\u5b58\u91d1\u989d(\u00a5)"),t("app.660", "\u76ee\u6807\u5468\u8f6c"),t("app.661", "\u5b9e\u9645\u5468\u8f6c"),t("app.662", "\u6700\u540e\u5165\u5e93"),t("app.663", "\u8ddd\u6700\u540e\u5165\u5e93\u5929\u6570"),t("app.664", "\u5e93\u9f84\u98ce\u9669"),t("app.665", "\u9996\u6b21\u5165\u5e93"),t("app.666", "\u5e93\u5b58\u5feb\u7167\u622a\u6b62"),t("app.667", "\u6700\u540e\u51fa\u5e93"),t("col.inv_status", "库存状态"),t("app.668", "\u91cd\u70b9\u5173\u6ce8"),t("col.remark", "备注")];
+    document.getElementById('inv-table').innerHTML=t('html.loadInv', '<div class="table-container" style="box-shadow:none;border-radius:0;max-width:100%"><table class="data-table"><thead><tr><th class="col-sticky" style="width:32px;left:0;background:#fafbfc"><input type="checkbox" id="inv-check-all" onchange="toggleAllInv(this.checked)"></th><th class="col-sticky" style="white-space:nowrap;left:32px;background:#fafbfc">SKU<br><a href="javascript:void(0)" onclick="selectAllInvFiltered()" style="font-size:11px;color:var(--primary,#2e7d32)">全选全部({v1})</a></th>{v2}</tr></thead><tbody>{v3}</tbody></table></div>', {v1: invAllFilteredIds.length, v2: cols.slice(1).map(h=>'<th>'+h+'</th>').join(''), v3: !data.length?'<tr><td colspan="'+(cols.length+1)+t('gen.L2908.1','" style="text-align:center;padding:30px;color:#999">暂无库存数据</td></tr>')
       :data.map(i=>{
         var invVal = (i.available_qty||0)*(i.weighted_avg_cost||0);
         // 计算距最后入库天数和库龄风险
@@ -2944,7 +2945,7 @@ async function loadInv(){
         +'<td class="text-right">'+(i.target_turnover_months||0)+'</td>'
         +'<td class="text-right">'+(i.turnover_months||0)+'</td>'
         +'<td class="cell-date">'+fmtDate(i.last_inbound_date)+'</td>'
-        +'<td class="text-right">'+(daysSinceLastInbound!=='-'?daysSinceLastInbound+'天':t("app.673", "\u672a\u77e5"))+'</td>'
+        +'<td class="text-right">'+(daysSinceLastInbound!=='-'?daysSinceLastInbound+t('gen.L2947.1','天'):t("app.673", "\u672a\u77e5"))+'</td>'
         +'<td><span class="status-badge '+agingRiskClass+'">'+agingRisk+'</span></td>'
         +'<td class="cell-date">'+fmtDate(i.first_inbound_date)+'</td>'
         +'<td class="cell-date">'+fmtDate(i.snapshot_cutoff_date)+'</td>'
@@ -2961,11 +2962,11 @@ async function refreshInvRates(){
   try{
     // 删除今天的缓存汇率，强制重新从API获取
     await api('/api/exchange-rates/refresh','POST',{});
-    showToast('汇率已刷新','success');
+    showToast(t("toast.rate_refreshed", "汇率已刷新"),'success');
     loadInv();
   }catch(e){
     // 如果没有refresh接口，直接重新加载（会从DB取或重新获取）
-    showToast('正在刷新汇率...','info');
+    showToast(t("toast.rate_refreshing", "正在刷新汇率..."),'info');
     loadInv();
   }
 }
@@ -3002,12 +3003,12 @@ function updateInvBatchBar(){
   if(ids.length === 0){ bar.style.display='none'; return; }
   bar.style.display='flex';
   const countEl = document.getElementById('inv-batch-count');
-  if(countEl) countEl.textContent = t('text.updateInvBatchBar', '已选择 {v1} 条{v2}', {v1: ids.length, v2: invSelectAllMode?'（全部筛选结果）':''});
+  if(countEl) countEl.textContent = t('text.updateInvBatchBar', '已选择 {v1} 条{v2}', {v1: ids.length, v2: invSelectAllMode?t('gen.L3005.1','（全部筛选结果）'):''});
 }
 
 async function invBatchAction(action){
   const ids = invGetSelectedIds();
-  if(ids.length === 0){ showToast('请先选择记录','warning'); return; }
+  if(ids.length === 0){ showToast(t("toast.select_first", "请先选择记录"),'warning'); return; }
 
   // 预览
   let preview;
@@ -3027,13 +3028,13 @@ async function invBatchAction(action){
 
 function invBuildBatchModal(action, preview){
   const previewHtml = '<div style="background:var(--bg-hover,#f5f5f5);border-radius:8px;padding:12px;margin-bottom:16px">'
-    +'<div style="font-weight:600;margin-bottom:8px">📋 操作预览</div>'
+    +'<div style="font-weight:600;margin-bottom:8px">'+t("modal.batch_preview", "📋 操作预览")+'</div>'
     +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px">'
-    +'<div>影响记录数: <b>'+preview.total_records+'</b></div>'
-    +'<div>涉及SKU数: <b>'+preview.sku_count+'</b></div>'
-    +'<div>涉及库存数量: <b>'+(preview.total_available_qty||0)+'</b></div>'
-    +'<div>涉及国家: <b>'+preview.countries.join(', ')+'</b></div>'
-    +'<div>涉及仓库: <b>'+preview.warehouses.join(', ')+'</b></div>'
+    +t("modal.batch_affect_records_open", "<div>影响记录数: <b>")+preview.total_records+'</b></div>'
+    +t("modal.batch_affect_sku_open", "<div>涉及SKU数: <b>")+preview.sku_count+'</b></div>'
+    +t("modal.batch_affect_qty_open", "<div>涉及库存数量: <b>")+(preview.total_available_qty||0)+'</b></div>'
+    +t("modal.batch_affect_country_open", "<div>涉及国家: <b>")+preview.countries.join(', ')+'</b></div>'
+    +t("modal.batch_affect_warehouse_open", "<div>涉及仓库: <b>")+preview.warehouses.join(', ')+'</b></div>'
     +'</div></div>';
 
   let inputHtml = '';
@@ -3042,46 +3043,46 @@ function invBuildBatchModal(action, preview){
 
   if(action === 'set_status'){
     title = t("app.684", "\u6279\u91cf\u8bbe\u7f6e\u5e93\u5b58\u72b6\u6001");
-    inputHtml = '<div class="form-group"><label>库存状态</label><select id="batch-val" class="form-control">'+INV_STATUS_OPTS.map(o=>'<option value="'+o.val+'">'+o.label+'</option>').join('')+'</select></div>';
+    inputHtml = '<div class="form-group"><label>'+t("col.inv_status", "库存状态")+'</label><select id="batch-val" class="form-control">'+INV_STATUS_OPTS.map(o=>'<option value="'+o.val+'">'+o.label+'</option>').join('')+'</select></div>';
   } else if(action === 'set_focused'){
     title = t("app.685", "\u6279\u91cf\u8bbe\u7f6e\u91cd\u70b9\u5173\u6ce8");
-    inputHtml = '<div class="form-group"><label>是否重点关注</label><select id="batch-val" class="form-control"><option value="1">⭐ 设为重点关注</option><option value="0">取消重点关注</option></select></div>';
+    inputHtml = '<div class="form-group"><label>'+t("modal.batch_focus", "是否重点关注")+t('gen.L3048.1','</label><select id="batch-val" class="form-control"><option value="1">⭐ 设为重点关注</option><option value="0">')+t("modal.batch_unset_focus", "取消重点关注")+'</option></select></div>';
   } else if(action === 'set_safety_stock'){
     title = t("app.689", "\u6279\u91cf\u8bbe\u7f6e\u5b89\u5168\u5e93\u5b58");
-    inputHtml = '<div class="form-group"><label>安全库存数量</label><input type="number" id="batch-val" class="form-control" min="0" placeholder="\u8bf7\u8f93\u5165\u5b89\u5168\u5e93\u5b58\u6570\u91cf"></div>';
+    inputHtml = '<div class="form-group"><label>'+t("modal.batch_safety", "安全库存数量")+t('gen.L3051.1','</label><input type="number" id="batch-val" class="form-control" min="0" placeholder="\u8bf7\u8f93\u5165\u5b89\u5168\u5e93\u5b58\u6570\u91cf"></div>');
   } else if(action === 'set_turnover'){
     title = t("app.692", "\u6279\u91cf\u8bbe\u7f6e\u76ee\u6807\u5468\u8f6c\u6708\u6570");
-    inputHtml = '<div class="form-group"><label>目标周转月数</label><input type="number" id="batch-val" class="form-control" min="0" step="0.5" placeholder="\u5982: 2, 3, 4"></div>';
+    inputHtml = '<div class="form-group"><label>'+t("modal.batch_turnover", "目标周转月数")+t('gen.L3054.1','</label><input type="number" id="batch-val" class="form-control" min="0" step="0.5" placeholder="\u5982: 2, 3, 4"></div>');
   } else if(action === 'set_replenish_rule'){
     title = t("app.695", "\u6279\u91cf\u8bbe\u7f6e\u8865\u8d27\u89c4\u5219");
-    inputHtml = '<div class="form-group"><label>补货规则</label><select id="batch-val" class="form-control"><option value="auto">自动补货</option><option value="manual">手动补货</option><option value="stop">停止补货</option><option value="">清空规则</option></select></div>';
+    inputHtml = '<div class="form-group"><label>'+t("modal.batch_rule", "补货规则")+'</label><select id="batch-val" class="form-control"><option value="auto">'+t("modal.batch_rule_auto", "自动补货")+'</option><option value="manual">'+t("modal.batch_rule_manual", "手动补货")+'</option><option value="stop">'+t("modal.batch_rule_stop", "停止补货")+'</option><option value="">'+t("modal.batch_rule_clear", "清空规则")+'</option></select></div>';
   } else if(action === 'set_remark'){
     title = t("app.701", "\u6279\u91cf\u8bbe\u7f6e\u5e93\u5b58\u5907\u6ce8");
-    inputHtml = '<div class="form-group"><label>库存备注</label><textarea id="batch-val" class="form-control" rows="3" placeholder="\u8bf7\u8f93\u5165\u5907\u6ce8\u5185\u5bb9"></textarea></div>';
+    inputHtml = '<div class="form-group"><label>'+t("modal.batch_remark", "库存备注")+t('gen.L3060.1','</label><textarea id="batch-val" class="form-control" rows="3" placeholder="\u8bf7\u8f93\u5165\u5907\u6ce8\u5185\u5bb9"></textarea></div>');
   } else if(action === 'inventory_adjust'){
     title = t("app.704", "\u6279\u91cf\u53d1\u8d77\u5e93\u5b58\u8c03\u6574\u5355");
     danger = true;
-    inputHtml = '<div class="form-group"><label>调整类型</label><select id="batch-val" class="form-control"><option value="manual">手工调整</option><option value="correction">库存纠正</option><option value="loss">盘亏</option><option value="gain">盘盈</option></select></div>'
-      +'<div class="form-group"><label>调整原因（必填）</label><textarea id="batch-reason" class="form-control" rows="3" placeholder="请说明调整原因" required></textarea></div>';
+    inputHtml = '<div class="form-group"><label>'+t("modal.batch_adj_type", "调整类型")+'</label><select id="batch-val" class="form-control"><option value="manual">'+t("modal.batch_adj_manual", "手工调整")+'</option><option value="correction">'+t("modal.batch_adj_correct", "库存纠正")+'</option><option value="loss">'+t("modal.batch_adj_loss", "盘亏")+'</option><option value="gain">'+t("modal.batch_adj_gain", "盘盈")+'</option></select></div>'
+      +'<div class="form-group"><label>'+t("modal.batch_adj_reason", "调整原因（必填）")+t('gen.L3065.1','</label><textarea id="batch-reason" class="form-control" rows="3" placeholder=t("modal.batch_adj_reason_ph", "请说明调整原因") required></textarea></div>');
   } else if(action === 'delete'){
-    title = '批量删除库存';
+    title = t("modal.batch_del_title", "批量删除库存");
     danger = true;
-    inputHtml = '<div class="form-group"><label>删除原因（必填，将记录到操作日志）</label><textarea id="batch-reason" class="form-control" rows="3" placeholder="\u5982\uff1a\u6e05\u7406\u6d4b\u8bd5\u6570\u636e" required></textarea></div>'
-      +'<div style="background:#fff1f0;border:1px solid #ffccc7;border-radius:6px;padding:10px;font-size:12px;color:#a8071a">⚠️ 若记录已关联库存导入/出库/调整单，将被跳过不允许删除。</div>';
+    inputHtml = '<div class="form-group"><label>'+t("modal.batch_del_reason", "删除原因（必填，将记录到操作日志）")+t('gen.L3069.1','</label><textarea id="batch-reason" class="form-control" rows="3" placeholder="\u5982\uff1a\u6e05\u7406\u6d4b\u8bd5\u6570\u636e" required></textarea></div>')
+      +t('gen.L3070.1','<div style="background:#fff1f0;border:1px solid #ffccc7;border-radius:6px;padding:10px;font-size:12px;color:#a8071a">⚠️ 若记录已关联库存导入/出库/调整单，将被跳过不允许删除。</div>');
   }
 
-  const reasonHtml = action !== 'inventory_adjust' ? '<div class="form-group"><label>操作原因（选填）</label><input type="text" id="batch-reason" class="form-control" placeholder="\u64cd\u4f5c\u539f\u56e0"></div>' : '';
+  const reasonHtml = action !== 'inventory_adjust' ? '<div class="form-group"><label>'+t("modal.batch_reason", "操作原因（选填）")+t('gen.L3073.1','</label><input type="text" id="batch-reason" class="form-control" placeholder="\u64cd\u4f5c\u539f\u56e0"></div>') : '';
 
   return '<div class="modal-header"><h3>'+(danger?'⚠️ ':'')+title+'</h3><button class="modal-close" onclick="closeModal()">×</button></div>'
     +'<div class="modal-body">'
     +previewHtml
     +inputHtml
     +reasonHtml
-    +'<div style="margin-top:16px;padding:10px;background:#fff3cd;border-radius:6px;font-size:12px;color:#856404">⚠️ 批量操作将逐条执行，异常数据自动跳过，执行完成后展示结果报告'+(danger?'。此操作为高影响操作，请确认后执行。':'')+'</div>'
+    +t('gen.L3080.1','<div style="margin-top:16px;padding:10px;background:#fff3cd;border-radius:6px;font-size:12px;color:#856404">⚠️ 批量操作将逐条执行，异常数据自动跳过，执行完成后展示结果报告')+(danger?t('gen.L3080.2','。此操作为高影响操作，请确认后执行。'):'')+'</div>'
     +'</div>'
     +'<div class="modal-footer">'
-    +'<button class="btn btn-secondary" onclick="closeModal()">取消</button>'
-    +'<button class="btn '+(danger?'btn-danger':'btn-primary')+'" onclick="invBatchExecute(\''+action+'\')">'+(danger?'确认执行':'执行')+'</button>'
+    +'<button class="btn btn-secondary" onclick="closeModal()">'+t("common.cancel", "取消")+'</button>'
+    +'<button class="btn '+(danger?'btn-danger':'btn-primary')+'" onclick="invBatchExecute(\''+action+'\')">'+(danger?t('gen.L3084.1','确认执行'):t('gen.L3084.2','执行'))+'</button>'
     +'</div>';
 }
 
@@ -3090,10 +3091,10 @@ async function invBatchExecute(action){
   const val = document.getElementById('batch-val')?.value;
   const reason = document.getElementById('batch-reason')?.value || '';
 
-  if(action === 'set_safety_stock' && (!val || val < 0)){ showToast('请输入有效的安全库存','warning'); return; }
-  if(action === 'set_turnover' && (!val || val < 0)){ showToast('请输入有效的目标周转月数','warning'); return; }
-  if(action === 'inventory_adjust' && !reason){ showToast('调整原因不能为空','warning'); return; }
-  if(action === 'delete' && !reason.trim()){ showToast('删除原因不能为空','warning'); return; }
+  if(action === 'set_safety_stock' && (!val || val < 0)){ showToast(t("toast.safety_required", "请输入有效的安全库存"),'warning'); return; }
+  if(action === 'set_turnover' && (!val || val < 0)){ showToast(t("toast.turnover_required", "请输入有效的目标周转月数"),'warning'); return; }
+  if(action === 'inventory_adjust' && !reason){ showToast(t("toast.reason_required", "调整原因不能为空"),'warning'); return; }
+  if(action === 'delete' && !reason.trim()){ showToast(t("toast.del_reason_required", "删除原因不能为空"),'warning'); return; }
 
   const apiMap = {
     'set_status': ['/api/inventory/batch-set-status', {ids, status:val, reason}],
@@ -3116,13 +3117,13 @@ async function invBatchExecute(action){
     invClearSelection();
     loadInv();
   } catch(e) {
-    showFlash('批量操作失败: '+e.message, 'danger');
+    showFlash(t("toast.batch_failed", "批量操作失败: ")+e.message, 'danger');
   }
 }
 
 function invBatchExport(ids){
   const data = invDataCache.filter(d => ids.includes(d.id));
-  const headers = ['SKU',t("app.232", "\u4ea7\u54c1\u540d"),t("app.112", "\u54c1\u724c"),t("app.113", "\u56fd\u5bb6"),t("app.114", "\u4ed3\u5e93"),'可用库存',t("app.655", "\u5b89\u5168\u5e93\u5b58"),'在途',t("app.656", "PI\u672a\u53d1"),t("app.657", "PO\u672a\u786e"),t("app.619", "\u52a0\u6743\u6210\u672c"),t("app.658", "\u5e93\u5b58\u91d1\u989d(\u672c\u5e01)"),t("shell.052", "\u5e93\u5b58\u91d1\u989d(\u4eba\u6c11\u5e01)"),t("shell.053", "\u76ee\u6807\u5468\u8f6c\u6708"),t("shell.054", "\u5b9e\u9645\u5468\u8f6c\u6708"),t("app.662", "\u6700\u540e\u5165\u5e93"),t("app.667", "\u6700\u540e\u51fa\u5e93"),'库存状态',t("app.668", "\u91cd\u70b9\u5173\u6ce8"),t("col.remark", "备注")];
+  const headers = ['SKU',t("app.232", "\u4ea7\u54c1\u540d"),t("app.112", "\u54c1\u724c"),t("app.113", "\u56fd\u5bb6"),t("app.114", "\u4ed3\u5e93"),t("html.inv_export.available", "可用库存"),t("app.655", "\u5b89\u5168\u5e93\u5b58"),t("col.in_transit", "在途"),t("app.656", "PI\u672a\u53d1"),t("app.657", "PO\u672a\u786e"),t("app.619", "\u52a0\u6743\u6210\u672c"),t("app.658", "\u5e93\u5b58\u91d1\u989d(\u672c\u5e01)"),t("shell.052", "\u5e93\u5b58\u91d1\u989d(\u4eba\u6c11\u5e01)"),t("shell.053", "\u76ee\u6807\u5468\u8f6c\u6708"),t("shell.054", "\u5b9e\u9645\u5468\u8f6c\u6708"),t("app.662", "\u6700\u540e\u5165\u5e93"),t("app.667", "\u6700\u540e\u51fa\u5e93"),t("col.inv_status", "库存状态"),t("app.668", "\u91cd\u70b9\u5173\u6ce8"),t("col.remark", "备注")];
   const rows = data.map(d => {
     var invVal = (d.available_qty||0)*(d.weighted_avg_cost||0);
     // 从缓存获取汇率信息
@@ -3146,11 +3147,11 @@ function invBatchExport(ids){
       invStatusLabel(d.inventory_status), d.is_focused?t("action.yes", "是"):'', d.inventory_remark||''
     ];
   });
-  if(typeof XLSX === 'undefined'){ showFlash('XLSX库未加载','danger'); return; }
+  if(typeof XLSX === 'undefined'){ showFlash(t("toast.xlsx_missing", "XLSX库未加载"),'danger'); return; }
   const ws = XLSX.utils.aoa_to_sheet([headers].concat(rows));
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, '库存总表');
-  XLSX.writeFile(wb, '库存总表导出_'+new Date().toISOString().slice(0,10)+'.xlsx');
+  XLSX.utils.book_append_sheet(wb, ws, t("nav.inventory_total", "库存总表"));
+  XLSX.writeFile(wb, t('gen.L3153.1','库存总表导出_')+new Date().toISOString().slice(0,10)+'.xlsx');
 }
 
 // ==================== 销售数据 ====================
@@ -3161,7 +3162,7 @@ let salesSelectAllMode = false;
 async function renderOutbound(){
   salesDataCache = []; salesAllFilteredIds = []; salesSelectAllMode = false;
   document.getElementById('content-inner').innerHTML=
-    t('html.renderOutbound', '<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>来源系统</label><select id="sr-ss"><option value="">全部</option></select></div><div class="filter-group"><label>渠道</label><select id="sr-sp"><option value="">全部</option></select></div><div class="filter-group"><label>品牌</label><select id="sr-b"><option value="">全部</option></select></div><div class="filter-group"><label>有效订单</label><select id="sr-iv"><option value="">全部</option><option value="1">有效</option><option value="0">无效</option></select></div><div class="filter-group"><label>开始日期</label><input type="date" id="sr-sd" class="form-control"></div><div class="filter-group"><label>结束日期</label><input type="date" id="sr-ed" class="form-control"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadSales()">搜索</button>{v1}</div></div></div><div id="sr-batch-bar" style="display:none;background:var(--bg-card,#fff);border:1px solid var(--border,#e0e0e0);border-radius:8px;padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span id="sr-batch-count" style="font-weight:600;margin-right:8px"></span><button class="btn btn-sm btn-secondary" onclick="salesBatchExport()">📊 导出</button><button class="btn btn-sm btn-secondary" onclick="salesClearSelection()" style="margin-left:auto">取消选择</button></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🛒 销售明细</div></div><div id="sr-table"></div></div>', {v1: hasPermission('outbound_import')?'<button class="btn btn-secondary btn-sm" onclick="openSalesBatchImport()">📥 导入</button>':''});
+    t('html.renderOutbound', '<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>来源系统</label><select id="sr-ss"><option value="">全部</option></select></div><div class="filter-group"><label>渠道</label><select id="sr-sp"><option value="">全部</option></select></div><div class="filter-group"><label>品牌</label><select id="sr-b"><option value="">全部</option></select></div><div class="filter-group"><label>有效订单</label><select id="sr-iv"><option value="">全部</option><option value="1">有效</option><option value="0">无效</option></select></div><div class="filter-group"><label>开始日期</label><input type="date" id="sr-sd" class="form-control"></div><div class="filter-group"><label>结束日期</label><input type="date" id="sr-ed" class="form-control"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadSales()">搜索</button>{v1}</div></div></div><div id="sr-batch-bar" style="display:none;background:var(--bg-card,#fff);border:1px solid var(--border,#e0e0e0);border-radius:8px;padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span id="sr-batch-count" style="font-weight:600;margin-right:8px"></span><button class="btn btn-sm btn-secondary" onclick="salesBatchExport()">📊 导出</button><button class="btn btn-sm btn-secondary" onclick="salesClearSelection()" style="margin-left:auto">取消选择</button></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🛒 销售明细</div></div><div id="sr-table"></div></div>', {v1: hasPermission('outbound_import')?t('gen.L3164.1','<button class="btn btn-secondary btn-sm" onclick="openSalesBatchImport()">📥 导入</button>'):''});
   // 加载下拉选项
   try{
     const opts=await api('/api/sales-records/filter-options');
@@ -3184,8 +3185,8 @@ async function loadSales(){
     salesAllFilteredIds = data.map(d=>d.id);
     salesSelectAllMode = false;
     updateSalesBatchBar();
-    const cols = ['来源系统','订单号','下单日期','渠道',t("app.112", "\u54c1\u724c"),'SKU',t("app.232", "\u4ea7\u54c1\u540d"),t("col.quantity", "数量"),t("app.640", "\u6709\u6548\u8ba2\u5355"),t("po.022", "\u539f\u59cb\u8ba2\u5355\u72b6\u6001"),t("col.remark", "备注")];
-    document.getElementById('sr-table').innerHTML=t('html.loadSales', '<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th style="width:32px"><input type="checkbox" id="sr-check-all" onchange="toggleAllSales(this.checked)"></th><th style="white-space:nowrap"><a href="javascript:void(0)" onclick="selectAllSalesFiltered()" style="font-size:11px;color:var(--primary,#2e7d32)">全选全部({v1})</a></th>{v2}</tr></thead><tbody>{v3}</tbody></table></div>', {v1: salesAllFilteredIds.length, v2: cols.slice(1).map(h=>'<th>'+h+'</th>').join(''), v3: !data.length?'<tr><td colspan="'+(cols.length+1)+'" style="text-align:center;padding:30px;color:#999">暂无数据</td></tr>'
+    const cols = [t("po.018", "来源系统"),t("po.019", "订单号"),t("col.order_date", "下单日期"),t("col.channel", "渠道"),t("app.112", "\u54c1\u724c"),'SKU',t("app.232", "\u4ea7\u54c1\u540d"),t("col.quantity", "数量"),t("app.640", "\u6709\u6548\u8ba2\u5355"),t("po.022", "\u539f\u59cb\u8ba2\u5355\u72b6\u6001"),t("col.remark", "备注")];
+    document.getElementById('sr-table').innerHTML=t('html.loadSales', '<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th style="width:32px"><input type="checkbox" id="sr-check-all" onchange="toggleAllSales(this.checked)"></th><th style="white-space:nowrap"><a href="javascript:void(0)" onclick="selectAllSalesFiltered()" style="font-size:11px;color:var(--primary,#2e7d32)">全选全部({v1})</a></th>{v2}</tr></thead><tbody>{v3}</tbody></table></div>', {v1: salesAllFilteredIds.length, v2: cols.slice(1).map(h=>'<th>'+h+'</th>').join(''), v3: !data.length?'<tr><td colspan="'+(cols.length+1)+t('gen.L3188.1','" style="text-align:center;padding:30px;color:#999">暂无数据</td></tr>')
       :data.map(r=>'<tr'+(r.is_valid_order?'':' style="opacity:0.5"')+'>'
         +'<td><input type="checkbox" class="sr-check" value="'+esc(r.id)+'" onchange="updateSalesBatchBar()"></td>'
         +'<td>'+esc(r.source_system||'-')+'</td>'
@@ -3196,7 +3197,7 @@ async function loadSales(){
         +'<td class="cell-id">'+esc(r.sku_code)+'</td>'
         +'<td style="max-width:150px;overflow:hidden;text-overflow:ellipsis" title="'+esc(r.product_name||'')+'">'+esc(r.product_name||'-')+'</td>'
         +'<td class="text-right font-bold">'+r.quantity+'</td>'
-        +'<td>'+(r.is_valid_order?'<span style="color:#52c41a">✅ 有效</span>':'<span style="color:#999">❌ 无效</span>')+'</td>'
+        +'<td>'+(r.is_valid_order?t('gen.L3199.1','<span style="color:#52c41a">✅ 有效</span>'):t('gen.L3199.2','<span style="color:#999">❌ 无效</span>'))+'</td>'
         +'<td style="max-width:120px;overflow:hidden;text-overflow:ellipsis" title="'+esc(r.original_order_status||'')+'">'+esc(r.original_order_status||'-')+'</td>'
         +'<td style="max-width:120px;overflow:hidden;text-overflow:ellipsis" title="'+esc(r.remark||'')+'">'+esc(r.remark||'')+'</td>'
       +'</tr>').join('')});
@@ -3236,24 +3237,24 @@ function updateSalesBatchBar(){
   if(ids.length === 0){ bar.style.display='none'; return; }
   bar.style.display='flex';
   const countEl = document.getElementById('sr-batch-count');
-  if(countEl) countEl.textContent = t('text.updateSalesBatchBar', '已选择 {v1} 条{v2}', {v1: ids.length, v2: salesSelectAllMode?'（全部筛选结果）':''});
+  if(countEl) countEl.textContent = t('text.updateSalesBatchBar', '已选择 {v1} 条{v2}', {v1: ids.length, v2: salesSelectAllMode?t('gen.L3239.1','（全部筛选结果）'):''});
 }
 
 function salesBatchExport(){
   const ids = salesGetSelectedIds();
-  if(ids.length === 0){ showToast('请先选择记录','warning'); return; }
+  if(ids.length === 0){ showToast(t("toast.select_first", "请先选择记录"),'warning'); return; }
   const data = salesDataCache.filter(d => ids.includes(d.id));
-  const headers = ['来源系统',t("po.019", "\u8ba2\u5355\u53f7"),t("po.020", "\u8ba2\u5355\u660e\u7ec6ID"),'下单日期','渠道',t("app.112", "\u54c1\u724c"),'SKU',t("col.quantity", "数量"),t("po.021", "\u662f\u5426\u6709\u6548\u8ba2\u5355"),t("po.022", "\u539f\u59cb\u8ba2\u5355\u72b6\u6001"),t("col.remark", "备注")];
+  const headers = [t("po.018", "来源系统"),t("po.019", "\u8ba2\u5355\u53f7"),t("po.020", "\u8ba2\u5355\u660e\u7ec6ID"),t("col.order_date", "下单日期"),t("col.channel", "渠道"),t("app.112", "\u54c1\u724c"),'SKU',t("col.quantity", "数量"),t("po.021", "\u662f\u5426\u6709\u6548\u8ba2\u5355"),t("po.022", "\u539f\u59cb\u8ba2\u5355\u72b6\u6001"),t("col.remark", "备注")];
   const rows = data.map(d => [
     d.source_system||'', d.order_no||'', d.order_detail_id||'', d.order_date||'',
     d.shop_platform||'', d.brand||'', d.sku_code||'', d.quantity||0,
     d.is_valid_order?'true':'false', d.original_order_status||'', d.remark||''
   ]);
-  if(typeof XLSX === 'undefined'){ showFlash('XLSX库未加载','danger'); return; }
+  if(typeof XLSX === 'undefined'){ showFlash(t("toast.xlsx_missing", "XLSX库未加载"),'danger'); return; }
   const ws = XLSX.utils.aoa_to_sheet([headers].concat(rows));
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, t("app.721", "\u9500\u552e\u660e\u7ec6"));
-  XLSX.writeFile(wb, '销售数据导出_'+new Date().toISOString().slice(0,10)+'.xlsx');
+  XLSX.writeFile(wb, t('gen.L3256.1','销售数据导出_')+new Date().toISOString().slice(0,10)+'.xlsx');
 }
 
 // ==================== SKU动销与订单预测 ====================
@@ -3361,18 +3362,18 @@ document.addEventListener('click',function(e){
 window.addEventListener('scroll',function(){ _rpHideTooltip(); },true);
 function rpTotalColMeta(){
   return [
-    {key:'check',label:'选择',fixed:true},
+    {key:'check',label:t('gen.L3364.1','选择'),fixed:true},
     {key:'model',label:'Model',fixed:true},
     {key:'sku',label:'SKU',fixed:true},
-    {key:'online_avg',label:'线上'+rpSalesStatsDays+'天月均销量'},
-    {key:'offline_avg',label:'线下'+rpSalesStatsDays+'天月均销量'},
-    {key:'total_avg',label:rpSalesStatsDays+'天月均销量'},
+    {key:'online_avg',label:t('gen.L3367.1','线上')+rpSalesStatsDays+t('gen.L3367.2','天月均销量')},
+    {key:'offline_avg',label:t('gen.L3368.1','线下')+rpSalesStatsDays+t('gen.L3368.2','天月均销量')},
+    {key:'total_avg',label:rpSalesStatsDays+t('gen.L3369.1','天月均销量')},
     {key:'avail',label:t("app.730", "\u5f53\u524d\u53ef\u7528\u5e93\u5b58")},
-    {key:'transit',label:'在途库存'},
+    {key:'transit',label:t('gen.L3371.1','在途库存')},
     {key:'pi_unshipped',label:t("app.731", "PI\u5df2\u786e\u8ba4\u672a\u53d1\u8d27")},
     {key:'po_unconfirmed',label:t("app.732", "PO\u672a\u786e\u8ba4PI")},
     {key:'total_target_stock',label:t("app.109", "\u5efa\u8bae\u91c7\u8d2d\u6570\u91cf"),fixed:true},
-    {key:'avail_turnover',label:'当前可用周转'},
+    {key:'avail_turnover',label:t('gen.L3375.1','当前可用周转')},
     {key:'transit_turnover',label:t("app.733", "\u5728\u9014\u540e\u5468\u8f6c")},
     {key:'after_order_turnover',label:t("app.734", "\u4e0b\u5355\u540e\u5468\u8f6c")},
     {key:'last_inbound_date',label:t("po.012", "\u6700\u540e\u5165\u5e93\u65e5\u671f")},
@@ -3405,7 +3406,7 @@ function normalizeRiskTags(risk_tags) {
 // 业务拦截：判断是否应该阻止自动补货
 function shouldBlockReplenish(sales_status, risk_tags) {
   var tags = normalizeRiskTags(risk_tags);
-  if (['清仓',t("app.554", "\u505c\u91c7/\u505c\u4ea7"),t("app.749", "\u65e0\u6709\u6548\u9500\u552e"),t("app.750", "\u5446\u6ede"),'慢销'].indexOf(sales_status) >= 0) return true;
+  if ([t('gen.L3408.1','清仓'),t("app.554", "\u505c\u91c7/\u505c\u4ea7"),t("app.749", "\u65e0\u6709\u6548\u9500\u552e"),t("app.750", "\u5446\u6ede"),t('gen.L3408.2','慢销')].indexOf(sales_status) >= 0) return true;
   if (tags.indexOf(t("app.751", "\u9ad8\u5e93\u5b58\u4e25\u91cd"))>=0 || tags.indexOf(t("app.752", "\u9ad8\u5e93\u5b58\u5173\u6ce8"))>=0 || tags.indexOf(t("app.753", "\u9ad8\u5e93\u9f84\u98ce\u9669"))>=0) return true;
   if (tags.indexOf(t("app.754", "\u65b0\u54c1\u65e0\u9500\u91cf"))>=0) return true;
   return false;
@@ -3431,15 +3432,15 @@ function simplifyAction(action){
   var a=String(action||'').trim();
   if(!a) return '';
   var map=[
-    [/停止采购.*消化库存/, '暂缓补货'],
-    [/停止采购.*不参与补货/, '暂缓补货'],
-    [/优先复核补货.*确认现货/, '优先补货'],
-    [/优先复核补货.*避免断货/, '优先补货'],
-    [/谨慎补货.*消化库存/, '谨慎补货'],
-    [/按目标周转正常补货/, '正常补货'],
-    [/人工复核目标周转.*暂缓补货/, '人工复核'],
-    [/暂停补货.*清库存/, '暂停补货'],
-    [/检查上架.*暂缓补货/, '暂缓补货']
+    [/停止采购.*消化库存/, t('gen.L3434.1','暂缓补货')],
+    [/停止采购.*不参与补货/, t('gen.L3435.1','暂缓补货')],
+    [/优先复核补货.*确认现货/, t('gen.L3436.1','优先补货')],
+    [/优先复核补货.*避免断货/, t('gen.L3437.1','优先补货')],
+    [/谨慎补货.*消化库存/, t('gen.L3438.1','谨慎补货')],
+    [/按目标周转正常补货/, t('gen.L3439.1','正常补货')],
+    [/人工复核目标周转.*暂缓补货/, t('gen.L3440.1','人工复核')],
+    [/暂停补货.*清库存/, t('gen.L3441.1','暂停补货')],
+    [/检查上架.*暂缓补货/, t('gen.L3442.1','暂缓补货')]
   ];
   for(var i=0;i<map.length;i++){ if(map[i][0].test(a)) return map[i][1]; }
   return a;
@@ -3454,22 +3455,22 @@ function rpChannelColMeta(){
     {key:'sales_m3',label:t("app.763", "\u8fd13\u6708\u6e20\u9053\u9500\u91cf")},
     {key:'sales_m2',label:t("app.764", "\u8fd12\u6708\u6e20\u9053\u9500\u91cf")},
     {key:'sales_m1',label:t("app.765", "\u672c\u6708\u6e20\u9053\u9500\u91cf")},
-    {key:'channel_avg',label:'渠道'+rpSalesStatsDays+'天月均销量'},
+    {key:'channel_avg',label:t('gen.L3457.1','渠道')+rpSalesStatsDays+t('gen.L3457.2','天月均销量')},
     {key:'channel_pct',label:t("app.766", "\u6e20\u9053\u5360\u6bd4")},
     // --- 库存判断字段（按用户指定顺序）---
     {key:'avail',label:t("app.767", "\u5206\u644a\u53ef\u7528\u5e93\u5b58")},
     {key:'transit',label:t("app.768", "\u5206\u644a\u5728\u9014\u5e93\u5b58")},
-    {key:'avail_turnover',label:'当前可用周转'},
+    {key:'avail_turnover',label:t('gen.L3462.1','当前可用周转')},
     {key:'transit_turnover',label:t("app.733", "\u5728\u9014\u540e\u5468\u8f6c")},
     {key:'po_unconfirmed',label:t("app.732", "PO\u672a\u786e\u8ba4PI")},
     {key:'pi_unshipped',label:t("app.731", "PI\u5df2\u786e\u8ba4\u672a\u53d1\u8d27")},
     {key:'target_turn',label:t("app.660", "\u76ee\u6807\u5468\u8f6c"),visibleByDefault:false},
-    {key:'target_stock',label:'建议采购',fixed:true},
+    {key:'target_stock',label:t('gen.L3467.1','建议采购'),fixed:true},
     {key:'after_order_turnover',label:t("app.734", "\u4e0b\u5355\u540e\u5468\u8f6c")},
     // --- 默认展示：结果 + 动作 ---
     {key:'sales_judgement',label:t("app.110", "\u52a8\u9500\u5224\u65ad")},
     {key:'action_rec',label:t("app.111", "\u5efa\u8bae\u52a8\u4f5c")},
-    {key:'review',label:'复盘'},
+    {key:'review',label:t('gen.L3472.1','复盘')},
     // --- 复盘详情字段（默认隐藏，可在字段配置中开启）---
     {key:'sales_status',label:t("app.735", "\u52a8\u9500\u72b6\u6001"),visibleByDefault:false},
     {key:'risk_tags',label:t("app.736", "\u98ce\u9669\u6807\u7b7e"),visibleByDefault:false},
@@ -3559,11 +3560,11 @@ function getActiveRpColKeys(tabKey){
 function buildRpCfgItem(c, tabKey){
   var hidden = (!c.visible && !c.fixed);
   var dimmedClass = hidden ? ' rp-cfg-item-hidden' : '';
-  var fixedBadge = c.fixed ? '<span class="rp-cfg-badge-fixed">固定</span>' : '';
+  var fixedBadge = c.fixed ? t('gen.L3562.1','<span class="rp-cfg-badge-fixed">固定</span>') : '';
   var checked = (c.visible || c.fixed) ? 'checked' : '';
   var disabled = c.fixed ? 'disabled' : '';
   return '<div class="rp-cfg-item'+dimmedClass+'" data-key="'+c.key+'" data-fixed="'+(c.fixed?1:0)+'" draggable="true">'
-    + '<span class="rp-cfg-handle" title="\u62d6\u62fd\u6392\u5e8f">⠿</span>'
+    + t('gen.L3566.1','<span class="rp-cfg-handle" title="\u62d6\u62fd\u6392\u5e8f">⠿</span>')
     + '<span class="rp-cfg-name">'+esc(c.label||t("app.771", "(\u7a7a)"))+'</span>'
     + fixedBadge
     + '<label class="rp-cfg-switch">'
@@ -3575,19 +3576,19 @@ function buildRpCfgItem(c, tabKey){
 // 打开字段配置面板
 function openRpFieldConfig(tabKey){
   var config=getRpColConfig(tabKey);
-  var tabLabel = tabKey==='total'?'总预测':tabKey==='online'?'线上预测':'线下预测';
+  var tabLabel = tabKey==='total'?t('gen.L3578.1','总预测'):tabKey==='online'?t('gen.L3578.2','线上预测'):t('gen.L3578.3','线下预测');
   var visibleCount = config.filter(function(c){return c.visible||c.fixed;}).length;
   var totalCount = config.length;
   var html='<div class="rp-cfg-panel">'
     +'<div class="rp-cfg-toolbar">'
-    +'<input type="text" class="rp-cfg-search" id="rp-cfg-search" placeholder="\u641c\u7d22\u5b57\u6bb5..." oninput="filterRpCfgFields()">'
-    +'<button class="btn btn-default btn-sm" onclick="showAllRpFields(\''+tabKey+'\')">全部显示</button>'
+    +t('gen.L3583.1','<input type="text" class="rp-cfg-search" id="rp-cfg-search" placeholder="\u641c\u7d22\u5b57\u6bb5..." oninput="filterRpCfgFields()">')
+    +'<button class="btn btn-default btn-sm" onclick="showAllRpFields(\''+tabKey+t('gen.L3584.1','\')">全部显示</button>')
     +'</div>'
-    +'<div class="rp-cfg-stats" id="rp-cfg-stats">显示 '+visibleCount+' / '+totalCount+' 个字段</div>'
+    +t('gen.L3586.1','<div class="rp-cfg-stats" id="rp-cfg-stats">显示 ')+visibleCount+' / '+totalCount+t('gen.L3586.2',' 个字段</div>')
     +'<div class="rp-cfg-list" id="rp-cfg-list">'
     + config.map(function(c){ return buildRpCfgItem(c, tabKey); }).join('')
     + '</div>'
-    +'<div style="margin-top:8px;font-size:12px;color:var(--text-secondary)">拖拽 ⠿ 手柄可调整字段顺序；切换开关控制显示/隐藏；固定字段不可关闭。</div>'
+    +t('gen.L3590.1','<div style="margin-top:8px;font-size:12px;color:var(--text-secondary)">拖拽 ⠿ 手柄可调整字段顺序；切换开关控制显示/隐藏；固定字段不可关闭。</div>')
     +'</div>';
   openModal(t('modal.title.openRpFieldConfig', '字段配置 - {v1}', {v1: tabLabel}), html,
     t('modal.footer.openRpFieldConfig', `<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-default" onclick="resetRpFieldConfig('{v1}')">恢复默认</button><button class="btn btn-primary" onclick="saveRpFieldConfig('{v2}')">保存</button>`, {v1: tabKey, v2: tabKey}));
@@ -3708,7 +3709,7 @@ function saveRpFieldConfig(tabKey){
   });
   saveRpColConfig(tabKey,config);
   closeModal();
-  showToast('字段配置已保存','success');
+  showToast(t('gen.L3711.1','字段配置已保存'),'success');
   if(tabKey==='total')loadRp();
   else loadRpChannelMonthly(tabKey);
   updateRpFieldConfigBtn(tabKey);
@@ -3725,7 +3726,7 @@ function resetRpFieldConfig(tabKey){
   }
   var search = document.getElementById('rp-cfg-search');
   if(search) search.value = '';
-  showToast('已恢复默认字段配置','success');
+  showToast(t('gen.L3728.1','已恢复默认字段配置'),'success');
 }
 // 更新表格顶部按钮显示计数
 function updateRpFieldConfigBtn(tabKey){
@@ -3810,7 +3811,7 @@ function initRpTableDrag(tabKey){
 
 async function renderReplenishment(){
   rpTab = 'total';
-  document.getElementById('content-inner').innerHTML=t('html.renderReplenishment', `<div id="flash-container"></div><div id="rp-collapsible"><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>国家</label><select id="rp-c" onchange="onRpCountryChange()"><option value="">全部</option></select></div><div class="filter-group"><label>仓库</label><select id="rp-w" onchange="loadRpSummary();loadRp()"><option value="">全部</option></select></div><div class="filter-group"><label>品牌</label><select id="rp-b" onchange="onRpBrandChange()"><option value="">全部</option></select></div><div class="filter-actions">{v1}<button class="btn btn-default btn-sm" onclick="exportRpExcel()">⬇ 导出Excel</button><button class="btn btn-default btn-sm" onclick="openRpParams()">⚙ 预测参数设置</button></div></div></div><div id="rp-kpi" class="kpi-row"></div></div><div class="tab-bar" style="margin:12px 20px 0;display:flex;justify-content:space-between;align-items:center"><div style="display:flex"><div class="tab-item active" onclick="switchRpTab('total')">📊 总预测</div><div class="tab-item" onclick="switchRpTab('online')">🛒 线上预测</div><div class="tab-item" onclick="switchRpTab('offline')">🏪 线下预测</div></div><div style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-secondary)"><span>显示方式：</span><div class="rp-mode-switch"><button class="rp-mode-btn active" onclick="switchRpMode('monthly')">按月</button><button class="rp-mode-btn" onclick="switchRpMode('daily')">按天</button></div><button class="btn btn-default btn-sm rp-collapse-btn" id="rp-collapse-btn" onclick="toggleRpCollapse()" title="收起/展开 顶部筛选区与指标卡片">▾ 收起</button></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left" id="rp-tab-title">📊 SKU动销与订单预测（总预测）</div><div class="table-section-actions"><input type="text" id="rp-s" placeholder="SKU搜索" onkeypress="if(event.key==='Enter')loadRp()" style="width:140px;height:28px;padding:4px 8px;border:1px solid #d0d7de;border-radius:4px;font-size:13px;margin-right:8px">{v2}{v3}<button class="btn btn-default btn-sm" id="rp-field-config-btn" onclick="openRpFieldConfig(rpTab)" title="字段显示与排序" style="margin-left:8px">⚙ 字段配置</button></div></div><div id="rp-table"></div></div>`, {v1: hasPermission('replenishment_edit')?'<button class="btn btn-success btn-sm rp-gen-btn" onclick="genRp()">🔄 重新计算</button>':'', v2: hasPermission('replenishment_edit')?'<button class="btn btn-success btn-sm rp-gen-btn" onclick="genRp()" style="margin-right:8px">🔄 重新计算</button>':'', v3: hasPermission('po_create')?'<button class="btn btn-primary btn-sm" id="rp-po-btn" onclick="genPOModal()">🛒 生成PO</button>':''});
+  document.getElementById('content-inner').innerHTML=t('html.renderReplenishment', `<div id="flash-container"></div><div id="rp-collapsible"><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>国家</label><select id="rp-c" onchange="onRpCountryChange()"><option value="">全部</option></select></div><div class="filter-group"><label>仓库</label><select id="rp-w" onchange="loadRpSummary();loadRp()"><option value="">全部</option></select></div><div class="filter-group"><label>品牌</label><select id="rp-b" onchange="onRpBrandChange()"><option value="">全部</option></select></div><div class="filter-actions">{v1}<button class="btn btn-default btn-sm" onclick="exportRpExcel()">⬇ 导出Excel</button><button class="btn btn-default btn-sm" onclick="openRpParams()">⚙ 预测参数设置</button></div></div></div><div id="rp-kpi" class="kpi-row"></div></div><div class="tab-bar" style="margin:12px 20px 0;display:flex;justify-content:space-between;align-items:center"><div style="display:flex"><div class="tab-item active" onclick="switchRpTab('total')">📊 总预测</div><div class="tab-item" onclick="switchRpTab('online')">🛒 线上预测</div><div class="tab-item" onclick="switchRpTab('offline')">🏪 线下预测</div></div><div style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-secondary)"><span>显示方式：</span><div class="rp-mode-switch"><button class="rp-mode-btn active" onclick="switchRpMode('monthly')">按月</button><button class="rp-mode-btn" onclick="switchRpMode('daily')">按天</button></div><button class="btn btn-default btn-sm rp-collapse-btn" id="rp-collapse-btn" onclick="toggleRpCollapse()" title="收起/展开 顶部筛选区与指标卡片">▾ 收起</button></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left" id="rp-tab-title">📊 SKU动销与订单预测（总预测）</div><div class="table-section-actions"><input type="text" id="rp-s" placeholder="SKU搜索" onkeypress="if(event.key==='Enter')loadRp()" style="width:140px;height:28px;padding:4px 8px;border:1px solid #d0d7de;border-radius:4px;font-size:13px;margin-right:8px">{v2}{v3}<button class="btn btn-default btn-sm" id="rp-field-config-btn" onclick="openRpFieldConfig(rpTab)" title="字段显示与排序" style="margin-left:8px">⚙ 字段配置</button></div></div><div id="rp-table"></div></div>`, {v1: hasPermission('replenishment_edit')?t('gen.L3813.1','<button class="btn btn-success btn-sm rp-gen-btn" onclick="genRp()">🔄 重新计算</button>'):'', v2: hasPermission('replenishment_edit')?t('gen.L3813.2','<button class="btn btn-success btn-sm rp-gen-btn" onclick="genRp()" style="margin-right:8px">🔄 重新计算</button>'):'', v3: hasPermission('po_create')?t('gen.L3813.3','<button class="btn btn-primary btn-sm" id="rp-po-btn" onclick="genPOModal()">🛒 生成PO</button>'):''});
   await loadRpFilterOptions();
   loadRpSummary();
   loadRp();
@@ -3830,8 +3831,8 @@ function applyRpCollapseState(collapsed){
   if(!el) return;
   el.classList.toggle('rp-collapsed',collapsed);
   if(btn){
-    btn.textContent=collapsed?'▸ 展开':t("shell.067", "\u25be \u6536\u8d77");
-    btn.title=collapsed?'展开 顶部筛选区与指标卡片':t("app.782", "\u6536\u8d77 \u9876\u90e8\u7b5b\u9009\u533a\u4e0e\u6307\u6807\u5361\u7247");
+    btn.textContent=collapsed?t('gen.L3833.1','▸ 展开'):t("shell.067", "\u25be \u6536\u8d77");
+    btn.title=collapsed?t('gen.L3834.1','展开 顶部筛选区与指标卡片'):t("app.782", "\u6536\u8d77 \u9876\u90e8\u7b5b\u9009\u533a\u4e0e\u6307\u6807\u5361\u7247");
   }
   try{localStorage.setItem(RP_COLLAPSE_KEY,collapsed?'1':'0');}catch(e){}
 }
@@ -3968,14 +3969,14 @@ async function loadRpSummary(){
     await getSalesStatsDays();
     const d=await api('/api/replenishment-suggestions/summary?'+rpQuery());
     const kpi=[
-      {label:'SKU总数',value:d.totalSkus||0,unit:'个'},
-      {label:t("app.740", "\u603b\u5e93\u5b58\u6c60"),value:d.totalPool||0,unit:'件'},
-      {label:t("pi.003", "\u8fd14\u4e2a\u6708\u603b\u9500\u91cf"),value:d.totalSales4m||0,unit:'件'},
-      {label:rpSalesStatsDays+'天月均销量',value:d.avgSalesPeriod||0,unit:t("pi.004", "\u4ef6/\u6708"),tip:'按"预测参数设置"中的销量统计周期（近'+rpSalesStatsDays+'天有效销量 ÷ '+rpSalesStatsDays+' × 30）计算的月均销量；当前可用周转也按此口径'},
-      {label:t("pi.005", "\u9884\u8ba1\u5468\u8f6c\u6708\u6570"),value:d.overallTurnover||0,unit:'月',warn:d.overallTurnover<2,tip:t("pi.006", "\u6309\u5f53\u524d\u9500\u91cf\u7edf\u8ba1\u5468\u671f(period)\u8ba1\u7b97\u7684\u5e73\u5747\u5468\u8f6c\uff08\u4ec5\u5c55\u793a\uff0c\u4e0d\u5f71\u54cd\u91c7\u8d2d\u94fe\u8def\uff09\uff1b\u5df2\u6392\u9664\u6708\u5747\u9500\u91cf=0\u7684\u65e0\u52a8\u9500SKU")},
-      {label:t("pi.007", "\u9700\u8865\u8d27SKU"),value:d.needReplenish||0,unit:'个',accent:true},
-      {label:t("app.651", "\u65ad\u8d27\u98ce\u9669"),value:d.stockoutRisk||0,unit:'个',danger:true},
-      {label:t("pi.008", "\u9ad8\u5e93\u5b58/\u6162\u9500"),value:d.highStock||0,unit:'个',muted:true}
+      {label:t('gen.L3971.1','SKU总数'),value:d.totalSkus||0,unit:t('gen.L3971.2','个')},
+      {label:t("app.740", "\u603b\u5e93\u5b58\u6c60"),value:d.totalPool||0,unit:t('gen.L3972.1','件')},
+      {label:t("pi.003", "\u8fd14\u4e2a\u6708\u603b\u9500\u91cf"),value:d.totalSales4m||0,unit:t('gen.L3973.1','件')},
+      {label:rpSalesStatsDays+t('gen.L3974.1','天月均销量'),value:d.avgSalesPeriod||0,unit:t("pi.004", "\u4ef6/\u6708"),tip:t('gen.L3974.2','按"预测参数设置"中的销量统计周期（近')+rpSalesStatsDays+t('gen.L3974.3','天有效销量 ÷ ')+rpSalesStatsDays+t('gen.L3974.4',' × 30）计算的月均销量；当前可用周转也按此口径')},
+      {label:t("pi.005", "\u9884\u8ba1\u5468\u8f6c\u6708\u6570"),value:d.overallTurnover||0,unit:t('gen.L3975.1','月'),warn:d.overallTurnover<2,tip:t("pi.006", "\u6309\u5f53\u524d\u9500\u91cf\u7edf\u8ba1\u5468\u671f(period)\u8ba1\u7b97\u7684\u5e73\u5747\u5468\u8f6c\uff08\u4ec5\u5c55\u793a\uff0c\u4e0d\u5f71\u54cd\u91c7\u8d2d\u94fe\u8def\uff09\uff1b\u5df2\u6392\u9664\u6708\u5747\u9500\u91cf=0\u7684\u65e0\u52a8\u9500SKU")},
+      {label:t("pi.007", "\u9700\u8865\u8d27SKU"),value:d.needReplenish||0,unit:t('gen.L3976.1','个'),accent:true},
+      {label:t("app.651", "\u65ad\u8d27\u98ce\u9669"),value:d.stockoutRisk||0,unit:t('gen.L3977.1','个'),danger:true},
+      {label:t("pi.008", "\u9ad8\u5e93\u5b58/\u6162\u9500"),value:d.highStock||0,unit:t('gen.L3978.1','个'),muted:true}
     ];
     document.getElementById('rp-kpi').innerHTML='<div class="kpi-grid">'+kpi.map(k=>'<div class="kpi-card'+(k.danger?' kpi-danger':k.accent?' kpi-accent':k.muted?' kpi-muted':'')+'">'
       +'<div class="kpi-label">'+k.label+(k.tip?' <span class="link-text" onclick="showKpiTip(this,\''+k.tip.replace(/'/g,"\\'")+'\')" style="cursor:help" title="'+k.tip+'">?</span>':'')+'</div>'
@@ -4011,7 +4012,7 @@ async function loadRp(){
     await getSalesStatsDays();
     var data=await api('/api/replenishment-suggestions?'+rpQuery());
     var turnColor=function(v){return v<2?'text-danger':v>=2&&v<4?'text-success':v>=4&&v<6?'text-primary':'text-secondary';};
-    var ADJ=['MOQ限制',t("app.786", "\u6574\u7bb1\u53d6\u6574"),t("app.787", "\u5de5\u5382\u6392\u4ea7"),t("app.788", "\u4f9b\u5e94\u5546\u4ea7\u80fd"),t("app.789", "\u51d1\u67dc"),t("app.790", "\u9884\u7b97\u63a7\u5236"),t("app.791", "\u8001\u677f\u786e\u8ba4"),t("app.792", "\u6e20\u9053\u7b56\u7565"),'其他'];
+    var ADJ=[t('gen.L4014.1','MOQ限制'),t("app.786", "\u6574\u7bb1\u53d6\u6574"),t("app.787", "\u5de5\u5382\u6392\u4ea7"),t("app.788", "\u4f9b\u5e94\u5546\u4ea7\u80fd"),t("app.789", "\u51d1\u67dc"),t("app.790", "\u9884\u7b97\u63a7\u5236"),t("app.791", "\u8001\u677f\u786e\u8ba4"),t("app.792", "\u6e20\u9053\u7b56\u7565"),t('gen.L4014.2','其他')];
     // 预计算 + 存储行数据（供 onFinalQtyChange 使用）
     window._rpRowData=window._rpRowData||{};
     data.forEach(function(r){
@@ -4046,20 +4047,20 @@ async function loadRp(){
     var Cols={
       check:{th:'<th style="width:36px"><input type="checkbox" id="rp-all" onchange="document.querySelectorAll(\'.rp-ck\').forEach(function(c){c.checked=this.checked})"></th>',
         td:function(r,c){return '<td><input type="checkbox" class="rp-ck" value="'+r.id+'" data-sku="'+esc(r.sku_code)+'" data-qty="'+c.sq+'"></td>';},
-        sum:function(t){return '<td class="text-center"><span style="font-size:11px;font-weight:700">合计</span></td>';}},
+        sum:function(t){return t('gen.L4049.1','<td class="text-center"><span style="font-size:11px;font-weight:700">合计</span></td>');}},
       model:{th:'<th>Model</th>',
         td:function(r,c){return '<td class="text-truncate" style="max-width:90px">'+esc(r.model||'')+'</td>';},
         sum:function(t){return '<td></td>';}},
       sku:{th:'<th>SKU</th>',
         td:function(r,c){return '<td class="cell-id">'+esc(r.sku_code)+'</td>';},
-        sum:function(t){return '<td><span style="font-size:10px;color:#888">'+t.count+'个SKU</span></td>';}},
-      online_avg:{th:rpTh('线上'+rpSalesStatsDays+'天月均销量','按"预测参数设置"中的销量统计周期计算：近'+rpSalesStatsDays+'天有效销量 ÷ '+rpSalesStatsDays+' × 30。','text-right'),
+        sum:function(t){return '<td><span style="font-size:10px;color:#888">'+t.count+t('gen.L4055.1','个SKU</span></td>');}},
+      online_avg:{th:rpTh(t('gen.L4056.1','线上')+rpSalesStatsDays+t('gen.L4056.2','天月均销量'),t('gen.L4056.3','按"预测参数设置"中的销量统计周期计算：近')+rpSalesStatsDays+t('gen.L4056.4','天有效销量 ÷ ')+rpSalesStatsDays+' × 30。','text-right'),
         td:function(r,c){return '<td class="text-right">'+Math.round(c.oaPeriod*100)/100+'</td>';},
         sum:function(t){return '<td class="text-right">'+Math.round(t.oaPeriod*100)/100+'</td>';}},
-      offline_avg:{th:rpTh('线下'+rpSalesStatsDays+'天月均销量','按"预测参数设置"中的销量统计周期计算：近'+rpSalesStatsDays+'天有效销量 ÷ '+rpSalesStatsDays+' × 30。','text-right'),
+      offline_avg:{th:rpTh(t('gen.L4059.1','线下')+rpSalesStatsDays+t('gen.L4059.2','天月均销量'),t('gen.L4059.3','按"预测参数设置"中的销量统计周期计算：近')+rpSalesStatsDays+t('gen.L4059.4','天有效销量 ÷ ')+rpSalesStatsDays+' × 30。','text-right'),
         td:function(r,c){return '<td class="text-right">'+Math.round(c.ofaPeriod*100)/100+'</td>';},
         sum:function(t){return '<td class="text-right">'+Math.round(t.ofaPeriod*100)/100+'</td>';}},
-      total_avg:{th:rpTh(rpSalesStatsDays+'天月均销量','按"预测参数设置"中的销量统计周期计算：近'+rpSalesStatsDays+'天有效销量 ÷ '+rpSalesStatsDays+' × 30。','text-right'),
+      total_avg:{th:rpTh(rpSalesStatsDays+t('gen.L4062.1','天月均销量'),t('gen.L4062.2','按"预测参数设置"中的销量统计周期计算：近')+rpSalesStatsDays+t('gen.L4062.3','天有效销量 ÷ ')+rpSalesStatsDays+' × 30。','text-right'),
         td:function(r,c){return '<td class="text-right font-bold">'+Math.round(c.taPeriod*100)/100+'</td>';},
         sum:function(t){return '<td class="text-right">'+Math.round(t.taPeriod*100)/100+'</td>';}},
       online_pct:{th:rpTh(t("app.738", "\u7ebf\u4e0a\u5360\u6bd4"),t("app.794", "\u6839\u636e\u7ebf\u4e0a\u9500\u91cf\u7edf\u8ba1\u5468\u671f(\u8fd1 N \u5929)\u9500\u91cf\u5360\u603b\u9500\u91cf(\u9500\u91cf\u7edf\u8ba1\u5468\u671f)\u7684\u6bd4\u4f8b\u8ba1\u7b97\uff0c\u7528\u4e8e\u5e93\u5b58\u5206\u644a\u548c\u8865\u8d27\u6d4b\u7b97\u3002\u5360\u6bd4\u4e0e\u5206\u644a\u5e93\u5b58\u6309\u9500\u91cf\u7edf\u8ba1\u5468\u671f\u53e3\u5f84\u3002"),'text-right'),
@@ -4068,10 +4069,10 @@ async function loadRp(){
       offline_pct:{th:rpTh(t("app.739", "\u7ebf\u4e0b\u5360\u6bd4"),t("app.795", "\u6839\u636e\u7ebf\u4e0b\u9500\u91cf\u7edf\u8ba1\u5468\u671f(\u8fd1 N \u5929)\u9500\u91cf\u5360\u603b\u9500\u91cf(\u9500\u91cf\u7edf\u8ba1\u5468\u671f)\u7684\u6bd4\u4f8b\u8ba1\u7b97\uff0c\u7528\u4e8e\u5e93\u5b58\u5206\u644a\u548c\u8865\u8d27\u6d4b\u7b97\u3002\u5360\u6bd4\u4e0e\u5206\u644a\u5e93\u5b58\u6309\u9500\u91cf\u7edf\u8ba1\u5468\u671f\u53e3\u5f84\u3002"),'text-right'),
         td:function(r,c){return '<td class="text-right">'+(c.taPeriod>0?c.ofpct+'%':'-')+'</td>';},
         sum:function(t){return '<td></td>';}},
-      avail:{th:'<th class="text-right">当前可用库存</th>',
+      avail:{th:t('gen.L4071.1','<th class="text-right">当前可用库存</th>'),
         td:function(r,c){return '<td class="text-right">'+(r.available_qty||0)+'</td>';},
         sum:function(t){return '<td class="text-right">'+t.avail+'</td>';}},
-      transit:{th:'<th class="text-right">在途库存</th>',
+      transit:{th:t('gen.L4074.1','<th class="text-right">在途库存</th>'),
         td:function(r,c){return '<td class="text-right">'+(r.in_transit_qty||0)+'</td>';},
         sum:function(t){return '<td class="text-right">'+t.transit+'</td>';}},
       po_unconfirmed:{th:rpTh(t("app.732", "PO\u672a\u786e\u8ba4PI"),t("app.796", "\u5df2\u7ecf\u521b\u5efa PO\uff0c\u4f46\u8fd8\u6ca1\u6709\u786e\u8ba4 PI \u7684\u6570\u91cf\u3002\u5c5e\u4e8e\u6f5c\u5728\u4f9b\u5e94\uff0c\u4e0d\u7b49\u4e8e\u4e00\u5b9a\u4f1a\u53d1\u8d27\u3002"),'text-right'),
@@ -4086,7 +4087,7 @@ async function loadRp(){
       pi_unshipped:{th:rpTh(t("app.731", "PI\u5df2\u786e\u8ba4\u672a\u53d1\u8d27"),t("app.800", "PI \u5df2\u786e\u8ba4\uff0c\u4f46\u5de5\u5382\u8fd8\u6ca1\u6709\u53d1\u8d27\u7684\u6570\u91cf\u3002\u6bd4 PO\u672a\u786e\u8ba4PI \u66f4\u63a5\u8fd1\u5b9e\u9645\u4f9b\u5e94\u3002"),'text-right'),
         td:function(r,c){return '<td class="text-right">'+c.piUnshipped+'</td>';},
         sum:function(t){return '<td class="text-right">'+t.piUnshipped+'</td>';}},
-      avail_turnover:{th:rpTh('当前可用周转',t("app.801", "\u5f53\u524d\u53ef\u7528\u5e93\u5b58 \u00f7 \u6708\u5747\u9500\u91cf\uff08\u9500\u91cf\u7edf\u8ba1\u5468\u671f\u53e3\u5f84\uff09\u3002\u8868\u793a\u4e0d\u8003\u8651\u5728\u9014\u548c\u672a\u53d1\u8d27\u8ba2\u5355\u65f6\uff0c\u73b0\u6709\u5e93\u5b58\u5927\u7ea6\u8fd8\u80fd\u5356\u51e0\u4e2a\u6708\u3002"),'text-right'),
+      avail_turnover:{th:rpTh(t('gen.L4089.1','当前可用周转'),t("app.801", "\u5f53\u524d\u53ef\u7528\u5e93\u5b58 \u00f7 \u6708\u5747\u9500\u91cf\uff08\u9500\u91cf\u7edf\u8ba1\u5468\u671f\u53e3\u5f84\uff09\u3002\u8868\u793a\u4e0d\u8003\u8651\u5728\u9014\u548c\u672a\u53d1\u8d27\u8ba2\u5355\u65f6\uff0c\u73b0\u6709\u5e93\u5b58\u5927\u7ea6\u8fd8\u80fd\u5356\u51e0\u4e2a\u6708\u3002"),'text-right'),
         td:function(r,c){return '<td class="text-right '+(c.availTurnover!==null?(c.availTurnover<2?'text-danger':c.availTurnover>6?'text-secondary':'text-success'):'text-muted')+'">'+(c.availTurnover!==null?c.availTurnover:'-')+'</td>';},
         sum:function(t){return '<td></td>';}},
       transit_turnover:{th:rpTh(t("app.733", "\u5728\u9014\u540e\u5468\u8f6c"),t("app.802", "\uff08\u5f53\u524d\u53ef\u7528\u5e93\u5b58 + \u5728\u9014\u5e93\u5b58\uff09\u00f7 \u6708\u5747\u9500\u91cf\uff08\u9500\u91cf\u7edf\u8ba1\u5468\u671f\u53e3\u5f84\uff09\u3002\u7528\u4e8e\u5224\u65ad\u5df2\u5728\u8def\u4e0a\u7684\u8d27\u5230\u540e\uff0c\u5e93\u5b58\u80fd\u652f\u6491\u591a\u4e45\u3002"),'text-right'),
@@ -4098,16 +4099,16 @@ async function loadRp(){
       sales_status:{th:rpTh(t("app.735", "\u52a8\u9500\u72b6\u6001"),t("app.804", "\u7cfb\u7edf\u6839\u636e\u9500\u91cf\u3001\u5e93\u5b58\u3001\u5e93\u9f84\u3001\u7f3a\u8d27\u3001\u6162\u9500\u3001\u9ad8\u5e93\u5b58\u7b49\u89c4\u5219\u5224\u65ad SKU \u5f53\u524d\u72b6\u6001\u3002")),
         td:function(r,c){return '<td><span class="status-badge">'+esc(r.sales_status||'')+'</span></td>';},
         sum:function(t){return '<td></td>';}},
-      risk_tags:{th:'<th>风险标签</th>',
+      risk_tags:{th:t('gen.L4101.1','<th>风险标签</th>'),
         td:function(r,c){return '<td>'+esc(r.risk_tags||'')+'</td>';},
         sum:function(t){return '<td></td>';}},
-      sales_reason:{th:'<th>动销原因</th>',
+      sales_reason:{th:t('gen.L4104.1','<th>动销原因</th>'),
         td:function(r,c){return '<td style="max-width:150px;overflow:hidden;text-overflow:ellipsis" title="'+esc(r.sales_reason||'')+'">'+esc(r.sales_reason||'')+'</td>';},
         sum:function(t){return '<td></td>';}},
       action_rec:{th:rpTh(t("app.111", "\u5efa\u8bae\u52a8\u4f5c"),t("app.805", "\u7cfb\u7edf\u6839\u636e\u52a8\u9500\u5224\u65ad\u7ed9\u51fa\u7684\u64cd\u4f5c\u5efa\u8bae\uff0c\u4f8b\u5982\u4f18\u5148\u8865\u8d27\u3001\u8c28\u614e\u8865\u8d27\u3001\u6682\u505c\u8865\u8d27\u3001\u4eba\u5de5\u590d\u6838\u3002")),
         td:function(r,c){return '<td style="max-width:150px;overflow:hidden;text-overflow:ellipsis" title="'+esc(r.action||'')+'">'+esc(r.action||'')+'</td>';},
         sum:function(t){return '<td></td>';}},
-      ai_business_advice:{th:'<th style="min-width:180px">AI建议</th>',
+      ai_business_advice:{th:t('gen.L4110.1','<th style="min-width:180px">AI建议</th>'),
         td:function(r,c){return '<td style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(r.ai_business_advice||'')+'">'+esc(r.ai_business_advice||'')+'</td>';},
         sum:function(t){return '<td></td>';}},
       last_inbound_date:{th:rpTh(t("po.012", "\u6700\u540e\u5165\u5e93\u65e5\u671f"),t("app.806", "\u8be5 SKU \u6700\u8fd1\u4e00\u6b21\u5165\u5e93\u7684\u65e5\u671f\uff0c\u7528\u4e8e\u5224\u65ad\u5e93\u9f84\u548c\u662f\u5426\u957f\u671f\u672a\u8865\u8d27\u3002")),
@@ -4117,7 +4118,7 @@ async function loadRp(){
         td:function(r,c){
           var d=r.days_since_last_inbound;
           var cls=d!==null?(d<=90?'text-success':d<=180?'text-primary':d<=365?'text-warning':'text-danger'):'text-muted';
-          return '<td class="text-right '+cls+'">'+(d!==null?d:'未知')+'</td>';
+          return '<td class="text-right '+cls+'">'+(d!==null?d:t('gen.L4120.1','未知'))+'</td>';
         },
         sum:function(t){return '<td></td>';}},
       online_target_turn:{th:rpTh(t("app.743", "\u7ebf\u4e0a\u76ee\u6807\u5468\u8f6c"),t("app.808", "\u5e0c\u671b\u8865\u8d27\u540e\u5e93\u5b58\u80fd\u8986\u76d6\u7684\u9500\u552e\u6708\u6570\u3002\u5b83\u662f\u8ba1\u7b97\u53c2\u6570\uff0c\u4e0d\u662f\u5b9e\u9645\u5e93\u5b58\u7ed3\u679c\u3002"),'text-right'),
@@ -4126,23 +4127,23 @@ async function loadRp(){
       offline_target_turn:{th:rpTh(t("app.744", "\u7ebf\u4e0b\u76ee\u6807\u5468\u8f6c"),t("app.808", "\u5e0c\u671b\u8865\u8d27\u540e\u5e93\u5b58\u80fd\u8986\u76d6\u7684\u9500\u552e\u6708\u6570\u3002\u5b83\u662f\u8ba1\u7b97\u53c2\u6570\uff0c\u4e0d\u662f\u5b9e\u9645\u5e93\u5b58\u7ed3\u679c\u3002"),'text-right'),
         td:function(r,c){return '<td class="text-right">'+c.oft+'</td>';},
         sum:function(t){return '<td></td>';}},
-      online_target_stock:{th:'<th class="text-right">线上</th>',
+      online_target_stock:{th:t('gen.L4129.1','<th class="text-right">线上</th>'),
         td:function(r,c){return '<td class="text-right">'+c.os+'</td>';},
         sum:function(t){return '<td class="text-right">'+t.os+'</td>';}},
-      offline_target_stock:{th:'<th class="text-right">线下</th>',
+      offline_target_stock:{th:t('gen.L4132.1','<th class="text-right">线下</th>'),
         td:function(r,c){return '<td class="text-right">'+c.ofs+'</td>';},
         sum:function(t){return '<td class="text-right">'+t.ofs+'</td>';}},
       total_target_stock:{th:rpTh(t("app.109", "\u5efa\u8bae\u91c7\u8d2d\u6570\u91cf"),t("app.809", "\u57fa\u4e8e\u9500\u91cf\u7edf\u8ba1\u5468\u671f(\u8fd1 N \u5929)\u6708\u5747\u9500\u91cf\u4e0e\u76ee\u6807\u5468\u8f6c\u8ba1\u7b97\u7684\u5efa\u8bae\u8865\u8d27\u6570\u91cf\u3002\u6162\u9500\u3001\u5446\u6ede\u3001\u9ad8\u5e93\u5b58\u7b49 SKU \u4f1a\u88ab\u62e6\u622a\u4e3a 0\u3002"),'text-right'),
         td:function(r,c){return '<td class="text-right font-bold">'+c.sq+'</td>';},
         sum:function(t){return '<td class="text-right">'+t.sq+'</td>';}},
-      arrival_month:{th:'<th>到货月份</th>',
+      arrival_month:{th:t('gen.L4138.1','<th>到货月份</th>'),
         td:function(r,c){return '<td>'+esc(r.arrival_month||'')+'</td>';},
         sum:function(t){return '<td></td>';}},
-      suggestion:{th:'<th>建议动作</th>',
+      suggestion:{th:t('gen.L4141.1','<th>建议动作</th>'),
         td:function(r,c){return '<td>'+esc(r.suggestion||'')+'</td>';},
         sum:function(t){return '<td></td>';}},
-      actions:{th:'<th>操作</th>',
-        td:function(r,c){return '<td class="cell-actions"><button class="action-btn" onclick="toggleGenPO(\''+r.id+'\')" title="\u52a0\u5165PO">🛒</button></td>';},
+      actions:{th:t('gen.L4144.1','<th>操作</th>'),
+        td:function(r,c){return '<td class="cell-actions"><button class="action-btn" onclick="toggleGenPO(\''+r.id+t('gen.L4145.1','\')" title="\u52a0\u5165PO">🛒</button></td>');},
         sum:function(t){return '<td></td>';}}
     };
     // 按配置过滤+排序
@@ -4172,23 +4173,84 @@ async function loadRp(){
     var sum='<tr class="rp-summary-row">' + activeKeys.map(function(k){return Cols[k].sum(totals);}).join('') + '</tr>';
     var colCount=activeKeys.length;
     var tableFoot=!data.length
-      ? '<tr><td colspan="'+colCount+'" style="text-align:center;padding:40px 20px;color:#999;background:#fafbfc">💡 当前筛选条件下暂无建议，请调整国家/仓库/品牌或点击"重新计算"</td></tr>'
+      ? '<tr><td colspan="'+colCount+t('gen.L4175.1','" style="text-align:center;padding:40px 20px;color:#999;background:#fafbfc">💡 当前筛选条件下暂无建议，请调整国家/仓库/品牌或点击"重新计算"</td></tr>')
       : '';
     document.getElementById('rp-table').innerHTML='<div class="table-container" style="box-shadow:none;border-radius:0;overflow:auto;max-height:70vh"><table class="data-table rp-monthly-table"><thead><tr style="height:34px">'+th+'</tr>'+sum+'</thead><tbody>'+rows+tableFoot+'</tbody></table></div>';
     initRpTableDrag('total');
   }catch(e){showFlash(e.message,'danger')}
 }
 
+// 纯显示函数：根据当前语言格式化月份标签（不影响日期/销售数据逻辑）
+function formatMonthLabel(monthNumber, isCurrent){
+  var lang = (typeof getLang === 'function') ? getLang() : 'zh';
+  if(lang === 'en'){
+    var enMonths = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return isCurrent ? ('This Month/'+enMonths[monthNumber-1]) : enMonths[monthNumber-1];
+  }
+  if(lang === 'id'){
+    var idMonths = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
+    return isCurrent ? ('Bulan Ini/'+idMonths[monthNumber-1]) : idMonths[monthNumber-1];
+  }
+  // zh: 保持原有"本月/X月"、"X月"格式
+  return isCurrent ? ('本月/'+monthNumber+'月') : (monthNumber+'月');
+}
+
+// PI 状态枚举展示层映射（仅显示用，不写回 DB / 不参与状态机判断）
+function formatPIStatus(status) {
+  switch (status) {
+    case 'pending':
+      return t('pi.status.pending', '待上传 PI');
+    case 'uploaded':
+      return t('pi.status.uploaded', '已上传 PI');
+    case 'confirmed':
+      return t('pi.status.confirmed', '已确认');
+    case 'pending_deposit':
+      return t('pi.status.pending_deposit', '待定金审批');
+    case 'deposit_paid':
+      return t('pi.status.deposit_paid', '定金已付款');
+    case 'producing':
+      return t('pi.status.producing', '生产中');
+    case 'pending_ci_pl':
+      return t('pi.status.pending_ci_pl', '待 CI/PL');
+    case 'partial_shipped':
+      return t('pi.status.partial_shipped', '部分发货');
+    case 'shipped_complete':
+      return t('pi.status.shipped_complete', '全部发货完成');
+    case 'cancelled':
+      return t('pi.status.cancelled', '已取消');
+    case 'completed':
+      return t('pi.status.completed', '已完成');
+    default:
+      return status || '—';
+  }
+}
+
+// PI 定金付款状态枚举展示层映射（仅显示用，不写回 DB / 不参与状态机判断）
+function formatPIDepositStatus(status) {
+  switch (status) {
+    case 'unpaid':
+      return t('pi.deposit_status.unpaid', '未付款');
+    case 'pending_approval':
+      return t('pi.deposit_status.pending_approval', '待审批');
+    case 'partial':
+      return t('pi.deposit_status.partial', '部分付款');
+    case 'paid':
+      return t('pi.deposit_status.paid', '已付款');
+    default:
+      return status || '—';
+  }
+}
+
 // 线上/线下预测 + 按月：设置目标周转
 async function loadRpChannelMonthly(channel){
   var isOnline=channel==='online';
-  var chLabel=isOnline?'线上':'线下';
+  var chLabel=isOnline?t('gen.L4185.1','线上'):t('gen.L4185.2','线下');
   var now=new Date();
   var ml=[];
   for(var i=3;i>=0;i--){
     var d=new Date(now.getFullYear(),now.getMonth()-i,1);
     var m=d.getMonth()+1;
-    ml.push(i===0?'本月/'+m+'月':m+'月');
+    ml.push(formatMonthLabel(m, i===0));
   }
   try{
     await getSalesStatsDays();
@@ -4266,7 +4328,7 @@ async function loadRpChannelMonthly(channel){
       sum:function(t){return '<td></td>';}};
     Cols.sku={th:'<th>SKU</th>',
       td:function(r,c){return '<td class="cell-id">'+esc(r.sku_code)+'</td>';},
-      sum:function(t){return '<td><span style="font-size:10px;color:#888">'+t.count+'个SKU</span></td>';}};
+      sum:function(t){return '<td><span style="font-size:10px;color:#888">'+t.count+t('gen.L4269.1','个SKU</span></td>');}};
     Cols.sales_m4={th:'<th class="text-right">'+ml[0]+chLabel+'</th>',
       td:function(r,c){return '<td class="text-right">'+c.salesM4+'</td>';},
       sum:function(t){return '<td class="text-right">'+t.salesM4+'</td>';}};
@@ -4279,20 +4341,20 @@ async function loadRpChannelMonthly(channel){
     Cols.sales_m1={th:'<th class="text-right">'+ml[3]+chLabel+'</th>',
       td:function(r,c){return '<td class="text-right font-bold">'+c.salesM1+'</td>';},
       sum:function(t){return '<td class="text-right">'+t.salesM1+'</td>';}};
-    Cols.channel_avg={th:rpTh(chLabel+rpSalesStatsDays+'天月均销量','按"预测参数设置"中的销量统计周期计算：近'+rpSalesStatsDays+'天有效销量 ÷ '+rpSalesStatsDays+' × 30。','text-right'),
+    Cols.channel_avg={th:rpTh(chLabel+rpSalesStatsDays+t('gen.L4282.1','天月均销量'),t('gen.L4282.2','按"预测参数设置"中的销量统计周期计算：近')+rpSalesStatsDays+t('gen.L4282.3','天有效销量 ÷ ')+rpSalesStatsDays+' × 30。','text-right'),
       td:function(r,c){return '<td class="text-right font-bold">'+Math.round(c.avgSalesPeriod*100)/100+'</td>';},
       sum:function(t){return '<td class="text-right">'+Math.round(t.avgSalesPeriod*100)/100+'</td>';}};
-    Cols.channel_pct={th:rpTh(chLabel+'占比',t("app.811", "\u6839\u636e\u8be5\u6e20\u9053\u9500\u91cf\u7edf\u8ba1\u5468\u671f(\u8fd1 N \u5929)\u9500\u91cf\u5360\u603b\u9500\u91cf(\u9500\u91cf\u7edf\u8ba1\u5468\u671f)\u7684\u6bd4\u4f8b\u8ba1\u7b97\uff0c\u7528\u4e8e\u5e93\u5b58\u5206\u644a\u548c\u8865\u8d27\u6d4b\u7b97\u3002\u5360\u6bd4\u4e0e\u5206\u644a\u5e93\u5b58\u6309\u9500\u91cf\u7edf\u8ba1\u5468\u671f\u53e3\u5f84\u3002"),'text-right'),
+    Cols.channel_pct={th:rpTh(chLabel+t('gen.L4285.1','占比'),t("app.811", "\u6839\u636e\u8be5\u6e20\u9053\u9500\u91cf\u7edf\u8ba1\u5468\u671f(\u8fd1 N \u5929)\u9500\u91cf\u5360\u603b\u9500\u91cf(\u9500\u91cf\u7edf\u8ba1\u5468\u671f)\u7684\u6bd4\u4f8b\u8ba1\u7b97\uff0c\u7528\u4e8e\u5e93\u5b58\u5206\u644a\u548c\u8865\u8d27\u6d4b\u7b97\u3002\u5360\u6bd4\u4e0e\u5206\u644a\u5e93\u5b58\u6309\u9500\u91cf\u7edf\u8ba1\u5468\u671f\u53e3\u5f84\u3002"),'text-right'),
       td:function(r,c){return '<td class="text-right">'+(c.totalAvgPeriod>0?Math.round(c.pctPeriod)+'%':'-')+'</td>';},
       sum:function(t){return '<td class="text-right">'+(t.totalAvgPeriod>0?Math.round(t.avgSalesPeriod/t.totalAvgPeriod*100)+'%':'-')+'</td>';}};
-    Cols.transit={th:rpTh(chLabel+t("app.768", "\u5206\u644a\u5728\u9014\u5e93\u5b58"),'按'+chLabel+'销量统计周期占比，从总在途库存中分摊给该渠道的数量（仅测算用，非独立仓库库存）。','text-right'),
-      td:function(r,c){return '<td class="text-right" title="总在途库存 '+(c.transit||0)+' × '+chLabel+'销量统计周期占比 '+Math.round(c.pctPeriod||0)+'%">'+c.transitAllocatedPeriod+'</td>';},
+    Cols.transit={th:rpTh(chLabel+t("app.768", "\u5206\u644a\u5728\u9014\u5e93\u5b58"),t('gen.L4288.1','按')+chLabel+t('gen.L4288.2','销量统计周期占比，从总在途库存中分摊给该渠道的数量（仅测算用，非独立仓库库存）。'),'text-right'),
+      td:function(r,c){return t('gen.L4289.1','<td class="text-right" title="总在途库存 ')+(c.transit||0)+' × '+chLabel+t('gen.L4289.2','销量统计周期占比 ')+Math.round(c.pctPeriod||0)+'%">'+c.transitAllocatedPeriod+'</td>';},
       sum:function(t){return '<td class="text-right">'+t.transitAllocatedPeriod+'</td>';}};
     Cols.po_unconfirmed={th:rpTh(t("app.732", "PO\u672a\u786e\u8ba4PI"),t("app.796", "\u5df2\u7ecf\u521b\u5efa PO\uff0c\u4f46\u8fd8\u6ca1\u6709\u786e\u8ba4 PI \u7684\u6570\u91cf\u3002\u5c5e\u4e8e\u6f5c\u5728\u4f9b\u5e94\uff0c\u4e0d\u7b49\u4e8e\u4e00\u5b9a\u4f1a\u53d1\u8d27\u3002"),'text-right'),
       td:function(r,c){return '<td class="text-right">'+(r.po_unconfirmed_pi_qty||0)+'</td>';},
       sum:function(t){return '<td class="text-right">'+t.po+'</td>';}};
-    Cols.avail={th:rpTh(chLabel+t("app.767", "\u5206\u644a\u53ef\u7528\u5e93\u5b58"),'按'+chLabel+'销量统计周期占比，从总可用库存中分摊给该渠道的数量（仅测算用，非独立仓库库存）。','text-right'),
-      td:function(r,c){return '<td class="text-right" title="总可用库存 '+(c.avail||0)+' × '+chLabel+'销量统计周期占比 '+Math.round(c.pctPeriod||0)+'%">'+c.availAllocatedPeriod+'</td>';},
+    Cols.avail={th:rpTh(chLabel+t("app.767", "\u5206\u644a\u53ef\u7528\u5e93\u5b58"),t('gen.L4294.1','按')+chLabel+t('gen.L4294.2','销量统计周期占比，从总可用库存中分摊给该渠道的数量（仅测算用，非独立仓库库存）。'),'text-right'),
+      td:function(r,c){return t('gen.L4295.1','<td class="text-right" title="总可用库存 ')+(c.avail||0)+' × '+chLabel+t('gen.L4295.2','销量统计周期占比 ')+Math.round(c.pctPeriod||0)+'%">'+c.availAllocatedPeriod+'</td>';},
       sum:function(t){return '<td class="text-right">'+t.availAllocatedPeriod+'</td>';}};
     Cols.current_turn={th:rpTh(chLabel+t("app.812", "\u5f53\u524d\u6d4b\u7b97\u5468\u8f6c"),t("app.813", "\u6e20\u9053\u5206\u644a\u5e93\u5b58\u6c60\uff08\u6309\u9500\u91cf\u7edf\u8ba1\u5468\u671f\u5360\u6bd4\u5206\u644a\uff09\u00f7 \u6e20\u9053\u6708\u5747\u9500\u91cf\uff08\u9500\u91cf\u7edf\u8ba1\u5468\u671f\u53e3\u5f84\uff09\u3002\u8868\u793a\u73b0\u6709\u5e93\u5b58\u5927\u7ea6\u8fd8\u80fd\u5356\u51e0\u4e2a\u6708\u3002"),'text-right'),
       td:function(r,c){
@@ -4303,7 +4365,7 @@ async function loadRpChannelMonthly(channel){
     Cols.pi_unshipped={th:rpTh(t("app.731", "PI\u5df2\u786e\u8ba4\u672a\u53d1\u8d27"),t("app.800", "PI \u5df2\u786e\u8ba4\uff0c\u4f46\u5de5\u5382\u8fd8\u6ca1\u6709\u53d1\u8d27\u7684\u6570\u91cf\u3002\u6bd4 PO\u672a\u786e\u8ba4PI \u66f4\u63a5\u8fd1\u5b9e\u9645\u4f9b\u5e94\u3002"),'text-right'),
       td:function(r,c){return '<td class="text-right">'+c.piUnshipped+'</td>';},
       sum:function(t){return '<td class="text-right">'+t.piUnshipped+'</td>';}};
-    Cols.avail_turnover={th:rpTh('当前可用周转',t("app.801", "\u5f53\u524d\u53ef\u7528\u5e93\u5b58 \u00f7 \u6708\u5747\u9500\u91cf\uff08\u9500\u91cf\u7edf\u8ba1\u5468\u671f\u53e3\u5f84\uff09\u3002\u8868\u793a\u4e0d\u8003\u8651\u5728\u9014\u548c\u672a\u53d1\u8d27\u8ba2\u5355\u65f6\uff0c\u73b0\u6709\u5e93\u5b58\u5927\u7ea6\u8fd8\u80fd\u5356\u51e0\u4e2a\u6708\u3002"),'text-right'),
+    Cols.avail_turnover={th:rpTh(t('gen.L4306.1','当前可用周转'),t("app.801", "\u5f53\u524d\u53ef\u7528\u5e93\u5b58 \u00f7 \u6708\u5747\u9500\u91cf\uff08\u9500\u91cf\u7edf\u8ba1\u5468\u671f\u53e3\u5f84\uff09\u3002\u8868\u793a\u4e0d\u8003\u8651\u5728\u9014\u548c\u672a\u53d1\u8d27\u8ba2\u5355\u65f6\uff0c\u73b0\u6709\u5e93\u5b58\u5927\u7ea6\u8fd8\u80fd\u5356\u51e0\u4e2a\u6708\u3002"),'text-right'),
       td:function(r,c){return '<td class="text-right '+(c.availTurnover!==null?(c.availTurnover<2?'text-danger':c.availTurnover>6?'text-secondary':'text-success'):'text-muted')+'">'+(c.availTurnover!==null?c.availTurnover:'-')+'</td>';},
       sum:function(t){return '<td></td>';}};
     Cols.transit_turnover={th:rpTh(t("app.733", "\u5728\u9014\u540e\u5468\u8f6c"),t("app.802", "\uff08\u5f53\u524d\u53ef\u7528\u5e93\u5b58 + \u5728\u9014\u5e93\u5b58\uff09\u00f7 \u6708\u5747\u9500\u91cf\uff08\u9500\u91cf\u7edf\u8ba1\u5468\u671f\u53e3\u5f84\uff09\u3002\u7528\u4e8e\u5224\u65ad\u5df2\u5728\u8def\u4e0a\u7684\u8d27\u5230\u540e\uff0c\u5e93\u5b58\u80fd\u652f\u6491\u591a\u4e45\u3002"),'text-right'),
@@ -4315,7 +4377,7 @@ async function loadRpChannelMonthly(channel){
     Cols.sales_status={th:rpTh(t("app.735", "\u52a8\u9500\u72b6\u6001"),t("app.804", "\u7cfb\u7edf\u6839\u636e\u9500\u91cf\u3001\u5e93\u5b58\u3001\u5e93\u9f84\u3001\u7f3a\u8d27\u3001\u6162\u9500\u3001\u9ad8\u5e93\u5b58\u7b49\u89c4\u5219\u5224\u65ad SKU \u5f53\u524d\u72b6\u6001\u3002")),
       td:function(r,c){return '<td><span class="status-badge">'+esc(r.sales_status||'')+'</span></td>';},
       sum:function(t){return '<td></td>';}};
-    Cols.risk_tags={th:'<th>风险标签</th>',
+    Cols.risk_tags={th:t('gen.L4318.1','<th>风险标签</th>'),
       td:function(r,c){return '<td>'+esc(r.risk_tags||'')+'</td>';},
       sum:function(t){return '<td></td>';}};
     Cols.action_rec={th:rpTh(t("app.111", "\u5efa\u8bae\u52a8\u4f5c"),t("app.805", "\u7cfb\u7edf\u6839\u636e\u52a8\u9500\u5224\u65ad\u7ed9\u51fa\u7684\u64cd\u4f5c\u5efa\u8bae\uff0c\u4f8b\u5982\u4f18\u5148\u8865\u8d27\u3001\u8c28\u614e\u8865\u8d27\u3001\u6682\u505c\u8865\u8d27\u3001\u4eba\u5de5\u590d\u6838\u3002")),
@@ -4326,15 +4388,15 @@ async function loadRpChannelMonthly(channel){
       td:function(r,c){return '<td style="min-width:150px;max-width:180px">'+buildSalesJudgement(r)+'</td>';},
       sum:function(t){return '<td></td>';}};
     // 复盘入口
-    Cols.review={th:'<th>复盘</th>',
-      td:function(r,c){return '<td class="cell-actions"><button class="action-btn" onclick="openRpReview(\''+r.id+'\',\''+channel+'\')" title="查看复盘">查看</button></td>';},
+    Cols.review={th:t('gen.L4329.1','<th>复盘</th>'),
+      td:function(r,c){return '<td class="cell-actions"><button class="action-btn" onclick="openRpReview(\''+r.id+'\',\''+channel+t('gen.L4330.1','\')" title="查看复盘">查看</button></td>');},
       sum:function(t){return '<td></td>';}};
     Cols.target_turn={th:rpTh(chLabel+t("app.660", "\u76ee\u6807\u5468\u8f6c"),t("app.808", "\u5e0c\u671b\u8865\u8d27\u540e\u5e93\u5b58\u80fd\u8986\u76d6\u7684\u9500\u552e\u6708\u6570\u3002\u5b83\u662f\u8ba1\u7b97\u53c2\u6570\uff0c\u4e0d\u662f\u5b9e\u9645\u5e93\u5b58\u7ed3\u679c\u3002"),'text-right','style="min-width:90px"'),
       td:function(r,c){
         return '<td class="text-right"><input type="number" class="rp-target-turn" data-rid="'+r.id+'" data-channel="'+channel+'" data-avg-sales="'+c.avgSales+'" value="'+c.targetTurn+'" min="0" step="0.5" style="width:65px;padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-weight:bold;text-align:right" onchange="onTargetTurnChange(this)"></td>';
       },
       sum:function(t){return '<td></td>';}};
-    Cols.target_stock={th:rpTh(chLabel+'建议采购',t("app.809", "\u57fa\u4e8e\u9500\u91cf\u7edf\u8ba1\u5468\u671f(\u8fd1 N \u5929)\u6708\u5747\u9500\u91cf\u4e0e\u76ee\u6807\u5468\u8f6c\u8ba1\u7b97\u7684\u5efa\u8bae\u8865\u8d27\u6570\u91cf\u3002\u6162\u9500\u3001\u5446\u6ede\u3001\u9ad8\u5e93\u5b58\u7b49 SKU \u4f1a\u88ab\u62e6\u622a\u4e3a 0\u3002"),'text-right'),
+    Cols.target_stock={th:rpTh(chLabel+t('gen.L4337.1','建议采购'),t("app.809", "\u57fa\u4e8e\u9500\u91cf\u7edf\u8ba1\u5468\u671f(\u8fd1 N \u5929)\u6708\u5747\u9500\u91cf\u4e0e\u76ee\u6807\u5468\u8f6c\u8ba1\u7b97\u7684\u5efa\u8bae\u8865\u8d27\u6570\u91cf\u3002\u6162\u9500\u3001\u5446\u6ede\u3001\u9ad8\u5e93\u5b58\u7b49 SKU \u4f1a\u88ab\u62e6\u622a\u4e3a 0\u3002"),'text-right'),
       td:function(r,c){
         var _blocked=shouldBlockReplenish(r.sales_status||'',r.risk_tags||'');
         var _val=_blocked?0:Math.round(c.suggestedQty||0);
@@ -4348,14 +4410,14 @@ async function loadRpChannelMonthly(channel){
       td:function(r,c){
         var d=r.days_since_last_inbound;
         var cls=d!==null?(d<=90?'text-success':d<=180?'text-primary':d<=365?'text-warning':'text-danger'):'text-muted';
-        return '<td class="text-right '+cls+'">'+(d!==null?d:'未知')+'</td>';
+        return '<td class="text-right '+cls+'">'+(d!==null?d:t('gen.L4351.1','未知'))+'</td>';
       },
       sum:function(t){return '<td></td>';}};
-    Cols.remark={th:'<th style="min-width:120px">'+chLabel+'备注</th>',
+    Cols.remark={th:'<th style="min-width:120px">'+chLabel+t('gen.L4354.1','备注</th>'),
       td:function(r,c){return '<td><input type="text" class="rp-channel-remark" data-rid="'+r.id+'" data-channel="'+channel+'" value="'+esc(c.remark)+'" onblur="onChannelRemarkBlur(this)" style="width:110px;padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px"></td>';},
       sum:function(t){return '<td></td>';}};
-    Cols.actions={th:'<th>操作</th>',
-      td:function(r,c){return '<td class="cell-actions"><button class="action-btn" onclick="saveChannelChanges(\''+r.id+'\',\''+channel+'\')" title="\u4fdd\u5b58">💾</button></td>';},
+    Cols.actions={th:t('gen.L4357.1','<th>操作</th>'),
+      td:function(r,c){return '<td class="cell-actions"><button class="action-btn" onclick="saveChannelChanges(\''+r.id+'\',\''+channel+t('gen.L4358.1','\')" title="\u4fdd\u5b58">💾</button></td>');},
       sum:function(t){return '<td></td>';}};
     // 按配置过滤+排序：可见或固定的列才显示
     var tabKey=isOnline?'online':'offline';
@@ -4386,7 +4448,7 @@ async function loadRpChannelMonthly(channel){
     var sum='<tr class="rp-summary-row">' + activeKeys.map(function(k){return Cols[k].sum(totals);}).join('') + '</tr>';
     var colCount=activeKeys.length;
     var tableFoot=!data.length
-      ? '<tr><td colspan="'+colCount+'" style="text-align:center;padding:40px 20px;color:#999;background:#fafbfc">💡 当前筛选条件下暂无建议，请调整国家/仓库/品牌或点击"重新计算"</td></tr>'
+      ? '<tr><td colspan="'+colCount+t('gen.L4389.1','" style="text-align:center;padding:40px 20px;color:#999;background:#fafbfc">💡 当前筛选条件下暂无建议，请调整国家/仓库/品牌或点击"重新计算"</td></tr>')
       : '';
     document.getElementById('rp-table').innerHTML='<div class="table-container" style="box-shadow:none;border-radius:0;overflow:auto;max-height:70vh"><table class="data-table rp-monthly-table"><thead><tr style="height:34px">'+th+'</tr>'+sum+'</thead><tbody>'+rows+tableFoot+'</tbody></table></div>';
     applyChannelFreezeColumns(tabKey, activeKeys);
@@ -4530,7 +4592,7 @@ function renderFreezeLine(container, tabKey, activeKeys, freezeIdx, widths, left
   // 创建冻结线元素
   var line=document.createElement('div');
   line.className='rp-freeze-line';
-  line.innerHTML='<div class="rp-freeze-line-tooltip">拖动调整冻结区域</div>';
+  line.innerHTML=t('gen.L4533.1','<div class="rp-freeze-line-tooltip">拖动调整冻结区域</div>');
   container.appendChild(line);
   // 存储当前冻结右边界，供 scroll handler 使用
   line._rpFreezeRight=freezeRight;
@@ -4652,10 +4714,10 @@ function initFreezeLineDrag(line, container, tabKey, activeKeys, widths, lefts){
 function openRpReview(rid, channel){
   var cache = window._rpChannelData && window._rpChannelData[channel];
   var r = cache ? cache[rid] : null;
-  if(!r){ showToast('未找到该行数据，请刷新后重试','danger'); return; }
+  if(!r){ showToast(t('gen.L4655.1','未找到该行数据，请刷新后重试'),'danger'); return; }
   var c = r._c || {};
   var isOnline = channel==='online';
-  var chLabel = isOnline?'线上':'线下';
+  var chLabel = isOnline?t('gen.L4658.1','线上'):t('gen.L4658.2','线下');
   var rawRisk = r.risk_tags || '';
   var tags = Array.isArray(rawRisk)?rawRisk:String(rawRisk).split(',').map(function(s){return s.trim();}).filter(Boolean);
   var statusText = r.sales_status || t("app.673", "\u672a\u77e5");
@@ -4669,21 +4731,21 @@ function openRpReview(rid, channel){
   }
   var html='<div class="detail-card" style="box-shadow:none;padding:0">'
     // 1. 系统判断
-    +'<div class="detail-section"><h3>1. 系统判断</h3><div class="detail-grid">'
+    +t('gen.L4672.1','<div class="detail-section"><h3>1. 系统判断</h3><div class="detail-grid">')
     +kv(t("app.110", "\u52a8\u9500\u5224\u65ad"), judgementText)
     +kv(t("app.111", "\u5efa\u8bae\u52a8\u4f5c"), actionHtml, true)
     +'</div></div>'
     // 2. 判断原因
-    +'<div class="detail-section"><h3>2. 判断原因</h3><div class="detail-grid">'
+    +t('gen.L4677.1','<div class="detail-section"><h3>2. 判断原因</h3><div class="detail-grid">')
     +kv(t("app.742", "\u52a8\u9500\u539f\u56e0"), r.sales_reason||'')
     +kv(t("app.737", "AI\u5efa\u8bae"), r.ai_business_advice||'')
     +'</div></div>'
     // 3. 关键数据（渠道口径）
-    +'<div class="detail-section"><h3>3. 关键数据（'+chLabel+'口径）</h3><div class="detail-grid">'
-    +kv(chLabel+'月均', c.avgSales!==undefined?Math.round(c.avgSales*100)/100:'')
-    +kv(chLabel+'占比', c.pct!==undefined?Math.round(c.pct)+'%':'')
+    +t('gen.L4682.1','<div class="detail-section"><h3>3. 关键数据（')+chLabel+t('gen.L4682.2','口径）</h3><div class="detail-grid">')
+    +kv(chLabel+t('gen.L4683.1','月均'), c.avgSales!==undefined?Math.round(c.avgSales*100)/100:'')
+    +kv(chLabel+t('gen.L4684.1','占比'), c.pct!==undefined?Math.round(c.pct)+'%':'')
     +kv(chLabel+t("app.767", "\u5206\u644a\u53ef\u7528\u5e93\u5b58"), c.availAllocated)
-    +kv('当前可用周转', c.availTurnover!==null?c.availTurnover:t("app.799", "\u65e0\u9500\u91cf"))
+    +kv(t('gen.L4686.1','当前可用周转'), c.availTurnover!==null?c.availTurnover:t("app.799", "\u65e0\u9500\u91cf"))
     +kv(chLabel+t("app.768", "\u5206\u644a\u5728\u9014\u5e93\u5b58"), c.transitAllocated)
     +kv(t("app.733", "\u5728\u9014\u540e\u5468\u8f6c"), c.transitTurnover!==null?c.transitTurnover:t("app.799", "\u65e0\u9500\u91cf"))
     +kv(t("app.732", "PO\u672a\u786e\u8ba4PI"), r.po_unconfirmed_pi_qty||0)
@@ -4695,16 +4757,16 @@ function openRpReview(rid, channel){
     +kv(t("app.663", "\u8ddd\u6700\u540e\u5165\u5e93\u5929\u6570"), r.days_since_last_inbound!==null?r.days_since_last_inbound:t("app.673", "\u672a\u77e5"))
     +'</div></div>'
     // 4. 人工调整
-    +'<div class="detail-section"><h3>4. 人工调整</h3><div class="detail-grid">'
+    +t('gen.L4698.1','<div class="detail-section"><h3>4. 人工调整</h3><div class="detail-grid">')
     +kv(t("app.025", "\u5907\u6ce8"), c.remark||'')
-    +kv(t("app.820", "\u8c03\u6574\u4eba"), '<span class="text-muted">暂无记录</span>', true)
-    +kv(t("app.822", "\u8c03\u6574\u65f6\u95f4"), '<span class="text-muted">暂无记录</span>', true)
-    +kv(t("app.823", "\u8c03\u6574\u524d\u6570\u91cf"), '<span class="text-muted">暂无记录</span>', true)
-    +kv(t("app.824", "\u8c03\u6574\u540e\u6570\u91cf"), '<span class="text-muted">暂无记录</span>', true)
+    +kv(t("app.820", "\u8c03\u6574\u4eba"), t('gen.L4700.1','<span class="text-muted">暂无记录</span>'), true)
+    +kv(t("app.822", "\u8c03\u6574\u65f6\u95f4"), t('gen.L4701.1','<span class="text-muted">暂无记录</span>'), true)
+    +kv(t("app.823", "\u8c03\u6574\u524d\u6570\u91cf"), t('gen.L4702.1','<span class="text-muted">暂无记录</span>'), true)
+    +kv(t("app.824", "\u8c03\u6574\u540e\u6570\u91cf"), t('gen.L4703.1','<span class="text-muted">暂无记录</span>'), true)
     +'</div></div>'
     +'</div>';
   openModal(t('modal.title.openRpReview', '复盘 - {v1} ({v2})', {v1: r.sku_code||'', v2: chLabel}), html,
-    '<button class="btn btn-secondary" onclick="closeModal()">关闭</button>');
+    t('gen.L4707.1','<button class="btn btn-secondary" onclick="closeModal()">关闭</button>'));
 }
 
 // 目标周转修改 → 实时预览目标库存
@@ -4802,7 +4864,7 @@ function showRpAutoSaved(input){
 function showRpSaveFailed(input){
   input.style.borderColor='#ff4d4f';
   input.style.boxShadow='0 0 0 2px rgba(255,77,79,0.2)';
-  showToast('保存失败，请重试','danger');
+  showToast(t('gen.L4805.1','保存失败，请重试'),'danger');
   setTimeout(function(){
     input.style.borderColor='';
     input.style.boxShadow='';
@@ -4850,7 +4912,7 @@ function onAdjReasonChange(sel){
   var reason=sel.value;
   // 异步保存原因
   api('/api/replenishment-suggestions/'+rid,'PUT',{adjustment_reason:reason}).then(function(){
-    showToast('调整原因已保存','success');
+    showToast(t('gen.L4853.1','调整原因已保存'),'success');
   }).catch(function(e){showToast(e.message,'danger')});
 }
 
@@ -4877,7 +4939,7 @@ async function saveChannelChanges(rid,channel){
         stockEl.textContent=stock;
       }
     }
-    showToast('已保存，目标库存已回写总预测','success');
+    showToast(t('gen.L4880.1','已保存，目标库存已回写总预测'),'success');
   }catch(e){showToast(e.message,'danger')}
 }
 
@@ -4891,7 +4953,7 @@ async function saveFinalQty(rid){
   if(reasonSel && !reasonSel.disabled) body.adjustment_reason=reasonSel.value;
   try{
     var resp=await api('/api/replenishment-suggestions/'+rid,'PUT',body);
-    showToast('已保存','success');
+    showToast(t('gen.L4894.1','已保存'),'success');
   }catch(e){showToast(e.message,'danger')}
 }
 
@@ -4926,15 +4988,15 @@ async function loadRpDaily(){
     // === 表头行 ===
     var headRow='<tr style="height:'+headerH+'px">'
       +'<th style="'+sHead(0)+'"><input type="checkbox" id="rp-all" onchange="document.querySelectorAll(\'.rp-ck\').forEach(function(c){c.checked=this.checked})"></th>'
-      +'<th style="'+sHead(1)+'">动销</th>'
-      +'<th style="'+sHead(2)+'">生命周期</th>'
+      +'<th style="'+sHead(1)+t('gen.L4929.1','">动销</th>')
+      +'<th style="'+sHead(2)+t('gen.L4930.1','">生命周期</th>')
       +'<th style="'+sHead(3)+'">Model</th>'
       +'<th style="'+sHead(4)+'">SKU</th>'
-      +'<th class="text-right" style="'+sHead(5)+'">近7天</th>'
-      +'<th class="text-right" style="'+sHead(6)+'">近14天</th>'
-      +'<th class="text-right" style="'+sHead(7)+'">近30天</th>'
-      +'<th class="text-right" style="'+sHead(8)+'">日均</th>'
-      +'<th class="text-center" style="'+sHead(9)+'">趋势</th>'
+      +'<th class="text-right" style="'+sHead(5)+t('gen.L4933.1','">近7天</th>')
+      +'<th class="text-right" style="'+sHead(6)+t('gen.L4934.1','">近14天</th>')
+      +'<th class="text-right" style="'+sHead(7)+t('gen.L4935.1','">近30天</th>')
+      +'<th class="text-right" style="'+sHead(8)+t('gen.L4936.1','">日均</th>')
+      +'<th class="text-center" style="'+sHead(9)+t('gen.L4937.1','">趋势</th>')
       +dateHeaders
       +'</tr>';
 
@@ -4950,11 +5012,11 @@ async function loadRpDaily(){
       return '<td class="text-right" style="position:sticky;top:'+headerH+'px;z-index:2;background:#e8edf3;font-weight:700;font-size:11px;min-width:44px">'+(dateSums[i]>0?dateSums[i]:'<span style="color:#aaa">-</span>')+'</td>';
     }).join('');
     var summaryRow='<tr style="height:'+summaryH+'px;background:#e8edf3">'
-      +'<td style="'+sSum(0)+'" class="text-center" colspan="1"><span style="font-size:11px;font-weight:700">合计</span></td>'
+      +'<td style="'+sSum(0)+t('gen.L4953.1','" class="text-center" colspan="1"><span style="font-size:11px;font-weight:700">合计</span></td>')
       +'<td style="'+sSum(1)+'"></td>'
       +'<td style="'+sSum(2)+'"></td>'
       +'<td style="'+sSum(3)+'"></td>'
-      +'<td style="'+sSum(4)+'"><span style="font-size:10px;color:#888">'+data.length+'个SKU</span></td>'
+      +'<td style="'+sSum(4)+'"><span style="font-size:10px;color:#888">'+data.length+t('gen.L4957.1','个SKU</span></td>')
       +'<td class="text-right" style="'+sSum(5)+'">'+sum7+'</td>'
       +'<td class="text-right" style="'+sSum(6)+'">'+sum14+'</td>'
       +'<td class="text-right" style="'+sSum(7)+'">'+sum30+'</td>'
@@ -4986,7 +5048,7 @@ async function loadRpDaily(){
     });
 
     var emptyFoot=!data.length
-      ? '<tr><td colspan="'+(10+dates.length)+'" style="text-align:center;padding:40px 20px;color:#999;background:#fafbfc">📈 当前筛选条件下暂无销量数据，请调整国家/仓库/品牌或点击"重新计算"</td></tr>'
+      ? '<tr><td colspan="'+(10+dates.length)+t('gen.L4989.1','" style="text-align:center;padding:40px 20px;color:#999;background:#fafbfc">📈 当前筛选条件下暂无销量数据，请调整国家/仓库/品牌或点击"重新计算"</td></tr>')
       : '';
     document.getElementById('rp-table').innerHTML='<div class="daily-table-wrap" style="overflow:auto;max-height:70vh;position:relative">'
       +'<table class="data-table" style="white-space:nowrap;border-collapse:separate;border-spacing:0">'
@@ -5015,7 +5077,7 @@ async function onRpQtyChange(input,rid){
     if(suggEl&&d) suggEl.textContent=d.suggestion||'';
     const ck=document.querySelector('.rp-ck[value="'+rid+'"]');
     if(ck) ck.dataset.qty=val;
-    showToast('已更新','success');
+    showToast(t('gen.L5018.1','已更新'),'success');
   }catch(e){showToast(e.message,'danger');loadRp()}
 }
 async function genRp(){
@@ -5023,7 +5085,7 @@ async function genRp(){
   const buttons=Array.from(document.querySelectorAll('.rp-gen-btn'));
   const oldLabels=buttons.map(b=>b.innerHTML);
   buttons.forEach(b=>{b.disabled=true;b.innerHTML=t("app.829", "\u8ba1\u7b97\u4e2d...");});
-  showToast('正在重新计算，请稍候...','info');
+  showToast(t('gen.L5026.1','正在重新计算，请稍候...'),'info');
   try{
     const r=await api('/api/replenishment-suggestions/generate','POST',rpFilterBody());
     if(!r||!r.success){
@@ -5049,13 +5111,13 @@ function showUnmatchedRules(unmatched){
   });
   var rows=Object.values(byBrand).sort(function(a,b){return b.count-a.count;});
   var html='<div style="padding:8px 0">'
-    +'<div style="font-size:14px;margin-bottom:12px;color:#c0392b">以下品牌未配置目标周转规则，无法重新计算。请先在「⚙ 预测参数设置」中为这些品牌添加规则后再重算：</div>'
-    +'<table class="table table-bordered" style="font-size:13px"><thead><tr><th>品牌</th><th style="width:140px">未命中 SKU 数</th></tr></thead><tbody>'
+    +t('gen.L5052.1','<div style="font-size:14px;margin-bottom:12px;color:#c0392b">以下品牌未配置目标周转规则，无法重新计算。请先在「⚙ 预测参数设置」中为这些品牌添加规则后再重算：</div>')
+    +t('gen.L5053.1','<table class="table table-bordered" style="font-size:13px"><thead><tr><th>品牌</th><th style="width:140px">未命中 SKU 数</th></tr></thead><tbody>')
     +rows.map(function(r){return '<tr><td>'+esc(r.brand)+'</td><td>'+r.count+'</td></tr>';}).join('')
     +'</tbody></table>'
-    +'<div style="font-size:12px;color:#888;margin-top:8px">提示：只需添加品牌级规则（国家/仓库留空）即可覆盖该品牌所有国家/仓库。</div>'
+    +t('gen.L5056.1','<div style="font-size:12px;color:#888;margin-top:8px">提示：只需添加品牌级规则（国家/仓库留空）即可覆盖该品牌所有国家/仓库。</div>')
     +'</div>';
-  openModal(t("app.836", "\u26a0\ufe0f \u65e0\u6cd5\u91cd\u65b0\u8ba1\u7b97\uff1a\u76ee\u6807\u5468\u8f6c\u89c4\u5219\u672a\u8986\u76d6"), html, '<button class="btn btn-primary" onclick="closeModal()">知道了</button>');
+  openModal(t("app.836", "\u26a0\ufe0f \u65e0\u6cd5\u91cd\u65b0\u8ba1\u7b97\uff1a\u76ee\u6807\u5468\u8f6c\u89c4\u5219\u672a\u8986\u76d6"), html, t('gen.L5058.1','<button class="btn btn-primary" onclick="closeModal()">知道了</button>'));
 }
 function exportRpExcel(){
   try{
@@ -5074,7 +5136,7 @@ function currentRpContext(){
 }
 function dimScoreLabel(score){
   var m={7:t("app.838", "\u54c1\u724c+\u56fd\u5bb6+\u4ed3\u5e93"),6:t("app.839", "\u54c1\u724c+\u56fd\u5bb6"),5:t("app.840", "\u54c1\u724c+\u4ed3\u5e93"),4:t("app.112", "\u54c1\u724c"),3:t("app.841", "\u56fd\u5bb6+\u4ed3\u5e93"),2:t("app.113", "\u56fd\u5bb6"),1:t("app.114", "\u4ed3\u5e93"),0:t("app.842", "\u5168\u901a\u914d")};
-  return m[score]!=null?m[score]:('得分'+score);
+  return m[score]!=null?m[score]:(t('gen.L5077.1','得分')+score);
 }
 // 前端镜像 server.js getDimTurnover 评分（不改变后端命中逻辑，仅用于只读参考与预填）
 function resolveDimHit(rules, brand, country, warehouse){
@@ -5129,67 +5191,67 @@ async function openRpParams(){
   var prefillOnline = hit?hit.online_turnover:'';
   var prefillOffline = hit?hit.offline_turnover:'';
   var prefillNote = hit
-    ? (keyOf(hit)===ctxKey ? '（当前维度已有规则，修改将覆盖它）' : '（参考：当前命中到更宽规则「'+dimScoreLabel(hit.score)+t("app.845", "\u300d\uff0c\u4fdd\u5b58\u5c06\u65b0\u589e\u5f53\u524d\u7ef4\u5ea6\u7684\u4e13\u5c5e\u89c4\u5219\uff09"))
+    ? (keyOf(hit)===ctxKey ? t('gen.L5132.1','（当前维度已有规则，修改将覆盖它）') : t('gen.L5132.2','（参考：当前命中到更宽规则「')+dimScoreLabel(hit.score)+t("app.845", "\u300d\uff0c\u4fdd\u5b58\u5c06\u65b0\u589e\u5f53\u524d\u7ef4\u5ea6\u7684\u4e13\u5c5e\u89c4\u5219\uff09"))
     : t("app.846", "\uff08\u5f53\u524d\u7ef4\u5ea6\u6682\u65e0\u547d\u4e2d\u89c4\u5219\uff0c\u4fdd\u5b58\u5c06\u65b0\u589e\uff09");
   var isFullWildcard = !ctx.brand && !ctx.country && !ctx.warehouse;
   var hitBlock = hit
     ? '<table class="table table-bordered" style="font-size:13px;margin-bottom:0">'
       +'<tbody>'
-      +'<tr><td style="width:120px;background:#fafafa;font-weight:600">命中的品牌</td><td>'+(esc(hit.brand)||t("app.848", "\u901a\u914d"))+'</td></tr>'
-      +'<tr><td style="background:#fafafa;font-weight:600">国家</td><td>'+(esc(hit.country)||t("app.848", "\u901a\u914d"))+'</td></tr>'
-      +'<tr><td style="background:#fafafa;font-weight:600">仓库</td><td>'+(esc(hit.warehouse)||t("app.848", "\u901a\u914d"))+'</td></tr>'
-      +'<tr><td style="background:#fafafa;font-weight:600">线上周转</td><td>'+esc(hit.online_turnover)+'</td></tr>'
-      +'<tr><td style="background:#fafafa;font-weight:600">线下周转</td><td>'+esc(hit.offline_turnover)+'</td></tr>'
-      +'<tr><td style="background:#fafafa;font-weight:600">命中优先级</td><td>'+esc(dimScoreLabel(hit.score))+'（得分 '+hit.score+'）</td></tr>'
+      +t('gen.L5138.1','<tr><td style="width:120px;background:#fafafa;font-weight:600">命中的品牌</td><td>')+(esc(hit.brand)||t("app.848", "\u901a\u914d"))+'</td></tr>'
+      +t('gen.L5139.1','<tr><td style="background:#fafafa;font-weight:600">国家</td><td>')+(esc(hit.country)||t("app.848", "\u901a\u914d"))+'</td></tr>'
+      +t('gen.L5140.1','<tr><td style="background:#fafafa;font-weight:600">仓库</td><td>')+(esc(hit.warehouse)||t("app.848", "\u901a\u914d"))+'</td></tr>'
+      +t('gen.L5141.1','<tr><td style="background:#fafafa;font-weight:600">线上周转</td><td>')+esc(hit.online_turnover)+'</td></tr>'
+      +t('gen.L5142.1','<tr><td style="background:#fafafa;font-weight:600">线下周转</td><td>')+esc(hit.offline_turnover)+'</td></tr>'
+      +t('gen.L5143.1','<tr><td style="background:#fafafa;font-weight:600">命中优先级</td><td>')+esc(dimScoreLabel(hit.score))+t('gen.L5143.2','（得分 ')+hit.score+'）</td></tr>'
       +'</tbody></table>'
-    : '<div style="color:#c0392b;font-size:13px">当前维度暂无命中规则（保存后将新增此维度规则）</div>';
+    : t('gen.L5145.1','<div style="color:#c0392b;font-size:13px">当前维度暂无命中规则（保存后将新增此维度规则）</div>');
   var html='<div style="padding:8px 0">'
     +'<div class="form-group" style="margin-bottom:14px">'
-      +'<label style="font-weight:600;display:block;margin-bottom:6px">销量统计周期</label>'
+      +t('gen.L5148.1','<label style="font-weight:600;display:block;margin-bottom:6px">销量统计周期</label>')
       +'<select id="rp-param-stats-days" class="form-control" style="width:160px">'
-        +'<option value="60"'+(String(sd)==='60'?' selected':'')+'>近 60 天</option>'
-        +'<option value="90"'+(String(sd)==='90'?' selected':'')+'>近 90 天（默认）</option>'
-        +'<option value="120"'+(String(sd)==='120'?' selected':'')+'>近 120 天</option>'
+        +'<option value="60"'+(String(sd)==='60'?' selected':'')+t('gen.L5150.1','>近 60 天</option>')
+        +'<option value="90"'+(String(sd)==='90'?' selected':'')+t('gen.L5151.1','>近 90 天（默认）</option>')
+        +'<option value="120"'+(String(sd)==='120'?' selected':'')+t('gen.L5152.1','>近 120 天</option>')
       +'</select>'
-      +'<div style="font-size:12px;color:#888;margin-top:4px">月均销量、当前可用周转、当前周转、当前测算周转、在途后周转、下单后周转、预计周转月数、占比、分摊库存、建议采购数量均已按当前「销量统计周期」计算；仅分类/风险/拦截层（动销状态、风险标签）仍按近 4 个月口径，属阶段性拆分（非 bug）。</div>'
+      +t('gen.L5154.1','<div style="font-size:12px;color:#888;margin-top:4px">月均销量、当前可用周转、当前周转、当前测算周转、在途后周转、下单后周转、预计周转月数、占比、分摊库存、建议采购数量均已按当前「销量统计周期」计算；仅分类/风险/拦截层（动销状态、风险标签）仍按近 4 个月口径，属阶段性拆分（非 bug）。</div>')
     +'</div>'
     +'<div class="form-group" style="margin-bottom:14px">'
-      +'<label style="font-weight:600;display:block;margin-bottom:8px">目标周转配置</label>'
+      +t('gen.L5157.1','<label style="font-weight:600;display:block;margin-bottom:8px">目标周转配置</label>')
       +'<div style="padding:10px;background:#f5f7fa;border:1px solid #e1e5ea;border-radius:6px;margin-bottom:10px;font-size:13px;color:#666">'
-        +'<div style="font-weight:600;color:#444;margin-bottom:6px">① 当前页面筛选（只读参考）</div>'
-        +'当前正在查看： '
-        +'<span style="display:inline-block;padding:2px 8px;margin:0 3px;background:#fff;border:1px solid #ccc;border-radius:10px">品牌: '+ctxLabel(ctx.brand)+'</span>'
-        +'<span style="display:inline-block;padding:2px 8px;margin:0 3px;background:#fff;border:1px solid #ccc;border-radius:10px">国家: '+ctxLabel(ctx.country)+'</span>'
-        +'<span style="display:inline-block;padding:2px 8px;margin:0 3px;background:#fff;border:1px solid #ccc;border-radius:10px">仓库: '+ctxLabel(ctx.warehouse)+'</span>'
+        +t('gen.L5159.1','<div style="font-weight:600;color:#444;margin-bottom:6px">① 当前页面筛选（只读参考）</div>')
+        +t('gen.L5160.1','当前正在查看： ')
+        +t('gen.L5161.1','<span style="display:inline-block;padding:2px 8px;margin:0 3px;background:#fff;border:1px solid #ccc;border-radius:10px">品牌: ')+ctxLabel(ctx.brand)+'</span>'
+        +t('gen.L5162.1','<span style="display:inline-block;padding:2px 8px;margin:0 3px;background:#fff;border:1px solid #ccc;border-radius:10px">国家: ')+ctxLabel(ctx.country)+'</span>'
+        +t('gen.L5163.1','<span style="display:inline-block;padding:2px 8px;margin:0 3px;background:#fff;border:1px solid #ccc;border-radius:10px">仓库: ')+ctxLabel(ctx.warehouse)+'</span>'
       +'</div>'
       +'<div style="padding:10px;background:#eef4fb;border:1px solid #cfe0f5;border-radius:6px;margin-bottom:6px">'
-        +'<div style="font-weight:600;color:#2c5d8a;margin-bottom:6px">② 本次保存的规则对象（可编辑，默认预填当前筛选）</div>'
-        +'<div style="font-size:12px;color:#888;margin-bottom:8px">空白=通配（不限该维度）。命中优先级：品牌+国家+仓库 &gt; 品牌+国家 &gt; 品牌+仓库 &gt; 品牌 &gt; 国家+仓库 &gt; 国家 &gt; 仓库 &gt; 全通配。<b>无兜底值</b>——未命中的 SKU 会阻止重新计算。保存以此处为准。</div>'
+        +t('gen.L5166.1','<div style="font-weight:600;color:#2c5d8a;margin-bottom:6px">② 本次保存的规则对象（可编辑，默认预填当前筛选）</div>')
+        +t('gen.L5167.1','<div style="font-size:12px;color:#888;margin-bottom:8px">空白=通配（不限该维度）。命中优先级：品牌+国家+仓库 &gt; 品牌+国家 &gt; 品牌+仓库 &gt; 品牌 &gt; 国家+仓库 &gt; 国家 &gt; 仓库 &gt; 全通配。<b>无兜底值</b>——未命中的 SKU 会阻止重新计算。保存以此处为准。</div>')
         +'<div style="display:flex;gap:10px;align-items:flex-end;margin-bottom:8px">'
-          +'<div><label style="font-size:12px;color:#666">品牌</label><input type="text" id="rp-rule-brand" class="form-control input-sm" value="'+esc(ctx.brand)+'" placeholder="(\u7a7a=\u901a\u914d)" style="width:120px"></div>'
-          +'<div><label style="font-size:12px;color:#666">国家</label><input type="text" id="rp-rule-country" class="form-control input-sm" value="'+esc(ctx.country)+'" placeholder="(\u7a7a=\u901a\u914d)" style="width:120px"></div>'
-          +'<div><label style="font-size:12px;color:#666">仓库</label><input type="text" id="rp-rule-warehouse" class="form-control input-sm" value="'+esc(ctx.warehouse)+'" placeholder="(\u7a7a=\u901a\u914d)" style="width:130px"></div>'
+          +t('gen.L5169.1','<div><label style="font-size:12px;color:#666">品牌</label><input type="text" id="rp-rule-brand" class="form-control input-sm" value="')+esc(ctx.brand)+t('gen.L5169.2','" placeholder="(\u7a7a=\u901a\u914d)" style="width:120px"></div>')
+          +t('gen.L5170.1','<div><label style="font-size:12px;color:#666">国家</label><input type="text" id="rp-rule-country" class="form-control input-sm" value="')+esc(ctx.country)+t('gen.L5170.2','" placeholder="(\u7a7a=\u901a\u914d)" style="width:120px"></div>')
+          +t('gen.L5171.1','<div><label style="font-size:12px;color:#666">仓库</label><input type="text" id="rp-rule-warehouse" class="form-control input-sm" value="')+esc(ctx.warehouse)+t('gen.L5171.2','" placeholder="(\u7a7a=\u901a\u914d)" style="width:130px"></div>')
         +'</div>'
         +'<div style="display:flex;gap:12px;align-items:flex-end">'
-          +'<div><label style="font-size:12px;color:#666">线上周转</label><input type="number" id="rp-param-online" class="form-control input-sm" value="'+esc(String(prefillOnline!=null?prefillOnline:''))+'" min="0" step="0.5" style="width:90px"></div>'
-          +'<div><label style="font-size:12px;color:#666">线下周转</label><input type="number" id="rp-param-offline" class="form-control input-sm" value="'+esc(String(prefillOffline!=null?prefillOffline:''))+'" min="0" step="0.5" style="width:90px"></div>'
+          +t('gen.L5174.1','<div><label style="font-size:12px;color:#666">线上周转</label><input type="number" id="rp-param-online" class="form-control input-sm" value="')+esc(String(prefillOnline!=null?prefillOnline:''))+'" min="0" step="0.5" style="width:90px"></div>'
+          +t('gen.L5175.1','<div><label style="font-size:12px;color:#666">线下周转</label><input type="number" id="rp-param-offline" class="form-control input-sm" value="')+esc(String(prefillOffline!=null?prefillOffline:''))+'" min="0" step="0.5" style="width:90px"></div>'
           +'<div style="font-size:12px;color:#888;padding-bottom:6px">'+prefillNote+'</div>'
         +'</div>'
       +'</div>'
     +'</div>'
     +'<div class="form-group" style="margin-bottom:14px">'
-      +'<label style="font-weight:600;display:block;margin-bottom:6px">当前命中到的已有规则（只读，保存前可见将覆盖/新增哪条）</label>'
+      +t('gen.L5181.1','<label style="font-weight:600;display:block;margin-bottom:6px">当前命中到的已有规则（只读，保存前可见将覆盖/新增哪条）</label>')
       +hitBlock
     +'</div>'
     + (isFullWildcard
-      ? '<div style="margin-bottom:14px;padding:10px;background:#fdecea;border:1px solid #f5c6cb;border-radius:6px;color:#c0392b;font-size:13px">⚠️ 当前 品牌/国家/仓库 均为「全部」。保存后将生成<b>全通配规则</b>，作用于所有未被更具体规则覆盖的维度。请确认确实需要。</div>'
+      ? t('gen.L5185.1','<div style="margin-bottom:14px;padding:10px;background:#fdecea;border:1px solid #f5c6cb;border-radius:6px;color:#c0392b;font-size:13px">⚠️ 当前 品牌/国家/仓库 均为「全部」。保存后将生成<b>全通配规则</b>，作用于所有未被更具体规则覆盖的维度。请确认确实需要。</div>')
       : '')
     +'<div style="margin-top:6px">'
-      +'<div style="cursor:pointer;font-weight:600;color:#555;font-size:13px;user-select:none" onclick="toggleRpAdv()">⚙ 高级设置（手动维护其它维度规则） ▾</div>'
+      +t('gen.L5188.1','<div style="cursor:pointer;font-weight:600;color:#555;font-size:13px;user-select:none" onclick="toggleRpAdv()">⚙ 高级设置（手动维护其它维度规则） ▾</div>')
       +'<div id="rp-adv-body" style="display:none;margin-top:8px">'
-        +'<div style="font-size:12px;color:#888;margin-bottom:8px">以下为全部已配置规则，可手动增删改<b>当前筛选维度之外</b>的规则；保存时一并合并（当前维度规则以左侧输入框为准）。</div>'
-        +'<table class="table table-bordered" style="font-size:13px;margin-bottom:8px"><thead><tr><th>品牌</th><th>国家</th><th>仓库</th><th>线上周转</th><th>线下周转</th><th style="width:50px"></th></tr></thead><tbody id="rp-dim-tbody"></tbody></table>'
-        +'<button class="btn btn-default btn-sm" onclick="addRpDimRow()">+ 新增规则</button>'
+        +t('gen.L5190.1','<div style="font-size:12px;color:#888;margin-bottom:8px">以下为全部已配置规则，可手动增删改<b>当前筛选维度之外</b>的规则；保存时一并合并（当前维度规则以左侧输入框为准）。</div>')
+        +t('gen.L5191.1','<table class="table table-bordered" style="font-size:13px;margin-bottom:8px"><thead><tr><th>品牌</th><th>国家</th><th>仓库</th><th>线上周转</th><th>线下周转</th><th style="width:50px"></th></tr></thead><tbody id="rp-dim-tbody"></tbody></table>')
+        +t('gen.L5192.1','<button class="btn btn-default btn-sm" onclick="addRpDimRow()">+ 新增规则</button>')
       +'</div>'
     +'</div>'
     +'<div style="margin-top:12px;padding:10px;background:var(--bg-secondary,#f5f5f5);border-radius:6px;font-size:12px;color:#666">'
@@ -5197,7 +5259,7 @@ async function openRpParams(){
     +'</div>'
   +'</div>';
   openModal(t("shell.060", "\u2699 \u9884\u6d4b\u53c2\u6570\u8bbe\u7f6e"), html,
-    '<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveRpParams()">💾 保存当前维度规则</button>');
+    t('gen.L5200.1','<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveRpParams()">💾 保存当前维度规则</button>'));
   // 渲染高级区：现有全部规则
   _rpDimRowCount=0;
   dimRules.forEach(function(r){
@@ -5212,7 +5274,7 @@ function addRpDimRow(brand,country,warehouse,online,offline){
 }
 async function saveRpParams(){
   var sd=document.getElementById('rp-param-stats-days').value;
-  if(!sd||[60,90,120].indexOf(parseInt(sd))<0){showToast('请选择有效的销量统计周期','warning');return;}
+  if(!sd||[60,90,120].indexOf(parseInt(sd))<0){showToast(t('gen.L5215.1','请选择有效的销量统计周期'),'warning');return;}
   // 保存来源：② 可编辑规则对象（默认预填当前筛选，但用户可改），不直接绑定页面筛选下拉
   var ctx={
     brand: (document.getElementById('rp-rule-brand').value||'').trim(),
@@ -5221,7 +5283,7 @@ async function saveRpParams(){
   };
   var online=parseFloat(document.getElementById('rp-param-online').value)||0;
   var offline=parseFloat(document.getElementById('rp-param-offline').value)||0;
-  if(!(online>0)||!(offline>0)){showToast('周转值必须为正数','warning');return;}
+  if(!(online>0)||!(offline>0)){showToast(t('gen.L5224.1','周转值必须为正数'),'warning');return;}
   // 全通配（② 三处皆空）→ 强二次确认，文案明确
   if(!ctx.brand && !ctx.country && !ctx.warehouse){
     if(!confirm(t("app.873", "\u8fd9\u4f1a\u4fdd\u5b58\u4e3a\u5168\u901a\u914d\u89c4\u5219\uff0c\u4f5c\u7528\u4e8e\u6240\u6709\u672a\u88ab\u66f4\u5177\u4f53\u89c4\u5219\u8986\u76d6\u7684\u7ef4\u5ea6\u3002\u786e\u8ba4\u4fdd\u5b58\u5417\uff1f"))) return;
@@ -5241,16 +5303,16 @@ async function saveRpParams(){
     if(!(ar.online_turnover>0)||!(ar.offline_turnover>0)) return; // 跳过非法高级行
     if(!rules.some(function(r){return keyOf(r)===keyOf(ar);})) rules.push(ar);
   });
-  if(!rules.length){showToast('至少需要一条规则','warning');return;}
+  if(!rules.length){showToast(t('gen.L5244.1','至少需要一条规则'),'warning');return;}
   var configs=[
     {key:'sales_stats_days',value:sd,description:t("system.009", "\u9500\u91cf\u7edf\u8ba1\u5468\u671f(\u5929)\uff1a60/90/120\uff0c\u5f71\u54cd\u6708\u5747\u9500\u91cf\u4e0e\u5404\u9879\u5468\u8f6c\uff08\u5f53\u524d\u53ef\u7528/\u5f53\u524d/\u5728\u9014\u540e/\u4e0b\u5355\u540e\uff09\u663e\u793a\u53e3\u5f84")},
-    {key:'dim_default_config',value:JSON.stringify(rules),description:'目标周转多维默认值(JSON数组)：brand/country/warehouse/online_turnover/offline_turnover，空=通配；命中优先级 品牌+国家+仓库>品牌+国家>品牌+仓库>品牌>国家+仓库>国家>仓库>兜底'}
+    {key:'dim_default_config',value:JSON.stringify(rules),description:t('gen.L5247.1','目标周转多维默认值(JSON数组)：brand/country/warehouse/online_turnover/offline_turnover，空=通配；命中优先级 品牌+国家+仓库>品牌+国家>品牌+仓库>品牌>国家+仓库>国家>仓库>兜底')}
   ];
   try{
     await api('/api/system-config','POST',{configs:configs});
     // 刷新销量统计周期缓存，使下次渲染表头/period 显示用新值
     rpSalesStatsDays=parseInt(sd)||90; _rpSdPromise=null;
-    showToast('已保存预测参数，请点击「重新计算」使新参数生效','success');
+    showToast(t('gen.L5253.1','已保存预测参数，请点击「重新计算」使新参数生效'),'success');
     closeModal();
   }catch(e){showToast(e.message||t("app.429", "\u4fdd\u5b58\u5931\u8d25"),'danger');}
 }
@@ -5263,12 +5325,12 @@ async function genPOModal(){
     const suggestions=await api('/api/replenishment-suggestions?'+rpQuery());
     // 生成 PO 只使用后端最终建议采购数量 suggested_qty
     const filtered=suggestions.filter(r=>(r.suggested_qty||0)>0);
-    if(!filtered.length){showToast('当前没有需要生成 PO 的 SKU。','warning');return;}
+    if(!filtered.length){showToast(''+t("toast.genpo_empty","当前没有需要生成 PO 的 SKU。")+'','warning');return;}
     // 预览窗口：显示建议采购数量 > 0 的 SKU
-    const prevHtml='<div class="table-container" style="max-height:50vh;overflow:auto"><table class="data-table"><thead><tr><th>SKU</th><th>Model</th><th class="text-right">建议采购数量</th><th>动销判断</th><th>建议动作</th><th>品牌</th><th>国家</th><th>仓库</th></tr></thead><tbody>'
+    const prevHtml='<div class="table-container" style="max-height:50vh;overflow:auto"><table class="data-table"><thead><tr><th>SKU</th><th>Model</th><th class="text-right">'+t("col.suggest_qty","建议采购数量")+'</th><th>'+t("col.sales_judgement","动销判断")+'</th><th>'+t("col.suggest_action","建议动作")+'</th><th>'+t("app.112","品牌")+'</th><th>'+t("app.113","国家")+'</th><th>'+t("app.114","仓库")+'</th></tr></thead><tbody>'
       +filtered.map((r,i)=>'<tr><td class="cell-id">'+esc(r.sku_code)+'</td><td class="text-truncate" style="max-width:120px">'+esc(r.model||'')+'</td><td class="text-right font-bold">'+(r.suggested_qty||0)+'</td><td style="min-width:100px">'+buildSalesJudgement(r)+'</td><td style="min-width:80px">'+esc(simplifyAction(r.action))+'</td><td>'+(r.brand||'-')+'</td><td>'+(r.country||'-')+'</td><td>'+(r.target_warehouse||'-')+'</td></tr>').join('')
-      +'</tbody></table></div><div style="margin-top:10px;font-weight:600;color:var(--primary)">共 '+filtered.length+' 个 SKU，建议采购总数量：'+filtered.reduce((s,r)=>s+(r.suggested_qty||0),0)+' 件</div>';
-    openModal(t("app.877", "\u751f\u6210PO\u9884\u89c8"),t('modal.body.genPOModal', '<div style="padding:4px 0"><p style="margin-bottom:12px;color:#666">以下为建议采购数量 > 0 的 SKU，确认后将继续选择供应商并生成 PO。</p>{v1}</div>', {v1: prevHtml}),'<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="continueGenPO()">确认并继续</button>');
+      +'</tbody></table></div><div style="margin-top:10px;font-weight:600;color:var(--primary)">'+t("common.total_prefix","共")+' '+filtered.length+''+t("genpo.suggest_total"," 个 SKU，建议采购总数量：")+''+filtered.reduce((s,r)=>s+(r.suggested_qty||0),0)+''+t("genpo.unit_pcs"," 件")+'</div>';
+    openModal(t("app.877", "\u751f\u6210PO\u9884\u89c8"),t('modal.body.genPOModal', '<div style="padding:4px 0"><p style="margin-bottom:12px;color:#666">以下为建议采购数量 > 0 的 SKU，确认后将继续选择供应商并生成 PO。</p>{v1}</div>', {v1: prevHtml}),'<button class="btn btn-secondary" onclick="closeModal()">'+t("common.cancel","取消")+'</button><button class="btn btn-primary" onclick="continueGenPO()">'+t("action.confirm_continue","确认并继续")+'</button>');
     window._genPOFiltered=filtered;
   }catch(e){showToast(e.message,'danger')}
 }
@@ -5280,7 +5342,7 @@ async function continueGenPO(){
     const items=filtered.map(r=>({id:r.id,sku_code:r.sku_code,brand:r.brand||'',po_qty:r.suggested_qty||0,country:r.country||'',target_warehouse:r.target_warehouse||''}));
     const brands=[...new Set(items.map(i=>i.brand).filter(Boolean))];
     if(!items.length || items.some(i=>!i.brand)){
-      showToast('部分 SKU 未配置品牌，请先在 SKU 管理中维护品牌信息。','danger');
+      showToast(t('gen.L5283.1','部分 SKU 未配置品牌，请先在 SKU 管理中维护品牌信息。'),'danger');
       return;
     }
     const activeSuppliers=suppliers.filter(s=>(s.status||'active')==='active');
@@ -5291,12 +5353,12 @@ async function continueGenPO(){
       else if(matched.length>1) brandSupplier[brand]={ambiguous:true,brand};
     });
     if(brands.some(b=>!brandSupplier[b] || brandSupplier[b].ambiguous)){
-      showToast('部分品牌未匹配到唯一供应商，请先在供应商管理中维护品牌与供应商关系。','danger');
+      showToast(t('gen.L5294.1','部分品牌未匹配到唯一供应商，请先在供应商管理中维护品牌与供应商关系。'),'danger');
       return;
     }
     const supplierIds=[...new Set(brands.map(b=>brandSupplier[b].id))];
     if(supplierIds.length!==1){
-      showToast('所选 SKU 属于不同供应商，请分开生成 PO。','warning');
+      showToast(t('gen.L5299.1','所选 SKU 属于不同供应商，请分开生成 PO。'),'warning');
       return;
     }
     const supplier=brandSupplier[brands[0]];
@@ -5304,8 +5366,8 @@ async function continueGenPO(){
     const warehouse=document.getElementById('rp-w')?.value || items[0]?.target_warehouse || '';
     const brandText=brands.join(', ');
     const totalQty=items.reduce((s,i)=>s+(parseInt(i.po_qty)||0),0);
-    openModal('生成PO',t('modal.body.continueGenPO', '<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid"><div class="form-group"><label>供应商</label><input type="text" id="po-supplier-name" value="{v1}" readonly></div><div class="form-group"><label>品牌</label><input type="text" id="po-brand" value="{v2}" readonly></div><div class="form-group"><label>国家</label><input type="text" id="po-country" value="{v3}" readonly></div><div class="form-group"><label>仓库</label><input type="text" id="po-wh" value="{v4}" readonly></div><div class="form-group"><label>币种</label><select id="po-cur">{v5}</select></div><div class="form-group"><label>PO日期</label><input type="date" id="po-date" value="{v6}"></div></div><h4 style="margin:16px 0 8px">SKU明细（可编辑数量）</h4><div class="table-container"><table class="data-table"><thead><tr><th>SKU</th><th class="text-right">数量</th></tr></thead><tbody>{v7}</tbody></table></div><div style="display:flex;gap:24px;justify-content:flex-end;margin-top:10px;font-weight:600"><span>合计 SKU：<b id="po-sku-total">{v8}</b> 个</span><span>合计数量：<b id="po-qty-total">{v9}</b> 件</span></div></div>', {v1: esc(supplier.name), v2: esc(brandText), v3: esc(country), v4: esc(warehouse), v5: ['RMB','USD'].map(c=>'<option value="'+c+'"'+((supplier.default_currency||'USD')===c?' selected':'')+'>'+c+'</option>').join(''), v6: todayStr(), v7: items.map((it,i)=>'<tr><td class="cell-id">'+esc(it.sku_code)+'</td><td class="text-right"><input type="number" min="0" id="po-qty-'+i+'" value="'+(parseInt(it.po_qty)||0)+'" oninput="updateGenPOSummary()" style="width:100px;padding:4px;text-align:right"></td></tr>').join(''), v8: items.length, v9: totalQty}),
-      '<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveGenPO()">创建PO</button>');
+    openModal(t('gen.L5307.1','生成PO'),t('modal.body.continueGenPO', '<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid"><div class="form-group"><label>供应商</label><input type="text" id="po-supplier-name" value="{v1}" readonly></div><div class="form-group"><label>品牌</label><input type="text" id="po-brand" value="{v2}" readonly></div><div class="form-group"><label>国家</label><input type="text" id="po-country" value="{v3}" readonly></div><div class="form-group"><label>仓库</label><input type="text" id="po-wh" value="{v4}" readonly></div><div class="form-group"><label>币种</label><select id="po-cur">{v5}</select></div><div class="form-group"><label>PO日期</label><input type="date" id="po-date" value="{v6}"></div></div><h4 style="margin:16px 0 8px">SKU明细（可编辑数量）</h4><div class="table-container"><table class="data-table"><thead><tr><th>SKU</th><th class="text-right">数量</th></tr></thead><tbody>{v7}</tbody></table></div><div style="display:flex;gap:24px;justify-content:flex-end;margin-top:10px;font-weight:600"><span>合计 SKU：<b id="po-sku-total">{v8}</b> 个</span><span>合计数量：<b id="po-qty-total">{v9}</b> 件</span></div></div>', {v1: esc(supplier.name), v2: esc(brandText), v3: esc(country), v4: esc(warehouse), v5: ['RMB','USD'].map(c=>'<option value="'+c+'"'+((supplier.default_currency||'USD')===c?' selected':'')+'>'+c+'</option>').join(''), v6: todayStr(), v7: items.map((it,i)=>'<tr><td class="cell-id">'+esc(it.sku_code)+'</td><td class="text-right"><input type="number" min="0" id="po-qty-'+i+'" value="'+(parseInt(it.po_qty)||0)+'" oninput="updateGenPOSummary()" style="width:100px;padding:4px;text-align:right"></td></tr>').join(''), v8: items.length, v9: totalQty}),
+      t('gen.L5308.1','<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveGenPO()">创建PO</button>'));
     window._poMeta={supplier_id:supplier.id,supplier_name:supplier.name,brand:brandText,country,target_warehouse:warehouse};
     window._poItems=items;
   }catch(e){showToast(e.message,'danger')}
@@ -5320,23 +5382,23 @@ async function saveGenPO(){
   const d={...meta,currency:document.getElementById('po-cur').value,po_date:document.getElementById('po-date').value,from_suggestion:1,items:(window._poItems||[]).map((it,i)=>({sku_code:it.sku_code,po_qty:parseInt(document.getElementById('po-qty-'+i)?.value)||0}))};
   try{
     const po=await api('/api/purchase-orders','POST',d);
-    showToast('PO创建成功','success');
+    showToast(t('gen.L5323.1','PO创建成功'),'success');
     openPOExportConfirm(po.id);
   }catch(e){showToast(e.message,'danger')}
 }
 function openPOExportConfirm(poId){
-  openModal('PO 创建成功','<div style="padding:4px 0;font-size:14px">PO 已创建成功，是否立即导出 Excel 格式 PO？</div>',t('modal.footer.openPOExportConfirm', `<button class="btn btn-secondary" onclick="closeModal();showPage('po')">取消</button><button class="btn btn-primary" onclick="exportPO('{v1}');closeModal();showPage('po')">导出 Excel</button>`, {v1: poId}));
+  openModal(t('gen.L5328.1','PO 创建成功'),t('gen.L5328.2','<div style="padding:4px 0;font-size:14px">PO 已创建成功，是否立即导出 Excel 格式 PO？</div>'),t('modal.footer.openPOExportConfirm', `<button class="btn btn-secondary" onclick="closeModal();showPage('po')">取消</button><button class="btn btn-primary" onclick="exportPO('{v1}');closeModal();showPage('po')">导出 Excel</button>`, {v1: poId}));
 }
 // ==================== PO管理 ====================
 async function renderPO(){
-  document.getElementById('content-inner').innerHTML=t('html.renderPO', `<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>状态</label><select id="po-fs"><option value="">全部</option><option value="draft">草稿</option><option value="pending_approval">待审批</option><option value="approved">已审批</option><option value="sent_factory">已发工厂</option><option value="partial_pi">部分转PI</option><option value="transferred_pi">已转PI</option></select></div><div class="filter-group"><label>关键词</label><input type="text" id="po-fk" onkeypress="if(event.key==='Enter')loadPO()"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadPO()">搜索</button>{v1}</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🛒 PO列表</div></div><div id="po-table"></div></div>`, {v1: hasPermission('po_create')?'<button class="btn btn-primary btn-sm" onclick="createPO()">➕ 新建PO</button>':''});
+  document.getElementById('content-inner').innerHTML=t('html.renderPO', `<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>状态</label><select id="po-fs"><option value="">全部</option><option value="draft">草稿</option><option value="pending_approval">待审批</option><option value="approved">已审批</option><option value="sent_factory">已发工厂</option><option value="partial_pi">部分转PI</option><option value="transferred_pi">已转PI</option></select></div><div class="filter-group"><label>关键词</label><input type="text" id="po-fk" onkeypress="if(event.key==='Enter')loadPO()"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadPO()">搜索</button>{v1}</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🛒 PO列表</div></div><div id="po-table"></div></div>`, {v1: hasPermission('po_create')?t('gen.L5332.1','<button class="btn btn-primary btn-sm" onclick="createPO()">➕ 新建PO</button>'):''});
   loadPO();
 }
 async function loadPO(){
   try{
     const s=document.getElementById('po-fs')?.value||'',k=document.getElementById('po-fk')?.value||'';
     const data=await api('/api/purchase-orders?status='+s+'&keyword='+encodeURIComponent(k));
-    document.getElementById('po-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">🛒</div>暂无PO</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>PO号</th><th>供应商</th><th>品牌</th><th>国家</th><th>仓库</th><th>PO日期</th><th>币种</th><th>明细</th><th>PO状态</th><th>审批</th><th>操作</th></tr></thead><tbody>'+data.map(p=>'<tr><td class="cell-id"><span class="link-text" onclick="viewPO(\''+p.id+'\')">'+esc(p.po_no)+'</span></td><td>'+esc(p.supplier_name)+'</td><td>'+esc(p.brand)+'</td><td>'+esc(p.country)+'</td><td>'+esc(p.target_warehouse)+'</td><td class="cell-date">'+fmtDate(p.po_date)+'</td><td>'+esc(p.currency)+'</td><td class="text-center">'+(p.item_count||0)+'</td><td><span class="status-badge '+((p.po_status==='approved'||p.po_status==='transferred_pi')?'status-completed':p.po_status==='pending_approval'?'status-pending':'status-draft')+'">'+statusLabel(p.po_status)+'</span></td><td><span class="status-badge '+(p.approval_status==='approved'?'status-approved':p.approval_status==='rejected'?'status-rejected':'status-pending')+'">'+statusLabel(p.approval_status)+'</span></td><td class="cell-actions"><button class="action-btn" onclick="viewPO(\''+p.id+'\')">👁️</button>'+(p.po_status==='draft'&&hasPermission('po_create')?'<button class="action-btn" onclick="submitPO(\''+p.id+'\')" title="提交审批">📤</button>':'')+(p.po_status==='approved'&&hasPermission('po_create')?'<button class="action-btn" onclick="sendFactory(\''+p.id+'\')" title="\u53d1\u5de5\u5382">📨</button>':'')+((hasPermission('po_export')||hasPermission('po_create'))?'<button class="action-btn" onclick="exportPO(\''+p.id+'\')" title="\u5bfc\u51faExcel">📊</button>':'')+(hasPermission('po_create')?'<button class="action-btn" onclick="voidPO(\''+p.id+'\')" title="\u4f5c\u5e9f">作废</button>':'')+(hasPermission('po_create')&&p.po_status==='draft'?'<button class="action-btn" style="color:#d4380d" onclick="deletePO(\''+p.id+'\')" title="删除">删除</button>':'')+'</td></tr>').join('')+'</tbody></table></div>';
+    document.getElementById('po-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">🛒</div>'+t("empty.no_po","暂无PO")+'</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>'+t("col.po_no","PO号")+'</th><th>'+t("col.supplier","供应商")+'</th><th>'+t("app.112","品牌")+'</th><th>'+t("app.113","国家")+'</th><th>'+t("app.114","仓库")+'</th><th>'+t("col.po_date","PO日期")+'</th><th>'+t("html.pay.th.currency","币种")+'</th><th>'+t("col.detail","明细")+'</th><th>'+t("col.po_status","PO状态")+'</th><th>'+t("col.approval","审批")+'</th><th>'+t("common.actions","操作")+'</th></tr></thead><tbody>'+data.map(p=>'<tr class="clickable-detail-row" onclick="rowClickView(event,\'viewPO\',\''+p.id+'\')"><td class="cell-id"><span class="link-text" onclick="viewPO(\''+p.id+'\')">'+esc(p.po_no)+'</span></td><td>'+esc(p.supplier_name)+'</td><td>'+esc(p.brand)+'</td><td>'+esc(p.country)+'</td><td>'+esc(p.target_warehouse)+'</td><td class="cell-date">'+fmtDate(p.po_date)+'</td><td>'+esc(p.currency)+'</td><td class="text-center">'+(p.item_count||0)+'</td><td><span class="status-badge '+((p.po_status==='approved'||p.po_status==='transferred_pi')?'status-completed':p.po_status==='pending_approval'?'status-pending':'status-draft')+'">'+statusLabel(p.po_status)+'</span></td><td><span class="status-badge '+(p.approval_status==='approved'?'status-approved':p.approval_status==='rejected'?'status-rejected':'status-pending')+'">'+statusLabel(p.approval_status)+'</span></td><td class="cell-actions"><button class="action-btn" onclick="viewPO(\''+p.id+'\')">👁️</button>'+(p.po_status==='draft'&&hasPermission('po_create')?'<button class="action-btn" onclick="submitPO(\''+p.id+'\')" title="'+t("po.submit_approval","提交审批")+'">📤</button>':'')+(p.po_status==='approved'&&hasPermission('po_create')?'<button class="action-btn" onclick="sendFactory(\''+p.id+'\')" title="'+t("po.send_factory","发工厂")+'">📨</button>':'')+((hasPermission('po_export')||hasPermission('po_create'))?'<button class="action-btn" onclick="exportPO(\''+p.id+'\')" title="'+t("action.export_excel","导出Excel")+'">📊</button>':'')+(hasPermission('po_create')?'<button class="action-btn" onclick="voidPO(\''+p.id+'\')" title="'+t("action.void","作废")+'">'+t("action.void","作废")+'</button>':'')+(hasPermission('po_create')&&p.po_status==='draft'?'<button class="action-btn" style="color:#d4380d" onclick="deletePO(\''+p.id+'\')" title="'+t("action.delete","删除")+'">'+t("action.delete","删除")+'</button>':'')+'</td></tr>').join('')+'</tbody></table></div>';
   }catch(e){showFlash(e.message,'danger')}
 }
 async function viewPO(id){
@@ -5347,7 +5409,7 @@ async function viewPO(id){
 }
 async function createPO(){
   const suppliers=await api('/api/suppliers');
-  openModal(t("system.013", "\u65b0\u5efaPO"),t('modal.body.createPO', '<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid"><div class="form-group"><label>供应商 <span class="required">*</span></label><select id="npo-sup">{v1}</select></div><div class="form-group"><label>品牌</label><input type="text" id="npo-brand"></div><div class="form-group"><label>国家</label><input type="text" id="npo-country"></div><div class="form-group"><label>仓库</label><input type="text" id="npo-wh"></div><div class="form-group"><label>PO日期</label><input type="date" id="npo-date" value="{v2}"></div><div class="form-group"><label>币种</label><select id="npo-cur"><option value="RMB">RMB</option><option value="USD">USD</option></select></div></div><h4 style="margin:16px 0 8px">明细 <button class="btn btn-secondary btn-sm" onclick="addPORow()">➕ 添加</button></h4><div id="po-items"></div></div>', {v1: suppliers.map(s=>'<option value="'+s.id+'" data-name="'+esc(s.name)+'">'+esc(s.name)+'</option>').join(''), v2: todayStr()}),'<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveNewPO()">创建</button>');
+  openModal(t("system.013", "\u65b0\u5efaPO"),t('modal.body.createPO', '<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid"><div class="form-group"><label>供应商 <span class="required">*</span></label><select id="npo-sup">{v1}</select></div><div class="form-group"><label>品牌</label><input type="text" id="npo-brand"></div><div class="form-group"><label>国家</label><input type="text" id="npo-country"></div><div class="form-group"><label>仓库</label><input type="text" id="npo-wh"></div><div class="form-group"><label>PO日期</label><input type="date" id="npo-date" value="{v2}"></div><div class="form-group"><label>币种</label><select id="npo-cur"><option value="RMB">RMB</option><option value="USD">USD</option></select></div></div><h4 style="margin:16px 0 8px">明细 <button class="btn btn-secondary btn-sm" onclick="addPORow()">➕ 添加</button></h4><div id="po-items"></div></div>', {v1: suppliers.map(s=>'<option value="'+s.id+'" data-name="'+esc(s.name)+'">'+esc(s.name)+'</option>').join(''), v2: todayStr()}),'<button class="btn btn-secondary" onclick="closeModal()">'+t("common.cancel","取消")+'</button><button class="btn btn-primary" onclick="saveNewPO()">'+t("action.create","创建")+'</button>');
   window._poR=0;addPORow();
 }
 function addPORow(){const c=document.getElementById('po-items');const i=window._poR++;c.innerHTML+=t('html.addPORow', `<div class="flex gap-8 mb-8" id="po-r-{v1}"><input type="text" placeholder="SKU" id="po-rs-{v2}" style="flex:1"><input type="number" placeholder="数量" id="po-rq-{v3}" style="width:100px"><button class="btn btn-danger btn-sm" onclick="document.getElementById('po-r-{v4}').remove()">🗑️</button></div>`, {v1: i, v2: i, v3: i, v4: i})}
@@ -5355,15 +5417,15 @@ async function saveNewPO(){
   const sel=document.getElementById('npo-sup');const items=[];
   for(let i=0;i<window._poR;i++){const sku=document.getElementById('po-rs-'+i)?.value;if(sku)items.push({sku_code:sku,po_qty:parseInt(document.getElementById('po-rq-'+i).value)||0})}
   const d={supplier_id:sel.value,supplier_name:sel.options[sel.selectedIndex].dataset.name,brand:document.getElementById('npo-brand').value,country:document.getElementById('npo-country').value,target_warehouse:document.getElementById('npo-wh').value,po_date:document.getElementById('npo-date').value,currency:document.getElementById('npo-cur').value,items};
-  try{await api('/api/purchase-orders','POST',d);showToast('PO创建成功','success');closeModal();loadPO()}catch(e){showToast(e.message,'danger')}
+  try{await api('/api/purchase-orders','POST',d);showToast(t('gen.L5358.1','PO创建成功'),'success');closeModal();loadPO()}catch(e){showToast(e.message,'danger')}
 }
 async function submitPO(id){
   try{
     const users=await api('/api/cc-candidates');
     const opts=users.map(u=>'<label style="display:flex;align-items:center;gap:6px;font-size:13px;margin:4px 0;min-width:160px"><input type="checkbox" class="cc-chk" value="'+esc(u.id)+'">'+esc(u.name)+'（'+(u.role_name||u.role_id||'')+'）</label>').join('');
-    const body='<div style="font-size:13px;color:#888;margin-bottom:8px">提交后将进入审批流程。可选：勾选需要知会的抄送人（仅记录，不阻塞审批、不发送通知）。</div>'
-      +'<div style="max-height:280px;overflow:auto;display:flex;flex-wrap:wrap;gap:4px 18px;padding:6px 2px;border:1px solid #eee;border-radius:6px">'+(opts||'<div class="muted-hint">暂无可用抄送人</div>')+'</div>';
-    const footer='<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="confirmSubmitApproval(\''+id+'\')">确认提交</button>';
+    const body='<div style="font-size:13px;color:#888;margin-bottom:8px">'+t("po.submit_hint","提交后将进入审批流程。可选：勾选需要知会的抄送人（仅记录，不阻塞审批、不发送通知）。")+'</div>'
+      +'<div style="max-height:280px;overflow:auto;display:flex;flex-wrap:wrap;gap:4px 18px;padding:6px 2px;border:1px solid #eee;border-radius:6px">'+(opts||'<div class="muted-hint">'+t("empty.no_cc","暂无可用抄送人")+'</div>')+'</div>';
+    const footer='<button class="btn btn-secondary" onclick="closeModal()">'+t("common.cancel","取消")+'</button><button class="btn btn-primary" onclick="confirmSubmitApproval(\''+id+'\')">'+t("po.confirm_submit","确认提交")+'</button>';
     openModal(t("app.888", "\u63d0\u4ea4\u5ba1\u6279 \u00b7 \u9009\u62e9\u6284\u9001\u4eba\uff08\u53ef\u9009\uff09"), body, footer, 'modal-lg');
   }catch(e){showToast(e.message,'danger')}
 }
@@ -5371,11 +5433,11 @@ async function confirmSubmitApproval(id){
   const chk=[...document.querySelectorAll('#modal-content .cc-chk')].filter(c=>c.checked).map(c=>c.value);
   try{
     await api('/api/purchase-orders/'+id+'/submit-approval','POST',{submitter_name:currentUser.name, cc_user_ids:chk});
-    showToast(t('toast.approvalSubmitted','已提交审批{extra}',{extra:chk.length?'，已记录 '+chk.length+' 位抄送人':''}),'success');
+    showToast(t('toast.approvalSubmitted','已提交审批{extra}',{extra:chk.length?t('gen.L5374.1','，已记录 ')+chk.length+t('gen.L5374.2',' 位抄送人'):''}),'success');
     closeModal();loadPO();
   }catch(e){showToast(e.message,'danger')}
 }
-async function sendFactory(id){if(!confirm(t("app.889", "\u786e\u8ba4\u5df2\u53d1\u5de5\u5382\uff1f")))return;try{await api('/api/purchase-orders/'+id+'/send-to-factory','POST');showToast('已标记发工厂','success');loadPO()}catch(e){showToast(e.message,'danger')}}
+async function sendFactory(id){if(!confirm(t("app.889", "\u786e\u8ba4\u5df2\u53d1\u5de5\u5382\uff1f")))return;try{await api('/api/purchase-orders/'+id+'/send-to-factory','POST');showToast(t('gen.L5378.1','已标记发工厂'),'success');loadPO()}catch(e){showToast(e.message,'danger')}}
 async function exportPO(id){
   try{
     const po=await api('/api/purchase-orders/'+id);
@@ -5402,7 +5464,7 @@ async function exportPO(id){
 
 // ==================== 单据作废 / 删除（前端入口，调用后端 void / DELETE 端点） ====================
 function openVoidModal(title, type, id){
-  const typeName = type==='po'?'采购订单(PO)':type==='pi'?'形式发票(PI)':'商业发票(CI)';
+  const typeName = type==='po'?t('gen.L5405.1','采购订单(PO)'):type==='pi'?t('gen.L5405.2','形式发票(PI)'):t('gen.L5405.3','商业发票(CI)');
   openModal(title,
     t('modal.body.openVoidModal', '<div class="form-card" style="box-shadow:none;padding:0"><p style="margin:0 0 12px;color:#666;font-size:13px">确认作废该{v1}？作废后状态将置为「已取消」，且订单预测页对应的在途字段会自动回落（无需重新计算）。</p><div class="form-group"><label>作废原因 <span class="required">*</span></label><textarea id="void-reason" rows="3" placeholder="请填写作废原因（必填）" style="width:100%;box-sizing:border-box"></textarea></div></div>', {v1: typeName}),
     t('modal.footer.openVoidModal', `<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-danger" onclick="confirmVoid('{v1}','{v2}')">确认作废</button>`, {v1: type, v2: id}));
@@ -5410,11 +5472,11 @@ function openVoidModal(title, type, id){
 async function confirmVoid(type, id){
   const el=document.getElementById('void-reason');
   const reason=el&&el.value?el.value.trim():'';
-  if(!reason){showToast('请填写作废原因','warning');return;}
+  if(!reason){showToast(t('gen.L5413.1','请填写作废原因'),'warning');return;}
   const url=type==='po'?'/api/purchase-orders/'+id+'/void':type==='pi'?'/api/proforma-invoices/'+id+'/void':'/api/commercial-invoices/'+id+'/void';
   try{
     await api(url,'POST',{void_reason:reason});
-    showToast('已作废','success');closeModal();
+    showToast(t('gen.L5417.1','已作废'),'success');closeModal();
     if(type==='po')loadPO();else if(type==='pi')loadPI();else loadCI();
   }catch(e){showToast(e.message,'danger');}
 }
@@ -5422,23 +5484,23 @@ function voidPO(id){openVoidModal(t("po.033", "\u4f5c\u5e9fPO"),'po',id);}
 function voidPI(id){openVoidModal(t("pi.009", "\u4f5c\u5e9fPI"),'pi',id);}
 function voidCI(id){openVoidModal(t("ci.001", "\u4f5c\u5e9fCI"),'ci',id);}
 async function deletePO(id){
-  if(!confirm('确认删除该PO？此操作不可恢复，删除后对应的在途字段会自动回落。'))return;
+  if(!confirm(t('gen.L5425.1','确认删除该PO？此操作不可恢复，删除后对应的在途字段会自动回落。')))return;
   try{
     await api('/api/purchase-orders/'+id,'DELETE');
-    showToast('PO已删除','success');loadPO();
+    showToast(t('gen.L5428.1','PO已删除'),'success');loadPO();
   }catch(e){showToast(e.message,'danger');}
 }
 
 // ==================== PI管理 ====================
 async function renderPI(){
-  document.getElementById('content-inner').innerHTML=t('html.renderPI', `<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>状态</label><select id="pi-fs"><option value="">全部</option><option value="pending">待上传 PI</option><option value="uploaded">已上传 PI</option><option value="confirmed">已确认</option><option value="pending_deposit">待定金审批</option><option value="deposit_paid">定金已付款</option><option value="producing">生产中</option><option value="pending_ci_pl">待 CI/PL</option><option value="cancelled">已取消</option></select></div><div class="filter-group"><label>关键词</label><input type="text" id="pi-fk" onkeypress="if(event.key==='Enter')loadPI()"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadPI()">搜索</button>{v1}</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">📄 PI列表</div></div><div id="pi-table"></div></div>`, {v1: hasPermission('pi_create')?'<button class="btn btn-secondary btn-sm" onclick="downloadDocTemplate(\'pi\')">📥 PI模板</button><button class="btn btn-secondary btn-sm" onclick="openDocImport(\'pi\')">📤 批量导入PI</button><button class="btn btn-primary btn-sm" onclick="createPI()">➕ 新建PI</button>':''});
+  document.getElementById('content-inner').innerHTML=t('html.renderPI', `<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>状态</label><select id="pi-fs"><option value="">全部</option><option value="pending">待上传 PI</option><option value="uploaded">已上传 PI</option><option value="confirmed">已确认</option><option value="pending_deposit">待定金审批</option><option value="deposit_paid">定金已付款</option><option value="producing">生产中</option><option value="pending_ci_pl">待 CI/PL</option><option value="cancelled">已取消</option></select></div><div class="filter-group"><label>关键词</label><input type="text" id="pi-fk" onkeypress="if(event.key==='Enter')loadPI()"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadPI()">搜索</button>{v1}</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">📄 PI列表</div></div><div id="pi-table"></div></div>`, {v1: hasPermission('pi_create')?t('gen.L5434.1','<button class="btn btn-secondary btn-sm" onclick="downloadDocTemplate(\'pi\')">📥 PI模板</button><button class="btn btn-secondary btn-sm" onclick="openDocImport(\'pi\')">📤 批量导入PI</button><button class="btn btn-primary btn-sm" onclick="createPI()">➕ 新建PI</button>'):''});
   loadPI();
 }
 async function loadPI(){
   try{
     const s=document.getElementById('pi-fs')?.value||'',k=document.getElementById('pi-fk')?.value||'';
     const data=await api('/api/proforma-invoices?status='+s+'&keyword='+encodeURIComponent(k));
-    document.getElementById('pi-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">📄</div>暂无PI</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>PI号</th><th>关联PO</th><th>供应商</th><th>品牌</th><th>国家</th><th>仓库</th><th>日期</th><th>币种</th><th>总金额</th><th>是否定金</th><th>定金比例</th><th>定金金额</th><th>定金状态</th><th>PI状态</th><th>操作</th></tr></thead><tbody>'+data.map(p=>'<tr><td class="cell-id"><span class="link-text" onclick="viewPI(\''+p.id+'\')">'+esc(p.pi_no)+'</span></td><td class="cell-id">'+esc(p.related_po_no)+'</td><td>'+esc(p.supplier_name)+'</td><td>'+esc(p.brand)+'</td><td>'+esc(p.country)+'</td><td>'+esc(p.target_warehouse)+'</td><td class="cell-date">'+fmtDate(p.pi_date)+'</td><td>'+esc(p.currency)+'</td><td class="text-right">'+fmtMoney(p.total_amount)+'</td><td>'+(p.need_deposit?'<span class="status-badge status-pending">是</span>':'<span class="status-badge status-completed">否</span>')+'</td><td class="text-right">'+(p.deposit_ratio||0)+'%</td><td class="text-right">'+fmtMoney(p.payable_deposit)+'</td><td><span class="status-badge '+(p.deposit_payment_status==='paid'?'status-paid':'status-unpaid')+'">'+esc(p.deposit_payment_status)+'</span></td><td><span class="status-badge status-pending">'+esc(p.pi_status)+'</span></td><td class="cell-actions"><button class="action-btn" onclick="viewPI(\''+p.id+'\')">👁️</button>'+(hasPermission('pi_edit')?('<button class="action-btn" '+(p.locked?('disabled title="已锁定，不可编辑：'+esc(p.lock_reason||'已锁定')+'" style="opacity:.3;cursor:not-allowed">✏️</button>'):('onclick="editPI(\''+p.id+'\')" title="编辑">✏️</button>'))):'')+'<button class="action-btn" onclick="uploadDocAttachment(\'pi\',\''+p.id+'\',\'attachment\')" title="\u4e0a\u4f20PI\u9644\u4ef6">📎</button>'+(p.need_deposit&&p.payable_deposit>0&&p.deposit_payment_status==='unpaid'&&hasPermission('payment_create')?'<button class="action-btn" onclick="createDepPay(\''+p.id+'\')" title="定金付款">💰</button>':'')+(hasPermission('pi_edit')?'<button class="action-btn" '+(p.pi_status==='completed'?'disabled title="\u5df2\u5b8c\u6210\u72b6\u6001\u4e0d\u53ef\u4f5c\u5e9f" style="opacity:.3;cursor:not-allowed"':'onclick="voidPI(\''+p.id+'\')" title="\u4f5c\u5e9f"')+'>作废</button>':'')+'</td></tr>').join('')+'</tbody></table></div>';
+    document.getElementById('pi-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">📄</div>'+t("empty.no_pi","暂无PI")+'</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>'+t("col.pi_no","PI号")+'</th><th>'+t("col.related_po","关联PO")+'</th><th>'+t("col.supplier","供应商")+'</th><th>'+t("app.112","品牌")+'</th><th>'+t("app.113","国家")+'</th><th>'+t("app.114","仓库")+'</th><th>'+t("col.date","日期")+'</th><th>'+t("html.pay.th.currency","币种")+'</th><th>'+t("col.total_amount","总金额")+'</th><th>'+t("col.is_deposit","是否定金")+'</th><th>'+t("col.deposit_ratio","定金比例")+'</th><th>'+t("col.deposit_amount","定金金额")+'</th><th>'+t("col.deposit_status","定金状态")+'</th><th>'+t("pi.field.status","PI状态")+'</th><th>'+t("common.actions","操作")+'</th></tr></thead><tbody>'+data.map(p=>'<tr class="clickable-detail-row" onclick="rowClickView(event,\'viewPI\',\''+p.id+'\')"><td class="cell-id"><span class="link-text" onclick="viewPI(\''+p.id+'\')">'+esc(p.pi_no)+'</span></td><td class="cell-id">'+esc(p.related_po_no)+'</td><td>'+esc(p.supplier_name)+'</td><td>'+esc(p.brand)+'</td><td>'+esc(p.country)+'</td><td>'+esc(p.target_warehouse)+'</td><td class="cell-date">'+fmtDate(p.pi_date)+'</td><td>'+esc(p.currency)+'</td><td class="text-right">'+fmtMoney(p.total_amount)+'</td><td>'+(p.need_deposit?'<span class="status-badge status-pending">'+t("enum.yes","是")+'</span>':'<span class="status-badge status-completed">'+t("enum.no","否")+'</span>')+'</td><td class="text-right">'+(p.deposit_ratio||0)+'%</td><td class="text-right">'+fmtMoney(p.payable_deposit)+'</td><td><span class="status-badge '+(p.deposit_payment_status==='paid'?'status-paid':'status-unpaid')+'">'+esc(formatPIDepositStatus(p.deposit_payment_status))+'</span></td><td><span class="status-badge status-pending">'+esc(formatPIStatus(p.pi_status))+'</span></td><td class="cell-actions"><button class="action-btn" onclick="viewPI(\''+p.id+'\')">👁️</button>'+(hasPermission('pi_edit')?('<button class="action-btn" '+(p.locked?('disabled title="'+t("pi.locked_note","已锁定，不可编辑：")+''+esc(p.lock_reason||''+t("pi.locked","已锁定")+'')+'" style="opacity:.3;cursor:not-allowed">✏️</button>'):('onclick="editPI(\''+p.id+'\')" title="'+t("action.edit","编辑")+'">✏️</button>'))):'')+'<button class="action-btn" onclick="uploadDocAttachment(\'pi\',\''+p.id+'\',\'attachment\')" title="'+t("pi.upload_attachment","上传PI附件")+'">📎</button>'+(p.need_deposit&&p.payable_deposit>0&&p.deposit_payment_status==='unpaid'&&hasPermission('payment_create')?'<button class="action-btn" onclick="createDepPay(\''+p.id+'\')" title="'+t("pi.deposit_pay","定金付款")+'">💰</button>':'')+(hasPermission('pi_edit')?'<button class="action-btn" '+(p.pi_status==='completed'?'disabled title="'+t("pi.cannot_void_completed","已完成状态不可作废")+'" style="opacity:.3;cursor:not-allowed"':'onclick="voidPI(\''+p.id+'\')" title="'+t("action.void","作废")+'"')+'>'+t("action.void","作废")+'</button>':'')+'</td></tr>').join('')+'</tbody></table></div>';
   }catch(e){showFlash(e.message,'danger')}
 }
 async function viewPI(id, backPay, backMode){
@@ -5446,8 +5508,11 @@ async function viewPI(id, backPay, backMode){
     let poRef=[];if(pi.related_po_id){try{poRef=(await api('/api/purchase-orders/'+pi.related_po_id)).items||[];}catch(e){}}
     const diffHtml=renderCmpReadonly(computePODiff(poRef,pi.items||[]));
     // 若来自付款申请详情，提供【← 返回付款申请详情】入口，保留原上下文（含 mode）
-    const backFooter=backPay?'<button class="btn btn-secondary" onclick="viewPayment(\''+backPay+'\',\''+(backMode||'view')+'\')">← 返回付款申请详情</button><button class="btn btn-secondary" onclick="closeModal()">关闭</button>':'';
-    openModal(t('modal.title.viewPI', 'PI详情 - {v1}', {v1: pi.pi_no}),t('modal.body.viewPI', '<div class="detail-card" style="box-shadow:none;padding:0"><div class="detail-section"><h3>基本信息</h3><div class="detail-grid">{v1}{v2}</div></div><div class="detail-section"><h3>PI明细</h3><div class="table-container"><table class="data-table"><thead><tr><th>SKU</th><th>PO数量</th><th>PI确认</th><th>单价</th><th>折扣</th><th>金额</th><th>已发货</th><th>未发货</th></tr></thead><tbody>{v3}</tbody></table></div></div><div class="detail-section"><h3>PO vs PI 差异对比</h3>{v4}</div></div>', {v1: ['pi_no','related_po_no','supplier_name','brand','country','target_warehouse','pi_date','currency','total_amount','payment_terms','need_deposit','deposit_ratio','payable_deposit','expected_delivery','pi_status'].map(f=>'<div class="detail-item"><span class="detail-label">'+f+'</span><span class="detail-value">'+(f==='need_deposit'?(pi[f]?'是':'否'):esc(pi[f]))+'</span></div>').join(''), v2: attachmentHtml('pi',pi.id,'attachment',pi.attachment,t("app.908", "PI\u9644\u4ef6")), v3: (pi.items||[]).map(i=>'<tr><td class="cell-id">'+esc(i.sku_code)+'</td><td class="text-right">'+i.po_qty+'</td><td class="text-right">'+i.pi_confirmed_qty+'</td><td class="text-right">'+fmtMoney(i.unit_price)+'</td><td class="text-right">'+((i.discount||0)*100)+'%</td><td class="text-right">'+fmtMoney(i.pi_amount)+'</td><td class="text-right">'+(i.shipped_qty||0)+'</td><td class="text-right">'+(i.unshipped_qty||0)+'</td></tr>').join(''), v4: diffHtml}),backFooter);
+    const backFooter=backPay?'<button class="btn btn-secondary" onclick="viewPayment(\''+backPay+'\',\''+(backMode||'view')+t('gen.L5449.1','\')">← 返回付款申请详情</button><button class="btn btn-secondary" onclick="closeModal()">关闭</button>'):'';
+    openModal(t('modal.title.viewPI', 'PI详情 - {v1}', {v1: pi.pi_no}),t('modal.body.viewPI', '<div class="detail-card" style="box-shadow:none;padding:0"><div class="detail-section"><h3>基本信息</h3><div class="detail-grid detail-grid-pi">{v1}{v2}</div></div><div class="detail-section"><h3>PI明细</h3><div class="pi-table-scroll"><table class="data-table pi-items-table"><thead><tr><th>SKU</th><th>PO数量</th><th>PI确认</th><th>单价</th><th>折扣</th><th>金额</th><th>已发货</th><th>未发货</th></tr></thead><tbody>{v3}</tbody></table></div></div><div class="detail-section"><h3>PO vs PI 差异对比</h3>{v4}</div></div>', {v1: [{f:'pi_no',l:t('col.pi_no','PI号')},{f:'related_po_no',l:t('col.related_po','关联PO')},{f:'supplier_name',l:t('pi.field.supplier','供应商')},{f:'brand',l:t('app.112','品牌')},{f:'country',l:t('app.113','国家')},{f:'target_warehouse',l:t('app.114','仓库')},{f:'pi_date',l:t('pi.field.date','PI日期')},{f:'currency',l:t('html.pay.th.currency','币种')},{f:'total_amount',l:t('pi.field.total_amount','总金额')},{f:'payment_terms',l:t('nav.payment_terms','付款条件')},{f:'need_deposit',l:t('col.is_deposit','是否定金')},{f:'deposit_ratio',l:t('col.deposit_ratio','定金比例')},{f:'payable_deposit',l:t('col.deposit_amount','定金金额')},{f:'expected_delivery',l:t('pi.field.expected_delivery','预计交期')},{f:'pi_status',l:t('pi.field.status','PI状态')}].map(o=>'<div class="detail-item"><span class="detail-label">'+o.l+'</span><span class="detail-value">'+(o.f==='need_deposit'?(pi[o.f]?t('gen.L5450.1','是'):t('gen.L5450.2','否')):(o.f==='pi_status'?esc(formatPIStatus(pi.pi_status)):(o.f==='deposit_ratio'?(pi[o.f]||0)+'%':(o.f==='total_amount'||o.f==='payable_deposit'?(pi.currency?pi.currency+' ':'')+fmtMoney(pi[o.f]):esc(pi[o.f])))))+'</span></div>').join(''), v2: attachmentHtml('pi',pi.id,'attachment',pi.attachment,t("pi.field.attachment", "PI\u9644\u4ef6")), v3: (pi.items||[]).map(i=>'<tr><td class="cell-id">'+esc(i.sku_code)+'</td><td class="text-right">'+i.po_qty+'</td><td class="text-right">'+i.pi_confirmed_qty+'</td><td class="text-right">'+fmtMoney(i.unit_price)+'</td><td class="text-right">'+((i.discount||0)*100)+'%</td><td class="text-right">'+fmtMoney(i.pi_amount)+'</td><td class="text-right">'+(i.shipped_qty||0)+'</td><td class="text-right">'+(i.unshipped_qty||0)+'</td></tr>').join(''), v4: diffHtml.replace('class="table-container"','class="pi-table-scroll"')}),backFooter,'modal-pi');
+    // PI-TABLE-ALIGN-01 R4: 给 i18n 渲染的 Items 表补 pi-items-readonly class + 像素 colgroup（8列总宽1165px）
+    const _piItemsTbl=document.querySelector('.modal-pi .pi-table-scroll .data-table:not(.pi-cmp-table)');
+    if(_piItemsTbl){if(!_piItemsTbl.classList.contains('pi-items-readonly'))_piItemsTbl.classList.add('pi-items-readonly');if(!_piItemsTbl.querySelector('colgroup')){_piItemsTbl.insertAdjacentHTML('afterbegin','<colgroup><col style="width:230px"><col style="width:125px"><col style="width:170px"><col style="width:130px"><col style="width:110px"><col style="width:140px"><col style="width:120px"><col style="width:140px"></colgroup>');}}
   }catch(e){showToast(e.message,'danger')}
 }
 async function editPI(id){
@@ -5455,7 +5520,7 @@ async function editPI(id){
     const pi=await api('/api/proforma-invoices/'+id);
     // 锁定：打开即提示，不渲染可编辑表单（第2层：仅前端表现，PUT 守卫已在第1层落地）
     if(pi.locked){
-      openModal(t('modal.title.editPI', '编辑PI - {v1}', {v1: esc(pi.pi_no)}),t('modal.body.editPI', '<div style="padding:24px 16px;text-align:center"><div style="font-size:42px;margin-bottom:10px">🔒</div><div style="font-size:15px;font-weight:600;margin-bottom:6px">该 PI 已锁定，不可编辑</div><div style="color:var(--text-muted)">原因：{v1}</div></div>', {v1: esc(pi.lock_reason||'已锁定')}),'<button class="btn btn-secondary" onclick="closeModal()">关闭</button>');
+      openModal(t('modal.title.editPI', '编辑PI - {v1}', {v1: esc(pi.pi_no)}),t('modal.body.editPI', '<div style="padding:24px 16px;text-align:center"><div style="font-size:42px;margin-bottom:10px">🔒</div><div style="font-size:15px;font-weight:600;margin-bottom:6px">该 PI 已锁定，不可编辑</div><div style="color:var(--text-muted)">原因：{v1}</div></div>', {v1: esc(pi.lock_reason||t('gen.L5458.1','已锁定'))}),t('gen.L5458.2','<button class="btn btn-secondary" onclick="closeModal()">关闭</button>'));
       return;
     }
     const suppliers=await api('/api/suppliers');
@@ -5465,22 +5530,22 @@ async function editPI(id){
     const supOpts=suppliers.map(s=>'<option value="'+s.id+'" data-name="'+esc(s.name)+'" data-last="'+esc(s.last_used_payment_term_id||'')+'"'+(s.id===pi.supplier_id?' selected':'')+'>'+esc(s.name)+'</option>').join('');
     const curOpts=['USD','RMB','IDR','MYR','THB'].map(c=>'<option'+(c===pi.currency?' selected':'')+'>'+c+'</option>').join('');
     const body='<div class="form-card" style="box-shadow:none;padding:0">'
-      +'<div style="margin-bottom:12px;padding:8px 12px;background:#f0f5ff;border:1px solid #adc6ff;border-radius:6px;font-size:12px;color:#333">编辑模式：可修改表头与明细并实时预览差异；保存将调用后端 PUT（付款条件变更自动回写供应商上次使用项）。「PI号 / 关联PO / 供应商 / PI日期 / 币种」为锁定项不可改。</div>'
+      +t('gen.L5468.1','<div style="margin-bottom:12px;padding:8px 12px;background:#f0f5ff;border:1px solid #adc6ff;border-radius:6px;font-size:12px;color:#333">编辑模式：可修改表头与明细并实时预览差异；保存将调用后端 PUT（付款条件变更自动回写供应商上次使用项）。「PI号 / 关联PO / 供应商 / PI日期 / 币种」为锁定项不可改。</div>')
       +'<div class="form-grid">'
-      +'<div class="form-group"><label>PI号（锁定）</label><input type="text" value="'+esc(pi.pi_no)+'" disabled></div>'
-      +'<div class="form-group"><label>关联PO（锁定）</label><input type="text" value="'+esc(pi.related_po_no||t("app.140", "\u65e0\u5173\u8054"))+'" disabled></div>'
-      +'<div class="form-group"><label>供应商（锁定）</label><select id="npi-sup" disabled onchange="onPISupplierChange()">'+supOpts+'</select></div>'
-      +'<div class="form-group"><label>PI日期（锁定）</label><input type="date" id="npi-date" value="'+esc(pi.pi_date||'')+'" disabled></div>'
-      +'<div class="form-group"><label>币种（锁定）</label><select id="npi-cur" disabled>'+curOpts+'</select></div>'
-      +'<div class="form-group"><label>是否需要定金</label><select id="npi-need-dep" onchange="togglePIDeposit()"><option value="1"'+(pi.need_deposit?' selected':'')+'>是</option><option value="0"'+(!pi.need_deposit?' selected':'')+'>否</option></select></div>'
-      +'<div class="form-group"><label>定金比例(%)</label><input type="number" id="npi-dep" value="'+(pi.deposit_ratio||0)+'"></div>'
-      +'<div class="form-group"><label>预计交期</label><input type="date" id="npi-del" value="'+esc(pi.expected_delivery||'')+'"></div>'
-      +'<div class="form-group"><label>付款条件</label><select id="npi-terms"><option value="">（未选择）</option></select></div>'
+      +t('gen.L5470.1','<div class="form-group"><label>PI号（锁定）</label><input type="text" value="')+esc(pi.pi_no)+'" disabled></div>'
+      +t('gen.L5471.1','<div class="form-group"><label>关联PO（锁定）</label><input type="text" value="')+esc(pi.related_po_no||t("app.140", "\u65e0\u5173\u8054"))+'" disabled></div>'
+      +t('gen.L5472.1','<div class="form-group"><label>供应商（锁定）</label><select id="npi-sup" disabled onchange="onPISupplierChange()">')+supOpts+'</select></div>'
+      +t('gen.L5473.1','<div class="form-group"><label>PI日期（锁定）</label><input type="date" id="npi-date" value="')+esc(pi.pi_date||'')+'" disabled></div>'
+      +t('gen.L5474.1','<div class="form-group"><label>币种（锁定）</label><select id="npi-cur" disabled>')+curOpts+'</select></div>'
+      +t('gen.L5475.1','<div class="form-group"><label>是否需要定金</label><select id="npi-need-dep" onchange="togglePIDeposit()"><option value="1"')+(pi.need_deposit?' selected':'')+t('gen.L5475.2','>是</option><option value="0"')+(!pi.need_deposit?' selected':'')+t('gen.L5475.3','>否</option></select></div>')
+      +t('gen.L5476.1','<div class="form-group"><label>定金比例(%)</label><input type="number" id="npi-dep" value="')+(pi.deposit_ratio||0)+'"></div>'
+      +t('gen.L5477.1','<div class="form-group"><label>预计交期</label><input type="date" id="npi-del" value="')+esc(pi.expected_delivery||'')+'"></div>'
+      +t('gen.L5478.1','<div class="form-group"><label>付款条件</label><select id="npi-terms"><option value="">（未选择）</option></select></div>')
       +'</div>'
-      +'<h4 style="margin:16px 0 8px">PO vs PI 合并对比 <button class="btn btn-secondary btn-sm" onclick="addPIRow()">➕ 添加行</button> <button class="btn btn-secondary btn-sm" onclick="openSupplierPIImport()">📥 导入供应商PI</button></h4>'
-      +'<div class="table-container" style="max-height:52vh;overflow:auto;box-shadow:none;margin-bottom:8px"><table class="data-table pi-cmp-table" id="pi-items-table"><thead><tr><th>SKU</th><th>PO数量</th><th>PI确认数量</th><th>PO单价</th><th>PI确认单价</th><th>PI折扣</th><th>PI金额</th><th>数量差异</th><th>单价差异</th><th>操作</th></tr></thead><tbody id="pi-items"></tbody><tfoot id="pi-cmp-foot"></tfoot></table></div>'
+      +t('gen.L5480.1','<h4 style="margin:16px 0 8px">PO vs PI 合并对比 <button class="btn btn-secondary btn-sm" onclick="addPIRow()">➕ 添加行</button> <button class="btn btn-secondary btn-sm" onclick="openSupplierPIImport()">📥 导入供应商PI</button></h4>')
+      +t('gen.L5481.1','<div class="table-container" style="max-height:52vh;overflow:auto;box-shadow:none;margin-bottom:8px"><table class="data-table pi-cmp-table" id="pi-items-table"><thead><tr><th>SKU</th><th>PO数量</th><th>PI确认数量</th><th>PO单价</th><th>PI确认单价</th><th>PI折扣</th><th>PI金额</th><th>数量差异</th><th>单价差异</th><th>操作</th></tr></thead><tbody id="pi-items"></tbody><tfoot id="pi-cmp-foot"></tfoot></table></div>')
       +'</div>';
-    openModal(t('modal.title.editPI.2', '编辑PI - {v1}', {v1: esc(pi.pi_no)}),body,t('modal.footer.editPI', `<button class="btn btn-secondary" onclick="closeModal()">关闭</button><button class="btn btn-primary" onclick="saveEditPI('{v1}')">💾 保存</button>`, {v1: id}),'modal-lg');
+    openModal(t('modal.title.editPI.2', '编辑PI - {v1}', {v1: esc(pi.pi_no)}),body,t('modal.footer.editPI', `<button class="btn btn-secondary" onclick="closeModal()">关闭</button><button class="btn btn-primary" onclick="saveEditPI('{v1}')">💾 保存</button>`, {v1: id}),'modal-pi');
     // 预填明细（复用 computePODiff + renderCmpTable）
     window._piRows=computePODiff(poRef,pi.items||[]);renderCmpTable();
     // 付款条件下拉联动 + 预填该 PI 实际使用的付款条件（覆盖默认项）
@@ -5517,7 +5582,7 @@ async function saveEditPI(id){
 }
 async function createPI(){
   const suppliers=await api('/api/suppliers');const pos=await api('/api/purchase-orders?status=approved');
-  openModal('新建PI',t('modal.body.createPI', `<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid"><div class="form-group"><label>关联PO</label><select id="npi-po" onchange="loadPOForPI()"><option value="">无关联</option>{v1}</select></div><div class="form-group"><label>供应商 <span class="required">*</span></label><select id="npi-sup" onchange="onPISupplierChange()">{v2}</select></div><div class="form-group"><label>PI日期</label><input type="date" id="npi-date" value="{v3}"></div><div class="form-group"><label>币种</label><select id="npi-cur"><option>USD</option><option>RMB</option><option>IDR</option><option>MYR</option><option>THB</option></select></div><div class="form-group"><label>是否需要定金</label><select id="npi-need-dep" onchange="togglePIDeposit()"><option value="1">是</option><option value="0">否</option></select></div><div class="form-group"><label>定金比例(%)</label><input type="number" id="npi-dep" value="30"></div><div class="form-group"><label>预计交期</label><input type="date" id="npi-del"></div><div class="form-group"><label>付款条件</label><select id="npi-terms"><option value="">（未选择）</option></select></div></div><h4 style="margin:16px 0 8px">PO vs PI 合并对比 <button class="btn btn-secondary btn-sm" onclick="addPIRow()">➕ 添加行</button> <button class="btn btn-secondary btn-sm" onclick="openSupplierPIImport()">📥 导入供应商PI</button> <button class="btn btn-secondary btn-sm" onclick="downloadDocTemplate('supplierPI')">📄 模板</button></h4><div class="table-container" style="max-height:52vh;overflow:auto;box-shadow:none;margin-bottom:8px"><table class="data-table pi-cmp-table" id="pi-items-table"><thead><tr><th>SKU</th><th>PO数量</th><th>PI确认数量</th><th>PO单价</th><th>PI确认单价</th><th>PI折扣</th><th>PI金额</th><th>数量差异</th><th>单价差异</th><th>操作</th></tr></thead><tbody id="pi-items"></tbody><tfoot id="pi-cmp-foot"></tfoot></table></div></div>`, {v1: pos.map(p=>'<option value="'+p.id+'" data-no="'+p.po_no+'">'+esc(p.po_no)+' - '+esc(p.supplier_name)+'</option>').join(''), v2: suppliers.map(s=>'<option value="'+s.id+'" data-name="'+esc(s.name)+'" data-last="'+esc(s.last_used_payment_term_id||'')+'">'+esc(s.name)+'</option>').join(''), v3: todayStr()}),'<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveNewPI()">创建</button>','modal-lg');
+  openModal(t('gen.L5520.1','新建PI'),t('modal.body.createPI', `<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid"><div class="form-group"><label>关联PO</label><select id="npi-po" onchange="loadPOForPI()"><option value="">无关联</option>{v1}</select></div><div class="form-group"><label>供应商 <span class="required">*</span></label><select id="npi-sup" onchange="onPISupplierChange()">{v2}</select></div><div class="form-group"><label>PI日期</label><input type="date" id="npi-date" value="{v3}"></div><div class="form-group"><label>币种</label><select id="npi-cur"><option>USD</option><option>RMB</option><option>IDR</option><option>MYR</option><option>THB</option></select></div><div class="form-group"><label>是否需要定金</label><select id="npi-need-dep" onchange="togglePIDeposit()"><option value="1">'+t('term.yes','是')+'</option><option value="0">'+t('term.no','否')+'</option></select></div><div class="form-group"><label>定金比例(%)</label><input type="number" id="npi-dep" value="30"></div><div class="form-group"><label>预计交期</label><input type="date" id="npi-del"></div><div class="form-group"><label>付款条件</label><select id="npi-terms"><option value="">（未选择）</option></select></div></div><h4 style="margin:16px 0 8px">PO vs PI 合并对比 <button class="btn btn-secondary btn-sm" onclick="addPIRow()">➕ 添加行</button> <button class="btn btn-secondary btn-sm" onclick="openSupplierPIImport()">📥 导入供应商PI</button> <button class="btn btn-secondary btn-sm" onclick="downloadDocTemplate('supplierPI')">📄 模板</button></h4><div class="pi-table-scroll" style="max-height:52vh;overflow:auto;box-shadow:none;margin-bottom:8px"><table class="data-table pi-cmp-table" id="pi-items-table"><thead><tr><th>SKU</th><th>PO数量</th><th>PI确认数量</th><th>PO单价</th><th>PI确认单价</th><th>PI折扣</th><th>PI金额</th><th>数量差异</th><th>单价差异</th><th>操作</th></tr></thead><tbody id="pi-items"></tbody><tfoot id="pi-cmp-foot"></tfoot></table></div></div>`, {v1: pos.map(p=>'<option value="'+p.id+'" data-no="'+p.po_no+'">'+esc(p.po_no)+' - '+esc(p.supplier_name)+'</option>').join(''), v2: suppliers.map(s=>'<option value="'+s.id+'" data-name="'+esc(s.name)+'" data-last="'+esc(s.last_used_payment_term_id||'')+'">'+esc(s.name)+'</option>').join(''), v3: todayStr()}),t('gen.L5520.2','<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveNewPI()">创建</button>'),'modal-pi');
   window._piRows=[];renderCmpTable();
   onPISupplierChange();
 }
@@ -5526,11 +5591,11 @@ async function onPISupplierChange(){
   if(!supSel||!termSel)return;
   const supId=supSel.value;
   const lastUsed=supSel.options[supSel.selectedIndex]?.dataset.last||'';
-  if(!supId){termSel.innerHTML='<option value="">（未选择）</option>';return;}
+  if(!supId){termSel.innerHTML=t('gen.L5529.1','<option value="">（未选择）</option>');return;}
   try{
     const terms=await api('/api/suppliers/'+encodeURIComponent(supId)+'/payment-terms');
     window._piTermsMap={};
-    termSel.innerHTML=t('html.onPISupplierChange', '<option value="">（未选择）</option>{v1}', {v1: terms.map(t=>{window._piTermsMap[t.id]=t;const extra=(t.term_type==='credit'||t.term_type==='other')&&t.credit_days?('（'+t.credit_days+t("app.924", "\u5929\uff09")):'';return '<option value="'+t.id+'">'+esc(t.term_name+(extra?' '+extra:''))+'</option>';}).join('')});
+    termSel.innerHTML=t('html.onPISupplierChange', '<option value="">（未选择）</option>{v1}', {v1: terms.map(term=>{window._piTermsMap[term.id]=term;const extra=(term.term_type==='credit'||term.term_type==='other')&&term.credit_days?('（'+term.credit_days+t("app.924", "\u5929\uff09")):'';return '<option value="'+term.id+'">'+esc(term.term_name+(extra?' '+extra:''))+'</option>';}).join('')});
     // 默认优先级：1) 上次该供应商实际使用的付款条件 2) 供应商默认项 3) 空白
     let defId='';
     if(lastUsed&&terms.some(t=>t.id===lastUsed))defId=lastUsed;
@@ -5540,15 +5605,18 @@ async function onPISupplierChange(){
 }
 function togglePIDeposit(){const need=document.getElementById('npi-need-dep')?.value!=='0';const dep=document.getElementById('npi-dep');if(dep){dep.disabled=!need;if(!need)dep.value=0;else if(!dep.value||dep.value==='0')dep.value=30;}}
 function addPIRow(){window._piRows.push({sku:'',poQty:0,poPrice:0,piQty:0,piPrice:0,piDisc:0,fromPO:false});renderCmpTable();}
-function renderCmpTable(){const tb=document.getElementById('pi-items');if(!tb)return;if(!window._piRows||!window._piRows.length){tb.innerHTML='<tr><td colspan="11" style="text-align:center;color:var(--text-muted);padding:18px">暂无明细，点击「➕ 添加行」新增 SKU，或「📥 导入供应商PI」</td></tr>';return;}tb.innerHTML=(window._piRows||[]).map((r,idx)=>cmpRowHTML(idx,r)).join('');window._piRows.forEach((r,idx)=>updCmpRow(idx));}
-function cmpRowHTML(idx,r){return '<tr data-idx="'+idx+'"><td><input type="text" value="'+esc(r.sku)+'" id="pi-rsk-'+idx+'" style="width:120px" oninput="updCmpRow('+idx+')"></td><td class="text-right" style="color:var(--text-muted)">'+r.poQty+'</td><td><input type="number" value="'+r.piQty+'" id="pi-rq-'+idx+'" style="width:80px" oninput="updCmpRow('+idx+')"></td><td class="text-right" style="color:var(--text-muted)">'+fmtMoney(r.poPrice)+'</td><td><input type="number" step="0.01" value="'+r.piPrice+'" id="pi-rp-'+idx+'" style="width:90px" oninput="updCmpRow('+idx+')"></td><td><input type="number" step="0.01" value="'+r.piDisc+'" id="pi-rd-'+idx+'" style="width:70px" oninput="updCmpRow('+idx+')"></td><td class="text-right" id="pi-ramt-'+idx+'">0.00</td><td class="text-right" id="pi-rqd-'+idx+'">0</td><td class="text-right" id="pi-rpd-'+idx+'">0</td><td><button class="btn btn-danger btn-sm" onclick="delCmpRow('+idx+')">🗑️</button></td></tr>';}
+function renderCmpTable(){const tb=document.getElementById('pi-items');if(!tb)return;
+// PI-TABLE-ALIGN-01 R4: 注入 colgroup 像素列宽（10列总宽1380px）+ pi-cmp-editable class
+const _tbl=tb.parentElement;if(_tbl){if(!_tbl.classList.contains('pi-cmp-editable'))_tbl.classList.add('pi-cmp-editable');if(!_tbl.querySelector('colgroup')){_tbl.insertAdjacentHTML('afterbegin','<colgroup><col style="width:220px"><col style="width:120px"><col style="width:145px"><col style="width:135px"><col style="width:180px"><col style="width:120px"><col style="width:125px"><col style="width:120px"><col style="width:135px"><col style="width:80px"></colgroup>');}}
+if(!window._piRows||!window._piRows.length){tb.innerHTML=t('gen.L5543.1','<tr><td colspan="11" style="text-align:center;color:var(--text-muted);padding:18px">暂无明细，点击「➕ 添加行」新增 SKU，或「📥 导入供应商PI」</td></tr>');return;}tb.innerHTML=(window._piRows||[]).map((r,idx)=>cmpRowHTML(idx,r)).join('');window._piRows.forEach((r,idx)=>updCmpRow(idx));}
+function cmpRowHTML(idx,r){return '<tr data-idx="'+idx+'"><td><input type="text" value="'+esc(r.sku)+'" id="pi-rsk-'+idx+'" oninput="updCmpRow('+idx+')"></td><td style="color:var(--text-muted)">'+r.poQty+'</td><td><input type="number" value="'+r.piQty+'" id="pi-rq-'+idx+'" oninput="updCmpRow('+idx+')"></td><td style="color:var(--text-muted)">'+fmtMoney(r.poPrice)+'</td><td><input type="number" step="0.01" value="'+r.piPrice+'" id="pi-rp-'+idx+'" oninput="updCmpRow('+idx+')"></td><td><input type="number" step="0.01" value="'+r.piDisc+'" id="pi-rd-'+idx+'" oninput="updCmpRow('+idx+')"></td><td id="pi-ramt-'+idx+'">0.00</td><td id="pi-rqd-'+idx+'">0</td><td id="pi-rpd-'+idx+'">0</td><td><button class="btn btn-danger btn-sm" onclick="delCmpRow('+idx+')">🗑️</button></td></tr>';}
 function updCmpRow(idx){const r=window._piRows[idx];if(!r)return;r.sku=document.getElementById('pi-rsk-'+idx)?.value||'';r.piQty=parseFloat(document.getElementById('pi-rq-'+idx)?.value)||0;r.piPrice=parseFloat(document.getElementById('pi-rp-'+idx)?.value)||0;r.piDisc=parseFloat(document.getElementById('pi-rd-'+idx)?.value)||0;const d=cmpDerived(r);const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};set('pi-ramt-'+idx,d.piAmt.toFixed(2));set('pi-rqd-'+idx,String(d.qtyDiff));set('pi-rpd-'+idx,d.priceDiff.toFixed(2));recomputeCmpFooter();}
 function delCmpRow(idx){window._piRows.splice(idx,1);renderCmpTable();}
 function cmpDerived(r){const poQty=+r.poQty||0,poPrice=+r.poPrice||0,piQty=+r.piQty||0,piPrice=+r.piPrice||0,piDisc=+r.piDisc||0;const poAmt=poQty*poPrice;const piAmt=piQty*piPrice*(1-piDisc);const qtyDiff=piQty-poQty;const priceDiff=piPrice-poPrice;const amtDiff=piAmt-poAmt;const hasPO=poQty>0||poPrice>0,hasPI=piQty>0||piPrice>0;let status=t("app.926", "\u4e00\u81f4");if(!hasPO&&hasPI)status=t("app.927", "PI\u65b0\u589e");else if(hasPO&&!hasPI)status=t("app.928", "PO\u6709PI\u7f3a");else if(Math.abs(qtyDiff)>1e-9&&Math.abs(priceDiff)>1e-9)status=t("app.929", "\u91cf\u4ef7\u5747\u5dee");else if(Math.abs(qtyDiff)>1e-9)status=t("app.930", "\u4ec5\u6570\u91cf\u5dee");else if(Math.abs(priceDiff)>1e-9)status=t("app.931", "\u4ec5\u5355\u4ef7\u5dee");return {poAmt,piAmt,qtyDiff,priceDiff,amtDiff,status};}
 function recomputeCmpFooter(){const f=document.getElementById('pi-cmp-foot');if(!f)return;let poQty=0,piQty=0,piAmt=0,qtyD=0,amtD=0;(window._piRows||[]).forEach(r=>{const d=cmpDerived(r);poQty+=r.poQty;piQty+=r.piQty;piAmt+=d.piAmt;qtyD+=d.qtyDiff;amtD+=d.amtDiff;});f.innerHTML=t('html.recomputeCmpFooter', '<tr style="font-weight:700;background:#e8edf3"><td>汇总</td><td class="text-right">{v1}</td><td class="text-right">{v2}</td><td></td><td></td><td></td><td class="text-right">{v3}</td><td class="text-right">{v4}</td><td colspan="2" class="text-right">金额差异：{v5}</td></tr>', {v1: poQty, v2: piQty, v3: fmtMoney(piAmt), v4: qtyD, v5: fmtMoney(amtD)});}
 async function loadPOForPI(){const poId=document.getElementById('npi-po').value;window._poRef=null;const curSel=document.getElementById('npi-cur');if(!poId){if(curSel)curSel.disabled=false;renderCmpTable();return;}try{const po=await api('/api/purchase-orders/'+poId);const supSel=document.getElementById('npi-sup');let sid=po.supplier_id;if(sid&&![...supSel.options].some(o=>o.value===sid)){const byName=[...supSel.options].find(o=>o.dataset.name===po.supplier_name);if(byName)sid=byName.value;}supSel.value=sid||'';onPISupplierChange();if(curSel){curSel.value=po.currency;curSel.disabled=true;}window._poRef=po.items||[];const extra=(window._piRows||[]).filter(r=>!r.fromPO);window._piRows=(po.items||[]).map(it=>({sku:it.sku_code||'',poQty:it.po_qty||0,poPrice:it.unit_price||0,piQty:0,piPrice:0,piDisc:0,fromPO:true})).concat(extra);renderCmpTable();}catch(e){showToast(e.message,'danger')}}
 function computePODiff(poRef,piItems){const map={};const rows=[];const norm=s=>String(s||'').trim().toLowerCase();(poRef||[]).forEach(p=>{const sku=p.sku_code||'';const r={sku,poQty:p.po_qty||0,poPrice:p.unit_price||0,piQty:0,piPrice:0,piDisc:0,fromPO:true};rows.push(r);map[norm(sku)]=r;});(piItems||[]).forEach(p=>{const sku=p.sku_code||'';const ex=map[norm(sku)];if(ex){ex.piQty=p.pi_confirmed_qty||0;ex.piPrice=p.unit_price||0;ex.piDisc=p.discount||0;}else{const r={sku,poQty:0,poPrice:0,piQty:p.pi_confirmed_qty||0,piPrice:p.unit_price||0,piDisc:p.discount||0,fromPO:false};rows.push(r);map[norm(sku)]=r;}});return rows;}
-function renderCmpReadonly(rows){const body=rows.map(r=>{const d=cmpDerived(r);return '<tr><td class="cell-id">'+esc(r.sku)+'</td><td class="text-right">'+r.poQty+'</td><td class="text-right">'+r.piQty+'</td><td class="text-right">'+fmtMoney(r.poPrice)+'</td><td class="text-right">'+fmtMoney(r.piPrice)+'</td><td class="text-right">'+((r.piDisc||0)*100).toFixed(0)+'%</td><td class="text-right">'+fmtMoney(d.piAmt)+'</td><td class="text-right">'+d.qtyDiff+'</td><td class="text-right">'+d.priceDiff.toFixed(2)+'</td><td>'+d.status+'</td></tr>';}).join('');let poQty=0,piQty=0,piAmt=0,qtyD=0,amtD=0;rows.forEach(r=>{const d=cmpDerived(r);poQty+=r.poQty;piQty+=r.piQty;piAmt+=d.piAmt;qtyD+=d.qtyDiff;amtD+=d.amtDiff;});const foot='<tr style="font-weight:700;background:#e8edf3"><td>汇总</td><td class="text-right">'+poQty+'</td><td class="text-right">'+piQty+'</td><td></td><td></td><td></td><td class="text-right">'+fmtMoney(piAmt)+'</td><td class="text-right">'+qtyD+'</td><td colspan="2" class="text-right">金额差异：'+fmtMoney(amtD)+'</td></tr>';return '<div class="table-container" style="max-height:50vh;overflow:auto;box-shadow:none"><table class="data-table pi-cmp-table"><thead><tr><th>SKU</th><th>PO数量</th><th>PI确认数量</th><th>PO单价</th><th>PI确认单价</th><th>PI折扣</th><th>PI金额</th><th>数量差异</th><th>单价差异</th><th>状态</th></tr></thead><tbody>'+body+'</tbody><tfoot>'+foot+'</tfoot></table></div>';}
+function renderCmpReadonly(rows){const body=rows.map(r=>{const d=cmpDerived(r);return '<tr><td class="cell-id">'+esc(r.sku)+'</td><td>'+r.poQty+'</td><td>'+r.piQty+'</td><td>'+fmtMoney(r.poPrice)+'</td><td>'+fmtMoney(r.piPrice)+'</td><td>'+((r.piDisc||0)*100).toFixed(0)+'%</td><td>'+fmtMoney(d.piAmt)+'</td><td>'+d.qtyDiff+'</td><td>'+d.priceDiff.toFixed(2)+'</td><td>'+d.status+'</td></tr>';}).join('');let poQty=0,piQty=0,piAmt=0,qtyD=0,amtD=0;rows.forEach(r=>{const d=cmpDerived(r);poQty+=r.poQty;piQty+=r.piQty;piAmt+=d.piAmt;qtyD+=d.qtyDiff;amtD+=d.amtDiff;});const foot=t('gen.L5551.1','<tr style="font-weight:700;background:#e8edf3"><td>汇总</td><td>')+poQty+'</td><td>'+piQty+'</td><td></td><td></td><td></td><td>'+fmtMoney(piAmt)+'</td><td>'+qtyD+t('gen.L5551.2','</td><td colspan="2">金额差异：')+fmtMoney(amtD)+'</td></tr>';return t('gen.L5551.3','<div class="table-container" style="max-height:50vh;overflow:auto;box-shadow:none"><table class="data-table pi-cmp-table pi-cmp-readonly"><colgroup><col style="width:220px"><col style="width:120px"><col style="width:145px"><col style="width:135px"><col style="width:180px"><col style="width:120px"><col style="width:125px"><col style="width:120px"><col style="width:135px"><col style="width:210px"></colgroup><thead><tr><th>SKU</th><th>PO数量</th><th>PI确认数量</th><th>PO单价</th><th>PI确认单价</th><th>PI折扣</th><th>PI金额</th><th>数量差异</th><th>单价差异</th><th>状态</th></tr></thead><tbody>')+body+'</tbody><tfoot>'+foot+'</tfoot></table></div>';}
 const SUPPLIER_PI_IMPORT_COLUMNS=[
   {key:'sku_code',label:'SKU',required:true},
   {key:'pi_confirmed_qty',label:t("app.143", "PI\u786e\u8ba4\u6570\u91cf"),required:true,format:v=>parseFloat(v)||0},
@@ -5563,7 +5631,7 @@ function openSupplierPIImport(){
   overlay.style.zIndex='1500';
   overlay.innerHTML=
     '<div class="modal modal-lg">'+
-      '<div class="modal-header"><span class="modal-title">导入供应商PI</span><button class="modal-close" onclick="closeSupplierPIImport()">&times;</button></div>'+
+      t('gen.L5566.1','<div class="modal-header"><span class="modal-title">导入供应商PI</span><button class="modal-close" onclick="closeSupplierPIImport()">&times;</button></div>')+
       '<div class="modal-body">'+
         '<div id="sup-pi-drop-zone" style="border:2px dashed #d9d9d9;border-radius:8px;padding:40px 20px;text-align:center;cursor:pointer;background:#fafafa;transition:all .2s" '+
           'onclick="document.getElementById(\'sup-pi-file-input\').click()" '+
@@ -5571,26 +5639,26 @@ function openSupplierPIImport(){
           'ondragleave="this.style.borderColor=\'#d9d9d9\';this.style.background=\'#fafafa\'" '+
           'ondrop="event.preventDefault();this.style.borderColor=\'#d9d9d9\';this.style.background=\'#fafafa\';handleSupplierPIFile(event.dataTransfer.files[0])">'+
           '<div style="font-size:48px;color:#1890ff;margin-bottom:8px">📥</div>'+
-          '<div style="font-size:14px;color:#333;margin-bottom:4px">点击上传或拖拽文件到此处</div>'+
-          '<div style="font-size:12px;color:#999">支持 .xlsx / .xls / .csv 格式</div>'+
+          t('gen.L5574.1','<div style="font-size:14px;color:#333;margin-bottom:4px">点击上传或拖拽文件到此处</div>')+
+          t('gen.L5575.1','<div style="font-size:12px;color:#999">支持 .xlsx / .xls / .csv 格式</div>')+
         '</div>'+
         '<input type="file" id="sup-pi-file-input" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleSupplierPIFile(this.files[0])">'+
         '<div style="margin-top:12px;padding:12px 14px;background:#f0f5ff;border:1px solid #adc6ff;border-radius:6px;font-size:12px;color:#333">'+
-          '<div style="font-weight:600;margin-bottom:6px">导入说明</div>'+
+          t('gen.L5579.1','<div style="font-weight:600;margin-bottom:6px">导入说明</div>')+
           '<div style="line-height:1.8">'+
-            '• 列：<b>SKU、PI确认数量、PI确认单价、PI折扣</b>（折扣填 0~1，如 0.1 表示 10%）<br>'+
-            '• 系统按 <b>SKU</b> 与下方「PO vs PI 合并对比」表匹配：已存在的 SKU 直接回填 PI 列，未匹配的 SKU 作为新增行加入<br>'+
-            '• 导入仅在当前新建 PI 弹窗内填充，不会单独入库；点「创建」后才落库<br>'+
-            '• 与 PO 的差异将自动重算'+
+            t('gen.L5581.1','• 列：<b>SKU、PI确认数量、PI确认单价、PI折扣</b>（折扣填 0~1，如 0.1 表示 10%）<br>')+
+            t('gen.L5582.1','• 系统按 <b>SKU</b> 与下方「PO vs PI 合并对比」表匹配：已存在的 SKU 直接回填 PI 列，未匹配的 SKU 作为新增行加入<br>')+
+            t('gen.L5583.1','• 导入仅在当前新建 PI 弹窗内填充，不会单独入库；点「创建」后才落库<br>')+
+            t('gen.L5584.1','• 与 PO 的差异将自动重算')+
           '</div>'+
         '</div>'+
         '<div id="sup-pi-preview" style="margin-top:16px"></div>'+
         '<div id="sup-pi-result" style="margin-top:16px"></div>'+
       '</div>'+
       '<div class="modal-footer">'+
-        '<button class="btn btn-secondary" onclick="downloadDocTemplate(\'supplierPI\')">下载模板</button>'+
-        '<button class="btn btn-secondary" onclick="closeSupplierPIImport()">关闭</button>'+
-        '<button class="btn btn-primary" id="sup-pi-import-btn" onclick="submitSupplierPIImport()" disabled>开始导入</button>'+
+        t('gen.L5591.1','<button class="btn btn-secondary" onclick="downloadDocTemplate(\'supplierPI\')">下载模板</button>')+
+        t('gen.L5592.1','<button class="btn btn-secondary" onclick="closeSupplierPIImport()">关闭</button>')+
+        t('gen.L5593.1','<button class="btn btn-primary" id="sup-pi-import-btn" onclick="submitSupplierPIImport()" disabled>开始导入</button>')+
       '</div>'+
     '</div>';
   document.body.appendChild(overlay);
@@ -5600,7 +5668,7 @@ function closeSupplierPIImport(){const o=document.getElementById('supplier-pi-im
 function handleSupplierPIFile(file){
   if(!file)return;
   const ext=file.name.split('.').pop().toLowerCase();
-  if(!['xlsx','xls','csv'].includes(ext)){showToast('仅支持 .xlsx / .xls / .csv 格式','danger');return;}
+  if(!['xlsx','xls','csv'].includes(ext)){showToast(t('gen.L5603.1','仅支持 .xlsx / .xls / .csv 格式'),'danger');return;}
   const reader=new FileReader();
   reader.onload=function(e){
     try{
@@ -5609,7 +5677,7 @@ function handleSupplierPIFile(file){
       else{wb=XLSX.read(new Uint8Array(e.target.result),{type:'array',cellDates:true});}
       const ws=wb.Sheets[wb.SheetNames[0]];
       const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:'',raw:false,dateNF:'yyyy-mm-dd'});
-      if(rows.length<2){showToast('文件为空或缺少数据行','danger');return;}
+      if(rows.length<2){showToast(t('gen.L5612.1','文件为空或缺少数据行'),'danger');return;}
       const headers=rows[0].map(h=>String(h||'').trim());
       const records=[];
       for(let i=1;i<rows.length;i++){
@@ -5620,7 +5688,7 @@ function handleSupplierPIFile(file){
           const idx=headers.findIndex(h=>h===col.label||h===col.key);
           if(idx>=0&&row[idx]!==undefined&&row[idx]!==''){let val=row[idx];if(typeof val==='string')val=val.trim();if(col.format)val=col.format(val);rec[col.key]=val;}
         });
-        if(!rec.sku_code||!String(rec.sku_code).trim())rec._errors.push('SKU不能为空');
+        if(!rec.sku_code||!String(rec.sku_code).trim())rec._errors.push(t('gen.L5623.1','SKU不能为空'));
         if(rec.pi_confirmed_qty===undefined||rec.pi_confirmed_qty===null||isNaN(rec.pi_confirmed_qty)||rec.pi_confirmed_qty<=0)rec._errors.push(t("app.934", "PI\u786e\u8ba4\u6570\u91cf\u5fc5\u987b\u4e3a\u6b63\u6570"));
         if(rec.discount!==undefined&&!isNaN(rec.discount)&&(rec.discount<0||rec.discount>1))rec._errors.push(t("app.935", "PI\u6298\u6263\u9700\u5728 0~1 \u4e4b\u95f4"));
         records.push(rec);
@@ -5636,17 +5704,17 @@ function handleSupplierPIFile(file){
 function renderSupplierPIPreview(records){
   const valid=records.filter(r=>r._errors.length===0).length;
   const invalid=records.length-valid;
-  let html='<div style="background:#f0f8ff;padding:10px 14px;border-radius:6px;margin-bottom:10px;font-size:13px"><b>共 '+records.length+' 条数据</b>，<span style="color:#52c41a">有效 '+valid+' 条</span>'+(invalid>0?'，<span style="color:#ff4d4f">无效 '+invalid+' 条</span>':'')+'</div>';
-  html+='<div class="table-container" style="max-height:300px;overflow:auto;box-shadow:none;border:1px solid #f0f0f0"><table class="data-table"><thead><tr><th>行</th><th>SKU</th><th>PI确认数量</th><th>PI确认单价</th><th>PI折扣</th><th>校验</th></tr></thead><tbody>';
+  let html=t('gen.L5639.1','<div style="background:#f0f8ff;padding:10px 14px;border-radius:6px;margin-bottom:10px;font-size:13px"><b>共 ')+records.length+t('gen.L5639.2',' 条数据</b>，<span style="color:#52c41a">有效 ')+valid+t('gen.L5639.3',' 条</span>')+(invalid>0?t('gen.L5639.4','，<span style="color:#ff4d4f">无效 ')+invalid+t('gen.L5639.5',' 条</span>'):'')+'</div>';
+  html+=t('gen.L5640.1','<div class="table-container" style="max-height:300px;overflow:auto;box-shadow:none;border:1px solid #f0f0f0"><table class="data-table"><thead><tr><th>行</th><th>SKU</th><th>PI确认数量</th><th>PI确认单价</th><th>PI折扣</th><th>校验</th></tr></thead><tbody>');
   records.slice(0,20).forEach(r=>{
     const ok=r._errors.length===0;
     html+='<tr style="'+(ok?'':'background:#fff1f0')+'"><td>'+r._rowNum+'</td><td class="cell-id">'+esc(r.sku_code||'-')+'</td><td class="text-right">'+(r.pi_confirmed_qty!==undefined?r.pi_confirmed_qty:'-')+'</td><td class="text-right">'+(r.unit_price!==undefined?r.unit_price:'-')+'</td><td class="text-right">'+(r.discount!==undefined?r.discount:'-')+'</td><td>'+(ok?'<span class="status-badge status-completed">✓</span>':'<span class="status-badge status-danger" title="'+esc(r._errors.join('; '))+'">✗ '+r._errors.length+'</span>')+'</td></tr>';
   });
-  if(records.length>20)html+='<tr><td colspan="6" style="text-align:center;color:#999;padding:8px">... 还有 '+(records.length-20)+' 条</td></tr>';
+  if(records.length>20)html+=t('gen.L5645.1','<tr><td colspan="6" style="text-align:center;color:#999;padding:8px">... 还有 ')+(records.length-20)+t('gen.L5645.2',' 条</td></tr>');
   html+='</tbody></table></div>';
   if(invalid>0){
-    html+='<div style="margin-top:10px;padding:10px;background:#fffbe6;border-radius:4px;font-size:12px;color:#666"><b>无效行明细：</b><br>'+
-      records.filter(r=>r._errors.length>0).slice(0,10).map(r=>'第 '+r._rowNum+' 行：'+r._errors.join('、')).join('<br>')+(invalid>10?'<br>...':'')+'</div>';
+    html+=t('gen.L5648.1','<div style="margin-top:10px;padding:10px;background:#fffbe6;border-radius:4px;font-size:12px;color:#666"><b>无效行明细：</b><br>')+
+      records.filter(r=>r._errors.length>0).slice(0,10).map(r=>t('gen.L5649.1','第 ')+r._rowNum+t('gen.L5649.2',' 行：')+r._errors.join('、')).join('<br>')+(invalid>10?'<br>...':'')+'</div>';
   }
   const el=document.getElementById('sup-pi-preview');
   if(el)el.innerHTML=html;
@@ -5654,7 +5722,7 @@ function renderSupplierPIPreview(records){
 async function submitSupplierPIImport(){
   const records=window._supplierPiImportData||[];
   const valid=records.filter(r=>r._errors.length===0);
-  if(!valid.length){showToast('没有可导入的有效数据','danger');return;}
+  if(!valid.length){showToast(t('gen.L5657.1','没有可导入的有效数据'),'danger');return;}
   const btn=document.getElementById('sup-pi-import-btn');
   if(btn){btn.disabled=true;btn.textContent=t("app.613", "\u5bfc\u5165\u4e2d...");}
   try{
@@ -5667,19 +5735,19 @@ async function submitSupplierPIImport(){
     });
     renderCmpTable();
     window._lastSupplierPiImportErrors=records.filter(r=>r._errors.length>0).map(r=>({row:r._rowNum,reason:r._errors.join('、')}));
-    let html='<div style="background:#f6ffed;border:1px solid #b7eb8f;border-radius:8px;padding:14px 16px;font-size:13px"><div style="font-weight:600;margin-bottom:8px">导入完成报告</div><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px"><span>总行数：'+records.length+' 条</span><span style="color:#1890ff">匹配回填：'+matched+' 条</span><span style="color:#52c41a">新增行：'+added+' 条</span><span style="color:#ff3b30">跳过（无效）：'+skipped+' 条</span></div>';
+    let html=t('gen.L5670.1','<div style="background:#f6ffed;border:1px solid #b7eb8f;border-radius:8px;padding:14px 16px;font-size:13px"><div style="font-weight:600;margin-bottom:8px">导入完成报告</div><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px"><span>总行数：')+records.length+t('gen.L5670.2',' 条</span><span style="color:#1890ff">匹配回填：')+matched+t('gen.L5670.3',' 条</span><span style="color:#52c41a">新增行：')+added+t('gen.L5670.4',' 条</span><span style="color:#ff3b30">跳过（无效）：')+skipped+t('gen.L5670.5',' 条</span></div>');
     if(window._lastSupplierPiImportErrors.length){
-      html+='<div style="margin-top:10px"><div style="font-weight:600;color:#ff3b30;margin-bottom:6px">无效明细</div>'+window._lastSupplierPiImportErrors.slice(0,20).map(e=>'<div style="color:#666">第 '+e.row+' 行：'+esc(e.reason)+'</div>').join('')+(window._lastSupplierPiImportErrors.length>20?'<div style="color:#999">还有 '+(window._lastSupplierPiImportErrors.length-20)+' 条...</div>':'')+'<button type="button" class="btn btn-secondary" style="margin-top:10px" onclick="downloadSupplierPIImportErrors()">下载无效明细</button></div>';
+      html+=t('gen.L5672.1','<div style="margin-top:10px"><div style="font-weight:600;color:#ff3b30;margin-bottom:6px">无效明细</div>')+window._lastSupplierPiImportErrors.slice(0,20).map(e=>t('gen.L5672.2','<div style="color:#666">第 ')+e.row+t('gen.L5672.3',' 行：')+esc(e.reason)+'</div>').join('')+(window._lastSupplierPiImportErrors.length>20?t('gen.L5672.4','<div style="color:#999">还有 ')+(window._lastSupplierPiImportErrors.length-20)+t('gen.L5672.5',' 条...</div>'):'')+t('gen.L5672.6','<button type="button" class="btn btn-secondary" style="margin-top:10px" onclick="downloadSupplierPIImportErrors()">下载无效明细</button></div>');
     }
     html+='</div>';
     const resEl=document.getElementById('sup-pi-result');if(resEl)resEl.innerHTML=html;
     showToast(t('toast.importMatch3','导入完成：匹配{m}，新增{a}，跳过{s}',{m:matched, a:added, s:skipped}),'success');
-  }catch(e){showToast(e.message||'导入失败','danger');}
+  }catch(e){showToast(e.message||t('gen.L5677.1','导入失败'),'danger');}
   finally{if(btn){btn.disabled=false;btn.textContent=t("app.067", "\u5f00\u59cb\u5bfc\u5165");}}
 }
 function downloadSupplierPIImportErrors(){
   if(!window._lastSupplierPiImportErrors||!window._lastSupplierPiImportErrors.length)return;
-  const ws=XLSX.utils.aoa_to_sheet([['行号','失败原因']].concat(window._lastSupplierPiImportErrors.map(e=>[e.row,e.reason])));
+  const ws=XLSX.utils.aoa_to_sheet([[t('gen.L5682.1','行号'),t('gen.L5682.2','失败原因')]].concat(window._lastSupplierPiImportErrors.map(e=>[e.row,e.reason])));
   const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,t("app.159", "\u65e0\u6548\u660e\u7ec6"));XLSX.writeFile(wb,t("app.937", "\u4f9b\u5e94\u5546PI\u5bfc\u5165\u65e0\u6548\u660e\u7ec6.xlsx"));
 }
 async function saveNewPI(){
@@ -5694,7 +5762,7 @@ async function saveNewPI(){
   try{
     await api('/api/proforma-invoices','POST',d);
     if(termId&&supSel.value){try{await api('/api/suppliers/'+encodeURIComponent(supSel.value)+'/last-payment-term','POST',{payment_term_id:termId});}catch(e){}}
-    showToast('PI创建成功','success');closeModal();loadPI();
+    showToast(t('gen.L5697.1','PI创建成功'),'success');closeModal();loadPI();
   }catch(e){showToast(e.message,'danger')}
 }
 async function createDepPay(id){
@@ -5733,39 +5801,39 @@ function handleDocImportFile(type,file){
 }
 function renderDocImportResult(res){
   const errs=res.errors||[];
-  let html='<div style="background:#f6ffed;border:1px solid #b7eb8f;border-radius:6px;padding:10px;margin-bottom:10px">导入完成：成功 '+(res.success||0)+' 条'+(res.idempotent?'，幂等识别 '+res.idempotent+' 条':'')+'，失败 '+(res.failed||0)+' 条</div>';
+  let html=t('gen.L5736.1','<div style="background:#f6ffed;border:1px solid #b7eb8f;border-radius:6px;padding:10px;margin-bottom:10px">导入完成：成功 ')+(res.success||0)+t('gen.L5736.2',' 条')+(res.idempotent?t('gen.L5736.3','，幂等识别 ')+res.idempotent+t('gen.L5736.4',' 条'):'')+t('gen.L5736.5','，失败 ')+(res.failed||0)+t('gen.L5736.6',' 条</div>');
   (res.messages||[]).forEach(m=>html+='<div style="background:#fffbe6;border:1px solid #ffe58f;border-radius:6px;padding:8px;margin-bottom:8px">'+esc(m)+'</div>');
-  if(errs.length)html+='<div class="table-container" style="max-height:260px;overflow:auto;box-shadow:none;border:1px solid #eee"><table class="data-table"><thead><tr><th>行号</th><th>失败原因</th></tr></thead><tbody>'+errs.map(e=>'<tr><td>'+e.row+'</td><td>'+esc(e.reason||e.error)+'</td></tr>').join('')+'</tbody></table></div>';
+  if(errs.length)html+=t('gen.L5738.1','<div class="table-container" style="max-height:260px;overflow:auto;box-shadow:none;border:1px solid #eee"><table class="data-table"><thead><tr><th>行号</th><th>失败原因</th></tr></thead><tbody>')+errs.map(e=>'<tr><td>'+e.row+'</td><td>'+esc(e.reason||e.error)+'</td></tr>').join('')+'</tbody></table></div>';
   document.getElementById('doc-import-result').innerHTML=html;
 }
-function parseAttachmentValue(v){try{return typeof v==='string'?JSON.parse(v):v}catch(e){return v?{name:'附件',dataUrl:v}:null}}
+function parseAttachmentValue(v){try{return typeof v==='string'?JSON.parse(v):v}catch(e){return v?{name:t('gen.L5741.1','附件'),dataUrl:v}:null}}
 function attachmentHtml(docType,id,field,val,label){
   const a=parseAttachmentValue(val);const has=a&&a.dataUrl;
-  return '<div class="detail-item"><span class="detail-label">'+label+'</span><span class="detail-value">'+(has?'<span class="link-text" onclick="downloadAttachment(\''+docType+'\',\''+id+'\',\''+field+'\')">'+esc(a.name||label)+'</span> <button class="btn btn-secondary btn-sm" onclick="uploadDocAttachment(\''+docType+'\',\''+id+'\',\''+field+'\')">重传</button> <button class="btn btn-danger btn-sm" onclick="deleteDocAttachment(\''+docType+'\',\''+id+'\',\''+field+'\')">删除</button>':'<button class="btn btn-secondary btn-sm" onclick="uploadDocAttachment(\''+docType+'\',\''+id+'\',\''+field+'\')">上传</button>')+'</span></div>';
+  return '<div class="detail-item"><span class="detail-label">'+label+'</span><span class="detail-value">'+(has?'<span class="link-text" onclick="downloadAttachment(\''+docType+'\',\''+id+'\',\''+field+'\')">'+esc(a.name||label)+'</span> <button class="btn btn-secondary btn-sm" onclick="uploadDocAttachment(\''+docType+'\',\''+id+'\',\''+field+t('gen.L5744.1','\')">重传</button> <button class="btn btn-danger btn-sm" onclick="deleteDocAttachment(\'')+docType+'\',\''+id+'\',\''+field+t('gen.L5744.2','\')">删除</button>'):'<button class="btn btn-secondary btn-sm" onclick="uploadDocAttachment(\''+docType+'\',\''+id+'\',\''+field+t('gen.L5744.3','\')">上传</button>'))+'</span></div>';
 }
 async function uploadDocAttachment(docType,id,field){
   const inp=document.createElement('input');inp.type='file';inp.accept='.pdf,.xlsx,.xls,.csv,.png,.jpg,.jpeg,.webp';
-  inp.onchange=()=>{const f=inp.files[0];if(!f)return;const r=new FileReader();r.onload=async e=>{const attachment={name:f.name,type:f.type,size:f.size,dataUrl:e.target.result,uploaded_at:new Date().toISOString()};try{const url=docType==='pi'?'/api/proforma-invoices/'+id+'/attachment':'/api/commercial-invoices/'+id+'/attachment';await api(url,'POST',{field,attachment});showToast('附件已上传','success');docType==='pi'?loadPI():loadCI();}catch(err){showToast(err.message,'danger')}};r.readAsDataURL(f)};inp.click();
+  inp.onchange=()=>{const f=inp.files[0];if(!f)return;const r=new FileReader();r.onload=async e=>{const attachment={name:f.name,type:f.type,size:f.size,dataUrl:e.target.result,uploaded_at:new Date().toISOString()};try{const url=docType==='pi'?'/api/proforma-invoices/'+id+'/attachment':'/api/commercial-invoices/'+id+'/attachment';await api(url,'POST',{field,attachment});showToast(t('gen.L5748.1','附件已上传'),'success');docType==='pi'?loadPI():loadCI();}catch(err){showToast(err.message,'danger')}};r.readAsDataURL(f)};inp.click();
 }
-async function deleteDocAttachment(docType,id,field){try{const url=docType==='pi'?'/api/proforma-invoices/'+id+'/attachment':'/api/commercial-invoices/'+id+'/attachment';await api(url,'POST',{field,attachment:''});showToast('附件已删除','success');closeModal();docType==='pi'?loadPI():loadCI();}catch(e){showToast(e.message,'danger')}}
-async function downloadAttachment(docType,id,field){const d=await api((docType==='pi'?'/api/proforma-invoices/':'/api/commercial-invoices/')+id);const a=parseAttachmentValue(d[field]);if(!a||!a.dataUrl){showToast('暂无附件','warning');return}const link=document.createElement('a');link.href=a.dataUrl;link.download=a.name||'附件';link.click();}
+async function deleteDocAttachment(docType,id,field){try{const url=docType==='pi'?'/api/proforma-invoices/'+id+'/attachment':'/api/commercial-invoices/'+id+'/attachment';await api(url,'POST',{field,attachment:''});showToast(t('gen.L5750.1','附件已删除'),'success');closeModal();docType==='pi'?loadPI():loadCI();}catch(e){showToast(e.message,'danger')}}
+async function downloadAttachment(docType,id,field){const d=await api((docType==='pi'?'/api/proforma-invoices/':'/api/commercial-invoices/')+id);const a=parseAttachmentValue(d[field]);if(!a||!a.dataUrl){showToast(t('gen.L5751.1','暂无附件'),'warning');return}const link=document.createElement('a');link.href=a.dataUrl;link.download=a.name||t('gen.L5751.2','附件');link.click();}
 
 // ==================== CI/PL管理 ====================
 function canImportHistoricalCI(){return hasPermission('ci_create')&&hasPermission('payment_create')&&hasPermission('payment_approve')}
 async function renderCI(){
-  document.getElementById('content-inner').innerHTML=t('html.renderCI', '<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>单据类型</label><select id="ci-source-mode" onchange="onCISourceModeChange()"><option value="operational">运营 CI</option><option value="historical">历史 CI</option><option value="all">全部</option></select></div><div class="filter-group"><label>状态</label><select id="ci-fs"><option value="">全部</option><option value="draft">待上传 CI/PL</option><option value="uploaded">已上传 CI/PL</option><option value="checking">待核对</option><option value="checked">已核对</option><option value="pending_balance">待尾款审批</option><option value="balance_paid">尾款已付款</option><option value="shipped">已发货</option><option value="customs">清关中</option><option value="completed">已完成</option></select></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadCI()">搜索</button>{v1}{v2}</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🚚 CI/PL列表</div></div><div id="ci-purchase-summary"></div><div id="ci-table"></div></div>', {v1: hasPermission('ci_create')?'<button class="btn btn-secondary btn-sm" onclick="downloadDocTemplate(\'ci\')">📥 CI模板</button><button class="btn btn-secondary btn-sm" onclick="openDocImport(\'ci\')">📤 导入CI</button><button class="btn btn-secondary btn-sm" onclick="downloadDocTemplate(\'pl\')">📥 PL模板</button><button class="btn btn-secondary btn-sm" onclick="openDocImport(\'pl\')">📦 导入PL</button><button class="btn btn-primary btn-sm" onclick="createCI()">➕ 新建CI</button>':'', v2: canImportHistoricalCI()?'<button class="btn btn-secondary btn-sm" onclick="downloadDocTemplate(\'historicalCI\')">📥 历史CI模板</button><button class="btn btn-secondary btn-sm" onclick="openDocImport(\'historicalCI\')">📤 批量导入历史CI</button><button class="btn btn-primary btn-sm" onclick="createHistoricalCI()">➕ 历史CI导入</button>':''});
+  document.getElementById('content-inner').innerHTML=t('html.renderCI', '<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>单据类型</label><select id="ci-source-mode" onchange="onCISourceModeChange()"><option value="operational">运营 CI</option><option value="historical">历史 CI</option><option value="all">全部</option></select></div><div class="filter-group"><label>状态</label><select id="ci-fs"><option value="">全部</option><option value="draft">待上传 CI/PL</option><option value="uploaded">已上传 CI/PL</option><option value="checking">待核对</option><option value="checked">已核对</option><option value="pending_balance">待尾款审批</option><option value="balance_paid">尾款已付款</option><option value="shipped">已发货</option><option value="customs">清关中</option><option value="completed">已完成</option></select></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadCI()">搜索</button>{v1}{v2}</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🚚 CI/PL列表</div></div><div id="ci-purchase-summary"></div><div id="ci-table"></div></div>', {v1: hasPermission('ci_create')?t('gen.L5756.1','<button class="btn btn-secondary btn-sm" onclick="downloadDocTemplate(\'ci\')">📥 CI模板</button><button class="btn btn-secondary btn-sm" onclick="openDocImport(\'ci\')">📤 导入CI</button><button class="btn btn-secondary btn-sm" onclick="downloadDocTemplate(\'pl\')">📥 PL模板</button><button class="btn btn-secondary btn-sm" onclick="openDocImport(\'pl\')">📦 导入PL</button><button class="btn btn-primary btn-sm" onclick="createCI()">➕ 新建CI</button>'):'', v2: canImportHistoricalCI()?t('gen.L5756.2','<button class="btn btn-secondary btn-sm" onclick="downloadDocTemplate(\'historicalCI\')">📥 历史CI模板</button><button class="btn btn-secondary btn-sm" onclick="openDocImport(\'historicalCI\')">📤 批量导入历史CI</button><button class="btn btn-primary btn-sm" onclick="createHistoricalCI()">➕ 历史CI导入</button>'):''});
   loadCI();
 }
 function onCISourceModeChange(){const mode=document.getElementById('ci-source-mode')?.value||'operational',status=document.getElementById('ci-fs');if(status)status.disabled=mode==='historical';loadCI()}
 function renderOperationalCITable(data){
-  return !data.length?'<div class="empty-state"><div class="empty-icon">🚚</div>暂无运营CI</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>CI号</th><th>关联PO</th><th>关联PI</th><th>供应商</th><th>品牌</th><th>国家</th><th>仓库</th><th>日期</th><th>币种</th><th>CI金额</th><th>已付定金</th><th>应付尾款</th><th>差异</th><th>状态</th><th>操作</th></tr></thead><tbody>'+data.map(c=>'<tr><td class="cell-id"><span class="link-text" onclick="viewCI(\''+c.id+'\')">'+esc(c.ci_no)+'</span></td><td class="cell-id">'+esc(c.related_po_no)+'</td><td class="cell-id">'+esc(c.related_pi_no)+'</td><td>'+esc(c.supplier_name)+'</td><td>'+esc(c.brand)+'</td><td>'+esc(c.country)+'</td><td>'+esc(c.target_warehouse)+'</td><td class="cell-date">'+fmtDate(c.ci_date)+'</td><td>'+esc(c.currency)+'</td><td class="text-right">'+fmtMoney(c.goods_amount)+'</td><td class="text-right">'+fmtMoney(c.actual_deducted_deposit)+'</td><td class="text-right">'+fmtMoney(c.payable_balance)+'</td><td class="text-right">'+fmtMoney(c.amount_difference)+'</td><td><span class="status-badge status-pending">'+esc(c.ci_status)+'</span></td><td class="cell-actions"><button class="action-btn" onclick="viewCI(\''+c.id+'\')">👁️</button><button class="action-btn" onclick="uploadDocAttachment(\'ci\',\''+c.id+'\',\'attachment\')" title="\u4e0a\u4f20CI\u9644\u4ef6">📎</button><button class="action-btn" onclick="uploadDocAttachment(\'ci\',\''+c.id+'\',\'pl_attachment\')" title="\u4e0a\u4f20PL\u9644\u4ef6">📦</button>'+(c.payable_balance>0&&c.balance_payment_status==='unpaid'&&hasPermission('payment_create')?'<button class="action-btn" onclick="createBalPay(\''+c.id+'\')" title="尾款付款">💰</button>':'')+(hasPermission('cost_view')?'<button class="action-btn" onclick="viewCICost(\''+c.id+'\')" title="费用管理">📊</button>':'')+(hasPermission('ci_edit')?'<button class="action-btn" '+((c.ci_status==='completed'||c.ci_status==='partial_inbound')?'disabled title="\u8be5\u72b6\u6001\u4e0d\u53ef\u4f5c\u5e9f" style="opacity:.3;cursor:not-allowed"':'onclick="voidCI(\''+c.id+'\')" title="\u4f5c\u5e9f"')+'>作废</button>':'')+'</td></tr>').join('')+'</tbody></table></div>';
+  return !data.length?t('gen.L5761.1','<div class="empty-state"><div class="empty-icon">🚚</div>暂无运营CI</div>'):t('gen.L5761.2','<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>CI号</th><th>关联PO</th><th>关联PI</th><th>供应商</th><th>品牌</th><th>国家</th><th>仓库</th><th>日期</th><th>币种</th><th>CI金额</th><th>已付定金</th><th>应付尾款</th><th>差异</th><th>状态</th><th>操作</th></tr></thead><tbody>')+data.map(c=>'<tr class="clickable-detail-row" onclick="rowClickView(event,\'viewCI\',\''+c.id+'\')"><td class="cell-id"><span class="link-text" onclick="viewCI(\''+c.id+'\')">'+esc(c.ci_no)+'</span></td><td class="cell-id">'+esc(c.related_po_no)+'</td><td class="cell-id">'+esc(c.related_pi_no)+'</td><td>'+esc(c.supplier_name)+'</td><td>'+esc(c.brand)+'</td><td>'+esc(c.country)+'</td><td>'+esc(c.target_warehouse)+'</td><td class="cell-date">'+fmtDate(c.ci_date)+'</td><td>'+esc(c.currency)+'</td><td class="text-right">'+fmtMoney(c.goods_amount)+'</td><td class="text-right">'+fmtMoney(c.actual_deducted_deposit)+'</td><td class="text-right">'+fmtMoney(c.payable_balance)+'</td><td class="text-right">'+fmtMoney(c.amount_difference)+'</td><td><span class="status-badge status-pending">'+esc(c.ci_status)+'</span></td><td class="cell-actions"><button class="action-btn" onclick="viewCI(\''+c.id+'\')">👁️</button><button class="action-btn" onclick="uploadDocAttachment(\'ci\',\''+c.id+t('gen.L5761.3','\',\'attachment\')" title="\u4e0a\u4f20CI\u9644\u4ef6">📎</button><button class="action-btn" onclick="uploadDocAttachment(\'ci\',\'')+c.id+t('gen.L5761.4','\',\'pl_attachment\')" title="\u4e0a\u4f20PL\u9644\u4ef6">📦</button>')+(c.payable_balance>0&&c.balance_payment_status==='unpaid'&&hasPermission('payment_create')?'<button class="action-btn" onclick="createBalPay(\''+c.id+t('gen.L5761.5','\')" title="尾款付款">💰</button>'):'')+(hasPermission('cost_view')?'<button class="action-btn" onclick="viewCICost(\''+c.id+t('gen.L5761.6','\')" title="费用管理">📊</button>'):'')+(hasPermission('ci_edit')?'<button class="action-btn" '+((c.ci_status==='completed'||c.ci_status==='partial_inbound')?t('gen.L5761.7','disabled title="\u8be5\u72b6\u6001\u4e0d\u53ef\u4f5c\u5e9f" style="opacity:.3;cursor:not-allowed"'):'onclick="voidCI(\''+c.id+t('gen.L5761.8','\')" title="\u4f5c\u5e9f"'))+t('gen.L5761.9','>作废</button>'):'')+'</td></tr>').join('')+'</tbody></table></div>';
 }
 function renderHistoricalCITable(data){
-  return !data.length?'<div class="empty-state"><div class="empty-icon">📚</div>暂无历史CI</div>':'<div style="font-size:12px;color:#666;padding:10px 0">仅用于历史采购金额和应付管理，不影响库存、WAC及订单预测。</div><div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>历史CI号</th><th>供应商</th><th>品牌</th><th>国家</th><th>日期</th><th>币种</th><th>总货款</th><th>导入历史已付</th><th>后续已付</th><th>抵扣</th><th>抹零</th><th>未结金额</th><th>付款状态</th><th>到期日</th><th>操作</th></tr></thead><tbody>'+data.map(h=>{const st=h.payment_status==='paid'?'status-paid':String(h.payment_status||'').includes('partial')?'status-pending':'status-unpaid';return '<tr><td class="cell-id"><span class="link-text" onclick="viewHistoricalCI(\''+h.id+'\')">'+esc(h.historical_ci_no)+'</span></td><td>'+esc(h.supplier_name)+'</td><td>'+esc(h.brand_name)+'</td><td>'+esc(h.country)+'</td><td class="cell-date">'+fmtDate(h.ci_date)+'</td><td>'+esc(h.currency)+'</td><td class="text-right font-bold">'+fmtMoney(h.gross_goods_amount)+'</td><td class="text-right">'+fmtMoney(h.historical_paid_amount)+'</td><td class="text-right">'+fmtMoney(h.subsequent_paid_amount)+'</td><td class="text-right">'+fmtMoney(h.deduction_amount)+'</td><td class="text-right">'+fmtMoney(h.rounding_amount)+'</td><td class="text-right '+(Number(h.unpaid_amount||0)>0?'text-danger':'')+'">'+fmtMoney(h.unpaid_amount)+'</td><td><span class="status-badge '+st+'">'+esc(PAY_STATUS_MAP[h.payment_status]||h.payment_status)+'</span></td><td class="cell-date">'+fmtDate(h.due_date)+'</td><td class="cell-actions"><button class="action-btn" onclick="viewHistoricalCI(\''+h.id+'\')" title="\u67e5\u770b\u5386\u53f2CI">👁️</button>'+(hasPermission('payment_view')?'<button class="action-btn" onclick="viewPayment(\''+h.payment_request_id+'\')" title="\u4ed8\u6b3e\u4e0e\u7ed3\u7b97">💳</button>':'')+'</td></tr>'}).join('')+'</tbody></table></div>';
+  return !data.length?t('gen.L5764.1','<div class="empty-state"><div class="empty-icon">📚</div>暂无历史CI</div>'):t('gen.L5764.2','<div style="font-size:12px;color:#666;padding:10px 0">仅用于历史采购金额和应付管理，不影响库存、WAC及订单预测。</div><div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>历史CI号</th><th>供应商</th><th>品牌</th><th>国家</th><th>日期</th><th>币种</th><th>总货款</th><th>导入历史已付</th><th>后续已付</th><th>抵扣</th><th>抹零</th><th>未结金额</th><th>付款状态</th><th>到期日</th><th>操作</th></tr></thead><tbody>')+data.map(h=>{const st=h.payment_status==='paid'?'status-paid':String(h.payment_status||'').includes('partial')?'status-pending':'status-unpaid';return '<tr class="clickable-detail-row" onclick="rowClickView(event,\'viewHistoricalCI\',\''+h.id+'\')"><td class="cell-id"><span class="link-text" onclick="viewHistoricalCI(\''+h.id+'\')">'+esc(h.historical_ci_no)+'</span></td><td>'+esc(h.supplier_name)+'</td><td>'+esc(h.brand_name)+'</td><td>'+esc(h.country)+'</td><td class="cell-date">'+fmtDate(h.ci_date)+'</td><td>'+esc(h.currency)+'</td><td class="text-right font-bold">'+fmtMoney(h.gross_goods_amount)+'</td><td class="text-right">'+fmtMoney(h.historical_paid_amount)+'</td><td class="text-right">'+fmtMoney(h.subsequent_paid_amount)+'</td><td class="text-right">'+fmtMoney(h.deduction_amount)+'</td><td class="text-right">'+fmtMoney(h.rounding_amount)+'</td><td class="text-right '+(Number(h.unpaid_amount||0)>0?'text-danger':'')+'">'+fmtMoney(h.unpaid_amount)+'</td><td><span class="status-badge '+st+'">'+esc(PAY_STATUS_MAP[h.payment_status]||h.payment_status)+'</span></td><td class="cell-date">'+fmtDate(h.due_date)+'</td><td class="cell-actions"><button class="action-btn" onclick="viewHistoricalCI(\''+h.id+t('gen.L5764.3','\')" title="\u67e5\u770b\u5386\u53f2CI">👁️</button>')+(hasPermission('payment_view')?'<button class="action-btn" onclick="viewPayment(\''+h.payment_request_id+t('gen.L5764.4','\')" title="\u4ed8\u6b3e\u4e0e\u7ed3\u7b97">💳</button>'):'')+'</td></tr>'}).join('')+'</tbody></table></div>';
 }
 function renderPurchaseAmountSummary(summary){
-  const scope=(label,data)=>'<div class="stat-card"><div class="stat-label">'+label+'</div><div class="stat-number" style="font-size:17px">'+((data.by_currency||[]).map(x=>esc(x.currency)+' '+Number(x.amount||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})).join(' · ')||'0.00')+'</div><div style="font-size:12px;color:#999;margin-top:4px">'+data.count+' 张；人民币待补 '+data.rmb_pending_count+' 张</div></div>';
-  return '<div class="stats-grid mb-16" style="grid-template-columns:repeat(3,minmax(0,1fr))">'+scope(t("app.978", "\u8fd0\u8425\u91c7\u8d2d\u91d1\u989d"),summary.operational)+scope('历史采购金额',summary.historical)+scope(t("app.979", "\u91c7\u8d2d\u91d1\u989d\u5408\u8ba1\uff08\u6309\u5e01\u79cd\uff09"),summary.total)+'</div><div style="font-size:12px;color:#999;margin:-8px 0 12px">'+esc(summary.rmb_note||'')+'</div>';
+  const scope=(label,data)=>'<div class="stat-card"><div class="stat-label">'+label+'</div><div class="stat-number" style="font-size:17px">'+((data.by_currency||[]).map(x=>esc(x.currency)+' '+Number(x.amount||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})).join(' · ')||'0.00')+'</div><div style="font-size:12px;color:#999;margin-top:4px">'+data.count+t('gen.L5767.1',' 张；人民币待补 ')+data.rmb_pending_count+t('gen.L5767.2',' 张</div></div>');
+  return '<div class="stats-grid mb-16" style="grid-template-columns:repeat(3,minmax(0,1fr))">'+scope(t("app.978", "\u8fd0\u8425\u91c7\u8d2d\u91d1\u989d"),summary.operational)+scope(t('gen.L5768.1','历史采购金额'),summary.historical)+scope(t("app.979", "\u91c7\u8d2d\u91d1\u989d\u5408\u8ba1\uff08\u6309\u5e01\u79cd\uff09"),summary.total)+'</div><div style="font-size:12px;color:#999;margin:-8px 0 12px">'+esc(summary.rmb_note||'')+'</div>';
 }
 async function loadCI(){
   try{
@@ -5780,30 +5848,30 @@ async function loadCI(){
 }
 async function createHistoricalCI(){
   try{
-    if(!canImportHistoricalCI()){showToast('历史 CI 导入需要 CI 创建、付款创建和付款审批权限','danger');return}
+    if(!canImportHistoricalCI()){showToast(t('gen.L5783.1','历史 CI 导入需要 CI 创建、付款创建和付款审批权限'),'danger');return}
     const results=await Promise.all([api('/api/suppliers'),api('/api/countries'),api('/api/currencies'),api('/api/brands/all')]),suppliers=results[0],countries=results[1].filter(x=>x.status==='active'),currencies=results[2].filter(x=>x.status==='active'),brands=results[3];
     const idempotency='historical-ci-ui:'+(window.crypto&&window.crypto.randomUUID?window.crypto.randomUUID():(Date.now()+'-'+Math.random().toString(36).slice(2)));
-    openModal(t("po.037", "\u5386\u53f2 CI \u5bfc\u5165"),t('modal.body.createHistoricalCI', '<div class="form-card" style="box-shadow:none;padding:0"><input type="hidden" id="hci-idempotency" value="{v1}"><div style="background:#f6ffed;border:1px solid #b7eb8f;border-radius:6px;padding:10px;margin-bottom:14px;font-size:13px">仅用于历史采购金额和应付管理，不影响库存、WAC及订单预测。</div><div class="form-grid"><div class="form-group"><label>历史 CI 编号 <span class="required">*</span></label><input id="hci-no"></div><div class="form-group"><label>供应商</label><select id="hci-supplier" onchange="onHistoricalSupplierChange()"><option value="">手工填写快照</option>{v2}</select></div><div class="form-group"><label>供应商快照 <span class="required">*</span></label><input id="hci-supplier-name"></div><div class="form-group"><label>品牌快照 <span class="required">*</span></label><input id="hci-brand" list="hci-brand-list"><datalist id="hci-brand-list">{v3}</datalist></div><div class="form-group"><label>采购归属国家 <span class="required">*</span></label><select id="hci-country"><option value="">请选择</option>{v4}</select></div><div class="form-group"><label>历史 CI 日期 <span class="required">*</span></label><input type="date" id="hci-date"></div><div class="form-group"><label>实际出货日期 <span class="required">*</span></label><input type="date" id="hci-ship-date"></div><div class="form-group"><label>币种 <span class="required">*</span></label><select id="hci-currency">{v5}</select></div><div class="form-group"><label>历史货款总金额 <span class="required">*</span></label><input type="number" min="0.01" step="0.01" id="hci-gross"></div><div class="form-group"><label>导入前历史已付款</label><input type="number" min="0" step="0.01" id="hci-paid" value="0"></div><div class="form-group"><label>历史已付款日期</label><input type="date" id="hci-paid-date"><div style="font-size:12px;color:#999">未知时保持为空，不会用导入日期代替。</div></div><div class="form-group"><label>付款条件 / 账期</label><input id="hci-terms"></div><div class="form-group"><label>到期日</label><input type="date" id="hci-due"></div><div class="form-group form-group-full"><label>原始文件、凭证或备注</label><textarea id="hci-note" rows="2"></textarea></div></div></div>', {v1: idempotency, v2: suppliers.map(s=>'<option value="'+esc(s.id)+'" data-name="'+esc(s.name)+'">'+esc(s.name)+'</option>').join(''), v3: brands.map(b=>'<option value="'+esc(b)+'"></option>').join(''), v4: countries.map(c=>'<option value="'+esc(c.name)+'">'+esc(c.name)+'（'+esc(c.code)+'）</option>').join(''), v5: currencies.map(c=>'<option value="'+esc(c.code)+'">'+esc(c.name)+'（'+esc(c.code)+'）</option>').join('')}),'<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" id="hci-save" onclick="saveHistoricalCI()">导入</button>','modal-lg');
+    openModal(t("po.037", "\u5386\u53f2 CI \u5bfc\u5165"),t('modal.body.createHistoricalCI', '<div class="form-card" style="box-shadow:none;padding:0"><input type="hidden" id="hci-idempotency" value="{v1}"><div style="background:#f6ffed;border:1px solid #b7eb8f;border-radius:6px;padding:10px;margin-bottom:14px;font-size:13px">仅用于历史采购金额和应付管理，不影响库存、WAC及订单预测。</div><div class="form-grid"><div class="form-group"><label>历史 CI 编号 <span class="required">*</span></label><input id="hci-no"></div><div class="form-group"><label>供应商</label><select id="hci-supplier" onchange="onHistoricalSupplierChange()"><option value="">手工填写快照</option>{v2}</select></div><div class="form-group"><label>供应商快照 <span class="required">*</span></label><input id="hci-supplier-name"></div><div class="form-group"><label>品牌快照 <span class="required">*</span></label><input id="hci-brand" list="hci-brand-list"><datalist id="hci-brand-list">{v3}</datalist></div><div class="form-group"><label>采购归属国家 <span class="required">*</span></label><select id="hci-country"><option value="">请选择</option>{v4}</select></div><div class="form-group"><label>历史 CI 日期 <span class="required">*</span></label><input type="date" id="hci-date"></div><div class="form-group"><label>实际出货日期 <span class="required">*</span></label><input type="date" id="hci-ship-date"></div><div class="form-group"><label>币种 <span class="required">*</span></label><select id="hci-currency">{v5}</select></div><div class="form-group"><label>历史货款总金额 <span class="required">*</span></label><input type="number" min="0.01" step="0.01" id="hci-gross"></div><div class="form-group"><label>导入前历史已付款</label><input type="number" min="0" step="0.01" id="hci-paid" value="0"></div><div class="form-group"><label>历史已付款日期</label><input type="date" id="hci-paid-date"><div style="font-size:12px;color:#999">未知时保持为空，不会用导入日期代替。</div></div><div class="form-group"><label>付款条件 / 账期</label><input id="hci-terms"></div><div class="form-group"><label>到期日</label><input type="date" id="hci-due"></div><div class="form-group form-group-full"><label>原始文件、凭证或备注</label><textarea id="hci-note" rows="2"></textarea></div></div></div>', {v1: idempotency, v2: suppliers.map(s=>'<option value="'+esc(s.id)+'" data-name="'+esc(s.name)+'">'+esc(s.name)+'</option>').join(''), v3: brands.map(b=>'<option value="'+esc(b)+'"></option>').join(''), v4: countries.map(c=>'<option value="'+esc(c.name)+'">'+esc(c.name)+'（'+esc(c.code)+'）</option>').join(''), v5: currencies.map(c=>'<option value="'+esc(c.code)+'">'+esc(c.name)+'（'+esc(c.code)+'）</option>').join('')}),t('gen.L5786.1','<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" id="hci-save" onclick="saveHistoricalCI()">导入</button>'),'modal-lg');
   }catch(e){showToast(e.message,'danger')}
 }
 function onHistoricalSupplierChange(){const select=document.getElementById('hci-supplier'),name=document.getElementById('hci-supplier-name');if(select&&name){const option=select.options[select.selectedIndex];name.value=option&&option.dataset.name||'';name.readOnly=Boolean(select.value)}}
 async function saveHistoricalCI(){
   const btn=document.getElementById('hci-save');if(!btn||btn.disabled)return;const supplier=document.getElementById('hci-supplier'),gross=parseFloat(document.getElementById('hci-gross').value),paid=parseFloat(document.getElementById('hci-paid').value||0);
   const body={historical_ci_no:document.getElementById('hci-no').value.trim(),supplier_id:supplier.value,supplier_name:document.getElementById('hci-supplier-name').value.trim(),brand_name:document.getElementById('hci-brand').value.trim(),country:document.getElementById('hci-country').value,ci_date:document.getElementById('hci-date').value,actual_ship_date:document.getElementById('hci-ship-date').value,currency:document.getElementById('hci-currency').value,gross_goods_amount:gross,historical_paid_amount:paid,historical_paid_date:document.getElementById('hci-paid-date').value,payment_terms:document.getElementById('hci-terms').value.trim(),due_date:document.getElementById('hci-due').value,source_note:document.getElementById('hci-note').value.trim(),source_mode:'historical',idempotency_key:document.getElementById('hci-idempotency').value};
-  if(!body.historical_ci_no||!body.supplier_name||!body.brand_name||!body.country||!body.ci_date||!body.currency){showToast('请填写历史 CI 编号、供应商、品牌、国家、日期和币种','warning');return}if(!(gross>0)){showToast('历史货款总金额必须大于0','warning');return}if(!Number.isFinite(paid)||paid<0){showToast('历史已付款金额不能小于0','warning');return}if(paid>gross){showToast('历史已付款金额不能超过历史货款总金额','warning');return}
-  btn.disabled=true;btn.textContent=t("app.984", "\u5bfc\u5165\u4e2d\u2026");try{const result=await api('/api/historical-commercial-invoices','POST',body);showToast(result.idempotent?'已识别为重复请求，未重复记账':t("app.986", "\u5386\u53f2 CI \u5df2\u5bfc\u5165"),'success');closeModal();const mode=document.getElementById('ci-source-mode');if(mode)mode.value='historical';loadCI()}catch(e){showToast(e.message,'danger');if(document.getElementById('hci-save')){btn.disabled=false;btn.textContent='导入'}}
+  if(!body.historical_ci_no||!body.supplier_name||!body.brand_name||!body.country||!body.ci_date||!body.currency){showToast(t('gen.L5793.1','请填写历史 CI 编号、供应商、品牌、国家、日期和币种'),'warning');return}if(!(gross>0)){showToast(t('gen.L5793.2','历史货款总金额必须大于0'),'warning');return}if(!Number.isFinite(paid)||paid<0){showToast(t('gen.L5793.3','历史已付款金额不能小于0'),'warning');return}if(paid>gross){showToast(t('gen.L5793.4','历史已付款金额不能超过历史货款总金额'),'warning');return}
+  btn.disabled=true;btn.textContent=t("app.984", "\u5bfc\u5165\u4e2d\u2026");try{const result=await api('/api/historical-commercial-invoices','POST',body);showToast(result.idempotent?t('gen.L5794.1','已识别为重复请求，未重复记账'):t("app.986", "\u5386\u53f2 CI \u5df2\u5bfc\u5165"),'success');closeModal();const mode=document.getElementById('ci-source-mode');if(mode)mode.value='historical';loadCI()}catch(e){showToast(e.message,'danger');if(document.getElementById('hci-save')){btn.disabled=false;btn.textContent=t('gen.L5794.2','导入')}}
 }
 // CI-SHIP-DATE-01：补充/更正实际出货日期（明确操作按钮 + 最小化弹窗，避免误改）
 async function editActualShipDate(type, id, current){
   const url = type === 'historical' ? '/api/historical-commercial-invoices/'+id+'/actual-ship-date' : '/api/commercial-invoices/'+id+'/actual-ship-date';
   window._asdUrl = url;
-  openModal(t("app.987", "\u8865\u5145/\u66f4\u6b63\u5b9e\u9645\u51fa\u8d27\u65e5\u671f"), t('modal.body.editActualShipDate', '<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid"><div class="form-group"><label>实际出货日期 (YYYY-MM-DD) <span class="required">*</span></label><input type="date" id="asd-input" value="{v1}"></div></div><div style="font-size:12px;color:#999">仅记录真实实际出货日期；不影响 due_date、付款、应付日期、库存或 WAC。</div></div>', {v1: current||''}), '<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="submitActualShipDate()">保存</button>');
+  openModal(t("app.987", "\u8865\u5145/\u66f4\u6b63\u5b9e\u9645\u51fa\u8d27\u65e5\u671f"), t('modal.body.editActualShipDate', '<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid"><div class="form-group"><label>实际出货日期 (YYYY-MM-DD) <span class="required">*</span></label><input type="date" id="asd-input" value="{v1}"></div></div><div style="font-size:12px;color:#999">仅记录真实实际出货日期；不影响 due_date、付款、应付日期、库存或 WAC。</div></div>', {v1: current||''}), t('gen.L5800.1','<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="submitActualShipDate()">保存</button>'));
 }
 async function submitActualShipDate(){
   const val = document.getElementById('asd-input').value;
   try{
     await api(window._asdUrl, 'PUT', { actual_ship_date: val });
-    showToast('实际出货日期已保存','success');
+    showToast(t('gen.L5806.1','实际出货日期已保存'),'success');
     closeModal();
     loadCI();
   }catch(e){ showToast(e.message,'danger'); }
@@ -5811,30 +5879,30 @@ async function submitActualShipDate(){
 async function viewHistoricalCI(id,backPay,backMode){
   try{
     const h=await api('/api/historical-commercial-invoices/'+id);
-    const back=backPay?'<button class="btn btn-secondary" onclick="viewPayment(\''+backPay+'\',\''+(backMode||'view')+'\')">← 返回付款申请详情</button>':'';
+    const back=backPay?'<button class="btn btn-secondary" onclick="viewPayment(\''+backPay+'\',\''+(backMode||'view')+t('gen.L5814.1','\')">← 返回付款申请详情</button>'):'';
     window._hciCurrentId=id;
     const attaches=parseHistoricalAttachments(h.attachment);
     const canEdit=hasPermission('ci_edit');
-    const attachSection='<div class="detail-section"><h3>历史 CI 附件（留痕）</h3>'+
-      (canEdit?'<div class="flex gap-8 mb-8"><select id="hci-att-type" class="form-control" style="max-width:180px"><option value="ci_document">原始 CI</option><option value="payment_proof">历史付款凭证</option><option value="statement">对账单</option><option value="terms_proof">账期证明</option><option value="other">其他说明</option></select><button class="btn btn-primary btn-sm" onclick="uploadHistoricalAttachment()">上传附件</button></div>':'')+
+    const attachSection=t('gen.L5818.1','<div class="detail-section"><h3>历史 CI 附件（留痕）</h3>')+
+      (canEdit?t('gen.L5819.1','<div class="flex gap-8 mb-8"><select id="hci-att-type" class="form-control" style="max-width:180px"><option value="ci_document">原始 CI</option><option value="payment_proof">历史付款凭证</option><option value="statement">对账单</option><option value="terms_proof">账期证明</option><option value="other">其他说明</option></select><button class="btn btn-primary btn-sm" onclick="uploadHistoricalAttachment()">上传附件</button></div>'):'')+
       '<div id="hci-att-list">'+historicalAttachmentListHtml(attaches,canEdit)+'</div>'+
-      '<div style="font-size:12px;color:#999;margin-top:8px">附件仅作为原始证据与审计留痕，不参与应付、抵扣、抹零、未结、WAC、库存或订单预测。</div></div>';
-    openModal(t('modal.title.viewHistoricalCI', '历史 CI - {v1}', {v1: esc(h.historical_ci_no)}),t('modal.body.viewHistoricalCI', '<div class="detail-card" style="box-shadow:none;padding:0"><div style="background:#f6ffed;border:1px solid #b7eb8f;border-radius:6px;padding:10px;margin-bottom:14px;font-size:13px">source_mode = historical；仅参与采购金额和应付统计，不进入 PO/PI/PL/Inbound、库存、WAC 或订单预测。</div><div class="detail-grid">{v1}<div class="detail-item"><span class="detail-label">实际出货日期</span><span class="detail-value{v2}">{v3}</span></div>{v4}</div>{v5}</div>', {v1: [['历史CI编号',h.historical_ci_no],['供应商',h.supplier_name],['品牌',h.brand_name],['国家',h.country],['CI日期',fmtDate(h.ci_date)],['币种',h.currency],['总货款',fmtMoney(h.gross_goods_amount,h.currency)],['导入历史已付',fmtMoney(h.historical_paid_amount,h.currency)],['历史付款日期',h.historical_paid_date||'未知'],['后续已付',fmtMoney(h.subsequent_paid_amount,h.currency)],['抵扣',fmtMoney(h.deduction_amount,h.currency)],['抹零',fmtMoney(h.rounding_amount,h.currency)],['未结金额',fmtMoney(h.unpaid_amount,h.currency)],['付款状态',PAY_STATUS_MAP[h.payment_status]||h.payment_status],['付款条件',h.payment_terms||'—'],['到期日',fmtDate(h.due_date)],['原始凭证或备注',h.source_note||'—']].map(x=>'<div class="detail-item"><span class="detail-label">'+x[0]+'</span><span class="detail-value">'+esc(x[1])+'</span></div>').join(''), v2: !h.actual_ship_date?' text-warning':'', v3: h.actual_ship_date?esc(fmtDate(h.actual_ship_date)):t("app.998", "\u5f85\u8865\u5145"), v4: canEdit?'<div class="detail-item" style="grid-column:1/-1"><button class="btn btn-secondary btn-sm" onclick="editActualShipDate(\'historical\',\''+h.id+'\',\''+(h.actual_ship_date||'')+'\')">补充/更正实际出货日期</button></div>':'', v5: attachSection}),t('modal.footer.viewHistoricalCI', '{v1}{v2}<button class="btn btn-secondary" onclick="closeModal()">关闭</button>', {v1: back, v2: hasPermission('payment_view')?'<button class="btn btn-primary" onclick="viewPayment(\''+h.payment_request_id+'\')">付款与结算</button>':''}))
+      t('gen.L5821.1','<div style="font-size:12px;color:#999;margin-top:8px">附件仅作为原始证据与审计留痕，不参与应付、抵扣、抹零、未结、WAC、库存或订单预测。</div></div>');
+    openModal(t('modal.title.viewHistoricalCI', '历史 CI - {v1}', {v1: esc(h.historical_ci_no)}),t('modal.body.viewHistoricalCI', '<div class="detail-card" style="box-shadow:none;padding:0"><div style="background:#f6ffed;border:1px solid #b7eb8f;border-radius:6px;padding:10px;margin-bottom:14px;font-size:13px">source_mode = historical；仅参与采购金额和应付统计，不进入 PO/PI/PL/Inbound、库存、WAC 或订单预测。</div><div class="detail-grid">{v1}<div class="detail-item"><span class="detail-label">实际出货日期</span><span class="detail-value{v2}">{v3}</span></div>{v4}</div>{v5}</div>', {v1: [[t('gen.L5822.1','历史CI编号'),h.historical_ci_no],[t('gen.L5822.2','供应商'),h.supplier_name],[t('gen.L5822.3','品牌'),h.brand_name],[t('gen.L5822.4','国家'),h.country],[t('gen.L5822.5','CI日期'),fmtDate(h.ci_date)],[t('gen.L5822.6','币种'),h.currency],[t('gen.L5822.7','总货款'),fmtMoney(h.gross_goods_amount,h.currency)],[t('gen.L5822.8','导入历史已付'),fmtMoney(h.historical_paid_amount,h.currency)],[t('gen.L5822.9','历史付款日期'),h.historical_paid_date||t('gen.L5822.10','未知')],[t('gen.L5822.11','后续已付'),fmtMoney(h.subsequent_paid_amount,h.currency)],[t('gen.L5822.12','抵扣'),fmtMoney(h.deduction_amount,h.currency)],[t('gen.L5822.13','抹零'),fmtMoney(h.rounding_amount,h.currency)],[t('gen.L5822.14','未结金额'),fmtMoney(h.unpaid_amount,h.currency)],[t('gen.L5822.15','付款状态'),PAY_STATUS_MAP[h.payment_status]||h.payment_status],[t('gen.L5822.16','付款条件'),h.payment_terms||'—'],[t('gen.L5822.17','到期日'),fmtDate(h.due_date)],[t('gen.L5822.18','原始凭证或备注'),h.source_note||'—']].map(x=>'<div class="detail-item"><span class="detail-label">'+x[0]+'</span><span class="detail-value">'+esc(x[1])+'</span></div>').join(''), v2: !h.actual_ship_date?' text-warning':'', v3: h.actual_ship_date?esc(fmtDate(h.actual_ship_date)):t("app.998", "\u5f85\u8865\u5145"), v4: canEdit?'<div class="detail-item" style="grid-column:1/-1"><button class="btn btn-secondary btn-sm" onclick="editActualShipDate(\'historical\',\''+h.id+'\',\''+(h.actual_ship_date||'')+t('gen.L5822.19','\')">补充/更正实际出货日期</button></div>'):'', v5: attachSection}),t('modal.footer.viewHistoricalCI', '{v1}{v2}<button class="btn btn-secondary" onclick="closeModal()">关闭</button>', {v1: back, v2: hasPermission('payment_view')?'<button class="btn btn-primary" onclick="viewPayment(\''+h.payment_request_id+t('gen.L5822.20','\')">付款与结算</button>'):''}))
   }catch(e){showToast(e.message,'danger')}
 }
 function parseHistoricalAttachments(val){ if(!val)return[]; try{ const v=typeof val==='string'?JSON.parse(val):val; return Array.isArray(v)?v:(v&&typeof v==='object'?[v]:[]); }catch(e){ return []; } }
 const HCI_ATTACH_LABELS={ci_document:t("app.991", "\u539f\u59cb CI"),payment_proof:t("app.992", "\u5386\u53f2\u4ed8\u6b3e\u51ed\u8bc1"),statement:t("app.993", "\u5bf9\u8d26\u5355"),terms_proof:t("app.994", "\u8d26\u671f\u8bc1\u660e"),other:t("app.995", "\u5176\u4ed6\u8bf4\u660e")};
 function fmtAttachSize(bytes){ const b=Number(bytes)||0; if(b<1024)return b+' B'; if(b<1024*1024)return (b/1024).toFixed(1)+' KB'; return (b/1024/1024).toFixed(2)+' MB'; }
-function historicalAttachmentListHtml(list,canEdit){ const active=(list||[]).filter(a=>!a.deleted); if(!active.length)return '<div class="empty-state" style="padding:12px">暂无附件</div>'; return '<table class="data-table" style="box-shadow:none"><thead><tr><th>类型</th><th>文件名</th><th>大小</th><th>上传人</th><th>上传时间</th><th>操作</th></tr></thead><tbody>'+active.map((a,i)=>'<tr><td>'+(HCI_ATTACH_LABELS[a.category]||a.category||'其他')+'</td><td class="cell-id">'+esc(a.name||t("app.999", "\u672a\u547d\u540d"))+'</td><td>'+fmtAttachSize(a.size)+'</td><td>'+esc(a.uploaded_by_name||a.uploaded_by||'—')+'</td><td>'+esc(a.uploaded_at||'—')+'</td><td class="cell-actions"><button class="action-btn" title="下载" onclick="downloadHistoricalAttachment('+i+')">⬇️</button>'+(canEdit?'<button class="action-btn" title="删除" onclick="deleteHistoricalAttachment('+i+')">🗑️</button>':'')+'</td></tr>').join('')+'</tbody></table>'; }
-async function uploadHistoricalAttachment(){ try{ const id=window._hciCurrentId; if(!id)return; const typeSel=document.getElementById('hci-att-type'); const category=typeSel?typeSel.value:'other'; const inp=document.createElement('input'); inp.type='file'; inp.accept='.pdf,.xls,.xlsx,.doc,.docx,.jpg,.jpeg,.png,.webp'; inp.onchange=()=>{ const f=inp.files[0]; if(!f)return; const r=new FileReader(); r.onload=async e=>{ try{ await api('/api/historical-commercial-invoices/'+id+'/attachment','POST',{attachment:{name:f.name,type:f.type,size:f.size,dataUrl:e.target.result,category}}); showToast('附件已上传','success'); viewHistoricalCI(id); }catch(err){ showToast(err.message,'danger'); } }; r.readAsDataURL(f); }; inp.click(); }catch(e){ showToast(e.message,'danger'); } }
-async function downloadHistoricalAttachment(index){ try{ const id=window._hciCurrentId; if(!id)return; const h=await api('/api/historical-commercial-invoices/'+id); const active=parseHistoricalAttachments(h.attachment).filter(a=>!a.deleted); const a=active[index]; if(!a||!a.dataUrl){ showToast('附件不存在','warning'); return; } const link=document.createElement('a'); link.href=a.dataUrl; link.download=a.name||'附件'; link.click(); }catch(e){ showToast(e.message,'danger'); } }
-async function deleteHistoricalAttachment(index){ try{ const id=window._hciCurrentId; if(!id)return; const h=await api('/api/historical-commercial-invoices/'+id); const list=parseHistoricalAttachments(h.attachment); const active=list.filter(a=>!a.deleted); const target=active[index]; if(!target)return; const realIdx=list.indexOf(target); await api('/api/historical-commercial-invoices/'+id+'/attachment/'+realIdx+'/delete','POST',{}); showToast('附件已删除（软删除）','success'); viewHistoricalCI(id); }catch(e){ showToast(e.message,'danger'); } }
+function historicalAttachmentListHtml(list,canEdit){ const active=(list||[]).filter(a=>!a.deleted); if(!active.length)return t('gen.L5828.1','<div class="empty-state" style="padding:12px">暂无附件</div>'); return t('gen.L5828.2','<table class="data-table" style="box-shadow:none"><thead><tr><th>类型</th><th>文件名</th><th>大小</th><th>上传人</th><th>上传时间</th><th>操作</th></tr></thead><tbody>')+active.map((a,i)=>'<tr><td>'+(HCI_ATTACH_LABELS[a.category]||a.category||t('gen.L5828.3','其他'))+'</td><td class="cell-id">'+esc(a.name||t("app.999", "\u672a\u547d\u540d"))+'</td><td>'+fmtAttachSize(a.size)+'</td><td>'+esc(a.uploaded_by_name||a.uploaded_by||'—')+'</td><td>'+esc(a.uploaded_at||'—')+t('gen.L5828.4','</td><td class="cell-actions"><button class="action-btn" title="下载" onclick="downloadHistoricalAttachment(')+i+')">⬇️</button>'+(canEdit?t('gen.L5828.5','<button class="action-btn" title="删除" onclick="deleteHistoricalAttachment(')+i+')">🗑️</button>':'')+'</td></tr>').join('')+'</tbody></table>'; }
+async function uploadHistoricalAttachment(){ try{ const id=window._hciCurrentId; if(!id)return; const typeSel=document.getElementById('hci-att-type'); const category=typeSel?typeSel.value:'other'; const inp=document.createElement('input'); inp.type='file'; inp.accept='.pdf,.xls,.xlsx,.doc,.docx,.jpg,.jpeg,.png,.webp'; inp.onchange=()=>{ const f=inp.files[0]; if(!f)return; const r=new FileReader(); r.onload=async e=>{ try{ await api('/api/historical-commercial-invoices/'+id+'/attachment','POST',{attachment:{name:f.name,type:f.type,size:f.size,dataUrl:e.target.result,category}}); showToast(t('gen.L5829.1','附件已上传'),'success'); viewHistoricalCI(id); }catch(err){ showToast(err.message,'danger'); } }; r.readAsDataURL(f); }; inp.click(); }catch(e){ showToast(e.message,'danger'); } }
+async function downloadHistoricalAttachment(index){ try{ const id=window._hciCurrentId; if(!id)return; const h=await api('/api/historical-commercial-invoices/'+id); const active=parseHistoricalAttachments(h.attachment).filter(a=>!a.deleted); const a=active[index]; if(!a||!a.dataUrl){ showToast(t('gen.L5830.1','附件不存在'),'warning'); return; } const link=document.createElement('a'); link.href=a.dataUrl; link.download=a.name||t('gen.L5830.2','附件'); link.click(); }catch(e){ showToast(e.message,'danger'); } }
+async function deleteHistoricalAttachment(index){ try{ const id=window._hciCurrentId; if(!id)return; const h=await api('/api/historical-commercial-invoices/'+id); const list=parseHistoricalAttachments(h.attachment); const active=list.filter(a=>!a.deleted); const target=active[index]; if(!target)return; const realIdx=list.indexOf(target); await api('/api/historical-commercial-invoices/'+id+'/attachment/'+realIdx+'/delete','POST',{}); showToast(t('gen.L5831.1','附件已删除（软删除）'),'success'); viewHistoricalCI(id); }catch(e){ showToast(e.message,'danger'); } }
 async function viewCI(id, backPay, backMode){
   try{const ci=await api('/api/commercial-invoices/'+id);
     const pl=ci.packing_list||{};const plItems=pl.items||[];
     // 若来自付款申请详情，提供【← 返回付款申请详情】入口，保留原上下文（含 mode）
-    const ciBackFooter=backPay?'<button class="btn btn-secondary" onclick="viewPayment(\''+backPay+'\',\''+(backMode||'view')+'\')">← 返回付款申请详情</button><button class="btn btn-secondary" onclick="closeModal()">关闭</button>':'';
-    openModal(t('modal.title.viewCI', 'CI/PL详情 - {v1}', {v1: ci.ci_no}),t('modal.body.viewCI', '<div class="detail-card" style="box-shadow:none;padding:0"><div class="detail-section"><h3>基本信息</h3><div class="detail-grid">{v1}<div class="detail-item"><span class="detail-label">实际出货日期</span><span class="detail-value{v2}">{v3}</span></div>{v4}{v5}{v6}</div></div><div class="detail-section"><h3>CI明细</h3><div class="table-container"><table class="data-table"><thead><tr><th>SKU</th><th>数量</th><th>单价</th><th>金额</th><th>实际关税税率(%)</th><th>已入库</th><th>未入库</th></tr></thead><tbody>{v7}</tbody></table></div></div><div class="detail-section"><h3>PL明细</h3>{v8}</div><div class="detail-section"><h3>CI vs PL 数量核对</h3><div class="table-container"><table class="data-table"><thead><tr><th>SKU</th><th>CI数量</th><th>PL数量</th><th>差异</th></tr></thead><tbody>{v9}</tbody></table></div></div></div>', {v1: ['ci_no','related_po_no','related_pi_no','supplier_name','brand','country','target_warehouse','ci_date','currency','goods_amount','pi_total_amount','amount_difference','difference_reason','actual_deducted_deposit','payable_balance','transport_basis','import_duty_total','ci_status','balance_payment_status'].map(f=>'<div class="detail-item"><span class="detail-label">'+f+'</span><span class="detail-value">'+esc(ci[f])+'</span></div>').join(''), v2: !ci.actual_ship_date?' text-warning':'', v3: ci.actual_ship_date?esc(fmtDate(ci.actual_ship_date)):t("app.998", "\u5f85\u8865\u5145"), v4: hasPermission('ci_edit')?'<div class="detail-item" style="grid-column:1/-1"><button class="btn btn-secondary btn-sm" onclick="editActualShipDate(\'commercial\',\''+ci.id+'\',\''+(ci.actual_ship_date||'')+'\')">补充/更正实际出货日期</button></div>':'', v5: attachmentHtml('ci',ci.id,'attachment',ci.attachment,t("ci.003", "CI\u9644\u4ef6")), v6: attachmentHtml('ci',ci.id,'pl_attachment',ci.pl_attachment,t("ci.004", "PL\u9644\u4ef6")), v7: (ci.items||[]).map(i=>'<tr><td class="cell-id">'+esc(i.sku_code)+'</td><td class="text-right">'+i.shipped_qty+'</td><td class="text-right">'+fmtMoney(i.unit_price)+'</td><td class="text-right">'+fmtMoney(i.ci_amount)+'</td><td class="text-right">'+(i.actual_customs_rate===null||i.actual_customs_rate===''?'—':esc(i.actual_customs_rate))+'</td><td class="text-right">'+(i.inbound_qty||0)+'</td><td class="text-right">'+(i.uninbound_qty||0)+'</td></tr>').join(''), v8: plItems.length?'<div class="table-container"><table class="data-table"><thead><tr><th>SKU</th><th>每箱数量</th><th>箱数</th><th>总数量</th><th>总毛重</th><th>总净重</th><th>总体积</th></tr></thead><tbody>'+plItems.map(i=>'<tr><td class="cell-id">'+esc(i.sku_code)+'</td><td class="text-right">'+i.qty_per_carton+'</td><td class="text-right">'+i.cartons+'</td><td class="text-right">'+i.total_qty+'</td><td class="text-right">'+i.gross_weight+'</td><td class="text-right">'+i.net_weight+'</td><td class="text-right">'+i.cbm+'</td></tr>').join('')+'</tbody></table></div>':'<div class="empty-state"><div class="empty-icon">📦</div>暂无PL明细</div>', v9: (ci.pl_check||[]).map(r=>'<tr><td class="cell-id">'+esc(r.sku_code)+'</td><td class="text-right">'+r.ci_qty+'</td><td class="text-right">'+r.pl_qty+'</td><td class="text-right '+(r.diff_qty!==0?'text-danger':'')+'">'+r.diff_qty+'</td></tr>').join('')}),ciBackFooter);
+    const ciBackFooter=backPay?'<button class="btn btn-secondary" onclick="viewPayment(\''+backPay+'\',\''+(backMode||'view')+t('gen.L5836.1','\')">← 返回付款申请详情</button><button class="btn btn-secondary" onclick="closeModal()">关闭</button>'):'';
+    openModal(t('modal.title.viewCI', 'CI/PL详情 - {v1}', {v1: ci.ci_no}),t('modal.body.viewCI', '<div class="detail-card" style="box-shadow:none;padding:0"><div class="detail-section"><h3>基本信息</h3><div class="detail-grid">{v1}<div class="detail-item"><span class="detail-label">实际出货日期</span><span class="detail-value{v2}">{v3}</span></div>{v4}{v5}{v6}</div></div><div class="detail-section"><h3>CI明细</h3><div class="table-container"><table class="data-table"><thead><tr><th>SKU</th><th>数量</th><th>单价</th><th>金额</th><th>实际关税税率(%)</th><th>已入库</th><th>未入库</th></tr></thead><tbody>{v7}</tbody></table></div></div><div class="detail-section"><h3>PL明细</h3>{v8}</div><div class="detail-section"><h3>CI vs PL 数量核对</h3><div class="table-container"><table class="data-table"><thead><tr><th>SKU</th><th>CI数量</th><th>PL数量</th><th>差异</th></tr></thead><tbody>{v9}</tbody></table></div></div></div>', {v1: ['ci_no','related_po_no','related_pi_no','supplier_name','brand','country','target_warehouse','ci_date','currency','goods_amount','pi_total_amount','amount_difference','difference_reason','actual_deducted_deposit','payable_balance','transport_basis','import_duty_total','ci_status','balance_payment_status'].map(f=>'<div class="detail-item"><span class="detail-label">'+f+'</span><span class="detail-value">'+esc(ci[f])+'</span></div>').join(''), v2: !ci.actual_ship_date?' text-warning':'', v3: ci.actual_ship_date?esc(fmtDate(ci.actual_ship_date)):t("app.998", "\u5f85\u8865\u5145"), v4: hasPermission('ci_edit')?'<div class="detail-item" style="grid-column:1/-1"><button class="btn btn-secondary btn-sm" onclick="editActualShipDate(\'commercial\',\''+ci.id+'\',\''+(ci.actual_ship_date||'')+t('gen.L5837.1','\')">补充/更正实际出货日期</button></div>'):'', v5: attachmentHtml('ci',ci.id,'attachment',ci.attachment,t("ci.003", "CI\u9644\u4ef6")), v6: attachmentHtml('ci',ci.id,'pl_attachment',ci.pl_attachment,t("ci.004", "PL\u9644\u4ef6")), v7: (ci.items||[]).map(i=>'<tr><td class="cell-id">'+esc(i.sku_code)+'</td><td class="text-right">'+i.shipped_qty+'</td><td class="text-right">'+fmtMoney(i.unit_price)+'</td><td class="text-right">'+fmtMoney(i.ci_amount)+'</td><td class="text-right">'+(i.actual_customs_rate===null||i.actual_customs_rate===''?'—':esc(i.actual_customs_rate))+'</td><td class="text-right">'+(i.inbound_qty||0)+'</td><td class="text-right">'+(i.uninbound_qty||0)+'</td></tr>').join(''), v8: plItems.length?t('gen.L5837.2','<div class="table-container"><table class="data-table"><thead><tr><th>SKU</th><th>每箱数量</th><th>箱数</th><th>总数量</th><th>总毛重</th><th>总净重</th><th>总体积</th></tr></thead><tbody>')+plItems.map(i=>'<tr><td class="cell-id">'+esc(i.sku_code)+'</td><td class="text-right">'+i.qty_per_carton+'</td><td class="text-right">'+i.cartons+'</td><td class="text-right">'+i.total_qty+'</td><td class="text-right">'+i.gross_weight+'</td><td class="text-right">'+i.net_weight+'</td><td class="text-right">'+i.cbm+'</td></tr>').join('')+'</tbody></table></div>':t('gen.L5837.3','<div class="empty-state"><div class="empty-icon">📦</div>暂无PL明细</div>'), v9: (ci.pl_check||[]).map(r=>'<tr><td class="cell-id">'+esc(r.sku_code)+'</td><td class="text-right">'+r.ci_qty+'</td><td class="text-right">'+r.pl_qty+'</td><td class="text-right '+(r.diff_qty!==0?'text-danger':'')+'">'+r.diff_qty+'</td></tr>').join('')}),ciBackFooter);
     // PUR-OPS-COLLAB-01：注入上架准备分区（DOM 注入，避免改动上方大字符串）
     let opsState=null; try{ opsState=await api('/api/commercial-invoices/'+id+'/ops-prep'); }catch(e){ opsState=null; }
     let opsCands=[]; try{ opsCands=await api('/api/cc-candidates'); }catch(e){ opsCands=[]; }
@@ -5845,9 +5913,9 @@ async function viewCI(id, backPay, backMode){
 // ==================== PUR-OPS-COLLAB-01：电商运营上架准备（V1）前端 ====================
 // 仅展示/编辑：负责人、抄送(CC)、计划上架日期、就绪(Ready)状态；不含图片/Listing/广告/活动。
 function renderOpsPrepSection(ciId, opsState, opsCands){
-  if(!opsState) return '<div class="detail-section"><h3>上架准备（电商运营）</h3><div class="empty-state" style="padding:12px">无法读取上架准备状态。</div></div>';
+  if(!opsState) return t('gen.L5848.1','<div class="detail-section"><h3>上架准备（电商运营）</h3><div class="empty-state" style="padding:12px">无法读取上架准备状态。</div></div>');
   if(opsState.wac_confirmed !== true){
-    return '<div class="detail-section"><h3>上架准备（电商运营）</h3><div style="font-size:13px;color:#fa8c16;background:#fff7e6;border:1px solid #ffd591;border-radius:6px;padding:10px">CI 尚未完成成本确认（wac_confirmed=1），上架准备将在确认后开启。</div></div>';
+    return t('gen.L5850.1','<div class="detail-section"><h3>上架准备（电商运营）</h3><div style="font-size:13px;color:#fa8c16;background:#fff7e6;border:1px solid #ffd591;border-radius:6px;padding:10px">CI 尚未完成成本确认（wac_confirmed=1），上架准备将在确认后开启。</div></div>');
   }
   const canEdit = hasPermission('ci_edit');
   const ownerId = opsState.ops_owner_id || '';
@@ -5862,37 +5930,37 @@ function renderOpsPrepSection(ciId, opsState, opsCands){
 
   if(!canEdit){
     // 只读：仅展示当前状态
-    let html = '<div class="detail-section" id="ops-prep-section"><h3>上架准备（电商运营）</h3>';
+    let html = t('gen.L5865.1','<div class="detail-section" id="ops-prep-section"><h3>上架准备（电商运营）</h3>');
     html += '<div class="detail-grid">';
-    html += '<div class="detail-item"><span class="detail-label">负责人</span><span class="detail-value">'+(ownerName||ownerId||t("app.199", "\u672a\u5206\u914d"))+'</span></div>';
-    html += '<div class="detail-item"><span class="detail-label">计划上架日期</span><span class="detail-value">'+(planDate||t("app.1002", "\u5f85\u5b9a"))+'</span></div>';
-    html += '<div class="detail-item"><span class="detail-label">就绪状态</span><span class="detail-value">'+(ready?'<span class="badge badge-success">Ready</span>':'<span class="badge badge-warning">Pending</span>')+'</span></div>';
+    html += t('gen.L5867.1','<div class="detail-item"><span class="detail-label">负责人</span><span class="detail-value">')+(ownerName||ownerId||t("app.199", "\u672a\u5206\u914d"))+'</span></div>';
+    html += t('gen.L5868.1','<div class="detail-item"><span class="detail-label">计划上架日期</span><span class="detail-value">')+(planDate||t("app.1002", "\u5f85\u5b9a"))+'</span></div>';
+    html += t('gen.L5869.1','<div class="detail-item"><span class="detail-label">就绪状态</span><span class="detail-value">')+(ready?'<span class="badge badge-success">Ready</span>':'<span class="badge badge-warning">Pending</span>')+'</span></div>';
     html += '</div>';
-    html += '<div class="detail-item" style="grid-column:1/-1"><span class="detail-label">抄送(CC)</span><span class="detail-value">'+(ccList.length?ccList.map(c=>esc(c.user_name)).join('、'):'无')+'</span></div>';
-    if(ready) html += '<div style="margin-top:8px;font-size:13px;color:#52c41a;background:#f6ffed;border:1px solid #b7eb8f;border-radius:6px;padding:8px">✔ 上架准备已完成（Ready），可安排上架。</div>';
+    html += t('gen.L5871.1','<div class="detail-item" style="grid-column:1/-1"><span class="detail-label">抄送(CC)</span><span class="detail-value">')+(ccList.length?ccList.map(c=>esc(c.user_name)).join('、'):t('gen.L5871.2','无'))+'</span></div>';
+    if(ready) html += t('gen.L5872.1','<div style="margin-top:8px;font-size:13px;color:#52c41a;background:#f6ffed;border:1px solid #b7eb8f;border-radius:6px;padding:8px">✔ 上架准备已完成（Ready），可安排上架。</div>');
     html += '</div>';
     return html;
   }
 
   // 可编辑
-  const ownerOpts = '<option value="">未分配</option>' + cands.map(u=>'<option value="'+u.id+'"'+(u.id===ownerId?' selected':'')+'>'+esc(u.name)+'（'+(u.role_name||'')+'）</option>').join('');
+  const ownerOpts = t('gen.L5878.1','<option value="">未分配</option>') + cands.map(u=>'<option value="'+u.id+'"'+(u.id===ownerId?' selected':'')+'>'+esc(u.name)+'（'+(u.role_name||'')+'）</option>').join('');
   const ccChecks = cands.length ? cands.map(u=>{
     const chk = ccList.some(c=>c.user_id===u.id) ? ' checked' : '';
     return '<label class="cc-check"><input type="checkbox" class="ops-cc-cb" value="'+u.id+'"'+chk+'> '+esc(u.name)+'</label>';
-  }).join('') : '<span class="empty-state">无可选项</span>';
+  }).join('') : t('gen.L5882.1','<span class="empty-state">无可选项</span>');
 
-  let html = '<div class="detail-section" id="ops-prep-section"><h3>上架准备（电商运营）</h3>';
-  html += '<div style="font-size:12px;color:#999;margin-bottom:8px">仅管理负责人、抄送、计划上架日期与就绪状态；不含图片、Listing、广告或活动。</div>';
+  let html = t('gen.L5884.1','<div class="detail-section" id="ops-prep-section"><h3>上架准备（电商运营）</h3>');
+  html += t('gen.L5885.1','<div style="font-size:12px;color:#999;margin-bottom:8px">仅管理负责人、抄送、计划上架日期与就绪状态；不含图片、Listing、广告或活动。</div>');
   html += '<div class="form-grid" id="ops-prep-form">';
-  html += '<div class="form-group"><label>负责人 <span class="required">*</span></label><select id="ops-owner" class="form-control">'+ownerOpts+'</select></div>';
-  html += '<div class="form-group"><label>计划上架日期</label><input type="date" id="ops-plan-date" class="form-control" value="'+planDate+'"></div>';
-  html += '<div class="form-group" style="grid-column:1/-1"><label>抄送(CC)</label><div class="cc-list" id="ops-cc-list">'+ccChecks+'</div></div>';
+  html += t('gen.L5887.1','<div class="form-group"><label>负责人 <span class="required">*</span></label><select id="ops-owner" class="form-control">')+ownerOpts+'</select></div>';
+  html += t('gen.L5888.1','<div class="form-group"><label>计划上架日期</label><input type="date" id="ops-plan-date" class="form-control" value="')+planDate+'"></div>';
+  html += t('gen.L5889.1','<div class="form-group" style="grid-column:1/-1"><label>抄送(CC)</label><div class="cc-list" id="ops-cc-list">')+ccChecks+'</div></div>';
   html += '</div>';
   html += '<div class="ops-prep-actions" style="margin-top:8px">';
-  html += '<button class="btn btn-primary btn-sm" onclick="saveOpsPrep(\''+ciId+'\')">保存上架准备</button> ';
-  if(canSetReady) html += '<button class="btn btn-success btn-sm" onclick="setOpsReady(\''+ciId+'\')">标记上架准备完成（Ready）</button>';
+  html += '<button class="btn btn-primary btn-sm" onclick="saveOpsPrep(\''+ciId+t('gen.L5892.1','\')">保存上架准备</button> ');
+  if(canSetReady) html += '<button class="btn btn-success btn-sm" onclick="setOpsReady(\''+ciId+t('gen.L5893.1','\')">标记上架准备完成（Ready）</button>');
   html += '</div>';
-  if(ready) html += '<div style="margin-top:8px;font-size:13px;color:#52c41a;background:#f6ffed;border:1px solid #b7eb8f;border-radius:6px;padding:8px">✔ 上架准备已完成（Ready），可安排上架。</div>';
+  if(ready) html += t('gen.L5895.1','<div style="margin-top:8px;font-size:13px;color:#52c41a;background:#f6ffed;border:1px solid #b7eb8f;border-radius:6px;padding:8px">✔ 上架准备已完成（Ready），可安排上架。</div>');
   html += '</div>';
   return html;
 }
@@ -5901,16 +5969,16 @@ async function saveOpsPrep(ciId){
     const owner = (document.getElementById('ops-owner')||{}).value || '';
     const planDate = (document.getElementById('ops-plan-date')||{}).value || '';
     const ccs = Array.from(document.querySelectorAll('.ops-cc-cb')).filter(cb=>cb.checked).map(cb=>cb.value);
-    if(!owner){ showToast('请选择负责人','warning'); return; }
+    if(!owner){ showToast(t('gen.L5904.1','请选择负责人'),'warning'); return; }
     await api('/api/commercial-invoices/'+ciId+'/ops-prep','POST',{ owner_user_id: owner, cc_user_ids: ccs, plan_listing_date: planDate });
-    showToast('上架准备已保存','success');
+    showToast(t('gen.L5906.1','上架准备已保存'),'success');
     await refreshOpsPrep(ciId);
   }catch(e){ showToast(e.message,'danger'); }
 }
 async function setOpsReady(ciId){
   try{
     await api('/api/commercial-invoices/'+ciId+'/ops-ready','POST',{});
-    showToast('已标记上架准备完成（Ready）','success');
+    showToast(t('gen.L5913.1','已标记上架准备完成（Ready）'),'success');
     await refreshOpsPrep(ciId);
   }catch(e){ showToast(e.message,'danger'); }
 }
@@ -5924,7 +5992,7 @@ async function refreshOpsPrep(ciId){
 }
 async function createCI(){
   const suppliers=await api('/api/suppliers');const pis=await api('/api/proforma-invoices');
-  openModal(t("pi.018", "\u65b0\u5efaCI"),t('modal.body.createCI', '<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid"><div class="form-group"><label>关联PI</label><select id="nci-pi" onchange="loadPIForCI()"><option value="">无关联</option>{v1}</select></div><div class="form-group"><label>供应商 <span class="required">*</span></label><select id="nci-sup">{v2}</select></div><div class="form-group"><label>CI日期</label><input type="date" id="nci-date" value="{v3}"></div><div class="form-group"><label>实际出货日期 <span class="required">*</span></label><input type="date" id="nci-ship-date"></div><div class="form-group"><label>发货批次</label><input type="number" id="nci-batch" value="1"></div><div class="form-group"><label>币种</label><select id="nci-cur"><option>USD</option><option>RMB</option><option>IDR</option><option>MYR</option><option>THB</option></select></div></div><h4 style="margin:16px 0 8px">CI明细 <button class="btn btn-secondary btn-sm" onclick="addCIRow()">➕ 添加</button></h4><div id="ci-items"></div></div>', {v1: pis.map(p=>'<option value="'+p.id+'" data-no="'+p.pi_no+'" data-supid="'+p.supplier_id+'" data-supname="'+esc(p.supplier_name)+'" data-cur="'+p.currency+'">'+esc(p.pi_no)+' - '+esc(p.supplier_name)+'</option>').join(''), v2: suppliers.map(s=>'<option value="'+s.id+'" data-name="'+esc(s.name)+'">'+esc(s.name)+'</option>').join(''), v3: todayStr()}),'<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveNewCI()">创建</button>');
+  openModal(t("pi.018", "\u65b0\u5efaCI"),t('modal.body.createCI', '<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid"><div class="form-group"><label>关联PI</label><select id="nci-pi" onchange="loadPIForCI()"><option value="">无关联</option>{v1}</select></div><div class="form-group"><label>供应商 <span class="required">*</span></label><select id="nci-sup">{v2}</select></div><div class="form-group"><label>CI日期</label><input type="date" id="nci-date" value="{v3}"></div><div class="form-group"><label>实际出货日期 <span class="required">*</span></label><input type="date" id="nci-ship-date"></div><div class="form-group"><label>发货批次</label><input type="number" id="nci-batch" value="1"></div><div class="form-group"><label>币种</label><select id="nci-cur"><option>USD</option><option>RMB</option><option>IDR</option><option>MYR</option><option>THB</option></select></div></div><h4 style="margin:16px 0 8px">CI明细 <button class="btn btn-secondary btn-sm" onclick="addCIRow()">➕ 添加</button></h4><div id="ci-items"></div></div>', {v1: pis.map(p=>'<option value="'+p.id+'" data-no="'+p.pi_no+'" data-supid="'+p.supplier_id+'" data-supname="'+esc(p.supplier_name)+'" data-cur="'+p.currency+'">'+esc(p.pi_no)+' - '+esc(p.supplier_name)+'</option>').join(''), v2: suppliers.map(s=>'<option value="'+s.id+'" data-name="'+esc(s.name)+'">'+esc(s.name)+'</option>').join(''), v3: todayStr()}),t('gen.L5927.1','<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveNewCI()">创建</button>'));
   window._ciR=0;addCIRow();
 }
 function addCIRow(){const c=document.getElementById('ci-items');const i=window._ciR++;c.innerHTML+=t('html.addCIRow', `<div class="flex gap-8 mb-8" id="ci-r-{v1}"><input type="text" placeholder="SKU" id="ci-rs-{v2}" style="flex:1"><input type="number" placeholder="发货量" id="ci-rq-{v3}" style="width:105px"><input type="number" step="0.01" placeholder="单价" id="ci-rp-{v4}" style="width:110px"><input type="number" min="0" step="0.01" placeholder="实际关税税率(%)" id="ci-rr-{v5}" style="width:145px"><button class="btn btn-danger btn-sm" onclick="document.getElementById('ci-r-{v6}').remove()">🗑️</button></div>`, {v1: i, v2: i, v3: i, v4: i, v5: i, v6: i})}
@@ -5933,7 +6001,7 @@ async function saveNewCI(){
   const piSel=document.getElementById('nci-pi'),supSel=document.getElementById('nci-sup');const items=[];
   for(let i=0;i<window._ciR;i++){const sku=document.getElementById('ci-rs-'+i)?.value,rateEl=document.getElementById('ci-rr-'+i);if(sku)items.push({sku_code:sku,shipped_qty:parseInt(document.getElementById('ci-rq-'+i).value)||0,unit_price:parseFloat(document.getElementById('ci-rp-'+i).value)||0,actual_customs_rate:rateEl&&rateEl.value!==''?parseFloat(rateEl.value):null})}
   const d={related_pi_id:piSel.value||'',related_pi_no:piSel.options[piSel.selectedIndex]?.dataset.no||'',supplier_id:supSel.value,supplier_name:supSel.options[supSel.selectedIndex].dataset.name,ci_date:document.getElementById('nci-date').value,actual_ship_date:document.getElementById('nci-ship-date').value,shipment_batch:parseInt(document.getElementById('nci-batch').value)||1,currency:document.getElementById('nci-cur').value,items};
-  try{await api('/api/commercial-invoices','POST',d);showToast('CI创建成功','success');closeModal();loadCI()}catch(e){showToast(e.message,'danger')}
+  try{await api('/api/commercial-invoices','POST',d);showToast(t('gen.L5936.1','CI创建成功'),'success');closeModal();loadCI()}catch(e){showToast(e.message,'danger')}
 }
 async function createBalPay(id){
   try{
@@ -5953,28 +6021,28 @@ async function viewCICost(id){
     const summary=await api('/api/commercial-invoices/'+id+'/cost-summary');
     const ci=await api('/api/commercial-invoices/'+id);
     openModal(t('modal.title.viewCICost', 'CI费用管理 - {v1}', {v1: ci.ci_no}),
-      t('modal.body.viewCICost', '<div class="form-card" style="box-shadow:none;padding:0"><div class="detail-section"><h3>费用标记</h3><div class="detail-grid"><div class="detail-item"><span class="detail-label">有关税</span><span class="detail-value">{v1}</span></div><div class="detail-item"><span class="detail-label">有商检费用</span><span class="detail-value">{v2}</span></div></div>{v3}</div><div class="detail-section"><h3>分摊输入快照</h3><div class="form-grid"><div class="form-group"><label>本票实际运输计费基础</label><select id="ci-cost-basis" {v4}><option value="">无运输类费用 / 未选择</option><option value="cbm" {v5}>CBM</option><option value="kg" {v6}>KG（PL总毛重）</option></select></div><div class="form-group"><label>CI Import Duty总金额</label><input type="number" min="0" step="0.01" id="ci-duty-total" value="{v7}" {v8}></div></div><div style="font-size:12px;color:#777;margin:8px 0">运输依据和实际税率均为本票快照，不会从运输方式或SKU主数据动态重算；费用确认后锁定。</div><div class="table-container" style="box-shadow:none"><table class="data-table"><thead><tr><th>SKU</th><th>CI实际金额</th><th>本票实际关税税率(%)</th></tr></thead><tbody>{v9}</tbody></table></div>{v10}</div><div class="detail-section"><h3>费用汇总</h3><div class="detail-grid"><div class="detail-item"><span class="detail-label">商品金额</span><span class="detail-value">{v11}</span></div><div class="detail-item"><span class="detail-label">到仓费用</span><span class="detail-value">{v12}</span></div><div class="detail-item"><span class="detail-label">关税</span><span class="detail-value">{v13}</span></div><div class="detail-item"><span class="detail-label">商检费用</span><span class="detail-value">{v14}</span></div><div class="detail-item"><span class="detail-label">落地成本总额</span><span class="detail-value font-bold">{v15}</span></div><div class="detail-item"><span class="detail-label">费用确认</span><span class="detail-value">{v16}</span></div><div class="detail-item"><span class="detail-label">费用分摊</span><span class="detail-value">{v17}</span></div><div class="detail-item"><span class="detail-label">原库存导入</span><span class="detail-value">{v18}</span></div></div></div>{v19}<div class="flex gap-8 mt-16">{v20}{v21}{v22}{v23}{v24}</div></div>', {v1: summary.has_customs_duty?'✅ 是':t("ci.012", "\u274c \u5426"), v2: summary.has_inspection_fee?'✅ 是':t("ci.012", "\u274c \u5426"), v3: hasPermission('ci_edit')?'<div class="flex gap-8 mt-16"><button class="btn btn-secondary btn-sm" onclick="toggleCiCostFlag(\''+id+'\','+(summary.has_customs_duty?0:1)+',null)">切换关税标记</button><button class="btn btn-secondary btn-sm" onclick="toggleCiCostFlag(\''+id+'\',null,'+(summary.has_inspection_fee?0:1)+')">切换商检标记</button></div>':'', v4: summary.cost_confirmed?'disabled':'', v5: summary.transport_basis==='cbm'?'selected':'', v6: summary.transport_basis==='kg'?'selected':'', v7: Number(summary.import_duty_total||0), v8: summary.cost_confirmed?'disabled':'', v9: (summary.ci_items||[]).map(i=>'<tr><td class="cell-id">'+esc(i.sku_code)+'</td><td class="text-right">'+fmtMoney(i.ci_amount)+'</td><td class="text-right"><input type="number" min="0" step="0.01" class="ci-duty-rate" data-id="'+esc(i.id)+'" value="'+(i.actual_customs_rate===null||i.actual_customs_rate===''?'':esc(i.actual_customs_rate))+'" style="width:120px;text-align:right" '+(summary.cost_confirmed?'disabled':'')+'></td></tr>').join(''), v10: hasPermission('ci_edit')&&!summary.cost_confirmed?'<button class="btn btn-secondary btn-sm mt-16" onclick="saveCiCostInputs(\''+id+'\')">保存分摊输入</button>':'', v11: fmtMoney(summary.goods_amount), v12: fmtMoney(summary.warehouse_arrival_total), v13: fmtMoney(summary.customs_duty_total), v14: fmtMoney(summary.inspection_fee_total), v15: fmtMoney(summary.landing_cost_total), v16: summary.cost_confirmed?'✅ 已确认':t("ci.021", "\u274c \u672a\u786e\u8ba4"), v17: summary.cost_allocated?'✅ 已分摊':t("ci.023", "\u274c \u672a\u5206\u644a"), v18: summary.original_inventory_imported?'✅ 已完成':'❌ 未完成', v19: summary.cost_items&&summary.cost_items.length?'<div class="detail-section"><h3>费用明细</h3><div class="table-container"><table class="data-table"><thead><tr><th>类别</th><th>小类</th><th>付款申请号</th><th>应付金额</th><th>已付金额</th><th>计入落地成本</th><th>付款对象</th></tr></thead><tbody>'+summary.cost_items.map(c=>'<tr><td>'+esc(PAY_CATEGORIES[c.cost_category]||c.cost_category)+'</td><td>'+esc(c.cost_subcategory)+'</td><td class="cell-id">'+esc(c.request_no)+'</td><td class="text-right">'+fmtMoney(c.payable_amount)+'</td><td class="text-right">'+fmtMoney(c.paid_amount)+'</td><td>'+(c.include_in_landing_cost?'✅':'❌')+'</td><td>'+esc(c.payee_name)+'</td></tr>').join('')+'</tbody></table></div></div>':'', v20: hasPermission('ci_edit')&&!summary.cost_confirmed?'<button class="btn btn-secondary btn-sm" onclick="confirmCiCosts(\''+id+'\')">✅ 确认费用完整</button>':'', v21: hasPermission('ci_edit')?'<button class="btn btn-secondary btn-sm" onclick="allocateCosts(\''+id+'\')">📊 费用分摊</button>':'', v22: hasPermission('payment_create')&&summary.has_customs_duty&&!summary.cost_confirmed?'<button class="btn btn-secondary btn-sm" onclick="createCustomsDutyPay(\''+id+'\')">💰 关税付款</button>':'', v23: hasPermission('payment_create')&&summary.has_inspection_fee&&!summary.cost_confirmed?'<button class="btn btn-secondary btn-sm" onclick="createInspectionFeePay(\''+id+'\')">💰 商检付款</button>':'', v24: hasPermission('payment_create')&&!summary.cost_confirmed?'<button class="btn btn-secondary btn-sm" onclick="createWarehousePay(\''+id+'\')">🚚 到仓费用付款</button>':''}),
-      '<button class="btn btn-secondary" onclick="closeModal()">关闭</button>');
+      t('modal.body.viewCICost', '<div class="form-card" style="box-shadow:none;padding:0"><div class="detail-section"><h3>费用标记</h3><div class="detail-grid"><div class="detail-item"><span class="detail-label">有关税</span><span class="detail-value">{v1}</span></div><div class="detail-item"><span class="detail-label">有商检费用</span><span class="detail-value">{v2}</span></div></div>{v3}</div><div class="detail-section"><h3>分摊输入快照</h3><div class="form-grid"><div class="form-group"><label>本票实际运输计费基础</label><select id="ci-cost-basis" {v4}><option value="">无运输类费用 / 未选择</option><option value="cbm" {v5}>CBM</option><option value="kg" {v6}>KG（PL总毛重）</option></select></div><div class="form-group"><label>CI Import Duty总金额</label><input type="number" min="0" step="0.01" id="ci-duty-total" value="{v7}" {v8}></div></div><div style="font-size:12px;color:#777;margin:8px 0">运输依据和实际税率均为本票快照，不会从运输方式或SKU主数据动态重算；费用确认后锁定。</div><div class="table-container" style="box-shadow:none"><table class="data-table"><thead><tr><th>SKU</th><th>CI实际金额</th><th>本票实际关税税率(%)</th></tr></thead><tbody>{v9}</tbody></table></div>{v10}</div><div class="detail-section"><h3>费用汇总</h3><div class="detail-grid"><div class="detail-item"><span class="detail-label">商品金额</span><span class="detail-value">{v11}</span></div><div class="detail-item"><span class="detail-label">到仓费用</span><span class="detail-value">{v12}</span></div><div class="detail-item"><span class="detail-label">关税</span><span class="detail-value">{v13}</span></div><div class="detail-item"><span class="detail-label">商检费用</span><span class="detail-value">{v14}</span></div><div class="detail-item"><span class="detail-label">落地成本总额</span><span class="detail-value font-bold">{v15}</span></div><div class="detail-item"><span class="detail-label">费用确认</span><span class="detail-value">{v16}</span></div><div class="detail-item"><span class="detail-label">费用分摊</span><span class="detail-value">{v17}</span></div><div class="detail-item"><span class="detail-label">原库存导入</span><span class="detail-value">{v18}</span></div></div></div>{v19}<div class="flex gap-8 mt-16">{v20}{v21}{v22}{v23}{v24}</div></div>', {v1: summary.has_customs_duty?t('gen.L5956.1','✅ 是'):t("ci.012", "\u274c \u5426"), v2: summary.has_inspection_fee?t('gen.L5956.2','✅ 是'):t("ci.012", "\u274c \u5426"), v3: hasPermission('ci_edit')?'<div class="flex gap-8 mt-16"><button class="btn btn-secondary btn-sm" onclick="toggleCiCostFlag(\''+id+'\','+(summary.has_customs_duty?0:1)+t('gen.L5956.3',',null)">切换关税标记</button><button class="btn btn-secondary btn-sm" onclick="toggleCiCostFlag(\'')+id+'\',null,'+(summary.has_inspection_fee?0:1)+t('gen.L5956.4',')">切换商检标记</button></div>'):'', v4: summary.cost_confirmed?'disabled':'', v5: summary.transport_basis==='cbm'?'selected':'', v6: summary.transport_basis==='kg'?'selected':'', v7: Number(summary.import_duty_total||0), v8: summary.cost_confirmed?'disabled':'', v9: (summary.ci_items||[]).map(i=>'<tr><td class="cell-id">'+esc(i.sku_code)+'</td><td class="text-right">'+fmtMoney(i.ci_amount)+'</td><td class="text-right"><input type="number" min="0" step="0.01" class="ci-duty-rate" data-id="'+esc(i.id)+'" value="'+(i.actual_customs_rate===null||i.actual_customs_rate===''?'':esc(i.actual_customs_rate))+'" style="width:120px;text-align:right" '+(summary.cost_confirmed?'disabled':'')+'></td></tr>').join(''), v10: hasPermission('ci_edit')&&!summary.cost_confirmed?'<button class="btn btn-secondary btn-sm mt-16" onclick="saveCiCostInputs(\''+id+t('gen.L5956.5','\')">保存分摊输入</button>'):'', v11: fmtMoney(summary.goods_amount), v12: fmtMoney(summary.warehouse_arrival_total), v13: fmtMoney(summary.customs_duty_total), v14: fmtMoney(summary.inspection_fee_total), v15: fmtMoney(summary.landing_cost_total), v16: summary.cost_confirmed?t('gen.L5956.6','✅ 已确认'):t("ci.021", "\u274c \u672a\u786e\u8ba4"), v17: summary.cost_allocated?t('gen.L5956.7','✅ 已分摊'):t("ci.023", "\u274c \u672a\u5206\u644a"), v18: summary.original_inventory_imported?t('gen.L5956.8','✅ 已完成'):t('gen.L5956.9','❌ 未完成'), v19: summary.cost_items&&summary.cost_items.length?t('gen.L5956.10','<div class="detail-section"><h3>费用明细</h3><div class="table-container"><table class="data-table"><thead><tr><th>类别</th><th>小类</th><th>付款申请号</th><th>应付金额</th><th>已付金额</th><th>计入落地成本</th><th>付款对象</th></tr></thead><tbody>')+summary.cost_items.map(c=>'<tr><td>'+esc(PAY_CATEGORIES[c.cost_category]||c.cost_category)+'</td><td>'+esc(c.cost_subcategory)+'</td><td class="cell-id">'+esc(c.request_no)+'</td><td class="text-right">'+fmtMoney(c.payable_amount)+'</td><td class="text-right">'+fmtMoney(c.paid_amount)+'</td><td>'+(c.include_in_landing_cost?'✅':'❌')+'</td><td>'+esc(c.payee_name)+'</td></tr>').join('')+'</tbody></table></div></div>':'', v20: hasPermission('ci_edit')&&!summary.cost_confirmed?'<button class="btn btn-secondary btn-sm" onclick="confirmCiCosts(\''+id+t('gen.L5956.11','\')">✅ 确认费用完整</button>'):'', v21: hasPermission('ci_edit')?'<button class="btn btn-secondary btn-sm" onclick="allocateCosts(\''+id+t('gen.L5956.12','\')">📊 费用分摊</button>'):'', v22: hasPermission('payment_create')&&summary.has_customs_duty&&!summary.cost_confirmed?'<button class="btn btn-secondary btn-sm" onclick="createCustomsDutyPay(\''+id+t('gen.L5956.13','\')">💰 关税付款</button>'):'', v23: hasPermission('payment_create')&&summary.has_inspection_fee&&!summary.cost_confirmed?'<button class="btn btn-secondary btn-sm" onclick="createInspectionFeePay(\''+id+t('gen.L5956.14','\')">💰 商检付款</button>'):'', v24: hasPermission('payment_create')&&!summary.cost_confirmed?'<button class="btn btn-secondary btn-sm" onclick="createWarehousePay(\''+id+t('gen.L5956.15','\')">🚚 到仓费用付款</button>'):''}),
+      '<button class="btn btn-secondary" onclick="closeModal()">'+t("common.close","关闭")+'<</button>');
   }catch(e){showToast(e.message,'danger')}
 }
 async function toggleCiCostFlag(id,duty,insp){
   const d={};if(duty!==null)d.has_customs_duty=duty;if(insp!==null)d.has_inspection_fee=insp;
-  try{await api('/api/commercial-invoices/'+id+'/cost-flags','PUT',d);showToast('费用标记已更新','success');viewCICost(id)}catch(e){showToast(e.message,'danger')}
+  try{await api('/api/commercial-invoices/'+id+'/cost-flags','PUT',d);showToast(''+t("toast.cost_flag_updated","费用标记已更新")+'','success');viewCICost(id)}catch(e){showToast(e.message,'danger')}
 }
 async function saveCiCostInputs(id,quiet){
   const basis=document.getElementById('ci-cost-basis'),duty=document.getElementById('ci-duty-total');
   if(!basis||!duty)return false;
   const items=[...document.querySelectorAll('.ci-duty-rate')].map(input=>({id:input.dataset.id,actual_customs_rate:input.value===''?null:parseFloat(input.value)}));
   const body={transport_basis:basis.value||null,import_duty_total:parseFloat(duty.value)||0,items};
-  if(body.import_duty_total<0||items.some(i=>i.actual_customs_rate!==null&&(!Number.isFinite(i.actual_customs_rate)||i.actual_customs_rate<0))){showToast('Import Duty和实际关税税率不能小于0','warning');return false}
-  try{await api('/api/commercial-invoices/'+id+'/cost-inputs','PUT',body);if(!quiet){showToast('分摊输入已保存','success');viewCICost(id)}return true}catch(e){showToast(e.message,'danger');return false}
+  if(body.import_duty_total<0||items.some(i=>i.actual_customs_rate!==null&&(!Number.isFinite(i.actual_customs_rate)||i.actual_customs_rate<0))){showToast(''+t("validation.duty_rate_positive","Import Duty和实际关税税率不能小于0")+'','warning');return false}
+  try{await api('/api/commercial-invoices/'+id+'/cost-inputs','PUT',body);if(!quiet){showToast(''+t("toast.cost_inputs_saved","分摊输入已保存")+'','success');viewCICost(id)}return true}catch(e){showToast(e.message,'danger');return false}
 }
 async function createWarehousePay(ciId){
   try{
   let countryField='';
-  if(!ciId){const countries=(await api('/api/countries')).filter(c=>c.status==='active');countryField='<div class="form-group"><label>'+t('term.fin.expense_country','费用归属国家')+' <span class="required">*</span></label><select id="war-country"><option value="">请选择</option>'+countries.map(c=>'<option value="'+esc(c.name)+'">'+esc(c.name)+'（'+esc(c.code)+'）</option>').join('')+'</select></div>'}
+  if(!ciId){const countries=(await api('/api/countries')).filter(c=>c.status==='active');countryField='<div class="form-group"><label>'+t('term.fin.expense_country','费用归属国家')+' <span class="required">*</span></label><select id="war-country"><option value="">'+t("common.please_select","请选择")+'</option>'+countries.map(c=>'<option value="'+esc(c.name)+'">'+esc(c.name)+'（'+esc(c.code)+'）</option>').join('')+'</select></div>'}
   openModal(t('modal.title.createWarehousePay','创建到仓费用付款'),
-    t('modal.body.createWarehousePay', `<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid"><div class="form-group"><label>费用小类</label><select id="war-sub"><option value="freight">运费</option><option value="customs_clearance">清关费</option><option value="port_charges">港口费</option><option value="delivery">派送费</option><option value="warehouse">仓储费</option><option value="other_local">其他本地费</option></select></div><div class="form-group"><label>付款对象</label><input type="text" id="war-payee" placeholder="货代/服务商名称"></div><div class="form-group"><label>应付金额</label><input type="number" step="0.01" id="war-amt"></div><div class="form-group"><label>币种</label><select id="war-cur"><option>USD</option><option>RMB</option><option>IDR</option><option>MYR</option><option>THB</option></select></div>{v1}<div class="form-group"><label>计入落地成本</label><select id="war-lic"><option value="1">是</option><option value="0">否</option></select></div><div class="form-group"><label>备注</label><input type="text" id="war-rem"></div><div class="form-group"><label>是否抵扣</label><select id="war-ded" onchange="document.getElementById('war-ded-amt').disabled=this.value==='0'"><option value="0">否</option><option value="1">是</option></select></div><div class="form-group"><label>抵扣金额</label><input type="number" step="0.01" id="war-ded-amt" value="0" disabled></div><div class="form-group"><label>抵扣来源类型</label><select id="war-ded-type"><option value="">选择</option><option value="other_payment">其他付款多付</option><option value="price_diff">价格差异</option><option value="quality_claim">质量索赔</option><option value="other">其他</option></select></div><div class="form-group form-group-full"><label>抵扣说明</label><input type="text" id="war-ded-desc"></div></div></div>`, {v1: countryField}),
+    t('modal.body.createWarehousePay', `<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid"><div class="form-group"><label>费用小类</label><select id="war-sub"><option value="freight">运费</option><option value="customs_clearance">清关费</option><option value="port_charges">港口费</option><option value="delivery">派送费</option><option value="warehouse">仓储费</option><option value="other_local">其他本地费</option></select></div><div class="form-group"><label>付款对象</label><input type="text" id="war-payee" placeholder="货代/服务商名称"></div><div class="form-group"><label>应付金额</label><input type="number" step="0.01" id="war-amt"></div><div class="form-group"><label>币种</label><select id="war-cur"><option>USD</option><option>RMB</option><option>IDR</option><option>MYR</option><option>THB</option></select></div>{v1}<div class="form-group"><label>计入落地成本</label><select id="war-lic"><option value="1">'+t('term.yes','是')+'</option><option value="0">'+t('term.no','否')+'</option></select></div><div class="form-group"><label>备注</label><input type="text" id="war-rem"></div><div class="form-group"><label>是否抵扣</label><select id="war-ded" onchange="document.getElementById('war-ded-amt').disabled=this.value==='0'"><option value="0">否</option><option value="1">是</option></select></div><div class="form-group"><label>抵扣金额</label><input type="number" step="0.01" id="war-ded-amt" value="0" disabled></div><div class="form-group"><label>抵扣来源类型</label><select id="war-ded-type"><option value="">选择</option><option value="other_payment">其他付款多付</option><option value="price_diff">价格差异</option><option value="quality_claim">质量索赔</option><option value="other">其他</option></select></div><div class="form-group form-group-full"><label>抵扣说明</label><input type="text" id="war-ded-desc"></div></div></div>`, {v1: countryField}),
     t('modal.footer.createWarehousePay', `<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveWarehousePay('{v1}')">创建</button>`, {v1: ciId}));
   }catch(e){showToast(e.message,'danger')}
 }
@@ -6022,14 +6090,14 @@ async function saveInspectionFeePay(ciId){
 
 // ==================== 物流管理 ====================
 async function renderLogistics(){
-  document.getElementById('content-inner').innerHTML=t('html.renderLogistics', '<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>状态</label><select id="log-fs"><option value="">全部</option><option value="pending">待提货</option><option value="picked_up">已提货</option><option value="in_transit">运输中</option><option value="arrived">到港</option><option value="customs">清关中</option><option value="cleared">已清关</option><option value="delivering">派送中</option><option value="completed">已完成</option></select></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadLog()">搜索</button>{v1}</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🚢 物流批次</div></div><div id="log-table"></div></div>', {v1: hasPermission('logistics_create')?'<button class="btn btn-primary btn-sm" onclick="createLog()">➕ 新建</button>':''});
+  document.getElementById('content-inner').innerHTML=t('html.renderLogistics', '<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>状态</label><select id="log-fs"><option value="">全部</option><option value="pending">待提货</option><option value="picked_up">已提货</option><option value="in_transit">运输中</option><option value="arrived">到港</option><option value="customs">清关中</option><option value="cleared">已清关</option><option value="delivering">派送中</option><option value="completed">已完成</option></select></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadLog()">搜索</button>{v1}</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🚢 物流批次</div></div><div id="log-table"></div></div>', {v1: hasPermission('logistics_create')?t('gen.L6025.1','<button class="btn btn-primary btn-sm" onclick="createLog()">➕ 新建</button>'):''});
   loadLog();
 }
 async function loadLog(){
   try{
     const s=document.getElementById('log-fs')?.value||'';
     const data=await api('/api/logistics-batches?status='+s);
-    document.getElementById('log-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">🚢</div>暂无物流数据</div>':'<div class="table-container" style="box-shadow:none;border-radius:0;overflow-x:auto"><table class="data-table"><thead><tr><th>批次号</th><th>关联CI</th><th>货代</th><th>方式</th><th>起运港</th><th>目的港</th><th>国家</th><th>提货</th><th>出发</th><th>到港</th><th>清关完成</th><th>入库完成</th><th>箱数</th><th>CBM</th><th>综合运费</th><th>关税</th><th>状态</th><th>费用</th><th>操作</th></tr></thead><tbody>'+data.map(l=>'<tr><td class="cell-id">'+esc(l.batch_no)+'</td><td class="cell-id">'+esc(l.related_ci_no)+'</td><td>'+esc(l.forwarder_name)+'</td><td>'+esc(l.transport_mode)+'</td><td>'+esc(l.origin_port)+'</td><td>'+esc(l.dest_port)+'</td><td>'+esc(l.target_country)+'</td><td class="cell-date">'+fmtDate(l.pickup_date)+'</td><td class="cell-date">'+fmtDate(l.depart_date)+'</td><td class="cell-date">'+fmtDate(l.actual_arrival_date)+'</td><td class="cell-date">'+fmtDate(l.customs_end_date)+'</td><td class="cell-date">'+fmtDate(l.inbound_complete_date)+'</td><td class="text-right">'+(l.total_cartons||0)+'</td><td class="text-right">'+(l.total_cbm||0)+'</td><td class="text-right">'+fmtMoney(l.total_freight,l.freight_currency)+'</td><td class="text-right">'+fmtMoney(l.customs_duty,l.freight_currency)+'</td><td><span class="status-badge '+(l.logistics_status==='completed'?'status-completed':'status-pending')+'">'+esc(l.logistics_status)+'</span></td><td><span class="status-badge '+(l.fee_status==='paid'?'status-paid':'status-unpaid')+'">'+esc(l.fee_status)+'</span></td><td class="cell-actions"><button class="action-btn" onclick="viewLog(\''+l.id+'\')">👁️</button>'+(l.total_freight>0&&l.fee_status==='unpaid'&&hasPermission('payment_create')?'<button class="action-btn" onclick="createFrtPay(\''+l.id+'\')" title="\u8fd0\u8d39\u4ed8\u6b3e">💰</button>':'')+(l.customs_duty>0&&l.fee_status==='unpaid'&&hasPermission('payment_create')?'<button class="action-btn" onclick="createDutyPay(\''+l.id+'\')" title="\u5173\u7a0e\u4ed8\u6b3e">🏛️</button>':'')+'</td></tr>').join('')+'</tbody></table></div>';
+    document.getElementById('log-table').innerHTML=!data.length?t('gen.L6032.1','<div class="empty-state"><div class="empty-icon">🚢</div>暂无物流数据</div>'):t('gen.L6032.2','<div class="table-container" style="box-shadow:none;border-radius:0;overflow-x:auto"><table class="data-table"><thead><tr><th>批次号</th><th>关联CI</th><th>货代</th><th>方式</th><th>起运港</th><th>目的港</th><th>国家</th><th>提货</th><th>出发</th><th>到港</th><th>清关完成</th><th>入库完成</th><th>箱数</th><th>CBM</th><th>综合运费</th><th>关税</th><th>状态</th><th>费用</th><th>操作</th></tr></thead><tbody>')+data.map(l=>'<tr class="clickable-detail-row" onclick="rowClickView(event,\'viewLog\',\''+l.id+'\')"><td class="cell-id">'+esc(l.batch_no)+'</td><td class="cell-id">'+esc(l.related_ci_no)+'</td><td>'+esc(l.forwarder_name)+'</td><td>'+esc(l.transport_mode)+'</td><td>'+esc(l.origin_port)+'</td><td>'+esc(l.dest_port)+'</td><td>'+esc(l.target_country)+'</td><td class="cell-date">'+fmtDate(l.pickup_date)+'</td><td class="cell-date">'+fmtDate(l.depart_date)+'</td><td class="cell-date">'+fmtDate(l.actual_arrival_date)+'</td><td class="cell-date">'+fmtDate(l.customs_end_date)+'</td><td class="cell-date">'+fmtDate(l.inbound_complete_date)+'</td><td class="text-right">'+(l.total_cartons||0)+'</td><td class="text-right">'+(l.total_cbm||0)+'</td><td class="text-right">'+fmtMoney(l.total_freight,l.freight_currency)+'</td><td class="text-right">'+fmtMoney(l.customs_duty,l.freight_currency)+'</td><td><span class="status-badge '+(l.logistics_status==='completed'?'status-completed':'status-pending')+'">'+esc(l.logistics_status)+'</span></td><td><span class="status-badge '+(l.fee_status==='paid'?'status-paid':'status-unpaid')+'">'+esc(l.fee_status)+'</span></td><td class="cell-actions"><button class="action-btn" onclick="viewLog(\''+l.id+'\')">👁️</button>'+(l.total_freight>0&&l.fee_status==='unpaid'&&hasPermission('payment_create')?'<button class="action-btn" onclick="createFrtPay(\''+l.id+t('gen.L6032.3','\')" title="\u8fd0\u8d39\u4ed8\u6b3e">💰</button>'):'')+(l.customs_duty>0&&l.fee_status==='unpaid'&&hasPermission('payment_create')?'<button class="action-btn" onclick="createDutyPay(\''+l.id+t('gen.L6032.4','\')" title="\u5173\u7a0e\u4ed8\u6b3e">🏛️</button>'):'')+'</td></tr>').join('')+'</tbody></table></div>';
   }catch(e){showFlash(e.message,'danger')}
 }
 async function viewLog(id){
@@ -6039,12 +6107,12 @@ async function viewLog(id){
 }
 async function createLog(){
   const ffs=await api('/api/freight-forwarders');const cis=await api('/api/commercial-invoices?status=shipped');
-  openModal(t("ci.025", "\u65b0\u5efa\u7269\u6d41\u6279\u6b21"),t('modal.body.createLog', '<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid"><div class="form-group"><label>关联CI</label><select id="nlog-ci"><option value="">无</option>{v1}</select></div><div class="form-group"><label>货代</label><select id="nlog-ff"><option value="">选择</option>{v2}</select></div><div class="form-group"><label>运输方式</label><select id="nlog-mode"><option value="sea">海运</option><option value="air">空运</option><option value="land">陆运</option><option value="express">快递</option></select></div><div class="form-group"><label>起运港</label><input type="text" id="nlog-origin"></div><div class="form-group"><label>目的港</label><input type="text" id="nlog-dest"></div><div class="form-group"><label>目标国家</label><input type="text" id="nlog-country"></div><div class="form-group"><label>目标仓库</label><input type="text" id="nlog-wh"></div><div class="form-group"><label>提货日期</label><input type="date" id="nlog-pickup"></div><div class="form-group"><label>出发日期</label><input type="date" id="nlog-depart"></div><div class="form-group"><label>预计到港</label><input type="date" id="nlog-eta"></div><div class="form-group"><label>运费币种</label><select id="nlog-cur"><option>USD</option><option>RMB</option><option>IDR</option><option>MYR</option><option>THB</option></select></div><div class="form-group"><label>国际运费</label><input type="number" step="0.01" id="nlog-intl" value="0"></div><div class="form-group"><label>本地杂费</label><input type="number" step="0.01" id="nlog-local" value="0"></div><div class="form-group"><label>清关服务费</label><input type="number" step="0.01" id="nlog-csv" value="0"></div><div class="form-group"><label>派送费</label><input type="number" step="0.01" id="nlog-delivery" value="0"></div><div class="form-group"><label>关税</label><input type="number" step="0.01" id="nlog-duty" value="0"></div><div class="form-group"><label>VAT/GST</label><input type="number" step="0.01" id="nlog-vat" value="0"></div><div class="form-group"><label>其他费用</label><input type="number" step="0.01" id="nlog-other" value="0"></div></div></div>', {v1: cis.map(c=>'<option value="'+c.id+'" data-no="'+c.ci_no+'">'+esc(c.ci_no)+' - '+esc(c.supplier_name)+'</option>').join(''), v2: ffs.map(f=>'<option value="'+f.id+'" data-name="'+esc(f.name)+'">'+esc(f.name)+'</option>').join('')}),'<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveNewLog()">创建</button>');
+  openModal(t("ci.025", "\u65b0\u5efa\u7269\u6d41\u6279\u6b21"),t('modal.body.createLog', '<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid"><div class="form-group"><label>关联CI</label><select id="nlog-ci"><option value="">无</option>{v1}</select></div><div class="form-group"><label>货代</label><select id="nlog-ff"><option value="">选择</option>{v2}</select></div><div class="form-group"><label>运输方式</label><select id="nlog-mode"><option value="sea">海运</option><option value="air">空运</option><option value="land">陆运</option><option value="express">快递</option></select></div><div class="form-group"><label>起运港</label><input type="text" id="nlog-origin"></div><div class="form-group"><label>目的港</label><input type="text" id="nlog-dest"></div><div class="form-group"><label>目标国家</label><input type="text" id="nlog-country"></div><div class="form-group"><label>目标仓库</label><input type="text" id="nlog-wh"></div><div class="form-group"><label>提货日期</label><input type="date" id="nlog-pickup"></div><div class="form-group"><label>出发日期</label><input type="date" id="nlog-depart"></div><div class="form-group"><label>预计到港</label><input type="date" id="nlog-eta"></div><div class="form-group"><label>运费币种</label><select id="nlog-cur"><option>USD</option><option>RMB</option><option>IDR</option><option>MYR</option><option>THB</option></select></div><div class="form-group"><label>国际运费</label><input type="number" step="0.01" id="nlog-intl" value="0"></div><div class="form-group"><label>本地杂费</label><input type="number" step="0.01" id="nlog-local" value="0"></div><div class="form-group"><label>清关服务费</label><input type="number" step="0.01" id="nlog-csv" value="0"></div><div class="form-group"><label>派送费</label><input type="number" step="0.01" id="nlog-delivery" value="0"></div><div class="form-group"><label>关税</label><input type="number" step="0.01" id="nlog-duty" value="0"></div><div class="form-group"><label>VAT/GST</label><input type="number" step="0.01" id="nlog-vat" value="0"></div><div class="form-group"><label>其他费用</label><input type="number" step="0.01" id="nlog-other" value="0"></div></div></div>', {v1: cis.map(c=>'<option value="'+c.id+'" data-no="'+c.ci_no+'">'+esc(c.ci_no)+' - '+esc(c.supplier_name)+'</option>').join(''), v2: ffs.map(f=>'<option value="'+f.id+'" data-name="'+esc(f.name)+'">'+esc(f.name)+'</option>').join('')}),t('gen.L6042.1','<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveNewLog()">创建</button>'));
 }
 async function saveNewLog(){
   const ciSel=document.getElementById('nlog-ci'),ffSel=document.getElementById('nlog-ff');
   const d={related_ci_id:ciSel.value||'',related_ci_no:ciSel.options[ciSel.selectedIndex]?.dataset.no||'',forwarder_id:ffSel.value||'',forwarder_name:ffSel.options[ffSel.selectedIndex]?.dataset.name||'',transport_mode:document.getElementById('nlog-mode').value,origin_port:document.getElementById('nlog-origin').value,dest_port:document.getElementById('nlog-dest').value,target_country:document.getElementById('nlog-country').value,target_warehouse:document.getElementById('nlog-wh').value,pickup_date:document.getElementById('nlog-pickup').value,depart_date:document.getElementById('nlog-depart').value,eta_date:document.getElementById('nlog-eta').value,freight_currency:document.getElementById('nlog-cur').value,international_freight:parseFloat(document.getElementById('nlog-intl').value)||0,local_charges:parseFloat(document.getElementById('nlog-local').value)||0,customs_service_fee:parseFloat(document.getElementById('nlog-csv').value)||0,delivery_fee:parseFloat(document.getElementById('nlog-delivery').value)||0,customs_duty:parseFloat(document.getElementById('nlog-duty').value)||0,vat_gst:parseFloat(document.getElementById('nlog-vat').value)||0,other_fees:parseFloat(document.getElementById('nlog-other').value)||0};
-  try{await api('/api/logistics-batches','POST',d);showToast('创建成功','success');closeModal();loadLog()}catch(e){showToast(e.message,'danger')}
+  try{await api('/api/logistics-batches','POST',d);showToast(t('gen.L6047.1','创建成功'),'success');closeModal();loadLog()}catch(e){showToast(e.message,'danger')}
 }
 async function createFrtPay(id){
   try{
@@ -6057,29 +6125,29 @@ async function createFrtPay(id){
 async function createDutyPay(id){
   try{
     const log=await api('/api/logistics-batches/'+id);
-    if(!log.related_ci_id){showToast('该物流批次未关联CI，请从CI费用管理页面创建关税付款','warning');return}
+    if(!log.related_ci_id){showToast(''+t("toast.duty_no_related_ci","该物流批次未关联CI，请从CI费用管理页面创建关税付款")+'','warning');return}
     const ci=await api('/api/commercial-invoices/'+log.related_ci_id);
-    if(!ci.has_customs_duty){showToast('该CI未标记为有关税，请先在CI费用管理中设置','warning');return}
+    if(!ci.has_customs_duty){showToast(''+t("toast.ci_no_customs_set","该CI未标记为有关税，请先在CI费用管理中设置")+'','warning');return}
     createCustomsDutyPay(log.related_ci_id);
   }catch(e){showToast(e.message,'danger')}
 }
 
 // ==================== 入库管理 ====================
 async function renderInbound(){
-  document.getElementById('content-inner').innerHTML=t('html.renderInbound', '<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>状态</label><select id="in-fs"><option value="">全部</option><option value="pending">待入库</option><option value="completed">已完成</option><option value="abnormal">异常</option></select></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadIn()">搜索</button>{v1}</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">📥 入库记录</div></div><div id="in-table"></div></div>', {v1: hasPermission('inbound_create')?'<button class="btn btn-primary btn-sm" onclick="openBatchImportInbound()">📥 批量导入</button><button class="btn btn-primary btn-sm" onclick="createIn()">➕ 新建入库</button>':''});
+  document.getElementById('content-inner').innerHTML=t('html.renderInbound', '<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>状态</label><select id="in-fs"><option value="">全部</option><option value="pending">待入库</option><option value="completed">已完成</option><option value="abnormal">异常</option></select></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadIn()">搜索</button>{v1}</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">📥 入库记录</div></div><div id="in-table"></div></div>', {v1: hasPermission('inbound_create')?t('gen.L6069.1','<button class="btn btn-primary btn-sm" onclick="openBatchImportInbound()">📥 批量导入</button><button class="btn btn-primary btn-sm" onclick="createIn()">➕ 新建入库</button>'):''});
   loadIn();
 }
 async function loadIn(){
   try{
     const s=document.getElementById('in-fs')?.value||'';
     const data=await api('/api/inbound-records?status='+s);
-    document.getElementById('in-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">📥</div>暂无入库数据</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>入库单号</th><th>来源CI</th><th>来源PL</th><th>物流批次</th><th>国家</th><th>仓库</th><th>日期</th><th>SKU</th><th>产品名</th><th>CI发货</th><th>应入库</th><th>实际入库</th><th>累计</th><th>未入库</th><th>异常</th><th>状态</th></tr></thead><tbody>'+data.map(i=>'<tr><td class="cell-id">'+esc(i.inbound_no)+'</td><td class="cell-id">'+esc(i.source_ci_no)+'</td><td class="cell-id">'+esc(i.source_pl_no||'-')+'</td><td class="cell-id">'+esc(i.source_logistics_batch_no)+'</td><td>'+esc(i.country)+'</td><td>'+esc(i.warehouse)+'</td><td class="cell-date">'+fmtDate(i.inbound_date)+'</td><td class="cell-id">'+esc(i.sku_code)+'</td><td>'+esc(i.product_name)+'</td><td class="text-right">'+(i.ci_shipped_qty||0)+'</td><td class="text-right">'+(i.expected_qty||0)+'</td><td class="text-right font-bold">'+(i.actual_qty||0)+'</td><td class="text-right">'+(i.accumulated_qty||0)+'</td><td class="text-right">'+(i.uninbound_qty||0)+'</td><td class="text-right '+(i.abnormal_qty>0?'text-danger':'')+'">'+(i.abnormal_qty||0)+'</td><td><span class="status-badge '+(i.inbound_status==='completed'?'status-completed':i.inbound_status==='abnormal'?'status-danger':'status-pending')+'">'+esc(i.inbound_status)+'</span></td></tr>').join('')+'</tbody></table></div>';
+    document.getElementById('in-table').innerHTML=!data.length?t('gen.L6076.1','<div class="empty-state"><div class="empty-icon">📥</div>暂无入库数据</div>'):t('gen.L6076.2','<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>入库单号</th><th>来源CI</th><th>来源PL</th><th>物流批次</th><th>国家</th><th>仓库</th><th>日期</th><th>SKU</th><th>产品名</th><th>CI发货</th><th>应入库</th><th>实际入库</th><th>累计</th><th>未入库</th><th>异常</th><th>状态</th></tr></thead><tbody>')+data.map(i=>'<tr><td class="cell-id">'+esc(i.inbound_no)+'</td><td class="cell-id">'+esc(i.source_ci_no)+'</td><td class="cell-id">'+esc(i.source_pl_no||'-')+'</td><td class="cell-id">'+esc(i.source_logistics_batch_no)+'</td><td>'+esc(i.country)+'</td><td>'+esc(i.warehouse)+'</td><td class="cell-date">'+fmtDate(i.inbound_date)+'</td><td class="cell-id">'+esc(i.sku_code)+'</td><td>'+esc(i.product_name)+'</td><td class="text-right">'+(i.ci_shipped_qty||0)+'</td><td class="text-right">'+(i.expected_qty||0)+'</td><td class="text-right font-bold">'+(i.actual_qty||0)+'</td><td class="text-right">'+(i.accumulated_qty||0)+'</td><td class="text-right">'+(i.uninbound_qty||0)+'</td><td class="text-right '+(i.abnormal_qty>0?'text-danger':'')+'">'+(i.abnormal_qty||0)+'</td><td><span class="status-badge '+(i.inbound_status==='completed'?'status-completed':i.inbound_status==='abnormal'?'status-danger':'status-pending')+'">'+esc(i.inbound_status)+'</span></td></tr>').join('')+'</tbody></table></div>';
   }catch(e){showFlash(e.message,'danger')}
 }
 // P1-STATE-01D：新建入库改为「选择 PL 明细」驱动，写入时提交 source_pl_id + source_pl_item_id
 async function createIn(){
   const pls=await api('/api/packing-lists');
-  openModal(t("app.1029", "\u65b0\u5efa\u5165\u5e93\uff08\u5173\u8054PL\u660e\u7ec6\uff09"),t('modal.body.createIn', '<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid"><div class="form-group"><label>来源PL <span class="required">*</span></label><select id="nin-pl" onchange="loadPLForIn()"><option value="">选择PL</option>{v1}</select></div><div class="form-group"><label>入库日期 <span class="required">*</span></label><input type="date" id="nin-date" value="{v2}"></div><div class="form-group"><label>国家</label><input type="text" id="nin-country"></div><div class="form-group"><label>仓库</label><input type="text" id="nin-wh"></div><div class="form-group"><label>物流批次号</label><input type="text" id="nin-log"></div><div class="form-group"><label>派送批次号</label><input type="text" id="nin-del"></div></div><div id="in-pl-items" style="margin-top:16px"></div></div>', {v1: pls.map(p=>'<option value="'+p.id+'" data-no="'+esc(p.pl_no)+'">'+esc(p.pl_no)+' - '+esc(p.related_ci_no||'')+' - '+esc(p.supplier_name||'')+'</option>').join(''), v2: todayStr()}),'<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveNewIn()">创建入库</button>');
+  openModal(t("app.1029", "\u65b0\u5efa\u5165\u5e93\uff08\u5173\u8054PL\u660e\u7ec6\uff09"),t('modal.body.createIn', '<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid"><div class="form-group"><label>来源PL <span class="required">*</span></label><select id="nin-pl" onchange="loadPLForIn()"><option value="">选择PL</option>{v1}</select></div><div class="form-group"><label>入库日期 <span class="required">*</span></label><input type="date" id="nin-date" value="{v2}"></div><div class="form-group"><label>国家</label><input type="text" id="nin-country"></div><div class="form-group"><label>仓库</label><input type="text" id="nin-wh"></div><div class="form-group"><label>物流批次号</label><input type="text" id="nin-log"></div><div class="form-group"><label>派送批次号</label><input type="text" id="nin-del"></div></div><div id="in-pl-items" style="margin-top:16px"></div></div>', {v1: pls.map(p=>'<option value="'+p.id+'" data-no="'+esc(p.pl_no)+'">'+esc(p.pl_no)+' - '+esc(p.related_ci_no||'')+' - '+esc(p.supplier_name||'')+'</option>').join(''), v2: todayStr()}),t('gen.L6082.1','<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveNewIn()">创建入库</button>'));
 }
 async function loadPLForIn(){
   const plSel=document.getElementById('nin-pl');
@@ -6101,7 +6169,7 @@ async function saveNewIn(){
       const q=parseInt(document.getElementById('in-q-'+i)?.value)||0;
       if(q>0)await api('/api/inbound-records','POST',{source_pl_id:plId,source_pl_item_id:items[i].id,source_logistics_batch_no:log,delivery_batch_no:del,country,warehouse:wh,inbound_date:date,sku_code:items[i].sku_code,actual_qty:q})
     }
-    showToast('入库完成','success');closeModal();loadIn();
+    showToast(t('gen.L6104.1','入库完成'),'success');closeModal();loadIn();
   }catch(e){showToast(e.message,'danger')}
 }
 
@@ -6135,15 +6203,15 @@ function openBatchImportInbound(){
         'ondragleave="this.style.borderColor=\'#d9d9d9\';this.style.background=\'#fafafa\'" '+
         'ondrop="event.preventDefault();this.style.borderColor=\'#d9d9d9\';this.style.background=\'#fafafa\';handleInboundFile(event.dataTransfer.files[0])">'+
         '<div style="font-size:48px;color:#1890ff;margin-bottom:8px">📤</div>'+
-        '<div style="font-size:14px;color:#333;margin-bottom:4px">点击上传或拖拽文件到此处</div>'+
-        '<div style="font-size:12px;color:#999">支持 .xlsx / .csv 格式</div>'+
+        t('gen.L6138.1','<div style="font-size:14px;color:#333;margin-bottom:4px">点击上传或拖拽文件到此处</div>')+
+        t('gen.L6139.1','<div style="font-size:12px;color:#999">支持 .xlsx / .csv 格式</div>')+
       '</div>'+
       '<input type="file" id="bi-file-input" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleInboundFile(this.files[0])">'+
       '<div id="bi-preview" style="margin-top:16px"></div>'+
     '</div>',
-    '<button class="btn btn-secondary" onclick="downloadInboundTemplate()">下载模板</button>'+
-    '<button class="btn btn-secondary" onclick="closeModal()">关闭</button>'+
-    '<button class="btn btn-primary" id="bi-import-btn" onclick="submitBatchImportInbound()" disabled>开始导入</button>'
+    t('gen.L6144.1','<button class="btn btn-secondary" onclick="downloadInboundTemplate()">下载模板</button>')+
+    t('gen.L6145.1','<button class="btn btn-secondary" onclick="closeModal()">关闭</button>')+
+    t('gen.L6146.1','<button class="btn btn-primary" id="bi-import-btn" onclick="submitBatchImportInbound()" disabled>开始导入</button>')
   );
   window._inboundImportData=[];
 }
@@ -6151,7 +6219,7 @@ function openBatchImportInbound(){
 function handleInboundFile(file){
   if(!file)return;
   const ext=file.name.split('.').pop().toLowerCase();
-  if(!['xlsx','xls','csv'].includes(ext)){showToast('仅支持 .xlsx / .xls / .csv 格式','danger');return}
+  if(!['xlsx','xls','csv'].includes(ext)){showToast(t('gen.L6154.1','仅支持 .xlsx / .xls / .csv 格式'),'danger');return}
   const reader=new FileReader();
   reader.onload=e=>{
     try{
@@ -6159,7 +6227,7 @@ function handleInboundFile(file){
       const wb=XLSX.read(data,{type:'array',cellDates:true});
       const ws=wb.Sheets[wb.SheetNames[0]];
       const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:'',raw:false,dateNF:'yyyy-mm-dd'});
-      if(rows.length<2){showToast('文件为空或缺少数据行','danger');return}
+      if(rows.length<2){showToast(t('gen.L6162.1','文件为空或缺少数据行'),'danger');return}
       // 解析表头
       const headers=rows[0].map(h=>String(h||'').trim());
       const records=[];
@@ -6180,7 +6248,7 @@ function handleInboundFile(file){
         // 校验
         INBOUND_IMPORT_COLUMNS.filter(c=>c.required).forEach(c=>{
           const v=rec[c.key];
-          if(v===undefined||v===null||v===''||(typeof v==='string'&&!v.trim()))rec._errors.push(c.label+'不能为空');
+          if(v===undefined||v===null||v===''||(typeof v==='string'&&!v.trim()))rec._errors.push(c.label+t('gen.L6183.1','不能为空'));
         });
         // P1-STATE-01D：必须提供 PL明细ID 或 PL号（与SKU配合定位明细）
         if(!rec.source_pl_item_id && !rec.source_pl_no){
@@ -6188,7 +6256,7 @@ function handleInboundFile(file){
         }
         if(rec.actual_qty!==undefined&&rec.actual_qty!==''){
           const n=parseInt(rec.actual_qty);
-          if(isNaN(n)||n<=0)rec._errors.push('实际入库数量必须为正整数（大于0）');
+          if(isNaN(n)||n<=0)rec._errors.push(t('gen.L6191.1','实际入库数量必须为正整数（大于0）'));
           else rec.actual_qty=n;
         }
         if(rec.inbound_date){
@@ -6208,8 +6276,8 @@ function handleInboundFile(file){
 function renderInboundPreview(records){
   const valid=records.filter(r=>r._errors.length===0).length;
   const invalid=records.length-valid;
-  let html='<div style="background:#f0f8ff;padding:10px 14px;border-radius:6px;margin-bottom:10px;font-size:13px"><b>共 '+records.length+' 条数据</b>，<span style="color:#52c41a">有效 '+valid+' 条</span>'+(invalid>0?'，<span style="color:#ff4d4f">无效 '+invalid+' 条</span>':'')+'</div>';
-  html+='<div class="table-container" style="max-height:300px;overflow:auto;box-shadow:none;border:1px solid #f0f0f0"><table class="data-table"><thead><tr><th>行</th><th>SKU</th><th>日期</th><th>数量</th><th>PL明细ID</th><th>PL号</th><th>国家</th><th>仓库</th><th>状态</th></tr></thead><tbody>';
+  let html='<div style="background:#f0f8ff;padding:10px 14px;border-radius:6px;margin-bottom:10px;font-size:13px"><b>'+t("common.total_prefix","共")+' '+records.length+''+t("common.unit_item_data"," 条数据")+'</b>，<span style="color:#52c41a">'+t("common.valid","有效")+' '+valid+''+t("common.unit_item"," 条")+'</span>'+(invalid>0?'，<span style="color:#ff4d4f">'+t("common.invalid","无效")+' '+invalid+''+t("common.unit_item"," 条")+'</span>':'')+'</div>';
+  html+='<div class="table-container" style="max-height:300px;overflow:auto;box-shadow:none;border:1px solid #f0f0f0"><table class="data-table"><thead><tr><th>'+t("col.row","行")+'</th><th>SKU</th><th>'+t("col.date","日期")+'</th><th>'+t("col.qty","数量")+'</th><th>'+t("col.pl_detail_id","PL明细ID")+'</th><th>'+t("col.pl_no","PL号")+'</th><th>'+t("app.113","国家")+'</th><th>'+t("app.114","仓库")+'</th><th>'+t("col.status","状态")+'</th></tr></thead><tbody>';
   const preview=records.slice(0,20);
   preview.forEach(r=>{
     const ok=r._errors.length===0;
@@ -6225,11 +6293,11 @@ function renderInboundPreview(records){
       '<td>'+(ok?'<span class="status-badge status-completed">✓</span>':'<span class="status-badge status-danger" title="'+esc(r._errors.join('; '))+'">✗ '+r._errors.length+'</span>')+'</td>'+
     '</tr>';
   });
-  if(records.length>20)html+='<tr><td colspan="9" style="text-align:center;color:#999;padding:8px">... 还有 '+(records.length-20)+' 条</td></tr>';
+  if(records.length>20)html+='<tr><td colspan="9" style="text-align:center;color:#999;padding:8px">... '+t("common.remaining","还有")+' '+(records.length-20)+''+t("common.unit_item"," 条")+'</td></tr>';
   html+='</tbody></table></div>';
   if(invalid>0){
-    html+='<div style="margin-top:10px;padding:10px;background:#fffbe6;border-radius:4px;font-size:12px;color:#666"><b>无效行明细：</b><br>'+
-      records.filter(r=>r._errors.length>0).slice(0,10).map(r=>'第 '+r._rowNum+' 行：'+r._errors.join('、')).join('<br>')+
+    html+='<div style="margin-top:10px;padding:10px;background:#fffbe6;border-radius:4px;font-size:12px;color:#666"><b>'+t("common.invalid_rows_detail","无效行明细：")+'</b><br>'+
+      records.filter(r=>r._errors.length>0).slice(0,10).map(r=>''+t("common.ordinal_prefix","第")+' '+r._rowNum+''+t("col.row_colon"," 行：")+''+r._errors.join('、')).join('<br>')+
       (invalid>10?'<br>...':'')+'</div>';
   }
   document.getElementById('bi-preview').innerHTML=html;
@@ -6316,13 +6384,13 @@ function downloadInboundTemplate(){
 async function submitBatchImportInbound(){
   const records=window._inboundImportData||[];
   const valid=records.filter(r=>r._errors.length===0);
-  if(valid.length===0){showToast('没有可导入的有效数据','danger');return}
+  if(valid.length===0){showToast(t('gen.L6319.1','没有可导入的有效数据'),'danger');return}
   const btn=document.getElementById('bi-import-btn');
   btn.disabled=true;btn.textContent=t("app.613", "\u5bfc\u5165\u4e2d...");
   try{
     const res=await api('/api/inbound-records/batch-import','POST',{records:valid});
-    let msg='导入完成：成功 '+res.success+' 条';
-    if(res.failed)msg+='，失败 '+res.failed+' 条';
+    let msg=t('gen.L6324.1','导入完成：成功 ')+res.success+t('gen.L6324.2',' 条');
+    if(res.failed)msg+=t('gen.L6325.1','，失败 ')+res.failed+t('gen.L6325.2',' 条');
     showToast(msg,res.failed?'warning':'success');
     if(res.errors&&res.errors.length){
       console.warn(t("app.1047", "\u5bfc\u5165\u9519\u8bef\u660e\u7ec6"),res.errors);
@@ -6330,7 +6398,7 @@ async function submitBatchImportInbound(){
     closeModal();
     loadIn();
   }catch(e){
-    showToast(e.message||'导入失败','danger');
+    showToast(e.message||t('gen.L6333.1','导入失败'),'danger');
     btn.disabled=false;btn.textContent=t("app.067", "\u5f00\u59cb\u5bfc\u5165");
   }
 }
@@ -6348,39 +6416,39 @@ function openLifecycleHelp(){
     {k:'stopped',label:t("app.554", "\u505c\u91c7/\u505c\u4ea7"),strategy:t("app.729", "\u505c\u91c7/\u505c\u4ea7\uff0c\u4e0d\u53c2\u4e0e\u8865\u8d27\u5efa\u8bae"),coeff:'0%',replenish:false,judge:t("app.1059", "SKU \u72b6\u6001 = stopped / discontinued")}
   ];
   const html='<div style="padding:4px 8px"><div style="background:#f6f8fa;padding:12px;border-radius:6px;margin-bottom:14px;font-size:13px;line-height:1.6">'+
-    '<b>📌 生命周期的作用</b><br>'+
-    '生命周期是辅助系统判断补货策略的字段，影响 <b>建议补货量</b> 和 <b>建议动作</b>。<br>'+
-    '可在 <b>商品管理 → 生命周期</b> 字段手动调整。'+
+    t('gen.L6351.1','<b>📌 生命周期的作用</b><br>')+
+    t('gen.L6352.1','生命周期是辅助系统判断补货策略的字段，影响 <b>建议补货量</b> 和 <b>建议动作</b>。<br>')+
+    t('gen.L6353.1','可在 <b>商品管理 → 生命周期</b> 字段手动调整。')+
     '</div>'+
     '<div class="table-container" style="box-shadow:none;border:1px solid #e1e4e8"><table class="data-table">'+
-    '<thead><tr><th>标签</th><th>系统判断依据</th><th>补货策略</th><th style="text-align:center">补货系数</th><th style="text-align:center">是否补货</th></tr></thead>'+
+    t('gen.L6356.1','<thead><tr><th>标签</th><th>系统判断依据</th><th>补货策略</th><th style="text-align:center">补货系数</th><th style="text-align:center">是否补货</th></tr></thead>')+
     '<tbody>'+rows.map(r=>'<tr>'+
       '<td><span class="lifecycle-tag lc-'+r.k+'">'+r.label+'</span></td>'+
       '<td style="font-size:12px;color:#586069">'+r.judge+'</td>'+
       '<td style="font-size:12px">'+r.strategy+'</td>'+
       '<td style="text-align:center;font-weight:bold">'+r.coeff+'</td>'+
-      '<td style="text-align:center">'+(r.replenish?'<span class="status-badge status-completed">是</span>':'<span class="status-badge status-secondary">否</span>')+'</td>'+
+      '<td style="text-align:center">'+(r.replenish?t('gen.L6362.1','<span class="status-badge status-completed">是</span>'):t('gen.L6362.2','<span class="status-badge status-secondary">否</span>'))+'</td>'+
     '</tr>').join('')+
     '</tbody></table></div>'+
     '<div style="margin-top:12px;padding:10px 12px;background:#fff8c5;border-radius:6px;font-size:12px;color:#586069;line-height:1.6">'+
-      '<b>💡 计算公式</b><br>'+
-      '建议补货量 = max(0, 目标库存 − 总库存池)（结果按箱规/MOQ 取整；慢销/呆滞/高库存等会被拦截为 0）<br>'+
-      '• 总库存池 = 当前可用 + 在途 + PI 已确认未发货 + PO 未确认 PI<br>'+
-      '• 目标库存月数 默认 4（后端配置，本轮不在"预测参数设置"界面调整）<br>'+
-      '• 生命周期系数当前不参与建议补货量数值计算（仅用于建议动作/经营建议文案）<br>'+
+      t('gen.L6366.1','<b>💡 计算公式</b><br>')+
+      t('gen.L6367.1','建议补货量 = max(0, 目标库存 − 总库存池)（结果按箱规/MOQ 取整；慢销/呆滞/高库存等会被拦截为 0）<br>')+
+      t('gen.L6368.1','• 总库存池 = 当前可用 + 在途 + PI 已确认未发货 + PO 未确认 PI<br>')+
+      t('gen.L6369.1','• 目标库存月数 默认 4（后端配置，本轮不在"预测参数设置"界面调整）<br>')+
+      t('gen.L6370.1','• 生命周期系数当前不参与建议补货量数值计算（仅用于建议动作/经营建议文案）<br>')+
       t("app.1073", "\u2022 \u6ce8\u610f\uff1a\u6708\u5747\u9500\u91cf\u3001\u5f53\u524d\u53ef\u7528\u5468\u8f6c\u3001\u5f53\u524d\u5468\u8f6c\u3001\u5f53\u524d\u6d4b\u7b97\u5468\u8f6c\u3001\u5728\u9014\u540e\u5468\u8f6c\u3001\u4e0b\u5355\u540e\u5468\u8f6c\u3001\u9884\u8ba1\u5468\u8f6c\u6708\u6570\u3001\u5360\u6bd4\u3001\u5206\u644a\u5e93\u5b58\u3001\u5efa\u8bae\u91c7\u8d2d\u6570\u91cf\u5747\u5df2\u6309\u5f53\u524d\u300c\u9500\u91cf\u7edf\u8ba1\u5468\u671f\u300d\u8ba1\u7b97\uff1b\u4ec5\u5206\u7c7b/\u98ce\u9669/\u62e6\u622a\u5c42\uff08\u52a8\u9500\u72b6\u6001\u3001\u98ce\u9669\u6807\u7b7e\uff09\u4ecd\u6309\u8fd1 4 \u4e2a\u6708\u53e3\u5f84\uff0c\u5c5e\u9636\u6bb5\u6027\u62c6\u5206\uff08\u975e bug\uff09\u3002")+
     '</div></div>';
-  openModal(t("app.1074", "\ud83d\udcd6 \u751f\u547d\u5468\u671f\u8bf4\u660e"), html, '<button class="btn btn-primary" onclick="closeModal()">关闭</button>');
+  openModal(t("app.1074", "\ud83d\udcd6 \u751f\u547d\u5468\u671f\u8bf4\u660e"), html, t('gen.L6373.1','<button class="btn btn-primary" onclick="closeModal()">关闭</button>'));
 }
 
 // ==================== 成本管理 ====================
 async function renderCost(){
   document.getElementById('content-inner').innerHTML='<div id="flash-container"></div>'+
     '<div class="tab-bar">'+
-      '<div class="tab-item active" onclick="switchCostTab(\'alloc\',this)">📊 费用分摊</div>'+
-      '<div class="tab-item" onclick="switchCostTab(\'origin\',this)">📦 原库存导入</div>'+
-      '<div class="tab-item" onclick="switchCostTab(\'wac\',this)">💰 加权平均成本</div>'+
-      '<div class="tab-item" onclick="switchCostTab(\'logs\',this)">📝 成本更新日志</div>'+
+      '<div class="tab-item active" onclick="switchCostTab(\'alloc\',this)">'+t("cost.tab_alloc","📊 费用分摊")+'<</div>'+
+      '<div class="tab-item" onclick="switchCostTab(\'origin\',this)">'+t("cost.tab_origin","📦 原库存导入")+'<</div>'+
+      '<div class="tab-item" onclick="switchCostTab(\'wac\',this)">'+t("cost.tab_wac","💰 加权平均成本")+'<</div>'+
+      '<div class="tab-item" onclick="switchCostTab(\'logs\',this)">'+t("cost.tab_logs","📝 成本更新日志")+'<</div>'+
     '</div>'+
     '<div id="cost-tab-content"></div>';
   loadCostAlloc();
@@ -6395,19 +6463,19 @@ function switchCostTab(tab,el){
 }
 // Tab 1: 费用分摊
 async function loadCostAlloc(){
-  document.getElementById('cost-tab-content').innerHTML='<div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>CI号</label><input type="text" id="cost-ci" onkeypress="if(event.key===\'Enter\')fetchCostAlloc()"></div><div class="filter-group"><label>SKU</label><input type="text" id="cost-sku" onkeypress="if(event.key===\'Enter\')fetchCostAlloc()"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="fetchCostAlloc()">搜索</button></div></div></div><div id="cost-alloc-table"><div class="empty-state"><div class="empty-icon">📊</div>请搜索查看费用分摊数据</div></div>';
+  document.getElementById('cost-tab-content').innerHTML='<div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>'+t("col.ci","CI号")+'<</label><input type="text" id="cost-ci" onkeypress="if(event.key===\'Enter\')fetchCostAlloc()"></div><div class="filter-group"><label>'+t("col.sku","SKU")+'<</label><input type="text" id="cost-sku" onkeypress="if(event.key===\'Enter\')fetchCostAlloc()"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="fetchCostAlloc()">'+t("action.search","搜索")+'<</button></div></div></div><div id="cost-alloc-table"><div class="empty-state"><div class="empty-icon">📊</div>'+t("empty.search_cost_alloc","请搜索查看费用分摊数据")+'<</div></div>';
   fetchCostAlloc();
 }
 async function fetchCostAlloc(){
   try{
     const ci=document.getElementById('cost-ci')?.value||'',sku=document.getElementById('cost-sku')?.value||'';
     const data=await api('/api/cost-allocations?ci_no='+encodeURIComponent(ci)+'&sku_code='+encodeURIComponent(sku));
-    document.getElementById('cost-alloc-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">📊</div>暂无成本数据</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>CI号</th><th>SKU</th><th>商品成本</th><th>分摊运费</th><th>分摊关税</th><th>分摊其他</th><th>总落地成本</th><th>入库量</th><th>单位商品成本</th><th>单位分摊成本</th><th>含费单位成本</th><th>原库存量</th><th>原成本</th><th>币种</th></tr></thead><tbody>'+data.map(c=>'<tr><td class="cell-id">'+esc(c.ci_no)+'</td><td class="cell-id">'+esc(c.sku_code)+'</td><td class="text-right">'+fmtMoney(c.product_cost)+'</td><td class="text-right">'+fmtMoney(c.allocated_freight)+'</td><td class="text-right">'+fmtMoney(c.allocated_duty)+'</td><td class="text-right">'+fmtMoney(c.allocated_other)+'</td><td class="text-right font-bold">'+fmtMoney(c.total_landing_cost)+'</td><td class="text-right">'+(c.inbound_qty||0)+'</td><td class="text-right">'+fmtMoney(c.unit_product_cost)+'</td><td class="text-right">'+fmtMoney(c.unit_allocated_cost)+'</td><td class="text-right font-bold">'+fmtMoney(c.unit_landing_cost_with_fees||c.unit_landing_cost)+'</td><td class="text-right">'+(c.original_qty||0)+'</td><td class="text-right">'+fmtMoney(c.original_avg_cost)+'</td><td>'+esc(c.currency)+'</td></tr>').join('')+'</tbody></table></div>';
+    document.getElementById('cost-alloc-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">📊</div>'+t("empty.no_cost_data","暂无成本数据")+'<</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>'+t("col.ci","CI号")+'<</th><th>'+t("col.sku","SKU")+'<</th><th>'+t("cost.col_product_cost","商品成本")+'<</th><th>'+t("cost.col_alloc_freight","分摊运费")+'<</th><th>'+t("cost.col_alloc_duty","分摊关税")+'<</th><th>'+t("cost.col_alloc_other","分摊其他")+'<</th><th>'+t("cost.col_landing_total","总落地成本")+'<</th><th>'+t("col.inbound_qty","入库量")+'<</th><th>'+t("cost.col_unit_product_cost","单位商品成本")+'<</th><th>'+t("cost.col_unit_alloc_cost","单位分摊成本")+'<</th><th>'+t("cost.col_unit_landing_with_fees","含费单位成本")+'<</th><th>'+t("col.original_qty","原库存量")+'<</th><th>'+t("col.original_cost","原成本")+'<</th><th>'+t("cost.col_currency","币种")+'<</th></tr></thead><tbody>'+data.map(c=>'<tr><td class="cell-id">'+esc(c.ci_no)+'</td><td class="cell-id">'+esc(c.sku_code)+'</td><td class="text-right">'+fmtMoney(c.product_cost)+'</td><td class="text-right">'+fmtMoney(c.allocated_freight)+'</td><td class="text-right">'+fmtMoney(c.allocated_duty)+'</td><td class="text-right">'+fmtMoney(c.allocated_other)+'</td><td class="text-right font-bold">'+fmtMoney(c.total_landing_cost)+'</td><td class="text-right">'+(c.inbound_qty||0)+'</td><td class="text-right">'+fmtMoney(c.unit_product_cost)+'</td><td class="text-right">'+fmtMoney(c.unit_allocated_cost)+'</td><td class="text-right font-bold">'+fmtMoney(c.unit_landing_cost_with_fees||c.unit_landing_cost)+'</td><td class="text-right">'+(c.original_qty||0)+'</td><td class="text-right">'+fmtMoney(c.original_avg_cost)+'</td><td>'+esc(c.currency)+'</td></tr>').join('')+'</tbody></table></div>';
   }catch(e){showFlash(e.message,'danger')}
 }
 // Tab 2: 原库存导入
 async function loadCostOrigin(){
-  document.getElementById('cost-tab-content').innerHTML=t('html.loadCostOrigin', '<div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>选择CI</label><select id="orig-ci" onchange="loadOriginRecords()"><option value="">选择CI</option></select></div><div class="filter-actions">{v1}{v2}</div></div></div><div id="origin-check"></div><div id="origin-records"></div>', {v1: hasPermission('cost_view')?'<button class="btn btn-secondary btn-sm" onclick="downloadOriginTemplate()">📥 下载模板</button>':'', v2: hasPermission('cost_view')?'<button class="btn btn-primary btn-sm" onclick="importOriginInventory()">📤 导入原库存</button>':''});
+  document.getElementById('cost-tab-content').innerHTML=t('html.loadCostOrigin', '<div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>选择CI</label><select id="orig-ci" onchange="loadOriginRecords()"><option value="">选择CI</option></select></div><div class="filter-actions">{v1}{v2}</div></div></div><div id="origin-check"></div><div id="origin-records"></div>', {v1: hasPermission('cost_view')?t('gen.L6410.1','<button class="btn btn-secondary btn-sm" onclick="downloadOriginTemplate()">📥 下载模板</button>'):'', v2: hasPermission('cost_view')?t('gen.L6410.2','<button class="btn btn-primary btn-sm" onclick="importOriginInventory()">📤 导入原库存</button>'):''});
   try{
     const cis=await api('/api/commercial-invoices');
     document.getElementById('orig-ci').innerHTML=t('html.loadCostOrigin.2', '<option value="">选择CI</option>{v1}', {v1: cis.map(c=>'<option value="'+c.id+'">'+esc(c.ci_no)+' - '+esc(c.supplier_name)+' ('+fmtMoney(c.goods_amount)+')</option>').join('')});
@@ -6418,9 +6486,9 @@ async function loadOriginRecords(){
   if(!ciId){document.getElementById('origin-check').innerHTML='';document.getElementById('origin-records').innerHTML='';return}
   try{
     const check=await api('/api/original-inventory/'+ciId+'/check');
-    document.getElementById('origin-check').innerHTML=t('html.loadOriginRecords', '<div class="stats-grid mb-16"><div class="stat-card {v1}"><div class="stat-number">{v2}</div><div class="stat-label">原库存导入状态</div></div><div class="stat-card"><div class="stat-number">{v3}/{v4}</div><div class="stat-label">已导入/总SKU数</div></div></div>{v5}', {v1: check.all_imported?'success':'warning', v2: check.all_imported?'✅ 已完成':t("inventory.007", "\u26a0\ufe0f \u672a\u5b8c\u6210"), v3: check.imported_skus, v4: check.total_skus, v5: check.missing_skus&&check.missing_skus.length?'<div class="flash flash-warning show">缺少SKU: '+esc(check.missing_skus.join(', '))+'</div>':''});
+    document.getElementById('origin-check').innerHTML=t('html.loadOriginRecords', '<div class="stats-grid mb-16"><div class="stat-card {v1}"><div class="stat-number">{v2}</div><div class="stat-label">原库存导入状态</div></div><div class="stat-card"><div class="stat-number">{v3}/{v4}</div><div class="stat-label">已导入/总SKU数</div></div></div>{v5}', {v1: check.all_imported?'success':'warning', v2: check.all_imported?t('gen.L6421.1','✅ 已完成'):t("inventory.007", "\u26a0\ufe0f \u672a\u5b8c\u6210"), v3: check.imported_skus, v4: check.total_skus, v5: check.missing_skus&&check.missing_skus.length?t('gen.L6421.2','<div class="flash flash-warning show">缺少SKU: ')+esc(check.missing_skus.join(', '))+'</div>':''});
     const records=await api('/api/original-inventory/'+ciId);
-    document.getElementById('origin-records').innerHTML=!records.length?'<div class="empty-state"><div class="empty-icon">📦</div>暂无原库存数据</div>':'<div class="table-section"><div class="table-section-title"><div class="table-section-title-left">📦 原库存记录</div></div><div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>SKU</th><th>国家</th><th>仓库</th><th>原库存数量</th><th>备注</th><th>导入时间</th></tr></thead><tbody>'+records.map(r=>'<tr><td class="cell-id">'+esc(r.sku_code)+'</td><td>'+esc(r.country)+'</td><td>'+esc(r.warehouse)+'</td><td class="text-right font-bold">'+(r.original_qty||0)+'</td><td>'+esc(r.remark)+'</td><td class="cell-date">'+fmtDate(r.imported_at)+'</td></tr>').join('')+'</tbody></table></div></div>';
+    document.getElementById('origin-records').innerHTML=!records.length?'<div class="empty-state"><div class="empty-icon">📦</div>'+t("empty.no_origin_data","暂无原库存数据")+'<</div>':'<div class="table-section"><div class="table-section-title"><div class="table-section-title-left">'+t("cost.section_origin_records","📦 原库存记录")+'<</div></div><div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>'+t("col.sku","SKU")+'<</th><th>'+t("app.113","国家")+'<</th><th>'+t("app.114","仓库")+'<</th><th>'+t("cost.col_original_qty","原库存数量")+'<</th><th>'+t("col.remark","备注")+'<</th><th>'+t("cost.col_import_time","导入时间")+'<</th></tr></thead><tbody>'+records.map(r=>'<tr><td class="cell-id">'+esc(r.sku_code)+'</td><td>'+esc(r.country)+'</td><td>'+esc(r.warehouse)+'</td><td class="text-right font-bold">'+(r.original_qty||0)+'</td><td>'+esc(r.remark)+'</td><td class="cell-date">'+fmtDate(r.imported_at)+'</td></tr>').join('')+'</tbody></table></div></div>';
   }catch(e){showFlash(e.message,'danger')}
 }
 async function downloadOriginTemplate(){
@@ -6433,7 +6501,7 @@ async function downloadOriginTemplate(){
 }
 async function importOriginInventory(){
   const ciId=document.getElementById('orig-ci')?.value;
-  if(!ciId){showToast('请先选择CI','warning');return}
+  if(!ciId){showToast(''+t("validation.select_ci_first","请先选择CI")+'','warning');return}
   const input=document.createElement('input');input.type='file';input.accept='.xlsx,.xls,.csv';
   input.onchange=async e=>{
     const file=e.target.files[0];if(!file)return;
@@ -6444,7 +6512,7 @@ async function importOriginInventory(){
         const wb=XLSX.read(data,{type:'array'});
         const ws=wb.Sheets[wb.SheetNames[0]];
         const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
-        if(rows.length<2){showToast('文件为空','danger');return}
+        if(rows.length<2){showToast(''+t("validation.file_empty","文件为空")+'','danger');return}
         const headers=rows[0].map(h=>String(h||'').trim());
         const items=[];
         for(let i=1;i<rows.length;i++){
@@ -6456,7 +6524,7 @@ async function importOriginInventory(){
           const remarkIdx=headers.findIndex(h=>h===t("col.remark", "备注")||h==='remark');
           if(skuIdx>=0&&row[skuIdx])items.push({sku_code:String(row[skuIdx]).trim(),original_qty:parseFloat(row[qtyIdx])||0,country:countryIdx>=0?String(row[countryIdx]||'').trim():'',warehouse:whIdx>=0?String(row[whIdx]||'').trim():'',remark:remarkIdx>=0?String(row[remarkIdx]||'').trim():''});
         }
-        if(!items.length){showToast('未找到有效数据','danger');return}
+        if(!items.length){showToast(''+t("validation.no_valid_data","未找到有效数据")+'','danger');return}
         const result=await api('/api/original-inventory/import','POST',{ci_id:ciId,items});
         showToast(t('toast.importSuccessFail','导入完成: 成功{s}条, 失败{f}条',{s:result.success, f:result.failed}),'success');
         if(result.errors&&result.errors.length)console.log(t("app.1081", "\u5bfc\u5165\u9519\u8bef:"),result.errors);
@@ -6469,7 +6537,7 @@ async function importOriginInventory(){
 }
 // Tab 3: 加权平均成本
 async function loadCostWac(){
-  document.getElementById('cost-tab-content').innerHTML='<div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>选择CI</label><select id="wac-ci" onchange="loadWacDetail()"><option value="">选择CI</option></select></div></div></div><div id="wac-detail"></div>';
+  document.getElementById('cost-tab-content').innerHTML='<div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>'+t("cost.select_ci","选择CI")+'</label><select id="wac-ci" onchange="loadWacDetail()"><option value="">'+t("cost.select_ci","选择CI")+'</option></select></div></div></div><div id="wac-detail"></div>';
   try{
     const cis=await api('/api/commercial-invoices');
     document.getElementById('wac-ci').innerHTML=t('html.loadCostWac', '<option value="">选择CI</option>{v1}', {v1: cis.map(c=>'<option value="'+c.id+'">'+esc(c.ci_no)+' - '+esc(c.supplier_name)+'</option>').join('')});
@@ -6484,74 +6552,74 @@ async function loadWacDetail(){
     const allocs=await api('/api/cost-allocation/'+ciId);
     const details=await api('/api/cost-allocation/'+ciId+'/details');
     let html='<div class="stats-grid mb-16">'+
-      '<div class="stat-card"><div class="stat-number">'+fmtMoney(summary.goods_amount)+'</div><div class="stat-label">商品金额</div></div>'+
-      '<div class="stat-card"><div class="stat-number">'+fmtMoney(summary.warehouse_arrival_total)+'</div><div class="stat-label">到仓费用</div></div>'+
-      '<div class="stat-card"><div class="stat-number">'+fmtMoney(summary.customs_duty_total)+'</div><div class="stat-label">关税</div></div>'+
-      '<div class="stat-card"><div class="stat-number">'+fmtMoney(summary.inspection_fee_total)+'</div><div class="stat-label">商检费用</div></div>'+
-      '<div class="stat-card success"><div class="stat-number">'+fmtMoney(summary.landing_cost_total)+'</div><div class="stat-label">落地成本总额</div></div>'+
+      '<div class="stat-card"><div class="stat-number">'+fmtMoney(summary.goods_amount)+'</div><div class="stat-label">'+t("cost.stat_goods_amount","商品金额")+'<</div></div>'+
+      '<div class="stat-card"><div class="stat-number">'+fmtMoney(summary.warehouse_arrival_total)+'</div><div class="stat-label">'+t("cost.stat_warehouse_fee","到仓费用")+'<</div></div>'+
+      '<div class="stat-card"><div class="stat-number">'+fmtMoney(summary.customs_duty_total)+'</div><div class="stat-label">'+t("cost.stat_duty","关税")+'<</div></div>'+
+      '<div class="stat-card"><div class="stat-number">'+fmtMoney(summary.inspection_fee_total)+'</div><div class="stat-label">'+t("cost.stat_inspection_fee","商检费用")+'<</div></div>'+
+      '<div class="stat-card success"><div class="stat-number">'+fmtMoney(summary.landing_cost_total)+'</div><div class="stat-label">'+t("cost.stat_landing_total","落地成本总额")+'<</div></div>'+
     '</div>';
     // 状态指示
-    html+='<div class="detail-card mb-16"><div class="detail-section"><h3>操作流程</h3><div class="detail-grid">'+
-      '<div class="detail-item"><span class="detail-label">1. 录入费用</span><span class="detail-value">'+(summary.cost_items&&summary.cost_items.length>=1?'✅ 已录入':t("app.1088", "\u274c \u672a\u5f55\u5165"))+'</span></div>'+
-      '<div class="detail-item"><span class="detail-label">2. 确认费用完整</span><span class="detail-value">'+(summary.cost_confirmed?'✅ 已确认':t("ci.021", "\u274c \u672a\u786e\u8ba4"))+'</span></div>'+
-      '<div class="detail-item"><span class="detail-label">3. 费用分摊</span><span class="detail-value">'+(summary.cost_allocated?'✅ 已分摊':t("ci.023", "\u274c \u672a\u5206\u644a"))+'</span></div>'+
-      '<div class="detail-item"><span class="detail-label">4. 导入原库存</span><span class="detail-value">'+(check.all_imported?'✅ 已完成':'❌ 未完成 ('+check.imported_skus+'/'+check.total_skus+')')+'</span></div>'+
-      '<div class="detail-item"><span class="detail-label">5. 确认加权平均成本</span><span class="detail-value">'+(summary.wac_confirmed?'✅ 已确认（版本已锁定）':t("app.1090", "\u23f3 \u5f85\u6267\u884c"))+'</span></div>'+
+    html+='<div class="detail-card mb-16"><div class="detail-section"><h3>'+t("cost.op_flow","操作流程")+'<</h3><div class="detail-grid">'+
+      '<div class="detail-item"><span class="detail-label">'+t("cost.step1","1. 录入费用")+'<</span><span class="detail-value">'+(summary.cost_items&&summary.cost_items.length>=1?''+t("cost.step1_done","✅ 已录入")+'':t("app.1088", "\u274c \u672a\u5f55\u5165"))+'</span></div>'+
+      '<div class="detail-item"><span class="detail-label">'+t("cost.step2","2. 确认费用完整")+'<</span><span class="detail-value">'+(summary.cost_confirmed?''+t("cost.step2_done","✅ 已确认")+'':t("ci.021", "\u274c \u672a\u786e\u8ba4"))+'</span></div>'+
+      '<div class="detail-item"><span class="detail-label">'+t("cost.step3","3. 费用分摊")+'<</span><span class="detail-value">'+(summary.cost_allocated?''+t("cost.step3_done","✅ 已分摊")+'':t("ci.023", "\u274c \u672a\u5206\u644a"))+'</span></div>'+
+      '<div class="detail-item"><span class="detail-label">'+t("cost.step4","4. 导入原库存")+'<</span><span class="detail-value">'+(check.all_imported?''+t("cost.step4_done","✅ 已完成")+'':''+t("cost.step4_undone","❌ 未完成 (")+''+check.imported_skus+'/'+check.total_skus+')')+'</span></div>'+
+      '<div class="detail-item"><span class="detail-label">'+t("cost.step5","5. 确认加权平均成本")+'<</span><span class="detail-value">'+(summary.wac_confirmed?''+t("cost.step5_done","✅ 已确认（版本已锁定）")+'':t("app.1090", "\u23f3 \u5f85\u6267\u884c"))+'</span></div>'+
     '</div>';
     // 操作按钮
     html+='<div class="flex gap-8 mt-16">'+
-      (hasPermission('ci_edit')?'<button class="btn btn-secondary btn-sm" onclick="confirmCiCosts(\''+ciId+'\')">✅ 确认费用完整</button>':'')+
-      (hasPermission('ci_edit')?'<button class="btn btn-secondary btn-sm" onclick="allocateCosts(\''+ciId+'\')">📊 执行费用分摊</button>':'')+
-      (hasPermission('ci_edit')?(summary.wac_confirmed?'<button class="btn btn-secondary btn-sm" disabled>✅ 已确认</button>':'<button class="btn btn-primary btn-sm" onclick="updateWeightedAvg(\''+ciId+'\')" '+(summary.cost_confirmed&&summary.cost_allocated&&check.all_imported?'':'disabled')+'>💰 确认加权平均成本</button>'):'')+
+      (hasPermission('ci_edit')?'<button class="btn btn-secondary btn-sm" onclick="confirmCiCosts(\''+ciId+'\')">'+t("cost.btn_confirm_cost","✅ 确认费用完整")+'<</button>':'')+
+      (hasPermission('ci_edit')?'<button class="btn btn-secondary btn-sm" onclick="allocateCosts(\''+ciId+'\')">'+t("cost.btn_allocate","📊 执行费用分摊")+'<</button>':'')+
+      (hasPermission('ci_edit')?(summary.wac_confirmed?'<button class="btn btn-secondary btn-sm" disabled>'+t("cost.step2_done","✅ 已确认")+'<</button>':'<button class="btn btn-primary btn-sm" onclick="updateWeightedAvg(\''+ciId+'\')" '+(summary.cost_confirmed&&summary.cost_allocated&&check.all_imported?'':'disabled')+'>'+t("cost.btn_confirm_wac","💰 确认加权平均成本")+'<</button>'):'')+
     '</div></div>';
     // 分摊明细
     if(allocs&&allocs.length){
-      html+='<div class="table-section"><div class="table-section-title"><div class="table-section-title-left">📊 分摊明细</div></div><div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>SKU</th><th>商品成本</th><th>分摊运费</th><th>分摊关税</th><th>分摊商检</th><th>总落地成本</th><th>入库量</th><th>含费单位成本</th><th>原库存量</th><th>原成本</th></tr></thead><tbody>'+allocs.map(a=>'<tr><td class="cell-id">'+esc(a.sku_code)+'</td><td class="text-right">'+fmtMoney(a.product_cost)+'</td><td class="text-right">'+fmtMoney(a.allocated_freight)+'</td><td class="text-right">'+fmtMoney(a.allocated_duty)+'</td><td class="text-right">'+fmtMoney(a.allocated_other)+'</td><td class="text-right font-bold">'+fmtMoney(a.total_landing_cost)+'</td><td class="text-right">'+(a.inbound_qty||0)+'</td><td class="text-right font-bold">'+fmtMoney(a.unit_landing_cost_with_fees||a.unit_landing_cost)+'</td><td class="text-right">'+(a.original_qty||0)+'</td><td class="text-right">'+fmtMoney(a.original_avg_cost)+'</td></tr>').join('')+'</tbody></table></div></div>';
+      html+='<div class="table-section"><div class="table-section-title"><div class="table-section-title-left">'+t("cost.section_alloc_detail","📊 分摊明细")+'<</div></div><div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>'+t("col.sku","SKU")+'<</th><th>'+t("cost.col_product_cost","商品成本")+'<</th><th>'+t("cost.col_alloc_freight","分摊运费")+'<</th><th>'+t("cost.col_alloc_duty","分摊关税")+'<</th><th>'+t("cost.col_alloc_inspection","分摊商检")+'<</th><th>'+t("cost.col_landing_total","总落地成本")+'<</th><th>'+t("col.inbound_qty","入库量")+'<</th><th>'+t("cost.col_unit_landing_with_fees","含费单位成本")+'<</th><th>'+t("col.original_qty","原库存量")+'<</th><th>'+t("col.original_cost","原成本")+'<</th></tr></thead><tbody>'+allocs.map(a=>'<tr><td class="cell-id">'+esc(a.sku_code)+'</td><td class="text-right">'+fmtMoney(a.product_cost)+'</td><td class="text-right">'+fmtMoney(a.allocated_freight)+'</td><td class="text-right">'+fmtMoney(a.allocated_duty)+'</td><td class="text-right">'+fmtMoney(a.allocated_other)+'</td><td class="text-right font-bold">'+fmtMoney(a.total_landing_cost)+'</td><td class="text-right">'+(a.inbound_qty||0)+'</td><td class="text-right font-bold">'+fmtMoney(a.unit_landing_cost_with_fees||a.unit_landing_cost)+'</td><td class="text-right">'+(a.original_qty||0)+'</td><td class="text-right">'+fmtMoney(a.original_avg_cost)+'</td></tr>').join('')+'</tbody></table></div></div>';
     }
     if(details&&details.length){
-      html+='<div class="table-section mt-16"><div class="table-section-title"><div class="table-section-title-left">分摊依据与尾差证据</div></div><div class="table-container" style="box-shadow:none;border-radius:0;overflow-x:auto"><table class="data-table"><thead><tr><th>费用</th><th>小类</th><th>SKU</th><th>依据</th><th>basis value</th><th>basis total</th><th>比例</th><th>理论金额</th><th>舍入金额</th><th>尾差调整</th><th>最终金额</th></tr></thead><tbody>'+details.map(d=>'<tr><td>'+esc(d.cost_category)+'</td><td>'+esc(d.cost_subcategory)+'</td><td class="cell-id">'+esc(d.sku_code)+(d.is_rounding_anchor?' *':'')+'</td><td>'+esc(d.allocation_basis)+'</td><td class="text-right">'+Number(d.basis_value||0).toFixed(4)+'</td><td class="text-right">'+Number(d.basis_total||0).toFixed(4)+'</td><td class="text-right">'+(Number(d.ratio||0)*100).toFixed(4)+'%</td><td class="text-right">'+Number(d.theoretical_amount||0).toFixed(6)+'</td><td class="text-right">'+fmtMoney(d.rounded_amount)+'</td><td class="text-right">'+fmtMoney(d.rounding_adjustment)+'</td><td class="text-right font-bold">'+fmtMoney(d.final_allocated_amount)+'</td></tr>').join('')+'</tbody></table></div></div>';
+      html+='<div class="table-section mt-16"><div class="table-section-title"><div class="table-section-title-left">'+t("cost.section_basis_evidence","分摊依据与尾差证据")+'<</div></div><div class="table-container" style="box-shadow:none;border-radius:0;overflow-x:auto"><table class="data-table"><thead><tr><th>'+t("cost.col_category","费用")+'<</th><th>'+t("cost.col_subcategory","小类")+'<</th><th>'+t("col.sku","SKU")+'<</th><th>'+t("cost.col_basis","依据")+'<</th><th>basis value</th><th>basis total</th><th>'+t("cost.col_ratio","比例")+'<</th><th>'+t("cost.col_theoretical","理论金额")+'<</th><th>'+t("cost.col_rounded","舍入金额")+'<</th><th>'+t("cost.col_rounding_adj","尾差调整")+'<</th><th>'+t("cost.col_final","最终金额")+'<</th></tr></thead><tbody>'+details.map(d=>'<tr><td>'+esc(d.cost_category)+'</td><td>'+esc(d.cost_subcategory)+'</td><td class="cell-id">'+esc(d.sku_code)+(d.is_rounding_anchor?' *':'')+'</td><td>'+esc(d.allocation_basis)+'</td><td class="text-right">'+Number(d.basis_value||0).toFixed(4)+'</td><td class="text-right">'+Number(d.basis_total||0).toFixed(4)+'</td><td class="text-right">'+(Number(d.ratio||0)*100).toFixed(4)+'%</td><td class="text-right">'+Number(d.theoretical_amount||0).toFixed(6)+'</td><td class="text-right">'+fmtMoney(d.rounded_amount)+'</td><td class="text-right">'+fmtMoney(d.rounding_adjustment)+'</td><td class="text-right font-bold">'+fmtMoney(d.final_allocated_amount)+'</td></tr>').join('')+'</tbody></table></div></div>';
     }
     document.getElementById('wac-detail').innerHTML=html;
   }catch(e){showFlash(e.message,'danger')}
 }
 async function confirmCiCosts(ciId){
   if(document.getElementById('ci-cost-basis')&&!(await saveCiCostInputs(ciId,true)))return;
-  try{await api('/api/commercial-invoices/'+ciId+'/confirm-costs','POST');showToast('费用已确认完整，运输依据和实际税率已锁定','success');closeModal();loadWacDetail()}catch(e){showToast(e.message,'danger')}
+  try{await api('/api/commercial-invoices/'+ciId+'/confirm-costs','POST');showToast(''+t("toast.costs_confirmed_locked","费用已确认完整，运输依据和实际税率已锁定")+'','success');closeModal();loadWacDetail()}catch(e){showToast(e.message,'danger')}
 }
 async function allocateCosts(ciId){
   try{const r=await api('/api/cost-allocation/allocate/'+ciId,'POST');showToast(t('toast.costAllocated','费用分摊完成，共{n}条',{n:r.allocations?.length||0}),'success');loadWacDetail()}catch(e){showToast(e.message,'danger')}
 }
 async function updateWeightedAvg(ciId){
-  if(!confirm('确认生成加权平均成本版本？\n\n这将生成并锁定的 WAC 历史版本，不会修改库存总表的数量、成本和金额。\n库存总表的加权平均成本将在 ERP 库存导入时自动匹配最新已确认版本。'))return;
+  if(!confirm(''+t("confirm.wac_generate","确认生成加权平均成本版本？\n\n这将生成并锁定的 WAC 历史版本，不会修改库存总表的数量、成本和金额。\n库存总表的加权平均成本将在 ERP 库存导入时自动匹配最新已确认版本。")+''))return;
   try{
-    const r=await api('/api/cost-allocation/update-weighted-avg/'+ciId,'POST',{remark:'成本确认'});
+    const r=await api('/api/cost-allocation/update-weighted-avg/'+ciId,'POST',{remark:''+t("cost.confirm_remark","成本确认")+''});
     showToast(t('toast.wacVersionLocked','加权平均成本版本已生成并锁定，共{n}条',{n:r.updated_count}),'success');
     // 显示详细结果
     if(r.logs&&r.logs.length){
-      let logHtml='<div class="table-container"><table class="data-table"><thead><tr><th>SKU</th><th>版本号</th><th>原库存</th><th>旧成本</th><th>入库量</th><th>单位落地成本</th><th>新加权平均成本</th></tr></thead><tbody>'+r.logs.map(l=>'<tr><td class="cell-id">'+esc(l.sku_code)+'</td><td class="text-center font-bold">v'+l.version_no+'</td><td class="text-right">'+l.original_qty+'</td><td class="text-right">'+fmtMoney(l.old_avg_cost)+'</td><td class="text-right">'+l.inbound_qty+'</td><td class="text-right">'+fmtMoney(l.unit_landing_cost)+'</td><td class="text-right font-bold">'+fmtMoney(l.new_avg_cost)+'</td></tr>').join('')+'</tbody></table></div>';
-      openModal('加权平均成本版本已生成',logHtml,'<button class="btn btn-primary" onclick="closeModal()">确定</button>');
+      let logHtml='<div class="table-container"><table class="data-table"><thead><tr><th>'+t("col.sku","SKU")+'<</th><th>'+t("col.version","版本号")+'<</th><th>'+t("cost.col_original_inventory","原库存")+'<</th><th>'+t("col.old_cost","旧成本")+'<</th><th>'+t("col.inbound_qty","入库量")+'<</th><th>'+t("cost.col_unit_landing_cost","单位落地成本")+'<</th><th>'+t("cost.col_new_wac","新加权平均成本")+'<</th></tr></thead><tbody>'+r.logs.map(l=>'<tr><td class="cell-id">'+esc(l.sku_code)+'</td><td class="text-center font-bold">v'+l.version_no+'</td><td class="text-right">'+l.original_qty+'</td><td class="text-right">'+fmtMoney(l.old_avg_cost)+'</td><td class="text-right">'+l.inbound_qty+'</td><td class="text-right">'+fmtMoney(l.unit_landing_cost)+'</td><td class="text-right font-bold">'+fmtMoney(l.new_avg_cost)+'</td></tr>').join('')+'</tbody></table></div>';
+      openModal(''+t("toast.wac_version_generated","加权平均成本版本已生成")+'',logHtml,'<button class="btn btn-primary" onclick="closeModal()">'+t("action.confirm","确定")+'<</button>');
     }
     loadWacDetail();
   }catch(e){showToast(e.message,'danger')}
 }
 // Tab 4: 成本更新日志
 async function loadCostLogs(){
-  document.getElementById('cost-tab-content').innerHTML='<div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>CI号</label><input type="text" id="log-ci" onkeypress="if(event.key===\'Enter\')fetchCostLogs()"></div><div class="filter-group"><label>SKU</label><input type="text" id="log-sku" onkeypress="if(event.key===\'Enter\')fetchCostLogs()"></div><div class="filter-group"><label>关键词</label><input type="text" id="log-kw" onkeypress="if(event.key===\'Enter\')fetchCostLogs()"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="fetchCostLogs()">搜索</button></div></div></div><div id="cost-logs-table"><div class="empty-state"><div class="empty-icon">📝</div>请搜索查看日志</div></div>';
+  document.getElementById('cost-tab-content').innerHTML='<div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>'+t("col.ci","CI号")+'<</label><input type="text" id="log-ci" onkeypress="if(event.key===\'Enter\')fetchCostLogs()"></div><div class="filter-group"><label>'+t("col.sku","SKU")+'<</label><input type="text" id="log-sku" onkeypress="if(event.key===\'Enter\')fetchCostLogs()"></div><div class="filter-group"><label>'+t("cost.filter_keyword","关键词")+'<</label><input type="text" id="log-kw" onkeypress="if(event.key===\'Enter\')fetchCostLogs()"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="fetchCostLogs()">'+t("action.search","搜索")+'<</button></div></div></div><div id="cost-logs-table"><div class="empty-state"><div class="empty-icon">📝</div>'+t("empty.search_logs","请搜索查看日志")+'<</div></div>';
   fetchCostLogs();
 }
 async function fetchCostLogs(){
   try{
     const ci=document.getElementById('log-ci')?.value||'',sku=document.getElementById('log-sku')?.value||'',kw=document.getElementById('log-kw')?.value||'';
     const data=await api('/api/cost-update-logs?ci_no='+encodeURIComponent(ci)+'&sku_code='+encodeURIComponent(sku)+'&keyword='+encodeURIComponent(kw));
-    document.getElementById('cost-logs-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">📝</div>暂无日志数据</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>时间</th><th>SKU</th><th>国家</th><th>仓库</th><th>关联PO</th><th>关联CI</th><th>原库存</th><th>旧成本</th><th>入库量</th><th>CI单位成本</th><th>单位落地成本</th><th>新库存</th><th>新成本</th><th>操作人</th><th>备注</th></tr></thead><tbody>'+data.map(l=>'<tr><td class="cell-date">'+fmtDate(l.created_at)+' '+String(l.created_at||'').split(' ')[1]||''+'</td><td class="cell-id">'+esc(l.sku_code)+'</td><td>'+esc(l.country)+'</td><td>'+esc(l.warehouse)+'</td><td class="cell-id">'+esc(l.related_po_no)+'</td><td class="cell-id">'+esc(l.related_ci_no)+'</td><td class="text-right">'+l.original_qty+'</td><td class="text-right">'+fmtMoney(l.old_avg_cost)+'</td><td class="text-right">'+l.inbound_qty+'</td><td class="text-right">'+fmtMoney(l.ci_unit_cost)+'</td><td class="text-right">'+fmtMoney(l.unit_landing_cost)+'</td><td class="text-right font-bold">'+l.new_qty+'</td><td class="text-right font-bold">'+fmtMoney(l.new_avg_cost)+'</td><td>'+esc(l.operator_name)+'</td><td>'+esc(l.remark)+'</td></tr>').join('')+'</tbody></table></div>';
+    document.getElementById('cost-logs-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">📝</div>'+t("empty.no_log_data","暂无日志数据")+'<</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>'+t("col.time","时间")+'<</th><th>'+t("col.sku","SKU")+'<</th><th>'+t("app.113","国家")+'<</th><th>'+t("app.114","仓库")+'<</th><th>'+t("col.related_po","关联PO")+'<</th><th>'+t("cost.col_rel_ci","关联CI")+'<</th><th>'+t("cost.col_original_inventory","原库存")+'<</th><th>'+t("col.old_cost","旧成本")+'<</th><th>'+t("col.inbound_qty","入库量")+'<</th><th>'+t("cost.col_ci_unit_cost","CI单位成本")+'<</th><th>'+t("cost.col_unit_landing_cost","单位落地成本")+'<</th><th>'+t("col.new_qty","新库存")+'<</th><th>'+t("col.new_cost","新成本")+'<</th><th>'+t("col.operator","操作人")+'<</th><th>'+t("col.remark","备注")+'<</th></tr></thead><tbody>'+data.map(l=>'<tr><td class="cell-date">'+fmtDate(l.created_at)+' '+String(l.created_at||'').split(' ')[1]||''+'</td><td class="cell-id">'+esc(l.sku_code)+'</td><td>'+esc(l.country)+'</td><td>'+esc(l.warehouse)+'</td><td class="cell-id">'+esc(l.related_po_no)+'</td><td class="cell-id">'+esc(l.related_ci_no)+'</td><td class="text-right">'+l.original_qty+'</td><td class="text-right">'+fmtMoney(l.old_avg_cost)+'</td><td class="text-right">'+l.inbound_qty+'</td><td class="text-right">'+fmtMoney(l.ci_unit_cost)+'</td><td class="text-right">'+fmtMoney(l.unit_landing_cost)+'</td><td class="text-right font-bold">'+l.new_qty+'</td><td class="text-right font-bold">'+fmtMoney(l.new_avg_cost)+'</td><td>'+esc(l.operator_name)+'</td><td>'+esc(l.remark)+'</td></tr>').join('')+'</tbody></table></div>';
   }catch(e){showFlash(e.message,'danger')}
 }
 
 // ==================== 付款管理 ====================
 const PAY_CATEGORIES={goods:t("payment.category.goods","货款"),warehouse_arrival:t("app.1083", "\u5230\u4ed3\u8d39\u7528"),customs_duty:t("app.224", "\u5173\u7a0e"),inspection_fee:t("app.1084", "\u5546\u68c0\u8d39\u7528")};
 const PAY_SUBCATS={
-  goods:{deposit:'定金',balance:'尾款'},
-  warehouse_arrival:{freight:'运费',customs_clearance:t("app.434", "\u6e05\u5173\u8d39"),port_charges:t("app.435", "\u6e2f\u53e3\u8d39"),delivery:t("app.436", "\u6d3e\u9001\u8d39"),warehouse:t("app.437", "\u4ed3\u50a8\u8d39"),other_local:t("app.438", "\u5176\u4ed6\u672c\u5730\u8d39")},
+  goods:{deposit:t('term.deposit','定金'),balance:t('term.balance','尾款')},
+  warehouse_arrival:{freight:t('term.freight','运费'),customs_clearance:t("app.434", "\u6e05\u5173\u8d39"),port_charges:t("app.435", "\u6e2f\u53e3\u8d39"),delivery:t("app.436", "\u6d3e\u9001\u8d39"),warehouse:t("app.437", "\u4ed3\u50a8\u8d39"),other_local:t("app.438", "\u5176\u4ed6\u672c\u5730\u8d39")},
   customs_duty:{duty:t("app.224", "\u5173\u7a0e")},
   inspection_fee:{inspection:t("app.439", "\u5546\u68c0\u8d39")}
 };
@@ -6561,7 +6629,7 @@ const PAY_STATUS_MAP={pending_approval:t("shell.072", "\u5f85\u5ba1\u6279"),appr
 let _cockpitData=null;
 async function renderPayableCockpit(){
   const el=document.getElementById('content-inner');
-  el.innerHTML='<div id="flash-container"></div><div style="padding:20px;color:var(--text-secondary,#888)">加载中…</div>';
+  el.innerHTML='<div id="flash-container"></div><div style="padding:20px;color:var(--text-secondary,#888)">'+t("cockpit.loading","加载中…")+'</div>';
   try{
     const data=await api('/api/finance/payable-cockpit');
     _cockpitData=data;
@@ -6586,13 +6654,13 @@ function cockpitCurBreakdown(d,field){
   }).join('');
 }
 function cockpitSupplierStatus(s){
-  if(s.overdue_amount>0) return '<span style="color:#c62828">已逾期</span>';
-  if(s.due_soon>0) return '<span style="color:#f57f17">即将到期</span>';
-  if(s.outstanding>0 && !s.earliest_due_date) return '<span style="color:#999">无到期日</span>';
-  return '<span style="color:#2e7d32">正常</span>';
+  if(s.overdue_amount>0) return '<span style="color:#c62828">'+t("cockpit.status_overdue","已逾期")+'</span>';
+  if(s.due_soon>0) return '<span style="color:#f57f17">'+t("cockpit.status_due_soon","即将到期")+'</span>';
+  if(s.outstanding>0 && !s.earliest_due_date) return '<span style="color:#999">'+t("cockpit.status_no_due","无到期日")+'</span>';
+  return '<span style="color:#2e7d32">'+t("cockpit.status_normal","正常")+'</span>';
 }
 // 费用类型展示别名（仅展示用，底层 payment_category / 计算逻辑不变）
-const COCKPIT_CAT_ALIAS={goods:'货款',warehouse_arrival:t("pi.022", "\u8fd0\u8f93\u8d39"),customs_duty:t("app.224", "\u5173\u7a0e"),inspection_fee:t("pi.023", "\u68c0\u9a8c\u8d39")};
+const COCKPIT_CAT_ALIAS={goods:''+t("cockpit.cat_goods","货款")+'',warehouse_arrival:t("pi.022", "\u8fd0\u8f93\u8d39"),customs_duty:t("app.224", "\u5173\u7a0e"),inspection_fee:t("pi.023", "\u68c0\u9a8c\u8d39")};
 function cockpitCatAlias(cat){return COCKPIT_CAT_ALIAS[cat]||t("ci.035", "\u5176\u4ed6\u8d39\u7528");}
 function toggleCockpitDetail(){
   const body=document.getElementById('cockpit-detail-body');
@@ -6600,7 +6668,7 @@ function toggleCockpitDetail(){
   if(!body)return;
   const open=body.style.display==='none';
   body.style.display=open?'':'none';
-  if(tog)tog.textContent=open?'收起 ▲':t("app.1103", "\u5c55\u5f00\u67e5\u770b \u25bc");
+  if(tog)tog.textContent=open?''+t("cockpit.collapse","收起 ▲")+'':t("app.1103", "\u5c55\u5f00\u67e5\u770b \u25bc");
   if(open)renderCockpitDetails();
 }
 function cockpitShowAnomaly(){
@@ -6709,7 +6777,7 @@ function renderCockpitView(){
   const allDetails=d.details||[];
   // 筛选下拉选项（来自全量 details，不受筛选影响，始终完整）
   const countrySet={}; allDetails.forEach(r=>{ countrySet[r.country||'']=1; });
-  let countryOpts=''; if(countrySet['']) countryOpts+='<option value="__NONE__">未设置(-)</option>';
+  let countryOpts=''; if(countrySet['']) countryOpts+='<option value="__NONE__">'+t("cockpit.opt_notset","未设置(-)")+'</option>';
   Object.keys(countrySet).filter(c=>c).sort().forEach(c=>{ countryOpts+='<option value="'+esc(c)+'">'+esc(c)+'</option>'; });
   const supSet={}; allDetails.forEach(r=>{ supSet[r.supplier_name]=1; });
   const supplierOpts=Object.keys(supSet).sort().map(s=>'<option value="'+esc(s)+'">'+esc(s)+'</option>').join('');
@@ -6719,22 +6787,22 @@ function renderCockpitView(){
   const categoryOpts=Object.keys(catSet).sort().map(c=>'<option value="'+esc(c)+'">'+esc(cockpitCatAlias(c))+'</option>').join('');
 
   let html='<div id="flash-container"></div>';
-  html+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><div style="font-size:15px;font-weight:700">🧭 财务应付驾驶舱</div>'
-    +'<div style="font-size:12px;color:var(--text-secondary,#999)">数据时间 '+esc(fmtDate(d.generated_at))+' ｜ 今天 '+esc(d.today)+'</div></div>';
-  html+='<details style="font-size:12px;color:var(--text-secondary,#999);margin-bottom:14px"><summary style="cursor:pointer">口径说明</summary><div style="line-height:1.7;padding:6px 0 0 14px">'
+  html+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><div style="font-size:15px;font-weight:700">🧭 '+t("cockpit.title","财务应付驾驶舱")+'</div>'
+    +'<div style="font-size:12px;color:var(--text-secondary,#999)">'+t("cockpit.lbl_data_time","数据时间")+' '+esc(fmtDate(d.generated_at))+' '+t("cockpit.lbl_today","｜ 今天")+' '+esc(d.today)+'</div></div>';
+  html+='<details style="font-size:12px;color:var(--text-secondary,#999);margin-bottom:14px"><summary style="cursor:pointer">'+t("cockpit.caliber_note","口径说明")+'</summary><div style="line-height:1.7;padding:6px 0 0 14px">'
     +esc(d.notes.outstanding)+'<br>'+esc(d.notes.currency)+'<br>'+esc(d.notes.due_date)+'</div></details>';
 
   if(!d.currencies.length){
-    html+='<div class="flash flash-info show">当前无有效应付单据。</div>';
+    html+='<div class="flash flash-info show">'+t("cockpit.no_valid","当前无有效应付单据。")+'</div>';
     el.innerHTML='<div class="cockpit-page">'+html+'</div>'; return;
   }
   // 顶部筛选栏（纯展示层，切换仅重渲染 #cockpit-layers，不请求后端）
   html+='<div class="filter-bar" style="margin:6px 0 10px"><div class="filter-form" style="flex-wrap:wrap">'
-    +'<div class="filter-group"><label>国家</label><select id="cockpit-f-country" onchange="renderCockpitLayers()"><option value="">全部</option>'+countryOpts+'</select></div>'
-    +'<div class="filter-group"><label>供应商</label><select id="cockpit-f-supplier" onchange="renderCockpitLayers()"><option value="">全部</option>'+supplierOpts+'</select></div>'
-    +'<div class="filter-group"><label>币种</label><select id="cockpit-f-currency" onchange="renderCockpitLayers()"><option value="">全部</option>'+currencyOpts+'</select></div>'
-    +'<div class="filter-group"><label>费用类型</label><select id="cockpit-f-category" onchange="renderCockpitLayers()"><option value="">全部</option>'+categoryOpts+'</select></div>'
-    +'<div class="filter-actions"><button class="btn btn-secondary btn-sm" onclick="cockpitResetFilters()">重置</button></div>'
+    +'<div class="filter-group"><label>'+t("cockpit.filter_country","国家")+'</label><select id="cockpit-f-country" onchange="renderCockpitLayers()"><option value="">'+t("cockpit.all","全部")+'</option>'+countryOpts+'</select></div>'
+    +'<div class="filter-group"><label>'+t("cockpit.filter_supplier","供应商")+'</label><select id="cockpit-f-supplier" onchange="renderCockpitLayers()"><option value="">'+t("cockpit.all","全部")+'</option>'+supplierOpts+'</select></div>'
+    +'<div class="filter-group"><label>'+t("cockpit.filter_currency","币种")+'</label><select id="cockpit-f-currency" onchange="renderCockpitLayers()"><option value="">'+t("cockpit.all","全部")+'</option>'+currencyOpts+'</select></div>'
+    +'<div class="filter-group"><label>'+t("cockpit.filter_cat","费用类型")+'</label><select id="cockpit-f-category" onchange="renderCockpitLayers()"><option value="">'+t("cockpit.all","全部")+'</option>'+categoryOpts+'</select></div>'
+    +'<div class="filter-actions"><button class="btn btn-secondary btn-sm" onclick="cockpitResetFilters()">'+t("cockpit.reset","重置")+'</button></div>'
     +'</div></div>';
   html+='<div id="cockpit-layers"></div>';
   el.innerHTML='<div class="cockpit-page">'+html+'</div>';
@@ -6751,22 +6819,22 @@ function renderCockpitLayers(){
   // Layer 1 — 应付概览（④ UX：高优先信号前置——已逾期 / 未来压力 / 数据异常 排在各币种未结清之前）
   const ovCount=curs.reduce((a,cur)=>a+((v.metrics[cur]&&v.metrics[cur].overdue_count)||0),0);
   const noDueCount=v.details.filter(r=>r.outstanding>0&&!r.has_due).length;
-  const noDueSub=noDueCount>0?'<span style="color:#f57f17;cursor:pointer" onclick="cockpitShowAnomaly()">CI出货日/Credit未录入，点击查看 ▼</span>':t("app.227", "\u65e0");
-  html+='<div style="font-size:13px;font-weight:600;margin:6px 0 8px">应付概览</div>';
+  const noDueSub=noDueCount>0?'<span style="color:#f57f17;cursor:pointer" onclick="cockpitShowAnomaly()">'+t("cockpit.anomaly_hint","CI出货日/Credit未录入，点击查看 ▼")+'</span>':t("app.227", "\u65e0");
+  html+='<div style="font-size:13px;font-weight:600;margin:6px 0 8px">'+t("cockpit.layer_overview","应付概览")+'</div>';
   html+='<div style="display:flex;flex-wrap:wrap;gap:10px">';
-  html+=cockpitCard(t("pi.020", "\u5df2\u903e\u671f"),cockpitCurBreakdown(v,'overdue_amount'),'danger',ovCount+' 笔');
+  html+=cockpitCard(t("pi.020", "\u5df2\u903e\u671f"),cockpitCurBreakdown(v,'overdue_amount'),'danger',ovCount+''+t("cockpit.unit_pi"," 笔")+'');
   html+=cockpitCard(t("app.1108", "\u672a\u67657\u5929\u4ed8\u6b3e\u538b\u529b"),cockpitCurBreakdown(v,'due_7'),'warn','');
   html+=cockpitCard(t("app.1109", "\u672a\u676530\u5929\u4ed8\u6b3e\u538b\u529b"),cockpitCurBreakdown(v,'due_30'),'warn','');
-  html+=cockpitCard(t("app.1110", "\u6570\u636e\u5f02\u5e38\u63d0\u9192"),'<span style="font-size:22px">'+noDueCount+'</span><span style="font-size:13px;font-weight:400"> 笔缺少应付日期</span>','info',noDueSub);
+  html+=cockpitCard(t("app.1110", "\u6570\u636e\u5f02\u5e38\u63d0\u9192"),'<span style="font-size:22px">'+noDueCount+'</span><span style="font-size:13px;font-weight:400">'+t("cockpit.missing_due_date"," 笔缺少应付日期")+'</span>','info',noDueSub);
   curs.forEach(cur=>{
     const m=v.metrics[cur]; if(!m)return;
-    html+=cockpitCard(cur+' 未结清',esc(fmtMoney(m.outstanding)),'outstanding',esc(cur)+' '+m.request_count+' 笔');
+    html+=cockpitCard(cur+''+t("cockpit.unsettled"," 未结清")+'',esc(fmtMoney(m.outstanding)),'outstanding',esc(cur)+' '+m.request_count+''+t("cockpit.unit_pi"," 笔")+'');
   });
   html+='</div>';
 
   // Layer 2 — 金额构成
   html+='<div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:10px">';
-  curs.forEach(cur=>{ const m=v.metrics[cur]; html+=cockpitCard(cur+' 总应付',esc(fmtMoney(m.gross_payable)),'total',''); html+=cockpitCard(cur+' 已结清',esc(fmtMoney(m.settled)),'settled',''); });
+  curs.forEach(cur=>{ const m=v.metrics[cur]; html+=cockpitCard(cur+''+t("cockpit.lbl_total_payable"," 总应付")+'',esc(fmtMoney(m.gross_payable)),'total',''); html+=cockpitCard(cur+''+t("cockpit.lbl_settled"," 已结清")+'',esc(fmtMoney(m.settled)),'settled',''); });
   html+='</div>';
 
   // Layer 1.5 — 应付费用构成
@@ -6777,9 +6845,9 @@ function renderCockpitLayers(){
     if(!catAgg[alias][c.currency])catAgg[alias][c.currency]={outstanding:0};
     catAgg[alias][c.currency].outstanding+=c.outstanding;
   });
-  const catOrder=['货款',t("pi.022", "\u8fd0\u8f93\u8d39"),t("app.224", "\u5173\u7a0e"),t("pi.023", "\u68c0\u9a8c\u8d39"),'其他费用'];
+  const catOrder=[''+t("cockpit.cat_goods","货款")+'',t("pi.022", "\u8fd0\u8f93\u8d39"),t("app.224", "\u5173\u7a0e"),t("pi.023", "\u68c0\u9a8c\u8d39"),''+t("ci.035","其他费用")+''];
   const catCurs=curs.slice().sort();
-  html+='<div style="margin-top:14px"><div style="font-size:13px;font-weight:600;margin:6px 0 8px">应付费用构成</div><div style="display:flex;flex-wrap:wrap;gap:10px">';
+  html+='<div style="margin-top:14px"><div style="font-size:13px;font-weight:600;margin:6px 0 8px">'+t("cockpit.layer_cost_composition","应付费用构成")+'</div><div style="display:flex;flex-wrap:wrap;gap:10px">';
   catOrder.forEach(alias=>{
     const curMap=catAgg[alias]||{};
     const curParts=catCurs.map(cur=>{
@@ -6793,10 +6861,10 @@ function renderCockpitLayers(){
 
   // Layer 3 — 供应商应付总览（含品牌/国家展示列，品牌仅关联展示）
   if((v.by_supplier||[]).length){
-    html+='<div class="table-section" style="margin-top:16px"><div class="table-section-title"><div class="table-section-title-left">🏢 按供应商应付总览</div><div style="font-size:12px;color:var(--text-secondary,#999)">点击任意行查看该供应商费用组成与付款明细</div></div>';
-    html+='<table class="data-table"><thead><tr><th>供应商</th><th>品牌</th><th>国家</th><th>币种</th><th style="text-align:right">总应付</th><th style="text-align:right">已结清</th><th style="text-align:right">未结清</th><th>状态</th></tr></thead><tbody>';
+    html+='<div class="table-section" style="margin-top:16px"><div class="table-section-title"><div class="table-section-title-left">🏢 '+t("cockpit.layer_by_supplier","按供应商应付总览")+'</div><div style="font-size:12px;color:var(--text-secondary,#999)">'+t("cockpit.click_row_hint","点击任意行查看该供应商费用组成与付款明细")+'</div></div>';
+    html+='<table class="data-table"><thead><tr><th>'+t("cockpit.col_supplier","供应商")+'</th><th>'+t("cockpit.col_brand","品牌")+'</th><th>'+t("cockpit.col_country","国家")+'</th><th>'+t("cockpit.col_currency","币种")+'</th><th style="text-align:right">'+t("cockpit.col_total_payable","总应付")+'</th><th style="text-align:right">'+t("cockpit.col_settled","已结清")+'</th><th style="text-align:right">'+t("cockpit.col_outstanding","未结清")+'</th><th>'+t("cockpit.col_status","状态")+'</th></tr></thead><tbody>';
     (v.by_supplier||[]).forEach(s=>{
-      html+='<tr style="cursor:pointer" onclick="cockpitSupplierDrawer(\''+encodeURIComponent(s.supplier_name)+'\',\''+esc(s.currency)+'\')" title="\u70b9\u51fb\u67e5\u770b\u8be5\u4f9b\u5e94\u5546\u8d39\u7528\u7ec4\u6210\u4e0e\u4ed8\u6b3e\u660e\u7ec6">'
+      html+='<tr style="cursor:pointer" onclick="cockpitSupplierDrawer(\''+encodeURIComponent(s.supplier_name)+'\',\''+esc(s.currency)+'\')" title="'+t('cockpit.row_title','点击查看该供应商费用组成与付款明细')+'">'
         +'<td>'+esc(s.supplier_name)+'</td>'
         +'<td>'+(s.brands?'<span title="'+esc(s.brands)+'">'+esc(s.brands)+'</span>':'<span style="color:#999">—</span>')+'</td>'
         +'<td>'+(s.country?esc(s.country):'<span style="color:#999">—</span>')+'</td>'
@@ -6811,8 +6879,8 @@ function renderCockpitLayers(){
 
   // Layer 4 — 按费用类型汇总
   if((v.by_category||[]).length){
-    html+='<div class="table-section" style="margin-top:16px"><div class="table-section-title"><div class="table-section-title-left">📊 按费用类型汇总</div></div>';
-    html+='<table class="data-table"><thead><tr><th>费用类型</th><th>币种</th><th style="text-align:right">总应付</th><th style="text-align:right">已结清</th><th style="text-align:right">未结清</th><th style="text-align:right">笔数</th></tr></thead><tbody>';
+    html+='<div class="table-section" style="margin-top:16px"><div class="table-section-title"><div class="table-section-title-left">📊 '+t("cockpit.layer_by_category","按费用类型汇总")+'</div></div>';
+    html+='<table class="data-table"><thead><tr><th>'+t("cockpit.filter_cat","费用类型")+'</th><th>'+t("cockpit.col_currency","币种")+'</th><th style="text-align:right">'+t("cockpit.col_total_payable","总应付")+'</th><th style="text-align:right">'+t("cockpit.col_settled","已结清")+'</th><th style="text-align:right">'+t("cockpit.col_outstanding","未结清")+'</th><th style="text-align:right">'+t("cockpit.col_count","笔数")+'</th></tr></thead><tbody>';
     v.by_category.forEach(c=>{
       html+='<tr><td>'+esc(c.category_label||c.payment_category)+'</td><td>'+esc(c.currency)+'</td>'
         +'<td style="text-align:right">'+fmtMoney(c.gross_payable)+'</td>'
@@ -6827,13 +6895,13 @@ function renderCockpitLayers(){
   const totalCnt=v.details.length;
   const outCnt=v.details.filter(r=>r.outstanding>0).length;
   html+='<div class="table-section" style="margin-top:16px"><div class="table-section-title" style="cursor:pointer" onclick="toggleCockpitDetail()">'
-    +'<div class="table-section-title-left">📋 应付明细（共 '+totalCnt+' 条，未结清 '+outCnt+' 条）</div>'
-    +'<div style="font-size:12px;color:var(--text-secondary,#999)" id="cockpit-detail-toggle">展开查看 ▼</div></div>'
+    +'<div class="table-section-title-left">📋 '+t("cockpit.layer_details_prefix","应付明细（共")+' '+totalCnt+''+t("cockpit.layer_details_mid"," 条，未结清 ")+''+outCnt+''+t("cockpit.layer_details_suffix"," 条）")+'</div>'
+    +'<div style="font-size:12px;color:var(--text-secondary,#999)" id="cockpit-detail-toggle">'+t("app.1103","展开查看 ▼")+'</div></div>'
     +'<div id="cockpit-detail-body" style="display:none">'
     +'<div class="filter-actions" style="margin:8px 0">'
-    +'<label style="font-size:12px;margin-right:6px"><input type="checkbox" id="cockpit-only-outstanding" onchange="renderCockpitDetails()" checked> 仅看未结清</label>'
-    +'<label style="font-size:12px;margin-right:6px"><input type="checkbox" id="cockpit-only-nodue" onchange="renderCockpitDetails()"> 仅看无到期日</label>'
-    +'<input type="text" id="cockpit-detail-kw" placeholder="\u4f9b\u5e94\u5546/\u7533\u8bf7\u53f7/CI" style="width:180px" oninput="renderCockpitDetails()">'
+    +'<label style="font-size:12px;margin-right:6px"><input type="checkbox" id="cockpit-only-outstanding" onchange="renderCockpitDetails()" checked> '+t("cockpit.only_outstanding","仅看未结清")+'</label>'
+    +'<label style="font-size:12px;margin-right:6px"><input type="checkbox" id="cockpit-only-nodue" onchange="renderCockpitDetails()"> '+t("cockpit.only_no_due","仅看无到期日")+'</label>'
+    +'<input type="text" id="cockpit-detail-kw" placeholder="'+t('cockpit.kw_placeholder','供应商/申请号/CI')+'" style="width:180px" oninput="renderCockpitDetails()">'
     +'</div><div id="cockpit-detail-table"></div></div></div>';
   box.innerHTML=html;
 }
@@ -6857,13 +6925,13 @@ function renderCockpitDetails(preSupplier,preCurrency){
     rows=rows.filter(r=>r.supplier_name===preSupplier&&r.currency===preCurrency);
   }
   if(kw)rows=rows.filter(r=>(r.supplier_name+' '+r.request_no+' '+(r.related_ci_no||'')+' '+(r.related_pi_no||'')).toLowerCase().includes(kw));
-  let html='<table class="data-table"><thead><tr><th>付款申请编号</th><th>供应商</th><th>来源</th><th>关联PI/CI</th><th>费用类型</th><th>付款主体</th><th>币种</th><th style="text-align:right">应付</th><th style="text-align:right">已核销</th><th style="text-align:right">未结清</th><th>到期日</th><th style="text-align:right">逾期天数</th><th>状态</th></tr></thead><tbody>';
-  if(!rows.length)html+='<tr><td colspan="13" style="text-align:center;color:#999;padding:20px">无匹配记录</td></tr>';
+  let html='<table class="data-table"><thead><tr><th>'+t("cockpit.col_request_no","付款申请编号")+'</th><th>'+t("cockpit.col_supplier","供应商")+'</th><th>'+t("cockpit.col_source","来源")+'</th><th>'+t("cockpit.col_related_pi_ci","关联PI/CI")+'</th><th>'+t("cockpit.filter_cat","费用类型")+'</th><th>'+t("cockpit.col_payer","付款主体")+'</th><th>'+t("cockpit.col_currency","币种")+'</th><th style="text-align:right">'+t("cockpit.col_payable","应付")+'</th><th style="text-align:right">'+t("cockpit.col_written_off","已核销")+'</th><th style="text-align:right">'+t("cockpit.col_outstanding","未结清")+'</th><th>'+t("cockpit.col_due_date","到期日")+'</th><th style="text-align:right">'+t("cockpit.col_overdue_days","逾期天数")+'</th><th>'+t("cockpit.col_status","状态")+'</th></tr></thead><tbody>';
+  if(!rows.length)html+='<tr><td colspan="13" style="text-align:center;color:#999;padding:20px">'+t("cockpit.no_match","无匹配记录")+'</td></tr>';
   rows.forEach(r=>{
     const rel=[r.related_pi_no,r.related_ci_no].filter(Boolean).join(' / ')||'—';
     const catTxt=(r.category_label||'')+(r.subcategory_label?' / '+r.subcategory_label:'');
     html+='<tr style="cursor:pointer" onclick="viewPayment(\''+r.id+'\')">'
-      +'<td style="color:#1d6fd3">'+esc(r.request_no)+(r.source_mode==='historical'?' <span style="font-size:10px;color:#999">(历史)</span>':'')+'</td>'
+      +'<td style="color:#1d6fd3">'+esc(r.request_no)+(r.source_mode==='historical'?' <span style="font-size:10px;color:#999">'+t("cockpit.historical","(历史)")+'</span>':'')+'</td>'
       +'<td>'+esc(r.supplier_name)+'</td>'
       +'<td>'+esc(r.source_type||'—')+'</td>'
       +'<td>'+esc(rel)+'</td>'
@@ -6873,7 +6941,7 @@ function renderCockpitDetails(preSupplier,preCurrency){
       +'<td style="text-align:right">'+fmtMoney(r.gross_payable)+'</td>'
       +'<td style="text-align:right;color:#2e7d32">'+fmtMoney(r.settled)+'</td>'
       +'<td style="text-align:right;color:#1565c0;font-weight:600">'+fmtMoney(r.outstanding)+'</td>'
-      +'<td>'+(r.payable_date||'<span style="color:#999">无到期日</span>')+'</td>'
+      +'<td>'+(r.payable_date||'<span style="color:#999">'+t("cockpit.status_no_due","无到期日")+'</span>')+'</td>'
       +'<td style="text-align:right;color:'+(r.overdue_days>0?'#c62828':'inherit')+'">'+(r.overdue_days>0?r.overdue_days:'—')+'</td>'
       +'<td>'+cockpitStatusBadge(r)+'</td></tr>';
   });
@@ -6903,7 +6971,7 @@ function cockpitSupplierDrawer(supplierEnc,currency){
   const brands=(d.supplier_brands&&d.supplier_brands[supplier])||'';
   const _cset={}; rows.forEach(r=>{ if(r.country) _cset[r.country]=1; });
   const countries=Object.keys(_cset).join(', ');
-  const order=['货款','运输费','关税','检验费','其他费用'];
+  const order=[''+t("cockpit.cat_goods","货款")+'',''+t("pi.022","运输费")+'',''+t("app.224","关税")+'',''+t("pi.023","检验费")+'',''+t("ci.035","其他费用")+''];
   const buckets={};let totalOut=0;
   rows.forEach(r=>{
     const alias=cockpitCatAlias(r.payment_category);
@@ -6925,42 +6993,42 @@ function cockpitSupplierDrawer(supplierEnc,currency){
     const rel=[r.related_pi_no,r.related_ci_no].filter(Boolean).join(' / ')||'—';
     const catTxt=(r.category_label||'')+(r.subcategory_label?' / '+r.subcategory_label:'')||'—';
     return '<tr style="cursor:pointer" onclick="closeCockpitDrawer();viewPayment(\''+r.id+'\')">'
-      +'<td style="color:#1d6fd3">'+esc(r.request_no)+(r.source_mode==='historical'?' <span style="font-size:10px;color:#999">(历史)</span>':'')+'</td>'
+      +'<td style="color:#1d6fd3">'+esc(r.request_no)+(r.source_mode==='historical'?' <span style="font-size:10px;color:#999">'+t("cockpit.historical","(历史)")+'</span>':'')+'</td>'
       +'<td>'+esc(rel)+'</td>'
       +'<td>'+esc(catTxt||'—')+'</td>'
       +'<td style="text-align:right">'+fmtMoney(r.gross_payable)+'</td>'
       +'<td style="text-align:right;color:#2e7d32">'+fmtMoney(r.settled)+'</td>'
       +'<td style="text-align:right;color:#1565c0;font-weight:600">'+fmtMoney(r.outstanding)+'</td>'
-      +'<td>'+(r.payable_date||'<span style="color:#999">无到期日</span>')+'</td>'
+      +'<td>'+(r.payable_date||'<span style="color:#999">'+t("cockpit.status_no_due","无到期日")+'</span>')+'</td>'
       +'<td>'+cockpitStatusBadge(r)+'</td></tr>';
-  }).join('') : '<tr><td colspan="8" style="text-align:center;color:#999;padding:18px">无付款记录</td></tr>';
+  }).join('') : '<tr><td colspan="8" style="text-align:center;color:#999;padding:18px">'+t("cockpit.no_payment_record","无付款记录")+'</td></tr>';
   const html='<div class="drawer-header"><div>'
     +'<div style="font-size:15px;font-weight:700">'+esc(supplier)+'</div>'
     +'<div style="font-size:12px;color:var(--text-secondary,#999);margin-top:2px">'+esc(currency)
-    +(brands?' ｜ 品牌 '+esc(brands):'')
-    +(countries?' ｜ 国家 '+esc(countries):'')
+    +(brands?''+t("cockpit.lbl_brand"," ｜ 品牌 ")+''+esc(brands):'')
+    +(countries?''+t("cockpit.lbl_country"," ｜ 国家 ")+''+esc(countries):'')
     +'</div>'
-    +'<div style="font-size:12px;color:var(--text-secondary,#999);margin-top:8px">未结清金额</div>'
+    +'<div style="font-size:12px;color:var(--text-secondary,#999);margin-top:8px">'+t("cockpit.lbl_outstanding_amount","未结清金额")+'</div>'
     +'<div style="font-size:24px;font-weight:700;color:#1565c0">'+esc(fmtMoney(totalOut))+' <span style="font-size:14px;color:#999">'+esc(currency)+'</span></div>'
     +'</div><button class="modal-close" onclick="closeCockpitDrawer()">×</button></div>'
     +'<div class="drawer-body">'
-    +'<div style="font-size:13px;font-weight:600;margin-bottom:10px">费用组成</div>'+compHtml
-    +'<div style="font-size:13px;font-weight:600;margin:18px 0 8px">付款明细（'+rows.length+' 笔）</div>'
-    +'<table class="data-table"><thead><tr><th>付款编号</th><th>来源</th><th>费用类型</th><th style="text-align:right">应付</th><th style="text-align:right">已付</th><th style="text-align:right">未付</th><th>到期日</th><th>状态</th></tr></thead><tbody>'+detailHtml+'</tbody></table>'
+    +'<div style="font-size:13px;font-weight:600;margin-bottom:10px">'+t("cockpit.cost_composition","费用组成")+'</div>'+compHtml
+    +'<div style="font-size:13px;font-weight:600;margin:18px 0 8px">'+t("cockpit.payment_detail_prefix","付款明细（")+''+rows.length+''+t("cockpit.payment_detail_suffix"," 笔）")+'</div>'
+    +'<table class="data-table"><thead><tr><th>'+t("cockpit.col_payment_no","付款编号")+'</th><th>'+t("cockpit.col_source","来源")+'</th><th>'+t("cockpit.filter_cat","费用类型")+'</th><th style="text-align:right">'+t("cockpit.col_payable","应付")+'</th><th style="text-align:right">'+t("cockpit.col_paid","已付")+'</th><th style="text-align:right">'+t("cockpit.col_unpaid","未付")+'</th><th>'+t("cockpit.col_due_date","到期日")+'</th><th>'+t("cockpit.col_status","状态")+'</th></tr></thead><tbody>'+detailHtml+'</tbody></table>'
     +'</div>';
   const dr=document.getElementById('cockpit-drawer');
   if(dr){dr.innerHTML=html;openCockpitDrawer();}
 }
 
 async function renderPayment(){
-  document.getElementById('content-inner').innerHTML=t('html.renderPayment', `<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>状态</label><select id="pay-fs"><option value="">全部</option><option value="pending_approval">待审批</option><option value="approved">已审批</option><option value="paid">已付款</option><option value="partial_paid">部分付款</option><option value="rejected">已驳回</option></select></div><div class="filter-group"><label>类别</label><select id="pay-fc"><option value="">全部</option><option value="goods">货款</option><option value="warehouse_arrival">到仓费用</option><option value="customs_duty">关税</option><option value="inspection_fee">商检费用</option></select></div><div class="filter-group"><label>关键词</label><input type="text" id="pay-fk" placeholder="申请号/供应商/来源单号" onkeypress="if(event.key==='Enter')loadPay()"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadPay()">搜索</button>{v1}</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">💳 付款申请</div></div><div id="pay-table"></div></div>`, {v1: hasPermission('payment_import')?'<button class="btn btn-secondary btn-sm" onclick="importPayResult()">📥 导入付款结果</button>':''});
+  document.getElementById('content-inner').innerHTML=t('html.renderPayment', `<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>状态</label><select id="pay-fs"><option value="">全部</option><option value="pending_approval">待审批</option><option value="approved">已审批</option><option value="paid">已付款</option><option value="partial_paid">部分付款</option><option value="rejected">已驳回</option></select></div><div class="filter-group"><label>类别</label><select id="pay-fc"><option value="">全部</option><option value="goods">货款</option><option value="warehouse_arrival">到仓费用</option><option value="customs_duty">关税</option><option value="inspection_fee">商检费用</option></select></div><div class="filter-group"><label>关键词</label><input type="text" id="pay-fk" placeholder="申请号/供应商/来源单号" onkeypress="if(event.key==='Enter')loadPay()"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadPay()">搜索</button>{v1}</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">💳 付款申请</div></div><div id="pay-table"></div></div>`, {v1: hasPermission('payment_import')?t('gen.L6956.1','<button class="btn btn-secondary btn-sm" onclick="importPayResult()">📥 导入付款结果</button>'):''});
   loadPay();
 }
 // 统一付款申请详情弹窗（付款管理与审批中心财务类审批共用同一弹窗）
 // mode：'view'=只读详情（付款管理，仅关闭）；'finance'=审批中心财务类审批（补审批意见 + 通过/驳回）
 async function viewPayment(id, mode){
   mode=mode||'view';
-  if(!hasPermission('payment_view')){showToast('无查看权限','danger');return}
+  if(!hasPermission('payment_view')){showToast(t('toast.no_view_permission','无查看权限'),'danger');return}
   try{
     const p=await api('/api/payment-requests/'+id);
     const catLabel=PAY_CATEGORIES[p.payment_category]||p.payment_category;
@@ -6968,7 +7036,7 @@ async function viewPayment(id, mode){
     const stLabel=PAY_STATUS_MAP[p.payment_status]||p.payment_status;
     const cur=p.currency||'';
     const fld=(k,v)=>'<div class="detail-item"><span class="detail-label">'+k+'</span><span class="detail-value">'+v+'</span></div>';
-    const qtyHtml=(p.total_qty!==null&&p.total_qty!==undefined)?'<b>'+Number(p.total_qty).toLocaleString('en-US')+'</b>':'<span style="color:#999">—（费用/无货物明细）</span>';
+    const qtyHtml=(p.total_qty!==null&&p.total_qty!==undefined)?'<b>'+Number(p.total_qty).toLocaleString('en-US')+'</b>':'<span style="color:#999">—'+t("payment.no_qty_detail","（费用/无货物明细）")+'</span>';
     // 返回上下文：从付款详情点开 PI/CI 后，需能返回本条付款详情（保留 mode）
     const backArg="'"+id+"','"+mode+"'";
     // 来源单号可点击：定金→PI，尾款/费用→CI（带返回上下文）
@@ -7003,20 +7071,20 @@ async function viewPayment(id, mode){
     let relHtml='';
     if(p.pi_summary){
       const pi=p.pi_summary;
-      relHtml+='<div class="detail-section"><h3>关联 PI 摘要 <a href="javascript:void(0)" style="color:#1d6fd3;cursor:pointer;text-decoration:underline" onclick="viewPI(\''+pi.id+'\','+backArg+')">'+esc(pi.pi_no)+'</a></h3>'
+      relHtml+='<div class="detail-section"><h3>'+t("payment.rel_pi_summary","关联 PI 摘要 ")+'<a href="javascript:void(0)" style="color:#1d6fd3;cursor:pointer;text-decoration:underline" onclick="viewPI(\''+pi.id+'\','+backArg+')">'+esc(pi.pi_no)+'</a></h3>'
         +'<div class="detail-grid">'
         + fld(t("app.116", "\u4f9b\u5e94\u5546"), esc(pi.supplier_name||'—'))
         + fld(t("app.112", "\u54c1\u724c"), esc(pi.brand||'—'))
         + fld(t("app.113", "\u56fd\u5bb6"), esc(pi.country||'—'))
         + fld(t("app.114", "\u4ed3\u5e93"), esc(pi.target_warehouse||'—'))
         + fld(t("app.147", "PI\u91d1\u989d"), fmtMoney(pi.total_amount, pi.currency))
-        + fld(t("app.134", "PI\u72b6\u6001"), esc(pi.pi_status||'—'))
+        + fld(t("app.134", "PI\u72b6\u6001"), esc(formatPIStatus(pi.pi_status)||'—'))
         + fld(t("po.036", "PI\u65e5\u671f"), esc(fmtDate(pi.pi_date)))
         +'</div></div>';
     }
     if(p.ci_summary){
       const ci=p.ci_summary;
-      relHtml+='<div class="detail-section"><h3>关联 CI 摘要 <a href="javascript:void(0)" style="color:#1d6fd3;cursor:pointer;text-decoration:underline" onclick="viewCI(\''+ci.id+'\','+backArg+')">'+esc(ci.ci_no)+'</a></h3>'
+      relHtml+='<div class="detail-section"><h3>'+t("payment.rel_ci_summary","关联 CI 摘要 ")+'<a href="javascript:void(0)" style="color:#1d6fd3;cursor:pointer;text-decoration:underline" onclick="viewCI(\''+ci.id+'\','+backArg+')">'+esc(ci.ci_no)+'</a></h3>'
         +'<div class="detail-grid">'
         + fld(t("app.116", "\u4f9b\u5e94\u5546"), esc(ci.supplier_name||'—'))
         + fld(t("app.112", "\u54c1\u724c"), esc(ci.brand||'—'))
@@ -7030,7 +7098,7 @@ async function viewPayment(id, mode){
     }
     if(p.historical_ci_summary){
       const h=p.historical_ci_summary;
-      relHtml+='<div class="detail-section"><h3>关联历史 CI 摘要 <a href="javascript:void(0)" style="color:#1d6fd3;cursor:pointer;text-decoration:underline" onclick="viewHistoricalCI(\''+h.id+'\','+backArg+')">'+esc(h.historical_ci_no)+'</a></h3>'
+      relHtml+='<div class="detail-section"><h3>'+t("payment.rel_his_ci_summary","关联历史 CI 摘要 ")+'<a href="javascript:void(0)" style="color:#1d6fd3;cursor:pointer;text-decoration:underline" onclick="viewHistoricalCI(\''+h.id+'\','+backArg+')">'+esc(h.historical_ci_no)+'</a></h3>'
         +'<div class="detail-grid">'
         + fld(t("app.116", "\u4f9b\u5e94\u5546"), esc(h.supplier_name||'—'))
         + fld(t("app.112", "\u54c1\u724c"), esc(h.brand_name||'—'))
@@ -7043,17 +7111,17 @@ async function viewPayment(id, mode){
         +'</div></div>';
     }
     const settlementLogs=p.settlement_logs||[];
-    const settlementSection='<div class="detail-section"><h3>结算记录</h3>'+(settlementLogs.length
-      ? '<div class="table-container" style="box-shadow:none;border:1px solid #eee"><table class="data-table"><thead><tr><th>类型</th><th>金额</th><th>付款日期</th><th>汇率快照</th><th>操作人/时间</th><th>状态</th><th>操作</th></tr></thead><tbody>'+settlementLogs.map(log=>{
+    const settlementSection='<div class="detail-section"><h3>'+t("payment.settlement_records","结算记录")+'</h3>'+(settlementLogs.length
+      ? '<div class="table-container" style="box-shadow:none;border:1px solid #eee"><table class="data-table"><thead><tr><th>'+t("col.type","类型")+'</th><th>'+t("col.amount","金额")+'</th><th>'+t("col.payment_date","付款日期")+'</th><th>'+t("col.rate_snapshot","汇率快照")+'</th><th>'+t("col.operator_time","操作人/时间")+'</th><th>'+t("col.status","状态")+'</th><th>'+t("common.actions","操作")+'</th></tr></thead><tbody>'+settlementLogs.map(log=>{
           const isPayment=log.event_type==='payment',isRounding=log.event_type==='rounding',isRoundingReversal=log.event_type==='rounding_reversal';
           const rateText=isPayment&&log.local_currency?(esc(log.original_currency||cur)+'→'+esc(log.local_currency)+' '+Number(log.local_rate||0)+'；'+esc(log.original_currency||cur)+'→RMB '+Number(log.rmb_rate||0)):'—';
-          const state=isRoundingReversal?'撤销证据':(log.status==='applied'?'有效':'已冲销');
+          const state=isRoundingReversal?''+t("payment.state_reversal_evidence","撤销证据")+'':(log.status==='applied'?''+t("common.valid","有效")+'':''+t("payment.state_reversed","已冲销")+'');
           const action=log.status==='applied'&&!isRoundingReversal&&hasPermission('payment_approve')
-            ? '<button class="btn btn-danger btn-sm" onclick="reversePaymentSettlement(\''+id+'\',\''+String(log.id).replace(/'/g,'')+'\',\''+log.event_type+'\')">'+(isRounding?'撤销抹零':'冲销'+(isPayment?'付款':t("app.180", "\u62b5\u6263")))+'</button>' : '';
-          const typeLabel=isPayment?'付款':(isRounding?'抹零':(isRoundingReversal?'抹零撤销':t("app.180", "\u62b5\u6263")));
-          return '<tr><td>'+typeLabel+(log.is_legacy?'（历史基线）':'')+'</td><td class="text-right">'+fmtMoney(log.amount,cur)+'</td><td>'+esc(log.paid_date||'—')+'</td><td style="font-size:12px">'+rateText+(isPayment&&log.local_currency?'<br>本币 '+fmtMoney(log.local_amount,log.local_currency)+'；人民币 '+fmtMoney(log.rmb_amount,'RMB'):'')+'</td><td>'+esc(log.operator_name||'—')+'<br><span style="font-size:12px;color:#999">'+esc((log.created_at||'').replace('T',' ').slice(0,19))+'</span></td><td><span class="status-badge '+(log.status==='applied'?'status-paid':'status-rejected')+'">'+state+'</span>'+(log.reversal_reason?'<br><span style="font-size:12px;color:#999">'+esc(log.reversal_reason)+'</span>':'')+'</td><td>'+action+'</td></tr>';
+            ? '<button class="btn btn-danger btn-sm" onclick="reversePaymentSettlement(\''+id+'\',\''+String(log.id).replace(/'/g,'')+'\',\''+log.event_type+'\')">'+(isRounding?''+t("payment.action_reverse_rounding","撤销抹零")+'':''+t("payment.action_reverse","冲销")+''+(isPayment?''+t("payment.type_pay","付款")+'':t("app.180", "\u62b5\u6263")))+'</button>' : '';
+          const typeLabel=isPayment?''+t("payment.type_pay","付款")+'':(isRounding?''+t("payment.type_rounding","抹零")+'':(isRoundingReversal?''+t("payment.type_rounding_reversal","抹零撤销")+'':t("app.180", "\u62b5\u6263")));
+          return '<tr><td>'+typeLabel+(log.is_legacy?''+t("payment.legacy_baseline","（历史基线）")+'':'')+'</td><td class="text-right">'+fmtMoney(log.amount,cur)+'</td><td>'+esc(log.paid_date||'—')+'</td><td style="font-size:12px">'+rateText+(isPayment&&log.local_currency?'<br>'+t("payment.local_currency","本币")+' '+fmtMoney(log.local_amount,log.local_currency)+'；'+t("payment.cny","人民币")+' '+fmtMoney(log.rmb_amount,'RMB'):'')+'</td><td>'+esc(log.operator_name||'—')+'<br><span style="font-size:12px;color:#999">'+esc((log.created_at||'').replace('T',' ').slice(0,19))+'</span></td><td><span class="status-badge '+(log.status==='applied'?'status-paid':'status-rejected')+'">'+state+'</span>'+(log.reversal_reason?'<br><span style="font-size:12px;color:#999">'+esc(log.reversal_reason)+'</span>':'')+'</td><td>'+action+'</td></tr>';
         }).join('')+'</tbody></table></div>'
-      : '<div style="color:#999;font-size:13px">暂无结算记录</div>')+'</div>';
+      : '<div style="color:#999;font-size:13px">'+t("empty.no_settlement","暂无结算记录")+'</div>')+'</div>';
     // 附件（多文件）：归一化为数组
     let attaches=[];
     try{ const pv=(typeof p.attachment==='string'&&p.attachment)?JSON.parse(p.attachment):p.attachment; attaches=Array.isArray(pv)?pv:(pv&&pv.dataUrl?[{name:pv.name,type:pv.type,size:pv.size,dataUrl:pv.dataUrl}]:[]); }catch(e){ attaches=[]; }
@@ -7068,8 +7136,8 @@ async function viewPayment(id, mode){
           +'ondragleave="this.style.borderColor=\'#d9d9d9\';this.style.background=\'#fafafa\'" '
           +'ondrop="event.preventDefault();this.style.borderColor=\'#d9d9d9\';this.style.background=\'#fafafa\';payUploadFiles(window._payId, event.dataTransfer.files)">'
           +'<div style="font-size:32px;color:#1890ff;margin-bottom:6px">📎</div>'
-          +'<div style="font-size:13px;color:#333;margin-bottom:3px">点击上传或拖拽文件到此处</div>'
-          +'<div style="font-size:12px;color:#999">支持 图片 / PDF / Excel / Word 等，可多选</div></div>'
+          +'<div style="font-size:13px;color:#333;margin-bottom:3px">'+t("payment.upload_hint","点击上传或拖拽文件到此处")+'</div>'
+          +'<div style="font-size:12px;color:#999">'+t("payment.support_formats","支持 图片 / PDF / Excel / Word 等，可多选")+'</div></div>'
           +'<input type="file" id="pay-file-input" multiple accept="image/*,.pdf,.xlsx,.xls,.csv,.doc,.docx" style="display:none" onchange="payUploadFiles(window._payId, this.files)">'
         : '')
       +'</div>';
@@ -7077,15 +7145,15 @@ async function viewPayment(id, mode){
     const isPendingApproval=(p.payment_status==='pending_approval'||p.approval_status==='pending');
     const canApprove=hasPermission('payment_approve');
     const opinionHtml=(mode==='finance'&&isPendingApproval&&canApprove)
-      ? '<div class="detail-section"><h3>审批意见</h3><textarea id="pay-appr-remark" rows="3" placeholder="\u586b\u5199\u5ba1\u6279\u610f\u89c1\uff08\u9a73\u56de\u65f6\u5fc5\u586b\uff09\uff1b\u5728\u6846\u5185\u7c98\u8d34\u56fe\u7247\u53ef\u81ea\u52a8\u4e0a\u4f20\u4e3a\u9644\u4ef6" style="width:100%;box-sizing:border-box" onpaste="onPayRemarkPaste(event)"></textarea></div>'
+      ? '<div class="detail-section"><h3>'+t("payment.opinion_title","审批意见")+'</h3><textarea id="pay-appr-remark" rows="3" placeholder="'+t("payment.approve_opinion_placeholder","填写审批意见（驳回时必填）；在框内粘贴图片可自动上传为附件")+'" style="width:100%;box-sizing:border-box" onpaste="onPayRemarkPaste(event)"></textarea></div>'
       : '';
-    const body='<div class="detail-card" style="box-shadow:none;padding:0"><div class="detail-section"><h3>付款申请摘要</h3>'+summary+'</div>'+relHtml+settlementSection+attSection+opinionHtml+'</div>';
+    const body='<div class="detail-card" style="box-shadow:none;padding:0"><div class="detail-section"><h3>'+t("payment.summary","付款申请摘要")+'</h3>'+summary+'</div>'+relHtml+settlementSection+attSection+opinionHtml+'</div>';
     // footer：finance 模式待审 → 通过/驳回；否则仅关闭
-    let footer='<button class="btn btn-secondary" onclick="closeModal()">关闭</button>';
+    let footer='<button class="btn btn-secondary" onclick="closeModal()">'+t("common.close","关闭")+'</button>';
     if(mode==='finance'&&isPendingApproval&&canApprove){
-      footer='<button class="btn btn-secondary" onclick="closeModal()">关闭</button>'
-        +'<button class="btn btn-danger" onclick="financeApprove(\''+id+'\',\'reject\')">⛔ 驳回</button>'
-        +'<button class="btn btn-primary" onclick="financeApprove(\''+id+'\',\'approve\')">✅ 通过</button>';
+      footer='<button class="btn btn-secondary" onclick="closeModal()">'+t("common.close","关闭")+'</button>'
+        +'<button class="btn btn-danger" onclick="financeApprove(\''+id+'\',\'reject\')">⛔ '+t("action.reject","驳回")+'</button>'
+        +'<button class="btn btn-primary" onclick="financeApprove(\''+id+'\',\'approve\')">✅ '+t("action.approve","通过")+'</button>';
     }
     openModal(t('modal.title.viewPayment', '付款申请详情 - {v1}', {v1: esc(p.request_no)}), body, footer);
   }catch(e){showToast(e.message,'danger')}
@@ -7173,17 +7241,17 @@ function onPayRemarkPaste(e){
   for(const it of cd.items){ if(it.kind==='file'&&it.type&&it.type.indexOf('image/')===0){ imgFile=it.getAsFile(); break; } }
   if(!imgFile)return; // 普通文本粘贴放行
   e.preventDefault();
-  if(!(hasPermission('payment_create')||hasPermission('payment_approve'))){ showToast('无附件上传权限','danger'); return; }
+  if(!(hasPermission('payment_create')||hasPermission('payment_approve'))){ showToast(t('gen.L7176.1','无附件上传权限'),'danger'); return; }
   payUploadFiles(window._payId,[imgFile]); // 粘贴图片自动上传为附件
 }
 // 财务类审批：通过 / 驳回（复用后端 POST /api/payment-requests/:id/approve，审批意见存 approval_remark）
 async function financeApprove(id, action){
   const ta=document.getElementById('pay-appr-remark');
   const remark=ta?ta.value.trim():'';
-  if(action==='reject'&&!remark){showToast('驳回时审批意见必填','warning');if(ta)ta.focus();return}
+  if(action==='reject'&&!remark){showToast(t('gen.L7183.1','驳回时审批意见必填'),'warning');if(ta)ta.focus();return}
   try{
     await api('/api/payment-requests/'+id+'/approve','POST',{action:action,remark:remark});
-    showToast(action==='approve'?'已通过':'已驳回','success');
+    showToast(action==='approve'?t('gen.L7186.1','已通过'):t('gen.L7186.2','已驳回'),'success');
     closeModal();
     if(typeof loadFinanceApprovalList==='function'&&document.getElementById('approval-list'))loadFinanceApprovalList();
     if(document.getElementById('pay-table'))loadPay();
@@ -7203,11 +7271,11 @@ async function loadPay(){
       const canRound=p.approval_status==='approved'&&Number(p.unpaid_amount||0)>0&&Number(p.rounding_amount||0)<=0&&!['rejected','cancelled'].includes(p.payment_status);
       const needsExpenseCountry=p.payment_category!=='goods'&&!String(p.expense_country||'').trim();
       const actualDisplay=Number(p.actual_pay_amount||0)>0||Number(p.deduction_amount||0)>0||Number(p.rounding_amount||0)>0?p.actual_pay_amount:p.payable_amount;
-      return '<tr><td class="cell-id">'+esc(p.request_no)+'</td><td>'+esc(catLabel)+'</td><td>'+esc(subLabel)+'</td><td class="cell-id">'+esc(p.source_no)+'</td><td class="cell-id">'+esc(p.related_ci_no||'')+'</td><td>'+esc(p.supplier_name)+'</td><td class="text-right font-bold">'+fmtMoney(p.payable_amount)+'</td><td class="text-right '+(p.deduction_amount>0?'text-warning':'')+'">'+(p.deduction_amount>0?fmtMoney(p.deduction_amount):'-')+'</td><td class="text-right font-bold">'+fmtMoney(actualDisplay)+'</td><td class="text-right">'+fmtMoney(p.paid_amount)+'</td><td class="text-right '+(p.unpaid_amount>0?'text-danger':'')+'">'+fmtMoney(p.unpaid_amount)+'</td><td>'+esc(p.currency)+'</td><td><span class="status-badge '+stClass+'">'+esc(stLabel)+'</span></td><td class="cell-actions">'+(hasPermission('payment_view')?'<button class="action-btn" onclick="viewPayment(\''+p.id+'\')" title="'+t('title.viewDetail','查看详情')+'">👁️</button>':'')+(needsExpenseCountry&&hasPermission('payment_approve')?'<button class="action-btn" onclick="openPaymentExpenseCountry(\''+p.id+'\')" title="'+t('term.fin.supplement_expense_country','补录费用归属国家')+'">补国家</button>':'')+(p.approval_status==='pending'&&hasPermission('payment_approve')?'<button class="action-btn action-edit" onclick="apprPay(\''+p.id+'\',\'approve\')" title="通过">✅</button><button class="action-btn action-delete" onclick="apprPay(\''+p.id+'\',\'reject\')" title="驳回">❌</button>':'')+(canPay&&hasPermission('payment_approve')?'<button class="action-btn action-edit" onclick="confirmPaid(\''+p.id+'\')" title="确认付款">💵</button>':'')+(canRound&&hasPermission('payment_approve')?'<button class="action-btn" onclick="openPaymentRounding(\''+p.id+'\')" title="手动抹零">抹零</button>':'')+(canDeduct&&hasPermission('payment_create')?'<button class="action-btn" onclick="editDeduction(\''+p.id+'\')" title="'+t('title.editDeduction','编辑抵扣')+'">✂️</button>':'')+'</td></tr>';
+      return '<tr'+(hasPermission('payment_view')?(' class="clickable-detail-row" onclick="rowClickView(event,\'viewPayment\',\''+p.id+'\')"'):'')+'><td class="cell-id">'+esc(p.request_no)+'</td><td>'+esc(catLabel)+'</td><td>'+esc(subLabel)+'</td><td class="cell-id">'+esc(p.source_no)+'</td><td class="cell-id">'+esc(p.related_ci_no||'')+'</td><td>'+esc(p.supplier_name)+'</td><td class="text-right font-bold">'+fmtMoney(p.payable_amount)+'</td><td class="text-right '+(p.deduction_amount>0?'text-warning':'')+'">'+(p.deduction_amount>0?fmtMoney(p.deduction_amount):'-')+'</td><td class="text-right font-bold">'+fmtMoney(actualDisplay)+'</td><td class="text-right">'+fmtMoney(p.paid_amount)+'</td><td class="text-right '+(p.unpaid_amount>0?'text-danger':'')+'">'+fmtMoney(p.unpaid_amount)+'</td><td>'+esc(p.currency)+'</td><td><span class="status-badge '+stClass+'">'+esc(stLabel)+'</span></td><td class="cell-actions">'+(hasPermission('payment_view')?'<button class="action-btn" onclick="viewPayment(\''+p.id+'\')" title="'+t('title.viewDetail','查看详情')+'">👁️</button>':'')+(needsExpenseCountry&&hasPermission('payment_approve')?'<button class="action-btn" onclick="openPaymentExpenseCountry(\''+p.id+'\')" title="'+t('term.fin.supplement_expense_country','补录费用归属国家')+'">'+t("payment.fill_country","补国家")+'</button>':'')+(p.approval_status==='pending'&&hasPermission('payment_approve')?'<button class="action-btn action-edit" onclick="apprPay(\''+p.id+'\',\'approve\')" title="'+t("action.approve","通过")+'">✅</button><button class="action-btn action-delete" onclick="apprPay(\''+p.id+'\',\'reject\')" title="'+t("action.reject","驳回")+'">❌</button>':'')+(canPay&&hasPermission('payment_approve')?'<button class="action-btn action-edit" onclick="confirmPaid(\''+p.id+'\')" title="'+t("payment.confirm_pay","确认付款")+'">💵</button>':'')+(canRound&&hasPermission('payment_approve')?'<button class="action-btn" onclick="openPaymentRounding(\''+p.id+'\')" title="'+t("payment.manual_rounding","手动抹零")+'">'+t("payment.type_rounding","抹零")+'</button>':'')+(canDeduct&&hasPermission('payment_create')?'<button class="action-btn" onclick="editDeduction(\''+p.id+'\')" title="'+t('title.editDeduction','编辑抵扣')+'">✂️</button>':'')+'</td></tr>';
     }).join('')+'</tbody></table></div>';
   }catch(e){showFlash(e.message,'danger')}
 }
-async function apprPay(id,act){const rem=act==='reject'?(prompt('驳回原因：')||''):'';try{await api('/api/payment-requests/'+id+'/approve','POST',{action:act,remark:rem});showToast(act==='approve'?'已通过':'已驳回','success');loadPay()}catch(e){showToast(e.message,'danger')}}
+async function apprPay(id,act){const rem=act==='reject'?(prompt(t('gen.L7210.1','驳回原因：'))||''):'';try{await api('/api/payment-requests/'+id+'/approve','POST',{action:act,remark:rem});showToast(act==='approve'?t('gen.L7210.2','已通过'):t('gen.L7210.3','已驳回'),'success');loadPay()}catch(e){showToast(e.message,'danger')}}
 async function confirmPaid(id){
   try{
     const p=await api('/api/payment-requests/'+id);
@@ -7221,22 +7289,22 @@ async function confirmPaid(id){
 async function saveConfirmedPayment(id){
   const btn=document.getElementById('pay-settle-save');if(!btn||btn.disabled)return;
   const amount=parseFloat(document.getElementById('pay-settle-amount').value),paidDate=document.getElementById('pay-settle-date').value,voucher=document.getElementById('pay-settle-voucher').value,idempotencyKey=document.getElementById('pay-settle-idempotency').value;
-  if(!(amount>0)){showToast('本次实际付款金额必须大于0','warning');return}if(!paidDate){showToast('请选择实际付款日期','warning');return}
+  if(!(amount>0)){showToast(t('gen.L7224.1','本次实际付款金额必须大于0'),'warning');return}if(!paidDate){showToast(t('gen.L7224.2','请选择实际付款日期'),'warning');return}
   btn.disabled=true;btn.textContent=t("app.476", "\u4fdd\u5b58\u4e2d\u2026");
-  try{await api('/api/payment-requests/'+id+'/approve','POST',{action:'confirm-paid',paid_amount:amount,paid_date:paidDate,payment_voucher:voucher,idempotency_key:idempotencyKey});showToast('付款结果已保存','success');closeModal();loadPay()}catch(e){showToast(e.message,'danger');if(document.getElementById('pay-settle-save')){btn.disabled=false;btn.textContent='确认付款'}}
+  try{await api('/api/payment-requests/'+id+'/approve','POST',{action:'confirm-paid',paid_amount:amount,paid_date:paidDate,payment_voucher:voucher,idempotency_key:idempotencyKey});showToast(t('gen.L7226.1','付款结果已保存'),'success');closeModal();loadPay()}catch(e){showToast(e.message,'danger');if(document.getElementById('pay-settle-save')){btn.disabled=false;btn.textContent=t('gen.L7226.2','确认付款')}}
 }
 async function reversePaymentSettlement(paymentId,logId,eventType){
-  const isRounding=eventType==='rounding',label=eventType==='payment'?'付款':(isRounding?'抹零':t("app.180", "\u62b5\u6263"));const reason=prompt('请输入'+(isRounding?'撤销':'冲销')+label+'原因：');if(reason===null)return;if(!reason.trim()){showToast((isRounding?'撤销':'冲销')+t("app.1162", "\u539f\u56e0\u4e0d\u80fd\u4e3a\u7a7a"),'warning');return}
+  const isRounding=eventType==='rounding',label=eventType==='payment'?''+t("settle.lbl_payment","付款")+'':(isRounding?''+t("settle.lbl_rounding","抹零")+'':t("app.180", "\u62b5\u6263"));const reason=prompt(''+t("settle.please_enter","请输入")+''+(isRounding?''+t("settle.reverse_rounding","撤销")+'':''+t("settle.reverse_payment","冲销")+'')+label+''+t("settle.reason_suffix","原因：")+'');if(reason===null)return;if(!reason.trim()){showToast((isRounding?''+t("settle.reverse_rounding","撤销")+'':''+t("settle.reverse_payment","冲销")+'')+t("app.1162", "\u539f\u56e0\u4e0d\u80fd\u4e3a\u7a7a"),'warning');return}
   const route=eventType==='payment'?'/reverse-payment':(isRounding?'/reverse-rounding':'/reverse-deduction');
-  try{await api('/api/payment-requests/'+paymentId+route,'POST',{settlement_log_id:logId,reason:reason.trim()});showToast(label+(isRounding?'已撤销':t("app.1101", "\u5df2\u51b2\u9500")),'success');closeModal();loadPay()}catch(e){showToast(e.message,'danger')}
+  try{await api('/api/payment-requests/'+paymentId+route,'POST',{settlement_log_id:logId,reason:reason.trim()});showToast(label+(isRounding?''+t("settle.done_reversed","已撤销")+'':t("app.1101", "\u5df2\u51b2\u9500")),'success');closeModal();loadPay()}catch(e){showToast(e.message,'danger')}
 }
 async function openPaymentRounding(id){
   try{const p=await api('/api/payment-requests/'+id);openModal(t('modal.title.openPaymentRounding', '手动抹零 - {v1}', {v1: esc(p.request_no)}),t('modal.body.openPaymentRounding', '<div class="form-card" style="box-shadow:none;padding:0"><div class="detail-grid mb-16"><div class="detail-item"><span class="detail-label">原始应付</span><span class="detail-value">{v1}</span></div><div class="detail-item"><span class="detail-label">当前未结</span><span class="detail-value">{v2}</span></div></div><div class="form-grid"><div class="form-group"><label>抹零金额 <span class="required">*</span></label><input type="number" min="0.01" step="0.01" id="pay-rounding-amount" placeholder="请手动填写"></div><div class="form-group form-group-full"><label>原因或备注 <span class="required">*</span></label><textarea id="pay-rounding-reason" rows="2"></textarea></div></div><div style="font-size:12px;color:#999">抹零只影响本付款申请的结清状态，不修改原始应付金额，也不参与采购成本、WAC 或趋势换算。</div></div>', {v1: fmtMoney(p.payable_amount,p.currency), v2: fmtMoney(p.outstanding,p.currency)}),t('modal.footer.openPaymentRounding', `<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" id="pay-rounding-save" onclick="savePaymentRounding('{v1}')">确认抹零</button>`, {v1: id}))}catch(e){showToast(e.message,'danger')}
 }
 async function savePaymentRounding(id){
   const btn=document.getElementById('pay-rounding-save');if(!btn||btn.disabled)return;const amount=parseFloat(document.getElementById('pay-rounding-amount').value),reason=document.getElementById('pay-rounding-reason').value.trim();
-  if(!Number.isFinite(amount)||amount<0){showToast('抹零金额不能小于0','warning');return}if(!(amount>0)){showToast('抹零金额必须大于0','warning');return}if(!reason){showToast('抹零原因或备注不能为空','warning');return}
-  btn.disabled=true;btn.textContent=t("app.476", "\u4fdd\u5b58\u4e2d\u2026");try{await api('/api/payment-requests/'+id+'/rounding','POST',{amount,reason});showToast('抹零已生效','success');closeModal();loadPay()}catch(e){showToast(e.message,'danger');if(document.getElementById('pay-rounding-save')){btn.disabled=false;btn.textContent=t("app.1171", "\u786e\u8ba4\u62b9\u96f6")}}
+  if(!Number.isFinite(amount)||amount<0){showToast(''+t("settle.rounding_amt_ge0","抹零金额不能小于0")+'','warning');return}if(!(amount>0)){showToast(''+t("settle.rounding_amt_gt0","抹零金额必须大于0")+'','warning');return}if(!reason){showToast(''+t("settle.rounding_reason_required","抹零原因或备注不能为空")+'','warning');return}
+  btn.disabled=true;btn.textContent=t("app.476", "\u4fdd\u5b58\u4e2d\u2026");try{await api('/api/payment-requests/'+id+'/rounding','POST',{amount,reason});showToast(''+t("settle.rounding_applied","抹零已生效")+'','success');closeModal();loadPay()}catch(e){showToast(e.message,'danger');if(document.getElementById('pay-rounding-save')){btn.disabled=false;btn.textContent=t("app.1171", "\u786e\u8ba4\u62b9\u96f6")}}
 }
 async function openPaymentExpenseCountry(id){
   try{
@@ -7271,7 +7339,7 @@ function importPayResult(){importFile('/api/payment-requests/bulk-import-result'
 
 // ==================== 呆滞分析 ====================
 async function renderStagnant(){
-  document.getElementById('content-inner').innerHTML='<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>国家</label><input type="text" id="stag-c"></div><div class="filter-group"><label>等级</label><select id="stag-l"><option value="all">全部呆滞</option><option value="light">轻度</option><option value="medium">中度</option><option value="heavy">重度</option><option value="dead">死亡库存</option><option value="backlog">积压</option><option value="severe_backlog">严重积压</option><option value="new_product">新品</option></select></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadStag()">搜索</button></div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">⚠️ 呆滞库存</div></div><div id="stag-table"></div></div>';
+  document.getElementById('content-inner').innerHTML='<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>'+t("app.113", "国家")+'</label><input type="text" id="stag-c"></div><div class="filter-group"><label>'+t("col.level", "等级")+'</label><select id="stag-l"><option value="all">'+t("status.all_stag", "全部呆滞")+'</option><option value="light">'+t("status.light", "轻度")+'</option><option value="medium">'+t("status.medium", "中度")+'</option><option value="heavy">'+t("status.heavy", "重度")+'</option><option value="dead">'+t("status.dead", "死亡库存")+'</option><option value="backlog">'+t("status.backlog", "积压")+'</option><option value="severe_backlog">'+t("status.severe_backlog", "严重积压")+'</option><option value="new_product">'+t("col.is_new", "新品")+'</option></select></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadStag()">'+t("action.search", "搜索")+t('gen.L7274.1','</button></div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">⚠️ 呆滞库存</div></div><div id="stag-table"></div></div>');
   loadStag();
 }
 async function loadStag(){
@@ -7279,40 +7347,40 @@ async function loadStag(){
     const c=document.getElementById('stag-c')?.value||'',l=document.getElementById('stag-l')?.value||'all';
     const data=await api('/api/stagnant-analysis?country='+encodeURIComponent(c)+'&level='+l);
     const tv=data.reduce((s,i)=>s+(i.inventory_value||0),0);
-    document.getElementById('stag-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">✅</div>暂无呆滞库存</div>':'<div class="stats-grid mb-16"><div class="stat-card warning"><div class="stat-number">'+fmtMoney(tv,'USD')+'</div><div class="stat-label">呆滞库存总金额</div></div><div class="stat-card"><div class="stat-number">'+data.length+'</div><div class="stat-label">呆滞SKU数</div></div></div><div class="table-container" style="box-shadow:none;border-radius:0;max-height:600px;overflow:auto"><table class="data-table"><thead><tr><th>SKU</th><th>产品名</th><th>品牌</th><th>国家</th><th>仓库</th><th>库存</th><th>金额</th><th>最后销售</th><th>距今天数</th><th>30d</th><th>60d</th><th>90d</th><th>月预测</th><th>周转月</th><th>新品</th><th>生命周期</th><th>呆滞等级</th><th>建议</th></tr></thead><tbody>'+data.map(i=>'<tr><td class="cell-id">'+esc(i.sku_code)+'</td><td>'+esc(i.product_name)+'</td><td>'+esc(i.brand)+'</td><td>'+esc(i.country)+'</td><td>'+esc(i.warehouse)+'</td><td class="text-right font-bold">'+i.available_qty+'</td><td class="text-right">'+fmtMoney(i.inventory_value)+'</td><td class="cell-date">'+fmtDate(i.last_sale_date)+'</td><td class="text-right">'+(i.days_since_sale!==null?i.days_since_sale:'-')+'</td><td class="text-right">'+i.sales_30d+'</td><td class="text-right">'+i.sales_60d+'</td><td class="text-right">'+i.sales_90d+'</td><td class="text-right">'+i.monthly_forecast+'</td><td class="text-right">'+i.turnover_months+'</td><td>'+(i.is_new_product?'<span class="status-badge status-pending">新品</span>':'-')+'</td><td>'+esc(i.lifecycle_status)+'</td><td><span class="status-badge '+(i.stagnant_level==='dead'||i.stagnant_level==='severe_backlog'?'status-danger':i.stagnant_level==='heavy'||i.stagnant_level==='backlog'?'status-warning':'status-pending')+'">'+esc(i.stagnant_level)+'</span></td><td>'+esc(i.suggestion)+'</td></tr>').join('')+'</tbody></table></div>';
+    document.getElementById('stag-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">✅</div>'+t("empty.no_stag", "暂无呆滞库存")+'</div>':'<div class="stats-grid mb-16"><div class="stat-card warning"><div class="stat-number">'+fmtMoney(tv,'USD')+'</div><div class="stat-label">'+t("col.stag_amount", "呆滞库存总金额")+'</div></div><div class="stat-card"><div class="stat-number">'+data.length+'</div><div class="stat-label">'+t("col.stag_sku_count", "呆滞SKU数")+'</div></div></div><div class="table-container" style="box-shadow:none;border-radius:0;max-height:600px;overflow:auto"><table class="data-table"><thead><tr><th>SKU</th><th>'+t("app.232", "产品名")+'</th><th>'+t("app.112", "品牌")+'</th><th>'+t("app.113", "国家")+'</th><th>'+t("app.114", "仓库")+'</th><th>'+t("col.inventory_qty", "库存")+'</th><th>'+t("col.amount", "金额")+'</th><th>'+t("col.last_sale", "最后销售")+'</th><th>'+t("col.days_since_sale", "距今天数")+'</th><th>30d</th><th>60d</th><th>90d</th><th>'+t("col.month_forecast", "月预测")+'</th><th>'+t("col.turnover_months", "周转月")+'</th><th>'+t("col.is_new", "新品")+'</th><th>'+t("app.559", "生命周期")+'</th><th>'+t("col.stagnant_level", "呆滞等级")+'</th><th>'+t("col.suggestion", "建议")+'</th></tr></thead><tbody>'+data.map(i=>'<tr><td class="cell-id">'+esc(i.sku_code)+'</td><td>'+esc(i.product_name)+'</td><td>'+esc(i.brand)+'</td><td>'+esc(i.country)+'</td><td>'+esc(i.warehouse)+'</td><td class="text-right font-bold">'+i.available_qty+'</td><td class="text-right">'+fmtMoney(i.inventory_value)+'</td><td class="cell-date">'+fmtDate(i.last_sale_date)+'</td><td class="text-right">'+(i.days_since_sale!==null?i.days_since_sale:'-')+'</td><td class="text-right">'+i.sales_30d+'</td><td class="text-right">'+i.sales_60d+'</td><td class="text-right">'+i.sales_90d+'</td><td class="text-right">'+i.monthly_forecast+'</td><td class="text-right">'+i.turnover_months+'</td><td>'+(i.is_new_product?'<span class="status-badge status-pending">'+t("col.is_new", "新品")+'</span>':'-')+'</td><td>'+esc(i.lifecycle_status)+'</td><td><span class="status-badge '+(i.stagnant_level==='dead'||i.stagnant_level==='severe_backlog'?'status-danger':i.stagnant_level==='heavy'||i.stagnant_level==='backlog'?'status-warning':'status-pending')+'">'+esc(i.stagnant_level)+'</span></td><td>'+esc(i.suggestion)+'</td></tr>').join('')+'</tbody></table></div>';
   }catch(e){showFlash(e.message,'danger')}
 }
 
 // ==================== 货代分析 ====================
 async function renderForwarderAnalysis(){
-  document.getElementById('content-inner').innerHTML='<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>国家</label><input type="text" id="ff-c"></div><div class="filter-group"><label>运输方式</label><select id="ff-m"><option value="">全部</option><option value="sea">海运</option><option value="air">空运</option><option value="express">快递</option></select></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadFF()">搜索</button></div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">📈 货代分析</div></div><div id="ff-table"></div></div>';
+  document.getElementById('content-inner').innerHTML=t('gen.L7288.1','<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>国家</label><input type="text" id="ff-c"></div><div class="filter-group"><label>运输方式</label><select id="ff-m"><option value="">全部</option><option value="sea">海运</option><option value="air">空运</option><option value="express">快递</option></select></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadFF()">搜索</button></div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">📈 货代分析</div></div><div id="ff-table"></div></div>');
   loadFF();
 }
 async function loadFF(){
   try{
     const c=document.getElementById('ff-c')?.value||'',m=document.getElementById('ff-m')?.value||'';
     const data=await api('/api/freight-forwarder-analysis?country='+encodeURIComponent(c)+'&transport_mode='+m);
-    document.getElementById('ff-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">📈</div>暂无货代分析数据</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>货代</th><th>国家</th><th>方式</th><th>批次</th><th>CI总额</th><th>总CBM</th><th>总重量</th><th>综合运费</th><th>关税</th><th>运费占比</th><th>每CBM</th><th>每KG</th><th>运输天</th><th>清关天</th><th>派送天</th></tr></thead><tbody>'+data.map(f=>'<tr><td class="cell-name">'+esc(f.forwarder_name)+'</td><td>'+esc(f.target_country)+'</td><td>'+esc(f.transport_mode)+'</td><td class="text-center">'+f.batch_count+'</td><td class="text-right">'+fmtMoney(f.total_ci_amount)+'</td><td class="text-right">'+(f.total_cbm||0)+'</td><td class="text-right">'+(f.total_weight||0)+'</td><td class="text-right font-bold">'+fmtMoney(f.total_freight)+'</td><td class="text-right">'+fmtMoney(f.total_duty)+'</td><td class="text-right '+(f.freight_ratio>15?'text-danger':f.freight_ratio>10?'text-warning':'')+'">'+f.freight_ratio+'%</td><td class="text-right">'+(f.freight_per_cbm||0)+'</td><td class="text-right">'+(f.freight_per_kg||0)+'</td><td class="text-right">'+(f.avg_transport_days||'-')+'</td><td class="text-right">'+(f.avg_customs_days||'-')+'</td><td class="text-right">'+(f.avg_delivery_days||'-')+'</td></tr>').join('')+'</tbody></table></div>';
+    document.getElementById('ff-table').innerHTML=!data.length?t('gen.L7295.1','<div class="empty-state"><div class="empty-icon">📈</div>暂无货代分析数据</div>'):t('gen.L7295.2','<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>货代</th><th>国家</th><th>方式</th><th>批次</th><th>CI总额</th><th>总CBM</th><th>总重量</th><th>综合运费</th><th>关税</th><th>运费占比</th><th>每CBM</th><th>每KG</th><th>运输天</th><th>清关天</th><th>派送天</th></tr></thead><tbody>')+data.map(f=>'<tr><td class="cell-name">'+esc(f.forwarder_name)+'</td><td>'+esc(f.target_country)+'</td><td>'+esc(f.transport_mode)+'</td><td class="text-center">'+f.batch_count+'</td><td class="text-right">'+fmtMoney(f.total_ci_amount)+'</td><td class="text-right">'+(f.total_cbm||0)+'</td><td class="text-right">'+(f.total_weight||0)+'</td><td class="text-right font-bold">'+fmtMoney(f.total_freight)+'</td><td class="text-right">'+fmtMoney(f.total_duty)+'</td><td class="text-right '+(f.freight_ratio>15?'text-danger':f.freight_ratio>10?'text-warning':'')+'">'+f.freight_ratio+'%</td><td class="text-right">'+(f.freight_per_cbm||0)+'</td><td class="text-right">'+(f.freight_per_kg||0)+'</td><td class="text-right">'+(f.avg_transport_days||'-')+'</td><td class="text-right">'+(f.avg_customs_days||'-')+'</td><td class="text-right">'+(f.avg_delivery_days||'-')+'</td></tr>').join('')+'</tbody></table></div>';
   }catch(e){showFlash(e.message,'danger')}
 }
 
 // ==================== 库存盘点 ====================
 async function renderCheck(){
-  document.getElementById('content-inner').innerHTML=t('html.renderCheck', '<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>国家</label><input type="text" id="chk-c"></div><div class="filter-group"><label>仓库</label><input type="text" id="chk-w"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadChk()">搜索</button>{v1}</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🔍 盘点记录</div></div><div id="chk-table"></div></div>', {v1: hasPermission('check_create')?'<button class="btn btn-secondary btn-sm" onclick="exportChkTpl()">📋 导出模板</button><button class="btn btn-secondary btn-sm" onclick="importFile(\'/api/inventory-checks/bulk-import\',loadChk)">📥 导入盘点</button>':''});
+  document.getElementById('content-inner').innerHTML=t('html.renderCheck', '<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>国家</label><input type="text" id="chk-c"></div><div class="filter-group"><label>仓库</label><input type="text" id="chk-w"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadChk()">搜索</button>{v1}</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🔍 盘点记录</div></div><div id="chk-table"></div></div>', {v1: hasPermission('check_create')?t('gen.L7301.1','<button class="btn btn-secondary btn-sm" onclick="exportChkTpl()">📋 导出模板</button><button class="btn btn-secondary btn-sm" onclick="importFile(\'/api/inventory-checks/bulk-import\',loadChk)">📥 导入盘点</button>'):''});
   loadChk();
 }
 async function loadChk(){
   try{
     const c=document.getElementById('chk-c')?.value||'',w=document.getElementById('chk-w')?.value||'';
     const data=await api('/api/inventory-checks?country='+encodeURIComponent(c)+'&warehouse='+encodeURIComponent(w));
-    document.getElementById('chk-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">🔍</div>暂无盘点数据</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>盘点单号</th><th>国家</th><th>仓库</th><th>日期</th><th>SKU</th><th>系统库存</th><th>实盘</th><th>差异</th><th>差异金额</th><th>原因</th><th>处理</th><th>审批</th><th>操作</th></tr></thead><tbody>'+data.map(c=>'<tr><td class="cell-id">'+esc(c.check_no)+'</td><td>'+esc(c.country)+'</td><td>'+esc(c.warehouse)+'</td><td class="cell-date">'+fmtDate(c.check_date)+'</td><td class="cell-id">'+esc(c.sku_code)+'</td><td class="text-right">'+c.system_qty+'</td><td class="text-right font-bold">'+c.actual_qty+'</td><td class="text-right '+(c.diff_qty!==0?'text-danger':'')+'">'+(c.diff_qty>0?'+':'')+c.diff_qty+'</td><td class="text-right">'+fmtMoney(c.diff_amount)+'</td><td>'+esc(c.diff_reason)+'</td><td>'+esc(c.handle_method)+'</td><td><span class="status-badge '+(c.approval_status==='approved'?'status-approved':'status-pending')+'">'+statusLabel(c.approval_status)+'</span></td><td>'+(c.approval_status==='pending'&&hasPermission('check_approve')?'<button class="action-btn action-edit" onclick="apprChk(\''+c.id+'\')" title="\u5ba1\u6279">✅</button>':'')+'</td></tr>').join('')+'</tbody></table></div>';
+    document.getElementById('chk-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">🔍</div>'+t("empty.no_check", "暂无盘点数据")+'</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>'+t("col.check_no", "盘点单号")+'</th><th>'+t("app.113", "国家")+'</th><th>'+t("app.114", "仓库")+'</th><th>'+t("col.date", "日期")+'</th><th>SKU</th><th>'+t("col.system_qty", "系统库存")+'</th><th>'+t("col.actual_qty", "实盘")+'</th><th>'+t("col.diff_qty", "差异")+'</th><th>'+t("col.diff_amount", "差异金额")+'</th><th>'+t("col.reason", "原因")+'</th><th>'+t("col.handle", "处理")+'</th><th>'+t("col.approval", "审批")+'</th><th>'+t("common.actions", "操作")+'</th></tr></thead><tbody>'+data.map(c=>'<tr><td class="cell-id">'+esc(c.check_no)+'</td><td>'+esc(c.country)+'</td><td>'+esc(c.warehouse)+'</td><td class="cell-date">'+fmtDate(c.check_date)+'</td><td class="cell-id">'+esc(c.sku_code)+'</td><td class="text-right">'+c.system_qty+'</td><td class="text-right font-bold">'+c.actual_qty+'</td><td class="text-right '+(c.diff_qty!==0?'text-danger':'')+'">'+(c.diff_qty>0?'+':'')+c.diff_qty+'</td><td class="text-right">'+fmtMoney(c.diff_amount)+'</td><td>'+esc(c.diff_reason)+'</td><td>'+esc(c.handle_method)+'</td><td><span class="status-badge '+(c.approval_status==='approved'?'status-approved':'status-pending')+'">'+statusLabel(c.approval_status)+'</span></td><td>'+(c.approval_status==='pending'&&hasPermission('check_approve')?'<button class="action-btn action-edit" onclick="apprChk(\''+c.id+t('gen.L7308.1','\')" title="\u5ba1\u6279">✅</button>'):'')+'</td></tr>').join('')+'</tbody></table></div>';
   }catch(e){showFlash(e.message,'danger')}
 }
 async function exportChkTpl(){
   const c=document.getElementById('chk-c')?.value||'',w=document.getElementById('chk-w')?.value||'';
-  try{const data=await api('/api/inventory-checks/template?country='+encodeURIComponent(c)+'&warehouse='+encodeURIComponent(w));const ws=XLSX.utils.json_to_sheet(data.map(d=>({国家:d.country,仓库:d.warehouse,SKU:d.sku_code,产品名:d.product_name,品牌:d.brand,系统库存:d.system_qty,实盘库存:'",\u5dee\u5f02\u539f\u56e0:"",\u5904\u7406\u65b9\u5f0f:"',盘点日期:todayStr()})));const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'盘点模板');XLSX.writeFile(wb,'盘点模板_'+(c||'all')+'.xlsx')}catch(e){showToast(e.message,'danger')}
+  try{const data=await api('/api/inventory-checks/template?country='+encodeURIComponent(c)+'&warehouse='+encodeURIComponent(w));const ws=XLSX.utils.json_to_sheet(data.map(d=>({国家:d.country,仓库:d.warehouse,SKU:d.sku_code,产品名:d.product_name,品牌:d.brand,系统库存:d.system_qty,实盘库存:t('gen.L7313.1','",\u5dee\u5f02\u539f\u56e0:"",\u5904\u7406\u65b9\u5f0f:"'),盘点日期:todayStr()})));const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'盘点模板');XLSX.writeFile(wb,'盘点模板_'+(c||'all')+'.xlsx')}catch(e){showToast(e.message,'danger')}
 }
-async function apprChk(id){if(!confirm(t("app.1187", "\u786e\u8ba4\u5ba1\u6279\u901a\u8fc7\uff1f\u5c06\u8c03\u6574\u5e93\u5b58\u3002")))return;try{await api('/api/inventory-checks/'+id+'/approve','POST');showToast('已审批','success');loadChk()}catch(e){showToast(e.message,'danger')}}
+async function apprChk(id){if(!confirm(t("app.1187", "\u786e\u8ba4\u5ba1\u6279\u901a\u8fc7\uff1f\u5c06\u8c03\u6574\u5e93\u5b58\u3002")))return;try{await api('/api/inventory-checks/'+id+'/approve','POST');showToast(t("shell.073", "已审批"),'success');loadChk()}catch(e){showToast(e.message,'danger')}}
 
 // ==================== 初始化 ====================
 window.addEventListener('DOMContentLoaded',()=>{
@@ -7321,7 +7389,7 @@ window.addEventListener('DOMContentLoaded',()=>{
   var _sw=document.getElementById('lang-switcher'); if(_sw&&typeof getLang==='function') _sw.value=getLang();
   // 直开 HTML 文件（file://）时后端不可达，先给出醒目指引
   if(isFileProtocol()){
-    showFatalNotice('⚠️ 检测到您直接打开了 HTML 文件（file://）。进销存系统需要后端服务，请：<br>① 在终端运行 <b>node server.js</b><br>② 浏览器访问 <b>http://localhost:3001</b><br>不要直接双击 index.html。');
+    showFatalNotice(t('err.file_protocol_startup','⚠️ 检测到您直接打开了 HTML 文件（file://）。进销存系统需要后端服务，请：<br>① 在终端运行 <b>node server.js</b><br>② 浏览器访问 <b>http://localhost:3001</b><br>不要直接双击 index.html。'));
     return;
   }
   // 凭证基于 HttpOnly Cookie（Session），启动即从 /api/me 探活；无有效会话则显示登录页
