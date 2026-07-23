@@ -26,6 +26,12 @@ const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
 const { query, queryOne, run, transaction, genId, initDatabase } = require('./db');
+const {
+  LANGUAGE_COOKIE_NAME,
+  normalizeLanguage,
+  resolveRequestLanguage,
+  localizeResponseBody
+} = require('./server-i18n');
 
 // ==================== AUTH-FEISHU-CORE 配置与工具 ====================
 const FEISHU_APP_ID = process.env.FEISHU_APP_ID || '';
@@ -103,6 +109,9 @@ function parseCookies(req) {
 }
 function sessionCookieOpts() {
   return { httpOnly: true, secure: COOKIE_SECURE, sameSite: 'Lax', path: '/', maxAge: SESSION_TTL_SECONDS * 1000 };
+}
+function languageCookieOpts() {
+  return { httpOnly: true, secure: COOKIE_SECURE, sameSite: 'Lax', path: '/', maxAge: 365 * 24 * 3600 * 1000 };
 }
 function genSessionToken() { return crypto.randomBytes(32).toString('hex'); }
 function createSessionForUser(res, user, userAgent, ip) {
@@ -411,6 +420,12 @@ function asyncHandler(fn) {
 }
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+app.use((req, res, next) => {
+  req.i18nLang = resolveRequestLanguage(req, { preferCookie: reqPath(req) === '/api/auth/feishu/callback' });
+  const json = res.json.bind(res);
+  res.json = body => json(localizeResponseBody(req, body));
+  next();
+});
 
 // 前端静态文件
 function sendNoCacheHtml(res, fileName) {
@@ -520,6 +535,9 @@ app.use('/api', apiAuth);
 
 // 飞书授权入口（生成一次性 state，跳转飞书；test 环境返回 state 供驱动）
 app.get('/api/auth/feishu/login', asyncHandler((req, res) => {
+  const oauthLang = normalizeLanguage(req.query && req.query.lang);
+  req.i18nLang = oauthLang;
+  res.cookie(LANGUAGE_COOKIE_NAME, oauthLang, languageCookieOpts());
   const state = crypto.randomBytes(16).toString('hex');
   run("INSERT INTO oauth_states (state, created_at, expires_at) VALUES (?, datetime('now'), datetime('now', '+10 minutes'))", [state]);
   const redirect = 'https://accounts.feishu.cn/open-apis/authen/v1/authorize?client_id=' + encodeURIComponent(FEISHU_APP_ID)
