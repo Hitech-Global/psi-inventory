@@ -310,8 +310,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 .daily-table-wrap thead tr:nth-child(2) td{border-bottom:2px solid var(--border,#c5cad3)!important}
 .daily-table-wrap thead tr:nth-child(2){box-shadow:0 2px 4px rgba(0,0,0,.08)}
 /* 按月模式冻结表头+汇总行 */
-.rp-monthly-table{border-collapse:separate!important;border-spacing:0!important}
-.rp-monthly-table thead th{position:sticky;top:0;z-index:3;background:#fafbfc}
+.rp-monthly-table{border-collapse:separate!important;border-spacing:0!important;table-layout:fixed}
+.rp-monthly-table thead th{position:sticky;top:0;z-index:3;background:#fafbfc;white-space:normal;line-height:1.35;overflow-wrap:normal;word-break:normal;hyphens:none;vertical-align:middle}
 .rp-monthly-table .rp-summary-row td{position:sticky;top:34px;z-index:2;background:#e8edf3;font-weight:700;font-size:12px;border-bottom:2px solid var(--border,#c5cad3)!important;box-shadow:0 2px 4px rgba(0,0,0,.08)}
 .rp-monthly-table tbody tr:hover td{background:#f8f9ff}
 /* 渠道表格冻结列（动态设置 left，此处仅定义基础样式） */
@@ -326,6 +326,36 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 .rp-monthly-table tbody tr:hover .rp-freeze-last{box-shadow:2px 0 6px rgba(0,0,0,0.12)}
 /* 渠道表格容器需 relative，作为冻结线 absolute 定位基准 */
 #rp-table .table-container{position:relative}
+/* ===== ORDER-FORECAST-FIXED-COLUMNS-01：固定列宽 + colgroup ===== */
+/* colgroup 统一列宽：header/summary/body 共用，保证严格对齐 */
+.rp-monthly-table colgroup col{display:table-column}
+/* 紧凑表头：允许换行，不拆散术语，不省略 */
+.rp-monthly-table thead th.rp-th-compact{white-space:normal;line-height:1.3;overflow-wrap:normal;word-break:normal;hyphens:none;vertical-align:middle;padding:6px 8px}
+/* 问号 tooltip 图标 */
+.rp-monthly-table .rp-th-help{display:inline-block;width:10px;height:10px;margin-left:3px;vertical-align:middle;cursor:help;border-radius:50%;background:#bbb;color:#fff;font-size:9px;line-height:10px;text-align:center;position:relative}
+.rp-monthly-table .rp-th-help:hover{background:var(--primary,#2e7d32)}
+.rp-monthly-table .rp-th-help::after{content:"?"}
+/* 订单预测数字列统一居中对齐（覆盖全局 .text-right 的右对齐，仅作用于 .rp-monthly-table） */
+.rp-monthly-table th.text-right,.rp-monthly-table td.text-right{text-align:center}
+.rp-monthly-table .rp-target-turn,.rp-monthly-table .rp-target-stock-input{text-align:center}
+/* 数字列保持单行不换行（防止数据被遮挡） */
+.rp-monthly-table td.text-right{white-space:nowrap}
+.rp-monthly-table td.cell-id{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Model 列保持单行 */
+.rp-monthly-table td.text-truncate{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* 长文本列（Suggested Action / Sales Reason / AI Business Advice / Risk Tags / Suggestion）：自然换行，不裁切 */
+.rp-monthly-table td.rp-cell-wrap{white-space:normal;overflow-wrap:break-word;word-break:normal;vertical-align:top}
+/* 订单预测专属：Movement Judgment / Sales Status / Risk Tags 防溢出 */
+.rp-monthly-table td.rp-movement-cell{overflow:hidden;overflow-wrap:break-word;word-break:normal}
+.rp-monthly-table td.rp-movement-cell .sales-judgement{max-width:100%;overflow:hidden}
+.rp-monthly-table td.rp-movement-cell .sj-status{white-space:normal;max-width:100%;word-break:normal}
+.rp-monthly-table td.rp-movement-cell .sj-tags{flex-wrap:wrap;gap:3px;max-width:100%}
+.rp-monthly-table td.rp-movement-cell .sj-tag{white-space:normal;max-width:100%;word-break:normal}
+.rp-monthly-table td.rp-sales-status-cell{overflow:hidden}
+.rp-monthly-table td.rp-sales-status-cell .status-badge{white-space:normal;max-width:100%;word-break:normal;overflow-wrap:break-word}
+.rp-monthly-table td.rp-risk-tags-cell{overflow:hidden}
+.rp-monthly-table td.rp-risk-tags-cell .sj-tags{flex-wrap:wrap;gap:3px;max-width:100%}
+.rp-monthly-table td.rp-risk-tags-cell .sj-tag{white-space:normal;max-width:100%;word-break:normal}
 /* 订单预测建议采购输入框：去掉 number input 默认上下箭头 */
 .rp-target-stock-input::-webkit-outer-spin-button,
 .rp-target-stock-input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
