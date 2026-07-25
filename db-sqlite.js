@@ -160,7 +160,9 @@ function initDatabase() {
       "ALTER TABLE users ADD COLUMN feishu_union_id TEXT NOT NULL DEFAULT ''",
       "ALTER TABLE users ADD COLUMN feishu_user_id TEXT NOT NULL DEFAULT ''",
       "ALTER TABLE users ADD COLUMN password_hash TEXT NOT NULL DEFAULT ''",
-      "ALTER TABLE users ADD COLUMN last_login_at TEXT NOT NULL DEFAULT ''"
+      "ALTER TABLE users ADD COLUMN last_login_at TEXT NOT NULL DEFAULT ''",
+      // I18N-100P-B1：用户语言偏好（飞书通知按收件人语言发送）；默认 zh；白名单校验在 API 层
+      "ALTER TABLE users ADD COLUMN language_preference TEXT NOT NULL DEFAULT 'zh'"
     ];
     for (const sql of userCols) { try { d.exec(sql); } catch(e) {} }
 

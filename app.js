@@ -4,6 +4,10 @@ let currentUser=null;let currentPage='dashboard';
 // --- 工具函数 ---
 function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
 function fmtMoney(v,c){const n=Number(v||0);return(c?c+' ':'')+n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}
+// 数量类显示专用格式化：标准四舍五入取整，仅影响页面显示，不改原始数据/计算精度/导出
+// 覆盖：销量、库存、在途、PO/PI数量、建议采购、分摊库存等
+// 不覆盖：周转月数、占比、百分比、日期、金额、单价、汇率、CBM、KG
+function formatQuantityDisplay(value){var n=Number(value||0);return Math.round(n)}
 function fmtDate(d){return d?String(d).split('T')[0]:''}
 function todayStr(){return new Date().toISOString().split('T')[0]}
 function b64EncodeUnicode(s){return btoa(unescape(encodeURIComponent(String(s||''))))}
@@ -148,7 +152,10 @@ async function doBreakGlassLogin(){
   if(!u.value||!p.value){showToast(t('login.enterEmergencyCreds','请输入应急账号和密码'),'warning');return}
   try{
     const d=await api('/api/auth/local/login','POST',{username:u.value,password:p.value});
-    currentUser=d;showApp();
+    currentUser=d;
+    // I18N-B1-FINAL-4-GAPS-CLOSEOUT：应急登录成功后应用用户语言偏好（共享函数；skipSave 不触发保存 API）
+    applyCurrentUserLanguagePreference(d);
+    showApp();
   }catch(e){
     showToast(t('toast.doBreakGlassLogin', '应急登录失败: {v1}', {v1: e.message||e}),'danger');
   }
@@ -168,7 +175,18 @@ function doLogout(){
     const app=document.getElementById('app'); if(app) app.style.display='none';
   });
 }
-function showApp(){const lp=document.getElementById('login-page');if(lp)lp.style.display='none';const pp=document.getElementById('pending-page');if(pp)pp.style.display='none';document.getElementById('app').style.display='flex';document.getElementById('user-name').textContent=currentUser.name;renderUserRole();document.getElementById('user-avatar').textContent=(currentUser.name||'U').charAt(0).toUpperCase();renderTopNav();renderSidebar();initSidebarCollapse();showPage('dashboard')}
+function showApp(){
+  const lp=document.getElementById('login-page');if(lp)lp.style.display='none';
+  const pp=document.getElementById('pending-page');if(pp)pp.style.display='none';
+  document.getElementById('app').style.display='flex';
+  // break-glass 本地应急账号：内置系统标签按语言显示；真实飞书用户姓名保持原文
+  const isLocal=currentUser.auth_source==='local' || currentUser.username==='admin';
+  const displayName=isLocal ? t('auth.breakglass_admin_label','超级管理员') : (currentUser.name||'');
+  document.getElementById('user-name').textContent=displayName;
+  renderUserRole();
+  document.getElementById('user-avatar').textContent=(displayName||'U').charAt(0).toUpperCase();
+  renderTopNav();renderSidebar();initSidebarCollapse();showPage('dashboard');
+}
 
 // 用户角色标签国际化（仅显示用，不改动权限/业务逻辑）；语言切换时由 i18n.setLang 重新调用
 // 系统内置角色使用独立静态 i18n key；自定义/未知角色 fallback 到 role_name 原文，不出现 undefined/unknown/空白。
@@ -176,6 +194,12 @@ function renderUserRole(){
   var el=document.getElementById('user-role');
   if(!el||!currentUser) return;
   el.textContent=formatRoleLabel(currentUser.role_id, currentUser.role_name);
+  // 同步刷新顶部用户显示名称（break-glass 本地账号按语言显示，真实飞书姓名保持原文）
+  var nameEl=document.getElementById('user-name');
+  if(nameEl){
+    var isLocal=currentUser.auth_source==='local' || currentUser.username==='admin';
+    nameEl.textContent=isLocal ? t('auth.breakglass_admin_label','超级管理员') : (currentUser.name||'');
+  }
 }
 
 // 统一角色显示函数（仅显示用）：内置角色三语翻译，自定义/未知角色保持 role_name 原文。
@@ -195,6 +219,29 @@ function formatRoleLabel(roleId, roleName){
   }
   // 自定义或未知角色：保持 role_name 原文，不误套翻译
   return roleName || '—';
+}
+
+// SYS-ROLE-I18N-UX-02：内置角色描述显示函数（仅显示用）
+// 内置角色描述按 role.id 映射三语，自定义角色描述保持数据库原文。
+function formatRoleDescription(roleId, roleDesc){
+  var descMap = {
+    'role_admin': { key:'role.description.admin', zh:'拥有系统全部管理权限' },
+    'role_operator': { key:'role.description.operator', zh:'业务操作权限，含审批与导入导出' },
+    'role_viewer': { key:'role.description.viewer', zh:'只读查看权限' }
+  };
+  var entry = descMap[roleId];
+  if(entry) return t(entry.key, entry.zh);
+  return roleDesc || t("app.425", "（无）");
+}
+
+// SYS-ROLE-I18N-UX-02：权限分类显示函数（module 为 server.js PERM_LABELS 中的中文分类名，作为稳定 key 后缀）
+function formatPermModule(module){
+  return t('permission.category.'+module, module);
+}
+
+// SYS-ROLE-I18N-UX-02：权限名称显示函数（permKey 为 server.js PERM_LABELS 中的稳定 permission.key）
+function formatPermLabel(permKey, fallbackLabel){
+  return t('permission.label.'+permKey, fallbackLabel);
 }
 
 // --- 导航结构定义 ---
@@ -368,6 +415,10 @@ async function renderDashboard(){
     statsEl.innerHTML=stats.map(s=>'<div class="stat-card '+s.c+'"><div class="stat-number">'+s.v+'</div><div class="stat-label">'+s.l+'</div></div>').join('');
     pendingEl.innerHTML=t('html.renderDashboard', '<div class="stat-card"><div class="stat-number">{v1}</div><div class="stat-label">PO未完成</div></div><div class="stat-card"><div class="stat-number">{v2}</div><div class="stat-label">PI未完成</div></div><div class="stat-card"><div class="stat-number">{v3}</div><div class="stat-label">CI未完成</div></div>', {v1: d.po_pending, v2: d.pi_pending, v3: d.ci_pending});
     if(d.freight_trend&&d.freight_trend.length&&chartEl){
+      // I18N-B1-BUGFIX-01：语言切换时 showPage→renderDashboard 可能重叠调用，
+      // 两个 async 调用通过 getElementById 拿到同一 canvas，第二个 new Chart 抛出
+      // "Canvas is already in use"。创建前先销毁已存在的旧实例。
+      var _oldChart=Chart.getChart(chartEl); if(_oldChart) _oldChart.destroy();
       new Chart(chartEl.getContext('2d'),{type:'line',data:{labels:d.freight_trend.map(x=>x.month),datasets:[{label:t("app.223", "\u7efc\u5408\u8fd0\u8d39"),data:d.freight_trend.map(x=>x.freight),borderColor:'#2e7d32',yAxisID:'y'},{label:t("app.357", "\u8fd0\u8d39\u5360\u6bd4(%)"),data:d.freight_trend.map(x=>x.ratio),borderColor:'#ff9500',yAxisID:'y1'}]},options:{responsive:true,maintainAspectRatio:false,scales:{y:{position:'left'},y1:{position:'right',grid:{display:false}}}}});
     }
   }catch(e){
@@ -534,17 +585,17 @@ async function loadBatchTasks(){
 
     document.getElementById('bt-tasks').innerHTML = !tasks.length ? t('gen.L496.1','<div class="empty-state"><div class="empty-icon">📭</div>暂无批量任务</div>') :
       t('gen.L497.1','<div style="max-height:500px;overflow-y:auto"><table class="data-table"><thead><tr><th>任务名称</th><th>操作人</th><th>页面</th><th>状态</th><th>总数</th><th>成功</th><th>失败</th><th>跳过</th><th>开始时间</th><th>错误报告</th></tr></thead><tbody>')
-      +tasks.map(t=>'<tr>'
-        +'<td>'+esc(t.task_name)+'</td>'
-        +'<td>'+esc(t.operator_name||'-')+'</td>'
-        +'<td>'+esc(t.page||'-')+'</td>'
-        +'<td><span class="status-badge '+(t.status==='completed'?'status-normal':'status-warning')+'">'+statusLabel(t.status)+'</span></td>'
-        +'<td class="text-right">'+t.total_count+'</td>'
-        +'<td class="text-right" style="color:#2e7d32;font-weight:600">'+t.success_count+'</td>'
-        +'<td class="text-right" style="color:#c62828">'+t.failed_count+'</td>'
-        +'<td class="text-right" style="color:#f57f17">'+t.skipped_count+'</td>'
-        +'<td class="cell-date">'+fmtDate(t.started_at)+'</td>'
-        +'<td>'+(t.failed_count>0?'<button class="btn btn-sm btn-secondary" onclick="downloadTaskErrors(\''+t.id+'\')">'+t('action.download','📥 下载')+'</button>':'-')+'</td>'
+      +tasks.map(task=>'<tr>'
+        +'<td>'+esc(task.task_name)+'</td>'
+        +'<td>'+esc(task.operator_name||'-')+'</td>'
+        +'<td>'+esc(task.page||'-')+'</td>'
+        +'<td><span class="status-badge '+(task.status==='completed'?'status-normal':'status-warning')+'">'+statusLabel(task.status)+'</span></td>'
+        +'<td class="text-right">'+task.total_count+'</td>'
+        +'<td class="text-right" style="color:#2e7d32;font-weight:600">'+task.success_count+'</td>'
+        +'<td class="text-right" style="color:#c62828">'+task.failed_count+'</td>'
+        +'<td class="text-right" style="color:#f57f17">'+task.skipped_count+'</td>'
+        +'<td class="cell-date">'+fmtDate(task.started_at)+'</td>'
+        +'<td>'+(task.failed_count>0?'<button class="btn btn-sm btn-secondary" onclick="downloadTaskErrors(\''+task.id+'\')">'+t('action.download','📥 下载')+'</button>':'-')+'</td>'
       +'</tr>').join('')+'</tbody></table></div>';
 
     document.getElementById('bt-logs').innerHTML = !logs.length ? t('gen.L511.1','<div class="empty-state"><div class="empty-icon">📭</div>暂无操作日志</div>') :
@@ -661,19 +712,19 @@ function renderSupTerms(){
   if(!box) return;
   const arr=window._supTerms||(window._supTerms=[]);
   if(!arr.length){ box.innerHTML='<div class="sup-terms-empty">'+t('msg.no_pay_terms','暂无付款条件，点击下方“添加付款条件”新增')+'</div>'; return; }
-  box.innerHTML=arr.map((t,i)=>{
-    const isDefault=!!t.is_default;
-    const creditVisible=(t.term_type==='credit'||t.term_type==='other');
+  box.innerHTML=arr.map((term,i)=>{
+    const isDefault=!!term.is_default;
+    const creditVisible=(term.term_type==='credit'||term.term_type==='other');
     return '<div class="sup-term-card" data-i="'+i+'">'
       +'<span class="sup-term-idx">'+(i+1)+'</span>'
       +'<div class="sup-term-fields">'
-        +'<div class="sup-term-field"><label>'+t('col.name','名称')+'</label><input type="text" class="st-name" data-i="'+i+'" value="'+esc(t.term_name)+t('gen.L631.1','" placeholder="\u5982 T/T 100% in advance"></div>')
+        +'<div class="sup-term-field"><label>'+t('col.name','名称')+'</label><input type="text" class="st-name" data-i="'+i+'" value="'+esc(term.term_name)+t('gen.L631.1','" placeholder="\u5982 T/T 100% in advance"></div>')
         +'<div class="sup-term-field"><label>'+t('col.type','类型')+'</label><select class="st-type" data-i="'+i+'">'
-          +'<option value="advance"'+((t.term_type||'advance')==='advance'?' selected':'')+'>'+t('term.payterm_advance','预付 advance')+'</option>'
-          +'<option value="credit"'+((t.term_type||'advance')==='credit'?' selected':'')+'>'+t('term.payterm_credit','信用 credit')+'</option>'
-          +'<option value="other"'+((t.term_type||'advance')==='other'?' selected':'')+'>'+t('term.payterm_other','其他 other')+'</option>'
+          +'<option value="advance"'+((term.term_type||'advance')==='advance'?' selected':'')+'>'+t('term.payterm_advance','预付 advance')+'</option>'
+          +'<option value="credit"'+((term.term_type||'advance')==='credit'?' selected':'')+'>'+t('term.payterm_credit','信用 credit')+'</option>'
+          +'<option value="other"'+((term.term_type||'advance')==='other'?' selected':'')+'>'+t('term.payterm_other','其他 other')+'</option>'
         +'</select></div>'
-        +'<div class="sup-term-field st-credit-box" style="display:'+(creditVisible?'flex':'none')+'"><label>'+t('col.credit_days','信用天数')+'</label><input type="number" class="st-days" data-i="'+i+'" value="'+esc(t.credit_days||0)+t('gen.L637.1','" min="0" placeholder="\u624b\u52a8\u586b\u5199\u5929\u6570"></div>')
+        +'<div class="sup-term-field st-credit-box" style="display:'+(creditVisible?'flex':'none')+'"><label>'+t('col.credit_days','信用天数')+'</label><input type="number" class="st-days" data-i="'+i+'" value="'+esc(term.credit_days||0)+t('gen.L637.1','" min="0" placeholder="\u624b\u52a8\u586b\u5199\u5929\u6570"></div>')
         +'<div class="sup-term-field sup-term-default"><label>'+t('term.default','默认')+'</label><input type="radio" name="sup-term-default" class="st-default" data-i="'+i+'"'+(isDefault?' checked':'')+'></div>'
         +'<div class="sup-term-field sup-term-del"><button type="button" class="action-btn action-del" title="'+t('action.delete','删除')+'" onclick="delSupTermRow('+i+')">🗑️</button></div>'
       +'</div>'
@@ -817,7 +868,7 @@ function renderApprovalCenter(){
     {id:'cc',label:t("app.383", "\u6284\u9001\u6211\u7684")},
     {id:'done',label:t("app.384", "\u5df2\u5904\u7406")},
   ];
-  document.getElementById('content-inner').innerHTML=t('html.renderApprovalCenter', '<div id="flash-container"></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">✅ 审批中心</div><div class="table-section-actions"><span class="muted-hint">已接入 PO 审批（采购类）与付款申请审批（财务类），其余分类预留</span></div></div><div class="approval-tabs" id="approval-tabs">{v1}</div><div id="approval-list"></div></div>', {v1: tabs.map((t,i)=>'<span class="approval-tab'+(i===0?' active':'')+'" data-tab="'+t.id+'" onclick="switchApprovalTab(\''+t.id+'\')">'+t.label+'</span>').join('')});
+  document.getElementById('content-inner').innerHTML=t('html.renderApprovalCenter', '<div id="flash-container"></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">✅ 审批中心</div><div class="table-section-actions"><span class="muted-hint">已接入 PO 审批（采购类）与付款申请审批（财务类），其余分类预留</span></div></div><div class="approval-tabs" id="approval-tabs">{v1}</div><div id="approval-list"></div></div>', {v1: tabs.map((tab,i)=>'<span class="approval-tab'+(i===0?' active':'')+'" data-tab="'+tab.id+'" onclick="switchApprovalTab(\''+tab.id+'\')">'+tab.label+'</span>').join('')});
   switchApprovalTab('mine');
 }
 let _approvalTab='mine';
@@ -976,6 +1027,7 @@ async function saveConfig(){
   try{await api('/api/system-config','POST',{configs});showToast(t('gen.L937.1','配置已保存'),'success')}catch(e){showToast(e.message,'danger')}
 }
 // 用户管理最小闭环：查看（脱敏飞书标识）、启用/停用、分配角色；不允许建本地密码账号、改密码、改飞书标识、停用/删应急账号
+// I18N-100P-B1：新增语言偏好 inline select（管理员可设置）
 async function renderUsers(){
   document.getElementById('content-inner').innerHTML=t('gen.L941.1','<div id="flash-container"></div><div id="user-mgr-loading" class="pc-loading">加载用户列表…</div>');
   try{
@@ -984,7 +1036,14 @@ async function renderUsers(){
     const rows=users.map(u=>{
       const isBG = u.auth_source==='local';
       const statusBadge = '<span class="status-'+(u.status==='active'?'active':(u.status==='pending'?'pending':'disabled'))+'">'+statusLabel(u.status)+'</span>';
-      const roleSel = '<select class="user-role-sel" data-uid="'+u.id+'"'+(isBG?t('gen.L948.1',' disabled title="\u5e94\u6025\u8d26\u53f7\u89d2\u8272\u56fa\u5b9a"'):'')+'>'+roles.map(r=>'<option value="'+r.id+'"'+(r.id===u.role_id?' selected':'')+'>'+esc(r.name||r.id)+'</option>').join('')+'</select>';
+      const roleSel = '<select class="user-role-sel" data-uid="'+u.id+'"'+(isBG?t('gen.L948.1',' disabled title="\u5e94\u6025\u8d26\u53f7\u89d2\u8272\u56fa\u5b9a"'):'')+'>'+roles.map(r=>'<option value="'+r.id+'"'+(r.id===u.role_id?' selected':'')+'>'+esc(formatRoleLabel(r.id, r.name))+'</option>').join('')+'</select>';
+      // I18N-100P-B1：语言偏好 inline select（zh/en/id）
+      const lp = u.language_preference==='en'?'en':(u.language_preference==='id'?'id':'zh');
+      const langSel = '<select class="user-lang-sel" data-uid="'+u.id+'">'
+        +'<option value="zh"'+(lp==='zh'?' selected':'')+'>'+t('user.lang_zh','中文')+'</option>'
+        +'<option value="en"'+(lp==='en'?' selected':'')+'>'+t('user.lang_en','English')+'</option>'
+        +'<option value="id"'+(lp==='id'?' selected':'')+'>'+t('user.lang_id','Bahasa Indonesia')+'</option>'
+        +'</select>';
       const actionBtn = isBG
         ? t('gen.L950.1','<button class="btn btn-xs btn-secondary" disabled title="应急账号不可停用">停用</button>')
         : (u.status==='active'
@@ -998,18 +1057,28 @@ async function renderUsers(){
         +'<td>'+(isBG?t('gen.L959.1','本地应急'):t("app.415", "\u98de\u4e66"))+'</td>'
         +'<td>'+statusBadge+'</td>'
         +'<td>'+roleSel+'</td>'
+        +'<td>'+langSel+'</td>'
         +'<td>'+actionBtn+'</td>'
         +'</tr>';
     }).join('');
     document.getElementById('content-inner').innerHTML=
-      t('html.renderUsers', '<div id="flash-container"></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">👤 用户管理</div></div><div class="table-container"><table class="data-table"><thead><tr><th>姓名</th><th>用户名</th><th>飞书标识(脱敏)</th><th>邮箱</th><th>来源</th><th>状态</th><th>角色</th><th>操作</th></tr></thead><tbody>{v1}</tbody></table></div><div class="pc-hint">用户由飞书首次登录自动创建（默认 <b>'+statusLabel('pending')+'</b>，无角色、无权限）。管理员启用并分配角色后，用户方可进入业务。不允许创建本地密码账号、不允许修改密码、不允许编辑飞书标识、不允许停用/删除应急账号。</div></div>', {v1: rows});
-    document.querySelectorAll('.user-role-sel').forEach(sel=>{ sel.addEventListener('change',()=>setUserRole(sel.dataset.uid, sel.value)); });
+      t('html.renderUsers', '<div id="flash-container"></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">👤 用户管理</div></div><div class="table-container"><table class="data-table"><thead><tr><th>姓名</th><th>用户名</th><th>飞书标识(脱敏)</th><th>邮箱</th><th>来源</th><th>状态</th><th>角色</th><th>语言偏好</th><th>操作</th></tr></thead><tbody>{v1}</tbody></table></div><div class="pc-hint">用户由飞书首次登录自动创建（默认 <b>'+statusLabel('pending')+'</b>，无角色、无权限）。管理员启用并分配角色后，用户方可进入业务。不允许创建本地密码账号、不允许修改密码、不允许编辑飞书标识、不允许停用/删除应急账号。</div></div>', {v1: rows});
+    // I18N-B1-PAGE-CONTEXT-STATE-01：限定 [data-uid] 排除顶部 lang-switcher（class同为 user-role-sel），
+    // 否则 renderUsers 会给 lang-switcher 绑定 setUserRole，语言切换时 setUserRole(undefined) → renderUsers() 覆盖当前页
+    document.querySelectorAll('.user-role-sel[data-uid]').forEach(sel=>{ sel.addEventListener('change',()=>setUserRole(sel.dataset.uid, sel.value)); });
+    document.querySelectorAll('.user-lang-sel[data-uid]').forEach(sel=>{ sel.addEventListener('change',()=>setUserLanguagePreference(sel.dataset.uid, sel.value)); });
   }catch(e){ showFlash(e.message,'danger'); }
 }
 async function setUserRole(uid, roleId){
   const u=(window.__userCache||[]).find(x=>x.id===uid);
   if(!u){ renderUsers(); return; }
   try{ await api('/api/users/'+uid,'PUT',{username:u.username, name:u.name, role_id:roleId}); showToast(t('gen.L973.1','角色已更新'),'success'); }catch(e){ showToast(e.message,'danger'); renderUsers(); }
+}
+// I18N-100P-B1：管理员修改用户语言偏好（复用 PUT /api/users/:id）
+async function setUserLanguagePreference(uid, lp){
+  const u=(window.__userCache||[]).find(x=>x.id===uid);
+  if(!u){ renderUsers(); return; }
+  try{ await api('/api/users/'+uid,'PUT',{username:u.username, name:u.name, language_preference:lp}); showToast(t('gen.L973.2','语言偏好已更新'),'success'); }catch(e){ showToast(e.message,'danger'); renderUsers(); }
 }
 async function setUserStatus(uid, status){
   const u=(window.__userCache||[]).find(x=>x.id===uid);
@@ -1025,8 +1094,15 @@ async function loadRoles(){
   try{
     const data=await api('/api/roles');
     roleListData=data;
-    const html=!data.length?t('gen.L989.1','<div class="empty-state">暂无角色</div>'):t('gen.L989.2','<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>角色名</th><th>描述</th><th>权限数</th><th>系统</th><th>操作</th></tr></thead><tbody>')+data.map(r=>'<tr style="cursor:pointer" onclick="openRoleEditor('+JSON.stringify(r.id)+t('gen.L989.3',')" title="\u70b9\u51fb\u7f16\u8f91\u6743\u9650"><td>')+esc(r.name)+'</td><td>'+esc(r.description)+'</td><td>'+(r.permissions||[]).length+'</td><td>'+(r.is_system?'✅':'❌')+'</td><td><button class="btn btn-sm btn-primary" onclick="event.stopPropagation();openRoleEditor('+JSON.stringify(r.id)+t('gen.L989.4',')">编辑权限</button></td></tr>')).join('')+'</tbody></table></div>';
+    const html=!data.length?t('gen.L989.1','<div class="empty-state">暂无角色</div>'):t('gen.L989.2','<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>')+t('role.col.name','角色名')+t('gen.L989.2.th1','</th><th>')+t('role.col.description','描述')+t('gen.L989.2.th2','</th><th>')+t('role.col.perm_count','权限数')+t('gen.L989.2.th3','</th><th>')+t('role.col.system','系统')+t('gen.L989.2.th4','</th><th>')+t('role.col.actions','操作')+t('gen.L989.2.th5','</th></tr></thead><tbody>')+data.map(r=>'<tr class="role-edit-row" data-role-id="'+esc(r.id)+'" style="cursor:pointer" title="'+t('gen.L989.3.title','点击编辑权限')+'"><td>'+esc(formatRoleLabel(r.id, r.name))+'</td><td>'+esc(formatRoleDescription(r.id, r.description))+'</td><td>'+(r.permissions||[]).length+'</td><td>'+(r.is_system?'✅':'❌')+'</td><td><button class="btn btn-sm btn-primary role-edit-btn" data-role-id="'+esc(r.id)+'">'+t('gen.L989.4.btn','编辑权限')+'</button></td></tr>').join('')+'</tbody></table></div>';
     document.getElementById('simple-table').innerHTML=html;
+    // [SEC] 角色 ID 通过 data-role-id 传递，避免 inline onclick 拼接 JS 字符串（防注入）
+    document.querySelectorAll('#simple-table .role-edit-btn').forEach(function(btn){
+      btn.addEventListener('click', function(e){ e.stopPropagation(); openRoleEditor(this.getAttribute('data-role-id')); });
+    });
+    document.querySelectorAll('#simple-table .role-edit-row').forEach(function(tr){
+      tr.addEventListener('click', function(){ openRoleEditor(this.getAttribute('data-role-id')); });
+    });
   }catch(e){showFlash(e.message,'danger')}
 }
 
@@ -1041,24 +1117,27 @@ async function openRoleEditor(roleId){
     const own=role.permissions||[];
     const groups={};
     catalog.forEach(p=>{ (groups[p.module]=groups[p.module]||[]).push(p); });
-    let body=t('gen.L1005.1','<div style="font-size:12px;color:var(--text-secondary,#999);margin-bottom:10px">角色名称（只读）：<b>')+esc(role.name)+t('gen.L1005.2','</b> ｜ 角色说明（只读）：')+esc(role.description||t("app.425", "\uff08\u65e0\uff09"))+'</div>';
+    let body=t('gen.L1005.1','<div style="font-size:12px;color:var(--text-secondary,#999);margin-bottom:10px">')+t('role.field.name_readonly','角色名称（只读）：')+'<b>'+esc(formatRoleLabel(role.id, role.name))+t('gen.L1005.2','</b> ｜ ')+t('role.field.desc_readonly','角色说明（只读）：')+esc(formatRoleDescription(role.id, role.description))+'</div>';
     if(role.id==='role_admin'){
-      body+=t('gen.L1007.1','<div class="flash flash-warning show" style="margin-bottom:12px">超级管理员角色：关键管理权限（角色管理 / 用户管理 / 系统配置）已被锁定，不可取消，以避免系统失去管理入口。</div>');
+      body+='<div class="flash flash-warning show" style="margin-bottom:12px">'+t('role.locked_warning','超级管理员角色：关键管理权限（角色管理 / 用户管理 / 系统配置）已被锁定，不可取消，以避免系统失去管理入口。')+'</div>';
     }
     ROLE_MODULE_ORDER.forEach(mod=>{
       const items=groups[mod]; if(!items||!items.length)return;
-      body+='<div style="font-weight:600;margin:12px 0 6px;font-size:13px">'+esc(mod)+'</div><div style="display:flex;flex-wrap:wrap;gap:8px 16px">';
+      body+='<div style="font-weight:600;margin:12px 0 6px;font-size:13px">'+esc(formatPermModule(mod))+'</div><div style="display:flex;flex-wrap:wrap;gap:8px 16px">';
       items.forEach(p=>{
         const checked=own.includes(p.key)?'checked':'';
         const locked=(role.id==='role_admin'&&ROLE_CRITICAL_PERMS.includes(p.key));
         const dis=locked?'disabled':'';
         const lockIco=locked?' 🔒':'';
-        body+='<label style="font-size:13px;display:flex;align-items:center;gap:4px;min-width:140px"><input type="checkbox" data-perm="'+esc(p.key)+'" '+checked+' '+dis+'>'+esc(p.label)+lockIco+'</label>';
+        body+='<label style="font-size:13px;display:flex;align-items:center;gap:4px;min-width:140px"><input type="checkbox" data-perm="'+esc(p.key)+'" '+checked+' '+dis+'>'+esc(formatPermLabel(p.key, p.label))+lockIco+'</label>';
       });
       body+='</div>';
     });
-    const footer=t('gen.L1021.1','<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveRolePermissions(')+JSON.stringify(role.id)+t('gen.L1021.2',')">保存</button>');
-    openModal(t('modal.title.openRoleEditor', '编辑角色权限 · {v1}', {v1: role.name}), body, footer, 'modal-lg');
+    // [SEC] 保存按钮通过 data-role-id 传递，避免 inline onclick 拼接 JS 字符串（防注入）
+    const footer='<button class="btn btn-secondary" onclick="closeModal()">'+t('role.btn.cancel','取消')+'</button><button class="btn btn-primary" id="role-save-btn" data-role-id="'+esc(role.id)+'">'+t('role.btn.save','保存')+'</button>';
+    openModal(t('modal.title.openRoleEditor', '编辑角色权限 · {v1}', {v1: formatRoleLabel(role.id, role.name)}), body, footer, 'modal-lg');
+    var saveBtn=document.getElementById('role-save-btn');
+    if(saveBtn){ saveBtn.addEventListener('click', function(){ saveRolePermissions(this.getAttribute('data-role-id')); }); }
   }catch(e){showToast(e.message||t("app.427", "\u6253\u5f00\u5931\u8d25"),'danger')}
 }
 async function saveRolePermissions(roleId){
@@ -3320,6 +3399,35 @@ const LIFECYCLE_STRATEGY={
   'stopped':{strategy:t("app.729", "\u505c\u91c7/\u505c\u4ea7\uff0c\u4e0d\u53c2\u4e0e\u8865\u8d27\u5efa\u8bae"),coeff:0,replenish:false}
 };
 function fmtLifecycle(v){return LIFECYCLE_LABELS[v]||v||'-';}
+// 动态读取生命周期标签（语言切换后立即生效，不依赖模块加载时的 const 快照）
+function fmtLifecycleDyn(v){
+  if(!v) return '-';
+  var map={
+    'new_test':t("app.547", "\u65b0\u54c1\u5bfc\u5165"),
+    'new_launch':t("app.548", "\u65b0\u54c1\u542f\u52a8"),
+    'growth':t("app.549", "\u6210\u957f\u671f"),
+    'stable':t("app.550", "\u6210\u719f\u671f"),
+    'slow':t("app.551", "\u8870\u9000\u671f"),
+    'stagnant':t("app.552", "\u6ede\u9500"),
+    'clearance':t("app.553", "\u6e05\u4ed3\u671f"),
+    'stopped':t("app.554", "\u505c\u91c7/\u505c\u4ea7")
+  };
+  return map[v]||v;
+}
+// 动销分组三语显示（按天列表 sales_group 字段）
+// 后端枚举值：滞销/低动销/中动销/高动销（server.js 行3479-3482）
+// 仅改变显示层，不修改 API 值、数据库值和业务判断
+function formatSalesGroupLabel(rawValue){
+  var v=String(rawValue||'').trim();
+  if(!v) return '';
+  var map={
+    '滞销':t('forecast.sales_group.stagnant','滞销'),
+    '低动销':t('forecast.sales_group.low','低动销'),
+    '中动销':t('forecast.sales_group.medium','中动销'),
+    '高动销':t('forecast.sales_group.high','高动销')
+  };
+  return map[v]||v; // 未知值原样显示
+}
 
 // ==================== 订单预测：字段配置系统 ====================
 var RP_COL_STORAGE_KEYS={total:'prediction_table_columns_total',online:'prediction_table_columns_online',offline:'prediction_table_columns_offline'};
@@ -3657,6 +3765,9 @@ function formatForecastRiskTags(rawValue){
   }
   return out.join(', ');
 }
+// formatForecastSalesReason / formatForecastAiAdvice 已删除：
+// sales_reason / ai_business_advice 由后端 forecastDisplayT 按请求语言翻译确定性模板后直接显示，
+// 前端不再重新生成或缩减（保持信息等价）
 // 线上/线下预测列元数据
 function rpChannelColMeta(){
   return [
@@ -3768,17 +3879,26 @@ function saveRpColConfig(tabKey,config){
 function getActiveRpColKeys(tabKey){
   return getRpColConfig(tabKey).filter(function(c){return c.visible||c.fixed;}).map(function(c){return c.key;});
 }
-// 构建单个字段行 HTML
+// 构建单个字段行 HTML（含冻结到此列单选控件）
 function buildRpCfgItem(c, tabKey){
   var hidden = (!c.visible && !c.fixed);
   var dimmedClass = hidden ? ' rp-cfg-item-hidden' : '';
   var fixedBadge = c.fixed ? t('gen.L3562.1','<span class="rp-cfg-badge-fixed">固定</span>') : '';
   var checked = (c.visible || c.fixed) ? 'checked' : '';
   var disabled = c.fixed ? 'disabled' : '';
+  // 冻结单选：仅可见字段可选，隐藏字段禁用
+  var freezeKey = getFreezeColKey(tabKey);
+  var isFreezeBoundary = (freezeKey === c.key);
+  var freezeDisabled = hidden ? 'disabled' : '';
+  var freezeChecked = (isFreezeBoundary && !hidden) ? 'checked' : '';
   return '<div class="rp-cfg-item'+dimmedClass+'" data-key="'+c.key+'" data-fixed="'+(c.fixed?1:0)+'" draggable="true">'
     + t('gen.L3566.1','<span class="rp-cfg-handle" title="\u62d6\u62fd\u6392\u5e8f">⠿</span>')
     + '<span class="rp-cfg-name">'+esc(c.label||t("app.771", "(\u7a7a)"))+'</span>'
     + fixedBadge
+    + '<label class="rp-cfg-freeze" title="'+t('freeze.column.to','冻结到此列')+'">'
+    + '<input type="radio" name="rp-freeze-boundary" class="rp-cfg-freeze-radio" data-key="'+c.key+'" '+freezeChecked+' '+freezeDisabled+'>'
+    + '<span>'+t('freeze.column.to','冻结到此列')+'</span>'
+    + '</label>'
     + '<label class="rp-cfg-switch">'
     + '<input type="checkbox" class="rp-cfg-vis" data-key="'+c.key+'" '+checked+' '+disabled+' onchange="onRpCfgToggle(this,\''+tabKey+'\')">'
     + '<span class="rp-cfg-slider"></span>'
@@ -3787,16 +3907,28 @@ function buildRpCfgItem(c, tabKey){
 }
 // 打开字段配置面板
 function openRpFieldConfig(tabKey){
+  // 按天模式：只显示冻结列配置，不显示按月字段隐藏/排序
+  if(rpMode==='daily'){
+    return openRpDailyFieldConfig(tabKey);
+  }
   var config=getRpColConfig(tabKey);
   var tabLabel = tabKey==='total'?t('gen.L3578.1','总预测'):tabKey==='online'?t('gen.L3578.2','线上预测'):t('gen.L3578.3','线下预测');
   var visibleCount = config.filter(function(c){return c.visible||c.fixed;}).length;
   var totalCount = config.length;
+  var freezeKey = getFreezeColKey(tabKey);
+  var freezeNoneChecked = !freezeKey ? 'checked' : '';
   var html='<div class="rp-cfg-panel">'
     +'<div class="rp-cfg-toolbar">'
     +t('gen.L3583.1','<input type="text" class="rp-cfg-search" id="rp-cfg-search" placeholder="\u641c\u7d22\u5b57\u6bb5..." oninput="filterRpCfgFields()">')
     +'<button class="btn btn-default btn-sm" onclick="showAllRpFields(\''+tabKey+t('gen.L3584.1','\')">全部显示</button>')
     +'</div>'
     +t('gen.L3586.1','<div class="rp-cfg-stats" id="rp-cfg-stats">显示 ')+visibleCount+' / '+totalCount+t('gen.L3586.2',' 个字段</div>')
+    +'<div class="rp-cfg-freeze-bar">'
+    +'<label class="rp-cfg-freeze-none" title="'+t('freeze.none','不冻结')+'">'
+    +'<input type="radio" name="rp-freeze-boundary" class="rp-cfg-freeze-radio" data-key="" '+freezeNoneChecked+'>'
+    +'<span>'+t('freeze.none','不冻结')+'</span>'
+    +'</label>'
+    +'</div>'
     +'<div class="rp-cfg-list" id="rp-cfg-list">'
     + config.map(function(c){ return buildRpCfgItem(c, tabKey); }).join('')
     + '</div>'
@@ -3863,10 +3995,13 @@ function initRpCfgDrag(tabKey){
 function onRpCfgToggle(checkbox, tabKey){
   var item = checkbox.closest('.rp-cfg-item');
   if(!item) return;
+  var freezeRadio = item.querySelector('.rp-cfg-freeze-radio');
   if(checkbox.checked){
     item.classList.remove('rp-cfg-item-hidden');
+    if(freezeRadio) freezeRadio.disabled = false;
   } else {
     item.classList.add('rp-cfg-item-hidden');
+    if(freezeRadio){ freezeRadio.disabled = true; freezeRadio.checked = false; }
   }
   updateRpCfgStats(tabKey);
 }
@@ -3892,6 +4027,8 @@ function showAllRpFields(tabKey){
     if(cb && !cb.disabled){
       cb.checked = true;
       item.classList.remove('rp-cfg-item-hidden');
+      var fr = item.querySelector('.rp-cfg-freeze-radio');
+      if(fr) fr.disabled = false;
     }
   });
   updateRpCfgStats(tabKey);
@@ -3920,6 +4057,10 @@ function saveRpFieldConfig(tabKey){
     config.push({key:key,label:meta?meta.label:'',fixed:fixed,visible:fixed?true:vis});
   });
   saveRpColConfig(tabKey,config);
+  // 保存冻结截止列：读取选中的单选按钮 data-key
+  var selectedFreeze = document.querySelector('.rp-cfg-freeze-radio:checked');
+  var freezeColKey = selectedFreeze ? (selectedFreeze.dataset.key || '') : '';
+  setFreezeColKey(tabKey, freezeColKey);
   closeModal();
   showToast(t('gen.L3711.1','字段配置已保存'),'success');
   if(tabKey==='total')loadRp();
@@ -3929,6 +4070,7 @@ function saveRpFieldConfig(tabKey){
 // 恢复默认（面板内重置，不关闭弹窗）
 function resetRpFieldConfig(tabKey){
   localStorage.removeItem(RP_COL_STORAGE_KEYS[tabKey]);
+  localStorage.removeItem('rp_freeze_col_'+tabKey); // 冻结设置恢复默认(last_inbound_date)
   var config = getRpColConfig(tabKey);
   var list = document.getElementById('rp-cfg-list');
   if(list){
@@ -3936,14 +4078,88 @@ function resetRpFieldConfig(tabKey){
     initRpCfgDrag(tabKey);
     updateRpCfgStats(tabKey);
   }
+  // 同步更新"不冻结"单选状态
+  var freezeKey = getFreezeColKey(tabKey);
+  var freezeNoneRadio = document.querySelector('.rp-cfg-freeze-none .rp-cfg-freeze-radio');
+  if(freezeNoneRadio) freezeNoneRadio.checked = !freezeKey;
   var search = document.getElementById('rp-cfg-search');
   if(search) search.value = '';
+  showToast(t('gen.L3728.1','已恢复默认字段配置'),'success');
+}
+// ==================== 按天字段配置：仅冻结列 ====================
+// 按天视图不提供字段隐藏/排序/列宽编辑，仅支持冻结边界配置
+// 冻结配置独立保存：rp_freeze_col_daily_{tabKey}
+// 动态日期列不作为冻结截止列（本轮限制）
+function rpDailyColMeta(){
+  return [
+    {key:'selection',        label:t('forecast.daily.col.selection','选择')},
+    {key:'sales_group',      label:t('forecast.daily.col.sales_group','动销')},
+    {key:'lifecycle_status', label:t('forecast.daily.col.lifecycle_status','生命周期')},
+    {key:'model',            label:t('forecast.daily.col.model','Model')},
+    {key:'sku',              label:t('forecast.daily.col.sku','SKU')},
+    {key:'last_7_days',      label:t('forecast.daily.col.last_7_days','近7天')},
+    {key:'last_14_days',     label:t('forecast.daily.col.last_14_days','近14天')},
+    {key:'last_30_days',     label:t('forecast.daily.col.last_30_days','近30天')},
+    {key:'avg_daily_sales',  label:t('forecast.daily.col.avg_daily_sales','日均')},
+    {key:'trend',            label:t('forecast.daily.col.trend','趋势')}
+  ];
+}
+function openRpDailyFieldConfig(tabKey){
+  var tabLabel = tabKey==='total'?t('gen.L3578.1','总预测'):tabKey==='online'?t('gen.L3578.2','线上预测'):t('gen.L3578.3','线下预测');
+  var freezeKey = getDailyFreezeColKey(tabKey);
+  var freezeNoneChecked = !freezeKey ? 'checked' : '';
+  var cols = rpDailyColMeta();
+  var items = cols.map(function(c){
+    var checked = (freezeKey === c.key) ? 'checked' : '';
+    return '<div class="rp-cfg-item">'
+      + '<span class="rp-cfg-name">'+esc(c.label)+'</span>'
+      + '<label class="rp-cfg-freeze" title="'+t('freeze.column.to','冻结到此列')+'">'
+      + '<input type="radio" name="rp-freeze-boundary" class="rp-cfg-freeze-radio" data-key="'+c.key+'" '+checked+'>'
+      + '<span>'+t('freeze.column.to','冻结到此列')+'</span>'
+      + '</label>'
+      + '</div>';
+  }).join('');
+  var html='<div class="rp-cfg-panel">'
+    +'<div class="rp-cfg-freeze-bar">'
+    +'<label class="rp-cfg-freeze-none" title="'+t('freeze.none','不冻结')+'">'
+    +'<input type="radio" name="rp-freeze-boundary" class="rp-cfg-freeze-radio" data-key="" '+freezeNoneChecked+'>'
+    +'<span>'+t('freeze.none','不冻结')+'</span>'
+    +'</label>'
+    +'</div>'
+    +'<div class="rp-cfg-list" id="rp-cfg-list">'+items+'</div>'
+    +t('forecast.daily.cfg.tip','<div style="margin-top:8px;font-size:12px;color:var(--text-secondary)">按天视图仅支持冻结列配置；不提供字段隐藏、排序或列宽编辑。动态日期列不参与冻结。</div>')
+    +'</div>';
+  openModal(t('modal.title.openRpDailyFieldConfig', '冻结列配置 - {v1}', {v1: tabLabel}), html,
+    t('modal.footer.openRpDailyFieldConfig', `<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-default" onclick="resetRpDailyFieldConfig('{v1}')">恢复默认</button><button class="btn btn-primary" onclick="saveRpDailyFieldConfig('{v2}')">保存</button>`, {v1: tabKey, v2: tabKey}));
+}
+function saveRpDailyFieldConfig(tabKey){
+  var selectedFreeze = document.querySelector('.rp-cfg-freeze-radio:checked');
+  var freezeColKey = selectedFreeze ? (selectedFreeze.dataset.key || '') : '';
+  setDailyFreezeColKey(tabKey, freezeColKey);
+  closeModal();
+  showToast(t('gen.L3711.1','字段配置已保存'),'success');
+  loadRpDaily();
+}
+function resetRpDailyFieldConfig(tabKey){
+  // 删除 daily key → 恢复 checkpoint f7d95df 真实按天默认（冻结到 trend）
+  localStorage.removeItem('rp_freeze_col_daily_'+tabKey);
+  var freezeKey = getDailyFreezeColKey(tabKey);
+  var freezeNoneRadio = document.querySelector('.rp-cfg-freeze-none .rp-cfg-freeze-radio');
+  if(freezeNoneRadio) freezeNoneRadio.checked = !freezeKey;
+  document.querySelectorAll('#rp-cfg-list .rp-cfg-freeze-radio').forEach(function(r){
+    r.checked = (r.dataset.key === freezeKey);
+  });
   showToast(t('gen.L3728.1','已恢复默认字段配置'),'success');
 }
 // 更新表格顶部按钮显示计数
 function updateRpFieldConfigBtn(tabKey){
   var btn = document.getElementById('rp-field-config-btn');
   if(!btn) return;
+  // 按天模式：按钮只显示"冻结列"，不带字段计数
+  if(rpMode==='daily'){
+    btn.textContent = t('text.updateRpFieldConfigBtn.daily', '⚙ 冻结列');
+    return;
+  }
   var config = getRpColConfig(tabKey || rpTab);
   var visible = config.filter(function(c){return c.visible||c.fixed;}).length;
   var total = config.length;
@@ -4025,9 +4241,16 @@ async function renderReplenishment(){
   rpTab = 'total';
   document.getElementById('content-inner').innerHTML=t('html.renderReplenishment', `<div id="flash-container"></div><div id="rp-collapsible"><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>国家</label><select id="rp-c" onchange="onRpCountryChange()"><option value="">全部</option></select></div><div class="filter-group"><label>仓库</label><select id="rp-w" onchange="loadRpSummary();loadRp()"><option value="">全部</option></select></div><div class="filter-group"><label>品牌</label><select id="rp-b" onchange="onRpBrandChange()"><option value="">全部</option></select></div><div class="filter-actions">{v1}<button class="btn btn-default btn-sm" onclick="exportRpExcel()">⬇ 导出Excel</button><button class="btn btn-default btn-sm" onclick="openRpParams()">⚙ 预测参数设置</button></div></div></div><div id="rp-kpi" class="kpi-row"></div></div><div class="tab-bar" style="margin:12px 20px 0;display:flex;justify-content:space-between;align-items:center"><div style="display:flex"><div class="tab-item active" onclick="switchRpTab('total')">📊 总预测</div><div class="tab-item" onclick="switchRpTab('online')">🛒 线上预测</div><div class="tab-item" onclick="switchRpTab('offline')">🏪 线下预测</div></div><div style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-secondary)"><span>显示方式：</span><div class="rp-mode-switch"><button class="rp-mode-btn active" onclick="switchRpMode('monthly')">按月</button><button class="rp-mode-btn" onclick="switchRpMode('daily')">按天</button></div><button class="btn btn-default btn-sm rp-collapse-btn" id="rp-collapse-btn" onclick="toggleRpCollapse()" title="收起/展开 顶部筛选区与指标卡片">▾ 收起</button></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left" id="rp-tab-title">📊 SKU动销与订单预测（总预测）</div><div class="table-section-actions"><input type="text" id="rp-s" placeholder="SKU搜索" onkeypress="if(event.key==='Enter')loadRp()" style="width:140px;height:28px;padding:4px 8px;border:1px solid #d0d7de;border-radius:4px;font-size:13px;margin-right:8px">{v2}{v3}<button class="btn btn-default btn-sm" id="rp-field-config-btn" onclick="openRpFieldConfig(rpTab)" title="字段显示与排序" style="margin-left:8px">⚙ 字段配置</button></div></div><div id="rp-table"></div></div>`, {v1: hasPermission('replenishment_edit')?t('gen.L3813.1','<button class="btn btn-success btn-sm rp-gen-btn" onclick="genRp()">🔄 重新计算</button>'):'', v2: hasPermission('replenishment_edit')?t('gen.L3813.2','<button class="btn btn-success btn-sm rp-gen-btn" onclick="genRp()" style="margin-right:8px">🔄 重新计算</button>'):'', v3: hasPermission('po_create')?t('gen.L3813.3','<button class="btn btn-primary btn-sm" id="rp-po-btn" onclick="genPOModal()">🛒 生成PO</button>'):''});
   await loadRpFilterOptions();
+  // RC-FILTER-PRESERVE：语言切换后恢复筛选稳定值（会话内一次）
+  // 国家→仓库→品牌存在依赖关系，loadRpFilterOptions 已 await onRpCountryChange 完成选项重建
+  // 此处按依赖顺序回填稳定值：country（已由 loadRpFilterOptions 内部 prevCountry 保持）→ warehouse → brand
+  var restored=false;
+  if(typeof window.__restoreRpFilterState==='function'){
+    restored=window.__restoreRpFilterState();
+  }
   loadRpSummary();
   loadRp();
-  updateRpFieldConfigBtn('total');
+  updateRpFieldConfigBtn(rpTab||'total');
   applyRpCollapse();
 }
 // ==================== 订单预测：顶部筛选区+指标卡 收起/展开 ====================
@@ -4061,10 +4284,14 @@ async function loadRpFilterOptions(){
     if(!cSel) return;
     const prevCountry=cSel.value||'';
     cSel.innerHTML=t('html.loadRpFilterOptions', '<option value="">全部</option>{v1}', {v1: (countries||[]).map(c=>'<option value="'+esc(c)+'">'+esc(c)+'</option>').join('')});
-    // 默认全部（中性起点），仅保留用户上次手选值的记忆
-    if(countries.includes(prevCountry)) cSel.value=prevCountry;
+    // RC-FILTER-PRESERVE：语言切换后从保存的状态恢复 country（在 onRpCountryChange 之前设置）
+    // 这样仓库和品牌选项会针对正确的 country 加载
+    var savedState=window.__rpFilterState;
+    var restoreCountry = savedState && savedState.country ? savedState.country : '';
+    if(restoreCountry && countries.includes(restoreCountry)) cSel.value=restoreCountry;
+    else if(countries.includes(prevCountry)) cSel.value=prevCountry;
     else cSel.value='';
-    // 联动加载仓库和品牌
+    // 联动加载仓库和品牌（此时 country 已恢复，仓库/品牌选项针对正确国家加载）
     await onRpCountryChange(true);
   }catch(e){console.warn('replenishment filter-options load failed',e)}
 }
@@ -4073,6 +4300,10 @@ async function onRpCountryChange(skipDataReload){
   const country=document.getElementById('rp-c')?.value||'';
   const prevWarehouse=document.getElementById('rp-w')?.value||'';
   const prevBrand=document.getElementById('rp-b')?.value||'';
+  // RC-FILTER-PRESERVE：语言切换后从保存状态恢复 warehouse（在选项重建后设置）
+  var savedState=window.__rpFilterState;
+  var restoreWarehouse = savedState && savedState.warehouse ? savedState.warehouse : '';
+  var restoreBrand = savedState && savedState.brand ? savedState.brand : '';
   try{
     const url='/api/warehouses/by-country'+(country?('?country='+encodeURIComponent(country)):'');
     const whs=await api(url);
@@ -4080,7 +4311,9 @@ async function onRpCountryChange(skipDataReload){
     const wSel=document.getElementById('rp-w');
     if(wSel){
       wSel.innerHTML=t('html.onRpCountryChange', '<option value="">全部</option>{v1}', {v1: (whs||[]).map(w=>'<option value="'+esc(w.name)+'">'+esc(w.name)+'</option>').join('')});
-      if(prevWarehouse && (whs||[]).some(w=>w.name===prevWarehouse)) wSel.value=prevWarehouse;
+      // 按依赖顺序恢复：优先使用 savedState 中的 warehouse，其次 prevWarehouse
+      if(restoreWarehouse && (whs||[]).some(w=>w.name===restoreWarehouse)) wSel.value=restoreWarehouse;
+      else if(prevWarehouse && (whs||[]).some(w=>w.name===prevWarehouse)) wSel.value=prevWarehouse;
       else wSel.value='';
     }
     // 从仓库的 brands 字段提取品牌列表
@@ -4097,13 +4330,53 @@ async function onRpCountryChange(skipDataReload){
     const bSel=document.getElementById('rp-b');
     if(bSel){
       bSel.innerHTML=t('html.onRpCountryChange.2', '<option value="">全部</option>{v1}', {v1: brands.map(b=>'<option value="'+esc(b)+'">'+esc(b)+'</option>').join('')});
-      // 默认全部（中性起点），仅保留用户上次手选值的记忆
-      if(prevBrand && brands.includes(prevBrand)) bSel.value=prevBrand;
+      // 按依赖顺序恢复：优先使用 savedState 中的 brand
+      if(restoreBrand && brands.includes(restoreBrand)) bSel.value=restoreBrand;
+      else if(prevBrand && brands.includes(prevBrand)) bSel.value=prevBrand;
       else bSel.value='';
     }
   }catch(e){console.warn('onRpCountryChange failed',e)}
   if(!skipDataReload){loadRpSummary();loadRp();}
 }
+// RC-FILTER-PRESERVE：语言切换时保存/恢复订单预测筛选稳定值（会话内）
+// 仅保存稳定 ID/value，不保存翻译文字；恢复时若选项已不存在则保持""（全部）
+window.__saveRpFilterState=function(){
+  var s={};
+  try{
+    var c=document.getElementById('rp-c'); if(c) s.country=c.value||'';
+    var w=document.getElementById('rp-w'); if(w) s.warehouse=w.value||'';
+    var b=document.getElementById('rp-b'); if(b) s.brand=b.value||'';
+    var sk=document.getElementById('rp-search'); if(sk) s.search=sk.value||'';
+    if(typeof rpTab!=='undefined') s.rpTab=rpTab;
+    if(typeof rpMode!=='undefined') s.rpMode=rpMode;
+    window.__rpFilterState=s;
+  }catch(e){ window.__rpFilterState=null; }
+};
+window.__restoreRpFilterState=function(){
+  var s=window.__rpFilterState;
+  if(!s) return false;
+  try{
+    // country/warehouse/brand 已在 loadRpFilterOptions→onRpCountryChange 中按依赖顺序恢复
+    // 此处仅恢复 search/rpTab/rpMode（这些不依赖 select 选项重建）
+    var sk=document.getElementById('rp-search'); if(sk) sk.value=s.search||'';
+    // 恢复 tab/mode 变量 + UI 高亮（不调用 switchRpTab/switchRpMode 以避免重复 loadRp）
+    if(s.rpTab && typeof rpTab!=='undefined'){
+      rpTab=s.rpTab;
+      var tabs=['total','online','offline'];
+      document.querySelectorAll('#content-inner .tab-bar .tab-item').forEach(function(el,i){
+        el.classList.toggle('active', tabs[i]===s.rpTab);
+      });
+    }
+    if(s.rpMode && typeof rpMode!=='undefined'){
+      rpMode=s.rpMode;
+      document.querySelectorAll('.rp-mode-btn').forEach(function(btn){
+        btn.classList.toggle('active', btn.getAttribute('onclick').indexOf(s.rpMode)>0);
+      });
+    }
+    return true;
+  }catch(e){ return false; }
+  finally{ window.__rpFilterState=null; }
+};
 // 品牌变化时联动：仓库列表按 国家+品牌 筛选
 async function onRpBrandChange(){
   const country=document.getElementById('rp-c')?.value||'';
@@ -4161,6 +4434,7 @@ function switchRpMode(mode){
   document.querySelectorAll('.rp-mode-btn').forEach(b=>b.classList.remove('active'));
   event.target.classList.add('active');
   loadRp();
+  updateRpFieldConfigBtn(rpTab);
 }
 // 销量统计周期（period 口径基准）：缓存当前 sales_stats_days，供动态表头与 period 显示字段使用
 var rpSalesStatsDays=90;
@@ -4185,14 +4459,14 @@ async function loadRpSummary(){
       {label:t("app.740", "\u603b\u5e93\u5b58\u6c60"),value:d.totalPool||0,unit:t('gen.L3972.1','件')},
       {label:t("pi.003", "\u8fd14\u4e2a\u6708\u603b\u9500\u91cf"),value:d.totalSales4m||0,unit:t('gen.L3973.1','件')},
       {label:rpSalesStatsDays+t('gen.L3974.1','天月均销量'),value:d.avgSalesPeriod||0,unit:t("pi.004", "\u4ef6/\u6708"),tip:t('gen.L3974.2','按"预测参数设置"中的销量统计周期（近')+rpSalesStatsDays+t('gen.L3974.3','天有效销量 ÷ ')+rpSalesStatsDays+t('gen.L3974.4',' × 30）计算的月均销量；当前可用周转也按此口径')},
-      {label:t("pi.005", "\u9884\u8ba1\u5468\u8f6c\u6708\u6570"),value:d.overallTurnover||0,unit:t('gen.L3975.1','月'),warn:d.overallTurnover<2,tip:t("pi.006", "\u6309\u5f53\u524d\u9500\u91cf\u7edf\u8ba1\u5468\u671f(period)\u8ba1\u7b97\u7684\u5e73\u5747\u5468\u8f6c\uff08\u4ec5\u5c55\u793a\uff0c\u4e0d\u5f71\u54cd\u91c7\u8d2d\u94fe\u8def\uff09\uff1b\u5df2\u6392\u9664\u6708\u5747\u9500\u91cf=0\u7684\u65e0\u52a8\u9500SKU")},
+      {label:t("pi.005", "\u9884\u8ba1\u5468\u8f6c\u6708\u6570"),value:d.overallTurnover||0,unit:t('gen.L3975.1','月'),warn:d.overallTurnover<2,turnover:true,tip:t("pi.006", "\u6309\u5f53\u524d\u9500\u91cf\u7edf\u8ba1\u5468\u671f(period)\u8ba1\u7b97\u7684\u5e73\u5747\u5468\u8f6c\uff08\u4ec5\u5c55\u793a\uff0c\u4e0d\u5f71\u54cd\u91c7\u8d2d\u94fe\u8def\uff09\uff1b\u5df2\u6392\u9664\u6708\u5747\u9500\u91cf=0\u7684\u65e0\u52a8\u9500SKU")},
       {label:t("pi.007", "\u9700\u8865\u8d27SKU"),value:d.needReplenish||0,unit:t('gen.L3976.1','个'),accent:true},
       {label:t("app.651", "\u65ad\u8d27\u98ce\u9669"),value:d.stockoutRisk||0,unit:t('gen.L3977.1','个'),danger:true},
       {label:t("pi.008", "\u9ad8\u5e93\u5b58/\u6162\u9500"),value:d.highStock||0,unit:t('gen.L3978.1','个'),muted:true}
     ];
     document.getElementById('rp-kpi').innerHTML='<div class="kpi-grid">'+kpi.map(k=>'<div class="kpi-card'+(k.danger?' kpi-danger':k.accent?' kpi-accent':k.muted?' kpi-muted':'')+'">'
       +'<div class="kpi-label">'+k.label+(k.tip?' <span class="link-text" onclick="showKpiTip(this,\''+k.tip.replace(/'/g,"\\'")+'\')" style="cursor:help" title="'+k.tip+'">?</span>':'')+'</div>'
-      +'<div class="kpi-value'+(k.warn?' kpi-warn':'')+'">'+(typeof k.value==='number'&&k.value%1!==0?Math.round(k.value*10)/10:k.value)+'</div>'
+      +'<div class="kpi-value'+(k.warn?' kpi-warn':'')+'">'+(k.turnover?(typeof k.value==='number'&&k.value%1!==0?Math.round(k.value*10)/10:k.value):formatQuantityDisplay(k.value))+'</div>'
       +'<div class="kpi-unit">'+k.unit+'</div></div>').join('')+'</div>';
   }catch(e){}
 }
@@ -4267,14 +4541,14 @@ async function loadRp(){
         td:function(r,c){return '<td class="cell-id" title="'+esc(r.sku_code||'')+'">'+esc(r.sku_code||'')+'</td>';},
         sum:function(total){return '<td><span style="font-size:10px;color:#888">'+total.count+t('gen.L4055.1','个SKU</span></td>');}},
       online_avg:{th:rpTh(t('gen.L4056.1','线上')+rpSalesStatsDays+t('gen.L4056.2','天月均销量'),t('gen.L4056.3','按"预测参数设置"中的销量统计周期计算：近')+rpSalesStatsDays+t('gen.L4056.4','天有效销量 ÷ ')+rpSalesStatsDays+' × 30。','text-right'),
-        td:function(r,c){return '<td class="text-right">'+Math.round(c.oaPeriod*100)/100+'</td>';},
-        sum:function(t){return '<td class="text-right">'+Math.round(t.oaPeriod*100)/100+'</td>';}},
+        td:function(r,c){return '<td class="text-right">'+formatQuantityDisplay(c.oaPeriod)+'</td>';},
+        sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.oaPeriod)+'</td>';}},
       offline_avg:{th:rpTh(t('gen.L4059.1','线下')+rpSalesStatsDays+t('gen.L4059.2','天月均销量'),t('gen.L4059.3','按"预测参数设置"中的销量统计周期计算：近')+rpSalesStatsDays+t('gen.L4059.4','天有效销量 ÷ ')+rpSalesStatsDays+' × 30。','text-right'),
-        td:function(r,c){return '<td class="text-right">'+Math.round(c.ofaPeriod*100)/100+'</td>';},
-        sum:function(t){return '<td class="text-right">'+Math.round(t.ofaPeriod*100)/100+'</td>';}},
+        td:function(r,c){return '<td class="text-right">'+formatQuantityDisplay(c.ofaPeriod)+'</td>';},
+        sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.ofaPeriod)+'</td>';}},
       total_avg:{th:rpThCompact(t('forecast.compact.total_avg','{days}天月均销量',{days:rpSalesStatsDays}),t('gen.L4062.2','按"预测参数设置"中的销量统计周期计算：近')+rpSalesStatsDays+t('gen.L4062.3','天有效销量 ÷ ')+rpSalesStatsDays+' × 30。','text-right','',true),
-        td:function(r,c){return '<td class="text-right font-bold">'+Math.round(c.taPeriod*100)/100+'</td>';},
-        sum:function(t){return '<td class="text-right">'+Math.round(t.taPeriod*100)/100+'</td>';}},
+        td:function(r,c){return '<td class="text-right font-bold">'+formatQuantityDisplay(c.taPeriod)+'</td>';},
+        sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.taPeriod)+'</td>';}},
       online_pct:{th:rpTh(t("app.738", "\u7ebf\u4e0a\u5360\u6bd4"),t("app.794", "\u6839\u636e\u7ebf\u4e0a\u9500\u91cf\u7edf\u8ba1\u5468\u671f(\u8fd1 N \u5929)\u9500\u91cf\u5360\u603b\u9500\u91cf(\u9500\u91cf\u7edf\u8ba1\u5468\u671f)\u7684\u6bd4\u4f8b\u8ba1\u7b97\uff0c\u7528\u4e8e\u5e93\u5b58\u5206\u644a\u548c\u8865\u8d27\u6d4b\u7b97\u3002\u5360\u6bd4\u4e0e\u5206\u644a\u5e93\u5b58\u6309\u9500\u91cf\u7edf\u8ba1\u5468\u671f\u53e3\u5f84\u3002"),'text-right'),
         td:function(r,c){return '<td class="text-right">'+(c.taPeriod>0?c.opct+'%':'-')+'</td>';},
         sum:function(t){return '<td class="text-right"></td>';}},
@@ -4282,23 +4556,23 @@ async function loadRp(){
         td:function(r,c){return '<td class="text-right">'+(c.taPeriod>0?c.ofpct+'%':'-')+'</td>';},
         sum:function(t){return '<td class="text-right"></td>';}},
       avail:{th:rpThCompact(t('forecast.compact.allocated_available','已分摊\n可用库存'),'','text-right','',true),
-        td:function(r,c){return '<td class="text-right">'+(r.available_qty||0)+'</td>';},
-        sum:function(t){return '<td class="text-right">'+t.avail+'</td>';}},
+        td:function(r,c){return '<td class="text-right">'+formatQuantityDisplay(r.available_qty||0)+'</td>';},
+        sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.avail)+'</td>';}},
       transit:{th:rpThCompact(t('forecast.compact.allocated_in_transit','已分摊\n在途库存'),'','text-right','',true),
-        td:function(r,c){return '<td class="text-right">'+(r.in_transit_qty||0)+'</td>';},
-        sum:function(t){return '<td class="text-right">'+t.transit+'</td>';}},
+        td:function(r,c){return '<td class="text-right">'+formatQuantityDisplay(r.in_transit_qty||0)+'</td>';},
+        sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.transit)+'</td>';}},
       po_unconfirmed:{th:rpThCompact(t('forecast.compact.po_unconfirmed','未确认\nPO'),t("app.796", "\u5df2\u7ecf\u521b\u5efa PO\uff0c\u4f46\u8fd8\u6ca1\u6709\u786e\u8ba4 PI \u7684\u6570\u91cf\u3002\u5c5e\u4e8e\u6f5c\u5728\u4f9b\u5e94\uff0c\u4e0d\u7b49\u4e8e\u4e00\u5b9a\u4f1a\u53d1\u8d27\u3002"),'text-right','',true),
-        td:function(r,c){return '<td class="text-right">'+(r.po_unconfirmed_pi_qty||0)+'</td>';},
-        sum:function(t){return '<td class="text-right">'+t.po+'</td>';}},
+        td:function(r,c){return '<td class="text-right">'+formatQuantityDisplay(r.po_unconfirmed_pi_qty||0)+'</td>';},
+        sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.po)+'</td>';}},
       pool:{th:rpTh(t("app.740", "\u603b\u5e93\u5b58\u6c60"),t("app.797", "\u5f53\u524d\u53ef\u7528\u5e93\u5b58 + \u5728\u9014\u5e93\u5b58 + PO\u672a\u786e\u8ba4PI + PI\u5df2\u786e\u8ba4\u672a\u53d1\u8d27\u3002\u7528\u4e8e\u5224\u65ad\u6574\u4f53\u662f\u5426\u9700\u8981\u8865\u8d27\u3002"),'text-right'),
-        td:function(r,c){return '<td class="text-right font-bold">'+c.pool+'</td>';},
-        sum:function(t){return '<td class="text-right">'+t.pool+'</td>';}},
+        td:function(r,c){return '<td class="text-right font-bold">'+formatQuantityDisplay(c.pool)+'</td>';},
+        sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.pool)+'</td>';}},
       current_turn:{th:rpTh(t("app.741", "\u5f53\u524d\u5468\u8f6c"),t("app.798", "\u603b\u5e93\u5b58\u6c60 \u00f7 \u6708\u5747\u9500\u91cf\uff08\u9500\u91cf\u7edf\u8ba1\u5468\u671f\u53e3\u5f84\uff09\u3002\u8868\u793a\u4e0d\u8003\u8651\u5728\u9014\u548c\u672a\u53d1\u8d27\u8ba2\u5355\u65f6\uff0c\u6574\u4f53\u5e93\u5b58\u5927\u7ea6\u8fd8\u80fd\u5356\u51e0\u4e2a\u6708\u3002"),'text-right'),
         td:function(r,c){return '<td class="text-right '+(c.taPeriod>0?(c.ct<2?'text-danger':c.ct>6?'text-secondary':'text-success'):'text-muted')+'">'+(c.taPeriod>0?c.ct:t("app.799", "\u65e0\u9500\u91cf"))+'</td>';},
         sum:function(t){return '<td class="text-right"></td>';}},
       pi_unshipped:{th:rpThCompact(t('forecast.compact.pi_unshipped','已确认PI\n未发货'),t("app.800", "PI \u5df2\u786e\u8ba4\uff0c\u4f46\u5de5\u5382\u8fd8\u6ca1\u6709\u53d1\u8d27\u7684\u6570\u91cf\u3002\u6bd4 PO\u672a\u786e\u8ba4PI \u66f4\u63a5\u8fd1\u5b9e\u9645\u4f9b\u5e94\u3002"),'text-right','',true),
-        td:function(r,c){return '<td class="text-right">'+c.piUnshipped+'</td>';},
-        sum:function(t){return '<td class="text-right">'+t.piUnshipped+'</td>';}},
+        td:function(r,c){return '<td class="text-right">'+formatQuantityDisplay(c.piUnshipped)+'</td>';},
+        sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.piUnshipped)+'</td>';}},
       avail_turnover:{th:rpTh(t('gen.L4089.1','当前可用周转'),t("app.801", "\u5f53\u524d\u53ef\u7528\u5e93\u5b58 \u00f7 \u6708\u5747\u9500\u91cf\uff08\u9500\u91cf\u7edf\u8ba1\u5468\u671f\u53e3\u5f84\uff09\u3002\u8868\u793a\u4e0d\u8003\u8651\u5728\u9014\u548c\u672a\u53d1\u8d27\u8ba2\u5355\u65f6\uff0c\u73b0\u6709\u5e93\u5b58\u5927\u7ea6\u8fd8\u80fd\u5356\u51e0\u4e2a\u6708\u3002"),'text-right'),
         td:function(r,c){return '<td class="text-right '+(c.availTurnover!==null?(c.availTurnover<2?'text-danger':c.availTurnover>6?'text-secondary':'text-success'):'text-muted')+'">'+(c.availTurnover!==null?c.availTurnover:'-')+'</td>';},
         sum:function(t){return '<td class="text-right"></td>';}},
@@ -4340,14 +4614,14 @@ async function loadRp(){
         td:function(r,c){return '<td class="text-right">'+c.oft+'</td>';},
         sum:function(t){return '<td class="text-right"></td>';}},
       online_target_stock:{th:t('gen.L4129.1','<th class="text-right">线上</th>'),
-        td:function(r,c){return '<td class="text-right">'+c.os+'</td>';},
-        sum:function(t){return '<td class="text-right">'+t.os+'</td>';}},
+        td:function(r,c){return '<td class="text-right">'+formatQuantityDisplay(c.os)+'</td>';},
+        sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.os)+'</td>';}},
       offline_target_stock:{th:t('gen.L4132.1','<th class="text-right">线下</th>'),
-        td:function(r,c){return '<td class="text-right">'+c.ofs+'</td>';},
-        sum:function(t){return '<td class="text-right">'+t.ofs+'</td>';}},
+        td:function(r,c){return '<td class="text-right">'+formatQuantityDisplay(c.ofs)+'</td>';},
+        sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.ofs)+'</td>';}},
       total_target_stock:{th:rpTh(t("app.109", "\u5efa\u8bae\u91c7\u8d2d\u6570\u91cf"),t("app.809", "\u57fa\u4e8e\u9500\u91cf\u7edf\u8ba1\u5468\u671f(\u8fd1 N \u5929)\u6708\u5747\u9500\u91cf\u4e0e\u76ee\u6807\u5468\u8f6c\u8ba1\u7b97\u7684\u5efa\u8bae\u8865\u8d27\u6570\u91cf\u3002\u6162\u9500\u3001\u5446\u6ede\u3001\u9ad8\u5e93\u5b58\u7b49 SKU \u4f1a\u88ab\u62e6\u622a\u4e3a 0\u3002"),'text-right'),
-        td:function(r,c){return '<td class="text-right font-bold">'+c.sq+'</td>';},
-        sum:function(t){return '<td class="text-right">'+t.sq+'</td>';}},
+        td:function(r,c){return '<td class="text-right font-bold">'+formatQuantityDisplay(c.sq)+'</td>';},
+        sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.sq)+'</td>';}},
       arrival_month:{th:t('gen.L4138.1','<th class="text-center">到货月份</th>'),
         td:function(r,c){return '<td class="text-center">'+esc(r.arrival_month||'')+'</td>';},
         sum:function(t){return '<td class="text-center"></td>';}},
@@ -4384,6 +4658,7 @@ async function loadRp(){
       ? '<tr><td colspan="'+colCount+t('gen.L4175.1','" style="text-align:center;padding:40px 20px;color:#999;background:#fafbfc">💡 当前筛选条件下暂无建议，请调整国家/仓库/品牌或点击"重新计算"</td></tr>')
       : '';
     document.getElementById('rp-table').innerHTML='<div class="table-container" style="box-shadow:none;border-radius:0;overflow:auto;max-height:70vh"><table class="data-table rp-monthly-table" style="width:'+rpColWidthTotal(activeKeys)+'px;min-width:'+rpColWidthTotal(activeKeys)+'px">'+rpColgroupHtml(activeKeys)+'<thead><tr style="height:34px">'+th+'</tr>'+sum+'</thead><tbody>'+rows+tableFoot+'</tbody></table></div>';
+    applyChannelFreezeColumns('total', activeKeys);
     syncRpHeaderHeight();
     initRpTableDrag('total');
   }catch(e){showFlash(e.message,'danger')}
@@ -4539,41 +4814,41 @@ async function loadRpChannelMonthly(channel){
       td:function(r,c){return '<td class="cell-id" title="'+esc(r.sku_code||'')+'">'+esc(r.sku_code||'')+'</td>';},
       sum:function(total){return '<td><span style="font-size:10px;color:#888">'+total.count+t('gen.L4269.1','个SKU</span></td>');}};
     Cols.sales_m4={th:rpThCompact(t('forecast.compact.month_sales','{month}\n销量',{month:ml[0]}),'','text-right','',true),
-      td:function(r,c){return '<td class="text-right">'+c.salesM4+'</td>';},
-      sum:function(t){return '<td class="text-right">'+t.salesM4+'</td>';}};
+      td:function(r,c){return '<td class="text-right">'+formatQuantityDisplay(c.salesM4)+'</td>';},
+      sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.salesM4)+'</td>';}};
     Cols.sales_m3={th:rpThCompact(t('forecast.compact.month_sales','{month}\n销量',{month:ml[1]}),'','text-right','',true),
-      td:function(r,c){return '<td class="text-right">'+c.salesM3+'</td>';},
-      sum:function(t){return '<td class="text-right">'+t.salesM3+'</td>';}};
+      td:function(r,c){return '<td class="text-right">'+formatQuantityDisplay(c.salesM3)+'</td>';},
+      sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.salesM3)+'</td>';}};
     Cols.sales_m2={th:rpThCompact(t('forecast.compact.month_sales','{month}\n销量',{month:ml[2]}),'','text-right','',true),
-      td:function(r,c){return '<td class="text-right">'+c.salesM2+'</td>';},
-      sum:function(t){return '<td class="text-right">'+t.salesM2+'</td>';}};
+      td:function(r,c){return '<td class="text-right">'+formatQuantityDisplay(c.salesM2)+'</td>';},
+      sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.salesM2)+'</td>';}};
     Cols.sales_m1={th:rpThCompact(t('forecast.compact.this_month_sales','本月\n销量'),'','text-right','',true),
-      td:function(r,c){return '<td class="text-right font-bold">'+c.salesM1+'</td>';},
-      sum:function(t){return '<td class="text-right">'+t.salesM1+'</td>';}};
+      td:function(r,c){return '<td class="text-right font-bold">'+formatQuantityDisplay(c.salesM1)+'</td>';},
+      sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.salesM1)+'</td>';}};
     Cols.channel_avg={th:rpThCompact(t('forecast.compact.avg_monthly_sales','90天\n月均销量'),'',t('forecast.help.channel_avg_sales','按"预测参数设置"中的销量统计周期计算：近{days}天有效销量 ÷ {days} × 30。',{days:rpSalesStatsDays}),'text-right','',true),
-      td:function(r,c){return '<td class="text-right font-bold">'+Math.round(c.avgSalesPeriod*100)/100+'</td>';},
-      sum:function(t){return '<td class="text-right">'+Math.round(t.avgSalesPeriod*100)/100+'</td>';}};
+      td:function(r,c){return '<td class="text-right font-bold">'+formatQuantityDisplay(c.avgSalesPeriod)+'</td>';},
+      sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.avgSalesPeriod)+'</td>';}};
     Cols.channel_pct={th:rpThCompact(t('forecast.compact.sales_share','销量\n占比'),t("app.811", "\u6839\u636e\u8be5\u6e20\u9053\u9500\u91cf\u7edf\u8ba1\u5468\u671f(\u8fd1 N \u5929)\u9500\u91cf\u5360\u603b\u9500\u91cf(\u9500\u91cf\u7edf\u8ba1\u5468\u671f)\u7684\u6bd4\u4f8b\u8ba1\u7b97\uff0c\u7528\u4e8e\u5e93\u5b58\u5206\u644a\u548c\u8865\u8d27\u6d4b\u7b97\u3002\u5360\u6bd4\u4e0e\u5206\u644a\u5e93\u5b58\u6309\u9500\u91cf\u7edf\u8ba1\u5468\u671f\u53e3\u5f84\u3002"),'text-right','',true),
       td:function(r,c){return '<td class="text-right">'+(c.totalAvgPeriod>0?Math.round(c.pctPeriod)+'%':'-')+'</td>';},
       sum:function(t){return '<td class="text-right">'+(t.totalAvgPeriod>0?Math.round(t.avgSalesPeriod/t.totalAvgPeriod*100)+'%':'-')+'</td>';}};
     Cols.transit={th:rpThCompact(t('forecast.compact.allocated_in_transit','已分摊\n在途库存'),t('forecast.help.allocated_in_transit','按{channel}销量统计周期占比，从总在途库存中分摊给该渠道的数量（仅测算用，非独立仓库库存）。',{channel:chLabel}),'text-right','',true),
-      td:function(r,c){return t('gen.L4289.1','<td class="text-right" title="总在途库存 ')+(c.transit||0)+' × '+chLabel+t('gen.L4289.2','销量统计周期占比 ')+Math.round(c.pctPeriod||0)+'%">'+c.transitAllocatedPeriod+'</td>';},
-      sum:function(t){return '<td class="text-right">'+t.transitAllocatedPeriod+'</td>';}};
+      td:function(r,c){return t('gen.L4289.1','<td class="text-right" title="总在途库存 ')+(c.transit||0)+' × '+chLabel+t('gen.L4289.2','销量统计周期占比 ')+Math.round(c.pctPeriod||0)+'%">'+formatQuantityDisplay(c.transitAllocatedPeriod)+'</td>';},
+      sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.transitAllocatedPeriod)+'</td>';}};
     Cols.po_unconfirmed={th:rpThCompact(t('forecast.compact.po_unconfirmed','未确认\nPO'),t("app.796", "\u5df2\u7ecf\u521b\u5efa PO\uff0c\u4f46\u8fd8\u6ca1\u6709\u786e\u8ba4 PI \u7684\u6570\u91cf\u3002\u5c5e\u4e8e\u6f5c\u5728\u4f9b\u5e94\uff0c\u4e0d\u7b49\u4e8e\u4e00\u5b9a\u4f1a\u53d1\u8d27\u3002"),'text-right','',true),
-      td:function(r,c){return '<td class="text-right">'+(r.po_unconfirmed_pi_qty||0)+'</td>';},
-      sum:function(t){return '<td class="text-right">'+t.po+'</td>';}};
+      td:function(r,c){return '<td class="text-right">'+formatQuantityDisplay(r.po_unconfirmed_pi_qty||0)+'</td>';},
+      sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.po)+'</td>';}};
     Cols.avail={th:rpThCompact(t('forecast.compact.allocated_available','已分摊\n可用库存'),t('forecast.help.allocated_available','按{channel}销量统计周期占比，从总可用库存中分摊给该渠道的数量（仅测算用，非独立仓库库存）。',{channel:chLabel}),'text-right','',true),
-      td:function(r,c){return t('gen.L4295.1','<td class="text-right" title="总可用库存 ')+(c.avail||0)+' × '+chLabel+t('gen.L4295.2','销量统计周期占比 ')+Math.round(c.pctPeriod||0)+'%">'+c.availAllocatedPeriod+'</td>';},
-      sum:function(t){return '<td class="text-right">'+t.availAllocatedPeriod+'</td>';}};
+      td:function(r,c){return t('gen.L4295.1','<td class="text-right" title="总可用库存 ')+(c.avail||0)+' × '+chLabel+t('gen.L4295.2','销量统计周期占比 ')+Math.round(c.pctPeriod||0)+'%">'+formatQuantityDisplay(c.availAllocatedPeriod)+'</td>';},
+      sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.availAllocatedPeriod)+'</td>';}};
     Cols.current_turn={th:rpThCompact(t('forecast.compact.current_turnover','当前\n周转'),t("app.813", "\u6e20\u9053\u5206\u644a\u5e93\u5b58\u6c60\uff08\u6309\u9500\u91cf\u7edf\u8ba1\u5468\u671f\u5360\u6bd4\u5206\u644a\uff09\u00f7 \u6e20\u9053\u6708\u5747\u9500\u91cf\uff08\u9500\u91cf\u7edf\u8ba1\u5468\u671f\u53e3\u5f84\uff09\u3002\u8868\u793a\u73b0\u6709\u5e93\u5b58\u5927\u7ea6\u8fd8\u80fd\u5356\u51e0\u4e2a\u6708\u3002"),'text-right','',true),
       td:function(r,c){
         var cls=c.avgSalesPeriod>0?(c.currentTurn<2?'text-danger':c.currentTurn>6?'text-secondary':'text-success'):'text-muted';
         return '<td class="text-right '+cls+'">'+(c.avgSalesPeriod>0?c.currentTurn:t("app.799", "\u65e0\u9500\u91cf"))+'</td>';
       },
       sum:function(t){return '<td class="text-right">'+(t.avgSalesPeriod>0?Math.round(t.poolAllocatedPeriod/t.avgSalesPeriod*10)/10:'-')+'</td>';}};
-    Cols.pi_unshipped={th:rpThCompact(t('forecast.compact.pi_unshipped','已确认PI\n未发货'),t("app.800", "PI \u5df2\u786e\u8ba4\uff0c\u4f46\u5de5\u5382\u8fd8\u6ca1\u6709\u53d1\u8d27\u7684\u6570\u91cf\u3002\u6bd4 PO\u672a\u786e\u8ba4PI \u66f4\u63a5\u8fd1\u5b9e\u9645\u4f9b\u5e94\u3002"),'text-right','',true),
-      td:function(r,c){return '<td class="text-right">'+c.piUnshipped+'</td>';},
-      sum:function(t){return '<td class="text-right">'+t.piUnshipped+'</td>';}};
+    Cols.pi_unshipped={th:rpThCompact(t('forecast.compact.pi_unshipped','已确认PI\n未发货'),t("app.800", "PI \u5df2\u786e\u8ba4\uff0c\u4f44\u5de5\u5382\u8fd8\u6ca1\u6709\u53d1\u8d27\u7684\u6570\u91cf\u3002\u6bd4 PO\u672a\u786e\u8ba4PI \u66f4\u63a5\u8fd1\u5b9e\u9645\u4f9b\u5e94\u3002"),'text-right','',true),
+      td:function(r,c){return '<td class="text-right">'+formatQuantityDisplay(c.piUnshipped)+'</td>';},
+      sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.piUnshipped)+'</td>';}},
     Cols.avail_turnover={th:rpTh(t('gen.L4306.1','当前可用周转'),t("app.801", "\u5f53\u524d\u53ef\u7528\u5e93\u5b58 \u00f7 \u6708\u5747\u9500\u91cf\uff08\u9500\u91cf\u7edf\u8ba1\u5468\u671f\u53e3\u5f84\uff09\u3002\u8868\u793a\u4e0d\u8003\u8651\u5728\u9014\u548c\u672a\u53d1\u8d27\u8ba2\u5355\u65f6\uff0c\u73b0\u6709\u5e93\u5b58\u5927\u7ea6\u8fd8\u80fd\u5356\u51e0\u4e2a\u6708\u3002"),'text-right'),
       td:function(r,c){return '<td class="text-right '+(c.availTurnover!==null?(c.availTurnover<2?'text-danger':c.availTurnover>6?'text-secondary':'text-success'):'text-muted')+'">'+(c.availTurnover!==null?c.availTurnover:'-')+'</td>';},
       sum:function(t){return '<td class="text-right"></td>';}};
@@ -4611,7 +4886,7 @@ async function loadRpChannelMonthly(channel){
         var _val=_blocked?0:Math.round(c.suggestedQty||0);
         return '<td class="text-right"><input type="number" class="rp-target-stock-input" data-rid="'+r.id+'" data-channel="'+channel+'" value="'+_val+'" min="0" style="width:75px;padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-weight:bold;text-align:center" onchange="onChannelTargetStockChange(this)"></td>';
       },
-      sum:function(t){return '<td class="text-right">'+Math.round(t.suggestedQty||0)+'</td>';}};
+      sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.suggestedQty)+'</td>';}};
     Cols.last_inbound_date={th:rpThCompact(t('forecast.compact.last_inbound_date','最近\n入库日期'),t("app.806", "\u8be5 SKU \u6700\u8fd1\u4e00\u6b21\u5165\u5e93\u7684\u65e5\u671f\uff0c\u7528\u4e8e\u5224\u65ad\u5e93\u9f84\u548c\u662f\u5426\u957f\u671f\u672a\u8865\u8d27\u3002"),'text-center','',true),
       td:function(r,c){return '<td class="cell-date text-center">'+(r.last_inbound_date?fmtDate(r.last_inbound_date):t("app.673", "\u672a\u77e5"))+'</td>';},
       sum:function(t){return '<td class="text-center"></td>';}};
@@ -4679,7 +4954,6 @@ function syncRpHeaderHeight(){
 // 渠道表格动态冻结列：飞书风格可拖拽冻结线
 // 基于 localStorage 保存的字段 key 恢复冻结位置；字段配置变化后自动重算
 function applyChannelFreezeColumns(tabKey, activeKeys){
-  if(tabKey!=='online'&&tabKey!=='offline') return;
   var container=document.querySelector('#rp-table .table-container');
   var table=container?container.querySelector('.rp-monthly-table'):null;
   if(!table) return;
@@ -4692,14 +4966,27 @@ function applyChannelFreezeColumns(tabKey, activeKeys){
     for(var i=0;i<activeKeys.length;i++){
       if(activeKeys[i]===freezeKey){ freezeIdx=i; break; }
     }
-    // 保存的字段被隐藏 → 回退 last_inbound_date
-    if(freezeIdx<0 && freezeKey!=='last_inbound_date'){
-      for(var j=0;j<activeKeys.length;j++){
-        if(activeKeys[j]==='last_inbound_date'){ freezeIdx=j; break; }
+    // 保存的字段被隐藏 → 退回到其前一个可见列；若前面没有可见列 → 不冻结
+    if(freezeIdx<0){
+      var fullConfig=getRpColConfig(tabKey);
+      var cfgIdx=-1;
+      for(var ci=0;ci<fullConfig.length;ci++){
+        if(fullConfig[ci].key===freezeKey){ cfgIdx=ci; break; }
       }
-      // 回退后仍找不到 → last_inbound_date 也隐藏 → 取消冻结
-      if(freezeIdx>=0) setFreezeColKey(tabKey,'last_inbound_date');
-      else setFreezeColKey(tabKey,'');
+      var fallbackKey='';
+      if(cfgIdx>0){
+        for(var pi=cfgIdx-1;pi>=0;pi--){
+          if(fullConfig[pi].visible||fullConfig[pi].fixed){ fallbackKey=fullConfig[pi].key; break; }
+        }
+      }
+      if(fallbackKey){
+        for(var fi=0;fi<activeKeys.length;fi++){
+          if(activeKeys[fi]===fallbackKey){ freezeIdx=fi; break; }
+        }
+        setFreezeColKey(tabKey, fallbackKey);
+      }else{
+        setFreezeColKey(tabKey,'');
+      }
     }
   }
   // freezeIdx<0 → 取消冻结（不设 sticky，冻结线隐藏）
@@ -4786,13 +5073,27 @@ function clearFreezeStyles(table){
 }
 
 // 读取/保存冻结字段 key（用字段 key 保存，不用列序号）
+// null=未配置→默认 last_inbound_date；空字符串=用户选择"不冻结"
 function getFreezeColKey(tabKey){
   var v=localStorage.getItem('rp_freeze_col_'+tabKey);
-  return v===null?'last_inbound_date':v; // 默认冻结到 Last Inbound Date
+  if(v===null) return 'last_inbound_date';
+  return v;
 }
 function setFreezeColKey(tabKey, colKey){
-  if(colKey) localStorage.setItem('rp_freeze_col_'+tabKey, colKey);
-  else localStorage.removeItem('rp_freeze_col_'+tabKey); // 空值=取消冻结
+  localStorage.setItem('rp_freeze_col_'+tabKey, colKey||'');
+}
+
+// 按天冻结配置：独立于按月保存（rp_freeze_col_daily_{tabKey}）
+// null=未配置→默认 trend（保持 checkpoint f7d95df 硬编码 10 列行为，最后一列为 trend）
+// 空字符串=用户选择"不冻结"
+// 其他值=冻结到该字段 key（必须是按天固定信息列稳定 key）
+function getDailyFreezeColKey(tabKey){
+  var v=localStorage.getItem('rp_freeze_col_daily_'+tabKey);
+  if(v===null) return 'trend';
+  return v;
+}
+function setDailyFreezeColKey(tabKey, colKey){
+  localStorage.setItem('rp_freeze_col_daily_'+tabKey, colKey||'');
 }
 
 // 渲染冻结线 + 绑定拖拽 + scroll 校正
@@ -4940,11 +5241,15 @@ function openRpReview(rid, channel){
   var chLabel = isOnline?t('gen.L4658.1','线上'):t('gen.L4658.2','线下');
   var rawRisk = r.risk_tags || '';
   var tags = Array.isArray(rawRisk)?rawRisk:String(rawRisk).split(',').map(function(s){return s.trim();}).filter(Boolean);
-  var statusText = r.sales_status || t("app.673", "\u672a\u77e5");
-  var judgementText = tags.length ? (statusText+'｜'+tags.join('、')) : statusText;
+  // 枚举字段保持数据库原始值，前端按原始值格式化三语
+  // sales_reason / ai_business_advice 由后端按请求语言翻译后直接显示
+  var statusText = r.sales_status ? formatForecastSalesStatus(r.sales_status) : t("app.673", "\u672a\u77e5");
+  var judgementText = tags.length ? (statusText+'｜'+tags.map(formatForecastRiskTag).join('、')) : statusText;
   var actionShort = simplifyAction(r.action);
   var actionFull = r.action || '';
-  var actionHtml = actionShort + (actionFull && actionFull!==actionShort ? '<br><span style="color:var(--text-secondary);font-size:12px">'+esc(actionFull)+'</span>' : '');
+  var actionShortI18n = formatForecastAction(actionShort) || actionShort;
+  var actionFullI18n = formatForecastAction(actionFull) || actionFull;
+  var actionHtml = actionShortI18n + (actionFull && actionFull!==actionShort ? '<br><span style="color:var(--text-secondary);font-size:12px">'+esc(actionFullI18n)+'</span>' : '');
   function kv(label, val, isHtml){
     var v = (val===null||val===undefined||val==='') ? '<span class="text-muted">-</span>' : (isHtml?val:esc(val));
     return '<div class="detail-item"><span class="detail-label">'+esc(label)+'</span><span class="detail-value">'+v+'</span></div>';
@@ -4955,23 +5260,23 @@ function openRpReview(rid, channel){
     +kv(t("app.110", "\u52a8\u9500\u5224\u65ad"), judgementText)
     +kv(t("app.111", "\u5efa\u8bae\u52a8\u4f5c"), actionHtml, true)
     +'</div></div>'
-    // 2. 判断原因
-    +t('gen.L4677.1','<div class="detail-section"><h3>2. 判断原因</h3><div class="detail-grid">')
-    +kv(t("app.742", "\u52a8\u9500\u539f\u56e0"), r.sales_reason||'')
-    +kv(t("app.737", "AI\u5efa\u8bae"), r.ai_business_advice||'')
+    // 2. 判断原因（上下排列，各占整行，便于多句长文本阅读）
+    +t('gen.L4677.1','<div class="detail-section"><h3>2. 判断原因</h3><div class="rp-review-reason-wrap">')
+    +'<div class="rp-review-reason-item"><div class="detail-label">'+esc(t("app.742", "\u52a8\u9500\u539f\u56e0"))+'</div><div class="rp-review-reason-text">'+esc(r.sales_reason||'')+'</div></div>'
+    +'<div class="rp-review-reason-item"><div class="detail-label">'+esc(t("app.737", "AI\u5efa\u8bae"))+'</div><div class="rp-review-reason-text">'+esc(r.ai_business_advice||'')+'</div></div>'
     +'</div></div>'
     // 3. 关键数据（渠道口径）
-    +t('gen.L4682.1','<div class="detail-section"><h3>3. 关键数据（')+chLabel+t('gen.L4682.2','口径）</h3><div class="detail-grid">')
-    +kv(chLabel+t('gen.L4683.1','月均'), c.avgSales!==undefined?Math.round(c.avgSales*100)/100:'')
-    +kv(chLabel+t('gen.L4684.1','占比'), c.pct!==undefined?Math.round(c.pct)+'%':'')
-    +kv(chLabel+t("app.767", "\u5206\u644a\u53ef\u7528\u5e93\u5b58"), c.availAllocated)
+    +t('forecast.review.key_data_title','<div class="detail-section"><h3>3. 关键数据（{channel}）</h3><div class="detail-grid">', {channel:chLabel})
+    +kv(t('forecast.review.monthly_avg','{channel} 月均', {channel:chLabel}), c.avgSales!==undefined?formatQuantityDisplay(c.avgSales):'')
+    +kv(t('forecast.review.sales_share','{channel} 占比', {channel:chLabel}), c.pct!==undefined?Math.round(c.pct)+'%':'')
+    +kv(t('forecast.review.allocated_available','已分摊可用库存（{channel}）', {channel:chLabel}), c.availAllocated!==undefined?formatQuantityDisplay(c.availAllocated):'')
     +kv(t('gen.L4686.1','当前可用周转'), c.availTurnover!==null?c.availTurnover:t("app.799", "\u65e0\u9500\u91cf"))
-    +kv(chLabel+t("app.768", "\u5206\u644a\u5728\u9014\u5e93\u5b58"), c.transitAllocated)
+    +kv(t('forecast.review.allocated_in_transit','已分摊在途库存（{channel}）', {channel:chLabel}), c.transitAllocated!==undefined?formatQuantityDisplay(c.transitAllocated):'')
     +kv(t("app.733", "\u5728\u9014\u540e\u5468\u8f6c"), c.transitTurnover!==null?c.transitTurnover:t("app.799", "\u65e0\u9500\u91cf"))
-    +kv(t("app.732", "PO\u672a\u786e\u8ba4PI"), r.po_unconfirmed_pi_qty||0)
-    +kv(t("app.731", "PI\u5df2\u786e\u8ba4\u672a\u53d1\u8d27"), c.piUnshipped)
+    +kv(t("app.732", "PO\u672a\u786e\u8ba4PI"), formatQuantityDisplay(r.po_unconfirmed_pi_qty||0))
+    +kv(t("app.731", "PI\u5df2\u786e\u8ba4\u672a\u53d1\u8d27"), formatQuantityDisplay(c.piUnshipped))
     +kv(t("app.660", "\u76ee\u6807\u5468\u8f6c"), c.targetTurn)
-    +kv(t("app.109", "\u5efa\u8bae\u91c7\u8d2d\u6570\u91cf"), c.suggestedQty)
+    +kv(t("app.109", "\u5efa\u8bae\u91c7\u8d2d\u6570\u91cf"), formatQuantityDisplay(c.suggestedQty))
     +kv(t("app.734", "\u4e0b\u5355\u540e\u5468\u8f6c"), c.afterOrderTurnover!==null?c.afterOrderTurnover:t("app.799", "\u65e0\u9500\u91cf"))
     +kv(t("po.012", "\u6700\u540e\u5165\u5e93\u65e5\u671f"), r.last_inbound_date?fmtDate(r.last_inbound_date):t("app.673", "\u672a\u77e5"))
     +kv(t("app.663", "\u8ddd\u6700\u540e\u5165\u5e93\u5929\u6570"), r.days_since_last_inbound!==null?r.days_since_last_inbound:t("app.673", "\u672a\u77e5"))
@@ -4986,7 +5291,7 @@ function openRpReview(rid, channel){
     +'</div></div>'
     +'</div>';
   openModal(t('modal.title.openRpReview', '复盘 - {v1} ({v2})', {v1: r.sku_code||'', v2: chLabel}), html,
-    t('gen.L4707.1','<button class="btn btn-secondary" onclick="closeModal()">关闭</button>'));
+    t('gen.L4707.1','<button class="btn btn-secondary" onclick="closeModal()">关闭</button>'), 'rp-review-modal');
 }
 
 // 目标周转修改 → 实时预览目标库存
@@ -5187,36 +5492,83 @@ async function loadRpDaily(){
     const dates=resp.dates||[];
     const data=resp.skus||[];
 
-    // 冻结列定义：宽度 + 计算left偏移
-    var fcw=[36,56,96,88,110,64,64,64,56,48]; // 10个冻结列宽度
+    // 按天固定信息列定义：稳定 key + 宽度（用于冻结边界计算）
+    // 注意：动态日期列不参与冻结边界配置（本轮限制）
+    // 宽度按英文文案完整换行后可读性调整（不改变字段顺序与 key）
+    var dailyCols=[
+      {key:'selection',        width:36},
+      {key:'sales_group',      width:88},
+      {key:'lifecycle_status', width:120},
+      {key:'model',            width:124},
+      {key:'sku',              width:140},
+      {key:'last_7_days',      width:80},
+      {key:'last_14_days',     width:80},
+      {key:'last_30_days',     width:80},
+      {key:'avg_daily_sales',  width:88},
+      {key:'trend',            width:60}
+    ];
+    var fcw=dailyCols.map(function(c){return c.width;});
     var fcLeft=[]; var totalFw=0;
     fcw.forEach(function(w,i){fcLeft.push(totalFw);totalFw+=w;});
     var headerH=34; // 表头行高
     var summaryH=30; // 汇总行高
 
-    // 生成冻结单元格的sticky样式
-    function sHead(i){return 'position:sticky;top:0;left:'+fcLeft[i]+'px;z-index:5;min-width:'+fcw[i]+'px;max-width:'+fcw[i]+'px;background:var(--bg-header,#f5f7fa)';}
-    function sSum(i){return 'position:sticky;top:'+headerH+'px;left:'+fcLeft[i]+'px;z-index:4;min-width:'+fcw[i]+'px;max-width:'+fcw[i]+'px;background:#e8edf3;font-weight:700';}
-    function sBody(i){return 'position:sticky;left:'+fcLeft[i]+'px;z-index:1;min-width:'+fcw[i]+'px;max-width:'+fcw[i]+'px;background:var(--bg-card,#fff)';}
+    // 读取按天冻结配置（独立于按月保存）
+    // null=未配置→默认 trend（保持 checkpoint f7d95df 硬编码 10 列行为）
+    // 空字符串=用户选择"不冻结"
+    var freezeKey=getDailyFreezeColKey(rpTab);
+    var freezeIdx=-1;
+    if(freezeKey){
+      for(var di=0;di<dailyCols.length;di++){
+        if(dailyCols[di].key===freezeKey){ freezeIdx=di; break; }
+      }
+      // 保存的 key 非法（不在固定列中）→ 回退默认 trend
+      if(freezeIdx<0){
+        for(var dj=0;dj<dailyCols.length;dj++){
+          if(dailyCols[dj].key==='trend'){ freezeIdx=dj; break; }
+        }
+      }
+    }
+    var FREEZE_SHADOW='box-shadow:2px 0 6px rgba(0,0,0,0.12)';
+    // 生成单元格 sticky 样式：i<=freezeIdx 应用 sticky left；否则仅保留宽度约束保持列对齐
+    function sHead(i){
+      var w='min-width:'+fcw[i]+'px;max-width:'+fcw[i]+'px';
+      if(i>freezeIdx) return 'position:sticky;top:0;z-index:3;background:var(--bg-header,#f5f7fa);'+w;
+      var s='position:sticky;top:0;left:'+fcLeft[i]+'px;z-index:5;background:var(--bg-header,#f5f7fa);'+w;
+      return i===freezeIdx?(s+';'+FREEZE_SHADOW):s;
+    }
+    function sSum(i){
+      var w='min-width:'+fcw[i]+'px;max-width:'+fcw[i]+'px';
+      if(i>freezeIdx) return 'position:sticky;top:'+headerH+'px;z-index:2;background:#e8edf3;font-weight:700;'+w;
+      var s='position:sticky;top:'+headerH+'px;left:'+fcLeft[i]+'px;z-index:4;background:#e8edf3;font-weight:700;'+w;
+      return i===freezeIdx?(s+';'+FREEZE_SHADOW):s;
+    }
+    function sBody(i){
+      var w='min-width:'+fcw[i]+'px;max-width:'+fcw[i]+'px';
+      if(i>freezeIdx) return w;
+      var s='position:sticky;left:'+fcLeft[i]+'px;z-index:1;background:var(--bg-card,#fff);'+w;
+      return i===freezeIdx?(s+';'+FREEZE_SHADOW):s;
+    }
 
     // 日期表头：7/1, 7/2...
     var dateHeaders=dates.map(function(d){
       var p=d.split('-');
-      return '<th class="text-right" style="min-width:44px;position:sticky;top:0;z-index:3;background:var(--bg-header,#f5f7fa)">'+parseInt(p[1])+'/'+parseInt(p[2])+'</th>';
+      return '<th class="text-right rp-daily-th" style="min-width:44px;position:sticky;top:0;z-index:3;background:var(--bg-header,#f5f7fa)">'+parseInt(p[1])+'/'+parseInt(p[2])+'</th>';
     }).join('');
 
     // === 表头行 ===
-    var headRow='<tr style="height:'+headerH+'px">'
+    // 表头允许自动换行（white-space:normal），高度自适应；汇总行 sticky top 在渲染后由 syncRpDailyHeaderHeight 同步
+    var headRow='<tr>'
       +'<th style="'+sHead(0)+'"><input type="checkbox" id="rp-all" onchange="document.querySelectorAll(\'.rp-ck\').forEach(function(c){c.checked=this.checked})"></th>'
-      +'<th style="'+sHead(1)+t('gen.L4929.1','">动销</th>')
-      +'<th style="'+sHead(2)+t('gen.L4930.1','">生命周期</th>')
-      +'<th style="'+sHead(3)+'">Model</th>'
-      +'<th style="'+sHead(4)+'">SKU</th>'
-      +'<th class="text-right" style="'+sHead(5)+t('gen.L4933.1','">近7天</th>')
-      +'<th class="text-right" style="'+sHead(6)+t('gen.L4934.1','">近14天</th>')
-      +'<th class="text-right" style="'+sHead(7)+t('gen.L4935.1','">近30天</th>')
-      +'<th class="text-right" style="'+sHead(8)+t('gen.L4936.1','">日均</th>')
-      +'<th class="text-center" style="'+sHead(9)+t('gen.L4937.1','">趋势</th>')
+      +'<th class="rp-daily-th" style="'+sHead(1)+'">'+t('forecast.daily.col.sales_group','动销')+'</th>'
+      +'<th class="rp-daily-th" style="'+sHead(2)+'">'+t('forecast.daily.col.lifecycle_status','生命周期')+'</th>'
+      +'<th class="rp-daily-th" style="'+sHead(3)+'">Model</th>'
+      +'<th class="rp-daily-th" style="'+sHead(4)+'">SKU</th>'
+      +'<th class="text-right rp-daily-th" style="'+sHead(5)+'">'+t('forecast.daily.col.last_7_days','近7天')+'</th>'
+      +'<th class="text-right rp-daily-th" style="'+sHead(6)+'">'+t('forecast.daily.col.last_14_days','近14天')+'</th>'
+      +'<th class="text-right rp-daily-th" style="'+sHead(7)+'">'+t('forecast.daily.col.last_30_days','近30天')+'</th>'
+      +'<th class="text-right rp-daily-th" style="'+sHead(8)+'">'+t('forecast.daily.col.avg_daily_sales','日均')+'</th>'
+      +'<th class="text-center rp-daily-th" style="'+sHead(9)+'">'+t('forecast.daily.col.trend','趋势')+'</th>'
       +dateHeaders
       +'</tr>';
 
@@ -5229,18 +5581,18 @@ async function loadRpDaily(){
       (r.daily_sales||[]).forEach(function(q,idx){dateSums[idx]+=q;});
     });
     var summaryDateCells=dates.map(function(d,i){
-      return '<td class="text-right" style="position:sticky;top:'+headerH+'px;z-index:2;background:#e8edf3;font-weight:700;font-size:11px;min-width:44px">'+(dateSums[i]>0?dateSums[i]:'<span style="color:#aaa">-</span>')+'</td>';
+      return '<td class="text-right rp-daily-sum-date" style="position:sticky;top:'+headerH+'px;z-index:2;background:#e8edf3;font-weight:700;font-size:11px;min-width:44px">'+(dateSums[i]>0?formatQuantityDisplay(dateSums[i]):'<span style="color:#aaa">-</span>')+'</td>';
     }).join('');
-    var summaryRow='<tr style="height:'+summaryH+'px;background:#e8edf3">'
-      +'<td style="'+sSum(0)+t('gen.L4953.1','" class="text-center" colspan="1"><span style="font-size:11px;font-weight:700">合计</span></td>')
+    var summaryRow='<tr class="rp-daily-summary-row" style="background:#e8edf3">'
+      +'<td style="'+sSum(0)+'" class="text-center" colspan="1"><span style="font-size:11px;font-weight:700">'+t('forecast.daily.summary.total','合计')+'</span></td>'
       +'<td style="'+sSum(1)+'"></td>'
       +'<td style="'+sSum(2)+'"></td>'
       +'<td style="'+sSum(3)+'"></td>'
-      +'<td style="'+sSum(4)+'"><span style="font-size:10px;color:#888">'+data.length+t('gen.L4957.1','个SKU</span></td>')
-      +'<td class="text-right" style="'+sSum(5)+'">'+sum7+'</td>'
-      +'<td class="text-right" style="'+sSum(6)+'">'+sum14+'</td>'
-      +'<td class="text-right" style="'+sSum(7)+'">'+sum30+'</td>'
-      +'<td class="text-right" style="'+sSum(8)+'">'+Math.round(sumAvg*100)/100+'</td>'
+      +'<td style="'+sSum(4)+'"><span style="font-size:10px;color:#888">'+data.length+' '+t('forecast.daily.summary.sku_unit','个SKU')+'</span></td>'
+      +'<td class="text-right" style="'+sSum(5)+'">'+formatQuantityDisplay(sum7)+'</td>'
+      +'<td class="text-right" style="'+sSum(6)+'">'+formatQuantityDisplay(sum14)+'</td>'
+      +'<td class="text-right" style="'+sSum(7)+'">'+formatQuantityDisplay(sum30)+'</td>'
+      +'<td class="text-right" style="'+sSum(8)+'">'+formatQuantityDisplay(sumAvg)+'</td>'
       +'<td class="text-center" style="'+sSum(9)+'"></td>'
       +summaryDateCells
       +'</tr>';
@@ -5250,32 +5602,49 @@ async function loadRpDaily(){
     data.forEach(function(r){
       var trendIcon=r.trend==='up'?'<span class="trend-up">↗</span>':r.trend==='down'?'<span class="trend-down">↘</span>':'<span class="trend-flat">→</span>';
       var dailyCells=(r.daily_sales||[]).map(function(q){
-        return '<td class="daily-sales-cell">'+(q>0?q:'<span class="daily-sales-zero">-</span>')+'</td>';
+        return '<td class="daily-sales-cell">'+(q>0?formatQuantityDisplay(q):'<span class="daily-sales-zero">-</span>')+'</td>';
       }).join('');
       rows+='<tr>'
         +'<td style="'+sBody(0)+'"><input type="checkbox" class="rp-ck" value="'+r.id+'" data-sku="'+esc(r.sku_code)+'"></td>'
-        +'<td style="'+sBody(1)+'"><span class="badge badge-sm">'+(r.sales_group||'')+'</span></td>'
-        +'<td style="'+sBody(2)+'"><span class="lifecycle-tag lc-'+(r.lifecycle_status||'stable')+'">'+fmtLifecycle(r.lifecycle_status)+'</span></td>'
-        +'<td class="text-truncate" style="'+sBody(3)+';overflow:hidden;text-overflow:ellipsis">'+esc(r.model||'')+'</td>'
-        +'<td class="cell-id" style="'+sBody(4)+'">'+esc(r.sku_code)+'</td>'
-        +'<td class="text-right font-bold" style="'+sBody(5)+'">'+(r.last_7_days||0)+'</td>'
-        +'<td class="text-right" style="'+sBody(6)+'">'+(r.last_14_days||0)+'</td>'
-        +'<td class="text-right" style="'+sBody(7)+'">'+(r.last_30_days||0)+'</td>'
-        +'<td class="text-right font-bold" style="'+sBody(8)+'">'+(r.avg_daily_sales||0)+'</td>'
+        +'<td style="'+sBody(1)+'"><span class="badge badge-sm">'+formatSalesGroupLabel(r.sales_group)+'</span></td>'
+        +'<td style="'+sBody(2)+';white-space:normal"><span class="lifecycle-tag lc-'+(r.lifecycle_status||'stable')+'">'+fmtLifecycleDyn(r.lifecycle_status)+'</span></td>'
+        +'<td class="rp-daily-cell-wrap" style="'+sBody(3)+';white-space:normal;overflow-wrap:anywhere">'+esc(r.model||'')+'</td>'
+        +'<td class="rp-daily-cell-wrap" style="'+sBody(4)+';white-space:normal;overflow-wrap:anywhere;font-family:monospace;font-size:12px">'+esc(r.sku_code)+'</td>'
+        +'<td class="text-right font-bold" style="'+sBody(5)+'">'+formatQuantityDisplay(r.last_7_days||0)+'</td>'
+        +'<td class="text-right" style="'+sBody(6)+'">'+formatQuantityDisplay(r.last_14_days||0)+'</td>'
+        +'<td class="text-right" style="'+sBody(7)+'">'+formatQuantityDisplay(r.last_30_days||0)+'</td>'
+        +'<td class="text-right font-bold" style="'+sBody(8)+'">'+formatQuantityDisplay(r.avg_daily_sales||0)+'</td>'
         +'<td class="text-center" style="'+sBody(9)+'">'+trendIcon+'</td>'
         +dailyCells
         +'</tr>';
     });
 
     var emptyFoot=!data.length
-      ? '<tr><td colspan="'+(10+dates.length)+t('gen.L4989.1','" style="text-align:center;padding:40px 20px;color:#999;background:#fafbfc">📈 当前筛选条件下暂无销量数据，请调整国家/仓库/品牌或点击"重新计算"</td></tr>')
+      ? '<tr><td colspan="'+(10+dates.length)+'" style="text-align:center;padding:40px 20px;color:#999;background:#fafbfc">'+t('forecast.daily.empty','📈 当前筛选条件下暂无销量数据，请调整国家/仓库/品牌或点击"重新计算"')+'</td></tr>'
       : '';
     document.getElementById('rp-table').innerHTML='<div class="daily-table-wrap" style="overflow:auto;max-height:70vh;position:relative">'
       +'<table class="data-table" style="white-space:nowrap;border-collapse:separate;border-spacing:0">'
       +'<thead>'+headRow+summaryRow+'</thead>'
       +'<tbody>'+rows+emptyFoot+'</tbody>'
       +'</table></div>';
+    // 表头允许自动换行 → 渲染后测量真实表头高度，同步汇总行 sticky top
+    syncRpDailyHeaderHeight();
   }catch(e){showFlash(e.message,'danger')}
+}
+
+// 按天表头高度自适应：表头可换行后实际高度 != headerH(34)
+// 渲染后读取真实 thead tr 高度，重写汇总行及日期汇总单元格的 sticky top
+function syncRpDailyHeaderHeight(){
+  var headTr=document.querySelector('#rp-table .daily-table-wrap thead tr:first-child');
+  if(!headTr) return;
+  var h=headTr.offsetHeight||34;
+  var sumTr=document.querySelector('#rp-table .daily-table-wrap .rp-daily-summary-row');
+  if(sumTr){
+    var cells=sumTr.children;
+    for(var i=0;i<cells.length;i++){
+      cells[i].style.top=h+'px';
+    }
+  }
 }
 
 async function onRpQtyChange(input,rid){
@@ -7620,7 +7989,12 @@ async function bootFromSession(){
   try{
     const me=await api('/api/me','GET');
     if(me&&me.status==='pending'){ showPendingPage(me); }
-    else { currentUser=me; showApp(); }
+    else {
+      currentUser=me;
+      // I18N-B1-FINAL-4-GAPS-CLOSEOUT：会话恢复应用用户语言偏好（共享函数；skipSave 不触发保存 API）
+      applyCurrentUserLanguagePreference(me);
+      showApp();
+    }
   }catch(e){
     // 未登录 / 会话失效：api 已在 401 时调用 doLogout 显示登录页
     const lp=document.getElementById('login-page'); if(lp) lp.style.display='flex';

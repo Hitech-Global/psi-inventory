@@ -33,7 +33,8 @@
 
   function getLang() { return I18N.lang; }
 
-  function setLang(lang) {
+  function setLang(lang, opts) {
+    opts = opts || {};
     if (lang !== 'zh' && lang !== 'en' && lang !== 'id') return;
     I18N.lang = lang;
     try { localStorage.setItem('lang', lang); } catch (e) {}
@@ -44,6 +45,22 @@
     if (typeof renderSidebar === 'function') { try { renderSidebar(); } catch (e) {} }
     if (typeof renderUserRole === 'function') { try { renderUserRole(); } catch (e) {} }
     applyI18n();
+    // I18N-B1-BUGFIX-01：保存语言偏好必须在 showPage 之前执行。
+    // 根因：showPage 触发 renderDashboard() → api('/api/dashboard')（async），
+    // 若该请求返回 401 则 api() 调用 doLogout() 销毁 session，
+    // 导致随后发出的保存 API 收到 401 → toast "Failed to save language preference"。
+    // 将保存 API 提前到 showPage 之前，确保 session 仍有效时发出保存请求。
+    // 同时修复：modal 打开时 early return 会跳过保存 API 的旧缺陷。
+    if (!opts.skipSave && typeof currentUser !== 'undefined' && currentUser && typeof api === 'function') {
+      try {
+        api('/api/users/me/language-preference', 'PUT', { language_preference: lang })
+          .catch(function(err) {
+            if (typeof showToast === 'function') {
+              showToast(t('toast.lang_save_failed', '语言偏好保存失败，稍后重试'), 'warning');
+            }
+          });
+      } catch (e) {}
+    }
     // 语言切换后同步刷新当前业务页（RC-A 修复）：
     // 仅当 ①当前页面存在 ②modal 未打开 ③无未保存 inline 编辑 时调用 showPage(currentPage)。
     // 不改动 showPage 核心逻辑，不引入复杂 dirty 系统（仅用 window.__brandUnsaved 最小标志）。
@@ -52,6 +69,15 @@
         var modalOpen = (typeof isModalOpen === 'function') ? isModalOpen() : false;
         if (modalOpen) return;
         if (window.__brandUnsaved) return;
+        // RC-FILTER-PRESERVE：订单预测页切换语言时保留筛选（国家/仓库/品牌/tab/mode/SKU 搜索）
+        // 仅保存稳定 ID/value，不保存翻译文字；在 renderReplenishment 渲染前注入回 select，
+        // 避免 loadRpFilterOptions 异步重建选项时 select.value 被覆盖为""（全部）
+        if (currentPage === 'replenishment' && typeof window.__saveRpFilterState === 'function') {
+          window.__saveRpFilterState();
+          showPage(currentPage);
+          // renderReplenishment 是 async，loadRpFilterOptions 完成后由 window.__restoreRpFilterState 恢复
+          return;
+        }
         showPage(currentPage);
       }
     } catch (e) {}
@@ -85,12 +111,26 @@
     }
   }
 
+  // I18N-B1-FINAL-4-GAPS-CLOSEOUT：共享函数 —— 登录/会话恢复时应用用户语言偏好。
+  // 规则：仅接受 zh/en/id；缺失/非法 → zh；调用 setLang(skipSave:true) 防止触发保存 API 形成循环。
+  function applyCurrentUserLanguagePreference(user) {
+    if (!user) return;
+    var raw = user.language_preference;
+    var lang = (raw === 'zh' || raw === 'en' || raw === 'id') ? raw : 'zh';
+    try { setLang(lang, { skipSave: true }); } catch (e) {}
+    try {
+      var sw = document.getElementById('lang-switcher');
+      if (sw) sw.value = getLang();
+    } catch (e) {}
+  }
+
   // 暴露全局
   window.I18N = I18N;
   window.t = t;
   window.getLang = getLang;
   window.setLang = setLang;
   window.applyI18n = applyI18n;
+  window.applyCurrentUserLanguagePreference = applyCurrentUserLanguagePreference;
 
   // 系统名称品牌统一：中文亦显示「PSI系统」（避免沿用旧「进销存系统」），不改动 app.js / index.html。
   I18N.dict.zh['nav.app_title'] = 'PSI系统';
@@ -168,7 +208,7 @@
   I18N.dict.en["api.008"] = "[FEISHU-NOTIFY] Payment reminder scan error: "; I18N.dict.id["api.008"] = "[FEISHU-NOTIFY] Kesalahan pemindaian pengingat pembayaran: ";
   I18N.dict.en["api.009"] = "[FEISHU-NOTIFY] Send failed open_id="; I18N.dict.id["api.009"] = "[FEISHU-NOTIFY] Pengiriman gagal open_id=";
   I18N.dict.en["api.010"] = "[FEISHU-NOTIFY] Notification flow error event="; I18N.dict.id["api.010"] = "[FEISHU-NOTIFY] Kesalahan alur notifikasi event=";
-  I18N.dict.en["api.011"] = "CI Import Duty total must be a number not less than 0"; I18N.dict.id["api.011"] = "Total Bea Masuk CI harus angka tidak kurang dari 0";
+  I18N.dict.en["api.011"] = "CI Import Duty total must be a number not less than 0"; I18N.dict.id["api.011"] = "Total Bea Masuk CI harus berupa angka tidak kurang dari 0";
   I18N.dict.en["api.012"] = "The CI is not yet confirmed, so listing preparation cannot be marked"; I18N.dict.id["api.012"] = "CI belum dikonfirmasi, sehingga persiapan penyiapan tidak dapat ditandai";
   I18N.dict.en["api.013"] = "The CI is not yet confirmed (wac_confirmed=1), so listing preparation cannot be arranged"; I18N.dict.id["api.013"] = "CI belum dikonfirmasi (wac_confirmed=1), sehingga persiapan penyiapan tidak dapat diatur";
   I18N.dict.en["api.014"] = "A Commercial Invoice must be linked to a Proforma Invoice and cannot be created directly"; I18N.dict.id["api.014"] = "Commercial Invoice harus terkait dengan Proforma Invoice dan tidak dapat dibuat langsung";
@@ -190,7 +230,7 @@
   I18N.dict.en["api.030"] = "The PL is not linked to a CI and cannot be received"; I18N.dict.id["api.030"] = "PL tidak terkait dengan CI dan tidak dapat diterima";
   I18N.dict.en["api.031"] = "The PL is not linked to a CI (related_ci_id is empty) and cannot be received"; I18N.dict.id["api.031"] = "PL tidak terkait dengan CI (related_ci_id kosong) dan tidak dapat diterima";
   I18N.dict.en["api.032"] = "Currency cannot be changed after PO creation; create a new PO if a different currency is needed"; I18N.dict.id["api.032"] = "Mata uang tidak dapat diubah setelah pembuatan PO; buat PO baru jika memerlukan mata uang lain";
-  I18N.dict.en["api.033"] = "The PO approval flow is not configured or not enabled, so it cannot be submitted for approval. Please complete the PO approval flow's approver configuration in System Management (Approval Flows) first."; I18N.dict.id["api.033"] = "Alur persetujuan PO belum dikonfigurasi atau belum diaktifkan, sehingga tidak dapat diajukan. Silakan selesaikan konfigurasi approver alur persetujuan PO di Manajemen Sistem (Alur Persetujuan) terlebih dahulu.";
+  I18N.dict.en["api.033"] = "The PO approval flow is not configured or not enabled, so it cannot be submitted for approval. Please complete the PO approval flow's approver configuration in System Management (Approval Flows) first."; I18N.dict.id["api.033"] = "Alur persetujuan PO belum dikonfigurasi atau belum diaktifkan, sehingga tidak dapat diajukan. Silakan selesaikan konfigurasi penyetuju alur persetujuan PO di Manajemen Sistem (Alur Persetujuan) terlebih dahulu.";
   I18N.dict.en["api.034"] = "The PO has not been approved, so a Proforma Invoice cannot be generated"; I18N.dict.id["api.034"] = "PO belum disetujui, sehingga Proforma Invoice tidak dapat dibuat";
   I18N.dict.en["api.035"] = "The PO has not been approved, so a Proforma Invoice cannot be generated: "; I18N.dict.id["api.035"] = "PO belum disetujui, sehingga Proforma Invoice tidak dapat dibuat: ";
   I18N.dict.en["api.036"] = "Purchase Order does not exist"; I18N.dict.id["api.036"] = "Purchase Order tidak ada";
@@ -944,7 +984,7 @@
   I18N.dict.en["app.346"] = "Login controls failed to load."; I18N.dict.id["app.346"] = "Kontrol login gagal dimuat.";
   I18N.dict.en["app.347"] = "Please enter the break-glass account and password."; I18N.dict.id["app.347"] = "Masukkan akun break-glass dan kata sandi.";
   I18N.dict.en["app.348"] = "Total Inventory Value"; I18N.dict.id["app.348"] = "Total Nilai Persediaan";
-  I18N.dict.en["app.349"] = "In-transit Inventory Value"; I18N.dict.id["app.349"] = "Nilai Persediaan Dalam Perjalanan";
+  I18N.dict.en["app.349"] = "In-transit Inventory Value"; I18N.dict.id["app.349"] = "Nilai Persediaan Dalam Pengiriman";
   I18N.dict.en["app.350"] = "Slow-moving Inventory Value"; I18N.dict.id["app.350"] = "Nilai Persediaan Lambat Bergerak";
   I18N.dict.en["app.351"] = "Low-stock Risk SKUs"; I18N.dict.id["app.351"] = "SKU Berisiko Kekurangan";
   I18N.dict.en["app.352"] = "Suggested Procurement Amount"; I18N.dict.id["app.352"] = "Jumlah Pengadaan yang Disarankan";
@@ -1670,7 +1710,7 @@
   I18N.dict.en["nav.approval_flows"] = "Approval Flows"; I18N.dict.id["nav.approval_flows"] = "Alur Persetujuan";
   I18N.dict.en["nav.batch_tasks"] = "Batch Task Center"; I18N.dict.id["nav.batch_tasks"] = "Pusat Tugas Batch";
   I18N.dict.en["nav.brand_settings"] = "Brand Settings"; I18N.dict.id["nav.brand_settings"] = "Pengaturan Merek";
-  I18N.dict.en["nav.ci"] = "Commercial Invoices / PL"; I18N.dict.id["nav.ci"] = "Commercial Invoice / PL";
+  I18N.dict.en["nav.ci"] = "Commercial Invoices / PL"; I18N.dict.id["nav.ci"] = "CI / PL";
   I18N.dict.en["nav.config"] = "System Settings"; I18N.dict.id["nav.config"] = "Parameter Sistem";
   I18N.dict.en["nav.cost"] = "Cost Management"; I18N.dict.id["nav.cost"] = "Manajemen Biaya";
   I18N.dict.en["nav.countries"] = "Countries"; I18N.dict.id["nav.countries"] = "Negara";
@@ -1679,7 +1719,7 @@
   I18N.dict.en["nav.expense_types"] = "Expense Types"; I18N.dict.id["nav.expense_types"] = "Tipe Biaya";
   I18N.dict.en["nav.forwarder_analysis"] = "Freight Forwarder Analysis"; I18N.dict.id["nav.forwarder_analysis"] = "Analisis Forwarder";
   I18N.dict.en["nav.freight_forwarders"] = "Freight Forwarders"; I18N.dict.id["nav.freight_forwarders"] = "Forwarder";
-  I18N.dict.en["nav.inbound"] = "Inbound"; I18N.dict.id["nav.inbound"] = "Barang Masuk";
+  I18N.dict.en["nav.inbound"] = "Inbound"; I18N.dict.id["nav.inbound"] = "Penerimaan";
   I18N.dict.en["nav.inventory"] = "Inventory"; I18N.dict.id["nav.inventory"] = "Persediaan";
   I18N.dict.en["nav.logistics"] = "Logistics"; I18N.dict.id["nav.logistics"] = "Logistik";
   I18N.dict.en["nav.operation_logs"] = "Operation Logs"; I18N.dict.id["nav.operation_logs"] = "Log Operasi";
@@ -1687,8 +1727,8 @@
   I18N.dict.en["nav.payment"] = "Payments"; I18N.dict.id["nav.payment"] = "Pembayaran";
   I18N.dict.en["nav.payment_categories"] = "Payment Categories"; I18N.dict.id["nav.payment_categories"] = "Kategori Pembayaran";
   I18N.dict.en["nav.payment_terms"] = "Payment Terms"; I18N.dict.id["nav.payment_terms"] = "Termin Pembayaran";
-  I18N.dict.en["nav.pi"] = "Proforma Invoices"; I18N.dict.id["nav.pi"] = "Proforma Invoice";
-  I18N.dict.en["nav.po"] = "Purchase Orders"; I18N.dict.id["nav.po"] = "Purchase Order";
+  I18N.dict.en["nav.pi"] = "Proforma Invoices"; I18N.dict.id["nav.pi"] = "PI";
+  I18N.dict.en["nav.po"] = "Purchase Orders"; I18N.dict.id["nav.po"] = "PO";
   I18N.dict.en["nav.procurement"] = "Procurement"; I18N.dict.id["nav.procurement"] = "Pengadaan";
   I18N.dict.en["nav.skus"] = "SKU Master"; I18N.dict.id["nav.skus"] = "Data Induk SKU";
   I18N.dict.en["nav.stagnant"] = "Slow-Moving Analysis"; I18N.dict.id["nav.stagnant"] = "Analisis Barang Lambat";
@@ -1959,7 +1999,7 @@
   I18N.dict.en["system.019"] = "Cost attribution country saved"; I18N.dict.id["system.019"] = "Negara atribusi biaya tersimpan";
 
   // ---- Phase 2-A dynamic Toast / Confirm (semantic keys, parameterized) ----
-  I18N.dict.en["validation.approverLevelRequired"] = "Level {n} approver is required"; I18N.dict.id["validation.approverLevelRequired"] = "Approver level {n} wajib diisi";
+  I18N.dict.en["validation.approverLevelRequired"] = "Level {n} approver is required"; I18N.dict.id["validation.approverLevelRequired"] = "Penyetuju level {n} wajib diisi";
   I18N.dict.en["toast.skuUpdated"] = "{count} SKUs updated"; I18N.dict.id["toast.skuUpdated"] = "{count} SKU diperbarui";
   I18N.dict.en["confirm.modifySkuStatus"] = "You are changing the status of {n} SKU(s) to \"{val}\". Confirm?"; I18N.dict.id["confirm.modifySkuStatus"] = "Anda mengubah status {n} SKU menjadi \"{val}\". Konfirmasi?";
   I18N.dict.en["toast.skuExported"] = "{count} SKUs exported"; I18N.dict.id["toast.skuExported"] = "{count} SKU diekspor";
@@ -1990,7 +2030,7 @@ I18N.dict.en["toast.doBreakGlassLogin"] = "Break-glass login failed: {v1}"; I18N
   I18N.dict.en["modal.title.openApprovalDetail"] = "PO Approval Details · {v1}"; I18N.dict.id["modal.title.openApprovalDetail"] = "PO Detail Persetujuan · {v1}";
   I18N.dict.en["modal.body.openApprovalDetail"] = "<div class=\"detail-card\" style=\"box-shadow:none;padding:0\"><div class=\"detail-section\"><h3>Basic Information</h3><div class=\"detail-grid\">{v1}{v2}{v3}{v4}{v5}{v6}{v7}{v8}{v9}</div></div>{v10}{v11}<div class=\"detail-section\"><h3>Approval Trail</h3><ul class=\"approval-timeline\">{v12}</ul></div></div>"; I18N.dict.id["modal.body.openApprovalDetail"] = "<div class=\"detail-card\" style=\"box-shadow:none;padding:0\"><div class=\"detail-section\"><h3>Informasi Dasar</h3><div class=\"detail-grid\">{v1}{v2}{v3}{v4}{v5}{v6}{v7}{v8}{v9}</div></div>{v10}{v11}<div class=\"detail-section\"><h3>Jejak Persetujuan</h3><ul class=\"approval-timeline\">{v12}</ul></div></div>";
   I18N.dict.en["html.renderConfig"] = "<div id=\"flash-container\"></div><div class=\"table-section\"><div class=\"table-section-title\"><div class=\"table-section-title-left\">⚙️ System Configuration</div><div class=\"table-section-actions\">{v1}</div></div><div id=\"config-table\" style=\"padding:20px\"></div></div>"; I18N.dict.id["html.renderConfig"] = "<div id=\"flash-container\"></div><div class=\"table-section\"><div class=\"table-section-title\"><div class=\"table-section-title-left\">⚙️ Konfigurasi Sistem</div><div class=\"table-section-actions\">{v1}</div></div><div id=\"config-table\" style=\"padding:20px\"></div></div>";
-  I18N.dict.en["html.renderUsers"] = "<div id=\"flash-container\"></div><div class=\"table-section\"><div class=\"table-section-title\"><div class=\"table-section-title-left\">👤 User Management</div></div><div class=\"table-container\"><table class=\"data-table\"><thead><tr><th>Name</th><th>Username</th><th>Feishu ID(Masked)</th><th>Email</th><th>Source</th><th>Status</th><th>Role</th><th>Actions</th></tr></thead><tbody>{v1}</tbody></table></div><div class=\"pc-hint\">Users are auto-created on first Feishu login (default <b>Pending</b>, no role, no permission). After the admin enables and assigns a role, the user may access the system. Creating local password accounts is not allowed, changing passwords is not allowed, editing the Feishu ID is not allowed, disabling/ or deleting emergency accounts.</div></div>"; I18N.dict.id["html.renderUsers"] = "<div id=\"flash-container\"></div><div class=\"table-section\"><div class=\"table-section-title\"><div class=\"table-section-title-left\">👤 Manajemen Pengguna</div></div><div class=\"table-container\"><table class=\"data-table\"><thead><tr><th>Nama</th><th>Nama Pengguna</th><th>ID Feishu(Disamarkan)</th><th>Email</th><th>Sumber</th><th>Status</th><th>Peran</th><th>Aksi</th></tr></thead><tbody>{v1}</tbody></table></div><div class=\"pc-hint\">Pengguna dibuat otomatis saat login Feishu pertama (default <b>Tertunda</b>, tanpa peran, tanpa izin). Setelah admin mengaktifkan dan menetapkan peran, pengguna dapat mengakses sistem. Membuat akun kata sandi lokal tidak diizinkan, mengubah kata sandi tidak diizinkan, mengedit ID Feishu tidak diizinkan, menonaktifkan/ atau menghapus akun darurat.</div></div>";
+  I18N.dict.en["html.renderUsers"] = "<div id=\"flash-container\"></div><div class=\"table-section\"><div class=\"table-section-title\"><div class=\"table-section-title-left\">👤 User Management</div></div><div class=\"table-container\"><table class=\"data-table\"><thead><tr><th>Name</th><th>Username</th><th>Feishu ID(Masked)</th><th>Email</th><th>Source</th><th>Status</th><th>Role</th><th>Language Preference</th><th>Actions</th></tr></thead><tbody>{v1}</tbody></table></div><div class=\"pc-hint\">Users are auto-created on first Feishu login (default <b>Pending</b>, no role, no permission). After the admin enables and assigns a role, the user may access the system. Creating local password accounts is not allowed, changing passwords is not allowed, editing the Feishu ID is not allowed, disabling/ or deleting emergency accounts.</div></div>"; I18N.dict.id["html.renderUsers"] = "<div id=\"flash-container\"></div><div class=\"table-section\"><div class=\"table-section-title\"><div class=\"table-section-title-left\">👤 Manajemen Pengguna</div></div><div class=\"table-container\"><table class=\"data-table\"><thead><tr><th>Nama</th><th>Nama Pengguna</th><th>ID Feishu(Disamarkan)</th><th>Email</th><th>Sumber</th><th>Status</th><th>Peran</th><th>Preferensi Bahasa</th><th>Aksi</th></tr></thead><tbody>{v1}</tbody></table></div><div class=\"pc-hint\">Pengguna dibuat otomatis saat login Feishu pertama (default <b>Tertunda</b>, tanpa peran, tanpa izin). Setelah admin mengaktifkan dan menetapkan peran, pengguna dapat mengakses sistem. Membuat akun kata sandi lokal tidak diizinkan, mengubah kata sandi tidak diizinkan, mengedit ID Feishu tidak diizinkan, menonaktifkan/ atau menghapus akun darurat.</div></div>";
   I18N.dict.en["modal.title.openRoleEditor"] = "Edit Role Permissions · {v1}"; I18N.dict.id["modal.title.openRoleEditor"] = "Edit Izin Peran · {v1}";
   I18N.dict.en["html.renderBrandSettings"] = "<div id=\"flash-container\"></div><div class=\"table-section\"><div class=\"table-section-title\"><div class=\"table-section-title-left\">🏷️ Brand Settings</div><div class=\"table-section-actions\">{v1}</div></div><div id=\"brand-settings-table\"></div></div>"; I18N.dict.id["html.renderBrandSettings"] = "<div id=\"flash-container\"></div><div class=\"table-section\"><div class=\"table-section-title\"><div class=\"table-section-title-left\">🏷️ Pengaturan Merek</div><div class=\"table-section-actions\">{v1}</div></div><div id=\"brand-settings-table\"></div></div>";
   I18N.dict.en["html.renderPaymentCategories"] = "<div id=\"flash-container\"></div>{v1}<div class=\"pc-head\"><div><div class=\"pc-title\">Payment Category Management</div><div class=\"pc-desc\">Maintains payment main categories, subcategories, and their expense source mappings. Disabled items will not appear in new payment requests, but do not affect historical records.</div></div><div class=\"pc-head-actions\"><button class=\"btn btn-secondary btn-sm\" id=\"pc-refresh-btn\" onclick=\"renderPaymentCategories()\">🔄 Refresh</button><button class=\"btn btn-secondary btn-sm\" onclick=\"pcShowHelp()\">❔ Page Description</button></div></div><div id=\"payment-categories-page\"><div class=\"payment-category-columns\" id=\"pc-cols\">{v2}{v3}{v4}</div></div>"; I18N.dict.id["html.renderPaymentCategories"] = "<div id=\"flash-container\"></div>{v1}<div class=\"pc-head\"><div><div class=\"pc-title\">Manajemen Kategori Pembayaran</div><div class=\"pc-desc\">Memelihara kategori pembayaran utama, subkategori, dan pemetaan sumber biaya mereka. Item yang dinonaktifkan tidak akan muncul di permintaan pembayaran baru, tetapi tidak mempengaruhi catatan historis.</div></div><div class=\"pc-head-actions\"><button class=\"btn btn-secondary btn-sm\" id=\"pc-refresh-btn\" onclick=\"renderPaymentCategories()\">🔄 Segarkan</button><button class=\"btn btn-secondary btn-sm\" onclick=\"pcShowHelp()\">❔ Deskripsi Halaman</button></div></div><div id=\"payment-categories-page\"><div class=\"payment-category-columns\" id=\"pc-cols\">{v2}{v3}{v4}</div></div>";
@@ -2032,6 +2072,23 @@ I18N.dict.en["toast.doBreakGlassLogin"] = "Break-glass login failed: {v1}"; I18N
   I18N.dict.en["html.loadSales"] = "<div class=\"table-container\" style=\"box-shadow:none;border-radius:0\"><table class=\"data-table\"><thead><tr><th style=\"width:32px\"><input type=\"checkbox\" id=\"sr-check-all\" onchange=\"toggleAllSales(this.checked)\"></th><th style=\"white-space:nowrap\"><a href=\"javascript:void(0)\" onclick=\"selectAllSalesFiltered()\" style=\"font-size:11px;color:var(--primary,#2e7d32)\">Select All({v1})</a></th>{v2}</tr></thead><tbody>{v3}</tbody></table></div>"; I18N.dict.id["html.loadSales"] = "<div class=\"table-container\" style=\"box-shadow:none;border-radius:0\"><table class=\"data-table\"><thead><tr><th style=\"width:32px\"><input type=\"checkbox\" id=\"sr-check-all\" onchange=\"toggleAllSales(this.checked)\"></th><th style=\"white-space:nowrap\"><a href=\"javascript:void(0)\" onclick=\"selectAllSalesFiltered()\" style=\"font-size:11px;color:var(--primary,#2e7d32)\">Pilih Semua({v1})</a></th>{v2}</tr></thead><tbody>{v3}</tbody></table></div>";
   I18N.dict.en["text.updateSalesBatchBar"] = "Selected {v1} {v2}"; I18N.dict.id["text.updateSalesBatchBar"] = "Dipilih {v1} {v2}";
   I18N.dict.en["modal.title.openRpFieldConfig"] = "Field Configuration - {v1}"; I18N.dict.id["modal.title.openRpFieldConfig"] = "Konfigurasi Field - {v1}";
+  I18N.dict.en["freeze.column.to"] = "Freeze to this column"; I18N.dict.id["freeze.column.to"] = "Beku hingga kolom ini";
+  I18N.dict.en["freeze.none"] = "No freeze"; I18N.dict.id["freeze.none"] = "Tidak dibekukan";
+  // 按天字段配置：稳定字段 key 对应的纯文本标签（不保存 HTML 片段）
+  I18N.dict.en["forecast.daily.col.selection"] = "Select"; I18N.dict.id["forecast.daily.col.selection"] = "Pilih";
+  I18N.dict.en["forecast.daily.col.sales_group"] = "Sales Activity"; I18N.dict.id["forecast.daily.col.sales_group"] = "Aktivitas Penjualan";
+  I18N.dict.en["forecast.daily.col.lifecycle_status"] = "Lifecycle"; I18N.dict.id["forecast.daily.col.lifecycle_status"] = "Siklus Hidup";
+  I18N.dict.en["forecast.daily.col.model"] = "Model"; I18N.dict.id["forecast.daily.col.model"] = "Model";
+  I18N.dict.en["forecast.daily.col.sku"] = "SKU"; I18N.dict.id["forecast.daily.col.sku"] = "SKU";
+  I18N.dict.en["forecast.daily.col.last_7_days"] = "Last 7 days"; I18N.dict.id["forecast.daily.col.last_7_days"] = "7 hari terakhir";
+  I18N.dict.en["forecast.daily.col.last_14_days"] = "Last 14 days"; I18N.dict.id["forecast.daily.col.last_14_days"] = "14 hari terakhir";
+  I18N.dict.en["forecast.daily.col.last_30_days"] = "Last 30 days"; I18N.dict.id["forecast.daily.col.last_30_days"] = "30 hari terakhir";
+  I18N.dict.en["forecast.daily.col.avg_daily_sales"] = "Daily Avg"; I18N.dict.id["forecast.daily.col.avg_daily_sales"] = "Rata-rata Harian";
+  I18N.dict.en["forecast.daily.col.trend"] = "Trend"; I18N.dict.id["forecast.daily.col.trend"] = "Tren";
+  I18N.dict.en["modal.title.openRpDailyFieldConfig"] = "Freeze Column - {v1}"; I18N.dict.id["modal.title.openRpDailyFieldConfig"] = "Kolom Beku - {v1}";
+  I18N.dict.en["modal.footer.openRpDailyFieldConfig"] = "<button class=\"btn btn-secondary\" onclick=\"closeModal()\">Cancel</button><button class=\"btn btn-default\" onclick=\"resetRpDailyFieldConfig('{v1}')\">Restore Defaults</button><button class=\"btn btn-primary\" onclick=\"saveRpDailyFieldConfig('{v2}')\">Save</button>"; I18N.dict.id["modal.footer.openRpDailyFieldConfig"] = "<button class=\"btn btn-secondary\" onclick=\"closeModal()\">Batal</button><button class=\"btn btn-default\" onclick=\"resetRpDailyFieldConfig('{v1}')\">Kembalikan Default</button><button class=\"btn btn-primary\" onclick=\"saveRpDailyFieldConfig('{v2}')\">Simpan</button>";
+  I18N.dict.en["forecast.daily.cfg.tip"] = "<div style=\"margin-top:8px;font-size:12px;color:var(--text-secondary)\">Daily view only supports freeze column configuration; field hide/sort/column-width editing is not provided. Dynamic date columns are not eligible as freeze boundaries.</div>"; I18N.dict.id["forecast.daily.cfg.tip"] = "<div style=\"margin-top:8px;font-size:12px;color:var(--text-secondary)\">Tampilan harian hanya mendukung konfigurasi kolom beku; sembunyai/urutkan/lebar kolom tidak disediakan. Kolom tanggal dinamis tidak dapat dijadikan batas pembekuan.</div>";
+  I18N.dict.en["text.updateRpFieldConfigBtn.daily"] = "⚙ Freeze Column"; I18N.dict.id["text.updateRpFieldConfigBtn.daily"] = "⚙ Kolom Beku";
   I18N.dict.en["modal.footer.openRpFieldConfig"] = "<button class=\"btn btn-secondary\" onclick=\"closeModal()\">Cancel</button><button class=\"btn btn-default\" onclick=\"resetRpFieldConfig('{v1}')\">Restore Defaults</button><button class=\"btn btn-primary\" onclick=\"saveRpFieldConfig('{v2}')\">Save</button>"; I18N.dict.id["modal.footer.openRpFieldConfig"] = "<button class=\"btn btn-secondary\" onclick=\"closeModal()\">Batal</button><button class=\"btn btn-default\" onclick=\"resetRpFieldConfig('{v1}')\">Kembalikan Default</button><button class=\"btn btn-primary\" onclick=\"saveRpFieldConfig('{v2}')\">Simpan</button>";
   I18N.dict.en["text.updateRpCfgStats"] = "Display {v1} / {v2}  fields"; I18N.dict.id["text.updateRpCfgStats"] = "Tampilkan {v1} / {v2}  kolom";
   I18N.dict.en["text.updateRpFieldConfigBtn"] = "⚙ Field Configuration {v1}/{v2}"; I18N.dict.id["text.updateRpFieldConfigBtn"] = "⚙ Konfigurasi Field {v1}/{v2}";
@@ -2072,7 +2129,7 @@ I18N.dict.en["toast.doBreakGlassLogin"] = "Break-glass login failed: {v1}"; I18N
   I18N.dict.en["modal.body.openDocImport"] = "<div class=\"form-card\" style=\"box-shadow:none;padding:0\"><div id=\"doc-import-drop\" style=\"border:2px dashed #d9d9d9;border-radius:8px;padding:34px 20px;text-align:center;cursor:pointer;background:#fafafa\" onclick=\"document.getElementById('doc-import-file').click()\"><div style=\"font-size:42px;color:#1890ff;margin-bottom:8px\">📤</div><div>Click to Upload Excel / CSV File</div><div style=\"font-size:12px;color:#999;margin-top:4px\">Supports .xlsx / .xls / .csv</div></div><input type=\"file\" id=\"doc-import-file\" accept=\".xlsx,.xls,.csv\" style=\"display:none\" onchange=\"handleDocImportFile('{v1}',this.files[0])\"><div id=\"doc-import-result\" style=\"margin-top:14px\"></div></div>"; I18N.dict.id["modal.body.openDocImport"] = "<div class=\"form-card\" style=\"box-shadow:none;padding:0\"><div id=\"doc-import-drop\" style=\"border:2px dashed #d9d9d9;border-radius:8px;padding:34px 20px;text-align:center;cursor:pointer;background:#fafafa\" onclick=\"document.getElementById('doc-import-file').click()\"><div style=\"font-size:42px;color:#1890ff;margin-bottom:8px\">📤</div><div>Klik untuk Unggah Excel / CSV Berkas</div><div style=\"font-size:12px;color:#999;margin-top:4px\">Mendukung .xlsx / .xls / .csv</div></div><input type=\"file\" id=\"doc-import-file\" accept=\".xlsx,.xls,.csv\" style=\"display:none\" onchange=\"handleDocImportFile('{v1}',this.files[0])\"><div id=\"doc-import-result\" style=\"margin-top:14px\"></div></div>";
   I18N.dict.en["modal.footer.openDocImport"] = "<button class=\"btn btn-secondary\" onclick=\"downloadDocTemplate('{v1}')\">Download Template</button><button class=\"btn btn-secondary\" onclick=\"closeModal()\">Close</button>"; I18N.dict.id["modal.footer.openDocImport"] = "<button class=\"btn btn-secondary\" onclick=\"downloadDocTemplate('{v1}')\">Unduh Templat</button><button class=\"btn btn-secondary\" onclick=\"closeModal()\">Tutup</button>";
   I18N.dict.en["toast.handleDocImportFile"] = "Import failed: {v1}"; I18N.dict.id["toast.handleDocImportFile"] = "Impor gagal: {v1}";
-  I18N.dict.en["html.renderCI"] = "<div id=\"flash-container\"></div><div class=\"filter-bar\"><div class=\"filter-form\"><div class=\"filter-group\"><label>Document Type</label><select id=\"ci-source-mode\" onchange=\"onCISourceModeChange()\"><option value=\"operational\">Operations CI</option><option value=\"historical\">History CI</option><option value=\"all\">All</option></select></div><div class=\"filter-group\"><label>Status</label><select id=\"ci-fs\"><option value=\"\">All</option><option value=\"draft\">Pending Upload CI/PL</option><option value=\"uploaded\">Uploaded CI/PL</option><option value=\"checking\">Pending Check</option><option value=\"checked\">Checked</option><option value=\"pending_balance\">Pending Balance Approval</option><option value=\"balance_paid\">Balance Paid</option><option value=\"shipped\">Shipped</option><option value=\"customs\">Customs Clearing</option><option value=\"completed\">Completed</option></select></div><div class=\"filter-actions\"><button class=\"btn btn-primary btn-sm\" onclick=\"loadCI()\">Search</button>{v1}{v2}</div></div></div><div class=\"table-section\"><div class=\"table-section-title\"><div class=\"table-section-title-left\">🚚 CI/PLList</div></div><div id=\"ci-purchase-summary\"></div><div id=\"ci-table\"></div></div>"; I18N.dict.id["html.renderCI"] = "<div id=\"flash-container\"></div><div class=\"filter-bar\"><div class=\"filter-form\"><div class=\"filter-group\"><label>Tipe Dokumen</label><select id=\"ci-source-mode\" onchange=\"onCISourceModeChange()\"><option value=\"operational\">Operasional CI</option><option value=\"historical\">Riwayat CI</option><option value=\"all\">Semua</option></select></div><div class=\"filter-group\"><label>Status</label><select id=\"ci-fs\"><option value=\"\">Semua</option><option value=\"draft\">Menunggu Unggah CI/PL</option><option value=\"uploaded\">Diunggah CI/PL</option><option value=\"checking\">Menunggu Verifikasi</option><option value=\"checked\">Diverifikasi</option><option value=\"pending_balance\">Menunggu Persetujuan Sisa</option><option value=\"balance_paid\">Sisa Dibayar</option><option value=\"shipped\">Dikirim</option><option value=\"customs\">Pembersihan Bea</option><option value=\"completed\">Selesai</option></select></div><div class=\"filter-actions\"><button class=\"btn btn-primary btn-sm\" onclick=\"loadCI()\">Cari</button>{v1}{v2}</div></div></div><div class=\"table-section\"><div class=\"table-section-title\"><div class=\"table-section-title-left\">🚚 CI/PLDaftar</div></div><div id=\"ci-purchase-summary\"></div><div id=\"ci-table\"></div></div>";
+  I18N.dict.en["html.renderCI"] = "<div id=\"flash-container\"></div><div class=\"filter-bar\"><div class=\"filter-form\"><div class=\"filter-group\"><label>Document Type</label><select id=\"ci-source-mode\" onchange=\"onCISourceModeChange()\"><option value=\"operational\">Operations CI</option><option value=\"historical\">History CI</option><option value=\"all\">All</option></select></div><div class=\"filter-group\"><label>Status</label><select id=\"ci-fs\"><option value=\"\">All</option><option value=\"draft\">Pending Upload CI/PL</option><option value=\"uploaded\">Uploaded CI/PL</option><option value=\"checking\">Pending Check</option><option value=\"checked\">Checked</option><option value=\"pending_balance\">Pending Balance Approval</option><option value=\"balance_paid\">Balance Paid</option><option value=\"shipped\">Shipped</option><option value=\"customs\">Customs Clearing</option><option value=\"completed\">Completed</option></select></div><div class=\"filter-actions\"><button class=\"btn btn-primary btn-sm\" onclick=\"loadCI()\">Search</button>{v1}{v2}</div></div></div><div class=\"table-section\"><div class=\"table-section-title\"><div class=\"table-section-title-left\">🚚 CI/PLList</div></div><div id=\"ci-purchase-summary\"></div><div id=\"ci-table\"></div></div>"; I18N.dict.id["html.renderCI"] = "<div id=\"flash-container\"></div><div class=\"filter-bar\"><div class=\"filter-form\"><div class=\"filter-group\"><label>Tipe Dokumen</label><select id=\"ci-source-mode\" onchange=\"onCISourceModeChange()\"><option value=\"operational\">Operasional CI</option><option value=\"historical\">Riwayat CI</option><option value=\"all\">Semua</option></select></div><div class=\"filter-group\"><label>Status</label><select id=\"ci-fs\"><option value=\"\">Semua</option><option value=\"draft\">Menunggu Unggah CI/PL</option><option value=\"uploaded\">Diunggah CI/PL</option><option value=\"checking\">Menunggu Verifikasi</option><option value=\"checked\">Diverifikasi</option><option value=\"pending_balance\">Menunggu Persetujuan Sisa</option><option value=\"balance_paid\">Sisa Dibayar</option><option value=\"shipped\">Dikirim</option><option value=\"customs\">Penyelesaian Bea Cukai</option><option value=\"completed\">Selesai</option></select></div><div class=\"filter-actions\"><button class=\"btn btn-primary btn-sm\" onclick=\"loadCI()\">Cari</button>{v1}{v2}</div></div></div><div class=\"table-section\"><div class=\"table-section-title\"><div class=\"table-section-title-left\">🚚 Daftar CI/PL</div></div><div id=\"ci-purchase-summary\"></div><div id=\"ci-table\"></div></div>";
   I18N.dict.en["html.loadCI"] = "<h3 style=\"margin:8px 0 10px;font-size:15px\">Operations CI</h3>{v1}<h3 style=\"margin:20px 0 10px;font-size:15px\">History CI</h3>{v2}"; I18N.dict.id["html.loadCI"] = "<h3 style=\"margin:8px 0 10px;font-size:15px\">Operasional CI</h3>{v1}<h3 style=\"margin:20px 0 10px;font-size:15px\">Riwayat CI</h3>{v2}";
   I18N.dict.en["modal.body.createHistoricalCI"] = "<div class=\"form-card\" style=\"box-shadow:none;padding:0\"><input type=\"hidden\" id=\"hci-idempotency\" value=\"{v1}\"><div style=\"background:#f6ffed;border:1px solid #b7eb8f;border-radius:6px;padding:10px;margin-bottom:14px;font-size:13px\">Only for historical purchase amount and payable management; does not affect inventory,WAC and order forecast.</div><div class=\"form-grid\"><div class=\"form-group\"><label>History CI No. <span class=\"required\">*</span></label><input id=\"hci-no\"></div><div class=\"form-group\"><label>Supplier</label><select id=\"hci-supplier\" onchange=\"onHistoricalSupplierChange()\"><option value=\"\">Manually filled snapshot</option>{v2}</select></div><div class=\"form-group\"><label>Supplier Snapshot <span class=\"required\">*</span></label><input id=\"hci-supplier-name\"></div><div class=\"form-group\"><label>Brand Snapshot <span class=\"required\">*</span></label><input id=\"hci-brand\" list=\"hci-brand-list\"><datalist id=\"hci-brand-list\">{v3}</datalist></div><div class=\"form-group\"><label>Purchase Country <span class=\"required\">*</span></label><select id=\"hci-country\"><option value=\"\">Please select</option>{v4}</select></div><div class=\"form-group\"><label>History CI Date <span class=\"required\">*</span></label><input type=\"date\" id=\"hci-date\"></div><div class=\"form-group\"><label>Actual Shipment Date <span class=\"required\">*</span></label><input type=\"date\" id=\"hci-ship-date\"></div><div class=\"form-group\"><label>Currency <span class=\"required\">*</span></label><select id=\"hci-currency\">{v5}</select></div><div class=\"form-group\"><label>Total Historical Goods Amount <span class=\"required\">*</span></label><input type=\"number\" min=\"0.01\" step=\"0.01\" id=\"hci-gross\"></div><div class=\"form-group\"><label>Historical paid before import</label><input type=\"number\" min=\"0\" step=\"0.01\" id=\"hci-paid\" value=\"0\"></div><div class=\"form-group\"><label>Historical Paid Date</label><input type=\"date\" id=\"hci-paid-date\"><div style=\"font-size:12px;color:#999\">When unknown, leave empty; the import date will not be used as a substitute.</div></div><div class=\"form-group\"><label>Payment Terms / Credit Term</label><input id=\"hci-terms\"></div><div class=\"form-group\"><label>Due Date</label><input type=\"date\" id=\"hci-due\"></div><div class=\"form-group form-group-full\"><label>Original file, voucher, or remark</label><textarea id=\"hci-note\" rows=\"2\"></textarea></div></div></div>"; I18N.dict.id["modal.body.createHistoricalCI"] = "<div class=\"form-card\" style=\"box-shadow:none;padding:0\"><input type=\"hidden\" id=\"hci-idempotency\" value=\"{v1}\"><div style=\"background:#f6ffed;border:1px solid #b7eb8f;border-radius:6px;padding:10px;margin-bottom:14px;font-size:13px\">Hanya untuk jumlah pembelian historis dan manajemen payable; tidak mempengaruhi inventaris,WAC dan prakiraan pesanan.</div><div class=\"form-grid\"><div class=\"form-group\"><label>Riwayat CI No. <span class=\"required\">*</span></label><input id=\"hci-no\"></div><div class=\"form-group\"><label>Supplier</label><select id=\"hci-supplier\" onchange=\"onHistoricalSupplierChange()\"><option value=\"\">Snapshot diisi manual</option>{v2}</select></div><div class=\"form-group\"><label>Snapshot Supplier <span class=\"required\">*</span></label><input id=\"hci-supplier-name\"></div><div class=\"form-group\"><label>Snapshot Merek <span class=\"required\">*</span></label><input id=\"hci-brand\" list=\"hci-brand-list\"><datalist id=\"hci-brand-list\">{v3}</datalist></div><div class=\"form-group\"><label>Negara Pembelian <span class=\"required\">*</span></label><select id=\"hci-country\"><option value=\"\">Silakan pilih</option>{v4}</select></div><div class=\"form-group\"><label>Riwayat CI Tanggal <span class=\"required\">*</span></label><input type=\"date\" id=\"hci-date\"></div><div class=\"form-group\"><label>Tanggal Pengiriman Aktual <span class=\"required\">*</span></label><input type=\"date\" id=\"hci-ship-date\"></div><div class=\"form-group\"><label>Mata Uang <span class=\"required\">*</span></label><select id=\"hci-currency\">{v5}</select></div><div class=\"form-group\"><label>Total Jumlah Barang Historis <span class=\"required\">*</span></label><input type=\"number\" min=\"0.01\" step=\"0.01\" id=\"hci-gross\"></div><div class=\"form-group\"><label>Dibayar historis sebelum impor</label><input type=\"number\" min=\"0\" step=\"0.01\" id=\"hci-paid\" value=\"0\"></div><div class=\"form-group\"><label>Tanggal Dibayar Historis</label><input type=\"date\" id=\"hci-paid-date\"><div style=\"font-size:12px;color:#999\">Jika tidak diketahui, biarkan kosong; tanggal impor tidak akan digunakan sebagai pengganti.</div></div><div class=\"form-group\"><label>Syarat Pembayaran / Termin Kredit</label><input id=\"hci-terms\"></div><div class=\"form-group\"><label>Jatuh Tempo</label><input type=\"date\" id=\"hci-due\"></div><div class=\"form-group form-group-full\"><label>Berkas asli, bukti, atau catatan</label><textarea id=\"hci-note\" rows=\"2\"></textarea></div></div></div>";
   I18N.dict.en["modal.body.editActualShipDate"] = "<div class=\"form-card\" style=\"box-shadow:none;padding:0\"><div class=\"form-grid\"><div class=\"form-group\"><label>Actual Shipment Date (YYYY-MM-DD) <span class=\"required\">*</span></label><input type=\"date\" id=\"asd-input\" value=\"{v1}\"></div></div><div style=\"font-size:12px;color:#999\">Only records the true actual shipment date；does not affect due_date, payment, payable due date, or inventory WAC. </div></div>"; I18N.dict.id["modal.body.editActualShipDate"] = "<div class=\"form-card\" style=\"box-shadow:none;padding:0\"><div class=\"form-grid\"><div class=\"form-group\"><label>Tanggal Pengiriman Aktual (YYYY-MM-DD) <span class=\"required\">*</span></label><input type=\"date\" id=\"asd-input\" value=\"{v1}\"></div></div><div style=\"font-size:12px;color:#999\">Hanya mencatat tanggal pengiriman aktual yang sebenarnya；tidak mempengaruhi due_date, pembayaran, jatuh tempo payable, atau inventaris WAC. </div></div>";
@@ -2092,10 +2149,10 @@ I18N.dict.en["toast.doBreakGlassLogin"] = "Break-glass login failed: {v1}"; I18N
   I18N.dict.en["modal.footer.createWarehousePay"] = "<button class=\"btn btn-secondary\" onclick=\"closeModal()\">Cancel</button><button class=\"btn btn-primary\" onclick=\"saveWarehousePay('{v1}')\">Create</button>"; I18N.dict.id["modal.footer.createWarehousePay"] = "<button class=\"btn btn-secondary\" onclick=\"closeModal()\">Batal</button><button class=\"btn btn-primary\" onclick=\"saveWarehousePay('{v1}')\">Buat</button>";
   I18N.dict.en["modal.footer.createCustomsDutyPay"] = "<button class=\"btn btn-secondary\" onclick=\"closeModal()\">Cancel</button><button class=\"btn btn-primary\" onclick=\"saveCustomsDutyPay('{v1}')\">Create</button>"; I18N.dict.id["modal.footer.createCustomsDutyPay"] = "<button class=\"btn btn-secondary\" onclick=\"closeModal()\">Batal</button><button class=\"btn btn-primary\" onclick=\"saveCustomsDutyPay('{v1}')\">Buat</button>";
   I18N.dict.en["modal.footer.createInspectionFeePay"] = "<button class=\"btn btn-secondary\" onclick=\"closeModal()\">Cancel</button><button class=\"btn btn-primary\" onclick=\"saveInspectionFeePay('{v1}')\">Create</button>"; I18N.dict.id["modal.footer.createInspectionFeePay"] = "<button class=\"btn btn-secondary\" onclick=\"closeModal()\">Batal</button><button class=\"btn btn-primary\" onclick=\"saveInspectionFeePay('{v1}')\">Buat</button>";
-  I18N.dict.en["html.renderLogistics"] = "<div id=\"flash-container\"></div><div class=\"filter-bar\"><div class=\"filter-form\"><div class=\"filter-group\"><label>Status</label><select id=\"log-fs\"><option value=\"\">All</option><option value=\"pending\">Pending Pickup</option><option value=\"picked_up\">Picked Up</option><option value=\"in_transit\">In Transit</option><option value=\"arrived\">Arrived at Port</option><option value=\"customs\">Customs Clearing</option><option value=\"cleared\">Customs Cleared</option><option value=\"delivering\">Dispatching</option><option value=\"completed\">Completed</option></select></div><div class=\"filter-actions\"><button class=\"btn btn-primary btn-sm\" onclick=\"loadLog()\">Search</button>{v1}</div></div></div><div class=\"table-section\"><div class=\"table-section-title\"><div class=\"table-section-title-left\">🚢 Logistics Batch</div></div><div id=\"log-table\"></div></div>"; I18N.dict.id["html.renderLogistics"] = "<div id=\"flash-container\"></div><div class=\"filter-bar\"><div class=\"filter-form\"><div class=\"filter-group\"><label>Status</label><select id=\"log-fs\"><option value=\"\">Semua</option><option value=\"pending\">Menunggu Pengambilan</option><option value=\"picked_up\">Diambil</option><option value=\"in_transit\">Dalam Perjalanan</option><option value=\"arrived\">Tiba di Pelabuhan</option><option value=\"customs\">Pembersihan Bea</option><option value=\"cleared\">Bea Selesai</option><option value=\"delivering\">Sedang Dikirim</option><option value=\"completed\">Selesai</option></select></div><div class=\"filter-actions\"><button class=\"btn btn-primary btn-sm\" onclick=\"loadLog()\">Cari</button>{v1}</div></div></div><div class=\"table-section\"><div class=\"table-section-title\"><div class=\"table-section-title-left\">🚢 Batch Logistik</div></div><div id=\"log-table\"></div></div>";
+  I18N.dict.en["html.renderLogistics"] = "<div id=\"flash-container\"></div><div class=\"filter-bar\"><div class=\"filter-form\"><div class=\"filter-group\"><label>Status</label><select id=\"log-fs\"><option value=\"\">All</option><option value=\"pending\">Pending Pickup</option><option value=\"picked_up\">Picked Up</option><option value=\"in_transit\">In Transit</option><option value=\"arrived\">Arrived at Port</option><option value=\"customs\">Customs Clearing</option><option value=\"cleared\">Customs Cleared</option><option value=\"delivering\">Dispatching</option><option value=\"completed\">Completed</option></select></div><div class=\"filter-actions\"><button class=\"btn btn-primary btn-sm\" onclick=\"loadLog()\">Search</button>{v1}</div></div></div><div class=\"table-section\"><div class=\"table-section-title\"><div class=\"table-section-title-left\">🚢 Logistics Batch</div></div><div id=\"log-table\"></div></div>"; I18N.dict.id["html.renderLogistics"] = "<div id=\"flash-container\"></div><div class=\"filter-bar\"><div class=\"filter-form\"><div class=\"filter-group\"><label>Status</label><select id=\"log-fs\"><option value=\"\">Semua</option><option value=\"pending\">Menunggu Pengambilan</option><option value=\"picked_up\">Diambil</option><option value=\"in_transit\">Dalam Perjalanan</option><option value=\"arrived\">Tiba di Pelabuhan</option><option value=\"customs\">Penyelesaian Bea Cukai</option><option value=\"cleared\">Bea Selesai</option><option value=\"delivering\">Sedang Dikirim</option><option value=\"completed\">Selesai</option></select></div><div class=\"filter-actions\"><button class=\"btn btn-primary btn-sm\" onclick=\"loadLog()\">Cari</button>{v1}</div></div></div><div class=\"table-section\"><div class=\"table-section-title\"><div class=\"table-section-title-left\">🚢 Batch Logistik</div></div><div id=\"log-table\"></div></div>";
   I18N.dict.en["modal.title.viewLog"] = "Logistics Details - {v1}"; I18N.dict.id["modal.title.viewLog"] = "Detail Logistik - {v1}";
   I18N.dict.en["modal.body.viewLog"] = "<div class=\"detail-card\" style=\"box-shadow:none;padding:0\"><div class=\"detail-section\"><h3>Basic Information</h3><div class=\"detail-grid\">{v1}</div></div></div>"; I18N.dict.id["modal.body.viewLog"] = "<div class=\"detail-card\" style=\"box-shadow:none;padding:0\"><div class=\"detail-section\"><h3>Informasi Dasar</h3><div class=\"detail-grid\">{v1}</div></div></div>";
-  I18N.dict.en["modal.body.createLog"] = "<div class=\"form-card\" style=\"box-shadow:none;padding:0\"><div class=\"form-grid\"><div class=\"form-group\"><label>RelatedCI</label><select id=\"nlog-ci\"><option value=\"\">None</option>{v1}</select></div><div class=\"form-group\"><label>Freight Forwarder</label><select id=\"nlog-ff\"><option value=\"\">Select</option>{v2}</select></div><div class=\"form-group\"><label>Shipping Method</label><select id=\"nlog-mode\"><option value=\"sea\">Sea</option><option value=\"air\">Air</option><option value=\"land\">Land</option><option value=\"express\">Express</option></select></div><div class=\"form-group\"><label>Port of Loading</label><input type=\"text\" id=\"nlog-origin\"></div><div class=\"form-group\"><label>Port of Discharge</label><input type=\"text\" id=\"nlog-dest\"></div><div class=\"form-group\"><label>Target Country</label><input type=\"text\" id=\"nlog-country\"></div><div class=\"form-group\"><label>Target Warehouse</label><input type=\"text\" id=\"nlog-wh\"></div><div class=\"form-group\"><label>Pickup Date</label><input type=\"date\" id=\"nlog-pickup\"></div><div class=\"form-group\"><label>Departure Date</label><input type=\"date\" id=\"nlog-depart\"></div><div class=\"form-group\"><label>Estimated Arrival</label><input type=\"date\" id=\"nlog-eta\"></div><div class=\"form-group\"><label>Freight Currency</label><select id=\"nlog-cur\"><option>USD</option><option>RMB</option><option>IDR</option><option>MYR</option><option>THB</option></select></div><div class=\"form-group\"><label>International Freight</label><input type=\"number\" step=\"0.01\" id=\"nlog-intl\" value=\"0\"></div><div class=\"form-group\"><label>Local Misc Fees</label><input type=\"number\" step=\"0.01\" id=\"nlog-local\" value=\"0\"></div><div class=\"form-group\"><label>Customs Clearance Fee</label><input type=\"number\" step=\"0.01\" id=\"nlog-csv\" value=\"0\"></div><div class=\"form-group\"><label>Delivery Fee</label><input type=\"number\" step=\"0.01\" id=\"nlog-delivery\" value=\"0\"></div><div class=\"form-group\"><label>Customs Duty</label><input type=\"number\" step=\"0.01\" id=\"nlog-duty\" value=\"0\"></div><div class=\"form-group\"><label>VAT/GST</label><input type=\"number\" step=\"0.01\" id=\"nlog-vat\" value=\"0\"></div><div class=\"form-group\"><label>Other Fees</label><input type=\"number\" step=\"0.01\" id=\"nlog-other\" value=\"0\"></div></div></div>"; I18N.dict.id["modal.body.createLog"] = "<div class=\"form-card\" style=\"box-shadow:none;padding:0\"><div class=\"form-grid\"><div class=\"form-group\"><label>TerkaitCI</label><select id=\"nlog-ci\"><option value=\"\">Tidak Ada</option>{v1}</select></div><div class=\"form-group\"><label>Freight Forwarder</label><select id=\"nlog-ff\"><option value=\"\">Pilih</option>{v2}</select></div><div class=\"form-group\"><label>Metode Pengiriman</label><select id=\"nlog-mode\"><option value=\"sea\">Laut</option><option value=\"air\">Udara</option><option value=\"land\">Darat</option><option value=\"express\">Ekspres</option></select></div><div class=\"form-group\"><label>Pelabuhan Muat</label><input type=\"text\" id=\"nlog-origin\"></div><div class=\"form-group\"><label>Pelabuhan Tujuan</label><input type=\"text\" id=\"nlog-dest\"></div><div class=\"form-group\"><label>Negara Tujuan</label><input type=\"text\" id=\"nlog-country\"></div><div class=\"form-group\"><label>Gudang Tujuan</label><input type=\"text\" id=\"nlog-wh\"></div><div class=\"form-group\"><label>Tanggal Pengambilan</label><input type=\"date\" id=\"nlog-pickup\"></div><div class=\"form-group\"><label>Tanggal Keberangkatan</label><input type=\"date\" id=\"nlog-depart\"></div><div class=\"form-group\"><label>Perkiraan Tiba</label><input type=\"date\" id=\"nlog-eta\"></div><div class=\"form-group\"><label>Mata Uang Angkut</label><select id=\"nlog-cur\"><option>USD</option><option>RMB</option><option>IDR</option><option>MYR</option><option>THB</option></select></div><div class=\"form-group\"><label>Ongkos Angkut Internasional</label><input type=\"number\" step=\"0.01\" id=\"nlog-intl\" value=\"0\"></div><div class=\"form-group\"><label>Biaya Lokal Lainnya</label><input type=\"number\" step=\"0.01\" id=\"nlog-local\" value=\"0\"></div><div class=\"form-group\"><label>Biaya Pembersihan Bea</label><input type=\"number\" step=\"0.01\" id=\"nlog-csv\" value=\"0\"></div><div class=\"form-group\"><label>Biaya Pengiriman</label><input type=\"number\" step=\"0.01\" id=\"nlog-delivery\" value=\"0\"></div><div class=\"form-group\"><label>Bea Masuk</label><input type=\"number\" step=\"0.01\" id=\"nlog-duty\" value=\"0\"></div><div class=\"form-group\"><label>VAT/GST</label><input type=\"number\" step=\"0.01\" id=\"nlog-vat\" value=\"0\"></div><div class=\"form-group\"><label>Biaya Lainnya</label><input type=\"number\" step=\"0.01\" id=\"nlog-other\" value=\"0\"></div></div></div>";
+  I18N.dict.en["modal.body.createLog"] = "<div class=\"form-card\" style=\"box-shadow:none;padding:0\"><div class=\"form-grid\"><div class=\"form-group\"><label>RelatedCI</label><select id=\"nlog-ci\"><option value=\"\">None</option>{v1}</select></div><div class=\"form-group\"><label>Freight Forwarder</label><select id=\"nlog-ff\"><option value=\"\">Select</option>{v2}</select></div><div class=\"form-group\"><label>Shipping Method</label><select id=\"nlog-mode\"><option value=\"sea\">Sea</option><option value=\"air\">Air</option><option value=\"land\">Land</option><option value=\"express\">Express</option></select></div><div class=\"form-group\"><label>Port of Loading</label><input type=\"text\" id=\"nlog-origin\"></div><div class=\"form-group\"><label>Port of Discharge</label><input type=\"text\" id=\"nlog-dest\"></div><div class=\"form-group\"><label>Target Country</label><input type=\"text\" id=\"nlog-country\"></div><div class=\"form-group\"><label>Target Warehouse</label><input type=\"text\" id=\"nlog-wh\"></div><div class=\"form-group\"><label>Pickup Date</label><input type=\"date\" id=\"nlog-pickup\"></div><div class=\"form-group\"><label>Departure Date</label><input type=\"date\" id=\"nlog-depart\"></div><div class=\"form-group\"><label>Estimated Arrival</label><input type=\"date\" id=\"nlog-eta\"></div><div class=\"form-group\"><label>Freight Currency</label><select id=\"nlog-cur\"><option>USD</option><option>RMB</option><option>IDR</option><option>MYR</option><option>THB</option></select></div><div class=\"form-group\"><label>International Freight</label><input type=\"number\" step=\"0.01\" id=\"nlog-intl\" value=\"0\"></div><div class=\"form-group\"><label>Local Misc Fees</label><input type=\"number\" step=\"0.01\" id=\"nlog-local\" value=\"0\"></div><div class=\"form-group\"><label>Customs Clearance Fee</label><input type=\"number\" step=\"0.01\" id=\"nlog-csv\" value=\"0\"></div><div class=\"form-group\"><label>Delivery Fee</label><input type=\"number\" step=\"0.01\" id=\"nlog-delivery\" value=\"0\"></div><div class=\"form-group\"><label>Customs Duty</label><input type=\"number\" step=\"0.01\" id=\"nlog-duty\" value=\"0\"></div><div class=\"form-group\"><label>VAT/GST</label><input type=\"number\" step=\"0.01\" id=\"nlog-vat\" value=\"0\"></div><div class=\"form-group\"><label>Other Fees</label><input type=\"number\" step=\"0.01\" id=\"nlog-other\" value=\"0\"></div></div></div>"; I18N.dict.id["modal.body.createLog"] = "<div class=\"form-card\" style=\"box-shadow:none;padding:0\"><div class=\"form-grid\"><div class=\"form-group\"><label>TerkaitCI</label><select id=\"nlog-ci\"><option value=\"\">Tidak Ada</option>{v1}</select></div><div class=\"form-group\"><label>Freight Forwarder</label><select id=\"nlog-ff\"><option value=\"\">Pilih</option>{v2}</select></div><div class=\"form-group\"><label>Metode Pengiriman</label><select id=\"nlog-mode\"><option value=\"sea\">Laut</option><option value=\"air\">Udara</option><option value=\"land\">Darat</option><option value=\"express\">Ekspres</option></select></div><div class=\"form-group\"><label>Pelabuhan Muat</label><input type=\"text\" id=\"nlog-origin\"></div><div class=\"form-group\"><label>Pelabuhan Tujuan</label><input type=\"text\" id=\"nlog-dest\"></div><div class=\"form-group\"><label>Negara Tujuan</label><input type=\"text\" id=\"nlog-country\"></div><div class=\"form-group\"><label>Gudang Tujuan</label><input type=\"text\" id=\"nlog-wh\"></div><div class=\"form-group\"><label>Tanggal Pengambilan</label><input type=\"date\" id=\"nlog-pickup\"></div><div class=\"form-group\"><label>Tanggal Keberangkatan</label><input type=\"date\" id=\"nlog-depart\"></div><div class=\"form-group\"><label>Perkiraan Tiba</label><input type=\"date\" id=\"nlog-eta\"></div><div class=\"form-group\"><label>Mata Uang Angkut</label><select id=\"nlog-cur\"><option>USD</option><option>RMB</option><option>IDR</option><option>MYR</option><option>THB</option></select></div><div class=\"form-group\"><label>Ongkos Angkut Internasional</label><input type=\"number\" step=\"0.01\" id=\"nlog-intl\" value=\"0\"></div><div class=\"form-group\"><label>Biaya Lokal Lainnya</label><input type=\"number\" step=\"0.01\" id=\"nlog-local\" value=\"0\"></div><div class=\"form-group\"><label>Biaya Penyelesaian Bea Cukai</label><input type=\"number\" step=\"0.01\" id=\"nlog-csv\" value=\"0\"></div><div class=\"form-group\"><label>Biaya Pengiriman</label><input type=\"number\" step=\"0.01\" id=\"nlog-delivery\" value=\"0\"></div><div class=\"form-group\"><label>Bea Masuk</label><input type=\"number\" step=\"0.01\" id=\"nlog-duty\" value=\"0\"></div><div class=\"form-group\"><label>VAT/GST</label><input type=\"number\" step=\"0.01\" id=\"nlog-vat\" value=\"0\"></div><div class=\"form-group\"><label>Biaya Lainnya</label><input type=\"number\" step=\"0.01\" id=\"nlog-other\" value=\"0\"></div></div></div>";
   I18N.dict.en["html.renderInbound"] = "<div id=\"flash-container\"></div><div class=\"filter-bar\"><div class=\"filter-form\"><div class=\"filter-group\"><label>Status</label><select id=\"in-fs\"><option value=\"\">All</option><option value=\"pending\">Pending Inbound</option><option value=\"completed\">Completed</option><option value=\"abnormal\">Anomaly</option></select></div><div class=\"filter-actions\"><button class=\"btn btn-primary btn-sm\" onclick=\"loadIn()\">Search</button>{v1}</div></div></div><div class=\"table-section\"><div class=\"table-section-title\"><div class=\"table-section-title-left\">📥 Inbound Records</div></div><div id=\"in-table\"></div></div>"; I18N.dict.id["html.renderInbound"] = "<div id=\"flash-container\"></div><div class=\"filter-bar\"><div class=\"filter-form\"><div class=\"filter-group\"><label>Status</label><select id=\"in-fs\"><option value=\"\">Semua</option><option value=\"pending\">Menunggu Inbound</option><option value=\"completed\">Selesai</option><option value=\"abnormal\">Anomali</option></select></div><div class=\"filter-actions\"><button class=\"btn btn-primary btn-sm\" onclick=\"loadIn()\">Cari</button>{v1}</div></div></div><div class=\"table-section\"><div class=\"table-section-title\"><div class=\"table-section-title-left\">📥 Catatan Inbound</div></div><div id=\"in-table\"></div></div>";
   I18N.dict.en["modal.body.createIn"] = "<div class=\"form-card\" style=\"box-shadow:none;padding:0\"><div class=\"form-grid\"><div class=\"form-group\"><label>SourcePL <span class=\"required\">*</span></label><select id=\"nin-pl\" onchange=\"loadPLForIn()\"><option value=\"\">SelectPL</option>{v1}</select></div><div class=\"form-group\"><label>Inbound Date <span class=\"required\">*</span></label><input type=\"date\" id=\"nin-date\" value=\"{v2}\"></div><div class=\"form-group\"><label>Country</label><input type=\"text\" id=\"nin-country\"></div><div class=\"form-group\"><label>Warehouse</label><input type=\"text\" id=\"nin-wh\"></div><div class=\"form-group\"><label>Logistics Batch No.</label><input type=\"text\" id=\"nin-log\"></div><div class=\"form-group\"><label>Delivery Batch No.</label><input type=\"text\" id=\"nin-del\"></div></div><div id=\"in-pl-items\" style=\"margin-top:16px\"></div></div>"; I18N.dict.id["modal.body.createIn"] = "<div class=\"form-card\" style=\"box-shadow:none;padding:0\"><div class=\"form-grid\"><div class=\"form-group\"><label>SumberPL <span class=\"required\">*</span></label><select id=\"nin-pl\" onchange=\"loadPLForIn()\"><option value=\"\">PilihPL</option>{v1}</select></div><div class=\"form-group\"><label>Tanggal Inbound <span class=\"required\">*</span></label><input type=\"date\" id=\"nin-date\" value=\"{v2}\"></div><div class=\"form-group\"><label>Negara</label><input type=\"text\" id=\"nin-country\"></div><div class=\"form-group\"><label>Gudang</label><input type=\"text\" id=\"nin-wh\"></div><div class=\"form-group\"><label>No. Batch Logistik</label><input type=\"text\" id=\"nin-log\"></div><div class=\"form-group\"><label>No. Batch Pengiriman</label><input type=\"text\" id=\"nin-del\"></div></div><div id=\"in-pl-items\" style=\"margin-top:16px\"></div></div>";
   I18N.dict.en["html.loadPLForIn"] = "<h4 style=\"margin-bottom:8px\">PLItems (Inbound/Remaining)</h4><div class=\"table-container\"><table class=\"data-table\"><thead><tr><th>SKU</th><th>PLQuantity</th><th>Inbound</th><th>Remaining</th><th>This Inbound</th></tr></thead><tbody>{v1}</tbody></table></div>"; I18N.dict.id["html.loadPLForIn"] = "<h4 style=\"margin-bottom:8px\">PLItem (Inbound/Sisa)</h4><div class=\"table-container\"><table class=\"data-table\"><thead><tr><th>SKU</th><th>PLJumlah</th><th>Inbound</th><th>Sisa</th><th>Inbound Ini</th></tr></thead><tbody>{v1}</tbody></table></div>";
@@ -2159,9 +2216,9 @@ I18N.dict.en["toast.doBreakGlassLogin"] = "Break-glass login failed: {v1}"; I18N
 
 // --- nav.* 模块标签（补充缺失的 8 个）---
 I18N.dict.en["nav.home"] = "Home"; I18N.dict.id["nav.home"] = "Beranda";
-I18N.dict.en["nav.forecast"] = "Order Forecast"; I18N.dict.id["nav.forecast"] = "Ramalan Pesanan";
-I18N.dict.en["nav.inventory_total"] = "Inventory Total"; I18N.dict.id["nav.inventory_total"] = "Total Inventori";
-I18N.dict.en["page.inventory_total"] = "Inventory Overview"; I18N.dict.id["page.inventory_total"] = "Ringkasan Inventori";
+I18N.dict.en["nav.forecast"] = "Order Forecast"; I18N.dict.id["nav.forecast"] = "Prakiraan Pesanan";
+I18N.dict.en["nav.inventory_total"] = "Inventory Total"; I18N.dict.id["nav.inventory_total"] = "Total Persediaan";
+I18N.dict.en["page.inventory_total"] = "Inventory Overview"; I18N.dict.id["page.inventory_total"] = "Ringkasan Persediaan";
 I18N.dict.en["nav.sales"] = "Sales"; I18N.dict.id["nav.sales"] = "Penjualan";
 I18N.dict.en["nav.sales_data"] = "Sales Data"; I18N.dict.id["nav.sales_data"] = "Data Penjualan";
 I18N.dict.en["nav.finance"] = "Finance"; I18N.dict.id["nav.finance"] = "Keuangan";
@@ -2228,7 +2285,7 @@ I18N.dict.en["term.pur.inbound"] = "Inbound"; I18N.dict.id["term.pur.inbound"] =
 I18N.dict.en["term.pur.logistics"] = "Logistics"; I18N.dict.id["term.pur.logistics"] = "Logistik";
 I18N.dict.en["term.inv.warehouse"] = "Warehouse"; I18N.dict.id["term.inv.warehouse"] = "Gudang";
 I18N.dict.en["term.inv.sku"] = "SKU"; I18N.dict.id["term.inv.sku"] = "SKU";
-I18N.dict.en["term.inv.stock"] = "Inventory"; I18N.dict.id["term.inv.stock"] = "Inventori";
+I18N.dict.en["term.inv.stock"] = "Inventory"; I18N.dict.id["term.inv.stock"] = "Persediaan";
 I18N.dict.en["term.inv.check"] = "Stock Check"; I18N.dict.id["term.inv.check"] = "Pemeriksaan Stok";
 I18N.dict.en["term.sales.demand"] = "Demand"; I18N.dict.id["term.sales.demand"] = "Permintaan";
 I18N.dict.en["term.sales.forecast"] = "Forecast"; I18N.dict.id["term.sales.forecast"] = "Ramalan";
@@ -2566,8 +2623,8 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.en['col.effective_order'] = 'Valid Order'; I18N.dict.id['col.effective_order'] = 'Pesanan Valid';
   I18N.dict.en['col.handle'] = 'Action'; I18N.dict.id['col.handle'] = 'Tindakan';
   I18N.dict.en['col.in_transit'] = 'In Transit'; I18N.dict.id['col.in_transit'] = 'Dalam Pengiriman';
-  I18N.dict.en['col.inv_status'] = 'Inventory Status'; I18N.dict.id['col.inv_status'] = 'Status Inventori';
-  I18N.dict.en['col.inventory_qty'] = 'Inventory'; I18N.dict.id['col.inventory_qty'] = 'Inventori';
+  I18N.dict.en['col.inv_status'] = 'Inventory Status'; I18N.dict.id['col.inv_status'] = 'Status Persediaan';
+  I18N.dict.en['col.inventory_qty'] = 'Inventory'; I18N.dict.id['col.inventory_qty'] = 'Persediaan';
   I18N.dict.en['col.is_new'] = 'New'; I18N.dict.id['col.is_new'] = 'Baru';
   I18N.dict.en['col.last_inbound_date'] = 'Last Inbound Date'; I18N.dict.id['col.last_inbound_date'] = 'Tanggal Masuk Terakhir';
   I18N.dict.en['col.last_sale'] = 'Last Sale Date'; I18N.dict.id['col.last_sale'] = 'Tanggal Penjualan Terakhir';
@@ -2605,12 +2662,12 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.en['html.inv.fail_detail'] = 'Failure Details'; I18N.dict.id['html.inv.fail_detail'] = 'Detail Kegagalan';
   I18N.dict.en['html.inv.high_priority'] = '⚠️ High priority (cost is 0, please complete cost confirmation ASAP)'; I18N.dict.id['html.inv.high_priority'] = '⚠️ Prioritas tinggi (biaya 0, segera lengkapi konfirmasi biaya)';
   I18N.dict.en['html.inv.required_note'] = 'Required; import not allowed if empty.'; I18N.dict.id['html.inv.required_note'] = 'Wajib; impor tidak diizinkan bila kosong.';
-  I18N.dict.en['html.inv.snapshot_cutoff'] = 'Inventory Snapshot Cutoff Date'; I18N.dict.id['html.inv.snapshot_cutoff'] = 'Tanggal Batas Snapshot Inventori';
+  I18N.dict.en['html.inv.snapshot_cutoff'] = 'Inventory Snapshot Cutoff Date'; I18N.dict.id['html.inv.snapshot_cutoff'] = 'Tanggal Batas Snapshot Persediaan';
   I18N.dict.en['html.inv.start_import'] = 'Start Import'; I18N.dict.id['html.inv.start_import'] = 'Mulai Impor';
   I18N.dict.en['html.inv.support_fmt'] = 'Supports .xlsx / .xls / .csv'; I18N.dict.id['html.inv.support_fmt'] = 'Mendukung format .xlsx / .xls / .csv';
   I18N.dict.en['html.inv.wac_auto'] = 'Weighted average cost is auto-matched by the system to the latest confirmed cost version; the weighted cost column in the import file is ignored.'; I18N.dict.id['html.inv.wac_auto'] = 'Biaya rata-rata tertimbang dicocokkan otomatis oleh sistem ke versi biaya terkonfirmasi terbaru; kolom biaya tertimbang di file impor diabaikan.';
   I18N.dict.en['html.inv.wac_note'] = 'Weighted Average Cost Notes'; I18N.dict.id['html.inv.wac_note'] = 'Catatan Biaya Rata-rata Tertimbang';
-  I18N.dict.en['html.inv_export.available'] = 'Available Inventory'; I18N.dict.id['html.inv_export.available'] = 'Inventori Tersedia';
+  I18N.dict.en['html.inv_export.available'] = 'Available Inventory'; I18N.dict.id['html.inv_export.available'] = 'Persediaan Tersedia';
   I18N.dict.en['html.preview.invalid_detail'] = 'Invalid rows detail:'; I18N.dict.id['html.preview.invalid_detail'] = 'Detail baris tidak valid:';
   I18N.dict.en['html.preview.row_pre'] = 'Row '; I18N.dict.id['html.preview.row_pre'] = 'Baris ';
   I18N.dict.en['html.preview.row_suffix'] = ':'; I18N.dict.id['html.preview.row_suffix'] = ':';
@@ -2632,7 +2689,7 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.en['modal.batch.skip'] = 'Skipped'; I18N.dict.id['modal.batch.skip'] = 'Dilewati';
   I18N.dict.en['modal.batch.success'] = 'Success'; I18N.dict.id['modal.batch.success'] = 'Berhasil';
   I18N.dict.en['modal.batch.task_center'] = 'View Task Center'; I18N.dict.id['modal.batch.task_center'] = 'Lihat Pusat Tugas';
-  I18N.dict.en['modal.batch_adj_correct'] = 'Inventory Correction'; I18N.dict.id['modal.batch_adj_correct'] = 'Koreksi Inventori';
+  I18N.dict.en['modal.batch_adj_correct'] = 'Inventory Correction'; I18N.dict.id['modal.batch_adj_correct'] = 'Koreksi Persediaan';
   I18N.dict.en['modal.batch_adj_gain'] = 'Stock Surplus'; I18N.dict.id['modal.batch_adj_gain'] = 'Surplus Stok';
   I18N.dict.en['modal.batch_adj_loss'] = 'Stock Shortage'; I18N.dict.id['modal.batch_adj_loss'] = 'Kekurangan Stok';
   I18N.dict.en['modal.batch_adj_manual'] = 'Manual Adjustment'; I18N.dict.id['modal.batch_adj_manual'] = 'Penyesuaian Manual';
@@ -2645,11 +2702,11 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.en['modal.batch_affect_sku_open'] = '<div>SKUs affected: <b>'; I18N.dict.id['modal.batch_affect_sku_open'] = '<div>SKU terdampak: <b>';
   I18N.dict.en['modal.batch_affect_warehouse_open'] = '<div>Warehouses affected: <b>'; I18N.dict.id['modal.batch_affect_warehouse_open'] = '<div>Gudang terdampak: <b>';
   I18N.dict.en['modal.batch_del_reason'] = 'Delete reason (required, logged)'; I18N.dict.id['modal.batch_del_reason'] = 'Alasan hapus (wajib, dicatat)';
-  I18N.dict.en['modal.batch_del_title'] = 'Batch Delete Inventory'; I18N.dict.id['modal.batch_del_title'] = 'Hapus Inventori Massal';
+  I18N.dict.en['modal.batch_del_title'] = 'Batch Delete Inventory'; I18N.dict.id['modal.batch_del_title'] = 'Hapus Persediaan Massal';
   I18N.dict.en['modal.batch_focus'] = 'Mark as focused?'; I18N.dict.id['modal.batch_focus'] = 'Tandai sebagai fokus?';
   I18N.dict.en['modal.batch_preview'] = '📋 Operation Preview'; I18N.dict.id['modal.batch_preview'] = '📋 Pratinjau Operasi';
   I18N.dict.en['modal.batch_reason'] = 'Operation reason (optional)'; I18N.dict.id['modal.batch_reason'] = 'Alasan operasi (opsional)';
-  I18N.dict.en['modal.batch_remark'] = 'Inventory Remark'; I18N.dict.id['modal.batch_remark'] = 'Catatan Inventori';
+  I18N.dict.en['modal.batch_remark'] = 'Inventory Remark'; I18N.dict.id['modal.batch_remark'] = 'Catatan Persediaan';
   I18N.dict.en['modal.batch_result.title'] = '📊 Batch Operation Result Report'; I18N.dict.id['modal.batch_result.title'] = '📊 Laporan Hasil Operasi Massal';
   I18N.dict.en['modal.batch_rule'] = 'Replenishment Rule'; I18N.dict.id['modal.batch_rule'] = 'Aturan Isi Ulang';
   I18N.dict.en['modal.batch_rule_auto'] = 'Auto Replenish'; I18N.dict.id['modal.batch_rule_auto'] = 'Isi Ulang Otomatis';
@@ -2709,7 +2766,7 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.en['col.po_date'] = 'PO Date'; I18N.dict.id['col.po_date'] = 'Tanggal PO';
   I18N.dict.en['col.detail'] = 'Detail'; I18N.dict.id['col.detail'] = 'Detail';
   I18N.dict.en['col.po_status'] = 'PO Status'; I18N.dict.id['col.po_status'] = 'Status PO';
-  I18N.dict.en['po.submit_approval'] = 'Submit for Approval'; I18N.dict.id['po.submit_approval'] = 'Ajukan Persetujuan';
+  I18N.dict.en['po.submit_approval'] = 'Submit for Approval'; I18N.dict.id['po.submit_approval'] = 'Ajukan untuk Persetujuan';
   I18N.dict.en['po.send_factory'] = 'Send to Factory'; I18N.dict.id['po.send_factory'] = 'Kirim ke Pabrik';
   I18N.dict.en['action.export_excel'] = 'Export Excel'; I18N.dict.id['action.export_excel'] = 'Ekspor Excel';
   I18N.dict.en['action.void'] = 'Void'; I18N.dict.id['action.void'] = 'Batalkan';
@@ -2874,7 +2931,7 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.en["cockpit.cat_goods"] = "Goods"; I18N.dict.id["cockpit.cat_goods"] = "Barang";
   I18N.dict.en["cockpit.collapse"] = "Collapse ▲"; I18N.dict.id["cockpit.collapse"] = "Lipat ▲";
   I18N.dict.en["cockpit.opt_notset"] = "Not set (-)"; I18N.dict.id["cockpit.opt_notset"] = "Belum diatur (-)";
-  I18N.dict.en["cockpit.title"] = "Payable Cockpit"; I18N.dict.id["cockpit.title"] = "Cockpit Hutang";
+  I18N.dict.en["cockpit.title"] = "Payable Cockpit"; I18N.dict.id["cockpit.title"] = "Kokpit Hutang";
   I18N.dict.en["cockpit.lbl_data_time"] = "Data time"; I18N.dict.id["cockpit.lbl_data_time"] = "Waktu data";
   I18N.dict.en["cockpit.lbl_today"] = "｜ Today"; I18N.dict.id["cockpit.lbl_today"] = "｜ Hari ini";
   I18N.dict.en["cockpit.caliber_note"] = "Caliber notes"; I18N.dict.id["cockpit.caliber_note"] = "Catatan kaliber";
@@ -2900,7 +2957,7 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.en["cockpit.col_country"] = "Country"; I18N.dict.id["cockpit.col_country"] = "Negara";
   I18N.dict.en["cockpit.col_currency"] = "Currency"; I18N.dict.id["cockpit.col_currency"] = "Mata uang";
   I18N.dict.en["cockpit.col_total_payable"] = "Total payable"; I18N.dict.id["cockpit.col_total_payable"] = "Total hutang";
-  I18N.dict.en["cockpit.col_settled"] = "Settled"; I18N.dict.id["cockpit.col_settled"] = "Lunas";
+  I18N.dict.en["cockpit.col_settled"] = "Settled"; I18N.dict.id["cockpit.col_settled"] = "Diselesaikan";
   I18N.dict.en["cockpit.col_outstanding"] = "Outstanding"; I18N.dict.id["cockpit.col_outstanding"] = "Belum lunas";
   I18N.dict.en["cockpit.col_status"] = "Status"; I18N.dict.id["cockpit.col_status"] = "Status";
   I18N.dict.en["cockpit.row_title"] = "Click to view the supplier cost composition and payment details"; I18N.dict.id["cockpit.row_title"] = "Klik untuk melihat komposisi biaya dan rincian pembayaran pemasok";
@@ -2917,7 +2974,7 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.en["cockpit.col_related_pi_ci"] = "Related PI/CI"; I18N.dict.id["cockpit.col_related_pi_ci"] = "PI/CI Terkait";
   I18N.dict.en["cockpit.col_payer"] = "Payer"; I18N.dict.id["cockpit.col_payer"] = "Pembayar";
   I18N.dict.en["cockpit.col_payable"] = "Payable"; I18N.dict.id["cockpit.col_payable"] = "Hutang";
-  I18N.dict.en["cockpit.col_written_off"] = "Written off"; I18N.dict.id["cockpit.col_written_off"] = "Direkonsiliasi";
+  I18N.dict.en["cockpit.col_written_off"] = "Written off"; I18N.dict.id["cockpit.col_written_off"] = "Dihapuskan";
   I18N.dict.en["cockpit.col_due_date"] = "Due date"; I18N.dict.id["cockpit.col_due_date"] = "Tanggal jatuh tempo";
   I18N.dict.en["cockpit.col_overdue_days"] = "Overdue days"; I18N.dict.id["cockpit.col_overdue_days"] = "Hari terlambat";
   I18N.dict.en["cockpit.no_match"] = "No matching records"; I18N.dict.id["cockpit.no_match"] = "Tidak ada catatan yang cocok";
@@ -3037,7 +3094,7 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.en["gen.L890.1"] = "Rejection reason is required"; I18N.dict.id["gen.L890.1"] = "Alasan penolakan wajib diisi";
   I18N.dict.en["gen.L896.1"] = "Rejected, PO returned to draft"; I18N.dict.id["gen.L896.1"] = "Ditolak, PO dikembalikan ke draf";
   I18N.dict.en["gen.L902.1"] = "Approval record not found"; I18N.dict.id["gen.L902.1"] = "Catatan persetujuan tidak ditemukan";
-  I18N.dict.en["gen.L905.1"] = "Submit for Approval"; I18N.dict.id["gen.L905.1"] = "Ajukan Persetujuan";
+  I18N.dict.en["gen.L905.1"] = "Submit for Approval"; I18N.dict.id["gen.L905.1"] = "Ajukan untuk Persetujuan";
   I18N.dict.en["gen.L905.2"] = "Approve"; I18N.dict.id["gen.L905.2"] = "Setujui";
   I18N.dict.en["gen.L905.3"] = "Reject"; I18N.dict.id["gen.L905.3"] = "Tolak";
   I18N.dict.en["gen.L905.4"] = "Withdraw"; I18N.dict.id["gen.L905.4"] = "Tarik Kembali";
@@ -3059,6 +3116,12 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.en["gen.L953.1"] = "','active')\">Enable</button>"; I18N.dict.id["gen.L953.1"] = "','active')\">Aktifkan</button>";
   I18N.dict.en["gen.L959.1"] = "Local Emergency"; I18N.dict.id["gen.L959.1"] = "Darurat Lokal";
   I18N.dict.en["gen.L973.1"] = "Role updated"; I18N.dict.id["gen.L973.1"] = "Peran diperbarui";
+  // I18N-100P-B1：用户管理语言偏好选择器 + 偏好保存提示（语言名采用 endonym，三语一致）
+  I18N.dict.en["gen.L973.2"] = "Language preference updated"; I18N.dict.id["gen.L973.2"] = "Preferensi bahasa diperbarui";
+  I18N.dict.en["user.lang_zh"] = "中文"; I18N.dict.id["user.lang_zh"] = "中文";
+  I18N.dict.en["user.lang_en"] = "English"; I18N.dict.id["user.lang_en"] = "English";
+  I18N.dict.en["user.lang_id"] = "Bahasa Indonesia"; I18N.dict.id["user.lang_id"] = "Bahasa Indonesia";
+  I18N.dict.en["toast.lang_save_failed"] = "Failed to save language preference, please retry later"; I18N.dict.id["toast.lang_save_failed"] = "Gagal menyimpan preferensi bahasa, coba lagi nanti";
   I18N.dict.en["gen.L978.1"] = "Enabled"; I18N.dict.id["gen.L978.1"] = "Diaktifkan";
   I18N.dict.en["gen.L978.2"] = "Disabled"; I18N.dict.id["gen.L978.2"] = "Dinonaktifkan";
   I18N.dict.en["gen.L981.1"] = "<div id=\"flash-container\"></div><div class=\"table-section\"><div class=\"table-section-title\"><div class=\"table-section-title-left\">🛡️ Role Management</div></div><div id=\"simple-table\"></div></div>"; I18N.dict.id["gen.L981.1"] = "<div id=\"flash-container\"></div><div class=\"table-section\"><div class=\"table-section-title\"><div class=\"table-section-title-left\">🛡️ Manajemen Peran</div></div><div id=\"simple-table\"></div></div>";
@@ -3066,12 +3129,17 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.en["gen.L989.2"] = "<div class=\"table-container\" style=\"box-shadow:none;border-radius:0\"><table class=\"data-table\"><thead><tr><th>Role Name</th><th>Description</th><th>Permission Count</th><th>System</th><th>Actions</th></tr></thead><tbody>"; I18N.dict.id["gen.L989.2"] = "<div class=\"table-container\" style=\"box-shadow:none;border-radius:0\"><table class=\"data-table\"><thead><tr><th>Nama Peran</th><th>Deskripsi</th><th>Jumlah Izin</th><th>Sistem</th><th>Aksi</th></tr></thead><tbody>";
   I18N.dict.en["gen.L989.3"] = ")\" title=\"Click to Edit Permissions\"><td>"; I18N.dict.id["gen.L989.3"] = ")\" title=\"Klik untuk Mengedit Izin\"><td>";
   I18N.dict.en["gen.L989.4"] = ")\">Edit Permissions</button></td></tr>"; I18N.dict.id["gen.L989.4"] = ")\">Ubah Izin</button></td></tr>";
+  // SYS-ROLE-EDIT-NO-RESPONSE-01：新独立文本键（替代旧 HTML 片段拼接键），避免 onclick 引号嵌套缺陷
+  I18N.dict.en["gen.L989.3.title"] = "Click to Edit Permissions"; I18N.dict.id["gen.L989.3.title"] = "Klik untuk Mengedit Izin";
+  I18N.dict.en["gen.L989.4.btn"] = "Edit Permissions"; I18N.dict.id["gen.L989.4.btn"] = "Ubah Izin";
   I18N.dict.en["gen.L1000.1"] = "Role not found"; I18N.dict.id["gen.L1000.1"] = "Peran tidak ditemukan";
   I18N.dict.en["gen.L1005.1"] = "<div style=\"font-size:12px;color:var(--text-secondary,#999);margin-bottom:10px\">Role Name (Read-only): <b>"; I18N.dict.id["gen.L1005.1"] = "<div style=\"font-size:12px;color:var(--text-secondary,#999);margin-bottom:10px\">Nama Peran (Hanya-baca): <b>";
   I18N.dict.en["gen.L1005.2"] = "</b> ｜ Role Description (Read-only): "; I18N.dict.id["gen.L1005.2"] = "</b> ｜ Deskripsi Peran (Hanya-baca): ";
   I18N.dict.en["gen.L1007.1"] = "<div class=\"flash flash-warning show\" style=\"margin-bottom:12px\">Super Admin Role: Key management permissions (Role Management / User Management / System Configuration) are locked and cannot be unchecked to prevent losing system administration access.</div>"; I18N.dict.id["gen.L1007.1"] = "<div class=\"flash flash-warning show\" style=\"margin-bottom:12px\">Peran Super Admin: Izin manajemen utama (Manajemen Peran / Manajemen Pengguna / Konfigurasi Sistem) dikunci dan tidak dapat dihapus centangnya agar akses administrasi sistem tidak hilang.</div>";
-  I18N.dict.en["gen.L1021.1"] = "<button class=\"btn btn-secondary\" onclick=\"closeModal()\">Cancel</button><button class=\"btn btn-primary\" onclick=\"saveRolePermissions("; I18N.dict.id["gen.L1021.1"] = "<button class=\"btn btn-secondary\" onclick=\"closeModal()\">Batal</button><button class=\"btn btn-primary\" onclick=\"saveRolePermissions(";
-  I18N.dict.en["gen.L1021.2"] = ")\">Save</button>"; I18N.dict.id["gen.L1021.2"] = ")\">Simpan</button>";
+  I18N.dict.en["gen.L1021.1"] = "<button class=\"btn btn-secondary\" onclick=\"closeModal()\">Cancel</button><button class=\"btn btn-primary\" onclick=\"saveRolePermissions(\\x27"; I18N.dict.id["gen.L1021.1"] = "<button class=\"btn btn-secondary\" onclick=\"closeModal()\">Batal</button><button class=\"btn btn-primary\" onclick=\"saveRolePermissions(\\x27";
+  I18N.dict.en["gen.L1021.2"] = "\\x27)\">Save</button>"; I18N.dict.id["gen.L1021.2"] = "\\x27)\">Simpan</button>";
+  I18N.dict.en["role.btn.cancel"] = "Cancel"; I18N.dict.id["role.btn.cancel"] = "Batal";
+  I18N.dict.en["role.btn.save"] = "Save"; I18N.dict.id["role.btn.save"] = "Simpan";
   I18N.dict.en["gen.L1028.1"] = "Role not found"; I18N.dict.id["gen.L1028.1"] = "Peran tidak ditemukan";
   I18N.dict.en["gen.L1036.1"] = "Role permissions saved"; I18N.dict.id["gen.L1036.1"] = "Izin peran disimpan";
   I18N.dict.en["gen.L1045.1"] = "<button class=\"btn btn-primary btn-sm\" onclick=\"saveBrandSettings()\">💾 Save Procurement Status</button>"; I18N.dict.id["gen.L1045.1"] = "<button class=\"btn btn-primary btn-sm\" onclick=\"saveBrandSettings()\">💾 Simpan Status Pengadaan</button>";
@@ -3385,7 +3453,7 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.en["gen.L4672.1"] = "<div class=\"detail-section\"><h3>1. System Assessment</h3><div class=\"detail-grid\">"; I18N.dict.id["gen.L4672.1"] = "<div class=\"detail-section\"><h3>1. Penilaian Sistem</h3><div class=\"detail-grid\">";
   I18N.dict.en["gen.L4677.1"] = "<div class=\"detail-section\"><h3>2. Assessment Reason</h3><div class=\"detail-grid\">"; I18N.dict.id["gen.L4677.1"] = "<div class=\"detail-section\"><h3>2. Alasan Penilaian</h3><div class=\"detail-grid\">";
   I18N.dict.en["gen.L4682.1"] = "<div class=\"detail-section\"><h3>3. Key Data ("; I18N.dict.id["gen.L4682.1"] = "<div class=\"detail-section\"><h3>3. Data Kunci (";
-  I18N.dict.en["gen.L4682.2"] = "Basis)</h3><div class=\"detail-grid\">"; I18N.dict.id["gen.L4682.2"] = "Basis)</h3><div class=\"detail-grid\">";
+  I18N.dict.en["gen.L4682.2"] = " Basis)</h3><div class=\"detail-grid\">"; I18N.dict.id["gen.L4682.2"] = " Basis)</h3><div class=\"detail-grid\">";
   I18N.dict.en["gen.L4683.1"] = "Monthly Avg"; I18N.dict.id["gen.L4683.1"] = "Rata-rata Bulanan";
   I18N.dict.en["gen.L4684.1"] = "Proportion"; I18N.dict.id["gen.L4684.1"] = "Proporsi";
   I18N.dict.en["gen.L4686.1"] = "Current Available Turnover"; I18N.dict.id["gen.L4686.1"] = "Perputaran Tersedia Saat Ini";
@@ -3480,7 +3548,7 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.en["forecast.movement.stockout_risk"] = "Stockout Risk"; I18N.dict.id["forecast.movement.stockout_risk"] = "Risiko Kehabisan Stok";
   I18N.dict.en["forecast.movement.stagnant"] = "Stagnant"; I18N.dict.id["forecast.movement.stagnant"] = "Stagnan";
   I18N.dict.en["forecast.movement.slow_sales"] = "Slow Sales"; I18N.dict.id["forecast.movement.slow_sales"] = "Penjualan Lambat";
-  I18N.dict.en["forecast.movement.brand_stopped"] = "Discontinued / Clearance"; I18N.dict.id["forecast.movement.brand_stopped"] = "Dihentikan / Dibebaskan";
+  I18N.dict.en["forecast.movement.brand_stopped"] = "Discontinued / Clearance"; I18N.dict.id["forecast.movement.brand_stopped"] = "Dihentikan / Pengurangan Stok";
   // Risk Tags (risk_tags 列)
   I18N.dict.en["forecast.risk.high_stock_attention"] = "High Stock Attention"; I18N.dict.id["forecast.risk.high_stock_attention"] = "Perhatian Stok Tinggi";
   I18N.dict.en["forecast.risk.high_stock_severe"] = "High Stock Severe"; I18N.dict.id["forecast.risk.high_stock_severe"] = "Stok Tinggi Parah";
@@ -3488,6 +3556,49 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.en["forecast.risk.age_unknown"] = "Age Unknown"; I18N.dict.id["forecast.risk.age_unknown"] = "Usia Tidak Diketahui";
   I18N.dict.en["forecast.risk.sales_distortion"] = "Sales Distortion"; I18N.dict.id["forecast.risk.sales_distortion"] = "Distorsi Penjualan";
   I18N.dict.en["forecast.risk.new_product_no_sales"] = "New Product No Sales"; I18N.dict.id["forecast.risk.new_product_no_sales"] = "Produk Baru Tanpa Penjualan";
+  // Sales Activity Reason（按 sales_status 稳定 key 翻译；后端中文确定性模板由前端重新组装）
+  I18N.dict.en["forecast.reason.normal"] = "Sales and turnover normal"; I18N.dict.id["forecast.reason.normal"] = "Penjualan dan perputaran normal";
+  I18N.dict.en["forecast.reason.clearance"] = "Lifecycle is clearance"; I18N.dict.id["forecast.reason.clearance"] = "Siklus hidup adalah clearance";
+  I18N.dict.en["forecast.reason.stopped"] = "Lifecycle is discontinued"; I18N.dict.id["forecast.reason.stopped"] = "Siklus hidup dihentikan";
+  I18N.dict.en["forecast.reason.new_product"] = "Within new product protection period, insufficient sales time"; I18N.dict.id["forecast.reason.new_product"] = "Masih dalam masa perlindungan produk baru, waktu penjualan tidak cukup";
+  I18N.dict.en["forecast.reason.no_sales"] = "Past new product protection period, but no historical effective sales"; I18N.dict.id["forecast.reason.no_sales"] = "Lewat masa perlindungan produk baru, tetapi tidak ada penjualan efektif historis";
+  I18N.dict.en["forecast.reason.stockout"] = "Available inventory is 0, recent sales may be depressed by stockout"; I18N.dict.id["forecast.reason.stockout"] = "Persediaan tersedia 0, penjualan terbaru mungkin tertekan oleh kehabisan stok";
+  I18N.dict.en["forecast.reason.stockout_risk"] = "Available inventory turnover < 0.5 months, recent sales may be depressed by stockout"; I18N.dict.id["forecast.reason.stockout_risk"] = "Perputaran persediaan tersedia < 0,5 bulan, penjualan terbaru mungkin tertekan oleh kehabisan stok";
+  I18N.dict.en["forecast.reason.stagnant"] = "No effective sales in last 30 days while inventory remains"; I18N.dict.id["forecast.reason.stagnant"] = "Tidak ada penjualan efektif dalam 30 hari terakhir dan stok masih ada";
+  I18N.dict.en["forecast.reason.slow_sales"] = "Has sales but turnover exceeds 2x target"; I18N.dict.id["forecast.reason.slow_sales"] = "Ada penjualan tetapi perputaran melebihi 2x target";
+  // AI Suggestion（按 sales_status + risk_tags 稳定 key 翻译；后端 buildAiAdvice 中文确定性模板由前端重新组装）
+  I18N.dict.en["forecast.advice.normal"] = "Sales and turnover are normal, replenish per target turnover."; I18N.dict.id["forecast.advice.normal"] = "Penjualan dan perputaran normal, isi ulang sesuai perputaran target.";
+  I18N.dict.en["forecast.advice.clearance"] = "Lifecycle is not suitable for normal replenishment, stop purchasing and prioritize inventory clearance."; I18N.dict.id["forecast.advice.clearance"] = "Siklus hidup tidak cocok untuk pengisian ulang normal, hentikan pembelian dan prioritaskan pengurangan stok.";
+  I18N.dict.en["forecast.advice.stopped"] = "Lifecycle is not suitable for normal replenishment, stop purchasing and prioritize inventory clearance."; I18N.dict.id["forecast.advice.stopped"] = "Siklus hidup tidak cocok untuk pengisian ulang normal, hentikan pembelian dan prioritaskan pengurangan stok.";
+  I18N.dict.en["forecast.advice.new_product"] = "Insufficient sales time, manually review target turnover first to avoid short-term misjudgement."; I18N.dict.id["forecast.advice.new_product"] = "Waktu penjualan tidak cukup, tinjau manual perputaran target dahulu untuk menghindari kesalahan penilaian jangka pendek.";
+  I18N.dict.en["forecast.advice.no_sales"] = "No effective sales yet, check listing, price, channel and inventory status first."; I18N.dict.id["forecast.advice.no_sales"] = "Belum ada penjualan efektif, periksa listing, harga, kanal dan status stok dahulu.";
+  I18N.dict.en["forecast.advice.stockout"] = "Stock is 0, review replenishment first; low sales may be caused by stockout."; I18N.dict.id["forecast.advice.stockout"] = "Stok 0, tinjau pengisian ulang dahulu; penjualan rendah mungkin disebabkan kehabisan stok.";
+  I18N.dict.en["forecast.advice.stockout_risk"] = "Available turnover is below 0.5 months, prioritize replenishment review to avoid stockout depressing sales."; I18N.dict.id["forecast.advice.stockout_risk"] = "Perputaran tersedia di bawah 0,5 bulan, prioritaskan tinjauan pengisian ulang untuk menghindari kehabisan stok yang menekan penjualan.";
+  I18N.dict.en["forecast.advice.stagnant"] = "No sales in 30 days while inventory remains, pause replenishment and clear inventory first."; I18N.dict.id["forecast.advice.stagnant"] = "Tidak ada penjualan dalam 30 hari dan stok masih ada, jeda pengisian ulang dan kurangi stok dahulu.";
+  I18N.dict.en["forecast.advice.slow_sales"] = "Has sales but turnover exceeds 2x target, replenish cautiously and digest inventory first."; I18N.dict.id["forecast.advice.slow_sales"] = "Ada penjualan tetapi perputaran melebihi 2x target, isi ulang dengan hati-hati dan cerna stok dahulu.";
+  I18N.dict.en["forecast.advice.risk.high_stock_attention"] = "Turnover exceeds 1.5x target, control purchasing to avoid inventory capital buildup."; I18N.dict.id["forecast.advice.risk.high_stock_attention"] = "Perputaran melebihi 1,5x target, kendalikan pembelian untuk menghindari penumpukan modal persediaan.";
+  I18N.dict.en["forecast.advice.risk.high_stock_severe"] = "Turnover exceeds 2x target, reduce purchasing and prioritize inventory clearance."; I18N.dict.id["forecast.advice.risk.high_stock_severe"] = "Perputaran melebihi 2x target, kurangi pembelian dan prioritaskan pengurangan stok.";
+  I18N.dict.en["forecast.advice.risk.high_age"] = "Age exceeds 180 days with high turnover, investigate old inventory, price and channel issues."; I18N.dict.id["forecast.advice.risk.high_age"] = "Usia melebihi 180 hari dengan perputaran tinggi, periksa masalah stok lama, harga dan kanal.";
+  I18N.dict.en["forecast.advice.risk.age_unknown"] = "Missing inbound date, complete the data first to avoid distorted age judgement."; I18N.dict.id["forecast.advice.risk.age_unknown"] = "Tanggal masuk hilang, lengkapi data dahulu untuk menghindari penilaian usia yang distorsi.";
+  I18N.dict.en["forecast.advice.risk.sales_distortion"] = "Sales distortion detected: available inventory is 0, recent sales may be depressed, using peak monthly sales of past 4 months as replenishment reference."; I18N.dict.id["forecast.advice.risk.sales_distortion"] = "Distorsi penjualan terdeteksi: persediaan tersedia 0, penjualan terbaru mungkin tertekan, menggunakan penjualan bulanan tertinggi 4 bulan terakhir sebagai referensi pengisian ulang.";
+  I18N.dict.en["forecast.advice.risk.new_product_no_sales"] = "New product has no sales yet, do not auto-replenish."; I18N.dict.id["forecast.advice.risk.new_product_no_sales"] = "Produk baru belum memiliki penjualan, jangan isi ulang otomatis.";
+  // break-glass 本地应急账号显示名称（系统内置标签，非真实人员姓名）
+  I18N.dict.en["auth.breakglass_admin_label"] = "Administrator"; I18N.dict.id["auth.breakglass_admin_label"] = "Administrator";
+  // 按天汇总行文案
+  I18N.dict.en["forecast.daily.summary.total"] = "Total"; I18N.dict.id["forecast.daily.summary.total"] = "Total";
+  I18N.dict.en["forecast.daily.summary.sku_unit"] = "SKUs"; I18N.dict.id["forecast.daily.summary.sku_unit"] = "SKU";
+  I18N.dict.en["forecast.daily.empty"] = "📈 No sales data for current filters, adjust Country/Warehouse/Brand or click Recalculate"; I18N.dict.id["forecast.daily.empty"] = "📈 Tidak ada data penjualan untuk filter saat ini, sesuaikan Negara/Gudang/Merek atau klik Hitung Ulang";
+  // Review 弹窗完整语义键（替代 chLabel + suffix 拼接，{channel} 由前端插值）
+  I18N.dict.en["forecast.review.key_data_title"] = "<div class=\"detail-section\"><h3>3. Key Data ({channel})</h3><div class=\"detail-grid\">"; I18N.dict.id["forecast.review.key_data_title"] = "<div class=\"detail-section\"><h3>3. Data Kunci ({channel})</h3><div class=\"detail-grid\">";
+  I18N.dict.en["forecast.review.monthly_avg"] = "{channel} Monthly Average"; I18N.dict.id["forecast.review.monthly_avg"] = "Rata-rata Bulanan {channel}";
+  I18N.dict.en["forecast.review.sales_share"] = "{channel} Sales Share"; I18N.dict.id["forecast.review.sales_share"] = "Pangsa Penjualan {channel}";
+  I18N.dict.en["forecast.review.allocated_available"] = "Allocated Available Inventory ({channel})"; I18N.dict.id["forecast.review.allocated_available"] = "Persediaan Tersedia Dialokasikan ({channel})";
+  I18N.dict.en["forecast.review.allocated_in_transit"] = "Allocated In-Transit Inventory ({channel})"; I18N.dict.id["forecast.review.allocated_in_transit"] = "Persediaan Dalam Pengiriman Dialokasikan ({channel})";
+  // 按天动销分组标签（formatSalesGroupLabel 使用）
+  I18N.dict.en["forecast.sales_group.stagnant"] = "Stagnant"; I18N.dict.id["forecast.sales_group.stagnant"] = "Stagnan";
+  I18N.dict.en["forecast.sales_group.low"] = "Low Sales"; I18N.dict.id["forecast.sales_group.low"] = "Penjualan Rendah";
+  I18N.dict.en["forecast.sales_group.medium"] = "Medium Sales"; I18N.dict.id["forecast.sales_group.medium"] = "Penjualan Sedang";
+  I18N.dict.en["forecast.sales_group.high"] = "High Sales"; I18N.dict.id["forecast.sales_group.high"] = "Penjualan Tinggi";
   I18N.dict.en["gen.L5018.1"] = "Updated"; I18N.dict.id["gen.L5018.1"] = "Diperbarui";
   I18N.dict.en["gen.L5026.1"] = "Recalculating, please wait..."; I18N.dict.id["gen.L5026.1"] = "Sedang menghitung ulang, mohon tunggu...";
   I18N.dict.en["gen.L5052.1"] = "<div style=\"font-size:14px;margin-bottom:12px;color:#c0392b\">The following brands have no target turnover rule configured and cannot be recalculated. Please add rules for these brands in \"⚙ Forecast Parameter Settings\" first, then recalculate:</div>"; I18N.dict.id["gen.L5052.1"] = "<div style=\"font-size:14px;margin-bottom:12px;color:#c0392b\">Merek berikut belum memiliki aturan target perputaran yang dikonfigurasi dan tidak dapat dihitung ulang. Silakan tambahkan aturan untuk merek ini di \"⚙ Pengaturan Parameter Prakiraan\" terlebih dahulu, lalu hitung ulang:</div>";
@@ -3814,7 +3925,96 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   // 仅 role_admin / role_operator / role_viewer 三个 is_system=1 内置角色；
   // 自定义角色保持数据库 role_name 原文，不在此映射。
   // zh 在 app.js formatRoleLabel 中以 fallback 字面量提供（保持与数据库中文名一致），此处仅维护 en/id。
-  I18N.dict.en["role.admin"] = "Super Admin"; I18N.dict.id["role.admin"] = "Admin Super";
+  I18N.dict.en["role.admin"] = "Super Admin"; I18N.dict.id["role.admin"] = "Admin Utama";
   I18N.dict.en["role.operator"] = "Operations"; I18N.dict.id["role.operator"] = "Operasional";
-  I18N.dict.en["role.viewer"] = "Viewer"; I18N.dict.id["role.viewer"] = "Pemirsa";
+  I18N.dict.en["role.viewer"] = "Viewer"; I18N.dict.id["role.viewer"] = "Peninjau";
+
+  // ===================== SYS-ROLE-I18N-UX-02: 内置角色描述三语 =====================
+  // 内置角色描述使用稳定 role.id 作为 key，不翻译自定义角色描述（用户输入保持原文）
+  I18N.dict.en["role.description.admin"] = "Full system management permissions"; I18N.dict.id["role.description.admin"] = "Izin manajemen sistem penuh";
+  I18N.dict.en["role.description.operator"] = "Business operations, including approvals, import and export"; I18N.dict.id["role.description.operator"] = "Operasi bisnis, termasuk persetujuan, impor dan ekspor";
+  I18N.dict.en["role.description.viewer"] = "Read-only access"; I18N.dict.id["role.description.viewer"] = "Akses hanya baca";
+
+  // ===================== SYS-ROLE-I18N-UX-02: 权限分类三语 =====================
+  // 权限分类按稳定中文 module 名作为 key 后缀（与 server.js PERM_LABELS.module 一致）
+  I18N.dict.en["permission.category.系统管理"] = "System Management"; I18N.dict.id["permission.category.系统管理"] = "Manajemen Sistem";
+  I18N.dict.en["permission.category.采购"] = "Procurement"; I18N.dict.id["permission.category.采购"] = "Pengadaan";
+  I18N.dict.en["permission.category.库存"] = "Inventory"; I18N.dict.id["permission.category.库存"] = "Inventaris";
+  I18N.dict.en["permission.category.销售"] = "Sales"; I18N.dict.id["permission.category.销售"] = "Penjualan";
+  I18N.dict.en["permission.category.财务"] = "Finance"; I18N.dict.id["permission.category.财务"] = "Keuangan";
+  I18N.dict.en["permission.category.报表"] = "Reports"; I18N.dict.id["permission.category.报表"] = "Laporan";
+
+  // ===================== SYS-ROLE-I18N-UX-02: 权限名称三语 =====================
+  // 权限名称按稳定 permission.key 作为 key 后缀（不修改后端 PERM_LABELS）
+  I18N.dict.en["permission.label.user_manage"] = "User Management"; I18N.dict.id["permission.label.user_manage"] = "Manajemen Pengguna";
+  I18N.dict.en["permission.label.role_manage"] = "Role Management"; I18N.dict.id["permission.label.role_manage"] = "Manajemen Peran";
+  I18N.dict.en["permission.label.system_config"] = "System Configuration"; I18N.dict.id["permission.label.system_config"] = "Konfigurasi Sistem";
+  I18N.dict.en["permission.label.po_view"] = "PO View"; I18N.dict.id["permission.label.po_view"] = "Lihat PO";
+  I18N.dict.en["permission.label.po_create"] = "PO Create"; I18N.dict.id["permission.label.po_create"] = "Buat PO";
+  I18N.dict.en["permission.label.po_edit"] = "PO Edit"; I18N.dict.id["permission.label.po_edit"] = "Edit PO";
+  I18N.dict.en["permission.label.po_approve"] = "PO Approve"; I18N.dict.id["permission.label.po_approve"] = "Setujui PO";
+  I18N.dict.en["permission.label.po_export"] = "PO Export"; I18N.dict.id["permission.label.po_export"] = "Ekspor PO";
+  I18N.dict.en["permission.label.pi_view"] = "PI View"; I18N.dict.id["permission.label.pi_view"] = "Lihat PI";
+  I18N.dict.en["permission.label.pi_create"] = "PI Create"; I18N.dict.id["permission.label.pi_create"] = "Buat PI";
+  I18N.dict.en["permission.label.pi_edit"] = "PI Edit"; I18N.dict.id["permission.label.pi_edit"] = "Edit PI";
+  I18N.dict.en["permission.label.ci_view"] = "CI View"; I18N.dict.id["permission.label.ci_view"] = "Lihat CI";
+  I18N.dict.en["permission.label.ci_create"] = "CI Create"; I18N.dict.id["permission.label.ci_create"] = "Buat CI";
+  I18N.dict.en["permission.label.ci_edit"] = "CI Edit"; I18N.dict.id["permission.label.ci_edit"] = "Edit CI";
+  I18N.dict.en["permission.label.logistics_view"] = "Logistics View"; I18N.dict.id["permission.label.logistics_view"] = "Lihat Logistik";
+  I18N.dict.en["permission.label.logistics_create"] = "Logistics Create"; I18N.dict.id["permission.label.logistics_create"] = "Buat Logistik";
+  I18N.dict.en["permission.label.logistics_edit"] = "Logistics Edit"; I18N.dict.id["permission.label.logistics_edit"] = "Edit Logistik";
+  I18N.dict.en["permission.label.inbound_view"] = "Inbound View"; I18N.dict.id["permission.label.inbound_view"] = "Lihat Masuk";
+  I18N.dict.en["permission.label.inbound_create"] = "Inbound Create"; I18N.dict.id["permission.label.inbound_create"] = "Buat Masuk";
+  I18N.dict.en["permission.label.inbound_edit"] = "Inbound Edit"; I18N.dict.id["permission.label.inbound_edit"] = "Edit Masuk";
+  I18N.dict.en["permission.label.inbound_confirm"] = "Inbound Confirm"; I18N.dict.id["permission.label.inbound_confirm"] = "Konfirmasi Masuk";
+  I18N.dict.en["permission.label.sku_view"] = "SKU View"; I18N.dict.id["permission.label.sku_view"] = "Lihat SKU";
+  I18N.dict.en["permission.label.sku_create"] = "SKU Create"; I18N.dict.id["permission.label.sku_create"] = "Buat SKU";
+  I18N.dict.en["permission.label.sku_edit"] = "SKU Edit"; I18N.dict.id["permission.label.sku_edit"] = "Edit SKU";
+  I18N.dict.en["permission.label.sku_delete"] = "SKU Delete"; I18N.dict.id["permission.label.sku_delete"] = "Hapus SKU";
+  I18N.dict.en["permission.label.sku_import"] = "SKU Import"; I18N.dict.id["permission.label.sku_import"] = "Impor SKU";
+  I18N.dict.en["permission.label.sku_export"] = "SKU Export"; I18N.dict.id["permission.label.sku_export"] = "Ekspor SKU";
+  I18N.dict.en["permission.label.inventory_view"] = "Inventory View"; I18N.dict.id["permission.label.inventory_view"] = "Lihat Inventaris";
+  I18N.dict.en["permission.label.inventory_import"] = "Inventory Import"; I18N.dict.id["permission.label.inventory_import"] = "Impor Inventaris";
+  I18N.dict.en["permission.label.inventory_export"] = "Inventory Export"; I18N.dict.id["permission.label.inventory_export"] = "Ekspor Inventaris";
+  I18N.dict.en["permission.label.replenishment_view"] = "Replenishment View"; I18N.dict.id["permission.label.replenishment_view"] = "Lihat Restok";
+  I18N.dict.en["permission.label.replenishment_edit"] = "Replenishment Edit"; I18N.dict.id["permission.label.replenishment_edit"] = "Edit Restok";
+  I18N.dict.en["permission.label.check_view"] = "Stock Check View"; I18N.dict.id["permission.label.check_view"] = "Lihat Cek Stok";
+  I18N.dict.en["permission.label.check_create"] = "Stock Check Create"; I18N.dict.id["permission.label.check_create"] = "Buat Cek Stok";
+  I18N.dict.en["permission.label.check_approve"] = "Stock Check Approve"; I18N.dict.id["permission.label.check_approve"] = "Setujui Cek Stok";
+  I18N.dict.en["permission.label.check_import"] = "Stock Check Import"; I18N.dict.id["permission.label.check_import"] = "Impor Cek Stok";
+  I18N.dict.en["permission.label.check_export"] = "Stock Check Export"; I18N.dict.id["permission.label.check_export"] = "Ekspor Cek Stok";
+  I18N.dict.en["permission.label.stagnant_view"] = "Stagnant View"; I18N.dict.id["permission.label.stagnant_view"] = "Lihat Stagnan";
+  I18N.dict.en["permission.label.stagnant_export"] = "Stagnant Export"; I18N.dict.id["permission.label.stagnant_export"] = "Ekspor Stagnan";
+  I18N.dict.en["permission.label.outbound_view"] = "Outbound View"; I18N.dict.id["permission.label.outbound_view"] = "Lihat Keluar";
+  I18N.dict.en["permission.label.outbound_create"] = "Outbound Create"; I18N.dict.id["permission.label.outbound_create"] = "Buat Keluar";
+  I18N.dict.en["permission.label.outbound_import"] = "Outbound Import"; I18N.dict.id["permission.label.outbound_import"] = "Impor Keluar";
+  I18N.dict.en["permission.label.cost_view"] = "Cost View"; I18N.dict.id["permission.label.cost_view"] = "Lihat Biaya";
+  I18N.dict.en["permission.label.payment_view"] = "Payment View"; I18N.dict.id["permission.label.payment_view"] = "Lihat Pembayaran";
+  I18N.dict.en["permission.label.payment_create"] = "Payment Create"; I18N.dict.id["permission.label.payment_create"] = "Buat Pembayaran";
+  I18N.dict.en["permission.label.payment_approve"] = "Payment Approve"; I18N.dict.id["permission.label.payment_approve"] = "Setujui Pembayaran";
+  I18N.dict.en["permission.label.payment_import"] = "Payment Import"; I18N.dict.id["permission.label.payment_import"] = "Impor Pembayaran";
+  I18N.dict.en["permission.label.payment_export"] = "Payment Export"; I18N.dict.id["permission.label.payment_export"] = "Ekspor Pembayaran";
+  I18N.dict.en["permission.label.dashboard_view"] = "Dashboard View"; I18N.dict.id["permission.label.dashboard_view"] = "Lihat Dasbor";
+  I18N.dict.en["permission.label.forwarder_view"] = "Forwarder View"; I18N.dict.id["permission.label.forwarder_view"] = "Lihat Penerus";
+  I18N.dict.en["permission.label.forwarder_export"] = "Forwarder Export"; I18N.dict.id["permission.label.forwarder_export"] = "Ekspor Penerus";
+
+  // ===================== SYS-ROLE-I18N-UX-02: 角色列表/弹窗固定文案三语 =====================
+  I18N.dict.en["role.col.name"] = "Role Name"; I18N.dict.id["role.col.name"] = "Nama Peran";
+  I18N.dict.en["role.col.description"] = "Description"; I18N.dict.id["role.col.description"] = "Deskripsi";
+  I18N.dict.en["role.col.perm_count"] = "Permission Count"; I18N.dict.id["role.col.perm_count"] = "Jumlah Izin";
+  I18N.dict.en["role.col.system"] = "System"; I18N.dict.id["role.col.system"] = "Sistem";
+  I18N.dict.en["role.col.actions"] = "Actions"; I18N.dict.id["role.col.actions"] = "Aksi";
+  I18N.dict.en["role.field.name_readonly"] = "Role Name (Read-only)"; I18N.dict.id["role.field.name_readonly"] = "Nama Peran (Hanya-baca)";
+  I18N.dict.en["role.field.desc_readonly"] = "Role Description (Read-only)"; I18N.dict.id["role.field.desc_readonly"] = "Deskripsi Peran (Hanya-baca)";
+  I18N.dict.en["role.locked_warning"] = "Super Admin Role: Key management permissions (Role Management / User Management / System Configuration) are locked and cannot be unchecked to prevent losing system administration access."; I18N.dict.id["role.locked_warning"] = "Peran Super Admin: Izin manajemen utama (Manajemen Peran / Manajemen Pengguna / Konfigurasi Sistem) dikunci dan tidak dapat dihapus centangnya agar akses administrasi sistem tidak hilang.";
+  // 角色列表表头分隔片段（仅用于 th 拼接，保持表头顺序；modal.title.openRoleEditor 已在 L2035 定义）
+  I18N.dict.en["gen.L989.2.th1"] = "</th><th>"; I18N.dict.id["gen.L989.2.th1"] = "</th><th>";
+  I18N.dict.en["gen.L989.2.th2"] = "</th><th>"; I18N.dict.id["gen.L989.2.th2"] = "</th><th>";
+  I18N.dict.en["gen.L989.2.th3"] = "</th><th>"; I18N.dict.id["gen.L989.2.th3"] = "</th><th>";
+  I18N.dict.en["gen.L989.2.th4"] = "</th><th>"; I18N.dict.id["gen.L989.2.th4"] = "</th><th>";
+  I18N.dict.en["gen.L989.2.th5"] = "</th></tr></thead><tbody>"; I18N.dict.id["gen.L989.2.th5"] = "</th></tr></thead><tbody>";
+
+  // ===================== I18N-100P-CLOSEOUT-01: HTML 补充翻译 =====================
+  I18N.dict.en["sidebar.footer"] = "v1.0.0 Local"; I18N.dict.id["sidebar.footer"] = "v1.0.0 Lokal";
+  I18N.dict.en["lang.switcher_title"] = "Language"; I18N.dict.id["lang.switcher_title"] = "Bahasa";
 })();

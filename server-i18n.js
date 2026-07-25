@@ -348,12 +348,192 @@ const COST_ALLOCATION_ERROR_CATALOG = Object.freeze({
   "ca.tmpl.011": Object.freeze({ zh: "费用 {cost_category}/{cost_subcategory} 尚未配置分摊规则", en: "Cost {cost_category}/{cost_subcategory} has no allocation rule configured", id: "Biaya {cost_category}/{cost_subcategory} tidak memiliki aturan alokasi yang dikonfigurasi" })
 });
 
-// 合并目录：F1A (api.*) + F1B (se.* / ca.*)
+// ==================== I18N-100P-CLOSEOUT-01: 通用动态模板 (B2/B3/B4) ====================
+// 审批流校验、抄送人校验、PO提交校验、来源映射、SKU删除、入库、费用归属等动态消息。
+// 中文原文保持不变；EN/ID 沿用系统既有术语机械映射。
+const GENERAL_TEMPLATE_CATALOG = Object.freeze({
+  // --- B2: 审批流配置校验 (6) ---
+  "gt.tmpl.001": Object.freeze({ zh: "第 {lvl} 级审批人不能为空", en: "Level {lvl} approver cannot be empty", id: "Penyetuju level {lvl} tidak boleh kosong" }),
+  "gt.tmpl.002": Object.freeze({ zh: "第 {lvl} 级审批用户不存在（可能已被删除）", en: "Level {lvl} approval user does not exist (may have been deleted)", id: "Pengguna persetujuan level {lvl} tidak ada (mungkin telah dihapus)" }),
+  "gt.tmpl.003": Object.freeze({ zh: "第 {lvl} 级审批用户「{name}」状态非 active，不可选为审批人", en: "Level {lvl} approval user \u300c{name}\u300d status is not active and cannot be selected as approver", id: "Status pengguna persetujuan level {lvl} \u300c{name}\u300d bukan active dan tidak dapat dipilih sebagai penyetuju" }),
+  "gt.tmpl.004": Object.freeze({ zh: "第 {lvl} 级审批用户「{name}」未绑定有效角色", en: "Level {lvl} approval user \u300c{name}\u300d has no valid role bound", id: "Pengguna persetujuan level {lvl} \u300c{name}\u300d tidak memiliki peran yang valid" }),
+  "gt.tmpl.005": Object.freeze({ zh: "第 {lvl} 级审批用户「{name}」绑定的角色不存在", en: "The role bound to level {lvl} approval user \u300c{name}\u300d does not exist", id: "Peran yang terikat pada pengguna persetujuan level {lvl} \u300c{name}\u300d tidak ada" }),
+  "gt.tmpl.006": Object.freeze({ zh: "第 {lvl} 级审批用户「{name}」的角色「{roleName}」不具备 po_approve 权限，不可选为审批人", en: "The role \u300c{roleName}\u300d of level {lvl} approval user \u300c{name}\u300d does not have po_approve permission and cannot be selected as approver", id: "Peran \u300c{roleName}\u300d pengguna persetujuan level {lvl} \u300c{name}\u300d tidak memiliki izin po_approve dan tidak dapat dipilih sebagai penyetuju" }),
+  // --- B3: 抄送人校验 (2) ---
+  "gt.tmpl.007": Object.freeze({ zh: "抄送人「{uid}」不存在", en: "Cc recipient \u300c{uid}\u300d does not exist", id: "Penerima cc \u300c{uid}\u300d tidak ada" }),
+  "gt.tmpl.008": Object.freeze({ zh: "抄送人「{name}」已停用，无法抄送", en: "Cc recipient \u300c{name}\u300d is disabled and cannot be cc'd", id: "Penerima cc \u300c{name}\u300d dinonaktifkan dan tidak dapat di-cc" }),
+  // --- B4-1: PO提交审批流校验外层消息 (1) ---
+  "gt.tmpl.009": Object.freeze({ zh: "审批流配置无效，无法提交：{msg}。请先在系统管理修正 PO 审批流配置（指定具体审批人）。", en: "Approval flow configuration is invalid and cannot be submitted: {msg}. Please fix the PO approval flow configuration in System Settings (specify concrete approvers).", id: "Konfigurasi alur persetujuan tidak valid dan tidak dapat diajukan: {msg}. Silakan perbaiki konfigurasi alur persetujuan PO di Pengaturan Sistem (tentukan penyetuju konkret)." }),
+  // --- B4-2: 来源映射校验 (6) ---
+  "gt.tmpl.010": Object.freeze({ zh: "不支持的来源类型：{source_type}", en: "Unsupported source type: {source_type}", id: "Tipe sumber tidak didukung: {source_type}" }),
+  "gt.tmpl.011": Object.freeze({ zh: "{sourceLabel}（{source_type}）不支持费用事件{fee_type}", en: "{sourceLabel} ({source_type}) does not support fee event {fee_type}", id: "{sourceLabel} ({source_type}) tidak mendukung event biaya {fee_type}" }),
+  "gt.tmpl.012": Object.freeze({ zh: "所属一级类目\u201c{category_name}（{category_code}）\u201d已停用，来源映射只能保存为停用状态。", en: "Parent category \u201c{category_name} ({category_code})\u201d is disabled; the source mapping can only be saved as disabled.", id: "Kategori induk \u201c{category_name} ({category_code})\u201d dinonaktifkan; pemetaan sumber hanya dapat disimpan sebagai dinonaktifkan." }),
+  "gt.tmpl.013": Object.freeze({ zh: "所属二级类目\u201c{subcategory_name}（{subcategory_code}）\u201d已停用，来源映射只能保存为停用状态。", en: "Subcategory \u201c{subcategory_name} ({subcategory_code})\u201d is disabled; the source mapping can only be saved as disabled.", id: "Subkategori \u201c{subcategory_name} ({subcategory_code})\u201d dinonaktifkan; pemetaan sumber hanya dapat disimpan sebagai dinonaktifkan." }),
+  "gt.tmpl.014": Object.freeze({ zh: "{sourceLabel}（{source_type}）+ {feeLabel}（{fee_type}）已经映射到\u2018{targetName}（{targetCode}）\u2019，不能重复启用。", en: "{sourceLabel} ({source_type}) + {feeLabel} ({fee_type}) is already mapped to \u2018{targetName} ({targetCode})\u2019 and cannot be enabled again.", id: "{sourceLabel} ({source_type}) + {feeLabel} ({fee_type}) sudah dipetakan ke \u2018{targetName} ({targetCode})\u2019 dan tidak dapat diaktifkan lagi." }),
+  "gt.tmpl.015": Object.freeze({ zh: "有效来源映射冲突：{sourceLabel}（{source_type}）+ {feeLabel}（{fee_type}）已被其他有效映射占用。", en: "Active source mapping conflict: {sourceLabel} ({source_type}) + {feeLabel} ({fee_type}) is already occupied by another active mapping.", id: "Konflik pemetaan sumber aktif: {sourceLabel} ({source_type}) + {feeLabel} ({fee_type}) sudah diduduki oleh pemetaan aktif lain." }),
+  // --- B4-3: SKU/库存删除关联检查 (3) ---
+  "gt.tmpl.016": Object.freeze({ zh: "SKU已关联{label}数据（{cnt}条），不允许删除，请改为停用", en: "SKU is associated with {label} data ({cnt} records) and cannot be deleted; please disable it instead", id: "SKU terkait dengan data {label} ({cnt} catatan) dan tidak dapat dihapus; silakan nonaktifkan" }),
+  "gt.tmpl.017": Object.freeze({ zh: "已关联{label}数据（{cnt}条），不允许删除", en: "Associated with {label} data ({cnt} records); cannot delete", id: "Terkait dengan data {label} ({cnt} catatan); tidak dapat dihapus" }),
+  "gt.tmpl.018": Object.freeze({ zh: "已关联{label}（{cnt}条），不允许删除", en: "Associated with {label} ({cnt} records); cannot delete", id: "Terkait dengan {label} ({cnt} catatan); tidak dapat dihapus" }),
+  // --- B4-4: 出库快照截止日期缺失 (1) ---
+  "gt.tmpl.019": Object.freeze({ zh: "找不到国家「{country}」仓库「{warehouse}」对应的库存快照截止日期，无法自动判断是否扣减库存。请先在库存总表导入该国家+仓库的库存快照。", en: "Cannot find the inventory snapshot cutoff date for country \u300c{country}\u300d warehouse \u300c{warehouse}\u300d; unable to automatically determine whether to deduct stock. Please import the inventory snapshot for that country+warehouse in the inventory master table first.", id: "Tidak dapat menemukan tanggal batas snapshot inventaris untuk negara \u300c{country}\u300d gudang \u300c{warehouse}\u300d; tidak dapat menentukan secara otomatis apakah stok dikurangi. Silakan impor snapshot inventaris untuk negara+gudang tersebut di tabel induk inventaris terlebih dahulu." }),
+  // --- B4-5: PO采购价缺失 (1, 变量在前) ---
+  "gt.tmpl.020": Object.freeze({ zh: "{currency}采购价缺失", en: "{currency} purchase price is missing", id: "Harga pembelian {currency} tidak ditemukan" }),
+  // --- B4-6: 入库数量超余量 (1) ---
+  "gt.tmpl.021": Object.freeze({ zh: "入库数量超过可入库余量（最大 {maxInbound}）", en: "Inbound quantity exceeds the available inbound remainder (max {maxInbound})", id: "Kuantitas masuk melebihi sisa masuk yang tersedia (maks {maxInbound})" }),
+  // --- B4-7: 费用归属国家快照 (1) ---
+  "gt.tmpl.022": Object.freeze({ zh: "费用归属国家已快照为\u201c{existing}\u201d，不能直接修改", en: "Cost attribution country has been snapshotted as \u201c{existing}\u201d and cannot be modified directly", id: "Negara atribusi biaya telah di-snapshot sebagai \u201c{existing}\u201d dan tidak dapat diubah langsung" }),
+  // --- B4-8: CI入库批次SKU校验 (3) ---
+  "gt.tmpl.023": Object.freeze({ zh: "SKU {skuCode} 不存在", en: "SKU {skuCode} does not exist", id: "SKU {skuCode} tidak ada" }),
+  "gt.tmpl.024": Object.freeze({ zh: "SKU {skuCode} 不属于该CI明细", en: "SKU {skuCode} does not belong to this CI detail", id: "SKU {skuCode} bukan milik detail CI ini" }),
+  "gt.tmpl.025": Object.freeze({ zh: "SKU {skuCode} 原库存数量不能为负数", en: "SKU {skuCode} original stock quantity cannot be negative", id: "Kuantitas stok asli SKU {skuCode} tidak boleh negatif" })
+});
+
+// ==================== I18N-100P-B1：飞书通知模板三语 catalog ====================
+// 8 类真实通知模板（以 server.js FEISHU_NOTIFY_TEMPLATES 实际代码为准）。
+// 独立于 ALL_CATALOGS：不参与 API 错误翻译匹配，仅通过 notifyT() 按收件人语言生成。
+// 动态参数（po_no/ci_no/request_no/due_date/amount/level/plan_date）保持原样不翻译。
+// ci_ops_assigned 的"待定"场景拆为两个 key（_tbd 后缀），避免在模板内做条件判断。
+const NOTIFY_TEMPLATE_CATALOG = Object.freeze({
+  // 1. PO 提交审批 → 通知第 1 级审批人 + CC
+  "notify.submit": Object.freeze({ zh: "【审批通知】PO {po_no} 已提交审批，请您审批。", en: "[Approval Notice] PO {po_no} has been submitted for approval. Please review.", id: "[Pemberitahuan Persetujuan] PO {po_no} telah diajukan untuk persetujuan. Mohon tinjau." }),
+  // 2. PO 中间级审批通过 → 通知下一级审批人 + CC
+  "notify.approved_intermediate": Object.freeze({ zh: "【审批通知】PO {po_no} 第{level}级已通过，请您审批。", en: "[Approval Notice] PO {po_no} Level {level} approved. Please review.", id: "[Pemberitahuan Persetujuan] PO {po_no} Level {level} disetujui. Mohon tinjau." }),
+  // 3. PO 最终审批通过 → 通知提交人 + CC
+  "notify.approved_final": Object.freeze({ zh: "【审批通知】PO {po_no} 审批已全部通过。", en: "[Approval Notice] PO {po_no} has been fully approved.", id: "[Pemberitahuan Persetujuan] PO {po_no} telah sepenuhnya disetujui." }),
+  // 4. PO 审批驳回 → 通知提交人 + CC
+  "notify.reject": Object.freeze({ zh: "【审批通知】PO {po_no} 已被驳回。", en: "[Approval Notice] PO {po_no} has been rejected.", id: "[Pemberitahuan Persetujuan] PO {po_no} telah ditolak." }),
+  // 5a. CI 分配上架准备任务（有计划日期）
+  "notify.ci_ops_assigned": Object.freeze({ zh: "【上架准备】CI {ci_no} 已分配上架准备任务，计划上架日期：{plan_date}。", en: "[Listing Prep] CI {ci_no} has been assigned a listing preparation task. Planned listing date: {plan_date}.", id: "[Persiapan Listing] CI {ci_no} telah ditugaskan tugas persiapan listing. Tanggal rencana listing: {plan_date}." }),
+  // 5b. CI 分配上架准备任务（无计划日期 → 待定）
+  "notify.ci_ops_assigned_tbd": Object.freeze({ zh: "【上架准备】CI {ci_no} 已分配上架准备任务，计划上架日期待定。", en: "[Listing Prep] CI {ci_no} has been assigned a listing preparation task. Planned listing date: TBD.", id: "[Persiapan Listing] CI {ci_no} telah ditugaskan tugas persiapan listing. Tanggal rencana listing: belum ditentukan." }),
+  // 6. CI 上架准备完成（Ready）
+  "notify.ci_ops_ready": Object.freeze({ zh: "【上架准备】CI {ci_no} 上架准备已完成（Ready），可安排上架。", en: "[Listing Prep] CI {ci_no} listing preparation is complete (Ready). Listing can be scheduled.", id: "[Persiapan Listing] CI {ci_no} persiapan listing selesai (Ready). Listing dapat dijadwalkan." }),
+  // 7. 付款申请到期提醒（7 日内）
+  "notify.payment_due": Object.freeze({ zh: "【付款提醒】付款申请 {request_no} 将于 {due_date} 到期，应付金额 {amount}，请及时安排付款。", en: "[Payment Reminder] Payment request {request_no} will be due on {due_date}. Amount payable: {amount}. Please arrange payment promptly.", id: "[Pengingat Pembayaran] Permintaan pembayaran {request_no} akan jatuh tempo pada {due_date}. Jumlah terutang: {amount}. Mohon segera atur pembayaran." }),
+  // 8. 付款申请逾期提醒
+  "notify.payment_overdue": Object.freeze({ zh: "【付款逾期】付款申请 {request_no} 已于 {due_date} 逾期，应付金额 {amount}，请尽快处理。", en: "[Payment Overdue] Payment request {request_no} is overdue since {due_date}. Amount payable: {amount}. Please process as soon as possible.", id: "[Pembayaran Terlambat] Permintaan pembayaran {request_no} terlambat sejak {due_date}. Jumlah terutang: {amount}. Mohon segera proses." })
+});
+
+// 按收件人语言生成通知文本。lang 非法/缺失时回退 zh。
+function notifyT(lang, key, vars) {
+  const normalized = normalizeLanguage(lang);
+  const row = NOTIFY_TEMPLATE_CATALOG[key];
+  if (!row) return key;
+  const text = normalized === 'zh' ? row.zh : (row[normalized] || row.zh);
+  return interpolate(text, vars);
+}
+
+// ==================== 订单预测展示层三语：sales_reason / ai_business_advice / sales_status / action / risk_tags ====================
+// 这些字段由 classifySkuState / buildAiAdvice 生成中文确定性模板并存入数据库。
+// GET 端点读取数据库后按请求语言翻译为显示文案。
+// 模板无动态参数（阈值 0.5/1.5/2/30/180 硬编码在字符串中），翻译内容与中文信息等价。
+// 不修改 classifySkuState / buildAiAdvice 判断逻辑、公式、阈值和 API 字段结构。
+const FORECAST_DISPLAY_CATALOG = Object.freeze({
+  // --- sales_status ---
+  "正常动销": Object.freeze({ zh: "正常动销", en: "Normal Sales", id: "Penjualan Normal" }),
+  "清仓": Object.freeze({ zh: "清仓", en: "Clearance", id: "Clearance" }),
+  "停采/停产": Object.freeze({ zh: "停采/停产", en: "Discontinued", id: "Dihentikan" }),
+  "新品/销售数据不足": Object.freeze({ zh: "新品/销售数据不足", en: "New Product / Insufficient Sales", id: "Produk Baru / Data Penjualan Tidak Cukup" }),
+  "无有效销售": Object.freeze({ zh: "无有效销售", en: "No Effective Sales", id: "Tidak Ada Penjualan Efektif" }),
+  "缺货": Object.freeze({ zh: "缺货", en: "Out of Stock", id: "Kehabisan Stok" }),
+  "缺货风险": Object.freeze({ zh: "缺货风险", en: "Stockout Risk", id: "Risiko Kehabisan Stok" }),
+  "呆滞": Object.freeze({ zh: "呆滞", en: "Stagnant", id: "Stagnan" }),
+  "慢销": Object.freeze({ zh: "慢销", en: "Slow Sales", id: "Penjualan Lambat" }),
+  "停采/清库存": Object.freeze({ zh: "停采/清库存", en: "Discontinued / Clear Inventory", id: "Dihentikan / Bersihkan Persediaan" }),
+
+  // --- sales_reason ---
+  "销量与周转正常": Object.freeze({ zh: "销量与周转正常", en: "Sales and turnover are normal", id: "Penjualan dan perputaran normal" }),
+  "生命周期为清仓期": Object.freeze({ zh: "生命周期为清仓期", en: "Lifecycle is in clearance phase", id: "Siklus hidup berada di fase clearance" }),
+  "生命周期为停采/停产": Object.freeze({ zh: "生命周期为停采/停产", en: "Lifecycle is discontinued", id: "Siklus hidup telah dihentikan" }),
+  "尚在新品保护期内，销售时间不足": Object.freeze({ zh: "尚在新品保护期内，销售时间不足", en: "Still within new product protection period, sales time insufficient", id: "Masih dalam masa perlindungan produk baru, waktu penjualan tidak cukup" }),
+  "已过新品保护期，但历史无有效销量": Object.freeze({ zh: "已过新品保护期，但历史无有效销量", en: "Past new product protection period, but no historical effective sales", id: "Lewat masa perlindungan produk baru, tetapi tidak ada penjualan efektif historis" }),
+  "当前可用库存为0，近期销量可能被缺货压低": Object.freeze({ zh: "当前可用库存为0，近期销量可能被缺货压低", en: "Available inventory is 0, recent sales may be depressed by stockout", id: "Persediaan tersedia 0, penjualan terbaru mungkin tertekan oleh kehabisan stok" }),
+  "可用库存周转<0.5个月，近期销量可能被缺货压低": Object.freeze({ zh: "可用库存周转<0.5个月，近期销量可能被缺货压低", en: "Available inventory turnover < 0.5 months, recent sales may be depressed by stockout", id: "Perputaran persediaan tersedia < 0,5 bulan, penjualan terbaru mungkin tertekan oleh kehabisan stok" }),
+  "近30天无有效销量且仍有库存": Object.freeze({ zh: "近30天无有效销量且仍有库存", en: "No effective sales in last 30 days while inventory remains", id: "Tidak ada penjualan efektif dalam 30 hari terakhir dan stok masih ada" }),
+  "有销量但周转超目标2倍": Object.freeze({ zh: "有销量但周转超目标2倍", en: "Has sales but turnover exceeds 2x target", id: "Ada penjualan tetapi perputaran melebihi 2x target" }),
+  "销量失真：当前可用库存为0，近期销量可能被缺货压低，已按过去4个月最高月销量作为补货参考。": Object.freeze({ zh: "销量失真：当前可用库存为0，近期销量可能被缺货压低，已按过去4个月最高月销量作为补货参考。", en: "Sales distortion: available inventory is 0, recent sales may be depressed by stockout, using peak monthly sales of past 4 months as replenishment reference.", id: "Distorsi penjualan: persediaan tersedia 0, penjualan terbaru mungkin tertekan oleh kehabisan stok, menggunakan penjualan bulanan tertinggi 4 bulan terakhir sebagai referensi pengisian ulang." }),
+  "品牌已设为停采（停止合作），不参与补货建议，优先消化库存": Object.freeze({ zh: "品牌已设为停采（停止合作），不参与补货建议，优先消化库存", en: "Brand is set to discontinued (cooperation stopped), not included in replenishment suggestions, prioritize inventory clearance", id: "Merek diatur sebagai dihentikan (kerja sama dihentikan), tidak termasuk dalam saran pengisian ulang, prioritaskan pengurangan stok" }),
+
+  // --- action ---
+  "停止采购，优先消化库存": Object.freeze({ zh: "停止采购，优先消化库存", en: "Stop purchasing, prioritize inventory clearance", id: "Hentikan pembelian, prioritaskan pengurangan stok" }),
+  "停止采购，不参与补货": Object.freeze({ zh: "停止采购，不参与补货", en: "Stop purchasing, not included in replenishment", id: "Hentikan pembelian, tidak termasuk dalam pengisian ulang" }),
+  "人工复核目标周转，暂缓补货": Object.freeze({ zh: "人工复核目标周转，暂缓补货", en: "Manually review target turnover, delay replenishment", id: "Tinjau manual perputaran target, tunda pengisian ulang" }),
+  "检查上架/价格/渠道，暂缓补货": Object.freeze({ zh: "检查上架/价格/渠道，暂缓补货", en: "Check listing/price/channel, delay replenishment", id: "Periksa listing/harga/kanal, tunda pengisian ulang" }),
+  "优先复核补货，确认现货": Object.freeze({ zh: "优先复核补货，确认现货", en: "Prioritize replenishment review, confirm stock", id: "Prioritaskan tinjauan pengisian ulang, konfirmasi stok" }),
+  "优先复核补货，避免断货": Object.freeze({ zh: "优先复核补货，避免断货", en: "Prioritize replenishment review, avoid stockout", id: "Prioritaskan tinjauan pengisian ulang, hindari kehabisan stok" }),
+  "暂停补货，先清库存": Object.freeze({ zh: "暂停补货，先清库存", en: "Pause replenishment, clear inventory first", id: "Jeda pengisian ulang, bersihkan stok dahulu" }),
+  "谨慎补货，先消化库存": Object.freeze({ zh: "谨慎补货，先消化库存", en: "Replenish cautiously, digest inventory first", id: "Isi ulang dengan hati-hati, cerna stok dahulu" }),
+  "按目标周转正常补货": Object.freeze({ zh: "按目标周转正常补货", en: "Replenish per target turnover normally", id: "Isi ulang sesuai perputaran target secara normal" }),
+  "停止采购，优先清库存": Object.freeze({ zh: "停止采购，优先清库存", en: "Stop purchasing, prioritize inventory clearance", id: "Hentikan pembelian, prioritaskan pengurangan stok" }),
+  "人工复核后决定": Object.freeze({ zh: "人工复核后决定", en: "Decide after manual review", id: "Putuskan setelah tinjauan manual" }),
+
+  // --- ai_business_advice MAIN ---
+  "生命周期不适合正常补货，停止采购，优先消化库存。": Object.freeze({ zh: "生命周期不适合正常补货，停止采购，优先消化库存。", en: "Lifecycle is not suitable for normal replenishment, stop purchasing, prioritize inventory clearance.", id: "Siklus hidup tidak cocok untuk pengisian ulang normal, hentikan pembelian, prioritaskan pengurangan stok." }),
+  "销售时间不足，先人工复核目标周转，避免短期误判。": Object.freeze({ zh: "销售时间不足，先人工复核目标周转，避免短期误判。", en: "Insufficient sales time, manually review target turnover first to avoid short-term misjudgement.", id: "Waktu penjualan tidak cukup, tinjau manual perputaran target dahulu untuk menghindari kesalahan penilaian jangka pendek." }),
+  "暂无有效销量，先检查上架、价格、渠道和库存状态。": Object.freeze({ zh: "暂无有效销量，先检查上架、价格、渠道和库存状态。", en: "No effective sales yet, check listing, price, channel and inventory status first.", id: "Belum ada penjualan efektif, periksa listing, harga, kanal dan status stok dahulu." }),
+  "现货为0，先复核补货；低销量可能由缺货造成。": Object.freeze({ zh: "现货为0，先复核补货；低销量可能由缺货造成。", en: "Stock is 0, review replenishment first; low sales may be caused by stockout.", id: "Stok 0, tinjau pengisian ulang dahulu; penjualan rendah mungkin disebabkan kehabisan stok." }),
+  "现货周转低于0.5个月，优先复核补货，避免断货压低销量。": Object.freeze({ zh: "现货周转低于0.5个月，优先复核补货，避免断货压低销量。", en: "Available turnover is below 0.5 months, prioritize replenishment review to avoid stockout depressing sales.", id: "Perputaran tersedia di bawah 0,5 bulan, prioritaskan tinjauan pengisian ulang untuk menghindari kehabisan stok yang menekan penjualan." }),
+  "30天无销量且仍有库存，暂停补货，先清库存。": Object.freeze({ zh: "30天无销量且仍有库存，暂停补货，先清库存。", en: "No sales in 30 days while inventory remains, pause replenishment and clear inventory first.", id: "Tidak ada penjualan dalam 30 hari dan stok masih ada, jeda pengisian ulang dan bersihkan stok dahulu." }),
+  "有销量但周转超目标2倍，谨慎补货，先消化库存。": Object.freeze({ zh: "有销量但周转超目标2倍，谨慎补货，先消化库存。", en: "Has sales but turnover exceeds 2x target, replenish cautiously and digest inventory first.", id: "Ada penjualan tetapi perputaran melebihi 2x target, isi ulang dengan hati-hati dan cerna stok dahulu." }),
+  "销量和周转正常，按目标周转正常补货。": Object.freeze({ zh: "销量和周转正常，按目标周转正常补货。", en: "Sales and turnover are normal, replenish per target turnover.", id: "Penjualan dan perputaran normal, isi ulang sesuai perputaran target." }),
+  "数据不足，建议人工复核销量、库存、周转和生命周期。": Object.freeze({ zh: "数据不足，建议人工复核销量、库存、周转和生命周期。", en: "Insufficient data, recommend manual review of sales, inventory, turnover and lifecycle.", id: "Data tidak cukup, disarankan tinjauan manual penjualan, stok, perputaran dan siklus hidup." }),
+
+  // --- ai_business_advice RISK ---
+  "周转超目标1.5倍，控制采购，避免库存资金堆高。": Object.freeze({ zh: "周转超目标1.5倍，控制采购，避免库存资金堆高。", en: "Turnover exceeds 1.5x target, control purchasing to avoid inventory capital buildup.", id: "Perputaran melebihi 1,5x target, kendalikan pembelian untuk menghindari penumpukan modal persediaan." }),
+  "周转超目标2倍，减少采购，优先消化库存。": Object.freeze({ zh: "周转超目标2倍，减少采购，优先消化库存。", en: "Turnover exceeds 2x target, reduce purchasing and prioritize inventory clearance.", id: "Perputaran melebihi 2x target, kurangi pembelian dan prioritaskan pengurangan stok." }),
+  "库龄超180天且周转偏高，排查老库存、价格和渠道问题。": Object.freeze({ zh: "库龄超180天且周转偏高，排查老库存、价格和渠道问题。", en: "Age exceeds 180 days with high turnover, investigate old inventory, price and channel issues.", id: "Usia melebihi 180 hari dengan perputaran tinggi, periksa masalah stok lama, harga dan kanal." }),
+  "缺少入库日期，先补全数据，避免库龄判断失真。": Object.freeze({ zh: "缺少入库日期，先补全数据，避免库龄判断失真。", en: "Missing inbound date, complete the data first to avoid distorted age judgement.", id: "Tanggal masuk hilang, lengkapi data dahulu untuk menghindari penilaian usia yang distorsi." }),
+
+  // --- risk_tags (单个标签) ---
+  "高库存关注": Object.freeze({ zh: "高库存关注", en: "High Stock Attention", id: "Perhatian Stok Tinggi" }),
+  "高库存严重": Object.freeze({ zh: "高库存严重", en: "High Stock Severe", id: "Stok Tinggi Parah" }),
+  "高库龄风险": Object.freeze({ zh: "高库龄风险", en: "High Age Risk", id: "Risiko Usia Tinggi" }),
+  "库龄未知": Object.freeze({ zh: "库龄未知", en: "Age Unknown", id: "Usia Tidak Diketahui" }),
+  "销量失真": Object.freeze({ zh: "销量失真", en: "Sales Distortion", id: "Distorsi Penjualan" }),
+  "新品无销量": Object.freeze({ zh: "新品无销量", en: "New Product No Sales", id: "Produk Baru Tanpa Penjualan" }),
+
+  // --- sales_group ---
+  "滞销": Object.freeze({ zh: "滞销", en: "Stagnant", id: "Stagnan" }),
+  "低动销": Object.freeze({ zh: "低动销", en: "Low Sales", id: "Penjualan Rendah" }),
+  "中动销": Object.freeze({ zh: "中动销", en: "Medium Sales", id: "Penjualan Sedang" }),
+  "高动销": Object.freeze({ zh: "高动销", en: "High Sales", id: "Penjualan Tinggi" })
+});
+
+// 按请求语言翻译订单预测展示字段（仅 sales_reason / ai_business_advice）
+// 全量匹配原则：完整文本或其所有组成部分必须全部精确命中已知模板才翻译；
+// 任意组成部分未知 → 整段原文返回（禁止部分翻译，保护用户输入/自由文本）
+// 阈值 0.5/1.5/2/30/180/4 等价保留；MAIN/RISK 顺序不变
+function forecastDisplayT(lang, zhText) {
+  if (!zhText || normalizeLanguage(lang) === 'zh') return zhText;
+  const normalized = normalizeLanguage(lang);
+  var text = String(zhText);
+  // 1. 完整文本精确命中一个已知模板（sales_reason 单句、ai_business_advice 单 MAIN 句子）
+  var row = FORECAST_DISPLAY_CATALOG[text];
+  if (row) return row[normalized] || row.zh;
+  // 2. ai_business_advice = MAIN句 + 空格 + RISK句（零个或多个），按空格分割
+  //    全量匹配：所有组成部分必须全部精确命中，否则整段原文返回
+  var parts = text.split(' ');
+  // 空格分割后只有一段且未命中 → 整段原文返回
+  if (parts.length <= 1) return text;
+  var translated = [];
+  for (var i = 0; i < parts.length; i++) {
+    var r = FORECAST_DISPLAY_CATALOG[parts[i]];
+    if (!r) return text; // 任意组成部分未知 → 整段原文返回
+    translated.push(r[normalized] || r.zh);
+  }
+  return translated.join(' ');
+}
+// forecastTagT 已撤回：枚举字段（sales_status/action/risk_tags/sales_group）保持数据库原始值，由前端格式化三语
+
+// 合并目录：F1A (api.*) + F1B (se.* / ca.*) + CLOSEOUT-01 (gt.tmpl.*)
 const ALL_CATALOGS = Object.freeze(
-  Object.assign({}, API_CATALOG, SETTLEMENT_ERROR_CATALOG, COST_ALLOCATION_ERROR_CATALOG)
+  Object.assign({}, API_CATALOG, SETTLEMENT_ERROR_CATALOG, COST_ALLOCATION_ERROR_CATALOG, GENERAL_TEMPLATE_CATALOG)
 );
 
-const PREFIX_KEYS = Object.freeze(["api.184","api.112","api.138","api.195","api.151","api.035","api.041","api.086","api.020","api.109","api.205","api.150","api.188","api.063","api.142","api.143"]);
+// api.112 已改为 gt.tmpl.009 全模板匹配（外层消息含动态 badMsg + 固定后缀），
+// 不再作为前缀匹配，避免仅翻译前缀导致 badMsg 和后缀中文泄漏。
+const PREFIX_KEYS = Object.freeze(["api.184","api.138","api.195","api.151","api.035","api.041","api.086","api.020","api.109","api.205","api.150","api.188","api.063","api.142","api.143"]);
 const EXACT_INDEX = new Map(Object.entries(ALL_CATALOGS).map(([key, row]) => [row.zh, key]));
 const PREFIX_ROWS = PREFIX_KEYS
   .map(key => ({ key, zh: API_CATALOG[key].zh }))
@@ -387,6 +567,11 @@ for (const [key, row] of Object.entries(SETTLEMENT_ERROR_CATALOG)) {
 }
 for (const [key, row] of Object.entries(COST_ALLOCATION_ERROR_CATALOG)) {
   if (key.startsWith('ca.tmpl.')) {
+    TEMPLATE_MATCHERS.push(_buildTemplateMatcher(key, row.zh));
+  }
+}
+for (const [key, row] of Object.entries(GENERAL_TEMPLATE_CATALOG)) {
+  if (key.startsWith('gt.tmpl.')) {
     TEMPLATE_MATCHERS.push(_buildTemplateMatcher(key, row.zh));
   }
 }
@@ -509,6 +694,9 @@ module.exports = Object.freeze({
   API_CATALOG,
   SETTLEMENT_ERROR_CATALOG,
   COST_ALLOCATION_ERROR_CATALOG,
+  GENERAL_TEMPLATE_CATALOG,
+  NOTIFY_TEMPLATE_CATALOG,
+  FORECAST_DISPLAY_CATALOG,
   ALL_CATALOGS,
   TEMPLATE_MATCHERS,
   LANGUAGE_COOKIE_NAME,
@@ -516,6 +704,8 @@ module.exports = Object.freeze({
   normalizeLanguage,
   resolveRequestLanguage,
   serverT,
+  notifyT,
+  forecastDisplayT,
   translateApprovedText,
   localizeResponseBody
 });

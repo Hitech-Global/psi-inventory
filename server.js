@@ -30,7 +30,9 @@ const {
   LANGUAGE_COOKIE_NAME,
   normalizeLanguage,
   resolveRequestLanguage,
-  localizeResponseBody
+  localizeResponseBody,
+  notifyT,
+  forecastDisplayT
 } = require('./server-i18n');
 
 // ==================== AUTH-FEISHU-CORE 配置与工具 ====================
@@ -220,28 +222,34 @@ async function sendFeishuTextMessage(openId, text) {
 }
 
 // V1 固定文案模板（不建模板管理）
+// I18N-100P-B1：改为按收件人 language_preference 生成三语文本。
+// 每个 build 函数接收 (lang, ...动态参数)，内部调用 notifyT 从 NOTIFY_TEMPLATE_CATALOG 取对应语言模板。
+// 动态参数（po_no/ci_no/request_no/due_date/amount/level/plan_date）保持原样不翻译。
 const FEISHU_NOTIFY_TEMPLATES = {
-  submit: (poNo) => `【审批通知】PO ${poNo} 已提交审批，请您审批。`,
-  approved_intermediate: (poNo, level) => `【审批通知】PO ${poNo} 第${level}级已通过，请您审批。`,
-  approved_final: (poNo) => `【审批通知】PO ${poNo} 审批已全部通过。`,
-  reject: (poNo) => `【审批通知】PO ${poNo} 已被驳回。`,
-  ci_ops_assigned: (ciNo, planDate) => `【上架准备】CI ${ciNo} 已分配上架准备任务，计划上架日期：${planDate || '待定'}。`,
-  ci_ops_ready: (ciNo) => `【上架准备】CI ${ciNo} 上架准备已完成（Ready），可安排上架。`,
-  payment_due: (prNo, dueDate, amt) => `【付款提醒】付款申请 ${prNo} 将于 ${dueDate} 到期，应付金额 ${amt}，请及时安排付款。`,
-  payment_overdue: (prNo, dueDate, amt) => `【付款逾期】付款申请 ${prNo} 已于 ${dueDate} 逾期，应付金额 ${amt}，请尽快处理。`
+  submit: (lang, poNo) => notifyT(lang, 'notify.submit', { po_no: poNo }),
+  approved_intermediate: (lang, poNo, level) => notifyT(lang, 'notify.approved_intermediate', { po_no: poNo, level: level }),
+  approved_final: (lang, poNo) => notifyT(lang, 'notify.approved_final', { po_no: poNo }),
+  reject: (lang, poNo) => notifyT(lang, 'notify.reject', { po_no: poNo }),
+  ci_ops_assigned: (lang, ciNo, planDate) => planDate
+    ? notifyT(lang, 'notify.ci_ops_assigned', { ci_no: ciNo, plan_date: planDate })
+    : notifyT(lang, 'notify.ci_ops_assigned_tbd', { ci_no: ciNo }),
+  ci_ops_ready: (lang, ciNo) => notifyT(lang, 'notify.ci_ops_ready', { ci_no: ciNo }),
+  payment_due: (lang, prNo, dueDate, amt) => notifyT(lang, 'notify.payment_due', { request_no: prNo, due_date: dueDate, amount: amt }),
+  payment_overdue: (lang, prNo, dueDate, amt) => notifyT(lang, 'notify.payment_overdue', { request_no: prNo, due_date: dueDate, amount: amt })
 };
 
 // 审批通知：事务外 best-effort；飞书异常不影响审批结果；仅向有 feishu_open_id 的用户发送；无收件人则静默返回。
+// I18N-100P-B1：收件人 Map 存储 { name, lang }，按每位收件人的 language_preference 分别生成对应语言文本。
 async function notifyApprovalParticipants(approvalId, eventType, ctx) {
   try {
     const approval = queryOne('SELECT * FROM approval_records WHERE id = ?', [approvalId]);
     if (!approval) return;
     const poNo = (ctx && ctx.po_no) || approval.business_code || '';
-    const recipients = new Map(); // open_id -> name
+    const recipients = new Map(); // open_id -> { name, lang }
     const addUser = (userId) => {
       if (!userId) return;
-      const u = queryOne('SELECT id, name, feishu_open_id FROM users WHERE id = ?', [userId]);
-      if (u && u.feishu_open_id) recipients.set(u.feishu_open_id, u.name || '');
+      const u = queryOne('SELECT id, name, feishu_open_id, language_preference FROM users WHERE id = ?', [userId]);
+      if (u && u.feishu_open_id) recipients.set(u.feishu_open_id, { name: u.name || '', lang: normalizeLanguage(u.language_preference) });
     };
     const ccRows = query('SELECT user_id FROM business_participants WHERE business_type=? AND business_id=? AND participant_type=?', ['approval', approvalId, 'cc']).rows;
     for (const r of ccRows) addUser(r.user_id);
@@ -259,8 +267,8 @@ async function notifyApprovalParticipants(approvalId, eventType, ctx) {
     }
     if (recipients.size === 0) return;
     const build = FEISHU_NOTIFY_TEMPLATES[eventType];
-    const text = build ? build(poNo, approval.current_level) : `【审批通知】PO ${poNo} 状态更新。`;
-    for (const [openId] of recipients) {
+    for (const [openId, info] of recipients) {
+      const text = build ? build(info.lang, poNo, approval.current_level) : notifyT(info.lang, 'notify.submit', { po_no: poNo });
       try { await sendFeishuTextMessage(openId, text); }
       catch (e) { console.error('[FEISHU-NOTIFY] 发送失败 open_id=' + openId + ' event=' + eventType + ':', e.message); }
     }
@@ -270,22 +278,23 @@ async function notifyApprovalParticipants(approvalId, eventType, ctx) {
 }
 
 // PUR-OPS-COLLAB-01：通用业务参与人通知（复用 business_participants，支持 business_type='ci' 等；与审批通知解耦）
+// I18N-100P-B1：按收件人 language_preference 分别生成对应语言文本。
 async function notifyBusinessParticipants(businessType, businessId, eventType, ctx) {
   try {
     const code = (ctx && ctx.code) || businessId || '';
-    const recipients = new Map(); // open_id -> name
+    const recipients = new Map(); // open_id -> { name, lang }
     const addUser = (userId) => {
       if (!userId) return;
-      const u = queryOne('SELECT id, name, feishu_open_id FROM users WHERE id = ?', [userId]);
-      if (u && u.feishu_open_id) recipients.set(u.feishu_open_id, u.name || '');
+      const u = queryOne('SELECT id, name, feishu_open_id, language_preference FROM users WHERE id = ?', [userId]);
+      if (u && u.feishu_open_id) recipients.set(u.feishu_open_id, { name: u.name || '', lang: normalizeLanguage(u.language_preference) });
     };
     const rows = query('SELECT user_id FROM business_participants WHERE business_type=? AND business_id=? AND participant_type IN (?,?)', [businessType, businessId, 'cc', 'owner']).rows;
     for (const r of rows) addUser(r.user_id);
     if (recipients.size === 0) return;
     const build = FEISHU_NOTIFY_TEMPLATES[eventType];
     if (!build) return;
-    const text = build(code, ctx && ctx.plan_date);
-    for (const [openId] of recipients) {
+    for (const [openId, info] of recipients) {
+      const text = build(info.lang, code, ctx && ctx.plan_date);
       try { await sendFeishuTextMessage(openId, text); }
       catch (e) { console.error('[FEISHU-NOTIFY] 发送失败 open_id=' + openId + ' event=' + eventType + ':', e.message); }
     }
@@ -297,6 +306,7 @@ async function notifyBusinessParticipants(businessType, businessId, eventType, c
 // ③ 应付到期/逾期提醒扫描（仅 server.js；复用 sendFeishuTextMessage；best-effort；不改付款状态）
 // 收件人 = 具 payment_approve 权限的 active 用户（有 feishu_open_id）+ business_participants(payment_reminder) CC
 // 去重 = 复用 remind_date 作"最后一次提醒日期"哨兵；同一天同一付款申请不重复发送
+// I18N-100P-B1：按收件人 language_preference 分别生成对应语言文本。
 async function scanPaymentReminders() {
   const result = { due_count: 0, overdue_count: 0, sent_count: 0, skipped: 0 };
   try {
@@ -305,11 +315,11 @@ async function scanPaymentReminders() {
     const d7 = new Date(now.getTime() + 7 * 86400000).toISOString().split('T')[0];
 
     // 收件人：具 payment_approve 权限的 active 用户
-    const recipients = new Map(); // open_id -> name
+    const recipients = new Map(); // open_id -> { name, lang }
     const addUser = (userId) => {
       if (!userId) return;
-      const u = queryOne('SELECT id, name, feishu_open_id, status FROM users WHERE id = ?', [userId]);
-      if (u && u.feishu_open_id && u.status === 'active') recipients.set(u.feishu_open_id, u.name || '');
+      const u = queryOne('SELECT id, name, feishu_open_id, status, language_preference FROM users WHERE id = ?', [userId]);
+      if (u && u.feishu_open_id && u.status === 'active') recipients.set(u.feishu_open_id, { name: u.name || '', lang: normalizeLanguage(u.language_preference) });
     };
     const financeUsers = query(`SELECT u.id, r.permissions AS role_permissions FROM users u LEFT JOIN roles r ON u.role_id = r.id WHERE u.status = 'active'`).rows;
     for (const fu of financeUsers) {
@@ -328,11 +338,11 @@ async function scanPaymentReminders() {
       for (const r of ccRows) addUser(r.user_id);
       if (recipients.size === 0) { result.skipped += 1; continue; }
       const amt = (pr.rmb_amount || pr.unpaid_amount || 0);
-      const text = isOverdue
-        ? FEISHU_NOTIFY_TEMPLATES.payment_overdue(pr.request_no, pr.payable_date, amt)
-        : FEISHU_NOTIFY_TEMPLATES.payment_due(pr.request_no, pr.payable_date, amt);
       let sentAny = false;
-      for (const [openId] of recipients) {
+      for (const [openId, info] of recipients) {
+        const text = isOverdue
+          ? FEISHU_NOTIFY_TEMPLATES.payment_overdue(info.lang, pr.request_no, pr.payable_date, amt)
+          : FEISHU_NOTIFY_TEMPLATES.payment_due(info.lang, pr.request_no, pr.payable_date, amt);
         try { await sendFeishuTextMessage(openId, text); sentAny = true; }
         catch (e) { console.error('[FEISHU-NOTIFY] 付款提醒发送失败 open_id=' + openId + ' pr=' + pr.id + ':', e.message); }
       }
@@ -466,7 +476,7 @@ function csrfGuard(req, res, next) {
   const allowed = TRUSTED_ORIGINS.concat([selfOrigin]);
   let ok = false;
   try { ok = allowed.includes(new URL(origin).origin); } catch (e) { ok = false; }
-  if (!ok) return res.status(403).json({ error: '跨站请求被拒绝（CSRF 防护）' });
+  if (!ok) { return res.status(403).json({ error: '跨站请求被拒绝（CSRF 防护）' }); }
   next();
 }
 app.use(csrfGuard);
@@ -477,11 +487,11 @@ function apiAuth(req, res, next) {
   if (PUBLIC_AUTH_PREFIXES.some(p => url === p || url.indexOf(p + '?') === 0)) return next();
 
   const token = parseCookies(req)[SESSION_COOKIE_NAME];
-  if (!token) return res.status(401).json({ error: '未登录' });
+  if (!token) { return res.status(401).json({ error: '未登录' }); }
 
   const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
   const sess = queryOne("SELECT * FROM sessions WHERE token_hash=? AND expires_at > datetime('now')", [tokenHash]);
-  if (!sess) return res.status(401).json({ error: '会话无效或已过期' });
+  if (!sess) { return res.status(401).json({ error: '会话无效或已过期' }); }
 
   const user = queryOne('SELECT * FROM users WHERE id=?', [sess.user_id]);
   if (!user) {
@@ -609,21 +619,37 @@ app.post('/api/auth/local/login', asyncHandler((req, res) => {
   createSessionForUser(res, user, ua, ip);
   const role = queryOne('SELECT * FROM roles WHERE id=?', [user.role_id]);
   const perms = role ? JSON.parse(role.permissions || '[]') : [];
-  res.json({ id: user.id, username: user.username, name: user.name, role_id: user.role_id, role_name: role ? role.name : '', status: user.status, permissions: perms });
+  res.json({ id: user.id, username: user.username, name: user.name, role_id: user.role_id, role_name: role ? role.name : '', status: user.status, permissions: perms, language_preference: normalizeLanguage(user.language_preference) });
 }));
 
 // 当前登录用户（pending 仅返回自身状态，业务接口由 apiAuth 拦截）
 app.get('/api/me', asyncHandler((req, res) => {
   if (!req.currentUserId) return res.status(401).json({ error: '未登录' });
-  const user = queryOne('SELECT id,username,name,role_id,status,email,auth_source,last_login_at FROM users WHERE id=?', [req.currentUserId]);
+  const user = queryOne('SELECT id,username,name,role_id,status,email,auth_source,last_login_at,language_preference FROM users WHERE id=?', [req.currentUserId]);
   if (!user) return res.status(401).json({ error: '账号不存在' });
   const role = queryOne('SELECT * FROM roles WHERE id=?', [user.role_id]);
   res.json({
     id: user.id, username: user.username, name: user.name,
     role_id: user.role_id, role_name: role ? role.name : '',
     status: user.status, email: user.email, auth_source: user.auth_source,
+    language_preference: normalizeLanguage(user.language_preference),
     permissions: req.currentUserPermissions || (role ? JSON.parse(role.permissions || '[]') : [])
   });
+}));
+
+// I18N-100P-B1：自助语言偏好保存（仅登录用户；仅改自己；CSRF 由现有中间件保护；白名单 zh/en/id）
+app.put('/api/users/me/language-preference', asyncHandler((req, res) => {
+  try {
+    if (!req.currentUserId) { return res.status(401).json({ error: '未登录' }); }
+    const raw = req.body && req.body.language_preference;
+    if (raw !== 'zh' && raw !== 'en' && raw !== 'id') {
+      return res.status(400).json({ error: 'language_preference 仅允许 zh、en、id' });
+    }
+    run('UPDATE users SET language_preference=? WHERE id=?', [raw, req.currentUserId]);
+    res.json({ language_preference: raw });
+  } catch (e) {
+    throw e;
+  }
 }));
 
 // 登出：销毁 Session + 清除 Cookie
@@ -640,9 +666,10 @@ app.post('/api/logout', asyncHandler((req, res) => {
 // ==================== 用户管理 ====================
 app.get('/api/users', requireApiPermission('user_manage'), asyncHandler((req, res) => {
   try {
-    const rows = query('SELECT id, username, name, role_id, status, email, auth_source, feishu_open_id, feishu_union_id, last_login_at, created_at FROM users ORDER BY created_at DESC').rows;
+    const rows = query('SELECT id, username, name, role_id, status, email, auth_source, feishu_open_id, feishu_union_id, last_login_at, created_at, language_preference FROM users ORDER BY created_at DESC').rows;
     const masked = rows.map(u => ({
       ...u,
+      language_preference: normalizeLanguage(u.language_preference),
       feishu_union_id: u.feishu_union_id ? ('****' + u.feishu_union_id.slice(-4)) : '',
       feishu_open_id: u.feishu_open_id ? ('****' + u.feishu_open_id.slice(-4)) : ''
     }));
@@ -652,25 +679,27 @@ app.get('/api/users', requireApiPermission('user_manage'), asyncHandler((req, re
 
 app.post('/api/users', requireApiPermission('user_manage'), asyncHandler((req, res) => {
   try {
-    const { id, username, name, role_id, status, email, auth_source, password, password_hash } = req.body;
+    const { id, username, name, role_id, status, email, auth_source, password, password_hash, language_preference } = req.body;
     if (!username || !name) return res.status(400).json({ error: '用户名和姓名不能为空' });
     if (password || password_hash || auth_source === 'local') {
       return res.status(400).json({ error: '不允许创建本地密码账号' });
     }
+    // I18N-100P-B1：语言偏好白名单校验（缺失默认 zh）
+    const lp = (language_preference === 'en' || language_preference === 'id') ? language_preference : 'zh';
     const exist = queryOne('SELECT id FROM users WHERE username = ?', [username]);
     if (exist) return res.status(400).json({ error: '用户名已存在' });
     const userId = id || genId('user');
     // 新建用户默认 pending + role_id=NULL（待管理员启用并分配角色）；仅飞书来源
-    run(`INSERT INTO users (id, username, name, role_id, status, email, auth_source) VALUES (?, ?, ?, ?, ?, ?, 'feishu')`,
-      [userId, username, name, null, status || 'pending', email || '']);
-    res.json({ id: userId, username, name, role_id: null, status: status || 'pending', email: email || '' });
+    run(`INSERT INTO users (id, username, name, role_id, status, email, auth_source, language_preference) VALUES (?, ?, ?, ?, ?, ?, 'feishu', ?)`,
+      [userId, username, name, null, status || 'pending', email || '', lp]);
+    res.json({ id: userId, username, name, role_id: null, status: status || 'pending', email: email || '', language_preference: lp });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
 app.put('/api/users/:id', requireApiPermission('user_manage'), asyncHandler((req, res) => {
   try {
     const { id } = req.params;
-    const { username, name, role_id, status, email, password, auth_source } = req.body;
+    const { username, name, role_id, status, email, password, auth_source, language_preference } = req.body;
     if (!username || !name) return res.status(400).json({ error: '用户名和姓名不能为空' });
     const user = queryOne('SELECT * FROM users WHERE id = ?', [id]);
     if (!user) return res.status(404).json({ error: '用户不存在' });
@@ -680,12 +709,15 @@ app.put('/api/users/:id', requireApiPermission('user_manage'), asyncHandler((req
     if (user.auth_source === 'local' && status && status !== 'active') {
       return res.status(400).json({ error: '不能停用 break-glass 应急账号' });
     }
+    // I18N-100P-B1：管理员可修改语言偏好（白名单校验；缺失保留原值）
+    const lp = (language_preference === 'zh' || language_preference === 'en' || language_preference === 'id')
+      ? language_preference : (user.language_preference || 'zh');
     const exist = queryOne('SELECT id FROM users WHERE username = ? AND id != ?', [username, id]);
     if (exist) return res.status(400).json({ error: '用户名已存在' });
     // 仅更新安全字段；auth_source / 飞书身份字段 / 密码 一律不由此接口改动
-    run('UPDATE users SET username=?, name=?, role_id=?, status=?, email=? WHERE id=?',
-      [username, name, role_id || user.role_id, status || user.status, email || '', id]);
-    res.json({ success: true });
+    run('UPDATE users SET username=?, name=?, role_id=?, status=?, email=?, language_preference=? WHERE id=?',
+      [username, name, role_id || user.role_id, status || user.status, email || '', lp, id]);
+    res.json({ success: true, language_preference: lp });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
@@ -3134,6 +3166,16 @@ app.get('/api/replenishment-suggestions/daily-sales', requireApiPermission('repl
     };
   });
 
+  // 按请求语言翻译展示层字段：仅 sales_reason / ai_business_advice（确定性最终说明文案）
+  // sales_status / action / risk_tags / sales_group / lifecycle_status 保持数据库原始值（前端按原始值格式化三语）
+  const dLang = req.i18nLang || 'zh';
+  if (dLang !== 'zh') {
+    result.forEach(function(s) {
+      if (s.sales_reason) s.sales_reason = forecastDisplayT(dLang, s.sales_reason);
+      if (s.ai_business_advice) s.ai_business_advice = forecastDisplayT(dLang, s.ai_business_advice);
+    });
+  }
+
   res.json({ dates, skus: result });
 }));
 
@@ -3176,6 +3218,15 @@ app.get('/api/replenishment-suggestions', requireApiPermission('replenishment_vi
     delete r.inv_available_qty; delete r.inv_in_transit_qty; delete r.inv_pi_confirmed_unshipped_qty; delete r.inv_po_unconfirmed_pi_qty;
     return r;
   });
+  // 按请求语言翻译展示层字段：仅 sales_reason / ai_business_advice（确定性最终说明文案）
+  // sales_status / action / risk_tags / sales_group / lifecycle_status / suggestion 保持数据库原始值
+  const rLang = req.i18nLang || 'zh';
+  if (rLang !== 'zh') {
+    rows.forEach(function(r) {
+      if (r.sales_reason) r.sales_reason = forecastDisplayT(rLang, r.sales_reason);
+      if (r.ai_business_advice) r.ai_business_advice = forecastDisplayT(rLang, r.ai_business_advice);
+    });
+  }
   res.json(rows);
 }));
 

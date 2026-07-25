@@ -347,9 +347,12 @@ async function initDatabase() {
       feishu_union_id TEXT NOT NULL DEFAULT '',
       feishu_user_id TEXT NOT NULL DEFAULT '',
       password_hash TEXT NOT NULL DEFAULT '',
-      last_login_at TEXT NOT NULL DEFAULT ''
+      last_login_at TEXT NOT NULL DEFAULT '',
+      language_preference TEXT NOT NULL DEFAULT 'zh'
     )
   `);
+  // I18N-100P-B1：旧 PG 库幂等迁移（PG 9.6+ 支持 ADD COLUMN IF NOT EXISTS）
+  await exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS language_preference TEXT NOT NULL DEFAULT 'zh'");
   await exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_union_id ON users(feishu_union_id) WHERE feishu_union_id <> ''");
   await exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_open_id ON users(feishu_open_id) WHERE feishu_open_id <> ''");
 
