@@ -112,6 +112,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 .filter-group input,.filter-group select{padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--card-bg);outline:none;font-family:inherit;height:30px}
 .filter-actions{display:flex;gap:6px;align-items:center;margin-left:auto}
 .status-badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:12px;font-weight:500;white-space:nowrap}
+/* CI 类型标签 — 区分运营CI与历史CI（仅展示） */
+.ci-type-badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:500;white-space:nowrap}
+.ci-type-op{background:#e6f7ff;color:#0958d9;border:1px solid #91caff}
+.ci-type-hist{background:#fff7e6;color:#d46b08;border:1px solid #ffd591}
 /* 动销判断列：主标签 + 风险小标签分层展示 */
 .sales-judgement{display:flex;flex-direction:column;align-items:flex-start;gap:2px;line-height:1.35}
 .sj-status{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px;font-weight:600;background:#eef2f7;color:#1a1a2e;white-space:nowrap}
