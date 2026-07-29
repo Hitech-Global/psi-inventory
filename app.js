@@ -6539,8 +6539,9 @@ async function createHistoricalCI(){
     currencies.forEach(function(c){body+='<option value="'+esc(c.code)+'"'+(c.symbol?' data-symbol="'+esc(c.symbol)+'"':'')+'>'+esc(c.code)+(c.symbol?' ('+c.symbol+')':'')+'</option>';});
     body+='</select></div></div>';
 
-    // Row 5: CI Date + Actual Ship Date
+    // Row 5: Warehouse + CI Date + Actual Ship Date
     body+='<div class="form-grid">';
+    body+='<div class="form-group"><label>'+t('field.target_warehouse','目标仓库')+' <span class="required">*</span></label><input id="hci-wh" readonly style="background:#f5f5f5" placeholder="'+t('ci.warehouse_auto','选择PI后自动填入')+'"><input type="hidden" id="hci-wh-id"></div>';
     body+='<div class="form-group"><label>'+t('field.ci_date','CI 日期')+' <span class="required">*</span></label><input type="date" id="hci-date"></div>';
     body+='<div class="form-group"><label>'+t('field.actual_ship_date','实际出货日期')+' <span class="required">*</span></label><input type="date" id="hci-ship-date"><div style="font-size:12px;color:#999">'+t('hci.ship_date_hint','用于信用账期计算，与 CI 日期不同')+'</div></div></div>';
 
@@ -6623,7 +6624,7 @@ function onHistoricalSupplierChange(){
         var remain=(p.confirmed_qty_sum||0)-(p.shipped_qty_sum||0);
         html+='<label class="hci-pi-item" style="display:block;padding:10px 12px;cursor:pointer;border-bottom:1px solid #f0f0f0;margin:0;transition:background .15s" onmouseover="this.style.background=\'#f5f5f5\'" onmouseout="this.style.background=\'#fff\'">';
         html+='<div style="display:flex;align-items:center;gap:8px">';
-        html+='<input type="checkbox" class="hci-pi-cb" value="'+p.id+'" data-no="'+esc(p.pi_no)+'" data-cur="'+p.currency+'" onchange="onHciPISelectionChange()" style="flex-shrink:0;width:16px;height:16px">';
+        html+='<input type="checkbox" class="hci-pi-cb" value="'+p.id+'" data-no="'+esc(p.pi_no)+'" data-cur="'+p.currency+'" data-wh="'+esc(p.target_warehouse||'')+'" data-wh-id="'+(p.warehouse_id||'')+'" onchange="onHciPISelectionChange()" style="flex-shrink:0;width:16px;height:16px">';
         html+='<span style="font-size:13px;font-weight:500;color:#333;white-space:nowrap">'+esc(p.pi_no)+'</span>';
         html+='</div>';
         html+='<div style="font-size:12px;color:#888;margin-top:4px;padding-left:24px">'+t('ci.pi.remain','剩余可出货：')+remain+' '+t('unit.pcs','件')+'</div>';
@@ -6631,7 +6632,7 @@ function onHistoricalSupplierChange(){
       });
       piList.innerHTML=html;
     }
-    window._hciAllItems=[];window._hciR=0;updateHciPiTriggerText();
+    window._hciAllItems=[];window._hciR=0;window._hciSelectedPiIds=[];updateHciPiTriggerText();
   }else if(piList&&!supId){
     piList.innerHTML='<div style="padding:12px;font-size:13px;color:#999">'+t('ci.select_supplier_first_hint','请先选择供应商')+'</div>';
     updateHciPiTriggerText();
@@ -6655,10 +6656,14 @@ function onHistoricalPIModeChange(){
 function toggleHciPiDropdown(){
   var dd=document.getElementById('hci-pi-dropdown');
   if(!dd)return;
-  dd.style.display=dd.style.display==='none'?'block':'none';
-  if(dd.style.display==='block'){
-    var sel=document.getElementById('hci-supplier');
-    if(sel&&sel.value)onHistoricalSupplierChange();
+  var opening=dd.style.display==='none';
+  dd.style.display=opening?'block':'none';
+  // Restore checked state from current selection when re-opening
+  if(opening){
+    var selIds=window._hciSelectedPiIds||[];
+    var cbs=dd.querySelectorAll('.hci-pi-cb');
+    cbs.forEach(function(cb){cb.checked=selIds.indexOf(cb.value)!==-1;});
+    updateHciPiTriggerText();
   }
 }
 function closeHciPiDropdown(){
@@ -6712,6 +6717,7 @@ async function onHciPISelectionChange(){
   }
   // ── Aggregate and display items from all selected PIs ──
   try{await aggregateHciPIItems(piIds);}catch(e){showToast(e.message,'danger')}
+  resolveCIWarehouse('.hci-pi-cb','hci-wh','hci-wh-id');
 }
 
 // ── Aggregate line items from selected PIs (informational reference table) ──
@@ -6843,7 +6849,7 @@ async function saveHistoricalCI(){
   if(piMode&&piMode.value==='linked'){
     document.querySelectorAll('.hci-pi-cb:checked').forEach(function(cb){piIds.push(cb.value);piNos.push(cb.dataset.no);});
   }
-  const body={historical_ci_no:document.getElementById('hci-no').value.trim(),supplier_id:supplier.value,supplier_name:document.getElementById('hci-supplier-name').value.trim(),brand_name:document.getElementById('hci-brand').value.trim(),country:document.getElementById('hci-country').value,ci_date:document.getElementById('hci-date').value,actual_ship_date:document.getElementById('hci-ship-date').value,currency:document.getElementById('hci-currency').value,gross_goods_amount:gross,historical_paid_amount:paid,historical_paid_date:document.getElementById('hci-paid-date').value,payment_terms:document.getElementById('hci-terms').value.trim(),due_date:document.getElementById('hci-due').value,source_note:document.getElementById('hci-note').value.trim(),source_mode:'historical',idempotency_key:document.getElementById('hci-idempotency').value};
+  const body={historical_ci_no:document.getElementById('hci-no').value.trim(),supplier_id:supplier.value,supplier_name:document.getElementById('hci-supplier-name').value.trim(),brand_name:document.getElementById('hci-brand').value.trim(),country:document.getElementById('hci-country').value,ci_date:document.getElementById('hci-date').value,actual_ship_date:document.getElementById('hci-ship-date').value,currency:document.getElementById('hci-currency').value,gross_goods_amount:gross,historical_paid_amount:paid,historical_paid_date:document.getElementById('hci-paid-date').value,payment_terms:document.getElementById('hci-terms').value.trim(),due_date:document.getElementById('hci-due').value,source_note:document.getElementById('hci-note').value.trim(),source_mode:'historical',idempotency_key:document.getElementById('hci-idempotency').value,warehouse_name:(document.getElementById('hci-wh')||{}).value||'',warehouse_id:(document.getElementById('hci-wh-id')||{}).value||undefined};
   // Attach PI references when linked mode
   if(piIds.length>0){body.related_pi_ids=piIds;body.related_pi_nos=piNos;}
   if(!body.historical_ci_no||!body.supplier_name||!body.brand_name||!body.country||!body.ci_date||!body.currency){showToast(t('gen.L5793.1','请填写历史 CI 编号、供应商、品牌、国家、日期和币种'),'warning');return}if(!(gross>0)){showToast(t('gen.L5793.2','历史货款总金额必须大于0'),'warning');return}if(!Number.isFinite(paid)||paid<0){showToast(t('gen.L5793.3','历史已付款金额不能小于0'),'warning');return}if(paid>gross){showToast(t('gen.L5793.4','历史已付款金额不能超过历史货款总金额'),'warning');return}
@@ -7036,6 +7042,7 @@ async function createOperationalCI(){
     body+='<div class="form-group"><label>'+t('field.currency','币种')+' <span class="required">*</span></label><input id="nci-cur" readonly style="background:#f5f5f5" placeholder="'+t('ci.currency_auto','选择PI后自动填入')+'"></div>';
     body+='<div class="form-group"><label>'+t('field.ci_date','CI日期')+' <span class="required">*</span></label><input type="date" id="nci-date"></div>';
     body+='<div class="form-group"><label>'+t('field.actual_ship_date','实际出货日期')+' <span class="required">*</span></label><input type="date" id="nci-ship-date"></div>';
+    body+='<div class="form-group"><label>'+t('field.target_warehouse','目标仓库')+' <span class="required">*</span></label><input id="nci-wh" readonly style="background:#f5f5f5" placeholder="'+t('ci.warehouse_auto','选择PI后自动填入')+'"><input type="hidden" id="nci-wh-id"></div>';
     body+='<div class="form-group"><label>'+t('field.shipment_batch','发货批次')+'</label><input type="number" id="nci-batch" value="1"></div></div>';
     // Row 4: Payment terms
     body+='<div class="form-group" style="margin-top:10px"><label>'+t('field.payment_terms','付款条件')+'</label><select id="nci-payment-terms"><option value="">'+t('app.none','无')+'</option>';
@@ -7079,7 +7086,7 @@ function onCISupplierChange(){
       var remain=(p.confirmed_qty_sum||0)-(p.shipped_qty_sum||0);
       html+='<label class="nci-pi-item" style="display:block;padding:10px 12px;cursor:pointer;border-bottom:1px solid #f0f0f0;margin:0;transition:background .15s" onmouseover="this.style.background=\'#f5f5f5\'" onmouseout="this.style.background=\'#fff\'">';
       html+='<div style="display:flex;align-items:center;gap:8px">';
-      html+='<input type="checkbox" class="nci-pi-cb" value="'+p.id+'" data-no="'+esc(p.pi_no)+'" data-supid="'+p.supplier_id+'" data-cur="'+p.currency+'" data-supname="'+esc(p.supplier_name)+'" onchange="onCIPISelectionChange()" style="flex-shrink:0;width:16px;height:16px">';
+      html+='<input type="checkbox" class="nci-pi-cb" value="'+p.id+'" data-no="'+esc(p.pi_no)+'" data-supid="'+p.supplier_id+'" data-cur="'+p.currency+'" data-supname="'+esc(p.supplier_name)+'" data-wh="'+esc(p.target_warehouse||'')+'" data-wh-id="'+(p.warehouse_id||'')+'" onchange="onCIPISelectionChange()" style="flex-shrink:0;width:16px;height:16px">';
       html+='<span style="font-size:13px;font-weight:500;color:#333;white-space:nowrap">'+esc(p.pi_no)+'</span>';
       html+='</div>';
       html+='<div style="font-size:12px;color:#888;margin-top:4px;padding-left:24px">'+t('ci.pi.remain','剩余可出货：')+remain+' '+t('unit.pcs','件')+'</div>';
@@ -7143,6 +7150,7 @@ function onCIPISelectionChange(){
     loadMultiPIItems(added,removed);
   }
   updateNciPiTriggerText();
+  resolveCIWarehouse('.nci-pi-cb','nci-wh','nci-wh-id');
 }
 async function loadMultiPIItems(addedPiIds,removedPiIds){
   var preview=document.getElementById('ci-items-preview'),summary=document.getElementById('ci-items-summary');
@@ -7291,6 +7299,32 @@ function closeNciPiDropdown(e){
   if(e&&trig&&trig.contains(e.target))return;
   dd.style.display='none';
 }
+// ── Resolve target warehouse from selected PIs ──
+function resolveCIWarehouse(cbSelector,whInputId,whIdInputId){
+  var cbs=document.querySelectorAll(cbSelector+':checked');
+  var whs={},whIds={};
+  cbs.forEach(function(cb){
+    var wh=cb.dataset.wh,whId=cb.dataset.whId;
+    if(wh){whs[wh]=true;}
+    if(whId){whIds[whId]=true;}
+  });
+  var whInput=document.getElementById(whInputId);
+  var whIdInput=document.getElementById(whIdInputId);
+  var whNames=Object.keys(whs),whIdVals=Object.keys(whIds);
+  if(whNames.length===0){
+    if(whInput){whInput.value='';whInput.style.borderColor='';}
+    if(whIdInput)whIdInput.value='';
+    return whNames;
+  }
+  if(whNames.length===1){
+    if(whInput){whInput.value=whNames[0];whInput.style.borderColor='';}
+    if(whIdInput)whIdInput.value=whIdVals[0]||'';
+  }else{
+    if(whInput){whInput.value=t('ci.warehouse_conflict','多个PI仓库不一致，请确认');whInput.style.borderColor='#faad14';}
+    if(whIdInput)whIdInput.value='';
+  }
+  return whNames;
+}
 function updateNciPiTriggerText(){
   var txt=document.getElementById('nci-pi-trigger-text');
   if(!txt)return;
@@ -7325,7 +7359,7 @@ async function saveNewCI(){
   var payTerms=(document.getElementById('nci-payment-terms')||{}).value||'',tmSel=document.getElementById('nci-payment-terms');
   var creditDays=0;
   if(tmSel&&tmSel.value&&tmSel.selectedOptions[0]){var cd=tmSel.selectedOptions[0].dataset.credit;if(cd)creditDays=parseInt(cd)||0;}
-  var d={ci_no:ciNo||undefined,related_pi_ids:piIds,related_pi_nos:piNos,supplier_name:supName,supplier_id:supId,currency:cur,ci_date:ciDate||undefined,actual_ship_date:sd,shipment_batch:bat,payment_terms:payTerms,credit_days:creditDays,items:items};
+  var d={ci_no:ciNo||undefined,related_pi_ids:piIds,related_pi_nos:piNos,supplier_name:supName,supplier_id:supId,currency:cur,ci_date:ciDate||undefined,actual_ship_date:sd,shipment_batch:bat,payment_terms:payTerms,credit_days:creditDays,warehouse_name:(document.getElementById('nci-wh')||{}).value||'',warehouse_id:(document.getElementById('nci-wh-id')||{}).value||undefined,items:items};
   var btn=document.getElementById('nci-save-btn');if(btn){btn.disabled=true;btn.textContent=t('app.creating','创建中...');}
   try{await api('/api/commercial-invoices','POST',d);showToast(t('ci.created','CI创建成功'),'success');closeModal();loadCI();}
   catch(e){showToast(e.message,'danger');if(btn){btn.disabled=false;btn.textContent=t('app.create','创建');}}

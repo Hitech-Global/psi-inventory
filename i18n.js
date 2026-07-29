@@ -4297,6 +4297,9 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.en["field.actual_ship_date"] = "Actual Ship Date"; I18N.dict.id["field.actual_ship_date"] = "Tanggal Pengiriman Aktual";
   I18N.dict.en["field.due_date"] = "Due Date"; I18N.dict.id["field.due_date"] = "Tanggal Jatuh Tempo";
   I18N.dict.en["field.payment_terms"] = "Payment Terms"; I18N.dict.id["field.payment_terms"] = "Ketentuan Pembayaran";
+  I18N.dict.en["field.target_warehouse"] = "Target Warehouse"; I18N.dict.id["field.target_warehouse"] = "Gudang Tujuan";
+  I18N.dict.en["ci.warehouse_auto"] = "Auto-filled after PI selection"; I18N.dict.id["ci.warehouse_auto"] = "Diisi otomatis setelah pilih PI";
+  I18N.dict.en["ci.warehouse_conflict"] = "Multiple PI warehouses differ, please confirm"; I18N.dict.id["ci.warehouse_conflict"] = "Beberapa gudang PI berbeda, harap konfirmasi";
 
   // ===================== I18N-100P-CLOSEOUT-01: HTML 补充翻译 =====================
   I18N.dict.en["sidebar.footer"] = "v1.0.0 Local"; I18N.dict.id["sidebar.footer"] = "v1.0.0 Lokal";
