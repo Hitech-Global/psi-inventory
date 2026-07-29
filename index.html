@@ -138,6 +138,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 .modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:1000;align-items:center;justify-content:center}
 .modal-overlay.show{display:flex}
 .modal{background:var(--card-bg);border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.2);max-width:700px;width:90%;max-height:90vh;overflow-y:auto}
+.modal-ci-create{max-width:1200px}
+#ci-summary{border-top:2px solid var(--border);margin-top:12px;padding-top:12px}
+#ci-summary .summary-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}
+#ci-summary .summary-item{text-align:center}
+#ci-summary .summary-label{font-size:11px;color:var(--text-muted);margin-bottom:2px}
+#ci-summary .summary-value{font-size:15px;font-weight:600}
+#ci-summary .summary-value.highlight{color:#1677ff}
 .modal-header{padding:16px 24px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
 .modal-title{font-size:18px;font-weight:700}
 .modal-close{background:none;border:none;font-size:24px;cursor:pointer;color:var(--text-muted);padding:0 8px}
@@ -154,6 +161,16 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 .modal-lg .modal-header{flex:0 0 auto}
 .modal-lg .modal-body{flex:1 1 auto;overflow-y:auto}
 .modal-lg .modal-footer{flex:0 0 auto}
+/* CI/PL creation modal — positioned within workspace, not covering nav/sidebar */
+.modal-overlay.ci-mode{top:48px;left:220px;right:0;bottom:0;width:auto;height:auto;align-items:flex-start;justify-content:flex-start;padding:12px 16px;z-index:100}
+.modal-overlay.ci-mode.ci-sb-collapsed{left:54px}
+.modal-overlay.ci-mode .modal-ci-create{width:100%;max-width:none;max-height:calc(100vh - 48px - 24px);display:flex;flex-direction:column;overflow:hidden}
+.modal-overlay.ci-mode .modal-ci-create .modal-header{flex:0 0 auto}
+.modal-overlay.ci-mode .modal-ci-create .modal-body{flex:1 1 auto;overflow-y:auto;min-height:0}
+.modal-overlay.ci-mode .modal-ci-create .modal-footer{flex:0 0 auto}
+/* CI detail table — internal scroll, preventing page growth */
+#ci-items-preview{max-height:min(350px,38vh);overflow-y:auto}
+#hci-items-preview{max-height:min(300px,38vh);overflow-y:auto}
 /* ===== 订单预测 Review 专属宽弹窗（不影响其他 modal） ===== */
 .rp-review-modal{max-width:1100px;width:min(1100px,calc(100vw - 48px));max-height:90vh;display:flex;flex-direction:column;overflow:hidden}
 .rp-review-modal .modal-header{flex:0 0 auto}
@@ -213,6 +230,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 /* 汇总/Total 行：文案左对齐，数字居中落对应列，末格金额差异右对齐 */
 .modal-pi .pi-cmp-editable tfoot td:first-child,.modal-pi .pi-cmp-readonly tfoot td:first-child{text-align:left}
 .modal-pi .pi-cmp-editable tfoot td[colspan],.modal-pi .pi-cmp-readonly tfoot td[colspan]{text-align:right}
+/* PI 弹窗定金比例字段：隐藏 number input 原生 spinner，保留数字输入能力（仅影响 .modal-pi 作用域，不影响其他页面） */
+.modal-pi .form-group input[type="number"]::-webkit-outer-spin-button,
+.modal-pi .form-group input[type="number"]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.modal-pi .form-group input[type="number"]{-moz-appearance:textfield}
 /* ===== 订单预测：字段配置面板 ===== */
 .rp-cfg-panel{padding:0 4px}
 .rp-cfg-toolbar{display:flex;gap:8px;margin-bottom:10px;align-items:center}
@@ -289,7 +310,29 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 .gap-8{gap:8px}
 .mb-8{margin-bottom:8px}
 .link-text{color:var(--primary);cursor:pointer;text-decoration:underline}
-.chart-container{background:var(--card-bg);border-radius:var(--radius);box-shadow:var(--shadow);padding:20px;margin-bottom:16px}
+.pi-badge{cursor:pointer;border-bottom:1px dashed var(--primary);transition:all .15s}
+.pi-badge:hover{opacity:.8}
+.pi-count-badge{display:inline-block;background:var(--primary);color:#fff;font-size:10px;padding:0 5px;border-radius:10px;line-height:16px;vertical-align:middle;margin-left:2px}
+/* 出货附件上传组件 */
+.att-dropzone{border:2px dashed var(--border);border-radius:8px;padding:20px;text-align:center;transition:all .2s;background:var(--card-bg);margin-bottom:12px}
+.att-dropzone-active{border-color:var(--primary);background:var(--primary-light,#f0f7ff)}
+.att-dropzone-content{display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap}
+.att-dropzone-icon{font-size:24px}
+.att-cat-select{border:1px solid var(--border);border-radius:4px;padding:4px 8px;font-size:12px;background:var(--card-bg)}
+.att-file-list{display:flex;flex-direction:column;gap:8px}
+.att-file-card{display:flex;align-items:center;gap:12px;padding:10px 12px;background:var(--card-bg);border:1px solid var(--border);border-radius:6px;transition:all .15s}
+.att-file-card:hover{border-color:var(--primary);box-shadow:0 1px 4px rgba(0,0,0,.06)}
+.att-file-icon{font-size:20px;flex-shrink:0;width:32px;text-align:center}
+.att-file-info{flex:1;min-width:0}
+.att-file-name{font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.att-file-meta{font-size:11px;color:var(--text-muted);margin-top:2px}
+.att-cat-tag{display:inline-block;font-size:10px;padding:0 4px;border-radius:3px;line-height:16px}
+.att-cat-ci{background:#e6f7ff;color:#1890ff}
+.att-cat-pl{background:#f6ffed;color:#52c41a}
+.att-cat-customs{background:#fff7e6;color:#fa8c16}
+.att-cat-logistics{background:#f0f5ff;color:#2f54eb}
+.att-cat-other{background:#f5f5f5;color:#666}
+.att-file-actions{display:flex;gap:4px;flex-shrink:0}
 .chart-canvas-wrapper{position:relative;height:300px}
 /* SKU动销与订单预测 - KPI指标卡 */
 .kpi-row{margin:12px 20px 0}

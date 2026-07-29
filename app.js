@@ -14,8 +14,8 @@ function b64EncodeUnicode(s){return btoa(unescape(encodeURIComponent(String(s||'
 function b64DecodeUnicode(s){return decodeURIComponent(escape(atob(String(s||''))))}
 function showToast(msg,type='info'){const c=document.getElementById('toast-container');const t=document.createElement('div');t.className='toast toast-'+type;t.innerHTML='<div>'+esc(msg)+'</div>';c.appendChild(t);setTimeout(()=>{t.style.opacity='0';setTimeout(()=>t.remove(),300)},3500)}
 function showFlash(msg,type='info'){const c=document.getElementById('flash-container');if(!c)return;c.innerHTML='<div class="flash flash-'+type+' show">'+esc(msg)+'</div>';setTimeout(()=>{if(c)c.innerHTML=''},4000)}
-function openModal(title,body,footer='',size=''){const mc=document.getElementById('modal-content');mc.className='modal'+(size?' '+size:'');if(size&&size.indexOf('modal-pi')!==-1){const sb=document.querySelector('.sidebar');if(sb&&sb.classList.contains('collapsed')){mc.classList.add('pi-sidebar-collapsed')}else{mc.classList.add('pi-sidebar-expanded')}}mc.innerHTML='<div class="modal-header"><span class="modal-title">'+esc(title)+'</span><button class="modal-close" onclick="closeModal()">&times;</button></div><div class="modal-body">'+body+'</div>'+(footer?'<div class="modal-footer">'+footer+'</div>':'');document.getElementById('modal-overlay').classList.add('show')}
-function closeModal(){document.getElementById('modal-overlay').classList.remove('show')}
+function openModal(title,body,footer='',size=''){const mc=document.getElementById('modal-content');mc.className='modal'+(size?' '+size:'');const ov=document.getElementById('modal-overlay');ov.classList.remove('ci-mode','ci-sb-collapsed');if(size&&size.indexOf('modal-pi')!==-1){const sb=document.querySelector('.sidebar');if(sb&&sb.classList.contains('collapsed')){mc.classList.add('pi-sidebar-collapsed')}else{mc.classList.add('pi-sidebar-expanded')}}if(size==='modal-ci-create'){const sb=document.querySelector('.sidebar');ov.classList.add('ci-mode');if(sb&&sb.classList.contains('collapsed')){ov.classList.add('ci-sb-collapsed')}}mc.innerHTML='<div class="modal-header"><span class="modal-title">'+esc(title)+'</span><button class="modal-close" onclick="closeModal()">&times;</button></div><div class="modal-body">'+body+'</div>'+(footer?'<div class="modal-footer">'+footer+'</div>':'');ov.classList.add('show')}
+function closeModal(){const ov=document.getElementById('modal-overlay');ov.classList.remove('show','ci-mode','ci-sb-collapsed')}
 function rowClickView(e,fn){var t=e.target;if(t.closest('button,a,input,select,textarea,label,[contenteditable="true"],[role="button"],[data-row-click-ignore],.link-text,.action-btn,.checkbox,[onclick]:not(tr)'))return;var args=Array.prototype.slice.call(arguments,2);if(typeof window[fn]==='function')window[fn].apply(null,args);}
 // 语言切换刷新守卫：modal 打开时不刷新当前页（避免丢失 modal 内未提交内容）
 function isModalOpen(){const ov=document.getElementById('modal-overlay');return !!(ov&&ov.classList.contains('show'));}
@@ -6674,7 +6674,6 @@ function updateHciPiTriggerText(){
 async function onHciPISelectionChange(){
   var cbs=document.querySelectorAll('.hci-pi-cb:checked');
   updateHciPiTriggerText();
-  closeHciPiDropdown();
   if(cbs.length===0){
     var preview=document.getElementById('hci-items-preview');
     if(preview)preview.style.display='none';
@@ -7105,7 +7104,6 @@ function onCIPISelectionChange(){
     loadMultiPIItems(added,removed);
   }
   updateNciPiTriggerText();
-  closeNciPiDropdown();
 }
 async function loadMultiPIItems(addedPiIds,removedPiIds){
   var preview=document.getElementById('ci-items-preview'),summary=document.getElementById('ci-items-summary');

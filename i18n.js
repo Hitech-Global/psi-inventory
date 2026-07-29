@@ -2387,6 +2387,7 @@ I18N.dict.en["action.cancel"] = "Cancel"; I18N.dict.id["action.cancel"] = "Batal
 I18N.dict.en["action.edit"] = "Edit"; I18N.dict.id["action.edit"] = "Edit";
 I18N.dict.en["action.delete"] = "Delete"; I18N.dict.id["action.delete"] = "Hapus";
 I18N.dict.en["action.confirm"] = "Confirm"; I18N.dict.id["action.confirm"] = "Konfirmasi";
+I18N.dict.en["app.operation"] = "Action"; I18N.dict.id["app.operation"] = "Aksi";
 I18N.dict.en["action.ok"] = "OK"; I18N.dict.id["action.ok"] = "OK";
 I18N.dict.en["action.submit"] = "Submit"; I18N.dict.id["action.submit"] = "Kirim";
 I18N.dict.en["action.approve"] = "Approve"; I18N.dict.id["action.approve"] = "Setujui";
