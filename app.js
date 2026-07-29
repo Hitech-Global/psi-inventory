@@ -6468,17 +6468,255 @@ async function loadCI(){
 async function createHistoricalCI(){
   try{
     if(!canImportHistoricalCI()){showToast(t('gen.L5783.1','历史 CI 导入需要 CI 创建、付款创建和付款审批权限'),'danger');return}
-    const results=await Promise.all([api('/api/suppliers'),api('/api/countries'),api('/api/currencies'),api('/api/brands/all')]),suppliers=results[0],countries=results[1].filter(x=>x.status==='active'),currencies=results[2].filter(x=>x.status==='active'),brands=results[3];
+    const results=await Promise.all([api('/api/suppliers'),api('/api/countries'),api('/api/currencies'),api('/api/brands/all'),api('/api/payment-term-options'),api('/api/proforma-invoices')]);
+    const suppliers=results[0].filter(function(s){return s.status==='active';});
+    const countries=results[1].filter(function(x){return x.status==='active';});
+    const currencies=results[2].filter(function(x){return x.status==='active';});
+    const brands=results[3];
+    const termOpts=results[4]||[];
+    const allPis=results[5]||[];
+
+    // Filter available PIs (same logic as operational CI — PI-level aggregates)
+    var avlPiMap={};var EPSILON=0.001;
+    allPis.forEach(function(p){
+      var remainQty=(p.confirmed_qty_sum||0)-(p.shipped_qty_sum||0);
+      if(remainQty>EPSILON && (p.need_deposit!==1||p.deposit_payment_status==='paid')){
+        avlPiMap[p.id]=p;
+      }
+    });
+    window._hciAllPis=Array.from(Object.values(avlPiMap));
+    window._hciAllTermOpts=termOpts;
+    window._hciSuppliers=suppliers;
+    window._hciBrands=brands;
+
     const idempotency='historical-ci-ui:'+(window.crypto&&window.crypto.randomUUID?window.crypto.randomUUID():(Date.now()+'-'+Math.random().toString(36).slice(2)));
-    openModal(t("po.037", "\u5386\u53f2 CI \u5bfc\u5165"),t('modal.body.createHistoricalCI', '<div class="form-card" style="box-shadow:none;padding:0"><input type="hidden" id="hci-idempotency" value="{v1}"><div style="background:#f6ffed;border:1px solid #b7eb8f;border-radius:6px;padding:10px;margin-bottom:14px;font-size:13px">仅用于历史采购金额和应付管理，不影响库存、WAC及订单预测。</div><div class="form-grid"><div class="form-group"><label>历史 CI 编号 <span class="required">*</span></label><input id="hci-no"></div><div class="form-group"><label>供应商</label><select id="hci-supplier" onchange="onHistoricalSupplierChange()"><option value="">手工填写快照</option>{v2}</select></div><div class="form-group"><label>供应商快照 <span class="required">*</span></label><input id="hci-supplier-name"></div><div class="form-group"><label>品牌快照 <span class="required">*</span></label><input id="hci-brand" list="hci-brand-list"><datalist id="hci-brand-list">{v3}</datalist></div><div class="form-group"><label>采购归属国家 <span class="required">*</span></label><select id="hci-country"><option value="">请选择</option>{v4}</select></div><div class="form-group"><label>历史 CI 日期 <span class="required">*</span></label><input type="date" id="hci-date"></div><div class="form-group"><label>实际出货日期 <span class="required">*</span></label><input type="date" id="hci-ship-date"></div><div class="form-group"><label>币种 <span class="required">*</span></label><select id="hci-currency">{v5}</select></div><div class="form-group"><label>历史货款总金额 <span class="required">*</span></label><input type="number" min="0.01" step="0.01" id="hci-gross"></div><div class="form-group"><label>导入前历史已付款</label><input type="number" min="0" step="0.01" id="hci-paid" value="0"></div><div class="form-group"><label>历史已付款日期</label><input type="date" id="hci-paid-date"><div style="font-size:12px;color:#999">未知时保持为空，不会用导入日期代替。</div></div><div class="form-group"><label>付款条件 / 账期</label><input id="hci-terms"></div><div class="form-group"><label>到期日</label><input type="date" id="hci-due"></div><div class="form-group form-group-full"><label>原始文件、凭证或备注</label><textarea id="hci-note" rows="2"></textarea></div></div></div>', {v1: idempotency, v2: suppliers.map(s=>'<option value="'+esc(s.id)+'" data-name="'+esc(s.name)+'">'+esc(s.name)+'</option>').join(''), v3: brands.map(b=>'<option value="'+esc(b)+'"></option>').join(''), v4: countries.map(c=>'<option value="'+esc(c.name)+'">'+esc(c.name)+'（'+esc(c.code)+'）</option>').join(''), v5: currencies.map(c=>'<option value="'+esc(c.code)+'">'+esc(c.name)+'（'+esc(c.code)+'）</option>').join('')}),t('gen.L5786.1','<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" id="hci-save" onclick="saveHistoricalCI()">导入</button>'),'modal-lg');
+
+    // Build HTML body — same layout style as createOperationalCI
+    var body='<div class="form-card" style="box-shadow:none;padding:0">';
+    body+='<input type="hidden" id="hci-idempotency" value="'+idempotency+'">';
+    body+='<div style="background:#f6ffed;border:1px solid #b7eb8f;border-radius:6px;padding:10px;margin-bottom:14px;font-size:13px">'+t('gen.L5783.2','仅用于历史采购金额和应付管理，不影响库存、WAC及订单预测。')+'</div>';
+
+    // Row 1: CI No + Supplier
+    body+='<div class="form-grid">';
+    body+='<div class="form-group"><label>'+t('field.historical_ci_no','历史 CI 编号')+' <span class="required">*</span></label><input id="hci-no" placeholder="'+t('ci.no.auto','留空自动生成')+'"><div style="font-size:11px;color:#999">'+t('ci.no.hint','留空则自动生成；填写需唯一')+'</div></div>';
+    body+='<div class="form-group"><label>'+t('field.supplier_name','供应商')+' <span class="required">*</span></label><select id="hci-supplier" onchange="onHistoricalSupplierChange()"><option value="">'+t('ci.select_supplier_first','请先选择供应商')+'</option>';
+    suppliers.forEach(function(s){
+      body+='<option value="'+s.id+'" data-name="'+esc(s.name)+'" data-currency="'+(s.default_currency||'')+'" data-brands="'+esc(s.associated_brands||'[]')+'">'+esc(s.name)+'</option>';
+    });
+    body+='</select></div></div>';
+
+    // Row 2: PI association toggle
+    body+='<h4 style="margin:12px 0 8px">'+t('hci.pi_assoc','PI 关联')+'</h4>';
+    body+='<div style="display:flex;gap:12px;margin-bottom:12px">';
+    body+='<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px"><input type="radio" name="hci-pi-mode" value="linked" checked onchange="onHistoricalPIModeChange()"> '+t('hci.pi_linked','有关联 PI')+'</label>';
+    body+='<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px"><input type="radio" name="hci-pi-mode" value="manual" onchange="onHistoricalPIModeChange()"> '+t('hci.pi_manual','无 PI 数据（手工录入）')+'</label>';
+    body+='</div>';
+
+    // PI dropdown (shown when mode=linked)
+    body+='<div id="hci-pi-section" class="form-group" style="position:relative;margin-bottom:12px">';
+    body+='<div id="hci-pi-trigger" onclick="toggleHciPiDropdown()" style="padding:8px 12px;border:1px solid #d9d9d9;border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;min-height:38px;background:#fff;user-select:none">';
+    body+='<span id="hci-pi-trigger-text" style="font-size:13px;color:#999">'+t('ci.select_supplier_first_hint','请先选择供应商')+'</span>';
+    body+='<span style="font-size:11px;color:#999">▼</span></div>';
+    body+='<div id="hci-pi-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:100;max-height:240px;overflow-y:auto;border:1px solid #d9d9d9;border-radius:6px;background:#fff;box-shadow:0 4px 12px rgba(0,0,0,0.1);margin-top:2px">';
+    body+='<div style="padding:12px;font-size:13px;color:#999">'+t('ci.select_supplier_first_hint','请先选择供应商')+'</div></div></div>';
+
+    // Row 3: Supplier snapshot (auto-filled) + Brand
+    body+='<div class="form-grid">';
+    body+='<div class="form-group"><label>'+t('field.supplier_snapshot','供应商快照')+' <span class="required">*</span></label><input id="hci-supplier-name" placeholder="'+t('hci.supplier_snapshot_hint','选择供应商后自动填入')+'" readonly style="background:#f5f5f5"></div>';
+    body+='<div class="form-group"><label>'+t('field.brand','品牌')+' <span class="required">*</span></label><input id="hci-brand" placeholder="'+t('hci.brand_hint','选择供应商后自动填入')+'"></div></div>';
+
+    // Row 4: Country + Currency (auto-filled)
+    body+='<div class="form-grid">';
+    body+='<div class="form-group"><label>'+t('field.country','采购归属国家')+' <span class="required">*</span></label><select id="hci-country"><option value="">'+t('app.select','请选择')+'</option>';
+    countries.forEach(function(c){body+='<option value="'+esc(c.code)+'"'+(c.default_currency?' data-cur="'+esc(c.default_currency)+'"':'')+'>'+esc(c.name)+(c.flag?' '+c.flag:'')+'</option>';});
+    body+='</select></div>';
+    body+='<div class="form-group"><label>'+t('field.currency','币种')+' <span class="required">*</span></label><select id="hci-currency">';
+    currencies.forEach(function(c){body+='<option value="'+esc(c.code)+'"'+(c.symbol?' data-symbol="'+esc(c.symbol)+'"':'')+'>'+esc(c.code)+(c.symbol?' ('+c.symbol+')':'')+'</option>';});
+    body+='</select></div></div>';
+
+    // Row 5: CI Date + Actual Ship Date
+    body+='<div class="form-grid">';
+    body+='<div class="form-group"><label>'+t('field.ci_date','CI 日期')+' <span class="required">*</span></label><input type="date" id="hci-date"></div>';
+    body+='<div class="form-group"><label>'+t('field.actual_ship_date','实际出货日期')+' <span class="required">*</span></label><input type="date" id="hci-ship-date"><div style="font-size:12px;color:#999">'+t('hci.ship_date_hint','用于信用账期计算，与 CI 日期不同')+'</div></div></div>';
+
+    // Row 6: Gross Amount + Historical Paid
+    body+='<div class="form-grid">';
+    body+='<div class="form-group"><label>'+t('field.gross_amount','历史货款总金额')+' <span class="required">*</span></label><input type="number" min="0.01" step="0.01" id="hci-gross" placeholder="0.00"></div>';
+    body+='<div class="form-group"><label>'+t('field.historical_paid','导入前历史已付款')+'</label><input type="number" min="0" step="0.01" id="hci-paid" value="0" placeholder="0.00"></div></div>';
+
+    // Row 7: Paid Date + Payment Terms
+    body+='<div class="form-grid">';
+    body+='<div class="form-group"><label>'+t('field.paid_date','历史已付款日期')+'</label><input type="date" id="hci-paid-date"><div style="font-size:12px;color:#999">'+t('hci.paid_date_hint','未知时保持为空，不会用导入日期代替')+'</div></div>';
+    body+='<div class="form-group"><label>'+t('field.payment_terms','付款条件/账期')+'</label><select id="hci-terms"><option value="">'+t('app.none','无')+'</option>';
+    termOpts.forEach(function(tm){body+='<option value="'+esc(tm.name)+'"'+(tm.credit_days>0?' data-credit="'+tm.credit_days+'"':'')+'>'+esc(tm.name)+(tm.credit_days>0?' ('+tm.credit_days+t('unit.days','天')+')':'')+' ('+(tm.source==='supplier'?t('ci.term.supplier','供应商'):t('ci.term.global','全局'))+')</option>';});
+    body+='</select></div></div>';
+
+    // Row 8: Due Date + Notes
+    body+='<div class="form-grid">';
+    body+='<div class="form-group"><label>'+t('field.due_date','到期日')+'</label><input type="date" id="hci-due"></div>';
+    body+='<div class="form-group"><label>'+t('field.source_note','原始凭证或备注')+'</label><input id="hci-note" placeholder="'+t('hci.note_hint','可选')+'"></div></div>';
+
+    body+='</div>';
+
+    openModal(t("po.037", "历史 CI 导入"), body,
+      t('hci.footer_btns','<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" id="hci-save" onclick="saveHistoricalCI()">导入</button>'));
+
+    // Init click-outside listener for PI dropdown
+    if(!window._hciPiDocListener){window._hciPiDocListener=true;document.addEventListener('click',function(e){if(!e.target.closest('#hci-pi-trigger')&&!e.target.closest('#hci-pi-dropdown')){closeHciPiDropdown();}});}
   }catch(e){showToast(e.message,'danger')}
 }
-function onHistoricalSupplierChange(){const select=document.getElementById('hci-supplier'),name=document.getElementById('hci-supplier-name');if(select&&name){const option=select.options[select.selectedIndex];name.value=option&&option.dataset.name||'';name.readOnly=Boolean(select.value)}}
+function onHistoricalSupplierChange(){
+  var sel=document.getElementById('hci-supplier');
+  var name=document.getElementById('hci-supplier-name');
+  var brand=document.getElementById('hci-brand');
+  var cur=document.getElementById('hci-currency');
+  var piList=document.getElementById('hci-pi-dropdown');
+  if(!sel)return;
+  var supId=sel.value;
+  var option=sel.options[sel.selectedIndex];
+  var supName=option&&option.dataset.name||'';
+
+  // Auto-fill supplier snapshot
+  if(name){name.value=supName;}
+
+  // Auto-fill brand from supplier's associated_brands
+  if(brand){
+    var brandsStr=option&&option.dataset.brands||'[]';
+    var supBrands=[];
+    try{supBrands=JSON.parse(brandsStr);}catch(e){supBrands=[];}
+    if(supBrands.length===1){
+      brand.value=supBrands[0];
+    }else if(supBrands.length>1){
+      brand.value=supBrands.join(', ');
+      brand.placeholder=supBrands.join(', ');
+    }else{
+      brand.value='';
+      brand.placeholder='';
+    }
+  }
+
+  // Auto-fill currency from supplier's default_currency
+  if(cur&&supId){
+    var supCur=option&&option.dataset.currency||'';
+    if(supCur){
+      for(var i=0;i<cur.options.length;i++){if(cur.options[i].value===supCur){cur.value=supCur;break;}}
+    }
+  }
+
+  // Filter payment terms by supplier
+  onHistoricalPaymentTermsFilter(supId);
+
+  // Filter PI dropdown
+  if(piList&&supId){
+    var supPis=(window._hciAllPis||[]).filter(function(p){return p.supplier_id===supId;});
+    if(supPis.length===0){
+      piList.innerHTML='<div style="padding:12px;font-size:13px;color:#999">'+t('ci.no_pi_for_supplier','该供应商无可选PI')+'</div>';
+    }else{
+      var html='';
+      supPis.forEach(function(p){
+        var remain=(p.confirmed_qty_sum||0)-(p.shipped_qty_sum||0);
+        html+='<label class="hci-pi-item" style="display:block;padding:10px 12px;cursor:pointer;border-bottom:1px solid #f0f0f0;margin:0;transition:background .15s" onmouseover="this.style.background=\'#f5f5f5\'" onmouseout="this.style.background=\'#fff\'">';
+        html+='<div style="display:flex;align-items:center;gap:8px">';
+        html+='<input type="checkbox" class="hci-pi-cb" value="'+p.id+'" data-no="'+esc(p.pi_no)+'" data-cur="'+p.currency+'" onchange="onHciPISelectionChange()" style="flex-shrink:0;width:16px;height:16px">';
+        html+='<span style="font-size:13px;font-weight:500;color:#333;white-space:nowrap">'+esc(p.pi_no)+'</span>';
+        html+='</div>';
+        html+='<div style="font-size:12px;color:#888;margin-top:4px;padding-left:24px">'+t('ci.pi.remain','剩余可出货：')+remain+' '+esc(p.currency)+'</div>';
+        html+='</label>';
+      });
+      piList.innerHTML=html;
+    }
+    updateHciPiTriggerText();
+  }else if(piList&&!supId){
+    piList.innerHTML='<div style="padding:12px;font-size:13px;color:#999">'+t('ci.select_supplier_first_hint','请先选择供应商')+'</div>';
+    updateHciPiTriggerText();
+  }
+}
+
+// ── PI mode toggle (linked vs manual) ──
+function onHistoricalPIModeChange(){
+  var mode=document.querySelector('input[name="hci-pi-mode"]:checked');
+  var section=document.getElementById('hci-pi-section');
+  if(!section||!mode)return;
+  section.style.display=mode.value==='linked'?'':'none';
+  // Clear PI selection when switching to manual
+  if(mode.value==='manual'){
+    document.querySelectorAll('.hci-pi-cb').forEach(function(cb){cb.checked=false;});
+    updateHciPiTriggerText();
+  }
+}
+
+// ── PI dropdown toggle ──
+function toggleHciPiDropdown(){
+  var dd=document.getElementById('hci-pi-dropdown');
+  if(!dd)return;
+  dd.style.display=dd.style.display==='none'?'block':'none';
+  if(dd.style.display==='block'){
+    var sel=document.getElementById('hci-supplier');
+    if(sel&&sel.value)onHistoricalSupplierChange();
+  }
+}
+function closeHciPiDropdown(){
+  var dd=document.getElementById('hci-pi-dropdown');
+  if(dd)dd.style.display='none';
+}
+function updateHciPiTriggerText(){
+  var el=document.getElementById('hci-pi-trigger-text');
+  if(!el)return;
+  var cbs=document.querySelectorAll('.hci-pi-cb:checked');
+  if(cbs.length===0){el.textContent=t('ci.select_supplier_first_hint','请先选择供应商');el.style.color='#999';return;}
+  if(cbs.length===1){el.textContent=cbs[0].dataset.no;el.style.color='#333';return;}
+  el.textContent=cbs.length+' '+t('hci.pi_selected','个PI已选择');el.style.color='#333';
+}
+function onHciPISelectionChange(){
+  var cbs=document.querySelectorAll('.hci-pi-cb:checked');
+  updateHciPiTriggerText();
+  closeHciPiDropdown();
+  // Auto-fill currency from selected PI
+  if(cbs.length>0){
+    var piCur=cbs[0].dataset.cur;
+    var cur=document.getElementById('hci-currency');
+    if(cur&&piCur){for(var i=0;i<cur.options.length;i++){if(cur.options[i].value===piCur){cur.value=piCur;break;}}}
+  }
+}
+
+// ── Payment terms filter (same pattern as onCIPaymentTermsFilter) ──
+async function onHistoricalPaymentTermsFilter(supId){
+  var tmSel=document.getElementById('hci-terms');
+  if(!tmSel||!supId)return;
+  var savedVal=tmSel.value;
+  var supTerms=[],globalTerms=window._hciAllTermOpts||[];
+  try{supTerms=await api('/api/suppliers/'+supId+'/payment-terms');}catch(e){supTerms=[];}
+  var globalOnly=globalTerms.filter(function(g){return g.source==='global';}).map(function(g){return{name:g.name,credit_days:g.credit_days||0,source:'global'};});
+  var displayTerms=supTerms&&supTerms.length>0?supTerms.map(function(t){return{name:t.term_name,credit_days:t.credit_days||0,source:'supplier',is_default:t.is_default};}):[];
+  if(displayTerms.length===0)displayTerms=globalOnly;
+  tmSel.innerHTML='<option value="">'+t('app.none','无')+'</option>';
+  if(displayTerms.length>0){
+    displayTerms.forEach(function(tm){
+      tmSel.innerHTML+='<option value="'+esc(tm.name)+'"'+(tm.credit_days>0?' data-credit="'+tm.credit_days+'"':'')+(tm.is_default?' selected':'')+'>'+esc(tm.name)+(tm.credit_days>0?' ('+tm.credit_days+t('unit.days','天')+')':'')+' ('+(tm.source==='supplier'?t('ci.term.supplier','供应商'):t('ci.term.global','全局'))+')</option>';
+    });
+  }
+  if(savedVal){
+    var found=false;
+    for(var i=0;i<tmSel.options.length;i++){if(tmSel.options[i].value===savedVal){found=true;break;}}
+    if(found)tmSel.value=savedVal;
+  }
+}
 async function saveHistoricalCI(){
-  const btn=document.getElementById('hci-save');if(!btn||btn.disabled)return;const supplier=document.getElementById('hci-supplier'),gross=parseFloat(document.getElementById('hci-gross').value),paid=parseFloat(document.getElementById('hci-paid').value||0);
+  const btn=document.getElementById('hci-save');if(!btn||btn.disabled)return;
+  const supplier=document.getElementById('hci-supplier');
+  const gross=parseFloat(document.getElementById('hci-gross').value);
+  const paid=parseFloat(document.getElementById('hci-paid').value||0);
+  // Collect selected PI info (optional)
+  var piMode=document.querySelector('input[name="hci-pi-mode"]:checked');
+  var piIds=[],piNos=[];
+  if(piMode&&piMode.value==='linked'){
+    document.querySelectorAll('.hci-pi-cb:checked').forEach(function(cb){piIds.push(cb.value);piNos.push(cb.dataset.no);});
+  }
   const body={historical_ci_no:document.getElementById('hci-no').value.trim(),supplier_id:supplier.value,supplier_name:document.getElementById('hci-supplier-name').value.trim(),brand_name:document.getElementById('hci-brand').value.trim(),country:document.getElementById('hci-country').value,ci_date:document.getElementById('hci-date').value,actual_ship_date:document.getElementById('hci-ship-date').value,currency:document.getElementById('hci-currency').value,gross_goods_amount:gross,historical_paid_amount:paid,historical_paid_date:document.getElementById('hci-paid-date').value,payment_terms:document.getElementById('hci-terms').value.trim(),due_date:document.getElementById('hci-due').value,source_note:document.getElementById('hci-note').value.trim(),source_mode:'historical',idempotency_key:document.getElementById('hci-idempotency').value};
+  // Attach PI references when linked mode
+  if(piIds.length>0){body.related_pi_ids=piIds;body.related_pi_nos=piNos;}
   if(!body.historical_ci_no||!body.supplier_name||!body.brand_name||!body.country||!body.ci_date||!body.currency){showToast(t('gen.L5793.1','请填写历史 CI 编号、供应商、品牌、国家、日期和币种'),'warning');return}if(!(gross>0)){showToast(t('gen.L5793.2','历史货款总金额必须大于0'),'warning');return}if(!Number.isFinite(paid)||paid<0){showToast(t('gen.L5793.3','历史已付款金额不能小于0'),'warning');return}if(paid>gross){showToast(t('gen.L5793.4','历史已付款金额不能超过历史货款总金额'),'warning');return}
-  btn.disabled=true;btn.textContent=t("app.984", "\u5bfc\u5165\u4e2d\u2026");try{const result=await api('/api/historical-commercial-invoices','POST',body);showToast(result.idempotent?t('gen.L5794.1','已识别为重复请求，未重复记账'):t("app.986", "\u5386\u53f2 CI \u5df2\u5bfc\u5165"),'success');closeModal();const mode=document.getElementById('ci-source-mode');if(mode)mode.value='historical';loadCI()}catch(e){showToast(e.message,'danger');if(document.getElementById('hci-save')){btn.disabled=false;btn.textContent=t('gen.L5794.2','导入')}}
+  btn.disabled=true;btn.textContent=t("app.984", "导入中…");try{const result=await api('/api/historical-commercial-invoices','POST',body);showToast(result.idempotent?t('gen.L5794.1','已识别为重复请求，未重复记账'):t("app.986", "历史 CI 已导入"),'success');closeModal();const mode=document.getElementById('ci-source-mode');if(mode)mode.value='historical';loadCI()}catch(e){showToast(e.message,'danger');if(document.getElementById('hci-save')){btn.disabled=false;btn.textContent=t('gen.L5794.2','导入')}}
 }
 // CI-SHIP-DATE-01：补充/更正实际出货日期（明确操作按钮 + 最小化弹窗，避免误改）
 async function editActualShipDate(type, id, current){

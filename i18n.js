@@ -4267,6 +4267,26 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.en["gen.L989.2.th3"] = "</th><th>"; I18N.dict.id["gen.L989.2.th3"] = "</th><th>";
   I18N.dict.en["gen.L989.2.th4"] = "</th><th>"; I18N.dict.id["gen.L989.2.th4"] = "</th><th>";
   I18N.dict.en["gen.L989.2.th5"] = "</th></tr></thead><tbody>"; I18N.dict.id["gen.L989.2.th5"] = "</th></tr></thead><tbody>";
+  // ── Historical CI UX Sync keys ──
+  I18N.dict.en["hci.pi_assoc"] = "PI Association"; I18N.dict.id["hci.pi_assoc"] = "Asosiasi PI";
+  I18N.dict.en["hci.pi_linked"] = "Linked PI"; I18N.dict.id["hci.pi_linked"] = "PI Terkait";
+  I18N.dict.en["hci.pi_manual"] = "No PI Data (Manual)"; I18N.dict.id["hci.pi_manual"] = "Tidak Ada Data PI (Manual)";
+  I18N.dict.en["hci.pi_selected"] = "PIs Selected"; I18N.dict.id["hci.pi_selected"] = "PI Dipilih";
+  I18N.dict.en["hci.supplier_snapshot_hint"] = "Auto-filled after supplier selection"; I18N.dict.id["hci.supplier_snapshot_hint"] = "Terisi otomatis setelah pemilihan pemasok";
+  I18N.dict.en["hci.brand_hint"] = "Auto-filled after supplier selection"; I18N.dict.id["hci.brand_hint"] = "Terisi otomatis setelah pemilihan pemasok";
+  I18N.dict.en["hci.ship_date_hint"] = "Used for credit term calculation, differs from CI date"; I18N.dict.id["hci.ship_date_hint"] = "Digunakan untuk perhitungan jangka waktu kredit, berbeda dari tanggal CI";
+  I18N.dict.en["hci.paid_date_hint"] = "Leave empty if unknown; will not be replaced with import date"; I18N.dict.id["hci.paid_date_hint"] = "Kosongkan jika tidak diketahui; tidak akan diganti dengan tanggal impor";
+  I18N.dict.en["hci.note_hint"] = "Optional"; I18N.dict.id["hci.note_hint"] = "Opsional";
+  I18N.dict.en["field.historical_ci_no"] = "Historical CI No."; I18N.dict.id["field.historical_ci_no"] = "No. CI Historis";
+  I18N.dict.en["field.supplier_snapshot"] = "Supplier Snapshot"; I18N.dict.id["field.supplier_snapshot"] = "Snapshot Pemasok";
+  I18N.dict.en["field.gross_amount"] = "Total Goods Amount"; I18N.dict.id["field.gross_amount"] = "Total Nilai Barang";
+  I18N.dict.en["field.historical_paid"] = "Historical Paid Before Import"; I18N.dict.id["field.historical_paid"] = "Historis Dibayar Sebelum Impor";
+  I18N.dict.en["field.paid_date"] = "Historical Paid Date"; I18N.dict.id["field.paid_date"] = "Tanggal Pembayaran Historis";
+  I18N.dict.en["field.source_note"] = "Source Document / Notes"; I18N.dict.id["field.source_note"] = "Dokumen Sumber / Catatan";
+  I18N.dict.en["field.ci_date"] = "CI Date"; I18N.dict.id["field.ci_date"] = "Tanggal CI";
+  I18N.dict.en["field.actual_ship_date"] = "Actual Ship Date"; I18N.dict.id["field.actual_ship_date"] = "Tanggal Pengiriman Aktual";
+  I18N.dict.en["field.due_date"] = "Due Date"; I18N.dict.id["field.due_date"] = "Tanggal Jatuh Tempo";
+  I18N.dict.en["field.payment_terms"] = "Payment Terms"; I18N.dict.id["field.payment_terms"] = "Ketentuan Pembayaran";
 
   // ===================== I18N-100P-CLOSEOUT-01: HTML 补充翻译 =====================
   I18N.dict.en["sidebar.footer"] = "v1.0.0 Local"; I18N.dict.id["sidebar.footer"] = "v1.0.0 Lokal";
