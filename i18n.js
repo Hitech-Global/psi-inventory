@@ -1686,6 +1686,11 @@
   I18N.dict.en["ci.col.pi_source"] = "PI Source"; I18N.dict.id["ci.col.pi_source"] = "Sumber PI";
   I18N.dict.en["ci.col.pi_qty"] = "PI Qty"; I18N.dict.id["ci.col.pi_qty"] = "Jml PI";
   I18N.dict.en["ci.col.ci_qty"] = "CI Qty"; I18N.dict.id["ci.col.ci_qty"] = "Jml CI";
+  I18N.dict.en["ci.col.pi_confirmed"] = "PI Confirmed"; I18N.dict.id["ci.col.pi_confirmed"] = "PI Dikonfirmasi";
+  I18N.dict.en["ci.col.pi_shipped"] = "Shipped"; I18N.dict.id["ci.col.pi_shipped"] = "Terkirim";
+  I18N.dict.en["ci.col.pi_unshipped"] = "Unshipped"; I18N.dict.id["ci.col.pi_unshipped"] = "Belum Dikirim";
+  I18N.dict.en["ci.summary.qty"] = "Total Qty: {v1} pcs"; I18N.dict.id["ci.summary.qty"] = "Total Jml: {v1} pcs";
+  I18N.dict.en["ci.summary.amt"] = "CI Amount: {v1} {v2}"; I18N.dict.id["ci.summary.amt"] = "Jumlah CI: {v1} {v2}";
   I18N.dict.en["ci.col.amount"] = "Amount"; I18N.dict.id["ci.col.amount"] = "Jumlah";
   I18N.dict.en["ci.select_supplier_first"] = "Please select supplier first"; I18N.dict.id["ci.select_supplier_first"] = "Silakan pilih pemasok terlebih dahulu";
   I18N.dict.en["ci.select_supplier_first_hint"] = "Please select supplier first"; I18N.dict.id["ci.select_supplier_first_hint"] = "Silakan pilih pemasok terlebih dahulu";
@@ -1696,6 +1701,7 @@
   I18N.dict.en["ci.term.global"] = "Global"; I18N.dict.id["ci.term.global"] = "Global";
   I18N.dict.en["field.payment_terms"] = "Payment Terms"; I18N.dict.id["field.payment_terms"] = "Syarat Pembayaran";
   I18N.dict.en["unit.days"] = "d"; I18N.dict.id["unit.days"] = "h";
+  I18N.dict.en["unit.pcs"] = "pcs"; I18N.dict.id["unit.pcs"] = "pcs";
   I18N.dict.en["app.none"] = "None"; I18N.dict.id["app.none"] = "Tidak ada";
   I18N.dict.en["ci.balance_warn"] = "\u26a0\ufe0f Abnormal"; I18N.dict.id["ci.balance_warn"] = "\u26a0\ufe0f Abnormal";
   I18N.dict.en["field.ci_no"] = "CI No."; I18N.dict.id["field.ci_no"] = "No. CI";

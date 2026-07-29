@@ -6563,7 +6563,7 @@ async function createHistoricalCI(){
     body+='</div>';
 
     openModal(t("po.037", "历史 CI 导入"), body,
-      t('hci.footer_btns','<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" id="hci-save" onclick="saveHistoricalCI()">导入</button>'));
+      t('hci.footer_btns','<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" id="hci-save" onclick="saveHistoricalCI()">导入</button>'),'modal-ci-create');
 
     // Init click-outside listener for PI dropdown
     if(!window._hciPiDocListener){window._hciPiDocListener=true;document.addEventListener('click',function(e){if(!e.target.closest('#hci-pi-trigger')&&!e.target.closest('#hci-pi-dropdown')){closeHciPiDropdown();}});}
@@ -6624,7 +6624,7 @@ function onHistoricalSupplierChange(){
         html+='<input type="checkbox" class="hci-pi-cb" value="'+p.id+'" data-no="'+esc(p.pi_no)+'" data-cur="'+p.currency+'" onchange="onHciPISelectionChange()" style="flex-shrink:0;width:16px;height:16px">';
         html+='<span style="font-size:13px;font-weight:500;color:#333;white-space:nowrap">'+esc(p.pi_no)+'</span>';
         html+='</div>';
-        html+='<div style="font-size:12px;color:#888;margin-top:4px;padding-left:24px">'+t('ci.pi.remain','剩余可出货：')+remain+' '+esc(p.currency)+'</div>';
+        html+='<div style="font-size:12px;color:#888;margin-top:4px;padding-left:24px">'+t('ci.pi.remain','剩余可出货：')+remain+' '+t('unit.pcs','件')+'</div>';
         html+='</label>';
       });
       piList.innerHTML=html;
@@ -7010,7 +7010,7 @@ async function createOperationalCI(){
     body+='</div>';
     openModal(t('ci.new_op_ci','新建运营 CI'),body,
       '<button class="btn btn-secondary" onclick="closeModal()">'+t('app.cancel','取消')+'</button>'+
-      '<button class="btn btn-primary" id="nci-save-btn" onclick="saveNewCI()">'+t('app.create','创建')+'</button>');
+      '<button class="btn btn-primary" id="nci-save-btn" onclick="saveNewCI()">'+t('app.create','创建')+'</button>','modal-ci-create');
     window._ciR=0;window._ciAllItems=[];window._ciSelectedPiIds={};window._allTermOpts=termOpts;
   if(!window._nciPiDocListener){window._nciPiDocListener=true;document.addEventListener('click',function(e){if(!e.target.closest('#nci-pi-trigger')&&!e.target.closest('#nci-pi-dropdown')){closeNciPiDropdown();}});}
   }catch(e){showToast(e.message,'danger')}
@@ -7044,7 +7044,7 @@ function onCISupplierChange(){
       html+='<input type="checkbox" class="nci-pi-cb" value="'+p.id+'" data-no="'+esc(p.pi_no)+'" data-supid="'+p.supplier_id+'" data-cur="'+p.currency+'" data-supname="'+esc(p.supplier_name)+'" onchange="onCIPISelectionChange()" style="flex-shrink:0;width:16px;height:16px">';
       html+='<span style="font-size:13px;font-weight:500;color:#333;white-space:nowrap">'+esc(p.pi_no)+'</span>';
       html+='</div>';
-      html+='<div style="font-size:12px;color:#888;margin-top:4px;padding-left:24px">'+t('ci.pi.remain','剩余可出货：')+remain+' '+esc(p.currency)+'</div>';
+      html+='<div style="font-size:12px;color:#888;margin-top:4px;padding-left:24px">'+t('ci.pi.remain','剩余可出货：')+remain+' '+t('unit.pcs','件')+'</div>';
       html+='</label>';
     });
   });
@@ -7144,7 +7144,7 @@ async function loadMultiPIItems(addedPiIds,removedPiIds){
         (pi.items||[]).forEach(function(it){
           if((it.unshipped_qty||0)>0){
             window._ciAllItems=(window._ciAllItems||[]);
-            window._ciAllItems.push({pi_id:pi.id,pi_no:pi.pi_no,sku_code:it.sku_code,unshipped_qty:it.unshipped_qty,unit_price:it.unit_price,reference_customs_rate:it.reference_customs_rate,idx:curR++});
+            window._ciAllItems.push({pi_id:pi.id,pi_no:pi.pi_no,sku_code:it.sku_code,pi_confirmed_qty:it.pi_confirmed_qty||0,shipped_qty:it.shipped_qty||0,unshipped_qty:it.unshipped_qty,unit_price:it.unit_price,reference_customs_rate:it.reference_customs_rate,idx:curR++,currency:pi.currency});
           }
         });
       }catch(e){}
@@ -7163,10 +7163,11 @@ async function loadMultiPIItems(addedPiIds,removedPiIds){
   var tbodyHtml='';var isNewTable=!preview.querySelector('table');
   if(isNewTable){
     // Full table build
-    var headHtml='<table class="data-table" style="margin:0"><thead><tr>'+
-      '<th>SKU</th><th>'+t('ci.col.pi_source','PI来源')+'</th><th>'+t('ci.col.pi_qty','PI数量')+'</th>'+
-      '<th>'+t('ci.col.ci_qty','CI数量')+'</th><th>'+t('field.unit_price','单价')+'</th>'+
-      '<th>'+t('ci.col.amount','金额')+'</th><th style="width:40px">'+t('app.operation','操作')+'</th></tr></thead><tbody>';
+    var headHtml='<table class="data-table" style="margin:0;font-size:12px"><thead><tr>'+
+      '<th>SKU</th><th>'+t('ci.col.pi_source','PI来源')+'</th><th style="text-align:right">'+t('ci.col.pi_confirmed','PI总数量')+'</th>'+
+      '<th style="text-align:right">'+t('ci.col.pi_shipped','已出货')+'</th><th style="text-align:right">'+t('ci.col.pi_unshipped','未出货')+'</th>'+
+      '<th style="text-align:right">'+t('ci.col.ci_qty','本次CI数量')+'</th><th style="text-align:right">'+t('field.unit_price','单价')+'</th>'+
+      '<th style="text-align:right">'+t('ci.col.amount','金额')+'</th><th style="width:36px">'+t('app.operation','操作')+'</th></tr></thead><tbody>';
     allItems.forEach(function(it){
       tbodyHtml+=buildCIItemRow(it,allItems);
     });
@@ -7191,13 +7192,17 @@ async function loadMultiPIItems(addedPiIds,removedPiIds){
 // Helper: build one CI item row (6 cols)
 function buildCIItemRow(it,allItems){
   var refRate=it.reference_customs_rate!=null&&it.reference_customs_rate!==undefined?it.reference_customs_rate:'';
+  var cQty=it.pi_confirmed_qty||0, sQty=it.shipped_qty||0, uQty=it.unshipped_qty||0;
   return '<tr id="ci-r-'+it.idx+'" data-pi-id="'+it.pi_id+'">'+
     '<td class="cell-id">'+esc(it.sku_code)+'</td>'+
     '<td style="font-size:12px;color:#888">'+esc(it.pi_no)+'</td>'+
-    '<td style="text-align:right;color:#888">'+it.unshipped_qty+'</td>'+
-    '<td><input type="number" id="ci-rq-'+it.idx+'" value="'+it.unshipped_qty+'" style="width:85px;text-align:right" min="0" max="'+it.unshipped_qty+'" onchange="updateCISummary()" oninput="updateCISummary()"></td>'+
-    '<td><input type="number" step="0.01" id="ci-rp-'+it.idx+'" value="'+it.unit_price+'" style="width:100px;text-align:right" onchange="updateCISummary()" oninput="updateCISummary()"></td>'+
-    '<td style="text-align:right;font-weight:bold" id="ci-ra-'+it.idx+'">'+fmtMoney(it.unshipped_qty*it.unit_price)+'</td>'+'<td style="text-align:center"><button onclick="deleteCIRow('+it.idx+')" style="color:#bbb;border:none;background:none;cursor:pointer;font-size:13px;line-height:1;padding:2px 4px" title="'+t('common.delete','删除')+'">×</button></td>'+
+    '<td style="text-align:right;color:#888">'+cQty+'</td>'+
+    '<td style="text-align:right;color:#888">'+sQty+'</td>'+
+    '<td style="text-align:right;color:#888">'+uQty+'</td>'+
+    '<td><input type="number" id="ci-rq-'+it.idx+'" value="'+uQty+'" style="width:70px;text-align:right" min="0" max="'+uQty+'" onchange="updateCISummary()" oninput="updateCISummary()"></td>'+
+    '<td><input type="number" step="0.01" id="ci-rp-'+it.idx+'" value="'+it.unit_price+'" style="width:80px;text-align:right" onchange="updateCISummary()" oninput="updateCISummary()"></td>'+
+    '<td style="text-align:right;font-weight:bold" id="ci-ra-'+it.idx+'">'+fmtMoney(uQty*it.unit_price)+'</td>'+
+    '<td style="text-align:center"><button onclick="deleteCIRow('+it.idx+')" style="color:#bbb;border:none;background:none;cursor:pointer;font-size:13px;line-height:1;padding:2px 4px" title="'+t('common.delete','删除')+'">×</button></td>'+
     '<input type="hidden" id="ci-rr-'+it.idx+'" value="'+refRate+'">'+
     '</tr>';
 }
@@ -7214,7 +7219,11 @@ function updateCISummary(){
       var ae=document.getElementById('ci-ra-'+it.idx);if(ae)ae.textContent=fmtMoney(q*p);}
   });
   summary.style.display='';
-  summary.innerHTML=t('ci.summary.total','<strong>合计：</strong>{v1} 件 | {v2}',{v1:totalQty,v2:fmtMoney(totalAmt)});
+  var currency=(allItems[0]||{}).currency||'';
+  summary.innerHTML='<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px">'+
+    '<span>'+t('ci.summary.qty','合计数量：{v1} 件',{v1:totalQty})+'</span>'+
+    '<span style="font-weight:bold">'+t('ci.summary.amt','CI金额：{v1} {v2}',{v1:fmtMoney(totalAmt),v2:currency})+'</span>'+
+    '</div>';
 }
 
 // ── Delete individual CI item row (user can remove SKUs not shipping this batch) ──
