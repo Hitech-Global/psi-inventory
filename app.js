@@ -6750,7 +6750,9 @@ async function aggregateHciPIItems(piIds){
   if(allItems.length===0){preview.style.display='none';if(summary)summary.style.display='none';return;}
 
   // Build 9-column editable table (matching operational CI)
-  var html='<table class="data-table ci-detail-table" style="margin:0;font-size:12px"><thead><tr>'+
+  var html='<table class="data-table ci-detail-table" style="margin:0;font-size:12px">'+
+    '<colgroup><col style="width:14%"><col style="width:12%"><col style="width:8%"><col style="width:8%"><col style="width:8%"><col style="width:11%"><col style="width:11%"><col style="width:12%"><col style="width:40px"></colgroup>'+
+    '<thead><tr>'+
     '<th class="ci-col-sku">SKU</th><th class="ci-col-pi">'+t('ci.col.pi_source','PI来源')+'</th>'+
     '<th class="ci-col-right">'+t('ci.col.pi_confirmed','PI总数量')+'</th>'+
     '<th class="ci-col-right">'+t('ci.col.pi_shipped','已出货')+'</th>'+
@@ -7223,7 +7225,9 @@ async function loadMultiPIItems(addedPiIds,removedPiIds){
   var tbodyHtml='';var isNewTable=!preview.querySelector('table');
   if(isNewTable){
     // Full table build
-    var headHtml='<table class="data-table ci-detail-table" style="margin:0;font-size:12px"><thead><tr>'+
+    var headHtml='<table class="data-table ci-detail-table" style="margin:0;font-size:12px">'+
+      '<colgroup><col style="width:14%"><col style="width:12%"><col style="width:8%"><col style="width:8%"><col style="width:8%"><col style="width:11%"><col style="width:11%"><col style="width:12%"><col style="width:40px"></colgroup>'+
+      '<thead><tr>'+
       '<th class="ci-col-sku">SKU</th><th class="ci-col-pi">'+t('ci.col.pi_source','PI来源')+'</th><th class="ci-col-right">'+t('ci.col.pi_confirmed','PI总数量')+'</th>'+
       '<th class="ci-col-right">'+t('ci.col.pi_shipped','已出货')+'</th><th class="ci-col-right">'+t('ci.col.pi_unshipped','未出货')+'</th>'+
       '<th class="ci-col-right">'+t('ci.col.ci_qty','本次CI数量')+'</th><th class="ci-col-right">'+t('field.unit_price','单价')+'</th>'+

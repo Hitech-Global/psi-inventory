@@ -177,13 +177,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 /* CI detail table — fixed layout + column alignment (unified for both operational & historical CI) */
 .ci-detail-table{table-layout:fixed;width:100%;border-collapse:collapse}
 .ci-detail-table th,.ci-detail-table td{padding:6px 8px;vertical-align:middle}
-.ci-col-sku{width:12%;text-align:left}
-.ci-col-pi{width:11%;text-align:left}
-.ci-col-right{width:10%;text-align:right}
-.ci-col-act{width:40px;text-align:center}
-/* CI detail table inputs — unified width, right-aligned for numeric columns */
+.ci-col-sku{text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ci-col-pi{text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ci-col-right{text-align:right}
+.ci-col-act{text-align:center}
+/* CI detail table inputs — fill cell, right-aligned for numeric columns */
 .ci-detail-table input[type="number"]{padding:4px 6px;border:1px solid #d9d9d9;border-radius:3px;font-size:12px;box-sizing:border-box;width:100%}
-.ci-detail-table .ci-col-right input[type="number"]{text-align:right}
+.ci-detail-table .ci-col-right input[type="number"]{text-align:right;padding-right:8px}
 /* Summary bar alignment */
 .ci-summary-bar{display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;font-size:13px}
 .ci-summary-bar .ci-sum-right{font-weight:bold;text-align:right}
