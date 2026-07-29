@@ -6543,7 +6543,7 @@ async function createHistoricalCI(){
     body+='<div class="form-grid">';
     body+='<div class="form-group"><label>'+t('field.target_warehouse','目标仓库')+' <span class="required">*</span></label><input id="hci-wh" readonly style="background:#f5f5f5" placeholder="'+t('ci.warehouse_auto','选择PI后自动填入')+'"><input type="hidden" id="hci-wh-id"></div>';
     body+='<div class="form-group"><label>'+t('field.ci_date','CI 日期')+' <span class="required">*</span></label><input type="date" id="hci-date"></div>';
-    body+='<div class="form-group"><label>'+t('field.actual_ship_date','实际出货日期')+' <span class="required">*</span></label><input type="date" id="hci-ship-date"><div style="font-size:12px;color:#999">'+t('hci.ship_date_hint','用于信用账期计算，与 CI 日期不同')+'</div></div></div>';
+    body+='<div class="form-group"><label>'+t('field.actual_ship_date','实际出货日期')+' <span class="required">*</span></label><input type="date" id="hci-ship-date" onchange="calcHciDueDate()"><div style="font-size:12px;color:#999">'+t('hci.ship_date_hint','用于信用账期计算，与 CI 日期不同')+'</div></div></div>';
 
     // Row 6: Gross Amount + Historical Paid
     body+='<div class="form-grid">';
@@ -6553,7 +6553,7 @@ async function createHistoricalCI(){
     // Row 7: Paid Date + Payment Terms
     body+='<div class="form-grid">';
     body+='<div class="form-group"><label>'+t('field.paid_date','历史已付款日期')+'</label><input type="date" id="hci-paid-date"><div style="font-size:12px;color:#999">'+t('hci.paid_date_hint','未知时保持为空，不会用导入日期代替')+'</div></div>';
-    body+='<div class="form-group"><label>'+t('field.payment_terms','付款条件/账期')+'</label><select id="hci-terms"><option value="">'+t('app.none','无')+'</option>';
+    body+='<div class="form-group"><label>'+t('field.payment_terms','付款条件/账期')+'</label><select id="hci-terms" onchange="calcHciDueDate()"><option value="">'+t('app.none','无')+'</option>';
     termOpts.forEach(function(tm){body+='<option value="'+esc(tm.name)+'"'+(tm.credit_days>0?' data-credit="'+tm.credit_days+'"':'')+'>'+esc(tm.name)+(tm.credit_days>0?' ('+tm.credit_days+t('unit.days','天')+')':'')+'</option>';});
     body+='</select></div></div>';
 
@@ -6763,15 +6763,15 @@ async function aggregateHciPIItems(piIds){
   allItems.forEach(function(it){
     var cQty=it.pi_confirmed_qty||0,sQty=it.shipped_qty||0,uQty=it.unshipped_qty||0;
     html+='<tr id="hci-r-'+it.idx+'" data-pi-id="'+it.pi_id+'">'+
-      '<td class="cell-id">'+esc(it.sku_code)+'</td>'+
-      '<td style="font-size:12px;color:#888">'+esc(it.pi_no)+'</td>'+
-      '<td style="text-align:right;color:#888">'+cQty+'</td>'+
-      '<td style="text-align:right;color:#888">'+sQty+'</td>'+
-      '<td style="text-align:right;color:#888">'+uQty+'</td>'+
-      '<td><input type="number" id="hci-rq-'+it.idx+'" value="'+uQty+'" style="width:70px;text-align:center" min="0" max="'+uQty+'" onchange="updateHciCISummary()" oninput="updateHciCISummary()"></td>'+
-      '<td><input type="number" step="0.01" id="hci-rp-'+it.idx+'" value="'+it.unit_price+'" style="width:80px;text-align:center" onchange="updateHciCISummary()" oninput="updateHciCISummary()"></td>'+
-      '<td style="text-align:right;font-weight:bold" id="hci-ra-'+it.idx+'">'+fmtMoney(uQty*it.unit_price)+'</td>'+
-      '<td style="text-align:center"><button onclick="deleteHciCIRow('+it.idx+')" style="color:#bbb;border:none;background:none;cursor:pointer;font-size:13px;line-height:1;padding:2px 4px" title="'+t('common.delete','删除')+'">×</button></td>'+
+      '<td class="ci-col-sku">'+esc(it.sku_code)+'</td>'+
+      '<td class="ci-col-pi" style="font-size:12px;color:#888">'+esc(it.pi_no)+'</td>'+
+      '<td class="ci-col-right" style="color:#888">'+cQty+'</td>'+
+      '<td class="ci-col-right" style="color:#888">'+sQty+'</td>'+
+      '<td class="ci-col-right" style="color:#888">'+uQty+'</td>'+
+      '<td class="ci-col-right"><input type="number" id="hci-rq-'+it.idx+'" value="'+uQty+'" min="0" max="'+uQty+'" onchange="updateHciCISummary()" oninput="updateHciCISummary()"></td>'+
+      '<td class="ci-col-right"><input type="number" step="0.01" id="hci-rp-'+it.idx+'" value="'+it.unit_price+'" onchange="updateHciCISummary()" oninput="updateHciCISummary()"></td>'+
+      '<td class="ci-col-right" style="font-weight:bold" id="hci-ra-'+it.idx+'">'+fmtMoney(uQty*it.unit_price)+'</td>'+
+      '<td class="ci-col-act"><button onclick="deleteHciCIRow('+it.idx+')" style="color:#bbb;border:none;background:none;cursor:pointer;font-size:13px;line-height:1;padding:2px 4px" title="'+t('common.delete','删除')+'">×</button></td>'+
       '</tr>';
   });
 
@@ -6837,6 +6837,21 @@ async function onHistoricalPaymentTermsFilter(supId){
     for(var i=0;i<tmSel.options.length;i++){if(tmSel.options[i].value===savedVal){found=true;break;}}
     if(found)tmSel.value=savedVal;
   }
+}
+// ── Historical CI due date auto-calculation (actual_ship_date + credit_days) ──
+function calcHciDueDate(){
+  var shipEl=document.getElementById('hci-ship-date'),dueEl=document.getElementById('hci-due'),termsEl=document.getElementById('hci-terms');
+  if(!shipEl||!dueEl||!termsEl)return;
+  var shipDate=shipEl.value;
+  if(!shipDate)return;
+  var selOpt=termsEl.options[termsEl.selectedIndex];
+  var creditDays=parseInt(selOpt&&selOpt.dataset.credit)||0;
+  if(creditDays<=0)return;
+  var d=new Date(shipDate+'T00:00:00');
+  if(isNaN(d.getTime()))return;
+  d.setDate(d.getDate()+creditDays);
+  var yyyy=d.getFullYear(),mm=String(d.getMonth()+1).padStart(2,'0'),dd=String(d.getDate()).padStart(2,'0');
+  dueEl.value=yyyy+'-'+mm+'-'+dd;
 }
 async function saveHistoricalCI(){
   const btn=document.getElementById('hci-save');if(!btn||btn.disabled)return;
@@ -7239,15 +7254,15 @@ function buildCIItemRow(it,allItems){
   var refRate=it.reference_customs_rate!=null&&it.reference_customs_rate!==undefined?it.reference_customs_rate:'';
   var cQty=it.pi_confirmed_qty||0, sQty=it.shipped_qty||0, uQty=it.unshipped_qty||0;
   return '<tr id="ci-r-'+it.idx+'" data-pi-id="'+it.pi_id+'">'+
-    '<td class="cell-id">'+esc(it.sku_code)+'</td>'+
-    '<td style="font-size:12px;color:#888">'+esc(it.pi_no)+'</td>'+
-    '<td style="text-align:right;color:#888">'+cQty+'</td>'+
-    '<td style="text-align:right;color:#888">'+sQty+'</td>'+
-    '<td style="text-align:right;color:#888">'+uQty+'</td>'+
-    '<td><input type="number" id="ci-rq-'+it.idx+'" value="'+uQty+'" style="width:70px;text-align:right" min="0" max="'+uQty+'" onchange="updateCISummary()" oninput="updateCISummary()"></td>'+
-    '<td><input type="number" step="0.01" id="ci-rp-'+it.idx+'" value="'+it.unit_price+'" style="width:80px;text-align:right" onchange="updateCISummary()" oninput="updateCISummary()"></td>'+
-    '<td style="text-align:right;font-weight:bold" id="ci-ra-'+it.idx+'">'+fmtMoney(uQty*it.unit_price)+'</td>'+
-    '<td style="text-align:center"><button onclick="deleteCIRow('+it.idx+')" style="color:#bbb;border:none;background:none;cursor:pointer;font-size:13px;line-height:1;padding:2px 4px" title="'+t('common.delete','删除')+'">×</button></td>'+
+    '<td class="ci-col-sku">'+esc(it.sku_code)+'</td>'+
+    '<td class="ci-col-pi" style="font-size:12px;color:#888">'+esc(it.pi_no)+'</td>'+
+    '<td class="ci-col-right" style="color:#888">'+cQty+'</td>'+
+    '<td class="ci-col-right" style="color:#888">'+sQty+'</td>'+
+    '<td class="ci-col-right" style="color:#888">'+uQty+'</td>'+
+    '<td class="ci-col-right"><input type="number" id="ci-rq-'+it.idx+'" value="'+uQty+'" min="0" max="'+uQty+'" onchange="updateCISummary()" oninput="updateCISummary()"></td>'+
+    '<td class="ci-col-right"><input type="number" step="0.01" id="ci-rp-'+it.idx+'" value="'+it.unit_price+'" onchange="updateCISummary()" oninput="updateCISummary()"></td>'+
+    '<td class="ci-col-right" style="font-weight:bold" id="ci-ra-'+it.idx+'">'+fmtMoney(uQty*it.unit_price)+'</td>'+
+    '<td class="ci-col-act"><button onclick="deleteCIRow('+it.idx+')" style="color:#bbb;border:none;background:none;cursor:pointer;font-size:13px;line-height:1;padding:2px 4px" title="'+t('common.delete','删除')+'">×</button></td>'+
     '<input type="hidden" id="ci-rr-'+it.idx+'" value="'+refRate+'">'+
     '</tr>';
 }
