@@ -6652,10 +6652,14 @@ async function createOperationalCI(){
       body+='<option value="'+s.id+'" data-name="'+esc(s.name)+'">'+esc(s.name)+(count>0?' ('+count+' PI)':' (0 PI)')+'</option>';
     });
     body+='</select></div></div>';
-    // Row 2: PI multi-select (initially disabled)
+    // Row 2: PI dropdown multi-select
     body+='<h4 style="margin:12px 0 8px">'+t('ci.select_pi','选择关联 PI')+' <span style="font-size:12px;color:#ff4d4f">（同供应商+同币种）</span></h4>';
-    body+='<div id="ci-pi-list" style="max-height:200px;overflow-y:auto;border:1px solid #ddd;border-radius:6px;padding:8px;margin-bottom:12px;background:#fafafa">';
-    body+='<div class="empty-state" style="padding:12px;font-size:13px;color:#999">'+t('ci.select_supplier_first_hint','请先选择供应商')+'</div></div>';
+    body+='<div class="form-group" style="position:relative;margin-bottom:12px">';
+    body+='<div id="nci-pi-trigger" onclick="toggleNciPiDropdown()" style="padding:8px 12px;border:1px solid #d9d9d9;border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;min-height:38px;background:#fff;user-select:none">';
+    body+='<span id="nci-pi-trigger-text" style="font-size:13px;color:#999">'+t('ci.select_supplier_first_hint','请先选择供应商')+'</span>';
+    body+='<span style="font-size:11px;color:#999">▼</span></div>';
+    body+='<div id="nci-pi-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:100;max-height:240px;overflow-y:auto;border:1px solid #d9d9d9;border-radius:6px;background:#fff;box-shadow:0 4px 12px rgba(0,0,0,0.1);margin-top:2px">';
+    body+='<div style="padding:12px;font-size:13px;color:#999">'+t('ci.select_supplier_first_hint','请先选择供应商')+'</div></div></div>';
     // Row 3: Currency + Ship date + Batch
     body+='<div class="form-grid">';
     body+='<div class="form-group"><label>'+t('field.currency','币种')+' <span class="required">*</span></label><input id="nci-cur" readonly style="background:#f5f5f5" placeholder="'+t('ci.currency_auto','选择PI后自动填入')+'"></div>';
@@ -6675,11 +6679,12 @@ async function createOperationalCI(){
       '<button class="btn btn-secondary" onclick="closeModal()">'+t('app.cancel','取消')+'</button>'+
       '<button class="btn btn-primary" id="nci-save-btn" onclick="saveNewCI()">'+t('app.create','创建')+'</button>');
     window._ciR=0;window._ciAllItems=[];window._ciSelectedPiIds={};window._allTermOpts=termOpts;
+  if(!window._nciPiDocListener){window._nciPiDocListener=true;document.addEventListener('click',function(e){if(!e.target.closest('#nci-pi-trigger')&&!e.target.closest('#nci-pi-dropdown')){closeNciPiDropdown();}});}
   }catch(e){showToast(e.message,'danger')}
 }
 // ── Supplier-first: filter PI list ──
 function onCISupplierChange(){
-  var sel=document.getElementById('nci-supplier'),list=document.getElementById('ci-pi-list'),cur=document.getElementById('nci-cur'),preview=document.getElementById('ci-items-preview'),summary=document.getElementById('ci-items-summary');
+  var sel=document.getElementById('nci-supplier'),list=document.getElementById('nci-pi-dropdown'),cur=document.getElementById('nci-cur'),preview=document.getElementById('ci-items-preview'),summary=document.getElementById('ci-items-summary');
   if(!list||!sel)return;
   var supId=sel.value;
   // Clear currency + items
@@ -6687,10 +6692,10 @@ function onCISupplierChange(){
   if(preview)preview.innerHTML='<div style="padding:12px;color:#999">'+t('ci.select_pi_first','请先选择供应商和PI')+'</div>';
   if(summary)summary.style.display='none';
   window._ciAllItems=[];window._ciR=0;window._ciSelectedPiIds={};
-  if(!supId){list.innerHTML='<div class="empty-state" style="padding:12px;font-size:13px;color:#999">'+t('ci.select_supplier_first_hint','请先选择供应商')+'</div>';return;}
+  if(!supId){list.innerHTML='<div class="empty-state" style="padding:12px;font-size:13px;color:#999">'+t('ci.select_supplier_first_hint','请先选择供应商')+'</div>';updateNciPiTriggerText();return;}
   // Filter PIs for this supplier
   var supPis=window._allPis.filter(function(p){return p.supplier_id===supId;});
-  if(supPis.length===0){list.innerHTML='<div class="empty-state" style="padding:12px;font-size:13px;color:#999">'+t('ci.no_pi_for_supplier','该供应商无可选PI')+'</div>';onCIPaymentTermsFilter(supId);return;}
+  if(supPis.length===0){list.innerHTML='<div class="empty-state" style="padding:12px;font-size:13px;color:#999">'+t('ci.no_pi_for_supplier','该供应商无可选PI')+'</div>';onCIPaymentTermsFilter(supId);updateNciPiTriggerText();return;}
   // ── Filter payment terms by supplier ──
   onCIPaymentTermsFilter(supId);
   // Group by currency
@@ -6712,8 +6717,8 @@ function onCISupplierChange(){
     html+='</div>';
   });
   list.innerHTML=html;
+  updateNciPiTriggerText();
 }
-// ── Filter payment terms by selected supplier ──
 async function onCIPaymentTermsFilter(supId){
   var tmSel=document.getElementById('nci-payment-terms');
   if(!tmSel||!supId)return;
@@ -6767,6 +6772,7 @@ function onCIPISelectionChange(){
   if(added.length>0||removed.length>0){
     loadMultiPIItems(added,removed);
   }
+  updateNciPiTriggerText();
 }
 async function loadMultiPIItems(addedPiIds,removedPiIds){
   var preview=document.getElementById('ci-items-preview'),summary=document.getElementById('ci-items-summary');
@@ -6827,7 +6833,7 @@ async function loadMultiPIItems(addedPiIds,removedPiIds){
     var headHtml='<table class="data-table" style="margin:0"><thead><tr>'+
       '<th>SKU</th><th>'+t('ci.col.pi_source','PI来源')+'</th><th>'+t('ci.col.pi_qty','PI数量')+'</th>'+
       '<th>'+t('ci.col.ci_qty','CI数量')+'</th><th>'+t('field.unit_price','单价')+'</th>'+
-      '<th>'+t('ci.col.amount','金额')+'</th></tr></thead><tbody>';
+      '<th>'+t('ci.col.amount','金额')+'</th><th style="width:40px">'+t('app.operation','操作')+'</th></tr></thead><tbody>';
     allItems.forEach(function(it){
       tbodyHtml+=buildCIItemRow(it,allItems);
     });
@@ -6858,7 +6864,7 @@ function buildCIItemRow(it,allItems){
     '<td style="text-align:right;color:#888">'+it.unshipped_qty+'</td>'+
     '<td><input type="number" id="ci-rq-'+it.idx+'" value="'+it.unshipped_qty+'" style="width:85px;text-align:right" min="0" max="'+it.unshipped_qty+'" onchange="updateCISummary()" oninput="updateCISummary()"></td>'+
     '<td><input type="number" step="0.01" id="ci-rp-'+it.idx+'" value="'+it.unit_price+'" style="width:100px;text-align:right" onchange="updateCISummary()" oninput="updateCISummary()"></td>'+
-    '<td style="text-align:right;font-weight:bold" id="ci-ra-'+it.idx+'">'+fmtMoney(it.unshipped_qty*it.unit_price)+'</td>'+
+    '<td style="text-align:right;font-weight:bold" id="ci-ra-'+it.idx+'">'+fmtMoney(it.unshipped_qty*it.unit_price)+'</td>'+'<td style="text-align:center"><button onclick="deleteCIRow('+it.idx+')" class="btn btn-sm" style="color:#ff4d4f;border:none;background:none;cursor:pointer;font-size:16px;line-height:1;padding:2px 6px" title="'+t('common.delete','删除')+'">✕</button></td>'+
     '<input type="hidden" id="ci-rr-'+it.idx+'" value="'+refRate+'">'+
     '</tr>';
 }
@@ -6877,6 +6883,45 @@ function updateCISummary(){
   summary.style.display='';
   summary.innerHTML=t('ci.summary.total','<strong>合计：</strong>{v1} 件 | {v2}',{v1:totalQty,v2:fmtMoney(totalAmt)});
 }
+
+// ── Delete individual CI item row (user can remove SKUs not shipping this batch) ──
+function deleteCIRow(idx){
+  var allItems=window._ciAllItems||[];
+  window._ciAllItems=allItems.filter(function(it){return it.idx!==idx;});
+  var row=document.getElementById('ci-r-'+idx);
+  if(row)row.remove();
+  updateCISummary();
+  if(window._ciAllItems.length===0){
+    var preview=document.getElementById('ci-items-preview');
+    if(preview)preview.innerHTML='<div style="padding:12px;color:#999">'+t('ci.select_pi_first','请先选择供应商和PI')+'</div>';
+    var summary=document.getElementById('ci-items-summary');
+    if(summary)summary.style.display='none';
+  }
+}
+
+// ── PI dropdown multi-select ──
+function toggleNciPiDropdown(){
+  var dd=document.getElementById('nci-pi-dropdown');
+  if(!dd)return;
+  var isOpen=dd.style.display==='block';
+  dd.style.display=isOpen?'none':'block';
+}
+function closeNciPiDropdown(e){
+  var dd=document.getElementById('nci-pi-dropdown'),trig=document.getElementById('nci-pi-trigger');
+  if(!dd)return;
+  if(e&&trig&&trig.contains(e.target))return;
+  dd.style.display='none';
+}
+function updateNciPiTriggerText(){
+  var txt=document.getElementById('nci-pi-trigger-text');
+  if(!txt)return;
+  var cbs=document.querySelectorAll('.nci-pi-cb:checked');
+  if(cbs.length===0){txt.textContent=t('ci.041','请选择PI');txt.style.color='#999';}
+  else if(cbs.length===1){
+    var no=cbs[0].dataset.no||'';txt.textContent=no;txt.style.color='#333';
+  }else{txt.textContent=t('ci.042','{v1} PI已选择',{v1:cbs.length});txt.style.color='#333';}
+}
+
 async function saveNewCI(){
   var cbs=document.querySelectorAll('.nci-pi-cb:checked');
   if(cbs.length===0){showToast(t('ci.no_pi_sel','请至少选择一个 PI'),'warning');return;}
@@ -6886,11 +6931,12 @@ async function saveNewCI(){
   if(!sd){showToast(t('ci.ship_date_req','请填写实际出货日期'),'warning');return;}
   var ciDate=(document.getElementById('nci-date')||{}).value||'';
   var items=[];
-  for(var i=0;i<(window._ciR||0);i++){
-    var qe=document.getElementById('ci-rq-'+i),pe=document.getElementById('ci-rp-'+i),re=document.getElementById('ci-rr-'+i);
+  var allItems=window._ciAllItems||[];
+  for(var i=0;i<allItems.length;i++){
+    var it=allItems[i];
+    var qe=document.getElementById('ci-rq-'+it.idx),pe=document.getElementById('ci-rp-'+it.idx),re=document.getElementById('ci-rr-'+it.idx);
     if(!qe)continue;var q=parseInt(qe.value)||0;if(q<=0)continue;
-    var it=(window._ciAllItems||[])[i];
-    items.push({pi_id:it?it.pi_id:piIds[0],sku_code:it?it.sku_code:'',shipped_qty:q,unit_price:parseFloat(pe?pe.value:0)||0,actual_customs_rate:re&&re.value!==''?parseFloat(re.value):null});
+    items.push({pi_id:it.pi_id,sku_code:it.sku_code,shipped_qty:q,unit_price:parseFloat(pe?pe.value:0)||0,actual_customs_rate:re&&re.value!==''?parseFloat(re.value):null});
   }
   if(items.length===0){showToast(t('ci.no_items','请至少添加一条出货明细'),'warning');return;}
   var ciNo=(document.getElementById('nci-no')||{}).value||'',supSel=document.getElementById('nci-supplier');
