@@ -4277,6 +4277,9 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.en["hci.ship_date_hint"] = "Used for credit term calculation, differs from CI date"; I18N.dict.id["hci.ship_date_hint"] = "Digunakan untuk perhitungan jangka waktu kredit, berbeda dari tanggal CI";
   I18N.dict.en["hci.paid_date_hint"] = "Leave empty if unknown; will not be replaced with import date"; I18N.dict.id["hci.paid_date_hint"] = "Kosongkan jika tidak diketahui; tidak akan diganti dengan tanggal impor";
   I18N.dict.en["hci.note_hint"] = "Optional"; I18N.dict.id["hci.note_hint"] = "Opsional";
+  I18N.dict.en["hci.items_hint"] = "Above is for reference, enter actual historical amount below"; I18N.dict.id["hci.items_hint"] = "Di atas untuk referensi, masukkan jumlah historis aktual di bawah";
+  I18N.dict.en["ci.items_from_pi"] = "Items from PI"; I18N.dict.id["ci.items_from_pi"] = "Item dari PI";
+  I18N.dict.en["ci.summary.est_total"] = "Est. Total"; I18N.dict.id["ci.summary.est_total"] = "Perkiraan Total";
   I18N.dict.en["field.historical_ci_no"] = "Historical CI No."; I18N.dict.id["field.historical_ci_no"] = "No. CI Historis";
   I18N.dict.en["field.supplier_snapshot"] = "Supplier Snapshot"; I18N.dict.id["field.supplier_snapshot"] = "Snapshot Pemasok";
   I18N.dict.en["field.gross_amount"] = "Total Goods Amount"; I18N.dict.id["field.gross_amount"] = "Total Nilai Barang";

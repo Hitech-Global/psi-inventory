@@ -6488,6 +6488,7 @@ async function createHistoricalCI(){
     window._hciAllTermOpts=termOpts;
     window._hciSuppliers=suppliers;
     window._hciBrands=brands;
+    window._hciCountries={};countries.forEach(function(c){window._hciCountries[c.name]=c.code;});
 
     const idempotency='historical-ci-ui:'+(window.crypto&&window.crypto.randomUUID?window.crypto.randomUUID():(Date.now()+'-'+Math.random().toString(36).slice(2)));
 
@@ -6519,6 +6520,9 @@ async function createHistoricalCI(){
     body+='<span style="font-size:11px;color:#999">▼</span></div>';
     body+='<div id="hci-pi-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:100;max-height:240px;overflow-y:auto;border:1px solid #d9d9d9;border-radius:6px;background:#fff;box-shadow:0 4px 12px rgba(0,0,0,0.1);margin-top:2px">';
     body+='<div style="padding:12px;font-size:13px;color:#999">'+t('ci.select_supplier_first_hint','请先选择供应商')+'</div></div></div>';
+
+    // Aggregated PI items table (shown when PI(s) selected)
+    body+='<div id="hci-items-preview" style="margin-bottom:12px;display:none"></div>';
 
     // Row 3: Supplier snapshot (auto-filled) + Brand
     body+='<div class="form-grid">';
@@ -6667,16 +6671,107 @@ function updateHciPiTriggerText(){
   if(cbs.length===1){el.textContent=cbs[0].dataset.no;el.style.color='#333';return;}
   el.textContent=cbs.length+' '+t('hci.pi_selected','个PI已选择');el.style.color='#333';
 }
-function onHciPISelectionChange(){
+async function onHciPISelectionChange(){
   var cbs=document.querySelectorAll('.hci-pi-cb:checked');
   updateHciPiTriggerText();
   closeHciPiDropdown();
-  // Auto-fill currency from selected PI
-  if(cbs.length>0){
-    var piCur=cbs[0].dataset.cur;
-    var cur=document.getElementById('hci-currency');
-    if(cur&&piCur){for(var i=0;i<cur.options.length;i++){if(cur.options[i].value===piCur){cur.value=piCur;break;}}}
+  if(cbs.length===0){
+    var preview=document.getElementById('hci-items-preview');
+    if(preview)preview.style.display='none';
+    window._hciSelectedPiIds=[];
+    return;
   }
+  // Collect selected PI IDs
+  var piIds=[];cbs.forEach(function(cb){piIds.push(cb.value);});
+  window._hciSelectedPiIds=piIds;
+  // ── Auto-fill from PI data (country/brand/currency/supplier_name via _hciAllPis) ──
+  var firstPi=null;
+  for(var j=0;j<cbs.length;j++){
+    var pid=cbs[j].value;
+    var match=(window._hciAllPis||[]).find(function(p){return p.id===pid;});
+    if(match){firstPi=match;break;}
+  }
+  if(firstPi){
+    // Country: reverse lookup name → code
+    var countryMap=window._hciCountries||{};
+    var countryCode=countryMap[firstPi.country]||'';
+    if(countryCode){
+      var countrySel=document.getElementById('hci-country');
+      if(countrySel){for(var k=0;k<countrySel.options.length;k++){if(countrySel.options[k].value===countryCode){countrySel.value=countryCode;break;}}}
+    }
+    // Brand
+    var brandEl=document.getElementById('hci-brand');
+    if(brandEl&&firstPi.brand){brandEl.value=firstPi.brand;}
+    // Currency
+    var curEl=document.getElementById('hci-currency');
+    if(curEl&&firstPi.currency){for(var c=0;c<curEl.options.length;c++){if(curEl.options[c].value===firstPi.currency){curEl.value=firstPi.currency;break;}}}
+    // Supplier snapshot
+    var supNameEl=document.getElementById('hci-supplier-name');
+    if(supNameEl&&firstPi.supplier_name){supNameEl.value=firstPi.supplier_name;}
+  }
+  // ── Aggregate and display items from all selected PIs ──
+  try{await aggregateHciPIItems(piIds);}catch(e){}
+}
+
+// ── Aggregate line items from selected PIs (informational reference table) ──
+async function aggregateHciPIItems(piIds){
+  var preview=document.getElementById('hci-items-preview');
+  if(!preview||piIds.length===0){if(preview)preview.style.display='none';return;}
+  // Fetch all selected PIs (single endpoint for items)
+  var allItems=[];
+  for(var i=0;i<piIds.length;i++){
+    try{
+      var pi=await api('/api/proforma-invoices/'+piIds[i]);
+      (pi.items||[]).forEach(function(it){
+        if((it.unshipped_qty||0)>0.001){
+          allItems.push({pi_no:pi.pi_no,sku_code:it.sku_code,pi_confirmed_qty:it.pi_confirmed_qty||it.shipped_qty||0,unshipped_qty:it.unshipped_qty||0,unit_price:it.unit_price||0,currency:pi.currency});
+        }
+      });
+    }catch(e){}
+  }
+  if(allItems.length===0){preview.style.display='none';return;}
+  // Aggregate by SKU (sum qty, average unit price for reference)
+  var agg={};
+  allItems.forEach(function(it){
+    var key=it.sku_code;
+    if(!agg[key])agg[key]={sku_code:it.sku_code,pi_nos:[],total_confirmed:0,unshipped:0,unit_price:0,price_count:0,currency:it.currency};
+    agg[key].pi_nos.push(it.pi_no);
+    agg[key].total_confirmed+=it.pi_confirmed_qty;
+    agg[key].unshipped+=it.unshipped_qty;
+    agg[key].unit_price+=it.unit_price;
+    agg[key].price_count++;
+  });
+  var rows=Object.values(agg);
+  rows.forEach(function(r){r.unit_price=r.price_count>0?r.unit_price/r.price_count:0;});
+  // Build table
+  var html='<h4 style="margin:12px 0 8px">'+t('ci.items_from_pi','从PI带出的出货明细')+' <span style="font-size:12px;color:#888">('+piIds.length+' PI)</span></h4>';
+  html+='<div style="max-height:300px;overflow-y:auto;border:1px solid #f0f0f0;border-radius:6px">';
+  html+='<table class="data-table" style="margin:0;font-size:13px"><thead><tr>';
+  html+='<th>SKU</th><th>'+t('ci.col.pi_source','PI来源')+'</th>';
+  html+='<th style="text-align:right">'+t('ci.col.pi_qty','PI数量')+'</th>';
+  html+='<th style="text-align:right">'+t('ci.pi.remain','剩余可出货')+'</th>';
+  html+='<th style="text-align:right">'+t('field.unit_price','参考单价')+'</th>';
+  html+='</tr></thead><tbody>';
+  var grandTotal=0;
+  rows.forEach(function(r){
+    var uniqueNos=[];r.pi_nos.forEach(function(n){if(uniqueNos.indexOf(n)<0)uniqueNos.push(n);});
+    var rowTotal=r.unshipped*r.unit_price;
+    grandTotal+=rowTotal;
+    html+='<tr>';
+    html+='<td class="cell-id">'+esc(r.sku_code)+'</td>';
+    html+='<td style="font-size:12px;color:#888">'+uniqueNos.join(', ')+'</td>';
+    html+='<td style="text-align:right">'+r.total_confirmed+'</td>';
+    html+='<td style="text-align:right">'+r.unshipped+'</td>';
+    html+='<td style="text-align:right">'+fmtMoney(r.unit_price)+' '+esc(r.currency)+'</td>';
+    html+='</tr>';
+  });
+  html+='</tbody><tfoot><tr style="background:#fafafa;font-weight:bold">';
+  html+='<td colspan="4" style="text-align:right">'+t('ci.summary.est_total','参考总金额')+'</td>';
+  html+='<td style="text-align:right">'+fmtMoney(grandTotal)+' '+esc(rows[0]&&rows[0].currency||'')+'</td>';
+  html+='</tr></tfoot></table></div>';
+  html+='<div style="font-size:12px;color:#999;margin-top:4px">'+t('hci.items_hint','以上为参考信息，请在下方填写实际历史货款金额')+'</div>';
+  preview.innerHTML=html;
+  preview.style.display='';
 }
 
 // ── Payment terms filter (same pattern as onCIPaymentTermsFilter) ──
