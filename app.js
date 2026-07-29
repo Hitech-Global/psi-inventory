@@ -6547,7 +6547,7 @@ async function createHistoricalCI(){
 
     // Row 6: Gross Amount + Historical Paid
     body+='<div class="form-grid">';
-    body+='<div class="form-group"><label>'+t('field.gross_amount','历史货款总金额')+' <span class="required">*</span></label><input type="number" min="0.01" step="0.01" id="hci-gross" placeholder="0.00"></div>';
+    body+='<div class="form-group" id="hci-gross-group"><label>'+t('field.gross_amount','历史货款总金额')+' <span class="required">*</span></label><input type="number" min="0.01" step="0.01" id="hci-gross" placeholder="0.00"><div id="hci-gross-hint" style="font-size:12px;color:#999"></div></div>';
     body+='<div class="form-group"><label>'+t('field.historical_paid','导入前历史已付款')+'</label><input type="number" min="0" step="0.01" id="hci-paid" value="0" placeholder="0.00"></div></div>';
 
     // Row 7: Paid Date + Payment Terms
@@ -6567,6 +6567,9 @@ async function createHistoricalCI(){
     window._hciR=0;window._hciAllItems=[];window._hciSelectedPiIds=[];
   openModal(t("po.037", "历史 CI 导入"), body,
       t('hci.footer_btns','<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" id="hci-save" onclick="saveHistoricalCI()">导入</button>'),'modal-ci-create');
+
+    // Apply default (linked) mode state: hide manual gross input + lock currency
+    onHistoricalPIModeChange();
 
     // Init click-outside listener for PI dropdown
     if(!window._hciPiDocListener){window._hciPiDocListener=true;document.addEventListener('click',function(e){if(!e.target.closest('#hci-pi-trigger')&&!e.target.closest('#hci-pi-dropdown')){closeHciPiDropdown();}});}
@@ -6645,6 +6648,21 @@ function onHistoricalPIModeChange(){
   var section=document.getElementById('hci-pi-section');
   if(!section||!mode)return;
   section.style.display=mode.value==='linked'?'':'none';
+  // Gross amount field: only manual input in non-linked mode
+  var grossGroup=document.getElementById('hci-gross-group');
+  var grossHint=document.getElementById('hci-gross-hint');
+  var curSel=document.getElementById('hci-currency');
+  if(mode.value==='linked'){
+    if(grossGroup)grossGroup.style.display='none';
+    if(grossHint)grossHint.textContent=t('hci.gross_auto_hint','关联 PI 时，历史货款总金额由 CI 明细金额自动汇总');
+    if(curSel){curSel.disabled=true;curSel.style.background='#f5f5f5';}
+  }else{
+    if(grossGroup)grossGroup.style.display='';
+    if(grossHint)grossHint.textContent='';
+    if(curSel){curSel.disabled=false;curSel.style.background='';}
+    // manual mode: clear any auto-filled gross so user must enter manually
+    var gi=document.getElementById('hci-gross');if(gi)gi.value='';
+  }
   // Clear PI selection when switching to manual
   if(mode.value==='manual'){
     document.querySelectorAll('.hci-pi-cb').forEach(function(cb){cb.checked=false;});
@@ -6783,19 +6801,40 @@ async function aggregateHciPIItems(piIds){
 
   // Show summary
   updateHciCISummary();
+  // linked mode: lock currency to PI currency (multi-PI share same currency per R4)
+  var modeChk0=document.querySelector('input[name="hci-pi-mode"]:checked');
+  if(modeChk0&&modeChk0.value==='linked'){
+    var curSel0=document.getElementById('hci-currency');
+    var itemCur=(allItems[0]||{}).currency||'';
+    if(curSel0&&itemCur){curSel0.value=itemCur;curSel0.disabled=true;curSel0.style.background='#f5f5f5';}
+  }
 }
 
 // ── Historical CI real-time summary ──
-function updateHciCISummary(){
-  var summary=document.getElementById('hci-items-h-summary'),allItems=window._hciAllItems||[];
-  if(!summary||allItems.length===0){if(summary)summary.style.display='none';return;}
-  var totalQty=0,totalAmt=0;
+function getHciItemTotal(){
+  var allItems=window._hciAllItems||[],total=0;
   allItems.forEach(function(it){
     var qe=document.getElementById('hci-rq-'+it.idx),pe=document.getElementById('hci-rp-'+it.idx);
     var q=parseInt(qe?qe.value:0)||0,p=parseFloat(pe?pe.value:0)||0;
-    if(q>0){totalQty+=q;totalAmt+=q*p;
+    if(q>0)total+=q*p;
+  });
+  return total;
+}
+function updateHciCISummary(){
+  var summary=document.getElementById('hci-items-h-summary'),allItems=window._hciAllItems||[];
+  if(!summary||allItems.length===0){if(summary)summary.style.display='none';return;}
+  var totalQty=0,totalAmt=getHciItemTotal();
+  allItems.forEach(function(it){
+    var qe=document.getElementById('hci-rq-'+it.idx);
+    var q=parseInt(qe?qe.value:0)||0;
+    if(q>0){totalQty+=q;
+      var pe=document.getElementById('hci-rp-'+it.idx);
+      var p=parseFloat(pe?pe.value:0)||0;
       var ae=document.getElementById('hci-ra-'+it.idx);if(ae)ae.textContent=fmtMoney(q*p);}
   });
+  // linked mode: auto-fill gross_goods_amount from CI detail total
+  var modeChk=document.querySelector('input[name="hci-pi-mode"]:checked');
+  if(modeChk&&modeChk.value==='linked'){var gi=document.getElementById('hci-gross');if(gi)gi.value=totalAmt;}
   summary.style.display='';
   var currency=(allItems[0]||{}).currency||'';
   summary.innerHTML='<div class="ci-summary-bar">'+
@@ -6858,7 +6897,9 @@ function calcHciDueDate(){
 async function saveHistoricalCI(){
   const btn=document.getElementById('hci-save');if(!btn||btn.disabled)return;
   const supplier=document.getElementById('hci-supplier');
-  const gross=parseFloat(document.getElementById('hci-gross').value);
+  var piModeChk=document.querySelector('input[name="hci-pi-mode"]:checked');
+  var isLinked=piModeChk&&piModeChk.value==='linked';
+  var gross = isLinked ? getHciItemTotal() : parseFloat(document.getElementById('hci-gross').value);
   const paid=parseFloat(document.getElementById('hci-paid').value||0);
   // Collect selected PI info (optional)
   var piMode=document.querySelector('input[name="hci-pi-mode"]:checked');
@@ -6869,7 +6910,7 @@ async function saveHistoricalCI(){
   const body={historical_ci_no:document.getElementById('hci-no').value.trim(),supplier_id:supplier.value,supplier_name:document.getElementById('hci-supplier-name').value.trim(),brand_name:document.getElementById('hci-brand').value.trim(),country:document.getElementById('hci-country').value,ci_date:document.getElementById('hci-date').value,actual_ship_date:document.getElementById('hci-ship-date').value,currency:document.getElementById('hci-currency').value,gross_goods_amount:gross,historical_paid_amount:paid,historical_paid_date:document.getElementById('hci-paid-date').value,payment_terms:document.getElementById('hci-terms').value.trim(),due_date:document.getElementById('hci-due').value,source_note:document.getElementById('hci-note').value.trim(),source_mode:'historical',idempotency_key:document.getElementById('hci-idempotency').value,warehouse_name:(document.getElementById('hci-wh')||{}).value||'',warehouse_id:(document.getElementById('hci-wh-id')||{}).value||undefined};
   // Attach PI references when linked mode
   if(piIds.length>0){body.related_pi_ids=piIds;body.related_pi_nos=piNos;}
-  if(!body.historical_ci_no||!body.supplier_name||!body.brand_name||!body.country||!body.ci_date||!body.currency){showToast(t('gen.L5793.1','请填写历史 CI 编号、供应商、品牌、国家、日期和币种'),'warning');return}if(!(gross>0)){showToast(t('gen.L5793.2','历史货款总金额必须大于0'),'warning');return}if(!Number.isFinite(paid)||paid<0){showToast(t('gen.L5793.3','历史已付款金额不能小于0'),'warning');return}if(paid>gross){showToast(t('gen.L5793.4','历史已付款金额不能超过历史货款总金额'),'warning');return}
+  if(!body.historical_ci_no||!body.supplier_name||!body.brand_name||!body.country||!body.ci_date||!body.currency){showToast(t('gen.L5793.1','请填写历史 CI 编号、供应商、品牌、国家、日期和币种'),'warning');return}if(!(gross>0)){showToast(isLinked?t('hci.gross_auto_required','请选择关联 PI 并填写 CI 明细数量与单价，货款总金额由明细自动汇总'):t('gen.L5793.2','历史货款总金额必须大于0'),'warning');return}if(!Number.isFinite(paid)||paid<0){showToast(t('gen.L5793.3','历史已付款金额不能小于0'),'warning');return}if(paid>gross){showToast(t('gen.L5793.4','历史已付款金额不能超过历史货款总金额'),'warning');return}
   btn.disabled=true;btn.textContent=t("app.984", "导入中…");try{const result=await api('/api/historical-commercial-invoices','POST',body);showToast(result.idempotent?t('gen.L5794.1','已识别为重复请求，未重复记账'):t("app.986", "历史 CI 已导入"),'success');closeModal();const mode=document.getElementById('ci-source-mode');if(mode)mode.value='historical';loadCI()}catch(e){showToast(e.message,'danger');if(document.getElementById('hci-save')){btn.disabled=false;btn.textContent=t('gen.L5794.2','导入')}}
 }
 // CI-SHIP-DATE-01：补充/更正实际出货日期（明确操作按钮 + 最小化弹窗，避免误改）
