@@ -1679,6 +1679,7 @@
   I18N.dict.en["ci.043"] = "Please select supplier"; I18N.dict.id["ci.043"] = "Silakan pilih pemasok";
   I18N.dict.en["ci.044"] = "Please select supplier first"; I18N.dict.id["ci.044"] = "Silakan pilih pemasok terlebih dahulu";
   I18N.dict.en["ci.045"] = "No available PI for this supplier"; I18N.dict.id["ci.045"] = "Tidak ada PI tersedia untuk pemasok ini";
+  I18N.dict.en["ci.pi.remain"] = "Remaining shippable: "; I18N.dict.id["ci.pi.remain"] = "Sisa dapat dikirim: ";
   I18N.dict.en["ci.balance_ok"] = "\u2713 Normal"; I18N.dict.id["ci.balance_ok"] = "\u2713 Normal";
   
   // CI-PL-FULL-RESTORE: added keys

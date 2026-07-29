@@ -6649,7 +6649,7 @@ async function createOperationalCI(){
     body+='<div class="form-group"><label>'+t('field.supplier_name','供应商')+' <span class="required">*</span></label><select id="nci-supplier" onchange="onCISupplierChange()"><option value="">'+t('ci.select_supplier_first','请先选择供应商')+'</option>';
     suppliers.forEach(function(s){
       var count=window._allPis.filter(function(p){return p.supplier_id===s.id;}).length;
-      body+='<option value="'+s.id+'" data-name="'+esc(s.name)+'">'+esc(s.name)+(count>0?' ('+count+' PI)':' (0 PI)')+'</option>';
+      body+='<option value="'+s.id+'" data-name="'+esc(s.name)+'">'+esc(s.name)+'</option>';
     });
     body+='</select></div></div>';
     // Row 2: PI dropdown multi-select
@@ -6701,20 +6701,19 @@ function onCISupplierChange(){
   // Group by currency
   var curMap={};
   supPis.forEach(function(p){var k=p.currency||'?';if(!curMap[k])curMap[k]=[];curMap[k].push(p);});
-  var html='';var gi=0;
+  var html='';
   Object.keys(curMap).sort().forEach(function(curKey){
-    var g=curMap[curKey];var bg=gi%2===0?'#fafafa':'#fff';gi++;
-    html+='<div class="pi-group" style="background:'+bg+';padding:6px 8px;border-radius:4px;margin-bottom:4px">';
-    html+='<div style="font-size:12px;color:#888;margin-bottom:4px">'+esc(curKey)+' ('+g.length+' PI)</div>';
+    var g=curMap[curKey];
     g.forEach(function(p){
       var remain=(p.confirmed_qty_sum||0)-(p.shipped_qty_sum||0);
-      html+='<label class="pi-check" style="display:flex;align-items:center;gap:8px;padding:4px 8px;cursor:pointer;margin-bottom:2px">';
-      html+='<input type="checkbox" class="nci-pi-cb" value="'+p.id+'" data-no="'+esc(p.pi_no)+'" data-supid="'+p.supplier_id+'" data-cur="'+p.currency+'" data-supname="'+esc(p.supplier_name)+'" onchange="onCIPISelectionChange()">';
-      html+='<span style="font-size:13px">'+esc(p.pi_no)+'</span>';
-      html+='<span style="font-size:12px;color:#999;margin-left:auto">'+t('ci.pi.remain','剩余 ')+remain+' | '+esc(p.currency)+'</span>';
+      html+='<label class="nci-pi-item" style="display:block;padding:10px 12px;cursor:pointer;border-bottom:1px solid #f0f0f0;margin:0;transition:background .15s" onmouseover="this.style.background=\'#f5f5f5\'" onmouseout="this.style.background=\'#fff\'">';
+      html+='<div style="display:flex;align-items:center;gap:8px">';
+      html+='<input type="checkbox" class="nci-pi-cb" value="'+p.id+'" data-no="'+esc(p.pi_no)+'" data-supid="'+p.supplier_id+'" data-cur="'+p.currency+'" data-supname="'+esc(p.supplier_name)+'" onchange="onCIPISelectionChange()" style="flex-shrink:0;width:16px;height:16px">';
+      html+='<span style="font-size:13px;font-weight:500;color:#333;white-space:nowrap">'+esc(p.pi_no)+'</span>';
+      html+='</div>';
+      html+='<div style="font-size:12px;color:#888;margin-top:4px;padding-left:24px">'+t('ci.pi.remain','剩余可出货：')+remain+' '+esc(p.currency)+'</div>';
       html+='</label>';
     });
-    html+='</div>';
   });
   list.innerHTML=html;
   updateNciPiTriggerText();
@@ -6773,6 +6772,7 @@ function onCIPISelectionChange(){
     loadMultiPIItems(added,removed);
   }
   updateNciPiTriggerText();
+  closeNciPiDropdown();
 }
 async function loadMultiPIItems(addedPiIds,removedPiIds){
   var preview=document.getElementById('ci-items-preview'),summary=document.getElementById('ci-items-summary');
@@ -6864,7 +6864,7 @@ function buildCIItemRow(it,allItems){
     '<td style="text-align:right;color:#888">'+it.unshipped_qty+'</td>'+
     '<td><input type="number" id="ci-rq-'+it.idx+'" value="'+it.unshipped_qty+'" style="width:85px;text-align:right" min="0" max="'+it.unshipped_qty+'" onchange="updateCISummary()" oninput="updateCISummary()"></td>'+
     '<td><input type="number" step="0.01" id="ci-rp-'+it.idx+'" value="'+it.unit_price+'" style="width:100px;text-align:right" onchange="updateCISummary()" oninput="updateCISummary()"></td>'+
-    '<td style="text-align:right;font-weight:bold" id="ci-ra-'+it.idx+'">'+fmtMoney(it.unshipped_qty*it.unit_price)+'</td>'+'<td style="text-align:center"><button onclick="deleteCIRow('+it.idx+')" class="btn btn-sm" style="color:#ff4d4f;border:none;background:none;cursor:pointer;font-size:16px;line-height:1;padding:2px 6px" title="'+t('common.delete','删除')+'">✕</button></td>'+
+    '<td style="text-align:right;font-weight:bold" id="ci-ra-'+it.idx+'">'+fmtMoney(it.unshipped_qty*it.unit_price)+'</td>'+'<td style="text-align:center"><button onclick="deleteCIRow('+it.idx+')" style="color:#bbb;border:none;background:none;cursor:pointer;font-size:13px;line-height:1;padding:2px 4px" title="'+t('common.delete','删除')+'">×</button></td>'+
     '<input type="hidden" id="ci-rr-'+it.idx+'" value="'+refRate+'">'+
     '</tr>';
 }
