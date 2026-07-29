@@ -6630,12 +6630,12 @@ async function createOperationalCI(){
   try{
     var results=await Promise.all([api('/api/proforma-invoices'),api('/api/suppliers'),api('/api/payment-term-options')]);
     var pis=results[0],suppliers=results[1].filter(function(s){return s.status==='active';}),termOpts=results[2]||[];
-    // Filter available PIs
+    // Filter available PIs — use PI-level aggregates; list endpoint does NOT return items array
     var avlPiMap={};
+    var EPSILON=0.001;
     pis.forEach(function(p){
-      var hasRemain=false;
-      (p.items||[]).forEach(function(it){ if((it.unshipped_qty||0)>0) hasRemain=true; });
-      if(hasRemain && (p.need_deposit!==1||p.deposit_payment_status==='paid')){
+      var remainQty=(p.confirmed_qty_sum||0)-(p.shipped_qty_sum||0);
+      if(remainQty>EPSILON && (p.need_deposit!==1||p.deposit_payment_status==='paid')){
         avlPiMap[p.id]=p;
       }
     });
@@ -6702,11 +6702,11 @@ function onCISupplierChange(){
     html+='<div class="pi-group" style="background:'+bg+';padding:6px 8px;border-radius:4px;margin-bottom:4px">';
     html+='<div style="font-size:12px;color:#888;margin-bottom:4px">'+esc(curKey)+' ('+g.length+' PI)</div>';
     g.forEach(function(p){
-      var tot=0;(p.items||[]).forEach(function(it){tot+=(it.shipped_qty||0)+(it.unshipped_qty||0);});
+      var remain=(p.confirmed_qty_sum||0)-(p.shipped_qty_sum||0);
       html+='<label class="pi-check" style="display:flex;align-items:center;gap:8px;padding:4px 8px;cursor:pointer;margin-bottom:2px">';
       html+='<input type="checkbox" class="nci-pi-cb" value="'+p.id+'" data-no="'+esc(p.pi_no)+'" data-supid="'+p.supplier_id+'" data-cur="'+p.currency+'" data-supname="'+esc(p.supplier_name)+'" onchange="onCIPISelectionChange()">';
       html+='<span style="font-size:13px">'+esc(p.pi_no)+'</span>';
-      html+='<span style="font-size:12px;color:#999;margin-left:auto">'+t('ci.pi.remain','剩余 ')+tot+' | '+esc(p.currency)+'</span>';
+      html+='<span style="font-size:12px;color:#999;margin-left:auto">'+t('ci.pi.remain','剩余 ')+remain+' | '+esc(p.currency)+'</span>';
       html+='</label>';
     });
     html+='</div>';
@@ -6800,7 +6800,8 @@ async function loadMultiPIItems(addedPiIds,removedPiIds){
     for(var i=0;i<addedPiIds.length;i++){
       try{
         var pi=window._availPiMap&&window._availPiMap[addedPiIds[i]];
-        if(!pi){try{pi=await api('/api/proforma-invoices/'+addedPiIds[i]);}catch(e){continue;}}
+        // _availPiMap comes from list endpoint (no items), so always fetch single PI for item details
+        if(!pi||!pi.items||pi.items.length===0){try{pi=await api('/api/proforma-invoices/'+addedPiIds[i]);}catch(e){continue;}}
         (pi.items||[]).forEach(function(it){
           if((it.unshipped_qty||0)>0){
             window._ciAllItems=(window._ciAllItems||[]);
