@@ -31,11 +31,45 @@ const als = new AsyncLocalStorage();
 let pool = null;
 
 // 连接配置（Client 模式：每次查询创建新连接，避免 Pool 在 deasync 上下文中的陈旧连接问题）
+// Render 等 IPv6-only 环境不支持 Supabase 直连（仅 AAAA 记录），
+// 自动从直连地址切换到 Session pooler（IPv4）。
 function getClientConfig() {
+  // 优先使用 POOLER_DATABASE_URL（如果显式设置）
+  const poolerUrl = process.env.POOLER_DATABASE_URL;
+  if (poolerUrl) {
+    return {
+      connectionString: poolerUrl,
+      ssl: { rejectUnauthorized: false },
+      connectionTimeoutMillis: 15000
+    };
+  }
+
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) {
     throw new Error('[DB-PG] 缺少环境变量 DATABASE_URL（DB_DRIVER=pg 时必须提供 Supabase 连接串）');
   }
+
+  // 检查是否是 Supabase 直连地址（db.PROJECT_REF.supabase.co，仅 IPv6）
+  // Render Free 不支持 IPv6（ENETUNREACH），自动切换到 Session pooler（IPv4）
+  const supabaseMatch = connectionString.match(/db\.([^.]+)\.supabase\.co/);
+  if (supabaseMatch) {
+    const projectRef = supabaseMatch[1];
+    const region = process.env.SUPABASE_REGION || 'ap-southeast-1';
+    // pooler 地址格式：aws-0-REGION.pooler.supabase.com
+    // 用户名格式：postgres.PROJECT_REF（而非 postgres）
+    let poolerConnStr = connectionString
+      .replace(/db\.[^.]+\.supabase\.co/, 'aws-0-' + region + '.pooler.supabase.com')
+      .replace(/\/\/postgres:/, '//postgres.' + projectRef + ':')
+      .replace(/\/\/postgres@/, '//postgres.' + projectRef + '@');
+    console.log('[DB-PG] 自动切换到 Supabase pooler (IPv4, region=' + region + ', ref=' + projectRef + ')');
+    return {
+      connectionString: poolerConnStr,
+      ssl: { rejectUnauthorized: false },
+      connectionTimeoutMillis: 15000
+    };
+  }
+
+  // 非 Supabase，使用原始地址
   const useSsl = /(sslmode=require|ssl=true|amazonaws|supabase|render\.com)/i.test(connectionString);
   return {
     connectionString,
