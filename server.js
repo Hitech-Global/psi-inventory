@@ -8496,9 +8496,53 @@ process.on('unhandledRejection', (reason) => {
   console.error('[FATAL] 未处理的 Promise 拒绝:', reason);
 });
 
-// break-glass 本地管理员初始化（fail-closed：缺强密码则启动失败）
-bootstrapBreakGlass();
+// ==================== 启动前环境诊断（Render 部署排查用）====================
+// 在任何 DB 操作之前检查所有必需环境变量，避免进程静默退出导致 Render 只显示 "Application exited early"
+console.log('\n========== 启动前环境诊断 ==========');
+console.log('[DIAG] NODE_ENV = ' + (NODE_ENV || '(未设置)'));
+console.log('[DIAG] DB_DRIVER = ' + (process.env.DB_DRIVER || '(默认 sqlite)'));
+console.log('[DIAG] PORT = ' + PORT);
+console.log('[DIAG] DATABASE_URL = ' + (process.env.DATABASE_URL ? '已设置 (长度=' + process.env.DATABASE_URL.length + ')' : '❌ 未设置'));
+console.log('[DIAG] BREAKGLASS_ADMIN_PASSWORD = ' + (BREAKGLASS_ADMIN_PASSWORD ? '已设置 (长度=' + BREAKGLASS_ADMIN_PASSWORD.length + ', 强度=' + (isStrongPassword(BREAKGLASS_ADMIN_PASSWORD) ? '合格' : '❌不合格') + ')' : '❌ 未设置'));
+console.log('[DIAG] FEISHU_APP_ID = ' + (FEISHU_APP_ID ? '已设置' : '(未设置)'));
+console.log('[DIAG] FEISHU_APP_SECRET = ' + (FEISHU_APP_SECRET ? '已设置' : '(未设置)'));
+console.log('[DIAG] FEISHU_REDIRECT_URI = ' + (FEISHU_REDIRECT_URI || '(未设置)'));
+console.log('[DIAG] TRUSTED_ORIGINS = ' + (TRUSTED_ORIGINS.length > 0 ? TRUSTED_ORIGINS.join(', ') : '(未设置)'));
+console.log('[DIAG] COOKIE_SECURE = ' + COOKIE_SECURE);
+console.log('[DIAG] CSRF_DISABLE = ' + CSRF_DISABLE);
 
+// PG 模式下 DATABASE_URL 是必需的
+if ((process.env.DB_DRIVER || '').toLowerCase() === 'pg' && !process.env.DATABASE_URL) {
+  console.error('\n[FATAL] DB_DRIVER=pg 但 DATABASE_URL 未设置！请在 Render Dashboard → Environment 中配置 DATABASE_URL（Supabase 直连串）。');
+  console.error('[FATAL] 格式：postgresql://postgres:<密码>@db.<项目ref>.supabase.co:5432/postgres');
+  process.exit(1);
+}
+
+// BREAKGLASS_ADMIN_PASSWORD 缺失或弱密码会导致 bootstrapBreakGlass 抛异常
+if (!BREAKGLASS_ADMIN_PASSWORD || !isStrongPassword(BREAKGLASS_ADMIN_PASSWORD)) {
+  console.error('\n[FATAL] BREAKGLASS_ADMIN_PASSWORD 未设置或强度不足（需≥12位且含大小写与数字）！');
+  console.error('[FATAL] 请在 Render Dashboard → Environment 中配置 BREAKGLASS_ADMIN_PASSWORD。');
+  console.error('[FATAL] bootstrapBreakGlass() 会在 app.listen() 之前抛出异常，导致进程立即退出。');
+  process.exit(1);
+}
+
+console.log('[DIAG] 环境变量检查通过 ✓');
+console.log('=====================================\n');
+
+// break-glass 本地管理员初始化（fail-closed：缺强密码则启动失败）
+// 用 try-catch 包裹，确保任何异常都有清晰的日志输出（Render 排查用）
+try {
+  console.log('[STARTUP] 开始初始化 break-glass 管理员...');
+  bootstrapBreakGlass();
+  console.log('[STARTUP] break-glass 管理员初始化完成 ✓');
+} catch (e) {
+  console.error('\n[FATAL] bootstrapBreakGlass() 失败:', e.message);
+  console.error(e.stack);
+  console.error('\n[FATAL] 服务无法启动。请检查上述错误并修正环境变量配置。');
+  process.exit(1);
+}
+
+console.log('[STARTUP] 正在启动 HTTP 服务 (端口 ' + PORT + ')...');
 const server = app.listen(PORT, () => {
   console.log(`\n[Server] 进销存管理系统已启动: http://localhost:${PORT}`);
   console.log(`[Server] 登录方式：飞书 OAuth（中国/印尼团队统一）；应急入口：登录页底部“应急登录入口”`);
