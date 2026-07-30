@@ -5149,13 +5149,13 @@ async function loadRpChannelMonthly(channel){
     Cols.channel_pct={th:rpThCompact(t('forecast.compact.sales_share','销量\n占比'),t("app.811", "\u8be5\u6e20\u9053\u5728\u5f53\u524d\u9500\u91cf\u7edf\u8ba1\u5468\u671f\u5185\u7684\u6708\u5747\u9500\u91cf\u5360\u603b\u6708\u5747\u9500\u91cf\u7684\u6bd4\u4f8b\uff0c\u7528\u4e8e\u5c55\u793a\u6e20\u9053\u9500\u552e\u7ed3\u6784\u3002\u91c7\u8d2d\u5efa\u8bae\u7531\u5171\u4eab\u5e93\u5b58\u6c60\u4e0e\u7ebf\u4e0a/\u7ebf\u4e0b\u76ee\u6807\u5e93\u5b58\u7edf\u4e00\u8ba1\u7b97\u3002"),'text-right','',true),
       td:function(r,c){return '<td class="text-right">'+(c.totalAvgPeriod>0?Math.round(c.pctPeriod)+'%':'-')+'</td>';},
       sum:function(t){return '<td class="text-right">'+(t.totalAvgPeriod>0?Math.round(t.avgSalesPeriod/t.totalAvgPeriod*100)+'%':'-')+'</td>';}};
-    Cols.transit={th:rpThCompact(t('forecast.compact.allocated_in_transit','已分摊\n在途库存'),t('forecast.help.allocated_in_transit','按{channel}销量统计周期占比，从总在途库存中分摊给该渠道的数量（仅测算用，非独立仓库库存）。',{channel:chLabel}),'text-right','',true),
+    Cols.transit={th:rpThCompact(t('forecast.compact.allocated_in_transit','在途库存'),t('forecast.help.allocated_in_transit','按{channel}销量统计周期占比，从总在途库存中分摊给该渠道的数量（仅测算用，非独立仓库库存）。',{channel:chLabel}),'text-right','',true),
       td:function(r,c){return '<td class="text-right">'+formatQuantityDisplay(c.transitAllocatedPeriod||0)+'</td>';},
       sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.transitAllocatedPeriod)+'</td>';}};
     Cols.po_unconfirmed={th:rpThCompact(t('forecast.compact.po_unconfirmed','未确认\nPO'),t("app.796", "\u5df2\u7ecf\u521b\u5efa PO\uff0c\u4f46\u8fd8\u6ca1\u6709\u786e\u8ba4 PI \u7684\u6570\u91cf\u3002\u5c5e\u4e8e\u6f5c\u5728\u4f9b\u5e94\uff0c\u4e0d\u7b49\u4e8e\u4e00\u5b9a\u4f1a\u53d1\u8d27\u3002"),'text-right','',true),
       td:function(r,c){return '<td class="text-right">'+formatQuantityDisplay(c.poAllocatedPeriod||0)+'</td>';},
       sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.poAllocatedPeriod)+'</td>';}};
-    Cols.avail={th:rpThCompact(t('forecast.compact.allocated_available','已分摊\n可用库存'),t('forecast.help.allocated_available','按{channel}销量统计周期占比，从总可用库存中分摊给该渠道的数量（仅测算用，非独立仓库库存）。',{channel:chLabel}),'text-right','',true),
+    Cols.avail={th:rpThCompact(t('forecast.compact.allocated_available','可用库存'),t('forecast.help.allocated_available','按{channel}销量统计周期占比，从总可用库存中分摊给该渠道的数量（仅测算用，非独立仓库库存）。',{channel:chLabel}),'text-right','',true),
       td:function(r,c){return '<td class="text-right">'+formatQuantityDisplay(c.availAllocatedPeriod||0)+'</td>';},
       sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.availAllocatedPeriod)+'</td>';}};
     Cols.pi_unshipped={th:rpThCompact(t('forecast.compact.pi_unshipped','已确认PI\n未发货'),t("app.800", "PI \u5df2\u786e\u8ba4\uff0c\u4f44\u5de5\u5382\u8fd8\u6ca1\u6709\u53d1\u8d27\u7684\u6570\u91cf\u3002\u6bd4 PO\u672a\u786e\u8ba4PI \u66f4\u63a5\u8fd1\u5b9e\u9645\u4f9b\u5e94\u3002"),'text-right','',true),

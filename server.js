@@ -2831,13 +2831,13 @@ function _buildValidDate(yStr, mStr, dStr) {
 //   3. 含 / 且第一段4位 → YYYY/M/D 或 YYYY/MM/DD
 //   4. 含 / 且第一段非4位 → M/D/YYYY 或 M/D/YY（两位年份 00-69→2000s，70-99→1900s）
 function salesOrderDateExpr(col = 'order_date') {
-  // 截取第一段（到第一个 / 之前），用于判断年份在前还是后
-  const firstSeg = `substr(${col}, 1, instr(${col} || '/', '/') - 1)`;
+  // 使用 strpos 以兼容 PostgreSQL；SQLite 通过 db-sqlite.js 注册同名函数
+  const firstSeg = `substr(${col}, 1, strpos(${col} || '/', '/') - 1)`;
   // 第二段：去掉第一段后的剩余，取到下一个 / 之前
-  const afterFirst = `substr(${col}, instr(${col} || '/', '/') + 1)`;
-  const secondSeg = `substr(${afterFirst}, 1, instr(${afterFirst} || '/', '/') - 1)`;
+  const afterFirst = `substr(${col}, strpos(${col} || '/', '/') + 1)`;
+  const secondSeg = `substr(${afterFirst}, 1, strpos(${afterFirst} || '/', '/') - 1)`;
   // 第三段：去掉第二段后的剩余
-  const afterSecond = `substr(${afterFirst}, instr(${afterFirst} || '/', '/') + 1)`;
+  const afterSecond = `substr(${afterFirst}, strpos(${afterFirst} || '/', '/') + 1)`;
   return `CASE
     WHEN ${col} GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' THEN substr(${col}, 1, 10)
     WHEN length(${col}) = 7 AND substr(${col}, 5, 1) = '-' THEN ${col} || '-01'
@@ -3083,12 +3083,44 @@ function classifySkuState(o) {
   return { sales_status, risk_tags, sales_reason, action, ai_business_advice };
 }
 
-// 订单预测/补货建议页面用户偏好设置（前端已调用，HEAD 缺失此端点导致 404）
+// 订单预测页面用户偏好归一化
+function normalizeForecastPagePreferences(raw) {
+  const source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const cleanText = (value, maxLength = 200) => String(value || '').trim().slice(0, maxLength);
+  const salesStatuses = new Set(['缺货风险', '呆滞', '慢销', '正常动销', '新品/销售数据不足', '无有效销售', '清仓', '停采/停产', '停采/清库存']);
+  const lifecycleStatuses = new Set(['new_test', 'new_launch', 'growth', 'stable', 'slow', 'stagnant', 'clearance', 'stopped']);
+  const tabs = new Set(['total', 'online', 'offline']);
+  const modes = new Set(['monthly', 'daily']);
+  const salesStatus = cleanText(source.sales_status, 40);
+  const lifecycleStatus = cleanText(source.lifecycle_status, 40);
+  const tab = cleanText(source.rpTab, 20);
+  const mode = cleanText(source.rpMode, 20);
+  return {
+    country: cleanText(source.country),
+    warehouse: cleanText(source.warehouse),
+    brand: cleanText(source.brand),
+    sales_status: salesStatuses.has(salesStatus) ? salesStatus : '',
+    lifecycle_status: lifecycleStatuses.has(lifecycleStatus) ? lifecycleStatus : '',
+    search: cleanText(source.search),
+    rpTab: tabs.has(tab) ? tab : 'total',
+    rpMode: modes.has(mode) ? mode : 'monthly'
+  };
+}
+
+// 订单预测/补货建议页面用户偏好设置
 app.get('/api/replenishment-suggestions/preferences', requireApiPermission('replenishment_view'), asyncHandler((req, res) => {
-  res.json({ preferences: {} });
+  const row = queryOne('SELECT preferences FROM forecast_page_preferences WHERE user_id = ?', [req.currentUserId]);
+  let parsed = {};
+  try { parsed = row ? JSON.parse(row.preferences || '{}') : {}; } catch (e) {}
+  res.json({ preferences: normalizeForecastPagePreferences(parsed) });
 }));
 app.put('/api/replenishment-suggestions/preferences', requireApiPermission('replenishment_view'), asyncHandler((req, res) => {
-  res.json({ success: true, preferences: (req.body && req.body.preferences) || {} });
+  const preferences = normalizeForecastPagePreferences(req.body && req.body.preferences);
+  const now = new Date().toISOString();
+  run(`INSERT INTO forecast_page_preferences (user_id, preferences, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT (user_id) DO UPDATE SET preferences=excluded.preferences, updated_at=excluded.updated_at`,
+    [req.currentUserId, JSON.stringify(preferences), now]);
+  res.json({ success: true, preferences });
 }));
 
 // 补货建议汇总统计（用于SKU动销与订单预测页面顶部指标卡）

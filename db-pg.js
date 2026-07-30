@@ -248,6 +248,10 @@ function normalizeSql(sql) {
     s = s.replace(/;\s*$/, '') + ' ON CONFLICT DO NOTHING';
   }
 
+  // 0.5 SQLite 允许 ON CONFLICT(col)，PostgreSQL 要求 ON CONFLICT (col)（空格）。
+  //     统一加空格，避免 PG 语法错误导致 upsert 失败。
+  s = s.replace(/\bON\s+CONFLICT\(/gi, 'ON CONFLICT (');
+
   // 1. COLLATE NOCASE 谓词 -> lower() 比较（保留 ? 占位符，须在 ?->$N 之前）
   s = s.replace(/\b(\w+)\s*=\s*\?\s+COLLATE\s+NOCASE/g, 'lower($1) = lower(?)');
 
@@ -279,8 +283,10 @@ function normalizeSql(sql) {
     return `TO_CHAR(CAST(NULLIF(${col}, '') AS timestamp), '${convertStrftimeFmt(fmt)}')`;
   });
 
-  // 6. instr(a, b) -> strpos(a, b)
-  s = replaceBalanced(s, 'instr', (inner) => `strpos(${inner})`);
+  // 6. instr(a, b) -> strpos(a, b)（循环处理嵌套调用）
+  while (/\binstr\s*\(/i.test(s)) {
+    s = replaceBalanced(s, 'instr', (inner) => `strpos(${inner})`);
+  }
 
   // 7. GLOB 'pat' -> ~ '^pat$'（大小写敏感；用 ~ 而非 ~*）
   s = s.replace(/\b(\w+)\s+GLOB\s+'([^']*)'/g, (m, col, pat) =>

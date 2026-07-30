@@ -20,6 +20,14 @@ function getDB() {
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
 
+  // 注册 strpos 函数，使 SQLite 兼容 PostgreSQL 的 strpos(text, text)
+  // server.js salesOrderDateExpr 使用 strpos 替代 instr 以支持双数据库
+  db.function('strpos', (text, substr) => {
+    if (text == null || substr == null) return 0;
+    const idx = String(text).indexOf(String(substr));
+    return idx === -1 ? 0 : idx + 1;
+  });
+
   console.log('[DB] SQLite 数据库已连接:', dbPath);
   return db;
 }
@@ -382,6 +390,15 @@ function initDatabase() {
       key TEXT PRIMARY KEY,
       value TEXT DEFAULT '',
       description TEXT DEFAULT '',
+      updated_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  // 订单预测页面用户偏好（账号级、跨浏览器；独立于全局系统配置）
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS forecast_page_preferences (
+      user_id TEXT PRIMARY KEY,
+      preferences TEXT NOT NULL DEFAULT '{}',
       updated_at TEXT DEFAULT (datetime('now'))
     )
   `);
