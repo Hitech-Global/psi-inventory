@@ -2956,7 +2956,7 @@ function invStatusBadge(v){
 async function renderInventory(){
   invDataCache = []; invAllFilteredIds = []; invSelectAllMode = false;
   document.getElementById('content-inner').innerHTML=
-    t('html.renderInventory', `<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>国家</label><select id="inv-c"><option value="">全部</option></select></div><div class="filter-group"><label>仓库</label><select id="inv-w"><option value="">全部</option></select></div><div class="filter-group"><label>品牌</label><select id="inv-b"><option value="">全部</option></select></div><div class="filter-group"><label>关键词</label><input type="text" id="inv-k" placeholder="SKU/产品名" onkeypress="if(event.key==='Enter')loadInv()"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadInv()">搜索</button>{v1}</div></div></div><div id="inv-batch-bar" style="display:none;background:var(--bg-card,#fff);border:1px solid var(--border,#e0e0e0);border-radius:8px;padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span id="inv-batch-count" style="font-weight:600;margin-right:8px"></span><button class="btn btn-sm btn-secondary" onclick="invBatchAction('export')">📊 导出</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_status')">🏷️ 库存状态</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_focused')">⭐ 重点关注</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_safety_stock')">🛡️ 安全库存</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_turnover')">🎯 目标周转</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_replenish_rule')">📋 补货规则</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_remark')">📝 库存备注</button><button class="btn btn-sm btn-warning" onclick="invBatchAction('inventory_adjust')">🔧 发起调整单</button><button class="btn btn-sm btn-danger" onclick="invBatchAction('delete')" style="background:#ff4d4f;color:#fff;border:none">🗑️ 删除</button><button class="btn btn-sm btn-secondary" onclick="invClearSelection()" style="margin-left:auto">取消选择</button></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">📦 库存总表</div><div class="table-section-title-right" id="inv-rate-display" style="font-size:12px;color:#666;display:flex;gap:12px;align-items:center"></div></div><div id="inv-table"></div></div>`, {v1: hasPermission('inventory_import')?t('gen.L2829.1','<button class="btn btn-secondary btn-sm" onclick="openInvBatchImport()">📥 导入库存</button>'):''});
+    t('html.renderInventory', `<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>国家</label><select id="inv-c"><option value="">全部</option></select></div><div class="filter-group"><label>仓库</label><select id="inv-w"><option value="">全部</option></select></div><div class="filter-group"><label>品牌</label><select id="inv-b"><option value="">全部</option></select></div><div class="filter-group"><label>关键词</label><input type="text" id="inv-k" placeholder="SKU/产品名" onkeypress="if(event.key==='Enter')loadInv()"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadInv()">搜索</button><button class="btn btn-secondary btn-sm" onclick="resetInvFilters()">重置</button>{v1}</div></div></div><div id="inv-batch-bar" style="display:none;background:var(--bg-card,#fff);border:1px solid var(--border,#e0e0e0);border-radius:8px;padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span id="inv-batch-count" style="font-weight:600;margin-right:8px"></span><button class="btn btn-sm btn-secondary" onclick="invBatchAction('export')">📊 导出</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_status')">🏷️ 库存状态</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_focused')">⭐ 重点关注</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_safety_stock')">🛡️ 安全库存</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_turnover')">🎯 目标周转</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_replenish_rule')">📋 补货规则</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_remark')">📝 库存备注</button><button class="btn btn-sm btn-warning" onclick="invBatchAction('inventory_adjust')">🔧 发起调整单</button><button class="btn btn-sm btn-danger" onclick="invBatchAction('delete')" style="background:#ff4d4f;color:#fff;border:none">🗑️ 删除</button><button class="btn btn-sm btn-secondary" onclick="invClearSelection()" style="margin-left:auto">取消选择</button></div><div id="inv-cards" class="stats-grid"></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">📦 库存总表</div><div class="table-section-title-right" id="inv-rate-display" style="font-size:12px;color:#666;display:flex;gap:12px;align-items:center"></div></div><div id="inv-table"></div></div>`, {v1: hasPermission('inventory_import')?t('gen.L2829.1','<button class="btn btn-secondary btn-sm" onclick="openInvBatchImport()">📥 导入库存</button>'):''});
   // 加载下拉选项
   try{
     const opts=await api('/api/inventory/filter-options');
@@ -2965,12 +2965,25 @@ async function renderInventory(){
     if(fw) opts.warehouses.forEach(w=>{const o=document.createElement('option');o.value=w;o.textContent=w;fw.appendChild(o);});
     if(fb) opts.brands.forEach(b=>{const o=document.createElement('option');o.value=b;o.textContent=b;fb.appendChild(o);});
   }catch(e){console.warn('filter-options load failed',e)}
+  // 恢复库存总表保存的筛选状态（仅本页面 localStorage，不影响其他页面）
+  try{
+    const saved=JSON.parse(localStorage.getItem('psi_inv_filters_v1')||'null');
+    if(saved){
+      const fc=document.getElementById('inv-c'), fw=document.getElementById('inv-w'), fb=document.getElementById('inv-b'), fk=document.getElementById('inv-k');
+      if(fc && saved.c) fc.value=saved.c;
+      if(fw && saved.w) fw.value=saved.w;
+      if(fb && saved.b) fb.value=saved.b;
+      if(fk && saved.k!=null) fk.value=saved.k;
+    }
+  }catch(e){}
   loadInv();
 }
 
 async function loadInv(){
   try{
     const c=document.getElementById('inv-c')?.value||'',w=document.getElementById('inv-w')?.value||'',b=document.getElementById('inv-b')?.value||'',k=document.getElementById('inv-k')?.value||'';
+    // 保存库存总表筛选状态（仅本页面 localStorage，不写数据库、不影响其他页面）
+    try{ localStorage.setItem('psi_inv_filters_v1', JSON.stringify({c,w,b,k})); }catch(e){}
     const [data, rateInfo] = await Promise.all([
       api('/api/inventory?country='+encodeURIComponent(c)+'&warehouse='+encodeURIComponent(w)+'&brand='+encodeURIComponent(b)+'&keyword='+encodeURIComponent(k)),
       api('/api/inventory/currency-rates')
@@ -3084,7 +3097,55 @@ async function loadInv(){
         +'<td style="max-width:120px;overflow:hidden;text-overflow:ellipsis" title="'+esc(i.inventory_remark||'')+'">'+esc(i.inventory_remark||'')+'</td>'
       +'</tr>';
       }).join('')});
+    renderInvCards(data, countryCurrency);
   }catch(e){showFlash(e.message,'danger')}
+}
+
+// 库存总表指标卡：根据当前筛选结果实时汇总（仅本页面，复用 loadInv 已构建的 countryCurrency）
+function renderInvCards(data, countryCurrency){
+  const el=document.getElementById('inv-cards');
+  if(!el) return;
+  const fmtN=function(v){return Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});};
+  // 库存总数量
+  let totalQty=0;
+  const byCur={}; let rmbTotal=0;
+  (data||[]).forEach(function(i){
+    totalQty += (i.available_qty||0);
+    const ci = countryCurrency[i.country] || {};
+    const invVal = (i.available_qty||0)*(i.weighted_avg_cost||0);
+    const code = ci.code || t('inv.kpi.unknown_cur','未知');
+    if(!byCur[code]) byCur[code]={symbol:(ci.symbol||''), amount:0};
+    byCur[code].amount += invVal;
+    if(ci.rate) rmbTotal += invVal / ci.rate; // rate=cnyToForeign (1 CNY = X 本币)，CNY = 本币/rate
+  });
+  const curCodes=Object.keys(byCur);
+  let localTitle, localValue;
+  if(curCodes.length===1){
+    const code=curCodes[0];
+    localTitle=t('inv.kpi.amount_local_cur','库存金额（{v1}）',{v1:code});
+    localValue=(byCur[code].symbol?byCur[code].symbol+' ':'')+fmtN(byCur[code].amount);
+  } else if(curCodes.length>1){
+    localTitle=t('inv.kpi.amount_local','库存金额（本币）');
+    localValue=curCodes.map(function(code){
+      return code+': '+(byCur[code].symbol?byCur[code].symbol+' ':'')+fmtN(byCur[code].amount);
+    }).join('　/　');
+  } else {
+    localTitle=t('inv.kpi.amount_local','库存金额（本币）');
+    localValue='-';
+  }
+  const rmbValue='¥ '+fmtN(rmbTotal);
+  el.innerHTML =
+    '<div class="stat-card"><div class="stat-label">'+t('inv.kpi.total_qty','库存总数量')+'</div><div class="stat-number">'+Number(totalQty).toLocaleString('en-US')+' '+t('inv.kpi.unit','件')+'</div></div>'
+    +'<div class="stat-card"><div class="stat-label">'+esc(localTitle)+'</div><div class="stat-number">'+esc(localValue)+'</div></div>'
+    +'<div class="stat-card"><div class="stat-label">'+t('inv.kpi.amount_rmb','库存金额（人民币）')+'</div><div class="stat-number">'+esc(rmbValue)+'</div></div>';
+}
+
+// 重置库存总表筛选：清空条件 + 删除保存状态 + 恢复全部库存 + 重新计算指标卡
+function resetInvFilters(){
+  const fc=document.getElementById('inv-c'), fw=document.getElementById('inv-w'), fb=document.getElementById('inv-b'), fk=document.getElementById('inv-k');
+  if(fc) fc.value=''; if(fw) fw.value=''; if(fb) fb.value=''; if(fk) fk.value='';
+  try{ localStorage.removeItem('psi_inv_filters_v1'); }catch(e){}
+  loadInv();
 }
 
 async function refreshInvRates(){
@@ -6723,12 +6784,12 @@ function ciUnifiedAttachmentHtml(ci){
   var slot=function(field,label,val){
     var a=parseAttachmentValue(val);var has=a&&a.dataUrl;
     var body=has
-      ? '<span class="link-text" onclick="ciPreviewAttachment(\'ci\','+ci.id+'\',\''+field+'\')">'+esc(a.name||label)+'</span>'
-        +' <button class="btn btn-secondary btn-sm" onclick="downloadAttachment(\'ci\','+ci.id+'\',\''+field+'\')">下载</button>'
-        +' <button class="btn btn-secondary btn-sm" onclick="uploadDocAttachment(\'ci\','+ci.id+'\',\''+field+'\')">重传</button>'
-        +' <button class="btn btn-danger btn-sm" onclick="deleteDocAttachment(\'ci\','+ci.id+'\',\''+field+'\')">删除</button>'
-      : '<button class="btn btn-secondary btn-sm" onclick="uploadDocAttachment(\'ci\','+ci.id+'\',\''+field+'\')">上传</button>';
-    return '<div class="ci-attach-slot" ondragover="event.preventDefault();this.classList.add(\'drag-over\')" ondragleave="this.classList.remove(\'drag-over\')" ondrop="event.preventDefault();this.classList.remove(\'drag-over\');ciDropUpload(\'ci\','+ci.id+'\',\''+field+'\',event)">'
+      ? '<span class="link-text" onclick="ciPreviewAttachment(\'ci\',\''+ci.id+'\',\''+field+'\')">'+esc(a.name||label)+'</span>'
+        +' <button class="btn btn-secondary btn-sm" onclick="downloadAttachment(\'ci\',\''+ci.id+'\',\''+field+'\')">下载</button>'
+        +' <button class="btn btn-secondary btn-sm" onclick="uploadDocAttachment(\'ci\',\''+ci.id+'\',\''+field+'\')">重传</button>'
+        +' <button class="btn btn-danger btn-sm" onclick="deleteDocAttachment(\'ci\',\''+ci.id+'\',\''+field+'\')">删除</button>'
+      : '<button class="btn btn-secondary btn-sm" onclick="uploadDocAttachment(\'ci\',\''+ci.id+'\',\''+field+'\')">上传</button>';
+    return '<div class="ci-attach-slot" ondragover="event.preventDefault();this.classList.add(\'drag-over\')" ondragleave="this.classList.remove(\'drag-over\')" ondrop="event.preventDefault();this.classList.remove(\'drag-over\');ciDropUpload(\'ci\',\''+ci.id+'\',\''+field+'\',event)">'
       +'<div class="ci-attach-label">'+label+'</div><div class="ci-attach-body">'+body+'</div></div>';
   };
   return '<style>.ci-attach-unified{display:flex;gap:14px;flex-wrap:wrap}.ci-attach-slot{flex:1;min-width:220px;border:1px dashed #ccd3dc;border-radius:8px;padding:12px;background:#fafbfc;transition:.15s}.ci-attach-slot.drag-over{border-color:#2e7d32;background:#eef9ee}.ci-attach-label{font-size:12px;color:#666;margin-bottom:8px;font-weight:600}.ci-attach-body{display:flex;gap:6px;align-items:center;flex-wrap:wrap}</style>'
@@ -7253,7 +7314,15 @@ async function saveHistoricalCI(){
   }
   const body={historical_ci_no:document.getElementById('hci-no').value.trim(),supplier_id:supplier.value,supplier_name:document.getElementById('hci-supplier-name').value.trim(),brand_name:document.getElementById('hci-brand').value.trim(),country:document.getElementById('hci-country').value,ci_date:document.getElementById('hci-date').value,actual_ship_date:document.getElementById('hci-ship-date').value,currency:document.getElementById('hci-currency').value,gross_goods_amount:gross,historical_paid_amount:paid,historical_paid_date:document.getElementById('hci-paid-date').value,payment_terms:document.getElementById('hci-terms').value.trim(),due_date:document.getElementById('hci-due').value,source_note:document.getElementById('hci-note').value.trim(),source_mode:'historical',idempotency_key:document.getElementById('hci-idempotency').value,warehouse_name:(document.getElementById('hci-wh')||{}).value||'',warehouse_id:(document.getElementById('hci-wh-id')||{}).value||undefined};
   // Attach PI references when linked mode
-  if(piIds.length>0){body.related_pi_ids=piIds;body.related_pi_nos=piNos;}
+  if(piIds.length>0){body.related_pi_ids=piIds;body.related_pi_nos=piNos;
+    // HCI-PI-LINK-01: 收集 CI 明细 (pi_id/sku_code/shipped_qty) 发送给服务端，确保 PI 发货状态同步
+    var ciItems=[];(window._hciAllItems||[]).forEach(function(it){
+      var qe=document.getElementById('hci-rq-'+it.idx);
+      var q=parseInt(qe?qe.value:0)||0;
+      if(q>0)ciItems.push({pi_id:it.pi_id,sku_code:it.sku_code,shipped_qty:q});
+    });
+    if(ciItems.length>0)body.items=ciItems;
+  }
   if(!body.historical_ci_no||!body.supplier_name||!body.brand_name||!body.country||!body.ci_date||!body.currency){showToast(t('gen.L5793.1','请填写历史 CI 编号、供应商、品牌、国家、日期和币种'),'warning');return}if(!(gross>0)){showToast(isLinked?t('hci.gross_auto_required','请选择关联 PI 并填写 CI 明细数量与单价，货款总金额由明细自动汇总'):t('gen.L5793.2','历史货款总金额必须大于0'),'warning');return}if(!Number.isFinite(paid)||paid<0){showToast(t('gen.L5793.3','历史已付款金额不能小于0'),'warning');return}if(paid>gross){showToast(t('gen.L5793.4','历史已付款金额不能超过历史货款总金额'),'warning');return}
   btn.disabled=true;btn.textContent=t("app.984", "导入中…");try{const result=await api('/api/historical-commercial-invoices','POST',body);showToast(result.idempotent?t('gen.L5794.1','已识别为重复请求，未重复记账'):t("app.986", "历史 CI 已导入"),'success');closeModal();const mode=document.getElementById('ci-source-mode');if(mode)mode.value='historical';loadCI()}catch(e){showToast(e.message,'danger');if(document.getElementById('hci-save')){btn.disabled=false;btn.textContent=t('gen.L5794.2','导入')}}
 }
@@ -8199,7 +8268,7 @@ function openLifecycleHelp(){
     '<div style="margin-top:12px;padding:10px 12px;background:#fff8c5;border-radius:6px;font-size:12px;color:#586069;line-height:1.6">'+
       t('gen.L6366.1','<b>💡 计算公式</b><br>')+
       t('gen.L6367.1','建议补货量 = max(0, 目标库存 − 总库存池)（结果按箱规/MOQ 取整；慢销/呆滞/高库存等会被拦截为 0）<br>')+
-      t('gen.L6368.1','• 总库存池 = 当前可用 + 在途 + PI 已确认未发货 + PO 未确认 PI<br>')+
+      t('gen.L6368.1','• 总库存池 = 当前可用 + CI 已发货在途 + PI/PO 已确认未发货；未确认 PO 不计入<br>')+
       t('gen.L6369.1','• 目标库存月数 默认 4（后端配置，本轮不在"预测参数设置"界面调整）<br>')+
       t('gen.L6370.1','• 生命周期系数当前不参与建议补货量数值计算（仅用于建议动作/经营建议文案）<br>')+
       t("app.1073", "\u2022 \u6ce8\u610f\uff1a\u6708\u5747\u9500\u91cf\u3001\u5f53\u524d\u53ef\u7528\u5468\u8f6c\u3001\u5f53\u524d\u5468\u8f6c\u3001\u5f53\u524d\u6d4b\u7b97\u5468\u8f6c\u3001\u5728\u9014\u540e\u5468\u8f6c\u3001\u4e0b\u5355\u540e\u5468\u8f6c\u3001\u9884\u8ba1\u5468\u8f6c\u6708\u6570\u3001\u5360\u6bd4\u3001\u5206\u644a\u5e93\u5b58\u3001\u5efa\u8bae\u91c7\u8d2d\u6570\u91cf\u5747\u5df2\u6309\u5f53\u524d\u300c\u9500\u91cf\u7edf\u8ba1\u5468\u671f\u300d\u8ba1\u7b97\uff1b\u4ec5\u5206\u7c7b/\u98ce\u9669/\u62e6\u622a\u5c42\uff08\u52a8\u9500\u72b6\u6001\u3001\u98ce\u9669\u6807\u7b7e\uff09\u4ecd\u6309\u8fd1 4 \u4e2a\u6708\u53e3\u5f84\uff0c\u5c5e\u9636\u6bb5\u6027\u62c6\u5206\uff08\u975e bug\uff09\u3002")+
