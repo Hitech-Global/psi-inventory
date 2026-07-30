@@ -4481,7 +4481,7 @@ function initRpTableDrag(tabKey){
 
 async function renderReplenishment(){
   rpTab = 'total';
-  document.getElementById('content-inner').innerHTML=t('html.renderReplenishment', `<div id="flash-container"></div><div id="rp-collapsible"><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>国家</label><select id="rp-c" onchange="onRpCountryChange()"><option value="">全部</option></select></div><div class="filter-group"><label>仓库</label><select id="rp-w" onchange="loadRpSummary();loadRp()"><option value="">全部</option></select></div><div class="filter-group"><label>品牌</label><select id="rp-b" onchange="onRpBrandChange()"><option value="">全部</option></select></div><div class="filter-actions">{v1}<button class="btn btn-default btn-sm" onclick="exportRpExcel()">⬇ 导出Excel</button><button class="btn btn-default btn-sm" onclick="openRpParams()">⚙ 预测参数设置</button></div></div></div><div id="rp-kpi" class="kpi-row"></div></div><div class="tab-bar" style="margin:12px 20px 0;display:flex;justify-content:space-between;align-items:center"><div style="display:flex"><div class="tab-item active" onclick="switchRpTab('total')">📊 总预测</div><div class="tab-item" onclick="switchRpTab('online')">🛒 线上预测</div><div class="tab-item" onclick="switchRpTab('offline')">🏪 线下预测</div></div><div style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-secondary)"><span>显示方式：</span><div class="rp-mode-switch"><button class="rp-mode-btn active" onclick="switchRpMode('monthly')">按月</button><button class="rp-mode-btn" onclick="switchRpMode('daily')">按天</button></div><button class="btn btn-default btn-sm rp-collapse-btn" id="rp-collapse-btn" onclick="toggleRpCollapse()" title="收起/展开 顶部筛选区与指标卡片">▾ 收起</button></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left" id="rp-tab-title">📊 SKU动销与订单预测（总预测）</div><div class="table-section-actions"><input type="text" id="rp-s" placeholder="SKU搜索" onkeypress="if(event.key==='Enter')loadRp()" style="width:140px;height:28px;padding:4px 8px;border:1px solid #d0d7de;border-radius:4px;font-size:13px;margin-right:8px">{v2}{v3}<button class="btn btn-default btn-sm" id="rp-field-config-btn" onclick="openRpFieldConfig(rpTab)" title="字段显示与排序" style="margin-left:8px">⚙ 字段配置</button></div></div><div id="rp-table"></div></div>`, {v1: hasPermission('replenishment_edit')?t('gen.L3813.1','<button class="btn btn-success btn-sm rp-gen-btn" onclick="genRp()">🔄 重新计算</button>'):'', v2: hasPermission('replenishment_edit')?t('gen.L3813.2','<button class="btn btn-success btn-sm rp-gen-btn" onclick="genRp()" style="margin-right:8px">🔄 重新计算</button>'):'', v3: hasPermission('po_create')?t('gen.L3813.3','<button class="btn btn-primary btn-sm" id="rp-po-btn" onclick="genPOModal()">🛒 生成PO</button>'):''});
+  document.getElementById('content-inner').innerHTML=t('html.renderReplenishment', `<div id="flash-container"></div><div id="rp-collapsible"><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>国家</label><select id="rp-c" onchange="onRpCountryChange()"><option value="">全部</option></select></div><div class="filter-group"><label>仓库</label><select id="rp-w" onchange="loadRpSummary();loadRp()"><option value="">全部</option></select></div><div class="filter-group"><label>品牌</label><select id="rp-b" onchange="onRpBrandChange()"><option value="">全部</option></select></div><div class="filter-actions">{v1}<button class="btn btn-default btn-sm" onclick="exportRpExcel()">⬇ 导出Excel</button><button class="btn btn-default btn-sm" onclick="openRpParams()">⚙ 预测参数设置</button></div></div></div></div><div class="tab-bar" style="margin:12px 20px 0;display:flex;justify-content:space-between;align-items:center"><div style="display:flex"><div class="tab-item active" onclick="switchRpTab('total')">📊 总预测</div><div class="tab-item" onclick="switchRpTab('online')">🛒 线上预测</div><div class="tab-item" onclick="switchRpTab('offline')">🏪 线下预测</div></div><div style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-secondary)"><span>显示方式：</span><div class="rp-mode-switch"><button class="rp-mode-btn active" onclick="switchRpMode('monthly')">按月</button><button class="rp-mode-btn" onclick="switchRpMode('daily')">按天</button></div><button class="btn btn-default btn-sm rp-collapse-btn" id="rp-collapse-btn" onclick="toggleRpCollapse()" title="收起/展开 顶部筛选区与指标卡片">▾ 收起</button></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left" id="rp-tab-title">📊 SKU动销与订单预测（总预测）</div><div class="table-section-actions"><input type="text" id="rp-s" placeholder="SKU搜索" onkeypress="if(event.key==='Enter')loadRp()" style="width:140px;height:28px;padding:4px 8px;border:1px solid #d0d7de;border-radius:4px;font-size:13px;margin-right:8px">{v2}{v3}<button class="btn btn-default btn-sm" id="rp-field-config-btn" onclick="openRpFieldConfig(rpTab)" title="字段显示与排序" style="margin-left:8px">⚙ 字段配置</button></div></div><div id="rp-table"></div></div>`, {v1: hasPermission('replenishment_edit')?t('gen.L3813.1','<button class="btn btn-success btn-sm rp-gen-btn" onclick="genRp()">🔄 重新计算</button>'):'', v2: hasPermission('replenishment_edit')?t('gen.L3813.2','<button class="btn btn-success btn-sm rp-gen-btn" onclick="genRp()" style="margin-right:8px">🔄 重新计算</button>'):'', v3: hasPermission('po_create')?t('gen.L3813.3','<button class="btn btn-primary btn-sm" id="rp-po-btn" onclick="genPOModal()">🛒 生成PO</button>'):''});
   var rpFilterActions=document.querySelector('#rp-collapsible .filter-actions');
   if(rpFilterActions){
     var statusFilter=document.createElement('div');
@@ -4775,86 +4775,7 @@ function getSalesStatsDays(){
   })();
   return _rpSdPromise;
 }
-async function loadRpSummary(){
-  try{
-    await getSalesStatsDays();
-    const [d, noSalesList]=await Promise.all([
-      api('/api/replenishment-suggestions/summary?'+rpQuery()),
-      api('/api/replenishment-suggestions?'+rpQuery()).catch(function(){return [];})
-    ]);
-    const turnoverValue=function(value){return value==null?'-':(Math.round(Number(value)*10)/10);};
-    const monthUnit=t('gen.L3975.1','月');
-    const skuUnit='SKU';
-    const currentInventoryLabel=t('app.730','当前可用库存');
-    const inTransitLabel=t('app.768','在途库存');
-    const confirmedUnshippedLabel=t('app.731','PI已确认未发货');
-    const monthlyAverageLabel=rpSalesStatsDays+t('gen.L3974.1','天月均销量');
-    const currentTip=currentInventoryLabel;
-    const currentTurnoverTip=currentInventoryLabel+' ÷ '+monthlyAverageLabel;
-    const transitTurnoverTip='('+currentInventoryLabel+' + '+inTransitLabel+') ÷ '+monthlyAverageLabel;
-    const orderTurnoverTip='('+currentInventoryLabel+' + '+inTransitLabel+' + '+confirmedUnshippedLabel+') ÷ '+monthlyAverageLabel;
-    const turnoverMetric=function(label,value,tip){
-      return '<div class="kpi-metric" title="'+esc(tip)+'"><div class="kpi-label">'+label+'</div>'
-        +'<div class="kpi-value">'+turnoverValue(value)+'</div>'
-        +'<div class="kpi-unit">'+monthUnit+'</div></div>';
-    };
-    const actionMetric=function(label,value){
-      return '<div class="kpi-metric muted"><div class="kpi-label">'+label+'</div>'
-        +'<div class="kpi-value">'+formatQuantityDisplay(value)+'</div>'
-        +'<div class="kpi-unit">'+skuUnit+'</div></div>';
-    };
-    // 无销量库存（库存风险指标，不参与周转计算；与周转列"-"判定口径一致：avg_sales_period===0）
-    const itemsArr = Array.isArray(noSalesList) ? noSalesList : (noSalesList && noSalesList.data) || [];
-    let noSalesSkuCount=0, noSalesInventory=0;
-    itemsArr.forEach(function(r){
-      if((r.avg_sales_period||0)===0){
-        noSalesSkuCount++;
-        noSalesInventory += (r.available_qty||0);
-      }
-    });
-    const noSalesTotalAvail = d.currentInventory||0;
-    const noSalesRatioPct = noSalesTotalAvail>0 ? Math.round(noSalesInventory/noSalesTotalAvail*1000)/10 : 0;
-    const riskMetric=function(label,value,unit,warn){
-      return '<div class="kpi-metric"><div class="kpi-label">'+label+'</div>'
-        +'<div class="kpi-value '+(warn?'kpi-warn':'')+'">'+value+'</div>'
-        +'<div class="kpi-unit">'+unit+'</div></div>';
-    };
-    // 前端兜底：当 summary 端点返回 null（totalMonthlySales=0）但列表端点有销量数据时，用列表数据重新计算周转
-    if(d.currentInventoryTurnover==null){
-      var fallbackTotalMonthlySales=itemsArr.reduce(function(s,r){return s+(r.avg_sales_period||0)},0);
-      if(fallbackTotalMonthlySales>0){
-        var fbCur=d.currentInventory||0;
-        var fbTransit=d.inTransitInventory||0;
-        var fbUnshipped=d.confirmedUnshippedInventory||0;
-        d.currentInventoryTurnover=Math.round(fbCur/fallbackTotalMonthlySales*10)/10;
-        d.afterTransitTurnover=Math.round((fbCur+fbTransit)/fallbackTotalMonthlySales*10)/10;
-        d.afterOrderTurnover=Math.round((fbCur+fbTransit+fbUnshipped)/fallbackTotalMonthlySales*10)/10;
-      }
-    }
-    document.getElementById('rp-kpi').innerHTML='<div class="kpi-grid">'
-      +'<div class="kpi-card" style="flex:2;min-width:300px"><div class="kpi-label">'+String(t('forecast.compact.current_turnover','库存周转')).replace(/\n/g,' ')+'</div>'
-      +'<div class="kpi-inner">'
-      +turnoverMetric(String(t('forecast.compact.current_turnover','当前')).replace(/\n/g,' '),d.currentInventoryTurnover,currentTurnoverTip)
-      +turnoverMetric(t('app.733','在途后'),d.afterTransitTurnover,transitTurnoverTip)
-      +turnoverMetric(t('app.734','下单后'),d.afterOrderTurnover,orderTurnoverTip)
-      +'</div></div>'
-      +'<div class="kpi-card kpi-danger" title="'+esc(t('forecast.no_sales_inventory_tip','库存风险指标：无销量SKU的可用库存合计，不计入周转计算'))+'"><div class="kpi-label">'+t('forecast.no_sales_inventory','无销量库存')+'</div>'
-      +'<div class="kpi-inner">'
-      +riskMetric(t('forecast.no_sales_sku','无销量SKU'),noSalesSkuCount,skuUnit,false)
-      +riskMetric(t('forecast.no_sales_qty','无销量库存'),formatQuantityDisplay(noSalesInventory),t('gen.L3972.1','件'),true)
-      +riskMetric(t('forecast.no_sales_ratio','占比'),noSalesRatioPct+'%','',true)
-      +'</div></div>'
-      +'<div class="kpi-card kpi-accent"><div class="kpi-label">'+t('app.109','建议采购')+'</div>'
-      +'<div class="kpi-value">'+formatQuantityDisplay(d.needReplenish||0)+'</div><div class="kpi-unit">'+skuUnit+'</div></div>'
-      +'<div class="kpi-card kpi-danger"><div class="kpi-label">'+t('app.651','断货风险')+'</div>'
-      +'<div class="kpi-value">'+formatQuantityDisplay(d.stockoutRisk||0)+'</div><div class="kpi-unit">'+skuUnit+'</div></div>'
-      +'<div class="kpi-card kpi-muted"><div class="kpi-label">'+t('forecast.summary.high_stock','高库存')+' / '+t('forecast.movement.slow_sales','慢销')+'</div>'
-      +'<div class="kpi-inner">'
-      +actionMetric(t('forecast.summary.high_stock','高库存'),d.highStock||0)
-      +actionMetric(t('forecast.movement.slow_sales','慢销'),d.slowSales||0)
-      +'</div></div>';
-  }catch(e){}
-}
+async function loadRpSummary(){/* KPI指标卡已移除 */}
 function showKpiTip(el,tip){
   const existing=document.getElementById('kpi-tooltip');
   if(existing){existing.remove();return;}
