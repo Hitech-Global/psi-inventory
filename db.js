@@ -21,12 +21,77 @@ function genId(prefix = 'id') {
 let impl;
 if (driver === 'pg') {
   // PG 驱动是 async，但 server.js 全部用同步调用（为 SQLite 设计）。
-  // 用 deasync.loopWhile 把 async 函数包装成同步，让 server.js 无需修改即可在 PG 模式下工作。
-  const deasync = require('deasync');
-  const pgImpl = require('./db-pg');
-  console.log('[DB] 驱动 = PostgreSQL (DB_DRIVER=pg, sync-wrapper)');
+  // 方案：worker_threads + Atomics.wait 实现同步包装。
+  // deasync.loopWhile 在 Render Linux 上无法正确处理 PG SSL I/O（导致
+  // "Connection terminated unexpectedly"）。worker 线程有独立事件循环，
+  // 不受主线程 Atomics.wait 阻塞影响，能正确处理 PG 查询。
+  const { Worker, MessageChannel, receiveMessageOnPort } = require('worker_threads');
+  console.log('[DB] 驱动 = PostgreSQL (DB_DRIVER=pg, worker_threads sync)');
 
-  // 连接错误重试白名单（与 db-pg.js 保持一致）
+  // SharedArrayBuffer 用于主线程同步等待 worker 完成
+  const sab = new SharedArrayBuffer(4);
+  const int32 = new Int32Array(sab);
+  const worker = new Worker(__dirname + '/db-sync-worker.js', { workerData: { sab } });
+  const channel = new MessageChannel();
+  let initialized = false;
+  let msgId = 0;
+
+  function ensureInit() {
+    if (initialized) return;
+    initialized = true;
+    // 把 port2 传给 worker，worker 用它发送结果
+    worker.postMessage({ type: 'init', port: channel.port2 }, [channel.port2]);
+  }
+
+  function syncRequest(type, sql, params) {
+    ensureInit();
+    var maxAttempts = 3;
+    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+      var id = ++msgId;
+      Atomics.store(int32, 0, 0);
+      worker.postMessage({ id: id, type: type, sql: sql, params: params });
+
+      // 同步等待 worker 完成（30 秒超时）
+      var status = Atomics.wait(int32, 0, 0, 30000);
+      if (status !== 'ok') {
+        var timeoutErr = new Error('DB query timeout (' + status + ') after 30s, type=' + type);
+        if (attempt < maxAttempts) {
+          console.warn('[DB-SYNC] 查询超时，第 ' + attempt + ' 次重试');
+          continue;
+        }
+        throw timeoutErr;
+      }
+
+      var msg = receiveMessageOnPort(channel.port1);
+      if (!msg || !msg.message) {
+        var noRespErr = new Error('No response from worker (type=' + type + ')');
+        if (attempt < maxAttempts) {
+          console.warn('[DB-SYNC] 无响应，第 ' + attempt + ' 次重试');
+          continue;
+        }
+        throw noRespErr;
+      }
+
+      var data = msg.message;
+      if (!data.ok) {
+        var err = new Error(data.error);
+        if (data.stack) err.stack = data.stack;
+        // 连接错误时重试
+        if (attempt < maxAttempts && isRetryable(data.error)) {
+          console.warn('[DB-SYNC] 查询失败（连接错误），第 ' + attempt + ' 次重试:', data.error);
+          // 同步等待 200ms（用 Atomics.wait 计时）
+          Atomics.wait(int32, 0, 1, 200);
+          Atomics.store(int32, 0, 0);
+          continue;
+        }
+        throw err;
+      }
+      return data;
+    }
+    throw new Error('DB query failed after ' + maxAttempts + ' attempts (type=' + type + ')');
+  }
+
+  // 连接错误重试白名单
   var RETRYABLE = [
     'Connection terminated',
     'terminating connection due to',
@@ -44,37 +109,32 @@ if (driver === 'pg') {
     return false;
   }
 
-  function makeSync(asyncFn) {
-    return function () {
-      var maxAttempts = 3; // 首次 + 2 次重试
-      for (var attempt = 1; attempt <= maxAttempts; attempt++) {
-        var done = false;
-        var result, error;
-        var promise = asyncFn.apply(null, arguments);
-        promise.then(function (r) { result = r; done = true; })
-               .catch(function (e) { error = e; done = true; });
-        deasync.loopWhile(function () { return !done; });
-        if (!error) return result;
-        // 连接错误时重试（用 deasync.sleep 等待，不依赖 setTimeout）
-        if (attempt < maxAttempts && isRetryable(error.message)) {
-          console.warn('[DB-SYNC] 查询失败（连接错误），第 ' + attempt + ' 次重试:', error.message);
-          deasync.sleep(200); // 同步等待 200ms
-          continue;
-        }
-        throw error;
-      }
-    };
-  }
-
   impl = {
-    query: makeSync(pgImpl.query),
-    queryOne: makeSync(pgImpl.queryOne),
-    run: makeSync(pgImpl.run),
-    transaction: makeSync(pgImpl.transaction),
-    // initDatabase 包含 50+ 建表语句，同步包装会死锁。
-    // PG 模式下表已由迁移脚本创建，跳过 initDatabase（幂等 DDL 已执行过）。
+    query: function (sql, params) {
+      var data = syncRequest('query', sql, params);
+      return { rows: data.rows || [] };
+    },
+    queryOne: function (sql, params) {
+      var data = syncRequest('query', sql, params);
+      return (data.rows && data.rows[0]) || null;
+    },
+    run: function (sql, params) {
+      var data = syncRequest('query', sql, params);
+      return { changes: data.rowCount == null ? 0 : data.rowCount };
+    },
+    transaction: function (fn) {
+      syncRequest('begin');
+      try {
+        var result = fn();
+        syncRequest('commit');
+        return result;
+      } catch (e) {
+        try { syncRequest('rollback'); } catch (re) {}
+        throw e;
+      }
+    },
     initDatabase: function () { console.log('[DB] initDatabase skipped in PG mode (tables already migrated)'); },
-    getDB: pgImpl.getDB || (function () { throw new Error('getDB() 未由 pg 驱动提供'); })
+    getDB: function () { throw new Error('getDB() not available in worker_threads mode'); }
   };
 } else {
   impl = require('./db-sqlite');

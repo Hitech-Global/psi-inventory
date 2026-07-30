@@ -2054,4 +2054,4 @@ async function initDatabase() {
   return true;
 }
 
-module.exports = { query, queryOne, run, transaction, initDatabase, getDB };
+module.exports = { query, queryOne, run, transaction, initDatabase, getDB, _normalizeSql: normalizeSql, _getClientConfig: getClientConfig };
