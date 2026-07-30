@@ -153,6 +153,23 @@ async function api(url,method='GET',body=null){
 // --- 登录（飞书 OAuth 主入口 + break-glass 应急）---
 // 飞书登录：直接跳转后端授权端点（生产环境由后端 302 到飞书；test 环境由测试脚本驱动）
 function doFeishuLogin(){ window.location.href='/api/auth/feishu/login?lang='+encodeURIComponent(typeof getLang==='function'?getLang():'zh'); }
+// 启动时检查飞书 OAuth 配置；未配齐时隐藏/灰化"飞书登录"按钮，避免用户点出 20028 "client_id 请求不合法"错误页
+async function probeFeishuStatus(){
+  try{
+    const r=await fetch('/api/auth/feishu/status',{credentials:'same-origin'});
+    if(!r.ok) return;
+    const s=await r.json();
+    const btn=document.getElementById('login-btn');
+    if(!btn) return;
+    if(!s.configured){
+      btn.disabled=true;
+      btn.style.opacity='0.5';
+      btn.style.cursor='not-allowed';
+      btn.title=t('login.feishu_unconfigured','飞书登录未配置（FEISHU_APP_ID/REDIRECT_URI 缺失），请使用下方"本地应急登录"');
+      btn.textContent=t('login.feishu_disabled','🔒 飞书登录未配置');
+    }
+  }catch(e){ /* 静默失败：保持按钮可用，避免误伤 */ }
+}
 function toggleBreakGlass(){ const f=document.getElementById('bg-form'); if(f) f.style.display = (f.style.display==='none'||!f.style.display)?'block':'none'; }
 async function doBreakGlassLogin(){
   const u=document.getElementById('bg-username');
@@ -9235,6 +9252,8 @@ window.addEventListener('DOMContentLoaded',()=>{
   }
   // 凭证基于 HttpOnly Cookie（Session），启动即从 /api/me 探活；无有效会话则显示登录页
   bootFromSession();
+  // 探测飞书 OAuth 配置（异步，不阻塞登录页加载）
+  if (typeof probeFeishuStatus==='function') probeFeishuStatus();
 });
 // 启动探活：有效会话 → 进入业务（pending 显示待授权页）；无效 → 登录页
 async function bootFromSession(){

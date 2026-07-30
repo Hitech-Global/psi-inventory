@@ -17,12 +17,18 @@
  */
 
 const { parentPort, workerData } = require('worker_threads');
-const { Client } = require('pg');
+const { Client, Pool } = require('pg');
 const pgImpl = require('./db-pg');
 
 const int32 = new Int32Array(workerData.sab);
 let mainPort = null;
 let txClient = null; // 事务模式下的专用连接
+
+// 连接池（非事务查询复用连接，消除冷启动 TCP/TLS 握手开销）
+const pool = new Pool(pgImpl._getClientConfig());
+pool.on('error', (err) => {
+  console.error('[DB-WORKER] 连接池错误（idle client）:', err.message);
+});
 
 parentPort.on('message', async (msg) => {
   // init 消息：接收主线程的 MessagePort
@@ -44,15 +50,9 @@ parentPort.on('message', async (msg) => {
         const res = await txClient.query(pgSql, params);
         result = { rows: res.rows, rowCount: res.rowCount };
       } else {
-        // 非事务：创建新连接
-        const client = new Client(pgImpl._getClientConfig());
-        await client.connect();
-        try {
-          const res = await client.query(pgSql, params);
-          result = { rows: res.rows, rowCount: res.rowCount };
-        } finally {
-          await client.end();
-        }
+        // 非事务：使用连接池复用连接（避免每次 cold start TCP/TLS 握手）
+        const res = await pool.query(pgSql, params);
+        result = { rows: res.rows, rowCount: res.rowCount };
       }
     } else if (msg.type === 'begin') {
       // 开始事务：创建专用连接

@@ -63,6 +63,7 @@ const SESSION_COOKIE_NAME = 'session_token';
 const PUBLIC_AUTH_PREFIXES = [
   '/api/auth/feishu/login',
   '/api/auth/feishu/callback',
+  '/api/auth/feishu/status',
   '/api/auth/local/login',
   '/api/logout',
   '/api/health',
@@ -546,6 +547,10 @@ app.use('/api', apiAuth);
 
 // 飞书授权入口（生成一次性 state，跳转飞书；test 环境返回 state 供驱动）
 app.get('/api/auth/feishu/login', asyncHandler((req, res) => {
+  // Guard: 缺少飞书 OAuth 配置时返回 503，避免构造 client_id= 的坏 URL（飞书 20028 错误）
+  if (!FEISHU_APP_ID || !FEISHU_REDIRECT_URI) {
+    return res.status(503).json({ error: 'feishu_not_configured', message: '飞书 OAuth 未配置。请在 Render Dashboard 环境变量中设置 FEISHU_APP_ID 和 FEISHU_REDIRECT_URI。' });
+  }
   const oauthLang = normalizeLanguage(req.query && req.query.lang);
   req.i18nLang = oauthLang;
   res.cookie(LANGUAGE_COOKIE_NAME, oauthLang, languageCookieOpts());
@@ -559,6 +564,10 @@ app.get('/api/auth/feishu/login', asyncHandler((req, res) => {
 
 // 飞书回调：校验 state → 换身份 → 按 union_id 匹配/创建 → 建 Session
 app.get('/api/auth/feishu/callback', asyncHandler(async (req, res) => {
+  // Guard: 缺少飞书 OAuth 配置时返回 503
+  if (!FEISHU_APP_ID || !FEISHU_APP_SECRET || !FEISHU_REDIRECT_URI) {
+    return res.status(503).json({ error: 'feishu_not_configured', message: '飞书 OAuth 未配置。无法处理回调。' });
+  }
   try {
     const { code, state } = req.query;
     if (!state) { auditLogin(null, '', 'feishu', false, 'missing_state'); return res.status(401).json({ error: '缺少 state' }); }
@@ -600,6 +609,17 @@ app.get('/api/feishu/notify/dryrun-log', asyncHandler((req, res) => {
   if (process.env.NODE_ENV !== 'test' && process.env.FEISHU_NOTIFY_DRYRUN !== '1') return res.status(404).json({ error: 'not available' });
   res.json({ log: __feishuDryRunLog });
 }));
+
+// 飞书 OAuth 配置探活（免登录，供前端登录页判断是否显示飞书按钮；也供 UptimeRobot 防休眠探活）
+app.get('/api/auth/feishu/status', (req, res) => {
+  res.json({
+    configured: !!(FEISHU_APP_ID && FEISHU_APP_SECRET && FEISHU_REDIRECT_URI),
+    has_app_id: !!FEISHU_APP_ID,
+    has_app_secret: !!FEISHU_APP_SECRET,
+    has_redirect_uri: !!FEISHU_REDIRECT_URI,
+    redirect_uri: FEISHU_REDIRECT_URI || null
+  });
+});
 
 // break-glass 本地应急登录（独立接口，强密码哈希校验，安全审计，防暴力破解）
 app.post('/api/auth/local/login', asyncHandler((req, res) => {
