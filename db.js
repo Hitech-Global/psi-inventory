@@ -26,16 +26,43 @@ if (driver === 'pg') {
   const pgImpl = require('./db-pg');
   console.log('[DB] 驱动 = PostgreSQL (DB_DRIVER=pg, sync-wrapper)');
 
+  // 连接错误重试白名单（与 db-pg.js 保持一致）
+  var RETRYABLE = [
+    'Connection terminated',
+    'terminating connection due to',
+    'connection reset',
+    'ECONNRESET',
+    'EPIPE',
+    'ETIMEDOUT',
+    'write ECONNRESET'
+  ];
+  function isRetryable(msg) {
+    if (!msg) return false;
+    for (var i = 0; i < RETRYABLE.length; i++) {
+      if (msg.indexOf(RETRYABLE[i]) !== -1) return true;
+    }
+    return false;
+  }
+
   function makeSync(asyncFn) {
     return function () {
-      var done = false;
-      var result, error;
-      var promise = asyncFn.apply(null, arguments);
-      promise.then(function (r) { result = r; done = true; })
-             .catch(function (e) { error = e; done = true; });
-      deasync.loopWhile(function () { return !done; });
-      if (error) throw error;
-      return result;
+      var maxAttempts = 3; // 首次 + 2 次重试
+      for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+        var done = false;
+        var result, error;
+        var promise = asyncFn.apply(null, arguments);
+        promise.then(function (r) { result = r; done = true; })
+               .catch(function (e) { error = e; done = true; });
+        deasync.loopWhile(function () { return !done; });
+        if (!error) return result;
+        // 连接错误时重试（用 deasync.sleep 等待，不依赖 setTimeout）
+        if (attempt < maxAttempts && isRetryable(error.message)) {
+          console.warn('[DB-SYNC] 查询失败（连接错误），第 ' + attempt + ' 次重试:', error.message);
+          deasync.sleep(200); // 同步等待 200ms
+          continue;
+        }
+        throw error;
+      }
     };
   }
 
