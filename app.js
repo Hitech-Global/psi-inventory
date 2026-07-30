@@ -4696,7 +4696,10 @@ function getSalesStatsDays(){
 async function loadRpSummary(){
   try{
     await getSalesStatsDays();
-    const d=await api('/api/replenishment-suggestions/summary?'+rpQuery());
+    const [d, noSalesList]=await Promise.all([
+      api('/api/replenishment-suggestions/summary?'+rpQuery()),
+      api('/api/replenishment-suggestions?'+rpQuery()).catch(function(){return [];})
+    ]);
     const turnoverValue=function(value){return value==null?'-':(Math.round(Number(value)*10)/10);};
     const monthUnit=t('gen.L3975.1','月');
     const skuUnit='SKU';
@@ -4718,6 +4721,22 @@ async function loadRpSummary(){
         +'<div style="font-size:19px;font-weight:700;color:var(--text-muted);margin-top:3px">'+formatQuantityDisplay(value)+'</div>'
         +'<div class="kpi-unit">'+skuUnit+'</div></div>';
     };
+    // 无销量库存（库存风险指标，不参与周转计算；与周转列"-"判定口径一致：avg_sales_period===0）
+    const itemsArr = Array.isArray(noSalesList) ? noSalesList : (noSalesList && noSalesList.data) || [];
+    let noSalesSkuCount=0, noSalesInventory=0;
+    itemsArr.forEach(function(r){
+      if((r.avg_sales_period||0)===0){
+        noSalesSkuCount++;
+        noSalesInventory += (r.available_qty||0);
+      }
+    });
+    const noSalesTotalAvail = d.currentInventory||0;
+    const noSalesRatioPct = noSalesTotalAvail>0 ? Math.round(noSalesInventory/noSalesTotalAvail*1000)/10 : 0;
+    const riskMetric=function(label,value,unit,warn){
+      return '<div style="min-width:72px"><div style="font-size:11px;color:var(--text-muted);white-space:nowrap">'+label+'</div>'
+        +'<div class="kpi-value '+(warn?'kpi-warn':'')+'" style="font-size:19px;margin-top:3px">'+value+'</div>'
+        +'<div class="kpi-unit">'+unit+'</div></div>';
+    };
     document.getElementById('rp-kpi').innerHTML='<div class="kpi-grid">'
       +'<div class="kpi-card" title="'+esc(currentTip)+'"><div class="kpi-label">'+t('app.730','当前库存')+'</div>'
       +'<div class="kpi-value">'+formatQuantityDisplay(d.currentInventory||0)+'</div><div class="kpi-unit">'+t('gen.L3972.1','件')+'</div></div>'
@@ -4735,6 +4754,12 @@ async function loadRpSummary(){
       +'<div style="display:flex;justify-content:space-around;gap:14px;margin-top:8px">'
       +actionMetric(t('forecast.summary.high_stock','高库存'),d.highStock||0)
       +actionMetric(t('forecast.movement.slow_sales','慢销'),d.slowSales||0)
+      +'</div>'
+      +'<div class="kpi-card kpi-danger" title="'+esc(t('forecast.no_sales_inventory_tip','库存风险指标：无销量SKU的可用库存合计，不计入周转计算'))+'"><div class="kpi-label">'+t('forecast.no_sales_inventory','无销量库存')+'</div>'
+      +'<div style="display:flex;justify-content:space-around;gap:14px;margin-top:8px">'
+      +riskMetric(t('forecast.no_sales_sku','无销量SKU'),noSalesSkuCount,skuUnit,false)
+      +riskMetric(t('forecast.no_sales_qty','无销量库存'),formatQuantityDisplay(noSalesInventory),t('gen.L3972.1','件'),true)
+      +riskMetric(t('forecast.no_sales_ratio','占比'),noSalesRatioPct+'%','',true)
       +'</div></div></div>';
   }catch(e){}
 }
