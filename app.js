@@ -3477,8 +3477,7 @@ function rpColWidthDefs(){
     // 周转
     avail_turnover:{min:75,default:90,max:130},
     transit_turnover:{min:75,default:90,max:130},
-    current_turn:{min:75,default:90,max:130},
-    after_order_turnover:{min:80,default:95,max:140},
+        after_order_turnover:{min:80,default:95,max:140},
     // 采购
     target_turn:{min:75,default:90,max:130},
     target_stock:{min:85,default:100,max:150},
@@ -3649,8 +3648,7 @@ function rpTotalColMeta(){
     {key:'online_pct',label:t("app.738", "\u7ebf\u4e0a\u5360\u6bd4"),visibleByDefault:false},
     {key:'offline_pct',label:t("app.739", "\u7ebf\u4e0b\u5360\u6bd4"),visibleByDefault:false},
     {key:'pool',label:t("app.740", "\u603b\u5e93\u5b58\u6c60"),visibleByDefault:false},
-    {key:'current_turn',label:t("app.741", "\u5f53\u524d\u5468\u8f6c"),visibleByDefault:false},
-    {key:'sales_reason',label:t("app.742", "\u52a8\u9500\u539f\u56e0"),visibleByDefault:false},
+        {key:'sales_reason',label:t("app.742", "\u52a8\u9500\u539f\u56e0"),visibleByDefault:false},
     {key:'online_target_turn',label:t("app.743", "\u7ebf\u4e0a\u76ee\u6807\u5468\u8f6c"),visibleByDefault:false},
     {key:'offline_target_turn',label:t("app.744", "\u7ebf\u4e0b\u76ee\u6807\u5468\u8f6c"),visibleByDefault:false},
     {key:'online_target_stock',label:t("app.745", "\u7ebf\u4e0a\u5efa\u8bae"),visibleByDefault:false},
@@ -3880,20 +3878,23 @@ function getRpColConfig(tabKey){
       localStorage.setItem(migKey4,'1');
     }
   }
-  // v5 迁移（所有模式）：将 SKU 移到 Model 前面，确保 SKU 在最左侧固定区域
+    // v5 迁移（所有模式）：统一强制 SKU → Model → 其他字段（SKU 永远最左固定，Model 紧随其后）
   var migKey5='rp_col_config_v5_'+tabKey;
   if(localStorage.getItem(migKey5)!=='1'){
     if(Array.isArray(saved)&&saved.length){
-      var skuIdx5=-1, modelIdx5=-1;
-      for(var i5=0;i5<saved.length;i5++){
-        if(saved[i5].key==='sku') skuIdx5=i5;
-        if(saved[i5].key==='model') modelIdx5=i5;
-      }
-      if(skuIdx5>=0 && modelIdx5>=0 && modelIdx5<skuIdx5){
-        var skuItem5=saved.splice(skuIdx5,1)[0];
-        saved.splice(modelIdx5,0,skuItem5);
-        localStorage.setItem(storageKey,JSON.stringify(saved));
-      }
+      var lead5=[], skuItem5=null, modelItem5=null, rest5=[];
+      saved.forEach(function(s){
+        if(s.key==='check'||s.key==='spacer') lead5.push(s);
+        else if(s.key==='sku') skuItem5=s;
+        else if(s.key==='model') modelItem5=s;
+        else rest5.push(s);
+      });
+      var rebuilt5=lead5.slice();
+      if(skuItem5) rebuilt5.push(skuItem5);
+      if(modelItem5) rebuilt5.push(modelItem5);
+      rebuilt5=rebuilt5.concat(rest5);
+      saved=rebuilt5;
+      localStorage.setItem(storageKey,JSON.stringify(saved));
     }
     localStorage.setItem(migKey5,'1');
   }
@@ -4835,9 +4836,6 @@ async function loadRp(){
       pool:{th:rpTh(t("app.740", "\u603b\u5e93\u5b58\u6c60"),t("app.797", "\u5f53\u524d\u53ef\u7528\u5e93\u5b58 + \u5728\u9014\u5e93\u5b58 + PI/PO\u5df2\u786e\u8ba4\u672a\u53d1\u8d27\u3002\u672a\u786e\u8ba4PO\u4e0d\u8ba1\u5165\u3002"),'text-right'),
         td:function(r,c){return '<td class="text-right font-bold">'+formatQuantityDisplay(c.pool)+'</td>';},
         sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.pool)+'</td>';}},
-      current_turn:{th:rpTh(t("app.741", "\u5f53\u524d\u5468\u8f6c"),t("app.798", "\u603b\u5e93\u5b58\u6c60 \u00f7 \u6708\u5747\u9500\u91cf\uff08\u9500\u91cf\u7edf\u8ba1\u5468\u671f\u53e3\u5f84\uff09\u3002\u8868\u793a\u4e0d\u8003\u8651\u5728\u9014\u548c\u672a\u53d1\u8d27\u8ba2\u5355\u65f6\uff0c\u6574\u4f53\u5e93\u5b58\u5927\u7ea6\u8fd8\u80fd\u5356\u51e0\u4e2a\u6708\u3002"),'text-right'),
-        td:function(r,c){return '<td class="text-right '+(c.taPeriod>0?(c.ct<2?'text-danger':c.ct>6?'text-secondary':'text-success'):'text-muted')+'">'+(c.taPeriod>0?c.ct:t("app.799", "\u65e0\u9500\u91cf"))+'</td>';},
-        sum:function(t){return '<td class="text-right"></td>';}},
       pi_unshipped:{th:rpThCompact(t('forecast.compact.pi_unshipped','已确认PI\n未发货'),t("app.800", "PI \u5df2\u786e\u8ba4\uff0c\u4f46\u5de5\u5382\u8fd8\u6ca1\u6709\u53d1\u8d27\u7684\u6570\u91cf\u3002\u6bd4 PO\u672a\u786e\u8ba4PI \u66f4\u63a5\u8fd1\u5b9e\u9645\u4f9b\u5e94\u3002"),'text-right','',true),
         td:function(r,c){return '<td class="text-right">'+formatQuantityDisplay(c.piUnshipped)+'</td>';},
         sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.piUnshipped)+'</td>';}},
@@ -5117,12 +5115,6 @@ async function loadRpChannelMonthly(channel){
     Cols.avail={th:rpThCompact(t('app.767','当前可用\n库存'),t('forecast.help.current_available','已经入库、当前可销售的库存。'),'text-right','',true),
       td:function(r,c){return '<td class="text-right">'+formatQuantityDisplay(c.avail||0)+'</td>';},
       sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.avail)+'</td>';}};
-    Cols.current_turn={th:rpThCompact(t('forecast.compact.current_turnover','当前\n周转'),t("app.813", "\u5f53\u524d\u5171\u4eab\u5e93\u5b58\u6c60 \u00f7 \u8be5\u6e20\u9053\u6708\u5747\u9500\u91cf\uff08\u5f53\u524d\u9500\u91cf\u7edf\u8ba1\u5468\u671f\u53e3\u5f84\uff09\u3002"),'text-right','',true),
-      td:function(r,c){
-        var cls=c.avgSalesPeriod>0?(c.currentTurn<2?'text-danger':c.currentTurn>6?'text-secondary':'text-success'):'text-muted';
-        return '<td class="text-right '+cls+'">'+(c.avgSalesPeriod>0?c.currentTurn:t("app.799", "\u65e0\u9500\u91cf"))+'</td>';
-      },
-      sum:function(t){return '<td class="text-right"></td>';}};
     Cols.pi_unshipped={th:rpThCompact(t('forecast.compact.pi_unshipped','已确认PI\n未发货'),t("app.800", "PI \u5df2\u786e\u8ba4\uff0c\u4f44\u5de5\u5382\u8fd8\u6ca1\u6709\u53d1\u8d27\u7684\u6570\u91cf\u3002\u6bd4 PO\u672a\u786e\u8ba4PI \u66f4\u63a5\u8fd1\u5b9e\u9645\u4f9b\u5e94\u3002"),'text-right','',true),
       td:function(r,c){return '<td class="text-right">'+formatQuantityDisplay(c.piUnshipped)+'</td>';},
       sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.piUnshipped)+'</td>';}},
