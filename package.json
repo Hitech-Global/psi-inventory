@@ -9,7 +9,7 @@
     "seed": "node insert_demo_data.js"
   },
   "engines": {
-    "node": ">=18.x",
+    "node": "22.22.2",
     "npm": ">=9.x"
   },
   "dependencies": {
