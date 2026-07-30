@@ -3624,8 +3624,8 @@ window.addEventListener('scroll',function(){ _rpHideTooltip(); },true);
 function rpTotalColMeta(){
   return [
     {key:'check',label:t('gen.L3364.1','选择'),fixed:true},
-    {key:'model',label:'Model',fixed:true},
     {key:'sku',label:'SKU',fixed:true},
+    {key:'model',label:'Model'},
     {key:'online_avg',label:t('gen.L3367.1','线上')+rpSalesStatsDays+t('gen.L3367.2','天月均销量')},
     {key:'offline_avg',label:t('gen.L3368.1','线下')+rpSalesStatsDays+t('gen.L3368.2','天月均销量')},
     {key:'total_avg',label:rpSalesStatsDays+t('gen.L3369.1','天月均销量')},
@@ -3791,8 +3791,8 @@ function rpChannelColMeta(){
   }
   return [
     {key:'spacer',label:t("app.761", "\u5360\u4f4d"),fixed:true},
-    {key:'model',label:'Model',fixed:true},
     {key:'sku',label:'SKU',fixed:true},
+    {key:'model',label:'Model'},
     {key:'sales_m4',label:monthLabels.sales_m4},
     {key:'sales_m3',label:monthLabels.sales_m3},
     {key:'sales_m2',label:monthLabels.sales_m2},
@@ -3879,6 +3879,23 @@ function getRpColConfig(tabKey){
       }
       localStorage.setItem(migKey4,'1');
     }
+  }
+  // v5 迁移（所有模式）：将 SKU 移到 Model 前面，确保 SKU 在最左侧固定区域
+  var migKey5='rp_col_config_v5_'+tabKey;
+  if(localStorage.getItem(migKey5)!=='1'){
+    if(Array.isArray(saved)&&saved.length){
+      var skuIdx5=-1, modelIdx5=-1;
+      for(var i5=0;i5<saved.length;i5++){
+        if(saved[i5].key==='sku') skuIdx5=i5;
+        if(saved[i5].key==='model') modelIdx5=i5;
+      }
+      if(skuIdx5>=0 && modelIdx5>=0 && modelIdx5<skuIdx5){
+        var skuItem5=saved.splice(skuIdx5,1)[0];
+        saved.splice(modelIdx5,0,skuItem5);
+        localStorage.setItem(storageKey,JSON.stringify(saved));
+      }
+    }
+    localStorage.setItem(migKey5,'1');
   }
   if(Array.isArray(saved)&&saved.length){
     var result=[]; var used={};
@@ -4788,8 +4805,8 @@ async function loadRp(){
       model:{th:'<th>Model</th>',
         td:function(r,c){return '<td class="text-truncate" style="max-width:90px" title="'+esc(r.model||'')+'">'+esc(r.model||'')+'</td>';},
         sum:function(t){return '<td></td>';}},
-      sku:{th:'<th>SKU</th>',
-        td:function(r,c){return '<td class="cell-id" title="'+esc(r.sku_code||'')+'">'+esc(r.sku_code||'')+'</td>';},
+      sku:{th:'<th style="min-width:120px;white-space:nowrap">SKU</th>',
+        td:function(r,c){return '<td class="cell-id" style="min-width:120px;white-space:nowrap" title="'+esc(r.sku_code||'')+'">'+esc(r.sku_code||'')+'</td>';},
         sum:function(total){return '<td><span style="font-size:10px;color:#888">'+total.count+t('gen.L4055.1','个SKU</span></td>');}},
       online_avg:{th:rpTh(t('gen.L4056.1','线上')+rpSalesStatsDays+t('gen.L4056.2','天月均销量'),t('gen.L4056.3','按"预测参数设置"中的销量统计周期计算：近')+rpSalesStatsDays+t('gen.L4056.4','天有效销量 ÷ ')+rpSalesStatsDays+' × 30。','text-right'),
         td:function(r,c){return '<td class="text-right">'+formatQuantityDisplay(c.oaPeriod)+'</td>';},
@@ -4888,7 +4905,7 @@ async function loadRp(){
     var activeKeys=[];
     config.forEach(function(cfg){
       var col=Cols[cfg.key];
-      if(col&&(cfg.visible||cfg.key==='check'||cfg.key==='model'||cfg.key==='sku'||cfg.key==='total_target_stock')){
+      if(col&&(cfg.visible||cfg.key==='check'||cfg.key==='sku'||cfg.key==='total_target_stock')){
         activeKeys.push(cfg.key);
       }
     });
@@ -5070,8 +5087,8 @@ async function loadRpChannelMonthly(channel){
     Cols.model={th:'<th>Model</th>',
       td:function(r,c){return '<td class="text-truncate" style="max-width:100px" title="'+esc(r.model||'')+'">'+esc(r.model||'')+'</td>';},
       sum:function(t){return '<td></td>';}};
-    Cols.sku={th:'<th>SKU</th>',
-      td:function(r,c){return '<td class="cell-id" title="'+esc(r.sku_code||'')+'">'+esc(r.sku_code||'')+'</td>';},
+    Cols.sku={th:'<th style="min-width:120px;white-space:nowrap">SKU</th>',
+      td:function(r,c){return '<td class="cell-id" style="min-width:120px;white-space:nowrap" title="'+esc(r.sku_code||'')+'">'+esc(r.sku_code||'')+'</td>';},
       sum:function(total){return '<td><span style="font-size:10px;color:#888">'+total.count+t('gen.L4269.1','个SKU</span></td>');}};
     Cols.sales_m4={th:rpThCompact(ml[0],'','text-right','',true),
       td:function(r,c){return '<td class="text-right">'+formatQuantityDisplay(c.salesM4)+'</td>';},
