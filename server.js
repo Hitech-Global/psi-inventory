@@ -422,6 +422,7 @@ initDatabase();
 
 // ==================== Express 初始化 ====================
 const app = express();
+app.set('trust proxy', 1); // Render 反向代理 TLS 终止后，使 req.protocol/req.secure 正确反映客户端原始协议
 
 function asyncHandler(fn) {
   return function (req, res, next) {
@@ -472,7 +473,7 @@ function csrfGuard(req, res, next) {
   if (PUBLIC_AUTH_PREFIXES.some(p => url === p || url.indexOf(p + '?') === 0)) return next();
   const origin = req.headers.origin;
   if (!origin) return next();
-  const selfOrigin = (req.secure ? 'https' : 'http') + '://' + (req.headers.host || '');
+  const selfOrigin = req.protocol + '://' + (req.headers.host || '');
   const allowed = TRUSTED_ORIGINS.concat([selfOrigin]);
   let ok = false;
   try { ok = allowed.includes(new URL(origin).origin); } catch (e) { ok = false; }
