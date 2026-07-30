@@ -4826,13 +4826,13 @@ async function loadRp(){
         sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.piUnshipped)+'</td>';}},
       avail_turnover:{th:rpTh(t('gen.L4089.1','当前可用周转'),t("app.801", "\u5f53\u524d\u53ef\u7528\u5e93\u5b58 \u00f7 \u6708\u5747\u9500\u91cf\uff08\u9500\u91cf\u7edf\u8ba1\u5468\u671f\u53e3\u5f84\uff09\u3002\u8868\u793a\u4e0d\u8003\u8651\u5728\u9014\u548c\u672a\u53d1\u8d27\u8ba2\u5355\u65f6\uff0c\u73b0\u6709\u5e93\u5b58\u5927\u7ea6\u8fd8\u80fd\u5356\u51e0\u4e2a\u6708\u3002"),'text-right'),
         td:function(r,c){return '<td class="text-right '+(c.availTurnover!==null?(c.availTurnover<2?'text-danger':c.availTurnover>6?'text-secondary':'text-success'):'text-muted')+'">'+(c.availTurnover!==null?c.availTurnover:'-')+'</td>';},
-        sum:function(t){return '<td class="text-right">'+(t.taPeriod>0?Math.round(t.avail/t.taPeriod*10)/10:'-')+'</td>';}},
-      transit_turnover:{th:rpTh(t("app.733", "\u5728\u9014\u5e93\u5b58\u5468\u8f6c"),t("app.802", "\uff08\u5f53\u524d\u53ef\u7528\u5e93\u5b58 + \u5728\u9014\u5e93\u5b58\uff09\u00f7 \u6708\u5747\u9500\u91cf\uff08\u9500\u91cf\u7edf\u8ba1\u5468\u671f\u53e3\u5f84\uff09\u3002"),'text-right'),
+        sum:function(t){return '<td class="text-right">'+(t.taPeriod>0?Math.round(t.availWS/t.taPeriod*10)/10:'-')+'</td>';}},
+      transit_turnover:{th:rpTh(t("app.733", "\u5728\u9014\u5e93\u5b58\u5468\u8f6c"),t("app.802", "\uff08\u5f53\u524d\u53ef\u7528\u5e93\u5b58 + \u5728\u9014\u5e93\u5b58\uff09\u00f7 \u6708\u5747\u9500\u91cf\uff08\u9509\u91cf\u7edf\u8ba1\u5468\u671f\u53e3\u5f84\uff09\u3002"),'text-right'),
         td:function(r,c){return '<td class="text-right '+(c.transitTurnover!==null?(c.transitTurnover<2?'text-danger':c.transitTurnover>6?'text-secondary':'text-success'):'text-muted')+'">'+(c.transitTurnover!==null?c.transitTurnover:'-')+'</td>';},
-        sum:function(t){return '<td class="text-right">'+(t.taPeriod>0?Math.round((t.avail+t.transit)/t.taPeriod*10)/10:'-')+'</td>';}},
+        sum:function(t){return '<td class="text-right">'+(t.taPeriod>0?Math.round((t.availWS+t.transitWS)/t.taPeriod*10)/10:'-')+'</td>';}},
       after_order_turnover:{th:rpThCompact(t('forecast.compact.after_order_turnover','\u9884\u8ba1\u4e0b\u5355\u540e\n\u5468\u8f6c'),t("app.803", "\uff08\u5f53\u524d\u5e93\u5b58\u6c60 + \u672c\u6b21\u5efa\u8bae\u91c7\u8d2d\u6570\u91cf\uff09\u00f7 \u6708\u5747\u9500\u91cf\uff08\u9500\u91cf\u7edf\u8ba1\u5468\u671f\u53e3\u5f84\uff09\u3002"),'text-right','',true),
         td:function(r,c){return '<td class="text-right '+(c.afterOrderTurnover!==null?(c.afterOrderTurnover<2?'text-danger':c.afterOrderTurnover>6?'text-secondary':'text-success'):'text-muted')+'">'+(c.afterOrderTurnover!==null?c.afterOrderTurnover:'-')+'</td>';},
-        sum:function(t){return '<td class="text-right">'+(t.taPeriod>0?Math.round((t.pool+t.po+t.sq)/t.taPeriod*10)/10:'-')+'</td>';}},
+        sum:function(t){return '<td class="text-right">'+(t.taPeriod>0?Math.round((t.poolWS+t.poWS+t.sqWS)/t.taPeriod*10)/10:'-')+'</td>';}},
       sales_status:{th:rpThCompact(t('forecast.compact.sales_status','销量\n状态'),t("app.804", "\u7cfb\u7edf\u6839\u636e\u9500\u91cf\u3001\u5e93\u5b58\u3001\u5e93\u9f84\u3001\u7f3a\u8d27\u3001\u6162\u9500\u3001\u9ad8\u5e93\u5b58\u7b49\u89c4\u5219\u5224\u65ad SKU \u5f53\u524d\u72b6\u6001\u3002"),'text-center','',true),
         td:function(r,c){return '<td class="text-center rp-sales-status-cell"><span class="status-badge">'+formatForecastSalesStatus(r.sales_status||'')+'</span></td>';},
         sum:function(t){return '<td class="text-center"></td>';}},
@@ -4893,13 +4893,22 @@ async function loadRp(){
       }
     });
     // 计算合计
-    var totals={count:data.length,oa:0,ofa:0,oaPeriod:0,ofaPeriod:0,ta:0,taPeriod:0,avail:0,transit:0,po:0,piUnshipped:0,pool:0,os:0,ofs:0,sq:0};
+    var totals={count:data.length,oa:0,ofa:0,oaPeriod:0,ofaPeriod:0,ta:0,taPeriod:0,avail:0,transit:0,po:0,piUnshipped:0,pool:0,os:0,ofs:0,sq:0,
+      availWS:0,transitWS:0,poWS:0,piUnshippedWS:0,poolWS:0,sqWS:0};
     data.forEach(function(r){
       var c=r._c;
       totals.oa+=c.oa;totals.ofa+=c.ofa;totals.oaPeriod+=c.oaPeriod;totals.ofaPeriod+=c.ofaPeriod;totals.ta+=c.ta;totals.taPeriod+=c.taPeriod;
       totals.avail+=(r.available_qty||0);totals.transit+=(r.in_transit_qty||0);totals.po+=(r.po_unconfirmed_pi_qty||0);totals.piUnshipped+=c.piUnshipped;totals.pool+=c.pool;
       totals.os+=c.os;totals.ofs+=c.ofs;
       totals.sq+=c.sq;
+      if(c.taPeriod>0){
+        totals.availWS+=(r.available_qty||0);
+        totals.transitWS+=(r.in_transit_qty||0);
+        totals.poWS+=(r.po_unconfirmed_pi_qty||0);
+        totals.piUnshippedWS+=c.piUnshipped;
+        totals.poolWS+=c.pool;
+        totals.sqWS+=c.sq;
+      }
     });
     addHistoricalColsToActive(activeKeys,Cols,totals,data);
     // 渲染
@@ -5102,13 +5111,13 @@ async function loadRpChannelMonthly(channel){
       sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.piUnshipped)+'</td>';}},
     Cols.avail_turnover={th:rpTh(t('gen.L4306.1','当前可用周转'),t("app.801", "\u5f53\u524d\u53ef\u7528\u5e93\u5b58 \u00f7 \u6708\u5747\u9500\u91cf\uff08\u9500\u91cf\u7edf\u8ba1\u5468\u671f\u53e3\u5f84\uff09\u3002\u8868\u793a\u4e0d\u8003\u8651\u5728\u9014\u548c\u672a\u53d1\u8d27\u8ba2\u5355\u65f6\uff0c\u73b0\u6709\u5e93\u5b58\u5927\u7ea6\u8fd8\u80fd\u5356\u51e0\u4e2a\u6708\u3002"),'text-right'),
       td:function(r,c){return '<td class="text-right '+(c.availTurnover!==null?(c.availTurnover<2?'text-danger':c.availTurnover>6?'text-secondary':'text-success'):'text-muted')+'">'+(c.availTurnover!==null?c.availTurnover:'-')+'</td>';},
-      sum:function(t){return '<td class="text-right">'+(t.avgSalesPeriod>0?Math.round(t.avail/t.avgSalesPeriod*10)/10:'-')+'</td>';}};
+      sum:function(t){return '<td class="text-right">'+(t.avgSalesPeriod>0?Math.round(t.availWS/t.avgSalesPeriod*10)/10:'-')+'</td>';}};
     Cols.transit_turnover={th:rpTh(t("app.733", "\u5728\u9014\u5e93\u5b58\u5468\u8f6c"),t("app.802", "\uff08\u5f53\u524d\u53ef\u7528\u5e93\u5b58 + \u5728\u9014\u5e93\u5b58\uff09\u00f7 \u5f53\u524d\u9884\u6d4b\u5468\u671f\u6708\u5747\u9500\u91cf\u3002"),'text-right'),
       td:function(r,c){return '<td class="text-right '+(c.transitTurnover!==null?(c.transitTurnover<2?'text-danger':c.transitTurnover>6?'text-secondary':'text-success'):'text-muted')+'">'+(c.transitTurnover!==null?c.transitTurnover:'-')+'</td>';},
-      sum:function(t){return '<td class="text-right">'+(t.avgSalesPeriod>0?Math.round((t.avail+t.transit)/t.avgSalesPeriod*10)/10:'-')+'</td>';}};
+      sum:function(t){return '<td class="text-right">'+(t.avgSalesPeriod>0?Math.round((t.availWS+t.transitWS)/t.avgSalesPeriod*10)/10:'-')+'</td>';}};
     Cols.after_order_turnover={th:rpThCompact(t('forecast.compact.after_order_turnover','\u9884\u8ba1\u4e0b\u5355\u540e\n\u5468\u8f6c'),t("app.803", "\uff08\u5f53\u524d\u5e93\u5b58\u6c60 + \u672c\u6b21\u5efa\u8bae\u91c7\u8d2d\u6570\u91cf\uff09\u00f7 \u5f53\u524d\u9884\u6d4b\u5468\u671f\u6708\u5747\u9509\u91cf\u3002"),'text-right','',true),
       td:function(r,c){return '<td class="text-right rp-after-order-turn" data-rid="'+r.id+'" '+(c.afterOrderTurnover!==null?(c.afterOrderTurnover<2?'text-danger':c.afterOrderTurnover>6?'text-secondary':'text-success'):'text-muted')+'>'+(c.afterOrderTurnover!==null?c.afterOrderTurnover:'-')+'</td>';},
-      sum:function(t){return '<td class="text-right">'+(t.avgSalesPeriod>0?Math.round((t.avail+t.transit+t.po+t.piUnshipped+t.suggestedQty)/t.avgSalesPeriod*10)/10:'-')+'</td>';}};
+      sum:function(t){return '<td class="text-right">'+(t.avgSalesPeriod>0?Math.round((t.availWS+t.transitWS+t.poWS+t.piUnshippedWS+t.suggestedQtyWS)/t.avgSalesPeriod*10)/10:'-')+'</td>';}};
     Cols.sales_status={th:rpThCompact(t('forecast.compact.sales_status','销量\n状态'),t("app.804", "\u7cfb\u7edf\u6839\u636e\u9500\u91cf\u3001\u5e93\u5b58\u3001\u5e93\u9f84\u3001\u7f3a\u8d27\u3001\u6162\u9500\u3001\u9ad8\u5e93\u5b58\u7b49\u89c4\u5219\u5224\u65ad SKU \u5f53\u524d\u72b6\u6001\u3002"),'text-center','',true),
       td:function(r,c){return '<td class="text-center rp-sales-status-cell"><span class="status-badge">'+formatForecastSalesStatus(r.sales_status||'')+'</span></td>';},
       sum:function(t){return '<td class="text-center"></td>';}};
@@ -5168,7 +5177,8 @@ async function loadRpChannelMonthly(channel){
       }
     });
     // 计算合计（salesM1~M4 语义与字段一致：M1=本月, M2=上月, M3=上上月, M4=4个月前）
-    var totals={count:data.length,salesM1:0,salesM2:0,salesM3:0,salesM4:0,avgSales:0,totalAvg:0,totalAvgPeriod:0,avgSalesPeriod:0,transit:0,transitAllocated:0,transitAllocatedPeriod:0,po:0,avail:0,availAllocated:0,availAllocatedPeriod:0,piUnshipped:0,allocatedStock:0,poolAllocatedPeriod:0,targetStock:0,suggestedQty:0};
+    var totals={count:data.length,salesM1:0,salesM2:0,salesM3:0,salesM4:0,avgSales:0,totalAvg:0,totalAvgPeriod:0,avgSalesPeriod:0,transit:0,transitAllocated:0,transitAllocatedPeriod:0,po:0,avail:0,availAllocated:0,availAllocatedPeriod:0,piUnshipped:0,allocatedStock:0,poolAllocatedPeriod:0,targetStock:0,suggestedQty:0,
+      availWS:0,transitWS:0,poWS:0,piUnshippedWS:0,suggestedQtyWS:0};
     data.forEach(function(r){
       var c=r._c;
       totals.salesM4+=c.salesM4;totals.salesM3+=c.salesM3;totals.salesM2+=c.salesM2;totals.salesM1+=c.salesM1;
@@ -5177,6 +5187,13 @@ async function loadRpChannelMonthly(channel){
       totals.piUnshipped+=c.piUnshipped;
       totals.allocatedStock+=c.allocatedStock;totals.poolAllocatedPeriod+=(c.poolAllocatedPeriod||0);totals.targetStock+=c.targetStock;
       totals.suggestedQty+=Math.round(c.suggestedQty||0);
+      if(c.avgSalesPeriod>0){
+        totals.availWS+=c.avail;
+        totals.transitWS+=c.transit;
+        totals.poWS+=c.po;
+        totals.piUnshippedWS+=c.piUnshipped;
+        totals.suggestedQtyWS+=Math.round(c.suggestedQty||0);
+      }
     });
     addHistoricalColsToActive(activeKeys,Cols,totals,data);
     // 渲染
