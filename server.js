@@ -8529,23 +8529,16 @@ if (!BREAKGLASS_ADMIN_PASSWORD || !isStrongPassword(BREAKGLASS_ADMIN_PASSWORD)) 
 console.log('[DIAG] 环境变量检查通过 ✓');
 console.log('=====================================\n');
 
-// break-glass 本地管理员初始化（fail-closed：缺强密码则启动失败）
-// 用 try-catch 包裹，确保任何异常都有清晰的日志输出（Render 排查用）
-try {
-  console.log('[STARTUP] 开始初始化 break-glass 管理员...');
-  bootstrapBreakGlass();
-  console.log('[STARTUP] break-glass 管理员初始化完成 ✓');
-} catch (e) {
-  console.error('\n[FATAL] bootstrapBreakGlass() 失败:', e.message);
-  console.error(e.stack);
-  console.error('\n[FATAL] 服务无法启动。请检查上述错误并修正环境变量配置。');
-  process.exit(1);
-}
+// ==================== 启动顺序：先 HTTP，后 DB 依赖 ====================
+// 设计：先启动 HTTP 服务器，让 Render 健康检查能通过；再异步初始化 DB 相关功能（break-glass）。
+// 这样即使 DB 暂时不可达，也能通过 /api/version 诊断问题，而非进程静默退出导致 Render 显示 "Application exited early"。
+// 安全检查（密码缺失/弱）已在诊断阶段完成，到达此处说明密码已校验通过；
+// 后续 bootstrapBreakGlass 只可能因 DB 不可达失败，属于基础设施问题，不应让整个进程退出。
 
 console.log('[STARTUP] 正在启动 HTTP 服务 (端口 ' + PORT + ')...');
 const server = app.listen(PORT, () => {
   console.log(`\n[Server] 进销存管理系统已启动: http://localhost:${PORT}`);
-  console.log(`[Server] 登录方式：飞书 OAuth（中国/印尼团队统一）；应急入口：登录页底部“应急登录入口”`);
+  console.log(`[Server] 登录方式：飞书 OAuth（中国/印尼团队统一）；应急入口：登录页底部"应急登录入口"`);
   console.log(`[Server] 默认账号 admin/admin 已停用；break-glass 本地管理员须通过 BREAKGLASS_ADMIN_PASSWORD 初始化\n`);
 });
 
@@ -8558,4 +8551,18 @@ server.on('error', (err) => {
     console.error('[ERROR] 服务启动失败:', err && err.stack || err);
   }
   process.exit(1);
+});
+
+// break-glass 异步初始化：HTTP 服务已启动，即使 DB 不可达也不退出
+setImmediate(() => {
+  try {
+    console.log('[STARTUP] 开始初始化 break-glass 管理员...');
+    bootstrapBreakGlass();
+    console.log('[STARTUP] break-glass 管理员初始化完成 ✓');
+  } catch (e) {
+    console.error('\n[WARN] bootstrapBreakGlass() 失败（DB 可能不可达）:', e.message);
+    console.error(e.stack);
+    console.error('[WARN] HTTP 服务已启动，可通过 /api/version 诊断；break-glass 将在 DB 恢复后下次重启生效。');
+    console.error('[WARN] 非 break-glass 用户仍可通过飞书 OAuth 登录。\n');
+  }
 });
