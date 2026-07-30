@@ -4792,12 +4792,12 @@ async function loadRpSummary(){
     const transitTurnoverTip='('+currentInventoryLabel+' + '+inTransitLabel+') ÷ '+monthlyAverageLabel;
     const orderTurnoverTip='('+currentInventoryLabel+' + '+inTransitLabel+' + '+confirmedUnshippedLabel+') ÷ '+monthlyAverageLabel;
     const turnoverMetric=function(label,value,tip){
-      return '<div style="min-width:72px" title="'+esc(tip)+'"><div style="font-size:11px;color:var(--text-muted);white-space:nowrap">'+label+'</div>'
+      return '<div class="kpi-metric" title="'+esc(tip)+'"><div style="font-size:11px;color:var(--text-muted);white-space:nowrap">'+label+'</div>'
         +'<div style="font-size:19px;font-weight:700;color:var(--text);margin-top:3px">'+turnoverValue(value)+'</div>'
         +'<div class="kpi-unit">'+monthUnit+'</div></div>';
     };
     const actionMetric=function(label,value){
-      return '<div style="min-width:72px"><div style="font-size:11px;color:var(--text-muted);white-space:nowrap">'+label+'</div>'
+      return '<div class="kpi-metric"><div style="font-size:11px;color:var(--text-muted);white-space:nowrap">'+label+'</div>'
         +'<div style="font-size:19px;font-weight:700;color:var(--text-muted);margin-top:3px">'+formatQuantityDisplay(value)+'</div>'
         +'<div class="kpi-unit">'+skuUnit+'</div></div>';
     };
@@ -4813,19 +4813,19 @@ async function loadRpSummary(){
     const noSalesTotalAvail = d.currentInventory||0;
     const noSalesRatioPct = noSalesTotalAvail>0 ? Math.round(noSalesInventory/noSalesTotalAvail*1000)/10 : 0;
     const riskMetric=function(label,value,unit,warn){
-      return '<div style="min-width:72px"><div style="font-size:11px;color:var(--text-muted);white-space:nowrap">'+label+'</div>'
+      return '<div class="kpi-metric"><div style="font-size:11px;color:var(--text-muted);white-space:nowrap">'+label+'</div>'
         +'<div class="kpi-value '+(warn?'kpi-warn':'')+'" style="font-size:19px;margin-top:3px">'+value+'</div>'
         +'<div class="kpi-unit">'+unit+'</div></div>';
     };
     document.getElementById('rp-kpi').innerHTML='<div class="kpi-grid">'
       +'<div class="kpi-card" style="flex:2;min-width:300px"><div class="kpi-label">'+String(t('forecast.compact.current_turnover','库存周转')).replace(/\n/g,' ')+'</div>'
-      +'<div style="display:flex;justify-content:space-around;gap:14px;margin-top:8px">'
+      +'<div class="kpi-inner">'
       +turnoverMetric(String(t('forecast.compact.current_turnover','当前')).replace(/\n/g,' '),d.currentInventoryTurnover,currentTurnoverTip)
       +turnoverMetric(t('app.733','在途后'),d.afterTransitTurnover,transitTurnoverTip)
       +turnoverMetric(t('app.734','下单后'),d.afterOrderTurnover,orderTurnoverTip)
       +'</div></div>'
       +'<div class="kpi-card kpi-danger" title="'+esc(t('forecast.no_sales_inventory_tip','库存风险指标：无销量SKU的可用库存合计，不计入周转计算'))+'"><div class="kpi-label">'+t('forecast.no_sales_inventory','无销量库存')+'</div>'
-      +'<div style="display:flex;justify-content:space-around;gap:14px;margin-top:8px">'
+      +'<div class="kpi-inner">'
       +riskMetric(t('forecast.no_sales_sku','无销量SKU'),noSalesSkuCount,skuUnit,false)
       +riskMetric(t('forecast.no_sales_qty','无销量库存'),formatQuantityDisplay(noSalesInventory),t('gen.L3972.1','件'),true)
       +riskMetric(t('forecast.no_sales_ratio','占比'),noSalesRatioPct+'%','',true)
@@ -4835,7 +4835,7 @@ async function loadRpSummary(){
       +'<div class="kpi-card kpi-danger"><div class="kpi-label">'+t('app.651','断货风险')+'</div>'
       +'<div class="kpi-value">'+formatQuantityDisplay(d.stockoutRisk||0)+'</div><div class="kpi-unit">'+skuUnit+'</div></div>'
       +'<div class="kpi-card kpi-muted"><div class="kpi-label">'+t('forecast.summary.high_stock','高库存')+' / '+t('forecast.movement.slow_sales','慢销')+'</div>'
-      +'<div style="display:flex;justify-content:space-around;gap:14px;margin-top:8px">'
+      +'<div class="kpi-inner">'
       +actionMetric(t('forecast.summary.high_stock','高库存'),d.highStock||0)
       +actionMetric(t('forecast.movement.slow_sales','慢销'),d.slowSales||0)
       +'</div></div>';
