@@ -4792,13 +4792,13 @@ async function loadRpSummary(){
     const transitTurnoverTip='('+currentInventoryLabel+' + '+inTransitLabel+') ÷ '+monthlyAverageLabel;
     const orderTurnoverTip='('+currentInventoryLabel+' + '+inTransitLabel+' + '+confirmedUnshippedLabel+') ÷ '+monthlyAverageLabel;
     const turnoverMetric=function(label,value,tip){
-      return '<div class="kpi-metric" title="'+esc(tip)+'"><div style="font-size:11px;color:var(--text-muted);white-space:nowrap">'+label+'</div>'
-        +'<div style="font-size:19px;font-weight:700;color:var(--text);margin-top:3px">'+turnoverValue(value)+'</div>'
+      return '<div class="kpi-metric" title="'+esc(tip)+'"><div class="kpi-label">'+label+'</div>'
+        +'<div class="kpi-value">'+turnoverValue(value)+'</div>'
         +'<div class="kpi-unit">'+monthUnit+'</div></div>';
     };
     const actionMetric=function(label,value){
-      return '<div class="kpi-metric"><div style="font-size:11px;color:var(--text-muted);white-space:nowrap">'+label+'</div>'
-        +'<div style="font-size:19px;font-weight:700;color:var(--text-muted);margin-top:3px">'+formatQuantityDisplay(value)+'</div>'
+      return '<div class="kpi-metric muted"><div class="kpi-label">'+label+'</div>'
+        +'<div class="kpi-value">'+formatQuantityDisplay(value)+'</div>'
         +'<div class="kpi-unit">'+skuUnit+'</div></div>';
     };
     // 无销量库存（库存风险指标，不参与周转计算；与周转列"-"判定口径一致：avg_sales_period===0）
@@ -4813,8 +4813,8 @@ async function loadRpSummary(){
     const noSalesTotalAvail = d.currentInventory||0;
     const noSalesRatioPct = noSalesTotalAvail>0 ? Math.round(noSalesInventory/noSalesTotalAvail*1000)/10 : 0;
     const riskMetric=function(label,value,unit,warn){
-      return '<div class="kpi-metric"><div style="font-size:11px;color:var(--text-muted);white-space:nowrap">'+label+'</div>'
-        +'<div class="kpi-value '+(warn?'kpi-warn':'')+'" style="font-size:19px;margin-top:3px">'+value+'</div>'
+      return '<div class="kpi-metric"><div class="kpi-label">'+label+'</div>'
+        +'<div class="kpi-value '+(warn?'kpi-warn':'')+'">'+value+'</div>'
         +'<div class="kpi-unit">'+unit+'</div></div>';
     };
     document.getElementById('rp-kpi').innerHTML='<div class="kpi-grid">'

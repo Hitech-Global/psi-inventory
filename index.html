@@ -356,19 +356,22 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 .chart-canvas-wrapper{position:relative;height:300px}
 /* SKU动销与订单预测 - KPI指标卡 */
 .kpi-row{margin:12px 20px 0}
-.kpi-grid{display:flex;gap:12px;flex-wrap:wrap}
-.kpi-card{background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:12px 16px;min-width:150px;flex:1;text-align:center;transition:all .2s;overflow:hidden}
+.kpi-grid{display:flex;gap:12px;flex-wrap:wrap;align-items:stretch}
+.kpi-card{background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:14px 12px;min-width:130px;flex:1 1 160px;text-align:center;transition:all .2s;overflow:hidden;display:flex;flex-direction:column;justify-content:center;align-items:stretch}
 .kpi-card:hover{box-shadow:0 2px 8px rgba(0,0,0,.08)}
-.kpi-label{font-size:11px;color:var(--text-muted);margin-bottom:4px}
-.kpi-value{font-size:22px;font-weight:700;color:var(--text)}
+.kpi-label{font-size:11px;color:var(--text-muted);margin-bottom:6px;line-height:1.3;text-align:center}
+.kpi-value{font-size:22px;font-weight:700;color:var(--text);line-height:1.2;text-align:center}
 .kpi-warn{color:var(--danger)!important}
-.kpi-unit{font-size:10px;color:var(--text-muted);margin-top:2px}
+.kpi-unit{font-size:10px;color:var(--text-muted);margin-top:4px;line-height:1.2;text-align:center}
 .kpi-danger .kpi-value{color:var(--danger)}
 .kpi-accent .kpi-value{color:var(--primary)}
 .kpi-muted .kpi-value{color:var(--text-muted)}
-.kpi-inner{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;margin-top:8px}
-.kpi-metric{flex:1 1 56px;min-width:0;max-width:120px;text-align:center}
-.kpi-metric .kpi-label{overflow:hidden;text-overflow:ellipsis}
+.kpi-inner{display:grid;grid-template-columns:repeat(auto-fit,minmax(70px,1fr));gap:10px 8px;margin-top:8px;width:100%;justify-items:center;align-items:start;align-self:stretch}
+.kpi-metric{display:flex;flex-direction:column;align-items:center;justify-content:flex-start;min-width:0;width:100%}
+.kpi-metric.muted .kpi-value{color:var(--text-muted)}
+.kpi-metric .kpi-label{font-size:11px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:100%;margin-bottom:2px;text-align:center}
+.kpi-metric .kpi-value{font-size:19px;font-weight:700;margin-top:2px;line-height:1.2;text-align:center}
+.kpi-metric .kpi-unit{font-size:10px;color:var(--text-muted);margin-top:2px;text-align:center}
 /* 订单预测 - 顶部筛选区+指标卡 收起/展开 */
 #rp-collapsible.rp-collapsed{display:none}
 .rp-collapse-btn{min-width:64px;text-align:center}
