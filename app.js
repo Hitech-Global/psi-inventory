@@ -4799,13 +4799,17 @@ async function loadRpSummary(){
         +'<div class="kpi-unit">'+unit+'</div></div>';
     };
     document.getElementById('rp-kpi').innerHTML='<div class="kpi-grid">'
-      +'<div class="kpi-card" title="'+esc(currentTip)+'"><div class="kpi-label">'+t('app.730','当前库存')+'</div>'
-      +'<div class="kpi-value">'+formatQuantityDisplay(d.currentInventory||0)+'</div><div class="kpi-unit">'+t('gen.L3972.1','件')+'</div></div>'
       +'<div class="kpi-card" style="flex:2;min-width:300px"><div class="kpi-label">'+String(t('forecast.compact.current_turnover','库存周转')).replace(/\n/g,' ')+'</div>'
       +'<div style="display:flex;justify-content:space-around;gap:14px;margin-top:8px">'
       +turnoverMetric(String(t('forecast.compact.current_turnover','当前')).replace(/\n/g,' '),d.currentInventoryTurnover,currentTurnoverTip)
       +turnoverMetric(t('app.733','在途后'),d.afterTransitTurnover,transitTurnoverTip)
       +turnoverMetric(t('app.734','下单后'),d.afterOrderTurnover,orderTurnoverTip)
+      +'</div></div>'
+      +'<div class="kpi-card kpi-danger" title="'+esc(t('forecast.no_sales_inventory_tip','库存风险指标：无销量SKU的可用库存合计，不计入周转计算'))+'"><div class="kpi-label">'+t('forecast.no_sales_inventory','无销量库存')+'</div>'
+      +'<div style="display:flex;justify-content:space-around;gap:14px;margin-top:8px">'
+      +riskMetric(t('forecast.no_sales_sku','无销量SKU'),noSalesSkuCount,skuUnit,false)
+      +riskMetric(t('forecast.no_sales_qty','无销量库存'),formatQuantityDisplay(noSalesInventory),t('gen.L3972.1','件'),true)
+      +riskMetric(t('forecast.no_sales_ratio','占比'),noSalesRatioPct+'%','',true)
       +'</div></div>'
       +'<div class="kpi-card kpi-accent"><div class="kpi-label">'+t('app.109','建议采购')+'</div>'
       +'<div class="kpi-value">'+formatQuantityDisplay(d.needReplenish||0)+'</div><div class="kpi-unit">'+skuUnit+'</div></div>'
@@ -4815,13 +4819,7 @@ async function loadRpSummary(){
       +'<div style="display:flex;justify-content:space-around;gap:14px;margin-top:8px">'
       +actionMetric(t('forecast.summary.high_stock','高库存'),d.highStock||0)
       +actionMetric(t('forecast.movement.slow_sales','慢销'),d.slowSales||0)
-      +'</div>'
-      +'<div class="kpi-card kpi-danger" title="'+esc(t('forecast.no_sales_inventory_tip','库存风险指标：无销量SKU的可用库存合计，不计入周转计算'))+'"><div class="kpi-label">'+t('forecast.no_sales_inventory','无销量库存')+'</div>'
-      +'<div style="display:flex;justify-content:space-around;gap:14px;margin-top:8px">'
-      +riskMetric(t('forecast.no_sales_sku','无销量SKU'),noSalesSkuCount,skuUnit,false)
-      +riskMetric(t('forecast.no_sales_qty','无销量库存'),formatQuantityDisplay(noSalesInventory),t('gen.L3972.1','件'),true)
-      +riskMetric(t('forecast.no_sales_ratio','占比'),noSalesRatioPct+'%','',true)
-      +'</div></div></div>';
+      +'</div></div>';
   }catch(e){}
 }
 function showKpiTip(el,tip){
