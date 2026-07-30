@@ -54,14 +54,16 @@ function getClientConfig() {
   const supabaseMatch = connectionString.match(/db\.([^.]+)\.supabase\.co/);
   if (supabaseMatch) {
     const projectRef = supabaseMatch[1];
-    const region = process.env.SUPABASE_REGION || 'ap-southeast-1';
-    // pooler 地址格式：aws-0-REGION.pooler.supabase.com
+    // pooler 地址格式：aws-N-REGION.pooler.supabase.com
+    // N 和 REGION 因项目而异，从环境变量读取或用默认值
+    const poolerHost = process.env.SUPABASE_POOLER_HOST ||
+      ('aws-1-ap-northeast-2.pooler.supabase.com');
     // 用户名格式：postgres.PROJECT_REF（而非 postgres）
     let poolerConnStr = connectionString
-      .replace(/db\.[^.]+\.supabase\.co/, 'aws-0-' + region + '.pooler.supabase.com')
+      .replace(/db\.[^.]+\.supabase\.co/, poolerHost)
       .replace(/\/\/postgres:/, '//postgres.' + projectRef + ':')
       .replace(/\/\/postgres@/, '//postgres.' + projectRef + '@');
-    console.log('[DB-PG] 自动切换到 Supabase pooler (IPv4, region=' + region + ', ref=' + projectRef + ')');
+    console.log('[DB-PG] 自动切换到 Supabase pooler (IPv4, host=' + poolerHost + ', ref=' + projectRef + ')');
     return {
       connectionString: poolerConnStr,
       ssl: { rejectUnauthorized: false },
