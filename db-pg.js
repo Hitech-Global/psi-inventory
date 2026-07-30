@@ -204,15 +204,17 @@ function normalizeSql(sql) {
   s = s.replace(/\b(\w+)\s*=\s*\?\s+COLLATE\s+NOCASE/g, 'lower($1) = lower(?)');
 
   // 2. datetime('now') / datetime('now', '+N unit')
-  s = s.replace(/datetime\(\s*'now'\s*\)/g, 'NOW()');
-  s = s.replace(/datetime\(\s*'now'\s*,\s*'\+(\d+)\s+(\w+)'\s*\)/g, "NOW() + INTERVAL '$1 $2'");
+  //    返回 TEXT 'YYYY-MM-DD HH24:MI:SS'（与 SQLite datetime() 返回类型一致），
+  //    使结果可直接与 TEXT 时间列（expires_at 等）比较。
+  s = s.replace(/datetime\(\s*'now'\s*\)/g, "to_char(NOW(), 'YYYY-MM-DD HH24:MI:SS')");
+  s = s.replace(/datetime\(\s*'now'\s*,\s*'\+(\d+)\s+(\w+)'\s*\)/g, "to_char(NOW() + INTERVAL '$1 $2', 'YYYY-MM-DD HH24:MI:SS')");
 
   // 3. date('now') / date('now', '[+-]N days|months')
   //    - 偏移符号与 INTERVAL 幅度分离，避免双重负号变成未来日期（修复 F2）。
   //    - 带修饰符的 date() 返回 TEXT 'YYYY-MM-DD'（与 SQLite 的 date() 返回类型一致），
   //      使结果可直接与 TEXT 日期列（order_date / depart_date 等）比较，
   //      对应 server.js:7666/7702/7780 的 `col >= date('now','-N days')` 写法。
-  s = s.replace(/date\(\s*'now'\s*\)/g, 'CURRENT_DATE');
+  s = s.replace(/date\(\s*'now'\s*\)/g, "to_char(CURRENT_DATE, 'YYYY-MM-DD')");
   s = s.replace(/date\(\s*'now'\s*,\s*'([+-]?)(\d+)\s+(days|months)'\s*\)/g,
     (m, sign, num, unit) => `TO_CHAR(CURRENT_DATE ${sign === '-' ? '-' : '+'} INTERVAL '${num} ${unit}', 'YYYY-MM-DD')`);
 
@@ -525,9 +527,12 @@ async function initDatabase() {
       business_type TEXT NOT NULL,
       levels TEXT DEFAULT '[]',
       is_enabled INTEGER DEFAULT 1,
-      created_at TEXT DEFAULT NOW()
+      created_at TEXT DEFAULT NOW(),
+      completion_cc_user_ids TEXT DEFAULT '[]'
     )
   `);
+  // PAY-CORE Phase 1：旧 PG 库幂等迁移（PG 9.6+ 支持 ADD COLUMN IF NOT EXISTS）
+  await exec("ALTER TABLE approval_flows ADD COLUMN IF NOT EXISTS completion_cc_user_ids TEXT DEFAULT '[]'");
 
   await exec(`
     CREATE TABLE IF NOT EXISTS expense_types (
@@ -559,6 +564,15 @@ async function initDatabase() {
       key TEXT PRIMARY KEY,
       value TEXT DEFAULT '',
       description TEXT DEFAULT '',
+      updated_at TEXT DEFAULT NOW()
+    )
+  `);
+
+  // 订单预测页面用户偏好（账号级、跨浏览器；独立于全局系统配置）
+  await exec(`
+    CREATE TABLE IF NOT EXISTS forecast_page_preferences (
+      user_id TEXT PRIMARY KEY,
+      preferences TEXT NOT NULL DEFAULT '{}',
       updated_at TEXT DEFAULT NOW()
     )
   `);
@@ -1208,6 +1222,8 @@ async function initDatabase() {
       source_id TEXT DEFAULT '',
       source_no TEXT DEFAULT '',
       payee_type TEXT DEFAULT '',
+      payee_key TEXT NOT NULL DEFAULT '',
+      payee_name_snapshot TEXT NOT NULL DEFAULT '',
       supplier_name TEXT DEFAULT '',
       payable_amount NUMERIC(18,4) DEFAULT 0,
       paid_amount NUMERIC(18,4) DEFAULT 0,
@@ -1249,6 +1265,19 @@ async function initDatabase() {
     )
   `);
 
+  // PAY-CORE Phase 1.5 Task 0：payment_requests 付款模式字段（V5 修正 2：显式 single/multi，不自动推断）
+  // payment_mode: single（单费用）/ multi（多费用）；旧数据默认 single
+  await exec("ALTER TABLE payment_requests ADD COLUMN IF NOT EXISTS payment_mode TEXT NOT NULL DEFAULT 'single'");
+  await exec("CREATE INDEX IF NOT EXISTS idx_payment_requests_mode ON payment_requests(payment_mode)");
+
+  // PAY-CORE Phase 1.5 Task 2：payment_requests 收款方字段（multi 模式校验同 payee_key；single 模式写入派生值）
+  // payee_key 格式：${payee_type}:${identity}（与 payable_items.payee_key 一致）
+  // payee_name_snapshot：收款方名称快照（与 payable_items.payee_name_snapshot 一致）
+  // 历史数据保持空字符串，不回填
+  await exec("ALTER TABLE payment_requests ADD COLUMN IF NOT EXISTS payee_key TEXT NOT NULL DEFAULT ''");
+  await exec("ALTER TABLE payment_requests ADD COLUMN IF NOT EXISTS payee_name_snapshot TEXT NOT NULL DEFAULT ''");
+  await exec("CREATE INDEX IF NOT EXISTS idx_payment_requests_payee_key ON payment_requests(payee_key)");
+
   await exec(`
     CREATE TABLE IF NOT EXISTS payable_items (
       id TEXT PRIMARY KEY,
@@ -1281,6 +1310,15 @@ async function initDatabase() {
   `);
   await exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_payable_active ON payable_items(source_type, source_id, fee_type) WHERE is_active = 1`);
   await exec(`CREATE INDEX IF NOT EXISTS ix_payable_src ON payable_items(source_type, source_id)`);
+
+  // PAY-CORE Phase 1.5 Task 0：payable_items 生命周期字段（V5 修正 1：与 is_active 解耦）
+  // lifecycle_status: active / reserved / paid / cancelled
+  // is_active 仅作为历史兼容字段，不再绑定生命周期（paid 视为有效历史财务记录）
+  await exec("ALTER TABLE payable_items ADD COLUMN IF NOT EXISTS lifecycle_status TEXT NOT NULL DEFAULT 'active'");
+  // 历史数据回填：is_active=0 的记录标记为 cancelled（仅回填，不影响新数据）
+  await exec("UPDATE payable_items SET lifecycle_status = 'cancelled' WHERE is_active = 0 AND lifecycle_status = 'active'");
+  await exec("CREATE INDEX IF NOT EXISTS idx_payable_items_lifecycle ON payable_items(lifecycle_status)");
+  await exec("CREATE INDEX IF NOT EXISTS idx_payable_items_fee_type ON payable_items(fee_type)");
 
   await exec(`
     CREATE TABLE IF NOT EXISTS payment_request_items (
@@ -1317,6 +1355,22 @@ async function initDatabase() {
     )
   `);
   await exec(`CREATE INDEX IF NOT EXISTS ix_tx_req ON payment_transactions(payment_request_id)`);
+
+  // PAY-CORE Phase 1.5 Task 0：payment_transactions 水单附件字段（V5 修正：URL/path，非 base64）
+  // 文件与数据库分离，voucher_attachment 保存文件路径
+  await exec("ALTER TABLE payment_transactions ADD COLUMN IF NOT EXISTS voucher_attachment TEXT DEFAULT ''");
+  // V5 修正 3：trans_status 状态约束通过应用层校验（避免 SQLite 重建表）
+  // 应用层允许值：paid_pending_allocation / allocated / cancelled
+  // 数据库 CHECK 保留旧值（registered/reconciled/cancelled）以保证向后兼容
+  // 新代码写入 trans_status 时使用应用层校验后的新值
+
+  // PAY-CORE Phase 2：新增 settlement_log_id 关联结算事实源 + currency 真实付款币种
+  // settlement_log_id: 关联 payment_settlement_logs.id（1:1），NULL 兼容历史数据
+  // currency: 真实付款币种（如 USD/IDR/MYR），NULL 兼容历史数据，不设 DEFAULT 避免伪造币种
+  await exec("ALTER TABLE payment_transactions ADD COLUMN IF NOT EXISTS settlement_log_id TEXT");
+  await exec("ALTER TABLE payment_transactions ADD COLUMN IF NOT EXISTS currency TEXT");
+  // 唯一索引：防止同一 settlement_log 重复生成 transaction（PG partial unique index 仅约束非空值）
+  await exec("CREATE UNIQUE INDEX IF NOT EXISTS uq_tx_settlement_log ON payment_transactions(settlement_log_id) WHERE settlement_log_id IS NOT NULL");
 
   await exec(`
     CREATE TABLE IF NOT EXISTS payment_allocations (
@@ -1721,7 +1775,7 @@ async function initDatabase() {
       'logistics_view','logistics_create','logistics_edit',
       'inbound_view','inbound_create','inbound_edit','inbound_confirm',
       'cost_view',
-      'payment_view','payment_create','payment_approve','payment_import','payment_export',
+      'payment_view','payment_create','payment_approve','payment_execute','payment_import','payment_export',
       'check_view','check_create','check_approve','check_import','check_export',
       'stagnant_view','stagnant_export',
       'forwarder_view','forwarder_export',
@@ -1880,6 +1934,22 @@ async function initDatabase() {
       await run(`INSERT INTO approval_flows (id, name, business_type, levels) VALUES (?, ?, ?, ?) ON CONFLICT (id) DO NOTHING`, f);
     }
     console.log('[DB-PG] 已插入默认审批流');
+  }
+
+  // PAY-CORE Phase 1：付款审批流种子（6 类业务类型，默认 is_enabled=0，等管理员手工配置审批人后启用）
+  // 幂等：仅在 id 不存在时插入，不覆盖人工修改。levels=[] 空数组，不预置审批人快照。
+  // business_type 与 approval_records.business_type 保持一致，由 paymentRequestToBusinessType() 派生。
+  // warehouse_arrival 子类归并规则：freight/customs_clearance/port_charges/delivery → freight；warehouse/other_local → warehouse。
+  const payFlowSeeds = [
+    ['flow_pay_pi_deposit', 'PI定金付款审批', 'pi_deposit', '[]'],
+    ['flow_pay_ci_balance', 'CI尾款付款审批', 'ci_balance', '[]'],
+    ['flow_pay_freight',    '运费付款审批',     'freight',    '[]'],
+    ['flow_pay_warehouse', '仓储费付款审批',   'warehouse',  '[]'],
+    ['flow_pay_customs',    '关税付款审批',     'customs',    '[]'],
+    ['flow_pay_inspection', '商检费付款审批',   'inspection', '[]']
+  ];
+  for (const f of payFlowSeeds) {
+    await run(`INSERT INTO approval_flows (id, name, business_type, levels, is_enabled) VALUES (?, ?, ?, ?, 0) ON CONFLICT (id) DO NOTHING`, f);
   }
 
   // 默认品牌采购状态：BOYA 停采（仅首次插入，不覆盖用户后续手动修改）

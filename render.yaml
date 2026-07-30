@@ -1,51 +1,41 @@
 # Render 部署配置（Infrastructure as Code）
-# 配套文档：RELEASE-PREP-01-RENDER-CHECKLIST.md
+# 架构：Render Free Web Service + Supabase PostgreSQL (Singapore)
+# 休眠防护：UptimeRobot 每5分钟探活 /api/auth/feishu/status
 #
 # 安全：本文件不含任何密钥。密钥/域名相关变量用 sync:false 交由 Render 后台注入，
 #       绝不在 git 提交真实值（.env 已被 .gitignore 保护）。
-#
-# 技术选型（用户确认 2026-07-18）：
-#   Render Web Service + SQLite V1（better-sqlite3，单文件库）+ backup/restore
-#   暂不迁移 PostgreSQL。
 
 services:
   - type: web
-    name: inventory-app
+    name: psi-inventory
     runtime: node
-    # 区域：可选 oregon / ohio / virginia / frankfurt / singapore
-    # 面向国内访问延迟较高，可评估 singapore；按实际用户分布选择。
-    region: oregon
-    branch: main                 # GitHub 自动部署分支
-    buildCommand: npm install    # 触发 better-sqlite3 原生模块编译
+    region: singapore             # 与 Supabase Singapore 同区，数据库延迟最低
+    branch: main                  # GitHub 自动部署分支
+    buildCommand: npm install     # 编译 deasync/better-sqlite3 原生模块
     startCommand: node server.js
-    plan: starter                # 免费版不支持持久磁盘，需 starter 及以上
-    numInstances: 1              # 必须=1：SQLite 单文件库不支持多进程并发写
-    healthCheckPath: /api/version  # server.js 内置轻量版本端点，返回 200
+    plan: free                    # 免费层：512MB RAM + 750h/月；数据库在 Supabase 不依赖本地磁盘
+    numInstances: 1
+    healthCheckPath: /api/version # server.js 内置轻量版本端点，返回 200
     envVars:
       # —— 固定值（写入 yaml）——
       - key: NODE_ENV
-        value: production        # CSRF 强制 + 错误栈不外露
-      - key: DB_PATH
-        value: /data/inventory.db  # 指向持久磁盘
+        value: production         # CSRF 强制 + 错误栈不外露
+      - key: DB_DRIVER
+        value: pg                 # 使用 PostgreSQL（Supabase），非 SQLite
       - key: COOKIE_SECURE
-        value: "1"               # 生产 HTTPS 必须，会话 Cookie 带 Secure
+        value: "1"                # 生产 HTTPS 必须，会话 Cookie 带 Secure
       - key: SESSION_TTL_HOURS
         value: "12"
-      - key: BACKUP_DIR
-        value: /data/backups     # 备份落持久磁盘，避免 ephemeral 丢失
       # —— 密钥/域名相关（sync:false → Render 后台填写，不入库）——
+      - key: DATABASE_URL
+        sync: false               # Supabase 连接串（直连端口5432，非Transaction池6543）
       - key: BREAKGLASS_ADMIN_PASSWORD
-        sync: false              # 强密码；缺失/弱值 fail-closed 拒绝启动
+        sync: false               # 强密码（≥12位含大小写+数字）；缺失/弱值 fail-closed 拒绝启动
       - key: FEISHU_APP_ID
         sync: false
       - key: FEISHU_APP_SECRET
         sync: false
       - key: FEISHU_REDIRECT_URI
-        sync: false              # 部署后填 https://<render-domain>/api/auth/feishu/callback
+        sync: false               # 部署后填 https://<render-domain>/api/auth/feishu/callback
       - key: TRUSTED_ORIGINS
-        sync: false              # 部署后填 https://<render-domain>（CSRF 写请求必须，否则 403）
-      # FEISHU_NOTIFY_DRYRUN 可选：演练期置 1（仅内存记录不真实发送）；L1 完成后删除或置 0
-    disk:
-      name: inventory-data
-      mountPath: /data           # SQLite 主库 + 备份均存于此，跨部署/重启持久化
-      sizeGB: 1                 # 按数据增长调整；备份也占用此空间
+        sync: false               # 部署后填 https://<render-domain>（CSRF 写请求必须，否则 403）

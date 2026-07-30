@@ -20,8 +20,35 @@ function genId(prefix = 'id') {
 
 let impl;
 if (driver === 'pg') {
-  impl = require('./db-pg');
-  console.log('[DB] 驱动 = PostgreSQL (DB_DRIVER=pg)');
+  // PG 驱动是 async，但 server.js 全部用同步调用（为 SQLite 设计）。
+  // 用 deasync.loopWhile 把 async 函数包装成同步，让 server.js 无需修改即可在 PG 模式下工作。
+  const deasync = require('deasync');
+  const pgImpl = require('./db-pg');
+  console.log('[DB] 驱动 = PostgreSQL (DB_DRIVER=pg, sync-wrapper)');
+
+  function makeSync(asyncFn) {
+    return function () {
+      var done = false;
+      var result, error;
+      var promise = asyncFn.apply(null, arguments);
+      promise.then(function (r) { result = r; done = true; })
+             .catch(function (e) { error = e; done = true; });
+      deasync.loopWhile(function () { return !done; });
+      if (error) throw error;
+      return result;
+    };
+  }
+
+  impl = {
+    query: makeSync(pgImpl.query),
+    queryOne: makeSync(pgImpl.queryOne),
+    run: makeSync(pgImpl.run),
+    transaction: makeSync(pgImpl.transaction),
+    // initDatabase 包含 50+ 建表语句，同步包装会死锁。
+    // PG 模式下表已由迁移脚本创建，跳过 initDatabase（幂等 DDL 已执行过）。
+    initDatabase: function () { console.log('[DB] initDatabase skipped in PG mode (tables already migrated)'); },
+    getDB: pgImpl.getDB || (function () { throw new Error('getDB() 未由 pg 驱动提供'); })
+  };
 } else {
   impl = require('./db-sqlite');
   console.log('[DB] 驱动 = SQLite (DB_DRIVER=sqlite)');
