@@ -16,7 +16,7 @@
  *  - NUMERIC/BIGINT 类型解析为 JS 数值，避免 server.js 字符串拼接式算术出错。
  */
 
-const { Pool } = require('pg');
+const { Client } = require('pg');
 const { types } = require('pg');
 const { AsyncLocalStorage } = require('async_hooks');
 
@@ -30,29 +30,39 @@ const als = new AsyncLocalStorage();
 
 let pool = null;
 
+// 连接配置（Client 模式：每次查询创建新连接，避免 Pool 在 deasync 上下文中的陈旧连接问题）
+function getClientConfig() {
+  const connectionString = process.env.DATABASE_URL;
+  if (!connectionString) {
+    throw new Error('[DB-PG] 缺少环境变量 DATABASE_URL（DB_DRIVER=pg 时必须提供 Supabase 连接串）');
+  }
+  const useSsl = /(sslmode=require|ssl=true|amazonaws|supabase|render\.com)/i.test(connectionString);
+  return {
+    connectionString,
+    ssl: useSsl ? { rejectUnauthorized: false } : false,
+    connectionTimeoutMillis: 15000
+  };
+}
+
+// 兼容旧代码：返回一个伪 Pool 对象（实际不使用连接池）
 function getPool() {
   if (!pool) {
-    const connectionString = process.env.DATABASE_URL;
-    if (!connectionString) {
-      throw new Error('[DB-PG] 缺少环境变量 DATABASE_URL（DB_DRIVER=pg 时必须提供 Supabase 直连/Session 池连接串，禁用 Transaction 池 6543）');
-    }
-    const max = parseInt(process.env.PG_POOL_MAX || '3', 10);
-    const poolMax = Number.isFinite(max) ? max : 3;
-    // Supabase 直连强制 ssl；Render free 反代下也需 ssl。
-    const useSsl = /(sslmode=require|ssl=true|amazonaws|supabase|render\.com)/i.test(connectionString);
-    pool = new Pool({
-      connectionString,
-      max: poolMax,
-      ssl: useSsl ? { rejectUnauthorized: false } : false,
-      idleTimeoutMillis: 10000,
-      connectionTimeoutMillis: 15000,
-      keepAlive: true,
-      keepAliveInitialDelayMillis: 5000
-    });
-    pool.on('error', (err) => {
-      console.error('[DB-PG] 连接池意外错误:', err.message);
-    });
-    console.log('[DB-PG] PostgreSQL 连接池已创建 (max=' + poolMax + ', keepAlive=true)');
+    console.log('[DB-PG] PostgreSQL Client 模式（无连接池，每次查询新连接）');
+    pool = {
+      query: async function(sql, params) {
+        const client = new Client(getClientConfig());
+        await client.connect();
+        try { return await client.query(sql, params); }
+        finally { await client.end(); }
+      },
+      connect: async function() {
+        const client = new Client(getClientConfig());
+        await client.connect();
+        return client;
+      },
+      end: async function() {},
+      on: function() {}
+    };
   }
   return pool;
 }
@@ -254,62 +264,61 @@ function normalizeSql(sql) {
 }
 
 // ==================== 核心 DAL 函数 ====================
+// 设计：每次查询用新 Client（不用 Pool），避免连接池在 deasync 上下文中
+// 持有陈旧连接导致 "Connection terminated unexpectedly"。
+// 事务用同一 Client 执行 BEGIN/COMMIT/ROLLBACK。
 
-// 连接断开重试：Supabase Free 会主动关闭空闲连接，导致 "Connection terminated unexpectedly"。
-// 此包装器在遇到连接错误时重试一次（仅对非事务查询生效，事务内不重试避免破坏原子性）。
-const RETRYABLE_ERRORS = [
-  'Connection terminated',
-  'Connection terminated unexpectedly',
-  'terminating connection due to',
-  'connection reset',
-  'ECONNRESET',
-  'EPIPE',
-  'ETIMEDOUT',
-  'write ECONNRESET'
-];
-function isRetryableError(err) {
-  if (!err || !err.message) return false;
-  const msg = err.message;
-  return RETRYABLE_ERRORS.some(e => msg.indexOf(e) !== -1);
-}
-
-async function queryWithRetry(pgSql, params, isTransactional) {
+async function query(sql, params = []) {
+  const store = als.getStore();
+  const pgSql = normalizeSql(sql);
+  if (store) {
+    // 事务内：复用已有 Client
+    const res = await store.client.query(pgSql, params);
+    return { rows: res.rows };
+  }
+  // 非事务：创建新 Client
+  const client = new Client(getClientConfig());
+  await client.connect();
   try {
-    const store = als.getStore();
-    const res = store
-      ? await store.client.query(pgSql, params)
-      : await getPool().query(pgSql, params);
-    return res;
-  } catch (err) {
-    // 事务内不重试（会破坏原子性）；非事务查询重试一次
-    if (isTransactional || !isRetryableError(err)) throw err;
-    console.warn('[DB-PG] 查询失败（连接错误），重试一次:', err.message);
-    // 等待短暂时间让连接池恢复
-    await new Promise(r => setTimeout(r, 100));
-    const store2 = als.getStore();
-    const res2 = store2
-      ? await store2.client.query(pgSql, params)
-      : await getPool().query(pgSql, params);
-    return res2;
+    const res = await client.query(pgSql, params);
+    return { rows: res.rows };
+  } finally {
+    await client.end();
   }
 }
 
-async function query(sql, params = []) {
-  const pgSql = normalizeSql(sql);
-  const res = await queryWithRetry(pgSql, params, false);
-  return { rows: res.rows };
-}
-
 async function queryOne(sql, params = []) {
+  const store = als.getStore();
   const pgSql = normalizeSql(sql);
-  const res = await queryWithRetry(pgSql, params, false);
-  return res.rows[0] || null;
+  if (store) {
+    const res = await store.client.query(pgSql, params);
+    return res.rows[0] || null;
+  }
+  const client = new Client(getClientConfig());
+  await client.connect();
+  try {
+    const res = await client.query(pgSql, params);
+    return res.rows[0] || null;
+  } finally {
+    await client.end();
+  }
 }
 
 async function run(sql, params = []) {
+  const store = als.getStore();
   const pgSql = normalizeSql(sql);
-  const res = await queryWithRetry(pgSql, params, false);
-  return { changes: res.rowCount == null ? 0 : res.rowCount };
+  if (store) {
+    const res = await store.client.query(pgSql, params);
+    return { changes: res.rowCount == null ? 0 : res.rowCount };
+  }
+  const client = new Client(getClientConfig());
+  await client.connect();
+  try {
+    const res = await client.query(pgSql, params);
+    return { changes: res.rowCount == null ? 0 : res.rowCount };
+  } finally {
+    await client.end();
+  }
 }
 
 // 嵌套事务守卫：外层事务内再调用 transaction() 时改用 SAVEPOINT，复用同一连接。
@@ -328,17 +337,19 @@ async function transaction(fn) {
       throw e;
     }
   }
-  const client = await getPool().connect();
+  // 顶层事务：创建新 Client
+  const client = new Client(getClientConfig());
+  await client.connect();
   try {
     await client.query('BEGIN');
     const result = await als.run({ client }, fn);
     await client.query('COMMIT');
     return result;
   } catch (e) {
-    await client.query('ROLLBACK');
+    try { await client.query('ROLLBACK'); } catch (re) {}
     throw e;
   } finally {
-    client.release();
+    await client.end();
   }
 }
 
