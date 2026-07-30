@@ -3083,6 +3083,14 @@ function classifySkuState(o) {
   return { sales_status, risk_tags, sales_reason, action, ai_business_advice };
 }
 
+// 订单预测/补货建议页面用户偏好设置（前端已调用，HEAD 缺失此端点导致 404）
+app.get('/api/replenishment-suggestions/preferences', requireApiPermission('replenishment_view'), asyncHandler((req, res) => {
+  res.json({ preferences: {} });
+}));
+app.put('/api/replenishment-suggestions/preferences', requireApiPermission('replenishment_view'), asyncHandler((req, res) => {
+  res.json({ success: true, preferences: (req.body && req.body.preferences) || {} });
+}));
+
 // 补货建议汇总统计（用于SKU动销与订单预测页面顶部指标卡）
 app.get('/api/replenishment-suggestions/summary', requireApiPermission('replenishment_view'), asyncHandler((req, res) => {
   const { country, warehouse, brand } = req.query;
