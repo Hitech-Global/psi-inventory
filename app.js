@@ -5147,14 +5147,19 @@ async function loadRpChannelMonthly(channel){
       // 分摊库存为库存数量，按整数展示（与 4m 口径的 availAllocated/transitAllocated 一致，避免长浮点串）
       var availAllocatedPeriod = Math.round(availTotal*(pctPeriod/100));
       var transitAllocatedPeriod = Math.round(transitTotal*(pctPeriod/100)); // P4: period 分摊在途，驱动显示 + 周转
-      var poolAllocatedPeriod = pool*(pctPeriod/100);             // P4: period 分摊总库存池，驱动当前测算周转显示
+      var piUnshippedAllocatedPeriod = Math.round(piUnshippedTotal*(pctPeriod/100));
+      var poAllocatedPeriod = Math.round((r.po_unconfirmed_pi_qty||0)*(pctPeriod/100));
+      // 渠道库存池=分摊可用+分摊在途+分摊PI未发货+分摊PO（四分量统一 pctPeriod 口径）
+      var poolAllocatedPeriod = availAllocatedPeriod+transitAllocatedPeriod+piUnshippedAllocatedPeriod+poAllocatedPeriod;
       r._c.poolAllocatedPeriod = poolAllocatedPeriod;
+      r._c.piUnshippedAllocatedPeriod = piUnshippedAllocatedPeriod;
+      r._c.poAllocatedPeriod = poAllocatedPeriod;
       r._c.availAllocatedPeriod = availAllocatedPeriod; // 保留供渠道目标库存编辑换算；页面展示仍使用真实可用库存
       r._c.transitAllocatedPeriod = transitAllocatedPeriod; // period 分摊在途，同上
       r._c.availTurnover = avgSalesPeriod>0 ? Math.round(availAllocatedPeriod/avgSalesPeriod*10)/10 : null;
       r._c.currentTurn = avgSalesPeriod>0 ? Math.round(poolAllocatedPeriod/avgSalesPeriod*10)/10 : t("app.799", "\u65e0\u9500\u91cf");
       r._c.transitTurnover = avgSalesPeriod>0 ? Math.round((availAllocatedPeriod+transitAllocatedPeriod)/avgSalesPeriod*10)/10 : null;
-      r._c.afterOrderTurnover = avgSalesPeriod>0 ? Math.round((poolAllocatedPeriod+r._c.po+r._c.suggestedQty)/avgSalesPeriod*10)/10 : null;
+      r._c.afterOrderTurnover = avgSalesPeriod>0 ? Math.round((poolAllocatedPeriod+r._c.suggestedQty)/avgSalesPeriod*10)/10 : null;
     });
     // 缓存行数据（含 _c 计算字段）供复盘弹窗读取
     window._rpChannelData = window._rpChannelData || {};
@@ -5194,14 +5199,14 @@ async function loadRpChannelMonthly(channel){
       td:function(r,c){return '<td class="text-right">'+formatQuantityDisplay(c.transitAllocatedPeriod||0)+'</td>';},
       sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.transitAllocatedPeriod)+'</td>';}};
     Cols.po_unconfirmed={th:rpThCompact(t('forecast.compact.po_unconfirmed','未确认\nPO'),t("app.796", "\u5df2\u7ecf\u521b\u5efa PO\uff0c\u4f46\u8fd8\u6ca1\u6709\u786e\u8ba4 PI \u7684\u6570\u91cf\u3002\u5c5e\u4e8e\u6f5c\u5728\u4f9b\u5e94\uff0c\u4e0d\u7b49\u4e8e\u4e00\u5b9a\u4f1a\u53d1\u8d27\u3002"),'text-right','',true),
-      td:function(r,c){return '<td class="text-right">'+formatQuantityDisplay(r.po_unconfirmed_pi_qty||0)+'</td>';},
-      sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.po)+'</td>';}};
+      td:function(r,c){return '<td class="text-right">'+formatQuantityDisplay(c.poAllocatedPeriod||0)+'</td>';},
+      sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.poAllocatedPeriod)+'</td>';}};
     Cols.avail={th:rpThCompact(t('forecast.compact.allocated_available','已分摊\n可用库存'),t('forecast.help.allocated_available','按{channel}销量统计周期占比，从总可用库存中分摊给该渠道的数量（仅测算用，非独立仓库库存）。',{channel:chLabel}),'text-right','',true),
       td:function(r,c){return '<td class="text-right">'+formatQuantityDisplay(c.availAllocatedPeriod||0)+'</td>';},
       sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.availAllocatedPeriod)+'</td>';}};
     Cols.pi_unshipped={th:rpThCompact(t('forecast.compact.pi_unshipped','已确认PI\n未发货'),t("app.800", "PI \u5df2\u786e\u8ba4\uff0c\u4f44\u5de5\u5382\u8fd8\u6ca1\u6709\u53d1\u8d27\u7684\u6570\u91cf\u3002\u6bd4 PO\u672a\u786e\u8ba4PI \u66f4\u63a5\u8fd1\u5b9e\u9645\u4f9b\u5e94\u3002"),'text-right','',true),
-      td:function(r,c){return '<td class="text-right">'+formatQuantityDisplay(c.piUnshipped)+'</td>';},
-      sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.piUnshipped)+'</td>';}},
+      td:function(r,c){return '<td class="text-right">'+formatQuantityDisplay(c.piUnshippedAllocatedPeriod||0)+'</td>';},
+      sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.piUnshippedAllocatedPeriod)+'</td>';}},
     Cols.avail_turnover={th:rpTh(t('gen.L4306.1','当前可用周转'),t("app.801", "\u5f53\u524d\u53ef\u7528\u5e93\u5b58 \u00f7 \u6708\u5747\u9500\u91cf\uff08\u9500\u91cf\u7edf\u8ba1\u5468\u671f\u53e3\u5f84\uff09\u3002\u8868\u793a\u4e0d\u8003\u8651\u5728\u9014\u548c\u672a\u53d1\u8d27\u8ba2\u5355\u65f6\uff0c\u73b0\u6709\u5e93\u5b58\u5927\u7ea6\u8fd8\u80fd\u5356\u51e0\u4e2a\u6708\u3002"),'text-right'),
       td:function(r,c){return '<td class="text-right '+(c.availTurnover!==null?(c.availTurnover<2?'text-danger':c.availTurnover>6?'text-secondary':'text-success'):'text-muted')+'">'+(c.availTurnover!==null?c.availTurnover:'-')+'</td>';},
       sum:function(t){return '<td class="text-right">'+(t.avgSalesPeriod>0?Math.round(t.availWS/t.avgSalesPeriod*10)/10:'-')+'</td>';}};
@@ -5271,6 +5276,7 @@ async function loadRpChannelMonthly(channel){
     });
     // 计算合计（salesM1~M4 语义与字段一致：M1=本月, M2=上月, M3=上上月, M4=4个月前）
     var totals={count:data.length,salesM1:0,salesM2:0,salesM3:0,salesM4:0,avgSales:0,totalAvg:0,totalAvgPeriod:0,avgSalesPeriod:0,transit:0,transitAllocated:0,transitAllocatedPeriod:0,po:0,avail:0,availAllocated:0,availAllocatedPeriod:0,piUnshipped:0,allocatedStock:0,poolAllocatedPeriod:0,targetStock:0,suggestedQty:0,
+      piUnshippedAllocatedPeriod:0,poAllocatedPeriod:0,
       availWS:0,transitWS:0,poWS:0,piUnshippedWS:0,suggestedQtyWS:0};
     data.forEach(function(r){
       var c=r._c;
@@ -5278,13 +5284,15 @@ async function loadRpChannelMonthly(channel){
       totals.avgSales+=c.avgSales;totals.totalAvg+=c.totalAvg;totals.totalAvgPeriod+=c.totalAvgPeriod;totals.avgSalesPeriod+=c.avgSalesPeriod;
       totals.transit+=c.transit;totals.transitAllocated+=c.transitAllocated;totals.transitAllocatedPeriod+=(c.transitAllocatedPeriod||0);totals.po+=c.po;totals.avail+=c.avail;totals.availAllocated+=c.availAllocated;totals.availAllocatedPeriod+=(c.availAllocatedPeriod||0);
       totals.piUnshipped+=c.piUnshipped;
+      totals.piUnshippedAllocatedPeriod+=(c.piUnshippedAllocatedPeriod||0);
+      totals.poAllocatedPeriod+=(c.poAllocatedPeriod||0);
       totals.allocatedStock+=c.allocatedStock;totals.poolAllocatedPeriod+=(c.poolAllocatedPeriod||0);totals.targetStock+=c.targetStock;
       totals.suggestedQty+=Math.round(c.suggestedQty||0);
       if(c.avgSalesPeriod>0){
         totals.availWS+=c.availAllocatedPeriod||0;
         totals.transitWS+=c.transitAllocatedPeriod||0;
-        totals.poWS+=c.po;
-        totals.piUnshippedWS+=c.piUnshippedAllocated||0;
+        totals.poWS+=c.poAllocatedPeriod||0;
+        totals.piUnshippedWS+=c.piUnshippedAllocatedPeriod||0;
         totals.suggestedQtyWS+=Math.round(c.suggestedQty||0);
       }
     });
