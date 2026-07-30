@@ -2824,7 +2824,7 @@ function handleSalesFile(file){
       }
       window._salesImportData=records;
       renderSalesPreview(records);
-      document.getElementById('sales-import-btn').disabled=records.filter(function(r){return r._errors.length===0}).length===0;
+      var _sib=document.getElementById('sales-import-btn'); if(_sib) _sib.disabled=records.filter(function(r){return r._errors.length===0}).length===0;
     }catch(err){showToast(t('toast.handleSalesFile', '文件解析失败：{v1}', {v1: err.message}),'danger')}
   };
   if(ext==='csv')reader.readAsText(file,'UTF-8');
@@ -2857,7 +2857,7 @@ async function requestSalesPreview(){
       var oldPreview=el.querySelector('div[style*="overflow:auto"]');
       el.innerHTML=html+(oldPreview?oldPreview.outerHTML:'');
     }
-    document.getElementById('sales-import-btn').disabled=false;
+    var _sib2=document.getElementById('sales-import-btn'); if(_sib2) _sib2.disabled=false;
   }catch(e){
     showToast(t('toast.requestSalesPreview', '预览失败: {v1}', {v1: e.message||''}),'danger');
   }
@@ -2888,7 +2888,7 @@ function renderSalesPreview(records){
       records.filter(function(r){return r._errors.length>0}).slice(0,10).map(function(r){return t("html.preview.row_pre", "第 ")+r._rowNum+t("html.preview.row_suffix", " 行：")+r._errors.join('、')}).join('<br>')+
       (invalid>10?'<br>...':'')+'</div>';
   }
-  document.getElementById('sales-preview-stats').innerHTML=html;
+  var _sps=document.getElementById('sales-preview-stats'); if(_sps) _sps.innerHTML=html;
   if(valid>0) requestSalesPreview();
 }
 
@@ -2911,6 +2911,7 @@ async function submitSalesBatchImport(){
   var valid=records.filter(function(r){return r._errors.length===0});
   if(valid.length===0){showToast(t("toast.no_valid_data", "没有可导入的有效数据"),'danger');return}
   var btn=document.getElementById('sales-import-btn');
+  if(!btn) return;
   btn.disabled=true;btn.textContent=t("app.613", "\u5bfc\u5165\u4e2d...");
   try{
     var items=valid.map(function(r){
@@ -2936,7 +2937,7 @@ async function submitSalesBatchImport(){
       html+='<button type="button" class="btn btn-secondary" style="margin-top:10px" onclick="downloadSalesImportErrors()">'+t("html.inv.download_fail", "下载失败明细")+'</button></div>';
     }
     html+='</div>';
-    document.getElementById('sales-result').innerHTML=html;
+    var _sr=document.getElementById('sales-result'); if(_sr) _sr.innerHTML=html;
     showToast(t('toast.importDone4','导入完成：新增{c}，更新{u}，重复{s}，失败{f}',{c:res.inserted||0, u:res.updated||0, s:res.skipped||0, f:res.failed||0}),res.failed>0?'warning':'success');
     loadSales();
   }catch(e){
@@ -3395,7 +3396,8 @@ async function loadSales(){
     salesSelectAllMode = false;
     updateSalesBatchBar();
     const cols = [t("po.018", "来源系统"),t("po.019", "订单号"),t("col.order_date", "下单日期"),t("col.channel", "渠道"),t("app.112", "\u54c1\u724c"),'SKU',t("app.232", "\u4ea7\u54c1\u540d"),t("col.quantity", "数量"),t("app.640", "\u6709\u6548\u8ba2\u5355"),t("po.022", "\u539f\u59cb\u8ba2\u5355\u72b6\u6001"),t("col.remark", "备注")];
-    document.getElementById('sr-table').innerHTML=t('html.loadSales', '<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th style="width:32px"><input type="checkbox" id="sr-check-all" onchange="toggleAllSales(this.checked)"></th><th style="white-space:nowrap"><a href="javascript:void(0)" onclick="selectAllSalesFiltered()" style="font-size:11px;color:var(--primary,#2e7d32)">全选全部({v1})</a></th>{v2}</tr></thead><tbody>{v3}</tbody></table></div>', {v1: salesAllFilteredIds.length, v2: cols.slice(1).map(h=>'<th>'+h+'</th>').join(''), v3: !data.length?'<tr><td colspan="'+(cols.length+1)+t('gen.L3188.1','" style="text-align:center;padding:30px;color:#999">暂无数据</td></tr>')
+    const _srTable=document.getElementById('sr-table'); if(!_srTable) return;
+    _srTable.innerHTML=t('html.loadSales', '<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th style="width:32px"><input type="checkbox" id="sr-check-all" onchange="toggleAllSales(this.checked)"></th><th style="white-space:nowrap"><a href="javascript:void(0)" onclick="selectAllSalesFiltered()" style="font-size:11px;color:var(--primary,#2e7d32)">全选全部({v1})</a></th>{v2}</tr></thead><tbody>{v3}</tbody></table></div>', {v1: salesAllFilteredIds.length, v2: cols.slice(1).map(h=>'<th>'+h+'</th>').join(''), v3: !data.length?'<tr><td colspan="'+(cols.length+1)+t('gen.L3188.1','" style="text-align:center;padding:30px;color:#999">暂无数据</td></tr>')
       :data.map(r=>'<tr'+(r.is_valid_order?'':' style="opacity:0.5"')+'>'
         +'<td><input type="checkbox" class="sr-check" value="'+esc(r.id)+'" onchange="updateSalesBatchBar()"></td>'
         +'<td>'+esc(r.source_system||'-')+'</td>'
@@ -4817,6 +4819,18 @@ async function loadRpSummary(){
         +'<div class="kpi-value '+(warn?'kpi-warn':'')+'">'+value+'</div>'
         +'<div class="kpi-unit">'+unit+'</div></div>';
     };
+    // 前端兜底：当 summary 端点返回 null（totalMonthlySales=0）但列表端点有销量数据时，用列表数据重新计算周转
+    if(d.currentInventoryTurnover==null){
+      var fallbackTotalMonthlySales=itemsArr.reduce(function(s,r){return s+(r.avg_sales_period||0)},0);
+      if(fallbackTotalMonthlySales>0){
+        var fbCur=d.currentInventory||0;
+        var fbTransit=d.inTransitInventory||0;
+        var fbUnshipped=d.confirmedUnshippedInventory||0;
+        d.currentInventoryTurnover=Math.round(fbCur/fallbackTotalMonthlySales*10)/10;
+        d.afterTransitTurnover=Math.round((fbCur+fbTransit)/fallbackTotalMonthlySales*10)/10;
+        d.afterOrderTurnover=Math.round((fbCur+fbTransit+fbUnshipped)/fallbackTotalMonthlySales*10)/10;
+      }
+    }
     document.getElementById('rp-kpi').innerHTML='<div class="kpi-grid">'
       +'<div class="kpi-card" style="flex:2;min-width:300px"><div class="kpi-label">'+String(t('forecast.compact.current_turnover','库存周转')).replace(/\n/g,' ')+'</div>'
       +'<div class="kpi-inner">'
