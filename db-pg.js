@@ -36,21 +36,23 @@ function getPool() {
     if (!connectionString) {
       throw new Error('[DB-PG] 缺少环境变量 DATABASE_URL（DB_DRIVER=pg 时必须提供 Supabase 直连/Session 池连接串，禁用 Transaction 池 6543）');
     }
-    const max = parseInt(process.env.PG_POOL_MAX || '10', 10);
-    const poolMax = Number.isFinite(max) ? max : 10;
+    const max = parseInt(process.env.PG_POOL_MAX || '3', 10);
+    const poolMax = Number.isFinite(max) ? max : 3;
     // Supabase 直连强制 ssl；Render free 反代下也需 ssl。
     const useSsl = /(sslmode=require|ssl=true|amazonaws|supabase|render\.com)/i.test(connectionString);
     pool = new Pool({
       connectionString,
       max: poolMax,
       ssl: useSsl ? { rejectUnauthorized: false } : false,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 10000
+      idleTimeoutMillis: 10000,
+      connectionTimeoutMillis: 15000,
+      keepAlive: true,
+      keepAliveInitialDelayMillis: 5000
     });
     pool.on('error', (err) => {
       console.error('[DB-PG] 连接池意外错误:', err.message);
     });
-    console.log('[DB-PG] PostgreSQL 连接池已创建 (max=' + poolMax + ')');
+    console.log('[DB-PG] PostgreSQL 连接池已创建 (max=' + poolMax + ', keepAlive=true)');
   }
   return pool;
 }
@@ -253,30 +255,60 @@ function normalizeSql(sql) {
 
 // ==================== 核心 DAL 函数 ====================
 
+// 连接断开重试：Supabase Free 会主动关闭空闲连接，导致 "Connection terminated unexpectedly"。
+// 此包装器在遇到连接错误时重试一次（仅对非事务查询生效，事务内不重试避免破坏原子性）。
+const RETRYABLE_ERRORS = [
+  'Connection terminated',
+  'Connection terminated unexpectedly',
+  'terminating connection due to',
+  'connection reset',
+  'ECONNRESET',
+  'EPIPE',
+  'ETIMEDOUT',
+  'write ECONNRESET'
+];
+function isRetryableError(err) {
+  if (!err || !err.message) return false;
+  const msg = err.message;
+  return RETRYABLE_ERRORS.some(e => msg.indexOf(e) !== -1);
+}
+
+async function queryWithRetry(pgSql, params, isTransactional) {
+  try {
+    const store = als.getStore();
+    const res = store
+      ? await store.client.query(pgSql, params)
+      : await getPool().query(pgSql, params);
+    return res;
+  } catch (err) {
+    // 事务内不重试（会破坏原子性）；非事务查询重试一次
+    if (isTransactional || !isRetryableError(err)) throw err;
+    console.warn('[DB-PG] 查询失败（连接错误），重试一次:', err.message);
+    // 等待短暂时间让连接池恢复
+    await new Promise(r => setTimeout(r, 100));
+    const store2 = als.getStore();
+    const res2 = store2
+      ? await store2.client.query(pgSql, params)
+      : await getPool().query(pgSql, params);
+    return res2;
+  }
+}
+
 async function query(sql, params = []) {
-  const store = als.getStore();
   const pgSql = normalizeSql(sql);
-  const res = store
-    ? await store.client.query(pgSql, params)
-    : await getPool().query(pgSql, params);
+  const res = await queryWithRetry(pgSql, params, false);
   return { rows: res.rows };
 }
 
 async function queryOne(sql, params = []) {
-  const store = als.getStore();
   const pgSql = normalizeSql(sql);
-  const res = store
-    ? await store.client.query(pgSql, params)
-    : await getPool().query(pgSql, params);
+  const res = await queryWithRetry(pgSql, params, false);
   return res.rows[0] || null;
 }
 
 async function run(sql, params = []) {
-  const store = als.getStore();
   const pgSql = normalizeSql(sql);
-  const res = store
-    ? await store.client.query(pgSql, params)
-    : await getPool().query(pgSql, params);
+  const res = await queryWithRetry(pgSql, params, false);
   return { changes: res.rowCount == null ? 0 : res.rowCount };
 }
 
