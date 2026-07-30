@@ -8529,6 +8529,22 @@ if (!BREAKGLASS_ADMIN_PASSWORD || !isStrongPassword(BREAKGLASS_ADMIN_PASSWORD)) 
 console.log('[DIAG] 环境变量检查通过 ✓');
 console.log('=====================================\n');
 
+// ==================== 全局错误处理器（Render 部署排查关键）====================
+// Express production 模式默认返回 HTML "Internal Server Error" 且不记录错误细节。
+// 此处理器：1) 记录完整堆栈到 console.error（Render logs 可见）2) 返回 JSON 错误响应
+app.use((err, req, res, next) => {
+  console.error('\n[ERROR-HANDLER] 未捕获异常:');
+  console.error('  URL:', req.method, req.originalUrl || req.url);
+  console.error('  Message:', err && err.message);
+  console.error('  Stack:', err && err.stack);
+  if (err && err.code) console.error('  Code:', err.code);
+  res.status(500).json({
+    error: '服务器内部错误',
+    detail: err && err.message,
+    stack: NODE_ENV === 'production' ? undefined : (err && err.stack)
+  });
+});
+
 // ==================== 启动顺序：先 HTTP，后 DB 依赖 ====================
 // 设计：先启动 HTTP 服务器，让 Render 健康检查能通过；再异步初始化 DB 相关功能（break-glass）。
 // 这样即使 DB 暂时不可达，也能通过 /api/version 诊断问题，而非进程静默退出导致 Render 显示 "Application exited early"。
