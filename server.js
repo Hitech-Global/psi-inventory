@@ -26,6 +26,7 @@ const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
 const { query, queryOne, run, transaction, genId, initDatabase } = require('./db');
+const { withGenerateClient } = require('./pg-async'); // 专用异步 Pool：generate 不阻塞主线程
 const {
   LANGUAGE_COOKIE_NAME,
   normalizeLanguage,
@@ -3789,18 +3790,27 @@ app.get('/api/replenishment-suggestions', requireApiPermission('replenishment_vi
 }));
 
 // 生成/刷新补货建议
-app.post('/api/replenishment-suggestions/generate', requireApiPermission('replenishment_edit'), asyncHandler((req, res) => {
+// 单进程级 generate 并发门禁：防止同进程重复启动全量事务（仅单实例级，非跨实例）。
+let generateInProgress = false;
+app.post('/api/replenishment-suggestions/generate', requireApiPermission('replenishment_edit'), asyncHandler(async (req, res) => {
+  if (generateInProgress) {
+    return res.json({ success: false, code: 'GENERATE_IN_PROGRESS', message: '订单预测正在重新计算，请稍后再试' });
+  }
+  generateInProgress = true;
   try {
     const { country, warehouse, brand } = req.body;
-    const targetMonths = parseFloat(queryOne("SELECT value FROM system_config WHERE key = 'target_stock_months'")?.value || '4');
-    const leadTimeMonths = parseFloat(queryOne("SELECT value FROM system_config WHERE key = 'lead_time_months'")?.value || '2');
+    const result = await withGenerateClient(async (aq, aqOne, run) => {
+    const targetMonths = parseFloat((await aqOne("SELECT value FROM system_config WHERE key = 'target_stock_months'"))?.value || '4');
+    const leadTimeMonths = parseFloat((await aqOne("SELECT value FROM system_config WHERE key = 'lead_time_months'"))?.value || '2');
     // 销量统计周期（天）：月均、周转、建议采购统一使用该口径。
-    const salesStatsDays = parseInt(queryOne("SELECT value FROM system_config WHERE key = 'sales_stats_days'")?.value || '90');
+    const salesStatsDays = parseInt((await aqOne("SELECT value FROM system_config WHERE key = 'sales_stats_days'"))?.value || '90');
     // 全局默认目标周转（预测参数设置维护），为空时回退品牌默认值
-    const onlineDefault = parseFloat(queryOne("SELECT value FROM system_config WHERE key = 'online_target_turnover_default'")?.value || '0');
-    const offlineDefault = parseFloat(queryOne("SELECT value FROM system_config WHERE key = 'offline_target_turnover_default'")?.value || '0');
-    const brandTargetCfg = loadBrandTargetConfig(); // 品牌目标周转配置（Redragon=4,Netac=2,默认3）— 兼容回退用
-    const dimCfg = getDimTurnoverConfig(); // A-Step1：多维目标周转配置（优先命中，未命中回退旧逻辑）
+    const onlineDefault = parseFloat((await aqOne("SELECT value FROM system_config WHERE key = 'online_target_turnover_default'"))?.value || '0');
+    const offlineDefault = parseFloat((await aqOne("SELECT value FROM system_config WHERE key = 'offline_target_turnover_default'"))?.value || '0');
+    const btRow = await aqOne("SELECT value FROM system_config WHERE key = 'brand_target_stock_months'");
+    const brandTargetCfg = (btRow && btRow.value) ? JSON.parse(btRow.value) : {}; // 品牌目标周转配置（Redragon=4,Netac=2,默认3）— 兼容回退用
+    const dimRow = await aqOne("SELECT value FROM system_config WHERE key = 'dim_default_config'");
+    const dimCfg = (dimRow && dimRow.value) ? JSON.parse(dimRow.value) : null; // A-Step1：多维目标周转配置（优先命中，未命中回退旧逻辑）
 
     // 获取所有有库存记录的SKU
     let invSql = `SELECT DISTINCT i.sku_code, i.country, i.warehouse, i.available_qty, i.in_transit_qty, i.pi_confirmed_unshipped_qty, i.po_unconfirmed_pi_qty, i.last_inbound_date, i.first_inbound_date, i.target_turnover_months FROM inventory i LEFT JOIN skus s ON i.sku_code = s.sku_code WHERE 1=1`;
@@ -3808,7 +3818,7 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
     if (country) { invSql += ' AND i.country = ?'; invParams.push(country); }
     if (warehouse) { invSql += ' AND i.warehouse = ?'; invParams.push(warehouse); }
     if (brand) { invSql += ' AND s.brand = ?'; invParams.push(brand); }
-    const inventoryItems = query(invSql, invParams).rows;
+    const inventoryItems = await aq(invSql, invParams);
 
     const now = new Date();
     const salesDate = salesOrderDateExpr('order_date');
@@ -3825,11 +3835,71 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
     }
 
     // 品牌采购状态映射（停采品牌系统级规则）：品牌停采的 SKU 不要求命中 dim 规则、不阻止整页重算
-    const bstatus = getBrandStatusMap();
+    const bsRows = await aq('SELECT brand, procurement_status FROM brand_settings');
+    const bstatus = {};
+    for (const r of bsRows) bstatus[(r.brand || '').trim()] = (r.procurement_status || 'active');
+
+    // ===== P0-1 集合化读取（消除 N+1）：一次性批量取 skus / existing_rs / 销量聚合 =====
+    // 仅替换「读取」阶段为集合查询 + 内存 map；写阶段（UPDATE/INSERT）保持逐条不变。
+    // 所有 SQL 使用 SQLite 方言 + IN(?,?,...) 占位列表，由 db-pg.js 翻译为 PG，两库通用。
+    const genSkuCodes = inventoryItems.map(function(it) { return it.sku_code; });
+    const genInPh = genSkuCodes.map(function() { return '?'; }).join(',');
+    const skuRows = await aq('SELECT * FROM skus WHERE sku_code IN (' + genInPh + ')', genSkuCodes);
+    const skuMap = {};
+    for (const s of skuRows) skuMap[s.sku_code] = s;
+    const existingRows = await aq('SELECT * FROM replenishment_suggestions WHERE sku_code IN (' + genInPh + ')', genSkuCodes);
+    const existingMap = {};
+    for (const r of existingRows) existingMap[r.sku_code + '|' + r.country + '|' + r.target_warehouse] = r;
+    const m4Start = new Date(now.getFullYear(), now.getMonth() - 3, 1).toISOString().split('T')[0];
+    const periodEnd = now.toISOString().split('T')[0];
+    const periodStart = new Date(now.getTime() - Math.max(0, salesStatsDays - 1) * 86400000).toISOString().split('T')[0];
+    const d30 = new Date(now.getTime() - 30 * 86400000).toISOString().split('T')[0];
+    const d90 = new Date(now.getTime() - 90 * 86400000).toISOString().split('T')[0];
+    // 销量聚合 A：按月 GROUP BY（m1=当月 … m4=3 个月前），online/offline 按现有谓词拆分
+    const monthlyRows = await aq(
+      `SELECT sku_code,
+              substr(${salesDate}, 1, 4) AS y,
+              substr(${salesDate}, 6, 2) AS mo,
+              COALESCE(SUM(quantity), 0) AS total,
+              COALESCE(SUM(CASE WHEN (shop_platform LIKE '%线上%' OR lower(shop_platform) = 'online') THEN quantity END), 0) AS online,
+              COALESCE(SUM(CASE WHEN (shop_platform LIKE '%线下%' OR lower(shop_platform) = 'offline') THEN quantity END), 0) AS offline
+       FROM sales_records
+       WHERE sku_code IN (${genInPh}) AND ${salesDate} >= ? AND ${salesDate} <= ? AND is_valid_order = 1
+       GROUP BY sku_code, y, mo`,
+      genSkuCodes.concat([m4Start, periodEnd])
+    );
+    const monthlyMap = {};
+    for (const r of monthlyRows) {
+      let key = null;
+      const ry = String(r.y);
+      const rmo = String(r.mo);
+      for (const m of months) { if (String(m.year) === ry && m.month === rmo) { key = m.key; break; } }
+      if (!key) continue;
+      if (!monthlyMap[r.sku_code]) monthlyMap[r.sku_code] = {};
+      monthlyMap[r.sku_code][key] = { total: Number(r.total) || 0, online: Number(r.online) || 0, offline: Number(r.offline) || 0 };
+    }
+    // 销量聚合 B：按 sku GROUP BY，覆盖周期 / d30 / d90 / 累计 / 首售
+    const aggRows = await aq(
+      `SELECT sku_code,
+              COALESCE(SUM(CASE WHEN ${salesDate} >= ? AND ${salesDate} <= ? THEN quantity END), 0) AS period_total,
+              COALESCE(SUM(CASE WHEN ${salesDate} >= ? AND ${salesDate} <= ? AND (shop_platform LIKE '%线上%' OR lower(shop_platform) = 'online') THEN quantity END), 0) AS period_online,
+              COALESCE(SUM(CASE WHEN ${salesDate} >= ? AND ${salesDate} <= ? AND (shop_platform LIKE '%线下%' OR lower(shop_platform) = 'offline') THEN quantity END), 0) AS period_offline,
+              COALESCE(SUM(CASE WHEN ${salesDate} >= ? THEN quantity END), 0) AS s30,
+              COALESCE(SUM(CASE WHEN ${salesDate} >= ? THEN quantity END), 0) AS s90,
+              COALESCE(SUM(quantity), 0) AS ever_total,
+              MIN(${salesDate}) AS first_sale
+       FROM sales_records
+       WHERE sku_code IN (${genInPh}) AND is_valid_order = 1
+       GROUP BY sku_code`,
+      [periodStart, periodEnd, periodStart, periodEnd, periodStart, periodEnd, d30, d90].concat(genSkuCodes)
+    );
+    const aggMap = {};
+    for (const r of aggRows) aggMap[r.sku_code] = r;
+
     // A-Step1 收口：预检——所有待处理 SKU 必须命中 dim_default_config，未命中则阻止重算（不偷偷用兜底值）
     const unmatchedMap = {};
     for (const inv of inventoryItems) {
-      const skuPre = queryOne('SELECT brand, status FROM skus WHERE sku_code = ?', [inv.sku_code]);
+      const skuPre = skuMap[inv.sku_code];
       if (!skuPre || skuPre.status === 'stopped') continue;
       if ((bstatus[(skuPre.brand || '').trim()] || 'active') === 'stopped') continue; // 品牌停采跳过预检
       const hit = getDimTurnover(skuPre.brand, inv.country, inv.warehouse, dimCfg);
@@ -3841,12 +3911,56 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
     }
     const unmatchedList = Object.values(unmatchedMap);
     if (unmatchedList.length) {
-      return res.json({ success: false, unmatched: unmatchedList });
+      return { unmatched: unmatchedList };
     }
 
-    transaction(() => {
+    // P0-2 批量写：列定义（与逐行 UPDATE/INSERT 完全一致，仅改执行方式，未改公式/业务规则）
+    const RS_SET_COLS = [
+      'available_qty', 'in_transit_qty', 'pi_confirmed_unshipped_qty', 'po_unconfirmed_pi_qty',
+      'total_inventory_pool', 'sales_m1', 'sales_m2', 'sales_m3', 'sales_m4', 'avg_sales_4m', 'avg_sales_period', 'online_avg_sales_period', 'offline_avg_sales_period',
+      'online_sales_m1', 'online_sales_m2', 'online_sales_m3', 'online_sales_m4', 'online_avg_sales_4m',
+      'offline_sales_m1', 'offline_sales_m2', 'offline_sales_m3', 'offline_sales_m4', 'offline_avg_sales_4m',
+      'current_turnover_months', 'suggested_qty', 'online_suggested_qty', 'offline_suggested_qty', 'other_suggested_qty', 'moq_qty', 'carton_adjusted_qty',
+      'after_order_turnover_months', 'online_after_order_turnover_months', 'offline_after_order_turnover_months',
+      'target_stock_months', 'risk_level', 'arrival_month',
+      'suggestion', 'is_new_product', 'lifecycle_status', 'sales_group',
+      'online_target_turnover', 'offline_target_turnover',
+      'online_target_stock', 'offline_target_stock', 'other_target_stock',
+      'final_order_qty',
+      'sales_status', 'risk_tags', 'sales_reason', 'action', 'ai_business_advice'
+    ];
+    const RS_INSERT_COLS = [
+      'id', 'sku_code', 'country', 'target_warehouse', 'available_qty', 'in_transit_qty',
+      'pi_confirmed_unshipped_qty', 'po_unconfirmed_pi_qty', 'total_inventory_pool',
+      'sales_m1', 'sales_m2', 'sales_m3', 'sales_m4', 'avg_sales_4m', 'avg_sales_period', 'online_avg_sales_period', 'offline_avg_sales_period',
+      'online_sales_m1', 'online_sales_m2', 'online_sales_m3', 'online_sales_m4', 'online_avg_sales_4m',
+      'offline_sales_m1', 'offline_sales_m2', 'offline_sales_m3', 'offline_sales_m4', 'offline_avg_sales_4m',
+      'current_turnover_months', 'suggested_qty', 'moq_qty', 'carton_adjusted_qty',
+      'online_suggested_qty', 'offline_suggested_qty', 'other_suggested_qty',
+      'after_order_turnover_months', 'online_after_order_turnover_months', 'offline_after_order_turnover_months',
+      'target_stock_months', 'risk_level', 'arrival_month', 'suggestion',
+      'is_new_product', 'lifecycle_status', 'sales_group', 'user_adjusted_qty', 'generate_po',
+      'online_target_turnover', 'offline_target_turnover',
+      'online_target_stock', 'offline_target_stock', 'other_target_stock', 'final_order_qty',
+      'sales_status', 'risk_tags', 'sales_reason', 'action', 'ai_business_advice'
+    ];
+
+    // 列类型：UPDATE ... FROM (VALUES ...) 时 PG 会把无类型 VALUES 列推断为 text，
+    // 导致 integer/text 类型冲突。显式声明 CTE 列类型可让参数正确转型。
+    // 用 current_schema() 兼容隔离 schema（p0_iso）与生产 schema（public）。
+    async function getRsColTypesAsync(aq) {
+      const rows = await aq("SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'replenishment_suggestions'");
+      const map = {};
+      (rows || []).forEach(r => {
+        const t = r.data_type;
+        map[r.column_name] = t === 'integer' ? 'integer' : t === 'double precision' ? 'double precision' : 'text';
+      });
+      return map;
+    }
+
+      const batchRows = [];
       inventoryItems.forEach(inv => {
-        const sku = queryOne('SELECT * FROM skus WHERE sku_code = ?', [inv.sku_code]);
+        const sku = skuMap[inv.sku_code];
         if (!sku) return;
         if (sku.status === 'stopped') return;
         // 品牌停采（系统级规则）：仍写入预测表保持可见，但建议采购强制为 0、不参与补货、不要求命中 dim 规则
@@ -3857,24 +3971,10 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
         const onlineSalesMap = {};
         const offlineSalesMap = {};
         months.forEach(m => {
-          const startDate = `${m.year}-${m.month}-01`;
-          const lastDay = new Date(m.year, parseInt(m.month), 0).getDate();
-          const endDate = `${m.year}-${m.month}-${String(lastDay).padStart(2, '0')}`;
-          const totalSales = queryOne(
-            `SELECT COALESCE(SUM(quantity), 0) as cnt FROM sales_records WHERE sku_code = ? AND ${salesDate} >= ? AND ${salesDate} <= ? AND is_valid_order = 1`,
-            [inv.sku_code, startDate, endDate]
-          )?.cnt || 0;
-          const onlineSales = queryOne(
-            `SELECT COALESCE(SUM(quantity), 0) as cnt FROM sales_records WHERE sku_code = ? AND ${salesDate} >= ? AND ${salesDate} <= ? AND is_valid_order = 1 AND (shop_platform LIKE '%线上%' OR lower(COALESCE(shop_platform, '')) = 'online')`,
-            [inv.sku_code, startDate, endDate]
-          )?.cnt || 0;
-          const offlineSales = queryOne(
-            `SELECT COALESCE(SUM(quantity), 0) as cnt FROM sales_records WHERE sku_code = ? AND ${salesDate} >= ? AND ${salesDate} <= ? AND is_valid_order = 1 AND (shop_platform LIKE '%线下%' OR lower(COALESCE(shop_platform, '')) = 'offline')`,
-            [inv.sku_code, startDate, endDate]
-          )?.cnt || 0;
-          onlineSalesMap[m.key] = onlineSales;
-          offlineSalesMap[m.key] = offlineSales;
-          salesMap[m.key] = totalSales;
+          const bucket = (monthlyMap[inv.sku_code] && monthlyMap[inv.sku_code][m.key]) || { total: 0, online: 0, offline: 0 };
+          salesMap[m.key] = bucket.total;
+          onlineSalesMap[m.key] = bucket.online;
+          offlineSalesMap[m.key] = bucket.offline;
         });
 
         const sales_m1 = salesMap.m1 || 0;
@@ -3895,21 +3995,11 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
         const offline_sales_m4 = offlineSalesMap.m4 || 0;
         const offline_avg_sales_4m = (offline_sales_m1 + offline_sales_m2 + offline_sales_m3 + offline_sales_m4) / 4;
 
-        // 销量统计周期月均：60/90/120 天有效销量分别 ÷ 2/3/4。
-        const periodStart = new Date(now.getTime() - Math.max(0, salesStatsDays - 1) * 86400000).toISOString().split('T')[0];
-        const periodEnd = now.toISOString().split('T')[0];
-        const totalPeriodSales = queryOne(
-          `SELECT COALESCE(SUM(quantity), 0) as cnt FROM sales_records WHERE sku_code = ? AND ${salesDate} >= ? AND ${salesDate} <= ? AND is_valid_order = 1`,
-          [inv.sku_code, periodStart, periodEnd]
-        )?.cnt || 0;
-        const onlinePeriodSales = queryOne(
-          `SELECT COALESCE(SUM(quantity), 0) as cnt FROM sales_records WHERE sku_code = ? AND ${salesDate} >= ? AND ${salesDate} <= ? AND is_valid_order = 1 AND (shop_platform LIKE '%线上%' OR lower(COALESCE(shop_platform, '')) = 'online')`,
-          [inv.sku_code, periodStart, periodEnd]
-        )?.cnt || 0;
-        const offlinePeriodSales = queryOne(
-          `SELECT COALESCE(SUM(quantity), 0) as cnt FROM sales_records WHERE sku_code = ? AND ${salesDate} >= ? AND ${salesDate} <= ? AND is_valid_order = 1 AND (shop_platform LIKE '%线下%' OR lower(COALESCE(shop_platform, '')) = 'offline')`,
-          [inv.sku_code, periodStart, periodEnd]
-        )?.cnt || 0;
+        // 销量统计周期月均：60/90/120 天有效销量分别 ÷ 2/3/4。（periodStart/periodEnd 已在集合化读取阶段计算）
+        const agg = aggMap[inv.sku_code];
+        const totalPeriodSales = agg ? Number(agg.period_total) || 0 : 0;
+        const onlinePeriodSales = agg ? Number(agg.period_online) || 0 : 0;
+        const offlinePeriodSales = agg ? Number(agg.period_offline) || 0 : 0;
         const salesPeriodMonths = salesStatsDays > 0 ? salesStatsDays / 30 : 3;
         // 统一以落库精度参与后续计算，保证接口展示值可直接复算周转和建议量。
         const avg_sales_period = Math.round(totalPeriodSales / salesPeriodMonths * 100) / 100;
@@ -3924,14 +4014,12 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
         // poUnconfirmed 仅保留为参考字段，未确认 PO 不计入库存池，避免把潜在供应当成已确认供应。
         const total_inventory_pool = avail + transit + piUnshipped;
 
-        // 统一判定层所需指标
-        const d30 = new Date(now.getTime() - 30 * 86400000).toISOString().split('T')[0];
-        const d90 = new Date(now.getTime() - 90 * 86400000).toISOString().split('T')[0];
-        const sales_30d = queryOne(`SELECT COALESCE(SUM(quantity), 0) as cnt FROM sales_records WHERE sku_code = ? AND ${salesDate} >= ? AND is_valid_order = 1`, [inv.sku_code, d30])?.cnt || 0;
-        const sales_90d = queryOne(`SELECT COALESCE(SUM(quantity), 0) as cnt FROM sales_records WHERE sku_code = ? AND ${salesDate} >= ? AND is_valid_order = 1`, [inv.sku_code, d90])?.cnt || 0;
-        const total_sales_ever = queryOne(`SELECT COALESCE(SUM(quantity), 0) as cnt FROM sales_records WHERE sku_code = ? AND is_valid_order = 1`, [inv.sku_code])?.cnt || 0;
-        const first_sale_row = queryOne(`SELECT MIN(${salesDate}) as d FROM sales_records WHERE sku_code = ? AND is_valid_order = 1`, [inv.sku_code]);
-        const first_sale_date = first_sale_row?.d || '';
+        // 统一判定层所需指标（d30/d90/ever/first_sale 已在集合化读取阶段计算）
+        const agg2 = aggMap[inv.sku_code];
+        const sales_30d = agg2 ? Number(agg2.s30) || 0 : 0;
+        const sales_90d = agg2 ? Number(agg2.s90) || 0 : 0;
+        const total_sales_ever = agg2 ? Number(agg2.ever_total) || 0 : 0;
+        const first_sale_date = agg2 ? (agg2.first_sale || '') : '';
         const last_inbound_date = inv.last_inbound_date || '';
         const first_inbound_date = inv.first_inbound_date || '';
         let days_since_last_inbound = null;
@@ -3959,7 +4047,7 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
         const current_turnover_months = avg_sales_period > 0 ? total_inventory_pool / avg_sales_period : 99;
 
         // existing_rs：读取历史 other_target_stock / final_order_qty（目标周转已在上文按维度命中/回退确定）
-        const existing_rs = queryOne('SELECT id, online_target_turnover, offline_target_turnover, other_target_stock, final_order_qty, user_adjusted_qty FROM replenishment_suggestions WHERE sku_code = ? AND country = ? AND target_warehouse = ?', [inv.sku_code, inv.country, inv.warehouse]);
+        const existing_rs = existingMap[inv.sku_code + '|' + inv.country + '|' + inv.warehouse] || null;
         // 当前业务仅有线上/线下；历史 other 字段保留兼容，但不参与本轮预测。
         const other_target_stock = 0;
 
@@ -4087,74 +4175,95 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
         }
 
         if (existing_rs) {
-          run(`UPDATE replenishment_suggestions SET
-            available_qty=?, in_transit_qty=?, pi_confirmed_unshipped_qty=?, po_unconfirmed_pi_qty=?,
-            total_inventory_pool=?, sales_m1=?, sales_m2=?, sales_m3=?, sales_m4=?, avg_sales_4m=?, avg_sales_period=?, online_avg_sales_period=?, offline_avg_sales_period=?,
-            online_sales_m1=?, online_sales_m2=?, online_sales_m3=?, online_sales_m4=?, online_avg_sales_4m=?,
-            offline_sales_m1=?, offline_sales_m2=?, offline_sales_m3=?, offline_sales_m4=?, offline_avg_sales_4m=?,
-            current_turnover_months=?, suggested_qty=?, online_suggested_qty=?, offline_suggested_qty=?, other_suggested_qty=?, moq_qty=?, carton_adjusted_qty=?,
-            after_order_turnover_months=?, online_after_order_turnover_months=?, offline_after_order_turnover_months=?,
-            target_stock_months=?, risk_level=?, arrival_month=?,
-            suggestion=?, is_new_product=?, lifecycle_status=?, sales_group=?,
-            online_target_turnover=?, offline_target_turnover=?,
-            online_target_stock=?, offline_target_stock=?, other_target_stock=?,
-            final_order_qty=?,
-            sales_status=?, risk_tags=?, sales_reason=?, action=?, ai_business_advice=?
-            WHERE id=?`,
-            [avail, transit, piUnshipped, poUnconfirmed,
-             total_inventory_pool, sales_m1, sales_m2, sales_m3, sales_m4, Math.round(avg_sales_4m * 100) / 100, Math.round(avg_sales_period * 100) / 100, Math.round(online_avg_sales_period * 100) / 100, Math.round(offline_avg_sales_period * 100) / 100,
-             online_sales_m1, online_sales_m2, online_sales_m3, online_sales_m4, Math.round(online_avg_sales_4m * 100) / 100,
-             offline_sales_m1, offline_sales_m2, offline_sales_m3, offline_sales_m4, Math.round(offline_avg_sales_4m * 100) / 100,
-             Math.round(current_turnover_months * 10) / 10, suggested_qty, online_suggested_qty, offline_suggested_qty, other_suggested_qty, moqQty, moqQty,
-             Math.round(after_order_turnover_months * 10) / 10, Math.round(onlineAfterOrder * 10) / 10, Math.round(offlineAfterOrder * 10) / 10,
-             targetMonths, risk_level, arrival_month, suggestion,
-             sku.is_new_product === 1 ? 1 : 0, sku.lifecycle_status || '', sales_group,
-             online_target_turnover, offline_target_turnover,
-             online_target_stock, offline_target_stock, other_target_stock,
-             final_order_qty,
-             sales_status, risk_tags, sales_reason, action_text, ai_business_advice,
-             existing_rs.id]);
+          batchRows.push({
+            mode: 'update',
+            id: existing_rs.id,
+            values: [
+              avail, transit, piUnshipped, poUnconfirmed,
+              total_inventory_pool, sales_m1, sales_m2, sales_m3, sales_m4, Math.round(avg_sales_4m * 100) / 100, Math.round(avg_sales_period * 100) / 100, Math.round(online_avg_sales_period * 100) / 100, Math.round(offline_avg_sales_period * 100) / 100,
+              online_sales_m1, online_sales_m2, online_sales_m3, online_sales_m4, Math.round(online_avg_sales_4m * 100) / 100,
+              offline_sales_m1, offline_sales_m2, offline_sales_m3, offline_sales_m4, Math.round(offline_avg_sales_4m * 100) / 100,
+              Math.round(current_turnover_months * 10) / 10, suggested_qty, online_suggested_qty, offline_suggested_qty, other_suggested_qty, moqQty, moqQty,
+              Math.round(after_order_turnover_months * 10) / 10, Math.round(onlineAfterOrder * 10) / 10, Math.round(offlineAfterOrder * 10) / 10,
+              targetMonths, risk_level, arrival_month, suggestion,
+              sku.is_new_product === 1 ? 1 : 0, sku.lifecycle_status || '', sales_group,
+              online_target_turnover, offline_target_turnover,
+              online_target_stock, offline_target_stock, other_target_stock,
+              final_order_qty,
+              sales_status, risk_tags, sales_reason, action_text, ai_business_advice
+            ]
+          });
         } else {
-          const insertColumns = [
-            'id', 'sku_code', 'country', 'target_warehouse', 'available_qty', 'in_transit_qty',
-            'pi_confirmed_unshipped_qty', 'po_unconfirmed_pi_qty', 'total_inventory_pool',
-            'sales_m1', 'sales_m2', 'sales_m3', 'sales_m4', 'avg_sales_4m', 'avg_sales_period', 'online_avg_sales_period', 'offline_avg_sales_period',
-            'online_sales_m1', 'online_sales_m2', 'online_sales_m3', 'online_sales_m4', 'online_avg_sales_4m',
-            'offline_sales_m1', 'offline_sales_m2', 'offline_sales_m3', 'offline_sales_m4', 'offline_avg_sales_4m',
-            'current_turnover_months', 'suggested_qty', 'moq_qty', 'carton_adjusted_qty',
-            'online_suggested_qty', 'offline_suggested_qty', 'other_suggested_qty',
-            'after_order_turnover_months', 'online_after_order_turnover_months', 'offline_after_order_turnover_months',
-            'target_stock_months', 'risk_level', 'arrival_month', 'suggestion',
-            'is_new_product', 'lifecycle_status', 'sales_group', 'user_adjusted_qty', 'generate_po',
-            'online_target_turnover', 'offline_target_turnover',
-            'online_target_stock', 'offline_target_stock', 'other_target_stock', 'final_order_qty',
-            'sales_status', 'risk_tags', 'sales_reason', 'action', 'ai_business_advice'
-          ];
-          const insertValues = [
-            genId('rs'), inv.sku_code, inv.country, inv.warehouse, avail, transit,
-            piUnshipped, poUnconfirmed, total_inventory_pool,
-            sales_m1, sales_m2, sales_m3, sales_m4, Math.round(avg_sales_4m * 100) / 100, Math.round(avg_sales_period * 100) / 100, Math.round(online_avg_sales_period * 100) / 100, Math.round(offline_avg_sales_period * 100) / 100,
-            online_sales_m1, online_sales_m2, online_sales_m3, online_sales_m4, Math.round(online_avg_sales_4m * 100) / 100,
-            offline_sales_m1, offline_sales_m2, offline_sales_m3, offline_sales_m4, Math.round(offline_avg_sales_4m * 100) / 100,
-            Math.round(current_turnover_months * 10) / 10, suggested_qty, moqQty, moqQty,
-            online_suggested_qty, offline_suggested_qty, other_suggested_qty,
-            Math.round(after_order_turnover_months * 10) / 10, Math.round(onlineAfterOrder * 10) / 10, Math.round(offlineAfterOrder * 10) / 10,
-            targetMonths, risk_level, arrival_month, suggestion,
-            sku.is_new_product === 1 ? 1 : 0, sku.lifecycle_status || '', sales_group, -1, 0,
-            online_target_turnover, offline_target_turnover,
-            online_target_stock, offline_target_stock, other_target_stock, final_order_qty,
-            sales_status, risk_tags, sales_reason, action_text, ai_business_advice
-          ];
-          run(
-            `INSERT INTO replenishment_suggestions (${insertColumns.join(', ')}) VALUES (${insertValues.map(() => '?').join(', ')})`,
-            insertValues
-          );
+          batchRows.push({
+            mode: 'insert',
+            values: [
+              genId('rs'), inv.sku_code, inv.country, inv.warehouse, avail, transit,
+              piUnshipped, poUnconfirmed, total_inventory_pool,
+              sales_m1, sales_m2, sales_m3, sales_m4, Math.round(avg_sales_4m * 100) / 100, Math.round(avg_sales_period * 100) / 100, Math.round(online_avg_sales_period * 100) / 100, Math.round(offline_avg_sales_period * 100) / 100,
+              online_sales_m1, online_sales_m2, online_sales_m3, online_sales_m4, Math.round(online_avg_sales_4m * 100) / 100,
+              offline_sales_m1, offline_sales_m2, offline_sales_m3, offline_sales_m4, Math.round(offline_avg_sales_4m * 100) / 100,
+              Math.round(current_turnover_months * 10) / 10, suggested_qty, moqQty, moqQty,
+              online_suggested_qty, offline_suggested_qty, other_suggested_qty,
+              Math.round(after_order_turnover_months * 10) / 10, Math.round(onlineAfterOrder * 10) / 10, Math.round(offlineAfterOrder * 10) / 10,
+              targetMonths, risk_level, arrival_month, suggestion,
+              sku.is_new_product === 1 ? 1 : 0, sku.lifecycle_status || '', sales_group, -1, 0,
+              online_target_turnover, offline_target_turnover,
+              online_target_stock, offline_target_stock, other_target_stock, final_order_qty,
+              sales_status, risk_tags, sales_reason, action_text, ai_business_advice
+            ]
+          });
         }
       });
+
+      // ===== 单条批量写（同一事务内，async pg client） =====
+      // 循环内仅收集计算结果（batchRows），此处统一写入：
+      //  (A) 已有行按 id 单条批量 UPDATE（UPDATE ... FROM (VALUES ...) AS v(id, <cols>) WHERE t.id = v.id）
+      //  (B) 新行单条多行 INSERT
+      // 任一 SQL 失败 -> withGenerateClient 自动 ROLLBACK，保证整次原子。
+      const colTypes = await getRsColTypesAsync(aq);
+      const updRows = batchRows.filter(r => r.mode === 'update');
+      const insRows = batchRows.filter(r => r.mode === 'insert');
+
+      // (A) 批量 UPDATE 已有记录（按 id）
+      // PG 的 VALUES 别名列表只能写列名、不能写类型，故在 SET 侧对每列显式转型（v.col::type），
+      // 把无类型 VALUES 列正确转成 integer / double precision / text。
+      if (updRows.length > 0) {
+        const setClause = RS_SET_COLS.map(c => `${c} = v.${c}::${colTypes[c] || 'text'}`).join(', ');
+        const valueRows = updRows.map(r => '(' + Array(r.values.length + 1).fill('?').join(', ') + ')').join(', ');
+        const params = [];
+        updRows.forEach(r => { params.push(r.id); r.values.forEach(v => params.push(v)); });
+        await run(
+          `UPDATE replenishment_suggestions t SET ${setClause} ` +
+          `FROM (VALUES ${valueRows}) AS v(id, ${RS_SET_COLS.join(', ')}) ` +
+          `WHERE t.id = v.id`,
+          params
+        );
+      }
+
+      // (B) 批量 INSERT 新记录
+      if (insRows.length > 0) {
+        const placeholders = insRows.map(r => '(' + r.values.map(() => '?').join(', ') + ')').join(', ');
+        const params = [];
+        insRows.forEach(r => r.values.forEach(v => params.push(v)));
+        await run(
+          `INSERT INTO replenishment_suggestions (${RS_INSERT_COLS.join(', ')}) VALUES ${placeholders}`,
+          params
+        );
+      }
+
+      return { count: inventoryItems.length };
     });
 
-    res.json({ success: true, count: inventoryItems.length });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    if (result && result.unmatched) {
+      return res.json({ success: false, unmatched: result.unmatched });
+    }
+    res.json({ success: true, count: result ? result.count : 0 });
+  } catch (e) {
+    console.error('[GENERATE-ERR]', e && e.code ? ('code=' + e.code) : (e && e.message ? e.message : e));
+    res.status(500).json({ error: '订单预测生成失败，请稍后重试或联系管理员' });
+  } finally {
+    generateInProgress = false;
+  }
 }));
 
 // 更新补货建议（目标周转、最终下单数量、备注等）
