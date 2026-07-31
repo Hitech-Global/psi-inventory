@@ -551,6 +551,19 @@ async function initDatabase() {
     )
   `);
 
+  // 供应商品牌配置（供应商+品牌+国家+仓库维度）
+  await exec(`
+    CREATE TABLE IF NOT EXISTS supplier_brand_configs (
+      id TEXT PRIMARY KEY,
+      supplier_id TEXT NOT NULL,
+      brand TEXT DEFAULT '',
+      country TEXT DEFAULT '',
+      warehouse_id TEXT DEFAULT '',
+      status TEXT DEFAULT 'active',
+      created_at TEXT DEFAULT NOW()
+    )
+  `);
+
   await exec(`
     CREATE TABLE IF NOT EXISTS freight_forwarders (
       id TEXT PRIMARY KEY,
@@ -1121,6 +1134,13 @@ async function initDatabase() {
       created_at TEXT DEFAULT NOW()
     )
   `);
+
+  // CI 多 PI：commercial_invoices 新增多 PI 关联字段 + 装运附件
+  await exec("ALTER TABLE commercial_invoices ADD COLUMN IF NOT EXISTS related_pi_ids TEXT DEFAULT ''");
+  await exec("ALTER TABLE commercial_invoices ADD COLUMN IF NOT EXISTS related_pi_nos TEXT DEFAULT ''");
+  await exec("ALTER TABLE commercial_invoices ADD COLUMN IF NOT EXISTS shipping_attachments TEXT NOT NULL DEFAULT '[]'");
+  // CI 多 PI：commercial_invoice_items 新增来源 PI 字段
+  await exec("ALTER TABLE commercial_invoice_items ADD COLUMN IF NOT EXISTS pi_id TEXT DEFAULT ''");
 
   await exec(`
     CREATE TABLE IF NOT EXISTS packing_lists (

@@ -412,8 +412,40 @@ const NOTIFY_TEMPLATE_CATALOG = Object.freeze({
   // 7. 付款申请到期提醒（7 日内）
   "notify.payment_due": Object.freeze({ zh: "【付款提醒】付款申请 {request_no} 将于 {due_date} 到期，应付金额 {amount}，请及时安排付款。", en: "[Payment Reminder] Payment request {request_no} will be due on {due_date}. Amount payable: {amount}. Please arrange payment promptly.", id: "[Pengingat Pembayaran] Permintaan pembayaran {request_no} akan jatuh tempo pada {due_date}. Jumlah terutang: {amount}. Mohon segera atur pembayaran." }),
   // 8. 付款申请逾期提醒
-  "notify.payment_overdue": Object.freeze({ zh: "【付款逾期】付款申请 {request_no} 已于 {due_date} 逾期，应付金额 {amount}，请尽快处理。", en: "[Payment Overdue] Payment request {request_no} is overdue since {due_date}. Amount payable: {amount}. Please process as soon as possible.", id: "[Pembayaran Terlambat] Permintaan pembayaran {request_no} terlambat sejak {due_date}. Jumlah terutang: {amount}. Mohon segera proses." })
+  "notify.payment_overdue": Object.freeze({ zh: "【付款逾期】付款申请 {request_no} 已于 {due_date} 逾期，应付金额 {amount}，请尽快处理。", en: "[Payment Overdue] Payment request {request_no} is overdue since {due_date}. Amount payable: {amount}. Please process as soon as possible.", id: "[Pembayaran Terlambat] Permintaan pembayaran {request_no} terlambat sejak {due_date}. Jumlah terutang: {amount}. Mohon segera proses." }),
+
+  // ==================== PAY-CORE Phase 1：付款审批通知（4 事件 × 3 语言） ====================
+  // 与 PO 审批通知解耦：使用独立 ctx（business_no/business_type_label/amount/currency/applicant/approver/level/remark）。
+  // business_type_label 通过 PAYMENT_BUSINESS_TYPE_LABEL_CATALOG 按收件人语言派生。
+  // 9. 付款提交审批 → 通知第 1 级审批人 + CC
+  "notify.payment.submit": Object.freeze({ zh: "【付款审批】{business_type_label} {business_no}（金额 {currency} {amount}）已提交审批，请您审批。", en: "[Payment Approval] {business_type_label} {business_no} (Amount: {currency} {amount}) has been submitted for approval. Please review.", id: "[Persetujuan Pembayaran] {business_type_label} {business_no} (Jumlah: {currency} {amount}) telah diajukan untuk persetujuan. Mohon tinjau." }),
+  // 10. 付款中间级审批通过 → 通知下一级审批人 + CC
+  "notify.payment.approved_intermediate": Object.freeze({ zh: "【付款审批】{business_type_label} {business_no} 第{level}级已通过，请您审批。", en: "[Payment Approval] {business_type_label} {business_no} Level {level} approved. Please review.", id: "[Persetujuan Pembayaran] {business_type_label} {business_no} Level {level} disetujui. Mohon tinjau." }),
+  // 11. 付款最终审批通过 → 通知提交人 + CC
+  "notify.payment.approved_final": Object.freeze({ zh: "【付款审批】{business_type_label} {business_no}（金额 {currency} {amount}）审批已全部通过。", en: "[Payment Approval] {business_type_label} {business_no} (Amount: {currency} {amount}) has been fully approved.", id: "[Persetujuan Pembayaran] {business_type_label} {business_no} (Jumlah: {currency} {amount}) telah disetujui sepenuhnya." }),
+  // 12. 付款审批驳回 → 通知提交人 + CC（含 remark）
+  "notify.payment.reject": Object.freeze({ zh: "【付款审批】{business_type_label} {business_no} 已被驳回。原因：{remark}", en: "[Payment Approval] {business_type_label} {business_no} has been rejected. Reason: {remark}", id: "[Persetujuan Pembayaran] {business_type_label} {business_no} telah ditolak. Alasan: {remark}" })
 });
+
+// PAY-CORE Phase 1：付款审批业务类型三语 label（6 类 × 3 语言）
+// 由 notifyPaymentApprovalParticipants 在构造 ctx 时按收件人语言派生 business_type_label。
+// 与 approval_records.business_type 取值严格对齐：pi_deposit / ci_balance / freight / warehouse / customs / inspection。
+const PAYMENT_BUSINESS_TYPE_LABEL_CATALOG = Object.freeze({
+  pi_deposit:   Object.freeze({ zh: "PI定金付款", en: "PI Deposit Payment",       id: "Pembayaran Deposit PI" }),
+  ci_balance:   Object.freeze({ zh: "CI尾款付款", en: "CI Balance Payment",       id: "Pembayaran Saldo CI" }),
+  freight:      Object.freeze({ zh: "运费付款",   en: "Freight Payment",         id: "Pembayaran Ongkos Kirim" }),
+  warehouse:    Object.freeze({ zh: "仓储费付款", en: "Warehouse Fee Payment",    id: "Pembayaran Biaya Gudang" }),
+  customs:      Object.freeze({ zh: "关税付款",   en: "Customs Duty Payment",     id: "Pembayaran Bea Cukai" }),
+  inspection:   Object.freeze({ zh: "商检费付款", en: "Inspection Fee Payment",   id: "Pembayaran Biaya Inspeksi" })
+});
+
+// 按收件人语言返回付款业务类型 label；未配置类型回退原值（不抛错，保证通知可用）
+function paymentBusinessTypeLabel(lang, businessType) {
+  const normalized = normalizeLanguage(lang);
+  const row = PAYMENT_BUSINESS_TYPE_LABEL_CATALOG[businessType];
+  if (!row) return businessType || '';
+  return normalized === 'zh' ? row.zh : (row[normalized] || row.zh);
+}
 
 // 按收件人语言生成通知文本。lang 非法/缺失时回退 zh。
 function notifyT(lang, key, vars) {
@@ -696,6 +728,7 @@ module.exports = Object.freeze({
   COST_ALLOCATION_ERROR_CATALOG,
   GENERAL_TEMPLATE_CATALOG,
   NOTIFY_TEMPLATE_CATALOG,
+  PAYMENT_BUSINESS_TYPE_LABEL_CATALOG,
   FORECAST_DISPLAY_CATALOG,
   ALL_CATALOGS,
   TEMPLATE_MATCHERS,
@@ -707,5 +740,6 @@ module.exports = Object.freeze({
   notifyT,
   forecastDisplayT,
   translateApprovedText,
-  localizeResponseBody
+  localizeResponseBody,
+  paymentBusinessTypeLabel
 });

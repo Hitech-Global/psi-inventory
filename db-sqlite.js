@@ -4,9 +4,29 @@
  * 云端部署时可切换为 PostgreSQL（参考售后系统 db.js）
  */
 
-const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
+
+// node:sqlite 兼容层（better-sqlite3 原生绑定不可用时回退）
+function createNodeSqliteDB(dbPath) {
+  const { DatabaseSync } = require('node:sqlite');
+  const _db = new DatabaseSync(dbPath);
+  let _inTx = false;
+  return {
+    _db,
+    get inTransaction() { return _inTx; },
+    pragma(str) { return _db.prepare(`PRAGMA ${str}`).all(); },
+    exec(sql) {
+      _db.exec(sql);
+      const u = sql.trim().toUpperCase();
+      if (u.startsWith('BEGIN')) _inTx = true;
+      else if (u.startsWith('COMMIT')) _inTx = false;
+      else if (u.startsWith('ROLLBACK') && !u.startsWith('ROLLBACK TO')) _inTx = false;
+    },
+    prepare(sql) { return _db.prepare(sql); },
+    close() { return _db.close(); },
+  };
+}
 
 let db = null;
 
@@ -16,17 +36,27 @@ function getDB() {
   const dbPath = process.env.DB_PATH || path.join(__dirname, 'data', 'inventory.db');
   const dbDir = path.dirname(dbPath);
   if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
-  db = new Database(dbPath);
+
+  // 优先 better-sqlite3，回退 node:sqlite（环境修复，非业务变更）
+  try {
+    const BetterDB = require('better-sqlite3');
+    db = new BetterDB(dbPath);
+  } catch (_e) {
+    db = createNodeSqliteDB(dbPath);
+    console.log('[DB] better-sqlite3 原生绑定不可用，回退到 node:sqlite');
+  }
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
-
-  // 注册 strpos 函数，使 SQLite 兼容 PostgreSQL 的 strpos(text, text)
-  // server.js salesOrderDateExpr 使用 strpos 替代 instr 以支持双数据库
-  db.function('strpos', (text, substr) => {
-    if (text == null || substr == null) return 0;
-    const idx = String(text).indexOf(String(substr));
-    return idx === -1 ? 0 : idx + 1;
-  });
+  // 为 server.js salesOrderDateExpr 提供跨库兼容函数（PG 原生支持 strpos）
+  try {
+    if (typeof db.function === 'function') {
+      db.function('strpos', (text, search) => {
+        const s = text == null ? '' : String(text);
+        const t = search == null ? '' : String(search);
+        return t === '' ? 0 : s.indexOf(t) + 1;
+      });
+    }
+  } catch (_e) { /* 忽略自定义函数注册失败 */ }
 
   console.log('[DB] SQLite 数据库已连接:', dbPath);
   return db;
@@ -277,6 +307,20 @@ function initDatabase() {
     )
   `);
 
+  // 供应商供应关系配置（一行=一个有效供应组合 supplier+brand+country+warehouse）
+  // warehouse_id 关联 warehouses.id；页面显示时 LEFT JOIN warehouses 带出 warehouse_name
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS supplier_brand_configs (
+      id TEXT PRIMARY KEY,
+      supplier_id TEXT NOT NULL,
+      brand TEXT DEFAULT '',
+      country TEXT DEFAULT '',
+      warehouse_id TEXT DEFAULT '',
+      status TEXT DEFAULT 'active',
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
   // 品牌采购状态主数据（停采品牌系统级规则）：brand=品牌名(主键)，procurement_status=active(可采购)/stopped(停采)
   d.exec(`
     CREATE TABLE IF NOT EXISTS brand_settings (
@@ -353,9 +397,12 @@ function initDatabase() {
       business_type TEXT NOT NULL,
       levels TEXT DEFAULT '[]',
       is_enabled INTEGER DEFAULT 1,
-      created_at TEXT DEFAULT (datetime('now'))
+      created_at TEXT DEFAULT (datetime('now')),
+      completion_cc_user_ids TEXT DEFAULT '[]'
     )
   `);
+  // PAY-CORE Phase 1：兼容升级，已存在的旧表添加 completion_cc_user_ids 列（幂等）
+  try { d.exec("ALTER TABLE approval_flows ADD COLUMN completion_cc_user_ids TEXT DEFAULT '[]'"); } catch(e) {}
 
   // 费用类型
   d.exec(`
@@ -833,6 +880,8 @@ function initDatabase() {
       related_po_no TEXT DEFAULT '',
       related_pi_id TEXT DEFAULT '',
       related_pi_no TEXT DEFAULT '',
+      related_pi_ids TEXT DEFAULT '',
+      related_pi_nos TEXT DEFAULT '',
       supplier_id TEXT DEFAULT '',
       supplier_name TEXT DEFAULT '',
       brand TEXT DEFAULT '',
@@ -903,6 +952,7 @@ function initDatabase() {
       ci_id TEXT NOT NULL,
       ci_no TEXT DEFAULT '',
       pi_no TEXT DEFAULT '',
+      pi_id TEXT DEFAULT '',
       sku_code TEXT NOT NULL,
       shipped_qty INTEGER DEFAULT 0,
       unit_price REAL DEFAULT 0,
@@ -1096,6 +1146,8 @@ function initDatabase() {
       source_id TEXT DEFAULT '',
       source_no TEXT DEFAULT '',
       payee_type TEXT DEFAULT '',
+      payee_key TEXT NOT NULL DEFAULT '',
+      payee_name_snapshot TEXT NOT NULL DEFAULT '',
       supplier_name TEXT DEFAULT '',
       payable_amount REAL DEFAULT 0,
       paid_amount REAL DEFAULT 0,
@@ -1118,6 +1170,19 @@ function initDatabase() {
     )
   `);
 
+  // PAY-CORE Phase 1.5 Task 0：payment_requests 付款模式字段（V5 修正 2：显式 single/multi，不自动推断）
+  // payment_mode: single（单费用）/ multi（多费用）；旧数据默认 single
+  try { d.exec("ALTER TABLE payment_requests ADD COLUMN payment_mode TEXT NOT NULL DEFAULT 'single'"); } catch(e) {}
+  try { d.exec("CREATE INDEX IF NOT EXISTS idx_payment_requests_mode ON payment_requests(payment_mode)"); } catch(e) {}
+
+  // PAY-CORE Phase 1.5 Task 2：payment_requests 收款方字段（multi 模式校验同 payee_key；single 模式写入派生值）
+  // payee_key 格式：${payee_type}:${identity}（与 payable_items.payee_key 一致）
+  // payee_name_snapshot：收款方名称快照（与 payable_items.payee_name_snapshot 一致）
+  // 历史数据保持空字符串，不回填
+  try { d.exec("ALTER TABLE payment_requests ADD COLUMN payee_key TEXT NOT NULL DEFAULT ''"); } catch(e) {}
+  try { d.exec("ALTER TABLE payment_requests ADD COLUMN payee_name_snapshot TEXT NOT NULL DEFAULT ''"); } catch(e) {}
+  try { d.exec("CREATE INDEX IF NOT EXISTS idx_payment_requests_payee_key ON payment_requests(payee_key)"); } catch(e) {}
+
   // ==================== 付款闭环核心表（L1A：仅建表与约束，不改任何现有流程） ====================
   // 费用单主表：统一承载 PI定金 / CI尾款 / 运费 / 关税 / 商检 等应付费用
   // 金额统一用 INTEGER 最小单位（分），不保存 paid_amount / settlement_status 等派生缓存
@@ -1128,6 +1193,7 @@ function initDatabase() {
       source_type TEXT NOT NULL,
       source_id TEXT NOT NULL,
       source_no TEXT DEFAULT '',
+      source_ci_id TEXT DEFAULT '',
       fee_type TEXT NOT NULL,
       category_code TEXT DEFAULT '',
       subcategory_code TEXT DEFAULT '',
@@ -1152,16 +1218,48 @@ function initDatabase() {
     )
   `);
 
-  // 有效费用单唯一约束（部分唯一索引）：同一 (source_type, source_id, fee_type) 只允许一张 is_active=1
+  // 有效费用单唯一约束（部分唯一索引）：同一 (source_type, source_id, fee_type, source_ci_id) 只允许一张 is_active=1
+  // source_ci_id 用于多PI CI场景：同一PI在不同CI下各有一条active balance payable_item
   // 作废（is_active=0）不进入索引，可无限累积历史并允许重建
   d.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS uq_payable_active
-      ON payable_items(source_type, source_id, fee_type)
+      ON payable_items(source_type, source_id, fee_type, source_ci_id)
       WHERE is_active = 1
   `);
 
   // 按来源 / 费用单定位的普通索引
   d.exec(`CREATE INDEX IF NOT EXISTS ix_payable_src ON payable_items(source_type, source_id)`);
+
+  // PAY-CORE Phase 1.5 Task 0：payable_items 生命周期字段（V5 修正 1：与 is_active 解耦）
+  // lifecycle_status: active / reserved / paid / cancelled
+  // is_active 仅作为历史兼容字段，不再绑定生命周期（paid 视为有效历史财务记录）
+  try { d.exec("ALTER TABLE payable_items ADD COLUMN lifecycle_status TEXT NOT NULL DEFAULT 'active'"); } catch(e) {}
+  // 历史数据回填：is_active=0 的记录标记为 cancelled（仅回填，不影响新数据）
+  try { d.exec("UPDATE payable_items SET lifecycle_status = 'cancelled' WHERE is_active = 0 AND lifecycle_status = 'active'"); } catch(e) {}
+  // 生命周期索引
+  try { d.exec("CREATE INDEX IF NOT EXISTS idx_payable_items_lifecycle ON payable_items(lifecycle_status)"); } catch(e) {}
+  try { d.exec("CREATE INDEX IF NOT EXISTS idx_payable_items_fee_type ON payable_items(fee_type)"); } catch(e) {}
+
+  // ==================== CI 多 PI 改造迁移（2026-07-29） ====================
+  // payable_items 增加 source_ci_id：per-PI balance payable_item 的来源 CI 引用
+  // 命名 source_ci_id（非 ci_id）：CI 不是付款来源，PI 才是 source；source_ci_id 仅标记该尾款产生自哪个 CI
+  try { d.exec("ALTER TABLE payable_items ADD COLUMN source_ci_id TEXT NOT NULL DEFAULT ''"); } catch(e) {}
+  // commercial_invoices 增加多 PI 数组字段
+  try { d.exec("ALTER TABLE commercial_invoices ADD COLUMN related_pi_ids TEXT DEFAULT ''"); } catch(e) {}
+  try { d.exec("ALTER TABLE commercial_invoices ADD COLUMN related_pi_nos TEXT DEFAULT ''"); } catch(e) {}
+  // commercial_invoice_items 增加 pi_id：每行明细的来源 PI
+  try { d.exec("ALTER TABLE commercial_invoice_items ADD COLUMN pi_id TEXT DEFAULT ''"); } catch(e) {}
+
+  // UNIQUE 索引迁移：从 3 列 (source_type, source_id, fee_type) 扩展为 4 列 (+ source_ci_id)
+  // 存量数据 source_ci_id 全部 ''，3列唯一等价于4列唯一，不会产生冲突
+  try { d.exec("DROP INDEX IF EXISTS uq_payable_active"); } catch(e) {}
+  try { d.exec("CREATE UNIQUE INDEX IF NOT EXISTS uq_payable_active ON payable_items(source_type, source_id, fee_type, source_ci_id) WHERE is_active = 1"); } catch(e) {}
+
+  // 存量回填：ci_items.pi_id = ci.related_pi_id（存量单 PI CI）
+  try { d.exec("UPDATE commercial_invoice_items SET pi_id = (SELECT ci.related_pi_id FROM commercial_invoices ci WHERE ci.id = commercial_invoice_items.ci_id) WHERE pi_id = ''"); } catch(e) {}
+  // 存量回填：ci.related_pi_ids = JSON 数组（存量单 PI CI）
+  try { d.exec("UPDATE commercial_invoices SET related_pi_ids = ('[\"' || related_pi_id || '\"]') WHERE related_pi_ids = '' AND related_pi_id != ''"); } catch(e) {}
+  try { d.exec("UPDATE commercial_invoices SET related_pi_nos = ('[\"' || related_pi_no || '\"]') WHERE related_pi_nos = '' AND related_pi_no != ''"); } catch(e) {}
 
   // 付款申请明细：一笔付款申请关联多张费用单行
   // 提交审批后明细冻结、驳回/撤回只改父申请状态，故无 is_active 软删列
@@ -1206,8 +1304,39 @@ function initDatabase() {
       FOREIGN KEY (payment_request_id) REFERENCES payment_requests(id)
     )
   `);
+  // 注意：CREATE TABLE 语法限制，新增列通过下方 ALTER TABLE 迁移添加（ settlement_log_id/currency/FX 快照字段 ）
 
   d.exec(`CREATE INDEX IF NOT EXISTS ix_tx_req ON payment_transactions(payment_request_id)`);
+
+  // PAY-CORE Phase 1.5 Task 0：payment_transactions 水单附件字段（V5 修正：URL/path，非 base64）
+  // 文件与数据库分离，voucher_attachment 保存文件路径
+  try { d.exec("ALTER TABLE payment_transactions ADD COLUMN voucher_attachment TEXT DEFAULT ''"); } catch(e) {}
+  // V5 修正 3：trans_status 状态约束通过应用层校验（避免 SQLite 重建表）
+  // 应用层允许值：paid_pending_allocation / allocated / cancelled
+  // 数据库 CHECK 保留旧值（registered/reconciled/cancelled）以保证向后兼容
+  // 新代码写入 trans_status 时使用应用层校验后的新值
+
+  // PAY-CORE Phase 2：新增 settlement_log_id 关联结算事实源 + currency 真实付款币种
+  // settlement_log_id: 关联 payment_settlement_logs.id（1:1），NULL 兼容历史数据
+  // currency: 真实付款币种（如 USD/IDR/MYR），NULL 兼容历史数据，不设 DEFAULT 避免伪造币种
+  try { d.exec("ALTER TABLE payment_transactions ADD COLUMN settlement_log_id TEXT"); } catch(e) {}
+  try { d.exec("ALTER TABLE payment_transactions ADD COLUMN currency TEXT"); } catch(e) {}
+
+  // PAY-CORE Phase 2-FX：付款事实必须保存 FX 快照（按实际付款日期 paid_date 锁定）
+  try { d.exec("ALTER TABLE payment_transactions ADD COLUMN settlement_country TEXT DEFAULT ''"); } catch(e) {}
+  try { d.exec("ALTER TABLE payment_transactions ADD COLUMN local_currency TEXT DEFAULT ''"); } catch(e) {}
+  try { d.exec("ALTER TABLE payment_transactions ADD COLUMN local_rate REAL DEFAULT 0"); } catch(e) {}
+  try { d.exec("ALTER TABLE payment_transactions ADD COLUMN local_rate_date TEXT DEFAULT ''"); } catch(e) {}
+  try { d.exec("ALTER TABLE payment_transactions ADD COLUMN local_rate_type TEXT DEFAULT ''"); } catch(e) {}
+  try { d.exec("ALTER TABLE payment_transactions ADD COLUMN local_rate_direction TEXT DEFAULT ''"); } catch(e) {}
+  try { d.exec("ALTER TABLE payment_transactions ADD COLUMN local_amount REAL DEFAULT 0"); } catch(e) {}
+  try { d.exec("ALTER TABLE payment_transactions ADD COLUMN rmb_rate REAL DEFAULT 0"); } catch(e) {}
+  try { d.exec("ALTER TABLE payment_transactions ADD COLUMN rmb_rate_date TEXT DEFAULT ''"); } catch(e) {}
+  try { d.exec("ALTER TABLE payment_transactions ADD COLUMN rmb_rate_type TEXT DEFAULT ''"); } catch(e) {}
+  try { d.exec("ALTER TABLE payment_transactions ADD COLUMN rmb_rate_direction TEXT DEFAULT ''"); } catch(e) {}
+  try { d.exec("ALTER TABLE payment_transactions ADD COLUMN rmb_amount REAL DEFAULT 0"); } catch(e) {}
+  // 唯一索引：防止同一 settlement_log 重复生成 transaction（SQLite UNIQUE 索引允许多个 NULL）
+  d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_tx_settlement_log ON payment_transactions(settlement_log_id)`);
 
   // 付款分摊核销：经 payment_request_items 定位费用单，不冗余存 payable_item_id
   d.exec(`
@@ -1973,6 +2102,9 @@ function initDatabase() {
     if (!opCols.includes('ops_ready_status')) {
       d.exec(`ALTER TABLE commercial_invoices ADD COLUMN ops_ready_status TEXT NOT NULL DEFAULT 'pending'`);
     }
+    if (!opCols.includes('shipping_attachments')) {
+      d.exec(`ALTER TABLE commercial_invoices ADD COLUMN shipping_attachments TEXT NOT NULL DEFAULT '[]'`);
+    }
   })();
 
   // ==================== 插入默认数据 ====================
@@ -1991,7 +2123,7 @@ function initDatabase() {
       'logistics_view', 'logistics_create', 'logistics_edit',
       'inbound_view', 'inbound_create', 'inbound_edit', 'inbound_confirm',
       'cost_view',
-      'payment_view', 'payment_create', 'payment_approve', 'payment_import', 'payment_export',
+      'payment_view', 'payment_create', 'payment_approve', 'payment_execute', 'payment_import', 'payment_export',
       'check_view', 'check_create', 'check_approve', 'check_import', 'check_export',
       'stagnant_view', 'stagnant_export',
       'forwarder_view', 'forwarder_export',
@@ -2153,6 +2285,19 @@ function initDatabase() {
     ];
     flowTypes.forEach(f => run(`INSERT INTO approval_flows (id, name, business_type, levels) VALUES (?, ?, ?, ?)`, f));
     console.log('[DB] 已插入默认审批流');
+  }
+
+  // PAY-CORE Phase 1：付款审批流种子（6 类业务类型，默认 is_enabled=0，等管理员手工配置审批人后启用）
+  // 幂等：仅在 id 不存在时插入，不覆盖人工修改。levels=[] 空数组，不预置审批人快照。
+  // business_type 与 approval_records.business_type 保持一致，由 paymentRequestToBusinessType() 派生。
+  // warehouse_arrival 子类归并规则：freight/customs_clearance/port_charges/delivery → freight；warehouse/other_local → warehouse。
+  // 2026-07-29：所有付款审批统一为一个审批流 business_type='payment'
+  // 不再按 subcategory 拆分 6 个独立审批流；管理员只需配置一套付款审批流程
+  const payFlowSeeds = [
+    ['flow_pay', '付款审批', 'payment', '[]']
+  ];
+  for (const f of payFlowSeeds) {
+    run(`INSERT OR IGNORE INTO approval_flows (id, name, business_type, levels, is_enabled) VALUES (?, ?, ?, ?, 0)`, f);
   }
 
   // 默认品牌采购状态：BOYA 已停合作但仍有库存在售，预设为停采（仅首次插入，不覆盖用户后续手动修改）

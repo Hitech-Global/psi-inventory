@@ -32,7 +32,8 @@ const {
   resolveRequestLanguage,
   localizeResponseBody,
   notifyT,
-  forecastDisplayT
+  forecastDisplayT,
+  paymentBusinessTypeLabel
 } = require('./server-i18n');
 
 // ==================== AUTH-FEISHU-CORE 配置与工具 ====================
@@ -239,6 +240,42 @@ const FEISHU_NOTIFY_TEMPLATES = {
   payment_overdue: (lang, prNo, dueDate, amt) => notifyT(lang, 'notify.payment_overdue', { request_no: prNo, due_date: dueDate, amount: amt })
 };
 
+// ==================== PAY-CORE Phase 1：approval_records.approvers 快照规范化 ====================
+// 老格式（纯数组）→ 包装为 { levels: [...], completion_cc_user_ids: [] }
+// 新格式（对象）→ 原样规范化，补齐缺失字段默认值
+// 仅用于 Payment 类审批；PO 保持原数组格式，不走此函数（Phase 2 TD）
+function normalizeApprovalSnapshot(raw) {
+  const empty = { levels: [], completion_cc_user_ids: [] };
+  if (!raw) return empty;
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch (e) { return empty; }
+  if (parsed === null || parsed === undefined) return empty;
+  // 老格式：纯数组
+  if (Array.isArray(parsed)) {
+    return {
+      levels: parsed.map(a => ({
+        level: Number(a.level),
+        approver_user_id: a.approver_user_id || '',
+        approver_name: a.approver_name || '',
+        approver_role_id: a.approver_role_id || '',
+        cc_user_ids: Array.isArray(a.cc_user_ids) ? a.cc_user_ids : []
+      })),
+      completion_cc_user_ids: []
+    };
+  }
+  // 新格式：对象
+  return {
+    levels: Array.isArray(parsed.levels) ? parsed.levels.map(a => ({
+      level: Number(a.level),
+      approver_user_id: a.approver_user_id || '',
+      approver_name: a.approver_name || '',
+      approver_role_id: a.approver_role_id || '',
+      cc_user_ids: Array.isArray(a.cc_user_ids) ? a.cc_user_ids : []
+    })) : [],
+    completion_cc_user_ids: Array.isArray(parsed.completion_cc_user_ids) ? parsed.completion_cc_user_ids : []
+  };
+}
+
 // 审批通知：事务外 best-effort；飞书异常不影响审批结果；仅向有 feishu_open_id 的用户发送；无收件人则静默返回。
 // I18N-100P-B1：收件人 Map 存储 { name, lang }，按每位收件人的 language_preference 分别生成对应语言文本。
 async function notifyApprovalParticipants(approvalId, eventType, ctx) {
@@ -276,6 +313,104 @@ async function notifyApprovalParticipants(approvalId, eventType, ctx) {
   } catch (e) {
     console.error('[FEISHU-NOTIFY] 通知流程异常 event=' + eventType + ' approvalId=' + approvalId + ':', e.message);
   }
+}
+
+// ==================== PAY-CORE Phase 1：付款审批通知（与 PO 通知解耦） ====================
+// 通用 ctx 结构：{ business_no, business_type, business_type_label, amount, currency, applicant, approver, level, remark }
+// business_type_label 由 paymentBusinessTypeLabel 按收件人 language_preference 派生，避免硬编码中文。
+const PAYMENT_NOTIFY_TEMPLATES = {
+  submit: (lang, ctx) => notifyT(lang, 'notify.payment.submit', ctx),
+  approved_intermediate: (lang, ctx) => notifyT(lang, 'notify.payment.approved_intermediate', ctx),
+  approved_final: (lang, ctx) => notifyT(lang, 'notify.payment.approved_final', ctx),
+  reject: (lang, ctx) => notifyT(lang, 'notify.payment.reject', ctx)
+};
+
+// 付款审批通知：与 notifyApprovalParticipants 实现对齐，但使用 PAYMENT_NOTIFY_TEMPLATES 与通用 ctx。
+// PAY-CORE Phase 1：收件人解析规则改造为按事件类型 + 当前节点从 approval_records.approvers 快照筛选
+//   submit → 第 1 级审批人 + 第 1 级节点 CC
+//   approved_intermediate → 下一级审批人 + 下一级节点 CC
+//   approved_final → 申请人 + 完成 CC
+//   reject → 申请人 + 当前节点 CC
+// CC 来源：approval_records.approvers 快照（不读 business_participants，不读 approval_flows）
+async function notifyPaymentApprovalParticipants(approvalId, eventType, ctx) {
+  try {
+    const approval = queryOne('SELECT * FROM approval_records WHERE id = ?', [approvalId]);
+    if (!approval) return;
+    const recipients = new Map(); // open_id -> { name, lang }
+    const addUser = (userId) => {
+      if (!userId) return;
+      const u = queryOne('SELECT id, name, feishu_open_id, language_preference FROM users WHERE id = ?', [userId]);
+      if (u && u.feishu_open_id) recipients.set(u.feishu_open_id, { name: u.name || '', lang: normalizeLanguage(u.language_preference) });
+    };
+    // PAY-CORE Phase 1：使用 normalizeApprovalSnapshot 兼容老数组格式 + 新对象格式
+    const snapshot = normalizeApprovalSnapshot(approval.approvers);
+    const approvers = snapshot.levels;
+    const completionCcUserIds = snapshot.completion_cc_user_ids;
+
+    if (eventType === 'submit') {
+      // 提交时：第 1 级审批人 + 第 1 级节点 CC
+      const first = approvers.find(a => a.level === 1);
+      if (first) {
+        addUser(first.approver_user_id);
+        (first.cc_user_ids || []).forEach(uid => addUser(uid));
+      }
+    } else if (eventType === 'approved_intermediate') {
+      // 中间级次通过：下一级审批人 + 下一级节点 CC
+      // 触发本通知时 current_level 已递增到"下一级待审"级次，故直接按该级次定位下一审批人
+      const next = approvers.find(a => a.level === (approval.current_level || 1));
+      if (next) {
+        addUser(next.approver_user_id);
+        (next.cc_user_ids || []).forEach(uid => addUser(uid));
+      }
+    } else if (eventType === 'approved_final') {
+      // 最终完成：申请人 + 完成 CC
+      addUser(approval.submitter_id);
+      completionCcUserIds.forEach(uid => addUser(uid));
+    } else if (eventType === 'reject') {
+      // 驳回：申请人 + 当前节点 CC
+      addUser(approval.submitter_id);
+      const cur = approvers.find(a => a.level === approval.current_level);
+      if (cur) (cur.cc_user_ids || []).forEach(uid => addUser(uid));
+    }
+    if (recipients.size === 0) return;
+    const build = PAYMENT_NOTIFY_TEMPLATES[eventType];
+    // ctx 中的 business_type_label 按每位收件人语言重派；其他字段保持原值（动态参数不翻译）
+    for (const [openId, info] of recipients) {
+      const localizedCtx = Object.assign({}, ctx || {}, {
+        business_type_label: paymentBusinessTypeLabel(info.lang, (ctx && ctx.business_type) || approval.business_type || ''),
+        level: (ctx && typeof ctx.level !== 'undefined') ? ctx.level : (approval.current_level || 1)
+      });
+      const text = build ? build(info.lang, localizedCtx) : notifyT(info.lang, 'notify.payment.submit', localizedCtx);
+      try { await sendFeishuTextMessage(openId, text); }
+      catch (e) { console.error('[FEISHU-NOTIFY] 付款审批通知发送失败 open_id=' + openId + ' event=' + eventType + ':', e.message); }
+    }
+  } catch (e) {
+    console.error('[FEISHU-NOTIFY] 付款审批通知流程异常 event=' + eventType + ' approvalId=' + approvalId + ':', e.message);
+  }
+}
+
+// PAY-CORE Phase 1：payment_requests → business_type 派生函数
+// 规则：approval_records.business_type 与 approval_flows.business_type 同名，由 payment_category + payment_subcategory 派生。
+// warehouse_arrival 子类归并：freight/customs_clearance/port_charges/delivery → freight；warehouse/other_local → warehouse。
+// 未覆盖类型返回 null，调用方据此拒绝提交。
+function paymentRequestToBusinessType(pr) {
+  // 2026-07-29：所有付款审批统一为一个审批流 business_type='payment'
+  // 不再按 payment_category/subcategory/payment_mode 派生不同业务类型
+  if (!pr) return null;
+  // 只要是有 payment_mode（即付款类申请），统一走 'payment' 审批流
+  if (pr.payment_mode || pr.payment_category) return 'payment';
+  return null;
+}
+
+// PAY-CORE Phase 1 补充：审批流配置权限按 business_type 动态派生
+// 规则：po → po_approve；其余 PAY-CORE 业务类型（pi_deposit/ci_balance/freight/warehouse/customs/inspection）→ payment_approve
+// 仅用于审批人配置校验与候选人筛选；不影响 approval_flows 表结构，不影响 PO 既有审批流。
+function approvalRequiredPermission(businessType) {
+  if (businessType === 'po') return 'po_approve';
+  // 2026-07-29：所有付款审��统一为 'payment' 业务类型
+  if (businessType === 'payment') return 'payment_approve';
+  // 兜底：未识别业务类型仍用 po_approve（保持向后兼容）
+  return 'po_approve';
 }
 
 // PUR-OPS-COLLAB-01：通用业务参与人通知（复用 business_participants，支持 business_type='ci' 等；与审批通知解耦）
@@ -398,6 +533,12 @@ function bgIsCooling(ip, username) {
   bgFailTracker.delete(bgFailKey(ip, username)); // 冷却自然到期后自动复位
   return false;
 }
+// 返回剩余冷却秒数（0 表示未冷却或已到期）
+function bgCooldownRemaining(ip, username) {
+  const e = bgFailTracker.get(bgFailKey(ip, username));
+  if (!e) return 0;
+  return Math.max(0, Math.ceil((e.cooldownUntil - Date.now()) / 1000));
+}
 function bgRegisterFail(ip, username) {
   const k = bgFailKey(ip, username);
   const e = bgFailTracker.get(k) || { fails: 0, cooldownUntil: 0 };
@@ -419,7 +560,31 @@ console.log(`  端口: ${PORT}`);
 console.log('========================================\n');
 
 // 初始化数据库
-initDatabase();
+// P0-FIX-1：仅在直接运行 server.js 时初始化数据库，避免 require 时连接/seed 真实库
+if (require.main === module) {
+  initDatabase();
+}
+
+// PAY-CORE Phase 2 V2.1 第 12 节：为现有 role_admin 添加 payment_execute 权限（幂等迁移）
+// 仅影响 role_admin；role_operator/role_viewer 不添加
+// P0-FIX-1：仅在直接运行 server.js 时执行迁移，避免 require 时写入真实库
+if (require.main === module) {
+  (function ensureRoleAdminPaymentExecute() {
+    try {
+      const adminRole = queryOne("SELECT permissions FROM roles WHERE id = 'role_admin'");
+      if (!adminRole || !adminRole.permissions) return;
+      const perms = JSON.parse(adminRole.permissions);
+      if (!Array.isArray(perms)) return;
+      if (!perms.includes('payment_execute')) {
+        perms.push('payment_execute');
+        run("UPDATE roles SET permissions = ? WHERE id = 'role_admin'", [JSON.stringify(perms)]);
+        console.log('[Migration] role_admin 已添加 payment_execute 权限');
+      }
+    } catch (e) {
+      console.warn('[Migration] role_admin payment_execute 迁移失败（非致命）:', e.message);
+    }
+  })();
+}
 
 // ==================== Express 初始化 ====================
 const app = express();
@@ -547,9 +712,10 @@ app.use('/api', apiAuth);
 
 // 飞书授权入口（生成一次性 state，跳转飞书；test 环境返回 state 供驱动）
 app.get('/api/auth/feishu/login', asyncHandler((req, res) => {
-  // Guard: 缺少飞书 OAuth 配置时返回 503，避免构造 client_id= 的坏 URL（飞书 20028 错误）
+  // 守卫：环境变量未配齐时不构造坏 URL（避免飞书 20028 "client_id 请求不合法"）
   if (!FEISHU_APP_ID || !FEISHU_REDIRECT_URI) {
-    return res.status(503).json({ error: 'feishu_not_configured', message: '飞书 OAuth 未配置。请在 Render Dashboard 环境变量中设置 FEISHU_APP_ID 和 FEISHU_REDIRECT_URI。' });
+    console.warn('[FEISHU] login 拒绝：环境变量未配齐 (FEISHU_APP_ID=' + (FEISHU_APP_ID ? '已设置' : '空') + ', FEISHU_REDIRECT_URI=' + (FEISHU_REDIRECT_URI ? '已设置' : '空') + ')');
+    return res.status(503).json({ error: 'feishu_not_configured', message: '飞书登录未配置（请在 Render 设置 FEISHU_APP_ID 与 FEISHU_REDIRECT_URI）' });
   }
   const oauthLang = normalizeLanguage(req.query && req.query.lang);
   req.i18nLang = oauthLang;
@@ -562,11 +728,23 @@ app.get('/api/auth/feishu/login', asyncHandler((req, res) => {
   res.redirect(redirect);
 }));
 
+// 飞书配置状态（前端探活 + 登录页决定是否显示"飞书登录"按钮；不暴露密钥）
+app.get('/api/auth/feishu/status', asyncHandler((req, res) => {
+  res.json({
+    configured: !!(FEISHU_APP_ID && FEISHU_REDIRECT_URI),
+    has_app_id: !!FEISHU_APP_ID,
+    has_app_secret: !!FEISHU_APP_SECRET,
+    has_redirect_uri: !!FEISHU_REDIRECT_URI,
+    redirect_uri: FEISHU_REDIRECT_URI || null,
+  });
+}));
+
 // 飞书回调：校验 state → 换身份 → 按 union_id 匹配/创建 → 建 Session
 app.get('/api/auth/feishu/callback', asyncHandler(async (req, res) => {
-  // Guard: 缺少飞书 OAuth 配置时返回 503
+  // 守卫：环境变量未配齐时直接 503（与 /api/auth/feishu/login 守卫一致）
   if (!FEISHU_APP_ID || !FEISHU_APP_SECRET || !FEISHU_REDIRECT_URI) {
-    return res.status(503).json({ error: 'feishu_not_configured', message: '飞书 OAuth 未配置。无法处理回调。' });
+    console.warn('[FEISHU] callback 拒绝：环境变量未配齐');
+    return res.status(503).json({ error: 'feishu_not_configured', message: '飞书登录未配置' });
   }
   try {
     const { code, state } = req.query;
@@ -610,17 +788,6 @@ app.get('/api/feishu/notify/dryrun-log', asyncHandler((req, res) => {
   res.json({ log: __feishuDryRunLog });
 }));
 
-// 飞书 OAuth 配置探活（免登录，供前端登录页判断是否显示飞书按钮；也供 UptimeRobot 防休眠探活）
-app.get('/api/auth/feishu/status', (req, res) => {
-  res.json({
-    configured: !!(FEISHU_APP_ID && FEISHU_APP_SECRET && FEISHU_REDIRECT_URI),
-    has_app_id: !!FEISHU_APP_ID,
-    has_app_secret: !!FEISHU_APP_SECRET,
-    has_redirect_uri: !!FEISHU_REDIRECT_URI,
-    redirect_uri: FEISHU_REDIRECT_URI || null
-  });
-});
-
 // break-glass 本地应急登录（独立接口，强密码哈希校验，安全审计，防暴力破解）
 app.post('/api/auth/local/login', asyncHandler((req, res) => {
   const { username, password } = req.body || {};
@@ -628,7 +795,10 @@ app.post('/api/auth/local/login', asyncHandler((req, res) => {
   const ip = req.headers['x-forwarded-for'] || req.ip || '';
   // P0-3 防暴力破解：冷却期内统一返回 429，不暴露账号是否存在
   if (bgIsCooling(ip, username)) {
-    return res.status(429).json({ error: '请求过于频繁，请稍后再试' });
+    const remainingSec = bgCooldownRemaining(ip, username);
+    const remainingMin = Math.max(1, Math.ceil(remainingSec / 60));
+    res.set('Retry-After', String(remainingSec));
+    return res.status(429).json({ error: `请求过于频繁，请 ${remainingMin} 分钟后再试`, retry_after: remainingSec });
   }
   const user = queryOne("SELECT * FROM users WHERE username=? AND auth_source='local'", [username]);
   if (!user) { auditLogin(null, username || '', 'local', false, 'no_local_user', ua, ip); bgRegisterFail(ip, username); return res.status(401).json({ error: '账号或密码错误' }); }
@@ -808,6 +978,7 @@ const PERM_LABELS = {
   payment_view: { label: '付款查看', module: '财务' },
   payment_create: { label: '付款创建', module: '财务' },
   payment_approve: { label: '付款审批', module: '财务' },
+  payment_execute: { label: '付款执行', module: '财务' },
   payment_import: { label: '付款导入', module: '财务' },
   payment_export: { label: '付款导出', module: '财务' },
   // 报表
@@ -959,7 +1130,37 @@ app.delete('/api/warehouses/:id', requireApiPermission('system_config'), asyncHa
 
 // ==================== 供应商管理 ====================
 app.get('/api/suppliers', requireLogin, asyncHandler((req, res) => {
-  res.json(query('SELECT * FROM suppliers ORDER BY created_at DESC').rows);
+  const rows = query('SELECT * FROM suppliers ORDER BY created_at DESC').rows;
+  // 从 supplier_brand_configs 聚合品牌，覆盖旧 associated_brands 字段
+  const brandRows = query(`
+    SELECT supplier_id, brand
+    FROM supplier_brand_configs
+    WHERE status = 'active' AND brand != ''
+    ORDER BY brand ASC
+  `).rows;
+  const brandMap = {};
+  for (const r of brandRows) {
+    if (!brandMap[r.supplier_id]) brandMap[r.supplier_id] = new Set();
+    brandMap[r.supplier_id].add(r.brand);
+  }
+  // 获取每个供应商的默认付款条件 credit_days
+  const creditRows = query(`
+    SELECT supplier_id, credit_days, term_name
+    FROM supplier_payment_terms
+    WHERE is_default = 1 AND status = 'active'
+  `).rows;
+  const creditMap = {};
+  for (const c of creditRows) {
+    if (!creditMap[c.supplier_id]) creditMap[c.supplier_id] = { credit_days: c.credit_days, term_name: c.term_name };
+  }
+  for (const s of rows) {
+    const brands = brandMap[s.id] ? Array.from(brandMap[s.id]) : [];
+    s.associated_brands = JSON.stringify(brands);
+    const credit = creditMap[s.id] || { credit_days: 0, term_name: '' };
+    s.default_credit_days = credit.credit_days;
+    s.default_term_name = credit.term_name;
+  }
+  res.json(rows);
 }));
 app.post('/api/suppliers', requireApiPermission('system_config'), asyncHandler((req, res) => {
   const d = req.body;
@@ -972,6 +1173,7 @@ app.post('/api/suppliers', requireApiPermission('system_config'), asyncHandler((
 }));
 app.delete('/api/suppliers/:id', requireApiPermission('system_config'), asyncHandler((req, res) => {
   run('DELETE FROM supplier_payment_terms WHERE supplier_id = ?', [req.params.id]);
+  run('DELETE FROM supplier_brand_configs WHERE supplier_id = ?', [req.params.id]);
   run('DELETE FROM suppliers WHERE id = ?', [req.params.id]);
   res.json({ success: true });
 }));
@@ -984,7 +1186,7 @@ app.post('/api/suppliers/:id/last-payment-term', requireApiPermission('pi_create
 
 // ==================== 供应商付款条件（结构化多条，独立于付款申请 payment_terms 目录表） ====================
 app.get('/api/suppliers/:id/payment-terms', requireLogin, asyncHandler((req, res) => {
-  const rows = query('SELECT * FROM supplier_payment_terms WHERE supplier_id = ? ORDER BY display_order ASC, created_at ASC', [req.params.id]).rows;
+  const rows = query('SELECT * FROM supplier_payment_terms WHERE supplier_id = ? AND status = ? ORDER BY display_order ASC, created_at ASC', [req.params.id, 'active']).rows;
   res.json(rows);
 }));
 app.post('/api/supplier-payment-terms', requireApiPermission('system_config'), asyncHandler((req, res) => {
@@ -1027,6 +1229,33 @@ app.post('/api/suppliers/:id/payment-terms', requireApiPermission('system_config
     const tId = (t.id && !String(t.id).startsWith('_new_')) ? t.id : genId('spt');
     run(`INSERT INTO supplier_payment_terms (id, supplier_id, term_name, term_type, credit_days, is_default, display_order, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [tId, supplierId, t.term_name || '', termType, t.credit_days || 0, isDefault, idx, t.status || 'active']);
+  });
+  res.json({ success: true, count: list.length });
+}));
+
+// ==================== 供应商供应关系配置（supplier+brand+country+warehouse 组合，一行一组） ====================
+// 读取该供应商所有有效组合，LEFT JOIN warehouses 带出 warehouse_name 供前端展示
+app.get('/api/suppliers/:id/brand-configs', requireLogin, asyncHandler((req, res) => {
+  const rows = query(`
+    SELECT c.id, c.supplier_id, c.brand, c.country, c.warehouse_id,
+           w.name AS warehouse_name, w.country_name AS warehouse_country
+    FROM supplier_brand_configs c
+    LEFT JOIN warehouses w ON c.warehouse_id = w.id
+    WHERE c.supplier_id = ? AND c.status = 'active'
+    ORDER BY c.created_at ASC
+  `, [req.params.id]).rows;
+  res.json(rows);
+}));
+// 整供应商替换供应关系配置（保存供应商时调用：先删后插，参照 payment-terms 模式）
+app.post('/api/suppliers/:id/brand-configs', requireApiPermission('system_config'), asyncHandler((req, res) => {
+  const supplierId = req.params.id;
+  const list = Array.isArray(req.body) ? req.body : (req.body.list || []);
+  run('DELETE FROM supplier_brand_configs WHERE supplier_id = ?', [supplierId]);
+  list.forEach((item) => {
+    if (!item || (!item.brand && !item.country && !item.warehouse_id)) return; // 跳过空行
+    const cId = (item.id && !String(item.id).startsWith('_new_')) ? item.id : genId('sbc');
+    run(`INSERT INTO supplier_brand_configs (id, supplier_id, brand, country, warehouse_id, status, created_at) VALUES (?, ?, ?, ?, ?, 'active', datetime('now'))`,
+      [cId, supplierId, item.brand || '', item.country || '', item.warehouse_id || '']);
   });
   res.json({ success: true, count: list.length });
 }));
@@ -1251,9 +1480,27 @@ app.delete('/api/payment-terms/:id', requireApiPermission('system_config'), asyn
   res.json({ success: true });
 }));
 
+// 付款条件下拉选项（合并 payment_terms 全局目录 + supplier_payment_terms 供应商级）
+app.get('/api/payment-term-options', requireLogin, asyncHandler((req, res) => {
+  const global = query('SELECT DISTINCT name FROM payment_terms WHERE is_enabled = 1').rows.map(r => ({ name: r.name, credit_days: 0, source: 'global' }));
+  const supplier = query("SELECT DISTINCT term_name as name, credit_days FROM supplier_payment_terms WHERE status = 'active'").rows.map(r => ({ ...r, source: 'supplier' }));
+  // Merge unique by name, prefer supplier (has credit_days)
+  const seen = new Set();
+  const merged = [];
+  for (const item of [...supplier, ...global]) {
+    if (!seen.has(item.name)) { seen.add(item.name); merged.push(item); }
+  }
+  res.json(merged);
+}));
+
 // ==================== 审批流管理 ====================
 app.get('/api/approval-flows', requireApiPermission('system_config'), asyncHandler((req, res) => {
-  res.json(query('SELECT * FROM approval_flows ORDER BY created_at').rows.map(f => ({ ...f, levels: JSON.parse(f.levels || '[]') })));
+  // PAY-CORE Phase 1：返回 completion_cc_user_ids；老库兼容（字段可能不存在时默认 []）
+  res.json(query('SELECT * FROM approval_flows ORDER BY created_at').rows.map(f => ({
+    ...f,
+    levels: JSON.parse(f.levels || '[]'),
+    completion_cc_user_ids: JSON.parse(f.completion_cc_user_ids || '[]')
+  })));
 }));
 app.post('/api/approval-flows', requireApiPermission('system_config'), asyncHandler((req, res) => {
   const d = req.body;
@@ -1288,18 +1535,67 @@ app.post('/api/approval-flows', requireApiPermission('system_config'), asyncHand
     if (!role) return res.status(400).json({ error: '第 ' + lvl + ' 级审批用户「' + u.name + '」绑定的角色不存在' });
     let perms = [];
     try { perms = JSON.parse(role.permissions || '[]'); } catch (e) { perms = []; }
-    if (!perms.includes('po_approve')) return res.status(400).json({ error: '第 ' + lvl + ' 级审批用户「' + u.name + '」的角色「' + role.name + '」不具备 po_approve 权限，不可选为审批人' });
-    // 后端写入真实快照，丢弃前端伪造的姓名/角色
-    validated.push({ level: lvl, approver_user_id: u.id, approver_name: u.name, approver_role_id: u.role_id });
+    // PAY-CORE 补充：按 business_type 动态校验权限（po→po_approve；PAY-CORE 6 类→payment_approve）
+    const requiredPerm = approvalRequiredPermission(businessType);
+    if (!perms.includes(requiredPerm)) return res.status(400).json({ error: '第 ' + lvl + ' 级审批用户「' + u.name + '」的角色「' + role.name + '」不具备 ' + requiredPerm + ' 权限，不可选为审批人' });
+    // PAY-CORE Phase 1：节点 CC 校验——必须是 active 用户的 id 数组（不要求 payment_approve 权限，仅作通知收件人）
+    let ccUserIds = [];
+    if (Array.isArray(lv.cc_user_ids)) {
+      for (const ccUid of lv.cc_user_ids) {
+        const ccU = queryOne('SELECT id, name, status FROM users WHERE id = ?', [ccUid]);
+        if (!ccU) return res.status(400).json({ error: '第 ' + lvl + ' 级节点 CC 用户不存在（id=' + ccUid + '）' });
+        if (ccU.status !== 'active') return res.status(400).json({ error: '第 ' + lvl + ' 级节点 CC 用户「' + ccU.name + '」状态非 active' });
+        if (!ccUserIds.includes(ccU.id)) ccUserIds.push(ccU.id);
+      }
+    }
+    // 后端写入真实快照，丢弃前端伪造的姓名/角色；保留规范化后的 cc_user_ids
+    validated.push({ level: lvl, approver_user_id: u.id, approver_name: u.name, approver_role_id: u.role_id, cc_user_ids: ccUserIds });
   }
 
-  run(`INSERT INTO approval_flows (id, name, business_type, levels, is_enabled) VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET name=excluded.name, business_type=excluded.business_type, levels=excluded.levels, is_enabled=excluded.is_enabled`,
-    [fId, name, businessType, JSON.stringify(validated), isEnabled]);
+  // PAY-CORE Phase 1：完成 CC 校验——必须是 active 用户的 id 数组（不要求 payment_approve 权限）
+  let completionCcUserIds = [];
+  if (Array.isArray(d.completion_cc_user_ids)) {
+    for (const ccUid of d.completion_cc_user_ids) {
+      const ccU = queryOne('SELECT id, name, status FROM users WHERE id = ?', [ccUid]);
+      if (!ccU) return res.status(400).json({ error: '完成 CC 用户不存在（id=' + ccUid + '）' });
+      if (ccU.status !== 'active') return res.status(400).json({ error: '完成 CC 用户「' + ccU.name + '」状态非 active' });
+      if (!completionCcUserIds.includes(ccU.id)) completionCcUserIds.push(ccU.id);
+    }
+  }
+
+  run(`INSERT INTO approval_flows (id, name, business_type, levels, is_enabled, completion_cc_user_ids) VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET name=excluded.name, business_type=excluded.business_type, levels=excluded.levels, is_enabled=excluded.is_enabled, completion_cc_user_ids=excluded.completion_cc_user_ids`,
+    [fId, name, businessType, JSON.stringify(validated), isEnabled, JSON.stringify(completionCcUserIds)]);
+
+  // 2026-07-29：审批流保存后，将待审的 approval_records 审批人快照同步为最新配置
+  // 这样管理员修改审批流后，所有 pending 的付款申请自动更新审批人，无需重新提交
+  try {
+    const pendingRecords = query(
+      `SELECT id, approvers FROM approval_records WHERE business_type = ? AND status = 'pending'`,
+      [businessType]
+    );
+    if (pendingRecords && pendingRecords.length > 0) {
+      const newSnapshot = { levels: validated, completion_cc_user_ids: completionCcUserIds };
+      const newSnapshotJson = JSON.stringify(newSnapshot);
+      for (const rec of pendingRecords) {
+        // 保留原有 current_level 和 max_level，仅更新审批人快照
+        // 如果新配置的级次数少于当前 current_level，不强制回退（由管理员自行判断）
+        run(`UPDATE approval_records SET approvers = ?, max_level = ?, updated_at = datetime('now') WHERE id = ?`,
+          [newSnapshotJson, validated.length, rec.id]);
+        console.log('[APPROVAL-FLOW-SYNC] 已同步 pending approval_record ' + rec.id + ' 的审批人快照（business_type=' + businessType + '）');
+      }
+    }
+  } catch (syncErr) {
+    // 同步失败不阻断审批流保存，仅日志记录
+    console.error('[APPROVAL-FLOW-SYNC] 同步 pending 审批记录失败：' + syncErr.message);
+  }
+
   res.json({ success: true, id: fId });
 }));
 
-// N5: 审批流配置页下拉数据源——仅返回具备 po_approve 的 active 系统用户（复用系统管理用户）
+// N5: 审批流配置页下拉数据源——返回具备 po_approve 或 payment_approve 的 active 系统用户（复用系统管理用户）
+// PAY-CORE 补充：原仅返回 po_approve 用户，付款审批流配置页拿不到候选人；现返回合集并附带权限标记，
+// 前端可按 business_type 自行筛选（PO→po_approve；PAY-CORE 6 类→payment_approve）。不修改前端调用约定。
 app.get('/api/approval-candidates', requireApiPermission('system_config'), asyncHandler((req, res) => {
   try {
     const users = query(`SELECT u.id, u.name, u.username, u.role_id, r.name AS role_name, r.permissions
@@ -1309,9 +1605,18 @@ app.get('/api/approval-candidates', requireApiPermission('system_config'), async
       .filter(u => {
         let perms = [];
         try { perms = JSON.parse(u.permissions || '[]'); } catch (e) { perms = []; }
-        return perms.includes('po_approve');
+        return perms.includes('po_approve') || perms.includes('payment_approve');
       })
-      .map(u => ({ id: u.id, name: u.name, username: u.username, role_id: u.role_id, role_name: u.role_name || u.role_id || '' }));
+      .map(u => {
+        let perms = [];
+        try { perms = JSON.parse(u.permissions || '[]'); } catch (e) { perms = []; }
+        return {
+          id: u.id, name: u.name, username: u.username, role_id: u.role_id, role_name: u.role_name || u.role_id || '',
+          // 权限标记：前端按 business_type 筛选展示；后端 POST 校验仍以 approvalRequiredPermission 为准
+          has_po_approve: perms.includes('po_approve'),
+          has_payment_approve: perms.includes('payment_approve')
+        };
+      });
     res.json(out);
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
@@ -2272,13 +2577,15 @@ async function updateInventoryTransitData() {
   // 先全量清零（保证被作废/删除后贡献降为 0 的 SKU 也能回落，而非残留旧值），再按活跃单据聚合写入
   await run('UPDATE inventory SET in_transit_qty = 0');
   const transitData = (await query(`
-    SELECT cii.sku_code, l.target_country as country, l.target_warehouse as warehouse,
+    SELECT cii.sku_code, ci.country, ci.target_warehouse as warehouse,
            SUM(cii.shipped_qty - cii.inbound_qty) as in_transit_qty
     FROM commercial_invoice_items cii
     JOIN commercial_invoices ci ON cii.ci_id = ci.id
-    JOIN logistics_batches l ON l.related_ci_id = ci.id
-    WHERE ci.ci_status NOT IN ('cancelled') AND (cii.shipped_qty - cii.inbound_qty) > 0
-    GROUP BY cii.sku_code, l.target_country, l.target_warehouse
+    WHERE ci.ci_status NOT IN ('cancelled')
+      AND (cii.shipped_qty - cii.inbound_qty) > 0
+      AND ci.country IS NOT NULL AND ci.country != ''
+      AND ci.target_warehouse IS NOT NULL AND ci.target_warehouse != ''
+    GROUP BY cii.sku_code, ci.country, ci.target_warehouse
   `)).rows;
 
   for (const td of transitData) {
@@ -2292,13 +2599,18 @@ async function updateInventoryTransitData() {
   // PI已确认未发货
   await run('UPDATE inventory SET pi_confirmed_unshipped_qty = 0');
   const piData = (await query(`
-    SELECT pii.sku_code, po.country, po.target_warehouse as warehouse,
+    SELECT pii.sku_code,
+           COALESCE(NULLIF(pi.country,''), po.country) as country,
+           COALESCE(NULLIF(pi.target_warehouse,''), po.target_warehouse) as warehouse,
            SUM(pii.pi_confirmed_qty - pii.shipped_qty) as pi_unshipped
     FROM proforma_invoice_items pii
     JOIN proforma_invoices pi ON pii.pi_id = pi.id
-    JOIN purchase_orders po ON pi.related_po_id = po.id
-    WHERE pi.pi_status NOT IN ('cancelled', 'completed') AND (pii.pi_confirmed_qty - pii.shipped_qty) > 0
-    GROUP BY pii.sku_code, po.country, po.target_warehouse
+    LEFT JOIN purchase_orders po ON pi.related_po_id = po.id
+    WHERE pi.pi_status NOT IN ('cancelled', 'completed')
+      AND (pii.pi_confirmed_qty - pii.shipped_qty) > 0
+    GROUP BY pii.sku_code,
+             COALESCE(NULLIF(pi.country,''), po.country),
+             COALESCE(NULLIF(pi.target_warehouse,''), po.target_warehouse)
   `)).rows;
 
   for (const pd of piData) {
@@ -2831,6 +3143,7 @@ function _buildValidDate(yStr, mStr, dStr) {
 //   3. 含 / 且第一段4位 → YYYY/M/D 或 YYYY/MM/DD
 //   4. 含 / 且第一段非4位 → M/D/YYYY 或 M/D/YY（两位年份 00-69→2000s，70-99→1900s）
 function salesOrderDateExpr(col = 'order_date') {
+  // 截取第一段（到第一个 / 之前），用于判断年份在前还是后
   // 使用 strpos 以兼容 PostgreSQL；SQLite 通过 db-sqlite.js 注册同名函数
   const firstSeg = `substr(${col}, 1, strpos(${col} || '/', '/') - 1)`;
   // 第二段：去掉第一段后的剩余，取到下一个 / 之前
@@ -2932,14 +3245,14 @@ function getBrandStatusMap() {
   return map;
 }
 
-// 是否已过新品保护期。参考日期优先级：launch_date > first_inbound_date > first_sale_date
+// 新品保护：按 SKU 保护期配置，以上市/首次入库/首次销售的最早可用业务日期为基准。
 function isPassedNewProductProtection(o, now) {
   const days = (o.new_product_protection_days != null && !isNaN(o.new_product_protection_days)) ? o.new_product_protection_days : 90;
   const refRaw = (o.launch_date && String(o.launch_date).trim())
     || (o.first_inbound_date && String(o.first_inbound_date).trim())
     || (o.first_sale_date && String(o.first_sale_date).trim())
     || '';
-  if (!refRaw) return !(o.is_new_product === 1); // 无参考日期：标记新品视为未过，否则视为已过
+  if (!refRaw) return !(o.is_new_product === 1);
   const ref = new Date(refRaw);
   if (isNaN(ref.getTime())) return !(o.is_new_product === 1);
   const diffDays = Math.floor((now - ref) / 86400000);
@@ -3013,17 +3326,45 @@ function shouldBlockReplenish(sales_status, risk_tags) {
   return false;
 }
 
+// 冻结建议公式：总建议=max(0,线上目标+线下目标-库存池)，再拆分为线上/线下两个整型分量。
+// 库存池是共享供应，不生成“其他渠道”需求；两个分量之和必须严格等于总建议。
+function calculateSuggestion(onlineTargetStock, offlineTargetStock, totalInventoryPool, blocked) {
+  const onlineTarget = Math.max(0, Math.round(Number(onlineTargetStock) || 0));
+  const offlineTarget = Math.max(0, Math.round(Number(offlineTargetStock) || 0));
+  const totalTarget = onlineTarget + offlineTarget;
+  const totalSuggested = blocked ? 0 : Math.max(0, totalTarget - Math.max(0, Number(totalInventoryPool) || 0));
+  const onlineSuggested = totalTarget > 0 ? Math.round(totalSuggested * onlineTarget / totalTarget) : 0;
+  return {
+    suggested_qty: totalSuggested,
+    online_suggested_qty: onlineSuggested,
+    offline_suggested_qty: totalSuggested - onlineSuggested,
+    other_suggested_qty: 0
+  };
+}
+
+function buildSuggestionText(salesStatus, lifecycleStatus, suggestedQty, brandStopped) {
+  const lifecycle = lifecycleStatus || 'stable';
+  if (brandStopped || salesStatus === '停采/清库存' || salesStatus === '停采/停产' || lifecycle === 'clearance' || lifecycle === 'stopped') {
+    return '停止采购，优先消化现有库存';
+  }
+  if (lifecycle === 'new_test') return '新品测试期，暂不自动生成采购建议';
+  if (lifecycle === 'new_launch') return '新品导入期，建议人工复核采购数量';
+  if (salesStatus === '呆滞') return '近30天无销量，建议清库存并暂停采购';
+  if (salesStatus === '慢销') return '库存周转偏高，建议观察并谨慎采购';
+  return suggestedQty > 0 ? `建议采购 ${suggestedQty}` : '当前库存池充足，建议观察';
+}
+
 // 统一动销状态判定（纯函数，不查库）
 // 输入 o: { lifecycle_status, is_new_product, launch_date, first_inbound_date, first_sale_date,
-//          new_product_protection_days, available, avg_sales_4m, sales_30d, sales_90d, total_sales_ever,
+//          new_product_protection_days, available, avg_sales_period, sales_30d, sales_90d, total_sales_ever,
 //          days_since_last_inbound, last_inbound_date, target_months }
 // 输出: { sales_status, risk_tags[], sales_reason, action, ai_business_advice }
-// 判断顺序：生命周期/新品 → 缺货/缺货风险 → 呆滞 → 慢销 → 高库存/高库龄 → 正常
+// 判断顺序：生命周期/新品保护 → 无有效销售 → 缺货/缺货风险 → 呆滞 → 慢销 → 正常
 function classifySkuState(o) {
   const now = new Date();
   const lc = (o.lifecycle_status || 'stable').trim();
   const available = o.available || 0;
-  const avg = o.avg_sales_4m || 0;
+  const avg = o.avg_sales_period != null ? o.avg_sales_period : (o.avg_sales_4m || 0);
   const target = o.target_months || 3;
   const availTurnover = avg > 0 ? (available / avg) : null; // null=无销量无法计算
   const passedProtection = isPassedNewProductProtection(o, now);
@@ -3031,6 +3372,7 @@ function classifySkuState(o) {
   const stockoutRisk = available > 0 && avg > 0 && availTurnover !== null && availTurnover < 0.5;
   const daysSinceInbound = (o.days_since_last_inbound != null) ? o.days_since_last_inbound : null;
   const hasInboundDate = !!(o.last_inbound_date && String(o.last_inbound_date).trim());
+  const totalSalesEver = (o.total_sales_ever || 0);
 
   let sales_status = '正常动销';
   let sales_reason = '销量与周转正常';
@@ -3041,15 +3383,15 @@ function classifySkuState(o) {
     sales_status = '停采/停产'; sales_reason = '生命周期为停采/停产';
   } else if (!passedProtection) {
     sales_status = '新品/销售数据不足'; sales_reason = '尚在新品保护期内，销售时间不足';
-  } else if ((o.total_sales_ever || 0) === 0) {
+  } else if (totalSalesEver === 0) {
     sales_status = '无有效销售'; sales_reason = '已过新品保护期，但历史无有效销量';
   } else if (stockout) {
     sales_status = '缺货'; sales_reason = '当前可用库存为0，近期销量可能被缺货压低';
   } else if (stockoutRisk) {
     sales_status = '缺货风险'; sales_reason = '可用库存周转<0.5个月，近期销量可能被缺货压低';
-  } else if ((o.sales_30d || 0) === 0 && available > 0 && passedProtection) {
+  } else if ((o.sales_30d || 0) === 0 && available > 0) {
     sales_status = '呆滞'; sales_reason = '近30天无有效销量且仍有库存';
-  } else if ((o.sales_90d || 0) > 0 && availTurnover !== null && availTurnover > target * 2 && passedProtection && !stockoutRisk) {
+  } else if ((o.sales_90d || 0) > 0 && availTurnover !== null && availTurnover > target * 2 && !stockoutRisk) {
     sales_status = '慢销'; sales_reason = '有销量但周转超目标2倍';
   } else {
     sales_status = '正常动销'; sales_reason = '销量与周转正常';
@@ -3083,7 +3425,7 @@ function classifySkuState(o) {
   return { sales_status, risk_tags, sales_reason, action, ai_business_advice };
 }
 
-// 订单预测页面用户偏好归一化
+// 订单预测页面用户偏好：仅保存稳定筛选值与视图选择，不复用全局系统配置。
 function normalizeForecastPagePreferences(raw) {
   const source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
   const cleanText = (value, maxLength = 200) => String(value || '').trim().slice(0, maxLength);
@@ -3107,13 +3449,13 @@ function normalizeForecastPagePreferences(raw) {
   };
 }
 
-// 订单预测/补货建议页面用户偏好设置
 app.get('/api/replenishment-suggestions/preferences', requireApiPermission('replenishment_view'), asyncHandler((req, res) => {
   const row = queryOne('SELECT preferences FROM forecast_page_preferences WHERE user_id = ?', [req.currentUserId]);
   let parsed = {};
   try { parsed = row ? JSON.parse(row.preferences || '{}') : {}; } catch (e) {}
   res.json({ preferences: normalizeForecastPagePreferences(parsed) });
 }));
+
 app.put('/api/replenishment-suggestions/preferences', requireApiPermission('replenishment_view'), asyncHandler((req, res) => {
   const preferences = normalizeForecastPagePreferences(req.body && req.body.preferences);
   const now = new Date().toISOString();
@@ -3123,42 +3465,92 @@ app.put('/api/replenishment-suggestions/preferences', requireApiPermission('repl
   res.json({ success: true, preferences });
 }));
 
+// 订单预测展示层统一读取 inventory 当前事实；不写回预测快照，不改变生成/分类/建议采购逻辑。
+function applyLiveForecastInventory(row) {
+  const hasInventoryRow = row.inv_row_id != null;
+  const available = hasInventoryRow ? row.inv_available_qty : 0;
+  const inTransit = hasInventoryRow ? row.inv_in_transit_qty : 0;
+  const piUnshipped = hasInventoryRow ? row.inv_pi_confirmed_unshipped_qty : 0;
+  const poUnconfirmed = hasInventoryRow ? row.inv_po_unconfirmed_pi_qty : 0;
+  row.available_qty = available || 0;
+  row.in_transit_qty = inTransit || 0;
+  row.pi_confirmed_unshipped_qty = piUnshipped || 0;
+  row.po_unconfirmed_pi_qty = poUnconfirmed || 0;
+  // 冻结库存池展示口径：当前可用 + CI 已发货在途 + PI 已确认未发货；未确认 PO 不计入。
+  row.total_inventory_pool = row.available_qty + row.in_transit_qty + row.pi_confirmed_unshipped_qty;
+  delete row.inv_row_id;
+  delete row.inv_available_qty;
+  delete row.inv_in_transit_qty;
+  delete row.inv_pi_confirmed_unshipped_qty;
+  delete row.inv_po_unconfirmed_pi_qty;
+  return row;
+}
+
 // 补货建议汇总统计（用于SKU动销与订单预测页面顶部指标卡）
 app.get('/api/replenishment-suggestions/summary', requireApiPermission('replenishment_view'), asyncHandler((req, res) => {
-  const { country, warehouse, brand } = req.query;
+  const { country, warehouse, brand, keyword, sales_status, lifecycle_status } = req.query;
   let where = '';
   const params = [];
   if (country) { where += (where ? ' AND' : ' WHERE') + ' rs.country = ?'; params.push(country); }
   if (warehouse) { where += (where ? ' AND' : ' WHERE') + ' rs.target_warehouse = ?'; params.push(warehouse); }
   if (brand) { where += (where ? ' AND' : ' WHERE') + ' s.brand = ?'; params.push(brand); }
-  const rows = query(`SELECT rs.* FROM replenishment_suggestions rs LEFT JOIN skus s ON rs.sku_code = s.sku_code${where}`, params).rows;
+  if (keyword) { where += (where ? ' AND' : ' WHERE') + ' (rs.sku_code LIKE ? OR s.product_name LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`); }
+  if (sales_status) { where += (where ? ' AND' : ' WHERE') + ' rs.sales_status = ?'; params.push(sales_status); }
+  if (lifecycle_status) { where += (where ? ' AND' : ' WHERE') + ' rs.lifecycle_status = ?'; params.push(lifecycle_status); }
+  const rows = query(`SELECT rs.*,
+      i.id AS inv_row_id,
+      i.available_qty AS inv_available_qty,
+      i.in_transit_qty AS inv_in_transit_qty,
+      i.pi_confirmed_unshipped_qty AS inv_pi_confirmed_unshipped_qty,
+      i.po_unconfirmed_pi_qty AS inv_po_unconfirmed_pi_qty
+    FROM replenishment_suggestions rs
+    LEFT JOIN skus s ON rs.sku_code = s.sku_code
+    LEFT JOIN inventory i ON rs.sku_code = i.sku_code AND rs.country = i.country AND rs.target_warehouse = i.warehouse${where}`, params).rows.map(applyLiveForecastInventory);
   const totalSkus = rows.length;
   const totalPool = rows.reduce((s, r) => s + (r.total_inventory_pool || 0), 0);
   const totalSales4m = rows.reduce((s, r) => s + (r.sales_m1 || 0) + (r.sales_m2 || 0) + (r.sales_m3 || 0) + (r.sales_m4 || 0), 0);
   const avgSales4m = rows.length > 0 ? rows.reduce((s, r) => s + (r.avg_sales_4m || 0), 0) / rows.length : 0;
-  // D1：按销量统计周期计算的月均销量（仅展示层使用）；预计周转月数仍沿用 4 个月口径
-  const avgSalesPeriod = rows.length > 0 ? rows.reduce((s, r) => s + (r.avg_sales_period || 0), 0) / rows.length : 0;
-  // 预计周转月数（展示口径=销量统计周期 period）：只统计月均销量>0的动销SKU，排除无销量SKU避免失真
-  // ⚠️ 仅改展示口径，不影响 target_stock / suggested_qty / PUT 重算 / PO 链路（采购仍按 4 个月口径）
+  const salesStatsDays = parseInt(queryOne("SELECT value FROM system_config WHERE key = 'sales_stats_days'")?.value || '90');
+  const salesPeriodMonths = salesStatsDays > 0 ? salesStatsDays / 30 : 3;
+  // 顶部周期总销量与周期月均必须来自同一批预测快照：
+  // 60/90/120 天总销量 = 各 SKU 周期月均之和 × 2/3/4；
+  // 页面月均 = 同一个周期总销量 ÷ 2/3/4，不再计算“每 SKU 平均月销”。
+  const totalSalesPeriod = Math.round(rows.reduce((s, r) => s + (r.avg_sales_period || 0) * salesPeriodMonths, 0));
+  const avgSalesPeriod = salesPeriodMonths > 0 ? totalSalesPeriod / salesPeriodMonths : 0;
+  // 预计周转月数统一采用系统销量统计周期；无销量 SKU 不参与平均周转分母。
   const activeSkus = rows.filter(r => (r.avg_sales_period || 0) > 0);
   const activePool = activeSkus.reduce((s, r) => s + (r.total_inventory_pool || 0), 0);
   const activeAvgSales = activeSkus.reduce((s, r) => s + (r.avg_sales_period || 0), 0);
   const overallTurnover = activeAvgSales > 0 ? activePool / activeAvgSales : 99;
+  // 顶部库存健康概览：仅基于现有预测快照做展示聚合，不写回、不参与建议采购或分类。
+  const currentInventory = rows.reduce((s, r) => s + (r.available_qty || 0), 0);
+  const inTransitInventory = rows.reduce((s, r) => s + (r.in_transit_qty || 0), 0);
+  const confirmedUnshippedInventory = rows.reduce((s, r) => s + (r.pi_confirmed_unshipped_qty || 0), 0);
+  const totalMonthlySales = rows.reduce((s, r) => s + (r.avg_sales_period || 0), 0);
+  const displayTurnover = quantity => totalMonthlySales > 0 ? Math.round(quantity / totalMonthlySales * 10) / 10 : null;
+  const currentInventoryTurnover = displayTurnover(currentInventory);
+  const afterTransitTurnover = displayTurnover(currentInventory + inTransitInventory);
+  const afterOrderTurnover = displayTurnover(currentInventory + inTransitInventory + confirmedUnshippedInventory);
   const needReplenish = rows.filter(r => (r.suggested_qty || 0) > 0 && (r.lifecycle_status || '') !== 'clearance').length;
   const stockoutRisk = rows.filter(r => (r.risk_level || '') === '严重缺货' || (r.risk_level || '') === '缺货风险').length;
-  const highStock = rows.filter(r => (r.risk_level || '') === '库存偏高' || (r.sales_group || '') === '滞销').length;
+  const stagnant = rows.filter(r => (r.sales_status || '') === '呆滞').length;
+  const slowSales = rows.filter(r => (r.sales_status || '') === '慢销').length;
+  const highStock = rows.filter(r => (r.risk_level || '') === '库存偏高' || normalizeRiskTags(r.risk_tags).some(t => t === '高库存关注' || t === '高库存严重')).length;
   res.json({
-    totalSkus, totalPool, totalSales4m,
+    totalSkus, totalPool, totalSales4m, totalSalesPeriod,
+    salesStatsDays,
     avgSales4m: Math.round(avgSales4m * 100) / 100,
     avgSalesPeriod: Math.round(avgSalesPeriod * 100) / 100,
     overallTurnover: Math.round(overallTurnover * 10) / 10,
-    needReplenish, stockoutRisk, highStock
+    currentInventory, inTransitInventory, confirmedUnshippedInventory,
+    currentInventoryTurnover, afterTransitTurnover, afterOrderTurnover,
+    needReplenish, stockoutRisk, stagnant, slowSales, highStock
   });
 }));
 
 // 按天销量明细
 app.get('/api/replenishment-suggestions/daily-sales', requireApiPermission('replenishment_view'), asyncHandler((req, res) => {
-  const { country, warehouse, brand, keyword } = req.query;
+  const { country, warehouse, brand, keyword, sales_status, lifecycle_status } = req.query;
   // 取近30天每天的日期
   const now = new Date();
   const dates = [];
@@ -3167,14 +3559,25 @@ app.get('/api/replenishment-suggestions/daily-sales', requireApiPermission('repl
     dates.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
   }
   // 取所有补货建议的SKU列表
-  let sql = `SELECT rs.*, s.product_name, s.brand, s.category, s.model, s.qty_per_carton FROM replenishment_suggestions rs LEFT JOIN skus s ON rs.sku_code = s.sku_code WHERE 1=1`;
+  let sql = `SELECT rs.*, s.product_name, s.brand, s.category, s.model, s.qty_per_carton,
+      i.id AS inv_row_id,
+      i.available_qty AS inv_available_qty,
+      i.in_transit_qty AS inv_in_transit_qty,
+      i.pi_confirmed_unshipped_qty AS inv_pi_confirmed_unshipped_qty,
+      i.po_unconfirmed_pi_qty AS inv_po_unconfirmed_pi_qty
+    FROM replenishment_suggestions rs
+    LEFT JOIN skus s ON rs.sku_code = s.sku_code
+    LEFT JOIN inventory i ON rs.sku_code = i.sku_code AND rs.country = i.country AND rs.target_warehouse = i.warehouse
+    WHERE 1=1`;
   const params = [];
   if (country) { sql += ' AND rs.country = ?'; params.push(country); }
   if (warehouse) { sql += ' AND rs.target_warehouse = ?'; params.push(warehouse); }
   if (brand) { sql += ' AND s.brand = ?'; params.push(brand); }
   if (keyword) { sql += ' AND (rs.sku_code LIKE ? OR s.product_name LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`); }
+  if (sales_status) { sql += ' AND rs.sales_status = ?'; params.push(sales_status); }
+  if (lifecycle_status) { sql += ' AND rs.lifecycle_status = ?'; params.push(lifecycle_status); }
   sql += ' ORDER BY rs.sku_code';
-  const skus = query(sql, params).rows;
+  const skus = query(sql, params).rows.map(applyLiveForecastInventory);
 
   // 查近30天出库记录，按SKU+日期聚合
   const skuCodes = skus.map(s => s.sku_code);
@@ -3240,23 +3643,129 @@ app.get('/api/replenishment-suggestions/daily-sales', requireApiPermission('repl
   res.json({ dates, skus: result });
 }));
 
+// 历史销售查看 — 仅用于字段配置面板中查看指定时间段销量，不参与任何预测计算
+app.get('/api/replenishment-suggestions/historical-sales', requireApiPermission('replenishment_view'), asyncHandler((req, res) => {
+  const { mode, start, end, country, warehouse, brand, keyword, sales_status, lifecycle_status } = req.query;
+  if (!mode || !start || !end) {
+    return res.status(400).json({ error: 'mode, start, end are required' });
+  }
+  if (mode !== 'monthly' && mode !== 'daily') {
+    return res.status(400).json({ error: 'mode must be "monthly" or "daily"' });
+  }
+
+  // 获取当前筛选条件下的 SKU 列表
+  let skuSql = `SELECT DISTINCT rs.sku_code, s.product_name, s.brand, s.model FROM replenishment_suggestions rs LEFT JOIN skus s ON rs.sku_code = s.sku_code WHERE 1=1`;
+  const skuParams = [];
+  if (country) { skuSql += ' AND rs.country = ?'; skuParams.push(country); }
+  if (warehouse) { skuSql += ' AND rs.target_warehouse = ?'; skuParams.push(warehouse); }
+  if (brand) { skuSql += ' AND s.brand = ?'; skuParams.push(brand); }
+  if (keyword) { skuSql += ' AND (rs.sku_code LIKE ? OR s.product_name LIKE ?)'; skuParams.push(`%${keyword}%`, `%${keyword}%`); }
+  if (sales_status) { skuSql += ' AND rs.sales_status = ?'; skuParams.push(sales_status); }
+  if (lifecycle_status) { skuSql += ' AND rs.lifecycle_status = ?'; skuParams.push(lifecycle_status); }
+  const skuRows = query(skuSql, skuParams).rows;
+  const skuCodes = skuRows.map(r => r.sku_code);
+  if (skuCodes.length === 0) {
+    return res.json({ success: true, mode, range: { start, end }, columns: [], data: {} });
+  }
+
+  const salesDate = salesOrderDateExpr('order_date');
+  const placeholders = skuCodes.map(() => '?').join(',');
+
+  if (mode === 'monthly') {
+    // 按月查看：解析年月范围，逐个查询
+    const [sy, sm] = start.split('-').map(Number);
+    const [ey, em] = end.split('-').map(Number);
+    if (!sy || !sm || !ey || !em || sy > ey || (sy === ey && sm > em)) {
+      return res.status(400).json({ error: 'Invalid month range' });
+    }
+    const monthCols = [];
+    const cursor = new Date(sy, sm - 1, 1);
+    const endDate = new Date(ey, em - 1, 1);
+    while (cursor <= endDate) {
+      const y = cursor.getFullYear();
+      const m = String(cursor.getMonth() + 1).padStart(2, '0');
+      monthCols.push(`${y}-${m}`);
+      cursor.setMonth(cursor.getMonth() + 1);
+    }
+
+    // 批量查询：整个时间范围一次查
+    const fullStart = `${monthCols[0]}-01`;
+    const lastMonth = monthCols[monthCols.length - 1];
+    const [ly, lm] = lastMonth.split('-').map(Number);
+    const lastDay = new Date(ly, lm, 0).getDate();
+    const fullEnd = `${lastMonth}-${String(lastDay).padStart(2, '0')}`;
+
+    const salesRows = query(
+      `SELECT sku_code, substr(${salesDate}, 1, 7) as ym, SUM(quantity) as qty FROM sales_records WHERE sku_code IN (${placeholders}) AND ${salesDate} >= ? AND ${salesDate} <= ? AND is_valid_order = 1 GROUP BY sku_code, substr(${salesDate}, 1, 7)`,
+      [...skuCodes, fullStart, fullEnd]
+    ).rows;
+
+    const data = {};
+    skuCodes.forEach(code => {
+      data[code] = {};
+      monthCols.forEach(m => { data[code][m] = 0; });
+    });
+    salesRows.forEach(r => {
+      if (data[r.sku_code] && data[r.sku_code][r.ym] !== undefined) {
+        data[r.sku_code][r.ym] = r.qty;
+      }
+    });
+
+    return res.json({ success: true, mode: 'monthly', range: { start, end }, columns: monthCols, data });
+  }
+
+  if (mode === 'daily') {
+    // 按日查看：汇总指定日期范围的总销量
+    const startDate = start.length === 10 ? start : `${start}-01`;
+    const endDateCalc = end;
+    let actualEnd = end;
+    if (end.length === 10) {
+      actualEnd = end;
+    } else {
+      const [ey2, em2] = end.split('-').map(Number);
+      const ld = new Date(ey2, em2, 0).getDate();
+      actualEnd = `${end}-${String(ld).padStart(2, '0')}`;
+    }
+
+    const salesRows = query(
+      `SELECT sku_code, SUM(quantity) as qty FROM sales_records WHERE sku_code IN (${placeholders}) AND ${salesDate} >= ? AND ${salesDate} <= ? AND is_valid_order = 1 GROUP BY sku_code`,
+      [...skuCodes, start, actualEnd]
+    ).rows;
+
+    const data = {};
+    skuCodes.forEach(code => { data[code] = { total: 0 }; });
+    salesRows.forEach(r => { data[r.sku_code].total = r.qty; });
+
+    return res.json({
+      success: true,
+      mode: 'daily',
+      range: { start: start.length === 10 ? start : startDate, end: actualEnd },
+      total: salesRows.reduce((sum, r) => sum + r.qty, 0),
+      data
+    });
+  }
+}));
+
 app.get('/api/replenishment-suggestions', requireApiPermission('replenishment_view'), asyncHandler((req, res) => {
-  const { country, warehouse, brand, keyword } = req.query;
+  const { country, warehouse, brand, keyword, sales_status, lifecycle_status } = req.query;
   let sql = `SELECT rs.*, s.product_name, s.brand, s.category, s.model, s.standard_purchase_price, s.qty_per_carton, s.purchase_currency, i.last_inbound_date,
-    i.available_qty AS inv_available_qty,
-    i.in_transit_qty AS inv_in_transit_qty,
-    i.pi_confirmed_unshipped_qty AS inv_pi_confirmed_unshipped_qty,
-    i.po_unconfirmed_pi_qty AS inv_po_unconfirmed_pi_qty
+      i.id AS inv_row_id,
+      i.available_qty AS inv_available_qty,
+      i.in_transit_qty AS inv_in_transit_qty,
+      i.pi_confirmed_unshipped_qty AS inv_pi_confirmed_unshipped_qty,
+      i.po_unconfirmed_pi_qty AS inv_po_unconfirmed_pi_qty
     FROM replenishment_suggestions rs LEFT JOIN skus s ON rs.sku_code = s.sku_code LEFT JOIN inventory i ON rs.sku_code = i.sku_code AND rs.country = i.country AND rs.target_warehouse = i.warehouse WHERE 1=1`;
   const params = [];
   if (country) { sql += ' AND rs.country = ?'; params.push(country); }
   if (warehouse) { sql += ' AND rs.target_warehouse = ?'; params.push(warehouse); }
   if (brand) { sql += ' AND s.brand = ?'; params.push(brand); }
   if (keyword) { sql += ' AND (rs.sku_code LIKE ? OR s.product_name LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`); }
+  if (sales_status) { sql += ' AND rs.sales_status = ?'; params.push(sales_status); }
+  if (lifecycle_status) { sql += ' AND rs.lifecycle_status = ?'; params.push(lifecycle_status); }
   sql += ' ORDER BY rs.sku_code';
   const today = new Date();
   const todayStr = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
-  const rows = query(sql, params).rows.map(r => {
+  const rows = query(sql, params).rows.map(applyLiveForecastInventory).map(r => {
     let daysSince = null;
     if (r.last_inbound_date) {
       const d = new Date(r.last_inbound_date);
@@ -3265,18 +3774,6 @@ app.get('/api/replenishment-suggestions', requireApiPermission('replenishment_vi
       }
     }
     r.days_since_last_inbound = daysSince;
-    // 方案B（2026-07-11）：订单预测页 4 字段直接读 inventory 实时值，不再依赖 generate 快照。
-    // 仅覆盖 PO未确认PI / PI已确认未发货 / 在途 / 总库存池；inventory 行缺失时回退 rs 快照（兼容 D3 无库存行）。
-    // 不动 available_qty 列显示（仍读 rs 快照，归属逻辑不变），但总库存池用实时 available 作基数重算。
-    const liveAvail = (r.inv_available_qty != null) ? r.inv_available_qty : r.available_qty;
-    const liveTransit = (r.inv_in_transit_qty != null) ? r.inv_in_transit_qty : r.in_transit_qty;
-    const livePi = (r.inv_pi_confirmed_unshipped_qty != null) ? r.inv_pi_confirmed_unshipped_qty : r.pi_confirmed_unshipped_qty;
-    const livePo = (r.inv_po_unconfirmed_pi_qty != null) ? r.inv_po_unconfirmed_pi_qty : r.po_unconfirmed_pi_qty;
-    r.in_transit_qty = liveTransit;
-    r.pi_confirmed_unshipped_qty = livePi;
-    r.po_unconfirmed_pi_qty = livePo;
-    r.total_inventory_pool = (liveAvail || 0) + (liveTransit || 0) + (livePi || 0) + (livePo || 0);
-    delete r.inv_available_qty; delete r.inv_in_transit_qty; delete r.inv_pi_confirmed_unshipped_qty; delete r.inv_po_unconfirmed_pi_qty;
     return r;
   });
   // 按请求语言翻译展示层字段：仅 sales_reason / ai_business_advice（确定性最终说明文案）
@@ -3297,7 +3794,7 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
     const { country, warehouse, brand } = req.body;
     const targetMonths = parseFloat(queryOne("SELECT value FROM system_config WHERE key = 'target_stock_months'")?.value || '4');
     const leadTimeMonths = parseFloat(queryOne("SELECT value FROM system_config WHERE key = 'lead_time_months'")?.value || '2');
-    // D1：销量统计周期（天），仅用于计算 period 月均（展示层），默认 90
+    // 销量统计周期（天）：月均、周转、建议采购统一使用该口径。
     const salesStatsDays = parseInt(queryOne("SELECT value FROM system_config WHERE key = 'sales_stats_days'")?.value || '90');
     // 全局默认目标周转（预测参数设置维护），为空时回退品牌默认值
     const onlineDefault = parseFloat(queryOne("SELECT value FROM system_config WHERE key = 'online_target_turnover_default'")?.value || '0');
@@ -3398,8 +3895,8 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
         const offline_sales_m4 = offlineSalesMap.m4 || 0;
         const offline_avg_sales_4m = (offline_sales_m1 + offline_sales_m2 + offline_sales_m3 + offline_sales_m4) / 4;
 
-        // D1：销量统计周期月均（近 salesStatsDays 天有效销量 ÷ 天数 × 30），仅用于展示层
-        const periodStart = new Date(now.getTime() - salesStatsDays * 86400000).toISOString().split('T')[0];
+        // 销量统计周期月均：60/90/120 天有效销量分别 ÷ 2/3/4。
+        const periodStart = new Date(now.getTime() - Math.max(0, salesStatsDays - 1) * 86400000).toISOString().split('T')[0];
         const periodEnd = now.toISOString().split('T')[0];
         const totalPeriodSales = queryOne(
           `SELECT COALESCE(SUM(quantity), 0) as cnt FROM sales_records WHERE sku_code = ? AND ${salesDate} >= ? AND ${salesDate} <= ? AND is_valid_order = 1`,
@@ -3413,16 +3910,19 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
           `SELECT COALESCE(SUM(quantity), 0) as cnt FROM sales_records WHERE sku_code = ? AND ${salesDate} >= ? AND ${salesDate} <= ? AND is_valid_order = 1 AND (shop_platform LIKE '%线下%' OR lower(COALESCE(shop_platform, '')) = 'offline')`,
           [inv.sku_code, periodStart, periodEnd]
         )?.cnt || 0;
-        const avg_sales_period = salesStatsDays > 0 ? totalPeriodSales / salesStatsDays * 30 : 0;
-        const online_avg_sales_period = salesStatsDays > 0 ? onlinePeriodSales / salesStatsDays * 30 : 0;
-        const offline_avg_sales_period = salesStatsDays > 0 ? offlinePeriodSales / salesStatsDays * 30 : 0;
+        const salesPeriodMonths = salesStatsDays > 0 ? salesStatsDays / 30 : 3;
+        // 统一以落库精度参与后续计算，保证接口展示值可直接复算周转和建议量。
+        const avg_sales_period = Math.round(totalPeriodSales / salesPeriodMonths * 100) / 100;
+        const online_avg_sales_period = Math.round(onlinePeriodSales / salesPeriodMonths * 100) / 100;
+        const offline_avg_sales_period = Math.round(offlinePeriodSales / salesPeriodMonths * 100) / 100;
 
         const avail = inv.available_qty || 0;
         const transit = inv.in_transit_qty || 0;
         const piUnshipped = inv.pi_confirmed_unshipped_qty || 0;
         const poUnconfirmed = inv.po_unconfirmed_pi_qty || 0;
-        // 总库存池 = 可用 + 在途 + PI已确认未发货 + PO未确认PI（用于参考总未来供应，避免重复下单）
-        const total_inventory_pool = avail + transit + piUnshipped + poUnconfirmed;
+        // 冻结库存池：可用 + CI 已发货在途 + PI/PO 已确认未发货。
+        // poUnconfirmed 仅保留为参考字段，未确认 PO 不计入库存池，避免把潜在供应当成已确认供应。
+        const total_inventory_pool = avail + transit + piUnshipped;
 
         // 统一判定层所需指标
         const d30 = new Date(now.getTime() - 30 * 86400000).toISOString().split('T')[0];
@@ -3456,11 +3956,12 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
         const lifecycleCoeff = LIFECYCLE_COEFF[lifecycle] !== undefined ? LIFECYCLE_COEFF[lifecycle] : 1.0;
 
         // 当前周转（总月均=0时显示99，前端会处理为"无销量"）
-        const current_turnover_months = avg_sales_4m > 0 ? total_inventory_pool / avg_sales_4m : 99;
+        const current_turnover_months = avg_sales_period > 0 ? total_inventory_pool / avg_sales_period : 99;
 
         // existing_rs：读取历史 other_target_stock / final_order_qty（目标周转已在上文按维度命中/回退确定）
         const existing_rs = queryOne('SELECT id, online_target_turnover, offline_target_turnover, other_target_stock, final_order_qty, user_adjusted_qty FROM replenishment_suggestions WHERE sku_code = ? AND country = ? AND target_warehouse = ?', [inv.sku_code, inv.country, inv.warehouse]);
-        const other_target_stock = (existing_rs && existing_rs.other_target_stock != null) ? existing_rs.other_target_stock : 0;
+        // 当前业务仅有线上/线下；历史 other 字段保留兼容，但不参与本轮预测。
+        const other_target_stock = 0;
 
         // 缺货销量失真检测：如果近期销量骤降由缺货导致，用断货前最高月销量修正基准
         const onlineDist = detectStockoutDistortion(online_sales_m1, online_sales_m2, online_sales_m3, online_sales_m4, avail);
@@ -3471,7 +3972,7 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
         const offline_base_avg = offlineDist.isDistorted ? offlineDist.adjustedAvg : offline_avg_sales_period;
         const online_target_stock = Math.round(online_base_avg * online_target_turnover);
         const offline_target_stock = Math.round(offline_base_avg * offline_target_turnover);
-        const total_target_stock = online_target_stock + offline_target_stock + other_target_stock;
+        const total_target_stock = online_target_stock + offline_target_stock;
 
         // suggested_qty 在 classifyResult 之后经过业务拦截重新计算，此处先用临时值
         let suggested_qty = Math.round(Math.max(0, total_target_stock - total_inventory_pool));
@@ -3493,7 +3994,7 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
           risk_level = '清仓';
         } else if (lifecycle === 'stopped') {
           risk_level = '停产';
-        } else if (avg_sales_4m === 0) {
+        } else if (avg_sales_period === 0) {
           risk_level = '无销量';
         } else if (current_turnover_months < 1) {
           risk_level = '严重缺货';
@@ -3508,9 +4009,6 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
         // 预计到货月份
         const arrDate = new Date(now.getFullYear(), now.getMonth() + Math.ceil(leadTimeMonths), 1);
         const arrival_month = `${arrDate.getFullYear()}-${String(arrDate.getMonth() + 1).padStart(2, '0')}`;
-
-        // 建议动作（suggested_qty 确定后再计算）
-        let suggestion = '';
 
         // 动销分组
         let sales_group = '';
@@ -3528,7 +4026,7 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
           first_sale_date,
           new_product_protection_days: sku.new_product_protection_days,
           available: avail,
-          avg_sales_4m,
+          avg_sales_period,
           sales_30d,
           sales_90d,
           total_sales_ever,
@@ -3554,62 +4052,35 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
         const ai_business_advice = classifyResult.ai_business_advice;
 
         // === 最终建议采购数量（经过业务拦截）===
-        // 单源口径：拆成 线上/线下/其他 三个分量落库，suggested_qty = 三分量之和。
-        // 这样 总预测页(Σ suggested_qty) = 线上页(Σ online_suggested_qty) + 线下页(Σ offline_suggested_qty) + 其他页(Σ other_suggested_qty) 严格成立；
-        // other=0 时即满足「总预测 = 线上 + 线下」（整型分量分别取整后相加，无取整误差）。
+        // 冻结公式：max(0, 线上目标库存 + 线下目标库存 - 当前库存池)。
         const blocked = shouldBlockReplenish(sales_status, classifyResult.risk_tags);
-        let online_suggested_qty = 0, offline_suggested_qty = 0, other_suggested_qty = 0;
-        if (!blocked) {
-          // 渠道分摊库存（按销量占比分摊，与前端口径一致）
-          const online_pct = avg_sales_period > 0 ? (online_avg_sales_period / avg_sales_period) : 0;
-          const offline_pct = avg_sales_period > 0 ? (offline_avg_sales_period / avg_sales_period) : 0;
-          const online_allocated = Math.round(total_inventory_pool * online_pct);
-          const offline_allocated = Math.round(total_inventory_pool * offline_pct);
-          const online_base = Math.max(0, online_target_stock - online_allocated);
-          const offline_base = Math.max(0, offline_target_stock - offline_allocated);
-          const other_final = other_target_stock || 0;
-          online_suggested_qty = Math.round(online_base);
-          offline_suggested_qty = Math.round(offline_base);
-          other_suggested_qty = Math.round(other_final);
-        }
-        suggested_qty = online_suggested_qty + offline_suggested_qty + other_suggested_qty;
+        const suggestionParts = calculateSuggestion(online_target_stock, offline_target_stock, total_inventory_pool, blocked);
+        let online_suggested_qty = suggestionParts.online_suggested_qty;
+        let offline_suggested_qty = suggestionParts.offline_suggested_qty;
+        let other_suggested_qty = 0;
+        suggested_qty = suggestionParts.suggested_qty;
+
+        // 用户可见建议说明必须随快照刷新，不能清空。
+        let suggestion = buildSuggestionText(sales_status, lifecycle, suggested_qty, brandStopped);
         // 重新计算依赖 suggested_qty 的字段
         moqQty = (sku.qty_per_carton > 0 && suggested_qty > 0) ? Math.ceil(suggested_qty / sku.qty_per_carton) * sku.qty_per_carton : suggested_qty;
         final_order_qty = (existing_rs && existing_rs.final_order_qty != null && existing_rs.final_order_qty >= 0) ? existing_rs.final_order_qty : suggested_qty;
         after_order_turnover_months = avg_sales_period > 0 ? (total_inventory_pool + final_order_qty) / avg_sales_period : 99;
         onlineAfterOrder = online_avg_sales_period > 0 ? (total_inventory_pool + final_order_qty) / online_avg_sales_period : 99;
         offlineAfterOrder = offline_avg_sales_period > 0 ? (total_inventory_pool + final_order_qty) / offline_avg_sales_period : 99;
-        // 重新计算 suggestion
-        if (lifecycle === 'new_test') {
-          suggestion = '新品导入，不直接生成PO';
-        } else if (lifecycle === 'new_launch') {
-          suggestion = suggested_qty > 0 ? `新品启动，建议备货 ${suggested_qty}` : '新品启动，库存观察中';
-        } else if (lifecycle === 'stagnant') {
-          suggestion = '滞销SKU，暂缓补货';
-        } else if (lifecycle === 'clearance' || sku.status === 'clearance') {
-          suggestion = '清仓中，不建议补货';
-        } else if (lifecycle === 'stopped') {
-          suggestion = '停采/停产，不参与补货建议';
-        } else if (avg_sales_4m === 0) {
-          suggestion = '无销量数据';
-        } else if (suggested_qty > 0) {
-          suggestion = `建议采购 ${suggested_qty}`;
-        } else {
-          suggestion = '库存充足';
-        }
 
         // 品牌停采（系统级规则）后置覆盖：强制不补货、保持可见便于清库存
         if (brandStopped) {
           sales_status = '停采/清库存';
           sales_reason = '品牌已设为停采（停止合作），不参与补货建议，优先消化库存';
           action_text = '停止采购，优先清库存';
+          suggestion = buildSuggestionText(sales_status, lifecycle, 0, true);
           suggested_qty = 0;
           online_suggested_qty = 0;
           offline_suggested_qty = 0;
           other_suggested_qty = 0;
           final_order_qty = 0;
           moqQty = 0;
-          suggestion = '品牌已停采，不参与补货建议，优先消化库存';
           after_order_turnover_months = avg_sales_period > 0 ? total_inventory_pool / avg_sales_period : 99;
           onlineAfterOrder = online_avg_sales_period > 0 ? total_inventory_pool / online_avg_sales_period : 99;
           offlineAfterOrder = offline_avg_sales_period > 0 ? total_inventory_pool / offline_avg_sales_period : 99;
@@ -3636,8 +4107,8 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
              offline_sales_m1, offline_sales_m2, offline_sales_m3, offline_sales_m4, Math.round(offline_avg_sales_4m * 100) / 100,
              Math.round(current_turnover_months * 10) / 10, suggested_qty, online_suggested_qty, offline_suggested_qty, other_suggested_qty, moqQty, moqQty,
              Math.round(after_order_turnover_months * 10) / 10, Math.round(onlineAfterOrder * 10) / 10, Math.round(offlineAfterOrder * 10) / 10,
-             targetMonths, risk_level, arrival_month,
-             suggestion, sku.is_new_product === 1 ? 1 : 0, sku.lifecycle_status || '', sales_group,
+             targetMonths, risk_level, arrival_month, suggestion,
+             sku.is_new_product === 1 ? 1 : 0, sku.lifecycle_status || '', sales_group,
              online_target_turnover, offline_target_turnover,
              online_target_stock, offline_target_stock, other_target_stock,
              final_order_qty,
@@ -3698,52 +4169,42 @@ app.put('/api/replenishment-suggestions/:id', requireApiPermission('replenishmen
 
     // 线上目标周转 → 重算线上目标库存 + 三分量 + 系统建议补货 + 订单后周转（与 generate 同源）
     if (d.online_target_turnover !== undefined) {
-      const rs = queryOne('SELECT online_avg_sales_period, offline_avg_sales_period, offline_target_stock, other_target_stock, total_inventory_pool, avg_sales_period, sales_status, risk_tags, final_order_qty FROM replenishment_suggestions WHERE id = ?', [req.params.id]);
+      const rs = queryOne('SELECT online_avg_sales_period, offline_target_stock, total_inventory_pool, avg_sales_period, sales_status, risk_tags, final_order_qty, lifecycle_status FROM replenishment_suggestions WHERE id = ?', [req.params.id]);
       const onlineTurn = parseFloat(d.online_target_turnover) || 0;
       const onlineStock = Math.round((rs.online_avg_sales_period || 0) * onlineTurn);
       const pool = rs.total_inventory_pool || 0;
       const avgPeriod = rs.avg_sales_period || 0;
-      const onlinePct = avgPeriod > 0 ? (rs.online_avg_sales_period || 0) / avgPeriod : 0;
-      const offlinePct = avgPeriod > 0 ? (rs.offline_avg_sales_period || 0) / avgPeriod : 0;
       const blocked = shouldBlockReplenish(rs.sales_status || '', rs.risk_tags || '');
       const isStopped = (rs.sales_status || '') === '停采/清库存';
-      let onComp, offComp, otherComp;
-      if (blocked || isStopped) { onComp = 0; offComp = 0; otherComp = 0; }
-      else {
-        onComp = Math.round(Math.max(0, onlineStock - Math.round(pool * onlinePct)));
-        offComp = Math.round(Math.max(0, (rs.offline_target_stock || 0) - Math.round(pool * offlinePct)));
-        otherComp = Math.round(rs.other_target_stock || 0);
-      }
-      const suggestedQty = onComp + offComp + otherComp;
+      const parts = calculateSuggestion(onlineStock, rs.offline_target_stock || 0, pool, blocked || isStopped);
+      const onComp = parts.online_suggested_qty;
+      const offComp = parts.offline_suggested_qty;
+      const otherComp = 0;
+      const suggestedQty = parts.suggested_qty;
       const foq = (rs.final_order_qty != null && rs.final_order_qty >= 0) ? rs.final_order_qty : suggestedQty;
       const afterOrder = avgPeriod > 0 ? (pool + foq) / avgPeriod : 99;
-      fields.push('online_target_turnover = ?', 'online_target_stock = ?', 'online_suggested_qty = ?', 'offline_suggested_qty = ?', 'other_suggested_qty = ?', 'suggested_qty = ?', 'after_order_turnover_months = ?');
-      values.push(onlineTurn, onlineStock, onComp, offComp, otherComp, suggestedQty, Math.round(afterOrder * 10) / 10);
+      fields.push('online_target_turnover = ?', 'online_target_stock = ?', 'online_suggested_qty = ?', 'offline_suggested_qty = ?', 'other_suggested_qty = ?', 'suggested_qty = ?', 'after_order_turnover_months = ?', 'suggestion = ?');
+      values.push(onlineTurn, onlineStock, onComp, offComp, otherComp, suggestedQty, Math.round(afterOrder * 10) / 10, buildSuggestionText(rs.sales_status, rs.lifecycle_status, suggestedQty, isStopped));
     }
 
     // 线下目标周转 → 重算线下目标库存 + 三分量 + 系统建议补货 + 订单后周转（与 generate 同源）
     if (d.offline_target_turnover !== undefined) {
-      const rs = queryOne('SELECT offline_avg_sales_period, online_avg_sales_period, online_target_stock, other_target_stock, total_inventory_pool, avg_sales_period, sales_status, risk_tags, final_order_qty FROM replenishment_suggestions WHERE id = ?', [req.params.id]);
+      const rs = queryOne('SELECT offline_avg_sales_period, online_target_stock, total_inventory_pool, avg_sales_period, sales_status, risk_tags, final_order_qty, lifecycle_status FROM replenishment_suggestions WHERE id = ?', [req.params.id]);
       const offlineTurn = parseFloat(d.offline_target_turnover) || 0;
       const offlineStock = Math.round((rs.offline_avg_sales_period || 0) * offlineTurn);
       const pool = rs.total_inventory_pool || 0;
       const avgPeriod = rs.avg_sales_period || 0;
-      const onlinePct = avgPeriod > 0 ? (rs.online_avg_sales_period || 0) / avgPeriod : 0;
-      const offlinePct = avgPeriod > 0 ? (rs.offline_avg_sales_period || 0) / avgPeriod : 0;
       const blocked = shouldBlockReplenish(rs.sales_status || '', rs.risk_tags || '');
       const isStopped = (rs.sales_status || '') === '停采/清库存';
-      let onComp, offComp, otherComp;
-      if (blocked || isStopped) { onComp = 0; offComp = 0; otherComp = 0; }
-      else {
-        onComp = Math.round(Math.max(0, (rs.online_target_stock || 0) - Math.round(pool * onlinePct)));
-        offComp = Math.round(Math.max(0, offlineStock - Math.round(pool * offlinePct)));
-        otherComp = Math.round(rs.other_target_stock || 0);
-      }
-      const suggestedQty = onComp + offComp + otherComp;
+      const parts = calculateSuggestion(rs.online_target_stock || 0, offlineStock, pool, blocked || isStopped);
+      const onComp = parts.online_suggested_qty;
+      const offComp = parts.offline_suggested_qty;
+      const otherComp = 0;
+      const suggestedQty = parts.suggested_qty;
       const foq = (rs.final_order_qty != null && rs.final_order_qty >= 0) ? rs.final_order_qty : suggestedQty;
       const afterOrder = avgPeriod > 0 ? (pool + foq) / avgPeriod : 99;
-      fields.push('offline_target_turnover = ?', 'offline_target_stock = ?', 'online_suggested_qty = ?', 'offline_suggested_qty = ?', 'other_suggested_qty = ?', 'suggested_qty = ?', 'after_order_turnover_months = ?');
-      values.push(offlineTurn, offlineStock, onComp, offComp, otherComp, suggestedQty, Math.round(afterOrder * 10) / 10);
+      fields.push('offline_target_turnover = ?', 'offline_target_stock = ?', 'online_suggested_qty = ?', 'offline_suggested_qty = ?', 'other_suggested_qty = ?', 'suggested_qty = ?', 'after_order_turnover_months = ?', 'suggestion = ?');
+      values.push(offlineTurn, offlineStock, onComp, offComp, otherComp, suggestedQty, Math.round(afterOrder * 10) / 10, buildSuggestionText(rs.sales_status, rs.lifecycle_status, suggestedQty, isStopped));
     }
 
     // 最终下单数量 → 重算订单后周转
@@ -3760,50 +4221,40 @@ app.put('/api/replenishment-suggestions/:id', requireApiPermission('replenishmen
 
     // 线上建议采购数量（手动改线上目标库存）→ 重算线上分量 + 三分量（与 generate 同源）
     if (d.online_target_stock !== undefined) {
-      const rs = queryOne('SELECT online_avg_sales_period, offline_avg_sales_period, avg_sales_period, total_inventory_pool, offline_target_stock, other_target_stock, sales_status, risk_tags, final_order_qty FROM replenishment_suggestions WHERE id = ?', [req.params.id]);
+      const rs = queryOne('SELECT avg_sales_period, total_inventory_pool, offline_target_stock, sales_status, risk_tags, final_order_qty, lifecycle_status FROM replenishment_suggestions WHERE id = ?', [req.params.id]);
       const newOnlineStock = parseInt(d.online_target_stock) || 0;
       const pool = rs.total_inventory_pool || 0;
       const avgPeriod = rs.avg_sales_period || 0;
-      const onlinePct = avgPeriod > 0 ? (rs.online_avg_sales_period || 0) / avgPeriod : 0;
-      const offlinePct = avgPeriod > 0 ? (rs.offline_avg_sales_period || 0) / avgPeriod : 0;
       const blocked = shouldBlockReplenish(rs.sales_status || '', rs.risk_tags || '');
       const isStopped = (rs.sales_status || '') === '停采/清库存';
-      let onComp, offComp, otherComp;
-      if (blocked || isStopped) { onComp = 0; offComp = 0; otherComp = 0; }
-      else {
-        onComp = Math.round(Math.max(0, newOnlineStock - Math.round(pool * onlinePct)));
-        offComp = Math.round(Math.max(0, (rs.offline_target_stock || 0) - Math.round(pool * offlinePct)));
-        otherComp = Math.round(rs.other_target_stock || 0);
-      }
-      const suggestedQty = onComp + offComp + otherComp;
+      const parts = calculateSuggestion(newOnlineStock, rs.offline_target_stock || 0, pool, blocked || isStopped);
+      const onComp = parts.online_suggested_qty;
+      const offComp = parts.offline_suggested_qty;
+      const otherComp = 0;
+      const suggestedQty = parts.suggested_qty;
       const foq = (rs.final_order_qty != null && rs.final_order_qty >= 0) ? rs.final_order_qty : suggestedQty;
       const afterOrder = avgPeriod > 0 ? (pool + foq) / avgPeriod : 99;
-      fields.push('online_target_stock = ?', 'online_suggested_qty = ?', 'offline_suggested_qty = ?', 'other_suggested_qty = ?', 'suggested_qty = ?', 'after_order_turnover_months = ?');
-      values.push(newOnlineStock, onComp, offComp, otherComp, suggestedQty, Math.round(afterOrder * 10) / 10);
+      fields.push('online_target_stock = ?', 'online_suggested_qty = ?', 'offline_suggested_qty = ?', 'other_suggested_qty = ?', 'suggested_qty = ?', 'after_order_turnover_months = ?', 'suggestion = ?');
+      values.push(newOnlineStock, onComp, offComp, otherComp, suggestedQty, Math.round(afterOrder * 10) / 10, buildSuggestionText(rs.sales_status, rs.lifecycle_status, suggestedQty, isStopped));
     }
 
     // 线下建议采购数量（手动改线下目标库存）→ 重算线下分量 + 三分量（与 generate 同源）
     if (d.offline_target_stock !== undefined) {
-      const rs = queryOne('SELECT online_avg_sales_period, offline_avg_sales_period, avg_sales_period, total_inventory_pool, online_target_stock, other_target_stock, sales_status, risk_tags, final_order_qty FROM replenishment_suggestions WHERE id = ?', [req.params.id]);
+      const rs = queryOne('SELECT avg_sales_period, total_inventory_pool, online_target_stock, sales_status, risk_tags, final_order_qty, lifecycle_status FROM replenishment_suggestions WHERE id = ?', [req.params.id]);
       const newOfflineStock = parseInt(d.offline_target_stock) || 0;
       const pool = rs.total_inventory_pool || 0;
       const avgPeriod = rs.avg_sales_period || 0;
-      const onlinePct = avgPeriod > 0 ? (rs.online_avg_sales_period || 0) / avgPeriod : 0;
-      const offlinePct = avgPeriod > 0 ? (rs.offline_avg_sales_period || 0) / avgPeriod : 0;
       const blocked = shouldBlockReplenish(rs.sales_status || '', rs.risk_tags || '');
       const isStopped = (rs.sales_status || '') === '停采/清库存';
-      let onComp, offComp, otherComp;
-      if (blocked || isStopped) { onComp = 0; offComp = 0; otherComp = 0; }
-      else {
-        onComp = Math.round(Math.max(0, (rs.online_target_stock || 0) - Math.round(pool * onlinePct)));
-        offComp = Math.round(Math.max(0, newOfflineStock - Math.round(pool * offlinePct)));
-        otherComp = Math.round(rs.other_target_stock || 0);
-      }
-      const suggestedQty = onComp + offComp + otherComp;
+      const parts = calculateSuggestion(rs.online_target_stock || 0, newOfflineStock, pool, blocked || isStopped);
+      const onComp = parts.online_suggested_qty;
+      const offComp = parts.offline_suggested_qty;
+      const otherComp = 0;
+      const suggestedQty = parts.suggested_qty;
       const foq = (rs.final_order_qty != null && rs.final_order_qty >= 0) ? rs.final_order_qty : suggestedQty;
       const afterOrder = avgPeriod > 0 ? (pool + foq) / avgPeriod : 99;
-      fields.push('offline_target_stock = ?', 'online_suggested_qty = ?', 'offline_suggested_qty = ?', 'other_suggested_qty = ?', 'suggested_qty = ?', 'after_order_turnover_months = ?');
-      values.push(newOfflineStock, onComp, offComp, otherComp, suggestedQty, Math.round(afterOrder * 10) / 10);
+      fields.push('offline_target_stock = ?', 'online_suggested_qty = ?', 'offline_suggested_qty = ?', 'other_suggested_qty = ?', 'suggested_qty = ?', 'after_order_turnover_months = ?', 'suggestion = ?');
+      values.push(newOfflineStock, onComp, offComp, otherComp, suggestedQty, Math.round(afterOrder * 10) / 10, buildSuggestionText(rs.sales_status, rs.lifecycle_status, suggestedQty, isStopped));
     }
 
     // 调整原因
@@ -4248,7 +4699,14 @@ function parseAttachment(value) {
 function getPILockReason(pi) {
   if (!pi) return null;
   if (pi.pi_status === 'cancelled') return '已作废';
-  const ci = queryOne('SELECT id FROM commercial_invoices WHERE related_pi_id = ? OR related_pi_no = ? LIMIT 1', [pi.id, pi.pi_no]);
+  // 多 PI 改造：增加 ci_items.pi_id 维度（CI 明细来源 PI）
+  const ci = queryOne(`
+    SELECT ci.id FROM commercial_invoices ci
+    LEFT JOIN commercial_invoice_items cii ON cii.ci_id = ci.id
+    WHERE (ci.related_pi_id = ? OR ci.related_pi_no = ? OR cii.pi_id = ?)
+      AND ci.ci_status != 'cancelled'
+    LIMIT 1
+  `, [pi.id, pi.pi_no, pi.id]);
   if (ci) return '已生成CI';
   const pl = queryOne('SELECT id FROM packing_lists WHERE related_pi_id = ? OR related_pi_no = ? LIMIT 1', [pi.id, pi.pi_no]);
   if (pl) return '已生成PL';
@@ -4259,16 +4717,60 @@ function getPILockReason(pi) {
 
 // ==================== PI 管理 ====================
 app.get('/api/proforma-invoices', requireApiPermission('pi_view'), asyncHandler((req, res) => {
-  const { status, keyword, related_po } = req.query;
-  let sql = 'SELECT * FROM proforma_invoices WHERE 1=1';
+  const { status, ship_status, keyword, related_po } = req.query;
+  let sql = `SELECT pi.*,
+      COALESCE((SELECT SUM(pii.pi_confirmed_qty) FROM proforma_invoice_items pii WHERE pii.pi_id = pi.id), 0) AS confirmed_qty_sum,
+      COALESCE((SELECT SUM(pii.shipped_qty) FROM proforma_invoice_items pii WHERE pii.pi_id = pi.id), 0) AS shipped_qty_sum,
+      COALESCE((SELECT pai.lifecycle_status FROM payable_items pai WHERE pai.source_id = pi.id AND pai.source_type = 'pi' AND pai.fee_type = 'deposit'), pi.deposit_payment_status) AS deposit_payment_status
+    FROM proforma_invoices pi WHERE 1=1`;
   const params = [];
-  if (status) { sql += ' AND pi_status = ?'; params.push(status); }
-  if (related_po) { sql += ' AND related_po_no = ?'; params.push(related_po); }
-  if (keyword) { sql += ' AND (pi_no LIKE ? OR supplier_name LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`); }
-  sql += ' ORDER BY created_at DESC';
-  const rows = query(sql, params).rows;
-  res.json(rows.map(r => { const lr = getPILockReason(r); return { ...r, locked: !!lr, lock_reason: lr || '' }; }));
+  if (status) { sql += ' AND pi.pi_status = ?'; params.push(status); }
+  if (related_po) { sql += ' AND pi.related_po_no = ?'; params.push(related_po); }
+  if (keyword) { sql += ' AND (pi.pi_no LIKE ? OR pi.supplier_name LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`); }
+  sql += ' ORDER BY pi.created_at DESC';
+  let rows = query(sql, params).rows;
+  if (ship_status) {
+    rows = rows.filter(r => resolvePIShipStatus(r) === ship_status);
+  }
+  // Batch-calculate deposit_paid based on actual payment facts
+  const depositPiIds = rows.filter(r => r.need_deposit).map(r => r.id);
+  const depositPaidMap = {};
+  if (depositPiIds.length > 0) {
+    const placeholders = depositPiIds.map(() => '?').join(',');
+    const depositRows = query(
+      `SELECT pai.source_id,
+        COALESCE(SUM(pa.allocated_amount_minor), 0) AS paid_minor,
+        MAX(pai.payable_amount_minor) AS payable_minor,
+        COALESCE(MAX(pr.rounding_amount), 0) AS rounding_amount
+      FROM payable_items pai
+      LEFT JOIN payment_request_items pri ON pri.payable_item_id = pai.id
+      LEFT JOIN payment_allocations pa ON pa.payment_request_item_id = pri.id
+      LEFT JOIN payment_requests pr ON pr.id = pri.payment_request_id
+      WHERE pai.source_id IN (${placeholders})
+        AND pai.source_type = 'pi' AND pai.fee_type = 'deposit'
+      GROUP BY pai.source_id`,
+      depositPiIds
+    ).rows;
+    depositRows.forEach(d => {
+      depositPaidMap[d.source_id] = (d.paid_minor + Math.round(d.rounding_amount * 100)) >= d.payable_minor;
+    });
+  }
+  res.json(rows.map(r => {
+    const lr = getPILockReason(r);
+    const deposit_paid = r.need_deposit ? (depositPaidMap[r.id] || false) : true;
+    return { ...r, locked: !!lr, lock_reason: lr || '', deposit_paid };
+  }));
 }));
+
+// 根据 PI 确认数量 vs 已出货数量解析纯发货状态（展示层语义，不写回 DB）
+function resolvePIShipStatus(pi) {
+  if (pi.pi_status === 'cancelled') return 'cancelled';
+  const confirmed = Number(pi.confirmed_qty_sum || pi.total_confirmed_qty || 0);
+  const shipped = Number(pi.shipped_qty_sum || pi.total_shipped_qty || 0);
+  if (confirmed > 0 && shipped >= confirmed) return 'shipped_complete';
+  if (shipped > 0 && shipped < confirmed) return 'partial_shipped';
+  return 'pending_shipment';
+}
 
 app.get('/api/proforma-invoices/:id', requireApiPermission('pi_view'), asyncHandler((req, res) => {
   const pi = queryOne('SELECT * FROM proforma_invoices WHERE id = ?', [req.params.id]);
@@ -4278,10 +4780,61 @@ app.get('/api/proforma-invoices/:id', requireApiPermission('pi_view'), asyncHand
     LEFT JOIN skus s ON s.sku_code = pii.sku_code
     WHERE pii.pi_id = ? ORDER BY pii.created_at, pii.id`, [req.params.id]).rows;
   const lr = getPILockReason(pi);
-  res.json({ ...pi, items, locked: !!lr, lock_reason: lr || '' });
+  // Build deposit progress from Payment Core
+  let depositProgress = null;
+  if (pi.need_deposit) {
+    const depositItem = queryOne(
+      `SELECT pai.id, pai.payable_amount_minor, pai.lifecycle_status
+       FROM payable_items pai
+       WHERE pai.source_id = ? AND pai.source_type = 'pi' AND pai.fee_type = 'deposit'`, [pi.id]);
+    if (depositItem) {
+      const payableMinor = depositItem.payable_amount_minor || 0;
+      const paidResult = queryOne(
+        `SELECT COALESCE(SUM(pa.allocated_amount_minor), 0) AS paid_minor
+         FROM payment_allocations pa
+         JOIN payment_request_items pri ON pa.payment_request_item_id = pri.id
+         WHERE pri.payable_item_id = ?`, [depositItem.id]);
+      const paidMinor = paidResult ? paidResult.paid_minor : 0;
+      const roundingMinor = Math.max(0, payableMinor - paidMinor);
+      const remainingMinor = Math.max(0, payableMinor - paidMinor - roundingMinor);
+      const pct = payableMinor > 0 ? Math.min(100, Math.round((paidMinor / payableMinor) * 100 * 100) / 100) : 0;
+      // Payment records: request_no, paid_date, amount
+      const records = query(
+        `SELECT DISTINCT pr.request_no, pr.supplier_name, pr.paid_date, pr.paid_amount, pr.currency,
+                pr.rounding_amount, pr.rounding_reason
+         FROM payment_requests pr
+         JOIN payment_request_items pri ON pri.payment_request_id = pr.id
+         WHERE pri.payable_item_id = ?
+         ORDER BY pr.paid_date DESC`, [depositItem.id]).rows;
+      depositProgress = {
+        payable_amount_minor: payableMinor,
+        paid_amount_minor: paidMinor,
+        rounding_amount_minor: roundingMinor,
+        remaining_amount_minor: remainingMinor,
+        core_status: depositItem.lifecycle_status,
+        payment_percentage: pct,
+        payment_records: records.map(r => ({
+          request_no: r.request_no,
+          supplier_name: r.supplier_name,
+          paid_date: r.paid_date,
+          paid_amount: r.paid_amount,
+          currency: r.currency,
+          rounding_amount: r.rounding_amount,
+          rounding_reason: r.rounding_reason || ''
+        }))
+      };
+    }
+  }
+  // Calculate deposit_paid based on actual payment facts
+  const depositPaid = depositProgress
+    ? (depositProgress.paid_amount_minor + Math.round((depositProgress.payment_records.reduce((s, r) => s + (r.rounding_amount || 0), 0)) * 100)) >= depositProgress.payable_amount_minor
+    : !pi.need_deposit;
+  res.json({ ...pi, items, locked: !!lr, lock_reason: lr || '', deposit_progress: depositProgress,
+    deposit_payment_status: depositProgress ? depositProgress.core_status : pi.deposit_payment_status,
+    deposit_paid: depositPaid });
 }));
 
-app.post('/api/proforma-invoices', requireApiPermission('pi_create'), asyncHandler((req, res) => {
+app.post('/api/proforma-invoices', requireApiPermission('pi_create'), asyncHandler(async (req, res) => {
   try {
     const d = req.body;
     if (!d.supplier_name) return res.status(400).json({ error: '供应商不能为空' });
@@ -4309,11 +4862,28 @@ app.post('/api/proforma-invoices', requireApiPermission('pi_create'), asyncHandl
     const needDeposit = d.need_deposit === false || d.need_deposit === 0 || d.need_deposit === '0' ? 0 : 1;
     const depositRatio = needDeposit ? n(d.deposit_ratio, 0) : 0;
 
-    transaction(async () => {
+    await transaction(async () => {
       run(`INSERT INTO proforma_invoices (id, pi_no, related_po_id, related_po_no, supplier_id, supplier_name, brand, country, target_warehouse, pi_date, currency, total_amount, payment_terms, payment_term_id, need_deposit, deposit_ratio, balance_ratio, payable_deposit, pi_status, expected_delivery, attachment, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [piId, piNo, d.related_po_id || '', d.related_po_no || '', d.supplier_id || '', d.supplier_name, d.brand || '', d.country || '', d.target_warehouse || '', d.pi_date || new Date().toISOString().split('T')[0], finalCurrency, 0, d.payment_terms || '', d.payment_term_id || '', needDeposit, depositRatio, 100 - depositRatio, 0, d.pi_status || 'pending', d.expected_delivery || '', parseAttachment(d.attachment), d.remark || '']);
 
       if (d.items && d.items.length > 0) {
+        // P2-6 守卫：PI 累计数量不得超过 PO 数量（按 SKU 聚合本次 PI 数量，避免同 PI 内多行同 SKU 累加漏校验）
+        if (d.related_po_id) {
+          const piQtyMap = new Map();
+          d.items.forEach(item => {
+            const sku = item.sku_code;
+            piQtyMap.set(sku, (piQtyMap.get(sku) || 0) + (item.pi_confirmed_qty || 0));
+          });
+          for (const [sku, thisPiQty] of piQtyMap) {
+            const poItem = queryOne('SELECT id, po_qty, transferred_pi_qty FROM purchase_order_items WHERE po_id = ? AND sku_code = ?', [d.related_po_id, sku]);
+            if (poItem) {
+              const newTransferred = (poItem.transferred_pi_qty || 0) + thisPiQty;
+              if (newTransferred > (poItem.po_qty || 0)) {
+                throw new Error(`PI数量超过采购订单剩余数量（SKU: ${sku}, PO数量: ${poItem.po_qty || 0}, 已转PI数量: ${poItem.transferred_pi_qty || 0}, 本次PI数量: ${thisPiQty}），请检查后重新提交。`);
+              }
+            }
+          }
+        }
         d.items.forEach(item => {
           const discount = n(item.discount, 0);
           const baseAmount = (item.pi_confirmed_qty || 0) * (item.unit_price || 0);
@@ -4336,6 +4906,25 @@ app.post('/api/proforma-invoices', requireApiPermission('pi_create'), asyncHandl
         const payableDeposit = needDeposit ? totalAmount * depositRatio / 100 : 0;
         run('UPDATE proforma_invoices SET total_amount = ?, payable_deposit = ?, available_deduct_deposit = ? WHERE id = ?', [totalAmount, payableDeposit, payableDeposit, piId]);
 
+        // PAY-CORE Phase 1.5 Task 1：PI 创建时自动生成 payable_items（deposit）
+        // V5 规则：needDeposit=true 且 payableDeposit > 0 才创建
+        if (needDeposit && payableDeposit > 0) {
+          createPayableItemFromSource({
+            sourceType: 'pi',
+            sourceId: piId,
+            sourceNo: piNo,
+            feeType: 'deposit',
+            categoryCode: 'goods',
+            subcategoryCode: 'deposit',
+            payeeType: 'factory',
+            payeeKey: `supplier:${d.supplier_id || d.supplier_name}`,
+            payeeName: d.supplier_name,
+            currency: finalCurrency,
+            payableAmount: payableDeposit,
+            createdBy: (req.currentUserId || req.user && req.user.id) || ''
+          });
+        }
+
         // 更新PO状态
         if (d.related_po_id) {
           const poItems = query('SELECT po_qty, transferred_pi_qty FROM purchase_order_items WHERE po_id = ?', [d.related_po_id]).rows;
@@ -4357,7 +4946,7 @@ app.post('/api/proforma-invoices', requireApiPermission('pi_create'), asyncHandl
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
-app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHandler((req, res) => {
+app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHandler(async (req, res) => {
   try {
     const d = req.body;
     const { id } = req.params;
@@ -4379,7 +4968,20 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
 
     const fields = [];
     const values = [];
-    ['payment_terms', 'payment_term_id', 'expected_delivery', 'remark'].forEach(f => {
+    // PI号：允许编辑为供应商真实编号；空值保持原值，重复时返回友好业务提示
+    if (d.pi_no !== undefined && d.pi_no !== '' && d.pi_no !== pi.pi_no) {
+      const dup = queryOne('SELECT id FROM proforma_invoices WHERE pi_no = ? AND id != ?', [d.pi_no, id]);
+      if (dup) return res.status(409).json({ error: '该 PI 编号已存在，请检查供应商文件', dup: true });
+      fields.push('pi_no = ?'); values.push(d.pi_no);
+      // 新明细的 pi_no 在事务内用 newPiNo 同步写入，无需单独 UPDATE 旧明细（旧明细会被 DELETE 后重建）
+    }
+    // PI 日期编辑规则与 brand/country/warehouse 一致：未进入后续业务链路即可改（getPILockReason 守卫）
+    ['pi_date', 'payment_terms', 'payment_term_id', 'expected_delivery', 'remark'].forEach(f => {
+      if (d[f] !== undefined) { fields.push(`${f} = ?`); values.push(d[f]); }
+    });
+    // brand/country/target_warehouse/currency 编辑规则：PI 未进入后续业务链路（未生成 CI/PL/未付定金/未作废）才可改，
+    // 锁定守卫已在前面 getPILockReason 拦截；PO→PI 继承仅在 PI 创建时发生，编辑时 PI 作为供应商正式文件可独立修正
+    ['brand', 'country', 'target_warehouse', 'currency'].forEach(f => {
       if (d[f] !== undefined) { fields.push(`${f} = ?`); values.push(d[f]); }
     });
     if (d.need_deposit !== undefined) { fields.push('need_deposit = ?'); values.push(needDeposit); }
@@ -4390,8 +4992,10 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
     const oldItems = query('SELECT * FROM proforma_invoice_items WHERE pi_id = ? ORDER BY created_at', [id]).rows;
     let totalAmount = pi.total_amount || 0;
     let payableDeposit = 0;
+    // 解析最新 PI号（若本次编辑修改了 pi_no，事务内新明细需用最新值）
+    const newPiNo = (d.pi_no !== undefined && d.pi_no !== '' && d.pi_no !== pi.pi_no) ? d.pi_no : pi.pi_no;
 
-    transaction(async () => {
+    await transaction(async () => {
       // 明细全量替换
       if (d.items && Array.isArray(d.items)) {
         run('DELETE FROM proforma_invoice_items WHERE pi_id = ?', [id]);
@@ -4403,7 +5007,7 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
           const amount = (item.pi_amount !== undefined && item.pi_amount !== null && item.pi_amount !== '') ? n(item.pi_amount, 0) : baseAmount * (1 - discount);
           totalAmount += amount;
           run(`INSERT INTO proforma_invoice_items (id, pi_id, pi_no, po_no, sku_code, po_qty, pi_confirmed_qty, unit_price, discount, pi_amount, shipped_qty, unshipped_qty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [genId('pii'), id, pi.pi_no, item.po_no || pi.related_po_no || '', item.sku_code, item.po_qty || 0, item.pi_confirmed_qty || 0, item.unit_price || 0, discount, amount, 0, item.pi_confirmed_qty || 0]);
+            [genId('pii'), id, newPiNo, item.po_no || pi.related_po_no || '', item.sku_code, item.po_qty || 0, item.pi_confirmed_qty || 0, item.unit_price || 0, discount, amount, 0, item.pi_confirmed_qty || 0]);
         });
       }
 
@@ -4411,6 +5015,12 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
       payableDeposit = needDeposit ? totalAmount * depositRatio / 100 : 0;
       fields.push('total_amount = ?', 'payable_deposit = ?', 'available_deduct_deposit = ?');
       values.push(totalAmount, payableDeposit, payableDeposit);
+
+      // PAY-CORE Phase 1.5 Task 1：PI 更新时同步 payable_items 金额
+      // V5 规则：仅 lifecycle_status='active' 的 payable_item 才同步；reserved/paid/cancelled 跳过
+      if (needDeposit && payableDeposit > 0) {
+        syncPayableItemAmount('pi', id, 'deposit', payableDeposit);
+      }
 
       // PO transferred_pi_qty delta 同步（先回滚旧明细，再应用新明细）
       if (pi.related_po_id) {
@@ -4423,6 +5033,21 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
           }
         });
         if (d.items && Array.isArray(d.items)) {
+          // P2-6 守卫：编辑 PI 后累计 PI 数量不得超过 PO 数量（按 SKU 聚合本次新明细数量，旧明细已回滚）
+          const piQtyMap = new Map();
+          d.items.forEach(item => {
+            const sku = item.sku_code;
+            piQtyMap.set(sku, (piQtyMap.get(sku) || 0) + (item.pi_confirmed_qty || 0));
+          });
+          for (const [sku, thisPiQty] of piQtyMap) {
+            const poItem = queryOne('SELECT id, po_qty, transferred_pi_qty FROM purchase_order_items WHERE po_id = ? AND sku_code = ?', [pi.related_po_id, sku]);
+            if (poItem) {
+              const newTransferred = (poItem.transferred_pi_qty || 0) + thisPiQty;
+              if (newTransferred > (poItem.po_qty || 0)) {
+                throw new Error(`PI数量超过采购订单剩余数量（SKU: ${sku}, PO数量: ${poItem.po_qty || 0}, 已转PI数量: ${poItem.transferred_pi_qty || 0}, 本次PI数量: ${thisPiQty}），请检查后重新提交。`);
+              }
+            }
+          }
           d.items.forEach(it => {
             const poItem = queryOne('SELECT id, po_qty, transferred_pi_qty FROM purchase_order_items WHERE po_id = ? AND sku_code = ?', [pi.related_po_id, it.sku_code]);
             if (poItem) {
@@ -4476,7 +5101,20 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
 
 app.post('/api/proforma-invoices/:id/attachment', requireApiPermission('pi_edit'), asyncHandler((req, res) => {
   try {
-    run('UPDATE proforma_invoices SET attachment = ?, pi_status = ?, updated_at = datetime(\'now\') WHERE id = ?', [parseAttachment(req.body.attachment), req.body.attachment ? 'uploaded' : 'pending', req.params.id]);
+    // PI-ATTACH-01：附件支持多文件数组存储；归一化为 JSON 字符串
+    // 兼容历史单对象、dataUrl 字符串、空值
+    const att = req.body.attachment;
+    let normalized = '';
+    if (Array.isArray(att)) normalized = att.length ? JSON.stringify(att) : '';
+    else if (att && typeof att === 'object') normalized = JSON.stringify([att]);
+    else if (typeof att === 'string' && att) {
+      try { const p = JSON.parse(att); normalized = Array.isArray(p) ? att : JSON.stringify([p]); }
+      catch(e) { normalized = JSON.stringify([{ name: '附件', dataUrl: att }]); }
+    }
+    // 保留 pi_status 联动：有附件 → uploaded；空 → pending
+    const hasAttachment = Boolean(normalized);
+    run('UPDATE proforma_invoices SET attachment = ?, pi_status = ?, updated_at = datetime(\'now\') WHERE id = ?',
+      [normalized, hasAttachment ? 'uploaded' : 'pending', req.params.id]);
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
@@ -4502,7 +5140,8 @@ app.post('/api/proforma-invoices/:id/void', requireApiPermission('pi_edit'), asy
 // ==================== CI/PL 管理 ====================
 app.get('/api/commercial-invoices', requireApiPermission('ci_view'), asyncHandler((req, res) => {
   const { status, keyword, related_pi } = req.query;
-  let sql = 'SELECT * FROM commercial_invoices WHERE 1=1';
+  // 差异 = CI金额 - 已付定金 - 应付尾款（付款闭环校验）
+  let sql = 'SELECT *, (goods_amount - COALESCE(actual_deducted_deposit, 0) - COALESCE(payable_balance, 0)) AS amount_difference FROM commercial_invoices WHERE 1=1';
   const params = [];
   if (status) { sql += ' AND ci_status = ?'; params.push(status); }
   if (related_pi) { sql += ' AND related_pi_no = ?'; params.push(related_pi); }
@@ -4512,7 +5151,7 @@ app.get('/api/commercial-invoices', requireApiPermission('ci_view'), asyncHandle
 }));
 
 app.get('/api/commercial-invoices/:id', requireApiPermission('ci_view'), asyncHandler((req, res) => {
-  const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [req.params.id]);
+  const ci = queryOne('SELECT *, (goods_amount - COALESCE(actual_deducted_deposit, 0) - COALESCE(payable_balance, 0)) AS amount_difference FROM commercial_invoices WHERE id = ?', [req.params.id]);
   if (!ci) return res.status(404).json({ error: 'CI不存在' });
   const items = query('SELECT * FROM commercial_invoice_items WHERE ci_id = ? ORDER BY created_at', [req.params.id]).rows;
   const pl = queryOne('SELECT * FROM packing_lists WHERE related_ci_id = ?', [req.params.id]);
@@ -4526,7 +5165,47 @@ app.get('/api/commercial-invoices/:id', requireApiPermission('ci_view'), asyncHa
   res.json({ ...ci, items, packing_list: pl ? { ...pl, items: plItems } : null, pl_check });
 }));
 
-app.post('/api/commercial-invoices', requireApiPermission('ci_create'), asyncHandler((req, res) => {
+// 多 PI 改造：查询 CI 关联的各 PI 尾款明细（供合并付款选择）
+app.get('/api/commercial-invoices/:id/pi-balances', requireApiPermission('ci_view'), asyncHandler((req, res) => {
+  const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [req.params.id]);
+  if (!ci) return res.status(404).json({ error: 'CI不存在' });
+  // 从 ci_items 取所有来源 PI
+  let piIds = [...new Set(
+    query('SELECT DISTINCT pi_id FROM commercial_invoice_items WHERE ci_id = ? AND pi_id != ?', [ci.id, '']).rows.map(r => r.pi_id)
+  )];
+  // 兼容存量：如果 ci_items.pi_id 为空，从 ci.related_pi_id 取
+  if (piIds.length === 0 && ci.related_pi_id) piIds.push(ci.related_pi_id);
+  const result = piIds.map(piId => {
+    const pi = queryOne('SELECT id, pi_no, supplier_name, currency FROM proforma_invoices WHERE id = ?', [piId]);
+    // per-PI balance payable_item（新建 CI）
+    const payableItem = queryOne(
+      `SELECT * FROM payable_items
+       WHERE source_type = 'pi' AND source_id = ? AND source_ci_id = ? AND fee_type = 'balance'
+         AND lifecycle_status = 'active'`,
+      [piId, ci.id]
+    );
+    // 存量 CI 级 balance payable_item（兼容旧 CI）
+    const legacyPayableItem = piIds.length === 1 ? queryOne(
+      `SELECT * FROM payable_items
+       WHERE source_type = 'ci' AND source_id = ? AND fee_type = 'balance'
+         AND lifecycle_status = 'active'`,
+      [ci.id]
+    ) : null;
+    const item = payableItem || legacyPayableItem || null;
+    return {
+      pi_id: piId,
+      pi_no: pi ? pi.pi_no : '',
+      supplier_name: pi ? pi.supplier_name : '',
+      currency: pi ? pi.currency : ci.currency,
+      payable_item_id: item ? item.id : null,
+      payable_amount: item ? (item.payable_amount_minor / 100) : 0,
+      lifecycle_status: item ? item.lifecycle_status : 'none'
+    };
+  });
+  res.json(result);
+}));
+
+app.post('/api/commercial-invoices', requireApiPermission('ci_create'), asyncHandler(async (req, res) => {
   try {
     const d = req.body;
     if (!d.supplier_name) return res.status(400).json({ error: '供应商不能为空' });
@@ -4536,26 +5215,107 @@ app.post('/api/commercial-invoices', requireApiPermission('ci_create'), asyncHan
     catch (e) { return res.status(e.status || 400).json({ error: e.message }); }
     const ciId = genId('ci');
     const ciNo = d.ci_no || `CI-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
-    let goodsAmount = 0;
-    const pi = d.related_pi_id ? queryOne('SELECT * FROM proforma_invoices WHERE id = ?', [d.related_pi_id]) : null;
-    // PAY-CREDIT-DUE-01：从 PI 已选付款条款快照 Credit 天数（运营 CI 仅此来源，不读实时供应商配置）
-    const ciCredit = resolveOperationalCiCreditSnapshot(d.related_pi_id);
-    // P1-STATE-01B 守卫①：运营链路 CI 必须关联 PI（在任何 INSERT/UPDATE 之前）
-    if (!d.related_pi_id) return res.status(400).json({ error: 'CI 必须关联 PI，不能直接创建' });
-    if (!pi) return res.status(400).json({ error: '关联的PI不存在' });
-    // P1-STATE-01B 守卫②：需定金且定金未付清，禁止生成 CI
-    if (pi.need_deposit && pi.deposit_payment_status !== 'paid') {
-      return res.status(400).json({ error: 'PI 定金尚未付清，不能生成 CI' });
+    // R11: CI No 唯一校验（手动填写时）
+    if (d.ci_no) {
+      const existCi = queryOne('SELECT id FROM commercial_invoices WHERE ci_no = ?', [d.ci_no]);
+      if (existCi) return res.status(400).json({ error: 'CI编号已存在，请使用其他编号' });
     }
-    const relatedPoId = d.related_po_id || (pi ? pi.related_po_id : '');
-    const relatedPoNo = d.related_po_no || (pi ? pi.related_po_no : '');
-    const piTotalAmount = pi ? (pi.total_amount || 0) : 0;
 
-    transaction(async () => {
-      run(`INSERT INTO commercial_invoices (id, ci_no, related_po_id, related_po_no, related_pi_id, related_pi_no, supplier_id, supplier_name, brand, country, target_warehouse, ci_date, actual_ship_date, payment_term_id, credit_days, shipment_batch, currency, goods_amount, pi_total_amount, amount_difference, difference_reason, ci_status, attachment, pl_attachment, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [ciId, ciNo, relatedPoId || '', relatedPoNo || '', d.related_pi_id || '', d.related_pi_no || '', d.supplier_id || '', d.supplier_name, d.brand || (pi ? pi.brand : ''), d.country || (pi ? pi.country : ''), d.target_warehouse || (pi ? pi.target_warehouse : ''), d.ci_date || new Date().toISOString().split('T')[0], actualShipDate, ciCredit.paymentTermId, ciCredit.creditDays, d.shipment_batch || 1, d.currency || 'USD', 0, piTotalAmount, 0, d.difference_reason || '', d.ci_status || 'uploaded', parseAttachment(d.attachment), parseAttachment(d.pl_attachment), d.remark || '']);
+    // 多 PI 支持：兼容旧 related_pi_id 单值
+    let relatedPiIds = [];
+    let relatedPiNos = [];
+    if (Array.isArray(d.related_pi_ids) && d.related_pi_ids.length > 0) {
+      relatedPiIds = d.related_pi_ids;
+      relatedPiNos = Array.isArray(d.related_pi_nos) ? d.related_pi_nos : [];
+    } else if (d.related_pi_id) {
+      relatedPiIds = [d.related_pi_id];
+      relatedPiNos = d.related_pi_no ? [d.related_pi_no] : [];
+    }
+    // P1-STATE-01B 守卫①：运营链路 CI 必须关联 PI（在任何 INSERT/UPDATE 之前）
+    if (relatedPiIds.length === 0) return res.status(400).json({ error: 'CI 必须关联 PI，不能直接创建' });
+
+    // 查询所有关联 PI
+    const pis = relatedPiIds.map(pid => queryOne('SELECT * FROM proforma_invoices WHERE id = ?', [pid])).filter(p => p);
+    if (pis.length !== relatedPiIds.length) return res.status(400).json({ error: '关联的PI不存在' });
+
+    // R4: 同供应商校验
+    const supplierIds = new Set(pis.map(p => p.supplier_id || ''));
+    if (supplierIds.size > 1) return res.status(400).json({ error: '多PI必须同供应商' });
+    // R4: 同币种校验
+    const piCurrencies = new Set(pis.map(p => p.currency || ''));
+    if (piCurrencies.size > 1) return res.status(400).json({ error: '多PI必须同币种' });
+
+    // P1-STATE-01B 守卫②：需定金且定金实际未付清（基于付款事实计算），禁止生成 CI
+    for (const pi of pis) {
+      if (pi.need_deposit) {
+        const dpr = queryOne(
+          `SELECT
+            COALESCE(SUM(pa.allocated_amount_minor), 0) AS paid_minor,
+            MAX(pai.payable_amount_minor) AS payable_minor,
+            COALESCE(MAX(pr.rounding_amount), 0) AS rounding_amount
+          FROM payable_items pai
+          LEFT JOIN payment_request_items pri ON pri.payable_item_id = pai.id
+          LEFT JOIN payment_allocations pa ON pa.payment_request_item_id = pri.id
+          LEFT JOIN payment_requests pr ON pr.id = pri.payment_request_id
+          WHERE pai.source_id = ? AND pai.source_type = 'pi' AND pai.fee_type = 'deposit'`,
+          [pi.id]
+        );
+        const depositPaid = dpr && (dpr.paid_minor + Math.round(dpr.rounding_amount * 100)) >= dpr.payable_minor;
+        if (!depositPaid) {
+          return res.status(400).json({ error: `PI ${pi.pi_no} 定金尚未付清，不能生成 CI` });
+        }
+      }
+    }
+
+    const firstPi = pis[0];
+    // PAY-CREDIT-DUE-01：优先使用前端传入的 credit_days；否则从 PI 已选付款条款获取
+    const frontendCreditDays = (d.credit_days !== undefined && d.credit_days !== null) ? Number(d.credit_days) : 0;
+    const ciCredit = resolveOperationalCiCreditSnapshot(firstPi.id);
+    const effectiveCreditDays = frontendCreditDays > 0 ? frontendCreditDays : ciCredit.creditDays;
+    const effectivePaymentTermId = frontendCreditDays > 0 ? '' : ciCredit.paymentTermId;
+    const ciPaymentTerms = String(d.payment_terms || '').trim();
+    const ciDueDate = String(d.due_date || '').trim();
+    const payDueDate = computePayableDate(actualShipDate, effectiveCreditDays);
+    const relatedPoId = d.related_po_id || (firstPi ? firstPi.related_po_id : '');
+    const relatedPoNo = d.related_po_no || (firstPi ? firstPi.related_po_no : '');
+    const ciCurrency = d.currency || firstPi.currency || 'USD';
+    const piTotalAmount = pis.reduce((s, p) => s + (p.total_amount || 0), 0);
+    // 补全 relatedPiNos
+    if (relatedPiNos.length !== relatedPiIds.length) {
+      relatedPiNos = pis.map(p => p.pi_no);
+    }
+
+    let goodsAmount = 0;
+    let totalShouldDeduct = 0;
+
+    await transaction(async () => {
+      // CI Header INSERT — related_pi_ids/related_pi_nos JSON 数组 + 旧字段首 PI 兼容
+      const relatedPiIdsJson = JSON.stringify(relatedPiIds);
+      const relatedPiNosJson = JSON.stringify(relatedPiNos);
+      run(`INSERT INTO commercial_invoices (id, ci_no, related_po_id, related_po_no, related_pi_id, related_pi_no, related_pi_ids, related_pi_nos, supplier_id, supplier_name, brand, country, target_warehouse, ci_date, actual_ship_date, payment_term_id, credit_days, payment_terms, due_date, shipment_batch, currency, goods_amount, pi_total_amount, amount_difference, difference_reason, ci_status, attachment, pl_attachment, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [ciId, ciNo, relatedPoId || '', relatedPoNo || '', firstPi.id, firstPi.pi_no, relatedPiIdsJson, relatedPiNosJson, d.supplier_id || firstPi.supplier_id || '', d.supplier_name, d.brand || firstPi.brand || '', d.country || firstPi.country || '', d.target_warehouse || firstPi.target_warehouse || '', d.ci_date || new Date().toISOString().split('T')[0], actualShipDate, effectivePaymentTermId, effectiveCreditDays, ciPaymentTerms, ciDueDate || payDueDate, d.shipment_batch || 1, ciCurrency, 0, piTotalAmount, 0, d.difference_reason || '', d.ci_status || 'uploaded', parseAttachment(d.attachment), parseAttachment(d.pl_attachment), d.remark || '']);
 
       if (d.items && d.items.length > 0) {
+        // P2-6 守卫：按 PI+SKU 聚合校验出货数量
+        const piSkuQtyMap = new Map();
+        d.items.forEach(item => {
+          const itemPiId = item.pi_id || firstPi.id;
+          const key = `${itemPiId}|${item.sku_code}`;
+          piSkuQtyMap.set(key, (piSkuQtyMap.get(key) || 0) + (item.shipped_qty || 0));
+        });
+        for (const [key, thisCiQty] of piSkuQtyMap) {
+          const [piId, sku] = key.split('|');
+          const piItem = queryOne('SELECT id, pi_confirmed_qty, shipped_qty FROM proforma_invoice_items WHERE pi_id = ? AND sku_code = ?', [piId, sku]);
+          if (piItem) {
+            const newShipped = (piItem.shipped_qty || 0) + thisCiQty;
+            if (newShipped > (piItem.pi_confirmed_qty || 0)) {
+              throw new Error(`CI出货数量超过PI剩余数量（PI: ${piId}, SKU: ${sku}, PI确认数量: ${piItem.pi_confirmed_qty || 0}, 已发货数量: ${piItem.shipped_qty || 0}, 本次CI数量: ${thisCiQty}），请检查后重新提交。`);
+            }
+          }
+        }
+
+        // 遍历 items: INSERT CI items + 更新 PI shipped_qty + 按 PI 累计货值
+        const perPiGoodsAmount = new Map();
         d.items.forEach(item => {
           const amount = (item.shipped_qty || 0) * (item.unit_price || 0);
           const sku = queryOne('SELECT reference_customs_rate FROM skus WHERE sku_code = ?', [item.sku_code]);
@@ -4567,61 +5327,94 @@ app.post('/api/commercial-invoices', requireApiPermission('ci_create'), asyncHan
             throw new Error(`SKU ${item.sku_code} 的实际关税税率必须为不小于0的数字`);
           }
           goodsAmount += amount;
-          run(`INSERT INTO commercial_invoice_items (id, ci_id, ci_no, pi_no, sku_code, shipped_qty, unit_price, ci_amount, actual_customs_rate, inbound_qty, uninbound_qty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [genId('cii'), ciId, ciNo, item.pi_no || d.related_pi_no || '', item.sku_code, item.shipped_qty || 0, item.unit_price || 0, amount, actualCustomsRate, 0, item.shipped_qty || 0]);
+
+          const itemPiId = item.pi_id || firstPi.id;
+          const itemPiNo = pis.find(p => p.id === itemPiId)?.pi_no || firstPi.pi_no;
+          perPiGoodsAmount.set(itemPiId, (perPiGoodsAmount.get(itemPiId) || 0) + amount);
+
+          run(`INSERT INTO commercial_invoice_items (id, ci_id, ci_no, pi_no, pi_id, sku_code, shipped_qty, unit_price, ci_amount, actual_customs_rate, inbound_qty, uninbound_qty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [genId('cii'), ciId, ciNo, itemPiNo, itemPiId, item.sku_code, item.shipped_qty || 0, item.unit_price || 0, amount, actualCustomsRate, 0, item.shipped_qty || 0]);
 
           // 更新PI明细的已发货数量
-          if (d.related_pi_id) {
-            const piItem = queryOne('SELECT id, pi_confirmed_qty, shipped_qty FROM proforma_invoice_items WHERE pi_id = ? AND sku_code = ?', [d.related_pi_id, item.sku_code]);
-            if (piItem) {
-              const newShipped = (piItem.shipped_qty || 0) + (item.shipped_qty || 0);
-              run('UPDATE proforma_invoice_items SET shipped_qty = ?, unshipped_qty = ? WHERE id = ?',
-                [newShipped, (piItem.pi_confirmed_qty || 0) - newShipped, piItem.id]);
-            }
+          const piItem = queryOne('SELECT id, pi_confirmed_qty, shipped_qty FROM proforma_invoice_items WHERE pi_id = ? AND sku_code = ?', [itemPiId, item.sku_code]);
+          if (piItem) {
+            const newShipped = (piItem.shipped_qty || 0) + (item.shipped_qty || 0);
+            run('UPDATE proforma_invoice_items SET shipped_qty = ?, unshipped_qty = ? WHERE id = ?',
+              [newShipped, (piItem.pi_confirmed_qty || 0) - newShipped, piItem.id]);
           }
         });
-        const amountDifference = goodsAmount - piTotalAmount;
-        run('UPDATE commercial_invoices SET goods_amount = ?, amount_difference = ? WHERE id = ?', [goodsAmount, amountDifference, ciId]);
+        // 差异 = CI金额 - 已付定金 - 应付尾款（付款闭环校验），创建时为0
+        run('UPDATE commercial_invoices SET goods_amount = ?, amount_difference = 0 WHERE id = ?', [goodsAmount, ciId]);
 
-        // 尾款以CI金额为准；如果PI不需要定金，尾款=CI总金额。
-        if (pi) {
-          const shouldDeduct = pi.need_deposit ? Math.min(pi.payable_deposit || 0, pi.available_deduct_deposit || 0, goodsAmount) : 0;
-          const payableBalance = goodsAmount - shouldDeduct;
-          run('UPDATE commercial_invoices SET should_deduct_deposit = ?, actual_deducted_deposit = ?, payable_balance = ?, unpaid_balance = ? WHERE id = ?',
-            [shouldDeduct, shouldDeduct, payableBalance, payableBalance, ciId]);
+        // Per-PI 循环：R7 定金比例分摊 + per-PI balance payable_item + PI 更新
+        for (const pi of pis) {
+          const piGoodsAmount = perPiGoodsAmount.get(pi.id) || 0;
+          if (piGoodsAmount <= 0) continue;
+
+          // R7: 定金按实际出货货值比例分摊
+          let shouldDeduct = 0;
+          if (pi.need_deposit && (pi.available_deduct_deposit || 0) > 0) {
+            const piRemainingUnshipped = (pi.total_amount || 0) - (pi.shipped_amount || 0);
+            const newRemaining = piRemainingUnshipped - piGoodsAmount;
+            if (piRemainingUnshipped <= 0.01 || newRemaining <= 0.01) {
+              // 最后一次 CI — 吸收四舍五入残差（R9）
+              shouldDeduct = pi.available_deduct_deposit || 0;
+            } else {
+              shouldDeduct = (pi.available_deduct_deposit || 0) * piGoodsAmount / piRemainingUnshipped;
+            }
+          }
+          const payableBalance = piGoodsAmount - shouldDeduct;
+          totalShouldDeduct += shouldDeduct;
+
+          // per-PI balance payable_item（R5/R8: source_type='pi', source_ci_id=ciId）
+          if (payableBalance > 0) {
+            createPayableItemFromSource({
+              sourceType: 'pi',
+              sourceId: pi.id,
+              sourceNo: pi.pi_no,
+              sourceCiId: ciId,
+              feeType: 'balance',
+              categoryCode: 'goods',
+              subcategoryCode: 'balance',
+              payeeType: 'factory',
+              payeeKey: `supplier:${pi.supplier_id || pi.supplier_name || d.supplier_name}`,
+              payeeName: pi.supplier_name || d.supplier_name,
+              currency: ciCurrency,
+              payableAmount: payableBalance,
+              createdBy: (req.currentUserId || req.user && req.user.id) || ''
+            });
+          }
 
           // 更新PI的已抵扣定金和已发货金额
           const newDeducted = (pi.deducted_deposit || 0) + shouldDeduct;
           const newAvailable = Math.max(0, (pi.payable_deposit || 0) - newDeducted);
-          const newShippedAmount = (pi.shipped_amount || 0) + goodsAmount;
+          const newShippedAmount = (pi.shipped_amount || 0) + piGoodsAmount;
           const newUnshippedAmount = (pi.total_amount || 0) - newShippedAmount;
           run('UPDATE proforma_invoices SET deducted_deposit = ?, available_deduct_deposit = ?, shipped_amount = ?, unshipped_amount = ? WHERE id = ?',
-            [newDeducted, newAvailable, newShippedAmount, newUnshippedAmount, d.related_pi_id]);
-        } else {
-          run('UPDATE commercial_invoices SET payable_balance = ?, unpaid_balance = ? WHERE id = ?', [goodsAmount, goodsAmount, ciId]);
-        }
+            [newDeducted, newAvailable, newShippedAmount, newUnshippedAmount, pi.id]);
 
-        // 更新PI状态
-        if (d.related_pi_id) {
-          const piItems = query('SELECT pi_confirmed_qty, shipped_qty FROM proforma_invoice_items WHERE pi_id = ?', [d.related_pi_id]).rows;
+          // 更新PI状态
+          const piItems = query('SELECT pi_confirmed_qty, shipped_qty FROM proforma_invoice_items WHERE pi_id = ?', [pi.id]).rows;
           const allShipped = piItems.every(i => i.shipped_qty >= i.pi_confirmed_qty);
           const anyShipped = piItems.some(i => i.shipped_qty > 0);
           if (allShipped) {
-            run('UPDATE proforma_invoices SET pi_status = ? WHERE id = ?', ['shipped_complete', d.related_pi_id]);
+            run('UPDATE proforma_invoices SET pi_status = ? WHERE id = ?', ['shipped_complete', pi.id]);
           } else if (anyShipped) {
-            run('UPDATE proforma_invoices SET pi_status = ? WHERE id = ?', ['partial_shipped', d.related_pi_id]);
+            run('UPDATE proforma_invoices SET pi_status = ? WHERE id = ?', ['partial_shipped', pi.id]);
           }
         }
+
+        // CI Header 聚合
+        const payableBalanceTotal = goodsAmount - totalShouldDeduct;
+        run('UPDATE commercial_invoices SET should_deduct_deposit = ?, actual_deducted_deposit = ?, payable_balance = ?, unpaid_balance = ? WHERE id = ?',
+          [totalShouldDeduct, totalShouldDeduct, payableBalanceTotal, payableBalanceTotal, ciId]);
 
         // 更新库存的在途数据
         await updateInventoryTransitData();
       }
     });
-    const shouldDeductResp = pi ? (pi.need_deposit ? Math.min(pi.payable_deposit || 0, pi.available_deduct_deposit || 0, goodsAmount) : 0) : 0;
-    const payableBalanceResp = goodsAmount - shouldDeductResp;
-    const piTotalResp = piTotalAmount;
-    const amountDiffResp = goodsAmount - piTotalResp;
-    res.json({ id: ciId, ci_no: ciNo, ...d, goods_amount: goodsAmount, pi_total_amount: piTotalResp, amount_difference: amountDiffResp, should_deduct_deposit: shouldDeductResp, payable_balance: payableBalanceResp });
+    const payableBalanceResp = goodsAmount - totalShouldDeduct;
+    res.json({ id: ciId, ci_no: ciNo, ...d, goods_amount: goodsAmount, pi_total_amount: piTotalAmount, amount_difference: 0, should_deduct_deposit: totalShouldDeduct, payable_balance: payableBalanceResp });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
@@ -4630,6 +5423,58 @@ app.post('/api/commercial-invoices/:id/attachment', requireApiPermission('ci_edi
     const field = req.body.field === 'pl_attachment' ? 'pl_attachment' : 'attachment';
     run(`UPDATE commercial_invoices SET ${field} = ?, ci_status = ?, updated_at = datetime('now') WHERE id = ?`, [parseAttachment(req.body.attachment), req.body.attachment ? 'uploaded' : 'draft', req.params.id]);
     res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+}));
+
+// ==================== 出货附件（统一 CI/PL/报关/物流/其他） ====================
+// 获取出货附件列表
+app.get('/api/commercial-invoices/:id/shipping-attachments', requireApiPermission('ci_view'), asyncHandler((req, res) => {
+  const ci = queryOne('SELECT shipping_attachments FROM commercial_invoices WHERE id = ?', [req.params.id]);
+  if (!ci) return res.status(404).json({ error: 'CI不存在' });
+  try { res.json({ attachments: JSON.parse(ci.shipping_attachments || '[]') }); }
+  catch(e) { res.json({ attachments: [] }); }
+}));
+
+// 上传出货附件��支持单个或多文件 base64）
+app.post('/api/commercial-invoices/:id/shipping-attachments', requireApiPermission('ci_edit'), asyncHandler((req, res) => {
+  try {
+    const { files } = req.body; // files: [{name, type, size, dataUrl, category}]
+    if (!files || !Array.isArray(files) || files.length === 0) {
+      return res.status(400).json({ error: '请提供至少一个文件' });
+    }
+    const ci = queryOne('SELECT shipping_attachments FROM commercial_invoices WHERE id = ?', [req.params.id]);
+    if (!ci) return res.status(404).json({ error: 'CI不存在' });
+    let existing = [];
+    try { existing = JSON.parse(ci.shipping_attachments || '[]'); } catch(e) { existing = []; }
+    const now = new Date().toISOString();
+    const newFiles = files.map(f => ({
+      id: 'att_' + Date.now().toString(36) + '_' + Math.random().toString(36).substr(2, 9),
+      name: f.name || 'file',
+      type: f.type || 'application/octet-stream',
+      size: f.size || 0,
+      dataUrl: f.dataUrl || '',
+      category: f.category || 'other',
+      uploaded_at: now
+    }));
+    const merged = existing.concat(newFiles);
+    run('UPDATE commercial_invoices SET shipping_attachments = ?, updated_at = datetime(\'now\') WHERE id = ?',
+      [JSON.stringify(merged), req.params.id]);
+    res.json({ success: true, attachments: merged, added: newFiles });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+}));
+
+// 删除出货附件
+app.delete('/api/commercial-invoices/:id/shipping-attachments/:fileId', requireApiPermission('ci_edit'), asyncHandler((req, res) => {
+  try {
+    const ci = queryOne('SELECT shipping_attachments FROM commercial_invoices WHERE id = ?', [req.params.id]);
+    if (!ci) return res.status(404).json({ error: 'CI不存在' });
+    let existing = [];
+    try { existing = JSON.parse(ci.shipping_attachments || '[]'); } catch(e) { existing = []; }
+    const filtered = existing.filter(a => a.id !== req.params.fileId);
+    if (filtered.length === existing.length) return res.status(404).json({ error: '文件不存在' });
+    run('UPDATE commercial_invoices SET shipping_attachments = ?, updated_at = datetime(\'now\') WHERE id = ?',
+      [JSON.stringify(filtered), req.params.id]);
+    res.json({ success: true, attachments: filtered });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
@@ -4648,6 +5493,152 @@ app.post('/api/commercial-invoices/:id/void', requireApiPermission('ci_edit'), a
     await updateInventoryTransitData();
     logOperation({ operator_id: req.currentUserId, operator_name: req.currentUserName, page: 'commercial_invoice', operation_type: 'void', target_ids: [ci.id], affected_count: 1, old_values: { ci_status: ci.ci_status }, new_values: { ci_status: 'cancelled', void_reason }, reason: void_reason, triggered_recalc: 0, is_rollbackable: 0 });
     res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+}));
+
+// CI-REVERSE-01：冲销已入库 CI（反向恢复 PI 发货状态、库存、WAC、成本分摊等）
+app.post('/api/commercial-invoices/:id/reverse', requireApiPermission('ci_edit'), asyncHandler(async (req, res) => {
+  try {
+    const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [req.params.id]);
+    if (!ci) return res.status(404).json({ error: 'CI不存在' });
+    if (ci.ci_status === 'reversed') return res.status(400).json({ error: '该 CI 已冲销，不能重复冲销' });
+    if (ci.ci_status === 'cancelled') return res.status(400).json({ error: '已作废的 CI 不允许冲销' });
+    if (ci.ci_status === 'draft' || ci.ci_status === 'uploaded' || ci.ci_status === 'ci_pl_uploaded' || ci.ci_status === 'shipped') {
+      return res.status(400).json({ error: '仅已入库的 CI 允许冲销，请使用作废功能' });
+    }
+
+    // 前置检查：尾款 payable_item 是否有付款记录
+    const paidBalances = query(
+      `SELECT pi.id FROM payable_items pi
+       JOIN payment_request_items pri ON pri.payable_item_id = pi.id
+       JOIN payment_allocations pa ON pa.payment_request_item_id = pri.id AND pa.status = 'reconciled'
+       WHERE pi.source_ci_id = ? AND pi.fee_type = 'balance' AND pi.lifecycle_status != 'released'
+       LIMIT 1`,
+      [ci.id]
+    ).rows;
+    if (paidBalances.length > 0) {
+      return res.status(400).json({ error: '该 CI 的尾款已有付款记录，请先处理尾款付款后再冲销 CI' });
+    }
+
+    const operatorName = req.currentUserName || '';
+    const operatorId = req.currentUserId || '';
+    const ts = new Date().toISOString().slice(0, 19).replace('T', ' ');
+
+    await transaction(async () => {
+      // 1. 查询关联数据
+      const ciItems = query('SELECT * FROM commercial_invoice_items WHERE ci_id = ?', [ci.id]).rows;
+      const inbounds = query('SELECT * FROM inbound_records WHERE source_ci_id = ?', [ci.id]).rows;
+      const pl = queryOne('SELECT * FROM packing_lists WHERE related_ci_id = ?', [ci.id]);
+      const piIds = [...new Set(ciItems.map(i => i.pi_id).filter(Boolean))];
+
+      // 2. 冲销入库记录
+      for (const ib of inbounds) {
+        run('UPDATE inbound_records SET inbound_status = ?, remark = ?, updated_at = datetime(\'now\') WHERE id = ?',
+          ['reversed', (ib.remark ? ib.remark + '\n' : '') + `[冲销 ${ts} by ${operatorName}] CI ${ci.ci_no}`, ib.id]);
+      }
+
+      // 3. 冲销 PL（标记 remark）
+      if (pl) {
+        const plRemark = (pl.remark ? pl.remark + '\n' : '') + `[冲销 ${ts} by ${operatorName}] CI ${ci.ci_no} 已冲销`;
+        run('UPDATE packing_lists SET remark = ? WHERE id = ?', [plRemark, pl.id]);
+      }
+
+      // 4. 回退库存（扣减 available_qty）
+      for (const ib of inbounds) {
+        const inv = queryOne('SELECT id, available_qty FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
+          [ib.sku_code, ib.country || ci.country, ib.warehouse || ci.target_warehouse]);
+        if (inv) {
+          run('UPDATE inventory SET available_qty = available_qty - ?, updated_at = datetime(\'now\') WHERE id = ?',
+            [ib.actual_qty || 0, inv.id]);
+        }
+      }
+
+      // 5. 回退 WAC — 临时解除 lock 触发器约束后标记 reversed
+      // PG 兼容：PG 触发器语法不同（需要 ON table / 不支持 CREATE TRIGGER IF NOT EXISTS SQLite 语法）
+      // 使用 ALTER TABLE DISABLE/ENABLE TRIGGER（PG）或 DROP/CREATE TRIGGER（SQLite）
+      var _isPg = process.env.DB_DRIVER === 'pg';
+      if (_isPg) {
+        run('ALTER TABLE wac_history DISABLE TRIGGER trg_wac_history_block_update');
+        run('ALTER TABLE wac_history DISABLE TRIGGER trg_wac_history_block_delete');
+      } else {
+        run('DROP TRIGGER IF EXISTS trg_wac_history_block_update');
+        run('DROP TRIGGER IF EXISTS trg_wac_history_block_delete');
+      }
+      run('UPDATE wac_history SET is_locked = 0, confirmation_status = \'reversed\' WHERE ci_id = ?', [ci.id]);
+      if (_isPg) {
+        run('ALTER TABLE wac_history ENABLE TRIGGER trg_wac_history_block_update');
+        run('ALTER TABLE wac_history ENABLE TRIGGER trg_wac_history_block_delete');
+      } else {
+        run('CREATE TRIGGER IF NOT EXISTS trg_wac_history_block_update BEFORE UPDATE ON wac_history WHEN OLD.is_locked = 1 BEGIN SELECT RAISE(ABORT, \'LOCKED_WAC_HISTORY_UPDATE_FORBIDDEN\'); END');
+        run('CREATE TRIGGER IF NOT EXISTS trg_wac_history_block_delete BEFORE DELETE ON wac_history WHEN OLD.is_locked = 1 BEGIN SELECT RAISE(ABORT, \'LOCKED_WAC_HISTORY_DELETE_FORBIDDEN\'); END');
+      }
+
+      // 6. 回退成本分摊 — 标记 reversed 并清除 ci_id 关联
+      // PG 兼容：NULL || 'text' = NULL，需 COALESCE 防止丢失原值
+      run('UPDATE cost_allocations SET allocation_basis = COALESCE(allocation_basis, \'\') || \' [reversed \' || ? || \']\', ci_id = \'\' WHERE ci_id = ?', [ts, ci.id]);
+
+      // 7. 回退 PI items（shipped_qty / unshipped_qty）
+      for (const citem of ciItems) {
+        const piItem = queryOne('SELECT id, pi_confirmed_qty, shipped_qty FROM proforma_invoice_items WHERE pi_id = ? AND sku_code = ?', [citem.pi_id, citem.sku_code]);
+        if (piItem) {
+          const newShipped = Math.max(0, (piItem.shipped_qty || 0) - (citem.shipped_qty || 0));
+          run('UPDATE proforma_invoice_items SET shipped_qty = ?, unshipped_qty = ? WHERE id = ?',
+            [newShipped, Math.max(0, (piItem.pi_confirmed_qty || 0) - newShipped), piItem.id]);
+        }
+      }
+
+      // 8. 回退 PI headers（deducted_deposit / available_deduct_deposit / shipped_amount / unshipped_amount / pi_status）
+      const totalCiAmount = ciItems.reduce((s, i) => s + (i.ci_amount || 0), 0);
+      for (const piId of piIds) {
+        const pi = queryOne('SELECT * FROM proforma_invoices WHERE id = ?', [piId]);
+        if (!pi) continue;
+
+        const piCiAmount = ciItems.filter(i => i.pi_id === piId).reduce((s, i) => s + (i.ci_amount || 0), 0);
+        const piDeductRatio = totalCiAmount > 0 ? piCiAmount / totalCiAmount : 0;
+        const piDeducted = Math.round((ci.actual_deducted_deposit || 0) * piDeductRatio * 100) / 100;
+
+        const newDeducted = Math.max(0, (pi.deducted_deposit || 0) - piDeducted);
+        const newAvailable = Math.max(0, (pi.payable_deposit || 0) - newDeducted);
+        const newShippedAmount = Math.max(0, (pi.shipped_amount || 0) - piCiAmount);
+        const newUnshippedAmount = Math.max(0, (pi.total_amount || 0) - newShippedAmount);
+
+        run('UPDATE proforma_invoices SET deducted_deposit = ?, available_deduct_deposit = ?, shipped_amount = ?, unshipped_amount = ? WHERE id = ?',
+          [newDeducted, newAvailable, newShippedAmount, newUnshippedAmount, piId]);
+
+        // 重算 PI 状态（仅发货状态，不涉及付款/定金）
+        const piItems2 = query('SELECT pi_confirmed_qty, shipped_qty FROM proforma_invoice_items WHERE pi_id = ?', [piId]).rows;
+        if (pi.pi_status === 'cancelled') continue;
+        const allShipped = piItems2.length > 0 && piItems2.every(i => i.shipped_qty >= i.pi_confirmed_qty);
+        const anyShipped = piItems2.some(i => i.shipped_qty > 0);
+        if (allShipped) {
+          run('UPDATE proforma_invoices SET pi_status = ? WHERE id = ?', ['shipped_complete', piId]);
+        } else if (anyShipped) {
+          run('UPDATE proforma_invoices SET pi_status = ? WHERE id = ?', ['partial_shipped', piId]);
+        } else {
+          run('UPDATE proforma_invoices SET pi_status = ? WHERE id = ?', ['pending', piId]);
+        }
+      }
+
+      // 9. 释放 balance payable_items
+      run('UPDATE payable_items SET lifecycle_status = \'released\' WHERE source_ci_id = ? AND fee_type = \'balance\' AND lifecycle_status = \'active\'', [ci.id]);
+
+      // 10. CI 状态 → reversed
+      const ciRemark = (ci.remark ? ci.remark + '\n' : '') + `[冲销 ${ts} by ${operatorName}]`;
+      run('UPDATE commercial_invoices SET ci_status = \'reversed\', wac_confirmed = 0, wac_version_id = \'\', cost_confirmed = 0, cost_allocated = 0, original_inventory_imported = 0, remark = ?, updated_at = datetime(\'now\') WHERE id = ?',
+        [ciRemark, ci.id]);
+
+      // 更新在途数据
+      await updateInventoryTransitData();
+    });
+
+    logOperation({
+      operator_id: operatorId, operator_name: operatorName,
+      page: 'commercial_invoice', operation_type: 'reverse', target_ids: [ci.id], affected_count: 1,
+      old_values: { ci_status: ci.ci_status }, new_values: { ci_status: 'reversed' },
+      reason: '冲销已入库CI', triggered_recalc: 0, is_rollbackable: 0
+    });
+
+    res.json({ success: true, id: ci.id, ci_no: ci.ci_no });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
@@ -4680,6 +5671,27 @@ app.post('/api/packing-lists', requireApiPermission('ci_create'), asyncHandler((
         [plId, plNo, d.related_po_id || (ci ? ci.related_po_id : ''), d.related_po_no || (ci ? ci.related_po_no : ''), d.related_pi_id || (ci ? ci.related_pi_id : ''), d.related_pi_no || (ci ? ci.related_pi_no : ''), d.related_ci_id || '', d.related_ci_no || '', d.supplier_id || (ci ? ci.supplier_id : ''), d.supplier_name || (ci ? ci.supplier_name : ''), d.brand || (ci ? ci.brand : ''), d.country || (ci ? ci.country : ''), d.target_warehouse || (ci ? ci.target_warehouse : ''), d.pl_date || new Date().toISOString().split('T')[0], 0, 0, 0, 0, 0, parseAttachment(d.attachment), d.remark || '']);
 
       if (d.items && d.items.length > 0) {
+        // P2-7 守卫：PL 累计数量不得超过 CI shipped_qty（按 SKU 聚合本次 PL 数量，避免同 PL 内多行同 SKU 累加漏校验）
+        if (d.related_ci_id) {
+          const plQtyMap = new Map();
+          d.items.forEach(item => {
+            const sku = item.sku_code;
+            const cartons = item.cartons || 0;
+            const qtyPerCarton = item.qty_per_carton || 0;
+            const totalQty = cartons * qtyPerCarton;
+            plQtyMap.set(sku, (plQtyMap.get(sku) || 0) + (totalQty || 0));
+          });
+          for (const [sku, thisPlQty] of plQtyMap) {
+            const ciItem = queryOne('SELECT id, shipped_qty FROM commercial_invoice_items WHERE ci_id = ? AND sku_code = ?', [d.related_ci_id, sku]);
+            if (ciItem) {
+              const existPlSum = queryOne('SELECT COALESCE(SUM(pli.total_qty),0) as total FROM packing_list_items pli JOIN packing_lists pl ON pli.pl_id = pl.id WHERE pl.related_ci_id = ? AND pli.sku_code = ?', [d.related_ci_id, sku]);
+              const newTotal = (existPlSum && existPlSum.total || 0) + thisPlQty;
+              if (newTotal > (ciItem.shipped_qty || 0)) {
+                throw new Error(`装箱单数量超过CI出货数量（SKU: ${sku}, CI出货数量: ${ciItem.shipped_qty || 0}, 已创建PL数量: ${existPlSum && existPlSum.total || 0}, 本次PL数量: ${thisPlQty}），请检查后重新提交。`);
+              }
+            }
+          }
+        }
         d.items.forEach(item => {
           const cartons = item.cartons || 0;
           const qtyPerCarton = item.qty_per_carton || 0;
@@ -4718,7 +5730,9 @@ app.post('/api/proforma-invoices/batch-import', requireApiPermission('pi_create'
     const result = { success: 0, failed: 0, total: rows.length, errors: [] };
     transaction(async () => {
       rows.forEach((row, idx) => {
+        // P0-FIX-2：每行独立 transaction（SAVEPOINT），单行失败只回滚当前行
         try {
+          transaction(() => {
           const rowNo = idx + 2;
           const poNo = s(pick(row, ['关联PO编号', 'PO编号', 'related_po_no', 'po_no']));
           const sku = s(pick(row, ['SKU', 'sku_code']));
@@ -4738,6 +5752,15 @@ app.post('/api/proforma-invoices/batch-import', requireApiPermission('pi_create'
           const needDepositVal = s(pick(row, ['是否需要定金', 'need_deposit']));
           const needDeposit = needDepositVal === '否' || needDepositVal === '0' || needDepositVal.toLowerCase() === 'false' ? 0 : 1;
           const depositRatio = needDeposit ? n(pick(row, ['定金比例', 'deposit_ratio']), 0) : 0;
+          // P2-6 守卫：批量导入 PI 累计数量不得超过 PO 数量（按 SKU 聚合已存在 PI items + 本次导入数量）
+          const poItem = queryOne('SELECT id, po_qty FROM purchase_order_items WHERE po_id = ? AND sku_code = ?', [po.id, sku]);
+          if (poItem) {
+            const existPiSum = queryOne('SELECT COALESCE(SUM(pi_confirmed_qty),0) as total FROM proforma_invoice_items WHERE po_no = ? AND sku_code = ?', [po.po_no, sku]);
+            const cumulativePi = (existPiSum && existPiSum.total || 0) + qty;
+            if (cumulativePi > (poItem.po_qty || 0)) {
+              throw new Error(`PI数量超过采购订单剩余数量（SKU: ${sku}, PO数量: ${poItem.po_qty || 0}, 已转PI数量: ${existPiSum && existPiSum.total || 0}, 本次PI数量: ${qty}），请检查后重新提交。`);
+            }
+          }
           const exist = queryOne('SELECT * FROM proforma_invoices WHERE pi_no = ?', [piNo]);
           let piId = exist ? exist.id : genId('pi');
           if (!exist) {
@@ -4751,6 +5774,32 @@ app.post('/api/proforma-invoices/batch-import', requireApiPermission('pi_create'
           const payableDeposit = needDeposit ? totalAmount * depositRatio / 100 : 0;
           run('UPDATE proforma_invoices SET total_amount=?, payable_deposit=?, available_deduct_deposit=? WHERE id=?', [totalAmount, payableDeposit, payableDeposit, piId]);
           run('UPDATE purchase_orders SET po_status=? WHERE id=?', ['transferred_pi', po.id]);
+          // PAY-CORE P0-1：与单条 PI 创建路径对齐，生成/更新 deposit payable_item
+          // createPayableItemFromSource 内部幂等：已存在 active 则跳过；金额通过 syncPayableItemAmount 同步
+          if (needDeposit && payableDeposit > 0) {
+            const finalCurrency = s(pick(row, ['币种', 'currency'])) || po.currency || 'USD';
+            const payeeKey = `supplier:${po.supplier_id || po.supplier_name}`;
+            const existingItem = findActivePayableItem('pi', piId, 'deposit');
+            if (existingItem) {
+              syncPayableItemAmount('pi', piId, 'deposit', payableDeposit);
+            } else {
+              createPayableItemFromSource({
+                sourceType: 'pi',
+                sourceId: piId,
+                sourceNo: piNo,
+                feeType: 'deposit',
+                categoryCode: 'goods',
+                subcategoryCode: 'deposit',
+                payeeType: 'factory',
+                payeeKey,
+                payeeName: po.supplier_name || '',
+                currency: finalCurrency,
+                payableAmount: payableDeposit,
+                createdBy: (req.currentUserId || req.user && req.user.id) || ''
+              });
+            }
+          }
+          });
           result.success++;
         } catch (e) {
           result.failed++;
@@ -4801,18 +5850,39 @@ app.post('/api/commercial-invoices/batch-import', requireApiPermission('ci_creat
           if (actualCustomsRate !== null && (!Number.isFinite(actualCustomsRate) || actualCustomsRate < 0)) throw new Error('实际关税税率必须为不小于0的数字：' + sku);
           const exist = queryOne('SELECT * FROM commercial_invoices WHERE ci_no = ?', [ciNo]);
           if (exist && exist.cost_confirmed) throw new Error('该CI费用已确认，不能继续追加或修改CI明细：' + ciNo);
+          // P2-6 守卫：批量导入 CI 累计 shipped_qty 不得超过 PI 确认数量（按 SKU 聚合已存在 CI items + 本次导入数量）
+          if (pi) {
+            const piItem = queryOne('SELECT id, pi_confirmed_qty FROM proforma_invoice_items WHERE pi_id = ? AND sku_code = ?', [pi.id, sku]);
+            if (piItem) {
+              const existCiSum = queryOne('SELECT COALESCE(SUM(shipped_qty),0) as total FROM commercial_invoice_items WHERE pi_no = ? AND sku_code = ?', [pi.pi_no, sku]);
+              const cumulativeCi = (existCiSum && existCiSum.total || 0) + qty;
+              if (cumulativeCi > (piItem.pi_confirmed_qty || 0)) {
+                throw new Error(`CI出货数量超过PI剩余数量（SKU: ${sku}, PI确认数量: ${piItem.pi_confirmed_qty || 0}, 已发货数量: ${existCiSum && existCiSum.total || 0}, 本次CI数量: ${qty}），请检查后重新提交。`);
+              }
+            }
+          }
           let ciId = exist ? exist.id : genId('ci');
           if (!exist) {
             run(`INSERT INTO commercial_invoices (id, ci_no, related_po_id, related_po_no, related_pi_id, related_pi_no, supplier_id, supplier_name, brand, country, target_warehouse, ci_date, actual_ship_date, payment_term_id, credit_days, currency, goods_amount, pi_total_amount, amount_difference, difference_reason, ci_status, attachment, pl_attachment, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
               [ciId, ciNo, po.id, po.po_no, pi ? pi.id : '', pi ? pi.pi_no : '', po.supplier_id || '', po.supplier_name || '', po.brand || '', po.country || '', po.target_warehouse || '', s(pick(row, ['CI日期', 'ci_date'])) || new Date().toISOString().split('T')[0], actualShipDate, ciCredit.paymentTermId, ciCredit.creditDays, s(pick(row, ['币种', 'currency'])) || po.currency || 'USD', 0, pi ? (pi.total_amount || 0) : 0, 0, s(pick(row, ['差异原因', 'difference_reason'])), 'uploaded', parseAttachment(row.attachment || ''), parseAttachment(row.pl_attachment || ''), s(pick(row, ['备注', 'remark']))]);
           }
-          run(`INSERT INTO commercial_invoice_items (id, ci_id, ci_no, pi_no, sku_code, shipped_qty, unit_price, ci_amount, actual_customs_rate, inbound_qty, uninbound_qty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [genId('cii'), ciId, ciNo, pi ? pi.pi_no : '', sku, qty, price, amount, actualCustomsRate, 0, qty]);
+          run(`INSERT INTO commercial_invoice_items (id, ci_id, ci_no, pi_no, pi_id, sku_code, shipped_qty, unit_price, ci_amount, actual_customs_rate, inbound_qty, uninbound_qty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [genId('cii'), ciId, ciNo, pi ? pi.pi_no : '', pi ? pi.id : '', sku, qty, price, amount, actualCustomsRate, 0, qty]);
           const totals = queryOne('SELECT COALESCE(SUM(ci_amount),0) as total FROM commercial_invoice_items WHERE ci_id = ?', [ciId]);
           const goodsAmount = totals.total || 0;
           const piTotal = pi ? (pi.total_amount || 0) : 0;
-          const deduct = pi && pi.need_deposit ? Math.min(pi.payable_deposit || 0, pi.available_deduct_deposit || 0, goodsAmount) : 0;
-          run('UPDATE commercial_invoices SET goods_amount=?, amount_difference=?, should_deduct_deposit=?, actual_deducted_deposit=?, payable_balance=?, unpaid_balance=? WHERE id=?', [goodsAmount, goodsAmount - piTotal, deduct, deduct, goodsAmount - deduct, goodsAmount - deduct, ciId]);
+          // R7: 定金按实际出货货值比例分摊
+          let deduct = 0;
+          if (pi && pi.need_deposit && (pi.available_deduct_deposit || 0) > 0) {
+            const piRemainingUnshipped = (pi.total_amount || 0) - (pi.shipped_amount || 0);
+            const newRemaining = piRemainingUnshipped - goodsAmount;
+            if (piRemainingUnshipped <= 0.01 || newRemaining <= 0.01) {
+              deduct = pi.available_deduct_deposit || 0;
+            } else {
+              deduct = (pi.available_deduct_deposit || 0) * goodsAmount / piRemainingUnshipped;
+            }
+          }
+          run('UPDATE commercial_invoices SET goods_amount=?, amount_difference=0, should_deduct_deposit=?, actual_deducted_deposit=?, payable_balance=?, unpaid_balance=? WHERE id=?', [goodsAmount, deduct, deduct, goodsAmount - deduct, goodsAmount - deduct, ciId]);
           result.success++;
         } catch (e) {
           result.failed++;
@@ -4853,6 +5923,15 @@ app.post('/api/packing-lists/batch-import', requireApiPermission('ci_create'), a
           const cartons = n(pick(row, ['箱数', 'cartons']), 0);
           const qtyPerCarton = n(pick(row, ['每箱数量', 'qty_per_carton']), 0);
           const totalQty = n(pick(row, ['总数量', 'total_qty']), cartons * qtyPerCarton);
+          // P2-7 守卫：批量导入 PL 累计数量不得超过 CI shipped_qty（按 CI + SKU 聚合已存在 PL 数量 + 本次导入数量）
+          const ciItem = queryOne('SELECT id, shipped_qty FROM commercial_invoice_items WHERE ci_id = ? AND sku_code = ?', [ci.id, sku]);
+          if (ciItem) {
+            const existPlSum = queryOne('SELECT COALESCE(SUM(pli.total_qty),0) as total FROM packing_list_items pli JOIN packing_lists pl ON pli.pl_id = pl.id WHERE pl.related_ci_id = ? AND pli.sku_code = ?', [ci.id, sku]);
+            const cumulativePl = (existPlSum && existPlSum.total || 0) + totalQty;
+            if (cumulativePl > (ciItem.shipped_qty || 0)) {
+              throw new Error(`装箱单数量超过CI出货数量（SKU: ${sku}, CI出货数量: ${ciItem.shipped_qty || 0}, 已创建PL数量: ${existPlSum && existPlSum.total || 0}, 本次PL数量: ${totalQty}），请检查后重新提交。`);
+            }
+          }
           const gross = n(pick(row, ['单箱毛重', 'gross_weight']), 0) * (cartons || 1);
           const net = n(pick(row, ['单箱净重', 'net_weight']), 0) * (cartons || 1);
           const cbm = n(pick(row, ['单箱体积', 'cbm']), 0) * (cartons || 1);
@@ -5470,9 +6549,23 @@ async function paymentSettlementFacts(payment) {
   const activePayments = paymentLogs.filter(log => log.status === 'applied');
   const activeDeductions = deductionLogs.filter(log => log.status === 'applied');
   const activeRoundings = roundingLogs.filter(log => log.status === 'applied');
-  const effectivePaid = settlementMoney(paymentLogs.length
-    ? activePayments.reduce((sum, log) => sum + Number(log.amount || 0), 0)
-    : Number(payment.paid_amount || 0));
+  // PAY-CORE Phase 2 SSOT：effectivePaid 拆分为 newTransactionPaid + legacyPaid
+  // 1. 新付款：从 payment_transactions 读取（唯一银行资金事实源）
+  const txRows = await query(
+    `SELECT paid_amount_minor FROM payment_transactions
+     WHERE payment_request_id = ? AND trans_status = 'reconciled'`,
+    [payment.id]
+  );
+  const newTransactionPaidMinor = (txRows.rows || []).reduce(
+    (sum, r) => sum + Number(r.paid_amount_minor || 0), 0
+  );
+  const newTransactionPaid = minorToAmount(newTransactionPaidMinor);
+  // 2. Legacy 付款：仅读取 is_legacy=1 的 payment settlement log（历史兼容基线）
+  const legacyActivePayments = activePayments.filter(log => Number(log.is_legacy) === 1);
+  const legacyPaid = legacyActivePayments.reduce((sum, log) => sum + Number(log.amount || 0), 0);
+  // 3. effectivePaid = 新付款 + Legacy 付款；完全删除 paid_amount fallback
+  //    新 PR 无 transaction + 无 legacy log → effectivePaid = 0（即使 paid_amount 被异常写入）
+  const effectivePaid = settlementMoney(newTransactionPaid + legacyPaid);
   const effectiveDeduction = settlementMoney(deductionLogs.length
     ? activeDeductions.reduce((sum, log) => sum + Number(log.amount || 0), 0)
     : Number(payment.deduction_amount || 0));
@@ -5548,9 +6641,94 @@ function sourceGoodsPaymentRows(sourceType, sourceId, subcategory) {
     [subcategory, ...params]).rows;
 }
 
+// PAY-CORE multi-PI-deposit：聚合某个 PI 下所有定金 payable_items 的实际付款状态
+// 跨 multi/single PR 统一通过 payment_allocations 聚合，避免串单
+async function aggregatePiDepositSettlement(piId) {
+  const items = await query(
+    `SELECT id, payable_amount_minor, lifecycle_status
+     FROM payable_items
+     WHERE source_type = 'pi' AND source_id = ?
+       AND fee_type = 'deposit'
+       AND lifecycle_status IN ('active', 'reserved', 'paid')`,
+    [piId]
+  );
+  if (!items.rows || items.rows.length === 0) {
+    return { effectivePaid: 0, payableAmount: 0, outstanding: 0, allSettled: false, hasSettlement: false, hasPendingApproval: false, sourcePayStatus: 'unpaid' };
+  }
+  let totalPayableMinor = 0;
+  let totalPaidMinor = 0;
+  let hasSettlement = false;
+  let hasPendingApproval = false;
+  for (const item of items.rows) {
+    const itemPayableMinor = Number(item.payable_amount_minor || 0);
+    totalPayableMinor += itemPayableMinor;
+    const pris = await query(
+      `SELECT pri.id, pri.payment_request_id
+       FROM payment_request_items pri
+       WHERE pri.payable_item_id = ?`,
+      [item.id]
+    );
+    let itemPaidMinor = 0;
+    for (const pri of pris.rows || []) {
+      const pr = await queryOne('SELECT approval_status, payment_status FROM payment_requests WHERE id = ?', [pri.payment_request_id]);
+      if (!pr) continue;
+      if (pr.approval_status === 'rejected' || pr.payment_status === 'cancelled' || pr.payment_status === 'rejected') continue;
+      if (pr.approval_status === 'pending') hasPendingApproval = true;
+      const allocs = await query(
+        `SELECT allocated_amount_minor FROM payment_allocations
+         WHERE payment_request_item_id = ? AND status = 'reconciled'`,
+        [pri.id]
+      );
+      const allocMinor = (allocs.rows || []).reduce((s, r) => s + Number(r.allocated_amount_minor || 0), 0);
+      if (allocMinor > 0) hasSettlement = true;
+      itemPaidMinor += allocMinor;
+    }
+    // PAY-CORE rounding：payable_item 已被 markPayableItemPaid 标记为 paid 时，
+    // 补齐 PR 级抹零/抵扣分摊到本项产生的尾差，使 paid_deposit 与 payable_deposit 一致。
+    if (item.lifecycle_status === 'paid' && itemPaidMinor > 0 && itemPaidMinor < itemPayableMinor) {
+      itemPaidMinor = itemPayableMinor;
+      hasSettlement = true;
+    }
+    totalPaidMinor += itemPaidMinor;
+  }
+  const effectivePaid = minorToAmount(totalPaidMinor);
+  const payableAmount = minorToAmount(totalPayableMinor);
+  const outstanding = settlementMoney(payableAmount - effectivePaid);
+  const allSettled = totalPayableMinor > 0 && totalPaidMinor >= totalPayableMinor;
+  const sourcePayStatus = allSettled ? 'paid' : (hasSettlement ? 'partial_paid' : (hasPendingApproval ? 'pending_approval' : 'unpaid'));
+  return { effectivePaid, payableAmount, outstanding, allSettled, hasSettlement, hasPendingApproval, sourcePayStatus };
+}
+
 async function syncPaymentSource(payment, facts, paymentStatus) {
   const isSettled = facts.outstanding <= 0;
   const hasSettlement = facts.effectivePaid > 0 || facts.effectiveDeduction > 0 || facts.effectiveRounding > 0;
+
+  // PAY-CORE multi-PI-deposit：multi 模式按 PI 维度分别回写
+  // 原因：multi PR 主表 source_type/source_id 为空，原分支无法触发；需通过 payment_request_items JOIN payable_items
+  // 找到关联的所有 PI，分别聚合其定金付款状态后回写
+  if (payment.payment_mode === 'multi') {
+    const piRows = await query(
+      `SELECT DISTINCT pi.source_id AS pi_id
+       FROM payment_request_items pri
+       JOIN payable_items pi ON pi.id = pri.payable_item_id
+       WHERE pri.payment_request_id = ?
+         AND pi.source_type = 'pi' AND pi.source_id != ''`,
+      [payment.id]
+    );
+    for (const piRow of piRows.rows || []) {
+      const piId = piRow.pi_id;
+      const aggregate = await aggregatePiDepositSettlement(piId);
+      const pi = await queryOne('SELECT pi_status FROM proforma_invoices WHERE id = ?', [piId]);
+      if (pi) {
+        let piStatus = pi.pi_status;
+        if (aggregate.allSettled && ['pending', 'uploaded', 'confirmed', 'pending_deposit'].includes(piStatus)) piStatus = 'deposit_paid';
+        if (!aggregate.allSettled && piStatus === 'deposit_paid') piStatus = 'pending_deposit';
+        await run(`UPDATE proforma_invoices
+             SET deposit_payment_status = ?, paid_deposit = ?, pi_status = ?, updated_at = datetime('now')
+             WHERE id = ?`, [aggregate.sourcePayStatus, aggregate.effectivePaid, piStatus, piId]);
+      }
+    }
+  }
 
   if (payment.payment_category === 'goods' && payment.payment_subcategory === 'deposit' && payment.source_type === 'pi' && payment.source_id) {
     const aggregate = await aggregateSourceSettlement(await sourceGoodsPaymentRows('pi', payment.source_id, 'deposit'));
@@ -5624,6 +6802,38 @@ function sourceExpenseCountry(value, sourceLabel) {
   return country;
 }
 
+function payableItemSourceExpenseCountry(item) {
+  const sourceType = String(item && item.source_type || '').trim();
+  const sourceId = String(item && item.source_id || '').trim();
+  let source = null;
+  if (sourceType === 'pi') {
+    source = queryOne('SELECT pi_no AS source_no, country FROM proforma_invoices WHERE id = ?', [sourceId]);
+  } else if (sourceType === 'ci') {
+    source = queryOne('SELECT ci_no AS source_no, country FROM commercial_invoices WHERE id = ?', [sourceId]);
+  } else if (sourceType === 'historical_ci') {
+    source = queryOne('SELECT historical_ci_no AS source_no, country FROM historical_commercial_invoices WHERE id = ?', [sourceId]);
+  } else {
+    throw new SettlementError(400, `应付费用 ${item.fee_no || item.id || ''} 的来源类型无法确定国家，不能创建付款申请`);
+  }
+  if (!source) {
+    throw new SettlementError(400, `应付费用 ${item.fee_no || item.id || ''} 的来源单据不存在，不能创建付款申请`);
+  }
+  const country = String(source.country || '').trim();
+  if (!country) {
+    throw new SettlementError(400, `来源费用 ${item.fee_no || item.id || ''}（${source.source_no || item.source_no || sourceId}）未设置国家，不能创建付款申请`);
+  }
+  return activeExpenseCountry(country);
+}
+
+function commonPayableItemsExpenseCountry(items) {
+  const countries = items.map(payableItemSourceExpenseCountry);
+  const uniqueCountries = [...new Set(countries)];
+  if (uniqueCountries.length !== 1) {
+    throw new SettlementError(400, `所选费用来源国家不一致（${uniqueCountries.join('、')}），不能合并创建付款申请`);
+  }
+  return uniqueCountries[0];
+}
+
 function existingActiveGoodsPayment(sourceType, sourceId, subcategory) {
   return queryOne(
     `SELECT id, request_no, payment_status FROM payment_requests
@@ -5637,6 +6847,390 @@ function existingActiveGoodsPayment(sourceType, sourceId, subcategory) {
 function isActiveGoodsPaymentUniqueError(error) {
   return String(error && error.message || '').includes('uq_payment_request_active_goods_source') ||
     String(error && error.message || '').includes('payment_requests.source_type, payment_requests.source_id, payment_requests.payment_subcategory');
+}
+
+// ==================== PAY-CORE Phase 1.5 Task 1：payable_items 应付费用池辅助函数 ====================
+// V5 修正 1：lifecycle_status 与 is_active 解耦，新代码以 lifecycle_status 为准
+// V5 修正 2：payable_amount_minor <= 0 不创建 payable_item
+
+/**
+ * 查找当前 active 状态的应付费用（按来源 + 费用类型）
+ * @param {string} [sourceCiId] - 可选，per-PI balance 的来源 CI；传入时按 source_ci_id 精确匹配
+ */
+function findActivePayableItem(sourceType, sourceId, feeType, sourceCiId) {
+  if (sourceCiId !== undefined) {
+    return queryOne(
+      `SELECT * FROM payable_items
+       WHERE source_type = ? AND source_id = ? AND fee_type = ? AND source_ci_id = ?
+         AND lifecycle_status = 'active'`,
+      [sourceType, sourceId, feeType, sourceCiId]
+    );
+  }
+  return queryOne(
+    `SELECT * FROM payable_items
+     WHERE source_type = ? AND source_id = ? AND fee_type = ?
+       AND lifecycle_status = 'active'`,
+    [sourceType, sourceId, feeType]
+  );
+}
+
+/**
+ * 创建应付费用记录
+ * 仅当 payableAmountMinor > 0 时才创建
+ * 若已存在 active 记录则跳过（幂等）
+ *
+ * @param {Object} params
+ * @param {string} params.sourceType - pi / ci
+ * @param {string} params.sourceId - 来源 ID
+ * @param {string} params.sourceNo - 来源编号（PI001/CI001）
+ * @param {string} params.feeType - deposit / balance
+ * @param {string} params.categoryCode - goods
+ * @param {string} params.subcategoryCode - deposit / balance
+ * @param {string} params.payeeType - factory
+ * @param {string} params.payeeKey - supplier:xxx
+ * @param {string} params.payeeName - 供应商名称
+ * @param {string} params.currency - 币种
+ * @param {number} params.payableAmount - 应付金额（元）
+ * @param {string} [params.sourceCiId] - 来源 CI ID（per-PI balance 时传入，标记该尾款产生自哪个 CI）
+ * @param {string} [params.createdBy] - 创建人
+ * @returns {Object|null} 创建的 payable_item 或 null（跳过）
+ */
+function createPayableItemFromSource(params) {
+  const {
+    sourceType, sourceId, sourceNo, feeType,
+    categoryCode, subcategoryCode,
+    payeeType, payeeKey, payeeName,
+    currency, payableAmount, sourceCiId = '', createdBy = ''
+  } = params;
+
+  // V5 规则：应付金额 <= 0 不创建
+  const amountMinor = Math.round((Number(payableAmount) || 0) * 100);
+  if (amountMinor <= 0) {
+    return null;
+  }
+
+  // 幂等：已存在 active 记录则返回已有记录，不重复创建
+  const existing = findActivePayableItem(sourceType, sourceId, feeType, sourceCiId);
+  if (existing) {
+    return existing;
+  }
+
+  // P0-FIX-3：检查是否存在非 active 状态的历史记录（reserved / paid / cancelled）
+  // UNIQUE 约束 (source_type, source_id, fee_type, source_ci_id) 会阻止创建重复记录
+  // 必须前置判断，不得依赖数据库异常
+  // 注意：payable_items 表无 updated_at 列，使用 created_at 排序
+  const historicalItem = queryOne(
+    `SELECT * FROM payable_items
+     WHERE source_type = ? AND source_id = ? AND fee_type = ? AND source_ci_id = ?
+       AND lifecycle_status != 'active'
+     ORDER BY created_at DESC LIMIT 1`,
+    [sourceType, sourceId, feeType, sourceCiId]
+  );
+  if (historicalItem) {
+    // 返回已有历史记录，附带明确状态，不创建新记录
+    // 调用方可通过 lifecycle_status 判断当前状态
+    return historicalItem;
+  }
+
+  const id = genId('payitem');
+  const feeNo = `PAY-ITEM-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}-${Math.random().toString(36).substring(2, 5)}`;
+  run(
+    `INSERT INTO payable_items
+     (id, fee_no, source_type, source_id, source_no, source_ci_id, fee_type,
+      category_code, subcategory_code, payee_type, payee_key, payee_name_snapshot,
+      payer_entity_key, payer_name_snapshot, currency, payable_amount_minor,
+      is_active, lifecycle_status, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'active', ?)`,
+    [id, feeNo, sourceType, sourceId, sourceNo, sourceCiId, feeType,
+     categoryCode || '', subcategoryCode || '',
+     payeeType || '', payeeKey, payeeName || '',
+     'self', '', currency, amountMinor, createdBy]
+  );
+
+  return { id, fee_no: feeNo, lifecycle_status: 'active', payable_amount_minor: amountMinor };
+}
+
+/**
+ * 同步应付费用金额（仅 lifecycle_status='active' 时允许）
+ * V5 修正 1：reserved/paid/cancelled 禁止自动修改
+ *
+ * @param {string} sourceType - pi / ci
+ * @param {string} sourceId - 来源 ID
+ * @param {string} feeType - deposit / balance
+ * @param {number} newAmount - 新金额（元）
+ * @returns {boolean} 是否同步成功
+ */
+function syncPayableItemAmount(sourceType, sourceId, feeType, newAmount) {
+  const amountMinor = Math.round((Number(newAmount) || 0) * 100);
+  // V5 规则：金额 <= 0 不自动取消，仅跳过同步
+  if (amountMinor <= 0) {
+    return false;
+  }
+  const result = run(
+    `UPDATE payable_items
+     SET payable_amount_minor = ?
+     WHERE source_type = ? AND source_id = ? AND fee_type = ?
+       AND lifecycle_status = 'active'`,
+    [amountMinor, sourceType, sourceId, feeType]
+  );
+  return result.changes > 0;
+}
+
+/**
+ * 取消应付费用（仅 lifecycle_status='active' 时允许）
+ * V5 修正 1：不更新 is_active，仅更新 lifecycle_status
+ *
+ * @param {string} payableItemId - 应付费用 ID
+ * @param {string} cancelledBy - 取消人
+ * @param {string} cancelReason - 取消原因
+ * @returns {boolean} 是否取消成功
+ */
+function cancelPayableItem(payableItemId, cancelledBy, cancelReason) {
+  const result = run(
+    `UPDATE payable_items
+     SET lifecycle_status = 'cancelled',
+         cancelled_by = ?,
+         cancelled_at = datetime('now'),
+         cancel_reason = ?
+     WHERE id = ? AND lifecycle_status = 'active'`,
+    [cancelledBy || '', cancelReason || '', payableItemId]
+  );
+  return result.changes > 0;
+}
+
+/**
+ * 锁定应付费用（active → reserved）
+ * 供 Task 2 payment_request_items 使用
+ */
+function reservePayableItem(payableItemId, paymentRequestId) {
+  const result = run(
+    `UPDATE payable_items
+     SET lifecycle_status = 'reserved'
+     WHERE id = ? AND lifecycle_status = 'active'`,
+    [payableItemId]
+  );
+  return result.changes > 0;
+}
+
+/**
+ * 释放应付费用（reserved → active）
+ * 供 Task 2 reject-approval 使用
+ */
+function releasePayableItem(payableItemId) {
+  const result = run(
+    `UPDATE payable_items
+     SET lifecycle_status = 'active'
+     WHERE id = ? AND lifecycle_status = 'reserved'`,
+    [payableItemId]
+  );
+  return result.changes > 0;
+}
+
+/**
+ * 释放付款申请关联的所有 payable_items（reserved → active）
+ * PAY-CORE Phase 1.5 Task 2：reject-approval 时调用（业务规则 7）
+ * 仅 multi 模式触发；single 模式 Task 1 未 reserve，保持兼容
+ */
+function releasePayableItemsByPR(prId) {
+  const items = query(
+    `SELECT payable_item_id FROM payment_request_items WHERE payment_request_id = ?`,
+    [prId]
+  );
+  let released = 0;
+  for (const row of items.rows || []) {
+    // P0-FIX-5：释放前检查该 item 是否还被其他非终态 PR 有效关联
+    // 若存在重复有效关联，抛出数据一致性错误，触发事务回滚
+    const otherActivePRs = query(
+      `SELECT COUNT(*) AS cnt FROM payment_request_items pri
+       JOIN payment_requests pr ON pr.id = pri.payment_request_id
+       WHERE pri.payable_item_id = ? AND pri.payment_request_id != ?
+         AND pr.payment_status NOT IN ('cancelled','rejected')
+         AND pr.approval_status NOT IN ('cancelled','rejected')`,
+      [row.payable_item_id, prId]
+    );
+    if (otherActivePRs.rows[0] && otherActivePRs.rows[0].cnt > 0) {
+      throw new Error(`数据一致性错误：应付费用 ${row.payable_item_id} 被多个有效付款申请关联，不得释放`);
+    }
+    if (releasePayableItem(row.payable_item_id)) released++;
+  }
+  return released;
+}
+
+/**
+ * PAY-CORE P0-2：multi PR 来源 PI 状态同步
+ * 从给定 payable_items 行中找出 source_type='pi' 且 fee_type='deposit' 的来源 PI（去重），
+ * 将其 deposit_payment_status 更新为指定状态（pending_approval / unpaid）
+ * 仅当当前状态匹配 fromStatus 时才更新，避免误覆盖已完成的状态
+ * @param {Array} payableRows - payable_items 行（需含 source_type, source_id, fee_type）
+ * @param {string} toStatus - 目标状态
+ * @param {string} fromStatus - 仅当当前状态等于此值才更新（可选，默认不限）
+ */
+function syncMultiSourcePiStatus(payableRows, toStatus, fromStatus) {
+  const piIds = new Set();
+  for (const r of payableRows || []) {
+    if (r.source_type === 'pi' && r.fee_type === 'deposit' && r.source_id) {
+      piIds.add(r.source_id);
+    }
+  }
+  if (piIds.size === 0) return 0;
+  let updated = 0;
+  for (const piId of piIds) {
+    if (fromStatus) {
+      const result = run(
+        `UPDATE proforma_invoices SET deposit_payment_status = ?, updated_at = datetime('now')
+         WHERE id = ? AND deposit_payment_status = ?`,
+        [toStatus, piId, fromStatus]
+      );
+      if (result.changes > 0) updated++;
+    } else {
+      const result = run(
+        `UPDATE proforma_invoices SET deposit_payment_status = ?, updated_at = datetime('now')
+         WHERE id = ?`,
+        [toStatus, piId]
+      );
+      if (result.changes > 0) updated++;
+    }
+  }
+  return updated;
+}
+
+/**
+ * 标记应付费用已付款（reserved → paid）
+ * V5 修正 1：不更新 is_active，paid 视为有效历史财务记录
+ * 供 Task 4 applyPaymentSettlement 使用
+ */
+function markPayableItemPaid(payableItemId) {
+  const result = run(
+    `UPDATE payable_items
+     SET lifecycle_status = 'paid'
+     WHERE id = ? AND lifecycle_status = 'reserved'`,
+    [payableItemId]
+  );
+  return result.changes > 0;
+}
+
+/**
+ * PAY-CORE Phase 2：金额转换 helper（统一口径，规避浮点误差）
+ */
+function amountToMinor(amount) {
+  return Math.round((Number(amount) || 0) * 100 + Number.EPSILON);
+}
+function minorToAmount(minor) {
+  return (Number(minor) || 0) / 100;
+}
+
+function finalPaymentApprovalInput(payment, body = {}) {
+  const actualPaidAmount = settlementMoney(body.actual_paid_amount);
+  if (!(actualPaidAmount > 0)) {
+    throw new SettlementError(400, '最终审批必须填写有效的实际付款金额');
+  }
+  const actualPaidDate = settlementDate(body.actual_paid_date);
+  const requestedAmount = settlementMoney(payment.payable_amount || 0);
+  if (actualPaidAmount > requestedAmount) {
+    throw new SettlementError(400, '实际付款金额不能大于申请金额');
+  }
+  const calculatedRounding = settlementMoney(requestedAmount - actualPaidAmount);
+  const submittedRounding = settlementMoney(body.rounding_amount);
+  if (!Number.isFinite(submittedRounding) || submittedRounding < 0) {
+    throw new SettlementError(400, '抹零金额无效');
+  }
+  if (Math.abs(submittedRounding - calculatedRounding) > 0.005) {
+    throw new SettlementError(400, '抹零金额必须等于申请金额减实际付款金额');
+  }
+  if (calculatedRounding > 0 && Math.abs(actualPaidAmount - Math.floor(requestedAmount)) > 0.005) {
+    throw new SettlementError(400, '现有付款核心仅支持小数尾差抹零');
+  }
+
+  const attachmentValue = body.attachment !== undefined ? body.attachment : payment.attachment;
+  const attachment = parseAttachment(attachmentValue);
+  let hasAttachment = Boolean(String(attachment || '').trim());
+  if (hasAttachment) {
+    try {
+      const parsed = JSON.parse(attachment);
+      if (Array.isArray(parsed)) hasAttachment = parsed.length > 0;
+      else if (parsed && typeof parsed === 'object') hasAttachment = Object.keys(parsed).length > 0;
+    } catch (e) {
+      // 历史字符串附件保持兼容，非空即视为已有付款凭证。
+    }
+  }
+  if (!hasAttachment) {
+    throw new SettlementError(400, '最终审批必须上传水单附件');
+  }
+
+  return {
+    actualPaidAmount,
+    actualPaidDate,
+    roundingAmount: calculatedRounding,
+    applyRoundOff: calculatedRounding > 0,
+    attachment,
+    idempotencyKey: String(body.idempotency_key || `approval:${payment.id}`).trim()
+  };
+}
+
+async function settleFinalPaymentApproval(payment, body, req) {
+  const input = finalPaymentApprovalInput(payment, body);
+  await run(
+    `UPDATE payment_requests
+     SET attachment = ?, updated_at = datetime('now')
+     WHERE id = ?`,
+    [input.attachment, payment.id]
+  );
+  return await applyPaymentSettlement(
+    payment.id,
+    input.actualPaidAmount,
+    input.actualPaidDate,
+    '',
+    req,
+    input.idempotencyKey,
+    {
+      voucher_attachment: input.attachment,
+      apply_round_off: input.applyRoundOff
+    }
+  );
+}
+
+/**
+ * PAY-CORE Phase 2：single PR 关联 payable_item 并 reserve
+ * 业务规则（V2.1 第 8 节）：
+ *   1. 按 source_type + source_id + fee_type 查找 active payable_item
+ *   2. 找到 >1 个候选 → 抛错冲突，事务回滚
+ *   3. 找到 1 个 → 校验 currency/payee_key 一致 → 创建 payment_request_items → reserve
+ *   4. 找到 0 个 → 历史兼容路径，跳过（不创建 items，不 reserve）
+ *   5. 必须在 PR 创建事务内调用
+ * @returns {Object|null} 关联的 payable_item 或 null（历史兼容）
+ */
+function linkSinglePayableItem(prId, sourceType, sourceId, feeType, prCurrency, prPayeeKey) {
+  const candidates = query(
+    `SELECT * FROM payable_items
+     WHERE source_type = ? AND source_id = ? AND fee_type = ?
+       AND lifecycle_status = 'active'`,
+    [sourceType, sourceId, feeType]
+  );
+  const items = candidates.rows || [];
+  if (items.length === 0) return null; // 历史兼容：PI/CI 在 Task 1 前创建，无 payable_item
+  if (items.length > 1) {
+    throw new SettlementError(409, `来源 ${sourceType}:${sourceId} 存在 ${items.length} 个 active 应付费用（${feeType}），无法自动关联，请先清理重复数据`);
+  }
+  const payableItem = items[0];
+  // 校验 currency 一致
+  if (String(payableItem.currency || '').toUpperCase() !== String(prCurrency || '').toUpperCase()) {
+    throw new SettlementError(409, `应付费用币种 ${payableItem.currency} 与付款申请币种 ${prCurrency} 不一致，无法关联`);
+  }
+  // 校验 payee_key 一致
+  if (String(payableItem.payee_key || '') !== String(prPayeeKey || '')) {
+    throw new SettlementError(409, `应付费用收款方 ${payableItem.payee_key} 与付款申请收款方 ${prPayeeKey} 不一致，无法关联`);
+  }
+  // 创建 payment_request_items（1 行，全额）
+  run(
+    `INSERT INTO payment_request_items (id, payment_request_id, payable_item_id, requested_amount_minor)
+     VALUES (?, ?, ?, ?)`,
+    [genId('pri'), prId, payableItem.id, payableItem.payable_amount_minor]
+  );
+  // reserve payable_item（active → reserved）
+  if (!reservePayableItem(payableItem.id, prId)) {
+    throw new SettlementError(409, `应付费用 ${payableItem.fee_no} 状态已变更，无法锁定`);
+  }
+  return payableItem;
 }
 
 function resolveSettlementCountry(payment) {
@@ -5724,37 +7318,66 @@ async function paymentIdempotencyResult(existing, payment, requestedAmount, paid
   if (!sameContent) {
     throw new SettlementError(409, '该付款幂等键已用于不同的付款申请、金额、付款日期或凭证，不能重复使用');
   }
+  // PAY-CORE Phase 2 SSOT：通过 settlement_log_id 反查关联的 transaction
+  const tx = await queryOne(
+    'SELECT id, trans_no FROM payment_transactions WHERE settlement_log_id = ?',
+    [existing.id]
+  );
   const facts = await paymentSettlementFacts(payment);
   return {
     idempotent: true,
     log_id: existing.id,
+    transaction_id: tx ? tx.id : null,
+    trans_no: tx ? tx.trans_no : null,
     ...facts,
     outstanding: Math.max(0, facts.outstanding),
     payment_status: derivePaymentStatus(payment, facts)
   };
 }
 
-async function applyPaymentSettlement(paymentRequestId, rawAmount, rawPaidDate, voucher, req, rawIdempotencyKey) {
+async function applyPaymentSettlement(paymentRequestId, rawAmount, rawPaidDate, voucher, req, rawIdempotencyKey, options = {}) {
   return await transaction(async () => {
     const payment = await queryOne('SELECT * FROM payment_requests WHERE id = ?', [paymentRequestId]);
     if (!payment) throw new SettlementError(404, '付款申请不存在');
     if (payment.approval_status !== 'approved') throw new SettlementError(409, '付款申请尚未审批通过，不能确认付款');
     if (['cancelled', 'rejected'].includes(payment.payment_status)) throw new SettlementError(409, '当前付款申请状态不允许确认付款');
+    // PAY-CORE Phase 2：MULTI 隔离（V2.1 第 10 节）
+    if (String(payment.currency || '').toUpperCase() === 'MULTI') {
+      throw new SettlementError(400, '该付款申请币种无效（MULTI），无法确认付款。请重新创建符合币种规则的付款申请。');
+    }
     const idempotencyKey = settlementIdempotencyKey(rawIdempotencyKey);
-    const requestedAmount = rawAmount === null || rawAmount === undefined || rawAmount === '' ? null : settlementMoney(rawAmount);
-    if (requestedAmount !== null && !(requestedAmount > 0)) throw new SettlementError(400, '本次实际付款金额必须大于0');
     const paidDate = settlementDate(rawPaidDate);
     const normalizedVoucher = String(voucher || '').trim();
+    const bankRefNo = String(options.bank_ref_no || '').trim();
+    const paymentAccount = String(options.payment_account || '').trim();
+    const voucherAttachment = String(options.voucher_attachment || normalizedVoucher).trim();
+    const applyRoundOff = options.apply_round_off === true;
     const existing = await queryOne(`SELECT * FROM payment_settlement_logs
                                WHERE event_type = 'payment' AND idempotency_key = ?`, [idempotencyKey]);
-    if (existing) return await paymentIdempotencyResult(existing, payment, requestedAmount, paidDate, normalizedVoucher);
+    if (existing) return await paymentIdempotencyResult(existing, payment, null, paidDate, normalizedVoucher);
     await ensureSettlementLegacyBaselines(payment);
     const before = await paymentSettlementFacts(payment);
     if (before.outstanding <= 0) throw new SettlementError(409, '该付款申请已结清，无需重复付款');
-    const amount = requestedAmount === null ? before.outstanding : requestedAmount;
-    if (!(amount > 0)) throw new SettlementError(400, '本次实际付款金额必须大于0');
-    if (amount > before.outstanding) throw new SettlementError(400, '本次实际付款金额不能大于当前未付金额');
-    const snapshot = await buildPaymentRateSnapshot(payment, amount, paidDate);
+    // V2.1 第 4-5 节：Round-off 基于当前 outstanding
+    let actualPaidAmount, roundOffAmount = 0;
+    if (applyRoundOff) {
+      // V2.1 第 5 节：apply_round_off=true 只能用于一次结清当前 outstanding
+      actualPaidAmount = Math.floor(before.outstanding);
+      roundOffAmount = settlementMoney(before.outstanding - actualPaidAmount);
+      if (roundOffAmount < 0) throw new SettlementError(400, '抹零金额不能小于0');
+    } else {
+      // V2.1 第 5 节：apply_round_off=false 保留 single partial payment 能力
+      const requestedAmount = rawAmount === null || rawAmount === undefined || rawAmount === '' ? null : settlementMoney(rawAmount);
+      if (requestedAmount !== null && !(requestedAmount > 0)) throw new SettlementError(400, '本次实际付款金额必须大于0');
+      actualPaidAmount = requestedAmount === null ? before.outstanding : requestedAmount;
+      if (!(actualPaidAmount > 0)) throw new SettlementError(400, '本次实际付款金额必须大于0');
+      if (actualPaidAmount > before.outstanding) throw new SettlementError(400, '本次实际付款金额不能大于当前未付金额');
+      // V2.1 第 5 节：multi 模式不允许部分付款
+      if (payment.payment_mode === 'multi' && actualPaidAmount < before.outstanding) {
+        throw new SettlementError(400, '多费用付款暂不支持部分付款，请全额支付或使用抹零一次结清');
+      }
+    }
+    const snapshot = await buildPaymentRateSnapshot(payment, actualPaidAmount, paidDate);
     const operator = await settlementOperator(req);
     const logId = await genId('settle');
     try {
@@ -5764,17 +7387,90 @@ async function applyPaymentSettlement(paymentRequestId, rawAmount, rawPaidDate, 
             local_rate_direction, local_amount, rmb_rate, rmb_rate_date, rmb_rate_type, rmb_rate_direction,
             rmb_amount, operator_id, operator_name, idempotency_key)
            VALUES (?, ?, 'payment', ?, 'applied', '付款确认', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [logId, payment.id, amount, paidDate, normalizedVoucher, payment.currency || '', snapshot.settlement_country,
+        [logId, payment.id, actualPaidAmount, paidDate, normalizedVoucher, payment.currency || '', snapshot.settlement_country,
           snapshot.local_currency, snapshot.local_rate, snapshot.local_rate_date, snapshot.local_rate_type,
           snapshot.local_rate_direction, snapshot.local_amount, snapshot.rmb_rate, snapshot.rmb_rate_date,
           snapshot.rmb_rate_type, snapshot.rmb_rate_direction, snapshot.rmb_amount, operator.id, operator.name, idempotencyKey]);
     } catch (e) {
       const raced = await queryOne(`SELECT * FROM payment_settlement_logs
                               WHERE event_type = 'payment' AND idempotency_key = ?`, [idempotencyKey]);
-      if (raced) return await paymentIdempotencyResult(raced, payment, amount, paidDate, normalizedVoucher);
+      if (raced) return await paymentIdempotencyResult(raced, payment, actualPaidAmount, paidDate, normalizedVoucher);
       throw e;
     }
-    return { idempotent: false, log_id: logId, ...await recalculatePaymentSettlement(payment.id) };
+    // PAY-CORE Phase 2 Step 5：事务内新增 transaction + allocation + payable_item lifecycle（V2.1 第 9 节）
+    // 1. INSERT payment_transactions（关联 settlement_log_id）
+    const txId = genId('txn');
+    const transNo = `TXN-${new Date().getFullYear()}-${String(Date.now()).slice(-8)}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+    const paidAmountMinor = amountToMinor(actualPaidAmount);
+    await run(
+      `INSERT INTO payment_transactions
+       (id, trans_no, payment_request_id, paid_amount_minor, paid_date, payment_account, bank_ref_no,
+        trans_status, operator_id, operator_name, voucher_attachment, settlement_log_id, currency,
+        settlement_country, local_currency, local_rate, local_rate_date, local_rate_type, local_rate_direction,
+        local_amount, rmb_rate, rmb_rate_date, rmb_rate_type, rmb_rate_direction, rmb_amount)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'reconciled', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [txId, transNo, payment.id, paidAmountMinor, paidDate, paymentAccount, bankRefNo,
+       operator.id, operator.name, voucherAttachment, logId, payment.currency || '',
+       snapshot.settlement_country, snapshot.local_currency, snapshot.local_rate, snapshot.local_rate_date,
+       snapshot.local_rate_type, snapshot.local_rate_direction, snapshot.local_amount, snapshot.rmb_rate,
+       snapshot.rmb_rate_date, snapshot.rmb_rate_type, snapshot.rmb_rate_direction, snapshot.rmb_amount]
+    );
+    // 2. INSERT payment_allocations（如有 payment_request_items，按 requested_amount_minor 比例分摊）
+    const priRows = await query(
+      `SELECT pri.id, pri.payable_item_id, pri.requested_amount_minor
+       FROM payment_request_items pri
+       WHERE pri.payment_request_id = ?`,
+      [payment.id]
+    );
+    if (priRows.rows && priRows.rows.length > 0) {
+      const items = priRows.rows;
+      const totalRequestedMinor = items.reduce((s, r) => s + (r.requested_amount_minor || 0), 0);
+      let allocated = 0;
+      // 按 requested_amount_minor 比例分摊，尾差归最大项
+      const sorted = items.slice().sort((a, b) => (b.requested_amount_minor || 0) - (a.requested_amount_minor || 0));
+      for (let i = 0; i < sorted.length; i++) {
+        const item = sorted[i];
+        let allocMinor;
+        if (i === 0) {
+          // 最大项：paidAmountMinor - 其余项之和（吸收尾差）
+          const othersSum = sorted.slice(1).reduce((s, r) => s + Math.floor(paidAmountMinor * (r.requested_amount_minor || 0) / totalRequestedMinor), 0);
+          allocMinor = paidAmountMinor - othersSum;
+        } else {
+          allocMinor = Math.floor(paidAmountMinor * (item.requested_amount_minor || 0) / totalRequestedMinor);
+        }
+        if (allocMinor < 0) allocMinor = 0;
+        allocated += allocMinor;
+        await run(
+          `INSERT INTO payment_allocations
+           (id, transaction_id, payment_request_item_id, allocated_amount_minor, status)
+           VALUES (?, ?, ?, ?, 'reconciled')`,
+          [genId('alloc'), txId, item.id, allocMinor]
+        );
+      }
+    }
+    // 3. Round-off：如有抹零差额，插入独立 rounding event（不关联 transaction）
+    if (applyRoundOff && roundOffAmount > 0) {
+      const roundingLogId = genId('settle');
+      await run(
+        `INSERT INTO payment_settlement_logs
+         (id, payment_request_id, event_type, amount, status, reason, original_currency, operator_id, operator_name)
+         VALUES (?, ?, 'rounding', ?, 'applied', '付款抹零（小数部分舍去）', ?, ?, ?)`,
+        [roundingLogId, payment.id, roundOffAmount, payment.currency || '', operator.id, operator.name]
+      );
+    }
+    // 4. payable_item lifecycle：在 recalculatePaymentSettlement 后判断（V2.1 第 7 节）
+    const result = await recalculatePaymentSettlement(payment.id);
+    // 重新读取付款后状态，判断是否 outstanding=0 → paid
+    const afterPayment = await queryOne('SELECT * FROM payment_requests WHERE id = ?', [payment.id]);
+    const afterFacts = await paymentSettlementFacts(afterPayment);
+    if (afterFacts.outstanding <= 0 && afterFacts.effectivePaid > 0) {
+      // PR 已结清 → 标记所有关联 payable_items 为 paid
+      const payableItemIds = (priRows.rows || []).map(r => r.payable_item_id).filter(Boolean);
+      for (const payableItemId of payableItemIds) {
+        markPayableItemPaid(payableItemId);
+      }
+    }
+    return { idempotent: false, log_id: logId, transaction_id: txId, trans_no: transNo, rounding_amount: roundOffAmount, ...result };
   });
 }
 
@@ -5857,6 +7553,29 @@ async function reverseSettlementEvent(paymentRequestId, rawLogId, eventType, rea
     if (!log) throw new SettlementError(404, '结算事件不存在');
     if (log.event_type !== eventType) throw new SettlementError(409, eventType === 'payment' ? '该事件不是付款记录，不能作为付款冲销' : '该事件不是抵扣记录，不能作为抵扣冲销');
     if (log.status !== 'applied') throw new SettlementError(409, '该结算事件已经冲销，不能重复操作');
+    // PAY-CORE Phase 2 V2.1 第 11 节：reversal 安全门禁
+    // 1. payment event：若已关联 payment_transactions，禁止 reverse（避免 transaction 悬空）
+    if (eventType === 'payment') {
+      const tx = await queryOne('SELECT id, trans_no FROM payment_transactions WHERE settlement_log_id = ?', [log.id]);
+      if (tx) {
+        throw new SettlementError(409, `该付款事件已关联银行流水 ${tx.trans_no || tx.id}，不能直接冲销。请先冲销对应交易记录。`);
+      }
+    }
+    // 2. rounding event：若 PR 已有 payable_items 处于 paid 状态，禁止 reverse（避免状态分裂）
+    //    现有 markPayableItemPaid 不会自动回退，reverse rounding 会导致 PR 未结清但 payable_item 仍为 paid
+    if (eventType === 'rounding') {
+      const paidItems = await query(
+        `SELECT pri.payable_item_id, pi.fee_no, pi.lifecycle_status
+         FROM payment_request_items pri
+         JOIN payable_items pi ON pi.id = pri.payable_item_id
+         WHERE pri.payment_request_id = ? AND pi.lifecycle_status = 'paid'`,
+        [payment.id]
+      );
+      if (paidItems.rows && paidItems.rows.length > 0) {
+        const feeNos = paidItems.rows.map(r => r.fee_no || r.payable_item_id).join(', ');
+        throw new SettlementError(409, `该抹零事件已影响应付费用状态（${feeNos}），不能直接冲销。冲销抹零会导致付款申请未结清但应付费用仍为已付款，请通过完整冲销流程处理。`);
+      }
+    }
     const operator = await settlementOperator(req);
     await run(`UPDATE payment_settlement_logs
          SET status = 'reversed', reversed_at = datetime('now'), reversed_by = ?, reversal_reason = ?
@@ -6054,13 +7773,17 @@ async function createHistoricalCI(body, req) {
         normalized.historical_paid_date, normalized.payment_terms, normalized.due_date, normalized.source_note,
         normalized.idempotency_key, normalized.payload_hash, operator.id, operator.name]);
 
+    // PAY-CORE Phase 1.5 Task 2：派生 payee_key/payee_name_snapshot（格式 ${payee_type}:${identity}，与 payable_items 一致）
+    const historicalPayeeKey = `supplier:${normalized.supplier_id || normalized.supplier_name}`;
+    const historicalPayeeNameSnapshot = normalized.supplier_name || '';
     await run(`INSERT INTO payment_requests
          (id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no,
-          payee_type, supplier_name, payable_amount, paid_amount, unpaid_amount, currency, payment_terms,
+          payee_type, payee_key, payee_name_snapshot, supplier_name, payable_amount, paid_amount, unpaid_amount, currency, payment_terms,
           payable_date, approval_status, approver_name, approved_at, remark, expense_country)
-         VALUES (?, ?, 'goods', 'balance', 'historical_ci', ?, ?, 'factory', ?, ?, 0, ?, ?, ?, ?,
+         VALUES (?, ?, 'goods', 'balance', 'historical_ci', ?, ?, 'factory', ?, ?, ?, ?, 0, ?, ?, ?, ?,
                  'approved', ?, datetime('now'), ?, ?)`,
-      [paymentRequestId, paymentRequestNo, historicalId, normalized.historical_ci_no, normalized.supplier_name,
+      [paymentRequestId, paymentRequestNo, historicalId, normalized.historical_ci_no,
+        historicalPayeeKey, historicalPayeeNameSnapshot, normalized.supplier_name,
         normalized.gross_goods_amount, normalized.gross_goods_amount, normalized.currency, normalized.payment_terms,
         historicalPayableDate, operator.name, normalized.source_note, normalized.country]);
 
@@ -6076,6 +7799,51 @@ async function createHistoricalCI(body, req) {
           normalized.source_note || `历史 CI ${normalized.historical_ci_no} 已付款导入`,
           normalized.historical_paid_date, normalized.currency, operator.id,
           operator.name || 'historical_import', `historical-ci-payment:${normalized.idempotency_key}`]);
+    }
+
+    // Historical CI with PI linkage: update PI shipped/unshipped quantities and ship status
+    const hciItems = Array.isArray(body.items) ? body.items : [];
+    // HCI-PI-LINK-01: 关联 PI 但无 CI 明细时禁止静默创建（避免 PI shipped_qty 不回写）
+    const linkedPiIds = Array.isArray(body.related_pi_ids) ? body.related_pi_ids : [];
+    if (linkedPiIds.length > 0 && hciItems.length === 0) {
+      throw new SettlementError(400, '关联 PI 的历史 CI 必须填写 CI 明细，否则无法同步 PI 发货状态');
+    }
+    if (hciItems.length > 0) {
+      const piIds = [...new Set(hciItems.map(i => i.pi_id))];
+      for (const piId of piIds) {
+        const pi = await queryOne('SELECT id, pi_no, total_amount, shipped_amount FROM proforma_invoices WHERE id = ?', [piId]);
+        if (!pi) continue;
+        let piGoodsAmount = 0;
+        const piItemUpdates = hciItems.filter(i => i.pi_id === piId);
+        for (const item of piItemUpdates) {
+          const qty = item.shipped_qty || 0;
+          if (qty <= 0) continue;
+          await run(
+            'UPDATE proforma_invoice_items SET shipped_qty = shipped_qty + ?, unshipped_qty = unshipped_qty - ? WHERE pi_id = ? AND sku_code = ?',
+            [qty, qty, piId, item.sku_code]
+          );
+          const priceRow = await queryOne('SELECT unit_price FROM proforma_invoice_items WHERE pi_id = ? AND sku_code = ?', [piId, item.sku_code]);
+          piGoodsAmount += qty * (priceRow ? priceRow.unit_price : 0);
+        }
+        // Update PI shipped/unshipped amounts
+        if (piGoodsAmount > 0) {
+          const newShippedAmount = (pi.shipped_amount || 0) + piGoodsAmount;
+          const newUnshippedAmount = Math.max(0, (pi.total_amount || 0) - newShippedAmount);
+          await run('UPDATE proforma_invoices SET shipped_amount = ?, unshipped_amount = ? WHERE id = ?',
+            [newShippedAmount, newUnshippedAmount, piId]);
+        }
+        // Update PI ship status
+        const piItems = query('SELECT pi_confirmed_qty, shipped_qty FROM proforma_invoice_items WHERE pi_id = ?', [piId]).rows;
+        const allShipped = piItems.length > 0 && piItems.every(i => i.shipped_qty >= i.pi_confirmed_qty);
+        const anyShipped = piItems.some(i => i.shipped_qty > 0);
+        if (allShipped) {
+          await run('UPDATE proforma_invoices SET pi_status = ? WHERE id = ?', ['shipped_complete', piId]);
+        } else if (anyShipped) {
+          await run('UPDATE proforma_invoices SET pi_status = ? WHERE id = ?', ['partial_shipped', piId]);
+        }
+      }
+      // HCI-PI-LINK-01: PI 发货数量更新后刷新库存预测数据（在途/已确认未发货/PO未确认PI）
+      await updateInventoryTransitData();
     }
 
     const settlement = await recalculatePaymentSettlement(paymentRequestId);
@@ -6291,6 +8059,57 @@ app.get('/api/purchase-amount-summary', requireApiPermission('ci_view'), asyncHa
       rmb_note: '仅原币为 RMB 的单据计入已知人民币总额；其他币种未提供明确汇率证据时标记为待补，不做跨币种裸加。'
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
+}));
+
+// ==================== PAY-CORE Phase 1.5 Task 1：应付费用池 API ====================
+
+// 应付费用池列表（支持按状态/费用类型/来源/收款方筛选）
+app.get('/api/payable-items', requireApiPermission('payment_view'), asyncHandler((req, res) => {
+  const { lifecycle_status, fee_type, source_type, source_id, payee_key, keyword } = req.query;
+  let sql = 'SELECT * FROM payable_items WHERE 1=1';
+  const params = [];
+  // 业务规则：应付费用工作台只列出待处理项（active + reserved）。
+  // 已审批通过+已付款（paid）以及已取消（cancelled）移出本列表。
+  // 调用方主动传 lifecycle_status 参数时按精确值查询（历史查询仍可用）。
+  if (lifecycle_status) { sql += ' AND lifecycle_status = ?'; params.push(lifecycle_status); }
+  else { sql += " AND lifecycle_status IN ('active','reserved')"; }
+  if (fee_type) { sql += ' AND fee_type = ?'; params.push(fee_type); }
+  if (source_type) { sql += ' AND source_type = ?'; params.push(source_type); }
+  if (source_id) { sql += ' AND source_id = ?'; params.push(source_id); }
+  if (payee_key) { sql += ' AND payee_key = ?'; params.push(payee_key); }
+  if (keyword) { sql += ' AND (fee_no LIKE ? OR source_no LIKE ? OR payee_name_snapshot LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`); }
+  sql += ' ORDER BY created_at DESC';
+  const rows = query(sql, params).rows;
+  // 金额转换为元（便于前端展示）
+  const items = rows.map(r => ({
+    ...r,
+    payable_amount: r.payable_amount_minor / 100
+  }));
+  res.json({ items, total: items.length });
+}));
+
+// 应付费用详情
+app.get('/api/payable-items/:id', requireApiPermission('payment_view'), asyncHandler((req, res) => {
+  const item = queryOne('SELECT * FROM payable_items WHERE id = ?', [req.params.id]);
+  if (!item) return res.status(404).json({ error: '应付费用不存在' });
+  item.payable_amount = item.payable_amount_minor / 100;
+  res.json({ item });
+}));
+
+// 取消应付费用（仅 lifecycle_status='active' 状态可取消）
+app.post('/api/payable-items/:id/cancel', requireApiPermission('payment_create'), asyncHandler((req, res) => {
+  const { cancel_reason } = req.body;
+  const item = queryOne('SELECT * FROM payable_items WHERE id = ?', [req.params.id]);
+  if (!item) return res.status(404).json({ error: '应付费用不存在' });
+  if (item.lifecycle_status !== 'active') {
+    return res.status(409).json({ error: `当前状态为 ${item.lifecycle_status}，不能取消（仅 active 状态可取消）` });
+  }
+  const operatorId = (req.currentUserId || req.user && req.user.id) || '';
+  const ok = cancelPayableItem(req.params.id, operatorId, cancel_reason || '手动取消');
+  if (!ok) {
+    return res.status(409).json({ error: '取消失败，应付费用可能已被锁定或付款' });
+  }
+  res.json({ success: true, id: req.params.id, lifecycle_status: 'cancelled' });
 }));
 
 app.get('/api/payment-requests', requireApiPermission('payment_view'), asyncHandler((req, res) => {
@@ -6511,7 +8330,40 @@ app.get('/api/payment-requests/pending', requireApiPermission('payment_approve')
       WHERE approval_status = 'pending'
       ORDER BY created_at DESC
     `).rows;
-    rows.forEach(r => { r.total_qty = computePaymentTotalQty(r); });
+    // PAY-CORE Phase 2-B：附加只读 approval 摘要（与 Phase 2-A 详情接口同款模式）
+    // 复用 paymentRequestToBusinessType 派生 bt，避免硬编码 business_type 列表
+    rows.forEach(r => {
+      r.total_qty = computePaymentTotalQty(r);
+      const bt = paymentRequestToBusinessType(r);
+      r.approval = null;
+      if (bt) {
+        const ar = queryOne(
+          `SELECT id, current_level, max_level, submitter_id, submitter_name,
+                  approvers, status, created_at AS submitted_at
+           FROM approval_records
+           WHERE business_id = ? AND business_type = ? AND status = 'pending'
+           ORDER BY created_at DESC LIMIT 1`,
+          [r.id, bt]
+        );
+        if (ar) {
+          // PAY-CORE Phase 1：使用 normalizeApprovalSnapshot 兼容老数组格式 + 新对象格式
+          const snapshot = normalizeApprovalSnapshot(ar.approvers);
+          const approverList = snapshot.levels;
+          const curApprover = approverList.find(a => a.level === ar.current_level);
+          r.approval = {
+            approval_id: ar.id,
+            current_level: ar.current_level,
+            max_level: ar.max_level,
+            submitter_name: ar.submitter_name,
+            current_approver_name: curApprover ? (curApprover.approver_name || curApprover.approver_user_id || '') : '',
+            current_approver_user_id: curApprover ? (curApprover.approver_user_id || '') : '',
+            // PAY-CORE Phase 1：附加当前节点 CC 数量 + 完成 CC 数量（前端可选择性展示）
+            current_node_cc_count: curApprover ? (Array.isArray(curApprover.cc_user_ids) ? curApprover.cc_user_ids.length : 0) : 0,
+            completion_cc_count: snapshot.completion_cc_user_ids.length
+          };
+        }
+      }
+    });
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
@@ -6522,6 +8374,23 @@ app.get('/api/payment-requests/:id', requireApiPermission('payment_view'), async
     const pr = queryOne('SELECT * FROM payment_requests WHERE id = ?', [req.params.id]);
     if (!pr) return res.status(404).json({ error: '付款申请不存在' });
     pr.total_qty = computePaymentTotalQty(pr);
+    // PAY-CORE Phase 1.5 Task 2：multi 模式附加 items[]（从 payable_items 派生费用性质/原始币种/原始金额）
+    let items = [];
+    if (pr.payment_mode === 'multi') {
+      const itemRows = await query(
+        `SELECT pri.id, pri.payable_item_id, pri.requested_amount_minor,
+                pi.fee_no, pi.source_type, pi.source_id, pi.source_no, pi.fee_type,
+                pi.category_code, pi.subcategory_code,
+                pi.payee_type, pi.payee_key, pi.payee_name_snapshot,
+                pi.currency, pi.payable_amount_minor, pi.lifecycle_status
+         FROM payment_request_items pri
+         JOIN payable_items pi ON pi.id = pri.payable_item_id
+         WHERE pri.payment_request_id = ?
+         ORDER BY pi.fee_type, pi.created_at`,
+        [req.params.id]
+      );
+      items = itemRows.rows;
+    }
     let pi_summary = null, ci_summary = null, historical_ci_summary = null;
     if (pr.source_type === 'pi' && pr.source_id) {
       pi_summary = queryOne('SELECT id, pi_no, supplier_name, brand, country, target_warehouse, total_amount, currency, pi_status, pi_date FROM proforma_invoices WHERE id = ?', [pr.source_id]);
@@ -6539,7 +8408,72 @@ app.get('/api/payment-requests/:id', requireApiPermission('payment_view'), async
     }
     const settlement_logs = await paymentSettlementDisplayLogs(pr);
     const settlement = await paymentSettlementFacts(pr);
-    res.json({ ...pr, pi_summary, ci_summary, historical_ci_summary, settlement_logs, effective_paid: settlement.effectivePaid, effective_deduction: settlement.effectiveDeduction, effective_rounding: settlement.effectiveRounding, outstanding: Math.max(0, settlement.outstanding) });
+    // PAY-CORE Phase 2-A：附加只读 approval 数据（仅展示，不修改状态机/通知/表结构）
+    // 复用 paymentRequestToBusinessType 派生 business_type，避免硬编码列表；权限仍由 requireApiPermission('payment_view') 保证
+    const bt = paymentRequestToBusinessType(pr);
+    let approval = null;
+    if (bt) {
+      const ar = queryOne(
+        `SELECT id, business_type, business_code, submitter_id, submitter_name,
+                current_level, max_level, approvers, approval_history, status,
+                created_at AS submitted_at, updated_at
+         FROM approval_records
+         WHERE business_id = ? AND business_type = ?
+         ORDER BY created_at DESC LIMIT 1`,
+        [pr.id, bt]
+      );
+      if (ar) {
+        // PAY-CORE Phase 1：使用 normalizeApprovalSnapshot 兼容老数组格式 + 新对象格式
+        const snapshot = normalizeApprovalSnapshot(ar.approvers);
+        let historyList = [];
+        try { historyList = JSON.parse(ar.approval_history || '[]'); } catch (e) { historyList = []; }
+        approval = {
+          approval_id: ar.id,
+          business_type: ar.business_type,
+          business_code: ar.business_code,
+          submitter_id: ar.submitter_id,
+          submitter_name: ar.submitter_name,
+          submitted_at: ar.submitted_at,
+          current_level: ar.current_level,
+          max_level: ar.max_level,
+          status: ar.status,
+          // PAY-CORE Phase 1：返回规范化后的快照对象（含 levels + completion_cc_user_ids）
+          approvers: snapshot.levels,
+          completion_cc_user_ids: snapshot.completion_cc_user_ids,
+          approval_history: historyList
+        };
+      }
+    }
+    res.json({ ...pr, pi_summary, ci_summary, historical_ci_summary, settlement_logs, effective_paid: settlement.effectivePaid, effective_deduction: settlement.effectiveDeduction, effective_rounding: settlement.effectiveRounding, outstanding: Math.max(0, settlement.outstanding), approval, items });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+}));
+
+// PAY-CORE Phase 1.5 Task 2：付款申请明细查询（multi 模式专用，复用详情 JOIN 逻辑）
+app.get('/api/payment-requests/:id/items', requireApiPermission('payment_view'), asyncHandler(async (req, res) => {
+  try {
+    const pr = queryOne('SELECT id, request_no, payment_mode, payee_key, payee_name_snapshot, currency FROM payment_requests WHERE id = ?', [req.params.id]);
+    if (!pr) return res.status(404).json({ error: '付款申请不存在' });
+    const rows = await query(
+      `SELECT pri.id, pri.payable_item_id, pri.requested_amount_minor,
+              pi.fee_no, pi.source_type, pi.source_id, pi.source_no, pi.fee_type,
+              pi.category_code, pi.subcategory_code,
+              pi.payee_type, pi.payee_key, pi.payee_name_snapshot,
+              pi.currency, pi.payable_amount_minor, pi.lifecycle_status
+       FROM payment_request_items pri
+       JOIN payable_items pi ON pi.id = pri.payable_item_id
+       WHERE pri.payment_request_id = ?
+       ORDER BY pi.fee_type, pi.created_at`,
+      [req.params.id]
+    );
+    res.json({
+      payment_request_id: pr.id,
+      request_no: pr.request_no,
+      payment_mode: pr.payment_mode,
+      payee_key: pr.payee_key,
+      payee_name_snapshot: pr.payee_name_snapshot,
+      currency: pr.currency,
+      items: rows.rows
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
@@ -6595,11 +8529,16 @@ app.post('/api/payment-requests/from-pi-deposit', requireApiPermission('payment_
 
     const prId = await genId('pay');
     const prNo = `PAY-DEP-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
+    // PAY-CORE Phase 1.5 Task 2：派生 payee_key/payee_name_snapshot（格式 ${payee_type}:${identity}，与 payable_items 一致）
+    const payeeKey = `supplier:${pi.supplier_id || pi.supplier_name}`;
+    const payeeNameSnapshot = pi.supplier_name || '';
     await transaction(async () => {
-      await run(`INSERT INTO payment_requests (id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no, payee_type, supplier_name, payable_amount, paid_amount, unpaid_amount, currency, payment_terms, payment_status, approval_status, remark, has_deduction, deduction_amount, deduction_source_type, deduction_source_desc, deduction_ref_no, actual_pay_amount, related_po_no, expense_country) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [prId, prNo, 'goods', 'deposit', 'pi', pi_id, pi.pi_no, 'factory', pi.supplier_name, payableAmount, 0, actualPay, pi.currency || 'USD', pi.payment_terms || '', 'pending_approval', 'pending', `PI定金 ${pi.pi_no}`, deductionEnabled ? 1 : 0, dedAmount, deduction_source_type || '', deduction_source_desc || '', deduction_ref_no || '', actualPay, pi.related_po_no || '', String(pi.country || '').trim()]);
+      await run(`INSERT INTO payment_requests (id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no, payee_type, payee_key, payee_name_snapshot, supplier_name, payable_amount, paid_amount, unpaid_amount, currency, payment_terms, payment_status, approval_status, remark, has_deduction, deduction_amount, deduction_source_type, deduction_source_desc, deduction_ref_no, actual_pay_amount, related_po_no, expense_country) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [prId, prNo, 'goods', 'deposit', 'pi', pi_id, pi.pi_no, 'factory', payeeKey, payeeNameSnapshot, pi.supplier_name, payableAmount, 0, actualPay, pi.currency || 'USD', pi.payment_terms || '', 'pending_approval', 'pending', `PI定金 ${pi.pi_no}`, deductionEnabled ? 1 : 0, dedAmount, deduction_source_type || '', deduction_source_desc || '', deduction_ref_no || '', actualPay, pi.related_po_no || '', String(pi.country || '').trim()]);
       if (deductionEnabled && dedAmount > 0) await recordInitialDeduction(prId, dedAmount, deduction_source_desc, await settlementOperator(req));
       await run('UPDATE proforma_invoices SET deposit_payment_status = ? WHERE id = ?', ['pending_approval', pi_id]);
+      // PAY-CORE Phase 2：关联 payable_item 并 reserve（V2.1 第 8 节）
+      linkSinglePayableItem(prId, 'pi', pi_id, 'deposit', pi.currency || 'USD', payeeKey);
     });
     res.json({ id: prId, request_no: prNo, payable_amount: payableAmount, actual_pay_amount: actualPay });
   } catch (e) {
@@ -6655,18 +8594,371 @@ app.post('/api/payment-requests/from-ci-balance', requireApiPermission('payment_
 
     const prId = await genId('pay');
     const prNo = `PAY-BAL-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
+    // PAY-CORE Phase 1.5 Task 2：派生 payee_key/payee_name_snapshot（格式 ${payee_type}:${identity}，与 payable_items 一致）
+    const payeeKey = `supplier:${ci.supplier_id || ci.supplier_name}`;
+    const payeeNameSnapshot = ci.supplier_name || '';
 
     // 三、INSERT 付款申请 + 更新 CI 状态，必须处于同一事务（任一步失败整体回滚）
     await transaction(async () => {
-      await run(`INSERT INTO payment_requests (id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no, payee_type, supplier_name, payable_amount, paid_amount, unpaid_amount, currency, payment_terms, payable_date, payment_status, approval_status, remark, has_deduction, deduction_amount, deduction_source_type, deduction_source_desc, deduction_ref_no, actual_pay_amount, related_ci_id, related_ci_no, related_po_no, expense_country) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [prId, prNo, 'goods', 'balance', 'ci', ci_id, ci.ci_no, 'factory', ci.supplier_name, unpaidBalance, 0, actualPay, ci.currency || 'USD', '', balancePayableDate, 'pending_approval', 'pending', `CI尾款 ${ci.ci_no}`, deductionEnabled ? 1 : 0, dedAmount, deduction_source_type || '', deduction_source_desc || '', deduction_ref_no || '', actualPay, ci_id, ci.ci_no, ci.related_po_no || '', String(ci.country || '').trim()]);
+      await run(`INSERT INTO payment_requests (id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no, payee_type, payee_key, payee_name_snapshot, supplier_name, payable_amount, paid_amount, unpaid_amount, currency, payment_terms, payable_date, payment_status, approval_status, remark, has_deduction, deduction_amount, deduction_source_type, deduction_source_desc, deduction_ref_no, actual_pay_amount, related_ci_id, related_ci_no, related_po_no, expense_country) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [prId, prNo, 'goods', 'balance', 'ci', ci_id, ci.ci_no, 'factory', payeeKey, payeeNameSnapshot, ci.supplier_name, unpaidBalance, 0, actualPay, ci.currency || 'USD', '', balancePayableDate, 'pending_approval', 'pending', `CI尾款 ${ci.ci_no}`, deductionEnabled ? 1 : 0, dedAmount, deduction_source_type || '', deduction_source_desc || '', deduction_ref_no || '', actualPay, ci_id, ci.ci_no, ci.related_po_no || '', String(ci.country || '').trim()]);
       if (deductionEnabled && dedAmount > 0) await recordInitialDeduction(prId, dedAmount, deduction_source_desc, await settlementOperator(req));
       await run('UPDATE commercial_invoices SET balance_payment_status = ? WHERE id = ?', ['pending_approval', ci_id]);
+      // PAY-CORE Phase 2：关联 payable_item 并 reserve（V2.1 第 8 节）
+      // 多 PI 改造：先查存量 CI 级 balance payable_item（source_type='ci'），再查 per-PI（source_type='pi', source_ci_id）
+      let linkedItem = linkSinglePayableItem(prId, 'ci', ci_id, 'balance', ci.currency || 'USD', payeeKey);
+      if (!linkedItem) {
+        // 新建 CI 使用 per-PI balance payable_item
+        const piBalanceItems = query(
+          `SELECT * FROM payable_items
+           WHERE source_type = 'pi' AND source_ci_id = ? AND fee_type = 'balance'
+             AND lifecycle_status = 'active'`,
+          [ci_id]
+        ).rows;
+        if (piBalanceItems.length === 1) {
+          // 单 PI CI — 自动关联
+          const payableItem = piBalanceItems[0];
+          if (String(payableItem.currency || '').toUpperCase() !== String(ci.currency || 'USD').toUpperCase()) {
+            throw new SettlementError(409, `应付费用币种 ${payableItem.currency} 与付款申请币种 ${ci.currency} 不一致，无法关联`);
+          }
+          if (String(payableItem.payee_key || '') !== String(payeeKey || '')) {
+            throw new SettlementError(409, `应付费用收款方 ${payableItem.payee_key} 与付款申请收款方 ${payeeKey} 不一致，无法关联`);
+          }
+          run(
+            `INSERT INTO payment_request_items (id, payment_request_id, payable_item_id, requested_amount_minor) VALUES (?, ?, ?, ?)`,
+            [genId('pri'), prId, payableItem.id, payableItem.payable_amount_minor]
+          );
+          if (!reservePayableItem(payableItem.id, prId)) {
+            throw new SettlementError(409, `应付费用 ${payableItem.fee_no} 状态已变更，无法锁定`);
+          }
+        } else if (piBalanceItems.length > 1) {
+          // 多 PI CI — 提示使用合并付款
+          throw new SettlementError(409, `该CI关联多个PI尾款(${piBalanceItems.length}个)，请使用合并付款功能选择具体PI尾款`);
+        }
+        // 0 条 → 历史兼容（跳过，不创建 items）
+      }
     });
     res.json({ id: prId, request_no: prNo, payable_amount: unpaidBalance, actual_pay_amount: actualPay });
   } catch (e) {
     if (isActiveGoodsPaymentUniqueError(e)) return res.status(409).json({ error: '该 CI 已存在有效的尾款付款申请，不能重复生成' });
     res.status(500).json({ error: e.message });
+  }
+}));
+
+// ===== PAY-CORE Phase 1.5 Task 2：多费用付款申请创建 =====
+// 业务规则：
+//   1) 一个 payment_request 只能包含一个 payee_key（多费用但同收款方）
+//   2) 允许同收款方的多个 payable_items 合并申请，允许多币种
+//   3) payment_mode='multi'，currency='MULTI'（仅作展示标记，不自动换算）
+//   4) payment_category/payment_subcategory 留空，费用性质通过 items → payable_items 派生
+//   5) requested_amount_minor = payable_items.payable_amount_minor（全额，不支持部分付款）
+//   6) 创建时立即 reserve payable_items（active → reserved）
+//   7) reject 时由 Task 2.B.5 释放（reserved → active）
+//   8) PAY-CORE Phase 2：所有 payable_items 必须同币种，currency 写入真实币种（不再 'MULTI'）
+app.post('/api/payment-requests/multi-expense', requireApiPermission('payment_create'), asyncHandler(async (req, res) => {
+  try {
+    const { payable_item_ids, remark } = req.body || {};
+    // 1. 入参校验
+    if (!Array.isArray(payable_item_ids) || payable_item_ids.length === 0) {
+      return res.status(400).json({ error: '请至少选择一项应付费用' });
+    }
+    // 2. 查询所有 payable_items
+    const placeholders = payable_item_ids.map(() => '?').join(',');
+    const items = await query(
+      `SELECT id, fee_no, source_type, source_id, source_no, fee_type, category_code, subcategory_code,
+              payee_type, payee_key, payee_name_snapshot, currency, payable_amount_minor, lifecycle_status
+       FROM payable_items WHERE id IN (${placeholders})`,
+      payable_item_ids
+    );
+    if (items.rows.length !== payable_item_ids.length) {
+      const found = new Set(items.rows.map(r => r.id));
+      const missing = payable_item_ids.filter(id => !found.has(id));
+      return res.status(404).json({ error: `应付费用不存在: ${missing.join(', ')}` });
+    }
+    // 3. 校验所有 lifecycle_status='active'
+    const nonActive = items.rows.filter(r => r.lifecycle_status !== 'active');
+    if (nonActive.length > 0) {
+      return res.status(409).json({ error: `所选费用中存在非待付状态，无法合并申请: ${nonActive.map(r => r.fee_no).join(', ')}` });
+    }
+    // 4. 校验所有 payee_key 一致（业务规则 1）
+    const payeeKeys = new Set(items.rows.map(r => r.payee_key));
+    if (payeeKeys.size > 1) {
+      return res.status(409).json({ error: '所选费用收款方不一致，无法合并申请' });
+    }
+    // 5. PAY-CORE Phase 2：校验所有 currency 一致（V2.1 第 4 节，不再使用 'MULTI'）
+    const currencies = new Set(items.rows.map(r => String(r.currency || '').toUpperCase()));
+    if (currencies.size > 1) {
+      return res.status(409).json({ error: '所选费用币种不一致，无法合并申请' });
+    }
+    const prCurrency = items.rows[0].currency || 'USD';
+    // P0：multi PR 必须从所有来源单据取得同一国家并写入主表快照。
+    // 缺失、来源不存在/不支持或多国家混合均在建单事务前拒绝，不锁定 payable_items。
+    const expenseCountrySnapshot = commonPayableItemsExpenseCountry(items.rows);
+    // 6. 派生字段
+    const firstItem = items.rows[0];
+    const payeeKey = firstItem.payee_key;
+    const payeeNameSnapshot = firstItem.payee_name_snapshot || '';
+    const payeeType = firstItem.payee_type || 'factory';
+    const totalAmountMinor = items.rows.reduce((s, r) => s + (r.payable_amount_minor || 0), 0);
+    const totalAmount = minorToAmount(totalAmountMinor); // 仅作展示参考，不作为审批/付款依据
+    const itemCount = items.rows.length;
+    // 7. 事务内：INSERT payment_requests + INSERT payment_request_items + reserve payable_items
+    const prId = await genId('pay');
+    const prNo = `PAY-MULTI-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
+    await transaction(async () => {
+      await run(
+        `INSERT INTO payment_requests
+           (id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no,
+           payee_type, payee_key, payee_name_snapshot, supplier_name,
+            payable_amount, paid_amount, unpaid_amount, currency,
+            payment_mode, payment_status, approval_status, remark, expense_country)
+         VALUES (?, ?, '', '', '', '', '',
+                 ?, ?, ?, ?,
+                 ?, 0, ?, ?,
+                 'multi', 'pending_approval', 'pending', ?, ?)`,
+        [prId, prNo, payeeType, payeeKey, payeeNameSnapshot, payeeNameSnapshot,
+         totalAmount, totalAmount, prCurrency,
+         remark || '', expenseCountrySnapshot]
+      );
+      // 循环 INSERT payment_request_items（requested_amount_minor = payable_amount_minor 全额）
+      for (const item of items.rows) {
+        await run(
+          `INSERT INTO payment_request_items (id, payment_request_id, payable_item_id, requested_amount_minor)
+           VALUES (?, ?, ?, ?)`,
+          [await genId('pri'), prId, item.id, item.payable_amount_minor]
+        );
+      }
+      // 循环 reserve payable_items（业务规则 6：创建时立即 reserve）
+      for (const item of items.rows) {
+        const reserved = reservePayableItem(item.id, prId);
+        if (!reserved) {
+          // 状态被并发修改（active → 其他），触发事务回滚
+          throw new Error(`应付费用 ${item.fee_no} 状态已变更，无法锁定`);
+        }
+      }
+      // PAY-CORE P0-2：同步所有来源 PI 的 deposit_payment_status → pending_approval
+      // multi PR 不依赖 payment_requests.source_id，通过 payable_items.source_type/source_id 反查
+      syncMultiSourcePiStatus(items.rows, 'pending_approval');
+    });
+    res.json({ id: prId, request_no: prNo, payment_mode: 'multi', currency: prCurrency, item_count: itemCount, payable_amount: totalAmount });
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+}));
+
+// PAY-CORE P0-3：通过 payable_item_ids 反查关联的付款申请
+// 查询规则：
+// 1. 默认只返回当前有效 PR（排除 cancelled/rejected 历史），避免前端误跳旧 PR
+// 2. include_history=true 时返回全部历史记录（含 cancelled/rejected）
+// 3. 多个 payable_items 同属一个 PR → 去重返回一条
+// 4. 分属多个 PR → 返回多条
+// 5. 未关联任何 PR → 返回空数组，不报错
+app.get('/api/payment-requests/by-payable-items', requireApiPermission('payment_view'), asyncHandler(async (req, res) => {
+  try {
+    const idsRaw = req.query.ids || '';
+    const ids = String(idsRaw).split(',').map(s => s.trim()).filter(Boolean);
+    if (ids.length === 0) {
+      return res.status(400).json({ error: '缺少 payable_item_ids' });
+    }
+    const includeHistory = String(req.query.include_history || '').toLowerCase() === 'true';
+    const placeholders = ids.map(() => '?').join(',');
+    // 默认排除 cancelled/rejected 历史，仅返回当前有效 PR
+    let whereExtra = '';
+    if (!includeHistory) {
+      whereExtra = ` AND pr.payment_status NOT IN ('cancelled','rejected') AND pr.approval_status NOT IN ('cancelled','rejected')`;
+    }
+    const rows = query(
+      `SELECT DISTINCT pr.id, pr.request_no, pr.payment_status, pr.approval_status, pr.payment_mode
+       FROM payment_requests pr
+       JOIN payment_request_items pri ON pri.payment_request_id = pr.id
+       WHERE pri.payable_item_id IN (${placeholders})${whereExtra}
+       ORDER BY pr.created_at DESC`,
+      ids
+    ).rows;
+    res.json({ payment_requests: rows, include_history: includeHistory });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+}));
+
+// PAY-CORE P0-3：批量撤回付款申请（仅 pending 审批 + 无 payment_transactions + 无有效 settlement_logs 可撤回）
+// 撤回事务内严格顺序：校验 → 释放 payable_items → 更新 PR → 更新 approval_records → 恢复 PI
+// payment_request_items 保留（不删除），cancelled PR 仍可查看原关联费用
+app.post('/api/payment-requests/batch-cancel', requireApiPermission('payment_create'), asyncHandler(async (req, res) => {
+  try {
+    const { payable_item_ids } = req.body;
+    if (!Array.isArray(payable_item_ids) || payable_item_ids.length === 0) {
+      return res.status(400).json({ error: '请选择需要撤回的应付费用' });
+    }
+    const operatorId = (req.currentUserId || req.user && req.user.id) || '';
+    const operatorName = (req.user && req.user.name) || '';
+
+    const results = [];
+    const skipped = [];
+    const errors = [];
+
+    await transaction(async () => {
+      // P0-FIX-4：输入完整性校验 - 检查所有 payable_item_ids 是否存在
+      const itemPlaceholders = payable_item_ids.map(() => '?').join(',');
+      const existRows = query(
+        `SELECT id FROM payable_items WHERE id IN (${itemPlaceholders})`,
+        payable_item_ids
+      ).rows;
+      const existIds = new Set(existRows.map(r => r.id));
+      const notExistIds = payable_item_ids.filter(id => !existIds.has(id));
+      if (notExistIds.length > 0) {
+        const err = new Error('以下应付费用不存在：' + notExistIds.join(', '));
+        err.status = 400;
+        throw err;
+      }
+
+      // 1. 通过 payable_item_ids 反查关联的 payment_request_ids（去重）
+      const prRows = query(
+        `SELECT DISTINCT pri.payment_request_id AS pr_id, pr.request_no, pr.payment_status, pr.approval_status, pr.payment_mode, pr.source_type, pr.source_id
+         FROM payment_request_items pri
+         JOIN payment_requests pr ON pr.id = pri.payment_request_id
+         WHERE pri.payable_item_id IN (${itemPlaceholders})`,
+        payable_item_ids
+      ).rows;
+
+      // P0-FIX-4：检查未关联 PR 的 payable_item_ids
+      const linkedItemIds = new Set();
+      const allPriRows = query(
+        `SELECT DISTINCT payable_item_id FROM payment_request_items WHERE payable_item_id IN (${itemPlaceholders})`,
+        payable_item_ids
+      ).rows;
+      allPriRows.forEach(r => linkedItemIds.add(r.payable_item_id));
+      const unlinkedIds = payable_item_ids.filter(id => !linkedItemIds.has(id));
+      if (unlinkedIds.length > 0) {
+        const err = new Error('以下应付费用未关联任何付款申请：' + unlinkedIds.join(', '));
+        err.status = 400;
+        throw err;
+      }
+
+      if (prRows.length === 0) {
+        const err = new Error('所选应付费用未关联任何付款申请');
+        err.status = 400;
+        throw err;
+      }
+
+      // 2. 先校验所有 PR 状态，不通过的分为 skipped（幂等跳过）和 validationErrors（不可撤回）
+      // PAY-CORE P0-3：严格事务一致性，不允许部分成功
+      const validationErrors = [];
+      for (const prRow of prRows) {
+        const prId = prRow.pr_id;
+        // 状态校验：仅 pending_approval + pending 可撤回
+        if (prRow.payment_status !== 'pending_approval' || prRow.approval_status !== 'pending') {
+          // cancelled 状态幂等处理：已撤回的 PR 跳过，不触发整批失败
+          if (prRow.payment_status === 'cancelled' && prRow.approval_status === 'cancelled') {
+            skipped.push({
+              pr_id: prId,
+              request_no: prRow.request_no,
+              reason: '该付款申请已撤回，无需重复操作'
+            });
+          } else {
+            validationErrors.push({
+              pr_id: prId,
+              request_no: prRow.request_no,
+              error: `付款申请状态不允许撤回（payment_status=${prRow.payment_status}, approval_status=${prRow.approval_status}）`
+            });
+          }
+          continue;
+        }
+        // PAY-CORE P0-3：校验是否存在 payment_transactions（已付款不得撤回）
+        const txCount = queryOne(
+          `SELECT COUNT(*) AS cnt FROM payment_transactions WHERE payment_request_id = ? AND trans_status != 'cancelled'`,
+          [prId]
+        );
+        if (txCount && txCount.cnt > 0) {
+          validationErrors.push({
+            pr_id: prId,
+            request_no: prRow.request_no,
+            error: `付款申请已存在付款记录（${txCount.cnt} 条），不得撤回`
+          });
+          continue;
+        }
+        // PAY-CORE P0-3：校验是否存在有效 payment_settlement_logs
+        // schema CHECK (status IN ('applied','reversed'))，有效状态为 applied（reversed 为冲销后无效）
+        const slCount = queryOne(
+          `SELECT COUNT(*) AS cnt FROM payment_settlement_logs WHERE payment_request_id = ? AND status = 'applied'`,
+          [prId]
+        );
+        if (slCount && slCount.cnt > 0) {
+          validationErrors.push({
+            pr_id: prId,
+            request_no: prRow.request_no,
+            error: `付款申请已存在有效付款结算记录（${slCount.cnt} 条），不得撤回`
+          });
+          continue;
+        }
+      }
+
+      // 存在校验错误 → 整体失败，不允许部分撤回
+      if (validationErrors.length > 0) {
+        // 抛出错误触发事务回滚
+        const err = new Error('部分付款申请状态不允许撤回，已整体回滚');
+        err.status = 409;
+        err.details = validationErrors;
+        throw err;
+      }
+
+      // 3. 全部校验通过，逐个执行撤回
+      for (const prRow of prRows) {
+        const prId = prRow.pr_id;
+
+        // 3.1 释放关联的 payable_items（reserved → active）
+        // releasePayableItemsByPR 内部仅将 lifecycle_status='reserved' 的改为 active，
+        // 不会误释放已被其他 PR 占用的费用（因为其他 PR 占用时状态为 reserved，而非本 PR 关联）
+        releasePayableItemsByPR(prId);
+
+        // 3.2 PAY-CORE P0-3：保留 payment_request_items，不删除
+        // cancelled PR 仍可通过 payment_request_items 查看原关联费用，保证审计完整
+
+        // 3.3 更新 payment_requests 状态为 cancelled
+        run(`UPDATE payment_requests SET payment_status = 'cancelled', approval_status = 'cancelled', updated_at = datetime('now') WHERE id = ?`, [prId]);
+
+        // 3.4 更新 approval_records：仅 pending 状态改为 withdrawn，已完成审批记录不得覆盖
+        run(`UPDATE approval_records SET status = 'withdrawn', updated_at = datetime('now') WHERE business_id = ? AND status = 'pending'`, [prId]);
+
+        // 3.5 恢复来源 PI 状态
+        // single 模式：直接用 pr.source_id
+        if (prRow.payment_mode === 'single' && prRow.source_type === 'pi' && prRow.source_id) {
+          run(`UPDATE proforma_invoices SET deposit_payment_status = 'unpaid', updated_at = datetime('now') WHERE id = ? AND deposit_payment_status = 'pending_approval'`, [prRow.source_id]);
+        }
+        // multi 模式：通过 payment_request_items → payable_items 反查所有来源 PI
+        if (prRow.payment_mode === 'multi') {
+          const payableRows = query(
+            `SELECT payit.source_type, payit.source_id, payit.fee_type
+             FROM payment_request_items pri
+             JOIN payable_items payit ON payit.id = pri.payable_item_id
+             WHERE pri.payment_request_id = ?`,
+            [prId]
+          ).rows;
+          // 仅恢复 pending_approval 状态的 PI，避免误覆盖已完成的 PI
+          syncMultiSourcePiStatus(payableRows, 'unpaid', 'pending_approval');
+        }
+
+        results.push({
+          pr_id: prId,
+          request_no: prRow.request_no,
+          status: 'cancelled'
+        });
+      }
+    });
+
+    res.json({
+      success: true,
+      cancelled: results,
+      cancelled_count: results.length,
+      skipped: skipped,
+      skipped_count: skipped.length
+    });
+  } catch (e) {
+    // 事务回滚后返回错误详情
+    const status = e.status || 500;
+    const body = { error: e.message };
+    if (e.details) body.details = e.details;
+    res.status(status).json(body);
   }
 }));
 
@@ -6701,9 +8993,24 @@ app.post('/api/payment-requests/warehouse-arrival', requireApiPermission('paymen
 
     const prId = await genId('pay');
     const prNo = `PAY-WAR-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
+    // PAY-CORE Phase 1.5 Task 2：派生 payee_key/payee_name_snapshot（格式 ${payee_type}:${identity}，与 payable_items 一致）
+    const payeeKey = `service_provider:${payee_name || ''}`;
+    const payeeNameSnapshot = payee_name || '';
+    // P2-8 守卫：同 CI + 同 category + 同 subcategory 的 active payment_request 防重（仅 ci_id 存在时校验，保留无 CI 来源的手工非货款录入场景；rejected/cancelled 不阻挡）
+    if (ci_id) {
+      const existingWarehouseArrival = await queryOne(
+        `SELECT id, request_no FROM payment_requests
+         WHERE payment_category = 'warehouse_arrival' AND payment_subcategory = ?
+           AND approval_status != 'rejected'
+           AND payment_status NOT IN ('rejected', 'cancelled')
+           AND ((source_type = 'ci' AND source_id = ?) OR related_ci_id = ?)`,
+        [subcategory, ci_id, ci_id]
+      );
+      if (existingWarehouseArrival) return res.status(409).json({ error: '该CI已存在有效的到仓费用付款申请（' + subcategory + '），不能重复生成' });
+    }
     await transaction(async () => {
-      await run(`INSERT INTO payment_requests (id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no, payee_type, supplier_name, payable_amount, paid_amount, unpaid_amount, currency, payment_status, approval_status, remark, has_deduction, deduction_amount, deduction_source_type, deduction_source_desc, deduction_ref_no, actual_pay_amount, related_ci_id, related_ci_no, related_po_no, include_in_landing_cost, expense_country) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [prId, prNo, 'warehouse_arrival', subcategory, ci_id ? 'ci' : 'manual', ci_id || '', ciNo, 'service_provider', payee_name || '', payable_amount, 0, actualPay, currency || 'USD', 'pending_approval', 'pending', remark || '', deductionEnabled ? 1 : 0, dedAmount, deduction_source_type || '', deduction_source_desc || '', deduction_ref_no || '', actualPay, ci_id || '', ciNo, poNo, include_in_landing_cost === false ? 0 : 1, expenseCountrySnapshot]);
+      await run(`INSERT INTO payment_requests (id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no, payee_type, payee_key, payee_name_snapshot, supplier_name, payable_amount, paid_amount, unpaid_amount, currency, payment_status, approval_status, remark, has_deduction, deduction_amount, deduction_source_type, deduction_source_desc, deduction_ref_no, actual_pay_amount, related_ci_id, related_ci_no, related_po_no, include_in_landing_cost, expense_country) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [prId, prNo, 'warehouse_arrival', subcategory, ci_id ? 'ci' : 'manual', ci_id || '', ciNo, 'service_provider', payeeKey, payeeNameSnapshot, payee_name || '', payable_amount, 0, actualPay, currency || 'USD', 'pending_approval', 'pending', remark || '', deductionEnabled ? 1 : 0, dedAmount, deduction_source_type || '', deduction_source_desc || '', deduction_ref_no || '', actualPay, ci_id || '', ciNo, poNo, include_in_landing_cost === false ? 0 : 1, expenseCountrySnapshot]);
       if (deductionEnabled && dedAmount > 0) await recordInitialDeduction(prId, dedAmount, deduction_source_desc, await settlementOperator(req));
       // 如果关联了CI，同时创建 ci_cost_items 记录
       if (ci) {
@@ -6739,11 +9046,22 @@ app.post('/api/payment-requests/customs-duty', requireApiPermission('payment_cre
 
     const prId = await genId('pay');
     const prNo = `PAY-DUT-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
-    const existingDuty = await queryOne("SELECT id FROM ci_cost_items WHERE ci_id = ? AND cost_category = 'customs_duty'", [ci_id]);
-    if (existingDuty) return res.status(409).json({ error: '该CI已存在Import Duty费用，请勿重复创建' });
+    // PAY-CORE Phase 1.5 Task 2：派生 payee_key/payee_name_snapshot（格式 ${payee_type}:${identity}，与 payable_items 一致）
+    const payeeKey = `customs:${payee_name || ''}`;
+    const payeeNameSnapshot = payee_name || '';
+    // P2-8 守卫：同 CI + 同 category + 同 subcategory 的 active payment_request 防重（rejected/cancelled 不阻挡）
+    const existingDuty = await queryOne(
+      `SELECT id, request_no FROM payment_requests
+       WHERE payment_category = 'customs_duty' AND payment_subcategory = 'duty'
+         AND approval_status != 'rejected'
+         AND payment_status NOT IN ('rejected', 'cancelled')
+         AND ((source_type = 'ci' AND source_id = ?) OR related_ci_id = ?)`,
+      [ci_id, ci_id]
+    );
+    if (existingDuty) return res.status(409).json({ error: '该CI已存在有效的Import Duty付款申请，不能重复生成' });
     await transaction(async () => {
-      await run(`INSERT INTO payment_requests (id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no, payee_type, supplier_name, payable_amount, paid_amount, unpaid_amount, currency, payment_status, approval_status, remark, has_deduction, deduction_amount, deduction_source_type, deduction_source_desc, deduction_ref_no, actual_pay_amount, related_ci_id, related_ci_no, related_po_no, include_in_landing_cost, expense_country) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [prId, prNo, 'customs_duty', 'duty', 'ci', ci_id, ci.ci_no, 'customs', payee_name || '', payable_amount, 0, actualPay, currency || ci.currency || 'USD', 'pending_approval', 'pending', remark || `关税 ${ci.ci_no}`, deductionEnabled ? 1 : 0, dedAmount, deduction_source_type || '', deduction_source_desc || '', deduction_ref_no || '', actualPay, ci_id, ci.ci_no, ci.related_po_no || '', 1, expenseCountrySnapshot]);
+      await run(`INSERT INTO payment_requests (id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no, payee_type, payee_key, payee_name_snapshot, supplier_name, payable_amount, paid_amount, unpaid_amount, currency, payment_status, approval_status, remark, has_deduction, deduction_amount, deduction_source_type, deduction_source_desc, deduction_ref_no, actual_pay_amount, related_ci_id, related_ci_no, related_po_no, include_in_landing_cost, expense_country) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [prId, prNo, 'customs_duty', 'duty', 'ci', ci_id, ci.ci_no, 'customs', payeeKey, payeeNameSnapshot, payee_name || '', payable_amount, 0, actualPay, currency || ci.currency || 'USD', 'pending_approval', 'pending', remark || `关税 ${ci.ci_no}`, deductionEnabled ? 1 : 0, dedAmount, deduction_source_type || '', deduction_source_desc || '', deduction_ref_no || '', actualPay, ci_id, ci.ci_no, ci.related_po_no || '', 1, expenseCountrySnapshot]);
       if (deductionEnabled && dedAmount > 0) await recordInitialDeduction(prId, dedAmount, deduction_source_desc, await settlementOperator(req));
       await run(`INSERT INTO ci_cost_items (id, ci_id, ci_no, payment_request_id, request_no, cost_category, cost_subcategory, payable_amount, paid_amount, include_in_landing_cost, payee_name, currency, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [await genId('cci'), ci_id, ci.ci_no, prId, prNo, 'customs_duty', 'duty', payable_amount, 0, 1, payee_name || '', currency || ci.currency || 'USD', remark || '']);
@@ -6777,9 +9095,22 @@ app.post('/api/payment-requests/inspection-fee', requireApiPermission('payment_c
 
     const prId = await genId('pay');
     const prNo = `PAY-INS-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
+    // PAY-CORE Phase 1.5 Task 2：派生 payee_key/payee_name_snapshot（格式 ${payee_type}:${identity}，与 payable_items 一致）
+    const payeeKey = `inspection_org:${payee_name || ''}`;
+    const payeeNameSnapshot = payee_name || '';
+    // P2-8 守卫：同 CI + 同 category + 同 subcategory 的 active payment_request 防重（rejected/cancelled 不阻挡）
+    const existingInspection = await queryOne(
+      `SELECT id, request_no FROM payment_requests
+       WHERE payment_category = 'inspection_fee' AND payment_subcategory = 'inspection'
+         AND approval_status != 'rejected'
+         AND payment_status NOT IN ('rejected', 'cancelled')
+         AND ((source_type = 'ci' AND source_id = ?) OR related_ci_id = ?)`,
+      [ci_id, ci_id]
+    );
+    if (existingInspection) return res.status(409).json({ error: '该CI已存在有效的商检费用付款申请，不能重复生成' });
     await transaction(async () => {
-      await run(`INSERT INTO payment_requests (id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no, payee_type, supplier_name, payable_amount, paid_amount, unpaid_amount, currency, payment_status, approval_status, remark, has_deduction, deduction_amount, deduction_source_type, deduction_source_desc, deduction_ref_no, actual_pay_amount, related_ci_id, related_ci_no, related_po_no, include_in_landing_cost, expense_country) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [prId, prNo, 'inspection_fee', 'inspection', 'ci', ci_id, ci.ci_no, 'inspection_org', payee_name || '', payable_amount, 0, actualPay, currency || ci.currency || 'USD', 'pending_approval', 'pending', remark || `商检费用 ${ci.ci_no}`, deductionEnabled ? 1 : 0, dedAmount, deduction_source_type || '', deduction_source_desc || '', deduction_ref_no || '', actualPay, ci_id, ci.ci_no, ci.related_po_no || '', 1, expenseCountrySnapshot]);
+      await run(`INSERT INTO payment_requests (id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no, payee_type, payee_key, payee_name_snapshot, supplier_name, payable_amount, paid_amount, unpaid_amount, currency, payment_status, approval_status, remark, has_deduction, deduction_amount, deduction_source_type, deduction_source_desc, deduction_ref_no, actual_pay_amount, related_ci_id, related_ci_no, related_po_no, include_in_landing_cost, expense_country) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [prId, prNo, 'inspection_fee', 'inspection', 'ci', ci_id, ci.ci_no, 'inspection_org', payeeKey, payeeNameSnapshot, payee_name || '', payable_amount, 0, actualPay, currency || ci.currency || 'USD', 'pending_approval', 'pending', remark || `商检费用 ${ci.ci_no}`, deductionEnabled ? 1 : 0, dedAmount, deduction_source_type || '', deduction_source_desc || '', deduction_ref_no || '', actualPay, ci_id, ci.ci_no, ci.related_po_no || '', 1, expenseCountrySnapshot]);
       if (deductionEnabled && dedAmount > 0) await recordInitialDeduction(prId, dedAmount, deduction_source_desc, await settlementOperator(req));
       await run(`INSERT INTO ci_cost_items (id, ci_id, ci_no, payment_request_id, request_no, cost_category, cost_subcategory, payable_amount, paid_amount, include_in_landing_cost, payee_name, currency, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [await genId('cci'), ci_id, ci.ci_no, prId, prNo, 'inspection_fee', 'inspection', payable_amount, 0, 1, payee_name || '', currency || ci.currency || 'USD', remark || '']);
@@ -6797,42 +9128,344 @@ app.put('/api/payment-requests/:id/deduction', requireApiPermission('payment_cre
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 }));
 
-// 付款审批
-app.post('/api/payment-requests/:id/approve', requireApiPermission('payment_approve'), asyncHandler(async (req, res) => {
+// PAY-CORE Phase 1：付款申请提交审批（生成 approval_records 实例 + 审批人快照 + CC 抄送）
+// 与 PO submit-approval 流程对齐；不修改 payment_requests 业务字段，仅同步 approval_status='pending'。
+// 业务类型由 paymentRequestToBusinessType(payment) 派生；未配置审批流时拒绝提交（不降级）。
+app.post('/api/payment-requests/:id/submit-approval', requireApiPermission('payment_create'), asyncHandler(async (req, res) => {
+  try {
+    const payment = await queryOne('SELECT * FROM payment_requests WHERE id = ?', [req.params.id]);
+    if (!payment) return res.status(404).json({ error: '付款申请不存在' });
+
+    // 状态校验：仅 pending/rejected/withdrawn 可提交；approved/已付款等不允许重提
+    if (!['pending', 'rejected', 'withdrawn'].includes(payment.approval_status)) {
+      return res.status(400).json({ error: '当前付款申请审批状态不允许提交审批（approval_status=' + payment.approval_status + '）' });
+    }
+    // 已付款/已取消/已冲销的付款不允许提交
+    if (['paid', 'cancelled', 'reversed'].includes(payment.payment_status)) {
+      return res.status(400).json({ error: '付款申请当前 payment_status=' + payment.payment_status + '，不允许提交审批' });
+    }
+
+    // 派生 business_type；未覆盖类型拒绝提交
+    const businessType = paymentRequestToBusinessType(payment);
+    if (!businessType) {
+      return res.status(400).json({ error: '该付款类型（category=' + payment.payment_category + ', subcategory=' + payment.payment_subcategory + '）未配置审批流映射，无法提交审批' });
+    }
+
+    // 读取审批流配置（与 PO 一致：未启用配置直接拒绝，不回退为任意 payment_approve 用户可审）
+    // PAY-CORE Phase 1：同步读取 completion_cc_user_ids 字段（老库兼容：字段可能不存在时返回 undefined）
+    const flow = await queryOne('SELECT id, levels, is_enabled, completion_cc_user_ids FROM approval_flows WHERE business_type = ? AND is_enabled = 1 LIMIT 1', [businessType]);
+    let maxLevel = 0, approvers = [], completionCcUserIds = [];
+    if (flow && flow.levels) {
+      let levels = [];
+      try { levels = JSON.parse(flow.levels); } catch (e) { levels = []; }
+      if (Array.isArray(levels) && levels.length > 0) {
+        // 提交时再次校验每个审批用户仍有效（active + 已绑定角色 + 具备 payment_approve 权限）
+        const built = [];
+        let ok = true, badMsg = '';
+        for (const lv of levels) {
+          const lvl = Number(lv.level);
+          const uid = (lv.approver_user_id || '').trim();
+          if (!uid) { ok = false; badMsg = '第 ' + lvl + ' 级审批人未配置具体用户'; break; }
+          const u = await queryOne('SELECT id, name, role_id, status FROM users WHERE id = ?', [uid]);
+          if (!u) { ok = false; badMsg = '第 ' + lvl + ' 级审批用户不存在'; break; }
+          if (u.status !== 'active') { ok = false; badMsg = '第 ' + lvl + ' 级审批用户「' + u.name + '」已停用'; break; }
+          if (!u.role_id) { ok = false; badMsg = '第 ' + lvl + ' 级审批用户「' + u.name + '」未绑定角色'; break; }
+          const role = await queryOne('SELECT id, name, permissions FROM roles WHERE id = ?', [u.role_id]);
+          if (!role) { ok = false; badMsg = '第 ' + lvl + ' 级审批用户「' + u.name + '」绑定的角色不存在'; break; }
+          let perms = [];
+          try { perms = JSON.parse(role.permissions || '[]'); } catch (e) { perms = []; }
+          if (!perms.includes('payment_approve')) { ok = false; badMsg = '第 ' + lvl + ' 级审批用户「' + u.name + '」当前不具备 payment_approve 权限'; break; }
+          // PAY-CORE Phase 1：节点 CC 校验——必须是 active 用户 id 数组（不要求 payment_approve 权限）
+          let nodeCcIds = [];
+          if (Array.isArray(lv.cc_user_ids)) {
+            for (const ccUid of lv.cc_user_ids) {
+              const ccU = await queryOne('SELECT id, name, status FROM users WHERE id = ?', [ccUid]);
+              if (!ccU) { ok = false; badMsg = '第 ' + lvl + ' 级节点 CC 用户不存在'; break; }
+              if (ccU.status !== 'active') { ok = false; badMsg = '第 ' + lvl + ' 级节点 CC 用户「' + ccU.name + '」已停用'; break; }
+              if (!nodeCcIds.includes(ccU.id)) nodeCcIds.push(ccU.id);
+            }
+            if (!ok) break;
+          }
+          built.push({ level: lvl, approver_user_id: u.id, approver_name: u.name, approver_role_id: u.role_id, cc_user_ids: nodeCcIds });
+        }
+        if (ok) {
+          maxLevel = built.length;
+          approvers = built;
+          // 解析 completion_cc_user_ids（老库兼容：字段不存在时为 undefined，默认空数组）
+          try {
+            const parsedCc = JSON.parse(flow.completion_cc_user_ids || '[]');
+            if (Array.isArray(parsedCc)) {
+              // 校验完成 CC 用户仍有效
+              for (const ccUid of parsedCc) {
+                const ccU = await queryOne('SELECT id, name, status FROM users WHERE id = ?', [ccUid]);
+                if (!ccU) { ok = false; badMsg = '完成 CC 用户不存在（id=' + ccUid + '）'; break; }
+                if (ccU.status !== 'active') { ok = false; badMsg = '完成 CC 用户「' + ccU.name + '」已停用'; break; }
+                if (!completionCcUserIds.includes(ccU.id)) completionCcUserIds.push(ccU.id);
+              }
+            }
+          } catch (e) { /* JSON 解析失败视为空数组，不影响提交 */ }
+          if (!ok) {
+            return res.status(400).json({ error: '审批流配置无效，无法提交：' + badMsg + '。请先在系统管理修正 ' + businessType + ' 审批流配置。' });
+          }
+        } else {
+          return res.status(400).json({ error: '审批流配置无效，无法提交：' + badMsg + '。请先在系统管理修正 ' + businessType + ' 审批流配置（指定具体审批人）。' });
+        }
+      }
+    }
+    if (!approvers || maxLevel < 1) {
+      return res.status(400).json({ error: '业务类型 ' + businessType + ' 的审批流未配置或未启用，无法提交审批。请先在系统管理（审批流管理）完成具体审批人配置并启用。' });
+    }
+
+    // PAY-CORE Phase 1：CC 完全由 approval_flows 配置决定，忽略请求体 cc_user_ids（与 PO 不同，PO 保留请求体 CC 作为 Phase 2 TD）
+    // 旧调用方仍可传 cc_user_ids，但本接口不再读取/校验/写入。
+
+    const submitterName = (req.body.submitter_name || req.currentUserName || '').toString();
+    const approvalId = genId('appr');
+
+    // 同事务原子写入：审批实例（DELETE 旧 pending/rejected/withdrawn 实例保留历史 approved）+ payment_requests.approval_status='pending'
+    // PAY-CORE Phase 1：approvers 写入对象格式快照 { levels: [...], completion_cc_user_ids: [...] }
+    await transaction(async () => {
+      // 删除同一 payment 的旧 pending/rejected/withdrawn 实例（保留已 approved 历史用于审计）
+      await run(`DELETE FROM approval_records WHERE business_id = ? AND business_type = ? AND status IN ('pending','rejected','withdrawn')`, [req.params.id, businessType]);
+      const approversSnapshot = JSON.stringify({ levels: approvers, completion_cc_user_ids: completionCcUserIds });
+      await run(`INSERT INTO approval_records (id, business_type, business_id, business_code, submitter_id, submitter_name, current_level, max_level, approvers, approval_history, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [approvalId, businessType, req.params.id, payment.request_no, req.currentUserId, submitterName, 1, maxLevel, approversSnapshot,
+         JSON.stringify([{ level: 0, action: 'submit', user_id: req.currentUserId, user_name: submitterName, time: new Date().toISOString(), remark: '提交审批' }]),
+         'pending']);
+      // PAY-CORE Phase 1：business_participants 写入节点 CC + 完成 CC（best-effort：失败仅 log，不影响审批提交）
+      // 仅作审计索引/缓存用途；通知逻辑直接读取 approval_records.approvers 快照，不依赖此表
+      try {
+        for (const lv of approvers) {
+          for (const ccUid of (lv.cc_user_ids || [])) {
+            await run(`INSERT INTO business_participants (id, business_type, business_id, participant_type, user_id, user_name) VALUES (?, ?, ?, ?, ?, ?)`,
+              [genId('bp'), 'approval', approvalId, 'node_cc', ccUid, '']);
+          }
+        }
+        for (const ccUid of completionCcUserIds) {
+          await run(`INSERT INTO business_participants (id, business_type, business_id, participant_type, user_id, user_name) VALUES (?, ?, ?, ?, ?, ?)`,
+            [genId('bp'), 'approval', approvalId, 'completion_cc', ccUid, '']);
+        }
+      } catch (bpErr) {
+        console.error('[PAY-CORE] business_participants 写入失败 approvalId=' + approvalId + '：', bpErr.message);
+        // 不抛出，审批提交继续
+      }
+      // 同步 payment_requests.approval_status='pending'；清空旧审批意见/审批人/审批时间（驳回后重提场景）
+      await run(`UPDATE payment_requests SET approval_status = ?, approval_remark = ?, approver_name = ?, approved_at = ?, updated_at = datetime('now') WHERE id = ?`,
+        ['pending', '', '', '', req.params.id]);
+    });
+
+    // 事务外 best-effort 通知第 1 级审批人 + 第 1 级节点 CC
+    const notifyCtx = {
+      business_no: payment.request_no,
+      business_type: businessType,
+      amount: settlementMoney(payment.payable_amount),
+      currency: payment.currency || 'USD',
+      applicant: submitterName
+    };
+    notifyPaymentApprovalParticipants(approvalId, 'submit', notifyCtx).catch(() => {});
+
+    res.json({ success: true, approval_id: approvalId, business_type: businessType, max_level: maxLevel });
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+}));
+
+// 付款审批（PAY-CORE Phase 1：approve/reject 内部优先走多级审批流，无实例时回退老单步逻辑以兼容历史调用方）
+app.post('/api/payment-requests/:id/approve', requireApiPermission('payment_approve', 'payment_execute'), asyncHandler(async (req, res) => {
   try {
     const { action, remark } = req.body;
     const payment = await queryOne('SELECT * FROM payment_requests WHERE id = ?', [req.params.id]);
     if (!payment) return res.status(404).json({ error: '付款申请不存在' });
 
     const userName = (await settlementOperator(req)).name;
-
-    // 审批意见（财务类审批）持久化到独立列 approval_remark，不覆盖申请备注 remark
     const apprRemark = (remark || '').toString();
+
+    // confirm-paid 与审批流解耦，直接走 applyPaymentSettlement 路径
+    // PAY-CORE Phase 2 V2.1 第 12 节：confirm-paid 从 payment_approve 切换到 payment_execute
+    // PAY-CORE Phase 2：新增 bank_ref_no / voucher_attachment / payment_account / apply_round_off 参数
+    if (action === 'confirm-paid') {
+      // V2.1：confirm-paid 需要 payment_execute 权限（不再仅凭 payment_approve）
+      const hasExecutePerm = (req.currentUserPermissions || []).includes('payment_execute') || (req.currentUserPermissions || []).includes('*');
+      if (!hasExecutePerm) {
+        return res.status(403).json({ error: '确认付款需要 payment_execute 权限' });
+      }
+      const result = await applyPaymentSettlement(req.params.id, req.body.paid_amount, req.body.paid_date, req.body.payment_voucher, req, req.body.idempotency_key, {
+        bank_ref_no: req.body.bank_ref_no,
+        payment_account: req.body.payment_account,
+        voucher_attachment: req.body.voucher_attachment,
+        apply_round_off: req.body.apply_round_off === true || req.body.apply_round_off === 1
+      });
+      return res.json({ success: true, idempotent: result.idempotent, log_id: result.log_id, transaction_id: result.transaction_id, trans_no: result.trans_no, rounding_amount: result.rounding_amount, paid_amount: result.effectivePaid, outstanding: result.outstanding, payment_status: result.payment_status });
+    }
+
+    if (!['approve', 'reject'].includes(action)) {
+      return res.status(400).json({ error: '无效的审批操作' });
+    }
+    // V2.1：approve/reject 必须有 payment_approve 权限（confirm-paid 走 payment_execute）
+    const hasApprovePerm = (req.currentUserPermissions || []).includes('payment_approve') || (req.currentUserPermissions || []).includes('*');
+    if (!hasApprovePerm) {
+      return res.status(403).json({ error: '审批操作需要 payment_approve 权限' });
+    }
+    if (payment.approval_status !== 'pending') {
+      return res.status(409).json({ error: '该付款申请已完成审批，不能重复操作' });
+    }
+
+    // 候选丁(PAY-MULTI-2026-227942 根因防护)：审批通过后自动结清需要 expense_country，
+    // 非货款类别若未设置费用归属国家，结清阶段(resolveSettlementCountry)会抛错导致状态卡住。
+    // 此处前置校验，在审批入口拦截数据缺失，避免“审批通过但结清失败”。
+    if (action === 'approve' && payment.payment_category !== 'goods') {
+      try {
+        resolveSettlementCountry(payment);
+      } catch (e) {
+        return res.status(400).json({ error: '审批前置校验失败：' + e.message });
+      }
+    }
+
+    // —— PAY-CORE Phase 1：查 approval_records 实例，若有 pending 实例则走多级审批逻辑 ——
+    const businessType = paymentRequestToBusinessType(payment);
+    const approval = businessType ? await queryOne(
+      'SELECT * FROM approval_records WHERE business_id = ? AND business_type = ? AND status = ? ORDER BY created_at DESC LIMIT 1',
+      [req.params.id, businessType, 'pending']
+    ) : null;
+
+    if (approval) {
+      // —— 多级审批分支：与 PO approve/reject 流程对齐，双重校验当前级次 + 当前用户为该级次指定审批人 ——
+      const curLevel = approval.current_level;
+      if (!Number.isInteger(curLevel) || curLevel < 1 || curLevel > approval.max_level) {
+        return res.status(403).json({ error: '当前审批级次无效' });
+      }
+      let approverList = [];
+      // PAY-CORE Phase 1：使用 normalizeApprovalSnapshot 兼容老数组格式 + 新对象格式
+      const paySnapshot = normalizeApprovalSnapshot(approval.approvers);
+      approverList = paySnapshot.levels;
+      const curNode = approverList.find(a => a.level === curLevel);
+      if (!curNode || !curNode.approver_user_id) {
+        return res.status(403).json({ error: '当前级次未配置具体审批人，无法审批' });
+      }
+      if (curNode.approver_user_id !== req.currentUserId) {
+        return res.status(403).json({ error: '您不是当前审批级次的指定审批人，无权审批' });
+      }
+
+      const history = JSON.parse(approval.approval_history || '[]');
+      const notifyCtx = {
+        business_no: payment.request_no,
+        business_type: businessType,
+        amount: settlementMoney(payment.payable_amount),
+        currency: payment.currency || 'USD',
+        applicant: approval.submitter_name || ''
+      };
+
+      if (action === 'approve') {
+        const nextLevel = (approval.current_level || 1) + 1;
+        if (nextLevel > approval.max_level) {
+          // 最终审批通过即完成付款：审批、结算事实、来源回写和 payable_items reserved→paid 同事务提交。
+          // 进入事务前预检查汇率可用性，避免事务回滚
+          if (payment.payment_category !== 'goods') {
+            try {
+              const country = resolveSettlementCountry(payment);
+              const paidDate = (req.body || {}).actual_paid_date || payment.paid_date;
+              if (paidDate && country.currency !== payment.currency) {
+                const rateCheck = exactSettlementRate(payment.currency, country.currency, paidDate);
+                if (!rateCheck || !(rateCheck.rate > 0)) {
+                  return res.status(400).json({
+                    error: `审批失败：缺少 ${paidDate} ${payment.currency}→${country.currency} 的付款汇率，请联系系统管理员在汇率管理中添加该日期的汇率后再审批`,
+                    suggestion: { from: payment.currency, to: country.currency, date: paidDate, type: SETTLEMENT_RATE_TYPE }
+                  });
+                }
+              }
+              // 同时检查 RMB 汇率
+              if (paidDate && payment.currency !== 'RMB') {
+                exactSettlementRate(payment.currency, 'RMB', paidDate);
+              }
+            } catch (e) {
+              if (e.name === 'SettlementError') {
+                return res.status(400).json({
+                  error: '审批前置校验失败（汇率）：' + e.message + '，请联系系统管理员在汇率管理中添加该日期的汇率后再审批'
+                });
+              }
+              throw e;
+            }
+          }
+          history.push({ level: approval.current_level, action: 'approve', user_id: req.currentUserId, user_name: userName, time: new Date().toISOString(), remark: apprRemark });
+          await transaction(async () => {
+            await ensureSettlementLegacyBaselines(payment);
+            await run(`UPDATE approval_records SET status = ?, approval_history = ?, updated_at = datetime('now') WHERE id = ?`, ['approved', JSON.stringify(history), approval.id]);
+            await run(`UPDATE payment_requests SET approval_status = ?, approval_remark = ?, approver_name = ?, approved_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`, ['approved', apprRemark, userName, req.params.id]);
+            await settleFinalPaymentApproval(payment, req.body || {}, req);
+          });
+          // 事务外 best-effort 通知提交人 + CC
+          notifyPaymentApprovalParticipants(approval.id, 'approved_final', Object.assign({}, notifyCtx, { approver: userName })).catch(() => {});
+        } else {
+          // 中间级次通过：approval_records.current_level=nextLevel，payment_requests.approval_status 保持 pending
+          history.push({ level: approval.current_level, action: 'approve', user_id: req.currentUserId, user_name: userName, time: new Date().toISOString(), remark: apprRemark });
+          await transaction(async () => {
+            await run(`UPDATE approval_records SET current_level = ?, approval_history = ?, updated_at = datetime('now') WHERE id = ?`, [nextLevel, JSON.stringify(history), approval.id]);
+            await run(`UPDATE payment_requests SET approval_remark = ?, approver_name = ?, updated_at = datetime('now') WHERE id = ?`, [apprRemark, userName, req.params.id]);
+            await recalculatePaymentSettlement(req.params.id);
+          });
+          notifyPaymentApprovalParticipants(approval.id, 'approved_intermediate', Object.assign({}, notifyCtx, { approver: userName, level: nextLevel })).catch(() => {});
+        }
+      } else {
+        // reject：approval_records.status='rejected' + payment_requests.approval_status='rejected'
+        history.push({ level: approval.current_level, action: 'reject', user_id: req.currentUserId, user_name: userName, time: new Date().toISOString(), remark: apprRemark });
+        await transaction(async () => {
+          await ensureSettlementLegacyBaselines(payment);
+          await run(`UPDATE approval_records SET status = ?, approval_history = ?, updated_at = datetime('now') WHERE id = ?`, ['rejected', JSON.stringify(history), approval.id]);
+          await run(`UPDATE payment_requests SET approval_status = ?, approval_remark = ?, approver_name = ?, approved_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`, ['rejected', apprRemark, userName, req.params.id]);
+          await recalculatePaymentSettlement(req.params.id);
+          // PAY-CORE Phase 1.5 Task 2：multi 模式 reject 时释放 payable_items（业务规则 7）
+          if (payment.payment_mode === 'multi') {
+            releasePayableItemsByPR(req.params.id);
+          }
+        });
+        notifyPaymentApprovalParticipants(approval.id, 'reject', Object.assign({}, notifyCtx, { approver: userName, remark: apprRemark })).catch(() => {});
+      }
+      return res.json({ success: true });
+    }
+
+    // —— 老单步审批逻辑（兼容路径）：payment_requests 无对应 approval_records 实例 ——
+    // Phase 1 兼容：前端未接入 submit-approval 时仍可使用旧 approve/reject 调用。
+    // 响应头加 Deprecation 提示已弃用，后续 Phase 2 前端切换后下线。
+    //
+    // [PAY-CORE-TD-001] Technical Debt — 旧 approve 接口兼容路径
+    // 现状：有 approval_record 时走新多级审批逻辑；无 approval_record 时允许旧单级审批逻辑
+    // 风险：旧接口理论上可能绕过 approval_records，导致审批实例链不完整
+    // 当前处理：不删除旧接口、不影响历史调用、保留兼容能力
+    // 后续要求：Phase 2 前端完全切换到 approval_records 流程后，再限制新付款申请必须经过 approval_records，
+    //          不允许新业务绕过审批实例（届时在此处加入 status=2 直接拒绝并引导走 submit-approval）
     if (action === 'approve') {
-      if (payment.approval_status !== 'pending') return res.status(409).json({ error: '该付款申请已完成审批，不能重复操作' });
       await transaction(async () => {
         await ensureSettlementLegacyBaselines(payment);
         await run(`UPDATE payment_requests SET approval_status = ?, approval_remark = ?, approver_name = ?,
              approved_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`,
           ['approved', apprRemark, userName, req.params.id]);
-        await recalculatePaymentSettlement(req.params.id);
+        // 候选戊([PAY-CORE-TD-001] 补全)：旧单步兼容路径补写 approval_records，
+        // 让审批链完整，详情接口可返回审批记录（修复 Bug B“暂无审批流程记录”）。
+        await run(`INSERT INTO approval_records (id, business_type, business_id, business_code, submitter_id, submitter_name, current_level, max_level, approvers, approval_history, status) VALUES (?, ?, ?, ?, ?, ?, 1, 1, ?, ?, 'approved')`,
+          [genId('appr'), paymentRequestToBusinessType(payment) || 'payment', payment.id, payment.request_no, req.currentUserId, userName,
+           JSON.stringify([{level:1, approver_id: req.currentUserId, approver_name: userName}]),
+           JSON.stringify([{level:1, action:'approve', user_id: req.currentUserId, user_name: userName, time: new Date().toISOString(), remark: apprRemark}])]);
+        await settleFinalPaymentApproval(payment, req.body || {}, req);
       });
-    } else if (action === 'reject') {
-      if (payment.approval_status !== 'pending') return res.status(409).json({ error: '该付款申请已完成审批，不能重复操作' });
+    } else { // reject
       await transaction(async () => {
         await ensureSettlementLegacyBaselines(payment);
         await run(`UPDATE payment_requests SET approval_status = ?, approval_remark = ?, approver_name = ?,
              approved_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`,
           ['rejected', apprRemark, userName, req.params.id]);
+        // 候选戊([PAY-CORE-TD-001] 补全)：旧单步兼容路径补写 approval_records（reject）
+        await run(`INSERT INTO approval_records (id, business_type, business_id, business_code, submitter_id, submitter_name, current_level, max_level, approvers, approval_history, status) VALUES (?, ?, ?, ?, ?, ?, 1, 1, ?, ?, 'rejected')`,
+          [genId('appr'), paymentRequestToBusinessType(payment) || 'payment', payment.id, payment.request_no, req.currentUserId, userName,
+           JSON.stringify([{level:1, approver_id: req.currentUserId, approver_name: userName}]),
+           JSON.stringify([{level:1, action:'reject', user_id: req.currentUserId, user_name: userName, time: new Date().toISOString(), remark: apprRemark}])]);
         await recalculatePaymentSettlement(req.params.id);
+        // PAY-CORE Phase 1.5 Task 2：multi 模式 reject 时释放 payable_items（业务规则 7）
+        if (payment.payment_mode === 'multi') {
+          releasePayableItemsByPR(req.params.id);
+        }
       });
-    } else if (action === 'confirm-paid') {
-      const result = await applyPaymentSettlement(req.params.id, req.body.paid_amount, req.body.paid_date, req.body.payment_voucher, req, req.body.idempotency_key);
-      return res.json({ success: true, idempotent: result.idempotent, log_id: result.log_id, paid_amount: result.effectivePaid, outstanding: result.outstanding, payment_status: result.payment_status });
-    } else {
-      return res.status(400).json({ error: '无效的审批操作' });
     }
-    res.json({ success: true });
+    res.set('Deprecation', 'true');
+    res.set('Link', '</api/payment-requests/:id/submit-approval>; rel="successor-version"');
+    res.json({ success: true, deprecation: '该审批路径已弃用，请改用 submit-approval 创建审批实例后再调用 approve' });
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 }));
 
@@ -7388,8 +10021,11 @@ app.post('/api/cost-allocation/allocate/:ci_id', requireApiPermission('ci_edit')
         const bases = [...new Set(feeEvents.map(fee => fee.basis))];
         const allocationBasis = bases.length === 0 ? 'amount' : (bases.length === 1 ? bases[0] : 'mixed');
         const allocId = genId('cost');
+        // 多 PI 改造：从 CI 明细取来源 PI（非 CI Header 的 related_pi_id）
+        const ciItemForPi = queryOne('SELECT pi_id, pi_no FROM commercial_invoice_items WHERE ci_id = ? AND sku_code = ? LIMIT 1', [ci.id, fact.sku_code]);
+        const itemPiNo = (ciItemForPi && ciItemForPi.pi_no) || ci.related_pi_no || '';
         run(`INSERT INTO cost_allocations (id, inbound_id, inbound_no, logistics_batch_no, allocation_run_id, ci_no, ci_id, related_po_no, related_pi_no, sku_code, allocation_basis, product_cost, allocated_freight, allocated_duty, allocated_other, total_landing_cost, inbound_qty, unit_landing_cost, currency, unit_product_cost, unit_allocated_cost, unit_landing_cost_with_fees, original_qty, original_avg_cost) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [allocId, '', '', '', allocationRunId, ci.ci_no, ci.id, ci.related_po_no || '', ci.related_pi_no || '', fact.sku_code, allocationBasis, productCost, summary.allocated_freight, summary.allocated_duty, summary.allocated_other, totalLandingCost, inboundQty, unitLandingCost, ci.currency || 'USD', unitProductCost, unitAllocatedCost, unitLandingCost, 0, 0]);
+          [allocId, '', '', '', allocationRunId, ci.ci_no, ci.id, ci.related_po_no || '', itemPiNo, fact.sku_code, allocationBasis, productCost, summary.allocated_freight, summary.allocated_duty, summary.allocated_other, totalLandingCost, inboundQty, unitLandingCost, ci.currency || 'USD', unitProductCost, unitAllocatedCost, unitLandingCost, 0, 0]);
         allocations.push({ sku_code: fact.sku_code, product_cost: productCost, allocated_warehouse: summary.allocated_freight, allocated_duty: summary.allocated_duty, allocated_inspection: summary.allocated_other, total_landing_cost: totalLandingCost, inbound_qty: inboundQty, unit_landing_cost: unitLandingCost });
       });
 
@@ -7468,13 +10104,17 @@ app.post('/api/cost-allocation/update-weighted-avg/:ci_id', requireApiPermission
         const skuInfo = queryOne('SELECT model, brand FROM skus WHERE sku_code = ?', [alloc.sku_code]);
 
         // P1-03-B: 生成并锁定 WAC 历史版本（不写 inventory/skus）
+        // 多 PI 改造：从 CI 明细取来源 PI（非 CI Header 的 related_pi_id）
+        const ciItemForWac = queryOne('SELECT pi_id, pi_no FROM commercial_invoice_items WHERE ci_id = ? AND sku_code = ? LIMIT 1', [ci.id, alloc.sku_code]);
+        const wacPiId = (ciItemForWac && ciItemForWac.pi_id) || ci.related_pi_id || '';
+        const wacPiNo = (ciItemForWac && ciItemForWac.pi_no) || ci.related_pi_no || '';
         const wacVer = generateWacVersion({
           ci_id: ci.id,
           ci_no: ci.ci_no,
           po_id: ci.related_po_id || '',
           po_no: ci.related_po_no || '',
-          pi_id: ci.related_pi_id || '',
-          pi_no: ci.related_pi_no || '',
+          pi_id: wacPiId,
+          pi_no: wacPiNo,
           sku_code: alloc.sku_code,
           model: skuInfo ? (skuInfo.model || '') : '',
           brand: ci.brand || (skuInfo ? (skuInfo.brand || '') : ''),
@@ -7497,7 +10137,7 @@ app.post('/api/cost-allocation/update-weighted-avg/:ci_id', requireApiPermission
         // 记录成本更新日志
         const logId = genId('cul');
         run(`INSERT INTO cost_update_logs (id, sku_code, country, warehouse, related_po_no, related_pi_no, related_ci_no, original_qty, old_avg_cost, inbound_qty, ci_unit_cost, unit_landing_cost, new_qty, new_avg_cost, operator_id, operator_name, import_file, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [logId, alloc.sku_code, origInv.country, origInv.warehouse, ci.related_po_no || '', ci.related_pi_no || '', ci.ci_no, originalQty, oldAvgCost, inboundQty, alloc.unit_product_cost || 0, unitLandingCost, newQty, roundedAvgCost, req.currentUserId, userName, '', req.body.remark || '']);
+          [logId, alloc.sku_code, origInv.country, origInv.warehouse, ci.related_po_no || '', wacPiNo, ci.ci_no, originalQty, oldAvgCost, inboundQty, alloc.unit_product_cost || 0, unitLandingCost, newQty, roundedAvgCost, req.currentUserId, userName, '', req.body.remark || '']);
 
         logs.push({ sku_code: alloc.sku_code, version_no: wacVer.version_no, wac_id: wacVer.id, original_qty: originalQty, old_avg_cost: oldAvgCost, inbound_qty: inboundQty, unit_landing_cost: unitLandingCost, new_avg_cost: roundedAvgCost });
       });
@@ -7991,15 +10631,17 @@ function recalcInventoryForSku(sku_code, country, warehouse, options = {}) {
     const sales90 = queryOne(`SELECT COALESCE(SUM(quantity),0) as qty FROM sales_records WHERE sku_code=? AND is_valid_order=1 AND order_date >= date('now','-90 days')`, [sku_code]);
     // 月均销量 = 90天/3
     const avgMonthly = Math.round((sales90?.qty || 0) / 3);
-    // 可用库存
-    const inv = queryOne('SELECT available_qty, safety_stock, target_turnover_months, inventory_status FROM inventory WHERE sku_code=? AND country=? AND warehouse=?', [sku_code, country, warehouse]);
+    // 可用库存（P2-9-A：同步读取 weighted_avg_cost 用于重算 inventory_value，避免库存数量变更后 inventory_value 与 available_qty * wac 不一致）
+    const inv = queryOne('SELECT available_qty, safety_stock, target_turnover_months, inventory_status, weighted_avg_cost FROM inventory WHERE sku_code=? AND country=? AND warehouse=?', [sku_code, country, warehouse]);
     if (inv) {
       const available = inv.available_qty || 0;
       const turnover = avgMonthly > 0 ? Math.round((available / avgMonthly) * 10) / 10 : 0;
+      // P2-9-A：同步重算 inventory_value（WAC 保持不变，仅数量变化触发价值重算）
+      const inventoryValue = Math.round(((available * (Number(inv.weighted_avg_cost) || 0)) + Number.EPSILON) * 100) / 100;
       if (skipStatus) {
         // 只更新周转/出库日期，不覆盖手动设置的库存状态
-        run(`UPDATE inventory SET last_outbound_date=?, turnover_months=?, updated_at=datetime('now') WHERE sku_code=? AND country=? AND warehouse=?`,
-          [lastOut?.d || '', turnover, sku_code, country, warehouse]);
+        run(`UPDATE inventory SET last_outbound_date=?, turnover_months=?, inventory_value=?, updated_at=datetime('now') WHERE sku_code=? AND country=? AND warehouse=?`,
+          [lastOut?.d || '', turnover, inventoryValue, sku_code, country, warehouse]);
       } else {
         // 自动判断库存状态
         let autoStatus = 'normal';
@@ -8007,8 +10649,8 @@ function recalcInventoryForSku(sku_code, country, warehouse, options = {}) {
         else if (inv.target_turnover_months > 0 && turnover > inv.target_turnover_months * 1.5) autoStatus = 'high_stock';
         else if (avgMonthly > 0 && turnover > inv.target_turnover_months * 2) autoStatus = 'slow_moving';
         else if (available <= (inv.safety_stock || 0)) autoStatus = 'out_of_stock_risk';
-        run(`UPDATE inventory SET last_outbound_date=?, turnover_months=?, inventory_status=?, updated_at=datetime('now') WHERE sku_code=? AND country=? AND warehouse=?`,
-          [lastOut?.d || '', turnover, autoStatus, sku_code, country, warehouse]);
+        run(`UPDATE inventory SET last_outbound_date=?, turnover_months=?, inventory_status=?, inventory_value=?, updated_at=datetime('now') WHERE sku_code=? AND country=? AND warehouse=?`,
+          [lastOut?.d || '', turnover, autoStatus, inventoryValue, sku_code, country, warehouse]);
       }
     }
   } catch(e) { console.error('[recalcInventoryForSku]', e.message); }
@@ -8558,87 +11200,82 @@ process.on('unhandledRejection', (reason) => {
 
 // ==================== 启动前环境诊断（Render 部署排查用）====================
 // 在任何 DB 操作之前检查所有必需环境变量，避免进程静默退出导致 Render 只显示 "Application exited early"
-console.log('\n========== 启动前环境诊断 ==========');
-console.log('[DIAG] NODE_ENV = ' + (NODE_ENV || '(未设置)'));
-console.log('[DIAG] DB_DRIVER = ' + (process.env.DB_DRIVER || '(默认 sqlite)'));
-console.log('[DIAG] PORT = ' + PORT);
-console.log('[DIAG] DATABASE_URL = ' + (process.env.DATABASE_URL ? '已设置 (长度=' + process.env.DATABASE_URL.length + ')' : '❌ 未设置'));
-console.log('[DIAG] BREAKGLASS_ADMIN_PASSWORD = ' + (BREAKGLASS_ADMIN_PASSWORD ? '已设置 (长度=' + BREAKGLASS_ADMIN_PASSWORD.length + ', 强度=' + (isStrongPassword(BREAKGLASS_ADMIN_PASSWORD) ? '合格' : '❌不合格') + ')' : '❌ 未设置'));
-console.log('[DIAG] FEISHU_APP_ID = ' + (FEISHU_APP_ID ? '已设置' : '(未设置)'));
-console.log('[DIAG] FEISHU_APP_SECRET = ' + (FEISHU_APP_SECRET ? '已设置' : '(未设置)'));
-console.log('[DIAG] FEISHU_REDIRECT_URI = ' + (FEISHU_REDIRECT_URI || '(未设置)'));
-console.log('[DIAG] TRUSTED_ORIGINS = ' + (TRUSTED_ORIGINS.length > 0 ? TRUSTED_ORIGINS.join(', ') : '(未设置)'));
-console.log('[DIAG] COOKIE_SECURE = ' + COOKIE_SECURE);
-console.log('[DIAG] CSRF_DISABLE = ' + CSRF_DISABLE);
+if (require.main === module) {
+  console.log('\n========== 启动前环境诊断 ==========');
+  console.log(`[DIAG] NODE_ENV = ${NODE_ENV || '(未设置)'}`);
+  console.log(`[DIAG] DB_DRIVER = ${process.env.DB_DRIVER || '(默认 sqlite)'}`);
+  console.log(`[DIAG] PORT = ${PORT}`);
+  console.log(`[DIAG] DATABASE_URL = ${process.env.DATABASE_URL ? '已设置 (长度=' + process.env.DATABASE_URL.length + ')' : '❌ 未设置'}`);
+  console.log(`[DIAG] BREAKGLASS_ADMIN_PASSWORD = ${BREAKGLASS_ADMIN_PASSWORD ? '已设置 (长度=' + BREAKGLASS_ADMIN_PASSWORD.length + ', 强度=' + (isStrongPassword(BREAKGLASS_ADMIN_PASSWORD) ? '合格' : '❌不合格') + ')' : '❌ 未设置'}`);
+  console.log(`[DIAG] FEISHU_APP_ID = ${FEISHU_APP_ID ? '已设置' : '(未设置)'}`);
+  console.log(`[DIAG] FEISHU_APP_SECRET = ${FEISHU_APP_SECRET ? '已设置' : '(未设置)'}`);
+  console.log(`[DIAG] FEISHU_REDIRECT_URI = ${FEISHU_REDIRECT_URI || '(未设置)'}`);
+  console.log(`[DIAG] TRUSTED_ORIGINS = ${TRUSTED_ORIGINS.length > 0 ? TRUSTED_ORIGINS.join(', ') : '(未设置)'}`);
+  console.log(`[DIAG] COOKIE_SECURE = ${COOKIE_SECURE}`);
+  console.log(`[DIAG] CSRF_DISABLE = ${CSRF_DISABLE}`);
 
-// PG 模式下 DATABASE_URL 是必需的
-if ((process.env.DB_DRIVER || '').toLowerCase() === 'pg' && !process.env.DATABASE_URL) {
-  console.error('\n[FATAL] DB_DRIVER=pg 但 DATABASE_URL 未设置！请在 Render Dashboard → Environment 中配置 DATABASE_URL（Supabase 直连串）。');
-  console.error('[FATAL] 格式：postgresql://postgres:<密码>@db.<项目ref>.supabase.co:5432/postgres');
-  process.exit(1);
-}
-
-// BREAKGLASS_ADMIN_PASSWORD 缺失或弱密码会导致 bootstrapBreakGlass 抛异常
-if (!BREAKGLASS_ADMIN_PASSWORD || !isStrongPassword(BREAKGLASS_ADMIN_PASSWORD)) {
-  console.error('\n[FATAL] BREAKGLASS_ADMIN_PASSWORD 未设置或强度不足（需≥12位且含大小写与数字）！');
-  console.error('[FATAL] 请在 Render Dashboard → Environment 中配置 BREAKGLASS_ADMIN_PASSWORD。');
-  console.error('[FATAL] bootstrapBreakGlass() 会在 app.listen() 之前抛出异常，导致进程立即退出。');
-  process.exit(1);
-}
-
-console.log('[DIAG] 环境变量检查通过 ✓');
-console.log('=====================================\n');
-
-// ==================== 全局错误处理器（Render 部署排查关键）====================
-// Express production 模式默认返回 HTML "Internal Server Error" 且不记录错误细节。
-// 此处理器：1) 记录完整堆栈到 console.error（Render logs 可见）2) 返回 JSON 错误响应
-app.use((err, req, res, next) => {
-  console.error('\n[ERROR-HANDLER] 未捕获异常:');
-  console.error('  URL:', req.method, req.originalUrl || req.url);
-  console.error('  Message:', err && err.message);
-  console.error('  Stack:', err && err.stack);
-  if (err && err.code) console.error('  Code:', err.code);
-  res.status(500).json({
-    error: '服务器内部错误',
-    detail: err && err.message,
-    stack: NODE_ENV === 'production' ? undefined : (err && err.stack)
-  });
-});
-
-// ==================== 启动顺序：先 HTTP，后 DB 依赖 ====================
-// 设计：先启动 HTTP 服务器，让 Render 健康检查能通过；再异步初始化 DB 相关功能（break-glass）。
-// 这样即使 DB 暂时不可达，也能通过 /api/version 诊断问题，而非进程静默退出导致 Render 显示 "Application exited early"。
-// 安全检查（密码缺失/弱）已在诊断阶段完成，到达此处说明密码已校验通过；
-// 后续 bootstrapBreakGlass 只可能因 DB 不可达失败，属于基础设施问题，不应让整个进程退出。
-
-console.log('[STARTUP] 正在启动 HTTP 服务 (端口 ' + PORT + ')...');
-const server = app.listen(PORT, () => {
-  console.log(`\n[Server] 进销存管理系统已启动: http://localhost:${PORT}`);
-  console.log(`[Server] 登录方式：飞书 OAuth（中国/印尼团队统一）；应急入口：登录页底部"应急登录入口"`);
-  console.log(`[Server] 默认账号 admin/admin 已停用；break-glass 本地管理员须通过 BREAKGLASS_ADMIN_PASSWORD 初始化\n`);
-});
-
-server.on('error', (err) => {
-  if (err.code === 'EADDRINUSE') {
-    console.error(`\n[ERROR] 端口 ${PORT} 已被占用，服务无法启动。`);
-    console.error(`        请先停止占用该端口的程序，或修改 server.js 中的 PORT 后重试。`);
-    console.error(`        否则前端访问时会提示 "Failed to fetch"（连不上后端）。\n`);
-  } else {
-    console.error('[ERROR] 服务启动失败:', err && err.stack || err);
+  // PG 模式下 DATABASE_URL 是必需的
+  if ((process.env.DB_DRIVER || '').toLowerCase() === 'pg' && !process.env.DATABASE_URL) {
+    console.error('\n[FATAL] DB_DRIVER=pg 但 DATABASE_URL 未设置！请在 Render Dashboard → Environment 中配置 DATABASE_URL（Supabase 直连串）。');
+    console.error('[FATAL] 格式：postgresql://postgres:<密码>@db.<项目ref>.supabase.co:5432/postgres');
+    process.exit(1);
   }
-  process.exit(1);
-});
 
-// break-glass 异步初始化：HTTP 服务已启动，即使 DB 不可达也不退出
-setImmediate(() => {
+  // BREAKGLASS_ADMIN_PASSWORD 缺失或弱密码会导致 bootstrapBreakGlass 抛异常
+  if (!BREAKGLASS_ADMIN_PASSWORD || !isStrongPassword(BREAKGLASS_ADMIN_PASSWORD)) {
+    console.error('\n[FATAL] BREAKGLASS_ADMIN_PASSWORD 未设置或强度不足（需≥12位且含大小写与数字）！');
+    console.error('[FATAL] 请在 Render Dashboard → Environment 中配置 BREAKGLASS_ADMIN_PASSWORD。');
+    console.error('[FATAL] bootstrapBreakGlass() 会在 app.listen() 之前抛出异常，导致进程立即退出。');
+    process.exit(1);
+  }
+
+  console.log('[DIAG] 环境变量检查通过 ✓');
+  console.log('=====================================\n');
+}
+
+// break-glass 本地管理员初始化（fail-closed：缺强密码则启动失败）
+// P0-FIX-1：仅在直接运行 server.js 时执行启动副作用（app.listen / bootstrapBreakGlass / initDatabase）
+// require(server.js) 作为模块时不执行，避免脚本污染真实库
+if (require.main === module) {
+  // 用 try-catch 包裹启动序列，确保任何异常都有清晰的日志输出（Render 排查用）
   try {
     console.log('[STARTUP] 开始初始化 break-glass 管理员...');
     bootstrapBreakGlass();
     console.log('[STARTUP] break-glass 管理员初始化完成 ✓');
   } catch (e) {
-    console.error('\n[WARN] bootstrapBreakGlass() 失败（DB 可能不可达）:', e.message);
+    console.error('\n[FATAL] bootstrapBreakGlass() 失败:', e.message);
     console.error(e.stack);
-    console.error('[WARN] HTTP 服务已启动，可通过 /api/version 诊断；break-glass 将在 DB 恢复后下次重启生效。');
-    console.error('[WARN] 非 break-glass 用户仍可通过飞书 OAuth 登录。\n');
+    console.error('\n[FATAL] 服务无法启动。请检查上述错误并修正环境变量配置。');
+    process.exit(1);
   }
-});
+
+  console.log('[STARTUP] 正在启动 HTTP 服务 (端口 ' + PORT + ')...');
+  const server = app.listen(PORT, () => {
+    console.log(`\n[Server] 进销存管理系统已启动: http://localhost:${PORT}`);
+    console.log(`[Server] 登录方式：飞书 OAuth（中国/印尼团队统一）；应急入口：登录页底部"应急登录入口"`);
+    console.log(`[Server] 默认账号 admin/admin 已停用；break-glass 本地管理员须通过 BREAKGLASS_ADMIN_PASSWORD 初始化\n`);
+  });
+
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`\n[ERROR] 端口 ${PORT} 已被占用，服务无法启动。`);
+      console.error(`        请先停止占用该端口的程序，或修改 server.js 中的 PORT 后重试。`);
+      console.error(`        否则前端访问时会提示 "Failed to fetch"（连不上后端）。\n`);
+    } else {
+      console.error('[ERROR] 服务启动失败:', err && err.stack || err);
+    }
+    process.exit(1);
+  });
+}
+
+// PAY-CORE P0-1：供 scripts/backfill-payable-items.js 复用，不影响运行时
+module.exports = {
+  createPayableItemFromSource,
+  findActivePayableItem,
+  syncPayableItemAmount,
+  reservePayableItem,
+  releasePayableItem,
+  releasePayableItemsByPR,
+  syncMultiSourcePiStatus,
+  recalculatePaymentSettlement
+};
