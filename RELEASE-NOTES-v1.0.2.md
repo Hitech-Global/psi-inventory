@@ -234,3 +234,29 @@ PDF iframe 内联预览（blob URL，固定高度避免双滚动条）；图片�
 - 权限 `pi_edit`：不变（前端 `hasPermission` + 后端 `requireApiPermission` 双守卫）。
 - D2 规则（PI 号锁定）：不变（`getPINumberLockReason` 不检查 attachment；本轮未改 server.js）。
 - 多附件合并不覆盖：保持。
+
+## 十六、线上复验阻断修复（4 组问题，49d9aaa 之后）
+
+### 问题一：创建/编辑 PI 缺少品牌字段
+- createPI/editPI 表单无品牌控件 → 用 JS 注入 `<select id="npi-brand">`（不改 i18n 模板结构），选项来自 `/api/brands/all`。
+- 无 PO 时品牌必填可编辑；有 PO 时从 PO 带出只读；切回无关联时恢复可编辑（`setPICountryWarehouseEditable` 扩展控制品牌）。
+- saveNewPI/saveEditPI payload 传 brand（后端 POST/PUT 已支持）；saveNewPI 不再单独 GET PO 取 brand（少 1 个 API）。
+- onPISupplierChange 不动品牌（供应商变化不覆盖品牌）。
+
+### 问题二：编辑 PI 仓库下拉为空
+- 根因（确凿）：`pi.country`（如"印度尼西亚"）与 `warehouses.country_name`（如"印尼"）不一致 → SQL `country_name = ?` 精确匹配返回空。
+- 修复：`_normalizeCountry` 按当前国家主数据做标准化映射（包含关系匹配，"印度尼西亚"→"印尼"）→ 用映射后国家加载仓库。
+- fallback：映射后仍找不到仓库时，追加 option 显示当前保存值 + `console.warn`，不静默丢失。
+
+### 问题三：仓库管理首次进入报错 "Cannot set properties of null (setting 'innerHTML')"
+- 根因：`renderBrandSettings` 无竞态守卫，3 个串行 await 后直接 `getElementById('brand-settings-table').innerHTML`，切页后元素已销毁 → null.innerHTML。
+- 修复：引入 `brandSettingsLoadSeq` 守卫（3 处 await 后检查 loadSeq + currentPage + DOM 存在性；catch 同样防护）。
+- 确认：renderBrandSettings 是系统管理**唯一**无守卫子页（国家/仓库/货代/币种/付款条件用 renderSimpleMgr 有 simpleMgrLoadSeq；供应商有 supplierLoadSeq；付款类目有 pcState.loadSeq；付款主体有 if(!t) return）。
+
+### 问题四：PI 弹窗打开慢（~2s）
+- 根因：串行 await（createPI 4 个、editPI 6-7 个、viewPI 2 个）。
+- 修复：
+  - **先开弹窗骨架 + Loading**（不等所有接口返回才 openModal；createPI/editPI/viewPI 均先 openModal 骨架，数据就绪后覆盖）。
+  - **Promise.all 并行化**（createPI: suppliers+pos+countries+brands 并行；editPI: 主数据+PO 明细并行 + 付款条件+仓库并行）。
+  - **稳定主数据会话级缓存**（`_getMaster`：suppliers/countries/brands，TTL 5min）；PO/PI/明细/附件不缓存。
+- viewPI：先开骨架，PI+PO 串行（PO 依赖 pi.related_po_id，无法并行）。
