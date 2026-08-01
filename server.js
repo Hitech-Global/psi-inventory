@@ -551,7 +551,14 @@ function bgClear(ip, username) { bgFailTracker.delete(bgFailKey(ip, username)); 
 
 // ==================== 配置 ====================
 const PORT = process.env.PORT || 3001;
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.0.1';
+// 发布可核对信息：部署时间（进程启动时间 ≈ 部署时间）+ git commit
+// （Render 自动注入 RENDER_GIT_COMMIT；否则回退本地 git rev-parse；都不可用则标记 unknown）
+const APP_STARTED_AT = new Date().toISOString();
+let APP_COMMIT = process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT || '';
+if (!APP_COMMIT) {
+  try { APP_COMMIT = require('child_process').execSync('git rev-parse HEAD', { cwd: __dirname }).toString().trim(); } catch (e) { APP_COMMIT = 'unknown'; }
+}
 
 console.log('========================================');
 console.log('  进销存管理系统 - 后端服务');
@@ -627,7 +634,13 @@ app.use(express.static(path.join(__dirname), {
 }));
 
 app.get('/api/version', asyncHandler((req, res) => {
-  res.json({ version: APP_VERSION, app: 'inventory-management-system', timestamp: new Date().toISOString() });
+  res.json({
+    version: APP_VERSION,
+    app: 'inventory-management-system',
+    commit: APP_COMMIT,
+    deployTime: APP_STARTED_AT,
+    timestamp: new Date().toISOString()
+  });
 }));
 
 // ==================== 认证与权限中间件 ====================
