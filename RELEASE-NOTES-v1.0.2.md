@@ -260,3 +260,38 @@ PDF iframe 内联预览（blob URL，固定高度避免双滚动条）；图片�
   - **Promise.all 并行化**（createPI: suppliers+pos+countries+brands 并行；editPI: 主数据+PO 明细并行 + 付款条件+仓库并行）。
   - **稳定主数据会话级缓存**（`_getMaster`：suppliers/countries/brands，TTL 5min）；PO/PI/明细/附件不缓存。
 - viewPI：先开骨架，PI+PO 串行（PO 依赖 pi.related_po_id，无法并行）。
+
+## 十七、仓库下拉为空（最终根因与修复，纠正十六/问题二）
+
+### 背景
+v1.0.2 上线后线上复验发现：新建 PI 与编辑 PI 打开时仓库下拉均为空（仅"请选择仓库"）。
+
+### 排查纠正（重要）
+- 十六/问题二曾假设根因为"`pi.country`（印度尼西亚）与 `warehouses.country_name`（印尼）不一致"，并采用前端 `_normalizeCountry` 映射方案。
+- **该方案已被否决**：用户明确"不要在前端维护国家映射，真正应该统一的是主数据"；经只读排查，根因**不在**主数据不一致，而是初始化流程。
+- 本轮**删除**了 `_normalizeCountry` 及相关前端映射逻辑，恢复由主数据统一保障。
+
+### 最终根因（确凿，浏览器日志佐证）
+- `populatePIWarehouse()` 本身正常：手动 `await populatePIWarehouse(document.getElementById('npi-country').value)` 后仓库（Bekasi Warehouse）立即正常显示 → 接口/DOM/函数均无问题。
+- **真正原因**：新建 PI 初始化时 `npi-country.innerHTML = countryOpts` 由浏览器自动选中第一项（如印度尼西亚），但**编程式 innerHTML 赋值不触发 `onchange`**，故 `populatePIWarehouse()` 从未被自动调用；首次打开只能看到占位"请选择仓库"。切换国家再切回才触发 `onchange` 加载。
+
+### 最终修复（最小改动，仅 createPI 初始化）
+- `countryOpts` 前插 `<option value="">（请选择国家）</option>` —— 页面打开国家默认"请选择国家"。
+- `brandOpts` 前插 `<option value="">（请选择品牌）</option>` —— 无关联 PO 时品牌默认"请选择品牌"。
+- `whOpts` 已有"请选择仓库"占位，未改。
+- 用户选国家 → `onchange` → `populatePIWarehouse()` → 按国家加载仓库。**不采用"自动选国家 + 自动调用"补丁方案。**
+- **未改 editPI**：其预选 `pi.country` 并显式 `await populatePIWarehouse(pi.country)`，行为正确，不受影响。
+
+### 临时诊断日志
+- 排查期间在 `populatePIWarehouse()` 内添加 7 处 `[populatePIWarehouse]` 及 `[DIAG 100ms]` setTimeout 诊断日志，均为临时用途。
+- **修复完成后已全部删除**；`grep` 确认 0 残留，不进入本次 commit。
+
+### 浏览器验收结论（4002 隔离服务）
+- PASS：本轮全部功能与交互项通过。
+- FAIL：无。
+- Known Issues：无。
+- Console：无阻断错误。
+- Network：无异常重复/失败请求。
+
+### 回滚点
+- 保留 v1.0.1 → `3cea48f` 作为明确回滚点；v1.0.2 tag 指向本轮最终修复 commit（非 6af13e1）。
