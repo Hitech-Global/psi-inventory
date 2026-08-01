@@ -54,3 +54,14 @@
 - **首选回滚点：`765535a`（原 `3846b15`，保留 P0 修复）**（仅撤销本版的版本号/端点/冒烟脚本/清理增量）。
 - 若需回退到 P0 之前：`847fa32`（P1 数据清理状态）或 `ea15f5c`（上线准备基线）。
 - 回滚方式：`git revert <release-commit>` 或 `git reset --hard 765535a` 后重新部署；数据库为外部 Supabase，回滚代码不影响既有数据（P0/P1 均为幂等迁移）。
+
+## 验收与上线状态（2026-08-01 线上回归，全部通过）
+- **状态：v1.0.1 标记为新的生产稳定版本 ✅**
+- **线上版本核对**：`/api/version` → `version=1.0.1`、`commit=cf3f850fd38772a3b9ddd4a93f3db8a1240c0c37`（与发布提交一致）、`deployTime=2026-08-01T02:09:52Z`；`/api/auth/feishu/status` 200 且配置正常。
+- **认证后线上回归 `scripts/verify-online-regression.cjs`（覆盖用户验收清单 A/B/C/D）结果：PASS**。
+  - **A 登录/会话**：错误密码→401 拒登；登录→200 拿到会话；`/api/me`→200；`/api/logout`→200 后 `/api/me`→401（会话真正失效）；重新登录 OK。
+  - **B 各模块端点**（me/feishu_status/inventory(+filter)/sku/daily_sales/forecast/po/pi/ci/pl/inbound/payable/payment(+pending)/po_pending_approval/approval_flows，共 17 项）：全部 200 + JSON，无 HTML500 / status=0 / 非 JSON。
+  - **C generate + 并发稳定性**：连续 2 轮 `/api/replenishment-suggestions/generate` 均 200 + `success=true`（5.2–6.3s）；每轮期间并发 inventory/PI/CI/Payment/daily_sales 探针全部 200 + JSON；无 `status=0`、无 500、无“非 JSON 响应”，Render 未重启/丢响应 → **P0 修复在生产并发下成立**。
+  - **D 数据对齐**：`inventory/filter-options` 国家仅剩 `["印度尼西亚"]`、仓库仅剩 `["Bekasi Warehouse"]`（P1 清理的 Indonesia/Thailand/Vietnam、Jakarta-WH/Bangkok-WH/Hanoi-WH 全部不再出现）；3 个 P1 测试 SKU（P103B-TEST-SKU-001/003/004）查询结果为空 → **脏数据已清除、真实数据未误伤**。
+- **说明（诚实披露）**：本环境无真实浏览器驱动，`agent-browser` 不可用，故以上为**接口/数据/逻辑层**验收；纯视觉层面（B 的页面按钮点击/三语布局渲染、C 的可视错误串如 “Cannot set properties of null”/“服务器返回非 JSON 响应”）仍需用户在真实浏览器中肉眼复核。接口层已断言无此类错误响应。
+- 回归脚本已纳入仓库（`scripts/verify-online-regression.cjs`，凭据仅来自环境变量、不写文件/仓库）。
