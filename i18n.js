@@ -4304,4 +4304,47 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   // ===================== I18N-100P-CLOSEOUT-01: HTML 补充翻译 =====================
   I18N.dict.en["sidebar.footer"] = "v1.0.0 Local"; I18N.dict.id["sidebar.footer"] = "v1.0.0 Lokal";
   I18N.dict.en["lang.switcher_title"] = "Language"; I18N.dict.id["lang.switcher_title"] = "Bahasa";
+
+  // ===================== PAY-CORE 应付费用列表（B 修复）三语 =====================
+  I18N.dict.zh["nav.payable_list"]="应付费用列表"; I18N.dict.en["nav.payable_list"]="Payable Expense List"; I18N.dict.id["nav.payable_list"]="Daftar Biaya Hutang";
+  I18N.dict.zh["payable_list.filter_status"]="状态"; I18N.dict.en["payable_list.filter_status"]="Status"; I18N.dict.id["payable_list.filter_status"]="Status";
+  I18N.dict.zh["payable_list.filter_feetype"]="费用类型"; I18N.dict.en["payable_list.filter_feetype"]="Fee Type"; I18N.dict.id["payable_list.filter_feetype"]="Jenis Biaya";
+  I18N.dict.zh["payable_list.filter_sourcetype"]="来源"; I18N.dict.en["payable_list.filter_sourcetype"]="Source"; I18N.dict.id["payable_list.filter_sourcetype"]="Sumber";
+  I18N.dict.zh["payable_list.filter_keyword"]="关键词"; I18N.dict.en["payable_list.filter_keyword"]="Keyword"; I18N.dict.id["payable_list.filter_keyword"]="Kata Kunci";
+  I18N.dict.zh["payable_list.filter_keyword_ph"]="费用号/来源单号/收款方"; I18N.dict.en["payable_list.filter_keyword_ph"]="Fee no / source no / payee"; I18N.dict.id["payable_list.filter_keyword_ph"]="No biaya / no sumber / penerima";
+  I18N.dict.zh["payable_list.all"]="全部"; I18N.dict.en["payable_list.all"]="All"; I18N.dict.id["payable_list.all"]="Semua";
+  I18N.dict.zh["payable_list.status_active"]="待处理"; I18N.dict.en["payable_list.status_active"]="Pending"; I18N.dict.id["payable_list.status_active"]="Tertunda";
+  I18N.dict.zh["payable_list.status_reserved"]="已占用"; I18N.dict.en["payable_list.status_reserved"]="Reserved"; I18N.dict.id["payable_list.status_reserved"]="Dicadangkan";
+  I18N.dict.zh["payable_list.empty"]="暂无应付费用（默认仅显示待处理/已占用）"; I18N.dict.en["payable_list.empty"]="No payable expenses (by default only Pending/Reserved shown)"; I18N.dict.id["payable_list.empty"]="Tidak ada biaya hutang (secara default hanya Tertunda/Dicadangkan)";
+  I18N.dict.zh["payable_list.col_feeno"]="费用号"; I18N.dict.en["payable_list.col_feeno"]="Fee No."; I18N.dict.id["payable_list.col_feeno"]="No. Biaya";
+  I18N.dict.zh["payable_list.col_source"]="来源"; I18N.dict.en["payable_list.col_source"]="Source"; I18N.dict.id["payable_list.col_source"]="Sumber";
+  I18N.dict.zh["payable_list.col_feetype"]="费用类型"; I18N.dict.en["payable_list.col_feetype"]="Fee Type"; I18N.dict.id["payable_list.col_feetype"]="Jenis Biaya";
+  I18N.dict.zh["payable_list.col_payee"]="收款方"; I18N.dict.en["payable_list.col_payee"]="Payee"; I18N.dict.id["payable_list.col_payee"]="Penerima";
+  I18N.dict.zh["payable_list.col_currency"]="币种"; I18N.dict.en["payable_list.col_currency"]="Currency"; I18N.dict.id["payable_list.col_currency"]="Mata Uang";
+  I18N.dict.zh["payable_list.col_amount"]="金额"; I18N.dict.en["payable_list.col_amount"]="Amount"; I18N.dict.id["payable_list.col_amount"]="Jumlah";
+  I18N.dict.zh["payable_list.col_status"]="状态"; I18N.dict.en["payable_list.col_status"]="Status"; I18N.dict.id["payable_list.col_status"]="Status";
+  I18N.dict.zh["payable_list.col_created"]="创建时间"; I18N.dict.en["payable_list.col_created"]="Created"; I18N.dict.id["payable_list.col_created"]="Dibuat";
+  I18N.dict.zh["payable_list.selected"]="已选 {v1} 项"; I18N.dict.en["payable_list.selected"]="Selected {v1}"; I18N.dict.id["payable_list.selected"]="Terpilih {v1}";
+  I18N.dict.zh["payable_list.btn_view"]="查看"; I18N.dict.en["payable_list.btn_view"]="View"; I18N.dict.id["payable_list.btn_view"]="Lihat";
+  I18N.dict.zh["payable_list.btn_create"]="创建付款申请"; I18N.dict.en["payable_list.btn_create"]="Create Payment Request"; I18N.dict.id["payable_list.btn_create"]="Buat Permintaan Pembayaran";
+  I18N.dict.zh["payable_list.btn_withdraw"]="撤回付款申请"; I18N.dict.en["payable_list.btn_withdraw"]="Withdraw Payment Request"; I18N.dict.id["payable_list.btn_withdraw"]="Tarik Permintaan Pembayaran";
+  I18N.dict.zh["payable_list.hint_select"]="请先选择费用"; I18N.dict.en["payable_list.hint_select"]="Please select expenses first"; I18N.dict.id["payable_list.hint_select"]="Pilih biaya dulu";
+  I18N.dict.zh["payable_list.hint_same_status"]="需选择相同状态（待处理 或 已占用）的费用"; I18N.dict.en["payable_list.hint_same_status"]="Select expenses with the same status (Pending or Reserved)"; I18N.dict.id["payable_list.hint_same_status"]="Pilih biaya dengan status sama (Tertunda atau Dicadangkan)";
+  I18N.dict.zh["payable_list.hint_create_only_active"]="仅待处理（active）费用可创建付款申请"; I18N.dict.en["payable_list.hint_create_only_active"]="Only Pending (active) expenses can create payment requests"; I18N.dict.id["payable_list.hint_create_only_active"]="Hanya biaya Tertunda (active) yang dapat membuat permintaan pembayaran";
+  I18N.dict.zh["payable_list.hint_withdraw_only_reserved"]="仅已占用（reserved）费用可撤回付款申请"; I18N.dict.en["payable_list.hint_withdraw_only_reserved"]="Only Reserved expenses can withdraw payment requests"; I18N.dict.id["payable_list.hint_withdraw_only_reserved"]="Hanya biaya Dicadangkan yang dapat menarik permintaan pembayaran";
+  I18N.dict.zh["payable_list.create_success"]="已创建合并付款申请：{v1}（{v2} 项）"; I18N.dict.en["payable_list.create_success"]="Created merged payment request: {v1} ({v2} items)"; I18N.dict.id["payable_list.create_success"]="Membuat permintaan pembayaran gabungan: {v1} ({v2} item)";
+  I18N.dict.zh["payable_list.create_fail"]="创建失败：{v1}"; I18N.dict.en["payable_list.create_fail"]="Create failed: {v1}"; I18N.dict.id["payable_list.create_fail"]="Gagal membuat: {v1}";
+  I18N.dict.zh["payable_list.withdraw_success"]="已撤回 {v1} 项付款申请"; I18N.dict.en["payable_list.withdraw_success"]="Withdrew {v1} payment request(s)"; I18N.dict.id["payable_list.withdraw_success"]="Menarik {v1} permintaan pembayaran";
+  I18N.dict.zh["payable_list.withdraw_skipped"]="跳过 {v1} 项已撤回"; I18N.dict.en["payable_list.withdraw_skipped"]="skipped {v1} already withdrawn"; I18N.dict.id["payable_list.withdraw_skipped"]="lewati {v1} yang sudah ditarik";
+  I18N.dict.zh["payable_list.withdraw_fail"]="撤回失败：{v1}"; I18N.dict.en["payable_list.withdraw_fail"]="Withdraw failed: {v1}"; I18N.dict.id["payable_list.withdraw_fail"]="Gagal menarik: {v1}";
+  I18N.dict.zh["payable_list.withdraw_confirm"]="确认撤回所选 {v1} 项付款申请？此操作将释放已占用费用。"; I18N.dict.en["payable_list.withdraw_confirm"]="Withdraw {v1} selected payment request(s)? This releases the reserved expenses."; I18N.dict.id["payable_list.withdraw_confirm"]="Tarik {v1} permintaan pembayaran terpilih? Ini akan melepaskan biaya yang dicadangkan.";
+  I18N.dict.zh["payable_list.view_fail"]="加载失败：{v1}"; I18N.dict.en["payable_list.view_fail"]="Load failed: {v1}"; I18N.dict.id["payable_list.view_fail"]="Gagal memuat: {v1}";
+  I18N.dict.zh["payable_list.detail_title"]="应付费用明细"; I18N.dict.en["payable_list.detail_title"]="Payable Expense Detail"; I18N.dict.id["payable_list.detail_title"]="Detail Biaya Hutang";
+  I18N.dict.zh["payable_list.summary_title"]="所选费用摘要"; I18N.dict.en["payable_list.summary_title"]="Selected Expense Summary"; I18N.dict.id["payable_list.summary_title"]="Ringkasan Biaya Terpilih";
+  I18N.dict.zh["payable_list.summary_multi"]="已选 {v1} 项（仅摘要，查看明细请单选）"; I18N.dict.en["payable_list.summary_multi"]="Selected {v1} (summary only; select one to view detail)"; I18N.dict.id["payable_list.summary_multi"]="Terpilih {v1} (ringkasan saja; pilih satu untuk detail)";
+  I18N.dict.zh["payable_list.related_pr"]="关联付款申请"; I18N.dict.en["payable_list.related_pr"]="Related Payment Requests"; I18N.dict.id["payable_list.related_pr"]="Permintaan Pembayaran Terkait";
+  I18N.dict.zh["payable_list.no_pr"]="无关联付款申请"; I18N.dict.en["payable_list.no_pr"]="No related payment requests"; I18N.dict.id["payable_list.no_pr"]="Tidak ada permintaan pembayaran terkait";
+  I18N.dict.zh["payable_list.pr_no"]="申请号"; I18N.dict.en["payable_list.pr_no"]="Request No."; I18N.dict.id["payable_list.pr_no"]="No. Permintaan";
+  I18N.dict.zh["payable_list.pr_paystatus"]="付款状态"; I18N.dict.en["payable_list.pr_paystatus"]="Payment Status"; I18N.dict.id["payable_list.pr_paystatus"]="Status Pembayaran";
+  I18N.dict.zh["payable_list.pr_appstatus"]="审批状态"; I18N.dict.en["payable_list.pr_appstatus"]="Approval Status"; I18N.dict.id["payable_list.pr_appstatus"]="Status Persetujuan";
 })();

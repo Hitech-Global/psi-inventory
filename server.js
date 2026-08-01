@@ -8490,6 +8490,35 @@ app.get('/api/payment-requests/pending', requireApiPermission('payment_approve')
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
+// [2026-08-01] 固定路径 by-payable-items 必须注册在通用动态路由 /api/payment-requests/:id 之前，否则会被 :id 抢先匹配而 404。
+app.get('/api/payment-requests/by-payable-items', requireApiPermission('payment_view'), asyncHandler(async (req, res) => {
+  try {
+    const idsRaw = req.query.ids || '';
+    const ids = String(idsRaw).split(',').map(s => s.trim()).filter(Boolean);
+    if (ids.length === 0) {
+      return res.status(400).json({ error: '缺少 payable_item_ids' });
+    }
+    const includeHistory = String(req.query.include_history || '').toLowerCase() === 'true';
+    const placeholders = ids.map(() => '?').join(',');
+    // 默认排除 cancelled/rejected 历史，仅返回当前有效 PR
+    let whereExtra = '';
+    if (!includeHistory) {
+      whereExtra = ` AND pr.payment_status NOT IN ('cancelled','rejected') AND pr.approval_status NOT IN ('cancelled','rejected')`;
+    }
+    const rows = query(
+      `SELECT DISTINCT pr.id, pr.request_no, pr.payment_status, pr.approval_status, pr.payment_mode
+       FROM payment_requests pr
+       JOIN payment_request_items pri ON pri.payment_request_id = pr.id
+       WHERE pri.payable_item_id IN (${placeholders})${whereExtra}
+       ORDER BY pr.created_at DESC`,
+      ids
+    ).rows;
+    res.json({ payment_requests: rows, include_history: includeHistory });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+}));
+
 // 付款申请详情（含按口径计算的 total_qty + 关联 PI/CI 摘要）
 app.get('/api/payment-requests/:id', requireApiPermission('payment_view'), asyncHandler(async (req, res) => {
   try {
@@ -8875,33 +8904,8 @@ app.post('/api/payment-requests/multi-expense', requireApiPermission('payment_cr
 // 3. 多个 payable_items 同属一个 PR → 去重返回一条
 // 4. 分属多个 PR → 返回多条
 // 5. 未关联任何 PR → 返回空数组，不报错
-app.get('/api/payment-requests/by-payable-items', requireApiPermission('payment_view'), asyncHandler(async (req, res) => {
-  try {
-    const idsRaw = req.query.ids || '';
-    const ids = String(idsRaw).split(',').map(s => s.trim()).filter(Boolean);
-    if (ids.length === 0) {
-      return res.status(400).json({ error: '缺少 payable_item_ids' });
-    }
-    const includeHistory = String(req.query.include_history || '').toLowerCase() === 'true';
-    const placeholders = ids.map(() => '?').join(',');
-    // 默认排除 cancelled/rejected 历史，仅返回当前有效 PR
-    let whereExtra = '';
-    if (!includeHistory) {
-      whereExtra = ` AND pr.payment_status NOT IN ('cancelled','rejected') AND pr.approval_status NOT IN ('cancelled','rejected')`;
-    }
-    const rows = query(
-      `SELECT DISTINCT pr.id, pr.request_no, pr.payment_status, pr.approval_status, pr.payment_mode
-       FROM payment_requests pr
-       JOIN payment_request_items pri ON pri.payment_request_id = pr.id
-       WHERE pri.payable_item_id IN (${placeholders})${whereExtra}
-       ORDER BY pr.created_at DESC`,
-      ids
-    ).rows;
-    res.json({ payment_requests: rows, include_history: includeHistory });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-}));
+// [2026-08-01] 此路由（/api/payment-requests/by-payable-items）已上移至 /api/payment-requests/:id 通用动态路由之前注册，
+// 以修复被 :id 抢先匹配导致 404「付款申请不存在」的问题。请勿将其移回 :id 之后。
 
 // PAY-CORE P0-3：批量撤回付款申请（仅 pending 审批 + 无 payment_transactions + 无有效 settlement_logs 可撤回）
 // 撤回事务内严格顺序：校验 → 释放 payable_items → 更新 PR → 更新 approval_records → 恢复 PI

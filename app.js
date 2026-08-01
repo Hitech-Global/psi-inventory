@@ -299,6 +299,7 @@ const NAV_MODULES=[
     {id:'payable-cockpit',key:'nav.payable_cockpit',icon:'🧭',label:t("nav.payable_cockpit","应付驾驶舱"),perm:'payment_view'},
     {id:'payment',key:'nav.payment',icon:'💳',label:t("nav.payment", "\u4ed8\u6b3e\u7ba1\u7406"),perm:'payment_view'},
     {id:'cost',key:'nav.cost',icon:'💰',label:t("nav.cost", "\u6210\u672c\u7ba1\u7406"),perm:'cost_view'},
+    {id:'payable-list',key:'nav.payable_list',icon:'📋',label:t("nav.payable_list", "\u5e94\u4ed8\u8d39\u7528\u5217\u8868"),perm:'payment_view'},
   ]},
   {id:'system',key:'nav.system',label:t("nav.system", "\u7cfb\u7edf\u7ba1\u7406"),items:[
     {id:'users',key:'nav.users',icon:'👤',label:t("nav.users", "\u7528\u6237\u7ba1\u7406"),perm:'user_manage'},
@@ -329,7 +330,7 @@ var NAV_ZH={
   'nav.forecast':'订单预测','nav.procurement':'采购链','nav.po':'PO管理',
   'nav.pi':'PI管理','nav.ci':'CI/PL管理','nav.logistics':'物流管理','nav.inbound':'入库管理',
   'nav.approval':'审批中心','nav.approval_center':'审批中心','nav.finance':'财务',
-  'nav.payable_cockpit':'应付驾驶舱','nav.payment':'付款管理','nav.cost':'成本管理',
+  'nav.payable_cockpit':'应付驾驶舱','nav.payment':'付款管理','nav.cost':'成本管理','nav.payable_list':'应付费用列表',
   'nav.system':'系统管理','nav.users':'用户管理','nav.roles':'角色权限',
   'nav.countries':'国家管理','nav.warehouses':'仓库管理','nav.brand_settings':'品牌设置',
   'nav.currencies':'币种设置','nav.operation_logs':'操作日志','nav.config':'系统参数',
@@ -415,9 +416,9 @@ function showPage(page){
   }
   document.querySelectorAll('.sidebar-item').forEach(el=>el.classList.toggle('active',el.dataset.page===page));
   document.querySelectorAll('.topnav-item').forEach((el,i)=>{if(NAV_MODULES[i]&&NAV_MODULES[i].id===currentModule)el.classList.add('active');else el.classList.remove('active')});
-  const titles={dashboard:t("nav.dashboard", "\u9996\u9875\u770b\u677f"),skus:t("nav.skus", "SKU\u4e3b\u6570\u636e"),inventory:t("page.inventory_total","库存总表"),outbound:t("nav.outbound","销售数据"),replenishment:t("nav.replenishment","订单预测"),stagnant:t("nav.stagnant", "\u5446\u6ede\u5206\u6790"),check:t("nav.stock_check", "\u5e93\u5b58\u76d8\u70b9"),po:t("nav.po", "PO\u7ba1\u7406"),pi:t("nav.pi", "PI\u7ba1\u7406"),ci:t("nav.ci", "CI/PL\u7ba1\u7406"),logistics:t("nav.logistics", "\u7269\u6d41\u7ba1\u7406"),inbound:t("nav.inbound", "\u5165\u5e93\u7ba1\u7406"),cost:t("nav.cost", "\u6210\u672c\u7ba1\u7406"),payment:t("nav.payment", "\u4ed8\u6b3e\u7ba1\u7406"),'payable-cockpit':t("nav.payable_cockpit","应付驾驶舱"),forwarder:t("nav.forwarder_analysis", "\u8d27\u4ee3\u5206\u6790"),countries:t("nav.countries", "\u56fd\u5bb6\u7ba1\u7406"),warehouses:t("nav.warehouses", "\u4ed3\u5e93\u7ba1\u7406"),suppliers:t("nav.suppliers", "\u4f9b\u5e94\u5546\u7ba1\u7406"),'freight-forwarders':t("nav.freight_forwarders", "\u8d27\u4ee3\u7ba1\u7406"),currencies:t("nav.currencies", "\u5e01\u79cd\u8bbe\u7f6e"),config:t("nav.config", "\u7cfb\u7edf\u53c2\u6570"),'payment-terms':t("nav.payment_terms", "\u4ed8\u6b3e\u6761\u4ef6"),'approval-flows':t("nav.approval_flows", "\u5ba1\u6279\u6d41\u7ba1\u7406"),'approval-center':t("nav.approval_center", "\u5ba1\u6279\u4e2d\u5fc3"),'expense-types':t("nav.expense_types", "\u8d39\u7528\u7c7b\u578b"),'allocation-rules':t("nav.allocation_rules", "\u5206\u644a\u89c4\u5219"),users:t("nav.users", "\u7528\u6237\u7ba1\u7406"),roles:t("nav.roles","角色权限"),'batch-tasks':t("nav.batch_tasks", "\u6279\u91cf\u4efb\u52a1\u4e2d\u5fc3"),'brand-settings':t("nav.brand_settings", "\u54c1\u724c\u8bbe\u7f6e"),'operation-logs':t("nav.operation_logs", "\u64cd\u4f5c\u65e5\u5fd7"),'payment-categories':t("nav.payment_categories", "\u4ed8\u6b3e\u7c7b\u76ee\u7ba1\u7406"),'payer-entities':t("nav.payer_entities", "\u4ed8\u6b3e\u4e3b\u4f53")};
+  const titles={dashboard:t("nav.dashboard", "\u9996\u9875\u770b\u677f"),skus:t("nav.skus", "SKU\u4e3b\u6570\u636e"),inventory:t("page.inventory_total","库存总表"),outbound:t("nav.outbound","销售数据"),replenishment:t("nav.replenishment","订单预测"),stagnant:t("nav.stagnant", "\u5446\u6ede\u5206\u6790"),check:t("nav.stock_check", "\u5e93\u5b58\u76d8\u70b9"),po:t("nav.po", "PO\u7ba1\u7406"),pi:t("nav.pi", "PI\u7ba1\u7406"),ci:t("nav.ci", "CI/PL\u7ba1\u7406"),logistics:t("nav.logistics", "\u7269\u6d41\u7ba1\u7406"),inbound:t("nav.inbound", "\u5165\u5e93\u7ba1\u7406"),cost:t("nav.cost", "\u6210\u672c\u7ba1\u7406"),payment:t("nav.payment", "\u4ed8\u6b3e\u7ba1\u7406"),'payable-cockpit':t("nav.payable_cockpit","应付驾驶舱"),'payable-list':t("nav.payable_list","应付费用列表"),forwarder:t("nav.forwarder_analysis", "\u8d27\u4ee3\u5206\u6790"),countries:t("nav.countries", "\u56fd\u5bb6\u7ba1\u7406"),warehouses:t("nav.warehouses", "\u4ed3\u5e93\u7ba1\u7406"),suppliers:t("nav.suppliers", "\u4f9b\u5e94\u5546\u7ba1\u7406"),'freight-forwarders':t("nav.freight_forwarders", "\u8d27\u4ee3\u7ba1\u7406"),currencies:t("nav.currencies", "\u5e01\u79cd\u8bbe\u7f6e"),config:t("nav.config", "\u7cfb\u7edf\u53c2\u6570"),'payment-terms':t("nav.payment_terms", "\u4ed8\u6b3e\u6761\u4ef6"),'approval-flows':t("nav.approval_flows", "\u5ba1\u6279\u6d41\u7ba1\u7406"),'approval-center':t("nav.approval_center", "\u5ba1\u6279\u4e2d\u5fc3"),'expense-types':t("nav.expense_types", "\u8d39\u7528\u7c7b\u578b"),'allocation-rules':t("nav.allocation_rules", "\u5206\u644a\u89c4\u5219"),users:t("nav.users", "\u7528\u6237\u7ba1\u7406"),roles:t("nav.roles","角色权限"),'batch-tasks':t("nav.batch_tasks", "\u6279\u91cf\u4efb\u52a1\u4e2d\u5fc3"),'brand-settings':t("nav.brand_settings", "\u54c1\u724c\u8bbe\u7f6e"),'operation-logs':t("nav.operation_logs", "\u64cd\u4f5c\u65e5\u5fd7"),'payment-categories':t("nav.payment_categories", "\u4ed8\u6b3e\u7c7b\u76ee\u7ba1\u7406"),'payer-entities':t("nav.payer_entities", "\u4ed8\u6b3e\u4e3b\u4f53")};
   document.getElementById('content-inner').innerHTML='<div id="flash-container"></div>';
-  const R={dashboard:renderDashboard,skus:renderSKUs,inventory:renderInventory,outbound:renderOutbound,replenishment:renderReplenishment,stagnant:renderStagnant,check:renderCheck,po:renderPO,pi:renderPI,ci:renderCI,logistics:renderLogistics,inbound:renderInbound,cost:renderCost,payment:renderPayment,'payable-cockpit':renderPayableCockpit,forwarder:renderForwarderAnalysis,countries:renderCountries,warehouses:renderWarehouses,suppliers:renderSuppliers,'freight-forwarders':renderFreightForwarders,currencies:renderCurrencies,config:renderConfig,'payment-terms':renderPaymentTerms,'approval-flows':renderApprovalFlows,'approval-center':renderApprovalCenter,'expense-types':renderExpenseTypes,'allocation-rules':renderAllocationRules,users:renderUsers,roles:renderRoles,'batch-tasks':renderBatchTasks,'brand-settings':renderBrandSettings,'operation-logs':renderOperationLogs,'payment-categories':renderPaymentCategories,'payer-entities':renderPayerEntities};
+  const R={dashboard:renderDashboard,skus:renderSKUs,inventory:renderInventory,outbound:renderOutbound,replenishment:renderReplenishment,stagnant:renderStagnant,check:renderCheck,po:renderPO,pi:renderPI,ci:renderCI,logistics:renderLogistics,inbound:renderInbound,cost:renderCost,payment:renderPayment,'payable-cockpit':renderPayableCockpit,'payable-list':renderPayableList,forwarder:renderForwarderAnalysis,countries:renderCountries,warehouses:renderWarehouses,suppliers:renderSuppliers,'freight-forwarders':renderFreightForwarders,currencies:renderCurrencies,config:renderConfig,'payment-terms':renderPaymentTerms,'approval-flows':renderApprovalFlows,'approval-center':renderApprovalCenter,'expense-types':renderExpenseTypes,'allocation-rules':renderAllocationRules,users:renderUsers,roles:renderRoles,'batch-tasks':renderBatchTasks,'brand-settings':renderBrandSettings,'operation-logs':renderOperationLogs,'payment-categories':renderPaymentCategories,'payer-entities':renderPayerEntities};
   if(R[page])R[page]();
 }
 
@@ -6503,7 +6504,7 @@ async function saveEditPI(id){
 }
 async function createPI(){
   const suppliers=await api('/api/suppliers');const pos=await api('/api/purchase-orders?status=approved');
-  openModal(t('gen.L5520.1','新建PI'),t('modal.body.createPI', `<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid"><div class="form-group"><label>关联PO</label><select id="npi-po" onchange="loadPOForPI()"><option value="">无关联</option>{v1}</select></div><div class="form-group"><label>供应商 <span class="required">*</span></label><select id="npi-sup" onchange="onPISupplierChange()">{v2}</select></div><div class="form-group"><label>PI日期</label><input type="date" id="npi-date" value="{v3}"></div><div class="form-group"><label>币种</label><select id="npi-cur"><option>USD</option><option>RMB</option><option>IDR</option><option>MYR</option><option>THB</option></select></div><div class="form-group"><label>是否需要定金</label><select id="npi-need-dep" onchange="togglePIDeposit()"><option value="1">${t('term.yes','是')}</option><option value="0">${t('term.no','否')}</option></select></div><div class="form-group"><label>定金比例(%)</label><input type="number" id="npi-dep" value="30"></div><div class="form-group"><label>预计交期</label><input type="date" id="npi-del"></div><div class="form-group"><label>付款条件</label><select id="npi-terms"><option value="">（未选择）</option></select></div></div><h4 style="margin:16px 0 8px">PO vs PI 合并对比 <button class="btn btn-secondary btn-sm" onclick="addPIRow()">➕ 添加行</button> <button class="btn btn-secondary btn-sm" onclick="openSupplierPIImport()">📥 导入供应商PI</button> <button class="btn btn-secondary btn-sm" onclick="downloadDocTemplate('supplierPI')">📄 模板</button></h4><div class="pi-table-scroll" style="max-height:52vh;overflow:auto;box-shadow:none;margin-bottom:8px"><table class="data-table pi-cmp-table" id="pi-items-table"><thead><tr><th>SKU</th><th>PO数量</th><th>PI确认数量</th><th>PO单价</th><th>PI确认单价</th><th>PI折扣</th><th>PI金额</th><th>数量差异</th><th>单价差异</th><th>操作</th></tr></thead><tbody id="pi-items"></tbody><tfoot id="pi-cmp-foot"></tfoot></table></div></div>`, {v1: pos.map(p=>'<option value="'+p.id+'" data-no="'+p.po_no+'">'+esc(p.po_no)+' - '+esc(p.supplier_name)+'</option>').join(''), v2: suppliers.map(s=>'<option value="'+s.id+'" data-name="'+esc(s.name)+'" data-last="'+esc(s.last_used_payment_term_id||'')+'">'+esc(s.name)+'</option>').join(''), v3: todayStr()}),t('gen.L5520.2','<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveNewPI()">创建</button>'),'modal-pi');
+  openModal(t('gen.L5520.1','新建PI'),t('modal.body.createPI', `<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid"><div class="form-group"><label>PI号（可选，留空自动生成）</label><input type="text" id="npi-no" placeholder="留空则系统自动生成"></div><div class="form-group"><label>关联PO</label><select id="npi-po" onchange="loadPOForPI()"><option value="">无关联</option>{v1}</select></div><div class="form-group"><label>供应商 <span class="required">*</span></label><select id="npi-sup" onchange="onPISupplierChange()">{v2}</select></div><div class="form-group"><label>PI日期</label><input type="date" id="npi-date" value="{v3}"></div><div class="form-group"><label>币种</label><select id="npi-cur"><option>USD</option><option>RMB</option><option>IDR</option><option>MYR</option><option>THB</option></select></div><div class="form-group"><label>是否需要定金</label><select id="npi-need-dep" onchange="togglePIDeposit()"><option value="1">${t('term.yes','是')}</option><option value="0">${t('term.no','否')}</option></select></div><div class="form-group"><label>定金比例(%)</label><input type="number" id="npi-dep" value="30"></div><div class="form-group"><label>预计交期</label><input type="date" id="npi-del"></div><div class="form-group"><label>付款条件</label><select id="npi-terms"><option value="">（未选择）</option></select></div></div><h4 style="margin:16px 0 8px">PO vs PI 合并对比 <button class="btn btn-secondary btn-sm" onclick="addPIRow()">➕ 添加行</button> <button class="btn btn-secondary btn-sm" onclick="openSupplierPIImport()">📥 导入供应商PI</button> <button class="btn btn-secondary btn-sm" onclick="downloadDocTemplate('supplierPI')">📄 模板</button></h4><div class="pi-table-scroll" style="max-height:52vh;overflow:auto;box-shadow:none;margin-bottom:8px"><table class="data-table pi-cmp-table" id="pi-items-table"><thead><tr><th>SKU</th><th>PO数量</th><th>PI确认数量</th><th>PO单价</th><th>PI确认单价</th><th>PI折扣</th><th>PI金额</th><th>数量差异</th><th>单价差异</th><th>操作</th></tr></thead><tbody id="pi-items"></tbody><tfoot id="pi-cmp-foot"></tfoot></table></div></div>`, {v1: pos.map(p=>'<option value="'+p.id+'" data-no="'+p.po_no+'">'+esc(p.po_no)+' - '+esc(p.supplier_name)+'</option>').join(''), v2: suppliers.map(s=>'<option value="'+s.id+'" data-name="'+esc(s.name)+'" data-last="'+esc(s.last_used_payment_term_id||'')+'">'+esc(s.name)+'</option>').join(''), v3: todayStr()}),t('gen.L5520.2','<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveNewPI()">创建</button>'),'modal-pi');
   window._piRows=[];renderCmpTable();
   onPISupplierChange();
 }
@@ -6679,7 +6680,7 @@ async function saveNewPI(){
   // 品牌/国家/仓库：与批量导入口径一致，关联 PO 时从 PO 带（PI 自身快照字段，不展示期 join 他表）
   let brand='',country='',target_warehouse='';
   if(poSel&&poSel.value){try{const po=await api('/api/purchase-orders/'+encodeURIComponent(poSel.value));brand=po.brand||'';country=po.country||'';target_warehouse=po.target_warehouse||'';}catch(e){}}
-  const d={related_po_id:poSel.value||'',related_po_no:poSel.options[poSel.selectedIndex]?.dataset.no||'',supplier_id:supSel.value,supplier_name:supSel.options[supSel.selectedIndex].dataset.name,brand,country,target_warehouse,pi_date:document.getElementById('npi-date').value,currency:document.getElementById('npi-cur').value,need_deposit:document.getElementById('npi-need-dep').value==='1'?1:0,deposit_ratio:parseFloat(document.getElementById('npi-dep').value)||0,expected_delivery:document.getElementById('npi-del').value,payment_terms:paymentTermsText,payment_term_id:termId,items};
+  const d={related_po_id:poSel.value||'',related_po_no:poSel.options[poSel.selectedIndex]?.dataset.no||'',supplier_id:supSel.value,supplier_name:supSel.options[supSel.selectedIndex].dataset.name,brand,country,target_warehouse,pi_no:(document.getElementById('npi-no')?.value||'').trim()||'',pi_date:document.getElementById('npi-date').value,currency:document.getElementById('npi-cur').value,need_deposit:document.getElementById('npi-need-dep').value==='1'?1:0,deposit_ratio:parseFloat(document.getElementById('npi-dep').value)||0,expected_delivery:document.getElementById('npi-del').value,payment_terms:paymentTermsText,payment_term_id:termId,items};
   try{
     await api('/api/proforma-invoices','POST',d);
     if(termId&&supSel.value){try{await api('/api/suppliers/'+encodeURIComponent(supSel.value)+'/last-payment-term','POST',{payment_term_id:termId});}catch(e){}}
@@ -8422,14 +8423,20 @@ const PAY_STATUS_MAP={pending_approval:t("shell.072", "\u5f85\u5ba1\u6279"),appr
 
 // ==================== FIN-DASHBOARD-01：财务应付驾驶舱（只读）====================
 let _cockpitData=null;
+let _cockpitLoadSeq=0;
 async function renderPayableCockpit(){
   const el=document.getElementById('content-inner');
   el.innerHTML='<div id="flash-container"></div><div style="padding:20px;color:var(--text-secondary,#888)">'+t("cockpit.loading","加载中…")+'</div>';
+  const seq=++_cockpitLoadSeq;
   try{
     const data=await api('/api/finance/payable-cockpit');
+    // 竞态防护：页面已切走则静默结束，不向已销毁/替换的 DOM 写入（避免跨页面 null 错误）
+    if(seq!==_cockpitLoadSeq||currentPage!=='payable-cockpit')return;
     _cockpitData=data;
     renderCockpitView();
   }catch(e){
+    // 竞态防护：页面已切走后不再写 DOM（避免 "Cannot set properties of null"）
+    if(seq!==_cockpitLoadSeq||currentPage!=='payable-cockpit')return;
     el.innerHTML=t('html.renderPayableCockpit', '<div id="flash-container"></div><div class="flash flash-danger show">加载应付驾驶舱失败：{v1}</div>', {v1: esc(e.message)});
   }
 }
@@ -8813,6 +8820,222 @@ function cockpitSupplierDrawer(supplierEnc,currency){
     +'</div>';
   const dr=document.getElementById('cockpit-drawer');
   if(dr){dr.innerHTML=html;openCockpitDrawer();}
+}
+
+// ==================== PAY-CORE 应付费用列表（运营工作台，恢复已冻结用户路径）====================
+// 设计原则：本页面只负责"选择业务对象"（多选/全选/已选 N 项），
+// 业务校验（同收款方 / 同币种 / 同国家）全部复用付款申请创建的统一入口
+// （multi-expense / batch-cancel），页面不维护任何一套业务规则，避免规则分散。
+const PAY_FEE_TYPE_LABELS={deposit:'定金',balance:'尾款',freight:'运费',customs_clearance:'清关费',port_charges:'港口费',delivery:'派送费',warehouse:'仓储费',other_local:'其他本地费',duty:'关税',inspection:'商检费'};
+const PAY_SOURCE_TYPE_LABELS={pi:'PI',ci:'CI',manual:'手动录入',historical_ci:'历史CI'};
+const PAY_LIFECYCLE_LABELS={active:'待处理',reserved:'已占用',released:'已释放',paid:'已付款',cancelled:'已取消'};
+let _payableListSel=new Set();
+let _payableListData=[];
+
+async function renderPayableList(){
+  const el=document.getElementById('content-inner');
+  el.innerHTML='<div id="flash-container"></div>'+
+    '<div class="filter-bar"><div class="filter-form">'+
+      '<div class="filter-group"><label>'+t('payable_list.filter_status','状态')+'</label><select id="payl-fs"><option value="">'+t('payable_list.all','全部')+'</option><option value="active">'+t('payable_list.status_active','待处理')+'</option><option value="reserved">'+t('payable_list.status_reserved','已占用')+'</option></select></div>'+
+      '<div class="filter-group"><label>'+t('payable_list.filter_feetype','费用类型')+'</label><select id="payl-ft"><option value="">'+t('payable_list.all','全部')+'</option>'+Object.keys(PAY_FEE_TYPE_LABELS).map(function(k){return '<option value="'+k+'">'+PAY_FEE_TYPE_LABELS[k]+'</option>';}).join('')+'</select></div>'+
+      '<div class="filter-group"><label>'+t('payable_list.filter_sourcetype','来源')+'</label><select id="payl-st"><option value="">'+t('payable_list.all','全部')+'</option>'+Object.keys(PAY_SOURCE_TYPE_LABELS).map(function(k){return '<option value="'+k+'">'+PAY_SOURCE_TYPE_LABELS[k]+'</option>';}).join('')+'</select></div>'+
+      '<div class="filter-group"><label>'+t('payable_list.filter_keyword','关键词')+'</label><input type="text" id="payl-fk" placeholder="'+t('payable_list.filter_keyword_ph','费用号/来源单号/收款方')+'" onkeypress="if(event.key===\'Enter\')loadPayableList()"></div>'+
+      '<div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadPayableList()">'+t('common.search','搜索')+'</button></div>'+
+    '</div></div>'+
+    '<div class="table-section"><div class="table-section-title"><div class="table-section-title-left">📋 '+t('nav.payable_list','应付费用列表')+'</div><div class="table-section-title-right" id="payl-selinfo"></div></div>'+
+    '<div id="payl-toolbar" class="payl-toolbar"></div>'+
+    '<div id="payl-hint" class="payl-hint"></div>'+
+    '<div id="payl-table"></div></div>';
+  _payableListSel=new Set();
+  await loadPayableList();
+}
+
+async function loadPayableList(){
+  const fs=document.getElementById('payl-fs');
+  const ft=document.getElementById('payl-ft');
+  const st=document.getElementById('payl-st');
+  const fk=document.getElementById('payl-fk');
+  const params=new URLSearchParams();
+  if(fs&&fs.value)params.set('lifecycle_status',fs.value);
+  if(ft&&ft.value)params.set('fee_type',ft.value);
+  if(st&&st.value)params.set('source_type',st.value);
+  if(fk&&fk.value)params.set('keyword',fk.value);
+  const q=params.toString();
+  let data;
+  try{
+    data=await api('/api/payable-items'+(q?'?'+q:''));
+  }catch(e){
+    const tb=document.getElementById('payl-table');if(tb)tb.innerHTML='<div class="flash flash-danger show">'+esc(e.message)+'</div>';
+    return;
+  }
+  _payableListData=(data&&data.items)||[];
+  renderPayableTable();
+  updatePayableMenu();
+}
+
+function renderPayableTable(){
+  const rows=_payableListData;
+  const tb=document.getElementById('payl-table');if(!tb)return;
+  if(!rows.length){
+    tb.innerHTML='<div class="flash flash-info show">'+t('payable_list.empty','暂无应付费用（默认仅显示待处理/已占用）')+'</div>';
+    return;
+  }
+  let html='<table class="data-table"><thead><tr>'+
+    '<th style="width:36px"><input type="checkbox" id="payl-selall" onchange="togglePayableSelAll(this.checked)"></th>'+
+    '<th>'+t('payable_list.col_feeno','费用号')+'</th>'+
+    '<th>'+t('payable_list.col_source','来源')+'</th>'+
+    '<th>'+t('payable_list.col_feetype','费用类型')+'</th>'+
+    '<th>'+t('payable_list.col_payee','收款方')+'</th>'+
+    '<th>'+t('payable_list.col_currency','币种')+'</th>'+
+    '<th style="text-align:right">'+t('payable_list.col_amount','金额')+'</th>'+
+    '<th>'+t('payable_list.col_status','状态')+'</th>'+
+    '<th>'+t('payable_list.col_created','创建时间')+'</th>'+
+    '</tr></thead><tbody>';
+  rows.forEach(function(r){
+    const checked=_payableListSel.has(r.id)?'checked':'';
+    const amt=Number((r.payable_amount!=null?r.payable_amount:(r.payable_amount_minor/100))||0).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
+    html+='<tr>'+
+      '<td><input type="checkbox" class="payl-cb" data-id="'+esc(r.id)+'" onchange="togglePayableSel(\''+esc(r.id)+'\',this.checked)"></td>'+
+      '<td>'+esc(r.fee_no||'')+'</td>'+
+      '<td>'+esc(PAY_SOURCE_TYPE_LABELS[r.source_type]||r.source_type||'')+(r.source_no?' · '+esc(r.source_no):'')+'</td>'+
+      '<td>'+esc(PAY_FEE_TYPE_LABELS[r.fee_type]||r.fee_type||'')+'</td>'+
+      '<td>'+esc(r.payee_name_snapshot||'')+(r.payee_key?' <span class="muted">('+esc(r.payee_key)+')</span>':'')+'</td>'+
+      '<td>'+esc(r.currency||'')+'</td>'+
+      '<td style="text-align:right">'+amt+'</td>'+
+      '<td>'+esc(PAY_LIFECYCLE_LABELS[r.lifecycle_status]||r.lifecycle_status||'')+'</td>'+
+      '<td class="muted">'+esc((r.created_at||'').slice(0,19))+'</td>'+
+      '</tr>';
+  });
+  html+='</tbody></table>';
+  tb.innerHTML=html;
+  const all=document.getElementById('payl-selall');
+  if(all){const cbs=document.querySelectorAll('.payl-cb');const sel=rows.filter(function(r){return _payableListSel.has(r.id);}).length;all.checked=(cbs.length>0&&sel===cbs.length);}
+}
+
+function togglePayableSel(id,checked){
+  if(checked)_payableListSel.add(id);else _payableListSel.delete(id);
+  updatePayableMenu();
+}
+function togglePayableSelAll(checked){
+  document.querySelectorAll('.payl-cb').forEach(function(cb){
+    const id=cb.getAttribute('data-id');
+    if(checked)_payableListSel.add(id);else _payableListSel.delete(id);
+    cb.checked=checked;
+  });
+  updatePayableMenu();
+}
+function getSelectedPayableItems(){return _payableListData.filter(function(r){return _payableListSel.has(r.id);});}
+function updatePayableMenu(){
+  const sel=getSelectedPayableItems();
+  const n=sel.length;
+  const info=document.getElementById('payl-selinfo');
+  const tb=document.getElementById('payl-toolbar');
+  const hint=document.getElementById('payl-hint');
+  if(info)info.textContent=t('payable_list.selected','已选 {v1} 项',{v1:n});
+  if(!tb)return;
+  tb.innerHTML='<button class="btn btn-secondary btn-sm" id="payl-view" onclick="viewPayableSelected()">'+t('payable_list.btn_view','查看')+'</button>'+
+    '<button class="btn btn-primary btn-sm" id="payl-create" onclick="createPaymentFromSelected()">'+t('payable_list.btn_create','创建付款申请')+'</button>'+
+    '<button class="btn btn-warning btn-sm" id="payl-withdraw" onclick="withdrawPaymentFromSelected()">'+t('payable_list.btn_withdraw','撤回付款申请')+'</button>';
+  const statuses=new Set(sel.map(function(r){return r.lifecycle_status;}));
+  const allActive=statuses.size===1&&statuses.has('active');
+  const allReserved=statuses.size===1&&statuses.has('reserved');
+  const mixed=!allActive&&!allReserved;
+  const bv=document.getElementById('payl-view');
+  const bc=document.getElementById('payl-create');
+  const bw=document.getElementById('payl-withdraw');
+  // 查看：>=1 即可（单选看明细，多选看摘要）；纯展示，不受生命周期限制
+  if(n===0){bv.disabled=true;bv.title=t('payable_list.hint_select','请先选择费用');}else{bv.disabled=false;bv.title='';}
+  // 创建付款申请：仅全部 active（同收款方/同币种/同国家 的校验交由统一入口 multi-expense，页面不维护）
+  if(allActive&&n>0){bc.disabled=false;bc.title='';}
+  else{bc.disabled=true;bc.title=mixed?t('payable_list.hint_same_status','需选择相同状态（待处理 或 已占用）的费用'):t('payable_list.hint_create_only_active','仅待处理（active）费用可创建付款申请');}
+  // 撤回付款申请：仅全部 reserved
+  if(allReserved&&n>0){bw.disabled=false;bw.title='';}
+  else{bw.disabled=true;bw.title=mixed?t('payable_list.hint_same_status','需选择相同状态（待处理 或 已占用）的费用'):t('payable_list.hint_withdraw_only_reserved','仅已占用（reserved）费用可撤回付款申请');}
+  // 提示行：明确原因
+  if(hint){
+    if(n===0)hint.textContent='';
+    else if(mixed)hint.textContent='⚠ '+t('payable_list.hint_same_status','需选择相同状态（待处理 或 已占用）的费用');
+    else if(allActive)hint.textContent='ℹ '+t('payable_list.hint_withdraw_only_reserved','仅已占用（reserved）费用可撤回付款申请');
+    else if(allReserved)hint.textContent='ℹ '+t('payable_list.hint_create_only_active','仅待处理（active）费用可创建付款申请');
+    else hint.textContent='';
+  }
+}
+
+async function viewPayableSelected(){
+  const sel=getSelectedPayableItems();
+  if(!sel.length){showToast(t('payable_list.hint_select','请先选择费用'),'warning');return;}
+  if(sel.length===1){
+    const r=sel[0];
+    let detail,rels;
+    try{
+      detail=await api('/api/payable-items/'+encodeURIComponent(r.id));
+      rels=await api('/api/payment-requests/by-payable-items?ids='+encodeURIComponent(r.id));
+    }catch(e){showFlash(t('payable_list.view_fail','加载失败：{v1}',{v1:e.message}),'danger');return;}
+    const it=detail.item||{};
+    const amt=Number((it.payable_amount!=null?it.payable_amount:it.payable_amount_minor/100)||0).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
+    let html='<div style="display:grid;grid-template-columns:auto 1fr;gap:4px 12px">';
+    html+='<div><b>'+t('payable_list.col_feeno','费用号')+'</b></div><div>'+esc(it.fee_no||'')+'</div>';
+    html+='<div><b>'+t('payable_list.col_source','来源')+'</b></div><div>'+esc(PAY_SOURCE_TYPE_LABELS[it.source_type]||it.source_type||'')+(it.source_no?' · '+esc(it.source_no):'')+'</div>';
+    html+='<div><b>'+t('payable_list.col_feetype','费用类型')+'</b></div><div>'+esc(PAY_FEE_TYPE_LABELS[it.fee_type]||it.fee_type||'')+'</div>';
+    html+='<div><b>'+t('payable_list.col_payee','收款方')+'</b></div><div>'+esc(it.payee_name_snapshot||'')+'</div>';
+    html+='<div><b>'+t('payable_list.col_currency','币种')+'</b></div><div>'+esc(it.currency||'')+'</div>';
+    html+='<div><b>'+t('payable_list.col_amount','金额')+'</b></div><div>'+amt+'</div>';
+    html+='<div><b>'+t('payable_list.col_status','状态')+'</b></div><div>'+esc(PAY_LIFECYCLE_LABELS[it.lifecycle_status]||it.lifecycle_status||'')+'</div>';
+    html+='</div>';
+    const prs=(rels&&rels.payment_requests)||[];
+    html+='<h4 style="margin:14px 0 6px">'+t('payable_list.related_pr','关联付款申请')+'</h4>';
+    if(!prs.length)html+='<div class="muted">'+t('payable_list.no_pr','无关联付款申请')+'</div>';
+    else{
+      html+='<table class="data-table"><thead><tr><th>'+t('payable_list.pr_no','申请号')+'</th><th>'+t('payable_list.pr_paystatus','付款状态')+'</th><th>'+t('payable_list.pr_appstatus','审批状态')+'</th></tr></thead><tbody>';
+      prs.forEach(function(p){html+='<tr><td>'+esc(p.request_no||'')+'</td><td>'+esc(p.payment_status||'')+'</td><td>'+esc(p.approval_status||'')+'</td></tr>';});
+      html+='</tbody></table>';
+    }
+    openModal(t('payable_list.detail_title','应付费用明细'),html);
+  }else{
+    // 多选：仅显示所选摘要，不混淆不同付款申请
+    let html='<div class="muted" style="margin-bottom:8px">'+t('payable_list.summary_multi','已选 {v1} 项（仅摘要，查看明细请单选）',{v1:sel.length})+'</div>';
+    html+='<table class="data-table"><thead><tr><th>'+t('payable_list.col_feeno','费用号')+'</th><th>'+t('payable_list.col_feetype','费用类型')+'</th><th style="text-align:right">'+t('payable_list.col_amount','金额')+'</th><th>'+t('payable_list.col_status','状态')+'</th></tr></thead><tbody>';
+    sel.forEach(function(r){
+      const amt=Number((r.payable_amount!=null?r.payable_amount:r.payable_amount_minor/100)||0).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
+      html+='<tr><td>'+esc(r.fee_no||'')+'</td><td>'+esc(PAY_FEE_TYPE_LABELS[r.fee_type]||r.fee_type||'')+'</td><td style="text-align:right">'+amt+'</td><td>'+esc(PAY_LIFECYCLE_LABELS[r.lifecycle_status]||r.lifecycle_status||'')+'</td></tr>';
+    });
+    html+='</tbody></table>';
+    openModal(t('payable_list.summary_title','所选费用摘要'),html);
+  }
+}
+
+async function createPaymentFromSelected(){
+  const sel=getSelectedPayableItems();
+  if(!sel.length||!sel.every(function(r){return r.lifecycle_status==='active';})){showToast(t('payable_list.hint_create_only_active','仅待处理（active）费用可创建付款申请'),'warning');return;}
+  const ids=sel.map(function(r){return r.id;});
+  // 注意：同收款方/同币种/同国家 的校验交由统一入口 multi-expense 在后端完成；页面不重复实现，避免规则分散。
+  try{
+    const d=await api('/api/payment-requests/multi-expense','POST',{payable_item_ids:ids,remark:''});
+    showFlash(t('payable_list.create_success','已创建合并付款申请：{v1}（{v2} 项）',{v1:d.request_no,v2:d.item_count}),'success');
+    _payableListSel=new Set();
+    await loadPayableList();
+  }catch(e){
+    showFlash(t('payable_list.create_fail','创建失败：{v1}',{v1:e.message}),'danger');
+  }
+}
+
+async function withdrawPaymentFromSelected(){
+  const sel=getSelectedPayableItems();
+  if(!sel.length||!sel.every(function(r){return r.lifecycle_status==='reserved';})){showToast(t('payable_list.hint_withdraw_only_reserved','仅已占用（reserved）费用可撤回付款申请'),'warning');return;}
+  const ids=sel.map(function(r){return r.id;});
+  if(!window.confirm(t('payable_list.withdraw_confirm','确认撤回所选 {v1} 项付款申请？此操作将释放已占用费用。',{v1:ids.length}))){return;}
+  try{
+    const d=await api('/api/payment-requests/batch-cancel','POST',{payable_item_ids:ids});
+    const cnt=(d&&d.cancelled&&d.cancelled.length)||0;
+    const skp=(d&&d.skipped&&d.skipped.length)||0;
+    let msg=t('payable_list.withdraw_success','已撤回 {v1} 项付款申请',{v1:cnt});
+    if(skp)msg+='；'+t('payable_list.withdraw_skipped','跳过 {v1} 项已撤回',{v1:skp});
+    showFlash(msg,'success');
+    _payableListSel=new Set();
+    await loadPayableList();
+  }catch(e){
+    showFlash(t('payable_list.withdraw_fail','撤回失败：{v1}',{v1:e.message}),'danger');
+  }
 }
 
 async function renderPayment(){

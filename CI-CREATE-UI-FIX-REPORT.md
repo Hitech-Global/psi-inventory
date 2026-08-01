@@ -1,91 +1,171 @@
 # CI-CREATE-UI-FIX-REPORT
 
-## 概述
-修复 CI 创建页面 3 个 UI 问题，涵盖运营 CI 和历史 CI 共 9 处修改。
+## 修改概览
 
-## 修改内容
+| 项目 | 文件 | 变更量 |
+|------|------|--------|
+| Fix 1: PI多选体验 | app.js | -2 lines |
+| Fix 2: 明细表优化 | app.js, i18n.js, index.html | +1 key, +2 CSS rules |
+| Fix 3: Modal布局 | app.js, index.html | +12 lines JS, +8 lines CSS |
 
-### Fix 1: PI 选择显示 — 去掉币种，改用数量单位
+提交：`2266266dc7fb880d195830a1bfa7466c19e9a148`
 
-**问题**：PI 下拉选项中 "剩余可出货：235 RMB" 误把 RMB 标记为数量单位。
+---
 
-**修复**：`"剩余可出货：235 RMB"` → `"剩余可出货：235 件"`
+## Fix 1 — PI选择改为真正多选体验
 
-| 文件 | 位置 | 修改 |
-|------|------|------|
-| app.js | `onHistoricalSupplierChange()` ~L6627 | `esc(p.currency)` → `t('unit.pcs','件')` |
-| app.js | `onCISupplierChange()` ~L7047 | 同上 |
-| i18n.js | `unit.pcs` | 新增 key：`件` / `pcs` / `pcs` |
+### 问题
+选择PI后下拉列表自动关闭��需重新打开才能继续勾选其他PI。
 
-### Fix 2: CI 明细列扩展 — 增加 PI 出货状态信息
+### 修改
+- `onCIPISelectionChange()`（运营CI）：移除末尾的 `closeNciPiDropdown()`
+- `onHciPISelectionChange()`（历史CI）：移除末尾的 `closeHciPiDropdown()`
 
-**问题**：旧 7 列表头仅含 SKU/PI来源/PI数量/CI数量/单价/金额/操作，无法判断 PI 已出货/未出货。
+### 效果
+- 展开PI下拉后保持打开状态
+- checkbox连续勾选多个PI
+- 已选PI保持☑勾选
+- 点击区域外或再次点击触发器关闭
+- 运营CI和历史CI行为一致
 
-**修复**：扩展为 9 列（8 数据列 + 1 操作列）
-
+### 验证
 ```
-旧列： SKU | PI来源 | PI数量(unshipped) | CI数量 | 单价 | 金额 | 操作
-新列： SKU | PI来源 | PI总数量 | 已出货 | 未出货 | 本次CI数量 | 单价 | 金额 | 操作
-       ↑       ↑       ↑(confirmed) ↑(shipped) ↑(unshipped) ↑(editable)  ↑      ↑      ↑
+✓ closeNciPiDropdown removed from onCIPISelectionChange
+✓ closeHciPiDropdown removed from onHciPISelectionChange
+```
+点击PI checkbox → onChange触发 → 三角函数不调用close → 下拉保持打开 → 继续选择。
+
+---
+
+## Fix 2 — CI明细数据展示调整
+
+### 明细字段（9列）
+| 列 | 说明 | 数据源 |
+|----|------|--------|
+| SKU | SKU编码 | item.sku_code |
+| PI来源 | PI编号 | item.pi_no |
+| PI总数量 | 原PI确认数量 | item.pi_confirmed_qty |
+| 已出货 | 历史CI已出货量 | item.shipped_qty |
+| 未出货 | 剩余可出货量 | item.unshipped_qty |
+| 本次CI数量 | 默认=未出货数量，可编辑 | input value=unshipped_qty |
+| 单价 | PI单价，可编辑 | item.unit_price |
+| 金额 | 数量×单价，实时计算 | computed |
+| 操作 | 删除按钮 | × |
+
+### 修改
+1. **i18n.js**：新增 `app.operation` 键（zh=操作/en=Action/id=Aksi）
+2. **index.html CSS**：
+   - `#ci-items-preview { max-height: min(350px, 38vh); overflow-y: auto }`
+   - `#hci-items-preview { max-height: min(300px, 38vh); overflow-y: auto }`
+
+### 已有功能验证
+- 默认CI数量 = 未出货数量 ✓（`buildCIItemRow` value=uQty）
+- 删除SKU后重算数量和金额 ✓（`deleteCIRow` 调用 `updateCISummary`）
+- qty/price变更实时更新金额 ✓（onchange/oninput → updateCISummary）
+- 9列 `<td>` 完整 ✓
+
+---
+
+## Fix 3 — CI创建Modal布局优化
+
+### 问题
+Modal全屏覆盖，遮挡顶部导航栏和左侧菜单栏。
+
+### 修改
+
+#### index.html CSS（新增 8 条规则）
+```css
+/* CI modal positioned within workspace */
+.modal-overlay.ci-mode {
+  top: 48px; left: 220px; right: 0; bottom: 0;
+  width: auto; height: auto;
+  align-items: flex-start; justify-content: flex-start;
+  padding: 12px 16px; z-index: 100;
+}
+.modal-overlay.ci-mode.ci-sb-collapsed { left: 54px; }
+
+/* CI modal flex column layout */
+.modal-overlay.ci-mode .modal-ci-create {
+  width: 100%; max-width: none;
+  max-height: calc(100vh - 48px - 24px);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.modal-overlay.ci-mode .modal-ci-create .modal-header { flex: 0 0 auto; }
+.modal-overlay.ci-mode .modal-ci-create .modal-body   { flex: 1 1 auto; overflow-y: auto; min-height: 0; }
+.modal-overlay.ci-mode .modal-ci-create .modal-footer { flex: 0 0 auto; }
 ```
 
-| 文件 | 位置 | 修改 |
-|------|------|------|
-| app.js | `loadMultiPIItems()` ~L7147 | item 结构增加 `pi_confirmed_qty` / `shipped_qty` / `currency` |
-| app.js | 表头渲染 ~L7166 | 表头从 6 列扩展为 8 列，新增 `ci.col.pi_confirmed` / `ci.col.pi_shipped` / `ci.col.pi_unshipped`，`ci.col.ci_qty` 文案改为 "本次CI数量" |
-| app.js | `buildCIItemRow()` ~L7199 | 行渲染增加 cQty / sQty / uQty 三列只读展示，CI 数量输入框宽度从 85px 缩小为 70px |
-| i18n.js | 新增 3 个列 key | `ci.col.pi_confirmed` / `ci.col.pi_shipped` / `ci.col.pi_unshipped` |
+#### app.js（修改 openModal / closeModal）
+```js
+// openModal: 检测 modal-ci-create → 添加 ci-mode + sidebar 状态类
+if(size==='modal-ci-create'){
+  ov.classList.add('ci-mode');
+  if(sb&&sb.classList.contains('collapsed')) ov.classList.add('ci-sb-collapsed');
+}
 
-### Fix 3: CI 弹窗尺寸扩大 + 合计区域优化
-
-**问题 A**：默认 modal 宽度 700px，多 PI 选择 + 9 列表格空间不足。
-
-**修复**：运营 CI 和历史 CI 弹窗均使用已有 CSS class `.modal-ci-create { max-width: 1200px }`
-
-| 文件 | 位置 | 修改 |
-|------|------|------|
-| app.js | `createOperationalCI()` ~L7011 | `openModal(...)` 第四参数增加 `'modal-ci-create'` |
-| app.js | `createHistoricalCI()` ~L6565 | 同上 |
-
-**问题 B**：合计显示 "合计：235 件 | 29,918.00"，金额无币种、格式紧凑。
-
-**修复**：两行 flex 布局
-
-```
-旧： 合计：235 件 | 29,918.00
-新： 合计数量：235 件        CI金额：RMB 29,918.00
+// closeModal: 移除所有 CI 相关类
+ov.classList.remove('show','ci-mode','ci-sb-collapsed');
 ```
 
-| 文件 | 位置 | 修改 |
-|------|------|------|
-| app.js | `updateCISummary()` ~L7223 | 两行 flex 布局，金额取 `allItems[0].currency` |
-| i18n.js | `ci.summary.qty` / `ci.summary.amt` | 新增 2 个 summary key |
+### 效果
+| 特性 | 说明 |
+|------|------|
+| 不覆盖导航栏 | top:48px 留出 topbar |
+| 不覆盖侧边栏 | left:220px (展开) / 54px (折叠) |
+| Header固定 | flex:0 0 auto |
+| Footer固定 | flex:0 0 auto |
+| Body滚动 | flex:1 1 auto + overflow-y:auto + min-height:0 |
+| CI明细表内滚 | max-height + overflow-y:auto |
 
-## 修改文件
+### 兼容性
+- 其他 Modal（non-CI）不受影响：`openModal` 先 remove `ci-mode` 再根据 `size` 添加
+- Sidebar 折叠/展开自动适配：`ci-sb-collapsed` 类动态切换
 
-| 文件 | 行数变化 | 说明 |
-|------|---------|------|
-| `app.js` | ~20 行修改 | PI 显示 / 明细列 / 弹窗尺寸 / 合计 |
-| `i18n.js` | +6 key | unit.pcs / ci.col.*×3 / ci.summary.*×2 |
+---
+
+## 修改清单
+
+### app.js
+- `openModal()`: +7 lines（ci-mode 检测 + sidebar 状态类）
+- `closeModal()`: 1 line changed（追加 remove ci-mode 类）
+- `onCIPISelectionChange()`: -1 line（移除 closeNciPiDropdown）
+- `onHciPISelectionChange()`: -1 line（移除 closeHciPiDropdown）
+
+### index.html
+- 新增 10 条 CSS 规则（ci-mode 定位 / flex 布局 / 明细表滚动）
+
+### i18n.js
+- 新增 1 行：`app.operation` (en/id)
+
+### 未修改
+- server.js
+- 数据库
+- PAY-CORE
+- 库存预测
+- WAC
+- 其他模块
+
+---
 
 ## 验证结果
 
-| 验证项 | 结果 |
-|--------|------|
-| app.js 语法 | ✅ PASS |
-| i18n.js 语法 | ✅ PASS |
-| PI 下拉无币种 (`esc(p.currency)`) | ✅ 0 处残留 |
-| `unit.pcs` 使用 | ✅ 3 处（2×PI 下拉 + 1×合计） |
-| 新增列 key (`ci.col.pi_*`) | ✅ 表头 + i18n 均存在 |
-| `modal-ci-create` 使用 | ✅ 2 处（运营 CI + 历史 CI） |
-| 合计双行格式 | ✅ `ci.summary.qty` + `ci.summary.amt` |
+运行 `/tmp/verify-ci-ui-fix.js` — **22 项全部 PASS**：
 
-## 人工验收要点
-
-| 步骤 | 预期 |
-|------|------|
-| 运营 CI → 选择 Netac → 展开 PI 下拉 | 每项显示 "剩余可出货：XXX 件"（无 RMB） |
-| 勾选 PI → 明细表 | 9 列：SKU/PI来源/PI总数量/已出货/未出货/本次CI数量/单价/金额/操作 |
-| 输入 CI 数量 → 底部合计 | "合计数量：XXX 件" | "CI金额：RMB XXX" |
-| 弹窗宽度 | ~1200px，充分展示 9 列 |
-| 历史 CI → 选择 Netac → PI 下拉 | 同样显示 "剩余可出货：XXX 件" |
+| 类别 | 检查项 | 结果 |
+|------|--------|------|
+| 语法 | app.js --check | ✓ |
+| Fix 1 | closeNciPiDropdown 移除 | ✓ |
+| Fix 1 | closeHciPiDropdown 移除 | ✓ |
+| Fix 2 | buildCIItemRow 9列 | ✓ |
+| Fix 2 | 默认CI数量 = 未出货 | ✓ |
+| Fix 2 | deleteCIRow 重算 | ✓ |
+| Fix 2 | CSS #ci-items-preview max-height | ✓ |
+| Fix 2 | CSS #hci-items-preview max-height | ✓ |
+| Fix 3 | openModal ci-mode | ✓ |
+| Fix 3 | openModal sidebar collapsed | ✓ |
+| Fix 3 | closeModal 清理 ci-mode | ✓ |
+| Fix 3 | CSS .ci-mode | ✓ |
+| Fix 3 | CSS .ci-sb-collapsed | ✓ |
+| i18n | ci.col.* (6 keys) | ✓ |
+| i18n | ci.summary.* (2 keys) | ✓ |
+| i18n | app.operation | ✓ |
