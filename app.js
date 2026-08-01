@@ -4845,8 +4845,8 @@ async function loadRp(){
       model:{th:'<th>Model</th>',
         td:function(r,c){return '<td class="text-truncate" style="max-width:90px" title="'+esc(r.model||'')+'">'+esc(r.model||'')+'</td>';},
         sum:function(t){return '<td></td>';}},
-      sku:{th:'<th style="min-width:120px;white-space:nowrap">SKU</th>',
-        td:function(r,c){return '<td class="cell-id" style="min-width:120px;white-space:nowrap" title="'+esc(r.sku_code||'')+'">'+esc(r.sku_code||'')+'</td>';},
+      sku:{th:'<th style="min-width:120px;max-width:180px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">SKU</th>',
+        td:function(r,c){return '<td class="cell-id" style="min-width:120px;max-width:180px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="'+esc(r.sku_code||'')+'">'+esc(r.sku_code||'')+'</td>';},
         sum:function(total){return '<td><span style="font-size:10px;color:#888">'+total.count+t('gen.L4055.1','个SKU</span></td>');}},
       online_avg:{th:rpTh(t('gen.L4056.1','线上')+rpSalesStatsDays+t('gen.L4056.2','天月均销量'),t('gen.L4056.3','按"预测参数设置"中的销量统计周期计算：近')+rpSalesStatsDays+t('gen.L4056.4','天有效销量 ÷ ')+rpSalesStatsDays+' × 30。','text-right'),
         td:function(r,c){return '<td class="text-right">'+formatQuantityDisplay(c.oaPeriod)+'</td>';},
@@ -5025,6 +5025,480 @@ function formatPIStatus(status) {
   }
 }
 
+// ── PI 列表「发货状态」列（纯发货语义，不混入上传状态） ──
+function computePIShipStatus(p) {
+  if (p.pi_status === 'cancelled') return 'cancelled';
+  const confirmed = Number(p.confirmed_qty_sum || p.total_confirmed_qty || 0);
+  const shipped = Number(p.shipped_qty_sum || p.total_shipped_qty || 0);
+  if (confirmed > 0 && shipped >= confirmed) return 'shipped_complete';
+  if (shipped > 0 && shipped < confirmed) return 'partial_shipped';
+  return 'pending_shipment';
+}
+function renderPIShipStatusBadge(p) {
+  const st = computePIShipStatus(p);
+  const map = {
+    shipped_complete: ['status-completed', t('pi.ship_status.shipped_complete', '全部发货完成')],
+    partial_shipped: ['status-warning', t('pi.ship_status.partial_shipped', '部分发货')],
+    cancelled: ['status-cancelled', t('pi.ship_status.cancelled', '已取消')],
+    pending_shipment: ['status-pending', t('pi.ship_status.pending_shipment', '未发货')]
+  };
+  const m = map[st] || map.pending_shipment;
+  return '<span class="status-badge ' + m[0] + '">' + esc(m[1]) + '</span>';
+}
+// PI 附件数组归一化（兼容历史单对象 / 数组 / 空值）
+function normalizeAttachments(v) {
+  try {
+    const a = typeof v === 'string' ? JSON.parse(v) : v;
+    if (Array.isArray(a)) return a.filter(x => x && x.dataUrl);
+    if (a && a.dataUrl) return [a];
+    return [];
+  } catch (e) { return []; }
+}
+// ==================== 通用附件组件（v1.0.2：PI 列表先接入；CI/PO/PL/PAY/售后暂未迁移）====================
+// 设计原则：不绑定任何业务字段/接口/权限；files 与 options 由调用方传入；复用全局 openModal/closeModal。
+// 事件清理：统一 _attPreviewCleanup / _attUploaderCleanup，覆盖 Esc / 遮罩 / 关闭按钮 / 外部 closeModal 四路径。
+// 拖拽事件使用具名 addEventListener / removeEventListener，绝不覆盖 window.ondragover / window.ondrop。
+
+// ---- 通用工具 ----
+function _attFmtSize(b){
+  if(b==null||b==='')return '-';
+  var n=Number(b); if(!n||n<0)return '-';
+  if(n<1024)return n+' B';
+  if(n<1048576)return (n/1024).toFixed(1)+' KB';
+  return (n/1048576).toFixed(2)+' MB';
+}
+// dataUrl → blob URL（PDF 预览 / 下载用，避免 data: 协议在 iframe/下载受限）
+function _attDataUrlToBlobUrl(dataUrl){
+  try{
+    var m=String(dataUrl||'').match(/^data:(.*?);base64,(.*)$/);
+    if(!m) return dataUrl;
+    var mime=m[1]||'application/octet-stream';
+    var bin=atob(m[2]); var arr=new Uint8Array(bin.length);
+    for(var i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);
+    return URL.createObjectURL(new Blob([arr],{type:mime}));
+  }catch(e){ return dataUrl; }
+}
+
+// ---- 通用附件预览组件 ----
+// openAttachmentPreview(files, options)
+//   files: Array<{name,type,size,dataUrl}>
+//   options: {title, startIndex, canDownload, onDownload, businessLabel}
+var _attPreviewState=null; // {files, idx, opts, _escBound, _mo}
+
+function openAttachmentPreview(files, options){
+  var opts=options||{};
+  var list=normalizeAttachments(files);
+  if(!list.length){ showToast(t('att.no_files','暂无附件'),'warning'); return; }
+  var start=Number(opts.startIndex)||0;
+  if(start<0||start>=list.length)start=0;
+  _attPreviewCleanup(); // 先清理可能残留的旧状态
+  _attPreviewState={files:list, idx:start, opts:opts};
+  // Esc 监听（具名，cleanup 时移除）
+  _attPreviewState._escBound=function(e){ if(e.key==='Escape'||e.keyCode===27){ closeModal(); } };
+  document.addEventListener('keydown', _attPreviewState._escBound);
+  // modal 关闭监听（覆盖遮罩点击 / 右上角关闭 / 外部 closeModal）
+  var ov=document.getElementById('modal-overlay');
+  if(ov && typeof MutationObserver!=='undefined'){
+    _attPreviewState._mo=new MutationObserver(function(muts){
+      for(var i=0;i<muts.length;i++){
+        if(muts[i].attributeName==='class' && !ov.classList.contains('show')){ _attPreviewCleanup(); return; }
+      }
+    });
+    _attPreviewState._mo.observe(ov,{attributes:true,attributeFilter:['class']});
+  }
+  _attRenderPreview();
+}
+
+function _attRenderPreview(){
+  var s=_attPreviewState; if(!s)return;
+  var att=s.files[s.idx]; if(!att)return;
+  var opts=s.opts||{};
+  var name=att.name||t('common.attachment','附件');
+  // 顶部工具条：当前文件名（单行省略 + hover 全文）+ 下载图标（右上角）
+  var dlBtn=(opts.canDownload!==false)
+    ? '<button class="btn btn-secondary btn-sm" onclick="_attDownloadCurrent()" title="'+t('att.download_current','下载当前附件')+'">\u2B07 '+t('common.download','下载')+'</button>'
+    : '';
+  var topBar='<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;flex-wrap:wrap">'
+    +'<div style="min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;color:#333" title="'+esc(name)+'">'+esc(name)+'</div>'
+    +'<div style="flex:0 0 auto">'+dlBtn+'</div></div>';
+  // 多附件切换标签（仅 >1 时显示；切换不重开弹窗、不重拉数据）
+  var tabsHtml='';
+  if(s.files.length>1){
+    tabsHtml='<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;border-bottom:1px solid #e8e8e8;padding-bottom:8px;overflow-x:auto">';
+    for(var i=0;i<s.files.length;i++){
+      var isActive=i===s.idx;
+      var tabStyle=isActive
+        ? 'font-weight:600;color:#1890ff;border-bottom:2px solid #1890ff;padding:2px 8px;cursor:pointer;white-space:nowrap'
+        : 'color:#666;padding:2px 8px;cursor:pointer;white-space:nowrap';
+      var tabName=s.files[i].name||(t('common.attachment','附件')+' '+(i+1));
+      var tabDisplay=tabName.length>24?tabName.substring(0,21)+'...':tabName;
+      tabsHtml+='<span style="'+tabStyle+'" title="'+esc(tabName)+'" onclick="_attSwitch('+i+')">'+esc(tabDisplay)+'</span>';
+    }
+    tabsHtml+='</div>';
+  }
+  var previewHtml=_attBuildPreviewContent(att);
+  var title=opts.title||t('att.modal_title_preview','查看附件');
+  var body=topBar+tabsHtml+previewHtml;
+  var footer='<button class="btn btn-secondary" onclick="_attPreviewCleanup();closeModal()">'+t('att.close','关闭')+'</button>';
+  openModal(title, body, footer, 'modal-lg');
+}
+
+function _attBuildPreviewContent(att){
+  var type=(att.type||'').toLowerCase();
+  var dataUrl=att.dataUrl||'';
+  var name=att.name||'';
+  // PDF：iframe 内联预览（blob URL 避免 data: 在部分浏览器受限）；固定高度避免双滚动条
+  if(type==='application/pdf'||name.toLowerCase().endsWith('.pdf')){
+    var pdfUrl=_attDataUrlToBlobUrl(dataUrl);
+    return '<div style="width:100%;height:min(70vh,600px);"><iframe src="'+pdfUrl+'" style="width:100%;height:100%;border:0;" allowfullscreen></iframe></div>';
+  }
+  // 图片：保持比例，不拉伸
+  if(type.indexOf('image/')===0||/\.(png|jpg|jpeg|webp|gif|bmp|svg)$/i.test(name)){
+    return '<div style="text-align:center;padding:10px;"><img src="'+dataUrl+'" style="max-width:100%;max-height:min(70vh,560px);object-fit:contain;border-radius:4px" alt="'+esc(name)+'" /></div>';
+  }
+  // 不支持格式：文件信息卡（仍保留上方下载图标，不报错）
+  var sizeStr=_attFmtSize(att.size);
+  return '<div style="text-align:center;padding:40px 20px;">'
+    +'<div style="font-size:48px;margin-bottom:16px;">\uD83D\uDCC4</div>'
+    +'<div style="font-weight:600;margin-bottom:8px;word-break:break-all">'+esc(name)+'</div>'
+    +'<div style="color:#999;margin-bottom:4px">'+t('att.file_type','文件类型')+': '+esc(att.type||'-')+'</div>'
+    +'<div style="color:#999;margin-bottom:16px">'+t('att.file_size','文件大小')+': '+sizeStr+'</div>'
+    +'<div style="color:#999">'+t('att.preview_not_supported','此格式不支持在线预览，请使用上方下载按钮下载')+'</div>'
+    +'</div>';
+}
+
+function _attSwitch(idx){
+  if(!_attPreviewState)return;
+  if(idx<0||idx>=_attPreviewState.files.length)return;
+  _attPreviewState.idx=idx;
+  _attRenderPreview();
+}
+
+function _attDownloadCurrent(){
+  var s=_attPreviewState; if(!s)return;
+  var att=s.files[s.idx]; if(!att)return;
+  var opts=s.opts||{};
+  if(typeof opts.onDownload==='function'){
+    try{ opts.onDownload(att, s.idx); }catch(e){ showToast(e.message,'danger'); }
+    return;
+  }
+  var link=document.createElement('a');
+  link.href=att.dataUrl;
+  link.download=att.name||t('common.attachment','附件');
+  document.body.appendChild(link); link.click(); document.body.removeChild(link);
+}
+
+function _attPreviewCleanup(){
+  if(!_attPreviewState)return;
+  if(_attPreviewState._escBound) document.removeEventListener('keydown', _attPreviewState._escBound);
+  if(_attPreviewState._mo) _attPreviewState._mo.disconnect();
+  _attPreviewState=null;
+}
+
+// ---- 通用附件上传组件 ----
+// openAttachmentUploader(options)
+//   options: {existingFiles, multiple, accept, maxFileSize, maxFiles, uploadHandler, mergeStrategy, businessLabel, onSuccess}
+var _attUploaderState=null; // {opts, queue:[], rejected:[], _escBound, _mo, _dz, _winOver, _winDrop}
+
+function openAttachmentUploader(options){
+  var opts=options||{};
+  _attUploaderCleanup(); // 先清理可能残留的旧状态
+  _attUploaderState={opts:opts, queue:[], rejected:[]};
+  // Esc 监听
+  _attUploaderState._escBound=function(e){ if(e.key==='Escape'||e.keyCode===27){ closeModal(); } };
+  document.addEventListener('keydown', _attUploaderState._escBound);
+  // modal 关闭监听（覆盖遮罩 / 右上角 / 外部 closeModal）
+  var ov=document.getElementById('modal-overlay');
+  if(ov && typeof MutationObserver!=='undefined'){
+    _attUploaderState._mo=new MutationObserver(function(muts){
+      for(var i=0;i<muts.length;i++){
+        if(muts[i].attributeName==='class' && !ov.classList.contains('show')){ _attUploaderCleanup(); return; }
+      }
+    });
+    _attUploaderState._mo.observe(ov,{attributes:true,attributeFilter:['class']});
+  }
+  _attRenderUploader();
+}
+
+function _attRenderUploader(){
+  var s=_attUploaderState; if(!s)return;
+  var opts=s.opts||{};
+  var accept=opts.accept||'.pdf,.xlsx,.xls,.csv,.png,.jpg,.jpeg,.webp';
+  var title=opts.businessLabel||t('att.modal_title_upload','上传附件');
+  // 拖拽区（静态，事件在 openModal 后具名绑定到元素）
+  var dropZone='<div id="att-drop-zone" class="att-drop-zone">'
+    +'<div style="font-size:32px;color:#1890ff;margin-bottom:6px">\uD83D\uDCC1</div>'
+    +'<div style="font-size:13px;color:#333;margin-bottom:3px">'+t('att.drag_hint','将文件拖到此处')+'</div>'
+    +'<div style="font-size:12px;color:#999">'+t('att.click_hint','或点击选择文件')+'</div>'
+    +'</div>'
+    +'<input type="file" id="att-file-input" '+(opts.multiple!==false?'multiple':'')+' accept="'+esc(accept)+'" style="display:none">';
+  var body='<div class="att-uploader">'+dropZone+'<div id="att-file-list" class="att-file-list"></div><div id="att-upload-error" class="att-upload-error"></div></div>';
+  var footer='<button class="btn btn-secondary" onclick="closeModal()">'+t('att.cancel','取消')+'</button>'
+    +'<button id="att-upload-btn" class="btn btn-primary" onclick="_attDoUpload()">'+t('att.upload','上传')+'</button>';
+  openModal(title, body, footer, 'modal-lg');
+  _attBindDropZone();
+  _attRenderFileList();
+}
+
+function _attBindDropZone(){
+  var s=_attUploaderState; if(!s)return;
+  var dz=document.getElementById('att-drop-zone');
+  var fi=document.getElementById('att-file-input');
+  if(dz){
+    dz.onclick=function(){ if(fi) fi.click(); };
+    var onEnter=function(e){ e.preventDefault(); e.stopPropagation(); dz.classList.add('att-drop-over'); };
+    var onOver=function(e){ e.preventDefault(); e.stopPropagation(); if(!dz.classList.contains('att-drop-over')) dz.classList.add('att-drop-over'); };
+    var onLeave=function(e){ e.preventDefault(); e.stopPropagation(); if(e.target===dz) dz.classList.remove('att-drop-over'); };
+    var onDrop=function(e){ e.preventDefault(); e.stopPropagation(); dz.classList.remove('att-drop-over'); if(e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files.length){ _attAddFiles(e.dataTransfer.files); } };
+    dz.addEventListener('dragenter',onEnter);
+    dz.addEventListener('dragover',onOver);
+    dz.addEventListener('dragleave',onLeave);
+    dz.addEventListener('drop',onDrop);
+    s._dz={el:dz, enter:onEnter, over:onOver, leave:onLeave, drop:onDrop};
+  }
+  if(fi){ fi.onchange=function(){ if(fi.files&&fi.files.length){ _attAddFiles(fi.files); } fi.value=''; }; }
+  // 阻止 window 级拖拽默认（防止文件拖到弹窗外被浏览器打开）；具名 addEventListener，cleanup 时 removeEventListener
+  s._winOver=function(e){ e.preventDefault(); };
+  s._winDrop=function(e){ e.preventDefault(); };
+  window.addEventListener('dragover', s._winOver);
+  window.addEventListener('drop', s._winDrop);
+}
+
+// 解析 accept 字符串为 {exts:{}, mimes:{}}
+function _attParseAccept(accept){
+  var exts={}, mimes={};
+  String(accept||'').split(',').forEach(function(tok){
+    tok=tok.trim().toLowerCase();
+    if(!tok)return;
+    if(tok.charAt(0)==='.') exts[tok.substring(1)]=true;
+    else if(tok.indexOf('/')!==-1) mimes[tok]=true;
+  });
+  return {exts:exts, mimes:mimes};
+}
+
+// 文件类型校验：有 MIME 结合 MIME，MIME 为空按扩展名；不得误拒绝浏览器未提供 MIME 的合法文件
+function _attCheckFileType(file, spec){
+  if(!spec) return true;
+  var hasExt=false, hasMime=false;
+  for(var k in spec.exts){ hasExt=true; break; }
+  for(var m in spec.mimes){ hasMime=true; break; }
+  if(!hasExt && !hasMime) return true; // 无限制
+  var name=(file.name||'').toLowerCase();
+  var ext='';
+  var dot=name.lastIndexOf('.');
+  if(dot>=0) ext=name.substring(dot+1);
+  var mime=(file.type||'').toLowerCase();
+  if(ext && spec.exts[ext]) return true; // 扩展名匹配 → 通过
+  if(mime){
+    if(spec.mimes[mime]) return true;
+    for(var mm in spec.mimes){
+      if(mm.charAt(mm.length-1)==='*' && mime.indexOf(mm.slice(0,-1))===0) return true;
+    }
+    return false; // MIME 非空但既不匹配扩展名也不匹配 MIME → 拒绝
+  }
+  return false; // MIME 为空 + 扩展名不匹配 → 拒绝
+}
+
+// 去重：同名 + 同大小
+function _attIsDuplicate(file, list){
+  var name=file.name||''; var size=Number(file.size)||0;
+  for(var i=0;i<list.length;i++){
+    var f=list[i];
+    if((f.name||'')===name && (Number(f.size)||0)===size) return true;
+  }
+  return false;
+}
+
+function _attAddFiles(fileList){
+  var s=_attUploaderState; if(!s)return;
+  var opts=s.opts||{};
+  var spec=_attParseAccept(opts.accept);
+  var maxFileSize=Number(opts.maxFileSize)||0;
+  var maxFiles=Number(opts.maxFiles)||0;
+  var existing=(opts.existingFiles||[]).slice();
+  for(var i=0;i<fileList.length;i++){
+    var f=fileList[i];
+    if(!_attCheckFileType(f, spec)){ s.rejected.push({name:f.name||'',size:f.size,reason:t('att.unsupported_format','格式不支持')}); continue; }
+    if(maxFileSize>0 && f.size>maxFileSize){ s.rejected.push({name:f.name||'',size:f.size,reason:t('att.file_too_large','文件过大（超过 {v1}）',{v1:_attFmtSize(maxFileSize)})}); continue; }
+    var allExisting=existing.concat(s.queue);
+    if(_attIsDuplicate(f, allExisting)){ s.rejected.push({name:f.name||'',size:f.size,reason:t('att.duplicate','文件重复')}); continue; }
+    if(maxFiles>0 && (existing.length + s.queue.length + 1) > maxFiles){ s.rejected.push({name:f.name||'',size:f.size,reason:t('att.too_many_files','文件数量超限（最多 {v1} 个）',{v1:maxFiles})}); continue; }
+    s.queue.push({file:f, name:f.name, type:f.type, size:f.size, dataUrl:null, reading:false});
+  }
+  _attRenderFileList();
+  // 异步读取 dataUrl（不阻塞 UI）
+  s.queue.forEach(function(item){
+    if(item.dataUrl||item.reading)return;
+    item.reading=true;
+    var r=new FileReader();
+    r.onload=function(e){ item.dataUrl=e.target.result; item.reading=false; _attSyncUploadBtn(); };
+    r.onerror=function(){ item.reading=false; };
+    r.readAsDataURL(item.file);
+  });
+}
+
+function _attOnFilesPicked(files){ _attAddFiles(files); }
+
+function _attSyncUploadBtn(){
+  var s=_attUploaderState; if(!s)return;
+  var btn=document.getElementById('att-upload-btn');
+  if(btn){
+    var hasReady=s.queue.some(function(it){ return it.dataUrl&&!it.reading; });
+    btn.disabled=!hasReady;
+  }
+}
+
+function _attRenderFileList(){
+  var s=_attUploaderState; if(!s)return;
+  var el=document.getElementById('att-file-list');
+  if(!el)return;
+  var html='';
+  if(s.queue.length){
+    html+='<div style="font-size:12px;color:#666;margin:12px 0 6px;font-weight:600">'+t('att.pending_list','待上传文件')+' ('+s.queue.length+')</div>';
+    html+='<div class="att-file-rows">';
+    s.queue.forEach(function(it,idx){
+      html+='<div class="att-file-row">'
+        +'<div class="att-file-info"><span class="att-file-name" title="'+esc(it.name)+'">'+esc(it.name)+'</span>'
+        +'<span class="att-file-meta">'+esc(it.type||'-')+' · '+_attFmtSize(it.size)+'</span></div>'
+        +'<button class="btn btn-secondary btn-sm" onclick="_attRemoveQueue('+idx+')">'+t('att.remove','移除')+'</button>'
+        +'</div>';
+    });
+    html+='</div>';
+  }
+  if(s.rejected.length){
+    html+='<div style="font-size:12px;color:#d4380d;margin:12px 0 6px;font-weight:600">'+t('att.rejected_list','被拒绝文件')+' ('+s.rejected.length+')</div>';
+    html+='<div class="att-file-rows">';
+    s.rejected.forEach(function(it,idx){
+      html+='<div class="att-file-row att-file-rejected">'
+        +'<div class="att-file-info"><span class="att-file-name" title="'+esc(it.name)+'">'+esc(it.name)+'</span>'
+        +'<span class="att-file-meta">'+_attFmtSize(it.size)+' · '+esc(it.reason)+'</span></div>'
+        +'<button class="btn btn-secondary btn-sm" onclick="_attRemoveRejected('+idx+')">'+t('att.remove','移除')+'</button>'
+        +'</div>';
+    });
+    html+='</div>';
+  }
+  if(!s.queue.length && !s.rejected.length){
+    html='<div style="color:#999;font-size:13px;text-align:center;padding:16px 0">'+t('att.no_files','暂无附件')+'</div>';
+  }
+  el.innerHTML=html;
+  _attSyncUploadBtn();
+}
+
+function _attRemoveQueue(idx){
+  var s=_attUploaderState; if(!s)return;
+  if(idx<0||idx>=s.queue.length)return;
+  s.queue.splice(idx,1);
+  _attRenderFileList();
+}
+
+function _attRemoveRejected(idx){
+  var s=_attUploaderState; if(!s)return;
+  if(idx<0||idx>=s.rejected.length)return;
+  s.rejected.splice(idx,1);
+  _attRenderFileList();
+}
+
+function _attDoUpload(){
+  var s=_attUploaderState; if(!s)return;
+  var opts=s.opts||{};
+  var ready=s.queue.filter(function(it){ return it.dataUrl&&!it.reading; });
+  if(!ready.length){ showToast(t('att.empty_queue','请先添加文件'),'warning'); return; }
+  var btn=document.getElementById('att-upload-btn');
+  if(btn){ btn.disabled=true; btn.textContent=t('att.uploading','上传中…'); } // 防重复提交；不伪造百分比
+  // 合并：mergeStrategy 默认 merge（不覆盖旧附件）
+  var existing=(opts.mergeStrategy==='replace')?[]:(opts.existingFiles||[]).slice();
+  var merged=existing.concat(ready.map(function(it){
+    return {name:it.name, type:it.type, size:it.size, dataUrl:it.dataUrl, uploaded_at:new Date().toISOString()};
+  }));
+  Promise.resolve().then(function(){ return opts.uploadHandler(merged); })
+    .then(function(){
+      _attUploaderCleanup();
+      closeModal();
+      if(typeof opts.onSuccess==='function') opts.onSuccess();
+    })
+    .catch(function(e){
+      if(btn){ btn.disabled=false; btn.textContent=t('att.retry','重试'); } // 失败保留列表，允许重试
+      var msg=(e&&e.message)||t('att.upload_failed','上传失败');
+      showToast(msg,'danger');
+      var errBox=document.getElementById('att-upload-error');
+      if(errBox) errBox.textContent=msg;
+    });
+}
+
+function _attUploaderCleanup(){
+  if(!_attUploaderState)return;
+  if(_attUploaderState._escBound) document.removeEventListener('keydown', _attUploaderState._escBound);
+  if(_attUploaderState._mo) _attUploaderState._mo.disconnect();
+  if(_attUploaderState._dz && _attUploaderState._dz.el){
+    var d=_attUploaderState._dz;
+    d.el.removeEventListener('dragenter',d.enter);
+    d.el.removeEventListener('dragover',d.over);
+    d.el.removeEventListener('dragleave',d.leave);
+    d.el.removeEventListener('drop',d.drop);
+  }
+  if(_attUploaderState._winOver) window.removeEventListener('dragover', _attUploaderState._winOver);
+  if(_attUploaderState._winDrop) window.removeEventListener('drop', _attUploaderState._winDrop);
+  _attUploaderState=null;
+}
+// ==================== 通用附件组件 END ====================
+
+// PI 列表「PI附件」单元格：未上传→待上传PI（可点击上传）；已上传→查看PI（弹窗预览）；多附件显示数量
+function renderPIAttachmentCell(p) {
+  const atts = normalizeAttachments(p.attachment);
+  // 单元格固定宽度 + 长文件名省略 + hover 全文，避免撑开 PI 表
+  var cellStyle = 'display:inline-block;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom';
+  if (!atts.length) {
+    return '<span class="link-text" style="color:#fa8c16;' + cellStyle + '" onclick="event.stopPropagation();uploadPIAttachmentInline(\'' + p.id + '\')">' + t('pi.attachment.pending', '待上传PI') + '</span>';
+  }
+  if (atts.length === 1) {
+    var name = atts[0].name || t('pi.attachment.view', '查看PI');
+    return '<span class="link-text" style="' + cellStyle + '" title="' + esc(name) + '" onclick="event.stopPropagation();piPreviewInline(\'' + p.id + '\')">' + esc(name) + '</span>';
+  }
+  var label = t('pi.attachment.view', '查看PI') + ' (' + atts.length + ')';
+  return '<span class="link-text" style="' + cellStyle + '" title="' + esc(label) + '" onclick="event.stopPropagation();piPreviewInline(\'' + p.id + '\')">' + esc(label) + '</span>';
+}
+// PI 附件上传业务适配器：权限校验 + 拉取现有附件 + 调用通用上传组件 + 更新当前行（不刷新整张列表）
+async function uploadPIAttachmentInline(id) {
+  if (!hasPermission('pi_edit')) { showToast(t('toast.uploadNoPermission', '无附件上传权限'), 'danger'); return; }
+  try {
+    const pi = await api('/api/proforma-invoices/' + id);
+    const existing = normalizeAttachments(pi.attachment);
+    openAttachmentUploader({
+      existingFiles: existing,
+      multiple: true,
+      accept: '.pdf,.xlsx,.xls,.csv,.png,.jpg,.jpeg,.webp',
+      maxFileSize: 20 * 1024 * 1024, // PI 限制作为调用参数，不固化为全系统规则
+      maxFiles: 20,
+      mergeStrategy: 'merge', // 合并旧附件，不覆盖
+      businessLabel: t('pi.field.attachment', 'PI附件'),
+      uploadHandler: async function (merged) {
+        await api('/api/proforma-invoices/' + id + '/attachment', 'POST', { attachment: merged });
+      },
+      onSuccess: async function () {
+        // 上传接口仅返回 {success:true}，无最新附件数据 → GET 单条 PI 更新当前行；不刷新整张 PI 列表
+        const cell = document.getElementById('pi-att-' + id);
+        if (cell) { const fresh = await api('/api/proforma-invoices/' + id); cell.innerHTML = renderPIAttachmentCell(fresh); }
+        showToast(t('att.upload_ok', '附件已上传'), 'success');
+      }
+    });
+  } catch (e) { showToast(e.message, 'danger'); }
+}
+
+// PI 附件预览业务适配器：拉取 PI 数据 → 调用通用预览组件（不打开新标签页）
+async function piPreviewInline(id, startIndex) {
+  try {
+    const d = await api('/api/proforma-invoices/' + id);
+    const atts = normalizeAttachments(d.attachment);
+    if (!atts.length) { showToast(t('att.no_files', '暂无附件'), 'warning'); return; }
+    openAttachmentPreview(atts, {
+      title: t('pi.preview_title', '查看 PI \u2014 {v1}').replace('{v1}', d.pi_no || id),
+      startIndex: startIndex || 0,
+      canDownload: true,
+      businessLabel: t('pi.field.attachment', 'PI附件')
+    });
+  } catch (e) { showToast(e.message, 'danger'); }
+}
+
 // PI 定金付款状态枚举展示层映射（仅显示用，不写回 DB / 不参与状态机判断）
 function formatPIDepositStatus(status) {
   switch (status) {
@@ -5129,8 +5603,8 @@ async function loadRpChannelMonthly(channel){
     Cols.model={th:'<th>Model</th>',
       td:function(r,c){return '<td class="text-truncate" style="max-width:100px" title="'+esc(r.model||'')+'">'+esc(r.model||'')+'</td>';},
       sum:function(t){return '<td></td>';}};
-    Cols.sku={th:'<th style="min-width:120px;white-space:nowrap">SKU</th>',
-      td:function(r,c){return '<td class="cell-id" style="min-width:120px;white-space:nowrap" title="'+esc(r.sku_code||'')+'">'+esc(r.sku_code||'')+'</td>';},
+    Cols.sku={th:'<th style="min-width:120px;max-width:180px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">SKU</th>',
+      td:function(r,c){return '<td class="cell-id" style="min-width:120px;max-width:180px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="'+esc(r.sku_code||'')+'">'+esc(r.sku_code||'')+'</td>';},
       sum:function(total){return '<td><span style="font-size:10px;color:#888">'+total.count+t('gen.L4269.1','个SKU</span></td>');}};
     Cols.sales_m4={th:rpThCompact(ml[0],'','text-right','',true),
       td:function(r,c){return '<td class="text-right">'+formatQuantityDisplay(c.salesM4)+'</td>';},
@@ -5936,7 +6410,7 @@ async function loadRpDaily(){
         +'<td style="'+sBody(1)+'"><span class="badge badge-sm">'+formatSalesGroupLabel(r.sales_group)+'</span></td>'
         +'<td style="'+sBody(2)+';white-space:normal"><span class="lifecycle-tag lc-'+(r.lifecycle_status||'stable')+'">'+fmtLifecycleDyn(r.lifecycle_status)+'</span></td>'
         +'<td class="rp-daily-cell-wrap" style="'+sBody(3)+';white-space:normal;overflow-wrap:anywhere">'+esc(r.model||'')+'</td>'
-        +'<td class="rp-daily-cell-wrap" style="'+sBody(4)+';white-space:normal;overflow-wrap:anywhere;font-family:monospace;font-size:12px">'+esc(r.sku_code)+'</td>'
+        +'<td class="rp-daily-cell-wrap" style="'+sBody(4)+';max-width:180px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:monospace;font-size:12px" title="'+esc(r.sku_code||'')+'">'+esc(r.sku_code)+'</td>'
         +'<td class="text-right font-bold" style="'+sBody(5)+'">'+formatQuantityDisplay(r.last_7_days||0)+'</td>'
         +'<td class="text-right" style="'+sBody(6)+'">'+formatQuantityDisplay(r.last_14_days||0)+'</td>'
         +'<td class="text-right" style="'+sBody(7)+'">'+formatQuantityDisplay(r.last_30_days||0)+'</td>'
@@ -6422,7 +6896,7 @@ async function loadPI(){
   try{
     const s=document.getElementById('pi-fs')?.value||'',k=document.getElementById('pi-fk')?.value||'';
     const data=await api('/api/proforma-invoices?status='+s+'&keyword='+encodeURIComponent(k));
-    document.getElementById('pi-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">📄</div>'+t("empty.no_pi","暂无PI")+'</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>'+t("col.pi_no","PI号")+'</th><th>'+t("col.related_po","关联PO")+'</th><th>'+t("col.supplier","供应商")+'</th><th>'+t("app.112","品牌")+'</th><th>'+t("app.113","国家")+'</th><th>'+t("app.114","仓库")+'</th><th>'+t("col.date","日期")+'</th><th>'+t("html.pay.th.currency","币种")+'</th><th>'+t("col.total_amount","总金额")+'</th><th>'+t("col.is_deposit","是否定金")+'</th><th>'+t("col.deposit_ratio","定金比例")+'</th><th>'+t("col.deposit_amount","定金金额")+'</th><th>'+t("col.deposit_status","定金状态")+'</th><th>'+t("pi.field.status","PI状态")+'</th><th>'+t("common.actions","操作")+'</th></tr></thead><tbody>'+data.map(p=>'<tr class="clickable-detail-row" onclick="rowClickView(event,\'viewPI\',\''+p.id+'\')"><td class="cell-id"><span class="link-text" onclick="viewPI(\''+p.id+'\')">'+esc(p.pi_no)+'</span></td><td class="cell-id">'+esc(p.related_po_no)+'</td><td>'+esc(p.supplier_name)+'</td><td>'+esc(p.brand)+'</td><td>'+esc(p.country)+'</td><td>'+esc(p.target_warehouse)+'</td><td class="cell-date">'+fmtDate(p.pi_date)+'</td><td>'+esc(p.currency)+'</td><td class="text-right">'+fmtMoney(p.total_amount)+'</td><td>'+(p.need_deposit?'<span class="status-badge status-pending">'+t("enum.yes","是")+'</span>':'<span class="status-badge status-completed">'+t("enum.no","否")+'</span>')+'</td><td class="text-right">'+(p.deposit_ratio||0)+'%</td><td class="text-right">'+fmtMoney(p.payable_deposit)+'</td><td><span class="status-badge '+(p.deposit_payment_status==='paid'?'status-paid':'status-unpaid')+'">'+esc(formatPIDepositStatus(p.deposit_payment_status))+'</span></td><td><span class="status-badge status-pending">'+esc(formatPIStatus(p.pi_status))+'</span></td><td class="cell-actions"><button class="action-btn" onclick="viewPI(\''+p.id+'\')">👁️</button>'+(hasPermission('pi_edit')?('<button class="action-btn" '+(p.locked?('disabled title="'+t("pi.locked_note","已锁定，不可编辑：")+''+esc(p.lock_reason||''+t("pi.locked","已锁定")+'')+'" style="opacity:.3;cursor:not-allowed">✏️</button>'):('onclick="editPI(\''+p.id+'\')" title="'+t("action.edit","编辑")+'">✏️</button>'))):'')+'<button class="action-btn" onclick="uploadDocAttachment(\'pi\',\''+p.id+'\',\'attachment\')" title="'+t("pi.upload_attachment","上传PI附件")+'">📎</button>'+(p.need_deposit&&p.payable_deposit>0&&p.deposit_payment_status==='unpaid'&&hasPermission('payment_create')?'<button class="action-btn" onclick="createDepPay(\''+p.id+'\')" title="'+t("pi.deposit_pay","定金付款")+'">💰</button>':'')+(hasPermission('pi_edit')?'<button class="action-btn" '+(p.pi_status==='completed'?'disabled title="'+t("pi.cannot_void_completed","已完成状态不可作废")+'" style="opacity:.3;cursor:not-allowed"':'onclick="voidPI(\''+p.id+'\')" title="'+t("action.void","作废")+'"')+'>'+t("action.void","作废")+'</button>':'')+'</td></tr>').join('')+'</tbody></table></div>';
+    document.getElementById('pi-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">📄</div>'+t("empty.no_pi","暂无PI")+'</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>'+t("col.pi_no","PI号")+'</th><th>'+t("col.related_po","关联PO")+'</th><th>'+t("col.supplier","供应商")+'</th><th>'+t("app.112","品牌")+'</th><th>'+t("app.113","国家")+'</th><th>'+t("app.114","仓库")+'</th><th>'+t("col.date","日期")+'</th><th>'+t("html.pay.th.currency","币种")+'</th><th>'+t("col.total_amount","总金额")+'</th><th>'+t("col.is_deposit","是否定金")+'</th><th>'+t("col.deposit_ratio","定金比例")+'</th><th>'+t("col.deposit_amount","定金金额")+'</th><th>'+t("col.deposit_status","定金状态")+'</th><th>'+t("pi.field.ship_status","发货状态")+'</th><th>'+t("pi.col.attachment","PI附件")+'</th><th>'+t("common.actions","操作")+'</th></tr></thead><tbody>'+data.map(p=>'<tr class="clickable-detail-row" onclick="rowClickView(event,\'viewPI\',\''+p.id+'\')"><td class="cell-id"><span class="link-text" onclick="viewPI(\''+p.id+'\')">'+esc(p.pi_no)+'</span></td><td class="cell-id">'+esc(p.related_po_no)+'</td><td>'+esc(p.supplier_name)+'</td><td>'+esc(p.brand)+'</td><td>'+esc(p.country)+'</td><td>'+esc(p.target_warehouse)+'</td><td class="cell-date">'+fmtDate(p.pi_date)+'</td><td>'+esc(p.currency)+'</td><td class="text-right">'+fmtMoney(p.total_amount)+'</td><td>'+(p.need_deposit?'<span class="status-badge status-pending">'+t("enum.yes","是")+'</span>':'<span class="status-badge status-completed">'+t("enum.no","否")+'</span>')+'</td><td class="text-right">'+(p.deposit_ratio||0)+'%</td><td class="text-right">'+fmtMoney(p.payable_deposit)+'</td><td><span class="status-badge '+(p.deposit_payment_status==='paid'?'status-paid':'status-unpaid')+'">'+esc(formatPIDepositStatus(p.deposit_payment_status))+'</span></td><td>'+renderPIShipStatusBadge(p)+'</td><td id="pi-att-'+p.id+'">'+renderPIAttachmentCell(p)+'</td><td class="cell-actions"><button class="action-btn" onclick="viewPI(\''+p.id+'\')">👁️</button>'+(hasPermission('pi_edit')?('<button class="action-btn" '+(p.locked?('disabled title="'+t("pi.locked_note","已锁定，不可编辑：")+''+esc(p.lock_reason||''+t("pi.locked","已锁定")+'')+'" style="opacity:.3;cursor:not-allowed">✏️</button>'):('onclick="editPI(\''+p.id+'\')" title="'+t("action.edit","编辑")+'">✏️</button>'))):'')+'<button class="action-btn" onclick="uploadDocAttachment(\'pi\',\''+p.id+'\',\'attachment\')" title="'+t("pi.upload_attachment","上传PI附件")+'">📎</button>'+(p.need_deposit&&p.payable_deposit>0&&p.deposit_payment_status==='unpaid'&&hasPermission('payment_create')?'<button class="action-btn" onclick="createDepPay(\''+p.id+'\')" title="'+t("pi.deposit_pay","定金付款")+'">💰</button>':'')+(hasPermission('pi_edit')?'<button class="action-btn" '+(p.pi_status==='completed'?'disabled title="'+t("pi.cannot_void_completed","已完成状态不可作废")+'" style="opacity:.3;cursor:not-allowed"':'onclick="voidPI(\''+p.id+'\')" title="'+t("action.void","作废")+'"')+'>'+t("action.void","作废")+'</button>':'')+'</td></tr>').join('')+'</tbody></table></div>';
   }catch(e){showFlash(e.message,'danger')}
 }
 async function viewPI(id, backPay, backMode){
@@ -6446,15 +6920,23 @@ async function editPI(id){
       return;
     }
     const suppliers=await api('/api/suppliers');
+    const countries=await api('/api/countries');
+    const countryOpts=countries.filter(c=>c.status==='active').map(c=>'<option value="'+esc(c.name)+'"'+(c.name===pi.country?' selected':'')+'>'+esc(c.name)+(c.flag?(' '+c.flag):'')+'</option>').join('');
+    const piNoLocked=!!pi.pi_no_locked;
+    const piNoField=piNoLocked
+      ? '<div class="form-group"><label>PI号（锁定）</label><input type="text" value="'+esc(pi.pi_no)+'" disabled><div class="form-hint" style="color:#fa8c16;font-size:12px">'+esc(pi.pi_no_lock_reason||t('gen.L5458.1','已锁定'))+'</div></div>'
+      : '<div class="form-group"><label>PI号</label><input type="text" id="npi-no" value="'+esc(pi.pi_no)+'" placeholder="'+t('pi.no.edit_hint','留空保持原值；修改需唯一，系统自动校验')+'"></div>';
     // 预取关联 PO 明细，用于 PO vs PI 对比（与 viewPI 同源）
     let poRef=[];
     if(pi.related_po_id){try{poRef=(await api('/api/purchase-orders/'+pi.related_po_id)).items||[];}catch(e){}}
     const supOpts=suppliers.map(s=>'<option value="'+s.id+'" data-name="'+esc(s.name)+'" data-last="'+esc(s.last_used_payment_term_id||'')+'"'+(s.id===pi.supplier_id?' selected':'')+'>'+esc(s.name)+'</option>').join('');
     const curOpts=['USD','RMB','IDR','MYR','THB'].map(c=>'<option'+(c===pi.currency?' selected':'')+'>'+c+'</option>').join('');
     const body='<div class="form-card" style="box-shadow:none;padding:0">'
-      +t('gen.L5468.1','<div style="margin-bottom:12px;padding:8px 12px;background:#f0f5ff;border:1px solid #adc6ff;border-radius:6px;font-size:12px;color:#333">编辑模式：可修改表头与明细并实时预览差异；保存将调用后端 PUT（付款条件变更自动回写供应商上次使用项）。「PI号 / 关联PO / 供应商 / PI日期 / 币种」为锁定项不可改。</div>')
+      +t('gen.L5468.2','<div style="margin-bottom:12px;padding:8px 12px;background:#f0f5ff;border:1px solid #adc6ff;border-radius:6px;font-size:12px;color:#333">编辑模式：可修改表头与明细并实时预览差异；保存将调用后端 PUT（付款条件变更自动回写供应商上次使用项）。PI号在未进入后续业务阶段时可修改（修改需唯一，系统自动校验）。「关联PO / 供应商 / PI日期 / 币种」为锁定项不可改。</div>')
       +'<div class="form-grid">'
-      +t('gen.L5470.1','<div class="form-group"><label>PI号（锁定）</label><input type="text" value="')+esc(pi.pi_no)+'" disabled></div>'
+      +piNoField
+      +'<div class="form-group"><label>'+t('app.113','国家')+'</label><select id="npi-country" onchange="onPICountryChange()">'+countryOpts+'</select></div>'
+      +'<div class="form-group"><label>'+t('app.114','仓库')+'</label><select id="npi-wh"></select></div>'
       +t('gen.L5471.1','<div class="form-group"><label>关联PO（锁定）</label><input type="text" value="')+esc(pi.related_po_no||t("app.140", "\u65e0\u5173\u8054"))+'" disabled></div>'
       +t('gen.L5472.1','<div class="form-group"><label>供应商（锁定）</label><select id="npi-sup" disabled onchange="onPISupplierChange()">')+supOpts+'</select></div>'
       +t('gen.L5473.1','<div class="form-group"><label>PI日期（锁定）</label><input type="date" id="npi-date" value="')+esc(pi.pi_date||'')+'" disabled></div>'
@@ -6468,6 +6950,7 @@ async function editPI(id){
       +t('gen.L5481.1','<div class="table-container" style="max-height:52vh;overflow:auto;box-shadow:none;margin-bottom:8px"><table class="data-table pi-cmp-table" id="pi-items-table"><thead><tr><th>SKU</th><th>PO数量</th><th>PI确认数量</th><th>PO单价</th><th>PI确认单价</th><th>PI折扣</th><th>PI金额</th><th>数量差异</th><th>单价差异</th><th>操作</th></tr></thead><tbody id="pi-items"></tbody><tfoot id="pi-cmp-foot"></tfoot></table></div>')
       +'</div>';
     openModal(t('modal.title.editPI.2', '编辑PI - {v1}', {v1: esc(pi.pi_no)}),body,t('modal.footer.editPI', `<button class="btn btn-secondary" onclick="closeModal()">关闭</button><button class="btn btn-primary" onclick="saveEditPI('{v1}')">💾 保存</button>`, {v1: id}),'modal-pi');
+    const sb=document.querySelector('.modal.show .btn-primary'); if(sb) sb.id='btn-save-edit-pi';
     // 预填明细（复用 computePODiff + renderCmpTable）
     window._piRows=computePODiff(poRef,pi.items||[]);renderCmpTable();
     // 付款条件下拉联动 + 预填该 PI 实际使用的付款条件（覆盖默认项）
@@ -6477,9 +6960,13 @@ async function editPI(id){
     // 仅应用定金比例输入的禁用态，不改动已预填的比例值
     const needSel=document.getElementById('npi-need-dep'),depIn=document.getElementById('npi-dep');
     if(needSel&&depIn)depIn.disabled=needSel.value==='0';
+    // 仓库按国家联动填充（编辑态展示已保存国家/仓库）
+    const wSel=document.getElementById('npi-wh'); if(wSel){ await populatePIWarehouse(pi.country||''); wSel.value=pi.target_warehouse||''; }
   }catch(e){showToast(e.message,'danger')}
 }
 async function saveEditPI(id){
+  const btn=document.getElementById('btn-save-edit-pi');
+  if(btn){btn.disabled=true;btn._old=btn.textContent;btn.textContent=t('common.saving','保存中…');}
   try{
     const termSel=document.getElementById('npi-terms');
     // 明细：仅组装有效 SKU 行（与 saveNewPI 同源，PUT 端会按 pi_confirmed_qty 重算金额/PO 同步）
@@ -6493,6 +6980,9 @@ async function saveEditPI(id){
       expected_delivery:document.getElementById('npi-del').value,
       need_deposit:document.getElementById('npi-need-dep').value==='1'?1:0,
       deposit_ratio:parseFloat(document.getElementById('npi-dep').value)||0,
+      pi_no:(document.getElementById('npi-no')?.value||'').trim(),
+      country:document.getElementById('npi-country')?.value||'',
+      target_warehouse:document.getElementById('npi-wh')?.value||'',
       items
     };
     // 调用第1层已落地的 PUT：内置锁定守卫 + 金额/PO transferred_pi_qty 同步 + 付款条件变更自动回写供应商 last_used
@@ -6501,12 +6991,16 @@ async function saveEditPI(id){
     closeModal();
     loadPI(); // 刷新 PI 列表
   }catch(e){showToast(e.message,'danger')}
+  finally{ if(btn){btn.disabled=false;btn.textContent=btn._old||t('common.save','保存');} }
 }
 async function createPI(){
-  const suppliers=await api('/api/suppliers');const pos=await api('/api/purchase-orders?status=approved');
-  openModal(t('gen.L5520.1','新建PI'),t('modal.body.createPI', `<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid"><div class="form-group"><label>PI号（可选，留空自动生成）</label><input type="text" id="npi-no" placeholder="留空则系统自动生成"></div><div class="form-group"><label>关联PO</label><select id="npi-po" onchange="loadPOForPI()"><option value="">无关联</option>{v1}</select></div><div class="form-group"><label>供应商 <span class="required">*</span></label><select id="npi-sup" onchange="onPISupplierChange()">{v2}</select></div><div class="form-group"><label>PI日期</label><input type="date" id="npi-date" value="{v3}"></div><div class="form-group"><label>币种</label><select id="npi-cur"><option>USD</option><option>RMB</option><option>IDR</option><option>MYR</option><option>THB</option></select></div><div class="form-group"><label>是否需要定金</label><select id="npi-need-dep" onchange="togglePIDeposit()"><option value="1">${t('term.yes','是')}</option><option value="0">${t('term.no','否')}</option></select></div><div class="form-group"><label>定金比例(%)</label><input type="number" id="npi-dep" value="30"></div><div class="form-group"><label>预计交期</label><input type="date" id="npi-del"></div><div class="form-group"><label>付款条件</label><select id="npi-terms"><option value="">（未选择）</option></select></div></div><h4 style="margin:16px 0 8px">PO vs PI 合并对比 <button class="btn btn-secondary btn-sm" onclick="addPIRow()">➕ 添加行</button> <button class="btn btn-secondary btn-sm" onclick="openSupplierPIImport()">📥 导入供应商PI</button> <button class="btn btn-secondary btn-sm" onclick="downloadDocTemplate('supplierPI')">📄 模板</button></h4><div class="pi-table-scroll" style="max-height:52vh;overflow:auto;box-shadow:none;margin-bottom:8px"><table class="data-table pi-cmp-table" id="pi-items-table"><thead><tr><th>SKU</th><th>PO数量</th><th>PI确认数量</th><th>PO单价</th><th>PI确认单价</th><th>PI折扣</th><th>PI金额</th><th>数量差异</th><th>单价差异</th><th>操作</th></tr></thead><tbody id="pi-items"></tbody><tfoot id="pi-cmp-foot"></tfoot></table></div></div>`, {v1: pos.map(p=>'<option value="'+p.id+'" data-no="'+p.po_no+'">'+esc(p.po_no)+' - '+esc(p.supplier_name)+'</option>').join(''), v2: suppliers.map(s=>'<option value="'+s.id+'" data-name="'+esc(s.name)+'" data-last="'+esc(s.last_used_payment_term_id||'')+'">'+esc(s.name)+'</option>').join(''), v3: todayStr()}),t('gen.L5520.2','<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveNewPI()">创建</button>'),'modal-pi');
+  const suppliers=await api('/api/suppliers');const pos=await api('/api/purchase-orders?status=approved');const countries=await api('/api/countries');
+  const countryOpts=countries.filter(c=>c.status==='active').map(c=>'<option value="'+esc(c.name)+'"'+(c.default_currency?' data-cur="'+esc(c.default_currency)+'"':'')+'>'+esc(c.name)+(c.flag?(' '+c.flag):'')+'</option>').join('');
+  const whOpts='<option value="">（请选择仓库）</option>';
+  openModal(t('gen.L5520.1','新建PI'),t('modal.body.createPI', `<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid"><div class="form-group"><label>PI号（可选，留空自动生成）</label><input type="text" id="npi-no" placeholder="留空则系统自动生成"></div><div class="form-group"><label>关联PO</label><select id="npi-po" onchange="loadPOForPI()"><option value="">无关联</option>{v1}</select></div><div class="form-group"><label>供应商 <span class="required">*</span></label><select id="npi-sup" onchange="onPISupplierChange()">{v2}</select></div><div class="form-group"><label>国家 <span class="required">*</span></label><select id="npi-country" onchange="onPICountryChange()">${countryOpts}</select></div><div class="form-group"><label>仓库 <span class="required">*</span></label><select id="npi-wh">${whOpts}</select></div><div class="form-group"><label>PI日期</label><input type="date" id="npi-date" value="{v3}"></div><div class="form-group"><label>币种</label><select id="npi-cur"><option>USD</option><option>RMB</option><option>IDR</option><option>MYR</option><option>THB</option></select></div><div class="form-group"><label>是否需要定金</label><select id="npi-need-dep" onchange="togglePIDeposit()"><option value="1">${t('term.yes','是')}</option><option value="0">${t('term.no','否')}</option></select></div><div class="form-group"><label>定金比例(%)</label><input type="number" id="npi-dep" value="30"></div><div class="form-group"><label>预计交期</label><input type="date" id="npi-del"></div><div class="form-group"><label>付款条件</label><select id="npi-terms"><option value="">（未选择）</option></select></div></div><h4 style="margin:16px 0 8px">PO vs PI 合并对比 <button class="btn btn-secondary btn-sm" onclick="addPIRow()">➕ 添加行</button> <button class="btn btn-secondary btn-sm" onclick="openSupplierPIImport()">📥 导入供应商PI</button> <button class="btn btn-secondary btn-sm" onclick="downloadDocTemplate('supplierPI')">📄 模板</button></h4><div class="pi-table-scroll" style="max-height:52vh;overflow:auto;box-shadow:none;margin-bottom:8px"><table class="data-table pi-cmp-table" id="pi-items-table"><thead><tr><th>SKU</th><th>PO数量</th><th>PI确认数量</th><th>PO单价</th><th>PI确认单价</th><th>PI折扣</th><th>PI金额</th><th>数量差异</th><th>单价差异</th><th>操作</th></tr></thead><tbody id="pi-items"></tbody><tfoot id="pi-cmp-foot"></tfoot></table></div></div>`, {v1: pos.map(p=>'<option value="'+p.id+'" data-no="'+p.po_no+'">'+esc(p.po_no)+' - '+esc(p.supplier_name)+'</option>').join(''), v2: suppliers.map(s=>'<option value="'+s.id+'" data-name="'+esc(s.name)+'" data-last="'+esc(s.last_used_payment_term_id||'')+'">'+esc(s.name)+'</option>').join(''), v3: todayStr()}),t('gen.L5520.2','<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveNewPI()">创建</button>'),'modal-pi');
   window._piRows=[];renderCmpTable();
   onPISupplierChange();
+  const sb=document.querySelector('.modal.show .btn-primary'); if(sb) sb.id='btn-save-new-pi';
 }
 async function onPISupplierChange(){
   const supSel=document.getElementById('npi-sup'),termSel=document.getElementById('npi-terms');
@@ -6525,6 +7019,26 @@ async function onPISupplierChange(){
     termSel.value=defId;
   }catch(e){showToast(e.message,'danger');}
 }
+// 国家 → 仓库联动（按国家过滤启用的仓库）
+async function populatePIWarehouse(country){
+  const wSel=document.getElementById('npi-wh'); if(!wSel)return;
+  if(!country){wSel.innerHTML='<option value="">（请选择仓库）</option>';return;}
+  try{
+    const whs=await api('/api/warehouses/by-country?country='+encodeURIComponent(country));
+    wSel.innerHTML='<option value="">（请选择仓库）</option>'+whs.map(w=>'<option value="'+esc(w.name||w.code||w)+'">'+esc(w.name||w.code||w)+'</option>').join('');
+  }catch(e){ wSel.innerHTML='<option value="">（请选择仓库）</option>'; }
+}
+// 国家变更 → 重新拉取仓库下拉（不改变用户已选国家/仓库之外的字段）
+function onPICountryChange(){
+  const cSel=document.getElementById('npi-country');
+  populatePIWarehouse(cSel?cSel.value:'');
+}
+// 设置/恢复 国家+仓库 可编辑态（新建：PO 关联→只读；无关联→可编辑）
+function setPICountryWarehouseEditable(editable){
+  const cSel=document.getElementById('npi-country'),wSel=document.getElementById('npi-wh');
+  if(cSel)cSel.disabled=!editable;
+  if(wSel)wSel.disabled=!editable;
+}
 function togglePIDeposit(){const need=document.getElementById('npi-need-dep')?.value!=='0';const dep=document.getElementById('npi-dep');if(dep){dep.disabled=!need;if(!need)dep.value=0;else if(!dep.value||dep.value==='0')dep.value=30;}}
 function addPIRow(){window._piRows.push({sku:'',poQty:0,poPrice:0,piQty:0,piPrice:0,piDisc:0,fromPO:false});renderCmpTable();}
 function renderCmpTable(){const tb=document.getElementById('pi-items');if(!tb)return;
@@ -6536,7 +7050,10 @@ function updCmpRow(idx){const r=window._piRows[idx];if(!r)return;r.sku=document.
 function delCmpRow(idx){window._piRows.splice(idx,1);renderCmpTable();}
 function cmpDerived(r){const poQty=+r.poQty||0,poPrice=+r.poPrice||0,piQty=+r.piQty||0,piPrice=+r.piPrice||0,piDisc=+r.piDisc||0;const poAmt=poQty*poPrice;const piAmt=piQty*piPrice*(1-piDisc);const qtyDiff=piQty-poQty;const priceDiff=piPrice-poPrice;const amtDiff=piAmt-poAmt;const hasPO=poQty>0||poPrice>0,hasPI=piQty>0||piPrice>0;let status=t("app.926", "\u4e00\u81f4");if(!hasPO&&hasPI)status=t("app.927", "PI\u65b0\u589e");else if(hasPO&&!hasPI)status=t("app.928", "PO\u6709PI\u7f3a");else if(Math.abs(qtyDiff)>1e-9&&Math.abs(priceDiff)>1e-9)status=t("app.929", "\u91cf\u4ef7\u5747\u5dee");else if(Math.abs(qtyDiff)>1e-9)status=t("app.930", "\u4ec5\u6570\u91cf\u5dee");else if(Math.abs(priceDiff)>1e-9)status=t("app.931", "\u4ec5\u5355\u4ef7\u5dee");return {poAmt,piAmt,qtyDiff,priceDiff,amtDiff,status};}
 function recomputeCmpFooter(){const f=document.getElementById('pi-cmp-foot');if(!f)return;let poQty=0,piQty=0,piAmt=0,qtyD=0,amtD=0;(window._piRows||[]).forEach(r=>{const d=cmpDerived(r);poQty+=r.poQty;piQty+=r.piQty;piAmt+=d.piAmt;qtyD+=d.qtyDiff;amtD+=d.amtDiff;});f.innerHTML=t('html.recomputeCmpFooter', '<tr style="font-weight:700;background:#e8edf3"><td>汇总</td><td class="text-right">{v1}</td><td class="text-right">{v2}</td><td></td><td></td><td></td><td class="text-right">{v3}</td><td class="text-right">{v4}</td><td colspan="2" class="text-right">金额差异：{v5}</td></tr>', {v1: poQty, v2: piQty, v3: fmtMoney(piAmt), v4: qtyD, v5: fmtMoney(amtD)});}
-async function loadPOForPI(){const poId=document.getElementById('npi-po').value;window._poRef=null;const curSel=document.getElementById('npi-cur');if(!poId){if(curSel)curSel.disabled=false;renderCmpTable();return;}try{const po=await api('/api/purchase-orders/'+poId);const supSel=document.getElementById('npi-sup');let sid=po.supplier_id;if(sid&&![...supSel.options].some(o=>o.value===sid)){const byName=[...supSel.options].find(o=>o.dataset.name===po.supplier_name);if(byName)sid=byName.value;}supSel.value=sid||'';onPISupplierChange();if(curSel){curSel.value=po.currency;curSel.disabled=true;}window._poRef=po.items||[];const extra=(window._piRows||[]).filter(r=>!r.fromPO);window._piRows=(po.items||[]).map(it=>({sku:it.sku_code||'',poQty:it.po_qty||0,poPrice:it.unit_price||0,piQty:0,piPrice:0,piDisc:0,fromPO:true})).concat(extra);renderCmpTable();}catch(e){showToast(e.message,'danger')}}
+async function loadPOForPI(){const poId=document.getElementById('npi-po').value;window._poRef=null;const curSel=document.getElementById('npi-cur');const cSel=document.getElementById('npi-country'),wSel=document.getElementById('npi-wh');if(!poId){if(curSel)curSel.disabled=false;setPICountryWarehouseEditable(true);if(cSel)cSel.value='';if(wSel)wSel.innerHTML='<option value="">（请选择仓库）</option>';renderCmpTable();return;}try{const po=await api('/api/purchase-orders/'+poId);const supSel=document.getElementById('npi-sup');let sid=po.supplier_id;if(sid&&![...supSel.options].some(o=>o.value===sid)){const byName=[...supSel.options].find(o=>o.dataset.name===po.supplier_name);if(byName)sid=byName.value;}supSel.value=sid||'';onPISupplierChange();if(curSel){curSel.value=po.currency;curSel.disabled=true;}// PO 关联：国家+仓库自动带出（只读，用户不可改）；切回无关联时恢复可编辑（见上分支）
+  if(cSel){cSel.value=po.country||'';cSel.disabled=true;}
+  if(wSel){await populatePIWarehouse(po.country||'');wSel.value=po.target_warehouse||'';wSel.disabled=true;}
+  window._poRef=po.items||[];const extra=(window._piRows||[]).filter(r=>!r.fromPO);window._piRows=(po.items||[]).map(it=>({sku:it.sku_code||'',poQty:it.po_qty||0,poPrice:it.unit_price||0,piQty:0,piPrice:0,piDisc:0,fromPO:true})).concat(extra);renderCmpTable();}catch(e){showToast(e.message,'danger')}}
 function computePODiff(poRef,piItems){const map={};const rows=[];const norm=s=>String(s||'').trim().toLowerCase();(poRef||[]).forEach(p=>{const sku=p.sku_code||'';const r={sku,poQty:p.po_qty||0,poPrice:p.unit_price||0,piQty:0,piPrice:0,piDisc:0,fromPO:true};rows.push(r);map[norm(sku)]=r;});(piItems||[]).forEach(p=>{const sku=p.sku_code||'';const ex=map[norm(sku)];if(ex){ex.piQty=p.pi_confirmed_qty||0;ex.piPrice=p.unit_price||0;ex.piDisc=p.discount||0;}else{const r={sku,poQty:0,poPrice:0,piQty:p.pi_confirmed_qty||0,piPrice:p.unit_price||0,piDisc:p.discount||0,fromPO:false};rows.push(r);map[norm(sku)]=r;}});return rows;}
 function renderCmpReadonly(rows){const body=rows.map(r=>{const d=cmpDerived(r);return '<tr><td class="cell-id">'+esc(r.sku)+'</td><td>'+r.poQty+'</td><td>'+r.piQty+'</td><td>'+fmtMoney(r.poPrice)+'</td><td>'+fmtMoney(r.piPrice)+'</td><td>'+((r.piDisc||0)*100).toFixed(0)+'%</td><td>'+fmtMoney(d.piAmt)+'</td><td>'+d.qtyDiff+'</td><td>'+d.priceDiff.toFixed(2)+'</td><td>'+d.status+'</td></tr>';}).join('');let poQty=0,piQty=0,piAmt=0,qtyD=0,amtD=0;rows.forEach(r=>{const d=cmpDerived(r);poQty+=r.poQty;piQty+=r.piQty;piAmt+=d.piAmt;qtyD+=d.qtyDiff;amtD+=d.amtDiff;});const foot=t('gen.L5551.1','<tr style="font-weight:700;background:#e8edf3"><td>汇总</td><td>')+poQty+'</td><td>'+piQty+'</td><td></td><td></td><td></td><td>'+fmtMoney(piAmt)+'</td><td>'+qtyD+t('gen.L5551.2','</td><td colspan="2">金额差异：')+fmtMoney(amtD)+'</td></tr>';return t('gen.L5551.3','<div class="table-container" style="max-height:50vh;overflow:auto;box-shadow:none"><table class="data-table pi-cmp-table pi-cmp-readonly"><colgroup><col style="width:220px"><col style="width:120px"><col style="width:145px"><col style="width:135px"><col style="width:180px"><col style="width:120px"><col style="width:125px"><col style="width:120px"><col style="width:135px"><col style="width:210px"></colgroup><thead><tr><th>SKU</th><th>PO数量</th><th>PI确认数量</th><th>PO单价</th><th>PI确认单价</th><th>PI折扣</th><th>PI金额</th><th>数量差异</th><th>单价差异</th><th>状态</th></tr></thead><tbody>')+body+'</tbody><tfoot>'+foot+'</tfoot></table></div>';}
 const SUPPLIER_PI_IMPORT_COLUMNS=[
@@ -6673,19 +7190,24 @@ function downloadSupplierPIImportErrors(){
   const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,t("app.159", "\u65e0\u6548\u660e\u7ec6"));XLSX.writeFile(wb,t("app.937", "\u4f9b\u5e94\u5546PI\u5bfc\u5165\u65e0\u6548\u660e\u7ec6.xlsx"));
 }
 async function saveNewPI(){
+  const btn=document.getElementById('btn-save-new-pi');
+  if(btn){btn.disabled=true;btn._old=btn.textContent;btn.textContent=t('common.saving','保存中…');}
   const poSel=document.getElementById('npi-po'),supSel=document.getElementById('npi-sup'),termSel=document.getElementById('npi-terms');const items=[];
   (window._piRows||[]).forEach(r=>{if(r.sku&&r.sku.trim())items.push({sku_code:r.sku.trim(),po_qty:parseInt(r.poQty)||0,pi_confirmed_qty:parseInt(r.piQty)||0,unit_price:parseFloat(r.piPrice)||0,discount:parseFloat(r.piDisc)||0})});
   const termId=termSel?termSel.value:'';
   const paymentTermsText=(termId&&termSel.options[termSel.selectedIndex])?termSel.options[termSel.selectedIndex].textContent:'';
-  // 品牌/国家/仓库：与批量导入口径一致，关联 PO 时从 PO 带（PI 自身快照字段，不展示期 join 他表）
-  let brand='',country='',target_warehouse='';
-  if(poSel&&poSel.value){try{const po=await api('/api/purchase-orders/'+encodeURIComponent(poSel.value));brand=po.brand||'';country=po.country||'';target_warehouse=po.target_warehouse||'';}catch(e){}}
+  // 品牌：仅 PO 关联时从 PO 带（PI 自身快照字段）；国家/仓库统一从表单读取（PO 关联时为只读预填值，无关联时为必填项）
+  let brand='';
+  if(poSel&&poSel.value){try{const po=await api('/api/purchase-orders/'+encodeURIComponent(poSel.value));brand=po.brand||'';}catch(e){}}
+  const country=document.getElementById('npi-country')?.value||'';
+  const target_warehouse=document.getElementById('npi-wh')?.value||'';
   const d={related_po_id:poSel.value||'',related_po_no:poSel.options[poSel.selectedIndex]?.dataset.no||'',supplier_id:supSel.value,supplier_name:supSel.options[supSel.selectedIndex].dataset.name,brand,country,target_warehouse,pi_no:(document.getElementById('npi-no')?.value||'').trim()||'',pi_date:document.getElementById('npi-date').value,currency:document.getElementById('npi-cur').value,need_deposit:document.getElementById('npi-need-dep').value==='1'?1:0,deposit_ratio:parseFloat(document.getElementById('npi-dep').value)||0,expected_delivery:document.getElementById('npi-del').value,payment_terms:paymentTermsText,payment_term_id:termId,items};
   try{
     await api('/api/proforma-invoices','POST',d);
     if(termId&&supSel.value){try{await api('/api/suppliers/'+encodeURIComponent(supSel.value)+'/last-payment-term','POST',{payment_term_id:termId});}catch(e){}}
     showToast(t('gen.L5697.1','PI创建成功'),'success');closeModal();loadPI();
   }catch(e){showToast(e.message,'danger')}
+  finally{ if(btn){btn.disabled=false;btn.textContent=btn._old||t('common.save','保存');} }
 }
 async function createDepPay(id){
   try{
@@ -9401,6 +9923,23 @@ async function exportChkTpl(){
 async function apprChk(id){if(!confirm(t("app.1187", "\u786e\u8ba4\u5ba1\u6279\u901a\u8fc7\uff1f\u5c06\u8c03\u6574\u5e93\u5b58\u3002")))return;try{await api('/api/inventory-checks/'+id+'/approve','POST');showToast(t("shell.073", "已审批"),'success');loadChk()}catch(e){showToast(e.message,'danger')}}
 
 // ==================== 初始化 ====================
+// 版本角标：读取 /api/version（公开），生产环境不显示「本地」；同步 document.title
+async function initVersionBadge(){
+  try{
+    const v=await api('/api/version','GET');
+    const badge=document.getElementById('version-badge');
+    if(badge){
+      const short=v.commit?(' '+String(v.commit).slice(0,7)):'';
+      const env=(v.environment==='production')?'':(' 本地');
+      const deploy=(v.environment==='production'&&v.deployTime)?(' '+String(v.deployTime).slice(0,10)):'';
+      badge.textContent='v'+v.version+short+deploy+env;
+      let tip='version '+v.version+' · commit '+(v.commit||'-')+' · '+(v.environment||'-');
+      if(v.deployTime)tip+=' · deploy '+v.deployTime;
+      badge.title=tip;
+    }
+    document.title=t('page.doc_title','进销存管理系统')+' v'+v.version;
+  }catch(e){ /* 后端不可达时保留 index.html 静态占位，不报错 */ }
+}
 window.addEventListener('DOMContentLoaded',()=>{
   // 多语言：启动时回填静态文本 + 同步语言切换器
   if (typeof applyI18n==='function') applyI18n();
@@ -9410,6 +9949,8 @@ window.addEventListener('DOMContentLoaded',()=>{
     showFatalNotice(t('err.file_protocol_startup','⚠️ 检测到您直接打开了 HTML 文件（file://）。进销存系统需要后端服务，请：<br>① 在终端运行 <b>node server.js</b><br>② 浏览器访问 <b>http://localhost:3001</b><br>不要直接双击 index.html。'));
     return;
   }
+  // 版本角标（公开接口，登录前后均可刷新）
+  initVersionBadge();
   // 凭证基于 HttpOnly Cookie（Session），启动即从 /api/me 探活；无有效会话则显示登录页
   bootFromSession();
   // 探测飞书 OAuth 配置（异步，不阻塞登录页加载）

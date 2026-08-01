@@ -551,7 +551,7 @@ function bgClear(ip, username) { bgFailTracker.delete(bgFailKey(ip, username)); 
 
 // ==================== 配置 ====================
 const PORT = process.env.PORT || 3001;
-const APP_VERSION = '1.0.1';
+const APP_VERSION = '1.0.2';
 // 发布可核对信息：部署时间（进程启动时间 ≈ 部署时间）+ git commit
 // （Render 自动注入 RENDER_GIT_COMMIT；否则回退本地 git rev-parse；都不可用则标记 unknown）
 const APP_STARTED_AT = new Date().toISOString();
@@ -639,6 +639,7 @@ app.get('/api/version', asyncHandler((req, res) => {
     app: 'inventory-management-system',
     commit: APP_COMMIT,
     deployTime: APP_STARTED_AT,
+    environment: process.env.RENDER === 'true' ? 'production' : (process.env.NODE_ENV === 'production' ? 'production' : 'development'),
     timestamp: new Date().toISOString()
   });
 }));
@@ -4837,6 +4838,50 @@ function getPILockReason(pi) {
   return null;
 }
 
+// PI号编辑锁定（比通用编辑锁定 getPILockReason 更严格）：PI号作为前期录单纠错字段，
+// 一旦进入后续业务阶段即锁定，不再允许修改。普通字段(pi日期/交期/付款条件等)沿用 getPILockReason。
+// 允许修改时尚未进入后续阶段，因此无需大范围级联下游(ci/pl/wac/成本/付款)历史数据。
+function getPINumberLockReason(pi) {
+  if (!pi) return null;
+  const base = getPILockReason(pi); // 已作废 / 已生成CI / 已生成PL / 已付定金
+  if (base) return base;
+  // 已创建付款申请（含待审批/审批中/已审批/已付款）：付款申请记录 或 reserved/paid 应付费用
+  const pr = queryOne("SELECT id FROM payment_requests WHERE (source_type='pi' AND source_id=?) OR (source_type='pi' AND source_no=?) LIMIT 1", [pi.id, pi.pi_no]);
+  if (pr) return '已创建付款申请';
+  const reservedPay = queryOne("SELECT id FROM payable_items WHERE source_type='pi' AND source_id=? AND fee_type='deposit' AND lifecycle_status IN ('reserved','paid') LIMIT 1", [pi.id]);
+  if (reservedPay) return '已创建付款申请';
+  // 已付款 / 结算 / 抹零：存在付款分摊流水
+  const paid = queryOne(`SELECT pa.id FROM payment_allocations pa
+     JOIN payment_request_items pri ON pri.id = pa.payment_request_item_id
+     JOIN payable_items pai ON pai.id = pri.payable_item_id
+     WHERE pai.source_type='pi' AND pai.source_id=? LIMIT 1`, [pi.id]);
+  if (paid) return '已发生付款';
+  // 已发货
+  const shipped = queryOne('SELECT COALESCE(SUM(shipped_qty),0) AS s FROM proforma_invoice_items WHERE pi_id=?', [pi.id]);
+  if (shipped && Number(shipped.s) > 0) return '已发生发货';
+  // 已入库（CI 入库回写到 CI 项）
+  const inbound = queryOne('SELECT COALESCE(SUM(inbound_qty),0) AS s FROM commercial_invoice_items WHERE pi_id=?', [pi.id]);
+  if (inbound && Number(inbound.s) > 0) return '已入库';
+  // 已产生 WAC / 成本 / 成本分摊
+  const cost = queryOne('SELECT id FROM cost_allocations WHERE related_pi_no=? LIMIT 1', [pi.pi_no])
+    || queryOne('SELECT id FROM cost_update_logs WHERE related_pi_no=? LIMIT 1', [pi.pi_no])
+    || queryOne('SELECT id FROM wac_history WHERE pi_no=? LIMIT 1', [pi.pi_no]);
+  if (cost) return '已产生成本记录';
+  return null;
+}
+
+// PI 明细是否真正变化（用于 PUT 的 updateInventoryTransitData 跳过重算判断）。
+// 仅比较影响在途口径的维度：SKU / po_qty / pi_confirmed_qty；单价/折扣不影响库存在途。
+function piItemsEqual(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b)) return false;
+  if (a.length !== b.length) return false;
+  const key = it => `${it.sku_code}|${it.po_qty || 0}|${it.pi_confirmed_qty || 0}`;
+  const sa = a.map(key).sort();
+  const sb = b.map(key).sort();
+  for (let i = 0; i < sa.length; i++) if (sa[i] !== sb[i]) return false;
+  return true;
+}
+
 // ==================== PI 管理 ====================
 app.get('/api/proforma-invoices', requireApiPermission('pi_view'), asyncHandler((req, res) => {
   const { status, ship_status, keyword, related_po } = req.query;
@@ -4953,7 +4998,8 @@ app.get('/api/proforma-invoices/:id', requireApiPermission('pi_view'), asyncHand
     : !pi.need_deposit;
   res.json({ ...pi, items, locked: !!lr, lock_reason: lr || '', deposit_progress: depositProgress,
     deposit_payment_status: depositProgress ? depositProgress.core_status : pi.deposit_payment_status,
-    deposit_paid: depositPaid });
+    deposit_paid: depositPaid,
+    pi_no_locked: !!getPINumberLockReason(pi), pi_no_lock_reason: getPINumberLockReason(pi) || '' });
 }));
 
 app.post('/api/proforma-invoices', requireApiPermission('pi_create'), asyncHandler(async (req, res) => {
@@ -5006,25 +5052,33 @@ app.post('/api/proforma-invoices', requireApiPermission('pi_create'), asyncHandl
             }
           }
         }
+        // 明细批量 INSERT（性能优化：N 次单插 → 1 次多值插入）
+        const itemRows = [];
         d.items.forEach(item => {
           const discount = n(item.discount, 0);
           const baseAmount = (item.pi_confirmed_qty || 0) * (item.unit_price || 0);
           // 金额口径含折扣：显式带 pi_amount 时以显式值为准（导入优先），否则反算 qty×price×(1-discount)
           const amount = (item.pi_amount !== undefined && item.pi_amount !== null && item.pi_amount !== '') ? n(item.pi_amount, 0) : baseAmount * (1 - discount);
           totalAmount += amount;
-          run(`INSERT INTO proforma_invoice_items (id, pi_id, pi_no, po_no, sku_code, po_qty, pi_confirmed_qty, unit_price, discount, pi_amount, shipped_qty, unshipped_qty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [genId('pii'), piId, piNo, item.po_no || d.related_po_no || '', item.sku_code, item.po_qty || 0, item.pi_confirmed_qty || 0, item.unit_price || 0, discount, amount, 0, item.pi_confirmed_qty || 0]);
+          itemRows.push([genId('pii'), piId, piNo, item.po_no || d.related_po_no || '', item.sku_code, item.po_qty || 0, item.pi_confirmed_qty || 0, item.unit_price || 0, discount, amount, 0, item.pi_confirmed_qty || 0]);
+        });
+        if (itemRows.length) {
+          const placeholders = itemRows.map(() => '(?,?,?,?,?,?,?,?,?,?,?,?)').join(',');
+          const flat = []; itemRows.forEach(r => flat.push(...r));
+          run(`INSERT INTO proforma_invoice_items (id, pi_id, pi_no, po_no, sku_code, po_qty, pi_confirmed_qty, unit_price, discount, pi_amount, shipped_qty, unshipped_qty) VALUES ${placeholders}`, flat);
+        }
 
-          // 更新PO明细的已转PI数量
-          if (d.related_po_id) {
+        // 更新PO明细的已转PI数量
+        if (d.related_po_id) {
+          d.items.forEach(item => {
             const poItem = queryOne('SELECT id, po_qty, transferred_pi_qty FROM purchase_order_items WHERE po_id = ? AND sku_code = ?', [d.related_po_id, item.sku_code]);
             if (poItem) {
               const newTransferred = (poItem.transferred_pi_qty || 0) + (item.pi_confirmed_qty || 0);
               run('UPDATE purchase_order_items SET transferred_pi_qty = ?, untransferred_pi_qty = ? WHERE id = ?',
                 [newTransferred, (poItem.po_qty || 0) - newTransferred, poItem.id]);
             }
-          }
-        });
+          });
+        }
         const payableDeposit = needDeposit ? totalAmount * depositRatio / 100 : 0;
         run('UPDATE proforma_invoices SET total_amount = ?, payable_deposit = ?, available_deduct_deposit = ? WHERE id = ?', [totalAmount, payableDeposit, payableDeposit, piId]);
 
@@ -5090,8 +5144,10 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
 
     const fields = [];
     const values = [];
-    // PI号：允许编辑为供应商真实编号；空值保持原值，重复时返回友好业务提示
+    // PI号：允许编辑为供应商真实编号（仅未进入后续业务阶段时可改，前端+后端双重校验）
     if (d.pi_no !== undefined && d.pi_no !== '' && d.pi_no !== pi.pi_no) {
+      const numLock = getPINumberLockReason(pi);
+      if (numLock) return res.status(409).json({ error: 'PI号不可修改（' + numLock + '）', locked: true, lock_reason: numLock, field: 'pi_no' });
       const dup = queryOne('SELECT id FROM proforma_invoices WHERE pi_no = ? AND id != ?', [d.pi_no, id]);
       if (dup) return res.status(409).json({ error: '该 PI 编号已存在，请检查供应商文件', dup: true });
       fields.push('pi_no = ?'); values.push(d.pi_no);
@@ -5118,19 +5174,24 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
     const newPiNo = (d.pi_no !== undefined && d.pi_no !== '' && d.pi_no !== pi.pi_no) ? d.pi_no : pi.pi_no;
 
     await transaction(async () => {
-      // 明细全量替换
+      // 明细全量替换（批量 INSERT）
       if (d.items && Array.isArray(d.items)) {
         run('DELETE FROM proforma_invoice_items WHERE pi_id = ?', [id]);
         totalAmount = 0;
+        const itemRows = [];
         d.items.forEach(item => {
           const discount = n(item.discount, 0);
           const baseAmount = (item.pi_confirmed_qty || 0) * (item.unit_price || 0);
           // 金额口径与创建一致：显式带 pi_amount 以显式值为准，否则 qty×price×(1-discount)
           const amount = (item.pi_amount !== undefined && item.pi_amount !== null && item.pi_amount !== '') ? n(item.pi_amount, 0) : baseAmount * (1 - discount);
           totalAmount += amount;
-          run(`INSERT INTO proforma_invoice_items (id, pi_id, pi_no, po_no, sku_code, po_qty, pi_confirmed_qty, unit_price, discount, pi_amount, shipped_qty, unshipped_qty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [genId('pii'), id, newPiNo, item.po_no || pi.related_po_no || '', item.sku_code, item.po_qty || 0, item.pi_confirmed_qty || 0, item.unit_price || 0, discount, amount, 0, item.pi_confirmed_qty || 0]);
+          itemRows.push([genId('pii'), id, newPiNo, item.po_no || pi.related_po_no || '', item.sku_code, item.po_qty || 0, item.pi_confirmed_qty || 0, item.unit_price || 0, discount, amount, 0, item.pi_confirmed_qty || 0]);
         });
+        if (itemRows.length) {
+          const placeholders = itemRows.map(() => '(?,?,?,?,?,?,?,?,?,?,?,?)').join(',');
+          const flat = []; itemRows.forEach(r => flat.push(...r));
+          run(`INSERT INTO proforma_invoice_items (id, pi_id, pi_no, po_no, sku_code, po_qty, pi_confirmed_qty, unit_price, discount, pi_amount, shipped_qty, unshipped_qty) VALUES ${placeholders}`, flat);
+        }
       }
 
       // 总额 + 应付定金 + 可用抵扣定金 重算
@@ -5198,8 +5259,16 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
       values.push(id);
       run(`UPDATE proforma_invoices SET ${fields.join(', ')} WHERE id = ?`, values);
 
-      // 库存 PI 未发货数量重算
-      await updateInventoryTransitData();
+      // 库存 PI 未发货数量重算：仅当影响库存口径字段变化时执行（性能优化）
+      // 命中：country / target_warehouse 变更，或明细(SKU/数量)真正变化。
+      // 说明：前端编辑时始终回传 items，因此必须比较"是否真的变化"，
+      // 否则仅改 PI 号/交期/付款条件等也会触发全表重算（D3 要求跳过）。
+      const itemsChanged = Array.isArray(d.items) && d.items.length > 0 && !piItemsEqual(d.items, oldItems);
+      const invAffectingChanged =
+        (d.country !== undefined && d.country !== pi.country) ||
+        (d.target_warehouse !== undefined && d.target_warehouse !== pi.target_warehouse) ||
+        itemsChanged;
+      if (invAffectingChanged) await updateInventoryTransitData();
     });
 
     // 操作日志（编辑痕迹）

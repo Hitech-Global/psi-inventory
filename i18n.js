@@ -136,7 +136,7 @@
   I18N.dict.zh['nav.app_title'] = 'PSI系统';
   I18N.dict.zh['auth.login_title'] = '📦 PSI系统';
   I18N.dict.zh['nav.toggle_sidebar'] = '折叠/展开菜单';
-  I18N.dict.zh['page.doc_title'] = '进销存管理系统 v1.0.0';
+  I18N.dict.zh['page.doc_title'] = '进销存管理系统';
 
   // ===================== 翻译字典 =====================
   // 注意：以下 en/id 为 ChatGPT 起草译文，待用户（印尼团队）审校。
@@ -1791,7 +1791,7 @@
   I18N.dict.en["nav.allocation_rules"] = "Allocation Rules"; I18N.dict.id["nav.allocation_rules"] = "Aturan Alokasi";
   I18N.dict.en["nav.app_title"] = "PSI System"; I18N.dict.id["nav.app_title"] = "Sistem PSI";
   I18N.dict.en["nav.toggle_sidebar"] = "Collapse/Expand Menu"; I18N.dict.id["nav.toggle_sidebar"] = "Ciutkan/Perluas Menu";
-  I18N.dict.en["page.doc_title"] = "Inventory Management System v1.0.0"; I18N.dict.id["page.doc_title"] = "Sistem Manajemen Persediaan v1.0.0";
+  I18N.dict.en["page.doc_title"] = "Inventory Management System"; I18N.dict.id["page.doc_title"] = "Sistem Manajemen Persediaan";
   I18N.dict.en["nav.approval_center"] = "Approval Center"; I18N.dict.id["nav.approval_center"] = "Pusat Persetujuan";
   I18N.dict.en["nav.approval_flows"] = "Approval Flows"; I18N.dict.id["nav.approval_flows"] = "Alur Persetujuan";
   I18N.dict.en["nav.batch_tasks"] = "Batch Task Center"; I18N.dict.id["nav.batch_tasks"] = "Pusat Tugas Batch";
@@ -1877,6 +1877,18 @@
   I18N.dict.en["pi.deposit_status.paid"] = "Paid"; I18N.dict.id["pi.deposit_status.paid"] = "Sudah Dibayar";
   // PI 字段 label 复用 col.*/app.*/nav.* 等，仅 pi.field.status 为本批次新增
   I18N.dict.en["pi.field.status"] = "Shipment status"; I18N.dict.id["pi.field.status"] = "Status pengiriman";
+  // PI 列表表头：发货状态列（替代原 PI状态 列，仅发货语义）
+  I18N.dict.en["pi.field.ship_status"] = "Shipment status"; I18N.dict.id["pi.field.ship_status"] = "Status pengiriman";
+  // PI 列表表头：PI 附件列
+  I18N.dict.en["pi.col.attachment"] = "PI Attachment"; I18N.dict.id["pi.col.attachment"] = "Lampiran PI";
+  // PI 附件单元格：未上传提示 / 查看
+  I18N.dict.en["pi.attachment.pending"] = "Upload PI"; I18N.dict.id["pi.attachment.pending"] = "Unggah PI";
+  I18N.dict.en["pi.attachment.view"] = "View PI"; I18N.dict.id["pi.attachment.view"] = "Lihat PI";
+  // PI号 编辑提示（D2：未进入后续业务阶段可改，需唯一）
+  I18N.dict.en["pi.no.edit_hint"] = "Leave blank to keep; change must be unique (auto-checked)";
+  I18N.dict.id["pi.no.edit_hint"] = "Biarkan kosong untuk mempertahankan; perubahan harus unik (periksa otomatis)";
+  // 保存按钮反馈
+  I18N.dict.en["common.saving"] = "Saving…"; I18N.dict.id["common.saving"] = "Menyimpan…";
   // PI 专用字段 label（避免全局 col.*/app.*/po.* key 被覆盖影响其他页面）
   I18N.dict.en["pi.field.supplier"] = "Supplier"; I18N.dict.id["pi.field.supplier"] = "Pemasok";
   I18N.dict.en["pi.field.total_amount"] = "Total Amount"; I18N.dict.id["pi.field.total_amount"] = "Jumlah Total";
@@ -3302,6 +3314,11 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.en["pi.sheet_more"] = "{n} in total, showing first only"; I18N.dict.id["pi.sheet_more"] = "{n} total, hanya menampilkan yang pertama";
   I18N.dict.en["pi.parse_failed"] = "Parse failed"; I18N.dict.id["pi.parse_failed"] = "Parsing gagal";
   I18N.dict.en["pi.parse_failed_detail"] = "Parse failed: {v1}"; I18N.dict.id["pi.parse_failed_detail"] = "Parsing gagal: {v1}";
+  // PI 附件弹窗预览交互（v1.0.2）
+  I18N.dict.en["pi.preview.download_current"] = "Download current attachment"; I18N.dict.id["pi.preview.download_current"] = "Unduh lampiran saat ini";
+  I18N.dict.en["pi.preview.file_type"] = "File type"; I18N.dict.id["pi.preview.file_type"] = "Tipe file";
+  I18N.dict.en["pi.preview.file_size"] = "File size"; I18N.dict.id["pi.preview.file_size"] = "Ukuran file";
+  I18N.dict.en["pi.preview_not_supported"] = "This format cannot be previewed online. Use the download button above to download."; I18N.dict.id["pi.preview_not_supported"] = "Format ini tidak dapat dipratinjau. Gunakan tombol unduh di atas untuk mengunduh.";
   I18N.dict.en["common.download"] = "Download"; I18N.dict.id["common.download"] = "Unduh";
   I18N.dict.en["toast.uploadNoPermission"] = "No permission to upload attachments"; I18N.dict.id["toast.uploadNoPermission"] = "Tidak ada izin untuk mengunggah lampiran";
   I18N.dict.en["gen.L694.1"] = "<div id=\"flash-container\"></div><div class=\"table-section\"><div class=\"table-section-title\"><div class=\"table-section-title-left\">✅ Approval Flow Management</div></div><div id=\"approval-flow-editor\"></div></div>"; I18N.dict.id["gen.L694.1"] = "<div id=\"flash-container\"></div><div class=\"table-section\"><div class=\"table-section-title\"><div class=\"table-section-title-left\">✅ Manajemen Alur Persetujuan</div></div><div id=\"approval-flow-editor\"></div></div>";
@@ -4347,4 +4364,31 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.zh["payable_list.pr_no"]="申请号"; I18N.dict.en["payable_list.pr_no"]="Request No."; I18N.dict.id["payable_list.pr_no"]="No. Permintaan";
   I18N.dict.zh["payable_list.pr_paystatus"]="付款状态"; I18N.dict.en["payable_list.pr_paystatus"]="Payment Status"; I18N.dict.id["payable_list.pr_paystatus"]="Status Pembayaran";
   I18N.dict.zh["payable_list.pr_appstatus"]="审批状态"; I18N.dict.en["payable_list.pr_appstatus"]="Approval Status"; I18N.dict.id["payable_list.pr_appstatus"]="Status Persetujuan";
+
+  // ===================== v1.0.2 通用附件组件三语（PI 列表先接入；CI/PO/PL/PAY/售后暂未迁移）=====================
+  I18N.dict.zh["att.modal_title_upload"]="上传附件"; I18N.dict.en["att.modal_title_upload"]="Upload Attachments"; I18N.dict.id["att.modal_title_upload"]="Unggah Lampiran";
+  I18N.dict.zh["att.modal_title_preview"]="查看附件"; I18N.dict.en["att.modal_title_preview"]="View Attachment"; I18N.dict.id["att.modal_title_preview"]="Lihat Lampiran";
+  I18N.dict.zh["att.drag_hint"]="将文件拖到此处"; I18N.dict.en["att.drag_hint"]="Drop files here"; I18N.dict.id["att.drag_hint"]="Jatuhkan file di sini";
+  I18N.dict.zh["att.click_hint"]="或点击选择文件"; I18N.dict.en["att.click_hint"]="or click to select files"; I18N.dict.id["att.click_hint"]="atau klik untuk memilih file";
+  I18N.dict.zh["att.upload"]="上传"; I18N.dict.en["att.upload"]="Upload"; I18N.dict.id["att.upload"]="Unggah";
+  I18N.dict.zh["att.uploading"]="上传中…"; I18N.dict.en["att.uploading"]="Uploading…"; I18N.dict.id["att.uploading"]="Mengunggah…";
+  I18N.dict.zh["att.upload_failed"]="上传失败"; I18N.dict.en["att.upload_failed"]="Upload failed"; I18N.dict.id["att.upload_failed"]="Gagal mengunggah";
+  I18N.dict.zh["att.retry"]="重试"; I18N.dict.en["att.retry"]="Retry"; I18N.dict.id["att.retry"]="Coba lagi";
+  I18N.dict.zh["att.cancel"]="取消"; I18N.dict.en["att.cancel"]="Cancel"; I18N.dict.id["att.cancel"]="Batal";
+  I18N.dict.zh["att.close"]="关闭"; I18N.dict.en["att.close"]="Close"; I18N.dict.id["att.close"]="Tutup";
+  I18N.dict.zh["att.download_current"]="下载当前附件"; I18N.dict.en["att.download_current"]="Download current attachment"; I18N.dict.id["att.download_current"]="Unduh lampiran saat ini";
+  I18N.dict.zh["att.no_files"]="暂无附件"; I18N.dict.en["att.no_files"]="No attachments"; I18N.dict.id["att.no_files"]="Tidak ada lampiran";
+  I18N.dict.zh["att.preview_not_supported"]="此格式不支持在线预览，请使用上方下载按钮下载"; I18N.dict.en["att.preview_not_supported"]="This format cannot be previewed online. Use the download button above."; I18N.dict.id["att.preview_not_supported"]="Format ini tidak dapat dipratinjau online. Gunakan tombol unduh di atas.";
+  I18N.dict.zh["att.file_type"]="文件类型"; I18N.dict.en["att.file_type"]="File type"; I18N.dict.id["att.file_type"]="Tipe file";
+  I18N.dict.zh["att.file_size"]="文件大小"; I18N.dict.en["att.file_size"]="File size"; I18N.dict.id["att.file_size"]="Ukuran file";
+  I18N.dict.zh["att.file_too_large"]="文件过大（超过 {v1}）"; I18N.dict.en["att.file_too_large"]="File too large (over {v1})"; I18N.dict.id["att.file_too_large"]="File terlalu besar (di atas {v1})";
+  I18N.dict.zh["att.too_many_files"]="文件数量超限（最多 {v1} 个）"; I18N.dict.en["att.too_many_files"]="Too many files (max {v1})"; I18N.dict.id["att.too_many_files"]="Terlalu banyak file (maks {v1})";
+  I18N.dict.zh["att.unsupported_format"]="格式不支持"; I18N.dict.en["att.unsupported_format"]="Unsupported format"; I18N.dict.id["att.unsupported_format"]="Format tidak didukung";
+  I18N.dict.zh["att.duplicate"]="文件重复"; I18N.dict.en["att.duplicate"]="Duplicate file"; I18N.dict.id["att.duplicate"]="File duplikat";
+  I18N.dict.zh["att.remove"]="移除"; I18N.dict.en["att.remove"]="Remove"; I18N.dict.id["att.remove"]="Hapus";
+  I18N.dict.zh["att.pending_list"]="待上传文件"; I18N.dict.en["att.pending_list"]="Pending files"; I18N.dict.id["att.pending_list"]="File tertunda";
+  I18N.dict.zh["att.rejected_list"]="被拒绝文件"; I18N.dict.en["att.rejected_list"]="Rejected files"; I18N.dict.id["att.rejected_list"]="File ditolak";
+  I18N.dict.zh["att.empty_queue"]="请先添加文件"; I18N.dict.en["att.empty_queue"]="Please add files first"; I18N.dict.id["att.empty_queue"]="Silakan tambahkan file dulu";
+  I18N.dict.zh["att.upload_ok"]="附件已上传"; I18N.dict.en["att.upload_ok"]="Attachments uploaded"; I18N.dict.id["att.upload_ok"]="Lampiran diunggah";
+  I18N.dict.zh["att.name"]="文件名"; I18N.dict.en["att.name"]="File name"; I18N.dict.id["att.name"]="Nama file";
 })();
