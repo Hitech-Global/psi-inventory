@@ -2436,10 +2436,24 @@ app.get('/api/inventory', requireApiPermission('inventory_view'), asyncHandler((
 
 // 库存总表筛选下拉选项（从实际数据动态聚合）
 app.get('/api/inventory/filter-options', requireApiPermission('inventory_view'), asyncHandler((req, res) => {
-  const countries = query(`SELECT DISTINCT country FROM inventory WHERE country IS NOT NULL AND country != '' ORDER BY country`).rows.map(r => r.country);
-  const warehouses = query(`SELECT DISTINCT warehouse FROM inventory WHERE warehouse IS NOT NULL AND warehouse != '' ORDER BY warehouse`).rows.map(r => r.warehouse);
-  // 品牌来自 inventory 关联到的 skus 表（有 LEFT JOIN，可能是 NULL）
-  const brands = query(`SELECT DISTINCT s.brand FROM inventory i JOIN skus s ON i.sku_code = s.sku_code WHERE s.brand IS NOT NULL AND s.brand != '' ORDER BY s.brand`).rows.map(r => r.brand);
+  const { country, warehouse, brand } = req.query;
+  const c = (country || '').trim();
+  const w = (warehouse || '').trim();
+  const b = (brand || '').trim();
+  // 各维度选项基于「其他已选维度」过滤；已选值即使不在过滤结果中也保留，避免下拉变空白
+  const countries = query(`SELECT DISTINCT country FROM inventory WHERE country IS NOT NULL AND country != ''`
+    + (w ? ' AND warehouse = ?' : '') + (b ? ' AND sku_code IN (SELECT sku_code FROM skus WHERE brand = ?)' : '')
+    + ' ORDER BY country', [...(w?[w]:[]), ...(b?[b]:[])]).rows.map(r => r.country);
+  const warehouses = query(`SELECT DISTINCT warehouse FROM inventory WHERE warehouse IS NOT NULL AND warehouse != ''`
+    + (c ? ' AND country = ?' : '') + (b ? ' AND sku_code IN (SELECT sku_code FROM skus WHERE brand = ?)' : '')
+    + ' ORDER BY warehouse', [...(c?[c]:[]), ...(b?[b]:[])]).rows.map(r => r.warehouse);
+  const brands = query(`SELECT DISTINCT s.brand FROM inventory i JOIN skus s ON i.sku_code = s.sku_code WHERE s.brand IS NOT NULL AND s.brand != ''`
+    + (c ? ' AND i.country = ?' : '') + (w ? ' AND i.warehouse = ?' : '')
+    + ' ORDER BY s.brand', [...(c?[c]:[]), ...(w?[w]:[])]).rows.map(r => r.brand);
+  // 友好处理：保留当前已选值（后端 unshift），避免条件组合下下拉显示空白
+  if (c && !countries.includes(c)) countries.unshift(c);
+  if (w && !warehouses.includes(w)) warehouses.unshift(w);
+  if (b && !brands.includes(b)) brands.unshift(b);
   res.json({ countries, warehouses, brands });
 }));
 

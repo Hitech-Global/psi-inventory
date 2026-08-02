@@ -3095,15 +3095,9 @@ function invStatusBadge(v){
 async function renderInventory(){
   invDataCache = []; invAllFilteredIds = []; invSelectAllMode = false;
   document.getElementById('content-inner').innerHTML=
-    t('html.renderInventory', `<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>国家</label><select id="inv-c" onchange="loadInv()"><option value="">全部</option></select></div><div class="filter-group"><label>仓库</label><select id="inv-w" onchange="loadInv()"><option value="">全部</option></select></div><div class="filter-group"><label>品牌</label><select id="inv-b" onchange="loadInv()"><option value="">全部</option></select></div><div class="filter-group"><label>关键词</label><input type="text" id="inv-k" placeholder="SKU/产品名" oninput="debouncedInvKeyword()"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadInv()">搜索</button><button class="btn btn-secondary btn-sm" onclick="resetInvFilters()">重置</button>{v1}</div></div></div><div id="inv-batch-bar" style="display:none;background:var(--bg-card,#fff);border:1px solid var(--border,#e0e0e0);border-radius:8px;padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span id="inv-batch-count" style="font-weight:600;margin-right:8px"></span><button class="btn btn-sm btn-secondary" onclick="invBatchAction('export')">📊 导出</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_status')">🏷️ 库存状态</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_focused')">⭐ 重点关注</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_safety_stock')">🛡️ 安全库存</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_turnover')">🎯 目标周转</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_replenish_rule')">📋 补货规则</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_remark')">📝 库存备注</button><button class="btn btn-sm btn-warning" onclick="invBatchAction('inventory_adjust')">🔧 发起调整单</button><button class="btn btn-sm btn-danger" onclick="invBatchAction('delete')" style="background:#ff4d4f;color:#fff;border:none">🗑️ 删除</button><button class="btn btn-sm btn-secondary" onclick="invClearSelection()" style="margin-left:auto">取消选择</button></div><div id="inv-cards" class="stats-grid"></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">📦 库存总表</div><div class="table-section-title-right" id="inv-rate-display" style="font-size:12px;color:#666;display:flex;gap:12px;align-items:center"></div></div><div id="inv-table"></div></div>`, {v1: hasPermission('inventory_import')?t('gen.L2829.1','<button class="btn btn-secondary btn-sm" onclick="openInvBatchImport()">📥 导入库存</button>'):''});
-  // 加载下拉选项
-  try{
-    const opts=await api('/api/inventory/filter-options');
-    const fc=document.getElementById('inv-c'), fw=document.getElementById('inv-w'), fb=document.getElementById('inv-b');
-    if(fc) opts.countries.forEach(c=>{const o=document.createElement('option');o.value=c;o.textContent=c;fc.appendChild(o);});
-    if(fw) opts.warehouses.forEach(w=>{const o=document.createElement('option');o.value=w;o.textContent=w;fw.appendChild(o);});
-    if(fb) opts.brands.forEach(b=>{const o=document.createElement('option');o.value=b;o.textContent=b;fb.appendChild(o);});
-  }catch(e){console.warn('filter-options load failed',e)}
+    t('html.renderInventory', `<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>国家</label><select id="inv-c" onchange="onInvFilterChange('country')"><option value="">全部</option></select></div><div class="filter-group"><label>仓库</label><select id="inv-w" onchange="onInvFilterChange('warehouse')"><option value="">全部</option></select></div><div class="filter-group"><label>品牌</label><select id="inv-b" onchange="onInvFilterChange('brand')"><option value="">全部</option></select></div><div class="filter-group"><label>关键词</label><input type="text" id="inv-k" placeholder="SKU/产品名" oninput="debouncedInvKeyword()"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadInv()">搜索</button><button class="btn btn-secondary btn-sm" onclick="resetInvFilters()">重置</button>{v1}</div></div></div><div id="inv-batch-bar" style="display:none;background:var(--bg-card,#fff);border:1px solid var(--border,#e0e0e0);border-radius:8px;padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span id="inv-batch-count" style="font-weight:600;margin-right:8px"></span><button class="btn btn-sm btn-secondary" onclick="invBatchAction('export')">📊 导出</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_status')">🏷️ 库存状态</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_focused')">⭐ 重点关注</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_safety_stock')">🛡️ 安全库存</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_turnover')">🎯 目标周转</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_replenish_rule')">📋 补货规则</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_remark')">📝 库存备注</button><button class="btn btn-sm btn-warning" onclick="invBatchAction('inventory_adjust')">🔧 发起调整单</button><button class="btn btn-sm btn-danger" onclick="invBatchAction('delete')" style="background:#ff4d4f;color:#fff;border:none">🗑️ 删除</button><button class="btn btn-sm btn-secondary" onclick="invClearSelection()" style="margin-left:auto">取消选择</button></div><div id="inv-cards" class="stats-grid"></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">📦 库存总表</div><div class="table-section-title-right" id="inv-rate-display" style="font-size:12px;color:#666;display:flex;gap:12px;align-items:center"></div></div><div id="inv-table"></div></div>`, {v1: hasPermission('inventory_import')?t('gen.L2829.1','<button class="btn btn-secondary btn-sm" onclick="openInvBatchImport()">📥 导入库存</button>'):''});
+  // 筛选级联：根据当前已选条件动态刷新下拉可选项（仅库存总表页面）
+  try{ await refreshInvFilterOptions(); }catch(e){console.warn('filter-options load failed',e)}
   // 恢复库存总表保存的筛选状态（仅本页面 localStorage，不影响其他页面）
   try{
     const saved=JSON.parse(localStorage.getItem('psi_inv_filters_v1')||'null');
@@ -3292,6 +3286,33 @@ function buildInvTableHTML(data, cols, allCount, fmtLocalMoney, fmtCnyMoney){
 }
 
 // 同步库存表头与表体：列宽对齐 + 横向滚动位移同步
+
+// ===== 库存总表筛选级联（P1-1，仅库存总表页面）=====
+async function refreshInvFilterOptions(){
+  var fc=document.getElementById('inv-c'), fw=document.getElementById('inv-w'), fb=document.getElementById('inv-b');
+  if(!fc||!fw||!fb) return;
+  var c=fc.value||'', w=fw.value||'', b=fb.value||'';
+  try{
+    var opts=await api('/api/inventory/filter-options?country='+encodeURIComponent(c)+'&warehouse='+encodeURIComponent(w)+'&brand='+encodeURIComponent(b));
+    _rebuildInvSelect(fc, opts.countries, c);
+    _rebuildInvSelect(fw, opts.warehouses, w);
+    _rebuildInvSelect(fb, opts.brands, b);
+  }catch(e){ console.warn('filter-options refresh failed', e); }
+}
+function _rebuildInvSelect(sel, values, current){
+  sel.innerHTML='<option value="">全部</option>';
+  (values||[]).forEach(function(v){
+    var o=document.createElement('option'); o.value=v; o.textContent=v;
+    if(v===current) o.selected=true;
+    sel.appendChild(o);
+  });
+}
+async function onInvFilterChange(dim){
+  // 维度变化后刷新依赖下拉（保留已选有效条件），再重新拉取库存数据
+  await refreshInvFilterOptions();
+  loadInv();
+}
+
 function syncInvHeader(){
   var bw=document.getElementById('inv-body-wrap');
   var hw=document.getElementById('inv-thead-wrap');
@@ -3299,7 +3320,27 @@ function syncInvHeader(){
   var head=document.getElementById('inv-head-table');
   if(bw&&hw&&body&&head){
     bw.onscroll=function(){ hw.scrollLeft=this.scrollLeft; };
+    // P1-2：布局稳定（字体/异步内容回流）后再次同步，消除列宽漂移
+    if(!window._invSyncRAF){
+      window._invSyncRAF=true;
+      requestAnimationFrame(function(){ window._invSyncRAF=false; _syncInvHeaderInternal(); });
+    }
   }
+  if(!body||!head) return;
+  _syncInvHeaderInternal();
+  if(!window._invResizeBound){
+    window._invResizeBound=true;
+    window.addEventListener('resize', function(){ _syncInvHeaderInternal(); });
+    if(typeof ResizeObserver!=='undefined'){
+      try{ var ro=new ResizeObserver(function(){ _syncInvHeaderInternal(); }); ro.observe(document.body); }catch(e){}
+    }
+  }
+}
+
+// P1-2：列宽对齐核心（提取复用，供 rAF / ResizeObserver 调用）
+function _syncInvHeaderInternal(){
+  var body=document.getElementById('inv-body-table');
+  var head=document.getElementById('inv-head-table');
   if(!body||!head) return;
   var ref=body.querySelector('tbody tr');
   var hRow=head.querySelector('thead tr');
@@ -3311,7 +3352,6 @@ function syncInvHeader(){
     bCells[i].style.width=w+'px'; bCells[i].style.minWidth=w+'px';
     hCells[i].style.width=w+'px'; hCells[i].style.minWidth=w+'px';
   }
-  if(!window._invResizeBound){ window.addEventListener('resize', function(){ syncInvHeader(); }); window._invResizeBound=true; }
 }
 
 function renderInvCards(data, countryCurrency){
