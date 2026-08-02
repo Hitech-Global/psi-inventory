@@ -1,6 +1,6 @@
 {
   "name": "inventory-management-system",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "进销存管理系统 - 采购/库存/成本/付款全流程",
   "main": "server.js",
   "scripts": {
