@@ -627,6 +627,33 @@ function initDatabase() {
   d.exec(`CREATE INDEX IF NOT EXISTS idx_sales_records_valid ON sales_records(is_valid_order)`);
   d.exec(`CREATE INDEX IF NOT EXISTS idx_sales_records_batch ON sales_records(import_batch_id)`);
 
+  // 销售导入控制表：记录可恢复的阶段进度、幂等指纹和最终结果。
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS sales_import_runs (
+      import_id TEXT PRIMARY KEY,
+      status TEXT NOT NULL,
+      phase TEXT NOT NULL DEFAULT '',
+      percent INTEGER,
+      processed_count INTEGER NOT NULL DEFAULT 0,
+      total_count INTEGER NOT NULL DEFAULT 0,
+      inserted INTEGER NOT NULL DEFAULT 0,
+      updated INTEGER NOT NULL DEFAULT 0,
+      skipped INTEGER NOT NULL DEFAULT 0,
+      failed INTEGER NOT NULL DEFAULT 0,
+      errors_json TEXT NOT NULL DEFAULT '[]',
+      timings_json TEXT NOT NULL DEFAULT '{}',
+      metrics_json TEXT NOT NULL DEFAULT '{}',
+      result_json TEXT NOT NULL DEFAULT '{}',
+      commit_state TEXT NOT NULL DEFAULT 'uncommitted',
+      recalc_status TEXT NOT NULL DEFAULT 'pending',
+      request_fingerprint TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+  d.exec(`CREATE INDEX IF NOT EXISTS idx_sales_import_runs_status ON sales_import_runs(status)`);
+  d.exec(`CREATE INDEX IF NOT EXISTS idx_sales_import_runs_updated ON sales_import_runs(updated_at)`);
+
   // 补货建议
   d.exec(`
     CREATE TABLE IF NOT EXISTS replenishment_suggestions (

@@ -1,0 +1,47 @@
+{
+  "checkpoint": "3-progress-idempotency-and-scale",
+  "status": "passed_disposable_sqlite_and_postgresql",
+  "control_table": "sales_import_runs",
+  "phases": ["validating", "staging", "matching", "writing", "committing", "inventory_recalc", "completed"],
+  "sqlite": {
+    "rows": 24,
+    "result": {"total": 24, "inserted": 24, "updated": 0, "skipped": 0, "failed": 0, "errors": []},
+    "persisted_terminal_status": "completed",
+    "phase_observation": true
+  },
+  "postgres": {
+    "version": "18.4",
+    "rows": 24,
+    "result": {"total": 24, "inserted": 24, "updated": 0, "skipped": 0, "failed": 0, "errors": []},
+    "persisted_terminal_status": "completed",
+    "phase_observation": true
+  },
+  "terminal_outcomes_verified": [
+    "failed_uncommitted",
+    "unknown_pending_reconcile",
+    "sales_committed_recalc_failed"
+  ],
+  "scale_30k_pg_runs": [
+    {"run": 1, "elapsed_ms": 662, "validation_ms": 24.871583, "staging_ms": 150.993583, "matching_ms": 69.158958, "writing_ms": 367.565708, "committing_ms": 14.521959, "inventory_recalc_ms": 8, "round_trips": 65, "query_one": 0, "duplicate_rows": 0, "max_probe_ms": 2},
+    {"run": 2, "elapsed_ms": 603, "validation_ms": 19.253333, "staging_ms": 157.947333, "matching_ms": 61.848375, "writing_ms": 307.441542, "committing_ms": 19.446959, "inventory_recalc_ms": 7, "round_trips": 65, "query_one": 0, "duplicate_rows": 0, "max_probe_ms": 8},
+    {"run": 3, "elapsed_ms": 652, "validation_ms": 13.863041, "staging_ms": 166.3215, "matching_ms": 48.589208, "writing_ms": 369.948042, "committing_ms": 13.421958, "inventory_recalc_ms": 8, "round_trips": 65, "query_one": 0, "duplicate_rows": 0, "max_probe_ms": 8}
+  ],
+  "ordinary_db_probe_during_import": {"verified": true, "max_latency_ms": 8},
+  "http_30k_runs": [
+    {"run": 1, "http_status": 200, "status": "completed", "inserted": 30000, "failed": 0, "elapsed_ms": 1059, "inventory_recalc_ms": 61, "round_trips": 65, "query_one": 0, "ordinary_api_probe_count": 30, "max_probe_ms": 68},
+    {"run": 2, "http_status": 200, "status": "completed", "inserted": 30000, "failed": 0, "elapsed_ms": 1060, "inventory_recalc_ms": 43, "round_trips": 65, "query_one": 0, "ordinary_api_probe_count": 30, "max_probe_ms": 55},
+    {"run": 3, "http_status": 200, "status": "completed", "inserted": 30000, "failed": 0, "elapsed_ms": 867, "inventory_recalc_ms": 38, "round_trips": 65, "query_one": 0, "ordinary_api_probe_count": 25, "max_probe_ms": 54}
+  ],
+  "inventory_recalc": "synchronous; measured only; not detached",
+  "browser_ui": {
+    "environment": "isolated SQLite HTTP server on 127.0.0.1:4019",
+    "upload_preview": true,
+    "progress_rendered": true,
+    "terminal_progress": "completed / 100% / processed 1 of 1",
+    "result_rendered": true,
+    "duplicate_submission_guard": "covered by HTTP idempotency test",
+    "console_errors": 0,
+    "null_innerHTML": 0,
+    "temporary_diagnostic_logs": 0
+  }
+}

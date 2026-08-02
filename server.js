@@ -28,6 +28,13 @@ const crypto = require('crypto');
 const { query, queryOne, run, transaction, genId, initDatabase } = require('./db');
 const { withGenerateClient } = require('./pg-async'); // 专用异步 Pool：generate 不阻塞主线程
 const {
+  createSqliteSalesImportAdapter,
+  createPostgresSalesImportAdapter,
+  createSalesImportRunStore,
+  previewSalesImport,
+  executeSalesImport
+} = require('./sales-import-service');
+const {
   LANGUAGE_COOKIE_NAME,
   normalizeLanguage,
   resolveRequestLanguage,
@@ -2887,6 +2894,61 @@ app.post('/api/sales-data/bulk-import', requireApiPermission('outbound_create'),
 
 // ==================== 销售明细数据（新） ====================
 
+// 销售明细导入使用独立的异步批量适配器：SQLite 复用同一连接句柄，
+// PostgreSQL 直接使用原生 async DAL，避免把 1,000 条导入重新送入
+// db.js 的 Atomics.wait 同步包装器。其他业务模块仍走既有 db 接口。
+function createSalesImportAdapter() {
+  if ((process.env.DB_DRIVER || 'sqlite').toLowerCase() === 'pg') {
+    const pgSalesDb = require('./db-pg');
+    return createPostgresSalesImportAdapter(pgSalesDb, { batchSize: 1000 });
+  }
+  const sqliteSalesDb = require('./db-sqlite');
+  return createSqliteSalesImportAdapter(sqliteSalesDb, { batchSize: 80 });
+}
+
+function createSalesImportRunStoreForCurrentDb() {
+  const isPg = (process.env.DB_DRIVER || 'sqlite').toLowerCase() === 'pg';
+  return createSalesImportRunStore(isPg ? require('./db-pg') : require('./db-sqlite'));
+}
+
+function salesImportFingerprint(items) {
+  return crypto.createHash('sha256').update(JSON.stringify(Array.isArray(items) ? items : [])).digest('hex');
+}
+
+function salesImportResultBody(run) {
+  const result = run && run.result && Object.keys(run.result).length ? run.result : {};
+  return {
+    ...result,
+    total: run ? run.total_count : result.total,
+    inserted: run ? run.inserted : result.inserted,
+    updated: run ? run.updated : result.updated,
+    skipped: run ? run.skipped : result.skipped,
+    failed: run ? run.failed : result.failed,
+    errors: run ? run.errors : (result.errors || []),
+    import_id: run && run.import_id,
+    status: run && run.status,
+    phase: run && run.phase,
+    percent: run && run.percent,
+    processed_count: run && run.processed_count,
+    total_count: run && run.total_count,
+    timings: run && run.timings,
+    metrics: run && run.metrics,
+    commit_state: run && run.commit_state,
+    recalc_status: run && run.recalc_status
+  };
+}
+
+function isUncertainSalesImportError(error) {
+  const code = String(error && error.code || '').toUpperCase();
+  const message = String(error && error.message || '');
+  return ['ECONNRESET', 'ECONNABORTED', 'ETIMEDOUT', 'EPIPE', '57P01', '08006', '08003'].includes(code) ||
+    /connection (?:reset|terminated|closed)|socket hang up|network timeout|timeout.*connection/i.test(message);
+}
+
+function salesImportIdFactory() {
+  return () => genId('sale');
+}
+
 // 销售明细列表
 app.get('/api/sales-records', requireApiPermission('outbound_view'), asyncHandler((req, res) => {
   const { source_system, order_no, shop_platform, brand, sku_code, is_valid, start_date, end_date, import_batch_id } = req.query;
@@ -2914,155 +2976,130 @@ app.get('/api/sales-records/filter-options', requireApiPermission('outbound_view
 }));
 
 
-// 销售明细导入预览
-app.post('/api/sales-records/bulk-import-preview', requireApiPermission('outbound_view'), asyncHandler((req, res) => {
+// 销售明细导入预览：与正式导入共享 normalize / validate / candidate / classify。
+// 只写入临时 staging，不写正式 sales_records。
+app.post('/api/sales-records/bulk-import-preview', requireApiPermission('outbound_view'), asyncHandler(async (req, res) => {
   try {
     const items = req.body.items || [];
-    const preview = items.map((item, i) => {
-      const errors = [];
-      if (!item.sku_code) errors.push('SKU不能为空');
-      if (!item.order_date && item.order_date !== 0) errors.push('下单日期不能为空');
-      if (!item.source_system) errors.push('来源系统不能为空');
-      if (!item.order_no) errors.push('订单号不能为空');
-      // 后端兜底：日期标准化（前端结果为准，后端再次校验）
-      let normalizedDate = null;
-      if (item.order_date || item.order_date === 0) {
-        normalizedDate = normalizeOrderDate(item.order_date);
-        if (!normalizedDate) errors.push('下单日期格式无法识别：' + item.order_date);
-      }
-      // is_valid_order 转换
-      let isValid = 1;
-      if (item.is_valid_order !== undefined && item.is_valid_order !== '') {
-        const v = String(item.is_valid_order).toLowerCase().trim();
-        isValid = (v === 'true' || v === '1' || v === '是' || v === '有效') ? 1 : 0;
-      }
-      // 判断是否已存在（upsert预判）
-      let existing = null;
-      if (item.order_detail_id) {
-        existing = queryOne('SELECT id FROM sales_records WHERE source_system=? AND order_detail_id=?', [item.source_system, item.order_detail_id]);
-      }
-      if (!existing) {
-        existing = queryOne('SELECT id, is_valid_order, quantity, shop_platform, original_order_status, remark FROM sales_records WHERE source_system=? AND order_no=? AND sku_code=? AND COALESCE(shop_platform,\'\')=?',
-          [item.source_system, item.order_no, item.sku_code, item.shop_platform || '']);
-      }
-      let action = 'insert';
-      if (existing && errors.length === 0) {
-        // 判断是否有变化
-        if (existing.is_valid_order !== isValid ||
-            existing.quantity !== (parseInt(item.quantity) || 0) ||
-            (existing.shop_platform || '') !== (item.shop_platform || '') ||
-            (existing.original_order_status || '') !== (item.original_order_status || '') ||
-            (existing.remark || '') !== (item.remark || '')) {
-          action = 'update';
-        } else {
-          action = 'skip';
-        }
-      }
-      return {
-        row: i + 2,
-        source_system: item.source_system || '',
-        order_no: item.order_no || '',
-        order_date: item.order_date || '',
-        shop_platform: item.shop_platform || '',
-        brand: item.brand || '',
-        sku_code: item.sku_code || '',
-        quantity: parseInt(item.quantity) || 0,
-        is_valid_order: isValid,
-        original_order_status: item.original_order_status || '',
-        action,
-        errors
-      };
+    const preview = await previewSalesImport(createSalesImportAdapter(), items, {
+      importBatchId: '',
+      idFactory: salesImportIdFactory()
     });
-    res.json({ preview });
+    res.json({ preview: preview.preview });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
-// 销售明细导入（upsert）
-app.post('/api/sales-records/bulk-import', requireApiPermission('outbound_import'), asyncHandler((req, res) => {
-  try {
-    const items = req.body.items || [];
-    const batchId = genId('batch');
-    const result = { total: items.length, inserted: 0, updated: 0, skipped: 0, failed: 0, errors: [] };
+// 销售导入状态：支持长导入期间进度轮询及刷新后恢复查看。
+app.get('/api/sales-records/bulk-import/:importId/status', requireApiPermission('outbound_view'), asyncHandler(async (req, res) => {
+  const run = await createSalesImportRunStoreForCurrentDb().get(String(req.params.importId || ''));
+  if (!run) return res.status(404).json({ error: '导入任务不存在', import_id: req.params.importId });
+  res.json(salesImportResultBody(run));
+}));
 
-    transaction(() => {
-      items.forEach((item, i) => {
-        try {
-          if (!item.sku_code) { result.failed++; result.errors.push({ row: i + 2, reason: 'SKU不能为空' }); return; }
-          if (!item.source_system) { result.failed++; result.errors.push({ row: i + 2, reason: '来源系统不能为空' }); return; }
-          if (!item.order_no) { result.failed++; result.errors.push({ row: i + 2, reason: '订单号不能为空' }); return; }
-          // 后端兜底：日期标准化，无法识别则导入失败（保留行号+原始值+原因）
-          const normalizedDate = normalizeOrderDate(item.order_date);
-          if (!normalizedDate) {
-            result.failed++;
-            result.errors.push({ row: i + 2, reason: '下单日期格式无法识别：' + item.order_date });
-            return;
-          }
-          item.order_date = normalizedDate;
-
-          // is_valid_order 转换
-          let isValid = 1;
-          if (item.is_valid_order !== undefined && item.is_valid_order !== '') {
-            const v = String(item.is_valid_order).toLowerCase().trim();
-            isValid = (v === 'true' || v === '1' || v === '是' || v === '有效') ? 1 : 0;
-          }
-          const qty = parseInt(item.quantity) || 0;
-          const shop = item.shop_platform || '';
-          const orderDetailId = item.order_detail_id || '';
-          const origStatus = item.original_order_status || '';
-          const remark = item.remark || '';
-          const brand = item.brand || '';
-
-          // 查找已有记录 —— 优先用 order_detail_id
-          let existing = null;
-          if (orderDetailId) {
-            existing = queryOne('SELECT id, is_valid_order, quantity, shop_platform, original_order_status, brand, remark FROM sales_records WHERE source_system=? AND order_detail_id=?', [item.source_system, orderDetailId]);
-          }
-          if (!existing) {
-            existing = queryOne('SELECT id, is_valid_order, quantity, shop_platform, original_order_status, brand, remark FROM sales_records WHERE source_system=? AND order_no=? AND sku_code=? AND COALESCE(shop_platform,\'\')=?',
-              [item.source_system, item.order_no, item.sku_code, shop]);
-          }
-
-          if (existing) {
-            // 判断是否有变化
-            const changed = existing.is_valid_order !== isValid ||
-              existing.quantity !== qty ||
-              (existing.shop_platform || '') !== shop ||
-              (existing.original_order_status || '') !== origStatus ||
-              (existing.brand || '') !== brand ||
-              (existing.remark || '') !== remark;
-            if (changed) {
-              run(`UPDATE sales_records SET order_date=?, shop_platform=?, brand=?, quantity=?, is_valid_order=?, original_order_status=?, remark=?, import_batch_id=?, updated_at=datetime('now') WHERE id=?`,
-                [item.order_date, shop, brand, qty, isValid, origStatus, remark, batchId, existing.id]);
-              result.updated++;
-            } else {
-              result.skipped++;
-            }
-          } else {
-            run(`INSERT INTO sales_records (id, source_system, order_no, order_detail_id, order_date, shop_platform, brand, sku_code, quantity, is_valid_order, original_order_status, remark, import_batch_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              [genId('sale'), item.source_system, item.order_no, orderDetailId, item.order_date, shop, brand, item.sku_code, qty, isValid, origStatus, remark, batchId]);
-            result.inserted++;
-          }
-        } catch (e) {
-          if (e.message && e.message.includes('UNIQUE')) {
-            result.skipped++;
-            result.errors.push({ row: i + 2, reason: '重复记录（唯一约束）' });
-          } else {
-            result.failed++;
-            result.errors.push({ row: i + 2, reason: e.message });
-          }
-        }
+// 销售明细导入（集合化 upsert；同步事务边界保持不变）
+app.post('/api/sales-records/bulk-import', requireApiPermission('outbound_import'), asyncHandler(async (req, res) => {
+  const items = req.body.items || [];
+  const importId = String(req.body.import_id || genId('sales-import')).slice(0, 180);
+  const fingerprint = salesImportFingerprint(items);
+  const store = createSalesImportRunStoreForCurrentDb();
+  const existing = await store.get(importId);
+  const terminalStatuses = new Set(['completed', 'failed_uncommitted', 'sales_committed_recalc_failed']);
+  const activeStatuses = new Set(['validating', 'staging', 'matching', 'writing', 'committing', 'inventory_recalc', 'unknown_pending_reconcile']);
+  if (existing) {
+    if (existing.request_fingerprint && existing.request_fingerprint !== fingerprint) {
+      return res.status(409).json({ error: 'import_id 已存在且导入内容不一致', import_id: importId, status: existing.status });
+    }
+    if (terminalStatuses.has(existing.status)) return res.json({ ...salesImportResultBody(existing), duplicate: true });
+    if (activeStatuses.has(existing.status)) return res.status(202).json({ ...salesImportResultBody(existing), duplicate: true });
+  }
+  if (!existing) {
+    try {
+      await store.create({
+        import_id: importId, status: 'validating', phase: 'validating', percent: 0,
+        total_count: Array.isArray(items) ? items.length : 0,
+        request_fingerprint: fingerprint
       });
+    } catch (createError) {
+      // A concurrent retry may have won the unique import_id race. Re-read and
+      // return its state rather than submitting the sales rows twice.
+      const raced = await store.get(importId);
+      if (raced) return res.status(202).json({ ...salesImportResultBody(raced), duplicate: true });
+      throw createError;
+    }
+  }
+
+  let salesCommitted = false;
+  const progress = state => store.update(importId, {
+    ...state,
+    total_count: Array.isArray(items) ? items.length : 0,
+    commit_state: state.commit_state || (salesCommitted ? 'committed' : 'uncommitted'),
+    result: {
+      total: Array.isArray(items) ? items.length : 0,
+      inserted: state.inserted || 0,
+      updated: state.updated || 0,
+      skipped: state.skipped || 0,
+      failed: state.failed || 0,
+      errors: state.errors || []
+    }
+  });
+  try {
+    const batchId = genId('batch');
+    const applied = await executeSalesImport(createSalesImportAdapter(), items, {
+      importBatchId: batchId,
+      idFactory: salesImportIdFactory(),
+      progress
+    });
+    salesCommitted = true;
+
+    const recalcStart = Date.now();
+    const recalcTimings = { ...applied.timings };
+    await progress({
+      status: 'inventory_recalc', phase: 'inventory_recalc', percent: 95,
+      processed_count: items.length, total_count: items.length,
+      inserted: applied.result.inserted, updated: applied.result.updated,
+      skipped: applied.result.skipped, failed: applied.result.failed,
+      errors: applied.result.errors, timings: recalcTimings,
+      metrics: applied.metrics, commit_state: 'committed', recalc_status: 'running'
     });
 
-    // 导入后重新计算受影响SKU的周转月
+    // 库存重算仍沿用现有同步逻辑；本阶段只测量导入集合化收益，不拆离库存刷新。
     const affectedSkus = [...new Set(items.filter(i => i.sku_code).map(i => i.sku_code))];
     affectedSkus.forEach(sku => {
       const invs = query('SELECT country, warehouse FROM inventory WHERE sku_code = ?', [sku]).rows;
       invs.forEach(inv => recalcInventoryForSku(sku, inv.country, inv.warehouse));
     });
 
-    res.json(result);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    recalcTimings.inventory_recalc_ms = Date.now() - recalcStart;
+    recalcTimings.total_ms = Number(applied.timings.total_ms || 0) + recalcTimings.inventory_recalc_ms;
+    const completed = await store.update(importId, {
+      status: 'completed', phase: 'completed', percent: 100,
+      processed_count: items.length, total_count: items.length,
+      inserted: applied.result.inserted, updated: applied.result.updated,
+      skipped: applied.result.skipped, failed: applied.result.failed,
+      errors: applied.result.errors, timings: recalcTimings, metrics: applied.metrics,
+      result: applied.result, commit_state: 'committed', recalc_status: 'completed'
+    });
+    res.json(salesImportResultBody(completed));
+  } catch (e) {
+    const uncertain = !salesCommitted && isUncertainSalesImportError(e);
+    const status = salesCommitted ? 'sales_committed_recalc_failed' : (uncertain ? 'unknown_pending_reconcile' : 'failed_uncommitted');
+    const commitState = salesCommitted ? 'committed' : (uncertain ? 'unknown' : 'uncommitted');
+    const recalcStatus = salesCommitted ? 'failed' : 'not_started';
+    const currentRun = await store.get(importId);
+    const currentResult = currentRun && currentRun.result || {};
+    const failedRun = await store.update(importId, {
+      status, phase: status, percent: salesCommitted ? 95 : null,
+      total_count: items.length, errors: [{ row: 0, reason: e.message }],
+      commit_state: commitState, recalc_status: recalcStatus,
+      result: { total: items.length, inserted: currentRun ? currentRun.inserted : (currentResult.inserted || 0),
+        updated: currentRun ? currentRun.updated : (currentResult.updated || 0),
+        skipped: currentRun ? currentRun.skipped : (currentResult.skipped || 0),
+        failed: currentRun ? currentRun.failed : (currentResult.failed || 0), errors: [{ row: 0, reason: e.message }] }
+    });
+    const body = salesImportResultBody(failedRun || { import_id: importId, status, errors: [{ row: 0, reason: e.message }] });
+    if (status === 'sales_committed_recalc_failed') return res.status(200).json(body);
+    res.status(500).json({ ...body, error: e.message });
+  }
 }));
 
 // ==================== 补货建议 ====================

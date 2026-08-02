@@ -1,0 +1,80 @@
+{
+  "checkpoint": "2-database-equivalence-and-performance",
+  "status": "passed_live_isolated_postgresql",
+  "checkpoint1_baseline_fixtures": 9,
+  "route_integration": {
+    "preview": "POST /api/sales-records/bulk-import-preview",
+    "apply": "POST /api/sales-records/bulk-import",
+    "response_shape_preserved": true,
+    "shared_service": "sales-import-service.js"
+  },
+  "sqlite": {
+    "fixture_count": 3,
+    "preview_no_formal_write": true,
+    "result_matches_shared_baseline": true,
+    "query_one": 0,
+    "benchmark_1000": {
+      "inserted": 750,
+      "updated": 250,
+      "skipped": 0,
+      "failed": 0,
+      "elapsed_ms": 193,
+      "validation_ms": 1.0095840000000038,
+      "staging_ms": 4.937875000000005,
+      "matching_ms": 165.01883300000003,
+      "writing_ms": 20.613,
+      "committing_ms": 0.4098329999999919,
+      "inventory_recalc_ms": null,
+      "total_ms": 191.99337500000001,
+      "query": 11,
+      "query_one": 0,
+      "run": 32,
+      "round_trips": 43,
+      "rss_mb": 75
+    }
+  },
+  "postgres": {
+    "staging_jsonb": true,
+    "set_based_update_insert": true,
+    "query_one": 0,
+    "live_isolated_database_available": true,
+    "postgres_version": "18.4",
+    "live_fixture_count": 3,
+    "live_1000": {
+      "inserted": 750,
+      "updated": 250,
+      "failed": 0,
+      "elapsed_ms": 35,
+      "validation_ms": 0.878167000000019,
+      "staging_ms": 7.66179200000002,
+      "matching_ms": 7.910082999999986,
+      "writing_ms": 12.366834000000011,
+      "committing_ms": 5.333499999999987,
+      "total_ms": 34.16779100000002,
+      "query": 1,
+      "query_one": 0,
+      "run": 6,
+      "round_trips": 7,
+      "rss_mb": 70
+    },
+    "rollback_verified": true,
+    "live_explain": {
+      "staging_exists_plan": "Hash Join",
+      "point_lookup_plan": "Index Scan",
+      "point_lookup_index": "idx_sales_records_source_detail_nonempty",
+      "point_lookup_actual_rows": 1,
+      "point_lookup_execution_ms": 0.023,
+      "staging_exists_execution_ms": 1.003
+    }
+  },
+  "index": {
+    "schema_source_checked": ["db-pg.js", "db-sqlite.js"],
+    "source_detail_partial_index_declared_in_repo": false,
+    "live_pg_schema_checked": false,
+    "migration_prepared": "sales-import-pg-index.sql",
+    "applied": false,
+    "unique_constraint_added": false
+  },
+  "inventory_recalculation": "unchanged synchronous route; not detached in Checkpoint 2",
+  "verification_script": "scripts/verify-sales-import-bulk.js"
+}

@@ -2776,6 +2776,7 @@ function openSalesBatchImport(){
         '</div>'+
       '</div>'+
       '<div id="sales-preview-stats" style="margin-top:16px"></div>'+
+      '<div id="sales-progress" style="margin-top:16px"></div>'+
       '<div id="sales-result" style="margin-top:16px"></div>'+
     '</div>',
     '<button class="btn btn-secondary" onclick="downloadSalesTemplate()">'+t("html.inv.download_tpl", "下载模板")+'</button>'+
@@ -2783,7 +2784,75 @@ function openSalesBatchImport(){
     '<button class="btn btn-primary" id="sales-import-btn" onclick="submitSalesBatchImport()" disabled>'+t("html.inv.start_import", "开始导入")+'</button>'
   );
   window._salesImportData=[];
+  resumeSalesImport();
 }
+
+var salesImportStatusPollTimer=null;
+var salesImportStatusTerminal=false;
+function salesImportSessionId(){try{return sessionStorage.getItem('sales_import_id')||''}catch(_){return ''}}
+function setSalesImportSessionId(id){try{if(id)sessionStorage.setItem('sales_import_id',id);else sessionStorage.removeItem('sales_import_id')}catch(_){} }
+function salesImportPhaseLabel(phase){return ({validating:'校验中',staging:'准备导入',matching:'匹配已有记录',writing:'写入销售数据',committing:'提交事务',inventory_recalc:'刷新库存',completed:'导入完成',failed_uncommitted:'导入失败，数据未写入',unknown_pending_reconcile:'导入结果待确认',sales_committed_recalc_failed:'销售数据已导入，库存重算失败'})[phase]||'处理中'}
+function stopSalesImportPolling(){if(salesImportStatusPollTimer){clearTimeout(salesImportStatusPollTimer);salesImportStatusPollTimer=null}}
+function renderSalesImportProgress(run){
+  var el=document.getElementById('sales-progress'); if(!el||!run)return;
+  var pct=run.percent===null||run.percent===undefined?'':String(run.percent)+'%';
+  var count=(run.processed_count===undefined?'':String(run.processed_count)+' / '+String(run.total_count||0));
+  var active=!['completed','failed_uncommitted','sales_committed_recalc_failed'].includes(run.status);
+  var color=run.status==='completed'?'#52c41a':(run.status==='failed_uncommitted'?'#ff4d4f':(run.status==='sales_committed_recalc_failed'?'#faad14':'#1890ff'));
+  el.innerHTML='<div style="border:1px solid #d9e8ff;background:#f7fbff;border-radius:8px;padding:12px 14px;font-size:13px">'+
+    '<div style="display:flex;justify-content:space-between;gap:12px"><b style="color:'+color+'">'+esc(salesImportPhaseLabel(run.phase||run.status))+'</b><span>'+esc(pct)+'</span></div>'+
+    '<div style="height:6px;background:#e6f4ff;border-radius:4px;margin:8px 0"><div style="height:6px;width:'+(run.percent==null?0:Math.max(0,Math.min(100,run.percent)))+'%;background:'+color+';border-radius:4px"></div></div>'+
+    '<div style="color:#666">已处理 '+esc(count)+(active?'，请勿重复提交':'')+'</div></div>';
+}
+function renderSalesImportResult(res){
+  var status=res.status||'completed';
+  window._lastSalesImportErrors=res.errors||[];
+  var failed=Number(res.failed||0);
+  var heading=status==='failed_uncommitted'?'导入失败，数据未写入':status==='unknown_pending_reconcile'?'导入结果待确认':status==='sales_committed_recalc_failed'?'销售数据已导入，库存重算失败':'导入完成报告';
+  var bg=status==='completed'?(failed>0?'#fffbe6':'#f6ffed'):(status==='sales_committed_recalc_failed'?'#fffbe6':'#fff1f0');
+  var border=status==='completed'?(failed>0?'#ffe58f':'#b7eb8f'):(status==='sales_committed_recalc_failed'?'#ffe58f':'#ffa39e');
+  var html='<div style="background:'+bg+';border:1px solid '+border+';border-radius:8px;padding:14px 16px;font-size:13px">'+
+    '<div style="font-weight:600;margin-bottom:8px">'+heading+'</div>'+
+    '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">'+
+      '总行数：'+(res.total||res.total_count||0)+' 条'+
+      '<span style="color:#52c41a">新增：'+(res.inserted||0)+' 条</span>'+
+      '<span style="color:#1890ff">更新：'+(res.updated||0)+' 条</span>'+
+      '<span style="color:#faad14">重复无变化：'+(res.skipped||0)+' 条</span>'+
+      '<span style="color:#ff3b30">失败：'+failed+' 条</span></div>';
+  if(window._lastSalesImportErrors.length>0){
+    html+='<div style="margin-top:10px"><div style="font-weight:600;color:#ff3b30;margin-bottom:6px">失败明细</div>';
+    html+=window._lastSalesImportErrors.slice(0,20).map(function(e){return '<div style="color:#666">第 '+e.row+' 行：'+esc(e.reason)+'</div>'}).join('');
+    if(window._lastSalesImportErrors.length>20)html+='<div style="color:#999">还有 '+(window._lastSalesImportErrors.length-20)+' 条失败...</div>';
+    html+='<button type="button" class="btn btn-secondary" style="margin-top:10px" onclick="downloadSalesImportErrors()">下载失败明细</button></div>';
+  }
+  html+='</div>';
+  var el=document.getElementById('sales-result'); if(el)el.innerHTML=html;
+  return status;
+}
+async function pollSalesImportStatus(importId){
+  if(!importId)return;
+  try{
+    var run=await api('/api/sales-records/bulk-import/'+encodeURIComponent(importId)+'/status');
+    renderSalesImportProgress(run);
+    var terminal=['completed','failed_uncommitted','sales_committed_recalc_failed','unknown_pending_reconcile'].includes(run.status);
+    if(terminal){
+      salesImportStatusTerminal=true;stopSalesImportPolling();renderSalesImportResult(run);if(run.status!=='unknown_pending_reconcile')setSalesImportSessionId('');
+      var btn=document.getElementById('sales-import-btn');if(btn){btn.disabled=false;btn.textContent=t('app.067','开始导入')}
+      if(run.status==='completed')showToast(t('toast.importDone4','导入完成：新增{c}，更新{u}，重复{s}，失败{f}',{c:run.inserted||0,u:run.updated||0,s:run.skipped||0,f:run.failed||0}),run.failed>0?'warning':'success');
+      else if(run.status==='sales_committed_recalc_failed')showToast('销售数据已导入，库存重算失败','warning');
+      else showToast(run.status==='unknown_pending_reconcile'?'导入结果待确认':'导入失败，数据未写入','danger');
+      return run;
+    }
+    salesImportStatusPollTimer=setTimeout(function(){pollSalesImportStatus(importId)},600);
+    return run;
+  }catch(e){
+    // 状态轮询失败不触发重复提交；下一次轮询继续尝试恢复状态。
+    var el=document.getElementById('sales-progress');if(el)el.innerHTML='<div style="padding:10px;color:#666">导入处理中，正在恢复状态…</div>';
+    salesImportStatusPollTimer=setTimeout(function(){pollSalesImportStatus(importId)},1200);
+  }
+}
+function startSalesImportPolling(importId){stopSalesImportPolling();salesImportStatusTerminal=false;pollSalesImportStatus(importId)}
+function resumeSalesImport(){var id=salesImportSessionId();if(id)startSalesImportPolling(id)}
 
 function handleSalesFile(file){
   if(!file)return;
@@ -2917,7 +2986,7 @@ function downloadSalesTemplate(){
   XLSX.writeFile(wb,t("app.647", "\u9500\u552e\u6570\u636e_\u5bfc\u5165\u6a21\u677f.xlsx"));
 }
 
-async function submitSalesBatchImport(){
+async function legacySubmitSalesBatchImport(){
   var records=window._salesImportData||[];
   var valid=records.filter(function(r){return r._errors.length===0});
   if(valid.length===0){showToast(t("toast.no_valid_data", "没有可导入的有效数据"),'danger');return}
@@ -2955,6 +3024,39 @@ async function submitSalesBatchImport(){
     showToast(e.message||t("toast.import_failed", "导入失败"),'danger');
   }finally{
     btn.disabled=false;btn.textContent=t("app.067", "\u5f00\u59cb\u5bfc\u5165");
+  }
+}
+
+// Phase 1/Checkpoint 3 override: import_id/idempotent submission and real
+// server-side progress.  Kept local to the sales import page.
+async function submitSalesBatchImport(){
+  var records=window._salesImportData||[];
+  var valid=records.filter(function(r){return r._errors.length===0});
+  if(valid.length===0){showToast(t("toast.no_valid_data", "没有可导入的有效数据"),'danger');return}
+  var btn=document.getElementById('sales-import-btn');
+  if(!btn||window._salesImportSubmitting)return;
+  window._salesImportSubmitting=true;btn.disabled=true;btn.textContent=t("app.613", "\u5bfc入中...");
+  var importId='';
+  try{importId=(window.crypto&&crypto.randomUUID)?crypto.randomUUID():'sales-import-'+Date.now()+'-'+Math.random().toString(36).slice(2)}catch(_){importId='sales-import-'+Date.now()}
+  setSalesImportSessionId(importId);startSalesImportPolling(importId);
+  try{
+    var items=valid.map(function(r){var o={};SALES_IMPORT_COLUMNS.forEach(function(c){o[c.key]=r[c.key]!==undefined?r[c.key]:''});return o});
+    var res=await api('/api/sales-records/bulk-import','POST',{items:items,import_id:importId});
+    renderSalesImportProgress(res);
+    if(['completed','failed_uncommitted','sales_committed_recalc_failed','unknown_pending_reconcile'].includes(res.status)){
+      renderSalesImportResult(res);stopSalesImportPolling();salesImportStatusTerminal=true;
+      if(res.status!=='unknown_pending_reconcile')setSalesImportSessionId('');
+      if(res.status==='completed')showToast(t('toast.importDone4','导入完成：新增{c}，更新{u}，重复{s}，失败{f}',{c:res.inserted||0,u:res.updated||0,s:res.skipped||0,f:res.failed||0}),res.failed>0?'warning':'success');
+      else if(res.status==='sales_committed_recalc_failed')showToast('销售数据已导入，库存重算失败','warning');
+      else if(res.status==='unknown_pending_reconcile')showToast('导入结果待确认','warning');
+      else showToast('导入失败，数据未写入','danger');
+      loadSales();
+    }
+  }catch(e){
+    var progressEl=document.getElementById('sales-progress');if(progressEl)progressEl.innerHTML='<div style="padding:10px;color:#666">导入请求未及时返回，正在通过 import_id 确认结果…</div>';
+  }finally{
+    window._salesImportSubmitting=false;
+    if(salesImportStatusTerminal){btn.disabled=false;btn.textContent=t("app.067", "\u5f00始导入")}
   }
 }
 

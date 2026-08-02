@@ -1,0 +1,31 @@
+{
+  "checkpoint": "1-rule-equivalence",
+  "source": "server.js sales-records bulk-import formal loop",
+  "preview_compatibility": "new preview follows new apply classification; old preview-only deviations are not preserved",
+  "fixtures": [
+    "insert",
+    "existing_exact_skip",
+    "existing_mutable_update",
+    "date_only_is_skip",
+    "same_detail_insert_then_update",
+    "same_business_key_exact_duplicate",
+    "same_business_key_changed_value",
+    "invalid_does_not_block_next_valid",
+    "detail_identity_does_not_rewrite_business_identity"
+  ],
+  "rules": {
+    "detail_id_priority": true,
+    "business_key_fallback": true,
+    "input_order_is_authoritative": true,
+    "later_valid_change_wins": true,
+    "identical_duplicate_is_skip": true,
+    "date_only_change_is_not_update": true,
+    "invalid_row_does_not_change_state": true,
+    "original_row_number_is_index_plus_two": true
+  },
+  "old_preview_deviations": [
+    "file-internal duplicates are not simulated by old preview",
+    "existing order_detail_id preview selects only id and therefore predicts update even when formal apply skips",
+    "old preview does not load brand while formal apply compares brand"
+  ]
+}
