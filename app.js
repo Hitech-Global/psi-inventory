@@ -3172,7 +3172,7 @@ async function loadInv(){
     // 否则 overflow-x:auto 会使其成为滚动容器，导致 thead sticky 相对容器而非视口，表头随页面滚走。
     if(!document.getElementById('inv-freeze-style')){
       var __st=document.createElement('style'); __st.id='inv-freeze-style';
-      __st.textContent='#inv-table .inv-thead-wrap{position:sticky;top:48px;z-index:40;overflow:hidden;background:#fafbfc;box-shadow:0 2px 4px rgba(0,0,0,.08)}#inv-table .inv-thead-wrap .data-table{margin:0}#inv-table .inv-body-wrap{overflow-x:auto}#inv-table .data-table thead .col-sticky{z-index:4}';
+      __st.textContent='#inv-table .inv-thead-wrap{position:sticky;top:-12px;z-index:40;overflow:hidden;background:#fafbfc;box-shadow:0 2px 4px rgba(0,0,0,.08)}#inv-table .inv-thead-wrap .data-table{margin:0}#inv-table .inv-body-wrap{overflow-x:auto}#inv-table .data-table thead .col-sticky{z-index:4}';
       document.head.appendChild(__st);
     }
     // 2) 库存数据截止日期（独立信息区域，复用现有 snapshot_cutoff_date；汇率之后、指标卡之前）
@@ -3227,7 +3227,8 @@ async function loadInv(){
 // 库存总表指标卡：根据当前筛选结果实时汇总（仅本页面，复用 loadInv 已构建的 countryCurrency）
 
 // 库存总表表头/表体拆分滚动（2026-08-02 修复）
-// 纵向：浏览器页面滚动，表头独立 sticky 钉在固定导航下方(top:48px)；
+// 纵向：滚动容器是 .content(overflow-y:auto, padding-top:12px)，不是 viewport；
+// 故 sticky top 用 -12px 抵消 .content 的 padding-top，使表头贴合 topbar 下沿；
 // 横向：表体容器 overflow-x:auto 自身横向滚动；表头与表体列宽+横向位移同步，保持对齐。
 // 仅前端 app.js，不改 server.js / DB / index.html 全局 / 其他页面 / 表格列与数据。
 function buildInvTableHTML(data, cols, allCount, fmtLocalMoney, fmtCnyMoney){
