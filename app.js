@@ -3178,7 +3178,7 @@ async function loadInv(){
     // 否则 overflow-x:auto 会使其成为滚动容器，导致 thead sticky 相对容器而非视口，表头随页面滚走。
     if(!document.getElementById('inv-freeze-style')){
       var __st=document.createElement('style'); __st.id='inv-freeze-style';
-      __st.textContent='#inv-table .table-container{overflow:visible}#inv-table .data-table thead th{position:sticky;top:0;z-index:3;background:#fafbfc}#inv-table .data-table thead .col-sticky{z-index:4}';
+      __st.textContent='#inv-table .inv-thead-wrap{position:sticky;top:48px;z-index:40;overflow:hidden;background:#fafbfc;box-shadow:0 2px 4px rgba(0,0,0,.08)}#inv-table .inv-thead-wrap .data-table{margin:0}#inv-table .inv-body-wrap{overflow-x:auto}#inv-table .data-table thead .col-sticky{z-index:4}';
       document.head.appendChild(__st);
     }
     // 2) 库存数据截止日期（独立信息区域，复用现有 snapshot_cutoff_date；汇率之后、指标卡之前）
@@ -3224,10 +3224,24 @@ async function loadInv(){
     const cols = ['SKU',t("app.113", "\u56fd\u5bb6"),t("app.114", "\u4ed3\u5e93"),t("app.112", "\u54c1\u724c"),t("col.available", "可用"),t("app.655", "\u5b89\u5168\u5e93\u5b58"),t("col.in_transit", "在途"),t("app.656", "PI\u672a\u53d1"),t("app.657", "PO\u672a\u786e"),t("app.619", "\u52a0\u6743\u6210\u672c"),t("app.658", "\u5e93\u5b58\u91d1\u989d(\u672c\u5e01)"),t("app.659", "\u5e93\u5b58\u91d1\u989d(\u00a5)"),t("app.660", "\u76ee\u6807\u5468\u8f6c"),t("app.661", "\u5b9e\u9645\u5468\u8f6c"),t("app.662", "\u6700\u540e\u5165\u5e93"),t("app.663", "\u8ddd\u6700\u540e\u5165\u5e93\u5929\u6570"),t("app.664", "\u5e93\u9f84\u98ce\u9669"),t("app.665", "\u9996\u6b21\u5165\u5e93"),t("app.666", "\u5e93\u5b58\u5feb\u7167\u622a\u6b62"),t("app.667", "\u6700\u540e\u51fa\u5e93"),t("col.inv_status", "库存状态"),t("app.668", "\u91cd\u70b9\u5173\u6ce8"),t("col.remark", "备注")];
     const invTable=document.getElementById('inv-table');
     if(!invTable) return; // 竞态/页面切换时容器可能已不存在，静默退出避免 null 报错
-    invTable.innerHTML=t('html.loadInv', '<div class="table-container" style="box-shadow:none;border-radius:0;max-width:100%"><table class="data-table"><thead><tr><th class="col-sticky" style="width:32px;left:0;background:#fafbfc"><input type="checkbox" id="inv-check-all" onchange="toggleAllInv(this.checked)"></th><th class="col-sticky" style="white-space:nowrap;left:32px;background:#fafbfc">SKU<br><a href="javascript:void(0)" onclick="selectAllInvFiltered()" style="font-size:11px;color:var(--primary,#2e7d32)">全选全部({v1})</a></th>{v2}</tr></thead><tbody>{v3}</tbody></table></div>', {v1: invAllFilteredIds.length, v2: cols.slice(1).map(h=>'<th>'+h+'</th>').join(''), v3: !data.length?'<tr><td colspan="'+(cols.length+1)+t('gen.L2908.1','" style="text-align:center;padding:30px;color:#999">暂无库存数据</td></tr>')
-      :data.map(i=>{
+    invTable.innerHTML = buildInvTableHTML(data, cols, invAllFilteredIds.length);
+    syncInvHeader();
+    renderInvCards(data, countryCurrency);
+  }catch(e){showFlash(e.message,'danger')}
+}
+
+// 库存总表指标卡：根据当前筛选结果实时汇总（仅本页面，复用 loadInv 已构建的 countryCurrency）
+
+// 库存总表表头/表体拆分滚动（2026-08-02 修复）
+// 纵向：浏览器页面滚动，表头独立 sticky 钉在固定导航下方(top:48px)；
+// 横向：表体容器 overflow-x:auto 自身横向滚动；表头与表体列宽+横向位移同步，保持对齐。
+// 仅前端 app.js，不改 server.js / DB / index.html 全局 / 其他页面 / 表格列与数据。
+function buildInvTableHTML(data, cols, allCount){
+  const thead='<tr><th class="col-sticky" style="width:32px;left:0;background:#fafbfc"><input type="checkbox" id="inv-check-all" onchange="toggleAllInv(this.checked)"></th><th class="col-sticky" style="white-space:nowrap;left:32px;background:#fafbfc">SKU<br><a href="javascript:void(0)" onclick="selectAllInvFiltered()" style="font-size:11px;color:var(--primary,#2e7d32)">全选全部('+allCount+')</a></th>'+cols.slice(1).map(h=>'<th>'+h+'</th>').join('');
+  const tbody = !data.length
+    ? '<tr><td colspan="'+(cols.length+1)+t('gen.L2908.1','" style="text-align:center;padding:30px;color:#999">暂无库存数据</td></tr>')
+    : data.map(i=>{
         var invVal = (i.available_qty||0)*(i.weighted_avg_cost||0);
-        // 计算距最后入库天数和库龄风险
         var daysSinceLastInbound = '-';
         var agingRisk = '-';
         var agingRiskClass = '';
@@ -3237,13 +3251,13 @@ async function loadInv(){
             var diffMs = new Date() - d;
             var diffDays = Math.floor(diffMs / (1000*60*60*24));
             daysSinceLastInbound = diffDays;
-            if(diffDays <= 90){agingRisk=t("inventory.005", "\u6b63\u5e38");agingRiskClass='status-completed';}
-            else if(diffDays <= 180){agingRisk=t("app.670", "\u5173\u6ce8");agingRiskClass='status-warning';}
-            else if(diffDays <= 365){agingRisk=t("app.671", "\u9ad8\u5e93\u9f84");agingRiskClass='status-danger';}
-            else{agingRisk=t("app.672", "\u8d85\u9ad8\u5e93\u9f84");agingRiskClass='status-danger';}
+            if(diffDays <= 90){agingRisk=t("inventory.005", "正常");agingRiskClass='status-completed';}
+            else if(diffDays <= 180){agingRisk=t("app.670", "关注");agingRiskClass='status-warning';}
+            else if(diffDays <= 365){agingRisk=t("app.671", "高库龄");agingRiskClass='status-danger';}
+            else{agingRisk=t("app.672", "超高库龄");agingRiskClass='status-danger';}
           }
         } else {
-          agingRisk = t("app.673", "\u672a\u77e5");
+          agingRisk = t("app.673", "未知");
           agingRiskClass = 'status-warning';
         }
         return '<tr>'
@@ -3263,7 +3277,7 @@ async function loadInv(){
         +'<td class="text-right">'+(i.target_turnover_months||0)+'</td>'
         +'<td class="text-right">'+(i.turnover_months||0)+'</td>'
         +'<td class="cell-date">'+fmtDate(i.last_inbound_date)+'</td>'
-        +'<td class="text-right">'+(daysSinceLastInbound!=='-'?daysSinceLastInbound+t('gen.L2947.1','天'):t("app.673", "\u672a\u77e5"))+'</td>'
+        +'<td class="text-right">'+(daysSinceLastInbound!=='-'?daysSinceLastInbound+t('gen.L2947.1','天'):t("app.673", "未知"))+'</td>'
         +'<td><span class="status-badge '+agingRiskClass+'">'+agingRisk+'</span></td>'
         +'<td class="cell-date">'+fmtDate(i.first_inbound_date)+'</td>'
         +'<td class="cell-date">'+fmtDate(i.snapshot_cutoff_date)+'</td>'
@@ -3271,13 +3285,35 @@ async function loadInv(){
         +'<td>'+invStatusBadge(i.inventory_status)+'</td>'
         +'<td>'+(i.is_focused?'⭐':'')+'</td>'
         +'<td style="max-width:120px;overflow:hidden;text-overflow:ellipsis" title="'+esc(i.inventory_remark||'')+'">'+esc(i.inventory_remark||'')+'</td>'
-      +'</tr>';
-      }).join('')});
-    renderInvCards(data, countryCurrency);
-  }catch(e){showFlash(e.message,'danger')}
+        +'</tr>';
+      }).join('');
+  return '<div class="inv-thead-wrap" id="inv-thead-wrap"><table class="data-table inv-head-table" id="inv-head-table" style="width:max-content;margin:0"><thead>'+thead+'</thead></table></div>'
+    + '<div class="table-container inv-body-wrap" id="inv-body-wrap" style="overflow-x:auto"><table class="data-table inv-body-table" id="inv-body-table" style="width:max-content"><tbody>'+tbody+'</tbody></table></div>';
 }
 
-// 库存总表指标卡：根据当前筛选结果实时汇总（仅本页面，复用 loadInv 已构建的 countryCurrency）
+// 同步库存表头与表体：列宽对齐 + 横向滚动位移同步
+function syncInvHeader(){
+  var bw=document.getElementById('inv-body-wrap');
+  var hw=document.getElementById('inv-thead-wrap');
+  var body=document.getElementById('inv-body-table');
+  var head=document.getElementById('inv-head-table');
+  if(bw&&hw&&body&&head){
+    bw.onscroll=function(){ hw.scrollLeft=this.scrollLeft; };
+  }
+  if(!body||!head) return;
+  var ref=body.querySelector('tbody tr');
+  var hRow=head.querySelector('thead tr');
+  if(!ref||!hRow) return;
+  var bCells=ref.children, hCells=hRow.children;
+  if(bCells.length<hCells.length) return; // 空数据行（colspan 占位），跳过宽度同步
+  for(var i=0;i<hCells.length;i++){
+    var w=bCells[i].offsetWidth;
+    bCells[i].style.width=w+'px'; bCells[i].style.minWidth=w+'px';
+    hCells[i].style.width=w+'px'; hCells[i].style.minWidth=w+'px';
+  }
+  if(!window._invResizeBound){ window.addEventListener('resize', function(){ syncInvHeader(); }); window._invResizeBound=true; }
+}
+
 function renderInvCards(data, countryCurrency){
   const el=document.getElementById('inv-cards');
   if(!el) return;
