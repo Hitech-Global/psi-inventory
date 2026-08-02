@@ -3338,7 +3338,10 @@ function syncInvHeader(){
   }
 }
 
-// P1-2：列宽对齐核心（提取复用，供 rAF / ResizeObserver 调用）
+// P1-2(R4)：列宽对齐核心 —— head/body 两张独立 table 共享同一份 <colgroup> 作为唯一列宽真源。
+// 列宽 = max(表头文字固有宽, 数据固有宽)，动态测量（列标题走 t() 国际化，禁止静态 px 表）。
+// 幂等：每次重算前必须清除上一轮 inline width/min-width 并移除旧 colgroup，
+//       否则 auto 测量会被上一轮总宽撑大，ResizeObserver 重复触发即导致宽度逐轮膨胀。
 function _syncInvHeaderInternal(){
   var body=document.getElementById('inv-body-table');
   var head=document.getElementById('inv-head-table');
@@ -3347,15 +3350,33 @@ function _syncInvHeaderInternal(){
   var hRow=head.querySelector('thead tr');
   if(!ref||!hRow) return;
   var bCells=ref.children, hCells=hRow.children;
-  if(bCells.length<hCells.length) return; // 空数据行（colspan 占位），跳过宽度同步
-  for(var i=0;i<hCells.length;i++){
-    var w=bCells[i].offsetWidth;
-    bCells[i].style.width=w+'px'; bCells[i].style.minWidth=w+'px';
-    hCells[i].style.width=w+'px'; hCells[i].style.minWidth=w+'px';
+  var i, n=hCells.length;
+  // 复位到自然布局（同时是空数据分支的回退状态）
+  var reset=function(){
+    for(var j=0;j<hCells.length;j++){ hCells[j].style.width=''; hCells[j].style.minWidth=''; }
+    for(var k=0;k<bCells.length;k++){ bCells[k].style.width=''; bCells[k].style.minWidth=''; }
+    [head,body].forEach(function(t){
+      var cg=t.querySelector('colgroup'); if(cg) cg.parentNode.removeChild(cg);
+      t.style.tableLayout='auto'; t.style.width='max-content'; t.style.minWidth='';
+    });
+  };
+  reset();
+  if(bCells.length<n) return; // 空数据行（colspan 占位），跳过列宽同步，保持自然布局
+  void body.offsetWidth; // 强制回流，确保读到 auto 布局下的固有宽度
+  var ws=[], totalW=0, w;
+  for(i=0;i<n;i++){
+    w=Math.ceil(Math.max(hCells[i].getBoundingClientRect().width, bCells[i].getBoundingClientRect().width));
+    if(i===0) w=32; // 复选框列钉死 32px，与 col-sticky 的 left:32px 严格对齐
+    ws.push(w); totalW+=w;
   }
-  // P1-2(R2): 两张表总宽强制一致，避免 table-layout:fixed 下 max-content 计算差异造成整体错位
-  var totalW=0; for(var k=0;k<bCells.length;k++){ totalW+=bCells[k].offsetWidth; }
-  body.style.width=totalW+'px'; head.style.width=totalW+'px';
+  // 同一份 colgroup 注入两张表：fixed 布局下 <col> 优先级高于首行单元格，构成唯一列宽真源
+  var cgHTML='<colgroup>';
+  for(i=0;i<n;i++){ cgHTML+='<col style="width:'+ws[i]+'px">'; }
+  cgHTML+='</colgroup>';
+  [head,body].forEach(function(t){
+    t.insertAdjacentHTML('afterbegin', cgHTML);
+    t.style.tableLayout='fixed'; t.style.width=totalW+'px'; t.style.minWidth=totalW+'px';
+  });
 }
 
 function renderInvCards(data, countryCurrency){
