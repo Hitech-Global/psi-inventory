@@ -3224,7 +3224,7 @@ async function loadInv(){
     const cols = ['SKU',t("app.113", "\u56fd\u5bb6"),t("app.114", "\u4ed3\u5e93"),t("app.112", "\u54c1\u724c"),t("col.available", "可用"),t("app.655", "\u5b89\u5168\u5e93\u5b58"),t("col.in_transit", "在途"),t("app.656", "PI\u672a\u53d1"),t("app.657", "PO\u672a\u786e"),t("app.619", "\u52a0\u6743\u6210\u672c"),t("app.658", "\u5e93\u5b58\u91d1\u989d(\u672c\u5e01)"),t("app.659", "\u5e93\u5b58\u91d1\u989d(\u00a5)"),t("app.660", "\u76ee\u6807\u5468\u8f6c"),t("app.661", "\u5b9e\u9645\u5468\u8f6c"),t("app.662", "\u6700\u540e\u5165\u5e93"),t("app.663", "\u8ddd\u6700\u540e\u5165\u5e93\u5929\u6570"),t("app.664", "\u5e93\u9f84\u98ce\u9669"),t("app.665", "\u9996\u6b21\u5165\u5e93"),t("app.666", "\u5e93\u5b58\u5feb\u7167\u622a\u6b62"),t("app.667", "\u6700\u540e\u51fa\u5e93"),t("col.inv_status", "库存状态"),t("app.668", "\u91cd\u70b9\u5173\u6ce8"),t("col.remark", "备注")];
     const invTable=document.getElementById('inv-table');
     if(!invTable) return; // 竞态/页面切换时容器可能已不存在，静默退出避免 null 报错
-    invTable.innerHTML = buildInvTableHTML(data, cols, invAllFilteredIds.length);
+    invTable.innerHTML = buildInvTableHTML(data, cols, invAllFilteredIds.length, fmtLocalMoney, fmtCnyMoney);
     syncInvHeader();
     renderInvCards(data, countryCurrency);
   }catch(e){showFlash(e.message,'danger')}
@@ -3236,7 +3236,7 @@ async function loadInv(){
 // 纵向：浏览器页面滚动，表头独立 sticky 钉在固定导航下方(top:48px)；
 // 横向：表体容器 overflow-x:auto 自身横向滚动；表头与表体列宽+横向位移同步，保持对齐。
 // 仅前端 app.js，不改 server.js / DB / index.html 全局 / 其他页面 / 表格列与数据。
-function buildInvTableHTML(data, cols, allCount){
+function buildInvTableHTML(data, cols, allCount, fmtLocalMoney, fmtCnyMoney){
   const thead='<tr><th class="col-sticky" style="width:32px;left:0;background:#fafbfc"><input type="checkbox" id="inv-check-all" onchange="toggleAllInv(this.checked)"></th><th class="col-sticky" style="white-space:nowrap;left:32px;background:#fafbfc">SKU<br><a href="javascript:void(0)" onclick="selectAllInvFiltered()" style="font-size:11px;color:var(--primary,#2e7d32)">全选全部('+allCount+')</a></th>'+cols.slice(1).map(h=>'<th>'+h+'</th>').join('');
   const tbody = !data.length
     ? '<tr><td colspan="'+(cols.length+1)+t('gen.L2908.1','" style="text-align:center;padding:30px;color:#999">暂无库存数据</td></tr>')
