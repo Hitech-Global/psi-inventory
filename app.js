@@ -3072,6 +3072,14 @@ function downloadSalesImportErrors(){
 let invDataCache = [];
 let invAllFilteredIds = [];
 let invSelectAllMode = false;
+// 库存总表：关键词防抖（350ms）+ 请求序号守卫（避免快速切换筛选时旧请求覆盖新结果）
+// 仅限本页面使用，不关联任何页面切换/渲染守卫（如 pageRenderSeq）。
+let _invKwTimer = null;
+let _invLoadSeq = 0;
+function debouncedInvKeyword(){
+  if(_invKwTimer) clearTimeout(_invKwTimer);
+  _invKwTimer = setTimeout(loadInv, 350);
+}
 
 const INV_STATUS_OPTS = [
   {val:'normal',label:t("inventory.005", "\u6b63\u5e38")},{val:'out_of_stock_risk',label:t("app.651", "\u65ad\u8d27\u98ce\u9669")},
@@ -3087,7 +3095,7 @@ function invStatusBadge(v){
 async function renderInventory(){
   invDataCache = []; invAllFilteredIds = []; invSelectAllMode = false;
   document.getElementById('content-inner').innerHTML=
-    t('html.renderInventory', `<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>国家</label><select id="inv-c"><option value="">全部</option></select></div><div class="filter-group"><label>仓库</label><select id="inv-w"><option value="">全部</option></select></div><div class="filter-group"><label>品牌</label><select id="inv-b"><option value="">全部</option></select></div><div class="filter-group"><label>关键词</label><input type="text" id="inv-k" placeholder="SKU/产品名" onkeypress="if(event.key==='Enter')loadInv()"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadInv()">搜索</button><button class="btn btn-secondary btn-sm" onclick="resetInvFilters()">重置</button>{v1}</div></div></div><div id="inv-batch-bar" style="display:none;background:var(--bg-card,#fff);border:1px solid var(--border,#e0e0e0);border-radius:8px;padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span id="inv-batch-count" style="font-weight:600;margin-right:8px"></span><button class="btn btn-sm btn-secondary" onclick="invBatchAction('export')">📊 导出</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_status')">🏷️ 库存状态</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_focused')">⭐ 重点关注</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_safety_stock')">🛡️ 安全库存</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_turnover')">🎯 目标周转</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_replenish_rule')">📋 补货规则</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_remark')">📝 库存备注</button><button class="btn btn-sm btn-warning" onclick="invBatchAction('inventory_adjust')">🔧 发起调整单</button><button class="btn btn-sm btn-danger" onclick="invBatchAction('delete')" style="background:#ff4d4f;color:#fff;border:none">🗑️ 删除</button><button class="btn btn-sm btn-secondary" onclick="invClearSelection()" style="margin-left:auto">取消选择</button></div><div id="inv-cards" class="stats-grid"></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">📦 库存总表</div><div class="table-section-title-right" id="inv-rate-display" style="font-size:12px;color:#666;display:flex;gap:12px;align-items:center"></div></div><div id="inv-table"></div></div>`, {v1: hasPermission('inventory_import')?t('gen.L2829.1','<button class="btn btn-secondary btn-sm" onclick="openInvBatchImport()">📥 导入库存</button>'):''});
+    t('html.renderInventory', `<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>国家</label><select id="inv-c" onchange="loadInv()"><option value="">全部</option></select></div><div class="filter-group"><label>仓库</label><select id="inv-w" onchange="loadInv()"><option value="">全部</option></select></div><div class="filter-group"><label>品牌</label><select id="inv-b" onchange="loadInv()"><option value="">全部</option></select></div><div class="filter-group"><label>关键词</label><input type="text" id="inv-k" placeholder="SKU/产品名" oninput="debouncedInvKeyword()"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadInv()">搜索</button><button class="btn btn-secondary btn-sm" onclick="resetInvFilters()">重置</button>{v1}</div></div></div><div id="inv-batch-bar" style="display:none;background:var(--bg-card,#fff);border:1px solid var(--border,#e0e0e0);border-radius:8px;padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span id="inv-batch-count" style="font-weight:600;margin-right:8px"></span><button class="btn btn-sm btn-secondary" onclick="invBatchAction('export')">📊 导出</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_status')">🏷️ 库存状态</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_focused')">⭐ 重点关注</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_safety_stock')">🛡️ 安全库存</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_turnover')">🎯 目标周转</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_replenish_rule')">📋 补货规则</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_remark')">📝 库存备注</button><button class="btn btn-sm btn-warning" onclick="invBatchAction('inventory_adjust')">🔧 发起调整单</button><button class="btn btn-sm btn-danger" onclick="invBatchAction('delete')" style="background:#ff4d4f;color:#fff;border:none">🗑️ 删除</button><button class="btn btn-sm btn-secondary" onclick="invClearSelection()" style="margin-left:auto">取消选择</button></div><div id="inv-cards" class="stats-grid"></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">📦 库存总表</div><div class="table-section-title-right" id="inv-rate-display" style="font-size:12px;color:#666;display:flex;gap:12px;align-items:center"></div></div><div id="inv-table"></div></div>`, {v1: hasPermission('inventory_import')?t('gen.L2829.1','<button class="btn btn-secondary btn-sm" onclick="openInvBatchImport()">📥 导入库存</button>'):''});
   // 加载下拉选项
   try{
     const opts=await api('/api/inventory/filter-options');
@@ -3115,10 +3123,12 @@ async function loadInv(){
     const c=document.getElementById('inv-c')?.value||'',w=document.getElementById('inv-w')?.value||'',b=document.getElementById('inv-b')?.value||'',k=document.getElementById('inv-k')?.value||'';
     // 保存库存总表筛选状态（仅本页面 localStorage，不写数据库、不影响其他页面）
     try{ localStorage.setItem('psi_inv_filters_v1', JSON.stringify({c,w,b,k})); }catch(e){}
+    const mySeq = ++_invLoadSeq;
     const [data, rateInfo] = await Promise.all([
       api('/api/inventory?country='+encodeURIComponent(c)+'&warehouse='+encodeURIComponent(w)+'&brand='+encodeURIComponent(b)+'&keyword='+encodeURIComponent(k)),
       api('/api/inventory/currency-rates')
     ]);
+    if(mySeq !== _invLoadSeq) return; // 丢弃过期响应：避免快速切换筛选时旧请求覆盖新结果
     window._invRateInfo = rateInfo; // 缓存供导出使用
     invDataCache = data;
     invAllFilteredIds = data.map(d=>d.id);
@@ -3161,6 +3171,39 @@ async function loadInv(){
     }
     var rateEl = document.getElementById('inv-rate-display');
     if(rateEl) rateEl.innerHTML = rateRowsHtml;
+
+    // ===== 库存总表体验优化（仅前端 app.js，不改 index.html / server.js / DB）=====
+    // 1) 注入作用域样式：仅冻结库存总表 thead（页面级 sticky，钉在浏览器顶部）
+    // 注意：取消 .table-container 的 overflow 滚动容器，改为页面级滚动，
+    // 否则 overflow-x:auto 会使其成为滚动容器，导致 thead sticky 相对容器而非视口，表头随页面滚走。
+    if(!document.getElementById('inv-freeze-style')){
+      var __st=document.createElement('style'); __st.id='inv-freeze-style';
+      __st.textContent='#inv-table .table-container{overflow:visible}#inv-table .data-table thead th{position:sticky;top:0;z-index:3;background:#fafbfc}#inv-table .data-table thead .col-sticky{z-index:4}';
+      document.head.appendChild(__st);
+    }
+    // 2) 库存数据截止日期（独立信息区域，复用现有 snapshot_cutoff_date；汇率之后、指标卡之前）
+    var __snapEl=document.getElementById('inv-snapshot-date');
+    if(!__snapEl){
+      __snapEl=document.createElement('div'); __snapEl.id='inv-snapshot-date';
+      __snapEl.style.margin='4px 0 8px'; __snapEl.style.fontSize='13px'; __snapEl.style.color='var(--text-secondary)';
+      var __cardsEl=document.getElementById('inv-cards');
+      if(__cardsEl && __cardsEl.parentNode) __cardsEl.parentNode.insertBefore(__snapEl, __cardsEl);
+    }
+    try{
+      var __snaps=(data||[]).map(function(i){return i.snapshot_cutoff_date;}).filter(function(v){return v!=null && String(v).trim()!=='';});
+      var __distinct=Array.from(new Set(__snaps.map(function(d){return String(d).slice(0,10);})));
+      if(__distinct.length===1){
+        __snapEl.innerHTML=t('inv.snapshot.cutoff','库存数据截止：')+fmtDate(__distinct[0]);
+        __snapEl.style.color='var(--text-secondary)';
+      } else if(__distinct.length===0){
+        __snapEl.innerHTML=t('inv.snapshot.cutoff','库存数据截止：')+t('inv.snapshot.unset','未设置');
+        __snapEl.style.color='var(--text-secondary)';
+      } else {
+        // 多个不同日期 -> 提示不一致，绝不静默取 MAX
+        __snapEl.innerHTML='⚠ '+t('inv.snapshot.inconsistent','库存数据日期不一致，请检查同步');
+        __snapEl.style.color='#ff4d4f';
+      }
+    }catch(e){}
 
     // 格式化带货币符号的金额
     function fmtLocalMoney(val, country){
@@ -3239,11 +3282,16 @@ function renderInvCards(data, countryCurrency){
   const el=document.getElementById('inv-cards');
   if(!el) return;
   const fmtN=function(v){return Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});};
-  // 库存总数量
+  // 可用库存（=Σ available_qty）
   let totalQty=0;
+  let safetyStock=0, inTransit=0, piUnshipped=0, poUnconfirmed=0;
   const byCur={}; let rmbTotal=0;
   (data||[]).forEach(function(i){
     totalQty += (i.available_qty||0);
+    safetyStock += (i.safety_stock||0);
+    inTransit += (i.in_transit_qty||0);
+    piUnshipped += (i.pi_confirmed_unshipped_qty||0);
+    poUnconfirmed += (i.po_unconfirmed_pi_qty||0);
     const ci = countryCurrency[i.country] || {};
     const invVal = (i.available_qty||0)*(i.weighted_avg_cost||0);
     const code = ci.code || t('inv.kpi.unknown_cur','未知');
@@ -3268,9 +3316,13 @@ function renderInvCards(data, countryCurrency){
   }
   const rmbValue='¥ '+fmtN(rmbTotal);
   el.innerHTML =
-    '<div class="stat-card"><div class="stat-label">'+t('inv.kpi.total_qty','库存总数量')+'</div><div class="stat-number">'+Number(totalQty).toLocaleString('en-US')+' '+t('inv.kpi.unit','件')+'</div></div>'
+    '<div class="stat-card"><div class="stat-label">'+t('inv.kpi.available_qty','可用库存')+'</div><div class="stat-number">'+Number(totalQty).toLocaleString('en-US')+' '+t('inv.kpi.unit','件')+'</div></div>'
     +'<div class="stat-card"><div class="stat-label">'+esc(localTitle)+'</div><div class="stat-number">'+esc(localValue)+'</div></div>'
-    +'<div class="stat-card"><div class="stat-label">'+t('inv.kpi.amount_rmb','库存金额（人民币）')+'</div><div class="stat-number">'+esc(rmbValue)+'</div></div>';
+    +'<div class="stat-card"><div class="stat-label">'+t('inv.kpi.amount_rmb','库存金额（人民币）')+'</div><div class="stat-number">'+esc(rmbValue)+'</div></div>'
+    +'<div class="stat-card"><div class="stat-label">'+t('inv.kpi.safety_stock','安全库存')+'</div><div class="stat-number">'+Number(safetyStock).toLocaleString('en-US')+' '+t('inv.kpi.unit','件')+'</div></div>'
+    +'<div class="stat-card"><div class="stat-label">'+t('inv.kpi.in_transit','在途')+'</div><div class="stat-number">'+Number(inTransit).toLocaleString('en-US')+' '+t('inv.kpi.unit','件')+'</div></div>'
+    +'<div class="stat-card"><div class="stat-label">'+t('inv.kpi.pi_unshipped','PI未发')+'</div><div class="stat-number">'+Number(piUnshipped).toLocaleString('en-US')+' '+t('inv.kpi.unit','件')+'</div></div>'
+    +'<div class="stat-card"><div class="stat-label">'+t('inv.kpi.po_unconfirmed','PO未确认')+'</div><div class="stat-number">'+Number(poUnconfirmed).toLocaleString('en-US')+' '+t('inv.kpi.unit','件')+'</div></div>';
 }
 
 // 重置库存总表筛选：清空条件 + 删除保存状态 + 恢复全部库存 + 重新计算指标卡
