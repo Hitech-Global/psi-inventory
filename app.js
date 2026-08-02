@@ -3220,7 +3220,7 @@ async function loadInv(){
     if(!invTable) return; // 竞态/页面切换时容器可能已不存在，静默退出避免 null 报错
     invTable.innerHTML = buildInvTableHTML(data, cols, invAllFilteredIds.length, fmtLocalMoney, fmtCnyMoney);
     syncInvHeader();
-    renderInvCards(data, countryCurrency);
+    renderInvCards(data, countryCurrency, c);
   }catch(e){showFlash(e.message,'danger')}
 }
 
@@ -3379,7 +3379,7 @@ function _syncInvHeaderInternal(){
   });
 }
 
-function renderInvCards(data, countryCurrency){
+function renderInvCards(data, countryCurrency, countryFilter){
   const el=document.getElementById('inv-cards');
   if(!el) return;
   const fmtN=function(v){return Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});};
@@ -3418,7 +3418,7 @@ function renderInvCards(data, countryCurrency){
   const rmbValue='¥ '+fmtN(rmbTotal);
   el.innerHTML =
     '<div class="stat-card"><div class="stat-label">'+t('inv.kpi.available_qty','可用库存')+'</div><div class="stat-number">'+Number(totalQty).toLocaleString('en-US')+' '+t('inv.kpi.unit','件')+'</div></div>'
-    +'<div class="stat-card"><div class="stat-label">'+esc(localTitle)+'</div><div class="stat-number">'+esc(localValue)+'</div></div>'
+    +(countryFilter ? '<div class="stat-card"><div class="stat-label">'+esc(localTitle)+'</div><div class="stat-number">'+esc(localValue)+'</div></div>' : '')
     +'<div class="stat-card"><div class="stat-label">'+t('inv.kpi.amount_rmb','库存金额（人民币）')+'</div><div class="stat-number">'+esc(rmbValue)+'</div></div>'
     +'<div class="stat-card"><div class="stat-label">'+t('inv.kpi.safety_stock','安全库存')+'</div><div class="stat-number">'+Number(safetyStock).toLocaleString('en-US')+' '+t('inv.kpi.unit','件')+'</div></div>'
     +'<div class="stat-card"><div class="stat-label">'+t('inv.kpi.in_transit','在途')+'</div><div class="stat-number">'+Number(inTransit).toLocaleString('en-US')+' '+t('inv.kpi.unit','件')+'</div></div>'
