@@ -1907,13 +1907,13 @@
   I18N.dict.en["po.008"] = "Supported formats: .xlsx / .xls / .csv"; I18N.dict.id["po.008"] = "Format yang didukung: .xlsx / .xls / .csv";
   I18N.dict.en["po.009"] = "Import date"; I18N.dict.id["po.009"] = "Tanggal impor";
   I18N.dict.en["po.010"] = "Available quantity"; I18N.dict.id["po.010"] = "Kuantitas tersedia";
-  I18N.dict.en["po.011"] = "Weighted average cost (ignored)"; I18N.dict.id["po.011"] = "Biaya rata-rata tertimbang (diabaikan)";
+  I18N.dict.en["po.011"] = "Weighted Average Cost"; I18N.dict.id["po.011"] = "Biaya Rata-rata Tertimbang";
   I18N.dict.en["po.012"] = "Last inbound date"; I18N.dict.id["po.012"] = "Tanggal masuk terakhir";
   I18N.dict.en["po.013"] = "Batch import inventory data"; I18N.dict.id["po.013"] = "Impor batch data persediaan";
   I18N.dict.en["po.014"] = "Inventory snapshot as-of date"; I18N.dict.id["po.014"] = "Tanggal snapshot persediaan";
   I18N.dict.en["po.015"] = "The available inventory being imported already fully accounts for outbound data up to the last day. For example, if today is July 5 but the day is not over yet, the as-of date should be July 4. Required; import is not allowed if left blank."; I18N.dict.id["po.015"] = "Persediaan tersedia yang diimpor sudah memperhitungkan penuh data barang keluar hingga hari terakhir. Misalnya, jika hari ini 5 Juli tetapi hari belum berakhir, tanggal perhitungan harus 4 Juli. Wajib diisi; impor tidak diizinkan jika kosong.";
   I18N.dict.en["po.016"] = "Weighted average cost note"; I18N.dict.id["po.016"] = "Keterangan biaya rata-rata tertimbang";
-  I18N.dict.en["po.017"] = "The weighted average cost is automatically matched by the system to the latest confirmed cost version; the weighted cost column in the import file is ignored."; I18N.dict.id["po.017"] = "Biaya rata-rata tertimbang dicocokkan otomatis oleh sistem dengan versi biaya terkonfirmasi terbaru; kolom biaya tertimbang di berkas impor diabaikan.";
+  I18N.dict.en["po.017"] = "During opening inventory import, the weighted average cost column serves as the initial local currency cost; existing valid WAC will not be overwritten; subsequent CI inbound will be automatically matched by the system based on confirmed cost versions."; I18N.dict.id["po.017"] = "Saat impor inventaris awal, kolom biaya rata-rata tertimbang berlaku sebagai biaya awal mata uang lokal; WAC yang valid tidak akan ditimpa; setelah barang masuk CI, sistem akan mencocokkan secara otomatis berdasarkan versi biaya yang dikonfirmasi.";
   I18N.dict.en["po.018"] = "Source system"; I18N.dict.id["po.018"] = "Sistem sumber";
   I18N.dict.en["po.019"] = "Order no."; I18N.dict.id["po.019"] = "No. pesanan";
   I18N.dict.en["po.020"] = "Order line ID"; I18N.dict.id["po.020"] = "ID baris pesanan";
@@ -2836,7 +2836,7 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.en['html.inv.snapshot_cutoff'] = 'Inventory Snapshot Cutoff Date'; I18N.dict.id['html.inv.snapshot_cutoff'] = 'Tanggal Batas Snapshot Persediaan';
   I18N.dict.en['html.inv.start_import'] = 'Start Import'; I18N.dict.id['html.inv.start_import'] = 'Mulai Impor';
   I18N.dict.en['html.inv.support_fmt'] = 'Supports .xlsx / .xls / .csv'; I18N.dict.id['html.inv.support_fmt'] = 'Mendukung format .xlsx / .xls / .csv';
-  I18N.dict.en['html.inv.wac_auto'] = 'Weighted average cost is auto-matched by the system to the latest confirmed cost version; the weighted cost column in the import file is ignored.'; I18N.dict.id['html.inv.wac_auto'] = 'Biaya rata-rata tertimbang dicocokkan otomatis oleh sistem ke versi biaya terkonfirmasi terbaru; kolom biaya tertimbang di file impor diabaikan.';
+  I18N.dict.en['html.inv.wac_auto'] = 'During opening inventory import, the weighted average cost column serves as the initial local currency cost; existing valid WAC will not be overwritten; subsequent CI inbound will be automatically matched by the system based on confirmed cost versions.'; I18N.dict.id['html.inv.wac_auto'] = 'Saat impor inventaris awal, kolom biaya rata-rata tertimbang berlaku sebagai biaya awal mata uang lokal; WAC yang valid tidak akan ditimpa; setelah barang masuk CI, sistem akan mencocokkan secara otomatis berdasarkan versi biaya yang dikonfirmasi.';
   I18N.dict.en['html.inv.wac_note'] = 'Weighted Average Cost Notes'; I18N.dict.id['html.inv.wac_note'] = 'Catatan Biaya Rata-rata Tertimbang';
   I18N.dict.en['html.inv_export.available'] = 'Available Inventory'; I18N.dict.id['html.inv_export.available'] = 'Persediaan Tersedia';
   I18N.dict.en['html.preview.invalid_detail'] = 'Invalid rows detail:'; I18N.dict.id['html.preview.invalid_detail'] = 'Detail baris tidak valid:';

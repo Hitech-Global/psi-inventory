@@ -2526,7 +2526,7 @@ const INV_IMPORT_COLUMNS=[
   {key:'warehouse',label:t("app.114", "\u4ed3\u5e93")},
   {key:'channel',label:t('col.channel','渠道')},
   {key:'available_qty',label:t("po.010", "\u53ef\u7528\u6570\u91cf"),format:parseInt},
-  {key:'weighted_avg_cost',label:t("po.011", "\u52a0\u6743\u6210\u672c(\u5ffd\u7565)"),format:parseFloat},
+  {key:'weighted_avg_cost',label:t("po.011", "\u52a0\u6743\u5e73\u5747\u6210\u672c"),format:parseFloat},
   {key:'last_inbound_date',label:t("po.012", "\u6700\u540e\u5165\u5e93\u65e5\u671f"),format:parseDateStr},
   {key:'remark',label:t("app.025", "\u5907\u6ce8")}
 ];
@@ -2541,7 +2541,7 @@ function openInvBatchImport(){
       '</div>'+
       '<div style="margin-bottom:12px;padding:10px 14px;background:#e6f7ff;border:1px solid #91d5ff;border-radius:6px;font-size:12px;color:#333">'+
         '<div style="font-weight:600;margin-bottom:4px">'+t("html.inv.wac_note", "加权平均成本说明")+'</div>'+
-        '<div style="color:#666">'+t("html.inv.wac_auto", "加权平均成本由系统按最新已确认成本版本自动匹配，导入文件中的加权成本列将被忽略。")+'</div>'+
+        '<div style="color:#666">'+t("html.inv.wac_auto", "期初库存导入时，加权平均成本列作为初始本币成本；已有有效WAC不会被覆盖；后续CI入库时系统将按已确认成本版本自动匹配。")+'</div>'+
       '</div>'+
       '<div id="inv-drop-zone" style="border:2px dashed #d9d9d9;border-radius:8px;padding:40px 20px;text-align:center;cursor:pointer;background:#fafafa;transition:all .2s" '+
         'onclick="document.getElementById(\'inv-file-input\').click()" '+

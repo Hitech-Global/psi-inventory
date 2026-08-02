@@ -2563,23 +2563,31 @@ async function refreshInventoryTotals(snapshotCutoffDate) {
       const existing = queryOne('SELECT id, weighted_avg_cost, last_inbound_date, first_inbound_date FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
         [imp.sku_code, imp.country, imp.warehouse]);
 
-      // P1-03-B: 查最新已确认 WAC
+      // WAC 来源优先级（按权威性从高到低）：
+      //   1. confirmed wac_history — 后续 CI 成本确认产生的正式 WAC
+      //   2. existing inventory WAC (≠0) — 已存在有效成本，不覆盖
+      //   3. opening import WAC (>0) — 库存导入时提供的加权平均成本，用于无正式 WAC 的新库存初始化
+      //   4. 0 — 兜底，表示无有效成本
       const wacRecord = await latestConfirmedWac(imp.sku_code, imp.country, imp.warehouse);
       let wac, wacSource;
       if (wacRecord) {
         wac = wacRecord.new_avg_cost || 0;
         wacSource = 'confirmed';
       } else if (existing && (existing.weighted_avg_cost || 0) !== 0) {
-        // 保留旧 WAC
+        // 保留已有有效 WAC，不被新的库存同步覆盖
         wac = existing.weighted_avg_cost || 0;
-        wacSource = 'legacy';
+        wacSource = 'existing';
         warnings.push({
           sku_code: imp.sku_code, country: imp.country, warehouse: imp.warehouse,
           priority: 'warning',
           message: '未找到最新已确认加权平均成本，已保留原成本，请完成成本确认。'
         });
+      } else if (imp.weighted_avg_cost && Number(imp.weighted_avg_cost) > 0) {
+        // 库存初始化：使用导入文件中的加权平均成本
+        wac = Number(imp.weighted_avg_cost);
+        wacSource = 'opening';
       } else {
-        // 无 WAC，使用 0
+        // 无有效成本，使用 0
         wac = 0;
         wacSource = 'none';
         warnings.push({
