@@ -2444,9 +2444,14 @@ app.get('/api/inventory/filter-options', requireApiPermission('inventory_view'),
   const countries = query(`SELECT DISTINCT country FROM inventory WHERE country IS NOT NULL AND country != ''`
     + (w ? ' AND warehouse = ?' : '') + (b ? ' AND sku_code IN (SELECT sku_code FROM skus WHERE brand = ?)' : '')
     + ' ORDER BY country', [...(w?[w]:[]), ...(b?[b]:[])]).rows.map(r => r.country);
-  const warehouses = query(`SELECT DISTINCT warehouse FROM inventory WHERE warehouse IS NOT NULL AND warehouse != ''`
-    + (c ? ' AND country = ?' : '') + (b ? ' AND sku_code IN (SELECT sku_code FROM skus WHERE brand = ?)' : '')
-    + ' ORDER BY warehouse', [...(c?[c]:[]), ...(b?[b]:[])]).rows.map(r => r.warehouse);
+  // P1-1(R2): 仓库归属以 warehouses 主数据 country_name 为准；inventory 仅提供存在性；
+  // 已匹配仓库按主数据国家过滤，未匹配仓库(主数据缺失)保留不消失。LEFT JOIN 安全方案，无 INNER JOIN 丢失风险。
+  let whSql = `SELECT DISTINCT i.warehouse FROM inventory i LEFT JOIN warehouses w ON w.name = i.warehouse AND w.status = 'active' WHERE i.warehouse IS NOT NULL AND i.warehouse != ''`;
+  const whParams = [];
+  if (c) { whSql += ' AND (w.name IS NULL OR w.country_name = ?)'; whParams.push(c); }
+  if (b) { whSql += ' AND i.sku_code IN (SELECT sku_code FROM skus WHERE brand = ?)'; whParams.push(b); }
+  whSql += ' ORDER BY i.warehouse';
+  const warehouses = query(whSql, whParams).rows.map(r => r.warehouse);
   const brands = query(`SELECT DISTINCT s.brand FROM inventory i JOIN skus s ON i.sku_code = s.sku_code WHERE s.brand IS NOT NULL AND s.brand != ''`
     + (c ? ' AND i.country = ?' : '') + (w ? ' AND i.warehouse = ?' : '')
     + ' ORDER BY s.brand', [...(c?[c]:[]), ...(w?[w]:[])]).rows.map(r => r.brand);

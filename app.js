@@ -3281,8 +3281,8 @@ function buildInvTableHTML(data, cols, allCount, fmtLocalMoney, fmtCnyMoney){
         +'<td style="max-width:120px;overflow:hidden;text-overflow:ellipsis" title="'+esc(i.inventory_remark||'')+'">'+esc(i.inventory_remark||'')+'</td>'
         +'</tr>';
       }).join('');
-  return '<div class="inv-thead-wrap" id="inv-thead-wrap"><table class="data-table inv-head-table" id="inv-head-table" style="width:max-content;margin:0"><thead>'+thead+'</thead></table></div>'
-    + '<div class="table-container inv-body-wrap" id="inv-body-wrap" style="overflow-x:auto"><table class="data-table inv-body-table" id="inv-body-table" style="width:max-content"><tbody>'+tbody+'</tbody></table></div>';
+  return '<div class="inv-thead-wrap" id="inv-thead-wrap"><table class="data-table inv-head-table" id="inv-head-table" style="table-layout:fixed;width:max-content;margin:0"><thead>'+thead+'</thead></table></div>'
+    + '<div class="table-container inv-body-wrap" id="inv-body-wrap" style="overflow-x:auto"><table class="data-table inv-body-table" id="inv-body-table" style="table-layout:fixed;width:max-content"><tbody>'+tbody+'</tbody></table></div>';
 }
 
 // 同步库存表头与表体：列宽对齐 + 横向滚动位移同步
@@ -3352,6 +3352,9 @@ function _syncInvHeaderInternal(){
     bCells[i].style.width=w+'px'; bCells[i].style.minWidth=w+'px';
     hCells[i].style.width=w+'px'; hCells[i].style.minWidth=w+'px';
   }
+  // P1-2(R2): 两张表总宽强制一致，避免 table-layout:fixed 下 max-content 计算差异造成整体错位
+  var totalW=0; for(var k=0;k<bCells.length;k++){ totalW+=bCells[k].offsetWidth; }
+  body.style.width=totalW+'px'; head.style.width=totalW+'px';
 }
 
 function renderInvCards(data, countryCurrency){
