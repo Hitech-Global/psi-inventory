@@ -3801,7 +3801,7 @@ function rpColWidthDefs(){
     check:{min:36,default:36,max:60},
     spacer:{min:28,default:36,max:48},
     model:{min:80,default:100,max:200},
-    sku:{min:110,default:135,max:240},
+    sku:{min:120,default:170,max:240},
     // 单月销量
     sales_m4:{min:65,default:72,max:120},
     sales_m3:{min:65,default:72,max:120},
@@ -5110,8 +5110,8 @@ async function loadRp(){
       model:{th:'<th>Model</th>',
         td:function(r,c){return '<td class="text-truncate" style="max-width:90px" title="'+esc(r.model||'')+'">'+esc(r.model||'')+'</td>';},
         sum:function(t){return '<td></td>';}},
-      sku:{th:'<th style="min-width:120px;max-width:180px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">SKU</th>',
-        td:function(r,c){return '<td class="cell-id" style="min-width:120px;max-width:180px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="'+esc(r.sku_code||'')+'">'+esc(r.sku_code||'')+'</td>';},
+      sku:{th:'<th style="min-width:120px;max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">SKU</th>',
+        td:function(r,c){return '<td class="cell-id rp-sku-cell" style="min-width:120px;max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="'+esc(r.sku_code||'')+'">'+esc(r.sku_code||'')+'</td>';},
         sum:function(total){return '<td><span style="font-size:10px;color:#888">'+total.count+t('gen.L4055.1','个SKU</span></td>');}},
       online_avg:{th:rpTh(t('gen.L4056.1','线上')+rpSalesStatsDays+t('gen.L4056.2','天月均销量'),t('gen.L4056.3','按"预测参数设置"中的销量统计周期计算：近')+rpSalesStatsDays+t('gen.L4056.4','天有效销量 ÷ ')+rpSalesStatsDays+' × 30。','text-right'),
         td:function(r,c){return '<td class="text-right">'+formatQuantityDisplay(c.oaPeriod)+'</td>';},
@@ -5873,8 +5873,8 @@ async function loadRpChannelMonthly(channel){
     Cols.model={th:'<th>Model</th>',
       td:function(r,c){return '<td class="text-truncate" style="max-width:100px" title="'+esc(r.model||'')+'">'+esc(r.model||'')+'</td>';},
       sum:function(t){return '<td></td>';}};
-    Cols.sku={th:'<th style="min-width:120px;max-width:180px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">SKU</th>',
-      td:function(r,c){return '<td class="cell-id" style="min-width:120px;max-width:180px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="'+esc(r.sku_code||'')+'">'+esc(r.sku_code||'')+'</td>';},
+    Cols.sku={th:'<th style="min-width:120px;max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">SKU</th>',
+      td:function(r,c){return '<td class="cell-id rp-sku-cell" style="min-width:120px;max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="'+esc(r.sku_code||'')+'">'+esc(r.sku_code||'')+'</td>';},
       sum:function(total){return '<td><span style="font-size:10px;color:#888">'+total.count+t('gen.L4269.1','个SKU</span></td>');}};
     Cols.sales_m4={th:rpThCompact(ml[0],'','text-right','',true),
       td:function(r,c){return '<td class="text-right">'+formatQuantityDisplay(c.salesM4)+'</td>';},
@@ -6571,7 +6571,7 @@ async function loadRpDaily(){
       {key:'sales_group',      width:88},
       {key:'lifecycle_status', width:120},
       {key:'model',            width:124},
-      {key:'sku',              width:140},
+      {key:'sku',              width:170},
       {key:'last_7_days',      width:80},
       {key:'last_14_days',     width:80},
       {key:'last_30_days',     width:80},
@@ -6680,7 +6680,7 @@ async function loadRpDaily(){
         +'<td style="'+sBody(1)+'"><span class="badge badge-sm">'+formatSalesGroupLabel(r.sales_group)+'</span></td>'
         +'<td style="'+sBody(2)+';white-space:normal"><span class="lifecycle-tag lc-'+(r.lifecycle_status||'stable')+'">'+fmtLifecycleDyn(r.lifecycle_status)+'</span></td>'
         +'<td class="rp-daily-cell-wrap" style="'+sBody(3)+';white-space:normal;overflow-wrap:anywhere">'+esc(r.model||'')+'</td>'
-        +'<td class="rp-daily-cell-wrap" style="'+sBody(4)+';max-width:180px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:monospace;font-size:12px" title="'+esc(r.sku_code||'')+'">'+esc(r.sku_code)+'</td>'
+        +'<td class="rp-daily-cell-wrap" style="'+sBody(4)+';max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:monospace;font-size:12px" title="'+esc(r.sku_code||'')+'">'+esc(r.sku_code)+'</td>'
         +'<td class="text-right font-bold" style="'+sBody(5)+'">'+formatQuantityDisplay(r.last_7_days||0)+'</td>'
         +'<td class="text-right" style="'+sBody(6)+'">'+formatQuantityDisplay(r.last_14_days||0)+'</td>'
         +'<td class="text-right" style="'+sBody(7)+'">'+formatQuantityDisplay(r.last_30_days||0)+'</td>'

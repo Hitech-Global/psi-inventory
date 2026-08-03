@@ -434,6 +434,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 /* 数字列保持单行不换行（防止数据被遮挡） */
 .rp-monthly-table td.text-right{white-space:nowrap}
 .rp-monthly-table td.cell-id{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* 订单预测专属：SKU 列独立宽度（不受全局 .cell-id max-width:170px 约束） */
+.rp-monthly-table td.rp-sku-cell{max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* Model 列保持单行 */
 .rp-monthly-table td.text-truncate{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* 长文本列（Suggested Action / Sales Reason / AI Business Advice / Risk Tags / Suggestion）：自然换行，不裁切 */
