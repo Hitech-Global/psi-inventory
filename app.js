@@ -8842,24 +8842,41 @@ async function selectCIForPL(ciId){
     });
     const ffs=window._ffs||[];
     const ffOpts=ffs.map(f=>'<option value="'+f.id+'" data-name="'+esc(f.name)+'">'+esc(f.name)+'</option>').join('');
-    openModal('新建物流批次 — '+esc(ci.ci_no),
+    // 优化多CI展示：ci_no 含 & 时拆分为独立标签
+    const ciNos=String(ci.ci_no||'').split('&').filter(Boolean);
+    const ciDisplay=ciNos.length>1?
+      '<div style="display:flex;flex-wrap:wrap;gap:4px">'+ciNos.map(n=>'<span style="display:inline-block;padding:2px 8px;background:#e6f7ff;border:1px solid #91d5ff;border-radius:4px;font-size:12px;color:#1890ff">'+esc(n)+'</span>').join('')+'</div>'
+      :'<input type="text" value="'+esc(ci.ci_no)+'" disabled>';
+    // 发货日期：自动关联CI出货日期，不允许手动输入
+    const shipDate=ci.actual_ship_date||'';
+    const shipDateNote=ciNos.length>1?(shipDate?'（多CI共享出货日期）':'（多CI未设置出货日期）'):'';
+    openModal('新建物流批次 — '+esc(ciNos[0]||ci.ci_no),
       '<div class="form-card" style="box-shadow:none;padding:0;max-height:70vh;overflow-y:auto">'+
       '<div class="detail-section"><h3>基础信息</h3><div class="form-grid">'+
-      '<div class="form-group"><label>关联CI</label><input type="text" value="'+esc(ci.ci_no)+'" disabled></div>'+
+      '<div class="form-group"><label>关联CI</label>'+ciDisplay+'</div>'+
       '<div class="form-group"><label>供应商</label><input type="text" value="'+esc(ci.supplier_name||'')+'" disabled></div>'+
       '<div class="form-group"><label>PL单号（留空自动生成）</label><input type="text" id="npl-no" placeholder="自动生成"></div>'+
       '<div class="form-group"><label>物流单号（留空自动生成）</label><input type="text" id="npl-batchno" placeholder="自动生成"></div>'+
       '<div class="form-group"><label>货代</label><select id="npl-ff"><option value="">选择货代</option>'+ffOpts+'</select></div>'+
       '<div class="form-group"><label>运输方式</label><select id="npl-mode"><option value="sea">海运</option><option value="air">空运</option><option value="land">陆运</option><option value="express">快递</option></select></div>'+
-      '<div class="form-group"><label>起运港</label><input type="text" id="npl-origin"></div>'+
-      '<div class="form-group"><label>目的港</label><input type="text" id="npl-dest"></div>'+
       '<div class="form-group"><label>目标国家</label><input type="text" id="npl-country" value="'+esc(ci.country||'')+'"></div>'+
       '<div class="form-group"><label>目标仓库</label><input type="text" id="npl-wh" value="'+esc(ci.target_warehouse||'')+'"></div>'+
-      '<div class="form-group"><label>提货日期</label><input type="date" id="npl-pickup"></div>'+
-      '<div class="form-group"><label>出发日期</label><input type="date" id="npl-depart"></div>'+
+      '<div class="form-group"><label>发货日期'+(shipDateNote?' <span style="font-weight:normal;color:#999;font-size:12px">'+shipDateNote+'</span>':'')+'</label><input type="date" id="npl-pickup" value="'+shipDate+'" readonly style="background:#f5f5f7;color:#666"></div>'+
       '<div class="form-group"><label>预计到港</label><input type="date" id="npl-eta"></div>'+
       '</div></div>'+
-      '<div class="detail-section"><h3>PL装箱明细 <button class="btn btn-secondary btn-sm" onclick="importPLItems()" style="margin-left:8px">导入Excel</button></h3><div id="pl-draft-table"></div></div>'+
+      '<div class="detail-section"><h3>PL装箱明细</h3>'+
+      '<div style="display:flex;gap:8px;margin-bottom:8px"><button class="btn btn-secondary btn-sm" onclick="downloadPLTemplate()">下载导入模板</button></div>'+
+      '<div id="pl-drop-zone" style="border:2px dashed #d9d9d9;border-radius:8px;padding:20px;text-align:center;cursor:pointer;background:#fafafa;transition:all .2s;margin-bottom:8px" '+
+        'onclick="document.getElementById(\'pl-file-input\').click()" '+
+        'ondragover="event.preventDefault();this.style.borderColor=\'#1890ff\';this.style.background=\'#e6f7ff\'" '+
+        'ondragleave="this.style.borderColor=\'#d9d9d9\';this.style.background=\'#fafafa\'" '+
+        'ondrop="event.preventDefault();this.style.borderColor=\'#d9d9d9\';this.style.background=\'#fafafa\';handlePLFile(event.dataTransfer.files[0])">'+
+        '<div style="font-size:28px;color:#1890ff;margin-bottom:4px">📤</div>'+
+        '<div style="font-size:13px;color:#333;margin-bottom:2px">点击上传或拖拽文件到此处</div>'+
+        '<div style="font-size:11px;color:#999">支持 .xlsx / .xls / .csv 格式，字段：SKU、箱数、单箱数量、总数量等</div>'+
+      '</div>'+
+      '<input type="file" id="pl-file-input" accept=".xlsx,.xls,.csv" style="display:none" onchange="handlePLFile(this.files[0])">'+
+      '<div id="pl-draft-table"></div></div>'+
       '<div class="detail-section"><h3>费用信息</h3><div class="form-grid">'+
       '<div class="form-group"><label>运费币种</label><select id="npl-cur"><option>USD</option><option>RMB</option><option>IDR</option><option>MYR</option><option>THB</option></select></div>'+
       '<div class="form-group"><label>运费</label><input type="number" step="0.01" id="npl-freight" value="0" oninput="calcTotalFreight()"></div>'+
@@ -8873,7 +8890,7 @@ async function selectCIForPL(ciId){
 }
 function renderPLDraftTable(){
   const items=window._plDraft||[];
-  if(!items.length){document.getElementById('pl-draft-table').innerHTML='<div style="padding:12px;color:#999">无PL明细（CI无可生成PL的SKU）</div>';return;}
+  if(!items.length){document.getElementById('pl-draft-table').innerHTML='<div style="padding:24px 12px;text-align:center;color:#999"><div style="font-size:32px;margin-bottom:8px">📋</div><div style="font-size:14px;margin-bottom:4px">暂无PL明细</div><div style="font-size:12px;color:#bbb">点击上方上传区域导入Excel，或手动编辑下方明细</div></div>';return;}
   let tc=0,tq=0,tg=0,tn=0,tb=0;
   items.forEach(it=>{tc+=it.cartons||0;tq+=it.total_qty||0;tg+=it.gross_weight||0;tn+=it.net_weight||0;tb+=it.cbm||0;});
   document.getElementById('pl-draft-table').innerHTML='<div class="table-container" style="overflow-x:auto"><table class="data-table" style="font-size:12px"><thead><tr><th>SKU</th><th>CI发货</th><th>已生成PL</th><th>剩余</th><th>箱数</th><th>单箱数量</th><th>总数量</th><th>单箱毛重</th><th>单箱净重</th><th>单箱体积</th><th>长</th><th>宽</th><th>高</th><th>总毛重</th><th>总净重</th><th>总体积</th><th></th></tr></thead><tbody>'+
@@ -8902,9 +8919,18 @@ function updatePLRow(idx,field,val){
   renderPLDraftTable();
 }
 function removePLRow(idx){window._plDraft.splice(idx,1);renderPLDraftTable();}
-function importPLItems(){
-  const inp=document.createElement('input');inp.type='file';inp.accept='.xlsx,.xls,.csv';
-  inp.onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>{try{
+function downloadPLTemplate(){
+  const headers=['SKU','箱数','单箱数量','总数量','单箱毛重','单箱净重','单箱体积','长','宽','高','总毛重','总净重','总体积'];
+  const sample=['NT03U505N-016G-20BK',6,10,60,1.50,1.20,0.0500,30,20,15,9.00,7.20,0.3000];
+  const ws=XLSX.utils.aoa_to_sheet([headers,sample]);
+  ws['!cols']=headers.map(h=>({wch:Math.max(h.length*2+4,12)}));
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,'PL导入模板');
+  XLSX.writeFile(wb,'PL装箱明细_导入模板.xlsx');
+}
+function handlePLFile(file){
+  if(!file)return;
+  const r=new FileReader();r.onload=ev=>{try{
     const wb=XLSX.read(ev.target.result,{type:'array'});const ws=wb.Sheets[wb.SheetNames[0]];const rows=XLSX.utils.sheet_to_json(ws);
     const aliasMap={'sku_code':['SKU','SKU编码','料号','sku_code'],'cartons':['箱数','CTN','Total CTN','cartons'],'qty_per_carton':['单箱数量','QTY/CTN','qty_per_carton'],'total_qty':['总数量','Total QTY','total_qty'],'gross_weight':['总毛重','GW','gross_weight'],'net_weight':['总净重','NW','net_weight'],'cbm':['总体积','CBM','cbm'],'gross_weight_per_carton':['单箱毛重','GW/CTN','gross_weight_per_carton'],'net_weight_per_carton':['单箱净重','NW/CTN','net_weight_per_carton'],'cbm_per_carton':['单箱体积','CBM/CTN','cbm_per_carton'],'length':['长','L','length'],'width':['宽','W','width'],'height':['高','H','height']};
     const mapped=rows.map(row=>{const item={};for(const [key,aliases] of Object.entries(aliasMap)){for(const alias of aliases){if(row[alias]!==undefined){item[key]=isNaN(row[alias])?row[alias]:parseFloat(row[alias]);break;}}}return item;});
@@ -8931,8 +8957,7 @@ function importPLItems(){
       matched++;
     });
     renderPLDraftTable();showToast('导入完成：匹配'+matched+'行，未匹配'+unmatched+'行',matched>0?'success':'warning');
-  }catch(err){showToast(err.message,'danger')}};r.readAsArrayBuffer(f)};
-  inp.click();
+  }catch(err){showToast(err.message,'danger')}};r.readAsArrayBuffer(file);
 }
 function renderOtherFees(){
   const fees=window._otherFees||[];
@@ -8959,10 +8984,10 @@ async function saveLogWithPL(){
   const d={related_ci_id:ci.id,related_ci_no:ci.ci_no,
     pl_no:document.getElementById('npl-no').value||'',batch_no:document.getElementById('npl-batchno').value||'',
     forwarder_id:ffSel.value||'',forwarder_name:ffSel.options[ffSel.selectedIndex]?.dataset.name||'',
-    transport_mode:document.getElementById('npl-mode').value,origin_port:document.getElementById('npl-origin').value,
-    dest_port:document.getElementById('npl-dest').value,target_country:document.getElementById('npl-country').value,
+    transport_mode:document.getElementById('npl-mode').value,
+    target_country:document.getElementById('npl-country').value,
     target_warehouse:document.getElementById('npl-wh').value,pickup_date:document.getElementById('npl-pickup').value,
-    depart_date:document.getElementById('npl-depart').value,eta_date:document.getElementById('npl-eta').value,
+    eta_date:document.getElementById('npl-eta').value,
     freight_currency:document.getElementById('npl-cur').value,
     international_freight:parseFloat(document.getElementById('npl-freight').value)||0,
     local_charges:otherSum,customs_service_fee:0,delivery_fee:0,customs_duty:0,vat_gst:0,other_fees:0,
