@@ -1066,7 +1066,11 @@ async function renderUsers(){
     const rows=users.map(u=>{
       const isBG = u.auth_source==='local';
       const statusBadge = '<span class="status-'+(u.status==='active'?'active':(u.status==='pending'?'pending':'disabled'))+'">'+statusLabel(u.status)+'</span>';
-      const roleSel = '<select class="user-role-sel" data-uid="'+u.id+'"'+(isBG?t('gen.L948.1',' disabled title="\u5e94\u6025\u8d26\u53f7\u89d2\u8272\u56fa\u5b9a"'):'')+'>'+roles.map(r=>'<option value="'+r.id+'"'+(r.id===u.role_id?' selected':'')+'>'+esc(formatRoleLabel(r.id, r.name))+'</option>').join('')+'</select>';
+      // FEISHU-USER-ROLE-SAVE-MINIMAL-FIX: role_id=null 时占位项 selected 且不禁用，
+      // 避免 disabled+selected 导致浏览器忽略 selected 而默认显示第一个真实角色（超级管理员）。
+      // role_id 已存在时占位项 disabled，管理员无法误选"未分配"。
+      const rolePlaceholder = isBG ? '' : '<option value=""'+(!u.role_id?' selected':' disabled')+'>'+t('user.role_unassigned','未分配')+'</option>';
+      const roleSel = '<select class="user-role-sel" data-uid="'+u.id+'"'+(isBG?t('gen.L948.1',' disabled title="\u5e94\u6025\u8d26\u53f7\u89d2\u8272\u56fa\u5b9a"'):'')+'>'+rolePlaceholder+roles.map(r=>'<option value="'+r.id+'"'+(r.id===u.role_id?' selected':'')+'>'+esc(formatRoleLabel(r.id, r.name))+'</option>').join('')+'</select>';
       // I18N-100P-B1：语言偏好 inline select（zh/en/id）
       const lp = u.language_preference==='en'?'en':(u.language_preference==='id'?'id':'zh');
       const langSel = '<select class="user-lang-sel" data-uid="'+u.id+'">'
@@ -1100,9 +1104,10 @@ async function renderUsers(){
   }catch(e){ showFlash(e.message,'danger'); }
 }
 async function setUserRole(uid, roleId){
+  if(!roleId){ showToast(t('user.role_select_required','请选择有效角色'),'warning'); renderUsers(); return; }
   const u=(window.__userCache||[]).find(x=>x.id===uid);
   if(!u){ renderUsers(); return; }
-  try{ await api('/api/users/'+uid,'PUT',{username:u.username, name:u.name, role_id:roleId}); showToast(t('gen.L973.1','角色已更新'),'success'); }catch(e){ showToast(e.message,'danger'); renderUsers(); }
+  try{ await api('/api/users/'+uid,'PUT',{username:u.username, name:u.name, role_id:roleId}); showToast(t('gen.L973.1','角色已更新'),'success'); renderUsers(); }catch(e){ showToast(e.message,'danger'); renderUsers(); }
 }
 // I18N-100P-B1：管理员修改用户语言偏好（复用 PUT /api/users/:id）
 async function setUserLanguagePreference(uid, lp){

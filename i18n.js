@@ -3381,6 +3381,8 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.en["user.lang_zh"] = "中文"; I18N.dict.id["user.lang_zh"] = "中文";
   I18N.dict.en["user.lang_en"] = "English"; I18N.dict.id["user.lang_en"] = "English";
   I18N.dict.en["user.lang_id"] = "Bahasa Indonesia"; I18N.dict.id["user.lang_id"] = "Bahasa Indonesia";
+  I18N.dict.en["user.role_unassigned"] = "Unassigned"; I18N.dict.id["user.role_unassigned"] = "Belum Ditetapkan";
+  I18N.dict.en["user.role_select_required"] = "Please select a valid role"; I18N.dict.id["user.role_select_required"] = "Silakan pilih peran yang valid";
   I18N.dict.en["toast.lang_save_failed"] = "Failed to save language preference, please retry later"; I18N.dict.id["toast.lang_save_failed"] = "Gagal menyimpan preferensi bahasa, coba lagi nanti";
   I18N.dict.en["gen.L978.1"] = "Enabled"; I18N.dict.id["gen.L978.1"] = "Diaktifkan";
   I18N.dict.en["gen.L978.2"] = "Disabled"; I18N.dict.id["gen.L978.2"] = "Dinonaktifkan";
