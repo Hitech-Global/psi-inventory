@@ -8752,12 +8752,19 @@ async function renderLogistics(){
   document.getElementById('content-inner').innerHTML=t('html.renderLogistics', '<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>状态</label><select id="log-fs"><option value="">全部</option><option value="pending">待提货</option><option value="picked_up">已提货</option><option value="in_transit">运输中</option><option value="arrived">到港</option><option value="customs">清关中</option><option value="cleared">已清关</option><option value="delivering">派送中</option><option value="completed">已完成</option></select></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadLog()">搜索</button>{v1}</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🚢 物流批次</div></div><div id="log-table"></div></div>', {v1: hasPermission('logistics_create')?'<button class="btn btn-primary btn-sm" onclick="createLogWithPL()">➕ 新建物流批次</button>':''});
   loadLog();
 }
-async function loadLog(){
+async function loadLog(retry){
   try{
     const s=document.getElementById('log-fs')?.value||'';
     const data=await api('/api/logistics-batches?status='+s);
-    document.getElementById('log-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">🚢</div>暂无物流数据</div>':'<div class="table-container" style="box-shadow:none;border-radius:0;overflow-x:auto"><table class="data-table"><thead><tr><th>物流单号</th><th>PL号</th><th>关联CI</th><th>货代</th><th>方式</th><th>国家</th><th>出发</th><th>到港</th><th>入库完成</th><th>箱数</th><th>CBM</th><th>综合运费</th><th>状态</th><th>操作</th></tr></thead><tbody>'+data.map(l=>'<tr class="clickable-detail-row" onclick="rowClickView(event,\'viewLogDetail\',\''+l.id+'\')"><td class="cell-id">'+esc(l.batch_no)+'</td><td class="cell-id">'+esc(l.pl_no||'-')+'</td><td class="cell-id">'+esc(l.related_ci_no)+'</td><td>'+esc(l.forwarder_name)+'</td><td>'+esc(l.transport_mode)+'</td><td>'+esc(l.target_country)+'</td><td class="cell-date">'+fmtDate(l.depart_date)+'</td><td class="cell-date">'+fmtDate(l.actual_arrival_date)+'</td><td class="cell-date">'+fmtDate(l.inbound_complete_date)+'</td><td class="text-right">'+(l.total_cartons||0)+'</td><td class="text-right">'+(l.total_cbm||0)+'</td><td class="text-right">'+fmtMoney(l.total_freight,l.freight_currency)+'</td><td><span class="status-badge '+(l.logistics_status==='completed'?'status-completed':'status-pending')+'">'+esc(l.logistics_status)+'</span></td><td class="cell-actions"><button class="action-btn" onclick="viewLogDetail(\''+l.id+'\')" title="查看">👁️</button>'+(hasPermission('logistics_edit')?'<button class="action-btn" onclick="editLog(\''+l.id+'\')" title="编辑">✏️</button>':'')+(l.total_freight>0&&l.fee_status==='unpaid'&&hasPermission('payment_create')?'<button class="action-btn" onclick="createFrtPay(\''+l.id+'\')" title="运费付款">💰</button>':'')+(l.customs_duty>0&&l.fee_status==='unpaid'&&hasPermission('payment_create')?'<button class="action-btn" onclick="createDutyPay(\''+l.id+'\')" title="关税付款">🏛️</button>':'')+'</td></tr>').join('')+'</tbody></table></div>';
-  }catch(e){showFlash(e.message,'danger')}
+    document.getElementById('log-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">🚢</div>暂无物流数据</div>':'<div class="table-container" style="box-shadow:none;border-radius:0;overflow-x:auto"><table class="data-table"><thead><tr><th>物流单号</th><th>PL号</th><th>关联CI</th><th>货代</th><th>方式</th><th>国家</th><th>出发</th><th>到港</th><th>入库完成</th><th>箱数</th><th>CBM</th><th>综合运费</th><th>状态</th><th>操作</th></tr></thead><tbody>'+data.map(l=>'<tr class="clickable-detail-row" onclick="rowClickView(event,\'viewLogDetail\',\''+l.id+'\')"><td class="cell-id">'+esc(l.batch_no)+'</td><td class="cell-id">'+esc(l.pl_no||'-')+'</td><td class="cell-id" title="'+esc(l.related_ci_no)+'" style="max-width:180px;word-break:break-all">'+esc(l.related_ci_no)+'</td><td>'+esc(l.forwarder_name)+'</td><td>'+esc(l.transport_mode)+'</td><td>'+esc(l.target_country)+'</td><td class="cell-date">'+fmtDate(l.depart_date)+'</td><td class="cell-date">'+fmtDate(l.actual_arrival_date)+'</td><td class="cell-date">'+fmtDate(l.inbound_complete_date)+'</td><td class="text-right">'+(l.total_cartons||0)+'</td><td class="text-right">'+(l.total_cbm||0)+'</td><td class="text-right">'+fmtMoney(l.total_freight,l.freight_currency)+'</td><td><span class="status-badge '+(l.logistics_status==='completed'?'status-completed':'status-pending')+'">'+esc(l.logistics_status)+'</span></td><td class="cell-actions"><button class="action-btn" onclick="viewLogDetail(\''+l.id+'\')" title="查看">👁️</button>'+(hasPermission('logistics_edit')?'<button class="action-btn" onclick="editLog(\''+l.id+'\')" title="编辑">✏️</button>':'')+(l.total_freight>0&&l.fee_status==='unpaid'&&hasPermission('payment_create')?'<button class="action-btn" onclick="createFrtPay(\''+l.id+'\')" title="运费付款">💰</button>':'')+(l.customs_duty>0&&l.fee_status==='unpaid'&&hasPermission('payment_create')?'<button class="action-btn" onclick="createDutyPay(\''+l.id+'\')" title="关税付款">🏛️</button>':'')+'</td></tr>').join('')+'</tbody></table></div>';
+  }catch(e){
+    if(!retry){
+      document.getElementById('log-table').innerHTML='<div class="empty-state"><div class="empty-icon">⏳</div>加载中，请稍候...</div>';
+      setTimeout(()=>{loadLog(true);},1500);
+    }else{
+      showFlash(e.message,'danger');
+    }
+  }
 }
 async function viewLogDetail(id){
   try{
@@ -8771,7 +8778,7 @@ async function viewLogDetail(id){
       '<div class="detail-section"><h3>基本信息</h3><div class="detail-grid">'+
       '<div class="detail-item"><span class="detail-label">物流单号</span><span class="detail-value">'+esc(l.batch_no)+'</span></div>'+
       '<div class="detail-item"><span class="detail-label">PL单号</span><span class="detail-value">'+esc(l.pl_no||'-')+'</span></div>'+
-      '<div class="detail-item"><span class="detail-label">关联CI</span><span class="detail-value">'+esc(l.related_ci_no)+'</span></div>'+
+      '<div class="detail-item"><span class="detail-label">关联CI</span><span class="detail-value" title="'+esc(l.related_ci_no)+'">'+esc(l.related_ci_no)+'</span></div>'+
       '<div class="detail-item"><span class="detail-label">货代</span><span class="detail-value">'+esc(l.forwarder_name)+'</span></div>'+
       '<div class="detail-item"><span class="detail-label">运输方式</span><span class="detail-value">'+esc(l.transport_mode)+'</span></div>'+
       '<div class="detail-item"><span class="detail-label">起运港</span><span class="detail-value">'+esc(l.origin_port)+'</span></div>'+
@@ -8794,7 +8801,7 @@ async function viewLogDetail(id){
       '</div></div>'+
       (l.remark?'<div class="detail-section"><h3>备注</h3><div>'+esc(l.remark)+'</div></div>':'')+
       '</div>',
-      '<button class="btn btn-secondary" onclick="closeModal()">关闭</button>'+(hasPermission('logistics_edit')?'<button class="btn btn-primary" onclick="closeModal();editLog(\''+id+'\')">编辑</button>':''));
+      '<button class="btn btn-secondary" onclick="closeModal()">关闭</button>'+(hasPermission('logistics_edit')?'<button class="btn btn-primary" onclick="closeModal();editLog(\''+id+'\')">编辑</button>':''),'modal-ci-create');
   }catch(e){showToast(e.message,'danger')}
 }
 async function createLogWithPL(){
@@ -8802,7 +8809,7 @@ async function createLogWithPL(){
     const cis=await api('/api/commercial-invoices/available-for-pl');
     window._ffs=await api('/api/freight-forwarders');
     const ciTableHTML=cis.length?'<div class="table-container" style="overflow-x:auto"><table class="data-table"><thead><tr><th>选择</th><th>CI号</th><th>供应商</th><th>CI日期</th><th>出货日期</th><th>国家</th><th>仓库</th><th>CI数量</th><th>已生成PL</th><th>剩余可生成</th></tr></thead><tbody>'+cis.map(c=>'<tr><td><button class="btn btn-primary btn-sm" onclick="selectCIForPL(\''+c.id+'\')">选择</button></td><td class="cell-id">'+esc(c.ci_no)+'</td><td>'+esc(c.supplier_name)+'</td><td class="cell-date">'+fmtDate(c.ci_date)+'</td><td class="cell-date">'+fmtDate(c.actual_ship_date)+'</td><td>'+esc(c.country)+'</td><td>'+esc(c.target_warehouse)+'</td><td class="text-right">'+(c.total_ci_qty||0)+'</td><td class="text-right">'+(c.generated_pl_qty||0)+'</td><td class="text-right font-bold" style="color:'+(c.available_to_create_pl_qty>0?'#1890ff':'#999')+'">'+(c.available_to_create_pl_qty||0)+'</td></tr>').join('')+'</tbody></table></div>':'<div class="empty-state"><div class="empty-icon">📦</div>没有可生成PL的CI</div>';
-    openModal('新建物流批次 — 选择CI',ciTableHTML,'<button class="btn btn-secondary" onclick="closeModal()">取消</button>');
+    openModal('新建物流批次 — 选择CI',ciTableHTML,'<button class="btn btn-secondary" onclick="closeModal()">取消</button>','modal-ci-create');
   }catch(e){showToast(e.message,'danger')}
 }
 async function selectCIForPL(ciId){
@@ -8842,15 +8849,9 @@ async function selectCIForPL(ciId){
     });
     const ffs=window._ffs||[];
     const ffOpts=ffs.map(f=>'<option value="'+f.id+'" data-name="'+esc(f.name)+'">'+esc(f.name)+'</option>').join('');
-    // 优化多CI展示：ci_no 含 & 时拆分为独立标签
-    const ciNos=String(ci.ci_no||'').split('&').filter(Boolean);
-    const ciDisplay=ciNos.length>1?
-      '<div style="display:flex;flex-wrap:wrap;gap:4px">'+ciNos.map(n=>'<span style="display:inline-block;padding:2px 8px;background:#e6f7ff;border:1px solid #91d5ff;border-radius:4px;font-size:12px;color:#1890ff">'+esc(n)+'</span>').join('')+'</div>'
-      :'<input type="text" value="'+esc(ci.ci_no)+'" disabled>';
-    // 发货日期：自动关联CI出货日期，不允许手动输入
+    const ciDisplay='<input type="text" value="'+esc(ci.ci_no)+'" disabled title="'+esc(ci.ci_no)+'">';
     const shipDate=ci.actual_ship_date||'';
-    const shipDateNote=ciNos.length>1?(shipDate?'（多CI共享出货日期）':'（多CI未设置出货日期）'):'';
-    openModal('新建物流批次 — '+esc(ciNos[0]||ci.ci_no),
+    openModal('新建物流批次 — '+esc(ci.ci_no),
       '<div class="form-card" style="box-shadow:none;padding:0;max-height:70vh;overflow-y:auto">'+
       '<div class="detail-section"><h3>基础信息</h3><div class="form-grid">'+
       '<div class="form-group"><label>关联CI</label>'+ciDisplay+'</div>'+
@@ -8861,7 +8862,7 @@ async function selectCIForPL(ciId){
       '<div class="form-group"><label>运输方式</label><select id="npl-mode"><option value="sea">海运</option><option value="air">空运</option><option value="land">陆运</option><option value="express">快递</option></select></div>'+
       '<div class="form-group"><label>目标国家</label><input type="text" id="npl-country" value="'+esc(ci.country||'')+'"></div>'+
       '<div class="form-group"><label>目标仓库</label><input type="text" id="npl-wh" value="'+esc(ci.target_warehouse||'')+'"></div>'+
-      '<div class="form-group"><label>发货日期'+(shipDateNote?' <span style="font-weight:normal;color:#999;font-size:12px">'+shipDateNote+'</span>':'')+'</label><input type="date" id="npl-pickup" value="'+shipDate+'" readonly style="background:#f5f5f7;color:#666"></div>'+
+      '<div class="form-group"><label>发货日期</label><input type="date" id="npl-pickup" value="'+shipDate+'" readonly style="background:#f5f5f7;color:#666"></div>'+
       '<div class="form-group"><label>预计到港</label><input type="date" id="npl-eta"></div>'+
       '</div></div>'+
       '<div class="detail-section"><h3>PL装箱明细</h3>'+
@@ -8884,7 +8885,7 @@ async function selectCIForPL(ciId){
       '<div id="ci-readonly-costs" style="margin-top:12px;padding:8px;background:#f5f5f7;border-radius:8px"><div style="font-size:13px;color:#666;margin-bottom:4px">CI费用（只读参考）</div><div style="display:flex;gap:16px;font-size:13px"><span>关税: <b>'+fmtMoney(costSummary.customs_duty_total||0,ci.currency||'USD')+'</b></span><span>商检费: <b>'+fmtMoney(costSummary.inspection_fee_total||0,ci.currency||'USD')+'</b></span></div></div>'+
       '<div style="margin-top:8px;font-size:14px;font-weight:500">综合运费合计: <span id="total-freight-display">0.00</span></div>'+
       '<div class="form-group" style="margin-top:8px"><label>备注</label><input type="text" id="npl-remark"></div></div></div></div>',
-      '<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-secondary" onclick="createLogWithPL()">返回选择CI</button><button class="btn btn-primary" onclick="saveLogWithPL()">创建物流批次</button>');
+      '<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-secondary" onclick="createLogWithPL()">返回选择CI</button><button class="btn btn-primary" onclick="saveLogWithPL()">创建物流批次</button>','modal-ci-create');
     renderPLDraftTable();renderOtherFees();calcTotalFreight();
   }catch(e){showToast(e.message,'danger')}
 }
@@ -9032,7 +9033,7 @@ async function editLog(id){
       '<div class="form-group"><label>其他运输费用</label><input type="number" step="0.01" id="el-local" value="'+(l.local_charges||0)+'"></div>'+
       '<div class="form-group"><label>费用状态</label><select id="el-feestatus"><option value="unpaid"'+(l.fee_status==='unpaid'?' selected':'')+'>未付</option><option value="paid"'+(l.fee_status==='paid'?' selected':'')+'>已付</option></select></div>'+
       '<div class="form-group"><label>备注</label><input type="text" id="el-remark" value="'+esc(l.remark||'')+'"></div></div></div></div>',
-      '<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveEditLog(\''+id+'\''+(plData?',\''+plData.id+'\'':'')+')">保存</button>');
+      '<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveEditLog(\''+id+'\''+(plData?',\''+plData.id+'\'':'')+')">保存</button>','modal-ci-create');
   }catch(e){showToast(e.message,'danger')}
 }
 async function saveEditLog(logId,plId){
