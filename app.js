@@ -468,7 +468,7 @@ function simpleMgrTarget(mySeq){
 }
 function renderSimpleMgr(title,apiUrl,fields,icon){
   const mySeq=++simpleMgrLoadSeq;
-  document.getElementById('content-inner').innerHTML='<div id="flash-container"></div><div id="simple-manager-page" data-load-seq="'+mySeq+'"><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">'+icon+' '+title+'</div><div class="table-section-actions">'+(hasPermission('system_config')?'<button class="btn btn-primary btn-sm" onclick="editSimple(\''+apiUrl+'\','+encodeURIComponent(JSON.stringify(fields))+')">'+t('common.add','➕ 新增')+'</button>':'')+'</div></div><div id="simple-table"></div></div></div>';
+  document.getElementById('content-inner').innerHTML='<div id="flash-container"></div><div id="simple-manager-page" data-load-seq="'+mySeq+'"><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">'+icon+' '+title+'</div><div class="table-section-actions">'+(hasPermission('system_config')?'<button class="btn btn-primary btn-sm" onclick="editSimple(\''+apiUrl+'\',\''+b64EncodeUnicode(JSON.stringify(fields))+'\')">'+t('common.add','➕ 新增')+'</button>':'')+'</div></div><div id="simple-table"></div></div></div>';
   loadSimple(apiUrl,fields,mySeq);
 }
 async function loadSimple(apiUrl,fields,mySeq){
