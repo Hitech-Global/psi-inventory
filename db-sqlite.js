@@ -1038,6 +1038,21 @@ function initDatabase() {
     )
   `);
 
+  // LOGISTICS-CLOSED-LOOP-PHASE1: packing_lists 新增状态/物流关联/更新时间
+  try { d.exec("ALTER TABLE packing_lists ADD COLUMN status TEXT DEFAULT 'draft'"); } catch(e) {}
+  try { d.exec("ALTER TABLE packing_lists ADD COLUMN logistics_batch_id TEXT DEFAULT ''"); } catch(e) {}
+  try { d.exec("ALTER TABLE packing_lists ADD COLUMN updated_at TEXT DEFAULT (datetime('now'))"); } catch(e) {}
+
+  // LOGISTICS-CLOSED-LOOP-PHASE1: packing_list_items 新增单箱重量/尺寸字段
+  // 字段含义：gross_weight=总毛重, net_weight=总净重, cbm=总体积（已有，不新增）
+  // 新增 per_carton 字段存储单箱值，length/width/height 存储箱规尺寸
+  try { d.exec("ALTER TABLE packing_list_items ADD COLUMN gross_weight_per_carton REAL DEFAULT 0"); } catch(e) {}
+  try { d.exec("ALTER TABLE packing_list_items ADD COLUMN net_weight_per_carton REAL DEFAULT 0"); } catch(e) {}
+  try { d.exec("ALTER TABLE packing_list_items ADD COLUMN cbm_per_carton REAL DEFAULT 0"); } catch(e) {}
+  try { d.exec("ALTER TABLE packing_list_items ADD COLUMN length REAL DEFAULT 0"); } catch(e) {}
+  try { d.exec("ALTER TABLE packing_list_items ADD COLUMN width REAL DEFAULT 0"); } catch(e) {}
+  try { d.exec("ALTER TABLE packing_list_items ADD COLUMN height REAL DEFAULT 0"); } catch(e) {}
+
   // 物流批次
   d.exec(`
     CREATE TABLE IF NOT EXISTS logistics_batches (

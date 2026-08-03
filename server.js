@@ -5405,19 +5405,58 @@ app.get('/api/commercial-invoices', requireApiPermission('ci_view'), asyncHandle
   res.json(query(sql, params).rows);
 }));
 
+// P2-LOGISTICS-CLOSED-LOOP: 可生成 PL 的 CI 列表（CI 创建即代表出货事实成立，不依赖 ci_status=shipped）
+// 查询条件：CI 未取消。返回 CI 总数量、已生成 PL 数量、剩余可生成 PL 数量。
+// 默认只返回 available_to_create_pl_qty > 0 的 CI（?all=true 返回全部）。
+// 注意：SKU 级剩余数量以 GET /api/commercial-invoices/:id 的 pl_check 为最终依据。
+app.get('/api/commercial-invoices/available-for-pl', requireApiPermission('ci_view'), asyncHandler((req, res) => {
+  const showAll = req.query.all === 'true';
+  const sql = `SELECT ci.id, ci.ci_no, ci.supplier_name, ci.ci_date, ci.actual_ship_date, ci.country, ci.target_warehouse,
+    COALESCE(ci_sum.total_ci_qty, 0) AS total_ci_qty,
+    COALESCE(pl_sum.generated_pl_qty, 0) AS generated_pl_qty,
+    COALESCE(ci_sum.total_ci_qty, 0) - COALESCE(pl_sum.generated_pl_qty, 0) AS available_to_create_pl_qty
+  FROM commercial_invoices ci
+  LEFT JOIN (
+    SELECT ci_id, SUM(shipped_qty) AS total_ci_qty
+    FROM commercial_invoice_items GROUP BY ci_id
+  ) ci_sum ON ci_sum.ci_id = ci.id
+  LEFT JOIN (
+    SELECT pl.related_ci_id, SUM(pli.total_qty) AS generated_pl_qty
+    FROM packing_lists pl
+    JOIN packing_list_items pli ON pli.pl_id = pl.id
+    GROUP BY pl.related_ci_id
+  ) pl_sum ON pl_sum.related_ci_id = ci.id
+  WHERE ci.ci_status != 'cancelled'
+  ORDER BY ci.created_at DESC`;
+  let rows = query(sql).rows;
+  if (!showAll) {
+    rows = rows.filter(r => (r.available_to_create_pl_qty || 0) > 0);
+  }
+  res.json(rows);
+}));
+
 app.get('/api/commercial-invoices/:id', requireApiPermission('ci_view'), asyncHandler((req, res) => {
   const ci = queryOne('SELECT *, (goods_amount - COALESCE(actual_deducted_deposit, 0) - COALESCE(payable_balance, 0)) AS amount_difference FROM commercial_invoices WHERE id = ?', [req.params.id]);
   if (!ci) return res.status(404).json({ error: 'CI不存在' });
   const items = query('SELECT * FROM commercial_invoice_items WHERE ci_id = ? ORDER BY created_at', [req.params.id]).rows;
-  const pl = queryOne('SELECT * FROM packing_lists WHERE related_ci_id = ?', [req.params.id]);
-  const plItems = pl ? query('SELECT * FROM packing_list_items WHERE pl_id = ? ORDER BY created_at', [pl.id]).rows : [];
+  // LOGISTICS-CLOSED-LOOP-PHASE1: 改 queryOne→query，返回 packing_lists 数组（支持一 CI 多 PL）
+  const pls = query('SELECT * FROM packing_lists WHERE related_ci_id = ? ORDER BY created_at', [req.params.id]).rows;
+  const packing_lists = pls.map(pl => {
+    const plItems = query('SELECT * FROM packing_list_items WHERE pl_id = ? ORDER BY created_at', [pl.id]).rows;
+    return { ...pl, items: plItems };
+  });
+  // 兼容旧前端：packing_list 保留第一个 PL（如存在），新前端使用 packing_lists 数组
+  const pl = pls.length > 0 ? packing_lists[0] : null;
+  const plItems = pl ? pl.items : [];
   const ciQtyBySku = {};
   items.forEach(i => { ciQtyBySku[i.sku_code] = (ciQtyBySku[i.sku_code] || 0) + (i.shipped_qty || 0); });
   const plQtyBySku = {};
-  plItems.forEach(i => { plQtyBySku[i.sku_code] = (plQtyBySku[i.sku_code] || 0) + (i.total_qty || 0); });
+  packing_lists.forEach(p => {
+    (p.items || []).forEach(i => { plQtyBySku[i.sku_code] = (plQtyBySku[i.sku_code] || 0) + (i.total_qty || 0); });
+  });
   const checkSkus = [...new Set(Object.keys(ciQtyBySku).concat(Object.keys(plQtyBySku)))];
   const pl_check = checkSkus.map(sku => ({ sku_code: sku, ci_qty: ciQtyBySku[sku] || 0, pl_qty: plQtyBySku[sku] || 0, diff_qty: (plQtyBySku[sku] || 0) - (ciQtyBySku[sku] || 0) }));
-  res.json({ ...ci, items, packing_list: pl ? { ...pl, items: plItems } : null, pl_check });
+  res.json({ ...ci, items, packing_list: pl, packing_lists, pl_check });
 }));
 
 // 多 PI 改造：查询 CI 关联的各 PI 尾款明细（供合并付款选择）
@@ -5783,7 +5822,8 @@ app.post('/api/commercial-invoices/:id/reverse', requireApiPermission('ci_edit')
       // 1. 查询关联数据
       const ciItems = query('SELECT * FROM commercial_invoice_items WHERE ci_id = ?', [ci.id]).rows;
       const inbounds = query('SELECT * FROM inbound_records WHERE source_ci_id = ?', [ci.id]).rows;
-      const pl = queryOne('SELECT * FROM packing_lists WHERE related_ci_id = ?', [ci.id]);
+      // LOGISTICS-CLOSED-LOOP-PHASE1: 适配多 PL，冲销所有关联 PL
+      const pls = query('SELECT * FROM packing_lists WHERE related_ci_id = ?', [ci.id]).rows;
       const piIds = [...new Set(ciItems.map(i => i.pi_id).filter(Boolean))];
 
       // 2. 冲销入库记录
@@ -5792,8 +5832,8 @@ app.post('/api/commercial-invoices/:id/reverse', requireApiPermission('ci_edit')
           ['reversed', (ib.remark ? ib.remark + '\n' : '') + `[冲销 ${ts} by ${operatorName}] CI ${ci.ci_no}`, ib.id]);
       }
 
-      // 3. 冲销 PL（标记 remark）
-      if (pl) {
+      // 3. 冲销 PL（标记 remark）— 适配多 PL
+      for (const pl of pls) {
         const plRemark = (pl.remark ? pl.remark + '\n' : '') + `[冲销 ${ts} by ${operatorName}] CI ${ci.ci_no} 已冲销`;
         run('UPDATE packing_lists SET remark = ? WHERE id = ?', [plRemark, pl.id]);
       }
@@ -6209,19 +6249,21 @@ app.post('/api/packing-lists/batch-import', requireApiPermission('ci_create'), a
 // ==================== 物流批次 ====================
 app.get('/api/logistics-batches', requireApiPermission('logistics_view'), asyncHandler((req, res) => {
   const { status, keyword, forwarder_id } = req.query;
-  let sql = 'SELECT * FROM logistics_batches WHERE 1=1';
+  let sql = 'SELECT lb.*, pl.pl_no, pl.id AS pl_id, pl.status AS pl_status FROM logistics_batches lb LEFT JOIN packing_lists pl ON pl.logistics_batch_id = lb.id WHERE 1=1';
   const params = [];
-  if (status) { sql += ' AND logistics_status = ?'; params.push(status); }
-  if (forwarder_id) { sql += ' AND forwarder_id = ?'; params.push(forwarder_id); }
-  if (keyword) { sql += ' AND (batch_no LIKE ? OR forwarder_name LIKE ? OR related_ci_no LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`); }
-  sql += ' ORDER BY created_at DESC';
+  if (status) { sql += ' AND lb.logistics_status = ?'; params.push(status); }
+  if (forwarder_id) { sql += ' AND lb.forwarder_id = ?'; params.push(forwarder_id); }
+  if (keyword) { sql += ' AND (lb.batch_no LIKE ? OR lb.forwarder_name LIKE ? OR lb.related_ci_no LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`); }
+  sql += ' ORDER BY lb.created_at DESC';
   res.json(query(sql, params).rows);
 }));
 
 app.get('/api/logistics-batches/:id', requireApiPermission('logistics_view'), asyncHandler((req, res) => {
   const batch = queryOne('SELECT * FROM logistics_batches WHERE id = ?', [req.params.id]);
   if (!batch) return res.status(404).json({ error: '物流批次不存在' });
-  res.json(batch);
+  // P2: 返回关联 PL 信息
+  const pl = queryOne('SELECT * FROM packing_lists WHERE logistics_batch_id = ?', [req.params.id]);
+  res.json({ ...batch, pl_id: pl ? pl.id : '', pl_no: pl ? pl.pl_no : '', pl_status: pl ? pl.status : '' });
 }));
 
 app.post('/api/logistics-batches', requireApiPermission('logistics_create'), asyncHandler((req, res) => {
@@ -6236,28 +6278,167 @@ app.post('/api/logistics-batches', requireApiPermission('logistics_create'), asy
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
+// LOGISTICS-CLOSED-LOOP-PHASE1: 合并创建事务 — PL + 物流批次在同一事务中创建
+// 前端以"新建物流批次"为入口，后台保持 CI → PL → Logistics 三层独立事实
+// PL → Logistics Batch 一对一模型（Phase 1）
+app.post('/api/logistics-batches/create-with-pl', requireApiPermission('logistics_create'), asyncHandler((req, res) => {
+  try {
+    const d = req.body;
+
+    // ====== 前置校验（事务外，快速失败） ======
+    if (!d.related_ci_id) return res.status(400).json({ error: '必须关联 CI' });
+    const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [d.related_ci_id]);
+    if (!ci) return res.status(400).json({ error: '关联的 CI 不存在' });
+    if (ci.ci_status === 'cancelled') return res.status(400).json({ error: '该 CI 已作废，不能创建 PL' });
+
+    // PL 单号唯一性校验（如用户手动指定）
+    const plNo = d.pl_no || `PL-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
+    if (d.pl_no) {
+      const existPl = queryOne('SELECT id FROM packing_lists WHERE pl_no = ?', [plNo]);
+      if (existPl) return res.status(409).json({ error: `PL 单号 ${plNo} 已存在` });
+    }
+
+    // 物流单号唯一性校验（如用户手动指定）
+    const bNo = d.batch_no || `LOG-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
+    if (d.batch_no) {
+      const existBatch = queryOne('SELECT id FROM logistics_batches WHERE batch_no = ?', [bNo]);
+      if (existBatch) return res.status(409).json({ error: `物流单号 ${bNo} 已存在` });
+    }
+
+    // PL 明细非空校验
+    if (!d.items || !Array.isArray(d.items) || d.items.length === 0) {
+      return res.status(400).json({ error: 'PL 明细不能为空' });
+    }
+
+    // 零行和负数校验
+    for (const item of d.items) {
+      const qty = item.total_qty || ((item.cartons || 0) * (item.qty_per_carton || 0));
+      if (qty <= 0) return res.status(400).json({ error: `SKU ${item.sku_code} 的数量必须大于 0` });
+    }
+
+    const plId = genId('pl');
+    const bId = genId('log');
+    let totalCartons = 0, totalQtyAll = 0, totalGross = 0, totalNet = 0, totalCbm = 0;
+    const totalFreight = (d.international_freight || 0) + (d.local_charges || 0) + (d.customs_service_fee || 0) + (d.delivery_fee || 0);
+
+    transaction(() => {
+      // ====== 步骤 1: 校验 CI 仍存在足够的剩余数量（事务内，防并发占用） ======
+      const plQtyMap = new Map();
+      d.items.forEach(item => {
+        const sku = item.sku_code;
+        const qty = item.total_qty || ((item.cartons || 0) * (item.qty_per_carton || 0));
+        plQtyMap.set(sku, (plQtyMap.get(sku) || 0) + (qty || 0));
+      });
+      for (const [sku, thisPlQty] of plQtyMap) {
+        // 使用 SUM 聚合同一 SKU 的所有 CI 明细行（CI 可能包含同 SKU 多行）
+        const ciSumRow = queryOne('SELECT COALESCE(SUM(shipped_qty),0) as total_qty FROM commercial_invoice_items WHERE ci_id = ? AND sku_code = ?', [d.related_ci_id, sku]);
+        const ciQty = ciSumRow ? (ciSumRow.total_qty || 0) : 0;
+        if (ciQty <= 0) throw new Error(`SKU ${sku} 不在 CI 明细中，不能创建 PL`);
+        const existPlSum = queryOne('SELECT COALESCE(SUM(pli.total_qty),0) as total FROM packing_list_items pli JOIN packing_lists pl ON pli.pl_id = pl.id WHERE pl.related_ci_id = ? AND pli.sku_code = ?', [d.related_ci_id, sku]);
+        const newTotal = (existPlSum && existPlSum.total || 0) + thisPlQty;
+        if (newTotal > ciQty) {
+          throw new Error(`装箱单数量超过CI出货数量（SKU: ${sku}, CI出货数量: ${ciQty}, 已创建PL数量: ${existPlSum && existPlSum.total || 0}, 本次PL数量: ${thisPlQty}），请检查后重新提交。`);
+        }
+      }
+
+      // ====== 步骤 2: 创建 PL Header ======
+      run(`INSERT INTO packing_lists (id, pl_no, related_po_id, related_po_no, related_pi_id, related_pi_no, related_ci_id, related_ci_no, supplier_id, supplier_name, brand, country, target_warehouse, pl_date, total_qty, total_cartons, total_gross_weight, total_net_weight, total_cbm, attachment, remark, status, logistics_batch_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?)`,
+        [plId, plNo, d.related_po_id || ci.related_po_id || '', d.related_po_no || ci.related_po_no || '', d.related_pi_id || ci.related_pi_id || '', d.related_pi_no || ci.related_pi_no || '', d.related_ci_id, d.related_ci_no || ci.ci_no || '', d.supplier_id || ci.supplier_id || '', d.supplier_name || ci.supplier_name || '', d.brand || ci.brand || '', d.country || ci.country || '', d.target_warehouse || ci.target_warehouse || '', d.pl_date || new Date().toISOString().split('T')[0], 0, 0, 0, 0, 0, parseAttachment(d.attachment), d.remark || '', 'draft', new Date().toISOString().slice(0, 19).replace('T', ' ')]);
+
+      // ====== 步骤 3: 创建 PL Items ======
+      d.items.forEach(item => {
+        const cartons = item.cartons || 0;
+        const qtyPerCarton = item.qty_per_carton || 0;
+        const totalQty = item.total_qty || (cartons * qtyPerCarton);
+        const grossW = item.gross_weight || 0;
+        const netW = item.net_weight || 0;
+        const cbm = item.cbm || 0;
+        const gwPerCarton = item.gross_weight_per_carton || 0;
+        const nwPerCarton = item.net_weight_per_carton || 0;
+        const cbmPerCarton = item.cbm_per_carton || 0;
+        const len = item.length || 0;
+        const wid = item.width || 0;
+        const hgt = item.height || 0;
+        totalCartons += cartons;
+        totalQtyAll += totalQty;
+        totalGross += grossW;
+        totalNet += netW;
+        totalCbm += cbm;
+        run(`INSERT INTO packing_list_items (id, pl_id, pl_no, ci_no, sku_code, cartons, qty_per_carton, total_qty, gross_weight, net_weight, cbm, remark, gross_weight_per_carton, net_weight_per_carton, cbm_per_carton, length, width, height) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [genId('pli'), plId, plNo, d.related_ci_no || ci.ci_no || '', item.sku_code, cartons, qtyPerCarton, totalQty, grossW, netW, cbm, item.remark || '', gwPerCarton, nwPerCarton, cbmPerCarton, len, wid, hgt]);
+      });
+
+      // ====== 步骤 4: 更新 PL Header 汇总 ======
+      run('UPDATE packing_lists SET total_qty = ?, total_cartons = ?, total_gross_weight = ?, total_net_weight = ?, total_cbm = ? WHERE id = ?',
+        [totalQtyAll, totalCartons, totalGross, totalNet, totalCbm, plId]);
+
+      // ====== 步骤 5: 创建物流批次 ======
+      run(`INSERT INTO logistics_batches (id, batch_no, related_ci_id, related_ci_no, forwarder_id, forwarder_name, transport_mode, origin_port, dest_port, target_country, target_warehouse, pickup_date, depart_date, eta_date, actual_arrival_date, customs_start_date, customs_end_date, delivery_date, inbound_complete_date, logistics_status, total_cartons, total_weight, total_cbm, freight_currency, international_freight, local_charges, customs_service_fee, delivery_fee, total_freight, customs_duty, vat_gst, other_fees, fee_status, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [bId, bNo, d.related_ci_id, d.related_ci_no || ci.ci_no || '', d.forwarder_id || '', d.forwarder_name || '', d.transport_mode || 'sea', d.origin_port || '', d.dest_port || '', d.target_country || ci.country || '', d.target_warehouse || ci.target_warehouse || '', d.pickup_date || '', d.depart_date || '', d.eta_date || '', d.actual_arrival_date || '', d.customs_start_date || '', d.customs_end_date || '', d.delivery_date || '', d.inbound_complete_date || '', d.logistics_status || 'pending', totalCartons, totalGross, totalCbm, d.freight_currency || 'USD', d.international_freight || 0, d.local_charges || 0, d.customs_service_fee || 0, d.delivery_fee || 0, totalFreight, d.customs_duty || 0, d.vat_gst || 0, d.other_fees || 0, d.fee_status || 'unpaid', d.remark || '']);
+
+      // ====== 步骤 6: 关联 PL → 物流批次 + 更新 PL 状态为 confirmed ======
+      run('UPDATE packing_lists SET logistics_batch_id = ?, status = ?, updated_at = ? WHERE id = ?',
+        [bId, 'confirmed', new Date().toISOString().slice(0, 19).replace('T', ' '), plId]);
+
+      // ====== 步骤 7: 更新 CI 状态 ======
+      run('UPDATE commercial_invoices SET ci_status = ? WHERE id = ?', ['ci_pl_uploaded', d.related_ci_id]);
+    });
+
+    res.json({
+      pl_id: plId,
+      pl_no: plNo,
+      logistics_batch_id: bId,
+      batch_no: bNo,
+      total_qty: totalQtyAll,
+      total_cartons: totalCartons,
+      total_gross_weight: totalGross,
+      total_net_weight: totalNet,
+      total_cbm: totalCbm,
+      total_freight: totalFreight
+    });
+  } catch (e) {
+    // 区分业务校验错误（400）和系统错误（500）
+    const msg = e.message || '';
+    if (msg.includes('超过CI') || msg.includes('不在 CI') || msg.includes('必须') || msg.includes('已存在') || msg.includes('不能为空')) {
+      return res.status(400).json({ error: msg });
+    }
+    res.status(500).json({ error: msg });
+  }
+}));
+
 app.put('/api/logistics-batches/:id', requireApiPermission('logistics_edit'), asyncHandler((req, res) => {
   try {
     const d = req.body;
     const { id } = req.params;
+
+    // LOGISTICS-CLOSED-LOOP-PHASE1: 查询当前记录（用于状态门禁 + 运费重算）
+    const existing = queryOne('SELECT * FROM logistics_batches WHERE id = ?', [id]);
+    if (!existing) return res.status(404).json({ error: '物流批次不存在' });
+
+    // LOGISTICS-CLOSED-LOOP-PHASE1: batch_no 编辑 — 状态门禁 + 唯一性校验
+    if (d.batch_no !== undefined && d.batch_no !== existing.batch_no) {
+      if (existing.logistics_status === 'completed' || existing.logistics_status === 'cancelled') {
+        return res.status(400).json({ error: '物流批次已完成或已取消，不能修改物流单号' });
+      }
+      const dup = queryOne('SELECT id FROM logistics_batches WHERE batch_no = ? AND id != ?', [d.batch_no, id]);
+      if (dup) return res.status(409).json({ error: `物流单号 ${d.batch_no} 已存在` });
+    }
+
     const fields = [];
     const values = [];
-    const allowed = ['forwarder_id', 'forwarder_name', 'transport_mode', 'origin_port', 'dest_port', 'target_country', 'target_warehouse', 'pickup_date', 'depart_date', 'eta_date', 'actual_arrival_date', 'customs_start_date', 'customs_end_date', 'delivery_date', 'inbound_complete_date', 'logistics_status', 'total_cartons', 'total_weight', 'total_cbm', 'freight_currency', 'international_freight', 'local_charges', 'customs_service_fee', 'delivery_fee', 'customs_duty', 'vat_gst', 'other_fees', 'fee_status', 'remark'];
+    const allowed = ['batch_no', 'forwarder_id', 'forwarder_name', 'transport_mode', 'origin_port', 'dest_port', 'target_country', 'target_warehouse', 'pickup_date', 'depart_date', 'eta_date', 'actual_arrival_date', 'customs_start_date', 'customs_end_date', 'delivery_date', 'inbound_complete_date', 'logistics_status', 'total_cartons', 'total_weight', 'total_cbm', 'freight_currency', 'international_freight', 'local_charges', 'customs_service_fee', 'delivery_fee', 'customs_duty', 'vat_gst', 'other_fees', 'fee_status', 'remark'];
     allowed.forEach(f => {
       if (d[f] !== undefined) { fields.push(`${f} = ?`); values.push(d[f]); }
     });
-    // 重新计算综合运费
+    // 重新计算综合运费（使用已查询的 existing 记录，避免二次查询）
     if (d.international_freight !== undefined || d.local_charges !== undefined || d.customs_service_fee !== undefined || d.delivery_fee !== undefined) {
-      const batch = queryOne('SELECT * FROM logistics_batches WHERE id = ?', [id]);
-      if (batch) {
-        const intl = d.international_freight !== undefined ? d.international_freight : batch.international_freight;
-        const local = d.local_charges !== undefined ? d.local_charges : batch.local_charges;
-        const customs = d.customs_service_fee !== undefined ? d.customs_service_fee : batch.customs_service_fee;
-        const delivery = d.delivery_fee !== undefined ? d.delivery_fee : batch.delivery_fee;
-        const total = (intl || 0) + (local || 0) + (customs || 0) + (delivery || 0);
-        fields.push('total_freight = ?');
-        values.push(total);
-      }
+      const intl = d.international_freight !== undefined ? d.international_freight : existing.international_freight;
+      const local = d.local_charges !== undefined ? d.local_charges : existing.local_charges;
+      const customs = d.customs_service_fee !== undefined ? d.customs_service_fee : existing.customs_service_fee;
+      const delivery = d.delivery_fee !== undefined ? d.delivery_fee : existing.delivery_fee;
+      const total = (intl || 0) + (local || 0) + (customs || 0) + (delivery || 0);
+      fields.push('total_freight = ?');
+      values.push(total);
     }
     fields.push(`updated_at = datetime('now')`);
     values.push(id);
@@ -6289,6 +6470,7 @@ app.get('/api/packing-lists', requireApiPermission('ci_view'), asyncHandler((req
 }));
 
 // P1-STATE-01D：只读 PL 明细（含 item.id 与已入库/剩余累计，供入库选择定位 PL 明细）
+// LOGISTICS-CLOSED-LOOP-PHASE1: 增加关联物流批次信息返回
 app.get('/api/packing-lists/:id', requireApiPermission('ci_view'), asyncHandler((req, res) => {
   try {
     const pl = queryOne('SELECT * FROM packing_lists WHERE id = ?', [req.params.id]);
@@ -6299,8 +6481,138 @@ app.get('/api/packing-lists/:id', requireApiPermission('ci_view'), asyncHandler(
       it.received_qty = r ? r.s : 0;
       it.remaining_qty = (it.total_qty || 0) - it.received_qty;
     });
-    res.json({ ...pl, items });
+    // 如果 PL 已关联物流批次，返回物流批次信息
+    let logistics_batch = null;
+    if (pl.logistics_batch_id) {
+      logistics_batch = queryOne('SELECT * FROM logistics_batches WHERE id = ?', [pl.logistics_batch_id]);
+    }
+    res.json({ ...pl, items, logistics_batch });
   } catch (e) { res.status(500).json({ error: e.message }); }
+}));
+
+// LOGISTICS-CLOSED-LOOP-PHASE1: PL 编辑接口（含状态门禁）
+// 支持编辑 PL Header 字段 + PL Items（增/改/删），全部在同一事务中完成
+// 状态门禁：已部分入库时 PL 数量不能低于已入库数量，已完全入库时禁止修改 SKU 和数量
+app.put('/api/packing-lists/:id', requireApiPermission('logistics_edit'), asyncHandler((req, res) => {
+  try {
+    const d = req.body;
+    const { id } = req.params;
+
+    const pl = queryOne('SELECT * FROM packing_lists WHERE id = ?', [id]);
+    if (!pl) return res.status(404).json({ error: 'PL不存在' });
+
+    // pl_no 唯一性校验
+    if (d.pl_no !== undefined && d.pl_no !== pl.pl_no) {
+      const dup = queryOne('SELECT id FROM packing_lists WHERE pl_no = ? AND id != ?', [d.pl_no, id]);
+      if (dup) return res.status(409).json({ error: `PL 单号 ${d.pl_no} 已存在` });
+    }
+
+    transaction(() => {
+      // ====== 1. 更新 PL Header 字段（白名单） ======
+      const headerAllowed = ['pl_no', 'target_warehouse', 'pl_date', 'remark', 'attachment'];
+      const fields = [];
+      const values = [];
+      headerAllowed.forEach(f => {
+        if (d[f] !== undefined) {
+          fields.push(`${f} = ?`);
+          values.push(f === 'attachment' ? parseAttachment(d[f]) : d[f]);
+        }
+      });
+
+      // pl_no 变更时同步更新 packing_list_items.pl_no
+      if (d.pl_no !== undefined && d.pl_no !== pl.pl_no) {
+        run('UPDATE packing_list_items SET pl_no = ? WHERE pl_id = ?', [d.pl_no, id]);
+      }
+
+      if (fields.length > 0) {
+        fields.push(`updated_at = datetime('now')`);
+        values.push(id);
+        run(`UPDATE packing_lists SET ${fields.join(', ')} WHERE id = ?`, values);
+      }
+
+      // ====== 2. 更新 PL Items（如果提供了 items 数组） ======
+      if (d.items && Array.isArray(d.items)) {
+        // 处理删除（已有入库记录的不允许删除）
+        d.items.filter(i => i._delete && i.id).forEach(item => {
+          const received = queryOne('SELECT COALESCE(SUM(actual_qty),0) AS s FROM inbound_records WHERE source_pl_item_id = ?', [item.id]);
+          if (received && received.s > 0) {
+            throw new Error(`已有入库记录的 PL 明细不能删除`);
+          }
+          run('DELETE FROM packing_list_items WHERE id = ? AND pl_id = ?', [item.id, id]);
+        });
+
+        // 处理新增和修改
+        d.items.filter(i => !i._delete).forEach(item => {
+          if (item.id) {
+            // ====== 编辑现有 item ======
+            const existing = queryOne('SELECT * FROM packing_list_items WHERE id = ? AND pl_id = ?', [item.id, id]);
+            if (!existing) throw new Error(`PL 明细 ${item.id} 不存在`);
+
+            // 查询已入库数量
+            const received = queryOne('SELECT COALESCE(SUM(actual_qty),0) AS s FROM inbound_records WHERE source_pl_item_id = ?', [item.id]);
+            const receivedQty = received ? received.s : 0;
+
+            // 状态门禁：已完全入库时禁止修改 SKU 和数量
+            if (receivedQty > 0 && receivedQty >= (existing.total_qty || 0)) {
+              if ((item.sku_code !== undefined && item.sku_code !== existing.sku_code) ||
+                  (item.total_qty !== undefined && item.total_qty !== existing.total_qty)) {
+                throw new Error(`SKU ${existing.sku_code} 已完全入库，不能修改 SKU 或数量`);
+              }
+            }
+
+            // 状态门禁：已部分入库时数量不能低于已入库数量
+            if (receivedQty > 0 && item.total_qty !== undefined && item.total_qty < receivedQty) {
+              throw new Error(`SKU ${existing.sku_code} 已入库 ${receivedQty} 件，PL 数量不能低于已入库数量`);
+            }
+
+            const itemAllowed = ['sku_code', 'cartons', 'qty_per_carton', 'total_qty', 'gross_weight', 'net_weight', 'cbm', 'gross_weight_per_carton', 'net_weight_per_carton', 'cbm_per_carton', 'length', 'width', 'height', 'remark'];
+            const itemFields = [];
+            const itemValues = [];
+            itemAllowed.forEach(f => {
+              if (item[f] !== undefined) { itemFields.push(`${f} = ?`); itemValues.push(item[f]); }
+            });
+            if (itemFields.length > 0) {
+              itemValues.push(item.id);
+              run(`UPDATE packing_list_items SET ${itemFields.join(', ')} WHERE id = ?`, itemValues);
+            }
+          } else {
+            // ====== 新增 item ======
+            if (!item.sku_code) throw new Error('新增 PL 明细必须提供 SKU');
+            const ciItem = queryOne('SELECT id, shipped_qty FROM commercial_invoice_items WHERE ci_id = ? AND sku_code = ?', [pl.related_ci_id, item.sku_code]);
+            if (!ciItem) throw new Error(`SKU ${item.sku_code} 不在 CI 明细中，不能添加`);
+
+            const cartons = item.cartons || 0;
+            const qtyPerCarton = item.qty_per_carton || 0;
+            const totalQty = item.total_qty || (cartons * qtyPerCarton);
+            if (totalQty <= 0) throw new Error(`SKU ${item.sku_code} 的数量必须大于 0`);
+
+            // 校验 CI 剩余数量（排除当前 PL 自身已占用的）
+            const existPlSum = queryOne('SELECT COALESCE(SUM(pli.total_qty),0) as total FROM packing_list_items pli JOIN packing_lists pl ON pli.pl_id = pl.id WHERE pl.related_ci_id = ? AND pli.sku_code = ? AND pli.pl_id != ?', [pl.related_ci_id, item.sku_code, id]);
+            const newTotal = (existPlSum && existPlSum.total || 0) + totalQty;
+            if (newTotal > (ciItem.shipped_qty || 0)) {
+              throw new Error(`装箱单数量超过 CI 出货数量（SKU: ${item.sku_code}, CI 出货数量: ${ciItem.shipped_qty || 0}, 其他 PL 已占: ${existPlSum && existPlSum.total || 0}, 本次新增: ${totalQty}）`);
+            }
+
+            run(`INSERT INTO packing_list_items (id, pl_id, pl_no, ci_no, sku_code, cartons, qty_per_carton, total_qty, gross_weight, net_weight, cbm, remark, gross_weight_per_carton, net_weight_per_carton, cbm_per_carton, length, width, height) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [genId('pli'), id, d.pl_no || pl.pl_no, pl.related_ci_no, item.sku_code, cartons, qtyPerCarton, totalQty, item.gross_weight || 0, item.net_weight || 0, item.cbm || 0, item.remark || '', item.gross_weight_per_carton || 0, item.net_weight_per_carton || 0, item.cbm_per_carton || 0, item.length || 0, item.width || 0, item.height || 0]);
+          }
+        });
+
+        // ====== 3. 重算 PL Header 汇总 ======
+        const totals = queryOne('SELECT COALESCE(SUM(total_qty),0) as qty, COALESCE(SUM(cartons),0) as cartons, COALESCE(SUM(gross_weight),0) as gw, COALESCE(SUM(net_weight),0) as nw, COALESCE(SUM(cbm),0) as cbm FROM packing_list_items WHERE pl_id = ?', [id]);
+        run("UPDATE packing_lists SET total_qty = ?, total_cartons = ?, total_gross_weight = ?, total_net_weight = ?, total_cbm = ?, updated_at = datetime('now') WHERE id = ?",
+          [totals.qty, totals.cartons, totals.gw, totals.nw, totals.cbm, id]);
+      }
+    });
+
+    res.json({ success: true });
+  } catch (e) {
+    const msg = e.message || '';
+    if (msg.includes('已存在') || msg.includes('不能') || msg.includes('超过') || msg.includes('不在') || msg.includes('必须') || msg.includes('已有入库')) {
+      return res.status(400).json({ error: msg });
+    }
+    res.status(500).json({ error: msg });
+  }
 }));
 
 // P1-STATE-01D：单笔入库——强制关联真实 PL 明细，写入前完成 18 步守卫

@@ -8749,29 +8749,284 @@ async function saveInspectionFeePay(ciId){
 
 // ==================== 物流管理 ====================
 async function renderLogistics(){
-  document.getElementById('content-inner').innerHTML=t('html.renderLogistics', '<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>状态</label><select id="log-fs"><option value="">全部</option><option value="pending">待提货</option><option value="picked_up">已提货</option><option value="in_transit">运输中</option><option value="arrived">到港</option><option value="customs">清关中</option><option value="cleared">已清关</option><option value="delivering">派送中</option><option value="completed">已完成</option></select></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadLog()">搜索</button>{v1}</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🚢 物流批次</div></div><div id="log-table"></div></div>', {v1: hasPermission('logistics_create')?t('gen.L6025.1','<button class="btn btn-primary btn-sm" onclick="createLog()">➕ 新建</button>'):''});
+  document.getElementById('content-inner').innerHTML=t('html.renderLogistics', '<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>状态</label><select id="log-fs"><option value="">全部</option><option value="pending">待提货</option><option value="picked_up">已提货</option><option value="in_transit">运输中</option><option value="arrived">到港</option><option value="customs">清关中</option><option value="cleared">已清关</option><option value="delivering">派送中</option><option value="completed">已完成</option></select></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadLog()">搜索</button>{v1}</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🚢 物流批次</div></div><div id="log-table"></div></div>', {v1: hasPermission('logistics_create')?'<button class="btn btn-primary btn-sm" onclick="createLogWithPL()">➕ 新建物流批次</button>':''});
   loadLog();
 }
 async function loadLog(){
   try{
     const s=document.getElementById('log-fs')?.value||'';
     const data=await api('/api/logistics-batches?status='+s);
-    document.getElementById('log-table').innerHTML=!data.length?t('gen.L6032.1','<div class="empty-state"><div class="empty-icon">🚢</div>暂无物流数据</div>'):t('gen.L6032.2','<div class="table-container" style="box-shadow:none;border-radius:0;overflow-x:auto"><table class="data-table"><thead><tr><th>批次号</th><th>关联CI</th><th>货代</th><th>方式</th><th>起运港</th><th>目的港</th><th>国家</th><th>提货</th><th>出发</th><th>到港</th><th>清关完成</th><th>入库完成</th><th>箱数</th><th>CBM</th><th>综合运费</th><th>关税</th><th>状态</th><th>费用</th><th>操作</th></tr></thead><tbody>')+data.map(l=>'<tr class="clickable-detail-row" onclick="rowClickView(event,\'viewLog\',\''+l.id+'\')"><td class="cell-id">'+esc(l.batch_no)+'</td><td class="cell-id">'+esc(l.related_ci_no)+'</td><td>'+esc(l.forwarder_name)+'</td><td>'+esc(l.transport_mode)+'</td><td>'+esc(l.origin_port)+'</td><td>'+esc(l.dest_port)+'</td><td>'+esc(l.target_country)+'</td><td class="cell-date">'+fmtDate(l.pickup_date)+'</td><td class="cell-date">'+fmtDate(l.depart_date)+'</td><td class="cell-date">'+fmtDate(l.actual_arrival_date)+'</td><td class="cell-date">'+fmtDate(l.customs_end_date)+'</td><td class="cell-date">'+fmtDate(l.inbound_complete_date)+'</td><td class="text-right">'+(l.total_cartons||0)+'</td><td class="text-right">'+(l.total_cbm||0)+'</td><td class="text-right">'+fmtMoney(l.total_freight,l.freight_currency)+'</td><td class="text-right">'+fmtMoney(l.customs_duty,l.freight_currency)+'</td><td><span class="status-badge '+(l.logistics_status==='completed'?'status-completed':'status-pending')+'">'+esc(l.logistics_status)+'</span></td><td><span class="status-badge '+(l.fee_status==='paid'?'status-paid':'status-unpaid')+'">'+esc(l.fee_status)+'</span></td><td class="cell-actions"><button class="action-btn" onclick="viewLog(\''+l.id+'\')">👁️</button>'+(l.total_freight>0&&l.fee_status==='unpaid'&&hasPermission('payment_create')?'<button class="action-btn" onclick="createFrtPay(\''+l.id+t('gen.L6032.3','\')" title="\u8fd0\u8d39\u4ed8\u6b3e">💰</button>'):'')+(l.customs_duty>0&&l.fee_status==='unpaid'&&hasPermission('payment_create')?'<button class="action-btn" onclick="createDutyPay(\''+l.id+t('gen.L6032.4','\')" title="\u5173\u7a0e\u4ed8\u6b3e">🏛️</button>'):'')+'</td></tr>').join('')+'</tbody></table></div>';
+    document.getElementById('log-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">🚢</div>暂无物流数据</div>':'<div class="table-container" style="box-shadow:none;border-radius:0;overflow-x:auto"><table class="data-table"><thead><tr><th>物流单号</th><th>PL号</th><th>关联CI</th><th>货代</th><th>方式</th><th>国家</th><th>出发</th><th>到港</th><th>入库完成</th><th>箱数</th><th>CBM</th><th>综合运费</th><th>状态</th><th>操作</th></tr></thead><tbody>'+data.map(l=>'<tr class="clickable-detail-row" onclick="rowClickView(event,\'viewLogDetail\',\''+l.id+'\')"><td class="cell-id">'+esc(l.batch_no)+'</td><td class="cell-id">'+esc(l.pl_no||'-')+'</td><td class="cell-id">'+esc(l.related_ci_no)+'</td><td>'+esc(l.forwarder_name)+'</td><td>'+esc(l.transport_mode)+'</td><td>'+esc(l.target_country)+'</td><td class="cell-date">'+fmtDate(l.depart_date)+'</td><td class="cell-date">'+fmtDate(l.actual_arrival_date)+'</td><td class="cell-date">'+fmtDate(l.inbound_complete_date)+'</td><td class="text-right">'+(l.total_cartons||0)+'</td><td class="text-right">'+(l.total_cbm||0)+'</td><td class="text-right">'+fmtMoney(l.total_freight,l.freight_currency)+'</td><td><span class="status-badge '+(l.logistics_status==='completed'?'status-completed':'status-pending')+'">'+esc(l.logistics_status)+'</span></td><td class="cell-actions"><button class="action-btn" onclick="viewLogDetail(\''+l.id+'\')" title="查看">👁️</button>'+(hasPermission('logistics_edit')?'<button class="action-btn" onclick="editLog(\''+l.id+'\')" title="编辑">✏️</button>':'')+(l.total_freight>0&&l.fee_status==='unpaid'&&hasPermission('payment_create')?'<button class="action-btn" onclick="createFrtPay(\''+l.id+'\')" title="运费付款">💰</button>':'')+(l.customs_duty>0&&l.fee_status==='unpaid'&&hasPermission('payment_create')?'<button class="action-btn" onclick="createDutyPay(\''+l.id+'\')" title="关税付款">🏛️</button>':'')+'</td></tr>').join('')+'</tbody></table></div>';
   }catch(e){showFlash(e.message,'danger')}
 }
-async function viewLog(id){
-  try{const l=await api('/api/logistics-batches/'+id);const fs=['batch_no','related_ci_no','forwarder_name','transport_mode','origin_port','dest_port','target_country','target_warehouse','pickup_date','depart_date','eta_date','actual_arrival_date','customs_start_date','customs_end_date','delivery_date','inbound_complete_date','logistics_status','total_cartons','total_weight','total_cbm','freight_currency','international_freight','local_charges','customs_service_fee','delivery_fee','total_freight','customs_duty','vat_gst','other_fees','fee_status'];
-    openModal(t('modal.title.viewLog', '物流详情 - {v1}', {v1: l.batch_no}),t('modal.body.viewLog', '<div class="detail-card" style="box-shadow:none;padding:0"><div class="detail-section"><h3>基本信息</h3><div class="detail-grid">{v1}</div></div></div>', {v1: fs.map(f=>'<div class="detail-item"><span class="detail-label">'+f+'</span><span class="detail-value">'+esc(l[f])+'</span></div>').join('')}));
+async function viewLogDetail(id){
+  try{
+    const l=await api('/api/logistics-batches/'+id);
+    let plData=null;
+    if(l.pl_id){plData=await api('/api/packing-lists/'+l.pl_id);}
+    const plItems=(plData&&plData.items)||[];
+    const plItemsHTML=plItems.length?'<div class="table-container" style="box-shadow:none;border-radius:0;overflow-x:auto;margin-top:8px"><table class="data-table"><thead><tr><th>SKU</th><th>箱数</th><th>单箱数量</th><th>总数量</th><th>单箱毛重</th><th>单箱净重</th><th>单箱体积</th><th>长</th><th>宽</th><th>高</th><th>总毛重</th><th>总净重</th><th>总体积</th></tr></thead><tbody>'+plItems.map(it=>'<tr><td class="cell-id">'+esc(it.sku_code)+'</td><td class="text-right">'+(it.cartons||0)+'</td><td class="text-right">'+(it.qty_per_carton||0)+'</td><td class="text-right font-bold">'+(it.total_qty||0)+'</td><td class="text-right">'+(it.gross_weight_per_carton||0)+'</td><td class="text-right">'+(it.net_weight_per_carton||0)+'</td><td class="text-right">'+(it.cbm_per_carton||0)+'</td><td class="text-right">'+(it.length||0)+'</td><td class="text-right">'+(it.width||0)+'</td><td class="text-right">'+(it.height||0)+'</td><td class="text-right">'+(it.gross_weight||0)+'</td><td class="text-right">'+(it.net_weight||0)+'</td><td class="text-right">'+(it.cbm||0)+'</td></tr>').join('')+'</tbody></table></div>':'<div style="padding:12px;color:#999">无PL明细</div>';
+    const plSummary=plData?'<div style="display:flex;gap:16px;margin-top:8px;font-size:13px;color:#666"><span>PL单号: <b>'+esc(plData.pl_no||'')+'</b></span><span>总箱数: <b>'+(plData.total_cartons||0)+'</b></span><span>总数量: <b>'+(plData.total_qty||0)+'</b></span><span>总毛重: <b>'+(plData.total_gross_weight||0)+'</b>kg</span><span>总体积: <b>'+(plData.total_cbm||0)+'</b>CBM</span><span>状态: <b>'+esc(plData.status||'')+'</b></span></div>':'';
+    openModal('物流详情 - '+esc(l.batch_no),'<div class="detail-card" style="box-shadow:none;padding:0">'+
+      '<div class="detail-section"><h3>基本信息</h3><div class="detail-grid">'+
+      '<div class="detail-item"><span class="detail-label">物流单号</span><span class="detail-value">'+esc(l.batch_no)+'</span></div>'+
+      '<div class="detail-item"><span class="detail-label">PL单号</span><span class="detail-value">'+esc(l.pl_no||'-')+'</span></div>'+
+      '<div class="detail-item"><span class="detail-label">关联CI</span><span class="detail-value">'+esc(l.related_ci_no)+'</span></div>'+
+      '<div class="detail-item"><span class="detail-label">货代</span><span class="detail-value">'+esc(l.forwarder_name)+'</span></div>'+
+      '<div class="detail-item"><span class="detail-label">运输方式</span><span class="detail-value">'+esc(l.transport_mode)+'</span></div>'+
+      '<div class="detail-item"><span class="detail-label">起运港</span><span class="detail-value">'+esc(l.origin_port)+'</span></div>'+
+      '<div class="detail-item"><span class="detail-label">目的港</span><span class="detail-value">'+esc(l.dest_port)+'</span></div>'+
+      '<div class="detail-item"><span class="detail-label">目标国家</span><span class="detail-value">'+esc(l.target_country)+'</span></div>'+
+      '<div class="detail-item"><span class="detail-label">目标仓库</span><span class="detail-value">'+esc(l.target_warehouse)+'</span></div>'+
+      '<div class="detail-item"><span class="detail-label">提货日期</span><span class="detail-value">'+fmtDate(l.pickup_date)+'</span></div>'+
+      '<div class="detail-item"><span class="detail-label">出发日期</span><span class="detail-value">'+fmtDate(l.depart_date)+'</span></div>'+
+      '<div class="detail-item"><span class="detail-label">预计到港</span><span class="detail-value">'+fmtDate(l.eta_date)+'</span></div>'+
+      '<div class="detail-item"><span class="detail-label">到港日期</span><span class="detail-value">'+fmtDate(l.actual_arrival_date)+'</span></div>'+
+      '<div class="detail-item"><span class="detail-label">物流状态</span><span class="detail-value">'+esc(l.logistics_status)+'</span></div>'+
+      '</div></div>'+
+      '<div class="detail-section"><h3>PL装箱明细</h3>'+plSummary+plItemsHTML+'</div>'+
+      '<div class="detail-section"><h3>费用信息</h3><div class="detail-grid">'+
+      '<div class="detail-item"><span class="detail-label">运费币种</span><span class="detail-value">'+esc(l.freight_currency)+'</span></div>'+
+      '<div class="detail-item"><span class="detail-label">运费</span><span class="detail-value">'+fmtMoney(l.international_freight,l.freight_currency)+'</span></div>'+
+      '<div class="detail-item"><span class="detail-label">其他运输费用</span><span class="detail-value">'+fmtMoney(l.local_charges,l.freight_currency)+'</span></div>'+
+      '<div class="detail-item"><span class="detail-label">综合运费</span><span class="detail-value">'+fmtMoney(l.total_freight,l.freight_currency)+'</span></div>'+
+      '<div class="detail-item"><span class="detail-label">费用状态</span><span class="detail-value">'+esc(l.fee_status)+'</span></div>'+
+      '</div></div>'+
+      (l.remark?'<div class="detail-section"><h3>备注</h3><div>'+esc(l.remark)+'</div></div>':'')+
+      '</div>',
+      '<button class="btn btn-secondary" onclick="closeModal()">关闭</button>'+(hasPermission('logistics_edit')?'<button class="btn btn-primary" onclick="closeModal();editLog(\''+id+'\')">编辑</button>':''));
   }catch(e){showToast(e.message,'danger')}
 }
-async function createLog(){
-  const ffs=await api('/api/freight-forwarders');const cis=await api('/api/commercial-invoices?status=shipped');
-  openModal(t("ci.025", "\u65b0\u5efa\u7269\u6d41\u6279\u6b21"),t('modal.body.createLog', '<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid"><div class="form-group"><label>关联CI</label><select id="nlog-ci"><option value="">无</option>{v1}</select></div><div class="form-group"><label>货代</label><select id="nlog-ff"><option value="">选择</option>{v2}</select></div><div class="form-group"><label>运输方式</label><select id="nlog-mode"><option value="sea">海运</option><option value="air">空运</option><option value="land">陆运</option><option value="express">快递</option></select></div><div class="form-group"><label>起运港</label><input type="text" id="nlog-origin"></div><div class="form-group"><label>目的港</label><input type="text" id="nlog-dest"></div><div class="form-group"><label>目标国家</label><input type="text" id="nlog-country"></div><div class="form-group"><label>目标仓库</label><input type="text" id="nlog-wh"></div><div class="form-group"><label>提货日期</label><input type="date" id="nlog-pickup"></div><div class="form-group"><label>出发日期</label><input type="date" id="nlog-depart"></div><div class="form-group"><label>预计到港</label><input type="date" id="nlog-eta"></div><div class="form-group"><label>运费币种</label><select id="nlog-cur"><option>USD</option><option>RMB</option><option>IDR</option><option>MYR</option><option>THB</option></select></div><div class="form-group"><label>国际运费</label><input type="number" step="0.01" id="nlog-intl" value="0"></div><div class="form-group"><label>本地杂费</label><input type="number" step="0.01" id="nlog-local" value="0"></div><div class="form-group"><label>清关服务费</label><input type="number" step="0.01" id="nlog-csv" value="0"></div><div class="form-group"><label>派送费</label><input type="number" step="0.01" id="nlog-delivery" value="0"></div><div class="form-group"><label>关税</label><input type="number" step="0.01" id="nlog-duty" value="0"></div><div class="form-group"><label>VAT/GST</label><input type="number" step="0.01" id="nlog-vat" value="0"></div><div class="form-group"><label>其他费用</label><input type="number" step="0.01" id="nlog-other" value="0"></div></div></div>', {v1: cis.map(c=>'<option value="'+c.id+'" data-no="'+c.ci_no+'">'+esc(c.ci_no)+' - '+esc(c.supplier_name)+'</option>').join(''), v2: ffs.map(f=>'<option value="'+f.id+'" data-name="'+esc(f.name)+'">'+esc(f.name)+'</option>').join('')}),t('gen.L6042.1','<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveNewLog()">创建</button>'));
+async function createLogWithPL(){
+  try{
+    const cis=await api('/api/commercial-invoices/available-for-pl');
+    window._ffs=await api('/api/freight-forwarders');
+    const ciTableHTML=cis.length?'<div class="table-container" style="overflow-x:auto"><table class="data-table"><thead><tr><th>选择</th><th>CI号</th><th>供应商</th><th>CI日期</th><th>出货日期</th><th>国家</th><th>仓库</th><th>CI数量</th><th>已生成PL</th><th>剩余可生成</th></tr></thead><tbody>'+cis.map(c=>'<tr><td><button class="btn btn-primary btn-sm" onclick="selectCIForPL(\''+c.id+'\')">选择</button></td><td class="cell-id">'+esc(c.ci_no)+'</td><td>'+esc(c.supplier_name)+'</td><td class="cell-date">'+fmtDate(c.ci_date)+'</td><td class="cell-date">'+fmtDate(c.actual_ship_date)+'</td><td>'+esc(c.country)+'</td><td>'+esc(c.target_warehouse)+'</td><td class="text-right">'+(c.total_ci_qty||0)+'</td><td class="text-right">'+(c.generated_pl_qty||0)+'</td><td class="text-right font-bold" style="color:'+(c.available_to_create_pl_qty>0?'#1890ff':'#999')+'">'+(c.available_to_create_pl_qty||0)+'</td></tr>').join('')+'</tbody></table></div>':'<div class="empty-state"><div class="empty-icon">📦</div>没有可生成PL的CI</div>';
+    openModal('新建物流批次 — 选择CI',ciTableHTML,'<button class="btn btn-secondary" onclick="closeModal()">取消</button>');
+  }catch(e){showToast(e.message,'danger')}
 }
-async function saveNewLog(){
-  const ciSel=document.getElementById('nlog-ci'),ffSel=document.getElementById('nlog-ff');
-  const d={related_ci_id:ciSel.value||'',related_ci_no:ciSel.options[ciSel.selectedIndex]?.dataset.no||'',forwarder_id:ffSel.value||'',forwarder_name:ffSel.options[ffSel.selectedIndex]?.dataset.name||'',transport_mode:document.getElementById('nlog-mode').value,origin_port:document.getElementById('nlog-origin').value,dest_port:document.getElementById('nlog-dest').value,target_country:document.getElementById('nlog-country').value,target_warehouse:document.getElementById('nlog-wh').value,pickup_date:document.getElementById('nlog-pickup').value,depart_date:document.getElementById('nlog-depart').value,eta_date:document.getElementById('nlog-eta').value,freight_currency:document.getElementById('nlog-cur').value,international_freight:parseFloat(document.getElementById('nlog-intl').value)||0,local_charges:parseFloat(document.getElementById('nlog-local').value)||0,customs_service_fee:parseFloat(document.getElementById('nlog-csv').value)||0,delivery_fee:parseFloat(document.getElementById('nlog-delivery').value)||0,customs_duty:parseFloat(document.getElementById('nlog-duty').value)||0,vat_gst:parseFloat(document.getElementById('nlog-vat').value)||0,other_fees:parseFloat(document.getElementById('nlog-other').value)||0};
-  try{await api('/api/logistics-batches','POST',d);showToast(t('gen.L6047.1','创建成功'),'success');closeModal();loadLog()}catch(e){showToast(e.message,'danger')}
+async function selectCIForPL(ciId){
+  try{
+    const ci=await api('/api/commercial-invoices/'+ciId);
+    let costSummary={customs_duty_total:0,inspection_fee_total:0};
+    try{costSummary=await api('/api/commercial-invoices/'+ciId+'/cost-summary')}catch(e){}
+    const skus=await api('/api/skus');
+    const skuMap={};skus.forEach(s=>skuMap[s.sku_code]=s);
+    window._plCI=ci;window._plCostSummary=costSummary;window._plSkuMap=skuMap;
+    window._plDraft=[];window._otherFees=[];
+    const plCheck=ci.pl_check||[];
+    // 聚合 CI items 中相同 SKU 的多行（CI 可能包含同 SKU 多行）
+    const ciAgg={};
+    ci.items.forEach(item=>{
+      if(!ciAgg[item.sku_code])ciAgg[item.sku_code]={sku_code:item.sku_code,shipped_qty:0};
+      ciAgg[item.sku_code].shipped_qty+=(item.shipped_qty||0);
+    });
+    Object.values(ciAgg).forEach(item=>{
+      const pc=plCheck.find(p=>p.sku_code===item.sku_code)||{ci_qty:0,pl_qty:0};
+      const remaining=(item.shipped_qty||0)-(pc.pl_qty||0);
+      if(remaining>0){
+        const sku=skuMap[item.sku_code]||{};
+        let len=0,wid=0,hgt=0;
+        if(sku.carton_spec){const m=String(sku.carton_spec).match(/(\d+\.?\d*)\s*[xX×*]\s*(\d+\.?\d*)\s*[xX×*]\s*(\d+\.?\d*)/);if(m){len=parseFloat(m[1]);wid=parseFloat(m[2]);hgt=parseFloat(m[3]);}}
+        const qpc=sku.qty_per_carton||0;
+        const cartons=qpc>0?Math.ceil(remaining/qpc):0;
+        const gwPc=(sku.unit_weight||0)*qpc;
+        const cbmPc=(sku.unit_cbm||0)*qpc;
+        window._plDraft.push({sku_code:item.sku_code,cartons:cartons,qty_per_carton:qpc,total_qty:remaining,
+          gross_weight_per_carton:Math.round(gwPc*100)/100,net_weight_per_carton:Math.round(gwPc*100)/100,
+          cbm_per_carton:Math.round(cbmPc*10000)/10000,length:len,width:wid,height:hgt,
+          gross_weight:Math.round(gwPc*cartons*100)/100,net_weight:Math.round(gwPc*cartons*100)/100,
+          cbm:Math.round(cbmPc*cartons*10000)/10000,
+          ci_shipped_qty:item.shipped_qty,pl_qty:pc.pl_qty||0,remaining:remaining});
+      }
+    });
+    const ffs=window._ffs||[];
+    const ffOpts=ffs.map(f=>'<option value="'+f.id+'" data-name="'+esc(f.name)+'">'+esc(f.name)+'</option>').join('');
+    openModal('新建物流批次 — '+esc(ci.ci_no),
+      '<div class="form-card" style="box-shadow:none;padding:0;max-height:70vh;overflow-y:auto">'+
+      '<div class="detail-section"><h3>基础信息</h3><div class="form-grid">'+
+      '<div class="form-group"><label>关联CI</label><input type="text" value="'+esc(ci.ci_no)+'" disabled></div>'+
+      '<div class="form-group"><label>供应商</label><input type="text" value="'+esc(ci.supplier_name||'')+'" disabled></div>'+
+      '<div class="form-group"><label>PL单号（留空自动生成）</label><input type="text" id="npl-no" placeholder="自动生成"></div>'+
+      '<div class="form-group"><label>物流单号（留空自动生成）</label><input type="text" id="npl-batchno" placeholder="自动生成"></div>'+
+      '<div class="form-group"><label>货代</label><select id="npl-ff"><option value="">选择货代</option>'+ffOpts+'</select></div>'+
+      '<div class="form-group"><label>运输方式</label><select id="npl-mode"><option value="sea">海运</option><option value="air">空运</option><option value="land">陆运</option><option value="express">快递</option></select></div>'+
+      '<div class="form-group"><label>起运港</label><input type="text" id="npl-origin"></div>'+
+      '<div class="form-group"><label>目的港</label><input type="text" id="npl-dest"></div>'+
+      '<div class="form-group"><label>目标国家</label><input type="text" id="npl-country" value="'+esc(ci.country||'')+'"></div>'+
+      '<div class="form-group"><label>目标仓库</label><input type="text" id="npl-wh" value="'+esc(ci.target_warehouse||'')+'"></div>'+
+      '<div class="form-group"><label>提货日期</label><input type="date" id="npl-pickup"></div>'+
+      '<div class="form-group"><label>出发日期</label><input type="date" id="npl-depart"></div>'+
+      '<div class="form-group"><label>预计到港</label><input type="date" id="npl-eta"></div>'+
+      '</div></div>'+
+      '<div class="detail-section"><h3>PL装箱明细 <button class="btn btn-secondary btn-sm" onclick="importPLItems()" style="margin-left:8px">导入Excel</button></h3><div id="pl-draft-table"></div></div>'+
+      '<div class="detail-section"><h3>费用信息</h3><div class="form-grid">'+
+      '<div class="form-group"><label>运费币种</label><select id="npl-cur"><option>USD</option><option>RMB</option><option>IDR</option><option>MYR</option><option>THB</option></select></div>'+
+      '<div class="form-group"><label>运费</label><input type="number" step="0.01" id="npl-freight" value="0" oninput="calcTotalFreight()"></div>'+
+      '</div><div style="margin-top:12px"><label style="font-weight:500">其他运输类费用（动态）</label><div id="other-fees-list"></div><button class="btn btn-secondary btn-sm" onclick="addOtherFeeRow()" style="margin-top:4px">添加费用行</button></div>'+
+      '<div id="ci-readonly-costs" style="margin-top:12px;padding:8px;background:#f5f5f7;border-radius:8px"><div style="font-size:13px;color:#666;margin-bottom:4px">CI费用（只读参考）</div><div style="display:flex;gap:16px;font-size:13px"><span>关税: <b>'+fmtMoney(costSummary.customs_duty_total||0,ci.currency||'USD')+'</b></span><span>商检费: <b>'+fmtMoney(costSummary.inspection_fee_total||0,ci.currency||'USD')+'</b></span></div></div>'+
+      '<div style="margin-top:8px;font-size:14px;font-weight:500">综合运费合计: <span id="total-freight-display">0.00</span></div>'+
+      '<div class="form-group" style="margin-top:8px"><label>备注</label><input type="text" id="npl-remark"></div></div></div></div>',
+      '<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-secondary" onclick="createLogWithPL()">返回选择CI</button><button class="btn btn-primary" onclick="saveLogWithPL()">创建物流批次</button>');
+    renderPLDraftTable();renderOtherFees();calcTotalFreight();
+  }catch(e){showToast(e.message,'danger')}
+}
+function renderPLDraftTable(){
+  const items=window._plDraft||[];
+  if(!items.length){document.getElementById('pl-draft-table').innerHTML='<div style="padding:12px;color:#999">无PL明细（CI无可生成PL的SKU）</div>';return;}
+  let tc=0,tq=0,tg=0,tn=0,tb=0;
+  items.forEach(it=>{tc+=it.cartons||0;tq+=it.total_qty||0;tg+=it.gross_weight||0;tn+=it.net_weight||0;tb+=it.cbm||0;});
+  document.getElementById('pl-draft-table').innerHTML='<div class="table-container" style="overflow-x:auto"><table class="data-table" style="font-size:12px"><thead><tr><th>SKU</th><th>CI发货</th><th>已生成PL</th><th>剩余</th><th>箱数</th><th>单箱数量</th><th>总数量</th><th>单箱毛重</th><th>单箱净重</th><th>单箱体积</th><th>长</th><th>宽</th><th>高</th><th>总毛重</th><th>总净重</th><th>总体积</th><th></th></tr></thead><tbody>'+
+    items.map((it,i)=>'<tr><td class="cell-id">'+esc(it.sku_code)+'</td><td class="text-right">'+(it.ci_shipped_qty||0)+'</td><td class="text-right">'+(it.pl_qty||0)+'</td><td class="text-right">'+(it.remaining||0)+'</td>'+
+      '<td><input type="number" value="'+(it.cartons||0)+'" style="width:60px;padding:2px" onchange="updatePLRow('+i+',\'cartons\',this.value)"></td>'+
+      '<td><input type="number" value="'+(it.qty_per_carton||0)+'" style="width:60px;padding:2px" onchange="updatePLRow('+i+',\'qty_per_carton\',this.value)"></td>'+
+      '<td><input type="number" value="'+(it.total_qty||0)+'" style="width:70px;padding:2px;font-weight:bold" onchange="updatePLRow('+i+',\'total_qty\',this.value)"></td>'+
+      '<td><input type="number" step="0.01" value="'+(it.gross_weight_per_carton||0)+'" style="width:65px;padding:2px" onchange="updatePLRow('+i+',\'gross_weight_per_carton\',this.value)"></td>'+
+      '<td><input type="number" step="0.01" value="'+(it.net_weight_per_carton||0)+'" style="width:65px;padding:2px" onchange="updatePLRow('+i+',\'net_weight_per_carton\',this.value)"></td>'+
+      '<td><input type="number" step="0.0001" value="'+(it.cbm_per_carton||0)+'" style="width:65px;padding:2px" onchange="updatePLRow('+i+',\'cbm_per_carton\',this.value)"></td>'+
+      '<td><input type="number" step="0.1" value="'+(it.length||0)+'" style="width:55px;padding:2px" onchange="updatePLRow('+i+',\'length\',this.value)"></td>'+
+      '<td><input type="number" step="0.1" value="'+(it.width||0)+'" style="width:55px;padding:2px" onchange="updatePLRow('+i+',\'width\',this.value)"></td>'+
+      '<td><input type="number" step="0.1" value="'+(it.height||0)+'" style="width:55px;padding:2px" onchange="updatePLRow('+i+',\'height\',this.value)"></td>'+
+      '<td class="text-right">'+(it.gross_weight||0).toFixed(2)+'</td><td class="text-right">'+(it.net_weight||0).toFixed(2)+'</td><td class="text-right">'+(it.cbm||0).toFixed(4)+'</td>'+
+      '<td><button class="action-btn" onclick="removePLRow('+i+')" title="删除">🗑️</button></td></tr>').join('')+
+    '<tr style="font-weight:bold;background:#f5f5f7"><td colspan="4">合计</td><td class="text-right">'+tc+'</td><td></td><td class="text-right">'+tq+'</td><td colspan="6"></td><td class="text-right">'+tg.toFixed(2)+'</td><td class="text-right">'+tn.toFixed(2)+'</td><td class="text-right">'+tb.toFixed(4)+'</td><td></td></tr>'+
+    '</tbody></table></div>';
+}
+function updatePLRow(idx,field,val){
+  const it=window._plDraft[idx];if(!it)return;
+  it[field]=parseFloat(val)||0;
+  if(field==='cartons'||field==='qty_per_carton'){it.total_qty=it.cartons*it.qty_per_carton;}
+  it.gross_weight=Math.round((it.gross_weight_per_carton*it.cartons)*100)/100;
+  it.net_weight=Math.round((it.net_weight_per_carton*it.cartons)*100)/100;
+  it.cbm=Math.round((it.cbm_per_carton*it.cartons)*10000)/10000;
+  renderPLDraftTable();
+}
+function removePLRow(idx){window._plDraft.splice(idx,1);renderPLDraftTable();}
+function importPLItems(){
+  const inp=document.createElement('input');inp.type='file';inp.accept='.xlsx,.xls,.csv';
+  inp.onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>{try{
+    const wb=XLSX.read(ev.target.result,{type:'array'});const ws=wb.Sheets[wb.SheetNames[0]];const rows=XLSX.utils.sheet_to_json(ws);
+    const aliasMap={'sku_code':['SKU','SKU编码','料号','sku_code'],'cartons':['箱数','CTN','Total CTN','cartons'],'qty_per_carton':['单箱数量','QTY/CTN','qty_per_carton'],'total_qty':['总数量','Total QTY','total_qty'],'gross_weight':['总毛重','GW','gross_weight'],'net_weight':['总净重','NW','net_weight'],'cbm':['总体积','CBM','cbm'],'gross_weight_per_carton':['单箱毛重','GW/CTN','gross_weight_per_carton'],'net_weight_per_carton':['单箱净重','NW/CTN','net_weight_per_carton'],'cbm_per_carton':['单箱体积','CBM/CTN','cbm_per_carton'],'length':['长','L','length'],'width':['宽','W','width'],'height':['高','H','height']};
+    const mapped=rows.map(row=>{const item={};for(const [key,aliases] of Object.entries(aliasMap)){for(const alias of aliases){if(row[alias]!==undefined){item[key]=isNaN(row[alias])?row[alias]:parseFloat(row[alias]);break;}}}return item;});
+    const ciItemsRaw=window._plCI.items||[];const plCheck=window._plCI.pl_check||[];let matched=0,unmatched=0;
+    // 聚合 CI items 中相同 SKU 的多行
+    const ciAgg={};
+    ciItemsRaw.forEach(i=>{if(!ciAgg[i.sku_code])ciAgg[i.sku_code]={sku_code:i.sku_code,shipped_qty:0};ciAgg[i.sku_code].shipped_qty+=(i.shipped_qty||0);});
+    const ciItems=Object.values(ciAgg);
+    mapped.forEach(item=>{
+      if(!item.sku_code){unmatched++;return;}
+      const skuStr=String(item.sku_code).trim();
+      const ciItem=ciItems.find(i=>i.sku_code===skuStr)||ciItems.find(i=>i.sku_code.toLowerCase()===skuStr.toLowerCase());
+      if(!ciItem){unmatched++;return;}
+      const pc=plCheck.find(p=>p.sku_code===ciItem.sku_code)||{pl_qty:0};
+      const remaining=(ciItem.shipped_qty||0)-(pc.pl_qty||0);
+      const existIdx=window._plDraft.findIndex(d=>d.sku_code===ciItem.sku_code);
+      const newData={cartons:item.cartons||0,qty_per_carton:item.qty_per_carton||0,total_qty:item.total_qty||0,
+        gross_weight_per_carton:item.gross_weight_per_carton||0,net_weight_per_carton:item.net_weight_per_carton||0,
+        cbm_per_carton:item.cbm_per_carton||0,length:item.length||0,width:item.width||0,height:item.height||0,
+        gross_weight:item.gross_weight||0,net_weight:item.net_weight||0,cbm:item.cbm||0};
+      if(existIdx>=0){Object.assign(window._plDraft[existIdx],newData);
+        const it=window._plDraft[existIdx];it.gross_weight=Math.round((it.gross_weight_per_carton*it.cartons)*100)/100;it.net_weight=Math.round((it.net_weight_per_carton*it.cartons)*100)/100;it.cbm=Math.round((it.cbm_per_carton*it.cartons)*10000)/10000;
+      }else{window._plDraft.push({...newData,sku_code:ciItem.sku_code,ci_shipped_qty:ciItem.shipped_qty,pl_qty:pc.pl_qty||0,remaining:remaining});}
+      matched++;
+    });
+    renderPLDraftTable();showToast('导入完成：匹配'+matched+'行，未匹配'+unmatched+'行',matched>0?'success':'warning');
+  }catch(err){showToast(err.message,'danger')}};r.readAsArrayBuffer(f)};
+  inp.click();
+}
+function renderOtherFees(){
+  const fees=window._otherFees||[];
+  document.getElementById('other-fees-list').innerHTML=fees.map((f,i)=>
+    '<div style="display:flex;gap:8px;margin-top:4px;align-items:center">'+
+    '<input type="text" placeholder="费用名称" value="'+esc(f.name||'')+'" style="flex:1;padding:4px" onchange="updateOtherFee('+i+',\'name\',this.value)">'+
+    '<input type="number" step="0.01" placeholder="金额" value="'+(f.amount||0)+'" style="width:120px;padding:4px" oninput="updateOtherFee('+i+',\'amount\',this.value);calcTotalFreight()">'+
+    '<button class="action-btn" onclick="removeOtherFeeRow('+i+')">🗑️</button></div>').join('');
+}
+function addOtherFeeRow(){if(!window._otherFees)window._otherFees=[];window._otherFees.push({name:'',amount:0});renderOtherFees();}
+function removeOtherFeeRow(idx){window._otherFees.splice(idx,1);renderOtherFees();calcTotalFreight();}
+function updateOtherFee(idx,field,val){if(!window._otherFees[idx])return;if(field==='amount')window._otherFees[idx].amount=parseFloat(val)||0;else window._otherFees[idx][field]=val;}
+function calcTotalFreight(){
+  const freight=parseFloat(document.getElementById('npl-freight')?.value)||0;
+  const otherSum=(window._otherFees||[]).reduce((s,f)=>s+(f.amount||0),0);
+  const el=document.getElementById('total-freight-display');if(el)el.textContent=(freight+otherSum).toFixed(2);
+}
+async function saveLogWithPL(){
+  const ci=window._plCI;if(!ci){showToast('请先选择CI','warning');return;}
+  const items=window._plDraft||[];if(!items.length){showToast('PL明细不能为空','warning');return;}
+  for(const it of items){if((it.total_qty||0)<=0){showToast('SKU '+it.sku_code+' 数量必须大于0','warning');return;}}
+  const otherSum=(window._otherFees||[]).reduce((s,f)=>s+(f.amount||0),0);
+  const ffSel=document.getElementById('npl-ff');
+  const d={related_ci_id:ci.id,related_ci_no:ci.ci_no,
+    pl_no:document.getElementById('npl-no').value||'',batch_no:document.getElementById('npl-batchno').value||'',
+    forwarder_id:ffSel.value||'',forwarder_name:ffSel.options[ffSel.selectedIndex]?.dataset.name||'',
+    transport_mode:document.getElementById('npl-mode').value,origin_port:document.getElementById('npl-origin').value,
+    dest_port:document.getElementById('npl-dest').value,target_country:document.getElementById('npl-country').value,
+    target_warehouse:document.getElementById('npl-wh').value,pickup_date:document.getElementById('npl-pickup').value,
+    depart_date:document.getElementById('npl-depart').value,eta_date:document.getElementById('npl-eta').value,
+    freight_currency:document.getElementById('npl-cur').value,
+    international_freight:parseFloat(document.getElementById('npl-freight').value)||0,
+    local_charges:otherSum,customs_service_fee:0,delivery_fee:0,customs_duty:0,vat_gst:0,other_fees:0,
+    remark:document.getElementById('npl-remark').value||'',
+    items:items.map(it=>({sku_code:it.sku_code,cartons:it.cartons||0,qty_per_carton:it.qty_per_carton||0,
+      total_qty:it.total_qty||0,gross_weight:it.gross_weight||0,net_weight:it.net_weight||0,cbm:it.cbm||0,
+      gross_weight_per_carton:it.gross_weight_per_carton||0,net_weight_per_carton:it.net_weight_per_carton||0,
+      cbm_per_carton:it.cbm_per_carton||0,length:it.length||0,width:it.width||0,height:it.height||0}))};
+  try{
+    const result=await api('/api/logistics-batches/create-with-pl','POST',d);
+    showToast('创建成功：PL '+result.pl_no+' / 物流 '+result.batch_no,'success');
+    closeModal();loadLog();
+  }catch(e){showToast(e.message,'danger')}
+}
+async function editLog(id){
+  try{
+    const l=await api('/api/logistics-batches/'+id);
+    let plData=null;if(l.pl_id){plData=await api('/api/packing-lists/'+l.pl_id);}
+    const ffs=await api('/api/freight-forwarders');
+    const ffOpts=ffs.map(f=>'<option value="'+f.id+'" data-name="'+esc(f.name)+'"'+(f.id===l.forwarder_id?' selected':'')+'>'+esc(f.name)+'</option>').join('');
+    const plItems=(plData&&plData.items)||[];
+    openModal('编辑物流批次 — '+esc(l.batch_no),
+      '<div class="form-card" style="box-shadow:none;padding:0;max-height:70vh;overflow-y:auto">'+
+      '<div class="detail-section"><h3>基础信息</h3><div class="form-grid">'+
+      '<div class="form-group"><label>物流单号</label><input type="text" id="el-batchno" value="'+esc(l.batch_no)+'"></div>'+
+      '<div class="form-group"><label>PL单号</label><input type="text" id="el-plno" value="'+esc(plData?plData.pl_no:'')+'"></div>'+
+      '<div class="form-group"><label>货代</label><select id="el-ff"><option value="">选择货代</option>'+ffOpts+'</select></div>'+
+      '<div class="form-group"><label>运输方式</label><select id="el-mode"><option value="sea"'+(l.transport_mode==='sea'?' selected':'')+'>海运</option><option value="air"'+(l.transport_mode==='air'?' selected':'')+'>空运</option><option value="land"'+(l.transport_mode==='land'?' selected':'')+'>陆运</option><option value="express"'+(l.transport_mode==='express'?' selected':'')+'>快递</option></select></div>'+
+      '<div class="form-group"><label>起运港</label><input type="text" id="el-origin" value="'+esc(l.origin_port)+'"></div>'+
+      '<div class="form-group"><label>目的港</label><input type="text" id="el-dest" value="'+esc(l.dest_port)+'"></div>'+
+      '<div class="form-group"><label>目标国家</label><input type="text" id="el-country" value="'+esc(l.target_country)+'"></div>'+
+      '<div class="form-group"><label>目标仓库</label><input type="text" id="el-wh" value="'+esc(l.target_warehouse)+'"></div>'+
+      '<div class="form-group"><label>提货日期</label><input type="date" id="el-pickup" value="'+(l.pickup_date||'')+'"></div>'+
+      '<div class="form-group"><label>出发日期</label><input type="date" id="el-depart" value="'+(l.depart_date||'')+'"></div>'+
+      '<div class="form-group"><label>预计到港</label><input type="date" id="el-eta" value="'+(l.eta_date||'')+'"></div>'+
+      '<div class="form-group"><label>物流状态</label><select id="el-status"><option value="pending"'+(l.logistics_status==='pending'?' selected':'')+'>待提货</option><option value="in_transit"'+(l.logistics_status==='in_transit'?' selected':'')+'>运输中</option><option value="arrived"'+(l.logistics_status==='arrived'?' selected':'')+'>到港</option><option value="completed"'+(l.logistics_status==='completed'?' selected':'')+'>已完成</option></select></div>'+
+      '</div></div>'+
+      '<div class="detail-section"><h3>PL装箱明细</h3>'+(plItems.length?'<div class="table-container" style="overflow-x:auto"><table class="data-table" style="font-size:12px"><thead><tr><th>SKU</th><th>箱数</th><th>单箱数量</th><th>总数量</th><th>单箱毛重</th><th>单箱净重</th><th>单箱体积</th><th>总毛重</th><th>总净重</th><th>总体积</th><th>已入库</th></tr></thead><tbody>'+plItems.map(it=>'<tr><td class="cell-id">'+esc(it.sku_code)+'</td><td class="text-right">'+(it.cartons||0)+'</td><td class="text-right">'+(it.qty_per_carton||0)+'</td><td class="text-right font-bold">'+(it.total_qty||0)+'</td><td class="text-right">'+(it.gross_weight_per_carton||0)+'</td><td class="text-right">'+(it.net_weight_per_carton||0)+'</td><td class="text-right">'+(it.cbm_per_carton||0)+'</td><td class="text-right">'+(it.gross_weight||0)+'</td><td class="text-right">'+(it.net_weight||0)+'</td><td class="text-right">'+(it.cbm||0)+'</td><td class="text-right">'+(it.received_qty||0)+'</td></tr>').join('')+'</tbody></table></div>':'<div style="padding:12px;color:#999">无PL明细</div>')+'</div>'+
+      '<div class="detail-section"><h3>费用信息</h3><div class="form-grid">'+
+      '<div class="form-group"><label>运费币种</label><select id="el-cur"><option'+(l.freight_currency==='USD'?' selected':'')+'>USD</option><option'+(l.freight_currency==='RMB'?' selected':'')+'>RMB</option><option'+(l.freight_currency==='IDR'?' selected':'')+'>IDR</option><option'+(l.freight_currency==='MYR'?' selected':'')+'>MYR</option><option'+(l.freight_currency==='THB'?' selected':'')+'>THB</option></select></div>'+
+      '<div class="form-group"><label>运费</label><input type="number" step="0.01" id="el-freight" value="'+(l.international_freight||0)+'"></div>'+
+      '<div class="form-group"><label>其他运输费用</label><input type="number" step="0.01" id="el-local" value="'+(l.local_charges||0)+'"></div>'+
+      '<div class="form-group"><label>费用状态</label><select id="el-feestatus"><option value="unpaid"'+(l.fee_status==='unpaid'?' selected':'')+'>未付</option><option value="paid"'+(l.fee_status==='paid'?' selected':'')+'>已付</option></select></div>'+
+      '<div class="form-group"><label>备注</label><input type="text" id="el-remark" value="'+esc(l.remark||'')+'"></div></div></div></div>',
+      '<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveEditLog(\''+id+'\''+(plData?',\''+plData.id+'\'':'')+')">保存</button>');
+  }catch(e){showToast(e.message,'danger')}
+}
+async function saveEditLog(logId,plId){
+  const d={batch_no:document.getElementById('el-batchno').value,
+    forwarder_id:document.getElementById('el-ff').value,
+    forwarder_name:document.getElementById('el-ff').options[document.getElementById('el-ff').selectedIndex]?.dataset.name||'',
+    transport_mode:document.getElementById('el-mode').value,origin_port:document.getElementById('el-origin').value,
+    dest_port:document.getElementById('el-dest').value,target_country:document.getElementById('el-country').value,
+    target_warehouse:document.getElementById('el-wh').value,pickup_date:document.getElementById('el-pickup').value,
+    depart_date:document.getElementById('el-depart').value,eta_date:document.getElementById('el-eta').value,
+    logistics_status:document.getElementById('el-status').value,freight_currency:document.getElementById('el-cur').value,
+    international_freight:parseFloat(document.getElementById('el-freight').value)||0,
+    local_charges:parseFloat(document.getElementById('el-local').value)||0,
+    fee_status:document.getElementById('el-feestatus').value,remark:document.getElementById('el-remark').value};
+  try{
+    await api('/api/logistics-batches/'+logId,'PUT',d);
+    if(plId){await api('/api/packing-lists/'+plId,'PUT',{pl_no:document.getElementById('el-plno').value});}
+    showToast('保存成功','success');closeModal();loadLog();
+  }catch(e){showToast(e.message,'danger')}
 }
 async function createFrtPay(id){
   try{

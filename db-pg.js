@@ -1232,6 +1232,21 @@ async function initDatabase() {
     )
   `);
 
+  // LOGISTICS-CLOSED-LOOP-PHASE1: packing_lists 新增状态/物流关联/更新时间
+  await exec("ALTER TABLE packing_lists ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'draft'");
+  await exec("ALTER TABLE packing_lists ADD COLUMN IF NOT EXISTS logistics_batch_id TEXT DEFAULT ''");
+  await exec("ALTER TABLE packing_lists ADD COLUMN IF NOT EXISTS updated_at TEXT DEFAULT NOW()");
+
+  // LOGISTICS-CLOSED-LOOP-PHASE1: packing_list_items 新增单箱重量/尺寸字段
+  // 字段含义：gross_weight=总毛重, net_weight=总净重, cbm=总体积（已有，不新增）
+  // 新增 per_carton 字段存储单箱值，length/width/height 存储箱规尺寸
+  await exec("ALTER TABLE packing_list_items ADD COLUMN IF NOT EXISTS gross_weight_per_carton DOUBLE PRECISION DEFAULT 0");
+  await exec("ALTER TABLE packing_list_items ADD COLUMN IF NOT EXISTS net_weight_per_carton DOUBLE PRECISION DEFAULT 0");
+  await exec("ALTER TABLE packing_list_items ADD COLUMN IF NOT EXISTS cbm_per_carton DOUBLE PRECISION DEFAULT 0");
+  await exec("ALTER TABLE packing_list_items ADD COLUMN IF NOT EXISTS length DOUBLE PRECISION DEFAULT 0");
+  await exec("ALTER TABLE packing_list_items ADD COLUMN IF NOT EXISTS width DOUBLE PRECISION DEFAULT 0");
+  await exec("ALTER TABLE packing_list_items ADD COLUMN IF NOT EXISTS height DOUBLE PRECISION DEFAULT 0");
+
   await exec(`
     CREATE TABLE IF NOT EXISTS logistics_batches (
       id TEXT PRIMARY KEY,
