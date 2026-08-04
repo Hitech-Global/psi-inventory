@@ -6312,7 +6312,7 @@ app.post('/api/logistics-batches/create-with-pl', requireApiPermission('logistic
 
     // 零行和负数校验
     for (const item of d.items) {
-      const qty = item.total_qty || ((item.cartons || 0) * (item.qty_per_carton || 0));
+      const qty = Number(item.total_qty) || 0;
       if (qty <= 0) return res.status(400).json({ error: `SKU ${item.sku_code} 的数量必须大于 0` });
     }
 
@@ -6349,23 +6349,17 @@ app.post('/api/logistics-batches/create-with-pl', requireApiPermission('logistic
       d.items.forEach(item => {
         const cartons = item.cartons || 0;
         const qtyPerCarton = item.qty_per_carton || 0;
-        const totalQty = item.total_qty || (cartons * qtyPerCarton);
+        const totalQty = Number(item.total_qty) || 0;
         const grossW = item.gross_weight || 0;
         const netW = item.net_weight || 0;
         const cbm = item.cbm || 0;
-        const gwPerCarton = item.gross_weight_per_carton || 0;
-        const nwPerCarton = item.net_weight_per_carton || 0;
-        const cbmPerCarton = item.cbm_per_carton || 0;
-        const len = item.length || 0;
-        const wid = item.width || 0;
-        const hgt = item.height || 0;
         totalCartons += cartons;
         totalQtyAll += totalQty;
         totalGross += grossW;
         totalNet += netW;
         totalCbm += cbm;
-        run(`INSERT INTO packing_list_items (id, pl_id, pl_no, ci_no, sku_code, cartons, qty_per_carton, total_qty, gross_weight, net_weight, cbm, remark, gross_weight_per_carton, net_weight_per_carton, cbm_per_carton, length, width, height) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [genId('pli'), plId, plNo, d.related_ci_no || ci.ci_no || '', item.sku_code, cartons, qtyPerCarton, totalQty, grossW, netW, cbm, item.remark || '', gwPerCarton, nwPerCarton, cbmPerCarton, len, wid, hgt]);
+        run(`INSERT INTO packing_list_items (id, pl_id, pl_no, ci_no, sku_code, cartons, qty_per_carton, total_qty, gross_weight, net_weight, cbm, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [genId('pli'), plId, plNo, d.related_ci_no || ci.ci_no || '', item.sku_code, cartons, qtyPerCarton, totalQty, grossW, netW, cbm, item.remark || '']);
       });
 
       // 前端可传入手动输入的总CTN数量，覆盖按明细行累加的值
@@ -6570,7 +6564,7 @@ app.put('/api/packing-lists/:id', requireApiPermission('logistics_edit'), asyncH
               throw new Error(`SKU ${existing.sku_code} 已入库 ${receivedQty} 件，PL 数量不能低于已入库数量`);
             }
 
-            const itemAllowed = ['sku_code', 'cartons', 'qty_per_carton', 'total_qty', 'gross_weight', 'net_weight', 'cbm', 'gross_weight_per_carton', 'net_weight_per_carton', 'cbm_per_carton', 'length', 'width', 'height', 'remark'];
+            const itemAllowed = ['sku_code', 'cartons', 'qty_per_carton', 'total_qty', 'gross_weight', 'net_weight', 'cbm', 'remark'];
             const itemFields = [];
             const itemValues = [];
             itemAllowed.forEach(f => {
@@ -6588,7 +6582,7 @@ app.put('/api/packing-lists/:id', requireApiPermission('logistics_edit'), asyncH
 
             const cartons = item.cartons || 0;
             const qtyPerCarton = item.qty_per_carton || 0;
-            const totalQty = item.total_qty || (cartons * qtyPerCarton);
+            const totalQty = Number(item.total_qty) || 0;
             if (totalQty <= 0) throw new Error(`SKU ${item.sku_code} 的数量必须大于 0`);
 
             // 校验 CI 剩余数量（排除当前 PL 自身已占用的）
@@ -6598,8 +6592,8 @@ app.put('/api/packing-lists/:id', requireApiPermission('logistics_edit'), asyncH
               throw new Error(`装箱单数量超过 CI 出货数量（SKU: ${item.sku_code}, CI 出货数量: ${ciItem.shipped_qty || 0}, 其他 PL 已占: ${existPlSum && existPlSum.total || 0}, 本次新增: ${totalQty}）`);
             }
 
-            run(`INSERT INTO packing_list_items (id, pl_id, pl_no, ci_no, sku_code, cartons, qty_per_carton, total_qty, gross_weight, net_weight, cbm, remark, gross_weight_per_carton, net_weight_per_carton, cbm_per_carton, length, width, height) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              [genId('pli'), id, d.pl_no || pl.pl_no, pl.related_ci_no, item.sku_code, cartons, qtyPerCarton, totalQty, item.gross_weight || 0, item.net_weight || 0, item.cbm || 0, item.remark || '', item.gross_weight_per_carton || 0, item.net_weight_per_carton || 0, item.cbm_per_carton || 0, item.length || 0, item.width || 0, item.height || 0]);
+            run(`INSERT INTO packing_list_items (id, pl_id, pl_no, ci_no, sku_code, cartons, qty_per_carton, total_qty, gross_weight, net_weight, cbm, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [genId('pli'), id, d.pl_no || pl.pl_no, pl.related_ci_no, item.sku_code, cartons, qtyPerCarton, totalQty, item.gross_weight || 0, item.net_weight || 0, item.cbm || 0, item.remark || '']);
           }
         });
 

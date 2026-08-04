@@ -8994,7 +8994,11 @@ function calcTotalFreight(){
 async function saveLogWithPL(){
   const ci=window._plCI;if(!ci){showToast('请先选择CI','warning');return;}
   const items=window._plDraft||[];if(!items.length){showToast('PL明细不能为空','warning');return;}
-  for(const it of items){if((it.total_qty||0)<=0){showToast('SKU '+it.sku_code+' 数量必须大于0','warning');return;}}
+  for(const it of items){if((Number(it.total_qty)||0)<=0){showToast('SKU '+it.sku_code+' 数量必须大于0','warning');return;}}
+  // PL整体级校验：总毛重和总体积至少填写一项
+  const totalGW=items.reduce((s,it)=>s+(parseFloat(it.gross_weight)||0),0);
+  const totalCBM=items.reduce((s,it)=>s+(parseFloat(it.cbm)||0),0);
+  if(totalGW<=0&&totalCBM<=0){showToast('总毛重和总体积至少需要填写一项','warning');return;}
   const otherSum=(window._otherFees||[]).reduce((s,f)=>s+(f.amount||0),0);
   const ffSel=document.getElementById('npl-ff');
   const d={related_ci_id:ci.id,related_ci_no:ci.ci_no,
@@ -9010,9 +9014,7 @@ async function saveLogWithPL(){
     remark:document.getElementById('npl-remark').value||'',
     total_cartons:parseInt(document.getElementById('npl-total-ctn')?.value)||0,
     items:items.map(it=>({sku_code:it.sku_code,cartons:it.cartons||0,qty_per_carton:it.qty_per_carton||0,
-      total_qty:it.total_qty||0,gross_weight:it.gross_weight||0,net_weight:it.net_weight||0,cbm:it.cbm||0,
-      gross_weight_per_carton:it.gross_weight_per_carton||0,net_weight_per_carton:it.net_weight_per_carton||0,
-      cbm_per_carton:it.cbm_per_carton||0,length:it.length||0,width:it.width||0,height:it.height||0}))};
+      total_qty:it.total_qty||0,gross_weight:it.gross_weight||0,net_weight:it.net_weight||0,cbm:it.cbm||0}))};
   try{
     const result=await api('/api/logistics-batches/create-with-pl','POST',d);
     showToast('创建成功：PL '+result.pl_no+' / 物流 '+result.batch_no,'success');
