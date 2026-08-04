@@ -12296,6 +12296,98 @@ app.get('/api/admin/diag-sales-channel-brand', requireApiPermission('ci_edit'), 
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
+// TEMP-FIX-03: 一次性修正 sales_records channel/brand 历史数据标准化
+// 用完即删
+app.post('/api/admin/fix-sales-channel-brand', requireApiPermission('ci_edit'), asyncHandler(async (req, res) => {
+  try {
+    const isPg = (process.env.DB_DRIVER || 'sqlite').toLowerCase() === 'pg';
+    let beforeChannel, beforeBrand, afterChannel, afterBrand;
+    let channelRows1, channelRows2, channelRows3, channelRows4;
+    let brandRows1, brandRows2, brandRows3, brandRows4;
+    let sampleOnline, sampleOffline, sampleBoya, sampleJoypeer;
+
+    if (isPg) {
+      const exec = require('./db-pg');
+
+      // 1. 修改前快照
+      beforeChannel = (await exec.query("SELECT COALESCE(shop_platform, '') AS channel, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(shop_platform, '') ORDER BY COUNT(*) DESC")).rows;
+      beforeBrand = (await exec.query("SELECT COALESCE(brand, '') AS brand, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(brand, '') ORDER BY COUNT(*) DESC")).rows;
+
+      // 2. channel 标准化
+      channelRows1 = (await exec.run("UPDATE sales_records SET shop_platform = '线上' WHERE shop_platform = '线上订单'")).changes || 0;
+      channelRows2 = (await exec.run("UPDATE sales_records SET shop_platform = '线上' WHERE shop_platform = '线上渠道'")).changes || 0;
+      channelRows3 = (await exec.run("UPDATE sales_records SET shop_platform = '线下' WHERE shop_platform = '线下渠道'")).changes || 0;
+      channelRows4 = (await exec.run("UPDATE sales_records SET shop_platform = '线下' WHERE shop_platform = '线下订单'")).changes || 0;
+
+      // 3. brand 标准化
+      brandRows1 = (await exec.run("UPDATE sales_records SET brand = 'Redragon' WHERE brand = 'Redragon Warehouse'")).changes || 0;
+      brandRows2 = (await exec.run("UPDATE sales_records SET brand = 'Netac' WHERE brand = 'Netac Warehouse'")).changes || 0;
+      brandRows3 = (await exec.run("UPDATE sales_records SET brand = 'BOYA' WHERE brand = 'Boya Warehouse'")).changes || 0;
+      brandRows4 = (await exec.run("UPDATE sales_records SET brand = 'Joypeer' WHERE brand = 'Joypeer Warehouse'")).changes || 0;
+
+      // 4. 修改后分布
+      afterChannel = (await exec.query("SELECT COALESCE(shop_platform, '') AS channel, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(shop_platform, '') ORDER BY COUNT(*) DESC")).rows;
+      afterBrand = (await exec.query("SELECT COALESCE(brand, '') AS brand, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(brand, '') ORDER BY COUNT(*) DESC")).rows;
+
+      // 5. 随机抽查
+      sampleOnline = (await exec.query("SELECT order_no, sku_code, shop_platform, brand, country, source_system FROM sales_records WHERE shop_platform = '线上' LIMIT 2")).rows;
+      sampleOffline = (await exec.query("SELECT order_no, sku_code, shop_platform, brand, country, source_system FROM sales_records WHERE shop_platform = '线下' LIMIT 2")).rows;
+      sampleBoya = (await exec.query("SELECT order_no, sku_code, shop_platform, brand, country, source_system FROM sales_records WHERE brand = 'BOYA' LIMIT 2")).rows;
+      sampleJoypeer = (await exec.query("SELECT order_no, sku_code, shop_platform, brand, country, source_system FROM sales_records WHERE brand = 'Joypeer' LIMIT 2")).rows;
+
+    } else {
+      beforeChannel = query("SELECT COALESCE(shop_platform, '') AS channel, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(shop_platform, '') ORDER BY COUNT(*) DESC").rows;
+      beforeBrand = query("SELECT COALESCE(brand, '') AS brand, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(brand, '') ORDER BY COUNT(*) DESC").rows;
+
+      channelRows1 = run("UPDATE sales_records SET shop_platform = '线上' WHERE shop_platform = '线上订单'").changes || 0;
+      channelRows2 = run("UPDATE sales_records SET shop_platform = '线上' WHERE shop_platform = '线上渠道'").changes || 0;
+      channelRows3 = run("UPDATE sales_records SET shop_platform = '线下' WHERE shop_platform = '线下渠道'").changes || 0;
+      channelRows4 = run("UPDATE sales_records SET shop_platform = '线下' WHERE shop_platform = '线下订单'").changes || 0;
+
+      brandRows1 = run("UPDATE sales_records SET brand = 'Redragon' WHERE brand = 'Redragon Warehouse'").changes || 0;
+      brandRows2 = run("UPDATE sales_records SET brand = 'Netac' WHERE brand = 'Netac Warehouse'").changes || 0;
+      brandRows3 = run("UPDATE sales_records SET brand = 'BOYA' WHERE brand = 'Boya Warehouse'").changes || 0;
+      brandRows4 = run("UPDATE sales_records SET brand = 'Joypeer' WHERE brand = 'Joypeer Warehouse'").changes || 0;
+
+      afterChannel = query("SELECT COALESCE(shop_platform, '') AS channel, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(shop_platform, '') ORDER BY COUNT(*) DESC").rows;
+      afterBrand = query("SELECT COALESCE(brand, '') AS brand, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(brand, '') ORDER BY COUNT(*) DESC").rows;
+
+      sampleOnline = query("SELECT order_no, sku_code, shop_platform, brand, country, source_system FROM sales_records WHERE shop_platform = '线上' LIMIT 2").rows;
+      sampleOffline = query("SELECT order_no, sku_code, shop_platform, brand, country, source_system FROM sales_records WHERE shop_platform = '线下' LIMIT 2").rows;
+      sampleBoya = query("SELECT order_no, sku_code, shop_platform, brand, country, source_system FROM sales_records WHERE brand = 'BOYA' LIMIT 2").rows;
+      sampleJoypeer = query("SELECT order_no, sku_code, shop_platform, brand, country, source_system FROM sales_records WHERE brand = 'Joypeer' LIMIT 2").rows;
+    }
+
+    res.json({
+      success: true,
+      summary: {
+        channel: {
+          '线上订单→线上': channelRows1,
+          '线上渠道→线上': channelRows2,
+          '线下渠道→线下': channelRows3,
+          '线下订单→线下': channelRows4,
+          total: channelRows1 + channelRows2 + channelRows3 + channelRows4
+        },
+        brand: {
+          'Redragon Warehouse→Redragon': brandRows1,
+          'Netac Warehouse→Netac': brandRows2,
+          'Boya Warehouse→BOYA': brandRows3,
+          'Joypeer Warehouse→Joypeer': brandRows4,
+          total: brandRows1 + brandRows2 + brandRows3 + brandRows4
+        }
+      },
+      before: { channel_distribution: beforeChannel, brand_distribution: beforeBrand },
+      after: { channel_distribution: afterChannel, brand_distribution: afterBrand },
+      samples: {
+        online: sampleOnline,
+        offline: sampleOffline,
+        boya: sampleBoya,
+        joypeer: sampleJoypeer
+      }
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+}));
+
 // PAY-CORE P0-1：供 scripts/backfill-payable-items.js 复用，不影响运行时
 module.exports = {
   createPayableItemFromSource,
