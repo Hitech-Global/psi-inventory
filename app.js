@@ -2741,6 +2741,236 @@ function downloadInvImportErrors(){
   XLSX.writeFile(wb,t("app.628", "\u5e93\u5b58\u5bfc\u5165\u5931\u8d25\u660e\u7ec6.xlsx"));
 }
 
+// ==================== 寄售库存初始化（批量导入） ====================
+// 列别名映射：同时兼容中文与英文表头
+var CI_IMPORT_COLUMNS=[
+  {key:'sku_code',aliases:['SKU','sku_code','SKU编码','sku']},
+  {key:'customer_name',aliases:['客户名称','customer_name','客户','customer']},
+  {key:'outbound_no',aliases:['出库单号','outbound_no','出库单','单号']},
+  {key:'outbound_date',aliases:['出库时间','outbound_date','出库日期','date']},
+  {key:'outbound_qty',aliases:['出库数量','outbound_qty','数量','qty'],num:true},
+  {key:'sold_qty',aliases:['已销售数量','sold_qty','已售数量','已售','sold'],num:true},
+  {key:'returned_qty',aliases:['已退货数量','returned_qty','已退数量','已退','returned'],num:true},
+  {key:'unit_cost',aliases:['寄售成本单价','unit_cost','成本单价','单价','cost'],num:true}
+];
+
+function openConsignmentImport(){
+  openModal(t('ci.title','📦 寄售库存初始化'),
+    '<div class="form-card" style="box-shadow:none;padding:0">'+
+      '<div style="margin-bottom:12px;padding:12px 14px;background:#f0f5ff;border:1px solid #adc6ff;border-radius:6px;font-size:12px;color:#333">'+
+        '<div style="font-weight:600;margin-bottom:6px">'+t('ci.step1','步骤 1：选择寄售仓库')+'</div>'+
+        '<div style="color:#666;margin-bottom:8px">'+t('ci.note','选择本次寄售库存初始化的目标仓库。上传的出库明细将按此仓库归集，导入后会覆盖该仓库此前的寄售批次。')+'</div>'+
+        '<select id="ci-warehouse" style="padding:6px 10px;border:1px solid #d9d9d9;border-radius:4px;width:100%;max-width:360px"><option value="">'+t('ci.select_wh','请选择仓库')+'</option></select>'+
+      '</div>'+
+      '<div id="ci-drop-zone" style="border:2px dashed #d9d9d9;border-radius:8px;padding:40px 20px;text-align:center;cursor:pointer;background:#fafafa;transition:all .2s" '+
+        'onclick="document.getElementById(\'ci-file-input\').click()" '+
+        'ondragover="event.preventDefault();this.style.borderColor=\'#1890ff\';this.style.background=\'#e6f7ff\'" '+
+        'ondragleave="this.style.borderColor=\'#d9d9d9\';this.style.background=\'#fafafa\'" '+
+        'ondrop="event.preventDefault();this.style.borderColor=\'#d9d9d9\';this.style.background=\'#fafafa\';handleConsignmentFile(event.dataTransfer.files[0])">'+
+        '<div style="font-size:48px;color:#1890ff;margin-bottom:8px">📦</div>'+
+        '<div style="font-size:14px;color:#333;margin-bottom:4px">'+t('ci.drop_hint','点击上传或拖拽文件到此处')+'</div>'+
+        '<div style="font-size:12px;color:#999">'+t('ci.support_fmt','支持 .xlsx / .xls / .csv 格式')+'</div>'+
+      '</div>'+
+      '<input type="file" id="ci-file-input" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleConsignmentFile(this.files[0])">'+
+      '<div id="consignment-preview" style="margin-top:16px"></div>'+
+      '<div id="consignment-result" style="margin-top:16px"></div>'+
+    '</div>',
+    '<button class="btn btn-secondary" onclick="downloadConsignmentTemplate()">'+t('ci.download_tpl','下载模板')+'</button>'+
+    '<button class="btn btn-secondary" onclick="closeModal()">'+t('action.close','关闭')+'</button>'+
+    '<button class="btn btn-primary" id="ci-import-btn" onclick="submitConsignmentImport()" disabled>'+t('ci.start_import','开始导入')+'</button>',
+    'modal-lg'
+  );
+  window._ciPreviewData=null;
+  window._ciFileName='';
+  window._ciWarehouses=[];
+  // 异步加载仓库下拉（仅 active）
+  (async function(){
+    try{
+      var whs=await api('/api/warehouses');
+      window._ciWarehouses=(whs||[]).filter(function(w){return w.status==='active'});
+      var sel=document.getElementById('ci-warehouse');
+      if(sel){
+        sel.innerHTML='<option value="">'+t('ci.select_wh','请选择仓库')+'</option>'+
+          window._ciWarehouses.map(function(w){return '<option value="'+esc(w.name)+'">'+esc(w.name)+(w.country_name?(' ('+esc(w.country_name)+')'):'')+'</option>'}).join('');
+      }
+    }catch(e){ showToast(t('ci.load_wh_fail','仓库列表加载失败'),'danger'); }
+  })();
+}
+
+function downloadConsignmentTemplate(){
+  var headers=['国家','寄售仓库','客户名称','出库单号','出库时间','SKU','出库数量','已销售数量','已退货数量','寄售成本单价'];
+  var sample=[
+    ['印尼','Jakarta寄售仓','PT Maju Jaya','OUT-2026-0701-001','2026-07-01','RD-K585-RGB','500','120','30','85.50'],
+    ['印尼','Jakarta寄售仓','CV Sentosa','OUT-2026-0705-002','2026-07-05','RD-M601-BK','200','0','0','92.00']
+  ];
+  var ws=XLSX.utils.aoa_to_sheet([headers].concat(sample));
+  ws['!cols']=headers.map(function(h){return {wch:h.length*2.2+6}});
+  var wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,t('ci.sheet_name','寄售库存'));
+  XLSX.writeFile(wb,t('ci.template_file','寄售库存_导入模板.xlsx'));
+}
+
+async function handleConsignmentFile(file){
+  if(!file)return;
+  var ext=file.name.split('.').pop().toLowerCase();
+  if(!['xlsx','xls','csv'].includes(ext)){showToast(t('toast.only_xlsx','仅支持 .xlsx / .xls / .csv 格式'),'danger');return}
+  var whSel=document.getElementById('ci-warehouse');
+  var warehouseName=whSel?whSel.value:'';
+  if(!warehouseName){showToast(t('ci.select_wh_first','请先选择寄售仓库'),'danger');return}
+  var wh=(window._ciWarehouses||[]).find(function(w){return w.name===warehouseName});
+  var countryName=wh?(wh.country_name||''):'';
+  var reader=new FileReader();
+  reader.onload=async function(e){
+    try{
+      var data=e.target.result;
+      var wb;
+      if(ext==='csv'){wb=XLSX.read(data,{type:'string',codepage:65001})}
+      else{wb=XLSX.read(new Uint8Array(data),{type:'array',cellDates:true})}
+      var ws=wb.Sheets[wb.SheetNames[0]];
+      var rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:'',raw:false,dateNF:'yyyy-mm-dd'});
+      if(rows.length<2){showToast(t('toast.file_empty','文件为空或缺少数据行'),'danger');return}
+      var headers=rows[0].map(function(h){return String(h||'').trim().toLowerCase()});
+      // 建立列名->索引映射（兼容中英文别名）
+      var colMap={};
+      CI_IMPORT_COLUMNS.forEach(function(col){
+        for(var i=0;i<headers.length;i++){
+          if(headers[i]==='')continue;
+          if(col.aliases.some(function(a){return a.toLowerCase()===headers[i]})){colMap[col.key]=i;break}
+        }
+      });
+      var items=[];
+      for(var i=1;i<rows.length;i++){
+        var row=rows[i];
+        if(!row||row.every(function(c){return !c||String(c).trim()===''}))continue;
+        var rec={};
+        CI_IMPORT_COLUMNS.forEach(function(col){
+          var idx=colMap[col.key];
+          if(idx==null||idx<0||row[idx]===undefined||row[idx]==='')return;
+          var val=row[idx];
+          if(typeof val==='string')val=val.trim();
+          if(col.num){var n=Number(val);val=Number.isFinite(n)?n:val}
+          else if(col.key==='outbound_date'){
+            if(val instanceof Date)val=formatDateISO(val);
+            else val=String(val).trim().slice(0,10);
+          }
+          rec[col.key]=val;
+        });
+        items.push(rec);
+      }
+      if(!items.length){showToast(t('toast.file_empty','文件为空或缺少数据行'),'danger');return}
+      window._ciFileName=file.name;
+      document.getElementById('consignment-result').innerHTML='';
+      // 调用后端预览校验
+      var res=await api('/api/consignment-inventory/preview','POST',{
+        warehouse_name:warehouseName,
+        country_name:countryName,
+        items:items
+      });
+      window._ciPreviewData={preview:res,warehouse_name:warehouseName,country_name:countryName};
+      renderConsignmentPreview(res);
+    }catch(err){showToast((err&&err.message)||t('ci.parse_fail','文件解析失败'),'danger')}
+  };
+  if(ext==='csv')reader.readAsText(file,'UTF-8');
+  else reader.readAsArrayBuffer(file);
+}
+
+function renderConsignmentPreview(d){
+  var btn=document.getElementById('ci-import-btn');
+  var canImport=d&&d.valid_rows>0&&d.error_rows===0;
+  if(btn)btn.disabled=!canImport;
+  var html='<div style="background:#f0f8ff;padding:10px 14px;border-radius:6px;margin-bottom:10px;font-size:13px">'+
+    '<b>'+t('ci.preview_summary','预览汇总')+'</b>'+
+    '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px 16px;margin-top:8px;color:#555">'+
+      '<span>'+t('ci.total_rows','总行数')+'：<b>'+(d.total_rows||0)+'</b></span>'+
+      '<span style="color:#52c41a">'+t('ci.valid_rows','有效行')+'：<b>'+(d.valid_rows||0)+'</b></span>'+
+      '<span style="color:'+(d.error_rows>0?'#ff4d4f':'#999')+'">'+t('ci.error_rows','错误行')+'：<b>'+(d.error_rows||0)+'</b></span>'+
+      '<span>'+t('ci.duplicate_count','重复行')+'：<b>'+(d.duplicate_count||0)+'</b></span>'+
+      '<span>'+t('ci.customer_count','客户数')+'：<b>'+(d.customer_count||0)+'</b></span>'+
+      '<span>'+t('ci.sku_count','SKU数')+'：<b>'+(d.sku_count||0)+'</b></span>'+
+      '<span>'+t('ci.total_remaining_qty','剩余总数量')+'：<b>'+(d.total_remaining_qty||0)+'</b></span>'+
+      '<span>'+t('ci.total_remaining_value','剩余库存金额')+'：<b>'+(d.total_remaining_value||0)+'</b></span>'+
+    '</div></div>';
+  // 错误明细表
+  if(d.errors&&d.errors.length){
+    html+='<div style="margin-bottom:10px"><div style="font-weight:600;color:#ff4d4f;margin-bottom:6px">'+t('ci.error_detail','错误明细')+'（'+d.errors.length+'）</div>'+
+      '<div class="table-container" style="max-height:200px;overflow:auto;box-shadow:none;border:1px solid #f0f0f0"><table class="data-table"><thead><tr><th>'+t('col.row','行')+'</th><th>'+t('ci.field','字段')+'</th><th>'+t('ci.value','值')+'</th><th>'+t('ci.reason','原因')+'</th></tr></thead><tbody>'+
+      d.errors.map(function(e){return '<tr style="background:#fff1f0"><td>'+esc(e.row)+'</td><td>'+esc(e.field)+'</td><td>'+esc(e.value==null?'':e.value)+'</td><td>'+esc(e.reason)+'</td></tr>'}).join('')+
+      '</tbody></table></div></div>';
+  }
+  // 有效行预览表（前 20 行）
+  var valid=d.valid_items||[];
+  html+='<div style="font-weight:600;margin-bottom:6px">'+t('ci.valid_preview','有效行预览')+'（'+t('ci.showing_first','前 ')+(Math.min(valid.length,20))+'/'+valid.length+'）</div>'+
+    '<div class="table-container" style="max-height:320px;overflow:auto;box-shadow:none;border:1px solid #f0f0f0"><table class="data-table"><thead><tr>'+
+    '<th>'+t('col.row','行')+'</th><th>SKU</th><th>'+t('ci.customer','客户名称')+'</th><th>'+t('ci.outbound_no','出库单号')+'</th><th>'+t('ci.outbound_date','出库时间')+'</th><th>'+t('ci.outbound_qty','出库数量')+'</th><th>'+t('ci.sold_qty','已销售')+'</th><th>'+t('ci.returned_qty','已退货')+'</th><th>'+t('ci.remaining_qty','剩余数量')+'</th><th>'+t('ci.unit_cost','成本单价')+'</th><th>'+t('ci.remaining_value','剩余金额')+'</th></tr></thead><tbody>';
+  valid.slice(0,20).forEach(function(v,idx){
+    html+='<tr><td>'+(idx+1)+'</td><td class="cell-id">'+esc(v.sku_code)+'</td><td>'+esc(v.customer_name||'-')+'</td><td>'+esc(v.outbound_no||'-')+'</td><td class="cell-date">'+esc(v.outbound_date||'-')+'</td><td class="text-right">'+esc(v.outbound_qty)+'</td><td class="text-right">'+esc(v.sold_qty)+'</td><td class="text-right">'+esc(v.returned_qty)+'</td><td class="text-right">'+esc(v.remaining_qty)+'</td><td class="text-right">'+fmtMoney(v.unit_cost)+'</td><td class="text-right">'+fmtMoney(v.remaining_inventory_value)+'</td></tr>';
+  });
+  if(valid.length>20)html+='<tr><td colspan="11" style="text-align:center;color:#999;padding:8px">... '+(valid.length-20)+' '+t('ci.more_rows','条')+'</td></tr>';
+  if(!valid.length)html+='<tr><td colspan="11" style="text-align:center;color:#999;padding:16px">'+t('ci.no_valid','无有效行')+'</td></tr>';
+  html+='</tbody></table></div>';
+  document.getElementById('consignment-preview').innerHTML=html;
+}
+
+async function submitConsignmentImport(){
+  var ci=window._ciPreviewData;
+  if(!ci||!ci.preview||!ci.preview.valid_items||!ci.preview.valid_items.length){showToast(t('ci.no_valid_data','没有可导入的有效数据'),'danger');return}
+  var btn=document.getElementById('ci-import-btn');
+  if(btn){btn.disabled=true;btn.textContent=t('ci.importing','导入中...')}
+  try{
+    var res=await api('/api/consignment-inventory/import','POST',{
+      warehouse_name:ci.warehouse_name,
+      country_name:ci.country_name,
+      original_filename:window._ciFileName||'',
+      items:ci.preview.valid_items
+    });
+    if(btn){btn.textContent=t('ci.start_import','开始导入')}
+    if(res&&res.success){
+      var html='<div style="background:#f6ffed;border:1px solid #b7eb8f;border-radius:8px;padding:14px 16px;font-size:13px">'+
+        '<div style="font-weight:600;margin-bottom:8px">✅ '+t('ci.import_done','导入完成')+'</div>'+
+        '<div style="color:#555">'+t('ci.import_stats','共导入 {v1} 条有效行，剩余总数量 {v2}，剩余库存金额 {v3}。',{v1:res.stats.valid_rows||0,v2:res.stats.total_remaining_qty||0,v3:res.stats.total_remaining_value||0})+'</div>'+
+        '<div style="color:#999;margin-top:4px">'+t('ci.batch_id','批次号')+'：'+esc(res.batch_id||'')+'</div></div>';
+      var box=document.getElementById('consignment-result');
+      if(box)box.innerHTML=html;
+      showToast(t('ci.import_success','寄售库存导入成功'),'success');
+      closeModal();
+      loadInv();
+    }else{
+      showToast(t('ci.import_failed','导入失败'),'danger');
+    }
+  }catch(e){
+    if(btn){btn.disabled=false;btn.textContent=t('ci.start_import','开始导入')}
+    showToast((e&&e.message)||t('ci.import_failed','导入失败'),'danger');
+  }
+}
+
+async function viewConsignmentLots(warehouse,skuCode){
+  openModal(t('ci.lots_title','🔍 寄售批次明细')+' - '+esc(skuCode),
+    '<div id="ci-lots-body" style="padding:4px"><div style="text-align:center;color:#999;padding:30px">'+t('ci.loading','加载中...')+'</div></div>',
+    '<button class="btn btn-secondary" onclick="closeModal()">'+t('action.close','关闭')+'</button>',
+    'modal-lg'
+  );
+  try{
+    var lots=await api('/api/consignment-inventory/lots?warehouse='+encodeURIComponent(warehouse)+'&sku_code='+encodeURIComponent(skuCode));
+    var body=document.getElementById('ci-lots-body');
+    if(!body)return;
+    if(!lots||!lots.length){
+      body.innerHTML='<div style="text-align:center;color:#999;padding:30px">'+t('ci.no_lots','无寄售批次记录')+'</div>';
+      return;
+    }
+    var html='<div style="margin-bottom:8px;font-size:13px;color:#555">'+t('ci.lots_count','共 {v1} 条活跃批次',{v1:lots.length})+'（'+esc(warehouse)+'）</div>'+
+      '<div class="table-container" style="max-height:60vh;overflow:auto;box-shadow:none;border:1px solid #f0f0f0"><table class="data-table"><thead><tr>'+
+      '<th>'+t('ci.customer','客户名称')+'</th><th>'+t('ci.outbound_no','出库单号')+'</th><th>'+t('ci.outbound_date','出库时间')+'</th><th>'+t('ci.outbound_qty','出库数量')+'</th><th>'+t('ci.sold_qty','已销售')+'</th><th>'+t('ci.returned_qty','已退货')+'</th><th>'+t('ci.remaining_qty','当前剩余数量')+'</th><th>'+t('ci.unit_cost','寄售成本单价')+'</th><th>'+t('ci.remaining_value','当前剩余库存金额')+'</th></tr></thead><tbody>';
+    lots.forEach(function(l){
+      html+='<tr><td>'+esc(l.customer_name||'-')+'</td><td>'+esc(l.outbound_no||'-')+'</td><td class="cell-date">'+esc(l.outbound_date||'-')+'</td><td class="text-right">'+esc(l.outbound_qty)+'</td><td class="text-right">'+esc(l.sold_qty)+'</td><td class="text-right">'+esc(l.returned_qty)+'</td><td class="text-right">'+esc(l.remaining_qty)+'</td><td class="text-right">'+fmtMoney(l.unit_cost)+'</td><td class="text-right">'+fmtMoney(l.remaining_inventory_value)+'</td></tr>';
+    });
+    html+='</tbody></table></div>';
+    body.innerHTML=html;
+  }catch(e){
+    var b=document.getElementById('ci-lots-body');
+    if(b)b.innerHTML='<div style="text-align:center;color:#ff4d4f;padding:30px">'+esc((e&&e.message)||t('ci.load_fail','加载失败'))+'</div>';
+  }
+}
+
 // ==================== 销售数据批量导入 ====================
 const SALES_IMPORT_COLUMNS=[
   {key:'source_system',label:t("po.018", "\u6765\u6e90\u7cfb\u7edf"),required:true},
@@ -3100,7 +3330,7 @@ function invStatusBadge(v){
 async function renderInventory(){
   invDataCache = []; invAllFilteredIds = []; invSelectAllMode = false;
   document.getElementById('content-inner').innerHTML=
-    t('html.renderInventory', `<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>国家</label><select id="inv-c" onchange="onInvFilterChange('country')"><option value="">全部</option></select></div><div class="filter-group"><label>仓库</label><select id="inv-w" onchange="onInvFilterChange('warehouse')"><option value="">全部</option></select></div><div class="filter-group"><label>品牌</label><select id="inv-b" onchange="onInvFilterChange('brand')"><option value="">全部</option></select></div><div class="filter-group"><label>关键词</label><input type="text" id="inv-k" placeholder="SKU/产品名" oninput="debouncedInvKeyword()"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadInv()">搜索</button><button class="btn btn-secondary btn-sm" onclick="resetInvFilters()">重置</button>{v1}</div></div></div><div id="inv-batch-bar" style="display:none;background:var(--bg-card,#fff);border:1px solid var(--border,#e0e0e0);border-radius:8px;padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span id="inv-batch-count" style="font-weight:600;margin-right:8px"></span><button class="btn btn-sm btn-secondary" onclick="invBatchAction('export')">📊 导出</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_status')">🏷️ 库存状态</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_focused')">⭐ 重点关注</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_safety_stock')">🛡️ 安全库存</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_turnover')">🎯 目标周转</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_replenish_rule')">📋 补货规则</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_remark')">📝 库存备注</button><button class="btn btn-sm btn-warning" onclick="invBatchAction('inventory_adjust')">🔧 发起调整单</button><button class="btn btn-sm btn-danger" onclick="invBatchAction('delete')" style="background:#ff4d4f;color:#fff;border:none">🗑️ 删除</button><button class="btn btn-sm btn-secondary" onclick="invClearSelection()" style="margin-left:auto">取消选择</button></div><div id="inv-cards" class="stats-grid"></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">📦 库存总表</div><div class="table-section-title-right" id="inv-rate-display" style="font-size:12px;color:#666;display:flex;gap:12px;align-items:center"></div></div><div id="inv-table"></div></div>`, {v1: hasPermission('inventory_import')?t('gen.L2829.1','<button class="btn btn-secondary btn-sm" onclick="openInvBatchImport()">📥 导入库存</button>'):''});
+    t('html.renderInventory', `<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>国家</label><select id="inv-c" onchange="onInvFilterChange('country')"><option value="">全部</option></select></div><div class="filter-group"><label>仓库</label><select id="inv-w" onchange="onInvFilterChange('warehouse')"><option value="">全部</option></select></div><div class="filter-group"><label>品牌</label><select id="inv-b" onchange="onInvFilterChange('brand')"><option value="">全部</option></select></div><div class="filter-group"><label>关键词</label><input type="text" id="inv-k" placeholder="SKU/产品名" oninput="debouncedInvKeyword()"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadInv()">搜索</button><button class="btn btn-secondary btn-sm" onclick="resetInvFilters()">重置</button>{v1}</div></div></div><div id="inv-batch-bar" style="display:none;background:var(--bg-card,#fff);border:1px solid var(--border,#e0e0e0);border-radius:8px;padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span id="inv-batch-count" style="font-weight:600;margin-right:8px"></span><button class="btn btn-sm btn-secondary" onclick="invBatchAction('export')">📊 导出</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_status')">🏷️ 库存状态</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_focused')">⭐ 重点关注</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_safety_stock')">🛡️ 安全库存</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_turnover')">🎯 目标周转</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_replenish_rule')">📋 补货规则</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_remark')">📝 库存备注</button><button class="btn btn-sm btn-warning" onclick="invBatchAction('inventory_adjust')">🔧 发起调整单</button><button class="btn btn-sm btn-danger" onclick="invBatchAction('delete')" style="background:#ff4d4f;color:#fff;border:none">🗑️ 删除</button><button class="btn btn-sm btn-secondary" onclick="invClearSelection()" style="margin-left:auto">取消选择</button></div><div id="inv-cards" class="stats-grid"></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">📦 库存总表</div><div class="table-section-title-right" id="inv-rate-display" style="font-size:12px;color:#666;display:flex;gap:12px;align-items:center"></div></div><div id="inv-table"></div></div>`, {v1: hasPermission('inventory_import')?(t('gen.L2829.1','<button class="btn btn-secondary btn-sm" onclick="openInvBatchImport()">📥 导入库存</button>')+'<button class="btn btn-secondary btn-sm" onclick="openConsignmentImport()" style="margin-left:8px">'+t('btn.consignment_init','📦 寄售库存初始化')+'</button>'):''});
   // 筛选级联：根据当前已选条件动态刷新下拉可选项（仅库存总表页面）
   try{ await refreshInvFilterOptions(); }catch(e){console.warn('filter-options load failed',e)}
   // 恢复库存总表保存的筛选状态（仅本页面 localStorage，不影响其他页面）
@@ -3262,7 +3492,7 @@ function buildInvTableHTML(data, cols, allCount, fmtLocalMoney, fmtCnyMoney){
         }
         return '<tr>'
         +'<td class="col-sticky" style="left:0;background:var(--card-bg,#fff)"><input type="checkbox" class="inv-check" value="'+esc(i.id)+'" onchange="updateInvBatchBar()"></td>'
-        +'<td class="col-sticky cell-id" style="left:32px;background:var(--card-bg,#fff)" title="'+esc(i.product_name||'')+'">'+esc(i.sku_code)+'</td>'
+        +'<td class="col-sticky cell-id" style="left:32px;background:var(--card-bg,#fff)" title="'+esc(i.product_name||'')+'">'+esc(i.sku_code)+' <button class="action-btn" style="padding:0 2px;font-size:12px;line-height:1;vertical-align:baseline" title="'+t('ci.lots_btn','查看寄售批次')+'" onclick="event.stopPropagation();viewConsignmentLots(\''+esc(i.warehouse)+'\',\''+esc(i.sku_code)+'\')">🔍</button></td>'
         +'<td>'+esc(i.country)+'</td>'
         +'<td>'+esc(i.warehouse)+'</td>'
         +'<td>'+esc(i.brand)+'</td>'

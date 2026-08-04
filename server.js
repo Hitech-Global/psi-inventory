@@ -601,6 +601,58 @@ if (require.main === module) {
   })();
 }
 
+// ==================== 寄售库存表迁移（CONSIGNMENT-INVENTORY） ====================
+// 幂等建表：consignment_inventory_lots（寄售库存批次行）+ consignment_inventory_import_batches（导入批次）
+// 仅在直接运行 server.js 时执行，避免 require 时写入真实库
+if (require.main === module) {
+  (function ensureConsignmentInventoryTables() {
+    try {
+      run(`CREATE TABLE IF NOT EXISTS consignment_inventory_lots (
+        id TEXT PRIMARY KEY,
+        country_name TEXT,
+        warehouse_name TEXT NOT NULL,
+        customer_name TEXT,
+        outbound_no TEXT,
+        outbound_date TEXT,
+        sku_code TEXT NOT NULL,
+        outbound_qty INTEGER,
+        sold_qty INTEGER,
+        returned_qty INTEGER,
+        remaining_qty INTEGER,
+        unit_cost NUMERIC(18,4),
+        remaining_inventory_value NUMERIC(18,4),
+        import_batch_id TEXT NOT NULL,
+        source_line_no INTEGER,
+        source_type TEXT DEFAULT 'excel',
+        status TEXT DEFAULT 'active',
+        created_by TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now'))
+      )`);
+      run(`CREATE TABLE IF NOT EXISTS consignment_inventory_import_batches (
+        id TEXT PRIMARY KEY,
+        warehouse_name TEXT NOT NULL,
+        country_name TEXT,
+        original_filename TEXT,
+        total_rows INTEGER,
+        valid_rows INTEGER,
+        error_rows INTEGER,
+        customer_count INTEGER,
+        sku_count INTEGER,
+        total_remaining_qty INTEGER,
+        total_remaining_value NUMERIC(18,4),
+        status TEXT DEFAULT 'pending',
+        created_by TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        activated_at TEXT
+      )`);
+      console.log('[Migration] 寄售库存表已就绪');
+    } catch (e) {
+      console.warn('[Migration] 寄售库存表迁移失败（非致命）:', e.message);
+    }
+  })();
+}
+
 // ==================== Express 初始化 ====================
 const app = express();
 app.set('trust proxy', 1); // Render 反向代理 TLS 终止后，使 req.protocol/req.secure 正确反映客户端原始协议
@@ -2460,6 +2512,343 @@ app.get('/api/inventory/filter-options', requireApiPermission('inventory_view'),
   if (w && !warehouses.includes(w)) warehouses.unshift(w);
   if (b && !brands.includes(b)) brands.unshift(b);
   res.json({ countries, warehouses, brands });
+}));
+
+// ==================== 寄售库存（CONSIGNMENT-INVENTORY） ====================
+// projectConsignmentInventoryToInventory：把某仓库的活跃寄售库存批次聚合投影到库存总表。
+// 独立函数（非路由）：按 sku_code 聚合 remaining_qty / remaining_inventory_value，
+// 以加权方式计算 weighted_avg_cost = inventory_value / available_qty；
+// 已存在则 UPDATE，不存在则 INSERT；仓库内已无活跃寄售批次的 SKU 清零。
+// 注意：不调用 refreshInventoryTotals / projectWacToInventory / 任何 WAC 函数，不写 wac_history。
+function projectConsignmentInventoryToInventory(warehouseName, countryName) {
+  const warehouse = (warehouseName || '').trim();
+  const country = (countryName || '').trim();
+  if (!warehouse) return;
+  transaction(() => {
+    // 聚合该仓库的活跃寄售库存行（按 sku_code 汇总剩余数量与剩余库存价值）
+    let lotsSql = `SELECT sku_code,
+        COALESCE(SUM(remaining_qty), 0) AS available_qty,
+        COALESCE(SUM(remaining_inventory_value), 0) AS inventory_value
+      FROM consignment_inventory_lots
+      WHERE warehouse_name = ? AND status = 'active'`;
+    const lotsParams = [warehouse];
+    if (country) { lotsSql += ' AND country_name = ?'; lotsParams.push(country); }
+    lotsSql += ' GROUP BY sku_code';
+    const lots = query(lotsSql, lotsParams).rows;
+
+    const activeSkuSet = new Set();
+    for (const lot of lots) {
+      const skuCode = lot.sku_code;
+      const availableQty = parseInt(lot.available_qty) || 0;
+      const invValue = Number(lot.inventory_value) || 0;
+      const wac = availableQty > 0 ? invValue / availableQty : 0;
+      activeSkuSet.add(skuCode);
+      const existing = queryOne('SELECT id FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
+        [skuCode, country, warehouse]);
+      if (existing) {
+        run(`UPDATE inventory SET available_qty = ?, inventory_value = ?, weighted_avg_cost = ?, snapshot_cutoff_date = datetime('now'), updated_at = datetime('now') WHERE sku_code = ? AND country = ? AND warehouse = ?`,
+          [availableQty, invValue, wac, skuCode, country, warehouse]);
+      } else {
+        run(`INSERT INTO inventory (id, sku_code, country, warehouse, available_qty, weighted_avg_cost, inventory_value, snapshot_cutoff_date, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+          [genId('inv'), skuCode, country, warehouse, availableQty, wac, invValue]);
+      }
+    }
+
+    // 仓库内原本存在库存记录、但新活跃寄售批次中没有的 SKU：数量/金额/成本清零
+    let invSql = 'SELECT sku_code FROM inventory WHERE warehouse = ?';
+    const invParams = [warehouse];
+    if (country) { invSql += ' AND country = ?'; invParams.push(country); }
+    const invRows = query(invSql, invParams).rows;
+    for (const row of invRows) {
+      if (!activeSkuSet.has(row.sku_code)) {
+        run(`UPDATE inventory SET available_qty = 0, inventory_value = 0, weighted_avg_cost = 0, updated_at = datetime('now') WHERE sku_code = ? AND country = ? AND warehouse = ?`,
+          [row.sku_code, country, warehouse]);
+      }
+    }
+  });
+}
+
+// 寄售库存导入预览：校验行数据并汇总，不落库
+app.post('/api/consignment-inventory/preview', requireApiPermission('inventory_import'), asyncHandler((req, res) => {
+  try {
+    const { warehouse_name, country_name, items } = req.body || {};
+    const warehouse = (warehouse_name || '').toString().trim();
+    const country = (country_name || '').toString().trim();
+    const rows = Array.isArray(items) ? items : [];
+    const errors = [];
+    const validItems = [];
+
+    if (!warehouse) {
+      return res.status(400).json({ error: 'warehouse_name 不能为空' });
+    }
+    // 仓库必须存在且 status='active'
+    const wh = queryOne("SELECT name FROM warehouses WHERE name = ? AND status = 'active'", [warehouse]);
+    if (!wh) {
+      return res.status(400).json({ error: `仓库不存在或未启用：${warehouse}` });
+    }
+
+    // 预取所有传入 SKU 的存在性，避免逐行查询
+    const skuCodes = Array.from(new Set(rows.map(r => (r && r.sku_code ? String(r.sku_code).trim() : '')).filter(Boolean)));
+    const skuExistMap = {};
+    if (skuCodes.length) {
+      const placeholders = skuCodes.map(() => '?').join(',');
+      const skuRows = query(`SELECT sku_code FROM skus WHERE sku_code IN (${placeholders})`, skuCodes).rows;
+      skuRows.forEach(r => { skuExistMap[r.sku_code] = true; });
+    }
+
+    const seenKeys = new Set();
+    let duplicateCount = 0;
+
+    rows.forEach((item, idx) => {
+      const rowNo = idx + 1;
+      const pushError = (field, value, reason) => errors.push({ row: rowNo, field, value, reason });
+
+      const skuCode = (item && item.sku_code != null ? String(item.sku_code) : '').trim();
+      if (!skuCode) { pushError('sku_code', item && item.sku_code, 'SKU编码不能为空'); return; }
+      if (!skuExistMap[skuCode]) { pushError('sku_code', skuCode, 'SKU不存在于SKU主数据表'); return; }
+
+      // 数量校验：outbound_qty / sold_qty / returned_qty 必须为数字且 >= 0
+      const numFields = ['outbound_qty', 'sold_qty', 'returned_qty'];
+      const nums = {};
+      for (const f of numFields) {
+        const raw = item ? item[f] : undefined;
+        if (raw === null || raw === undefined || String(raw).trim() === '') {
+          nums[f] = 0;
+        } else {
+          const v = Number(raw);
+          if (!Number.isFinite(v) || v < 0) {
+            pushError(f, raw, '数量必须为非负数字');
+            return;
+          }
+          nums[f] = v;
+        }
+      }
+      // sold_qty + returned_qty <= outbound_qty
+      if (nums.sold_qty + nums.returned_qty > nums.outbound_qty) {
+        pushError('outbound_qty', nums.outbound_qty, '已售+已退不能大于出库数量');
+        return;
+      }
+      // unit_cost >= 0
+      const rawCost = item ? item.unit_cost : undefined;
+      let unitCost = 0;
+      if (rawCost !== null && rawCost !== undefined && String(rawCost).trim() !== '') {
+        const c = Number(rawCost);
+        if (!Number.isFinite(c) || c < 0) {
+          pushError('unit_cost', rawCost, '单位成本必须为非负数字');
+          return;
+        }
+        unitCost = c;
+      }
+
+      const remainingQty = nums.outbound_qty - nums.sold_qty - nums.returned_qty;
+      const remainingValue = Math.round((remainingQty * unitCost + Number.EPSILON) * 10000) / 10000;
+
+      // 重复行检测：(sku_code, customer_name, outbound_no)
+      const customerName = (item && item.customer_name != null ? String(item.customer_name) : '').trim();
+      const outboundNo = (item && item.outbound_no != null ? String(item.outbound_no) : '').trim();
+      const dupKey = `${skuCode}|${customerName}|${outboundNo}`;
+      if (seenKeys.has(dupKey)) {
+        duplicateCount++;
+      } else {
+        seenKeys.add(dupKey);
+      }
+
+      validItems.push({
+        sku_code: skuCode,
+        customer_name: customerName,
+        outbound_no: outboundNo,
+        outbound_date: (item && item.outbound_date != null ? String(item.outbound_date) : '').trim(),
+        outbound_qty: nums.outbound_qty,
+        sold_qty: nums.sold_qty,
+        returned_qty: nums.returned_qty,
+        unit_cost: unitCost,
+        remaining_qty: remainingQty,
+        remaining_inventory_value: remainingValue
+      });
+    });
+
+    const customerSet = new Set();
+    const skuSet = new Set();
+    let totalRemainingQty = 0;
+    let totalRemainingValue = 0;
+    validItems.forEach(v => {
+      if (v.customer_name) customerSet.add(v.customer_name);
+      skuSet.add(v.sku_code);
+      totalRemainingQty += v.remaining_qty;
+      totalRemainingValue += v.remaining_inventory_value;
+    });
+
+    res.json({
+      total_rows: rows.length,
+      valid_rows: validItems.length,
+      error_rows: errors.length,
+      customer_count: customerSet.size,
+      sku_count: skuSet.size,
+      total_remaining_qty: totalRemainingQty,
+      total_remaining_value: Math.round((totalRemainingValue + Number.EPSILON) * 10000) / 10000,
+      duplicate_count: duplicateCount,
+      errors,
+      valid_items: validItems
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+}));
+
+// 寄售库存导入：事务内创建批次、写入批次行、作废旧批次、激活新批次、投影到库存总表、记录操作日志
+app.post('/api/consignment-inventory/import', requireApiPermission('inventory_import'), asyncHandler((req, res) => {
+  try {
+    const { warehouse_name, country_name, items, original_filename } = req.body || {};
+    const warehouse = (warehouse_name || '').toString().trim();
+    const country = (country_name || '').toString().trim();
+    const rows = Array.isArray(items) ? items : [];
+
+    if (!warehouse) return res.status(400).json({ error: 'warehouse_name 不能为空' });
+    if (!rows.length) return res.status(400).json({ error: 'items 不能为空' });
+    const wh = queryOne("SELECT name FROM warehouses WHERE name = ? AND status = 'active'", [warehouse]);
+    if (!wh) return res.status(400).json({ error: `仓库不存在或未启用：${warehouse}` });
+
+    // 复用预览校验逻辑（内联，避免副作用）
+    const skuCodes = Array.from(new Set(rows.map(r => (r && r.sku_code ? String(r.sku_code).trim() : '')).filter(Boolean)));
+    const skuExistMap = {};
+    if (skuCodes.length) {
+      const placeholders = skuCodes.map(() => '?').join(',');
+      query(`SELECT sku_code FROM skus WHERE sku_code IN (${placeholders})`, skuCodes).rows.forEach(r => { skuExistMap[r.sku_code] = true; });
+    }
+
+    const validItems = [];
+    const errors = [];
+    rows.forEach((item, idx) => {
+      const rowNo = idx + 1;
+      const pushError = (field, value, reason) => errors.push({ row: rowNo, field, value, reason });
+      const skuCode = (item && item.sku_code != null ? String(item.sku_code) : '').trim();
+      if (!skuCode) { pushError('sku_code', item && item.sku_code, 'SKU编码不能为空'); return; }
+      if (!skuExistMap[skuCode]) { pushError('sku_code', skuCode, 'SKU不存在于SKU主数据表'); return; }
+      const nums = {};
+      for (const f of ['outbound_qty', 'sold_qty', 'returned_qty']) {
+        const raw = item ? item[f] : undefined;
+        if (raw === null || raw === undefined || String(raw).trim() === '') { nums[f] = 0; }
+        else { const v = Number(raw); if (!Number.isFinite(v) || v < 0) { pushError(f, raw, '数量必须为非负数字'); return; } nums[f] = v; }
+      }
+      if (nums.sold_qty + nums.returned_qty > nums.outbound_qty) { pushError('outbound_qty', nums.outbound_qty, '已售+已退不能大于出库数量'); return; }
+      const rawCost = item ? item.unit_cost : undefined;
+      let unitCost = 0;
+      if (rawCost !== null && rawCost !== undefined && String(rawCost).trim() !== '') {
+        const c = Number(rawCost); if (!Number.isFinite(c) || c < 0) { pushError('unit_cost', rawCost, '单位成本必须为非负数字'); return; } unitCost = c;
+      }
+      const remainingQty = nums.outbound_qty - nums.sold_qty - nums.returned_qty;
+      const remainingValue = Math.round((remainingQty * unitCost + Number.EPSILON) * 10000) / 10000;
+      validItems.push({
+        sku_code: skuCode,
+        customer_name: (item && item.customer_name != null ? String(item.customer_name) : '').trim(),
+        outbound_no: (item && item.outbound_no != null ? String(item.outbound_no) : '').trim(),
+        outbound_date: (item && item.outbound_date != null ? String(item.outbound_date) : '').trim(),
+        outbound_qty: nums.outbound_qty,
+        sold_qty: nums.sold_qty,
+        returned_qty: nums.returned_qty,
+        unit_cost: unitCost,
+        remaining_qty: remainingQty,
+        remaining_inventory_value: remainingValue
+      });
+    });
+
+    if (!validItems.length) {
+      return res.status(400).json({ error: '没有有效行可导入', errors });
+    }
+
+    const customerSet = new Set();
+    const skuSet = new Set();
+    let totalRemainingQty = 0;
+    let totalRemainingValue = 0;
+    validItems.forEach(v => {
+      if (v.customer_name) customerSet.add(v.customer_name);
+      skuSet.add(v.sku_code);
+      totalRemainingQty += v.remaining_qty;
+      totalRemainingValue += v.remaining_inventory_value;
+    });
+
+    const batchId = genId('cib');
+    const userId = req.currentUserId || '';
+    const userName = req.currentUserName || '';
+
+    transaction(() => {
+      // 1. 创建导入批次记录（status='pending'）
+      run(`INSERT INTO consignment_inventory_import_batches
+        (id, warehouse_name, country_name, original_filename, total_rows, valid_rows, error_rows, customer_count, sku_count, total_remaining_qty, total_remaining_value, status, created_by, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, datetime('now'))`,
+        [batchId, warehouse, country, (original_filename || '').toString(), rows.length, validItems.length, errors.length,
+         customerSet.size, skuSet.size, totalRemainingQty,
+         Math.round((totalRemainingValue + Number.EPSILON) * 10000) / 10000, userId]);
+
+      // 2. 写入所有批次行（status 默认 'active'）
+      validItems.forEach((v, i) => {
+        run(`INSERT INTO consignment_inventory_lots
+          (id, country_name, warehouse_name, customer_name, outbound_no, outbound_date, sku_code,
+           outbound_qty, sold_qty, returned_qty, remaining_qty, unit_cost, remaining_inventory_value,
+           import_batch_id, source_line_no, source_type, status, created_by, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'excel', 'active', ?, datetime('now'))`,
+          [genId('cil'), country, warehouse, v.customer_name, v.outbound_no, v.outbound_date, v.sku_code,
+           v.outbound_qty, v.sold_qty, v.returned_qty, v.remaining_qty, v.unit_cost, v.remaining_inventory_value,
+           batchId, i + 1, userId]);
+      });
+
+      // 3. 作废该仓库此前活跃的寄售批次行（保留新插入的本批次行）
+      run(`UPDATE consignment_inventory_lots SET status = 'superseded', updated_at = datetime('now')
+        WHERE warehouse_name = ? AND status = 'active' AND import_batch_id != ?`, [warehouse, batchId]);
+
+      // 4. 激活新批次
+      run(`UPDATE consignment_inventory_import_batches SET status = 'active', activated_at = datetime('now') WHERE id = ?`, [batchId]);
+
+      // 5. 投影到库存总表（内部以事务/SAVEPOINT 执行，不触碰 WAC）
+      projectConsignmentInventoryToInventory(warehouse, country);
+
+      // 6. 记录操作日志
+      logOperation({
+        operator_id: userId,
+        operator_name: userName,
+        page: 'consignment_inventory',
+        operation_type: 'import',
+        target_ids: [batchId],
+        affected_count: validItems.length,
+        old_values: {},
+        new_values: { warehouse_name: warehouse, country_name: country, original_filename: original_filename || '',
+          total_rows: rows.length, valid_rows: validItems.length, total_remaining_qty: totalRemainingQty,
+          total_remaining_value: totalRemainingValue },
+        reason: '',
+        triggered_recalc: 0,
+        is_rollbackable: 0
+      });
+    });
+
+    res.json({
+      success: true,
+      batch_id: batchId,
+      stats: {
+        total_rows: rows.length,
+        valid_rows: validItems.length,
+        total_remaining_qty: totalRemainingQty,
+        total_remaining_value: Math.round((totalRemainingValue + Number.EPSILON) * 10000) / 10000
+      }
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+}));
+
+// 寄售库存批次行查询（活跃）
+app.get('/api/consignment-inventory/lots', requireApiPermission('inventory_view'), asyncHandler((req, res) => {
+  try {
+    const { warehouse, sku_code } = req.query;
+    let sql = `SELECT * FROM consignment_inventory_lots WHERE status = 'active'`;
+    const params = [];
+    if (warehouse) { sql += ' AND warehouse_name = ?'; params.push(warehouse); }
+    if (sku_code) { sql += ' AND sku_code = ?'; params.push(sku_code); }
+    sql += ' ORDER BY customer_name, outbound_no';
+    res.json(query(sql, params).rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+}));
+
+// 寄售库存导入批次历史
+app.get('/api/consignment-inventory/batches', requireApiPermission('inventory_view'), asyncHandler((req, res) => {
+  try {
+    res.json(query(`SELECT * FROM consignment_inventory_import_batches ORDER BY created_at DESC LIMIT 50`).rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
 // 获取库存快照截止日期（按 国家+仓库 维度返回）
