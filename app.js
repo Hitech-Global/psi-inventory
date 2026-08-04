@@ -8917,29 +8917,61 @@ function handlePLFile(file){
     const wb=XLSX.read(ev.target.result,{type:'array'});const ws=wb.Sheets[wb.SheetNames[0]];const rows=XLSX.utils.sheet_to_json(ws);
     const aliasMap={'sku_code':['SKU','SKU编码','料号','sku_code'],'total_qty':['数量','总数量','Total QTY','total_qty'],'cartons':['CTN数量','箱数','CTN','Total CTN','cartons'],'gross_weight':['总毛重','GW','gross_weight'],'net_weight':['总净重','NW','net_weight'],'cbm':['总体积','CBM','cbm']};
     const mapped=rows.map(row=>{const item={};for(const [key,aliases] of Object.entries(aliasMap)){for(const alias of aliases){if(row[alias]!==undefined){item[key]=isNaN(row[alias])?row[alias]:parseFloat(row[alias]);break;}}}return item;});
-    const ciItemsRaw=window._plCI.items||[];const plCheck=window._plCI.pl_check||[];let matched=0,unmatched=0;
-    // 聚合 CI items 中相同 SKU 的多行
+
+    // 第一步：按标准化 SKU 聚合本次导入数据（同 SKU 多行 → SUM，重复导入不累加）
+    const importMap=new Map();
+    mapped.forEach(item=>{
+      if(!item.sku_code)return;
+      const key=String(item.sku_code).trim().toLowerCase();
+      if(!importMap.has(key)){
+        importMap.set(key,{sku_code:String(item.sku_code).trim(),total_qty:0,gross_weight:0,net_weight:0,cbm:0,cartons:0});
+      }
+      const agg=importMap.get(key);
+      agg.total_qty+=(item.total_qty||0);
+      agg.gross_weight+=(item.gross_weight||0);
+      agg.net_weight+=(item.net_weight||0);
+      agg.cbm+=(item.cbm||0);
+      agg.cartons+=(item.cartons||0);
+    });
+
+    // 第二步：遍历 _plDraft，覆盖或清零
+    const ciItemsRaw=window._plCI.items||[];const plCheck=window._plCI.pl_check||[];
     const ciAgg={};
     ciItemsRaw.forEach(i=>{if(!ciAgg[i.sku_code])ciAgg[i.sku_code]={sku_code:i.sku_code,shipped_qty:0};ciAgg[i.sku_code].shipped_qty+=(i.shipped_qty||0);});
     const ciItems=Object.values(ciAgg);
-    mapped.forEach(item=>{
-      if(!item.sku_code){unmatched++;return;}
-      const skuStr=String(item.sku_code).trim();
-      const ciItem=ciItems.find(i=>i.sku_code===skuStr)||ciItems.find(i=>i.sku_code.toLowerCase()===skuStr.toLowerCase());
-      if(!ciItem){unmatched++;return;}
-      const pc=plCheck.find(p=>p.sku_code===ciItem.sku_code)||{pl_qty:0};
-      const remaining=(ciItem.shipped_qty||0)-(pc.pl_qty||0);
-      const existIdx=window._plDraft.findIndex(d=>d.sku_code===ciItem.sku_code);
-      const newData={cartons:item.cartons||0,qty_per_carton:0,total_qty:item.total_qty||0,
-        gross_weight_per_carton:0,net_weight_per_carton:0,cbm_per_carton:0,length:0,width:0,height:0,
-        gross_weight:item.gross_weight||0,net_weight:item.net_weight||0,cbm:item.cbm||0};
-      if(existIdx>=0){Object.assign(window._plDraft[existIdx],newData);
-      }else{window._plDraft.push({...newData,sku_code:ciItem.sku_code,ci_shipped_qty:ciItem.shipped_qty,pl_qty:pc.pl_qty||0,remaining:remaining});}
-      matched++;
+    let matched=0,unmatched=0;
+    window._plDraft.forEach(d=>{
+      const key=String(d.sku_code).trim().toLowerCase();
+      if(importMap.has(key)){
+        const imp=importMap.get(key);
+        d.total_qty=imp.total_qty;
+        d.gross_weight=imp.gross_weight;
+        d.net_weight=imp.net_weight;
+        d.cbm=imp.cbm;
+        d.cartons=imp.cartons;
+        matched++;
+      }else{
+        d.total_qty=0;d.gross_weight=0;d.net_weight=0;d.cbm=0;
+      }
     });
-    // 清零未出现在导入文件中的 SKU 的本次 PL 业务值（保留 CI 参考字段）
-    const importedSkus=new Set(mapped.filter(m=>m.sku_code).map(m=>String(m.sku_code).trim().toLowerCase()));
-    window._plDraft.forEach(d=>{if(!importedSkus.has(String(d.sku_code).trim().toLowerCase())){d.total_qty=0;d.gross_weight=0;d.net_weight=0;d.cbm=0;}});
+    // 处理 importMap 中存在但 _plDraft 中尚无的 SKU（CI 中有匹配）
+    importMap.forEach((imp,key)=>{
+      const existIdx=window._plDraft.findIndex(d=>String(d.sku_code).trim().toLowerCase()===key);
+      if(existIdx<0){
+        const ciItem=ciItems.find(i=>i.sku_code.toLowerCase()===key);
+        if(ciItem){
+          const pc=plCheck.find(p=>p.sku_code===ciItem.sku_code)||{pl_qty:0};
+          const remaining=(ciItem.shipped_qty||0)-(pc.pl_qty||0);
+          window._plDraft.push({sku_code:ciItem.sku_code,cartons:imp.cartons,qty_per_carton:0,total_qty:imp.total_qty,
+            gross_weight_per_carton:0,net_weight_per_carton:0,cbm_per_carton:0,length:0,width:0,height:0,
+            gross_weight:imp.gross_weight,net_weight:imp.net_weight,cbm:imp.cbm,
+            ci_shipped_qty:ciItem.shipped_qty,pl_qty:pc.pl_qty||0,remaining:remaining});
+          matched++;
+        }else{
+          unmatched++;
+        }
+      }
+    });
     renderPLDraftTable();showToast('导入完成：匹配'+matched+'行，未匹配'+unmatched+'行',matched>0?'success':'warning');
   }catch(err){showToast(err.message,'danger')}};r.readAsArrayBuffer(file);
 }
