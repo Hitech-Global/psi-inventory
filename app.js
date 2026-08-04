@@ -8893,7 +8893,7 @@ function renderPLDraftTable(){
       '<td><input type="number" step="0.01" value="'+(it.net_weight||0)+'" style="width:70px;padding:2px" onchange="updatePLRow('+i+',\'net_weight\',this.value)"></td>'+
       '<td><input type="number" step="0.0001" value="'+(it.cbm||0)+'" style="width:70px;padding:2px" onchange="updatePLRow('+i+',\'cbm\',this.value)"></td>'+
       '<td><button class="action-btn" onclick="removePLRow('+i+')" title="删除">🗑️</button></td></tr>').join('')+
-    '<tr style="font-weight:bold;background:#f5f5f7"><td>合计</td><td></td><td></td><td></td><td class="text-right">'+tc+'</td><td class="text-right">'+tq+'</td><td class="text-right">'+tg.toFixed(2)+'</td><td class="text-right">'+tn.toFixed(2)+'</td><td class="text-right">'+tb.toFixed(4)+'</td><td></td></tr>'+
+    '<tr style="font-weight:bold;background:#f5f5f7"><td>合计</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td class="text-right">'+tc+'</td><td class="text-right">'+tq+'</td><td class="text-right">'+tg.toFixed(2)+'</td><td class="text-right">'+tn.toFixed(2)+'</td><td class="text-right">'+tb.toFixed(4)+'</td><td>&nbsp;</td></tr>'+
     '</tbody></table></div>';
 }
 function updatePLRow(idx,field,val){
