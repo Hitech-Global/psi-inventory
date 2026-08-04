@@ -6002,7 +6002,7 @@ app.post('/api/commercial-invoices', requireApiPermission('ci_create'), asyncHan
         });
         for (const [key, thisCiQty] of piSkuQtyMap) {
           const [piId, sku] = key.split('|');
-          const piItem = queryOne('SELECT id, pi_confirmed_qty, shipped_qty FROM proforma_invoice_items WHERE pi_id = ? AND sku_code = ?', [piId, sku]);
+          const piItem = queryOne('SELECT id, pi_confirmed_qty, shipped_qty, discount FROM proforma_invoice_items WHERE pi_id = ? AND sku_code = ?', [piId, sku]);
           if (piItem) {
             const newShipped = (piItem.shipped_qty || 0) + thisCiQty;
             if (newShipped > (piItem.pi_confirmed_qty || 0)) {
@@ -6014,7 +6014,12 @@ app.post('/api/commercial-invoices', requireApiPermission('ci_create'), asyncHan
         // 遍历 items: INSERT CI items + 更新 PI shipped_qty + 按 PI 累计货值
         const perPiGoodsAmount = new Map();
         d.items.forEach(item => {
-          const amount = (item.shipped_qty || 0) * (item.unit_price || 0);
+          const itemPiId = item.pi_id || firstPi.id;
+          // 读取 PI 明细折扣，继承到 CI 成本事实快照
+          const piItem = queryOne('SELECT id, pi_confirmed_qty, shipped_qty, discount FROM proforma_invoice_items WHERE pi_id = ? AND sku_code = ?', [itemPiId, item.sku_code]);
+          const discountRate = piItem ? (piItem.discount || 0) : 0;
+          const netUnitPrice = (item.unit_price || 0) * (1 - discountRate);
+          const amount = (item.shipped_qty || 0) * netUnitPrice;
           const sku = queryOne('SELECT reference_customs_rate FROM skus WHERE sku_code = ?', [item.sku_code]);
           const rateInput = item.actual_customs_rate;
           const actualCustomsRate = rateInput === '' || rateInput === null || rateInput === undefined
@@ -6025,15 +6030,13 @@ app.post('/api/commercial-invoices', requireApiPermission('ci_create'), asyncHan
           }
           goodsAmount += amount;
 
-          const itemPiId = item.pi_id || firstPi.id;
           const itemPiNo = pis.find(p => p.id === itemPiId)?.pi_no || firstPi.pi_no;
           perPiGoodsAmount.set(itemPiId, (perPiGoodsAmount.get(itemPiId) || 0) + amount);
 
-          run(`INSERT INTO commercial_invoice_items (id, ci_id, ci_no, pi_no, pi_id, sku_code, shipped_qty, unit_price, ci_amount, actual_customs_rate, inbound_qty, uninbound_qty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [genId('cii'), ciId, ciNo, itemPiNo, itemPiId, item.sku_code, item.shipped_qty || 0, item.unit_price || 0, amount, actualCustomsRate, 0, item.shipped_qty || 0]);
+          run(`INSERT INTO commercial_invoice_items (id, ci_id, ci_no, pi_no, pi_id, sku_code, shipped_qty, unit_price, discount, net_unit_price, ci_amount, actual_customs_rate, inbound_qty, uninbound_qty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [genId('cii'), ciId, ciNo, itemPiNo, itemPiId, item.sku_code, item.shipped_qty || 0, item.unit_price || 0, discountRate, netUnitPrice, amount, actualCustomsRate, 0, item.shipped_qty || 0]);
 
           // 更新PI明细的已发货数量
-          const piItem = queryOne('SELECT id, pi_confirmed_qty, shipped_qty FROM proforma_invoice_items WHERE pi_id = ? AND sku_code = ?', [itemPiId, item.sku_code]);
           if (piItem) {
             const newShipped = (piItem.shipped_qty || 0) + (item.shipped_qty || 0);
             run('UPDATE proforma_invoice_items SET shipped_qty = ?, unshipped_qty = ? WHERE id = ?',
@@ -6539,7 +6542,11 @@ app.post('/api/commercial-invoices/batch-import', requireApiPermission('ci_creat
           const ciNo = s(pick(row, ['CI编号', 'ci_no'])) || `CI-${new Date().getFullYear()}-${String(Date.now() + idx).slice(-6)}`;
           const qty = n(pick(row, ['数量', 'CI数量', 'shipped_qty', 'qty']), 0);
           const price = n(pick(row, ['单价', 'unit_price']), 0);
-          const amount = qty * price;
+          // 读取 PI 明细折扣，继承到 CI 成本事实快照
+          const piItemForDiscount = pi ? queryOne('SELECT discount FROM proforma_invoice_items WHERE pi_id = ? AND sku_code = ?', [pi.id, sku]) : null;
+          const discountRate = piItemForDiscount ? (piItemForDiscount.discount || 0) : 0;
+          const netUnitPrice = price * (1 - discountRate);
+          const amount = qty * netUnitPrice;
           const rateRaw = pick(row, ['实际关税税率', 'actual_customs_rate']);
           const skuRate = queryOne('SELECT reference_customs_rate FROM skus WHERE sku_code = ?', [sku]);
           const actualCustomsRate = rateRaw === '' || rateRaw === null || rateRaw === undefined
@@ -6550,7 +6557,7 @@ app.post('/api/commercial-invoices/batch-import', requireApiPermission('ci_creat
           if (exist && exist.cost_confirmed) throw new Error('该CI费用已确认，不能继续追加或修改CI明细：' + ciNo);
           // P2-6 守卫：批量导入 CI 累计 shipped_qty 不得超过 PI 确认数量（按 SKU 聚合已存在 CI items + 本次导入数量）
           if (pi) {
-            const piItem = queryOne('SELECT id, pi_confirmed_qty FROM proforma_invoice_items WHERE pi_id = ? AND sku_code = ?', [pi.id, sku]);
+            const piItem = queryOne('SELECT id, pi_confirmed_qty, discount FROM proforma_invoice_items WHERE pi_id = ? AND sku_code = ?', [pi.id, sku]);
             if (piItem) {
               const existCiSum = queryOne('SELECT COALESCE(SUM(shipped_qty),0) as total FROM commercial_invoice_items WHERE pi_no = ? AND sku_code = ?', [pi.pi_no, sku]);
               const cumulativeCi = (existCiSum && existCiSum.total || 0) + qty;
@@ -6564,8 +6571,8 @@ app.post('/api/commercial-invoices/batch-import', requireApiPermission('ci_creat
             run(`INSERT INTO commercial_invoices (id, ci_no, related_po_id, related_po_no, related_pi_id, related_pi_no, supplier_id, supplier_name, brand, country, target_warehouse, ci_date, actual_ship_date, payment_term_id, credit_days, currency, goods_amount, pi_total_amount, amount_difference, difference_reason, ci_status, attachment, pl_attachment, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
               [ciId, ciNo, po.id, po.po_no, pi ? pi.id : '', pi ? pi.pi_no : '', po.supplier_id || '', po.supplier_name || '', po.brand || '', po.country || '', po.target_warehouse || '', s(pick(row, ['CI日期', 'ci_date'])) || new Date().toISOString().split('T')[0], actualShipDate, ciCredit.paymentTermId, ciCredit.creditDays, s(pick(row, ['币种', 'currency'])) || po.currency || 'USD', 0, pi ? (pi.total_amount || 0) : 0, 0, s(pick(row, ['差异原因', 'difference_reason'])), 'uploaded', parseAttachment(row.attachment || ''), parseAttachment(row.pl_attachment || ''), s(pick(row, ['备注', 'remark']))]);
           }
-          run(`INSERT INTO commercial_invoice_items (id, ci_id, ci_no, pi_no, pi_id, sku_code, shipped_qty, unit_price, ci_amount, actual_customs_rate, inbound_qty, uninbound_qty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [genId('cii'), ciId, ciNo, pi ? pi.pi_no : '', pi ? pi.id : '', sku, qty, price, amount, actualCustomsRate, 0, qty]);
+          run(`INSERT INTO commercial_invoice_items (id, ci_id, ci_no, pi_no, pi_id, sku_code, shipped_qty, unit_price, discount, net_unit_price, ci_amount, actual_customs_rate, inbound_qty, uninbound_qty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [genId('cii'), ciId, ciNo, pi ? pi.pi_no : '', pi ? pi.id : '', sku, qty, price, discountRate, netUnitPrice, amount, actualCustomsRate, 0, qty]);
           const totals = queryOne('SELECT COALESCE(SUM(ci_amount),0) as total FROM commercial_invoice_items WHERE ci_id = ?', [ciId]);
           const goodsAmount = totals.total || 0;
           const piTotal = pi ? (pi.total_amount || 0) : 0;
@@ -10682,7 +10689,7 @@ app.get('/api/commercial-invoices/:id/cost-summary', requireApiPermission('ci_vi
 
     summary.landing_cost_total = summary.goods_amount + summary.warehouse_arrival_total + summary.customs_duty_total + summary.inspection_fee_total;
     summary.cost_items = costItems;
-    summary.ci_items = query('SELECT id, sku_code, shipped_qty, unit_price, ci_amount, actual_customs_rate FROM commercial_invoice_items WHERE ci_id = ? ORDER BY created_at, id', [req.params.id]).rows;
+    summary.ci_items = query('SELECT id, sku_code, shipped_qty, unit_price, discount, net_unit_price, ci_amount, actual_customs_rate FROM commercial_invoice_items WHERE ci_id = ? ORDER BY created_at, id', [req.params.id]).rows;
 
     res.json(summary);
   } catch (e) { res.status(500).json({ error: e.message }); }

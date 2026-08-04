@@ -1295,6 +1295,9 @@ function initDatabase() {
   try { d.exec("ALTER TABLE commercial_invoices ADD COLUMN related_pi_nos TEXT DEFAULT ''"); } catch(e) {}
   // commercial_invoice_items 增加 pi_id：每行明细的来源 PI
   try { d.exec("ALTER TABLE commercial_invoice_items ADD COLUMN pi_id TEXT DEFAULT ''"); } catch(e) {}
+  // CI 明细增加折扣字段：discount（PI折扣快照）、net_unit_price（折后单价）
+  try { d.exec("ALTER TABLE commercial_invoice_items ADD COLUMN discount REAL DEFAULT 0"); } catch(e) {}
+  try { d.exec("ALTER TABLE commercial_invoice_items ADD COLUMN net_unit_price REAL DEFAULT 0"); } catch(e) {}
 
   // UNIQUE 索引迁移：从 3 列 (source_type, source_id, fee_type) 扩展为 4 列 (+ source_ci_id)
   // 存量数据 source_ci_id 全部 ''，3列唯一等价于4列唯一，不会产生冲突

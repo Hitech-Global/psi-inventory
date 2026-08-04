@@ -1692,6 +1692,10 @@
   I18N.dict.en["ci.summary.qty"] = "Total Qty: {v1} pcs"; I18N.dict.id["ci.summary.qty"] = "Total Jml: {v1} pcs";
   I18N.dict.en["ci.summary.amt"] = "CI Amount: {v1} {v2}"; I18N.dict.id["ci.summary.amt"] = "Jumlah CI: {v1} {v2}";
   I18N.dict.en["ci.col.amount"] = "Amount"; I18N.dict.id["ci.col.amount"] = "Jumlah";
+  I18N.dict.en["field.original_unit_price"] = "Original Unit Price"; I18N.dict.id["field.original_unit_price"] = "Harga Satuan Asli";
+  I18N.dict.en["field.discount"] = "Discount"; I18N.dict.id["field.discount"] = "Diskon";
+  I18N.dict.en["field.net_unit_price"] = "Net Unit Price"; I18N.dict.id["field.net_unit_price"] = "Harga Satuan Bersih";
+  I18N.dict.en["cost.section_ci_items"] = "📋 CI Items"; I18N.dict.id["cost.section_ci_items"] = "📋 Item CI";
   I18N.dict.en["ci.select_supplier_first"] = "Please select supplier first"; I18N.dict.id["ci.select_supplier_first"] = "Silakan pilih pemasok terlebih dahulu";
   I18N.dict.en["ci.select_supplier_first_hint"] = "Please select supplier first"; I18N.dict.id["ci.select_supplier_first_hint"] = "Silakan pilih pemasok terlebih dahulu";
   I18N.dict.en["ci.no_pi_for_supplier"] = "No available PI for this supplier"; I18N.dict.id["ci.no_pi_for_supplier"] = "Tidak ada PI tersedia untuk pemasok ini";
