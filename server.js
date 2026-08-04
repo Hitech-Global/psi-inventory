@@ -12276,6 +12276,49 @@ if (require.main === module) {
   });
 }
 
+// TEMP-DIAG-01: 一次性诊断 sales_records 数据分布（只读）
+// 用完即删
+app.get('/api/admin/diag-sales-distribution', requireApiPermission('ci_edit'), asyncHandler(async (req, res) => {
+  try {
+    const isPg = (process.env.DB_DRIVER || 'sqlite').toLowerCase() === 'pg';
+    const exec = isPg ? require('./db-pg') : null;
+
+    // country 分布
+    let countryDist, sourceSystemDist, totalCount;
+    if (isPg) {
+      const r1 = await exec.query("SELECT COALESCE(country, '') AS country, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(country, '') ORDER BY COUNT(*) DESC");
+      countryDist = r1.rows;
+      const r2 = await exec.query("SELECT COALESCE(source_system, '') AS source_system, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(source_system, '') ORDER BY COUNT(*) DESC");
+      sourceSystemDist = r2.rows;
+      const r3 = await exec.query("SELECT COUNT(*) AS cnt FROM sales_records");
+      totalCount = r3.rows[0].cnt;
+    } else {
+      countryDist = query("SELECT COALESCE(country, '') AS country, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(country, '') ORDER BY COUNT(*) DESC").rows;
+      sourceSystemDist = query("SELECT COALESCE(source_system, '') AS source_system, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(source_system, '') ORDER BY COUNT(*) DESC").rows;
+      totalCount = queryOne("SELECT COUNT(*) AS cnt FROM sales_records").cnt;
+    }
+
+    // 统计 NULL/空值
+    let nullCountry, nullSource;
+    if (isPg) {
+      nullCountry = (await exec.query("SELECT COUNT(*) AS cnt FROM sales_records WHERE country IS NULL OR country = ''")).rows[0].cnt;
+      nullSource = (await exec.query("SELECT COUNT(*) AS cnt FROM sales_records WHERE source_system IS NULL OR source_system = ''")).rows[0].cnt;
+    } else {
+      nullCountry = queryOne("SELECT COUNT(*) AS cnt FROM sales_records WHERE country IS NULL OR country = ''").cnt;
+      nullSource = queryOne("SELECT COUNT(*) AS cnt FROM sales_records WHERE source_system IS NULL OR source_system = ''").cnt;
+    }
+
+    res.json({
+      success: true,
+      total: totalCount,
+      country_distribution: countryDist,
+      source_system_distribution: sourceSystemDist,
+      country_null_or_empty: nullCountry,
+      source_system_null_or_empty: nullSource
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+}));
+
 // PAY-CORE P0-1：供 scripts/backfill-payable-items.js 复用，不影响运行时
 module.exports = {
   createPayableItemFromSource,
