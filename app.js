@@ -8893,7 +8893,7 @@ function renderPLDraftTable(){
       '<td><input type="number" step="0.01" value="'+(it.net_weight||0)+'" style="width:70px;padding:2px" onchange="updatePLRow('+i+',\'net_weight\',this.value)"></td>'+
       '<td><input type="number" step="0.0001" value="'+(it.cbm||0)+'" style="width:70px;padding:2px" onchange="updatePLRow('+i+',\'cbm\',this.value)"></td>'+
       '<td><button class="action-btn" onclick="removePLRow('+i+')" title="删除">🗑️</button></td></tr>').join('')+
-    '<tr style="font-weight:bold;background:#f5f5f7"><td colspan="4">合计</td><td class="text-right">'+tc+'</td><td class="text-right">'+tq+'</td><td class="text-right">'+tg.toFixed(2)+'</td><td class="text-right">'+tn.toFixed(2)+'</td><td class="text-right">'+tb.toFixed(4)+'</td><td></td></tr>'+
+    '<tr style="font-weight:bold;background:#f5f5f7"><td>合计</td><td></td><td></td><td></td><td class="text-right">'+tc+'</td><td class="text-right">'+tq+'</td><td class="text-right">'+tg.toFixed(2)+'</td><td class="text-right">'+tn.toFixed(2)+'</td><td class="text-right">'+tb.toFixed(4)+'</td><td></td></tr>'+
     '</tbody></table></div>';
 }
 function updatePLRow(idx,field,val){
@@ -8937,6 +8937,9 @@ function handlePLFile(file){
       }else{window._plDraft.push({...newData,sku_code:ciItem.sku_code,ci_shipped_qty:ciItem.shipped_qty,pl_qty:pc.pl_qty||0,remaining:remaining});}
       matched++;
     });
+    // 清零未出现在导入文件中的 SKU 的本次 PL 业务值（保留 CI 参考字段）
+    const importedSkus=new Set(mapped.filter(m=>m.sku_code).map(m=>String(m.sku_code).trim().toLowerCase()));
+    window._plDraft.forEach(d=>{if(!importedSkus.has(String(d.sku_code).trim().toLowerCase())){d.total_qty=0;d.gross_weight=0;d.net_weight=0;d.cbm=0;}});
     renderPLDraftTable();showToast('导入完成：匹配'+matched+'行，未匹配'+unmatched+'行',matched>0?'success':'warning');
   }catch(err){showToast(err.message,'danger')}};r.readAsArrayBuffer(file);
 }
