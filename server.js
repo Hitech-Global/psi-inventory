@@ -12276,6 +12276,20 @@ if (require.main === module) {
   });
 }
 
+// TEMP-MIGRATION-01: 一次性修复 PG 模式下 sales_records 缺失 country 列
+// 原因: db.js 在 PG 模式下跳过 initDatabase(), ALTER TABLE 未执行
+// 用完即删
+app.post('/api/admin/temp-migrate-sales-country', requireApiPermission('ci_edit'), asyncHandler(async (req, res) => {
+  try {
+    const isPg = (process.env.DB_DRIVER || 'sqlite').toLowerCase() === 'pg';
+    if (!isPg) return res.status(400).json({ error: '此端点仅适用于 PG 模式' });
+    const pgDb = require('./db-pg');
+    await pgDb.run('ALTER TABLE sales_records ADD COLUMN IF NOT EXISTS country TEXT DEFAULT \'\'');
+    const check = await pgDb.query("SELECT column_name FROM information_schema.columns WHERE table_name = 'sales_records' AND column_name = 'country'");
+    res.json({ success: true, message: 'sales_records.country 列已确保存在', exists: check.rows.length > 0 });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+}));
+
 // PAY-CORE P0-1：供 scripts/backfill-payable-items.js 复用，不影响运行时
 module.exports = {
   createPayableItemFromSource,
