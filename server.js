@@ -12306,28 +12306,31 @@ app.post('/api/admin/fix-sales-channel-brand', requireApiPermission('ci_edit'), 
     if (isPg) {
       const exec = require('./db-pg');
 
-      // 1. 修改前快照（事务外读取）
+      // 0. 修改前快照（事务外读取）
       const beforeChannel = (await exec.query("SELECT COALESCE(shop_platform, '') AS channel, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(shop_platform, '') ORDER BY COUNT(*) DESC")).rows;
       const beforeBrand = (await exec.query("SELECT COALESCE(brand, '') AS brand, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(brand, '') ORDER BY COUNT(*) DESC")).rows;
 
-      // 2. 在单个事务中执行所有 UPDATE
-      let ch1, ch2, ch3, ch4, br1, br2, br3, br4;
-      await exec.transaction(async () => {
-        ch1 = (await exec.run("UPDATE sales_records SET shop_platform = '线上' WHERE shop_platform = '线上订单'")).changes || 0;
-        ch2 = (await exec.run("UPDATE sales_records SET shop_platform = '线上' WHERE shop_platform = '线上渠道'")).changes || 0;
-        ch3 = (await exec.run("UPDATE sales_records SET shop_platform = '线下' WHERE shop_platform = '线下渠道'")).changes || 0;
-        ch4 = (await exec.run("UPDATE sales_records SET shop_platform = '线下' WHERE shop_platform = '线下订单'")).changes || 0;
-        br1 = (await exec.run("UPDATE sales_records SET brand = 'Redragon' WHERE brand = 'Redragon Warehouse'")).changes || 0;
-        br2 = (await exec.run("UPDATE sales_records SET brand = 'Netac' WHERE brand = 'Netac Warehouse'")).changes || 0;
-        br3 = (await exec.run("UPDATE sales_records SET brand = 'BOYA' WHERE brand = 'Boya Warehouse'")).changes || 0;
-        br4 = (await exec.run("UPDATE sales_records SET brand = 'Joypeer' WHERE brand = 'Joypeer Warehouse'")).changes || 0;
-      });
+      // 1. 删除唯一索引（channel 标准化会导致重复键冲突）
+      await exec.run('DROP INDEX IF EXISTS idx_sales_records_unique');
 
-      // 3. 修改后分布（事务外读取）
+      // 2. 执行所有 UPDATE（不需事务，因已删除唯一约束）
+      const ch1 = (await exec.run("UPDATE sales_records SET shop_platform = '线上' WHERE shop_platform = '线上订单'")).changes || 0;
+      const ch2 = (await exec.run("UPDATE sales_records SET shop_platform = '线上' WHERE shop_platform = '线上渠道'")).changes || 0;
+      const ch3 = (await exec.run("UPDATE sales_records SET shop_platform = '线下' WHERE shop_platform = '线下渠道'")).changes || 0;
+      const ch4 = (await exec.run("UPDATE sales_records SET shop_platform = '线下' WHERE shop_platform = '线下订单'")).changes || 0;
+      const br1 = (await exec.run("UPDATE sales_records SET brand = 'Redragon' WHERE brand = 'Redragon Warehouse'")).changes || 0;
+      const br2 = (await exec.run("UPDATE sales_records SET brand = 'Netac' WHERE brand = 'Netac Warehouse'")).changes || 0;
+      const br3 = (await exec.run("UPDATE sales_records SET brand = 'BOYA' WHERE brand = 'Boya Warehouse'")).changes || 0;
+      const br4 = (await exec.run("UPDATE sales_records SET brand = 'Joypeer' WHERE brand = 'Joypeer Warehouse'")).changes || 0;
+
+      // 3. 重建唯一索引
+      await exec.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_sales_records_unique ON sales_records(source_system, order_no, sku_code, COALESCE(shop_platform, ''))");
+
+      // 4. 修改后分布
       const afterChannel = (await exec.query("SELECT COALESCE(shop_platform, '') AS channel, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(shop_platform, '') ORDER BY COUNT(*) DESC")).rows;
       const afterBrand = (await exec.query("SELECT COALESCE(brand, '') AS brand, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(brand, '') ORDER BY COUNT(*) DESC")).rows;
 
-      // 4. 随机抽查
+      // 5. 随机抽查
       const sampleOnline = (await exec.query("SELECT order_no, sku_code, shop_platform, brand, country, source_system FROM sales_records WHERE shop_platform = '线上' LIMIT 2")).rows;
       const sampleOffline = (await exec.query("SELECT order_no, sku_code, shop_platform, brand, country, source_system FROM sales_records WHERE shop_platform = '线下' LIMIT 2")).rows;
       const sampleBoya = (await exec.query("SELECT order_no, sku_code, shop_platform, brand, country, source_system FROM sales_records WHERE brand = 'BOYA' LIMIT 2")).rows;
@@ -12346,6 +12349,7 @@ app.post('/api/admin/fix-sales-channel-brand', requireApiPermission('ci_edit'), 
     } else {
       const beforeChannel = query("SELECT COALESCE(shop_platform, '') AS channel, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(shop_platform, '') ORDER BY COUNT(*) DESC").rows;
       const beforeBrand = query("SELECT COALESCE(brand, '') AS brand, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(brand, '') ORDER BY COUNT(*) DESC").rows;
+      run('DROP INDEX IF EXISTS idx_sales_records_unique');
       const ch1 = run("UPDATE sales_records SET shop_platform = '线上' WHERE shop_platform = '线上订单'").changes || 0;
       const ch2 = run("UPDATE sales_records SET shop_platform = '线上' WHERE shop_platform = '线上渠道'").changes || 0;
       const ch3 = run("UPDATE sales_records SET shop_platform = '线下' WHERE shop_platform = '线下渠道'").changes || 0;
@@ -12354,6 +12358,7 @@ app.post('/api/admin/fix-sales-channel-brand', requireApiPermission('ci_edit'), 
       const br2 = run("UPDATE sales_records SET brand = 'Netac' WHERE brand = 'Netac Warehouse'").changes || 0;
       const br3 = run("UPDATE sales_records SET brand = 'BOYA' WHERE brand = 'Boya Warehouse'").changes || 0;
       const br4 = run("UPDATE sales_records SET brand = 'Joypeer' WHERE brand = 'Joypeer Warehouse'").changes || 0;
+      run("CREATE UNIQUE INDEX IF NOT EXISTS idx_sales_records_unique ON sales_records(source_system, order_no, sku_code, COALESCE(shop_platform, ''))");
       const afterChannel = query("SELECT COALESCE(shop_platform, '') AS channel, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(shop_platform, '') ORDER BY COUNT(*) DESC").rows;
       const afterBrand = query("SELECT COALESCE(brand, '') AS brand, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(brand, '') ORDER BY COUNT(*) DESC").rows;
       const sampleOnline = query("SELECT order_no, sku_code, shop_platform, brand, country, source_system FROM sales_records WHERE shop_platform = '线上' LIMIT 2").rows;
