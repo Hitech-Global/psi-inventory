@@ -8772,7 +8772,7 @@ async function viewLogDetail(id){
     let plData=null;
     if(l.pl_id){plData=await api('/api/packing-lists/'+l.pl_id);}
     const plItems=(plData&&plData.items)||[];
-    const plItemsHTML=plItems.length?'<div class="table-container" style="box-shadow:none;border-radius:0;overflow-x:auto;margin-top:8px"><table class="data-table"><thead><tr><th>SKU</th><th>箱数</th><th>单箱数量</th><th>总数量</th><th>单箱毛重</th><th>单箱净重</th><th>单箱体积</th><th>长</th><th>宽</th><th>高</th><th>总毛重</th><th>总净重</th><th>总体积</th></tr></thead><tbody>'+plItems.map(it=>'<tr><td class="cell-id">'+esc(it.sku_code)+'</td><td class="text-right">'+(it.cartons||0)+'</td><td class="text-right">'+(it.qty_per_carton||0)+'</td><td class="text-right font-bold">'+(it.total_qty||0)+'</td><td class="text-right">'+(it.gross_weight_per_carton||0)+'</td><td class="text-right">'+(it.net_weight_per_carton||0)+'</td><td class="text-right">'+(it.cbm_per_carton||0)+'</td><td class="text-right">'+(it.length||0)+'</td><td class="text-right">'+(it.width||0)+'</td><td class="text-right">'+(it.height||0)+'</td><td class="text-right">'+(it.gross_weight||0)+'</td><td class="text-right">'+(it.net_weight||0)+'</td><td class="text-right">'+(it.cbm||0)+'</td></tr>').join('')+'</tbody></table></div>':'<div style="padding:12px;color:#999">无PL明细</div>';
+    const plItemsHTML=plItems.length?'<div class="table-container" style="box-shadow:none;border-radius:0;overflow-x:auto;margin-top:8px"><table class="data-table"><thead><tr><th>SKU</th><th>CTN数量</th><th>总数量</th><th>总毛重</th><th>总净重</th><th>总体积</th></tr></thead><tbody>'+plItems.map(it=>'<tr><td class="cell-id">'+esc(it.sku_code)+'</td><td class="text-right">'+(it.cartons||0)+'</td><td class="text-right font-bold">'+(it.total_qty||0)+'</td><td class="text-right">'+(it.gross_weight||0)+'</td><td class="text-right">'+(it.net_weight||0)+'</td><td class="text-right">'+(it.cbm||0)+'</td></tr>').join('')+'</tbody></table></div>':'<div style="padding:12px;color:#999">无PL明细</div>';
     const plSummary=plData?'<div style="display:flex;gap:16px;margin-top:8px;font-size:13px;color:#666"><span>PL单号: <b>'+esc(plData.pl_no||'')+'</b></span><span>总箱数: <b>'+(plData.total_cartons||0)+'</b></span><span>总数量: <b>'+(plData.total_qty||0)+'</b></span><span>总毛重: <b>'+(plData.total_gross_weight||0)+'</b>kg</span><span>总体积: <b>'+(plData.total_cbm||0)+'</b>CBM</span><span>状态: <b>'+esc(plData.status||'')+'</b></span></div>':'';
     openModal('物流详情 - '+esc(l.batch_no),'<div class="detail-card" style="box-shadow:none;padding:0">'+
       '<div class="detail-section"><h3>基本信息</h3><div class="detail-grid">'+
@@ -8832,18 +8832,9 @@ async function selectCIForPL(ciId){
       const pc=plCheck.find(p=>p.sku_code===item.sku_code)||{ci_qty:0,pl_qty:0};
       const remaining=(item.shipped_qty||0)-(pc.pl_qty||0);
       if(remaining>0){
-        const sku=skuMap[item.sku_code]||{};
-        let len=0,wid=0,hgt=0;
-        if(sku.carton_spec){const m=String(sku.carton_spec).match(/(\d+\.?\d*)\s*[xX×*]\s*(\d+\.?\d*)\s*[xX×*]\s*(\d+\.?\d*)/);if(m){len=parseFloat(m[1]);wid=parseFloat(m[2]);hgt=parseFloat(m[3]);}}
-        const qpc=sku.qty_per_carton||0;
-        const cartons=qpc>0?Math.ceil(remaining/qpc):0;
-        const gwPc=(sku.unit_weight||0)*qpc;
-        const cbmPc=(sku.unit_cbm||0)*qpc;
-        window._plDraft.push({sku_code:item.sku_code,cartons:cartons,qty_per_carton:qpc,total_qty:remaining,
-          gross_weight_per_carton:Math.round(gwPc*100)/100,net_weight_per_carton:Math.round(gwPc*100)/100,
-          cbm_per_carton:Math.round(cbmPc*10000)/10000,length:len,width:wid,height:hgt,
-          gross_weight:Math.round(gwPc*cartons*100)/100,net_weight:Math.round(gwPc*cartons*100)/100,
-          cbm:Math.round(cbmPc*cartons*10000)/10000,
+        window._plDraft.push({sku_code:item.sku_code,cartons:0,qty_per_carton:0,total_qty:remaining,
+          gross_weight_per_carton:0,net_weight_per_carton:0,cbm_per_carton:0,length:0,width:0,height:0,
+          gross_weight:0,net_weight:0,cbm:0,
           ci_shipped_qty:item.shipped_qty,pl_qty:pc.pl_qty||0,remaining:remaining});
       }
     });
@@ -8865,7 +8856,7 @@ async function selectCIForPL(ciId){
       '<div class="form-group"><label>发货日期</label><input type="date" id="npl-pickup" value="'+shipDate+'" readonly style="background:#f5f5f7;color:#666"></div>'+
       '<div class="form-group"><label>预计到港</label><input type="date" id="npl-eta"></div>'+
       '</div></div>'+
-      '<div class="detail-section"><h3>PL装箱明细</h3>'+
+      '<div class="detail-section"><h3>PL装箱明细 <span id="pl-total-ctn" style="font-size:13px;font-weight:normal;color:#666">CTN数量: 0</span></h3>'+
       '<div style="display:flex;gap:8px;margin-bottom:8px"><button class="btn btn-secondary btn-sm" onclick="downloadPLTemplate()">下载导入模板</button></div>'+
       '<div id="pl-drop-zone" style="border:2px dashed #d9d9d9;border-radius:8px;padding:20px;text-align:center;cursor:pointer;background:#fafafa;transition:all .2s;margin-bottom:8px" '+
         'onclick="document.getElementById(\'pl-file-input\').click()" '+
@@ -8874,7 +8865,7 @@ async function selectCIForPL(ciId){
         'ondrop="event.preventDefault();this.style.borderColor=\'#d9d9d9\';this.style.background=\'#fafafa\';handlePLFile(event.dataTransfer.files[0])">'+
         '<div style="font-size:28px;color:#1890ff;margin-bottom:4px">📤</div>'+
         '<div style="font-size:13px;color:#333;margin-bottom:2px">点击上传或拖拽文件到此处</div>'+
-        '<div style="font-size:11px;color:#999">支持 .xlsx / .xls / .csv 格式，字段：SKU、箱数、单箱数量、总数量等</div>'+
+        '<div style="font-size:11px;color:#999">支持 .xlsx / .xls / .csv 格式，字段：SKU、数量、CTN数量、总毛重、总净重、总体积</div>'+
       '</div>'+
       '<input type="file" id="pl-file-input" accept=".xlsx,.xls,.csv" style="display:none" onchange="handlePLFile(this.files[0])">'+
       '<div id="pl-draft-table"></div></div>'+
@@ -8894,97 +8885,39 @@ function renderPLDraftTable(){
   if(!items.length){document.getElementById('pl-draft-table').innerHTML='<div style="padding:24px 12px;text-align:center;color:#999"><div style="font-size:32px;margin-bottom:8px">📋</div><div style="font-size:14px;margin-bottom:4px">暂无PL明细</div><div style="font-size:12px;color:#bbb">点击上方上传区域导入Excel，或手动编辑下方明细</div></div>';return;}
   let tc=0,tq=0,tg=0,tn=0,tb=0;
   items.forEach(it=>{tc+=it.cartons||0;tq+=it.total_qty||0;tg+=it.gross_weight||0;tn+=it.net_weight||0;tb+=it.cbm||0;});
-  document.getElementById('pl-draft-table').innerHTML='<style>.pl-draft-wrap{overflow:auto;max-height:420px}.pl-draft-wrap thead th{position:sticky;top:0;z-index:2;background:#eef0f3;white-space:nowrap}</style><div class="table-container pl-draft-wrap"><table class="data-table" style="font-size:12px"><thead><tr><th>SKU</th><th>CI发货</th><th>已生成PL</th><th>剩余</th><th>箱数</th><th>单箱数量</th><th>总数量</th><th>单箱毛重</th><th>单箱净重</th><th>单箱体积</th><th>长</th><th>宽</th><th>高</th><th>总毛重</th><th>总净重</th><th>总体积</th><th></th></tr></thead><tbody>'+
+  var hdr=document.getElementById('pl-total-ctn');if(hdr)hdr.textContent='CTN数量: '+tc;
+  document.getElementById('pl-draft-table').innerHTML='<style>.pl-draft-wrap{overflow:auto;max-height:420px}.pl-draft-wrap thead th{position:sticky;top:0;z-index:2;background:#eef0f3;white-space:nowrap}</style><div class="table-container pl-draft-wrap"><table class="data-table" style="font-size:12px"><thead><tr><th>SKU</th><th>CI发货</th><th>已生成PL</th><th>剩余</th><th>CTN数量</th><th>总数量</th><th>总毛重</th><th>总净重</th><th>总体积</th><th></th></tr></thead><tbody>'+
     items.map((it,i)=>'<tr><td class="cell-id">'+esc(it.sku_code)+'</td><td class="text-right">'+(it.ci_shipped_qty||0)+'</td><td class="text-right">'+(it.pl_qty||0)+'</td><td class="text-right">'+(it.remaining||0)+'</td>'+
       '<td><input type="number" value="'+(it.cartons||0)+'" style="width:60px;padding:2px" onchange="updatePLRow('+i+',\'cartons\',this.value)"></td>'+
-      '<td><input type="number" value="'+(it.qty_per_carton||0)+'" style="width:60px;padding:2px" onchange="updatePLRow('+i+',\'qty_per_carton\',this.value)"></td>'+
       '<td><input type="number" value="'+(it.total_qty||0)+'" style="width:70px;padding:2px;font-weight:bold" onchange="updatePLRow('+i+',\'total_qty\',this.value)"></td>'+
-      '<td><input type="number" step="0.01" value="'+(it.gross_weight_per_carton||0)+'" style="width:65px;padding:2px" onchange="updatePLRow('+i+',\'gross_weight_per_carton\',this.value)"></td>'+
-      '<td><input type="number" step="0.01" value="'+(it.net_weight_per_carton||0)+'" style="width:65px;padding:2px" onchange="updatePLRow('+i+',\'net_weight_per_carton\',this.value)"></td>'+
-      '<td><input type="number" step="0.0001" value="'+(it.cbm_per_carton||0)+'" style="width:65px;padding:2px" onchange="updatePLRow('+i+',\'cbm_per_carton\',this.value)"></td>'+
-      '<td><input type="number" step="0.1" value="'+(it.length||0)+'" style="width:55px;padding:2px" onchange="updatePLRow('+i+',\'length\',this.value)"></td>'+
-      '<td><input type="number" step="0.1" value="'+(it.width||0)+'" style="width:55px;padding:2px" onchange="updatePLRow('+i+',\'width\',this.value)"></td>'+
-      '<td><input type="number" step="0.1" value="'+(it.height||0)+'" style="width:55px;padding:2px" onchange="updatePLRow('+i+',\'height\',this.value)"></td>'+
-      '<td class="text-right">'+(it.gross_weight||0).toFixed(2)+'</td><td class="text-right">'+(it.net_weight||0).toFixed(2)+'</td><td class="text-right">'+(it.cbm||0).toFixed(4)+'</td>'+
+      '<td><input type="number" step="0.01" value="'+(it.gross_weight||0)+'" style="width:70px;padding:2px" onchange="updatePLRow('+i+',\'gross_weight\',this.value)"></td>'+
+      '<td><input type="number" step="0.01" value="'+(it.net_weight||0)+'" style="width:70px;padding:2px" onchange="updatePLRow('+i+',\'net_weight\',this.value)"></td>'+
+      '<td><input type="number" step="0.0001" value="'+(it.cbm||0)+'" style="width:70px;padding:2px" onchange="updatePLRow('+i+',\'cbm\',this.value)"></td>'+
       '<td><button class="action-btn" onclick="removePLRow('+i+')" title="删除">🗑️</button></td></tr>').join('')+
-    '<tr style="font-weight:bold;background:#f5f5f7"><td colspan="4">合计</td><td class="text-right">'+tc+'</td><td></td><td class="text-right">'+tq+'</td><td colspan="6"></td><td class="text-right">'+tg.toFixed(2)+'</td><td class="text-right">'+tn.toFixed(2)+'</td><td class="text-right">'+tb.toFixed(4)+'</td><td></td></tr>'+
+    '<tr style="font-weight:bold;background:#f5f5f7"><td colspan="4">合计</td><td class="text-right">'+tc+'</td><td class="text-right">'+tq+'</td><td class="text-right">'+tg.toFixed(2)+'</td><td class="text-right">'+tn.toFixed(2)+'</td><td class="text-right">'+tb.toFixed(4)+'</td><td></td></tr>'+
     '</tbody></table></div>';
 }
 function updatePLRow(idx,field,val){
   const it=window._plDraft[idx];if(!it)return;
   it[field]=parseFloat(val)||0;
-  if(field==='cartons'||field==='qty_per_carton'){it.total_qty=it.cartons*it.qty_per_carton;}
-  it.gross_weight=Math.round((it.gross_weight_per_carton*it.cartons)*100)/100;
-  it.net_weight=Math.round((it.net_weight_per_carton*it.cartons)*100)/100;
-  it.cbm=Math.round((it.cbm_per_carton*it.cartons)*10000)/10000;
   renderPLDraftTable();
 }
 function removePLRow(idx){window._plDraft.splice(idx,1);renderPLDraftTable();}
 function downloadPLTemplate(){
-  // Sheet1: PL汇总（保留现有逻辑，供应商只提供 SKU 汇总数据）
-  const headers1=['SKU','箱数','单箱数量','总数量','单箱毛重','单箱净重','单箱体积','长','宽','高','总毛重','总净重','总体积'];
-  const sample1=['NT03U505N-016G-20BK',6,10,60,1.50,1.20,0.0500,30,20,15,9.00,7.20,0.3000];
-  const ws1=XLSX.utils.aoa_to_sheet([headers1,sample1]);
-  ws1['!cols']=headers1.map(h=>({wch:Math.max(h.length*2+4,12)}));
-  // Sheet2: 箱级明细（新增，供应商提供逐箱 PL，导入时自动汇总到 SKU 级）
-  const headers2=['箱号','SKU','箱内数量','毛重','净重','CBM','长','宽','高'];
-  const sample2a=['CTN001','NT03U505N-016G-20BK',10,1.50,1.20,0.0500,30,20,15];
-  const sample2b=['CTN002','NT03U505N-016G-20BK',10,1.50,1.20,0.0500,30,20,15];
-  const ws2=XLSX.utils.aoa_to_sheet([headers2,sample2a,sample2b]);
-  ws2['!cols']=headers2.map(h=>({wch:Math.max(h.length*2+4,12)}));
+  const headers=['SKU','数量','CTN数量','总毛重','总净重','总体积'];
+  const sample=['NT03U505N-016G-20BK',60,6,9.00,7.20,0.3000];
+  const ws=XLSX.utils.aoa_to_sheet([headers,sample]);
+  ws['!cols']=headers.map(h=>({wch:Math.max(h.length*2+4,12)}));
   const wb=XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb,ws1,'PL汇总');
-  XLSX.utils.book_append_sheet(wb,ws2,'箱级明细');
+  XLSX.utils.book_append_sheet(wb,ws,'PL汇总');
   XLSX.writeFile(wb,'PL装箱明细_导入模板.xlsx');
 }
 function handlePLFile(file){
   if(!file)return;
   const r=new FileReader();r.onload=ev=>{try{
-    const wb=XLSX.read(ev.target.result,{type:'array'});
-    // 优先检测 Sheet2「箱级明细」是否存在且含有效数据
-    const sheet2Name=wb.SheetNames.find(n=>/箱级明细/i.test(n));
-    let mapped=[],source='PL汇总';
-    if(sheet2Name){
-      const rows2=XLSX.utils.sheet_to_json(wb.Sheets[sheet2Name]);
-      const valid2=rows2.filter(r=>{const v=r['SKU']||r['SKU编码']||r['料号']||r['sku_code'];return v!==undefined&&String(v).trim()!=='';});
-      if(valid2.length){
-        source='箱级明细汇总';
-        const aliasMap2={'carton_no':['箱号','CTN No','Carton No','carton_no'],'sku_code':['SKU','SKU编码','料号','sku_code'],'qty_per_carton':['箱内数量','数量','QTY','qty_per_carton'],'gross_weight_per_carton':['毛重','GW','gross_weight','gross_weight_per_carton'],'net_weight_per_carton':['净重','NW','net_weight','net_weight_per_carton'],'cbm_per_carton':['CBM','体积','cbm','cbm_per_carton'],'length':['长','L','length'],'width':['宽','W','width'],'height':['高','H','height']};
-        const boxRows=valid2.map(row=>{const item={};for(const [key,aliases] of Object.entries(aliasMap2)){for(const alias of aliases){if(row[alias]!==undefined){item[key]=isNaN(row[alias])?row[alias]:parseFloat(row[alias]);break;}}}return item;});
-        // 按 SKU 聚合箱级明细（cartons = 箱号去重数量；无箱号时按行数计）
-        const agg={};
-        boxRows.forEach(b=>{
-          if(!b.sku_code)return;
-          const sku=String(b.sku_code).trim();
-          if(!agg[sku])agg[sku]={sku_code:sku,_cartonNos:new Set(),_anonCnt:0,total_qty:0,gross_weight:0,net_weight:0,cbm:0,length:0,width:0,height:0};
-          const a=agg[sku];
-          if(b.carton_no&&String(b.carton_no).trim())a._cartonNos.add(String(b.carton_no).trim());else a._anonCnt++;
-          a.total_qty+=(b.qty_per_carton||0);
-          a.gross_weight+=(b.gross_weight_per_carton||0);
-          a.net_weight+=(b.net_weight_per_carton||0);
-          a.cbm+=(b.cbm_per_carton||0);
-          if(!a.length&&b.length)a.length=b.length;
-          if(!a.width&&b.width)a.width=b.width;
-          if(!a.height&&b.height)a.height=b.height;
-        });
-        mapped=Object.values(agg).map(a=>{
-          const cartons=a._cartonNos.size||a._anonCnt||1;
-          return {sku_code:a.sku_code,cartons:cartons,qty_per_carton:cartons>0?Math.round(a.total_qty/cartons):0,total_qty:a.total_qty,
-            gross_weight_per_carton:cartons>0?Math.round((a.gross_weight/cartons)*100)/100:0,
-            net_weight_per_carton:cartons>0?Math.round((a.net_weight/cartons)*100)/100:0,
-            cbm_per_carton:cartons>0?Math.round((a.cbm/cartons)*10000)/10000:0,
-            length:a.length,width:a.width,height:a.height,
-            gross_weight:Math.round(a.gross_weight*100)/100,net_weight:Math.round(a.net_weight*100)/100,cbm:Math.round(a.cbm*10000)/10000};
-        });
-      }
-    }
-    // 回退到 Sheet1（现有逻辑，供应商只提供 SKU 汇总数据）
-    if(!mapped.length){
-      const ws=wb.Sheets[wb.SheetNames[0]];const rows=XLSX.utils.sheet_to_json(ws);
-      const aliasMap={'sku_code':['SKU','SKU编码','料号','sku_code'],'cartons':['箱数','CTN','Total CTN','cartons'],'qty_per_carton':['单箱数量','QTY/CTN','qty_per_carton'],'total_qty':['总数量','Total QTY','total_qty'],'gross_weight':['总毛重','GW','gross_weight'],'net_weight':['总净重','NW','net_weight'],'cbm':['总体积','CBM','cbm'],'gross_weight_per_carton':['单箱毛重','GW/CTN','gross_weight_per_carton'],'net_weight_per_carton':['单箱净重','NW/CTN','net_weight_per_carton'],'cbm_per_carton':['单箱体积','CBM/CTN','cbm_per_carton'],'length':['长','L','length'],'width':['宽','W','width'],'height':['高','H','height']};
-      mapped=rows.map(row=>{const item={};for(const [key,aliases] of Object.entries(aliasMap)){for(const alias of aliases){if(row[alias]!==undefined){item[key]=isNaN(row[alias])?row[alias]:parseFloat(row[alias]);break;}}}return item;});
-    }
-    // CI 匹配逻辑（Sheet1/Sheet2 共用）
+    const wb=XLSX.read(ev.target.result,{type:'array'});const ws=wb.Sheets[wb.SheetNames[0]];const rows=XLSX.utils.sheet_to_json(ws);
+    const aliasMap={'sku_code':['SKU','SKU编码','料号','sku_code'],'total_qty':['数量','总数量','Total QTY','total_qty'],'cartons':['CTN数量','箱数','CTN','Total CTN','cartons'],'gross_weight':['总毛重','GW','gross_weight'],'net_weight':['总净重','NW','net_weight'],'cbm':['总体积','CBM','cbm']};
+    const mapped=rows.map(row=>{const item={};for(const [key,aliases] of Object.entries(aliasMap)){for(const alias of aliases){if(row[alias]!==undefined){item[key]=isNaN(row[alias])?row[alias]:parseFloat(row[alias]);break;}}}return item;});
     const ciItemsRaw=window._plCI.items||[];const plCheck=window._plCI.pl_check||[];let matched=0,unmatched=0;
     // 聚合 CI items 中相同 SKU 的多行
     const ciAgg={};
@@ -8998,16 +8931,14 @@ function handlePLFile(file){
       const pc=plCheck.find(p=>p.sku_code===ciItem.sku_code)||{pl_qty:0};
       const remaining=(ciItem.shipped_qty||0)-(pc.pl_qty||0);
       const existIdx=window._plDraft.findIndex(d=>d.sku_code===ciItem.sku_code);
-      const newData={cartons:item.cartons||0,qty_per_carton:item.qty_per_carton||0,total_qty:item.total_qty||0,
-        gross_weight_per_carton:item.gross_weight_per_carton||0,net_weight_per_carton:item.net_weight_per_carton||0,
-        cbm_per_carton:item.cbm_per_carton||0,length:item.length||0,width:item.width||0,height:item.height||0,
+      const newData={cartons:item.cartons||0,qty_per_carton:0,total_qty:item.total_qty||0,
+        gross_weight_per_carton:0,net_weight_per_carton:0,cbm_per_carton:0,length:0,width:0,height:0,
         gross_weight:item.gross_weight||0,net_weight:item.net_weight||0,cbm:item.cbm||0};
       if(existIdx>=0){Object.assign(window._plDraft[existIdx],newData);
-        const it=window._plDraft[existIdx];it.gross_weight=Math.round((it.gross_weight_per_carton*it.cartons)*100)/100;it.net_weight=Math.round((it.net_weight_per_carton*it.cartons)*100)/100;it.cbm=Math.round((it.cbm_per_carton*it.cartons)*10000)/10000;
       }else{window._plDraft.push({...newData,sku_code:ciItem.sku_code,ci_shipped_qty:ciItem.shipped_qty,pl_qty:pc.pl_qty||0,remaining:remaining});}
       matched++;
     });
-    renderPLDraftTable();showToast('导入完成（'+source+'）：匹配'+matched+'行，未匹配'+unmatched+'行',matched>0?'success':'warning');
+    renderPLDraftTable();showToast('导入完成：匹配'+matched+'行，未匹配'+unmatched+'行',matched>0?'success':'warning');
   }catch(err){showToast(err.message,'danger')}};r.readAsArrayBuffer(file);
 }
 function renderOtherFees(){
@@ -9076,7 +9007,7 @@ async function editLog(id){
       '<div class="form-group"><label>预计到港</label><input type="date" id="el-eta" value="'+(l.eta_date||'')+'"></div>'+
       '<div class="form-group"><label>物流状态</label><select id="el-status"><option value="pending"'+(l.logistics_status==='pending'?' selected':'')+'>待提货</option><option value="in_transit"'+(l.logistics_status==='in_transit'?' selected':'')+'>运输中</option><option value="arrived"'+(l.logistics_status==='arrived'?' selected':'')+'>到港</option><option value="completed"'+(l.logistics_status==='completed'?' selected':'')+'>已完成</option></select></div>'+
       '</div></div>'+
-      '<div class="detail-section"><h3>PL装箱明细</h3>'+(plItems.length?'<div class="table-container" style="overflow-x:auto"><table class="data-table" style="font-size:12px"><thead><tr><th>SKU</th><th>箱数</th><th>单箱数量</th><th>总数量</th><th>单箱毛重</th><th>单箱净重</th><th>单箱体积</th><th>总毛重</th><th>总净重</th><th>总体积</th><th>已入库</th></tr></thead><tbody>'+plItems.map(it=>'<tr><td class="cell-id">'+esc(it.sku_code)+'</td><td class="text-right">'+(it.cartons||0)+'</td><td class="text-right">'+(it.qty_per_carton||0)+'</td><td class="text-right font-bold">'+(it.total_qty||0)+'</td><td class="text-right">'+(it.gross_weight_per_carton||0)+'</td><td class="text-right">'+(it.net_weight_per_carton||0)+'</td><td class="text-right">'+(it.cbm_per_carton||0)+'</td><td class="text-right">'+(it.gross_weight||0)+'</td><td class="text-right">'+(it.net_weight||0)+'</td><td class="text-right">'+(it.cbm||0)+'</td><td class="text-right">'+(it.received_qty||0)+'</td></tr>').join('')+'</tbody></table></div>':'<div style="padding:12px;color:#999">无PL明细</div>')+'</div>'+
+      '<div class="detail-section"><h3>PL装箱明细</h3>'+(plItems.length?'<div class="table-container" style="overflow-x:auto"><table class="data-table" style="font-size:12px"><thead><tr><th>SKU</th><th>CTN数量</th><th>总数量</th><th>总毛重</th><th>总净重</th><th>总体积</th><th>已入库</th></tr></thead><tbody>'+plItems.map(it=>'<tr><td class="cell-id">'+esc(it.sku_code)+'</td><td class="text-right">'+(it.cartons||0)+'</td><td class="text-right font-bold">'+(it.total_qty||0)+'</td><td class="text-right">'+(it.gross_weight||0)+'</td><td class="text-right">'+(it.net_weight||0)+'</td><td class="text-right">'+(it.cbm||0)+'</td><td class="text-right">'+(it.received_qty||0)+'</td></tr>').join('')+'</tbody></table></div>':'<div style="padding:12px;color:#999">无PL明细</div>')+'</div>'+
       '<div class="detail-section"><h3>费用信息</h3><div class="form-grid">'+
       '<div class="form-group"><label>运费币种</label><select id="el-cur"><option'+(l.freight_currency==='USD'?' selected':'')+'>USD</option><option'+(l.freight_currency==='RMB'?' selected':'')+'>RMB</option><option'+(l.freight_currency==='IDR'?' selected':'')+'>IDR</option><option'+(l.freight_currency==='MYR'?' selected':'')+'>MYR</option><option'+(l.freight_currency==='THB'?' selected':'')+'>THB</option></select></div>'+
       '<div class="form-group"><label>运费</label><input type="number" step="0.01" id="el-freight" value="'+(l.international_freight||0)+'"></div>'+
