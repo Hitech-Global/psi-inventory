@@ -12,7 +12,8 @@ const SALES_MUTABLE_FIELDS = [
   'shop_platform',
   'original_order_status',
   'brand',
-  'remark'
+  'remark',
+  'country'
 ];
 
 function normalizeOrderDate(value) {
@@ -93,6 +94,7 @@ function normalizeSalesRows(items) {
     if (!item || !item.sku_code) firstError = 'SKU不能为空';
     else if (!item.source_system) firstError = '来源系统不能为空';
     else if (!item.order_no) firstError = '订单号不能为空';
+    else if (!item.country || !String(item.country).trim()) firstError = '国家不能为空';
     else if (!normalizedDate) firstError = '下单日期格式无法识别：' + rawDate;
     const errors = firstError ? [firstError] : [];
 
@@ -112,6 +114,7 @@ function normalizeSalesRows(items) {
       is_valid_order: parseIsValidOrder(item && item.is_valid_order),
       original_order_status: item && item.original_order_status || '',
       remark: item && item.remark || '',
+      country: (item && item.country != null ? String(item.country) : '').trim(),
       errors
     };
     return row;
@@ -144,6 +147,7 @@ function normalizedExisting(existing) {
     sku_code: existing && existing.sku_code || '',
     original_order_status: existing && existing.original_order_status || '',
     remark: existing && existing.remark || '',
+    country: existing && existing.country || '',
     is_valid_order: existing && existing.is_valid_order === undefined ? 1 : existing && existing.is_valid_order,
     quantity: existing && existing.quantity === undefined ? 0 : existing && existing.quantity
   };
@@ -161,7 +165,8 @@ function hasSalesChanges(existing, row) {
     old.shop_platform !== row.shop_platform ||
     old.original_order_status !== row.original_order_status ||
     old.brand !== row.brand ||
-    old.remark !== row.remark;
+    old.remark !== row.remark ||
+    old.country !== row.country;
 }
 
 function mutableValues(row, importBatchId) {
@@ -173,6 +178,7 @@ function mutableValues(row, importBatchId) {
     is_valid_order: row.is_valid_order,
     original_order_status: row.original_order_status,
     remark: row.remark,
+    country: row.country || '',
     import_batch_id: importBatchId || ''
   };
 }
@@ -196,6 +202,7 @@ function fullInsertedRecord(row, idFactory, importBatchId) {
     is_valid_order: row.is_valid_order,
     original_order_status: row.original_order_status,
     remark: row.remark,
+    country: row.country || '',
     import_batch_id: importBatchId || ''
   };
 }
@@ -329,6 +336,7 @@ function buildSalesPreview(rows, classification) {
       quantity: row.quantity,
       is_valid_order: row.is_valid_order,
       original_order_status: row.original_order_status,
+      country: row.country || '',
       action: item ? item.action : 'insert',
       errors: item ? item.errors.slice() : row.errors.slice()
     };
@@ -371,7 +379,7 @@ function quoteIdentifier(identifier) {
 function getCandidateFieldsSql() {
   return `id, source_system, order_no, order_detail_id, order_date, shop_platform,
           brand, sku_code, quantity, is_valid_order, original_order_status, remark,
-          import_batch_id`;
+          import_batch_id, country`;
 }
 
 function candidateRowsFromRows(rows) {
@@ -413,7 +421,8 @@ function buildPlanRows(classification) {
       quantity: record.quantity || 0,
       is_valid_order: record.is_valid_order === undefined ? 1 : record.is_valid_order,
       original_order_status: record.original_order_status || '',
-      remark: record.remark || ''
+      remark: record.remark || '',
+      country: record.country || ''
     };
   }).filter(Boolean);
 }
@@ -525,9 +534,10 @@ function createSqliteSalesImportAdapter(db, options = {}) {
       quantity INTEGER DEFAULT 0,
       is_valid_order INTEGER DEFAULT 1,
       original_order_status TEXT DEFAULT '',
-      remark TEXT DEFAULT ''
+      remark TEXT DEFAULT '',
+      country TEXT DEFAULT ''
     )`);
-    const columns = ['action', 'existing_id', 'id', 'source_system', 'order_no', 'order_detail_id', 'order_date', 'shop_platform', 'brand', 'sku_code', 'quantity', 'is_valid_order', 'original_order_status', 'remark'];
+    const columns = ['action', 'existing_id', 'id', 'source_system', 'order_no', 'order_detail_id', 'order_date', 'shop_platform', 'brand', 'sku_code', 'quantity', 'is_valid_order', 'original_order_status', 'remark', 'country'];
     for (const chunk of chunkRows(planRows, batchSize)) {
       const params = [];
       const placeholders = chunk.map(row => {
@@ -544,11 +554,12 @@ function createSqliteSalesImportAdapter(db, options = {}) {
       is_valid_order = (SELECT p.is_valid_order FROM ${planName} p WHERE p.action='update' AND p.existing_id=sales_records.id),
       original_order_status = (SELECT p.original_order_status FROM ${planName} p WHERE p.action='update' AND p.existing_id=sales_records.id),
       remark = (SELECT p.remark FROM ${planName} p WHERE p.action='update' AND p.existing_id=sales_records.id),
+      country = (SELECT p.country FROM ${planName} p WHERE p.action='update' AND p.existing_id=sales_records.id),
       import_batch_id = (SELECT ? FROM ${planName} p WHERE p.action='update' AND p.existing_id=sales_records.id),
       updated_at = datetime('now')
       WHERE id IN (SELECT existing_id FROM ${planName} WHERE action='update')`, [classification.importBatchId || '']);
-    callRun(`INSERT INTO sales_records (id, source_system, order_no, order_detail_id, order_date, shop_platform, brand, sku_code, quantity, is_valid_order, original_order_status, remark, import_batch_id)
-      SELECT id, source_system, order_no, order_detail_id, order_date, shop_platform, brand, sku_code, quantity, is_valid_order, original_order_status, remark, ?
+    callRun(`INSERT INTO sales_records (id, source_system, order_no, order_detail_id, order_date, shop_platform, brand, sku_code, quantity, is_valid_order, original_order_status, remark, import_batch_id, country)
+      SELECT id, source_system, order_no, order_detail_id, order_date, shop_platform, brand, sku_code, quantity, is_valid_order, original_order_status, remark, ?, country
       FROM ${planName} WHERE action='insert'`, [classification.importBatchId || '']);
     callRun(`DROP TABLE IF EXISTS ${planName}`);
     callRun(`DROP TABLE IF EXISTS ${stageName}`);
@@ -574,7 +585,7 @@ function createPostgresSalesImportAdapter(db, options = {}) {
       source_system TEXT NOT NULL, order_no TEXT NOT NULL, order_detail_id TEXT DEFAULT '',
       order_date TEXT, shop_platform TEXT DEFAULT '', brand TEXT DEFAULT '', sku_code TEXT NOT NULL,
       quantity INTEGER DEFAULT 0, is_valid_order INTEGER DEFAULT 1,
-      original_order_status TEXT DEFAULT '', remark TEXT DEFAULT '', error_json JSONB DEFAULT '[]'::jsonb
+      original_order_status TEXT DEFAULT '', remark TEXT DEFAULT '', country TEXT DEFAULT '', error_json JSONB DEFAULT '[]'::jsonb
     ) ON COMMIT DROP`);
     for (const chunk of chunkRows(rows, batchSize)) {
       const json = JSON.stringify(chunk.map(row => ({
@@ -582,12 +593,12 @@ function createPostgresSalesImportAdapter(db, options = {}) {
         source_system: row.source_system, order_no: row.order_no, order_detail_id: row.order_detail_id,
         order_date: row.order_date, shop_platform: row.shop_platform, brand: row.brand,
         sku_code: row.sku_code, quantity: row.quantity, is_valid_order: row.is_valid_order,
-        original_order_status: row.original_order_status, remark: row.remark, error_json: row.errors
+        original_order_status: row.original_order_status, remark: row.remark, country: row.country, error_json: row.errors
       })));
       await callRun(`INSERT INTO ${stageName} SELECT * FROM jsonb_to_recordset(?::jsonb) AS x(
         source_row_no INTEGER, input_order INTEGER, source_system TEXT, order_no TEXT,
         order_detail_id TEXT, order_date TEXT, shop_platform TEXT, brand TEXT, sku_code TEXT,
-        quantity INTEGER, is_valid_order INTEGER, original_order_status TEXT, remark TEXT, error_json JSONB
+        quantity INTEGER, is_valid_order INTEGER, original_order_status TEXT, remark TEXT, country TEXT, error_json JSONB
       )`, [json]);
     }
   }
@@ -609,7 +620,7 @@ function createPostgresSalesImportAdapter(db, options = {}) {
       source_system TEXT DEFAULT '', order_no TEXT DEFAULT '', order_detail_id TEXT DEFAULT '',
       order_date TEXT, shop_platform TEXT DEFAULT '', brand TEXT DEFAULT '', sku_code TEXT DEFAULT '',
       quantity INTEGER DEFAULT 0, is_valid_order INTEGER DEFAULT 1,
-      original_order_status TEXT DEFAULT '', remark TEXT DEFAULT ''
+      original_order_status TEXT DEFAULT '', remark TEXT DEFAULT '', country TEXT DEFAULT ''
     ) ON COMMIT DROP`);
     for (const chunk of chunkRows(planRows, batchSize)) {
       if (!chunk.length) continue;
@@ -617,19 +628,19 @@ function createPostgresSalesImportAdapter(db, options = {}) {
       await callRun(`INSERT INTO ${planName} SELECT * FROM jsonb_to_recordset(?::jsonb) AS x(
         action TEXT, existing_id TEXT, id TEXT, source_system TEXT, order_no TEXT,
         order_detail_id TEXT, order_date TEXT, shop_platform TEXT, brand TEXT, sku_code TEXT,
-        quantity INTEGER, is_valid_order INTEGER, original_order_status TEXT, remark TEXT
+        quantity INTEGER, is_valid_order INTEGER, original_order_status TEXT, remark TEXT, country TEXT
       )`, [json]);
     }
     await callRun(`UPDATE sales_records sr SET
       order_date=p.order_date, shop_platform=p.shop_platform, brand=p.brand, quantity=p.quantity,
       is_valid_order=p.is_valid_order, original_order_status=p.original_order_status,
-      remark=p.remark, import_batch_id=?, updated_at=NOW()
+      remark=p.remark, country=p.country, import_batch_id=?, updated_at=NOW()
       FROM ${planName} p WHERE p.action='update' AND p.existing_id=sr.id`, [classification.importBatchId || '']);
     await callRun(`INSERT INTO sales_records
       (id, source_system, order_no, order_detail_id, order_date, shop_platform, brand, sku_code,
-       quantity, is_valid_order, original_order_status, remark, import_batch_id)
+       quantity, is_valid_order, original_order_status, remark, import_batch_id, country)
       SELECT id, source_system, order_no, order_detail_id, order_date, shop_platform, brand, sku_code,
-       quantity, is_valid_order, original_order_status, remark, ?
+       quantity, is_valid_order, original_order_status, remark, ?, country
       FROM ${planName} WHERE action='insert'`, [classification.importBatchId || '']);
   }
 

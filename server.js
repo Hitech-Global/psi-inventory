@@ -3367,7 +3367,7 @@ function salesImportIdFactory() {
 
 // 销售明细列表
 app.get('/api/sales-records', requireApiPermission('outbound_view'), asyncHandler((req, res) => {
-  const { source_system, order_no, shop_platform, brand, sku_code, is_valid, start_date, end_date, import_batch_id } = req.query;
+  const { source_system, order_no, shop_platform, brand, sku_code, is_valid, start_date, end_date, import_batch_id, country } = req.query;
   let sql = `SELECT sr.*, s.product_name FROM sales_records sr LEFT JOIN skus s ON sr.sku_code = s.sku_code WHERE 1=1`;
   const params = [];
   if (source_system) { sql += ' AND sr.source_system = ?'; params.push(source_system); }
@@ -3379,6 +3379,7 @@ app.get('/api/sales-records', requireApiPermission('outbound_view'), asyncHandle
   if (start_date) { sql += ' AND sr.order_date >= ?'; params.push(start_date); }
   if (end_date) { sql += ' AND sr.order_date <= ?'; params.push(end_date); }
   if (import_batch_id) { sql += ' AND sr.import_batch_id = ?'; params.push(import_batch_id); }
+  if (country) { sql += ' AND sr.country = ?'; params.push(country); }
   sql += ' ORDER BY sr.order_date DESC, sr.created_at DESC LIMIT 500';
   res.json(query(sql, params).rows);
 }));
@@ -3388,7 +3389,8 @@ app.get('/api/sales-records/filter-options', requireApiPermission('outbound_view
   const source_systems = query(`SELECT DISTINCT source_system FROM sales_records WHERE source_system IS NOT NULL AND source_system != '' ORDER BY source_system`).rows.map(r => r.source_system);
   const shop_platforms = query(`SELECT DISTINCT shop_platform FROM sales_records WHERE shop_platform IS NOT NULL AND shop_platform != '' ORDER BY shop_platform`).rows.map(r => r.shop_platform);
   const brands = query(`SELECT DISTINCT brand FROM sales_records WHERE brand IS NOT NULL AND brand != '' ORDER BY brand`).rows.map(r => r.brand);
-  res.json({ source_systems, shop_platforms, brands });
+  const countries = query(`SELECT DISTINCT country FROM sales_records WHERE country IS NOT NULL AND country != '' ORDER BY country`).rows.map(r => r.country);
+  res.json({ source_systems, shop_platforms, brands, countries });
 }));
 
 
@@ -4060,9 +4062,13 @@ app.get('/api/replenishment-suggestions/daily-sales', requireApiPermission('repl
   else if (isOffline) { channelFilter = " AND (shop_platform LIKE '%线下%' OR lower(COALESCE(shop_platform, '')) = 'offline')"; }
 
   const salesDate = salesOrderDateExpr('order_date');
+  // 国家筛选：如果指定了国家，仅匹配该国家的销售记录
+  let countryFilter = '';
+  const salesParams = [...skuCodes, startDate, endDate];
+  if (country) { countryFilter = ' AND country = ?'; salesParams.push(country); }
   const salesRows = query(
-    `SELECT sku_code, ${salesDate} as normalized_order_date, SUM(quantity) as qty FROM sales_records WHERE sku_code IN (${placeholders}) AND ${salesDate} >= ? AND ${salesDate} <= ? AND is_valid_order = 1${channelFilter} GROUP BY sku_code, normalized_order_date`,
-    [...skuCodes, startDate, endDate]
+    `SELECT sku_code, ${salesDate} as normalized_order_date, SUM(quantity) as qty FROM sales_records WHERE sku_code IN (${placeholders}) AND ${salesDate} >= ? AND ${salesDate} <= ? AND is_valid_order = 1${channelFilter}${countryFilter} GROUP BY sku_code, normalized_order_date`,
+    salesParams
   ).rows;
 
   // 构建 SKU+date → qty 映射
@@ -4156,17 +4162,18 @@ app.get('/api/replenishment-suggestions/historical-sales', requireApiPermission(
       cursor.setMonth(cursor.getMonth() + 1);
     }
 
-    // 批量查询：整个时间范围一次查
+    // 批量查询：整个时间范围一次查（按国家筛选）
     const fullStart = `${monthCols[0]}-01`;
     const lastMonth = monthCols[monthCols.length - 1];
     const [ly, lm] = lastMonth.split('-').map(Number);
     const lastDay = new Date(ly, lm, 0).getDate();
     const fullEnd = `${lastMonth}-${String(lastDay).padStart(2, '0')}`;
 
-    const salesRows = query(
-      `SELECT sku_code, substr(${salesDate}, 1, 7) as ym, SUM(quantity) as qty FROM sales_records WHERE sku_code IN (${placeholders}) AND ${salesDate} >= ? AND ${salesDate} <= ? AND is_valid_order = 1 GROUP BY sku_code, substr(${salesDate}, 1, 7)`,
-      [...skuCodes, fullStart, fullEnd]
-    ).rows;
+    let monthlySalesSql = `SELECT sku_code, substr(${salesDate}, 1, 7) as ym, SUM(quantity) as qty FROM sales_records WHERE sku_code IN (${placeholders}) AND ${salesDate} >= ? AND ${salesDate} <= ? AND is_valid_order = 1`;
+    const monthlySalesParams = [...skuCodes, fullStart, fullEnd];
+    if (country) { monthlySalesSql += ' AND country = ?'; monthlySalesParams.push(country); }
+    monthlySalesSql += ` GROUP BY sku_code, substr(${salesDate}, 1, 7)`;
+    const salesRows = query(monthlySalesSql, monthlySalesParams).rows;
 
     const data = {};
     skuCodes.forEach(code => {
@@ -4195,10 +4202,11 @@ app.get('/api/replenishment-suggestions/historical-sales', requireApiPermission(
       actualEnd = `${end}-${String(ld).padStart(2, '0')}`;
     }
 
-    const salesRows = query(
-      `SELECT sku_code, SUM(quantity) as qty FROM sales_records WHERE sku_code IN (${placeholders}) AND ${salesDate} >= ? AND ${salesDate} <= ? AND is_valid_order = 1 GROUP BY sku_code`,
-      [...skuCodes, start, actualEnd]
-    ).rows;
+    let dailySalesSql = `SELECT sku_code, SUM(quantity) as qty FROM sales_records WHERE sku_code IN (${placeholders}) AND ${salesDate} >= ? AND ${salesDate} <= ? AND is_valid_order = 1`;
+    const dailySalesParams = [...skuCodes, start, actualEnd];
+    if (country) { dailySalesSql += ' AND country = ?'; dailySalesParams.push(country); }
+    dailySalesSql += ' GROUP BY sku_code';
+    const salesRows = query(dailySalesSql, dailySalesParams).rows;
 
     const data = {};
     skuCodes.forEach(code => { data[code] = { total: 0 }; });
@@ -4323,8 +4331,10 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
     const d30 = new Date(now.getTime() - 30 * 86400000).toISOString().split('T')[0];
     const d90 = new Date(now.getTime() - 90 * 86400000).toISOString().split('T')[0];
     // 销量聚合 A：按月 GROUP BY（m1=当月 … m4=3 个月前），online/offline 按现有谓词拆分
+    // 国家维度：按 sku_code + country 分组，旧数据 country='' 不参与具体国家预测
     const monthlyRows = await aq(
       `SELECT sku_code,
+              COALESCE(country, '') AS country,
               substr(${salesDate}, 1, 4) AS y,
               substr(${salesDate}, 6, 2) AS mo,
               COALESCE(SUM(quantity), 0) AS total,
@@ -4332,7 +4342,7 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
               COALESCE(SUM(CASE WHEN (shop_platform LIKE '%线下%' OR lower(shop_platform) = 'offline') THEN quantity END), 0) AS offline
        FROM sales_records
        WHERE sku_code IN (${genInPh}) AND ${salesDate} >= ? AND ${salesDate} <= ? AND is_valid_order = 1
-       GROUP BY sku_code, y, mo`,
+       GROUP BY sku_code, COALESCE(country, ''), y, mo`,
       genSkuCodes.concat([m4Start, periodEnd])
     );
     const monthlyMap = {};
@@ -4342,12 +4352,14 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
       const rmo = String(r.mo);
       for (const m of months) { if (String(m.year) === ry && m.month === rmo) { key = m.key; break; } }
       if (!key) continue;
-      if (!monthlyMap[r.sku_code]) monthlyMap[r.sku_code] = {};
-      monthlyMap[r.sku_code][key] = { total: Number(r.total) || 0, online: Number(r.online) || 0, offline: Number(r.offline) || 0 };
+      const mapKey = r.sku_code + '|' + (r.country || '');
+      if (!monthlyMap[mapKey]) monthlyMap[mapKey] = {};
+      monthlyMap[mapKey][key] = { total: Number(r.total) || 0, online: Number(r.online) || 0, offline: Number(r.offline) || 0 };
     }
-    // 销量聚合 B：按 sku GROUP BY，覆盖周期 / d30 / d90 / 累计 / 首售
+    // 销量聚合 B：按 sku + country GROUP BY，覆盖周期 / d30 / d90 / 累计 / 首售
     const aggRows = await aq(
       `SELECT sku_code,
+              COALESCE(country, '') AS country,
               COALESCE(SUM(CASE WHEN ${salesDate} >= ? AND ${salesDate} <= ? THEN quantity END), 0) AS period_total,
               COALESCE(SUM(CASE WHEN ${salesDate} >= ? AND ${salesDate} <= ? AND (shop_platform LIKE '%线上%' OR lower(shop_platform) = 'online') THEN quantity END), 0) AS period_online,
               COALESCE(SUM(CASE WHEN ${salesDate} >= ? AND ${salesDate} <= ? AND (shop_platform LIKE '%线下%' OR lower(shop_platform) = 'offline') THEN quantity END), 0) AS period_offline,
@@ -4357,11 +4369,11 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
               MIN(${salesDate}) AS first_sale
        FROM sales_records
        WHERE sku_code IN (${genInPh}) AND is_valid_order = 1
-       GROUP BY sku_code`,
+       GROUP BY sku_code, COALESCE(country, '')`,
       [periodStart, periodEnd, periodStart, periodEnd, periodStart, periodEnd, d30, d90].concat(genSkuCodes)
     );
     const aggMap = {};
-    for (const r of aggRows) aggMap[r.sku_code] = r;
+    for (const r of aggRows) aggMap[r.sku_code + '|' + (r.country || '')] = r;
 
     // A-Step1 收口：预检——所有待处理 SKU 必须命中 dim_default_config，未命中则阻止重算（不偷偷用兜底值）
     const unmatchedMap = {};
@@ -4438,7 +4450,8 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
         const onlineSalesMap = {};
         const offlineSalesMap = {};
         months.forEach(m => {
-          const bucket = (monthlyMap[inv.sku_code] && monthlyMap[inv.sku_code][m.key]) || { total: 0, online: 0, offline: 0 };
+          const invSalesKey = inv.sku_code + '|' + (inv.country || '');
+          const bucket = (monthlyMap[invSalesKey] && monthlyMap[invSalesKey][m.key]) || { total: 0, online: 0, offline: 0 };
           salesMap[m.key] = bucket.total;
           onlineSalesMap[m.key] = bucket.online;
           offlineSalesMap[m.key] = bucket.offline;
@@ -4463,7 +4476,8 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
         const offline_avg_sales_4m = (offline_sales_m1 + offline_sales_m2 + offline_sales_m3 + offline_sales_m4) / 4;
 
         // 销量统计周期月均：60/90/120 天有效销量分别 ÷ 2/3/4。（periodStart/periodEnd 已在集合化读取阶段计算）
-        const agg = aggMap[inv.sku_code];
+        const invAggKey = inv.sku_code + '|' + (inv.country || '');
+        const agg = aggMap[invAggKey];
         const totalPeriodSales = agg ? Number(agg.period_total) || 0 : 0;
         const onlinePeriodSales = agg ? Number(agg.period_online) || 0 : 0;
         const offlinePeriodSales = agg ? Number(agg.period_offline) || 0 : 0;
@@ -4482,7 +4496,7 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
         const total_inventory_pool = avail + transit + piUnshipped;
 
         // 统一判定层所需指标（d30/d90/ever/first_sale 已在集合化读取阶段计算）
-        const agg2 = aggMap[inv.sku_code];
+        const agg2 = aggMap[invAggKey];
         const sales_30d = agg2 ? Number(agg2.s30) || 0 : 0;
         const sales_90d = agg2 ? Number(agg2.s90) || 0 : 0;
         const total_sales_ever = agg2 ? Number(agg2.ever_total) || 0 : 0;

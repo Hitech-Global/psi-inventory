@@ -850,15 +850,19 @@ async function initDatabase() {
       original_order_status TEXT DEFAULT '',
       remark TEXT DEFAULT '',
       import_batch_id TEXT DEFAULT '',
+      country TEXT DEFAULT '',
       created_at TEXT DEFAULT NOW(),
       updated_at TEXT DEFAULT NOW()
     )
   `);
+  // 幂等迁移：sales_records 增加 country 列（旧库可能不存在）
+  try { await exec(`ALTER TABLE sales_records ADD COLUMN IF NOT EXISTS country TEXT DEFAULT ''`); } catch (e) { /* 列已存在 */ }
   await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_sales_records_unique ON sales_records(source_system, order_no, sku_code, COALESCE(shop_platform, ''))`);
   await exec(`CREATE INDEX IF NOT EXISTS idx_sales_records_sku ON sales_records(sku_code)`);
   await exec(`CREATE INDEX IF NOT EXISTS idx_sales_records_date ON sales_records(order_date)`);
   await exec(`CREATE INDEX IF NOT EXISTS idx_sales_records_valid ON sales_records(is_valid_order)`);
   await exec(`CREATE INDEX IF NOT EXISTS idx_sales_records_batch ON sales_records(import_batch_id)`);
+  await exec(`CREATE INDEX IF NOT EXISTS idx_sales_records_country ON sales_records(country)`);
 
   // 销售导入控制表：记录可恢复的阶段进度、幂等指纹和最终结果。
   await exec(`

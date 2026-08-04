@@ -2977,6 +2977,7 @@ const SALES_IMPORT_COLUMNS=[
   {key:'order_no',label:t("po.019", "\u8ba2\u5355\u53f7"),required:true},
   {key:'order_detail_id',label:t("po.020", "\u8ba2\u5355\u660e\u7ec6ID")},
   {key:'order_date',label:t('col.order_date','下单日期'),required:true},
+  {key:'country',label:t('col.country','国家'),required:true},
   {key:'shop_platform',label:t('col.channel','渠道')},
   {key:'brand',label:t("app.112", "\u54c1\u724c")},
   {key:'sku_code',label:'SKU',required:true},
@@ -3120,6 +3121,7 @@ function handleSalesFile(file){
         });
         if(!rec.source_system||!String(rec.source_system).trim())rec._errors.push(t("toast.src_required", "来源系统不能为空"));
         if(!rec.order_no||!String(rec.order_no).trim())rec._errors.push(t("toast.order_required", "订单号不能为空"));
+        if(!rec.country||!String(rec.country).trim())rec._errors.push(t('col.country','国家')+'不能为空');
         if(!rec.sku_code||!String(rec.sku_code).trim())rec._errors.push(t("toast.sku_required", "SKU不能为空"));
         if(!rec.order_date)rec._errors.push(t("app.632", "\u4e0b\u5355\u65e5\u671f\u4e0d\u80fd\u4e3a\u7a7a"));
         else{
@@ -3182,7 +3184,7 @@ function renderSalesPreview(records){
   var valid=records.filter(function(r){return r._errors.length===0}).length;
   var invalid=records.length-valid;
   var html=t('gen.L2722.1','<div style="background:#f0f8ff;padding:10px 14px;border-radius:6px;margin-bottom:10px;font-size:13px"><b>共 ')+records.length+t('gen.L2722.2',' 条数据</b>，<span style="color:#52c41a">有效 ')+valid+t('gen.L2722.3',' 条</span>')+(invalid>0?t('gen.L2722.4','，<span style="color:#ff4d4f">无效 ')+invalid+t('gen.L2722.5',' 条</span>'):'')+'</div>';
-  html+='<div class="table-container" style="max-height:300px;overflow:auto;box-shadow:none;border:1px solid #f0f0f0"><table class="data-table"><thead><tr><th>'+t("col.row", "行")+'</th><th>'+t("po.018", "来源系统")+'</th><th>'+t("po.019", "订单号")+'</th><th>'+t("col.order_date", "下单日期")+'</th><th>SKU</th><th>'+t("col.qty", "数量")+'</th><th>'+t("col.effective_order", "有效订单")+'</th><th>'+t("col.verify", "校验")+'</th></tr></thead><tbody>';
+  html+='<div class="table-container" style="max-height:300px;overflow:auto;box-shadow:none;border:1px solid #f0f0f0"><table class="data-table"><thead><tr><th>'+t("col.row", "行")+'</th><th>'+t("po.018", "来源系统")+'</th><th>'+t("po.019", "订单号")+'</th><th>'+t("col.order_date", "下单日期")+'</th><th>'+t("col.country", "国家")+'</th><th>SKU</th><th>'+t("col.qty", "数量")+'</th><th>'+t("col.effective_order", "有效订单")+'</th><th>'+t("col.verify", "校验")+'</th></tr></thead><tbody>';
   records.slice(0,20).forEach(function(r){
     var ok=r._errors.length===0;
     html+='<tr style="'+(ok?'':'background:#fff1f0')+'">'+
@@ -3190,13 +3192,14 @@ function renderSalesPreview(records){
       '<td>'+esc(r.source_system||'-')+'</td>'+
       '<td class="cell-id">'+esc(r.order_no||'-')+'</td>'+
       '<td>'+esc(r.order_date||'-')+'</td>'+
+      '<td>'+esc(r.country||'-')+'</td>'+
       '<td class="cell-id">'+esc(r.sku_code||'-')+'</td>'+
       '<td class="text-right">'+(r.quantity!==undefined?r.quantity:'-')+'</td>'+
       '<td>'+(r.is_valid_order?t('gen.L2733.1','<span style="color:#52c41a">是</span>'):t('gen.L2733.2','<span style="color:#999">否</span>'))+'</td>'+
       '<td>'+(ok?'<span class="status-badge status-completed">✓</span>':'<span class="status-badge status-danger" title="'+esc(r._errors.join('; '))+'">✗ '+r._errors.length+'</span>')+'</td>'+
     '</tr>';
   });
-  if(records.length>20)html+=t('gen.L2737.1','<tr><td colspan="8" style="text-align:center;color:#999;padding:8px">... 还有 ')+(records.length-20)+t('gen.L2737.2',' 条</td></tr>');
+  if(records.length>20)html+=t('gen.L2737.1','<tr><td colspan="9" style="text-align:center;color:#999;padding:8px">... 还有 ')+(records.length-20)+t('gen.L2737.2',' 条</td></tr>');
   html+='</tbody></table></div>';
   if(invalid>0){
     html+='<div style="margin-top:10px;padding:10px;background:#fffbe6;border-radius:4px;font-size:12px;color:#666"><b>'+t("html.preview.invalid_detail", "无效行明细：")+'</b><br>'+
@@ -3210,9 +3213,9 @@ function renderSalesPreview(records){
 function downloadSalesTemplate(){
   var headers=SALES_IMPORT_COLUMNS.map(function(c){return c.label});
   var sample=[
-    ['BigSeller','BS-2026-001234','','2026-06-15',t("app.641", "Shopee\u5370\u5c3c\u5e97"),'BOYA','BY-M1',30,'true','Shipped',t("sample.normal_order", "正常订单")],
-    [t("sample.zhisu", "至速"),'ZS-2026-005678','','2026-06-15',t("app.644", "Lazada\u9a6c\u6765\u5e97"),'BOYA','BY-M1000',15,'true','Delivered',''],
-    ['EDA','EDA-2026-009999','DTL-001','2026-06-14',t("app.645", "TikTok\u6cf0\u56fd\u5e97"),'BOYA','BY-WM8 Pro',8,'false','Cancelled',t("sample.sales_remark", "取消订单不计入预测")]
+    ['BigSeller','BS-2026-001234','','2026-06-15','印尼',t("app.641", "Shopee\u5370\u5c3c\u5e97"),'BOYA','BY-M1',30,'true','Shipped',t("sample.normal_order", "正常订单")],
+    [t("sample.zhisu", "至速"),'ZS-2026-005678','','2026-06-15','马来西亚',t("app.644", "Lazada\u9a6c\u6765\u5e97"),'BOYA','BY-M1000',15,'true','Delivered',''],
+    ['EDA','EDA-2026-009999','DTL-001','2026-06-14','泰国',t("app.645", "TikTok\u6cf0\u56fd\u5e97"),'BOYA','BY-WM8 Pro',8,'false','Cancelled',t("sample.sales_remark", "取消订单不计入预测")]
   ];
   var ws=XLSX.utils.aoa_to_sheet([headers].concat(sample));
   ws['!cols']=SALES_IMPORT_COLUMNS.map(function(c){return {wch:c.label.length*2+6}});
@@ -3873,22 +3876,24 @@ let salesSelectAllMode = false;
 async function renderOutbound(){
   salesDataCache = []; salesAllFilteredIds = []; salesSelectAllMode = false;
   document.getElementById('content-inner').innerHTML=
-    t('html.renderOutbound', '<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>来源系统</label><select id="sr-ss"><option value="">全部</option></select></div><div class="filter-group"><label>渠道</label><select id="sr-sp"><option value="">全部</option></select></div><div class="filter-group"><label>品牌</label><select id="sr-b"><option value="">全部</option></select></div><div class="filter-group"><label>有效订单</label><select id="sr-iv"><option value="">全部</option><option value="1">有效</option><option value="0">无效</option></select></div><div class="filter-group"><label>开始日期</label><input type="date" id="sr-sd" class="form-control"></div><div class="filter-group"><label>结束日期</label><input type="date" id="sr-ed" class="form-control"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadSales()">搜索</button>{v1}</div></div></div><div id="sr-batch-bar" style="display:none;background:var(--bg-card,#fff);border:1px solid var(--border,#e0e0e0);border-radius:8px;padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span id="sr-batch-count" style="font-weight:600;margin-right:8px"></span><button class="btn btn-sm btn-secondary" onclick="salesBatchExport()">📊 导出</button><button class="btn btn-sm btn-secondary" onclick="salesClearSelection()" style="margin-left:auto">取消选择</button></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🛒 销售明细</div></div><div id="sr-table"></div></div>', {v1: hasPermission('outbound_import')?t('gen.L3164.1','<button class="btn btn-secondary btn-sm" onclick="openSalesBatchImport()">📥 导入</button>'):''});
+    t('html.renderOutbound', '<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>来源系统</label><select id="sr-ss"><option value="">全部</option></select></div><div class="filter-group"><label>国家</label><select id="sr-co"><option value="">全部</option></select></div><div class="filter-group"><label>渠道</label><select id="sr-sp"><option value="">全部</option></select></div><div class="filter-group"><label>品牌</label><select id="sr-b"><option value="">全部</option></select></div><div class="filter-group"><label>有效订单</label><select id="sr-iv"><option value="">全部</option><option value="1">有效</option><option value="0">无效</option></select></div><div class="filter-group"><label>开始日期</label><input type="date" id="sr-sd" class="form-control"></div><div class="filter-group"><label>结束日期</label><input type="date" id="sr-ed" class="form-control"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadSales()">搜索</button>{v1}</div></div></div><div id="sr-batch-bar" style="display:none;background:var(--bg-card,#fff);border:1px solid var(--border,#e0e0e0);border-radius:8px;padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span id="sr-batch-count" style="font-weight:600;margin-right:8px"></span><button class="btn btn-sm btn-secondary" onclick="salesBatchExport()">📊 导出</button><button class="btn btn-sm btn-secondary" onclick="salesClearSelection()" style="margin-left:auto">取消选择</button></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🛒 销售明细</div></div><div id="sr-table"></div></div>', {v1: hasPermission('outbound_import')?t('gen.L3164.1','<button class="btn btn-secondary btn-sm" onclick="openSalesBatchImport()">📥 导入</button>'):''});
   // 加载下拉选项
   try{
     const opts=await api('/api/sales-records/filter-options');
-    const fss=document.getElementById('sr-ss'), fsp=document.getElementById('sr-sp'), fb=document.getElementById('sr-b');
+    const fss=document.getElementById('sr-ss'), fsp=document.getElementById('sr-sp'), fb=document.getElementById('sr-b'), fco=document.getElementById('sr-co');
     if(fss) opts.source_systems.forEach(c=>{const o=document.createElement('option');o.value=c;o.textContent=c;fss.appendChild(o);});
     if(fsp) opts.shop_platforms.forEach(w=>{const o=document.createElement('option');o.value=w;o.textContent=w;fsp.appendChild(o);});
     if(fb) opts.brands.forEach(b=>{const o=document.createElement('option');o.value=b;o.textContent=b;fb.appendChild(o);});
+    if(fco) (opts.countries||[]).forEach(c=>{const o=document.createElement('option');o.value=c;o.textContent=c;fco.appendChild(o);});
   }catch(e){console.warn('sales filter-options load failed',e)}
   loadSales();
 }
 
 async function loadSales(){
   try{
-    const ss=document.getElementById('sr-ss')?.value||'',sp=document.getElementById('sr-sp')?.value||'',b=document.getElementById('sr-b')?.value||'',iv=document.getElementById('sr-iv')?.value||'',sd=document.getElementById('sr-sd')?.value||'',ed=document.getElementById('sr-ed')?.value||'';
+    const ss=document.getElementById('sr-ss')?.value||'',sp=document.getElementById('sr-sp')?.value||'',b=document.getElementById('sr-b')?.value||'',iv=document.getElementById('sr-iv')?.value||'',sd=document.getElementById('sr-sd')?.value||'',ed=document.getElementById('sr-ed')?.value||'',co=document.getElementById('sr-co')?.value||'';
     let url='/api/sales-records?source_system='+encodeURIComponent(ss)+'&shop_platform='+encodeURIComponent(sp)+'&brand='+encodeURIComponent(b)+'&is_valid='+iv;
+    if(co) url+='&country='+encodeURIComponent(co);
     if(sd) url+='&start_date='+sd;
     if(ed) url+='&end_date='+ed;
     const data=await api(url);
@@ -3896,7 +3901,7 @@ async function loadSales(){
     salesAllFilteredIds = data.map(d=>d.id);
     salesSelectAllMode = false;
     updateSalesBatchBar();
-    const cols = [t("po.018", "来源系统"),t("po.019", "订单号"),t("col.order_date", "下单日期"),t("col.channel", "渠道"),t("app.112", "\u54c1\u724c"),'SKU',t("app.232", "\u4ea7\u54c1\u540d"),t("col.quantity", "数量"),t("app.640", "\u6709\u6548\u8ba2\u5355"),t("po.022", "\u539f\u59cb\u8ba2\u5355\u72b6\u6001"),t("col.remark", "备注")];
+    const cols = [t("po.018", "来源系统"),t("po.019", "订单号"),t("col.order_date", "下单日期"),t("col.country", "国家"),t("col.channel", "渠道"),t("app.112", "\u54c1\u724c"),'SKU',t("app.232", "\u4ea7\u54c1\u540d"),t("col.quantity", "数量"),t("app.640", "\u6709\u6548\u8ba2\u5355"),t("po.022", "\u539f\u59cb\u8ba2\u5355\u72b6\u6001"),t("col.remark", "备注")];
     const _srTable=document.getElementById('sr-table'); if(!_srTable) return;
     _srTable.innerHTML=t('html.loadSales', '<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th style="width:32px"><input type="checkbox" id="sr-check-all" onchange="toggleAllSales(this.checked)"></th><th style="white-space:nowrap"><a href="javascript:void(0)" onclick="selectAllSalesFiltered()" style="font-size:11px;color:var(--primary,#2e7d32)">全选全部({v1})</a></th>{v2}</tr></thead><tbody>{v3}</tbody></table></div>', {v1: salesAllFilteredIds.length, v2: cols.slice(1).map(h=>'<th>'+h+'</th>').join(''), v3: !data.length?'<tr><td colspan="'+(cols.length+1)+t('gen.L3188.1','" style="text-align:center;padding:30px;color:#999">暂无数据</td></tr>')
       :data.map(r=>'<tr'+(r.is_valid_order?'':' style="opacity:0.5"')+'>'
@@ -3904,6 +3909,7 @@ async function loadSales(){
         +'<td>'+esc(r.source_system||'-')+'</td>'
         +'<td class="cell-id">'+esc(r.order_no||'-')+'</td>'
         +'<td class="cell-date">'+fmtDate(r.order_date)+'</td>'
+        +'<td>'+esc(r.country||'-')+'</td>'
         +'<td>'+esc(r.shop_platform||'-')+'</td>'
         +'<td>'+esc(r.brand||'-')+'</td>'
         +'<td class="cell-id">'+esc(r.sku_code)+'</td>'
