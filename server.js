@@ -76,8 +76,7 @@ const PUBLIC_AUTH_PREFIXES = [
   '/api/auth/local/login',
   '/api/logout',
   '/api/health',
-  '/api/version',
-  '/api/admin/fix-sales-channel-brand'
+  '/api/version'
 ];
 function reqPath(req) { return (req.originalUrl || req.url || '').split('?')[0]; }
 
@@ -12276,135 +12275,6 @@ if (require.main === module) {
     process.exit(1);
   });
 }
-
-// TEMP-DIAG-02: 一次性诊断 sales_records channel/brand 分布（只读）
-// 用完即删
-app.get('/api/admin/diag-sales-channel-brand', requireApiPermission('ci_edit'), asyncHandler(async (req, res) => {
-  try {
-    const isPg = (process.env.DB_DRIVER || 'sqlite').toLowerCase() === 'pg';
-    let channelDist, brandDist, total;
-    if (isPg) {
-      const exec = require('./db-pg');
-      channelDist = (await exec.query("SELECT COALESCE(shop_platform, '') AS channel, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(shop_platform, '') ORDER BY COUNT(*) DESC")).rows;
-      brandDist = (await exec.query("SELECT COALESCE(brand, '') AS brand, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(brand, '') ORDER BY COUNT(*) DESC")).rows;
-      total = (await exec.query("SELECT COUNT(*) AS cnt FROM sales_records")).rows[0].cnt;
-    } else {
-      channelDist = query("SELECT COALESCE(shop_platform, '') AS channel, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(shop_platform, '') ORDER BY COUNT(*) DESC").rows;
-      brandDist = query("SELECT COALESCE(brand, '') AS brand, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(brand, '') ORDER BY COUNT(*) DESC").rows;
-      total = queryOne("SELECT COUNT(*) AS cnt FROM sales_records").cnt;
-    }
-    res.json({ success: true, total, channel_distribution: channelDist, brand_distribution: brandDist });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-}));
-
-// TEMP-FIX-03: 一次性修正 sales_records channel/brand 历史数据标准化
-// 临时免认证 + 密钥保护，用完即删
-app.post('/api/admin/fix-sales-channel-brand', asyncHandler(async (req, res) => {
-  // 密钥校验（替代 requireApiPermission，因端点已加入 PUBLIC_AUTH_PREFIXES）
-  if (req.headers['x-fix-key'] !== 'FIX_2026_08_04_CB') {
-    return res.status(403).json({ error: '密钥无效' });
-  }
-  try {
-    const isPg = (process.env.DB_DRIVER || 'sqlite').toLowerCase() === 'pg';
-    let result;
-
-    if (isPg) {
-      const exec = require('./db-pg');
-
-      // 0. 修改前快照
-      const beforeChannel = (await exec.query("SELECT COALESCE(shop_platform, '') AS channel, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(shop_platform, '') ORDER BY COUNT(*) DESC")).rows;
-      const beforeBrand = (await exec.query("SELECT COALESCE(brand, '') AS brand, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(brand, '') ORDER BY COUNT(*) DESC")).rows;
-      const beforeTotal = (await exec.query("SELECT COUNT(*) AS cnt FROM sales_records")).rows[0].cnt;
-
-      // 1. 单事务：DROP INDEX → UPDATE → 去重 → CREATE INDEX
-      let ch1, ch2, ch3, ch4, br1, br2, br3, br4, dedupCount;
-      await exec.transaction(async () => {
-        await exec.run('DROP INDEX IF EXISTS idx_sales_records_unique');
-
-        ch1 = (await exec.run("UPDATE sales_records SET shop_platform = '线上' WHERE shop_platform = '线上订单'")).changes || 0;
-        ch2 = (await exec.run("UPDATE sales_records SET shop_platform = '线上' WHERE shop_platform = '线上渠道'")).changes || 0;
-        ch3 = (await exec.run("UPDATE sales_records SET shop_platform = '线下' WHERE shop_platform = '线下渠道'")).changes || 0;
-        ch4 = (await exec.run("UPDATE sales_records SET shop_platform = '线下' WHERE shop_platform = '线下订单'")).changes || 0;
-        br1 = (await exec.run("UPDATE sales_records SET brand = 'Redragon' WHERE brand = 'Redragon Warehouse'")).changes || 0;
-        br2 = (await exec.run("UPDATE sales_records SET brand = 'Netac' WHERE brand = 'Netac Warehouse'")).changes || 0;
-        br3 = (await exec.run("UPDATE sales_records SET brand = 'BOYA' WHERE brand = 'Boya Warehouse'")).changes || 0;
-        br4 = (await exec.run("UPDATE sales_records SET brand = 'Joypeer' WHERE brand = 'Joypeer Warehouse'")).changes || 0;
-
-        // 去重：标准化后产生相同 (source_system, order_no, sku_code, shop_platform) 的行，保留 ctid 最小的
-        const dedupRes = await exec.run("DELETE FROM sales_records a USING sales_records b WHERE a.ctid > b.ctid AND a.source_system = b.source_system AND a.order_no = b.order_no AND a.sku_code = b.sku_code AND COALESCE(a.shop_platform, '') = COALESCE(b.shop_platform, '')");
-        dedupCount = dedupRes.changes || 0;
-
-        await exec.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_sales_records_unique ON sales_records(source_system, order_no, sku_code, COALESCE(shop_platform, ''))");
-      });
-
-      // 2. 修改后分布
-      const afterChannel = (await exec.query("SELECT COALESCE(shop_platform, '') AS channel, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(shop_platform, '') ORDER BY COUNT(*) DESC")).rows;
-      const afterBrand = (await exec.query("SELECT COALESCE(brand, '') AS brand, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(brand, '') ORDER BY COUNT(*) DESC")).rows;
-      const afterTotal = (await exec.query("SELECT COUNT(*) AS cnt FROM sales_records")).rows[0].cnt;
-
-      // 3. 随机抽查
-      const sampleOnline = (await exec.query("SELECT order_no, sku_code, shop_platform, brand, country, source_system FROM sales_records WHERE shop_platform = '线上' LIMIT 2")).rows;
-      const sampleOffline = (await exec.query("SELECT order_no, sku_code, shop_platform, brand, country, source_system FROM sales_records WHERE shop_platform = '线下' LIMIT 2")).rows;
-      const sampleBoya = (await exec.query("SELECT order_no, sku_code, shop_platform, brand, country, source_system FROM sales_records WHERE brand = 'BOYA' LIMIT 2")).rows;
-      const sampleJoypeer = (await exec.query("SELECT order_no, sku_code, shop_platform, brand, country, source_system FROM sales_records WHERE brand = 'Joypeer' LIMIT 2")).rows;
-
-      result = {
-        success: true,
-        summary: {
-          channel: { '线上订单→线上': ch1, '线上渠道→线上': ch2, '线下渠道→线下': ch3, '线下订单→线下': ch4, total: ch1 + ch2 + ch3 + ch4 },
-          brand: { 'Redragon Warehouse→Redragon': br1, 'Netac Warehouse→Netac': br2, 'Boya Warehouse→BOYA': br3, 'Joypeer Warehouse→Joypeer': br4, total: br1 + br2 + br3 + br4 },
-          dedup_removed: dedupCount,
-          before_total: beforeTotal,
-          after_total: afterTotal
-        },
-        before: { channel_distribution: beforeChannel, brand_distribution: beforeBrand },
-        after: { channel_distribution: afterChannel, brand_distribution: afterBrand },
-        samples: { online: sampleOnline, offline: sampleOffline, boya: sampleBoya, joypeer: sampleJoypeer }
-      };
-    } else {
-      const beforeChannel = query("SELECT COALESCE(shop_platform, '') AS channel, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(shop_platform, '') ORDER BY COUNT(*) DESC").rows;
-      const beforeBrand = query("SELECT COALESCE(brand, '') AS brand, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(brand, '') ORDER BY COUNT(*) DESC").rows;
-      const beforeTotal = queryOne("SELECT COUNT(*) AS cnt FROM sales_records").cnt;
-      run('DROP INDEX IF EXISTS idx_sales_records_unique');
-      const ch1 = run("UPDATE sales_records SET shop_platform = '线上' WHERE shop_platform = '线上订单'").changes || 0;
-      const ch2 = run("UPDATE sales_records SET shop_platform = '线上' WHERE shop_platform = '线上渠道'").changes || 0;
-      const ch3 = run("UPDATE sales_records SET shop_platform = '线下' WHERE shop_platform = '线下渠道'").changes || 0;
-      const ch4 = run("UPDATE sales_records SET shop_platform = '线下' WHERE shop_platform = '线下订单'").changes || 0;
-      const br1 = run("UPDATE sales_records SET brand = 'Redragon' WHERE brand = 'Redragon Warehouse'").changes || 0;
-      const br2 = run("UPDATE sales_records SET brand = 'Netac' WHERE brand = 'Netac Warehouse'").changes || 0;
-      const br3 = run("UPDATE sales_records SET brand = 'BOYA' WHERE brand = 'Boya Warehouse'").changes || 0;
-      const br4 = run("UPDATE sales_records SET brand = 'Joypeer' WHERE brand = 'Joypeer Warehouse'").changes || 0;
-      const dedupCount = run("DELETE FROM sales_records WHERE rowid NOT IN (SELECT MIN(rowid) FROM sales_records GROUP BY source_system, order_no, sku_code, COALESCE(shop_platform, ''))").changes || 0;
-      run("CREATE UNIQUE INDEX IF NOT EXISTS idx_sales_records_unique ON sales_records(source_system, order_no, sku_code, COALESCE(shop_platform, ''))");
-      const afterChannel = query("SELECT COALESCE(shop_platform, '') AS channel, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(shop_platform, '') ORDER BY COUNT(*) DESC").rows;
-      const afterBrand = query("SELECT COALESCE(brand, '') AS brand, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(brand, '') ORDER BY COUNT(*) DESC").rows;
-      const afterTotal = queryOne("SELECT COUNT(*) AS cnt FROM sales_records").cnt;
-      const sampleOnline = query("SELECT order_no, sku_code, shop_platform, brand, country, source_system FROM sales_records WHERE shop_platform = '线上' LIMIT 2").rows;
-      const sampleOffline = query("SELECT order_no, sku_code, shop_platform, brand, country, source_system FROM sales_records WHERE shop_platform = '线下' LIMIT 2").rows;
-      const sampleBoya = query("SELECT order_no, sku_code, shop_platform, brand, country, source_system FROM sales_records WHERE brand = 'BOYA' LIMIT 2").rows;
-      const sampleJoypeer = query("SELECT order_no, sku_code, shop_platform, brand, country, source_system FROM sales_records WHERE brand = 'Joypeer' LIMIT 2").rows;
-
-      result = {
-        success: true,
-        summary: {
-          channel: { '线上订单→线上': ch1, '线上渠道→线上': ch2, '线下渠道→线下': ch3, '线下订单→线下': ch4, total: ch1 + ch2 + ch3 + ch4 },
-          brand: { 'Redragon Warehouse→Redragon': br1, 'Netac Warehouse→Netac': br2, 'Boya Warehouse→BOYA': br3, 'Joypeer Warehouse→Joypeer': br4, total: br1 + br2 + br3 + br4 },
-          dedup_removed: dedupCount,
-          before_total: beforeTotal,
-          after_total: afterTotal
-        },
-        before: { channel_distribution: beforeChannel, brand_distribution: beforeBrand },
-        after: { channel_distribution: afterChannel, brand_distribution: afterBrand },
-        samples: { online: sampleOnline, offline: sampleOffline, boya: sampleBoya, joypeer: sampleJoypeer }
-      };
-    }
-
-    res.json(result);
-  } catch (e) {
-    console.error('[FIX-CHANNEL-BRAND] Error:', e.message, e.stack);
-    res.status(500).json({ error: e.message, stack: e.stack });
-  }
-}));
 
 // PAY-CORE P0-1：供 scripts/backfill-payable-items.js 复用，不影响运行时
 module.exports = {
