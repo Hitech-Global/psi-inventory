@@ -76,7 +76,8 @@ const PUBLIC_AUTH_PREFIXES = [
   '/api/auth/local/login',
   '/api/logout',
   '/api/health',
-  '/api/version'
+  '/api/version',
+  '/api/admin/diag-hci-tables'
 ];
 function reqPath(req) { return (req.originalUrl || req.url || '').split('?')[0]; }
 
@@ -12275,6 +12276,75 @@ if (require.main === module) {
     process.exit(1);
   });
 }
+
+// PAY-CORE P0-1：供 scripts/backfill-payable-items.js 复用，不影响运行时
+
+// TEMP-DIAG-HCI: 只读检查 historical_commercial_invoice_items 表是否存在及列结构
+// 临时免认证 + 密钥保护，用完即删
+app.get('/api/admin/diag-hci-tables', asyncHandler(async (req, res) => {
+  if (req.headers['x-diag-key'] !== 'DIAG_HCI_2026_08_05') {
+    return res.status(403).json({ error: '密钥无效' });
+  }
+  try {
+    const isPg = (process.env.DB_DRIVER || 'sqlite').toLowerCase() === 'pg';
+    if (!isPg) {
+      return res.json({ error: '当前非 PG 模式，跳过检查' });
+    }
+    const exec = require('./db-pg');
+
+    // 1. 检查两张表是否存在
+    const tableCheck = (await exec.query(`
+      SELECT
+        to_regclass('historical_commercial_invoices') AS hci_table,
+        to_regclass('historical_commercial_invoice_items') AS hci_items_table
+    `)).rows[0];
+
+    let itemsColumns = null;
+    if (tableCheck.hci_items_table) {
+      // 2. 如果 items 表存在，查询列结构
+      itemsColumns = (await exec.query(`
+        SELECT column_name, data_type
+        FROM information_schema.columns
+        WHERE table_name = 'historical_commercial_invoice_items'
+        ORDER BY ordinal_position
+      `)).rows;
+    }
+
+    // 3. 额外检查：尝试直接查 items 表行数
+    let itemsCount = null;
+    let itemsCountError = null;
+    try {
+      itemsCount = (await exec.query('SELECT COUNT(*) AS cnt FROM historical_commercial_invoice_items')).rows[0].cnt;
+    } catch (ce) {
+      itemsCountError = ce.message;
+    }
+
+    // 4. 检查主表行数
+    let hciCount = null;
+    let hciCountError = null;
+    try {
+      hciCount = (await exec.query('SELECT COUNT(*) AS cnt FROM historical_commercial_invoices')).rows[0].cnt;
+    } catch (ce) {
+      hciCountError = ce.message;
+    }
+
+    res.json({
+      success: true,
+      table_existence: {
+        historical_commercial_invoices: tableCheck.hci_table,
+        historical_commercial_invoice_items: tableCheck.hci_items_table
+      },
+      hci_main_count: hciCount,
+      hci_main_count_error: hciCountError,
+      items_count: itemsCount,
+      items_count_error: itemsCountError,
+      items_columns: itemsColumns
+    });
+  } catch (e) {
+    console.error('[DIAG-HCI] Error:', e.message, e.stack);
+    res.status(500).json({ error: e.message, stack: e.stack });
+  }
+}));
 
 // PAY-CORE P0-1：供 scripts/backfill-payable-items.js 复用，不影响运行时
 module.exports = {
