@@ -7452,7 +7452,7 @@ async function editPI(id){
     const supOpts=suppliers.map(s=>'<option value="'+s.id+'" data-name="'+esc(s.name)+'" data-last="'+esc(s.last_used_payment_term_id||'')+'"'+(s.id===pi.supplier_id?' selected':'')+'>'+esc(s.name)+'</option>').join('');
     const curOpts=['USD','RMB','IDR','MYR','THB'].map(c=>'<option'+(c===pi.currency?' selected':'')+'>'+c+'</option>').join('');
     const body='<div class="form-card" style="box-shadow:none;padding:0">'
-      +t('gen.L5468.2','<div style="margin-bottom:12px;padding:8px 12px;background:#f0f5ff;border:1px solid #adc6ff;border-radius:6px;font-size:12px;color:#333">编辑模式：可修改表头与明细并实时预览差异；保存将调用后端 PUT（付款条件变更自动回写供应商上次使用项）。PI号在未进入后续业务阶段时可修改（修改需唯一，系统自动校验）。「关联PO / 供应商 / PI日期 / 币种」为锁定项不可改。</div>')
+      +t('gen.L5468.2','<div style="margin-bottom:12px;padding:8px 12px;background:#f0f5ff;border:1px solid #adc6ff;border-radius:6px;font-size:12px;color:#333">编辑模式：可修改表头与明细并实时预览差异；保存将调用后端 PUT（付款条件变更自动回写供应商上次使用项）。PI号在未进入后续业务阶段时可修改（修改需唯一，系统自动校验）。「关联PO / 供应商」为锁定项不可改。</div>')
       +'<div class="form-grid">'
       +piNoField
       +'<div class="form-group"><label>'+t('app.113','国家')+'</label><select id="npi-country" onchange="onPICountryChange()">'+countryOpts+'</select></div>'
@@ -7460,8 +7460,8 @@ async function editPI(id){
       +'<div class="form-group"><label>'+t('app.112','品牌')+'</label><select id="npi-brand"></select></div>'
       +t('gen.L5471.1','<div class="form-group"><label>关联PO（锁定）</label><input type="text" value="')+esc(pi.related_po_no||t("app.140", "\u65e0\u5173\u8054"))+'" disabled></div>'
       +t('gen.L5472.1','<div class="form-group"><label>供应商（锁定）</label><select id="npi-sup" disabled onchange="onPISupplierChange()">')+supOpts+'</select></div>'
-      +t('gen.L5473.1','<div class="form-group"><label>PI日期（锁定）</label><input type="date" id="npi-date" value="')+esc(pi.pi_date||'')+'" disabled></div>'
-      +t('gen.L5474.1','<div class="form-group"><label>币种（锁定）</label><select id="npi-cur" disabled>')+curOpts+'</select></div>'
+      +t('gen.L5473.1','<div class="form-group"><label>PI日期</label><input type="date" id="npi-date" value="')+esc(pi.pi_date||'')+'"></div>'
+      +t('gen.L5474.1','<div class="form-group"><label>币种</label><select id="npi-cur">')+curOpts+'</select></div>'
       +t('gen.L5475.1','<div class="form-group"><label>是否需要定金</label><select id="npi-need-dep" onchange="togglePIDeposit()"><option value="1"')+(piNeedsDeposit(pi.need_deposit)?' selected':'')+t('gen.L5475.2','>是</option><option value="0"')+(!piNeedsDeposit(pi.need_deposit)?' selected':'')+t('gen.L5475.3','>否</option></select></div>')
       +t('gen.L5476.1','<div class="form-group"><label>定金比例(%)</label><input type="number" id="npi-dep" value="')+(pi.deposit_ratio||0)+'"></div>'
       +t('gen.L5477.1','<div class="form-group"><label>预计交期</label><input type="date" id="npi-del" value="')+esc(pi.expected_delivery||'')+'"></div>'
@@ -7514,6 +7514,8 @@ async function saveEditPI(id){
     const termId=termSel?termSel.value:'';
     const paymentTermsText=(termId&&termSel.options[termSel.selectedIndex])?termSel.options[termSel.selectedIndex].textContent:'';
     const d={
+      pi_date:document.getElementById('npi-date')?.value||'',
+      currency:document.getElementById('npi-cur')?.value||'',
       payment_terms:paymentTermsText,
       payment_term_id:termId,
       expected_delivery:document.getElementById('npi-del').value,
