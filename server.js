@@ -6368,6 +6368,11 @@ app.post('/api/logistics-batches/create-with-pl', requireApiPermission('logistic
           [genId('pli'), plId, plNo, d.related_ci_no || ci.ci_no || '', item.sku_code, cartons, qtyPerCarton, totalQty, grossW, netW, cbm, item.remark || '', gwPerCarton, nwPerCarton, cbmPerCarton, len, wid, hgt]);
       });
 
+      // 前端可传入手动输入的总CTN数量，覆盖按明细行累加的值
+      if (d.total_cartons !== undefined && d.total_cartons !== null && d.total_cartons !== '') {
+        totalCartons = parseInt(d.total_cartons) || 0;
+      }
+
       // ====== 步骤 4: 更新 PL Header 汇总 ======
       run('UPDATE packing_lists SET total_qty = ?, total_cartons = ?, total_gross_weight = ?, total_net_weight = ?, total_cbm = ? WHERE id = ?',
         [totalQtyAll, totalCartons, totalGross, totalNet, totalCbm, plId]);
