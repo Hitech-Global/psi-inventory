@@ -8798,8 +8798,12 @@ async function createHistoricalCI(body, req) {
             'UPDATE proforma_invoice_items SET shipped_qty = shipped_qty + ?, unshipped_qty = unshipped_qty - ? WHERE pi_id = ? AND sku_code = ?',
             [qty, qty, piId, item.sku_code]
           );
-          const priceRow = await queryOne('SELECT unit_price FROM proforma_invoice_items WHERE pi_id = ? AND sku_code = ?', [piId, item.sku_code]);
-          piGoodsAmount += qty * (priceRow ? priceRow.unit_price : 0);
+          const priceRow = await queryOne('SELECT unit_price, discount FROM proforma_invoice_items WHERE pi_id = ? AND sku_code = ?', [piId, item.sku_code]);
+          if (priceRow) {
+            const disc = priceRow.discount || 0;
+            const netUnitPrice = priceRow.unit_price * (1 - disc);
+            piGoodsAmount += qty * netUnitPrice;
+          }
         }
         // Update PI shipped/unshipped amounts
         if (piGoodsAmount > 0) {
@@ -8820,6 +8824,29 @@ async function createHistoricalCI(body, req) {
       }
       // HCI-PI-LINK-01: PI 发货数量更新后刷新库存预测数据（在途/已确认未发货/PO未确认PI）
       await updateInventoryTransitData();
+    }
+
+    // 保存 SKU 级成交价格快照（后端计算，不信任前端传值）
+    if (hciItems.length > 0) {
+      for (const item of hciItems) {
+        const qty = item.shipped_qty || 0;
+        if (qty <= 0) continue;
+        const priceRow = await queryOne('SELECT unit_price, discount FROM proforma_invoice_items WHERE pi_id = ? AND sku_code = ?', [item.pi_id, item.sku_code]);
+        if (!priceRow) continue;
+        const up = priceRow.unit_price || 0;
+        const disc = priceRow.discount || 0;
+        const netUp = up * (1 - disc);
+        const ciAmt = qty * netUp;
+        const piRow = await queryOne('SELECT pi_no FROM proforma_invoices WHERE id = ?', [item.pi_id]);
+        await run(
+          `INSERT INTO historical_commercial_invoice_items
+           (id, hci_id, hci_no, pi_id, pi_no, sku_code, shipped_qty, unit_price, discount, net_unit_price, ci_amount)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [await genId('hcii'), historicalId, normalized.historical_ci_no,
+           item.pi_id || '', piRow ? piRow.pi_no : '', item.sku_code,
+           qty, up, disc, netUp, ciAmt]
+        );
+      }
     }
 
     const settlement = await recalculatePaymentSettlement(paymentRequestId);
@@ -8866,6 +8893,7 @@ app.get('/api/historical-commercial-invoices/:id', requireApiPermission('ci_view
   try {
     const historical = queryOne(historicalCISelectSql() + ' WHERE h.id = ?', [req.params.id]);
     if (!historical) return res.status(404).json({ error: '历史 CI 不存在' });
+    historical.items = query('SELECT sku_code, shipped_qty, unit_price, discount, net_unit_price, ci_amount FROM historical_commercial_invoice_items WHERE hci_id = ? ORDER BY created_at, id', [req.params.id]).rows;
     res.json(historical);
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));

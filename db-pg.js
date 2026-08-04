@@ -1167,6 +1167,25 @@ async function initDatabase() {
     )
   `);
 
+  // 历史 CI SKU 级明细（价格快照，创建后不可编辑）
+  await exec(`
+    CREATE TABLE IF NOT EXISTS historical_commercial_invoice_items (
+      id TEXT PRIMARY KEY,
+      hci_id TEXT NOT NULL,
+      hci_no TEXT DEFAULT '',
+      pi_id TEXT DEFAULT '',
+      pi_no TEXT DEFAULT '',
+      sku_code TEXT NOT NULL,
+      shipped_qty INTEGER DEFAULT 0,
+      unit_price NUMERIC(18,4) DEFAULT 0,
+      discount NUMERIC(18,4) DEFAULT 0,
+      net_unit_price NUMERIC(18,4) DEFAULT 0,
+      ci_amount NUMERIC(18,4) DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+  await exec(`CREATE INDEX IF NOT EXISTS ix_hci_items_hci_id ON historical_commercial_invoice_items(hci_id)`);
+
   await exec(`
     CREATE TABLE IF NOT EXISTS commercial_invoice_items (
       id TEXT PRIMARY KEY,

@@ -8219,10 +8219,14 @@ async function aggregateHciPIItems(piIds){
       var pi=await api('/api/proforma-invoices/'+piIds[i]);
       (pi.items||[]).forEach(function(it){
         if((it.unshipped_qty||0)>0.001){
+          var disc=it.discount||0;
+          var up=it.unit_price||0;
+          var netUp=up*(1-disc);
           allItems.push({
             pi_id:pi.id,pi_no:pi.pi_no,sku_code:it.sku_code,
             pi_confirmed_qty:it.pi_confirmed_qty||0,shipped_qty:it.shipped_qty||0,
-            unshipped_qty:it.unshipped_qty||0,unit_price:it.unit_price||0,
+            unshipped_qty:it.unshipped_qty||0,unit_price:up,
+            discount:disc,net_unit_price:netUp,
             reference_customs_rate:it.reference_customs_rate,currency:pi.currency,
             idx:window._hciR++
           });
@@ -8234,21 +8238,25 @@ async function aggregateHciPIItems(piIds){
 
   if(allItems.length===0){preview.style.display='none';if(summary)summary.style.display='none';return;}
 
-  // Build 9-column editable table (matching operational CI)
+  // Build 11-column table (matching operational CI: +原单价/折扣/折后单价)
   var html='<table class="data-table ci-detail-table" style="margin:0;font-size:12px">'+
-    '<colgroup><col style="width:14%"><col style="width:12%"><col style="width:8%"><col style="width:8%"><col style="width:8%"><col style="width:11%"><col style="width:11%"><col style="width:12%"><col style="width:40px"></colgroup>'+
+    '<colgroup><col style="width:12%"><col style="width:10%"><col style="width:7%"><col style="width:7%"><col style="width:7%"><col style="width:10%"><col style="width:8%"><col style="width:7%"><col style="width:8%"><col style="width:10%"><col style="width:40px"></colgroup>'+
     '<thead><tr>'+
     '<th class="ci-col-sku">SKU</th><th class="ci-col-pi">'+t('ci.col.pi_source','PI来源')+'</th>'+
     '<th class="ci-col-right">'+t('ci.col.pi_confirmed','PI总数量')+'</th>'+
     '<th class="ci-col-right">'+t('ci.col.pi_shipped','已出货')+'</th>'+
     '<th class="ci-col-right">'+t('ci.col.pi_unshipped','未出货')+'</th>'+
     '<th class="ci-col-right">'+t('ci.col.ci_qty','本次CI数量')+'</th>'+
-    '<th class="ci-col-right">'+t('field.unit_price','单价')+'</th>'+
+    '<th class="ci-col-right">'+t('field.original_unit_price','原单价')+'</th>'+
+    '<th class="ci-col-right">'+t('field.discount','折扣')+'</th>'+
+    '<th class="ci-col-right">'+t('field.net_unit_price','折后单价')+'</th>'+
     '<th class="ci-col-right">'+t('ci.col.amount','金额')+'</th>'+
     '<th class="ci-col-act">'+t('app.operation','操作')+'</th></tr></thead><tbody>';
 
   allItems.forEach(function(it){
     var cQty=it.pi_confirmed_qty||0,sQty=it.shipped_qty||0,uQty=it.unshipped_qty||0;
+    var disc=it.discount||0;
+    var netUp=it.net_unit_price||0;
     html+='<tr id="hci-r-'+it.idx+'" data-pi-id="'+it.pi_id+'">'+
       '<td class="ci-col-sku">'+esc(it.sku_code)+'</td>'+
       '<td class="ci-col-pi" style="font-size:12px;color:#888">'+esc(it.pi_no)+'</td>'+
@@ -8256,8 +8264,10 @@ async function aggregateHciPIItems(piIds){
       '<td class="ci-col-right" style="color:#888">'+sQty+'</td>'+
       '<td class="ci-col-right" style="color:#888">'+uQty+'</td>'+
       '<td class="ci-col-right"><input type="number" id="hci-rq-'+it.idx+'" value="'+uQty+'" min="0" max="'+uQty+'" onchange="updateHciCISummary()" oninput="updateHciCISummary()"></td>'+
-      '<td class="ci-col-right"><input type="number" step="0.01" id="hci-rp-'+it.idx+'" value="'+it.unit_price+'" onchange="updateHciCISummary()" oninput="updateHciCISummary()"></td>'+
-      '<td class="ci-col-right" style="font-weight:bold" id="hci-ra-'+it.idx+'">'+fmtMoney(uQty*it.unit_price)+'</td>'+
+      '<td class="ci-col-right" style="color:#888">'+fmtMoney(it.unit_price)+'</td>'+
+      '<td class="ci-col-right" style="color:#888">'+(disc>0?(disc*100).toFixed(1)+'%':'—')+'</td>'+
+      '<td class="ci-col-right" style="color:#888">'+fmtMoney(netUp)+'</td>'+
+      '<td class="ci-col-right" style="font-weight:bold" id="hci-ra-'+it.idx+'">'+fmtMoney(uQty*netUp)+'</td>'+
       '<td class="ci-col-act"><button onclick="deleteHciCIRow('+it.idx+')" style="color:#bbb;border:none;background:none;cursor:pointer;font-size:13px;line-height:1;padding:2px 4px" title="'+t('common.delete','删除')+'">×</button></td>'+
       '</tr>';
   });
@@ -8281,9 +8291,10 @@ async function aggregateHciPIItems(piIds){
 function getHciItemTotal(){
   var allItems=window._hciAllItems||[],total=0;
   allItems.forEach(function(it){
-    var qe=document.getElementById('hci-rq-'+it.idx),pe=document.getElementById('hci-rp-'+it.idx);
-    var q=parseInt(qe?qe.value:0)||0,p=parseFloat(pe?pe.value:0)||0;
-    if(q>0)total+=q*p;
+    var qe=document.getElementById('hci-rq-'+it.idx);
+    var q=parseInt(qe?qe.value:0)||0;
+    var netUp=it.net_unit_price||0;
+    if(q>0)total+=q*netUp;
   });
   return total;
 }
@@ -8295,9 +8306,8 @@ function updateHciCISummary(){
     var qe=document.getElementById('hci-rq-'+it.idx);
     var q=parseInt(qe?qe.value:0)||0;
     if(q>0){totalQty+=q;
-      var pe=document.getElementById('hci-rp-'+it.idx);
-      var p=parseFloat(pe?pe.value:0)||0;
-      var ae=document.getElementById('hci-ra-'+it.idx);if(ae)ae.textContent=fmtMoney(q*p);}
+      var netUp=it.net_unit_price||0;
+      var ae=document.getElementById('hci-ra-'+it.idx);if(ae)ae.textContent=fmtMoney(q*netUp);}
   });
   // linked mode: auto-fill gross_goods_amount from CI detail total
   var modeChk=document.querySelector('input[name="hci-pi-mode"]:checked');
@@ -8377,11 +8387,11 @@ async function saveHistoricalCI(){
   const body={historical_ci_no:document.getElementById('hci-no').value.trim(),supplier_id:supplier.value,supplier_name:document.getElementById('hci-supplier-name').value.trim(),brand_name:document.getElementById('hci-brand').value.trim(),country:document.getElementById('hci-country').value,ci_date:document.getElementById('hci-date').value,actual_ship_date:document.getElementById('hci-ship-date').value,currency:document.getElementById('hci-currency').value,gross_goods_amount:gross,historical_paid_amount:paid,historical_paid_date:document.getElementById('hci-paid-date').value,payment_terms:document.getElementById('hci-terms').value.trim(),due_date:document.getElementById('hci-due').value,source_note:document.getElementById('hci-note').value.trim(),source_mode:'historical',idempotency_key:document.getElementById('hci-idempotency').value,warehouse_name:(document.getElementById('hci-wh')||{}).value||'',warehouse_id:(document.getElementById('hci-wh-id')||{}).value||undefined};
   // Attach PI references when linked mode
   if(piIds.length>0){body.related_pi_ids=piIds;body.related_pi_nos=piNos;
-    // HCI-PI-LINK-01: 收集 CI 明细 (pi_id/sku_code/shipped_qty) 发送给服务端，确保 PI 发货状态同步
+    // HCI-PI-LINK-01: 收集 CI 明细 (pi_id/sku_code/shipped_qty/unit_price/discount/net_unit_price) 发送给服务端，确保 PI 发货状态同步
     var ciItems=[];(window._hciAllItems||[]).forEach(function(it){
       var qe=document.getElementById('hci-rq-'+it.idx);
       var q=parseInt(qe?qe.value:0)||0;
-      if(q>0)ciItems.push({pi_id:it.pi_id,sku_code:it.sku_code,shipped_qty:q});
+      if(q>0)ciItems.push({pi_id:it.pi_id,sku_code:it.sku_code,shipped_qty:q,unit_price:it.unit_price,discount:it.discount,net_unit_price:it.net_unit_price});
     });
     if(ciItems.length>0)body.items=ciItems;
   }
@@ -8414,7 +8424,28 @@ async function viewHistoricalCI(id,backPay,backMode){
       (canEdit?t('gen.L5819.1','<div class="flex gap-8 mb-8"><select id="hci-att-type" class="form-control" style="max-width:180px"><option value="ci_document">原始 CI</option><option value="payment_proof">历史付款凭证</option><option value="statement">对账单</option><option value="terms_proof">账期证明</option><option value="other">其他说明</option></select><button class="btn btn-primary btn-sm" onclick="uploadHistoricalAttachment()">上传附件</button></div>'):'')+
       '<div id="hci-att-list">'+historicalAttachmentListHtml(attaches,canEdit)+'</div>'+
       t('gen.L5821.1','<div style="font-size:12px;color:#999;margin-top:8px">附件仅作为原始证据与审计留痕，不参与应付、抵扣、抹零、未结、WAC、库存或订单预测。</div></div>');
-    openModal(t('modal.title.viewHistoricalCI', '历史 CI - {v1}', {v1: esc(h.historical_ci_no)}),t('modal.body.viewHistoricalCI', '<div class="detail-card" style="box-shadow:none;padding:0"><div style="background:#f6ffed;border:1px solid #b7eb8f;border-radius:6px;padding:10px;margin-bottom:14px;font-size:13px">source_mode = historical；仅参与采购金额和应付统计，不进入 PO/PI/PL/Inbound、库存、WAC 或订单预测。</div><div class="detail-grid">{v1}<div class="detail-item"><span class="detail-label">'+t('field.actual_ship_date','实际出货日期')+'</span><span class="detail-value{v2}">{v3}</span></div>{v4}</div>{v5}</div>', {v1: [[t('gen.L5822.1','历史CI编号'),h.historical_ci_no],[t('gen.L5822.2','供应商'),h.supplier_name],[t('gen.L5822.3','品牌'),h.brand_name],[t('gen.L5822.4','国家'),h.country],[t('gen.L5822.5','CI日期'),fmtDate(h.ci_date)],[t('gen.L5822.6','币种'),h.currency],[t('gen.L5822.7','总货款'),fmtMoney(h.gross_goods_amount,h.currency)],[t('gen.L5822.8','导入历史已付'),fmtMoney(h.historical_paid_amount,h.currency)],[t('gen.L5822.9','历史付款日期'),h.historical_paid_date||t('gen.L5822.10','未知')],[t('gen.L5822.11','后续已付'),fmtMoney(h.subsequent_paid_amount,h.currency)],[t('gen.L5822.12','抵扣'),fmtMoney(h.deduction_amount,h.currency)],[t('gen.L5822.13','抹零'),fmtMoney(h.rounding_amount,h.currency)],[t('gen.L5822.14','未结金额'),fmtMoney(h.unpaid_amount,h.currency)],[t('gen.L5822.15','付款状态'),PAY_STATUS_MAP[h.payment_status]||h.payment_status],[t('gen.L5822.16','付款条件'),h.payment_terms||'—'],[t('gen.L5822.17','到期日'),fmtDate(h.due_date)],[t('gen.L5822.18','原始凭证或备注'),h.source_note||'—']].map(x=>'<div class="detail-item"><span class="detail-label">'+x[0]+'</span><span class="detail-value">'+esc(x[1])+'</span></div>').join(''), v2: !h.actual_ship_date?' text-warning':'', v3: h.actual_ship_date?esc(fmtDate(h.actual_ship_date)):t("app.998", "\u5f85\u8865\u5145"), v4: canEdit?'<div class="detail-item" style="grid-column:1/-1"><button class="btn btn-secondary btn-sm" onclick="editActualShipDate(\'historical\',\''+h.id+'\',\''+(h.actual_ship_date||'')+t('gen.L5822.19','\')">补充/更正实际出货日期</button></div>'):'', v5: attachSection}),t('modal.footer.viewHistoricalCI', '{v1}{v2}<button class="btn btn-secondary" onclick="closeModal()">关闭</button>', {v1: back, v2: hasPermission('payment_view')?'<button class="btn btn-primary" onclick="viewPayment(\''+h.payment_request_id+t('gen.L5822.20','\')">付款与结算</button>'):''}))
+    var itemsSection='';
+    if(h.items&&h.items.length>0){
+      itemsSection='<div class="detail-section"><h3>'+t('hci.items_title','SKU 成交价格明细')+'</h3>'+
+        '<table class="data-table" style="box-shadow:none;font-size:12px">'+
+        '<thead><tr><th>SKU</th><th class="ci-col-right">'+t('ci.col.ci_qty','数量')+'</th>'+
+        '<th class="ci-col-right">'+t('field.original_unit_price','原单价')+'</th>'+
+        '<th class="ci-col-right">'+t('field.discount','折扣')+'</th>'+
+        '<th class="ci-col-right">'+t('field.net_unit_price','折后单价')+'</th>'+
+        '<th class="ci-col-right">'+t('ci.col.amount','金额')+'</th></tr></thead><tbody>'+
+        h.items.map(function(it){
+          var disc=it.discount||0;
+          return '<tr><td>'+esc(it.sku_code)+'</td>'+
+            '<td class="ci-col-right">'+(it.shipped_qty||0)+'</td>'+
+            '<td class="ci-col-right">'+fmtMoney(it.unit_price)+'</td>'+
+            '<td class="ci-col-right">'+(disc>0?(disc*100).toFixed(1)+'%':'—')+'</td>'+
+            '<td class="ci-col-right">'+fmtMoney(it.net_unit_price)+'</td>'+
+            '<td class="ci-col-right" style="font-weight:bold">'+fmtMoney(it.ci_amount)+'</td></tr>';
+        }).join('')+
+        '</tbody></table>'+
+        '<div style="font-size:12px;color:#999;margin-top:8px">'+t('hci.items_note','SKU 级成交价格快照，创建时锁定，不可编辑')+'</div></div>';
+    }
+    openModal(t('modal.title.viewHistoricalCI', '历史 CI - {v1}', {v1: esc(h.historical_ci_no)}),t('modal.body.viewHistoricalCI', '<div class="detail-card" style="box-shadow:none;padding:0"><div style="background:#f6ffed;border:1px solid #b7eb8f;border-radius:6px;padding:10px;margin-bottom:14px;font-size:13px">source_mode = historical；仅参与采购金额和应付统计，不进入 PO/PI/PL/Inbound、库存、WAC 或订单预测。</div><div class="detail-grid">{v1}<div class="detail-item"><span class="detail-label">'+t('field.actual_ship_date','实际出货日期')+'</span><span class="detail-value{v2}">{v3}</span></div>{v4}</div>{v5}</div>', {v1: [[t('gen.L5822.1','历史CI编号'),h.historical_ci_no],[t('gen.L5822.2','供应商'),h.supplier_name],[t('gen.L5822.3','品牌'),h.brand_name],[t('gen.L5822.4','国家'),h.country],[t('gen.L5822.5','CI日期'),fmtDate(h.ci_date)],[t('gen.L5822.6','币种'),h.currency],[t('gen.L5822.7','总货款'),fmtMoney(h.gross_goods_amount,h.currency)],[t('gen.L5822.8','导入历史已付'),fmtMoney(h.historical_paid_amount,h.currency)],[t('gen.L5822.9','历史付款日期'),h.historical_paid_date||t('gen.L5822.10','未知')],[t('gen.L5822.11','后续已付'),fmtMoney(h.subsequent_paid_amount,h.currency)],[t('gen.L5822.12','抵扣'),fmtMoney(h.deduction_amount,h.currency)],[t('gen.L5822.13','抹零'),fmtMoney(h.rounding_amount,h.currency)],[t('gen.L5822.14','未结金额'),fmtMoney(h.unpaid_amount,h.currency)],[t('gen.L5822.15','付款状态'),PAY_STATUS_MAP[h.payment_status]||h.payment_status],[t('gen.L5822.16','付款条件'),h.payment_terms||'—'],[t('gen.L5822.17','到期日'),fmtDate(h.due_date)],[t('gen.L5822.18','原始凭证或备注'),h.source_note||'—']].map(x=>'<div class="detail-item"><span class="detail-label">'+x[0]+'</span><span class="detail-value">'+esc(x[1])+'</span></div>').join(''), v2: !h.actual_ship_date?' text-warning':'', v3: h.actual_ship_date?esc(fmtDate(h.actual_ship_date)):t("app.998", "\u5f85\u8865\u5145"), v4: canEdit?'<div class="detail-item" style="grid-column:1/-1"><button class="btn btn-secondary btn-sm" onclick="editActualShipDate(\'historical\',\''+h.id+'\',\''+(h.actual_ship_date||'')+t('gen.L5822.19','\')">补充/更正实际出货日期</button></div>'):'', v5: itemsSection+attachSection}),t('modal.footer.viewHistoricalCI', '{v1}{v2}<button class="btn btn-secondary" onclick="closeModal()">关闭</button>', {v1: back, v2: hasPermission('payment_view')?'<button class="btn btn-primary" onclick="viewPayment(\''+h.payment_request_id+t('gen.L5822.20','\')">付款与结算</button>'):''}))
   }catch(e){showToast(e.message,'danger')}
 }
 function parseHistoricalAttachments(val){ if(!val)return[]; try{ const v=typeof val==='string'?JSON.parse(val):val; return Array.isArray(v)?v:(v&&typeof v==='object'?[v]:[]); }catch(e){ return []; } }

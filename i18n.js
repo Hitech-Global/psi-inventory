@@ -1692,9 +1692,11 @@
   I18N.dict.en["ci.summary.qty"] = "Total Qty: {v1} pcs"; I18N.dict.id["ci.summary.qty"] = "Total Jml: {v1} pcs";
   I18N.dict.en["ci.summary.amt"] = "CI Amount: {v1} {v2}"; I18N.dict.id["ci.summary.amt"] = "Jumlah CI: {v1} {v2}";
   I18N.dict.en["ci.col.amount"] = "Amount"; I18N.dict.id["ci.col.amount"] = "Jumlah";
-  I18N.dict.en["field.original_unit_price"] = "Original Unit Price"; I18N.dict.id["field.original_unit_price"] = "Harga Satuan Asli";
-  I18N.dict.en["field.discount"] = "Discount"; I18N.dict.id["field.discount"] = "Diskon";
-  I18N.dict.en["field.net_unit_price"] = "Net Unit Price"; I18N.dict.id["field.net_unit_price"] = "Harga Satuan Bersih";
+  I18N.dict.en["field.original_unit_price"] = "Original Unit Price"; I18N.dict.id["field.original_unit_price"] = "Harga Satuan Asli"; I18N.dict.zh["field.original_unit_price"] = "原单价";
+  I18N.dict.en["field.discount"] = "Discount"; I18N.dict.id["field.discount"] = "Diskon"; I18N.dict.zh["field.discount"] = "折扣";
+  I18N.dict.en["field.net_unit_price"] = "Net Unit Price"; I18N.dict.id["field.net_unit_price"] = "Harga Satuan Bersih"; I18N.dict.zh["field.net_unit_price"] = "折后单价";
+  I18N.dict.en["hci.items_title"] = "SKU Transaction Details"; I18N.dict.id["hci.items_title"] = "Detail Transaksi SKU"; I18N.dict.zh["hci.items_title"] = "SKU 成交价格明细";
+  I18N.dict.en["hci.items_note"] = "SKU-level transaction price snapshot, locked at creation, not editable"; I18N.dict.id["hci.items_note"] = "Snapshot harga transaksi SKU, dikunci saat dibuat, tidak dapat diedit"; I18N.dict.zh["hci.items_note"] = "SKU 级成交价格快照，创建时锁定，不可编辑";
   I18N.dict.en["cost.section_ci_items"] = "📋 CI Items"; I18N.dict.id["cost.section_ci_items"] = "📋 Item CI";
   I18N.dict.en["ci.select_supplier_first"] = "Please select supplier first"; I18N.dict.id["ci.select_supplier_first"] = "Silakan pilih pemasok terlebih dahulu";
   I18N.dict.en["ci.select_supplier_first_hint"] = "Please select supplier first"; I18N.dict.id["ci.select_supplier_first_hint"] = "Silakan pilih pemasok terlebih dahulu";
