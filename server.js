@@ -12276,6 +12276,26 @@ if (require.main === module) {
   });
 }
 
+// TEMP-DIAG-02: 一次性诊断 sales_records channel/brand 分布（只读）
+// 用完即删
+app.get('/api/admin/diag-sales-channel-brand', requireApiPermission('ci_edit'), asyncHandler(async (req, res) => {
+  try {
+    const isPg = (process.env.DB_DRIVER || 'sqlite').toLowerCase() === 'pg';
+    let channelDist, brandDist, total;
+    if (isPg) {
+      const exec = require('./db-pg');
+      channelDist = (await exec.query("SELECT COALESCE(shop_platform, '') AS channel, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(shop_platform, '') ORDER BY COUNT(*) DESC")).rows;
+      brandDist = (await exec.query("SELECT COALESCE(brand, '') AS brand, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(brand, '') ORDER BY COUNT(*) DESC")).rows;
+      total = (await exec.query("SELECT COUNT(*) AS cnt FROM sales_records")).rows[0].cnt;
+    } else {
+      channelDist = query("SELECT COALESCE(shop_platform, '') AS channel, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(shop_platform, '') ORDER BY COUNT(*) DESC").rows;
+      brandDist = query("SELECT COALESCE(brand, '') AS brand, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(brand, '') ORDER BY COUNT(*) DESC").rows;
+      total = queryOne("SELECT COUNT(*) AS cnt FROM sales_records").cnt;
+    }
+    res.json({ success: true, total, channel_distribution: channelDist, brand_distribution: brandDist });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+}));
+
 // PAY-CORE P0-1：供 scripts/backfill-payable-items.js 复用，不影响运行时
 module.exports = {
   createPayableItemFromSource,
