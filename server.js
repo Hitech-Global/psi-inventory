@@ -12319,6 +12319,71 @@ app.get('/api/admin/diag-sales-distribution', requireApiPermission('ci_edit'), a
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
+// TEMP-FIX-02: 一次性修正 sales_records 的 country 和 source_system 历史数据
+// 用完即删
+app.post('/api/admin/fix-sales-history', requireApiPermission('ci_edit'), asyncHandler(async (req, res) => {
+  try {
+    const isPg = (process.env.DB_DRIVER || 'sqlite').toLowerCase() === 'pg';
+    let exec, beforeCountry, beforeSource, afterCountry, afterSource, countryRows, sourceRows, sampleMy, sampleId;
+
+    if (isPg) {
+      exec = require('./db-pg');
+
+      // 1. 修改前快照
+      beforeCountry = (await exec.query("SELECT COALESCE(country, '') AS country, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(country, '') ORDER BY COUNT(*) DESC")).rows;
+      beforeSource = (await exec.query("SELECT COALESCE(source_system, '') AS source_system, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(source_system, '') ORDER BY COUNT(*) DESC")).rows;
+
+      // 2. 执行修正：country 不等于'马来西亚'的更新为'印度尼西亚'
+      const countryResult = await exec.run("UPDATE sales_records SET country = '印度尼西亚' WHERE country IS NULL OR country != '马来西亚'");
+      countryRows = countryResult.changes || 0;
+
+      // 3. 执行修正：source_system 不等于'至速仓'的更新为'Bigseller'
+      const sourceResult = await exec.run("UPDATE sales_records SET source_system = 'Bigseller' WHERE source_system IS NULL OR source_system != '至速仓'");
+      sourceRows = sourceResult.changes || 0;
+
+      // 4. 修改后分布
+      afterCountry = (await exec.query("SELECT COALESCE(country, '') AS country, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(country, '') ORDER BY COUNT(*) DESC")).rows;
+      afterSource = (await exec.query("SELECT COALESCE(source_system, '') AS source_system, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(source_system, '') ORDER BY COUNT(*) DESC")).rows;
+
+      // 5. 随机抽查：马来西亚+至速仓
+      sampleMy = (await exec.query("SELECT order_no, sku_code, country, source_system, order_date FROM sales_records WHERE country = '马来西亚' AND source_system = '至速仓' LIMIT 3")).rows;
+      // 6. 随机抽查：印度尼西亚+Bigseller
+      sampleId = (await exec.query("SELECT order_no, sku_code, country, source_system, order_date FROM sales_records WHERE country = '印度尼西亚' AND source_system = 'Bigseller' LIMIT 3")).rows;
+
+    } else {
+      beforeCountry = query("SELECT COALESCE(country, '') AS country, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(country, '') ORDER BY COUNT(*) DESC").rows;
+      beforeSource = query("SELECT COALESCE(source_system, '') AS source_system, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(source_system, '') ORDER BY COUNT(*) DESC").rows;
+
+      countryRows = run("UPDATE sales_records SET country = '印度尼西亚' WHERE country IS NULL OR country != '马来西亚'").changes || 0;
+      sourceRows = run("UPDATE sales_records SET source_system = 'Bigseller' WHERE source_system IS NULL OR source_system != '至速仓'").changes || 0;
+
+      afterCountry = query("SELECT COALESCE(country, '') AS country, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(country, '') ORDER BY COUNT(*) DESC").rows;
+      afterSource = query("SELECT COALESCE(source_system, '') AS source_system, COUNT(*) AS cnt FROM sales_records GROUP BY COALESCE(source_system, '') ORDER BY COUNT(*) DESC").rows;
+
+      sampleMy = query("SELECT order_no, sku_code, country, source_system, order_date FROM sales_records WHERE country = '马来西亚' AND source_system = '至速仓' LIMIT 3").rows;
+      sampleId = query("SELECT order_no, sku_code, country, source_system, order_date FROM sales_records WHERE country = '印度尼西亚' AND source_system = 'Bigseller' LIMIT 3").rows;
+    }
+
+    res.json({
+      success: true,
+      summary: {
+        country_updated_rows: countryRows,
+        source_system_updated_rows: sourceRows
+      },
+      before: {
+        country_distribution: beforeCountry,
+        source_system_distribution: beforeSource
+      },
+      after: {
+        country_distribution: afterCountry,
+        source_system_distribution: afterSource
+      },
+      sample_malaysia_zhisucang: sampleMy,
+      sample_indonesia_bigseller: sampleId
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+}));
+
 // PAY-CORE P0-1：供 scripts/backfill-payable-items.js 复用，不影响运行时
 module.exports = {
   createPayableItemFromSource,
