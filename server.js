@@ -5796,16 +5796,95 @@ app.post('/api/proforma-invoices/:id/void', requireApiPermission('pi_edit'), asy
 }));
 
 // ==================== CI/PL 管理 ====================
+// 物流阶段排序（业务阶段：待出运 < 运输中 < 清关中 < 待派送 < 已到仓）
+// 底层值 → 阶段序号，用于取最高阶段
+// 注意：物流状态纯粹由 logistics_status 映射，不依赖 Inbound 事实
+const LOGISTICS_STAGE_RANK = {
+  pending: 0, picked_up: 0,      // 待出运
+  in_transit: 1,                 // 运输中
+  arrived: 2, customs: 2,        // 清关中
+  cleared: 3, delivering: 3,     // 待派送
+  completed: 4                    // 已到仓
+};
+const STAGE_KEYS = ['pending_shipment', 'in_transit', 'customs_clearing', 'awaiting_delivery', 'warehouse_arrived'];
+
+// 从底层 logistics_status 派生物流展示状态键（不依赖 Inbound 事实）
+function deriveLogisticsDisplayStatus(rawStatus) {
+  const rank = LOGISTICS_STAGE_RANK[rawStatus];
+  if (rank === undefined) return 'pending_shipment';
+  return STAGE_KEYS[rank];
+}
+
 app.get('/api/commercial-invoices', requireApiPermission('ci_view'), asyncHandler((req, res) => {
-  const { status, keyword, related_pi } = req.query;
+  const { inbound_status, keyword, related_pi } = req.query;
   // 差异 = CI金额 - 已付定金 - 应付尾款（付款闭环校验）
   let sql = 'SELECT *, (goods_amount - COALESCE(actual_deducted_deposit, 0) - COALESCE(payable_balance, 0)) AS amount_difference FROM commercial_invoices WHERE 1=1';
   const params = [];
-  if (status) { sql += ' AND ci_status = ?'; params.push(status); }
   if (related_pi) { sql += ' AND related_pi_no = ?'; params.push(related_pi); }
   if (keyword) { sql += ' AND (ci_no LIKE ? OR supplier_name LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`); }
   sql += ' ORDER BY created_at DESC';
-  res.json(query(sql, params).rows);
+  let rows = query(sql, params).rows;
+
+  // ── 展示层派生字段：关联物流单、物流展示状态、入库状态（不修改底层 ci_status） ──
+  // 1. 批量查询每个 CI 关联的物流单
+  const ciIds = rows.map(r => r.id);
+  const logisticsMap = {}; // ci_id → { batch_nos: [], logistics_statuses: [] }
+  if (ciIds.length > 0) {
+    const placeholders = ciIds.map(() => '?').join(',');
+    const lbRows = query(`SELECT id, batch_no, related_ci_id, logistics_status FROM logistics_batches WHERE related_ci_id IN (${placeholders})`, ciIds).rows;
+    lbRows.forEach(lb => {
+      if (!logisticsMap[lb.related_ci_id]) logisticsMap[lb.related_ci_id] = { batch_nos: [], logistics_statuses: [] };
+      logisticsMap[lb.related_ci_id].batch_nos.push(lb.batch_no);
+      logisticsMap[lb.related_ci_id].logistics_statuses.push(lb.logistics_status);
+    });
+  }
+
+  // 2. 批量查询每个 CI 的入库状态（从 commercial_invoice_items 派生）
+  const inboundMap = {}; // ci_id → 'none' | 'partial' | 'completed'
+  if (ciIds.length > 0) {
+    const placeholders = ciIds.map(() => '?').join(',');
+    const itemRows = query(`SELECT ci_id, shipped_qty, inbound_qty FROM commercial_invoice_items WHERE ci_id IN (${placeholders})`, ciIds).rows;
+    const ciItemMap = {}; // ci_id → { totalShipped, totalInbound }
+    itemRows.forEach(it => {
+      if (!ciItemMap[it.ci_id]) ciItemMap[it.ci_id] = { totalShipped: 0, totalInbound: 0 };
+      ciItemMap[it.ci_id].totalShipped += (it.shipped_qty || 0);
+      ciItemMap[it.ci_id].totalInbound += (it.inbound_qty || 0);
+    });
+    ciIds.forEach(cid => {
+      const agg = ciItemMap[cid];
+      if (!agg || agg.totalShipped === 0) { inboundMap[cid] = 'none'; return; }
+      if (agg.totalInbound >= agg.totalShipped) { inboundMap[cid] = 'completed'; return; }
+      if (agg.totalInbound > 0) { inboundMap[cid] = 'partial'; return; }
+      inboundMap[cid] = 'none';
+    });
+  }
+
+  // 3. 注入派生字段到每行 + 按 inbound_status 筛选
+  rows = rows.filter(r => {
+    const lbInfo = logisticsMap[r.id];
+    const inboundDerived = inboundMap[r.id] || 'none';
+    r.related_logistics_batch_nos = lbInfo ? lbInfo.batch_nos.join(', ') : '';
+    r.inbound_derived_status = inboundDerived;
+
+    // 派生 ci_logistics_display_status：按业务阶段排序取最高阶段
+    // 纯粹由 logistics_status 派生，不依赖 Inbound 事实
+    if (lbInfo && lbInfo.logistics_statuses.length > 0) {
+      let maxRank = -1;
+      lbInfo.logistics_statuses.forEach(s => {
+        const rank = LOGISTICS_STAGE_RANK[s] !== undefined ? LOGISTICS_STAGE_RANK[s] : 0;
+        if (rank > maxRank) maxRank = rank;
+      });
+      r.ci_logistics_display_status = maxRank >= 0 ? STAGE_KEYS[maxRank] : '';
+    } else {
+      r.ci_logistics_display_status = '';
+    }
+
+    // 按 inbound_status 筛选（派生字段，post-query 过滤）
+    if (inbound_status && inboundDerived !== inbound_status) return false;
+    return true;
+  });
+
+  res.json(rows);
 }));
 
 // P2-LOGISTICS-CLOSED-LOOP: 可生成 PL 的 CI 列表（CI 创建即代表出货事实成立，不依赖 ci_status=shipped）
@@ -6658,14 +6737,45 @@ app.post('/api/packing-lists/batch-import', requireApiPermission('ci_create'), a
 
 // ==================== 物流批次 ====================
 app.get('/api/logistics-batches', requireApiPermission('logistics_view'), asyncHandler((req, res) => {
-  const { status, keyword, forwarder_id } = req.query;
+  const { logistics_display_status, keyword, forwarder_id } = req.query;
   let sql = 'SELECT lb.*, pl.pl_no, pl.id AS pl_id, pl.status AS pl_status FROM logistics_batches lb LEFT JOIN packing_lists pl ON pl.logistics_batch_id = lb.id WHERE 1=1';
   const params = [];
-  if (status) { sql += ' AND lb.logistics_status = ?'; params.push(status); }
   if (forwarder_id) { sql += ' AND lb.forwarder_id = ?'; params.push(forwarder_id); }
   if (keyword) { sql += ' AND (lb.batch_no LIKE ? OR lb.forwarder_name LIKE ? OR lb.related_ci_no LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`); }
   sql += ' ORDER BY lb.created_at DESC';
-  res.json(query(sql, params).rows);
+  let rows = query(sql, params).rows;
+
+  // ── 派生 logistics_display_status + inbound_derived_status（不修改底层 logistics_status） ──
+  // 物流展示状态纯粹由 logistics_status 映射，入库状态由 Inbound 事实派生
+  const ciIds = [...new Set(rows.map(r => r.related_ci_id).filter(Boolean))];
+  const ciInboundMap = {}; // ci_id → 'none' | 'partial' | 'completed'
+  if (ciIds.length > 0) {
+    const placeholders = ciIds.map(() => '?').join(',');
+    const itemRows = query(`SELECT ci_id, shipped_qty, inbound_qty FROM commercial_invoice_items WHERE ci_id IN (${placeholders})`, ciIds).rows;
+    const ciItemMap = {};
+    itemRows.forEach(it => {
+      if (!ciItemMap[it.ci_id]) ciItemMap[it.ci_id] = { totalShipped: 0, totalInbound: 0 };
+      ciItemMap[it.ci_id].totalShipped += (it.shipped_qty || 0);
+      ciItemMap[it.ci_id].totalInbound += (it.inbound_qty || 0);
+    });
+    ciIds.forEach(cid => {
+      const agg = ciItemMap[cid];
+      if (!agg || agg.totalShipped === 0) { ciInboundMap[cid] = 'none'; return; }
+      if (agg.totalInbound >= agg.totalShipped) { ciInboundMap[cid] = 'completed'; return; }
+      if (agg.totalInbound > 0) { ciInboundMap[cid] = 'partial'; return; }
+      ciInboundMap[cid] = 'none';
+    });
+  }
+
+  // 注入派生字段 + 按 logistics_display_status 筛选
+  rows = rows.filter(r => {
+    r.logistics_display_status = deriveLogisticsDisplayStatus(r.logistics_status);
+    r.inbound_derived_status = r.related_ci_id ? (ciInboundMap[r.related_ci_id] || 'none') : 'none';
+    if (logistics_display_status && r.logistics_display_status !== logistics_display_status) return false;
+    return true;
+  });
+
+  res.json(rows);
 }));
 
 app.get('/api/logistics-batches/:id', requireApiPermission('logistics_view'), asyncHandler((req, res) => {
@@ -6673,7 +6783,18 @@ app.get('/api/logistics-batches/:id', requireApiPermission('logistics_view'), as
   if (!batch) return res.status(404).json({ error: '物流批次不存在' });
   // P2: 返回关联 PL 信息
   const pl = queryOne('SELECT * FROM packing_lists WHERE logistics_batch_id = ?', [req.params.id]);
-  res.json({ ...batch, pl_id: pl ? pl.id : '', pl_no: pl ? pl.pl_no : '', pl_status: pl ? pl.status : '' });
+
+  // 派生 logistics_display_status + inbound_derived_status
+  let inboundDerivedStatus = 'none';
+  if (batch.related_ci_id) {
+    const itemRows = query('SELECT shipped_qty, inbound_qty FROM commercial_invoice_items WHERE ci_id = ?', [batch.related_ci_id]).rows;
+    let totalShipped = 0, totalInbound = 0;
+    itemRows.forEach(it => { totalShipped += (it.shipped_qty || 0); totalInbound += (it.inbound_qty || 0); });
+    if (totalShipped > 0 && totalInbound >= totalShipped) inboundDerivedStatus = 'completed';
+    else if (totalInbound > 0) inboundDerivedStatus = 'partial';
+  }
+
+  res.json({ ...batch, pl_id: pl ? pl.id : '', pl_no: pl ? pl.pl_no : '', pl_status: pl ? pl.status : '', logistics_display_status: deriveLogisticsDisplayStatus(batch.logistics_status), inbound_derived_status: inboundDerivedStatus });
 }));
 
 app.post('/api/logistics-batches', requireApiPermission('logistics_create'), asyncHandler((req, res) => {
