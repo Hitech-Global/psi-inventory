@@ -1775,6 +1775,7 @@
   I18N.dict.en["common.enable"] = "Enable"; I18N.dict.id["common.enable"] = "Aktifkan";
   I18N.dict.en["common.invalid_params"] = "Invalid parameters"; I18N.dict.id["common.invalid_params"] = "Parameter tidak valid";
   I18N.dict.en["common.logout"] = "Log Out"; I18N.dict.id["common.logout"] = "Keluar";
+  I18N.dict.en["common.no_data"] = "No data"; I18N.dict.id["common.no_data"] = "Tidak ada data";
   I18N.dict.en["common.reset"] = "Reset"; I18N.dict.id["common.reset"] = "Atur Ulang";
   I18N.dict.en["common.save"] = "Save"; I18N.dict.id["common.save"] = "Simpan";
   I18N.dict.en["common.search"] = "Search"; I18N.dict.id["common.search"] = "Cari";
@@ -4471,6 +4472,30 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.zh["fro.days_30"]="未来30天"; I18N.dict.en["fro.days_30"]="Next 30 Days"; I18N.dict.id["fro.days_30"]="30 Hari ke Depan";
   I18N.dict.zh["fro.days_90"]="未来90天"; I18N.dict.en["fro.days_90"]="Next 90 Days"; I18N.dict.id["fro.days_90"]="90 Hari ke Depan";
   I18N.dict.zh["fro.as_of"]="数据截止"; I18N.dict.en["fro.as_of"]="As of"; I18N.dict.id["fro.as_of"]="Per";
+  I18N.dict.zh["fro.analysis"]="分析"; I18N.dict.en["fro.analysis"]="Analysis"; I18N.dict.id["fro.analysis"]="Analisis";
+  I18N.dict.zh["fro.back_overview"]="返回总览"; I18N.dict.en["fro.back_overview"]="Back to Overview"; I18N.dict.id["fro.back_overview"]="Kembali ke Ikhtisar";
+  I18N.dict.zh["fro.dim_country"]="按国家"; I18N.dict.en["fro.dim_country"]="By Country"; I18N.dict.id["fro.dim_country"]="Berdasarkan Negara";
+  I18N.dict.zh["fro.dim_brand"]="按品牌"; I18N.dict.en["fro.dim_brand"]="By Brand"; I18N.dict.id["fro.dim_brand"]="Berdasarkan Merek";
+  I18N.dict.zh["fro.dim_warehouse"]="按仓库"; I18N.dict.en["fro.dim_warehouse"]="By Warehouse"; I18N.dict.id["fro.dim_warehouse"]="Berdasarkan Gudang";
+  I18N.dict.zh["fro.dim_sku"]="SKU 明细"; I18N.dict.en["fro.dim_sku"]="SKU Details"; I18N.dict.id["fro.dim_sku"]="Detail SKU";
+  I18N.dict.zh["fro.amount_cny"]="金额(CNY)"; I18N.dict.en["fro.amount_cny"]="Amount (CNY)"; I18N.dict.id["fro.amount_cny"]="Jumlah (CNY)";
+  I18N.dict.zh["fro.drill_down"]="下钻 ›"; I18N.dict.en["fro.drill_down"]="Drill Down ›"; I18N.dict.id["fro.drill_down"]="Detail ›";
+  I18N.dict.zh["fro.transit_detail_desc"]="已发货未完全入库的 CI 明细"; I18N.dict.en["fro.transit_detail_desc"]="Shipped but not fully inbound CI details"; I18N.dict.id["fro.transit_detail_desc"]="Detail CI yang dikirim namun belum diterima sepenuhnya";
+  I18N.dict.zh["fro.logistics_status"]="物流状态"; I18N.dict.en["fro.logistics_status"]="Logistics Status"; I18N.dict.id["fro.logistics_status"]="Status Logistik";
+  I18N.dict.zh["fro.inbound_status"]="入库状态"; I18N.dict.en["fro.inbound_status"]="Inbound Status"; I18N.dict.id["fro.inbound_status"]="Status Penerimaan";
+  I18N.dict.zh["fro.inbound_complete"]="已入库"; I18N.dict.en["fro.inbound_complete"]="Fully Inbound"; I18N.dict.id["fro.inbound_complete"]="Diterima Sepenuhnya";
+  I18N.dict.zh["fro.inbound_partial"]="部分入库"; I18N.dict.en["fro.inbound_partial"]="Partially Inbound"; I18N.dict.id["fro.inbound_partial"]="Diterima Sebagian";
+  I18N.dict.zh["fro.inbound_none"]="未入库"; I18N.dict.en["fro.inbound_none"]="Not Inbound"; I18N.dict.id["fro.inbound_none"]="Belum Diterima";
+  I18N.dict.zh["common.product_name"]="品名"; I18N.dict.en["common.product_name"]="Product Name"; I18N.dict.id["common.product_name"]="Nama Produk";
+  I18N.dict.zh["common.available_qty"]="可用库存"; I18N.dict.en["common.available_qty"]="Available Qty"; I18N.dict.id["common.available_qty"]="Jumlah Tersedia";
+  I18N.dict.zh["common.wac"]="WAC"; I18N.dict.en["common.wac"]="WAC"; I18N.dict.id["common.wac"]="WAC";
+  I18N.dict.zh["common.percentage"]="占比"; I18N.dict.en["common.percentage"]="Percentage"; I18N.dict.id["common.percentage"]="Persentase";
+  I18N.dict.zh["common.country"]="国家"; I18N.dict.en["common.country"]="Country"; I18N.dict.id["common.country"]="Negara";
+  I18N.dict.zh["common.brand"]="品牌"; I18N.dict.en["common.brand"]="Brand"; I18N.dict.id["common.brand"]="Merek";
+  I18N.dict.zh["common.warehouse"]="仓库"; I18N.dict.en["common.warehouse"]="Warehouse"; I18N.dict.id["common.warehouse"]="Gudang";
+  I18N.dict.zh["common.number"]="编号"; I18N.dict.en["common.number"]="No."; I18N.dict.id["common.number"]="No.";
+  I18N.dict.zh["common.no_data"]="暂无数据"; I18N.dict.en["common.no_data"]="No Data"; I18N.dict.id["common.no_data"]="Tidak Ada Data";
+  I18N.dict.zh["common.unclassified"]="未分类"; I18N.dict.en["common.unclassified"]="Unclassified"; I18N.dict.id["common.unclassified"]="Tidak Diklasifikasi";
 
   // ===================== 物流管理页面 i18n（P2 新增） =====================
   // 缺失的通用键
