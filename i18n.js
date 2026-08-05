@@ -4527,6 +4527,17 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.zh["logistics.col.cartons"]="箱数"; I18N.dict.en["logistics.col.cartons"]="Cartons"; I18N.dict.id["logistics.col.cartons"]="Karton";
   I18N.dict.zh["logistics.col.total_freight"]="综合运费"; I18N.dict.en["logistics.col.total_freight"]="Total Freight"; I18N.dict.id["logistics.col.total_freight"]="Total Ongkos Kirim";
 
+  // 国家名称翻译键（物流页面国家显示修复 — DB存储中文，前端按语言映射）
+  I18N.dict.zh["country.印度尼西亚"]="印度尼西亚"; I18N.dict.en["country.印度尼西亚"]="Indonesia"; I18N.dict.id["country.印度尼西亚"]="Indonesia";
+  I18N.dict.zh["country.马来西亚"]="马来西亚"; I18N.dict.en["country.马来西亚"]="Malaysia"; I18N.dict.id["country.马来西亚"]="Malaysia";
+  I18N.dict.zh["country.泰国"]="泰国"; I18N.dict.en["country.泰国"]="Thailand"; I18N.dict.id["country.泰国"]="Thailand";
+  I18N.dict.zh["country.中国"]="中国"; I18N.dict.en["country.中国"]="China"; I18N.dict.id["country.中国"]="China";
+  // 英文DB值兼容
+  I18N.dict.zh["country.indonesia"]="印度尼西亚"; I18N.dict.en["country.indonesia"]="Indonesia"; I18N.dict.id["country.indonesia"]="Indonesia";
+  I18N.dict.zh["country.malaysia"]="马来西亚"; I18N.dict.en["country.malaysia"]="Malaysia"; I18N.dict.id["country.malaysia"]="Malaysia";
+  I18N.dict.zh["country.thailand"]="泰国"; I18N.dict.en["country.thailand"]="Thailand"; I18N.dict.id["country.thailand"]="Thailand";
+  I18N.dict.zh["country.china"]="中国"; I18N.dict.en["country.china"]="China"; I18N.dict.id["country.china"]="China";
+
   // 物流按钮
   I18N.dict.zh["logistics.btn.create"]="➕ 新建物流批次"; I18N.dict.en["logistics.btn.create"]="➕ New Batch"; I18N.dict.id["logistics.btn.create"]="➕ Batch Baru";
   I18N.dict.zh["logistics.btn.freight_pay"]="运费付款"; I18N.dict.en["logistics.btn.freight_pay"]="Freight Payment"; I18N.dict.id["logistics.btn.freight_pay"]="Pembayaran Ongkos Kirim";
