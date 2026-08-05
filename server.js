@@ -4046,7 +4046,7 @@ app.get('/api/replenishment-suggestions/daily-sales', requireApiPermission('repl
   if (keyword) { sql += ' AND (rs.sku_code LIKE ? OR s.product_name LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`); }
   if (sales_status) { sql += ' AND rs.sales_status = ?'; params.push(sales_status); }
   if (lifecycle_status) { sql += ' AND rs.lifecycle_status = ?'; params.push(lifecycle_status); }
-  sql += ' ORDER BY rs.sku_code';
+  sql += ' ORDER BY CASE WHEN rs.lifecycle_status IN (\'stopped\',\'discontinued\') THEN 1 ELSE 0 END, rs.sku_code';
   const skus = query(sql, params).rows.map(applyLiveForecastInventory);
 
   // 查近30天出库记录，按SKU+日期聚合
@@ -4238,7 +4238,7 @@ app.get('/api/replenishment-suggestions', requireApiPermission('replenishment_vi
   if (keyword) { sql += ' AND (rs.sku_code LIKE ? OR s.product_name LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`); }
   if (sales_status) { sql += ' AND rs.sales_status = ?'; params.push(sales_status); }
   if (lifecycle_status) { sql += ' AND rs.lifecycle_status = ?'; params.push(lifecycle_status); }
-  sql += ' ORDER BY rs.sku_code';
+  sql += ' ORDER BY CASE WHEN rs.lifecycle_status IN (\'stopped\',\'discontinued\') THEN 1 ELSE 0 END, rs.sku_code';
   const today = new Date();
   const todayStr = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
   const rows = query(sql, params).rows.map(applyLiveForecastInventory).map(r => {
