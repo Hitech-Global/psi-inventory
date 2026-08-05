@@ -11585,6 +11585,120 @@ app.get('/api/dashboard', requireApiPermission('dashboard_view'), asyncHandler((
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
+// ==================== 资金风险总览 V1 ====================
+// 口径（用户冻结 2026-08-05）：
+// 1. 库存资产(CNY) = SUM(available_qty × weighted_avg_cost(本币) × 汇率换算系数)
+//    - 按 SKU 计算，按国家/币种转换人民币，复用库存总表已有 WAC 和汇率逻辑
+// 2. 在途资产(CNY) = SUM(CI item 人民币货值 × 未入库比例)
+//    - 按 CI 明细行计算：未入库比例 = (shipped_qty - inbound_qty) / shipped_qty
+//    - 使用 CI 已确认的人民币货值，不再根据 CI unit_price 和汇率重新计算
+// 3. 未来应付资金压力(CNY)：累计口径 today~today+7 / today~today+30 / today~today+90
+//    - 排除逾期付款(payable_date < today)
+//    - 优先使用 PAY-CORE 已确认人民币金额(rmb_amount/paid_amount 推算汇率)
+//    - 不重新按当前汇率转换历史付款金额
+// 不修改：库存逻辑、采购链逻辑、CI/PL业务逻辑、PAY-CORE业务逻辑
+app.get('/api/financial-risk/overview', requireApiPermission('dashboard_view'), asyncHandler((req, res) => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+
+    // --- 汇率缓存：from_currency -> rate(对RMB) ---
+    const allRates = query("SELECT from_currency, rate FROM exchange_rates WHERE to_currency = 'RMB' ORDER BY rate_date DESC, created_at DESC").rows;
+    const rateMap = {};
+    for (const r of allRates) {
+      const curr = r.from_currency;
+      if (!rateMap[curr]) rateMap[curr] = Number(r.rate);
+    }
+    rateMap['RMB'] = 1;
+    rateMap['CNY'] = 1;
+
+    function getRate(currency) {
+      const c = (currency || 'USD').toUpperCase();
+      return rateMap[c] || rateMap['USD'] || 1;
+    }
+
+    // --- 1. 库存资产(CNY) ---
+    // SUM(available_qty × weighted_avg_cost × rate_to_rmb)，按 SKU 计算
+    const invRows = query(`
+      SELECT i.available_qty, i.weighted_avg_cost, s.purchase_currency
+      FROM inventory i
+      LEFT JOIN skus s ON i.sku_code = s.sku_code
+      WHERE i.available_qty > 0 AND i.weighted_avg_cost > 0
+    `).rows;
+    let inventoryAssets = 0;
+    for (const r of invRows) {
+      const rate = getRate(r.purchase_currency);
+      inventoryAssets += Number(r.available_qty) * Number(r.weighted_avg_cost) * rate;
+    }
+
+    // --- 2. 在途资产(CNY) ---
+    // 按 CI 明细行计算：ci_amount × rate_to_rmb × (shipped_qty - inbound_qty) / shipped_qty
+    const transitRows = query(`
+      SELECT cii.ci_amount, cii.shipped_qty, cii.inbound_qty, ci.currency
+      FROM commercial_invoice_items cii
+      JOIN commercial_invoices ci ON cii.ci_id = ci.id
+      WHERE ci.ci_status NOT IN ('cancelled', 'completed')
+        AND cii.shipped_qty > 0
+        AND (cii.shipped_qty - COALESCE(cii.inbound_qty, 0)) > 0
+    `).rows;
+    let inTransitAssets = 0;
+    for (const r of transitRows) {
+      const rate = getRate(r.currency);
+      const shippedQty = Number(r.shipped_qty);
+      const inboundQty = Number(r.inbound_qty || 0);
+      const uninboundRatio = (shippedQty - inboundQty) / shippedQty;
+      const ciAmountRmb = Number(r.ci_amount || 0) * rate;
+      inTransitAssets += ciAmountRmb * uninboundRatio;
+    }
+
+    // --- 3. 未来应付资金压力(CNY) ---
+    // 排除逾期(payable_date < today)，累计口径
+    const d7 = addDays(today, 7);
+    const d30 = addDays(today, 30);
+    const d90 = addDays(today, 90);
+
+    const payRows = query(`
+      SELECT pr.unpaid_amount, pr.paid_amount, pr.rmb_amount, pr.currency, pr.payable_date
+      FROM payment_requests pr
+      WHERE pr.approval_status IN ('pending', 'approved')
+        AND pr.payment_status NOT IN ('paid', 'deduction_settled', 'rejected', 'cancelled')
+        AND pr.unpaid_amount > 0
+        AND pr.payable_date != ''
+        AND pr.payable_date >= ?
+    `, [today]).rows;
+
+    let pay7 = 0, pay30 = 0, pay90 = 0;
+    for (const pr of payRows) {
+      // 优先使用 PAY-CORE 已确认人民币金额
+      let unpaidRmb;
+      if (Number(pr.paid_amount) > 0 && Number(pr.rmb_amount) > 0) {
+        const impliedRate = Number(pr.rmb_amount) / Number(pr.paid_amount);
+        unpaidRmb = Number(pr.unpaid_amount) * impliedRate;
+      } else {
+        const rate = getRate(pr.currency);
+        unpaidRmb = Number(pr.unpaid_amount) * rate;
+      }
+      if (pr.payable_date <= d7) pay7 += unpaidRmb;
+      if (pr.payable_date <= d30) pay30 += unpaidRmb;
+      if (pr.payable_date <= d90) pay90 += unpaidRmb;
+    }
+
+    const totalAssets = inventoryAssets + inTransitAssets;
+    const round2 = (v) => Math.round(v * 100) / 100;
+
+    res.json({
+      total_assets: { value: round2(totalAssets), currency: 'CNY' },
+      inventory_assets: { value: round2(inventoryAssets), currency: 'CNY' },
+      in_transit_assets: { value: round2(inTransitAssets), currency: 'CNY' },
+      future_payables: {
+        days_7: { value: round2(pay7), currency: 'CNY' },
+        days_30: { value: round2(pay30), currency: 'CNY' },
+        days_90: { value: round2(pay90), currency: 'CNY' }
+      },
+      as_of: today
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+}));
+
 // ==================== 批量操作辅助函数 ====================
 
 const INVENTORY_STATUS_MAP = {

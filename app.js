@@ -424,36 +424,46 @@ function showPage(page){
 
 // ==================== 首页看板 ====================
 async function renderDashboard(){
-  document.getElementById('content-inner').innerHTML='<div id="flash-container"></div><div class="stats-grid" id="dash-stats"><div class="empty-state"><div class="empty-icon">⏳</div>'+t("html.dash.loading", "加载中...")+'</div></div><div class="chart-container"><h3 style="margin-bottom:12px">'+t("html.dash.freight_trend", "运费占比趋势")+'</h3><div class="chart-canvas-wrapper"><canvas id="chart-freight"></canvas></div></div><div class="stats-grid" id="dash-pending"></div>';
+  document.getElementById('content-inner').innerHTML='<div id="flash-container"></div>'+
+    '<div class="fro-overview">'+
+      '<div class="fro-section">'+
+        '<div class="fro-section-title">'+t("fro.total_assets","供应链总资产")+'（CNY）</div>'+
+        '<div class="fro-total-card">'+
+          '<div class="fro-total-value">¥ <span id="fro-total">'+t("common.loading","加载中...")+'</span></div>'+
+          '<div class="fro-total-sub">'+t("fro.total_formula","总资产 = 库存资产 + 在途资产")+'</div>'+
+        '</div>'+
+      '</div>'+
+      '<div class="fro-section">'+
+        '<div class="fro-section-title">'+t("fro.assets_structure","资产结构")+'</div>'+
+        '<div class="stats-grid">'+
+          '<div class="stat-card"><div class="stat-number">¥ <span id="fro-inventory">'+t("common.loading","...")+'</span></div><div class="stat-label">'+t("fro.inventory_assets","库存资产")+'</div></div>'+
+          '<div class="stat-card"><div class="stat-number">¥ <span id="fro-transit">'+t("common.loading","...")+'</span></div><div class="stat-label">'+t("fro.in_transit_assets","在途资产")+'</div></div>'+
+        '</div>'+
+      '</div>'+
+      '<div class="fro-section">'+
+        '<div class="fro-section-title">'+t("fro.future_payables","未来应付资金压力")+'（CNY）</div>'+
+        '<div class="stats-grid">'+
+          '<div class="stat-card warning"><div class="stat-number">¥ <span id="fro-pay7">'+t("common.loading","...")+'</span></div><div class="stat-label">'+t("fro.days_7","未来7天")+'</div></div>'+
+          '<div class="stat-card"><div class="stat-number">¥ <span id="fro-pay30">'+t("common.loading","...")+'</span></div><div class="stat-label">'+t("fro.days_30","未来30天")+'</div></div>'+
+          '<div class="stat-card"><div class="stat-number">¥ <span id="fro-pay90">'+t("common.loading","...")+'</span></div><div class="stat-label">'+t("fro.days_90","未来90天")+'</div></div>'+
+        '</div>'+
+      '</div>'+
+      '<div class="fro-as-of" id="fro-as-of"></div>'+
+    '</div>';
   try{
-    const d=await api('/api/dashboard');
-    // 竞态防护：页面已切走则静默结束，不向已销毁 DOM 写入（避免跨页面 null 错误）
-    const statsEl=document.getElementById('dash-stats');
-    const pendingEl=document.getElementById('dash-pending');
-    const chartEl=document.getElementById('chart-freight');
-    if(!statsEl||!pendingEl) return;
-    const stats=[
-      {l:t("app.348", "\u603b\u5e93\u5b58\u91d1\u989d"),v:fmtMoney(d.total_inventory_value,'USD'),c:''},
-      {l:t("app.349", "\u5728\u9014\u5e93\u5b58\u91d1\u989d"),v:fmtMoney(d.in_transit_value,'USD'),c:''},
-      {l:t("app.350", "\u5446\u6ede\u5e93\u5b58\u91d1\u989d"),v:fmtMoney(d.stagnant_value,'USD'),c:'warning'},
-      {l:t("app.351", "\u7f3a\u8d27\u98ce\u9669SKU"),v:d.shortage_sku_count,c:'danger'},
-      {l:t("app.352", "\u5efa\u8bae\u91c7\u8d2d\u91d1\u989d"),v:fmtMoney(d.suggest_purchase_amount,'USD'),c:''},
-      {l:t("app.353", "7\u5929\u5185\u5f85\u4ed8\u6b3e"),v:fmtMoney(d.pay_7d_amount,'USD'),c:'warning'},
-      {l:t("app.354", "30\u5929\u5185\u5f85\u4ed8\u6b3e"),v:fmtMoney(d.pay_30d_amount,'USD'),c:''},
-      {l:t("app.355", "\u903e\u671f\u4ed8\u6b3e\u91d1\u989d"),v:fmtMoney(d.overdue_amount,'USD'),c:'danger'},
-    ];
-    statsEl.innerHTML=stats.map(s=>'<div class="stat-card '+s.c+'"><div class="stat-number">'+s.v+'</div><div class="stat-label">'+s.l+'</div></div>').join('');
-    pendingEl.innerHTML=t('html.renderDashboard', '<div class="stat-card"><div class="stat-number">{v1}</div><div class="stat-label">PO未完成</div></div><div class="stat-card"><div class="stat-number">{v2}</div><div class="stat-label">PI未完成</div></div><div class="stat-card"><div class="stat-number">{v3}</div><div class="stat-label">CI未完成</div></div>', {v1: d.po_pending, v2: d.pi_pending, v3: d.ci_pending});
-    if(d.freight_trend&&d.freight_trend.length&&chartEl){
-      // I18N-B1-BUGFIX-01：语言切换时 showPage→renderDashboard 可能重叠调用，
-      // 两个 async 调用通过 getElementById 拿到同一 canvas，第二个 new Chart 抛出
-      // "Canvas is already in use"。创建前先销毁已存在的旧实例。
-      var _oldChart=Chart.getChart(chartEl); if(_oldChart) _oldChart.destroy();
-      new Chart(chartEl.getContext('2d'),{type:'line',data:{labels:d.freight_trend.map(x=>x.month),datasets:[{label:t("app.223", "\u7efc\u5408\u8fd0\u8d39"),data:d.freight_trend.map(x=>x.freight),borderColor:'#2e7d32',yAxisID:'y'},{label:t("app.357", "\u8fd0\u8d39\u5360\u6bd4(%)"),data:d.freight_trend.map(x=>x.ratio),borderColor:'#ff9500',yAxisID:'y1'}]},options:{responsive:true,maintainAspectRatio:false,scales:{y:{position:'left'},y1:{position:'right',grid:{display:false}}}}});
-    }
+    const d=await api('/api/financial-risk/overview');
+    // 竞态防护：页面已切走则静默结束
+    if(!document.getElementById('fro-total')) return;
+    document.getElementById('fro-total').textContent=fmtMoney(d.total_assets.value,'');
+    document.getElementById('fro-inventory').textContent=fmtMoney(d.inventory_assets.value,'');
+    document.getElementById('fro-transit').textContent=fmtMoney(d.in_transit_assets.value,'');
+    document.getElementById('fro-pay7').textContent=fmtMoney(d.future_payables.days_7.value,'');
+    document.getElementById('fro-pay30').textContent=fmtMoney(d.future_payables.days_30.value,'');
+    document.getElementById('fro-pay90').textContent=fmtMoney(d.future_payables.days_90.value,'');
+    var asOfEl=document.getElementById('fro-as-of');
+    if(asOfEl&&d.as_of) asOfEl.textContent=t("fro.as_of","数据截止")+'：'+d.as_of;
   }catch(e){
-    // 仅当 dashboard 目标 DOM 仍存在时才显示错误，避免上一页请求的错误污染新页面
-    if(document.getElementById('dash-stats')) showFlash(e.message,'danger');
+    if(document.getElementById('fro-total')) showFlash(e.message,'danger');
   }
 }
 

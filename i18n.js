@@ -4456,4 +4456,15 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.zh["ci.no_lots"]="无寄售批次记录"; I18N.dict.en["ci.no_lots"]="No consignment lot records"; I18N.dict.id["ci.no_lots"]="Tidak ada catatan lot konsinyasi";
   I18N.dict.zh["ci.lots_count"]="共 {v1} 条活跃批次"; I18N.dict.en["ci.lots_count"]="{v1} active lot(s)"; I18N.dict.id["ci.lots_count"]="{v1} lot aktif";
   I18N.dict.zh["ci.load_fail"]="加载失败"; I18N.dict.en["ci.load_fail"]="Load failed"; I18N.dict.id["ci.load_fail"]="Gagal memuat";
+  // ==================== 资金风险总览 V1 ====================
+  I18N.dict.zh["fro.total_assets"]="供应链总资产"; I18N.dict.en["fro.total_assets"]="Total Supply Chain Assets"; I18N.dict.id["fro.total_assets"]="Total Aset Rantai Pasokan";
+  I18N.dict.zh["fro.total_formula"]="总资产 = 库存资产 + 在途资产"; I18N.dict.en["fro.total_formula"]="Total = Inventory Assets + In-Transit Assets"; I18N.dict.id["fro.total_formula"]="Total = Aset Persediaan + Aset Dalam Pengiriman";
+  I18N.dict.zh["fro.assets_structure"]="资产结构"; I18N.dict.en["fro.assets_structure"]="Asset Structure"; I18N.dict.id["fro.assets_structure"]="Struktur Aset";
+  I18N.dict.zh["fro.inventory_assets"]="库存资产"; I18N.dict.en["fro.inventory_assets"]="Inventory Assets"; I18N.dict.id["fro.inventory_assets"]="Aset Persediaan";
+  I18N.dict.zh["fro.in_transit_assets"]="在途资产"; I18N.dict.en["fro.in_transit_assets"]="In-Transit Assets"; I18N.dict.id["fro.in_transit_assets"]="Aset Dalam Pengiriman";
+  I18N.dict.zh["fro.future_payables"]="未来应付资金压力"; I18N.dict.en["fro.future_payables"]="Future Payable Pressure"; I18N.dict.id["fro.future_payables"]="Tekanan Hutang Masa Depan";
+  I18N.dict.zh["fro.days_7"]="未来7天"; I18N.dict.en["fro.days_7"]="Next 7 Days"; I18N.dict.id["fro.days_7"]="7 Hari ke Depan";
+  I18N.dict.zh["fro.days_30"]="未来30天"; I18N.dict.en["fro.days_30"]="Next 30 Days"; I18N.dict.id["fro.days_30"]="30 Hari ke Depan";
+  I18N.dict.zh["fro.days_90"]="未来90天"; I18N.dict.en["fro.days_90"]="Next 90 Days"; I18N.dict.id["fro.days_90"]="90 Hari ke Depan";
+  I18N.dict.zh["fro.as_of"]="数据截止"; I18N.dict.en["fro.as_of"]="As of"; I18N.dict.id["fro.as_of"]="Per";
 })();
