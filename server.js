@@ -11587,51 +11587,73 @@ app.get('/api/dashboard', requireApiPermission('dashboard_view'), asyncHandler((
 
 // ==================== 资金风险总览 V1 ====================
 // 口径（用户冻结 2026-08-05）：
-// 1. 库存资产(CNY) = SUM(available_qty × weighted_avg_cost(本币) × 汇率换算系数)
-//    - 按 SKU 计算，按国家/币种转换人民币，复用库存总表已有 WAC 和汇率逻辑
+// 1. 库存资产(CNY) = SUM(available_qty × weighted_avg_cost × foreignToRmb)
+//    - 按 inventory.country → countries.default_currency 确定本币（与库存总表完全一致）
+//    - 复用 exchange_rates 表中 from_currency=curr, to_currency='RMB' 的 foreignToRmb
+//    - 缺失汇率时跳过该行（与库存总表 renderInvCards 行为一致）
 // 2. 在途资产(CNY) = SUM(CI item 人民币货值 × 未入库比例)
 //    - 按 CI 明细行计算：未入库比例 = (shipped_qty - inbound_qty) / shipped_qty
-//    - 使用 CI 已确认的人民币货值，不再根据 CI unit_price 和汇率重新计算
+//    - 仅统计已发货(shipped_qty>0)且未完全入库的 CI item
+//    - 不计入：仅 PO、仅 PI、未发货、已完全入库
 // 3. 未来应付资金压力(CNY)：累计口径 today~today+7 / today~today+30 / today~today+90
 //    - 排除逾期付款(payable_date < today)
 //    - 优先使用 PAY-CORE 已确认人民币金额(rmb_amount/paid_amount 推算汇率)
-//    - 不重新按当前汇率转换历史付款金额
 // 不修改：库存逻辑、采购链逻辑、CI/PL业务逻辑、PAY-CORE业务逻辑
 app.get('/api/financial-risk/overview', requireApiPermission('dashboard_view'), asyncHandler((req, res) => {
   try {
     const today = new Date().toISOString().split('T')[0];
 
-    // --- 汇率缓存：from_currency -> rate(对RMB) ---
-    const allRates = query("SELECT from_currency, rate FROM exchange_rates WHERE to_currency = 'RMB' ORDER BY rate_date DESC, created_at DESC").rows;
-    const rateMap = {};
-    for (const r of allRates) {
-      const curr = r.from_currency;
-      if (!rateMap[curr]) rateMap[curr] = Number(r.rate);
-    }
-    rateMap['RMB'] = 1;
-    rateMap['CNY'] = 1;
+    // --- 国家→货币映射（与库存总表 /api/inventory/currency-rates 完全一致） ---
+    const allCountries = query("SELECT name, default_currency FROM countries WHERE status = 'active' AND default_currency IS NOT NULL AND default_currency != ''").rows;
+    const countryToCurrency = {};
+    for (const c of allCountries) { countryToCurrency[c.name] = c.default_currency; }
 
-    function getRate(currency) {
-      const c = (currency || 'USD').toUpperCase();
-      return rateMap[c] || rateMap['USD'] || 1;
+    // --- foreignToRmb 汇率映射（与库存总表完全一致） ---
+    // exchange_rates 中 to_currency='RMB' 的条目：rate = 1外币 = X 人民币（foreignToRmb）
+    const directRates = query("SELECT from_currency, rate FROM exchange_rates WHERE to_currency = 'RMB' ORDER BY rate_date DESC, created_at DESC").rows;
+    const foreignToRmbMap = {};
+    for (const r of directRates) {
+      const curr = r.from_currency;
+      if (!foreignToRmbMap[curr]) foreignToRmbMap[curr] = Number(r.rate);
     }
+    // 反向条目：from_currency='RMB', to_currency=curr → foreignToRmb = 1/rate
+    const reverseRates = query("SELECT to_currency, rate FROM exchange_rates WHERE from_currency = 'RMB' ORDER BY rate_date DESC, created_at DESC").rows;
+    for (const r of reverseRates) {
+      const curr = r.to_currency;
+      if (!foreignToRmbMap[curr] && Number(r.rate) > 0) {
+        foreignToRmbMap[curr] = 1 / Number(r.rate);
+      }
+    }
+    foreignToRmbMap['RMB'] = 1;
+    foreignToRmbMap['CNY'] = 1;
 
     // --- 1. 库存资产(CNY) ---
-    // SUM(available_qty × weighted_avg_cost × rate_to_rmb)，按 SKU 计算
+    // 与库存总表 renderInvCards 完全一致：
+    //   invVal = available_qty × weighted_avg_cost（本币）
+    //   rmbTotal += invVal × foreignToRmb（按 inventory.country 确定本币）
+    //   缺失汇率时跳过（与库存总表 if(ci.rate) 行为一致）
     const invRows = query(`
-      SELECT i.available_qty, i.weighted_avg_cost, s.purchase_currency
+      SELECT i.available_qty, i.weighted_avg_cost, i.country
       FROM inventory i
-      LEFT JOIN skus s ON i.sku_code = s.sku_code
       WHERE i.available_qty > 0 AND i.weighted_avg_cost > 0
     `).rows;
     let inventoryAssets = 0;
     for (const r of invRows) {
-      const rate = getRate(r.purchase_currency);
-      inventoryAssets += Number(r.available_qty) * Number(r.weighted_avg_cost) * rate;
+      let currency = countryToCurrency[r.country] || '';
+      // 别名匹配（与 /api/inventory/currency-rates 一致）
+      if (!currency && COUNTRY_ALIAS_MAP[r.country]) {
+        currency = countryToCurrency[COUNTRY_ALIAS_MAP[r.country]] || '';
+      }
+      const rate = currency ? (foreignToRmbMap[currency] || null) : null;
+      if (rate) {
+        inventoryAssets += Number(r.available_qty) * Number(r.weighted_avg_cost) * rate;
+      }
+      // rate 缺失时跳过该行（与库存总表一致）
     }
 
     // --- 2. 在途资产(CNY) ---
-    // 按 CI 明细行计算：ci_amount × rate_to_rmb × (shipped_qty - inbound_qty) / shipped_qty
+    // 按 CI 明细行计算：ci_amount × foreignToRmb × (shipped_qty - inbound_qty) / shipped_qty
+    // 仅统计已发货且未完全入库的 CI item，不计入 PO/PI/未发货/已入库
     const transitRows = query(`
       SELECT cii.ci_amount, cii.shipped_qty, cii.inbound_qty, ci.currency
       FROM commercial_invoice_items cii
@@ -11642,7 +11664,7 @@ app.get('/api/financial-risk/overview', requireApiPermission('dashboard_view'), 
     `).rows;
     let inTransitAssets = 0;
     for (const r of transitRows) {
-      const rate = getRate(r.currency);
+      const rate = foreignToRmbMap[(r.currency || 'RMB').toUpperCase()] || foreignToRmbMap['RMB'] || 1;
       const shippedQty = Number(r.shipped_qty);
       const inboundQty = Number(r.inbound_qty || 0);
       const uninboundRatio = (shippedQty - inboundQty) / shippedQty;
@@ -11674,7 +11696,7 @@ app.get('/api/financial-risk/overview', requireApiPermission('dashboard_view'), 
         const impliedRate = Number(pr.rmb_amount) / Number(pr.paid_amount);
         unpaidRmb = Number(pr.unpaid_amount) * impliedRate;
       } else {
-        const rate = getRate(pr.currency);
+        const rate = foreignToRmbMap[(pr.currency || 'RMB').toUpperCase()] || foreignToRmbMap['RMB'] || 1;
         unpaidRmb = Number(pr.unpaid_amount) * rate;
       }
       if (pr.payable_date <= d7) pay7 += unpaidRmb;
