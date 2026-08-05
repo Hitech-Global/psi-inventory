@@ -137,6 +137,9 @@
   I18N.dict.zh['auth.login_title'] = 'PSI系统';
   I18N.dict.zh['nav.toggle_sidebar'] = '折叠/展开菜单';
   I18N.dict.zh['page.doc_title'] = '进销存管理系统';
+  I18N.dict.zh['splash.title'] = '你好';
+  I18N.dict.zh['splash.opening'] = '正在进入 Hitech PSI...';
+  I18N.dict.zh['app.title'] = 'Hitech PSI';
 
   // ===================== 翻译字典 =====================
   // 注意：以下 en/id 为 ChatGPT 起草译文，待用户（印尼团队）审校。
@@ -1798,6 +1801,9 @@
   I18N.dict.en["nav.app_title"] = "PSI System"; I18N.dict.id["nav.app_title"] = "Sistem PSI";
   I18N.dict.en["nav.toggle_sidebar"] = "Collapse/Expand Menu"; I18N.dict.id["nav.toggle_sidebar"] = "Ciutkan/Perluas Menu";
   I18N.dict.en["page.doc_title"] = "Inventory Management System"; I18N.dict.id["page.doc_title"] = "Sistem Manajemen Persediaan";
+  I18N.dict.en["splash.title"] = "Hello"; I18N.dict.id["splash.title"] = "Halo";
+  I18N.dict.en["splash.opening"] = "Opening Hitech PSI..."; I18N.dict.id["splash.opening"] = "Opening Hitech PSI...";
+  I18N.dict.en["app.title"] = "Hitech PSI"; I18N.dict.id["app.title"] = "Hitech PSI";
   I18N.dict.en["nav.approval_center"] = "Approval Center"; I18N.dict.id["nav.approval_center"] = "Pusat Persetujuan";
   I18N.dict.en["nav.approval_flows"] = "Approval Flows"; I18N.dict.id["nav.approval_flows"] = "Alur Persetujuan";
   I18N.dict.en["nav.batch_tasks"] = "Batch Task Center"; I18N.dict.id["nav.batch_tasks"] = "Pusat Tugas Batch";
