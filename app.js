@@ -10706,7 +10706,7 @@ function renderPayableTable(){
       '<td>'+esc(r.fee_no||'')+'</td>'+
       '<td>'+esc(PAY_SOURCE_TYPE_LABELS[r.source_type]||r.source_type||'')+(r.source_no?' · '+esc(r.source_no):'')+'</td>'+
       '<td>'+esc(PAY_FEE_TYPE_LABELS[r.fee_type]||r.fee_type||'')+'</td>'+
-      '<td>'+esc(r.payee_name_snapshot||'')+(r.payee_key?' <span class="muted">('+esc(r.payee_key)+')</span>':'')+'</td>'+
+      '<td>'+esc(r.payee_name_snapshot||'')+'</td>'+
       '<td>'+esc(r.currency||'')+'</td>'+
       '<td style="text-align:right">'+amt+'</td>'+
       '<td>'+esc(PAY_LIFECYCLE_LABELS[r.lifecycle_status]||r.lifecycle_status||'')+'</td>'+
