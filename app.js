@@ -4343,9 +4343,17 @@ function formatForecastSalesStatus(rawValue){
     '慢销':'forecast.movement.slow_sales',
     '停采/清库存':'forecast.movement.brand_stopped'
   };
+  // 业务友好展示名（仅中文 fallback，不改内部值/不改 i18n key）
+  var DISPLAY={
+    '正常动销':'正常销售',
+    '缺货风险':'即将缺货',
+    '慢销':'销售偏慢',
+    '停采/停产':'停止补货',
+    '停采/清库存':'停止补货'
+  };
   var key=MAP[v];
   if(!key) return v;
-  return t(key, v);
+  return t(key, DISPLAY[v] || v);
 }
 // Risk Tags 显式静态映射（支持逗号分隔字符串或数组）
 var FORECAST_RISK_MAP={
@@ -4361,7 +4369,10 @@ function formatForecastRiskTag(rawValue){
   var tg=String(rawValue||'').trim();
   if(!tg) return '';
   var key=FORECAST_RISK_MAP[tg];
-  return key?t(key,tg):tg; // 未识别值原样显示
+  if(!key) return tg;
+  // 业务友好展示名（仅中文 fallback，不改内部值/不改 i18n key）
+  var DISPLAY={'销量失真':'缺货影响'};
+  return t(key, DISPLAY[tg] || tg); // 未识别值原样显示
 }
 function formatForecastRiskTags(rawValue){
   var raw=rawValue||'';
@@ -5403,7 +5414,7 @@ async function loadRp(){
       after_order_turnover:{th:rpThCompact(t('forecast.compact.after_order_turnover','\u9884\u8ba1\u4e0b\u5355\u540e\n\u5468\u8f6c'),t("app.803", "\uff08\u5f53\u524d\u5e93\u5b58\u6c60 + \u672c\u6b21\u5efa\u8bae\u91c7\u8d2d\u6570\u91cf\uff09\u00f7 \u6708\u5747\u9500\u91cf\uff08\u9500\u91cf\u7edf\u8ba1\u5468\u671f\u53e3\u5f84\uff09\u3002"),'text-right','',true),
         td:function(r,c){return '<td class="text-right '+(c.afterOrderTurnover!==null?(c.afterOrderTurnover<2?'text-danger':c.afterOrderTurnover>6?'text-secondary':'text-success'):'text-muted')+'">'+(c.afterOrderTurnover!==null?c.afterOrderTurnover:'-')+'</td>';},
         sum:function(t){return '<td class="text-right">'+(t.taPeriod>0?Math.round((t.poolWS+t.poWS+t.sqWS)/t.taPeriod*10)/10:'-')+'</td>';}},
-      sales_status:{th:rpThCompact(t('forecast.compact.sales_status','销量\n状态'),t("app.804", "\u7cfb\u7edf\u6839\u636e\u9500\u91cf\u3001\u5e93\u5b58\u3001\u5e93\u9f84\u3001\u7f3a\u8d27\u3001\u6162\u9500\u3001\u9ad8\u5e93\u5b58\u7b49\u89c4\u5219\u5224\u65ad SKU \u5f53\u524d\u72b6\u6001\u3002"),'text-center','',true),
+      sales_status:{th:rpThCompact(t('forecast.compact.sales_status','销量\n状态'),t("app.804", "\u7cfb\u7edf\u6839\u636e\u9500\u91cf\u8d8b\u52bf\u3001\u5e93\u5b58\u72b6\u6001\u3001\u5e93\u5b58\u5468\u8f6c\u548c\u751f\u547d\u5468\u671f\u7efc\u5408\u5224\u65ad\u5f53\u524d SKU \u9500\u552e\u72b6\u6001\uff0c\u5e76\u81ea\u52a8\u9009\u62e9\u5bf9\u5e94\u8865\u8d27\u8ba1\u7b97\u65b9\u5f0f\u3002\u7528\u6237\u65e0\u9700\u7406\u89e3\u8ba1\u7b97\u89c4\u5219\uff0c\u53ea\u9700\u6839\u636e\u7cfb\u7edf\u5224\u65ad\u6267\u884c\u590d\u6838\u3001\u8865\u8d27\u6216\u505c\u6b62\u91c7\u8d2d\u3002"),'text-center','',true),
         td:function(r,c){return '<td class="text-center rp-sales-status-cell"><span class="status-badge">'+formatForecastSalesStatus(r.sales_status||'')+'</span></td>';},
         sum:function(t){return '<td class="text-center"></td>';}},
       risk_tags:{th:rpThCompact(t('forecast.compact.risk_tags','风险\n标签'),'','','text-center','',true),
@@ -6166,7 +6177,7 @@ async function loadRpChannelMonthly(channel){
     Cols.after_order_turnover={th:rpThCompact(t('forecast.compact.after_order_turnover','\u9884\u8ba1\u4e0b\u5355\u540e\n\u5468\u8f6c'),t("app.803", "\uff08\u5f53\u524d\u5e93\u5b58\u6c60 + \u672c\u6b21\u5efa\u8bae\u91c7\u8d2d\u6570\u91cf\uff09\u00f7 \u5f53\u524d\u9884\u6d4b\u5468\u671f\u6708\u5747\u9509\u91cf\u3002"),'text-right','',true),
       td:function(r,c){return '<td class="text-right rp-after-order-turn" data-rid="'+r.id+'" '+(c.afterOrderTurnover!==null?(c.afterOrderTurnover<2?'text-danger':c.afterOrderTurnover>6?'text-secondary':'text-success'):'text-muted')+'>'+(c.afterOrderTurnover!==null?c.afterOrderTurnover:'-')+'</td>';},
       sum:function(t){return '<td class="text-right">'+(t.avgSalesPeriod>0?Math.round((t.availWS+t.transitWS+t.poWS+t.piUnshippedWS+t.suggestedQtyWS)/t.avgSalesPeriod*10)/10:'-')+'</td>';}};
-    Cols.sales_status={th:rpThCompact(t('forecast.compact.sales_status','销量\n状态'),t("app.804", "\u7cfb\u7edf\u6839\u636e\u9500\u91cf\u3001\u5e93\u5b58\u3001\u5e93\u9f84\u3001\u7f3a\u8d27\u3001\u6162\u9500\u3001\u9ad8\u5e93\u5b58\u7b49\u89c4\u5219\u5224\u65ad SKU \u5f53\u524d\u72b6\u6001\u3002"),'text-center','',true),
+    Cols.sales_status={th:rpThCompact(t('forecast.compact.sales_status','销量\n状态'),t("app.804", "\u7cfb\u7edf\u6839\u636e\u9500\u91cf\u8d8b\u52bf\u3001\u5e93\u5b58\u72b6\u6001\u3001\u5e93\u5b58\u5468\u8f6c\u548c\u751f\u547d\u5468\u671f\u7efc\u5408\u5224\u65ad\u5f53\u524d SKU \u9500\u552e\u72b6\u6001\uff0c\u5e76\u81ea\u52a8\u9009\u62e9\u5bf9\u5e94\u8865\u8d27\u8ba1\u7b97\u65b9\u5f0f\u3002\u7528\u6237\u65e0\u9700\u7406\u89e3\u8ba1\u7b97\u89c4\u5219\uff0c\u53ea\u9700\u6839\u636e\u7cfb\u7edf\u5224\u65ad\u6267\u884c\u590d\u6838\u3001\u8865\u8d27\u6216\u505c\u6b62\u91c7\u8d2d\u3002"),'text-center','',true),
       td:function(r,c){return '<td class="text-center rp-sales-status-cell"><span class="status-badge">'+formatForecastSalesStatus(r.sales_status||'')+'</span></td>';},
       sum:function(t){return '<td class="text-center"></td>';}};
     Cols.risk_tags={th:rpThCompact(t('forecast.compact.risk_tags','风险\n标签'),'','','text-center','',true),
@@ -6179,7 +6190,7 @@ async function loadRpChannelMonthly(channel){
       td:function(r,c){return '<td class="rp-cell-wrap" title="'+esc(r.suggestion||'')+'">'+esc(r.suggestion||'')+'</td>';},
       sum:function(t){return '<td></td>';}};
     // 动销判断 = 动销状态 ｜ 风险标签（前端合并展示）
-    Cols.sales_judgement={th:rpThCompact(t('forecast.compact.sales_judgement','动销\n判断'),t("app.804", "\u7cfb\u7edf\u6839\u636e\u9500\u91cf\u3001\u5e93\u5b58\u3001\u5e93\u9f84\u3001\u7f3a\u8d27\u3001\u6162\u9500\u3001\u9ad8\u5e93\u5b58\u7b49\u89c4\u5219\u5224\u65ad SKU \u5f53\u524d\u72b6\u6001\u3002"),'','',true),
+    Cols.sales_judgement={th:rpThCompact(t('forecast.compact.sales_judgement','动销\n判断'),t("app.804", "\u7cfb\u7edf\u6839\u636e\u9500\u91cf\u8d8b\u52bf\u3001\u5e93\u5b58\u72b6\u6001\u3001\u5e93\u5b58\u5468\u8f6c\u548c\u751f\u547d\u5468\u671f\u7efc\u5408\u5224\u65ad\u5f53\u524d SKU \u9500\u552e\u72b6\u6001\uff0c\u5e76\u81ea\u52a8\u9009\u62e9\u5bf9\u5e94\u8865\u8d27\u8ba1\u7b97\u65b9\u5f0f\u3002\u7528\u6237\u65e0\u9700\u7406\u89e3\u8ba1\u7b97\u89c4\u5219\uff0c\u53ea\u9700\u6839\u636e\u7cfb\u7edf\u5224\u65ad\u6267\u884c\u590d\u6838\u3001\u8865\u8d27\u6216\u505c\u6b62\u91c7\u8d2d\u3002"),'','',true),
       td:function(r,c){return '<td class="rp-movement-cell" style="min-width:150px;max-width:180px">'+buildSalesJudgement(r)+'</td>';},
       sum:function(t){return '<td></td>';}};
     // 复盘入口
@@ -6588,6 +6599,23 @@ function openRpReview(rid, channel){
     +'<div class="rp-review-reason-item"><div class="detail-label">'+esc(t("app.742", "\u52a8\u9500\u539f\u56e0"))+'</div><div class="rp-review-reason-text">'+esc(r.sales_reason||'')+'</div></div>'
     +'<div class="rp-review-reason-item"><div class="detail-label">'+esc(t("app.737", "AI\u5efa\u8bae"))+'</div><div class="rp-review-reason-text">'+esc(r.ai_business_advice||'')+'</div></div>'
     +'</div></div>'
+    // 2.5 缺货影响说明（仅当存在"销量失真"标签时展示）
+    +(function(){
+      var hasDistortion = tags.indexOf('销量失真') >= 0;
+      if(!hasDistortion) return '';
+      var maxMonthly = Math.max(c.salesM1||0, c.salesM2||0, c.salesM3||0, c.salesM4||0);
+      var refLabel = isOnline ? t('gen.L4658.1','线上') : t('gen.L4658.2','线下');
+      var explainHtml = '<div style="background:#fff8e1;border:1px solid #ffe082;border-radius:8px;padding:12px 16px;margin-bottom:8px">'
+        +'<div style="font-size:13px;line-height:1.8;color:#5d4037">'
+        +t('forecast.review.distortion_explain','当前库存为 0，近期销量受到缺货限制。系统未采用滚动月均销量，而采用过去4个月最高月销量作为补货参考。')
+        +'</div></div>';
+      var dataHtml = '<div class="detail-grid" style="grid-template-columns:1fr 1fr 1fr">'
+        +kv(t('forecast.review.monthly_avg','{channel} 月均', {channel:refLabel}), c.avgSalesPeriod!==undefined?formatQuantityDisplay(c.avgSalesPeriod):'')
+        +kv(t('forecast.review.ref_sales','补货参考销量'), formatQuantityDisplay(maxMonthly)+'<br><span style="font-size:11px;color:var(--text-secondary)">'+t('forecast.review.ref_sales_hint','（过去4个月最高月销量）')+'</span>', true)
+        +kv(t("app.109", "\u5efa\u8bae\u91c7\u8d2d\u6570\u91cf"), formatQuantityDisplay(c.suggestedQty))
+        +'</div>';
+      return t('forecast.review.distortion_title','<div class="detail-section"><h3>2.5 补货参考说明</h3>')+explainHtml+dataHtml+'</div>';
+    })()
     // 3. 关键数据（渠道口径）
     +t('forecast.review.key_data_title','<div class="detail-section"><h3>3. 关键数据（{channel}）</h3><div class="detail-grid">', {channel:chLabel})
     +kv(t('forecast.review.monthly_avg','{channel} 月均', {channel:chLabel}), c.avgSalesPeriod!==undefined?formatQuantityDisplay(c.avgSalesPeriod):'')

@@ -3829,21 +3829,26 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   // Movement Judgment (sales_status 列)
   I18N.dict.en["forecast.movement.normal"] = "Normal Sales"; I18N.dict.id["forecast.movement.normal"] = "Penjualan Normal";
   I18N.dict.en["forecast.movement.clearance"] = "Clearance"; I18N.dict.id["forecast.movement.clearance"] = "Dibebaskan";
-  I18N.dict.en["forecast.movement.stopped"] = "Discontinued"; I18N.dict.id["forecast.movement.stopped"] = "Dihentikan";
+  I18N.dict.en["forecast.movement.stopped"] = "No Replenishment"; I18N.dict.id["forecast.movement.stopped"] = "Tidak Replenish";
   I18N.dict.en["forecast.movement.new_product"] = "New Product / Insufficient Data"; I18N.dict.id["forecast.movement.new_product"] = "Produk Baru / Data Tidak Cukup";
   I18N.dict.en["forecast.movement.no_sales"] = "No Effective Sales"; I18N.dict.id["forecast.movement.no_sales"] = "Tidak Ada Penjualan Efektif";
   I18N.dict.en["forecast.movement.stockout"] = "Stockout"; I18N.dict.id["forecast.movement.stockout"] = "Kehabisan Stok";
-  I18N.dict.en["forecast.movement.stockout_risk"] = "Stockout Risk"; I18N.dict.id["forecast.movement.stockout_risk"] = "Risiko Kehabisan Stok";
+  I18N.dict.en["forecast.movement.stockout_risk"] = "Impending Stockout"; I18N.dict.id["forecast.movement.stockout_risk"] = "Kehabisan Stok Terdekat";
   I18N.dict.en["forecast.movement.stagnant"] = "Stagnant"; I18N.dict.id["forecast.movement.stagnant"] = "Stagnan";
-  I18N.dict.en["forecast.movement.slow_sales"] = "Slow Sales"; I18N.dict.id["forecast.movement.slow_sales"] = "Penjualan Lambat";
-  I18N.dict.en["forecast.movement.brand_stopped"] = "Discontinued / Clearance"; I18N.dict.id["forecast.movement.brand_stopped"] = "Dihentikan / Pengurangan Stok";
+  I18N.dict.en["forecast.movement.slow_sales"] = "Slow Moving"; I18N.dict.id["forecast.movement.slow_sales"] = "Pergerakan Lambat";
+  I18N.dict.en["forecast.movement.brand_stopped"] = "No Replenishment"; I18N.dict.id["forecast.movement.brand_stopped"] = "Tidak Replenish";
   // Risk Tags (risk_tags 列)
   I18N.dict.en["forecast.risk.high_stock_attention"] = "High Stock Attention"; I18N.dict.id["forecast.risk.high_stock_attention"] = "Perhatian Stok Tinggi";
   I18N.dict.en["forecast.risk.high_stock_severe"] = "High Stock Severe"; I18N.dict.id["forecast.risk.high_stock_severe"] = "Stok Tinggi Parah";
   I18N.dict.en["forecast.risk.high_age"] = "High Age Risk"; I18N.dict.id["forecast.risk.high_age"] = "Risiko Usia Tua";
   I18N.dict.en["forecast.risk.age_unknown"] = "Age Unknown"; I18N.dict.id["forecast.risk.age_unknown"] = "Usia Tidak Diketahui";
-  I18N.dict.en["forecast.risk.sales_distortion"] = "Sales Distortion"; I18N.dict.id["forecast.risk.sales_distortion"] = "Distorsi Penjualan";
+  I18N.dict.en["forecast.risk.sales_distortion"] = "Stockout Impact"; I18N.dict.id["forecast.risk.sales_distortion"] = "Dampak Kehabisan Stok";
   I18N.dict.en["forecast.risk.new_product_no_sales"] = "New Product No Sales"; I18N.dict.id["forecast.risk.new_product_no_sales"] = "Produk Baru Tanpa Penjualan";
+  // Review modal - stockout distortion explanation
+  I18N.dict.en["forecast.review.distortion_title"] = "<div class=\"detail-section\"><h3>2.5 Replenishment Reference</h3>"; I18N.dict.id["forecast.review.distortion_title"] = "<div class=\"detail-section\"><h3>2.5 Referensi Replenish</h3>";
+  I18N.dict.en["forecast.review.distortion_explain"] = "Current stock is 0, recent sales may be suppressed by stockout. The system uses the highest monthly sales in the past 4 months as the replenishment reference instead of the rolling average."; I18N.dict.id["forecast.review.distortion_explain"] = "Stok saat ini 0, penjualan terbaru mungkin tertekan oleh kehabisan stok. Sistem menggunakan penjualan bulanan tertinggi dalam 4 bulan terakhir sebagai referensi replenish.";
+  I18N.dict.en["forecast.review.ref_sales"] = "Ref. Sales"; I18N.dict.id["forecast.review.ref_sales"] = "Penjualan Ref.";
+  I18N.dict.en["forecast.review.ref_sales_hint"] = "(Highest monthly sales in past 4 months)"; I18N.dict.id["forecast.review.ref_sales_hint"] = "(Penjualan bulanan tertinggi 4 bulan terakhir)";
   // Sales Activity Reason（按 sales_status 稳定 key 翻译；后端中文确定性模板由前端重新组装）
   I18N.dict.en["forecast.reason.normal"] = "Sales and turnover normal"; I18N.dict.id["forecast.reason.normal"] = "Penjualan dan perputaran normal";
   I18N.dict.en["forecast.reason.clearance"] = "Lifecycle is clearance"; I18N.dict.id["forecast.reason.clearance"] = "Siklus hidup adalah clearance";
