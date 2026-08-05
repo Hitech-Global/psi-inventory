@@ -1181,7 +1181,7 @@ async function initDatabase() {
       discount NUMERIC(18,4) DEFAULT 0,
       net_unit_price NUMERIC(18,4) DEFAULT 0,
       ci_amount NUMERIC(18,4) DEFAULT 0,
-      created_at TEXT DEFAULT (datetime('now'))
+      created_at TEXT DEFAULT NOW()
     )
   `);
   await exec(`CREATE INDEX IF NOT EXISTS ix_hci_items_hci_id ON historical_commercial_invoice_items(hci_id)`);

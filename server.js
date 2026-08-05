@@ -76,9 +76,7 @@ const PUBLIC_AUTH_PREFIXES = [
   '/api/auth/local/login',
   '/api/logout',
   '/api/health',
-  '/api/version',
-  '/api/admin/diag-hci-records',
-  '/api/admin/migrate-hci-items'
+  '/api/version'
 ];
 function reqPath(req) { return (req.originalUrl || req.url || '').split('?')[0]; }
 
@@ -12277,134 +12275,6 @@ if (require.main === module) {
     process.exit(1);
   });
 }
-
-// TEMP-DIAG-HCI-RECORDS: 只读检查 historical_commercial_invoices 已有记录
-// 临时免认证 + 密钥保护，用完即删
-app.get('/api/admin/diag-hci-records', asyncHandler(async (req, res) => {
-  if (req.headers['x-diag-key'] !== 'DIAG_HCI_2026_08_05') {
-    return res.status(403).json({ error: '密钥无效' });
-  }
-  try {
-    const exec = require('./db-pg');
-
-    // 1. 查询所有历史CI主表记录
-    const records = (await exec.query(`
-      SELECT id, historical_ci_no, supplier_name, supplier_identity, brand_name, country,
-             ci_date, currency, gross_goods_amount, historical_paid_amount,
-             payment_request_id, idempotency_key, payload_hash, created_at
-      FROM historical_commercial_invoices
-      ORDER BY created_at
-    `)).rows;
-
-    // 2. 对每条记录检查 payment_request 是否存在
-    const enrichedRecords = [];
-    for (const r of records) {
-      let paymentRequest = null;
-      if (r.payment_request_id) {
-        const prRows = (await exec.query(`
-          SELECT id, request_no, payee_name_snapshot, payable_amount, currency, payment_status, approval_status
-          FROM payment_requests WHERE id = $1
-        `, [r.payment_request_id])).rows;
-        paymentRequest = prRows[0] || null;
-      }
-      enrichedRecords.push({ ...r, payment_request: paymentRequest });
-    }
-
-    // 3. 检查 historical_commercial_invoice_items 表是否存在
-    const tableCheck = (await exec.query(`
-      SELECT to_regclass('historical_commercial_invoice_items') AS exists
-    `)).rows[0];
-
-    res.json({
-      success: true,
-      total_records: records.length,
-      table_items_exists: tableCheck.exists,
-      records: enrichedRecords
-    });
-  } catch (e) {
-    console.error('[DIAG-HCI-RECORDS] Error:', e.message, e.stack);
-    res.status(500).json({ error: e.message, stack: e.stack });
-  }
-}));
-
-// TEMP-MIGRATE-HCI-ITEMS: 补建 historical_commercial_invoice_items 表 + 索引
-// 临时免认证 + 密钥保护，用完即删
-app.post('/api/admin/migrate-hci-items', asyncHandler(async (req, res) => {
-  if (req.headers['x-migrate-key'] !== 'MIGRATE_HCI_2026_08_05') {
-    return res.status(403).json({ error: '密钥无效' });
-  }
-  try {
-    const exec = require('./db-pg');
-    const steps = [];
-
-    // 1. 检查表是否已存在
-    const tableCheck = (await exec.query(`
-      SELECT to_regclass('historical_commercial_invoice_items') AS exists
-    `)).rows[0];
-    steps.push({ step: 'check_table_exists', result: tableCheck.exists });
-
-    if (tableCheck.exists) {
-      // 表已存在，检查列结构
-      const columns = (await exec.query(`
-        SELECT column_name, data_type
-        FROM information_schema.columns
-        WHERE table_name = 'historical_commercial_invoice_items'
-        ORDER BY ordinal_position
-      `)).rows;
-      steps.push({ step: 'table_already_exists', columns });
-    } else {
-      // 2. 建表（修正 created_at 为 NOW()，与主表一致）
-      await exec.run(`
-        CREATE TABLE historical_commercial_invoice_items (
-          id TEXT PRIMARY KEY,
-          hci_id TEXT NOT NULL,
-          hci_no TEXT DEFAULT '',
-          pi_id TEXT DEFAULT '',
-          pi_no TEXT DEFAULT '',
-          sku_code TEXT NOT NULL,
-          shipped_qty INTEGER DEFAULT 0,
-          unit_price NUMERIC(18,4) DEFAULT 0,
-          discount NUMERIC(18,4) DEFAULT 0,
-          net_unit_price NUMERIC(18,4) DEFAULT 0,
-          ci_amount NUMERIC(18,4) DEFAULT 0,
-          created_at TEXT DEFAULT NOW()
-        )
-      `);
-      steps.push({ step: 'create_table', result: 'created' });
-
-      // 3. 建索引
-      await exec.run(`CREATE INDEX IF NOT EXISTS ix_hci_items_hci_id ON historical_commercial_invoice_items(hci_id)`);
-      steps.push({ step: 'create_index', result: 'created' });
-    }
-
-    // 4. 验证最终状态
-    const finalCheck = (await exec.query(`
-      SELECT to_regclass('historical_commercial_invoice_items') AS table_exists
-    `)).rows[0];
-    const finalColumns = (await exec.query(`
-      SELECT column_name, data_type
-      FROM information_schema.columns
-      WHERE table_name = 'historical_commercial_invoice_items'
-      ORDER BY ordinal_position
-    `)).rows;
-    const indexCheck = (await exec.query(`
-      SELECT indexname FROM pg_indexes WHERE tablename = 'historical_commercial_invoice_items'
-    `)).rows;
-
-    res.json({
-      success: true,
-      steps,
-      final_state: {
-        table_exists: finalCheck.table_exists,
-        columns: finalColumns,
-        indexes: indexCheck
-      }
-    });
-  } catch (e) {
-    console.error('[MIGRATE-HCI-ITEMS] Error:', e.message, e.stack);
-    res.status(500).json({ error: e.message, stack: e.stack });
-  }
-}));
 
 // PAY-CORE P0-1：供 scripts/backfill-payable-items.js 复用，不影响运行时
 module.exports = {
