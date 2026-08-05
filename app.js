@@ -3260,7 +3260,8 @@ function openSalesBatchImport(){
     '<button class="btn btn-primary" id="sales-import-btn" onclick="submitSalesBatchImport()" disabled>'+t("html.inv.start_import", "开始导入")+'</button>'
   );
   window._salesImportData=[];
-  resumeSalesImport();
+  setSalesImportSessionId('');
+  stopSalesImportPolling();
 }
 
 var salesImportStatusPollTimer=null;
