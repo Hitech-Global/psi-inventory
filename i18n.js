@@ -134,7 +134,7 @@
 
   // 系统名称品牌统一：中文亦显示「PSI系统」（避免沿用旧「进销存系统」），不改动 app.js / index.html。
   I18N.dict.zh['nav.app_title'] = 'PSI系统';
-  I18N.dict.zh['auth.login_title'] = '📦 PSI系统';
+  I18N.dict.zh['auth.login_title'] = 'PSI系统';
   I18N.dict.zh['nav.toggle_sidebar'] = '折叠/展开菜单';
   I18N.dict.zh['page.doc_title'] = '进销存管理系统';
 
@@ -1631,7 +1631,7 @@
   I18N.dict.en["auth.breakglass_link"] = "Local Emergency Sign-in"; I18N.dict.id["auth.breakglass_link"] = "Masuk Darurat Lokal";
   I18N.dict.en["auth.feishu_login"] = "🔵 Sign in with Feishu"; I18N.dict.id["auth.feishu_login"] = "🔵 Masuk dengan Feishu";
   I18N.dict.en["auth.login_subtitle"] = "End-to-end Procurement · Inventory · Cost · Payment management"; I18N.dict.id["auth.login_subtitle"] = "Manajemen Pengadaan · Persediaan · Biaya · Pembayaran ujung ke ujung";
-  I18N.dict.en["auth.login_title"] = "📦 PSI System"; I18N.dict.id["auth.login_title"] = "📦 Sistem PSI";
+  I18N.dict.en["auth.login_title"] = "PSI System"; I18N.dict.id["auth.login_title"] = "Sistem PSI";
   I18N.dict.en["auth.recommend_hint"] = "Your account will be enabled and assigned permissions by an admin on first sign-in."; I18N.dict.id["auth.recommend_hint"] = "Pada login pertama, admin akan mengaktifkan akun dan menetapkan izin.";
   I18N.dict.en["auth.recommend_title"] = "Recommended: Sign in with Feishu"; I18N.dict.id["auth.recommend_title"] = "Disarankan: Masuk dengan Feishu";
   I18N.dict.en["ci.001"] = "Void Commercial Invoice"; I18N.dict.id["ci.001"] = "Batalkan Commercial Invoice";

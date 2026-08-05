@@ -170,20 +170,30 @@ async function probeFeishuStatus(){
     }
   }catch(e){ /* 静默失败：保持按钮可用，避免误伤 */ }
 }
-function toggleBreakGlass(){ const f=document.getElementById('bg-form'); if(f) f.style.display = (f.style.display==='none'||!f.style.display)?'block':'none'; }
+function toggleBreakGlass(){ clearLoginError(); const f=document.getElementById('bg-form'); if(f) f.style.display = (f.style.display==='none'||!f.style.display)?'block':'none'; }
+function showLoginError(msg){ const el=document.getElementById('login-error'); if(!el)return; el.textContent=msg; el.style.display='block'; }
+function clearLoginError(){ const el=document.getElementById('login-error'); if(el) el.style.display='none'; }
 async function doBreakGlassLogin(){
   const u=document.getElementById('bg-username');
   const p=document.getElementById('bg-password');
+  const btn=document.querySelector('#bg-form .btn-secondary');
+  const loading=document.getElementById('login-loading');
   if(!u||!p){alert(t('login.controlNotLoaded','登录控件未加载'));return}
-  if(!u.value||!p.value){showToast(t('login.enterEmergencyCreds','请输入应急账号和密码'),'warning');return}
+  if(!u.value||!p.value){showLoginError(t('login.enterEmergencyCreds','请输入应急账号和密码'));return}
+  if(loading) loading.style.display='flex';
+  if(btn) btn.disabled=true;
   try{
     const d=await api('/api/auth/local/login','POST',{username:u.value,password:p.value});
     currentUser=d;
     // I18N-B1-FINAL-4-GAPS-CLOSEOUT：应急登录成功后应用用户语言偏好（共享函数；skipSave 不触发保存 API）
     applyCurrentUserLanguagePreference(d);
+    if(loading) loading.style.display='none';
+    if(btn) btn.disabled=false;
     showApp();
   }catch(e){
-    showToast(t('toast.doBreakGlassLogin', '应急登录失败: {v1}', {v1: e.message||e}),'danger');
+    if(loading) loading.style.display='none';
+    if(btn) btn.disabled=false;
+    showLoginError(t('toast.doBreakGlassLogin', '应急登录失败: {v1}', {v1: e.message||e}));
   }
 }
 // pending 落地页：仅显示"账号已识别，等待管理员授权"，业务接口由后端 apiAuth 拦截
@@ -205,6 +215,7 @@ function showApp(){
   const lp=document.getElementById('login-page');if(lp)lp.style.display='none';
   const pp=document.getElementById('pending-page');if(pp)pp.style.display='none';
   document.getElementById('app').style.display='flex';
+  showEnterSplash();
   // break-glass 本地应急账号：内置系统标签按语言显示；真实飞书用户姓名保持原文
   const isLocal=currentUser.auth_source==='local' || currentUser.username==='admin';
   const displayName=isLocal ? t('auth.breakglass_admin_label','超级管理员') : (currentUser.name||'');
@@ -212,6 +223,15 @@ function showApp(){
   renderUserRole();
   document.getElementById('user-avatar').textContent=(displayName||'U').charAt(0).toUpperCase();
   renderTopNav();renderSidebar();initSidebarCollapse();showPage('dashboard');
+}
+
+// 登录欢迎 splash（纯视觉，进入系统时显示一次，不改变权限/路由/业务）
+function showEnterSplash(){
+  const el=document.getElementById('welcome-screen');
+  if(!el) return;
+  el.classList.remove('hide');
+  el.classList.add('show');
+  setTimeout(function(){ el.classList.add('hide'); setTimeout(function(){ el.classList.remove('show'); },700); },1800);
 }
 
 // 用户角色标签国际化（仅显示用，不改动权限/业务逻辑）；语言切换时由 i18n.setLang 重新调用
