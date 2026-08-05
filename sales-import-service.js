@@ -780,7 +780,7 @@ async function executeSalesImport(adapter, items, options = {}) {
   timings.validation_ms = clockNow() - validationStart;
   await reportImportProgress(options, {
     status: 'validating', phase: 'validating', percent: 10,
-    processed_count: rows.length, total_count: rows.length,
+    processed_count: 0, total_count: rows.length,
     timings, metrics: adapter.metrics
   });
   let classification;
