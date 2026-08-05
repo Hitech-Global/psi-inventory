@@ -5984,6 +5984,7 @@ app.get('/api/commercial-invoices', requireApiPermission('ci_view'), asyncHandle
   rows = rows.filter(r => {
     const lbInfo = logisticsMap[r.id];
     const inboundDerived = inboundMap[r.id] || 'none';
+    r.payable_date = computePayableDate(r.actual_ship_date, r.credit_days);
     r.related_logistics_batch_nos = lbInfo ? lbInfo.batch_nos.join(', ') : '';
     r.inbound_derived_status = inboundDerived;
 
@@ -6041,6 +6042,7 @@ app.get('/api/commercial-invoices/available-for-pl', requireApiPermission('ci_vi
 app.get('/api/commercial-invoices/:id', requireApiPermission('ci_view'), asyncHandler((req, res) => {
   const ci = queryOne('SELECT *, (goods_amount - COALESCE(actual_deducted_deposit, 0) - COALESCE(payable_balance, 0)) AS amount_difference FROM commercial_invoices WHERE id = ?', [req.params.id]);
   if (!ci) return res.status(404).json({ error: 'CI不存在' });
+  ci.payable_date = computePayableDate(ci.actual_ship_date, ci.credit_days);
   const items = query('SELECT * FROM commercial_invoice_items WHERE ci_id = ? ORDER BY created_at', [req.params.id]).rows;
   // LOGISTICS-CLOSED-LOOP-PHASE1: 改 queryOne→query，返回 packing_lists 数组（支持一 CI 多 PL）
   const pls = query('SELECT * FROM packing_lists WHERE related_ci_id = ? ORDER BY created_at', [req.params.id]).rows;
@@ -6281,6 +6283,7 @@ app.post('/api/commercial-invoices', requireApiPermission('ci_create'), asyncHan
               payeeName: pi.supplier_name || d.supplier_name,
               currency: ciCurrency,
               payableAmount: payableBalance,
+              payableDate: computePayableDate(actualShipDate, ciCredit.creditDays),
               createdBy: (req.currentUserId || req.user && req.user.id) || ''
             });
           }
@@ -6806,6 +6809,7 @@ app.post('/api/commercial-invoices/batch-import', requireApiPermission('ci_creat
                 payeeType: 'factory', payeeKey: balancePayeeKey,
                 payeeName: pi.supplier_name || po.supplier_name || '',
                 currency: ciCurrency, payableAmount: payableBalance,
+                payableDate: computePayableDate(actualShipDate, ciCredit.creditDays),
                 createdBy: (req.currentUserId || req.user && req.user.id) || ''
               });
             }
@@ -8140,7 +8144,7 @@ function createPayableItemFromSource(params) {
     sourceType, sourceId, sourceNo, feeType,
     categoryCode, subcategoryCode,
     payeeType, payeeKey, payeeName,
-    currency, payableAmount, sourceCiId = '', createdBy = ''
+    currency, payableAmount, sourceCiId = '', payableDate = '', createdBy = ''
   } = params;
 
   // V5 规则：应付金额 <= 0 不创建
@@ -8179,12 +8183,12 @@ function createPayableItemFromSource(params) {
      (id, fee_no, source_type, source_id, source_no, source_ci_id, fee_type,
       category_code, subcategory_code, payee_type, payee_key, payee_name_snapshot,
       payer_entity_key, payer_name_snapshot, currency, payable_amount_minor,
-      is_active, lifecycle_status, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'active', ?)`,
+      is_active, lifecycle_status, payable_date, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'active', ?, ?)`,
     [id, feeNo, sourceType, sourceId, sourceNo, sourceCiId, feeType,
      categoryCode || '', subcategoryCode || '',
      payeeType || '', payeeKey, payeeName || '',
-     'self', '', currency, amountMinor, createdBy]
+     'self', '', currency, amountMinor, payableDate || '', createdBy]
   );
 
   return { id, fee_no: feeNo, lifecycle_status: 'active', payable_amount_minor: amountMinor };
@@ -9072,6 +9076,7 @@ async function createHistoricalCI(body, req) {
       feeType: 'balance', categoryCode: 'goods', subcategoryCode: 'balance',
       payeeType: 'factory', payeeKey: historicalPayeeKey, payeeName: historicalPayeeNameSnapshot,
       currency: normalized.currency, payableAmount: normalized.gross_goods_amount,
+      payableDate: historicalPayableDate,
       createdBy: operator.id
     });
     if (hciPayableItem && hciPayableItem.id && hciPayableItem.lifecycle_status === 'active') {

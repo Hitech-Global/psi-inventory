@@ -1334,6 +1334,8 @@ function initDatabase() {
   // payable_items 增加 source_ci_id：per-PI balance payable_item 的来源 CI 引用
   // 命名 source_ci_id（非 ci_id）：CI 不是付款来源，PI 才是 source；source_ci_id 仅标记该尾款产生自哪个 CI
   try { d.exec("ALTER TABLE payable_items ADD COLUMN source_ci_id TEXT NOT NULL DEFAULT ''"); } catch(e) {}
+  // PAY-CORE payable_date 链路统一：payable_items 增加应付日期（CI 尾款到期日 = actual_ship_date + credit_days）
+  try { d.exec("ALTER TABLE payable_items ADD COLUMN payable_date TEXT DEFAULT ''"); } catch(e) {}
   // commercial_invoices 增加多 PI 数组字段
   try { d.exec("ALTER TABLE commercial_invoices ADD COLUMN related_pi_ids TEXT DEFAULT ''"); } catch(e) {}
   try { d.exec("ALTER TABLE commercial_invoices ADD COLUMN related_pi_nos TEXT DEFAULT ''"); } catch(e) {}

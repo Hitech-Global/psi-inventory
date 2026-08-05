@@ -1537,6 +1537,8 @@ async function initDatabase() {
   await exec("UPDATE payable_items SET lifecycle_status = 'cancelled' WHERE is_active = 0 AND lifecycle_status = 'active'");
   await exec("CREATE INDEX IF NOT EXISTS idx_payable_items_lifecycle ON payable_items(lifecycle_status)");
   await exec("CREATE INDEX IF NOT EXISTS idx_payable_items_fee_type ON payable_items(fee_type)");
+  // PAY-CORE payable_date 链路统一：payable_items 增加应付日期（CI 尾款到期日 = actual_ship_date + credit_days）
+  await exec("ALTER TABLE payable_items ADD COLUMN IF NOT EXISTS payable_date TEXT DEFAULT ''");
 
   await exec(`
     CREATE TABLE IF NOT EXISTS payment_request_items (
