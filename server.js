@@ -8449,21 +8449,41 @@ async function applyPaymentSettlement(paymentRequestId, rawAmount, rawPaidDate, 
     const paymentAccount = String(options.payment_account || '').trim();
     const voucherAttachment = String(options.voucher_attachment || normalizedVoucher).trim();
     const applyRoundOff = options.apply_round_off === true;
+    // PAY-CORE V3：人工抹零参数（独立于 apply_round_off 自动 floor 逻辑）
+    const userRoundingAmount = options.rounding_amount != null ? settlementMoney(options.rounding_amount) : null;
+    const userRoundingReason = String(options.rounding_reason || '').trim();
+    const hasUserRounding = userRoundingAmount != null && userRoundingAmount > 0;
     const existing = await queryOne(`SELECT * FROM payment_settlement_logs
                                WHERE event_type = 'payment' AND idempotency_key = ?`, [idempotencyKey]);
     if (existing) return await paymentIdempotencyResult(existing, payment, null, paidDate, normalizedVoucher);
     await ensureSettlementLegacyBaselines(payment);
     const before = await paymentSettlementFacts(payment);
     if (before.outstanding <= 0) throw new SettlementError(409, '该付款申请已结清，无需重复付款');
-    // V2.1 第 4-5 节：Round-off 基于当前 outstanding
+    // PAY-CORE V3：三种互斥模式
+    // 模式 C（人工抹零）：rounding_amount > 0，实际付款以用户填写为准，不反推
+    // 模式 B（自动 floor）：apply_round_off=true 且无人工抹零，兼容历史
+    // 模式 A（普通付款）：无抹零
     let actualPaidAmount, roundOffAmount = 0;
-    if (applyRoundOff) {
-      // V2.1 第 5 节：apply_round_off=true 只能用于一次结清当前 outstanding
+    if (hasUserRounding) {
+      // ── 模式 C：人工抹零 ──
+      roundOffAmount = userRoundingAmount;
+      if (roundOffAmount > before.outstanding)
+        throw new SettlementError(400, '抹零金额不能大于当前未付金额');
+      const requestedAmount = (rawAmount === null || rawAmount === undefined || rawAmount === '')
+        ? null : settlementMoney(rawAmount);
+      actualPaidAmount = requestedAmount === null ? 0 : requestedAmount;
+      if (actualPaidAmount < 0) actualPaidAmount = 0;
+      // 累计结算 = 实际付款 + 抹零 + 抵扣，不能超过应付总额（非 outstanding，因 outstanding 已扣除抵扣）
+      const totalSettlement = settlementMoney(actualPaidAmount + roundOffAmount + before.effectiveDeduction);
+      if (totalSettlement > before.grossPayable)
+        throw new SettlementError(400, '实际付款金额与抹零金额及抵扣金额之和不能大于应付总额');
+    } else if (applyRoundOff) {
+      // ── 模式 B：自动 floor（原有逻辑，不动） ──
       actualPaidAmount = Math.floor(before.outstanding);
       roundOffAmount = settlementMoney(before.outstanding - actualPaidAmount);
       if (roundOffAmount < 0) throw new SettlementError(400, '抹零金额不能小于0');
     } else {
-      // V2.1 第 5 节：apply_round_off=false 保留 single partial payment 能力
+      // ── 模式 A：普通付款（原有逻辑，不动） ──
       const requestedAmount = rawAmount === null || rawAmount === undefined || rawAmount === '' ? null : settlementMoney(rawAmount);
       if (requestedAmount !== null && !(requestedAmount > 0)) throw new SettlementError(400, '本次实际付款金额必须大于0');
       actualPaidAmount = requestedAmount === null ? before.outstanding : requestedAmount;
@@ -8474,85 +8494,102 @@ async function applyPaymentSettlement(paymentRequestId, rawAmount, rawPaidDate, 
         throw new SettlementError(400, '多费用付款暂不支持部分付款，请全额支付或使用抹零一次结清');
       }
     }
-    const snapshot = await buildPaymentRateSnapshot(payment, actualPaidAmount, paidDate);
     const operator = await settlementOperator(req);
-    const logId = await genId('settle');
-    try {
-      await run(`INSERT INTO payment_settlement_logs
-           (id, payment_request_id, event_type, amount, status, reason, paid_date, payment_voucher,
-            original_currency, settlement_country, local_currency, local_rate, local_rate_date, local_rate_type,
-            local_rate_direction, local_amount, rmb_rate, rmb_rate_date, rmb_rate_type, rmb_rate_direction,
-            rmb_amount, operator_id, operator_name, idempotency_key)
-           VALUES (?, ?, 'payment', ?, 'applied', '付款确认', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [logId, payment.id, actualPaidAmount, paidDate, normalizedVoucher, payment.currency || '', snapshot.settlement_country,
-          snapshot.local_currency, snapshot.local_rate, snapshot.local_rate_date, snapshot.local_rate_type,
-          snapshot.local_rate_direction, snapshot.local_amount, snapshot.rmb_rate, snapshot.rmb_rate_date,
-          snapshot.rmb_rate_type, snapshot.rmb_rate_direction, snapshot.rmb_amount, operator.id, operator.name, idempotencyKey]);
-    } catch (e) {
-      const raced = await queryOne(`SELECT * FROM payment_settlement_logs
-                              WHERE event_type = 'payment' AND idempotency_key = ?`, [idempotencyKey]);
-      if (raced) return await paymentIdempotencyResult(raced, payment, actualPaidAmount, paidDate, normalizedVoucher);
-      throw e;
-    }
-    // PAY-CORE Phase 2 Step 5：事务内新增 transaction + allocation + payable_item lifecycle（V2.1 第 9 节）
-    // 1. INSERT payment_transactions（关联 settlement_log_id）
-    const txId = genId('txn');
-    const transNo = `TXN-${new Date().getFullYear()}-${String(Date.now()).slice(-8)}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
-    const paidAmountMinor = amountToMinor(actualPaidAmount);
-    await run(
-      `INSERT INTO payment_transactions
-       (id, trans_no, payment_request_id, paid_amount_minor, paid_date, payment_account, bank_ref_no,
-        trans_status, operator_id, operator_name, voucher_attachment, settlement_log_id, currency,
-        settlement_country, local_currency, local_rate, local_rate_date, local_rate_type, local_rate_direction,
-        local_amount, rmb_rate, rmb_rate_date, rmb_rate_type, rmb_rate_direction, rmb_amount)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'reconciled', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [txId, transNo, payment.id, paidAmountMinor, paidDate, paymentAccount, bankRefNo,
-       operator.id, operator.name, voucherAttachment, logId, payment.currency || '',
-       snapshot.settlement_country, snapshot.local_currency, snapshot.local_rate, snapshot.local_rate_date,
-       snapshot.local_rate_type, snapshot.local_rate_direction, snapshot.local_amount, snapshot.rmb_rate,
-       snapshot.rmb_rate_date, snapshot.rmb_rate_type, snapshot.rmb_rate_direction, snapshot.rmb_amount]
-    );
-    // 2. INSERT payment_allocations（如有 payment_request_items，按 requested_amount_minor 比例分摊）
-    const priRows = await query(
-      `SELECT pri.id, pri.payable_item_id, pri.requested_amount_minor
-       FROM payment_request_items pri
-       WHERE pri.payment_request_id = ?`,
-      [payment.id]
-    );
-    if (priRows.rows && priRows.rows.length > 0) {
-      const items = priRows.rows;
-      const totalRequestedMinor = items.reduce((s, r) => s + (r.requested_amount_minor || 0), 0);
-      let allocated = 0;
-      // 按 requested_amount_minor 比例分摊，尾差归最大项
-      const sorted = items.slice().sort((a, b) => (b.requested_amount_minor || 0) - (a.requested_amount_minor || 0));
-      for (let i = 0; i < sorted.length; i++) {
-        const item = sorted[i];
-        let allocMinor;
-        if (i === 0) {
-          // 最大项：paidAmountMinor - 其余项之和（吸收尾差）
-          const othersSum = sorted.slice(1).reduce((s, r) => s + Math.floor(paidAmountMinor * (r.requested_amount_minor || 0) / totalRequestedMinor), 0);
-          allocMinor = paidAmountMinor - othersSum;
-        } else {
-          allocMinor = Math.floor(paidAmountMinor * (item.requested_amount_minor || 0) / totalRequestedMinor);
-        }
-        if (allocMinor < 0) allocMinor = 0;
-        allocated += allocMinor;
-        await run(
-          `INSERT INTO payment_allocations
-           (id, transaction_id, payment_request_item_id, allocated_amount_minor, status)
-           VALUES (?, ?, ?, ?, 'reconciled')`,
-          [genId('alloc'), txId, item.id, allocMinor]
-        );
+    // PAY-CORE V3：纯抹零（actualPaidAmount=0）时跳过 payment log + transaction
+    let logId = null, txId = null, transNo = null;
+    let priRows = { rows: [] };
+    if (actualPaidAmount > 0) {
+      const snapshot = await buildPaymentRateSnapshot(payment, actualPaidAmount, paidDate);
+      logId = await genId('settle');
+      try {
+        await run(`INSERT INTO payment_settlement_logs
+             (id, payment_request_id, event_type, amount, status, reason, paid_date, payment_voucher,
+              original_currency, settlement_country, local_currency, local_rate, local_rate_date, local_rate_type,
+              local_rate_direction, local_amount, rmb_rate, rmb_rate_date, rmb_rate_type, rmb_rate_direction,
+              rmb_amount, operator_id, operator_name, idempotency_key)
+             VALUES (?, ?, 'payment', ?, 'applied', '付款确认', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [logId, payment.id, actualPaidAmount, paidDate, normalizedVoucher, payment.currency || '', snapshot.settlement_country,
+            snapshot.local_currency, snapshot.local_rate, snapshot.local_rate_date, snapshot.local_rate_type,
+            snapshot.local_rate_direction, snapshot.local_amount, snapshot.rmb_rate, snapshot.rmb_rate_date,
+            snapshot.rmb_rate_type, snapshot.rmb_rate_direction, snapshot.rmb_amount, operator.id, operator.name, idempotencyKey]);
+      } catch (e) {
+        const raced = await queryOne(`SELECT * FROM payment_settlement_logs
+                                WHERE event_type = 'payment' AND idempotency_key = ?`, [idempotencyKey]);
+        if (raced) return await paymentIdempotencyResult(raced, payment, actualPaidAmount, paidDate, normalizedVoucher);
+        throw e;
       }
+      // PAY-CORE Phase 2 Step 5：事务内新增 transaction + allocation + payable_item lifecycle（V2.1 第 9 节）
+      // 1. INSERT payment_transactions（关联 settlement_log_id）
+      txId = genId('txn');
+      transNo = `TXN-${new Date().getFullYear()}-${String(Date.now()).slice(-8)}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+      const paidAmountMinor = amountToMinor(actualPaidAmount);
+      await run(
+        `INSERT INTO payment_transactions
+         (id, trans_no, payment_request_id, paid_amount_minor, paid_date, payment_account, bank_ref_no,
+          trans_status, operator_id, operator_name, voucher_attachment, settlement_log_id, currency,
+          settlement_country, local_currency, local_rate, local_rate_date, local_rate_type, local_rate_direction,
+          local_amount, rmb_rate, rmb_rate_date, rmb_rate_type, rmb_rate_direction, rmb_amount)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'reconciled', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [txId, transNo, payment.id, paidAmountMinor, paidDate, paymentAccount, bankRefNo,
+         operator.id, operator.name, voucherAttachment, logId, payment.currency || '',
+         snapshot.settlement_country, snapshot.local_currency, snapshot.local_rate, snapshot.local_rate_date,
+         snapshot.local_rate_type, snapshot.local_rate_direction, snapshot.local_amount, snapshot.rmb_rate,
+         snapshot.rmb_rate_date, snapshot.rmb_rate_type, snapshot.rmb_rate_direction, snapshot.rmb_amount]
+      );
+      // 2. INSERT payment_allocations（如有 payment_request_items，按 requested_amount_minor 比例分摊）
+      priRows = await query(
+        `SELECT pri.id, pri.payable_item_id, pri.requested_amount_minor
+         FROM payment_request_items pri
+         WHERE pri.payment_request_id = ?`,
+        [payment.id]
+      );
+      if (priRows.rows && priRows.rows.length > 0) {
+        const items = priRows.rows;
+        const totalRequestedMinor = items.reduce((s, r) => s + (r.requested_amount_minor || 0), 0);
+        let allocated = 0;
+        // 按 requested_amount_minor 比例分摊，尾差归最大项
+        const sorted = items.slice().sort((a, b) => (b.requested_amount_minor || 0) - (a.requested_amount_minor || 0));
+        for (let i = 0; i < sorted.length; i++) {
+          const item = sorted[i];
+          let allocMinor;
+          if (i === 0) {
+            // 最大项：paidAmountMinor - 其余项之和（吸收尾差）
+            const othersSum = sorted.slice(1).reduce((s, r) => s + Math.floor(paidAmountMinor * (r.requested_amount_minor || 0) / totalRequestedMinor), 0);
+            allocMinor = paidAmountMinor - othersSum;
+          } else {
+            allocMinor = Math.floor(paidAmountMinor * (item.requested_amount_minor || 0) / totalRequestedMinor);
+          }
+          if (allocMinor < 0) allocMinor = 0;
+          allocated += allocMinor;
+          await run(
+            `INSERT INTO payment_allocations
+             (id, transaction_id, payment_request_item_id, allocated_amount_minor, status)
+             VALUES (?, ?, ?, ?, 'reconciled')`,
+            [genId('alloc'), txId, item.id, allocMinor]
+          );
+        }
+      }
+    } else {
+      // 纯抹零场景：仍需读取 priRows 用于 payable_item lifecycle
+      priRows = await query(
+        `SELECT pri.id, pri.payable_item_id, pri.requested_amount_minor
+         FROM payment_request_items pri
+         WHERE pri.payment_request_id = ?`,
+        [payment.id]
+      );
     }
     // 3. Round-off：如有抹零差额，插入独立 rounding event（不关联 transaction）
-    if (applyRoundOff && roundOffAmount > 0) {
+    // PAY-CORE V3：支持人工抹零（模式 C）和自动 floor（模式 B），统一写入 rounding log
+    if (roundOffAmount > 0) {
+      const roundingReason = hasUserRounding
+        ? (userRoundingReason || '人工抹零')
+        : '付款抹零（小数部分舍去）';
       const roundingLogId = genId('settle');
       await run(
         `INSERT INTO payment_settlement_logs
          (id, payment_request_id, event_type, amount, status, reason, original_currency, operator_id, operator_name)
-         VALUES (?, ?, 'rounding', ?, 'applied', '付款抹零（小数部分舍去）', ?, ?, ?)`,
-        [roundingLogId, payment.id, roundOffAmount, payment.currency || '', operator.id, operator.name]
+         VALUES (?, ?, 'rounding', ?, 'applied', ?, ?, ?, ?)`,
+        [roundingLogId, payment.id, roundOffAmount, roundingReason, payment.currency || '', operator.id, operator.name]
       );
     }
     // 4. payable_item lifecycle：在 recalculatePaymentSettlement 后判断（V2.1 第 7 节）
@@ -8560,14 +8597,15 @@ async function applyPaymentSettlement(paymentRequestId, rawAmount, rawPaidDate, 
     // 重新读取付款后状态，判断是否 outstanding=0 → paid
     const afterPayment = await queryOne('SELECT * FROM payment_requests WHERE id = ?', [payment.id]);
     const afterFacts = await paymentSettlementFacts(afterPayment);
-    if (afterFacts.outstanding <= 0 && afterFacts.effectivePaid > 0) {
+    // PAY-CORE V3：纯抹零结清时 effectivePaid=0 但 effectiveRounding>0，也需标记 paid
+    if (afterFacts.outstanding <= 0 && (afterFacts.effectivePaid > 0 || afterFacts.effectiveRounding > 0)) {
       // PR 已结清 → 标记所有关联 payable_items 为 paid
       const payableItemIds = (priRows.rows || []).map(r => r.payable_item_id).filter(Boolean);
       for (const payableItemId of payableItemIds) {
         markPayableItemPaid(payableItemId);
       }
     }
-    return { idempotent: false, log_id: logId, transaction_id: txId, trans_no: transNo, rounding_amount: roundOffAmount, ...result };
+    return { idempotent: false, log_id: logId, transaction_id: txId, trans_no: transNo, rounding_amount: roundOffAmount, effectivePaid: actualPaidAmount, ...result };
   });
 }
 
@@ -10420,7 +10458,9 @@ app.post('/api/payment-requests/:id/approve', requireApiPermission('payment_appr
         bank_ref_no: req.body.bank_ref_no,
         payment_account: req.body.payment_account,
         voucher_attachment: req.body.voucher_attachment,
-        apply_round_off: req.body.apply_round_off === true || req.body.apply_round_off === 1
+        apply_round_off: req.body.apply_round_off === true || req.body.apply_round_off === 1,
+        rounding_amount: req.body.rounding_amount,
+        rounding_reason: req.body.rounding_reason
       });
       return res.json({ success: true, idempotent: result.idempotent, log_id: result.log_id, transaction_id: result.transaction_id, trans_no: result.trans_no, rounding_amount: result.rounding_amount, paid_amount: result.effectivePaid, outstanding: result.outstanding, payment_status: result.payment_status });
     }
