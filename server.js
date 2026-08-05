@@ -11760,7 +11760,7 @@ app.get('/api/dashboard', requireApiPermission('dashboard_view'), asyncHandler((
 //    - 排除逾期付款(payable_date < today)
 //    - 优先使用 PAY-CORE 已确认人民币金额(rmb_amount/paid_amount 推算汇率)
 // 不修改：库存逻辑、采购链逻辑、CI/PL业务逻辑、PAY-CORE业务逻辑
-app.get('/api/financial-risk/overview', requireApiPermission('dashboard_view'), asyncHandler((req, res) => {
+app.get('/api/financial-risk/overview', requireApiPermission('dashboard_view'), asyncHandler(async (req, res) => {
   try {
     const today = new Date().toISOString().split('T')[0];
 
@@ -11769,24 +11769,68 @@ app.get('/api/financial-risk/overview', requireApiPermission('dashboard_view'), 
     const countryToCurrency = {};
     for (const c of allCountries) { countryToCurrency[c.name] = c.default_currency; }
 
-    // --- foreignToRmb 汇率映射（与库存总表完全一致） ---
-    // exchange_rates 中 to_currency='RMB' 的条目：rate = 1外币 = X 人民币（foreignToRmb）
-    const directRates = query("SELECT from_currency, rate FROM exchange_rates WHERE to_currency = 'RMB' ORDER BY rate_date DESC, created_at DESC").rows;
+    // --- 收集所有涉及币种（库存国家→币种 + CI 币种 + 付款申请币种） ---
+    const invCountries = query("SELECT DISTINCT country FROM inventory WHERE country IS NOT NULL AND country != ''").rows.map(r => r.country);
+    const ciCurrencies = query("SELECT DISTINCT currency FROM commercial_invoices WHERE currency IS NOT NULL AND currency != ''").rows.map(r => r.currency);
+    const payCurrencies = query("SELECT DISTINCT currency FROM payment_requests WHERE currency IS NOT NULL AND currency != ''").rows.map(r => r.currency);
+
+    const allCurrenciesSet = new Set();
+    // 库存国家→币种（与库存总表一致，支持别名）
+    invCountries.forEach(country => {
+      let curr = countryToCurrency[country];
+      if (!curr && COUNTRY_ALIAS_MAP[country]) curr = countryToCurrency[COUNTRY_ALIAS_MAP[country]];
+      if (curr) allCurrenciesSet.add(curr);
+    });
+    // CI币种
+    ciCurrencies.forEach(curr => allCurrenciesSet.add(curr));
+    // 付款申请币种
+    payCurrencies.forEach(curr => allCurrenciesSet.add(curr));
+    allCurrenciesSet.add('RMB');
+    allCurrenciesSet.add('CNY');
+
+    // --- foreignToRmb 汇率映射（与库存总表 /api/inventory/currency-rates 完全一致） ---
+    // 库存总表逻辑：先查DB今天汇率 → 再查DB最新汇率 → 最后从API获取并缓存
     const foreignToRmbMap = {};
-    for (const r of directRates) {
-      const curr = r.from_currency;
-      if (!foreignToRmbMap[curr]) foreignToRmbMap[curr] = Number(r.rate);
-    }
-    // 反向条目：from_currency='RMB', to_currency=curr → foreignToRmb = 1/rate
-    const reverseRates = query("SELECT to_currency, rate FROM exchange_rates WHERE from_currency = 'RMB' ORDER BY rate_date DESC, created_at DESC").rows;
-    for (const r of reverseRates) {
-      const curr = r.to_currency;
-      if (!foreignToRmbMap[curr] && Number(r.rate) > 0) {
-        foreignToRmbMap[curr] = 1 / Number(r.rate);
-      }
-    }
     foreignToRmbMap['RMB'] = 1;
     foreignToRmbMap['CNY'] = 1;
+
+    for (const curr of allCurrenciesSet) {
+      if (curr === 'RMB' || curr === 'CNY') continue;
+      // 查DB中今天的汇率（与库存总表一致：只查 from_currency=curr, to_currency='RMB'）
+      let row = queryOne('SELECT rate, rate_date FROM exchange_rates WHERE from_currency = ? AND to_currency = ? AND rate_date = ? ORDER BY created_at DESC LIMIT 1', [curr, 'RMB', today]);
+      if (!row) {
+        // 查DB中最新汇率（不限日期）
+        row = queryOne('SELECT rate, rate_date FROM exchange_rates WHERE from_currency = ? AND to_currency = ? ORDER BY rate_date DESC, created_at DESC LIMIT 1', [curr, 'RMB']);
+      }
+      if (row && Number(row.rate) > 0) {
+        foreignToRmbMap[curr] = Number(row.rate);
+      }
+    }
+
+    // 对缺失的汇率，从API获取（与库存总表 /api/inventory/currency-rates 步骤4完全一致）
+    const missingCurrencies = Array.from(allCurrenciesSet).filter(c => c !== 'RMB' && c !== 'CNY' && !foreignToRmbMap[c]);
+    if (missingCurrencies.length > 0) {
+      try {
+        const apiCode = 'CNY';
+        const resp = await fetch(`https://open.er-api.com/v6/latest/${apiCode}`);
+        const data = await resp.json();
+        if (data && data.rates) {
+          for (const curr of missingCurrencies) {
+            const apiCurr = CURRENCY_API_MAP[curr] || curr;
+            const cnyToForeign = data.rates[apiCurr]; // 1 CNY = X 外币（API直接返回）
+            if (cnyToForeign && cnyToForeign > 0) {
+              const foreignToRmb = 1 / cnyToForeign; // 换算为 1外币=X人民币
+              foreignToRmbMap[curr] = foreignToRmb;
+              // 缓存到DB（与库存总表一致，存foreignToRmb方便复用）
+              run('INSERT INTO exchange_rates (id, from_currency, to_currency, rate, rate_date, rate_type) VALUES (?, ?, ?, ?, ?, ?)',
+                [genId('rate'), curr, 'RMB', foreignToRmb, today, 'realtime']);
+            }
+          }
+        }
+      } catch (fetchErr) {
+        console.warn('[financial-risk] Failed to fetch real-time rates:', fetchErr.message);
+      }
+    }
 
     // --- 1. 库存资产(CNY) ---
     // 与库存总表 renderInvCards 完全一致：
@@ -11799,6 +11843,7 @@ app.get('/api/financial-risk/overview', requireApiPermission('dashboard_view'), 
       WHERE i.available_qty > 0 AND i.weighted_avg_cost > 0
     `).rows;
     let inventoryAssets = 0;
+    const invMissingRates = []; // 记录缺失汇率的库存行
     for (const r of invRows) {
       let currency = countryToCurrency[r.country] || '';
       // 别名匹配（与 /api/inventory/currency-rates 一致）
@@ -11808,8 +11853,13 @@ app.get('/api/financial-risk/overview', requireApiPermission('dashboard_view'), 
       const rate = currency ? (foreignToRmbMap[currency] || null) : null;
       if (rate) {
         inventoryAssets += Number(r.available_qty) * Number(r.weighted_avg_cost) * rate;
+      } else {
+        // rate 缺失时跳过该行并记录（与库存总表一致，不fallback=1）
+        invMissingRates.push({ country: r.country, currency: currency || '(unknown)' });
       }
-      // rate 缺失时跳过该行（与库存总表一致）
+    }
+    if (invMissingRates.length > 0) {
+      console.warn('[financial-risk] 库存资产：' + invMissingRates.length + ' 行缺失汇率，已跳过:', JSON.stringify(invMissingRates.slice(0, 5)));
     }
 
     // --- 2. 在途资产(CNY) ---
@@ -11824,13 +11874,23 @@ app.get('/api/financial-risk/overview', requireApiPermission('dashboard_view'), 
         AND (cii.shipped_qty - COALESCE(cii.inbound_qty, 0)) > 0
     `).rows;
     let inTransitAssets = 0;
+    const transitMissingRates = []; // 记录缺失汇率的CI明细（禁止 fallback=1）
     for (const r of transitRows) {
-      const rate = foreignToRmbMap[(r.currency || 'RMB').toUpperCase()] || foreignToRmbMap['RMB'] || 1;
+      const curr = (r.currency || '').toUpperCase();
+      const rate = foreignToRmbMap[curr];
+      if (!rate) {
+        // 缺失汇率：禁止 fallback=1，跳过该行并记录
+        transitMissingRates.push({ ci_currency: r.currency, ci_amount: r.ci_amount });
+        continue;
+      }
       const shippedQty = Number(r.shipped_qty);
       const inboundQty = Number(r.inbound_qty || 0);
       const uninboundRatio = (shippedQty - inboundQty) / shippedQty;
       const ciAmountRmb = Number(r.ci_amount || 0) * rate;
       inTransitAssets += ciAmountRmb * uninboundRatio;
+    }
+    if (transitMissingRates.length > 0) {
+      console.warn('[financial-risk] 在途资产：' + transitMissingRates.length + ' 条 CI 明细缺失汇率，已跳过:', JSON.stringify(transitMissingRates.slice(0, 5)));
     }
 
     // --- 3. 未来应付资金压力(CNY) ---
@@ -11850,6 +11910,7 @@ app.get('/api/financial-risk/overview', requireApiPermission('dashboard_view'), 
     `, [today]).rows;
 
     let pay7 = 0, pay30 = 0, pay90 = 0;
+    const payMissingRates = []; // 记录缺失汇率的付款申请（不静默按1计算）
     for (const pr of payRows) {
       // 优先使用 PAY-CORE 已确认人民币金额
       let unpaidRmb;
@@ -11857,12 +11918,21 @@ app.get('/api/financial-risk/overview', requireApiPermission('dashboard_view'), 
         const impliedRate = Number(pr.rmb_amount) / Number(pr.paid_amount);
         unpaidRmb = Number(pr.unpaid_amount) * impliedRate;
       } else {
-        const rate = foreignToRmbMap[(pr.currency || 'RMB').toUpperCase()] || foreignToRmbMap['RMB'] || 1;
+        const curr = (pr.currency || '').toUpperCase();
+        const rate = foreignToRmbMap[curr];
+        if (!rate) {
+          // 缺失汇率：禁止 fallback=1，跳过并记录
+          payMissingRates.push({ request_no: pr.request_no || '', currency: pr.currency, unpaid_amount: pr.unpaid_amount });
+          continue;
+        }
         unpaidRmb = Number(pr.unpaid_amount) * rate;
       }
       if (pr.payable_date <= d7) pay7 += unpaidRmb;
       if (pr.payable_date <= d30) pay30 += unpaidRmb;
       if (pr.payable_date <= d90) pay90 += unpaidRmb;
+    }
+    if (payMissingRates.length > 0) {
+      console.warn('[financial-risk] 未来应付：' + payMissingRates.length + ' 条付款申请缺失汇率，已跳过:', JSON.stringify(payMissingRates));
     }
 
     const totalAssets = inventoryAssets + inTransitAssets;
