@@ -133,7 +133,28 @@ if (driver === 'pg') {
         throw e;
       }
     },
-    initDatabase: function () { console.log('[DB] initDatabase skipped in PG mode (tables already migrated)'); },
+    initDatabase: function () {
+      console.log('[DB] initDatabase in PG mode — executing idempotent migrations...');
+      // CHANNEL-ALLOCATION: 幂等 DDL，确保新增列/表存在
+      // db-pg.js 的 async initDatabase 在 worker_threads 模式下不会被调用，
+      // 因此在此处通过 syncRequest 同步执行迁移。
+      var migrations = [
+        "CREATE TABLE IF NOT EXISTS sku_channel_configs (id TEXT PRIMARY KEY, sku_code TEXT NOT NULL, country_id TEXT NOT NULL, online_pct DOUBLE PRECISION NOT NULL, offline_pct DOUBLE PRECISION NOT NULL, status TEXT DEFAULT 'active', remark TEXT DEFAULT '', created_at TEXT DEFAULT NOW(), updated_at TEXT DEFAULT NOW(), UNIQUE (sku_code, country_id))",
+        "ALTER TABLE replenishment_suggestions ADD COLUMN IF NOT EXISTS channel_ratio_source TEXT DEFAULT ''",
+        "ALTER TABLE replenishment_suggestions ADD COLUMN IF NOT EXISTS channel_allocation_status TEXT DEFAULT ''",
+        "ALTER TABLE replenishment_suggestions ADD COLUMN IF NOT EXISTS resolved_online_pct DOUBLE PRECISION",
+        "ALTER TABLE replenishment_suggestions ADD COLUMN IF NOT EXISTS resolved_at TEXT DEFAULT ''"
+      ];
+      for (var i = 0; i < migrations.length; i++) {
+        try {
+          syncRequest('query', migrations[i]);
+          console.log('[DB] migration OK: ' + migrations[i].substring(0, 60) + '...');
+        } catch (e) {
+          console.error('[DB] migration FAILED: ' + e.message);
+        }
+      }
+      console.log('[DB] PG migrations completed.');
+    },
     getDB: function () { throw new Error('getDB() not available in worker_threads mode'); }
   };
 } else {
