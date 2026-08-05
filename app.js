@@ -6367,6 +6367,11 @@ async function loadRpChannelMonthly(channel){
       var avgSalesPeriod = isOnline ? (r.online_avg_sales_period||0) : (r.offline_avg_sales_period||0);
       var pct=totalAvg>0?(avgSales/totalAvg*100):0;
       var pctPeriod=totalAvgPeriod>0?(avgSalesPeriod/totalAvgPeriod*100):0;
+      // CHANNEL-ALLOCATION: 渠道分配模型 — 当已解析渠道占比时，使用解析值替代销量占比
+      if (r.channel_allocation_status === 'allocated' && r.resolved_online_pct != null) {
+        pctPeriod = isOnline ? r.resolved_online_pct : (100 - r.resolved_online_pct);
+        pct = pctPeriod; // 同步覆盖4m口径分摊，保持一致
+      }
       var availTotal=r.available_qty||0;
       var transitTotal=r.in_transit_qty||0;
       var piUnshippedTotal=r.pi_confirmed_unshipped_qty||0;
@@ -6378,6 +6383,8 @@ async function loadRpChannelMonthly(channel){
       var piUnshippedAllocated=Math.round(piUnshippedTotal*(pct/100));
       r._c.salesM1=salesM1; r._c.salesM2=salesM2; r._c.salesM3=salesM3; r._c.salesM4=salesM4;
       r._c.avgSales=avgSales; r._c.totalAvg=totalAvg; r._c.pct=pct; r._c.pctPeriod=pctPeriod; r._c.avgSalesPeriod=avgSalesPeriod; r._c.totalAvgPeriod=totalAvgPeriod;
+      r._c.channelRatioSource = r.channel_ratio_source || '';
+      r._c.channelAllocationStatus = r.channel_allocation_status || '';
       r._c.pool=pool; r._c.allocatedStock=allocatedStock;
       r._c.transit=transitTotal; r._c.po=r.po_unconfirmed_pi_qty||0; r._c.avail=availTotal;
       r._c.availAllocated=availAllocated; r._c.transitAllocated=transitAllocated; r._c.piUnshippedAllocated=piUnshippedAllocated;
@@ -6437,7 +6444,18 @@ async function loadRpChannelMonthly(channel){
       td:function(r,c){return '<td class="text-right font-bold">'+formatQuantityDisplay(c.avgSalesPeriod)+'</td>';},
       sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.avgSalesPeriod)+'</td>';}};
     Cols.channel_pct={th:rpThCompact(t('forecast.compact.sales_share','销量\n占比'),t("app.811", "\u8be5\u6e20\u9053\u5728\u5f53\u524d\u9500\u91cf\u7edf\u8ba1\u5468\u671f\u5185\u7684\u6708\u5747\u9500\u91cf\u5360\u603b\u6708\u5747\u9500\u91cf\u7684\u6bd4\u4f8b\uff0c\u7528\u4e8e\u5c55\u793a\u6e20\u9053\u9500\u552e\u7ed3\u6784\u3002\u91c7\u8d2d\u5efa\u8bae\u7531\u5171\u4eab\u5e93\u5b58\u6c60\u4e0e\u7ebf\u4e0a/\u7ebf\u4e0b\u76ee\u6807\u5e93\u5b58\u7edf\u4e00\u8ba1\u7b97\u3002"),'text-right','',true),
-      td:function(r,c){return '<td class="text-right">'+(c.totalAvgPeriod>0?Math.round(c.pctPeriod)+'%':'-')+'</td>';},
+      td:function(r,c){
+        if(c.channelAllocationStatus==='allocated'){
+          var srcLabel = c.channelRatioSource==='recent_sales' ? '' :
+                         c.channelRatioSource==='pre_stockout' ? '<span class="channel-src-badge" style="font-size:10px;color:#888;margin-left:2px">('+t('forecast.channel.pre_stockout','缺货前')+')<span>' :
+                         c.channelRatioSource==='manual_config' ? '<span class="channel-src-badge" style="font-size:10px;color:#888;margin-left:2px">('+t('forecast.channel.manual','人工')+')<span>' : '';
+          return '<td class="text-right">'+Math.round(c.pctPeriod)+'%'+srcLabel+'</td>';
+        }
+        if(c.channelAllocationStatus==='unallocated'){
+          return '<td class="text-right text-muted" style="font-size:11px">'+t('forecast.channel.unallocated','未分配')+'</td>';
+        }
+        return '<td class="text-right">'+(c.totalAvgPeriod>0?Math.round(c.pctPeriod)+'%':'-')+'</td>';
+      },
       sum:function(t){return '<td class="text-right">'+(t.totalAvgPeriod>0?Math.round(t.avgSalesPeriod/t.totalAvgPeriod*100)+'%':'-')+'</td>';}};
     Cols.transit={th:rpThCompact(t('forecast.compact.allocated_in_transit','在途库存'),t('forecast.help.allocated_in_transit','按{channel}销量统计周期占比，从总在途库存中分摊给该渠道的数量（仅测算用，非独立仓库库存）。',{channel:chLabel}),'text-right','',true),
       td:function(r,c){return '<td class="text-right">'+formatQuantityDisplay(c.transitAllocatedPeriod||0)+'</td>';},
@@ -6903,6 +6921,15 @@ function openRpReview(rid, channel){
     +t('forecast.review.key_data_title','<div class="detail-section"><h3>3. 关键数据（{channel}）</h3><div class="detail-grid">', {channel:chLabel})
     +kv(t('forecast.review.monthly_avg','{channel} 月均', {channel:chLabel}), c.avgSalesPeriod!==undefined?formatQuantityDisplay(c.avgSalesPeriod):'')
     +kv(t('forecast.review.sales_share','{channel} 占比', {channel:chLabel}), c.pctPeriod!==undefined?Math.round(c.pctPeriod)+'%':'')
+    +kv(t('forecast.review.channel_source','渠道占比来源'), (function(){
+      if(c.channelAllocationStatus==='allocated'){
+        if(c.channelRatioSource==='recent_sales') return t('forecast.channel.recent_sales','近期销量');
+        if(c.channelRatioSource==='pre_stockout') return t('forecast.channel.pre_stockout','缺货前销量');
+        if(c.channelRatioSource==='manual_config') return t('forecast.channel.manual','人工配置');
+      }
+      if(c.channelAllocationStatus==='unallocated') return t('forecast.channel.unallocated','未分配');
+      return '';
+    })())
     +kv(t('app.767','当前可用库存'), c.avail!==undefined?formatQuantityDisplay(c.avail):'')
     +kv(t('gen.L4686.1','当前可用周转'), c.availTurnover!==null?c.availTurnover:t("app.799", "\u65e0\u9500\u91cf"))
     +kv(t('app.768','在途库存'), c.transit!==undefined?formatQuantityDisplay(c.transit):'')

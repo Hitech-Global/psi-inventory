@@ -431,6 +431,22 @@ function initDatabase() {
     )
   `);
 
+  // SKU 渠道比例人工配置（CHANNEL-ALLOCATION-MODEL）
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS sku_channel_configs (
+      id           TEXT PRIMARY KEY,
+      sku_code     TEXT NOT NULL,
+      country_id   TEXT NOT NULL,
+      online_pct   REAL NOT NULL,
+      offline_pct  REAL NOT NULL,
+      status       TEXT DEFAULT 'active',
+      remark       TEXT DEFAULT '',
+      created_at   TEXT DEFAULT (datetime('now')),
+      updated_at   TEXT DEFAULT (datetime('now')),
+      UNIQUE (sku_code, country_id)
+    )
+  `);
+
   // 系统配置
   d.exec(`
     CREATE TABLE IF NOT EXISTS system_config (
@@ -795,6 +811,15 @@ function initDatabase() {
   ['online_suggested_qty INTEGER DEFAULT 0',
    'offline_suggested_qty INTEGER DEFAULT 0',
    'other_suggested_qty INTEGER DEFAULT 0'
+  ].forEach(col => {
+    try { d.exec(`ALTER TABLE replenishment_suggestions ADD COLUMN ${col}`); } catch(e) {}
+  });
+
+  // CHANNEL-ALLOCATION-MODEL：渠道分配模型字段
+  ['channel_ratio_source TEXT DEFAULT \'\'',
+   'channel_allocation_status TEXT DEFAULT \'\'',
+   'resolved_online_pct REAL',
+   'resolved_at TEXT DEFAULT \'\''
   ].forEach(col => {
     try { d.exec(`ALTER TABLE replenishment_suggestions ADD COLUMN ${col}`); } catch(e) {}
   });

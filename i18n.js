@@ -3885,6 +3885,12 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.en["forecast.review.key_data_title"] = "<div class=\"detail-section\"><h3>3. Key Data ({channel})</h3><div class=\"detail-grid\">"; I18N.dict.id["forecast.review.key_data_title"] = "<div class=\"detail-section\"><h3>3. Data Kunci ({channel})</h3><div class=\"detail-grid\">";
   I18N.dict.en["forecast.review.monthly_avg"] = "{channel} Monthly Average"; I18N.dict.id["forecast.review.monthly_avg"] = "Rata-rata Bulanan {channel}";
   I18N.dict.en["forecast.review.sales_share"] = "{channel} Sales Share"; I18N.dict.id["forecast.review.sales_share"] = "Pangsa Penjualan {channel}";
+  I18N.dict.en["forecast.review.channel_source"] = "Channel Ratio Source"; I18N.dict.id["forecast.review.channel_source"] = "Sumber Rasio Saluran";
+  // CHANNEL-ALLOCATION: 渠道分配来源标签
+  I18N.dict.en["forecast.channel.recent_sales"] = "Recent Sales"; I18N.dict.id["forecast.channel.recent_sales"] = "Penjualan Terkini";
+  I18N.dict.en["forecast.channel.pre_stockout"] = "Pre-stockout"; I18N.dict.id["forecast.channel.pre_stockout"] = "Sebelum Kebosahan Stok";
+  I18N.dict.en["forecast.channel.manual"] = "Manual"; I18N.dict.id["forecast.channel.manual"] = "Manual";
+  I18N.dict.en["forecast.channel.unallocated"] = "Unallocated"; I18N.dict.id["forecast.channel.unallocated"] = "Tidak Dialokasikan";
   I18N.dict.en["forecast.review.allocated_available"] = "Current Available Inventory ({channel})"; I18N.dict.id["forecast.review.allocated_available"] = "Stok Tersedia Saat Ini ({channel})";
   I18N.dict.en["forecast.review.allocated_in_transit"] = "In-Transit Inventory ({channel})"; I18N.dict.id["forecast.review.allocated_in_transit"] = "Stok Dalam Perjalanan ({channel})";
   // 按天动销分组标签（formatSalesGroupLabel 使用）

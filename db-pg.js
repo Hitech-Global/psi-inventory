@@ -657,6 +657,22 @@ async function initDatabase() {
     )
   `);
 
+  // SKU 渠道比例人工配置（CHANNEL-ALLOCATION-MODEL）
+  await exec(`
+    CREATE TABLE IF NOT EXISTS sku_channel_configs (
+      id           TEXT PRIMARY KEY,
+      sku_code     TEXT NOT NULL,
+      country_id   TEXT NOT NULL,
+      online_pct   DOUBLE PRECISION NOT NULL,
+      offline_pct  DOUBLE PRECISION NOT NULL,
+      status       TEXT DEFAULT 'active',
+      remark       TEXT DEFAULT '',
+      created_at   TEXT DEFAULT NOW(),
+      updated_at   TEXT DEFAULT NOW(),
+      UNIQUE (sku_code, country_id)
+    )
+  `);
+
   await exec(`
     CREATE TABLE IF NOT EXISTS system_config (
       key TEXT PRIMARY KEY,
@@ -973,6 +989,10 @@ async function initDatabase() {
       offline_avg_sales_4m DOUBLE PRECISION DEFAULT 0,
       online_after_order_turnover_months DOUBLE PRECISION DEFAULT 0,
       offline_after_order_turnover_months DOUBLE PRECISION DEFAULT 0,
+      channel_ratio_source TEXT DEFAULT '',
+      channel_allocation_status TEXT DEFAULT '',
+      resolved_online_pct DOUBLE PRECISION,
+      resolved_at TEXT DEFAULT '',
       created_at TEXT DEFAULT NOW()
     )
   `);

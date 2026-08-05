@@ -3644,6 +3644,121 @@ function salesOrderDateExpr(col = 'order_date') {
   END`;
 }
 
+// ==================== 渠道分配模型（CHANNEL-ALLOCATION-MODEL）====================
+// country 名称 → country_id 解析（兼容中英文别名）
+function resolveCountryId(countryName, countriesCache) {
+  if (!countryName) return null;
+  for (const c of countriesCache) {
+    if (c.name === countryName) return c.id;
+    if (c.code && c.code.toUpperCase() === countryName.toUpperCase()) return c.id;
+  }
+  const ALIAS = { 'Indonesia': '印度尼西亚', 'Malaysia': '马来西亚', 'Thailand': '泰国', 'Vietnam': '越南' };
+  const alias = ALIAS[countryName];
+  if (alias) {
+    for (const c of countriesCache) {
+      if (c.name === alias) return c.id;
+    }
+  }
+  return null;
+}
+
+// 独立缺货事实判断（不依赖 sales_status）
+function isStockoutAffected(available, totalSalesEver, lastSaleDate, lastOutboundDate) {
+  if (available > 0) return false;
+  if (!totalSalesEver || totalSalesEver <= 0) return false;
+  if (!lastSaleDate) return false;
+  if (!lastOutboundDate) return false;
+  const stockoutDay = new Date(lastOutboundDate);
+  const lastSaleDay = new Date(lastSaleDate);
+  if (isNaN(stockoutDay.getTime()) || isNaN(lastSaleDay.getTime())) return false;
+  const diffDays = (lastSaleDay - stockoutDay) / (1000 * 60 * 60 * 24);
+  // 出库日期应早于或接近最后销售日期（库存归零在前，残余销售在后），容忍7天前到30天后
+  return diffDays >= -7 && diffDays <= 30;
+}
+
+// 缺货前最后有效销售月份的渠道占比
+// 优先从4个月窗口(monthlyMap)取，窗口外查历史
+function resolvePreStockoutRatio(skuCode, country, monthlyMap, aq) {
+  // 步骤1: 从4个月窗口取（从最近到最早）
+  const mapKey = skuCode + '|' + (country || '');
+  const mo = monthlyMap[mapKey];
+  if (mo) {
+    for (const m of ['m1', 'm2', 'm3', 'm4']) {
+      if (mo[m] && mo[m].total > 0) {
+        return mo[m].online / mo[m].total * 100;
+      }
+    }
+  }
+  // 步骤2: 查历史全量（同步接口，仅对少量SKU触发）
+  try {
+    const row = queryOne(`
+      SELECT
+        SUM(CASE WHEN shop_platform LIKE '%线上%' OR lower(shop_platform) = 'online'
+                 THEN quantity ELSE 0 END) as online_qty,
+        SUM(quantity) as total_qty
+      FROM sales_records
+      WHERE sku_code = ? AND is_valid_order = 1
+        AND strftime('%Y-%m', order_date) = (
+          SELECT strftime('%Y-%m', order_date)
+          FROM sales_records
+          WHERE sku_code = ? AND is_valid_order = 1
+          ORDER BY order_date DESC LIMIT 1
+        )
+    `, [skuCode, skuCode]);
+    if (row && row.total_qty > 0) {
+      return row.online_qty / row.total_qty * 100;
+    }
+  } catch (e) {
+    console.error('[CHANNEL-ALLOCATION] resolvePreStockoutRatio error:', e.message);
+  }
+  return null;
+}
+
+// 渠道比例三级解析入口
+// 返回: { source, allocationStatus, onlinePct (number|null), resolvedAt }
+function resolveChannelRatio(opts) {
+  const { skuCode, country, avgSalesPeriod, available, totalSalesEver,
+          lastSaleDate, lastOutboundDate, aggObj, monthlyMap,
+          channelConfigMap, countriesCache } = opts;
+
+  const now = new Date();
+  const resolvedAt = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' +
+                     String(now.getDate()).padStart(2, '0') + ' ' +
+                     String(now.getHours()).padStart(2, '0') + ':' +
+                     String(now.getMinutes()).padStart(2, '0') + ':' +
+                     String(now.getSeconds()).padStart(2, '0');
+
+  // Level 1: 正常销售SKU — 当前周期存在有效销量
+  if (avgSalesPeriod > 0 && aggObj) {
+    const periodOnline = Number(aggObj.period_online) || 0;
+    const periodOffline = Number(aggObj.period_offline) || 0;
+    if (periodOnline + periodOffline > 0) {
+      const pct = periodOnline / (periodOnline + periodOffline) * 100;
+      return { source: 'recent_sales', allocationStatus: 'allocated', onlinePct: Math.round(pct * 100) / 100, resolvedAt };
+    }
+  }
+
+  // Level 2: 缺货影响SKU — 独立事实判断
+  if (isStockoutAffected(available, totalSalesEver, lastSaleDate, lastOutboundDate)) {
+    const prePct = resolvePreStockoutRatio(skuCode, country, monthlyMap, null);
+    if (prePct !== null && !isNaN(prePct)) {
+      return { source: 'pre_stockout', allocationStatus: 'allocated', onlinePct: Math.round(prePct * 100) / 100, resolvedAt };
+    }
+  }
+
+  // Level 3: 无历史销量SKU — 人工配置
+  const countryId = resolveCountryId(country, countriesCache);
+  if (countryId) {
+    const config = channelConfigMap[skuCode + '|' + countryId];
+    if (config && config.status === 'active') {
+      return { source: 'manual_config', allocationStatus: 'allocated', onlinePct: config.online_pct, resolvedAt };
+    }
+  }
+
+  // 未配置 — 不猜测，不分配
+  return { source: 'unconfigured', allocationStatus: 'unallocated', onlinePct: null, resolvedAt };
+}
+
 // ==================== 统一动销状态判定层 ====================
 // 读取品牌目标周转配置（JSON）：Redragon=4, Netac=2, __default__=3
 function loadBrandTargetConfig() {
@@ -4288,7 +4403,7 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
     const dimCfg = (dimRow && dimRow.value) ? JSON.parse(dimRow.value) : null; // A-Step1：多维目标周转配置（优先命中，未命中回退旧逻辑）
 
     // 获取所有有库存记录的SKU
-    let invSql = `SELECT DISTINCT i.sku_code, i.country, i.warehouse, i.available_qty, i.in_transit_qty, i.pi_confirmed_unshipped_qty, i.po_unconfirmed_pi_qty, i.last_inbound_date, i.first_inbound_date, i.target_turnover_months FROM inventory i LEFT JOIN skus s ON i.sku_code = s.sku_code WHERE 1=1`;
+    let invSql = `SELECT DISTINCT i.sku_code, i.country, i.warehouse, i.available_qty, i.in_transit_qty, i.pi_confirmed_unshipped_qty, i.po_unconfirmed_pi_qty, i.last_inbound_date, i.first_inbound_date, i.last_outbound_date, i.target_turnover_months FROM inventory i LEFT JOIN skus s ON i.sku_code = s.sku_code WHERE 1=1`;
     const invParams = [];
     if (country) { invSql += ' AND i.country = ?'; invParams.push(country); }
     if (warehouse) { invSql += ' AND i.warehouse = ?'; invParams.push(warehouse); }
@@ -4366,7 +4481,8 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
               COALESCE(SUM(CASE WHEN ${salesDate} >= ? THEN quantity END), 0) AS s30,
               COALESCE(SUM(CASE WHEN ${salesDate} >= ? THEN quantity END), 0) AS s90,
               COALESCE(SUM(quantity), 0) AS ever_total,
-              MIN(${salesDate}) AS first_sale
+              MIN(${salesDate}) AS first_sale,
+              MAX(${salesDate}) AS last_sale
        FROM sales_records
        WHERE sku_code IN (${genInPh}) AND is_valid_order = 1
        GROUP BY sku_code, COALESCE(country, '')`,
@@ -4374,6 +4490,12 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
     );
     const aggMap = {};
     for (const r of aggRows) aggMap[r.sku_code + '|' + (r.country || '')] = r;
+
+    // CHANNEL-ALLOCATION: 预加载国家表和渠道配置
+    const countriesCache = await aq('SELECT id, name, code FROM countries ORDER BY sort_order');
+    const channelConfigRows = await aq('SELECT sku_code, country_id, online_pct, offline_pct, status FROM sku_channel_configs WHERE status = ?', ['active']);
+    const channelConfigMap = {};
+    for (const r of channelConfigRows) channelConfigMap[r.sku_code + '|' + r.country_id] = r;
 
     // A-Step1 收口：预检——所有待处理 SKU 必须命中 dim_default_config，未命中则阻止重算（不偷偷用兜底值）
     const unmatchedMap = {};
@@ -4406,7 +4528,8 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
       'online_target_turnover', 'offline_target_turnover',
       'online_target_stock', 'offline_target_stock', 'other_target_stock',
       'final_order_qty',
-      'sales_status', 'risk_tags', 'sales_reason', 'action', 'ai_business_advice'
+      'sales_status', 'risk_tags', 'sales_reason', 'action', 'ai_business_advice',
+      'channel_ratio_source', 'channel_allocation_status', 'resolved_online_pct', 'resolved_at'
     ];
     const RS_INSERT_COLS = [
       'id', 'sku_code', 'country', 'target_warehouse', 'available_qty', 'in_transit_qty',
@@ -4421,7 +4544,8 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
       'is_new_product', 'lifecycle_status', 'sales_group', 'user_adjusted_qty', 'generate_po',
       'online_target_turnover', 'offline_target_turnover',
       'online_target_stock', 'offline_target_stock', 'other_target_stock', 'final_order_qty',
-      'sales_status', 'risk_tags', 'sales_reason', 'action', 'ai_business_advice'
+      'sales_status', 'risk_tags', 'sales_reason', 'action', 'ai_business_advice',
+      'channel_ratio_source', 'channel_allocation_status', 'resolved_online_pct', 'resolved_at'
     ];
 
     // 列类型：UPDATE ... FROM (VALUES ...) 时 PG 会把无类型 VALUES 列推断为 text，
@@ -4508,6 +4632,23 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
           const ld = new Date(last_inbound_date);
           if (!isNaN(ld.getTime())) days_since_last_inbound = Math.floor((now - ld) / 86400000);
         }
+
+        // CHANNEL-ALLOCATION: 渠道比例三级解析
+        const last_outbound_date = inv.last_outbound_date || '';
+        const last_sale_date = agg2 ? (agg2.last_sale || '') : '';
+        const channelRatio = resolveChannelRatio({
+          skuCode: inv.sku_code,
+          country: inv.country,
+          avgSalesPeriod: avg_sales_period,
+          available: avail,
+          totalSalesEver: total_sales_ever,
+          lastSaleDate: last_sale_date,
+          lastOutboundDate: last_outbound_date,
+          aggObj: agg,
+          monthlyMap: monthlyMap,
+          channelConfigMap: channelConfigMap,
+          countriesCache: countriesCache
+        });
         // A-Step1 收口：目标周转值来源——dim 命中（预检已保证非 null，不再回退旧逻辑/兜底值）
         // 品牌停采时可能无命中规则（预检已跳过），用中性兜底仅供展示列，不影响采购（建议采购会强制为 0）
         const dimHit = getDimTurnover(sku.brand, inv.country, inv.warehouse, dimCfg) || { online_turnover: 3, offline_turnover: 3 };
@@ -4671,7 +4812,8 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
               online_target_turnover, offline_target_turnover,
               online_target_stock, offline_target_stock, other_target_stock,
               final_order_qty,
-              sales_status, risk_tags, sales_reason, action_text, ai_business_advice
+              sales_status, risk_tags, sales_reason, action_text, ai_business_advice,
+              channelRatio.source, channelRatio.allocationStatus, channelRatio.onlinePct, channelRatio.resolvedAt
             ]
           });
         } else {
@@ -4690,7 +4832,8 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
               sku.is_new_product === 1 ? 1 : 0, sku.lifecycle_status || '', sales_group, -1, 0,
               online_target_turnover, offline_target_turnover,
               online_target_stock, offline_target_stock, other_target_stock, final_order_qty,
-              sales_status, risk_tags, sales_reason, action_text, ai_business_advice
+              sales_status, risk_tags, sales_reason, action_text, ai_business_advice,
+              channelRatio.source, channelRatio.allocationStatus, channelRatio.onlinePct, channelRatio.resolvedAt
             ]
           });
         }
