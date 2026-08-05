@@ -77,6 +77,41 @@ async function withGenerateClient(fn) {
   }
 }
 
+// 非事务异步客户端：用于销售导入后的库存重算等不需要事务包裹的场景。
+// 提供 aq/aqOne/arun 异步接口，SQL 经 _normalizeSql 翻译，不阻塞事件循环。
+async function withAsyncPoolClient(fn) {
+  const p = getGeneratePool();
+  if (!p) {
+    const e = new Error('DATABASE_URL 未配置，无法连接数据库');
+    e.code = 'NO_DATABASE_URL';
+    throw e;
+  }
+  let client;
+  try {
+    client = await p.connect();
+  } catch (e) {
+    const err = new Error('数据库连接失败：' + (e && e.message ? e.message : e));
+    err.code = 'DB_CONNECT_FAILED';
+    throw err;
+  }
+  try {
+    const aq = async (sql, params) => {
+      const r = await client.query(_normalizeSql(sql), params || []);
+      return r.rows;
+    };
+    const aqOne = async (sql, params) => {
+      const rows = await aq(sql, params);
+      return rows[0] || null;
+    };
+    const arun = async (sql, params) => {
+      await client.query(_normalizeSql(sql), params || []);
+    };
+    return await fn(aq, aqOne, arun);
+  } finally {
+    client.release();
+  }
+}
+
 // 进程退出时有序关闭（不影响正常请求；仅释放空闲连接）
 let shutdownHooked = false;
 function hookShutdown() {
@@ -88,4 +123,4 @@ function hookShutdown() {
 }
 hookShutdown();
 
-module.exports = { getGeneratePool, withGenerateClient, hookShutdown };
+module.exports = { getGeneratePool, withGenerateClient, withAsyncPoolClient, hookShutdown };

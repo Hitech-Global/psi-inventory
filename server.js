@@ -26,7 +26,7 @@ const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
 const { query, queryOne, run, transaction, genId, initDatabase } = require('./db');
-const { withGenerateClient } = require('./pg-async'); // 专用异步 Pool：generate 不阻塞主线程
+const { withGenerateClient, withAsyncPoolClient } = require('./pg-async'); // 专用异步 Pool：generate / 销售导入库存重算不阻塞主线程
 const {
   createSqliteSalesImportAdapter,
   createPostgresSalesImportAdapter,
@@ -3469,35 +3469,42 @@ app.post('/api/sales-records/bulk-import', requireApiPermission('outbound_import
     });
     salesCommitted = true;
 
-    const recalcStart = Date.now();
-    const recalcTimings = { ...applied.timings };
-    await progress({
-      status: 'inventory_recalc', phase: 'inventory_recalc', percent: 95,
-      processed_count: items.length, total_count: items.length,
-      inserted: applied.result.inserted, updated: applied.result.updated,
-      skipped: applied.result.skipped, failed: applied.result.failed,
-      errors: applied.result.errors, timings: recalcTimings,
-      metrics: applied.metrics, commit_state: 'committed', recalc_status: 'running'
-    });
-
-    // 库存重算仍沿用现有同步逻辑；本阶段只测量导入集合化收益，不拆离库存刷新。
+    // === 销售数据已提交 ===
+    // PG 模式：立即返回导入完成，库存重算异步后台执行（不阻塞 HTTP 响应、不阻塞事件循环）
+    // SQLite 模式：同步重算（本地快速，无阻塞问题）
     const affectedSkus = [...new Set(items.filter(i => i.sku_code).map(i => i.sku_code))];
-    affectedSkus.forEach(sku => {
-      const invs = query('SELECT country, warehouse FROM inventory WHERE sku_code = ?', [sku]).rows;
-      invs.forEach(inv => recalcInventoryForSku(sku, inv.country, inv.warehouse));
-    });
+    const isPg = (process.env.DB_DRIVER || 'sqlite').toLowerCase() === 'pg';
 
-    recalcTimings.inventory_recalc_ms = Date.now() - recalcStart;
-    recalcTimings.total_ms = Number(applied.timings.total_ms || 0) + recalcTimings.inventory_recalc_ms;
-    const completed = await store.update(importId, {
-      status: 'completed', phase: 'completed', percent: 100,
-      processed_count: items.length, total_count: items.length,
-      inserted: applied.result.inserted, updated: applied.result.updated,
-      skipped: applied.result.skipped, failed: applied.result.failed,
-      errors: applied.result.errors, timings: recalcTimings, metrics: applied.metrics,
-      result: applied.result, commit_state: 'committed', recalc_status: 'completed'
-    });
-    res.json(salesImportResultBody(completed));
+    if (isPg) {
+      const completed = await store.update(importId, {
+        status: 'completed', phase: 'completed', percent: 100,
+        processed_count: items.length, total_count: items.length,
+        inserted: applied.result.inserted, updated: applied.result.updated,
+        skipped: applied.result.skipped, failed: applied.result.failed,
+        errors: applied.result.errors, timings: applied.timings, metrics: applied.metrics,
+        result: applied.result, commit_state: 'committed', recalc_status: 'pending'
+      });
+      res.json(salesImportResultBody(completed));
+
+      // 后台异步库存重算（不阻塞 HTTP 响应）
+      recalcInventoryForSkusBackground(importId, affectedSkus).catch(e => {
+        console.error('[sales-import] background recalc unhandled:', e.message);
+      });
+    } else {
+      affectedSkus.forEach(sku => {
+        const invs = query('SELECT country, warehouse FROM inventory WHERE sku_code = ?', [sku]).rows;
+        invs.forEach(inv => recalcInventoryForSku(sku, inv.country, inv.warehouse));
+      });
+      const completed = await store.update(importId, {
+        status: 'completed', phase: 'completed', percent: 100,
+        processed_count: items.length, total_count: items.length,
+        inserted: applied.result.inserted, updated: applied.result.updated,
+        skipped: applied.result.skipped, failed: applied.result.failed,
+        errors: applied.result.errors, timings: applied.timings, metrics: applied.metrics,
+        result: applied.result, commit_state: 'committed', recalc_status: 'completed'
+      });
+      res.json(salesImportResultBody(completed));
+    }
   } catch (e) {
     const uncertain = !salesCommitted && isUncertainSalesImportError(e);
     const status = salesCommitted ? 'sales_committed_recalc_failed' : (uncertain ? 'unknown_pending_reconcile' : 'failed_uncommitted');
@@ -12442,6 +12449,60 @@ function recalcInventoryForSku(sku_code, country, warehouse, options = {}) {
       }
     }
   } catch(e) { console.error('[recalcInventoryForSku]', e.message); }
+}
+
+// 异步库存重算（PG 模式专用）：复用 pg-async.js 连接池，不阻塞事件循环。
+// 业务逻辑与 recalcInventoryForSku 完全一致，仅将同步 queryOne/run 替换为异步 aqOne/arun。
+async function recalcInventoryForSkuPg(aqOne, arun, sku_code, country, warehouse) {
+  try {
+    const lastOut = await aqOne(`SELECT MAX(order_date) as d FROM sales_records WHERE sku_code=? AND is_valid_order=1`, [sku_code]);
+    const sales90 = await aqOne(`SELECT COALESCE(SUM(quantity),0) as qty FROM sales_records WHERE sku_code=? AND is_valid_order=1 AND order_date >= date('now','-90 days')`, [sku_code]);
+    const avgMonthly = Math.round((sales90?.qty || 0) / 3);
+    const inv = await aqOne('SELECT available_qty, safety_stock, target_turnover_months, inventory_status, weighted_avg_cost FROM inventory WHERE sku_code=? AND country=? AND warehouse=?', [sku_code, country, warehouse]);
+    if (inv) {
+      const available = inv.available_qty || 0;
+      const turnover = avgMonthly > 0 ? Math.round((available / avgMonthly) * 10) / 10 : 0;
+      const inventoryValue = Math.round(((available * (Number(inv.weighted_avg_cost) || 0)) + Number.EPSILON) * 100) / 100;
+      let autoStatus = 'normal';
+      if (available <= 0) autoStatus = 'out_of_stock_risk';
+      else if (inv.target_turnover_months > 0 && turnover > inv.target_turnover_months * 1.5) autoStatus = 'high_stock';
+      else if (avgMonthly > 0 && turnover > inv.target_turnover_months * 2) autoStatus = 'slow_moving';
+      else if (available <= (inv.safety_stock || 0)) autoStatus = 'out_of_stock_risk';
+      await arun(`UPDATE inventory SET last_outbound_date=?, turnover_months=?, inventory_status=?, inventory_value=?, updated_at=datetime('now') WHERE sku_code=? AND country=? AND warehouse=?`,
+        [lastOut?.d || '', turnover, autoStatus, inventoryValue, sku_code, country, warehouse]);
+    }
+  } catch(e) { console.error('[recalcInventoryForSkuPg]', e.message); }
+}
+
+// 销售导入后后台库存重算：PG 模式下异步执行，不阻塞导入响应。
+// 逐 SKU 执行，单个 SKU 失败不影响其他 SKU（与同步版行为一致）。
+async function recalcInventoryForSkusBackground(importId, affectedSkus) {
+  const store = createSalesImportRunStoreForCurrentDb();
+  try {
+    await store.update(importId, { recalc_status: 'running' });
+    console.log('[sales-import] background recalc started for', affectedSkus.length, 'SKUs');
+
+    const recalcStart = Date.now();
+    await withAsyncPoolClient(async (aq, aqOne, arun) => {
+      for (const sku of affectedSkus) {
+        try {
+          const invRows = await aq('SELECT country, warehouse FROM inventory WHERE sku_code = ?', [sku]);
+          for (const inv of invRows) {
+            await recalcInventoryForSkuPg(aqOne, arun, sku, inv.country, inv.warehouse);
+          }
+        } catch (e) {
+          console.error('[recalc-bg] SKU=' + sku + ':', e.message);
+        }
+      }
+    });
+
+    const elapsed = Date.now() - recalcStart;
+    await store.update(importId, { recalc_status: 'completed' });
+    console.log('[sales-import] background recalc completed in', elapsed, 'ms for', affectedSkus.length, 'SKUs');
+  } catch (e) {
+    console.error('[sales-import] background recalc failed:', e.message);
+    try { await store.update(importId, { recalc_status: 'failed' }); } catch (_) {}
+  }
 }
 
 // ==================== 库存总表批量操作 ====================
