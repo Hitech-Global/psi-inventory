@@ -16,7 +16,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 .sidebar.collapsed{width:54px}
 .sidebar-header{height:54px;display:flex;align-items:center;justify-content:space-between;padding:0 8px 0 12px;border-bottom:1px solid rgba(255,255,255,.1);flex-shrink:0}
 .sidebar-brand{font-size:13px;font-weight:700;color:#fff;display:flex;align-items:center;gap:8px;text-decoration:none;overflow:hidden;white-space:nowrap;flex:1}
-.sidebar-brand .brand-icon{width:26px;height:26px;background:#2e9d52;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0}
+.sidebar-brand .brand-icon{width:44px;height:30px;background:transparent;border-radius:0;display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden}
+.sidebar-brand .brand-icon img{display:block;width:100%;height:100%;object-fit:contain}
 .sidebar-collapse-btn{background:rgba(255,255,255,.08);border:none;color:var(--sidebar-text);width:24px;height:24px;border-radius:5px;cursor:pointer;font-size:14px;line-height:1;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:background .2s}
 .sidebar-collapse-btn:hover{background:rgba(255,255,255,.2);color:#fff}
 .sidebar-nav{flex:1;padding:6px 6px;overflow-y:auto}
@@ -300,7 +301,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 .login-container{width:100%;max-width:460px;padding:20px}
 .login-card{width:100%;box-sizing:border-box;background:rgba(255,255,255,.82);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);border:1px solid rgba(0,0,0,.05);border-radius:24px;padding:40px 38px;box-shadow:0 8px 30px rgba(0,0,0,.08);text-align:center;display:flex;flex-direction:column;justify-content:center;min-height:300px}
 .login-logo{width:92px;height:58px;margin:0 auto 18px;display:flex;align-items:center;justify-content:center}
-.login-logo .brand-mark{display:flex;align-items:center;justify-content:center;width:100%;height:100%;font-size:34px}
+.login-logo img{display:block;width:100%;height:100%;object-fit:contain}
 .login-card h1{font-size:24px;font-weight:600;letter-spacing:-.01em;color:#1d1d1f;margin-bottom:8px}
 .login-card p{color:var(--text-secondary);font-size:13.5px;margin-bottom:22px;line-height:1.6}
 .login-card input{width:100%;height:46px;padding:0 14px;border:1px solid #e2e2e7;border-radius:12px;font-size:15px;margin-bottom:12px;outline:none;font-family:inherit;background:#fbfbfd;box-sizing:border-box;transition:border-color .15s,box-shadow .15s}
@@ -314,14 +315,19 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 .login-loading{display:none;align-items:center;justify-content:center;gap:8px;padding:4px 0 14px;font-size:14px;color:#6e6e73;min-height:30px}
 .login-loading .spinner{display:inline-block;width:18px;height:18px;border:2px solid #e2e2e7;border-top-color:#007aff;border-radius:50%;animation:spin .6s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
-.welcome-screen{position:fixed;inset:0;z-index:2000;display:none;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;background:#eaf2f7;transition:opacity .7s cubic-bezier(.32,.72,0,1),transform .7s cubic-bezier(.32,.72,0,1)}
+.welcome-screen{position:fixed;inset:0;z-index:2000;display:none;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;background:#eaf2f7;opacity:1;transform:scale(1);will-change:opacity,transform;transition:opacity .7s cubic-bezier(.32,.72,0,1),transform .7s cubic-bezier(.32,.72,0,1);font-family:inherit}
 .welcome-screen.show{display:flex}
-.welcome-screen.hide{opacity:0;transform:scale(1.02)}
-.welcome-bg{position:absolute;inset:0;background:radial-gradient(1200px 600px at 50% -10%,#ffffff 0%,#eef4f9 55%,#e3edf5 100%)}
-.welcome-content{position:relative;display:flex;flex-direction:column;align-items:center}
-.welcome-logo{width:92px;height:58px;margin-bottom:24px;display:flex;align-items:center;justify-content:center;font-size:34px}
-.welcome-title{font-size:clamp(48px,9vw,84px);font-weight:600;letter-spacing:-.02em;color:#1d1d1f}
-.welcome-brand{margin-top:16px;font-size:18px;font-weight:500;color:rgba(46,66,96,.72)}
+.welcome-screen.hidden{opacity:0;transform:scale(1.03);pointer-events:none}
+.welcome-bg{position:absolute;inset:-12%;background:radial-gradient(closest-side at 50% 46%,rgba(64,108,176,.55),rgba(64,108,176,0) 70%),radial-gradient(120% 80% at 16% 12%,rgba(150,205,225,.95),rgba(150,205,225,0) 55%),radial-gradient(120% 90% at 86% 24%,rgba(172,226,212,.92),rgba(172,226,212,0) 55%),linear-gradient(180deg,#f3f8fb 0%,#e6eef4 55%,#d3e2f0 100%);animation:welcomeFloat 16s ease-in-out infinite alternate}
+@keyframes welcomeFloat{0%{transform:scale(1.06) translateY(0)}100%{transform:scale(1.14) translateY(-14px)}}
+.welcome-content{position:relative;z-index:2;text-align:center;animation:welcomeFade .9s ease both}
+@keyframes welcomeFade{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+.welcome-logo{width:112px;aspect-ratio:2287/1443;margin:0 auto 24px;display:flex;align-items:center;justify-content:center}
+.welcome-logo img{display:block;width:100%;height:100%;object-fit:contain}
+.welcome-title{font-size:clamp(76px,13vw,116px);font-weight:600;letter-spacing:-.02em;line-height:1;margin:0;background:linear-gradient(180deg,#ffffff 0%,#e6f0fb 100%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;filter:drop-shadow(0 2px 22px rgba(90,130,180,.35))}
+.welcome-brand{margin-top:20px;font-size:20px;font-weight:500;letter-spacing:.01em;color:rgba(46,66,96,.72)}
+.welcome-foot{position:relative;z-index:2;margin-top:32px;font-size:15px;font-weight:400;letter-spacing:.01em;color:rgba(46,66,96,.55);animation:welcomeFade 1s ease .3s both}
+@media (prefers-reduced-motion: reduce){.welcome-screen{transition:none}.welcome-screen.hidden{transform:none}.welcome-bg{animation:none}.welcome-content{animation:none}.welcome-foot{animation:none}}
 .empty-state{text-align:center;padding:60px 20px;color:var(--text-secondary);background:var(--card-bg);border-radius:var(--radius);box-shadow:var(--shadow)}
 .empty-icon{font-size:48px;margin-bottom:12px}
 .table-section{background:var(--card-bg);border-radius:var(--radius);box-shadow:var(--shadow);overflow:visible;margin-bottom:12px}
@@ -606,7 +612,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 <body>
 <div id="login-page" class="login-page">
   <div class="login-container"><div class="login-card">
-    <div class="login-logo"><span class="brand-mark">📦</span></div>
+    <div class="login-logo"><img src="/assets/brand/hnm-logo.png" alt="PSI"></div>
     <h1 data-i18n="auth.login_title">PSI系统</h1>
     <p data-i18n="auth.login_subtitle">采购 · 库存 · 成本 · 付款全流程管理</p>
     <div class="login-error" id="login-error"></div>
@@ -632,7 +638,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 </div>
 <div id="app" class="app-shell" style="display:none">
   <aside class="sidebar">
-    <div class="sidebar-header"><a class="sidebar-brand"><span class="brand-icon">📦</span><span id="sidebar-module-title" data-i18n="nav.app_title">进销存系统</span></a><button class="sidebar-collapse-btn" onclick="toggleSidebar()" data-i18n="nav.toggle_sidebar" data-i18n-attr="title" title="折叠/展开菜单">«</button></div>
+    <div class="sidebar-header"><a class="sidebar-brand"><span class="brand-icon"><img src="/assets/brand/hnm-logo.png" alt="PSI"></span><span id="sidebar-module-title" data-i18n="nav.app_title">进销存系统</span></a><button class="sidebar-collapse-btn" onclick="toggleSidebar()" data-i18n="nav.toggle_sidebar" data-i18n-attr="title" title="折叠/展开菜单">«</button></div>
     <nav class="sidebar-nav" id="sidebar-nav"></nav>
     <div class="sidebar-footer" id="version-badge">v1.0.1 本地</div>
   </aside>
@@ -657,10 +663,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 <div id="welcome-screen" class="welcome-screen">
   <div class="welcome-bg"></div>
   <div class="welcome-content">
-    <div class="welcome-logo">📦</div>
+    <div class="welcome-logo"><img src="/assets/brand/hnm-logo.png" alt="PSI"></div>
     <div class="welcome-title">PSI</div>
     <div class="welcome-brand" data-i18n="nav.app_title">PSI系统</div>
   </div>
+  <div class="welcome-foot" id="welcome-foot" data-i18n="splash.opening" style="display:none">Opening PSI系统...</div>
 </div>
 <div class="toast-container" id="toast-container"></div>
 <div class="modal-overlay" id="modal-overlay" onclick="if(event.target===this)closeModal()"><div class="modal" id="modal-content"></div></div>

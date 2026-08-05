@@ -229,9 +229,9 @@ function showApp(){
 function showEnterSplash(){
   const el=document.getElementById('welcome-screen');
   if(!el) return;
-  el.classList.remove('hide');
+  el.classList.remove('hidden');
   el.classList.add('show');
-  setTimeout(function(){ el.classList.add('hide'); setTimeout(function(){ el.classList.remove('show'); },700); },1800);
+  setTimeout(function(){ el.classList.add('hidden'); setTimeout(function(){ el.classList.remove('show'); },700); },1800);
 }
 
 // 用户角色标签国际化（仅显示用，不改动权限/业务逻辑）；语言切换时由 i18n.setLang 重新调用
