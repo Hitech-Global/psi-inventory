@@ -12302,7 +12302,7 @@ app.get('/api/admin/diag-hci-records', asyncHandler(async (req, res) => {
       let paymentRequest = null;
       if (r.payment_request_id) {
         const prRows = (await exec.query(`
-          SELECT id, request_no, payee_name, amount, currency, status, lifecycle_status
+          SELECT id, request_no, payee_name_snapshot, payable_amount, currency, payment_status, approval_status
           FROM payment_requests WHERE id = $1
         `, [r.payment_request_id])).rows;
         paymentRequest = prRows[0] || null;
