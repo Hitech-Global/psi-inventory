@@ -6788,6 +6788,28 @@ app.post('/api/commercial-invoices/batch-import', requireApiPermission('ci_creat
             }
           }
           run('UPDATE commercial_invoices SET goods_amount=?, amount_difference=0, should_deduct_deposit=?, actual_deducted_deposit=?, payable_balance=?, unpaid_balance=? WHERE id=?', [goodsAmount, deduct, deduct, goodsAmount - deduct, goodsAmount - deduct, ciId]);
+          // PAY-CORE CI→付款事实闭环：CI batch import 补 per-PI balance payable_items（与单条 CI 6271 口径一致）
+          // 复用 createPayableItemFromSource（幂等）；同 CI 同 PI 多行累积时直接 UPDATE 金额
+          // （syncPayableItemAmount 不含 source_ci_id 维度，per-PI balance 不可用）
+          const payableBalance = goodsAmount - deduct;
+          if (pi && payableBalance > 0) {
+            const ciCurrency = s(pick(row, ['币种', 'currency'])) || po.currency || 'USD';
+            const balancePayeeKey = `supplier:${pi.supplier_id || pi.supplier_name || po.supplier_name}`;
+            const existingBalanceItem = findActivePayableItem('pi', pi.id, 'balance', ciId);
+            if (existingBalanceItem) {
+              run('UPDATE payable_items SET payable_amount_minor = ? WHERE id = ? AND lifecycle_status = ?',
+                [Math.round(payableBalance * 100), existingBalanceItem.id, 'active']);
+            } else {
+              createPayableItemFromSource({
+                sourceType: 'pi', sourceId: pi.id, sourceNo: pi.pi_no, sourceCiId: ciId,
+                feeType: 'balance', categoryCode: 'goods', subcategoryCode: 'balance',
+                payeeType: 'factory', payeeKey: balancePayeeKey,
+                payeeName: pi.supplier_name || po.supplier_name || '',
+                currency: ciCurrency, payableAmount: payableBalance,
+                createdBy: (req.currentUserId || req.user && req.user.id) || ''
+              });
+            }
+          }
           result.success++;
         } catch (e) {
           result.failed++;
@@ -9043,6 +9065,23 @@ async function createHistoricalCI(body, req) {
         normalized.gross_goods_amount, normalized.gross_goods_amount, normalized.currency, normalized.payment_terms,
         historicalPayableDate, operator.name, normalized.source_note, normalized.country]);
 
+    // PAY-CORE CI→付款事实闭环：Historical CI 补 payable_items（active + 关联 + reserve，与标准 PR 创建口径对齐）
+    // 复用 createPayableItemFromSource；不改变历史付款事实（is_legacy settlement_logs 不动）
+    const hciPayableItem = createPayableItemFromSource({
+      sourceType: 'historical_ci', sourceId: historicalId, sourceNo: normalized.historical_ci_no,
+      feeType: 'balance', categoryCode: 'goods', subcategoryCode: 'balance',
+      payeeType: 'factory', payeeKey: historicalPayeeKey, payeeName: historicalPayeeNameSnapshot,
+      currency: normalized.currency, payableAmount: normalized.gross_goods_amount,
+      createdBy: operator.id
+    });
+    if (hciPayableItem && hciPayableItem.id && hciPayableItem.lifecycle_status === 'active') {
+      await run(
+        `INSERT INTO payment_request_items (id, payment_request_id, payable_item_id, requested_amount_minor) VALUES (?, ?, ?, ?)`,
+        [await genId('pri'), paymentRequestId, hciPayableItem.id, hciPayableItem.payable_amount_minor || Math.round(normalized.gross_goods_amount * 100)]
+      );
+      reservePayableItem(hciPayableItem.id, paymentRequestId);
+    }
+
     await run('UPDATE historical_commercial_invoices SET payment_request_id = ?, updated_at = datetime(\'now\') WHERE id = ?',
       [paymentRequestId, historicalId]);
 
@@ -9398,7 +9437,7 @@ app.post('/api/payable-items/:id/cancel', requireApiPermission('payment_create')
 
 app.get('/api/payment-requests', requireApiPermission('payment_view'), asyncHandler((req, res) => {
   const { status, category, keyword } = req.query;
-  let sql = 'SELECT * FROM payment_requests WHERE 1=1';
+  let sql = "SELECT * FROM payment_requests WHERE 1=1 AND approval_status != 'draft'";
   const params = [];
   if (status) { sql += ' AND payment_status = ?'; params.push(status); }
   if (category) { sql += ' AND payment_category = ?'; params.push(category); }
@@ -9429,7 +9468,7 @@ app.get('/api/finance/payable-cockpit', requireApiPermission('payment_view'), as
     const d30 = addDays(today, 30);
     // 应付实体：payment_requests 全量，排除已驳回/已取消（非应付义务）；含 pending（待审仍是应付义务）
     const rows = query(`SELECT * FROM payment_requests
-                        WHERE approval_status != 'rejected'
+                        WHERE approval_status NOT IN ('rejected','draft')
                           AND payment_status NOT IN ('rejected', 'cancelled')`).rows;
 
     const m2 = (v) => settlementMoney(v);
@@ -9847,7 +9886,7 @@ app.post('/api/payment-requests/from-pi-deposit', requireApiPermission('payment_
     const payeeNameSnapshot = pi.supplier_name || '';
     await transaction(async () => {
       await run(`INSERT INTO payment_requests (id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no, payee_type, payee_key, payee_name_snapshot, supplier_name, payable_amount, paid_amount, unpaid_amount, currency, payment_terms, payment_status, approval_status, remark, has_deduction, deduction_amount, deduction_source_type, deduction_source_desc, deduction_ref_no, actual_pay_amount, related_po_no, expense_country) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [prId, prNo, 'goods', 'deposit', 'pi', pi_id, pi.pi_no, 'factory', payeeKey, payeeNameSnapshot, pi.supplier_name, payableAmount, 0, actualPay, pi.currency || 'USD', pi.payment_terms || '', 'pending_approval', 'pending', `PI定金 ${pi.pi_no}`, deductionEnabled ? 1 : 0, dedAmount, deduction_source_type || '', deduction_source_desc || '', deduction_ref_no || '', actualPay, pi.related_po_no || '', String(pi.country || '').trim()]);
+        [prId, prNo, 'goods', 'deposit', 'pi', pi_id, pi.pi_no, 'factory', payeeKey, payeeNameSnapshot, pi.supplier_name, payableAmount, 0, actualPay, pi.currency || 'USD', pi.payment_terms || '', 'pending_approval', 'draft', `PI定金 ${pi.pi_no}`, deductionEnabled ? 1 : 0, dedAmount, deduction_source_type || '', deduction_source_desc || '', deduction_ref_no || '', actualPay, pi.related_po_no || '', String(pi.country || '').trim()]);
       if (deductionEnabled && dedAmount > 0) await recordInitialDeduction(prId, dedAmount, deduction_source_desc, await settlementOperator(req));
       await run('UPDATE proforma_invoices SET deposit_payment_status = ? WHERE id = ?', ['pending_approval', pi_id]);
       // PAY-CORE Phase 2：关联 payable_item 并 reserve（V2.1 第 8 节）
@@ -9914,7 +9953,7 @@ app.post('/api/payment-requests/from-ci-balance', requireApiPermission('payment_
     // 三、INSERT 付款申请 + 更新 CI 状态，必须处于同一事务（任一步失败整体回滚）
     await transaction(async () => {
       await run(`INSERT INTO payment_requests (id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no, payee_type, payee_key, payee_name_snapshot, supplier_name, payable_amount, paid_amount, unpaid_amount, currency, payment_terms, payable_date, payment_status, approval_status, remark, has_deduction, deduction_amount, deduction_source_type, deduction_source_desc, deduction_ref_no, actual_pay_amount, related_ci_id, related_ci_no, related_po_no, expense_country) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [prId, prNo, 'goods', 'balance', 'ci', ci_id, ci.ci_no, 'factory', payeeKey, payeeNameSnapshot, ci.supplier_name, unpaidBalance, 0, actualPay, ci.currency || 'USD', '', balancePayableDate, 'pending_approval', 'pending', `CI尾款 ${ci.ci_no}`, deductionEnabled ? 1 : 0, dedAmount, deduction_source_type || '', deduction_source_desc || '', deduction_ref_no || '', actualPay, ci_id, ci.ci_no, ci.related_po_no || '', String(ci.country || '').trim()]);
+        [prId, prNo, 'goods', 'balance', 'ci', ci_id, ci.ci_no, 'factory', payeeKey, payeeNameSnapshot, ci.supplier_name, unpaidBalance, 0, actualPay, ci.currency || 'USD', '', balancePayableDate, 'pending_approval', 'draft', `CI尾款 ${ci.ci_no}`, deductionEnabled ? 1 : 0, dedAmount, deduction_source_type || '', deduction_source_desc || '', deduction_ref_no || '', actualPay, ci_id, ci.ci_no, ci.related_po_no || '', String(ci.country || '').trim()]);
       if (deductionEnabled && dedAmount > 0) await recordInitialDeduction(prId, dedAmount, deduction_source_desc, await settlementOperator(req));
       await run('UPDATE commercial_invoices SET balance_payment_status = ? WHERE id = ?', ['pending_approval', ci_id]);
       // PAY-CORE Phase 2：关联 payable_item 并 reserve（V2.1 第 8 节）
@@ -10028,7 +10067,7 @@ app.post('/api/payment-requests/multi-expense', requireApiPermission('payment_cr
          VALUES (?, ?, '', '', '', '', '',
                  ?, ?, ?, ?,
                  ?, 0, ?, ?,
-                 'multi', 'pending_approval', 'pending', ?, ?)`,
+                 'multi', 'pending_approval', 'draft', ?, ?)`,
         [prId, prNo, payeeType, payeeKey, payeeNameSnapshot, payeeNameSnapshot,
          totalAmount, totalAmount, prCurrency,
          remark || '', expenseCountrySnapshot]
@@ -10425,7 +10464,7 @@ app.post('/api/payment-requests/:id/submit-approval', requireApiPermission('paym
     if (!payment) return res.status(404).json({ error: '付款申请不存在' });
 
     // 状态校验：仅 pending/rejected/withdrawn 可提交；approved/已付款等不允许重提
-    if (!['pending', 'rejected', 'withdrawn'].includes(payment.approval_status)) {
+    if (!['draft', 'pending', 'rejected', 'withdrawn'].includes(payment.approval_status)) {
       return res.status(400).json({ error: '当前付款申请审批状态不允许提交审批（approval_status=' + payment.approval_status + '）' });
     }
     // 已付款/已取消/已冲销的付款不允许提交
@@ -10679,7 +10718,6 @@ app.post('/api/payment-requests/:id/approve', requireApiPermission('payment_appr
             await ensureSettlementLegacyBaselines(payment);
             await run(`UPDATE approval_records SET status = ?, approval_history = ?, updated_at = datetime('now') WHERE id = ?`, ['approved', JSON.stringify(history), approval.id]);
             await run(`UPDATE payment_requests SET approval_status = ?, approval_remark = ?, approver_name = ?, approved_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`, ['approved', apprRemark, userName, req.params.id]);
-            await settleFinalPaymentApproval(payment, req.body || {}, req);
           });
           // 事务外 best-effort 通知提交人 + CC
           notifyPaymentApprovalParticipants(approval.id, 'approved_final', Object.assign({}, notifyCtx, { approver: userName })).catch(() => {});
@@ -10733,7 +10771,6 @@ app.post('/api/payment-requests/:id/approve', requireApiPermission('payment_appr
           [genId('appr'), paymentRequestToBusinessType(payment) || 'payment', payment.id, payment.request_no, req.currentUserId, userName,
            JSON.stringify([{level:1, approver_id: req.currentUserId, approver_name: userName}]),
            JSON.stringify([{level:1, action:'approve', user_id: req.currentUserId, user_name: userName, time: new Date().toISOString(), remark: apprRemark}])]);
-        await settleFinalPaymentApproval(payment, req.body || {}, req);
       });
     } else { // reject
       await transaction(async () => {
