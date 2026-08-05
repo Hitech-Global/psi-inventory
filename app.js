@@ -10773,8 +10773,14 @@ async function viewPayableSelected(){
     html+='<h4 style="margin:14px 0 6px">'+t('payable_list.related_pr','关联付款申请')+'</h4>';
     if(!prs.length)html+='<div class="muted">'+t('payable_list.no_pr','无关联付款申请')+'</div>';
     else{
-      html+='<table class="data-table"><thead><tr><th>'+t('payable_list.pr_no','申请号')+'</th><th>'+t('payable_list.pr_paystatus','付款状态')+'</th><th>'+t('payable_list.pr_appstatus','审批状态')+'</th></tr></thead><tbody>';
-      prs.forEach(function(p){html+='<tr><td>'+esc(p.request_no||'')+'</td><td>'+esc(p.payment_status||'')+'</td><td>'+esc(p.approval_status||'')+'</td></tr>';});
+      html+='<table class="data-table"><thead><tr><th>'+t('payable_list.pr_no','申请号')+'</th><th>'+t('payable_list.pr_paystatus','付款状态')+'</th><th>'+t('payable_list.pr_appstatus','审批状态')+'</th><th>'+t('payable_list.pr_action','操作')+'</th></tr></thead><tbody>';
+      prs.forEach(function(p){
+        var actionHtml='';
+        if(p.approval_status==='draft'){
+          actionHtml='<button class="btn btn-primary btn-sm" onclick="submitPaymentRequestApproval(\''+esc(p.id)+'\')">'+t('payable_list.btn_submit_approval','提交审批')+'</button>';
+        }
+        html+='<tr><td>'+esc(p.request_no||'')+'</td><td>'+esc(p.payment_status||'')+'</td><td>'+esc(p.approval_status||'')+'</td><td>'+actionHtml+'</td></tr>';
+      });
       html+='</tbody></table>';
     }
     openModal(t('payable_list.detail_title','应付费用明细'),html);
@@ -10798,7 +10804,7 @@ async function createPaymentFromSelected(){
   // 注意：同收款方/同币种/同国家 的校验交由统一入口 multi-expense 在后端完成；页面不重复实现，避免规则分散。
   try{
     const d=await api('/api/payment-requests/multi-expense','POST',{payable_item_ids:ids,remark:''});
-    showFlash(t('payable_list.create_success','已创建合并付款申请：{v1}（{v2} 项）',{v1:d.request_no,v2:d.item_count}),'success');
+    showFlash(t('payable_list.create_success','已创建合并付款申请：{v1}（{v2} 项），请在查看明细中提交审批',{v1:d.request_no,v2:d.item_count}),'success');
     _payableListSel=new Set();
     await loadPayableList();
   }catch(e){
@@ -10822,6 +10828,19 @@ async function withdrawPaymentFromSelected(){
     await loadPayableList();
   }catch(e){
     showFlash(t('payable_list.withdraw_fail','撤回失败：{v1}',{v1:e.message}),'danger');
+  }
+}
+
+// PAY-CORE draft→pending：应付费用列表查看明细中提交付款申请审批
+async function submitPaymentRequestApproval(prId){
+  if(!prId){showToast(t('payable_list.submit_no_id','缺少付款申请ID'),'warning');return;}
+  try{
+    await api('/api/payment-requests/'+encodeURIComponent(prId)+'/submit-approval','POST',{submitter_name:(currentUser&&currentUser.name)||''});
+    closeModal();
+    showToast(t('payable_list.submit_success','已提交审批'),'success');
+    await loadPayableList();
+  }catch(e){
+    showToast(t('payable_list.submit_fail','提交审批失败：{v1}',{v1:e.message}),'danger');
   }
 }
 
