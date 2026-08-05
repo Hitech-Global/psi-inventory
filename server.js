@@ -11952,6 +11952,256 @@ app.get('/api/financial-risk/overview', requireApiPermission('dashboard_view'), 
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
+// ==================== financial-risk 下钻接口 ====================
+
+// 共用：构建 foreignToRmb 汇率映射（与 overview + 库存总表完全一致）
+async function buildForeignToRmbMap(today, allCurrenciesSet) {
+  const foreignToRmbMap = {};
+  foreignToRmbMap['RMB'] = 1;
+  foreignToRmbMap['CNY'] = 1;
+
+  for (const curr of allCurrenciesSet) {
+    if (curr === 'RMB' || curr === 'CNY') continue;
+    let row = queryOne('SELECT rate, rate_date FROM exchange_rates WHERE from_currency = ? AND to_currency = ? AND rate_date = ? ORDER BY created_at DESC LIMIT 1', [curr, 'RMB', today]);
+    if (!row) {
+      row = queryOne('SELECT rate, rate_date FROM exchange_rates WHERE from_currency = ? AND to_currency = ? ORDER BY rate_date DESC, created_at DESC LIMIT 1', [curr, 'RMB']);
+    }
+    if (row && Number(row.rate) > 0) {
+      foreignToRmbMap[curr] = Number(row.rate);
+    }
+  }
+
+  const missingCurrencies = Array.from(allCurrenciesSet).filter(c => c !== 'RMB' && c !== 'CNY' && !foreignToRmbMap[c]);
+  if (missingCurrencies.length > 0) {
+    try {
+      const resp = await fetch(`https://open.er-api.com/v6/latest/CNY`);
+      const data = await resp.json();
+      if (data && data.rates) {
+        for (const curr of missingCurrencies) {
+          const apiCurr = CURRENCY_API_MAP[curr] || curr;
+          const cnyToForeign = data.rates[apiCurr];
+          if (cnyToForeign && cnyToForeign > 0) {
+            const foreignToRmb = 1 / cnyToForeign;
+            foreignToRmbMap[curr] = foreignToRmb;
+            run('INSERT INTO exchange_rates (id, from_currency, to_currency, rate, rate_date, rate_type) VALUES (?, ?, ?, ?, ?, ?)',
+              [genId('rate'), curr, 'RMB', foreignToRmb, today, 'realtime']);
+          }
+        }
+      }
+    } catch (fetchErr) {
+      console.warn('[financial-risk] Failed to fetch real-time rates:', fetchErr.message);
+    }
+  }
+  return foreignToRmbMap;
+}
+
+// 共用：库存行 → 本币汇率（与 overview + 库存总表一致，支持别名）
+function getInventoryRate(row, countryToCurrency, foreignToRmbMap) {
+  let currency = countryToCurrency[row.country] || '';
+  if (!currency && COUNTRY_ALIAS_MAP[row.country]) {
+    currency = countryToCurrency[COUNTRY_ALIAS_MAP[row.country]] || '';
+  }
+  return currency ? (foreignToRmbMap[currency] || null) : null;
+}
+
+// 1. 库存资产下钻：国家 → 品牌 → 仓库 → SKU
+app.get('/api/financial-risk/inventory-breakdown', requireApiPermission('dashboard_view'), asyncHandler(async (req, res) => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const { country, brand, warehouse } = req.query;
+
+    // 国家→币种映射
+    const allCountries = query("SELECT name, default_currency FROM countries WHERE status = 'active' AND default_currency IS NOT NULL AND default_currency != ''").rows;
+    const countryToCurrency = {};
+    for (const c of allCountries) { countryToCurrency[c.name] = c.default_currency; }
+
+    // 收集涉及币种
+    const invCountries = query("SELECT DISTINCT country FROM inventory WHERE country IS NOT NULL AND country != ''").rows.map(r => r.country);
+    const allCurrenciesSet = new Set(['RMB', 'CNY']);
+    invCountries.forEach(c => {
+      let curr = countryToCurrency[c];
+      if (!curr && COUNTRY_ALIAS_MAP[c]) curr = countryToCurrency[COUNTRY_ALIAS_MAP[c]];
+      if (curr) allCurrenciesSet.add(curr);
+    });
+
+    const foreignToRmbMap = await buildForeignToRmbMap(today, allCurrenciesSet);
+
+    // 查库存数据（带 JOIN skus 获取 product_name + brand）
+    const invRows = query(`
+      SELECT i.sku_code, i.available_qty, i.weighted_avg_cost, i.country, i.warehouse,
+             s.product_name, s.brand
+      FROM inventory i
+      LEFT JOIN skus s ON i.sku_code = s.sku_code
+      WHERE i.available_qty > 0 AND i.weighted_avg_cost > 0
+    `).rows;
+
+    // 计算每行人民币金额 + 过滤
+    const items = [];
+    let total = 0;
+    for (const r of invRows) {
+      const rate = getInventoryRate(r, countryToCurrency, foreignToRmbMap);
+      if (!rate) continue; // 缺失汇率跳过（与 overview 一致）
+
+      // 下钻过滤
+      if (country && r.country !== country) continue;
+      if (brand && (s => s || '')(r.brand) !== brand) continue;
+      if (warehouse && r.warehouse !== warehouse) continue;
+
+      const amountCny = Number(r.available_qty) * Number(r.weighted_avg_cost) * rate;
+      total += amountCny;
+      items.push({
+        sku_code: r.sku_code,
+        product_name: r.product_name || '',
+        available_qty: Number(r.available_qty),
+        weighted_avg_cost: Number(r.weighted_avg_cost),
+        country: r.country,
+        brand: r.brand || '',
+        warehouse: r.warehouse,
+        amount_cny: amountCny
+      });
+    }
+
+    // 确定当前维度
+    let dimension;
+    if (!country) dimension = 'country';
+    else if (!brand) dimension = 'brand';
+    else if (!warehouse) dimension = 'warehouse';
+    else dimension = 'sku';
+
+    if (dimension === 'sku') {
+      // SKU 明细
+      const sortedItems = items.sort((a, b) => b.amount_cny - a.amount_cny);
+      const result = sortedItems.map(it => ({
+        ...it,
+        percentage: total > 0 ? Math.round(it.amount_cny / total * 1000) / 10 : 0
+      }));
+      return res.json({ total: Math.round(total * 100) / 100, dimension, items: result });
+    }
+
+    // 维度聚合
+    const groupMap = {};
+    for (const it of items) {
+      let key, label;
+      if (dimension === 'country') { key = it.country; label = it.country; }
+      else if (dimension === 'brand') { key = it.brand || ''; label = it.brand || ''; }
+      else { key = it.warehouse || ''; label = it.warehouse || ''; }
+
+      if (!groupMap[key]) groupMap[key] = { key, label, amount_cny: 0 };
+      groupMap[key].amount_cny += it.amount_cny;
+    }
+
+    const groups = Object.values(groupMap)
+      .sort((a, b) => b.amount_cny - a.amount_cny)
+      .map(g => ({
+        ...g,
+        amount_cny: Math.round(g.amount_cny * 100) / 100,
+        percentage: total > 0 ? Math.round(g.amount_cny / total * 1000) / 10 : 0
+      }));
+
+    res.json({ total: Math.round(total * 100) / 100, dimension, groups });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+}));
+
+// 2. 在途资产下钻：CI 级明细列表
+app.get('/api/financial-risk/in-transit-breakdown', requireApiPermission('dashboard_view'), asyncHandler(async (req, res) => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+
+    // 国家→币种映射
+    const allCountries = query("SELECT name, default_currency FROM countries WHERE status = 'active' AND default_currency IS NOT NULL AND default_currency != ''").rows;
+    const countryToCurrency = {};
+    for (const c of allCountries) { countryToCurrency[c.name] = c.default_currency; }
+
+    // 收集 CI 币种
+    const ciCurrencies = query("SELECT DISTINCT currency FROM commercial_invoices WHERE currency IS NOT NULL AND currency != ''").rows.map(r => r.currency);
+    const allCurrenciesSet = new Set(['RMB', 'CNY']);
+    ciCurrencies.forEach(curr => allCurrenciesSet.add(curr));
+
+    const foreignToRmbMap = await buildForeignToRmbMap(today, allCurrenciesSet);
+
+    // 查在途 CI 明细（与 overview 相同条件）
+    const transitRows = query(`
+      SELECT cii.ci_id, cii.ci_amount, cii.shipped_qty, cii.inbound_qty,
+             ci.ci_no, ci.currency, ci.brand, ci.country, ci.target_warehouse, ci.ci_status
+      FROM commercial_invoice_items cii
+      JOIN commercial_invoices ci ON cii.ci_id = ci.id
+      WHERE ci.ci_status NOT IN ('cancelled', 'completed')
+        AND cii.shipped_qty > 0
+        AND (cii.shipped_qty - COALESCE(cii.inbound_qty, 0)) > 0
+    `).rows;
+
+    // 查关联物流批次状态（用于 logistics_display_status）
+    const ciIds = [...new Set(transitRows.map(r => r.ci_id))];
+    const lbMap = {}; // ci_id → 最高阶段 logistics_display_status
+    if (ciIds.length > 0) {
+      const lbRows = query(`SELECT related_ci_id, logistics_status FROM logistics_batches WHERE related_ci_id IN (${ciIds.map(() => '?').join(',')})`, ciIds).rows;
+      for (const lb of lbRows) {
+        const displayStatus = deriveLogisticsDisplayStatus(lb.logistics_status);
+        lbMap[lb.related_ci_id] = displayStatus;
+      }
+    }
+
+    // 按 CI 聚合
+    const ciMap = {}; // ci_id → 聚合数据
+    let total = 0;
+    for (const r of transitRows) {
+      const curr = (r.currency || '').toUpperCase();
+      const rate = foreignToRmbMap[curr];
+      if (!rate) continue; // 缺失汇率跳过（与 overview 一致）
+
+      const shippedQty = Number(r.shipped_qty);
+      const inboundQty = Number(r.inbound_qty || 0);
+      const uninboundRatio = (shippedQty - inboundQty) / shippedQty;
+      const ciAmountRmb = Number(r.ci_amount || 0) * rate;
+      const amountCny = ciAmountRmb * uninboundRatio;
+
+      total += amountCny;
+
+      if (!ciMap[r.ci_id]) {
+        // 派生入库状态
+        let inboundStatus = 'none';
+        if (inboundQty >= shippedQty) inboundStatus = 'completed';
+        else if (inboundQty > 0) inboundStatus = 'partial';
+
+        ciMap[r.ci_id] = {
+          ci_no: r.ci_no,
+          country: r.country || '',
+          brand: r.brand || '',
+          warehouse: r.target_warehouse || '',
+          logistics_display_status: lbMap[r.ci_id] || 'pending_shipment',
+          inbound_derived_status: inboundStatus,
+          amount_cny: 0,
+          _totalShipped: 0,
+          _totalInbound: 0
+        };
+      }
+      ciMap[r.ci_id].amount_cny += amountCny;
+      ciMap[r.ci_id]._totalShipped += shippedQty;
+      ciMap[r.ci_id]._totalInbound += inboundQty;
+    }
+
+    // 重新计算 CI 级入库状态（基于所有明细行的汇总）
+    const items = Object.values(ciMap).map(ci => {
+      let inboundStatus = 'none';
+      if (ci._totalInbound > 0 && ci._totalInbound >= ci._totalShipped) inboundStatus = 'completed';
+      else if (ci._totalInbound > 0) inboundStatus = 'partial';
+
+      delete ci._totalShipped;
+      delete ci._totalInbound;
+      return {
+        ...ci,
+        inbound_derived_status: inboundStatus,
+        amount_cny: Math.round(ci.amount_cny * 100) / 100
+      };
+    }).sort((a, b) => b.amount_cny - a.amount_cny);
+
+    res.json({
+      total: Math.round(total * 100) / 100,
+      items
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+}));
+
 // ==================== 批量操作辅助函数 ====================
 
 const INVENTORY_STATUS_MAP = {
