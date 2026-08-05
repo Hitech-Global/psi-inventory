@@ -997,6 +997,12 @@ async function initDatabase() {
     )
   `);
 
+  // CHANNEL-ALLOCATION: 现有表追加新列（CREATE TABLE IF NOT EXISTS 不会给已存在的表加列）
+  await exec("ALTER TABLE replenishment_suggestions ADD COLUMN IF NOT EXISTS channel_ratio_source TEXT DEFAULT ''");
+  await exec("ALTER TABLE replenishment_suggestions ADD COLUMN IF NOT EXISTS channel_allocation_status TEXT DEFAULT ''");
+  await exec("ALTER TABLE replenishment_suggestions ADD COLUMN IF NOT EXISTS resolved_online_pct DOUBLE PRECISION");
+  await exec("ALTER TABLE replenishment_suggestions ADD COLUMN IF NOT EXISTS resolved_at TEXT DEFAULT ''");
+
   await exec(`
     CREATE TABLE IF NOT EXISTS purchase_orders (
       id TEXT PRIMARY KEY,

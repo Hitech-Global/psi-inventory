@@ -3677,9 +3677,8 @@ function isStockoutAffected(available, totalSalesEver, lastSaleDate, lastOutboun
 }
 
 // 缺货前最后有效销售月份的渠道占比
-// 优先从4个月窗口(monthlyMap)取，窗口外查历史
-function resolvePreStockoutRatio(skuCode, country, monthlyMap, aq) {
-  // 步骤1: 从4个月窗口取（从最近到最早）
+// 仅从4个月窗口(monthlyMap)取，窗口外不回退同步查询（PG async 上下文禁止 queryOne）
+function resolvePreStockoutRatio(skuCode, country, monthlyMap) {
   const mapKey = skuCode + '|' + (country || '');
   const mo = monthlyMap[mapKey];
   if (mo) {
@@ -3689,28 +3688,7 @@ function resolvePreStockoutRatio(skuCode, country, monthlyMap, aq) {
       }
     }
   }
-  // 步骤2: 查历史全量（同步接口，仅对少量SKU触发）
-  try {
-    const row = queryOne(`
-      SELECT
-        SUM(CASE WHEN shop_platform LIKE '%线上%' OR lower(shop_platform) = 'online'
-                 THEN quantity ELSE 0 END) as online_qty,
-        SUM(quantity) as total_qty
-      FROM sales_records
-      WHERE sku_code = ? AND is_valid_order = 1
-        AND strftime('%Y-%m', order_date) = (
-          SELECT strftime('%Y-%m', order_date)
-          FROM sales_records
-          WHERE sku_code = ? AND is_valid_order = 1
-          ORDER BY order_date DESC LIMIT 1
-        )
-    `, [skuCode, skuCode]);
-    if (row && row.total_qty > 0) {
-      return row.online_qty / row.total_qty * 100;
-    }
-  } catch (e) {
-    console.error('[CHANNEL-ALLOCATION] resolvePreStockoutRatio error:', e.message);
-  }
+  // 窗口外无数据，返回 null（SKU 将降级到 Level 3 或 unconfigured）
   return null;
 }
 
@@ -3740,7 +3718,7 @@ function resolveChannelRatio(opts) {
 
   // Level 2: 缺货影响SKU — 独立事实判断
   if (isStockoutAffected(available, totalSalesEver, lastSaleDate, lastOutboundDate)) {
-    const prePct = resolvePreStockoutRatio(skuCode, country, monthlyMap, null);
+    const prePct = resolvePreStockoutRatio(skuCode, country, monthlyMap);
     if (prePct !== null && !isNaN(prePct)) {
       return { source: 'pre_stockout', allocationStatus: 'allocated', onlinePct: Math.round(prePct * 100) / 100, resolvedAt };
     }
