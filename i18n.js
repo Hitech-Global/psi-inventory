@@ -1775,7 +1775,6 @@
   I18N.dict.en["common.enable"] = "Enable"; I18N.dict.id["common.enable"] = "Aktifkan";
   I18N.dict.en["common.invalid_params"] = "Invalid parameters"; I18N.dict.id["common.invalid_params"] = "Parameter tidak valid";
   I18N.dict.en["common.logout"] = "Log Out"; I18N.dict.id["common.logout"] = "Keluar";
-  I18N.dict.en["common.no_data"] = "No data"; I18N.dict.id["common.no_data"] = "Tidak ada data";
   I18N.dict.en["common.reset"] = "Reset"; I18N.dict.id["common.reset"] = "Atur Ulang";
   I18N.dict.en["common.save"] = "Save"; I18N.dict.id["common.save"] = "Simpan";
   I18N.dict.en["common.search"] = "Search"; I18N.dict.id["common.search"] = "Cari";
@@ -4472,4 +4471,119 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.zh["fro.days_30"]="未来30天"; I18N.dict.en["fro.days_30"]="Next 30 Days"; I18N.dict.id["fro.days_30"]="30 Hari ke Depan";
   I18N.dict.zh["fro.days_90"]="未来90天"; I18N.dict.en["fro.days_90"]="Next 90 Days"; I18N.dict.id["fro.days_90"]="90 Hari ke Depan";
   I18N.dict.zh["fro.as_of"]="数据截止"; I18N.dict.en["fro.as_of"]="As of"; I18N.dict.id["fro.as_of"]="Per";
+
+  // ===================== 物流管理页面 i18n（P2 新增） =====================
+  // 缺失的通用键
+  I18N.dict.zh["common.all"]="全部"; I18N.dict.en["common.all"]="All"; I18N.dict.id["common.all"]="Semua";
+  I18N.dict.zh["common.status"]="状态"; I18N.dict.en["common.status"]="Status"; I18N.dict.id["common.status"]="Status";
+  I18N.dict.zh["common.view"]="查看"; I18N.dict.en["common.view"]="View"; I18N.dict.id["common.view"]="Lihat";
+
+  // 物流状态标签
+  I18N.dict.zh["logistics.status.pending_shipment"]="待出运"; I18N.dict.en["logistics.status.pending_shipment"]="Pending Shipment"; I18N.dict.id["logistics.status.pending_shipment"]="Menunggu Pengiriman";
+  I18N.dict.zh["logistics.status.in_transit"]="运输中"; I18N.dict.en["logistics.status.in_transit"]="In Transit"; I18N.dict.id["logistics.status.in_transit"]="Dalam Pengiriman";
+  I18N.dict.zh["logistics.status.customs_clearing"]="清关中"; I18N.dict.en["logistics.status.customs_clearing"]="Customs Clearing"; I18N.dict.id["logistics.status.customs_clearing"]="Pengecekan Bea Cukai";
+  I18N.dict.zh["logistics.status.awaiting_delivery"]="待派送"; I18N.dict.en["logistics.status.awaiting_delivery"]="Awaiting Delivery"; I18N.dict.id["logistics.status.awaiting_delivery"]="Menunggu Pengiriman";
+  I18N.dict.zh["logistics.status.warehouse_arrived"]="已到仓"; I18N.dict.en["logistics.status.warehouse_arrived"]="Warehouse Arrived"; I18N.dict.id["logistics.status.warehouse_arrived"]="Tiba di Gudang";
+
+  // 物流列表
+  I18N.dict.zh["logistics.title"]="🚢 物流批次"; I18N.dict.en["logistics.title"]="🚢 Logistics Batches"; I18N.dict.id["logistics.title"]="🚢 Batch Logistik";
+  I18N.dict.zh["logistics.empty"]="暂无物流数据"; I18N.dict.en["logistics.empty"]="No logistics data"; I18N.dict.id["logistics.empty"]="Tidak ada data logistik";
+  I18N.dict.zh["logistics.filter.status"]="状态"; I18N.dict.en["logistics.filter.status"]="Status"; I18N.dict.id["logistics.filter.status"]="Status";
+
+  // 物流列表表头
+  I18N.dict.zh["logistics.col.batch_no"]="物流单号"; I18N.dict.en["logistics.col.batch_no"]="Batch No."; I18N.dict.id["logistics.col.batch_no"]="No. Batch";
+  I18N.dict.zh["logistics.col.pl_no"]="PL号"; I18N.dict.en["logistics.col.pl_no"]="PL No."; I18N.dict.id["logistics.col.pl_no"]="No. PL";
+  I18N.dict.zh["logistics.col.related_ci"]="关联CI"; I18N.dict.en["logistics.col.related_ci"]="Related CI"; I18N.dict.id["logistics.col.related_ci"]="CI Terkait";
+  I18N.dict.zh["logistics.col.forwarder"]="货代"; I18N.dict.en["logistics.col.forwarder"]="Forwarder"; I18N.dict.id["logistics.col.forwarder"]="Forwarder";
+  I18N.dict.zh["logistics.col.mode"]="方式"; I18N.dict.en["logistics.col.mode"]="Mode"; I18N.dict.id["logistics.col.mode"]="Mode";
+  I18N.dict.zh["logistics.col.country"]="国家"; I18N.dict.en["logistics.col.country"]="Country"; I18N.dict.id["logistics.col.country"]="Negara";
+  I18N.dict.zh["logistics.col.eta"]="预计到港日期"; I18N.dict.en["logistics.col.eta"]="ETA"; I18N.dict.id["logistics.col.eta"]="ETA";
+  I18N.dict.zh["logistics.col.inbound_date"]="入库完成"; I18N.dict.en["logistics.col.inbound_date"]="Inbound Done"; I18N.dict.id["logistics.col.inbound_date"]="Inbound Selesai";
+  I18N.dict.zh["logistics.col.cartons"]="箱数"; I18N.dict.en["logistics.col.cartons"]="Cartons"; I18N.dict.id["logistics.col.cartons"]="Karton";
+  I18N.dict.zh["logistics.col.total_freight"]="综合运费"; I18N.dict.en["logistics.col.total_freight"]="Total Freight"; I18N.dict.id["logistics.col.total_freight"]="Total Ongkos Kirim";
+
+  // 物流按钮
+  I18N.dict.zh["logistics.btn.create"]="➕ 新建物流批次"; I18N.dict.en["logistics.btn.create"]="➕ New Batch"; I18N.dict.id["logistics.btn.create"]="➕ Batch Baru";
+  I18N.dict.zh["logistics.btn.freight_pay"]="运费付款"; I18N.dict.en["logistics.btn.freight_pay"]="Freight Payment"; I18N.dict.id["logistics.btn.freight_pay"]="Pembayaran Ongkos Kirim";
+  I18N.dict.zh["logistics.btn.duty_pay"]="关税付款"; I18N.dict.en["logistics.btn.duty_pay"]="Duty Payment"; I18N.dict.id["logistics.btn.duty_pay"]="Pembayaran Bea Masuk";
+
+  // 物流详情
+  I18N.dict.zh["logistics.detail.title"]="物流详情"; I18N.dict.en["logistics.detail.title"]="Logistics Details"; I18N.dict.id["logistics.detail.title"]="Detail Logistik";
+  I18N.dict.zh["logistics.detail.basic_info"]="基本信息"; I18N.dict.en["logistics.detail.basic_info"]="Basic Info"; I18N.dict.id["logistics.detail.basic_info"]="Info Dasar";
+  I18N.dict.zh["logistics.detail.batch_no"]="物流单号"; I18N.dict.en["logistics.detail.batch_no"]="Batch No."; I18N.dict.id["logistics.detail.batch_no"]="No. Batch";
+  I18N.dict.zh["logistics.detail.pl_no"]="PL单号"; I18N.dict.en["logistics.detail.pl_no"]="PL No."; I18N.dict.id["logistics.detail.pl_no"]="No. PL";
+  I18N.dict.zh["logistics.detail.related_ci"]="关联CI"; I18N.dict.en["logistics.detail.related_ci"]="Related CI"; I18N.dict.id["logistics.detail.related_ci"]="CI Terkait";
+  I18N.dict.zh["logistics.detail.forwarder"]="货代"; I18N.dict.en["logistics.detail.forwarder"]="Forwarder"; I18N.dict.id["logistics.detail.forwarder"]="Forwarder";
+  I18N.dict.zh["logistics.detail.transport_mode"]="运输方式"; I18N.dict.en["logistics.detail.transport_mode"]="Transport Mode"; I18N.dict.id["logistics.detail.transport_mode"]="Mode Transportasi";
+  I18N.dict.zh["logistics.detail.target_country"]="目标国家"; I18N.dict.en["logistics.detail.target_country"]="Target Country"; I18N.dict.id["logistics.detail.target_country"]="Negara Tujuan";
+  I18N.dict.zh["logistics.detail.target_warehouse"]="目标仓库"; I18N.dict.en["logistics.detail.target_warehouse"]="Target Warehouse"; I18N.dict.id["logistics.detail.target_warehouse"]="Gudang Tujuan";
+  I18N.dict.zh["logistics.detail.pickup_date"]="提货日期"; I18N.dict.en["logistics.detail.pickup_date"]="Pickup Date"; I18N.dict.id["logistics.detail.pickup_date"]="Tanggal Pengambilan";
+  I18N.dict.zh["logistics.detail.depart_date"]="出发日期"; I18N.dict.en["logistics.detail.depart_date"]="Departure Date"; I18N.dict.id["logistics.detail.depart_date"]="Tanggal Keberangkatan";
+  I18N.dict.zh["logistics.detail.eta"]="预计到港"; I18N.dict.en["logistics.detail.eta"]="ETA"; I18N.dict.id["logistics.detail.eta"]="ETA";
+  I18N.dict.zh["logistics.detail.arrival_date"]="到港日期"; I18N.dict.en["logistics.detail.arrival_date"]="Arrival Date"; I18N.dict.id["logistics.detail.arrival_date"]="Tanggal Kedatangan";
+  I18N.dict.zh["logistics.detail.logistics_status"]="物流状态"; I18N.dict.en["logistics.detail.logistics_status"]="Logistics Status"; I18N.dict.id["logistics.detail.logistics_status"]="Status Logistik";
+  I18N.dict.zh["logistics.detail.pl_items"]="PL装箱明细"; I18N.dict.en["logistics.detail.pl_items"]="PL Packing Details"; I18N.dict.id["logistics.detail.pl_items"]="Detail Packing PL";
+  I18N.dict.zh["logistics.detail.fee_info"]="费用信息"; I18N.dict.en["logistics.detail.fee_info"]="Fee Info"; I18N.dict.id["logistics.detail.fee_info"]="Info Biaya";
+  I18N.dict.zh["logistics.detail.freight_currency"]="运费币种"; I18N.dict.en["logistics.detail.freight_currency"]="Freight Currency"; I18N.dict.id["logistics.detail.freight_currency"]="Mata Uang Ongkos Kirim";
+  I18N.dict.zh["logistics.detail.freight"]="运费"; I18N.dict.en["logistics.detail.freight"]="Freight"; I18N.dict.id["logistics.detail.freight"]="Ongkos Kirim";
+  I18N.dict.zh["logistics.detail.local_charges"]="其他运输费用"; I18N.dict.en["logistics.detail.local_charges"]="Local Charges"; I18N.dict.id["logistics.detail.local_charges"]="Biaya Lokal";
+  I18N.dict.zh["logistics.detail.total_freight"]="综合运费"; I18N.dict.en["logistics.detail.total_freight"]="Total Freight"; I18N.dict.id["logistics.detail.total_freight"]="Total Ongkos Kirim";
+  I18N.dict.zh["logistics.detail.fee_status"]="费用状态"; I18N.dict.en["logistics.detail.fee_status"]="Fee Status"; I18N.dict.id["logistics.detail.fee_status"]="Status Biaya";
+  I18N.dict.zh["logistics.detail.remark"]="备注"; I18N.dict.en["logistics.detail.remark"]="Remark"; I18N.dict.id["logistics.detail.remark"]="Catatan";
+  I18N.dict.zh["logistics.detail.no_pl_items"]="无PL明细"; I18N.dict.en["logistics.detail.no_pl_items"]="No PL items"; I18N.dict.id["logistics.detail.no_pl_items"]="Tidak ada item PL";
+
+  // 物流编辑
+  I18N.dict.zh["logistics.edit.title"]="编辑物流批次"; I18N.dict.en["logistics.edit.title"]="Edit Logistics Batch"; I18N.dict.id["logistics.edit.title"]="Edit Batch Logistik";
+  I18N.dict.zh["logistics.edit.basic_info"]="基础信息"; I18N.dict.en["logistics.edit.basic_info"]="Basic Info"; I18N.dict.id["logistics.edit.basic_info"]="Info Dasar";
+  I18N.dict.zh["logistics.edit.batch_no"]="物流单号"; I18N.dict.en["logistics.edit.batch_no"]="Batch No."; I18N.dict.id["logistics.edit.batch_no"]="No. Batch";
+  I18N.dict.zh["logistics.edit.pl_no"]="PL单号"; I18N.dict.en["logistics.edit.pl_no"]="PL No."; I18N.dict.id["logistics.edit.pl_no"]="No. PL";
+  I18N.dict.zh["logistics.edit.forwarder"]="货代"; I18N.dict.en["logistics.edit.forwarder"]="Forwarder"; I18N.dict.id["logistics.edit.forwarder"]="Forwarder";
+  I18N.dict.zh["logistics.edit.select_forwarder"]="选择货代"; I18N.dict.en["logistics.edit.select_forwarder"]="Select forwarder"; I18N.dict.id["logistics.edit.select_forwarder"]="Pilih forwarder";
+  I18N.dict.zh["logistics.edit.transport_mode"]="运输方式"; I18N.dict.en["logistics.edit.transport_mode"]="Transport Mode"; I18N.dict.id["logistics.edit.transport_mode"]="Mode Transportasi";
+  I18N.dict.zh["logistics.edit.target_country"]="目标国家"; I18N.dict.en["logistics.edit.target_country"]="Target Country"; I18N.dict.id["logistics.edit.target_country"]="Negara Tujuan";
+  I18N.dict.zh["logistics.edit.target_warehouse"]="目标仓库"; I18N.dict.en["logistics.edit.target_warehouse"]="Target Warehouse"; I18N.dict.id["logistics.edit.target_warehouse"]="Gudang Tujuan";
+  I18N.dict.zh["logistics.edit.pickup_date"]="提货日期"; I18N.dict.en["logistics.edit.pickup_date"]="Pickup Date"; I18N.dict.id["logistics.edit.pickup_date"]="Tanggal Pengambilan";
+  I18N.dict.zh["logistics.edit.depart_date"]="出发日期"; I18N.dict.en["logistics.edit.depart_date"]="Departure Date"; I18N.dict.id["logistics.edit.depart_date"]="Tanggal Keberangkatan";
+  I18N.dict.zh["logistics.edit.eta"]="预计到港"; I18N.dict.en["logistics.edit.eta"]="ETA"; I18N.dict.id["logistics.edit.eta"]="ETA";
+  I18N.dict.zh["logistics.edit.logistics_status"]="物流状态"; I18N.dict.en["logistics.edit.logistics_status"]="Logistics Status"; I18N.dict.id["logistics.edit.logistics_status"]="Status Logistik";
+  I18N.dict.zh["logistics.edit.pl_items"]="PL装箱明细"; I18N.dict.en["logistics.edit.pl_items"]="PL Packing Details"; I18N.dict.id["logistics.edit.pl_items"]="Detail Packing PL";
+  I18N.dict.zh["logistics.edit.total_cartons"]="总CTN数量"; I18N.dict.en["logistics.edit.total_cartons"]="Total Cartons"; I18N.dict.id["logistics.edit.total_cartons"]="Total Karton";
+  I18N.dict.zh["logistics.edit.fee_info"]="费用信息"; I18N.dict.en["logistics.edit.fee_info"]="Fee Info"; I18N.dict.id["logistics.edit.fee_info"]="Info Biaya";
+  I18N.dict.zh["logistics.edit.freight_currency"]="运费币种"; I18N.dict.en["logistics.edit.freight_currency"]="Freight Currency"; I18N.dict.id["logistics.edit.freight_currency"]="Mata Uang Ongkos Kirim";
+  I18N.dict.zh["logistics.edit.freight"]="运费"; I18N.dict.en["logistics.edit.freight"]="Freight"; I18N.dict.id["logistics.edit.freight"]="Ongkos Kirim";
+  I18N.dict.zh["logistics.edit.local_charges"]="其他运输费用"; I18N.dict.en["logistics.edit.local_charges"]="Local Charges"; I18N.dict.id["logistics.edit.local_charges"]="Biaya Lokal";
+  I18N.dict.zh["logistics.edit.fee_status"]="费用状态"; I18N.dict.en["logistics.edit.fee_status"]="Fee Status"; I18N.dict.id["logistics.edit.fee_status"]="Status Biaya";
+  I18N.dict.zh["logistics.edit.remark"]="备注"; I18N.dict.en["logistics.edit.remark"]="Remark"; I18N.dict.id["logistics.edit.remark"]="Catatan";
+  I18N.dict.zh["logistics.edit.no_pl_items"]="无PL明细"; I18N.dict.en["logistics.edit.no_pl_items"]="No PL items"; I18N.dict.id["logistics.edit.no_pl_items"]="Tidak ada item PL";
+
+  // 运输方式选项
+  I18N.dict.zh["logistics.mode.sea"]="海运"; I18N.dict.en["logistics.mode.sea"]="Sea Freight"; I18N.dict.id["logistics.mode.sea"]="Laut";
+  I18N.dict.zh["logistics.mode.air"]="空运"; I18N.dict.en["logistics.mode.air"]="Air Freight"; I18N.dict.id["logistics.mode.air"]="Udara";
+  I18N.dict.zh["logistics.mode.land"]="陆运"; I18N.dict.en["logistics.mode.land"]="Land Transport"; I18N.dict.id["logistics.mode.land"]="Darat";
+  I18N.dict.zh["logistics.mode.express"]="快递"; I18N.dict.en["logistics.mode.express"]="Express"; I18N.dict.id["logistics.mode.express"]="Express";
+
+  // 费用状态选项
+  I18N.dict.zh["logistics.fee.unpaid"]="未付"; I18N.dict.en["logistics.fee.unpaid"]="Unpaid"; I18N.dict.id["logistics.fee.unpaid"]="Belum Dibayar";
+  I18N.dict.zh["logistics.fee.paid"]="已付"; I18N.dict.en["logistics.fee.paid"]="Paid"; I18N.dict.id["logistics.fee.paid"]="Lunas";
+
+  // PL明细表头
+  I18N.dict.zh["logistics.pl.sku"]="SKU"; I18N.dict.en["logistics.pl.sku"]="SKU"; I18N.dict.id["logistics.pl.sku"]="SKU";
+  I18N.dict.zh["logistics.pl.cartons"]="CTN数量"; I18N.dict.en["logistics.pl.cartons"]="Cartons"; I18N.dict.id["logistics.pl.cartons"]="Karton";
+  I18N.dict.zh["logistics.pl.total_qty"]="总数量"; I18N.dict.en["logistics.pl.total_qty"]="Total Qty"; I18N.dict.id["logistics.pl.total_qty"]="Total Qty";
+  I18N.dict.zh["logistics.pl.gross_weight"]="总毛重"; I18N.dict.en["logistics.pl.gross_weight"]="Gross Weight"; I18N.dict.id["logistics.pl.gross_weight"]="Berat Kotor";
+  I18N.dict.zh["logistics.pl.net_weight"]="总净重"; I18N.dict.en["logistics.pl.net_weight"]="Net Weight"; I18N.dict.id["logistics.pl.net_weight"]="Berat Bersih";
+  I18N.dict.zh["logistics.pl.cbm"]="总体积"; I18N.dict.en["logistics.pl.cbm"]="CBM"; I18N.dict.id["logistics.pl.cbm"]="CBM";
+  I18N.dict.zh["logistics.pl.received_qty"]="已入库"; I18N.dict.en["logistics.pl.received_qty"]="Received"; I18N.dict.id["logistics.pl.received_qty"]="Diterima";
+
+  // PL摘要
+  I18N.dict.zh["logistics.pl.summary_pl_no"]="PL单号"; I18N.dict.en["logistics.pl.summary_pl_no"]="PL No."; I18N.dict.id["logistics.pl.summary_pl_no"]="No. PL";
+  I18N.dict.zh["logistics.pl.summary_total_cartons"]="总CTN数量"; I18N.dict.en["logistics.pl.summary_total_cartons"]="Total Cartons"; I18N.dict.id["logistics.pl.summary_total_cartons"]="Total Karton";
+  I18N.dict.zh["logistics.pl.summary_total_qty"]="总数量"; I18N.dict.en["logistics.pl.summary_total_qty"]="Total Qty"; I18N.dict.id["logistics.pl.summary_total_qty"]="Total Qty";
+  I18N.dict.zh["logistics.pl.summary_gross_weight"]="总毛重"; I18N.dict.en["logistics.pl.summary_gross_weight"]="Gross Weight"; I18N.dict.id["logistics.pl.summary_gross_weight"]="Berat Kotor";
+  I18N.dict.zh["logistics.pl.summary_cbm"]="总体积"; I18N.dict.en["logistics.pl.summary_cbm"]="Total CBM"; I18N.dict.id["logistics.pl.summary_cbm"]="Total CBM";
+  I18N.dict.zh["logistics.pl.summary_status"]="状态"; I18N.dict.en["logistics.pl.summary_status"]="Status"; I18N.dict.id["logistics.pl.summary_status"]="Status";
+
+  // 物流 Toast
+  I18N.dict.zh["logistics.toast.loading"]="加载中，请稍候..."; I18N.dict.en["logistics.toast.loading"]="Loading, please wait..."; I18N.dict.id["logistics.toast.loading"]="Memuat, mohon tunggu...";
+  I18N.dict.zh["logistics.toast.save_success"]="保存成功"; I18N.dict.en["logistics.toast.save_success"]="Saved successfully"; I18N.dict.id["logistics.toast.save_success"]="Berhasil disimpan";
 })();
