@@ -3367,7 +3367,7 @@ function salesImportIdFactory() {
 
 // 销售明细列表
 app.get('/api/sales-records', requireApiPermission('outbound_view'), asyncHandler((req, res) => {
-  const { source_system, order_no, shop_platform, brand, sku_code, is_valid, start_date, end_date, import_batch_id, country } = req.query;
+  const { source_system, order_no, shop_platform, brand, sku_code, is_valid, start_date, end_date, import_batch_id, country, limit, offset } = req.query;
   let sql = `SELECT sr.*, s.product_name FROM sales_records sr LEFT JOIN skus s ON sr.sku_code = s.sku_code WHERE 1=1`;
   const params = [];
   if (source_system) { sql += ' AND sr.source_system = ?'; params.push(source_system); }
@@ -3380,8 +3380,19 @@ app.get('/api/sales-records', requireApiPermission('outbound_view'), asyncHandle
   if (end_date) { sql += ' AND sr.order_date <= ?'; params.push(end_date); }
   if (import_batch_id) { sql += ' AND sr.import_batch_id = ?'; params.push(import_batch_id); }
   if (country) { sql += ' AND sr.country = ?'; params.push(country); }
-  sql += ' ORDER BY sr.order_date DESC, sr.created_at DESC LIMIT 500';
-  res.json(query(sql, params).rows);
+
+  // Count total matching records (for pagination metadata)
+  let countSql = sql.replace(/^SELECT sr\.\*, s\.product_name FROM/, 'SELECT COUNT(*) as total FROM');
+  countSql = countSql.replace(/ LEFT JOIN skus s ON sr\.sku_code = s\.sku_code/, '');
+  const totalResult = query(countSql, params);
+  const total = totalResult.rows[0]?.total || 0;
+
+  sql += ' ORDER BY sr.order_date DESC, sr.created_at DESC';
+  const pageLimit = Math.min(Math.max(parseInt(limit) || 500, 1), 10000);
+  const pageOffset = Math.max(parseInt(offset) || 0, 0);
+  sql += ' LIMIT ' + pageLimit + ' OFFSET ' + pageOffset;
+  const rows = query(sql, params).rows;
+  res.json({ rows, total, limit: pageLimit, offset: pageOffset });
 }));
 
 // 销售明细筛选下拉选项
