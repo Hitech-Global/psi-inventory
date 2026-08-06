@@ -510,12 +510,20 @@ async function renderDashboard(){
     document.getElementById('fro-total').textContent=fmtMoney(d.total_assets.value,'');
     document.getElementById('fro-inventory').textContent=fmtMoney(d.inventory_assets.value,'');
     document.getElementById('fro-transit').textContent=fmtMoney(d.in_transit_assets.value,'');
-    // 占比显示
+    // 占比显示 + 资产结构条（纯展示，数据不变）
     var totalVal=Number(d.total_assets.value||0);
+    var invVal=Number(d.inventory_assets.value||0);
+    var trsVal=Number(d.in_transit_assets.value||0);
+    var invPct=totalVal>0?invVal/totalVal*100:0;
+    var trsPct=totalVal>0?trsVal/totalVal*100:0;
     var invPctEl=document.getElementById('fro-inventory-pct');
     var trsPctEl=document.getElementById('fro-transit-pct');
-    if(invPctEl) invPctEl.textContent=totalVal>0?(Number(d.inventory_assets.value||0)/totalVal*100).toFixed(1)+'%':'';
-    if(trsPctEl) trsPctEl.textContent=totalVal>0?(Number(d.in_transit_assets.value||0)/totalVal*100).toFixed(1)+'%':'';
+    if(invPctEl) invPctEl.textContent=totalVal>0?invPct.toFixed(1)+'%':'';
+    if(trsPctEl) trsPctEl.textContent=totalVal>0?trsPct.toFixed(1)+'%':'';
+    var invBar=document.getElementById('fro-inv-bar');
+    var trsBar=document.getElementById('fro-trs-bar');
+    if(invBar) invBar.style.width=invPct.toFixed(1)+'%';
+    if(trsBar) trsBar.style.width=trsPct.toFixed(1)+'%';
     document.getElementById('fro-pay7').textContent=fmtMoney(d.future_payables.days_7.value,'');
     document.getElementById('fro-pay30').textContent=fmtMoney(d.future_payables.days_30.value,'');
     document.getElementById('fro-pay90').textContent=fmtMoney(d.future_payables.days_90.value,'');
@@ -561,8 +569,9 @@ function renderFroInventoryAnalysis(country, brand, warehouse){
         '<div class="fro-analysis-back"><a href="javascript:showPage(\'dashboard\')" class="fro-back-link">← '+t('fro.back_overview','返回总览')+'</a></div>'+
         '<div class="fro-breadcrumb">'+crumbHtml+'</div>'+
       '</div>'+
-      '<div class="fro-analysis-title">'+t('fro.inventory_assets','库存资产')+' '+t('fro.analysis','分析')+'</div>'+
+      '<div class="fro-analysis-title">'+t('fro.inv_dist_title','库存资金分布')+'</div>'+
       '<div class="fro-analysis-subtitle">'+dimTitle+'</div>'+
+      '<div class="fro-inv-ctx" id="fro-inv-ctx"></div>'+
       '<div class="fro-analysis-total" id="fro-inv-total">'+t('common.loading','加载中...')+'</div>'+
       '<div class="fro-analysis-table" id="fro-inv-table"></div>'+
     '</div>';
@@ -661,7 +670,7 @@ function renderFroTransitAnalysis(){
       '<div class="fro-analysis-header">'+
         '<div class="fro-analysis-back"><a href="javascript:showPage(\'dashboard\')" class="fro-back-link">← '+t('fro.back_overview','返回总览')+'</a></div>'+
       '</div>'+
-      '<div class="fro-analysis-title">'+t('fro.in_transit_assets','在途资产')+' '+t('fro.analysis','分析')+'</div>'+
+      '<div class="fro-analysis-title">'+t('fro.transit_title','运输中资产')+'</div>'+
       '<div class="fro-analysis-subtitle">'+t('fro.transit_detail_desc','已发货未完全入库的 CI 明细')+'</div>'+
       '<div class="fro-analysis-total" id="fro-trs-total">'+t('common.loading','加载中...')+'</div>'+
       '<div class="fro-analysis-table" id="fro-trs-table"></div>'+
