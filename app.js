@@ -6544,20 +6544,21 @@ async function loadRpChannelMonthly(channel){
       var transitAllocatedPeriod = Math.round(transitTotal*(pctPeriod/100)); // 自动分摊在途（参考值）
       var piUnshippedAllocatedPeriod = Math.round(piUnshippedTotal*(pctPeriod/100));
       var poAllocatedPeriod = Math.round((r.po_unconfirmed_pi_qty||0)*(pctPeriod/100));
-      // 双渠道有效在途分配：已分配SKU使用自动分摊，未分配SKU使用人工配置
+      // 双渠道有效在途分配：人工修正优先于自动分配
       // 共享未分配池 = 在途总库存 - 线上有效分配 - 线下有效分配
       var isAllocated = r.channel_allocation_status === 'allocated';
       var manualOnline = r.manual_online_transit_qty||0;
       var manualOffline = r.manual_offline_transit_qty||0;
-      var effectiveOnline, effectiveOffline;
+      // 计算自动分配值（仅 allocated 时有值）
+      var autoOnline = 0, autoOffline = 0;
       if(isAllocated){
         var onlinePct = r.resolved_online_pct!=null ? r.resolved_online_pct : 0;
-        effectiveOnline = Math.round(transitTotal*(onlinePct/100));
-        effectiveOffline = Math.round(transitTotal*((100-onlinePct)/100));
-      }else{
-        effectiveOnline = manualOnline;
-        effectiveOffline = manualOffline;
+        autoOnline = Math.round(transitTotal*(onlinePct/100));
+        autoOffline = Math.round(transitTotal*((100-onlinePct)/100));
       }
+      // 人工值 > 0 时优先使用人工修正，否则使用自动分配结果
+      var effectiveOnline = manualOnline > 0 ? manualOnline : autoOnline;
+      var effectiveOffline = manualOffline > 0 ? manualOffline : autoOffline;
       var effectiveTransitAllocated = isOnline ? effectiveOnline : effectiveOffline;
       // 共享未分配在途池
       var transitUnallocated = transitTotal - effectiveOnline - effectiveOffline;
@@ -7314,20 +7315,29 @@ async function saveChannelChanges(rid,channel){
   }catch(e){showToast(e.message,'danger')}
 }
 
-// 在途库存人工分配保存（仅未分配SKU，手动指定该渠道的在途库存数量）
-// 有效分配值参与库存池和周转计算，保存后必须刷新页面重算所有派生值
+// 在途库存人工分配保存
+// 人工修正优先于自动分配，有效分配值参与库存池和周转计算
 // 人工输入消耗共享未分配在途池，线上+线下分配总和不得超过在途总库存
 async function saveTransitAllocation(rid,channel,val){
   var qty=parseInt(val)||0;
   if(qty<0) qty=0;
-  // 客户端校验：从缓存读取在途总库存和另一渠道已分配量
+  // 客户端校验：从缓存读取在途总库存和另一渠道有效已分配量
   var cached=window._rpChannelData&&window._rpChannelData[channel]&&window._rpChannelData[channel][rid];
   if(cached){
     var transitTotal=cached.in_transit_qty||0;
-    var otherChannelEffective=channel==='online'
+    // 另一渠道有效在途 = 人工值>0 ? 人工值 : 自动分配值
+    var otherManual = channel==='online'
       ? (cached.manual_offline_transit_qty||0)
       : (cached.manual_online_transit_qty||0);
-    var maxAvailable=transitTotal-otherChannelEffective;
+    var otherEffective = otherManual;
+    if(otherEffective === 0 && cached.channel_allocation_status === 'allocated'){
+      // 无人工值时，使用自动分配结果
+      var otherPct = channel==='online'
+        ? (100 - (cached.resolved_online_pct||0))
+        : (cached.resolved_online_pct||0);
+      otherEffective = Math.round(transitTotal * (otherPct/100));
+    }
+    var maxAvailable=transitTotal-otherEffective;
     if(maxAvailable<0) maxAvailable=0;
     if(qty>maxAvailable){
       showToast(t('forecast.transit.exceed','分配数量超过可分配上限')+': '+maxAvailable,'danger');
