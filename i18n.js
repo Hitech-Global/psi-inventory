@@ -3761,7 +3761,13 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.en["forecast.col.channel_share"] = "{channel} Sales Share"; I18N.dict.id["forecast.col.channel_share"] = "Proporsi Penjualan {channel}";
   // 渠道分摊在途库存
   I18N.dict.en["forecast.col.allocated_in_transit"] = "Allocated In-Transit — {channel}"; I18N.dict.id["forecast.col.allocated_in_transit"] = "Stok Dalam Perjalanan Teralokasi — {channel}";
-  I18N.dict.en["forecast.help.allocated_in_transit"] = "Quantity allocated to this channel from total in-transit stock based on the {channel} share of sales during the statistical period (for calculation only, not separate warehouse inventory)."; I18N.dict.id["forecast.help.allocated_in_transit"] = "Jumlah yang dialokasikan ke saluran ini dari total stok dalam perjalanan berdasarkan proporsi penjualan {channel} selama periode statistik (hanya untuk perhitungan, bukan persediaan gudang terpisah).";
+  I18N.dict.en["forecast.help.allocated_in_transit"] = "Quantity allocated to this channel from total in-transit stock based on the {channel} share of sales during the statistical period. For SKUs without sales data, you can manually enter the allocated quantity."; I18N.dict.id["forecast.help.allocated_in_transit"] = "Jumlah yang dialokasikan ke saluran ini dari total stok dalam perjalanan berdasarkan proporsi penjualan {channel} selama periode statistik. Untuk SKU tanpa data penjualan, Anda dapat memasukkan jumlah alokasi secara manual.";
+  // 在途总库存 / 未分配在途
+  I18N.dict.en["forecast.compact.transit_total"] = "Total\nIn-Transit"; I18N.dict.id["forecast.compact.transit_total"] = "Total Stok\nDalam Perjalanan";
+  I18N.dict.en["forecast.compact.transit_unallocated"] = "Unallocated\nIn-Transit"; I18N.dict.id["forecast.compact.transit_unallocated"] = "Stok Dlm Perjalanan\nBelum Teralokasi";
+  I18N.dict.en["forecast.help.transit_total"] = "Total in-transit inventory for this SKU (not split by channel)."; I18N.dict.id["forecast.help.transit_total"] = "Total stok dalam perjalanan untuk SKU ini (tidak dibagi per saluran).";
+  I18N.dict.en["forecast.help.transit_unallocated"] = "Total in-transit stock minus the quantity allocated to this channel."; I18N.dict.id["forecast.help.transit_unallocated"] = "Total stok dalam perjalanan dikurangi jumlah yang dialokasikan ke saluran ini.";
+  I18N.dict.en["forecast.transit.saved"] = "Transit allocation saved"; I18N.dict.id["forecast.transit.saved"] = "Alokasi stok dalam perjalanan disimpan";
   // 渠道分摊可用库存
   I18N.dict.en["forecast.col.allocated_available"] = "Allocated Available Inventory — {channel}"; I18N.dict.id["forecast.col.allocated_available"] = "Stok Tersedia Teralokasi — {channel}";
   I18N.dict.en["forecast.help.allocated_available"] = "Quantity allocated to this channel from total available stock based on the {channel} share of sales during the statistical period (for calculation only, not separate warehouse inventory)."; I18N.dict.id["forecast.help.allocated_available"] = "Jumlah yang dialokasikan ke saluran ini dari total stok tersedia berdasarkan proporsi penjualan {channel} selama periode statistik (hanya untuk perhitungan, bukan persediaan gudang terpisah).";
@@ -3780,6 +3786,8 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.en["forecast.compact.avg_monthly_sales"] = "90-Day Avg\nMonthly Sales"; I18N.dict.id["forecast.compact.avg_monthly_sales"] = "Rata-rata Penjualan\nBulanan 90 Hari";
   I18N.dict.en["forecast.compact.sales_share"] = "Sales\nShare"; I18N.dict.id["forecast.compact.sales_share"] = "Proporsi\nPenjualan";
   I18N.dict.en["forecast.compact.in_transit"] = "In-Transit\nInventory"; I18N.dict.id["forecast.compact.in_transit"] = "Stok Dalam\nPerjalanan";
+  I18N.dict.en["forecast.compact.allocated_in_transit"] = "Allocated\nIn-Transit"; I18N.dict.id["forecast.compact.allocated_in_transit"] = "Stok Dalam Perjalanan\nTeralokasi";
+  I18N.dict.en["forecast.compact.allocated_available"] = "Allocated\nAvailable"; I18N.dict.id["forecast.compact.allocated_available"] = "Stok Tersedia\nTeralokasi";
   I18N.dict.en["forecast.compact.current_available"] = "Current\nAvailable"; I18N.dict.id["forecast.compact.current_available"] = "Stok\nTersedia";
   I18N.dict.en["forecast.compact.current_turnover"] = "Current\nTurnover"; I18N.dict.id["forecast.compact.current_turnover"] = "Perputaran\nSaat Ini";
   I18N.dict.en["forecast.compact.target_turnover"] = "Target\nTurnover"; I18N.dict.id["forecast.compact.target_turnover"] = "Perputaran\nTarget";
@@ -4498,6 +4506,11 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.zh["fro.inbound_complete"]="已入库"; I18N.dict.en["fro.inbound_complete"]="Fully Inbound"; I18N.dict.id["fro.inbound_complete"]="Diterima Sepenuhnya";
   I18N.dict.zh["fro.inbound_partial"]="部分入库"; I18N.dict.en["fro.inbound_partial"]="Partially Inbound"; I18N.dict.id["fro.inbound_partial"]="Diterima Sebagian";
   I18N.dict.zh["fro.inbound_none"]="未入库"; I18N.dict.en["fro.inbound_none"]="Not Inbound"; I18N.dict.id["fro.inbound_none"]="Belum Diterima";
+  I18N.dict.zh["fro.hero_title"]="供应链资产"; I18N.dict.en["fro.hero_title"]="Supply Chain Assets"; I18N.dict.id["fro.hero_title"]="Aset Rantai Pasokan";
+  I18N.dict.zh["fro.hero_sub"]="当前供应链资金占用"; I18N.dict.en["fro.hero_sub"]="Current supply chain capital tied up"; I18N.dict.id["fro.hero_sub"]="Modal rantai pasokan saat ini terikat";
+  I18N.dict.zh["fro.view_detail"]="查看明细"; I18N.dict.en["fro.view_detail"]="View Details"; I18N.dict.id["fro.view_detail"]="Lihat Detail";
+  I18N.dict.zh["fro.payable_has"]="有待付款"; I18N.dict.en["fro.payable_has"]="Pending Payment"; I18N.dict.id["fro.payable_has"]="Ada Tagihan";
+  I18N.dict.zh["fro.payable_none"]="无待付款"; I18N.dict.en["fro.payable_none"]="No Pending Payment"; I18N.dict.id["fro.payable_none"]="Tidak Ada Tagihan";
   I18N.dict.zh["common.product_name"]="品名"; I18N.dict.en["common.product_name"]="Product Name"; I18N.dict.id["common.product_name"]="Nama Produk";
   I18N.dict.zh["common.available_qty"]="可用库存"; I18N.dict.en["common.available_qty"]="Available Qty"; I18N.dict.id["common.available_qty"]="Jumlah Tersedia";
   I18N.dict.zh["common.wac"]="WAC"; I18N.dict.en["common.wac"]="WAC"; I18N.dict.id["common.wac"]="WAC";

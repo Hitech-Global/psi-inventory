@@ -443,39 +443,57 @@ function showPage(page){
 }
 
 // ==================== 首页看板 ====================
+// UI-only 纯展示（非业务判断）：仅展示金额与「待付款」事实状态。
+// 风险等级由后续业务规则定义，前端不做推断，也不新增任何计算。
+function froPayableState(value){
+  return Number(value||0)>0
+    ? {cls:'has', label:t('fro.payable_has','有待付款')}
+    : {cls:'none', label:t('fro.payable_none','无待付款')};
+}
+function setFroPayState(prefix, value){
+  var st=froPayableState(value);
+  var lbl=document.getElementById(prefix+'-status');
+  if(lbl) lbl.textContent=st.label;
+}
+// 未来应付卡片（纯展示：金额 + 待付款事实状态，无风险推断）
+function froPayCard(prefix, label){
+  return '<div class="fro-pay-card">'+
+    '<div class="fro-pay-top"><span class="fro-pay-status" id="'+prefix+'-status">'+t("common.loading","...")+'</span></div>'+
+    '<div class="fro-pay-amount">¥ <span id="'+prefix+'">'+t("common.loading","...")+'</span></div>'+
+    '<div class="fro-pay-label">'+label+'</div>'+
+  '</div>';
+}
 async function renderDashboard(){
   document.getElementById('content-inner').innerHTML='<div id="flash-container"></div>'+
     '<div class="fro-overview">'+
-      '<div class="fro-section">'+
-        '<div class="fro-section-title">'+t("fro.total_assets","供应链总资产")+'（CNY）</div>'+
-        '<div class="fro-total-card">'+
-          '<div class="fro-total-value">¥ <span id="fro-total">'+t("common.loading","加载中...")+'</span></div>'+
-          '<div class="fro-total-sub">'+t("fro.total_formula","总资产 = 库存资产 + 在途资产")+'</div>'+
-        '</div>'+
-      '</div>'+
-      '<div class="fro-section">'+
+      '<section class="fro-hero">'+
+        '<div class="fro-hero-label">'+t("fro.hero_title","供应链资产")+'</div>'+
+        '<div class="fro-hero-value">¥ <span id="fro-total">'+t("common.loading","加载中...")+'</span></div>'+
+        '<div class="fro-hero-sub">'+t("fro.hero_sub","当前供应链资金占用")+'</div>'+
+      '</section>'+
+      '<section class="fro-section">'+
         '<div class="fro-section-title">'+t("fro.assets_structure","资产结构")+'</div>'+
-        '<div class="stats-grid">'+
-          '<div class="stat-card fro-clickable" onclick="renderFroInventoryAnalysis()" style="cursor:pointer">'+
-            '<div class="stat-number">¥ <span id="fro-inventory">'+t("common.loading","...")+'</span></div>'+
-            '<div class="stat-label">'+t("fro.inventory_assets","库存资产")+'</div>'+
-            '<div class="stat-sub" id="fro-inventory-pct"></div>'+
+        '<div class="fro-asset-grid">'+
+          '<div class="fro-asset-card fro-clickable" onclick="renderFroInventoryAnalysis()" style="cursor:pointer">'+
+            '<div class="fro-asset-head"><span class="fro-asset-name">'+t("fro.inventory_assets","库存资产")+'</span><span class="fro-asset-ratio" id="fro-inventory-pct"></span></div>'+
+            '<div class="fro-asset-amount">¥ <span id="fro-inventory">'+t("common.loading","...")+'</span></div>'+
+            '<div class="fro-asset-hint">'+t("fro.view_detail","查看明细")+' ›</div>'+
           '</div>'+
-          '<div class="stat-card fro-clickable" onclick="renderFroTransitAnalysis()" style="cursor:pointer">'+
-            '<div class="stat-number">¥ <span id="fro-transit">'+t("common.loading","...")+'</span></div>'+
-            '<div class="stat-label">'+t("fro.in_transit_assets","在途资产")+'</div>'+
-            '<div class="stat-sub" id="fro-transit-pct"></div>'+
+          '<div class="fro-asset-card fro-clickable" onclick="renderFroTransitAnalysis()" style="cursor:pointer">'+
+            '<div class="fro-asset-head"><span class="fro-asset-name">'+t("fro.in_transit_assets","在途资产")+'</span><span class="fro-asset-ratio" id="fro-transit-pct"></span></div>'+
+            '<div class="fro-asset-amount">¥ <span id="fro-transit">'+t("common.loading","...")+'</span></div>'+
+            '<div class="fro-asset-hint">'+t("fro.view_detail","查看明细")+' ›</div>'+
           '</div>'+
         '</div>'+
-      '</div>'+
-      '<div class="fro-section">'+
-        '<div class="fro-section-title">'+t("fro.future_payables","未来应付资金压力")+'（CNY）</div>'+
-        '<div class="stats-grid">'+
-          '<div class="stat-card warning"><div class="stat-number">¥ <span id="fro-pay7">'+t("common.loading","...")+'</span></div><div class="stat-label">'+t("fro.days_7","未来7天")+'</div></div>'+
-          '<div class="stat-card"><div class="stat-number">¥ <span id="fro-pay30">'+t("common.loading","...")+'</span></div><div class="stat-label">'+t("fro.days_30","未来30天")+'</div></div>'+
-          '<div class="stat-card"><div class="stat-number">¥ <span id="fro-pay90">'+t("common.loading","...")+'</span></div><div class="stat-label">'+t("fro.days_90","未来90天")+'</div></div>'+
+      '</section>'+
+      '<section class="fro-section">'+
+        '<div class="fro-section-title">'+t("fro.future_payables","未来应付资金压力")+'</div>'+
+        '<div class="fro-pay-grid">'+
+          froPayCard('fro-pay7', t("fro.days_7","未来7天"))+
+          froPayCard('fro-pay30', t("fro.days_30","未来30天"))+
+          froPayCard('fro-pay90', t("fro.days_90","未来90天"))+
         '</div>'+
-      '</div>'+
+      '</section>'+
       '<div class="fro-as-of" id="fro-as-of"></div>'+
     '</div>';
   try{
@@ -489,11 +507,15 @@ async function renderDashboard(){
     var totalVal=Number(d.total_assets.value||0);
     var invPctEl=document.getElementById('fro-inventory-pct');
     var trsPctEl=document.getElementById('fro-transit-pct');
-    if(invPctEl) invPctEl.textContent=totalVal>0?'占比 '+(Number(d.inventory_assets.value||0)/totalVal*100).toFixed(1)+'%':'';
-    if(trsPctEl) trsPctEl.textContent=totalVal>0?'占比 '+(Number(d.in_transit_assets.value||0)/totalVal*100).toFixed(1)+'%':'';
+    if(invPctEl) invPctEl.textContent=totalVal>0?(Number(d.inventory_assets.value||0)/totalVal*100).toFixed(1)+'%':'';
+    if(trsPctEl) trsPctEl.textContent=totalVal>0?(Number(d.in_transit_assets.value||0)/totalVal*100).toFixed(1)+'%':'';
     document.getElementById('fro-pay7').textContent=fmtMoney(d.future_payables.days_7.value,'');
     document.getElementById('fro-pay30').textContent=fmtMoney(d.future_payables.days_30.value,'');
     document.getElementById('fro-pay90').textContent=fmtMoney(d.future_payables.days_90.value,'');
+    // 待付款事实状态（纯展示，不做风险推断）
+    setFroPayState('fro-pay7',Number(d.future_payables.days_7.value||0));
+    setFroPayState('fro-pay30',Number(d.future_payables.days_30.value||0));
+    setFroPayState('fro-pay90',Number(d.future_payables.days_90.value||0));
     var asOfEl=document.getElementById('fro-as-of');
     if(asOfEl&&d.as_of) asOfEl.textContent=t("fro.as_of","数据截止")+'：'+d.as_of;
   }catch(e){
@@ -4326,6 +4348,9 @@ function rpColWidthDefs(){
     // 库存
     avail:{min:95,default:105,max:180},
     transit:{min:95,default:105,max:180},
+    transit_allocated:{min:95,default:120,max:180},
+    transit_total:{min:85,default:100,max:160},
+    transit_unallocated:{min:85,default:100,max:160},
     pool:{min:80,default:100,max:140},
     po_unconfirmed:{min:75,default:95,max:140},
     pi_unshipped:{min:85,default:100,max:160},
@@ -4665,7 +4690,9 @@ function rpChannelColMeta(){
     {key:'channel_pct',label:t("app.766", "\u6e20\u9053\u5360\u6bd4")},
     // --- 库存判断字段（按用户指定顺序）---
     {key:'avail',label:t("app.767", "\u5f53\u524d\u53ef\u7528\u5e93\u5b58")},
-    {key:'transit',label:t("app.768", "\u5728\u9014\u5e93\u5b58")},
+    {key:'transit_allocated',label:t('forecast.compact.allocated_in_transit','在途库存（已分配）')},
+    {key:'transit_total',label:t('forecast.compact.transit_total','在途总库存'),visibleByDefault:false},
+    {key:'transit_unallocated',label:t('forecast.compact.transit_unallocated','未分配在途'),visibleByDefault:false},
     {key:'avail_turnover',label:t('gen.L3462.1','当前可用周转')},
     {key:'transit_turnover',label:t("app.733", "\u5728\u9014\u5e93\u5b58\u5468\u8f6c")},
     {key:'po_unconfirmed',label:t("app.732", "PO\u672a\u786e\u8ba4PI"),visibleByDefault:false},
@@ -4763,6 +4790,24 @@ function getRpColConfig(tabKey){
       localStorage.setItem(storageKey,JSON.stringify(saved));
     }
     localStorage.setItem(migKey5,'1');
+  }
+  // v6 迁移（仅渠道页）：将 'transit' 键替换为 'transit_allocated'，追加在途总库存/未分配在途列
+  if(tabKey!=='total'){
+    var migKey6='rp_col_config_v6_'+tabKey;
+    if(localStorage.getItem(migKey6)!=='1'){
+      if(Array.isArray(saved)&&saved.length){
+        saved=saved.map(function(s){
+          if(s.key==='transit') return {key:'transit_allocated',visible:s.visible};
+          return s;
+        });
+        var hasTT=saved.some(function(s){return s.key==='transit_total';});
+        var hasTU=saved.some(function(s){return s.key==='transit_unallocated';});
+        if(!hasTT) saved.push({key:'transit_total',visible:false});
+        if(!hasTU) saved.push({key:'transit_unallocated',visible:false});
+        localStorage.setItem(storageKey,JSON.stringify(saved));
+      }
+      localStorage.setItem(migKey6,'1');
+    }
   }
   if(Array.isArray(saved)&&saved.length){
     var result=[]; var used={};
@@ -6453,6 +6498,15 @@ async function loadRpChannelMonthly(channel){
       r._c.poAllocatedPeriod = poAllocatedPeriod;
       r._c.availAllocatedPeriod = availAllocatedPeriod; // 保留供渠道目标库存编辑换算；页面展示仍使用真实可用库存
       r._c.transitAllocatedPeriod = transitAllocatedPeriod; // period 分摊在途，同上
+      // 在途库存渠道分配展示：已分配SKU使用自动分摊，未分配SKU支持人工配置
+      var manualTransitQty = isOnline ? (r.manual_online_transit_qty||0) : (r.manual_offline_transit_qty||0);
+      var transitDisplayPeriod = transitAllocatedPeriod;
+      if(r.channel_allocation_status !== 'allocated' && manualTransitQty > 0){
+        transitDisplayPeriod = manualTransitQty;
+      }
+      r._c.transitDisplayPeriod = transitDisplayPeriod;
+      r._c.transitTotalDisplay = transitTotal;
+      r._c.transitUnallocated = transitTotal - transitDisplayPeriod;
       r._c.availTurnover = avgSalesPeriod>0 ? Math.round(availAllocatedPeriod/avgSalesPeriod*10)/10 : null;
       r._c.currentTurn = avgSalesPeriod>0 ? Math.round(poolAllocatedPeriod/avgSalesPeriod*10)/10 : t("app.799", "\u65e0\u9500\u91cf");
       r._c.transitTurnover = avgSalesPeriod>0 ? Math.round((availAllocatedPeriod+transitAllocatedPeriod)/avgSalesPeriod*10)/10 : null;
@@ -6503,9 +6557,20 @@ async function loadRpChannelMonthly(channel){
         return '<td class="text-right">'+(c.totalAvgPeriod>0?Math.round(c.pctPeriod)+'%':'-')+'</td>';
       },
       sum:function(t){return '<td class="text-right">'+(t.totalAvgPeriod>0?Math.round(t.avgSalesPeriod/t.totalAvgPeriod*100)+'%':'-')+'</td>';}};
-    Cols.transit={th:rpThCompact(t('forecast.compact.allocated_in_transit','在途库存'),t('forecast.help.allocated_in_transit','按{channel}销量统计周期占比，从总在途库存中分摊给该渠道的数量（仅测算用，非独立仓库库存）。',{channel:chLabel}),'text-right','',true),
-      td:function(r,c){return '<td class="text-right">'+formatQuantityDisplay(c.transitAllocatedPeriod||0)+'</td>';},
-      sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.transitAllocatedPeriod)+'</td>';}};
+    Cols.transit_allocated={th:rpThCompact(t('forecast.compact.allocated_in_transit','在途库存（已分配）'),t('forecast.help.allocated_in_transit','按{channel}销量统计周期占比，从总在途库存中分摊给该渠道的数量。无销量SKU可手动输入分配数量。',{channel:chLabel}),'text-right','',true),
+      td:function(r,c){
+        if(c.channelAllocationStatus!=='allocated' && (r.in_transit_qty||0)>0){
+          return '<td class="text-right"><input type="number" class="rp-transit-manual" data-rid="'+r.id+'" value="'+(c.transitDisplayPeriod||0)+'" style="width:70px;text-align:right;padding:2px 4px;border:1px solid #ddd;border-radius:3px" onchange="saveTransitAllocation('+r.id+',\''+channel+'\',this.value)"></td>';
+        }
+        return '<td class="text-right">'+formatQuantityDisplay(c.transitDisplayPeriod||0)+'</td>';
+      },
+      sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.transitDisplayPeriod)+'</td>';}};
+    Cols.transit_total={th:rpThCompact(t('forecast.compact.transit_total','在途总库存'),t('forecast.help.transit_total','该SKU的全部在途库存总量（不分渠道）。'),'text-right','',true),
+      td:function(r,c){return '<td class="text-right">'+formatQuantityDisplay(c.transitTotalDisplay||0)+'</td>';},
+      sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.transitTotalDisplay)+'</td>';}};
+    Cols.transit_unallocated={th:rpThCompact(t('forecast.compact.transit_unallocated','未分配在途'),t('forecast.help.transit_unallocated','在途总库存减去已分配给该渠道的数量。'),'text-right','',true),
+      td:function(r,c){return '<td class="text-right rp-transit-unallocated-cell">'+formatQuantityDisplay(c.transitUnallocated||0)+'</td>';},
+      sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.transitUnallocated)+'</td>';}};
     Cols.po_unconfirmed={th:rpThCompact(t('forecast.compact.po_unconfirmed','未确认\nPO'),t("app.796", "\u5df2\u7ecf\u521b\u5efa PO\uff0c\u4f46\u8fd8\u6ca1\u6709\u786e\u8ba4 PI \u7684\u6570\u91cf\u3002\u5c5e\u4e8e\u6f5c\u5728\u4f9b\u5e94\uff0c\u4e0d\u7b49\u4e8e\u4e00\u5b9a\u4f1a\u53d1\u8d27\u3002"),'text-right','',true),
       td:function(r,c){return '<td class="text-right">'+formatQuantityDisplay(c.poAllocatedPeriod||0)+'</td>';},
       sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.poAllocatedPeriod)+'</td>';}};
@@ -6583,14 +6648,14 @@ async function loadRpChannelMonthly(channel){
       }
     });
     // 计算合计（salesM1~M4 语义与字段一致：M1=本月, M2=上月, M3=上上月, M4=4个月前）
-    var totals={count:data.length,salesM1:0,salesM2:0,salesM3:0,salesM4:0,avgSales:0,totalAvg:0,totalAvgPeriod:0,avgSalesPeriod:0,transit:0,transitAllocated:0,transitAllocatedPeriod:0,po:0,avail:0,availAllocated:0,availAllocatedPeriod:0,piUnshipped:0,allocatedStock:0,poolAllocatedPeriod:0,targetStock:0,suggestedQty:0,
+    var totals={count:data.length,salesM1:0,salesM2:0,salesM3:0,salesM4:0,avgSales:0,totalAvg:0,totalAvgPeriod:0,avgSalesPeriod:0,transit:0,transitAllocated:0,transitAllocatedPeriod:0,transitDisplayPeriod:0,transitTotalDisplay:0,transitUnallocated:0,po:0,avail:0,availAllocated:0,availAllocatedPeriod:0,piUnshipped:0,allocatedStock:0,poolAllocatedPeriod:0,targetStock:0,suggestedQty:0,
       piUnshippedAllocatedPeriod:0,poAllocatedPeriod:0,
       availWS:0,transitWS:0,poWS:0,piUnshippedWS:0,suggestedQtyWS:0};
     data.forEach(function(r){
       var c=r._c;
       totals.salesM4+=c.salesM4;totals.salesM3+=c.salesM3;totals.salesM2+=c.salesM2;totals.salesM1+=c.salesM1;
       totals.avgSales+=c.avgSales;totals.totalAvg+=c.totalAvg;totals.totalAvgPeriod+=c.totalAvgPeriod;totals.avgSalesPeriod+=c.avgSalesPeriod;
-      totals.transit+=c.transit;totals.transitAllocated+=c.transitAllocated;totals.transitAllocatedPeriod+=(c.transitAllocatedPeriod||0);totals.po+=c.po;totals.avail+=c.avail;totals.availAllocated+=c.availAllocated;totals.availAllocatedPeriod+=(c.availAllocatedPeriod||0);
+      totals.transit+=c.transit;totals.transitAllocated+=c.transitAllocated;totals.transitAllocatedPeriod+=(c.transitAllocatedPeriod||0);totals.transitDisplayPeriod+=(c.transitDisplayPeriod||0);totals.transitTotalDisplay+=(c.transitTotalDisplay||0);totals.transitUnallocated+=(c.transitUnallocated||0);totals.po+=c.po;totals.avail+=c.avail;totals.availAllocated+=c.availAllocated;totals.availAllocatedPeriod+=(c.availAllocatedPeriod||0);
       totals.piUnshipped+=c.piUnshipped;
       totals.piUnshippedAllocatedPeriod+=(c.piUnshippedAllocatedPeriod||0);
       totals.poAllocatedPeriod+=(c.poAllocatedPeriod||0);
@@ -7171,6 +7236,35 @@ async function saveChannelChanges(rid,channel){
       }
     }
     showToast(t('gen.L4880.1','已保存，目标库存已回写总预测'),'success');
+  }catch(e){showToast(e.message,'danger')}
+}
+
+// 在途库存人工分配保存（仅未分配SKU，手动指定该渠道的在途库存数量）
+async function saveTransitAllocation(rid,channel,val){
+  var qty=parseInt(val)||0;
+  var body={};
+  if(channel==='online'){
+    body.manual_online_transit_qty=qty;
+  }else{
+    body.manual_offline_transit_qty=qty;
+  }
+  try{
+    await api('/api/replenishment-suggestions/'+rid,'PUT',body);
+    showToast(t('forecast.transit.saved','在途分配已保存'),'success');
+    // 局部更新同行未分配在途列，不刷新整页
+    var row=document.querySelector('tr[data-rid="'+rid+'"]');
+    if(row){
+      var cached=window._rpChannelData&&window._rpChannelData[channel]&&window._rpChannelData[channel][rid];
+      var transitTotal=cached?(cached.in_transit_qty||0):0;
+      var unallocated=transitTotal-qty;
+      var unallocCell=row.querySelector('.rp-transit-unallocated-cell');
+      if(unallocCell) unallocCell.textContent=formatQuantityDisplay(unallocated);
+      // 更新缓存中的 manual 值
+      if(cached){
+        if(channel==='online') cached.manual_online_transit_qty=qty;
+        else cached.manual_offline_transit_qty=qty;
+      }
+    }
   }catch(e){showToast(e.message,'danger')}
 }
 

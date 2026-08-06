@@ -4996,6 +4996,10 @@ app.put('/api/replenishment-suggestions/:id', requireApiPermission('replenishmen
     if (d.online_remark !== undefined) { fields.push('online_remark = ?'); values.push(d.online_remark); }
     if (d.offline_remark !== undefined) { fields.push('offline_remark = ?'); values.push(d.offline_remark); }
 
+    // 在途库存人工渠道分配（仅未分配SKU使用，存储人工指定的线上/线下在途数量）
+    if (d.manual_online_transit_qty !== undefined) { fields.push('manual_online_transit_qty = ?'); values.push(parseInt(d.manual_online_transit_qty) || 0); }
+    if (d.manual_offline_transit_qty !== undefined) { fields.push('manual_offline_transit_qty = ?'); values.push(parseInt(d.manual_offline_transit_qty) || 0); }
+
     if (fields.length === 0) return res.json({ success: true });
     values.push(req.params.id);
     run(`UPDATE replenishment_suggestions SET ${fields.join(', ')} WHERE id = ?`, values);
