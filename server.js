@@ -3938,12 +3938,26 @@ function resolveChannelRatio(opts) {
     const periodOnline = Number(aggObj.period_online) || 0;
     const periodOffline = Number(aggObj.period_offline) || 0;
     if (periodOnline + periodOffline > 0) {
+      // 当前周期双渠道均有销量 → 直接使用当前周期占比
+      if (periodOnline > 0 && periodOffline > 0) {
+        const pct = periodOnline / (periodOnline + periodOffline) * 100;
+        return { source: 'recent_sales', allocationStatus: 'allocated', onlinePct: Math.round(pct * 100) / 100, resolvedAt };
+      }
+      // 当前周期单渠道为0（可能因断货/缺货导致失真）→ 回退120天历史累计销量占比
+      // 历史占比采用累计销量占比，不采用月份占比平均
+      const s120Online = Number(aggObj.s120_online) || 0;
+      const s120Offline = Number(aggObj.s120_offline) || 0;
+      if (s120Online > 0 && s120Offline > 0) {
+        const histPct = s120Online / (s120Online + s120Offline) * 100;
+        return { source: 'historical_sales', allocationStatus: 'allocated', onlinePct: Math.round(histPct * 100) / 100, resolvedAt };
+      }
+      // 120天历史也是单渠道 → 当前周期占比反映真实渠道结构，直接使用
       const pct = periodOnline / (periodOnline + periodOffline) * 100;
       return { source: 'recent_sales', allocationStatus: 'allocated', onlinePct: Math.round(pct * 100) / 100, resolvedAt };
     }
   }
 
-  // Level 2: 缺货影响SKU — 独立事实判断
+  // Level 2: 缺货影响SKU — 独立事实判断（当前周期无销量时）
   if (isStockoutAffected(available, totalSalesEver, lastSaleDate, lastOutboundDate)) {
     const prePct = resolvePreStockoutRatio(skuCode, country, monthlyMap);
     if (prePct !== null && !isNaN(prePct)) {
@@ -4650,6 +4664,8 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
     const periodStart = new Date(now.getTime() - Math.max(0, salesStatsDays - 1) * 86400000).toISOString().split('T')[0];
     const d30 = new Date(now.getTime() - 30 * 86400000).toISOString().split('T')[0];
     const d90 = new Date(now.getTime() - 90 * 86400000).toISOString().split('T')[0];
+    // CHANNEL-ALLOCATION: 120天历史累计线上/线下销量（用于当前周期失真时的渠道比例修正）
+    const d120 = new Date(now.getTime() - 120 * 86400000).toISOString().split('T')[0];
     // 销量聚合 A：按月 GROUP BY（m1=当月 … m4=3 个月前），online/offline 按现有谓词拆分
     // 国家维度：按 sku_code + country 分组，旧数据 country='' 不参与具体国家预测
     const monthlyRows = await aq(
@@ -4685,13 +4701,15 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
               COALESCE(SUM(CASE WHEN ${salesDate} >= ? AND ${salesDate} <= ? AND (shop_platform LIKE '%线下%' OR lower(shop_platform) = 'offline') THEN quantity END), 0) AS period_offline,
               COALESCE(SUM(CASE WHEN ${salesDate} >= ? THEN quantity END), 0) AS s30,
               COALESCE(SUM(CASE WHEN ${salesDate} >= ? THEN quantity END), 0) AS s90,
+              COALESCE(SUM(CASE WHEN ${salesDate} >= ? AND (shop_platform LIKE '%线上%' OR lower(shop_platform) = 'online') THEN quantity END), 0) AS s120_online,
+              COALESCE(SUM(CASE WHEN ${salesDate} >= ? AND (shop_platform LIKE '%线下%' OR lower(shop_platform) = 'offline') THEN quantity END), 0) AS s120_offline,
               COALESCE(SUM(quantity), 0) AS ever_total,
               MIN(${salesDate}) AS first_sale,
               MAX(${salesDate}) AS last_sale
        FROM sales_records
        WHERE sku_code IN (${genInPh}) AND is_valid_order = 1
        GROUP BY sku_code, COALESCE(country, '')`,
-      [periodStart, periodEnd, periodStart, periodEnd, periodStart, periodEnd, d30, d90].concat(genSkuCodes)
+      [periodStart, periodEnd, periodStart, periodEnd, periodStart, periodEnd, d30, d90, d120, d120].concat(genSkuCodes)
     );
     const aggMap = {};
     for (const r of aggRows) aggMap[r.sku_code + '|' + (r.country || '')] = r;

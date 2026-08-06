@@ -3904,6 +3904,8 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.en["forecast.review.channel_source"] = "Channel Ratio Source"; I18N.dict.id["forecast.review.channel_source"] = "Sumber Rasio Saluran";
   // CHANNEL-ALLOCATION: 渠道分配来源标签
   I18N.dict.en["forecast.channel.recent_sales"] = "Recent Sales"; I18N.dict.id["forecast.channel.recent_sales"] = "Penjualan Terkini";
+  I18N.dict.en["forecast.channel.historical"] = "Historical"; I18N.dict.id["forecast.channel.historical"] = "Historis";
+  I18N.dict.en["forecast.channel.historical_sales"] = "Historical Sales Correction"; I18N.dict.id["forecast.channel.historical_sales"] = "Koreksi Penjualan Historis";
   I18N.dict.en["forecast.channel.pre_stockout"] = "Pre-stockout"; I18N.dict.id["forecast.channel.pre_stockout"] = "Sebelum Kebosahan Stok";
   I18N.dict.en["forecast.channel.manual"] = "Manual"; I18N.dict.id["forecast.channel.manual"] = "Manual";
   I18N.dict.en["forecast.channel.unallocated"] = "Unallocated"; I18N.dict.id["forecast.channel.unallocated"] = "Tidak Dialokasikan";

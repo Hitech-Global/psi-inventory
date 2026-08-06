@@ -6627,6 +6627,7 @@ async function loadRpChannelMonthly(channel){
       td:function(r,c){
         if(c.channelAllocationStatus==='allocated'){
           var srcLabel = c.channelRatioSource==='recent_sales' ? '' :
+                         c.channelRatioSource==='historical_sales' ? '<span class="channel-src-badge" style="font-size:10px;color:#888;margin-left:2px">('+t('forecast.channel.historical','历史')+')<span>' :
                          c.channelRatioSource==='pre_stockout' ? '<span class="channel-src-badge" style="font-size:10px;color:#888;margin-left:2px">('+t('forecast.channel.pre_stockout','缺货前')+')<span>' :
                          c.channelRatioSource==='manual_config' ? '<span class="channel-src-badge" style="font-size:10px;color:#888;margin-left:2px">('+t('forecast.channel.manual','人工')+')<span>' : '';
           return '<td class="text-right">'+Math.round(c.pctPeriod)+'%'+srcLabel+'</td>';
@@ -7119,6 +7120,7 @@ function openRpReview(rid, channel){
     +kv(t('forecast.review.channel_source','渠道占比来源'), (function(){
       if(c.channelAllocationStatus==='allocated'){
         if(c.channelRatioSource==='recent_sales') return t('forecast.channel.recent_sales','近期销量');
+        if(c.channelRatioSource==='historical_sales') return t('forecast.channel.historical_sales','历史销量修正');
         if(c.channelRatioSource==='pre_stockout') return t('forecast.channel.pre_stockout','缺货前销量');
         if(c.channelRatioSource==='manual_config') return t('forecast.channel.manual','人工配置');
       }
