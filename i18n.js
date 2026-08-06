@@ -4513,6 +4513,11 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.zh["fro.view_detail"]="查看明细"; I18N.dict.en["fro.view_detail"]="View Details"; I18N.dict.id["fro.view_detail"]="Lihat Detail";
   I18N.dict.zh["fro.payable_has"]="有待付款"; I18N.dict.en["fro.payable_has"]="Pending Payment"; I18N.dict.id["fro.payable_has"]="Ada Tagihan";
   I18N.dict.zh["fro.payable_none"]="无待付款"; I18N.dict.en["fro.payable_none"]="No Pending Payment"; I18N.dict.id["fro.payable_none"]="Tidak Ada Tagihan";
+  I18N.dict.zh["fro.inv_dist_title"]="库存资金分布"; I18N.dict.en["fro.inv_dist_title"]="Inventory Fund Distribution"; I18N.dict.id["fro.inv_dist_title"]="Distribusi Dana Inventaris";
+  I18N.dict.zh["fro.transit_title"]="运输中资产"; I18N.dict.en["fro.transit_title"]="Assets In Transit"; I18N.dict.id["fro.transit_title"]="Aset Dalam Pengiriman";
+  I18N.dict.zh["fro.cur_level"]="当前层级"; I18N.dict.en["fro.cur_level"]="Current Level"; I18N.dict.id["fro.cur_level"]="Level Saat Ini";
+  I18N.dict.zh["fro.asset_amount"]="资产金额"; I18N.dict.en["fro.asset_amount"]="Asset Amount"; I18N.dict.id["fro.asset_amount"]="Jumlah Aset";
+  I18N.dict.zh["fro.sku_count"]="SKU 数量"; I18N.dict.en["fro.sku_count"]="SKU Count"; I18N.dict.id["fro.sku_count"]="Jumlah SKU";
   I18N.dict.zh["common.product_name"]="品名"; I18N.dict.en["common.product_name"]="Product Name"; I18N.dict.id["common.product_name"]="Nama Produk";
   I18N.dict.zh["common.available_qty"]="可用库存"; I18N.dict.en["common.available_qty"]="Available Qty"; I18N.dict.id["common.available_qty"]="Jumlah Tersedia";
   I18N.dict.zh["common.wac"]="WAC"; I18N.dict.en["common.wac"]="WAC"; I18N.dict.id["common.wac"]="WAC";
