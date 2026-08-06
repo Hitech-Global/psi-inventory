@@ -6637,7 +6637,6 @@ async function loadRpChannelMonthly(channel){
           var maxAvail=c.maxAvailableTransit||0;
           return '<td class="text-right" style="padding:2px 4px">'
             +'<input type="number" min="0" max="'+maxAvail+'" class="rp-transit-manual" data-rid="'+r.id+'" value="'+(c.effectiveTransitAllocated||0)+'" style="width:60px;text-align:right;padding:2px 4px;border:1px solid #ddd;border-radius:3px" onchange="saveTransitAllocation('+r.id+',\''+channel+'\',this.value)">'
-            +'<div style="font-size:10px;color:#888;margin-top:1px">'+t('forecast.transit.max_available','可分配')+':'+maxAvail+'</div>'
             +'</td>';
         }
         return '<td class="text-right">'+formatQuantityDisplay(c.effectiveTransitAllocated||0)+'</td>';
