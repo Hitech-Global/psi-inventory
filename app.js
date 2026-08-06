@@ -8477,10 +8477,31 @@ function ciPreviewAttachment(docType,id,field){
 // ==================== CI/PL管理 ====================
 function canImportHistoricalCI(){return hasPermission('ci_create')&&hasPermission('payment_create')&&hasPermission('payment_approve')}
 async function renderCI(){
-  document.getElementById('content-inner').innerHTML=t('html.renderCI', '<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>单据类型</label><select id="ci-source-mode" onchange="onCISourceModeChange()"><option value="operational">运营 CI</option><option value="historical">历史 CI</option><option value="all">全部</option></select></div><div class="filter-group"><label>入库状态</label><select id="ci-inbound-fs"><option value="">全部</option><option value="none">未入库</option><option value="partial">部分入库</option><option value="completed">已入库</option></select></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadCI()">搜索</button>{v1}{v2}</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🚚 CI/PL列表</div></div><div id="ci-purchase-summary"></div><div id="ci-table"></div></div>', {v1: hasPermission('ci_create')?t('gen.L5756.1','<button class="btn btn-primary btn-sm" onclick="createCI()">➕ 新建CI</button>'):'', v2: ''});
+  const ciFilterControls = '<div class="filter-group"><label>'+t('field.country','国家')+'</label><select id="ci-country" onchange="onCIFilterChange()"><option value="">全部</option></select></div><div class="filter-group"><label>'+t('field.target_warehouse','仓库')+'</label><select id="ci-warehouse" onchange="onCIFilterChange()"><option value="">全部</option></select></div><div class="filter-group"><label>'+t('field.brand','品牌')+'</label><select id="ci-brand" onchange="onCIFilterChange()"><option value="">全部</option></select></div>';
+  document.getElementById('content-inner').innerHTML=t('html.renderCI', '<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>单据类型</label><select id="ci-source-mode" onchange="onCISourceModeChange()"><option value="operational">运营 CI</option><option value="historical">历史 CI</option><option value="all">全部</option></select></div><div class="filter-group"><label>入库状态</label><select id="ci-inbound-fs"><option value="">全部</option><option value="none">未入库</option><option value="partial">部分入库</option><option value="completed">已入库</option></select></div>' + ciFilterControls + '<div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadCI()">搜索</button>{v1}{v2}</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🚚 CI/PL列表</div></div><div id="ci-purchase-summary"></div><div id="ci-table"></div></div>', {v1: hasPermission('ci_create')?t('gen.L5756.1','<button class="btn btn-primary btn-sm" onclick="createCI()">➕ 新建CI</button>'):'', v2: ''});
+  refreshCIFilterOptions();
   loadCI();
 }
-function onCISourceModeChange(){const mode=document.getElementById('ci-source-mode')?.value||'operational',fs=document.getElementById('ci-inbound-fs');if(fs)fs.disabled=mode==='historical';loadCI()}
+function onCISourceModeChange(){const mode=document.getElementById('ci-source-mode')?.value||'operational',fs=document.getElementById('ci-inbound-fs');if(fs)fs.disabled=mode==='historical';refreshCIFilterOptions();loadCI()}
+async function refreshCIFilterOptions(){
+  try{
+    const mode=document.getElementById('ci-source-mode')?.value||'operational';
+    const country=document.getElementById('ci-country')?.value||'';
+    const warehouse=document.getElementById('ci-warehouse')?.value||'';
+    const brand=document.getElementById('ci-brand')?.value||'';
+    const q='mode='+encodeURIComponent(mode)+'&country='+encodeURIComponent(country)+'&warehouse='+encodeURIComponent(warehouse)+'&brand='+encodeURIComponent(brand);
+    const opts=await api('/api/ci-filter-options?'+q);
+    fillCISelect('ci-country', opts.countries||[], country);
+    fillCISelect('ci-warehouse', opts.warehouses||[], warehouse);
+    const wh=document.getElementById('ci-warehouse'); if(wh) wh.disabled=(mode==='historical');
+  }catch(e){ /* 选项刷新失败不影响列表渲染 */ }
+}
+function fillCISelect(id, values, current){
+  const sel=document.getElementById(id); if(!sel)return;
+  const keep=values.indexOf(current)>=0?current:'';
+  sel.innerHTML='<option value="">全部</option>'+values.map(function(v){return '<option value="'+esc(String(v))+'"'+(v===keep?' selected':'')+'>'+esc(String(v))+'</option>';}).join('');
+}
+function onCIFilterChange(){ refreshCIFilterOptions(); loadCI(); }
 function renderOperationalCITable(data){
   return !data.length?t('gen.L5761.1','<div class="empty-state"><div class="empty-icon">🚚</div>暂无运营CI</div>'):t('gen.L5761.2','<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>CI号</th><th>'+t('ci.col.type','CI类型')+'</th><th>关联PI</th><th>供应商</th><th>品牌</th><th>国家</th><th>仓库</th><th>'+t('ci.col.ship_date','出货日期')+'</th><th>币种</th><th>CI金额</th><th>已付定金</th><th>应付尾款</th><th>'+t('ci.col.related_logistics','关联物流单')+'</th><th>'+t('ci.col.logistics_status','物流状态')+'</th><th>'+t('ci.col.inbound_status','入库状态')+'</th><th>'+t('col.status','状态')+'</th><th>操作</th></tr></thead><tbody>')+data.map(c=>'<tr class="clickable-detail-row" onclick="rowClickView(event,\'viewCI\',\''+c.id+'\')"><td class="cell-id"><span class="link-text" onclick="viewCI(\''+c.id+'\')">'+esc(c.ci_no)+'</span></td><td>'+ciTypeBadge('operational')+'</td><td class="cell-id" style="max-width:160px">'+renderMultiPICell(c)+'</td><td>'+esc(c.supplier_name)+'</td><td>'+esc(c.brand)+'</td><td>'+esc(c.country)+'</td><td>'+esc(c.target_warehouse)+'</td><td class="cell-date">'+fmtDate(c.actual_ship_date||c.ci_date)+'</td><td>'+esc(c.currency)+'</td><td class="text-right">'+fmtMoney(c.goods_amount)+'</td><td class="text-right">'+fmtMoney(c.actual_deducted_deposit)+'</td><td class="text-right">'+fmtMoney(c.payable_balance)+'</td><td class="cell-id" style="max-width:140px">'+esc(c.related_logistics_batch_nos||'—')+'</td><td><span class="status-badge '+logisticsStatusBadgeClassByKey(c.ci_logistics_display_status)+'">'+logisticsStatusLabelByKey(c.ci_logistics_display_status)+'</span></td><td><span class="status-badge '+ciInboundStatusBadgeClass(c.inbound_derived_status)+'">'+ciInboundStatusLabel(c.inbound_derived_status)+'</span></td><td><span class="status-badge status-completed">'+t('ci.status.shipped','已出货')+'</span></td><td class="cell-actions"><button class="action-btn" onclick="viewCI(\''+c.id+'\')">👁️</button><button class="action-btn" onclick="uploadDocAttachment(\'ci\',\''+c.id+t('gen.L5761.3','\',\'attachment\')" title="\u4e0a\u4f20CI\u9644\u4ef6">📎</button><button class="action-btn" onclick="uploadDocAttachment(\'ci\',\'')+c.id+t('gen.L5761.4','\',\'pl_attachment\')" title="\u4e0a\u4f20PL\u9644\u4ef6">📦</button>')+(c.payable_balance>0&&c.balance_payment_status==='unpaid'&&hasPermission('payment_create')?'<button class="action-btn" onclick="createBalPay(\''+c.id+t('gen.L5761.5','\')" title="尾款付款">💰</button>'):'')+(hasPermission('cost_view')?'<button class="action-btn" onclick="viewCICost(\''+c.id+t('gen.L5761.6','\')" title="费用管理">📊</button>'):'')+(hasPermission('ci_edit')?'<button class="action-btn" '+((c.ci_status==='completed'||c.ci_status==='partial_inbound')?t('gen.L5761.7','disabled title="\u8be5\u72b6\u6001\u4e0d\u53ef\u4f5c\u5e9f" style="opacity:.3;cursor:not-allowed"'):'onclick="voidCI(\''+c.id+t('gen.L5761.8','\')" title="\u4f5c\u5e9f"'))+t('gen.L5761.9','>作废</button>'):'')+'</td></tr>').join('')+'</tbody></table></div>';
 }
@@ -8520,7 +8541,12 @@ function togglePICell(uid,total){
 async function loadCI(){
   try{
     const mode=document.getElementById('ci-source-mode')?.value||'operational',s=document.getElementById('ci-inbound-fs')?.value||'';
-    const results=await Promise.all([mode==='historical'?Promise.resolve([]):api('/api/commercial-invoices?inbound_status='+encodeURIComponent(s)),mode==='operational'?Promise.resolve([]):api('/api/historical-commercial-invoices'),api('/api/purchase-amount-summary')]);
+    const country=document.getElementById('ci-country')?.value||'';
+    const warehouse=document.getElementById('ci-warehouse')?.value||'';
+    const brand=document.getElementById('ci-brand')?.value||'';
+    const opQ='inbound_status='+encodeURIComponent(s)+(country?'&country='+encodeURIComponent(country):'')+(warehouse?'&warehouse='+encodeURIComponent(warehouse):'')+(brand?'&brand='+encodeURIComponent(brand):'');
+    const histQ=(country?'country='+encodeURIComponent(country):'')+(brand?'&brand='+encodeURIComponent(brand):'');
+    const results=await Promise.all([mode==='historical'?Promise.resolve([]):api('/api/commercial-invoices?'+opQ),mode==='operational'?Promise.resolve([]):api('/api/historical-commercial-invoices'+(histQ?'?'+histQ:'')),api('/api/purchase-amount-summary')]);
     const table=document.getElementById('ci-table'),summary=document.getElementById('ci-purchase-summary');if(!table||!summary)return;
     summary.innerHTML=renderPurchaseAmountSummary(results[2]);
     if(mode==='operational')table.innerHTML=renderOperationalCITable(results[0]);

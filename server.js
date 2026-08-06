@@ -558,7 +558,7 @@ function bgClear(ip, username) { bgFailTracker.delete(bgFailKey(ip, username)); 
 
 // ==================== 配置 ====================
 const PORT = process.env.PORT || 3001;
-const APP_VERSION = '1.0.6';
+const APP_VERSION = '1.0.7';
 // 发布可核对信息：部署时间（进程启动时间 ≈ 部署时间）+ git commit
 // （Render 自动注入 RENDER_GIT_COMMIT；否则回退本地 git rev-parse；都不可用则标记 unknown）
 const APP_STARTED_AT = new Date().toISOString();
@@ -5971,12 +5971,15 @@ function deriveLogisticsDisplayStatus(rawStatus) {
 }
 
 app.get('/api/commercial-invoices', requireApiPermission('ci_view'), asyncHandler((req, res) => {
-  const { inbound_status, keyword, related_pi } = req.query;
+  const { inbound_status, keyword, related_pi, country, warehouse, brand } = req.query;
   // 差异 = CI金额 - 已付定金 - 应付尾款（付款闭环校验）
   let sql = 'SELECT *, (goods_amount - COALESCE(actual_deducted_deposit, 0) - COALESCE(payable_balance, 0)) AS amount_difference FROM commercial_invoices WHERE 1=1';
   const params = [];
   if (related_pi) { sql += ' AND related_pi_no = ?'; params.push(related_pi); }
   if (keyword) { sql += ' AND (ci_no LIKE ? OR supplier_name LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`); }
+  if (country) { const al = countryAliases(country); sql += ' AND country IN (' + al.map(() => '?').join(',') + ')'; al.forEach(a => params.push(a)); }
+  if (warehouse) { sql += ' AND target_warehouse = ?'; params.push(warehouse); }
+  if (brand) { sql += ' AND brand = ?'; params.push(brand); }
   sql += ' ORDER BY created_at DESC';
   let rows = query(sql, params).rows;
 
@@ -9242,9 +9245,72 @@ app.get('/api/historical-commercial-invoices', requireApiPermission('ci_view'), 
       const pattern = `%${req.query.keyword}%`;
       params.push(pattern, pattern, pattern);
     }
+    if (req.query.country) { const al = countryAliases(req.query.country); sql += ' AND h.country IN (' + al.map(() => '?').join(',') + ')'; al.forEach(a => params.push(a)); }
+    if (req.query.brand) { sql += ' AND h.brand_name = ?'; params.push(req.query.brand); }
     sql += ' ORDER BY h.ci_date DESC, h.created_at DESC';
     res.json(query(sql, params).rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
+}));
+
+// ==================== CI 筛选：国家字段兼容（仅查询/筛选层，不改动库与业务） ====================
+// 已知不一致：commercial_invoices.country 存中文名（如“印度尼西亚”），historical_commercial_invoices.country 存代码（如“ID”）。
+// 以下映射让两者在筛选/查询时视为同一国家；不修改任何历史数据、不触碰 CI/付款业务逻辑。
+const COUNTRY_CANON = {
+  'ID': 'ID', 'Indonesia': 'ID', '印度尼西亚': 'ID', '印尼': 'ID', 'IND': 'ID',
+  'CN': 'CN', 'China': 'CN', '中国': 'CN', 'CHN': 'CN',
+  'MY': 'MY', 'Malaysia': 'MY', '马来西亚': 'MY', 'MYS': 'MY',
+  'TH': 'TH', 'Thailand': 'TH', '泰国': 'TH', 'THA': 'TH',
+  'VN': 'VN', 'Vietnam': 'VN', '越南': 'VN', 'VNM': 'VN',
+  'PH': 'PH', 'Philippines': 'PH', '菲律宾': 'PH', 'PHL': 'PH',
+  'SG': 'SG', 'Singapore': 'SG', '新加坡': 'SG', 'SGP': 'SG'
+};
+const COUNTRY_DISPLAY = { 'ID': '印度尼西亚', 'CN': 'China', 'MY': '马来西亚', 'TH': '泰国', 'VN': '越南', 'PH': '菲律宾', 'SG': '新加坡' };
+function canonCountry(v) { return COUNTRY_CANON[v] || v; }
+function displayCountry(c) { return COUNTRY_DISPLAY[c] || c; }
+function countryAliases(sel) {
+  const c = canonCountry(sel);
+  const set = new Set(Object.keys(COUNTRY_CANON).filter(k => COUNTRY_CANON[k] === c));
+  set.add(c);
+  return Array.from(set);
+}
+
+// CI-FILTER-OPTIONS：CI/PL 管理页联动筛选选项。
+// 仅基于当前 CI 数据实际存在值生成（不读全量主数据），不修改任何 CI 业务/状态/付款逻辑。
+// 枚举某维度时，应用「另外两个维度 + 单据类型」过滤、排除自身维度，实现联动。
+app.get('/api/ci-filter-options', requireApiPermission('ci_view'), asyncHandler((req, res) => {
+  const mode = req.query.mode || 'all';
+  const country = req.query.country || '';
+  const warehouse = req.query.warehouse || '';
+  const brand = req.query.brand || '';
+  const distinctOp = (dim) => {
+    let sql = `SELECT DISTINCT ${dim} FROM commercial_invoices WHERE 1=1`;
+    const p = [];
+    if (country && dim !== 'country') { const al = countryAliases(country); sql += ' AND country IN (' + al.map(() => '?').join(',') + ')'; al.forEach(a => p.push(a)); }
+    if (warehouse && dim !== 'target_warehouse') { sql += ' AND target_warehouse = ?'; p.push(warehouse); }
+    if (brand && dim !== 'brand') { sql += ' AND brand = ?'; p.push(brand); }
+    return query(sql, p).rows.map(r => r[dim]).filter(v => v != null && String(v) !== '');
+  };
+  const distinctHist = (dim) => {
+    let sql = `SELECT DISTINCT ${dim} FROM historical_commercial_invoices WHERE 1=1`;
+    const p = [];
+    if (country && dim !== 'country') { const al = countryAliases(country); sql += ' AND country IN (' + al.map(() => '?').join(',') + ')'; al.forEach(a => p.push(a)); }
+    if (brand && dim !== 'brand_name') { sql += ' AND brand_name = ?'; p.push(brand); }
+    return query(sql, p).rows.map(r => r[dim]).filter(v => v != null && String(v) !== '');
+  };
+  const countries = new Set();
+  const warehouses = new Set();
+  const brands = new Set();
+  if (mode === 'operational' || mode === 'all') {
+    distinctOp('country').forEach(v => countries.add(displayCountry(canonCountry(v))));
+    distinctOp('target_warehouse').forEach(v => warehouses.add(v));
+    distinctOp('brand').forEach(v => brands.add(v));
+  }
+  if (mode === 'historical' || mode === 'all') {
+    distinctHist('country').forEach(v => countries.add(displayCountry(canonCountry(v))));
+    distinctHist('brand_name').forEach(v => brands.add(v));
+  }
+  const sortArr = a => Array.from(a).sort((x, y) => String(x).localeCompare(String(y)));
+  res.json({ countries: sortArr(countries), warehouses: sortArr(warehouses), brands: sortArr(brands) });
 }));
 
 app.get('/api/historical-commercial-invoices/:id', requireApiPermission('ci_view'), asyncHandler((req, res) => {
