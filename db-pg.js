@@ -1341,6 +1341,14 @@ async function initDatabase() {
     )
   `);
 
+  // LOGISTICS-LISTING-01：物流单 Listing 上架状态管理（幂等迁移，存量 PG 库同样生效）
+  // 与 CI 的 PUR-OPS-COLLAB-01 完全独立并存，互不读写。四态见 db-sqlite.js 同名迁移块注释。
+  await exec("ALTER TABLE logistics_batches ADD COLUMN IF NOT EXISTS listing_status TEXT NOT NULL DEFAULT 'pending_plan'");
+  await exec("ALTER TABLE logistics_batches ADD COLUMN IF NOT EXISTS listing_owner_id TEXT NOT NULL DEFAULT ''");
+  await exec("ALTER TABLE logistics_batches ADD COLUMN IF NOT EXISTS listing_status_updated_at TEXT NOT NULL DEFAULT ''");
+  await exec("ALTER TABLE logistics_batches ADD COLUMN IF NOT EXISTS listing_remind_date TEXT NOT NULL DEFAULT ''");
+  await exec("ALTER TABLE logistics_batches ADD COLUMN IF NOT EXISTS listing_eta_remind_date TEXT NOT NULL DEFAULT ''");
+
   await exec(`
     CREATE TABLE IF NOT EXISTS inbound_records (
       id TEXT PRIMARY KEY,

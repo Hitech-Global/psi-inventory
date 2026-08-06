@@ -424,8 +424,37 @@ const NOTIFY_TEMPLATE_CATALOG = Object.freeze({
   // 11. 付款最终审批通过 → 通知提交人 + CC
   "notify.payment.approved_final": Object.freeze({ zh: "【付款审批】{business_type_label} {business_no}（金额 {currency} {amount}）审批已全部通过。", en: "[Payment Approval] {business_type_label} {business_no} (Amount: {currency} {amount}) has been fully approved.", id: "[Persetujuan Pembayaran] {business_type_label} {business_no} (Jumlah: {currency} {amount}) telah disetujui sepenuhnya." }),
   // 12. 付款审批驳回 → 通知提交人 + CC（含 remark）
-  "notify.payment.reject": Object.freeze({ zh: "【付款审批】{business_type_label} {business_no} 已被驳回。原因：{remark}", en: "[Payment Approval] {business_type_label} {business_no} has been rejected. Reason: {remark}", id: "[Persetujuan Pembayaran] {business_type_label} {business_no} telah ditolak. Alasan: {remark}" })
+  "notify.payment.reject": Object.freeze({ zh: "【付款审批】{business_type_label} {business_no} 已被驳回。原因：{remark}", en: "[Payment Approval] {business_type_label} {business_no} has been rejected. Reason: {remark}", id: "[Persetujuan Pembayaran] {business_type_label} {business_no} telah ditolak. Alasan: {remark}" }),
+
+  // ==================== LOGISTICS-LISTING-01：物流单 Listing 上架状态通知（4 事件 × 3 语言） ====================
+  // 收件人 = 上架负责人 + CC（business_participants business_type='logistics'）。
+  // status_label 由 LISTING_STATUS_LABEL_CATALOG 按收件人语言派生；eta_date/days/batch_no 为动态参数不翻译。
+  // 13a. 物流单创建 → 通知上架负责人 + CC（有预计到货日期）
+  "notify.logistics_listing_created": Object.freeze({ zh: "【上架任务】物流单 {batch_no} 已创建，预计到货日期：{eta_date}。当前上架状态：{status_label}，请及时提交上架计划。", en: "[Listing Task] Logistics order {batch_no} has been created. ETA: {eta_date}. Current listing status: {status_label}. Please submit the listing plan promptly.", id: "[Tugas Listing] Order logistik {batch_no} telah dibuat. Perkiraan tiba: {eta_date}. Status listing saat ini: {status_label}. Mohon segera ajukan rencana listing." }),
+  // 13b. 物流单创建（无预计到货日期 → 待定）
+  "notify.logistics_listing_created_tbd": Object.freeze({ zh: "【上架任务】物流单 {batch_no} 已创建，预计到货日期待定。当前上架状态：{status_label}，请及时提交上架计划。", en: "[Listing Task] Logistics order {batch_no} has been created. ETA: TBD. Current listing status: {status_label}. Please submit the listing plan promptly.", id: "[Tugas Listing] Order logistik {batch_no} telah dibuat. Perkiraan tiba: belum ditentukan. Status listing saat ini: {status_label}. Mohon segera ajukan rencana listing." }),
+  // 14. 上架状态停滞提醒（创建/上次变更后 N 天未更新）
+  "notify.logistics_listing_stalled": Object.freeze({ zh: "【上架提醒】物流单 {batch_no} 的上架状态已停留在「{status_label}」{days} 天未更新，请及时处理。", en: "[Listing Reminder] Logistics order {batch_no} has remained in \"{status_label}\" for {days} days without update. Please take action.", id: "[Pengingat Listing] Order logistik {batch_no} tetap berstatus \"{status_label}\" selama {days} hari tanpa pembaruan. Mohon segera ditindaklanjuti." }),
+  // 15. 预计到货临近催办（ETA 前 N 天且未达已准备完成/已上架）
+  "notify.logistics_listing_eta_due": Object.freeze({ zh: "【上架催办】物流单 {batch_no} 预计 {eta_date} 到货，当前上架状态「{status_label}」尚未准备完成，请优先处理。", en: "[Listing Urgent] Logistics order {batch_no} is expected to arrive on {eta_date}, but the listing status \"{status_label}\" is not yet ready. Please prioritize.", id: "[Listing Mendesak] Order logistik {batch_no} diperkirakan tiba pada {eta_date}, namun status listing \"{status_label}\" belum siap. Mohon diprioritaskan." })
 });
+
+// LOGISTICS-LISTING-01：Listing 上架状态三语 label（4 态 × 3 语言）
+// 与 logistics_batches.listing_status 取值严格对齐：pending_plan / preparing / ready / listed。
+const LISTING_STATUS_LABEL_CATALOG = Object.freeze({
+  pending_plan: Object.freeze({ zh: "待提交上架计划", en: "Pending Listing Plan", id: "Menunggu Rencana Listing" }),
+  preparing:    Object.freeze({ zh: "准备中",         en: "Preparing",            id: "Sedang Dipersiapkan" }),
+  ready:        Object.freeze({ zh: "已准备完成",     en: "Ready",                id: "Siap" }),
+  listed:       Object.freeze({ zh: "已上架",         en: "Listed",               id: "Sudah Listing" })
+});
+
+// 按收件人语言返回 Listing 状态 label；未配置状态回退原值（不抛错，保证通知可用）
+function listingStatusLabel(lang, status) {
+  const normalized = normalizeLanguage(lang);
+  const row = LISTING_STATUS_LABEL_CATALOG[status];
+  if (!row) return status || '';
+  return normalized === 'zh' ? row.zh : (row[normalized] || row.zh);
+}
 
 // PAY-CORE Phase 1：付款审批业务类型三语 label（6 类 × 3 语言）
 // 由 notifyPaymentApprovalParticipants 在构造 ctx 时按收件人语言派生 business_type_label。
@@ -729,6 +758,7 @@ module.exports = Object.freeze({
   GENERAL_TEMPLATE_CATALOG,
   NOTIFY_TEMPLATE_CATALOG,
   PAYMENT_BUSINESS_TYPE_LABEL_CATALOG,
+  LISTING_STATUS_LABEL_CATALOG,
   FORECAST_DISPLAY_CATALOG,
   ALL_CATALOGS,
   TEMPLATE_MATCHERS,
@@ -741,5 +771,6 @@ module.exports = Object.freeze({
   forecastDisplayT,
   translateApprovedText,
   localizeResponseBody,
-  paymentBusinessTypeLabel
+  paymentBusinessTypeLabel,
+  listingStatusLabel
 });

@@ -2204,6 +2204,32 @@ function initDatabase() {
     }
   })();
 
+  // LOGISTICS-LISTING-01：物流单 Listing 上架状态管理 — logistics_batches 新增 5 列
+  // 与 CI 的 PUR-OPS-COLLAB-01（ops_owner_id/ops_ready_status）完全独立并存，互不读写。
+  // listing_status 四态：pending_plan(待提交上架计划) / preparing(准备中) / ready(已准备完成) / listed(已上架)
+  // listing_status_updated_at 是停滞提醒的计算基准，状态一变即刷新，从而"按状态变化重新计算"。
+  // 两个 *_remind_date 是提醒去重哨兵（同一天同一单不重复发），状态变化时清空以便重新提醒。
+  // 负责人 owner/CC 明细存 business_participants(business_type='logistics')，本列仅存 owner 便于列表查询与扫描。
+  (function logisticsListingMigration() {
+    const d = getDB();
+    const lgCols = d.prepare(`PRAGMA table_info(logistics_batches)`).all().map(c => c.name);
+    if (!lgCols.includes('listing_status')) {
+      d.exec(`ALTER TABLE logistics_batches ADD COLUMN listing_status TEXT NOT NULL DEFAULT 'pending_plan'`);
+    }
+    if (!lgCols.includes('listing_owner_id')) {
+      d.exec(`ALTER TABLE logistics_batches ADD COLUMN listing_owner_id TEXT NOT NULL DEFAULT ''`);
+    }
+    if (!lgCols.includes('listing_status_updated_at')) {
+      d.exec(`ALTER TABLE logistics_batches ADD COLUMN listing_status_updated_at TEXT NOT NULL DEFAULT ''`);
+    }
+    if (!lgCols.includes('listing_remind_date')) {
+      d.exec(`ALTER TABLE logistics_batches ADD COLUMN listing_remind_date TEXT NOT NULL DEFAULT ''`);
+    }
+    if (!lgCols.includes('listing_eta_remind_date')) {
+      d.exec(`ALTER TABLE logistics_batches ADD COLUMN listing_eta_remind_date TEXT NOT NULL DEFAULT ''`);
+    }
+  })();
+
   // ==================== 插入默认数据 ====================
 
   // 默认角色

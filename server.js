@@ -41,7 +41,8 @@ const {
   localizeResponseBody,
   notifyT,
   forecastDisplayT,
-  paymentBusinessTypeLabel
+  paymentBusinessTypeLabel,
+  listingStatusLabel
 } = require('./server-i18n');
 
 // ==================== AUTH-FEISHU-CORE 配置与工具 ====================
@@ -245,8 +246,34 @@ const FEISHU_NOTIFY_TEMPLATES = {
     : notifyT(lang, 'notify.ci_ops_assigned_tbd', { ci_no: ciNo }),
   ci_ops_ready: (lang, ciNo) => notifyT(lang, 'notify.ci_ops_ready', { ci_no: ciNo }),
   payment_due: (lang, prNo, dueDate, amt) => notifyT(lang, 'notify.payment_due', { request_no: prNo, due_date: dueDate, amount: amt }),
-  payment_overdue: (lang, prNo, dueDate, amt) => notifyT(lang, 'notify.payment_overdue', { request_no: prNo, due_date: dueDate, amount: amt })
+  payment_overdue: (lang, prNo, dueDate, amt) => notifyT(lang, 'notify.payment_overdue', { request_no: prNo, due_date: dueDate, amount: amt }),
+
+  // LOGISTICS-LISTING-01：物流单 Listing 上架通知
+  // logistics_listing_created 走 notifyBusinessParticipants，故沿用其 (lang, code, plan_date) 签名，第 3 参传 eta_date。
+  logistics_listing_created: (lang, batchNo, etaDate) => etaDate
+    ? notifyT(lang, 'notify.logistics_listing_created', { batch_no: batchNo, eta_date: etaDate, status_label: listingStatusLabel(lang, 'pending_plan') })
+    : notifyT(lang, 'notify.logistics_listing_created_tbd', { batch_no: batchNo, status_label: listingStatusLabel(lang, 'pending_plan') }),
+  // 以下两个仅供 scanListingReminders 直接调用（签名为 (lang, batchNo, ctx)），不经 notifyBusinessParticipants。
+  logistics_listing_stalled: (lang, batchNo, ctx) => notifyT(lang, 'notify.logistics_listing_stalled', {
+    batch_no: batchNo,
+    status_label: listingStatusLabel(lang, (ctx && ctx.listing_status) || 'pending_plan'),
+    days: (ctx && ctx.days) || 0
+  }),
+  logistics_listing_eta_due: (lang, batchNo, ctx) => notifyT(lang, 'notify.logistics_listing_eta_due', {
+    batch_no: batchNo,
+    eta_date: (ctx && ctx.eta_date) || '',
+    status_label: listingStatusLabel(lang, (ctx && ctx.listing_status) || 'pending_plan')
+  })
 };
+
+// LOGISTICS-LISTING-01：Listing 状态机常量（与 db 层 listing_status 取值、server-i18n LISTING_STATUS_LABEL_CATALOG 严格对齐）
+// LISTING_TERMINAL：终态，停滞提醒不再打扰。
+// LISTING_ETA_SAFE：达到这些状态即视为"已准备完成/已上架"，ETA 临近提醒放行。
+const LISTING_STATUSES = ['pending_plan', 'preparing', 'ready', 'listed'];
+const LISTING_TERMINAL = ['listed'];
+const LISTING_ETA_SAFE = ['ready', 'listed'];
+const LISTING_STALL_DAYS = 2;   // 需求：物流单创建后 2 天上架状态仍未更新即提醒
+const LISTING_ETA_LEAD_DAYS = 3; // 需求：预计到货日期前 3 天未达 ready/listed 即催办
 
 // ==================== PAY-CORE Phase 1：approval_records.approvers 快照规范化 ====================
 // 老格式（纯数组）→ 包装为 { levels: [...], completion_cc_user_ids: [] }
@@ -497,6 +524,106 @@ async function scanPaymentReminders() {
     }
   } catch (e) {
     console.error('[FEISHU-NOTIFY] 付款提醒扫描异常:', e.message);
+  }
+  return result;
+}
+
+// LOGISTICS-LISTING-01：DB 时间串 → 毫秒。
+// 库内时间统一为 UTC（SQLite datetime('now') 与 new Date().toISOString() 均为 UTC），
+// 'YYYY-MM-DD HH:MM:SS' 无时区后缀，需显式补 Z，否则 V8 会按本地时区解析而产生 8 小时偏差。
+function parseDbTimeMs(s) {
+  if (!s) return 0;
+  const str = String(s).trim();
+  const norm = str.includes('T') ? str : str.replace(' ', 'T');
+  const withZone = /[Zz]$|[+-]\d{2}:?\d{2}$/.test(norm) ? norm : norm + 'Z';
+  const ms = Date.parse(withZone);
+  return Number.isNaN(ms) ? 0 : ms;
+}
+
+// ④ LOGISTICS-LISTING-01：Listing 上架状态提醒扫描（仅 server.js；复用 sendFeishuTextMessage；best-effort；不改 listing_status）
+// 收件人 = 该物流单的上架负责人 + CC（business_participants business_type='logistics'），每单独立解析。
+// 规则 A（停滞）：非终态且距 listing_status_updated_at（回退 created_at）≥ 2 天 → 提醒；哨兵 listing_remind_date。
+// 规则 B（临近到货）：eta_date 非空、距今 ≤ 3 天（含已过期）且状态未达 ready/listed → 催办；哨兵 listing_eta_remind_date。
+// 去重：两个哨兵各存"最后一次提醒日期"，同日不重发；状态一变即被清空 + 基准时间刷新，实现"按状态变化重新计算"。
+async function scanListingReminders() {
+  const result = { stalled_count: 0, eta_count: 0, sent_count: 0, skipped_no_owner: 0, skipped_no_feishu: 0 };
+  try {
+    const now = new Date();
+    const today = now.toISOString().split('T')[0];
+    const todayMs = Date.parse(today + 'T00:00:00Z');
+
+    // 粗筛排除终态；精确日期判断放 JS 层，规避 SQLite/PG 日期函数方言差异
+    const rows = query(
+      `SELECT id, batch_no, eta_date, listing_status, listing_owner_id, listing_status_updated_at,
+              listing_remind_date, listing_eta_remind_date, created_at
+       FROM logistics_batches
+       WHERE listing_status IS NULL OR listing_status != ?`,
+      ['listed']
+    ).rows;
+
+    for (const lb of rows) {
+      const status = lb.listing_status || 'pending_plan';
+      if (LISTING_TERMINAL.includes(status)) continue;
+      if (!lb.listing_owner_id) { result.skipped_no_owner += 1; continue; }
+
+      // 收件人每单独立解析，避免跨单累积（与付款扫描的全局 Map 写法刻意不同）
+      const recipients = new Map(); // open_id -> { name, lang }
+      const addUser = (userId) => {
+        if (!userId) return;
+        const u = queryOne('SELECT id, name, feishu_open_id, status, language_preference FROM users WHERE id = ?', [userId]);
+        if (u && u.feishu_open_id && u.status === 'active') {
+          recipients.set(u.feishu_open_id, { name: u.name || '', lang: normalizeLanguage(u.language_preference) });
+        }
+      };
+      addUser(lb.listing_owner_id);
+      const ccRows = query('SELECT user_id FROM business_participants WHERE business_type=? AND business_id=? AND participant_type=?', ['logistics', lb.id, 'cc']).rows;
+      for (const r of ccRows) addUser(r.user_id);
+      if (recipients.size === 0) { result.skipped_no_feishu += 1; continue; }
+
+      // ── 规则 A：状态停滞 ──
+      const baseMs = parseDbTimeMs(lb.listing_status_updated_at || lb.created_at);
+      const stalledDays = baseMs ? Math.floor((now.getTime() - baseMs) / 86400000) : 0;
+      const needStalled = baseMs > 0 && stalledDays >= LISTING_STALL_DAYS && lb.listing_remind_date !== today;
+
+      // ── 规则 B：预计到货临近（daysToEta ≤ 3，负数表示已过期，仍需催办） ──
+      let needEta = false;
+      let daysToEta = null;
+      if (lb.eta_date && !LISTING_ETA_SAFE.includes(status) && lb.listing_eta_remind_date !== today) {
+        const etaMs = Date.parse(String(lb.eta_date).slice(0, 10) + 'T00:00:00Z');
+        if (!Number.isNaN(etaMs)) {
+          daysToEta = Math.round((etaMs - todayMs) / 86400000);
+          needEta = daysToEta <= LISTING_ETA_LEAD_DAYS;
+        }
+      }
+
+      let touched = false;
+
+      if (needStalled) {
+        result.stalled_count += 1;
+        let sentAny = false;
+        for (const [openId, info] of recipients) {
+          const text = FEISHU_NOTIFY_TEMPLATES.logistics_listing_stalled(info.lang, lb.batch_no, { listing_status: status, days: stalledDays });
+          try { await sendFeishuTextMessage(openId, text); sentAny = true; }
+          catch (e) { console.error('[FEISHU-NOTIFY] 上架停滞提醒发送失败 open_id=' + openId + ' batch=' + lb.batch_no + ':', e.message); }
+        }
+        if (sentAny) { run('UPDATE logistics_batches SET listing_remind_date = ? WHERE id = ?', [today, lb.id]); touched = true; }
+      }
+
+      if (needEta) {
+        result.eta_count += 1;
+        let sentAny = false;
+        for (const [openId, info] of recipients) {
+          const text = FEISHU_NOTIFY_TEMPLATES.logistics_listing_eta_due(info.lang, lb.batch_no, { listing_status: status, eta_date: lb.eta_date });
+          try { await sendFeishuTextMessage(openId, text); sentAny = true; }
+          catch (e) { console.error('[FEISHU-NOTIFY] 上架到货催办发送失败 open_id=' + openId + ' batch=' + lb.batch_no + ':', e.message); }
+        }
+        if (sentAny) { run('UPDATE logistics_batches SET listing_eta_remind_date = ? WHERE id = ?', [today, lb.id]); touched = true; }
+      }
+
+      if (touched) result.sent_count += 1;
+    }
+  } catch (e) {
+    console.error('[FEISHU-NOTIFY] 上架提醒扫描异常:', e.message);
   }
   return result;
 }
@@ -6921,8 +7048,9 @@ app.post('/api/packing-lists/batch-import', requireApiPermission('ci_create'), a
 
 // ==================== 物流批次 ====================
 app.get('/api/logistics-batches', requireApiPermission('logistics_view'), asyncHandler((req, res) => {
-  const { logistics_display_status, keyword, forwarder_id } = req.query;
-  let sql = 'SELECT lb.*, pl.pl_no, pl.id AS pl_id, pl.status AS pl_status FROM logistics_batches lb LEFT JOIN packing_lists pl ON pl.logistics_batch_id = lb.id WHERE 1=1';
+  const { logistics_display_status, keyword, forwarder_id, listing_status } = req.query;
+  // LOGISTICS-LISTING-01：LEFT JOIN users 回填上架负责人姓名（listing_owner_name），供列表直接展示
+  let sql = 'SELECT lb.*, pl.pl_no, pl.id AS pl_id, pl.status AS pl_status, lu.name AS listing_owner_name FROM logistics_batches lb LEFT JOIN packing_lists pl ON pl.logistics_batch_id = lb.id LEFT JOIN users lu ON lu.id = lb.listing_owner_id WHERE 1=1';
   const params = [];
   if (forwarder_id) { sql += ' AND lb.forwarder_id = ?'; params.push(forwarder_id); }
   if (keyword) { sql += ' AND (lb.batch_no LIKE ? OR lb.forwarder_name LIKE ? OR lb.related_ci_no LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`); }
@@ -6951,11 +7079,15 @@ app.get('/api/logistics-batches', requireApiPermission('logistics_view'), asyncH
     });
   }
 
-  // 注入派生字段 + 按 logistics_display_status 筛选
+  // 注入派生字段 + 按 logistics_display_status / listing_status 筛选
   rows = rows.filter(r => {
     r.logistics_display_status = deriveLogisticsDisplayStatus(r.logistics_status);
     r.inbound_derived_status = r.related_ci_id ? (ciInboundMap[r.related_ci_id] || 'none') : 'none';
+    // LOGISTICS-LISTING-01：存量物流单（迁移前创建）listing_status 为空时兜底为初始态，避免前端渲染空白
+    if (!r.listing_status) r.listing_status = 'pending_plan';
+    r.listing_owner_name = r.listing_owner_name || '';
     if (logistics_display_status && r.logistics_display_status !== logistics_display_status) return false;
+    if (listing_status && r.listing_status !== listing_status) return false;
     return true;
   });
 
@@ -6981,14 +7113,32 @@ app.get('/api/logistics-batches/:id', requireApiPermission('logistics_view'), as
   res.json({ ...batch, pl_id: pl ? pl.id : '', pl_no: pl ? pl.pl_no : '', pl_status: pl ? pl.status : '', logistics_display_status: deriveLogisticsDisplayStatus(batch.logistics_status), inbound_derived_status: inboundDerivedStatus });
 }));
 
+// 注意：这是无前端调用方的遗留裸接口（前端统一走 /create-with-pl）。
+// LOGISTICS-LISTING-01：此处 listing_owner_id 为「可选」而非必填，以免破坏未知的外部/脚本调用方；
+// 传了才校验、写参与人并发通知，不传则 listing_owner_id 留空、不发通知（扫描时会跳过无负责人的单）。
+// 前端入口 /create-with-pl 才是必填校验所在。
 app.post('/api/logistics-batches', requireApiPermission('logistics_create'), asyncHandler((req, res) => {
   try {
     const d = req.body;
     const bId = genId('log');
     const bNo = d.batch_no || `LOG-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
     const totalFreight = (d.international_freight || 0) + (d.local_charges || 0) + (d.customs_service_fee || 0) + (d.delivery_fee || 0);
-    run(`INSERT INTO logistics_batches (id, batch_no, related_ci_id, related_ci_no, forwarder_id, forwarder_name, transport_mode, origin_port, dest_port, target_country, target_warehouse, pickup_date, depart_date, eta_date, actual_arrival_date, customs_start_date, customs_end_date, delivery_date, inbound_complete_date, logistics_status, total_cartons, total_weight, total_cbm, freight_currency, international_freight, local_charges, customs_service_fee, delivery_fee, total_freight, customs_duty, vat_gst, other_fees, fee_status, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [bId, bNo, d.related_ci_id || '', d.related_ci_no || '', d.forwarder_id || '', d.forwarder_name || '', d.transport_mode || 'sea', d.origin_port || '', d.dest_port || '', d.target_country || '', d.target_warehouse || '', d.pickup_date || '', d.depart_date || '', d.eta_date || '', d.actual_arrival_date || '', d.customs_start_date || '', d.customs_end_date || '', d.delivery_date || '', d.inbound_complete_date || '', d.logistics_status || 'pending', d.total_cartons || 0, d.total_weight || 0, d.total_cbm || 0, d.freight_currency || 'USD', d.international_freight || 0, d.local_charges || 0, d.customs_service_fee || 0, d.delivery_fee || 0, totalFreight, d.customs_duty || 0, d.vat_gst || 0, d.other_fees || 0, d.fee_status || 'unpaid', d.remark || '']);
+
+    const bareOwnerId = (d.listing_owner_id || '').toString().trim();
+    let bareOwner = null;
+    if (bareOwnerId) {
+      bareOwner = queryOne('SELECT id, name, status FROM users WHERE id = ?', [bareOwnerId]);
+      if (!bareOwner) return res.status(400).json({ error: '上架负责人不存在' });
+      if (bareOwner.status !== 'active') return res.status(400).json({ error: '上架负责人已停用' });
+    }
+    run(`INSERT INTO logistics_batches (id, batch_no, related_ci_id, related_ci_no, forwarder_id, forwarder_name, transport_mode, origin_port, dest_port, target_country, target_warehouse, pickup_date, depart_date, eta_date, actual_arrival_date, customs_start_date, customs_end_date, delivery_date, inbound_complete_date, logistics_status, total_cartons, total_weight, total_cbm, freight_currency, international_freight, local_charges, customs_service_fee, delivery_fee, total_freight, customs_duty, vat_gst, other_fees, fee_status, remark, listing_status, listing_owner_id, listing_status_updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [bId, bNo, d.related_ci_id || '', d.related_ci_no || '', d.forwarder_id || '', d.forwarder_name || '', d.transport_mode || 'sea', d.origin_port || '', d.dest_port || '', d.target_country || '', d.target_warehouse || '', d.pickup_date || '', d.depart_date || '', d.eta_date || '', d.actual_arrival_date || '', d.customs_start_date || '', d.customs_end_date || '', d.delivery_date || '', d.inbound_complete_date || '', d.logistics_status || 'pending', d.total_cartons || 0, d.total_weight || 0, d.total_cbm || 0, d.freight_currency || 'USD', d.international_freight || 0, d.local_charges || 0, d.customs_service_fee || 0, d.delivery_fee || 0, totalFreight, d.customs_duty || 0, d.vat_gst || 0, d.other_fees || 0, d.fee_status || 'unpaid', d.remark || '', 'pending_plan', bareOwnerId, new Date().toISOString().slice(0, 19).replace('T', ' ')]);
+
+    if (bareOwner) {
+      run('INSERT INTO business_participants (id, business_type, business_id, participant_type, user_id, user_name) VALUES (?, ?, ?, ?, ?, ?)',
+        [genId('bp'), 'logistics', bId, 'owner', bareOwnerId, bareOwner.name || '']);
+      notifyBusinessParticipants('logistics', bId, 'logistics_listing_created', { code: bNo, plan_date: d.eta_date || '' }).catch(() => {});
+    }
     res.json({ id: bId, batch_no: bNo, ...d, total_freight: totalFreight });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
@@ -7029,6 +7179,28 @@ app.post('/api/logistics-batches/create-with-pl', requireApiPermission('logistic
     for (const item of d.items) {
       const qty = Number(item.total_qty) || 0;
       if (qty <= 0) return res.status(400).json({ error: `SKU ${item.sku_code} 的数量必须大于 0` });
+    }
+
+    // LOGISTICS-LISTING-01：上架负责人必填校验（事务外快速失败，与既有校验风格一致）
+    // 负责人是创建即触发飞书通知的收件人，缺失则通知无处可发，故设为硬校验。
+    const listingOwnerId = (d.listing_owner_id || '').toString().trim();
+    if (!listingOwnerId) return res.status(400).json({ error: '上架负责人不能为空' });
+    const listingOwner = queryOne('SELECT id, name, status FROM users WHERE id = ?', [listingOwnerId]);
+    if (!listingOwner) return res.status(400).json({ error: '上架负责人不存在' });
+    if (listingOwner.status !== 'active') return res.status(400).json({ error: '上架负责人已停用' });
+
+    // CC 校验（可选，去重；停用用户直接拒绝，与 CI ops-prep 行为对齐）
+    const listingCcRaw = Array.isArray(d.listing_cc_user_ids) ? d.listing_cc_user_ids : [];
+    const listingCcList = [];
+    const listingCcSeen = new Set([listingOwnerId]);
+    for (const raw of listingCcRaw) {
+      const uid = (raw || '').toString().trim();
+      if (!uid || listingCcSeen.has(uid)) continue;
+      const u = queryOne('SELECT id, name, status FROM users WHERE id = ?', [uid]);
+      if (!u) return res.status(400).json({ error: '抄送人「' + uid + '」不存在' });
+      if (u.status !== 'active') return res.status(400).json({ error: '抄送人「' + (u.name || uid) + '」已停用，无法抄送' });
+      listingCcSeen.add(uid);
+      listingCcList.push({ id: u.id, name: u.name });
     }
 
     const plId = genId('pl');
@@ -7087,8 +7259,18 @@ app.post('/api/logistics-batches/create-with-pl', requireApiPermission('logistic
         [totalQtyAll, totalCartons, totalGross, totalNet, totalCbm, plId]);
 
       // ====== 步骤 5: 创建物流批次 ======
-      run(`INSERT INTO logistics_batches (id, batch_no, related_ci_id, related_ci_no, forwarder_id, forwarder_name, transport_mode, origin_port, dest_port, target_country, target_warehouse, pickup_date, depart_date, eta_date, actual_arrival_date, customs_start_date, customs_end_date, delivery_date, inbound_complete_date, logistics_status, total_cartons, total_weight, total_cbm, freight_currency, international_freight, local_charges, customs_service_fee, delivery_fee, total_freight, customs_duty, vat_gst, other_fees, fee_status, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [bId, bNo, d.related_ci_id, d.related_ci_no || ci.ci_no || '', d.forwarder_id || '', d.forwarder_name || '', d.transport_mode || 'sea', d.origin_port || '', d.dest_port || '', d.target_country || ci.country || '', d.target_warehouse || ci.target_warehouse || '', d.pickup_date || '', d.depart_date || '', d.eta_date || '', d.actual_arrival_date || '', d.customs_start_date || '', d.customs_end_date || '', d.delivery_date || '', d.inbound_complete_date || '', d.logistics_status || 'pending', totalCartons, totalGross, totalCbm, d.freight_currency || 'USD', d.international_freight || 0, d.local_charges || 0, d.customs_service_fee || 0, d.delivery_fee || 0, totalFreight, d.customs_duty || 0, d.vat_gst || 0, d.other_fees || 0, d.fee_status || 'unpaid', d.remark || '']);
+      // LOGISTICS-LISTING-01：listing_status 恒以 'pending_plan'（待提交上架计划）初始化，不接受前端指定；
+      // listing_status_updated_at 以创建时刻为停滞提醒的首个计算基准。
+      run(`INSERT INTO logistics_batches (id, batch_no, related_ci_id, related_ci_no, forwarder_id, forwarder_name, transport_mode, origin_port, dest_port, target_country, target_warehouse, pickup_date, depart_date, eta_date, actual_arrival_date, customs_start_date, customs_end_date, delivery_date, inbound_complete_date, logistics_status, total_cartons, total_weight, total_cbm, freight_currency, international_freight, local_charges, customs_service_fee, delivery_fee, total_freight, customs_duty, vat_gst, other_fees, fee_status, remark, listing_status, listing_owner_id, listing_status_updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [bId, bNo, d.related_ci_id, d.related_ci_no || ci.ci_no || '', d.forwarder_id || '', d.forwarder_name || '', d.transport_mode || 'sea', d.origin_port || '', d.dest_port || '', d.target_country || ci.country || '', d.target_warehouse || ci.target_warehouse || '', d.pickup_date || '', d.depart_date || '', d.eta_date || '', d.actual_arrival_date || '', d.customs_start_date || '', d.customs_end_date || '', d.delivery_date || '', d.inbound_complete_date || '', d.logistics_status || 'pending', totalCartons, totalGross, totalCbm, d.freight_currency || 'USD', d.international_freight || 0, d.local_charges || 0, d.customs_service_fee || 0, d.delivery_fee || 0, totalFreight, d.customs_duty || 0, d.vat_gst || 0, d.other_fees || 0, d.fee_status || 'unpaid', d.remark || '', 'pending_plan', listingOwnerId, new Date().toISOString().slice(0, 19).replace('T', ' ')]);
+
+      // LOGISTICS-LISTING-01：写入上架参与人（owner + cc），复用通用 business_participants 表
+      run('INSERT INTO business_participants (id, business_type, business_id, participant_type, user_id, user_name) VALUES (?, ?, ?, ?, ?, ?)',
+        [genId('bp'), 'logistics', bId, 'owner', listingOwnerId, listingOwner.name || '']);
+      for (const c of listingCcList) {
+        run('INSERT INTO business_participants (id, business_type, business_id, participant_type, user_id, user_name) VALUES (?, ?, ?, ?, ?, ?)',
+          [genId('bp'), 'logistics', bId, 'cc', c.id, c.name || '']);
+      }
 
       // ====== 步骤 6: 关联 PL → 物流批次 + 更新 PL 状态为 confirmed ======
       run('UPDATE packing_lists SET logistics_batch_id = ?, status = ?, updated_at = ? WHERE id = ?',
@@ -7097,6 +7279,10 @@ app.post('/api/logistics-batches/create-with-pl', requireApiPermission('logistic
       // ====== 步骤 7: 更新 CI 状态 ======
       run('UPDATE commercial_invoices SET ci_status = ? WHERE id = ?', ['ci_pl_uploaded', d.related_ci_id]);
     });
+
+    // LOGISTICS-LISTING-01：物流单 Created 后立即通知上架负责人 + CC
+    // 事务外 best-effort：飞书异常不回滚物流单，与既有 ci_ops_assigned 通知一致的容错策略。
+    notifyBusinessParticipants('logistics', bId, 'logistics_listing_created', { code: bNo, plan_date: d.eta_date || '' }).catch(() => {});
 
     res.json({
       pl_id: plId,
@@ -7158,6 +7344,139 @@ app.put('/api/logistics-batches/:id', requireApiPermission('logistics_edit'), as
     values.push(id);
     run(`UPDATE logistics_batches SET ${fields.join(', ')} WHERE id = ?`, values);
     res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+}));
+
+// ==================== LOGISTICS-LISTING-01：Listing 上架状态管理 ====================
+// 刻意不把 listing_status 并入上面的通用 PUT 白名单：状态变更必须经过本端点，
+// 以保证「修改人/修改时间/原状态/新状态」100% 落 operation_logs，无绕过留痕的路径。
+// 与 CI 的 PUR-OPS-COLLAB-01（ops_ready_status）完全独立，本端点不读写 commercial_invoices。
+
+// 读取某物流单的上架状态（含 CC 列表与变更历史）
+app.get('/api/logistics-batches/:id/listing', requireApiPermission('logistics_view'), asyncHandler((req, res) => {
+  try {
+    const lb = queryOne('SELECT * FROM logistics_batches WHERE id = ?', [req.params.id]);
+    if (!lb) return res.status(404).json({ error: '物流单不存在' });
+    const cc = query('SELECT user_id, user_name FROM business_participants WHERE business_type=? AND business_id=? AND participant_type=?', ['logistics', lb.id, 'cc']).rows;
+    const ownerName = lb.listing_owner_id ? ((queryOne('SELECT name FROM users WHERE id=?', [lb.listing_owner_id]) || {}).name || '') : '';
+    // 变更历史：从 operation_logs 反查（target_ids 是 JSON 数组字符串，用 LIKE 匹配本单 id）
+    const history = query(
+      `SELECT operator_name, operation_type, old_values, new_values, created_at FROM operation_logs
+       WHERE page = ? AND operation_type IN (?, ?) AND target_ids LIKE ? ORDER BY created_at DESC LIMIT 50`,
+      ['logistics', 'listing_status_change', 'listing_owner_change', '%' + lb.id + '%']
+    ).rows.map(r => {
+      let ov = {}, nv = {};
+      try { ov = JSON.parse(r.old_values || '{}'); } catch (e) {}
+      try { nv = JSON.parse(r.new_values || '{}'); } catch (e) {}
+      return { operator_name: r.operator_name || '', operation_type: r.operation_type, old_values: ov, new_values: nv, created_at: r.created_at };
+    });
+    res.json({
+      batch_no: lb.batch_no,
+      eta_date: lb.eta_date || '',
+      listing_status: lb.listing_status || 'pending_plan',
+      listing_owner_id: lb.listing_owner_id || '',
+      listing_owner_name: ownerName,
+      listing_status_updated_at: lb.listing_status_updated_at || '',
+      cc: cc.map(r => ({ user_id: r.user_id, user_name: r.user_name })),
+      history
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+}));
+
+// 修改上架状态 / 上架负责人 / CC（运营手动操作入口）
+app.post('/api/logistics-batches/:id/listing', requireApiPermission('logistics_edit'), asyncHandler((req, res) => {
+  try {
+    const lb = queryOne('SELECT * FROM logistics_batches WHERE id = ?', [req.params.id]);
+    if (!lb) return res.status(404).json({ error: '物流单不存在' });
+
+    const hasStatus = Object.prototype.hasOwnProperty.call(req.body, 'listing_status');
+    const hasOwner = Object.prototype.hasOwnProperty.call(req.body, 'listing_owner_id');
+    const hasCc = Object.prototype.hasOwnProperty.call(req.body, 'listing_cc_user_ids');
+    if (!hasStatus && !hasOwner && !hasCc) return res.status(400).json({ error: '未提供任何可修改字段' });
+
+    const oldStatus = lb.listing_status || 'pending_plan';
+    const newStatus = hasStatus ? (req.body.listing_status || '').toString().trim() : oldStatus;
+    if (hasStatus && !LISTING_STATUSES.includes(newStatus)) {
+      return res.status(400).json({ error: '非法的上架状态：' + newStatus });
+    }
+
+    const oldOwnerId = lb.listing_owner_id || '';
+    let newOwnerId = oldOwnerId;
+    let newOwner = null;
+    if (hasOwner) {
+      newOwnerId = (req.body.listing_owner_id || '').toString().trim();
+      if (!newOwnerId) return res.status(400).json({ error: '上架负责人不能为空' });
+      newOwner = queryOne('SELECT id, name, status FROM users WHERE id = ?', [newOwnerId]);
+      if (!newOwner) return res.status(400).json({ error: '上架负责人不存在' });
+      if (newOwner.status !== 'active') return res.status(400).json({ error: '上架负责人已停用' });
+    }
+
+    const ccList = [];
+    if (hasCc) {
+      const raws = Array.isArray(req.body.listing_cc_user_ids) ? req.body.listing_cc_user_ids : [];
+      const seen = new Set([newOwnerId]);
+      for (const raw of raws) {
+        const uid = (raw || '').toString().trim();
+        if (!uid || seen.has(uid)) continue;
+        const u = queryOne('SELECT id, name, status FROM users WHERE id = ?', [uid]);
+        if (!u) return res.status(400).json({ error: '抄送人「' + uid + '」不存在' });
+        if (u.status !== 'active') return res.status(400).json({ error: '抄送人「' + (u.name || uid) + '」已停用，无法抄送' });
+        seen.add(uid);
+        ccList.push({ id: u.id, name: u.name });
+      }
+    }
+
+    const statusChanged = hasStatus && newStatus !== oldStatus;
+    const ownerChanged = hasOwner && newOwnerId !== oldOwnerId;
+    const nowStr = new Date().toISOString().slice(0, 19).replace('T', ' ');
+
+    transaction(() => {
+      if (statusChanged) {
+        // 状态变化即刷新基准时间并清空两个提醒哨兵 —— 这就是需求「按状态变化重新计算」的落点：
+        // 停滞计时从此刻重新起算，且当天可以再次触发提醒而不被昨日哨兵挡住。
+        run('UPDATE logistics_batches SET listing_status = ?, listing_status_updated_at = ?, listing_remind_date = ?, listing_eta_remind_date = ?, updated_at = ? WHERE id = ?',
+          [newStatus, nowStr, '', '', nowStr, lb.id]);
+      }
+      if (ownerChanged) {
+        run('UPDATE logistics_batches SET listing_owner_id = ?, updated_at = ? WHERE id = ?', [newOwnerId, nowStr, lb.id]);
+        run('DELETE FROM business_participants WHERE business_type=? AND business_id=? AND participant_type=?', ['logistics', lb.id, 'owner']);
+        run('INSERT INTO business_participants (id, business_type, business_id, participant_type, user_id, user_name) VALUES (?, ?, ?, ?, ?, ?)',
+          [genId('bp'), 'logistics', lb.id, 'owner', newOwnerId, (newOwner && newOwner.name) || '']);
+      }
+      if (hasCc) {
+        run('DELETE FROM business_participants WHERE business_type=? AND business_id=? AND participant_type=?', ['logistics', lb.id, 'cc']);
+        for (const c of ccList) {
+          run('INSERT INTO business_participants (id, business_type, business_id, participant_type, user_id, user_name) VALUES (?, ?, ?, ?, ?, ?)',
+            [genId('bp'), 'logistics', lb.id, 'cc', c.id, c.name || '']);
+        }
+      }
+    });
+
+    // 需求四：变更留痕（修改人 / 修改时间 / 原状态 / 新状态）。
+    // operator_id + operator_name 来自当前登录态，created_at 由 operation_logs 表默认值写入。
+    if (statusChanged) {
+      logOperation({
+        operator_id: req.currentUserId, operator_name: req.currentUserName,
+        page: 'logistics', operation_type: 'listing_status_change',
+        target_ids: [lb.id], affected_count: 1,
+        old_values: { listing_status: oldStatus },
+        new_values: { listing_status: newStatus, batch_no: lb.batch_no },
+        reason: (req.body.reason || '').toString(), triggered_recalc: 0, is_rollbackable: 0
+      });
+    }
+    if (ownerChanged) {
+      const oldOwnerName = oldOwnerId ? ((queryOne('SELECT name FROM users WHERE id=?', [oldOwnerId]) || {}).name || '') : '';
+      logOperation({
+        operator_id: req.currentUserId, operator_name: req.currentUserName,
+        page: 'logistics', operation_type: 'listing_owner_change',
+        target_ids: [lb.id], affected_count: 1,
+        old_values: { listing_owner_id: oldOwnerId, listing_owner_name: oldOwnerName },
+        new_values: { listing_owner_id: newOwnerId, listing_owner_name: (newOwner && newOwner.name) || '', batch_no: lb.batch_no },
+        reason: (req.body.reason || '').toString(), triggered_recalc: 0, is_rollbackable: 0
+      });
+    }
+
+    res.json({ success: true, listing_status: newStatus, listing_owner_id: newOwnerId, status_changed: statusChanged, owner_changed: ownerChanged });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
@@ -11915,6 +12234,17 @@ app.get('/api/freight-forwarder-analysis', requireApiPermission('forwarder_view'
 app.post('/api/finance/payment-reminders/scan', requireApiPermission('payment_approve'), asyncHandler(async (req, res) => {
   try {
     const result = await scanPaymentReminders();
+    res.json({ success: true, ...result });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+}));
+
+// ④ LOGISTICS-LISTING-01：上架状态提醒外部 cron 触发端点
+// 与付款提醒同构：不引入进程内 cron/setInterval（Render Free 实例休眠会导致定时器停摆），
+// 由外部调度器（Render Cron Job / cron-job.org 等）每日调用一次。
+// 幂等：同一天重复调用不会重复发送（两个哨兵日期拦截）。
+app.post('/api/logistics/listing-reminders/scan', requireApiPermission('logistics_edit'), asyncHandler(async (req, res) => {
+  try {
+    const result = await scanListingReminders();
     res.json({ success: true, ...result });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));

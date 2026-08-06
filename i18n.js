@@ -4559,6 +4559,20 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.zh["logistics.col.cartons"]="箱数"; I18N.dict.en["logistics.col.cartons"]="Cartons"; I18N.dict.id["logistics.col.cartons"]="Karton";
   I18N.dict.zh["logistics.col.total_freight"]="综合运费"; I18N.dict.en["logistics.col.total_freight"]="Total Freight"; I18N.dict.id["logistics.col.total_freight"]="Total Ongkos Kirim";
 
+  // LOGISTICS-LISTING-01：Listing 上架状态管理（列表新增两列 + 创建/编辑/内联改状态）
+  I18N.dict.zh["logistics.col.listing_status"]="Listing 状态"; I18N.dict.en["logistics.col.listing_status"]="Listing Status"; I18N.dict.id["logistics.col.listing_status"]="Status Listing";
+  I18N.dict.zh["logistics.col.listing_owner"]="上架负责人"; I18N.dict.en["logistics.col.listing_owner"]="Listing Owner"; I18N.dict.id["logistics.col.listing_owner"]="Pemilik Listing";
+  I18N.dict.zh["logistics.listing_status.pending_plan"]="待提交上架计划"; I18N.dict.en["logistics.listing_status.pending_plan"]="Pending Plan"; I18N.dict.id["logistics.listing_status.pending_plan"]="Menunggu Rencana";
+  I18N.dict.zh["logistics.listing_status.preparing"]="准备中"; I18N.dict.en["logistics.listing_status.preparing"]="Preparing"; I18N.dict.id["logistics.listing_status.preparing"]="Menyiapkan";
+  I18N.dict.zh["logistics.listing_status.ready"]="已准备完成"; I18N.dict.en["logistics.listing_status.ready"]="Ready"; I18N.dict.id["logistics.listing_status.ready"]="Siap";
+  I18N.dict.zh["logistics.listing_status.listed"]="已上架"; I18N.dict.en["logistics.listing_status.listed"]="Listed"; I18N.dict.id["logistics.listing_status.listed"]="Ter-Listing";
+  I18N.dict.zh["logistics.listing_status_updated"]="上架状态已更新为："; I18N.dict.en["logistics.listing_status_updated"]="Listing status updated to: "; I18N.dict.id["logistics.listing_status_updated"]="Status listing diperbarui menjadi: ";
+  I18N.dict.zh["logistics.listing_owner_required"]="上架负责人不能为空"; I18N.dict.en["logistics.listing_owner_required"]="Listing owner is required"; I18N.dict.id["logistics.listing_owner_required"]="Pemilik listing wajib diisi";
+  I18N.dict.zh["logistics.edit.listing_info"]="上架信息"; I18N.dict.en["logistics.edit.listing_info"]="Listing Info"; I18N.dict.id["logistics.edit.listing_info"]="Info Listing";
+  I18N.dict.zh["logistics.edit.listing_status"]="上架状态"; I18N.dict.en["logistics.edit.listing_status"]="Listing Status"; I18N.dict.id["logistics.edit.listing_status"]="Status Listing";
+  I18N.dict.zh["logistics.edit.listing_owner"]="上架负责人"; I18N.dict.en["logistics.edit.listing_owner"]="Listing Owner"; I18N.dict.id["logistics.edit.listing_owner"]="Pemilik Listing";
+  I18N.dict.zh["logistics.edit.listing_cc"]="上架抄送（可选，Ctrl/⌘多选）"; I18N.dict.en["logistics.edit.listing_cc"]="CC (optional, Ctrl/⌘ multi-select)"; I18N.dict.id["logistics.edit.listing_cc"]="CC (opsional, Ctrl/⌘ multi-pilih)";
+
   // 国家名称翻译键（物流页面国家显示修复 — DB存储中文，前端按语言映射）
   I18N.dict.zh["country.印度尼西亚"]="印度尼西亚"; I18N.dict.en["country.印度尼西亚"]="Indonesia"; I18N.dict.id["country.印度尼西亚"]="Indonesia";
   I18N.dict.zh["country.马来西亚"]="马来西亚"; I18N.dict.en["country.马来西亚"]="Malaysia"; I18N.dict.id["country.马来西亚"]="Malaysia";
