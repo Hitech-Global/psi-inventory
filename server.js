@@ -5247,7 +5247,9 @@ app.put('/api/replenishment-suggestions/:id', requireApiPermission('replenishmen
 // ==================== PO 管理 ====================
 app.get('/api/purchase-orders', requireApiPermission('po_view'), asyncHandler((req, res) => {
   const { status, keyword, supplier_id } = req.query;
-  let sql = `SELECT po.*, (SELECT COUNT(*) FROM purchase_order_items WHERE po_id = po.id) as item_count FROM purchase_orders po WHERE 1=1`;
+  let sql = `SELECT po.*, (SELECT COUNT(*) FROM purchase_order_items WHERE po_id = po.id) as item_count,
+    CASE WHEN EXISTS(SELECT 1 FROM purchase_order_items WHERE po_id = po.id AND (unit_price IS NULL OR unit_price = 0)) THEN 'pending_fob' ELSE 'confirmed' END as price_status
+    FROM purchase_orders po WHERE 1=1`;
   const params = [];
   if (status) { sql += ' AND po.po_status = ?'; params.push(status); }
   if (supplier_id) { sql += ' AND po.supplier_id = ?'; params.push(supplier_id); }
@@ -5332,20 +5334,25 @@ app.post('/api/purchase-orders', requireApiPermission('po_create'), asyncHandler
     const poId = genId('po');
     const poNo = d.po_no || `PO-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
 
-    // 价格校验：SKU 必须存在且对应币种采购价有效>0；不信任客户端 unit_price
+    // 价格校验：SKU 必须存在；价格缺失不阻断创建，记入 warnings
     const invalidItems = [];
+    const priceWarnings = [];
     const itemRows = [];
     if (d.items && d.items.length > 0) {
       for (const item of d.items) {
         const sku = queryOne('SELECT sku_code, ' + priceCol + ' FROM skus WHERE sku_code = ?', [item.sku_code]);
         if (!sku) { invalidItems.push({ sku_code: item.sku_code, currency, reason: 'SKU不存在' }); continue; }
         const price = Number(sku[priceCol]);
-        if (isNaN(price) || price <= 0) { invalidItems.push({ sku_code: item.sku_code, currency, reason: currency + '采购价缺失' }); continue; }
-        itemRows.push({ sku_code: item.sku_code, po_qty: item.po_qty || 0, unit_price: price, remark: item.remark || '', forecast: item.forecast_turnover_months || 0 });
+        if (isNaN(price) || price <= 0) {
+          priceWarnings.push({ sku_code: item.sku_code, currency, reason: currency + '采购价缺失，请后续补充FOB价格' });
+        }
+        const unitPrice = (isNaN(price) || price <= 0) ? 0 : price;
+        itemRows.push({ sku_code: item.sku_code, po_qty: item.po_qty || 0, unit_price: unitPrice, remark: item.remark || '', forecast: item.forecast_turnover_months || 0 });
       }
     }
+    // SKU 不存在仍为硬阻断（数据完整性问题，非价格问题）
     if (invalidItems.length > 0) {
-      return res.status(400).json({ error: 'PO创建失败：存在价格问题', invalid_items: invalidItems });
+      return res.status(400).json({ error: 'PO创建失败：SKU不存在', invalid_items: invalidItems });
     }
 
     let totalAmount = 0;
@@ -5365,7 +5372,7 @@ app.post('/api/purchase-orders', requireApiPermission('po_create'), asyncHandler
       // 新建 PO 后刷新在途字段（po_unconfirmed_pi_qty 等）
       await updateInventoryTransitData();
     });
-    res.json({ id: poId, po_no: poNo, ...d, currency, total_amount: totalAmount });
+    res.json({ id: poId, po_no: poNo, ...d, currency, total_amount: totalAmount, price_warnings: priceWarnings });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
@@ -5416,14 +5423,15 @@ app.put('/api/purchase-orders/:id', requireApiPermission('po_create'), asyncHand
           const sku = queryOne('SELECT sku_code, ' + priceCol + ' FROM skus WHERE sku_code = ?', [item.sku_code]);
           if (!sku) { invalidItems.push({ sku_code: item.sku_code, currency: poCurrency, reason: 'SKU不存在' }); continue; }
           const price = Number(sku[priceCol]);
-          if (isNaN(price) || price <= 0) { invalidItems.push({ sku_code: item.sku_code, currency: poCurrency, reason: (poCurrency || '') + '采购价缺失' }); continue; }
-          unitPrice = price;
+          // 价格缺失不阻断，使用 0；后续可在 PO 编辑中补充
+          unitPrice = (isNaN(price) || price <= 0) ? 0 : price;
           rowId = genId('poi'); // 换新行，旧行稍后删除
         }
         toUpsert.push({ id: rowId, sku_code: item.sku_code, po_qty: item.po_qty || 0, unit_price: unitPrice, remark: item.remark || '', forecast: item.forecast_turnover_months || 0 });
       }
+      // SKU 不存在仍为硬阻断（数据完整性问题，非价格问题）
       if (invalidItems.length > 0) {
-        return res.status(400).json({ error: 'PO更新失败：存在价格问题', invalid_items: invalidItems });
+        return res.status(400).json({ error: 'PO更新失败：SKU不存在', invalid_items: invalidItems });
       }
       // 删除被移除的明细（原 id 未出现）
       const removeIds = existing.filter(e => !seenIds.has(e.id)).map(e => e.id);

@@ -7905,7 +7905,11 @@ async function saveGenPO(){
   const d={...meta,currency:document.getElementById('po-cur').value,po_date:document.getElementById('po-date').value,from_suggestion:1,items:(window._poItems||[]).map((it,i)=>({sku_code:it.sku_code,po_qty:parseInt(document.getElementById('po-qty-'+i)?.value)||0}))};
   try{
     const po=await api('/api/purchase-orders','POST',d);
-    showToast(t('gen.L5323.1','PO创建成功'),'success');
+    if(po.price_warnings&&po.price_warnings.length>0){
+      showToast(t('po.create_success_with_warning','PO创建成功，但'+po.price_warnings.length+'个SKU待补充FOB价格'),'warning');
+    }else{
+      showToast(t('gen.L5323.1','PO创建成功'),'success');
+    }
     openPOExportConfirm(po.id);
   }catch(e){showToast(e.message,'danger')}
 }
@@ -7921,13 +7925,15 @@ async function loadPO(){
   try{
     const s=document.getElementById('po-fs')?.value||'',k=document.getElementById('po-fk')?.value||'';
     const data=await api('/api/purchase-orders?status='+s+'&keyword='+encodeURIComponent(k));
-    document.getElementById('po-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">🛒</div>'+t("empty.no_po","暂无PO")+'</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>'+t("col.po_no","PO号")+'</th><th>'+t("col.supplier","供应商")+'</th><th>'+t("app.112","品牌")+'</th><th>'+t("app.113","国家")+'</th><th>'+t("app.114","仓库")+'</th><th>'+t("col.po_date","PO日期")+'</th><th>'+t("html.pay.th.currency","币种")+'</th><th>'+t("col.detail","明细")+'</th><th>'+t("col.po_status","PO状态")+'</th><th>'+t("col.approval","审批")+'</th><th>'+t("common.actions","操作")+'</th></tr></thead><tbody>'+data.map(p=>'<tr class="clickable-detail-row" onclick="rowClickView(event,\'viewPO\',\''+p.id+'\')"><td class="cell-id"><span class="link-text" onclick="viewPO(\''+p.id+'\')">'+esc(p.po_no)+'</span></td><td>'+esc(p.supplier_name)+'</td><td>'+esc(p.brand)+'</td><td>'+esc(p.country)+'</td><td>'+esc(p.target_warehouse)+'</td><td class="cell-date">'+fmtDate(p.po_date)+'</td><td>'+esc(p.currency)+'</td><td class="text-center">'+(p.item_count||0)+'</td><td><span class="status-badge '+((p.po_status==='approved'||p.po_status==='transferred_pi')?'status-completed':p.po_status==='pending_approval'?'status-pending':'status-draft')+'">'+statusLabel(p.po_status)+'</span></td><td><span class="status-badge '+(p.approval_status==='approved'?'status-approved':p.approval_status==='rejected'?'status-rejected':'status-pending')+'">'+statusLabel(p.approval_status)+'</span></td><td class="cell-actions"><button class="action-btn" onclick="viewPO(\''+p.id+'\')">👁️</button>'+(p.po_status==='draft'&&hasPermission('po_create')?'<button class="action-btn" onclick="submitPO(\''+p.id+'\')" title="'+t("po.submit_approval","提交审批")+'">📤</button>':'')+(p.po_status==='approved'&&hasPermission('po_create')?'<button class="action-btn" onclick="sendFactory(\''+p.id+'\')" title="'+t("po.send_factory","发工厂")+'">📨</button>':'')+((hasPermission('po_export')||hasPermission('po_create'))?'<button class="action-btn" onclick="exportPO(\''+p.id+'\')" title="'+t("action.export_excel","导出Excel")+'">📊</button>':'')+(hasPermission('po_create')?'<button class="action-btn" onclick="voidPO(\''+p.id+'\')" title="'+t("action.void","作废")+'">'+t("action.void","作废")+'</button>':'')+(hasPermission('po_create')&&p.po_status==='draft'?'<button class="action-btn" style="color:#d4380d" onclick="deletePO(\''+p.id+'\')" title="'+t("action.delete","删除")+'">'+t("action.delete","删除")+'</button>':'')+'</td></tr>').join('')+'</tbody></table></div>';
+    document.getElementById('po-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">🛒</div>'+t("empty.no_po","暂无PO")+'</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>'+t("col.po_no","PO号")+'</th><th>'+t("col.supplier","供应商")+'</th><th>'+t("app.112","品牌")+'</th><th>'+t("app.113","国家")+'</th><th>'+t("app.114","仓库")+'</th><th>'+t("col.po_date","PO日期")+'</th><th>'+t("html.pay.th.currency","币种")+'</th><th>'+t("col.detail","明细")+'</th><th>'+t("po.price_status","价格状态")+'</th><th>'+t("col.po_status","PO状态")+'</th><th>'+t("col.approval","审批")+'</th><th>'+t("common.actions","操作")+'</th></tr></thead><tbody>'+data.map(p=>'<tr class="clickable-detail-row" onclick="rowClickView(event,\'viewPO\',\''+p.id+'\')"><td class="cell-id"><span class="link-text" onclick="viewPO(\''+p.id+'\')">'+esc(p.po_no)+'</span></td><td>'+esc(p.supplier_name)+'</td><td>'+esc(p.brand)+'</td><td>'+esc(p.country)+'</td><td>'+esc(p.target_warehouse)+'</td><td class="cell-date">'+fmtDate(p.po_date)+'</td><td>'+esc(p.currency)+'</td><td class="text-center">'+(p.item_count||0)+'</td><td><span class="status-badge '+(p.price_status==='confirmed'?'status-completed':'status-pending')+'">'+(p.price_status==='confirmed'?t("po.price_confirmed","已确认价格"):t("po.price_pending","待补充FOB价格"))+'</span></td><td><span class="status-badge '+((p.po_status==='approved'||p.po_status==='transferred_pi')?'status-completed':p.po_status==='pending_approval'?'status-pending':'status-draft')+'">'+statusLabel(p.po_status)+'</span></td><td><span class="status-badge '+(p.approval_status==='approved'?'status-approved':p.approval_status==='rejected'?'status-rejected':'status-pending')+'">'+statusLabel(p.approval_status)+'</span></td><td class="cell-actions"><button class="action-btn" onclick="viewPO(\''+p.id+'\')">👁️</button>'+(p.po_status==='draft'&&hasPermission('po_create')?'<button class="action-btn" onclick="submitPO(\''+p.id+'\')" title="'+t("po.submit_approval","提交审批")+'">📤</button>':'')+(p.po_status==='approved'&&hasPermission('po_create')?'<button class="action-btn" onclick="sendFactory(\''+p.id+'\')" title="'+t("po.send_factory","发工厂")+'">📨</button>':'')+((hasPermission('po_export')||hasPermission('po_create'))?'<button class="action-btn" onclick="exportPO(\''+p.id+'\')" title="'+t("action.export_excel","导出Excel")+'">📊</button>':'')+(hasPermission('po_create')?'<button class="action-btn" onclick="voidPO(\''+p.id+'\')" title="'+t("action.void","作废")+'">'+t("action.void","作废")+'</button>':'')+(hasPermission('po_create')&&p.po_status==='draft'?'<button class="action-btn" style="color:#d4380d" onclick="deletePO(\''+p.id+'\')" title="'+t("action.delete","删除")+'">'+t("action.delete","删除")+'</button>':'')+'</td></tr>').join('')+'</tbody></table></div>';
   }catch(e){showFlash(e.message,'danger')}
 }
 async function viewPO(id){
   try{const po=await api('/api/purchase-orders/'+id);
     const totalQty=(po.items||[]).reduce((s,i)=>s+(i.po_qty||0),0);
-    openModal(t('modal.title.viewPO', 'PO详情 - {v1}', {v1: po.po_no}),t('modal.body.viewPO', '<div class="detail-card" style="box-shadow:none;padding:0"><div class="detail-section"><h3>基本信息</h3><div class="detail-grid">{v1}</div></div><div class="detail-section"><h3>PO明细</h3><div class="table-container"><table class="data-table"><thead><tr><th>SKU</th><th class="text-right">数量</th></tr></thead><tbody>{v2}</tbody></table></div><div style="display:flex;gap:24px;justify-content:flex-end;margin-top:10px;font-weight:600"><span>合计 SKU：{v3} 个</span><span>合计数量：{v4} 件</span></div></div></div>', {v1: ['po_no','supplier_name','brand','country','target_warehouse','po_date','currency','po_status','approval_status','created_by_name'].map(f=>'<div class="detail-item"><span class="detail-label">'+f+'</span><span class="detail-value">'+esc(po[f])+'</span></div>').join(''), v2: (po.items||[]).map(i=>'<tr><td class="cell-id">'+esc(i.sku_code)+'</td><td class="text-right">'+i.po_qty+'</td></tr>').join(''), v3: (po.items||[]).length, v4: totalQty}));
+    const totalAmt=(po.items||[]).reduce((s,i)=>s+((i.po_qty||0)*(i.unit_price||0)),0);
+    const hasMissingPrice=(po.items||[]).some(i=>!i.unit_price||i.unit_price<=0);
+    openModal(t('modal.title.viewPO', 'PO详情 - {v1}', {v1: po.po_no}),t('modal.body.viewPO', '<div class="detail-card" style="box-shadow:none;padding:0"><div class="detail-section"><h3>基本信息</h3><div class="detail-grid">{v1}</div></div><div class="detail-section"><h3>PO明细</h3>'+(hasMissingPrice?'<div style="padding:8px 12px;background:#fff7e6;border:1px solid #ffd591;border-radius:4px;margin-bottom:8px;font-size:13px;color:#d46b08">⚠️ '+t("po.price_pending","待补充FOB价格")+'：部分SKU单价为0，请在转PI前补充</div>':'')+'<div class="table-container"><table class="data-table"><thead><tr><th>SKU</th><th class="text-right">数量</th><th class="text-right">单价</th><th class="text-right">金额</th></tr></thead><tbody>{v2}</tbody></table></div><div style="display:flex;gap:24px;justify-content:flex-end;margin-top:10px;font-weight:600"><span>合计 SKU：{v3} 个</span><span>合计数量：{v4} 件</span><span>合计金额：{v5}</span></div></div></div>', {v1: ['po_no','supplier_name','brand','country','target_warehouse','po_date','currency','po_status','approval_status','created_by_name'].map(f=>'<div class="detail-item"><span class="detail-label">'+f+'</span><span class="detail-value">'+esc(po[f])+'</span></div>').join(''), v2: (po.items||[]).map(i=>'<tr><td class="cell-id">'+esc(i.sku_code)+'</td><td class="text-right">'+i.po_qty+'</td><td class="text-right">'+((!i.unit_price||i.unit_price<=0)?'<span style="color:#d46b08">'+t("po.price_pending","待补充")+'</span>':fmtMoney(i.unit_price,po.currency))+'</td><td class="text-right">'+fmtMoney((i.po_qty||0)*(i.unit_price||0),po.currency)+'</td></tr>').join(''), v3: (po.items||[]).length, v4: totalQty, v5: fmtMoney(totalAmt,po.currency)}));
   }catch(e){showToast(e.message,'danger')}
 }
 async function createPO(){
@@ -11098,7 +11104,7 @@ async function createPaymentFromSelected(){
   // 注意：同收款方/同币种/同国家 的校验交由统一入口 multi-expense 在后端完成；页面不重复实现，避免规则分散。
   try{
     const d=await api('/api/payment-requests/multi-expense','POST',{payable_item_ids:ids,remark:''});
-    showFlash(t('payable_list.create_success','已创建合并付款申请：{v1}（{v2} 项），请在查看明细中提交审批',{v1:d.request_no,v2:d.item_count}),'success');
+    showFlash(t('payable_list.create_success','已创建付款申请：{v1}（{v2} 项），已自动提交审批',{v1:d.request_no,v2:d.item_count}),'success');
     _payableListSel=new Set();
     await loadPayableList();
   }catch(e){
@@ -11139,7 +11145,7 @@ async function submitPaymentRequestApproval(prId){
 }
 
 async function renderPayment(){
-  document.getElementById('content-inner').innerHTML=t('html.renderPayment', `<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>状态</label><select id="pay-fs"><option value="">全部</option><option value="pending_approval">待审批</option><option value="approved">已审批</option><option value="paid">已付款</option><option value="partial_paid">部分付款</option><option value="rejected">已驳回</option></select></div><div class="filter-group"><label>类别</label><select id="pay-fc"><option value="">全部</option><option value="goods">货款</option><option value="warehouse_arrival">到仓费用</option><option value="customs_duty">关税</option><option value="inspection_fee">商检费用</option></select></div><div class="filter-group"><label>关键词</label><input type="text" id="pay-fk" placeholder="申请号/供应商/来源单号" onkeypress="if(event.key==='Enter')loadPay()"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadPay()">搜索</button>{v1}</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">💳 付款申请</div></div><div id="pay-table"></div></div>`, {v1: hasPermission('payment_import')?t('gen.L6956.1','<button class="btn btn-secondary btn-sm" onclick="importPayResult()">📥 导入付款结果</button>'):''});
+  document.getElementById('content-inner').innerHTML=t('html.renderPayment', `<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>状态</label><select id="pay-fs"><option value="">全部</option><option value="approved">已审批</option><option value="paid">已付款</option><option value="partial_paid">部分付款</option><option value="cancelled">已取消</option></select></div><div class="filter-group"><label>类别</label><select id="pay-fc"><option value="">全部</option><option value="goods">货款</option><option value="warehouse_arrival">到仓费用</option><option value="customs_duty">关税</option><option value="inspection_fee">商检费用</option></select></div><div class="filter-group"><label>关键词</label><input type="text" id="pay-fk" placeholder="申请号/供应商/来源单号" onkeypress="if(event.key==='Enter')loadPay()"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadPay()">搜索</button>{v1}</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">💳 付款申请</div></div><div id="pay-table"></div></div>`, {v1: hasPermission('payment_import')?t('gen.L6956.1','<button class="btn btn-secondary btn-sm" onclick="importPayResult()">📥 导入付款结果</button>'):''});
   loadPay();
 }
 // 统一付款申请详情弹窗（付款管理与审批中心财务类审批共用同一弹窗）
@@ -11262,16 +11268,39 @@ async function viewPayment(id, mode){
     // finance 模式且待审：补审批意见输入框（粘贴图片自动上传为附件）
     const isPendingApproval=(p.payment_status==='pending_approval'||p.approval_status==='pending');
     const canApprove=hasPermission('payment_approve');
+    // PAY-CORE Phase 2：判断是否为最终审批节点（current_level >= max_level）
+    const appr=p.approval||{};
+    const isFinalLevel=appr&&appr.current_level>=appr.max_level&&appr.max_level>0;
+    // PAY-CORE Phase 2：最终节点需要填写实际付款信息
+    const _now=new Date(),_today=new Date(_now.getTime()-_now.getTimezoneOffset()*60000).toISOString().slice(0,10);
+    const paymentFormHtml=(mode==='finance'&&isPendingApproval&&canApprove&&isFinalLevel)
+      ? '<div class="detail-section"><h3>'+t("payment.final_payment_info","最终付款信息")+'</h3>'
+        +'<div class="form-grid">'
+        +'<div class="form-group"><label>'+t("payment.actual_paid_amount","实际付款金额")+' <span class="required">*</span></label>'
+        +'<input type="number" min="0" step="0.01" id="pay-final-amount" value="'+Number(p.outstanding||p.unpaid_amount||0).toFixed(2)+'"></div>'
+        +'<div class="form-group"><label>'+t("payment.actual_paid_date","实际付款日期")+' <span class="required">*</span></label>'
+        +'<input type="date" id="pay-final-date" value="'+_today+'"></div>'
+        +'<div class="form-group form-group-full"><label>'+t("payment.bank_ref_no","银行流水号")+'</label>'
+        +'<input type="text" id="pay-final-bank-ref"></div>'
+        +'<div class="form-group"><label>'+t("payment.rounding_amount","抹零金额")+'</label>'
+        +'<input type="number" min="0" step="0.01" id="pay-final-rounding" placeholder="'+t("payment.rounding_placeholder","选填，不抹零请留空")+'"></div>'
+        +'<div class="form-group form-group-full"><label>'+t("payment.rounding_reason","抹零原因")+'</label>'
+        +'<input type="text" id="pay-final-rounding-reason" placeholder="'+t("payment.rounding_reason_placeholder","建议填写")+'"></div>'
+        +'</div>'
+        +'<div style="font-size:12px;color:#999;margin-top:8px">'+t("payment.final_payment_hint","通过最终审批后将自动执行付款结算。部分付款不支持抹零。")+'</div>'
+        +'</div>'
+      : '';
     const opinionHtml=(mode==='finance'&&isPendingApproval&&canApprove)
       ? '<div class="detail-section"><h3>'+t("payment.opinion_title","审批意见")+'</h3><textarea id="pay-appr-remark" rows="3" placeholder="'+t("payment.approve_opinion_placeholder","填写审批意见（驳回时必填）；在框内粘贴图片可自动上传为附件")+'" style="width:100%;box-sizing:border-box" onpaste="onPayRemarkPaste(event)"></textarea></div>'
       : '';
-    const body='<div class="detail-card" style="box-shadow:none;padding:0"><div class="detail-section"><h3>'+t("payment.summary","付款申请摘要")+'</h3>'+summary+'</div>'+relHtml+settlementSection+attSection+opinionHtml+'</div>';
+    const body='<div class="detail-card" style="box-shadow:none;padding:0"><div class="detail-section"><h3>'+t("payment.summary","付款申请摘要")+'</h3>'+summary+'</div>'+relHtml+settlementSection+attSection+paymentFormHtml+opinionHtml+'</div>';
     // footer：finance 模式待审 → 通过/驳回；否则仅关闭
     let footer='<button class="btn btn-secondary" onclick="closeModal()">'+t("common.close","关闭")+'</button>';
     if(mode==='finance'&&isPendingApproval&&canApprove){
+      const approveLabel=isFinalLevel?t("payment.final_approve_btn","通过并付款"):t("action.approve","通过");
       footer='<button class="btn btn-secondary" onclick="closeModal()">'+t("common.close","关闭")+'</button>'
         +'<button class="btn btn-danger" onclick="financeApprove(\''+id+'\',\'reject\')">⛔ '+t("action.reject","驳回")+'</button>'
-        +'<button class="btn btn-primary" onclick="financeApprove(\''+id+'\',\'approve\')">✅ '+t("action.approve","通过")+'</button>';
+        +'<button class="btn btn-primary" onclick="financeApprove(\''+id+'\',\'approve\')">✅ '+approveLabel+'</button>';
     }
     openModal(t('modal.title.viewPayment', '付款申请详情 - {v1}', {v1: esc(p.request_no)}), body, footer);
   }catch(e){showToast(e.message,'danger')}
@@ -11367,9 +11396,35 @@ async function financeApprove(id, action){
   const ta=document.getElementById('pay-appr-remark');
   const remark=ta?ta.value.trim():'';
   if(action==='reject'&&!remark){showToast(t('gen.L7183.1','驳回时审批意见必填'),'warning');if(ta)ta.focus();return}
+  // PAY-CORE Phase 2：最终审批节点收集付款信息
+  const body={action:action,remark:remark};
+  const amtEl=document.getElementById('pay-final-amount');
+  if(action==='approve'&&amtEl){
+    const amount=parseFloat(amtEl.value);
+    const paidDate=document.getElementById('pay-final-date')?document.getElementById('pay-final-date').value:'';
+    const bankRef=document.getElementById('pay-final-bank-ref')?document.getElementById('pay-final-bank-ref').value.trim():'';
+    const roundingVal=document.getElementById('pay-final-rounding')?document.getElementById('pay-final-rounding').value:'';
+    const roundingReason=document.getElementById('pay-final-rounding-reason')?document.getElementById('pay-final-rounding-reason').value.trim():'';
+    const roundingAmount=parseFloat(roundingVal);
+    if(!(Number.isFinite(amount)&&amount>0)){showToast(t('payment.err_amount_required','实际付款金额必须大于0'),'warning');amtEl.focus();return}
+    if(!paidDate){showToast(t('payment.err_date_required','请选择实际付款日期'),'warning');return}
+    body.actual_paid_amount=amount;
+    body.actual_paid_date=paidDate;
+    body.bank_ref_no=bankRef;
+    if(Number.isFinite(roundingAmount)&&roundingAmount>0){
+      body.rounding_amount=roundingAmount;
+      if(roundingReason)body.rounding_reason=roundingReason;
+    }
+    body.idempotency_key='appr:'+id+':'+(window.crypto&&window.crypto.randomUUID?window.crypto.randomUUID():(Date.now()+'-'+Math.random().toString(36).slice(2)));
+    if(!window.confirm(t('payment.final_approve_confirm','确认通过最终审批并执行付款？此操作将自动结算付款。'))){return}
+  }
   try{
-    await api('/api/payment-requests/'+id+'/approve','POST',{action:action,remark:remark});
-    showToast(action==='approve'?t('gen.L7186.1','已通过'):t('gen.L7186.2','已驳回'),'success');
+    const r=await api('/api/payment-requests/'+id+'/approve','POST',body);
+    if(r.settlement){
+      showToast(t('payment.final_approve_success','最终审批通过，付款已完成'),'success');
+    }else{
+      showToast(action==='approve'?t('gen.L7186.1','已通过'):t('gen.L7186.2','已驳回'),'success');
+    }
     closeModal();
     if(typeof loadFinanceApprovalList==='function'&&document.getElementById('approval-list'))loadFinanceApprovalList();
     if(document.getElementById('pay-table'))loadPay();
@@ -11389,7 +11444,7 @@ async function loadPay(){
       const canRound=p.approval_status==='approved'&&Number(p.unpaid_amount||0)>0&&Number(p.rounding_amount||0)<=0&&!['rejected','cancelled'].includes(p.payment_status);
       const needsExpenseCountry=p.payment_category!=='goods'&&!String(p.expense_country||'').trim();
       const actualDisplay=Number(p.actual_pay_amount||0)>0||Number(p.deduction_amount||0)>0||Number(p.rounding_amount||0)>0?p.actual_pay_amount:p.payable_amount;
-      return '<tr'+(hasPermission('payment_view')?(' class="clickable-detail-row" onclick="rowClickView(event,\'viewPayment\',\''+p.id+'\')"'):'')+'><td class="cell-id">'+esc(p.request_no)+'</td><td>'+esc(catLabel)+'</td><td>'+esc(subLabel)+'</td><td class="cell-id">'+esc(p.source_no)+'</td><td class="cell-id">'+esc(p.related_ci_no||'')+'</td><td>'+esc(p.supplier_name)+'</td><td class="text-right font-bold">'+fmtMoney(p.payable_amount)+'</td><td class="text-right '+(p.deduction_amount>0?'text-warning':'')+'">'+(p.deduction_amount>0?fmtMoney(p.deduction_amount):'-')+'</td><td class="text-right font-bold">'+fmtMoney(actualDisplay)+'</td><td class="text-right">'+fmtMoney(p.paid_amount)+'</td><td class="text-right '+(p.unpaid_amount>0?'text-danger':'')+'">'+fmtMoney(p.unpaid_amount)+'</td><td>'+esc(p.currency)+'</td><td><span class="status-badge '+stClass+'">'+esc(stLabel)+'</span></td><td class="cell-actions">'+(hasPermission('payment_view')?'<button class="action-btn" onclick="viewPayment(\''+p.id+'\')" title="'+t('title.viewDetail','查看详情')+'">👁️</button>':'')+(needsExpenseCountry&&hasPermission('payment_approve')?'<button class="action-btn" onclick="openPaymentExpenseCountry(\''+p.id+'\')" title="'+t('term.fin.supplement_expense_country','补录费用归属国家')+'">'+t("payment.fill_country","补国家")+'</button>':'')+(canPay&&hasPermission('payment_execute')?'<button class="action-btn action-edit" onclick="confirmPaid(\''+p.id+'\')" title="'+t("payment.confirm_pay","确认付款")+'">💵</button>':'')+(canRound&&hasPermission('payment_approve')?'<button class="action-btn" onclick="openPaymentRounding(\''+p.id+'\')" title="'+t("payment.manual_rounding","手动抹零")+'">'+t("payment.type_rounding","抹零")+'</button>':'')+(canDeduct&&hasPermission('payment_create')?'<button class="action-btn" onclick="editDeduction(\''+p.id+'\')" title="'+t('title.editDeduction','编辑抵扣')+'">✂️</button>':'')+'</td></tr>';
+      return '<tr'+(hasPermission('payment_view')?(' class="clickable-detail-row" onclick="rowClickView(event,\'viewPayment\',\''+p.id+'\')"'):'')+'><td class="cell-id">'+esc(p.request_no)+'</td><td>'+esc(catLabel)+'</td><td>'+esc(subLabel)+'</td><td class="cell-id">'+esc(p.source_no)+'</td><td class="cell-id">'+esc(p.related_ci_no||'')+'</td><td>'+esc(p.supplier_name)+'</td><td class="text-right font-bold">'+fmtMoney(p.payable_amount)+'</td><td class="text-right '+(p.deduction_amount>0?'text-warning':'')+'">'+(p.deduction_amount>0?fmtMoney(p.deduction_amount):'-')+'</td><td class="text-right font-bold">'+fmtMoney(actualDisplay)+'</td><td class="text-right">'+fmtMoney(p.paid_amount)+'</td><td class="text-right '+(p.unpaid_amount>0?'text-danger':'')+'">'+fmtMoney(p.unpaid_amount)+'</td><td>'+esc(p.currency)+'</td><td><span class="status-badge '+stClass+'">'+esc(stLabel)+'</span></td><td class="cell-actions">'+(hasPermission('payment_view')?'<button class="action-btn" onclick="viewPayment(\''+p.id+'\')" title="'+t('title.viewDetail','查看详情')+'">👁️</button>':'')+(needsExpenseCountry&&hasPermission('payment_approve')?'<button class="action-btn" onclick="openPaymentExpenseCountry(\''+p.id+'\')" title="'+t('term.fin.supplement_expense_country','补录费用归属国家')+'">'+t("payment.fill_country","补国家")+'</button>':'')+(canRound&&hasPermission('payment_approve')?'<button class="action-btn" onclick="openPaymentRounding(\''+p.id+'\')" title="'+t("payment.manual_rounding","手动抹零")+'">'+t("payment.type_rounding","抹零")+'</button>':'')+(canDeduct&&hasPermission('payment_create')?'<button class="action-btn" onclick="editDeduction(\''+p.id+'\')" title="'+t('title.editDeduction','编辑抵扣')+'">✂️</button>':'')+'</td></tr>';
     }).join('')+'</tbody></table></div>';
   }catch(e){showFlash(e.message,'danger')}
 }
