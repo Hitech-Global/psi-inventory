@@ -676,7 +676,19 @@ function sendNoCacheHtml(res, fileName) {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.set('Pragma', 'no-cache');
   res.set('Expires', '0');
-  res.sendFile(path.join(__dirname, fileName));
+  // 注入 cache-busting 版本参数到 script/link 标签，确保浏览器始终加载最新 JS/CSS
+  const fs = require('fs');
+  let html = fs.readFileSync(path.join(__dirname, fileName), 'utf8');
+  const cacheBust = APP_COMMIT ? APP_COMMIT.slice(0, 12) : APP_STARTED_AT.replace(/[^0-9a-zA-Z]/g, '');
+  html = html.replace(/(<script\s+src=")([^"]+)(")/g, function(m, prefix, src, suffix) {
+    if (src.indexOf('?v=') !== -1) return m; // 已有版本参数则跳过
+    return prefix + src + '?v=' + cacheBust + suffix;
+  });
+  html = html.replace(/(<link\s+[^>]*href=")([^"]+\.css)(")/g, function(m, prefix, src, suffix) {
+    if (src.indexOf('?v=') !== -1) return m;
+    return prefix + src + '?v=' + cacheBust + suffix;
+  });
+  res.send(html);
 }
 
 app.get('/', asyncHandler((req, res) => sendNoCacheHtml(res, 'index.html')));
