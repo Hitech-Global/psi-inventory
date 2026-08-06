@@ -4122,10 +4122,17 @@ async function renderOutbound(){
   try{
     const opts=await api('/api/sales-records/filter-options');
     const fss=document.getElementById('sr-ss'), fsp=document.getElementById('sr-sp'), fb=document.getElementById('sr-b'), fco=document.getElementById('sr-co');
-    if(fss) opts.source_systems.forEach(c=>{const o=document.createElement('option');o.value=c;o.textContent=c;fss.appendChild(o);});
-    if(fsp) opts.shop_platforms.forEach(w=>{const o=document.createElement('option');o.value=w;o.textContent=w;fsp.appendChild(o);});
-    if(fb) opts.brands.forEach(b=>{const o=document.createElement('option');o.value=b;o.textContent=b;fb.appendChild(o);});
-    if(fco) (opts.countries||[]).forEach(c=>{const o=document.createElement('option');o.value=c;o.textContent=c;fco.appendChild(o);});
+    // 清除除"全部"外的旧选项，防止重复追加
+    function refillSelect(el, values){
+      if(!el) return;
+      // 保留第一个 option（"全部"），删除其余
+      while(el.options.length>1) el.remove(1);
+      values.forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=v;el.appendChild(o);});
+    }
+    refillSelect(fss, opts.source_systems||[]);
+    refillSelect(fsp, opts.shop_platforms||[]);
+    refillSelect(fb, opts.brands||[]);
+    refillSelect(fco, opts.countries||[]);
   }catch(e){console.warn('sales filter-options load failed',e)}
   loadSales();
 }
