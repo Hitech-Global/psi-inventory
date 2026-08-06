@@ -1452,6 +1452,15 @@ app.post('/api/suppliers', requireApiPermission('system_config'), asyncHandler((
   run(`INSERT INTO suppliers (id, name, short_name, contact_person, phone, email, address, associated_brands, default_currency, payment_terms, remark, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET name=excluded.name, short_name=excluded.short_name, contact_person=excluded.contact_person, phone=excluded.phone, email=excluded.email, address=excluded.address, associated_brands=excluded.associated_brands, default_currency=excluded.default_currency, payment_terms=excluded.payment_terms, remark=excluded.remark, status=excluded.status`,
     [sId, d.name, d.short_name || '', d.contact_person || '', d.phone || '', d.email || '', d.address || '', associatedBrands, d.default_currency || 'USD', d.payment_terms || '', d.remark || '', d.status || 'active']);
+  // 同步品牌关联到 supplier_brand_configs 表（GET 接口从该表读取品牌）
+  run('DELETE FROM supplier_brand_configs WHERE supplier_id = ?', [sId]);
+  const brandList = Array.isArray(d.associated_brands) ? d.associated_brands : (() => { try { return JSON.parse(associatedBrands); } catch (e) { return []; } })();
+  for (const brand of brandList) {
+    if (brand && String(brand).trim()) {
+      run(`INSERT INTO supplier_brand_configs (id, supplier_id, brand, country, warehouse_id, status, created_at) VALUES (?, ?, ?, '', '', 'active', datetime('now'))`,
+        [genId('sbc'), sId, String(brand).trim()]);
+    }
+  }
   res.json({ success: true, id: sId });
 }));
 app.delete('/api/suppliers/:id', requireApiPermission('system_config'), asyncHandler((req, res) => {
