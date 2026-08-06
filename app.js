@@ -6565,10 +6565,17 @@ async function loadRpChannelMonthly(channel){
       // 共享未分配在途池
       var transitUnallocated = transitTotal - effectiveOnline - effectiveOffline;
       if(transitUnallocated < 0) transitUnallocated = 0;
-      // 当前渠道可分配上限 = 在途总库存 - 另一渠道已分配量
-      var maxAvailableTransit = isOnline
-        ? Math.max(0, transitTotal - effectiveOffline)
-        : Math.max(0, transitTotal - effectiveOnline);
+      // 当前渠道可分配上限
+      // 人工模式：在途总库存 - 另一渠道人工值（另一渠道已锁定为人工值）
+      // 自动模式：在途总库存（输入任意正数将进入人工模式，另一渠道归0，可覆盖全部在途库存）
+      var maxAvailableTransit;
+      if(hasManualAllocation){
+        maxAvailableTransit = isOnline
+          ? Math.max(0, transitTotal - manualOffline)
+          : Math.max(0, transitTotal - manualOnline);
+      }else{
+        maxAvailableTransit = transitTotal;
+      }
       // 渠道库存池=分摊可用+有效在途分配+分摊PI未发货+分摊PO（使用 effectiveTransitAllocated）
       var poolAllocatedPeriod = availAllocatedPeriod+effectiveTransitAllocated+piUnshippedAllocatedPeriod+poAllocatedPeriod;
       r._c.poolAllocatedPeriod = poolAllocatedPeriod;
@@ -6630,10 +6637,10 @@ async function loadRpChannelMonthly(channel){
         return '<td class="text-right">'+(c.totalAvgPeriod>0?Math.round(c.pctPeriod)+'%':'-')+'</td>';
       },
       sum:function(t){return '<td class="text-right">'+(t.totalAvgPeriod>0?Math.round(t.avgSalesPeriod/t.totalAvgPeriod*100)+'%':'-')+'</td>';}};
-    Cols.transit_allocated={th:rpThCompact(t('forecast.compact.allocated_in_transit','在途库存（已分配）'),t('forecast.help.allocated_in_transit','按{channel}销量统计周期占比，从总在途库存中分摊给该渠道的数量。未分配在途>0时可手动输入分配数量，输入值消耗共享未分配在途池。',{channel:chLabel}),'text-right','',true),
+    Cols.transit_allocated={th:rpThCompact(t('forecast.compact.allocated_in_transit','在途库存（已分配）'),t('forecast.help.allocated_in_transit','按{channel}销量统计周期占比，从总在途库存中分摊给该渠道的数量。在途总库存>0时可手动输入分配数量，输入值消耗共享未分配在途池，人工分配可随时修改。',{channel:chLabel}),'text-right','',true),
       td:function(r,c){
-        // 只要存在未分配在途（共享池剩余>0），就显示人工分配入口
-        if((c.transitUnallocated||0) > 0){
+        // 只要存在在途库存，就显示人工分配入口（允许覆盖自动分配或修改已有人工分配）
+        if((c.transitTotalDisplay||0) > 0){
           var maxAvail=c.maxAvailableTransit||0;
           return '<td class="text-right" style="padding:2px 4px">'
             +'<input type="number" min="0" max="'+maxAvail+'" class="rp-transit-manual" data-rid="'+r.id+'" value="'+(c.effectiveTransitAllocated||0)+'" style="width:60px;text-align:right;padding:2px 4px;border:1px solid #ddd;border-radius:3px" onchange="saveTransitAllocation(\''+r.id+'\',\''+channel+'\',this.value)">'
