@@ -6636,7 +6636,7 @@ async function loadRpChannelMonthly(channel){
         if((c.transitUnallocated||0) > 0){
           var maxAvail=c.maxAvailableTransit||0;
           return '<td class="text-right" style="padding:2px 4px">'
-            +'<input type="number" min="0" max="'+maxAvail+'" class="rp-transit-manual" data-rid="'+r.id+'" value="'+(c.effectiveTransitAllocated||0)+'" style="width:60px;text-align:right;padding:2px 4px;border:1px solid #ddd;border-radius:3px" onchange="saveTransitAllocation('+r.id+',\''+channel+'\',this.value)">'
+            +'<input type="number" min="0" max="'+maxAvail+'" class="rp-transit-manual" data-rid="'+r.id+'" value="'+(c.effectiveTransitAllocated||0)+'" style="width:60px;text-align:right;padding:2px 4px;border:1px solid #ddd;border-radius:3px" onchange="saveTransitAllocation(\''+r.id+'\',\''+channel+'\',this.value)">'
             +'</td>';
         }
         return '<td class="text-right">'+formatQuantityDisplay(c.effectiveTransitAllocated||0)+'</td>';
@@ -7319,22 +7319,24 @@ async function saveChannelChanges(rid,channel){
 // 在途库存人工分配保存
 // 人工配置是对自动分配的整体业务替代，一旦存在任意人工分配，SKU整体进入人工模式
 // 人工输入消耗共享未分配在途池，线上+线下分配总和不得超过在途总库存
+// 保存时同时发送另一渠道的当前人工值，确保DB状态与前端一致（完整替代规则）
 async function saveTransitAllocation(rid,channel,val){
   var qty=parseInt(val)||0;
   if(qty<0) qty=0;
+  var otherManualVal=0; // 另一渠道的当前人工值（默认0）
   // 客户端校验：从缓存读取在途总库存和另一渠道有效已分配量
   var cached=window._rpChannelData&&window._rpChannelData[channel]&&window._rpChannelData[channel][rid];
   if(cached){
     var transitTotal=cached.in_transit_qty||0;
-    var otherManual = channel==='online'
+    otherManualVal = channel==='online'
       ? (cached.manual_offline_transit_qty||0)
       : (cached.manual_online_transit_qty||0);
     // 判断是否进入人工模式：当前输入>0 或 另一渠道已有人工值
-    var hasManual = (qty > 0) || (otherManual > 0);
+    var hasManual = (qty > 0) || (otherManualVal > 0);
     var otherEffective;
     if(hasManual){
       // 人工模式：另一渠道有效值 = 其人工值（未填写=0）
-      otherEffective = otherManual;
+      otherEffective = otherManualVal;
     }else{
       // 自动模式：另一渠道有效值 = 自动分配结果
       otherEffective = 0;
@@ -7355,11 +7357,14 @@ async function saveTransitAllocation(rid,channel,val){
       qty=maxAvailable;
     }
   }
+  // 保存当前渠道值，同时保留另一渠道的已有人工值（确保DB状态完整）
   var body={};
   if(channel==='online'){
     body.manual_online_transit_qty=qty;
+    body.manual_offline_transit_qty=otherManualVal;
   }else{
     body.manual_offline_transit_qty=qty;
+    body.manual_online_transit_qty=otherManualVal;
   }
   try{
     await api('/api/replenishment-suggestions/'+rid,'PUT',body);
