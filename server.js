@@ -172,16 +172,27 @@ function mintPersistentLogin(res, user, userAgent, ip) {
         [user.id, user.id, count.c - 4]);
     }
   } catch (e) {}
-  run('INSERT INTO persistent_logins (id, token_hash, user_id, created_at, expires_at, user_agent, ip_address, revoked) VALUES (?,?,?,?,?,?,?,0)',
-    [genId('pl'), tokenHash, user.id, now, expires, userAgent || '', ip || '']);
-  res.cookie(PERSISTENT_COOKIE_NAME, token, persistentCookieOpts());
+  // INSERT 也包裹 try/catch：表不存在或其他异常时不应阻断登录流程（remember-me 是 best-effort）
+  try {
+    run('INSERT INTO persistent_logins (id, token_hash, user_id, created_at, expires_at, user_agent, ip_address, revoked) VALUES (?,?,?,?,?,?,?,0)',
+      [genId('pl'), tokenHash, user.id, now, expires, userAgent || '', ip || '']);
+    res.cookie(PERSISTENT_COOKIE_NAME, token, persistentCookieOpts());
+  } catch (e) {
+    console.warn('[AUTH] mintPersistentLogin INSERT failed (non-fatal, login continues):', e.message);
+  }
 }
 // 长期 remember 凭证自动恢复：有效则重建短期 session 并返回该行，否则 null
 function tryRestoreFromPersistent(req, res) {
   const pToken = parseCookies(req)[PERSISTENT_COOKIE_NAME];
   if (!pToken) return null;
   const pHash = crypto.createHash('sha256').update(pToken).digest('hex');
-  const row = queryOne("SELECT * FROM persistent_logins WHERE token_hash=? AND expires_at > datetime('now') AND revoked=0", [pHash]);
+  let row;
+  try {
+    row = queryOne("SELECT * FROM persistent_logins WHERE token_hash=? AND expires_at > datetime('now') AND revoked=0", [pHash]);
+  } catch (e) {
+    // 表不存在或其他异常时静默降级（不阻断正常请求）
+    return null;
+  }
   if (!row) return null;
   const user = queryOne('SELECT * FROM users WHERE id=?', [row.user_id]);
   if (!user || user.status === 'disabled') return null;
@@ -1037,7 +1048,8 @@ app.get('/api/auth/feishu/callback', asyncHandler(async (req, res) => {
     }
     res.redirect('/');
   } catch (e) {
-    auditLogin(null, '', 'feishu', false, 'exception');
+    console.error('[FEISHU] callback exception:', e.message, '\n', e.stack);
+    auditLogin(null, '', 'feishu', false, 'exception:' + (e.message || 'unknown'));
     return res.status(401).json({ error: '飞书登录失败' });
   }
 }));

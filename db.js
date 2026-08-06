@@ -145,7 +145,12 @@ if (driver === 'pg') {
         "ALTER TABLE replenishment_suggestions ADD COLUMN IF NOT EXISTS resolved_online_pct DOUBLE PRECISION",
         "ALTER TABLE replenishment_suggestions ADD COLUMN IF NOT EXISTS resolved_at TEXT DEFAULT ''",
         "ALTER TABLE replenishment_suggestions ADD COLUMN IF NOT EXISTS manual_online_transit_qty INTEGER DEFAULT 0",
-        "ALTER TABLE replenishment_suggestions ADD COLUMN IF NOT EXISTS manual_offline_transit_qty INTEGER DEFAULT 0"
+        "ALTER TABLE replenishment_suggestions ADD COLUMN IF NOT EXISTS manual_offline_transit_qty INTEGER DEFAULT 0",
+        // AUTH: persistent_logins 表（remember-me 30天免登录）；db-pg.js async initDatabase 在 worker_threads 模式下不执行，须在此补建
+        "CREATE TABLE IF NOT EXISTS persistent_logins (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, user_id TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, last_used_at TEXT DEFAULT '', user_agent TEXT DEFAULT '', ip_address TEXT DEFAULT '', revoked INTEGER NOT NULL DEFAULT 0)",
+        "CREATE INDEX IF NOT EXISTS idx_persistent_user ON persistent_logins(user_id)",
+        "CREATE INDEX IF NOT EXISTS idx_persistent_expires ON persistent_logins(expires_at)",
+        "CREATE INDEX IF NOT EXISTS idx_persistent_token ON persistent_logins(token_hash)"
       ];
       for (var i = 0; i < migrations.length; i++) {
         try {
