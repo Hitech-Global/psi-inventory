@@ -6485,31 +6485,32 @@ async function loadRpChannelMonthly(channel){
       r._c.suggestedQty = isOnline ? (r.online_suggested_qty||0) : (r.offline_suggested_qty||0);
       // 三周转指标（基于渠道月均 + 渠道分摊库存，口径：可用+在途，不含PI未发货）
       // 当前可用周转：用 period 口径分摊库存 ÷ 渠道月均(period)，消除 4m分摊÷period月均 的混合口径
-      // P4：占比/分摊显示列也已切 period（pctPeriod / availAllocatedPeriod / transitAllocatedPeriod 直接驱动显示）
-      // 分摊库存为库存数量，按整数展示（与 4m 口径的 availAllocated/transitAllocated 一致，避免长浮点串）
+      // 分摊库存为库存数量，按整数展示
+      // 有效在途分配(effectiveTransitAllocated)参与库存池和周转计算，非纯展示
       var availAllocatedPeriod = Math.round(availTotal*(pctPeriod/100));
-      var transitAllocatedPeriod = Math.round(transitTotal*(pctPeriod/100)); // P4: period 分摊在途，驱动显示 + 周转
+      var transitAllocatedPeriod = Math.round(transitTotal*(pctPeriod/100)); // 自动分摊在途（参考值）
       var piUnshippedAllocatedPeriod = Math.round(piUnshippedTotal*(pctPeriod/100));
       var poAllocatedPeriod = Math.round((r.po_unconfirmed_pi_qty||0)*(pctPeriod/100));
-      // 渠道库存池=分摊可用+分摊在途+分摊PI未发货+分摊PO（四分量统一 pctPeriod 口径）
-      var poolAllocatedPeriod = availAllocatedPeriod+transitAllocatedPeriod+piUnshippedAllocatedPeriod+poAllocatedPeriod;
+      // 有效在途分配：已分配SKU使用自动分摊，未分配SKU使用人工配置
+      // 该值参与库存池、周转等所有下游计算（非纯展示字段）
+      var manualTransitQty = isOnline ? (r.manual_online_transit_qty||0) : (r.manual_offline_transit_qty||0);
+      var effectiveTransitAllocated = transitAllocatedPeriod;
+      if(r.channel_allocation_status !== 'allocated' && manualTransitQty > 0){
+        effectiveTransitAllocated = manualTransitQty;
+      }
+      // 渠道库存池=分摊可用+有效在途分配+分摊PI未发货+分摊PO（使用 effectiveTransitAllocated）
+      var poolAllocatedPeriod = availAllocatedPeriod+effectiveTransitAllocated+piUnshippedAllocatedPeriod+poAllocatedPeriod;
       r._c.poolAllocatedPeriod = poolAllocatedPeriod;
       r._c.piUnshippedAllocatedPeriod = piUnshippedAllocatedPeriod;
       r._c.poAllocatedPeriod = poAllocatedPeriod;
-      r._c.availAllocatedPeriod = availAllocatedPeriod; // 保留供渠道目标库存编辑换算；页面展示仍使用真实可用库存
-      r._c.transitAllocatedPeriod = transitAllocatedPeriod; // period 分摊在途，同上
-      // 在途库存渠道分配展示：已分配SKU使用自动分摊，未分配SKU支持人工配置
-      var manualTransitQty = isOnline ? (r.manual_online_transit_qty||0) : (r.manual_offline_transit_qty||0);
-      var transitDisplayPeriod = transitAllocatedPeriod;
-      if(r.channel_allocation_status !== 'allocated' && manualTransitQty > 0){
-        transitDisplayPeriod = manualTransitQty;
-      }
-      r._c.transitDisplayPeriod = transitDisplayPeriod;
+      r._c.availAllocatedPeriod = availAllocatedPeriod;
+      r._c.transitAllocatedPeriod = transitAllocatedPeriod; // 保留自动分摊值供参考
+      r._c.effectiveTransitAllocated = effectiveTransitAllocated; // 有效在途分配，参与计算
       r._c.transitTotalDisplay = transitTotal;
-      r._c.transitUnallocated = transitTotal - transitDisplayPeriod;
+      r._c.transitUnallocated = transitTotal - effectiveTransitAllocated;
       r._c.availTurnover = avgSalesPeriod>0 ? Math.round(availAllocatedPeriod/avgSalesPeriod*10)/10 : null;
       r._c.currentTurn = avgSalesPeriod>0 ? Math.round(poolAllocatedPeriod/avgSalesPeriod*10)/10 : t("app.799", "\u65e0\u9500\u91cf");
-      r._c.transitTurnover = avgSalesPeriod>0 ? Math.round((availAllocatedPeriod+transitAllocatedPeriod)/avgSalesPeriod*10)/10 : null;
+      r._c.transitTurnover = avgSalesPeriod>0 ? Math.round((availAllocatedPeriod+effectiveTransitAllocated)/avgSalesPeriod*10)/10 : null;
       r._c.afterOrderTurnover = avgSalesPeriod>0 ? Math.round((poolAllocatedPeriod+r._c.suggestedQty)/avgSalesPeriod*10)/10 : null;
     });
     // 缓存行数据（含 _c 计算字段）供复盘弹窗读取
@@ -6560,11 +6561,11 @@ async function loadRpChannelMonthly(channel){
     Cols.transit_allocated={th:rpThCompact(t('forecast.compact.allocated_in_transit','在途库存（已分配）'),t('forecast.help.allocated_in_transit','按{channel}销量统计周期占比，从总在途库存中分摊给该渠道的数量。无销量SKU可手动输入分配数量。',{channel:chLabel}),'text-right','',true),
       td:function(r,c){
         if(c.channelAllocationStatus!=='allocated' && (r.in_transit_qty||0)>0){
-          return '<td class="text-right"><input type="number" class="rp-transit-manual" data-rid="'+r.id+'" value="'+(c.transitDisplayPeriod||0)+'" style="width:70px;text-align:right;padding:2px 4px;border:1px solid #ddd;border-radius:3px" onchange="saveTransitAllocation('+r.id+',\''+channel+'\',this.value)"></td>';
+          return '<td class="text-right"><input type="number" class="rp-transit-manual" data-rid="'+r.id+'" value="'+(c.effectiveTransitAllocated||0)+'" style="width:70px;text-align:right;padding:2px 4px;border:1px solid #ddd;border-radius:3px" onchange="saveTransitAllocation('+r.id+',\''+channel+'\',this.value)"></td>';
         }
-        return '<td class="text-right">'+formatQuantityDisplay(c.transitDisplayPeriod||0)+'</td>';
+        return '<td class="text-right">'+formatQuantityDisplay(c.effectiveTransitAllocated||0)+'</td>';
       },
-      sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.transitDisplayPeriod)+'</td>';}};
+      sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.effectiveTransitAllocated)+'</td>';}};
     Cols.transit_total={th:rpThCompact(t('forecast.compact.transit_total','在途总库存'),t('forecast.help.transit_total','该SKU的全部在途库存总量（不分渠道）。'),'text-right','',true),
       td:function(r,c){return '<td class="text-right">'+formatQuantityDisplay(c.transitTotalDisplay||0)+'</td>';},
       sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.transitTotalDisplay)+'</td>';}};
@@ -6648,14 +6649,14 @@ async function loadRpChannelMonthly(channel){
       }
     });
     // 计算合计（salesM1~M4 语义与字段一致：M1=本月, M2=上月, M3=上上月, M4=4个月前）
-    var totals={count:data.length,salesM1:0,salesM2:0,salesM3:0,salesM4:0,avgSales:0,totalAvg:0,totalAvgPeriod:0,avgSalesPeriod:0,transit:0,transitAllocated:0,transitAllocatedPeriod:0,transitDisplayPeriod:0,transitTotalDisplay:0,transitUnallocated:0,po:0,avail:0,availAllocated:0,availAllocatedPeriod:0,piUnshipped:0,allocatedStock:0,poolAllocatedPeriod:0,targetStock:0,suggestedQty:0,
+    var totals={count:data.length,salesM1:0,salesM2:0,salesM3:0,salesM4:0,avgSales:0,totalAvg:0,totalAvgPeriod:0,avgSalesPeriod:0,transit:0,transitAllocated:0,transitAllocatedPeriod:0,effectiveTransitAllocated:0,transitTotalDisplay:0,transitUnallocated:0,po:0,avail:0,availAllocated:0,availAllocatedPeriod:0,piUnshipped:0,allocatedStock:0,poolAllocatedPeriod:0,targetStock:0,suggestedQty:0,
       piUnshippedAllocatedPeriod:0,poAllocatedPeriod:0,
       availWS:0,transitWS:0,poWS:0,piUnshippedWS:0,suggestedQtyWS:0};
     data.forEach(function(r){
       var c=r._c;
       totals.salesM4+=c.salesM4;totals.salesM3+=c.salesM3;totals.salesM2+=c.salesM2;totals.salesM1+=c.salesM1;
       totals.avgSales+=c.avgSales;totals.totalAvg+=c.totalAvg;totals.totalAvgPeriod+=c.totalAvgPeriod;totals.avgSalesPeriod+=c.avgSalesPeriod;
-      totals.transit+=c.transit;totals.transitAllocated+=c.transitAllocated;totals.transitAllocatedPeriod+=(c.transitAllocatedPeriod||0);totals.transitDisplayPeriod+=(c.transitDisplayPeriod||0);totals.transitTotalDisplay+=(c.transitTotalDisplay||0);totals.transitUnallocated+=(c.transitUnallocated||0);totals.po+=c.po;totals.avail+=c.avail;totals.availAllocated+=c.availAllocated;totals.availAllocatedPeriod+=(c.availAllocatedPeriod||0);
+      totals.transit+=c.transit;totals.transitAllocated+=c.transitAllocated;totals.transitAllocatedPeriod+=(c.transitAllocatedPeriod||0);totals.effectiveTransitAllocated+=(c.effectiveTransitAllocated||0);totals.transitTotalDisplay+=(c.transitTotalDisplay||0);totals.transitUnallocated+=(c.transitUnallocated||0);totals.po+=c.po;totals.avail+=c.avail;totals.availAllocated+=c.availAllocated;totals.availAllocatedPeriod+=(c.availAllocatedPeriod||0);
       totals.piUnshipped+=c.piUnshipped;
       totals.piUnshippedAllocatedPeriod+=(c.piUnshippedAllocatedPeriod||0);
       totals.poAllocatedPeriod+=(c.poAllocatedPeriod||0);
@@ -6663,7 +6664,7 @@ async function loadRpChannelMonthly(channel){
       totals.suggestedQty+=Math.round(c.suggestedQty||0);
       if(c.avgSalesPeriod>0){
         totals.availWS+=c.availAllocatedPeriod||0;
-        totals.transitWS+=c.transitAllocatedPeriod||0;
+        totals.transitWS+=c.effectiveTransitAllocated||0;
         totals.poWS+=c.poAllocatedPeriod||0;
         totals.piUnshippedWS+=c.piUnshippedAllocatedPeriod||0;
         totals.suggestedQtyWS+=Math.round(c.suggestedQty||0);
@@ -7240,6 +7241,7 @@ async function saveChannelChanges(rid,channel){
 }
 
 // 在途库存人工分配保存（仅未分配SKU，手动指定该渠道的在途库存数量）
+// 有效分配值参与库存池和周转计算，保存后必须刷新页面重算所有派生值
 async function saveTransitAllocation(rid,channel,val){
   var qty=parseInt(val)||0;
   var body={};
@@ -7250,21 +7252,9 @@ async function saveTransitAllocation(rid,channel,val){
   }
   try{
     await api('/api/replenishment-suggestions/'+rid,'PUT',body);
-    showToast(t('forecast.transit.saved','在途分配已保存'),'success');
-    // 局部更新同行未分配在途列，不刷新整页
-    var row=document.querySelector('tr[data-rid="'+rid+'"]');
-    if(row){
-      var cached=window._rpChannelData&&window._rpChannelData[channel]&&window._rpChannelData[channel][rid];
-      var transitTotal=cached?(cached.in_transit_qty||0):0;
-      var unallocated=transitTotal-qty;
-      var unallocCell=row.querySelector('.rp-transit-unallocated-cell');
-      if(unallocCell) unallocCell.textContent=formatQuantityDisplay(unallocated);
-      // 更新缓存中的 manual 值
-      if(cached){
-        if(channel==='online') cached.manual_online_transit_qty=qty;
-        else cached.manual_offline_transit_qty=qty;
-      }
-    }
+    showToast(t('forecast.transit.saved','在途分配已保存，库存池已更新'),'success');
+    // 刷新当前渠道页数据以重算库存池、周转、未分配在途等所有派生值
+    if(typeof loadRp==='function') loadRp();
   }catch(e){showToast(e.message,'danger')}
 }
 
