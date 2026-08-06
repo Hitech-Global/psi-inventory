@@ -611,6 +611,15 @@ function renderFroInventoryAnalysis(country, brand, warehouse){
         '</tr>';
       }).join('');
       tableEl.innerHTML='<table class="data-table fro-data-table"><thead>'+hdr+'</thead><tbody>'+rows+'</tbody></table>';
+      // SKU 明细层顶部上下文信息（纯 UI，复用现有数据：层级路径 / 资产金额 / SKU 数量）
+      var ctxEl=document.getElementById('fro-inv-ctx');
+      if(ctxEl){
+        var levelPath=[country,brand,warehouse].filter(Boolean).join(' › ');
+        ctxEl.innerHTML=
+          '<div class="fro-ctx-item"><span class="fro-ctx-label">'+t('fro.cur_level','当前层级')+'</span><span class="fro-ctx-val">'+esc(levelPath)+'</span></div>'+
+          '<div class="fro-ctx-item"><span class="fro-ctx-label">'+t('fro.asset_amount','资产金额')+'</span><span class="fro-ctx-val">¥ '+fmtMoney(d.total,'')+'</span></div>'+
+          '<div class="fro-ctx-item"><span class="fro-ctx-label">'+t('fro.sku_count','SKU 数量')+'</span><span class="fro-ctx-val">'+d.items.length+'</span></div>';
+      }
     }else{
       // 维度聚合表格
       if(!d.groups||d.groups.length===0){
@@ -4705,11 +4714,12 @@ function rpChannelColMeta(){
     {key:'channel_avg',label:t('gen.L3457.1','渠道')+rpSalesStatsDays+t('gen.L3457.2','天月均销量')},
     {key:'channel_pct',label:t("app.766", "\u6e20\u9053\u5360\u6bd4")},
     // --- 库存判断字段（按用户指定顺序）---
+    // 顺序：可用库存 → 当前可用周转 → 在途库存（已分配）→ 在途总库存 → 未分配在途 → 在途库存周转 → 未确认PO → 已确认PI未发货
     {key:'avail',label:t("app.767", "\u5f53\u524d\u53ef\u7528\u5e93\u5b58")},
+    {key:'avail_turnover',label:t('gen.L3462.1','当前可用周转')},
     {key:'transit_allocated',label:t('forecast.compact.allocated_in_transit','在途库存（已分配）')},
     {key:'transit_total',label:t('forecast.compact.transit_total','在途总库存'),visibleByDefault:false},
     {key:'transit_unallocated',label:t('forecast.compact.transit_unallocated','未分配在途'),visibleByDefault:false},
-    {key:'avail_turnover',label:t('gen.L3462.1','当前可用周转')},
     {key:'transit_turnover',label:t("app.733", "\u5728\u9014\u5e93\u5b58\u5468\u8f6c")},
     {key:'po_unconfirmed',label:t("app.732", "PO\u672a\u786e\u8ba4PI"),visibleByDefault:false},
     {key:'pi_unshipped',label:t("app.731", "PI\u5df2\u786e\u8ba4\u672a\u53d1\u8d27")},
@@ -4823,6 +4833,32 @@ function getRpColConfig(tabKey){
         localStorage.setItem(storageKey,JSON.stringify(saved));
       }
       localStorage.setItem(migKey6,'1');
+    }
+  }
+  // v7 迁移（仅渠道页）：调整库存判断字段顺序
+  // avail → avail_turnover → transit_allocated → transit_total → transit_unallocated → transit_turnover → po_unconfirmed → pi_unshipped
+  if(tabKey!=='total'){
+    var migKey7='rp_col_config_v7_'+tabKey;
+    if(localStorage.getItem(migKey7)!=='1'){
+      if(Array.isArray(saved)&&saved.length){
+        var INV_ORDER=['avail','avail_turnover','transit_allocated','transit_total','transit_unallocated','transit_turnover','po_unconfirmed','pi_unshipped'];
+        var invItems={}, nonInv=[];
+        saved.forEach(function(s){
+          if(INV_ORDER.indexOf(s.key)>=0){invItems[s.key]=s;}
+          else{nonInv.push(s);}
+        });
+        // 找到插入位置：紧跟在 channel_pct 之后
+        var insertIdx=0;
+        for(var j=0;j<nonInv.length;j++){
+          if(nonInv[j].key==='channel_pct'){insertIdx=j+1;}
+        }
+        var orderedInv=[];
+        INV_ORDER.forEach(function(k){if(invItems[k]) orderedInv.push(invItems[k]);});
+        var rebuilt7=nonInv.slice(0,insertIdx).concat(orderedInv).concat(nonInv.slice(insertIdx));
+        saved=rebuilt7;
+        localStorage.setItem(storageKey,JSON.stringify(saved));
+      }
+      localStorage.setItem(migKey7,'1');
     }
   }
   if(Array.isArray(saved)&&saved.length){
@@ -6591,9 +6627,10 @@ async function loadRpChannelMonthly(channel){
         return '<td class="text-right">'+(c.totalAvgPeriod>0?Math.round(c.pctPeriod)+'%':'-')+'</td>';
       },
       sum:function(t){return '<td class="text-right">'+(t.totalAvgPeriod>0?Math.round(t.avgSalesPeriod/t.totalAvgPeriod*100)+'%':'-')+'</td>';}};
-    Cols.transit_allocated={th:rpThCompact(t('forecast.compact.allocated_in_transit','在途库存（已分配）'),t('forecast.help.allocated_in_transit','按{channel}销量统计周期占比，从总在途库存中分摊给该渠道的数量。无销量SKU可手动输入分配数量，输入值消耗共享未分配在途池。',{channel:chLabel}),'text-right','',true),
+    Cols.transit_allocated={th:rpThCompact(t('forecast.compact.allocated_in_transit','在途库存（已分配）'),t('forecast.help.allocated_in_transit','按{channel}销量统计周期占比，从总在途库存中分摊给该渠道的数量。未分配在途>0时可手动输入分配数量，输入值消耗共享未分配在途池。',{channel:chLabel}),'text-right','',true),
       td:function(r,c){
-        if(c.channelAllocationStatus!=='allocated' && (r.in_transit_qty||0)>0){
+        // 只要存在未分配在途（共享池剩余>0），就显示人工分配入口
+        if((c.transitUnallocated||0) > 0){
           var maxAvail=c.maxAvailableTransit||0;
           return '<td class="text-right" style="padding:2px 4px">'
             +'<input type="number" min="0" max="'+maxAvail+'" class="rp-transit-manual" data-rid="'+r.id+'" value="'+(c.effectiveTransitAllocated||0)+'" style="width:60px;text-align:right;padding:2px 4px;border:1px solid #ddd;border-radius:3px" onchange="saveTransitAllocation('+r.id+',\''+channel+'\',this.value)">'
