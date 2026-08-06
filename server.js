@@ -52,6 +52,9 @@ const FEISHU_REDIRECT_URI = process.env.FEISHU_REDIRECT_URI || '';
 const COOKIE_SECURE = process.env.COOKIE_SECURE ? process.env.COOKIE_SECURE !== 'false' : true;
 const SESSION_TTL_HOURS = parseInt(process.env.SESSION_TTL_HOURS || '12', 10);
 const SESSION_TTL_SECONDS = (isNaN(SESSION_TTL_HOURS) ? 12 : SESSION_TTL_HOURS) * 3600;
+// 30 天免登录（remember-me）：可用 REMEMBER_ME_DAYS 环境变量覆盖
+const REMEMBER_ME_DAYS = parseInt(process.env.REMEMBER_ME_DAYS || '30', 10);
+const REMEMBER_ME_MS = (isNaN(REMEMBER_ME_DAYS) ? 30 : REMEMBER_ME_DAYS) * 24 * 3600 * 1000;
 const BREAKGLASS_ADMIN_PASSWORD = process.env.BREAKGLASS_ADMIN_PASSWORD || '';
 const TRUSTED_ORIGINS = (process.env.TRUSTED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
 const NODE_ENV = process.env.NODE_ENV || '';
@@ -68,6 +71,7 @@ const CSRF_DISABLE = (NODE_ENV === 'production') ? false
   : (NODE_ENV === 'test') ? !CSRF_FORCE
   : (process.env.CSRF_DISABLE === 'true');
 const SESSION_COOKIE_NAME = 'session_token';
+const PERSISTENT_COOKIE_NAME = 'remember_token';
 
 // 公共鉴权免拦截前缀（登录/OAuth/登出/健康检查）
 const PUBLIC_AUTH_PREFIXES = [
@@ -123,6 +127,9 @@ function parseCookies(req) {
 function sessionCookieOpts() {
   return { httpOnly: true, secure: COOKIE_SECURE, sameSite: 'Lax', path: '/', maxAge: SESSION_TTL_SECONDS * 1000 };
 }
+function persistentCookieOpts() {
+  return { httpOnly: true, secure: COOKIE_SECURE, sameSite: 'Lax', path: '/', maxAge: REMEMBER_ME_MS };
+}
 function languageCookieOpts() {
   return { httpOnly: true, secure: COOKIE_SECURE, sameSite: 'Lax', path: '/', maxAge: 365 * 24 * 3600 * 1000 };
 }
@@ -132,6 +139,7 @@ function createSessionForUser(res, user, userAgent, ip) {
   const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
   const now = new Date().toISOString();
   const expires = new Date(Date.now() + SESSION_TTL_SECONDS * 1000).toISOString().replace('T', ' ').replace(/\.\d+Z$/, '');
+  const sessionId = genId('sess');
   try {
     run("DELETE FROM sessions WHERE expires_at < datetime('now')");
     const count = queryOne('SELECT COUNT(*) AS c FROM sessions WHERE user_id=?', [user.id]);
@@ -141,10 +149,45 @@ function createSessionForUser(res, user, userAgent, ip) {
     }
   } catch (e) {}
   run('INSERT INTO sessions (id, token_hash, user_id, created_at, expires_at, user_agent, ip_address) VALUES (?,?,?,?,?,?,?)',
-    [genId('sess'), tokenHash, user.id, now, expires, userAgent || '', ip || '']);
+    [sessionId, tokenHash, user.id, now, expires, userAgent || '', ip || '']);
   run("UPDATE users SET last_login_at=? WHERE id=?", [now, user.id]);
+  // 签发 30 天 remember 凭证（免登录机制）；同时覆盖飞书与 break-glass 本地登录
+  mintPersistentLogin(res, user, userAgent, ip);
   res.cookie(SESSION_COOKIE_NAME, token, sessionCookieOpts());
-  return token;
+  return queryOne('SELECT * FROM sessions WHERE id=?', [sessionId]);
+}
+
+// --- 长期 remember 凭证（30 天免登录）---
+// 签发 30 天 remember 凭证：写入 persistent_logins（token 哈希存储）+ 下发 HttpOnly cookie
+function mintPersistentLogin(res, user, userAgent, ip) {
+  const token = genSessionToken();
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  const now = new Date().toISOString();
+  const expires = new Date(Date.now() + REMEMBER_ME_MS).toISOString().replace('T', ' ').replace(/\.\d+Z$/, '');
+  try {
+    run("DELETE FROM persistent_logins WHERE expires_at < datetime('now')");
+    const count = queryOne('SELECT COUNT(*) AS c FROM persistent_logins WHERE user_id=?', [user.id]);
+    if (count && count.c >= 5) {
+      run("DELETE FROM persistent_logins WHERE user_id=? AND id IN (SELECT id FROM persistent_logins WHERE user_id=? ORDER BY created_at ASC LIMIT ?)",
+        [user.id, user.id, count.c - 4]);
+    }
+  } catch (e) {}
+  run('INSERT INTO persistent_logins (id, token_hash, user_id, created_at, expires_at, user_agent, ip_address, revoked) VALUES (?,?,?,?,?,?,?,0)',
+    [genId('pl'), tokenHash, user.id, now, expires, userAgent || '', ip || '']);
+  res.cookie(PERSISTENT_COOKIE_NAME, token, persistentCookieOpts());
+}
+// 长期 remember 凭证自动恢复：有效则重建短期 session 并返回该行，否则 null
+function tryRestoreFromPersistent(req, res) {
+  const pToken = parseCookies(req)[PERSISTENT_COOKIE_NAME];
+  if (!pToken) return null;
+  const pHash = crypto.createHash('sha256').update(pToken).digest('hex');
+  const row = queryOne("SELECT * FROM persistent_logins WHERE token_hash=? AND expires_at > datetime('now') AND revoked=0", [pHash]);
+  if (!row) return null;
+  const user = queryOne('SELECT * FROM users WHERE id=?', [row.user_id]);
+  if (!user || user.status === 'disabled') return null;
+  const sess = createSessionForUser(res, user, req.headers['user-agent'], req.headers['x-forwarded-for'] || req.ip);
+  try { run("UPDATE persistent_logins SET last_used_at=? WHERE id=?", [new Date().toISOString(), row.id]); } catch (e) {}
+  return sess;
 }
 
 // --- 登录审计 ---
@@ -865,21 +908,25 @@ app.use(csrfGuard);
 function apiAuth(req, res, next) {
   const url = reqPath(req);
   if (PUBLIC_AUTH_PREFIXES.some(p => url === p || url.indexOf(p + '?') === 0)) return next();
-
+  // 1) 短期 session（cookie 内 token）
+  let sess = null;
   const token = parseCookies(req)[SESSION_COOKIE_NAME];
-  if (!token) { return res.status(401).json({ error: '未登录' }); }
-
-  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-  const sess = queryOne("SELECT * FROM sessions WHERE token_hash=? AND expires_at > datetime('now')", [tokenHash]);
+  if (token) {
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    sess = queryOne("SELECT * FROM sessions WHERE token_hash=? AND expires_at > datetime('now')", [tokenHash]);
+  }
+  // 2) 长期 remember 凭证：session 缺失/过期时透明自动恢复（30 天免登录）
+  if (!sess) {
+    sess = tryRestoreFromPersistent(req, res);
+  }
   if (!sess) { return res.status(401).json({ error: '会话无效或已过期' }); }
-
   const user = queryOne('SELECT * FROM users WHERE id=?', [sess.user_id]);
   if (!user) {
-    run('DELETE FROM sessions WHERE token_hash=?', [tokenHash]);
+    run('DELETE FROM sessions WHERE id=?', [sess.id]);
     return res.status(401).json({ error: '账号不存在' });
   }
   if (user.status === 'disabled') {
-    run('DELETE FROM sessions WHERE token_hash=?', [tokenHash]);
+    run('DELETE FROM sessions WHERE id=?', [sess.id]);
     return res.status(401).json({ error: '账号已停用' });
   }
   if (user.status === 'pending') {
@@ -1056,13 +1103,26 @@ app.put('/api/users/me/language-preference', asyncHandler((req, res) => {
   }
 }));
 
-// 登出：销毁 Session + 清除 Cookie
+// 登出：销毁 Session + 清除 Cookie（含 30 天 remember 凭证，登出即放弃免登录）
 app.post('/api/logout', asyncHandler((req, res) => {
+  let userId = null;
   const token = parseCookies(req)[SESSION_COOKIE_NAME];
   if (token) {
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    const sess = queryOne('SELECT * FROM sessions WHERE token_hash=?', [tokenHash]);
+    if (sess) userId = sess.user_id;
     run('DELETE FROM sessions WHERE token_hash=?', [tokenHash]);
   }
+  const pToken = parseCookies(req)[PERSISTENT_COOKIE_NAME];
+  if (pToken) {
+    const pHash = crypto.createHash('sha256').update(pToken).digest('hex');
+    run('DELETE FROM persistent_logins WHERE token_hash=?', [pHash]);
+  }
+  // 登出即放弃免登录：无论请求是否携带 remember cookie，均吊销该用户全部长期凭证
+  if (userId) {
+    run('DELETE FROM persistent_logins WHERE user_id=?', [userId]);
+  }
+  res.clearCookie(PERSISTENT_COOKIE_NAME, { httpOnly: true, secure: COOKIE_SECURE, sameSite: 'Lax', path: '/' });
   res.clearCookie(SESSION_COOKIE_NAME, { httpOnly: true, secure: COOKIE_SECURE, sameSite: 'Lax', path: '/' });
   res.json({ success: true });
 }));
@@ -1079,6 +1139,16 @@ app.get('/api/users', requireApiPermission('user_manage'), asyncHandler((req, re
     }));
     res.json(masked);
   } catch (e) { res.status(500).json({ error: e.message }); }
+}));
+
+// 管理员撤销某用户的全部登录凭证（session + 30 天 remember 凭证）→ 下次访问需重新飞书登录
+app.post('/api/users/:id/revoke-sessions', requireApiPermission('user_manage'), asyncHandler(async (req, res) => {
+  const userId = req.params.id;
+  const u = queryOne('SELECT id FROM users WHERE id=?', [userId]);
+  if (!u) return res.status(404).json({ error: '用户不存在' });
+  run('DELETE FROM sessions WHERE user_id=?', [userId]);
+  run('DELETE FROM persistent_logins WHERE user_id=?', [userId]);
+  res.json({ success: true });
 }));
 
 app.post('/api/users', requireApiPermission('user_manage'), asyncHandler((req, res) => {
@@ -8729,16 +8799,31 @@ function finalPaymentApprovalInput(payment, body = {}) {
   if (actualPaidAmount > requestedAmount) {
     throw new SettlementError(400, '实际付款金额不能大于申请金额');
   }
-  const calculatedRounding = settlementMoney(requestedAmount - actualPaidAmount);
-  const submittedRounding = settlementMoney(body.rounding_amount);
-  if (!Number.isFinite(submittedRounding) || submittedRounding < 0) {
-    throw new SettlementError(400, '抹零金额无效');
-  }
-  if (Math.abs(submittedRounding - calculatedRounding) > 0.005) {
-    throw new SettlementError(400, '抹零金额必须等于申请金额减实际付款金额');
-  }
-  if (calculatedRounding > 0 && Math.abs(actualPaidAmount - Math.floor(requestedAmount)) > 0.005) {
-    throw new SettlementError(400, '现有付款核心仅支持小数尾差抹零');
+  // PAY-CORE Phase 2：支持部分付款（actualPaidAmount < requestedAmount 且无抹零）
+  const isPartialPayment = actualPaidAmount < requestedAmount;
+  const submittedRounding = body.rounding_amount != null ? settlementMoney(body.rounding_amount) : 0;
+
+  let roundingAmount = 0;
+  let applyRoundOff = false;
+
+  if (isPartialPayment) {
+    if (submittedRounding > 0) {
+      throw new SettlementError(400, '部分付款不支持抹零，请清除抹零金额后重试');
+    }
+    roundingAmount = 0;
+    applyRoundOff = false;
+  } else {
+    roundingAmount = settlementMoney(requestedAmount - actualPaidAmount);
+    if (!Number.isFinite(submittedRounding) || submittedRounding < 0) {
+      throw new SettlementError(400, '抹零金额无效');
+    }
+    if (Math.abs(submittedRounding - roundingAmount) > 0.005) {
+      throw new SettlementError(400, '抹零金额必须等于申请金额减实际付款金额');
+    }
+    if (roundingAmount > 0 && Math.abs(actualPaidAmount - Math.floor(requestedAmount)) > 0.005) {
+      throw new SettlementError(400, '现有付款核心仅支持小数尾差抹零');
+    }
+    applyRoundOff = roundingAmount > 0;
   }
 
   const attachmentValue = body.attachment !== undefined ? body.attachment : payment.attachment;
@@ -8760,8 +8845,8 @@ function finalPaymentApprovalInput(payment, body = {}) {
   return {
     actualPaidAmount,
     actualPaidDate,
-    roundingAmount: calculatedRounding,
-    applyRoundOff: calculatedRounding > 0,
+    roundingAmount,
+    applyRoundOff,
     attachment,
     idempotencyKey: String(body.idempotency_key || `approval:${payment.id}`).trim()
   };
@@ -8775,6 +8860,7 @@ async function settleFinalPaymentApproval(payment, body, req) {
      WHERE id = ?`,
     [input.attachment, payment.id]
   );
+  // PAY-CORE Phase 2：透传 rounding_amount / rounding_reason / bank_ref_no，与 confirm-paid 路径一致
   return await applyPaymentSettlement(
     payment.id,
     input.actualPaidAmount,
@@ -8784,7 +8870,10 @@ async function settleFinalPaymentApproval(payment, body, req) {
     input.idempotencyKey,
     {
       voucher_attachment: input.attachment,
-      apply_round_off: input.applyRoundOff
+      apply_round_off: input.applyRoundOff,
+      rounding_amount: input.roundingAmount,
+      rounding_reason: body.rounding_reason || '',
+      bank_ref_no: body.bank_ref_no || ''
     }
   );
 }
@@ -9861,7 +9950,7 @@ app.post('/api/payable-items/:id/cancel', requireApiPermission('payment_create')
 
 app.get('/api/payment-requests', requireApiPermission('payment_view'), asyncHandler((req, res) => {
   const { status, category, keyword } = req.query;
-  let sql = "SELECT * FROM payment_requests WHERE 1=1 AND approval_status != 'draft'";
+  let sql = "SELECT * FROM payment_requests WHERE 1=1 AND (approval_status = 'approved' OR payment_status IN ('paid','partial_paid','cancelled'))";
   const params = [];
   if (status) { sql += ' AND payment_status = ?'; params.push(status); }
   if (category) { sql += ' AND payment_category = ?'; params.push(category); }
@@ -10310,13 +10399,22 @@ app.post('/api/payment-requests/from-pi-deposit', requireApiPermission('payment_
     const payeeNameSnapshot = pi.supplier_name || '';
     await transaction(async () => {
       await run(`INSERT INTO payment_requests (id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no, payee_type, payee_key, payee_name_snapshot, supplier_name, payable_amount, paid_amount, unpaid_amount, currency, payment_terms, payment_status, approval_status, remark, has_deduction, deduction_amount, deduction_source_type, deduction_source_desc, deduction_ref_no, actual_pay_amount, related_po_no, expense_country) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [prId, prNo, 'goods', 'deposit', 'pi', pi_id, pi.pi_no, 'factory', payeeKey, payeeNameSnapshot, pi.supplier_name, payableAmount, 0, actualPay, pi.currency || 'USD', pi.payment_terms || '', 'pending_approval', 'draft', `PI定金 ${pi.pi_no}`, deductionEnabled ? 1 : 0, dedAmount, deduction_source_type || '', deduction_source_desc || '', deduction_ref_no || '', actualPay, pi.related_po_no || '', String(pi.country || '').trim()]);
+        [prId, prNo, 'goods', 'deposit', 'pi', pi_id, pi.pi_no, 'factory', payeeKey, payeeNameSnapshot, pi.supplier_name, payableAmount, 0, actualPay, pi.currency || 'USD', pi.payment_terms || '', 'pending_approval', 'pending', `PI定金 ${pi.pi_no}`, deductionEnabled ? 1 : 0, dedAmount, deduction_source_type || '', deduction_source_desc || '', deduction_ref_no || '', actualPay, pi.related_po_no || '', String(pi.country || '').trim()]);
       if (deductionEnabled && dedAmount > 0) await recordInitialDeduction(prId, dedAmount, deduction_source_desc, await settlementOperator(req));
       await run('UPDATE proforma_invoices SET deposit_payment_status = ? WHERE id = ?', ['pending_approval', pi_id]);
       // PAY-CORE Phase 2：关联 payable_item 并 reserve（V2.1 第 8 节）
       linkSinglePayableItem(prId, 'pi', pi_id, 'deposit', pi.currency || 'USD', payeeKey);
     });
-    res.json({ id: prId, request_no: prNo, payable_amount: payableAmount, actual_pay_amount: actualPay });
+    // PAY-CORE Phase 2：创建后自动提交审批
+    let approvalInfo = {};
+    try {
+      const createdPayment = await queryOne('SELECT * FROM payment_requests WHERE id = ?', [prId]);
+      const apprResult = await createApprovalInstance(prId, createdPayment, req);
+      approvalInfo = { approval_id: apprResult.approvalId, auto_submitted: true };
+    } catch (apprErr) {
+      approvalInfo = { auto_submit_failed: true, approval_error: apprErr.message };
+    }
+    res.json({ id: prId, request_no: prNo, payable_amount: payableAmount, actual_pay_amount: actualPay, ...approvalInfo });
   } catch (e) {
     if (isActiveGoodsPaymentUniqueError(e)) return res.status(409).json({ error: '该 PI 已存在有效的定金付款申请，不能重复生成' });
     res.status(500).json({ error: e.message });
@@ -10377,7 +10475,7 @@ app.post('/api/payment-requests/from-ci-balance', requireApiPermission('payment_
     // 三、INSERT 付款申请 + 更新 CI 状态，必须处于同一事务（任一步失败整体回滚）
     await transaction(async () => {
       await run(`INSERT INTO payment_requests (id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no, payee_type, payee_key, payee_name_snapshot, supplier_name, payable_amount, paid_amount, unpaid_amount, currency, payment_terms, payable_date, payment_status, approval_status, remark, has_deduction, deduction_amount, deduction_source_type, deduction_source_desc, deduction_ref_no, actual_pay_amount, related_ci_id, related_ci_no, related_po_no, expense_country) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [prId, prNo, 'goods', 'balance', 'ci', ci_id, ci.ci_no, 'factory', payeeKey, payeeNameSnapshot, ci.supplier_name, unpaidBalance, 0, actualPay, ci.currency || 'USD', '', balancePayableDate, 'pending_approval', 'draft', `CI尾款 ${ci.ci_no}`, deductionEnabled ? 1 : 0, dedAmount, deduction_source_type || '', deduction_source_desc || '', deduction_ref_no || '', actualPay, ci_id, ci.ci_no, ci.related_po_no || '', String(ci.country || '').trim()]);
+        [prId, prNo, 'goods', 'balance', 'ci', ci_id, ci.ci_no, 'factory', payeeKey, payeeNameSnapshot, ci.supplier_name, unpaidBalance, 0, actualPay, ci.currency || 'USD', '', balancePayableDate, 'pending_approval', 'pending', `CI尾款 ${ci.ci_no}`, deductionEnabled ? 1 : 0, dedAmount, deduction_source_type || '', deduction_source_desc || '', deduction_ref_no || '', actualPay, ci_id, ci.ci_no, ci.related_po_no || '', String(ci.country || '').trim()]);
       if (deductionEnabled && dedAmount > 0) await recordInitialDeduction(prId, dedAmount, deduction_source_desc, await settlementOperator(req));
       await run('UPDATE commercial_invoices SET balance_payment_status = ? WHERE id = ?', ['pending_approval', ci_id]);
       // PAY-CORE Phase 2：关联 payable_item 并 reserve（V2.1 第 8 节）
@@ -10414,7 +10512,16 @@ app.post('/api/payment-requests/from-ci-balance', requireApiPermission('payment_
         // 0 条 → 历史兼容（跳过，不创建 items）
       }
     });
-    res.json({ id: prId, request_no: prNo, payable_amount: unpaidBalance, actual_pay_amount: actualPay });
+    // PAY-CORE Phase 2：创建后自动提交审批
+    let approvalInfo = {};
+    try {
+      const createdPayment = await queryOne('SELECT * FROM payment_requests WHERE id = ?', [prId]);
+      const apprResult = await createApprovalInstance(prId, createdPayment, req);
+      approvalInfo = { approval_id: apprResult.approvalId, auto_submitted: true };
+    } catch (apprErr) {
+      approvalInfo = { auto_submit_failed: true, approval_error: apprErr.message };
+    }
+    res.json({ id: prId, request_no: prNo, payable_amount: unpaidBalance, actual_pay_amount: actualPay, ...approvalInfo });
   } catch (e) {
     if (isActiveGoodsPaymentUniqueError(e)) return res.status(409).json({ error: '该 CI 已存在有效的尾款付款申请，不能重复生成' });
     res.status(500).json({ error: e.message });
@@ -10491,7 +10598,7 @@ app.post('/api/payment-requests/multi-expense', requireApiPermission('payment_cr
          VALUES (?, ?, '', '', '', '', '',
                  ?, ?, ?, ?,
                  ?, 0, ?, ?,
-                 'multi', 'pending_approval', 'draft', ?, ?)`,
+                 'multi', 'pending_approval', 'pending', ?, ?)`,
         [prId, prNo, payeeType, payeeKey, payeeNameSnapshot, payeeNameSnapshot,
          totalAmount, totalAmount, prCurrency,
          remark || '', expenseCountrySnapshot]
@@ -10516,7 +10623,16 @@ app.post('/api/payment-requests/multi-expense', requireApiPermission('payment_cr
       // multi PR 不依赖 payment_requests.source_id，通过 payable_items.source_type/source_id 反查
       syncMultiSourcePiStatus(items.rows, 'pending_approval');
     });
-    res.json({ id: prId, request_no: prNo, payment_mode: 'multi', currency: prCurrency, item_count: itemCount, payable_amount: totalAmount });
+    // PAY-CORE Phase 2：创建后自动提交审批
+    let approvalInfo = {};
+    try {
+      const createdPayment = await queryOne('SELECT * FROM payment_requests WHERE id = ?', [prId]);
+      const apprResult = await createApprovalInstance(prId, createdPayment, req);
+      approvalInfo = { approval_id: apprResult.approvalId, auto_submitted: true };
+    } catch (apprErr) {
+      approvalInfo = { auto_submit_failed: true, approval_error: apprErr.message };
+    }
+    res.json({ id: prId, request_no: prNo, payment_mode: 'multi', currency: prCurrency, item_count: itemCount, payable_amount: totalAmount, ...approvalInfo });
   } catch (e) {
     res.status(e.status || 500).json({ error: e.message });
   }
@@ -10770,7 +10886,16 @@ app.post('/api/payment-requests/warehouse-arrival', requireApiPermission('paymen
       }
     });
 
-    res.json({ id: prId, request_no: prNo, actual_pay_amount: actualPay });
+    // PAY-CORE Phase 2：创建后自动提交审批
+    let approvalInfo = {};
+    try {
+      const createdPayment = await queryOne('SELECT * FROM payment_requests WHERE id = ?', [prId]);
+      const apprResult = await createApprovalInstance(prId, createdPayment, req);
+      approvalInfo = { approval_id: apprResult.approvalId, auto_submitted: true };
+    } catch (apprErr) {
+      approvalInfo = { auto_submit_failed: true, approval_error: apprErr.message };
+    }
+    res.json({ id: prId, request_no: prNo, actual_pay_amount: actualPay, ...approvalInfo });
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 }));
 
@@ -10819,7 +10944,16 @@ app.post('/api/payment-requests/customs-duty', requireApiPermission('payment_cre
       await run('UPDATE commercial_invoices SET import_duty_total = ?, updated_at = datetime(\'now\') WHERE id = ?', [costMoney(payable_amount), ci.id]);
     });
 
-    res.json({ id: prId, request_no: prNo, actual_pay_amount: actualPay });
+    // PAY-CORE Phase 2：创建后自动提交审批
+    let approvalInfo = {};
+    try {
+      const createdPayment = await queryOne('SELECT * FROM payment_requests WHERE id = ?', [prId]);
+      const apprResult = await createApprovalInstance(prId, createdPayment, req);
+      approvalInfo = { approval_id: apprResult.approvalId, auto_submitted: true };
+    } catch (apprErr) {
+      approvalInfo = { auto_submit_failed: true, approval_error: apprErr.message };
+    }
+    res.json({ id: prId, request_no: prNo, actual_pay_amount: actualPay, ...approvalInfo });
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 }));
 
@@ -10867,7 +11001,16 @@ app.post('/api/payment-requests/inspection-fee', requireApiPermission('payment_c
         [await genId('cci'), ci_id, ci.ci_no, prId, prNo, 'inspection_fee', 'inspection', payable_amount, 0, 1, payee_name || '', currency || ci.currency || 'USD', remark || '']);
     });
 
-    res.json({ id: prId, request_no: prNo, actual_pay_amount: actualPay });
+    // PAY-CORE Phase 2：创建后自动提交审批
+    let approvalInfo = {};
+    try {
+      const createdPayment = await queryOne('SELECT * FROM payment_requests WHERE id = ?', [prId]);
+      const apprResult = await createApprovalInstance(prId, createdPayment, req);
+      approvalInfo = { approval_id: apprResult.approvalId, auto_submitted: true };
+    } catch (apprErr) {
+      approvalInfo = { auto_submit_failed: true, approval_error: apprErr.message };
+    }
+    res.json({ id: prId, request_no: prNo, actual_pay_amount: actualPay, ...approvalInfo });
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 }));
 
@@ -10879,143 +11022,134 @@ app.put('/api/payment-requests/:id/deduction', requireApiPermission('payment_cre
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 }));
 
+// PAY-CORE Phase 2：提取 createApprovalInstance — 供创建端点自动提交审批 和 submit-approval 端点共用
+// 不修改 applyPaymentSettlement / settlement_logs / payment_transactions / payable_items 状态模型
+// 仅负责：读取审批流配置 → 校验审批人 → 创建 approval_records → 通知第1级审批人
+async function createApprovalInstance(prId, payment, req) {
+  // 状态校验：仅 draft/pending/rejected/withdrawn 可提交
+  if (!['draft', 'pending', 'rejected', 'withdrawn'].includes(payment.approval_status)) {
+    throw Object.assign(new Error('当前付款申请审批状态不允许提交审批（approval_status=' + payment.approval_status + '）'), { status: 400 });
+  }
+  if (['paid', 'cancelled', 'reversed'].includes(payment.payment_status)) {
+    throw Object.assign(new Error('付款申请当前 payment_status=' + payment.payment_status + '，不允许提交审批'), { status: 400 });
+  }
+
+  const businessType = paymentRequestToBusinessType(payment);
+  if (!businessType) {
+    throw Object.assign(new Error('该付款类型（category=' + payment.payment_category + ', subcategory=' + payment.payment_subcategory + '）未配置审批流映射，无法提交审批'), { status: 400 });
+  }
+
+  // 读取审批流配置
+  const flow = await queryOne('SELECT id, levels, is_enabled, completion_cc_user_ids FROM approval_flows WHERE business_type = ? AND is_enabled = 1 LIMIT 1', [businessType]);
+  let maxLevel = 0, approvers = [], completionCcUserIds = [];
+  if (flow && flow.levels) {
+    let levels = [];
+    try { levels = JSON.parse(flow.levels); } catch (e) { levels = []; }
+    if (Array.isArray(levels) && levels.length > 0) {
+      const built = [];
+      let ok = true, badMsg = '';
+      for (const lv of levels) {
+        const lvl = Number(lv.level);
+        const uid = (lv.approver_user_id || '').trim();
+        if (!uid) { ok = false; badMsg = '第 ' + lvl + ' 级审批人未配置具体用户'; break; }
+        const u = await queryOne('SELECT id, name, role_id, status FROM users WHERE id = ?', [uid]);
+        if (!u) { ok = false; badMsg = '第 ' + lvl + ' 级审批用户不存在'; break; }
+        if (u.status !== 'active') { ok = false; badMsg = '第 ' + lvl + ' 级审批用户「' + u.name + '」已停用'; break; }
+        if (!u.role_id) { ok = false; badMsg = '第 ' + lvl + ' 级审批用户「' + u.name + '」未绑定角色'; break; }
+        const role = await queryOne('SELECT id, name, permissions FROM roles WHERE id = ?', [u.role_id]);
+        if (!role) { ok = false; badMsg = '第 ' + lvl + ' 级审批用户「' + u.name + '」绑定的角色不存在'; break; }
+        let perms = [];
+        try { perms = JSON.parse(role.permissions || '[]'); } catch (e) { perms = []; }
+        if (!perms.includes('payment_approve')) { ok = false; badMsg = '第 ' + lvl + ' 级审批用户「' + u.name + '」当前不具备 payment_approve 权限'; break; }
+        let nodeCcIds = [];
+        if (Array.isArray(lv.cc_user_ids)) {
+          for (const ccUid of lv.cc_user_ids) {
+            const ccU = await queryOne('SELECT id, name, status FROM users WHERE id = ?', [ccUid]);
+            if (!ccU) { ok = false; badMsg = '第 ' + lvl + ' 级节点 CC 用户不存在'; break; }
+            if (ccU.status !== 'active') { ok = false; badMsg = '第 ' + lvl + ' 级节点 CC 用户「' + ccU.name + '」已停用'; break; }
+            if (!nodeCcIds.includes(ccU.id)) nodeCcIds.push(ccU.id);
+          }
+          if (!ok) break;
+        }
+        built.push({ level: lvl, approver_user_id: u.id, approver_name: u.name, approver_role_id: u.role_id, cc_user_ids: nodeCcIds });
+      }
+      if (ok) {
+        maxLevel = built.length;
+        approvers = built;
+        try {
+          const parsedCc = JSON.parse(flow.completion_cc_user_ids || '[]');
+          if (Array.isArray(parsedCc)) {
+            for (const ccUid of parsedCc) {
+              const ccU = await queryOne('SELECT id, name, status FROM users WHERE id = ?', [ccUid]);
+              if (!ccU) { ok = false; badMsg = '完成 CC 用户不存在（id=' + ccUid + '）'; break; }
+              if (ccU.status !== 'active') { ok = false; badMsg = '完成 CC 用户「' + ccU.name + '」已停用'; break; }
+              if (!completionCcUserIds.includes(ccU.id)) completionCcUserIds.push(ccU.id);
+            }
+          }
+        } catch (e) { /* JSON 解析失败视为空数组 */ }
+        if (!ok) {
+          throw Object.assign(new Error('审批流配置无效，无法提交：' + badMsg + '。请先在系统管理修正 ' + businessType + ' 审批流配置。'), { status: 400 });
+        }
+      } else {
+        throw Object.assign(new Error('审批流配置无效，无法提交：' + badMsg + '。请先在系统管理修正 ' + businessType + ' 审批流配置（指定具体审批人）。'), { status: 400 });
+      }
+    }
+  }
+  if (!approvers || maxLevel < 1) {
+    throw Object.assign(new Error('业务类型 ' + businessType + ' 的审批流未配置或未启用，无法提交审批。请先在系统管理（审批流管理）完成具体审批人配置并启用。'), { status: 400 });
+  }
+
+  const submitterName = (req.body.submitter_name || req.currentUserName || '').toString();
+  const approvalId = genId('appr');
+
+  await transaction(async () => {
+    await run(`DELETE FROM approval_records WHERE business_id = ? AND business_type = ? AND status IN ('pending','rejected','withdrawn')`, [prId, businessType]);
+    const approversSnapshot = JSON.stringify({ levels: approvers, completion_cc_user_ids: completionCcUserIds });
+    await run(`INSERT INTO approval_records (id, business_type, business_id, business_code, submitter_id, submitter_name, current_level, max_level, approvers, approval_history, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [approvalId, businessType, prId, payment.request_no, req.currentUserId, submitterName, 1, maxLevel, approversSnapshot,
+       JSON.stringify([{ level: 0, action: 'submit', user_id: req.currentUserId, user_name: submitterName, time: new Date().toISOString(), remark: '提交审批' }]),
+       'pending']);
+    try {
+      for (const lv of approvers) {
+        for (const ccUid of (lv.cc_user_ids || [])) {
+          await run(`INSERT INTO business_participants (id, business_type, business_id, participant_type, user_id, user_name) VALUES (?, ?, ?, ?, ?, ?)`,
+            [genId('bp'), 'approval', approvalId, 'node_cc', ccUid, '']);
+        }
+      }
+      for (const ccUid of completionCcUserIds) {
+        await run(`INSERT INTO business_participants (id, business_type, business_id, participant_type, user_id, user_name) VALUES (?, ?, ?, ?, ?, ?)`,
+          [genId('bp'), 'approval', approvalId, 'completion_cc', ccUid, '']);
+      }
+    } catch (bpErr) {
+      console.error('[PAY-CORE] business_participants 写入失败 approvalId=' + approvalId + '：', bpErr.message);
+    }
+    await run(`UPDATE payment_requests SET approval_status = ?, approval_remark = ?, approver_name = ?, approved_at = ?, updated_at = datetime('now') WHERE id = ?`,
+      ['pending', '', '', '', prId]);
+  });
+
+  // 事务外 best-effort 通知第 1 级审批人 + 第 1 级节点 CC
+  const notifyCtx = {
+    business_no: payment.request_no,
+    business_type: businessType,
+    amount: settlementMoney(payment.payable_amount),
+    currency: payment.currency || 'USD',
+    applicant: submitterName
+  };
+  notifyPaymentApprovalParticipants(approvalId, 'submit', notifyCtx).catch(() => {});
+
+  return { approvalId, businessType, maxLevel };
+}
+
 // PAY-CORE Phase 1：付款申请提交审批（生成 approval_records 实例 + 审批人快照 + CC 抄送）
 // 与 PO submit-approval 流程对齐；不修改 payment_requests 业务字段，仅同步 approval_status='pending'。
 // 业务类型由 paymentRequestToBusinessType(payment) 派生；未配置审批流时拒绝提交（不降级）。
+// PAY-CORE Phase 2：核心逻辑已提取到 createApprovalInstance，本端点仅做参数校验 + 调用
 app.post('/api/payment-requests/:id/submit-approval', requireApiPermission('payment_create'), asyncHandler(async (req, res) => {
   try {
     const payment = await queryOne('SELECT * FROM payment_requests WHERE id = ?', [req.params.id]);
     if (!payment) return res.status(404).json({ error: '付款申请不存在' });
-
-    // 状态校验：仅 pending/rejected/withdrawn 可提交；approved/已付款等不允许重提
-    if (!['draft', 'pending', 'rejected', 'withdrawn'].includes(payment.approval_status)) {
-      return res.status(400).json({ error: '当前付款申请审批状态不允许提交审批（approval_status=' + payment.approval_status + '）' });
-    }
-    // 已付款/已取消/已冲销的付款不允许提交
-    if (['paid', 'cancelled', 'reversed'].includes(payment.payment_status)) {
-      return res.status(400).json({ error: '付款申请当前 payment_status=' + payment.payment_status + '，不允许提交审批' });
-    }
-
-    // 派生 business_type；未覆盖类型拒绝提交
-    const businessType = paymentRequestToBusinessType(payment);
-    if (!businessType) {
-      return res.status(400).json({ error: '该付款类型（category=' + payment.payment_category + ', subcategory=' + payment.payment_subcategory + '）未配置审批流映射，无法提交审批' });
-    }
-
-    // 读取审批流配置（与 PO 一致：未启用配置直接拒绝，不回退为任意 payment_approve 用户可审）
-    // PAY-CORE Phase 1：同步读取 completion_cc_user_ids 字段（老库兼容：字段可能不存在时返回 undefined）
-    const flow = await queryOne('SELECT id, levels, is_enabled, completion_cc_user_ids FROM approval_flows WHERE business_type = ? AND is_enabled = 1 LIMIT 1', [businessType]);
-    let maxLevel = 0, approvers = [], completionCcUserIds = [];
-    if (flow && flow.levels) {
-      let levels = [];
-      try { levels = JSON.parse(flow.levels); } catch (e) { levels = []; }
-      if (Array.isArray(levels) && levels.length > 0) {
-        // 提交时再次校验每个审批用户仍有效（active + 已绑定角色 + 具备 payment_approve 权限）
-        const built = [];
-        let ok = true, badMsg = '';
-        for (const lv of levels) {
-          const lvl = Number(lv.level);
-          const uid = (lv.approver_user_id || '').trim();
-          if (!uid) { ok = false; badMsg = '第 ' + lvl + ' 级审批人未配置具体用户'; break; }
-          const u = await queryOne('SELECT id, name, role_id, status FROM users WHERE id = ?', [uid]);
-          if (!u) { ok = false; badMsg = '第 ' + lvl + ' 级审批用户不存在'; break; }
-          if (u.status !== 'active') { ok = false; badMsg = '第 ' + lvl + ' 级审批用户「' + u.name + '」已停用'; break; }
-          if (!u.role_id) { ok = false; badMsg = '第 ' + lvl + ' 级审批用户「' + u.name + '」未绑定角色'; break; }
-          const role = await queryOne('SELECT id, name, permissions FROM roles WHERE id = ?', [u.role_id]);
-          if (!role) { ok = false; badMsg = '第 ' + lvl + ' 级审批用户「' + u.name + '」绑定的角色不存在'; break; }
-          let perms = [];
-          try { perms = JSON.parse(role.permissions || '[]'); } catch (e) { perms = []; }
-          if (!perms.includes('payment_approve')) { ok = false; badMsg = '第 ' + lvl + ' 级审批用户「' + u.name + '」当前不具备 payment_approve 权限'; break; }
-          // PAY-CORE Phase 1：节点 CC 校验——必须是 active 用户 id 数组（不要求 payment_approve 权限）
-          let nodeCcIds = [];
-          if (Array.isArray(lv.cc_user_ids)) {
-            for (const ccUid of lv.cc_user_ids) {
-              const ccU = await queryOne('SELECT id, name, status FROM users WHERE id = ?', [ccUid]);
-              if (!ccU) { ok = false; badMsg = '第 ' + lvl + ' 级节点 CC 用户不存在'; break; }
-              if (ccU.status !== 'active') { ok = false; badMsg = '第 ' + lvl + ' 级节点 CC 用户「' + ccU.name + '」已停用'; break; }
-              if (!nodeCcIds.includes(ccU.id)) nodeCcIds.push(ccU.id);
-            }
-            if (!ok) break;
-          }
-          built.push({ level: lvl, approver_user_id: u.id, approver_name: u.name, approver_role_id: u.role_id, cc_user_ids: nodeCcIds });
-        }
-        if (ok) {
-          maxLevel = built.length;
-          approvers = built;
-          // 解析 completion_cc_user_ids（老库兼容：字段不存在时为 undefined，默认空数组）
-          try {
-            const parsedCc = JSON.parse(flow.completion_cc_user_ids || '[]');
-            if (Array.isArray(parsedCc)) {
-              // 校验完成 CC 用户仍有效
-              for (const ccUid of parsedCc) {
-                const ccU = await queryOne('SELECT id, name, status FROM users WHERE id = ?', [ccUid]);
-                if (!ccU) { ok = false; badMsg = '完成 CC 用户不存在（id=' + ccUid + '）'; break; }
-                if (ccU.status !== 'active') { ok = false; badMsg = '完成 CC 用户「' + ccU.name + '」已停用'; break; }
-                if (!completionCcUserIds.includes(ccU.id)) completionCcUserIds.push(ccU.id);
-              }
-            }
-          } catch (e) { /* JSON 解析失败视为空数组，不影响提交 */ }
-          if (!ok) {
-            return res.status(400).json({ error: '审批流配置无效，无法提交：' + badMsg + '。请先在系统管理修正 ' + businessType + ' 审批流配置。' });
-          }
-        } else {
-          return res.status(400).json({ error: '审批流配置无效，无法提交：' + badMsg + '。请先在系统管理修正 ' + businessType + ' 审批流配置（指定具体审批人）。' });
-        }
-      }
-    }
-    if (!approvers || maxLevel < 1) {
-      return res.status(400).json({ error: '业务类型 ' + businessType + ' 的审批流未配置或未启用，无法提交审批。请先在系统管理（审批流管理）完成具体审批人配置并启用。' });
-    }
-
-    // PAY-CORE Phase 1：CC 完全由 approval_flows 配置决定，忽略请求体 cc_user_ids（与 PO 不同，PO 保留请求体 CC 作为 Phase 2 TD）
-    // 旧调用方仍可传 cc_user_ids，但本接口不再读取/校验/写入。
-
-    const submitterName = (req.body.submitter_name || req.currentUserName || '').toString();
-    const approvalId = genId('appr');
-
-    // 同事务原子写入：审批实例（DELETE 旧 pending/rejected/withdrawn 实例保留历史 approved）+ payment_requests.approval_status='pending'
-    // PAY-CORE Phase 1：approvers 写入对象格式快照 { levels: [...], completion_cc_user_ids: [...] }
-    await transaction(async () => {
-      // 删除同一 payment 的旧 pending/rejected/withdrawn 实例（保留已 approved 历史用于审计）
-      await run(`DELETE FROM approval_records WHERE business_id = ? AND business_type = ? AND status IN ('pending','rejected','withdrawn')`, [req.params.id, businessType]);
-      const approversSnapshot = JSON.stringify({ levels: approvers, completion_cc_user_ids: completionCcUserIds });
-      await run(`INSERT INTO approval_records (id, business_type, business_id, business_code, submitter_id, submitter_name, current_level, max_level, approvers, approval_history, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [approvalId, businessType, req.params.id, payment.request_no, req.currentUserId, submitterName, 1, maxLevel, approversSnapshot,
-         JSON.stringify([{ level: 0, action: 'submit', user_id: req.currentUserId, user_name: submitterName, time: new Date().toISOString(), remark: '提交审批' }]),
-         'pending']);
-      // PAY-CORE Phase 1：business_participants 写入节点 CC + 完成 CC（best-effort：失败仅 log，不影响审批提交）
-      // 仅作审计索引/缓存用途；通知逻辑直接读取 approval_records.approvers 快照，不依赖此表
-      try {
-        for (const lv of approvers) {
-          for (const ccUid of (lv.cc_user_ids || [])) {
-            await run(`INSERT INTO business_participants (id, business_type, business_id, participant_type, user_id, user_name) VALUES (?, ?, ?, ?, ?, ?)`,
-              [genId('bp'), 'approval', approvalId, 'node_cc', ccUid, '']);
-          }
-        }
-        for (const ccUid of completionCcUserIds) {
-          await run(`INSERT INTO business_participants (id, business_type, business_id, participant_type, user_id, user_name) VALUES (?, ?, ?, ?, ?, ?)`,
-            [genId('bp'), 'approval', approvalId, 'completion_cc', ccUid, '']);
-        }
-      } catch (bpErr) {
-        console.error('[PAY-CORE] business_participants 写入失败 approvalId=' + approvalId + '：', bpErr.message);
-        // 不抛出，审批提交继续
-      }
-      // 同步 payment_requests.approval_status='pending'；清空旧审批意见/审批人/审批时间（驳回后重提场景）
-      await run(`UPDATE payment_requests SET approval_status = ?, approval_remark = ?, approver_name = ?, approved_at = ?, updated_at = datetime('now') WHERE id = ?`,
-        ['pending', '', '', '', req.params.id]);
-    });
-
-    // 事务外 best-effort 通知第 1 级审批人 + 第 1 级节点 CC
-    const notifyCtx = {
-      business_no: payment.request_no,
-      business_type: businessType,
-      amount: settlementMoney(payment.payable_amount),
-      currency: payment.currency || 'USD',
-      applicant: submitterName
-    };
-    notifyPaymentApprovalParticipants(approvalId, 'submit', notifyCtx).catch(() => {});
-
-    res.json({ success: true, approval_id: approvalId, business_type: businessType, max_level: maxLevel });
+    const result = await createApprovalInstance(req.params.id, payment, req);
+    res.json({ success: true, approval_id: result.approvalId, business_type: result.businessType, max_level: result.maxLevel });
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 }));
 
@@ -11145,6 +11279,32 @@ app.post('/api/payment-requests/:id/approve', requireApiPermission('payment_appr
           });
           // 事务外 best-effort 通知提交人 + CC
           notifyPaymentApprovalParticipants(approval.id, 'approved_final', Object.assign({}, notifyCtx, { approver: userName })).catch(() => {});
+          // PAY-CORE Phase 2：最终审批通过后，若附带付款信息则直接执行结算（创建→审批→付款闭环）
+          if (req.body.actual_paid_amount != null) {
+            try {
+              const updatedPayment = await queryOne('SELECT * FROM payment_requests WHERE id = ?', [req.params.id]);
+              const settleResult = await settleFinalPaymentApproval(updatedPayment, req.body, req);
+              return res.json({
+                success: true,
+                settlement: {
+                  idempotent: settleResult.idempotent,
+                  log_id: settleResult.log_id,
+                  transaction_id: settleResult.transaction_id,
+                  trans_no: settleResult.trans_no,
+                  rounding_amount: settleResult.rounding_amount,
+                  paid_amount: settleResult.effectivePaid,
+                  outstanding: settleResult.outstanding,
+                  payment_status: settleResult.payment_status
+                }
+              });
+            } catch (settleErr) {
+              return res.status(settleErr.status || 500).json({
+                error: '审批已通过，但付款结算失败：' + settleErr.message,
+                approval_success: true,
+                settlement_failed: true
+              });
+            }
+          }
         } else {
           // 中间级次通过：approval_records.current_level=nextLevel，payment_requests.approval_status 保持 pending
           history.push({ level: approval.current_level, action: 'approve', user_id: req.currentUserId, user_name: userName, time: new Date().toISOString(), remark: apprRemark });

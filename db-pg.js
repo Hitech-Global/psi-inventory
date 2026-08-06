@@ -466,6 +466,21 @@ async function initDatabase() {
   `);
   await exec("CREATE INDEX IF NOT EXISTS idx_oauth_states_expires ON oauth_states(expires_at)");
 
+  await exec(`CREATE TABLE IF NOT EXISTS persistent_logins (
+      id TEXT PRIMARY KEY,
+      token_hash TEXT NOT NULL UNIQUE,
+      user_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      last_used_at TEXT DEFAULT '',
+      user_agent TEXT DEFAULT '',
+      ip_address TEXT DEFAULT '',
+      revoked INTEGER NOT NULL DEFAULT 0
+    )`);
+  await exec("CREATE INDEX IF NOT EXISTS idx_persistent_user ON persistent_logins(user_id)");
+  await exec("CREATE INDEX IF NOT EXISTS idx_persistent_expires ON persistent_logins(expires_at)");
+  await exec("CREATE INDEX IF NOT EXISTS idx_persistent_token ON persistent_logins(token_hash)");
+
   await exec(`
     CREATE TABLE IF NOT EXISTS login_audit (
       id TEXT PRIMARY KEY,
