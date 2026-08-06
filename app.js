@@ -467,22 +467,29 @@ async function renderDashboard(){
   document.getElementById('content-inner').innerHTML='<div id="flash-container"></div>'+
     '<div class="fro-overview">'+
       '<section class="fro-hero">'+
-        '<div class="fro-hero-label">'+t("fro.hero_title","供应链资产")+'</div>'+
-        '<div class="fro-hero-value">¥ <span id="fro-total">'+t("common.loading","加载中...")+'</span></div>'+
-        '<div class="fro-hero-sub">'+t("fro.hero_sub","当前供应链资金占用")+'</div>'+
-      '</section>'+
-      '<section class="fro-section">'+
-        '<div class="fro-section-title">'+t("fro.assets_structure","资产结构")+'</div>'+
-        '<div class="fro-asset-grid">'+
-          '<div class="fro-asset-card fro-clickable" onclick="renderFroInventoryAnalysis()" style="cursor:pointer">'+
-            '<div class="fro-asset-head"><span class="fro-asset-name">'+t("fro.inventory_assets","库存资产")+'</span><span class="fro-asset-ratio" id="fro-inventory-pct"></span></div>'+
-            '<div class="fro-asset-amount">¥ <span id="fro-inventory">'+t("common.loading","...")+'</span></div>'+
-            '<div class="fro-asset-hint">'+t("fro.view_detail","查看明细")+' ›</div>'+
+        '<div class="fro-hero-main">'+
+          '<div class="fro-hero-label">'+t("fro.hero_title","供应链资产")+'</div>'+
+          '<div class="fro-hero-value">¥ <span id="fro-total">'+t("common.loading","加载中...")+'</span></div>'+
+          '<div class="fro-hero-sub">'+t("fro.hero_sub","当前供应链资金占用")+'</div>'+
+        '</div>'+
+        '<div class="fro-hero-structure">'+
+          '<div class="fro-structure-bar">'+
+            '<div class="fro-structure-seg inv" id="fro-inv-bar"></div>'+
+            '<div class="fro-structure-seg trs" id="fro-trs-bar"></div>'+
           '</div>'+
-          '<div class="fro-asset-card fro-clickable" onclick="renderFroTransitAnalysis()" style="cursor:pointer">'+
-            '<div class="fro-asset-head"><span class="fro-asset-name">'+t("fro.in_transit_assets","在途资产")+'</span><span class="fro-asset-ratio" id="fro-transit-pct"></span></div>'+
-            '<div class="fro-asset-amount">¥ <span id="fro-transit">'+t("common.loading","...")+'</span></div>'+
-            '<div class="fro-asset-hint">'+t("fro.view_detail","查看明细")+' ›</div>'+
+          '<div class="fro-structure-legend">'+
+            '<div class="fro-legend-item fro-clickable" onclick="renderFroInventoryAnalysis()" style="cursor:pointer">'+
+              '<span class="fro-legend-dot inv"></span>'+
+              '<span class="fro-legend-name">'+t("fro.inventory_assets","库存资产")+'</span>'+
+              '<span class="fro-legend-amount">¥ <span id="fro-inventory">'+t("common.loading","...")+'</span></span>'+
+              '<span class="fro-legend-pct" id="fro-inventory-pct"></span>'+
+            '</div>'+
+            '<div class="fro-legend-item fro-clickable" onclick="renderFroTransitAnalysis()" style="cursor:pointer">'+
+              '<span class="fro-legend-dot trs"></span>'+
+              '<span class="fro-legend-name">'+t("fro.in_transit_assets","在途资产")+'</span>'+
+              '<span class="fro-legend-amount">¥ <span id="fro-transit">'+t("common.loading","...")+'</span></span>'+
+              '<span class="fro-legend-pct" id="fro-transit-pct"></span>'+
+            '</div>'+
           '</div>'+
         '</div>'+
       '</section>'+
@@ -6487,17 +6494,33 @@ async function loadRpChannelMonthly(channel){
       // 当前可用周转：用 period 口径分摊库存 ÷ 渠道月均(period)，消除 4m分摊÷period月均 的混合口径
       // 分摊库存为库存数量，按整数展示
       // 有效在途分配(effectiveTransitAllocated)参与库存池和周转计算，非纯展示
+      // 未分配在途是双渠道共享池，人工输入消耗该共享池
       var availAllocatedPeriod = Math.round(availTotal*(pctPeriod/100));
       var transitAllocatedPeriod = Math.round(transitTotal*(pctPeriod/100)); // 自动分摊在途（参考值）
       var piUnshippedAllocatedPeriod = Math.round(piUnshippedTotal*(pctPeriod/100));
       var poAllocatedPeriod = Math.round((r.po_unconfirmed_pi_qty||0)*(pctPeriod/100));
-      // 有效在途分配：已分配SKU使用自动分摊，未分配SKU使用人工配置
-      // 该值参与库存池、周转等所有下游计算（非纯展示字段）
-      var manualTransitQty = isOnline ? (r.manual_online_transit_qty||0) : (r.manual_offline_transit_qty||0);
-      var effectiveTransitAllocated = transitAllocatedPeriod;
-      if(r.channel_allocation_status !== 'allocated' && manualTransitQty > 0){
-        effectiveTransitAllocated = manualTransitQty;
+      // 双渠道有效在途分配：已分配SKU使用自动分摊，未分配SKU使用人工配置
+      // 共享未分配池 = 在途总库存 - 线上有效分配 - 线下有效分配
+      var isAllocated = r.channel_allocation_status === 'allocated';
+      var manualOnline = r.manual_online_transit_qty||0;
+      var manualOffline = r.manual_offline_transit_qty||0;
+      var effectiveOnline, effectiveOffline;
+      if(isAllocated){
+        var onlinePct = r.resolved_online_pct!=null ? r.resolved_online_pct : 0;
+        effectiveOnline = Math.round(transitTotal*(onlinePct/100));
+        effectiveOffline = Math.round(transitTotal*((100-onlinePct)/100));
+      }else{
+        effectiveOnline = manualOnline;
+        effectiveOffline = manualOffline;
       }
+      var effectiveTransitAllocated = isOnline ? effectiveOnline : effectiveOffline;
+      // 共享未分配在途池
+      var transitUnallocated = transitTotal - effectiveOnline - effectiveOffline;
+      if(transitUnallocated < 0) transitUnallocated = 0;
+      // 当前渠道可分配上限 = 在途总库存 - 另一渠道已分配量
+      var maxAvailableTransit = isOnline
+        ? Math.max(0, transitTotal - effectiveOffline)
+        : Math.max(0, transitTotal - effectiveOnline);
       // 渠道库存池=分摊可用+有效在途分配+分摊PI未发货+分摊PO（使用 effectiveTransitAllocated）
       var poolAllocatedPeriod = availAllocatedPeriod+effectiveTransitAllocated+piUnshippedAllocatedPeriod+poAllocatedPeriod;
       r._c.poolAllocatedPeriod = poolAllocatedPeriod;
@@ -6507,7 +6530,8 @@ async function loadRpChannelMonthly(channel){
       r._c.transitAllocatedPeriod = transitAllocatedPeriod; // 保留自动分摊值供参考
       r._c.effectiveTransitAllocated = effectiveTransitAllocated; // 有效在途分配，参与计算
       r._c.transitTotalDisplay = transitTotal;
-      r._c.transitUnallocated = transitTotal - effectiveTransitAllocated;
+      r._c.transitUnallocated = transitUnallocated; // 共享未分配池（双渠道一致）
+      r._c.maxAvailableTransit = maxAvailableTransit; // 当前渠道可分配上限
       r._c.availTurnover = avgSalesPeriod>0 ? Math.round(availAllocatedPeriod/avgSalesPeriod*10)/10 : null;
       r._c.currentTurn = avgSalesPeriod>0 ? Math.round(poolAllocatedPeriod/avgSalesPeriod*10)/10 : t("app.799", "\u65e0\u9500\u91cf");
       r._c.transitTurnover = avgSalesPeriod>0 ? Math.round((availAllocatedPeriod+effectiveTransitAllocated)/avgSalesPeriod*10)/10 : null;
@@ -6558,10 +6582,14 @@ async function loadRpChannelMonthly(channel){
         return '<td class="text-right">'+(c.totalAvgPeriod>0?Math.round(c.pctPeriod)+'%':'-')+'</td>';
       },
       sum:function(t){return '<td class="text-right">'+(t.totalAvgPeriod>0?Math.round(t.avgSalesPeriod/t.totalAvgPeriod*100)+'%':'-')+'</td>';}};
-    Cols.transit_allocated={th:rpThCompact(t('forecast.compact.allocated_in_transit','在途库存（已分配）'),t('forecast.help.allocated_in_transit','按{channel}销量统计周期占比，从总在途库存中分摊给该渠道的数量。无销量SKU可手动输入分配数量。',{channel:chLabel}),'text-right','',true),
+    Cols.transit_allocated={th:rpThCompact(t('forecast.compact.allocated_in_transit','在途库存（已分配）'),t('forecast.help.allocated_in_transit','按{channel}销量统计周期占比，从总在途库存中分摊给该渠道的数量。无销量SKU可手动输入分配数量，输入值消耗共享未分配在途池。',{channel:chLabel}),'text-right','',true),
       td:function(r,c){
         if(c.channelAllocationStatus!=='allocated' && (r.in_transit_qty||0)>0){
-          return '<td class="text-right"><input type="number" class="rp-transit-manual" data-rid="'+r.id+'" value="'+(c.effectiveTransitAllocated||0)+'" style="width:70px;text-align:right;padding:2px 4px;border:1px solid #ddd;border-radius:3px" onchange="saveTransitAllocation('+r.id+',\''+channel+'\',this.value)"></td>';
+          var maxAvail=c.maxAvailableTransit||0;
+          return '<td class="text-right" style="padding:2px 4px">'
+            +'<input type="number" min="0" max="'+maxAvail+'" class="rp-transit-manual" data-rid="'+r.id+'" value="'+(c.effectiveTransitAllocated||0)+'" style="width:60px;text-align:right;padding:2px 4px;border:1px solid #ddd;border-radius:3px" onchange="saveTransitAllocation('+r.id+',\''+channel+'\',this.value)">'
+            +'<div style="font-size:10px;color:#888;margin-top:1px">'+t('forecast.transit.max_available','可分配')+':'+maxAvail+'</div>'
+            +'</td>';
         }
         return '<td class="text-right">'+formatQuantityDisplay(c.effectiveTransitAllocated||0)+'</td>';
       },
@@ -6569,7 +6597,7 @@ async function loadRpChannelMonthly(channel){
     Cols.transit_total={th:rpThCompact(t('forecast.compact.transit_total','在途总库存'),t('forecast.help.transit_total','该SKU的全部在途库存总量（不分渠道）。'),'text-right','',true),
       td:function(r,c){return '<td class="text-right">'+formatQuantityDisplay(c.transitTotalDisplay||0)+'</td>';},
       sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.transitTotalDisplay)+'</td>';}};
-    Cols.transit_unallocated={th:rpThCompact(t('forecast.compact.transit_unallocated','未分配在途'),t('forecast.help.transit_unallocated','在途总库存减去已分配给该渠道的数量。'),'text-right','',true),
+    Cols.transit_unallocated={th:rpThCompact(t('forecast.compact.transit_unallocated','未分配在途'),t('forecast.help.transit_unallocated','在途总库存减去线上和线下已分配数量后的剩余共享池。'),'text-right','',true),
       td:function(r,c){return '<td class="text-right rp-transit-unallocated-cell">'+formatQuantityDisplay(c.transitUnallocated||0)+'</td>';},
       sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.transitUnallocated)+'</td>';}};
     Cols.po_unconfirmed={th:rpThCompact(t('forecast.compact.po_unconfirmed','未确认\nPO'),t("app.796", "\u5df2\u7ecf\u521b\u5efa PO\uff0c\u4f46\u8fd8\u6ca1\u6709\u786e\u8ba4 PI \u7684\u6570\u91cf\u3002\u5c5e\u4e8e\u6f5c\u5728\u4f9b\u5e94\uff0c\u4e0d\u7b49\u4e8e\u4e00\u5b9a\u4f1a\u53d1\u8d27\u3002"),'text-right','',true),
@@ -7242,8 +7270,27 @@ async function saveChannelChanges(rid,channel){
 
 // 在途库存人工分配保存（仅未分配SKU，手动指定该渠道的在途库存数量）
 // 有效分配值参与库存池和周转计算，保存后必须刷新页面重算所有派生值
+// 人工输入消耗共享未分配在途池，线上+线下分配总和不得超过在途总库存
 async function saveTransitAllocation(rid,channel,val){
   var qty=parseInt(val)||0;
+  if(qty<0) qty=0;
+  // 客户端校验：从缓存读取在途总库存和另一渠道已分配量
+  var cached=window._rpChannelData&&window._rpChannelData[channel]&&window._rpChannelData[channel][rid];
+  if(cached){
+    var transitTotal=cached.in_transit_qty||0;
+    var otherChannelEffective=channel==='online'
+      ? (cached.manual_offline_transit_qty||0)
+      : (cached.manual_online_transit_qty||0);
+    var maxAvailable=transitTotal-otherChannelEffective;
+    if(maxAvailable<0) maxAvailable=0;
+    if(qty>maxAvailable){
+      showToast(t('forecast.transit.exceed','分配数量超过可分配上限')+': '+maxAvailable,'danger');
+      // 恢复输入框值为上限
+      var input=document.querySelector('.rp-transit-manual[data-rid="'+rid+'"]');
+      if(input) input.value=maxAvailable;
+      qty=maxAvailable;
+    }
+  }
   var body={};
   if(channel==='online'){
     body.manual_online_transit_qty=qty;
