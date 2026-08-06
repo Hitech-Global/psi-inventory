@@ -143,7 +143,9 @@ if (driver === 'pg') {
         "ALTER TABLE replenishment_suggestions ADD COLUMN IF NOT EXISTS channel_ratio_source TEXT DEFAULT ''",
         "ALTER TABLE replenishment_suggestions ADD COLUMN IF NOT EXISTS channel_allocation_status TEXT DEFAULT ''",
         "ALTER TABLE replenishment_suggestions ADD COLUMN IF NOT EXISTS resolved_online_pct DOUBLE PRECISION",
-        "ALTER TABLE replenishment_suggestions ADD COLUMN IF NOT EXISTS resolved_at TEXT DEFAULT ''"
+        "ALTER TABLE replenishment_suggestions ADD COLUMN IF NOT EXISTS resolved_at TEXT DEFAULT ''",
+        "ALTER TABLE replenishment_suggestions ADD COLUMN IF NOT EXISTS manual_online_transit_qty INTEGER DEFAULT 0",
+        "ALTER TABLE replenishment_suggestions ADD COLUMN IF NOT EXISTS manual_offline_transit_qty INTEGER DEFAULT 0"
       ];
       for (var i = 0; i < migrations.length; i++) {
         try {

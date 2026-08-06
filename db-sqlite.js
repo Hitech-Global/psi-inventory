@@ -819,7 +819,9 @@ function initDatabase() {
   ['channel_ratio_source TEXT DEFAULT \'\'',
    'channel_allocation_status TEXT DEFAULT \'\'',
    'resolved_online_pct REAL',
-   'resolved_at TEXT DEFAULT \'\''
+   'resolved_at TEXT DEFAULT \'\'',
+   'manual_online_transit_qty INTEGER DEFAULT 0',
+   'manual_offline_transit_qty INTEGER DEFAULT 0'
   ].forEach(col => {
     try { d.exec(`ALTER TABLE replenishment_suggestions ADD COLUMN ${col}`); } catch(e) {}
   });
