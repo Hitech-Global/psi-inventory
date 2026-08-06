@@ -7371,8 +7371,19 @@ async function saveTransitAllocation(rid,channel,val){
   try{
     await api('/api/replenishment-suggestions/'+rid,'PUT',body);
     showToast(t('forecast.transit.saved','在途分配已保存，库存池已更新'),'success');
+    // 保存滚动位置，刷新后恢复（避免保存后页面跳到顶部）
+    var scrollContainer=document.querySelector('#rp-table .table-container');
+    var savedScrollTop=scrollContainer?scrollContainer.scrollTop:0;
+    var savedScrollLeft=scrollContainer?scrollContainer.scrollLeft:0;
     // 刷新当前渠道页数据以重算库存池、周转、未分配在途等所有派生值
-    if(typeof loadRp==='function') loadRp();
+    if(typeof loadRp==='function'){
+      await loadRp();
+      // 恢复滚动位置
+      requestAnimationFrame(function(){
+        var sc=document.querySelector('#rp-table .table-container');
+        if(sc){sc.scrollTop=savedScrollTop;sc.scrollLeft=savedScrollLeft;}
+      });
+    }
   }catch(e){showToast(e.message,'danger')}
 }
 

@@ -556,8 +556,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 .rp-monthly-table td.rp-risk-tags-cell .sj-tag{white-space:normal;max-width:100%;word-break:normal}
 /* 订单预测建议采购输入框：去掉 number input 默认上下箭头 */
 .rp-target-stock-input::-webkit-outer-spin-button,
-.rp-target-stock-input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
-.rp-target-stock-input{-moz-appearance:textfield}
+.rp-target-stock-input::-webkit-inner-spin-button,
+.rp-transit-manual::-webkit-outer-spin-button,
+.rp-transit-manual::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.rp-target-stock-input,.rp-transit-manual{-moz-appearance:textfield}
 /* 字段说明 tooltip（Shopee 风格问号图标 + 气泡）
    说明气泡渲染到 body 下的 #global-tooltip，避免被 table-container overflow 裁剪 */
 .rp-th-help{display:inline-block;width:14px;height:14px;margin-left:3px;vertical-align:middle;cursor:help;position:relative}
