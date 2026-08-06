@@ -7286,13 +7286,15 @@ app.post('/api/logistics-batches/create-with-pl', requireApiPermission('logistic
       if (qty <= 0) return res.status(400).json({ error: `SKU ${item.sku_code} 的数量必须大于 0` });
     }
 
-    // LOGISTICS-LISTING-01：上架负责人必填校验（事务外快速失败，与既有校验风格一致）
-    // 负责人是创建即触发飞书通知的收件人，缺失则通知无处可发，故设为硬校验。
+    // LOGISTICS-LISTING-01：上架负责人可选（业务上创建阶段不强制指定，由运营后续维护上架状态）。
+    // 传了才校验存在性与状态、写参与人并发通知；不传则 listing_owner_id 留空、跳过该通知。
     const listingOwnerId = (d.listing_owner_id || '').toString().trim();
-    if (!listingOwnerId) return res.status(400).json({ error: '上架负责人不能为空' });
-    const listingOwner = queryOne('SELECT id, name, status FROM users WHERE id = ?', [listingOwnerId]);
-    if (!listingOwner) return res.status(400).json({ error: '上架负责人不存在' });
-    if (listingOwner.status !== 'active') return res.status(400).json({ error: '上架负责人已停用' });
+    let listingOwner = null;
+    if (listingOwnerId) {
+      listingOwner = queryOne('SELECT id, name, status FROM users WHERE id = ?', [listingOwnerId]);
+      if (!listingOwner) return res.status(400).json({ error: '上架负责人不存在' });
+      if (listingOwner.status !== 'active') return res.status(400).json({ error: '上架负责人已停用' });
+    }
 
     // CC 校验（可选，去重；停用用户直接拒绝，与 CI ops-prep 行为对齐）
     const listingCcRaw = Array.isArray(d.listing_cc_user_ids) ? d.listing_cc_user_ids : [];
@@ -7370,8 +7372,10 @@ app.post('/api/logistics-batches/create-with-pl', requireApiPermission('logistic
         [bId, bNo, d.related_ci_id, d.related_ci_no || ci.ci_no || '', d.forwarder_id || '', d.forwarder_name || '', d.transport_mode || 'sea', d.origin_port || '', d.dest_port || '', d.target_country || ci.country || '', d.target_warehouse || ci.target_warehouse || '', d.pickup_date || '', d.depart_date || '', d.eta_date || '', d.actual_arrival_date || '', d.customs_start_date || '', d.customs_end_date || '', d.delivery_date || '', d.inbound_complete_date || '', d.logistics_status || 'pending', totalCartons, totalGross, totalCbm, d.freight_currency || 'USD', d.international_freight || 0, d.local_charges || 0, d.customs_service_fee || 0, d.delivery_fee || 0, totalFreight, d.customs_duty || 0, d.vat_gst || 0, d.other_fees || 0, d.fee_status || 'unpaid', d.remark || '', 'pending_plan', listingOwnerId, new Date().toISOString().slice(0, 19).replace('T', ' ')]);
 
       // LOGISTICS-LISTING-01：写入上架参与人（owner + cc），复用通用 business_participants 表
-      run('INSERT INTO business_participants (id, business_type, business_id, participant_type, user_id, user_name) VALUES (?, ?, ?, ?, ?, ?)',
-        [genId('bp'), 'logistics', bId, 'owner', listingOwnerId, listingOwner.name || '']);
+      if (listingOwnerId && listingOwner) {
+        run('INSERT INTO business_participants (id, business_type, business_id, participant_type, user_id, user_name) VALUES (?, ?, ?, ?, ?, ?)',
+          [genId('bp'), 'logistics', bId, 'owner', listingOwnerId, listingOwner.name || '']);
+      }
       for (const c of listingCcList) {
         run('INSERT INTO business_participants (id, business_type, business_id, participant_type, user_id, user_name) VALUES (?, ?, ?, ?, ?, ?)',
           [genId('bp'), 'logistics', bId, 'cc', c.id, c.name || '']);
