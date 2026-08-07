@@ -1098,66 +1098,128 @@ function renderFreightForwarders(){renderSimpleMgr(t("nav.freight_forwarders", "
 function renderCurrencies(){renderSimpleMgr(t("shell.014", "\u5e01\u79cd\u7ba1\u7406"),'/api/currencies',[{name:'code',label:t("shell.002", "\u4ee3\u7801"),req:1},{name:'name',label:t("col.name", "名称"),req:1},{name:'symbol',label:t("shell.015", "\u7b26\u53f7")},{name:'is_base',label:t("shell.016", "\u57fa\u7840\u5e01\u79cd"),bool:1},{name:'sort_order',label:t("shell.003", "\u6392\u5e8f"),num:1},{name:'status',label:t("status.label", "\u72b6\u6001"),sel:1,opts:['active','disabled']}],'💱')}
 function renderPaymentTerms(){renderSimpleMgr(t("nav.payment_terms", "\u4ed8\u6b3e\u6761\u4ef6"),'/api/payment-terms',[{name:'name',label:`${t("col.name","名称")}`,req:1},{name:'payee_type',label:t("app.209", "\u4ed8\u6b3e\u5bf9\u8c61"),sel:1,opts:['factory','forwarder','customs']},{name:'payment_type',label:t("shell.017", "\u4ed8\u6b3e\u7c7b\u578b"),sel:1,opts:['goods','logistics','tax']},{name:'payment_stage',label:t("shell.018", "\u4ed8\u6b3e\u9636\u6bb5"),sel:1,opts:['deposit','balance','full','monthly']},{name:'payment_node',label:t("shell.019", "\u4ed8\u6b3e\u8282\u70b9"),sel:1,opts:['after_pi','before_ship','after_ci','after_arrival','after_inbound','monthly']},{name:'ratio',label:t("shell.020", "\u6bd4\u4f8b(%)"),num:1},{name:'remind_days_before',label:t("shell.021", "\u63d0\u9192\u63d0\u524d\u5929"),num:1},{name:'is_enabled',label:t("common.enable", "\u542f\u7528"),bool:1}],'📋')}
 function renderApprovalFlows(){
-  document.getElementById('content-inner').innerHTML=t('gen.L694.1','<div id="flash-container"></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">✅ 审批流管理</div></div><div id="approval-flow-editor"></div></div>');
+  document.getElementById('content-inner').innerHTML=
+    '<div id="flash-container"></div>'+
+    '<div class="table-section">'+
+      '<div class="table-section-title"><div class="table-section-title-left">✅ 审批流管理</div>'+
+      '<div class="table-section-actions"><span class="muted-hint">配置企业采购、付款等业务审批规则</span></div></div>'+
+      '<div class="approval-flow-filter" style="display:flex;gap:8px;margin:6px 0 14px">'+
+        '<span class="approval-tab active" data-f="all" onclick="onApprovalFlowFilter(\'all\')">全部</span>'+
+        '<span class="approval-tab" data-f="po" onclick="onApprovalFlowFilter(\'po\')">采购</span>'+
+        '<span class="approval-tab" data-f="payment" onclick="onApprovalFlowFilter(\'payment\')">付款</span>'+
+      '</div>'+
+      '<div id="approval-flow-editor"></div>'+
+    '</div>';
   loadApprovalFlows();
 }
-// N5: 审批流最小配置界面（仅 PO 类型可编辑；责任主体为具体系统用户）
+// 审批流管理：仅 PO / Payment 两类可配置（均为既有类型，不新增）
+const EDITABLE_FLOW_TYPES=['po','payment'];
 let _afState={};
 let _afCandidates=[];
+let _afData=[];
+let _afEditId=null;
+let _afFilter='all';
 function afSafeId(id){return String(id).replace(/[^a-zA-Z0-9_]/g,'_');}
 function afSetEnable(flowId,checked){if(_afState[flowId])_afState[flowId].is_enabled=checked?1:0;}
 function afSetUser(flowId,level,uid){const st=_afState[flowId];if(!st)return;const lv=st.levels.find(l=>l.level===level);if(lv)lv.approver_user_id=uid;}
+function afBizTypeLabel(bt){return bt==='po'?'🛒 采购审批':(bt==='payment'?'💰 付款审批':bt);}
+function afStatusBadge(on){return on?'<span style="color:#16a34a">🟢 已启用</span>':'<span style="color:#9ca3af">🔴 未启用</span>';}
+function afApproverName(uid){
+  if(!uid)return '未配置';
+  const u=_afCandidates.find(x=>x.id===uid);
+  return u?esc(u.name):'未配置';
+}
+// 候选人按业务类型过滤（PO→po_approve；Payment→payment_approve）；不修改后端接口
+function afFilterCandidates(bt){
+  if(bt==='po')return _afCandidates.filter(u=>u.has_po_approve);
+  if(bt==='payment')return _afCandidates.filter(u=>u.has_payment_approve);
+  return _afCandidates;
+}
 async function loadApprovalFlows(){
   try{
     const data=await api('/api/approval-flows');
     const cands=await api('/api/approval-candidates');
-    _afCandidates=cands;
-    _afState={};
-    const wrap=document.getElementById('approval-flow-editor');
-    if(!data.length){wrap.innerHTML=t('gen.L710.1','<div class="empty-state"><div class="empty-icon">✅</div>暂无审批流</div>');return;}
-    let html='';
+    _afData=data;_afCandidates=cands;_afEditId=null;_afState={};
     for(const f of data){
-      const isPO=f.business_type==='po';
       _afState[f.id]={name:f.name,business_type:f.business_type,is_enabled:!!f.is_enabled,
         levels:(Array.isArray(f.levels)?f.levels:[]).map(l=>({level:Number(l.level),approver_user_id:l.approver_user_id||''}))};
-      html+='<div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px;margin-bottom:14px">'+
-        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">'+
-          '<div><b>'+esc(f.name)+'</b> <span class="muted-hint">('+esc(f.business_type)+')</span></div>'+
-          (isPO?'<label style="display:inline-flex;gap:6px;align-items:center"><input type="checkbox" '+(f.is_enabled?'checked':'')+' onchange="afSetEnable(\''+esc(f.id)+t('gen.L719.1','\',this.checked)"> 启用</label>'):t('gen.L719.2','<span class="muted-hint">非PO类型本轮只读</span>'))+
-        '</div>';
-      if(isPO){
-        html+='<div id="aflevels_'+afSafeId(f.id)+'"></div>'+
-          '<div style="margin-top:10px;display:flex;gap:8px">'+
-            '<button class="btn btn-secondary" onclick="afAddLevel(\''+esc(f.id)+t('gen.L724.1','\')">＋ 添加审批级次</button>')+
-            '<button class="btn btn-primary" onclick="afSaveFlow(\''+esc(f.id)+t('gen.L725.1','\')">💾 保存</button>')+
-          '</div>';
-      }else{
-        html+='<div class="muted-hint">'+esc(JSON.stringify(f.levels))+'</div>';
-      }
-      html+='</div>';
     }
-    wrap.innerHTML=html;
-    for(const f of data){ if(f.business_type==='po') afRenderLevels(f.id); }
+    afRenderAll();
   }catch(e){showFlash(e.message,'danger')}
 }
+// 展示态：业务化卡片（与编辑态分离）
+function afRenderCards(f){
+  const st=_afState[f.id]||{};
+  const levels=(st.levels||[]).slice().sort((a,b)=>a.level-b.level);
+  const nodes=levels.length
+    ? levels.map(lv=>'<div style="margin:4px 0">'+lv.level+' 审批人：'+afApproverName(lv.approver_user_id)+'</div>').join('')
+    : '<div class="muted-hint">暂无审批节点，点击「编辑流程」配置</div>';
+  return '<div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px;margin-bottom:14px">'+
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'+
+      '<div><b>'+esc(f.name)+'</b> <span class="muted-hint">'+afBizTypeLabel(f.business_type)+'（'+esc(f.business_type)+'）</span></div>'+
+      afStatusBadge(!!f.is_enabled)+
+    '</div>'+
+    '<div class="muted-hint" style="margin-bottom:8px">审批级别：'+levels.length+' 级</div>'+
+    '<div style="background:#f9fafb;border-radius:6px;padding:8px;margin-bottom:10px">'+nodes+'</div>'+
+    '<div><button class="btn btn-secondary" onclick="afEditFlow(\''+esc(f.id)+'\')">编辑流程</button></div>'+
+  '</div>';
+}
+// 编辑态卡片：复用 afRenderLevels 渲染节点编辑器
+function afCardEdit(f){
+  return '<div style="border:1px solid #3b82f6;border-radius:8px;padding:14px;margin-bottom:14px">'+
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'+
+      '<div><b>'+esc(f.name)+'</b> <span class="muted-hint">'+afBizTypeLabel(f.business_type)+'</span></div>'+
+      '<label style="display:inline-flex;gap:6px;align-items:center"><input type="checkbox" '+(f.is_enabled?'checked':'')+' onchange="afSetEnable(\''+esc(f.id)+'\',this.checked)"> 启用</label>'+
+    '</div>'+
+    '<div id="aflevels_'+afSafeId(f.id)+'"></div>'+
+    '<div style="margin-top:10px;display:flex;gap:8px">'+
+      '<button class="btn btn-secondary" onclick="afAddLevel(\''+esc(f.id)+'\')">＋ 添加审批节点</button>'+
+      '<button class="btn btn-primary" onclick="afSaveFlow(\''+esc(f.id)+'\')">💾 保存</button>'+
+      '<button class="btn btn-secondary" onclick="afCancelEdit(\''+esc(f.id)+'\')">取消</button>'+
+    '</div>'+
+  '</div>';
+}
+function afRenderAll(){
+  const wrap=document.getElementById('approval-flow-editor');
+  if(!wrap)return;
+  const list=_afData.filter(f=>_afFilter==='all'||f.business_type===_afFilter);
+  if(!list.length){wrap.innerHTML='<div class="empty-state"><div class="empty-icon">✅</div>暂无审批流</div>';return;}
+  let html='';
+  for(const f of list){
+    const editable=EDITABLE_FLOW_TYPES.includes(f.business_type);
+    if(editable&&_afEditId===f.id) html+=afCardEdit(f);
+    else html+=afRenderCards(f);
+  }
+  wrap.innerHTML=html;
+  for(const f of list){
+    if(EDITABLE_FLOW_TYPES.includes(f.business_type)&&_afEditId===f.id) afRenderLevels(f.id);
+  }
+  const tabs=document.querySelectorAll('.approval-flow-filter .approval-tab');
+  tabs.forEach(el=>el.classList.toggle('active',el.dataset.f===_afFilter));
+}
+function onApprovalFlowFilter(type){_afFilter=type;afRenderAll();}
+function afEditFlow(id){_afEditId=id;afRenderAll();}
+function afCancelEdit(id){_afEditId=null;loadApprovalFlows();}
 function afRenderLevels(flowId){
   const st=_afState[flowId]; if(!st)return;
   const box=document.getElementById('aflevels_'+afSafeId(flowId)); if(!box)return;
   const sorted=st.levels.slice().sort((a,b)=>a.level-b.level);
+  const cands=afFilterCandidates(st.business_type);
   let html='';
   sorted.forEach(lv=>{
-    const opts=_afCandidates.map(u=>'<option value="'+esc(u.id)+'" '+(u.id===lv.approver_user_id?'selected':'')+'>'+esc(u.name)+'（'+esc(formatRoleLabel(u.role_id, u.role_name))+'）</option>').join('');
+    const opts=cands.map(u=>'<option value="'+esc(u.id)+'" '+(u.id===lv.approver_user_id?'selected':'')+'>'+esc(u.name)+'（'+esc(formatRoleLabel(u.role_id,u.role_name))+'）</option>').join('');
     html+='<div style="display:flex;gap:8px;align-items:center;margin:6px 0">'+
-      t('gen.L744.1','<span style="min-width:64px">第 ')+lv.level+t('gen.L744.2',' 级</span>')+
+      '<span style="min-width:64px">'+lv.level+' 级</span>'+
       '<select data-af-user="'+lv.level+'" onchange="afSetUser(\''+esc(flowId)+'\','+lv.level+',this.value)" style="flex:1">'+opts+'</select>'+
-      '<button class="btn btn-secondary" onclick="afMoveLevel(\''+esc(flowId)+'\','+lv.level+t('gen.L746.1',',-1)" title="\u4e0a\u79fb">↑</button>')+
-      '<button class="btn btn-secondary" onclick="afMoveLevel(\''+esc(flowId)+'\','+lv.level+t('gen.L747.1',',1)" title="\u4e0b\u79fb">↓</button>')+
-      '<button class="btn btn-secondary" onclick="afRemoveLevel(\''+esc(flowId)+'\','+lv.level+t('gen.L748.1',')" title="删除">✕</button>')+
+      '<button class="btn btn-secondary" onclick="afMoveLevel(\''+esc(flowId)+'\','+lv.level+',-1)" title="上移">↑</button>'+
+      '<button class="btn btn-secondary" onclick="afMoveLevel(\''+esc(flowId)+'\','+lv.level+',1)" title="下移">↓</button>'+
+      '<button class="btn btn-secondary" onclick="afRemoveLevel(\''+esc(flowId)+'\','+lv.level+')" title="删除">✕</button>'+
     '</div>';
   });
+  if(!sorted.length) html='<div class="muted-hint">请添加审批节点</div>';
   box.innerHTML=html;
 }
-function afAddLevel(flowId){const st=_afState[flowId];if(!st)return;const maxL=st.levels.reduce((m,l)=>Math.max(m,l.level),0);st.levels.push({level:maxL+1,approver_user_id:_afCandidates[0]?_afCandidates[0].id:''});afRenderLevels(flowId);}
+function afAddLevel(flowId){const st=_afState[flowId];if(!st)return;const maxL=st.levels.reduce((m,l)=>Math.max(m,l.level),0);const cands=afFilterCandidates(st.business_type);st.levels.push({level:maxL+1,approver_user_id:cands[0]?cands[0].id:''});afRenderLevels(flowId);}
 function afRemoveLevel(flowId,level){const st=_afState[flowId];if(!st)return;if(st.levels.length<=1){showToast(t('gen.L754.1','至少保留一个审批级次'),'warning');return;}st.levels=st.levels.filter(l=>l.level!==level);st.levels.sort((a,b)=>a.level-b.level).forEach((l,i)=>l.level=i+1);afRenderLevels(flowId);}
 function afMoveLevel(flowId,level,dir){const st=_afState[flowId];if(!st)return;const sorted=st.levels.slice().sort((a,b)=>a.level-b.level);const idx=sorted.findIndex(l=>l.level===level);const j=idx+dir;if(j<0||j>=sorted.length)return;const t=sorted[idx].level;sorted[idx].level=sorted[j].level;sorted[j].level=t;afRenderLevels(flowId);}
 async function afSaveFlow(flowId){
@@ -1169,7 +1231,7 @@ async function afSaveFlow(flowId){
   }
   const payload={id:flowId,name:st.name,business_type:st.business_type,is_enabled:st.is_enabled?1:0,
     levels:sorted.map(l=>({level:l.level,approver_user_id:l.approver_user_id}))};
-  try{await api('/api/approval-flows','POST',payload);showToast(t('gen.L765.1','审批流已保存'),'success');loadApprovalFlows();}
+  try{await api('/api/approval-flows','POST',payload);showToast(t('gen.L765.1','审批流已保存'),'success');_afEditId=null;loadApprovalFlows();}
   catch(e){showToast(e.message,'danger')}
 }
 // ==================== 审批中心（PO 审批人侧补齐，最小范围） ====================
