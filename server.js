@@ -599,11 +599,24 @@ function splitIdCsv(s) {
   if (!s) return [];
   return String(s).split(',').map(x => String(x).trim()).filter(Boolean);
 }
+// LOGISTICS-LISTING-01（2026-08-07 修复）：批量解析 owner 姓名，仅一次查询，消除 N+1 连接风暴。
+// 返回 id -> name 的映射，供列表/详情/创建/编辑统一回填。
+function resolveOwnerNameMap(idList) {
+  const ids = Array.from(new Set((idList || []).map(x => String(x).trim()).filter(Boolean)));
+  const map = {};
+  if (ids.length === 0) return map;
+  const placeholders = ids.map(() => '?').join(',');
+  const rows = query(`SELECT id, name FROM users WHERE id IN (${placeholders})`, ids).rows;
+  rows.forEach(u => { map[String(u.id)] = u.name; });
+  return map;
+}
+function namesFromMap(oids, map) {
+  return (oids || []).map(id => (map[String(id)] != null ? map[String(id)] : id));
+}
+// 兼容单批调用（详情/创建返回/编辑留痕）；内部仍是单次批量查询。
 function resolveOwnerNames(ids) {
-  return (ids || []).map(id => {
-    const u = queryOne('SELECT name FROM users WHERE id = ?', [id]);
-    return (u && u.name) || id;
-  });
+  const map = resolveOwnerNameMap(ids);
+  return namesFromMap(ids, map);
 }
 
 // ④ LOGISTICS-LISTING-01：Listing 上架状态提醒扫描（仅 server.js；复用 sendFeishuTextMessage；best-effort；不改 listing_status）
@@ -7180,12 +7193,15 @@ app.post('/api/packing-lists/batch-import', requireApiPermission('ci_create'), a
 app.get('/api/logistics-batches', requireApiPermission('logistics_view'), asyncHandler((req, res) => {
   const { logistics_display_status, keyword, forwarder_id, listing_status } = req.query;
   // LOGISTICS-LISTING-01（2026-08-07 owner 多选）：listing_owner_ids 为逗号分隔多 ID，姓名由 resolveOwnerNames 解析，避免对逗号列表做 JOIN
-  let sql = 'SELECT lb.*, pl.pl_no, pl.id AS pl_id, pl.status AS pl_status, lb.listing_owner_ids FROM logistics_batches lb LEFT JOIN packing_lists pl ON pl.logistics_batch_id = lb.id WHERE 1=1';
+  let sql = 'SELECT lb.*, pl.pl_no, pl.id AS pl_id, pl.status AS pl_status FROM logistics_batches lb LEFT JOIN packing_lists pl ON pl.logistics_batch_id = lb.id WHERE 1=1';
   const params = [];
   if (forwarder_id) { sql += ' AND lb.forwarder_id = ?'; params.push(forwarder_id); }
   if (keyword) { sql += ' AND (lb.batch_no LIKE ? OR lb.forwarder_name LIKE ? OR lb.related_ci_no LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`); }
   sql += ' ORDER BY lb.created_at DESC';
   let rows = query(sql, params).rows;
+
+  // LOGISTICS-LISTING-01（2026-08-07 修复）：一次性批量解析所有上架负责人姓名，避免逐行 N+1 查询
+  const ownerNameMap = resolveOwnerNameMap(rows.flatMap(r => splitIdCsv(r.listing_owner_ids)));
 
   // ── 派生 logistics_display_status + inbound_derived_status（不修改底层 logistics_status） ──
   // 物流展示状态纯粹由 logistics_status 映射，入库状态由 Inbound 事实派生
@@ -7217,7 +7233,7 @@ app.get('/api/logistics-batches', requireApiPermission('logistics_view'), asyncH
     if (!r.listing_status) r.listing_status = 'pending_plan';
     const oids = splitIdCsv(r.listing_owner_ids);
     r.listing_owner_ids = oids;
-    r.listing_owner_names = resolveOwnerNames(oids);
+    r.listing_owner_names = namesFromMap(oids, ownerNameMap);
     if (logistics_display_status && r.logistics_display_status !== logistics_display_status) return false;
     if (listing_status && r.listing_status !== listing_status) return false;
     return true;
