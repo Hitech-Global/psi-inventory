@@ -1888,6 +1888,8 @@
   I18N.dict.en["pi.deposit_status.partial_paid"] = "Partially Paid"; I18N.dict.id["pi.deposit_status.partial_paid"] = "Dibayar Sebagian";
   I18N.dict.en["pi.deposit_status.paid"] = "Paid"; I18N.dict.id["pi.deposit_status.paid"] = "Sudah Dibayar";
   I18N.dict.en["pi.deposit_status.none"] = "No deposit required"; I18N.dict.id["pi.deposit_status.none"] = "Tidak perlu uang muka";
+  // 三态收敛后的统一「待付款」（覆盖 unpaid/pending_approval/partial/active/reserved 等内部枚举，不暴露原值）
+  I18N.dict.en["pi.deposit_status.pending"] = "Pending Payment"; I18N.dict.id["pi.deposit_status.pending"] = "Menunggu Pembayaran";
   I18N.dict.en["pi.warehouse.saved_value_missing"] = "Warehouse data mismatch: the saved warehouse is not available for the current country. The saved value has been retained."; I18N.dict.id["pi.warehouse.saved_value_missing"] = "Ketidaksesuaian data gudang: gudang tersimpan tidak tersedia untuk negara saat ini. Nilai tersimpan tetap dipertahankan.";
   // PI 字段 label 复用 col.*/app.*/nav.* 等，仅 pi.field.status 为本批次新增
   I18N.dict.en["pi.field.status"] = "Shipment status"; I18N.dict.id["pi.field.status"] = "Status pengiriman";

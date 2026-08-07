@@ -6521,21 +6521,19 @@ async function piPreviewInline(id, startIndex) {
 function piNeedsDeposit(value) {
   return value === true || value === 1 || value === '1';
 }
+// UI 只暴露三个业务态：无需定金 / 待付款 / 已付款。
+// 该字段后端有两套枚举来源（server.js 列表 SELECT 用 COALESCE 覆盖）：
+//   ① PI 旧枚举：none / unpaid / pending_approval / partial / paid
+//   ② Payment Core payable_items.lifecycle_status：active / reserved / paid / cancelled / released
+// 展示层统一收敛，禁止把任何内部枚举值透出到界面（原 default 分支会原样回显 active）。
+// 仅改文案：不写回 DB、不参与状态机判断、不影响付款流程；badge 配色仍由调用处按 ==='paid' 判定。
 function formatPIDepositStatus(status) {
-  switch (status) {
-    case 'none':
-      return t('pi.deposit_status.none', '无需定金');
-    case 'unpaid':
-      return t('pi.deposit_status.unpaid', '未付款');
-    case 'pending_approval':
-      return t('pi.deposit_status.pending_approval', '待审批');
-    case 'partial':
-      return t('pi.deposit_status.partial', '部分付款');
-    case 'paid':
-      return t('pi.deposit_status.paid', '已付款');
-    default:
-      return status || '—';
-  }
+  var s = (status == null ? '' : String(status)).trim().toLowerCase();
+  if (s === 'none') return t('pi.deposit_status.none', '无需定金');
+  if (s === 'paid') return t('pi.deposit_status.paid', '已付款');
+  // 其余（unpaid / pending_approval / partial / active / reserved / cancelled / released / 空值）
+  // 一律归为「待付款」——业务语义即「需要定金但尚未付清」。
+  return t('pi.deposit_status.pending', '待付款');
 }
 
 // 线上/线下预测 + 按月：设置目标周转
