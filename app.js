@@ -1139,8 +1139,11 @@ async function loadApprovalFlows(){
   try{
     const data=await api('/api/approval-flows');
     const cands=await api('/api/approval-candidates');
-    _afData=data;_afCandidates=cands;_afEditId=null;_afState={};
-    for(const f of data){
+    // 隐藏 07-29「统一付款审批流」前的遗留付款场景孤儿流（flow_pay_* 且非 flow_pay 本身）。
+    // 这些流 is_enabled=0 且运行时统一走 business_type='payment' 的 flow_pay，纯展示噪音。仅前端过滤，不动 DB/API/逻辑。
+    _afData=data.filter(f=>!(String(f.id).startsWith('flow_pay_')&&f.id!=='flow_pay'));
+    _afCandidates=cands;_afEditId=null;_afState={};
+    for(const f of _afData){
       _afState[f.id]={name:f.name,business_type:f.business_type,is_enabled:!!f.is_enabled,
         levels:(Array.isArray(f.levels)?f.levels:[]).map(l=>({level:Number(l.level),approver_user_id:l.approver_user_id||''}))};
     }
