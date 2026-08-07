@@ -267,23 +267,79 @@ async function getFeishuTenantToken() {
 }
 
 // 发送文本消息到指定 open_id。best-effort：测试/演练模式只记录不真实发送；真实模式带 5s 超时。
-async function sendFeishuTextMessage(openId, text) {
+// 通用飞书消息发送：支持 open_id（个人）与 chat_id（群）。best-effort：测试/演练模式只记录不真实发送。
+async function sendFeishuMessage(receiveId, receiveIdType, text) {
   if (process.env.NODE_ENV === 'test' || process.env.FEISHU_NOTIFY_DRYRUN === '1' || process.env.FEISHU_NOTIFY_FORCE_FAIL === '1') {
-    __feishuDryRunLog.push({ open_id: openId, text, at: new Date().toISOString(), forced_fail: process.env.FEISHU_NOTIFY_FORCE_FAIL === '1' });
+    __feishuDryRunLog.push({ open_id: receiveId, receive_id_type: receiveIdType, text, at: new Date().toISOString(), forced_fail: process.env.FEISHU_NOTIFY_FORCE_FAIL === '1' });
     if (process.env.FEISHU_NOTIFY_FORCE_FAIL === '1') throw new Error('forced feishu failure (test)');
-    return { dryrun: true, open_id: openId };
+    return { dryrun: true, receive_id: receiveId, receive_id_type: receiveIdType };
   }
-  if (!openId) throw new Error('open_id 为空');
+  if (!receiveId) throw new Error('receive_id 为空');
   const token = await getFeishuTenantToken();
-  const resp = await fetch('https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id', {
+  const resp = await fetch('https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=' + receiveIdType, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
-    body: JSON.stringify({ receive_id: openId, msg_type: 'text', content: JSON.stringify({ text }) }),
+    body: JSON.stringify({ receive_id: receiveId, msg_type: 'text', content: JSON.stringify({ text }) }),
     signal: AbortSignal.timeout(5000)
   });
   const data = await resp.json();
   if (data.code !== 0) throw new Error('飞书消息发送失败: ' + (data.msg || data.code || 'unknown'));
   return data;
+}
+
+async function sendFeishuTextMessage(openId, text) {
+  return sendFeishuMessage(openId, 'open_id', text);
+}
+
+// 飞书群通知（可选）：FEISHU_GROUP_CHAT_IDS 为空则跳过，完全向后兼容，不影响个人通知。
+// 机器人需被加入对应群；复用现有 tenant token 与 im:message:send_as_bot 权限。
+async function notifyFeishuGroups(text) {
+  const ids = (process.env.FEISHU_GROUP_CHAT_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
+  if (ids.length === 0) return;
+  for (const chatId of ids) {
+    try { await sendFeishuMessage(chatId, 'chat_id', text); }
+    catch (e) { console.error('[FEISHU-NOTIFY] 群通知发送失败 chat_id=' + chatId + ':', e.message); }
+  }
+}
+
+// Listing 上架准备通知：运营可读正文构造（物流批次/品牌/国家/仓库/货物信息/关联CI/当前负责人）
+// 个人通知（owner_added / manual_reminder）与群通知共用同一正文，保证信息一致。
+function buildListingNotifyBlock(batchNo, ctx) {
+  const brand = (ctx && ctx.brand) || '-';
+  const country = (ctx && ctx.country) || '-';
+  const warehouse = (ctx && ctx.warehouse) || '-';
+  const cartons = (ctx && typeof ctx.total_cartons !== 'undefined') ? (ctx.total_cartons || 0) : '-';
+  const weight = (ctx && typeof ctx.total_weight !== 'undefined') ? (ctx.total_weight || 0) : '-';
+  const cbm = (ctx && typeof ctx.total_cbm !== 'undefined') ? (ctx.total_cbm || 0) : '-';
+  const ci = (ctx && ctx.related_ci) || '-';
+  const owners = (ctx && ctx.current_owners) || '-';
+  return '物流批次：\n' + batchNo
+    + '\n\n品牌：\n' + brand
+    + '\n\n国家：\n' + country
+    + '\n\n仓库：\n' + warehouse
+    + '\n\n货物信息：\n总箱数：' + cartons + ' 箱\n总重量：' + weight + ' KG\n总体积：' + cbm + ' CBM'
+    + '\n\n关联CI：\n' + ci
+    + '\n\n当前负责人：\n' + owners;
+}
+
+// 从物流单主表 + 关联 CI 装载上架通知所需的全部运营字段（brand 来自 CI，其余来自物流单主表）
+function loadListingNotifyCtx(batchId) {
+  const lbRow = queryOne(
+    'SELECT lb.target_country, lb.target_warehouse, lb.total_cartons, lb.total_weight, lb.total_cbm, lb.related_ci_no, lb.listing_owner_ids, ci.brand '
+    + 'FROM logistics_batches lb LEFT JOIN commercial_invoices ci ON lb.related_ci_id = ci.id WHERE lb.id = ?',
+    [batchId]
+  );
+  if (!lbRow) return null;
+  return {
+    brand: lbRow.brand || '-',
+    country: lbRow.target_country || '-',
+    warehouse: lbRow.target_warehouse || '-',
+    total_cartons: lbRow.total_cartons || 0,
+    total_weight: lbRow.total_weight || 0,
+    total_cbm: lbRow.total_cbm || 0,
+    related_ci: lbRow.related_ci_no || '-',
+    current_owners: resolveOwnerNames(splitIdCsv(lbRow.listing_owner_ids)).join('、') || '-'
+  };
 }
 
 // V1 固定文案模板（不建模板管理）
@@ -309,14 +365,12 @@ const FEISHU_NOTIFY_TEMPLATES = {
     : notifyT(lang, 'notify.logistics_listing_created_tbd', { batch_no: batchNo, status_label: listingStatusLabel(lang, 'pending_plan') }),
   // Listing 编辑增量通知 / 手动提醒专用模板（不依赖 i18n 词条，正文在 server.js 内联构造；第 4 参 ctx 承载 related_ci / current_owners）
   logistics_listing_owner_added: (lang, batchNo, planDate, ctx) => {
-    const ci = (ctx && ctx.related_ci) || '-';
-    const owners = (ctx && ctx.current_owners) || '-';
-    return '📦 上架准备负责人更新提醒\n\n物流单：' + batchNo + '\n关联CI：' + ci + '\n当前上架负责人：' + owners + '\n\n你已被加入该物流单上架准备负责人/抄送，请及时处理。';
+    return '📦 上架准备负责人更新提醒\n\n' + buildListingNotifyBlock(batchNo, ctx)
+      + '\n\n你已被加入该物流单上架准备负责人/抄送，请及时处理。';
   },
   logistics_listing_manual_reminder: (lang, batchNo, planDate, ctx) => {
-    const ci = (ctx && ctx.related_ci) || '-';
-    const owners = (ctx && ctx.current_owners) || '-';
-    return '📦 上架准备提醒\n\n物流单：' + batchNo + '\n关联CI：' + ci + '\n当前负责人：' + owners + '\n\n请关注该物流单上架准备工作。';
+    return '📦 上架准备提醒\n\n' + buildListingNotifyBlock(batchNo, ctx)
+      + '\n\n请关注该批次上架准备工作。';
   },
   // 以下两个仅供 scanListingReminders 直接调用（签名为 (lang, batchNo, ctx)），不经 notifyBusinessParticipants。
   logistics_listing_stalled: (lang, batchNo, ctx) => notifyT(lang, 'notify.logistics_listing_stalled', {
@@ -554,12 +608,8 @@ async function notifyListingDelta(batchId, batchNo, addedOwnerIds, addedCcIds, p
     if (recipients.size === 0) return;
     const build = FEISHU_NOTIFY_TEMPLATES['logistics_listing_owner_added'];
     if (!build) return;
-    // 关联CI + 当前上架负责人（用于正文展示），从物流单主表读取
-    const lbRow = queryOne('SELECT related_ci_no, listing_owner_ids FROM logistics_batches WHERE id = ?', [batchId]);
-    const ctx = {
-      related_ci: lbRow ? (lbRow.related_ci_no || '-') : '-',
-      current_owners: lbRow ? (resolveOwnerNames(splitIdCsv(lbRow.listing_owner_ids)).join('、') || '-') : '-'
-    };
+    // 关联CI + 当前上架负责人 + 品牌/国家/仓库/货物信息（用于正文展示），从物流单主表 + 关联 CI 读取
+    const ctx = loadListingNotifyCtx(batchId);
     for (const [openId, info] of recipients) {
       const text = build(info.lang, batchNo, planDate, ctx);
       try { await sendFeishuTextMessage(openId, text); }
@@ -7333,6 +7383,9 @@ app.post('/api/logistics-batches', requireApiPermission('logistics_create'), asy
           [genId('bp'), 'logistics', bId, 'owner', ow.id, ow.name || '']);
       }
       notifyBusinessParticipants('logistics', bId, 'logistics_listing_created', { code: bNo, plan_date: d.eta_date || '' }).catch(() => {});
+      // 群通知（可选）：FEISHU_GROUP_CHAT_IDS 为空则跳过；物流创建后团队同步，复用运营可读正文
+      const gctx = loadListingNotifyCtx(bId);
+      if (gctx) notifyFeishuGroups('📦 上架准备提醒\n\n' + buildListingNotifyBlock(bNo, gctx) + '\n\n请关注该物流单上架准备工作。').catch(() => {});
     }
     res.json({ id: bId, batch_no: bNo, ...d, total_freight: totalFreight });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -7483,6 +7536,9 @@ app.post('/api/logistics-batches/create-with-pl', requireApiPermission('logistic
     // LOGISTICS-LISTING-01：物流单 Created 后立即通知上架负责人 + CC
     // 事务外 best-effort：飞书异常不回滚物流单，与既有 ci_ops_assigned 通知一致的容错策略。
     notifyBusinessParticipants('logistics', bId, 'logistics_listing_created', { code: bNo, plan_date: d.eta_date || '' }).catch(() => {});
+    // 群通知（可选）：FEISHU_GROUP_CHAT_IDS 为空则跳过；物流创建后团队同步，复用运营可读正文
+    const gctx2 = loadListingNotifyCtx(bId);
+    if (gctx2) notifyFeishuGroups('📦 上架准备提醒\n\n' + buildListingNotifyBlock(bNo, gctx2) + '\n\n请关注该物流单上架准备工作。').catch(() => {});
 
     res.json({
       pl_id: plId,
@@ -7700,11 +7756,12 @@ app.post('/api/logistics-batches/:id/listing', requireApiPermission('logistics_e
 // 正文含关联CI 与 当前负责人，供运营补发提醒 / 测试飞书链路 / 防止遗漏。不影响其他通知逻辑。
 app.post('/api/logistics-batches/:id/notify', requireApiPermission('logistics_edit'), asyncHandler((req, res) => {
   try {
-    const lb = queryOne('SELECT * FROM logistics_batches WHERE id = ?', [req.params.id]);
+    const lb = queryOne('SELECT id, batch_no, eta_date FROM logistics_batches WHERE id = ?', [req.params.id]);
     if (!lb) return res.status(404).json({ error: '物流单不存在' });
-    const relatedCi = lb.related_ci_no || '-';
-    const currentOwners = resolveOwnerNames(splitIdCsv(lb.listing_owner_ids)).join('、') || '-';
-    notifyBusinessParticipants('logistics', lb.id, 'logistics_listing_manual_reminder', { code: lb.batch_no, plan_date: lb.eta_date || '', related_ci: relatedCi, current_owners: currentOwners }).catch(() => {});
+    const ctx = loadListingNotifyCtx(lb.id);
+    notifyBusinessParticipants('logistics', lb.id, 'logistics_listing_manual_reminder', { code: lb.batch_no, plan_date: lb.eta_date || '', related_ci: (ctx && ctx.related_ci) || '-', current_owners: (ctx && ctx.current_owners) || '-' }).catch(() => {});
+    // 群通知（可选）：FEISHU_GROUP_CHAT_IDS 为空则跳过；复用运营可读正文，与手动提醒个人通知一致
+    if (ctx) notifyFeishuGroups('📦 上架准备提醒\n\n' + buildListingNotifyBlock(lb.batch_no, ctx) + '\n\n请关注该批次上架准备工作。').catch(() => {});
     res.json({ success: true, notified: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
