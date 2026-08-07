@@ -9047,6 +9047,8 @@ function minorToAmount(minor) {
 }
 
 function finalPaymentApprovalInput(payment, body = {}) {
+  // PAY-CORE Phase 2：读取付款账户，透传至 applyPaymentSettlement（与 confirm-paid 路径一致）
+  const paymentAccount = body.payment_account != null ? String(body.payment_account) : '';
   const actualPaidAmount = settlementMoney(body.actual_paid_amount);
   if (!(actualPaidAmount > 0)) {
     throw new SettlementError(400, '最终审批必须填写有效的实际付款金额');
@@ -9105,6 +9107,7 @@ function finalPaymentApprovalInput(payment, body = {}) {
     roundingAmount,
     applyRoundOff,
     attachment,
+    paymentAccount,
     idempotencyKey: String(body.idempotency_key || `approval:${payment.id}`).trim()
   };
 }
@@ -9130,7 +9133,8 @@ async function settleFinalPaymentApproval(payment, body, req) {
       apply_round_off: input.applyRoundOff,
       rounding_amount: input.roundingAmount,
       rounding_reason: body.rounding_reason || '',
-      bank_ref_no: body.bank_ref_no || ''
+      bank_ref_no: body.bank_ref_no || '',
+      payment_account: input.paymentAccount || ''
     }
   );
 }

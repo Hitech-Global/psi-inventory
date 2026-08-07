@@ -11398,6 +11398,8 @@ async function viewPayment(id, mode){
         +'<input type="date" id="pay-final-date" value="'+_today+'"></div>'
         +'<div class="form-group form-group-full"><label>'+t("payment.bank_ref_no","银行流水号")+'</label>'
         +'<input type="text" id="pay-final-bank-ref"></div>'
+        +'<div class="form-group form-group-full"><label>'+t("payment.payment_account","付款账户")+'</label>'
+        +'<input type="text" id="pay-final-account" placeholder="'+t("payment.payment_account_placeholder","选填，用于结算记录付款账户")+'"></div>'
         +'<div class="form-group"><label>'+t("payment.rounding_amount","抹零金额")+'</label>'
         +'<input type="number" min="0" step="0.01" id="pay-final-rounding" placeholder="'+t("payment.rounding_placeholder","选填，不抹零请留空")+'"></div>'
         +'<div class="form-group form-group-full"><label>'+t("payment.rounding_reason","抹零原因")+'</label>'
@@ -11527,6 +11529,8 @@ async function financeApprove(id, action){
     body.actual_paid_amount=amount;
     body.actual_paid_date=paidDate;
     body.bank_ref_no=bankRef;
+    const accountEl=document.getElementById('pay-final-account');
+    body.payment_account=accountEl?accountEl.value.trim():'';
     if(Number.isFinite(roundingAmount)&&roundingAmount>0){
       body.rounding_amount=roundingAmount;
       if(roundingReason)body.rounding_reason=roundingReason;
