@@ -316,8 +316,16 @@ const LISTING_BLOCK_FIELDS = {
   en: { batch: 'Logistics Batch', brand: 'Brand', country: 'Country', warehouse: 'Warehouse', cargo: 'Cargo Info', cartons: 'Total Cartons', weight: 'Total Weight', cbm: 'Total Volume', ci: 'Related CI', owners: 'Current Owners', cartonUnit: 'ctns', weightUnit: 'KG', cbmUnit: 'CBM' }
 };
 const LISTING_BLOCK_I18N = {
-  zh: { manual: { title: '📦 上架准备提醒', footer: '请关注该批次上架准备工作。' }, owner_added: { title: '📦 上架准备负责人更新提醒', footer: '你已被加入该物流单上架准备负责人/抄送，请及时处理。' } },
-  en: { manual: { title: '📦 Listing Preparation Reminder', footer: 'Please follow up on the listing preparation for this batch.' }, owner_added: { title: '📦 Listing Preparation Owner Update', footer: 'You have been added as an owner/cc for this batch’s listing preparation. Please handle it promptly.' } }
+  zh: {
+    manual: { title: '📦 上架准备提醒', footer: '请关注该物流单进度' },
+    owner_added: { title: '📦 上架准备提醒', footer: '你已被加入该物流单负责人' },
+    created: { title: '📦 上架准备提醒', footer: '新的物流单已创建，请开始上架准备' }
+  },
+  en: {
+    manual: { title: '📦 Listing Preparation Reminder', footer: 'Please follow up on the progress of this batch.' },
+    owner_added: { title: '📦 Listing Preparation Reminder', footer: 'You have been added as an owner of this logistics batch.' },
+    created: { title: '📦 Listing Preparation Reminder', footer: 'A new logistics batch has been created. Please start the listing preparation.' }
+  }
 };
 function buildListingNotifyBlock(batchNo, ctx, lang, mode) {
   const L = (LISTING_BLOCK_I18N[lang] && LISTING_BLOCK_I18N[lang][mode]) ? LISTING_BLOCK_I18N[lang][mode] : LISTING_BLOCK_I18N.zh.manual;
@@ -387,11 +395,8 @@ const FEISHU_NOTIFY_TEMPLATES = {
   payment_due: (lang, prNo, dueDate, amt) => notifyT(lang, 'notify.payment_due', { request_no: prNo, due_date: dueDate, amount: amt }),
   payment_overdue: (lang, prNo, dueDate, amt) => notifyT(lang, 'notify.payment_overdue', { request_no: prNo, due_date: dueDate, amount: amt }),
 
-  // LOGISTICS-LISTING-01：物流单 Listing 上架通知
-  // logistics_listing_created 走 notifyBusinessParticipants，故沿用其 (lang, code, plan_date) 签名，第 3 参传 eta_date。
-  logistics_listing_created: (lang, batchNo, etaDate) => etaDate
-    ? notifyT(lang, 'notify.logistics_listing_created', { batch_no: batchNo, eta_date: etaDate, status_label: listingStatusLabel(lang, 'pending_plan') })
-    : notifyT(lang, 'notify.logistics_listing_created_tbd', { batch_no: batchNo, status_label: listingStatusLabel(lang, 'pending_plan') }),
+  // LOGISTICS-LISTING 统一通知体系：创建个人通知与手动提醒/编辑增量/群通知共用同一份 ctx 与同一 buildListingNotifyBlock 正文（含品牌/国家/仓库/货物信息/关联CI/当前负责人），仅 closing line 按 mode 不同（created/owner_added/manual）。签名 (lang, code, plan_date, ctx) 与 notifyBusinessParticipants 一致。
+  logistics_listing_created: (lang, batchNo, planDate, ctx) => buildListingNotifyBlock(batchNo, ctx, lang, 'created'),
   // Listing 编辑增量通知 / 手动提醒专用模板（不依赖 i18n 词条，正文在 server.js 内联构造；第 4 参 ctx 承载 related_ci / current_owners）
   logistics_listing_owner_added: (lang, batchNo, planDate, ctx) => buildListingNotifyBlock(batchNo, ctx, lang, 'owner_added'),
   logistics_listing_manual_reminder: (lang, batchNo, planDate, ctx) => buildListingNotifyBlock(batchNo, ctx, lang, 'manual'),
@@ -7405,10 +7410,14 @@ app.post('/api/logistics-batches', requireApiPermission('logistics_create'), asy
         run('INSERT INTO business_participants (id, business_type, business_id, participant_type, user_id, user_name) VALUES (?, ?, ?, ?, ?, ?)',
           [genId('bp'), 'logistics', bId, 'owner', ow.id, ow.name || '']);
       }
-      notifyBusinessParticipants('logistics', bId, 'logistics_listing_created', { code: bNo, plan_date: d.eta_date || '' }).catch(() => {});
-      // 群通知（可选）：FEISHU_GROUP_CHAT_IDS(中文群)/FEISHU_GROUP_CHAT_IDS_EN(英文群) 为空则跳过；物流创建后团队同步，复用运营可读正文（与个人通知同一模板）
+      // 个人通知与群通知共用同一份物流通知 ctx（loadListingNotifyCtx 为唯一数据源），字段完全一致，避免两套格式
       const gctx = loadListingNotifyCtx(bId);
-      if (gctx) { const gt = buildListingNotifyTexts(bNo, gctx); notifyFeishuGroups(gt.zh, gt.en).catch(() => {}); }
+      if (gctx) {
+        notifyBusinessParticipants('logistics', bId, 'logistics_listing_created', gctx).catch(() => {});
+        // 群通知（可选）：中文群(FEISHU_GROUP_CHAT_IDS)发中文、英文群(FEISHU_GROUP_CHAT_IDS_EN)发英文；两 env 均空则跳过
+        const gt = buildListingNotifyTexts(bNo, gctx);
+        notifyFeishuGroups(gt.zh, gt.en).catch(() => {});
+      }
     }
     res.json({ id: bId, batch_no: bNo, ...d, total_freight: totalFreight });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -7558,10 +7567,14 @@ app.post('/api/logistics-batches/create-with-pl', requireApiPermission('logistic
 
     // LOGISTICS-LISTING-01：物流单 Created 后立即通知上架负责人 + CC
     // 事务外 best-effort：飞书异常不回滚物流单，与既有 ci_ops_assigned 通知一致的容错策略。
-    notifyBusinessParticipants('logistics', bId, 'logistics_listing_created', { code: bNo, plan_date: d.eta_date || '' }).catch(() => {});
-    // 群通知（可选）：FEISHU_GROUP_CHAT_IDS(中文群)/FEISHU_GROUP_CHAT_IDS_EN(英文群) 为空则跳过；物流创建后团队同步，复用运营可读正文（与个人通知同一模板）
+    // 个人通知与群通知共用同一份物流通知 ctx（loadListingNotifyCtx 为唯一数据源），字段完全一致
     const gctx2 = loadListingNotifyCtx(bId);
-    if (gctx2) { const gt = buildListingNotifyTexts(bNo, gctx2); notifyFeishuGroups(gt.zh, gt.en).catch(() => {}); }
+    if (gctx2) {
+      notifyBusinessParticipants('logistics', bId, 'logistics_listing_created', gctx2).catch(() => {});
+      // 群通知（可选）：中文群(FEISHU_GROUP_CHAT_IDS)发中文、英文群(FEISHU_GROUP_CHAT_IDS_EN)发英文；两 env 均空则跳过
+      const gt = buildListingNotifyTexts(bNo, gctx2);
+      notifyFeishuGroups(gt.zh, gt.en).catch(() => {});
+    }
 
     res.json({
       pl_id: plId,
