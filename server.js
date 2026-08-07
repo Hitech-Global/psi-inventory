@@ -322,15 +322,18 @@ function buildListingNotifyBlock(batchNo, ctx) {
     + '\n\n当前负责人：\n' + owners;
 }
 
-// 从物流单主表 + 关联 CI 装载上架通知所需的全部运营字段（brand 来自 CI，其余来自物流单主表）
+// 从物流单主表 + 关联 CI 装载上架通知所需的全部运营字段——个人通知与群通知共用的唯一数据源。
+// brand 来自 CI，其余来自物流单主表；同时返回 code(批次号) 与 plan_date(eta)，供 notifyBusinessParticipants 定位「物流批次」行。
 function loadListingNotifyCtx(batchId) {
   const lbRow = queryOne(
-    'SELECT lb.target_country, lb.target_warehouse, lb.total_cartons, lb.total_weight, lb.total_cbm, lb.related_ci_no, lb.listing_owner_ids, ci.brand '
+    'SELECT lb.batch_no, lb.eta_date, lb.target_country, lb.target_warehouse, lb.total_cartons, lb.total_weight, lb.total_cbm, lb.related_ci_no, lb.listing_owner_ids, ci.brand '
     + 'FROM logistics_batches lb LEFT JOIN commercial_invoices ci ON lb.related_ci_id = ci.id WHERE lb.id = ?',
     [batchId]
   );
   if (!lbRow) return null;
   return {
+    code: lbRow.batch_no || '',
+    plan_date: lbRow.eta_date || '',
     brand: lbRow.brand || '-',
     country: lbRow.target_country || '-',
     warehouse: lbRow.target_warehouse || '-',
@@ -7758,10 +7761,13 @@ app.post('/api/logistics-batches/:id/notify', requireApiPermission('logistics_ed
   try {
     const lb = queryOne('SELECT id, batch_no, eta_date FROM logistics_batches WHERE id = ?', [req.params.id]);
     if (!lb) return res.status(404).json({ error: '物流单不存在' });
+    // 个人通知与群通知共用同一份物流通知 ctx（loadListingNotifyCtx 为唯一数据源），避免两套逻辑字段不一致
     const ctx = loadListingNotifyCtx(lb.id);
-    notifyBusinessParticipants('logistics', lb.id, 'logistics_listing_manual_reminder', { code: lb.batch_no, plan_date: lb.eta_date || '', related_ci: (ctx && ctx.related_ci) || '-', current_owners: (ctx && ctx.current_owners) || '-' }).catch(() => {});
-    // 群通知（可选）：FEISHU_GROUP_CHAT_IDS 为空则跳过；复用运营可读正文，与手动提醒个人通知一致
-    if (ctx) notifyFeishuGroups('📦 上架准备提醒\n\n' + buildListingNotifyBlock(lb.batch_no, ctx) + '\n\n请关注该批次上架准备工作。').catch(() => {});
+    if (ctx) {
+      notifyBusinessParticipants('logistics', lb.id, 'logistics_listing_manual_reminder', ctx).catch(() => {});
+      // 群通知（可选）：FEISHU_GROUP_CHAT_IDS 为空则跳过；复用同一 ctx 与运营可读正文，与个人通知完全一致
+      notifyFeishuGroups('📦 上架准备提醒\n\n' + buildListingNotifyBlock(ctx.code, ctx) + '\n\n请关注该批次上架准备工作。').catch(() => {});
+    }
     res.json({ success: true, notified: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
