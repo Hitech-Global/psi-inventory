@@ -307,6 +307,17 @@ const FEISHU_NOTIFY_TEMPLATES = {
   logistics_listing_created: (lang, batchNo, etaDate) => etaDate
     ? notifyT(lang, 'notify.logistics_listing_created', { batch_no: batchNo, eta_date: etaDate, status_label: listingStatusLabel(lang, 'pending_plan') })
     : notifyT(lang, 'notify.logistics_listing_created_tbd', { batch_no: batchNo, status_label: listingStatusLabel(lang, 'pending_plan') }),
+  // Listing 编辑增量通知 / 手动提醒专用模板（不依赖 i18n 词条，正文在 server.js 内联构造；第 4 参 ctx 承载 related_ci / current_owners）
+  logistics_listing_owner_added: (lang, batchNo, planDate, ctx) => {
+    const ci = (ctx && ctx.related_ci) || '-';
+    const owners = (ctx && ctx.current_owners) || '-';
+    return '📦 上架准备负责人更新提醒\n\n物流单：' + batchNo + '\n关联CI：' + ci + '\n当前上架负责人：' + owners + '\n\n你已被加入该物流单上架准备负责人/抄送，请及时处理。';
+  },
+  logistics_listing_manual_reminder: (lang, batchNo, planDate, ctx) => {
+    const ci = (ctx && ctx.related_ci) || '-';
+    const owners = (ctx && ctx.current_owners) || '-';
+    return '📦 上架准备提醒\n\n物流单：' + batchNo + '\n关联CI：' + ci + '\n当前负责人：' + owners + '\n\n请关注该物流单上架准备工作。';
+  },
   // 以下两个仅供 scanListingReminders 直接调用（签名为 (lang, batchNo, ctx)），不经 notifyBusinessParticipants。
   logistics_listing_stalled: (lang, batchNo, ctx) => notifyT(lang, 'notify.logistics_listing_stalled', {
     batch_no: batchNo,
@@ -519,12 +530,43 @@ async function notifyBusinessParticipants(businessType, businessId, eventType, c
     const build = FEISHU_NOTIFY_TEMPLATES[eventType];
     if (!build) return;
     for (const [openId, info] of recipients) {
-      const text = build(info.lang, code, ctx && ctx.plan_date);
+      const text = build(info.lang, code, ctx && ctx.plan_date, ctx);
       try { await sendFeishuTextMessage(openId, text); }
       catch (e) { console.error('[FEISHU-NOTIFY] 发送失败 open_id=' + openId + ' event=' + eventType + ':', e.message); }
     }
   } catch (e) {
     console.error('[FEISHU-NOTIFY] 业务通知异常 event=' + eventType + ' businessType=' + businessType + ' businessId=' + businessId + ':', e.message);
+  }
+}
+
+// Listing 编辑增量通知：仅通知「新增」的上架负责人与抄送人，避免每次普通编辑都打扰。
+// 模板 logistics_listing_owner_added（正文明确"你已被加入"，仅发给新增人员，不重复打扰既有负责人/CC）。
+async function notifyListingDelta(batchId, batchNo, addedOwnerIds, addedCcIds, planDate) {
+  try {
+    const recipients = new Map(); // open_id -> { name, lang }
+    const addUser = (userId) => {
+      if (!userId) return;
+      const u = queryOne('SELECT id, name, feishu_open_id, language_preference FROM users WHERE id = ?', [userId]);
+      if (u && u.feishu_open_id) recipients.set(u.feishu_open_id, { name: u.name || '', lang: normalizeLanguage(u.language_preference) });
+    };
+    (addedOwnerIds || []).forEach(addUser);
+    (addedCcIds || []).forEach(addUser);
+    if (recipients.size === 0) return;
+    const build = FEISHU_NOTIFY_TEMPLATES['logistics_listing_owner_added'];
+    if (!build) return;
+    // 关联CI + 当前上架负责人（用于正文展示），从物流单主表读取
+    const lbRow = queryOne('SELECT related_ci_no, listing_owner_ids FROM logistics_batches WHERE id = ?', [batchId]);
+    const ctx = {
+      related_ci: lbRow ? (lbRow.related_ci_no || '-') : '-',
+      current_owners: lbRow ? (resolveOwnerNames(splitIdCsv(lbRow.listing_owner_ids)).join('、') || '-') : '-'
+    };
+    for (const [openId, info] of recipients) {
+      const text = build(info.lang, batchNo, planDate, ctx);
+      try { await sendFeishuTextMessage(openId, text); }
+      catch (e) { console.error('[FEISHU-NOTIFY] 物流编辑增量通知失败 open_id=' + openId + ' batch=' + batchId + ':', e.message); }
+    }
+  } catch (e) {
+    console.error('[FEISHU-NOTIFY] 物流编辑增量通知异常 batch=' + batchId + ':', e.message);
   }
 }
 
@@ -7561,6 +7603,7 @@ app.post('/api/logistics-batches/:id/listing', requireApiPermission('logistics_e
 
     const oldOwnerIds = splitIdCsv(lb.listing_owner_ids);
     const oldOwnerKey = oldOwnerIds.join(',');
+    const oldCcIds = query('SELECT user_id FROM business_participants WHERE business_type=? AND business_id=? AND participant_type=?', ['logistics', lb.id, 'cc']).rows.map(r => r.user_id);
     let newOwnerIds = oldOwnerIds;
     let newOwners = [];
     if (hasOwner) {
@@ -7642,7 +7685,27 @@ app.post('/api/logistics-batches/:id/listing', requireApiPermission('logistics_e
       });
     }
 
+    // Listing 编辑增量通知：仅当负责人或抄送发生变化且确有「新增」人员时，才通知新增的上架负责人 / 抄送人（不每次普通编辑都通知）。
+    const addedOwnerIds = ownerChanged ? newOwnerIds.filter(id => !oldOwnerIds.includes(id)) : [];
+    const addedCcIds = hasCc ? ccList.map(c => c.id).filter(id => !oldCcIds.includes(id)) : [];
+    if (addedOwnerIds.length || addedCcIds.length) {
+      notifyListingDelta(lb.id, lb.batch_no, addedOwnerIds, addedCcIds, lb.eta_date || '').catch(() => {});
+    }
+
     res.json({ success: true, listing_status: newStatus, listing_owner_ids: newOwnerIds, status_changed: statusChanged, owner_changed: ownerChanged });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+}));
+
+// 手动发送上架提醒：收件人 = 当前物流单的上架负责人 + 抄送(CC)，复用现有 notifyBusinessParticipants（logistics_listing_manual_reminder 模板）。
+// 正文含关联CI 与 当前负责人，供运营补发提醒 / 测试飞书链路 / 防止遗漏。不影响其他通知逻辑。
+app.post('/api/logistics-batches/:id/notify', requireApiPermission('logistics_edit'), asyncHandler((req, res) => {
+  try {
+    const lb = queryOne('SELECT * FROM logistics_batches WHERE id = ?', [req.params.id]);
+    if (!lb) return res.status(404).json({ error: '物流单不存在' });
+    const relatedCi = lb.related_ci_no || '-';
+    const currentOwners = resolveOwnerNames(splitIdCsv(lb.listing_owner_ids)).join('、') || '-';
+    notifyBusinessParticipants('logistics', lb.id, 'logistics_listing_manual_reminder', { code: lb.batch_no, plan_date: lb.eta_date || '', related_ci: relatedCi, current_owners: currentOwners }).catch(() => {});
+    res.json({ success: true, notified: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
