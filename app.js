@@ -8146,7 +8146,8 @@ async function editPI(id){
       +t('gen.L5471.1','<div class="form-group"><label>关联PO（锁定）</label><input type="text" value="')+esc(pi.related_po_no||t("app.140", "\u65e0\u5173\u8054"))+'" disabled></div>'
       +t('gen.L5472.1','<div class="form-group"><label>供应商（锁定）</label><select id="npi-sup" disabled onchange="onPISupplierChange()">')+supOpts+'</select></div>'
       +t('gen.L5473.1','<div class="form-group"><label>PI日期</label><input type="date" id="npi-date" value="')+esc(pi.pi_date||'')+'"></div>'
-      +t('gen.L5474.1','<div class="form-group"><label>币种</label><select id="npi-cur">')+curOpts+'</select></div>'
+      +t('gen.L5474.1','<div class="form-group"><label>币种</label><select id="npi-cur"')+((pi.deposit_payment_status==='pending_approval')?' disabled':'')+'>'+curOpts+'</select>'
+      +((pi.deposit_payment_status==='pending_approval')?'<div class="form-hint" style="color:#fa8c16;font-size:12px">'+t('pi.currency.locked_hint','定金审批中，币种不可修改')+'</div>':'')+'</div>'
       +t('gen.L5475.1','<div class="form-group"><label>是否需要定金</label><select id="npi-need-dep" onchange="togglePIDeposit()"><option value="1"')+(piNeedsDeposit(pi.need_deposit)?' selected':'')+t('gen.L5475.2','>是</option><option value="0"')+(!piNeedsDeposit(pi.need_deposit)?' selected':'')+t('gen.L5475.3','>否</option></select></div>')
       +t('gen.L5476.1','<div class="form-group"><label>定金比例(%)</label><input type="number" id="npi-dep" value="')+(pi.deposit_ratio||0)+'"></div>'
       +t('gen.L5477.1','<div class="form-group"><label>预计交期</label><input type="date" id="npi-del" value="')+esc(pi.expected_delivery||'')+'"></div>'

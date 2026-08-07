@@ -6171,6 +6171,10 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
     });
     // brand/country/target_warehouse/currency 编辑规则：PI 未进入后续业务链路（未生成 CI/PL/未付定金/未作废）才可改，
     // 锁定守卫已在前面 getPILockReason 拦截；PO→PI 继承仅在 PI 创建时发生，编辑时 PI 作为供应商正式文件可独立修正
+    // 字段级守卫：定金审批中（pending_approval）禁止修改 currency，避免 PI/应付/付款申请币种不一致
+    if (d.currency !== undefined && d.currency !== pi.currency && pi.deposit_payment_status === 'pending_approval') {
+      return res.status(409).json({ error: '该 PI 有定金付款审批中，不可修改币种', locked: true, field: 'currency' });
+    }
     ['brand', 'country', 'target_warehouse', 'currency'].forEach(f => {
       if (d[f] !== undefined) { fields.push(`${f} = ?`); values.push(d[f]); }
     });
@@ -11584,10 +11588,8 @@ app.post('/api/payment-requests/:id/approve', requireApiPermission('payment_appr
           await run(`UPDATE approval_records SET status = ?, approval_history = ?, updated_at = datetime('now') WHERE id = ?`, ['rejected', JSON.stringify(history), approval.id]);
           await run(`UPDATE payment_requests SET approval_status = ?, approval_remark = ?, approver_name = ?, approved_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`, ['rejected', apprRemark, userName, req.params.id]);
           await recalculatePaymentSettlement(req.params.id);
-          // PAY-CORE Phase 1.5 Task 2：multi 模式 reject 时释放 payable_items（业务规则 7）
-          if (payment.payment_mode === 'multi') {
-            releasePayableItemsByPR(req.params.id);
-          }
+          // reject 时释放关联的 payable_items（reserved → active），single / multi 均执行
+          releasePayableItemsByPR(req.params.id);
         });
         notifyPaymentApprovalParticipants(approval.id, 'reject', Object.assign({}, notifyCtx, { approver: userName, remark: apprRemark })).catch(() => {});
       }
@@ -11629,10 +11631,8 @@ app.post('/api/payment-requests/:id/approve', requireApiPermission('payment_appr
            JSON.stringify([{level:1, approver_id: req.currentUserId, approver_name: userName}]),
            JSON.stringify([{level:1, action:'reject', user_id: req.currentUserId, user_name: userName, time: new Date().toISOString(), remark: apprRemark}])]);
         await recalculatePaymentSettlement(req.params.id);
-        // PAY-CORE Phase 1.5 Task 2：multi 模式 reject 时释放 payable_items（业务规则 7）
-        if (payment.payment_mode === 'multi') {
-          releasePayableItemsByPR(req.params.id);
-        }
+        // reject 时释放关联的 payable_items（reserved → active），single / multi 均执行
+        releasePayableItemsByPR(req.params.id);
       });
     }
     res.set('Deprecation', 'true');
