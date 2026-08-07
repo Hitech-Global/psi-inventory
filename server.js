@@ -885,7 +885,7 @@ function bgClear(ip, username) { bgFailTracker.delete(bgFailKey(ip, username)); 
 
 // ==================== 配置 ====================
 const PORT = process.env.PORT || 3001;
-const APP_VERSION = '1.0.14';
+const APP_VERSION = '1.0.15';
 // 发布可核对信息：部署时间（进程启动时间 ≈ 部署时间）+ git commit
 // （Render 自动注入 RENDER_GIT_COMMIT；否则回退本地 git rev-parse；都不可用则标记 unknown）
 const APP_STARTED_AT = new Date().toISOString();
