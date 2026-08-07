@@ -1363,6 +1363,12 @@ async function initDatabase() {
   await exec("ALTER TABLE logistics_batches ADD COLUMN IF NOT EXISTS listing_status_updated_at TEXT NOT NULL DEFAULT ''");
   await exec("ALTER TABLE logistics_batches ADD COLUMN IF NOT EXISTS listing_remind_date TEXT NOT NULL DEFAULT ''");
   await exec("ALTER TABLE logistics_batches ADD COLUMN IF NOT EXISTS listing_eta_remind_date TEXT NOT NULL DEFAULT ''");
+  // LOGISTICS-LISTING-01（2026-08-07 调整）：上架负责人 owner 单选 → 多选。
+  // listing_owner_id（单列）→ listing_owner_ids（逗号分隔多 ID）；回填后删除旧单列。
+  // 负责人事实仍存于 business_participants(participant_type='owner')，可一行多人。
+  await exec("ALTER TABLE logistics_batches ADD COLUMN IF NOT EXISTS listing_owner_ids TEXT NOT NULL DEFAULT ''");
+  await exec("UPDATE logistics_batches SET listing_owner_ids = listing_owner_id WHERE listing_owner_ids = '' AND listing_owner_id IS NOT NULL AND listing_owner_id <> ''");
+  await exec("ALTER TABLE logistics_batches DROP COLUMN IF EXISTS listing_owner_id");
 
   await exec(`
     CREATE TABLE IF NOT EXISTS inbound_records (

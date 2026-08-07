@@ -2245,6 +2245,23 @@ function initDatabase() {
     }
   })();
 
+  // LOGISTICS-LISTING-01（2026-08-07 调整）：上架负责人 owner 单选 → 多选。
+  // listing_owner_id（单列）→ listing_owner_ids（逗号分隔多 ID）；回填后删除旧单列。
+  // 负责人事实仍存于 business_participants(participant_type='owner')，可一行多人。
+  (function logisticsListingOwnerMultiMigration() {
+    const d = getDB();
+    const cols = d.prepare(`PRAGMA table_info(logistics_batches)`).all().map(c => c.name);
+    if (!cols.includes('listing_owner_ids')) {
+      d.exec(`ALTER TABLE logistics_batches ADD COLUMN listing_owner_ids TEXT NOT NULL DEFAULT ''`);
+    }
+    if (cols.includes('listing_owner_id')) {
+      // 回填：旧单列 → 新多列（仅在尚未回填时）
+      d.exec(`UPDATE logistics_batches SET listing_owner_ids = listing_owner_id WHERE listing_owner_ids = '' AND listing_owner_id IS NOT NULL AND listing_owner_id <> ''`);
+      // 删除旧单列（SQLite 3.35+ 支持 DROP COLUMN；旧版本忽略）
+      try { d.exec(`ALTER TABLE logistics_batches DROP COLUMN listing_owner_id`); } catch (e) { /* 不支持则保留 */ }
+    }
+  })();
+
   // ==================== 插入默认数据 ====================
 
   // 默认角色

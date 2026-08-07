@@ -594,6 +594,18 @@ function parseDbTimeMs(s) {
   return Number.isNaN(ms) ? 0 : ms;
 }
 
+// LOGISTICS-LISTING-01（2026-08-07 调整）：owner 多选，listing_owner_ids 为逗号分隔多 ID。
+function splitIdCsv(s) {
+  if (!s) return [];
+  return String(s).split(',').map(x => String(x).trim()).filter(Boolean);
+}
+function resolveOwnerNames(ids) {
+  return (ids || []).map(id => {
+    const u = queryOne('SELECT name FROM users WHERE id = ?', [id]);
+    return (u && u.name) || id;
+  });
+}
+
 // ④ LOGISTICS-LISTING-01：Listing 上架状态提醒扫描（仅 server.js；复用 sendFeishuTextMessage；best-effort；不改 listing_status）
 // 收件人 = 该物流单的上架负责人 + CC（business_participants business_type='logistics'），每单独立解析。
 // 规则 A（停滞）：非终态且距 listing_status_updated_at（回退 created_at）≥ 2 天 → 提醒；哨兵 listing_remind_date。
@@ -608,7 +620,7 @@ async function scanListingReminders() {
 
     // 粗筛排除终态；精确日期判断放 JS 层，规避 SQLite/PG 日期函数方言差异
     const rows = query(
-      `SELECT id, batch_no, eta_date, listing_status, listing_owner_id, listing_status_updated_at,
+      `SELECT id, batch_no, eta_date, listing_status, listing_owner_ids, listing_status_updated_at,
               listing_remind_date, listing_eta_remind_date, created_at
        FROM logistics_batches
        WHERE listing_status IS NULL OR listing_status != ?`,
@@ -618,7 +630,8 @@ async function scanListingReminders() {
     for (const lb of rows) {
       const status = lb.listing_status || 'pending_plan';
       if (LISTING_TERMINAL.includes(status)) continue;
-      if (!lb.listing_owner_id) { result.skipped_no_owner += 1; continue; }
+      const ownerIds = splitIdCsv(lb.listing_owner_ids);
+      if (ownerIds.length === 0) { result.skipped_no_owner += 1; continue; }
 
       // 收件人每单独立解析，避免跨单累积（与付款扫描的全局 Map 写法刻意不同）
       const recipients = new Map(); // open_id -> { name, lang }
@@ -629,7 +642,7 @@ async function scanListingReminders() {
           recipients.set(u.feishu_open_id, { name: u.name || '', lang: normalizeLanguage(u.language_preference) });
         }
       };
-      addUser(lb.listing_owner_id);
+      ownerIds.forEach(id => addUser(id));
       const ccRows = query('SELECT user_id FROM business_participants WHERE business_type=? AND business_id=? AND participant_type=?', ['logistics', lb.id, 'cc']).rows;
       for (const r of ccRows) addUser(r.user_id);
       if (recipients.size === 0) { result.skipped_no_feishu += 1; continue; }
@@ -7166,8 +7179,8 @@ app.post('/api/packing-lists/batch-import', requireApiPermission('ci_create'), a
 // ==================== 物流批次 ====================
 app.get('/api/logistics-batches', requireApiPermission('logistics_view'), asyncHandler((req, res) => {
   const { logistics_display_status, keyword, forwarder_id, listing_status } = req.query;
-  // LOGISTICS-LISTING-01：LEFT JOIN users 回填上架负责人姓名（listing_owner_name），供列表直接展示
-  let sql = 'SELECT lb.*, pl.pl_no, pl.id AS pl_id, pl.status AS pl_status, lu.name AS listing_owner_name FROM logistics_batches lb LEFT JOIN packing_lists pl ON pl.logistics_batch_id = lb.id LEFT JOIN users lu ON lu.id = lb.listing_owner_id WHERE 1=1';
+  // LOGISTICS-LISTING-01（2026-08-07 owner 多选）：listing_owner_ids 为逗号分隔多 ID，姓名由 resolveOwnerNames 解析，避免对逗号列表做 JOIN
+  let sql = 'SELECT lb.*, pl.pl_no, pl.id AS pl_id, pl.status AS pl_status, lb.listing_owner_ids FROM logistics_batches lb LEFT JOIN packing_lists pl ON pl.logistics_batch_id = lb.id WHERE 1=1';
   const params = [];
   if (forwarder_id) { sql += ' AND lb.forwarder_id = ?'; params.push(forwarder_id); }
   if (keyword) { sql += ' AND (lb.batch_no LIKE ? OR lb.forwarder_name LIKE ? OR lb.related_ci_no LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`); }
@@ -7200,9 +7213,11 @@ app.get('/api/logistics-batches', requireApiPermission('logistics_view'), asyncH
   rows = rows.filter(r => {
     r.logistics_display_status = deriveLogisticsDisplayStatus(r.logistics_status);
     r.inbound_derived_status = r.related_ci_id ? (ciInboundMap[r.related_ci_id] || 'none') : 'none';
-    // LOGISTICS-LISTING-01：存量物流单（迁移前创建）listing_status 为空时兜底为初始态，避免前端渲染空白
+    // LOGISTICS-LISTING-01（2026-08-07 owner 多选）：listing_owner_ids 解析为数组 + 姓名数组
     if (!r.listing_status) r.listing_status = 'pending_plan';
-    r.listing_owner_name = r.listing_owner_name || '';
+    const oids = splitIdCsv(r.listing_owner_ids);
+    r.listing_owner_ids = oids;
+    r.listing_owner_names = resolveOwnerNames(oids);
     if (logistics_display_status && r.logistics_display_status !== logistics_display_status) return false;
     if (listing_status && r.listing_status !== listing_status) return false;
     return true;
@@ -7227,12 +7242,13 @@ app.get('/api/logistics-batches/:id', requireApiPermission('logistics_view'), as
     else if (totalInbound > 0) inboundDerivedStatus = 'partial';
   }
 
-  res.json({ ...batch, pl_id: pl ? pl.id : '', pl_no: pl ? pl.pl_no : '', pl_status: pl ? pl.status : '', logistics_display_status: deriveLogisticsDisplayStatus(batch.logistics_status), inbound_derived_status: inboundDerivedStatus });
+  const gOwnerIds = splitIdCsv(batch.listing_owner_ids);
+  res.json({ ...batch, pl_id: pl ? pl.id : '', pl_no: pl ? pl.pl_no : '', pl_status: pl ? pl.status : '', logistics_display_status: deriveLogisticsDisplayStatus(batch.logistics_status), inbound_derived_status: inboundDerivedStatus, listing_owner_ids: gOwnerIds, listing_owner_names: resolveOwnerNames(gOwnerIds) });
 }));
 
 // 注意：这是无前端调用方的遗留裸接口（前端统一走 /create-with-pl）。
-// LOGISTICS-LISTING-01：此处 listing_owner_id 为「可选」而非必填，以免破坏未知的外部/脚本调用方；
-// 传了才校验、写参与人并发通知，不传则 listing_owner_id 留空、不发通知（扫描时会跳过无负责人的单）。
+// LOGISTICS-LISTING-01：此处 listing_owner_ids 为「可选」而非必填，以免破坏未知的外部/脚本调用方；
+// 传了才校验、写参与人并发通知，不传则 listing_owner_ids 留空、不发通知（扫描时会跳过无负责人的单）。
 // 前端入口 /create-with-pl 才是必填校验所在。
 app.post('/api/logistics-batches', requireApiPermission('logistics_create'), asyncHandler((req, res) => {
   try {
@@ -7241,19 +7257,23 @@ app.post('/api/logistics-batches', requireApiPermission('logistics_create'), asy
     const bNo = d.batch_no || `LOG-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
     const totalFreight = (d.international_freight || 0) + (d.local_charges || 0) + (d.customs_service_fee || 0) + (d.delivery_fee || 0);
 
-    const bareOwnerId = (d.listing_owner_id || '').toString().trim();
-    let bareOwner = null;
-    if (bareOwnerId) {
-      bareOwner = queryOne('SELECT id, name, status FROM users WHERE id = ?', [bareOwnerId]);
-      if (!bareOwner) return res.status(400).json({ error: '上架负责人不存在' });
-      if (bareOwner.status !== 'active') return res.status(400).json({ error: '上架负责人已停用' });
+    // LOGISTICS-LISTING-01（2026-08-07 owner 多选）：遗留裸接口保持可选——传了 listing_owner_ids 才校验/写参与人/通知
+    const bareOwnerIds = Array.isArray(d.listing_owner_ids) ? d.listing_owner_ids.map(s => String(s).trim()).filter(Boolean) : [];
+    const bareOwners = [];
+    for (const oid of bareOwnerIds) {
+      const u = queryOne('SELECT id, name, status FROM users WHERE id = ?', [oid]);
+      if (!u) return res.status(400).json({ error: '上架负责人不存在' });
+      if (u.status !== 'active') return res.status(400).json({ error: '上架负责人已停用' });
+      bareOwners.push(u);
     }
-    run(`INSERT INTO logistics_batches (id, batch_no, related_ci_id, related_ci_no, forwarder_id, forwarder_name, transport_mode, origin_port, dest_port, target_country, target_warehouse, pickup_date, depart_date, eta_date, actual_arrival_date, customs_start_date, customs_end_date, delivery_date, inbound_complete_date, logistics_status, total_cartons, total_weight, total_cbm, freight_currency, international_freight, local_charges, customs_service_fee, delivery_fee, total_freight, customs_duty, vat_gst, other_fees, fee_status, remark, listing_status, listing_owner_id, listing_status_updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [bId, bNo, d.related_ci_id || '', d.related_ci_no || '', d.forwarder_id || '', d.forwarder_name || '', d.transport_mode || 'sea', d.origin_port || '', d.dest_port || '', d.target_country || '', d.target_warehouse || '', d.pickup_date || '', d.depart_date || '', d.eta_date || '', d.actual_arrival_date || '', d.customs_start_date || '', d.customs_end_date || '', d.delivery_date || '', d.inbound_complete_date || '', d.logistics_status || 'pending', d.total_cartons || 0, d.total_weight || 0, d.total_cbm || 0, d.freight_currency || 'USD', d.international_freight || 0, d.local_charges || 0, d.customs_service_fee || 0, d.delivery_fee || 0, totalFreight, d.customs_duty || 0, d.vat_gst || 0, d.other_fees || 0, d.fee_status || 'unpaid', d.remark || '', 'pending_plan', bareOwnerId, new Date().toISOString().slice(0, 19).replace('T', ' ')]);
+    run(`INSERT INTO logistics_batches (id, batch_no, related_ci_id, related_ci_no, forwarder_id, forwarder_name, transport_mode, origin_port, dest_port, target_country, target_warehouse, pickup_date, depart_date, eta_date, actual_arrival_date, customs_start_date, customs_end_date, delivery_date, inbound_complete_date, logistics_status, total_cartons, total_weight, total_cbm, freight_currency, international_freight, local_charges, customs_service_fee, delivery_fee, total_freight, customs_duty, vat_gst, other_fees, fee_status, remark, listing_status, listing_owner_ids, listing_status_updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [bId, bNo, d.related_ci_id || '', d.related_ci_no || '', d.forwarder_id || '', d.forwarder_name || '', d.transport_mode || 'sea', d.origin_port || '', d.dest_port || '', d.target_country || '', d.target_warehouse || '', d.pickup_date || '', d.depart_date || '', d.eta_date || '', d.actual_arrival_date || '', d.customs_start_date || '', d.customs_end_date || '', d.delivery_date || '', d.inbound_complete_date || '', d.logistics_status || 'pending', d.total_cartons || 0, d.total_weight || 0, d.total_cbm || 0, d.freight_currency || 'USD', d.international_freight || 0, d.local_charges || 0, d.customs_service_fee || 0, d.delivery_fee || 0, totalFreight, d.customs_duty || 0, d.vat_gst || 0, d.other_fees || 0, d.fee_status || 'unpaid', d.remark || '', 'pending_plan', bareOwnerIds.join(','), new Date().toISOString().slice(0, 19).replace('T', ' ')]);
 
-    if (bareOwner) {
-      run('INSERT INTO business_participants (id, business_type, business_id, participant_type, user_id, user_name) VALUES (?, ?, ?, ?, ?, ?)',
-        [genId('bp'), 'logistics', bId, 'owner', bareOwnerId, bareOwner.name || '']);
+    if (bareOwners.length > 0) {
+      for (const ow of bareOwners) {
+        run('INSERT INTO business_participants (id, business_type, business_id, participant_type, user_id, user_name) VALUES (?, ?, ?, ?, ?, ?)',
+          [genId('bp'), 'logistics', bId, 'owner', ow.id, ow.name || '']);
+      }
       notifyBusinessParticipants('logistics', bId, 'logistics_listing_created', { code: bNo, plan_date: d.eta_date || '' }).catch(() => {});
     }
     res.json({ id: bId, batch_no: bNo, ...d, total_freight: totalFreight });
@@ -7298,20 +7318,21 @@ app.post('/api/logistics-batches/create-with-pl', requireApiPermission('logistic
       if (qty <= 0) return res.status(400).json({ error: `SKU ${item.sku_code} 的数量必须大于 0` });
     }
 
-    // LOGISTICS-LISTING-01：上架负责人可选（业务上创建阶段不强制指定，由运营后续维护上架状态）。
-    // 传了才校验存在性与状态、写参与人并发通知；不传则 listing_owner_id 留空、跳过该通知。
-    const listingOwnerId = (d.listing_owner_id || '').toString().trim();
-    let listingOwner = null;
-    if (listingOwnerId) {
-      listingOwner = queryOne('SELECT id, name, status FROM users WHERE id = ?', [listingOwnerId]);
-      if (!listingOwner) return res.status(400).json({ error: '上架负责人不存在' });
-      if (listingOwner.status !== 'active') return res.status(400).json({ error: '上架负责人已停用' });
+    // LOGISTICS-LISTING-01（2026-08-07 owner 多选）：上架负责人支持多选且至少选择 1 人（运营协作承担上架责任）。
+    const ownerIds = Array.isArray(d.listing_owner_ids) ? d.listing_owner_ids.map(s => String(s).trim()).filter(Boolean) : [];
+    if (ownerIds.length === 0) return res.status(400).json({ error: '上架负责人至少选择 1 人' });
+    const listingOwners = [];
+    for (const oid of ownerIds) {
+      const u = queryOne('SELECT id, name, status FROM users WHERE id = ?', [oid]);
+      if (!u) return res.status(400).json({ error: '上架负责人不存在' });
+      if (u.status !== 'active') return res.status(400).json({ error: '上架负责人已停用' });
+      listingOwners.push(u);
     }
 
     // CC 校验（可选，去重；停用用户直接拒绝，与 CI ops-prep 行为对齐）
     const listingCcRaw = Array.isArray(d.listing_cc_user_ids) ? d.listing_cc_user_ids : [];
     const listingCcList = [];
-    const listingCcSeen = new Set([listingOwnerId]);
+    const listingCcSeen = new Set(ownerIds);
     for (const raw of listingCcRaw) {
       const uid = (raw || '').toString().trim();
       if (!uid || listingCcSeen.has(uid)) continue;
@@ -7380,13 +7401,13 @@ app.post('/api/logistics-batches/create-with-pl', requireApiPermission('logistic
       // ====== 步骤 5: 创建物流批次 ======
       // LOGISTICS-LISTING-01：listing_status 恒以 'pending_plan'（待提交上架计划）初始化，不接受前端指定；
       // listing_status_updated_at 以创建时刻为停滞提醒的首个计算基准。
-      run(`INSERT INTO logistics_batches (id, batch_no, related_ci_id, related_ci_no, forwarder_id, forwarder_name, transport_mode, origin_port, dest_port, target_country, target_warehouse, pickup_date, depart_date, eta_date, actual_arrival_date, customs_start_date, customs_end_date, delivery_date, inbound_complete_date, logistics_status, total_cartons, total_weight, total_cbm, freight_currency, international_freight, local_charges, customs_service_fee, delivery_fee, total_freight, customs_duty, vat_gst, other_fees, fee_status, remark, listing_status, listing_owner_id, listing_status_updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [bId, bNo, d.related_ci_id, d.related_ci_no || ci.ci_no || '', d.forwarder_id || '', d.forwarder_name || '', d.transport_mode || 'sea', d.origin_port || '', d.dest_port || '', d.target_country || ci.country || '', d.target_warehouse || ci.target_warehouse || '', d.pickup_date || '', d.depart_date || '', d.eta_date || '', d.actual_arrival_date || '', d.customs_start_date || '', d.customs_end_date || '', d.delivery_date || '', d.inbound_complete_date || '', d.logistics_status || 'pending', totalCartons, totalGross, totalCbm, d.freight_currency || 'USD', d.international_freight || 0, d.local_charges || 0, d.customs_service_fee || 0, d.delivery_fee || 0, totalFreight, d.customs_duty || 0, d.vat_gst || 0, d.other_fees || 0, d.fee_status || 'unpaid', d.remark || '', 'pending_plan', listingOwnerId, new Date().toISOString().slice(0, 19).replace('T', ' ')]);
+      run(`INSERT INTO logistics_batches (id, batch_no, related_ci_id, related_ci_no, forwarder_id, forwarder_name, transport_mode, origin_port, dest_port, target_country, target_warehouse, pickup_date, depart_date, eta_date, actual_arrival_date, customs_start_date, customs_end_date, delivery_date, inbound_complete_date, logistics_status, total_cartons, total_weight, total_cbm, freight_currency, international_freight, local_charges, customs_service_fee, delivery_fee, total_freight, customs_duty, vat_gst, other_fees, fee_status, remark, listing_status, listing_owner_ids, listing_status_updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [bId, bNo, d.related_ci_id, d.related_ci_no || ci.ci_no || '', d.forwarder_id || '', d.forwarder_name || '', d.transport_mode || 'sea', d.origin_port || '', d.dest_port || '', d.target_country || ci.country || '', d.target_warehouse || ci.target_warehouse || '', d.pickup_date || '', d.depart_date || '', d.eta_date || '', d.actual_arrival_date || '', d.customs_start_date || '', d.customs_end_date || '', d.delivery_date || '', d.inbound_complete_date || '', d.logistics_status || 'pending', totalCartons, totalGross, totalCbm, d.freight_currency || 'USD', d.international_freight || 0, d.local_charges || 0, d.customs_service_fee || 0, d.delivery_fee || 0, totalFreight, d.customs_duty || 0, d.vat_gst || 0, d.other_fees || 0, d.fee_status || 'unpaid', d.remark || '', 'pending_plan', ownerIds.join(','), new Date().toISOString().slice(0, 19).replace('T', ' ')]);
 
-      // LOGISTICS-LISTING-01：写入上架参与人（owner + cc），复用通用 business_participants 表
-      if (listingOwnerId && listingOwner) {
+      // LOGISTICS-LISTING-01（2026-08-07 owner 多选）：写入上架参与人（多个 owner + cc），复用通用 business_participants 表
+      for (const ow of listingOwners) {
         run('INSERT INTO business_participants (id, business_type, business_id, participant_type, user_id, user_name) VALUES (?, ?, ?, ?, ?, ?)',
-          [genId('bp'), 'logistics', bId, 'owner', listingOwnerId, listingOwner.name || '']);
+          [genId('bp'), 'logistics', bId, 'owner', ow.id, ow.name || '']);
       }
       for (const c of listingCcList) {
         run('INSERT INTO business_participants (id, business_type, business_id, participant_type, user_id, user_name) VALUES (?, ?, ?, ?, ?, ?)',
@@ -7479,7 +7500,8 @@ app.get('/api/logistics-batches/:id/listing', requireApiPermission('logistics_vi
     const lb = queryOne('SELECT * FROM logistics_batches WHERE id = ?', [req.params.id]);
     if (!lb) return res.status(404).json({ error: '物流单不存在' });
     const cc = query('SELECT user_id, user_name FROM business_participants WHERE business_type=? AND business_id=? AND participant_type=?', ['logistics', lb.id, 'cc']).rows;
-    const ownerName = lb.listing_owner_id ? ((queryOne('SELECT name FROM users WHERE id=?', [lb.listing_owner_id]) || {}).name || '') : '';
+    const gOwnerIds = splitIdCsv(lb.listing_owner_ids);
+    const ownerNames = resolveOwnerNames(gOwnerIds);
     // 变更历史：从 operation_logs 反查（target_ids 是 JSON 数组字符串，用 LIKE 匹配本单 id）
     const history = query(
       `SELECT operator_name, operation_type, old_values, new_values, created_at FROM operation_logs
@@ -7495,8 +7517,8 @@ app.get('/api/logistics-batches/:id/listing', requireApiPermission('logistics_vi
       batch_no: lb.batch_no,
       eta_date: lb.eta_date || '',
       listing_status: lb.listing_status || 'pending_plan',
-      listing_owner_id: lb.listing_owner_id || '',
-      listing_owner_name: ownerName,
+      listing_owner_ids: gOwnerIds,
+      listing_owner_names: ownerNames,
       listing_status_updated_at: lb.listing_status_updated_at || '',
       cc: cc.map(r => ({ user_id: r.user_id, user_name: r.user_name })),
       history
@@ -7511,7 +7533,7 @@ app.post('/api/logistics-batches/:id/listing', requireApiPermission('logistics_e
     if (!lb) return res.status(404).json({ error: '物流单不存在' });
 
     const hasStatus = Object.prototype.hasOwnProperty.call(req.body, 'listing_status');
-    const hasOwner = Object.prototype.hasOwnProperty.call(req.body, 'listing_owner_id');
+    const hasOwner = Object.prototype.hasOwnProperty.call(req.body, 'listing_owner_ids');
     const hasCc = Object.prototype.hasOwnProperty.call(req.body, 'listing_cc_user_ids');
     if (!hasStatus && !hasOwner && !hasCc) return res.status(400).json({ error: '未提供任何可修改字段' });
 
@@ -7521,21 +7543,25 @@ app.post('/api/logistics-batches/:id/listing', requireApiPermission('logistics_e
       return res.status(400).json({ error: '非法的上架状态：' + newStatus });
     }
 
-    const oldOwnerId = lb.listing_owner_id || '';
-    let newOwnerId = oldOwnerId;
-    let newOwner = null;
+    const oldOwnerIds = splitIdCsv(lb.listing_owner_ids);
+    const oldOwnerKey = oldOwnerIds.join(',');
+    let newOwnerIds = oldOwnerIds;
+    let newOwners = [];
     if (hasOwner) {
-      newOwnerId = (req.body.listing_owner_id || '').toString().trim();
-      if (!newOwnerId) return res.status(400).json({ error: '上架负责人不能为空' });
-      newOwner = queryOne('SELECT id, name, status FROM users WHERE id = ?', [newOwnerId]);
-      if (!newOwner) return res.status(400).json({ error: '上架负责人不存在' });
-      if (newOwner.status !== 'active') return res.status(400).json({ error: '上架负责人已停用' });
+      newOwnerIds = Array.isArray(req.body.listing_owner_ids) ? req.body.listing_owner_ids.map(s => String(s).trim()).filter(Boolean) : [];
+      if (newOwnerIds.length === 0) return res.status(400).json({ error: '上架负责人至少选择 1 人' });
+      for (const oid of newOwnerIds) {
+        const u = queryOne('SELECT id, name, status FROM users WHERE id = ?', [oid]);
+        if (!u) return res.status(400).json({ error: '上架负责人不存在' });
+        if (u.status !== 'active') return res.status(400).json({ error: '上架负责人已停用' });
+        newOwners.push(u);
+      }
     }
 
     const ccList = [];
     if (hasCc) {
       const raws = Array.isArray(req.body.listing_cc_user_ids) ? req.body.listing_cc_user_ids : [];
-      const seen = new Set([newOwnerId]);
+      const seen = new Set(newOwnerIds);
       for (const raw of raws) {
         const uid = (raw || '').toString().trim();
         if (!uid || seen.has(uid)) continue;
@@ -7548,7 +7574,7 @@ app.post('/api/logistics-batches/:id/listing', requireApiPermission('logistics_e
     }
 
     const statusChanged = hasStatus && newStatus !== oldStatus;
-    const ownerChanged = hasOwner && newOwnerId !== oldOwnerId;
+    const ownerChanged = hasOwner && newOwnerIds.join(',') !== oldOwnerKey;
     const nowStr = new Date().toISOString().slice(0, 19).replace('T', ' ');
 
     transaction(() => {
@@ -7559,10 +7585,12 @@ app.post('/api/logistics-batches/:id/listing', requireApiPermission('logistics_e
           [newStatus, nowStr, '', '', nowStr, lb.id]);
       }
       if (ownerChanged) {
-        run('UPDATE logistics_batches SET listing_owner_id = ?, updated_at = ? WHERE id = ?', [newOwnerId, nowStr, lb.id]);
+        run('UPDATE logistics_batches SET listing_owner_ids = ?, updated_at = ? WHERE id = ?', [newOwnerIds.join(','), nowStr, lb.id]);
         run('DELETE FROM business_participants WHERE business_type=? AND business_id=? AND participant_type=?', ['logistics', lb.id, 'owner']);
-        run('INSERT INTO business_participants (id, business_type, business_id, participant_type, user_id, user_name) VALUES (?, ?, ?, ?, ?, ?)',
-          [genId('bp'), 'logistics', lb.id, 'owner', newOwnerId, (newOwner && newOwner.name) || '']);
+        for (const ow of newOwners) {
+          run('INSERT INTO business_participants (id, business_type, business_id, participant_type, user_id, user_name) VALUES (?, ?, ?, ?, ?, ?)',
+            [genId('bp'), 'logistics', lb.id, 'owner', ow.id, ow.name || '']);
+        }
       }
       if (hasCc) {
         run('DELETE FROM business_participants WHERE business_type=? AND business_id=? AND participant_type=?', ['logistics', lb.id, 'cc']);
@@ -7586,18 +7614,19 @@ app.post('/api/logistics-batches/:id/listing', requireApiPermission('logistics_e
       });
     }
     if (ownerChanged) {
-      const oldOwnerName = oldOwnerId ? ((queryOne('SELECT name FROM users WHERE id=?', [oldOwnerId]) || {}).name || '') : '';
+      const oldOwnerNames = resolveOwnerNames(oldOwnerIds);
+      const newOwnerNames = resolveOwnerNames(newOwnerIds);
       logOperation({
         operator_id: req.currentUserId, operator_name: req.currentUserName,
         page: 'logistics', operation_type: 'listing_owner_change',
         target_ids: [lb.id], affected_count: 1,
-        old_values: { listing_owner_id: oldOwnerId, listing_owner_name: oldOwnerName },
-        new_values: { listing_owner_id: newOwnerId, listing_owner_name: (newOwner && newOwner.name) || '', batch_no: lb.batch_no },
+        old_values: { listing_owner_ids: oldOwnerIds, listing_owner_names: oldOwnerNames },
+        new_values: { listing_owner_ids: newOwnerIds, listing_owner_names: newOwnerNames, batch_no: lb.batch_no },
         reason: (req.body.reason || '').toString(), triggered_recalc: 0, is_rollbackable: 0
       });
     }
 
-    res.json({ success: true, listing_status: newStatus, listing_owner_id: newOwnerId, status_changed: statusChanged, owner_changed: ownerChanged });
+    res.json({ success: true, listing_status: newStatus, listing_owner_ids: newOwnerIds, status_changed: statusChanged, owner_changed: ownerChanged });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
