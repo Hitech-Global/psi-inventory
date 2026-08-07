@@ -171,7 +171,10 @@ if (driver === 'pg') {
         "UPDATE payable_items SET lifecycle_status = 'cancelled' WHERE is_active = 0 AND lifecycle_status = 'active'",
         "ALTER TABLE payable_items ADD COLUMN IF NOT EXISTS payable_date TEXT DEFAULT ''",
         "CREATE INDEX IF NOT EXISTS idx_payable_items_lifecycle ON payable_items(lifecycle_status)",
-        "CREATE INDEX IF NOT EXISTS idx_payable_items_fee_type ON payable_items(fee_type)"
+        "CREATE INDEX IF NOT EXISTS idx_payable_items_fee_type ON payable_items(fee_type)",
+        // DATA-FIX: PI 币种变更后 payable_items.currency 未同步的存量修复
+        // 仅修复 active/reserved（paid 已结算不碰）；幂等（currency 一致时 0 行受影响）
+        "UPDATE payable_items SET currency = pi.currency FROM proforma_invoices pi WHERE payable_items.source_type = 'pi' AND payable_items.source_id = pi.id AND payable_items.fee_type = 'deposit' AND payable_items.currency != pi.currency AND payable_items.lifecycle_status IN ('active', 'reserved')"
       ];
       for (var i = 0; i < migrations.length; i++) {
         try {
