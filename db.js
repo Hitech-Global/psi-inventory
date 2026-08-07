@@ -150,7 +150,17 @@ if (driver === 'pg') {
         "CREATE TABLE IF NOT EXISTS persistent_logins (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, user_id TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, last_used_at TEXT DEFAULT '', user_agent TEXT DEFAULT '', ip_address TEXT DEFAULT '', revoked INTEGER NOT NULL DEFAULT 0)",
         "CREATE INDEX IF NOT EXISTS idx_persistent_user ON persistent_logins(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_persistent_expires ON persistent_logins(expires_at)",
-        "CREATE INDEX IF NOT EXISTS idx_persistent_token ON persistent_logins(token_hash)"
+        "CREATE INDEX IF NOT EXISTS idx_persistent_token ON persistent_logins(token_hash)",
+        // LOGISTICS-LISTING-01：物流单 Listing 上架状态管理迁移。
+        // 这些 ALTER 原本只写在 db-pg.js 的 initDatabase（worker_threads 模式下是死代码、生产从未执行），
+        // 故补到此处的生产实际执行入口（db.js initDatabase 硬编码列表），使生产库补齐缺失列。
+        // 全部幂等（ADD COLUMN IF NOT EXISTS），不影响已有物流数据；
+        // 默认兼容：status 默认 'pending_plan'、其余空串，不改动历史行。
+        "ALTER TABLE logistics_batches ADD COLUMN IF NOT EXISTS listing_status TEXT NOT NULL DEFAULT 'pending_plan'",
+        "ALTER TABLE logistics_batches ADD COLUMN IF NOT EXISTS listing_owner_ids TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE logistics_batches ADD COLUMN IF NOT EXISTS listing_status_updated_at TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE logistics_batches ADD COLUMN IF NOT EXISTS listing_remind_date TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE logistics_batches ADD COLUMN IF NOT EXISTS listing_eta_remind_date TEXT NOT NULL DEFAULT ''"
       ];
       for (var i = 0; i < migrations.length; i++) {
         try {
