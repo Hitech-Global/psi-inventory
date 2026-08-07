@@ -160,7 +160,18 @@ if (driver === 'pg') {
         "ALTER TABLE logistics_batches ADD COLUMN IF NOT EXISTS listing_owner_ids TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE logistics_batches ADD COLUMN IF NOT EXISTS listing_status_updated_at TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE logistics_batches ADD COLUMN IF NOT EXISTS listing_remind_date TEXT NOT NULL DEFAULT ''",
-        "ALTER TABLE logistics_batches ADD COLUMN IF NOT EXISTS listing_eta_remind_date TEXT NOT NULL DEFAULT ''"
+        "ALTER TABLE logistics_batches ADD COLUMN IF NOT EXISTS listing_eta_remind_date TEXT NOT NULL DEFAULT ''",
+        // PAY-CORE：payable_items 后续新增列迁移。
+        // 这些 ALTER / 索引原本只写在 db-pg.js 的 initDatabase（worker_threads 模式下是死代码、生产从未执行），
+        // 故补到此处的生产实际执行入口（db.js initDatabase 硬编码列表），使生产库补齐缺失列。
+        // 全部幂等（ADD COLUMN IF NOT EXISTS / CREATE INDEX IF NOT EXISTS），不影响已有付款数据；
+        // 默认兼容：lifecycle_status 默认 'active'、source_ci_id / payable_date 空串，不改动历史行。
+        "ALTER TABLE payable_items ADD COLUMN IF NOT EXISTS source_ci_id TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE payable_items ADD COLUMN IF NOT EXISTS lifecycle_status TEXT NOT NULL DEFAULT 'active'",
+        "UPDATE payable_items SET lifecycle_status = 'cancelled' WHERE is_active = 0 AND lifecycle_status = 'active'",
+        "ALTER TABLE payable_items ADD COLUMN IF NOT EXISTS payable_date TEXT DEFAULT ''",
+        "CREATE INDEX IF NOT EXISTS idx_payable_items_lifecycle ON payable_items(lifecycle_status)",
+        "CREATE INDEX IF NOT EXISTS idx_payable_items_fee_type ON payable_items(fee_type)"
       ];
       for (var i = 0; i < migrations.length; i++) {
         try {
