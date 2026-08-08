@@ -1236,6 +1236,8 @@ async function initDatabase() {
       sku_code TEXT NOT NULL,
       shipped_qty INTEGER DEFAULT 0,
       unit_price NUMERIC(18,4) DEFAULT 0,
+      discount NUMERIC(18,4) DEFAULT 0,
+      net_unit_price NUMERIC(18,4) DEFAULT 0,
       ci_amount NUMERIC(18,4) DEFAULT 0,
       actual_customs_rate NUMERIC(18,8) DEFAULT NULL,
       inbound_qty INTEGER DEFAULT 0,

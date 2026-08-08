@@ -1048,6 +1048,8 @@ function initDatabase() {
       sku_code TEXT NOT NULL,
       shipped_qty INTEGER DEFAULT 0,
       unit_price REAL DEFAULT 0,
+      discount REAL DEFAULT 0,
+      net_unit_price REAL DEFAULT 0,
       ci_amount REAL DEFAULT 0,
       actual_customs_rate REAL DEFAULT NULL,
       inbound_qty INTEGER DEFAULT 0,
