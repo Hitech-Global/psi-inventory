@@ -10485,7 +10485,7 @@ app.get('/api/payment-requests/by-payable-items', requireApiPermission('payment_
       whereExtra = ` AND pr.payment_status NOT IN ('cancelled','rejected') AND pr.approval_status NOT IN ('cancelled','rejected')`;
     }
     const rows = query(
-      `SELECT DISTINCT pr.id, pr.request_no, pr.payment_status, pr.approval_status, pr.payment_mode
+      `SELECT DISTINCT pr.id, pr.request_no, pr.payment_status, pr.approval_status, pr.payment_mode, pri.payable_item_id AS payable_item_id
        FROM payment_requests pr
        JOIN payment_request_items pri ON pri.payment_request_id = pr.id
        WHERE pri.payable_item_id IN (${placeholders})${whereExtra}
@@ -12924,6 +12924,8 @@ app.get('/api/financial-risk/overview', requireApiPermission('dashboard_view'), 
     `, [today]).rows;
 
     let pay7 = 0, pay30 = 0, pay90 = 0;
+    let pay7Pending = 0, pay30Pending = 0, pay90Pending = 0;
+    let pay7Approved = 0, pay30Approved = 0, pay90Approved = 0;
     const payMissingRates = []; // 记录缺失汇率的付款申请（不静默按1计算）
     for (const pr of payRows) {
       // 优先使用 PAY-CORE 已确认人民币金额
@@ -12941,9 +12943,11 @@ app.get('/api/financial-risk/overview', requireApiPermission('dashboard_view'), 
         }
         unpaidRmb = Number(pr.unpaid_amount) * rate;
       }
-      if (pr.payable_date <= d7) pay7 += unpaidRmb;
-      if (pr.payable_date <= d30) pay30 += unpaidRmb;
-      if (pr.payable_date <= d90) pay90 += unpaidRmb;
+      // 方案A：按审批状态拆分（审批中=pending / 已批准待付款=approved），总额不变
+      const isApproved = pr.approval_status === 'approved';
+      if (pr.payable_date <= d7) { pay7 += unpaidRmb; if (isApproved) pay7Approved += unpaidRmb; else pay7Pending += unpaidRmb; }
+      if (pr.payable_date <= d30) { pay30 += unpaidRmb; if (isApproved) pay30Approved += unpaidRmb; else pay30Pending += unpaidRmb; }
+      if (pr.payable_date <= d90) { pay90 += unpaidRmb; if (isApproved) pay90Approved += unpaidRmb; else pay90Pending += unpaidRmb; }
     }
     if (payMissingRates.length > 0) {
       console.warn('[financial-risk] 未来应付：' + payMissingRates.length + ' 条付款申请缺失汇率，已跳过:', JSON.stringify(payMissingRates));
@@ -12957,9 +12961,9 @@ app.get('/api/financial-risk/overview', requireApiPermission('dashboard_view'), 
       inventory_assets: { value: round2(inventoryAssets), currency: 'CNY' },
       in_transit_assets: { value: round2(inTransitAssets), currency: 'CNY' },
       future_payables: {
-        days_7: { value: round2(pay7), currency: 'CNY' },
-        days_30: { value: round2(pay30), currency: 'CNY' },
-        days_90: { value: round2(pay90), currency: 'CNY' }
+        days_7: { value: round2(pay7), currency: 'CNY', pending: round2(pay7Pending), approved: round2(pay7Approved) },
+        days_30: { value: round2(pay30), currency: 'CNY', pending: round2(pay30Pending), approved: round2(pay30Approved) },
+        days_90: { value: round2(pay90), currency: 'CNY', pending: round2(pay90Pending), approved: round2(pay90Approved) }
       },
       as_of: today
     });

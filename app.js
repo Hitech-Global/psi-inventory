@@ -455,11 +455,20 @@ function setFroPayState(prefix, value){
   var lbl=document.getElementById(prefix+'-status');
   if(lbl) lbl.textContent=st.label;
 }
+// 未来应付卡：审批中 / 已批准待付款 拆分（方案A，纯展示，总额不变）
+function setFroPaySplit(prefix, data){
+  const el=document.getElementById(prefix+'-split');
+  if(!el||!data)return;
+  const pend=Number(data.pending||0), appr=Number(data.approved||0);
+  if(pend<=0&&appr<=0){el.textContent='';return;}
+  el.innerHTML='<span style="color:#f57f17">审批中 ¥'+fmtMoney(pend,'')+'</span> · <span style="color:#1565c0">已批准待付款 ¥'+fmtMoney(appr,'')+'</span>';
+}
 // 未来应付卡片（纯展示：金额 + 待付款事实状态，无风险推断）
 function froPayCard(prefix, label){
   return '<div class="fro-pay-card">'+
     '<div class="fro-pay-top"><span class="fro-pay-status" id="'+prefix+'-status">'+t("common.loading","...")+'</span></div>'+
     '<div class="fro-pay-amount">¥ <span id="'+prefix+'">'+t("common.loading","...")+'</span></div>'+
+    '<div class="fro-pay-split" id="'+prefix+'-split" style="font-size:12px;color:#888;margin-top:4px"></div>'+
     '<div class="fro-pay-label">'+label+'</div>'+
   '</div>';
 }
@@ -531,6 +540,10 @@ async function renderDashboard(){
     setFroPayState('fro-pay7',Number(d.future_payables.days_7.value||0));
     setFroPayState('fro-pay30',Number(d.future_payables.days_30.value||0));
     setFroPayState('fro-pay90',Number(d.future_payables.days_90.value||0));
+    // 资金状态拆分（方案A：审批中 / 已批准待付款），总额不变
+    setFroPaySplit('fro-pay7', d.future_payables.days_7);
+    setFroPaySplit('fro-pay30', d.future_payables.days_30);
+    setFroPaySplit('fro-pay90', d.future_payables.days_90);
     var asOfEl=document.getElementById('fro-as-of');
     if(asOfEl&&d.as_of) asOfEl.textContent=t("fro.as_of","数据截止")+'：'+d.as_of;
   }catch(e){
@@ -1150,12 +1163,20 @@ async function loadApprovalFlows(){
     afRenderAll();
   }catch(e){showFlash(e.message,'danger')}
 }
+// 付款审批流节点语义标签（纯展示，不落库、不进 levels JSON、不改审批引擎）
+// L1=财务审批节点，L2=付款人审批节点（付款执行）；其余业务类型/级次返回空
+function afNodeSemanticLabel(businessType, level){
+  if(businessType!=='payment')return '';
+  if(level===1)return '财务审批节点';
+  if(level===2)return '付款人审批节点（付款执行）';
+  return '';
+}
 // 展示态：业务化卡片（与编辑态分离）
 function afRenderCards(f){
   const st=_afState[f.id]||{};
   const levels=(st.levels||[]).slice().sort((a,b)=>a.level-b.level);
   const nodes=levels.length
-    ? levels.map(lv=>'<div style="margin:4px 0">'+lv.level+' 审批人：'+afApproverName(lv.approver_user_id)+'</div>').join('')
+    ? levels.map(lv=>{const sem=afNodeSemanticLabel(f.business_type,lv.level);const head=sem?('<b>'+lv.level+'级 '+esc(sem)+'</b>'):(lv.level+' 审批人');return '<div style="margin:4px 0">'+head+'：'+afApproverName(lv.approver_user_id)+'</div>';}).join('')
     : '<div class="muted-hint">暂无审批节点，点击「编辑流程」配置</div>';
   return '<div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px;margin-bottom:14px">'+
     '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'+
@@ -1212,7 +1233,7 @@ function afRenderLevels(flowId){
   sorted.forEach(lv=>{
     const opts=cands.map(u=>'<option value="'+esc(u.id)+'" '+(u.id===lv.approver_user_id?'selected':'')+'>'+esc(u.name)+'（'+esc(formatRoleLabel(u.role_id,u.role_name))+'）</option>').join('');
     html+='<div style="display:flex;gap:8px;align-items:center;margin:6px 0">'+
-      '<span style="min-width:64px">'+lv.level+' 级</span>'+
+      '<span style="min-width:64px">'+lv.level+' 级'+(afNodeSemanticLabel(st.business_type,lv.level)?(' · '+esc(afNodeSemanticLabel(st.business_type,lv.level))):'')+'</span>'+
       '<select data-af-user="'+lv.level+'" onchange="afSetUser(\''+esc(flowId)+'\','+lv.level+',this.value)" style="flex:1">'+opts+'</select>'+
       '<button class="btn btn-secondary" onclick="afMoveLevel(\''+esc(flowId)+'\','+lv.level+',-1)" title="上移">↑</button>'+
       '<button class="btn btn-secondary" onclick="afMoveLevel(\''+esc(flowId)+'\','+lv.level+',1)" title="下移">↓</button>'+
