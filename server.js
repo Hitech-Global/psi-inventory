@@ -42,7 +42,9 @@ const {
   notifyT,
   forecastDisplayT,
   paymentBusinessTypeLabel,
-  listingStatusLabel
+  listingStatusLabel,
+  logisticsDisplayStatusLabel,
+  countryLabel
 } = require('./server-i18n');
 
 // ==================== AUTH-FEISHU-CORE 配置与工具 ====================
@@ -268,9 +270,10 @@ async function getFeishuTenantToken() {
 
 // 发送文本消息到指定 open_id。best-effort：测试/演练模式只记录不真实发送；真实模式带 5s 超时。
 // 通用飞书消息发送：支持 open_id（个人）与 chat_id（群）。best-effort：测试/演练模式只记录不真实发送。
-async function sendFeishuMessage(receiveId, receiveIdType, text) {
+// 抽象为统一出口 sendFeishuRaw（msgType + contentObj），text / interactive 共用同一 token、超时与 dry-run 逻辑。
+async function sendFeishuRaw(receiveId, receiveIdType, msgType, contentObj) {
   if (process.env.NODE_ENV === 'test' || process.env.FEISHU_NOTIFY_DRYRUN === '1' || process.env.FEISHU_NOTIFY_FORCE_FAIL === '1') {
-    __feishuDryRunLog.push({ open_id: receiveId, receive_id_type: receiveIdType, text, at: new Date().toISOString(), forced_fail: process.env.FEISHU_NOTIFY_FORCE_FAIL === '1' });
+    __feishuDryRunLog.push({ open_id: receiveId, receive_id_type: receiveIdType, msg_type: msgType, content: contentObj, at: new Date().toISOString(), forced_fail: process.env.FEISHU_NOTIFY_FORCE_FAIL === '1' });
     if (process.env.FEISHU_NOTIFY_FORCE_FAIL === '1') throw new Error('forced feishu failure (test)');
     return { dryrun: true, receive_id: receiveId, receive_id_type: receiveIdType };
   }
@@ -279,12 +282,21 @@ async function sendFeishuMessage(receiveId, receiveIdType, text) {
   const resp = await fetch('https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=' + receiveIdType, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
-    body: JSON.stringify({ receive_id: receiveId, msg_type: 'text', content: JSON.stringify({ text }) }),
+    body: JSON.stringify({ receive_id: receiveId, msg_type: msgType, content: JSON.stringify(contentObj) }),
     signal: AbortSignal.timeout(5000)
   });
   const data = await resp.json();
   if (data.code !== 0) throw new Error('飞书消息发送失败: ' + (data.msg || data.code || 'unknown'));
   return data;
+}
+
+async function sendFeishuMessage(receiveId, receiveIdType, text) {
+  return sendFeishuRaw(receiveId, receiveIdType, 'text', { text });
+}
+
+// 飞书 interactive card 发送（Listing 通知升级卡片展示）。与文本共用同一出口，权限无需新增。
+async function sendFeishuInteractive(receiveId, receiveIdType, card) {
+  return sendFeishuRaw(receiveId, receiveIdType, 'interactive', { card });
 }
 
 async function sendFeishuTextMessage(openId, text) {
@@ -304,6 +316,20 @@ async function notifyFeishuGroups(zhText, enText) {
   for (const chatId of enIds) {
     try { await sendFeishuMessage(chatId, 'chat_id', enText); }
     catch (e) { console.error('[FEISHU-NOTIFY] 群通知(英文)发送失败 chat_id=' + chatId + ':', e.message); }
+  }
+}
+
+// 飞书群卡片通知（可选）：与 notifyFeishuGroups 同源群配置（中文群/英文群），发送 interactive card；两 env 均空则跳过。
+async function notifyFeishuGroupsCard(zhCard, enCard) {
+  const zhIds = (process.env.FEISHU_GROUP_CHAT_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
+  const enIds = (process.env.FEISHU_GROUP_CHAT_IDS_EN || '').split(',').map(s => s.trim()).filter(Boolean);
+  for (const chatId of zhIds) {
+    try { await sendFeishuInteractive(chatId, 'chat_id', zhCard); }
+    catch (e) { console.error('[FEISHU-NOTIFY] 群通知(中文)卡片发送失败 chat_id=' + chatId + ':', e.message); }
+  }
+  for (const chatId of enIds) {
+    try { await sendFeishuInteractive(chatId, 'chat_id', enCard); }
+    catch (e) { console.error('[FEISHU-NOTIFY] 群通知(英文)卡片发送失败 chat_id=' + chatId + ':', e.message); }
   }
 }
 
@@ -356,16 +382,103 @@ function buildListingNotifyTexts(batchNo, ctx) {
   };
 }
 
+// Listing 上架通知 interactive card（飞书卡片）。与 buildListingNotifyBlock 同源 ctx，字段完全一致：
+// Logistics Batch / Brand / Country / Warehouse / Cargo Info(总箱数·总重量·总体积) / Related CI / Current Owners / Current Status。
+// 国家按 lang 调 countryLabel（中文明文、英文 Indonesia），状态按 lang 调 listingStatusLabel（不显示 DB 原值）。
+// 底部 View Logistics Detail 按钮：仅当 APP_BASE_URL 配置时生成（不硬编码域名；未配置则卡片不含按钮，URL 用内部 id 深链 ?page=logistics&batch=<id>）。
+// statusChange（可选）：状态变化通知专用，{ statusType: 'logistics'|'listing', oldStatus: <展示键>, newStatus: <展示键> }。
+// 提供时，「当前状态」字段与新增的 Status Update 段都展示本次变化的（物流展示状态或上架状态），并按 lang 输出对应语言。
+function buildListingNotifyCard(batchNo, ctx, lang, mode, statusChange) {
+  const L = (LISTING_BLOCK_I18N[lang] && LISTING_BLOCK_I18N[lang][mode]) ? LISTING_BLOCK_I18N[lang][mode] : LISTING_BLOCK_I18N.zh.manual;
+  const F = LISTING_BLOCK_FIELDS[lang] || LISTING_BLOCK_FIELDS.zh;
+  const statusField = (lang === 'zh') ? '当前状态' : 'Current Status';
+  const brand = (ctx && ctx.brand) || '-';
+  const country = (ctx && ctx.country) ? countryLabel(lang, ctx.country) : '-';
+  const warehouse = (ctx && ctx.warehouse) || '-';
+  const cartons = (ctx && typeof ctx.total_cartons !== 'undefined') ? (ctx.total_cartons || 0) : '-';
+  const weight = (ctx && typeof ctx.total_weight !== 'undefined') ? (ctx.total_weight || 0) : '-';
+  const cbm = (ctx && typeof ctx.total_cbm !== 'undefined') ? (ctx.total_cbm || 0) : '-';
+  const ci = (ctx && ctx.related_ci) || '-';
+  const owners = (ctx && ctx.current_owners) || '-';
+  let statusValue;
+  if (statusChange) {
+    statusValue = (statusChange.statusType === 'logistics')
+      ? logisticsDisplayStatusLabel(lang, statusChange.newStatus)
+      : listingStatusLabel(lang, statusChange.newStatus);
+  } else {
+    statusValue = (ctx && typeof ctx.listing_status !== 'undefined') ? listingStatusLabel(lang, ctx.listing_status) : '-';
+  }
+  const fields = [
+    { is_short: false, text: { tag: 'lark_md', content: '**' + F.batch + '**\n' + (batchNo || '-') } },
+    { is_short: true, text: { tag: 'lark_md', content: '**' + F.brand + '**\n' + brand } },
+    { is_short: true, text: { tag: 'lark_md', content: '**' + F.country + '**\n' + country } },
+    { is_short: true, text: { tag: 'lark_md', content: '**' + F.warehouse + '**\n' + warehouse } },
+    { is_short: true, text: { tag: 'lark_md', content: '**' + F.cartons + '**\n' + cartons + ' ' + F.cartonUnit } },
+    { is_short: true, text: { tag: 'lark_md', content: '**' + F.weight + '**\n' + weight + ' ' + F.weightUnit } },
+    { is_short: true, text: { tag: 'lark_md', content: '**' + F.cbm + '**\n' + cbm + ' ' + F.cbmUnit } },
+    { is_short: true, text: { tag: 'lark_md', content: '**' + F.ci + '**\n' + ci } },
+    { is_short: false, text: { tag: 'lark_md', content: '**' + F.owners + '**\n' + owners } },
+    { is_short: true, text: { tag: 'lark_md', content: '**' + statusField + '**\n' + statusValue } }
+  ];
+  const elements = [{ tag: 'div', fields: fields }];
+  if (statusChange) {
+    const prevLabel = (lang === 'zh') ? '原状态' : 'Previous Status';
+    const currLabel = (lang === 'zh') ? '新状态' : 'Current Status';
+    const sectionTitle = (lang === 'zh') ? '状态更新' : 'Status Update';
+    const prevVal = (statusChange.statusType === 'logistics')
+      ? logisticsDisplayStatusLabel(lang, statusChange.oldStatus)
+      : listingStatusLabel(lang, statusChange.oldStatus);
+    const currVal = (statusChange.statusType === 'logistics')
+      ? logisticsDisplayStatusLabel(lang, statusChange.newStatus)
+      : listingStatusLabel(lang, statusChange.newStatus);
+    elements.push({
+      tag: 'div',
+      fields: [
+        { is_short: false, text: { tag: 'lark_md', content: '**' + sectionTitle + '**' } },
+        { is_short: true, text: { tag: 'lark_md', content: '**' + prevLabel + '**\n' + prevVal } },
+        { is_short: true, text: { tag: 'lark_md', content: '**' + currLabel + '**\n' + currVal } }
+      ]
+    });
+  }
+  const baseUrl = process.env.APP_BASE_URL;
+  if (baseUrl) {
+    const url = baseUrl.replace(/\/+$/, '') + '/?page=logistics&batch=' + encodeURIComponent(ctx && ctx.id ? ctx.id : (batchNo || ''));
+    elements.push({
+      tag: 'action',
+      actions: [{
+        tag: 'button',
+        text: { tag: 'plain_text', content: (lang === 'zh' ? '查看物流详情' : 'View Logistics Detail') },
+        type: 'primary',
+        url: url
+      }]
+    });
+  }
+  return {
+    config: { wide_screen_mode: true },
+    header: { template: 'blue', title: { tag: 'plain_text', content: L.title } },
+    elements: elements
+  };
+}
+
+// 同时构造中/英两份上架准备卡片（群通知按群语言分别发送 interactive card；个人通知由 notifyBusinessParticipants 按收件人语言构造）
+function buildListingNotifyCards(batchNo, ctx) {
+  return {
+    zh: buildListingNotifyCard(batchNo, ctx, 'zh', 'manual'),
+    en: buildListingNotifyCard(batchNo, ctx, 'en', 'manual')
+  };
+}
+
 // 从物流单主表 + 关联 CI 装载上架通知所需的全部运营字段——个人通知与群通知共用的唯一数据源。
 // brand 来自 CI，其余来自物流单主表；同时返回 code(批次号) 与 plan_date(eta)，供 notifyBusinessParticipants 定位「物流批次」行。
 function loadListingNotifyCtx(batchId) {
   const lbRow = queryOne(
-    'SELECT lb.batch_no, lb.eta_date, lb.target_country, lb.target_warehouse, lb.total_cartons, lb.total_weight, lb.total_cbm, lb.related_ci_no, lb.listing_owner_ids, ci.brand '
+    'SELECT lb.id, lb.batch_no, lb.eta_date, lb.target_country, lb.target_warehouse, lb.total_cartons, lb.total_weight, lb.total_cbm, lb.related_ci_no, lb.listing_owner_ids, lb.listing_status, ci.brand '
     + 'FROM logistics_batches lb LEFT JOIN commercial_invoices ci ON lb.related_ci_id = ci.id WHERE lb.id = ?',
     [batchId]
   );
   if (!lbRow) return null;
   return {
+    id: lbRow.id,
     code: lbRow.batch_no || '',
     plan_date: lbRow.eta_date || '',
     brand: lbRow.brand || '-',
@@ -375,6 +488,7 @@ function loadListingNotifyCtx(batchId) {
     total_weight: lbRow.total_weight || 0,
     total_cbm: lbRow.total_cbm || 0,
     related_ci: lbRow.related_ci_no || '-',
+    listing_status: lbRow.listing_status || 'pending_plan',
     current_owners: resolveOwnerNames(splitIdCsv(lbRow.listing_owner_ids)).join('、') || '-'
   };
 }
@@ -395,11 +509,14 @@ const FEISHU_NOTIFY_TEMPLATES = {
   payment_due: (lang, prNo, dueDate, amt) => notifyT(lang, 'notify.payment_due', { request_no: prNo, due_date: dueDate, amount: amt }),
   payment_overdue: (lang, prNo, dueDate, amt) => notifyT(lang, 'notify.payment_overdue', { request_no: prNo, due_date: dueDate, amount: amt }),
 
-  // LOGISTICS-LISTING 统一通知体系：创建个人通知与手动提醒/编辑增量/群通知共用同一份 ctx 与同一 buildListingNotifyBlock 正文（含品牌/国家/仓库/货物信息/关联CI/当前负责人），仅 closing line 按 mode 不同（created/owner_added/manual）。签名 (lang, code, plan_date, ctx) 与 notifyBusinessParticipants 一致。
-  logistics_listing_created: (lang, batchNo, planDate, ctx) => buildListingNotifyBlock(batchNo, ctx, lang, 'created'),
-  // Listing 编辑增量通知 / 手动提醒专用模板（不依赖 i18n 词条，正文在 server.js 内联构造；第 4 参 ctx 承载 related_ci / current_owners）
-  logistics_listing_owner_added: (lang, batchNo, planDate, ctx) => buildListingNotifyBlock(batchNo, ctx, lang, 'owner_added'),
-  logistics_listing_manual_reminder: (lang, batchNo, planDate, ctx) => buildListingNotifyBlock(batchNo, ctx, lang, 'manual'),
+  // LOGISTICS-LISTING 统一通知体系：创建个人通知与手动提醒/编辑增量/群通知共用同一份 ctx 与同一卡片模板（含品牌/国家/仓库/货物信息/关联CI/当前负责人/当前状态），仅 closing line 按 mode 不同（created/owner_added/manual）。返回 interactive card 对象；notifyBusinessParticipants 据此自动走卡片发送，非 listing 模板仍走文本（兼容不破坏）。
+  logistics_listing_created: (lang, batchNo, planDate, ctx) => buildListingNotifyCard(batchNo, ctx, lang, 'created'),
+  // Listing 编辑增量通知 / 手动提醒专用模板（不依赖 i18n 词条，正文在 server.js 内联构造；第 4 参 ctx 承载 related_ci / current_owners / listing_status）
+  logistics_listing_owner_added: (lang, batchNo, planDate, ctx) => buildListingNotifyCard(batchNo, ctx, lang, 'owner_added'),
+  logistics_listing_manual_reminder: (lang, batchNo, planDate, ctx) => buildListingNotifyCard(batchNo, ctx, lang, 'manual'),
+  // 状态变化通知（物流展示状态 / 上架状态）专用模板：ctx.statusChange 承载 { statusType, oldStatus, newStatus }（均为展示键），卡片据此渲染 Status Update 段。
+  // 个人通知由 notifyBusinessParticipants 按收件人语言构造；无 statusChange 时回退为普通手动提醒卡片。
+  logistics_listing_status_changed: (lang, batchNo, planDate, ctx) => buildListingNotifyCard(batchNo, ctx, lang, 'manual', (ctx && ctx.statusChange) ? ctx.statusChange : null),
   // 以下两个仅供 scanListingReminders 直接调用（签名为 (lang, batchNo, ctx)），不经 notifyBusinessParticipants。
   logistics_listing_stalled: (lang, batchNo, ctx) => notifyT(lang, 'notify.logistics_listing_stalled', {
     batch_no: batchNo,
@@ -612,8 +729,12 @@ async function notifyBusinessParticipants(businessType, businessId, eventType, c
     const build = FEISHU_NOTIFY_TEMPLATES[eventType];
     if (!build) return;
     for (const [openId, info] of recipients) {
-      const text = build(info.lang, code, ctx && ctx.plan_date, ctx);
-      try { await sendFeishuTextMessage(openId, text); }
+      const content = build(info.lang, code, ctx && ctx.plan_date, ctx);
+      try {
+        // Listing 卡片模板返回 object（interactive card），其余模板返回 string（文本），自动分流，互不干扰
+        if (content && typeof content === 'object') await sendFeishuInteractive(openId, 'open_id', content);
+        else await sendFeishuTextMessage(openId, content);
+      }
       catch (e) { console.error('[FEISHU-NOTIFY] 发送失败 open_id=' + openId + ' event=' + eventType + ':', e.message); }
     }
   } catch (e) {
@@ -639,12 +760,44 @@ async function notifyListingDelta(batchId, batchNo, addedOwnerIds, addedCcIds, p
     // 关联CI + 当前上架负责人 + 品牌/国家/仓库/货物信息（用于正文展示），从物流单主表 + 关联 CI 读取
     const ctx = loadListingNotifyCtx(batchId);
     for (const [openId, info] of recipients) {
-      const text = build(info.lang, batchNo, planDate, ctx);
-      try { await sendFeishuTextMessage(openId, text); }
+      const content = build(info.lang, batchNo, planDate, ctx);
+      try {
+        if (content && typeof content === 'object') await sendFeishuInteractive(openId, 'open_id', content);
+        else await sendFeishuTextMessage(openId, content);
+      }
       catch (e) { console.error('[FEISHU-NOTIFY] 物流编辑增量通知失败 open_id=' + openId + ' batch=' + batchId + ':', e.message); }
     }
   } catch (e) {
     console.error('[FEISHU-NOTIFY] 物流编辑增量通知异常 batch=' + batchId + ':', e.message);
+  }
+}
+
+// 状态变化通知（物流展示状态 / 上架状态）：统一处理个人（上架负责人 + CC）与中文群/英文群。
+// 入参 oldStatus/newStatus 为底层枚举值；内部先派生成「业务展示状态」再比较 —— 展示状态未变（如 arrived→customs 同属清关中）则不通知。
+// statusType='logistics' → 用 deriveLogisticsDisplayStatus 派生展示桶；statusType='listing' → 直接用 listing_status 原值（其本身即展示状态）。
+async function notifyListingStatusChanged(batchId, oldStatus, newStatus, statusType) {
+  try {
+    const ctx = loadListingNotifyCtx(batchId);
+    if (!ctx) return;
+    let oldDisplay, newDisplay;
+    if (statusType === 'logistics') {
+      oldDisplay = deriveLogisticsDisplayStatus(oldStatus || '');
+      newDisplay = deriveLogisticsDisplayStatus(newStatus || '');
+    } else {
+      oldDisplay = oldStatus || '';
+      newDisplay = newStatus || '';
+    }
+    if (oldDisplay === newDisplay) return; // 展示状态未变不通知（避免 arrived→customs 等底层枚举变化误触发）
+    // 把变化上下文挂到 ctx，供个人卡片模板（logistics_listing_status_changed）渲染 Status Update 段
+    ctx.statusChange = { statusType, oldStatus: oldDisplay, newStatus: newDisplay };
+    // 个人通知：上架负责人 + 抄送（business_participants business_type='logistics'），按各自 language_preference 语言
+    notifyBusinessParticipants('logistics', batchId, 'logistics_listing_status_changed', ctx).catch(() => {});
+    // 群通知：中文群 / 英文群 分别发送中/英卡片（APP_BASE_URL 未配置时卡片不含按钮，由 buildListingNotifyCard 内部处理）
+    const zhCard = buildListingNotifyCard(ctx.code, ctx, 'zh', 'manual', ctx.statusChange);
+    const enCard = buildListingNotifyCard(ctx.code, ctx, 'en', 'manual', ctx.statusChange);
+    notifyFeishuGroupsCard(zhCard, enCard).catch(() => {});
+  } catch (e) {
+    console.error('[FEISHU-NOTIFY] 状态变化通知异常 batch=' + batchId + ' statusType=' + statusType + ':', e.message);
   }
 }
 
@@ -7419,8 +7572,8 @@ app.post('/api/logistics-batches', requireApiPermission('logistics_create'), asy
       if (gctx) {
         notifyBusinessParticipants('logistics', bId, 'logistics_listing_created', gctx).catch(() => {});
         // 群通知（可选）：中文群(FEISHU_GROUP_CHAT_IDS)发中文、英文群(FEISHU_GROUP_CHAT_IDS_EN)发英文；两 env 均空则跳过
-        const gt = buildListingNotifyTexts(bNo, gctx);
-        notifyFeishuGroups(gt.zh, gt.en).catch(() => {});
+        const gc = buildListingNotifyCards(bNo, gctx);
+        notifyFeishuGroupsCard(gc.zh, gc.en).catch(() => {});
       }
     }
     res.json({ id: bId, batch_no: bNo, ...d, total_freight: totalFreight });
@@ -7576,8 +7729,8 @@ app.post('/api/logistics-batches/create-with-pl', requireApiPermission('logistic
     if (gctx2) {
       notifyBusinessParticipants('logistics', bId, 'logistics_listing_created', gctx2).catch(() => {});
       // 群通知（可选）：中文群(FEISHU_GROUP_CHAT_IDS)发中文、英文群(FEISHU_GROUP_CHAT_IDS_EN)发英文；两 env 均空则跳过
-      const gt = buildListingNotifyTexts(bNo, gctx2);
-      notifyFeishuGroups(gt.zh, gt.en).catch(() => {});
+      const gc = buildListingNotifyCards(bNo, gctx2);
+      notifyFeishuGroupsCard(gc.zh, gc.en).catch(() => {});
     }
 
     res.json({
@@ -7639,6 +7792,23 @@ app.put('/api/logistics-batches/:id', requireApiPermission('logistics_edit'), as
     fields.push(`updated_at = datetime('now')`);
     values.push(id);
     run(`UPDATE logistics_batches SET ${fields.join(', ')} WHERE id = ?`, values);
+    // 物流展示状态变化通知：仅当「业务展示状态」（非底层枚举）真正变化才记录 + 通知。
+    // 例 arrived→customs 同为「清关中」，展示状态未变，不记录也不通知；清关中→待派送才触发。
+    if (d.logistics_status !== undefined) {
+      const oldDisplay = deriveLogisticsDisplayStatus(existing.logistics_status);
+      const newDisplay = deriveLogisticsDisplayStatus(d.logistics_status);
+      if (oldDisplay !== newDisplay) {
+        logOperation({
+          operator_id: req.currentUserId, operator_name: req.currentUserName,
+          page: 'logistics', operation_type: 'logistics_status_change',
+          target_ids: [id], affected_count: 1,
+          old_values: { logistics_status: existing.logistics_status, display_status: oldDisplay },
+          new_values: { logistics_status: d.logistics_status, display_status: newDisplay, batch_no: existing.batch_no },
+          reason: (d.reason || '').toString(), triggered_recalc: 0, is_rollbackable: 0
+        });
+        notifyListingStatusChanged(id, existing.logistics_status, d.logistics_status, 'logistics').catch(() => {});
+      }
+    }
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
@@ -7768,6 +7938,10 @@ app.post('/api/logistics-batches/:id/listing', requireApiPermission('logistics_e
         reason: (req.body.reason || '').toString(), triggered_recalc: 0, is_rollbackable: 0
       });
     }
+    // 状态变化通知（上架状态）：上架负责人 + 抄送 + 中文群/英文群，复用 Listing Card 并附 Status Update 段
+    if (statusChanged) {
+      notifyListingStatusChanged(lb.id, oldStatus, newStatus, 'listing').catch(() => {});
+    }
     if (ownerChanged) {
       const oldOwnerNames = resolveOwnerNames(oldOwnerIds);
       const newOwnerNames = resolveOwnerNames(newOwnerIds);
@@ -7804,8 +7978,8 @@ app.post('/api/logistics-batches/:id/notify', requireApiPermission('logistics_ed
       // 个人通知：按收件人 language_preference 各自语言；群通知：中文群/英文群分别发送中/英正文。两者共用同一 ctx 与同一正文模板，字段完全一致
       notifyBusinessParticipants('logistics', lb.id, 'logistics_listing_manual_reminder', ctx).catch(() => {});
       // 群通知（可选）：FEISHU_GROUP_CHAT_IDS(中文群)/FEISHU_GROUP_CHAT_IDS_EN(英文群) 为空则跳过
-      const gt = buildListingNotifyTexts(ctx.code, ctx);
-      notifyFeishuGroups(gt.zh, gt.en).catch(() => {});
+      const gc = buildListingNotifyCards(ctx.code, ctx);
+      notifyFeishuGroupsCard(gc.zh, gc.en).catch(() => {});
     }
     res.json({ success: true, notified: true });
   } catch (e) { res.status(500).json({ error: e.message }); }

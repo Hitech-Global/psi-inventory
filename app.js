@@ -223,6 +223,14 @@ function showApp(){
   renderUserRole();
   document.getElementById('user-avatar').textContent=(displayName||'U').charAt(0).toUpperCase();
   renderTopNav();renderSidebar();initSidebarCollapse();showPage('dashboard');
+  // Listing 飞书卡片深链：登录后自动进入物流管理并打开对应物流详情弹窗（?page=logistics&batch=<内部id>）。
+  // 轻量支持，不做完整前端路由；欢迎 splash 结束后执行，避免弹窗被覆盖。
+  const _dl = new URLSearchParams(location.search);
+  if (_dl.get('page') === 'logistics' && _dl.get('batch')) {
+    setTimeout(function () {
+      try { showPage('logistics'); viewLogDetail(_dl.get('batch')); } catch (e) { /* 深链失败不影响主流程 */ }
+    }, 2000);
+  }
 }
 
 // 登录欢迎 splash（纯视觉，进入系统时显示一次，不改变权限/路由/业务）

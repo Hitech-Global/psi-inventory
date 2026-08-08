@@ -456,6 +456,48 @@ function listingStatusLabel(lang, status) {
   return normalized === 'zh' ? row.zh : (row[normalized] || row.zh);
 }
 
+// 物流展示状态（业务派生桶，与 server.js deriveLogisticsDisplayStatus 的 STAGE_KEYS 严格对齐）：
+// pending_shipment / in_transit / customs_clearing / awaiting_delivery / warehouse_arrived。
+const LOGISTICS_DISPLAY_STATUS_LABEL_CATALOG = Object.freeze({
+  pending_shipment:   Object.freeze({ zh: '待出运',  en: 'Pending Shipment', id: 'Menunggu Pengiriman' }),
+  in_transit:         Object.freeze({ zh: '运输中',  en: 'In Transit',       id: 'Dalam Pengiriman' }),
+  customs_clearing:   Object.freeze({ zh: '清关中',  en: 'Customs Clearance', id: 'Pembersihan Bea Cukai' }),
+  awaiting_delivery:  Object.freeze({ zh: '待派送',  en: 'Awaiting Delivery', id: 'Menunggu Pengiriman' }),
+  warehouse_arrived:  Object.freeze({ zh: '已到仓',  en: 'Warehouse Arrived', id: 'Tiba di Gudang' })
+});
+
+// 按收件人语言返回物流展示状态 label；未配置状态回退原值（不抛错，保证通知可用）。
+// 入参是 deriveLogisticsDisplayStatus 派生的展示键（非底层 logistics_status 枚举值）。
+function logisticsDisplayStatusLabel(lang, displayStatus) {
+  const normalized = normalizeLanguage(lang);
+  const row = LOGISTICS_DISPLAY_STATUS_LABEL_CATALOG[displayStatus];
+  if (!row) return displayStatus || '';
+  return normalized === 'zh' ? row.zh : (row[normalized] || row.zh);
+}
+
+// 国家名称三语 label（与 i18n.js country.* 词条、logistics_batches.target_country 存储值严格对齐）
+// 修正「英文群通知 Country 仍显示中文」：按通知语言输出对应名称，不直接透传 DB 原值（DB 存中文）。
+const COUNTRY_LABEL_CATALOG = Object.freeze({
+  '印度尼西亚': Object.freeze({ zh: '印度尼西亚', en: 'Indonesia', id: 'Indonesia' }),
+  '马来西亚':   Object.freeze({ zh: '马来西亚',   en: 'Malaysia',  id: 'Malaysia' }),
+  '泰国':       Object.freeze({ zh: '泰国',       en: 'Thailand',  id: 'Thailand' }),
+  '中国':       Object.freeze({ zh: '中国',       en: 'China',     id: 'China' })
+});
+// DB 偶发存英文小写（兼容层）：英文 key → 中文 canonical key
+const COUNTRY_ALIAS_EN = Object.freeze({ indonesia: '印度尼西亚', malaysia: '马来西亚', thailand: '泰国', china: '中国' });
+
+// 按通知语言返回国家名称；未收录国家回退原值（不抛错，保证通知可用且不硬编码额外数据）
+function countryLabel(lang, rawCountry) {
+  if (!rawCountry) return '-';
+  const key = String(rawCountry).trim();
+  if (!key) return '-';
+  const canonical = COUNTRY_LABEL_CATALOG[key] ? key : (COUNTRY_ALIAS_EN[key.toLowerCase()] || null);
+  const row = canonical ? COUNTRY_LABEL_CATALOG[canonical] : null;
+  if (!row) return key;
+  const normalized = normalizeLanguage(lang);
+  return normalized === 'zh' ? row.zh : (row[normalized] || row.en);
+}
+
 // PAY-CORE Phase 1：付款审批业务类型三语 label（6 类 × 3 语言）
 // 由 notifyPaymentApprovalParticipants 在构造 ctx 时按收件人语言派生 business_type_label。
 // 与 approval_records.business_type 取值严格对齐：pi_deposit / ci_balance / freight / warehouse / customs / inspection。
@@ -772,5 +814,7 @@ module.exports = Object.freeze({
   translateApprovedText,
   localizeResponseBody,
   paymentBusinessTypeLabel,
-  listingStatusLabel
+  listingStatusLabel,
+  logisticsDisplayStatusLabel,
+  countryLabel
 });
