@@ -9688,9 +9688,10 @@ async function saveNewCI(){
   var allItems=window._ciAllItems||[];
   for(var i=0;i<allItems.length;i++){
     var it=allItems[i];
-    var qe=document.getElementById('ci-rq-'+it.idx),pe=document.getElementById('ci-rp-'+it.idx),re=document.getElementById('ci-rr-'+it.idx);
+    var qe=document.getElementById('ci-rq-'+it.idx),re=document.getElementById('ci-rr-'+it.idx);
     if(!qe)continue;var q=parseInt(qe.value)||0;if(q<=0)continue;
-    items.push({pi_id:it.pi_id,sku_code:it.sku_code,shipped_qty:q,unit_price:parseFloat(pe?pe.value:0)||0,actual_customs_rate:re&&re.value!==''?parseFloat(re.value):null});
+    // unit_price 取自内存中的 PI 明细快照（buildCIItemRow 仅以只读文本展示原单价，页面无 ci-rp-{idx} 输入框，不能读 input）
+    items.push({pi_id:it.pi_id,sku_code:it.sku_code,shipped_qty:q,unit_price:it.unit_price||0,actual_customs_rate:re&&re.value!==''?parseFloat(re.value):null});
   }
   if(items.length===0){showToast(t('ci.no_items','请至少添加一条出货明细'),'warning');return;}
   var ciNo=(document.getElementById('nci-no')||{}).value||'',supSel=document.getElementById('nci-supplier');
