@@ -174,7 +174,13 @@ if (driver === 'pg') {
         "CREATE INDEX IF NOT EXISTS idx_payable_items_fee_type ON payable_items(fee_type)",
         // DATA-FIX: PI 币种变更后 payable_items.currency 未同步的存量修复
         // 仅修复 active/reserved（paid 已结算不碰）；幂等（currency 一致时 0 行受影响）
-        "UPDATE payable_items SET currency = pi.currency FROM proforma_invoices pi WHERE payable_items.source_type = 'pi' AND payable_items.source_id = pi.id AND payable_items.fee_type = 'deposit' AND payable_items.currency != pi.currency AND payable_items.lifecycle_status IN ('active', 'reserved')"
+        "UPDATE payable_items SET currency = pi.currency FROM proforma_invoices pi WHERE payable_items.source_type = 'pi' AND payable_items.source_id = pi.id AND payable_items.fee_type = 'deposit' AND payable_items.currency != pi.currency AND payable_items.lifecycle_status IN ('active', 'reserved')",
+        // CI 明细折扣字段：discount（PI折扣快照）、net_unit_price（折后单价）。
+        // 这些 ALTER 原本只写在 db-pg.js 的 initDatabase（worker_threads 模式下是死代码、生产从未执行），
+        // 故补到此处的生产实际执行入口，确保生产 PG 建表后仍能补齐缺失列。
+        // 全部幂等（ADD COLUMN IF NOT EXISTS），不影响已有 CI 数据。
+        "ALTER TABLE commercial_invoice_items ADD COLUMN IF NOT EXISTS discount DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE commercial_invoice_items ADD COLUMN IF NOT EXISTS net_unit_price NUMERIC(18,4) DEFAULT 0"
       ];
       for (var i = 0; i < migrations.length; i++) {
         try {
