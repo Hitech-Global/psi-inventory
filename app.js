@@ -8085,16 +8085,42 @@ async function deletePO(id){
 
 // ==================== PI管理 ====================
 async function renderPI(){
-  document.getElementById('content-inner').innerHTML=t('html.renderPI', `<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>发货状态</label><select id="pi-fs"><option value="">全部</option><option value="pending_shipment">未发货</option><option value="partial_shipped">部分发货</option><option value="shipped_complete">全部发货</option></select></div><div class="filter-group"><label>关键词</label><input type="text" id="pi-fk" onkeypress="if(event.key==='Enter')loadPI()"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadPI()">搜索</button>{v1}</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">📄 PI列表</div></div><div id="pi-table"></div></div>`, {v1: hasPermission('pi_create')?t('gen.L5434.1','<button class="btn btn-secondary btn-sm" onclick="downloadDocTemplate(\'pi\')">📥 PI模板</button><button class="btn btn-secondary btn-sm" onclick="openDocImport(\'pi\')">📤 批量导入PI</button><button class="btn btn-primary btn-sm" onclick="createPI()">➕ 新建PI</button>'):''});
+  document.getElementById('content-inner').innerHTML=t('html.renderPI', `<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>发货状态</label><div class="multi-select" id="pi-fs-wrap" style="position:relative;display:inline-block"><button type="button" class="ms-toggle" id="pi-fs-toggle" style="min-width:150px;padding:6px 10px;border:1px solid #d0d7de;border-radius:6px;background:#fff;cursor:pointer;text-align:left;font-size:13px;color:#24292f" onclick="event.stopPropagation();togglePIFs()">未发货, 部分发货 ▾</button><div class="ms-panel" id="pi-fs-panel" style="display:none;position:absolute;z-index:50;margin-top:4px;background:#fff;border:1px solid #d0d7de;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.12);padding:6px;min-width:160px" onclick="event.stopPropagation()"><label class="ms-item" style="display:flex;align-items:center;gap:6px;padding:5px 8px;white-space:nowrap;cursor:pointer;font-weight:normal;font-size:13px"><input type="checkbox" id="pi-fs-all" onchange="piFsAllChange()"> 全部</label><label class="ms-item" style="display:flex;align-items:center;gap:6px;padding:5px 8px;white-space:nowrap;cursor:pointer;font-weight:normal;font-size:13px"><input type="checkbox" class="pi-fs-opt" value="pending_shipment" checked onchange="piFsOptChange()"> 未发货</label><label class="ms-item" style="display:flex;align-items:center;gap:6px;padding:5px 8px;white-space:nowrap;cursor:pointer;font-weight:normal;font-size:13px"><input type="checkbox" class="pi-fs-opt" value="partial_shipped" checked onchange="piFsOptChange()"> 部分发货</label><label class="ms-item" style="display:flex;align-items:center;gap:6px;padding:5px 8px;white-space:nowrap;cursor:pointer;font-weight:normal;font-size:13px"><input type="checkbox" class="pi-fs-opt" value="shipped_complete" onchange="piFsOptChange()"> 全部发货</label></div></div></div><div class="filter-group"><label>关键词</label><input type="text" id="pi-fk" onkeypress="if(event.key==='Enter'){_piKeyword=this.value;loadPI()}"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="_piKeyword=document.getElementById('pi-fk').value;loadPI()">搜索</button>{v1}</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">📄 PI列表</div></div><div id="pi-table"></div></div>`, {v1: hasPermission('pi_create')?t('gen.L5434.1','<button class="btn btn-secondary btn-sm" onclick="downloadDocTemplate(\'pi\')">📥 PI模板</button><button class="btn btn-secondary btn-sm" onclick="openDocImport(\'pi\')">📤 批量导入PI</button><button class="btn btn-primary btn-sm" onclick="createPI()">➕ 新建PI</button>'):''});
   loadPI();
+  updatePIFsLabel();
 }
 async function loadPI(){
   try{
-    const s=document.getElementById('pi-fs')?.value||'',k=document.getElementById('pi-fk')?.value||'';
-    const data=await api('/api/proforma-invoices?ship_status='+s+'&keyword='+encodeURIComponent(k));
+    const raw=await api('/api/proforma-invoices?keyword='+encodeURIComponent(_piKeyword));
+    const _piSel=piSelectedStatuses();
+    const data = _piSel.length ? raw.filter(p=>_piSel.includes(computePIShipStatus(p))) : raw;
     document.getElementById('pi-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">📄</div>'+t("empty.no_pi","暂无PI")+'</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>'+t("col.pi_no","PI号")+'</th><th>'+t("col.related_po","关联PO")+'</th><th>'+t("col.supplier","供应商")+'</th><th>'+t("app.112","品牌")+'</th><th>'+t("app.113","国家")+'</th><th>'+t("app.114","仓库")+'</th><th>'+t("col.date","日期")+'</th><th>'+t("html.pay.th.currency","币种")+'</th><th>'+t("col.total_amount","总金额")+'</th><th>'+t("col.is_deposit","是否定金")+'</th><th>'+t("col.deposit_ratio","定金比例")+'</th><th>'+t("col.deposit_amount","定金金额")+'</th><th>'+t("col.deposit_status","定金状态")+'</th><th>'+t("pi.field.ship_status","发货状态")+'</th><th>'+t("pi.col.attachment","PI附件")+'</th><th>'+t("common.actions","操作")+'</th></tr></thead><tbody>'+data.map(p=>'<tr class="clickable-detail-row" onclick="rowClickView(event,\'viewPI\',\''+p.id+'\')"><td class="cell-id"><span class="link-text" onclick="viewPI(\''+p.id+'\')">'+esc(p.pi_no)+'</span></td><td class="cell-id">'+esc(p.related_po_no)+'</td><td>'+esc(p.supplier_name)+'</td><td>'+esc(p.brand)+'</td><td>'+esc(p.country)+'</td><td>'+esc(p.target_warehouse)+'</td><td class="cell-date">'+fmtDate(p.pi_date)+'</td><td>'+esc(p.currency)+'</td><td class="text-right">'+fmtMoney(p.total_amount)+'</td><td>'+(piNeedsDeposit(p.need_deposit)?'<span class="status-badge status-pending">'+t("enum.yes","是")+'</span>':'<span class="status-badge status-completed">'+t("enum.no","否")+'</span>')+'</td><td class="text-right">'+(p.deposit_ratio||0)+'%</td><td class="text-right">'+fmtMoney(p.payable_deposit)+'</td><td>'+(piNeedsDeposit(p.need_deposit)?'<span class="status-badge '+(p.deposit_paid?'status-paid':'status-unpaid')+'">'+esc(formatPIDepositStatus(p.deposit_paid?'paid':'unpaid'))+'</span>':'<span class="status-badge status-completed">'+t('pi.deposit_status.none','无需定金')+'</span>')+'</td><td>'+renderPIShipStatusBadge(p)+'</td><td id="pi-att-'+p.id+'">'+renderPIAttachmentCell(p)+'</td><td class="cell-actions"><button class="action-btn" onclick="viewPI(\''+p.id+'\')">👁️</button>'+(hasPermission('pi_edit')?('<button class="action-btn" '+(p.locked?('disabled title="'+t("pi.locked_note","已锁定，不可编辑：")+''+esc(p.lock_reason||''+t("pi.locked","已锁定")+'')+'" style="opacity:.3;cursor:not-allowed">✏️</button>'):('onclick="editPI(\''+p.id+'\')" title="'+t("action.edit","编辑")+'">✏️</button>'))):'')+'<button class="action-btn" onclick="uploadDocAttachment(\'pi\',\''+p.id+'\',\'attachment\')" title="'+t("pi.upload_attachment","上传PI附件")+'">📎</button>'+(piNeedsDeposit(p.need_deposit)&&p.payable_deposit>0&&p.deposit_payment_status==='unpaid'&&hasPermission('payment_create')?'<button class="action-btn" onclick="createDepPay(\''+p.id+'\')" title="'+t("pi.deposit_pay","定金付款")+'">💰</button>':'')+(hasPermission('pi_edit')?'<button class="action-btn" '+(p.pi_status==='completed'?'disabled title="'+t("pi.cannot_void_completed","已完成状态不可作废")+'" style="opacity:.3;cursor:not-allowed"':'onclick="voidPI(\''+p.id+'\')" title="'+t("action.void","作废")+'"')+'>'+t("action.void","作废")+'</button>':'')+'</td></tr>').join('')+'</tbody></table></div>';
   }catch(e){showFlash(e.message,'danger')}
 }
+
+let _piKeyword='';
+function piSelectedStatuses(){
+  const all=document.getElementById('pi-fs-all');
+  if(all&&all.checked) return [];
+  return Array.from(document.querySelectorAll('.pi-fs-opt:checked')).map(el=>el.value);
+}
+function updatePIFsLabel(){
+  const btn=document.getElementById('pi-fs-toggle'); if(!btn) return;
+  const all=document.getElementById('pi-fs-all');
+  const opts=Array.from(document.querySelectorAll('.pi-fs-opt:checked'));
+  let txt;
+  if((all&&all.checked)||opts.length===0){ txt=t('pi.filter.all','全部'); }
+  else{
+    const map={pending_shipment:t('pi.ship_status.pending_shipment','未发货'),partial_shipped:t('pi.ship_status.partial_shipped','部分发货'),shipped_complete:t('pi.ship_status.shipped_complete','全部发货')};
+    txt=opts.map(o=>map[o.value]||o.value).join(', ');
+  }
+  btn.textContent=txt+' ▾';
+}
+function piFsAllChange(){ if(document.getElementById('pi-fs-all').checked){ document.querySelectorAll('.pi-fs-opt').forEach(o=>o.checked=false); } updatePIFsLabel(); loadPI(); }
+function piFsOptChange(){ const any=document.querySelectorAll('.pi-fs-opt:checked').length>0; const all=document.getElementById('pi-fs-all'); if(all) all.checked=!any; updatePIFsLabel(); loadPI(); }
+function togglePIFs(){ const p=document.getElementById('pi-fs-panel'); if(!p) return; const open=p.style.display!=='block'; p.style.display=open?'block':'none'; if(open){ setTimeout(function(){document.addEventListener('click',piFsOutside);},0); } else { document.removeEventListener('click',piFsOutside); } }
+function piFsOutside(e){ const w=document.getElementById('pi-fs-wrap'); if(w&&!w.contains(e.target)){ const p=document.getElementById('pi-fs-panel'); if(p)p.style.display='none'; document.removeEventListener('click',piFsOutside); } }
+
 async function viewPI(id, backPay, backMode){
   // 先开弹窗骨架 + Loading（立即响应，不等接口）
   openModal(t('modal.title.viewPI','PI详情'),'<div style="padding:40px;text-align:center"><div style="font-size:32px;color:#1890ff;margin-bottom:8px">⏳</div><div style="color:#666">'+t('common.loading','加载中…')+'</div></div>','','modal-pi');
@@ -11035,6 +11061,50 @@ const PAY_SOURCE_TYPE_LABELS={pi:'PI',ci:'CI',manual:'手动录入',historical_c
 const PAY_LIFECYCLE_LABELS={active:'待处理',reserved:'已占用',released:'已释放',paid:'已付款',cancelled:'已取消'};
 let _payableListSel=new Set();
 let _payableListData=[];
+let _payablePrStatusMap={};
+
+// 应付费用列表「付款申请状态」：将关联 PR 的原始枚举聚合为业务态（禁止透出内部枚举）
+// 多 PR 关联同一 payable_item 时按资金状态最高优先级展示：已付款 > 部分付款 > 已通过 > 审批中 > 草稿
+function derivePayablePrBusinessStatus(prs){
+  if(!prs||!prs.length)return '未申请';
+  const has={paid:false,partial:false,approved:false,pending:false,draft:false};
+  prs.forEach(function(p){
+    const as=p.approval_status, ps=p.payment_status;
+    if(as==='draft'){has.draft=true;return;}
+    if(as==='pending'||as==='pending_approval'){has.pending=true;return;}
+    if(as==='approved'){
+      if(ps==='paid'||ps==='deduction_settled')has.paid=true;
+      else if(ps==='partial_paid'||ps==='partial_deduction'||ps==='partial_rounding'||ps==='partial_payment_partial_deduction')has.partial=true;
+      else has.approved=true; // approved 但未付款（unpaid 等）
+      return;
+    }
+    // rejected/cancelled 等不计入（端点默认已排除）
+  });
+  if(has.paid)return '已付款';
+  if(has.partial)return '部分付款';
+  if(has.approved)return '已通过';
+  if(has.pending)return '审批中';
+  if(has.draft)return '草稿';
+  return '未申请';
+}
+
+// 批量获取整页 payable_item 的付款申请状态，建立 payable_item_id → 业务态 map（单请求，禁止 N+1）
+async function loadPayablePrStatusMap(items){
+  _payablePrStatusMap={};
+  if(!items||!items.length)return;
+  const ids=items.map(function(r){return r.id;}).filter(Boolean).join(',');
+  if(!ids)return;
+  try{
+    const rels=await api('/api/payment-requests/by-payable-items?ids='+encodeURIComponent(ids));
+    const prs=(rels&&rels.payment_requests)||[];
+    const byItem={};
+    prs.forEach(function(p){const iid=p.payable_item_id;if(!iid)return;(byItem[iid]=byItem[iid]||[]).push(p);});
+    items.forEach(function(r){_payablePrStatusMap[r.id]=derivePayablePrBusinessStatus(byItem[r.id]||[]);});
+  }catch(e){
+    // 状态列降级：获取失败时标未申请，不影响主列表与生命周期
+    items.forEach(function(r){_payablePrStatusMap[r.id]='未申请';});
+  }
+}
 
 async function renderPayableList(){
   const el=document.getElementById('content-inner');
@@ -11073,6 +11143,7 @@ async function loadPayableList(){
     return;
   }
   _payableListData=(data&&data.items)||[];
+  await loadPayablePrStatusMap(_payableListData);
   renderPayableTable();
   updatePayableMenu();
 }
@@ -11093,6 +11164,7 @@ function renderPayableTable(){
     '<th>'+t('payable_list.col_currency','币种')+'</th>'+
     '<th style="text-align:right">'+t('payable_list.col_amount','金额')+'</th>'+
     '<th>'+t('payable_list.col_status','状态')+'</th>'+
+    '<th>'+t('payable_list.col_pr_status','付款申请状态')+'</th>'+
     '<th>'+t('payable_list.col_created','创建时间')+'</th>'+
     '</tr></thead><tbody>';
   rows.forEach(function(r){
@@ -11107,6 +11179,7 @@ function renderPayableTable(){
       '<td>'+esc(r.currency||'')+'</td>'+
       '<td style="text-align:right">'+amt+'</td>'+
       '<td>'+esc(PAY_LIFECYCLE_LABELS[r.lifecycle_status]||r.lifecycle_status||'')+'</td>'+
+      '<td>'+esc(_payablePrStatusMap[r.id]||'未申请')+'</td>'+
       '<td class="muted">'+esc((r.created_at||'').slice(0,19))+'</td>'+
       '</tr>';
   });
