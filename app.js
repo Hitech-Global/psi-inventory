@@ -11493,21 +11493,34 @@ async function viewPayment(id, mode){
     const isFinalLevel=appr&&appr.current_level>=appr.max_level&&appr.max_level>0;
     // PAY-CORE Phase 2：最终节点需要填写实际付款信息
     const _now=new Date(),_today=new Date(_now.getTime()-_now.getTimezoneOffset()*60000).toISOString().slice(0,10);
+    // 固定缓存本单基准未结，供抵扣/抹零联动与实时未结计算使用（不改动后端逻辑，仅为前端展示）
+    window._finalPayCtx={outstanding:Number(p.outstanding||p.unpaid_amount||0)};
     const paymentFormHtml=(mode==='finance'&&isPendingApproval&&canApprove&&isFinalLevel)
       ? '<div class="detail-section"><h3>'+t("payment.final_payment_info","最终付款信息")+'</h3>'
         +'<div class="form-grid">'
         +'<div class="form-group"><label>'+t("payment.actual_paid_amount","实际付款金额")+' <span class="required">*</span></label>'
-        +'<input type="number" min="0" step="0.01" id="pay-final-amount" value="'+Number(p.outstanding||p.unpaid_amount||0).toFixed(2)+'"></div>'
+        +'<input type="number" min="0" step="0.01" id="pay-final-amount" value="'+Number(p.outstanding||p.unpaid_amount||0).toFixed(2)+'" oninput="recalcFinalPay()"></div>'
         +'<div class="form-group"><label>'+t("payment.actual_paid_date","实际付款日期")+' <span class="required">*</span></label>'
         +'<input type="date" id="pay-final-date" value="'+_today+'"></div>'
         +'<div class="form-group form-group-full"><label>'+t("payment.bank_ref_no","银行流水号")+'</label>'
         +'<input type="text" id="pay-final-bank-ref"></div>'
         +'<div class="form-group form-group-full"><label>'+t("payment.payment_account","付款账户")+'</label>'
         +'<input type="text" id="pay-final-account" placeholder="'+t("payment.payment_account_placeholder","选填，用于结算记录付款账户")+'"></div>'
+        +'<div class="form-group"><label>'+t("payment.deduction_amount","抵扣金额")+'</label>'
+        +'<input type="number" min="0" step="0.01" id="pay-final-ded-amt" placeholder="'+t("payment.deduction_placeholder","选填，无抵扣请留空")+'" oninput="recalcFinalPay()"></div>'
+        +'<div class="form-group"><label>'+t("payment.deduction_source_type","抵扣来源类型")+'</label>'
+        +'<select id="pay-final-ded-type" onchange="recalcFinalPay()"><option value="">'+t("payment.ded_type_select","选择")+'</option><option value="other_payment">'+t("payment.ded_other_payment","其他付款多付")+'</option><option value="price_diff">'+t("payment.ded_price_diff","价格差异")+'</option><option value="other">'+t("payment.ded_other","其他")+'</option></select></div>'
+        +'<div class="form-group form-group-full"><label>'+t("payment.deduction_reason","抵扣原因/备注")+'</label>'
+        +'<input type="text" id="pay-final-ded-desc" placeholder="'+t("payment.deduction_reason_placeholder","有抵扣时建议填写")+'" oninput="recalcFinalPay()"></div>'
         +'<div class="form-group"><label>'+t("payment.rounding_amount","抹零金额")+'</label>'
-        +'<input type="number" min="0" step="0.01" id="pay-final-rounding" placeholder="'+t("payment.rounding_placeholder","选填，不抹零请留空")+'"></div>'
+        +'<input type="number" min="0" step="0.01" id="pay-final-rounding" placeholder="'+t("payment.rounding_placeholder","选填，不抹零请留空")+'" oninput="recalcFinalPay()"></div>'
         +'<div class="form-group form-group-full"><label>'+t("payment.rounding_reason","抹零原因")+'</label>'
         +'<input type="text" id="pay-final-rounding-reason" placeholder="'+t("payment.rounding_reason_placeholder","建议填写")+'"></div>'
+        +'<div class="form-group form-group-full" style="background:#f6f8fb;padding:8px 10px;border-radius:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+          +'<span style="font-weight:600">'+t("payment.estimated_outstanding","预估未结金额")+':</span>'
+          +'<span id="pay-final-est-outstanding" style="font-weight:700;color:#c0392b">'+Number(p.outstanding||p.unpaid_amount||0).toFixed(2)+'</span>'
+          +'<span style="color:#999;font-size:12px">'+t("payment.est_formula","= 当前未结 − 实际付款 − 抵扣 − 抹零")+'</span>'
+        +'</div>'
         +'</div>'
         +'<div style="font-size:12px;color:#999;margin-top:8px">'+t("payment.final_payment_hint","通过最终审批后将自动执行付款结算。部分付款不支持抹零。")+'</div>'
         +'</div>'
@@ -11525,6 +11538,8 @@ async function viewPayment(id, mode){
         +'<button class="btn btn-primary" onclick="financeApprove(\''+id+'\',\'approve\')">✅ '+approveLabel+'</button>';
     }
     openModal(t('modal.title.viewPayment', '付款申请详情 - {v1}', {v1: esc(p.request_no)}), body, footer);
+    // 渲染后校正"预估未结金额"初始值（实际付款默认=当前未结，故初始未结应为0）
+    if(paymentFormHtml){ try{ recalcFinalPay(); }catch(_){} }
   }catch(e){showToast(e.message,'danger')}
 }
 // ===== 付款申请附件（Layer 4：多文件上传/展示/删除/粘贴图片自动上传）=====
@@ -11613,6 +11628,22 @@ function onPayRemarkPaste(e){
   if(!(hasPermission('payment_create')||hasPermission('payment_approve'))){ showToast(t('gen.L7176.1','无附件上传权限'),'danger'); return; }
   payUploadFiles(window._payId,[imgFile]); // 粘贴图片自动上传为附件
 }
+// 最终付款信息区：抵扣/抹零为独立结算事实，实时预览未结（前端展示用，不改后端逻辑）
+// 抵扣不自动改写“实际付款金额”（银行流水金额 = 系统付款金额）
+// 预估未结 = 当前未结基准 − 实际付款 − 抵扣 − 抹零（与后端 paymentSettlementFacts 口径一致）
+function recalcFinalPay(){
+  try{
+    const base=(window._finalPayCtx&&Number.isFinite(window._finalPayCtx.outstanding))?window._finalPayCtx.outstanding:0;
+    const amtEl=document.getElementById('pay-final-amount');
+    const ded=parseFloat(document.getElementById('pay-final-ded-amt')?document.getElementById('pay-final-ded-amt').value:0)||0;
+    const rnd=parseFloat(document.getElementById('pay-final-rounding')?document.getElementById('pay-final-rounding').value:0)||0;
+    // 实际付款金额由用户独立填写，抵扣仅作独立结算事实，互不改写
+    const paid=parseFloat(amtEl?amtEl.value:0)||0;
+    const out=Math.max(0,base-paid-ded-rnd);
+    const outEl=document.getElementById('pay-final-est-outstanding');
+    if(outEl) outEl.textContent=out.toFixed(2);
+  }catch(_){}
+}
 // 财务类审批：通过 / 驳回（复用后端 POST /api/payment-requests/:id/approve，审批意见存 approval_remark）
 async function financeApprove(id, action){
   const ta=document.getElementById('pay-appr-remark');
@@ -11628,19 +11659,38 @@ async function financeApprove(id, action){
     const roundingVal=document.getElementById('pay-final-rounding')?document.getElementById('pay-final-rounding').value:'';
     const roundingReason=document.getElementById('pay-final-rounding-reason')?document.getElementById('pay-final-rounding-reason').value.trim():'';
     const roundingAmount=parseFloat(roundingVal);
+    // 抵扣字段（确认付款页固定显示，无抵扣时留空）
+    const dedAmtEl=document.getElementById('pay-final-ded-amt');
+    const dedAmt=dedAmtEl?parseFloat(dedAmtEl.value)||0:0;
+    const dedType=document.getElementById('pay-final-ded-type')?document.getElementById('pay-final-ded-type').value.trim():'';
+    const dedDesc=document.getElementById('pay-final-ded-desc')?document.getElementById('pay-final-ded-desc').value.trim():'';
     if(!(Number.isFinite(amount)&&amount>0)){showToast(t('payment.err_amount_required','实际付款金额必须大于0'),'warning');amtEl.focus();return}
     if(!paidDate){showToast(t('payment.err_date_required','请选择实际付款日期'),'warning');return}
+    // 有抵扣时来源类型与原因必填（后端 applyDeductionSettlement 要求）
+    if(dedAmt>0&&!dedType){showToast(t('payment.ded_type_required','有抵扣时必须选择抵扣来源类型'),'warning');return}
+    if(dedAmt>0&&!dedDesc){showToast(t('payment.ded_reason_required','有抵扣时必须填写抵扣原因/备注'),'warning');return}
+    // 总额校验：实际付款 + 抵扣 + 抹零 不得超过当前未结基准
+    const base=(window._finalPayCtx&&Number.isFinite(window._finalPayCtx.outstanding))?window._finalPayCtx.outstanding:0;
+    const rnd=Number.isFinite(roundingAmount)&&roundingAmount>0?roundingAmount:0;
+    if(amount+dedAmt+rnd>base+0.001){showToast(t('payment.err_exceed_outstanding','实际付款+抵扣+抹零 不能超过当前未结金额'),'warning');return}
     body.actual_paid_amount=amount;
     body.actual_paid_date=paidDate;
     body.bank_ref_no=bankRef;
     const accountEl=document.getElementById('pay-final-account');
     body.payment_account=accountEl?accountEl.value.trim():'';
-    if(Number.isFinite(roundingAmount)&&roundingAmount>0){
-      body.rounding_amount=roundingAmount;
+    if(rnd>0){
+      body.rounding_amount=rnd;
       if(roundingReason)body.rounding_reason=roundingReason;
     }
     body.idempotency_key='appr:'+id+':'+(window.crypto&&window.crypto.randomUUID?window.crypto.randomUUID():(Date.now()+'-'+Math.random().toString(36).slice(2)));
     if(!window.confirm(t('payment.final_approve_confirm','确认通过最终审批并执行付款？此操作将自动结算付款。'))){return}
+    // 有抵扣时先写抵扣（复用现有 /deduction 接口与 PAY-CORE deduction 能力），再执行审批结算。
+    // 顺序保证：deduction 写入后 applyPaymentSettlement 计算 outstanding 时自动扣减抵扣，满足 应付−实际付款−抵扣−抹零=未结
+    if(dedAmt>0){
+      try{
+        await api('/api/payment-requests/'+id+'/deduction','POST',{has_deduction:1,deduction_amount:dedAmt,deduction_source_type:dedType,deduction_source_desc:dedDesc});
+      }catch(e){ showToast(e.message,'danger'); return; }
+    }
   }
   try{
     const r=await api('/api/payment-requests/'+id+'/approve','POST',body);

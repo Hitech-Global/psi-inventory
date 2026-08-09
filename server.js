@@ -11070,6 +11070,14 @@ app.post('/api/payment-requests/multi-expense', requireApiPermission('payment_cr
     const totalAmountMinor = items.rows.reduce((s, r) => s + (r.payable_amount_minor || 0), 0);
     const totalAmount = minorToAmount(totalAmountMinor); // 仅作展示参考，不作为审批/付款依据
     const itemCount = items.rows.length;
+    // PAY-MULTI category 推导（创建逻辑修复）：合并来源全部为货款(pi/ci)时标记为 goods，
+    // 审批时自动跳过付款日 realtime 汇率校验；含非货款来源时保持 ''（仍走付款日汇率校验，符合非货款费用要求）。
+    const _goodsSources = new Set(['pi', 'ci']);
+    const _allGoods = items.rows.length > 0 && items.rows.every(r => _goodsSources.has(String(r.source_type || '').toLowerCase()));
+    const prCategory = _allGoods ? 'goods' : '';
+    const prSubcategory = _allGoods
+      ? (items.rows.every(r => String(r.fee_type || '') === 'deposit') ? 'deposit' : 'balance')
+      : '';
     // 7. 事务内：INSERT payment_requests + INSERT payment_request_items + reserve payable_items
     const prId = await genId('pay');
     const prNo = `PAY-MULTI-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
@@ -11080,11 +11088,11 @@ app.post('/api/payment-requests/multi-expense', requireApiPermission('payment_cr
            payee_type, payee_key, payee_name_snapshot, supplier_name,
             payable_amount, paid_amount, unpaid_amount, currency,
             payment_mode, payment_status, approval_status, remark, expense_country)
-         VALUES (?, ?, '', '', '', '', '',
+         VALUES (?, ?, ?, ?, '', '', '',
                  ?, ?, ?, ?,
                  ?, 0, ?, ?,
                  'multi', 'pending_approval', 'pending', ?, ?)`,
-        [prId, prNo, payeeType, payeeKey, payeeNameSnapshot, payeeNameSnapshot,
+        [prId, prNo, prCategory, prSubcategory, payeeType, payeeKey, payeeNameSnapshot, payeeNameSnapshot,
          totalAmount, totalAmount, prCurrency,
          remark || '', expenseCountrySnapshot]
       );
