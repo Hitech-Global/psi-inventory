@@ -269,8 +269,29 @@ async function getFeishuTenantToken() {
 }
 
 // 发送文本消息到指定 open_id。best-effort：测试/演练模式只记录不真实发送；真实模式带 5s 超时。
+// 从卡片反推纯文本（用于飞书 extErrCode=200621 临时降级）。仅取 header.title 与 div fields；跳过 button/action 段。
+// 飞书 2026 偶发隐性卡片 schema 校验收紧导致所有 interactive 卡片 230099-200621，text 链路不受影响，自动降级可恢复业务可达性。
+function cardToFallbackText(card) {
+  if (!card || typeof card !== 'object') return '';
+  const lines = [];
+  if (card.header && card.header.title && card.header.title.content) lines.push(String(card.header.title.content));
+  const elements = Array.isArray(card.elements) ? card.elements : [];
+  for (const el of elements) {
+    if (!el || el.tag !== 'div') continue;
+    const fields = Array.isArray(el.fields) ? el.fields : [];
+    for (const f of fields) {
+      const c = f && f.text && f.text.content;
+      if (!c) continue;
+      const m = c.match(/^\*\*(.+?)\*\*\n([\s\S]+)$/);
+      lines.push(m ? (m[1] + ': ' + m[2]) : c);
+    }
+  }
+  return lines.join('\n');
+}
+
 // 通用飞书消息发送：支持 open_id（个人）与 chat_id（群）。best-effort：测试/演练模式只记录不真实发送。
 // 抽象为统一出口 sendFeishuRaw（msgType + contentObj），text / interactive 共用同一 token、超时与 dry-run 逻辑。
+// 卡片场景下若飞书返回 extErrCode=200621 (parse card json err)，自动以 cardToFallbackText 构造的纯文本走 text 通道同 receive_id 重发，确保运营可达；后续若飞书侧恢复，自动走回卡片（无需改动）。
 async function sendFeishuRaw(receiveId, receiveIdType, msgType, contentObj) {
   if (process.env.NODE_ENV === 'test' || process.env.FEISHU_NOTIFY_DRYRUN === '1' || process.env.FEISHU_NOTIFY_FORCE_FAIL === '1') {
     __feishuDryRunLog.push({ open_id: receiveId, receive_id_type: receiveIdType, msg_type: msgType, content: contentObj, at: new Date().toISOString(), forced_fail: process.env.FEISHU_NOTIFY_FORCE_FAIL === '1' });
@@ -285,7 +306,32 @@ async function sendFeishuRaw(receiveId, receiveIdType, msgType, contentObj) {
     body: JSON.stringify({ receive_id: receiveId, msg_type: msgType, content: JSON.stringify(contentObj) }),
     signal: AbortSignal.timeout(5000)
   });
-  const data = await resp.json();
+  let data = await resp.json();
+  // 卡片隐性故障 fallback：仅当 msgType=interactive 且飞书返回 parse card json err/200621 时降级为文本（text 链路不受影响）。
+  if (data.code !== 0 && msgType === 'interactive' && /200621|parse card json/.test(String(data.msg || ''))) {
+    const card = contentObj && contentObj.card;
+    const fallbackText = card ? cardToFallbackText(card) : '';
+    if (fallbackText) {
+      try {
+        const resp2 = await fetch('https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=' + receiveIdType, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+          body: JSON.stringify({ receive_id: receiveId, msg_type: 'text', content: JSON.stringify({ text: fallbackText }) }),
+          signal: AbortSignal.timeout(5000)
+        });
+        const data2 = await resp2.json();
+        if (data2 && data2.code === 0) {
+          console.warn('[FEISHU-NOTIFY] 卡片降级为文本发送成功 (200621 fallback) receive_id=' + receiveId + ' type=' + receiveIdType + ' text_len=' + fallbackText.length);
+          return data2;
+        }
+        console.warn('[FEISHU-NOTIFY] 卡片降级为文本发送仍失败 receive_id=' + receiveId + ' type=' + receiveIdType + ' code=' + (data2 && data2.code) + ' msg=' + (data2 && data2.msg));
+      } catch (e2) {
+        console.warn('[FEISHU-NOTIFY] 卡片降级文本重发异常 receive_id=' + receiveId + ' type=' + receiveIdType + ':', e2.message);
+      }
+    }
+    // 降级失败也要回报原始卡片错误（不要吞掉卡片问题），便于定位
+    throw new Error('飞书消息发送失败: ' + (data.msg || data.code || 'unknown') + ' (card fallback attempted)');
+  }
   if (data.code !== 0) throw new Error('飞书消息发送失败: ' + (data.msg || data.code || 'unknown'));
   return data;
 }
@@ -1038,7 +1084,7 @@ function bgClear(ip, username) { bgFailTracker.delete(bgFailKey(ip, username)); 
 
 // ==================== 配置 ====================
 const PORT = process.env.PORT || 3001;
-const APP_VERSION = '1.0.16';
+const APP_VERSION = '1.0.17';
 // 发布可核对信息：部署时间（进程启动时间 ≈ 部署时间）+ git commit
 // （Render 自动注入 RENDER_GIT_COMMIT；否则回退本地 git rev-parse；都不可用则标记 unknown）
 const APP_STARTED_AT = new Date().toISOString();
