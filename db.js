@@ -172,6 +172,11 @@ if (driver === 'pg') {
         "ALTER TABLE payable_items ADD COLUMN IF NOT EXISTS payable_date TEXT DEFAULT ''",
         "CREATE INDEX IF NOT EXISTS idx_payable_items_lifecycle ON payable_items(lifecycle_status)",
         "CREATE INDEX IF NOT EXISTS idx_payable_items_fee_type ON payable_items(fee_type)",
+        // PAY-CORE 多次付款：重建唯一索引，使付款动作完成后的 PR（partial_paid / paid 等）
+        // 不再阻止同一来源新建付款申请。仅「仍在审批/付款流程中、未发生付款确认」的 PR 保持唯一约束。
+        // 使用 DO 块做条件检查：仅当索引不存在或定义不含 partial_paid（旧定义）时才 DROP+CREATE。
+        // 首次部署后后续重启检测到定义已匹配，跳过 DDL，实现「生产 schema 变更只执行一次」。
+        "DO $outer$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'uq_payment_request_active_goods_source' AND indexdef LIKE '%partial_paid%') THEN DROP INDEX IF EXISTS uq_payment_request_active_goods_source; EXECUTE $inner$CREATE UNIQUE INDEX IF NOT EXISTS uq_payment_request_active_goods_source ON payment_requests(source_type, source_id, payment_subcategory) WHERE payment_category = 'goods' AND payment_subcategory IN ('deposit','balance') AND source_id <> '' AND payment_status NOT IN ('rejected','cancelled','partial_paid','partial_payment_partial_deduction','paid','deduction_settled','partial_rounding','reversed')$inner$; END IF; END $outer$",
         // DATA-FIX: PI 币种变更后 payable_items.currency 未同步的存量修复
         // 仅修复 active/reserved（paid 已结算不碰）；幂等（currency 一致时 0 行受影响）
         "UPDATE payable_items SET currency = pi.currency FROM proforma_invoices pi WHERE payable_items.source_type = 'pi' AND payable_items.source_id = pi.id AND payable_items.fee_type = 'deposit' AND payable_items.currency != pi.currency AND payable_items.lifecycle_status IN ('active', 'reserved')",

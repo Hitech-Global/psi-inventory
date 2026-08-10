@@ -1821,13 +1821,16 @@ function initDatabase() {
       ON payment_settlement_logs(idempotency_key)
       WHERE event_type = 'payment' AND idempotency_key != ''
   `);
+  // PAY-CORE 多次付款：付款动作完成后（partial_paid / paid 等）的 PR 不再阻止同一来源新建 PR。
+  // 仅「仍在审批/付款流程中、未发生付款确认」的 PR 保持唯一约束。
+  d.exec(`DROP INDEX IF EXISTS uq_payment_request_active_goods_source`);
   d.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS uq_payment_request_active_goods_source
       ON payment_requests(source_type, source_id, payment_subcategory)
       WHERE payment_category = 'goods'
         AND payment_subcategory IN ('deposit', 'balance')
         AND source_id != ''
-        AND payment_status NOT IN ('rejected', 'cancelled')
+        AND payment_status NOT IN ('rejected', 'cancelled', 'partial_paid', 'partial_payment_partial_deduction', 'paid', 'deduction_settled', 'partial_rounding', 'reversed')
   `);
 
   // cost_allocations 表新增字段

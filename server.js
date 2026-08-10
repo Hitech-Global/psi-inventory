@@ -6059,7 +6059,7 @@ function getPINumberLockReason(pi) {
   // 已创建付款申请（含待审批/审批中/已审批/已付款）：付款申请记录 或 reserved/paid 应付费用
   const pr = queryOne("SELECT id FROM payment_requests WHERE (source_type='pi' AND source_id=?) OR (source_type='pi' AND source_no=?) LIMIT 1", [pi.id, pi.pi_no]);
   if (pr) return '已创建付款申请';
-  const reservedPay = queryOne("SELECT id FROM payable_items WHERE source_type='pi' AND source_id=? AND fee_type='deposit' AND lifecycle_status IN ('reserved','paid') LIMIT 1", [pi.id]);
+  const reservedPay = queryOne("SELECT id FROM payable_items WHERE source_type='pi' AND source_id=? AND fee_type='deposit' AND lifecycle_status IN ('reserved','partially_paid','paid') LIMIT 1", [pi.id]);
   if (reservedPay) return '已创建付款申请';
   // 已付款 / 结算 / 抹零：存在付款分摊流水
   const paid = queryOne(`SELECT pa.id FROM payment_allocations pa
@@ -8609,6 +8609,12 @@ const ACTIVE_GOODS_PAYMENT_STATUSES = [
   'pending_approval', 'approved', 'pending_payment', 'partial_paid', 'partial_deduction',
   'partial_rounding', 'partial_payment_partial_deduction', 'deduction_settled', 'reversed', 'paid'
 ];
+// PAY-CORE 多次付款：仅「仍在审批/付款流程中、未发生付款确认」的 PR 阻止同一来源新建 PR。
+// 付款动作完成后（partial_paid / partial_payment_partial_deduction / paid / deduction_settled /
+// partial_rounding / reversed），PR 退出审批中心，不再阻止剩余金额再次申请付款。
+const BLOCKING_GOODS_PR_STATUSES = [
+  'pending_approval', 'approved', 'pending_payment', 'partial_deduction'
+];
 
 function settlementMoney(value) {
   const amount = Number(value);
@@ -8800,7 +8806,7 @@ async function aggregatePiDepositSettlement(piId) {
      FROM payable_items
      WHERE source_type = 'pi' AND source_id = ?
        AND fee_type = 'deposit'
-       AND lifecycle_status IN ('active', 'reserved', 'paid')`,
+       AND lifecycle_status IN ('active', 'reserved', 'partially_paid', 'paid')`,
     [piId]
   );
   if (!items.rows || items.rows.length === 0) {
@@ -8990,8 +8996,8 @@ function existingActiveGoodsPayment(sourceType, sourceId, subcategory) {
     `SELECT id, request_no, payment_status FROM payment_requests
      WHERE payment_category = 'goods' AND payment_subcategory = ?
        AND source_type = ? AND source_id = ?
-       AND payment_status IN (${ACTIVE_GOODS_PAYMENT_STATUSES.map(() => '?').join(',')})`,
-    [subcategory, sourceType, sourceId, ...ACTIVE_GOODS_PAYMENT_STATUSES]
+       AND payment_status IN (${BLOCKING_GOODS_PR_STATUSES.map(() => '?').join(',')})`,
+    [subcategory, sourceType, sourceId, ...BLOCKING_GOODS_PR_STATUSES]
   );
 }
 
@@ -9150,29 +9156,33 @@ function cancelPayableItem(payableItemId, cancelledBy, cancelReason) {
 }
 
 /**
- * 锁定应付费用（active → reserved）
+ * 锁定应付费用（active / partially_paid → reserved）
  * 供 Task 2 payment_request_items 使用
+ * PAY-CORE 多次付款：partially_paid（已付部分、仍有剩余）同样可被下一次付款申请锁定
  */
 function reservePayableItem(payableItemId, paymentRequestId) {
   const result = run(
     `UPDATE payable_items
      SET lifecycle_status = 'reserved'
-     WHERE id = ? AND lifecycle_status = 'active'`,
+     WHERE id = ? AND lifecycle_status IN ('active', 'partially_paid')`,
     [payableItemId]
   );
   return result.changes > 0;
 }
 
 /**
- * 释放应付费用（reserved → active）
+ * 释放应付费用（reserved → active / partially_paid）
  * 供 Task 2 reject-approval 使用
+ * PAY-CORE 多次付款：已发生过结算的费用释放后回到 partially_paid，避免被误取消或被来源单据金额同步覆盖
  */
 function releasePayableItem(payableItemId) {
+  const settledMinor = payableItemsSettledMinor([payableItemId]).get(payableItemId) || 0;
+  const target = settledMinor > 0 ? 'partially_paid' : 'active';
   const result = run(
     `UPDATE payable_items
-     SET lifecycle_status = 'active'
+     SET lifecycle_status = ?
      WHERE id = ? AND lifecycle_status = 'reserved'`,
-    [payableItemId]
+    [target, payableItemId]
   );
   return result.changes > 0;
 }
@@ -9191,11 +9201,14 @@ function releasePayableItemsByPR(prId) {
   for (const row of items.rows || []) {
     // P0-FIX-5：释放前检查该 item 是否还被其他非终态 PR 有效关联
     // 若存在重复有效关联，抛出数据一致性错误，触发事务回滚
+    // PAY-CORE 多次付款：已完成付款动作的历史 PR（partial_paid / paid 等）不再占用该费用，
+    // 否则同一费用第二次申请后撤回会误判为"重复关联"。
     const otherActivePRs = query(
       `SELECT COUNT(*) AS cnt FROM payment_request_items pri
        JOIN payment_requests pr ON pr.id = pri.payment_request_id
        WHERE pri.payable_item_id = ? AND pri.payment_request_id != ?
-         AND pr.payment_status NOT IN ('cancelled','rejected')
+         AND pr.payment_status NOT IN ('cancelled','rejected','paid','partial_paid',
+                                       'partial_payment_partial_deduction','deduction_settled','partial_rounding')
          AND pr.approval_status NOT IN ('cancelled','rejected')`,
       [row.payable_item_id, prId]
     );
@@ -9254,6 +9267,21 @@ function markPayableItemPaid(payableItemId) {
   const result = run(
     `UPDATE payable_items
      SET lifecycle_status = 'paid'
+     WHERE id = ? AND lifecycle_status IN ('reserved', 'partially_paid')`,
+    [payableItemId]
+  );
+  return result.changes > 0;
+}
+
+/**
+ * 标记应付费用部分已付（reserved → partially_paid）
+ * PAY-CORE 多次付款：一笔应付事实可分多次付清，本次付款完成后释放剩余金额，
+ * 费用继续留在应付列表并可再次发起付款申请，不新增尾款业务对象。
+ */
+function markPayableItemPartiallyPaid(payableItemId) {
+  const result = run(
+    `UPDATE payable_items
+     SET lifecycle_status = 'partially_paid'
      WHERE id = ? AND lifecycle_status = 'reserved'`,
     [payableItemId]
   );
@@ -9268,6 +9296,158 @@ function amountToMinor(amount) {
 }
 function minorToAmount(minor) {
   return (Number(minor) || 0) / 100;
+}
+
+// PAY-CORE 多次付款：payable_item 已结算金额（minor）
+// 业务模型：payable_item = 一笔应付事实，可被多次付款申请分次结清，不新增尾款对象。
+// 口径：① 付款取 payment_allocations（reconciled）——真实资金分摊事实；
+//       ② 抵扣/抹零为 PR 级事实，按本项 requested_amount_minor 在该 PR 内的占比分摊；
+//       ③ 仅统计非 cancelled/rejected 的付款申请。
+// 剩余可付 = payable_amount_minor - 已结算金额。
+function payableItemsSettledMinor(itemIds) {
+  const result = new Map();
+  const ids = [...new Set((itemIds || []).filter(Boolean))];
+  if (!ids.length) return result;
+  ids.forEach(id => result.set(id, 0));
+  const priRows = query(
+    `SELECT pri.id, pri.payable_item_id, pri.payment_request_id, pri.requested_amount_minor
+     FROM payment_request_items pri
+     JOIN payment_requests pr ON pr.id = pri.payment_request_id
+     WHERE pri.payable_item_id IN (${ids.map(() => '?').join(',')})
+       AND pr.payment_status NOT IN ('cancelled','rejected')
+       AND pr.approval_status NOT IN ('cancelled','rejected')`,
+    ids
+  ).rows || [];
+  if (!priRows.length) return result;
+  const priIds = priRows.map(r => r.id);
+  const prIds = [...new Set(priRows.map(r => r.payment_request_id))];
+  // ① 付款分摊
+  const paidByPri = new Map();
+  const allocRows = query(
+    `SELECT payment_request_item_id, SUM(allocated_amount_minor) AS paid_minor
+     FROM payment_allocations
+     WHERE status = 'reconciled' AND payment_request_item_id IN (${priIds.map(() => '?').join(',')})
+     GROUP BY payment_request_item_id`,
+    priIds
+  ).rows || [];
+  allocRows.forEach(r => paidByPri.set(r.payment_request_item_id, Number(r.paid_minor || 0)));
+  // ② PR 级抵扣 + 抹零（applied 才计入，reversed 自动排除）
+  const drByPr = new Map();
+  const drRows = query(
+    `SELECT payment_request_id, SUM(amount) AS amt
+     FROM payment_settlement_logs
+     WHERE status = 'applied' AND event_type IN ('deduction','rounding')
+       AND payment_request_id IN (${prIds.map(() => '?').join(',')})
+     GROUP BY payment_request_id`,
+    prIds
+  ).rows || [];
+  drRows.forEach(r => drByPr.set(r.payment_request_id, amountToMinor(r.amt)));
+  // ③ 各 PR 的 requested 总额（须取该 PR 全部明细，占比才正确）
+  const totalByPr = new Map();
+  const totRows = query(
+    `SELECT payment_request_id, SUM(requested_amount_minor) AS total_minor
+     FROM payment_request_items
+     WHERE payment_request_id IN (${prIds.map(() => '?').join(',')})
+     GROUP BY payment_request_id`,
+    prIds
+  ).rows || [];
+  totRows.forEach(r => totalByPr.set(r.payment_request_id, Number(r.total_minor || 0)));
+  for (const r of priRows) {
+    const paidMinor = paidByPri.get(r.id) || 0;
+    const drMinor = drByPr.get(r.payment_request_id) || 0;
+    const totalMinor = totalByPr.get(r.payment_request_id) || 0;
+    const share = totalMinor > 0 ? (Number(r.requested_amount_minor || 0) / totalMinor) : 0;
+    const settled = paidMinor + Math.round(drMinor * share);
+    result.set(r.payable_item_id, (result.get(r.payable_item_id) || 0) + settled);
+  }
+  return result;
+}
+
+// PAY-CORE 多次付款：payable_item 结算拆分（minor）
+// 与 payableItemsSettledMinor 同源，但拆成三路，供应付费用列表按「已付款 / 抵扣 / 抹零」分别展示：
+//   paidMinor     = 真实付款（payment_allocations reconciled）+ 历史 legacy 付款（按本项占比分摊）
+//   deductionMinor= PR 级抵扣（applied，按本项在该 PR 内占比分摊）
+//   roundingMinor = PR 级抹零（applied，按本项占比分摊）
+// 剩余可付 = payable_amount_minor - paidMinor - deductionMinor - roundingMinor。
+function payableItemsSettlementBreakdown(itemIds) {
+  const result = new Map();
+  const ids = [...new Set((itemIds || []).filter(Boolean))];
+  ids.forEach(id => result.set(id, { paidMinor: 0, deductionMinor: 0, roundingMinor: 0 }));
+  if (!ids.length) return result;
+  const priRows = query(
+    `SELECT pri.id, pri.payable_item_id, pri.payment_request_id, pri.requested_amount_minor
+     FROM payment_request_items pri
+     JOIN payment_requests pr ON pr.id = pri.payment_request_id
+     WHERE pri.payable_item_id IN (${ids.map(() => '?').join(',')})
+       AND pr.payment_status NOT IN ('cancelled','rejected')
+       AND pr.approval_status NOT IN ('cancelled','rejected')`,
+    ids
+  ).rows || [];
+  if (!priRows.length) return result;
+  const priIds = priRows.map(r => r.id);
+  const prIds = [...new Set(priRows.map(r => r.payment_request_id))];
+  // 真实付款（新事务，reconciled）
+  const paidByPri = new Map();
+  query(
+    `SELECT payment_request_item_id, SUM(allocated_amount_minor) AS paid_minor
+     FROM payment_allocations
+     WHERE status = 'reconciled' AND payment_request_item_id IN (${priIds.map(() => '?').join(',')})
+     GROUP BY payment_request_item_id`,
+    priIds
+  ).forEach(r => paidByPri.set(r.payment_request_item_id, Number(r.paid_minor || 0)));
+  // 历史 legacy 付款（applied 的 payment 事件，is_legacy=1），PR 级，需按占比分摊到各 pri
+  const legacyPaidByPr = new Map();
+  query(
+    `SELECT payment_request_id, SUM(amount) AS amt
+     FROM payment_settlement_logs
+     WHERE status = 'applied' AND event_type = 'payment' AND is_legacy = 1
+       AND payment_request_id IN (${prIds.map(() => '?').join(',')})
+     GROUP BY payment_request_id`,
+    prIds
+  ).forEach(r => legacyPaidByPr.set(r.payment_request_id, amountToMinor(r.amt)));
+  // PR 级抵扣 + 抹零（applied），按本项占比分摊
+  const dedByPr = new Map();
+  const rndByPr = new Map();
+  query(
+    `SELECT payment_request_id, event_type, SUM(amount) AS amt
+     FROM payment_settlement_logs
+     WHERE status = 'applied' AND event_type IN ('deduction','rounding')
+       AND payment_request_id IN (${prIds.map(() => '?').join(',')})
+     GROUP BY payment_request_id, event_type`,
+    prIds
+  ).forEach(r => {
+    const m = amountToMinor(r.amt);
+    if (r.event_type === 'deduction') dedByPr.set(r.payment_request_id, m);
+    else rndByPr.set(r.payment_request_id, m);
+  });
+  const totalByPr = new Map();
+  query(
+    `SELECT payment_request_id, SUM(requested_amount_minor) AS total_minor
+     FROM payment_request_items
+     WHERE payment_request_id IN (${prIds.map(() => '?').join(',')})
+     GROUP BY payment_request_id`,
+    prIds
+  ).forEach(r => totalByPr.set(r.payment_request_id, Number(r.total_minor || 0)));
+  for (const r of priRows) {
+    const share = (totalByPr.get(r.payment_request_id) || 0) > 0
+      ? (Number(r.requested_amount_minor || 0) / totalByPr.get(r.payment_request_id)) : 0;
+    const legacyPaid = (legacyPaidByPr.get(r.payment_request_id) || 0) * share;
+    const paid = (paidByPri.get(r.id) || 0) + Math.round(legacyPaid);
+    const deduction = Math.round((dedByPr.get(r.payment_request_id) || 0) * share);
+    const rounding = Math.round((rndByPr.get(r.payment_request_id) || 0) * share);
+    const cur = result.get(r.payable_item_id);
+    cur.paidMinor += paid;
+    cur.deductionMinor += deduction;
+    cur.roundingMinor += rounding;
+  }
+  return result;
+}
+
+// 单项剩余可付金额（minor），不足 0 时归 0
+function payableItemRemainingMinor(item) {
+  if (!item) return 0;
+  const settled = payableItemsSettledMinor([item.id]).get(item.id) || 0;
+  return Math.max(0, Number(item.payable_amount_minor || 0) - settled);
 }
 
 function finalPaymentApprovalInput(payment, body = {}) {
@@ -9366,24 +9546,26 @@ async function settleFinalPaymentApproval(payment, body, req) {
 /**
  * PAY-CORE Phase 2：single PR 关联 payable_item 并 reserve
  * 业务规则（V2.1 第 8 节）：
- *   1. 按 source_type + source_id + fee_type 查找 active payable_item
+ *   1. 按 source_type + source_id + fee_type 查找 active / partially_paid payable_item
  *   2. 找到 >1 个候选 → 抛错冲突，事务回滚
- *   3. 找到 1 个 → 校验 currency/payee_key 一致 → 创建 payment_request_items → reserve
+ *   3. 找到 1 个 → 校验 currency/payee_key 一致 → 创建 payment_request_items（本次剩余金额）→ reserve
  *   4. 找到 0 个 → 历史兼容路径，跳过（不创建 items，不 reserve）
  *   5. 必须在 PR 创建事务内调用
+ * PAY-CORE 多次付款：partially_paid 的费用仍有剩余可付，再次发起申请时只关联「剩余金额」，
+ * 不动用已结算部分；remaining<=0 视为已付清，拒绝重复创建。
  * @returns {Object|null} 关联的 payable_item 或 null（历史兼容）
  */
 function linkSinglePayableItem(prId, sourceType, sourceId, feeType, prCurrency, prPayeeKey) {
   const candidates = query(
     `SELECT * FROM payable_items
      WHERE source_type = ? AND source_id = ? AND fee_type = ?
-       AND lifecycle_status = 'active'`,
+       AND lifecycle_status IN ('active', 'partially_paid')`,
     [sourceType, sourceId, feeType]
   );
   const items = candidates.rows || [];
   if (items.length === 0) return null; // 历史兼容：PI/CI 在 Task 1 前创建，无 payable_item
   if (items.length > 1) {
-    throw new SettlementError(409, `来源 ${sourceType}:${sourceId} 存在 ${items.length} 个 active 应付费用（${feeType}），无法自动关联，请先清理重复数据`);
+    throw new SettlementError(409, `来源 ${sourceType}:${sourceId} 存在 ${items.length} 个 active/partially_paid 应付费用（${feeType}），无法自动关联，请先清理重复数据`);
   }
   const payableItem = items[0];
   // 校验 currency 一致
@@ -9394,13 +9576,20 @@ function linkSinglePayableItem(prId, sourceType, sourceId, feeType, prCurrency, 
   if (String(payableItem.payee_key || '') !== String(prPayeeKey || '')) {
     throw new SettlementError(409, `应付费用收款方 ${payableItem.payee_key} 与付款申请收款方 ${prPayeeKey} 不一致，无法关联`);
   }
-  // 创建 payment_request_items（1 行，全额）
+  // PAY-CORE 多次付款：本次可申请金额 = 应付 - 已结算（剩余可付）
+  const payableMinor = Number(payableItem.payable_amount_minor || 0);
+  const settledMinor = payableItemsSettledMinor([payableItem.id]).get(payableItem.id) || 0;
+  const remainingMinor = payableMinor - settledMinor;
+  if (remainingMinor <= 0) {
+    throw new SettlementError(409, `应付费用 ${payableItem.fee_no} 已付清（剩余 ${minorToAmount(remainingMinor)}），无需再次付款`);
+  }
+  // 创建 payment_request_items（1 行，剩余金额）
   run(
     `INSERT INTO payment_request_items (id, payment_request_id, payable_item_id, requested_amount_minor)
      VALUES (?, ?, ?, ?)`,
-    [genId('pri'), prId, payableItem.id, payableItem.payable_amount_minor]
+    [genId('pri'), prId, payableItem.id, remainingMinor]
   );
-  // reserve payable_item（active → reserved）
+  // reserve payable_item（active / partially_paid → reserved）
   if (!reservePayableItem(payableItem.id, prId)) {
     throw new SettlementError(409, `应付费用 ${payableItem.fee_no} 状态已变更，无法锁定`);
   }
@@ -9675,11 +9864,27 @@ async function applyPaymentSettlement(paymentRequestId, rawAmount, rawPaidDate, 
     const afterPayment = await queryOne('SELECT * FROM payment_requests WHERE id = ?', [payment.id]);
     const afterFacts = await paymentSettlementFacts(afterPayment);
     // PAY-CORE V3：纯抹零结清时 effectivePaid=0 但 effectiveRounding>0，也需标记 paid
+    const payableItemIds = (priRows.rows || []).map(r => r.payable_item_id).filter(Boolean);
     if (afterFacts.outstanding <= 0 && (afterFacts.effectivePaid > 0 || afterFacts.effectiveRounding > 0)) {
       // PR 已结清 → 标记所有关联 payable_items 为 paid
-      const payableItemIds = (priRows.rows || []).map(r => r.payable_item_id).filter(Boolean);
       for (const payableItemId of payableItemIds) {
         markPayableItemPaid(payableItemId);
+      }
+    } else if (afterFacts.effectivePaid > 0 || afterFacts.effectiveRounding > 0) {
+      // PAY-CORE 多次付款：本次付款动作已完成但仍有剩余未付。
+      // 逐项按「应付 - 已结算」判定：结清 → paid；仍有剩余 → partially_paid（释放剩余金额，可再次发起申请）。
+      if (payableItemIds.length > 0) {
+        const settledMap = payableItemsSettledMinor(payableItemIds);
+        const itemRows = await query(
+          `SELECT id, payable_amount_minor FROM payable_items
+           WHERE id IN (${payableItemIds.map(() => '?').join(',')})`,
+          payableItemIds
+        );
+        for (const item of itemRows.rows || []) {
+          const remainingMinor = Number(item.payable_amount_minor || 0) - (settledMap.get(item.id) || 0);
+          if (remainingMinor <= 0) markPayableItemPaid(item.id);
+          else markPayableItemPartiallyPaid(item.id);
+        }
       }
     }
     return { idempotent: false, log_id: logId, transaction_id: txId, trans_no: transNo, rounding_amount: roundOffAmount, effectivePaid: actualPaidAmount, ...result };
@@ -10389,11 +10594,12 @@ app.get('/api/payable-items', requireApiPermission('payment_view'), asyncHandler
   const { lifecycle_status, fee_type, source_type, source_id, payee_key, keyword } = req.query;
   let sql = 'SELECT * FROM payable_items WHERE 1=1';
   const params = [];
-  // 业务规则：应付费用工作台只列出待处理项（active + reserved）。
-  // 已审批通过+已付款（paid）以及已取消（cancelled）移出本列表。
+  // 业务规则：应付费用工作台只列出未结清项（active + reserved + partially_paid）。
+  // 全部付清（paid）以及已取消（cancelled）移出本列表。
+  // partially_paid = 已付一部分、仍有剩余未付，继续留在列表并可再次发起付款申请。
   // 调用方主动传 lifecycle_status 参数时按精确值查询（历史查询仍可用）。
   if (lifecycle_status) { sql += ' AND lifecycle_status = ?'; params.push(lifecycle_status); }
-  else { sql += " AND lifecycle_status IN ('active','reserved')"; }
+  else { sql += " AND lifecycle_status IN ('active','reserved','partially_paid')"; }
   if (fee_type) { sql += ' AND fee_type = ?'; params.push(fee_type); }
   if (source_type) { sql += ' AND source_type = ?'; params.push(source_type); }
   if (source_id) { sql += ' AND source_id = ?'; params.push(source_id); }
@@ -10401,11 +10607,31 @@ app.get('/api/payable-items', requireApiPermission('payment_view'), asyncHandler
   if (keyword) { sql += ' AND (fee_no LIKE ? OR source_no LIKE ? OR payee_name_snapshot LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`); }
   sql += ' ORDER BY created_at DESC';
   const rows = query(sql, params).rows;
+  // PAY-CORE 多次付款：附加「已付款 / 抵扣 / 抹零 / 剩余未付」拆分（应付事实不变，金额动态推导）
+  const breakdownMap = payableItemsSettlementBreakdown(rows.map(r => r.id));
   // 金额转换为元（便于前端展示）
-  const items = rows.map(r => ({
-    ...r,
-    payable_amount: r.payable_amount_minor / 100
-  }));
+  const items = rows.map(r => {
+    const b = breakdownMap.get(r.id) || { paidMinor: 0, deductionMinor: 0, roundingMinor: 0 };
+    const payableMinor = Number(r.payable_amount_minor || 0);
+    const paidMinor = b.paidMinor;
+    const deductionMinor = b.deductionMinor;
+    const roundingMinor = b.roundingMinor;
+    const remainingMinor = Math.max(0, payableMinor - paidMinor - deductionMinor - roundingMinor);
+    return {
+      ...r,
+      payable_amount: payableMinor / 100,
+      paid_amount_minor: paidMinor,
+      paid_amount: minorToAmount(paidMinor),
+      deduction_amount_minor: deductionMinor,
+      deduction_amount: minorToAmount(deductionMinor),
+      rounding_amount_minor: roundingMinor,
+      rounding_amount: minorToAmount(roundingMinor),
+      settled_amount_minor: paidMinor + deductionMinor + roundingMinor,
+      settled_amount: minorToAmount(paidMinor + deductionMinor + roundingMinor),
+      remaining_amount_minor: remainingMinor,
+      remaining_amount: minorToAmount(remainingMinor)
+    };
+  });
   res.json({ items, total: items.length });
 }));
 
@@ -10414,6 +10640,23 @@ app.get('/api/payable-items/:id', requireApiPermission('payment_view'), asyncHan
   const item = queryOne('SELECT * FROM payable_items WHERE id = ?', [req.params.id]);
   if (!item) return res.status(404).json({ error: '应付费用不存在' });
   item.payable_amount = item.payable_amount_minor / 100;
+  const b = payableItemsSettlementBreakdown([item.id]).get(item.id) || { paidMinor: 0, deductionMinor: 0, roundingMinor: 0 };
+  const payableMinor = Number(item.payable_amount_minor || 0);
+  const paidMinor = b.paidMinor;
+  const deductionMinor = b.deductionMinor;
+  const roundingMinor = b.roundingMinor;
+  const settledMinor = paidMinor + deductionMinor + roundingMinor;
+  const remainingMinor = Math.max(0, payableMinor - settledMinor);
+  item.paid_amount_minor = paidMinor;
+  item.paid_amount = minorToAmount(paidMinor);
+  item.deduction_amount_minor = deductionMinor;
+  item.deduction_amount = minorToAmount(deductionMinor);
+  item.rounding_amount_minor = roundingMinor;
+  item.rounding_amount = minorToAmount(roundingMinor);
+  item.settled_amount_minor = settledMinor;
+  item.settled_amount = minorToAmount(settledMinor);
+  item.remaining_amount_minor = remainingMinor;
+  item.remaining_amount = minorToAmount(remainingMinor);
   res.json({ item });
 }));
 
@@ -10641,6 +10884,10 @@ function computePaymentTotalQty(pr) {
 }
 
 // 待审付款申请（供审批中心 → 财务类审批读取）
+// 审批中心只负责两件事：① 待审批（approval_status='pending'）；② 已审批但尚未做付款确认。
+// 因此用白名单：approved 后仅 pending_approval / approved / partial_deduction（仅抵扣、未付款）保留；
+// 一旦发生付款确认（partial_paid / partial_payment_partial_deduction / paid / deduction_settled / partial_rounding）
+// 即视为本次付款动作完成，移出审批中心；剩余未付金额回到应付费用列表，由用户重新发起付款申请。
 app.get('/api/payment-requests/pending', requireApiPermission('payment_approve'), asyncHandler((req, res) => {
   try {
     const rows = query(`
@@ -10649,7 +10896,7 @@ app.get('/api/payment-requests/pending', requireApiPermission('payment_approve')
              approval_status, payment_status, remark, created_at
       FROM payment_requests
       WHERE approval_status = 'pending'
-         OR (approval_status = 'approved' AND payment_status NOT IN ('paid','rejected','cancelled'))
+         OR (approval_status = 'approved' AND payment_status IN ('pending_approval','approved','partial_deduction'))
       ORDER BY created_at DESC
     `).rows;
     // PAY-CORE Phase 2-B：附加只读 approval 摘要（与 Phase 2-A 详情接口同款模式）
@@ -10929,13 +11176,13 @@ app.post('/api/payment-requests/from-ci-balance', requireApiPermission('payment_
       return res.status(409).json({ error: '该 CI 已无待付尾款，不能重复生成尾款申请' });
     }
 
-    // 二、有效尾款防重：明确白名单（不含 rejected），兼容 source_type/source_id 与 related_ci_id 两种关联
+    // 二、有效尾款防重：仅「仍在审批/付款流程中、未发生付款确认」的 PR 阻止新建（PAY-CORE 多次付款）
     const existingBalance = await queryOne(
       `SELECT id, request_no, payment_status FROM payment_requests
        WHERE payment_subcategory = 'balance'
-         AND payment_status IN (${ACTIVE_GOODS_PAYMENT_STATUSES.map(() => '?').join(',')})
+         AND payment_status IN (${BLOCKING_GOODS_PR_STATUSES.map(() => '?').join(',')})
          AND ((source_type = 'ci' AND source_id = ?) OR related_ci_id = ?)`,
-      [...ACTIVE_GOODS_PAYMENT_STATUSES, ci_id, ci_id]
+      [...BLOCKING_GOODS_PR_STATUSES, ci_id, ci_id]
     );
     if (existingBalance) {
       return res.status(409).json({ error: '该 CI 已存在有效的尾款付款申请，不能重复生成' });
@@ -10972,11 +11219,11 @@ app.post('/api/payment-requests/from-ci-balance', requireApiPermission('payment_
         const piBalanceItems = query(
           `SELECT * FROM payable_items
            WHERE source_type = 'pi' AND source_ci_id = ? AND fee_type = 'balance'
-             AND lifecycle_status = 'active'`,
+             AND lifecycle_status IN ('active', 'partially_paid')`,
           [ci_id]
         ).rows;
         if (piBalanceItems.length === 1) {
-          // 单 PI CI — 自动关联
+          // 单 PI CI — 自动关联（PAY-CORE 多次付款：仅关联剩余金额）
           const payableItem = piBalanceItems[0];
           if (String(payableItem.currency || '').toUpperCase() !== String(ci.currency || 'USD').toUpperCase()) {
             throw new SettlementError(409, `应付费用币种 ${payableItem.currency} 与付款申请币种 ${ci.currency} 不一致，无法关联`);
@@ -10984,9 +11231,15 @@ app.post('/api/payment-requests/from-ci-balance', requireApiPermission('payment_
           if (String(payableItem.payee_key || '') !== String(payeeKey || '')) {
             throw new SettlementError(409, `应付费用收款方 ${payableItem.payee_key} 与付款申请收款方 ${payeeKey} 不一致，无法关联`);
           }
+          const payableMinor = Number(payableItem.payable_amount_minor || 0);
+          const settledMinor = payableItemsSettledMinor([payableItem.id]).get(payableItem.id) || 0;
+          const remainingMinor = payableMinor - settledMinor;
+          if (remainingMinor <= 0) {
+            throw new SettlementError(409, `应付费用 ${payableItem.fee_no} 已付清（剩余 ${minorToAmount(remainingMinor)}），无需再次付款`);
+          }
           run(
             `INSERT INTO payment_request_items (id, payment_request_id, payable_item_id, requested_amount_minor) VALUES (?, ?, ?, ?)`,
-            [genId('pri'), prId, payableItem.id, payableItem.payable_amount_minor]
+            [genId('pri'), prId, payableItem.id, remainingMinor]
           );
           if (!reservePayableItem(payableItem.id, prId)) {
             throw new SettlementError(409, `应付费用 ${payableItem.fee_no} 状态已变更，无法锁定`);
@@ -11020,8 +11273,8 @@ app.post('/api/payment-requests/from-ci-balance', requireApiPermission('payment_
 //   2) 允许同收款方的多个 payable_items 合并申请，允许多币种
 //   3) payment_mode='multi'，currency='MULTI'（仅作展示标记，不自动换算）
 //   4) payment_category/payment_subcategory 留空，费用性质通过 items → payable_items 派生
-//   5) requested_amount_minor = payable_items.payable_amount_minor（允许部分付款，multi 支持抵扣+部分付款+后续尾款）
-//   6) 创建时立即 reserve payable_items（active → reserved）
+//   5) requested_amount_minor = payable_items 的剩余未付金额（应付 - 已付 - 已抵扣 - 已抹零），支持同一费用多次付款
+//   6) 创建时立即 reserve payable_items（active / partially_paid → reserved）
 //   7) reject 时由 Task 2.B.5 释放（reserved → active）
 //   8) PAY-CORE Phase 2：所有 payable_items 必须同币种，currency 写入真实币种（不再 'MULTI'）
 app.post('/api/payment-requests/multi-expense', requireApiPermission('payment_create'), asyncHandler(async (req, res) => {
@@ -11044,10 +11297,23 @@ app.post('/api/payment-requests/multi-expense', requireApiPermission('payment_cr
       const missing = payable_item_ids.filter(id => !found.has(id));
       return res.status(404).json({ error: `应付费用不存在: ${missing.join(', ')}` });
     }
-    // 3. 校验所有 lifecycle_status='active'
-    const nonActive = items.rows.filter(r => r.lifecycle_status !== 'active');
+    // 3. 校验所有 lifecycle_status 可申请（active 待处理 / partially_paid 部分已付、仍有剩余）
+    const creatableStatuses = new Set(['active', 'partially_paid']);
+    const nonActive = items.rows.filter(r => !creatableStatuses.has(r.lifecycle_status));
     if (nonActive.length > 0) {
       return res.status(409).json({ error: `所选费用中存在非待付状态，无法合并申请: ${nonActive.map(r => r.fee_no).join(', ')}` });
+    }
+    // PAY-CORE 多次付款：本次可申请金额 = 应付金额 - 已结算金额（已付 + 已抵扣 + 已抹零）
+    const settledMap = payableItemsSettledMinor(items.rows.map(r => r.id));
+    const remainingByItem = new Map();
+    const exhausted = [];
+    for (const r of items.rows) {
+      const remainingMinor = Number(r.payable_amount_minor || 0) - (settledMap.get(r.id) || 0);
+      if (remainingMinor <= 0) exhausted.push(r.fee_no);
+      remainingByItem.set(r.id, remainingMinor);
+    }
+    if (exhausted.length > 0) {
+      return res.status(409).json({ error: `所选费用已无剩余未付金额，无法再次申请: ${exhausted.join(', ')}` });
     }
     // 4. 校验所有 payee_key 一致（业务规则 1）
     const payeeKeys = new Set(items.rows.map(r => r.payee_key));
@@ -11068,7 +11334,8 @@ app.post('/api/payment-requests/multi-expense', requireApiPermission('payment_cr
     const payeeKey = firstItem.payee_key;
     const payeeNameSnapshot = firstItem.payee_name_snapshot || '';
     const payeeType = firstItem.payee_type || 'factory';
-    const totalAmountMinor = items.rows.reduce((s, r) => s + (r.payable_amount_minor || 0), 0);
+    // PAY-CORE 多次付款：申请金额按剩余未付金额汇总，避免第二次申请重复申请全额
+    const totalAmountMinor = items.rows.reduce((s, r) => s + (remainingByItem.get(r.id) || 0), 0);
     const totalAmount = minorToAmount(totalAmountMinor); // 仅作展示参考，不作为审批/付款依据
     const itemCount = items.rows.length;
     // PAY-MULTI category 推导（创建逻辑修复）：合并来源全部为货款(pi/ci/historical_ci)时标记为 goods，
@@ -11098,12 +11365,12 @@ app.post('/api/payment-requests/multi-expense', requireApiPermission('payment_cr
          totalAmount, totalAmount, prCurrency,
          remark || '', expenseCountrySnapshot]
       );
-      // 循环 INSERT payment_request_items（requested_amount_minor = payable_amount_minor 全额）
+      // 循环 INSERT payment_request_items（requested_amount_minor = 本项剩余未付金额）
       for (const item of items.rows) {
         await run(
           `INSERT INTO payment_request_items (id, payment_request_id, payable_item_id, requested_amount_minor)
            VALUES (?, ?, ?, ?)`,
-          [await genId('pri'), prId, item.id, item.payable_amount_minor]
+          [await genId('pri'), prId, item.id, remainingByItem.get(item.id) || 0]
         );
       }
       // 循环 reserve payable_items（业务规则 6：创建时立即 reserve）

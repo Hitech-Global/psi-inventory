@@ -6564,14 +6564,14 @@ function piNeedsDeposit(value) {
 // UI 只暴露三个业务态：无需定金 / 待付款 / 已付款。
 // 该字段后端有两套枚举来源（server.js 列表 SELECT 用 COALESCE 覆盖）：
 //   ① PI 旧枚举：none / unpaid / pending_approval / partial / paid
-//   ② Payment Core payable_items.lifecycle_status：active / reserved / paid / cancelled / released
+//   ② Payment Core payable_items.lifecycle_status：active / reserved / partially_paid / paid / cancelled / released
 // 展示层统一收敛，禁止把任何内部枚举值透出到界面（原 default 分支会原样回显 active）。
 // 仅改文案：不写回 DB、不参与状态机判断、不影响付款流程；badge 配色仍由调用处按 ==='paid' 判定。
 function formatPIDepositStatus(status) {
   var s = (status == null ? '' : String(status)).trim().toLowerCase();
   if (s === 'none') return t('pi.deposit_status.none', '无需定金');
   if (s === 'paid') return t('pi.deposit_status.paid', '已付款');
-  // 其余（unpaid / pending_approval / partial / active / reserved / cancelled / released / 空值）
+  // 其余（unpaid / pending_approval / partial / active / reserved / partially_paid / cancelled / released / 空值）
   // 一律归为「待付款」——业务语义即「需要定金但尚未付清」。
   return t('pi.deposit_status.pending', '待付款');
 }
@@ -11099,7 +11099,7 @@ function cockpitSupplierDrawer(supplierEnc,currency){
 // （multi-expense / batch-cancel），页面不维护任何一套业务规则，避免规则分散。
 const PAY_FEE_TYPE_LABELS={deposit:'定金',balance:'尾款',freight:'运费',customs_clearance:'清关费',port_charges:'港口费',delivery:'派送费',warehouse:'仓储费',other_local:'其他本地费',duty:'关税',inspection:'商检费'};
 const PAY_SOURCE_TYPE_LABELS={pi:'PI',ci:'CI',manual:'手动录入',historical_ci:'历史CI'};
-const PAY_LIFECYCLE_LABELS={active:'待处理',reserved:'已占用',released:'已释放',paid:'已付款',cancelled:'已取消'};
+const PAY_LIFECYCLE_LABELS={active:'待处理',reserved:'已占用',partially_paid:'部分已付',released:'已释放',paid:'已付款',cancelled:'已取消'};
 let _payableListSel=new Set();
 let _payableListData=[];
 let _payablePrStatusMap={};
@@ -11151,7 +11151,7 @@ async function renderPayableList(){
   const el=document.getElementById('content-inner');
   el.innerHTML='<div id="flash-container"></div>'+
     '<div class="filter-bar"><div class="filter-form">'+
-      '<div class="filter-group"><label>'+t('payable_list.filter_status','状态')+'</label><select id="payl-fs"><option value="">'+t('payable_list.all','全部')+'</option><option value="active">'+t('payable_list.status_active','待处理')+'</option><option value="reserved">'+t('payable_list.status_reserved','已占用')+'</option></select></div>'+
+      '<div class="filter-group"><label>'+t('payable_list.filter_status','状态')+'</label><select id="payl-fs"><option value="">'+t('payable_list.all','全部')+'</option><option value="active">'+t('payable_list.status_active','待处理')+'</option><option value="reserved">'+t('payable_list.status_reserved','已占用')+'</option><option value="partially_paid">'+t('payable_list.status_partially_paid','部分已付')+'</option></select></div>'+
       '<div class="filter-group"><label>'+t('payable_list.filter_feetype','费用类型')+'</label><select id="payl-ft"><option value="">'+t('payable_list.all','全部')+'</option>'+Object.keys(PAY_FEE_TYPE_LABELS).map(function(k){return '<option value="'+k+'">'+PAY_FEE_TYPE_LABELS[k]+'</option>';}).join('')+'</select></div>'+
       '<div class="filter-group"><label>'+t('payable_list.filter_sourcetype','来源')+'</label><select id="payl-st"><option value="">'+t('payable_list.all','全部')+'</option>'+Object.keys(PAY_SOURCE_TYPE_LABELS).map(function(k){return '<option value="'+k+'">'+PAY_SOURCE_TYPE_LABELS[k]+'</option>';}).join('')+'</select></div>'+
       '<div class="filter-group"><label>'+t('payable_list.filter_keyword','关键词')+'</label><input type="text" id="payl-fk" placeholder="'+t('payable_list.filter_keyword_ph','费用号/来源单号/收款方')+'" onkeypress="if(event.key===\'Enter\')loadPayableList()"></div>'+
@@ -11193,7 +11193,7 @@ function renderPayableTable(){
   const rows=_payableListData;
   const tb=document.getElementById('payl-table');if(!tb)return;
   if(!rows.length){
-    tb.innerHTML='<div class="flash flash-info show">'+t('payable_list.empty','暂无应付费用（默认仅显示待处理/已占用）')+'</div>';
+    tb.innerHTML='<div class="flash flash-info show">'+t('payable_list.empty','暂无应付费用（默认显示待处理/已占用/部分已付）')+'</div>';
     return;
   }
   let html='<table class="data-table"><thead><tr>'+
@@ -11203,14 +11203,28 @@ function renderPayableTable(){
     '<th>'+t('payable_list.col_feetype','费用类型')+'</th>'+
     '<th>'+t('payable_list.col_payee','收款方')+'</th>'+
     '<th>'+t('payable_list.col_currency','币种')+'</th>'+
-    '<th style="text-align:right">'+t('payable_list.col_amount','金额')+'</th>'+
+    '<th style="text-align:right">'+t('payable_list.col_amount','应付金额')+'</th>'+
+    '<th style="text-align:right">'+t('payable_list.col_paid','已付款')+'</th>'+
+    '<th style="text-align:right">'+t('payable_list.col_deduction','抵扣')+'</th>'+
+    '<th style="text-align:right">'+t('payable_list.col_rounding','抹零')+'</th>'+
+    '<th style="text-align:right">'+t('payable_list.col_remaining','剩余未付')+'</th>'+
     '<th>'+t('payable_list.col_status','状态')+'</th>'+
     '<th>'+t('payable_list.col_pr_status','付款申请状态')+'</th>'+
     '<th>'+t('payable_list.col_created','创建时间')+'</th>'+
     '</tr></thead><tbody>';
   rows.forEach(function(r){
     const checked=_payableListSel.has(r.id)?'checked':'';
-    const amt=Number((r.payable_amount!=null?r.payable_amount:(r.payable_amount_minor/100))||0).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
+    const payableNum=Number((r.payable_amount!=null?r.payable_amount:(r.payable_amount_minor/100))||0);
+    const amt=payableNum.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
+    // PAY-CORE 多次付款：拆分 已付款/抵扣/抹零/剩余未付（应付金额不变，剩余=应付-已付款-抵扣-抹零，动态推导）
+    const paidNum=Number(r.paid_amount||0);
+    const deductionNum=Number(r.deduction_amount||0);
+    const roundingNum=Number(r.rounding_amount||0);
+    const remainNum=r.remaining_amount!=null?Number(r.remaining_amount):Math.max(0,payableNum-paidNum-deductionNum-roundingNum);
+    const paidTxt=paidNum.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
+    const deductionTxt=deductionNum.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
+    const roundingTxt=roundingNum.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
+    const remainTxt=remainNum.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
     html+='<tr>'+
       '<td><input type="checkbox" class="payl-cb" data-id="'+esc(r.id)+'" onchange="togglePayableSel(\''+esc(r.id)+'\',this.checked)"></td>'+
       '<td>'+esc(r.fee_no||'')+'</td>'+
@@ -11219,6 +11233,10 @@ function renderPayableTable(){
       '<td>'+esc(r.payee_name_snapshot||'')+'</td>'+
       '<td>'+esc(r.currency||'')+'</td>'+
       '<td style="text-align:right">'+amt+'</td>'+
+      '<td style="text-align:right"'+(paidNum>0?'':' class="muted"')+'>'+paidTxt+'</td>'+
+      '<td style="text-align:right"'+(deductionNum>0?'':' class="muted"')+'>'+deductionTxt+'</td>'+
+      '<td style="text-align:right"'+(roundingNum>0?'':' class="muted"')+'>'+roundingTxt+'</td>'+
+      '<td style="text-align:right"><b>'+remainTxt+'</b></td>'+
       '<td>'+esc(PAY_LIFECYCLE_LABELS[r.lifecycle_status]||r.lifecycle_status||'')+'</td>'+
       '<td>'+esc(_payablePrStatusMap[r.id]||'未申请')+'</td>'+
       '<td class="muted">'+esc((r.created_at||'').slice(0,19))+'</td>'+
@@ -11255,7 +11273,8 @@ function updatePayableMenu(){
     '<button class="btn btn-primary btn-sm" id="payl-create" onclick="createPaymentFromSelected()">'+t('payable_list.btn_create','创建付款申请')+'</button>'+
     '<button class="btn btn-warning btn-sm" id="payl-withdraw" onclick="withdrawPaymentFromSelected()">'+t('payable_list.btn_withdraw','撤回付款申请')+'</button>';
   const statuses=new Set(sel.map(function(r){return r.lifecycle_status;}));
-  const allActive=statuses.size===1&&statuses.has('active');
+  // PAY-CORE 多次付款：active（未申请）与 partially_paid（已付部分、仍有剩余）都可发起付款申请
+  const allActive=statuses.size>0&&sel.every(function(r){return r.lifecycle_status==='active'||r.lifecycle_status==='partially_paid';});
   const allReserved=statuses.size===1&&statuses.has('reserved');
   const mixed=!allActive&&!allReserved;
   const bv=document.getElementById('payl-view');
@@ -11263,16 +11282,16 @@ function updatePayableMenu(){
   const bw=document.getElementById('payl-withdraw');
   // 查看：>=1 即可（单选看明细，多选看摘要）；纯展示，不受生命周期限制
   if(n===0){bv.disabled=true;bv.title=t('payable_list.hint_select','请先选择费用');}else{bv.disabled=false;bv.title='';}
-  // 创建付款申请：仅全部 active（同收款方/同币种/同国家 的校验交由统一入口 multi-expense，页面不维护）
+  // 创建付款申请：全部为待处理/部分已付（同收款方/同币种/同国家 的校验交由统一入口 multi-expense，页面不维护）
   if(allActive&&n>0){bc.disabled=false;bc.title='';}
-  else{bc.disabled=true;bc.title=mixed?t('payable_list.hint_same_status','需选择相同状态（待处理 或 已占用）的费用'):t('payable_list.hint_create_only_active','仅待处理（active）费用可创建付款申请');}
+  else{bc.disabled=true;bc.title=mixed?t('payable_list.hint_same_status','需选择相同状态（待处理/部分已付 或 已占用）的费用'):t('payable_list.hint_create_only_active','仅待处理或部分已付的费用可创建付款申请');}
   // 撤回付款申请：仅全部 reserved
   if(allReserved&&n>0){bw.disabled=false;bw.title='';}
-  else{bw.disabled=true;bw.title=mixed?t('payable_list.hint_same_status','需选择相同状态（待处理 或 已占用）的费用'):t('payable_list.hint_withdraw_only_reserved','仅已占用（reserved）费用可撤回付款申请');}
+  else{bw.disabled=true;bw.title=mixed?t('payable_list.hint_same_status','需选择相同状态（待处理/部分已付 或 已占用）的费用'):t('payable_list.hint_withdraw_only_reserved','仅已占用（reserved）费用可撤回付款申请');}
   // 提示行：明确原因
   if(hint){
     if(n===0)hint.textContent='';
-    else if(mixed)hint.textContent='⚠ '+t('payable_list.hint_same_status','需选择相同状态（待处理 或 已占用）的费用');
+    else if(mixed)hint.textContent='⚠ '+t('payable_list.hint_same_status','需选择相同状态（待处理/部分已付 或 已占用）的费用');
     else if(allActive)hint.textContent='ℹ '+t('payable_list.hint_withdraw_only_reserved','仅已占用（reserved）费用可撤回付款申请');
     else if(allReserved)hint.textContent='ℹ '+t('payable_list.hint_create_only_active','仅待处理（active）费用可创建付款申请');
     else hint.textContent='';
@@ -11290,14 +11309,27 @@ async function viewPayableSelected(){
       rels=await api('/api/payment-requests/by-payable-items?ids='+encodeURIComponent(r.id));
     }catch(e){showFlash(t('payable_list.view_fail','加载失败：{v1}',{v1:e.message}),'danger');return;}
     const it=detail.item||{};
-    const amt=Number((it.payable_amount!=null?it.payable_amount:it.payable_amount_minor/100)||0).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
+    const payableNum=Number((it.payable_amount!=null?it.payable_amount:it.payable_amount_minor/100)||0);
+    const amt=payableNum.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
+    const paidNum=Number(it.paid_amount||0);
+    const deductionNum=Number(it.deduction_amount||0);
+    const roundingNum=Number(it.rounding_amount||0);
+    const remainNum=it.remaining_amount!=null?Number(it.remaining_amount):Math.max(0,payableNum-paidNum-deductionNum-roundingNum);
+    const paidTxt=paidNum.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
+    const deductionTxt=deductionNum.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
+    const roundingTxt=roundingNum.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
+    const remainTxt=remainNum.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
     let html='<div style="display:grid;grid-template-columns:auto 1fr;gap:4px 12px">';
     html+='<div><b>'+t('payable_list.col_feeno','费用号')+'</b></div><div>'+esc(it.fee_no||'')+'</div>';
     html+='<div><b>'+t('payable_list.col_source','来源')+'</b></div><div>'+esc(PAY_SOURCE_TYPE_LABELS[it.source_type]||it.source_type||'')+(it.source_no?' · '+esc(it.source_no):'')+'</div>';
     html+='<div><b>'+t('payable_list.col_feetype','费用类型')+'</b></div><div>'+esc(PAY_FEE_TYPE_LABELS[it.fee_type]||it.fee_type||'')+'</div>';
     html+='<div><b>'+t('payable_list.col_payee','收款方')+'</b></div><div>'+esc(it.payee_name_snapshot||'')+'</div>';
     html+='<div><b>'+t('payable_list.col_currency','币种')+'</b></div><div>'+esc(it.currency||'')+'</div>';
-    html+='<div><b>'+t('payable_list.col_amount','金额')+'</b></div><div>'+amt+'</div>';
+    html+='<div><b>'+t('payable_list.col_amount','应付金额')+'</b></div><div>'+amt+'</div>';
+    html+='<div><b>'+t('payable_list.col_paid','已付款')+'</b></div><div>'+paidTxt+'</div>';
+    html+='<div><b>'+t('payable_list.col_deduction','抵扣')+'</b></div><div>'+deductionTxt+'</div>';
+    html+='<div><b>'+t('payable_list.col_rounding','抹零')+'</b></div><div>'+roundingTxt+'</div>';
+    html+='<div><b>'+t('payable_list.col_remaining','剩余未付')+'</b></div><div><b>'+remainTxt+'</b></div>';
     html+='<div><b>'+t('payable_list.col_status','状态')+'</b></div><div>'+esc(PAY_LIFECYCLE_LABELS[it.lifecycle_status]||it.lifecycle_status||'')+'</div>';
     html+='</div>';
     const prs=(rels&&rels.payment_requests)||[];
@@ -11318,10 +11350,19 @@ async function viewPayableSelected(){
   }else{
     // 多选：仅显示所选摘要，不混淆不同付款申请
     let html='<div class="muted" style="margin-bottom:8px">'+t('payable_list.summary_multi','已选 {v1} 项（仅摘要，查看明细请单选）',{v1:sel.length})+'</div>';
-    html+='<table class="data-table"><thead><tr><th>'+t('payable_list.col_feeno','费用号')+'</th><th>'+t('payable_list.col_feetype','费用类型')+'</th><th style="text-align:right">'+t('payable_list.col_amount','金额')+'</th><th>'+t('payable_list.col_status','状态')+'</th></tr></thead><tbody>';
+    html+='<table class="data-table"><thead><tr><th>'+t('payable_list.col_feeno','费用号')+'</th><th>'+t('payable_list.col_feetype','费用类型')+'</th><th style="text-align:right">'+t('payable_list.col_amount','应付金额')+'</th><th style="text-align:right">'+t('payable_list.col_paid','已付款')+'</th><th style="text-align:right">'+t('payable_list.col_deduction','抵扣')+'</th><th style="text-align:right">'+t('payable_list.col_rounding','抹零')+'</th><th style="text-align:right">'+t('payable_list.col_remaining','剩余未付')+'</th><th>'+t('payable_list.col_status','状态')+'</th></tr></thead><tbody>';
     sel.forEach(function(r){
-      const amt=Number((r.payable_amount!=null?r.payable_amount:r.payable_amount_minor/100)||0).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
-      html+='<tr><td>'+esc(r.fee_no||'')+'</td><td>'+esc(PAY_FEE_TYPE_LABELS[r.fee_type]||r.fee_type||'')+'</td><td style="text-align:right">'+amt+'</td><td>'+esc(PAY_LIFECYCLE_LABELS[r.lifecycle_status]||r.lifecycle_status||'')+'</td></tr>';
+      const payableNum=Number((r.payable_amount!=null?r.payable_amount:r.payable_amount_minor/100)||0);
+      const amt=payableNum.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
+      const paidNum=Number(r.paid_amount||0);
+      const deductionNum=Number(r.deduction_amount||0);
+      const roundingNum=Number(r.rounding_amount||0);
+      const remainNum=r.remaining_amount!=null?Number(r.remaining_amount):Math.max(0,payableNum-paidNum-deductionNum-roundingNum);
+      const paidTxt=paidNum.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
+      const deductionTxt=deductionNum.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
+      const roundingTxt=roundingNum.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
+      const remainTxt=remainNum.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
+      html+='<tr><td>'+esc(r.fee_no||'')+'</td><td>'+esc(PAY_FEE_TYPE_LABELS[r.fee_type]||r.fee_type||'')+'</td><td style="text-align:right">'+amt+'</td><td style="text-align:right">'+paidTxt+'</td><td style="text-align:right">'+deductionTxt+'</td><td style="text-align:right">'+roundingTxt+'</td><td style="text-align:right">'+remainTxt+'</td><td>'+esc(PAY_LIFECYCLE_LABELS[r.lifecycle_status]||r.lifecycle_status||'')+'</td></tr>';
     });
     html+='</tbody></table>';
     openModal(t('payable_list.summary_title','所选费用摘要'),html);
@@ -11330,7 +11371,7 @@ async function viewPayableSelected(){
 
 async function createPaymentFromSelected(){
   const sel=getSelectedPayableItems();
-  if(!sel.length||!sel.every(function(r){return r.lifecycle_status==='active';})){showToast(t('payable_list.hint_create_only_active','仅待处理（active）费用可创建付款申请'),'warning');return;}
+  if(!sel.length||!sel.every(function(r){return r.lifecycle_status==='active'||r.lifecycle_status==='partially_paid';})){showToast(t('payable_list.hint_create_only_active','仅待处理或部分已付的费用可创建付款申请'),'warning');return;}
   const ids=sel.map(function(r){return r.id;});
   // 注意：同收款方/同币种/同国家 的校验交由统一入口 multi-expense 在后端完成；页面不重复实现，避免规则分散。
   try{
@@ -11498,9 +11539,11 @@ async function viewPayment(id, mode){
       +'</div>';
     // finance 模式且待审：补审批意见输入框（粘贴图片自动上传为附件）
     const isPendingApproval=(p.payment_status==='pending_approval'||p.approval_status==='pending');
-    // 两级财务审批流程：第二级「付款确认」——一级已审批(approved)且尚未付清(payment_status!='paid')。
-    // 此类单据继续留在财务类审批等待付款确认（系统异常中断后的继续执行，不新建/不回退审批）。
-    const isPendingPaymentConfirmation=(mode==='finance'&&p.approval_status==='approved'&&p.payment_status!=='paid'&&!['rejected','cancelled'].includes(p.payment_status));
+    // 两级财务审批流程：第二级「付款确认」——一级已审批(approved)且尚未进入付款动作。
+    // PAY-CORE 多次付款：partial_paid / partial_payment_partial_deduction 等已发生付款动作的状态不再显示确认按钮，
+    // 避免同一 PR 重复确认；剩余尾款由用户从应付费用列表另行创建付款申请。
+    // 仍显示：approved（仅靠审批待付款）/ partial_deduction（已抵扣但未付款）。
+    const isPendingPaymentConfirmation=(mode==='finance'&&p.approval_status==='approved'&&['approved','partial_deduction'].includes(p.payment_status));
     const canApprove=hasPermission('payment_approve');
     // PAY-CORE Phase 2：判断是否为最终审批节点（current_level >= max_level）
     const appr=p.approval||{};

@@ -1794,7 +1794,11 @@ async function initDatabase() {
   await exec(`CREATE INDEX IF NOT EXISTS ix_payment_settlement_request ON payment_settlement_logs(payment_request_id, event_type, status)`);
   await exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_payment_settlement_legacy_baseline ON payment_settlement_logs(payment_request_id, event_type) WHERE is_legacy = 1`);
   await exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_payment_settlement_payment_idempotency ON payment_settlement_logs(idempotency_key) WHERE event_type = 'payment' AND idempotency_key <> ''`);
-  await exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_payment_request_active_goods_source ON payment_requests(source_type, source_id, payment_subcategory) WHERE payment_category = 'goods' AND payment_subcategory IN ('deposit','balance') AND source_id <> '' AND payment_status NOT IN ('rejected','cancelled')`);
+  // PAY-CORE 多次付款：付款动作完成后（partial_paid / paid 等）的 PR 不再阻止同一来源新建 PR。
+  // 仅「仍在审批/付款流程中、未发生付款确认」的 PR 保持唯一约束。
+  // 使用 DO 块做条件检查：仅当索引不存在或定义不含 partial_paid（旧定义）时才 DROP+CREATE。
+  // 首次部署后后续重启检测到定义已匹配，跳过 DDL，实现「生产 schema 变更只执行一次」。
+  await exec(`DO $outer$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'uq_payment_request_active_goods_source' AND indexdef LIKE '%partial_paid%') THEN DROP INDEX IF EXISTS uq_payment_request_active_goods_source; EXECUTE $inner$CREATE UNIQUE INDEX IF NOT EXISTS uq_payment_request_active_goods_source ON payment_requests(source_type, source_id, payment_subcategory) WHERE payment_category = 'goods' AND payment_subcategory IN ('deposit','balance') AND source_id <> '' AND payment_status NOT IN ('rejected','cancelled','partial_paid','partial_payment_partial_deduction','paid','deduction_settled','partial_rounding','reversed')$inner$; END IF; END $outer$`);
 
   await exec(`
     CREATE TABLE IF NOT EXISTS operation_logs (
