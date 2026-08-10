@@ -9566,10 +9566,10 @@ async function applyPaymentSettlement(paymentRequestId, rawAmount, rawPaidDate, 
       actualPaidAmount = requestedAmount === null ? before.outstanding : requestedAmount;
       if (!(actualPaidAmount > 0)) throw new SettlementError(400, '本次实际付款金额必须大于0');
       if (actualPaidAmount > before.outstanding) throw new SettlementError(400, '本次实际付款金额不能大于当前未付金额');
-      // V2.1 第 5 节：multi 模式不允许部分付款
-      if (payment.payment_mode === 'multi' && actualPaidAmount < before.outstanding) {
-        throw new SettlementError(400, '多费用付款暂不支持部分付款，请全额支付或使用抹零一次结清');
-      }
+      // PAY-CORE V4：multi（多费用合并付款）允许部分付款，与 single 一致。
+      // 仅保留“本次付款金额 <= 当前未付金额”守卫（上一行），不再强制全额/抹零一次结清。
+      // 部分付款后由 derivePaymentStatus 置为 partial_paid / partial_payment_partial_deduction，
+      // 剩余 outstanding 保留，可继续后续付款。
     }
     const operator = await settlementOperator(req);
     // PAY-CORE V3：纯抹零（actualPaidAmount=0）时跳过 payment log + transaction
@@ -11020,7 +11020,7 @@ app.post('/api/payment-requests/from-ci-balance', requireApiPermission('payment_
 //   2) 允许同收款方的多个 payable_items 合并申请，允许多币种
 //   3) payment_mode='multi'，currency='MULTI'（仅作展示标记，不自动换算）
 //   4) payment_category/payment_subcategory 留空，费用性质通过 items → payable_items 派生
-//   5) requested_amount_minor = payable_items.payable_amount_minor（全额，不支持部分付款）
+//   5) requested_amount_minor = payable_items.payable_amount_minor（允许部分付款，multi 支持抵扣+部分付款+后续尾款）
 //   6) 创建时立即 reserve payable_items（active → reserved）
 //   7) reject 时由 Task 2.B.5 释放（reserved → active）
 //   8) PAY-CORE Phase 2：所有 payable_items 必须同币种，currency 写入真实币种（不再 'MULTI'）
