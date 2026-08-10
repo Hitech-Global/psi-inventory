@@ -11640,7 +11640,7 @@ async function viewPayment(id, mode){
       ? '<div class="detail-section"><h3>'+t("payment.final_payment_info","最终付款信息")+'</h3>'
         +'<div class="form-grid">'
         +'<div class="form-group"><label>'+t("payment.actual_paid_amount","实际付款金额")+' <span class="required">*</span></label>'
-        +'<input type="number" min="0" step="0.01" id="pay-final-amount" value="'+Number(p.outstanding||p.unpaid_amount||0).toFixed(2)+'" oninput="recalcFinalPay()"></div>'
+        +'<input type="number" min="0" step="0.01" id="pay-final-amount" value="'+Number(p.outstanding||p.unpaid_amount||0).toFixed(2)+'" oninput="onPayAmountChanged()"></div>'
         + (p.payment_mode==='multi' && p.items && p.items.length ? buildMultiAllocationTable(p.items, p.currency) : '')
         +'<div class="form-group"><label>'+t("payment.actual_paid_date","实际付款日期")+' <span class="required">*</span></label>'
         +'<input type="date" id="pay-final-date" value="'+_today+'"></div>'
@@ -11794,35 +11794,37 @@ function recalcFinalPay(){
     const out=Math.max(0,base-paid-ded-rnd);
     const outEl=document.getElementById('pay-final-est-outstanding');
     if(outEl) outEl.textContent=out.toFixed(2);
-    // 合并付款人工分摊：实时算分摊合计 + 校验 == 实际付款金额（分精度），不等则禁用确认按钮
+    // 合并付款人工分摊：实时算已分配合计与差额（剩余未分配 / 超出），差额不为 0 则禁用确认按钮
     const allocInputs=document.querySelectorAll('.pay-alloc-input');
     if(allocInputs&&allocInputs.length){
-      let sum=0;
-      allocInputs.forEach(function(inp){ sum+=(parseFloat(inp.value)||0); });
+      let sumMinor=0;
+      allocInputs.forEach(function(inp){ sumMinor+=Math.round((parseFloat(inp.value)||0)*100); });
+      const paidMinor=Math.round(paid*100);
+      const diffMinor=paidMinor-sumMinor; // >0 剩余未分配；<0 超出实际付款金额
       const totalEl=document.getElementById('pay-alloc-total');
-      if(totalEl) totalEl.textContent=sum.toFixed(2);
-      const checkEl=document.getElementById('pay-alloc-check');
-      const mismatch=Math.abs(sum-paid)>0.001;
-      if(checkEl){
-        if(mismatch){ checkEl.textContent=t('payment.alloc_mismatch','⚠ 分摊合计必须等于实际付款金额'); checkEl.style.color='#c0392b'; }
-        else { checkEl.textContent=t('payment.alloc_ok','✓ 分摊合计与实际付款金额一致'); checkEl.style.color='#1a7f37'; }
+      if(totalEl) totalEl.textContent=(sumMinor/100).toFixed(2);
+      const diffEl=document.getElementById('pay-alloc-diff');
+      if(diffEl){
+        if(diffMinor>0){ diffEl.innerHTML=t('payment.alloc_unassigned','剩余未分配')+': <b>'+(diffMinor/100).toFixed(2)+'</b>'; diffEl.style.color='#b26a00'; }
+        else if(diffMinor<0){ diffEl.innerHTML=t('payment.alloc_over','超出实际付款金额')+': <b>'+(-diffMinor/100).toFixed(2)+'</b>'; diffEl.style.color='#c0392b'; }
+        else { diffEl.innerHTML=t('payment.alloc_ok','✓ 分摊合计与实际付款金额一致'); diffEl.style.color='#1a7f37'; }
       }
-      ['pay-final-confirm-btn','pay-settle-save'].forEach(function(id){ const b=document.getElementById(id); if(b) b.disabled=mismatch; });
+      ['pay-final-confirm-btn','pay-settle-save'].forEach(function(id){ const b=document.getElementById(id); if(b) b.disabled=(diffMinor!==0); });
     }
   }catch(_){}
 }
 
-// 合并付款确认付款：渲染各费用单人工分摊表（费用单 / 剩余未付 / 本次分摊 / 合计 / 校验提示）
+// 合并付款确认付款：渲染各费用单人工分摊表（费用单 / 剩余未付 / 本次分摊 / 已分配 / 差额提示）
 // items: GET /api/payment-requests/:id 返回的 items[]（含 id(pri.id), payable_item_id, fee_no, requested_amount_minor）
-// 默认本次分摊 = 各 item 的 requested_amount_minor（创建时剩余未付，reserved 锁定，等于当前剩余未付）
+// 初始化不填默认分摊金额：分摊在用户输入「实际付款金额」后由 autoDistributePayAllocations 按剩余未付比例生成
 function buildMultiAllocationTable(items, currency){
   if(!items||!items.length) return '';
   const rows=items.map(function(it){
-    const defAmt=(Number(it.requested_amount_minor||0)/100).toFixed(2);
+    const remainMinor=Number(it.requested_amount_minor||0);
     return '<tr>'
       +'<td>'+esc(it.fee_no||it.payable_item_id)+'</td>'
-      +'<td class="text-right">'+fmtMoney(Number(it.requested_amount_minor||0)/100, currency||'')+'</td>'
-      +'<td><input type="number" min="0" step="0.01" class="pay-alloc-input" data-pri="'+esc(it.id)+'" value="'+defAmt+'" oninput="recalcFinalPay()"></td>'
+      +'<td class="text-right">'+fmtMoney(remainMinor/100, currency||'')+'</td>'
+      +'<td><input type="number" min="0" step="0.01" class="pay-alloc-input" data-pri="'+esc(it.id)+'" data-remain-minor="'+remainMinor+'" placeholder="'+t('payment.alloc_placeholder','填写实际付款金额后自动分摊')+'" oninput="recalcFinalPay()"></td>'
       +'</tr>';
   }).join('');
   return '<div class="detail-section" style="grid-column:1/-1"><h3>'+t('payment.alloc_title','合并付款明细（人工分摊）')+'</h3>'
@@ -11832,9 +11834,35 @@ function buildMultiAllocationTable(items, currency){
     +'<th>'+t('payment.alloc_this','本次分摊')+'</th>'
     +'</tr></thead><tbody>'+rows+'</tbody></table></div>'
     +'<div style="font-size:12px;margin-top:6px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">'
-    +'<span>'+t('payment.alloc_total','分摊合计')+': <b id="pay-alloc-total">0.00</b></span>'
-    +'<span id="pay-alloc-check" style="color:#c0392b"></span>'
+    +'<span>'+t('payment.alloc_total','已分配')+': <b id="pay-alloc-total">0.00</b></span>'
+    +'<span id="pay-alloc-diff"></span>'
     +'</div></div>';
+}
+// 实际付款金额变化时：按各费用单「剩余未付」比例自动生成默认分摊，尾差归最大项（与后端自动分摊口径一致）
+// 生成后用户可手工修改任意一项；金额清空或为 0 时清空全部分摊
+function autoDistributePayAllocations(){
+  const list=Array.prototype.slice.call(document.querySelectorAll('.pay-alloc-input'));
+  if(!list.length) return;
+  const amtEl=document.getElementById('pay-final-amount')||document.getElementById('pay-settle-amount');
+  const paidMinor=Math.round((parseFloat(amtEl?amtEl.value:'')||0)*100);
+  if(!(paidMinor>0)){ list.forEach(function(inp){ inp.value=''; }); return; }
+  const remainOf=function(inp){ return Number(inp.getAttribute('data-remain-minor'))||0; };
+  const totalRemain=list.reduce(function(s,inp){ return s+remainOf(inp); },0);
+  if(!(totalRemain>0)) return;
+  const sorted=list.slice().sort(function(a,b){ return remainOf(b)-remainOf(a); });
+  let othersSum=0;
+  for(let i=1;i<sorted.length;i++){
+    const m=Math.floor(paidMinor*remainOf(sorted[i])/totalRemain);
+    sorted[i].value=(m/100).toFixed(2);
+    othersSum+=m;
+  }
+  const topMinor=paidMinor-othersSum;
+  sorted[0].value=((topMinor>0?topMinor:0)/100).toFixed(2);
+}
+// 实际付款金额输入框专用：先重算默认分摊，再刷新合计/差额与未结预览
+function onPayAmountChanged(){
+  try{ autoDistributePayAllocations(); }catch(_){}
+  recalcFinalPay();
 }
 // 合并付款人工分摊：收集 .pay-alloc-input 并校验（financeApprove / financeConfirmPay 共用同一套逻辑）
 // 返回 {ok:false} 表示校验不通过（已 toast 提示）；{ok:true,allocations:null} 表示无分摊表（走后端原自动分摊）
@@ -11995,7 +12023,7 @@ async function confirmPaid(id){
     const now=new Date(),today=new Date(now.getTime()-now.getTimezoneOffset()*60000).toISOString().slice(0,10);
     const idempotencyKey='pay:'+(window.crypto&&window.crypto.randomUUID?window.crypto.randomUUID():(Date.now()+'-'+Math.random().toString(36).slice(2)));
     openModal(t('modal.title.confirmPaid', '确认付款 - {v1}', {v1: esc(p.request_no)}),
-      (function(){ var _b=t('modal.body.confirmPaid', '<div class="form-card" style="box-shadow:none;padding:0"><input type="hidden" id="pay-settle-idempotency" value="{v1}"><div class="detail-grid mb-16"><div class="detail-item"><span class="detail-label">当前未付</span><span class="detail-value">{v2}</span></div><div class="detail-item"><span class="detail-label">币种</span><span class="detail-value">{v3}</span></div></div><div class="form-grid"><div class="form-group"><label>本次实际付款金额 <span class="required">*</span></label><input type="number" min="0" step="0.01" id="pay-settle-amount" value="{v4}" oninput="recalcFinalPay()"></div><div class="form-group"><label>实际付款日期 <span class="required">*</span></label><input type="date" id="pay-settle-date" value="{v5}"></div><div class="form-group form-group-full"><label>付款凭证号</label><input type="text" id="pay-settle-voucher"></div><div class="form-group"><label>抹零金额</label><input type="number" min="0" step="0.01" id="pay-settle-rounding" placeholder="选填，不抹零请留空" oninput="recalcFinalPay()"></div><div class="form-group form-group-full"><label>抹零原因</label><input type="text" id="pay-settle-rounding-reason" placeholder="建议填写，未填将记录为人工抹零"></div></div><div style="font-size:12px;color:#999">非货款费用将严格按实际付款日期读取系统 realtime 汇率并保存快照；缺少汇率时不会确认付款。</div></div>', {v1: idempotencyKey, v2: fmtMoney(p.outstanding,p.currency), v3: esc(p.currency||''), v4: Number(p.outstanding||0).toFixed(2), v5: today}); if(p.payment_mode==='multi'&&p.items&&p.items.length){ _b+=buildMultiAllocationTable(p.items, p.currency); } return _b; })(),
+      (function(){ var _b=t('modal.body.confirmPaid', '<div class="form-card" style="box-shadow:none;padding:0"><input type="hidden" id="pay-settle-idempotency" value="{v1}"><div class="detail-grid mb-16"><div class="detail-item"><span class="detail-label">当前未付</span><span class="detail-value">{v2}</span></div><div class="detail-item"><span class="detail-label">币种</span><span class="detail-value">{v3}</span></div></div><div class="form-grid"><div class="form-group"><label>本次实际付款金额 <span class="required">*</span></label><input type="number" min="0" step="0.01" id="pay-settle-amount" value="{v4}" oninput="onPayAmountChanged()"></div><div class="form-group"><label>实际付款日期 <span class="required">*</span></label><input type="date" id="pay-settle-date" value="{v5}"></div><div class="form-group form-group-full"><label>付款凭证号</label><input type="text" id="pay-settle-voucher"></div><div class="form-group"><label>抹零金额</label><input type="number" min="0" step="0.01" id="pay-settle-rounding" placeholder="选填，不抹零请留空" oninput="recalcFinalPay()"></div><div class="form-group form-group-full"><label>抹零原因</label><input type="text" id="pay-settle-rounding-reason" placeholder="建议填写，未填将记录为人工抹零"></div></div><div style="font-size:12px;color:#999">非货款费用将严格按实际付款日期读取系统 realtime 汇率并保存快照；缺少汇率时不会确认付款。</div></div>', {v1: idempotencyKey, v2: fmtMoney(p.outstanding,p.currency), v3: esc(p.currency||''), v4: Number(p.outstanding||0).toFixed(2), v5: today}); if(p.payment_mode==='multi'&&p.items&&p.items.length){ _b+=buildMultiAllocationTable(p.items, p.currency); } return _b; })(),
       t('modal.footer.confirmPaid', `<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" id="pay-settle-save" onclick="saveConfirmedPayment('{v1}')">确认付款</button>`, {v1: id}));
     window._finalPayCtx={outstanding:Number(p.outstanding||0)};
   }catch(e){showToast(e.message,'danger')}
