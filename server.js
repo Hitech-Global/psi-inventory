@@ -9597,6 +9597,7 @@ async function settleFinalPaymentApproval(payment, body, req) {
     [input.attachment, payment.id]
   );
   // PAY-CORE Phase 2：透传 rounding_amount / rounding_reason / bank_ref_no，与 confirm-paid 路径一致
+  // PAY-CORE 人工分摊：透传 allocations（合并付款确认时前端逐项填写），缺省则走原自动比例分摊
   return await applyPaymentSettlement(
     payment.id,
     input.actualPaidAmount,
@@ -9610,7 +9611,8 @@ async function settleFinalPaymentApproval(payment, body, req) {
       rounding_amount: input.roundingAmount,
       rounding_reason: body.rounding_reason || '',
       bank_ref_no: body.bank_ref_no || '',
-      payment_account: input.paymentAccount || ''
+      payment_account: input.paymentAccount || '',
+      allocations: Array.isArray(body.allocations) ? body.allocations : undefined
     }
   );
 }
@@ -9874,7 +9876,7 @@ async function applyPaymentSettlement(paymentRequestId, rawAmount, rawPaidDate, 
          snapshot.local_rate_type, snapshot.local_rate_direction, snapshot.local_amount, snapshot.rmb_rate,
          snapshot.rmb_rate_date, snapshot.rmb_rate_type, snapshot.rmb_rate_direction, snapshot.rmb_amount]
       );
-      // 2. INSERT payment_allocations（如有 payment_request_items，按 requested_amount_minor 比例分摊）
+      // 2. INSERT payment_allocations（如有 payment_request_items）
       priRows = await query(
         `SELECT pri.id, pri.payable_item_id, pri.requested_amount_minor
          FROM payment_request_items pri
@@ -9883,28 +9885,34 @@ async function applyPaymentSettlement(paymentRequestId, rawAmount, rawPaidDate, 
       );
       if (priRows.rows && priRows.rows.length > 0) {
         const items = priRows.rows;
-        const totalRequestedMinor = items.reduce((s, r) => s + (r.requested_amount_minor || 0), 0);
-        let allocated = 0;
-        // 按 requested_amount_minor 比例分摊，尾差归最大项
-        const sorted = items.slice().sort((a, b) => (b.requested_amount_minor || 0) - (a.requested_amount_minor || 0));
-        for (let i = 0; i < sorted.length; i++) {
-          const item = sorted[i];
-          let allocMinor;
-          if (i === 0) {
-            // 最大项：paidAmountMinor - 其余项之和（吸收尾差）
-            const othersSum = sorted.slice(1).reduce((s, r) => s + Math.floor(paidAmountMinor * (r.requested_amount_minor || 0) / totalRequestedMinor), 0);
-            allocMinor = paidAmountMinor - othersSum;
-          } else {
-            allocMinor = Math.floor(paidAmountMinor * (item.requested_amount_minor || 0) / totalRequestedMinor);
+        // 人工分摊优先：options.allocations = [{payment_request_item_id, amount}]（amount 单位：元）
+        // 校验失败抛错 → 整个 transaction 回滚，不产生 settlement / allocation
+        if (Array.isArray(options.allocations) && options.allocations.length > 0) {
+          await insertHumanAllocations(items, options.allocations, txId, paidAmountMinor);
+        } else {
+          // 自动比例分摊：按 requested_amount_minor 比例，尾差归最大项（旧逻辑，单费用/旧流程保持不变）
+          const totalRequestedMinor = items.reduce((s, r) => s + (r.requested_amount_minor || 0), 0);
+          let allocated = 0;
+          const sorted = items.slice().sort((a, b) => (b.requested_amount_minor || 0) - (a.requested_amount_minor || 0));
+          for (let i = 0; i < sorted.length; i++) {
+            const item = sorted[i];
+            let allocMinor;
+            if (i === 0) {
+              // 最大项：paidAmountMinor - 其余项之和（吸收尾差）
+              const othersSum = sorted.slice(1).reduce((s, r) => s + Math.floor(paidAmountMinor * (r.requested_amount_minor || 0) / totalRequestedMinor), 0);
+              allocMinor = paidAmountMinor - othersSum;
+            } else {
+              allocMinor = Math.floor(paidAmountMinor * (item.requested_amount_minor || 0) / totalRequestedMinor);
+            }
+            if (allocMinor < 0) allocMinor = 0;
+            allocated += allocMinor;
+            await run(
+              `INSERT INTO payment_allocations
+               (id, transaction_id, payment_request_item_id, allocated_amount_minor, status)
+               VALUES (?, ?, ?, ?, 'reconciled')`,
+              [genId('alloc'), txId, item.id, allocMinor]
+            );
           }
-          if (allocMinor < 0) allocMinor = 0;
-          allocated += allocMinor;
-          await run(
-            `INSERT INTO payment_allocations
-             (id, transaction_id, payment_request_item_id, allocated_amount_minor, status)
-             VALUES (?, ?, ?, ?, 'reconciled')`,
-            [genId('alloc'), txId, item.id, allocMinor]
-          );
         }
       }
     } else {
@@ -9961,6 +9969,60 @@ async function applyPaymentSettlement(paymentRequestId, rawAmount, rawPaidDate, 
     }
     return { idempotent: false, log_id: logId, transaction_id: txId, trans_no: transNo, rounding_amount: roundOffAmount, effectivePaid: actualPaidAmount, ...result };
   });
+}
+
+// PAY-CORE：合并付款「人工分摊」——确认付款时由前端逐项填写各费用单本次分摊金额
+// allocations: [{ payment_request_item_id, amount }]，amount 单位：元
+// 校验（任一失败抛 SettlementError，由调用方 transaction 回滚，不产生 settlement / allocation）：
+//   ① 分摊合计 == 实际付款金额（minor 精度）
+//   ② 单项分摊 <= 该费用剩余未付金额（payable_item 当前剩余未付 = 应付 − 已结算）
+//   ③ 不允许负数
+//   ④ 不遗漏本 PR 的任一 payment_request_item（且只能包含本 PR 的 item）
+async function insertHumanAllocations(items, allocations, txId, paidAmountMinor) {
+  const itemMap = new Map(items.map(r => [r.id, r]));
+  // ①/④前置：传入的 payment_request_item_id 必须全部属于本 PR
+  const settledMap = payableItemsSettledMinor(items.map(r => r.payable_item_id));
+  const pRows = await query(
+    `SELECT id, fee_no, payable_amount_minor FROM payable_items WHERE id IN (${items.map(() => '?').join(',')})`,
+    items.map(r => r.payable_item_id)
+  );
+  const pMap = new Map((pRows.rows || []).map(r => [r.id, r]));
+  const validated = [];
+  let sumMinor = 0;
+  for (const a of allocations) {
+    const item = itemMap.get(a.payment_request_item_id);
+    if (!item) throw new SettlementError(400, `分摊包含非本付款申请的费用项：${a.payment_request_item_id || ''}`);
+    const amt = Number(a.amount);
+    if (Number.isNaN(amt) || !(amt >= 0)) throw new SettlementError(400, '分摊金额不能为负数');
+    const allocMinor = amountToMinor(amt);
+    const pItem = pMap.get(item.payable_item_id);
+    if (!pItem) throw new SettlementError(500, `费用项 ${item.payable_item_id} 关联的应付费用不存在`);
+    const remainingMinor = Number(pItem.payable_amount_minor || 0) - (settledMap.get(item.payable_item_id) || 0);
+    if (allocMinor > remainingMinor) {
+      throw new SettlementError(400, `费用 ${pItem.fee_no || item.payable_item_id} 分摊金额 ${minorToAmount(allocMinor)} 超过剩余未付 ${minorToAmount(remainingMinor)}`);
+    }
+    validated.push({ itemId: item.id, allocMinor });
+    sumMinor += allocMinor;
+  }
+  // ④ 不遗漏：本 PR 每个 payment_request_item 都必须出现在 allocations 中
+  for (const r of items) {
+    if (!allocations.some(a => a.payment_request_item_id === r.id)) {
+      throw new SettlementError(400, `分摊遗漏了关联费用项：${r.fee_no || r.payable_item_id || r.id}`);
+    }
+  }
+  // ① 总额校验（minor 精度）
+  if (sumMinor !== paidAmountMinor) {
+    throw new SettlementError(400, `分摊合计 ${minorToAmount(sumMinor)} 不等于实际付款金额 ${minorToAmount(paidAmountMinor)}`);
+  }
+  // 全部校验通过 → 写 payment_allocations（复用现有表结构，allocated_amount_minor 单位：分）
+  for (const v of validated) {
+    await run(
+      `INSERT INTO payment_allocations
+       (id, transaction_id, payment_request_item_id, allocated_amount_minor, status)
+       VALUES (?, ?, ?, ?, 'reconciled')`,
+      [genId('alloc'), txId, v.itemId, v.allocMinor]
+    );
+  }
 }
 
 async function applyDeductionSettlement(paymentRequestId, body, req) {
@@ -12027,7 +12089,9 @@ app.post('/api/payment-requests/:id/approve', requireApiPermission('payment_appr
         voucher_attachment: req.body.voucher_attachment,
         apply_round_off: req.body.apply_round_off === true || req.body.apply_round_off === 1,
         rounding_amount: req.body.rounding_amount,
-        rounding_reason: req.body.rounding_reason
+        rounding_reason: req.body.rounding_reason,
+        // 合并付款人工分摊：前端逐项填写的 allocations 透传到结算逻辑（无则走自动比例分摊）
+        allocations: Array.isArray(req.body.allocations) ? req.body.allocations : undefined
       });
       return res.json({ success: true, idempotent: result.idempotent, log_id: result.log_id, transaction_id: result.transaction_id, trans_no: result.trans_no, rounding_amount: result.rounding_amount, paid_amount: result.effectivePaid, outstanding: result.outstanding, payment_status: result.payment_status });
     }
