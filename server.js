@@ -11515,6 +11515,15 @@ app.put('/api/payment-requests/:id/deduction', requireApiPermission('payment_cre
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 }));
 
+// 最终审批时写入抵扣（供「通过并付款」弹窗复用 PAY-CORE deduction 能力）
+// 与 PUT 区别：权限跟随审批动作，避免审批人没有 payment_create 时 403
+app.post('/api/payment-requests/:id/deduction', requireApiPermission('payment_approve','payment_execute'), asyncHandler(async (req, res) => {
+  try {
+    const result = await applyDeductionSettlement(req.params.id, req.body || {}, req);
+    res.json({ success: true, actual_pay_amount: settlementMoney(result.grossPayable - result.effectiveDeduction), outstanding: result.outstanding, payment_status: result.payment_status });
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+}));
+
 // PAY-CORE Phase 2：提取 createApprovalInstance — 供创建端点自动提交审批 和 submit-approval 端点共用
 // 不修改 applyPaymentSettlement / settlement_logs / payment_transactions / payable_items 状态模型
 // 仅负责：读取审批流配置 → 校验审批人 → 创建 approval_records → 通知第1级审批人
