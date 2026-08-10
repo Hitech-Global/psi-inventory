@@ -11070,9 +11070,10 @@ app.post('/api/payment-requests/multi-expense', requireApiPermission('payment_cr
     const totalAmountMinor = items.rows.reduce((s, r) => s + (r.payable_amount_minor || 0), 0);
     const totalAmount = minorToAmount(totalAmountMinor); // 仅作展示参考，不作为审批/付款依据
     const itemCount = items.rows.length;
-    // PAY-MULTI category 推导（创建逻辑修复）：合并来源全部为货款(pi/ci)时标记为 goods，
+    // PAY-MULTI category 推导（创建逻辑修复）：合并来源全部为货款(pi/ci/historical_ci)时标记为 goods，
     // 审批时自动跳过付款日 realtime 汇率校验；含非货款来源时保持 ''（仍走付款日汇率校验，符合非货款费用要求）。
-    const _goodsSources = new Set(['pi', 'ci']);
+    // historical_ci 为 CI 历史形态，本质仍属 CI 货款，需纳入 goods 判定，否则会误判为 non-goods 触发汇率校验。
+    const _goodsSources = new Set(['pi', 'ci', 'historical_ci']);
     const _allGoods = items.rows.length > 0 && items.rows.every(r => _goodsSources.has(String(r.source_type || '').toLowerCase()));
     const prCategory = _allGoods ? 'goods' : '';
     const prSubcategory = _allGoods
