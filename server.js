@@ -10649,6 +10649,7 @@ app.get('/api/payment-requests/pending', requireApiPermission('payment_approve')
              approval_status, payment_status, remark, created_at
       FROM payment_requests
       WHERE approval_status = 'pending'
+         OR (approval_status = 'approved' AND payment_status NOT IN ('paid','rejected','cancelled'))
       ORDER BY created_at DESC
     `).rows;
     // PAY-CORE Phase 2-B：附加只读 approval 摘要（与 Phase 2-A 详情接口同款模式）
@@ -11670,10 +11671,16 @@ app.post('/api/payment-requests/:id/approve', requireApiPermission('payment_appr
     // PAY-CORE Phase 2 V2.1 第 12 节：confirm-paid 从 payment_approve 切换到 payment_execute
     // PAY-CORE Phase 2：新增 bank_ref_no / voucher_attachment / payment_account / apply_round_off 参数
     if (action === 'confirm-paid') {
-      // V2.1：confirm-paid 需要 payment_execute 权限（不再仅凭 payment_approve）
-      const hasExecutePerm = (req.currentUserPermissions || []).includes('payment_execute') || (req.currentUserPermissions || []).includes('*');
+      // 两级财务审批流程：第二级「付款确认」由财务审批人在审批中心执行，
+      // 因此 payment_approve / payment_execute / 通配(*) 任一权限均可触发（原 V2.1 仅限 payment_execute 过严）。
+      // 前置校验：仅已完成一级审批(approval_status='approved')的付款申请可走 confirm-paid，
+      // 避免 pending 单子绕过一级审批直接结算。
+      if (payment.approval_status !== 'approved') {
+        return res.status(409).json({ error: '该付款申请尚未完成审批，不能确认付款' });
+      }
+      const hasExecutePerm = (req.currentUserPermissions || []).some(p => p === 'payment_execute' || p === 'payment_approve' || p === '*');
       if (!hasExecutePerm) {
-        return res.status(403).json({ error: '确认付款需要 payment_execute 权限' });
+        return res.status(403).json({ error: '确认付款需要 payment_approve 或 payment_execute 权限' });
       }
       const result = await applyPaymentSettlement(req.params.id, req.body.paid_amount, req.body.paid_date, req.body.payment_voucher, req, req.body.idempotency_key, {
         bank_ref_no: req.body.bank_ref_no,

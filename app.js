@@ -1304,10 +1304,20 @@ async function loadFinanceApprovalList(){
     const data=await api('/api/payment-requests/pending');
     if(!data.length){wrap.innerHTML=t('gen.L804.1','<div class="empty-state"><div class="empty-icon">✅</div>暂无待审付款申请</div>');return}
     const canApprove=hasPermission('payment_approve');
-    wrap.innerHTML=t('html.loadFinanceApprovalList', '<div class="table-container"><table class="data-table"><thead><tr><th>申请号</th><th>大类</th><th>小类</th><th>来源单号</th><th>关联CI</th><th>付款对象</th><th class="text-right">总数量</th><th class="text-right">应付金额</th><th>币种</th><th>提交时间</th><th>操作</th></tr></thead><tbody>{v1}</tbody></table></div>', {v1: data.map(p=>{
+    // 财务类审批列表状态标签：pending=待审批；approved 且未 paid=待付款确认（付款确认中）
+    const financeStateLabel=(p)=>{
+      if(p.approval_status==='approved' && p.payment_status!=='paid'){
+        return String(p.payment_status||'').includes('partial') ? t('payment.state_pay_confirming','付款确认中') : t('payment.state_pending_pay_confirm','待付款确认');
+      }
+      return t('payment.state_pending_approval','待审批');
+    };
+    const financeStateClass=(p)=>(p.approval_status==='approved'&&p.payment_status!=='paid')?'status-pending':'status-approved';
+    wrap.innerHTML=t('html.loadFinanceApprovalList', '<div class="table-container"><table class="data-table"><thead><tr><th>申请号</th><th>大类</th><th>小类</th><th>来源单号</th><th>关联CI</th><th>付款对象</th><th class="text-right">总数量</th><th class="text-right">应付金额</th><th>币种</th><th>提交时间</th><th>状态</th><th>操作</th></tr></thead><tbody>{v1}</tbody></table></div>', {v1: data.map(p=>{
         const catLabel=PAY_CATEGORIES[p.payment_category]||p.payment_category;
         const subLabel=(PAY_SUBCATS[p.payment_category]&&PAY_SUBCATS[p.payment_category][p.payment_subcategory])||p.payment_subcategory||'';
         const qtyTxt=(p.total_qty!==null&&p.total_qty!==undefined)?Number(p.total_qty).toLocaleString('en-US'):'—';
+        const isPayConfirm=(p.approval_status==='approved'&&p.payment_status!=='paid');
+        const btnTitle=isPayConfirm?t('payment.finance_pay_confirm','付款确认'):(canApprove?t('gen.L822.1','查看/审批'):t("app.389", "\u67e5\u770b\u8be6\u60c5"));
         return '<tr class="clickable-detail-row" onclick="rowClickView(event,\'viewPayment\',\''+p.id+'\',\'finance\')">'+
           '<td class="cell-id">'+esc(p.request_no)+'</td>'+
           '<td>'+esc(catLabel)+'</td>'+
@@ -1319,8 +1329,9 @@ async function loadFinanceApprovalList(){
           '<td class="text-right font-bold">'+fmtMoney(p.payable_amount,p.currency)+'</td>'+
           '<td>'+esc(p.currency||'')+'</td>'+
           '<td>'+esc((p.created_at||'').replace('T',' ').slice(0,19))+'</td>'+
+          '<td><span class="status-badge '+financeStateClass(p)+'">'+esc(financeStateLabel(p))+'</span></td>'+
           '<td class="cell-actions">'+
-            '<button class="action-btn" onclick="viewPayment(\''+p.id+'\',\'finance\')" title="'+(canApprove?t('gen.L822.1','查看/审批'):t("app.389", "\u67e5\u770b\u8be6\u60c5"))+'">👁️</button>'+
+            '<button class="action-btn" onclick="viewPayment(\''+p.id+'\',\'finance\')" title="'+btnTitle+'">👁️</button>'+
           '</td>'+
         '</tr>';
       }).join('')});
@@ -11487,6 +11498,9 @@ async function viewPayment(id, mode){
       +'</div>';
     // finance 模式且待审：补审批意见输入框（粘贴图片自动上传为附件）
     const isPendingApproval=(p.payment_status==='pending_approval'||p.approval_status==='pending');
+    // 两级财务审批流程：第二级「付款确认」——一级已审批(approved)且尚未付清(payment_status!='paid')。
+    // 此类单据继续留在财务类审批等待付款确认（系统异常中断后的继续执行，不新建/不回退审批）。
+    const isPendingPaymentConfirmation=(mode==='finance'&&p.approval_status==='approved'&&p.payment_status!=='paid'&&!['rejected','cancelled'].includes(p.payment_status));
     const canApprove=hasPermission('payment_approve');
     // PAY-CORE Phase 2：判断是否为最终审批节点（current_level >= max_level）
     const appr=p.approval||{};
@@ -11495,7 +11509,7 @@ async function viewPayment(id, mode){
     const _now=new Date(),_today=new Date(_now.getTime()-_now.getTimezoneOffset()*60000).toISOString().slice(0,10);
     // 固定缓存本单基准未结，供抵扣/抹零联动与实时未结计算使用（不改动后端逻辑，仅为前端展示）
     window._finalPayCtx={outstanding:Number(p.outstanding||p.unpaid_amount||0)};
-    const paymentFormHtml=(mode==='finance'&&isPendingApproval&&canApprove&&isFinalLevel)
+    const paymentFormHtml=(mode==='finance'&&canApprove&&((isPendingApproval&&isFinalLevel)||isPendingPaymentConfirmation))
       ? '<div class="detail-section"><h3>'+t("payment.final_payment_info","最终付款信息")+'</h3>'
         +'<div class="form-grid">'
         +'<div class="form-group"><label>'+t("payment.actual_paid_amount","实际付款金额")+' <span class="required">*</span></label>'
@@ -11507,11 +11521,17 @@ async function viewPayment(id, mode){
         +'<div class="form-group form-group-full"><label>'+t("payment.payment_account","付款账户")+'</label>'
         +'<input type="text" id="pay-final-account" placeholder="'+t("payment.payment_account_placeholder","选填，用于结算记录付款账户")+'"></div>'
         +'<div class="form-group"><label>'+t("payment.deduction_amount","抵扣金额")+'</label>'
-        +'<input type="number" min="0" step="0.01" id="pay-final-ded-amt" placeholder="'+t("payment.deduction_placeholder","选填，无抵扣请留空")+'" oninput="recalcFinalPay()"></div>'
+        +(isPendingPaymentConfirmation&&Number(p.deduction_amount||0)>0
+            ? '<input type="number" class="is-disabled" disabled value="'+Number(p.deduction_amount||0).toFixed(2)+'">'
+            : '<input type="number" min="0" step="0.01" id="pay-final-ded-amt" placeholder="'+t("payment.deduction_placeholder","选填，无抵扣请留空")+'" oninput="recalcFinalPay()">')+'</div>'
         +'<div class="form-group"><label>'+t("payment.deduction_source_type","抵扣来源类型")+'</label>'
-        +'<select id="pay-final-ded-type" onchange="recalcFinalPay()"><option value="">'+t("payment.ded_type_select","选择")+'</option><option value="other_payment">'+t("payment.ded_other_payment","其他付款多付")+'</option><option value="price_diff">'+t("payment.ded_price_diff","价格差异")+'</option><option value="other">'+t("payment.ded_other","其他")+'</option></select></div>'
+        +(isPendingPaymentConfirmation&&Number(p.deduction_amount||0)>0
+            ? '<input type="text" class="is-disabled" disabled value="'+esc(p.deduction_source_type||'—')+'">'
+            : '<select id="pay-final-ded-type" onchange="recalcFinalPay()"><option value="">'+t("payment.ded_type_select","选择")+'</option><option value="other_payment">'+t("payment.ded_other_payment","其他付款多付")+'</option><option value="price_diff">'+t("payment.ded_price_diff","价格差异")+'</option><option value="other">'+t("payment.ded_other","其他")+'</option></select>')+'</div>'
         +'<div class="form-group form-group-full"><label>'+t("payment.deduction_reason","抵扣原因/备注")+'</label>'
-        +'<input type="text" id="pay-final-ded-desc" placeholder="'+t("payment.deduction_reason_placeholder","有抵扣时建议填写")+'" oninput="recalcFinalPay()"></div>'
+        +(isPendingPaymentConfirmation&&Number(p.deduction_amount||0)>0
+            ? '<input type="text" class="is-disabled" disabled value="'+esc(p.deduction_source_desc||'—')+'">'
+            : '<input type="text" id="pay-final-ded-desc" placeholder="'+t("payment.deduction_reason_placeholder","有抵扣时建议填写")+'" oninput="recalcFinalPay()">')+'</div>'
         +'<div class="form-group"><label>'+t("payment.rounding_amount","抹零金额")+'</label>'
         +'<input type="number" min="0" step="0.01" id="pay-final-rounding" placeholder="'+t("payment.rounding_placeholder","选填，不抹零请留空")+'" oninput="recalcFinalPay()"></div>'
         +'<div class="form-group form-group-full"><label>'+t("payment.rounding_reason","抹零原因")+'</label>'
@@ -11531,7 +11551,11 @@ async function viewPayment(id, mode){
     const body='<div class="detail-card" style="box-shadow:none;padding:0"><div class="detail-section"><h3>'+t("payment.summary","付款申请摘要")+'</h3>'+summary+'</div>'+relHtml+settlementSection+attSection+paymentFormHtml+opinionHtml+'</div>';
     // footer：finance 模式待审 → 通过/驳回；否则仅关闭
     let footer='<button class="btn btn-secondary" onclick="closeModal()">'+t("common.close","关闭")+'</button>';
-    if(mode==='finance'&&isPendingApproval&&canApprove){
+    if(mode==='finance'&&canApprove&&isPendingPaymentConfirmation){
+      // 第二级付款确认：一级已审批通过，此处仅执行付款结算确认（走 confirm-paid 接口）
+      footer='<button class="btn btn-secondary" onclick="closeModal()">'+t("common.close","关闭")+'</button>'
+        +'<button class="btn btn-primary" id="pay-final-confirm-btn" onclick="financeConfirmPay(\''+id+'\')">💰 '+t("payment.confirm_pay_btn","确认付款")+'</button>';
+    } else if(mode==='finance'&&isPendingApproval&&canApprove){
       const approveLabel=isFinalLevel?t("payment.final_approve_btn","通过并付款"):t("action.approve","通过");
       footer='<button class="btn btn-secondary" onclick="closeModal()">'+t("common.close","关闭")+'</button>'
         +'<button class="btn btn-danger" onclick="financeApprove(\''+id+'\',\'reject\')">⛔ '+t("action.reject","驳回")+'</button>'
@@ -11703,6 +11727,52 @@ async function financeApprove(id, action){
     if(typeof loadFinanceApprovalList==='function'&&document.getElementById('approval-list'))loadFinanceApprovalList();
     if(document.getElementById('pay-table'))loadPay();
   }catch(e){showToast(e.message,'danger')}
+}
+// 两级审批流程：第二级「付款确认」——对已通过一级审批(approval_status='approved')但尚未付清的单据，
+// 在财务类审批详情中执行付款结算确认（复用后端 confirm-paid 路径）。不回退审批、不新建申请。
+async function financeConfirmPay(id){
+  const amtEl=document.getElementById('pay-final-amount');
+  if(!amtEl){showToast(t('payment.err_form_missing','付款确认表单未加载'),'danger');return;}
+  const amount=parseFloat(amtEl.value);
+  const paidDate=document.getElementById('pay-final-date')?document.getElementById('pay-final-date').value:'';
+  const bankRef=document.getElementById('pay-final-bank-ref')?document.getElementById('pay-final-bank-ref').value.trim():'';
+  const accountEl=document.getElementById('pay-final-account');
+  const paymentAccount=accountEl?accountEl.value.trim():'';
+  const roundingVal=document.getElementById('pay-final-rounding')?document.getElementById('pay-final-rounding').value:'';
+  const roundingReason=document.getElementById('pay-final-rounding-reason')?document.getElementById('pay-final-rounding-reason').value.trim():'';
+  const roundingAmount=parseFloat(roundingVal);
+  if(!(Number.isFinite(amount)&&amount>0)){showToast(t('payment.err_amount_required','实际付款金额必须大于0'),'warning');amtEl.focus();return}
+  if(!paidDate){showToast(t('payment.err_date_required','请选择实际付款日期'),'warning');return}
+  // 抵扣字段：确认模式下若已生效则被 disabled（无 id），此时跳过；否则按普通抵扣处理
+  const dedAmtEl=document.getElementById('pay-final-ded-amt');
+  let dedAmt=0,dedType='',dedDesc='';
+  if(dedAmtEl && !dedAmtEl.disabled){
+    dedAmt=parseFloat(dedAmtEl.value)||0;
+    dedType=document.getElementById('pay-final-ded-type')?document.getElementById('pay-final-ded-type').value.trim():'';
+    dedDesc=document.getElementById('pay-final-ded-desc')?document.getElementById('pay-final-ded-desc').value.trim():'';
+    if(dedAmt>0&&!dedType){showToast(t('payment.ded_type_required','有抵扣时必须选择抵扣来源类型'),'warning');return}
+    if(dedAmt>0&&!dedDesc){showToast(t('payment.ded_reason_required','有抵扣时必须填写抵扣原因/备注'),'warning');return}
+  }
+  const base=(window._finalPayCtx&&Number.isFinite(window._finalPayCtx.outstanding))?window._finalPayCtx.outstanding:0;
+  const rnd=Number.isFinite(roundingAmount)&&roundingAmount>0?roundingAmount:0;
+  if(amount+dedAmt+rnd>base+0.001){showToast(t('payment.err_exceed_outstanding','实际付款+抵扣+抹零 不能超过当前未结金额'),'warning');return}
+  const body={action:'confirm-paid',paid_amount:amount,paid_date:paidDate,bank_ref_no:bankRef,payment_account:paymentAccount,idempotency_key:'conf:'+id+':'+(window.crypto&&window.crypto.randomUUID?window.crypto.randomUUID():(Date.now()+'-'+Math.random().toString(36).slice(2)))};
+  if(rnd>0){body.rounding_amount=rnd;if(roundingReason)body.rounding_reason=roundingReason;}
+  // 确认模式下抵扣已生效不在此重复提交；仅当存在可编辑抵扣字段时才提交
+  if(dedAmt>0){
+    try{
+      await api('/api/payment-requests/'+id+'/deduction','POST',{has_deduction:1,deduction_amount:dedAmt,deduction_source_type:dedType,deduction_source_desc:dedDesc});
+    }catch(e){showToast(e.message,'danger');return;}
+  }
+  const btn=document.getElementById('pay-final-confirm-btn');
+  if(btn){btn.disabled=true;btn.textContent=t("app.476","保存中…");}
+  try{
+    await api('/api/payment-requests/'+id+'/approve','POST',body);
+    showToast(t('payment.confirm_pay_success','付款确认成功，结算已完成'),'success');
+    closeModal();
+    if(typeof loadFinanceApprovalList==='function'&&document.getElementById('approval-list'))loadFinanceApprovalList();
+    if(document.getElementById('pay-table'))loadPay();
+  }catch(e){showToast(e.message,'danger');if(btn){btn.disabled=false;btn.textContent=t("payment.confirm_pay_btn","确认付款")}}
 }
 async function loadPay(){
   try{
