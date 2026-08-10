@@ -9394,7 +9394,7 @@ function payableItemsSettlementBreakdown(itemIds) {
      WHERE status = 'reconciled' AND payment_request_item_id IN (${priIds.map(() => '?').join(',')})
      GROUP BY payment_request_item_id`,
     priIds
-  ).forEach(r => paidByPri.set(r.payment_request_item_id, Number(r.paid_minor || 0)));
+  ).rows.forEach(r => paidByPri.set(r.payment_request_item_id, Number(r.paid_minor || 0)));
   // 历史 legacy 付款（applied 的 payment 事件，is_legacy=1），PR 级，需按占比分摊到各 pri
   const legacyPaidByPr = new Map();
   query(
@@ -9404,7 +9404,7 @@ function payableItemsSettlementBreakdown(itemIds) {
        AND payment_request_id IN (${prIds.map(() => '?').join(',')})
      GROUP BY payment_request_id`,
     prIds
-  ).forEach(r => legacyPaidByPr.set(r.payment_request_id, amountToMinor(r.amt)));
+  ).rows.forEach(r => legacyPaidByPr.set(r.payment_request_id, amountToMinor(r.amt)));
   // PR 级抵扣 + 抹零（applied），按本项占比分摊
   const dedByPr = new Map();
   const rndByPr = new Map();
@@ -9415,7 +9415,7 @@ function payableItemsSettlementBreakdown(itemIds) {
        AND payment_request_id IN (${prIds.map(() => '?').join(',')})
      GROUP BY payment_request_id, event_type`,
     prIds
-  ).forEach(r => {
+  ).rows.forEach(r => {
     const m = amountToMinor(r.amt);
     if (r.event_type === 'deduction') dedByPr.set(r.payment_request_id, m);
     else rndByPr.set(r.payment_request_id, m);
@@ -9427,7 +9427,7 @@ function payableItemsSettlementBreakdown(itemIds) {
      WHERE payment_request_id IN (${prIds.map(() => '?').join(',')})
      GROUP BY payment_request_id`,
     prIds
-  ).forEach(r => totalByPr.set(r.payment_request_id, Number(r.total_minor || 0)));
+  ).rows.forEach(r => totalByPr.set(r.payment_request_id, Number(r.total_minor || 0)));
   for (const r of priRows) {
     const share = (totalByPr.get(r.payment_request_id) || 0) > 0
       ? (Number(r.requested_amount_minor || 0) / totalByPr.get(r.payment_request_id)) : 0;
