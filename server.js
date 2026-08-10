@@ -4922,6 +4922,78 @@ app.get('/api/replenishment-suggestions/historical-sales', requireApiPermission(
   }
 }));
 
+// 月度销量矩阵（总预测月份列数据源）
+// 口径与 replenishment_suggestions.sales_m1..m4 的生成逻辑完全一致（见本文件「销量聚合 A」）：
+// 同一事实表 sales_records、同一日期归一化 salesOrderDateExpr、同一 is_valid_order = 1、
+// 同一 SUM(quantity)、同一 sku_code + country 分组维度。仅把 4 个月的窗口拉长为任意月份区间。
+// 纯查询接口，不参与也不改变任何预测计算。
+app.get('/api/replenishment-suggestions/monthly-sales', requireApiPermission('replenishment_view'), asyncHandler((req, res) => {
+  const { start, end, country, warehouse, brand, keyword, sales_status, lifecycle_status } = req.query;
+  if (!start || !end) {
+    return res.status(400).json({ error: 'start, end are required (YYYY-MM)' });
+  }
+  const [sy, sm] = String(start).split('-').map(Number);
+  const [ey, em] = String(end).split('-').map(Number);
+  if (!sy || !sm || !ey || !em || sm < 1 || sm > 12 || em < 1 || em > 12 || sy > ey || (sy === ey && sm > em)) {
+    return res.status(400).json({ error: 'Invalid month range' });
+  }
+
+  // 月份列（YYYY-MM）
+  const columns = [];
+  const cursor = new Date(sy, sm - 1, 1);
+  const lastMonthDate = new Date(ey, em - 1, 1);
+  while (cursor <= lastMonthDate) {
+    columns.push(`${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}`);
+    cursor.setMonth(cursor.getMonth() + 1);
+  }
+
+  // 与当前筛选条件一致的 SKU 范围（与 historical-sales 保持同样的筛选口径）
+  let skuSql = `SELECT DISTINCT rs.sku_code FROM replenishment_suggestions rs LEFT JOIN skus s ON rs.sku_code = s.sku_code WHERE 1=1`;
+  const skuParams = [];
+  if (country) { skuSql += ' AND rs.country = ?'; skuParams.push(country); }
+  if (warehouse) { skuSql += ' AND rs.target_warehouse = ?'; skuParams.push(warehouse); }
+  if (brand) { skuSql += ' AND s.brand = ?'; skuParams.push(brand); }
+  if (keyword) { skuSql += ' AND (rs.sku_code LIKE ? OR s.product_name LIKE ?)'; skuParams.push(`%${keyword}%`, `%${keyword}%`); }
+  if (sales_status) { skuSql += ' AND rs.sales_status = ?'; skuParams.push(sales_status); }
+  if (lifecycle_status) { skuSql += ' AND rs.lifecycle_status = ?'; skuParams.push(lifecycle_status); }
+  const skuCodes = query(skuSql, skuParams).rows.map(r => r.sku_code);
+  if (skuCodes.length === 0) {
+    return res.json({ success: true, range: { start, end }, columns, data: {} });
+  }
+
+  const salesDate = salesOrderDateExpr('order_date');
+  const placeholders = skuCodes.map(() => '?').join(',');
+  const rangeStart = `${columns[0]}-01`;
+  const [ly, lm] = columns[columns.length - 1].split('-').map(Number);
+  const rangeEnd = `${columns[columns.length - 1]}-${String(new Date(ly, lm, 0).getDate()).padStart(2, '0')}`;
+
+  const rows = query(
+    `SELECT sku_code,
+            COALESCE(country, '') AS country,
+            substr(${salesDate}, 1, 4) AS y,
+            substr(${salesDate}, 6, 2) AS mo,
+            COALESCE(SUM(quantity), 0) AS total
+     FROM sales_records
+     WHERE sku_code IN (${placeholders}) AND ${salesDate} >= ? AND ${salesDate} <= ? AND is_valid_order = 1
+     GROUP BY sku_code, COALESCE(country, ''), y, mo`,
+    skuCodes.concat([rangeStart, rangeEnd])
+  ).rows;
+
+  // 按 sku_code|country 组织，与总预测行粒度一致
+  const data = {};
+  const columnSet = {};
+  columns.forEach(c => { columnSet[c] = true; });
+  rows.forEach(r => {
+    const ym = `${r.y}-${r.mo}`;
+    if (!columnSet[ym]) return;
+    const mapKey = `${r.sku_code}|${r.country || ''}`;
+    if (!data[mapKey]) data[mapKey] = {};
+    data[mapKey][ym] = Number(r.total) || 0;
+  });
+
+  return res.json({ success: true, range: { start, end }, columns, data });
+}));
+
 app.get('/api/replenishment-suggestions', requireApiPermission('replenishment_view'), asyncHandler((req, res) => {
   const { country, warehouse, brand, keyword, sales_status, lifecycle_status } = req.query;
   let sql = `SELECT rs.*, s.product_name, s.brand, s.category, s.model, s.standard_purchase_price, s.qty_per_carton, s.purchase_currency, i.last_inbound_date,

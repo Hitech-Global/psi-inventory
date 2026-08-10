@@ -4450,6 +4450,30 @@ function formatSalesGroupLabel(rawValue){
 
 // ==================== 订单预测：字段配置系统 ====================
 var RP_COL_STORAGE_KEYS={total:'prediction_table_columns_total',online:'prediction_table_columns_online',offline:'prediction_table_columns_offline'};
+// ==================== 总预测：月度销量列（字段池覆盖 去年1月 ~ 今年12月）====================
+// 不新增页面年份筛选：当年 12 个月默认显示，去年 12 个月默认隐藏，用户通过「字段配置」自行开关。
+// 列 key 固定为 ms_YYYY_MM，随年份滚动而稳定，localStorage 中已保存的显隐/顺序/冻结配置不会失效。
+function isRpMonthColKey(key){return /^ms_\d{4}_\d{2}$/.test(String(key||''));}
+function rpMonthColDefs(){
+  var now=new Date();
+  var currentYear=now.getFullYear();
+  var currentMonth=now.getMonth()+1; // 1-12，当前月（含）之前的月份视为“已发生”
+  var defs=[];
+  [currentYear-1,currentYear].forEach(function(y){
+    for(var m=1;m<=12;m++){
+      var mm=String(m).padStart(2,'0');
+      // 当年已过去的月份默认可见；未来未发生月份默认隐藏（显示0，可在字段设置动态打开）
+      var visible=y===currentYear && m<=currentMonth;
+      defs.push({key:'ms_'+y+'_'+mm,ym:y+'-'+mm,year:y,month:m,label:y+'-'+mm,visibleByDefault:visible});
+    }
+  });
+  return defs;
+}
+// 月度销量取数区间：与字段池覆盖范围一致
+function rpMonthColRange(){
+  var currentYear=new Date().getFullYear();
+  return {start:(currentYear-1)+'-01',end:currentYear+'-12'};
+}
 // ==================== 订单预测：固定列宽配置（ORDER-FORECAST-FIXED-COLUMNS-01）====================
 // 系统统一维护固定优化列宽，不再支持手动拖动/保存/重置列宽
 // min/max 仅作为开发约束和安全验证，不用于用户交互
@@ -4520,7 +4544,10 @@ function rpColWidth(key){
 // 生成 colgroup HTML（header/summary/body 共用，保证严格对齐）
 // 安全 fallback：未找到专属定义时使用通用 {min:60,default:100,max:200}，防止 undefined.min 崩溃
 var RP_COL_WIDTH_DEFAULT={min:60,default:100,max:200};
+// 总预测月份销量列统一列宽，与渠道页单月销量列（sales_m*）保持一致
+var RP_MONTH_COL_WIDTH={min:65,default:72,max:120};
 function rpColWidthDef(key){
+  if(isRpMonthColKey(key)) return RP_MONTH_COL_WIDTH;
   var defs=rpColWidthDefs();
   return defs[key]||RP_COL_WIDTH_DEFAULT;
 }
@@ -4634,7 +4661,8 @@ function rpTotalColMeta(){
   return [
     {key:'check',label:t('gen.L3364.1','选择'),fixed:true},
     {key:'sku',label:'SKU',fixed:true},
-    {key:'model',label:'Model'},
+    {key:'model',label:'Model'}
+  ].concat(rpMonthColDefs()).concat([
     {key:'online_avg',label:t('gen.L3367.1','线上')+rpSalesStatsDays+t('gen.L3367.2','天月均销量')},
     {key:'offline_avg',label:t('gen.L3368.1','线下')+rpSalesStatsDays+t('gen.L3368.2','天月均销量')},
     {key:'total_avg',label:rpSalesStatsDays+t('gen.L3369.1','天月均销量')},
@@ -4664,7 +4692,7 @@ function rpTotalColMeta(){
     {key:'online_target_stock',label:t("app.745", "\u7ebf\u4e0a\u5efa\u8bae"),visibleByDefault:false},
     {key:'offline_target_stock',label:t("app.746", "\u7ebf\u4e0b\u5efa\u8bae"),visibleByDefault:false},
     {key:'arrival_month',label:t("app.747", "\u5230\u8d27\u6708\u4efd"),visibleByDefault:false}
-  ];
+  ]);
 }
 // 规范化 risk_tags（兼容数组和逗号字符串）
 function normalizeRiskTags(risk_tags) {
@@ -4966,6 +4994,36 @@ function getRpColConfig(tabKey){
       localStorage.setItem(migKey7,'1');
     }
   }
+  // v8 迁移（仅总预测）：月度销量字段插入到 Model 之后，兼容旧 localStorage 排序
+  // 不改动用户已有字段的相对顺序，也不覆盖用户已保存的显隐选择
+  if(tabKey==='total'){
+    var migKey8='rp_col_config_v8_total';
+    if(localStorage.getItem(migKey8)!=='1'){
+      if(Array.isArray(saved)&&saved.length){
+        var monthDefs8=rpMonthColDefs();
+        var savedKeys8={};
+        saved.forEach(function(s){savedKeys8[s.key]=true;});
+        var newMonthItems=monthDefs8
+          .filter(function(md){return !savedKeys8[md.key];})
+          .map(function(md){return {key:md.key,visible:md.visibleByDefault!==false};});
+        if(newMonthItems.length){
+          // 插入位置：Model 之后；无 Model 时退回 SKU 之后；再无则置于首位
+          var anchorIdx=-1;
+          for(var k8=0;k8<saved.length;k8++){
+            if(saved[k8].key==='model'){anchorIdx=k8;break;}
+          }
+          if(anchorIdx<0){
+            for(var k9=0;k9<saved.length;k9++){
+              if(saved[k9].key==='sku'){anchorIdx=k9;break;}
+            }
+          }
+          saved=saved.slice(0,anchorIdx+1).concat(newMonthItems).concat(saved.slice(anchorIdx+1));
+          localStorage.setItem(storageKey,JSON.stringify(saved));
+        }
+      }
+      localStorage.setItem(migKey8,'1');
+    }
+  }
   if(Array.isArray(saved)&&saved.length){
     var result=[]; var used={};
     saved.forEach(function(s){
@@ -5082,6 +5140,12 @@ function addHistoricalColsToActive(activeKeys,Cols,totals,data){
       var month=new Date(now.getFullYear(),now.getMonth()-offset,1);
       builtInMonths[month.getFullYear()+'-'+String(month.getMonth()+1).padStart(2,'0')]=true;
     }
+  }
+  // 总预测已通过字段配置展示的月份列（ms_YYYY_MM），历史查看范围与其重叠时不再重复追加同月列
+  if(hist.mode==='monthly'){
+    activeKeys.forEach(function(key){
+      if(isRpMonthColKey(key)) builtInMonths[key.slice(3).replace('_','-')]=true;
+    });
   }
   totals._historical={};
   columns.forEach(function(column){
@@ -5788,7 +5852,14 @@ async function loadRp(){
   if(rpTab==='offline'){return loadRpChannelMonthly('offline');}
   try{
     await getSalesStatsDays();
-    var data=await api('/api/replenishment-suggestions?'+rpQuery());
+    // 月度销量与建议列表并行拉取，互不阻塞；月度销量仅用于展示，失败时降级为空不影响预测结果
+    var monthRange=rpMonthColRange();
+    var results=await Promise.all([
+      api('/api/replenishment-suggestions?'+rpQuery()),
+      api('/api/replenishment-suggestions/monthly-sales?start='+monthRange.start+'&end='+monthRange.end+'&'+rpQuery()).catch(function(){return null;})
+    ]);
+    var data=results[0];
+    var monthlySales=(results[1]&&results[1].success)?(results[1].data||{}):{};
     var turnColor=function(v){return v<2?'text-danger':v>=2&&v<4?'text-success':v>=4&&v<6?'text-primary':'text-secondary';};
     var ADJ=[t('gen.L4014.1','MOQ限制'),t("app.786", "\u6574\u7bb1\u53d6\u6574"),t("app.787", "\u5de5\u5382\u6392\u4ea7"),t("app.788", "\u4f9b\u5e94\u5546\u4ea7\u80fd"),t("app.789", "\u51d1\u67dc"),t("app.790", "\u9884\u7b97\u63a7\u5236"),t("app.791", "\u8001\u677f\u786e\u8ba4"),t("app.792", "\u6e20\u9053\u7b56\u7565"),t('gen.L4014.2','其他')];
     // 预计算 + 存储行数据（供 onFinalQtyChange 使用）
@@ -5819,6 +5890,8 @@ async function loadRp(){
       c.transitTurnover = c.taPeriod>0 ? Math.round((avail+transit)/c.taPeriod*10)/10 : null;
       c.afterOrderTurnover = c.taPeriod>0 ? Math.round((c.pool+c.po+c.sq)/c.taPeriod*10)/10 : null;
       c.piUnshipped = piUnshipped;
+      // 月度销量按 sku_code|country 对齐行粒度（与 sales_m1..m4 的分组维度一致）
+      c.monthly = monthlySales[r.sku_code+'|'+(r.country||'')] || {};
       r._c=c;
       window._rpRowData[r.id]=c;
     });
@@ -5922,6 +5995,15 @@ async function loadRp(){
         td:function(r,c){return '<td class="cell-actions text-center"><button class="action-btn" onclick="toggleGenPO(\''+r.id+t('gen.L4145.1','\')" title="\u52a0\u5165PO">🛒</button></td>');},
         sum:function(t){return '<td class="text-center"></td>';}}
     };
+    // 月度销量列渲染器（纯展示：数据取自 sales_records 事实表，不参与任何预测计算）
+    var rpMonthDefs=rpMonthColDefs();
+    rpMonthDefs.forEach(function(md){
+      Cols[md.key]={
+        th:rpThCompact(esc(md.label),'','text-right','',true),
+        td:function(r,c){return '<td class="text-right">'+formatQuantityDisplay(Number((c.monthly||{})[md.ym]||0))+'</td>';},
+        sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(Number((t._monthly||{})[md.key]||0))+'</td>';}
+      };
+    });
     // 按配置过滤+排序（不追加隐藏字段，避免列错位）
     var config=getRpColConfig('total');
     var activeKeys=[];
@@ -5933,9 +6015,11 @@ async function loadRp(){
     });
     // 计算合计
     var totals={count:data.length,oa:0,ofa:0,oaPeriod:0,ofaPeriod:0,ta:0,taPeriod:0,avail:0,transit:0,po:0,piUnshipped:0,pool:0,os:0,ofs:0,sq:0,
-      availWS:0,transitWS:0,poWS:0,piUnshippedWS:0,poolWS:0,sqWS:0};
+      availWS:0,transitWS:0,poWS:0,piUnshippedWS:0,poolWS:0,sqWS:0,_monthly:{}};
+    rpMonthDefs.forEach(function(md){totals._monthly[md.key]=0;});
     data.forEach(function(r){
       var c=r._c;
+      rpMonthDefs.forEach(function(md){totals._monthly[md.key]+=Number((c.monthly||{})[md.ym]||0);});
       totals.oa+=c.oa;totals.ofa+=c.ofa;totals.oaPeriod+=c.oaPeriod;totals.ofaPeriod+=c.ofaPeriod;totals.ta+=c.ta;totals.taPeriod+=c.taPeriod;
       totals.avail+=(r.available_qty||0);totals.transit+=(r.in_transit_qty||0);totals.po+=(r.po_unconfirmed_pi_qty||0);totals.piUnshipped+=c.piUnshipped;totals.pool+=c.pool;
       totals.os+=c.os;totals.ofs+=c.ofs;
