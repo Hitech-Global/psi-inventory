@@ -6686,7 +6686,7 @@ app.get('/api/commercial-invoices', requireApiPermission('ci_view'), asyncHandle
   rows = rows.filter(r => {
     const lbInfo = logisticsMap[r.id];
     const inboundDerived = inboundMap[r.id] || 'none';
-    r.payable_date = computePayableDate(r.actual_ship_date, r.credit_days);
+    r.payable_date = String(r.due_date || '').trim() || computePayableDate(r.actual_ship_date, r.credit_days);
     r.related_logistics_batch_nos = lbInfo ? lbInfo.batch_nos.join(', ') : '';
     r.inbound_derived_status = inboundDerived;
 
@@ -6744,7 +6744,7 @@ app.get('/api/commercial-invoices/available-for-pl', requireApiPermission('ci_vi
 app.get('/api/commercial-invoices/:id', requireApiPermission('ci_view'), asyncHandler((req, res) => {
   const ci = queryOne('SELECT *, (goods_amount - COALESCE(actual_deducted_deposit, 0) - COALESCE(payable_balance, 0)) AS amount_difference FROM commercial_invoices WHERE id = ?', [req.params.id]);
   if (!ci) return res.status(404).json({ error: 'CI不存在' });
-  ci.payable_date = computePayableDate(ci.actual_ship_date, ci.credit_days);
+  ci.payable_date = String(ci.due_date || '').trim() || computePayableDate(ci.actual_ship_date, ci.credit_days);
   const items = query('SELECT * FROM commercial_invoice_items WHERE ci_id = ? ORDER BY created_at', [req.params.id]).rows;
   // LOGISTICS-CLOSED-LOOP-PHASE1: 改 queryOne→query，返回 packing_lists 数组（支持一 CI 多 PL）
   const pls = query('SELECT * FROM packing_lists WHERE related_ci_id = ? ORDER BY created_at', [req.params.id]).rows;
@@ -6877,6 +6877,8 @@ app.post('/api/commercial-invoices', requireApiPermission('ci_create'), asyncHan
     const ciPaymentTerms = String(d.payment_terms || '').trim();
     const ciDueDate = String(d.due_date || '').trim();
     const payDueDate = computePayableDate(actualShipDate, effectiveCreditDays);
+    // 应付日期：优先使用录入的 due_date（业务事实），否则按出货日+账期推算（与 CI 表头一致）
+    const effectivePayableDate = ciDueDate || payDueDate;
     const relatedPoId = d.related_po_id || (firstPi ? firstPi.related_po_id : '');
     const relatedPoNo = d.related_po_no || (firstPi ? firstPi.related_po_no : '');
     const ciCurrency = d.currency || firstPi.currency || 'USD';
@@ -6985,7 +6987,7 @@ app.post('/api/commercial-invoices', requireApiPermission('ci_create'), asyncHan
               payeeName: pi.supplier_name || d.supplier_name,
               currency: ciCurrency,
               payableAmount: payableBalance,
-              payableDate: computePayableDate(actualShipDate, ciCredit.creditDays),
+              payableDate: effectivePayableDate,
               createdBy: (req.currentUserId || req.user && req.user.id) || ''
             });
           }
@@ -7511,7 +7513,7 @@ app.post('/api/commercial-invoices/batch-import', requireApiPermission('ci_creat
                 payeeType: 'factory', payeeKey: balancePayeeKey,
                 payeeName: pi.supplier_name || po.supplier_name || '',
                 currency: ciCurrency, payableAmount: payableBalance,
-                payableDate: computePayableDate(actualShipDate, ciCredit.creditDays),
+                payableDate: resolvePayableDate({ dueDate: '', creditDays: ciCredit.creditDays, baseDate: actualShipDate }),
                 createdBy: (req.currentUserId || req.user && req.user.id) || ''
               });
             }
@@ -10207,6 +10209,20 @@ function computePayableDate(actualShipDate, creditDays) {
   return addDays(actualShipDate, Number(creditDays));
 }
 
+// 应付日期统一解析（FIN-DASHBOARD 修复）：
+// 优先级 1：已录入的 due_date（业务事实，历史CI尤其如此，绝不被 credit_days=0 覆盖）
+// 优先级 2：invoice_date(=出货日) + credit_days 推算
+// 两者皆无：返回空（进入数据异常提醒），绝不臆造
+// 说明：推算基准沿用既有 computePayableDate 的 actual_ship_date（本项目 Credit 账期从出货日起算），未改变任何既有计算口径
+function resolvePayableDate({ dueDate, creditDays, baseDate }) {
+  const due = String(dueDate || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(due)) return due;
+  if (Number(creditDays) > 0 && baseDate && /^\d{4}-\d{2}-\d{2}$/.test(baseDate)) {
+    return addDays(baseDate, Number(creditDays));
+  }
+  return '';
+}
+
 function normalizeHistoricalCI(body) {
   const historicalCiNo = String(historicalCIField(body, 'historical_ci_no', '历史CI编号', 'CI编号') || '').trim();
   if (!historicalCiNo) throw new SettlementError(400, '历史 CI 编号不能为空');
@@ -10310,8 +10326,8 @@ async function createHistoricalCI(body, req) {
     const historicalId = await genId('hci');
     const paymentRequestId = await genId('pay');
     const paymentRequestNo = `PAY-HCI-${String(paymentRequestId).replace(/^pay_/, '').toUpperCase()}`;
-    // PAY-CREDIT-DUE-01：应付日期 = 实际出货日期 + Credit 天数（仅 goods+Credit）；否则留空（待补充），due_date 仅作证据
-    const historicalPayableDate = computePayableDate(normalized.actual_ship_date, normalized.credit_days);
+    // PAY-CREDIT-DUE-01（修复）：优先使用录入的 due_date（历史CI已录业务事实），否则按出货日+Credit天数推算
+    const historicalPayableDate = resolvePayableDate({ dueDate: normalized.due_date, creditDays: normalized.credit_days, baseDate: normalized.actual_ship_date });
     await run(`INSERT INTO historical_commercial_invoices
          (id, historical_ci_no, supplier_id, supplier_name, supplier_identity, brand_id, brand_name,
           country, ci_date, actual_ship_date, payment_term_id, credit_days, currency, gross_goods_amount, historical_paid_amount, historical_paid_date,
@@ -10726,7 +10742,14 @@ app.get('/api/purchase-amount-summary', requireApiPermission('ci_view'), asyncHa
 // 应付费用池列表（支持按状态/费用类型/来源/收款方筛选）
 app.get('/api/payable-items', requireApiPermission('payment_view'), asyncHandler((req, res) => {
   const { lifecycle_status, fee_type, source_type, source_id, payee_key, keyword } = req.query;
-  let sql = 'SELECT * FROM payable_items WHERE 1=1';
+  // 关联来源单据取供应商名称（仅用于列表展示「供应商」列，不改任何业务规则/金额/状态）
+  let sql = `SELECT pi.*,
+      COALESCE(ci.supplier_name, hci.supplier_name, pii.supplier_name) AS supplier_name
+    FROM payable_items pi
+    LEFT JOIN commercial_invoices ci ON pi.source_ci_id = ci.id
+    LEFT JOIN historical_commercial_invoices hci ON pi.source_ci_id = hci.id
+    LEFT JOIN proforma_invoices pii ON pi.source_type = 'pi' AND pi.source_id = pii.id
+    WHERE 1=1`;
   const params = [];
   // 业务规则：应付费用工作台只列出未结清项（active + reserved + partially_paid）。
   // 全部付清（paid）以及已取消（cancelled）移出本列表。
@@ -10859,6 +10882,26 @@ app.get('/api/finance/payable-cockpit', requireApiPermission('payment_view'), as
       const overdueDays = (hasDue && outstanding > 0 && payableDate < today)
         ? Math.max(0, Math.floor((new Date(today + 'T00:00:00Z') - new Date(payableDate + 'T00:00:00Z')) / 86400000))
         : 0;
+      // 信用条款上下文：仅「Credit 条款 + 已录入出货日 + 有 credit_days」却仍无应付日期，才属真实数据异常。
+      // 非 Credit（如定金/预付）本就无需应付日期，不补、不报异常；绝不臆造日期。
+      let creditMissingDue = false;
+      {
+        let ciTbl = null, ciId = null, ciNo = null;
+        if (pr.source_type === 'historical_ci') { ciTbl = 'historical_commercial_invoices'; ciId = pr.source_id; ciNo = pr.source_no; }
+        else if (pr.source_type === 'ci') { ciTbl = 'commercial_invoices'; ciId = pr.source_id || pr.related_ci_id; }
+        if (ciTbl) {
+          let ciRow = ciId ? query(`SELECT credit_days, actual_ship_date FROM ${ciTbl} WHERE id = ?`, [ciId]).rows[0] : null;
+          if (!ciRow && ciNo) {
+            const noCol = ciTbl === 'historical_commercial_invoices' ? 'historical_ci_no' : 'ci_no';
+            ciRow = query(`SELECT credit_days, actual_ship_date FROM ${ciTbl} WHERE ${noCol} = ?`, [ciNo]).rows[0];
+          }
+          if (ciRow) {
+            const cd = Number(ciRow.credit_days) || 0;
+            const ship = String(ciRow.actual_ship_date || '').trim();
+            creditMissingDue = cd > 0 && /^\d{4}-\d{2}-\d{2}$/.test(ship) && !hasDue;
+          }
+        }
+      }
       enriched.push({
         id: pr.id,
         request_no: pr.request_no,
@@ -10882,6 +10925,7 @@ app.get('/api/finance/payable-cockpit', requireApiPermission('payment_view'), as
         rmb_amount: Number(pr.rmb_amount || 0),
         payable_date: hasDue ? payableDate : '',
         has_due: hasDue,
+        credit_missing_due: creditMissingDue,
         overdue_days: overdueDays,
         status,
         status_label: PAYABLE_STATUS_LABELS[status] || status,
@@ -10906,7 +10950,7 @@ app.get('/api/finance/payable-cockpit', requireApiPermission('payment_view'), as
       mm.settled = m2(mm.settled + r.settled);
       mm.outstanding = m2(mm.outstanding + r.outstanding);
       if (r.outstanding > 0) {
-        if (!r.has_due) {
+        if (r.credit_missing_due) {
           mm.no_due_outstanding = m2(mm.no_due_outstanding + r.outstanding);
         } else if (r.payable_date < today) {
           mm.overdue_amount = m2(mm.overdue_amount + r.outstanding);
@@ -10988,7 +11032,7 @@ app.get('/api/finance/payable-cockpit', requireApiPermission('payment_view'), as
       details,
       notes: {
         currency: '各币种独立汇总，未提供 USD→RMB 等锁定汇率证据时不做跨币种折算或裸加',
-        due_date: '到期日=CI实际出货日+Credit天数（computePayableDate 建单时写入 payable_date）；底层出货日/账期未录入的单据归入"无到期日"',
+        due_date: '应付日期（Credit 条款）= CI 已录入 due_date 优先；否则 实际出货日 + credit_days。非 Credit（如定金/预付）无需应付日期，保持为空且不计入异常。',
         outstanding: '未结清=应付-有效付款-有效抵扣-有效抹零（仅计 status=applied 的结算事件，与付款管理页/落库 unpaid_amount 同口径）',
         scope: '仅口径展示，未修改任何付款/审批/抵扣/冲销/汇率/WAC 业务规则与数据'
       }
@@ -11330,8 +11374,8 @@ app.post('/api/payment-requests/from-ci-balance', requireApiPermission('payment_
       if (!deduction_source_type || !deduction_source_desc) return res.status(400).json({ error: '抵扣金额大于0时必须填写抵扣来源类型和说明' });
     }
     const actualPay = settlementMoney(unpaidBalance - dedAmount);
-    // PAY-CREDIT-DUE-01：应付日期 = 实际出货日期 + Credit 天数（仅 goods+Credit）；否则留空（待补充）
-    const balancePayableDate = computePayableDate(ci.actual_ship_date, ci.credit_days);
+    // PAY-CREDIT-DUE-01（修复）：优先使用 CI 已有的 due_date，否则按出货日+Credit天数推算
+    const balancePayableDate = resolvePayableDate({ dueDate: ci.due_date, creditDays: ci.credit_days, baseDate: ci.actual_ship_date });
 
     const prId = await genId('pay');
     const prNo = `PAY-BAL-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;

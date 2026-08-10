@@ -9323,7 +9323,7 @@ async function viewCI(id, backPay, backMode){
     // 若来自付款申请详情，提供【← 返回付款申请详情】入口，保留原上下文（含 mode）
     const ciBackFooter=backPay?'<button class="btn btn-secondary" onclick="viewPayment(\''+backPay+'\',\''+(backMode||'view')+t('gen.L5836.1','\')">← 返回付款申请详情</button><button class="btn btn-secondary" onclick="closeModal()">关闭</button>'):'';
     openModal(t('modal.title.viewCI', 'CI/PL详情 - {v1}', {v1: ci.ci_no}),t('modal.body.viewCI', '<div class="detail-card" style="box-shadow:none;padding:0"><div class="detail-section"><h3>'+t('section.basic_info','基本信息')+'</h3><div class="detail-grid">{v1}<div class="detail-item"><span class="detail-label">'+t('field.actual_ship_date','实际出货日期')+'</span><span class="detail-value{v2}">{v3}</span></div>{v4}{v5}{v6}</div></div><div class="detail-section"><h3>'+t('section.ci_items','CI明细')+'</h3><div class="table-container"><table class="data-table"><thead><tr><th>SKU</th><th>数量</th><th>原单价</th><th>折扣</th><th>折后单价</th><th>金额</th><th>实际关税税率(%)</th><th>已入库</th><th>未入库</th></tr></thead><tbody>{v7}</tbody></table></div></div><div class="detail-section"><h3>'+t('section.pl_items','PL明细')+'</h3>{v8}</div></div>', {v1: (function(fields){
-      var labels={ci_no:t('field.ci_no','CI号'),related_pi_no:t('field.related_pi_no','关联PI'),supplier_name:t('field.supplier_name','供应商'),brand:t('field.brand','品牌'),country:t('field.country','国家'),target_warehouse:t('field.target_warehouse','目标仓库'),ci_date:t('field.ci_date','CI日期'),currency:t('field.currency','币种'),ci_total_qty:t('ci.detail.total_qty','CI总数量'),goods_amount:t('field.goods_amount','CI金额'),pi_total_amount:t('ci.detail.pi_total','PI总金额'),amount_difference:t('ci.detail.amount_diff','金额差异'),difference_reason:t('ci.detail.diff_reason','差异原因'),actual_deducted_deposit:t('ci.detail.deposit','已抵扣定金'),payable_balance:t('ci.detail.balance','应付尾款'),transport_basis:t('ci.detail.transport','运输方式'),import_duty_total:t('ci.detail.duty','进口关税'),ci_status:t('field.ci_status','CI状态'),balance_payment_status:t('ci.detail.bal_status','尾款付款状态')};
+      var labels={ci_no:t('field.ci_no','CI号'),related_pi_no:t('field.related_pi_no','关联PI'),supplier_name:t('field.supplier_name','供应商'),brand:t('field.brand','品牌'),country:t('field.country','国家'),target_warehouse:t('field.target_warehouse','目标仓库'),ci_date:t('field.ci_date','CI日期'),payable_date:t('field.payable_date','应付日期'),currency:t('field.currency','币种'),ci_total_qty:t('ci.detail.total_qty','CI总数量'),goods_amount:t('field.goods_amount','CI金额'),pi_total_amount:t('ci.detail.pi_total','PI总金额'),amount_difference:t('ci.detail.amount_diff','金额差异'),difference_reason:t('ci.detail.diff_reason','差异原因'),actual_deducted_deposit:t('ci.detail.deposit','已抵扣定金'),payable_balance:t('ci.detail.balance','应付尾款'),transport_basis:t('ci.detail.transport','运输方式'),import_duty_total:t('ci.detail.duty','进口关税'),ci_status:t('field.ci_status','CI状态'),balance_payment_status:t('ci.detail.bal_status','尾款付款状态')};
       var buf='';fields.forEach(function(f){
         var v;if(f==='related_pi_no'){var pns=[];try{pns=JSON.parse(ci.related_pi_nos||'[]');}catch(e){}if(pns.length===0&&ci.related_pi_no)pns=[ci.related_pi_no];v=pns.length>0?pns.map(esc).join('<br>'):'—';}
         else if(f==='ci_status'){var sc=ciStatusClass(ci[f]);v='<span class="status-badge '+sc+'">'+statusLabel(ci[f])+'</span>';}
@@ -9331,7 +9331,7 @@ async function viewCI(id, backPay, backMode){
         else v=esc(ci[f]);
         buf+='<div class=\"detail-item\"><span class=\"detail-label\">'+(labels[f]||f)+'</span><span class=\"detail-value\">'+v+'</span></div>';
       });return buf;
-    })(ci._v1fields||['ci_no','related_pi_no','supplier_name','brand','country','target_warehouse','ci_date','currency','ci_total_qty','goods_amount','pi_total_amount','amount_difference','difference_reason','actual_deducted_deposit','payable_balance','transport_basis','import_duty_total','ci_status','balance_payment_status']), v2: !ci.actual_ship_date?' text-warning':'', v3: ci.actual_ship_date?esc(fmtDate(ci.actual_ship_date)):t("app.998", "\u5f85\u8865\u5145"), v4: hasPermission('ci_edit')?'<div class="detail-item" style="grid-column:1/-1"><button class="btn btn-secondary btn-sm" onclick="editActualShipDate(\'commercial\',\''+ci.id+'\',\''+(ci.actual_ship_date||'')+t('gen.L5837.1','\')">补充/更正实际出货日期</button></div>'):'', v5: '<div class="detail-item" style="grid-column:1/-1"><span class="detail-label">'+t("ci.005", "CI / PL 附件")+'</span><span class="detail-value">'+ciUnifiedAttachmentHtml(ci)+'</span></div>', v6: '', v7: (ci.items||[]).map(i=>{var dsc=i.discount||0;var nup=i.net_unit_price||(i.unit_price*(1-dsc));return '<tr><td class="cell-id">'+esc(i.sku_code)+'</td><td class="text-right">'+i.shipped_qty+'</td><td class="text-right">'+fmtMoney(i.unit_price)+'</td><td class="text-right">'+(dsc>0?(dsc*100).toFixed(1)+'%':'—')+'</td><td class="text-right">'+fmtMoney(nup)+'</td><td class="text-right">'+fmtMoney(i.ci_amount)+'</td><td class="text-right">'+(i.actual_customs_rate===null||i.actual_customs_rate===''?'—':esc(i.actual_customs_rate))+'</td><td class="text-right">'+(i.inbound_qty||0)+'</td><td class="text-right">'+(i.uninbound_qty||0)+'</td></tr>';}).join(''), v8: plItems.length?t('gen.L5837.2','<div class="table-container"><table class="data-table"><thead><tr><th>SKU</th><th>每箱数量</th><th>箱数</th><th>总数量</th><th>总毛重</th><th>总净重</th><th>总体积</th></tr></thead><tbody>')+plItems.map(i=>'<tr><td class="cell-id">'+esc(i.sku_code)+'</td><td class="text-right">'+i.qty_per_carton+'</td><td class="text-right">'+i.cartons+'</td><td class="text-right">'+i.total_qty+'</td><td class="text-right">'+i.gross_weight+'</td><td class="text-right">'+i.net_weight+'</td><td class="text-right">'+i.cbm+'</td></tr>').join('')+'</tbody></table></div>':t('gen.L5837.3','<div class="empty-state"><div class="empty-icon">📦</div>暂无PL明细</div>')}),ciBackFooter,'modal-ci-create');
+    })(ci._v1fields||['ci_no','related_pi_no','supplier_name','brand','country','target_warehouse','ci_date','payable_date','currency','ci_total_qty','goods_amount','pi_total_amount','amount_difference','difference_reason','actual_deducted_deposit','payable_balance','transport_basis','import_duty_total','ci_status','balance_payment_status']), v2: !ci.actual_ship_date?' text-warning':'', v3: ci.actual_ship_date?esc(fmtDate(ci.actual_ship_date)):t("app.998", "\u5f85\u8865\u5145"), v4: hasPermission('ci_edit')?'<div class="detail-item" style="grid-column:1/-1"><button class="btn btn-secondary btn-sm" onclick="editActualShipDate(\'commercial\',\''+ci.id+'\',\''+(ci.actual_ship_date||'')+t('gen.L5837.1','\')">补充/更正实际出货日期</button></div>'):'', v5: '<div class="detail-item" style="grid-column:1/-1"><span class="detail-label">'+t("ci.005", "CI / PL 附件")+'</span><span class="detail-value">'+ciUnifiedAttachmentHtml(ci)+'</span></div>', v6: '', v7: (ci.items||[]).map(i=>{var dsc=i.discount||0;var nup=i.net_unit_price||(i.unit_price*(1-dsc));return '<tr><td class="cell-id">'+esc(i.sku_code)+'</td><td class="text-right">'+i.shipped_qty+'</td><td class="text-right">'+fmtMoney(i.unit_price)+'</td><td class="text-right">'+(dsc>0?(dsc*100).toFixed(1)+'%':'—')+'</td><td class="text-right">'+fmtMoney(nup)+'</td><td class="text-right">'+fmtMoney(i.ci_amount)+'</td><td class="text-right">'+(i.actual_customs_rate===null||i.actual_customs_rate===''?'—':esc(i.actual_customs_rate))+'</td><td class="text-right">'+(i.inbound_qty||0)+'</td><td class="text-right">'+(i.uninbound_qty||0)+'</td></tr>';}).join(''), v8: plItems.length?t('gen.L5837.2','<div class="table-container"><table class="data-table"><thead><tr><th>SKU</th><th>每箱数量</th><th>箱数</th><th>总数量</th><th>总毛重</th><th>总净重</th><th>总体积</th></tr></thead><tbody>')+plItems.map(i=>'<tr><td class="cell-id">'+esc(i.sku_code)+'</td><td class="text-right">'+i.qty_per_carton+'</td><td class="text-right">'+i.cartons+'</td><td class="text-right">'+i.total_qty+'</td><td class="text-right">'+i.gross_weight+'</td><td class="text-right">'+i.net_weight+'</td><td class="text-right">'+i.cbm+'</td></tr>').join('')+'</tbody></table></div>':t('gen.L5837.3','<div class="empty-state"><div class="empty-icon">📦</div>暂无PL明细</div>')}),ciBackFooter,'modal-ci-create');
     // PUR-OPS-COLLAB-01：注入上架准备分区（DOM 注入，避免改动上方大字符串）
     let opsState=null; try{ opsState=await api('/api/commercial-invoices/'+id+'/ops-prep'); }catch(e){ opsState=null; }
     let opsCands=[]; try{ opsCands=await api('/api/cc-candidates'); }catch(e){ opsCands=[]; }
@@ -10797,11 +10797,13 @@ async function renderPayableCockpit(){
 }
 
 function cockpitCard(label,valueHtml,tone,sub){
-  const toneColor={total:'var(--text-primary,#222)',settled:'#2e7d32',outstanding:'#1565c0',warn:'#f57f17',danger:'#c62828',info:'#6a1b9a'}[tone]||'var(--text-primary,#222)';
-  return '<div style="flex:1;min-width:150px;padding:14px 16px;background:var(--bg-card,#fff);border:1px solid var(--border,#e6e6e6);border-radius:10px">'
-    +'<div style="font-size:12px;color:var(--text-secondary,#888);margin-bottom:6px">'+esc(label)+'</div>'
-    +'<div style="font-size:20px;font-weight:700;color:'+toneColor+'">'+valueHtml+'</div>'
-    +(sub?'<div style="font-size:11px;color:var(--text-secondary,#999);margin-top:4px">'+sub+'</div>':'')
+  // 苹果风格：圆角大留白 + 弱边框 + 数字突出 + 标签弱化 + 配色纪律（红=风险/橙=即将/绿=完成/蓝=未结清/灰=普通）
+  const accent={danger:'#ff3b30',warn:'#ff9500',settled:'#34c759',outstanding:'#007aff',info:'#ff9500',total:'#8e8e93',normal:'#1d1d1f'}[tone]||'#8e8e93';
+  const numColor={danger:'#ff3b30',warn:'#e8830c',settled:'#1a8a3c',outstanding:'#0a6cff',info:'#b06a00',total:'#1d1d1f',normal:'#1d1d1f'}[tone]||'#1d1d1f';
+  return '<div style="flex:1;min-width:172px;padding:18px 20px;background:var(--bg-card,#fff);border:1px solid var(--border,#ececec);border-radius:14px;box-shadow:0 1px 3px rgba(0,0,0,.05)">'
+    +'<div style="font-size:13px;color:var(--text-secondary,#8e8e93);margin-bottom:10px;display:flex;align-items:center;gap:7px"><span style="width:8px;height:8px;border-radius:50%;background:'+accent+';display:inline-block"></span>'+esc(label)+'</div>'
+    +'<div style="font-size:26px;font-weight:700;letter-spacing:-0.4px;color:'+numColor+'">'+valueHtml+'</div>'
+    +(sub?'<div style="font-size:12px;color:var(--text-secondary,#8e8e93);margin-top:6px">'+sub+'</div>':'')
     +'</div>';
 }
 function cockpitCurBreakdown(d,field){
@@ -10836,7 +10838,7 @@ function cockpitShowAnomaly(){
   const tog=document.getElementById('cockpit-detail-toggle');if(tog)tog.textContent=t("app.1102", "\u6536\u8d77 \u25b2");
   renderCockpitDetails();
   // ④ UX：异常卡片联动同步提示（纯展示，不改动任何筛选/聚合逻辑）
-  const ndRows=getCockpitView().details.filter(r=>!r.has_due);
+  const ndRows=getCockpitView().details.filter(r=>r.credit_missing_due);
   let note=document.getElementById('cockpit-anomaly-note');
   if(!note){ note=document.createElement('div'); note.id='cockpit-anomaly-note'; note.style='font-size:12px;color:#f57f17;margin:4px 0 8px'; const body=document.getElementById('cockpit-detail-body'); if(body) body.insertBefore(note, body.firstChild); }
   note.textContent=t('text.cockpitShowAnomaly', '已自动筛选：仅显示无到期日单据（共 {v1} 笔）。可在上方筛选栏调整。', {v1: ndRows.length});
@@ -10875,7 +10877,7 @@ function cockpitAggregate(rows){
     const m=bump(r.currency);
     m.request_count++; m.gross_payable+=r.gross_payable; m.settled+=r.settled; m.outstanding+=r.outstanding;
     if(r.outstanding>0){
-      if(!r.has_due){ m.no_due_outstanding+=r.outstanding; }
+      if(r.credit_missing_due){ m.no_due_outstanding+=r.outstanding; }
       else if(r.payable_date<today){ m.overdue_amount+=r.outstanding; m.overdue_count++; }
       else { if(r.payable_date<=d7) m.due_7+=r.outstanding; if(r.payable_date<=d30) m.due_30+=r.outstanding; }
     }
@@ -10975,23 +10977,32 @@ function renderCockpitLayers(){
   let html='';
   // Layer 1 — 应付概览（④ UX：高优先信号前置——已逾期 / 未来压力 / 数据异常 排在各币种未结清之前）
   const ovCount=curs.reduce((a,cur)=>a+((v.metrics[cur]&&v.metrics[cur].overdue_count)||0),0);
-  const noDueCount=v.details.filter(r=>r.outstanding>0&&!r.has_due).length;
-  const noDueSub=noDueCount>0?'<span style="color:#f57f17;cursor:pointer" onclick="cockpitShowAnomaly()">'+t("cockpit.anomaly_hint","CI出货日/Credit未录入，点击查看 ▼")+'</span>':t("app.227", "\u65e0");
-  html+='<div style="font-size:13px;font-weight:600;margin:6px 0 8px">'+t("cockpit.layer_overview","应付概览")+'</div>';
-  html+='<div style="display:flex;flex-wrap:wrap;gap:10px">';
-  html+=cockpitCard(t("pi.020", "\u5df2\u903e\u671f"),cockpitCurBreakdown(v,'overdue_amount'),'danger',ovCount+''+t("cockpit.unit_pi"," 笔")+'');
-  html+=cockpitCard(t("app.1108", "\u672a\u67657\u5929\u4ed8\u6b3e\u538b\u529b"),cockpitCurBreakdown(v,'due_7'),'warn','');
-  html+=cockpitCard(t("app.1109", "\u672a\u676530\u5929\u4ed8\u6b3e\u538b\u529b"),cockpitCurBreakdown(v,'due_30'),'warn','');
-  html+=cockpitCard(t("app.1110", "\u6570\u636e\u5f02\u5e38\u63d0\u9192"),'<span style="font-size:22px">'+noDueCount+'</span><span style="font-size:13px;font-weight:400">'+t("cockpit.missing_due_date"," 笔缺少应付日期")+'</span>','info',noDueSub);
-  curs.forEach(cur=>{
-    const m=v.metrics[cur]; if(!m)return;
-    html+=cockpitCard(cur+''+t("cockpit.unsettled"," 未结清")+'',esc(fmtMoney(m.outstanding)),'outstanding',esc(cur)+' '+m.request_count+''+t("cockpit.unit_pi"," 笔")+'');
-  });
+  const noDueCount=v.details.filter(r=>r.outstanding>0&&r.credit_missing_due).length;
+  const noDueSub=noDueCount>0?'<span style="color:#f57f17;cursor:pointer" onclick="cockpitShowAnomaly()">'+t("cockpit.anomaly_hint","Credit 付款缺少应付日期，点击查看 ▼")+'</span>':t("app.227", "\u65e0");
+  // 第一层：用户最关心的风险与时间信号（红=风险 / 橙=即将 / 蓝=未结清）
+  html+='<div style="font-size:13px;font-weight:600;margin:6px 0 10px;color:var(--text-secondary,#8e8e93)">'+t("cockpit.layer_focus","优先关注")+'</div>';
+  html+='<div style="display:flex;flex-wrap:wrap;gap:12px">';
+  html+=cockpitCard(t("pi.020", "已逾期"),cockpitCurBreakdown(v,'overdue_amount'),'danger',ovCount+t("cockpit.unit_pi"," 笔"));
+  html+=cockpitCard(t("app.1108", "未来 7 天付款"),cockpitCurBreakdown(v,'due_7'),'warn','');
+  html+=cockpitCard(t("app.1109", "未来 30 天付款"),cockpitCurBreakdown(v,'due_30'),'warn','');
+  html+=cockpitCard(t("cockpit.cur_unsettled","当前未结清"),cockpitCurBreakdown(v,'outstanding'),'outstanding','');
   html+='</div>';
 
+  // 数据异常提醒（可点击筛选，纯展示）
+  if(noDueCount>0){
+    html+='<div style="margin-top:12px;display:flex;align-items:center;gap:10px;padding:12px 16px;background:#fff8f0;border:1px solid #ffd591;border-radius:12px;font-size:13px;color:#b06a00;cursor:pointer" onclick="cockpitShowAnomaly()">'
+      +'<span style="font-size:16px">⚠</span><div>'+t("cockpit.anomaly_banner","{v1} 笔 Credit 付款缺少应付日期，点击查看。",{v1:noDueCount})+'</div></div>';
+  }
+
   // Layer 2 — 金额构成
-  html+='<div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:10px">';
-  curs.forEach(cur=>{ const m=v.metrics[cur]; html+=cockpitCard(cur+''+t("cockpit.lbl_total_payable"," 总应付")+'',esc(fmtMoney(m.gross_payable)),'total',''); html+=cockpitCard(cur+''+t("cockpit.lbl_settled"," 已结清")+'',esc(fmtMoney(m.settled)),'settled',''); });
+  // Layer 2 — 第二层：应付结构（总应付 / 已结清 / 未结清，按币种，绝不跨币种合并）
+  html+='<div style="font-size:13px;font-weight:600;margin:18px 0 10px;color:var(--text-secondary,#8e8e93)">'+t("cockpit.layer_structure","应付结构")+'</div>';
+  html+='<div style="display:flex;flex-wrap:wrap;gap:12px">';
+  curs.forEach(cur=>{ const m=v.metrics[cur]; if(!m)return;
+    html+=cockpitCard(cur+t("cockpit.lbl_total_payable"," 总应付"),esc(fmtMoney(m.gross_payable)),'total','');
+    html+=cockpitCard(cur+t("cockpit.lbl_settled"," 已结清"),esc(fmtMoney(m.settled)),'settled','');
+    html+=cockpitCard(cur+t("cockpit.unsettled"," 未结清"),esc(fmtMoney(m.outstanding)),'outstanding',m.request_count+t("cockpit.unit_pi"," 笔"));
+  });
   html+='</div>';
 
   // Layer 1.5 — 应付费用构成
@@ -11019,16 +11030,15 @@ function renderCockpitLayers(){
   // Layer 3 — 供应商应付总览（含品牌/国家展示列，品牌仅关联展示）
   if((v.by_supplier||[]).length){
     html+='<div class="table-section" style="margin-top:16px"><div class="table-section-title"><div class="table-section-title-left">🏢 '+t("cockpit.layer_by_supplier","按供应商应付总览")+'</div><div style="font-size:12px;color:var(--text-secondary,#999)">'+t("cockpit.click_row_hint","点击任意行查看该供应商费用组成与付款明细")+'</div></div>';
-    html+='<table class="data-table"><thead><tr><th>'+t("cockpit.col_supplier","供应商")+'</th><th>'+t("cockpit.col_brand","品牌")+'</th><th>'+t("cockpit.col_country","国家")+'</th><th>'+t("cockpit.col_currency","币种")+'</th><th style="text-align:right">'+t("cockpit.col_total_payable","总应付")+'</th><th style="text-align:right">'+t("cockpit.col_settled","已结清")+'</th><th style="text-align:right">'+t("cockpit.col_outstanding","未结清")+'</th><th>'+t("cockpit.col_status","状态")+'</th></tr></thead><tbody>';
+    html+='<table class="data-table"><thead><tr><th>'+t("cockpit.col_supplier","供应商")+'</th><th>'+t("cockpit.col_brand","品牌")+'</th><th>'+t("cockpit.col_country","国家")+'</th><th>'+t("cockpit.col_currency","币种")+'</th><th style="text-align:right">'+t("cockpit.col_outstanding","未结清")+'</th><th>'+t("cockpit.col_nearest_due","最近到期日")+'</th><th>'+t("cockpit.col_risk_status","风险状态")+'</th></tr></thead><tbody>';
     (v.by_supplier||[]).forEach(s=>{
       html+='<tr style="cursor:pointer" onclick="cockpitSupplierDrawer(\''+encodeURIComponent(s.supplier_name)+'\',\''+esc(s.currency)+'\')" title="'+t('cockpit.row_title','点击查看该供应商费用组成与付款明细')+'">'
         +'<td>'+esc(s.supplier_name)+'</td>'
         +'<td>'+(s.brands?'<span title="'+esc(s.brands)+'">'+esc(s.brands)+'</span>':'<span style="color:#999">—</span>')+'</td>'
         +'<td>'+(s.country?esc(s.country):'<span style="color:#999">—</span>')+'</td>'
         +'<td>'+esc(s.currency)+'</td>'
-        +'<td style="text-align:right">'+fmtMoney(s.gross_payable)+'</td>'
-        +'<td style="text-align:right;color:#2e7d32">'+fmtMoney(s.settled)+'</td>'
-        +'<td style="text-align:right;color:#1565c0;font-weight:600">'+fmtMoney(s.outstanding)+'</td>'
+        +'<td style="text-align:right;color:#0a6cff;font-weight:700">'+fmtMoney(s.outstanding)+'</td>'
+        +'<td>'+(s.earliest_due_date?esc(s.earliest_due_date):'<span style="color:#999">—</span>')+'</td>'
         +'<td>'+cockpitSupplierStatus(s)+'</td></tr>';
     });
     html+='</tbody></table></div>';
@@ -11284,6 +11294,7 @@ function renderPayableTable(){
     '<th style="width:36px"><input type="checkbox" id="payl-selall" onchange="togglePayableSelAll(this.checked)"></th>'+
     '<th>'+t('payable_list.col_feeno','费用号')+'</th>'+
     '<th>'+t('payable_list.col_source','来源')+'</th>'+
+    '<th>'+t('payable_list.col_supplier','供应商')+'</th>'+
     '<th>'+t('payable_list.col_feetype','费用类型')+'</th>'+
     '<th>'+t('payable_list.col_payee','收款方')+'</th>'+
     '<th>'+t('payable_list.col_currency','币种')+'</th>'+
@@ -11292,6 +11303,7 @@ function renderPayableTable(){
     '<th style="text-align:right">'+t('payable_list.col_deduction','抵扣')+'</th>'+
     '<th style="text-align:right">'+t('payable_list.col_rounding','抹零')+'</th>'+
     '<th style="text-align:right">'+t('payable_list.col_remaining','剩余未付')+'</th>'+
+    '<th class="col-paydate">'+t('payable_list.col_paydate','应付日期')+' ⭐</th>'+
     '<th>'+t('payable_list.col_status','状态')+'</th>'+
     '<th>'+t('payable_list.col_pr_status','付款申请状态')+'</th>'+
     '<th>'+t('payable_list.col_created','创建时间')+'</th>'+
@@ -11313,6 +11325,7 @@ function renderPayableTable(){
       '<td><input type="checkbox" class="payl-cb" data-id="'+esc(r.id)+'" onchange="togglePayableSel(\''+esc(r.id)+'\',this.checked)"></td>'+
       '<td>'+esc(r.fee_no||'')+'</td>'+
       '<td>'+esc(PAY_SOURCE_TYPE_LABELS[r.source_type]||r.source_type||'')+(r.source_no?' · '+esc(r.source_no):'')+'</td>'+
+      '<td>'+esc(r.supplier_name||r.payee_name_snapshot||'—')+'</td>'+
       '<td>'+esc(PAY_FEE_TYPE_LABELS[r.fee_type]||r.fee_type||'')+'</td>'+
       '<td>'+esc(r.payee_name_snapshot||'')+'</td>'+
       '<td>'+esc(r.currency||'')+'</td>'+
@@ -11321,6 +11334,7 @@ function renderPayableTable(){
       '<td style="text-align:right"'+(deductionNum>0?'':' class="muted"')+'>'+deductionTxt+'</td>'+
       '<td style="text-align:right"'+(roundingNum>0?'':' class="muted"')+'>'+roundingTxt+'</td>'+
       '<td style="text-align:right"><b>'+remainTxt+'</b></td>'+
+      '<td class="col-paydate'+(r.payable_date?'':' muted')+'">'+ (r.payable_date?esc(fmtDate(r.payable_date)):'—') +'</td>'+
       '<td>'+esc(PAY_LIFECYCLE_LABELS[r.lifecycle_status]||r.lifecycle_status||'')+'</td>'+
       '<td>'+esc(_payablePrStatusMap[r.id]||'未申请')+'</td>'+
       '<td class="muted">'+esc((r.created_at||'').slice(0,19))+'</td>'+
@@ -11414,6 +11428,7 @@ async function viewPayableSelected(){
     html+='<div><b>'+t('payable_list.col_deduction','抵扣')+'</b></div><div>'+deductionTxt+'</div>';
     html+='<div><b>'+t('payable_list.col_rounding','抹零')+'</b></div><div>'+roundingTxt+'</div>';
     html+='<div><b>'+t('payable_list.col_remaining','剩余未付')+'</b></div><div><b>'+remainTxt+'</b></div>';
+    html+='<div><b>'+t('payable_list.col_paydate','应付日期')+'</b></div><div>'+(it.payable_date?esc(fmtDate(it.payable_date)):'<span class="muted">—</span>')+'</div>';
     html+='<div><b>'+t('payable_list.col_status','状态')+'</b></div><div>'+esc(PAY_LIFECYCLE_LABELS[it.lifecycle_status]||it.lifecycle_status||'')+'</div>';
     html+='</div>';
     const prs=(rels&&rels.payment_requests)||[];
