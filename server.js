@@ -10749,13 +10749,14 @@ function derivePayableSourceRefs(rows) {
   const ciIds = [...new Set(rows.map(r => r.source_ci_id).filter(Boolean))];
   const ciMap = {};
   if (ciIds.length) {
+    // commercial_invoices 含 related_pi_no；historical_commercial_invoices 不含该列（与驾驶舱现有查询一致）
     query(`SELECT id, ci_no, related_pi_no FROM commercial_invoices WHERE id IN (${ciIds.map(() => '?').join(',')})`, ciIds)
       .rows.forEach(c => { ciMap[c.id] = c; });
-    query(`SELECT id, historical_ci_no AS ci_no, related_pi_no FROM historical_commercial_invoices WHERE id IN (${ciIds.map(() => '?').join(',')})`, ciIds)
+    query(`SELECT id, historical_ci_no AS ci_no FROM historical_commercial_invoices WHERE id IN (${ciIds.map(() => '?').join(',')})`, ciIds)
       .rows.forEach(c => { ciMap[c.id] = c; });
   }
   const hciByNo = {};
-  query('SELECT historical_ci_no, historical_ci_no AS ci_no, related_pi_no FROM historical_commercial_invoices')
+  query('SELECT historical_ci_no, historical_ci_no AS ci_no FROM historical_commercial_invoices')
     .rows.forEach(c => { if (c.historical_ci_no) hciByNo[c.historical_ci_no] = c; });
   const piIds = [...new Set(rows.map(r => r.source_id).filter(Boolean))];
   const piMap = {};
