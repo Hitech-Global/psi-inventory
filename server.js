@@ -10328,6 +10328,21 @@ async function createHistoricalCI(body, req) {
     const paymentRequestNo = `PAY-HCI-${String(paymentRequestId).replace(/^pay_/, '').toUpperCase()}`;
     // PAY-CREDIT-DUE-01（修复）：优先使用录入的 due_date（历史CI已录业务事实），否则按出货日+Credit天数推算
     const historicalPayableDate = resolvePayableDate({ dueDate: normalized.due_date, creditDays: normalized.credit_days, baseDate: normalized.actual_ship_date });
+    // HCI-DEPOSIT-DEDUCT: 历史CI尾款 = CI货值 − 关联PI当前可抵扣定金余额(available_deduct_deposit)
+    // 复用正常CI同款口径：只读 PI.available_deduct_deposit（已含其他CI消费后的剩余），不回写PI定金列，不拆 per-PI。
+    const hciLinkedPiIds = [...new Set([
+      ...(Array.isArray(body.related_pi_ids) ? body.related_pi_ids : []),
+      ...(Array.isArray(body.items) ? body.items : []).map(i => i && i.pi_id).filter(Boolean)
+    ])];
+    let hciDepositDeductMinor = 0;
+    for (const piId of hciLinkedPiIds) {
+      const pi = await queryOne('SELECT id, pi_no, available_deduct_deposit FROM proforma_invoices WHERE id = ?', [piId]);
+      if (!pi) continue;
+      hciDepositDeductMinor += Math.round((pi.available_deduct_deposit || 0) * 100);
+    }
+    const hciGrossMinor = Math.round(normalized.gross_goods_amount * 100);
+    const hciBalanceMinor = Math.max(0, hciGrossMinor - hciDepositDeductMinor);
+    const hciBalanceAmount = hciBalanceMinor / 100;
     await run(`INSERT INTO historical_commercial_invoices
          (id, historical_ci_no, supplier_id, supplier_name, supplier_identity, brand_id, brand_name,
           country, ci_date, actual_ship_date, payment_term_id, credit_days, currency, gross_goods_amount, historical_paid_amount, historical_paid_date,
@@ -10351,7 +10366,7 @@ async function createHistoricalCI(body, req) {
                  'approved', ?, datetime('now'), ?, ?)`,
       [paymentRequestId, paymentRequestNo, historicalId, normalized.historical_ci_no,
         historicalPayeeKey, historicalPayeeNameSnapshot, normalized.supplier_name,
-        normalized.gross_goods_amount, normalized.gross_goods_amount, normalized.currency, normalized.payment_terms,
+        hciBalanceAmount, hciBalanceAmount, normalized.currency, normalized.payment_terms,
         historicalPayableDate, operator.name, normalized.source_note, normalized.country]);
 
     // PAY-CORE CI→付款事实闭环：Historical CI 补 payable_items（active + 关联 + reserve，与标准 PR 创建口径对齐）
@@ -10360,14 +10375,14 @@ async function createHistoricalCI(body, req) {
       sourceType: 'historical_ci', sourceId: historicalId, sourceNo: normalized.historical_ci_no,
       feeType: 'balance', categoryCode: 'goods', subcategoryCode: 'balance',
       payeeType: 'factory', payeeKey: historicalPayeeKey, payeeName: historicalPayeeNameSnapshot,
-      currency: normalized.currency, payableAmount: normalized.gross_goods_amount,
+      currency: normalized.currency, payableAmount: hciBalanceAmount,
       payableDate: historicalPayableDate,
       createdBy: operator.id
     });
     if (hciPayableItem && hciPayableItem.id && hciPayableItem.lifecycle_status === 'active') {
       await run(
         `INSERT INTO payment_request_items (id, payment_request_id, payable_item_id, requested_amount_minor) VALUES (?, ?, ?, ?)`,
-        [await genId('pri'), paymentRequestId, hciPayableItem.id, hciPayableItem.payable_amount_minor || Math.round(normalized.gross_goods_amount * 100)]
+        [await genId('pri'), paymentRequestId, hciPayableItem.id, hciPayableItem.payable_amount_minor || hciBalanceMinor]
       );
       reservePayableItem(hciPayableItem.id, paymentRequestId);
     }
@@ -13637,6 +13652,8 @@ app.get('/api/financial-risk/overview', requireApiPermission('dashboard_view'), 
     const invCountries = query("SELECT DISTINCT country FROM inventory WHERE country IS NOT NULL AND country != ''").rows.map(r => r.country);
     const ciCurrencies = query("SELECT DISTINCT currency FROM commercial_invoices WHERE currency IS NOT NULL AND currency != ''").rows.map(r => r.currency);
     const payCurrencies = query("SELECT DISTINCT currency FROM payment_requests WHERE currency IS NOT NULL AND currency != ''").rows.map(r => r.currency);
+    // 未来应付口径已切换到 payable_items，需覆盖应付项币种用于 RMB 折算
+    const payableItemCurrencies = query("SELECT DISTINCT currency FROM payable_items WHERE currency IS NOT NULL AND currency != ''").rows.map(r => r.currency);
 
     const allCurrenciesSet = new Set();
     // 库存国家→币种（与库存总表一致，支持别名）
@@ -13649,6 +13666,7 @@ app.get('/api/financial-risk/overview', requireApiPermission('dashboard_view'), 
     ciCurrencies.forEach(curr => allCurrenciesSet.add(curr));
     // 付款申请币种
     payCurrencies.forEach(curr => allCurrenciesSet.add(curr));
+    payableItemCurrencies.forEach(curr => allCurrenciesSet.add(curr));
     allCurrenciesSet.add('RMB');
     allCurrenciesSet.add('CNY');
 
@@ -13758,49 +13776,66 @@ app.get('/api/financial-risk/overview', requireApiPermission('dashboard_view'), 
     }
 
     // --- 3. 未来应付资金压力(CNY) ---
-    // 排除逾期(payable_date < today)，累计口径
+    // 口径对齐「应付费用列表 / 驾驶舱」：数据源 = payable_items，不再用 payment_requests。
+    //   payment_requests 仅代表付款执行过程（审批中/已批准待付款），不作为应付预测金额来源。
+    // remaining = payable_amount_minor - 已付(payment_allocations reconciled) - 抵扣(deduction) - 抹零(rounding)
+    //   （复用 payableItemsSettlementBreakdown，与应付列表/驾驶舱完全一致）
+    // 过滤：remaining > 0 且 payable_date 存在且 >= today（排除逾期/无日期；逾期归入"已逾期未结"但不计入未来）
+    // 时间桶：today~today+7 / +30 / +90
+    // 币种：复用 foreignToRmbMap（缺失汇率跳过并告警，与库存/在途一致，禁止 fallback=1）
+    // 付款申请状态（审批中/已批准待付款）仅作辅助展示拆分，不影响未来应付金额统计。
     const d7 = addDays(today, 7);
     const d30 = addDays(today, 30);
     const d90 = addDays(today, 90);
 
-    const payRows = query(`
-      SELECT pr.unpaid_amount, pr.paid_amount, pr.rmb_amount, pr.currency, pr.payable_date
-      FROM payment_requests pr
-      WHERE pr.approval_status IN ('pending', 'approved')
-        AND pr.payment_status NOT IN ('paid', 'deduction_settled', 'rejected', 'cancelled')
-        AND pr.unpaid_amount > 0
-        AND pr.payable_date != ''
-        AND pr.payable_date >= ?
-    `, [today]).rows;
+    const payItemRows = query(`
+      SELECT pi.id, pi.payable_amount_minor, pi.currency, pi.payable_date, pi.lifecycle_status
+      FROM payable_items pi
+      WHERE pi.lifecycle_status IN ('active','reserved','partially_paid')
+    `).rows;
+
+    const piIds = payItemRows.map(r => r.id);
+    const breakdownMap = payableItemsSettlementBreakdown(piIds);
+
+    // 关联付款申请（仅辅助展示：已批准待付款 / 审批中），一次查询避免 N+1
+    const linkedPrs = piIds.length ? query(`
+      SELECT pri.payable_item_id AS payable_item_id, pr.approval_status
+      FROM payment_request_items pri
+      JOIN payment_requests pr ON pr.id = pri.payment_request_id
+      WHERE pri.payable_item_id IN (${piIds.map(() => '?').join(',')})
+        AND pr.payment_status NOT IN ('cancelled','rejected')
+        AND pr.approval_status NOT IN ('cancelled','rejected')
+    `, piIds).rows : [];
+    const approvedItemIds = new Set();
+    linkedPrs.forEach(p => { if (p.approval_status === 'approved') approvedItemIds.add(p.payable_item_id); });
 
     let pay7 = 0, pay30 = 0, pay90 = 0;
     let pay7Pending = 0, pay30Pending = 0, pay90Pending = 0;
     let pay7Approved = 0, pay30Approved = 0, pay90Approved = 0;
-    const payMissingRates = []; // 记录缺失汇率的付款申请（不静默按1计算）
-    for (const pr of payRows) {
-      // 优先使用 PAY-CORE 已确认人民币金额
-      let unpaidRmb;
-      if (Number(pr.paid_amount) > 0 && Number(pr.rmb_amount) > 0) {
-        const impliedRate = Number(pr.rmb_amount) / Number(pr.paid_amount);
-        unpaidRmb = Number(pr.unpaid_amount) * impliedRate;
-      } else {
-        const curr = (pr.currency || '').toUpperCase();
-        const rate = foreignToRmbMap[curr];
-        if (!rate) {
-          // 缺失汇率：禁止 fallback=1，跳过并记录
-          payMissingRates.push({ request_no: pr.request_no || '', currency: pr.currency, unpaid_amount: pr.unpaid_amount });
-          continue;
-        }
-        unpaidRmb = Number(pr.unpaid_amount) * rate;
+    const payMissingRates = []; // 记录缺失汇率的应付项（不静默按1计算）
+    for (const pi of payItemRows) {
+      // 复用应付列表同款 settlement 拆算：已付款 / 抵扣 / 抹零 / 剩余未付
+      const b = breakdownMap.get(pi.id) || { paidMinor: 0, deductionMinor: 0, roundingMinor: 0 };
+      const settledMinor = b.paidMinor + b.deductionMinor + b.roundingMinor;
+      const remainingMinor = Math.max(0, Number(pi.payable_amount_minor || 0) - settledMinor);
+      if (remainingMinor <= 0) continue;                       // 已结清 / 超额付清
+      if (!pi.payable_date || pi.payable_date < today) continue; // 无日期或逾期 → 不计入"未来"
+      const curr = (pi.currency || '').toUpperCase();
+      const rate = foreignToRmbMap[curr];
+      if (!rate) {
+        // 缺失汇率：禁止 fallback=1，跳过并记录
+        payMissingRates.push({ id: pi.id, currency: pi.currency, remaining_minor: remainingMinor });
+        continue;
       }
-      // 方案A：按审批状态拆分（审批中=pending / 已批准待付款=approved），总额不变
-      const isApproved = pr.approval_status === 'approved';
-      if (pr.payable_date <= d7) { pay7 += unpaidRmb; if (isApproved) pay7Approved += unpaidRmb; else pay7Pending += unpaidRmb; }
-      if (pr.payable_date <= d30) { pay30 += unpaidRmb; if (isApproved) pay30Approved += unpaidRmb; else pay30Pending += unpaidRmb; }
-      if (pr.payable_date <= d90) { pay90 += unpaidRmb; if (isApproved) pay90Approved += unpaidRmb; else pay90Pending += unpaidRmb; }
+      // 方案A：按审批状态拆分（已批准待付款=approved / 审批中=pending），总额不变（不影响预测）
+      const rmb = (remainingMinor / 100) * rate;
+      const isApproved = approvedItemIds.has(pi.id);
+      if (pi.payable_date <= d7)  { pay7  += rmb; if (isApproved) pay7Approved  += rmb; else pay7Pending  += rmb; }
+      if (pi.payable_date <= d30) { pay30 += rmb; if (isApproved) pay30Approved += rmb; else pay30Pending += rmb; }
+      if (pi.payable_date <= d90) { pay90 += rmb; if (isApproved) pay90Approved += rmb; else pay90Pending += rmb; }
     }
     if (payMissingRates.length > 0) {
-      console.warn('[financial-risk] 未来应付：' + payMissingRates.length + ' 条付款申请缺失汇率，已跳过:', JSON.stringify(payMissingRates));
+      console.warn('[financial-risk] 未来应付：' + payMissingRates.length + ' 条应付项缺失汇率，已跳过:', JSON.stringify(payMissingRates.slice(0, 5)));
     }
 
     const totalAssets = inventoryAssets + inTransitAssets;
