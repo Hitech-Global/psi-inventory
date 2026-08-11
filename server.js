@@ -10995,6 +10995,10 @@ app.get('/api/finance/payable-cockpit', requireApiPermission('payment_view'), as
       const relatedCiNo = ciCtx ? ciNo : '';
       // 国家：优先 source_ci_id 关联 CI（运营/历史），其次 PI 来源回退 proforma_invoices.country
       const country = ciCtx ? (ciCtx.country || '') : (piCtx ? (piCtx.country || '') : '');
+      // 国家展示归一化：商业 CI/PI 表的 country 存中文名（如「印度尼西亚」），historical_commercial_invoices 表的 country 存代码（如「ID」），
+      // 同一供应商下两种格式并存会造成驾驶舱明细/头部列表显示不一致。仅在明细返回层归一化，不修改原 country 字段、DB 写逻辑及任何业务规则。
+      // 复用既有 canonCountry/displayCountry（已在 CI 筛选接口用于兼容查询）。
+      const countryDisplay = displayCountry(canonCountry(country));
 
       enriched.push({
         id: prs.length ? prs[0].pr_id : pi.id,
@@ -11002,6 +11006,7 @@ app.get('/api/finance/payable-cockpit', requireApiPermission('payment_view'), as
         // 与应付费用列表「供应商」列展示口径一致：优先 JOIN 来源名称，缺失时回退收款方快照
         supplier_name: ((pi.supplier_name || '').trim()) || ((pi.payee_name_snapshot || '').trim()) || '（未填供应商）',
         country,
+        country_display: countryDisplay,
         source_type: pi.source_type || '',
         related_pi_no: relatedPiNo,
         related_ci_no: relatedCiNo,

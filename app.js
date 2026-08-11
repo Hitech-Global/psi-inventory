@@ -10899,8 +10899,9 @@ function cockpitFilteredDetails(){
   const d=_cockpitData; if(!d) return [];
   const f=cockpitActiveFilters();
   let rows=d.details;
-  if(f.country==='__NONE__') rows=rows.filter(r=>!(r.country||''));
-  else if(f.country) rows=rows.filter(r=>(r.country||'')===f.country);
+  // 筛选键统一用 country_display 归一化（CI 历史表存代码、PI/CI 表存中文），保证同一国家只一类展示
+  if(f.country==='__NONE__') rows=rows.filter(r=>!(r.country_display||r.country||''));
+  else if(f.country) rows=rows.filter(r=>(r.country_display||r.country||'')===f.country);
   if(f.supplier) rows=rows.filter(r=>r.supplier_name===f.supplier);
   if(f.currency) rows=rows.filter(r=>r.currency===f.currency);
   if(f.category) rows=rows.filter(r=>r.payment_category===f.category);
@@ -10927,7 +10928,7 @@ function cockpitAggregate(rows){
     if(!supMap[key]) supMap[key]={supplier_name:r.supplier_name,currency:r.currency,country_set:{},gross_payable:0,settled:0,outstanding:0,due_soon:0,overdue_amount:0,earliest_due_date:'',outstanding_count:0,request_count:0,ids:[],last_payment_date:''};
     const s=supMap[key];
     s.request_count++; s.ids.push(r.id); s.gross_payable+=r.gross_payable; s.settled+=r.settled; s.outstanding+=r.outstanding;
-    if(r.country) s.country_set[r.country]=1;
+    if(r.country_display||r.country) s.country_set[r.country_display||r.country||'']=1;
     if(r.outstanding>0){
       s.outstanding_count++;
       if(r.has_due){ if(r.payable_date<today) s.overdue_amount+=r.outstanding; else if(r.payable_date<=d30) s.due_soon+=r.outstanding; if(!s.earliest_due_date||r.payable_date<s.earliest_due_date) s.earliest_due_date=r.payable_date; }
@@ -10953,7 +10954,7 @@ function cockpitAggregate(rows){
 function cockpitBaselineView(){
   const d=_cockpitData;
   const cm={};
-  d.details.forEach(r=>{ if(r.country){ const k=r.supplier_name+'||'+r.currency; (cm[k]=cm[k]||{}); cm[k][r.country]=1; } });
+  d.details.forEach(r=>{ if(r.country_display||r.country){ const k=r.supplier_name+'||'+r.currency; (cm[k]=cm[k]||{}); cm[k][r.country_display||r.country||'']=1; } });
   const by_supplier=d.by_supplier.map(s=>{ const k=s.supplier_name+'||'+s.currency; return Object.assign({},s,{brands:(d.supplier_brands&&d.supplier_brands[s.supplier_name])||'', country: cm[k]?Object.keys(cm[k]).join(', '):''}); });
   return {metrics:d.metrics,by_supplier,by_category:d.by_category,details:d.details,curs:d.currencies};
 }
@@ -10974,7 +10975,8 @@ function renderCockpitView(){
   const el=document.getElementById('content-inner');
   const allDetails=d.details||[];
   // 筛选下拉选项（来自全量 details，不受筛选影响，始终完整）
-  const countrySet={}; allDetails.forEach(r=>{ countrySet[r.country||'']=1; });
+  // 筛选下拉选项（来自全量 details，不受筛选影响，始终完整）。统一用 country_display 归一化（CI 表存中文国名、历史 CI 表存代码），保证同国仅一项
+  const countrySet={}; allDetails.forEach(r=>{ const _c=r.country_display||r.country||''; countrySet[_c]=1; });
   let countryOpts=''; if(countrySet['']) countryOpts+='<option value="__NONE__">'+t("cockpit.opt_notset","未设置(-)")+'</option>';
   Object.keys(countrySet).filter(c=>c).sort().forEach(c=>{ countryOpts+='<option value="'+esc(c)+'">'+esc(c)+'</option>'; });
   const supSet={}; allDetails.forEach(r=>{ supSet[r.supplier_name]=1; });
@@ -11179,7 +11181,8 @@ function cockpitSupplierDrawer(supplierEnc,currency){
   const d=_cockpitData;if(!d)return;
   const rows=getCockpitView().details.filter(r=>r.supplier_name===supplier&&r.currency===currency);
   const brands=(d.supplier_brands&&d.supplier_brands[supplier])||'';
-  const _cset={}; rows.forEach(r=>{ if(r.country) _cset[r.country]=1; });
+  // 头部国家列表：归一化拼接（CI/PI 存中文名，历史 CI 存代码），避免同一国家显示成两种风格
+  const _cset={}; rows.forEach(r=>{ const _c=r.country_display||r.country; if(_c) _cset[_c]=1; });
   const countries=Object.keys(_cset).join(', ');
   const order=[''+t("cockpit.cat_goods","货款")+'',''+t("pi.022","运输费")+'',''+t("app.224","关税")+'',''+t("pi.023","检验费")+'',''+t("ci.035","其他费用")+''];
   const buckets={};let totalOut=0;
@@ -11205,7 +11208,7 @@ function cockpitSupplierDrawer(supplierEnc,currency){
     const prAux=r.request_no?('<div style="font-size:11px;color:#999;margin-top:2px">'+t("cockpit.col_payment_no","付款编号")+': '+esc(r.request_no)+'</div>'):'';
     return '<tr style="cursor:pointer" onclick="closeCockpitDrawer();viewPayment(\''+r.id+'\')">'
       +'<td>'+esc(src)+(r.source_mode==='historical'?' <span style="font-size:10px;color:#999">'+t("cockpit.historical","(历史)")+'</span>':'')+'</td>'
-      +'<td>'+esc(r.country||'—')+'</td>'
+      +'<td>'+esc((r.country_display||r.country||'—'))+'</td>'
       +'<td>'+esc(catTxt||'—')+'</td>'
       +'<td style="text-align:right">'+fmtMoney(r.gross_payable)+'</td>'
       +'<td style="text-align:right;color:#2e7d32">'+fmtMoney(r.settled)+'</td>'
