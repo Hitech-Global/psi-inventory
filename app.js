@@ -11167,11 +11167,11 @@ function closeCockpitDrawer(){
   document.removeEventListener('keydown',cockpitDrawerEsc);
 }
 function cockpitDrawerEsc(e){if(e.key==='Escape')closeCockpitDrawer();}
-// 明细来源：显示应付事实本身（定金↔PI编号，尾款↔CI编号）。
+// 明细来源：按 source_type 显示应付事实主体（PI→PI编号，CI/历史CI→CI编号）。
 // payment_request 仅作为辅助状态展示（见状态栏 request_no 小字），不作为来源主体。
 function cockpitSourceNo(r){
-  if(r.subcategory==='deposit') return r.related_pi_no||'—';
-  if(r.subcategory==='balance') return r.related_ci_no||'—';
+  if(r.source_type==='pi') return r.related_pi_no||'—';
+  if(r.source_type==='ci'||r.source_type==='historical_ci') return r.related_ci_no||'—';
   return [r.related_pi_no,r.related_ci_no].filter(Boolean).join(' / ')||'—';
 }
 function cockpitSupplierDrawer(supplierEnc,currency){

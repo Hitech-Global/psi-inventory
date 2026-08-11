@@ -10911,6 +10911,19 @@ app.get('/api/finance/payable-cockpit', requireApiPermission('payment_view'), as
         ciIds
       ).rows.forEach(c => { ciMap[c.id] = c; });
     }
+    // 历史 CI：额外按 historical_ci_no 建索引。
+    // 历史类应付项的 source_ci_id 可能为 NULL，需借 source_no 关联 historical_commercial_invoices.historical_ci_no 才能取到来源编号与国家。
+    const hciByNo = {};
+    query('SELECT id, historical_ci_no, historical_ci_no AS ci_no, country, credit_days, actual_ship_date FROM historical_commercial_invoices')
+      .rows.forEach(c => { if (c.historical_ci_no) hciByNo[c.historical_ci_no] = c; ciMap[c.id] = c; });
+
+    // PI 上下文（来源编号 pi_no / 国家），一次查询（source_type='pi' 时 source_id 指向 PI）
+    const piIds = [...new Set(rows.map(r => r.source_id).filter(Boolean))];
+    const piMap = {};
+    if (piIds.length) {
+      query(`SELECT id, pi_no, country FROM proforma_invoices WHERE id IN (${piIds.map(() => '?').join(',')})`, piIds)
+        .rows.forEach(p => { piMap[p.id] = p; });
+    }
 
     const m2 = (v) => settlementMoney(v);
     const enriched = [];
@@ -10935,7 +10948,12 @@ app.get('/api/finance/payable-cockpit', requireApiPermission('payment_view'), as
       // 信用条款上下文：仅「Credit 条款 + 已录入出货日 + 有 credit_days」却仍无应付日期，才属真实数据异常。
       // 非 Credit（如定金/预付）本就无需应付日期，不补、不报异常；绝不臆造日期。
       let creditMissingDue = false;
-      const ciCtx = pi.source_ci_id ? ciMap[pi.source_ci_id] : null;
+      // 统一来源解析：
+      //  - source_ci_id 有效 → 运营CI / 历史CI（ciMap 已含两类）
+      //  - 历史CI 且 source_ci_id 为空 → 回退 source_no 关联 historical_commercial_invoices.historical_ci_no
+      const ciCtx0 = pi.source_ci_id ? ciMap[pi.source_ci_id] : null;
+      const ciCtx = ciCtx0 || (pi.source_type === 'historical_ci' && pi.source_no ? (hciByNo[pi.source_no] || null) : null);
+      const piCtx = pi.source_type === 'pi' ? piMap[pi.source_id] : null;
       if (ciCtx) {
         const cd = Number(ciCtx.credit_days) || 0;
         const ship = String(ciCtx.actual_ship_date || '').trim();
@@ -10967,10 +10985,16 @@ app.get('/api/finance/payable-cockpit', requireApiPermission('payment_view'), as
       }
       const lastPaymentDate = (prs.map(p => p.paid_date).filter(Boolean).sort().slice(-1)[0]) || '';
       const requestNo = prs.map(p => p.request_no).filter(Boolean).join(' / ') || '';
+      // 来源编号：
+      //  - PI来源(source_type='pi') → proforma_invoices.pi_no
+      //  - CI来源(source_ci_id 命中运营CI/历史CI) → commercial_invoices.ci_no / historical_commercial_invoices.historical_ci_no
       const ciNo = ciCtx ? (ciCtx.ci_no || '') : '';
-      const relatedPiNo = pi.source_type === 'pi' ? (pi.source_no || '') : (ciCtx ? (ciCtx.related_pi_no || '') : '');
-      const relatedCiNo = pi.source_type === 'ci' ? (pi.source_no || '') : ciNo;
-      const country = ciCtx ? (ciCtx.country || '') : '';
+      const relatedPiNo = pi.source_type === 'pi'
+        ? (piCtx ? (piCtx.pi_no || '') : (pi.source_no || ''))
+        : (ciCtx ? (ciCtx.related_pi_no || '') : '');
+      const relatedCiNo = ciCtx ? ciNo : '';
+      // 国家：优先 source_ci_id 关联 CI（运营/历史），其次 PI 来源回退 proforma_invoices.country
+      const country = ciCtx ? (ciCtx.country || '') : (piCtx ? (piCtx.country || '') : '');
 
       enriched.push({
         id: prs.length ? prs[0].pr_id : pi.id,
