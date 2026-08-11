@@ -11171,10 +11171,16 @@ function closeCockpitDrawer(){
 function cockpitDrawerEsc(e){if(e.key==='Escape')closeCockpitDrawer();}
 // 明细来源：按 source_type 显示应付事实主体（PI→PI编号，CI/历史CI→CI编号）。
 // payment_request 仅作为辅助状态展示（见状态栏 request_no 小字），不作为来源主体。
+// 应付来源展示：仅展示费用事实依据单据（财务关注应付依据，不展示 CI↔PI 采购链路关联）。
+//   - 定金(deposit) → PI 编号
+//   - 尾款(balance) → CI 编号
+//   - 其他费用 → 对应业务单据编号（优先 CI，其次 PI）
+// 基于 subcategory_code（费用性质）判定，不依赖 source_type：尾款 bug 项 source_type 虽为 pi，subcategory 仍为 balance，应显示 CI 编号。
 function cockpitSourceNo(r){
-  if(r.source_type==='pi') return r.related_pi_no||'—';
-  if(r.source_type==='ci'||r.source_type==='historical_ci') return r.related_ci_no||'—';
-  return [r.related_pi_no,r.related_ci_no].filter(Boolean).join(' / ')||'—';
+  const sub = r.subcategory || '';
+  if (sub === 'deposit') return r.related_pi_no || r.related_ci_no || '—';
+  if (sub === 'balance') return r.related_ci_no || r.related_pi_no || '—';
+  return r.related_ci_no || r.related_pi_no || '—';
 }
 function cockpitSupplierDrawer(supplierEnc,currency){
   const supplier=decodeURIComponent(supplierEnc);
