@@ -10864,73 +10864,142 @@ app.get('/api/finance/payable-cockpit', requireApiPermission('payment_view'), as
     const remindDays = parseInt(queryOne("SELECT value FROM system_config WHERE key = 'payment_remind_days'")?.value || '7', 10);
     const d7 = addDays(today, remindDays);
     const d30 = addDays(today, 30);
-    // 应付实体：payment_requests 全量，排除已驳回/已取消（非应付义务）；含 pending（待审仍是应付义务）
-    const rows = query(`SELECT * FROM payment_requests
-                        WHERE approval_status NOT IN ('rejected','draft')
-                          AND payment_status NOT IN ('rejected', 'cancelled')`).rows;
+    // ===== 应付驾驶舱：基于 payable_items 聚合（与「应付费用列表」同一套计算口径）=====
+    // 业务规则：进入应付费用列表的数据即为企业真实应付；payment_requests 仅代表付款执行过程，
+    // 不作为应付金额统计来源。故此处直接聚合 payable_items 的剩余未付（remaining），
+    // 复用 payableItemsSettlementBreakdown() 与列表完全一致 —— 确保「驾驶舱供应商金额 = 应付列表供应商金额」。
+    // 未结清口径与列表默认一致：仅 active / reserved / partially_paid（paid / cancelled 排除）。
+    const rows = query(
+      `SELECT pi.*,
+          COALESCE(ci.supplier_name, hci.supplier_name, pii.supplier_name) AS supplier_name
+       FROM payable_items pi
+       LEFT JOIN commercial_invoices ci ON pi.source_ci_id = ci.id
+       LEFT JOIN historical_commercial_invoices hci ON pi.source_ci_id = hci.id
+       LEFT JOIN proforma_invoices pii ON pi.source_type = 'pi' AND pi.source_id = pii.id
+       WHERE pi.lifecycle_status IN ('active','reserved','partially_paid')`
+    ).rows;
+
+    // 复用列表同款 settlement 拆算：已付款 / 抵扣 / 抹零 / 剩余未付（金额动态推导，不改变任何业务规则）
+    const breakdownMap = payableItemsSettlementBreakdown(rows.map(r => r.id));
+
+    // 关联付款申请（仅作辅助展示：是否已申请 / 审批状态 / 付款状态），一次查询避免 N+1
+    const linkedPrs = rows.length ? query(
+      `SELECT pri.payable_item_id AS payable_item_id, pr.id AS pr_id, pr.request_no,
+              pr.approval_status, pr.payment_status, pr.paid_date
+       FROM payment_request_items pri
+       JOIN payment_requests pr ON pr.id = pri.payment_request_id
+       WHERE pri.payable_item_id IN (${rows.map(() => '?').join(',')})
+         AND pr.payment_status NOT IN ('cancelled','rejected')
+         AND pr.approval_status NOT IN ('cancelled','rejected')`,
+      rows.map(r => r.id)
+    ).rows : [];
+    const prByItem = {};
+    linkedPrs.forEach(p => { (prByItem[p.payable_item_id] = prByItem[p.payable_item_id] || []).push(p); });
+
+    // CI 上下文（供应商追溯 / 国家 / 信用条款），一次查询
+    const ciIds = [...new Set(rows.map(r => r.source_ci_id).filter(Boolean))];
+    const ciMap = {};
+    if (ciIds.length) {
+      query(
+        `SELECT id, ci_no, related_pi_no, country, credit_days, actual_ship_date
+         FROM commercial_invoices WHERE id IN (${ciIds.map(() => '?').join(',')})`,
+        ciIds
+      ).rows.forEach(c => { ciMap[c.id] = c; });
+      query(
+        `SELECT id, historical_ci_no AS ci_no, country, credit_days, actual_ship_date
+         FROM historical_commercial_invoices WHERE id IN (${ciIds.map(() => '?').join(',')})`,
+        ciIds
+      ).rows.forEach(c => { ciMap[c.id] = c; });
+    }
 
     const m2 = (v) => settlementMoney(v);
     const enriched = [];
-    for (const pr of rows) {
-      const facts = await paymentSettlementFacts(pr);
-      const status = derivePaymentStatus(pr, facts);
-      const outstanding = Math.max(0, facts.outstanding);
-      const settled = m2(facts.effectivePaid + facts.effectiveDeduction + facts.effectiveRounding);
+    for (const pi of rows) {
+      const b = breakdownMap.get(pi.id) || { paidMinor: 0, deductionMinor: 0, roundingMinor: 0 };
+      const payableMinor = Number(pi.payable_amount_minor || 0);
+      const paidMinor = b.paidMinor;
+      const deductionMinor = b.deductionMinor;
+      const roundingMinor = b.roundingMinor;
+      const remainingMinor = Math.max(0, payableMinor - paidMinor - deductionMinor - roundingMinor);
+      const grossPayable = minorToAmount(payableMinor);
+      const settled = minorToAmount(paidMinor + deductionMinor + roundingMinor);
+      const outstanding = minorToAmount(remainingMinor);
+
       // 到期日：持久化字段优先；空归入"无到期日"桶
-      const payableDate = String(pr.payable_date || '').trim();
+      const payableDate = String(pi.payable_date || '').trim();
       const hasDue = /^\d{4}-\d{2}-\d{2}$/.test(payableDate);
-      const overdueDays = (hasDue && outstanding > 0 && payableDate < today)
+      const overdueDays = (hasDue && remainingMinor > 0 && payableDate < today)
         ? Math.max(0, Math.floor((new Date(today + 'T00:00:00Z') - new Date(payableDate + 'T00:00:00Z')) / 86400000))
         : 0;
+
       // 信用条款上下文：仅「Credit 条款 + 已录入出货日 + 有 credit_days」却仍无应付日期，才属真实数据异常。
       // 非 Credit（如定金/预付）本就无需应付日期，不补、不报异常；绝不臆造日期。
       let creditMissingDue = false;
-      {
-        let ciTbl = null, ciId = null, ciNo = null;
-        if (pr.source_type === 'historical_ci') { ciTbl = 'historical_commercial_invoices'; ciId = pr.source_id; ciNo = pr.source_no; }
-        else if (pr.source_type === 'ci') { ciTbl = 'commercial_invoices'; ciId = pr.source_id || pr.related_ci_id; }
-        if (ciTbl) {
-          let ciRow = ciId ? query(`SELECT credit_days, actual_ship_date FROM ${ciTbl} WHERE id = ?`, [ciId]).rows[0] : null;
-          if (!ciRow && ciNo) {
-            const noCol = ciTbl === 'historical_commercial_invoices' ? 'historical_ci_no' : 'ci_no';
-            ciRow = query(`SELECT credit_days, actual_ship_date FROM ${ciTbl} WHERE ${noCol} = ?`, [ciNo]).rows[0];
-          }
-          if (ciRow) {
-            const cd = Number(ciRow.credit_days) || 0;
-            const ship = String(ciRow.actual_ship_date || '').trim();
-            creditMissingDue = cd > 0 && /^\d{4}-\d{2}-\d{2}$/.test(ship) && !hasDue;
-          }
-        }
+      const ciCtx = pi.source_ci_id ? ciMap[pi.source_ci_id] : null;
+      if (ciCtx) {
+        const cd = Number(ciCtx.credit_days) || 0;
+        const ship = String(ciCtx.actual_ship_date || '').trim();
+        creditMissingDue = cd > 0 && /^\d{4}-\d{2}-\d{2}$/.test(ship) && !hasDue;
       }
+
+      // 关联付款申请（辅助展示）→ 派生态：是否已申请 / 审批状态 / 付款状态
+      const prs = prByItem[pi.id] || [];
+      let status = 'unpaid', status_label = '未申请';
+      {
+        let paid = false, partial = false, approved = false, pending = false, draft = false, rejected = false;
+        prs.forEach(p => {
+          const as = p.approval_status, ps = p.payment_status;
+          if (as === 'rejected' || ps === 'rejected' || as === 'cancelled' || ps === 'cancelled') { rejected = true; return; }
+          if (as === 'draft') { draft = true; return; }
+          if (as === 'pending' || as === 'pending_approval') { pending = true; return; }
+          if (as === 'approved') {
+            if (ps === 'paid' || ps === 'deduction_settled') paid = true;
+            else if (ps === 'partial_paid' || ps === 'partial_deduction' || ps === 'partial_rounding' || ps === 'partial_payment_partial_deduction') partial = true;
+            else approved = true;
+          }
+        });
+        if (paid) { status = 'paid'; status_label = '已付款'; }
+        else if (partial) { status = 'approved'; status_label = '部分付款'; }
+        else if (approved) { status = 'approved'; status_label = '已通过'; }
+        else if (pending) { status = 'pending_approval'; status_label = '审批中'; }
+        else if (draft) { status = 'pending_approval'; status_label = '草稿'; }
+        else if (rejected) { status = 'rejected'; status_label = '已驳回'; }
+      }
+      const lastPaymentDate = (prs.map(p => p.paid_date).filter(Boolean).sort().slice(-1)[0]) || '';
+      const requestNo = prs.map(p => p.request_no).filter(Boolean).join(' / ') || '';
+      const ciNo = ciCtx ? (ciCtx.ci_no || '') : '';
+      const relatedPiNo = pi.source_type === 'pi' ? (pi.source_no || '') : (ciCtx ? (ciCtx.related_pi_no || '') : '');
+      const relatedCiNo = pi.source_type === 'ci' ? (pi.source_no || '') : ciNo;
+      const country = ciCtx ? (ciCtx.country || '') : '';
+
       enriched.push({
-        id: pr.id,
-        request_no: pr.request_no,
-        supplier_name: pr.supplier_name || '（未填供应商）',
-        country: (pr.expense_country || '').trim(),
-        source_type: pr.source_type || '',
-        related_pi_no: pr.source_type === 'pi' ? (pr.source_no || '') : '',
-        related_ci_no: pr.related_ci_no || (pr.source_type === 'ci' ? pr.source_no : '') || '',
-        payment_category: pr.payment_category || '',
-        category_label: PAYABLE_CATEGORY_LABELS[pr.payment_category] || pr.payment_category || '',
-        subcategory: pr.payment_subcategory || '',
-        subcategory_label: PAYABLE_SUBCAT_LABELS[pr.payment_subcategory] || pr.payment_subcategory || '',
-        payee_type: pr.payee_type || '',
-        payee_label: PAYABLE_PAYEE_LABELS[pr.payee_type] || pr.payee_type || '',
-        currency: pr.currency || '',
-        gross_payable: m2(facts.grossPayable),
+        id: prs.length ? prs[0].pr_id : pi.id,
+        request_no: requestNo,
+        // 与应付费用列表「供应商」列展示口径一致：优先 JOIN 来源名称，缺失时回退收款方快照
+        supplier_name: ((pi.supplier_name || '').trim()) || ((pi.payee_name_snapshot || '').trim()) || '（未填供应商）',
+        country,
+        source_type: pi.source_type || '',
+        related_pi_no: relatedPiNo,
+        related_ci_no: relatedCiNo,
+        payment_category: pi.category_code || '',
+        category_label: PAYABLE_CATEGORY_LABELS[pi.category_code] || pi.category_code || '',
+        subcategory: pi.subcategory_code || '',
+        subcategory_label: PAYABLE_SUBCAT_LABELS[pi.subcategory_code] || pi.subcategory_code || '',
+        payee_type: pi.payee_type || '',
+        payee_label: PAYABLE_PAYEE_LABELS[pi.payee_type] || pi.payee_type || '',
+        currency: pi.currency || '',
+        gross_payable: grossPayable,
         settled,
         outstanding,
-        last_payment_date: (facts.latestPayment && facts.latestPayment.paid_date) || pr.paid_date || '',
-        local_amount: Number(pr.local_amount || 0),
-        rmb_amount: Number(pr.rmb_amount || 0),
+        last_payment_date: lastPaymentDate,
         payable_date: hasDue ? payableDate : '',
         has_due: hasDue,
         credit_missing_due: creditMissingDue,
         overdue_days: overdueDays,
         status,
-        status_label: PAYABLE_STATUS_LABELS[status] || status,
-        approval_status: pr.approval_status || '',
-        source_mode: pr.source_type === 'historical_ci' ? 'historical' : 'operational'
+        status_label,
+        approval_status: status,
+        source_mode: pi.source_type === 'historical_ci' ? 'historical' : 'operational'
       });
     }
 
@@ -10952,13 +11021,16 @@ app.get('/api/finance/payable-cockpit', requireApiPermission('payment_view'), as
       if (r.outstanding > 0) {
         if (r.credit_missing_due) {
           mm.no_due_outstanding = m2(mm.no_due_outstanding + r.outstanding);
-        } else if (r.payable_date < today) {
-          mm.overdue_amount = m2(mm.overdue_amount + r.outstanding);
-          mm.overdue_count += 1;
-        } else {
-          if (r.payable_date <= d7) mm.due_7 = m2(mm.due_7 + r.outstanding);
-          if (r.payable_date <= d30) mm.due_30 = m2(mm.due_30 + r.outstanding);
+        } else if (r.has_due) {
+          if (r.payable_date < today) {
+            mm.overdue_amount = m2(mm.overdue_amount + r.outstanding);
+            mm.overdue_count += 1;
+          } else {
+            if (r.payable_date <= d7) mm.due_7 = m2(mm.due_7 + r.outstanding);
+            if (r.payable_date <= d30) mm.due_30 = m2(mm.due_30 + r.outstanding);
+          }
         }
+        // 无到期日且非 Credit 异常的未结项：不计入任何时间桶（与 by_supplier 口径一致）
       }
     });
 
@@ -11032,9 +11104,10 @@ app.get('/api/finance/payable-cockpit', requireApiPermission('payment_view'), as
       details,
       notes: {
         currency: '各币种独立汇总，未提供 USD→RMB 等锁定汇率证据时不做跨币种折算或裸加',
-        due_date: '应付日期（Credit 条款）= CI 已录入 due_date 优先；否则 实际出货日 + credit_days。非 Credit（如定金/预付）无需应付日期，保持为空且不计入异常。',
-        outstanding: '未结清=应付-有效付款-有效抵扣-有效抹零（仅计 status=applied 的结算事件，与付款管理页/落库 unpaid_amount 同口径）',
-        scope: '仅口径展示，未修改任何付款/审批/抵扣/冲销/汇率/WAC 业务规则与数据'
+        due_date: '应付日期来自 payable_items.payable_date（与应付费用列表同字段）；非 Credit（如定金/预付）无需应付日期，保持为空且不计入异常。',
+        outstanding: '未结清=应付费用列表同口径：payable_items 应付金额 − 已付款 − 抵扣 − 抹零（复用 payableItemsSettlementBreakdown）。payment_requests 仅作付款执行状态辅助展示，不参与金额汇总。',
+        source: '驾驶舱直接基于 payable_items 聚合（真实应付事实）；进入应付费用列表的数据无论是否提交付款申请均计入。',
+        scope: '仅口径调整，未修改任何付款/审批/抵扣/冲销/汇率/WAC 业务规则与数据'
       }
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
