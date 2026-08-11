@@ -11130,15 +11130,18 @@ function renderCockpitDetails(preSupplier,preCurrency){
     rows=rows.filter(r=>r.supplier_name===preSupplier&&r.currency===preCurrency);
   }
   if(kw)rows=rows.filter(r=>(r.supplier_name+' '+r.request_no+' '+(r.related_ci_no||'')+' '+(r.related_pi_no||'')).toLowerCase().includes(kw));
+  rows=mergeBalanceByCi(rows);
   let html='<table class="data-table"><thead><tr><th>'+t("cockpit.col_request_no","付款申请编号")+'</th><th>'+t("cockpit.col_supplier","供应商")+'</th><th>'+t("cockpit.col_source","来源")+'</th><th>'+t("cockpit.col_related_pi_ci","关联PI/CI")+'</th><th>'+t("cockpit.filter_cat","费用类型")+'</th><th>'+t("cockpit.col_payer","付款主体")+'</th><th>'+t("cockpit.col_currency","币种")+'</th><th style="text-align:right">'+t("cockpit.col_payable","应付")+'</th><th style="text-align:right">'+t("cockpit.col_written_off","已核销")+'</th><th style="text-align:right">'+t("cockpit.col_outstanding","未结清")+'</th><th>'+t("cockpit.col_due_date","到期日")+'</th><th style="text-align:right">'+t("cockpit.col_overdue_days","逾期天数")+'</th><th>'+t("cockpit.col_status","状态")+'</th></tr></thead><tbody>';
   if(!rows.length)html+='<tr><td colspan="13" style="text-align:center;color:#999;padding:20px">'+t("cockpit.no_match","无匹配记录")+'</td></tr>';
   rows.forEach(r=>{
     const rel=[r.related_pi_no,r.related_ci_no].filter(Boolean).join(' / ')||'—';
     const catTxt=(r.category_label||'')+(r.subcategory_label?' / '+r.subcategory_label:'');
-    html+='<tr style="cursor:pointer" onclick="viewPayment(\''+r.id+'\')">'
+    const srcTxt=esc(cockpitSourceNo(r))+(r.merged?' <span class="muted" style="font-size:11px">×'+r.merged_count+'</span>':'');
+    const rowClick=r.merged?('openMergedBalanceSummary(\''+esc(r.ids.join(','))+'\')'):('viewPayment(\''+esc(r.id)+'\')');
+    html+='<tr style="cursor:pointer" onclick="'+rowClick+'">'
       +'<td style="color:#1d6fd3">'+esc(r.request_no)+(r.source_mode==='historical'?' <span style="font-size:10px;color:#999">'+t("cockpit.historical","(历史)")+'</span>':'')+'</td>'
       +'<td>'+esc(r.supplier_name)+'</td>'
-      +'<td>'+esc(cockpitSourceNo(r))+'</td>'
+      +'<td>'+srcTxt+'</td>'
       +'<td>'+esc(rel)+'</td>'
       +'<td>'+esc(catTxt||'—')+'</td>'
       +'<td>'+esc(r.payee_label||'—')+'</td>'
@@ -11182,10 +11185,61 @@ function cockpitSourceNo(r){
   if (sub === 'balance') return r.related_ci_no || r.related_pi_no || '—';
   return r.related_ci_no || r.related_pi_no || '—';
 }
+// ============================================================
+// 尾款(余额)按 CI 粒度合并展示（仅展示层，不改 payable_items / 付款流程）
+// 业务事实：尾款付款粒度是 CI（多个 PI 合并出货 → 1 个 CI → 多笔尾款 payable_item）。
+// 展示规则：balance 且 related_ci_no 非空 → 按 CI 号分组，金额(payable/paid/deduction/rounding/remaining)求和；
+//           deposit 与其他费用保持原粒度。合并行携带底层所有 id（ids），付款申请仍走现有 multi-expense。
+// 兼容两套字段名：应付列表(payable_amount/paid_amount/deduction_amount/rounding_amount/remaining_amount)
+//               与 驾驶舱(gross_payable/settled/outstanding)。
+// ============================================================
+function _mPayable(r){ if(r.payable_amount!=null&&r.payable_amount!=='')return Number(r.payable_amount); if(r.gross_payable!=null)return Number(r.gross_payable); return Number(r.payable_amount_minor||0)/100; }
+function _mPaid(r){ if(r.paid_amount!=null&&r.paid_amount!=='')return Number(r.paid_amount); if(r.settled!=null)return Number(r.settled); return 0; }
+function _mDed(r){ if(r.deduction_amount!=null&&r.deduction_amount!=='')return Number(r.deduction_amount); return 0; }
+function _mRound(r){ if(r.rounding_amount!=null&&r.rounding_amount!=='')return Number(r.rounding_amount); return 0; }
+function _mRemain(r){ if(r.remaining_amount!=null&&r.remaining_amount!=='')return Number(r.remaining_amount); if(r.outstanding!=null)return Number(r.outstanding); return Math.max(0,_mPayable(r)-_mPaid(r)-_mDed(r)-_mRound(r)); }
+function _mSub(r){ return r.subcategory || r.subcategory_code || ''; }
+function _mCI(r){ return r.related_ci_no || ''; }
+// 驾驶舱 status 优先级合并（paid > approved > pending_approval > rejected > reversed）
+const _COCKPIT_STATUS_PRI={'paid':5,'approved':4,'pending_approval':3,'rejected':2,'reversed':1};
+const _COCKPIT_STATUS_LABEL={'paid':'已付款','approved':'已通过','pending_approval':'审批中','rejected':'已驳回','reversed':'已冲销'};
+function mergeBalanceByCi(rows){
+  const groups={}; const out=[];
+  rows.forEach(function(r){
+    const sub=_mSub(r), ci=_mCI(r);
+    if(sub==='balance' && ci){ (groups[ci]=groups[ci]||[]).push(r); }
+    else out.push(r);
+  });
+  Object.keys(groups).forEach(function(ci){
+    const ms=groups[ci];
+    const base=Object.assign({}, ms[0]);
+    let p=0,pa=0,d=0,ro=0,re=0,bestP=0,best='';
+    ms.forEach(function(r){
+      p+=_mPayable(r); pa+=_mPaid(r); d+=_mDed(r); ro+=_mRound(r); re+=_mRemain(r);
+      const pri=_COCKPIT_STATUS_PRI[r.status]||0; if(pri>bestP){bestP=pri;best=r.status;}
+    });
+    base.payable_amount=p; base.gross_payable=p;
+    base.paid_amount=pa; base.settled=pa;
+    base.deduction_amount=d;
+    base.rounding_amount=ro;
+    base.remaining_amount=re; base.outstanding=re;
+    base.related_ci_no=ci; base.related_pi_no='';
+    base.subcategory='balance'; base.subcategory_code='balance'; base.fee_type='balance';
+    base.merged=true; base.merged_count=ms.length;
+    base.ids=ms.map(function(r){return r.id;});
+    base.id=ci; // 展示行键（非真实 item id），选择器据此展开到底层 items
+    base.payable_date = ms.map(function(r){return r.payable_date;}).filter(Boolean)[0] || '';
+    if(base.has_due===undefined){ base.has_due = ms.some(function(r){return r.has_due;}); }
+    if(best){ base.status=best; base.status_label=_COCKPIT_STATUS_LABEL[best]||base.status_label||''; }
+    base.request_no=''; // 合并行不展示单条 PR，状态栏已聚合
+    out.push(base);
+  });
+  return out;
+}
 function cockpitSupplierDrawer(supplierEnc,currency){
   const supplier=decodeURIComponent(supplierEnc);
   const d=_cockpitData;if(!d)return;
-  const rows=getCockpitView().details.filter(r=>r.supplier_name===supplier&&r.currency===currency);
+  const rows=mergeBalanceByCi(getCockpitView().details.filter(r=>r.supplier_name===supplier&&r.currency===currency));
   const brands=(d.supplier_brands&&d.supplier_brands[supplier])||'';
   // 头部国家列表：归一化拼接（CI/PI 存中文名，历史 CI 存代码），避免同一国家显示成两种风格
   const _cset={}; rows.forEach(r=>{ const _c=r.country_display||r.country; if(_c) _cset[_c]=1; });
@@ -11210,10 +11264,12 @@ function cockpitSupplierDrawer(supplierEnc,currency){
   }).join('');
   const detailHtml=rows.length?rows.map(r=>{
     const src=cockpitSourceNo(r);
+    const srcTxt=esc(src)+(r.merged?' <span class="muted" style="font-size:11px">×'+r.merged_count+'</span>':'')+(r.source_mode==='historical'?' <span style="font-size:10px;color:#999">'+t("cockpit.historical","(历史)")+'</span>':'');
     const catTxt=(r.category_label||'')+(r.subcategory_label?' / '+r.subcategory_label:'')||'—';
     const prAux=r.request_no?('<div style="font-size:11px;color:#999;margin-top:2px">'+t("cockpit.col_payment_no","付款编号")+': '+esc(r.request_no)+'</div>'):'';
-    return '<tr style="cursor:pointer" onclick="closeCockpitDrawer();viewPayment(\''+r.id+'\')">'
-      +'<td>'+esc(src)+(r.source_mode==='historical'?' <span style="font-size:10px;color:#999">'+t("cockpit.historical","(历史)")+'</span>':'')+'</td>'
+    const rowClick=r.merged?('openMergedBalanceSummary(\''+esc(r.ids.join(','))+'\')'):('closeCockpitDrawer();viewPayment(\''+esc(r.id)+'\')');
+    return '<tr style="cursor:pointer" onclick="'+rowClick+'">'
+      +'<td>'+srcTxt+'</td>'
       +'<td>'+esc((r.country_display||r.country||'—'))+'</td>'
       +'<td>'+esc(catTxt||'—')+'</td>'
       +'<td style="text-align:right">'+fmtMoney(r.gross_payable)+'</td>'
@@ -11247,9 +11303,22 @@ function cockpitSupplierDrawer(supplierEnc,currency){
 const PAY_FEE_TYPE_LABELS={deposit:'定金',balance:'尾款',freight:'运费',customs_clearance:'清关费',port_charges:'港口费',delivery:'派送费',warehouse:'仓储费',other_local:'其他本地费',duty:'关税',inspection:'商检费'};
 const PAY_SOURCE_TYPE_LABELS={pi:'PI',ci:'CI',manual:'手动录入',historical_ci:'历史CI'};
 const PAY_LIFECYCLE_LABELS={active:'待处理',reserved:'已占用',partially_paid:'部分已付',released:'已释放',paid:'已付款',cancelled:'已取消'};
+// 合并行「付款申请状态」聚合：取底层所有成员业务态的最高优先级（已付款 > 部分付款 > 已通过 > 审批中 > 草稿 > 未申请）
+const _PR_STATUS_PRI={'已付款':6,'部分付款':5,'已通过':4,'审批中':3,'草稿':2,'未申请':1};
+function mergedPayablePrStatus(r){
+  if(!r.merged||!r.ids)return '未申请';
+  let bestP=0,best='未申请';
+  r.ids.forEach(function(id){
+    const s=_payablePrStatusMap[id]||'未申请';
+    const p=_PR_STATUS_PRI[s]||0; if(p>bestP){bestP=p;best=s;}
+  });
+  return best;
+}
 let _payableListSel=new Set();
 let _payableListData=[];
 let _payablePrStatusMap={};
+// 合并行选择展开：mergedKey(CI号) → 底层 payable_item 数组。getSelectedPayableItems 据此展开。
+let _mergedRowsMap={};
 
 // 应付费用列表「付款申请状态」：将关联 PR 的原始枚举聚合为业务态（禁止透出内部枚举）
 // 多 PR 关联同一 payable_item 时按资金状态最高优先级展示：已付款 > 部分付款 > 已通过 > 审批中 > 草稿
@@ -11337,7 +11406,10 @@ async function loadPayableList(){
 }
 
 function renderPayableTable(){
-  const rows=_payableListData;
+  _mergedRowsMap={};
+  const rows=mergeBalanceByCi(_payableListData);
+  // 记录合并行底层 items，供选择集展开
+  rows.forEach(function(r){ if(r.merged)_mergedRowsMap[r.id]=r.ids.map(function(id){ return _payableListData.find(function(x){return x.id===id;})||{id:id}; }); });
   const tb=document.getElementById('payl-table');if(!tb)return;
   if(!rows.length){
     tb.innerHTML='<div class="flash flash-info show">'+t('payable_list.empty','暂无应付费用（默认显示待处理/已占用/部分已付）')+'</div>';
@@ -11362,7 +11434,8 @@ function renderPayableTable(){
     '<th class="muted-col">'+t('payable_list.col_created','创建时间')+'</th>'+
     '</tr></thead><tbody>';
   rows.forEach(function(r){
-    const checked=_payableListSel.has(r.id)?'checked':'';
+    const rKey=r.id;
+    const checked=_payableListSel.has(rKey)?'checked':'';
     const payableNum=Number((r.payable_amount!=null?r.payable_amount:(r.payable_amount_minor/100))||0);
     const amt=payableNum.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
     // PAY-CORE 多次付款：拆分 已付款/抵扣/抹零/剩余未付（应付金额不变，剩余=应付-已付款-抵扣-抹零，动态推导）
@@ -11374,10 +11447,12 @@ function renderPayableTable(){
     const deductionTxt=deductionNum.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
     const roundingTxt=roundingNum.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
     const remainTxt=remainNum.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
-    html+='<tr class="pay-row" onclick="openPayableDetailModal(\''+esc(r.id)+'\')">'+
-      '<td onclick="event.stopPropagation()"><input type="checkbox" class="payl-cb" data-id="'+esc(r.id)+'" onchange="togglePayableSel(\''+esc(r.id)+'\',this.checked)"></td>'+
+    const srcTxt=esc(cockpitSourceNo(r))+(r.merged?' <span class="muted" style="font-size:11px">×'+r.merged_count+'</span>':'');
+    const rowClick=r.merged?('openMergedBalanceSummary(\''+esc(r.ids.join(','))+'\')'):('openPayableDetailModal(\''+esc(r.id)+'\')');
+    html+='<tr class="pay-row" onclick="'+rowClick+'">'+
+      '<td onclick="event.stopPropagation()"><input type="checkbox" class="payl-cb" data-id="'+esc(rKey)+'" onchange="togglePayableSel(\''+esc(rKey)+'\',this.checked)"></td>'+
       '<td>'+esc(r.fee_no||'')+'</td>'+
-      '<td>'+esc(cockpitSourceNo(r))+'</td>'+
+      '<td>'+srcTxt+'</td>'+
       '<td>'+esc(r.supplier_name||r.payee_name_snapshot||'—')+'</td>'+
       '<td>'+esc(PAY_FEE_TYPE_LABELS[r.fee_type]||r.fee_type||'')+'</td>'+
       '<td>'+esc(r.payee_name_snapshot||'')+'</td>'+
@@ -11389,7 +11464,7 @@ function renderPayableTable(){
       '<td style="text-align:right"><b>'+remainTxt+'</b></td>'+
       '<td class="col-paydate'+(r.payable_date?'':' muted')+'">'+ (r.payable_date?esc(fmtDate(r.payable_date)):'—') +'</td>'+
       '<td>'+esc(PAY_LIFECYCLE_LABELS[r.lifecycle_status]||r.lifecycle_status||'')+'</td>'+
-      '<td>'+esc(_payablePrStatusMap[r.id]||'未申请')+'</td>'+
+      '<td>'+esc(r.merged?mergedPayablePrStatus(r):(_payablePrStatusMap[r.id]||'未申请'))+'</td>'+
       '<td class="muted-col muted">'+esc((r.created_at||'').slice(0,19))+'</td>'+
       '</tr>';
   });
@@ -11411,7 +11486,15 @@ function togglePayableSelAll(checked){
   });
   updatePayableMenu();
 }
-function getSelectedPayableItems(){return _payableListData.filter(function(r){return _payableListSel.has(r.id);});}
+function getSelectedPayableItems(){
+  const out=[];
+  _payableListData.forEach(function(r){ if(_payableListSel.has(r.id))out.push(r); });
+  // 展开合并行选择：CI 键 → 底层所有 payable_item
+  Object.keys(_mergedRowsMap).forEach(function(k){
+    if(_payableListSel.has(k)){ _mergedRowsMap[k].forEach(function(r){ out.push(r); }); }
+  });
+  return out;
+}
 function updatePayableMenu(){
   const sel=getSelectedPayableItems();
   const n=sel.length;
@@ -11527,6 +11610,38 @@ async function viewPayableSelected(){
     html+='</tbody></table>';
     openModal(t('payable_list.summary_title','所选费用摘要'),html);
   }
+}
+
+// 合并尾款明细：展示该 CI 下各 PI 尾款的逐笔事实（付款事实粒度为 CI，不展开多个 PI 为独立付款行）
+async function openMergedBalanceSummary(idsCsv){
+  const ids=String(idsCsv).split(',').filter(Boolean);
+  if(ids.length===1){ await openPayableDetailModal(ids[0]); return; }
+  let rows=[];
+  try{
+    const rels=await api('/api/payment-requests/by-payable-items?ids='+encodeURIComponent(ids.join(',')));
+    const prs=(rels&&rels.payment_requests)||[];
+    const byItem={};
+    prs.forEach(function(p){const i=p.payable_item_id; if(!i)return; (byItem[i]=byItem[i]||[]).push(p);});
+    for(const id of ids){
+      const d=await api('/api/payable-items/'+encodeURIComponent(id));
+      rows.push({it:d.item||{}, prs:byItem[id]||[]});
+    }
+  }catch(e){ showFlash(t('payable_list.view_fail','加载失败：{v1}',{v1:e.message}),'danger'); return; }
+  const f2=function(n){return Number(n||0).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});};
+  let sp=0,spa=0,sd=0,sr=0,sre=0;
+  let html='<div class="muted" style="margin-bottom:8px">'+t('payable_list.merged_balance_title','该 CI 尾款由 {v1} 笔 PI 尾款合并（付款事实粒度为 CI）',{v1:rows.length})+'</div>';
+  html+='<table class="data-table"><thead><tr><th>'+t('payable_list.col_source','来源')+'</th><th>'+t('payable_list.col_feetype','费用类型')+'</th><th style="text-align:right">'+t('payable_list.col_amount','应付金额')+'</th><th style="text-align:right">'+t('payable_list.col_paid','已付款')+'</th><th style="text-align:right">'+t('payable_list.col_deduction','抵扣')+'</th><th style="text-align:right">'+t('payable_list.col_rounding','抹零')+'</th><th style="text-align:right">'+t('payable_list.col_remaining','剩余未付')+'</th><th>'+t('payable_list.col_status','状态')+'</th></tr></thead><tbody>';
+  rows.forEach(function(o){
+    const it=o.it;
+    const payableNum=Number((it.payable_amount!=null?it.payable_amount:it.payable_amount_minor/100)||0);
+    const paidNum=Number(it.paid_amount||0), dedNum=Number(it.deduction_amount||0), roundNum=Number(it.rounding_amount||0);
+    const remNum=it.remaining_amount!=null?Number(it.remaining_amount):Math.max(0,payableNum-paidNum-dedNum-roundNum);
+    sp+=payableNum;spa+=paidNum;sd+=dedNum;sr+=roundNum;sre+=remNum;
+    html+='<tr><td>'+esc(cockpitSourceNo(it))+'</td><td>'+esc(PAY_FEE_TYPE_LABELS[it.fee_type]||it.fee_type||'')+'</td><td style="text-align:right">'+f2(payableNum)+'</td><td style="text-align:right">'+f2(paidNum)+'</td><td style="text-align:right">'+f2(dedNum)+'</td><td style="text-align:right">'+f2(roundNum)+'</td><td style="text-align:right"><b>'+f2(remNum)+'</b></td><td>'+esc(PAY_LIFECYCLE_LABELS[it.lifecycle_status]||it.lifecycle_status||'')+'</td></tr>';
+  });
+  html+='<tr style="font-weight:700;background:#f5f7fa"><td>'+t('common.total','合计')+'</td><td></td><td style="text-align:right">'+f2(sp)+'</td><td style="text-align:right">'+f2(spa)+'</td><td style="text-align:right">'+f2(sd)+'</td><td style="text-align:right">'+f2(sr)+'</td><td style="text-align:right">'+f2(sre)+'</td><td></td></tr>';
+  html+='</tbody></table>';
+  openModal(t('payable_list.merged_balance_title','合并尾款明细'),html);
 }
 
 async function createPaymentFromSelected(){
