@@ -11167,6 +11167,13 @@ function closeCockpitDrawer(){
   document.removeEventListener('keydown',cockpitDrawerEsc);
 }
 function cockpitDrawerEsc(e){if(e.key==='Escape')closeCockpitDrawer();}
+// 明细来源：显示应付事实本身（定金↔PI编号，尾款↔CI编号）。
+// payment_request 仅作为辅助状态展示（见状态栏 request_no 小字），不作为来源主体。
+function cockpitSourceNo(r){
+  if(r.subcategory==='deposit') return r.related_pi_no||'—';
+  if(r.subcategory==='balance') return r.related_ci_no||'—';
+  return [r.related_pi_no,r.related_ci_no].filter(Boolean).join(' / ')||'—';
+}
 function cockpitSupplierDrawer(supplierEnc,currency){
   const supplier=decodeURIComponent(supplierEnc);
   const d=_cockpitData;if(!d)return;
@@ -11193,18 +11200,18 @@ function cockpitSupplierDrawer(supplierEnc,currency){
       +'<div style="height:6px;background:#eef0f3;border-radius:4px;overflow:hidden"><div style="height:100%;width:'+pct+'%;background:'+(dim?'#e0e0e0':'#3370ff')+';border-radius:4px"></div></div></div>';
   }).join('');
   const detailHtml=rows.length?rows.map(r=>{
-    const rel=[r.related_pi_no,r.related_ci_no].filter(Boolean).join(' / ')||'—';
+    const src=cockpitSourceNo(r);
     const catTxt=(r.category_label||'')+(r.subcategory_label?' / '+r.subcategory_label:'')||'—';
+    const prAux=r.request_no?('<div style="font-size:11px;color:#999;margin-top:2px">'+t("cockpit.col_payment_no","付款编号")+': '+esc(r.request_no)+'</div>'):'';
     return '<tr style="cursor:pointer" onclick="closeCockpitDrawer();viewPayment(\''+r.id+'\')">'
-      +'<td style="color:#1d6fd3">'+esc(r.request_no)+(r.source_mode==='historical'?' <span style="font-size:10px;color:#999">'+t("cockpit.historical","(历史)")+'</span>':'')+'</td>'
-      +'<td>'+esc(rel)+'</td>'
+      +'<td>'+esc(src)+(r.source_mode==='historical'?' <span style="font-size:10px;color:#999">'+t("cockpit.historical","(历史)")+'</span>':'')+'</td>'
       +'<td>'+esc(catTxt||'—')+'</td>'
       +'<td style="text-align:right">'+fmtMoney(r.gross_payable)+'</td>'
       +'<td style="text-align:right;color:#2e7d32">'+fmtMoney(r.settled)+'</td>'
       +'<td style="text-align:right;color:#1565c0;font-weight:600">'+fmtMoney(r.outstanding)+'</td>'
       +'<td>'+(r.payable_date||'<span style="color:#999">'+t("cockpit.status_no_due","无到期日")+'</span>')+'</td>'
-      +'<td>'+cockpitStatusBadge(r)+'</td></tr>';
-  }).join('') : '<tr><td colspan="8" style="text-align:center;color:#999;padding:18px">'+t("cockpit.no_payment_record","无付款记录")+'</td></tr>';
+      +'<td>'+cockpitStatusBadge(r)+prAux+'</td></tr>';
+  }).join('') : '<tr><td colspan="7" style="text-align:center;color:#999;padding:18px">'+t("cockpit.no_payment_record","无付款记录")+'</td></tr>';
   const html='<div class="drawer-header"><div>'
     +'<div style="font-size:15px;font-weight:700">'+esc(supplier)+'</div>'
     +'<div style="font-size:12px;color:var(--text-secondary,#999);margin-top:2px">'+esc(currency)
@@ -11217,7 +11224,7 @@ function cockpitSupplierDrawer(supplierEnc,currency){
     +'<div class="drawer-body">'
     +'<div style="font-size:13px;font-weight:600;margin-bottom:10px">'+t("cockpit.cost_composition","费用组成")+'</div>'+compHtml
     +'<div style="font-size:13px;font-weight:600;margin:18px 0 8px">'+t("cockpit.payment_detail_prefix","付款明细（")+''+rows.length+''+t("cockpit.payment_detail_suffix"," 笔）")+'</div>'
-    +'<table class="data-table"><thead><tr><th>'+t("cockpit.col_payment_no","付款编号")+'</th><th>'+t("cockpit.col_source","来源")+'</th><th>'+t("cockpit.filter_cat","费用类型")+'</th><th style="text-align:right">'+t("cockpit.col_payable","应付")+'</th><th style="text-align:right">'+t("cockpit.col_paid","已付")+'</th><th style="text-align:right">'+t("cockpit.col_unpaid","未付")+'</th><th>'+t("cockpit.col_due_date","到期日")+'</th><th>'+t("cockpit.col_status","状态")+'</th></tr></thead><tbody>'+detailHtml+'</tbody></table>'
+    +'<table class="data-table"><thead><tr><th>'+t("cockpit.col_source","应付来源")+'</th><th>'+t("cockpit.filter_cat","费用类型")+'</th><th style="text-align:right">'+t("cockpit.col_payable","应付")+'</th><th style="text-align:right">'+t("cockpit.col_paid","已付")+'</th><th style="text-align:right">'+t("cockpit.col_unpaid","未付")+'</th><th>'+t("cockpit.col_due_date","到期日")+'</th><th>'+t("cockpit.col_status","状态")+'</th></tr></thead><tbody>'+detailHtml+'</tbody></table>'
     +'</div>';
   const dr=document.getElementById('cockpit-drawer');
   if(dr){dr.innerHTML=html;openCockpitDrawer();}
