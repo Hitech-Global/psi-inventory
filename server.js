@@ -10750,18 +10750,18 @@ function derivePayableSourceRefs(rows) {
   const ciMap = {};
   if (ciIds.length) {
     // commercial_invoices 含 related_pi_no；historical_commercial_invoices 不含该列（与驾驶舱现有查询一致）
-    query(`SELECT id, ci_no, related_pi_no FROM commercial_invoices WHERE id IN (${ciIds.map(() => '?').join(',')})`, ciIds)
+    query(`SELECT id, ci_no, related_pi_no, country FROM commercial_invoices WHERE id IN (${ciIds.map(() => '?').join(',')})`, ciIds)
       .rows.forEach(c => { ciMap[c.id] = c; });
-    query(`SELECT id, historical_ci_no AS ci_no FROM historical_commercial_invoices WHERE id IN (${ciIds.map(() => '?').join(',')})`, ciIds)
+    query(`SELECT id, historical_ci_no AS ci_no, country FROM historical_commercial_invoices WHERE id IN (${ciIds.map(() => '?').join(',')})`, ciIds)
       .rows.forEach(c => { ciMap[c.id] = c; });
   }
   const hciByNo = {};
-  query('SELECT historical_ci_no, historical_ci_no AS ci_no FROM historical_commercial_invoices')
+  query('SELECT historical_ci_no, historical_ci_no AS ci_no, country FROM historical_commercial_invoices')
     .rows.forEach(c => { if (c.historical_ci_no) hciByNo[c.historical_ci_no] = c; });
   const piIds = [...new Set(rows.map(r => r.source_id).filter(Boolean))];
   const piMap = {};
   if (piIds.length) {
-    query(`SELECT id, pi_no FROM proforma_invoices WHERE id IN (${piIds.map(() => '?').join(',')})`, piIds)
+    query(`SELECT id, pi_no, country FROM proforma_invoices WHERE id IN (${piIds.map(() => '?').join(',')})`, piIds)
       .rows.forEach(p => { piMap[p.id] = p; });
   }
   const out = new Map();
@@ -10773,7 +10773,13 @@ function derivePayableSourceRefs(rows) {
       ? (piCtx ? (piCtx.pi_no || '') : (r.source_no || ''))
       : (ciCtx ? (ciCtx.related_pi_no || '') : '');
     const relatedCiNo = ciCtx ? (ciCtx.ci_no || '') : '';
-    out.set(r.id, { related_pi_no: relatedPiNo, related_ci_no: relatedCiNo });
+    // 国家：定金→PI.country，尾款/其他→CI.country（无 CI 回退 PI），归一化显示（CI 历史表存代码、PI/CI 表存中文）
+    const sub = r.subcategory_code || '';
+    const rawCountry = sub === 'deposit'
+      ? (piCtx ? (piCtx.country || '') : '')
+      : (ciCtx ? (ciCtx.country || '') : (piCtx ? (piCtx.country || '') : ''));
+    const countryDisplay = displayCountry(canonCountry(rawCountry));
+    out.set(r.id, { related_pi_no: relatedPiNo, related_ci_no: relatedCiNo, country_display: countryDisplay });
   }
   return out;
 }
@@ -10814,11 +10820,12 @@ app.get('/api/payable-items', requireApiPermission('payment_view'), asyncHandler
     const deductionMinor = b.deductionMinor;
     const roundingMinor = b.roundingMinor;
     const remainingMinor = Math.max(0, payableMinor - paidMinor - deductionMinor - roundingMinor);
-    const refs = refMap.get(r.id) || { related_pi_no: '', related_ci_no: '' };
+    const refs = refMap.get(r.id) || { related_pi_no: '', related_ci_no: '', country_display: '' };
     return {
       ...r,
       related_pi_no: refs.related_pi_no,
       related_ci_no: refs.related_ci_no,
+      country_display: refs.country_display,
       payable_amount: payableMinor / 100,
       paid_amount_minor: paidMinor,
       paid_amount: minorToAmount(paidMinor),
@@ -10841,9 +10848,10 @@ app.get('/api/payable-items/:id', requireApiPermission('payment_view'), asyncHan
   if (!item) return res.status(404).json({ error: '应付费用不存在' });
   // 来源编号派生（仅展示用，与驾驶舱/列表同口径：定金→PI号，尾款→CI号）
   const refMap = derivePayableSourceRefs([item]);
-  const refs = refMap.get(item.id) || { related_pi_no: '', related_ci_no: '' };
+  const refs = refMap.get(item.id) || { related_pi_no: '', related_ci_no: '', country_display: '' };
   item.related_pi_no = refs.related_pi_no;
   item.related_ci_no = refs.related_ci_no;
+  item.country_display = refs.country_display;
   item.payable_amount = item.payable_amount_minor / 100;
   const b = payableItemsSettlementBreakdown([item.id]).get(item.id) || { paidMinor: 0, deductionMinor: 0, roundingMinor: 0 };
   const payableMinor = Number(item.payable_amount_minor || 0);

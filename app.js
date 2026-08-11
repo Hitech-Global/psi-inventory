@@ -11136,7 +11136,7 @@ function renderCockpitDetails(preSupplier,preCurrency){
   rows.forEach(r=>{
     const rel=[r.related_pi_no,r.related_ci_no].filter(Boolean).join(' / ')||'—';
     const catTxt=(r.category_label||'')+(r.subcategory_label?' / '+r.subcategory_label:'');
-    const srcTxt=esc(cockpitSourceNo(r))+(r.merged?' <span class="muted" style="font-size:11px">×'+r.merged_count+'</span>':'');
+    const srcTxt=esc(cockpitSourceNo(r));
     const rowClick=r.merged?('openMergedBalanceSummary(\''+esc(r.ids.join(','))+'\')'):('viewPayment(\''+esc(r.id)+'\')');
     html+='<tr style="cursor:pointer" onclick="'+rowClick+'">'
       +'<td style="color:#1d6fd3">'+esc(r.request_no)+(r.source_mode==='historical'?' <span style="font-size:10px;color:#999">'+t("cockpit.historical","(历史)")+'</span>':'')+'</td>'
@@ -11264,7 +11264,7 @@ function cockpitSupplierDrawer(supplierEnc,currency){
   }).join('');
   const detailHtml=rows.length?rows.map(r=>{
     const src=cockpitSourceNo(r);
-    const srcTxt=esc(src)+(r.merged?' <span class="muted" style="font-size:11px">×'+r.merged_count+'</span>':'')+(r.source_mode==='historical'?' <span style="font-size:10px;color:#999">'+t("cockpit.historical","(历史)")+'</span>':'');
+    const srcTxt=esc(src)+(r.source_mode==='historical'?' <span style="font-size:10px;color:#999">'+t("cockpit.historical","(历史)")+'</span>':'');
     const catTxt=(r.category_label||'')+(r.subcategory_label?' / '+r.subcategory_label:'')||'—';
     const prAux=r.request_no?('<div style="font-size:11px;color:#999;margin-top:2px">'+t("cockpit.col_payment_no","付款编号")+': '+esc(r.request_no)+'</div>'):'';
     const rowClick=r.merged?('openMergedBalanceSummary(\''+esc(r.ids.join(','))+'\')'):('closeCockpitDrawer();viewPayment(\''+esc(r.id)+'\')');
@@ -11419,6 +11419,7 @@ function renderPayableTable(){
     '<th style="width:36px"><input type="checkbox" id="payl-selall" onchange="togglePayableSelAll(this.checked)"></th>'+
     '<th>'+t('payable_list.col_feeno','费用号')+'</th>'+
     '<th>'+t('payable_list.col_source','来源')+'</th>'+
+    '<th>'+t('payable_list.col_country','国家')+'</th>'+
     '<th>'+t('payable_list.col_supplier','供应商')+'</th>'+
     '<th>'+t('payable_list.col_feetype','费用类型')+'</th>'+
     '<th>'+t('payable_list.col_payee','收款方')+'</th>'+
@@ -11447,12 +11448,13 @@ function renderPayableTable(){
     const deductionTxt=deductionNum.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
     const roundingTxt=roundingNum.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
     const remainTxt=remainNum.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
-    const srcTxt=esc(cockpitSourceNo(r))+(r.merged?' <span class="muted" style="font-size:11px">×'+r.merged_count+'</span>':'');
+    const srcTxt=esc(cockpitSourceNo(r));
     const rowClick=r.merged?('openMergedBalanceSummary(\''+esc(r.ids.join(','))+'\')'):('openPayableDetailModal(\''+esc(r.id)+'\')');
     html+='<tr class="pay-row" onclick="'+rowClick+'">'+
       '<td onclick="event.stopPropagation()"><input type="checkbox" class="payl-cb" data-id="'+esc(rKey)+'" onchange="togglePayableSel(\''+esc(rKey)+'\',this.checked)"></td>'+
       '<td>'+esc(r.fee_no||'')+'</td>'+
       '<td>'+srcTxt+'</td>'+
+      '<td>'+esc(r.country_display||r.country||'—')+'</td>'+
       '<td>'+esc(r.supplier_name||r.payee_name_snapshot||'—')+'</td>'+
       '<td>'+esc(PAY_FEE_TYPE_LABELS[r.fee_type]||r.fee_type||'')+'</td>'+
       '<td>'+esc(r.payee_name_snapshot||'')+'</td>'+
