@@ -10818,6 +10818,28 @@ function cockpitSupplierStatus(s){
   if(s.outstanding>0 && !s.earliest_due_date) return '<span style="color:#999">'+t("cockpit.status_no_due","无到期日")+'</span>';
   return '<span style="color:#2e7d32">'+t("cockpit.status_normal","正常")+'</span>';
 }
+// 供应商风险状态（红=逾期 / 橙=近期压力 / 蓝=普通未结 / 绿=完成）
+function cockpitSupplierRisk(s){
+  if(s.overdue_amount>0) return {key:'overdue',label:t("cockpit.status_overdue","逾期"),color:'#ff3b30'};
+  if(s.due_soon>0) return {key:'due_soon',label:t("cockpit.status_due_soon_short","近期压力"),color:'#ff9500'};
+  if(s.outstanding<=0) return {key:'done',label:t("cockpit.status_done","完成"),color:'#34c759'};
+  return {key:'normal',label:t("cockpit.status_normal_short","未结"),color:'#007aff'};
+}
+function supplierPill(st){
+  return '<span class="sup-pill" style="background:'+st.color+'1a;color:'+st.color+';border-color:'+st.color+'33">'+esc(st.label)+'</span>';
+}
+// 供应商风险卡（Apple 风：左侧状态色条 + 突出 供应商/未结金额/最近应付日期/风险状态）
+function cockpitSupplierCard(s){
+  const cur=s.currency||'';
+  const st=cockpitSupplierRisk(s);
+  const amtColor=st.key==='overdue'?'#ff3b30':st.key==='due_soon'?'#ff9500':st.key==='done'?'#34c759':'#007aff';
+  const dueHtml=s.earliest_due_date?esc(s.earliest_due_date):'<span style="color:#999">'+t("cockpit.status_no_due","无到期日")+'</span>';
+  return '<div class="supplier-card" style="border-left-color:'+st.color+'" onclick="cockpitSupplierDrawer(\''+encodeURIComponent(s.supplier_name)+'\',\''+esc(cur)+'\')" title="'+t('cockpit.row_title','点击查看该供应商费用组成与付款明细')+'">'
+    +'<div class="supplier-card-top"><div class="supplier-card-name">'+esc(s.supplier_name)+'</div>'+supplierPill(st)+'</div>'
+    +'<div class="supplier-card-amount" style="color:'+amtColor+'">'+esc(fmtMoney(s.outstanding))+' <span class="supplier-card-cur">'+esc(cur)+'</span></div>'
+    +'<div class="supplier-card-due">'+t("cockpit.lbl_nearest_due","最近应付")+'：'+dueHtml+'</div>'
+    +'</div>';
+}
 // 费用类型展示别名（仅展示用，底层 payment_category / 计算逻辑不变）
 const COCKPIT_CAT_ALIAS={goods:''+t("cockpit.cat_goods","货款")+'',warehouse_arrival:t("pi.022", "\u8fd0\u8f93\u8d39"),customs_duty:t("app.224", "\u5173\u7a0e"),inspection_fee:t("pi.023", "\u68c0\u9a8c\u8d39")};
 function cockpitCatAlias(cat){return COCKPIT_CAT_ALIAS[cat]||t("ci.035", "\u5176\u4ed6\u8d39\u7528");}
@@ -10830,12 +10852,29 @@ function toggleCockpitDetail(){
   if(tog)tog.textContent=open?''+t("cockpit.collapse","收起 ▲")+'':t("app.1103", "\u5c55\u5f00\u67e5\u770b \u25bc");
   if(open)renderCockpitDetails();
 }
+let _cockpitSecondaryOpen=false;
+function toggleCockpitSecondary(){
+  const body=document.getElementById('cockpit-secondary-body');
+  const tog=document.getElementById('cockpit-secondary-toggle');
+  if(!body)return;
+  _cockpitSecondaryOpen=body.style.display==='none';
+  body.style.display=_cockpitSecondaryOpen?'':'none';
+  if(tog)tog.textContent=_cockpitSecondaryOpen?'收起 ▲':'展开 ▼';
+}
+function cockpitOpenSecondary(){
+  const body=document.getElementById('cockpit-secondary-body');
+  const tog=document.getElementById('cockpit-secondary-toggle');
+  _cockpitSecondaryOpen=true;
+  if(body)body.style.display='';
+  if(tog)tog.textContent='收起 ▲';
+}
 function cockpitShowAnomaly(){
   const only=document.getElementById('cockpit-only-outstanding');if(only)only.checked=true;
   const nd=document.getElementById('cockpit-only-nodue');if(nd)nd.checked=true;
   const kw=document.getElementById('cockpit-detail-kw');if(kw)kw.value='';
   const body=document.getElementById('cockpit-detail-body');if(body)body.style.display='';
   const tog=document.getElementById('cockpit-detail-toggle');if(tog)tog.textContent=t("app.1102", "\u6536\u8d77 \u25b2");
+  cockpitOpenSecondary();
   renderCockpitDetails();
   // ④ UX：异常卡片联动同步提示（纯展示，不改动任何筛选/聚合逻辑）
   const ndRows=getCockpitView().details.filter(r=>r.credit_missing_due);
@@ -10975,12 +11014,12 @@ function renderCockpitLayers(){
   const v=getCockpitView();
   const curs=v.curs;
   let html='';
-  // Layer 1 — 应付概览（④ UX：高优先信号前置——已逾期 / 未来压力 / 数据异常 排在各币种未结清之前）
+  // ===== 核心指标：优先关注信号 + 应付结构（按币种绝不跨币种合并）=====
   const ovCount=curs.reduce((a,cur)=>a+((v.metrics[cur]&&v.metrics[cur].overdue_count)||0),0);
   const noDueCount=v.details.filter(r=>r.outstanding>0&&r.credit_missing_due).length;
-  const noDueSub=noDueCount>0?'<span style="color:#f57f17;cursor:pointer" onclick="cockpitShowAnomaly()">'+t("cockpit.anomaly_hint","Credit 付款缺少应付日期，点击查看 ▼")+'</span>':t("app.227", "\u65e0");
   // 第一层：用户最关心的风险与时间信号（红=风险 / 橙=即将 / 蓝=未结清）
-  html+='<div style="font-size:13px;font-weight:600;margin:6px 0 10px;color:var(--text-secondary,#8e8e93)">'+t("cockpit.layer_focus","优先关注")+'</div>';
+  html+='<div class="cockpit-section-title">'+t("cockpit.layer_core","核心指标")+'</div>';
+  html+='<div class="cockpit-sub-title">'+t("cockpit.layer_focus","优先关注")+'</div>';
   html+='<div style="display:flex;flex-wrap:wrap;gap:12px">';
   html+=cockpitCard(t("pi.020", "已逾期"),cockpitCurBreakdown(v,'overdue_amount'),'danger',ovCount+t("cockpit.unit_pi"," 笔"));
   html+=cockpitCard(t("app.1108", "未来 7 天付款"),cockpitCurBreakdown(v,'due_7'),'warn','');
@@ -10994,9 +11033,8 @@ function renderCockpitLayers(){
       +'<span style="font-size:16px">⚠</span><div>'+t("cockpit.anomaly_banner","{v1} 笔 Credit 付款缺少应付日期，点击查看。",{v1:noDueCount})+'</div></div>';
   }
 
-  // Layer 2 — 金额构成
-  // Layer 2 — 第二层：应付结构（总应付 / 已结清 / 未结清，按币种，绝不跨币种合并）
-  html+='<div style="font-size:13px;font-weight:600;margin:18px 0 10px;color:var(--text-secondary,#8e8e93)">'+t("cockpit.layer_structure","应付结构")+'</div>';
+  // 应付结构（总应付 / 已结清 / 未结清，按币种）
+  html+='<div class="cockpit-sub-title" style="margin-top:18px">'+t("cockpit.layer_structure","应付结构")+'</div>';
   html+='<div style="display:flex;flex-wrap:wrap;gap:12px">';
   curs.forEach(cur=>{ const m=v.metrics[cur]; if(!m)return;
     html+=cockpitCard(cur+t("cockpit.lbl_total_payable"," 总应付"),esc(fmtMoney(m.gross_payable)),'total','');
@@ -11005,7 +11043,15 @@ function renderCockpitLayers(){
   });
   html+='</div>';
 
-  // Layer 1.5 — 应付费用构成
+  // ===== 供应商风险：卡片网格（突出 供应商 / 未结金额 / 最近应付日期 / 风险状态）=====
+  if((v.by_supplier||[]).length){
+    html+='<div class="cockpit-section-title">🏢 '+t("cockpit.layer_supplier_risk","供应商风险")+' <span class="cockpit-section-sub">'+t("cockpit.click_row_hint","点击卡片查看费用组成与付款明细")+'</span></div>';
+    html+='<div class="cockpit-supplier-grid">';
+    (v.by_supplier||[]).forEach(s=>{ html+=cockpitSupplierCard(s); });
+    html+='</div>';
+  }
+
+  // ===== 费用构成：货款 / 运输费 / 关税 / 检测费 / 其他（不拆定金尾款）=====
   const catAgg={};
   (v.by_category||[]).forEach(c=>{
     const alias=cockpitCatAlias(c.payment_category);
@@ -11015,7 +11061,8 @@ function renderCockpitLayers(){
   });
   const catOrder=[''+t("cockpit.cat_goods","货款")+'',t("pi.022", "\u8fd0\u8f93\u8d39"),t("app.224", "\u5173\u7a0e"),t("pi.023", "\u68c0\u9a8c\u8d39"),''+t("ci.035","其他费用")+''];
   const catCurs=curs.slice().sort();
-  html+='<div style="margin-top:14px"><div style="font-size:13px;font-weight:600;margin:6px 0 8px">'+t("cockpit.layer_cost_composition","应付费用构成")+'</div><div style="display:flex;flex-wrap:wrap;gap:10px">';
+  html+='<div class="cockpit-section-title" style="margin-top:20px">'+t("cockpit.layer_cost_composition","费用构成")+'</div>';
+  html+='<div style="display:flex;flex-wrap:wrap;gap:10px">';
   catOrder.forEach(alias=>{
     const curMap=catAgg[alias]||{};
     const curParts=catCurs.map(cur=>{
@@ -11025,28 +11072,19 @@ function renderCockpitLayers(){
     html+='<div style="flex:1;min-width:150px;padding:12px 14px;background:var(--bg-card,#fff);border:1px solid var(--border,#e6e6e6);border-radius:10px">'
       +'<div style="font-size:12px;color:var(--text-secondary,#888);margin-bottom:6px">'+alias+'</div>'+curParts+'</div>';
   });
-  html+='</div></div>';
+  html+='</div>';
 
-  // Layer 3 — 供应商应付总览（含品牌/国家展示列，品牌仅关联展示）
-  if((v.by_supplier||[]).length){
-    html+='<div class="table-section" style="margin-top:16px"><div class="table-section-title"><div class="table-section-title-left">🏢 '+t("cockpit.layer_by_supplier","按供应商应付总览")+'</div><div style="font-size:12px;color:var(--text-secondary,#999)">'+t("cockpit.click_row_hint","点击任意行查看该供应商费用组成与付款明细")+'</div></div>';
-    html+='<table class="data-table"><thead><tr><th>'+t("cockpit.col_supplier","供应商")+'</th><th>'+t("cockpit.col_brand","品牌")+'</th><th>'+t("cockpit.col_country","国家")+'</th><th>'+t("cockpit.col_currency","币种")+'</th><th style="text-align:right">'+t("cockpit.col_outstanding","未结清")+'</th><th>'+t("cockpit.col_nearest_due","最近到期日")+'</th><th>'+t("cockpit.col_risk_status","风险状态")+'</th></tr></thead><tbody>';
-    (v.by_supplier||[]).forEach(s=>{
-      html+='<tr style="cursor:pointer" onclick="cockpitSupplierDrawer(\''+encodeURIComponent(s.supplier_name)+'\',\''+esc(s.currency)+'\')" title="'+t('cockpit.row_title','点击查看该供应商费用组成与付款明细')+'">'
-        +'<td>'+esc(s.supplier_name)+'</td>'
-        +'<td>'+(s.brands?'<span title="'+esc(s.brands)+'">'+esc(s.brands)+'</span>':'<span style="color:#999">—</span>')+'</td>'
-        +'<td>'+(s.country?esc(s.country):'<span style="color:#999">—</span>')+'</td>'
-        +'<td>'+esc(s.currency)+'</td>'
-        +'<td style="text-align:right;color:#0a6cff;font-weight:700">'+fmtMoney(s.outstanding)+'</td>'
-        +'<td>'+(s.earliest_due_date?esc(s.earliest_due_date):'<span style="color:#999">—</span>')+'</td>'
-        +'<td>'+cockpitSupplierStatus(s)+'</td></tr>';
-    });
-    html+='</tbody></table></div>';
-  }
-
-  // Layer 4 — 按费用类型汇总
+  // ===== 折叠次级区域：费用类型汇总 + 应付明细（默认折叠，点击展开）=====
+  const totalCnt=v.details.length;
+  const outCnt=v.details.filter(r=>r.outstanding>0).length;
+  html+='<div class="cockpit-secondary" style="margin-top:20px">'
+    +'<div class="cockpit-secondary-head" onclick="toggleCockpitSecondary()">'
+    +'<span>'+t("cockpit.secondary_title","展开查看：费用类型汇总 · 应付明细")+'</span>'
+    +'<span id="cockpit-secondary-toggle" class="cockpit-secondary-toggle">'+( _cockpitSecondaryOpen?t("cockpit.collapse","收起 ▲"):t("app.1103","展开 ▼"))+'</span></div>'
+    +'<div id="cockpit-secondary-body" style="display:'+(_cockpitSecondaryOpen?'':'none')+'">';
+  // 费用类型汇总
   if((v.by_category||[]).length){
-    html+='<div class="table-section" style="margin-top:16px"><div class="table-section-title"><div class="table-section-title-left">📊 '+t("cockpit.layer_by_category","按费用类型汇总")+'</div></div>';
+    html+='<div class="table-section" style="margin-top:14px"><div class="table-section-title"><div class="table-section-title-left">📊 '+t("cockpit.layer_by_category","按费用类型汇总")+'</div></div>';
     html+='<table class="data-table"><thead><tr><th>'+t("cockpit.filter_cat","费用类型")+'</th><th>'+t("cockpit.col_currency","币种")+'</th><th style="text-align:right">'+t("cockpit.col_total_payable","总应付")+'</th><th style="text-align:right">'+t("cockpit.col_settled","已结清")+'</th><th style="text-align:right">'+t("cockpit.col_outstanding","未结清")+'</th><th style="text-align:right">'+t("cockpit.col_count","笔数")+'</th></tr></thead><tbody>';
     v.by_category.forEach(c=>{
       html+='<tr><td>'+esc(c.category_label||c.payment_category)+'</td><td>'+esc(c.currency)+'</td>'
@@ -11057,10 +11095,7 @@ function renderCockpitLayers(){
     });
     html+='</tbody></table></div>';
   }
-
-  // Layer 5 — 应付明细（默认折叠，保持原字段结构，不增加国家列）
-  const totalCnt=v.details.length;
-  const outCnt=v.details.filter(r=>r.outstanding>0).length;
+  // 应付明细（内层仍可独立折叠）
   html+='<div class="table-section" style="margin-top:16px"><div class="table-section-title" style="cursor:pointer" onclick="toggleCockpitDetail()">'
     +'<div class="table-section-title-left">📋 '+t("cockpit.layer_details_prefix","应付明细（共")+' '+totalCnt+''+t("cockpit.layer_details_mid"," 条，未结清 ")+''+outCnt+''+t("cockpit.layer_details_suffix"," 条）")+'</div>'
     +'<div style="font-size:12px;color:var(--text-secondary,#999)" id="cockpit-detail-toggle">'+t("app.1103","展开查看 ▼")+'</div></div>'
@@ -11070,6 +11105,7 @@ function renderCockpitLayers(){
     +'<label style="font-size:12px;margin-right:6px"><input type="checkbox" id="cockpit-only-nodue" onchange="renderCockpitDetails()"> '+t("cockpit.only_no_due","仅看无到期日")+'</label>'
     +'<input type="text" id="cockpit-detail-kw" placeholder="'+t('cockpit.kw_placeholder','供应商/申请号/CI')+'" style="width:180px" oninput="renderCockpitDetails()">'
     +'</div><div id="cockpit-detail-table"></div></div></div>';
+  html+='</div>';
   box.innerHTML=html;
 }
 
@@ -11297,16 +11333,16 @@ function renderPayableTable(){
     '<th>'+t('payable_list.col_supplier','供应商')+'</th>'+
     '<th>'+t('payable_list.col_feetype','费用类型')+'</th>'+
     '<th>'+t('payable_list.col_payee','收款方')+'</th>'+
-    '<th>'+t('payable_list.col_currency','币种')+'</th>'+
+    '<th class="muted-col">'+t('payable_list.col_currency','币种')+'</th>'+
     '<th style="text-align:right">'+t('payable_list.col_amount','应付金额')+'</th>'+
     '<th style="text-align:right">'+t('payable_list.col_paid','已付款')+'</th>'+
-    '<th style="text-align:right">'+t('payable_list.col_deduction','抵扣')+'</th>'+
-    '<th style="text-align:right">'+t('payable_list.col_rounding','抹零')+'</th>'+
+    '<th style="text-align:right" class="muted-col">'+t('payable_list.col_deduction','抵扣')+'</th>'+
+    '<th style="text-align:right" class="muted-col">'+t('payable_list.col_rounding','抹零')+'</th>'+
     '<th style="text-align:right">'+t('payable_list.col_remaining','剩余未付')+'</th>'+
     '<th class="col-paydate">'+t('payable_list.col_paydate','应付日期')+' ⭐</th>'+
     '<th>'+t('payable_list.col_status','状态')+'</th>'+
     '<th>'+t('payable_list.col_pr_status','付款申请状态')+'</th>'+
-    '<th>'+t('payable_list.col_created','创建时间')+'</th>'+
+    '<th class="muted-col">'+t('payable_list.col_created','创建时间')+'</th>'+
     '</tr></thead><tbody>';
   rows.forEach(function(r){
     const checked=_payableListSel.has(r.id)?'checked':'';
@@ -11321,23 +11357,23 @@ function renderPayableTable(){
     const deductionTxt=deductionNum.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
     const roundingTxt=roundingNum.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
     const remainTxt=remainNum.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
-    html+='<tr>'+
-      '<td><input type="checkbox" class="payl-cb" data-id="'+esc(r.id)+'" onchange="togglePayableSel(\''+esc(r.id)+'\',this.checked)"></td>'+
+    html+='<tr class="pay-row" onclick="openPayableDetailModal(\''+esc(r.id)+'\')">'+
+      '<td onclick="event.stopPropagation()"><input type="checkbox" class="payl-cb" data-id="'+esc(r.id)+'" onchange="togglePayableSel(\''+esc(r.id)+'\',this.checked)"></td>'+
       '<td>'+esc(r.fee_no||'')+'</td>'+
       '<td>'+esc(PAY_SOURCE_TYPE_LABELS[r.source_type]||r.source_type||'')+(r.source_no?' · '+esc(r.source_no):'')+'</td>'+
       '<td>'+esc(r.supplier_name||r.payee_name_snapshot||'—')+'</td>'+
       '<td>'+esc(PAY_FEE_TYPE_LABELS[r.fee_type]||r.fee_type||'')+'</td>'+
       '<td>'+esc(r.payee_name_snapshot||'')+'</td>'+
-      '<td>'+esc(r.currency||'')+'</td>'+
+      '<td class="muted-col">'+esc(r.currency||'')+'</td>'+
       '<td style="text-align:right">'+amt+'</td>'+
       '<td style="text-align:right"'+(paidNum>0?'':' class="muted"')+'>'+paidTxt+'</td>'+
-      '<td style="text-align:right"'+(deductionNum>0?'':' class="muted"')+'>'+deductionTxt+'</td>'+
-      '<td style="text-align:right"'+(roundingNum>0?'':' class="muted"')+'>'+roundingTxt+'</td>'+
+      '<td style="text-align:right" class="muted-col'+(deductionNum>0?'':' muted')+'">'+deductionTxt+'</td>'+
+      '<td style="text-align:right" class="muted-col'+(roundingNum>0?'':' muted')+'">'+roundingTxt+'</td>'+
       '<td style="text-align:right"><b>'+remainTxt+'</b></td>'+
       '<td class="col-paydate'+(r.payable_date?'':' muted')+'">'+ (r.payable_date?esc(fmtDate(r.payable_date)):'—') +'</td>'+
       '<td>'+esc(PAY_LIFECYCLE_LABELS[r.lifecycle_status]||r.lifecycle_status||'')+'</td>'+
       '<td>'+esc(_payablePrStatusMap[r.id]||'未申请')+'</td>'+
-      '<td class="muted">'+esc((r.created_at||'').slice(0,19))+'</td>'+
+      '<td class="muted-col muted">'+esc((r.created_at||'').slice(0,19))+'</td>'+
       '</tr>';
   });
   html+='</tbody></table>';
@@ -11396,56 +11432,64 @@ function updatePayableMenu(){
   }
 }
 
+// 单行点击查看详情（独立于多选状态，不影响付款申请多选）
+async function openPayableDetailModal(id){
+  let detail,rels;
+  try{
+    detail=await api('/api/payable-items/'+encodeURIComponent(id));
+    rels=await api('/api/payment-requests/by-payable-items?ids='+encodeURIComponent(id));
+  }catch(e){showFlash(t('payable_list.view_fail','加载失败：{v1}',{v1:e.message}),'danger');return;}
+  const it=detail.item||{};
+  const prs=(rels&&rels.payment_requests)||[];
+  openModal(t('payable_list.detail_title','应付费用明细'),buildPayableDetailHtml(it,prs));
+}
+// 构建应付费用明细 HTML（单选行点击与「查看」按钮共用，避免重复逻辑）
+function buildPayableDetailHtml(it,prs){
+  const payableNum=Number((it.payable_amount!=null?it.payable_amount:it.payable_amount_minor/100)||0);
+  const amt=payableNum.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const paidNum=Number(it.paid_amount||0);
+  const deductionNum=Number(it.deduction_amount||0);
+  const roundingNum=Number(it.rounding_amount||0);
+  const remainNum=it.remaining_amount!=null?Number(it.remaining_amount):Math.max(0,payableNum-paidNum-deductionNum-roundingNum);
+  const paidTxt=paidNum.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const deductionTxt=deductionNum.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const roundingTxt=roundingNum.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const remainTxt=remainNum.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
+  let html='<div style="display:grid;grid-template-columns:auto 1fr;gap:4px 12px">';
+  html+='<div><b>'+t('payable_list.col_feeno','费用号')+'</b></div><div>'+esc(it.fee_no||'')+'</div>';
+  html+='<div><b>'+t('payable_list.col_source','来源')+'</b></div><div>'+esc(PAY_SOURCE_TYPE_LABELS[it.source_type]||it.source_type||'')+(it.source_no?' · '+esc(it.source_no):'')+'</div>';
+  html+='<div><b>'+t('payable_list.col_feetype','费用类型')+'</b></div><div>'+esc(PAY_FEE_TYPE_LABELS[it.fee_type]||it.fee_type||'')+'</div>';
+  html+='<div><b>'+t('payable_list.col_payee','收款方')+'</b></div><div>'+esc(it.payee_name_snapshot||'')+'</div>';
+  html+='<div><b>'+t('payable_list.col_currency','币种')+'</b></div><div>'+esc(it.currency||'')+'</div>';
+  html+='<div><b>'+t('payable_list.col_amount','应付金额')+'</b></div><div>'+amt+'</div>';
+  html+='<div><b>'+t('payable_list.col_paid','已付款')+'</b></div><div>'+paidTxt+'</div>';
+  html+='<div><b>'+t('payable_list.col_deduction','抵扣')+'</b></div><div>'+deductionTxt+'</div>';
+  html+='<div><b>'+t('payable_list.col_rounding','抹零')+'</b></div><div>'+roundingTxt+'</div>';
+  html+='<div><b>'+t('payable_list.col_remaining','剩余未付')+'</b></div><div><b>'+remainTxt+'</b></div>';
+  html+='<div><b>'+t('payable_list.col_paydate','应付日期')+'</b></div><div>'+(it.payable_date?esc(fmtDate(it.payable_date)):'<span class="muted">—</span>')+'</div>';
+  html+='<div><b>'+t('payable_list.col_status','状态')+'</b></div><div>'+esc(PAY_LIFECYCLE_LABELS[it.lifecycle_status]||it.lifecycle_status||'')+'</div>';
+  html+='</div>';
+  html+='<h4 style="margin:14px 0 6px">'+t('payable_list.related_pr','关联付款申请')+'</h4>';
+  if(!prs.length)html+='<div class="muted">'+t('payable_list.no_pr','无关联付款申请')+'</div>';
+  else{
+    html+='<table class="data-table"><thead><tr><th>'+t('payable_list.pr_no','申请号')+'</th><th>'+t('payable_list.pr_paystatus','付款状态')+'</th><th>'+t('payable_list.pr_appstatus','审批状态')+'</th><th>'+t('payable_list.pr_action','操作')+'</th></tr></thead><tbody>';
+    prs.forEach(function(p){
+      var actionHtml='';
+      if(p.approval_status==='draft'){
+        actionHtml='<button class="btn btn-primary btn-sm" onclick="submitPaymentRequestApproval(\''+esc(p.id)+'\')">'+t('payable_list.btn_submit_approval','提交审批')+'</button>';
+      }
+      html+='<tr><td>'+esc(p.request_no||'')+'</td><td>'+esc(p.payment_status||'')+'</td><td>'+esc(p.approval_status||'')+'</td><td>'+actionHtml+'</td></tr>';
+    });
+    html+='</tbody></table>';
+  }
+  return html;
+}
 async function viewPayableSelected(){
   const sel=getSelectedPayableItems();
   if(!sel.length){showToast(t('payable_list.hint_select','请先选择费用'),'warning');return;}
   if(sel.length===1){
-    const r=sel[0];
-    let detail,rels;
-    try{
-      detail=await api('/api/payable-items/'+encodeURIComponent(r.id));
-      rels=await api('/api/payment-requests/by-payable-items?ids='+encodeURIComponent(r.id));
-    }catch(e){showFlash(t('payable_list.view_fail','加载失败：{v1}',{v1:e.message}),'danger');return;}
-    const it=detail.item||{};
-    const payableNum=Number((it.payable_amount!=null?it.payable_amount:it.payable_amount_minor/100)||0);
-    const amt=payableNum.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
-    const paidNum=Number(it.paid_amount||0);
-    const deductionNum=Number(it.deduction_amount||0);
-    const roundingNum=Number(it.rounding_amount||0);
-    const remainNum=it.remaining_amount!=null?Number(it.remaining_amount):Math.max(0,payableNum-paidNum-deductionNum-roundingNum);
-    const paidTxt=paidNum.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
-    const deductionTxt=deductionNum.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
-    const roundingTxt=roundingNum.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
-    const remainTxt=remainNum.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
-    let html='<div style="display:grid;grid-template-columns:auto 1fr;gap:4px 12px">';
-    html+='<div><b>'+t('payable_list.col_feeno','费用号')+'</b></div><div>'+esc(it.fee_no||'')+'</div>';
-    html+='<div><b>'+t('payable_list.col_source','来源')+'</b></div><div>'+esc(PAY_SOURCE_TYPE_LABELS[it.source_type]||it.source_type||'')+(it.source_no?' · '+esc(it.source_no):'')+'</div>';
-    html+='<div><b>'+t('payable_list.col_feetype','费用类型')+'</b></div><div>'+esc(PAY_FEE_TYPE_LABELS[it.fee_type]||it.fee_type||'')+'</div>';
-    html+='<div><b>'+t('payable_list.col_payee','收款方')+'</b></div><div>'+esc(it.payee_name_snapshot||'')+'</div>';
-    html+='<div><b>'+t('payable_list.col_currency','币种')+'</b></div><div>'+esc(it.currency||'')+'</div>';
-    html+='<div><b>'+t('payable_list.col_amount','应付金额')+'</b></div><div>'+amt+'</div>';
-    html+='<div><b>'+t('payable_list.col_paid','已付款')+'</b></div><div>'+paidTxt+'</div>';
-    html+='<div><b>'+t('payable_list.col_deduction','抵扣')+'</b></div><div>'+deductionTxt+'</div>';
-    html+='<div><b>'+t('payable_list.col_rounding','抹零')+'</b></div><div>'+roundingTxt+'</div>';
-    html+='<div><b>'+t('payable_list.col_remaining','剩余未付')+'</b></div><div><b>'+remainTxt+'</b></div>';
-    html+='<div><b>'+t('payable_list.col_paydate','应付日期')+'</b></div><div>'+(it.payable_date?esc(fmtDate(it.payable_date)):'<span class="muted">—</span>')+'</div>';
-    html+='<div><b>'+t('payable_list.col_status','状态')+'</b></div><div>'+esc(PAY_LIFECYCLE_LABELS[it.lifecycle_status]||it.lifecycle_status||'')+'</div>';
-    html+='</div>';
-    const prs=(rels&&rels.payment_requests)||[];
-    html+='<h4 style="margin:14px 0 6px">'+t('payable_list.related_pr','关联付款申请')+'</h4>';
-    if(!prs.length)html+='<div class="muted">'+t('payable_list.no_pr','无关联付款申请')+'</div>';
-    else{
-      html+='<table class="data-table"><thead><tr><th>'+t('payable_list.pr_no','申请号')+'</th><th>'+t('payable_list.pr_paystatus','付款状态')+'</th><th>'+t('payable_list.pr_appstatus','审批状态')+'</th><th>'+t('payable_list.pr_action','操作')+'</th></tr></thead><tbody>';
-      prs.forEach(function(p){
-        var actionHtml='';
-        if(p.approval_status==='draft'){
-          actionHtml='<button class="btn btn-primary btn-sm" onclick="submitPaymentRequestApproval(\''+esc(p.id)+'\')">'+t('payable_list.btn_submit_approval','提交审批')+'</button>';
-        }
-        html+='<tr><td>'+esc(p.request_no||'')+'</td><td>'+esc(p.payment_status||'')+'</td><td>'+esc(p.approval_status||'')+'</td><td>'+actionHtml+'</td></tr>';
-      });
-      html+='</tbody></table>';
-    }
-    openModal(t('payable_list.detail_title','应付费用明细'),html);
+    await openPayableDetailModal(sel[0].id);
+    return;
   }else{
     // 多选：仅显示所选摘要，不混淆不同付款申请
     let html='<div class="muted" style="margin-bottom:8px">'+t('payable_list.summary_multi','已选 {v1} 项（仅摘要，查看明细请单选）',{v1:sel.length})+'</div>';
