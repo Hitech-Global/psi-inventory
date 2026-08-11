@@ -1104,6 +1104,13 @@ console.log('========================================\n');
 // P0-FIX-1：仅在直接运行 server.js 时初始化数据库，避免 require 时连接/seed 真实库
 if (require.main === module) {
   initDatabase();
+  // 库存导入日期归一化回填：修复 M/D/YY 文本导致快照 MAX 字典序误判（根因 A）
+  normalizeImportDatesBackfill();
+  // 日期归一化后重新计算库存快照，使修正后的"最新批次"立即生效
+  // （已导入但停留在旧快照的批次无需手动重新导入即可修正）
+  refreshInventoryTotals('').then(() => {
+    console.log('[STARTUP] 库存快照已按修正后的最新导入日期重算完成');
+  }).catch(e => console.error('[STARTUP] 库存快照重算失败:', e && e.message));
 }
 
 // PAY-CORE Phase 2 V2.1 第 12 节：为现有 role_admin 添加 payment_execute 权限（幂等迁移）
@@ -3036,8 +3043,10 @@ app.post('/api/inventory-imports/bulk-import', requireApiPermission('inventory_i
             result.failed++; result.errors.push({ row: i + 2, reason: '可用数量必须为非负整数' }); return;
           }
           const id = genId('inv_imp');
+          // 归一化导入日期为 ISO，避免 M/D/YY 文本再次混入导致快照 MAX 比较失真
+          const importDate = normalizeImportDate(item.import_date);
           run(`INSERT INTO inventory_imports (id, import_date, country, warehouse, channel, sku_code, available_qty, remark, snapshot_cutoff_date, brand, weighted_avg_cost, last_inbound_date, first_inbound_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [id, item.import_date, item.country || '', item.warehouse || '', item.channel || '', item.sku_code, availQty, item.remark || '', snapshotCutoffDate, item.brand || '', parseFloat(item.weighted_avg_cost) || 0, item.last_inbound_date || '', item.first_inbound_date || '']);
+            [id, importDate, item.country || '', item.warehouse || '', item.channel || '', item.sku_code, availQty, item.remark || '', snapshotCutoffDate, item.brand || '', parseFloat(item.weighted_avg_cost) || 0, item.last_inbound_date || '', item.first_inbound_date || '']);
           result.created++;
         } catch (e) { result.failed++; result.errors.push({ row: i + 2, reason: e.message }); }
       });
@@ -3510,16 +3519,95 @@ function generateWacVersion(params) {
   return { id, version_no: nextVersionNo };
 }
 
+// 库存导入日期归一化：inventory_imports.import_date 在历史数据中混存了
+// M/D/YY（如 "8/2/26"）与 ISO（"2026-07-06"）两种文本格式，导致
+// MAX(import_date) 在 TEXT 列上做字典序比较时选出错误的"最新"批次
+// （'8/2/26' 字典序 > '8/11/26'），使库存快照截止日期停留在旧批次。
+// 归一为 ISO(YYYY-MM-DD) 后，TEXT 字典序比较即等价于真实日期比较。
+function normalizeImportDate(v) {
+  if (v === null || v === undefined) return v;
+  const s = String(v).trim();
+  if (!s) return s;
+  // 已是 ISO YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  // M/D/YY 或 M/D/YYYY（美式；2 位年份视为 20xx）
+  let m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (m) {
+    let y = parseInt(m[3], 10);
+    if (y < 100) y += 2000;
+    const mo = String(parseInt(m[1], 10)).padStart(2, '0');
+    const d = String(parseInt(m[2], 10)).padStart(2, '0');
+    return `${y}-${mo}-${d}`;
+  }
+  // 年在前、斜杠分隔（YYYY/M/D 或 YYYY/M/D）
+  m = s.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
+  if (m) {
+    const y = parseInt(m[1], 10);
+    const mo = String(parseInt(m[2], 10)).padStart(2, '0');
+    const d = String(parseInt(m[3], 10)).padStart(2, '0');
+    return `${y}-${mo}-${d}`;
+  }
+  // 无法识别则原样返回，避免破坏数据
+  return s;
+}
+
+// 启动期一次性回填：把历史 inventory_imports.import_date 统一归一为 ISO。
+// 幂等——已为 ISO 的行不改动；仅修正混存的 M/D/YY 文本。
+function normalizeImportDatesBackfill() {
+  try {
+    const rows = query('SELECT id, import_date FROM inventory_imports WHERE import_date IS NOT NULL AND import_date <> \'\'').rows;
+    let changed = 0;
+    transaction(() => {
+      for (const r of rows) {
+        const norm = normalizeImportDate(r.import_date);
+        if (norm && norm !== r.import_date) {
+          run('UPDATE inventory_imports SET import_date = ? WHERE id = ?', [norm, r.id]);
+          changed++;
+        }
+      }
+    });
+    if (changed) console.log(`[BACKFILL] 归一化 inventory_imports.import_date 共 ${changed} 行（M/D/YY → ISO）`);
+  } catch (e) {
+    console.error('[BACKFILL] import_date 归一化失败:', e.message);
+  }
+}
+
+// 取每个 SKU+国家+仓库 最新批次的 SQL。
+// 关键修复：原本 `import_date = (SELECT MAX(import_date) ...)` 在 TEXT 列上做字典序
+// 比较，遇到 M/D/YY 文本会选错批次。改为按真实日期比较（PG 用 ::date，SQLite 用 date()），
+// 即便历史数据未完全归一也能选出正确的"最新"导入日期。
+function latestImportsSql() {
+  const driver = (process.env.DB_DRIVER || 'sqlite').toLowerCase();
+  if (driver === 'pg') {
+    return `
+      SELECT sku_code, country, warehouse, available_qty, import_date, snapshot_cutoff_date, weighted_avg_cost, last_inbound_date, first_inbound_date
+      FROM inventory_imports i1
+      WHERE i1.import_date IS NOT NULL AND i1.import_date <> ''
+        AND i1.import_date::date = (
+          SELECT MAX(i2.import_date::date)
+          FROM inventory_imports i2
+          WHERE i2.sku_code = i1.sku_code AND i2.country = i1.country AND i2.warehouse = i1.warehouse
+            AND i2.import_date IS NOT NULL AND i2.import_date <> ''
+        )`;
+  }
+  return `
+    SELECT sku_code, country, warehouse, available_qty, import_date, snapshot_cutoff_date, weighted_avg_cost, last_inbound_date, first_inbound_date
+    FROM inventory_imports i1
+    WHERE i1.import_date IS NOT NULL AND i1.import_date <> ''
+      AND date(i1.import_date) = (
+        SELECT MAX(date(i2.import_date))
+        FROM inventory_imports i2
+        WHERE i2.sku_code = i1.sku_code AND i2.country = i1.country AND i2.warehouse = i1.warehouse
+          AND i2.import_date IS NOT NULL AND i2.import_date <> ''
+      )`;
+}
+
 // 刷新库存总表（根据导入记录和业务数据重新计算）
 async function refreshInventoryTotals(snapshotCutoffDate) {
   // P1-03-B: WAC 不再从文件列读取，改为查 latest confirmed locked WAC 版本
   const warnings = [];
   // 获取每个 SKU+国家+仓库 的最新可用库存（连同 snapshot_cutoff_date）
-  const latestImports = query(`
-    SELECT sku_code, country, warehouse, available_qty, import_date, snapshot_cutoff_date, weighted_avg_cost, last_inbound_date, first_inbound_date
-    FROM inventory_imports i1
-    WHERE import_date = (SELECT MAX(import_date) FROM inventory_imports i2 WHERE i2.sku_code = i1.sku_code AND i2.country = i1.country AND i2.warehouse = i1.warehouse)
-  `).rows;
+  const latestImports = query(latestImportsSql()).rows;
 
   transaction(async () => {
     for (const imp of latestImports) {
