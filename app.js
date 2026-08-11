@@ -11138,7 +11138,7 @@ function renderCockpitDetails(preSupplier,preCurrency){
     html+='<tr style="cursor:pointer" onclick="viewPayment(\''+r.id+'\')">'
       +'<td style="color:#1d6fd3">'+esc(r.request_no)+(r.source_mode==='historical'?' <span style="font-size:10px;color:#999">'+t("cockpit.historical","(历史)")+'</span>':'')+'</td>'
       +'<td>'+esc(r.supplier_name)+'</td>'
-      +'<td>'+esc(r.source_type||'—')+'</td>'
+      +'<td>'+esc(cockpitSourceNo(r))+'</td>'
       +'<td>'+esc(rel)+'</td>'
       +'<td>'+esc(catTxt||'—')+'</td>'
       +'<td>'+esc(r.payee_label||'—')+'</td>'
@@ -11177,7 +11177,7 @@ function cockpitDrawerEsc(e){if(e.key==='Escape')closeCockpitDrawer();}
 //   - 其他费用 → 对应业务单据编号（优先 CI，其次 PI）
 // 基于 subcategory_code（费用性质）判定，不依赖 source_type：尾款 bug 项 source_type 虽为 pi，subcategory 仍为 balance，应显示 CI 编号。
 function cockpitSourceNo(r){
-  const sub = r.subcategory || '';
+  const sub = r.subcategory || r.subcategory_code || '';
   if (sub === 'deposit') return r.related_pi_no || r.related_ci_no || '—';
   if (sub === 'balance') return r.related_ci_no || r.related_pi_no || '—';
   return r.related_ci_no || r.related_pi_no || '—';
@@ -11377,7 +11377,7 @@ function renderPayableTable(){
     html+='<tr class="pay-row" onclick="openPayableDetailModal(\''+esc(r.id)+'\')">'+
       '<td onclick="event.stopPropagation()"><input type="checkbox" class="payl-cb" data-id="'+esc(r.id)+'" onchange="togglePayableSel(\''+esc(r.id)+'\',this.checked)"></td>'+
       '<td>'+esc(r.fee_no||'')+'</td>'+
-      '<td>'+esc(PAY_SOURCE_TYPE_LABELS[r.source_type]||r.source_type||'')+(r.source_no?' · '+esc(r.source_no):'')+'</td>'+
+      '<td>'+esc(cockpitSourceNo(r))+'</td>'+
       '<td>'+esc(r.supplier_name||r.payee_name_snapshot||'—')+'</td>'+
       '<td>'+esc(PAY_FEE_TYPE_LABELS[r.fee_type]||r.fee_type||'')+'</td>'+
       '<td>'+esc(r.payee_name_snapshot||'')+'</td>'+
@@ -11474,7 +11474,7 @@ function buildPayableDetailHtml(it,prs){
   const remainTxt=remainNum.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
   let html='<div style="display:grid;grid-template-columns:auto 1fr;gap:4px 12px">';
   html+='<div><b>'+t('payable_list.col_feeno','费用号')+'</b></div><div>'+esc(it.fee_no||'')+'</div>';
-  html+='<div><b>'+t('payable_list.col_source','来源')+'</b></div><div>'+esc(PAY_SOURCE_TYPE_LABELS[it.source_type]||it.source_type||'')+(it.source_no?' · '+esc(it.source_no):'')+'</div>';
+  html+='<div><b>'+t('payable_list.col_source','来源')+'</b></div><div>'+esc(cockpitSourceNo(it))+'</div>';
   html+='<div><b>'+t('payable_list.col_feetype','费用类型')+'</b></div><div>'+esc(PAY_FEE_TYPE_LABELS[it.fee_type]||it.fee_type||'')+'</div>';
   html+='<div><b>'+t('payable_list.col_payee','收款方')+'</b></div><div>'+esc(it.payee_name_snapshot||'')+'</div>';
   html+='<div><b>'+t('payable_list.col_currency','币种')+'</b></div><div>'+esc(it.currency||'')+'</div>';

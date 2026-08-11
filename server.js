@@ -10740,6 +10740,43 @@ app.get('/api/purchase-amount-summary', requireApiPermission('ci_view'), asyncHa
 // ==================== PAY-CORE Phase 1.5 Task 1：应付费用池 API ====================
 
 // 应付费用池列表（支持按状态/费用类型/来源/收款方筛选）
+// 应付来源编号派生（仅展示用，与财务驾驶舱同口径）：
+//  - 定金(deposit, source_type='pi') → proforma_invoices.pi_no
+//  - 尾款(balance) 及有 CI 关联 → commercial_invoices.ci_no / historical_commercial_invoices.historical_ci_no
+//  - 历史CI 且 source_ci_id 为空 → 回退 source_no 关联 historical_commercial_invoices.historical_ci_no
+// 不修改 payable_items / source_type / source_id / CI-PI 关联 / 付款流程，仅返回展示字段。
+function derivePayableSourceRefs(rows) {
+  const ciIds = [...new Set(rows.map(r => r.source_ci_id).filter(Boolean))];
+  const ciMap = {};
+  if (ciIds.length) {
+    query(`SELECT id, ci_no, related_pi_no FROM commercial_invoices WHERE id IN (${ciIds.map(() => '?').join(',')})`, ciIds)
+      .rows.forEach(c => { ciMap[c.id] = c; });
+    query(`SELECT id, historical_ci_no AS ci_no, related_pi_no FROM historical_commercial_invoices WHERE id IN (${ciIds.map(() => '?').join(',')})`, ciIds)
+      .rows.forEach(c => { ciMap[c.id] = c; });
+  }
+  const hciByNo = {};
+  query('SELECT historical_ci_no, historical_ci_no AS ci_no, related_pi_no FROM historical_commercial_invoices')
+    .rows.forEach(c => { if (c.historical_ci_no) hciByNo[c.historical_ci_no] = c; });
+  const piIds = [...new Set(rows.map(r => r.source_id).filter(Boolean))];
+  const piMap = {};
+  if (piIds.length) {
+    query(`SELECT id, pi_no FROM proforma_invoices WHERE id IN (${piIds.map(() => '?').join(',')})`, piIds)
+      .rows.forEach(p => { piMap[p.id] = p; });
+  }
+  const out = new Map();
+  for (const r of rows) {
+    const ciCtx = r.source_ci_id ? ciMap[r.source_ci_id]
+      : (r.source_type === 'historical_ci' && r.source_no ? (hciByNo[r.source_no] || null) : null);
+    const piCtx = r.source_type === 'pi' ? piMap[r.source_id] : null;
+    const relatedPiNo = r.source_type === 'pi'
+      ? (piCtx ? (piCtx.pi_no || '') : (r.source_no || ''))
+      : (ciCtx ? (ciCtx.related_pi_no || '') : '');
+    const relatedCiNo = ciCtx ? (ciCtx.ci_no || '') : '';
+    out.set(r.id, { related_pi_no: relatedPiNo, related_ci_no: relatedCiNo });
+  }
+  return out;
+}
+
 app.get('/api/payable-items', requireApiPermission('payment_view'), asyncHandler((req, res) => {
   const { lifecycle_status, fee_type, source_type, source_id, payee_key, keyword } = req.query;
   // 关联来源单据取供应商名称（仅用于列表展示「供应商」列，不改任何业务规则/金额/状态）
@@ -10766,6 +10803,8 @@ app.get('/api/payable-items', requireApiPermission('payment_view'), asyncHandler
   const rows = query(sql, params).rows;
   // PAY-CORE 多次付款：附加「已付款 / 抵扣 / 抹零 / 剩余未付」拆分（应付事实不变，金额动态推导）
   const breakdownMap = payableItemsSettlementBreakdown(rows.map(r => r.id));
+  // 来源编号派生（仅展示用，与驾驶舱同口径：定金→PI号，尾款→CI号）
+  const refMap = derivePayableSourceRefs(rows);
   // 金额转换为元（便于前端展示）
   const items = rows.map(r => {
     const b = breakdownMap.get(r.id) || { paidMinor: 0, deductionMinor: 0, roundingMinor: 0 };
@@ -10774,8 +10813,11 @@ app.get('/api/payable-items', requireApiPermission('payment_view'), asyncHandler
     const deductionMinor = b.deductionMinor;
     const roundingMinor = b.roundingMinor;
     const remainingMinor = Math.max(0, payableMinor - paidMinor - deductionMinor - roundingMinor);
+    const refs = refMap.get(r.id) || { related_pi_no: '', related_ci_no: '' };
     return {
       ...r,
+      related_pi_no: refs.related_pi_no,
+      related_ci_no: refs.related_ci_no,
       payable_amount: payableMinor / 100,
       paid_amount_minor: paidMinor,
       paid_amount: minorToAmount(paidMinor),
@@ -10796,6 +10838,11 @@ app.get('/api/payable-items', requireApiPermission('payment_view'), asyncHandler
 app.get('/api/payable-items/:id', requireApiPermission('payment_view'), asyncHandler((req, res) => {
   const item = queryOne('SELECT * FROM payable_items WHERE id = ?', [req.params.id]);
   if (!item) return res.status(404).json({ error: '应付费用不存在' });
+  // 来源编号派生（仅展示用，与驾驶舱/列表同口径：定金→PI号，尾款→CI号）
+  const refMap = derivePayableSourceRefs([item]);
+  const refs = refMap.get(item.id) || { related_pi_no: '', related_ci_no: '' };
+  item.related_pi_no = refs.related_pi_no;
+  item.related_ci_no = refs.related_ci_no;
   item.payable_amount = item.payable_amount_minor / 100;
   const b = payableItemsSettlementBreakdown([item.id]).get(item.id) || { paidMinor: 0, deductionMinor: 0, roundingMinor: 0 };
   const payableMinor = Number(item.payable_amount_minor || 0);
