@@ -2992,6 +2992,7 @@ function handleInvFile(file){
         });
         if(!rec.sku_code||!String(rec.sku_code).trim())rec._errors.push(t("toast.sku_code_required", "SKU编码不能为空"));
         if(!rec.import_date)rec._errors.push(t("app.618", "\u5bfc\u5165\u65e5\u671f\u4e0d\u80fd\u4e3a\u7a7a"));
+        if(rec.available_qty===undefined||rec.available_qty===''||!isFinite(rec.available_qty))rec._errors.push(t("toast.avail_qty_required", "可用数量不能为空且必须为数字"));
         else{
           if(rec.import_date instanceof Date)rec.import_date=formatDateISO(rec.import_date);
           else rec.import_date=String(rec.import_date).trim().slice(0,10);
@@ -3116,7 +3117,12 @@ async function submitInvBatchImport(){
     }
     html+='</div>';
     document.getElementById('inv-result').innerHTML=html;
-    showToast(t('toast.importDone2','导入完成：新增{c}，失败{f}',{c:res.created||0, f:res.failed||0}),res.failed>0?'warning':'success');
+    var createdN=res.created||0, failedN=res.failed||0, toastMsg, toastType;
+    if(createdN>0&&failedN===0){toastMsg=t('toast.importDone2','导入完成：新增{c}，失败{f}',{c:createdN,f:failedN});toastType='success';}
+    else if(createdN>0&&failedN>0){toastMsg=t('toast.import_partial','导入部分完成：新增{c}，失败{f}',{c:createdN,f:failedN});toastType='warning';}
+    else if(createdN===0&&failedN>0){toastMsg=t('toast.import_failed2','导入失败：新增{c}，失败{f}',{c:createdN,f:failedN});toastType='danger';}
+    else{toastMsg=t('toast.import_no_data','无有效数据：新增{c}，失败{f}',{c:createdN,f:failedN});toastType='danger';}
+    showToast(toastMsg,toastType);
     loadInv();
   }catch(e){
     showToast(e.message||t("toast.import_failed", "导入失败"),'danger');
