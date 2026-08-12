@@ -2063,6 +2063,25 @@ app.get('/api/warehouses/countries', requireLogin, asyncHandler((req, res) => {
   const rows = query(sql, params).rows.map(r => r.country_name);
   res.json(rows);
 }));
+// 寄售仓权威清单：直接来自 consignment_inventory_lots.warehouse_name（寄售库存投影进 inventory 的仓库名）。
+// 不写死任何仓库名，也不新增 warehouse_type / is_consignment 等 schema（仅解除寄售仓与订单预测的关联）。
+// 仅用于订单预测相关查询过滤，不影响库存模块 / WAC / 寄售库存本身。
+function getConsignmentWarehouseNames() {
+  const res = query("SELECT DISTINCT warehouse_name FROM consignment_inventory_lots WHERE warehouse_name IS NOT NULL AND warehouse_name != ''");
+  const rows = (res && res.rows) || [];
+  return rows.map(r => r.warehouse_name).filter(Boolean);
+}
+// 在已有 SQL 的 WHERE 后追加排除寄售仓条件（名单为空时不拼接，避免 NOT IN () 非法 SQL）。
+// 自动处理前导：有 WHERE 内容用 AND，尚无则用 WHERE 起头。
+function appendConsignmentExclusion(sql, params, columnExpr) {
+  const names = getConsignmentWarehouseNames();
+  if (names.length > 0) {
+    sql += (sql ? ' AND' : ' WHERE') + ' ' + columnExpr + ' NOT IN (' + names.map(() => '?').join(',') + ')';
+    params.push(...names);
+  }
+  return sql;
+}
+
 // 按国家筛选仓库（用于订单预测等页面的下拉联动）
 // DATA-SCOPE: 根据角色数据权限过滤可见仓库
 app.get('/api/warehouses/by-country', requireLogin, asyncHandler((req, res) => {
@@ -2070,6 +2089,8 @@ app.get('/api/warehouses/by-country', requireLogin, asyncHandler((req, res) => {
   let sql = "SELECT id, name, country_name, brands, warehouse_type FROM warehouses WHERE status = 'active'";
   const params = [];
   if (country) { sql += ' AND country_name = ?'; params.push(country); }
+  // 订单预测仓库选项排除寄售仓（“全部”=参与订单预测的正常仓库）
+  sql = appendConsignmentExclusion(sql, params, 'name');
   if (needsDataScopeFilter(req)) {
     const scope = req.currentUserDataScope;
     const conditions = [];
@@ -2115,6 +2136,8 @@ app.get('/api/warehouses/by-country-brand', requireLogin, asyncHandler((req, res
     sql += ` AND (brands = '' OR brands LIKE ? OR brands LIKE ? OR brands LIKE ? OR brands LIKE ?)`;
     params.push('%'+brand+'%', brand+',%', '%,'+brand, '%,'+brand+',%');
   }
+  // 订单预测仓库选项排除寄售仓（“全部”=参与订单预测的正常仓库）
+  sql = appendConsignmentExclusion(sql, params, 'name');
   if (needsDataScopeFilter(req)) {
     const scope = req.currentUserDataScope;
     if (scope.warehouses && scope.warehouses.length > 0) {
@@ -5162,6 +5185,8 @@ app.get('/api/replenishment-suggestions/summary', requireApiPermission('replenis
   if (keyword) { where += (where ? ' AND' : ' WHERE') + ' (rs.sku_code LIKE ? OR s.product_name LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`); }
   if (sales_status) { where += (where ? ' AND' : ' WHERE') + ' rs.sales_status = ?'; params.push(sales_status); }
   if (lifecycle_status) { where += (where ? ' AND' : ' WHERE') + ' rs.lifecycle_status = ?'; params.push(lifecycle_status); }
+  // 订单预测排除寄售仓：寄售库存不计入库存池/周转/建议采购（保证列表、底部合计、汇总口径一致）
+  where = appendConsignmentExclusion(where, params, 'rs.target_warehouse');
   // DATA-SCOPE: 应用数据权限过滤（国家/品牌/仓库）
   const rsScopeFilterSum = buildReplenishmentDataScopeFilter(req);
   if (rsScopeFilterSum.sql) {
@@ -5532,6 +5557,8 @@ app.get('/api/replenishment-suggestions', requireApiPermission('replenishment_vi
   if (keyword) { sql += ' AND (rs.sku_code LIKE ? OR s.product_name LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`); }
   if (sales_status) { sql += ' AND rs.sales_status = ?'; params.push(sales_status); }
   if (lifecycle_status) { sql += ' AND rs.lifecycle_status = ?'; params.push(lifecycle_status); }
+  // 订单预测排除寄售仓：寄售库存不计入库存池/周转/建议采购（页面上线后立即隐藏历史寄售行）
+  sql = appendConsignmentExclusion(sql, params, 'rs.target_warehouse');
   // DATA-SCOPE: 应用数据权限过滤（国家/品牌/仓库）
   const rsScopeFilter2 = buildReplenishmentDataScopeFilter(req);
   if (rsScopeFilter2.sql) { sql += rsScopeFilter2.sql; params.push(...rsScopeFilter2.params); }
@@ -5590,6 +5617,14 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
     if (country) { invSql += ' AND i.country = ?'; invParams.push(country); }
     if (warehouse) { invSql += ' AND i.warehouse = ?'; invParams.push(warehouse); }
     if (brand) { invSql += ' AND s.brand = ?'; invParams.push(brand); }
+    // 订单预测排除寄售仓：寄售库存不生成预测行（不影响 inventory 中寄售库存本身）
+    {
+      const consignWh = getConsignmentWarehouseNames();
+      if (consignWh.length > 0) {
+        invSql += ' AND i.warehouse NOT IN (' + consignWh.map(() => '?').join(',') + ')';
+        invParams.push(...consignWh);
+      }
+    }
     const inventoryItems = await aq(invSql, invParams);
 
     const now = new Date();
