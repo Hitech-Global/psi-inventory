@@ -1134,6 +1134,35 @@ if (require.main === module) {
   })();
 }
 
+// Phase 2：为拥有审批权限的角色自动追加 approval_view（幂等迁移）
+// 仅处理含 po_approve/payment_approve/check_approve 的角色，不处理含 '*' 的超级管理员（通配符已覆盖所有权限）
+if (require.main === module) {
+  (function ensureApprovalView() {
+    try {
+      const roles = query("SELECT id, permissions FROM roles").rows;
+      const approvePerms = ['po_approve', 'payment_approve', 'check_approve'];
+      let migrated = 0;
+      roles.forEach(role => {
+        let perms;
+        try { perms = JSON.parse(role.permissions || '[]'); } catch(_) { return; }
+        if (!Array.isArray(perms)) return;
+        if (perms.includes('*')) return; // 超级管理员通配符已覆盖
+        const hasApprovePerm = approvePerms.some(p => perms.includes(p));
+        if (hasApprovePerm && !perms.includes('approval_view')) {
+          perms.push('approval_view');
+          run("UPDATE roles SET permissions = ? WHERE id = ?", [JSON.stringify(perms), role.id]);
+          migrated++;
+        }
+      });
+      if (migrated > 0) {
+        console.log('[Migration] 已为 ' + migrated + ' 个角色追加 approval_view 权限');
+      }
+    } catch (e) {
+      console.warn('[Migration] approval_view 迁移失败（非致命）:', e.message);
+    }
+  })();
+}
+
 // ==================== 寄售库存表迁移（CONSIGNMENT-INVENTORY） ====================
 // 幂等建表：consignment_inventory_lots（寄售库存批次行）+ consignment_inventory_import_batches（导入批次）
 // 仅在直接运行 server.js 时执行，避免 require 时写入真实库
@@ -1802,71 +1831,73 @@ app.put('/api/roles/:id/data-scope', requireApiPermission('role_manage'), asyncH
 // ==================== 角色管理 ====================
 // 权限目录（仅展示用 label 映射，非权限模型；key 集合必须与 db.js allPerms 完全一致）
 const PERM_LABELS = {
-  // 系统管理
-  user_manage: { label: '用户管理', module: '系统管理' },
-  role_manage: { label: '角色管理', module: '系统管理' },
-  system_config: { label: '系统配置', module: '系统管理' },
-  // 采购
-  po_view: { label: 'PO 查看', module: '采购' },
-  po_create: { label: 'PO 创建', module: '采购' },
-  po_edit: { label: 'PO 编辑', module: '采购' },
-  po_approve: { label: 'PO 审批', module: '采购' },
-  po_export: { label: 'PO 导出', module: '采购' },
-  pi_view: { label: 'PI 查看', module: '采购' },
-  pi_create: { label: 'PI 创建', module: '采购' },
-  pi_edit: { label: 'PI 编辑', module: '采购' },
-  ci_view: { label: 'CI 查看', module: '采购' },
-  ci_create: { label: 'CI 创建', module: '采购' },
-  ci_edit: { label: 'CI 编辑', module: '采购' },
-  logistics_view: { label: '物流查看', module: '采购' },
-  logistics_create: { label: '物流创建', module: '采购' },
-  logistics_edit: { label: '物流编辑', module: '采购' },
-  inbound_view: { label: '入库查看', module: '采购' },
-  inbound_create: { label: '入库创建', module: '采购' },
-  inbound_edit: { label: '入库编辑', module: '采购' },
-  inbound_confirm: { label: '入库确认', module: '采购' },
-  // 库存
-  sku_view: { label: 'SKU 查看', module: '库存' },
-  sku_create: { label: 'SKU 创建', module: '库存' },
-  sku_edit: { label: 'SKU 编辑', module: '库存' },
-  sku_delete: { label: 'SKU 删除', module: '库存' },
-  sku_import: { label: 'SKU 导入', module: '库存' },
-  sku_export: { label: 'SKU 导出', module: '库存' },
-  inventory_view: { label: '库存查看', module: '库存' },
-  inventory_import: { label: '库存导入', module: '库存' },
-  inventory_export: { label: '库存导出', module: '库存' },
-  replenishment_view: { label: '补货查看', module: '库存' },
-  replenishment_edit: { label: '补货编辑', module: '库存' },
-  check_view: { label: '盘点查看', module: '库存' },
-  check_create: { label: '盘点创建', module: '库存' },
-  check_approve: { label: '盘点审批', module: '库存' },
-  check_import: { label: '盘点导入', module: '库存' },
-  check_export: { label: '盘点导出', module: '库存' },
-  stagnant_view: { label: '呆滞查看', module: '库存' },
-  stagnant_export: { label: '呆滞导出', module: '库存' },
+  // 首页
+  dashboard_view: { label: '查看', module: '首页', submodule: '' },
   // 销售
-  outbound_view: { label: '出库查看', module: '销售' },
-  outbound_create: { label: '出库创建', module: '销售' },
-  outbound_import: { label: '出库导入', module: '销售' },
+  outbound_view: { label: '查看', module: '销售', submodule: '销售数据' },
+  outbound_create: { label: '新增/编辑', module: '销售', submodule: '销售数据' },
+  outbound_import: { label: '导入', module: '销售', submodule: '销售数据' },
+  replenishment_view: { label: '查看', module: '销售', submodule: '订单预测' },
+  replenishment_edit: { label: '生成/调参', module: '销售', submodule: '订单预测' },
+  // 采购链
+  po_view: { label: '查看', module: '采购链', submodule: 'PO管理' },
+  po_create: { label: '创建', module: '采购链', submodule: 'PO管理' },
+  po_edit: { label: '编辑', module: '采购链', submodule: 'PO管理' },
+  po_export: { label: '导出', module: '采购链', submodule: 'PO管理' },
+  pi_view: { label: '查看', module: '采购链', submodule: 'PI管理' },
+  pi_create: { label: '创建', module: '采购链', submodule: 'PI管理' },
+  pi_edit: { label: '编辑', module: '采购链', submodule: 'PI管理' },
+  ci_view: { label: '查看', module: '采购链', submodule: 'CI管理' },
+  ci_create: { label: '创建', module: '采购链', submodule: 'CI管理' },
+  ci_edit: { label: '编辑', module: '采购链', submodule: 'CI管理' },
+  logistics_view: { label: '查看', module: '采购链', submodule: '物流管理' },
+  logistics_create: { label: '创建', module: '采购链', submodule: '物流管理' },
+  logistics_edit: { label: '编辑', module: '采购链', submodule: '物流管理' },
+  inbound_view: { label: '查看', module: '采购链', submodule: '入库管理' },
+  inbound_create: { label: '创建', module: '采购链', submodule: '入库管理' },
+  inbound_edit: { label: '编辑', module: '采购链', submodule: '入库管理' },
+  inbound_confirm: { label: '确认', module: '采购链', submodule: '入库管理' },
+  // 库存
+  sku_view: { label: '查看', module: '库存', submodule: 'SKU主数据' },
+  sku_create: { label: '创建', module: '库存', submodule: 'SKU主数据' },
+  sku_edit: { label: '编辑', module: '库存', submodule: 'SKU主数据' },
+  sku_delete: { label: '删除', module: '库存', submodule: 'SKU主数据' },
+  sku_import: { label: '导入', module: '库存', submodule: 'SKU主数据' },
+  sku_export: { label: '导出', module: '库存', submodule: 'SKU主数据' },
+  inventory_view: { label: '查看', module: '库存', submodule: '库存总表' },
+  inventory_import: { label: '导入', module: '库存', submodule: '库存总表' },
+  inventory_export: { label: '导出', module: '库存', submodule: '库存总表' },
+  check_view: { label: '查看', module: '库存', submodule: '库存盘点' },
+  check_create: { label: '创建', module: '库存', submodule: '库存盘点' },
+  check_import: { label: '导入', module: '库存', submodule: '库存盘点' },
+  check_export: { label: '导出', module: '库存', submodule: '库存盘点' },
+  stagnant_view: { label: '查看', module: '库存', submodule: '呆滞分析' },
+  stagnant_export: { label: '导出', module: '库存', submodule: '呆滞分析' },
   // 财务
-  cost_view: { label: '成本查看', module: '财务' },
-  payment_view: { label: '付款查看', module: '财务' },
-  payment_create: { label: '付款创建', module: '财务' },
-  payment_approve: { label: '付款审批', module: '财务' },
-  payment_execute: { label: '付款执行', module: '财务' },
-  payment_import: { label: '付款导入', module: '财务' },
-  payment_export: { label: '付款导出', module: '财务' },
-  // 报表
-  dashboard_view: { label: '仪表盘查看', module: '报表' },
-  forwarder_view: { label: '货代查看', module: '报表' },
-  forwarder_export: { label: '货代导出', module: '报表' }
+  cost_view: { label: '查看', module: '财务', submodule: '成本管理' },
+  payment_view: { label: '查看', module: '财务', submodule: '付款管理' },
+  payment_create: { label: '创建', module: '财务', submodule: '付款管理' },
+  payment_execute: { label: '执行', module: '财务', submodule: '付款管理' },
+  payment_import: { label: '导入', module: '财务', submodule: '付款管理' },
+  payment_export: { label: '导出', module: '财务', submodule: '付款管理' },
+  // 审批
+  approval_view: { label: '审批中心入口', module: '审批', submodule: '审批中心' },
+  po_approve: { label: '采购审批', module: '审批', submodule: '采购审批' },
+  payment_approve: { label: '付款审批', module: '审批', submodule: '付款审批' },
+  check_approve: { label: '库存审批', module: '审批', submodule: '库存审批' },
+  // 系统管理
+  user_manage: { label: '管理', module: '系统管理', submodule: '用户管理' },
+  role_manage: { label: '管理', module: '系统管理', submodule: '角色管理' },
+  system_config: { label: '配置', module: '系统管理', submodule: '系统配置' },
+  forwarder_view: { label: '查看', module: '系统管理', submodule: '货代分析' },
+  forwarder_export: { label: '导出', module: '系统管理', submodule: '货代分析' }
 };
 const ROLE_CRITICAL_PERMS = ['role_manage', 'user_manage', 'system_config'];
 
 // 只读：暴露权限目录给角色管理 UI（不改变 RBAC 模型，不增表）
 app.get('/api/permissions', requireApiPermission('role_manage'), asyncHandler((req, res) => {
   try {
-    const list = Object.keys(PERM_LABELS).map(k => ({ key: k, label: PERM_LABELS[k].label, module: PERM_LABELS[k].module }));
+    const list = Object.keys(PERM_LABELS).map(k => ({ key: k, label: PERM_LABELS[k].label, module: PERM_LABELS[k].module, submodule: PERM_LABELS[k].submodule || '' }));
     res.json(list);
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));

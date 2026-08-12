@@ -292,6 +292,10 @@ function formatRoleDescription(roleId, roleDesc){
 function formatPermModule(module){
   return t('permission.category.'+module, module);
 }
+// Phase 2: 子模块名显示函数
+function formatPermSubmodule(submodule){
+  return t('permission.submodule.'+submodule, submodule);
+}
 
 // SYS-ROLE-I18N-UX-02：权限名称显示函数（permKey 为 server.js PERM_LABELS 中的稳定 permission.key）
 function formatPermLabel(permKey, fallbackLabel){
@@ -321,7 +325,7 @@ const NAV_MODULES=[
     {id:'inbound',key:'nav.inbound',icon:'📥',label:t("nav.inbound", "\u5165\u5e93\u7ba1\u7406"),perm:'inbound_view'},
   ]},
   {id:'approval',key:'nav.approval',label:t("nav.approval_center", "\u5ba1\u6279\u4e2d\u5fc3"),items:[
-    {id:'approval-center',key:'nav.approval_center',icon:'✅',label:t("nav.approval_center", "\u5ba1\u6279\u4e2d\u5fc3"),perm:'po_approve'},
+    {id:'approval-center',key:'nav.approval_center',icon:'✅',label:t("nav.approval_center", "\u5ba1\u6279\u4e2d\u5fc3"),perm:'approval_view'},
   ]},
   {id:'finance',key:'nav.finance',label:t("nav.finance","财务"),items:[
     {id:'payable-cockpit',key:'nav.payable_cockpit',icon:'🧭',label:t("nav.payable_cockpit","应付驾驶舱"),perm:'payment_view'},
@@ -431,6 +435,13 @@ function initSidebarCollapse(){
 
 // --- 页面路由 ---
 function showPage(page){
+  // Phase 2: 页面级权限守卫 — 进入页面前校验对应权限
+  var _allNavItems = NAV_MODULES.flatMap(function(m){return m.items;});
+  var _navItem = _allNavItems.find(function(i){return i.id===page;});
+  if(_navItem && _navItem.perm && !hasPermission(_navItem.perm)){
+    showToast(t('toast.no_page_permission','无权限访问该页面'), 'danger');
+    return;
+  }
   // CI-DETAIL-UX：切换页面时关闭 CI 详情/编辑 modal，避免弹窗残留（不影响其他 modal）
   const _ov=document.getElementById('modal-overlay');
   if(_ov&&_ov.classList.contains('ci-mode')) closeModal();
@@ -1270,28 +1281,42 @@ async function afSaveFlow(flowId){
 // 信息架构预留：待我审批 / 全部待审批 / 采购类 / 财务类 / 确认任务 / 抄送我的 / 已处理
 // 本期仅实现 PO 审批（待我审批/全部待审批/采购类 共用 PO 待审列表）；其余分类为占位。
 function renderApprovalCenter(){
-  const tabs=[
-    {id:'mine',label:t("app.378", "\u5f85\u6211\u5ba1\u6279")},
-    {id:'all',label:t("app.379", "\u5168\u90e8\u5f85\u5ba1\u6279")},
-    {id:'purchase',label:t("app.380", "\u91c7\u8d2d\u7c7b\u5ba1\u6279")},
-    {id:'finance',label:t("app.381", "\u8d22\u52a1\u7c7b\u5ba1\u6279")},
-    {id:'confirm',label:t("app.382", "\u786e\u8ba4\u4efb\u52a1")},
-    {id:'cc',label:t("app.383", "\u6284\u9001\u6211\u7684")},
-    {id:'done',label:t("app.384", "\u5df2\u5904\u7406")},
-  ];
-  document.getElementById('content-inner').innerHTML=t('html.renderApprovalCenter', '<div id="flash-container"></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">✅ 审批中心</div><div class="table-section-actions"><span class="muted-hint">已接入 PO 审批（采购类）与付款申请审批（财务类），其余分类预留</span></div></div><div class="approval-tabs" id="approval-tabs">{v1}</div><div id="approval-list"></div></div>', {v1: tabs.map((tab,i)=>'<span class="approval-tab'+(i===0?' active':'')+'" data-tab="'+tab.id+'" onclick="switchApprovalTab(\''+tab.id+'\')">'+tab.label+'</span>').join('')});
-  switchApprovalTab('mine');
+  // Phase 2: 根据具体审批权限动态显示标签
+  var _hasPoApprove = hasPermission('po_approve');
+  var _hasPaymentApprove = hasPermission('payment_approve');
+  var _hasCheckApprove = hasPermission('check_approve');
+  var tabs=[];
+  if(_hasPoApprove){
+    tabs.push({id:'mine',label:t("app.378", "\u5f85\u6211\u5ba1\u6279")});
+    tabs.push({id:'all',label:t("app.379", "\u5168\u90e8\u5f85\u5ba1\u6279")});
+    tabs.push({id:'purchase',label:t("app.380", "\u91c7\u8d2d\u5ba1\u6279")});
+  }
+  if(_hasPaymentApprove){
+    tabs.push({id:'finance',label:t("app.381", "\u4ed8\u6b3e\u5ba1\u6279")});
+  }
+  if(_hasCheckApprove){
+    tabs.push({id:'check',label:t("app.1200", "\u5e93\u5b58\u5ba1\u6279")});
+  }
+  // Phase 2: 无具体审批权限 → 空状态
+  if(tabs.length===0){
+    document.getElementById('content-inner').innerHTML='<div id="flash-container"></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">\u2705 '+t('nav.approval_center','\u5ba1\u6279\u4e2d\u5fc3')+'</div></div><div class="empty-state"><div class="empty-icon">\ud83d\udcb3</div>'+t('approval.no_permission','\u60a8\u6682\u65e0\u5ba1\u6279\u6743\u9650\uff0c\u8bf7\u8054\u7cfb\u7ba1\u7406\u5458\u5206\u914d\u76f8\u5173\u6743\u9650\u3002')+'</div></div>';
+    return;
+  }
+  document.getElementById('content-inner').innerHTML=t('html.renderApprovalCenter', '<div id="flash-container"></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">\u2705 \u5ba1\u6279\u4e2d\u5fc3</div><div class="table-section-actions"><span class="muted-hint">\u5df2\u63a5\u5165 PO \u5ba1\u6279\uff08\u91c7\u8d2d\u7c7b\uff09\u4e0e\u4ed8\u6b3e\u7533\u8bf7\u5ba1\u6279\uff08\u8d22\u52a1\u7c7b\uff09\uff0c\u5176\u4f59\u5206\u7c7b\u9884\u7559</span></div></div><div class="approval-tabs" id="approval-tabs">{v1}</div><div id="approval-list"></div></div>', {v1: tabs.map(function(tab,i){return '<span class="approval-tab'+(i===0?' active':'')+'" data-tab="'+tab.id+'" onclick="switchApprovalTab(\''+tab.id+'\')">'+tab.label+'</span>';}).join('')});
+  switchApprovalTab(tabs[0].id);
 }
 let _approvalTab='mine';
 let _approvalListData=[];
 function switchApprovalTab(tab){
   _approvalTab=tab;
   document.querySelectorAll('#approval-tabs .approval-tab').forEach(el=>el.classList.toggle('active',el.dataset.tab===tab));
-  // 待我审批 / 全部待审批 / 采购类审批 → PO 待审列表；财务类审批 → 付款申请待审列表；其余预留占位
+  // 待我审批 / 全部待审批 / 采购类审批 → PO 待审列表；财务类审批 → 付款申请待审列表；库存审批 → 占位
   if(tab==='mine'||tab==='all'||tab==='purchase'){
     loadApprovalCenterList();
   }else if(tab==='finance'){
     loadFinanceApprovalList();
+  }else if(tab==='check'){
+    document.getElementById('approval-list').innerHTML='<div class="empty-state"><div class="empty-icon">🚧</div>'+t('approval.check_placeholder','库存审批功能将在后续版本接入')+'</div>';
   }else{
     document.getElementById('approval-list').innerHTML=t('html.switchApprovalTab', '<div class="empty-state"><div class="empty-icon">🚧</div>{v1} 分类将在后续版本接入</div>', {v1: esc(tabLabel(tab))});
   }
@@ -1337,7 +1362,7 @@ async function loadFinanceApprovalList(){
       }).join('')});
   }catch(e){showFlash(e.message,'danger')}
 }
-function tabLabel(id){const m={mine:t("app.378", "\u5f85\u6211\u5ba1\u6279"),all:t("app.379", "\u5168\u90e8\u5f85\u5ba1\u6279"),purchase:t("app.380", "\u91c7\u8d2d\u7c7b\u5ba1\u6279"),finance:t("app.381", "\u8d22\u52a1\u7c7b\u5ba1\u6279"),confirm:t("app.382", "\u786e\u8ba4\u4efb\u52a1"),cc:t("app.383", "\u6284\u9001\u6211\u7684"),done:t("app.384", "\u5df2\u5904\u7406")};return m[id]||id;}
+function tabLabel(id){const m={mine:t("app.378", "\u5f85\u6211\u5ba1\u6279"),all:t("app.379", "\u5168\u90e8\u5f85\u5ba1\u6279"),purchase:t("app.380", "\u91c7\u8d2d\u5ba1\u6279"),finance:t("app.381", "\u4ed8\u6b3e\u5ba1\u6279"),check:t("app.1200", "\u5e93\u5b58\u5ba1\u6279"),confirm:t("app.382", "\u786e\u8ba4\u4efb\u52a1"),cc:t("app.383", "\u6284\u9001\u6211\u7684"),done:t("app.384", "\u5df2\u5904\u7406")};return m[id]||id;}
 async function loadApprovalCenterList(){
   try{
     // M3: 待我审批 tab 按当前用户过滤；其余 tab 保持原逻辑
@@ -1548,7 +1573,7 @@ async function loadRoles(){
 
 // 角色权限编辑：点击角色 → 弹窗勾选权限 → 保存（复用 POST /api/roles upsert）
 const ROLE_CRITICAL_PERMS=['role_manage','user_manage','system_config'];
-const ROLE_MODULE_ORDER=['系统管理','采购','库存','销售','财务','报表'];
+const ROLE_MODULE_ORDER=['首页','销售','采购链','库存','财务','审批','系统管理'];
 async function openRoleEditor(roleId){
   try{
     const role=roleListData.find(r=>r.id===roleId);
@@ -1573,15 +1598,27 @@ async function openRoleEditor(roleId){
     body+='<div style="font-weight:700;margin:16px 0 6px;font-size:14px;border-bottom:2px solid var(--border,#e0e0e0);padding-bottom:4px">'+t('role.section.page_perm','页面权限')+'</div>';
     ROLE_MODULE_ORDER.forEach(mod=>{
       const items=groups[mod]; if(!items||!items.length)return;
-      body+='<div style="font-weight:600;margin:12px 0 6px;font-size:13px">'+esc(formatPermModule(mod))+'</div><div style="display:flex;flex-wrap:wrap;gap:8px 16px">';
-      items.forEach(p=>{
-        const checked=own.includes(p.key)?'checked':'';
-        const locked=(isAdmin&&ROLE_CRITICAL_PERMS.includes(p.key));
-        const dis=locked?'disabled':'';
-        const lockIco=locked?' 🔒':'';
-        body+='<label style="font-size:13px;display:flex;align-items:center;gap:4px;min-width:140px"><input type="checkbox" data-perm="'+esc(p.key)+'" '+checked+' '+dis+'>'+esc(formatPermLabel(p.key, p.label))+lockIco+'</label>';
+      body+='<div style="font-weight:600;margin:12px 0 6px;font-size:13px">'+esc(formatPermModule(mod))+'</div>';
+      // Phase 2: 按 submodule 分组渲染
+      var subgroups={};
+      items.forEach(function(p){
+        var sm=p.submodule||'';
+        (subgroups[sm]=subgroups[sm]||[]).push(p);
       });
-      body+='</div>';
+      Object.keys(subgroups).forEach(function(sm){
+        if(sm){
+          body+='<div style="font-weight:500;margin:8px 0 4px 12px;font-size:12px;color:var(--text-secondary,#666)">'+esc(formatPermSubmodule(sm))+'</div>';
+        }
+        body+='<div style="display:flex;flex-wrap:wrap;gap:8px 16px;margin-left:12px">';
+        subgroups[sm].forEach(function(p){
+          var checked=own.includes(p.key)?'checked':'';
+          var locked=(isAdmin&&ROLE_CRITICAL_PERMS.includes(p.key));
+          var dis=locked?'disabled':'';
+          var lockIco=locked?' 🔒':'';
+          body+='<label style="font-size:13px;display:flex;align-items:center;gap:4px;min-width:140px"><input type="checkbox" data-perm="'+esc(p.key)+'" '+checked+' '+dis+'>'+esc(formatPermLabel(p.key, p.label))+lockIco+'</label>';
+        });
+        body+='</div>';
+      });
     });
     // --- 2. 数据权限（Data Scope）---
     if(!isAdmin){

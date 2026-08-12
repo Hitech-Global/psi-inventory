@@ -2086,7 +2086,8 @@ async function initDatabase() {
       'check_view','check_create','check_approve','check_import','check_export',
       'stagnant_view','stagnant_export',
       'forwarder_view','forwarder_export',
-      'user_manage','role_manage','system_config'
+      'user_manage','role_manage','system_config',
+      'approval_view'
     ]);
     const operatorPerms = JSON.stringify([
       'dashboard_view','sku_view','sku_create','sku_edit','sku_import','sku_export',
