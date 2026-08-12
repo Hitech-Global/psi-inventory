@@ -1340,8 +1340,8 @@ function apiAuth(req, res, next) {
   req.currentUserName = user.name;
   req.currentUserRole = user.role_id || '';
   req.currentUserPermissions = perms;
-  // DATA-SCOPE: 加载角色数据权限（每次请求实时读取，变更即时生效）
-  req.currentUserDataScope = getRoleDataScope(user.role_id);
+  // DATA-SCOPE: 用户级 > 角色级 > 无限制（每次请求实时读取，变更即时生效）
+  req.currentUserDataScope = getUserDataScope(user.id) || getRoleDataScope(user.role_id);
   next();
 }
 
@@ -1366,6 +1366,19 @@ function requireLogin(req, res, next) {
 function getRoleDataScope(roleId) {
   if (!roleId) return null;
   const row = queryOne('SELECT * FROM role_data_scope WHERE role_id=?', [roleId]);
+  if (!row) return null;
+  let countries = [], brands = [], warehouses = [];
+  try { countries = JSON.parse(row.countries || '[]'); } catch (e) { countries = []; }
+  try { brands = JSON.parse(row.brands || '[]'); } catch (e) { brands = []; }
+  try { warehouses = JSON.parse(row.warehouses || '[]'); } catch (e) { warehouses = []; }
+  return { countries, brands, warehouses };
+}
+
+// 用户级数据权限覆盖（优先于角色级）
+// 存在 user_data_scope 行 → 使用用户配置；不存在 → 返回 null（由调用方回退到角色级）
+function getUserDataScope(userId) {
+  if (!userId) return null;
+  const row = queryOne('SELECT * FROM user_data_scope WHERE user_id=?', [userId]);
   if (!row) return null;
   let countries = [], brands = [], warehouses = [];
   try { countries = JSON.parse(row.countries || '[]'); } catch (e) { countries = []; }
@@ -1724,8 +1737,11 @@ app.post('/api/logout', asyncHandler((req, res) => {
 app.get('/api/users', requireApiPermission('user_manage'), asyncHandler((req, res) => {
   try {
     const rows = query('SELECT id, username, name, role_id, status, email, auth_source, feishu_open_id, feishu_union_id, last_login_at, created_at, language_preference FROM users ORDER BY created_at DESC').rows;
+    // USER-SCOPE: 获取有个人数据权限的用户ID集合（用于列表展示来源标识）
+    const scopeUserIds = new Set(query('SELECT user_id FROM user_data_scope').rows.map(r => r.user_id));
     const masked = rows.map(u => ({
       ...u,
+      has_personal_scope: scopeUserIds.has(u.id),
       language_preference: normalizeLanguage(u.language_preference),
       feishu_union_id: u.feishu_union_id ? ('****' + u.feishu_union_id.slice(-4)) : '',
       feishu_open_id: u.feishu_open_id ? ('****' + u.feishu_open_id.slice(-4)) : ''
@@ -1825,6 +1841,46 @@ app.put('/api/roles/:id/data-scope', requireApiPermission('role_manage'), asyncH
          ON CONFLICT(role_id) DO UPDATE SET countries=excluded.countries, brands=excluded.brands, warehouses=excluded.warehouses, updated_at=excluded.updated_at`,
       [req.params.id, JSON.stringify(c), JSON.stringify(b), JSON.stringify(w)]);
     res.json({ success: true, countries: c, brands: b, warehouses: w });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+}));
+
+// ==================== 数据权限管理（用户级覆盖） ====================
+// 获取用户数据权限配置（同时返回角色级作为参考）
+app.get('/api/users/:id/data-scope', requireApiPermission('user_manage'), asyncHandler((req, res) => {
+  try {
+    const user = queryOne('SELECT id, role_id FROM users WHERE id=?', [req.params.id]);
+    if (!user) return res.status(404).json({ error: '用户不存在' });
+    const userScope = getUserDataScope(req.params.id);
+    const roleScope = getRoleDataScope(user.role_id);
+    res.json({
+      source: userScope ? 'personal' : 'role',
+      personal: userScope,                           // null = 未配置个人覆盖
+      role: roleScope || { countries: [], brands: [], warehouses: [] }
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+}));
+
+// 保存用户个人数据权限（upsert）
+app.put('/api/users/:id/data-scope', requireApiPermission('user_manage'), asyncHandler((req, res) => {
+  try {
+    const user = queryOne('SELECT id FROM users WHERE id=?', [req.params.id]);
+    if (!user) return res.status(404).json({ error: '用户不存在' });
+    const { countries, brands, warehouses } = req.body;
+    const c = Array.isArray(countries) ? countries.filter(x => typeof x === 'string' && x) : [];
+    const b = Array.isArray(brands) ? brands.filter(x => typeof x === 'string' && x) : [];
+    const w = Array.isArray(warehouses) ? warehouses.filter(x => typeof x === 'string' && x) : [];
+    run(`INSERT INTO user_data_scope (user_id, countries, brands, warehouses, updated_at) VALUES (?, ?, ?, ?, datetime('now'))
+         ON CONFLICT(user_id) DO UPDATE SET countries=excluded.countries, brands=excluded.brands, warehouses=excluded.warehouses, updated_at=excluded.updated_at`,
+      [req.params.id, JSON.stringify(c), JSON.stringify(b), JSON.stringify(w)]);
+    res.json({ success: true, countries: c, brands: b, warehouses: w });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+}));
+
+// 清除用户个人数据权限（删除行 → 回退到角色级）
+app.delete('/api/users/:id/data-scope', requireApiPermission('user_manage'), asyncHandler((req, res) => {
+  try {
+    run('DELETE FROM user_data_scope WHERE user_id=?', [req.params.id]);
+    res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 

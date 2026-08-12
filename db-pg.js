@@ -497,7 +497,8 @@ async function initDatabase() {
   await exec("CREATE INDEX IF NOT EXISTS idx_login_audit_user ON login_audit(user_id)");
   await exec("CREATE INDEX IF NOT EXISTS idx_login_audit_created ON login_audit(created_at)");
 
-  // DATA-SCOPE: 用户数据权限（已废弃，迁移到 role_data_scope；保留用于兼容旧数据迁移）
+  // DATA-SCOPE: 用户级数据权限覆盖（优先于角色级 role_data_scope）
+  // 存在 user_data_scope 行 → 使用用户配置；不存在 → 回退到角色级
   await exec(`CREATE TABLE IF NOT EXISTS user_data_scope (
     user_id TEXT PRIMARY KEY,
     countries TEXT DEFAULT '[]',
@@ -506,7 +507,7 @@ async function initDatabase() {
     updated_at TEXT DEFAULT NOW()
   )`);
 
-  // DATA-SCOPE: 角色数据权限（替代 user_data_scope，符合 RBAC 模型）
+  // DATA-SCOPE: 角色级数据权限（作为模板，可被用户级 user_data_scope 覆盖）
   await exec(`CREATE TABLE IF NOT EXISTS role_data_scope (
     role_id TEXT PRIMARY KEY,
     countries TEXT DEFAULT '[]',

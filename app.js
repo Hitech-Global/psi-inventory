@@ -1500,6 +1500,15 @@ async function renderUsers(){
         : (u.status==='active'
             ? '<button class="btn btn-xs btn-warning" onclick="setUserStatus(\''+u.id+t('gen.L952.1','\',\'disabled\')">停用</button>')
             : '<button class="btn btn-xs btn-success" onclick="setUserStatus(\''+u.id+t('gen.L953.1','\',\'active\')">启用</button>'));
+      // USER-SCOPE: 数据权限来源标识
+      var dsCell;
+      if(u.role_id==='role_admin'){
+        dsCell='<span style="font-size:12px;color:#999">'+t('user.data_scope_admin','不限制')+'</span>';
+      }else if(u.has_personal_scope){
+        dsCell='<span style="font-size:11px;padding:2px 8px;border-radius:4px;background:#fff3e0;color:#e65100;cursor:pointer" onclick="openUserDataScopeEditor(\''+u.id+'\')">'+t('user.data_scope_personal','个人覆盖')+'</span>';
+      }else{
+        dsCell='<span style="font-size:11px;padding:2px 8px;border-radius:4px;background:#e3f2fd;color:#1565c0;cursor:pointer" onclick="openUserDataScopeEditor(\''+u.id+'\')">'+t('user.data_scope_inherited','继承角色')+'</span>';
+      }
       return '<tr>'
         +'<td>'+esc(u.name||'')+'</td>'
         +'<td>'+esc(u.username||'')+'</td>'
@@ -1509,11 +1518,12 @@ async function renderUsers(){
         +'<td>'+statusBadge+'</td>'
         +'<td>'+roleSel+'</td>'
         +'<td>'+langSel+'</td>'
+        +'<td>'+dsCell+'</td>'
         +'<td>'+actionBtn+'</td>'
         +'</tr>';
     }).join('');
     document.getElementById('content-inner').innerHTML=
-      t('html.renderUsers', '<div id="flash-container"></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">👤 用户管理</div></div><div class="table-container"><table class="data-table"><thead><tr><th>姓名</th><th>用户名</th><th>飞书标识(脱敏)</th><th>邮箱</th><th>来源</th><th>状态</th><th>角色</th><th>语言偏好</th><th>操作</th></tr></thead><tbody>{v1}</tbody></table></div><div class="pc-hint">用户由飞书首次登录自动创建（默认 <b>'+statusLabel('pending')+'</b>，无角色、无权限）。管理员启用并分配角色后，用户方可进入业务。不允许创建本地密码账号、不允许修改密码、不允许编辑飞书标识、不允许停用/删除应急账号。</div></div>', {v1: rows});
+      t('html.renderUsers', '<div id="flash-container"></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">👤 用户管理</div></div><div class="table-container"><table class="data-table"><thead><tr><th>姓名</th><th>用户名</th><th>飞书标识(脱敏)</th><th>邮箱</th><th>来源</th><th>状态</th><th>角色</th><th>语言偏好</th><th>数据权限</th><th>操作</th></tr></thead><tbody>{v1}</tbody></table></div><div class="pc-hint">用户由飞书首次登录自动创建（默认 <b>'+statusLabel('pending')+'</b>，无角色、无权限）。管理员启用并分配角色后，用户方可进入业务。不允许创建本地密码账号、不允许修改密码、不允许编辑飞书标识、不允许停用/删除应急账号。</div></div>', {v1: rows});
     // I18N-B1-PAGE-CONTEXT-STATE-01：限定 [data-uid] 排除顶部 lang-switcher（class同为 user-role-sel），
     // 否则 renderUsers 会给 lang-switcher 绑定 setUserRole，语言切换时 setUserRole(undefined) → renderUsers() 覆盖当前页
     document.querySelectorAll('.user-role-sel[data-uid]').forEach(sel=>{ sel.addEventListener('change',()=>setUserRole(sel.dataset.uid, sel.value)); });
@@ -1536,6 +1546,109 @@ async function setUserStatus(uid, status){
   const u=(window.__userCache||[]).find(x=>x.id===uid);
   if(!u){ renderUsers(); return; }
   try{ await api('/api/users/'+uid,'PUT',{username:u.username, name:u.name, status}); showToast(status==='active'?t('gen.L978.1','已启用'):t('gen.L978.2','已停用'),'success'); renderUsers(); }catch(e){ showToast(e.message,'danger'); }
+}
+
+// ==================== 用户数据权限覆盖（USER-SCOPE） ====================
+// 用户个人数据权限 > 角色数据权限 > 无限制
+async function openUserDataScopeEditor(userId){
+  try{
+    var u=(window.__userCache||[]).find(x=>x.id===userId);
+    if(!u){showToast(t('gen.L1028.1','未找到该用户'),'danger');return;}
+    // 并行加载：用户数据权限 + 角色数据权限参考 + 可选国家/品牌/仓库
+    var isAdmin=u.role_id==='role_admin';
+    var result=isAdmin?{source:'admin',personal:null,role:null}:await api('/api/users/'+userId+'/data-scope');
+    var countries=isAdmin?[]:await api('/api/countries');
+    var brands=isAdmin?[]:await api('/api/brands/all');
+    var warehouses=isAdmin?[]:await api('/api/warehouses');
+    var body='<div style="font-size:12px;color:var(--text-secondary,#999);margin-bottom:10px">'+t('user.data_scope_user','用户：')+'<b>'+esc(u.name||u.username||'')+'</b></div>';
+    if(isAdmin){
+      body+='<div class="flash flash-info show" style="margin-bottom:12px">'+t('user.data_scope_admin_hint','超级管理员不受数据权限限制，无需配置。')+'</div>';
+    }else{
+      // 权限来源标识
+      var sourceLabel=result.source==='personal'
+        ?'<span style="padding:2px 8px;border-radius:4px;background:#fff3e0;color:#e65100;font-size:12px">'+t('user.data_scope_personal','个人覆盖')+'</span>'
+        :'<span style="padding:2px 8px;border-radius:4px;background:#e3f2fd;color:#1565c0;font-size:12px">'+t('user.data_scope_inherited','继承角色')+'</span>';
+      body+='<div style="margin-bottom:12px"><span style="font-weight:600;font-size:13px">'+t('user.data_scope_source','权限来源：')+'</span>'+sourceLabel+'</div>';
+      // 如果继承角色，显示角色当前配置作为参考
+      if(result.source==='role'&&result.role){
+        var roleScope=result.role;
+        var roleInfo=[];
+        if(roleScope.countries&&roleScope.countries.length)roleInfo.push(t('user.data_scope_countries','国家')+': '+roleScope.countries.length);
+        if(roleScope.brands&&roleScope.brands.length)roleInfo.push(t('user.data_scope_brands','品牌')+': '+roleScope.brands.length);
+        if(roleScope.warehouses&&roleScope.warehouses.length)roleInfo.push(t('user.data_scope_warehouses','仓库')+': '+roleScope.warehouses.length);
+        if(roleInfo.length){
+          body+='<div style="font-size:12px;color:var(--text-secondary,#999);margin-bottom:10px;padding:6px 10px;background:var(--surface-muted,#f5f5f5);border-radius:6px">'+t('user.data_scope_role_ref','角色当前配置')+'：'+roleInfo.join(' · ')+'</div>';
+        }else{
+          body+='<div style="font-size:12px;color:var(--text-secondary,#999);margin-bottom:10px">'+t('user.data_scope_role_empty','角色未配置数据权限（当前不限制）')+'</div>';
+        }
+      }
+      // 当前选中的值（个人配置 or 空数组）
+      var sel=result.personal||{countries:[],brands:[],warehouses:[]};
+      var countryItems=countries.map(function(c){return{id:c.id,name:c.name};});
+      var warehouseItems=warehouses.map(function(w){return{id:w.id,name:w.name+(w.country_name?' ('+w.country_name+')':'')};});
+      body+='<div style="font-size:12px;color:var(--text-secondary,#999);margin-bottom:6px">'+t('user.data_scope_personal_hint','勾选用户个人数据范围，将覆盖角色配置。不勾选则该维度不限制。')+'</div>';
+      // 国家
+      body+='<div style="margin-bottom:12px">'
+        +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">'
+        +'<span style="font-weight:600;font-size:13px">'+t('user.data_scope_countries','国家')+'</span>'
+        +'<span style="font-size:12px"><a href="javascript:void(0)" onclick="document.querySelectorAll(\'.uds-country-cb\').forEach(function(cb){cb.checked=true})" style="color:var(--primary,#2e7d32)">'+t('action.select_all','全选')+'</a> | <a href="javascript:void(0)" onclick="document.querySelectorAll(\'.uds-country-cb\').forEach(function(cb){cb.checked=false})" style="color:var(--danger,#e53e3e)">'+t('action.clear','清空')+'</a></span>'
+        +'</div>'
+        +'<div style="max-height:100px;overflow-y:auto;border:1px solid var(--border,#e0e0e0);border-radius:6px;padding:8px">'+dsCheckboxList(countryItems,sel.countries,'uds-country','id','name')+'</div>'
+        +'</div>';
+      // 品牌
+      body+='<div style="margin-bottom:12px">'
+        +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">'
+        +'<span style="font-weight:600;font-size:13px">'+t('user.data_scope_brands','品牌')+'</span>'
+        +'<span style="font-size:12px"><a href="javascript:void(0)" onclick="document.querySelectorAll(\'.uds-brand-cb\').forEach(function(cb){cb.checked=true})" style="color:var(--primary,#2e7d32)">'+t('action.select_all','全选')+'</a> | <a href="javascript:void(0)" onclick="document.querySelectorAll(\'.uds-brand-cb\').forEach(function(cb){cb.checked=false})" style="color:var(--danger,#e53e3e)">'+t('action.clear','清空')+'</a></span>'
+        +'</div>'
+        +'<div style="max-height:100px;overflow-y:auto;border:1px solid var(--border,#e0e0e0);border-radius:6px;padding:8px">'+dsCheckboxList(brands.map(function(b){return{id:b,name:b};}),sel.brands,'uds-brand','id','name')+'</div>'
+        +'</div>';
+      // 仓库
+      body+='<div style="margin-bottom:12px">'
+        +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">'
+        +'<span style="font-weight:600;font-size:13px">'+t('user.data_scope_warehouses','仓库')+'</span>'
+        +'<span style="font-size:12px"><a href="javascript:void(0)" onclick="document.querySelectorAll(\'.uds-warehouse-cb\').forEach(function(cb){cb.checked=true})" style="color:var(--primary,#2e7d32)">'+t('action.select_all','全选')+'</a> | <a href="javascript:void(0)" onclick="document.querySelectorAll(\'.uds-warehouse-cb\').forEach(function(cb){cb.checked=false})" style="color:var(--danger,#e53e3e)">'+t('action.clear','清空')+'</a></span>'
+        +'</div>'
+        +'<div style="max-height:100px;overflow-y:auto;border:1px solid var(--border,#e0e0e0);border-radius:6px;padding:8px">'+dsCheckboxList(warehouseItems,sel.warehouses,'uds-warehouse','id','name')+'</div>'
+        +'</div>';
+    }
+    // 按钮：保存 + 清除个人配置（仅个人覆盖时显示） + 取消
+    var footer='<button class="btn btn-secondary" onclick="closeModal()">'+t('role.btn.cancel','取消')+'</button>';
+    if(!isAdmin){
+      if(result.source==='personal'){
+        footer+='<button class="btn btn-warning" id="uds-clear-btn" data-uid="'+esc(userId)+'">'+t('user.data_scope_clear','清除个人配置')+'</button>';
+      }
+      footer+='<button class="btn btn-primary" id="uds-save-btn" data-uid="'+esc(userId)+'">'+t('role.btn.save','保存')+'</button>';
+    }
+    openModal(t('user.data_scope_title','用户数据权限配置 · {v1}',{v1:u.name||u.username||''}),body,footer,'modal-lg');
+    var saveBtn=document.getElementById('uds-save-btn');
+    if(saveBtn){saveBtn.addEventListener('click',function(){saveUserDataScope(this.getAttribute('data-uid'));});}
+    var clearBtn=document.getElementById('uds-clear-btn');
+    if(clearBtn){clearBtn.addEventListener('click',function(){
+      if(confirm(t('user.data_scope_clear_confirm','清除后将回退到角色数据权限，确认？'))){
+        clearUserDataScope(this.getAttribute('data-uid'));
+      }
+    });}
+  }catch(e){showToast(e.message||t("app.427","打开失败"),'danger')}
+}
+async function saveUserDataScope(userId){
+  try{
+    var dsCountries=Array.from(document.querySelectorAll('#modal-content .uds-country-cb:checked')).map(function(cb){return cb.value;});
+    var dsBrands=Array.from(document.querySelectorAll('#modal-content .uds-brand-cb:checked')).map(function(cb){return cb.value;});
+    var dsWarehouses=Array.from(document.querySelectorAll('#modal-content .uds-warehouse-cb:checked')).map(function(cb){return cb.value;});
+    await api('/api/users/'+userId+'/data-scope','PUT',{countries:dsCountries,brands:dsBrands,warehouses:dsWarehouses});
+    showToast(t('user.data_scope_saved','用户数据权限已保存'),'success');
+    closeModal();
+    renderUsers();
+  }catch(e){showToast(e.message,'danger')}
+}
+async function clearUserDataScope(userId){
+  try{
+    await api('/api/users/'+userId+'/data-scope','DELETE');
+    showToast(t('user.data_scope_cleared','已清除个人数据权限，回退到角色级'),'success');
+    closeModal();
+    renderUsers();
+  }catch(e){showToast(e.message,'danger')}
 }
 
 // ==================== 数据权限管理（角色级） ====================
