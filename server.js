@@ -2065,11 +2065,17 @@ app.get('/api/warehouses/countries', requireLogin, asyncHandler((req, res) => {
 }));
 // 寄售仓权威清单：直接来自 consignment_inventory_lots.warehouse_name（寄售库存投影进 inventory 的仓库名）。
 // 不写死任何仓库名，也不新增 warehouse_type / is_consignment 等 schema（仅解除寄售仓与订单预测的关联）。
+// 权威清单双来源并集：
+//   1) consignment_inventory_lots.warehouse_name（寄售库存投影进 inventory 的仓名）
+//   2) warehouses 表中名称含 consign 的 active 仓（生产环境寄售仓实际登记处）
 // 仅用于订单预测相关查询过滤，不影响库存模块 / WAC / 寄售库存本身。
 function getConsignmentWarehouseNames() {
-  const res = query("SELECT DISTINCT warehouse_name FROM consignment_inventory_lots WHERE warehouse_name IS NOT NULL AND warehouse_name != ''");
-  const rows = (res && res.rows) || [];
-  return rows.map(r => r.warehouse_name).filter(Boolean);
+  const names = new Set();
+  const res1 = query("SELECT DISTINCT warehouse_name FROM consignment_inventory_lots WHERE warehouse_name IS NOT NULL AND warehouse_name != ''");
+  (res1 && res1.rows || []).forEach(r => { if (r.warehouse_name) names.add(r.warehouse_name); });
+  const res2 = query("SELECT DISTINCT name FROM warehouses WHERE LOWER(name) LIKE '%consign%' AND status = 'active'");
+  (res2 && res2.rows || []).forEach(r => { if (r.name) names.add(r.name); });
+  return Array.from(names);
 }
 // 在已有 SQL 的 WHERE 后追加排除寄售仓条件（名单为空时不拼接，避免 NOT IN () 非法 SQL）。
 // 自动处理前导：有 WHERE 内容用 AND，尚无则用 WHERE 起头。
