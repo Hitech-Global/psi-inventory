@@ -5369,6 +5369,8 @@ function addHistoricalColsToActive(activeKeys,Cols,totals,data){
     });
   }
   totals._historical={};
+  // 收集本次需要新增的历史列 key（按时间升序，已在 columns 中保证），稍后统一插入到固定位置
+  var histKeys=[];
   columns.forEach(function(column){
     if(builtInMonths[column])return;
     var key='hs_'+String(column).replace(/[^a-zA-Z0-9]/g,'_');
@@ -5386,8 +5388,16 @@ function addHistoricalColsToActive(activeKeys,Cols,totals,data){
       },
       sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t._historical[key]||0)+'</td>';}
     };
-    if(activeKeys.indexOf(key)<0)activeKeys.push(key);
+    if(activeKeys.indexOf(key)<0)histKeys.push(key);
   });
+  // 固定显示位置：历史销售月份字段统一放在 SKU 列之后（按时间升序），禁止动态追加到表格末尾
+  if(histKeys.length){
+    var skuIdx=activeKeys.indexOf('sku');
+    var insertIdx = skuIdx>=0 ? skuIdx+1 : (activeKeys.indexOf('check')>=0 ? 1 : 0);
+    for(var hi=0;hi<histKeys.length;hi++){
+      activeKeys.splice(insertIdx+hi,0,histKeys[hi]);
+    }
+  }
 }
 
 // 构建单个字段行 HTML（含冻结到此列单选控件）
@@ -7824,6 +7834,21 @@ async function loadRpDaily(){
     let url='/api/replenishment-suggestions/daily-sales?'+rpQuery();
     if(rpTab==='online') url+='&tab=online';
     else if(rpTab==='offline') url+='&tab=offline';
+    // 历史销售查看范围统一生效：按天视图展示该范围内每日销售数据；未配置时保持最近30天默认行为
+    var hcfg=window._rpHistoricalSalesConfig;
+    if(hcfg&&hcfg.start&&hcfg.end){
+      var ds,de;
+      if(hcfg.mode==='monthly'){
+        var eParts=hcfg.end.split('-');
+        var ey=Number(eParts[0]), em=Number(eParts[1]);
+        var lastDay=new Date(ey,em,0).getDate();
+        ds=hcfg.start+'-01';
+        de=ey+'-'+String(em).padStart(2,'0')+'-'+String(lastDay).padStart(2,'0');
+      }else{
+        ds=hcfg.start; de=hcfg.end;
+      }
+      url+='&start='+encodeURIComponent(ds)+'&end='+encodeURIComponent(de);
+    }
     const resp=await api(url);
     const dates=resp.dates||[];
     const data=resp.skus||[];

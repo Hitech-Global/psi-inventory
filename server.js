@@ -5253,13 +5253,26 @@ app.get('/api/replenishment-suggestions/summary', requireApiPermission('replenis
 
 // 按天销量明细
 app.get('/api/replenishment-suggestions/daily-sales', requireApiPermission('replenishment_view'), asyncHandler((req, res) => {
-  const { country, warehouse, brand, keyword, sales_status, lifecycle_status } = req.query;
-  // 取近30天每天的日期
-  const now = new Date();
-  const dates = [];
-  for (let i = 29; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
-    dates.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+  const { country, warehouse, brand, keyword, sales_status, lifecycle_status, start, end } = req.query;
+  // 日期范围：优先使用「历史销售查看范围」(start/end 为 YYYY-MM-DD)，否则默认最近30天
+  let dates = [];
+  if (start && end) {
+    const d0 = new Date(start + 'T00:00:00');
+    const d1 = new Date(end + 'T00:00:00');
+    if (!isNaN(d0.getTime()) && !isNaN(d1.getTime()) && d0 <= d1) {
+      let cursor = new Date(d0.getFullYear(), d0.getMonth(), d0.getDate());
+      while (cursor <= d1) {
+        dates.push(`${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`);
+        cursor.setDate(cursor.getDate() + 1);
+      }
+    }
+  }
+  if (dates.length === 0) {
+    const now = new Date();
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+      dates.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+    }
   }
   // 取所有补货建议的SKU列表
   let sql = `SELECT rs.*, s.product_name, s.brand, s.category, s.model, s.qty_per_carton,
@@ -5323,8 +5336,9 @@ app.get('/api/replenishment-suggestions/daily-sales', requireApiPermission('repl
     const daily = dates.map(d => dailyMap[d] || 0);
     const last7 = daily.slice(-7).reduce((a, b) => a + b, 0);
     const last14 = daily.slice(-14).reduce((a, b) => a + b, 0);
-    const last30 = daily.reduce((a, b) => a + b, 0);
-    const avgDaily = Math.round((last30 / 30) * 100) / 100;
+    const last30 = daily.slice(-30).reduce((a, b) => a + b, 0);
+    const avgWindow = Math.min(daily.length, 30);
+    const avgDaily = avgWindow > 0 ? Math.round((last30 / avgWindow) * 100) / 100 : 0;
     // 销量趋势：近7天 vs 前7天
     const recent7 = daily.slice(-7).reduce((a, b) => a + b, 0);
     const prev7 = daily.slice(-14, -7).reduce((a, b) => a + b, 0);
