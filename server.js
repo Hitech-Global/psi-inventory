@@ -1569,6 +1569,14 @@ function buildDashboardScopeFilters(req) {
   return { inventory, ci: ciFilter, po: ciFilter, pi: ciFilter, ciAlias };
 }
 
+// 把 inventory 的数据权限 scope 适配到 consignment_inventory_lots 表：
+// 列名 country→country_name、warehouse→warehouse_name，参数顺序与 inventory scope 保持一致。
+// 用于首页资产汇总时，寄售库存按与 inventory 相同的数据权限 scope 过滤 country_name。
+function adaptScopeToLots(dsfInv) {
+  const sql = (dsfInv && dsfInv.sql || '').replace(/\bcountry\b/g, 'country_name').replace(/\bwarehouse\b/g, 'warehouse_name');
+  return { sql, params: (dsfInv && dsfInv.params) || [] };
+}
+
 // 所有 /api 路由需要认证（公共鉴权前缀已在 apiAuth 内放行）
 app.use('/api', apiAuth);
 
@@ -3808,8 +3816,7 @@ app.post('/api/consignment-inventory/import', requireApiPermission('inventory_im
       // 4. 激活新批次
       run(`UPDATE consignment_inventory_import_batches SET status = 'active', activated_at = datetime('now') WHERE id = ?`, [batchId]);
 
-      // 5. 投影到库存总表（内部以事务/SAVEPOINT 执行，不触碰 WAC）
-      projectConsignmentInventoryToInventory(warehouse, country);
+      // 5. [已解耦] 寄售库存不再投影进入 inventory 总表；寄售库存以 consignment_inventory_lots 为事实源，由首页资产汇总与寄售独立页读取。
 
       // 6. 记录操作日志
       logOperation({
@@ -14122,8 +14129,12 @@ app.get('/api/dashboard', requireApiPermission('dashboard_view'), asyncHandler((
     const dsf = buildDashboardScopeFilters(req);
     const rsScope = buildReplenishmentDataScopeFilter(req);
 
-    // 总库存金额
-    const totalInv = queryOne('SELECT COALESCE(SUM(available_qty * weighted_avg_cost), 0) as val FROM inventory WHERE 1=1' + dsf.inventory.sql, dsf.inventory.params)?.val || 0;
+    // 总库存金额（普通库存，原币口径，不折 CNY）
+    const totalInvBase = queryOne('SELECT COALESCE(SUM(available_qty * weighted_avg_cost), 0) as val FROM inventory WHERE 1=1' + dsf.inventory.sql, dsf.inventory.params)?.val || 0;
+    // 寄售库存资产（原币口径，叠加 active 批次 remaining_inventory_value；与 inventory 相同数据权限 scope 过滤 country_name）
+    const consignScope = adaptScopeToLots(dsf.inventory);
+    const totalConsign = queryOne('SELECT COALESCE(SUM(remaining_inventory_value), 0) as val FROM consignment_inventory_lots WHERE status = \'active\'' + consignScope.sql, consignScope.params)?.val || 0;
+    const totalInv = (Number(totalInvBase) || 0) + (Number(totalConsign) || 0);
 
     // 在途库存金额（用标准采购价估算）
     const transitInv = queryOne(`
@@ -14322,6 +14333,17 @@ app.get('/api/financial-risk/overview', requireApiPermission('dashboard_view'), 
       } else {
         // rate 缺失时跳过该行并记录（与库存总表一致，不fallback=1）
         invMissingRates.push({ country: r.country, currency: currency || '(unknown)' });
+      }
+    }
+    // 寄售库存资产（CNY，与公司资产口径一致）：按 country_name 折算，复用同一汇率表与缺失汇率跳过逻辑
+    // 注：本接口 inventory 查询未套用数据权限 scope，寄售此处同样不套用，保持与 inventory 完全一致
+    const consignAssetRows = query(`SELECT country_name, COALESCE(SUM(remaining_inventory_value), 0) as v FROM consignment_inventory_lots WHERE status = 'active' GROUP BY country_name`).rows;
+    for (const l of consignAssetRows) {
+      const rate = getInventoryRate({ country: l.country_name }, countryToCurrency, foreignToRmbMap);
+      if (rate) {
+        inventoryAssets += Number(l.v) * rate;
+      } else {
+        invMissingRates.push({ country: l.country_name, currency: countryToCurrency[l.country_name] || '(unknown)' });
       }
     }
     if (invMissingRates.length > 0) {
@@ -14546,6 +14568,13 @@ app.get('/api/financial-risk/inventory-breakdown', requireApiPermission('dashboa
         warehouse: r.warehouse,
         amount_cny: amountCny
       });
+    }
+
+    // 寄售库存资产（CNY）：计入 total（明细下钻暂未扩展；本接口 inventory 未套 scope，寄售同样不套，与 inventory 一致）
+    const consignBreakRows = query(`SELECT country_name, COALESCE(SUM(remaining_inventory_value), 0) as v FROM consignment_inventory_lots WHERE status = 'active' GROUP BY country_name`).rows;
+    for (const l of consignBreakRows) {
+      const rate = getInventoryRate({ country: l.country_name }, countryToCurrency, foreignToRmbMap);
+      if (rate) total += Number(l.v) * rate;
     }
 
     // 确定当前维度
