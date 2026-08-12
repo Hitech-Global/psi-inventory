@@ -310,6 +310,7 @@ const NAV_MODULES=[
   {id:'inventory',key:'nav.inventory',label:t("nav.inventory", "\u5e93\u5b58\u7ba1\u7406"),items:[
     {id:'skus',key:'nav.skus',icon:'🏷️',label:t("nav.skus", "SKU\u4e3b\u6570\u636e"),perm:'sku_view'},
     {id:'inventory',key:'nav.inventory_total',icon:'📦',label:t("nav.inventory_total","库存总表"),perm:'inventory_view'},
+    {id:'consignment',key:'nav.consignment',icon:'🤝',label:t("nav.consignment","寄售库存"),perm:'inventory_view'},
     {id:'check',key:'nav.stock_check',icon:'🔍',label:t("nav.stock_check", "\u5e93\u5b58\u76d8\u70b9"),perm:'check_view'},
     {id:'stagnant',key:'nav.stagnant',icon:'⚠️',label:t("nav.stagnant", "\u5446\u6ede\u5206\u6790"),perm:'stagnant_view'},
   ]},
@@ -357,7 +358,7 @@ const NAV_MODULES=[
 // 导航中文 fallback：避免 label 在加载时被 t() 凝固为非中文
 var NAV_ZH={
   'nav.home':'首页看板','nav.dashboard':'首页看板','nav.inventory':'库存管理',
-  'nav.inventory_total':'库存总表','nav.skus':'SKU主数据','nav.stock_check':'库存盘点',
+  'nav.inventory_total':'库存总表','nav.consignment':'寄售库存','nav.skus':'SKU主数据','nav.stock_check':'库存盘点',
   'nav.stagnant':'呆滞分析','nav.sales':'销售','nav.sales_data':'销售数据',
   'nav.forecast':'订单预测','nav.procurement':'采购链','nav.po':'PO管理',
   'nav.pi':'PI管理','nav.ci':'CI/PL管理','nav.logistics':'物流管理','nav.inbound':'入库管理',
@@ -457,7 +458,7 @@ function showPage(page){
   document.querySelectorAll('.topnav-item').forEach((el,i)=>{if(NAV_MODULES[i]&&NAV_MODULES[i].id===currentModule)el.classList.add('active');else el.classList.remove('active')});
   const titles={dashboard:t("nav.dashboard", "\u9996\u9875\u770b\u677f"),skus:t("nav.skus", "SKU\u4e3b\u6570\u636e"),inventory:t("page.inventory_total","库存总表"),outbound:t("nav.outbound","销售数据"),replenishment:t("nav.replenishment","订单预测"),stagnant:t("nav.stagnant", "\u5446\u6ede\u5206\u6790"),check:t("nav.stock_check", "\u5e93\u5b58\u76d8\u70b9"),po:t("nav.po", "PO\u7ba1\u7406"),pi:t("nav.pi", "PI\u7ba1\u7406"),ci:t("nav.ci", "CI/PL\u7ba1\u7406"),logistics:t("nav.logistics", "\u7269\u6d41\u7ba1\u7406"),inbound:t("nav.inbound", "\u5165\u5e93\u7ba1\u7406"),cost:t("nav.cost", "\u6210\u672c\u7ba1\u7406"),payment:t("nav.payment", "\u4ed8\u6b3e\u7ba1\u7406"),'payable-cockpit':t("nav.payable_cockpit","应付驾驶舱"),'payable-list':t("nav.payable_list","应付费用列表"),forwarder:t("nav.forwarder_analysis", "\u8d27\u4ee3\u5206\u6790"),countries:t("nav.countries", "\u56fd\u5bb6\u7ba1\u7406"),warehouses:t("nav.warehouses", "\u4ed3\u5e93\u7ba1\u7406"),suppliers:t("nav.suppliers", "\u4f9b\u5e94\u5546\u7ba1\u7406"),'freight-forwarders':t("nav.freight_forwarders", "\u8d27\u4ee3\u7ba1\u7406"),currencies:t("nav.currencies", "\u5e01\u79cd\u8bbe\u7f6e"),config:t("nav.config", "\u7cfb\u7edf\u53c2\u6570"),'payment-terms':t("nav.payment_terms", "\u4ed8\u6b3e\u6761\u4ef6"),'approval-flows':t("nav.approval_flows", "\u5ba1\u6279\u6d41\u7ba1\u7406"),'approval-center':t("nav.approval_center", "\u5ba1\u6279\u4e2d\u5fc3"),'expense-types':t("nav.expense_types", "\u8d39\u7528\u7c7b\u578b"),'allocation-rules':t("nav.allocation_rules", "\u5206\u644a\u89c4\u5219"),users:t("nav.users", "\u7528\u6237\u7ba1\u7406"),roles:t("nav.roles","角色权限"),'batch-tasks':t("nav.batch_tasks", "\u6279\u91cf\u4efb\u52a1\u4e2d\u5fc3"),'brand-settings':t("nav.brand_settings", "\u54c1\u724c\u8bbe\u7f6e"),'operation-logs':t("nav.operation_logs", "\u64cd\u4f5c\u65e5\u5fd7"),'payment-categories':t("nav.payment_categories", "\u4ed8\u6b3e\u7c7b\u76ee\u7ba1\u7406"),'payer-entities':t("nav.payer_entities", "\u4ed8\u6b3e\u4e3b\u4f53")};
   document.getElementById('content-inner').innerHTML='<div id="flash-container"></div>';
-  const R={dashboard:renderDashboard,skus:renderSKUs,inventory:renderInventory,outbound:renderOutbound,replenishment:renderReplenishment,stagnant:renderStagnant,check:renderCheck,po:renderPO,pi:renderPI,ci:renderCI,logistics:renderLogistics,inbound:renderInbound,cost:renderCost,payment:renderPayment,'payable-cockpit':renderPayableCockpit,'payable-list':renderPayableList,forwarder:renderForwarderAnalysis,countries:renderCountries,warehouses:renderWarehouses,suppliers:renderSuppliers,'freight-forwarders':renderFreightForwarders,currencies:renderCurrencies,config:renderConfig,'payment-terms':renderPaymentTerms,'approval-flows':renderApprovalFlows,'approval-center':renderApprovalCenter,'expense-types':renderExpenseTypes,'allocation-rules':renderAllocationRules,users:renderUsers,roles:renderRoles,'batch-tasks':renderBatchTasks,'brand-settings':renderBrandSettings,'operation-logs':renderOperationLogs,'payment-categories':renderPaymentCategories,'payer-entities':renderPayerEntities};
+  const R={dashboard:renderDashboard,skus:renderSKUs,inventory:renderInventory,consignment:renderConsignment,outbound:renderOutbound,replenishment:renderReplenishment,stagnant:renderStagnant,check:renderCheck,po:renderPO,pi:renderPI,ci:renderCI,logistics:renderLogistics,inbound:renderInbound,cost:renderCost,payment:renderPayment,'payable-cockpit':renderPayableCockpit,'payable-list':renderPayableList,forwarder:renderForwarderAnalysis,countries:renderCountries,warehouses:renderWarehouses,suppliers:renderSuppliers,'freight-forwarders':renderFreightForwarders,currencies:renderCurrencies,config:renderConfig,'payment-terms':renderPaymentTerms,'approval-flows':renderApprovalFlows,'approval-center':renderApprovalCenter,'expense-types':renderExpenseTypes,'allocation-rules':renderAllocationRules,users:renderUsers,roles:renderRoles,'batch-tasks':renderBatchTasks,'brand-settings':renderBrandSettings,'operation-logs':renderOperationLogs,'payment-categories':renderPaymentCategories,'payer-entities':renderPayerEntities};
   if(R[page])R[page]();
 }
 
@@ -3584,6 +3585,79 @@ async function viewConsignmentLots(warehouse,skuCode){
   }
 }
 
+// ==================== 寄售库存独立页面（Phase 2：数据源 consignment_inventory_lots，不读取 inventory） ====================
+// 列表/筛选/底部合计；页头保留「寄售库存初始化」导入入口。
+async function renderConsignment(){
+  document.getElementById('content-inner').innerHTML =
+    '<div id="flash-container"></div>'+
+    '<div class="filter-bar"><div class="filter-form">'+
+      '<div class="filter-group"><label>'+t('nav.consignment.country','国家')+'</label><input type="text" id="cs-c" placeholder="'+t('nav.consignment.country_ph','国家')+'"></div>'+
+      '<div class="filter-group"><label>'+t('ci.customer','客户名称')+'</label><input type="text" id="cs-cust" placeholder="'+t('ci.customer_ph','客户名称')+'"></div>'+
+      '<div class="filter-group"><label>SKU</label><input type="text" id="cs-sku" placeholder="SKU"></div>'+
+      '<div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadConsignment()">'+t('action.search','搜索')+'</button><button class="btn btn-secondary btn-sm" onclick="resetConsignmentFilters()">'+t('action.reset','重置')+'</button></div>'+
+    '</div></div>'+
+    '<div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🤝 '+t('nav.consignment','寄售库存')+'</div>'+
+      '<div class="table-section-title-right"><button class="btn btn-secondary btn-sm" onclick="openConsignmentImport()">'+t('btn.consignment_init','📦 寄售库存初始化')+'</button></div></div>'+
+      '<div id="cs-table"></div>'+
+      '<div id="cs-total" class="stats-grid" style="margin-top:12px"></div>'+
+    '</div>';
+  loadConsignment();
+}
+
+async function loadConsignment(){
+  try{
+    const c=document.getElementById('cs-c')?.value||'';
+    const cust=document.getElementById('cs-cust')?.value||'';
+    const sku=document.getElementById('cs-sku')?.value||'';
+    const q=[];
+    if(c) q.push('country='+encodeURIComponent(c));
+    if(cust) q.push('customer_name='+encodeURIComponent(cust));
+    if(sku) q.push('sku_code='+encodeURIComponent(sku));
+    const lots=await api('/api/consignment-inventory/lots'+(q.length?'?'+q.join('&'):''));
+    const box=document.getElementById('cs-table');
+    if(!box)return;
+    if(!lots||!lots.length){
+      box.innerHTML='<div style="text-align:center;color:#999;padding:30px">'+t('ci.no_lots','无寄售批次记录')+'</div>';
+      const tot=document.getElementById('cs-total'); if(tot)tot.innerHTML='';
+      return;
+    }
+    let html='<div class="table-container" style="box-shadow:none"><table class="data-table"><thead><tr>'+
+      '<th>'+t('ci.customer','客户名称')+'</th>'+
+      '<th>SKU</th>'+
+      '<th>'+t('nav.warehouse','仓库')+'</th>'+
+      '<th>'+t('ci.outbound_no','出库单号')+'</th>'+
+      '<th class="text-right">'+t('ci.remaining_qty','当前剩余数量')+'</th>'+
+      '<th class="text-right">'+t('ci.unit_cost','寄售成本单价')+'</th>'+
+      '<th class="text-right">'+t('ci.remaining_value','当前剩余库存金额')+'</th>'+
+      '<th class="text-right">'+t('ci.sold_qty','已销售')+'</th>'+
+    '</tr></thead><tbody>';
+    let sumQty=0, sumVal=0;
+    lots.forEach(function(l){
+      const qty=Number(l.remaining_qty||0), val=Number(l.remaining_inventory_value||0);
+      sumQty+=qty; sumVal+=val;
+      html+='<tr><td>'+esc(l.customer_name||'-')+'</td><td>'+esc(l.sku_code||'-')+'</td><td>'+esc(l.warehouse_name||'-')+'</td><td>'+esc(l.outbound_no||'-')+'</td>'+
+        '<td class="text-right">'+qty.toLocaleString()+'</td>'+
+        '<td class="text-right">'+fmtMoney(l.unit_cost)+'</td>'+
+        '<td class="text-right">'+fmtMoney(l.remaining_inventory_value)+'</td>'+
+        '<td class="text-right">'+Number(l.sold_qty||0).toLocaleString()+'</td></tr>';
+    });
+    html+='</tbody></table></div>';
+    box.innerHTML=html;
+    const tot=document.getElementById('cs-total');
+    if(tot)tot.innerHTML='<div class="stat-card"><div class="stat-label">'+t('ci.total_remaining_qty','剩余数量合计')+'</div><div class="stat-value">'+sumQty.toLocaleString()+'</div></div>'+
+      '<div class="stat-card"><div class="stat-label">'+t('ci.total_remaining_value','库存金额合计')+'</div><div class="stat-value">'+fmtMoney(sumVal)+'</div></div>';
+  }catch(e){
+    const box=document.getElementById('cs-table');
+    if(box)box.innerHTML='<div style="text-align:center;color:#ff4d4f;padding:30px">'+esc((e&&e.message)||t('ci.load_fail','加载失败'))+'</div>';
+  }
+}
+
+function resetConsignmentFilters(){
+  const c=document.getElementById('cs-c'), cust=document.getElementById('cs-cust'), sku=document.getElementById('cs-sku');
+  if(c)c.value=''; if(cust)cust.value=''; if(sku)sku.value='';
+  loadConsignment();
+}
+
 // ==================== 销售数据批量导入 ====================
 const SALES_IMPORT_COLUMNS=[
   {key:'source_system',label:t("po.018", "\u6765\u6e90\u7cfb\u7edf"),required:true},
@@ -3947,7 +4021,7 @@ function invStatusBadge(v){
 async function renderInventory(){
   invDataCache = []; invAllFilteredIds = []; invSelectAllMode = false;
   document.getElementById('content-inner').innerHTML=
-    t('html.renderInventory', `<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>国家</label><select id="inv-c" onchange="onInvFilterChange('country')"><option value="">全部</option></select></div><div class="filter-group"><label>仓库</label><select id="inv-w" onchange="onInvFilterChange('warehouse')"><option value="">全部</option></select></div><div class="filter-group"><label>品牌</label><select id="inv-b" onchange="onInvFilterChange('brand')"><option value="">全部</option></select></div><div class="filter-group"><label>关键词</label><input type="text" id="inv-k" placeholder="SKU/产品名" oninput="debouncedInvKeyword()"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadInv()">搜索</button><button class="btn btn-secondary btn-sm" onclick="resetInvFilters()">重置</button>{v1}</div></div></div><div id="inv-batch-bar" style="display:none;background:var(--bg-card,#fff);border:1px solid var(--border,#e0e0e0);border-radius:8px;padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span id="inv-batch-count" style="font-weight:600;margin-right:8px"></span><button class="btn btn-sm btn-secondary" onclick="invBatchAction('export')">📊 导出</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_status')">🏷️ 库存状态</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_focused')">⭐ 重点关注</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_safety_stock')">🛡️ 安全库存</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_turnover')">🎯 目标周转</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_replenish_rule')">📋 补货规则</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_remark')">📝 库存备注</button><button class="btn btn-sm btn-warning" onclick="invBatchAction('inventory_adjust')">🔧 发起调整单</button><button class="btn btn-sm btn-danger" onclick="invBatchAction('delete')" style="background:#ff4d4f;color:#fff;border:none">🗑️ 删除</button><button class="btn btn-sm btn-secondary" onclick="invClearSelection()" style="margin-left:auto">取消选择</button></div><div id="inv-cards" class="stats-grid"></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">📦 库存总表</div><div class="table-section-title-right" id="inv-rate-display" style="font-size:12px;color:#666;display:flex;gap:12px;align-items:center"></div></div><div id="inv-table"></div></div>`, {v1: hasPermission('inventory_import')?(t('gen.L2829.1','<button class="btn btn-secondary btn-sm" onclick="openInvBatchImport()">📥 导入库存</button>')+'<button class="btn btn-secondary btn-sm" onclick="openConsignmentImport()" style="margin-left:8px">'+t('btn.consignment_init','📦 寄售库存初始化')+'</button>'):''});
+    t('html.renderInventory', `<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>国家</label><select id="inv-c" onchange="onInvFilterChange('country')"><option value="">全部</option></select></div><div class="filter-group"><label>仓库</label><select id="inv-w" onchange="onInvFilterChange('warehouse')"><option value="">全部</option></select></div><div class="filter-group"><label>品牌</label><select id="inv-b" onchange="onInvFilterChange('brand')"><option value="">全部</option></select></div><div class="filter-group"><label>关键词</label><input type="text" id="inv-k" placeholder="SKU/产品名" oninput="debouncedInvKeyword()"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadInv()">搜索</button><button class="btn btn-secondary btn-sm" onclick="resetInvFilters()">重置</button>{v1}</div></div></div><div id="inv-batch-bar" style="display:none;background:var(--bg-card,#fff);border:1px solid var(--border,#e0e0e0);border-radius:8px;padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span id="inv-batch-count" style="font-weight:600;margin-right:8px"></span><button class="btn btn-sm btn-secondary" onclick="invBatchAction('export')">📊 导出</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_status')">🏷️ 库存状态</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_focused')">⭐ 重点关注</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_safety_stock')">🛡️ 安全库存</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_turnover')">🎯 目标周转</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_replenish_rule')">📋 补货规则</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_remark')">📝 库存备注</button><button class="btn btn-sm btn-warning" onclick="invBatchAction('inventory_adjust')">🔧 发起调整单</button><button class="btn btn-sm btn-danger" onclick="invBatchAction('delete')" style="background:#ff4d4f;color:#fff;border:none">🗑️ 删除</button><button class="btn btn-sm btn-secondary" onclick="invClearSelection()" style="margin-left:auto">取消选择</button></div><div id="inv-cards" class="stats-grid"></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">📦 库存总表</div><div class="table-section-title-right" id="inv-rate-display" style="font-size:12px;color:#666;display:flex;gap:12px;align-items:center"></div></div><div id="inv-table"></div></div>`, {v1: hasPermission('inventory_import')?(t('gen.L2829.1','<button class="btn btn-secondary btn-sm" onclick="openInvBatchImport()">📥 导入库存</button>')):''});
   // 筛选级联：根据当前已选条件动态刷新下拉可选项（仅库存总表页面）
   try{ await refreshInvFilterOptions(); }catch(e){console.warn('filter-options load failed',e)}
   // 恢复库存总表保存的筛选状态（仅本页面 localStorage，不影响其他页面）

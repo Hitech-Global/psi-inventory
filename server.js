@@ -3850,13 +3850,20 @@ app.post('/api/consignment-inventory/import', requireApiPermission('inventory_im
 }));
 
 // 寄售库存批次行查询（活跃）
+// 数据源：consignment_inventory_lots（寄售事实表），不读取 inventory。
+// 筛选：warehouse / sku_code / country / customer_name；并套用与 inventory 相同的数据权限 scope。
 app.get('/api/consignment-inventory/lots', requireApiPermission('inventory_view'), asyncHandler((req, res) => {
   try {
-    const { warehouse, sku_code } = req.query;
-    let sql = `SELECT * FROM consignment_inventory_lots WHERE status = 'active'`;
-    const params = [];
+    const { warehouse, sku_code, country, customer_name } = req.query;
+    // 数据权限 scope：与 inventory 一致（country/warehouse 维度），列名适配到 consignment_inventory_lots
+    const dsf = buildDashboardScopeFilters(req);
+    const lotScope = adaptScopeToLots(dsf.inventory);
+    let sql = `SELECT * FROM consignment_inventory_lots WHERE status = 'active'` + lotScope.sql;
+    const params = lotScope.params.slice();
     if (warehouse) { sql += ' AND warehouse_name = ?'; params.push(warehouse); }
     if (sku_code) { sql += ' AND sku_code = ?'; params.push(sku_code); }
+    if (country) { sql += ' AND country_name = ?'; params.push(country); }
+    if (customer_name) { sql += ' AND customer_name LIKE ?'; params.push('%' + customer_name + '%'); }
     sql += ' ORDER BY customer_name, outbound_no';
     res.json(query(sql, params).rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
