@@ -254,6 +254,16 @@ function initDatabase() {
     )`);
     d.exec("CREATE INDEX IF NOT EXISTS idx_login_audit_user ON login_audit(user_id)");
     d.exec("CREATE INDEX IF NOT EXISTS idx_login_audit_created ON login_audit(created_at)");
+
+    // DATA-SCOPE: 用户数据权限（独立于功能权限，控制销售模块数据可见范围）
+    // countries/brands/warehouses 均为 JSON 数组，空数组表示不限制该维度
+    d.exec(`CREATE TABLE IF NOT EXISTS user_data_scope (
+      user_id TEXT PRIMARY KEY,
+      countries TEXT DEFAULT '[]',
+      brands TEXT DEFAULT '[]',
+      warehouses TEXT DEFAULT '[]',
+      updated_at TEXT DEFAULT (datetime('now'))
+    )`);
   })();
 
   // 国家

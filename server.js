@@ -1311,6 +1311,8 @@ function apiAuth(req, res, next) {
   req.currentUserName = user.name;
   req.currentUserRole = user.role_id || '';
   req.currentUserPermissions = perms;
+  // DATA-SCOPE: 加载用户数据权限（每次请求实时读取，变更即时生效）
+  req.currentUserDataScope = getUserDataScope(user.id);
   next();
 }
 
@@ -1326,6 +1328,139 @@ function requireApiPermission(...perms) {
 function requireLogin(req, res, next) {
   if (!req.currentUserId) return res.status(401).json({ error: '未登录' });
   next();
+}
+
+// ==================== 数据权限（Data Scope） ====================
+// 独立于功能权限，控制销售模块数据可见范围（国家/品牌/仓库多选）
+// admin 角色不受数据权限限制；普通用户若未配置 user_data_scope 行则也不限制（向后兼容）
+
+function getUserDataScope(userId) {
+  const row = queryOne('SELECT * FROM user_data_scope WHERE user_id=?', [userId]);
+  if (!row) return null;
+  let countries = [], brands = [], warehouses = [];
+  try { countries = JSON.parse(row.countries || '[]'); } catch (e) { countries = []; }
+  try { brands = JSON.parse(row.brands || '[]'); } catch (e) { brands = []; }
+  try { warehouses = JSON.parse(row.warehouses || '[]'); } catch (e) { warehouses = []; }
+  return { countries, brands, warehouses };
+}
+
+// 判断当前用户是否需要数据权限过滤
+function needsDataScopeFilter(req) {
+  if (!req.currentUserId) return false;
+  // admin 角色不受限
+  if (req.currentUserRole === 'role_admin') return false;
+  // 通配权限也跳过
+  if ((req.currentUserPermissions || []).includes('*')) return false;
+  // 未配置 data scope 则不限制
+  const scope = req.currentUserDataScope;
+  if (!scope) return false;
+  // 三个维度都为空则不限制
+  if ((!scope.countries || scope.countries.length === 0) &&
+      (!scope.brands || scope.brands.length === 0) &&
+      (!scope.warehouses || scope.warehouses.length === 0)) return false;
+  return true;
+}
+
+// 构建销售数据权限 SQL 过滤片段（用于 sales_records 表查询）
+// tablePrefix: 表别名前缀，默认 'sr'，传 '' 则无前缀
+// 返回 { sql: ' AND ...', params: [...] } 或 { sql: '', params: [] }
+function buildSalesDataScopeFilter(req, tablePrefix) {
+  // tablePrefix 显式传 '' 表示无前缀；undefined 时默认 'sr'
+  const tp = (tablePrefix !== undefined) ? tablePrefix : 'sr';
+  const colPrefix = tp ? tp + '.' : '';
+  if (!needsDataScopeFilter(req)) return { sql: '', params: [] };
+  const scope = req.currentUserDataScope;
+  const params = [];
+  const conditions = [];
+
+  // 国家过滤：country_ids → 解析为 country.name + country.code，与 sales_records.country 匹配
+  // 仓库过滤：warehouse_ids → 解析为 country_id → 再追加到国家维度
+  let effectiveCountryIds = [];
+  if (scope.countries && scope.countries.length > 0) {
+    effectiveCountryIds = effectiveCountryIds.concat(scope.countries);
+  }
+  if (scope.warehouses && scope.warehouses.length > 0) {
+    const whRows = query('SELECT DISTINCT country_id FROM warehouses WHERE id IN (' +
+      scope.warehouses.map(() => '?').join(',') + ") AND country_id != ''", scope.warehouses).rows;
+    whRows.forEach(r => { if (r.country_id && effectiveCountryIds.indexOf(r.country_id) < 0) effectiveCountryIds.push(r.country_id); });
+  }
+
+  if (effectiveCountryIds.length > 0) {
+    // 解析 country_ids → name + code 值列表，匹配 sales_records.country
+    const countryRows = query('SELECT name, code FROM countries WHERE id IN (' +
+      effectiveCountryIds.map(() => '?').join(',') + ')', effectiveCountryIds).rows;
+    const countryValues = [];
+    countryRows.forEach(r => {
+      if (r.name && countryValues.indexOf(r.name) < 0) countryValues.push(r.name);
+      if (r.code && countryValues.indexOf(r.code) < 0) countryValues.push(r.code);
+    });
+    // 同时也把 country_id 本身加入（sales_records.country 可能存储 id）
+    effectiveCountryIds.forEach(cid => { if (countryValues.indexOf(cid) < 0) countryValues.push(cid); });
+    if (countryValues.length > 0) {
+      conditions.push(colPrefix + 'country IN (' + countryValues.map(() => '?').join(',') + ')');
+      params.push(...countryValues);
+    }
+  }
+
+  // 品牌过滤：直接匹配 sales_records.brand
+  if (scope.brands && scope.brands.length > 0) {
+    conditions.push(colPrefix + 'brand IN (' + scope.brands.map(() => '?').join(',') + ')');
+    params.push(...scope.brands);
+  }
+
+  if (conditions.length === 0) return { sql: '', params: [] };
+  return { sql: ' AND ' + conditions.join(' AND '), params };
+}
+
+// 构建订单预测数据权限 SQL 过滤片段（用于 replenishment_suggestions rs + skus s 表查询）
+// country → rs.country, brand → s.brand, warehouse → rs.target_warehouse
+// 返回 { sql: ' AND ...', params: [...] } 或 { sql: '', params: [] }
+function buildReplenishmentDataScopeFilter(req) {
+  if (!needsDataScopeFilter(req)) return { sql: '', params: [] };
+  const scope = req.currentUserDataScope;
+  const params = [];
+  const conditions = [];
+
+  // 国家过滤：country_ids → 解析为 name + code + id，匹配 rs.country
+  if (scope.countries && scope.countries.length > 0) {
+    const countryRows = query('SELECT name, code FROM countries WHERE id IN (' +
+      scope.countries.map(() => '?').join(',') + ')', scope.countries).rows;
+    const countryValues = [];
+    countryRows.forEach(r => {
+      if (r.name && countryValues.indexOf(r.name) < 0) countryValues.push(r.name);
+      if (r.code && countryValues.indexOf(r.code) < 0) countryValues.push(r.code);
+    });
+    scope.countries.forEach(cid => { if (countryValues.indexOf(cid) < 0) countryValues.push(cid); });
+    if (countryValues.length > 0) {
+      conditions.push('rs.country IN (' + countryValues.map(() => '?').join(',') + ')');
+      params.push(...countryValues);
+    }
+  }
+
+  // 品牌过滤：s.brand（来自 skus JOIN）
+  if (scope.brands && scope.brands.length > 0) {
+    conditions.push('s.brand IN (' + scope.brands.map(() => '?').join(',') + ')');
+    params.push(...scope.brands);
+  }
+
+  // 仓库过滤：rs.target_warehouse（直接列，解析 warehouse_ids → id + name）
+  if (scope.warehouses && scope.warehouses.length > 0) {
+    const whRows = query('SELECT id, name FROM warehouses WHERE id IN (' +
+      scope.warehouses.map(() => '?').join(',') + ')', scope.warehouses).rows;
+    const whValues = [];
+    whRows.forEach(r => {
+      if (r.id && whValues.indexOf(r.id) < 0) whValues.push(r.id);
+      if (r.name && whValues.indexOf(r.name) < 0) whValues.push(r.name);
+    });
+    scope.warehouses.forEach(wid => { if (whValues.indexOf(wid) < 0) whValues.push(wid); });
+    if (whValues.length > 0) {
+      conditions.push('rs.target_warehouse IN (' + whValues.map(() => '?').join(',') + ')');
+      params.push(...whValues);
+    }
+  }
+
+  if (conditions.length === 0) return { sql: '', params: [] };
+  return { sql: ' AND ' + conditions.join(' AND '), params };
 }
 
 // 所有 /api 路由需要认证（公共鉴权前缀已在 apiAuth 内放行）
@@ -1448,7 +1583,8 @@ app.get('/api/me', asyncHandler((req, res) => {
     role_id: user.role_id, role_name: role ? role.name : '',
     status: user.status, email: user.email, auth_source: user.auth_source,
     language_preference: normalizeLanguage(user.language_preference),
-    permissions: req.currentUserPermissions || (role ? JSON.parse(role.permissions || '[]') : [])
+    permissions: req.currentUserPermissions || (role ? JSON.parse(role.permissions || '[]') : []),
+    data_scope: req.currentUserDataScope || null
   });
 }));
 
@@ -1568,6 +1704,34 @@ app.delete('/api/users/:id', requireApiPermission('user_manage'), asyncHandler((
     run('DELETE FROM users WHERE id = ?', [req.params.id]);
     run('DELETE FROM sessions WHERE user_id = ?', [req.params.id]);
     res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+}));
+
+// ==================== 数据权限管理 ====================
+// 获取用户数据权限配置
+app.get('/api/users/:id/data-scope', requireApiPermission('user_manage'), asyncHandler((req, res) => {
+  try {
+    const user = queryOne('SELECT id FROM users WHERE id=?', [req.params.id]);
+    if (!user) return res.status(404).json({ error: '用户不存在' });
+    const scope = getUserDataScope(req.params.id);
+    res.json(scope || { countries: [], brands: [], warehouses: [] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+}));
+
+// 保存用户数据权限配置
+app.put('/api/users/:id/data-scope', requireApiPermission('user_manage'), asyncHandler((req, res) => {
+  try {
+    const user = queryOne('SELECT id, role_id FROM users WHERE id=?', [req.params.id]);
+    if (!user) return res.status(404).json({ error: '用户不存在' });
+    const { countries, brands, warehouses } = req.body;
+    const c = Array.isArray(countries) ? countries.filter(x => typeof x === 'string' && x) : [];
+    const b = Array.isArray(brands) ? brands.filter(x => typeof x === 'string' && x) : [];
+    const w = Array.isArray(warehouses) ? warehouses.filter(x => typeof x === 'string' && x) : [];
+    // upsert
+    run(`INSERT INTO user_data_scope (user_id, countries, brands, warehouses, updated_at) VALUES (?, ?, ?, ?, datetime('now'))
+         ON CONFLICT(user_id) DO UPDATE SET countries=excluded.countries, brands=excluded.brands, warehouses=excluded.warehouses, updated_at=excluded.updated_at`,
+      [req.params.id, JSON.stringify(c), JSON.stringify(b), JSON.stringify(w)]);
+    res.json({ success: true, countries: c, brands: b, warehouses: w });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
@@ -4044,6 +4208,10 @@ app.get('/api/sales-records', requireApiPermission('outbound_view'), asyncHandle
   if (import_batch_id) { sql += ' AND sr.import_batch_id = ?'; params.push(import_batch_id); }
   if (country) { sql += ' AND sr.country = ?'; params.push(country); }
 
+  // DATA-SCOPE: 应用数据权限过滤（国家/品牌/仓库）
+  const scopeFilter = buildSalesDataScopeFilter(req);
+  if (scopeFilter.sql) { sql += scopeFilter.sql; params.push(...scopeFilter.params); }
+
   // Count total matching records (for pagination metadata)
   let countSql = sql.replace(/^SELECT sr\.\*, s\.product_name FROM/, 'SELECT COUNT(*) as total FROM');
   countSql = countSql.replace(/ LEFT JOIN skus s ON sr\.sku_code = s\.sku_code/, '');
@@ -4060,10 +4228,15 @@ app.get('/api/sales-records', requireApiPermission('outbound_view'), asyncHandle
 
 // 销售明细筛选下拉选项
 app.get('/api/sales-records/filter-options', requireApiPermission('outbound_view'), asyncHandler((req, res) => {
-  const source_systems = query(`SELECT DISTINCT source_system FROM sales_records WHERE source_system IS NOT NULL AND source_system != '' ORDER BY source_system`).rows.map(r => r.source_system);
-  const shop_platforms = query(`SELECT DISTINCT shop_platform FROM sales_records WHERE shop_platform IS NOT NULL AND shop_platform != '' ORDER BY shop_platform`).rows.map(r => r.shop_platform);
-  const brands = query(`SELECT DISTINCT brand FROM sales_records WHERE brand IS NOT NULL AND brand != '' ORDER BY brand`).rows.map(r => r.brand);
-  const countries = query(`SELECT DISTINCT country FROM sales_records WHERE country IS NOT NULL AND country != '' ORDER BY country`).rows.map(r => r.country);
+  // DATA-SCOPE: 数据权限范围内构建基础 WHERE 子句
+  const scopeFilter = buildSalesDataScopeFilter(req, '');
+  const scopeWhere = scopeFilter.sql || '';
+  const scopeParams = scopeFilter.params;
+
+  const source_systems = query(`SELECT DISTINCT source_system FROM sales_records WHERE source_system IS NOT NULL AND source_system != ''` + scopeWhere + ` ORDER BY source_system`, scopeParams).rows.map(r => r.source_system);
+  const shop_platforms = query(`SELECT DISTINCT shop_platform FROM sales_records WHERE shop_platform IS NOT NULL AND shop_platform != ''` + scopeWhere + ` ORDER BY shop_platform`, scopeParams).rows.map(r => r.shop_platform);
+  const brands = query(`SELECT DISTINCT brand FROM sales_records WHERE brand IS NOT NULL AND brand != ''` + scopeWhere + ` ORDER BY brand`, scopeParams).rows.map(r => r.brand);
+  const countries = query(`SELECT DISTINCT country FROM sales_records WHERE country IS NOT NULL AND country != ''` + scopeWhere + ` ORDER BY country`, scopeParams).rows.map(r => r.country);
   res.json({ source_systems, shop_platforms, brands, countries });
 }));
 
@@ -4755,6 +4928,13 @@ app.get('/api/replenishment-suggestions/summary', requireApiPermission('replenis
   if (keyword) { where += (where ? ' AND' : ' WHERE') + ' (rs.sku_code LIKE ? OR s.product_name LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`); }
   if (sales_status) { where += (where ? ' AND' : ' WHERE') + ' rs.sales_status = ?'; params.push(sales_status); }
   if (lifecycle_status) { where += (where ? ' AND' : ' WHERE') + ' rs.lifecycle_status = ?'; params.push(lifecycle_status); }
+  // DATA-SCOPE: 应用数据权限过滤（国家/品牌/仓库）
+  const rsScopeFilterSum = buildReplenishmentDataScopeFilter(req);
+  if (rsScopeFilterSum.sql) {
+    const scopeConds = rsScopeFilterSum.sql.replace(/^ AND /, '');
+    where += (where ? ' AND ' : ' WHERE ') + scopeConds;
+    params.push(...rsScopeFilterSum.params);
+  }
   const rows = query(`SELECT rs.*,
       i.id AS inv_row_id,
       i.available_qty AS inv_available_qty,
@@ -4834,6 +5014,9 @@ app.get('/api/replenishment-suggestions/daily-sales', requireApiPermission('repl
   if (keyword) { sql += ' AND (rs.sku_code LIKE ? OR s.product_name LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`); }
   if (sales_status) { sql += ' AND rs.sales_status = ?'; params.push(sales_status); }
   if (lifecycle_status) { sql += ' AND rs.lifecycle_status = ?'; params.push(lifecycle_status); }
+  // DATA-SCOPE: 应用数据权限过滤（国家/品牌/仓库）
+  const rsScopeFilter = buildReplenishmentDataScopeFilter(req);
+  if (rsScopeFilter.sql) { sql += rsScopeFilter.sql; params.push(...rsScopeFilter.params); }
   sql += ' ORDER BY CASE WHEN rs.lifecycle_status IN (\'stopped\',\'discontinued\') THEN 1 ELSE 0 END, rs.sku_code';
   const skus = query(sql, params).rows.map(applyLiveForecastInventory);
 
@@ -4854,8 +5037,11 @@ app.get('/api/replenishment-suggestions/daily-sales', requireApiPermission('repl
   let countryFilter = '';
   const salesParams = [...skuCodes, startDate, endDate];
   if (country) { countryFilter = ' AND country = ?'; salesParams.push(country); }
+  // DATA-SCOPE: 销售记录数据权限过滤
+  const salesScopeFilter1 = buildSalesDataScopeFilter(req, '');
+  salesParams.push(...salesScopeFilter1.params);
   const salesRows = query(
-    `SELECT sku_code, ${salesDate} as normalized_order_date, SUM(quantity) as qty FROM sales_records WHERE sku_code IN (${placeholders}) AND ${salesDate} >= ? AND ${salesDate} <= ? AND is_valid_order = 1${channelFilter}${countryFilter} GROUP BY sku_code, normalized_order_date`,
+    `SELECT sku_code, ${salesDate} as normalized_order_date, SUM(quantity) as qty FROM sales_records WHERE sku_code IN (${placeholders}) AND ${salesDate} >= ? AND ${salesDate} <= ? AND is_valid_order = 1${channelFilter}${countryFilter}${salesScopeFilter1.sql} GROUP BY sku_code, normalized_order_date`,
     salesParams
   ).rows;
 
@@ -4924,6 +5110,9 @@ app.get('/api/replenishment-suggestions/historical-sales', requireApiPermission(
   if (keyword) { skuSql += ' AND (rs.sku_code LIKE ? OR s.product_name LIKE ?)'; skuParams.push(`%${keyword}%`, `%${keyword}%`); }
   if (sales_status) { skuSql += ' AND rs.sales_status = ?'; skuParams.push(sales_status); }
   if (lifecycle_status) { skuSql += ' AND rs.lifecycle_status = ?'; skuParams.push(lifecycle_status); }
+  // DATA-SCOPE: 应用数据权限过滤（国家/品牌/仓库）
+  const hsRsScopeFilter = buildReplenishmentDataScopeFilter(req);
+  if (hsRsScopeFilter.sql) { skuSql += hsRsScopeFilter.sql; skuParams.push(...hsRsScopeFilter.params); }
   const skuRows = query(skuSql, skuParams).rows;
   const skuCodes = skuRows.map(r => r.sku_code);
   if (skuCodes.length === 0) {
@@ -4960,6 +5149,9 @@ app.get('/api/replenishment-suggestions/historical-sales', requireApiPermission(
     let monthlySalesSql = `SELECT sku_code, substr(${salesDate}, 1, 7) as ym, SUM(quantity) as qty FROM sales_records WHERE sku_code IN (${placeholders}) AND ${salesDate} >= ? AND ${salesDate} <= ? AND is_valid_order = 1`;
     const monthlySalesParams = [...skuCodes, fullStart, fullEnd];
     if (country) { monthlySalesSql += ' AND country = ?'; monthlySalesParams.push(country); }
+    // DATA-SCOPE: 销售记录数据权限过滤
+    const hsMonthlyScopeFilter = buildSalesDataScopeFilter(req, '');
+    if (hsMonthlyScopeFilter.sql) { monthlySalesSql += hsMonthlyScopeFilter.sql; monthlySalesParams.push(...hsMonthlyScopeFilter.params); }
     monthlySalesSql += ` GROUP BY sku_code, substr(${salesDate}, 1, 7)`;
     const salesRows = query(monthlySalesSql, monthlySalesParams).rows;
 
@@ -4993,6 +5185,9 @@ app.get('/api/replenishment-suggestions/historical-sales', requireApiPermission(
     let dailySalesSql = `SELECT sku_code, SUM(quantity) as qty FROM sales_records WHERE sku_code IN (${placeholders}) AND ${salesDate} >= ? AND ${salesDate} <= ? AND is_valid_order = 1`;
     const dailySalesParams = [...skuCodes, start, actualEnd];
     if (country) { dailySalesSql += ' AND country = ?'; dailySalesParams.push(country); }
+    // DATA-SCOPE: 销售记录数据权限过滤
+    const hsDailyScopeFilter = buildSalesDataScopeFilter(req, '');
+    if (hsDailyScopeFilter.sql) { dailySalesSql += hsDailyScopeFilter.sql; dailySalesParams.push(...hsDailyScopeFilter.params); }
     dailySalesSql += ' GROUP BY sku_code';
     const salesRows = query(dailySalesSql, dailySalesParams).rows;
 
@@ -5044,6 +5239,9 @@ app.get('/api/replenishment-suggestions/monthly-sales', requireApiPermission('re
   if (keyword) { skuSql += ' AND (rs.sku_code LIKE ? OR s.product_name LIKE ?)'; skuParams.push(`%${keyword}%`, `%${keyword}%`); }
   if (sales_status) { skuSql += ' AND rs.sales_status = ?'; skuParams.push(sales_status); }
   if (lifecycle_status) { skuSql += ' AND rs.lifecycle_status = ?'; skuParams.push(lifecycle_status); }
+  // DATA-SCOPE: 应用数据权限过滤（国家/品牌/仓库）
+  const msRsScopeFilter = buildReplenishmentDataScopeFilter(req);
+  if (msRsScopeFilter.sql) { skuSql += msRsScopeFilter.sql; skuParams.push(...msRsScopeFilter.params); }
   const skuCodes = query(skuSql, skuParams).rows.map(r => r.sku_code);
   if (skuCodes.length === 0) {
     return res.json({ success: true, range: { start, end }, columns, data: {} });
@@ -5055,6 +5253,8 @@ app.get('/api/replenishment-suggestions/monthly-sales', requireApiPermission('re
   const [ly, lm] = columns[columns.length - 1].split('-').map(Number);
   const rangeEnd = `${columns[columns.length - 1]}-${String(new Date(ly, lm, 0).getDate()).padStart(2, '0')}`;
 
+  // DATA-SCOPE: 销售记录数据权限过滤
+  const msSalesScopeFilter = buildSalesDataScopeFilter(req, '');
   const rows = query(
     `SELECT sku_code,
             COALESCE(country, '') AS country,
@@ -5062,9 +5262,9 @@ app.get('/api/replenishment-suggestions/monthly-sales', requireApiPermission('re
             substr(${salesDate}, 6, 2) AS mo,
             COALESCE(SUM(quantity), 0) AS total
      FROM sales_records
-     WHERE sku_code IN (${placeholders}) AND ${salesDate} >= ? AND ${salesDate} <= ? AND is_valid_order = 1
+     WHERE sku_code IN (${placeholders}) AND ${salesDate} >= ? AND ${salesDate} <= ? AND is_valid_order = 1${msSalesScopeFilter.sql}
      GROUP BY sku_code, COALESCE(country, ''), y, mo`,
-    skuCodes.concat([rangeStart, rangeEnd])
+    skuCodes.concat([rangeStart, rangeEnd]).concat(msSalesScopeFilter.params)
   ).rows;
 
   // 按 sku_code|country 组织，与总预测行粒度一致
@@ -5098,6 +5298,9 @@ app.get('/api/replenishment-suggestions', requireApiPermission('replenishment_vi
   if (keyword) { sql += ' AND (rs.sku_code LIKE ? OR s.product_name LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`); }
   if (sales_status) { sql += ' AND rs.sales_status = ?'; params.push(sales_status); }
   if (lifecycle_status) { sql += ' AND rs.lifecycle_status = ?'; params.push(lifecycle_status); }
+  // DATA-SCOPE: 应用数据权限过滤（国家/品牌/仓库）
+  const rsScopeFilter2 = buildReplenishmentDataScopeFilter(req);
+  if (rsScopeFilter2.sql) { sql += rsScopeFilter2.sql; params.push(...rsScopeFilter2.params); }
   sql += ' ORDER BY CASE WHEN rs.lifecycle_status IN (\'stopped\',\'discontinued\') THEN 1 ELSE 0 END, rs.sku_code';
   const today = new Date();
   const todayStr = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');

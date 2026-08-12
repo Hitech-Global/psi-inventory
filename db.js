@@ -185,7 +185,9 @@ if (driver === 'pg') {
         // 故补到此处的生产实际执行入口，确保生产 PG 建表后仍能补齐缺失列。
         // 全部幂等（ADD COLUMN IF NOT EXISTS），不影响已有 CI 数据。
         "ALTER TABLE commercial_invoice_items ADD COLUMN IF NOT EXISTS discount DOUBLE PRECISION DEFAULT 0",
-        "ALTER TABLE commercial_invoice_items ADD COLUMN IF NOT EXISTS net_unit_price NUMERIC(18,4) DEFAULT 0"
+        "ALTER TABLE commercial_invoice_items ADD COLUMN IF NOT EXISTS net_unit_price NUMERIC(18,4) DEFAULT 0",
+        // DATA-SCOPE: 用户数据权限表（控制销售模块数据可见范围，独立于功能权限）
+        "CREATE TABLE IF NOT EXISTS user_data_scope (user_id TEXT PRIMARY KEY, countries TEXT DEFAULT '[]', brands TEXT DEFAULT '[]', warehouses TEXT DEFAULT '[]', updated_at TEXT DEFAULT NOW())"
       ];
       for (var i = 0; i < migrations.length; i++) {
         try {
