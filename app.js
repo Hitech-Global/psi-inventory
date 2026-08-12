@@ -1475,8 +1475,6 @@ async function renderUsers(){
         : (u.status==='active'
             ? '<button class="btn btn-xs btn-warning" onclick="setUserStatus(\''+u.id+t('gen.L952.1','\',\'disabled\')">停用</button>')
             : '<button class="btn btn-xs btn-success" onclick="setUserStatus(\''+u.id+t('gen.L953.1','\',\'active\')">启用</button>'));
-      // DATA-SCOPE: 数据权限按钮（break-glass 账号不显示）
-      const dataScopeBtn = isBG ? '' : ' <button class="btn btn-xs btn-info" onclick="openUserDataScopeEditor(\''+u.id+'\')">'+t('user.data_scope_btn','数据权限')+'</button>';
       return '<tr>'
         +'<td>'+esc(u.name||'')+'</td>'
         +'<td>'+esc(u.username||'')+'</td>'
@@ -1486,7 +1484,7 @@ async function renderUsers(){
         +'<td>'+statusBadge+'</td>'
         +'<td>'+roleSel+'</td>'
         +'<td>'+langSel+'</td>'
-        +'<td>'+actionBtn+dataScopeBtn+'</td>'
+        +'<td>'+actionBtn+'</td>'
         +'</tr>';
     }).join('');
     document.getElementById('content-inner').innerHTML=
@@ -1515,81 +1513,17 @@ async function setUserStatus(uid, status){
   try{ await api('/api/users/'+uid,'PUT',{username:u.username, name:u.name, status}); showToast(status==='active'?t('gen.L978.1','已启用'):t('gen.L978.2','已停用'),'success'); renderUsers(); }catch(e){ showToast(e.message,'danger'); }
 }
 
-// ==================== 数据权限管理 ====================
-async function openUserDataScopeEditor(userId){
-  const u=(window.__userCache||[]).find(x=>x.id===userId);
-  if(!u){ showToast(t('user.not_found','用户不存在'),'danger'); return; }
-  // 并行加载：当前数据权限 + 可选国家/品牌/仓库
-  const [scope, countries, brands, warehouses] = await Promise.all([
-    api('/api/users/'+userId+'/data-scope'),
-    api('/api/countries'),
-    api('/api/brands/all'),
-    api('/api/warehouses')
-  ]);
-  const selCountries = scope.countries || [];
-  const selBrands = scope.brands || [];
-  const selWarehouses = scope.warehouses || [];
-
-  function checkboxList(items, selected, idPrefix, valueKey, labelKey){
-    return items.map((item, i) => {
-      const val = item[valueKey];
-      const label = item[labelKey] || val;
-      const checked = selected.indexOf(val) >= 0 ? ' checked' : '';
-      return '<label style="display:inline-flex;align-items:center;gap:4px;margin:4px 8px;cursor:pointer;white-space:nowrap">'
-        + '<input type="checkbox" class="'+idPrefix+'-cb" value="'+esc(val)+'"'+checked+'>'
-        + '<span>'+esc(label)+'</span></label>';
-    }).join('');
-  }
-
-  const countryItems = countries.map(c => ({id: c.id, name: c.name}));
-  const warehouseItems = warehouses.map(w => ({id: w.id, name: w.name + (w.country_name ? ' ('+w.country_name+')' : '')}));
-
-  const html = '<div style="max-width:680px;margin:0 auto">'
-    + '<div style="margin-bottom:16px;padding:12px;background:var(--bg-card,#f8f9fa);border-radius:8px">'
-    +   '<div style="font-weight:600;margin-bottom:4px">'+esc(u.name||u.username)+' '+t('user.data_scope_title','数据权限配置')+'</div>'
-    +   '<div style="font-size:12px;color:var(--text-secondary,#999)">'+t('user.data_scope_hint','勾选该用户可访问的数据范围。不勾选则不限制该维度。仅对非管理员角色的销售模块生效。')+'</div>'
-    + '</div>'
-    // 国家
-    + '<div style="margin-bottom:16px">'
-    +   '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">'
-    +     '<span style="font-weight:600">'+t('user.data_scope_countries','国家')+'</span>'
-    +     '<span style="font-size:12px"><a href="javascript:void(0)" onclick="document.querySelectorAll(\'.ds-country-cb\').forEach(cb=>cb.checked=true)" style="color:var(--primary,#2e7d32)">'+t('action.select_all','全选')+'</a> | <a href="javascript:void(0)" onclick="document.querySelectorAll(\'.ds-country-cb\').forEach(cb=>cb.checked=false)" style="color:var(--danger,#e53e3e)">'+t('action.clear','清空')+'</a></span>'
-    +   '</div>'
-    +   '<div style="max-height:120px;overflow-y:auto;border:1px solid var(--border,#e0e0e0);border-radius:6px;padding:8px">'+checkboxList(countryItems, selCountries, 'ds-country', 'id', 'name')+'</div>'
-    + '</div>'
-    // 品牌
-    + '<div style="margin-bottom:16px">'
-    +   '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">'
-    +     '<span style="font-weight:600">'+t('user.data_scope_brands','品牌')+'</span>'
-    +     '<span style="font-size:12px"><a href="javascript:void(0)" onclick="document.querySelectorAll(\'.ds-brand-cb\').forEach(cb=>cb.checked=true)" style="color:var(--primary,#2e7d32)">'+t('action.select_all','全选')+'</a> | <a href="javascript:void(0)" onclick="document.querySelectorAll(\'.ds-brand-cb\').forEach(cb=>cb.checked=false)" style="color:var(--danger,#e53e3e)">'+t('action.clear','清空')+'</a></span>'
-    +   '</div>'
-    +   '<div style="max-height:120px;overflow-y:auto;border:1px solid var(--border,#e0e0e0);border-radius:6px;padding:8px">'+checkboxList(brands.map(b=>({id:b,name:b})), selBrands, 'ds-brand', 'id', 'name')+'</div>'
-    + '</div>'
-    // 仓库
-    + '<div style="margin-bottom:16px">'
-    +   '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">'
-    +     '<span style="font-weight:600">'+t('user.data_scope_warehouses','仓库')+'</span>'
-    +     '<span style="font-size:12px"><a href="javascript:void(0)" onclick="document.querySelectorAll(\'.ds-warehouse-cb\').forEach(cb=>cb.checked=true)" style="color:var(--primary,#2e7d32)">'+t('action.select_all','全选')+'</a> | <a href="javascript:void(0)" onclick="document.querySelectorAll(\'.ds-warehouse-cb\').forEach(cb=>cb.checked=false)" style="color:var(--danger,#e53e3e)">'+t('action.clear','清空')+'</a></span>'
-    +   '</div>'
-    +   '<div style="max-height:120px;overflow-y:auto;border:1px solid var(--border,#e0e0e0);border-radius:6px;padding:8px">'+checkboxList(warehouseItems, selWarehouses, 'ds-warehouse', 'id', 'name')+'</div>'
-    + '</div>'
-    + '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px">'
-    +   '<button class="btn btn-secondary" onclick="closeModal()">'+t('action.cancel','取消')+'</button>'
-    +   '<button class="btn btn-primary" onclick="saveUserDataScope(\''+esc(userId)+'\')">'+t('action.save','保存')+'</button>'
-    + '</div>'
-    + '</div>';
-  showModal(html);
-}
-
-async function saveUserDataScope(userId){
-  try{
-    const countries = Array.from(document.querySelectorAll('.ds-country-cb:checked')).map(cb => cb.value);
-    const brands = Array.from(document.querySelectorAll('.ds-brand-cb:checked')).map(cb => cb.value);
-    const warehouses = Array.from(document.querySelectorAll('.ds-warehouse-cb:checked')).map(cb => cb.value);
-    await api('/api/users/'+userId+'/data-scope', 'PUT', { countries, brands, warehouses });
-    showToast(t('user.data_scope_saved','数据权限已保存'),'success');
-    closeModal();
-  }catch(e){ showToast(e.message,'danger'); }
+// ==================== 数据权限管理（角色级） ====================
+// 复用：数据权限多选列表 HTML 生成
+function dsCheckboxList(items, selected, idPrefix, valueKey, labelKey){
+  return items.map((item) => {
+    const val = item[valueKey];
+    const label = item[labelKey] || val;
+    const checked = selected.indexOf(val) >= 0 ? ' checked' : '';
+    return '<label style="display:inline-flex;align-items:center;gap:4px;margin:4px 8px;cursor:pointer;white-space:nowrap">'
+      + '<input type="checkbox" class="'+idPrefix+'-cb" value="'+esc(val)+'"'+checked+'>'
+      + '<span>'+esc(label)+'</span></label>';
+  }).join('');
 }
 function renderRoles(){
   document.getElementById('content-inner').innerHTML=t('gen.L981.1','<div id="flash-container"></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🛡️ 角色管理</div></div><div id="simple-table"></div></div>');
@@ -1619,26 +1553,70 @@ async function openRoleEditor(roleId){
   try{
     const role=roleListData.find(r=>r.id===roleId);
     if(!role){showToast(t('gen.L1000.1','未找到该角色'),'danger');return;}
-    const catalog=await api('/api/permissions');
+    // 并行加载：权限目录 + 角色数据权限 + 可选国家/品牌/仓库
+    const isAdmin = role.id==='role_admin';
+    const [catalog, scope, countries, brands, warehouses] = await Promise.all([
+      api('/api/permissions'),
+      isAdmin ? Promise.resolve(null) : api('/api/roles/'+roleId+'/data-scope'),
+      isAdmin ? Promise.resolve([]) : api('/api/countries'),
+      isAdmin ? Promise.resolve([]) : api('/api/brands/all'),
+      isAdmin ? Promise.resolve([]) : api('/api/warehouses')
+    ]);
     const own=role.permissions||[];
     const groups={};
     catalog.forEach(p=>{ (groups[p.module]=groups[p.module]||[]).push(p); });
     let body=t('gen.L1005.1','<div style="font-size:12px;color:var(--text-secondary,#999);margin-bottom:10px">')+t('role.field.name_readonly','角色名称（只读）：')+'<b>'+esc(formatRoleLabel(role.id, role.name))+t('gen.L1005.2','</b> ｜ ')+t('role.field.desc_readonly','角色说明（只读）：')+esc(formatRoleDescription(role.id, role.description))+'</div>';
-    if(role.id==='role_admin'){
+    if(isAdmin){
       body+='<div class="flash flash-warning show" style="margin-bottom:12px">'+t('role.locked_warning','超级管理员角色：关键管理权限（角色管理 / 用户管理 / 系统配置）已被锁定，不可取消，以避免系统失去管理入口。')+'</div>';
     }
+    // --- 1. 页面权限（功能权限）---
+    body+='<div style="font-weight:700;margin:16px 0 6px;font-size:14px;border-bottom:2px solid var(--border,#e0e0e0);padding-bottom:4px">'+t('role.section.page_perm','页面权限')+'</div>';
     ROLE_MODULE_ORDER.forEach(mod=>{
       const items=groups[mod]; if(!items||!items.length)return;
       body+='<div style="font-weight:600;margin:12px 0 6px;font-size:13px">'+esc(formatPermModule(mod))+'</div><div style="display:flex;flex-wrap:wrap;gap:8px 16px">';
       items.forEach(p=>{
         const checked=own.includes(p.key)?'checked':'';
-        const locked=(role.id==='role_admin'&&ROLE_CRITICAL_PERMS.includes(p.key));
+        const locked=(isAdmin&&ROLE_CRITICAL_PERMS.includes(p.key));
         const dis=locked?'disabled':'';
         const lockIco=locked?' 🔒':'';
         body+='<label style="font-size:13px;display:flex;align-items:center;gap:4px;min-width:140px"><input type="checkbox" data-perm="'+esc(p.key)+'" '+checked+' '+dis+'>'+esc(formatPermLabel(p.key, p.label))+lockIco+'</label>';
       });
       body+='</div>';
     });
+    // --- 2. 数据权限（Data Scope）---
+    if(!isAdmin){
+      const selCountries = (scope&&scope.countries) || [];
+      const selBrands = (scope&&scope.brands) || [];
+      const selWarehouses = (scope&&scope.warehouses) || [];
+      const countryItems = countries.map(c => ({id: c.id, name: c.name}));
+      const warehouseItems = warehouses.map(w => ({id: w.id, name: w.name + (w.country_name ? ' ('+w.country_name+')' : '')}));
+      body+='<div style="font-weight:700;margin:20px 0 6px;font-size:14px;border-bottom:2px solid var(--border,#e0e0e0);padding-bottom:4px">'+t('role.section.data_scope','数据权限')+'</div>';
+      body+='<div style="font-size:12px;color:var(--text-secondary,#999);margin-bottom:10px">'+t('role.data_scope_hint','勾选该角色可访问的数据范围。不勾选则不限制该维度。仅对非管理员角色生效。')+'</div>';
+      // 国家
+      body+='<div style="margin-bottom:12px">'
+        + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">'
+        +   '<span style="font-weight:600;font-size:13px">'+t('user.data_scope_countries','国家')+'</span>'
+        +   '<span style="font-size:12px"><a href="javascript:void(0)" onclick="document.querySelectorAll(\'.ds-country-cb\').forEach(cb=>cb.checked=true)" style="color:var(--primary,#2e7d32)">'+t('action.select_all','全选')+'</a> | <a href="javascript:void(0)" onclick="document.querySelectorAll(\'.ds-country-cb\').forEach(cb=>cb.checked=false)" style="color:var(--danger,#e53e3e)">'+t('action.clear','清空')+'</a></span>'
+        + '</div>'
+        + '<div style="max-height:100px;overflow-y:auto;border:1px solid var(--border,#e0e0e0);border-radius:6px;padding:8px">'+dsCheckboxList(countryItems, selCountries, 'ds-country', 'id', 'name')+'</div>'
+        + '</div>';
+      // 品牌
+      body+='<div style="margin-bottom:12px">'
+        + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">'
+        +   '<span style="font-weight:600;font-size:13px">'+t('user.data_scope_brands','品牌')+'</span>'
+        +   '<span style="font-size:12px"><a href="javascript:void(0)" onclick="document.querySelectorAll(\'.ds-brand-cb\').forEach(cb=>cb.checked=true)" style="color:var(--primary,#2e7d32)">'+t('action.select_all','全选')+'</a> | <a href="javascript:void(0)" onclick="document.querySelectorAll(\'.ds-brand-cb\').forEach(cb=>cb.checked=false)" style="color:var(--danger,#e53e3e)">'+t('action.clear','清空')+'</a></span>'
+        + '</div>'
+        + '<div style="max-height:100px;overflow-y:auto;border:1px solid var(--border,#e0e0e0);border-radius:6px;padding:8px">'+dsCheckboxList(brands.map(b=>({id:b,name:b})), selBrands, 'ds-brand', 'id', 'name')+'</div>'
+        + '</div>';
+      // 仓库
+      body+='<div style="margin-bottom:12px">'
+        + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">'
+        +   '<span style="font-weight:600;font-size:13px">'+t('user.data_scope_warehouses','仓库')+'</span>'
+        +   '<span style="font-size:12px"><a href="javascript:void(0)" onclick="document.querySelectorAll(\'.ds-warehouse-cb\').forEach(cb=>cb.checked=true)" style="color:var(--primary,#2e7d32)">'+t('action.select_all','全选')+'</a> | <a href="javascript:void(0)" onclick="document.querySelectorAll(\'.ds-warehouse-cb\').forEach(cb=>cb.checked=false)" style="color:var(--danger,#e53e3e)">'+t('action.clear','清空')+'</a></span>'
+        + '</div>'
+        + '<div style="max-height:100px;overflow-y:auto;border:1px solid var(--border,#e0e0e0);border-radius:6px;padding:8px">'+dsCheckboxList(warehouseItems, selWarehouses, 'ds-warehouse', 'id', 'name')+'</div>'
+        + '</div>';
+    }
     // [SEC] 保存按钮通过 data-role-id 传递，避免 inline onclick 拼接 JS 字符串（防注入）
     const footer='<button class="btn btn-secondary" onclick="closeModal()">'+t('role.btn.cancel','取消')+'</button><button class="btn btn-primary" id="role-save-btn" data-role-id="'+esc(role.id)+'">'+t('role.btn.save','保存')+'</button>';
     openModal(t('modal.title.openRoleEditor', '编辑角色权限 · {v1}', {v1: formatRoleLabel(role.id, role.name)}), body, footer, 'modal-lg');
@@ -1656,7 +1634,15 @@ async function saveRolePermissions(roleId){
     if(roleId==='role_admin'){
       ROLE_CRITICAL_PERMS.forEach(p=>{ if(!perms.includes(p)) perms.push(p); });
     }
+    // 保存页面权限
     await api('/api/roles','POST',{id:roleId,name:role.name,description:role.description||'',permissions:perms});
+    // 保存数据权限（非管理员角色）
+    if(roleId!=='role_admin'){
+      const dsCountries = Array.from(document.querySelectorAll('#modal-content .ds-country-cb:checked')).map(cb => cb.value);
+      const dsBrands = Array.from(document.querySelectorAll('#modal-content .ds-brand-cb:checked')).map(cb => cb.value);
+      const dsWarehouses = Array.from(document.querySelectorAll('#modal-content .ds-warehouse-cb:checked')).map(cb => cb.value);
+      await api('/api/roles/'+roleId+'/data-scope', 'PUT', { countries: dsCountries, brands: dsBrands, warehouses: dsWarehouses });
+    }
     showToast(t('gen.L1036.1','角色权限已保存'),'success');
     closeModal();
     loadRoles();

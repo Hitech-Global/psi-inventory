@@ -195,23 +195,19 @@
   I18N.dict.en['common.no'] = 'No';
   I18N.dict.id['common.no'] = 'Tidak';
 
-  // ---- 数据权限（Data Scope） ----
-  I18N.dict.en['user.data_scope_btn'] = 'Data Scope';
-  I18N.dict.id['user.data_scope_btn'] = 'Cakupan Data';
-  I18N.dict.en['user.data_scope_title'] = 'Data Permission Settings';
-  I18N.dict.id['user.data_scope_title'] = 'Pengaturan Cakupan Data';
-  I18N.dict.en['user.data_scope_hint'] = 'Select the data scope this user can access. Leave unchecked to not restrict that dimension. Only applies to non-admin users in the sales module.';
-  I18N.dict.id['user.data_scope_hint'] = 'Pilih cakupan data yang dapat diakses pengguna. Biarkan tidak dicentang untuk tidak membatasi dimensi tersebut. Hanya berlaku untuk pengguna non-admin di modul penjualan.';
+  // ---- 数据权限（Data Scope · 角色级） ----
+  I18N.dict.en['role.section.page_perm'] = 'Page Permissions';
+  I18N.dict.id['role.section.page_perm'] = 'Izin Halaman';
+  I18N.dict.en['role.section.data_scope'] = 'Data Scope';
+  I18N.dict.id['role.section.data_scope'] = 'Cakupan Data';
+  I18N.dict.en['role.data_scope_hint'] = 'Select the data scope this role can access. Leave unchecked to not restrict that dimension. Only applies to non-admin roles.';
+  I18N.dict.id['role.data_scope_hint'] = 'Pilih cakupan data yang dapat diakses peran ini. Biarkan tidak dicentang untuk tidak membatasi dimensi tersebut. Hanya berlaku untuk peran non-admin.';
   I18N.dict.en['user.data_scope_countries'] = 'Countries';
   I18N.dict.id['user.data_scope_countries'] = 'Negara';
   I18N.dict.en['user.data_scope_brands'] = 'Brands';
   I18N.dict.id['user.data_scope_brands'] = 'Merek';
   I18N.dict.en['user.data_scope_warehouses'] = 'Warehouses';
   I18N.dict.id['user.data_scope_warehouses'] = 'Gudang';
-  I18N.dict.en['user.data_scope_saved'] = 'Data scope saved';
-  I18N.dict.id['user.data_scope_saved'] = 'Cakupan data tersimpan';
-  I18N.dict.en['user.not_found'] = 'User not found';
-  I18N.dict.id['user.not_found'] = 'Pengguna tidak ditemukan';
   I18N.dict.en['action.select_all'] = 'Select All';
   I18N.dict.id['action.select_all'] = 'Pilih Semua';
   I18N.dict.en['action.clear'] = 'Clear';

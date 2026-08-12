@@ -1311,8 +1311,8 @@ function apiAuth(req, res, next) {
   req.currentUserName = user.name;
   req.currentUserRole = user.role_id || '';
   req.currentUserPermissions = perms;
-  // DATA-SCOPE: 加载用户数据权限（每次请求实时读取，变更即时生效）
-  req.currentUserDataScope = getUserDataScope(user.id);
+  // DATA-SCOPE: 加载角色数据权限（每次请求实时读取，变更即时生效）
+  req.currentUserDataScope = getRoleDataScope(user.role_id);
   next();
 }
 
@@ -1332,10 +1332,11 @@ function requireLogin(req, res, next) {
 
 // ==================== 数据权限（Data Scope） ====================
 // 独立于功能权限，控制销售模块数据可见范围（国家/品牌/仓库多选）
-// admin 角色不受数据权限限制；普通用户若未配置 user_data_scope 行则也不限制（向后兼容）
+// admin 角色不受数据权限限制；普通角色若未配置 role_data_scope 行则也不限制（向后兼容）
 
-function getUserDataScope(userId) {
-  const row = queryOne('SELECT * FROM user_data_scope WHERE user_id=?', [userId]);
+function getRoleDataScope(roleId) {
+  if (!roleId) return null;
+  const row = queryOne('SELECT * FROM role_data_scope WHERE role_id=?', [roleId]);
   if (!row) return null;
   let countries = [], brands = [], warehouses = [];
   try { countries = JSON.parse(row.countries || '[]'); } catch (e) { countries = []; }
@@ -1461,6 +1462,69 @@ function buildReplenishmentDataScopeFilter(req) {
 
   if (conditions.length === 0) return { sql: '', params: [] };
   return { sql: ' AND ' + conditions.join(' AND '), params };
+}
+
+// 构建首页看板数据权限过滤片段（用于 inventory / CI / PO / PI 表查询）
+// 返回 { inventory: {sql, params}, ci: {sql, params}, po: {sql, params}, pi: {sql, params}, ciAlias: {sql, params} }
+// ciAlias 用于 CI 表带别名的查询（如 ci.country）
+function buildDashboardScopeFilters(req) {
+  const empty = { sql: '', params: [] };
+  if (!needsDataScopeFilter(req)) return { inventory: empty, ci: empty, po: empty, pi: empty, ciAlias: empty };
+  const scope = req.currentUserDataScope;
+
+  // 1. 解析国家：country_ids → country_names
+  let effectiveCountryIds = [];
+  if (scope.countries && scope.countries.length > 0) {
+    effectiveCountryIds = effectiveCountryIds.concat(scope.countries);
+  }
+  // 仓库 → country_id 追加
+  if (scope.warehouses && scope.warehouses.length > 0) {
+    const whRows = query('SELECT DISTINCT country_id FROM warehouses WHERE id IN (' +
+      scope.warehouses.map(() => '?').join(',') + ") AND country_id != ''", scope.warehouses).rows;
+    whRows.forEach(r => { if (r.country_id && effectiveCountryIds.indexOf(r.country_id) < 0) effectiveCountryIds.push(r.country_id); });
+  }
+  let countryNames = [];
+  if (effectiveCountryIds.length > 0) {
+    const countryRows = query('SELECT name FROM countries WHERE id IN (' +
+      effectiveCountryIds.map(() => '?').join(',') + ')', effectiveCountryIds).rows;
+    countryNames = countryRows.map(r => r.name).filter(n => n);
+  }
+
+  // 2. 解析仓库：warehouse_ids → warehouse_names
+  let warehouseNames = [];
+  if (scope.warehouses && scope.warehouses.length > 0) {
+    const whRows = query('SELECT name FROM warehouses WHERE id IN (' +
+      scope.warehouses.map(() => '?').join(',') + ')', scope.warehouses).rows;
+    warehouseNames = whRows.map(r => r.name).filter(n => n);
+  }
+
+  // 3. 构建 inventory 表过滤（country + warehouse 列，存的是 name）
+  const invConds = [], invParams = [];
+  if (countryNames.length > 0) {
+    invConds.push('country IN (' + countryNames.map(() => '?').join(',') + ')');
+    invParams.push(...countryNames);
+  }
+  if (warehouseNames.length > 0) {
+    invConds.push('warehouse IN (' + warehouseNames.map(() => '?').join(',') + ')');
+    invParams.push(...warehouseNames);
+  }
+  const inventory = invConds.length > 0 ? { sql: ' AND (' + invConds.join(' OR ') + ')', params: invParams } : empty;
+
+  // 4. 构建 CI/PO/PI 表过滤（country + brand 列）
+  const ciConds = [], ciParams = [];
+  if (countryNames.length > 0) {
+    ciConds.push('country IN (' + countryNames.map(() => '?').join(',') + ')');
+    ciParams.push(...countryNames);
+  }
+  if (scope.brands && scope.brands.length > 0) {
+    ciConds.push('brand IN (' + scope.brands.map(() => '?').join(',') + ')');
+    ciParams.push(...scope.brands);
+  }
+  const ciFilter = ciConds.length > 0 ? { sql: ' AND (' + ciConds.join(' OR ') + ')', params: ciParams } : empty;
+  const ciAliasConds = ciConds.map(c => c.replace('country ', 'ci.country ').replace('brand ', 'ci.brand '));
+  const ciAlias = ciAliasConds.length > 0 ? { sql: ' AND (' + ciAliasConds.join(' OR ') + ')', params: ciParams } : empty;
+
+  return { inventory, ci: ciFilter, po: ciFilter, pi: ciFilter, ciAlias };
 }
 
 // 所有 /api 路由需要认证（公共鉴权前缀已在 apiAuth 内放行）
@@ -1707,29 +1771,29 @@ app.delete('/api/users/:id', requireApiPermission('user_manage'), asyncHandler((
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
-// ==================== 数据权限管理 ====================
-// 获取用户数据权限配置
-app.get('/api/users/:id/data-scope', requireApiPermission('user_manage'), asyncHandler((req, res) => {
+// ==================== 数据权限管理（角色级） ====================
+// 获取角色数据权限配置
+app.get('/api/roles/:id/data-scope', requireApiPermission('role_manage'), asyncHandler((req, res) => {
   try {
-    const user = queryOne('SELECT id FROM users WHERE id=?', [req.params.id]);
-    if (!user) return res.status(404).json({ error: '用户不存在' });
-    const scope = getUserDataScope(req.params.id);
+    const role = queryOne('SELECT id FROM roles WHERE id=?', [req.params.id]);
+    if (!role) return res.status(404).json({ error: '角色不存在' });
+    const scope = getRoleDataScope(req.params.id);
     res.json(scope || { countries: [], brands: [], warehouses: [] });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
-// 保存用户数据权限配置
-app.put('/api/users/:id/data-scope', requireApiPermission('user_manage'), asyncHandler((req, res) => {
+// 保存角色数据权限配置
+app.put('/api/roles/:id/data-scope', requireApiPermission('role_manage'), asyncHandler((req, res) => {
   try {
-    const user = queryOne('SELECT id, role_id FROM users WHERE id=?', [req.params.id]);
-    if (!user) return res.status(404).json({ error: '用户不存在' });
+    const role = queryOne('SELECT id FROM roles WHERE id=?', [req.params.id]);
+    if (!role) return res.status(404).json({ error: '角色不存在' });
     const { countries, brands, warehouses } = req.body;
     const c = Array.isArray(countries) ? countries.filter(x => typeof x === 'string' && x) : [];
     const b = Array.isArray(brands) ? brands.filter(x => typeof x === 'string' && x) : [];
     const w = Array.isArray(warehouses) ? warehouses.filter(x => typeof x === 'string' && x) : [];
     // upsert
-    run(`INSERT INTO user_data_scope (user_id, countries, brands, warehouses, updated_at) VALUES (?, ?, ?, ?, datetime('now'))
-         ON CONFLICT(user_id) DO UPDATE SET countries=excluded.countries, brands=excluded.brands, warehouses=excluded.warehouses, updated_at=excluded.updated_at`,
+    run(`INSERT INTO role_data_scope (role_id, countries, brands, warehouses, updated_at) VALUES (?, ?, ?, ?, datetime('now'))
+         ON CONFLICT(role_id) DO UPDATE SET countries=excluded.countries, brands=excluded.brands, warehouses=excluded.warehouses, updated_at=excluded.updated_at`,
       [req.params.id, JSON.stringify(c), JSON.stringify(b), JSON.stringify(w)]);
     res.json({ success: true, countries: c, brands: b, warehouses: w });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -1873,20 +1937,88 @@ app.post('/api/warehouses', requireApiPermission('system_config'), asyncHandler(
   res.json({ success: true, id: wId });
 }));
 // 获取仓库所属国家列表（用于下拉联动，数据来源为 warehouses 表）
+// DATA-SCOPE: 根据角色数据权限过滤可见国家
 app.get('/api/warehouses/countries', requireLogin, asyncHandler((req, res) => {
-  const rows = query("SELECT DISTINCT country_name FROM warehouses WHERE status = 'active' AND country_name IS NOT NULL AND country_name != '' ORDER BY country_name").rows.map(r => r.country_name);
+  let sql = "SELECT DISTINCT country_name FROM warehouses WHERE status = 'active' AND country_name IS NOT NULL AND country_name != ''";
+  const params = [];
+  if (needsDataScopeFilter(req)) {
+    const scope = req.currentUserDataScope;
+    const conditions = [];
+    // 国家维度：解析 country_ids → country_name 列表
+    let effectiveCountryIds = [];
+    if (scope.countries && scope.countries.length > 0) {
+      effectiveCountryIds = effectiveCountryIds.concat(scope.countries);
+    }
+    // 仓库维度：解析 warehouse_ids → country_id，追加到国家过滤
+    if (scope.warehouses && scope.warehouses.length > 0) {
+      const whRows = query('SELECT DISTINCT country_id FROM warehouses WHERE id IN (' +
+        scope.warehouses.map(() => '?').join(',') + ") AND country_id != ''", scope.warehouses).rows;
+      whRows.forEach(r => { if (r.country_id && effectiveCountryIds.indexOf(r.country_id) < 0) effectiveCountryIds.push(r.country_id); });
+      // 同时直接限制 warehouse id
+      conditions.push('id IN (' + scope.warehouses.map(() => '?').join(',') + ')');
+      params.push(...scope.warehouses);
+    }
+    if (effectiveCountryIds.length > 0) {
+      // 解析 country_ids → country_name，与 warehouses.country_name 匹配
+      const countryRows = query('SELECT name FROM countries WHERE id IN (' +
+        effectiveCountryIds.map(() => '?').join(',') + ')', effectiveCountryIds).rows;
+      const countryNames = countryRows.map(r => r.name).filter(n => n);
+      if (countryNames.length > 0) {
+        conditions.push('country_name IN (' + countryNames.map(() => '?').join(',') + ')');
+        params.push(...countryNames);
+      }
+    }
+    if (conditions.length > 0) {
+      sql += ' AND (' + conditions.join(' OR ') + ')';
+    }
+  }
+  sql += ' ORDER BY country_name';
+  const rows = query(sql, params).rows.map(r => r.country_name);
   res.json(rows);
 }));
 // 按国家筛选仓库（用于订单预测等页面的下拉联动）
+// DATA-SCOPE: 根据角色数据权限过滤可见仓库
 app.get('/api/warehouses/by-country', requireLogin, asyncHandler((req, res) => {
   const { country } = req.query;
   let sql = "SELECT id, name, country_name, brands, warehouse_type FROM warehouses WHERE status = 'active'";
   const params = [];
   if (country) { sql += ' AND country_name = ?'; params.push(country); }
+  if (needsDataScopeFilter(req)) {
+    const scope = req.currentUserDataScope;
+    const conditions = [];
+    // 仓库维度：直接限制 warehouse id
+    if (scope.warehouses && scope.warehouses.length > 0) {
+      conditions.push('id IN (' + scope.warehouses.map(() => '?').join(',') + ')');
+      params.push(...scope.warehouses);
+    }
+    // 国家维度：解析 country_ids → country_name
+    let effectiveCountryIds = [];
+    if (scope.countries && scope.countries.length > 0) {
+      effectiveCountryIds = effectiveCountryIds.concat(scope.countries);
+    }
+    if (scope.warehouses && scope.warehouses.length > 0) {
+      const whRows = query('SELECT DISTINCT country_id FROM warehouses WHERE id IN (' +
+        scope.warehouses.map(() => '?').join(',') + ") AND country_id != ''", scope.warehouses).rows;
+      whRows.forEach(r => { if (r.country_id && effectiveCountryIds.indexOf(r.country_id) < 0) effectiveCountryIds.push(r.country_id); });
+    }
+    if (effectiveCountryIds.length > 0) {
+      const countryRows = query('SELECT name FROM countries WHERE id IN (' +
+        effectiveCountryIds.map(() => '?').join(',') + ')', effectiveCountryIds).rows;
+      const countryNames = countryRows.map(r => r.name).filter(n => n);
+      if (countryNames.length > 0) {
+        conditions.push('country_name IN (' + countryNames.map(() => '?').join(',') + ')');
+        params.push(...countryNames);
+      }
+    }
+    if (conditions.length > 0) {
+      sql += ' AND (' + conditions.join(' OR ') + ')';
+    }
+  }
   sql += ' ORDER BY sort_order, name';
   res.json(query(sql, params).rows);
 }));
 // 按 (国家, 品牌) 筛选仓库
+// DATA-SCOPE: 根据角色数据权限过滤可见仓库
 app.get('/api/warehouses/by-country-brand', requireLogin, asyncHandler((req, res) => {
   const { country, brand } = req.query;
   let sql = `SELECT id, name, country_name, brands, warehouse_type FROM warehouses WHERE status = 'active'`;
@@ -1896,12 +2028,20 @@ app.get('/api/warehouses/by-country-brand', requireLogin, asyncHandler((req, res
     sql += ` AND (brands = '' OR brands LIKE ? OR brands LIKE ? OR brands LIKE ? OR brands LIKE ?)`;
     params.push('%'+brand+'%', brand+',%', '%,'+brand, '%,'+brand+',%');
   }
+  if (needsDataScopeFilter(req)) {
+    const scope = req.currentUserDataScope;
+    if (scope.warehouses && scope.warehouses.length > 0) {
+      sql += ' AND id IN (' + scope.warehouses.map(() => '?').join(',') + ')';
+      params.push(...scope.warehouses);
+    }
+  }
   sql += ' ORDER BY sort_order, name';
   res.json(query(sql, params).rows);
 }));
 // 获取系统中所有出现过的品牌（从 skus + po + pi + ci 聚合）
+// DATA-SCOPE: 根据角色数据权限过滤可见品牌
 app.get('/api/brands/all', requireLogin, asyncHandler((req, res) => {
-  const rows = query(`
+  let rows = query(`
     SELECT DISTINCT brand FROM (
       SELECT brand FROM skus WHERE brand IS NOT NULL AND brand != ''
       UNION SELECT brand FROM purchase_orders WHERE brand IS NOT NULL AND brand != ''
@@ -1909,6 +2049,13 @@ app.get('/api/brands/all', requireLogin, asyncHandler((req, res) => {
       UNION SELECT brand FROM commercial_invoices WHERE brand IS NOT NULL AND brand != ''
     ) ORDER BY brand
   `).rows.map(r => r.brand);
+  // DATA-SCOPE: 根据角色数据权限过滤可见品牌
+  if (needsDataScopeFilter(req)) {
+    const scope = req.currentUserDataScope;
+    if (scope.brands && scope.brands.length > 0) {
+      rows = rows.filter(b => scope.brands.includes(b));
+    }
+  }
   res.json(rows);
 }));
 // 品牌采购状态（停采品牌系统级规则）：读取/保存品牌级 可采购/停采
@@ -13829,8 +13976,12 @@ app.post('/api/logistics/listing-reminders/scan', requireApiPermission('logistic
 // ==================== 首页看板 ====================
 app.get('/api/dashboard', requireApiPermission('dashboard_view'), asyncHandler((req, res) => {
   try {
+    // DATA-SCOPE: 首页看板数据权限过滤
+    const dsf = buildDashboardScopeFilters(req);
+    const rsScope = buildReplenishmentDataScopeFilter(req);
+
     // 总库存金额
-    const totalInv = queryOne('SELECT COALESCE(SUM(available_qty * weighted_avg_cost), 0) as val FROM inventory')?.val || 0;
+    const totalInv = queryOne('SELECT COALESCE(SUM(available_qty * weighted_avg_cost), 0) as val FROM inventory WHERE 1=1' + dsf.inventory.sql, dsf.inventory.params)?.val || 0;
 
     // 在途库存金额（用标准采购价估算）
     const transitInv = queryOne(`
@@ -13838,7 +13989,7 @@ app.get('/api/dashboard', requireApiPermission('dashboard_view'), asyncHandler((
       FROM commercial_invoice_items cii
       JOIN commercial_invoices ci ON cii.ci_id = ci.id
       WHERE ci.ci_status NOT IN ('cancelled', 'completed')
-    `)?.val || 0;
+    ` + dsf.ciAlias.sql, dsf.ciAlias.params)?.val || 0;
 
     // 呆滞库存金额
     const stagnantInv = queryOne(`
@@ -13847,14 +13998,14 @@ app.get('/api/dashboard', requireApiPermission('dashboard_view'), asyncHandler((
       WHERE i.available_qty > 0 AND i.sku_code IN (
         SELECT sku_code FROM skus WHERE lifecycle_status IN ('stagnant', 'clearance')
       )
-    `)?.val || 0;
+    ` + dsf.inventory.sql.replace(/country/g, 'i.country').replace(/warehouse/g, 'i.warehouse'), dsf.inventory.params)?.val || 0;
 
     // 缺货风险SKU数量
     const shortageSkus = queryOne(`
       SELECT COUNT(DISTINCT i.sku_code) as cnt FROM inventory i
       WHERE i.available_qty <= 0 OR (i.weighted_avg_cost > 0 AND i.available_qty > 0
         AND NOT EXISTS (SELECT 1 FROM sales_records WHERE sku_code = i.sku_code AND is_valid_order = 1 AND order_date >= date('now', '-30 days')))
-    `)?.cnt || 0;
+    ` + dsf.inventory.sql.replace(/country/g, 'i.country').replace(/warehouse/g, 'i.warehouse'), dsf.inventory.params)?.cnt || 0;
 
     // 建议采购金额
     const suggestAmount = queryOne(`
@@ -13862,7 +14013,7 @@ app.get('/api/dashboard', requireApiPermission('dashboard_view'), asyncHandler((
       FROM replenishment_suggestions rs
       LEFT JOIN skus s ON rs.sku_code = s.sku_code
       WHERE rs.suggested_qty > 0
-    `)?.val || 0;
+    ` + rsScope.sql, rsScope.params)?.val || 0;
 
     // 7天内待付款金额
     const now = new Date();
@@ -13878,9 +14029,9 @@ app.get('/api/dashboard', requireApiPermission('dashboard_view'), asyncHandler((
     const overdue = queryOne(`SELECT COALESCE(SUM(unpaid_amount), 0) as val FROM payment_requests WHERE approval_status IN ('pending', 'approved') AND payment_status NOT IN ('paid', 'deduction_settled', 'rejected', 'cancelled') AND unpaid_amount > 0 AND payable_date != '' AND payable_date < ?`, [today])?.val || 0;
 
     // PO/PI/CI 未完成数量
-    const poPending = queryOne("SELECT COUNT(*) as cnt FROM purchase_orders WHERE po_status NOT IN ('cancelled', 'transferred_pi')")?.cnt || 0;
-    const piPending = queryOne("SELECT COUNT(*) as cnt FROM proforma_invoices WHERE pi_status NOT IN ('cancelled', 'shipped_complete')")?.cnt || 0;
-    const ciPending = queryOne("SELECT COUNT(*) as cnt FROM commercial_invoices WHERE ci_status NOT IN ('cancelled', 'completed')")?.cnt || 0;
+    const poPending = queryOne("SELECT COUNT(*) as cnt FROM purchase_orders WHERE po_status NOT IN ('cancelled', 'transferred_pi')" + dsf.po.sql, dsf.po.params)?.cnt || 0;
+    const piPending = queryOne("SELECT COUNT(*) as cnt FROM proforma_invoices WHERE pi_status NOT IN ('cancelled', 'shipped_complete')" + dsf.pi.sql, dsf.pi.params)?.cnt || 0;
+    const ciPending = queryOne("SELECT COUNT(*) as cnt FROM commercial_invoices WHERE ci_status NOT IN ('cancelled', 'completed')" + dsf.ci.sql, dsf.ci.params)?.cnt || 0;
 
     // 运费占比趋势
     const freightTrend = query(`
@@ -13891,7 +14042,7 @@ app.get('/api/dashboard', requireApiPermission('dashboard_view'), asyncHandler((
       LEFT JOIN commercial_invoices ci ON lb.related_ci_id = ci.id
       WHERE lb.depart_date != '' AND lb.depart_date >= date('now', '-6 months')
       GROUP BY month ORDER BY month
-    `).rows.map(r => ({
+    ` + dsf.ciAlias.sql, dsf.ciAlias.params).rows.map(r => ({
       month: r.month,
       freight: r.freight || 0,
       goods: r.goods || 0,

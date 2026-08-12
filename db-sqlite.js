@@ -255,8 +255,7 @@ function initDatabase() {
     d.exec("CREATE INDEX IF NOT EXISTS idx_login_audit_user ON login_audit(user_id)");
     d.exec("CREATE INDEX IF NOT EXISTS idx_login_audit_created ON login_audit(created_at)");
 
-    // DATA-SCOPE: 用户数据权限（独立于功能权限，控制销售模块数据可见范围）
-    // countries/brands/warehouses 均为 JSON 数组，空数组表示不限制该维度
+    // DATA-SCOPE: 用户数据权限（已废弃，迁移到 role_data_scope；保留用于兼容旧数据迁移）
     d.exec(`CREATE TABLE IF NOT EXISTS user_data_scope (
       user_id TEXT PRIMARY KEY,
       countries TEXT DEFAULT '[]',
@@ -264,6 +263,40 @@ function initDatabase() {
       warehouses TEXT DEFAULT '[]',
       updated_at TEXT DEFAULT (datetime('now'))
     )`);
+
+    // DATA-SCOPE: 角色数据权限（替代 user_data_scope，符合 RBAC 模型）
+    // countries/brands/warehouses 均为 JSON 数组，空数组表示不限制该维度
+    d.exec(`CREATE TABLE IF NOT EXISTS role_data_scope (
+      role_id TEXT PRIMARY KEY,
+      countries TEXT DEFAULT '[]',
+      brands TEXT DEFAULT '[]',
+      warehouses TEXT DEFAULT '[]',
+      updated_at TEXT DEFAULT (datetime('now'))
+    )`);
+
+    // 数据迁移：将 user_data_scope 数据迁移到 role_data_scope（按用户角色聚合，仅迁移首次）
+    const hasMigrated = d.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='role_data_scope'").get();
+    if (hasMigrated) {
+      const existingRoleScope = d.prepare("SELECT COUNT(*) as cnt FROM role_data_scope").get();
+      if (existingRoleScope.cnt === 0) {
+        const userScopes = d.prepare("SELECT uds.*, u.role_id FROM user_data_scope uds JOIN users u ON uds.user_id = u.id WHERE u.role_id IS NOT NULL AND u.role_id != ''").all();
+        const roleScopeMap = {};
+        userScopes.forEach(us => {
+          if (!roleScopeMap[us.role_id]) {
+            roleScopeMap[us.role_id] = {
+              countries: JSON.parse(us.countries || '[]'),
+              brands: JSON.parse(us.brands || '[]'),
+              warehouses: JSON.parse(us.warehouses || '[]')
+            };
+          }
+        });
+        Object.entries(roleScopeMap).forEach(([roleId, scope]) => {
+          d.prepare("INSERT OR IGNORE INTO role_data_scope (role_id, countries, brands, warehouses, updated_at) VALUES (?, ?, ?, ?, datetime('now'))").run(
+            roleId, JSON.stringify(scope.countries), JSON.stringify(scope.brands), JSON.stringify(scope.warehouses)
+          );
+        });
+      }
+    }
   })();
 
   // 国家

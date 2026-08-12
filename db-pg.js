@@ -497,8 +497,7 @@ async function initDatabase() {
   await exec("CREATE INDEX IF NOT EXISTS idx_login_audit_user ON login_audit(user_id)");
   await exec("CREATE INDEX IF NOT EXISTS idx_login_audit_created ON login_audit(created_at)");
 
-  // DATA-SCOPE: 用户数据权限（独立于功能权限，控制销售模块数据可见范围）
-  // countries/brands/warehouses 均为 JSON 数组，空数组表示不限制该维度
+  // DATA-SCOPE: 用户数据权限（已废弃，迁移到 role_data_scope；保留用于兼容旧数据迁移）
   await exec(`CREATE TABLE IF NOT EXISTS user_data_scope (
     user_id TEXT PRIMARY KEY,
     countries TEXT DEFAULT '[]',
@@ -506,6 +505,37 @@ async function initDatabase() {
     warehouses TEXT DEFAULT '[]',
     updated_at TEXT DEFAULT NOW()
   )`);
+
+  // DATA-SCOPE: 角色数据权限（替代 user_data_scope，符合 RBAC 模型）
+  await exec(`CREATE TABLE IF NOT EXISTS role_data_scope (
+    role_id TEXT PRIMARY KEY,
+    countries TEXT DEFAULT '[]',
+    brands TEXT DEFAULT '[]',
+    warehouses TEXT DEFAULT '[]',
+    updated_at TEXT DEFAULT NOW()
+  )`);
+
+  // 数据迁移：将 user_data_scope 数据迁移到 role_data_scope（仅首次执行）
+  {
+    const cntRow = await queryOne("SELECT COUNT(*) as cnt FROM role_data_scope");
+    if (!cntRow || Number(cntRow.cnt) === 0) {
+      const userScopes = (await query("SELECT uds.*, u.role_id FROM user_data_scope uds JOIN users u ON uds.user_id = u.id WHERE u.role_id IS NOT NULL AND u.role_id != ''")).rows || [];
+      const roleScopeMap = {};
+      userScopes.forEach(us => {
+        if (!roleScopeMap[us.role_id]) {
+          roleScopeMap[us.role_id] = {
+            countries: JSON.parse(us.countries || '[]'),
+            brands: JSON.parse(us.brands || '[]'),
+            warehouses: JSON.parse(us.warehouses || '[]')
+          };
+        }
+      });
+      for (const [roleId, scope] of Object.entries(roleScopeMap)) {
+        await run("INSERT INTO role_data_scope (role_id, countries, brands, warehouses, updated_at) VALUES ($1, $2, $3, $4, NOW()) ON CONFLICT (role_id) DO NOTHING",
+          [roleId, JSON.stringify(scope.countries), JSON.stringify(scope.brands), JSON.stringify(scope.warehouses)]);
+      }
+    }
+  }
 
   await exec(`
     CREATE TABLE IF NOT EXISTS countries (
