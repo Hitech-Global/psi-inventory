@@ -1868,7 +1868,8 @@
   I18N.dict.en["nav.expense_types"] = "Expense Types"; I18N.dict.id["nav.expense_types"] = "Tipe Biaya";
   I18N.dict.en["nav.forwarder_analysis"] = "Freight Forwarder Analysis"; I18N.dict.id["nav.forwarder_analysis"] = "Analisis Forwarder";
   I18N.dict.en["nav.freight_forwarders"] = "Freight Forwarders"; I18N.dict.id["nav.freight_forwarders"] = "Forwarder";
-  I18N.dict.en["nav.inbound"] = "Inbound"; I18N.dict.id["nav.inbound"] = "Penerimaan";
+  I18N.dict.en["nav.inbound"] = "WAC Confirmation"; I18N.dict.id["nav.inbound"] = "Konfirmasi WAC";
+  I18N.dict.en["nav.wac_confirm"] = "WAC Confirmation"; I18N.dict.id["nav.wac_confirm"] = "Konfirmasi WAC";
   I18N.dict.en["nav.inventory"] = "Inventory"; I18N.dict.id["nav.inventory"] = "Persediaan";
   I18N.dict.en["nav.logistics"] = "Logistics"; I18N.dict.id["nav.logistics"] = "Logistik";
   I18N.dict.en["nav.operation_logs"] = "Operation Logs"; I18N.dict.id["nav.operation_logs"] = "Log Operasi";

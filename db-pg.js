@@ -1919,6 +1919,12 @@ async function initDatabase() {
     )
   `);
 
+  // LOGISTICS-COST-LINK：ci_cost_items 新增 logistics_batch_id，用于追溯费用来自哪个物流单
+  await exec("ALTER TABLE ci_cost_items ADD COLUMN IF NOT EXISTS logistics_batch_id TEXT DEFAULT ''");
+  // LOGISTICS-COST-LINK-V2：ci_cost_items 新增 payable_item_id，关联 payable_items（成本流→资金流桥接）
+  // 物流单费用生成 ci_cost_items 时同时创建 payable_items，付款申请从 payable_items 手动提交
+  await exec("ALTER TABLE ci_cost_items ADD COLUMN IF NOT EXISTS payable_item_id TEXT DEFAULT ''");
+
   await exec(`
     CREATE TABLE IF NOT EXISTS cost_update_logs (
       id TEXT PRIMARY KEY,
@@ -1985,6 +1991,7 @@ async function initDatabase() {
       is_locked INTEGER DEFAULT 1,
       confirmed_by TEXT DEFAULT '',
       confirmed_at TEXT DEFAULT '',
+      logistics_batch_id TEXT,
       created_at TEXT DEFAULT NOW()
     )
   `);
@@ -2018,6 +2025,9 @@ async function initDatabase() {
   await exec(`CREATE INDEX IF NOT EXISTS idx_cost_logs_sku ON cost_update_logs(sku_code)`);
   await exec(`CREATE INDEX IF NOT EXISTS idx_orig_inv_ci ON original_inventory_imports(ci_id)`);
   await exec(`CREATE INDEX IF NOT EXISTS idx_orig_inv_sku ON original_inventory_imports(sku_code)`);
+  // WAC-CLOSED-LOOP: wac_history 新增 logistics_batch_id 列，追踪物流批次来源
+  await exec("ALTER TABLE wac_history ADD COLUMN IF NOT EXISTS logistics_batch_id TEXT");
+
   await exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_wac_history_version ON wac_history(sku_code, country, warehouse, version_no)`);
   await exec(`CREATE INDEX IF NOT EXISTS idx_wac_history_latest ON wac_history(sku_code, country, warehouse, confirmation_status, is_locked)`);
   await exec(`CREATE INDEX IF NOT EXISTS idx_wac_history_ci ON wac_history(ci_id)`);

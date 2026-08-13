@@ -2002,6 +2002,11 @@ function initDatabase() {
     )
   `);
 
+  // LOGISTICS-COST-LINK：ci_cost_items 新增 logistics_batch_id，用于追溯费用来自哪个物流单
+  try { d.exec("ALTER TABLE ci_cost_items ADD COLUMN logistics_batch_id TEXT DEFAULT ''"); } catch(e) {}
+  // LOGISTICS-COST-LINK-V2：ci_cost_items 新增 payable_item_id，关联 payable_items（成本流→资金流桥接）
+  try { d.exec("ALTER TABLE ci_cost_items ADD COLUMN payable_item_id TEXT DEFAULT ''"); } catch(e) {}
+
   // 成本更新日志（每次更新加权平均成本时记录）
   d.exec(`
     CREATE TABLE IF NOT EXISTS cost_update_logs (
@@ -2071,6 +2076,7 @@ function initDatabase() {
       is_locked INTEGER DEFAULT 1,
       confirmed_by TEXT DEFAULT '',
       confirmed_at TEXT DEFAULT '',
+      logistics_batch_id TEXT,
       created_at TEXT DEFAULT (datetime('now'))
     )
   `);
@@ -2308,6 +2314,15 @@ function initDatabase() {
       d.exec(`UPDATE logistics_batches SET listing_owner_ids = listing_owner_id WHERE listing_owner_ids = '' AND listing_owner_id IS NOT NULL AND listing_owner_id <> ''`);
       // 删除旧单列（SQLite 3.35+ 支持 DROP COLUMN；旧版本忽略）
       try { d.exec(`ALTER TABLE logistics_batches DROP COLUMN listing_owner_id`); } catch (e) { /* 不支持则保留 */ }
+    }
+  })();
+
+  // WAC-CLOSED-LOOP: wac_history 新增 logistics_batch_id 列，追踪物流批次来源
+  (function wacClosedLoopMigration() {
+    const d = getDB();
+    const wacCols = d.prepare(`PRAGMA table_info(wac_history)`).all().map(c => c.name);
+    if (!wacCols.includes('logistics_batch_id')) {
+      d.exec(`ALTER TABLE wac_history ADD COLUMN logistics_batch_id TEXT`);
     }
   })();
 

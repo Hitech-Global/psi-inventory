@@ -3929,11 +3929,12 @@ async function latestConfirmedWac(skuCode, country, warehouse) {
 }
 
 // P1-03-B: 在事务内生成下一版本号并插入锁定的 WAC 历史
+// logistics_batch_id: 物流批次WAC确认时传入，CI手动确认时不传（默认''）
 function generateWacVersion(params) {
   const { ci_id, ci_no, po_id, po_no, pi_id, pi_no, sku_code, model, brand, country, warehouse,
           original_qty, original_avg_cost, original_inventory_value,
           inbound_qty, unit_landing_cost, inbound_total_cost, new_avg_cost,
-          settlement_date, confirmed_by } = params;
+          settlement_date, confirmed_by, logistics_batch_id } = params;
 
   // 在事务内获取当前最大版本号
   const maxVersion = queryOne(`
@@ -3949,13 +3950,13 @@ function generateWacVersion(params) {
       sku_code, model, brand, country, warehouse,
       original_qty, original_avg_cost, original_inventory_value,
       inbound_qty, unit_landing_cost, inbound_total_cost, new_avg_cost,
-      settlement_date, confirmation_status, is_locked, confirmed_by, confirmed_at, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      settlement_date, confirmation_status, is_locked, confirmed_by, confirmed_at, logistics_batch_id, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [id, nextVersionNo, ci_id || '', ci_no || '', po_id || '', po_no || '', pi_id || '', pi_no || '',
      sku_code, model || '', brand || '', country || '', warehouse || '',
      original_qty || 0, original_avg_cost || 0, original_inventory_value || 0,
      inbound_qty || 0, unit_landing_cost || 0, inbound_total_cost || 0, new_avg_cost || 0,
-     settlement_date || '', 'confirmed', 1, confirmed_by || '', now, now]);
+     settlement_date || '', 'confirmed', 1, confirmed_by || '', now, logistics_batch_id || null, now]);
 
   return { id, version_no: nextVersionNo };
 }
@@ -9637,6 +9638,15 @@ function payableItemSourceExpenseCountry(item) {
     source = queryOne('SELECT ci_no AS source_no, country FROM commercial_invoices WHERE id = ?', [sourceId]);
   } else if (sourceType === 'historical_ci') {
     source = queryOne('SELECT historical_ci_no AS source_no, country FROM historical_commercial_invoices WHERE id = ?', [sourceId]);
+  } else if (sourceType === 'logistics') {
+    // LOGISTICS-COST-LINK-V2: logistics 费用通过 source_ci_id 关联 CI，从 CI 获取国家
+    const ciId = String(item && item.source_ci_id || '').trim();
+    if (ciId) {
+      source = queryOne('SELECT ci_no AS source_no, country FROM commercial_invoices WHERE id = ?', [ciId]);
+    }
+    if (!source) {
+      throw new SettlementError(400, `应付费用 ${item.fee_no || item.id || ''} 的来源CI不存在，不能创建付款申请`);
+    }
   } else {
     throw new SettlementError(400, `应付费用 ${item.fee_no || item.id || ''} 的来源类型无法确定国家，不能创建付款申请`);
   }
@@ -12326,6 +12336,15 @@ app.post('/api/payment-requests/multi-expense', requireApiPermission('payment_cr
           throw new Error(`应付费用 ${item.fee_no} 状态已变更，无法锁定`);
         }
       }
+      // LOGISTICS-COST-LINK-V2：回写 ci_cost_items.payment_request_id，桥接成本流→资金流
+      // 物流单生成成本时 ci_cost_items.payment_request_id 为空，付款申请创建后补填
+      // 后续 syncPaymentSource 通过 payment_request_id 回写 paid_amount
+      for (const item of items.rows) {
+        await run(
+          `UPDATE ci_cost_items SET payment_request_id = ?, request_no = ? WHERE payable_item_id = ? AND (payment_request_id = '' OR payment_request_id IS NULL)`,
+          [prId, prNo, item.id]
+        );
+      }
       // PAY-CORE P0-2：同步所有来源 PI 的 deposit_payment_status → pending_approval
       // multi PR 不依赖 payment_requests.source_id，通过 payable_items.source_type/source_id 反查
       syncMultiSourcePiStatus(items.rows, 'pending_approval');
@@ -12534,6 +12553,124 @@ app.post('/api/payment-requests/batch-cancel', requireApiPermission('payment_cre
     if (e.details) body.details = e.details;
     res.status(status).json(body);
   }
+}));
+
+// LOGISTICS-COST-LINK-V2：从物流单费用生成 ci_cost_items（成本事实）+ payable_items（应付费用）
+// 成本流：logistics_batches → ci_cost_items（payable_amount，供 WAC 读取）
+// 资金流：payable_items → payment_request（人工提交）→ payment_settlement_logs → ci_cost_items.paid_amount 回写
+// 两条流独立，互不阻塞
+app.post('/api/logistics-batches/:id/generate-cost-items', requireApiPermission('payment_create'), asyncHandler(async (req, res) => {
+  try {
+    const batch = queryOne('SELECT * FROM logistics_batches WHERE id = ?', [req.params.id]);
+    if (!batch) return res.status(404).json({ error: '物流批次不存在' });
+
+    if (!batch.related_ci_id) return res.status(400).json({ error: '该物流批次未关联CI，无法生成成本记录' });
+
+    const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [batch.related_ci_id]);
+    if (!ci) return res.status(400).json({ error: '关联CI不存在' });
+
+    if (ci.cost_confirmed) return res.status(409).json({ error: '该CI费用已确认，不能继续新增费用' });
+
+    // 防重：检查是否已从该物流单生成过 ci_cost_items
+    const existingItems = queryOne('SELECT 1 FROM ci_cost_items WHERE logistics_batch_id = ? LIMIT 1', [batch.id]);
+    if (existingItems) return res.status(409).json({ error: '该物流批次已生成成本记录，不能重复生成' });
+
+    const { payee_name } = req.body;
+    const currency = batch.freight_currency || 'USD';
+    const defaultPayee = payee_name || batch.forwarder_name || '';
+    const createdBy = (req.currentUserId || req.user && req.user.id) || '';
+
+    // 计算各费用组金额
+    const freightTotal = (Number(batch.international_freight) || 0) + (Number(batch.local_charges) || 0) +
+                         (Number(batch.customs_service_fee) || 0) + (Number(batch.delivery_fee) || 0);
+    const dutyTotal = (Number(batch.customs_duty) || 0) + (Number(batch.vat_gst) || 0);
+    const otherTotal = Number(batch.other_fees) || 0;
+
+    if (freightTotal <= 0 && dutyTotal <= 0 && otherTotal <= 0) {
+      return res.status(400).json({ error: '物流单费用均为0，无需生成成本记录' });
+    }
+
+    // CI 级别防重检查：检查是否已存在同费用类型的 ci_cost_items（排除已取消的）
+    const ciCostDupCheck = (costCat, costSub) => {
+      const dup = queryOne(
+        `SELECT id FROM ci_cost_items
+         WHERE ci_id = ? AND cost_category = ? AND cost_subcategory = ?
+         LIMIT 1`,
+        [ci.id, costCat, costSub]
+      );
+      return dup;
+    };
+    if (freightTotal > 0 && ciCostDupCheck('warehouse_arrival', 'freight')) {
+      return res.status(409).json({ error: '该CI已存在运费成本记录，不能重复生成' });
+    }
+    if (dutyTotal > 0 && ciCostDupCheck('customs_duty', 'duty')) {
+      return res.status(409).json({ error: '该CI已存在关税成本记录，不能重复生成' });
+    }
+    if (otherTotal > 0 && ciCostDupCheck('warehouse_arrival', 'other_local')) {
+      return res.status(409).json({ error: '该CI已存在其他费用成本记录，不能重复生成' });
+    }
+
+    const generated = [];
+
+    await transaction(async () => {
+      // 1. 运费 → ci_cost_items + payable_items
+      if (freightTotal > 0) {
+        const payeeKey = `service_provider:${defaultPayee}`;
+        // 创建 payable_item（进入应付费用列表，待人工提交付款申请）
+        const piResult = createPayableItemFromSource({
+          sourceType: 'logistics', sourceId: batch.id, sourceNo: batch.batch_no,
+          feeType: 'freight', categoryCode: 'warehouse_arrival', subcategoryCode: 'freight',
+          payeeType: 'service_provider', payeeKey, payeeName: defaultPayee,
+          currency, payableAmount: freightTotal, sourceCiId: ci.id, createdBy
+        });
+        const payableItemId = piResult?.id || '';
+        // 创建 ci_cost_item（成本事实，WAC 读取 payable_amount）
+        const cciId = genId('cci');
+        await run(`INSERT INTO ci_cost_items (id, ci_id, ci_no, payment_request_id, request_no, cost_category, cost_subcategory, payable_amount, paid_amount, include_in_landing_cost, payee_name, currency, remark, logistics_batch_id, payable_item_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [cciId, ci.id, ci.ci_no, '', '', 'warehouse_arrival', 'freight', freightTotal, 0, 1, defaultPayee, currency, `运费 ${batch.batch_no}`, batch.id, payableItemId]);
+        generated.push({ cost_category: 'warehouse_arrival', cost_subcategory: 'freight', ci_cost_item_id: cciId, payable_item_id: payableItemId, fee_no: piResult?.fee_no || '', amount: freightTotal });
+      }
+
+      // 2. 关税 → ci_cost_items + payable_items
+      if (dutyTotal > 0) {
+        const payeeKey = `customs:${defaultPayee}`;
+        const piResult = createPayableItemFromSource({
+          sourceType: 'logistics', sourceId: batch.id, sourceNo: batch.batch_no,
+          feeType: 'duty', categoryCode: 'customs_duty', subcategoryCode: 'duty',
+          payeeType: 'customs', payeeKey, payeeName: defaultPayee,
+          currency, payableAmount: dutyTotal, sourceCiId: ci.id, createdBy
+        });
+        const payableItemId = piResult?.id || '';
+        const cciId = genId('cci');
+        await run(`INSERT INTO ci_cost_items (id, ci_id, ci_no, payment_request_id, request_no, cost_category, cost_subcategory, payable_amount, paid_amount, include_in_landing_cost, payee_name, currency, remark, logistics_batch_id, payable_item_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [cciId, ci.id, ci.ci_no, '', '', 'customs_duty', 'duty', dutyTotal, 0, 1, defaultPayee, currency, `关税 ${batch.batch_no}`, batch.id, payableItemId]);
+        // 更新 CI 关税总额和标记
+        run('UPDATE commercial_invoices SET import_duty_total = ?, has_customs_duty = 1, updated_at = datetime(\'now\') WHERE id = ?', [dutyTotal, ci.id]);
+        generated.push({ cost_category: 'customs_duty', cost_subcategory: 'duty', ci_cost_item_id: cciId, payable_item_id: payableItemId, fee_no: piResult?.fee_no || '', amount: dutyTotal });
+      }
+
+      // 3. 其他费用 → ci_cost_items + payable_items
+      if (otherTotal > 0) {
+        const payeeKey = `service_provider:${defaultPayee}`;
+        const piResult = createPayableItemFromSource({
+          sourceType: 'logistics', sourceId: batch.id, sourceNo: batch.batch_no,
+          feeType: 'other_local', categoryCode: 'warehouse_arrival', subcategoryCode: 'other_local',
+          payeeType: 'service_provider', payeeKey, payeeName: defaultPayee,
+          currency, payableAmount: otherTotal, sourceCiId: ci.id, createdBy
+        });
+        const payableItemId = piResult?.id || '';
+        const cciId = genId('cci');
+        await run(`INSERT INTO ci_cost_items (id, ci_id, ci_no, payment_request_id, request_no, cost_category, cost_subcategory, payable_amount, paid_amount, include_in_landing_cost, payee_name, currency, remark, logistics_batch_id, payable_item_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [cciId, ci.id, ci.ci_no, '', '', 'warehouse_arrival', 'other_local', otherTotal, 0, 1, defaultPayee, currency, `其他费用 ${batch.batch_no}`, batch.id, payableItemId]);
+        generated.push({ cost_category: 'warehouse_arrival', cost_subcategory: 'other_local', ci_cost_item_id: cciId, payable_item_id: payableItemId, fee_no: piResult?.fee_no || '', amount: otherTotal });
+      }
+
+      // 更新物流单费用状态
+      run('UPDATE logistics_batches SET fee_status = ?, updated_at = datetime(\'now\') WHERE id = ?', ['cost_generated', batch.id]);
+    });
+
+    res.json({ generated, batch_no: batch.batch_no, ci_no: ci.ci_no });
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 }));
 
 // 生成付款申请（到仓费用）— 可关联CI
@@ -13782,6 +13919,480 @@ app.post('/api/cost-allocation/update-weighted-avg/:ci_id', requireApiPermission
     });
 
     res.json({ success: true, updated_count: logs.length, logs, wac_confirmed: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+}));
+
+// ==================== WAC 确认（物流批次 → WAC → 库存成本） ====================
+// 物流批次到货后 → WAC确认 → 更新库存成本
+// 不做传统ERP入库闭环，只打通「物流 → WAC → 库存成本」
+// WAC是否确认以 wac_history 记录作为事实来源，不增加第二套状态
+// WAC确认只更新 inventory.weighted_avg_cost，不更新 available_qty
+const LOGISTICS_STATUS_ARRIVED = 'completed'; // 已到仓
+
+// WAC-COST-SOURCE-V2：从 ci_cost_items 读取成本事实（payable_amount）
+// 成本流：logistics_batches → generate-cost-items → ci_cost_items（payable_amount）
+// 如果 ci_cost_items 存在（已生成成本记录），使用 ci_cost_items.payable_amount
+// 如果不存在（旧数据未生成成本记录），回退到 logistics_batches 静态字段
+function getCiCostSummary(ciId, batch) {
+  const costItems = query(
+    `SELECT cost_category, cost_subcategory, payable_amount
+     FROM ci_cost_items
+     WHERE ci_id = ? AND include_in_landing_cost = 1`,
+    [ciId]
+  ).rows;
+
+  if (costItems.length > 0) {
+    let totalFreight = 0, totalCustoms = 0, totalOther = 0;
+    costItems.forEach(item => {
+      const amount = Number(item.payable_amount) || 0;
+      if (item.cost_category === 'customs_duty') {
+        totalCustoms += amount;
+      } else if (item.cost_category === 'warehouse_arrival' && item.cost_subcategory === 'freight') {
+        totalFreight += amount;
+      } else {
+        totalOther += amount;
+      }
+    });
+    return { totalFreight, totalCustoms, totalOther, source: 'ci_cost_items' };
+  }
+
+  // 回退到 logistics_batches 静态字段（旧数据兼容）
+  return {
+    totalFreight: (Number(batch.international_freight) || 0) + (Number(batch.local_charges) || 0) +
+                  (Number(batch.customs_service_fee) || 0) + (Number(batch.delivery_fee) || 0),
+    totalCustoms: (Number(batch.customs_duty) || 0) + (Number(batch.vat_gst) || 0),
+    totalOther: Number(batch.other_fees) || 0,
+    source: 'logistics_batches'
+  };
+}
+
+// 查询待WAC确认的物流批次（已到仓 且 wac_history 中无该批次的确认记录）
+app.get('/api/wac/pending-batches', requireApiPermission('ci_view'), asyncHandler((req, res) => {
+  try {
+    const rows = query(`SELECT lb.id, lb.batch_no, lb.related_ci_id, lb.related_ci_no, lb.forwarder_name,
+      lb.target_country, lb.target_warehouse, lb.logistics_status, lb.actual_arrival_date,
+      lb.international_freight, lb.local_charges, lb.customs_service_fee,
+      lb.delivery_fee, lb.customs_duty, lb.vat_gst, lb.other_fees, lb.freight_currency,
+      lb.total_cartons, pl.pl_no, pl.id AS pl_id, pl.status AS pl_status, pl.total_qty AS pl_total_qty,
+      ci.goods_amount, ci.currency AS ci_currency, ci.ci_no
+      FROM logistics_batches lb
+      LEFT JOIN packing_lists pl ON pl.logistics_batch_id = lb.id
+      LEFT JOIN commercial_invoices ci ON ci.id = lb.related_ci_id
+      WHERE lb.logistics_status = ?
+      AND pl.id IS NOT NULL
+      AND EXISTS (SELECT 1 FROM packing_list_items pli WHERE pli.pl_id = pl.id AND COALESCE(pli.total_qty, 0) > 0)
+      AND NOT EXISTS (SELECT 1 FROM wac_history wh WHERE wh.logistics_batch_id = lb.id)
+      ORDER BY lb.actual_arrival_date DESC, lb.created_at DESC`, [LOGISTICS_STATUS_ARRIVED]).rows;
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+}));
+
+// 查询已完成 WAC 确认的物流批次历史（从 wac_history 派生，不依赖 logistics_batches 状态字段）
+app.get('/api/wac/confirmed-batches', requireApiPermission('ci_view'), asyncHandler((req, res) => {
+  try {
+    const rows = query(`SELECT lb.id, lb.batch_no, lb.related_ci_no, lb.forwarder_name,
+      lb.target_country, lb.target_warehouse, lb.actual_arrival_date,
+      wh.confirmed_at, wh.ci_no,
+      pl.pl_no, pl.total_qty AS pl_total_qty,
+      (SELECT COUNT(DISTINCT wh2.sku_code) FROM wac_history wh2 WHERE wh2.logistics_batch_id = lb.id) AS sku_count
+      FROM logistics_batches lb
+      INNER JOIN wac_history wh ON wh.logistics_batch_id = lb.id
+      LEFT JOIN packing_lists pl ON pl.logistics_batch_id = lb.id
+      WHERE lb.logistics_status = ?
+      GROUP BY lb.id
+      ORDER BY wh.confirmed_at DESC`, [LOGISTICS_STATUS_ARRIVED]).rows;
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+}));
+
+// WAC 确认预览：获取物流批次的 PL SKU 明细 + 当前 WAC + landing cost 计算
+app.get('/api/wac/preview/:logistics_batch_id', requireApiPermission('ci_view'), asyncHandler((req, res) => {
+  try {
+    const batch = queryOne('SELECT * FROM logistics_batches WHERE id = ?', [req.params.logistics_batch_id]);
+    if (!batch) return res.status(404).json({ error: '物流批次不存在' });
+
+    const pl = queryOne('SELECT * FROM packing_lists WHERE logistics_batch_id = ?', [batch.id]);
+    if (!pl) return res.status(400).json({ error: '该物流批次未关联PL' });
+
+    const plItems = query('SELECT * FROM packing_list_items WHERE pl_id = ? ORDER BY created_at', [pl.id]).rows;
+    if (plItems.length === 0) return res.status(400).json({ error: 'PL无明细数据' });
+
+    const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [batch.related_ci_id || pl.related_ci_id]);
+
+    // WAC-MODEL-V2: 优先从 commercial_invoice_items 读取SKU级采购成本
+    // CI明细存在时：按SKU聚合，保留SKU级加权采购成本，用产品成本比例分摊费用
+    // CI明细不存在时：回退到PL数量 + ci.goods_amount按数量分摊（旧逻辑）
+    const ciItems = ci ? query('SELECT * FROM commercial_invoice_items WHERE ci_id = ? ORDER BY created_at', [ci.id]).rows : [];
+    const useCiItems = ciItems.length > 0;
+
+    // 按SKU聚合
+    const skuMap = new Map();
+    if (useCiItems) {
+      // 从CI明细聚合：保留SKU级采购成本（同SKU不同单价时加权合并）+ 关税税率
+      ciItems.forEach(item => {
+        const skuCode = item.sku_code;
+        const qty = item.shipped_qty || 0;
+        const unitPrice = (item.net_unit_price > 0 ? item.net_unit_price : (item.unit_price || 0));
+        const lineCost = qty * unitPrice;
+        const customsRate = (item.actual_customs_rate !== null && item.actual_customs_rate !== '' && item.actual_customs_rate !== undefined)
+          ? Number(item.actual_customs_rate) : null;
+        if (skuMap.has(skuCode)) {
+          const existing = skuMap.get(skuCode);
+          existing.totalQty += qty;
+          existing.totalCost += lineCost;
+          existing.rowCount++;
+          // 同SKU多行：取第一个非null税率
+          if (existing.customsRate === null && customsRate !== null) existing.customsRate = customsRate;
+        } else {
+          skuMap.set(skuCode, { skuCode, totalQty: qty, totalCost: lineCost, rowCount: 1, customsRate });
+        }
+      });
+    } else {
+      // 回退：从PL聚合（仅有数量，无价格）
+      plItems.forEach(plItem => {
+        const skuCode = plItem.sku_code;
+        const plQty = plItem.total_qty || 0;
+        if (skuMap.has(skuCode)) {
+          skuMap.get(skuCode).totalQty += plQty;
+          skuMap.get(skuCode).rowCount++;
+        } else {
+          skuMap.set(skuCode, { skuCode, totalQty: plQty, totalCost: 0, rowCount: 1, customsRate: null });
+        }
+      });
+    }
+    const aggregatedItems = Array.from(skuMap.values());
+
+    const totalQty = aggregatedItems.reduce((sum, it) => sum + it.totalQty, 0);
+    // CI明细模式：totalProductCost = 各SKU采购成本之和；回退模式：使用 ci.goods_amount
+    const totalProductCost = useCiItems
+      ? aggregatedItems.reduce((sum, it) => sum + it.totalCost, 0)
+      : (ci ? ci.goods_amount || 0 : 0);
+    // WAC-COST-SOURCE-V2: 从 ci_cost_items.payable_amount 读取成本事实
+    // 如果已生成成本记录，使用 ci_cost_items；否则回退到 logistics_batches 静态字段
+    const costSummary = getCiCostSummary(ci.id, batch);
+    const totalFreight = costSummary.totalFreight;
+    const totalCustoms = costSummary.totalCustoms;
+    const totalOther = costSummary.totalOther;
+
+    // WAC-MODEL-V2.1: 关税按SKU税率权重分摊（F-A2规则）
+    // customs_weight = SKU采购成本 × SKU关税税率
+    // 实际总关税按 customs_weight 比例分配，残差给最大权重SKU
+    let customsAllocations = null;
+    const useCustomsRateModel = useCiItems && totalCustoms > 0;
+    if (useCustomsRateModel) {
+      // 计算各SKU关税权重
+      aggregatedItems.forEach(it => {
+        it.customsWeight = (it.customsRate !== null && it.customsRate !== undefined && it.customsRate > 0)
+          ? it.totalCost * it.customsRate : 0;
+      });
+      const totalCustomsWeight = aggregatedItems.reduce((sum, it) => sum + it.customsWeight, 0);
+      if (totalCustomsWeight > 0) {
+        // 按关税权重分摊 + 残差处理
+        const rawAlloc = aggregatedItems.map(it => {
+          const ratio = it.customsWeight / totalCustomsWeight;
+          const theoretical = totalCustoms * ratio;
+          const rounded = Math.round(theoretical * 10000) / 10000;
+          return { skuCode: it.skuCode, theoretical, rounded, final: rounded, adjustment: 0 };
+        });
+        // 锚点：理论值最大的SKU承担残差
+        const anchor = rawAlloc.slice().sort((a, b) => b.theoretical - a.theoretical)[0];
+        const roundedTotal = rawAlloc.reduce((sum, r) => sum + r.rounded, 0);
+        const remainder = Math.round(totalCustoms * 10000) / 10000 - roundedTotal;
+        if (anchor) {
+          anchor.adjustment = remainder;
+          anchor.final = Math.round((anchor.rounded + anchor.adjustment) * 10000) / 10000;
+        }
+        customsAllocations = new Map(rawAlloc.map(r => [r.skuCode, r.final]));
+      }
+      // totalCustomsWeight === 0 时 customsAllocations 保持 null，回退到成本比例
+    }
+
+    const country = batch.target_country || pl.country || '';
+    const warehouse = batch.target_warehouse || pl.target_warehouse || '';
+
+    // 检查是否已确认（wac_history 中存在该批次记录）
+    const existingWac = queryOne('SELECT 1 FROM wac_history WHERE logistics_batch_id = ? LIMIT 1', [batch.id]);
+
+    const items = aggregatedItems.map(aggItem => {
+      const skuCode = aggItem.skuCode;
+      const itemQty = aggItem.totalQty;
+
+      // SKU级加权采购成本
+      const weightedUnitPrice = itemQty > 0 ? aggItem.totalCost / itemQty : 0;
+      // CI明细模式：productCost = 实际SKU级采购成本；回退模式：按数量从ci.goods_amount分摊
+      const productCost = useCiItems
+        ? aggItem.totalCost
+        : (totalQty > 0 ? (ci ? ci.goods_amount || 0 : 0) * (itemQty / totalQty) : 0);
+
+      // 运费/其他费用分摊比例：CI明细模式按产品成本比例，回退模式按数量比例
+      const allocationRatio = useCiItems
+        ? (totalProductCost > 0 ? aggItem.totalCost / totalProductCost : 0)
+        : (totalQty > 0 ? itemQty / totalQty : 0);
+      const freightCost = totalFreight * allocationRatio;
+      // 关税：优先使用税率模型分摊，无税率时回退到成本比例
+      const customsCost = customsAllocations
+        ? (customsAllocations.get(skuCode) || 0)
+        : totalCustoms * allocationRatio;
+      const otherCost = totalOther * allocationRatio;
+      const totalLandingCost = productCost + freightCost + customsCost + otherCost;
+      const unitLandingCost = itemQty > 0 ? totalLandingCost / itemQty : 0;
+
+      const invRecord = queryOne('SELECT available_qty, weighted_avg_cost FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
+        [skuCode, country, warehouse]);
+      const currentWac = invRecord ? (invRecord.weighted_avg_cost || 0) : 0;
+      const availableQty = invRecord ? (invRecord.available_qty || 0) : 0;
+
+      const skuInfo = queryOne('SELECT product_name, model, brand FROM skus WHERE sku_code = ?', [skuCode]);
+
+      return {
+        sku_code: skuCode,
+        product_name: skuInfo ? (skuInfo.product_name || '') : '',
+        model: skuInfo ? (skuInfo.model || '') : '',
+        pl_qty: itemQty,
+        pl_row_count: aggItem.rowCount,
+        weighted_unit_price: Math.round(weightedUnitPrice * 10000) / 10000,
+        customs_rate: aggItem.customsRate,
+        available_qty: availableQty,
+        current_wac: currentWac,
+        product_cost: Math.round(productCost * 10000) / 10000,
+        freight_cost: Math.round(freightCost * 10000) / 10000,
+        customs_cost: Math.round(customsCost * 10000) / 10000,
+        other_cost: Math.round(otherCost * 10000) / 10000,
+        total_landing_cost: Math.round(totalLandingCost * 10000) / 10000,
+        unit_landing_cost: Math.round(unitLandingCost * 10000) / 10000
+      };
+    });
+
+    res.json({
+      batch_id: batch.id,
+      batch_no: batch.batch_no,
+      ci_no: ci ? ci.ci_no : '',
+      ci_id: ci ? ci.id : '',
+      country,
+      warehouse,
+      logistics_status: batch.logistics_status,
+      already_confirmed: !!existingWac,
+      actual_arrival_date: batch.actual_arrival_date || '',
+      total_freight: totalFreight,
+      total_customs: totalCustoms,
+      total_other: totalOther,
+      goods_amount: ci ? ci.goods_amount || 0 : 0,
+      total_product_cost: Math.round(totalProductCost * 10000) / 10000,
+      cost_source: useCiItems ? 'ci_items' : 'pl_fallback',
+      cost_data_source: costSummary.source,
+      customs_allocation: customsAllocations ? 'tax_rate_model' : 'cost_ratio_fallback',
+      currency: ci ? ci.currency || 'USD' : 'USD',
+      freight_currency: batch.freight_currency || 'USD',
+      total_pl_qty: totalQty,
+      items
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+}));
+
+// WAC 确认：从物流批次触发 WAC 计算，写入 wac_history + 更新 inventory.weighted_avg_cost
+// 只更新成本，不更新库存数量；不写入 logistics_batches 状态字段
+app.post('/api/wac/confirm/:logistics_batch_id', requireApiPermission('ci_edit'), asyncHandler((req, res) => {
+  try {
+    const batch = queryOne('SELECT * FROM logistics_batches WHERE id = ?', [req.params.logistics_batch_id]);
+    if (!batch) return res.status(404).json({ error: '物流批次不存在' });
+
+    // 入口条件：物流"已到仓"状态（使用常量，不绑定 completed 字符串）
+    if (batch.logistics_status !== LOGISTICS_STATUS_ARRIVED) {
+      return res.status(400).json({ error: '物流批次必须为「已到仓」状态才能进行WAC确认' });
+    }
+
+    // 重复确认检查：以 wac_history 记录为事实来源
+    const existingWac = queryOne('SELECT 1 FROM wac_history WHERE logistics_batch_id = ? LIMIT 1', [batch.id]);
+    if (existingWac) {
+      return res.status(409).json({ error: '该物流批次已完成WAC确认' });
+    }
+
+    const pl = queryOne('SELECT * FROM packing_lists WHERE logistics_batch_id = ?', [batch.id]);
+    if (!pl) return res.status(400).json({ error: '该物流批次未关联PL' });
+
+    const plItems = query('SELECT * FROM packing_list_items WHERE pl_id = ? ORDER BY created_at', [pl.id]).rows;
+    if (plItems.length === 0) return res.status(400).json({ error: 'PL无明细数据' });
+
+    const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [batch.related_ci_id || pl.related_ci_id]);
+    if (!ci) return res.status(400).json({ error: '未找到关联CI' });
+
+    // WAC-MODEL-V2: 优先从 commercial_invoice_items 读取SKU级采购成本
+    const ciItems = query('SELECT * FROM commercial_invoice_items WHERE ci_id = ? ORDER BY created_at', [ci.id]).rows;
+    const useCiItems = ciItems.length > 0;
+
+    // 按SKU聚合：确保每个SKU只执行一次WAC计算
+    const skuMap = new Map();
+    if (useCiItems) {
+      // 从CI明细聚合：保留SKU级采购成本（同SKU不同单价时加权合并）+ 关税税率
+      ciItems.forEach(item => {
+        const skuCode = item.sku_code;
+        const qty = item.shipped_qty || 0;
+        const unitPrice = (item.net_unit_price > 0 ? item.net_unit_price : (item.unit_price || 0));
+        const lineCost = qty * unitPrice;
+        const customsRate = (item.actual_customs_rate !== null && item.actual_customs_rate !== '' && item.actual_customs_rate !== undefined)
+          ? Number(item.actual_customs_rate) : null;
+        if (skuMap.has(skuCode)) {
+          const existing = skuMap.get(skuCode);
+          existing.totalQty += qty;
+          existing.totalCost += lineCost;
+          if (existing.customsRate === null && customsRate !== null) existing.customsRate = customsRate;
+        } else {
+          skuMap.set(skuCode, { skuCode, totalQty: qty, totalCost: lineCost, customsRate });
+        }
+      });
+    } else {
+      // 回退：从PL聚合（仅有数量，无价格）
+      plItems.forEach(plItem => {
+        const skuCode = plItem.sku_code;
+        const plQty = plItem.total_qty || 0;
+        if (skuMap.has(skuCode)) {
+          skuMap.get(skuCode).totalQty += plQty;
+        } else {
+          skuMap.set(skuCode, { skuCode, totalQty: plQty, totalCost: 0, customsRate: null });
+        }
+      });
+    }
+    const aggregatedItems = Array.from(skuMap.values());
+
+    const userItems = req.body.items || [];
+    if (userItems.length === 0) return res.status(400).json({ error: '请提供库存数量数据' });
+
+    const totalQty = aggregatedItems.reduce((sum, it) => sum + it.totalQty, 0);
+    // CI明细模式：totalProductCost = 各SKU采购成本之和；回退模式：使用 ci.goods_amount
+    const totalProductCost = useCiItems
+      ? aggregatedItems.reduce((sum, it) => sum + it.totalCost, 0)
+      : (ci.goods_amount || 0);
+    // WAC-COST-SOURCE-V2: 从 ci_cost_items.payable_amount 读取成本事实
+    // 如果已生成成本记录，使用 ci_cost_items；否则回退到 logistics_batches 静态字段
+    const costSummary = getCiCostSummary(ci.id, batch);
+    const totalFreight = costSummary.totalFreight;
+    const totalCustoms = costSummary.totalCustoms;
+    const totalOther = costSummary.totalOther;
+
+    // WAC-MODEL-V2.1: 关税按SKU税率权重分摊（F-A2规则）
+    let customsAllocations = null;
+    const useCustomsRateModel = useCiItems && totalCustoms > 0;
+    if (useCustomsRateModel) {
+      aggregatedItems.forEach(it => {
+        it.customsWeight = (it.customsRate !== null && it.customsRate !== undefined && it.customsRate > 0)
+          ? it.totalCost * it.customsRate : 0;
+      });
+      const totalCustomsWeight = aggregatedItems.reduce((sum, it) => sum + it.customsWeight, 0);
+      if (totalCustomsWeight > 0) {
+        const rawAlloc = aggregatedItems.map(it => {
+          const ratio = it.customsWeight / totalCustomsWeight;
+          const theoretical = totalCustoms * ratio;
+          const rounded = Math.round(theoretical * 10000) / 10000;
+          return { skuCode: it.skuCode, theoretical, rounded, final: rounded, adjustment: 0 };
+        });
+        const anchor = rawAlloc.slice().sort((a, b) => b.theoretical - a.theoretical)[0];
+        const roundedTotal = rawAlloc.reduce((sum, r) => sum + r.rounded, 0);
+        const remainder = Math.round(totalCustoms * 10000) / 10000 - roundedTotal;
+        if (anchor) {
+          anchor.adjustment = remainder;
+          anchor.final = Math.round((anchor.rounded + anchor.adjustment) * 10000) / 10000;
+        }
+        customsAllocations = new Map(rawAlloc.map(r => [r.skuCode, r.final]));
+      }
+    }
+
+    const country = batch.target_country || pl.country || '';
+    const warehouse = batch.target_warehouse || pl.target_warehouse || '';
+
+    const user = queryOne('SELECT name FROM users WHERE id = ?', [req.currentUserId]);
+    const userName = user ? user.name : '';
+    const today = new Date().toISOString().split('T')[0];
+    const logs = [];
+
+    transaction(() => {
+      aggregatedItems.forEach(aggItem => {
+        const skuCode = aggItem.skuCode;
+        const itemQty = aggItem.totalQty;
+        if (itemQty <= 0) return;
+
+        // 从用户提交数据中获取 old_qty
+        const userInput = userItems.find(it => it.sku_code === skuCode);
+        const oldQty = userInput ? (parseFloat(userInput.old_qty) || 0) : 0;
+
+        // 读取当前 WAC（从 inventory 总表）
+        const invRecord = queryOne('SELECT id, available_qty, weighted_avg_cost FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
+          [skuCode, country, warehouse]);
+        const oldAvgCost = invRecord ? (invRecord.weighted_avg_cost || 0) : 0;
+        const originalInventoryValue = oldQty * oldAvgCost;
+
+        // SKU级加权采购成本
+        const weightedUnitPrice = itemQty > 0 ? aggItem.totalCost / itemQty : 0;
+        // CI明细模式：productCost = 实际SKU级采购成本；回退模式：按数量从ci.goods_amount分摊
+        const productCost = useCiItems
+          ? aggItem.totalCost
+          : (totalQty > 0 ? (ci.goods_amount || 0) * (itemQty / totalQty) : 0);
+
+        // 运费/其他费用分摊比例：CI明细模式按产品成本比例，回退模式按数量比例
+        const allocationRatio = useCiItems
+          ? (totalProductCost > 0 ? aggItem.totalCost / totalProductCost : 0)
+          : (totalQty > 0 ? itemQty / totalQty : 0);
+        const freightCost = totalFreight * allocationRatio;
+        // 关税：优先使用税率模型分摊，无税率时回退到成本比例
+        const customsCost = customsAllocations
+          ? (customsAllocations.get(skuCode) || 0)
+          : totalCustoms * allocationRatio;
+        const otherCost = totalOther * allocationRatio;
+        const totalLandingCost = productCost + freightCost + customsCost + otherCost;
+        const unitLandingCost = itemQty > 0 ? totalLandingCost / itemQty : 0;
+
+        // WAC 移动加权公式
+        const newQty = oldQty + itemQty;
+        const newAvgCost = newQty > 0
+          ? (oldQty * oldAvgCost + itemQty * unitLandingCost) / newQty
+          : unitLandingCost;
+        const roundedAvgCost = Math.round(newAvgCost * 10000) / 10000;
+
+        const skuInfo = queryOne('SELECT model, brand FROM skus WHERE sku_code = ?', [skuCode]);
+
+        // 生成并锁定 WAC 历史版本（记录 logistics_batch_id 追踪来源）
+        const wacVer = generateWacVersion({
+          ci_id: ci.id,
+          ci_no: ci.ci_no,
+          po_id: ci.related_po_id || '',
+          po_no: ci.related_po_no || '',
+          pi_id: ci.related_pi_id || '',
+          pi_no: ci.related_pi_no || '',
+          sku_code: skuCode,
+          model: skuInfo ? (skuInfo.model || '') : '',
+          brand: ci.brand || (skuInfo ? (skuInfo.brand || '') : ''),
+          country: country,
+          warehouse: warehouse,
+          original_qty: oldQty,
+          original_avg_cost: oldAvgCost,
+          original_inventory_value: originalInventoryValue,
+          inbound_qty: itemQty,
+          unit_landing_cost: unitLandingCost,
+          inbound_total_cost: totalLandingCost,
+          new_avg_cost: roundedAvgCost,
+          settlement_date: today,
+          confirmed_by: req.currentUserId,
+          logistics_batch_id: batch.id
+        });
+
+        // 只更新 inventory.weighted_avg_cost 和 inventory_value，不更新 available_qty
+        if (invRecord) {
+          const newInvValue = (invRecord.available_qty || 0) * roundedAvgCost;
+          run('UPDATE inventory SET weighted_avg_cost = ?, inventory_value = ?, updated_at = datetime(\'now\') WHERE id = ?',
+            [roundedAvgCost, newInvValue, invRecord.id]);
+        }
+
+        // 记录成本更新日志
+        const logId = genId('cul');
+        run(`INSERT INTO cost_update_logs (id, sku_code, country, warehouse, related_po_no, related_pi_no, related_ci_no, original_qty, old_avg_cost, inbound_qty, ci_unit_cost, unit_landing_cost, new_qty, new_avg_cost, operator_id, operator_name, import_file, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [logId, skuCode, country, warehouse, ci.related_po_no || '', ci.related_pi_no || '', ci.ci_no,
+           oldQty, oldAvgCost, itemQty, weightedUnitPrice, unitLandingCost, newQty, roundedAvgCost,
+           req.currentUserId, userName, '', `WAC确认-物流批次:${batch.batch_no}`]);
+
+        logs.push({ sku_code: skuCode, version_no: wacVer.version_no, wac_id: wacVer.id, original_qty: oldQty, old_avg_cost: oldAvgCost, inbound_qty: itemQty, unit_landing_cost: unitLandingCost, new_avg_cost: roundedAvgCost });
+      });
+    });
+
+    res.json({ success: true, confirmed_count: logs.length, logs });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 

@@ -196,7 +196,11 @@ if (driver === 'pg') {
         // AUTH: sessions 表（会话管理）；同上，补建以防新部署/数据库重置后缺失
         "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, ip_address TEXT DEFAULT '', user_agent TEXT DEFAULT '')",
         "CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)",
-        "CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at)"
+        "CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at)",
+        // WAC-V2: ci_cost_items 新增 logistics_batch_id，追溯费用来自哪个物流单
+        "ALTER TABLE ci_cost_items ADD COLUMN IF NOT EXISTS logistics_batch_id TEXT DEFAULT ''",
+        // WAC-V2: wac_history 新增 logistics_batch_id，标记 WAC 确认来自哪个物流批次
+        "ALTER TABLE wac_history ADD COLUMN IF NOT EXISTS logistics_batch_id TEXT"
       ];
       for (var i = 0; i < migrations.length; i++) {
         try {
