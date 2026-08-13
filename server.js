@@ -83,8 +83,7 @@ const PUBLIC_AUTH_PREFIXES = [
   '/api/auth/local/login',
   '/api/logout',
   '/api/health',
-  '/api/version',
-  '/api/debug/logistics-fee' // TEMP-DEBUG
+  '/api/version'
 ];
 function reqPath(req) { return (req.originalUrl || req.url || '').split('?')[0]; }
 
@@ -1653,16 +1652,6 @@ app.get('/api/auth/feishu/callback', asyncHandler(async (req, res) => {
     console.error('[FEISHU] callback exception:', e.message, '\n', e.stack);
     auditLogin(null, '', 'feishu', false, 'exception:' + (e.message || 'unknown'));
     return res.status(401).json({ error: '飞书登录失败' });
-  }
-}));
-
-// TEMP-DEBUG: 物流批次 fee_status 诊断
-app.get('/api/debug/logistics-fee', asyncHandler((req, res) => {
-  try {
-    const rows = query("SELECT id, batch_no, total_freight, customs_duty, other_fees, fee_status, related_ci_id FROM logistics_batches ORDER BY created_at DESC LIMIT 10").rows;
-    res.json({ rows });
-  } catch (e) {
-    res.json({ error: e.message });
   }
 }));
 
