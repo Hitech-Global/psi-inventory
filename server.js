@@ -83,8 +83,7 @@ const PUBLIC_AUTH_PREFIXES = [
   '/api/auth/local/login',
   '/api/logout',
   '/api/health',
-  '/api/version',
-  '/api/debug/oauth-states' // TEMP-DEBUG: 临时调试端点，部署后移除
+  '/api/version'
 ];
 function reqPath(req) { return (req.originalUrl || req.url || '').split('?')[0]; }
 
@@ -1654,89 +1653,6 @@ app.get('/api/auth/feishu/callback', asyncHandler(async (req, res) => {
     auditLogin(null, '', 'feishu', false, 'exception:' + (e.message || 'unknown'));
     return res.status(401).json({ error: '飞书登录失败' });
   }
-}));
-
-// TEMP-DEBUG: oauth_states 诊断端点（部署后移除）
-app.get('/api/debug/oauth-states', asyncHandler((req, res) => {
-  const diag = { steps: [] };
-  try {
-    // Step 1: 检查表是否存在
-    try {
-      const tbl = queryOne("SELECT table_name FROM information_schema.tables WHERE table_name='oauth_states'");
-      diag.steps.push({ step: 'check_table', exists: !!tbl, detail: tbl });
-    } catch (e) {
-      diag.steps.push({ step: 'check_table', error: e.message });
-    }
-
-    // Step 2: 查看表结构
-    try {
-      const cols = query("SELECT column_name, data_type, column_default FROM information_schema.columns WHERE table_name='oauth_states' ORDER BY ordinal_position");
-      diag.steps.push({ step: 'table_schema', columns: cols });
-    } catch (e) {
-      diag.steps.push({ step: 'table_schema', error: e.message });
-    }
-
-    // Step 3: 确保表存在
-    try {
-      run("CREATE TABLE IF NOT EXISTS oauth_states (state TEXT PRIMARY KEY, created_at TEXT DEFAULT NOW(), expires_at TEXT NOT NULL)");
-      diag.steps.push({ step: 'ensure_table', ok: true });
-    } catch (e) {
-      diag.steps.push({ step: 'ensure_table', error: e.message });
-    }
-
-    // Step 4: INSERT 测试记录
-    const testState = 'debug_' + crypto.randomBytes(8).toString('hex');
-    try {
-      run("INSERT INTO oauth_states (state, created_at, expires_at) VALUES (?, datetime('now'), datetime('now', '+10 minutes'))", [testState]);
-      diag.steps.push({ step: 'insert', ok: true, state: testState });
-    } catch (e) {
-      diag.steps.push({ step: 'insert', error: e.message });
-    }
-
-    // Step 5: SELECT 刚插入的记录（带 expires_at 条件）
-    try {
-      const found = queryOne("SELECT * FROM oauth_states WHERE state=? AND expires_at > datetime('now')", [testState]);
-      diag.steps.push({ step: 'select_with_expiry', found: !!found, detail: found });
-    } catch (e) {
-      diag.steps.push({ step: 'select_with_expiry', error: e.message });
-    }
-
-    // Step 6: SELECT 不带 expires_at 条件
-    try {
-      const found2 = queryOne("SELECT * FROM oauth_states WHERE state=?", [testState]);
-      diag.steps.push({ step: 'select_without_expiry', found: !!found2, detail: found2 });
-    } catch (e) {
-      diag.steps.push({ step: 'select_without_expiry', error: e.message });
-    }
-
-    // Step 7: 查看总记录数
-    try {
-      const cnt = queryOne("SELECT COUNT(*) as cnt FROM oauth_states");
-      diag.steps.push({ step: 'count', count: cnt ? cnt.cnt : 'null' });
-    } catch (e) {
-      diag.steps.push({ step: 'count', error: e.message });
-    }
-
-    // Step 8: 查看最近5条记录
-    try {
-      const recent = query("SELECT * FROM oauth_states ORDER BY created_at DESC LIMIT 5");
-      diag.steps.push({ step: 'recent', records: recent });
-    } catch (e) {
-      diag.steps.push({ step: 'recent', error: e.message });
-    }
-
-    // Step 9: 查看 NOW() 返回值
-    try {
-      const nowResult = queryOne("SELECT NOW() as now_val, to_char(NOW(), 'YYYY-MM-DD HH24:MI:SS') as now_text, CURRENT_TIMESTAMP as ts_val");
-      diag.steps.push({ step: 'now_check', detail: nowResult });
-    } catch (e) {
-      diag.steps.push({ step: 'now_check', error: e.message });
-    }
-
-  } catch (e) {
-    diag.fatalError = e.message;
-  }
-  res.json(diag);
 }));
 
 // 飞书通知演练记录查询（仅测试/演练模式可用；生产恒 404，不暴露任何内部状态）

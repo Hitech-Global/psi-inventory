@@ -25,7 +25,16 @@ let mainPort = null;
 let txClient = null; // 事务模式下的专用连接
 
 // 连接池（非事务查询复用连接，消除冷启动 TCP/TLS 握手开销）
-const pool = new Pool(pgImpl._getClientConfig());
+// maxLifetime: 连接最长存活 60s，到期后归还时自动关闭重建，防止 Supabase 端
+//   单方面断连后 Pool 仍持有"僵尸"连接（表现为 INSERT 成功但 SELECT 返回空）
+// idleTimeoutMillis: 空闲 20s 即关闭，低于 Supabase pooler 的 idle 超时
+const poolConfig = {
+  ...pgImpl._getClientConfig(),
+  maxLifetime: 60000,
+  idleTimeoutMillis: 20000,
+  max: 5
+};
+const pool = new Pool(poolConfig);
 pool.on('error', (err) => {
   console.error('[DB-WORKER] 连接池错误（idle client）:', err.message);
 });

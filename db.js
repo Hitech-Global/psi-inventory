@@ -189,7 +189,14 @@ if (driver === 'pg') {
         // DATA-SCOPE: 用户数据权限表（已废弃，迁移到 role_data_scope；保留用于兼容旧数据迁移）
         "CREATE TABLE IF NOT EXISTS user_data_scope (user_id TEXT PRIMARY KEY, countries TEXT DEFAULT '[]', brands TEXT DEFAULT '[]', warehouses TEXT DEFAULT '[]', updated_at TEXT DEFAULT NOW())",
         // DATA-SCOPE: 角色数据权限表（替代 user_data_scope，符合 RBAC 模型）
-        "CREATE TABLE IF NOT EXISTS role_data_scope (role_id TEXT PRIMARY KEY, countries TEXT DEFAULT '[]', brands TEXT DEFAULT '[]', warehouses TEXT DEFAULT '[]', updated_at TEXT DEFAULT NOW())"
+        "CREATE TABLE IF NOT EXISTS role_data_scope (role_id TEXT PRIMARY KEY, countries TEXT DEFAULT '[]', brands TEXT DEFAULT '[]', warehouses TEXT DEFAULT '[]', updated_at TEXT DEFAULT NOW())",
+        // AUTH: oauth_states 表（飞书 OAuth state 存储）；db-pg.js initDatabase 在 worker_threads 模式下不执行，须在此补建
+        "CREATE TABLE IF NOT EXISTS oauth_states (state TEXT PRIMARY KEY, created_at TEXT DEFAULT NOW(), expires_at TEXT NOT NULL)",
+        "CREATE INDEX IF NOT EXISTS idx_oauth_states_expires ON oauth_states(expires_at)",
+        // AUTH: sessions 表（会话管理）；同上，补建以防新部署/数据库重置后缺失
+        "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, ip_address TEXT DEFAULT '', user_agent TEXT DEFAULT '')",
+        "CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)",
+        "CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at)"
       ];
       for (var i = 0; i < migrations.length; i++) {
         try {
