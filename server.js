@@ -84,7 +84,7 @@ const PUBLIC_AUTH_PREFIXES = [
   '/api/logout',
   '/api/health',
   '/api/version',
-  '/api/debug/' // TEMP-DEBUG: 临时调试端点，部署后移除
+  '/api/debug/oauth-states' // TEMP-DEBUG: 临时调试端点，部署后移除
 ];
 function reqPath(req) { return (req.originalUrl || req.url || '').split('?')[0]; }
 
