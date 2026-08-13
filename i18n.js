@@ -4683,6 +4683,23 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.zh["logistics.btn.create"]="➕ 新建物流批次"; I18N.dict.en["logistics.btn.create"]="➕ New Batch"; I18N.dict.id["logistics.btn.create"]="➕ Batch Baru";
   I18N.dict.zh["logistics.btn.freight_pay"]="运费付款"; I18N.dict.en["logistics.btn.freight_pay"]="Freight Payment"; I18N.dict.id["logistics.btn.freight_pay"]="Pembayaran Ongkos Kirim";
   I18N.dict.zh["logistics.btn.duty_pay"]="关税付款"; I18N.dict.en["logistics.btn.duty_pay"]="Duty Payment"; I18N.dict.id["logistics.btn.duty_pay"]="Pembayaran Bea Masuk";
+  // LOGISTICS-COST-LINK-V2：物流单费用生成成本记录（成本流与资金流分离）
+  I18N.dict.zh["logistics.btn.generate_cost"]="生成成本记录"; I18N.dict.en["logistics.btn.generate_cost"]="Generate Cost Record"; I18N.dict.id["logistics.btn.generate_cost"]="Buat Catatan Biaya";
+  I18N.dict.zh["logistics.gen_cost.title"]="生成成本记录"; I18N.dict.en["logistics.gen_cost.title"]="Generate Cost Record"; I18N.dict.id["logistics.gen_cost.title"]="Buat Catatan Biaya";
+  I18N.dict.zh["logistics.gen_cost.no_ci"]="该物流批次未关联CI，无法生成成本记录"; I18N.dict.en["logistics.gen_cost.no_ci"]="This logistics batch has no linked CI, cannot generate cost record"; I18N.dict.id["logistics.gen_cost.no_ci"]="Batch logistik ini tidak terkait dengan CI, tidak dapat membuat catatan biaya";
+  I18N.dict.zh["logistics.gen_cost.no_fees"]="物流单费用均为0，无需生成成本记录"; I18N.dict.en["logistics.gen_cost.no_fees"]="All logistics costs are 0, no need to generate cost record"; I18N.dict.id["logistics.gen_cost.no_fees"]="Semua biaya logistik adalah 0, tidak perlu membuat catatan biaya";
+  I18N.dict.zh["logistics.gen_cost.freight"]="运费(国际运费+本地费用+报关服务费+派送费)"; I18N.dict.en["logistics.gen_cost.freight"]="Freight (Intl+Local+Customs Service+Delivery)"; I18N.dict.id["logistics.gen_cost.freight"]="Ongkos Kirim (Intl+Lokal+Bea Cukai+Pengiriman)";
+  I18N.dict.zh["logistics.gen_cost.duty"]="关税(关税+增值税/GST)"; I18N.dict.en["logistics.gen_cost.duty"]="Duty (Customs Duty+VAT/GST)"; I18N.dict.id["logistics.gen_cost.duty"]="Bea Masuk (Bea Masuk+VAT/GST)";
+  I18N.dict.zh["logistics.gen_cost.other"]="其他费用"; I18N.dict.en["logistics.gen_cost.other"]="Other Fees"; I18N.dict.id["logistics.gen_cost.other"]="Biaya Lainnya";
+  I18N.dict.zh["logistics.gen_cost.confirm_hint"]="以下费用将生成CI成本记录并推送到应付费用列表，付款申请需在应付费用列表手动提交："; I18N.dict.en["logistics.gen_cost.confirm_hint"]="The following costs will generate CI cost records and push to the payable list. Payment requests must be manually submitted from the payable list:"; I18N.dict.id["logistics.gen_cost.confirm_hint"]="Biaya berikut akan membuat catatan biaya CI dan mendorong ke daftar hutang. Permintaan pembayaran harus diajukan secara manual dari daftar hutang:";
+  I18N.dict.zh["logistics.gen_cost.payee"]="收款方"; I18N.dict.en["logistics.gen_cost.payee"]="Payee"; I18N.dict.id["logistics.gen_cost.payee"]="Penerima Pembayaran";
+  I18N.dict.zh["logistics.gen_cost.payee_placeholder"]="货代/报关行名称"; I18N.dict.en["logistics.gen_cost.payee_placeholder"]="Freight forwarder / Customs broker name"; I18N.dict.id["logistics.gen_cost.payee_placeholder"]="Nama freight forwarder / customs broker";
+  I18N.dict.zh["logistics.gen_cost.note"]="提示：生成后可在应付费用列表查看并手动提交付款申请。关税将自动更新CI的Import Duty总额。"; I18N.dict.en["logistics.gen_cost.note"]="Note: After generation, you can view and manually submit payment requests in the payable list. Duty will automatically update CI Import Duty total."; I18N.dict.id["logistics.gen_cost.note"]="Catatan: Setelah dibuat, Anda dapat melihat dan mengajukan permintaan pembayaran secara manual di daftar hutang. Bea masuk akan otomatis memperbarui total Import Duty CI.";
+  I18N.dict.zh["logistics.gen_cost.confirm"]="确认生成"; I18N.dict.en["logistics.gen_cost.confirm"]="Confirm Generate"; I18N.dict.id["logistics.gen_cost.confirm"]="Konfirmasi Buat";
+  I18N.dict.zh["logistics.gen_cost.success"]="成本记录已生成"; I18N.dict.en["logistics.gen_cost.success"]="Cost records generated"; I18N.dict.id["logistics.gen_cost.success"]="Catatan biaya telah dibuat";
+  I18N.dict.zh["logistics.gen_cost.items"]="笔"; I18N.dict.en["logistics.gen_cost.items"]=" items"; I18N.dict.id["logistics.gen_cost.items"]=" item";
+  I18N.dict.zh["logistics.gen_cost.payable_hint"]="请在应付费用列表提交付款申请"; I18N.dict.en["logistics.gen_cost.payable_hint"]="Please submit payment requests in the payable list"; I18N.dict.id["logistics.gen_cost.payable_hint"]="Silakan ajukan permintaan pembayaran di daftar hutang";
+  I18N.dict.zh["common.cancel"]="取消";
 
   // 物流详情
   I18N.dict.zh["logistics.detail.title"]="物流详情"; I18N.dict.en["logistics.detail.title"]="Logistics Details"; I18N.dict.id["logistics.detail.title"]="Detail Logistik";
@@ -4763,4 +4780,58 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   // 物流 Toast
   I18N.dict.zh["logistics.toast.loading"]="加载中，请稍候..."; I18N.dict.en["logistics.toast.loading"]="Loading, please wait..."; I18N.dict.id["logistics.toast.loading"]="Memuat, mohon tunggu...";
   I18N.dict.zh["logistics.toast.save_success"]="保存成功"; I18N.dict.en["logistics.toast.save_success"]="Saved successfully"; I18N.dict.id["logistics.toast.save_success"]="Berhasil disimpan";
+
+  // ===================== WAC 确认（物流批次 → WAC → 库存成本） =====================
+  I18N.dict.zh["wac.refresh"]="刷新"; I18N.dict.en["wac.refresh"]="Refresh"; I18N.dict.id["wac.refresh"]="Muat Ulang";
+  I18N.dict.zh["wac.history"]="确认历史"; I18N.dict.en["wac.history"]="Confirmation History"; I18N.dict.id["wac.history"]="Riwayat Konfirmasi";
+  I18N.dict.zh["wac.pending_title"]="待WAC确认的物流批次"; I18N.dict.en["wac.pending_title"]="Logistics Batches Pending WAC Confirmation"; I18N.dict.id["wac.pending_title"]="Batch Logistik Menunggu Konfirmasi WAC";
+  I18N.dict.zh["wac.no_pending"]="暂无待确认的物流批次"; I18N.dict.en["wac.no_pending"]="No batches pending WAC confirmation"; I18N.dict.id["wac.no_pending"]="Tidak ada batch menunggu konfirmasi WAC";
+  I18N.dict.zh["wac.no_history"]="暂无WAC确认历史"; I18N.dict.en["wac.no_history"]="No WAC confirmation history"; I18N.dict.id["wac.no_history"]="Tidak ada riwayat konfirmasi WAC";
+  I18N.dict.zh["wac.no_items"]="无PL明细数据"; I18N.dict.en["wac.no_items"]="No PL detail data"; I18N.dict.id["wac.no_items"]="Tidak ada data detail PL";
+  I18N.dict.zh["wac.modal_title"]="WAC确认"; I18N.dict.en["wac.modal_title"]="WAC Confirmation"; I18N.dict.id["wac.modal_title"]="Konfirmasi WAC";
+  I18N.dict.zh["wac.btn_confirm"]="WAC确认"; I18N.dict.en["wac.btn_confirm"]="WAC Confirm"; I18N.dict.id["wac.btn_confirm"]="Konfirmasi WAC";
+  I18N.dict.zh["wac.btn_submit"]="确认WAC"; I18N.dict.en["wac.btn_submit"]="Confirm WAC"; I18N.dict.id["wac.btn_submit"]="Konfirmasi WAC";
+  I18N.dict.zh["wac.confirm_msg"]="确认提交WAC计算？写入后不可修改。"; I18N.dict.en["wac.confirm_msg"]="Confirm WAC calculation? This cannot be undone after submission."; I18N.dict.id["wac.confirm_msg"]="Konfirmasi perhitungan WAC? Tidak dapat dibatalkan setelah dikirim.";
+  I18N.dict.zh["wac.success"]="WAC确认成功，共{v1}个SKU更新"; I18N.dict.en["wac.success"]="WAC confirmation successful, {v1} SKU(s) updated"; I18N.dict.id["wac.success"]="Konfirmasi WAC berhasil, {v1} SKU diperbarui";
+  I18N.dict.zh["wac.batch_info"]="物流批次"; I18N.dict.en["wac.batch_info"]="Logistics Batch"; I18N.dict.id["wac.batch_info"]="Batch Logistik";
+  I18N.dict.zh["wac.country"]="国家"; I18N.dict.en["wac.country"]="Country"; I18N.dict.id["wac.country"]="Negara";
+  I18N.dict.zh["wac.warehouse"]="仓库"; I18N.dict.en["wac.warehouse"]="Warehouse"; I18N.dict.id["wac.warehouse"]="Gudang";
+  I18N.dict.zh["wac.arrival"]="到货日期"; I18N.dict.en["wac.arrival"]="Arrival Date"; I18N.dict.id["wac.arrival"]="Tanggal Tiba";
+  I18N.dict.zh["wac.formula_hint"]="移动加权公式：新WAC = (旧库存数量 × 当前WAC + 本批次数量 × 单位落地成本) ÷ (旧库存数量 + 本批次数量)"; I18N.dict.en["wac.formula_hint"]="Moving Average Formula: New WAC = (Old Qty × Current WAC + Batch Qty × Unit Landing Cost) ÷ (Old Qty + Batch Qty)"; I18N.dict.id["wac.formula_hint"]="Rumus Rata-rata Bergerak: WAC Baru = (Qty Lama × WAC Saat Ini + Qty Batch × Biaya Pendarat per Unit) ÷ (Qty Lama + Qty Batch)";
+  I18N.dict.zh["wac.landing_cost_hint"]="单位落地成本 = (产品货值 + 物流费用 + 清关费用 + 其他费用) ÷ SKU数量"; I18N.dict.en["wac.landing_cost_hint"]="Unit Landing Cost = (Product Cost + Freight + Customs + Other Fees) ÷ SKU Qty"; I18N.dict.id["wac.landing_cost_hint"]="Biaya Pendarat per Unit = (Biaya Produk + Pengiriman + Bea Cukai + Biaya Lain) ÷ Qty SKU";
+  I18N.dict.zh["wac.old_qty_hint"]="⚠️ 旧库存数量需人工输入，请根据实际盘点填写，不可直接使用系统库存数量"; I18N.dict.en["wac.old_qty_hint"]="⚠️ Old stock quantity must be entered manually based on actual inventory count, do not use system stock quantity directly"; I18N.dict.id["wac.old_qty_hint"]="⚠️ Qty stok lama harus diisi manual berdasarkan jumlah aktual, jangan gunakan qty stok sistem langsung";
+  // WAC 列标题
+  I18N.dict.zh["wac.col_batch_no"]="物流单号"; I18N.dict.en["wac.col_batch_no"]="Batch No."; I18N.dict.id["wac.col_batch_no"]="No. Batch";
+  I18N.dict.zh["wac.col_ci"]="关联CI"; I18N.dict.en["wac.col_ci"]="Related CI"; I18N.dict.id["wac.col_ci"]="CI Terkait";
+  I18N.dict.zh["wac.col_forwarder"]="货代"; I18N.dict.en["wac.col_forwarder"]="Forwarder"; I18N.dict.id["wac.col_forwarder"]="Forwarder";
+  I18N.dict.zh["wac.col_country"]="国家"; I18N.dict.en["wac.col_country"]="Country"; I18N.dict.id["wac.col_country"]="Negara";
+  I18N.dict.zh["wac.col_warehouse"]="仓库"; I18N.dict.en["wac.col_warehouse"]="Warehouse"; I18N.dict.id["wac.col_warehouse"]="Gudang";
+  I18N.dict.zh["wac.col_arrival"]="到货日期"; I18N.dict.en["wac.col_arrival"]="Arrival Date"; I18N.dict.id["wac.col_arrival"]="Tanggal Tiba";
+  I18N.dict.zh["wac.col_pl_qty"]="PL数量"; I18N.dict.en["wac.col_pl_qty"]="PL Qty"; I18N.dict.id["wac.col_pl_qty"]="Qty PL";
+  I18N.dict.zh["wac.col_goods"]="货值"; I18N.dict.en["wac.col_goods"]="Goods Value"; I18N.dict.id["wac.col_goods"]="Nilai Barang";
+  I18N.dict.zh["wac.col_action"]="操作"; I18N.dict.en["wac.col_action"]="Action"; I18N.dict.id["wac.col_action"]="Aksi";
+  I18N.dict.zh["wac.col_product"]="产品"; I18N.dict.en["wac.col_product"]="Product"; I18N.dict.id["wac.col_product"]="Produk";
+  I18N.dict.zh["wac.col_avail"]="当前库存"; I18N.dict.en["wac.col_avail"]="Current Stock"; I18N.dict.id["wac.col_avail"]="Stok Saat Ini";
+  I18N.dict.zh["wac.col_old_qty"]="旧库存数量"; I18N.dict.en["wac.col_old_qty"]="Old Stock Qty"; I18N.dict.id["wac.col_old_qty"]="Qty Stok Lama";
+  I18N.dict.zh["wac.col_current_wac"]="当前WAC"; I18N.dict.en["wac.col_current_wac"]="Current WAC"; I18N.dict.id["wac.col_current_wac"]="WAC Saat Ini";
+  I18N.dict.zh["wac.col_product_cost"]="产品货值"; I18N.dict.en["wac.col_product_cost"]="Product Cost"; I18N.dict.id["wac.col_product_cost"]="Biaya Produk";
+  I18N.dict.zh["wac.col_freight"]="物流费"; I18N.dict.en["wac.col_freight"]="Freight"; I18N.dict.id["wac.col_freight"]="Pengiriman";
+  I18N.dict.zh["wac.col_customs"]="清关费"; I18N.dict.en["wac.col_customs"]="Customs"; I18N.dict.id["wac.col_customs"]="Bea Cukai";
+  I18N.dict.zh["wac.col_other"]="其他费"; I18N.dict.en["wac.col_other"]="Other Fees"; I18N.dict.id["wac.col_other"]="Biaya Lain";
+  I18N.dict.zh["wac.col_unit_landing"]="单位落地成本"; I18N.dict.en["wac.col_unit_landing"]="Unit Landing Cost"; I18N.dict.id["wac.col_unit_landing"]="Biaya Pendarat per Unit";
+  I18N.dict.zh["wac.col_new_wac"]="新WAC"; I18N.dict.en["wac.col_new_wac"]="New WAC"; I18N.dict.id["wac.col_new_wac"]="WAC Baru";
+  I18N.dict.zh["wac.col_confirmed_at"]="确认时间"; I18N.dict.en["wac.col_confirmed_at"]="Confirmed At"; I18N.dict.id["wac.col_confirmed_at"]="Dikompirmasi Pada";
+  I18N.dict.zh["wac.col_sku_count"]="SKU数"; I18N.dict.en["wac.col_sku_count"]="SKU Count"; I18N.dict.id["wac.col_sku_count"]="Jumlah SKU";
+  // WAC-MODEL-V2 新增翻译键
+  I18N.dict.zh["wac.col_agg"]="聚合"; I18N.dict.en["wac.col_agg"]="Agg"; I18N.dict.id["wac.col_agg"]="Agg";
+  I18N.dict.zh["wac.col_weighted_price"]="加权采购单价"; I18N.dict.en["wac.col_weighted_price"]="Weighted Purchase Price"; I18N.dict.id["wac.col_weighted_price"]="Harga Beli Tertimbang";
+  I18N.dict.zh["wac.cost_source"]="成本来源"; I18N.dict.en["wac.cost_source"]="Cost Source"; I18N.dict.id["wac.cost_source"]="Sumber Biaya";
+  I18N.dict.zh["wac.cost_data_source"]="费用来源"; I18N.dict.en["wac.cost_data_source"]="Expense Source"; I18N.dict.id["wac.cost_data_source"]="Sumber Pengeluaran";
+  I18N.dict.zh["wac.aggregated_tip"]="同SKU多行已聚合"; I18N.dict.en["wac.aggregated_tip"]="Duplicate SKU rows aggregated"; I18N.dict.id["wac.aggregated_tip"]="Baris SKU duplikat diagregasi";
+  I18N.dict.zh["wac.landing_cost_hint_v2"]="单位落地成本 = (SKU级采购成本 + 按成本比例分摊的物流/清关/其他费用) ÷ SKU数量"; I18N.dict.en["wac.landing_cost_hint_v2"]="Unit Landing Cost = (SKU-level Purchase Cost + Cost-proportional Freight/Customs/Other) ÷ SKU Qty"; I18N.dict.id["wac.landing_cost_hint_v2"]="Biaya Pendarat per Unit = (Biaya Beli SKU + Pengiriman/Bea Cukai/Lain proportional) ÷ Qty SKU";
+  I18N.dict.zh["wac.ci_items_hint"]="✅ 成本来源：CI明细，同SKU不同单价已加权聚合，费用按产品成本比例分摊"; I18N.dict.en["wac.ci_items_hint"]="✅ Cost source: CI items, duplicate SKUs with different prices weighted, fees allocated by product cost ratio"; I18N.dict.id["wac.ci_items_hint"]="✅ Sumber biaya: item CI, SKU duplikat dengan harga berbeda ditimbang, biaya dialokasikan proporsional";
+  // WAC-MODEL-V2.1 关税税率模型翻译键
+  I18N.dict.zh["wac.col_customs_rate"]="关税税率"; I18N.dict.en["wac.col_customs_rate"]="Customs Rate"; I18N.dict.id["wac.col_customs_rate"]="Tarif Bea Cukai";
+  I18N.dict.zh["wac.customs_alloc"]="关税分摊"; I18N.dict.en["wac.customs_alloc"]="Customs Alloc"; I18N.dict.id["wac.customs_alloc"]="Alokasi Bea Cukai";
+  I18N.dict.zh["wac.customs_rate_hint"]="✅ 关税按SKU税率权重分摊：理论关税=SKU货值×SKU税率，实际总关税按理论关税比例分配，残差给最大SKU"; I18N.dict.en["wac.customs_rate_hint"]="✅ Customs allocated by SKU tax rate weight: theoretical duty = SKU value × SKU rate, actual total duty allocated by theoretical ratio, residual to largest SKU"; I18N.dict.id["wac.customs_rate_hint"]="✅ Bea Cukai dialokasikan berdasarkan tarif SKU: bea teoretis = nilai SKU × tarif, total aktual dialokasikan proporsional, sisa ke SKU terbesar";
 })();
