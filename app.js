@@ -12194,12 +12194,14 @@ async function viewPayment(id, mode){
         : '')
       +'</div>';
     // finance 模式且待审：补审批意见输入框（粘贴图片自动上传为附件）
-    const isPendingApproval=(p.payment_status==='pending_approval'||p.approval_status==='pending');
+    // 注意：审批按钮映射仅看 approval_status，避免已 approved 但 payment_status='pending_approval' 的单据被误判为“待审批”、仍显示 approve 按钮导致重复调用 approve 返回 409
+    const isPendingApproval=(p.approval_status==='pending');
     // 两级财务审批流程：第二级「付款确认」——一级已审批(approved)且尚未进入付款动作。
     // PAY-CORE 多次付款：partial_paid / partial_payment_partial_deduction 等已发生付款动作的状态不再显示确认按钮，
     // 避免同一 PR 重复确认；剩余尾款由用户从应付费用列表另行创建付款申请。
     // 仍显示：approved（仅靠审批待付款）/ partial_deduction（已抵扣但未付款）。
-    const isPendingPaymentConfirmation=(mode==='finance'&&p.approval_status==='approved'&&['approved','partial_deduction'].includes(p.payment_status));
+    // 已审批通过、待付款确认：approved（仅靠审批待付款）/ partial_deduction（已抵扣未付款）/ pending_approval（审批已通过、尚未确认付款）
+    const isPendingPaymentConfirmation=(mode==='finance'&&p.approval_status==='approved'&&['approved','partial_deduction','pending_approval'].includes(p.payment_status));
     const canApprove=hasPermission('payment_approve');
     // PAY-CORE Phase 2：判断是否为最终审批节点（current_level >= max_level）
     const appr=p.approval||{};
