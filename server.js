@@ -4116,19 +4116,45 @@ async function updateInventoryTransitData() {
   //   po_unconfirmed_pi_qty / pi_confirmed_unshipped_qty / in_transit_qty
   // 全量重算（SET 聚合值，非 +=），幂等，与导入流程不冲突。
   // 注：本函数只更新已存在的 inventory 行；新采购 SKU 若无 inventory 行则 transit 字段保持原值。
-  // CI已发货未入库 = 在途
-  // 先全量清零（保证被作废/删除后贡献降为 0 的 SKU 也能回落，而非残留旧值），再按活跃单据聚合写入
+  // 整段重算包成单个事务：reset+逐行回写 原子提交，任何一步失败整体 ROLLBACK，
+  // 避免出现「先清零、只写回一部分」的半更新状态。
+  await transaction(async () => {
+  // 在途口径（方案 B）：CI 已发货数量 - 已完成到仓(completed)物流批次对应 PL 的 SKU 数量
+  // 不读取 inbound_qty；物理到仓由 logistics_status='completed' + PL items 决定。
+  // 先全量清零（保证被作废/删除后贡献降为 0 的 SKU 也能回落，而非残留旧值），再按事实聚合写入
   await run('UPDATE inventory SET in_transit_qty = 0');
   const transitData = (await query(`
-    SELECT cii.sku_code, ci.country, ci.target_warehouse as warehouse,
-           SUM(cii.shipped_qty - cii.inbound_qty) as in_transit_qty
-    FROM commercial_invoice_items cii
-    JOIN commercial_invoices ci ON cii.ci_id = ci.id
-    WHERE ci.ci_status NOT IN ('cancelled')
-      AND (cii.shipped_qty - cii.inbound_qty) > 0
-      AND ci.country IS NOT NULL AND ci.country != ''
-      AND ci.target_warehouse IS NOT NULL AND ci.target_warehouse != ''
-    GROUP BY cii.sku_code, ci.country, ci.target_warehouse
+    WITH shipped AS (
+      SELECT cii.ci_id, cii.sku_code,
+             SUM(COALESCE(cii.shipped_qty, 0)) AS shipped_qty
+      FROM commercial_invoice_items cii
+      JOIN commercial_invoices ci ON ci.id = cii.ci_id
+      WHERE ci.ci_status NOT IN ('cancelled')
+      GROUP BY cii.ci_id, cii.sku_code
+    ),
+    arrived AS (
+      SELECT lb.related_ci_id AS ci_id, pli.sku_code,
+             SUM(COALESCE(pli.total_qty, 0)) AS arrived_qty
+      FROM logistics_batches lb
+      JOIN packing_lists pl ON pl.logistics_batch_id = lb.id
+      JOIN packing_list_items pli ON pli.pl_id = pl.id
+      WHERE lb.logistics_status = 'completed'
+        AND lb.related_ci_id IS NOT NULL
+      GROUP BY lb.related_ci_id, pli.sku_code
+    ),
+    per_ci_transit AS (
+      SELECT s.sku_code, ci.country, ci.target_warehouse AS warehouse,
+             CASE WHEN COALESCE(s.shipped_qty, 0) - COALESCE(a.arrived_qty, 0) < 0 THEN 0
+                  ELSE COALESCE(s.shipped_qty, 0) - COALESCE(a.arrived_qty, 0) END AS in_transit_qty
+      FROM shipped s
+      JOIN commercial_invoices ci ON ci.id = s.ci_id
+      LEFT JOIN arrived a ON a.ci_id = s.ci_id AND a.sku_code = s.sku_code
+      WHERE ci.country != '' AND ci.target_warehouse != ''
+    )
+    SELECT sku_code, country, warehouse, SUM(in_transit_qty) AS in_transit_qty
+    FROM per_ci_transit
+    GROUP BY sku_code, country, warehouse
+    HAVING SUM(in_transit_qty) > 0
   `)).rows;
 
   for (const td of transitData) {
@@ -4182,6 +4208,7 @@ async function updateInventoryTransitData() {
       await run('UPDATE inventory SET po_unconfirmed_pi_qty = ? WHERE id = ?', [pd.po_unconfirmed || 0, inv.id]);
     }
   }
+  });
 }
 
 // ==================== 出库数据 ====================
@@ -5576,7 +5603,11 @@ app.get('/api/replenishment-suggestions/monthly-sales', requireApiPermission('re
   return res.json({ success: true, range: { start, end }, columns, data });
 }));
 
-app.get('/api/replenishment-suggestions', requireApiPermission('replenishment_view'), asyncHandler((req, res) => {
+app.get('/api/replenishment-suggestions', requireApiPermission('replenishment_view'), asyncHandler(async (req, res) => {
+  // 读取前兜底重算：物流状态(completed)是「是否在途」的唯一物理事实源，
+  // inventory.in_transit_qty 只是可重新生成的派生数据。即便物流 PUT 后即时重算失败，
+  // 用户刷新订单预测时此处必会按源事实校正，形成确定性自愈链路。
+  await updateInventoryTransitData();
   const { country, warehouse, brand, keyword, sales_status, lifecycle_status } = req.query;
   let sql = `SELECT rs.*, s.product_name, s.brand, s.category, s.model, s.standard_purchase_price, s.qty_per_carton, s.purchase_currency, i.last_inbound_date,
       i.id AS inv_row_id,
@@ -8470,7 +8501,7 @@ app.post('/api/logistics-batches/create-with-pl', requireApiPermission('logistic
   }
 }));
 
-app.put('/api/logistics-batches/:id', requireApiPermission('logistics_edit'), asyncHandler((req, res) => {
+app.put('/api/logistics-batches/:id', requireApiPermission('logistics_edit'), asyncHandler(async (req, res) => {
   try {
     const d = req.body;
     const { id } = req.params;
@@ -8507,6 +8538,21 @@ app.put('/api/logistics-batches/:id', requireApiPermission('logistics_edit'), as
     fields.push(`updated_at = datetime('now')`);
     values.push(id);
     run(`UPDATE logistics_batches SET ${fields.join(', ')} WHERE id = ?`, values);
+    // 在途物理口径：物流批次 completed(已到仓) <-> 其他 状态 跨越时，触发在途重算。
+    // 这样「已到仓」的 SKU 数量会立即退出订单预测在途；状态回退则恢复在途。
+    // 仅边界跨越才重算，pending→in_transit→customs 等内部流转不触发。
+    // 若此处重算失败，订单预测 GET 自身仍会在读取前兜底重算，属确定性自愈链路，故仅记录错误日志。
+    if (d.logistics_status !== undefined && d.logistics_status !== existing.logistics_status) {
+      const wasArrived = existing.logistics_status === LOGISTICS_STATUS_ARRIVED;
+      const nowArrived = d.logistics_status === LOGISTICS_STATUS_ARRIVED;
+      if (wasArrived !== nowArrived) {
+        try {
+          await updateInventoryTransitData();
+        } catch (err) {
+          console.error('[transit-recalc] 物流状态边界变更后重算在途失败:', err && err.message ? err.message : err);
+        }
+      }
+    }
     // 物流展示状态变化通知：仅当「业务展示状态」（非底层枚举）真正变化才记录 + 通知。
     // 例 arrived→customs 同为「清关中」，展示状态未变，不记录也不通知；清关中→待派送才触发。
     if (d.logistics_status !== undefined) {
