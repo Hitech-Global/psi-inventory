@@ -6939,7 +6939,7 @@ app.post('/api/proforma-invoices', requireApiPermission('pi_create'), asyncHandl
     const needDeposit = d.need_deposit === false || d.need_deposit === 0 || d.need_deposit === '0' ? 0 : 1;
     const depositRatio = needDeposit ? n(d.deposit_ratio, 0) : 0;
 
-    await transaction(async () => {
+    transaction(() => {
       run(`INSERT INTO proforma_invoices (id, pi_no, related_po_id, related_po_no, supplier_id, supplier_name, brand, country, target_warehouse, pi_date, currency, total_amount, payment_terms, payment_term_id, need_deposit, deposit_ratio, balance_ratio, payable_deposit, pi_status, expected_delivery, attachment, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [piId, piNo, d.related_po_id || '', d.related_po_no || '', d.supplier_id || '', d.supplier_name, d.brand || '', d.country || '', d.target_warehouse || '', d.pi_date || new Date().toISOString().split('T')[0], finalCurrency, 0, d.payment_terms || '', d.payment_term_id || '', needDeposit, depositRatio, 100 - depositRatio, 0, d.pi_status || 'pending', d.expected_delivery || '', parseAttachment(d.attachment), d.remark || '']);
 
@@ -7022,13 +7022,56 @@ app.post('/api/proforma-invoices', requireApiPermission('pi_create'), asyncHandl
           }
         }
 
-        // 更新库存的PI未发货数量
-        await updateInventoryTransitData();
+        // 更新库存的PI未发货数量（派生/在途汇总刷新，已移到事务外、COMMIT 后执行）
       }
     });
+    // —— COMMIT 后 read-back（事务外，走 pool，证明已真正持久化）——
+    let verify = null;
+    try {
+      verify = queryOne('SELECT id, pi_no FROM proforma_invoices WHERE id = ?', [piId]);
+    } catch (readErr) {
+      // 读库本身异常：状态未知，不能告诉用户成功也不能说失败
+      throw new Error('PI_CREATE_UNCONFIRMED_UNKNOWN');
+    }
+    if (!verify || verify.pi_no !== piNo) {
+      // 查询成功但找不到刚写入的 PI：事务未真正落库
+      throw new Error('PI_CREATE_UNCONFIRMED');
+    }
+
+    // 派生/在途汇总刷新（可重算，放事务外，确保原子 PI 已落库后再算）。
+    // 失败属于「派生数据刷新失败」，绝不影响「PI 已创建成功」这一原子事实：
+    // 改为记录 warning 并随响应返回非阻塞 transit_refresh_warning，不撤销 PI 创建。
+    // 后续任意 PO/CI/PI 变更都会再次触发 updateInventoryTransitData，派生值会被重算补齐。
+    let transitRefreshWarning = null;
+    try {
+      await updateInventoryTransitData();
+    } catch (transitErr) {
+      transitRefreshWarning = (transitErr && transitErr.message) ? transitErr.message : String(transitErr);
+      console.error('[PI-CREATE] 派生在途数据刷新失败（PI 已落库，不影响创建成功）:', transitErr);
+    }
+
     const payableDeposit = (d.items && d.items.length > 0) ? (needDeposit ? totalAmount * depositRatio / 100 : 0) : 0;
-    res.json({ id: piId, pi_no: piNo, ...d, total_amount: totalAmount, need_deposit: needDeposit, deposit_ratio: depositRatio, payable_deposit: payableDeposit });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    res.json({
+      id: piId,
+      pi_no: piNo,
+      ...d,
+      total_amount: totalAmount,
+      need_deposit: needDeposit,
+      deposit_ratio: depositRatio,
+      payable_deposit: payableDeposit,
+      transit_refresh_warning: transitRefreshWarning
+    });
+  } catch (e) {
+    const msg = e && e.message;
+    if (msg === 'PI_CREATE_UNCONFIRMED') {
+      return res.status(500).json({ error: 'PI 创建未成功，请勿重复提交' });
+    }
+    if (msg === 'PI_CREATE_UNCONFIRMED_UNKNOWN') {
+      return res.status(500).json({ error: 'PI 创建状态未确认，请勿重复提交，请按 PI 号检查' });
+    }
+    console.error('PI 创建失败:', e);
+    res.status(500).json({ error: 'PI 创建失败: ' + (msg || e) });
+  }
 }));
 
 app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHandler(async (req, res) => {

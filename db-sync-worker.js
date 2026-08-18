@@ -66,15 +66,30 @@ parentPort.on('message', async (msg) => {
     } else if (msg.type === 'begin') {
       // 开始事务：创建专用连接
       txClient = new Client(pgImpl._getClientConfig());
+      // 连接级错误必须显式暴露（不再静默变僵尸连接）：上报 fatal 让主线程 poison
+      txClient.on('error', (e) => {
+        console.error('[DB-WORKER] txClient error:', e.message);
+        if (mainPort) {
+          mainPort.postMessage({ id: -1, ok: false, error: 'txClient error: ' + e.message });
+          Atomics.store(int32, 0, 1);
+          Atomics.notify(int32, 0);
+        }
+      });
       await txClient.connect();
       await txClient.query('BEGIN');
     } else if (msg.type === 'commit') {
-      if (txClient) {
-        await txClient.query('COMMIT');
-        await txClient.end();
-        txClient = null;
+      // COMMIT 强校验：txClient 为空或 PG 返回非 COMMIT（如事务已 aborted → ROLLBACK）一律失败
+      if (!txClient) {
+        throw new Error('[DB-WORKER] COMMIT 时 txClient 为 null（事务已丢失）');
       }
+      const res = await txClient.query('COMMIT');
+      if (!res || res.command !== 'COMMIT') {
+        throw new Error('[DB-WORKER] COMMIT 实际返回 ' + (res && res.command) + '（事务已被回滚，未持久化）');
+      }
+      await txClient.end();
+      txClient = null;
     } else if (msg.type === 'rollback') {
+      // rollback 为 best-effort 清理：txClient 为空说明已无事务可回滚，视为成功
       if (txClient) {
         try { await txClient.query('ROLLBACK'); } catch (e) {}
         try { await txClient.end(); } catch (e) {}

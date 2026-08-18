@@ -31,10 +31,13 @@ if (driver === 'pg') {
   // SharedArrayBuffer 用于主线程同步等待 worker 完成
   const sab = new SharedArrayBuffer(4);
   const int32 = new Int32Array(sab);
-  const worker = new Worker(__dirname + '/db-sync-worker.js', { workerData: { sab } });
-  const channel = new MessageChannel();
+  let worker = null;
+  let channel = null;
   let initialized = false;
   let msgId = 0;
+  // 协议/连接一旦进入未知状态，标记 poisoned：
+  // 当前事务立即失败、禁止继续 COMMIT、下一笔请求前必须先重建 worker/channel。
+  let poisoned = false;
 
   function ensureInit() {
     if (initialized) return;
@@ -43,9 +46,68 @@ if (driver === 'pg') {
     worker.postMessage({ type: 'init', port: channel.port2 }, [channel.port2]);
   }
 
-  function syncRequest(type, sql, params) {
+  function teardownWorker() {
+    // 立即切断旧 worker 与通道，避免带未结束 PG 事务的连接继续存活、占用连接/锁。
+    // worker.terminate() 即便返回 Promise 也无需 await（本轮不引入 async transaction），
+    // 只需立即发起终止并彻底清除旧通道的复用资格即可。
+    if (worker) {
+      try { worker.terminate(); } catch (_) {}
+    }
+    worker = null;
+    if (channel) {
+      try { channel.port1.close(); } catch (_) {}
+      try { channel.port2.close(); } catch (_) {}
+    }
+    channel = null;
+  }
+
+  function createWorker() {
+    // 防御性：若仍有残留 worker/channel，先彻底清掉（正常路径下 poison 已 teardown，
+    // 此处多为初次启动或下一笔独立请求时的懒惰重建）。
+    if (worker) { try { worker.terminate(); } catch (_) {} }
+    if (channel) {
+      try { channel.port1.close(); } catch (_) {}
+      try { channel.port2.close(); } catch (_) {}
+    }
+    worker = new Worker(__dirname + '/db-sync-worker.js', { workerData: { sab } });
+    channel = new MessageChannel();
+    msgId = 0;
+    initialized = false;
+    poisoned = false;
+    // 重建后必须重新把端口交给 worker
     ensureInit();
+  }
+  createWorker();
+
+  function poisonWorker(reason) {
+    if (poisoned) return;
+    poisoned = true;
+    console.error('[DB-SYNC] worker poisoned (' + reason + ')，立即 terminate 旧 worker / 关闭通道，下一笔独立请求重建');
+    // 立即 teardown：旧 txClient 随 worker/socket 终止，PostgreSQL 自动 rollback，
+    // 不会让未知事务长时间占着连接/锁；此后不再向旧 worker 发送任何 SQL。
+    teardownWorker();
+  }
+
+  // 写操作（含事务控制语句）一旦超时/错位，绝不重发原 SQL（状态未知）。
+  // 只读 SELECT 的连接错误仍允许有限重试（幂等安全）。
+  function isWriteStatement(type, sql) {
+    if (type === 'begin' || type === 'commit' || type === 'rollback') return true;
+    if (type !== 'query') return true;
+    var s = (sql || '').trim().toLowerCase();
+    if (s.startsWith('select') || s.startsWith('with') || s.startsWith('explain') ||
+        s.startsWith('show') || s.startsWith('values')) {
+      return false;
+    }
+    return true; // INSERT/UPDATE/DELETE/CREATE/ALTER/DROP/...
+  }
+
+  function syncRequest(type, sql, params) {
+    // poisoned 状态下，先彻底重建 worker 与通道，避免复用未知状态的连接/错位队列
+    if (poisoned) createWorker();
+
     var maxAttempts = 3;
+    var isWrite = isWriteStatement(type, sql);
+
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
       var id = ++msgId;
       Atomics.store(int32, 0, 0);
@@ -54,30 +116,40 @@ if (driver === 'pg') {
       // 同步等待 worker 完成（30 秒超时）
       var status = Atomics.wait(int32, 0, 0, 30000);
       if (status !== 'ok') {
-        var timeoutErr = new Error('DB query timeout (' + status + ') after 30s, type=' + type);
-        if (attempt < maxAttempts) {
-          console.warn('[DB-SYNC] 查询超时，第 ' + attempt + ' 次重试');
-          continue;
-        }
-        throw timeoutErr;
+        // 超时：WRITE / 事务内请求 fail-closed，绝不自动重发原 SQL
+        var tErr = new Error('[DB-SYNC] ' + (isWrite ? 'WRITE/事务' : '查询') +
+          ' 超时 (' + status + ') after 30s, type=' + type);
+        poisonWorker('timeout type=' + type);
+        throw tErr;
       }
 
-      var msg = receiveMessageOnPort(channel.port1);
-      if (!msg || !msg.message) {
-        var noRespErr = new Error('No response from worker (type=' + type + ')');
-        if (attempt < maxAttempts) {
-          console.warn('[DB-SYNC] 无响应，第 ' + attempt + ' 次重试');
-          continue;
-        }
-        throw noRespErr;
+      var raw = receiveMessageOnPort(channel.port1);
+      if (!raw || !raw.message) {
+        poisonWorker('no-response type=' + type);
+        throw new Error('[DB-SYNC] 无响应 (type=' + type + ')');
       }
 
-      var data = msg.message;
+      var data = raw.message;
+
+      // ① worker 致命错误（id === -1）：当前请求失败，不伪造 success
+      if (data.id === -1) {
+        poisonWorker('worker-fatal: ' + data.error);
+        throw new Error('[DB-SYNC] worker fatal: ' + data.error);
+      }
+
+      // ② 响应关联校验：stale / 错位响应直接判协议错误，绝不当当前请求结果
+      if (data.id !== id) {
+        poisonWorker('protocol mismatch expected=' + id + ' received=' + data.id);
+        throw new Error('[DB-SYNC] protocol mismatch expected=' + id +
+          ' received=' + data.id + '; worker poisoned');
+      }
+
+      // ③ 错误响应
       if (!data.ok) {
         var err = new Error(data.error);
         if (data.stack) err.stack = data.stack;
-        // 连接错误时重试
-        if (attempt < maxAttempts && isRetryable(data.error)) {
+        // 仅只读查询的连接错误允许有限重试（不重发写操作）
+        if (!isWrite && attempt < maxAttempts && isRetryable(data.error)) {
           console.warn('[DB-SYNC] 查询失败（连接错误），第 ' + attempt + ' 次重试:', data.error);
           // 同步等待 200ms（用 Atomics.wait 计时）
           Atomics.wait(int32, 0, 1, 200);
@@ -88,10 +160,10 @@ if (driver === 'pg') {
       }
       return data;
     }
-    throw new Error('DB query failed after ' + maxAttempts + ' attempts (type=' + type + ')');
+    throw new Error('[DB-SYNC] 请求在 ' + maxAttempts + ' 次尝试后仍失败 (type=' + type + ')');
   }
 
-  // 连接错误重试白名单
+  // 连接错误重试白名单（仅用于只读查询）
   var RETRYABLE = [
     'Connection terminated',
     'terminating connection due to',
@@ -129,7 +201,13 @@ if (driver === 'pg') {
         syncRequest('commit');
         return result;
       } catch (e) {
-        try { syncRequest('rollback'); } catch (re) {}
+        // 已 poisoned 的事务（commit 超时 / 响应错位 / worker fatal）不再向新 worker 发送 rollback：
+        // 否则会在 rollback 路径上不必要地重建 worker/channel。旧 worker 的连接会在
+        // 下一笔独立 DB 操作懒惰重建时被 terminate，PG 后端自动回滚未提交事务。
+        // 仅当未 poison（如 fn() 内业务错误、COMMIT 返回 ok:false 等正常错误路径）才回滚。
+        if (!poisoned) {
+          try { syncRequest('rollback'); } catch (re) {}
+        }
         throw e;
       }
     },
