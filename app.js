@@ -7158,6 +7158,74 @@ async function loadRpChannelMonthly(channel){
     // 预处理
     // 月份字段语义统一约定：m1=本月，m2=上月，m3=上上月，m4=当前四个月窗口中的最早自然月。
     // 表头从左到右：真实年月(m4) → 真实年月(m3) → 真实年月(m2) → 真实年月本月(m1)。
+
+    // 统一 Effective Allocation 计算（纯函数，无任何 DOM / DB 依赖）
+    // 输入：
+    //   transitTotal : inventory.in_transit_qty（实时在途事实）
+    //   manualOnline / manualOffline : Raw Manual Allocation = 用户当前最后一次保存的人工在途分配意图（保留，本轮不动库）
+    //   allocStatus  : channel_allocation_status（'allocated' 时走原自动拆分）
+    //   onlinePct    : resolved_online_pct（仅 allocated 自动拆分时使用）
+    // 不变量（永久成立）：
+    //   0 <= effectiveOnline, 0 <= effectiveOffline, 0 <= unallocatedTransit
+    //   effectiveOnline + effectiveOffline <= transitTotal
+    //   effectiveOnline + effectiveOffline + unallocatedTransit = transitTotal
+    // 冻结原则：当前 effective allocation 永远不得超过当前实时 inventory.in_transit_qty。
+    function computeEffectiveTransitAllocation(transitTotal, manualOnline, manualOffline, allocStatus, onlinePct) {
+      var transit = Math.max(0, Math.floor(Number(transitTotal) || 0));
+      var mo = Math.max(0, Math.floor(Number(manualOnline) || 0));
+      var mf = Math.max(0, Math.floor(Number(manualOffline) || 0));
+      var hasManual = mo > 0 || mf > 0;
+      var manualTotal = mo + mf;
+      var effectiveOnline = 0, effectiveOffline = 0;
+
+      if (transit <= 0) {
+        // 实时在途为 0：无论如何 effective 必须为 0（Raw Manual 保留，仅显示/派生归零）
+        effectiveOnline = 0;
+        effectiveOffline = 0;
+      } else if (hasManual) {
+        if (manualTotal <= transit) {
+          // 人工总量未超当前在途 → 原值保留，剩余进 unallocated
+          effectiveOnline = mo;
+          effectiveOffline = mf;
+        } else {
+          // 部分到仓：按原人工比例同比例缩减到 transitTotal（确定性最大余数规则）
+          var exactOnline = transit * mo / manualTotal;
+          var exactOffline = transit * mf / manualTotal;
+          var floorOnline = Math.floor(exactOnline);
+          var floorOffline = Math.floor(exactOffline);
+          var remainder = transit - (floorOnline + floorOffline); // 0 或 1
+          if (remainder > 0) {
+            var fracOnline = exactOnline - floorOnline;
+            var fracOffline = exactOffline - floorOffline;
+            // 余数给 fractional remainder 较大的一方；完全相等时固定给 online（明确 tie-break）
+            if (fracOffline > fracOnline) floorOffline += remainder;
+            else floorOnline += remainder;
+          }
+          effectiveOnline = floorOnline;
+          effectiveOffline = floorOffline;
+        }
+      } else if (allocStatus === 'allocated') {
+        // 无人工：保持现有 allocated / onlinePct 自动拆分逻辑不变
+        var pct = (onlinePct != null) ? Number(onlinePct) : 0;
+        effectiveOnline = Math.round(transit * pct / 100);
+        effectiveOffline = Math.round(transit * (100 - pct) / 100);
+      } else {
+        effectiveOnline = 0;
+        effectiveOffline = 0;
+      }
+
+      // 防御性钳制（理论上上述分支已保证不变量，仅保底）
+      if (effectiveOnline < 0) effectiveOnline = 0;
+      if (effectiveOffline < 0) effectiveOffline = 0;
+      if (effectiveOnline + effectiveOffline > transit) {
+        effectiveOffline = transit - effectiveOnline;
+        if (effectiveOffline < 0) { effectiveOffline = 0; effectiveOnline = transit; }
+      }
+      var unallocatedTransit = Math.max(0, transit - effectiveOnline - effectiveOffline);
+
+      return { effectiveOnline: effectiveOnline, effectiveOffline: effectiveOffline, unallocatedTransit: unallocatedTransit };
+    }
+
     data.forEach(function(r){
       r._c={};
       var salesM1,salesM2,salesM3,salesM4,avgSales,targetTurn,targetStock,remark;
@@ -7216,24 +7284,17 @@ async function loadRpChannelMonthly(channel){
       // 双渠道有效在途分配：人工配置是对自动分配的整体业务替代
       // 一旦存在任意人工分配，SKU整体进入人工模式，未填写渠道默认0
       // 共享未分配池 = 在途总库存 - 线上有效分配 - 线下有效分配
-      var isAllocated = r.channel_allocation_status === 'allocated';
       var manualOnline = r.manual_online_transit_qty||0;
       var manualOffline = r.manual_offline_transit_qty||0;
       var hasManualAllocation = manualOnline > 0 || manualOffline > 0;
-      // 计算自动分配值（仅 allocated 时有值）
-      var autoOnline = 0, autoOffline = 0;
-      if(isAllocated){
-        var onlinePct = r.resolved_online_pct!=null ? r.resolved_online_pct : 0;
-        autoOnline = Math.round(transitTotal*(onlinePct/100));
-        autoOffline = Math.round(transitTotal*((100-onlinePct)/100));
-      }
-      // 人工模式：使用人工值（未填写渠道默认0）；自动模式：使用自动分配结果
-      var effectiveOnline = hasManualAllocation ? manualOnline : autoOnline;
-      var effectiveOffline = hasManualAllocation ? manualOffline : autoOffline;
+      // Raw Manual Allocation = 用户当前最后一次保存的人工在途分配意图（保留，本轮不动库）
+      // Effective Allocation = 按实时 transitTotal 实时派生，永不超过当前在途
+      var _eff = computeEffectiveTransitAllocation(transitTotal, manualOnline, manualOffline, r.channel_allocation_status, r.resolved_online_pct);
+      var effectiveOnline = _eff.effectiveOnline;
+      var effectiveOffline = _eff.effectiveOffline;
       var effectiveTransitAllocated = isOnline ? effectiveOnline : effectiveOffline;
-      // 共享未分配在途池
-      var transitUnallocated = transitTotal - effectiveOnline - effectiveOffline;
-      if(transitUnallocated < 0) transitUnallocated = 0;
+      // 共享未分配在途池（>=0，恒等于 transitTotal - effectiveOnline - effectiveOffline）
+      var transitUnallocated = _eff.unallocatedTransit;
       // 当前渠道可分配上限
       // 人工模式：在途总库存 - 另一渠道人工值（另一渠道已锁定为人工值）
       // 自动模式：在途总库存（输入任意正数将进入人工模式，另一渠道归0，可覆盖全部在途库存）
