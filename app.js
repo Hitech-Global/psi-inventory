@@ -5374,6 +5374,7 @@ async function fetchHistoricalSales(){
     var result=await api(url);
     if(!result||result.success===false)throw new Error((result&&result.error)||t('forecast.hist.api_no_data','未获取到历史销售数据'));
     window._rpHistoricalSales=result;
+    rpClearViewForTab(rpTab);
     await loadRp();
   }catch(e){
     window._rpHistoricalSales=null;
@@ -5401,6 +5402,7 @@ function clearHistoricalSales(){
   window._rpHistoricalSalesConfig=null;
   window._rpHistoricalSales=null;
   closeModal();
+  rpClearViewForTab(rpTab);
   loadRp();
 }
 function historicalSalesPanelHtml(){
@@ -5659,6 +5661,7 @@ function saveRpFieldConfig(tabKey){
   setFreezeColKey(tabKey, freezeColKey);
   closeModal();
   showToast(t('gen.L3711.1','字段配置已保存'),'success');
+  rpClearViewForTab(tabKey);
   if(tabKey==='total')loadRp();
   else loadRpChannelMonthly(tabKey);
   updateRpFieldConfigBtn(tabKey);
@@ -5775,11 +5778,13 @@ function reorderRpColConfig(tabKey, srcKey, tgtKey){
   else loadRpChannelMonthly(tabKey);
 }
 // 初始化表头拖拽排序
-function initRpTableDrag(tabKey){
+function initRpTableDrag(tabKey, container){
   if(window._rpHistoricalSales)return;
+  container=container||rpActiveContainer();
+  if(!container)return;
   // 重试机制：等待表格渲染完成
   function tryInit(){
-    var table=document.querySelector('#rp-table table');
+    var table=container.querySelector('table');
     if(!table){setTimeout(tryInit,200);return;}
     var tr=table.querySelector('thead tr');
     if(!tr){setTimeout(tryInit,200);return;}
@@ -5836,6 +5841,8 @@ function initRpTableDrag(tabKey){
 
 async function renderReplenishment(){
   rpTab = 'total';
+  rpClearDataCache();
+  rpClearAllViews();
   document.getElementById('content-inner').innerHTML=t('html.renderReplenishment', `<div id="flash-container"></div><div id="rp-collapsible"><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>国家</label><select id="rp-c" onchange="onRpCountryChange()"><option value="">全部</option></select></div><div class="filter-group"><label>仓库</label><select id="rp-w" onchange="loadRpSummary();loadRp()"><option value="">全部</option></select></div><div class="filter-group"><label>品牌</label><select id="rp-b" onchange="onRpBrandChange()"><option value="">全部</option></select></div><div class="filter-actions">{v1}<button class="btn btn-default btn-sm" onclick="exportRpExcel()">⬇ 导出Excel</button><button class="btn btn-default btn-sm" onclick="openRpParams()">⚙ 预测参数设置</button></div></div></div></div><div class="tab-bar" style="margin:12px 20px 0;display:flex;justify-content:space-between;align-items:center"><div style="display:flex"><div class="tab-item active" onclick="switchRpTab('total')">📊 总预测</div><div class="tab-item" onclick="switchRpTab('online')">🛒 线上预测</div><div class="tab-item" onclick="switchRpTab('offline')">🏪 线下预测</div></div><div style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-secondary)"><span>显示方式：</span><div class="rp-mode-switch"><button class="rp-mode-btn active" onclick="switchRpMode('monthly')">按月</button><button class="rp-mode-btn" onclick="switchRpMode('daily')">按天</button></div><button class="btn btn-default btn-sm rp-collapse-btn" id="rp-collapse-btn" onclick="toggleRpCollapse()" title="收起/展开 顶部筛选区与指标卡片">▾ 收起</button></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left" id="rp-tab-title">📊 SKU动销与订单预测（总预测）</div><div class="table-section-actions"><input type="text" id="rp-s" placeholder="SKU搜索" onkeypress="if(event.key==='Enter')loadRp()" style="width:140px;height:28px;padding:4px 8px;border:1px solid #d0d7de;border-radius:4px;font-size:13px;margin-right:8px">{v2}{v3}<button class="btn btn-default btn-sm" id="rp-field-config-btn" onclick="openRpFieldConfig(rpTab)" title="字段显示与排序" style="margin-left:8px">⚙ 字段配置</button></div></div><div id="rp-table"></div></div>`, {v1: hasPermission('replenishment_edit')?t('gen.L3813.1','<button class="btn btn-success btn-sm rp-gen-btn" onclick="genRp()">🔄 重新计算</button>'):'', v2: hasPermission('replenishment_edit')?t('gen.L3813.2','<button class="btn btn-success btn-sm rp-gen-btn" onclick="genRp()" style="margin-right:8px">🔄 重新计算</button>'):'', v3: hasPermission('po_create')?t('gen.L3813.3','<button class="btn btn-primary btn-sm" id="rp-po-btn" onclick="genPOModal()">🛒 生成PO</button>'):''});
   var rpFilterActions=document.querySelector('#rp-collapsible .filter-actions');
   if(rpFilterActions){
@@ -6064,6 +6071,8 @@ function saveRpPreferences(){
 }
 function onRpFilterChange(){
   saveRpPreferences();
+  rpClearDataCache();
+  rpClearAllViews();
   loadRpSummary();
   loadRpWithHistorical();
 }
@@ -6073,6 +6082,8 @@ async function resetRpFilters(){
     if(el)el.value='';
   });
   window.__rpFilterState=null;
+  rpClearDataCache();
+  rpClearAllViews();
   await onRpCountryChange(true);
   await saveRpPreferences();
   loadRpSummary();
@@ -6094,7 +6105,146 @@ function rpFilterBody(){
     brand:document.getElementById('rp-b')?.value||''
   };
 }
+// ==================== 订单预测：缓存基础设施 ====================
+var RP_MAX_DOM_VIEWS=3;
+var RP_MAX_DATA_ENTRIES=20;
+window._rpCache={
+  data:new Map(),
+  pending:new Map(),
+  views:{},
+  viewOrder:[]
+};
+function rpBaseUrl(){return '/api/replenishment-suggestions?'+rpQuery();}
+function rpMonthlySalesUrl(){
+  var r=rpMonthColRange();
+  return '/api/replenishment-suggestions/monthly-sales?start='+r.start+'&end='+r.end+'&'+rpQuery();
+}
+function rpDailyUrl(){
+  var url='/api/replenishment-suggestions/daily-sales?'+rpQuery();
+  if(rpTab==='online')url+='&tab=online';
+  else if(rpTab==='offline')url+='&tab=offline';
+  var hcfg=window._rpHistoricalSalesConfig;
+  if(hcfg&&hcfg.start&&hcfg.end){
+    var ds,de;
+    if(hcfg.mode==='monthly'){
+      var eP=hcfg.end.split('-');var ey=Number(eP[0]),em=Number(eP[1]);
+      ds=hcfg.start+'-01';de=ey+'-'+String(em).padStart(2,'0')+'-'+String(new Date(ey,em,0).getDate()).padStart(2,'0');
+    }else{ds=hcfg.start;de=hcfg.end;}
+    url+='&start='+encodeURIComponent(ds)+'&end='+encodeURIComponent(de);
+  }
+  return url;
+}
+function rpCurrentViewKey(){return rpTab+'-'+rpMode;}
+function rpSignature(viewKey){
+  if(viewKey==='total-monthly')return rpBaseUrl()+'|'+rpMonthlySalesUrl();
+  if(viewKey==='online-monthly'||viewKey==='offline-monthly')return rpBaseUrl();
+  return rpDailyUrl();
+}
+async function rpFetchCached(url){
+  if(window._rpCache.data.has(url)){return window._rpCache.data.get(url);}
+  if(window._rpCache.pending.has(url)){return window._rpCache.pending.get(url);}
+  var p=api(url);
+  window._rpCache.pending.set(url,p);
+  try{
+    var resp=await p;
+    window._rpCache.data.set(url,resp);
+    if(window._rpCache.data.size>RP_MAX_DATA_ENTRIES){
+      var firstKey=window._rpCache.data.keys().next().value;
+      window._rpCache.data.delete(firstKey);
+    }
+    return resp;
+  }finally{window._rpCache.pending.delete(url);}
+}
+function rpGetViewNode(viewKey){
+  var v=window._rpCache.views[viewKey];
+  if(!v)return null;
+  if(v.signature!==rpSignature(viewKey))return null;
+  return v;
+}
+function rpActiveContainer(){
+  var containers=document.querySelectorAll('#rp-table .rp-view-container');
+  for(var i=0;i<containers.length;i++){
+    if(containers[i].style.display!=='none')return containers[i];
+  }
+  return null;
+}
+function rpEnsureContainer(viewKey){
+  var id='rp-view-'+viewKey;
+  var el=document.getElementById(id);
+  if(!el){
+    el=document.createElement('div');
+    el.id=id;
+    el.className='rp-view-container';
+    el.style.display='none';
+    document.getElementById('rp-table').appendChild(el);
+  }
+  return el;
+}
+function rpShowView(viewKey){
+  document.querySelectorAll('#rp-table .rp-view-container').forEach(function(el){
+    el.style.display='none';
+  });
+  var target=document.getElementById('rp-view-'+viewKey);
+  if(target)target.style.display='block';
+}
+function rpStoreViewNode(viewKey,container){
+  window._rpCache.views[viewKey]={node:container,signature:rpSignature(viewKey),scrollTop:0,scrollLeft:0};
+  var idx=window._rpCache.viewOrder.indexOf(viewKey);
+  if(idx>=0)window._rpCache.viewOrder.splice(idx,1);
+  window._rpCache.viewOrder.push(viewKey);
+  rpEvictOldViews();
+}
+function rpTouchView(viewKey){
+  var idx=window._rpCache.viewOrder.indexOf(viewKey);
+  if(idx>=0){window._rpCache.viewOrder.splice(idx,1);window._rpCache.viewOrder.push(viewKey);}
+}
+function rpEvictOldViews(){
+  while(window._rpCache.viewOrder.length>RP_MAX_DOM_VIEWS){
+    var old=window._rpCache.viewOrder.shift();
+    var v=window._rpCache.views[old];
+    if(v&&v.node)v.node.remove();
+    delete window._rpCache.views[old];
+  }
+}
+function rpRemoveView(viewKey){
+  var v=window._rpCache.views[viewKey];
+  if(v&&v.node)v.node.remove();
+  delete window._rpCache.views[viewKey];
+  var idx=window._rpCache.viewOrder.indexOf(viewKey);
+  if(idx>=0)window._rpCache.viewOrder.splice(idx,1);
+}
+function rpClearAllViews(){
+  Object.keys(window._rpCache.views).forEach(function(k){
+    var v=window._rpCache.views[k];
+    if(v&&v.node)v.node.remove();
+  });
+  window._rpCache.views={};
+  window._rpCache.viewOrder=[];
+}
+function rpClearViewForTab(tab){
+  ['monthly','daily'].forEach(function(mode){
+    rpRemoveView(tab+'-'+mode);
+  });
+}
+function rpClearDataCache(){
+  window._rpCache.data.clear();
+  window._rpCache.pending.clear();
+}
+function rpSaveScroll(viewKey){
+  var v=window._rpCache.views[viewKey];
+  if(!v||!v.node)return;
+  var sc=v.node.querySelector('.table-container')||v.node.querySelector('.daily-table-wrap');
+  if(sc){v.scrollTop=sc.scrollTop;v.scrollLeft=sc.scrollLeft;}
+}
+function rpRestoreScroll(viewKey){
+  var v=window._rpCache.views[viewKey];
+  if(!v||!v.node)return;
+  var sc=v.node.querySelector('.table-container')||v.node.querySelector('.daily-table-wrap');
+  if(sc){if(v.scrollTop)sc.scrollTop=v.scrollTop;if(v.scrollLeft)sc.scrollLeft=v.scrollLeft;}
+}
+// ==================== 订单预测：Tab/Mode 切换 ====================
 function switchRpTab(tab){
+  var _t0=performance.now();
   rpTab=tab;
   document.querySelectorAll('#content-inner .tab-bar .tab-item').forEach((t,i)=>{
     const tabs=['total','online','offline'];
@@ -6105,14 +6255,35 @@ function switchRpTab(tab){
   var poBtn=document.getElementById('rp-po-btn');
   if(poBtn){poBtn.style.display=(tab==='total')?'':'none';}
   saveRpPreferences();
+  var viewKey=tab+'-'+rpMode;
+  var cached=rpGetViewNode(viewKey);
+  if(cached){
+    rpSaveScroll(rpCurrentViewKey());
+    rpShowView(viewKey);
+    rpRestoreScroll(viewKey);
+    rpTouchView(viewKey);
+    updateRpFieldConfigBtn(tab);
+    return;
+  }
   loadRp();
   updateRpFieldConfigBtn(tab);
 }
 function switchRpMode(mode){
+  var _t0=performance.now();
   rpMode=mode;
   document.querySelectorAll('.rp-mode-btn').forEach(b=>b.classList.remove('active'));
   event.target.classList.add('active');
   saveRpPreferences();
+  var viewKey=rpTab+'-'+mode;
+  var cached=rpGetViewNode(viewKey);
+  if(cached){
+    rpSaveScroll(rpCurrentViewKey());
+    rpShowView(viewKey);
+    rpRestoreScroll(viewKey);
+    rpTouchView(viewKey);
+    updateRpFieldConfigBtn(rpTab);
+    return;
+  }
   loadRp();
   updateRpFieldConfigBtn(rpTab);
 }
@@ -6155,16 +6326,15 @@ async function loadRp(){
   if(rpMode==='daily'){return loadRpDaily();}
   if(rpTab==='online'){return loadRpChannelMonthly('online');}
   if(rpTab==='offline'){return loadRpChannelMonthly('offline');}
+  var myViewKey='total-monthly';
   try{
     await getSalesStatsDays();
-    // 月度销量与建议列表并行拉取，互不阻塞；月度销量仅用于展示，失败时降级为空不影响预测结果
-    var monthRange=rpMonthColRange();
-    var results=await Promise.all([
-      api('/api/replenishment-suggestions?'+rpQuery()),
-      api('/api/replenishment-suggestions/monthly-sales?start='+monthRange.start+'&end='+monthRange.end+'&'+rpQuery()).catch(function(){return null;})
-    ]);
-    var data=results[0];
-    var monthlySales=(results[1]&&results[1].success)?(results[1].data||{}):{};
+    var bUrl=rpBaseUrl();
+    var msUrl=rpMonthlySalesUrl();
+    var bResult=await rpFetchCached(bUrl);
+    var msResult=await rpFetchCached(msUrl).catch(function(){return null;});
+    var data=bResult;
+    var monthlySales=(msResult&&msResult.success)?(msResult.data||{}):{};
     var turnColor=function(v){return v<2?'text-danger':v>=2&&v<4?'text-success':v>=4&&v<6?'text-primary':'text-secondary';};
     var ADJ=[t('gen.L4014.1','MOQ限制'),t("app.786", "\u6574\u7bb1\u53d6\u6574"),t("app.787", "\u5de5\u5382\u6392\u4ea7"),t("app.788", "\u4f9b\u5e94\u5546\u4ea7\u80fd"),t("app.789", "\u51d1\u67dc"),t("app.790", "\u9884\u7b97\u63a7\u5236"),t("app.791", "\u8001\u677f\u786e\u8ba4"),t("app.792", "\u6e20\u9053\u7b56\u7565"),t('gen.L4014.2','其他')];
     // 预计算 + 存储行数据（供 onFinalQtyChange 使用）
@@ -6202,7 +6372,7 @@ async function loadRp(){
     });
     // 列渲染器
     var Cols={
-      check:{th:'<th style="width:36px"><input type="checkbox" id="rp-all" onchange="document.querySelectorAll(\'.rp-ck\').forEach(function(c){c.checked=this.checked})"></th>',
+      check:{th:'<th style="width:36px"><input type="checkbox" class="rp-all" onchange="(function(el){el.closest(\'.rp-view-container\').querySelectorAll(\'.rp-ck\').forEach(function(c){c.checked=el.checked})})(this)"></th>',
         td:function(r,c){return '<td><input type="checkbox" class="rp-ck" value="'+r.id+'" data-sku="'+esc(r.sku_code)+'" data-qty="'+c.sq+'"></td>';},
         sum:function(total){return t('gen.L4049.1','<td class="text-center"><span style="font-size:11px;font-weight:700">合计</span></td>');}},
       model:{th:'<th>Model</th>',
@@ -6349,10 +6519,16 @@ async function loadRp(){
     var tableFoot=!data.length
       ? '<tr><td colspan="'+colCount+t('gen.L4175.1','" style="text-align:center;padding:40px 20px;color:#999;background:#fafbfc">💡 当前筛选条件下暂无建议，请调整国家/仓库/品牌或点击"重新计算"</td></tr>')
       : '';
-    document.getElementById('rp-table').innerHTML='<div class="table-container" style="box-shadow:none;border-radius:0;overflow:auto;max-height:70vh"><table class="data-table rp-monthly-table" style="width:'+rpColWidthTotal(activeKeys)+'px;min-width:'+rpColWidthTotal(activeKeys)+'px">'+rpColgroupHtml(activeKeys)+'<thead><tr style="height:34px">'+th+'</tr>'+sum+'</thead><tbody>'+rows+tableFoot+'</tbody></table></div>';
-    applyChannelFreezeColumns('total', activeKeys);
-    syncRpHeaderHeight();
-    initRpTableDrag('total');
+    var html='<div class="table-container" style="box-shadow:none;border-radius:0;overflow:auto;max-height:70vh"><table class="data-table rp-monthly-table" style="width:'+rpColWidthTotal(activeKeys)+'px;min-width:'+rpColWidthTotal(activeKeys)+'px">'+rpColgroupHtml(activeKeys)+'<thead><tr style="height:34px">'+th+'</tr>'+sum+'</thead><tbody>'+rows+tableFoot+'</tbody></table></div>';
+    var container=rpEnsureContainer(myViewKey);
+    container.innerHTML=html;
+    rpStoreViewNode(myViewKey,container);
+    if(rpCurrentViewKey()===myViewKey){
+      rpShowView(myViewKey);
+      applyChannelFreezeColumns('total', activeKeys, container);
+      syncRpHeaderHeight(container);
+      initRpTableDrag('total', container);
+    }
   }catch(e){showFlash(e.message,'danger')}
 }
 
@@ -6967,6 +7143,7 @@ function formatPIDepositStatus(status) {
 
 // 线上/线下预测 + 按月：设置目标周转
 async function loadRpChannelMonthly(channel){
+  var myViewKey=channel+'-monthly';
   var isOnline=channel==='online';
   var chLabel=isOnline?t('gen.L4185.1','线上'):t('gen.L4185.2','线下');
   var now=new Date();
@@ -6977,7 +7154,7 @@ async function loadRpChannelMonthly(channel){
   }
   try{
     await getSalesStatsDays();
-    var data=await api('/api/replenishment-suggestions?'+rpQuery());
+    var data=await rpFetchCached(rpBaseUrl());
     // 预处理
     // 月份字段语义统一约定：m1=本月，m2=上月，m3=上上月，m4=当前四个月窗口中的最早自然月。
     // 表头从左到右：真实年月(m4) → 真实年月(m3) → 真实年月(m2) → 真实年月本月(m1)。
@@ -7257,18 +7434,26 @@ async function loadRpChannelMonthly(channel){
     var tableFoot=!data.length
       ? '<tr><td colspan="'+colCount+t('gen.L4389.1','" style="text-align:center;padding:40px 20px;color:#999;background:#fafbfc">💡 当前筛选条件下暂无建议，请调整国家/仓库/品牌或点击"重新计算"</td></tr>')
       : '';
-    document.getElementById('rp-table').innerHTML='<div class="table-container" style="box-shadow:none;border-radius:0;overflow:auto;max-height:70vh"><table class="data-table rp-monthly-table" style="width:'+rpColWidthTotal(activeKeys)+'px;min-width:'+rpColWidthTotal(activeKeys)+'px">'+rpColgroupHtml(activeKeys)+'<thead><tr style="height:34px">'+th+'</tr>'+sum+'</thead><tbody>'+rows+tableFoot+'</tbody></table></div>';
-    applyChannelFreezeColumns(tabKey, activeKeys);
-    syncRpHeaderHeight();
-    initRpTableDrag(channel);
+    var html='<div class="table-container" style="box-shadow:none;border-radius:0;overflow:auto;max-height:70vh"><table class="data-table rp-monthly-table" style="width:'+rpColWidthTotal(activeKeys)+'px;min-width:'+rpColWidthTotal(activeKeys)+'px">'+rpColgroupHtml(activeKeys)+'<thead><tr style="height:34px">'+th+'</tr>'+sum+'</thead><tbody>'+rows+tableFoot+'</tbody></table></div>';
+    var container=rpEnsureContainer(myViewKey);
+    container.innerHTML=html;
+    rpStoreViewNode(myViewKey,container);
+    if(rpCurrentViewKey()===myViewKey){
+      rpShowView(myViewKey);
+      applyChannelFreezeColumns(tabKey, activeKeys, container);
+      syncRpHeaderHeight(container);
+      initRpTableDrag(channel, container);
+    }
   }catch(e){showFlash(e.message,'danger')}
 }
 
 // 订单预测表头换行后：同步合计行 sticky top 到实际表头高度
-function syncRpHeaderHeight(){
-  var headerTr=document.querySelector('#rp-table .rp-monthly-table thead tr:first-child');
+function syncRpHeaderHeight(container){
+  container=container||rpActiveContainer();
+  if(!container)return;
+  var headerTr=container.querySelector('.rp-monthly-table thead tr:first-child');
   if(!headerTr) return;
-  var summaryTds=document.querySelectorAll('#rp-table .rp-monthly-table .rp-summary-row td');
+  var summaryTds=container.querySelectorAll('.rp-monthly-table .rp-summary-row td');
   if(!summaryTds.length) return;
   var h=headerTr.offsetHeight||34;
   for(var i=0;i<summaryTds.length;i++){ summaryTds[i].style.top=h+'px'; }
@@ -7276,9 +7461,10 @@ function syncRpHeaderHeight(){
 
 // 渠道表格动态冻结列：飞书风格可拖拽冻结线
 // 基于 localStorage 保存的字段 key 恢复冻结位置；字段配置变化后自动重算
-function applyChannelFreezeColumns(tabKey, activeKeys){
-  var container=document.querySelector('#rp-table .table-container');
-  var table=container?container.querySelector('.rp-monthly-table'):null;
+function applyChannelFreezeColumns(tabKey, activeKeys, container){
+  container=container||rpActiveContainer();
+  if(!container)return;
+  var table=container.querySelector('.rp-monthly-table');
   if(!table) return;
   // 1. 先清理旧 sticky 样式（字段配置/切换页面/拖动后都会重新计算，避免残留）
   clearFreezeStyles(table);
@@ -7543,7 +7729,7 @@ function initFreezeLineDrag(line, container, tabKey, activeKeys, widths, lefts){
         setFreezeColKey(tabKey,''); // 取消冻结
       }
       // 重新渲染冻结列
-      applyChannelFreezeColumns(tabKey, activeKeys);
+      applyChannelFreezeColumns(tabKey, activeKeys, container);
     }
     document.addEventListener('mousemove',onMove);
     document.addEventListener('mouseup',onUp);
@@ -7652,11 +7838,16 @@ function onTargetTurnChange(input){
   var months=parseFloat(input.value)||0;
   var avgSales=parseFloat(input.dataset.avgSales)||0;
   var stock=Math.round(avgSales*months);
-  var stockEl=document.querySelector('.rp-target-stock-'+rid);
+  var vc=input.closest('.rp-view-container')||rpActiveContainer();
+  var stockEl=vc?vc.querySelector('.rp-target-stock-'+rid):document.querySelector('.rp-target-stock-'+rid);
   if(stockEl) stockEl.textContent=stock;
   // 异步保存目标周转
   var field=channel==='online'?'online_target_turnover':'offline_target_turnover';
-  api('/api/replenishment-suggestions/'+rid,'PUT',{online_target_turnover:channel==='online'?months:undefined,offline_target_turnover:channel==='offline'?months:undefined});
+  api('/api/replenishment-suggestions/'+rid,'PUT',{online_target_turnover:channel==='online'?months:undefined,offline_target_turnover:channel==='offline'?months:undefined}).then(function(){
+    rpClearDataCache();
+    var vk=rpCurrentViewKey();
+    if(window._rpCache.views[vk])window._rpCache.views[vk].signature='__STALE__';
+  });
 }
 
 // 线上/线下建议采购数量修改 → 自动保存 + 换算预计下单后周转 + 反馈
@@ -7665,6 +7856,7 @@ async function onChannelTargetStockChange(input){
   var rid=input.dataset.rid;
   var channel=input.dataset.channel;
   var qty=parseInt(input.value)||0;
+  var vc=input.closest('.rp-view-container')||rpActiveContainer();
   // 从缓存读取行数据用于换算
   var cache=window._rpChannelData&&window._rpChannelData[channel];
   var r=cache?cache[rid]:null;
@@ -7676,7 +7868,7 @@ async function onChannelTargetStockChange(input){
   if(c){
     var newAfterOrder=c.avgSalesPeriod>0?Math.round((c.pool+qty)/c.avgSalesPeriod*10)/10:null;
     c.afterOrderTurnover=newAfterOrder; // 同步缓存，供复盘弹窗读取
-    var turnEl=document.querySelector('.rp-after-order-turn[data-rid="'+rid+'"]');
+    var turnEl=vc?vc.querySelector('.rp-after-order-turn[data-rid="'+rid+'"]'):document.querySelector('.rp-after-order-turn[data-rid="'+rid+'"]');
     if(turnEl&&newAfterOrder!==null){
       turnEl.textContent=newAfterOrder;
       var cls=newAfterOrder<2?'text-danger':newAfterOrder>6?'text-secondary':'text-success';
@@ -7700,6 +7892,9 @@ async function onChannelTargetStockChange(input){
       }
     }
     showRpAutoSaved(input);
+    rpClearDataCache();
+    var vk2=rpCurrentViewKey();
+    if(window._rpCache.views[vk2])window._rpCache.views[vk2].signature='__STALE__';
   }catch(e){
     showRpSaveFailed(input);
   }
@@ -7716,6 +7911,9 @@ async function onChannelRemarkBlur(input){
   try{
     await api('/api/replenishment-suggestions/'+rid,'PUT',data);
     showRpAutoSaved(input);
+    rpClearDataCache();
+    var vk3=rpCurrentViewKey();
+    if(window._rpCache.views[vk3])window._rpCache.views[vk3].signature='__STALE__';
   }catch(e){
     showRpSaveFailed(input);
   }
@@ -7752,19 +7950,20 @@ function onFinalQtyChange(input){
   var rid=input.dataset.rid;
   var foq=parseInt(input.value)||0;
   var suggested=parseInt(input.dataset.suggested)||0;
+  var vc=input.closest('.rp-view-container')||rpActiveContainer();
   // 从存储的行数据读取，不依赖 DOM 列位置
   var rowData=window._rpRowData&&window._rpRowData[rid];
   var totalAvg=rowData?(rowData.totalAvg||0):0;
   var pool=rowData?(rowData.pool||0):0;
   var afterOrder=totalAvg>0?Math.round((pool+foq)/totalAvg*10)/10:0;
-  var turnEl=document.getElementById('rp-turn-'+rid);
+  var turnEl=vc?vc.querySelector('#rp-turn-'+rid):document.getElementById('rp-turn-'+rid);
   if(turnEl){
     turnEl.textContent=totalAvg>0?afterOrder:t("app.799", "\u65e0\u9500\u91cf");
     var cls=afterOrder<2?'text-danger':afterOrder>=2&&afterOrder<4?'text-success':afterOrder>=4&&afterOrder<6?'text-primary':'text-secondary';
     turnEl.className='text-right '+cls;
   }
   // 启用/禁用调整原因
-  var reasonSel=document.querySelector('.rp-adj-reason[data-rid="'+rid+'"]');
+  var reasonSel=vc?vc.querySelector('.rp-adj-reason[data-rid="'+rid+'"]'):document.querySelector('.rp-adj-reason[data-rid="'+rid+'"]');
   if(reasonSel){
     if(foq!==suggested){
       reasonSel.disabled=false;
@@ -7776,7 +7975,7 @@ function onFinalQtyChange(input){
     }
   }
   // 更新checkbox的data-qty
-  var ck=document.querySelector('.rp-ck[value="'+rid+'"]');
+  var ck=vc?vc.querySelector('.rp-ck[value="'+rid+'"]'):document.querySelector('.rp-ck[value="'+rid+'"]');
   if(ck) ck.dataset.qty=parseInt(input.dataset.suggested)||0;
   // 自动保存
   saveFinalQty(rid);
@@ -7786,16 +7985,19 @@ function onFinalQtyChange(input){
 function onAdjReasonChange(sel){
   var rid=sel.dataset.rid;
   var reason=sel.value;
-  // 异步保存原因
   api('/api/replenishment-suggestions/'+rid,'PUT',{adjustment_reason:reason}).then(function(){
     showToast(t('gen.L4853.1','调整原因已保存'),'success');
+    rpClearDataCache();
+    var vk=rpCurrentViewKey();
+    if(window._rpCache.views[vk])window._rpCache.views[vk].signature='__STALE__';
   }).catch(function(e){showToast(e.message,'danger')});
 }
 
 // 保存渠道变更（目标周转+备注）
 async function saveChannelChanges(rid,channel){
-  var turnInput=document.querySelector('.rp-target-turn[data-rid="'+rid+'"][data-channel="'+channel+'"]');
-  var remarkInput=document.querySelector('.rp-channel-remark[data-rid="'+rid+'"][data-channel="'+channel+'"]');
+  var vc=rpActiveContainer();
+  var turnInput=vc?vc.querySelector('.rp-target-turn[data-rid="'+rid+'"][data-channel="'+channel+'"]'):document.querySelector('.rp-target-turn[data-rid="'+rid+'"][data-channel="'+channel+'"]');
+  var remarkInput=vc?vc.querySelector('.rp-channel-remark[data-rid="'+rid+'"][data-channel="'+channel+'"]'):document.querySelector('.rp-channel-remark[data-rid="'+rid+'"][data-channel="'+channel+'"]');
   if(!turnInput) return;
   var body={};
   if(channel==='online'){
@@ -7809,13 +8011,16 @@ async function saveChannelChanges(rid,channel){
     var resp=await api('/api/replenishment-suggestions/'+rid,'PUT',body);
     var d=resp.data;
     if(d){
-      var stockEl=document.querySelector('.rp-target-stock-'+rid);
+      var stockEl=vc?vc.querySelector('.rp-target-stock-'+rid):document.querySelector('.rp-target-stock-'+rid);
       if(stockEl){
         var stock=channel==='online'?(d.online_target_stock||0):(d.offline_target_stock||0);
         stockEl.textContent=stock;
       }
     }
     showToast(t('gen.L4880.1','已保存，目标库存已回写总预测'),'success');
+    rpClearDataCache();
+    var vk=rpCurrentViewKey();
+    if(window._rpCache.views[vk])window._rpCache.views[vk].signature='__STALE__';
   }catch(e){showToast(e.message,'danger')}
 }
 
@@ -7826,6 +8031,7 @@ async function saveChannelChanges(rid,channel){
 async function saveTransitAllocation(rid,channel,val){
   var qty=parseInt(val)||0;
   if(qty<0) qty=0;
+  var vc=rpActiveContainer();
   var otherManualVal=0; // 另一渠道的当前人工值（默认0）
   // 客户端校验：从缓存读取在途总库存和另一渠道有效已分配量
   var cached=window._rpChannelData&&window._rpChannelData[channel]&&window._rpChannelData[channel][rid];
@@ -7855,7 +8061,7 @@ async function saveTransitAllocation(rid,channel,val){
     if(qty>maxAvailable){
       showToast(t('forecast.transit.exceed','分配数量超过可分配上限')+': '+maxAvailable,'danger');
       // 恢复输入框值为上限
-      var input=document.querySelector('.rp-transit-manual[data-rid="'+rid+'"]');
+      var input=vc?vc.querySelector('.rp-transit-manual[data-rid="'+rid+'"]'):document.querySelector('.rp-transit-manual[data-rid="'+rid+'"]');
       if(input) input.value=maxAvailable;
       qty=maxAvailable;
     }
@@ -7873,15 +8079,18 @@ async function saveTransitAllocation(rid,channel,val){
     await api('/api/replenishment-suggestions/'+rid,'PUT',body);
     showToast(t('forecast.transit.saved','在途分配已保存，库存池已更新'),'success');
     // 保存滚动位置，刷新后恢复（避免保存后页面跳到顶部）
-    var scrollContainer=document.querySelector('#rp-table .table-container');
+    var scrollContainer=vc?vc.querySelector('.table-container'):document.querySelector('#rp-table .table-container');
     var savedScrollTop=scrollContainer?scrollContainer.scrollTop:0;
     var savedScrollLeft=scrollContainer?scrollContainer.scrollLeft:0;
     // 刷新当前渠道页数据以重算库存池、周转、未分配在途等所有派生值
     if(typeof loadRp==='function'){
+      rpClearDataCache();
+      rpRemoveView(rpCurrentViewKey());
       await loadRp();
       // 恢复滚动位置
       requestAnimationFrame(function(){
-        var sc=document.querySelector('#rp-table .table-container');
+        var ac=rpActiveContainer();
+        var sc=ac?ac.querySelector('.table-container'):document.querySelector('#rp-table .table-container');
         if(sc){sc.scrollTop=savedScrollTop;sc.scrollLeft=savedScrollLeft;}
       });
     }
@@ -7890,40 +8099,28 @@ async function saveTransitAllocation(rid,channel,val){
 
 // 最终下单数量保存（失焦时触发）
 async function saveFinalQty(rid){
-  var input=document.querySelector('.rp-final-qty[data-rid="'+rid+'"]');
+  var vc=rpActiveContainer();
+  var input=vc?vc.querySelector('.rp-final-qty[data-rid="'+rid+'"]'):document.querySelector('.rp-final-qty[data-rid="'+rid+'"]');
   if(!input) return;
   var foq=parseInt(input.value)||0;
-  var reasonSel=document.querySelector('.rp-adj-reason[data-rid="'+rid+'"]');
+  var reasonSel=vc?vc.querySelector('.rp-adj-reason[data-rid="'+rid+'"]'):document.querySelector('.rp-adj-reason[data-rid="'+rid+'"]');
   var body={final_order_qty:foq};
   if(reasonSel && !reasonSel.disabled) body.adjustment_reason=reasonSel.value;
   try{
     var resp=await api('/api/replenishment-suggestions/'+rid,'PUT',body);
     showToast(t('gen.L4894.1','已保存'),'success');
+    rpClearDataCache();
+    var vk=rpCurrentViewKey();
+    if(window._rpCache.views[vk])window._rpCache.views[vk].signature='__STALE__';
   }catch(e){showToast(e.message,'danger')}
 }
 
 // 按天模式：冻结左侧列 + 冻结汇总行
 async function loadRpDaily(){
+  var myViewKey=rpTab+'-daily';
   try{
-    let url='/api/replenishment-suggestions/daily-sales?'+rpQuery();
-    if(rpTab==='online') url+='&tab=online';
-    else if(rpTab==='offline') url+='&tab=offline';
-    // 历史销售查看范围统一生效：按天视图展示该范围内每日销售数据；未配置时保持最近30天默认行为
-    var hcfg=window._rpHistoricalSalesConfig;
-    if(hcfg&&hcfg.start&&hcfg.end){
-      var ds,de;
-      if(hcfg.mode==='monthly'){
-        var eParts=hcfg.end.split('-');
-        var ey=Number(eParts[0]), em=Number(eParts[1]);
-        var lastDay=new Date(ey,em,0).getDate();
-        ds=hcfg.start+'-01';
-        de=ey+'-'+String(em).padStart(2,'0')+'-'+String(lastDay).padStart(2,'0');
-      }else{
-        ds=hcfg.start; de=hcfg.end;
-      }
-      url+='&start='+encodeURIComponent(ds)+'&end='+encodeURIComponent(de);
-    }
-    const resp=await api(url);
+    var url=rpDailyUrl();
+    const resp=await rpFetchCached(url);
     const dates=resp.dates||[];
     const data=resp.skus||[];
 
@@ -7994,7 +8191,7 @@ async function loadRpDaily(){
     // === 表头行 ===
     // 表头允许自动换行（white-space:normal），高度自适应；汇总行 sticky top 在渲染后由 syncRpDailyHeaderHeight 同步
     var headRow='<tr>'
-      +'<th style="'+sHead(0)+'"><input type="checkbox" id="rp-all" onchange="document.querySelectorAll(\'.rp-ck\').forEach(function(c){c.checked=this.checked})"></th>'
+      +'<th style="'+sHead(0)+'"><input type="checkbox" class="rp-all" onchange="(function(el){el.closest(\'.rp-view-container\').querySelectorAll(\'.rp-ck\').forEach(function(c){c.checked=el.checked})})(this)"></th>'
       +'<th class="rp-daily-th" style="'+sHead(1)+'">'+t('forecast.daily.col.sales_group','动销')+'</th>'
       +'<th class="rp-daily-th" style="'+sHead(2)+'">'+t('forecast.daily.col.lifecycle_status','生命周期')+'</th>'
       +'<th class="rp-daily-th" style="'+sHead(3)+'">Model</th>'
@@ -8057,23 +8254,30 @@ async function loadRpDaily(){
     var emptyFoot=!data.length
       ? '<tr><td colspan="'+(10+dates.length)+'" style="text-align:center;padding:40px 20px;color:#999;background:#fafbfc">'+t('forecast.daily.empty','📈 当前筛选条件下暂无销量数据，请调整国家/仓库/品牌或点击"重新计算"')+'</td></tr>'
       : '';
-    document.getElementById('rp-table').innerHTML='<div class="daily-table-wrap" style="overflow:auto;max-height:70vh;position:relative">'
+    var html='<div class="daily-table-wrap" style="overflow:auto;max-height:70vh;position:relative">'
       +'<table class="data-table" style="white-space:nowrap;border-collapse:separate;border-spacing:0">'
       +'<thead>'+headRow+summaryRow+'</thead>'
       +'<tbody>'+rows+emptyFoot+'</tbody>'
       +'</table></div>';
-    // 表头允许自动换行 → 渲染后测量真实表头高度，同步汇总行 sticky top
-    syncRpDailyHeaderHeight();
+    var container=rpEnsureContainer(myViewKey);
+    container.innerHTML=html;
+    rpStoreViewNode(myViewKey,container);
+    if(rpCurrentViewKey()===myViewKey){
+      rpShowView(myViewKey);
+      syncRpDailyHeaderHeight(container);
+    }
   }catch(e){showFlash(e.message,'danger')}
 }
 
 // 按天表头高度自适应：表头可换行后实际高度 != headerH(34)
 // 渲染后读取真实 thead tr 高度，重写汇总行及日期汇总单元格的 sticky top
-function syncRpDailyHeaderHeight(){
-  var headTr=document.querySelector('#rp-table .daily-table-wrap thead tr:first-child');
+function syncRpDailyHeaderHeight(container){
+  container=container||rpActiveContainer();
+  if(!container)return;
+  var headTr=container.querySelector('.daily-table-wrap thead tr:first-child');
   if(!headTr) return;
   var h=headTr.offsetHeight||34;
-  var sumTr=document.querySelector('#rp-table .daily-table-wrap .rp-daily-summary-row');
+  var sumTr=container.querySelector('.daily-table-wrap .rp-daily-summary-row');
   if(sumTr){
     var cells=sumTr.children;
     for(var i=0;i<cells.length;i++){
@@ -8087,8 +8291,9 @@ async function onRpQtyChange(input,rid){
   try{
     const resp=await api('/api/replenishment-suggestions/'+rid,'PUT',{user_adjusted_qty:val});
     const d=resp.data;
+    var vc=input.closest('.rp-view-container')||rpActiveContainer();
     // 根据当前Tab更新对应的周转月数列
-    const turnEl=document.getElementById('rp-turn-'+rid);
+    const turnEl=vc?vc.querySelector('#rp-turn-'+rid):document.getElementById('rp-turn-'+rid);
     if(turnEl&&d){
       let afterOrder=99;
       if(rpTab==='online') afterOrder=d.online_after_order_turnover_months||99;
@@ -8097,9 +8302,9 @@ async function onRpQtyChange(input,rid){
       turnEl.textContent=Math.round(afterOrder*10)/10;
       turnEl.className='text-right '+(afterOrder<2?'text-danger':afterOrder>=2&&afterOrder<4?'text-success':afterOrder>=4&&afterOrder<6?'text-primary':'text-secondary');
     }
-    const suggEl=document.getElementById('rp-sugg-'+rid);
+    const suggEl=vc?vc.querySelector('#rp-sugg-'+rid):document.getElementById('rp-sugg-'+rid);
     if(suggEl&&d) suggEl.textContent=d.suggestion||'';
-    const ck=document.querySelector('.rp-ck[value="'+rid+'"]');
+    const ck=vc?vc.querySelector('.rp-ck[value="'+rid+'"]'):document.querySelector('.rp-ck[value="'+rid+'"]');
     if(ck) ck.dataset.qty=val;
     showToast(t('gen.L5018.1','已更新'),'success');
   }catch(e){showToast(e.message,'danger');loadRp()}
@@ -8118,6 +8323,8 @@ async function genRp(){
       return;
     }
     showToast(t('toast.suggestionsGenerated','已生成{count}条建议',{count:r.count}),'success');
+    rpClearDataCache();
+    rpClearAllViews();
     await loadRpSummary();
     await loadRp();
   }catch(e){
