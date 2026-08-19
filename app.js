@@ -4564,7 +4564,7 @@ let salesSelectAllMode = false;
 async function renderOutbound(){
   salesDataCache = []; salesAllFilteredIds = []; salesSelectAllMode = false;
   document.getElementById('content-inner').innerHTML=
-    t('html.renderOutbound', '<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>来源系统</label><select id="sr-ss"><option value="">全部</option></select></div><div class="filter-group"><label>国家</label><select id="sr-co"><option value="">全部</option></select></div><div class="filter-group"><label>渠道</label><select id="sr-sp"><option value="">全部</option></select></div><div class="filter-group"><label>品牌</label><select id="sr-b"><option value="">全部</option></select></div><div class="filter-group"><label>有效订单</label><select id="sr-iv"><option value="">全部</option><option value="1">有效</option><option value="0">无效</option></select></div><div class="filter-group"><label>开始日期</label><input type="date" id="sr-sd" class="form-control"></div><div class="filter-group"><label>结束日期</label><input type="date" id="sr-ed" class="form-control"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="salesResetPage();loadSales()">搜索</button>{v1}</div></div></div><div id="sr-batch-bar" style="display:none;background:var(--bg-card,#fff);border:1px solid var(--border,#e0e0e0);border-radius:8px;padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span id="sr-batch-count" style="font-weight:600;margin-right:8px"></span><button class="btn btn-sm btn-secondary" onclick="salesBatchExport()">📊 导出</button><button class="btn btn-sm btn-secondary" onclick="salesClearSelection()" style="margin-left:auto">取消选择</button></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🛒 销售明细</div></div><div id="sr-table"></div></div>', {v1: hasPermission('outbound_import')?t('gen.L3164.1','<button class="btn btn-secondary btn-sm" onclick="openSalesBatchImport()">📥 导入</button>'):''});
+    t('html.renderOutbound', '<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>来源系统</label><select id="sr-ss"><option value="">全部</option></select></div><div class="filter-group"><label>国家</label><select id="sr-co"><option value="">全部</option></select></div><div class="filter-group"><label>渠道</label><select id="sr-sp"><option value="">全部</option></select></div><div class="filter-group"><label>品牌</label><select id="sr-b"><option value="">全部</option></select></div><div class="filter-group"><label>SKU搜索</label><input type="text" id="sr-sk" class="form-control" placeholder="SKU（支持部分/大小写不敏感）"></div><div class="filter-group"><label>有效订单</label><select id="sr-iv"><option value="">全部</option><option value="1">有效</option><option value="0">无效</option></select></div><div class="filter-group"><label>开始日期</label><input type="date" id="sr-sd" class="form-control"></div><div class="filter-group"><label>结束日期</label><input type="date" id="sr-ed" class="form-control"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="salesResetPage();loadSales()">搜索</button>{v1}</div></div></div><div id="sr-batch-bar" style="display:none;background:var(--bg-card,#fff);border:1px solid var(--border,#e0e0e0);border-radius:8px;padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span id="sr-batch-count" style="font-weight:600;margin-right:8px"></span>{v2}<button class="btn btn-sm btn-secondary" onclick="salesBatchExport()">📊 导出</button><button class="btn btn-sm btn-secondary" onclick="salesClearSelection()" style="margin-left:auto">取消选择</button></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🛒 销售明细</div></div><div id="sr-table"></div></div>', {v1: hasPermission('outbound_import')?t('gen.L3164.1','<button class="btn btn-secondary btn-sm" onclick="openSalesBatchImport()">📥 导入</button>'):''});
   // 加载下拉选项
   try{
     const opts=await api('/api/sales-records/filter-options');
@@ -4587,28 +4587,48 @@ async function renderOutbound(){
 let salesCurrentPage = 1;
 const SALES_PAGE_SIZE = 500;
 
-async function loadSales(){
+// 统一构造销售列表筛选参数：列表查询与“全选全部”查询共用，避免前端参数漂移
+function buildSalesFilterParams(){
+  const ss=document.getElementById('sr-ss')?.value||'',sp=document.getElementById('sr-sp')?.value||'',b=document.getElementById('sr-b')?.value||'',iv=document.getElementById('sr-iv')?.value||'',sd=document.getElementById('sr-sd')?.value||'',ed=document.getElementById('sr-ed')?.value||'',co=document.getElementById('sr-co')?.value||'',sk=document.getElementById('sr-sk')?.value||'';
+  const p=new URLSearchParams();
+  if(ss) p.set('source_system',ss);
+  if(sp) p.set('shop_platform',sp);
+  if(b) p.set('brand',b);
+  if(sk) p.set('sku_code',sk);
+  if(iv!==undefined && iv!=='') p.set('is_valid',iv);
+  if(co) p.set('country',co);
+  if(sd) p.set('start_date',sd);
+  if(ed) p.set('end_date',ed);
+  return p;
+}
+
+async function loadSales(opts){
+  opts = opts || {};
+  const preserveSelection = !!opts.preserveSelection;
   try{
-    const ss=document.getElementById('sr-ss')?.value||'',sp=document.getElementById('sr-sp')?.value||'',b=document.getElementById('sr-b')?.value||'',iv=document.getElementById('sr-iv')?.value||'',sd=document.getElementById('sr-sd')?.value||'',ed=document.getElementById('sr-ed')?.value||'',co=document.getElementById('sr-co')?.value||'';
     const offset=(salesCurrentPage-1)*SALES_PAGE_SIZE;
-    let url='/api/sales-records?source_system='+encodeURIComponent(ss)+'&shop_platform='+encodeURIComponent(sp)+'&brand='+encodeURIComponent(b)+'&is_valid='+iv+'&limit='+SALES_PAGE_SIZE+'&offset='+offset;
-    if(co) url+='&country='+encodeURIComponent(co);
-    if(sd) url+='&start_date='+sd;
-    if(ed) url+='&end_date='+ed;
-    const resp=await api(url);
+    const p=buildSalesFilterParams();
+    p.set('limit',SALES_PAGE_SIZE);
+    p.set('offset',offset);
+    const resp=await api('/api/sales-records?'+p.toString());
     const data=resp.rows||resp;
     const totalCount=resp.total!==undefined?resp.total:data.length;
     salesDataCache = data;
-    salesAllFilteredIds = data.map(d=>d.id);
-    salesSelectAllMode = false;
+    // 选择态管理：仅当“全新筛选加载”（非翻页保活）时重置为当前页选择态
+    if(!preserveSelection || !salesSelectAllMode){
+      salesAllFilteredIds = data.map(d=>d.id);
+      salesSelectAllMode = false;
+    }
     updateSalesBatchBar();
     const cols = [t("po.018", "来源系统"),t("po.019", "订单号"),t("col.order_date", "下单日期"),t("col.country", "国家"),t("col.channel", "渠道"),t("app.112", "\u54c1\u724c"),'SKU',t("app.232", "\u4ea7\u54c1\u540d"),t("col.quantity", "数量"),t("app.640", "\u6709\u6548\u8ba2\u5355"),t("po.022", "\u539f\u59cb\u8ba2\u5355\u72b6\u6001"),t("col.remark", "备注")];
     const _srTable=document.getElementById('sr-table'); if(!_srTable) return;
     const totalPages=Math.ceil(totalCount/SALES_PAGE_SIZE);
+    const inSelectAll = salesSelectAllMode;
+    const allSet = inSelectAll ? new Set(salesAllFilteredIds) : null;
     const paginationHtml=totalCount>SALES_PAGE_SIZE?'<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 16px;background:var(--bg-card,#fff);border-top:1px solid var(--border,#e0e0e0);font-size:13px"><span>'+t('html.sales.total_records','共 {n} 条',{n:totalCount})+'</span><div style="display:flex;gap:6px;align-items:center"><button class="btn btn-sm btn-secondary" onclick="salesGotoPage('+(salesCurrentPage-1)+')" '+(salesCurrentPage<=1?'disabled':'')+'>'+t('action.prev','上一页')+'</button><span>'+salesCurrentPage+' / '+totalPages+'</span><button class="btn btn-sm btn-secondary" onclick="salesGotoPage('+(salesCurrentPage+1)+')" '+(salesCurrentPage>=totalPages?'disabled':'')+'>'+t('action.next','下一页')+'</button></div></div>':'';
     _srTable.innerHTML=t('html.loadSales', '<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th style="width:32px"><input type="checkbox" id="sr-check-all" onchange="toggleAllSales(this.checked)"></th><th style="white-space:nowrap"><a href="javascript:void(0)" onclick="selectAllSalesFiltered()" style="font-size:11px;color:var(--primary,#2e7d32)">全选全部({v1})</a></th>{v2}</tr></thead><tbody>{v3}</tbody></table></div>', {v1: totalCount, v2: cols.slice(1).map(h=>'<th>'+h+'</th>').join(''), v3: !data.length?'<tr><td colspan="'+(cols.length+1)+t('gen.L3188.1','" style="text-align:center;padding:30px;color:#999">暂无数据</td></tr>')
       :data.map(r=>'<tr'+(r.is_valid_order?'':' style="opacity:0.5"')+'>'
-        +'<td><input type="checkbox" class="sr-check" value="'+esc(r.id)+'" onchange="updateSalesBatchBar()"></td>'
+        +'<td><input type="checkbox" class="sr-check" value="'+esc(r.id)+'"'+(inSelectAll && allSet.has(r.id)?' checked':'')+' onchange="updateSalesBatchBar()"></td>'
         +'<td>'+esc(r.source_system||'-')+'</td>'
         +'<td class="cell-id">'+esc(r.order_no||'-')+'</td>'
         +'<td class="cell-date">'+fmtDate(r.order_date)+'</td>'
@@ -4628,11 +4648,20 @@ async function loadSales(){
 function salesGotoPage(page){
   if(page<1) return;
   salesCurrentPage=page;
-  loadSales();
+  // 翻页：保留“全选全部”选择态，仅刷新当前页数据
+  loadSales({preserveSelection:true});
+}
+
+// 清除选择态（用于“筛选条件变化”场景，与翻页区分开）
+function resetSalesSelection(){
+  salesSelectAllMode = false;
+  salesAllFilteredIds = [];
 }
 
 function salesResetPage(){
   salesCurrentPage=1;
+  // 搜索 = 新筛选，必须清选择（分页 ≠ 新筛选）
+  resetSalesSelection();
 }
 
 function salesGetSelectedIds(){
@@ -4643,14 +4672,26 @@ function salesGetSelectedIds(){
 function toggleAllSales(checked){
   document.querySelectorAll('.sr-check').forEach(cb=>cb.checked=checked);
   salesSelectAllMode = false;
+  salesAllFilteredIds = [];
   updateSalesBatchBar();
 }
 
-function selectAllSalesFiltered(){
-  salesSelectAllMode = true;
-  document.querySelectorAll('.sr-check').forEach(cb=>cb.checked=true);
-  const cba=document.getElementById('sr-check-all'); if(cba) cba.checked=true;
-  updateSalesBatchBar();
+async function salesFetchAllFilteredIds(){
+  // 与 loadSales 共用同一前端筛选参数来源，避免两套筛选 SQL 漂移
+  const p=buildSalesFilterParams();
+  const resp=await api('/api/sales-records/ids?'+p.toString());
+  return (resp.ids||[]);
+}
+
+async function selectAllSalesFiltered(){
+  try{
+    const ids = await salesFetchAllFilteredIds();
+    salesAllFilteredIds = ids;
+    salesSelectAllMode = true;
+    document.querySelectorAll('.sr-check').forEach(cb=>cb.checked=true);
+    const cba=document.getElementById('sr-check-all'); if(cba) cba.checked=true;
+    updateSalesBatchBar();
+  }catch(e){ showFlash(e.message,'danger'); }
 }
 
 
@@ -4669,6 +4710,37 @@ function updateSalesBatchBar(){
   bar.style.display='flex';
   const countEl = document.getElementById('sr-batch-count');
   if(countEl) countEl.textContent = t('text.updateSalesBatchBar', '已选择 {v1} 条{v2}', {v1: ids.length, v2: salesSelectAllMode?t('gen.L3239.1','（全部筛选结果）'):''});
+}
+
+// §10 删除 payload 的 selection 语义：全选全部 → 完整 filtered ids；否则 → 当前页选中 ids
+function salesGetDeleteIds(){
+  return salesSelectAllMode ? Array.from(salesAllFilteredIds) : salesGetSelectedIds();
+}
+
+// §9/§11/§12 真实删除入口（后端 outbound_delete 终态校验；此处仅 UX 前置）
+async function salesDeleteSelected(){
+  const ids = salesGetDeleteIds();
+  if(ids.length === 0){ showToast(t("toast.select_first","请先选择记录"),'warning'); return; }
+  // §11 preflight（真实 DELETE 仍会全量复校权限/scope/whole-request，此处仅 UX 预确认）
+  let preflight = null;
+  try{
+    preflight = await api('/api/sales-records/delete-preflight','POST',{ids});
+  }catch(e){ showFlash(e.message,'danger'); return; }
+  if(!preflight || preflight.error){ showFlash((preflight&&preflight.error)||t('err.preflight_failed','预检失败'),'danger'); return; }
+  const ok = confirm(t('confirm.sales_delete','确定删除已选择的 {n} 条销售记录吗？\n删除后，对应 SKU 的销量统计和订单预测将同步更新。',{n: ids.length}));
+  if(!ok) return;
+  try{
+    const resp = await api('/api/sales-records','DELETE',{ids});
+    if(resp && resp.error){ showFlash(resp.error,'danger'); return; }
+    showFlash(t('flash.sales_deleted','已删除 {n} 条销售记录',{n: (resp&&resp.deleted_count!=null?resp.deleted_count:ids.length)}),'success');
+    resetSalesSelection();
+    // §12 保留筛选条件重新加载；修正越界页（删除后当前页可能超出总页数）
+    await loadSales();
+    while(salesDataCache.length===0 && salesCurrentPage>1){
+      salesCurrentPage = salesCurrentPage - 1;
+      await loadSales();
+    }
+  }catch(e){ showFlash(e.message,'danger'); }
 }
 
 function salesBatchExport(){

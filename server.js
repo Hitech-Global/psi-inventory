@@ -1134,6 +1134,31 @@ if (require.main === module) {
   })();
 }
 
+// P2：为现有 role_admin 添加 outbound_delete 权限（幂等迁移）
+// 高风险删除权限仅限超级管理员；role_operator / role_viewer 不添加（B1）
+// 沿用 payment_execute 迁移模式：仅在直接运行 server.js 时执行，避免 require 时写入真实库
+if (require.main === module) {
+  (function ensureRoleAdminOutboundDelete() {
+    try {
+      const adminRole = queryOne("SELECT permissions FROM roles WHERE id = 'role_admin'");
+      if (!adminRole || !adminRole.permissions) return;
+      const perms = JSON.parse(adminRole.permissions);
+      if (!Array.isArray(perms)) return;
+      // P2.1-1：即便已含 '*' 也显式追加 outbound_delete。
+      // 原因：requireApiPermission 仅做字面 includes 校验（见其定义），'*' 不会通配授予该权限；
+      // 若 role_admin 为 ['*'] 却未显式含 outbound_delete，则 requireApiPermission('outbound_delete') 会 403。
+      // 约束：不覆盖其它权限、不删除 '*'、不修改其它角色、幂等（已含则跳过）。
+      if (!perms.includes('outbound_delete')) {
+        perms.push('outbound_delete');
+        run("UPDATE roles SET permissions = ? WHERE id = 'role_admin'", [JSON.stringify(perms)]);
+        console.log('[Migration] role_admin 已添加 outbound_delete 权限');
+      }
+    } catch (e) {
+      console.warn('[Migration] role_admin outbound_delete 迁移失败（非致命）:', e.message);
+    }
+  })();
+}
+
 // Phase 2：为拥有审批权限的角色自动追加 approval_view（幂等迁移）
 // 仅处理含 po_approve/payment_approve/check_approve 的角色，不处理含 '*' 的超级管理员（通配符已覆盖所有权限）
 if (require.main === module) {
@@ -1901,6 +1926,7 @@ const PERM_LABELS = {
   outbound_view: { label: '查看', module: '销售', submodule: '销售数据' },
   outbound_create: { label: '新增/编辑', module: '销售', submodule: '销售数据' },
   outbound_import: { label: '导入', module: '销售', submodule: '销售数据' },
+  outbound_delete: { label: '删除', module: '销售', submodule: '销售数据' },
   replenishment_view: { label: '查看', module: '销售', submodule: '订单预测' },
   replenishment_edit: { label: '生成/调参', module: '销售', submodule: '订单预测' },
   // 采购链
@@ -2077,18 +2103,21 @@ app.get('/api/warehouses/countries', requireLogin, asyncHandler((req, res) => {
 //   1) consignment_inventory_lots.warehouse_name（寄售库存投影进 inventory 的仓名）
 //   2) warehouses 表中名称含 consign 的 active 仓（生产环境寄售仓实际登记处）
 // 仅用于订单预测相关查询过滤，不影响库存模块 / WAC / 寄售库存本身。
-function getConsignmentWarehouseNames() {
+// executor-aware：传 exec 时所有查询走 exec.all（同一事务连接）；
+// 不传 exec 时保持现有 global query 行为（页面路由/ generate 现网路径不变）。
+function getConsignmentWarehouseNames(exec) {
   const names = new Set();
-  const res1 = query("SELECT DISTINCT warehouse_name FROM consignment_inventory_lots WHERE warehouse_name IS NOT NULL AND warehouse_name != ''");
-  (res1 && res1.rows || []).forEach(r => { if (r.warehouse_name) names.add(r.warehouse_name); });
-  const res2 = query("SELECT DISTINCT name FROM warehouses WHERE LOWER(name) LIKE '%consign%' AND status = 'active'");
-  (res2 && res2.rows || []).forEach(r => { if (r.name) names.add(r.name); });
+  const runQ = (sql) => exec ? exec.all(sql, []) : (query(sql, []).rows || []);
+  const res1 = runQ("SELECT DISTINCT warehouse_name FROM consignment_inventory_lots WHERE warehouse_name IS NOT NULL AND warehouse_name != ''");
+  (res1 || []).forEach(r => { if (r.warehouse_name) names.add(r.warehouse_name); });
+  const res2 = runQ("SELECT DISTINCT name FROM warehouses WHERE LOWER(name) LIKE '%consign%' AND status = 'active'");
+  (res2 || []).forEach(r => { if (r.name) names.add(r.name); });
   return Array.from(names);
 }
 // 在已有 SQL 的 WHERE 后追加排除寄售仓条件（名单为空时不拼接，避免 NOT IN () 非法 SQL）。
 // 自动处理前导：有 WHERE 内容用 AND，尚无则用 WHERE 起头。
-function appendConsignmentExclusion(sql, params, columnExpr) {
-  const names = getConsignmentWarehouseNames();
+function appendConsignmentExclusion(sql, params, columnExpr, exec) {
+  const names = getConsignmentWarehouseNames(exec);
   if (names.length > 0) {
     sql += (sql ? ' AND' : ' WHERE') + ' ' + columnExpr + ' NOT IN (' + names.map(() => '?').join(',') + ')';
     params.push(...names);
@@ -4497,25 +4526,34 @@ function salesImportIdFactory() {
   return () => genId('sale');
 }
 
+// 销售明细统一筛选构造：生成 { sql, params }，供列表 / ids 接口共用，避免两套 WHERE 漂移。
+function buildSalesRecordsWhere(req) {
+  const q = (req && req.query) || {};
+  const { source_system, order_no, shop_platform, brand, sku_code, is_valid, start_date, end_date, import_batch_id, country } = q;
+  const parts = [];
+  const params = [];
+  if (source_system) { parts.push(' AND sr.source_system = ?'); params.push(source_system); }
+  if (order_no) { parts.push(' AND sr.order_no LIKE ?'); params.push('%' + order_no + '%'); }
+  if (shop_platform) { parts.push(' AND sr.shop_platform = ?'); params.push(shop_platform); }
+  if (brand) { parts.push(' AND sr.brand = ?'); params.push(brand); }
+  if (sku_code) { parts.push(' AND LOWER(sr.sku_code) LIKE ?'); params.push('%' + String(sku_code).toLowerCase() + '%'); }
+  if (is_valid !== undefined && is_valid !== '') { parts.push(' AND sr.is_valid_order = ?'); params.push(parseInt(is_valid)); }
+  if (start_date) { parts.push(' AND sr.order_date >= ?'); params.push(start_date); }
+  if (end_date) { parts.push(' AND sr.order_date <= ?'); params.push(end_date); }
+  if (import_batch_id) { parts.push(' AND sr.import_batch_id = ?'); params.push(import_batch_id); }
+  if (country) { parts.push(' AND sr.country = ?'); params.push(country); }
+  // DATA-SCOPE: 数据权限（国家/品牌/仓库），与列表接口完全一致
+  const scope = buildSalesDataScopeFilter(req, 'sr');
+  if (scope.sql) { parts.push(scope.sql); params.push.apply(params, scope.params); }
+  return { sql: parts.join(''), params };
+}
+
 // 销售明细列表
 app.get('/api/sales-records', requireApiPermission('outbound_view'), asyncHandler((req, res) => {
-  const { source_system, order_no, shop_platform, brand, sku_code, is_valid, start_date, end_date, import_batch_id, country, limit, offset } = req.query;
+  const { limit, offset } = req.query;
   let sql = `SELECT sr.*, s.product_name FROM sales_records sr LEFT JOIN skus s ON sr.sku_code = s.sku_code WHERE 1=1`;
-  const params = [];
-  if (source_system) { sql += ' AND sr.source_system = ?'; params.push(source_system); }
-  if (order_no) { sql += ' AND sr.order_no LIKE ?'; params.push(`%${order_no}%`); }
-  if (shop_platform) { sql += ' AND sr.shop_platform = ?'; params.push(shop_platform); }
-  if (brand) { sql += ' AND sr.brand = ?'; params.push(brand); }
-  if (sku_code) { sql += ' AND sr.sku_code LIKE ?'; params.push(`%${sku_code}%`); }
-  if (is_valid !== undefined && is_valid !== '') { sql += ' AND sr.is_valid_order = ?'; params.push(parseInt(is_valid)); }
-  if (start_date) { sql += ' AND sr.order_date >= ?'; params.push(start_date); }
-  if (end_date) { sql += ' AND sr.order_date <= ?'; params.push(end_date); }
-  if (import_batch_id) { sql += ' AND sr.import_batch_id = ?'; params.push(import_batch_id); }
-  if (country) { sql += ' AND sr.country = ?'; params.push(country); }
-
-  // DATA-SCOPE: 应用数据权限过滤（国家/品牌/仓库）
-  const scopeFilter = buildSalesDataScopeFilter(req);
-  if (scopeFilter.sql) { sql += scopeFilter.sql; params.push(...scopeFilter.params); }
+  const { sql: whereSql, params } = buildSalesRecordsWhere(req);
+  sql += whereSql;
 
   // Count total matching records (for pagination metadata)
   let countSql = sql.replace(/^SELECT sr\.\*, s\.product_name FROM/, 'SELECT COUNT(*) as total FROM');
@@ -4529,6 +4567,351 @@ app.get('/api/sales-records', requireApiPermission('outbound_view'), asyncHandle
   sql += ' LIMIT ' + pageLimit + ' OFFSET ' + pageOffset;
   const rows = query(sql, params).rows;
   res.json({ rows, total, limit: pageLimit, offset: pageOffset });
+}));
+
+// 销售明细 ID 列表（全筛选结果，不分页）—— 供"全选全部"使用，复用统一筛选构造
+app.get('/api/sales-records/ids', requireApiPermission('outbound_view'), asyncHandler((req, res) => {
+  const { sql: whereSql, params } = buildSalesRecordsWhere(req);
+  const rows = query('SELECT sr.id FROM sales_records sr WHERE 1=1' + whereSql, params).rows;
+  const ids = rows.map(r => r.id); // 保持 TEXT 字符串，禁止 parseInt/Number
+  res.json({ ids, total: ids.length });
+}));
+
+// ==================== P2：销售记录删除安全基础设施（仅 preflight，不执行 DELETE）====================
+// 这些 helper 为 P3 真实删除事务复用：规范化 ID、数据权限复校、affected key 解析。
+// 本阶段所有函数均只读（SELECT），不修改 sales_records / replenishment_suggestions / inventory。
+
+// 批量删除上限：防止客户端一次性提交几十万 ID 导致语句过大或长事务。
+const SALES_DELETE_MAX_BATCH = 10000;
+
+// 将客户端传入的 ids 规范化为唯一 TEXT 数组（绝不数字化）。
+// 非法输入直接抛出 400（statusCode 字段供路由使用）。
+function normalizeSalesRecordIds(input) {
+  if (!Array.isArray(input)) {
+    const err = new Error('ids 必须是数组');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (input.length === 0) {
+    const err = new Error('ids 不能为空');
+    err.statusCode = 400;
+    throw err;
+  }
+  const seen = new Set();
+  const out = [];
+  for (const raw of input) {
+    // P2.1-4：高风险删除链路严格要求字符串 id。拒绝 number/boolean/object/array/null/undefined。
+    // 不再接受 String(...) 隐式转换，避免模糊类型进入破坏性 API（即便最终只会 409，也没必要接收）。
+    // sales_records.id 真实类型为 TEXT，前端提交的也是字符串；严禁 Number / parseInt 数字化。
+    if (raw === null || raw === undefined) {
+      const err = new Error('存在无效 id（null/undefined）');
+      err.statusCode = 400;
+      throw err;
+    }
+    if (typeof raw !== 'string') {
+      const err = new Error('存在非字符串 id（类型=' + typeof raw + '）');
+      err.statusCode = 400;
+      throw err;
+    }
+    const s = raw.trim();
+    if (s === '') {
+      const err = new Error('存在空 id');
+      err.statusCode = 400;
+      throw err;
+    }
+    if (!seen.has(s)) {
+      seen.add(s);
+      out.push(s); // 保持 TEXT 原样，禁止 parseInt / Number / String 隐式转换
+    }
+  }
+  if (out.length > SALES_DELETE_MAX_BATCH) {
+    const err = new Error('批量删除数量超过上限 ' + SALES_DELETE_MAX_BATCH);
+    err.statusCode = 400;
+    throw err;
+  }
+  return out;
+}
+
+// P2.1-2：纯函数，根据「已解析」的数据权限范围构造销售数据过滤 SQL 片段。
+// scope: { countryValues: string[], brandValues: string[] } | null（null = 无需过滤）
+// tablePrefix: 表别名前缀，传 '' 表示无前缀；undefined 默认 'sr'。
+// 仅拼 SQL，不触碰任何数据库；范围「解析」（含仓库→国家、国家→name/code 的 DB 查询）
+// 由 resolveSalesDataScope 负责，确保未来事务化时整条链路都用显式 executor。
+function buildSalesDataScopeSql(scope, tablePrefix) {
+  if (!scope) return { sql: '', params: [] };
+  const tp = (tablePrefix !== undefined) ? tablePrefix : 'sr';
+  const colPrefix = tp ? tp + '.' : '';
+  const params = [];
+  const conditions = [];
+  if (scope.countryValues && scope.countryValues.length > 0) {
+    conditions.push(colPrefix + 'country IN (' + scope.countryValues.map(() => '?').join(',') + ')');
+    params.push(...scope.countryValues);
+  }
+  if (scope.brandValues && scope.brandValues.length > 0) {
+    conditions.push(colPrefix + 'brand IN (' + scope.brandValues.map(() => '?').join(',') + ')');
+    params.push(...scope.brandValues);
+  }
+  if (conditions.length === 0) return { sql: '', params: [] };
+  return { sql: ' AND ' + conditions.join(' AND '), params };
+}
+
+// P2.1-2：异步，在给定 executor 上「解析」当前用户销售数据权限范围（国家/品牌具体值）。
+// exec: { query(sql, params) -> { rows: [...] } }（P4 传入事务 executor，确保 scope 解析与后续
+//       查询/DELETE/重算都在同一事务连接上，绝不偷偷切回全局 db.query）。
+// 返回 scope: { countryValues, brandValues } | null（无需过滤）。
+// 与 buildSalesDataScopeFilter(req,...) 产出等价过滤，但走显式 executor，为未来事务化铺路。
+async function resolveSalesDataScope(req, exec) {
+  if (!needsDataScopeFilter(req)) return null;
+  const scope = req.currentUserDataScope;
+  let effectiveCountryIds = [];
+  if (scope.countries && scope.countries.length > 0) {
+    effectiveCountryIds = effectiveCountryIds.concat(scope.countries);
+  }
+  if (scope.warehouses && scope.warehouses.length > 0) {
+    const whRows = (await exec.query('SELECT DISTINCT country_id FROM warehouses WHERE id IN (' +
+      scope.warehouses.map(() => '?').join(',') + ") AND country_id != ''", scope.warehouses)).rows;
+    whRows.forEach(r => { if (r.country_id && effectiveCountryIds.indexOf(r.country_id) < 0) effectiveCountryIds.push(r.country_id); });
+  }
+  const countryValues = [];
+  if (effectiveCountryIds.length > 0) {
+    const countryRows = (await exec.query('SELECT name, code FROM countries WHERE id IN (' +
+      effectiveCountryIds.map(() => '?').join(',') + ')', effectiveCountryIds)).rows;
+    countryRows.forEach(r => {
+      if (r.name && countryValues.indexOf(r.name) < 0) countryValues.push(r.name);
+      if (r.code && countryValues.indexOf(r.code) < 0) countryValues.push(r.code);
+    });
+    // 同时也把 country_id 本身加入（sales_records.country 可能存储 id）
+    effectiveCountryIds.forEach(cid => { if (countryValues.indexOf(cid) < 0) countryValues.push(cid); });
+  }
+  const brandValues = [];
+  if (scope.brands && scope.brands.length > 0) {
+    brandValues.push(...scope.brands);
+  }
+  return { countryValues, brandValues };
+}
+
+// 在「数据权限 scope 内」解析用户提交的 ids，仅做 SELECT（不 DELETE）。
+// exec: 驱动无关查询接口 { query(sql, params) -> { rows: [...] } }（P3/P4 传入事务内 executor）
+// P2.1-2：scope 解析现在显式走 exec（resolveSalesDataScope），不再偷偷调用全局
+//         buildSalesDataScopeFilter / db.query；与列表接口过滤语义保持等价，避免权限判断漂移。
+async function resolveSalesDeleteScope(exec, req, requestedIds) {
+  if (!requestedIds.length) return [];
+  const placeholders = requestedIds.map(() => '?').join(',');
+  let sql = `SELECT sr.id, sr.sku_code, sr.country, sr.is_valid_order, sr.order_date
+             FROM sales_records sr WHERE sr.id IN (${placeholders})`;
+  const params = requestedIds.slice();
+  const scope = await resolveSalesDataScope(req, exec);
+  const scopeSql = buildSalesDataScopeSql(scope, 'sr');
+  if (scopeSql.sql) { sql += scopeSql.sql; params.push(...scopeSql.params); }
+  const rows = (await exec.query(sql, params)).rows;
+  return rows;
+}
+
+// 判断销售 key 维度是否为「空白」（缺失 / 不可用于构造预测 key）
+function isBlankSalesKey(v) {
+  return v === null || v === undefined || String(v).trim() === '';
+}
+
+// 基于「已成功解析（=已通过数据权限）」的行计算 affected key。
+// 仅 is_valid_order=1 的有效销售进入 affected（删除无效订单不触发预测重算）。
+// P2.1-5：key 使用 JSON.stringify([sku_code, country])，避免 '|' delimiter 理论碰撞
+//         （如 sku="A|B" country="C" 与 sku="A" country="B|C" 在 '|' 拼接下会误判为同一 key）。
+// P2.1-6：有效销售若 sku_code / country 缺失（空白），无法可靠构造预测 key，计入 incompleteValid，
+//         交由 preflight 整笔拒绝（0 数据修改，不泄露具体记录）。
+// 返回去重后的 { sku_code, country } 列表与有效/无效/不完整计数。
+function computeAffectedSalesKeys(resolvedRows) {
+  const seen = new Set();
+  const affectedKeys = [];
+  let validCount = 0;
+  let invalidCount = 0;
+  let incompleteValid = 0;
+  for (const r of resolvedRows) {
+    const isInvalid = !(r.is_valid_order === 1 || r.is_valid_order === '1');
+    if (isInvalid) {
+      invalidCount++;
+      continue;
+    }
+    validCount++;
+    const sku = r.sku_code;
+    const country = r.country;
+    if (isBlankSalesKey(sku) || isBlankSalesKey(country)) {
+      incompleteValid++;
+      continue;
+    }
+    const key = JSON.stringify([sku, country]);
+    if (!seen.has(key)) {
+      seen.add(key);
+      affectedKeys.push({ sku_code: sku, country: country });
+    }
+  }
+  return { affectedKeys, validCount, invalidCount, incompleteValid };
+}
+
+// 销售记录删除预检（只读，不执行 DELETE）。
+// 验证：权限（requireApiPermission 中间件）→ ID 规范化 → 数据权限复校 → affected 解析。
+// whole-request 校验：去重后 requested 与 resolved 数量（及集合，因 resolved ⊆ requested）必须一致，
+// 否则整笔拒绝（409），不泄露具体哪个 id 缺失/越权。
+app.post('/api/sales-records/delete-preflight', requireApiPermission('outbound_delete'), asyncHandler(async (req, res) => {
+  let requestedIds;
+  try {
+    requestedIds = normalizeSalesRecordIds(req.body && req.body.ids);
+  } catch (e) {
+    return res.status(e.statusCode || 400).json({ error: e.message });
+  }
+  const requestedCount = requestedIds.length;
+
+  // §1 驱动感知：PG 走 withGenerateClient，SQLite 走 db 全局；与 DELETE 主流程保持一致
+  async function doPreflight(exec) {
+    const resolved = await resolveSalesDeleteScope(exec, req, requestedIds);
+    const resolvedIds = resolved.map(r => r.id);
+    if (resolvedIds.length !== requestedCount) {
+      // whole-request 失败：不暴露具体越权/缺失 id（防权限信息泄露）
+      return { status: 409, body: { error: '部分销售记录不存在、已被删除或无权访问，整笔请求已拒绝' } };
+    }
+    const { affectedKeys, validCount, invalidCount, incompleteValid } = computeAffectedSalesKeys(resolved);
+    // P2.1-6：有效销售缺少 SKU/国家 → 整笔拒绝（0 数据修改，不泄露具体记录）
+    if (incompleteValid > 0) {
+      return { status: 409, body: { error: '存在有效销售记录缺少 SKU 或国家，无法可靠刷新关联预测，整笔请求已拒绝' } };
+    }
+    return {
+      status: 200,
+      body: {
+        requested_count: requestedCount,
+        resolved_count: resolved.length,
+        valid_sales_count: validCount,
+        invalid_sales_count: invalidCount,
+        incomplete_valid_sales_count: incompleteValid,
+        affected_key_count: affectedKeys.length
+      }
+    };
+  }
+
+  let result;
+  if (process.env.DATABASE_URL) {
+    result = await withGenerateClient(async (aq, aqOne, run) => doPreflight(buildPgExec(aq, aqOne, run)));
+  } else {
+    result = await doPreflight(buildSqliteExec());
+  }
+  return res.status(result.status).json(result.body);
+}));
+
+// ============ P4 真实销售删除闭环 ============
+// selection → permission → scope → transaction → DELETE sales_records → refresh existing → COMMIT。
+// 整笔操作全部在同一事务连接的 exec 上完成（§1/§3）：PG 走 withGenerateClient，SQLite 走 db.transaction。
+// 禁止自行判断连接类型、禁止自开事务、禁止写 inventory、禁止 INSERT/DELETE suggestion。
+
+function mapSalesDeleteError(e) {
+  const msg = (e && e.message) || String(e);
+  if (/SALES_DELETE_STALE_CONFLICT/.test(msg)) {
+    // P4.1 并发/重复删除冲突：本事务实际删除行数 < 请求行数（另一事务已先行删除或并发改动），
+    // 事务已整体回滚，销售数据未变更，对用户返回可理解文案。
+    return { status: 409, body: { error: '删除冲突：部分销售记录已被其他操作删除或并发修改，本次删除已取消（数据未变更）。', code: 'SALES_DELETE_STALE_CONFLICT' } };
+  }
+  if (/SALES_DELETE_SCOPE_MISMATCH|SALES_DELETE_INCOMPLETE_VALID|SALES_REFRESH_ORPHAN_SUGGESTION|SALES_REFRESH_SKU_MISSING|SALES_REFRESH_SKU_STOPPED|SALES_REFRESH_DIM_UNMATCHED|SALES_REFRESH_UNEXPECTED_INSERT|SALES_REFRESH_MISSING_ID|SALES_DELETE_VERIFY_FAILED/.test(msg)) {
+    // §8 refresh fail-closed / whole-request 校验失败：销售数据未删除（事务已回滚），对用户返回可理解文案
+    return { status: 409, body: { error: '关联预测数据当前无法安全同步，销售数据未删除。', code: 'SALES_REFRESH_FAILED' } };
+  }
+  return { status: 500, body: { error: '销售记录删除失败，请稍后重试或联系管理员' } };
+}
+
+function buildSqliteExec() {
+  return {
+    query: (sql, p) => query(sql, p),
+    all: (sql, p) => query(sql, p).rows,
+    one: (sql, p) => queryOne(sql, p),
+    run: (sql, p) => run(sql, p)
+  };
+}
+
+function buildPgExec(aq, aqOne, run) {
+  return {
+    query: (sql, p) => ({ rows: aq(sql, p) }),
+    all: (sql, p) => aq(sql, p),
+    one: (sql, p) => aqOne(sql, p),
+    run: (sql, p) => run(sql, p)
+  };
+}
+
+// §3 事务内完整流程（DELETE 后调用 refresh，确保读到删除后的剩余销售）
+async function execSalesDeletionFlow(exec, req, requestedIds, dialect) {
+  const requestedCount = requestedIds.length;
+  // §2/§3-2 解析 + whole-request 校验（resolved ⊆ requested，数量必须严格相等）
+  const resolvedRows = await resolveSalesDeleteScope(exec, req, requestedIds);
+  if (resolvedRows.length !== requestedCount) {
+    throw new Error('SALES_DELETE_SCOPE_MISMATCH');
+  }
+  const { affectedKeys, validCount, invalidCount, incompleteValid } = computeAffectedSalesKeys(resolvedRows);
+  if (incompleteValid > 0) {
+    throw new Error('SALES_DELETE_INCOMPLETE_VALID');
+  }
+  // §3-5 refreshability precheck（fail-closed 尽早失败，而非跳过；此时尚未 DELETE）
+  await resolveAndValidateRefreshTargets(exec, affectedKeys);
+
+  // §3-6 DELETE（仅按 id；绝不按 sku/country/order_no/date/channel）
+  // P4.1：使用 DELETE ... RETURNING id，以「本事务实际删除返回的行数」作为删除证明，
+  // 而非「DELETE 后再次 SELECT 是否还存在」。这样在并发/重复删除场景下，若另一事务已先行
+  // 删除部分行，本事务实际 RETURNING 行数 < requestedCount，会被判定为 stale conflict 并回滚，
+  // 不会错误地报告 deleted_count = requestedIds.length。
+  const placeholders = requestedIds.map(() => '?').join(',');
+  const deletedRows = await exec.all('DELETE FROM sales_records WHERE id IN (' + placeholders + ') RETURNING id', requestedIds);
+  const actualDeletedCount = Array.isArray(deletedRows) ? deletedRows.length : 0;
+
+  // P4.1 §五：实际删除行数必须严格等于请求行数；否则视为并发冲突/已被其他操作改动，整体回滚。
+  if (actualDeletedCount !== requestedCount) {
+    throw new Error('SALES_DELETE_STALE_CONFLICT');
+  }
+
+  // §3-7 额外 sanity check（不能替代上面的实际行数证明）：DELETE 后这些 id 应已不存在。
+  // 该检查仅作为兜底，正常路径下 actualDeletedCount === requestedCount 已保证 remaining 为空。
+  const remaining = await exec.all('SELECT id FROM sales_records WHERE id IN (' + placeholders + ')', requestedIds);
+  if (remaining.length > 0) {
+    throw new Error('SALES_DELETE_VERIFY_FAILED');
+  }
+
+  // §3-8 删除后重算已有 suggestion（DELETE 之后读取剩余销售数据）
+  let refreshedCount = 0;
+  if (affectedKeys.length > 0) {
+    const r = await refreshExistingSalesSuggestions({ exec, affectedKeys, dialect });
+    refreshedCount = r.updated;
+  }
+  return { deletedCount: requestedCount, affectedKeyCount: affectedKeys.length, refreshedCount };
+}
+
+// §1 构造统一 exec + 选择正确驱动事务（PG: withGenerateClient / SQLite: db.transaction）
+async function runSalesDeletionInTx(req, requestedIds) {
+  if (process.env.DATABASE_URL) {
+    return await withGenerateClient(async (aq, aqOne, run) => {
+      const exec = buildPgExec(aq, aqOne, run);
+      return await execSalesDeletionFlow(exec, req, requestedIds, 'pg');
+    });
+  }
+  return await transaction(async () => {
+    const exec = buildSqliteExec();
+    return await execSalesDeletionFlow(exec, req, requestedIds, 'sqlite');
+  });
+}
+
+// §2 真实 DELETE 接口（权限 outbound_delete）；复用 normalizeSalesRecordIds（不另写 ID 解析）
+app.delete('/api/sales-records', requireApiPermission('outbound_delete'), asyncHandler(async (req, res) => {
+  let requestedIds;
+  try {
+    requestedIds = normalizeSalesRecordIds(req.body && req.body.ids);
+  } catch (e) {
+    return res.status(e.statusCode || 400).json({ error: e.message });
+  }
+  try {
+    const result = await runSalesDeletionInTx(req, requestedIds);
+    return res.json({
+      success: true,
+      deleted_count: result.deletedCount,
+      affected_key_count: result.affectedKeyCount,
+      refreshed_suggestion_count: result.refreshedCount
+    });
+  } catch (e) {
+    const mapped = mapSalesDeleteError(e);
+    if (mapped.status >= 500) console.error('[SALES-DELETE-ERR]', e && e.message ? e.message : e);
+    return res.status(mapped.status).json(mapped.body);
+  }
 }));
 
 // 销售明细筛选下拉选项
@@ -5654,6 +6037,500 @@ app.get('/api/replenishment-suggestions', requireApiPermission('replenishment_vi
   res.json(rows);
 }));
 
+// P3B-1：抽取「单个 suggestion target 的预测计算公式」为纯计算函数。
+// 仅 MOVE + CALL，未改任何公式/业务规则（与 P3A.2 原始 forEach 体逐行一致）。
+// 纯计算边界（详见 P3B-1 §4）：禁止 query/aq/run/transaction/INSERT/UPDATE/DELETE；
+// 仅调用已确认无 DB side effect 的 helper（calculateSuggestion/resolveChannelRatio/
+// getDimTurnover/detectStockoutDistortion/classifySkuState/shouldBlockReplenish/
+// buildSuggestionText/genId）。
+function computeSuggestionForTarget({ inv, sku, existing_rs, brandStopped, months, monthlyMap, aggMap, targetMonths, leadTimeMonths, salesStatsDays, dimCfg, channelConfigMap, countriesCache, now }) {
+      // 计算近4个月销量（从销售明细表汇总，is_valid_order=1）
+      const salesMap = {};
+      const onlineSalesMap = {};
+      const offlineSalesMap = {};
+      months.forEach(m => {
+        const invSalesKey = inv.sku_code + '|' + (inv.country || '');
+        const bucket = (monthlyMap[invSalesKey] && monthlyMap[invSalesKey][m.key]) || { total: 0, online: 0, offline: 0 };
+        salesMap[m.key] = bucket.total;
+        onlineSalesMap[m.key] = bucket.online;
+        offlineSalesMap[m.key] = bucket.offline;
+      });
+
+      const sales_m1 = salesMap.m1 || 0;
+      const sales_m2 = salesMap.m2 || 0;
+      const sales_m3 = salesMap.m3 || 0;
+      const sales_m4 = salesMap.m4 || 0;
+      const avg_sales_4m = (sales_m1 + sales_m2 + sales_m3 + sales_m4) / 4;
+
+      // 线上/线下分月销量
+      const online_sales_m1 = onlineSalesMap.m1 || 0;
+      const online_sales_m2 = onlineSalesMap.m2 || 0;
+      const online_sales_m3 = onlineSalesMap.m3 || 0;
+      const online_sales_m4 = onlineSalesMap.m4 || 0;
+      const online_avg_sales_4m = (online_sales_m1 + online_sales_m2 + online_sales_m3 + online_sales_m4) / 4;
+      const offline_sales_m1 = offlineSalesMap.m1 || 0;
+      const offline_sales_m2 = offlineSalesMap.m2 || 0;
+      const offline_sales_m3 = offlineSalesMap.m3 || 0;
+      const offline_sales_m4 = offlineSalesMap.m4 || 0;
+      const offline_avg_sales_4m = (offline_sales_m1 + offline_sales_m2 + offline_sales_m3 + offline_sales_m4) / 4;
+
+      // 销量统计周期月均：60/90/120 天有效销量分别 ÷ 2/3/4。（periodStart/periodEnd 已在集合化读取阶段计算）
+      const invAggKey = inv.sku_code + '|' + (inv.country || '');
+      const agg = aggMap[invAggKey];
+      const totalPeriodSales = agg ? Number(agg.period_total) || 0 : 0;
+      const onlinePeriodSales = agg ? Number(agg.period_online) || 0 : 0;
+      const offlinePeriodSales = agg ? Number(agg.period_offline) || 0 : 0;
+      const salesPeriodMonths = salesStatsDays > 0 ? salesStatsDays / 30 : 3;
+      // 统一以落库精度参与后续计算，保证接口展示值可直接复算周转和建议量。
+      const avg_sales_period = Math.round(totalPeriodSales / salesPeriodMonths * 100) / 100;
+      const online_avg_sales_period = Math.round(onlinePeriodSales / salesPeriodMonths * 100) / 100;
+      const offline_avg_sales_period = Math.round(offlinePeriodSales / salesPeriodMonths * 100) / 100;
+
+      const avail = inv.available_qty || 0;
+      const transit = inv.in_transit_qty || 0;
+      const piUnshipped = inv.pi_confirmed_unshipped_qty || 0;
+      const poUnconfirmed = inv.po_unconfirmed_pi_qty || 0;
+      // 冻结库存池：可用 + CI 已发货在途 + PI/PO 已确认未发货。
+      // poUnconfirmed 仅保留为参考字段，未确认 PO 不计入库存池，避免把潜在供应当成已确认供应。
+      const total_inventory_pool = avail + transit + piUnshipped;
+
+      // 统一判定层所需指标（d30/d90/ever/first_sale 已在集合化读取阶段计算）
+      const agg2 = aggMap[invAggKey];
+      const sales_30d = agg2 ? Number(agg2.s30) || 0 : 0;
+      const sales_90d = agg2 ? Number(agg2.s90) || 0 : 0;
+      const total_sales_ever = agg2 ? Number(agg2.ever_total) || 0 : 0;
+      const first_sale_date = agg2 ? (agg2.first_sale || '') : '';
+      const last_inbound_date = inv.last_inbound_date || '';
+      const first_inbound_date = inv.first_inbound_date || '';
+      let days_since_last_inbound = null;
+      if (last_inbound_date) {
+        const ld = new Date(last_inbound_date);
+        if (!isNaN(ld.getTime())) days_since_last_inbound = Math.floor((now - ld) / 86400000);
+      }
+
+      // CHANNEL-ALLOCATION: 渠道比例三级解析
+      const last_outbound_date = inv.last_outbound_date || '';
+      const last_sale_date = agg2 ? (agg2.last_sale || '') : '';
+      const channelRatio = resolveChannelRatio({
+        skuCode: inv.sku_code,
+        country: inv.country,
+        avgSalesPeriod: avg_sales_period,
+        available: avail,
+        totalSalesEver: total_sales_ever,
+        lastSaleDate: last_sale_date,
+        lastOutboundDate: last_outbound_date,
+        aggObj: agg,
+        monthlyMap: monthlyMap,
+        channelConfigMap: channelConfigMap,
+        countriesCache: countriesCache
+      });
+      // A-Step1 收口：目标周转值来源——dim 命中（预检已保证非 null，不再回退旧逻辑/兜底值）
+      // 品牌停采时可能无命中规则（预检已跳过），用中性兜底仅供展示列，不影响采购（建议采购会强制为 0）
+      const dimHit = getDimTurnover(sku.brand, inv.country, inv.warehouse, dimCfg) || { online_turnover: 3, offline_turnover: 3 };
+      const online_target_turnover = dimHit.online_turnover;
+      const offline_target_turnover = dimHit.offline_turnover;
+      const classifyTarget = dimHit.online_turnover;
+
+      // 生命周期策略系数
+      const lifecycle = sku.lifecycle_status || 'stable';
+      const LIFECYCLE_COEFF = {
+        'new_test': 0, 'new_launch': 0.5, 'growth': 0.8,
+        'stable': 1.0, 'slow': 0.5, 'stagnant': 0,
+        'clearance': 0, 'stopped': 0
+      };
+      const lifecycleCoeff = LIFECYCLE_COEFF[lifecycle] !== undefined ? LIFECYCLE_COEFF[lifecycle] : 1.0;
+
+      // 当前周转（总月均=0时显示99，前端会处理为"无销量"）
+      const current_turnover_months = avg_sales_period > 0 ? total_inventory_pool / avg_sales_period : 99;
+
+      // existing_rs：读取历史 other_target_stock / final_order_qty（目标周转已在上文按维度命中/回退确定）
+      // 当前业务仅有线上/线下；历史 other 字段保留兼容，但不参与本轮预测。
+      const other_target_stock = 0;
+
+      // 缺货销量失真检测：如果近期销量骤降由缺货导致，用断货前最高月销量修正基准
+      const onlineDist = detectStockoutDistortion(online_sales_m1, online_sales_m2, online_sales_m3, online_sales_m4, avail);
+      const offlineDist = detectStockoutDistortion(offline_sales_m1, offline_sales_m2, offline_sales_m3, offline_sales_m4, avail);
+
+      // 目标库存计算：基数取销量统计周期月均；若命中缺货销量失真，则用断货前峰值修正基准（回归修复：P4 统一口径时误删的特殊分支）
+      const online_base_avg = onlineDist.isDistorted ? onlineDist.adjustedAvg : online_avg_sales_period;
+      const offline_base_avg = offlineDist.isDistorted ? offlineDist.adjustedAvg : offline_avg_sales_period;
+      const online_target_stock = Math.round(online_base_avg * online_target_turnover);
+      const offline_target_stock = Math.round(offline_base_avg * offline_target_turnover);
+      const total_target_stock = online_target_stock + offline_target_stock;
+
+      // suggested_qty 在 classifyResult 之后经过业务拦截重新计算，此处先用临时值
+      let suggested_qty = Math.round(Math.max(0, total_target_stock - total_inventory_pool));
+
+      // MOQ和箱规修正
+      let moqQty = (sku.qty_per_carton > 0 && suggested_qty > 0) ? Math.ceil(suggested_qty / sku.qty_per_carton) * sku.qty_per_carton : suggested_qty;
+
+      // 最终下单数量（默认=系统建议补货，保留用户已设置的值）
+      let final_order_qty = (existing_rs && existing_rs.final_order_qty != null && existing_rs.final_order_qty >= 0) ? existing_rs.final_order_qty : suggested_qty;
+
+      // 订单后周转 = (总库存池 + 最终下单数量) ÷ 总月均
+      let after_order_turnover_months = avg_sales_period > 0 ? (total_inventory_pool + final_order_qty) / avg_sales_period : 99;
+      let onlineAfterOrder = online_avg_sales_period > 0 ? (total_inventory_pool + final_order_qty) / online_avg_sales_period : 99;
+      let offlineAfterOrder = offline_avg_sales_period > 0 ? (total_inventory_pool + final_order_qty) / offline_avg_sales_period : 99;
+
+      // 风险等级
+      let risk_level = '';
+      if (sku.status === 'clearance' || lifecycle === 'clearance') {
+        risk_level = '清仓';
+      } else if (lifecycle === 'stopped') {
+        risk_level = '停产';
+      } else if (avg_sales_period === 0) {
+        risk_level = '无销量';
+      } else if (current_turnover_months < 1) {
+        risk_level = '严重缺货';
+      } else if (current_turnover_months < 2) {
+        risk_level = '缺货风险';
+      } else if (current_turnover_months > 6) {
+        risk_level = '库存偏高';
+      } else {
+        risk_level = '正常';
+      }
+
+      // 预计到货月份
+      const arrDate = new Date(now.getFullYear(), now.getMonth() + Math.ceil(leadTimeMonths), 1);
+      const arrival_month = `${arrDate.getFullYear()}-${String(arrDate.getMonth() + 1).padStart(2, '0')}`;
+
+      // 动销分组
+      let sales_group = '';
+      if (avg_sales_4m === 0) sales_group = '滞销';
+      else if (avg_sales_4m < 10) sales_group = '低动销';
+      else if (avg_sales_4m < 50) sales_group = '中动销';
+      else sales_group = '高动销';
+
+      // 统一判断层：动销状态/风险标签/动销原因/建议动作/AI经营建议（不影响建议采购数量）
+      const classifyResult = classifySkuState({
+        lifecycle_status: lifecycle,
+        is_new_product: sku.is_new_product,
+        launch_date: sku.launch_date,
+        first_inbound_date,
+        first_sale_date,
+        new_product_protection_days: sku.new_product_protection_days,
+        available: avail,
+        avg_sales_period,
+        sales_30d,
+        sales_90d,
+        total_sales_ever,
+        days_since_last_inbound: days_since_last_inbound,
+        last_inbound_date,
+        target_months: classifyTarget
+      });
+      let sales_status = classifyResult.sales_status;
+      // 缺货销量失真后处理：追加标签和说明
+      if (onlineDist.isDistorted || offlineDist.isDistorted) {
+        classifyResult.risk_tags.push('销量失真');
+        classifyResult.sales_reason = onlineDist.isDistorted
+          ? onlineDist.reason
+          : offlineDist.reason;
+      }
+      // 新品无销量标记
+      if (sales_status === '新品/销售数据不足' && sales_30d === 0 && sales_90d === 0) {
+        classifyResult.risk_tags.push('新品无销量');
+      }
+      const risk_tags = classifyResult.risk_tags.join(',');
+      let sales_reason = classifyResult.sales_reason;
+      let action_text = classifyResult.action;
+      const ai_business_advice = classifyResult.ai_business_advice;
+
+      // === 最终建议采购数量（经过业务拦截）===
+      // 冻结公式：max(0, 线上目标库存 + 线下目标库存 - 当前库存池)。
+      const blocked = shouldBlockReplenish(sales_status, classifyResult.risk_tags);
+      const suggestionParts = calculateSuggestion(online_target_stock, offline_target_stock, total_inventory_pool, blocked);
+      let online_suggested_qty = suggestionParts.online_suggested_qty;
+      let offline_suggested_qty = suggestionParts.offline_suggested_qty;
+      let other_suggested_qty = 0;
+      suggested_qty = suggestionParts.suggested_qty;
+
+      // 用户可见建议说明必须随快照刷新，不能清空。
+      let suggestion = buildSuggestionText(sales_status, lifecycle, suggested_qty, brandStopped);
+      // 重新计算依赖 suggested_qty 的字段
+      moqQty = (sku.qty_per_carton > 0 && suggested_qty > 0) ? Math.ceil(suggested_qty / sku.qty_per_carton) * sku.qty_per_carton : suggested_qty;
+      final_order_qty = (existing_rs && existing_rs.final_order_qty != null && existing_rs.final_order_qty >= 0) ? existing_rs.final_order_qty : suggested_qty;
+      after_order_turnover_months = avg_sales_period > 0 ? (total_inventory_pool + final_order_qty) / avg_sales_period : 99;
+      onlineAfterOrder = online_avg_sales_period > 0 ? (total_inventory_pool + final_order_qty) / online_avg_sales_period : 99;
+      offlineAfterOrder = offline_avg_sales_period > 0 ? (total_inventory_pool + final_order_qty) / offline_avg_sales_period : 99;
+
+      // 品牌停采（系统级规则）后置覆盖：强制不补货、保持可见便于清库存
+      if (brandStopped) {
+        sales_status = '停采/清库存';
+        sales_reason = '品牌已设为停采（停止合作），不参与补货建议，优先消化库存';
+        action_text = '停止采购，优先清库存';
+        suggestion = buildSuggestionText(sales_status, lifecycle, 0, true);
+        suggested_qty = 0;
+        online_suggested_qty = 0;
+        offline_suggested_qty = 0;
+        other_suggested_qty = 0;
+        final_order_qty = 0;
+        moqQty = 0;
+        after_order_turnover_months = avg_sales_period > 0 ? total_inventory_pool / avg_sales_period : 99;
+        onlineAfterOrder = online_avg_sales_period > 0 ? total_inventory_pool / online_avg_sales_period : 99;
+        offlineAfterOrder = offline_avg_sales_period > 0 ? total_inventory_pool / offline_avg_sales_period : 99;
+      }
+
+      if (existing_rs) {
+        return {
+          mode: 'update',
+          id: existing_rs.id,
+          values: [
+            avail, transit, piUnshipped, poUnconfirmed,
+            total_inventory_pool, sales_m1, sales_m2, sales_m3, sales_m4, Math.round(avg_sales_4m * 100) / 100, Math.round(avg_sales_period * 100) / 100, Math.round(online_avg_sales_period * 100) / 100, Math.round(offline_avg_sales_period * 100) / 100,
+            online_sales_m1, online_sales_m2, online_sales_m3, online_sales_m4, Math.round(online_avg_sales_4m * 100) / 100,
+            offline_sales_m1, offline_sales_m2, offline_sales_m3, offline_sales_m4, Math.round(offline_avg_sales_4m * 100) / 100,
+            Math.round(current_turnover_months * 10) / 10, suggested_qty, online_suggested_qty, offline_suggested_qty, other_suggested_qty, moqQty, moqQty,
+            Math.round(after_order_turnover_months * 10) / 10, Math.round(onlineAfterOrder * 10) / 10, Math.round(offlineAfterOrder * 10) / 10,
+            targetMonths, risk_level, arrival_month, suggestion,
+            sku.is_new_product === 1 ? 1 : 0, sku.lifecycle_status || '', sales_group,
+            online_target_turnover, offline_target_turnover,
+            online_target_stock, offline_target_stock, other_target_stock,
+            final_order_qty,
+            sales_status, risk_tags, sales_reason, action_text, ai_business_advice,
+            channelRatio.source, channelRatio.allocationStatus, channelRatio.onlinePct, channelRatio.resolvedAt
+          ]
+        };
+      } else {
+        return {
+          mode: 'insert',
+          values: [
+            genId('rs'), inv.sku_code, inv.country, inv.warehouse, avail, transit,
+            piUnshipped, poUnconfirmed, total_inventory_pool,
+            sales_m1, sales_m2, sales_m3, sales_m4, Math.round(avg_sales_4m * 100) / 100, Math.round(avg_sales_period * 100) / 100, Math.round(online_avg_sales_period * 100) / 100, Math.round(offline_avg_sales_period * 100) / 100,
+            online_sales_m1, online_sales_m2, online_sales_m3, online_sales_m4, Math.round(online_avg_sales_4m * 100) / 100,
+            offline_sales_m1, offline_sales_m2, offline_sales_m3, offline_sales_m4, Math.round(offline_avg_sales_4m * 100) / 100,
+            Math.round(current_turnover_months * 10) / 10, suggested_qty, moqQty, moqQty,
+            online_suggested_qty, offline_suggested_qty, other_suggested_qty,
+            Math.round(after_order_turnover_months * 10) / 10, Math.round(onlineAfterOrder * 10) / 10, Math.round(offlineAfterOrder * 10) / 10,
+            targetMonths, risk_level, arrival_month, suggestion,
+            sku.is_new_product === 1 ? 1 : 0, sku.lifecycle_status || '', sales_group, -1, 0,
+            online_target_turnover, offline_target_turnover,
+            online_target_stock, offline_target_stock, other_target_stock, final_order_qty,
+            sales_status, risk_tags, sales_reason, action_text, ai_business_advice,
+            channelRatio.source, channelRatio.allocationStatus, channelRatio.onlinePct, channelRatio.resolvedAt
+          ]
+        };
+      }
+}
+
+// 刷新引擎与 full generate 共用的建议列（写入顺序与 computeSuggestionForTarget 的 update/insert values 完全一致）
+const RS_SET_COLS = [
+  'available_qty', 'in_transit_qty', 'pi_confirmed_unshipped_qty', 'po_unconfirmed_pi_qty',
+  'total_inventory_pool', 'sales_m1', 'sales_m2', 'sales_m3', 'sales_m4', 'avg_sales_4m', 'avg_sales_period', 'online_avg_sales_period', 'offline_avg_sales_period',
+  'online_sales_m1', 'online_sales_m2', 'online_sales_m3', 'online_sales_m4', 'online_avg_sales_4m',
+  'offline_sales_m1', 'offline_sales_m2', 'offline_sales_m3', 'offline_sales_m4', 'offline_avg_sales_4m',
+  'current_turnover_months', 'suggested_qty', 'online_suggested_qty', 'offline_suggested_qty', 'other_suggested_qty', 'moq_qty', 'carton_adjusted_qty',
+  'after_order_turnover_months', 'online_after_order_turnover_months', 'offline_after_order_turnover_months',
+  'target_stock_months', 'risk_level', 'arrival_month',
+  'suggestion', 'is_new_product', 'lifecycle_status', 'sales_group',
+  'online_target_turnover', 'offline_target_turnover',
+  'online_target_stock', 'offline_target_stock', 'other_target_stock',
+  'final_order_qty',
+  'sales_status', 'risk_tags', 'sales_reason', 'action', 'ai_business_advice',
+  'channel_ratio_source', 'channel_allocation_status', 'resolved_online_pct', 'resolved_at'
+];
+
+// ============ P3B-2 Refresh Existing Engine ============
+// 内部函数（未暴露任何 HTTP route）。针对指定 affected [{sku_code,country}]，
+// 根据删除后的当前 sales_records 重新计算【已存在】的 replenishment_suggestions。
+// 硬约束：只 UPDATE existing；禁止 INSERT/DELETE suggestion、禁止新增/删除 target_warehouse、
+// 禁止修改 inventory、禁止修改 manual 字段、禁止自行开启事务。
+// 所有 DB 读写 100% 通过传入的 exec（exec.all / exec.one / exec.run）。
+// P4 外层负责 transaction 与调用；dialect 由调用方明确传入（'pg' | 'sqlite'）。
+
+// §11 防御：refresh 结果绝不允许意外 INSERT（compute 对已有 existing_rs 必返回 update，
+// 但要求显式 assert 兜底，避免任何未来的公式改动悄悄变成写新行）。
+function assertRefreshUpdateOnly(result, key) {
+  if (!result || result.mode !== 'update') {
+    throw new Error('SALES_REFRESH_UNEXPECTED_INSERT:' + key);
+  }
+  if (!result.id) {
+    throw new Error('SALES_REFRESH_MISSING_ID:' + key);
+  }
+}
+
+// §13 SQLite refresh writer：逐行 UPDATE，SQL 方言 = SQLite，复用 RS_SET_COLS 与
+// computeSuggestionForTarget 的 values 顺序。不开启事务（依赖外层 SQLite transaction），
+// 禁止 INSERT/DELETE。每行的 id 已在前置 assert 校验存在。
+async function writeSuggestionRefreshSqlite(exec, updateRows) {
+  for (const r of updateRows) {
+    assertRefreshUpdateOnly(r, r.id || '(no-id)');
+    const setClause = RS_SET_COLS.map(c => c + ' = ?').join(', ');
+    const params = r.values.concat([r.id]);
+    await exec.run('UPDATE replenishment_suggestions SET ' + setClause + ' WHERE id = ?', params);
+  }
+}
+
+// §12 PG refresh writer：复用 generate 的 UPDATE ... FROM (VALUES ...) 形式，但不含 INSERT 分支。
+// 列类型通过 information_schema 取（与 generate 一致）。exec.all 返回列类型行。
+async function writeSuggestionRefreshPg(exec, updateRows) {
+  if (!updateRows.length) return;
+  for (const r of updateRows) assertRefreshUpdateOnly(r, r.id || '(no-id)');
+  const colTypeRows = await exec.all(
+    "SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'replenishment_suggestions'"
+  );
+  const typeMap = {};
+  (colTypeRows || []).forEach(r => {
+    const t = r.data_type;
+    typeMap[r.column_name] = t === 'integer' ? 'integer' : t === 'double precision' ? 'double precision' : 'text';
+  });
+  const setClause = RS_SET_COLS.map(c => c + ' = v.' + c + '::' + (typeMap[c] || 'text')).join(', ');
+  const valueRows = updateRows.map(r => '(' + Array(r.values.length + 1).fill('?').join(', ') + ')').join(', ');
+  const params = [];
+  updateRows.forEach(r => { params.push(r.id); r.values.forEach(v => params.push(v)); });
+  await exec.run(
+    'UPDATE replenishment_suggestions t SET ' + setClause +
+    ' FROM (VALUES ' + valueRows + ') AS v(id, ' + RS_SET_COLS.join(', ') + ') WHERE t.id = v.id',
+    params
+  );
+}
+
+// §4/§6/§7/§8 共享校验（DELETE 前 precheck 与 refresh engine 共用，单一真源，杜绝规则漂移）：
+// 读取 affected keys 的 existing suggestion 快照 + 当前 inventory（寄售排除）+ SKU master + brand 状态 + DIM，
+// 构建经过 fail-closed 校验的 exact targets。任意 orphan / missing SKU / stopped / DIM 未命中 → 抛错。
+// 仅 SELECT（不 DELETE / 不 INSERT / 不写 inventory）。空 affectedKeys 直接返回空（S6/S9 合法）。
+async function resolveAndValidateRefreshTargets(exec, affectedKeys) {
+  if (!affectedKeys || affectedKeys.length === 0) return { targets: [], existingCount: 0, dimCfg: null };
+
+  const ors = affectedKeys.map(() => '(sku_code = ? AND country = ?)').join(' OR ');
+  const exParams = [];
+  affectedKeys.forEach(k => { exParams.push(k.sku_code); exParams.push(k.country); });
+  const existingRows = await exec.all('SELECT * FROM replenishment_suggestions WHERE ' + ors, exParams);
+
+  const skuCodes = Array.from(new Set(affectedKeys.map(k => k.sku_code)));
+  const inPh = skuCodes.map(() => '?').join(',');
+  const invParams = skuCodes.slice();
+  let invSql = 'SELECT DISTINCT i.sku_code, i.country, i.warehouse, i.available_qty, i.in_transit_qty, i.pi_confirmed_unshipped_qty, i.po_unconfirmed_pi_qty, i.last_inbound_date, i.first_inbound_date, i.last_outbound_date, i.target_turnover_months FROM inventory i LEFT JOIN skus s ON i.sku_code = s.sku_code WHERE i.sku_code IN (' + inPh + ')';
+  invSql = appendConsignmentExclusion(invSql, invParams, 'i.warehouse', exec);
+  const inventoryItems = await exec.all(invSql, invParams);
+  const invMap = {};
+  for (const it of inventoryItems) invMap[it.sku_code + '|' + it.country + '|' + it.warehouse] = it;
+
+  const skuRows = await exec.all('SELECT * FROM skus WHERE sku_code IN (' + inPh + ')', skuCodes.slice());
+  const skuMap = {};
+  for (const s of skuRows) skuMap[s.sku_code] = s;
+
+  const bsRows = await exec.all('SELECT brand, procurement_status FROM brand_settings');
+  const bstatus = {};
+  for (const r of bsRows) bstatus[(r.brand || '').trim()] = (r.procurement_status || 'active');
+
+  const dimRaw = await exec.one("SELECT value FROM system_config WHERE key = 'dim_default_config'");
+  const dimCfg = dimRaw ? JSON.parse(dimRaw.value) : null;
+
+  const targets = [];
+  for (const er of existingRows) {
+    const sku = skuMap[er.sku_code];
+    if (!sku) throw new Error('SALES_REFRESH_SKU_MISSING:' + er.sku_code); // §7 missing SKU master
+    if (sku.status === 'stopped') throw new Error('SALES_REFRESH_SKU_STOPPED:' + er.sku_code); // §7 stopped SKU
+    const inv = invMap[er.sku_code + '|' + er.country + '|' + er.target_warehouse];
+    if (!inv) throw new Error('SALES_REFRESH_ORPHAN_SUGGESTION:' + er.sku_code + '|' + er.country + '|' + er.target_warehouse); // §6 orphan
+    const brandStopped = (bstatus[(sku.brand || '').trim()] || 'active') === 'stopped';
+    // §8 DIM precheck：仅对 existing ∩ inventory 的 exact target；品牌停采免检（与 generate 预检跳过一致），禁用 3/3 fallback
+    if (!brandStopped) {
+      const hit = getDimTurnover(sku.brand, er.country, er.target_warehouse, dimCfg);
+      if (!hit) throw new Error('SALES_REFRESH_DIM_UNMATCHED:' + (sku.brand || '') + '|' + er.country + '|' + er.target_warehouse);
+    }
+    targets.push({ er, sku, inv, brandStopped });
+  }
+  return { targets, existingCount: targets.length, dimCfg };
+}
+
+// §1/§2/§5-§11 主入口：刷新已有 suggestion。transaction-bound（exec 由调用方提供）。
+async function refreshExistingSalesSuggestions({ exec, affectedKeys, dialect }) {
+  if (!exec) throw new Error('SALES_REFRESH_NO_EXEC');
+  if (!Array.isArray(affectedKeys) || affectedKeys.length === 0) return { updated: 0 };
+
+  // §4/§5/§6/§8 单一真源校验（orphan / missing SKU / stopped / DIM）；DELETE 后由调用方再次触发以最终保证边界
+  const { targets, dimCfg } = await resolveAndValidateRefreshTargets(exec, affectedKeys);
+  if (targets.length === 0) return { updated: 0 }; // §6 affected 无 existing suggestion → 0 行不 INSERT
+
+  const skuCodes = Array.from(new Set(affectedKeys.map(k => k.sku_code)));
+  const inPh = skuCodes.map(() => '?').join(',');
+  // §10 context（仅 compute 所需；校验已由 helper 完成）
+  const now = new Date();
+  const oneVal = async (key) => { const r = await exec.one("SELECT value FROM system_config WHERE key = ?", [key]); return r ? r.value : null; };
+  const targetMonths = Number(await oneVal('target_stock_months')) || 4;
+  const leadTimeMonths = Number(await oneVal('lead_time_months')) || 2;
+  const salesStatsDays = Number(await oneVal('sales_stats_days')) || 90;
+  const countriesCache = await exec.all('SELECT id, name, code FROM countries ORDER BY sort_order');
+  const channelConfigRows = await exec.all("SELECT sku_code, country_id, online_pct, offline_pct, status FROM sku_channel_configs WHERE status = 'active'");
+  const channelConfigMap = {};
+  for (const r of channelConfigRows) channelConfigMap[r.sku_code + '|' + r.country_id] = r;
+
+  // §9 月份 + 日期口径（与 generate 完全一致；now 冻结由调用方环境保证）
+  const months = [];
+  for (let i = 0; i < 4; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    months.push({ year: d.getFullYear(), month: String(d.getMonth() + 1).padStart(2, '0'), key: ['m1', 'm2', 'm3', 'm4'][i] });
+  }
+  const m4Start = new Date(now.getFullYear(), now.getMonth() - 3, 1).toISOString().split('T')[0];
+  const periodEnd = now.toISOString().split('T')[0];
+  const periodStart = new Date(now.getTime() - Math.max(0, salesStatsDays - 1) * 86400000).toISOString().split('T')[0];
+  const d30 = new Date(now.getTime() - 30 * 86400000).toISOString().split('T')[0];
+  const d90 = new Date(now.getTime() - 90 * 86400000).toISOString().split('T')[0];
+  const d120 = new Date(now.getTime() - 120 * 86400000).toISOString().split('T')[0];
+  const salesDate = salesOrderDateExpr('order_date');
+
+  // §9 销量聚合（与 generate 逐字一致的 SQL：近4月按月 + 周期/d30/d90/累计；is_valid_order=1）
+  const monthlyRows = await exec.all(
+    'SELECT sku_code, COALESCE(country, \'\') AS country, substr(' + salesDate + ', 1, 4) AS y, substr(' + salesDate + ', 6, 2) AS mo, ' +
+    'COALESCE(SUM(quantity), 0) AS total, ' +
+    'COALESCE(SUM(CASE WHEN (shop_platform LIKE \'%线上%\' OR lower(shop_platform) = \'online\') THEN quantity END), 0) AS online, ' +
+    'COALESCE(SUM(CASE WHEN (shop_platform LIKE \'%线下%\' OR lower(shop_platform) = \'offline\') THEN quantity END), 0) AS offline ' +
+    'FROM sales_records WHERE sku_code IN (' + inPh + ') AND ' + salesDate + ' >= ? AND ' + salesDate + ' <= ? AND is_valid_order = 1 ' +
+    'GROUP BY sku_code, COALESCE(country, \'\'), y, mo',
+    skuCodes.concat([m4Start, periodEnd])
+  );
+  const monthlyMap = {};
+  for (const r of monthlyRows) {
+    const ry = String(r.y); const rmo = String(r.mo);
+    let key = null;
+    for (const m of months) { if (String(m.year) === ry && m.month === rmo) { key = m.key; break; } }
+    if (!key) continue;
+    const mapKey = r.sku_code + '|' + (r.country || '');
+    if (!monthlyMap[mapKey]) monthlyMap[mapKey] = {};
+    monthlyMap[mapKey][key] = { total: Number(r.total) || 0, online: Number(r.online) || 0, offline: Number(r.offline) || 0 };
+  }
+  const aggRows = await exec.all(
+    'SELECT sku_code, COALESCE(country, \'\') AS country, ' +
+    'COALESCE(SUM(CASE WHEN ' + salesDate + ' >= ? AND ' + salesDate + ' <= ? THEN quantity END), 0) AS period_total, ' +
+    'COALESCE(SUM(CASE WHEN ' + salesDate + ' >= ? AND ' + salesDate + ' <= ? AND (shop_platform LIKE \'%线上%\' OR lower(shop_platform) = \'online\') THEN quantity END), 0) AS period_online, ' +
+    'COALESCE(SUM(CASE WHEN ' + salesDate + ' >= ? AND ' + salesDate + ' <= ? AND (shop_platform LIKE \'%线下%\' OR lower(shop_platform) = \'offline\') THEN quantity END), 0) AS period_offline, ' +
+    'COALESCE(SUM(CASE WHEN ' + salesDate + ' >= ? THEN quantity END), 0) AS s30, ' +
+    'COALESCE(SUM(CASE WHEN ' + salesDate + ' >= ? THEN quantity END), 0) AS s90, ' +
+    'COALESCE(SUM(CASE WHEN ' + salesDate + ' >= ? AND (shop_platform LIKE \'%线上%\' OR lower(shop_platform) = \'online\') THEN quantity END), 0) AS s120_online, ' +
+    'COALESCE(SUM(CASE WHEN ' + salesDate + ' >= ? AND (shop_platform LIKE \'%线下%\' OR lower(shop_platform) = \'offline\') THEN quantity END), 0) AS s120_offline, ' +
+    'COALESCE(SUM(quantity), 0) AS ever_total, MIN(' + salesDate + ') AS first_sale, MAX(' + salesDate + ') AS last_sale ' +
+    'FROM sales_records WHERE sku_code IN (' + inPh + ') AND is_valid_order = 1 GROUP BY sku_code, COALESCE(country, \'\')',
+    [periodStart, periodEnd, periodStart, periodEnd, periodStart, periodEnd, d30, d90, d120, d120].concat(skuCodes)
+  );
+  const aggMap = {};
+  for (const r of aggRows) aggMap[r.sku_code + '|' + (r.country || '')] = r;
+
+  // §6/§7/§8 targets 与 fail-closed 校验已由 resolveAndValidateRefreshTargets 构建（单一真源，无重复规则）
+
+  // §10/§11 调用已验明等价的 computeSuggestionForTarget（禁止复制 per-row 公式）；assert 仅 update
+  const updateRows = [];
+  for (const t of targets) {
+    const result = computeSuggestionForTarget({
+      inv: t.inv, sku: t.sku, existing_rs: t.er, brandStopped: t.brandStopped,
+      months, monthlyMap, aggMap,
+      targetMonths, leadTimeMonths, salesStatsDays, dimCfg,
+      channelConfigMap, countriesCache, now
+    });
+    assertRefreshUpdateOnly(result, t.er.sku_code + '|' + t.er.country + '|' + t.er.target_warehouse);
+    updateRows.push(result);
+  }
+
+  // §14 dialect-aware writer（仅 UPDATE；dialect 由调用方明确传入，禁止在 pure compute 内判断连接类型）
+  if (dialect === 'pg') {
+    await writeSuggestionRefreshPg(exec, updateRows);
+  } else {
+    await writeSuggestionRefreshSqlite(exec, updateRows);
+  }
+  return { updated: updateRows.length };
+}
+
 // 生成/刷新补货建议
 // 单进程级 generate 并发门禁：防止同进程重复启动全量事务（仅单实例级，非跨实例）。
 let generateInProgress = false;
@@ -5802,22 +6679,7 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
       return { unmatched: unmatchedList };
     }
 
-    // P0-2 批量写：列定义（与逐行 UPDATE/INSERT 完全一致，仅改执行方式，未改公式/业务规则）
-    const RS_SET_COLS = [
-      'available_qty', 'in_transit_qty', 'pi_confirmed_unshipped_qty', 'po_unconfirmed_pi_qty',
-      'total_inventory_pool', 'sales_m1', 'sales_m2', 'sales_m3', 'sales_m4', 'avg_sales_4m', 'avg_sales_period', 'online_avg_sales_period', 'offline_avg_sales_period',
-      'online_sales_m1', 'online_sales_m2', 'online_sales_m3', 'online_sales_m4', 'online_avg_sales_4m',
-      'offline_sales_m1', 'offline_sales_m2', 'offline_sales_m3', 'offline_sales_m4', 'offline_avg_sales_4m',
-      'current_turnover_months', 'suggested_qty', 'online_suggested_qty', 'offline_suggested_qty', 'other_suggested_qty', 'moq_qty', 'carton_adjusted_qty',
-      'after_order_turnover_months', 'online_after_order_turnover_months', 'offline_after_order_turnover_months',
-      'target_stock_months', 'risk_level', 'arrival_month',
-      'suggestion', 'is_new_product', 'lifecycle_status', 'sales_group',
-      'online_target_turnover', 'offline_target_turnover',
-      'online_target_stock', 'offline_target_stock', 'other_target_stock',
-      'final_order_qty',
-      'sales_status', 'risk_tags', 'sales_reason', 'action', 'ai_business_advice',
-      'channel_ratio_source', 'channel_allocation_status', 'resolved_online_pct', 'resolved_at'
-    ];
+    // P0-2 批量写：列定义（RS_SET_COLS 已提升至模块作用域，full generate 与刷新引擎共用）
     const RS_INSERT_COLS = [
       'id', 'sku_code', 'country', 'target_warehouse', 'available_qty', 'in_transit_qty',
       'pi_confirmed_unshipped_qty', 'po_unconfirmed_pi_qty', 'total_inventory_pool',
@@ -5856,274 +6718,13 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
         // 品牌停采（系统级规则）：仍写入预测表保持可见，但建议采购强制为 0、不参与补货、不要求命中 dim 规则
         const brandStopped = (bstatus[(sku.brand || '').trim()] || 'active') === 'stopped';
 
-        // 计算近4个月销量（从销售明细表汇总，is_valid_order=1）
-        const salesMap = {};
-        const onlineSalesMap = {};
-        const offlineSalesMap = {};
-        months.forEach(m => {
-          const invSalesKey = inv.sku_code + '|' + (inv.country || '');
-          const bucket = (monthlyMap[invSalesKey] && monthlyMap[invSalesKey][m.key]) || { total: 0, online: 0, offline: 0 };
-          salesMap[m.key] = bucket.total;
-          onlineSalesMap[m.key] = bucket.online;
-          offlineSalesMap[m.key] = bucket.offline;
-        });
-
-        const sales_m1 = salesMap.m1 || 0;
-        const sales_m2 = salesMap.m2 || 0;
-        const sales_m3 = salesMap.m3 || 0;
-        const sales_m4 = salesMap.m4 || 0;
-        const avg_sales_4m = (sales_m1 + sales_m2 + sales_m3 + sales_m4) / 4;
-
-        // 线上/线下分月销量
-        const online_sales_m1 = onlineSalesMap.m1 || 0;
-        const online_sales_m2 = onlineSalesMap.m2 || 0;
-        const online_sales_m3 = onlineSalesMap.m3 || 0;
-        const online_sales_m4 = onlineSalesMap.m4 || 0;
-        const online_avg_sales_4m = (online_sales_m1 + online_sales_m2 + online_sales_m3 + online_sales_m4) / 4;
-        const offline_sales_m1 = offlineSalesMap.m1 || 0;
-        const offline_sales_m2 = offlineSalesMap.m2 || 0;
-        const offline_sales_m3 = offlineSalesMap.m3 || 0;
-        const offline_sales_m4 = offlineSalesMap.m4 || 0;
-        const offline_avg_sales_4m = (offline_sales_m1 + offline_sales_m2 + offline_sales_m3 + offline_sales_m4) / 4;
-
-        // 销量统计周期月均：60/90/120 天有效销量分别 ÷ 2/3/4。（periodStart/periodEnd 已在集合化读取阶段计算）
-        const invAggKey = inv.sku_code + '|' + (inv.country || '');
-        const agg = aggMap[invAggKey];
-        const totalPeriodSales = agg ? Number(agg.period_total) || 0 : 0;
-        const onlinePeriodSales = agg ? Number(agg.period_online) || 0 : 0;
-        const offlinePeriodSales = agg ? Number(agg.period_offline) || 0 : 0;
-        const salesPeriodMonths = salesStatsDays > 0 ? salesStatsDays / 30 : 3;
-        // 统一以落库精度参与后续计算，保证接口展示值可直接复算周转和建议量。
-        const avg_sales_period = Math.round(totalPeriodSales / salesPeriodMonths * 100) / 100;
-        const online_avg_sales_period = Math.round(onlinePeriodSales / salesPeriodMonths * 100) / 100;
-        const offline_avg_sales_period = Math.round(offlinePeriodSales / salesPeriodMonths * 100) / 100;
-
-        const avail = inv.available_qty || 0;
-        const transit = inv.in_transit_qty || 0;
-        const piUnshipped = inv.pi_confirmed_unshipped_qty || 0;
-        const poUnconfirmed = inv.po_unconfirmed_pi_qty || 0;
-        // 冻结库存池：可用 + CI 已发货在途 + PI/PO 已确认未发货。
-        // poUnconfirmed 仅保留为参考字段，未确认 PO 不计入库存池，避免把潜在供应当成已确认供应。
-        const total_inventory_pool = avail + transit + piUnshipped;
-
-        // 统一判定层所需指标（d30/d90/ever/first_sale 已在集合化读取阶段计算）
-        const agg2 = aggMap[invAggKey];
-        const sales_30d = agg2 ? Number(agg2.s30) || 0 : 0;
-        const sales_90d = agg2 ? Number(agg2.s90) || 0 : 0;
-        const total_sales_ever = agg2 ? Number(agg2.ever_total) || 0 : 0;
-        const first_sale_date = agg2 ? (agg2.first_sale || '') : '';
-        const last_inbound_date = inv.last_inbound_date || '';
-        const first_inbound_date = inv.first_inbound_date || '';
-        let days_since_last_inbound = null;
-        if (last_inbound_date) {
-          const ld = new Date(last_inbound_date);
-          if (!isNaN(ld.getTime())) days_since_last_inbound = Math.floor((now - ld) / 86400000);
-        }
-
-        // CHANNEL-ALLOCATION: 渠道比例三级解析
-        const last_outbound_date = inv.last_outbound_date || '';
-        const last_sale_date = agg2 ? (agg2.last_sale || '') : '';
-        const channelRatio = resolveChannelRatio({
-          skuCode: inv.sku_code,
-          country: inv.country,
-          avgSalesPeriod: avg_sales_period,
-          available: avail,
-          totalSalesEver: total_sales_ever,
-          lastSaleDate: last_sale_date,
-          lastOutboundDate: last_outbound_date,
-          aggObj: agg,
-          monthlyMap: monthlyMap,
-          channelConfigMap: channelConfigMap,
-          countriesCache: countriesCache
-        });
-        // A-Step1 收口：目标周转值来源——dim 命中（预检已保证非 null，不再回退旧逻辑/兜底值）
-        // 品牌停采时可能无命中规则（预检已跳过），用中性兜底仅供展示列，不影响采购（建议采购会强制为 0）
-        const dimHit = getDimTurnover(sku.brand, inv.country, inv.warehouse, dimCfg) || { online_turnover: 3, offline_turnover: 3 };
-        const online_target_turnover = dimHit.online_turnover;
-        const offline_target_turnover = dimHit.offline_turnover;
-        const classifyTarget = dimHit.online_turnover;
-
-        // 生命周期策略系数
-        const lifecycle = sku.lifecycle_status || 'stable';
-        const LIFECYCLE_COEFF = {
-          'new_test': 0, 'new_launch': 0.5, 'growth': 0.8,
-          'stable': 1.0, 'slow': 0.5, 'stagnant': 0,
-          'clearance': 0, 'stopped': 0
-        };
-        const lifecycleCoeff = LIFECYCLE_COEFF[lifecycle] !== undefined ? LIFECYCLE_COEFF[lifecycle] : 1.0;
-
-        // 当前周转（总月均=0时显示99，前端会处理为"无销量"）
-        const current_turnover_months = avg_sales_period > 0 ? total_inventory_pool / avg_sales_period : 99;
-
-        // existing_rs：读取历史 other_target_stock / final_order_qty（目标周转已在上文按维度命中/回退确定）
         const existing_rs = existingMap[inv.sku_code + '|' + inv.country + '|' + inv.warehouse] || null;
-        // 当前业务仅有线上/线下；历史 other 字段保留兼容，但不参与本轮预测。
-        const other_target_stock = 0;
-
-        // 缺货销量失真检测：如果近期销量骤降由缺货导致，用断货前最高月销量修正基准
-        const onlineDist = detectStockoutDistortion(online_sales_m1, online_sales_m2, online_sales_m3, online_sales_m4, avail);
-        const offlineDist = detectStockoutDistortion(offline_sales_m1, offline_sales_m2, offline_sales_m3, offline_sales_m4, avail);
-
-        // 目标库存计算：基数取销量统计周期月均；若命中缺货销量失真，则用断货前峰值修正基准（回归修复：P4 统一口径时误删的特殊分支）
-        const online_base_avg = onlineDist.isDistorted ? onlineDist.adjustedAvg : online_avg_sales_period;
-        const offline_base_avg = offlineDist.isDistorted ? offlineDist.adjustedAvg : offline_avg_sales_period;
-        const online_target_stock = Math.round(online_base_avg * online_target_turnover);
-        const offline_target_stock = Math.round(offline_base_avg * offline_target_turnover);
-        const total_target_stock = online_target_stock + offline_target_stock;
-
-        // suggested_qty 在 classifyResult 之后经过业务拦截重新计算，此处先用临时值
-        let suggested_qty = Math.round(Math.max(0, total_target_stock - total_inventory_pool));
-
-        // MOQ和箱规修正
-        let moqQty = (sku.qty_per_carton > 0 && suggested_qty > 0) ? Math.ceil(suggested_qty / sku.qty_per_carton) * sku.qty_per_carton : suggested_qty;
-
-        // 最终下单数量（默认=系统建议补货，保留用户已设置的值）
-        let final_order_qty = (existing_rs && existing_rs.final_order_qty != null && existing_rs.final_order_qty >= 0) ? existing_rs.final_order_qty : suggested_qty;
-
-        // 订单后周转 = (总库存池 + 最终下单数量) ÷ 总月均
-        let after_order_turnover_months = avg_sales_period > 0 ? (total_inventory_pool + final_order_qty) / avg_sales_period : 99;
-        let onlineAfterOrder = online_avg_sales_period > 0 ? (total_inventory_pool + final_order_qty) / online_avg_sales_period : 99;
-        let offlineAfterOrder = offline_avg_sales_period > 0 ? (total_inventory_pool + final_order_qty) / offline_avg_sales_period : 99;
-
-        // 风险等级
-        let risk_level = '';
-        if (sku.status === 'clearance' || lifecycle === 'clearance') {
-          risk_level = '清仓';
-        } else if (lifecycle === 'stopped') {
-          risk_level = '停产';
-        } else if (avg_sales_period === 0) {
-          risk_level = '无销量';
-        } else if (current_turnover_months < 1) {
-          risk_level = '严重缺货';
-        } else if (current_turnover_months < 2) {
-          risk_level = '缺货风险';
-        } else if (current_turnover_months > 6) {
-          risk_level = '库存偏高';
-        } else {
-          risk_level = '正常';
-        }
-
-        // 预计到货月份
-        const arrDate = new Date(now.getFullYear(), now.getMonth() + Math.ceil(leadTimeMonths), 1);
-        const arrival_month = `${arrDate.getFullYear()}-${String(arrDate.getMonth() + 1).padStart(2, '0')}`;
-
-        // 动销分组
-        let sales_group = '';
-        if (avg_sales_4m === 0) sales_group = '滞销';
-        else if (avg_sales_4m < 10) sales_group = '低动销';
-        else if (avg_sales_4m < 50) sales_group = '中动销';
-        else sales_group = '高动销';
-
-        // 统一判断层：动销状态/风险标签/动销原因/建议动作/AI经营建议（不影响建议采购数量）
-        const classifyResult = classifySkuState({
-          lifecycle_status: lifecycle,
-          is_new_product: sku.is_new_product,
-          launch_date: sku.launch_date,
-          first_inbound_date,
-          first_sale_date,
-          new_product_protection_days: sku.new_product_protection_days,
-          available: avail,
-          avg_sales_period,
-          sales_30d,
-          sales_90d,
-          total_sales_ever,
-          days_since_last_inbound: days_since_last_inbound,
-          last_inbound_date,
-          target_months: classifyTarget
-        });
-        let sales_status = classifyResult.sales_status;
-        // 缺货销量失真后处理：追加标签和说明
-        if (onlineDist.isDistorted || offlineDist.isDistorted) {
-          classifyResult.risk_tags.push('销量失真');
-          classifyResult.sales_reason = onlineDist.isDistorted
-            ? onlineDist.reason
-            : offlineDist.reason;
-        }
-        // 新品无销量标记
-        if (sales_status === '新品/销售数据不足' && sales_30d === 0 && sales_90d === 0) {
-          classifyResult.risk_tags.push('新品无销量');
-        }
-        const risk_tags = classifyResult.risk_tags.join(',');
-        let sales_reason = classifyResult.sales_reason;
-        let action_text = classifyResult.action;
-        const ai_business_advice = classifyResult.ai_business_advice;
-
-        // === 最终建议采购数量（经过业务拦截）===
-        // 冻结公式：max(0, 线上目标库存 + 线下目标库存 - 当前库存池)。
-        const blocked = shouldBlockReplenish(sales_status, classifyResult.risk_tags);
-        const suggestionParts = calculateSuggestion(online_target_stock, offline_target_stock, total_inventory_pool, blocked);
-        let online_suggested_qty = suggestionParts.online_suggested_qty;
-        let offline_suggested_qty = suggestionParts.offline_suggested_qty;
-        let other_suggested_qty = 0;
-        suggested_qty = suggestionParts.suggested_qty;
-
-        // 用户可见建议说明必须随快照刷新，不能清空。
-        let suggestion = buildSuggestionText(sales_status, lifecycle, suggested_qty, brandStopped);
-        // 重新计算依赖 suggested_qty 的字段
-        moqQty = (sku.qty_per_carton > 0 && suggested_qty > 0) ? Math.ceil(suggested_qty / sku.qty_per_carton) * sku.qty_per_carton : suggested_qty;
-        final_order_qty = (existing_rs && existing_rs.final_order_qty != null && existing_rs.final_order_qty >= 0) ? existing_rs.final_order_qty : suggested_qty;
-        after_order_turnover_months = avg_sales_period > 0 ? (total_inventory_pool + final_order_qty) / avg_sales_period : 99;
-        onlineAfterOrder = online_avg_sales_period > 0 ? (total_inventory_pool + final_order_qty) / online_avg_sales_period : 99;
-        offlineAfterOrder = offline_avg_sales_period > 0 ? (total_inventory_pool + final_order_qty) / offline_avg_sales_period : 99;
-
-        // 品牌停采（系统级规则）后置覆盖：强制不补货、保持可见便于清库存
-        if (brandStopped) {
-          sales_status = '停采/清库存';
-          sales_reason = '品牌已设为停采（停止合作），不参与补货建议，优先消化库存';
-          action_text = '停止采购，优先清库存';
-          suggestion = buildSuggestionText(sales_status, lifecycle, 0, true);
-          suggested_qty = 0;
-          online_suggested_qty = 0;
-          offline_suggested_qty = 0;
-          other_suggested_qty = 0;
-          final_order_qty = 0;
-          moqQty = 0;
-          after_order_turnover_months = avg_sales_period > 0 ? total_inventory_pool / avg_sales_period : 99;
-          onlineAfterOrder = online_avg_sales_period > 0 ? total_inventory_pool / online_avg_sales_period : 99;
-          offlineAfterOrder = offline_avg_sales_period > 0 ? total_inventory_pool / offline_avg_sales_period : 99;
-        }
-
-        if (existing_rs) {
-          batchRows.push({
-            mode: 'update',
-            id: existing_rs.id,
-            values: [
-              avail, transit, piUnshipped, poUnconfirmed,
-              total_inventory_pool, sales_m1, sales_m2, sales_m3, sales_m4, Math.round(avg_sales_4m * 100) / 100, Math.round(avg_sales_period * 100) / 100, Math.round(online_avg_sales_period * 100) / 100, Math.round(offline_avg_sales_period * 100) / 100,
-              online_sales_m1, online_sales_m2, online_sales_m3, online_sales_m4, Math.round(online_avg_sales_4m * 100) / 100,
-              offline_sales_m1, offline_sales_m2, offline_sales_m3, offline_sales_m4, Math.round(offline_avg_sales_4m * 100) / 100,
-              Math.round(current_turnover_months * 10) / 10, suggested_qty, online_suggested_qty, offline_suggested_qty, other_suggested_qty, moqQty, moqQty,
-              Math.round(after_order_turnover_months * 10) / 10, Math.round(onlineAfterOrder * 10) / 10, Math.round(offlineAfterOrder * 10) / 10,
-              targetMonths, risk_level, arrival_month, suggestion,
-              sku.is_new_product === 1 ? 1 : 0, sku.lifecycle_status || '', sales_group,
-              online_target_turnover, offline_target_turnover,
-              online_target_stock, offline_target_stock, other_target_stock,
-              final_order_qty,
-              sales_status, risk_tags, sales_reason, action_text, ai_business_advice,
-              channelRatio.source, channelRatio.allocationStatus, channelRatio.onlinePct, channelRatio.resolvedAt
-            ]
-          });
-        } else {
-          batchRows.push({
-            mode: 'insert',
-            values: [
-              genId('rs'), inv.sku_code, inv.country, inv.warehouse, avail, transit,
-              piUnshipped, poUnconfirmed, total_inventory_pool,
-              sales_m1, sales_m2, sales_m3, sales_m4, Math.round(avg_sales_4m * 100) / 100, Math.round(avg_sales_period * 100) / 100, Math.round(online_avg_sales_period * 100) / 100, Math.round(offline_avg_sales_period * 100) / 100,
-              online_sales_m1, online_sales_m2, online_sales_m3, online_sales_m4, Math.round(online_avg_sales_4m * 100) / 100,
-              offline_sales_m1, offline_sales_m2, offline_sales_m3, offline_sales_m4, Math.round(offline_avg_sales_4m * 100) / 100,
-              Math.round(current_turnover_months * 10) / 10, suggested_qty, moqQty, moqQty,
-              online_suggested_qty, offline_suggested_qty, other_suggested_qty,
-              Math.round(after_order_turnover_months * 10) / 10, Math.round(onlineAfterOrder * 10) / 10, Math.round(offlineAfterOrder * 10) / 10,
-              targetMonths, risk_level, arrival_month, suggestion,
-              sku.is_new_product === 1 ? 1 : 0, sku.lifecycle_status || '', sales_group, -1, 0,
-              online_target_turnover, offline_target_turnover,
-              online_target_stock, offline_target_stock, other_target_stock, final_order_qty,
-              sales_status, risk_tags, sales_reason, action_text, ai_business_advice,
-              channelRatio.source, channelRatio.allocationStatus, channelRatio.onlinePct, channelRatio.resolvedAt
-            ]
-          });
-        }
+        batchRows.push(computeSuggestionForTarget({
+          inv, sku, existing_rs, brandStopped,
+          months, monthlyMap, aggMap,
+          targetMonths, leadTimeMonths, salesStatsDays, dimCfg,
+          channelConfigMap, countriesCache, now
+        }));
       });
 
       // ===== 单条批量写（同一事务内，async pg client） =====
