@@ -47,13 +47,20 @@ parentPort.on('message', async (msg) => {
     return;
   }
 
+  const tWorkerStart = Date.now();
+  const tEnter = msg.tEnter || tWorkerStart;
+  const op = msg.type === 'query'
+    ? (String(msg.sql || '').trim().split(/\s+/)[0] || 'QUERY').toUpperCase()
+    : msg.type.toUpperCase();
+  let pgStart = 0, pgEnd = 0, errMsg = null;
+
   try {
     let result = {};
 
     if (msg.type === 'query') {
       const pgSql = pgImpl._normalizeSql(msg.sql);
       const params = msg.params || [];
-
+      pgStart = Date.now();
       if (txClient) {
         // 事务内：复用专用连接
         const res = await txClient.query(pgSql, params);
@@ -63,8 +70,10 @@ parentPort.on('message', async (msg) => {
         const res = await pool.query(pgSql, params);
         result = { rows: res.rows, rowCount: res.rowCount };
       }
+      pgEnd = Date.now();
     } else if (msg.type === 'begin') {
       // 开始事务：创建专用连接
+      pgStart = Date.now();
       txClient = new Client(pgImpl._getClientConfig());
       // 连接级错误必须显式暴露（不再静默变僵尸连接）：上报 fatal 让主线程 poison
       txClient.on('error', (e) => {
@@ -77,8 +86,10 @@ parentPort.on('message', async (msg) => {
       });
       await txClient.connect();
       await txClient.query('BEGIN');
+      pgEnd = Date.now();
     } else if (msg.type === 'commit') {
       // COMMIT 强校验：txClient 为空或 PG 返回非 COMMIT（如事务已 aborted → ROLLBACK）一律失败
+      pgStart = Date.now();
       if (!txClient) {
         throw new Error('[DB-WORKER] COMMIT 时 txClient 为 null（事务已丢失）');
       }
@@ -88,13 +99,16 @@ parentPort.on('message', async (msg) => {
       }
       await txClient.end();
       txClient = null;
+      pgEnd = Date.now();
     } else if (msg.type === 'rollback') {
       // rollback 为 best-effort 清理：txClient 为空说明已无事务可回滚，视为成功
+      pgStart = Date.now();
       if (txClient) {
         try { await txClient.query('ROLLBACK'); } catch (e) {}
         try { await txClient.end(); } catch (e) {}
         txClient = null;
       }
+      pgEnd = Date.now();
     } else {
       throw new Error('Unknown message type: ' + msg.type);
     }
@@ -102,12 +116,23 @@ parentPort.on('message', async (msg) => {
     // 先发送结果到 MessagePort，再用 Atomics 唤醒主线程
     mainPort.postMessage({ id: msg.id, ok: true, ...result });
   } catch (e) {
+    errMsg = e && e.message;
+    pgEnd = Date.now();
     mainPort.postMessage({
       id: msg.id,
       ok: false,
       error: e.message,
       stack: e.stack
     });
+  }
+
+  // DB-TRACE（P0-D）：区分 worker 排队耗时(queueMs) 与 PG 执行耗时(pgMs)
+  // 不输出 SQL 参数；DB_TRACE=1 或慢查询(>500ms)或出错时打印
+  const queueMs = tWorkerStart - tEnter;
+  const pgMs = pgEnd - pgStart;
+  const totalMs = Date.now() - tEnter;
+  if (process.env.DB_TRACE === '1' || totalMs > 500 || errMsg) {
+    console.error('[DB-TRACE] id=' + msg.id + ' op=' + op + ' queueMs=' + queueMs + ' pgMs=' + pgMs + ' totalMs=' + totalMs + (errMsg ? ' ERR=' + errMsg : ''));
   }
 
   // 唤醒主线程

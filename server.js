@@ -4147,12 +4147,12 @@ async function updateInventoryTransitData() {
   // 注：本函数只更新已存在的 inventory 行；新采购 SKU 若无 inventory 行则 transit 字段保持原值。
   // 整段重算包成单个事务：reset+逐行回写 原子提交，任何一步失败整体 ROLLBACK，
   // 避免出现「先清零、只写回一部分」的半更新状态。
-  await transaction(async () => {
+  transaction(() => {
   // 在途口径（方案 B）：CI 已发货数量 - 已完成到仓(completed)物流批次对应 PL 的 SKU 数量
   // 不读取 inbound_qty；物理到仓由 logistics_status='completed' + PL items 决定。
   // 先全量清零（保证被作废/删除后贡献降为 0 的 SKU 也能回落，而非残留旧值），再按事实聚合写入
-  await run('UPDATE inventory SET in_transit_qty = 0');
-  const transitData = (await query(`
+  run('UPDATE inventory SET in_transit_qty = 0');
+  const transitData = (query(`
     WITH shipped AS (
       SELECT cii.ci_id, cii.sku_code,
              SUM(COALESCE(cii.shipped_qty, 0)) AS shipped_qty
@@ -4187,16 +4187,16 @@ async function updateInventoryTransitData() {
   `)).rows;
 
   for (const td of transitData) {
-    const inv = await queryOne('SELECT id FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
+    const inv = queryOne('SELECT id FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
       [td.sku_code, td.country, td.warehouse]);
     if (inv) {
-      await run('UPDATE inventory SET in_transit_qty = ? WHERE id = ?', [td.in_transit_qty || 0, inv.id]);
+      run('UPDATE inventory SET in_transit_qty = ? WHERE id = ?', [td.in_transit_qty || 0, inv.id]);
     }
   }
 
   // PI已确认未发货
-  await run('UPDATE inventory SET pi_confirmed_unshipped_qty = 0');
-  const piData = (await query(`
+  run('UPDATE inventory SET pi_confirmed_unshipped_qty = 0');
+  const piData = (query(`
     SELECT pii.sku_code,
            COALESCE(NULLIF(pi.country,''), po.country) as country,
            COALESCE(NULLIF(pi.target_warehouse,''), po.target_warehouse) as warehouse,
@@ -4212,16 +4212,16 @@ async function updateInventoryTransitData() {
   `)).rows;
 
   for (const pd of piData) {
-    const inv = await queryOne('SELECT id FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
+    const inv = queryOne('SELECT id FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
       [pd.sku_code, pd.country, pd.warehouse]);
     if (inv) {
-      await run('UPDATE inventory SET pi_confirmed_unshipped_qty = ? WHERE id = ?', [pd.pi_unshipped || 0, inv.id]);
+      run('UPDATE inventory SET pi_confirmed_unshipped_qty = ? WHERE id = ?', [pd.pi_unshipped || 0, inv.id]);
     }
   }
 
   // PO已生成未确认PI
-  await run('UPDATE inventory SET po_unconfirmed_pi_qty = 0');
-  const poData = (await query(`
+  run('UPDATE inventory SET po_unconfirmed_pi_qty = 0');
+  const poData = (query(`
     SELECT poi.sku_code, po.country, po.target_warehouse as warehouse,
            SUM(poi.po_qty - poi.transferred_pi_qty) as po_unconfirmed
     FROM purchase_order_items poi
@@ -4231,10 +4231,10 @@ async function updateInventoryTransitData() {
   `)).rows;
 
   for (const pd of poData) {
-    const inv = await queryOne('SELECT id FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
+    const inv = queryOne('SELECT id FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
       [pd.sku_code, pd.country, pd.warehouse]);
     if (inv) {
-      await run('UPDATE inventory SET po_unconfirmed_pi_qty = ? WHERE id = ?', [pd.po_unconfirmed || 0, inv.id]);
+      run('UPDATE inventory SET po_unconfirmed_pi_qty = ? WHERE id = ?', [pd.po_unconfirmed || 0, inv.id]);
     }
   }
   });
@@ -7730,7 +7730,15 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
     // 解析最新 PI号（若本次编辑修改了 pi_no，事务内新明细需用最新值）
     const newPiNo = (d.pi_no !== undefined && d.pi_no !== '' && d.pi_no !== pi.pi_no) ? d.pi_no : pi.pi_no;
 
-    await transaction(async () => {
+    // 计算是否需要触发库存派生刷新（与事务内写入解耦，事务提交后在响应返回后执行）
+    const itemsChanged = Array.isArray(d.items) && d.items.length > 0 && !piItemsEqual(d.items, oldItems);
+    const invAffectingChanged =
+      (d.country !== undefined && d.country !== pi.country) ||
+      (d.target_warehouse !== undefined && d.target_warehouse !== pi.target_warehouse) ||
+      itemsChanged;
+
+    // P0-A：PI 主事实写入全部在同一同步事务内原子提交；回调内不再出现 async/await
+    transaction(() => {
       // 明细全量替换（批量 INSERT）
       if (d.items && Array.isArray(d.items)) {
         run('DELETE FROM proforma_invoice_items WHERE pi_id = ?', [id]);
@@ -7815,35 +7823,44 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
       fields.push(`updated_at = datetime('now')`);
       values.push(id);
       run(`UPDATE proforma_invoices SET ${fields.join(', ')} WHERE id = ?`, values);
-
-      // 库存 PI 未发货数量重算：仅当影响库存口径字段变化时执行（性能优化）
-      // 命中：country / target_warehouse 变更，或明细(SKU/数量)真正变化。
-      // 说明：前端编辑时始终回传 items，因此必须比较"是否真的变化"，
-      // 否则仅改 PI 号/交期/付款条件等也会触发全表重算（D3 要求跳过）。
-      const itemsChanged = Array.isArray(d.items) && d.items.length > 0 && !piItemsEqual(d.items, oldItems);
-      const invAffectingChanged =
-        (d.country !== undefined && d.country !== pi.country) ||
-        (d.target_warehouse !== undefined && d.target_warehouse !== pi.target_warehouse) ||
-        itemsChanged;
-      if (invAffectingChanged) await updateInventoryTransitData();
+      // 库存派生刷新（updateInventoryTransitData）已移出本事务，待 COMMIT 成功后执行（见下方 P0-B）
     });
 
-    // 操作日志（编辑痕迹）
-    logOperation({
-      operator_id: req.currentUserId,
-      operator_name: req.currentUserName,
-      page: 'proforma_invoice',
-      operation_type: 'edit',
-      target_ids: [id],
-      affected_count: (d.items && d.items.length) || oldItems.length,
-      old_values: { total_amount: pi.total_amount, payable_deposit: pi.payable_deposit, deposit_ratio: pi.deposit_ratio },
-      new_values: { total_amount: totalAmount, payable_deposit: payableDeposit, deposit_ratio: depositRatio, balance_ratio: balanceRatio, items_count: (d.items ? d.items.length : oldItems.length) },
-      reason: d.edit_reason || '',
-      triggered_recalc: 1,
-      is_rollbackable: 0
-    });
+    // 操作日志（编辑痕迹）—— 独立 try/catch，避免日志失败把"保存成功"误判为失败
+    try {
+      logOperation({
+        operator_id: req.currentUserId,
+        operator_name: req.currentUserName,
+        page: 'proforma_invoice',
+        operation_type: 'edit',
+        target_ids: [id],
+        affected_count: (d.items && d.items.length) || oldItems.length,
+        old_values: { total_amount: pi.total_amount, payable_deposit: pi.payable_deposit, deposit_ratio: pi.deposit_ratio },
+        new_values: { total_amount: totalAmount, payable_deposit: payableDeposit, deposit_ratio: depositRatio, balance_ratio: balanceRatio, items_count: (d.items ? d.items.length : oldItems.length) },
+        reason: d.edit_reason || '',
+        triggered_recalc: 1,
+        is_rollbackable: 0
+      });
+    } catch (logErr) {
+      console.error('[PI-LOG] operation log failed for ' + id + ':', logErr && logErr.message);
+    }
 
-    res.json({ success: true, id, total_amount: totalAmount, payable_deposit: payableDeposit });
+    // P0-B：PI 主事务已 COMMIT 成功，先返回 success，再 best-effort 刷新库存派生数据。
+    // 关键顺序约束（Gate 1）：必须等 response 真正 finish（已 flush 到 socket）后，
+    // 才在下一个事件循环 tick 启动 refresh。否则 DB-SYNC + Atomics.wait 的同步刷新
+    // 会在 response 完成边界前阻塞，导致前端仍可能收到 502 / 重复提交。
+    res.once('finish', () => {
+      if (!invAffectingChanged) return;
+      setImmediate(() => {
+        updateInventoryTransitData().catch((rfErr) => {
+          // 仅记录刷新失败，绝不 throw / 不调用 next / 不再写 res。
+          // PI 已成功提交，刷新失败不影响"PI 保存成功"的语义。
+          console.error('[PI-REFRESH] inventory refresh failed for ' + id + ':', rfErr && rfErr.message);
+        });
+      });
+    });
+    res.status(200).json({ success: true, id, total_amount: totalAmount, payable_deposit: payableDeposit });
+    return;
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 

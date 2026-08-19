@@ -111,7 +111,7 @@ if (driver === 'pg') {
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
       var id = ++msgId;
       Atomics.store(int32, 0, 0);
-      worker.postMessage({ id: id, type: type, sql: sql, params: params });
+      worker.postMessage({ id: id, type: type, sql: sql, params: params, tEnter: Date.now() });
 
       // 同步等待 worker 完成（30 秒超时）
       var status = Atomics.wait(int32, 0, 0, 30000);
