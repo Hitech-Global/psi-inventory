@@ -14,8 +14,8 @@ function b64EncodeUnicode(s){return btoa(unescape(encodeURIComponent(String(s||'
 function b64DecodeUnicode(s){return decodeURIComponent(escape(atob(String(s||''))))}
 function showToast(msg,type='info'){const c=document.getElementById('toast-container');const t=document.createElement('div');t.className='toast toast-'+type;t.innerHTML='<div>'+esc(msg)+'</div>';c.appendChild(t);setTimeout(()=>{t.style.opacity='0';setTimeout(()=>t.remove(),300)},3500)}
 function showFlash(msg,type='info'){const c=document.getElementById('flash-container');if(!c)return;c.innerHTML='<div class="flash flash-'+type+' show">'+esc(msg)+'</div>';setTimeout(()=>{if(c)c.innerHTML=''},4000)}
-function openModal(title,body,footer='',size=''){const mc=document.getElementById('modal-content');mc.className='modal'+(size?' '+size:'');const ov=document.getElementById('modal-overlay');ov.classList.remove('ci-mode','ci-sb-collapsed');if(size&&size.indexOf('modal-pi')!==-1){const sb=document.querySelector('.sidebar');if(sb&&sb.classList.contains('collapsed')){mc.classList.add('pi-sidebar-collapsed')}else{mc.classList.add('pi-sidebar-expanded')}}if(size==='modal-ci-create'){const sb=document.querySelector('.sidebar');ov.classList.add('ci-mode');if(sb&&sb.classList.contains('collapsed')){ov.classList.add('ci-sb-collapsed')}}mc.innerHTML='<div class="modal-header"><span class="modal-title">'+esc(title)+'</span><button class="modal-close" onclick="closeModal()">&times;</button></div><div class="modal-body">'+body+'</div>'+(footer?'<div class="modal-footer">'+footer+'</div>':'');ov.classList.add('show')}
-function closeModal(){const ov=document.getElementById('modal-overlay');ov.classList.remove('show','ci-mode','ci-sb-collapsed')}
+function openModal(title,body,footer='',size=''){const mc=document.getElementById('modal-content');mc.className='modal'+(size?' '+size:'');const ov=document.getElementById('modal-overlay');ov.classList.remove('ci-mode','ci-sb-collapsed','wac-mode','wac-sb-collapsed');if(size&&size.indexOf('modal-pi')!==-1){const sb=document.querySelector('.sidebar');if(sb&&sb.classList.contains('collapsed')){mc.classList.add('pi-sidebar-collapsed')}else{mc.classList.add('pi-sidebar-expanded')}}if(size==='modal-ci-create'){const sb=document.querySelector('.sidebar');ov.classList.add('ci-mode');if(sb&&sb.classList.contains('collapsed')){ov.classList.add('ci-sb-collapsed')}}if(size==='modal-wac'){const sb=document.querySelector('.sidebar');ov.classList.add('wac-mode');if(sb&&sb.classList.contains('collapsed')){ov.classList.add('wac-sb-collapsed')}}mc.innerHTML='<div class="modal-header"><span class="modal-title">'+esc(title)+'</span><button class="modal-close" onclick="closeModal()">&times;</button></div><div class="modal-body">'+body+'</div>'+(footer?'<div class="modal-footer">'+footer+'</div>':'');ov.classList.add('show')}
+function closeModal(){const ov=document.getElementById('modal-overlay');ov.classList.remove('show','ci-mode','ci-sb-collapsed','wac-mode','wac-sb-collapsed')}
 function rowClickView(e,fn){var t=e.target;if(t.closest('button,a,input,select,textarea,label,[contenteditable="true"],[role="button"],[data-row-click-ignore],.link-text,.action-btn,.checkbox,[onclick]:not(tr)'))return;var args=Array.prototype.slice.call(arguments,2);if(typeof window[fn]==='function')window[fn].apply(null,args);}
 // 语言切换刷新守卫：modal 打开时不刷新当前页（避免丢失 modal 内未提交内容）
 function isModalOpen(){const ov=document.getElementById('modal-overlay');return !!(ov&&ov.classList.contains('show'));}
@@ -10556,7 +10556,7 @@ async function loadLog(retry){
   try{
     const s=document.getElementById('log-fs')?.value||'';
     const data=await api('/api/logistics-batches?logistics_display_status='+s);
-    document.getElementById('log-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">🚢</div>'+t('logistics.empty','暂无物流数据')+'</div>':'<div class="table-container" style="box-shadow:none;border-radius:0;overflow-x:auto"><table class="data-table" style="table-layout:fixed;width:100%;min-width:0"><colgroup><col style="width:120px"><col style="width:100px"><col style="width:140px"><col style="width:100px"><col style="width:70px"><col style="width:80px"><col style="width:110px"><col style="width:100px"><col style="width:70px"><col style="width:70px"><col style="width:100px"><col style="width:110px"><col style="width:110px"><col style="width:160px"><col style="width:120px"></colgroup><thead><tr><th>'+t('logistics.col.batch_no','物流单号')+'</th><th>'+t('logistics.col.pl_no','PL号')+'</th><th>'+t('logistics.col.related_ci','关联CI')+'</th><th>'+t('logistics.col.forwarder','货代')+'</th><th>'+t('logistics.col.mode','方式')+'</th><th>'+t('logistics.col.country','国家')+'</th><th>'+t('logistics.col.eta','预计到港日期')+'</th><th>'+t('logistics.col.inbound_date','入库完成')+'</th><th>'+t('logistics.col.cartons','箱数')+'</th><th>CBM</th><th>'+t('logistics.col.total_freight','综合运费')+'</th><th>'+t('common.status','状态')+'</th><th>'+t('logistics.col.listing_status','Listing状态')+'</th><th>'+t('logistics.col.listing_owner','上架负责人')+'</th><th>'+t('common.actions','操作')+'</th></tr></thead><tbody>'+data.map(l=>{return '<tr class="clickable-detail-row" onclick="rowClickView(event,\'viewLogDetail\',\''+l.id+'\')"><td class="cell-id" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(l.batch_no)+'</td><td class="cell-id">'+esc(l.pl_no||'-')+'</td><td class="cell-id" title="'+esc(l.related_ci_no)+'" style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(l.related_ci_no)+'</td><td style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(l.forwarder_name)+'</td><td>'+esc(l.transport_mode)+'</td><td>'+countryLabel(l.target_country)+'</td><td class="cell-date">'+fmtDate(l.eta_date)+'</td><td class="cell-date">'+fmtDate(l.inbound_complete_date)+'</td><td>'+(l.total_cartons||0)+'</td><td>'+(l.total_cbm||0)+'</td><td>'+fmtMoney(l.total_freight,l.freight_currency)+'</td><td style="white-space:nowrap"><span class="status-badge '+logisticsStatusBadgeClassByKey(l.logistics_display_status)+'">'+logisticsStatusLabelByKey(l.logistics_display_status)+'</span></td>'+listingStatusCell(l)+listingOwnerCell(l)+'<td class="cell-actions" style="white-space:nowrap"><button class="action-btn" onclick="viewLogDetail(\''+l.id+'\')" title="'+t('common.view','查看')+'">👁️</button>'+(hasPermission('logistics_edit')?'<button class="action-btn" onclick="editLog(\''+l.id+'\')" title="'+t('common.edit','编辑')+'">✏️</button>':'')+(hasPermission('logistics_edit')?'<button class="action-btn" onclick="notifyListing(\''+l.id+'\')" title="'+t('logistics.action.notify','发送上架提醒')+'">🔔</button>':'')+((l.total_freight>0||l.customs_duty>0||l.other_fees>0)&&l.fee_status==='unpaid'&&l.related_ci_id&&hasPermission('payment_create')?'<button class="action-btn" onclick="generateCostItems(\''+l.id+'\')" title="'+t('logistics.btn.generate_cost','生成成本记录')+'">📋</button>':'')+'</td></tr>';}).join('')+'</tbody></table></div>';
+    document.getElementById('log-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">🚢</div>'+t('logistics.empty','暂无物流数据')+'</div>':'<div class="table-container" style="box-shadow:none;border-radius:0;overflow-x:auto"><table class="data-table" style="table-layout:fixed;width:100%;min-width:0"><colgroup><col style="width:120px"><col style="width:100px"><col style="width:140px"><col style="width:100px"><col style="width:70px"><col style="width:80px"><col style="width:110px"><col style="width:100px"><col style="width:70px"><col style="width:70px"><col style="width:100px"><col style="width:110px"><col style="width:110px"><col style="width:160px"><col style="width:120px"></colgroup><thead><tr><th>'+t('logistics.col.batch_no','物流单号')+'</th><th>'+t('logistics.col.pl_no','PL号')+'</th><th>'+t('logistics.col.related_ci','关联CI')+'</th><th>'+t('logistics.col.forwarder','货代')+'</th><th>'+t('logistics.col.mode','方式')+'</th><th>'+t('logistics.col.country','国家')+'</th><th>'+t('logistics.col.eta','预计到港日期')+'</th><th>'+t('logistics.col.inbound_date','入库完成')+'</th><th>'+t('logistics.col.cartons','箱数')+'</th><th>CBM</th><th>'+t('logistics.col.total_freight','综合运费')+'</th><th>'+t('common.status','状态')+'</th><th>'+t('logistics.col.listing_status','Listing状态')+'</th><th>'+t('logistics.col.listing_owner','上架负责人')+'</th><th>'+t('common.actions','操作')+'</th></tr></thead><tbody>'+data.map(l=>{return '<tr class="clickable-detail-row" onclick="rowClickView(event,\'viewLogDetail\',\''+l.id+'\')"><td class="cell-id" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(l.batch_no)+'</td><td class="cell-id">'+esc(l.pl_no||'-')+'</td><td class="cell-id" title="'+esc(l.related_ci_no)+'" style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(l.related_ci_no)+'</td><td style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(l.forwarder_name)+'</td><td>'+t('logistics.mode.'+l.transport_mode, l.transport_mode)+'</td><td>'+countryLabel(l.target_country)+'</td><td class="cell-date">'+fmtDate(l.eta_date)+'</td><td class="cell-date">'+fmtDate(l.inbound_complete_date)+'</td><td>'+(l.total_cartons||0)+'</td><td>'+(l.total_cbm||0)+'</td><td>'+fmtMoney(l.total_freight,l.freight_currency)+'</td><td style="white-space:nowrap"><span class="status-badge '+logisticsStatusBadgeClassByKey(l.logistics_display_status)+'">'+logisticsStatusLabelByKey(l.logistics_display_status)+'</span></td>'+listingStatusCell(l)+listingOwnerCell(l)+'<td class="cell-actions" style="white-space:nowrap"><button class="action-btn" onclick="viewLogDetail(\''+l.id+'\')" title="'+t('common.view','查看')+'">👁️</button>'+(hasPermission('logistics_edit')?'<button class="action-btn" onclick="editLog(\''+l.id+'\')" title="'+t('common.edit','编辑')+'">✏️</button>':'')+(hasPermission('logistics_edit')?'<button class="action-btn" onclick="notifyListing(\''+l.id+'\')" title="'+t('logistics.action.notify','发送上架提醒')+'">🔔</button>':'')+((l.total_freight>0||l.customs_duty>0||l.other_fees>0)&&l.fee_status==='unpaid'&&l.related_ci_id&&hasPermission('payment_create')?'<button class="action-btn" onclick="generateCostItems(\''+l.id+'\')" title="'+t('logistics.btn.generate_cost','生成成本记录')+'">📋</button>':'')+'</td></tr>';}).join('')+'</tbody></table></div>';
   }catch(e){
     if(!retry){
       document.getElementById('log-table').innerHTML='<div class="empty-state"><div class="empty-icon">⏳</div>'+t('logistics.toast.loading','加载中，请稍候...')+'</div>';
@@ -10580,7 +10580,7 @@ async function viewLogDetail(id){
       '<div class="detail-item"><span class="detail-label">'+t('logistics.detail.pl_no','PL单号')+'</span><span class="detail-value">'+esc(l.pl_no||'-')+'</span></div>'+
       '<div class="detail-item"><span class="detail-label">'+t('logistics.detail.related_ci','关联CI')+'</span><span class="detail-value" title="'+esc(l.related_ci_no)+'">'+esc(l.related_ci_no)+'</span></div>'+
       '<div class="detail-item"><span class="detail-label">'+t('logistics.detail.forwarder','货代')+'</span><span class="detail-value">'+esc(l.forwarder_name)+'</span></div>'+
-      '<div class="detail-item"><span class="detail-label">'+t('logistics.detail.transport_mode','运输方式')+'</span><span class="detail-value">'+esc(l.transport_mode)+'</span></div>'+
+      '<div class="detail-item"><span class="detail-label">'+t('logistics.detail.transport_mode','运输方式')+'</span><span class="detail-value">'+t('logistics.mode.'+l.transport_mode, l.transport_mode)+'</span></div>'+
       '<div class="detail-item"><span class="detail-label">'+t('logistics.detail.target_country','目标国家')+'</span><span class="detail-value">'+countryLabel(l.target_country)+'</span></div>'+
       '<div class="detail-item"><span class="detail-label">'+t('logistics.detail.target_warehouse','目标仓库')+'</span><span class="detail-value">'+esc(l.target_warehouse)+'</span></div>'+
       '<div class="detail-item"><span class="detail-label">'+t('logistics.detail.pickup_date','提货日期')+'</span><span class="detail-value">'+fmtDate(l.pickup_date)+'</span></div>'+
@@ -10595,7 +10595,7 @@ async function viewLogDetail(id){
       '<div class="detail-item"><span class="detail-label">'+t('logistics.detail.freight','运费')+'</span><span class="detail-value">'+fmtMoney(l.international_freight,l.freight_currency)+'</span></div>'+
       '<div class="detail-item"><span class="detail-label">'+t('logistics.detail.local_charges','其他运输费用')+'</span><span class="detail-value">'+fmtMoney(l.local_charges,l.freight_currency)+'</span></div>'+
       '<div class="detail-item"><span class="detail-label">'+t('logistics.detail.total_freight','综合运费')+'</span><span class="detail-value">'+fmtMoney(l.total_freight,l.freight_currency)+'</span></div>'+
-      '<div class="detail-item"><span class="detail-label">'+t('logistics.detail.fee_status','费用状态')+'</span><span class="detail-value">'+esc(l.fee_status)+'</span></div>'+
+      '<div class="detail-item"><span class="detail-label">'+t('logistics.detail.fee_status','费用状态')+'</span><span class="detail-value">'+t('logistics.fee.'+l.fee_status, l.fee_status)+'</span></div>'+
       '</div></div>'+
       (l.remark?'<div class="detail-section"><h3>'+t('logistics.detail.remark','备注')+'</h3><div>'+esc(l.remark)+'</div></div>':'')+
       '</div>',
@@ -10605,7 +10605,7 @@ async function viewLogDetail(id){
 // ===== LOGISTICS-LISTING-01 前端：上架状态/负责人 helpers（2026-08-07）=====
 const LISTING_STATUS_OPTIONS=[{v:'pending_plan',l:'待提交上架计划'},{v:'preparing',l:'准备中'},{v:'ready',l:'已准备完成'},{v:'listed',l:'已上架'}];
 function listingStatusOptions(selected){
-  return LISTING_STATUS_OPTIONS.map(o=>'<option value="'+o.v+'"'+(o.v===selected?' selected':'')+'>'+o.l+'</option>').join('');
+  return LISTING_STATUS_OPTIONS.map(o=>'<option value="'+o.v+'"'+(o.v===selected?' selected':'')+'>'+t('logistics.listing_status.'+o.v, o.l)+'</option>').join('');
 }
 function formatOwnerNames(arr){
   arr=arr||[];
@@ -11026,13 +11026,20 @@ async function loadWacPending(){
 }
 
 // WAC确认弹窗：展示PL明细 + 用户输入旧库存数量 + 自动计算新WAC
+// 结构：固定(标题/批次信息/公式/操作栏) + 滚动(SKU明细表) + 固定(底部按钮)
 async function wacConfirm(batchId){
   try{
     const p=await api('/api/wac/preview/'+batchId);
     window._wacPreview=p;
+    // 每个批次独立初始化导入状态，防止跨批次串号（old_qty / status / 缺失 / 异常）
+    window._wacImport={batchId:batchId,matched:[],missing:[],unknown:[],duplicate:[],invalid:[]};
     const items=p.items||[];
+    // 防御性去重：按 sku_code 建立 行索引映射（preview 已聚合，这里再保证唯一）
+    const skuIndex={};
+    items.forEach((it,i)=>{const k=String(it.sku_code);if(!(k in skuIndex))skuIndex[k]=i;});
+    window._wacSkuIndex=skuIndex;
     const rowsHtml=items.map((it,i)=>{
-      // 旧库存数量默认为0，由用户手动输入（不使用 inventory.available_qty 替代）
+      // 旧库存数量默认为0，由用户手动输入或导入（不使用 inventory.available_qty 替代）
       const oldQty=0;
       const oldWac=it.current_wac||0;
       const plQty=it.pl_qty||0;
@@ -11047,7 +11054,7 @@ async function wacConfirm(batchId){
         '<td class="text-right">'+(it.weighted_unit_price||0).toFixed(4)+'</td>'+
         '<td class="text-right">'+(it.customs_rate!==null&&it.customs_rate!==undefined?Number(it.customs_rate).toFixed(4):'-')+'</td>'+
         '<td class="text-right" style="color:#999">'+(it.available_qty||0)+'</td>'+
-        '<td><input type="number" id="wac-old-'+i+'" value="'+oldQty+'" placeholder="输入" min="0" style="width:80px;padding:4px;text-align:right;background:#fffbe6" onchange="recalcWacRow('+i+')"></td>'+
+        '<td><input type="number" id="wac-old-'+i+'" value="'+oldQty+'" placeholder="0" min="0" step="1" style="width:90px;padding:4px;text-align:right;background:#fffbe6" onchange="recalcWacRow('+i+');wacValidateInputs()"></td>'+
         '<td class="text-right">'+(it.current_wac||0).toFixed(4)+'</td>'+
         '<td class="text-right">'+(it.product_cost||0).toFixed(2)+'</td>'+
         '<td class="text-right">'+(it.freight_cost||0).toFixed(2)+'</td>'+
@@ -11058,50 +11065,60 @@ async function wacConfirm(batchId){
       '</tr>';
     }).join('');
 
+    const opBar='<div class="wac-opbar">'+
+      '<button class="btn btn-secondary btn-sm" onclick="exportWacOldInventoryTemplate()">📥 '+t('wac.btn_export_old','导出旧库存模板')+'</button>'+
+      '<button class="btn btn-secondary btn-sm" onclick="importWacOldInventory()">📤 '+t('wac.btn_import_old','导入旧库存')+'</button>'+
+      '<span class="wac-import-status" id="wac-import-status"><span class="warn">'+t('wac.import_not_imported','未导入')+'</span></span>'+
+    '</div>';
+
+    const head='<div class="form-card" style="box-shadow:none;padding:0;display:flex;flex-direction:column;overflow:hidden">'+
+      '<div style="background:#f0f8ff;padding:12px 16px;border-radius:6px;margin-bottom:12px;font-size:13px">'+
+        '<b>'+t('wac.batch_info','物流批次')+'</b>：'+esc(p.batch_no)+' ｜ '+
+        '<b>CI</b>：'+esc(p.ci_no||'-')+' ｜ '+
+        '<b>'+t('wac.country','国家')+'</b>：'+countryLabel(p.country)+' ｜ '+
+        '<b>'+t('wac.warehouse','仓库')+'</b>：'+esc(p.warehouse||'-')+' ｜ '+
+        '<b>'+t('wac.arrival','到货日期')+'</b>：'+fmtDate(p.actual_arrival_date)+' ｜ '+
+        '<b>'+t('wac.cost_source','成本来源')+'</b>：'+
+        (p.cost_source==='ci_items'?'<span style="color:#52c41a">CI明细(SKU级)</span>':'<span style="color:#fa8c16">PL回退(数量分摊)</span>')+' ｜ '+
+        '<b>'+t('wac.cost_data_source','费用来源')+'</b>：'+
+        (p.cost_data_source==='ci_cost_items'?'<span style="color:#52c41a">成本记录(ci_cost_items)</span>':'<span style="color:#fa8c16">物流单静态字段</span>')+' ｜ '+
+        '<b>'+t('wac.customs_alloc','关税分摊')+'</b>：'+
+        (p.customs_allocation==='tax_rate_model'?'<span style="color:#52c41a">税率模型</span>':'<span style="color:#fa8c16">成本比例(无税率)</span>')+
+      '</div>'+
+      '<div style="background:#fffbe6;padding:10px 14px;border-radius:6px;margin-bottom:12px;font-size:12px;color:#666">'+
+        t('wac.formula_hint','移动加权公式：新WAC = (旧库存数量 × 当前WAC + 本批次数量 × 单位落地成本) ÷ (旧库存数量 + 本批次数量)')+'<br>'+
+        t('wac.landing_cost_hint_v2','单位落地成本 = (SKU级采购成本 + 按成本比例分摊的物流/其他费用 + 按税率权重分摊的关税) ÷ SKU数量')+'<br>'+
+        (p.customs_allocation==='tax_rate_model'?t('wac.customs_rate_hint','✅ 关税按SKU税率权重分摊：理论关税=SKU货值×SKU税率，实际总关税按理论关税比例分配，残差给最大SKU')+'<br>':'')+
+        (p.cost_source==='ci_items'?t('wac.ci_items_hint','✅ 成本来源：CI明细，同SKU不同单价已加权聚合，费用按产品成本比例分摊')+'<br>':'')+
+        t('wac.old_qty_hint','⚠️ 旧库存数量需人工输入，请根据实际盘点填写，不可直接使用系统库存数量')+
+      '</div>'+
+      opBar+
+      '<div class="wac-table-scroll">'+
+      '<table class="data-table" style="table-layout:auto;min-width:1100px"><thead><tr>'+
+        '<th>SKU</th><th>'+t('wac.col_product','产品')+'</th>'+
+        '<th>'+t('wac.col_pl_qty','PL数量')+'</th>'+
+        '<th>'+t('wac.col_agg','聚合')+'</th>'+
+        '<th>'+t('wac.col_weighted_price','加权采购单价')+'</th>'+
+        '<th>'+t('wac.col_customs_rate','关税税率')+'</th>'+
+        '<th>'+t('wac.col_avail','当前库存')+'</th>'+
+        '<th>'+t('wac.col_old_qty','旧库存数量')+'</th>'+
+        '<th>'+t('wac.col_current_wac','当前WAC')+'</th>'+
+        '<th>'+t('wac.col_product_cost','产品货值')+'</th>'+
+        '<th>'+t('wac.col_freight','物流费')+'</th>'+
+        '<th>'+t('wac.col_customs','清关费')+'</th>'+
+        '<th>'+t('wac.col_other','其他费')+'</th>'+
+        '<th>'+t('wac.col_unit_landing','单位落地成本')+'</th>'+
+        '<th>'+t('wac.col_new_wac','新WAC')+'</th>'+
+      '</tr></thead><tbody>'+rowsHtml+'</tbody></table></div>'+
+    '</div>';
+
     openModal(
       t('wac.modal_title','WAC确认')+' - '+p.batch_no,
-      '<div class="form-card" style="box-shadow:none;padding:0">'+
-        '<div style="background:#f0f8ff;padding:12px 16px;border-radius:6px;margin-bottom:12px;font-size:13px">'+
-          '<b>'+t('wac.batch_info','物流批次')+'</b>：'+esc(p.batch_no)+' ｜ '+
-          '<b>CI</b>：'+esc(p.ci_no||'-')+' ｜ '+
-          '<b>'+t('wac.country','国家')+'</b>：'+countryLabel(p.country)+' ｜ '+
-          '<b>'+t('wac.warehouse','仓库')+'</b>：'+esc(p.warehouse||'-')+' ｜ '+
-          '<b>'+t('wac.arrival','到货日期')+'</b>：'+fmtDate(p.actual_arrival_date)+' ｜ '+
-          '<b>'+t('wac.cost_source','成本来源')+'</b>：'+
-          (p.cost_source==='ci_items'?'<span style="color:#52c41a">CI明细(SKU级)</span>':'<span style="color:#fa8c16">PL回退(数量分摊)</span>')+' ｜ '+
-          '<b>'+t('wac.cost_data_source','费用来源')+'</b>：'+
-          (p.cost_data_source==='ci_cost_items'?'<span style="color:#52c41a">成本记录(ci_cost_items)</span>':'<span style="color:#fa8c16">物流单静态字段</span>')+' ｜ '+
-          '<b>'+t('wac.customs_alloc','关税分摊')+'</b>：'+
-          (p.customs_allocation==='tax_rate_model'?'<span style="color:#52c41a">税率模型</span>':'<span style="color:#fa8c16">成本比例(无税率)</span>')+
-        '</div>'+
-        '<div style="background:#fffbe6;padding:10px 14px;border-radius:6px;margin-bottom:12px;font-size:12px;color:#666">'+
-          t('wac.formula_hint','移动加权公式：新WAC = (旧库存数量 × 当前WAC + 本批次数量 × 单位落地成本) ÷ (旧库存数量 + 本批次数量)')+'<br>'+
-          t('wac.landing_cost_hint_v2','单位落地成本 = (SKU级采购成本 + 按成本比例分摊的物流/其他费用 + 按税率权重分摊的关税) ÷ SKU数量')+'<br>'+
-          (p.customs_allocation==='tax_rate_model'?t('wac.customs_rate_hint','✅ 关税按SKU税率权重分摊：理论关税=SKU货值×SKU税率，实际总关税按理论关税比例分配，残差给最大SKU')+'<br>':'')+
-          (p.cost_source==='ci_items'?t('wac.ci_items_hint','✅ 成本来源：CI明细，同SKU不同单价已加权聚合，费用按产品成本比例分摊')+'<br>':'')+
-          t('wac.old_qty_hint','⚠️ 旧库存数量需人工输入，请根据实际盘点填写，不可直接使用系统库存数量')+
-        '</div>'+
-        '<div class="table-container" style="max-height:400px;overflow:auto">'+
-        '<table class="data-table" style="table-layout:auto"><thead><tr>'+
-          '<th>SKU</th><th>'+t('wac.col_product','产品')+'</th>'+
-          '<th>'+t('wac.col_pl_qty','PL数量')+'</th>'+
-          '<th>'+t('wac.col_agg','聚合')+'</th>'+
-          '<th>'+t('wac.col_weighted_price','加权采购单价')+'</th>'+
-          '<th>'+t('wac.col_customs_rate','关税税率')+'</th>'+
-          '<th>'+t('wac.col_avail','当前库存')+'</th>'+
-          '<th>'+t('wac.col_old_qty','旧库存数量')+'</th>'+
-          '<th>'+t('wac.col_current_wac','当前WAC')+'</th>'+
-          '<th>'+t('wac.col_product_cost','产品货值')+'</th>'+
-          '<th>'+t('wac.col_freight','物流费')+'</th>'+
-          '<th>'+t('wac.col_customs','清关费')+'</th>'+
-          '<th>'+t('wac.col_other','其他费')+'</th>'+
-          '<th>'+t('wac.col_unit_landing','单位落地成本')+'</th>'+
-          '<th>'+t('wac.col_new_wac','新WAC')+'</th>'+
-        '</tr></thead><tbody>'+rowsHtml+'</tbody></table></div>'+
-      '</div>',
+      head,
       '<button class="btn btn-secondary" onclick="closeModal()">'+t('common.cancel','取消')+'</button>'+
-      '<button class="btn btn-primary" onclick="submitWacConfirm(\''+batchId+'\')">'+t('wac.btn_submit','确认WAC')+'</button>'
-    );
+      '<button class="btn btn-primary" id="wac-confirm-btn" onclick="submitWacConfirm(\''+batchId+'\')">'+t('wac.btn_submit','确认WAC')+'</button>'
+    ,'modal-wac');
+    wacValidateInputs();
   }catch(e){showToast(e.message,'danger')}
 }
 
@@ -11120,15 +11137,199 @@ function recalcWacRow(i){
   if(cell)cell.textContent=newWac.toFixed(4);
 }
 
+// 读取某行 old_qty 输入，严格区分 0 与 空白/非法（不使用 if(!qty) 这类判断）
+function readWacOldRaw(i){
+  const el=document.getElementById('wac-old-'+i);
+  if(!el) return {ok:false,reason:'missing'};
+  const raw=String(el.value==null?'':el.value).trim();
+  if(raw==='') return {ok:false,reason:'blank'};
+  const num=Number(raw);
+  if(isNaN(num)) return {ok:false,reason:'nan'};
+  if(num<0) return {ok:false,reason:'negative'};
+  return {ok:true,value:num};
+}
+// 实时校验：任何输入空白/非法 → 禁止确认；文件级 unknown/duplicate 永久阻断
+function wacValidateInputs(){
+  const p=window._wacPreview; const st=window._wacImport;
+  if(!p||!p.items) return;
+  const items=p.items;
+  const liveInvalid=[];
+  items.forEach((it,i)=>{
+    const r=readWacOldRaw(i);
+    if(!r.ok) liveInvalid.push(it.sku_code);
+  });
+  // 重新 reconcile：把已变为合法的 missing/invalid 从文件级列表中移除（支持手工修正后解禁）
+  if(st){
+    st.missing=st.missing.filter(s=>liveInvalid.includes(s));
+    st.invalid=st.invalid.filter(s=>liveInvalid.includes(s));
+  }
+  const unknownN=st?st.unknown.length:0;
+  const duplicateN=st?st.duplicate.length:0;
+  const blocked=liveInvalid.length>0||unknownN>0||duplicateN>0;
+  const statusEl=document.getElementById('wac-import-status');
+  const btn=document.getElementById('wac-confirm-btn');
+  if(statusEl){
+    const parts=[];
+    const matchedN=st?st.matched.length:0;
+    const missingN=st?st.missing.length:0;
+    const unknownArr=st?st.unknown:[];
+    const duplicateArr=st?st.duplicate:[];
+    const invalidArr=st?st.invalid:[];
+    parts.push('<span class="'+(matchedN?'ok':'')+'">'+t('wac.import_matched','已匹配')+': '+matchedN+'</span>');
+    if(missingN) parts.push('<span class="bad">'+t('wac.import_missing','缺失SKU')+': '+missingN+' ('+st.missing.join(', ')+')</span>');
+    if(unknownArr.length) parts.push('<span class="bad">'+t('wac.import_unknown','未知SKU')+': '+unknownArr.length+' ('+unknownArr.join(', ')+')</span>');
+    if(duplicateArr.length) parts.push('<span class="bad">'+t('wac.import_duplicate','重复SKU')+': '+duplicateArr.length+' ('+duplicateArr.join(', ')+')</span>');
+    if(invalidArr.length) parts.push('<span class="bad">'+t('wac.import_invalid','非法数量')+': '+invalidArr.length+' ('+invalidArr.join(', ')+')</span>');
+    if(liveInvalid.length) parts.push('<span class="bad">'+t('wac.import_live_invalid','当前输入异常')+': '+liveInvalid.length+' ('+liveInvalid.join(', ')+')</span>');
+    if(!missingN&&!unknownArr.length&&!duplicateArr.length&&!invalidArr.length&&!liveInvalid.length){
+      parts.push('<span class="ok">'+t('wac.import_ok','就绪')+'</span>');
+    }
+    statusEl.innerHTML=parts.join(' ');
+  }
+  if(btn) btn.disabled=blocked;
+}
+// 导出旧库存模板：以当前 WAC Preview 的 SKU 集合为唯一来源（按 sku_code 防御性去重）
+async function exportWacOldInventoryTemplate(){
+  try{
+    const p=window._wacPreview;
+    if(!p||!p.items||!p.items.length){showToast(t('wac.export_no_data','暂无SKU可导出'),'warning');return;}
+    const seen={}; const rows=[];
+    p.items.forEach(it=>{
+      const k=String(it.sku_code);
+      if(seen[k])return; seen[k]=true;
+      rows.push({'SKU':k,'原库存数量':'','备注':''});
+    });
+    const ws=XLSX.utils.json_to_sheet(rows);
+    const wb=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb,ws,t('wac.old_inventory_sheet','旧库存模板'));
+    const safeBatch=String(p.batch_no||'batch').replace(/[\\/:*?"<>|]/g,'_');
+    XLSX.writeFile(wb,'WAC_OldInventory_'+safeBatch+'.xlsx');
+    showToast(t('wac.export_ok','已导出旧库存模板，请填写「原库存数量」后重新导入'),'success');
+  }catch(e){showToast(e.message,'danger')}
+}
+// 导入旧库存 Excel：完整校验（SKU列/数量列/空SKU/0与空白/负数/非数字/重复/未知/缺失）
+async function importWacOldInventory(){
+  const p=window._wacPreview; const st=window._wacImport;
+  if(!p||!p.items||!p.items.length){showToast(t('wac.import_no_data','请先打开WAC确认弹窗'),'warning');return;}
+  if(!st||st.batchId!==p.batch_no){st&&(st.batchId=p.batch_no);}
+  const input=document.createElement('input');input.type='file';input.accept='.xlsx,.xls,.csv';
+  input.onchange=async e=>{
+    const file=e.target.files[0];if(!file)return;
+    const reader=new FileReader();
+    reader.onload=async ev=>{
+      try{
+        const data=new Uint8Array(ev.target.result);
+        const wb=XLSX.read(data,{type:'array'});
+        const ws=wb.Sheets[wb.SheetNames[0]];
+        const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
+        if(rows.length<2){showToast(t('wac.import_file_empty','文件为空或仅含表头'),'danger');return;}
+        const headers=rows[0].map(h=>String(h==null?'':h).trim());
+        const skuIdx=headers.findIndex(h=>h==='SKU'||h==='sku_code');
+        const qtyIdx=headers.findIndex(h=>h.indexOf('原库存数量')!==-1||h==='original_qty'||h==='old_qty');
+        if(skuIdx<0){showToast(t('wac.err_no_sku_col','缺少 SKU 列，请使用导出的模板'),'danger');return;}
+        if(qtyIdx<0){showToast(t('wac.err_no_qty_col','缺少 原库存数量 列，请使用导出的模板'),'danger');return;}
+        // 当前批次 SKU 集合（去重）
+        const skuIndex=window._wacSkuIndex||{};
+        const batchSkus=Object.keys(skuIndex);
+        const batchSet=new Set(batchSkus);
+        // 解析文件行
+        const fileMap={}; // sku -> [{row, qtyRaw, qtyKind}]
+        const parseErrors=[]; let hasValidRow=false;
+        for(let i=1;i<rows.length;i++){
+          const row=rows[i];
+          if(!row||row.every(c=>c===''||c==null))continue; // 整行空跳过
+          const skuRaw=row[skuIdx];
+          const sku=String(skuRaw==null?'':skuRaw).trim();
+          if(!sku){parseErrors.push(t('wac.err_empty_sku','第 {v1} 行 SKU 为空',{v1:i+1}));continue;}
+          const qtyRaw=row[qtyIdx];
+          // 0 与空白严格区分
+          let qtyKind;
+          if(qtyRaw===''||qtyRaw==null) qtyKind='blank';
+          else{
+            const num=Number(String(qtyRaw).trim());
+            if(isNaN(num)) qtyKind='nan';
+            else if(num<0) qtyKind='negative';
+            else qtyKind='num';
+          }
+          if(!fileMap[sku])fileMap[sku]=[];
+          fileMap[sku].push({row:i+1,qtyRaw:qtyRaw,qtyKind:qtyKind});
+          if(qtyKind==='num')hasValidRow=true;
+        }
+        if(!hasValidRow&&Object.keys(fileMap).length===0){showToast(t('wac.import_no_valid','未找到有效数据'),'danger');return;}
+
+        const matched=[]; const missing=[]; const unknown=[]; const duplicate=[]; const invalid=[];
+        batchSkus.forEach(sku=>{
+          const idx=skuIndex[sku];
+          if(!(sku in fileMap)){ // Excel 中完全缺失该 SKU → 清空输入框(置为空白)，强制用户处理后才可确认
+            missing.push(sku);
+            const el=document.getElementById('wac-old-'+idx);
+            if(el){el.value=''; recalcWacRow(idx);}
+            return;
+          }
+          const entries=fileMap[sku];
+          if(entries.length>1){ duplicate.push(sku); return; }
+          const e0=entries[0];
+          if(e0.qtyKind==='blank'){ // Excel 中该 SKU 数量空白 → 视为未提供旧库存，清空输入框
+            missing.push(sku);
+            const el=document.getElementById('wac-old-'+idx);
+            if(el){el.value=''; recalcWacRow(idx);}
+            return;
+          }
+          if(e0.qtyKind==='nan'||e0.qtyKind==='negative'){ invalid.push(sku); return; }
+          // num → 回填输入框并实时重算（0 也合法，保留数字 0）
+          const el=document.getElementById('wac-old-'+idx);
+          if(el){el.value=String(Number(String(e0.qtyRaw).trim())); recalcWacRow(idx);}
+          matched.push(sku);
+        });
+        // 文件中不在当前批次的 SKU → unknown
+        Object.keys(fileMap).forEach(sku=>{ if(!batchSet.has(sku)) unknown.push(sku); });
+
+        // 覆盖式写入本次导入状态（每次导入都重置，不继承上次）
+        st.matched=matched; st.missing=missing.slice(); st.unknown=unknown.slice(); st.duplicate=duplicate.slice(); st.invalid=invalid.slice();
+
+        const msgs=[];
+        if(missing.length) msgs.push(t('wac.import_missing','缺失SKU')+': '+missing.join(', '));
+        if(unknown.length) msgs.push(t('wac.import_unknown','未知SKU')+'（'+t('wac.import_unknown_hint','不在当前批次')+'）: '+unknown.join(', '));
+        if(duplicate.length) msgs.push(t('wac.import_duplicate','重复SKU')+': '+duplicate.join(', '));
+        if(invalid.length) msgs.push(t('wac.import_invalid','非法数量')+': '+invalid.join(', '));
+        if(parseErrors.length) msgs.push(parseErrors.join('；'));
+
+        wacValidateInputs();
+
+        if(msgs.length){
+          showToast(t('wac.import_done_with_err','导入完成但存在异常：')+msgs.join('；'),'warning');
+        }else{
+          showToast(t('wac.import_success','导入成功，已匹配 {v1} 个 SKU',{v1:matched.length}),'success');
+        }
+      }catch(err){showToast(t('wac.import_fail','导入失败：{v1}',{v1:err.message}),'danger')}
+    };
+    reader.readAsArrayBuffer(file);
+  };
+  input.click();
+}
 // 提交WAC确认
 // 只更新 inventory.weighted_avg_cost，不更新 available_qty
 async function submitWacConfirm(batchId){
   const p=window._wacPreview;
   if(!p){closeModal();return}
-  const items=(p.items||[]).map((it,i)=>({
-    sku_code:it.sku_code,
-    old_qty:parseFloat(document.getElementById('wac-old-'+i)?.value)||0
-  }));
+  // 提交前再次校验：文件结构错误（未知/重复 SKU）直接拦截
+  wacValidateInputs();
+  const st=window._wacImport;
+  if(st&&(st.unknown.length||st.duplicate.length)){
+    showToast(t('wac.confirm_blocked','存在缺失/异常 SKU，禁止确认 WAC：')+st.unknown.concat(st.duplicate).join(', '),'danger');
+    return;
+  }
+  // 提交层独立安全：逐 SKU 读取；任何 blank/nan/negative/非法 立即拒绝，绝不 fallback 0
+  const items=[];
+  for(let i=0;i<(p.items||[]).length;i++){
+    const it=p.items[i];
+    const r=readWacOldRaw(i);
+    if(!r.ok){
+      showToast(t('wac.confirm_blocked','存在缺失/异常 SKU，禁止确认 WAC：')+esc(it.sku_code),'danger');
+      return;
+    }
+    items.push({ sku_code:it.sku_code, old_qty:r.value });
+  }
   if(items.length===0){showToast(t('wac.no_items','无PL明细数据'),'warning');return}
   if(!confirm(t('wac.confirm_msg','确认提交WAC计算？写入后不可修改。')))return;
   try{

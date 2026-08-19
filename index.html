@@ -256,6 +256,20 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 .modal-overlay.ci-mode .modal-ci-create .modal-header{flex:0 0 auto}
 .modal-overlay.ci-mode .modal-ci-create .modal-body{flex:1 1 auto;overflow-y:auto;min-height:0}
 .modal-overlay.ci-mode .modal-ci-create .modal-footer{flex:0 0 auto}
+/* WAC 确认弹窗：定位在主内容区（顶部导航下、左侧导航右），不遮挡导航；仅 SKU 明细表滚动 */
+.modal-overlay.wac-mode{top:48px;left:220px;right:0;bottom:0;width:auto;height:auto;align-items:flex-start;justify-content:flex-start;padding:12px 16px;z-index:100}
+.modal-overlay.wac-mode.wac-sb-collapsed{left:54px}
+.modal-wac{width:96%;max-width:none;max-height:calc(100vh - 48px - 24px);display:flex;flex-direction:column;overflow:hidden}
+.modal-wac .modal-header{flex:0 0 auto}
+.modal-wac .modal-body{flex:1 1 auto;display:flex;flex-direction:column;overflow:hidden;min-height:0;padding:16px 20px}
+.modal-wac .modal-footer{flex:0 0 auto}
+.wac-table-scroll{flex:1 1 auto;overflow:auto;min-height:0;margin-top:12px}
+.wac-opbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:10px 12px;background:#f6f8fa;border:1px solid var(--border);border-radius:6px}
+.wac-opbar .btn{white-space:nowrap}
+.wac-import-status{font-size:12px;color:#666;display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.wac-import-status .ok{color:#52c41a;font-weight:600}
+.wac-import-status .bad{color:#cf1322;font-weight:600}
+.wac-import-status .warn{color:#fa8c16;font-weight:600}
 /* CI detail table — internal scroll, preventing page growth */
 #ci-items-preview{max-height:min(350px,38vh);overflow-y:auto}
 #hci-items-preview{max-height:min(350px,38vh);overflow-y:auto}

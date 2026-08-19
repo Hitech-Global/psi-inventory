@@ -4834,5 +4834,30 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   // WAC-MODEL-V2.1 关税税率模型翻译键
   I18N.dict.zh["wac.col_customs_rate"]="关税税率"; I18N.dict.en["wac.col_customs_rate"]="Customs Rate"; I18N.dict.id["wac.col_customs_rate"]="Tarif Bea Cukai";
   I18N.dict.zh["wac.customs_alloc"]="关税分摊"; I18N.dict.en["wac.customs_alloc"]="Customs Alloc"; I18N.dict.id["wac.customs_alloc"]="Alokasi Bea Cukai";
-  I18N.dict.zh["wac.customs_rate_hint"]="✅ 关税按SKU税率权重分摊：理论关税=SKU货值×SKU税率，实际总关税按理论关税比例分配，残差给最大SKU"; I18N.dict.en["wac.customs_rate_hint"]="✅ Customs allocated by SKU tax rate weight: theoretical duty = SKU value × SKU rate, actual total duty allocated by theoretical ratio, residual to largest SKU"; I18N.dict.id["wac.customs_rate_hint"]="✅ Bea Cukai dialokasikan berdasarkan tarif SKU: bea teoretis = nilai SKU × tarif, total aktual dialokasikan proporsional, sisa ke SKU terbesar";
+  I18N.dict.zh["wac.customs_rate_hint"]="✅ 关税按SKU税率权重分摊：理论关税=SKU货值×SKU税率，实际总关税按理论关税比例分配，残差给最大SKU"; I18N.dict.en["wac.customs_rate_hint"]="✅ Customs allocated by SKU tax rate weight: theoretical duty = SKU value × SKU rate, actual total duty allocated by theoretical ratio, residual to largest SKU";   I18N.dict.id["wac.customs_rate_hint"]="✅ Bea Cukai dialokasikan berdasarkan tarif SKU: bea teoretis = nilai SKU × tarif, total aktual dialokasikan proporsional, sisa ke SKU terbesar";
+  // WAC-MODEL-V2.2 旧库存导入（导出/导入/校验/状态）翻译键
+  I18N.dict.zh["wac.btn_export_old"]="导出旧库存模板"; I18N.dict.en["wac.btn_export_old"]="Export Old Inventory Template"; I18N.dict.id["wac.btn_export_old"]="Ekspor Template Stok Lama";
+  I18N.dict.zh["wac.btn_import_old"]="导入旧库存"; I18N.dict.en["wac.btn_import_old"]="Import Old Inventory"; I18N.dict.id["wac.btn_import_old"]="Impor Stok Lama";
+  I18N.dict.zh["wac.import_not_imported"]="未导入"; I18N.dict.en["wac.import_not_imported"]="Not Imported"; I18N.dict.id["wac.import_not_imported"]="Belum Diimpor";
+  I18N.dict.zh["wac.import_matched"]="已匹配"; I18N.dict.en["wac.import_matched"]="Matched"; I18N.dict.id["wac.import_matched"]="Cocok";
+  I18N.dict.zh["wac.import_missing"]="缺失SKU"; I18N.dict.en["wac.import_missing"]="Missing SKU"; I18N.dict.id["wac.import_missing"]="SKU Hilang";
+  I18N.dict.zh["wac.import_unknown"]="未知SKU"; I18N.dict.en["wac.import_unknown"]="Unknown SKU"; I18N.dict.id["wac.import_unknown"]="SKU Tidak Dikenal";
+  I18N.dict.zh["wac.import_duplicate"]="重复SKU"; I18N.dict.en["wac.import_duplicate"]="Duplicate SKU"; I18N.dict.id["wac.import_duplicate"]="SKU Duplikat";
+  I18N.dict.zh["wac.import_invalid"]="非法数量"; I18N.dict.en["wac.import_invalid"]="Invalid Qty"; I18N.dict.id["wac.import_invalid"]="Jumlah Tidak Valid";
+  I18N.dict.zh["wac.import_live_invalid"]="当前输入异常"; I18N.dict.en["wac.import_live_invalid"]="Current Input Invalid"; I18N.dict.id["wac.import_live_invalid"]="Input Saat Ini Tidak Valid";
+  I18N.dict.zh["wac.import_ok"]="就绪"; I18N.dict.en["wac.import_ok"]="Ready"; I18N.dict.id["wac.import_ok"]="Siap";
+  I18N.dict.zh["wac.export_no_data"]="暂无SKU可导出"; I18N.dict.en["wac.export_no_data"]="No SKU to export"; I18N.dict.id["wac.export_no_data"]="Tidak ada SKU untuk diekspor";
+  I18N.dict.zh["wac.old_inventory_sheet"]="旧库存模板"; I18N.dict.en["wac.old_inventory_sheet"]="Old Inventory Template"; I18N.dict.id["wac.old_inventory_sheet"]="Template Stok Lama";
+  I18N.dict.zh["wac.export_ok"]="已导出旧库存模板，请填写「原库存数量」后重新导入"; I18N.dict.en["wac.export_ok"]="Old inventory template exported. Fill in \"Original Qty\" then re-import"; I18N.dict.id["wac.export_ok"]="Template stok lama diekspor. Isi \"Qty Asli\" lalu impor kembali";
+  I18N.dict.zh["wac.import_no_data"]="请先打开WAC确认弹窗"; I18N.dict.en["wac.import_no_data"]="Open WAC confirmation modal first"; I18N.dict.id["wac.import_no_data"]="Buka modal konfirmasi WAC dulu";
+  I18N.dict.zh["wac.err_no_sku_col"]="缺少 SKU 列，请使用导出的模板"; I18N.dict.en["wac.err_no_sku_col"]="Missing SKU column, use the exported template"; I18N.dict.id["wac.err_no_sku_col"]="Kolom SKU hilang, gunakan template yang diekspor";
+  I18N.dict.zh["wac.err_no_qty_col"]="缺少 原库存数量 列，请使用导出的模板"; I18N.dict.en["wac.err_no_qty_col"]="Missing \"Original Qty\" column, use the exported template"; I18N.dict.id["wac.err_no_qty_col"]="Kolom \"Qty Asli\" hilang, gunakan template yang diekspor";
+  I18N.dict.zh["wac.import_file_empty"]="文件为空或仅含表头"; I18N.dict.en["wac.import_file_empty"]="File is empty or header-only"; I18N.dict.id["wac.import_file_empty"]="File kosong atau hanya header";
+  I18N.dict.zh["wac.import_no_valid"]="未找到有效数据"; I18N.dict.en["wac.import_no_valid"]="No valid data found"; I18N.dict.id["wac.import_no_valid"]="Tidak ada data valid";
+  I18N.dict.zh["wac.import_unknown_hint"]="不在当前批次"; I18N.dict.en["wac.import_unknown_hint"]="not in current batch"; I18N.dict.id["wac.import_unknown_hint"]="tidak di batch ini";
+  I18N.dict.zh["wac.import_done_with_err"]="导入完成但存在异常："; I18N.dict.en["wac.import_done_with_err"]="Import done but errors found: "; I18N.dict.id["wac.import_done_with_err"]="Impor selesai tapi ada kesalahan: ";
+  I18N.dict.zh["wac.import_success"]="导入成功，已匹配 {v1} 个 SKU"; I18N.dict.en["wac.import_success"]="Import successful, {v1} SKU matched"; I18N.dict.id["wac.import_success"]="Impor berhasil, {v1} SKU cocok";
+  I18N.dict.zh["wac.import_fail"]="导入失败：{v1}"; I18N.dict.en["wac.import_fail"]="Import failed: {v1}"; I18N.dict.id["wac.import_fail"]="Impor gagal: {v1}";
+  I18N.dict.zh["wac.confirm_blocked"]="存在缺失/异常 SKU，禁止确认 WAC："; I18N.dict.en["wac.confirm_blocked"]="Missing/invalid SKU found, WAC confirmation blocked: "; I18N.dict.id["wac.confirm_blocked"]="Ada SKU hilang/tidak valid, konfirmasi WAC diblokir: ";
+  I18N.dict.zh["wac.err_empty_sku"]="第 {v1} 行 SKU 为空"; I18N.dict.en["wac.err_empty_sku"]="Row {v1} has empty SKU"; I18N.dict.id["wac.err_empty_sku"]="Baris {v1} SKU kosong";
 })();
