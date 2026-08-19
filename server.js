@@ -27,6 +27,11 @@ const path = require('path');
 const crypto = require('crypto');
 const { query, queryOne, run, transaction, genId, initDatabase } = require('./db');
 const { withGenerateClient, withAsyncPoolClient } = require('./pg-async'); // 专用异步 Pool：generate / 销售导入库存重算不阻塞主线程
+// Batch 1.0a: PG async DB 接口 + driver 检测（仅用于已迁移的函数）
+const dbPg = require('./db-pg');
+function isPgDriver() {
+  return (process.env.DB_DRIVER || 'sqlite').toLowerCase() === 'pg';
+}
 const {
   createSqliteSalesImportAdapter,
   createPostgresSalesImportAdapter,
@@ -1100,23 +1105,61 @@ console.log(`  版本: ${APP_VERSION}`);
 console.log(`  端口: ${PORT}`);
 console.log('========================================\n');
 
-// 初始化数据库
-// P0-FIX-1：仅在直接运行 server.js 时初始化数据库，避免 require 时连接/seed 真实库
-if (require.main === module) {
-  initDatabase();
-  // 库存导入日期归一化回填：修复 M/D/YY 文本导致快照 MAX 字典序误判（根因 A）
-  normalizeImportDatesBackfill();
-  // 日期归一化后重新计算库存快照，使修正后的"最新批次"立即生效
-  // （已导入但停留在旧快照的批次无需手动重新导入即可修正）
-  refreshInventoryTotals('').then(() => {
-    console.log('[STARTUP] 库存快照已按修正后的最新导入日期重算完成');
-  }).catch(e => console.error('[STARTUP] 库存快照重算失败:', e && e.message));
+// ==================== 唯一启动序列（Batch 0.5） ====================
+// 严格顺序：环境验证 → core schema → supplemental migrations → bootstrap → HTTP listen
+// 后一步必须严格等待前一步完成，禁止并行 race。
+async function validateStartupEnvironment() {
+  console.log('\n========== 启动前环境诊断 ==========');
+  console.log(`[DIAG] NODE_ENV = ${NODE_ENV || '(未设置)'}`);
+  console.log(`[DIAG] DB_DRIVER = ${process.env.DB_DRIVER || '(默认 sqlite)'}`);
+  console.log(`[DIAG] PORT = ${PORT}`);
+  const _hasDbUrl = !!process.env.DATABASE_URL;
+  const _hasPoolerUrl = !!process.env.POOLER_DATABASE_URL;
+  console.log(`[DIAG] DATABASE_URL = ${_hasDbUrl ? '已设置 (长度=' + process.env.DATABASE_URL.length + ')' : '❌ 未设置'}`);
+  console.log(`[DIAG] POOLER_DATABASE_URL = ${_hasPoolerUrl ? '已设置 (长度=' + process.env.POOLER_DATABASE_URL.length + ')' : '❌ 未设置'}`);
+  console.log(`[DIAG] BREAKGLASS_ADMIN_PASSWORD = ${BREAKGLASS_ADMIN_PASSWORD ? '已设置 (长度=' + BREAKGLASS_ADMIN_PASSWORD.length + ', 强度=' + (isStrongPassword(BREAKGLASS_ADMIN_PASSWORD) ? '合格' : '❌不合格') + ')' : '❌ 未设置'}`);
+  console.log(`[DIAG] FEISHU_APP_ID = ${FEISHU_APP_ID ? '已设置' : '(未设置)'}`);
+  console.log(`[DIAG] FEISHU_APP_SECRET = ${FEISHU_APP_SECRET ? '已设置' : '(未设置)'}`);
+  console.log(`[DIAG] FEISHU_REDIRECT_URI = ${FEISHU_REDIRECT_URI || '(未设置)'}`);
+  console.log(`[DIAG] TRUSTED_ORIGINS = ${TRUSTED_ORIGINS.length > 0 ? TRUSTED_ORIGINS.join(', ') : '(未设置)'}`);
+  console.log(`[DIAG] COOKIE_SECURE = ${COOKIE_SECURE}`);
+  console.log(`[DIAG] CSRF_DISABLE = ${CSRF_DISABLE}`);
+
+  // PG 模式下至少需要一个连接串
+  if ((process.env.DB_DRIVER || '').toLowerCase() === 'pg' && !_hasDbUrl && !_hasPoolerUrl) {
+    console.error('\n[FATAL] DB_DRIVER=pg 但 DATABASE_URL / POOLER_DATABASE_URL 均未设置！');
+    console.error('[FATAL] 请在 Render Dashboard → Environment 中配置 POOLER_DATABASE_URL（推荐）或 DATABASE_URL。');
+    process.exit(1);
+  }
+
+  // BREAKGLASS_ADMIN_PASSWORD 缺失或弱密码会导致 bootstrapBreakGlass 抛异常
+  if (!BREAKGLASS_ADMIN_PASSWORD || !isStrongPassword(BREAKGLASS_ADMIN_PASSWORD)) {
+    console.error('\n[FATAL] BREAKGLASS_ADMIN_PASSWORD 未设置或强度不足（需≥12位且含大小写与数字）！');
+    console.error('[FATAL] 请在 Render Dashboard → Environment 中配置 BREAKGLASS_ADMIN_PASSWORD。');
+    process.exit(1);
+  }
+
+  console.log('[DIAG] 环境变量检查通过 ✓');
+  console.log('=====================================\n');
 }
 
-// PAY-CORE Phase 2 V2.1 第 12 节：为现有 role_admin 添加 payment_execute 权限（幂等迁移）
-// 仅影响 role_admin；role_operator/role_viewer 不添加
-// P0-FIX-1：仅在直接运行 server.js 时执行迁移，避免 require 时写入真实库
-if (require.main === module) {
+async function startServer() {
+  // 1. 环境验证
+  await validateStartupEnvironment();
+
+  // 2. Core schema（PG 模式：db-pg.js initDatabase 幂等建表 + 种子数据）
+  if ((process.env.DB_DRIVER || '').toLowerCase() === 'pg') {
+    console.log('[STARTUP] 执行 db-pg.js initDatabase（幂等建表 + 种子数据）...');
+    const dbPg = require('./db-pg');
+    await dbPg.initDatabase();
+    console.log('[STARTUP] core schema completed ✓');
+  }
+
+  // 3. Supplemental migrations（db.js 同步内联迁移：ALTER/补建索引，幂等）
+  initDatabase();
+  console.log('[STARTUP] supplemental migrations completed ✓');
+
+  // 4. 角色权限迁移（幂等）
   (function ensureRoleAdminPaymentExecute() {
     try {
       const adminRole = queryOne("SELECT permissions FROM roles WHERE id = 'role_admin'");
@@ -1132,22 +1175,13 @@ if (require.main === module) {
       console.warn('[Migration] role_admin payment_execute 迁移失败（非致命）:', e.message);
     }
   })();
-}
 
-// P2：为现有 role_admin 添加 outbound_delete 权限（幂等迁移）
-// 高风险删除权限仅限超级管理员；role_operator / role_viewer 不添加（B1）
-// 沿用 payment_execute 迁移模式：仅在直接运行 server.js 时执行，避免 require 时写入真实库
-if (require.main === module) {
   (function ensureRoleAdminOutboundDelete() {
     try {
       const adminRole = queryOne("SELECT permissions FROM roles WHERE id = 'role_admin'");
       if (!adminRole || !adminRole.permissions) return;
       const perms = JSON.parse(adminRole.permissions);
       if (!Array.isArray(perms)) return;
-      // P2.1-1：即便已含 '*' 也显式追加 outbound_delete。
-      // 原因：requireApiPermission 仅做字面 includes 校验（见其定义），'*' 不会通配授予该权限；
-      // 若 role_admin 为 ['*'] 却未显式含 outbound_delete，则 requireApiPermission('outbound_delete') 会 403。
-      // 约束：不覆盖其它权限、不删除 '*'、不修改其它角色、幂等（已含则跳过）。
       if (!perms.includes('outbound_delete')) {
         perms.push('outbound_delete');
         run("UPDATE roles SET permissions = ? WHERE id = 'role_admin'", [JSON.stringify(perms)]);
@@ -1157,11 +1191,7 @@ if (require.main === module) {
       console.warn('[Migration] role_admin outbound_delete 迁移失败（非致命）:', e.message);
     }
   })();
-}
 
-// Phase 2：为拥有审批权限的角色自动追加 approval_view（幂等迁移）
-// 仅处理含 po_approve/payment_approve/check_approve 的角色，不处理含 '*' 的超级管理员（通配符已覆盖所有权限）
-if (require.main === module) {
   (function ensureApprovalView() {
     try {
       const roles = query("SELECT id, permissions FROM roles").rows;
@@ -1171,7 +1201,7 @@ if (require.main === module) {
         let perms;
         try { perms = JSON.parse(role.permissions || '[]'); } catch(_) { return; }
         if (!Array.isArray(perms)) return;
-        if (perms.includes('*')) return; // 超级管理员通配符已覆盖
+        if (perms.includes('*')) return;
         const hasApprovePerm = approvePerms.some(p => perms.includes(p));
         if (hasApprovePerm && !perms.includes('approval_view')) {
           perms.push('approval_view');
@@ -1186,12 +1216,7 @@ if (require.main === module) {
       console.warn('[Migration] approval_view 迁移失败（非致命）:', e.message);
     }
   })();
-}
 
-// ==================== 寄售库存表迁移（CONSIGNMENT-INVENTORY） ====================
-// 幂等建表：consignment_inventory_lots（寄售库存批次行）+ consignment_inventory_import_batches（导入批次）
-// 仅在直接运行 server.js 时执行，避免 require 时写入真实库
-if (require.main === module) {
   (function ensureConsignmentInventoryTables() {
     try {
       run(`CREATE TABLE IF NOT EXISTS consignment_inventory_lots (
@@ -1238,11 +1263,64 @@ if (require.main === module) {
       console.warn('[Migration] 寄售库存表迁移失败（非致命）:', e.message);
     }
   })();
+
+  // 库存导入日期归一化回填 + 快照重算（fire-and-forget，保持原有业务语义）
+  normalizeImportDatesBackfill();
+  refreshInventoryTotals('').then(() => {
+    console.log('[STARTUP] 库存快照已按修正后的最新导入日期重算完成');
+  }).catch(e => console.error('[STARTUP] 库存快照重算失败:', e && e.message));
+
+  // 5. Bootstrap break-glass 管理员
+  try {
+    console.log('[STARTUP] 开始初始化 break-glass 管理员...');
+    bootstrapBreakGlass();
+    console.log('[STARTUP] bootstrap completed ✓');
+  } catch (e) {
+    console.error('\n[FATAL] bootstrapBreakGlass() 失败:', e.message);
+    console.error(e.stack);
+    process.exit(1);
+  }
+
+  // 6. 运行时诊断
+  diag.startEventLoopMonitor();
+  diag.startMetricsLogger();
+  console.log('[STARTUP] 运行时诊断已启用（事件循环直方图 + 慢请求 + 连接池水位）');
+
+  // 7. HTTP listen
+  console.log('[STARTUP] 正在启动 HTTP 服务 (端口 ' + PORT + ')...');
+  const server = app.listen(PORT, () => {
+    console.log(`\n[STARTUP] HTTP listening ✓ (端口 ${PORT})`);
+    console.log(`[Server] 进销存管理系统已启动: http://localhost:${PORT}`);
+    console.log(`[Server] 登录方式：飞书 OAuth（中国/印尼团队统一）；应急入口：登录页底部"应急登录入口"`);
+    console.log(`[Server] 默认账号 admin/admin 已停用；break-glass 本地管理员须通过 BREAKGLASS_ADMIN_PASSWORD 初始化\n`);
+  });
+
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`\n[ERROR] 端口 ${PORT} 已被占用，服务无法启动。`);
+    } else {
+      console.error('[ERROR] 服务启动失败:', err && err.stack || err);
+    }
+    process.exit(1);
+  });
+}
+
+if (require.main === module) {
+  startServer().catch(e => {
+    console.error('\n[FATAL] 启动失败:', e.message);
+    console.error(e.stack);
+    process.exit(1);
+  });
 }
 
 // ==================== Express 初始化 ====================
 const app = express();
 app.set('trust proxy', 1); // Render 反向代理 TLS 终止后，使 req.protocol/req.secure 正确反映客户端原始协议
+
+// DB-BATCH0 运行时诊断（只观测，不改业务）：必须是第一个中间件，才能覆盖 body 解析、
+// 鉴权、DB 等全部耗时。慢请求日志只记录 method/path/status/ms，不含 body/query/参数。
+const diag = require('./runtime-diagnostics');
+app.use(diag.requestTimingMiddleware);
 
 function asyncHandler(fn) {
   return function (req, res, next) {
@@ -1301,6 +1379,21 @@ app.get('/api/version', asyncHandler((req, res) => {
     timestamp: new Date().toISOString()
   });
 }));
+
+// 运行时诊断端点（不查库）：默认 404，仅在设置 DIAG_ENDPOINT_TOKEN 且请求头
+// x-diag-token 匹配时返回事件循环延迟 / 连接池水位 / 内存；?reset=1 清空直方图窗口。
+// 放在 csrfGuard / apiAuth 之前，使压测脚本在主线程被拖住时也能取到指标。
+app.get(diag.DIAG_ROUTE, diag.runtimeHandler);
+// 故障注入端点：非生产专用，代码级硬门禁。
+// NODE_ENV === 'production' 时**根本不注册这个 route**（不是靠 handler 里 404 兜底），
+// 因此生产环境不可能通过改 DIAG_FAULT_INJECTION / DIAG_ENDPOINT_TOKEN 激活 pg_sleep、
+// 锁等待或事件循环阻塞注入。非生产环境仍需 DIAG_FAULT_INJECTION=1 + token 才生效。
+if (diag.isFaultInjectionAllowed()) {
+  app.get(diag.FAULT_ROUTE, diag.faultHandler);
+  console.warn('[DIAG-FAULT] 故障注入端点已启用（仅非生产环境）: ' + diag.FAULT_ROUTE);
+} else if (diag.isProduction()) {
+  console.log('[DIAG-FAULT] NODE_ENV=production：故障注入 route 未注册（代码级硬门禁）');
+}
 
 // ==================== 认证与权限中间件 ====================
 // 写请求可信 Origin 校验（CSRF 防护；test 环境自动绕过）
@@ -3967,14 +4060,27 @@ function getSnapshotCutoffMap() {
 }
 
 // P1-03-B: 查询最新已确认且锁定的 WAC 版本（唯一读取规则）
-async function latestConfirmedWac(skuCode, country, warehouse) {
-  return await queryOne(`
+// Batch 1.0a: 拆分 PG async / SQLite sync 两条内部路径，消除 transaction(async) 提前 COMMIT bug。
+// 公共 API 保持 async（返回 Promise），17 个 callers 无需修改。
+const _wacLatestSql = `
     SELECT * FROM wac_history
     WHERE sku_code = ? AND country = ? AND warehouse = ?
       AND confirmation_status = 'confirmed' AND is_locked = 1
     ORDER BY version_no DESC
     LIMIT 1
-  `, [skuCode, country, warehouse]);
+  `;
+
+function _latestConfirmedWacSqliteSync(skuCode, country, warehouse) {
+  return queryOne(_wacLatestSql, [skuCode, country, warehouse]);
+}
+
+async function _latestConfirmedWacPg(skuCode, country, warehouse) {
+  return await dbPg.queryOne(_wacLatestSql, [skuCode, country, warehouse]);
+}
+
+async function latestConfirmedWac(skuCode, country, warehouse) {
+  if (isPgDriver()) return await _latestConfirmedWacPg(skuCode, country, warehouse);
+  return _latestConfirmedWacSqliteSync(skuCode, country, warehouse);
 }
 
 // P1-03-B: 在事务内生成下一版本号并插入锁定的 WAC 历史
@@ -4094,13 +4200,18 @@ function latestImportsSql() {
 }
 
 // 刷新库存总表（根据导入记录和业务数据重新计算）
+// Batch 1.0a: 拆分 PG async / SQLite sync 两条内部路径，消除 transaction(async) 提前 COMMIT bug。
+// 公共 API 保持 async，callers 无需修改。
 async function refreshInventoryTotals(snapshotCutoffDate) {
-  // P1-03-B: WAC 不再从文件列读取，改为查 latest confirmed locked WAC 版本
+  if (isPgDriver()) return await _refreshInventoryTotalsPg(snapshotCutoffDate);
+  return _refreshInventoryTotalsSqliteSync(snapshotCutoffDate);
+}
+
+function _refreshInventoryTotalsSqliteSync(snapshotCutoffDate) {
   const warnings = [];
-  // 获取每个 SKU+国家+仓库 的最新可用库存（连同 snapshot_cutoff_date）
   const latestImports = query(latestImportsSql()).rows;
 
-  transaction(async () => {
+  transaction(() => {
     for (const imp of latestImports) {
       const cutoff = imp.snapshot_cutoff_date || snapshotCutoffDate || '';
       const existing = queryOne('SELECT id, weighted_avg_cost, last_inbound_date, first_inbound_date FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
@@ -4111,13 +4222,12 @@ async function refreshInventoryTotals(snapshotCutoffDate) {
       //   2. existing inventory WAC (≠0) — 已存在有效成本，不覆盖
       //   3. opening import WAC (>0) — 库存导入时提供的加权平均成本，用于无正式 WAC 的新库存初始化
       //   4. 0 — 兜底，表示无有效成本
-      const wacRecord = await latestConfirmedWac(imp.sku_code, imp.country, imp.warehouse);
+      const wacRecord = _latestConfirmedWacSqliteSync(imp.sku_code, imp.country, imp.warehouse);
       let wac, wacSource;
       if (wacRecord) {
         wac = wacRecord.new_avg_cost || 0;
         wacSource = 'confirmed';
       } else if (existing && (existing.weighted_avg_cost || 0) !== 0) {
-        // 保留已有有效 WAC，不被新的库存同步覆盖
         wac = existing.weighted_avg_cost || 0;
         wacSource = 'existing';
         warnings.push({
@@ -4126,11 +4236,9 @@ async function refreshInventoryTotals(snapshotCutoffDate) {
           message: '未找到最新已确认加权平均成本，已保留原成本，请完成成本确认。'
         });
       } else if (imp.weighted_avg_cost && Number(imp.weighted_avg_cost) > 0) {
-        // 库存初始化：使用导入文件中的加权平均成本
         wac = Number(imp.weighted_avg_cost);
         wacSource = 'opening';
       } else {
-        // 无有效成本，使用 0
         wac = 0;
         wacSource = 'none';
         warnings.push({
@@ -4141,9 +4249,7 @@ async function refreshInventoryTotals(snapshotCutoffDate) {
       }
       const invValue = (parseInt(imp.available_qty) || 0) * wac;
 
-      // last_inbound_date 更新规则：导入文件有值则更新，否则保留原值
       const newLastInbound = (imp.last_inbound_date && String(imp.last_inbound_date).trim()) ? imp.last_inbound_date : (existing ? existing.last_inbound_date : '');
-      // first_inbound_date 更新规则：导入文件填写新日期才更新；为空则保留旧值
       const newFirstInbound = (imp.first_inbound_date && String(imp.first_inbound_date).trim()) ? imp.first_inbound_date : (existing ? existing.first_inbound_date : '');
       if (existing) {
         run(`UPDATE inventory SET available_qty = ?, weighted_avg_cost = ?, inventory_value = ?, last_import_date = ?, snapshot_cutoff_date = ?, last_inbound_date = ?, first_inbound_date = ?, updated_at = datetime('now') WHERE id = ?`,
@@ -4154,13 +4260,73 @@ async function refreshInventoryTotals(snapshotCutoffDate) {
       }
     }
     // 更新在途、PI未发货、PO未确认等
-    await updateInventoryTransitData();
+    _updateInventoryTransitDataSqliteSync();
+  });
+  return { warnings };
+}
+
+async function _refreshInventoryTotalsPg(snapshotCutoffDate) {
+  const warnings = [];
+  const latestImports = (await dbPg.query(latestImportsSql())).rows;
+
+  await dbPg.transaction(async () => {
+    for (const imp of latestImports) {
+      const cutoff = imp.snapshot_cutoff_date || snapshotCutoffDate || '';
+      const existing = await dbPg.queryOne('SELECT id, weighted_avg_cost, last_inbound_date, first_inbound_date FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
+        [imp.sku_code, imp.country, imp.warehouse]);
+
+      const wacRecord = await _latestConfirmedWacPg(imp.sku_code, imp.country, imp.warehouse);
+      let wac, wacSource;
+      if (wacRecord) {
+        wac = wacRecord.new_avg_cost || 0;
+        wacSource = 'confirmed';
+      } else if (existing && (existing.weighted_avg_cost || 0) !== 0) {
+        wac = existing.weighted_avg_cost || 0;
+        wacSource = 'existing';
+        warnings.push({
+          sku_code: imp.sku_code, country: imp.country, warehouse: imp.warehouse,
+          priority: 'warning',
+          message: '未找到最新已确认加权平均成本，已保留原成本，请完成成本确认。'
+        });
+      } else if (imp.weighted_avg_cost && Number(imp.weighted_avg_cost) > 0) {
+        wac = Number(imp.weighted_avg_cost);
+        wacSource = 'opening';
+      } else {
+        wac = 0;
+        wacSource = 'none';
+        warnings.push({
+          sku_code: imp.sku_code, country: imp.country, warehouse: imp.warehouse,
+          priority: 'high',
+          message: '未找到已确认加权平均成本，成本与金额暂为 0，请尽快完成成本确认。'
+        });
+      }
+      const invValue = (parseInt(imp.available_qty) || 0) * wac;
+
+      const newLastInbound = (imp.last_inbound_date && String(imp.last_inbound_date).trim()) ? imp.last_inbound_date : (existing ? existing.last_inbound_date : '');
+      const newFirstInbound = (imp.first_inbound_date && String(imp.first_inbound_date).trim()) ? imp.first_inbound_date : (existing ? existing.first_inbound_date : '');
+      if (existing) {
+        await dbPg.run(`UPDATE inventory SET available_qty = ?, weighted_avg_cost = ?, inventory_value = ?, last_import_date = ?, snapshot_cutoff_date = ?, last_inbound_date = ?, first_inbound_date = ?, updated_at = datetime('now') WHERE id = ?`,
+          [imp.available_qty, wac, invValue, imp.import_date, cutoff, newLastInbound, newFirstInbound, existing.id]);
+      } else {
+        await dbPg.run(`INSERT INTO inventory (id, sku_code, country, warehouse, available_qty, weighted_avg_cost, inventory_value, last_import_date, snapshot_cutoff_date, last_inbound_date, first_inbound_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [genId('inv'), imp.sku_code, imp.country, imp.warehouse, imp.available_qty, wac, invValue, imp.import_date, cutoff, newLastInbound, newFirstInbound]);
+      }
+    }
+    // 更新在途、PI未发货、PO未确认等（嵌套事务 → SAVEPOINT，同一 ALS client）
+    await _updateInventoryTransitDataPg();
   });
   return { warnings };
 }
 
 // 更新库存的在途数据
+// Batch 1.0a: 拆分 PG async / SQLite sync 两条内部路径。
+// 公共 API 保持 async，17 个 callers 无需修改。
 async function updateInventoryTransitData() {
+  if (isPgDriver()) return await _updateInventoryTransitDataPg();
+  return _updateInventoryTransitDataSqliteSync();
+}
+
+function _updateInventoryTransitDataSqliteSync() {
   // 采购链状态变化自动回写库存总表的在途类字段：
   //   po_unconfirmed_pi_qty / pi_confirmed_unshipped_qty / in_transit_qty
   // 全量重算（SET 聚合值，非 +=），幂等，与导入流程不冲突。
@@ -4255,6 +4421,95 @@ async function updateInventoryTransitData() {
       [pd.sku_code, pd.country, pd.warehouse]);
     if (inv) {
       run('UPDATE inventory SET po_unconfirmed_pi_qty = ? WHERE id = ?', [pd.po_unconfirmed || 0, inv.id]);
+    }
+  }
+  });
+}
+
+async function _updateInventoryTransitDataPg() {
+  await dbPg.transaction(async () => {
+  await dbPg.run('UPDATE inventory SET in_transit_qty = 0');
+  const transitData = (await dbPg.query(`
+    WITH shipped AS (
+      SELECT cii.ci_id, cii.sku_code,
+             SUM(COALESCE(cii.shipped_qty, 0)) AS shipped_qty
+      FROM commercial_invoice_items cii
+      JOIN commercial_invoices ci ON ci.id = cii.ci_id
+      WHERE ci.ci_status NOT IN ('cancelled')
+      GROUP BY cii.ci_id, cii.sku_code
+    ),
+    arrived AS (
+      SELECT lb.related_ci_id AS ci_id, pli.sku_code,
+             SUM(COALESCE(pli.total_qty, 0)) AS arrived_qty
+      FROM logistics_batches lb
+      JOIN packing_lists pl ON pl.logistics_batch_id = lb.id
+      JOIN packing_list_items pli ON pli.pl_id = pl.id
+      WHERE lb.logistics_status = 'completed'
+        AND lb.related_ci_id IS NOT NULL
+      GROUP BY lb.related_ci_id, pli.sku_code
+    ),
+    per_ci_transit AS (
+      SELECT s.sku_code, ci.country, ci.target_warehouse AS warehouse,
+             CASE WHEN COALESCE(s.shipped_qty, 0) - COALESCE(a.arrived_qty, 0) < 0 THEN 0
+                  ELSE COALESCE(s.shipped_qty, 0) - COALESCE(a.arrived_qty, 0) END AS in_transit_qty
+      FROM shipped s
+      JOIN commercial_invoices ci ON ci.id = s.ci_id
+      LEFT JOIN arrived a ON a.ci_id = s.ci_id AND a.sku_code = s.sku_code
+      WHERE ci.country != '' AND ci.target_warehouse != ''
+    )
+    SELECT sku_code, country, warehouse, SUM(in_transit_qty) AS in_transit_qty
+    FROM per_ci_transit
+    GROUP BY sku_code, country, warehouse
+    HAVING SUM(in_transit_qty) > 0
+  `)).rows;
+
+  for (const td of transitData) {
+    const inv = await dbPg.queryOne('SELECT id FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
+      [td.sku_code, td.country, td.warehouse]);
+    if (inv) {
+      await dbPg.run('UPDATE inventory SET in_transit_qty = ? WHERE id = ?', [td.in_transit_qty || 0, inv.id]);
+    }
+  }
+
+  await dbPg.run('UPDATE inventory SET pi_confirmed_unshipped_qty = 0');
+  const piData = (await dbPg.query(`
+    SELECT pii.sku_code,
+           COALESCE(NULLIF(pi.country,''), po.country) as country,
+           COALESCE(NULLIF(pi.target_warehouse,''), po.target_warehouse) as warehouse,
+           SUM(pii.pi_confirmed_qty - pii.shipped_qty) as pi_unshipped
+    FROM proforma_invoice_items pii
+    JOIN proforma_invoices pi ON pii.pi_id = pi.id
+    LEFT JOIN purchase_orders po ON pi.related_po_id = po.id
+    WHERE pi.pi_status NOT IN ('cancelled', 'completed')
+      AND (pii.pi_confirmed_qty - pii.shipped_qty) > 0
+    GROUP BY pii.sku_code,
+             COALESCE(NULLIF(pi.country,''), po.country),
+             COALESCE(NULLIF(pi.target_warehouse,''), po.target_warehouse)
+  `)).rows;
+
+  for (const pd of piData) {
+    const inv = await dbPg.queryOne('SELECT id FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
+      [pd.sku_code, pd.country, pd.warehouse]);
+    if (inv) {
+      await dbPg.run('UPDATE inventory SET pi_confirmed_unshipped_qty = ? WHERE id = ?', [pd.pi_unshipped || 0, inv.id]);
+    }
+  }
+
+  await dbPg.run('UPDATE inventory SET po_unconfirmed_pi_qty = 0');
+  const poData = (await dbPg.query(`
+    SELECT poi.sku_code, po.country, po.target_warehouse as warehouse,
+           SUM(poi.po_qty - poi.transferred_pi_qty) as po_unconfirmed
+    FROM purchase_order_items poi
+    JOIN purchase_orders po ON poi.po_id = po.id
+    WHERE po.po_status NOT IN ('cancelled', 'transferred_pi') AND (poi.po_qty - poi.transferred_pi_qty) > 0
+    GROUP BY poi.sku_code, po.country, po.target_warehouse
+  `)).rows;
+
+  for (const pd of poData) {
+    const inv = await dbPg.queryOne('SELECT id FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
+      [pd.sku_code, pd.country, pd.warehouse]);
+    if (inv) {
+      await dbPg.run('UPDATE inventory SET po_unconfirmed_pi_qty = ? WHERE id = ?', [pd.po_unconfirmed || 0, inv.id]);
     }
   }
   });
@@ -8963,7 +9218,57 @@ app.get('/api/logistics-batches/:id', requireApiPermission('logistics_view'), as
   }
 
   const gOwnerIds = splitIdCsv(batch.listing_owner_ids);
-  res.json({ ...batch, pl_id: pl ? pl.id : '', pl_no: pl ? pl.pl_no : '', pl_status: pl ? pl.status : '', logistics_display_status: deriveLogisticsDisplayStatus(batch.logistics_status), inbound_derived_status: inboundDerivedStatus, listing_owner_ids: gOwnerIds, listing_owner_names: resolveOwnerNames(gOwnerIds) });
+
+  // Freight payment facts: query real settlement records for this batch
+  let freightPaymentFacts = null;
+  if (batch.related_ci_id && batch.total_freight > 0) {
+    const freightCostItems = query(
+      `SELECT id, payment_request_id, payable_amount, currency
+       FROM ci_cost_items
+       WHERE ci_id = ? AND logistics_batch_id = ? AND include_in_landing_cost = 1
+         AND cost_category = 'warehouse_arrival' AND cost_subcategory = 'freight'`,
+      [batch.related_ci_id, batch.id]
+    ).rows;
+    const itemsWithPr = freightCostItems.filter(i => i.payment_request_id);
+    const freightPrIds = [...new Set(itemsWithPr.map(i => i.payment_request_id))];
+    if (freightPrIds.length > 0) {
+      const ph = freightPrIds.map(() => '?').join(',');
+      const freightLogs = query(
+        `SELECT payment_request_id, amount, local_amount, local_rate, local_rate_date, local_currency, paid_date
+         FROM payment_settlement_logs
+         WHERE payment_request_id IN (${ph})
+           AND event_type = 'payment' AND status = 'applied'
+         ORDER BY paid_date`,
+        freightPrIds
+      ).rows;
+      if (freightLogs.length > 0) {
+        const localTotal = freightLogs.reduce((s, l) => s + (Number(l.local_amount) || 0), 0);
+        const paidTotal = freightLogs.reduce((s, l) => s + (Number(l.amount) || 0), 0);
+        const lastPaidDate = freightLogs.reduce((max, l) => (l.paid_date && l.paid_date > max ? l.paid_date : max), '');
+        freightPaymentFacts = {
+          has_real_settlement: true,
+          payment_breakdown: freightLogs.map(l => ({
+            payment_request_id: l.payment_request_id,
+            amount: Number(l.amount) || 0,
+            local_amount: Number(l.local_amount) || 0,
+            local_rate: Number(l.local_rate) || 0,
+            local_rate_date: l.local_rate_date || '',
+            local_currency: l.local_currency || '',
+            paid_date: l.paid_date || ''
+          })),
+          last_paid_date: lastPaidDate,
+          effective_rate: batch.total_freight > 0 ? localTotal / batch.total_freight : null,
+          paid_total: paidTotal,
+          local_total: localTotal
+        };
+      }
+    }
+    if (!freightPaymentFacts) {
+      freightPaymentFacts = { has_real_settlement: false };
+    }
+  }
+
+  res.json({ ...batch, pl_id: pl ? pl.id : '', pl_no: pl ? pl.pl_no : '', pl_status: pl ? pl.status : '', logistics_display_status: deriveLogisticsDisplayStatus(batch.logistics_status), inbound_derived_status: inboundDerivedStatus, listing_owner_ids: gOwnerIds, listing_owner_names: resolveOwnerNames(gOwnerIds), freight_payment_facts: freightPaymentFacts });
 }));
 
 // 注意：这是无前端调用方的遗留裸接口（前端统一走 /create-with-pl）。
@@ -9425,6 +9730,110 @@ app.post('/api/logistics-batches/:id/notify', requireApiPermission('logistics_ed
     }
     res.json({ success: true, notified: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
+}));
+
+// ==================== 历史事实补录 (Historical Backfill) ====================
+
+// A. 补录到货事实：写回 logistics_batches.actual_arrival_date + remark
+app.post('/api/logistics-batches/:id/backfill-arrival', requireApiPermission('logistics_edit'), asyncHandler(async (req, res) => {
+  const batch = queryOne('SELECT * FROM logistics_batches WHERE id = ?', [req.params.id]);
+  if (!batch) return res.status(404).json({ error: '物流批次不存在' });
+  const { actual_arrival_date, evidence } = req.body;
+  if (!actual_arrival_date) return res.status(400).json({ error: '实际到港日期不能为空' });
+  const auditRemark = evidence ? `[补录凭证: ${evidence}]` : '';
+  const newRemark = batch.remark
+    ? batch.remark + (auditRemark ? ' ' + auditRemark : '')
+    : auditRemark;
+  await run('UPDATE logistics_batches SET actual_arrival_date = ?, remark = ? WHERE id = ?',
+    [actual_arrival_date, newRemark, batch.id]);
+  res.json({ success: true, actual_arrival_date, batch_id: batch.id });
+}));
+
+// B. 补录运费付款事实：写入 payment_requests + ci_cost_items + payment_settlement_logs
+app.post('/api/logistics-batches/:id/backfill-freight-payment', requireApiPermission('payment_create'), asyncHandler(async (req, res) => {
+  const batch = queryOne('SELECT * FROM logistics_batches WHERE id = ?', [req.params.id]);
+  if (!batch) return res.status(404).json({ error: '物流批次不存在' });
+  if (!batch.related_ci_id) return res.status(400).json({ error: '物流批次未关联CI' });
+  const d = req.body;
+  if (!d.original_amount || !d.original_currency || !d.paid_date || !d.local_currency || !d.local_rate || !d.local_rate_date || !d.local_amount)
+    return res.status(400).json({ error: '所有付款事实字段均为必填' });
+
+  // Check if freight cost item already exists for this batch
+  let costItem = queryOne(
+    `SELECT * FROM ci_cost_items
+     WHERE ci_id = ? AND logistics_batch_id = ? AND include_in_landing_cost = 1
+       AND cost_category = 'warehouse_arrival' AND cost_subcategory = 'freight'`,
+    [batch.related_ci_id, batch.id]
+  );
+
+  let paymentRequest = null;
+  if (costItem && costItem.payment_request_id) {
+    paymentRequest = queryOne('SELECT * FROM payment_requests WHERE id = ?', [costItem.payment_request_id]);
+  }
+
+  // Create payment_request if not exists
+  if (!paymentRequest) {
+    const prId = genId('pr');
+    const prNo = `PR-FREIGHT-${batch.batch_no}-${Date.now().toString().slice(-6)}`;
+    await run(
+      `INSERT INTO payment_requests (id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no, payee_type, payee_key, payee_name_snapshot, supplier_name, payable_amount, paid_amount, unpaid_amount, currency, payment_status, approval_status, remark)
+       VALUES (?, ?, 'logistics', 'freight', 'logistics_batch', ?, ?, 'forwarder', ?, ?, ?, ?, ?, 0, ?, 'approved', 'approved', ?)`,
+      [prId, prNo, batch.id, batch.batch_no, batch.forwarder_name || 'forwarder', batch.forwarder_name || 'forwarder', batch.forwarder_name || '',
+       d.original_amount, d.original_currency, `[历史补录] ${d.evidence || ''}`]
+    );
+    paymentRequest = { id: prId, request_no: prNo, currency: d.original_currency };
+  }
+
+  // Create or update ci_cost_items
+  if (!costItem) {
+    const ciId = genId('ci');
+    await run(
+      `INSERT INTO ci_cost_items (id, ci_id, ci_no, payment_request_id, request_no, cost_category, cost_subcategory, payable_amount, paid_amount, include_in_landing_cost, payee_name, currency, logistics_batch_id, remark)
+       VALUES (?, ?, ?, ?, ?, 'warehouse_arrival', 'freight', ?, ?, 1, ?, ?, ?, ?)`,
+      [ciId, batch.related_ci_id, batch.related_ci_no || '', paymentRequest.id, paymentRequest.request_no,
+       d.original_amount, d.original_amount, batch.forwarder_name || '', d.original_currency, batch.id, '[历史补录]']
+    );
+  } else if (!costItem.payment_request_id) {
+    await run('UPDATE ci_cost_items SET payment_request_id = ?, request_no = ?, paid_amount = ? WHERE id = ?',
+      [paymentRequest.id, paymentRequest.request_no, d.original_amount, costItem.id]);
+  }
+
+  // Check if settlement log already exists
+  const existingLog = queryOne(
+    'SELECT id FROM payment_settlement_logs WHERE payment_request_id = ? AND event_type = ? AND status = ? AND amount = ? AND paid_date = ?',
+    [paymentRequest.id, 'payment', 'applied', d.original_amount, d.paid_date]
+  );
+  if (existingLog) {
+    return res.status(409).json({ error: '相同的付款记录已存在', payment_request_id: paymentRequest.id });
+  }
+
+  // Create payment_settlement_log
+  const logId = genId('psl');
+  await run(
+    `INSERT INTO payment_settlement_logs (id, payment_request_id, event_type, amount, status, paid_date, original_currency, settlement_country, local_currency, local_rate, local_rate_date, local_rate_type, local_amount, reason, is_legacy)
+     VALUES (?, ?, 'payment', ?, 'applied', ?, ?, ?, ?, ?, ?, 'realtime', ?, ?, 1)`,
+    [logId, paymentRequest.id, d.original_amount, d.paid_date, d.original_currency, batch.target_country || '',
+     d.local_currency, d.local_rate, d.local_rate_date, d.local_amount, `[历史补录] ${d.evidence || ''}`]
+  );
+
+  // Update payment_request paid/unpaid amounts
+  const totalPaid = query(
+    'SELECT COALESCE(SUM(amount), 0) AS total FROM payment_settlement_logs WHERE payment_request_id = ? AND event_type = ? AND status = ?',
+    [paymentRequest.id, 'payment', 'applied']
+  ).rows[0].total;
+  await run('UPDATE payment_requests SET paid_amount = ?, unpaid_amount = ?, payment_status = ? WHERE id = ?',
+    [totalPaid, Math.max(0, d.original_amount - totalPaid), totalPaid >= d.original_amount ? 'paid' : 'partial', paymentRequest.id]);
+
+  // Update ci_cost_items paid_amount
+  await run('UPDATE ci_cost_items SET paid_amount = ? WHERE payment_request_id = ? AND logistics_batch_id = ?',
+    [totalPaid, paymentRequest.id, batch.id]);
+
+  res.json({
+    success: true,
+    payment_request_id: paymentRequest.id,
+    settlement_log_id: logId,
+    batch_id: batch.id
+  });
 }));
 
 // ==================== 入库管理 ====================
@@ -14656,42 +15065,11 @@ app.post('/api/cost-allocation/update-weighted-avg/:ci_id', requireApiPermission
 // WAC确认只更新 inventory.weighted_avg_cost，不更新 available_qty
 const LOGISTICS_STATUS_ARRIVED = 'completed'; // 已到仓
 
-// WAC-COST-SOURCE-V2：从 ci_cost_items 读取成本事实（payable_amount）
-// 成本流：logistics_batches → generate-cost-items → ci_cost_items（payable_amount）
-// 如果 ci_cost_items 存在（已生成成本记录），使用 ci_cost_items.payable_amount
-// 如果不存在（旧数据未生成成本记录），回退到 logistics_batches 静态字段
-function getCiCostSummary(ciId, batch) {
-  const costItems = query(
-    `SELECT cost_category, cost_subcategory, payable_amount
-     FROM ci_cost_items
-     WHERE ci_id = ? AND include_in_landing_cost = 1`,
-    [ciId]
-  ).rows;
-
-  if (costItems.length > 0) {
-    let totalFreight = 0, totalCustoms = 0, totalOther = 0;
-    costItems.forEach(item => {
-      const amount = Number(item.payable_amount) || 0;
-      if (item.cost_category === 'customs_duty') {
-        totalCustoms += amount;
-      } else if (item.cost_category === 'warehouse_arrival' && item.cost_subcategory === 'freight') {
-        totalFreight += amount;
-      } else {
-        totalOther += amount;
-      }
-    });
-    return { totalFreight, totalCustoms, totalOther, source: 'ci_cost_items' };
-  }
-
-  // 回退到 logistics_batches 静态字段（旧数据兼容）
-  return {
-    totalFreight: (Number(batch.international_freight) || 0) + (Number(batch.local_charges) || 0) +
-                  (Number(batch.customs_service_fee) || 0) + (Number(batch.delivery_fee) || 0),
-    totalCustoms: (Number(batch.customs_duty) || 0) + (Number(batch.vat_gst) || 0),
-    totalOther: Number(batch.other_fees) || 0,
-    source: 'logistics_batches'
-  };
-}
+// ==================== WAC Shared Calculator (Phase 1 Design Freeze) ====================
+// computeWacCostFacts: single source of truth for WAC cost computation.
+// Used by both /api/wac/preview and /api/wac/confirm.
+// Fail-closed: any data integrity issue produces a blocker; blockers > 0 → no DB writes.
+const { computeWacCostFacts, resolveExactFxRate, allocateByWeight, WAC_MONETARY_TOLERANCE } = require('./wac-calculator');
 
 // 查询待WAC确认的物流批次（已到仓 且 wac_history 中无该批次的确认记录）
 app.get('/api/wac/pending-batches', requireApiPermission('ci_view'), asyncHandler((req, res) => {
@@ -14732,367 +15110,126 @@ app.get('/api/wac/confirmed-batches', requireApiPermission('ci_view'), asyncHand
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
-// WAC 确认预览：获取物流批次的 PL SKU 明细 + 当前 WAC + landing cost 计算
+// WAC 确认预览：调用共享计算器，返回成本事实 + blockers（允许展示 blockers，blockers > 0 时不可确认）
 app.get('/api/wac/preview/:logistics_batch_id', requireApiPermission('ci_view'), asyncHandler((req, res) => {
   try {
-    const batch = queryOne('SELECT * FROM logistics_batches WHERE id = ?', [req.params.logistics_batch_id]);
-    if (!batch) return res.status(404).json({ error: '物流批次不存在' });
-
-    const pl = queryOne('SELECT * FROM packing_lists WHERE logistics_batch_id = ?', [batch.id]);
-    if (!pl) return res.status(400).json({ error: '该物流批次未关联PL' });
-
-    const plItems = query('SELECT * FROM packing_list_items WHERE pl_id = ? ORDER BY created_at', [pl.id]).rows;
-    if (plItems.length === 0) return res.status(400).json({ error: 'PL无明细数据' });
-
-    const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [batch.related_ci_id || pl.related_ci_id]);
-
-    // WAC-MODEL-V2: 优先从 commercial_invoice_items 读取SKU级采购成本
-    // CI明细存在时：按SKU聚合，保留SKU级加权采购成本，用产品成本比例分摊费用
-    // CI明细不存在时：回退到PL数量 + ci.goods_amount按数量分摊（旧逻辑）
-    const ciItems = ci ? query('SELECT * FROM commercial_invoice_items WHERE ci_id = ? ORDER BY created_at', [ci.id]).rows : [];
-    const useCiItems = ciItems.length > 0;
-
-    // 按SKU聚合
-    const skuMap = new Map();
-    if (useCiItems) {
-      // 从CI明细聚合：保留SKU级采购成本（同SKU不同单价时加权合并）+ 关税税率
-      ciItems.forEach(item => {
-        const skuCode = item.sku_code;
-        const qty = item.shipped_qty || 0;
-        const unitPrice = (item.net_unit_price > 0 ? item.net_unit_price : (item.unit_price || 0));
-        const lineCost = qty * unitPrice;
-        const customsRate = (item.actual_customs_rate !== null && item.actual_customs_rate !== '' && item.actual_customs_rate !== undefined)
-          ? Number(item.actual_customs_rate) : null;
-        if (skuMap.has(skuCode)) {
-          const existing = skuMap.get(skuCode);
-          existing.totalQty += qty;
-          existing.totalCost += lineCost;
-          existing.rowCount++;
-          // 同SKU多行：取第一个非null税率
-          if (existing.customsRate === null && customsRate !== null) existing.customsRate = customsRate;
-        } else {
-          skuMap.set(skuCode, { skuCode, totalQty: qty, totalCost: lineCost, rowCount: 1, customsRate });
-        }
-      });
-    } else {
-      // 回退：从PL聚合（仅有数量，无价格）
-      plItems.forEach(plItem => {
-        const skuCode = plItem.sku_code;
-        const plQty = plItem.total_qty || 0;
-        if (skuMap.has(skuCode)) {
-          skuMap.get(skuCode).totalQty += plQty;
-          skuMap.get(skuCode).rowCount++;
-        } else {
-          skuMap.set(skuCode, { skuCode, totalQty: plQty, totalCost: 0, rowCount: 1, customsRate: null });
-        }
-      });
-    }
-    const aggregatedItems = Array.from(skuMap.values());
-
-    const totalQty = aggregatedItems.reduce((sum, it) => sum + it.totalQty, 0);
-    // CI明细模式：totalProductCost = 各SKU采购成本之和；回退模式：使用 ci.goods_amount
-    const totalProductCost = useCiItems
-      ? aggregatedItems.reduce((sum, it) => sum + it.totalCost, 0)
-      : (ci ? ci.goods_amount || 0 : 0);
-    // WAC-COST-SOURCE-V2: 从 ci_cost_items.payable_amount 读取成本事实
-    // 如果已生成成本记录，使用 ci_cost_items；否则回退到 logistics_batches 静态字段
-    const costSummary = getCiCostSummary(ci.id, batch);
-    const totalFreight = costSummary.totalFreight;
-    const totalCustoms = costSummary.totalCustoms;
-    const totalOther = costSummary.totalOther;
-
-    // WAC-MODEL-V2.1: 关税按SKU税率权重分摊（F-A2规则）
-    // customs_weight = SKU采购成本 × SKU关税税率
-    // 实际总关税按 customs_weight 比例分配，残差给最大权重SKU
-    let customsAllocations = null;
-    const useCustomsRateModel = useCiItems && totalCustoms > 0;
-    if (useCustomsRateModel) {
-      // 计算各SKU关税权重
-      aggregatedItems.forEach(it => {
-        it.customsWeight = (it.customsRate !== null && it.customsRate !== undefined && it.customsRate > 0)
-          ? it.totalCost * it.customsRate : 0;
-      });
-      const totalCustomsWeight = aggregatedItems.reduce((sum, it) => sum + it.customsWeight, 0);
-      if (totalCustomsWeight > 0) {
-        // 按关税权重分摊 + 残差处理
-        const rawAlloc = aggregatedItems.map(it => {
-          const ratio = it.customsWeight / totalCustomsWeight;
-          const theoretical = totalCustoms * ratio;
-          const rounded = Math.round(theoretical * 10000) / 10000;
-          return { skuCode: it.skuCode, theoretical, rounded, final: rounded, adjustment: 0 };
-        });
-        // 锚点：理论值最大的SKU承担残差
-        const anchor = rawAlloc.slice().sort((a, b) => b.theoretical - a.theoretical)[0];
-        const roundedTotal = rawAlloc.reduce((sum, r) => sum + r.rounded, 0);
-        const remainder = Math.round(totalCustoms * 10000) / 10000 - roundedTotal;
-        if (anchor) {
-          anchor.adjustment = remainder;
-          anchor.final = Math.round((anchor.rounded + anchor.adjustment) * 10000) / 10000;
-        }
-        customsAllocations = new Map(rawAlloc.map(r => [r.skuCode, r.final]));
-      }
-      // totalCustomsWeight === 0 时 customsAllocations 保持 null，回退到成本比例
-    }
-
-    const country = batch.target_country || pl.country || '';
-    const warehouse = batch.target_warehouse || pl.target_warehouse || '';
-
-    // 检查是否已确认（wac_history 中存在该批次记录）
-    const existingWac = queryOne('SELECT 1 FROM wac_history WHERE logistics_batch_id = ? LIMIT 1', [batch.id]);
-
-    const items = aggregatedItems.map(aggItem => {
-      const skuCode = aggItem.skuCode;
-      const itemQty = aggItem.totalQty;
-
-      // SKU级加权采购成本
-      const weightedUnitPrice = itemQty > 0 ? aggItem.totalCost / itemQty : 0;
-      // CI明细模式：productCost = 实际SKU级采购成本；回退模式：按数量从ci.goods_amount分摊
-      const productCost = useCiItems
-        ? aggItem.totalCost
-        : (totalQty > 0 ? (ci ? ci.goods_amount || 0 : 0) * (itemQty / totalQty) : 0);
-
-      // 运费/其他费用分摊比例：CI明细模式按产品成本比例，回退模式按数量比例
-      const allocationRatio = useCiItems
-        ? (totalProductCost > 0 ? aggItem.totalCost / totalProductCost : 0)
-        : (totalQty > 0 ? itemQty / totalQty : 0);
-      const freightCost = totalFreight * allocationRatio;
-      // 关税：优先使用税率模型分摊，无税率时回退到成本比例
-      const customsCost = customsAllocations
-        ? (customsAllocations.get(skuCode) || 0)
-        : totalCustoms * allocationRatio;
-      const otherCost = totalOther * allocationRatio;
-      const totalLandingCost = productCost + freightCost + customsCost + otherCost;
-      const unitLandingCost = itemQty > 0 ? totalLandingCost / itemQty : 0;
-
-      const invRecord = queryOne('SELECT available_qty, weighted_avg_cost FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
-        [skuCode, country, warehouse]);
-      const currentWac = invRecord ? (invRecord.weighted_avg_cost || 0) : 0;
-      const availableQty = invRecord ? (invRecord.available_qty || 0) : 0;
-
-      const skuInfo = queryOne('SELECT product_name, model, brand FROM skus WHERE sku_code = ?', [skuCode]);
-
-      return {
-        sku_code: skuCode,
-        product_name: skuInfo ? (skuInfo.product_name || '') : '',
-        model: skuInfo ? (skuInfo.model || '') : '',
-        pl_qty: itemQty,
-        pl_row_count: aggItem.rowCount,
-        weighted_unit_price: Math.round(weightedUnitPrice * 10000) / 10000,
-        customs_rate: aggItem.customsRate,
-        available_qty: availableQty,
-        current_wac: currentWac,
-        product_cost: Math.round(productCost * 10000) / 10000,
-        freight_cost: Math.round(freightCost * 10000) / 10000,
-        customs_cost: Math.round(customsCost * 10000) / 10000,
-        other_cost: Math.round(otherCost * 10000) / 10000,
-        total_landing_cost: Math.round(totalLandingCost * 10000) / 10000,
-        unit_landing_cost: Math.round(unitLandingCost * 10000) / 10000
-      };
-    });
-
-    res.json({
-      batch_id: batch.id,
-      batch_no: batch.batch_no,
-      ci_no: ci ? ci.ci_no : '',
-      ci_id: ci ? ci.id : '',
-      country,
-      warehouse,
-      logistics_status: batch.logistics_status,
-      already_confirmed: !!existingWac,
-      actual_arrival_date: batch.actual_arrival_date || '',
-      total_freight: totalFreight,
-      total_customs: totalCustoms,
-      total_other: totalOther,
-      goods_amount: ci ? ci.goods_amount || 0 : 0,
-      total_product_cost: Math.round(totalProductCost * 10000) / 10000,
-      cost_source: useCiItems ? 'ci_items' : 'pl_fallback',
-      cost_data_source: costSummary.source,
-      customs_allocation: customsAllocations ? 'tax_rate_model' : 'cost_ratio_fallback',
-      currency: ci ? ci.currency || 'USD' : 'USD',
-      freight_currency: batch.freight_currency || 'USD',
-      total_pl_qty: totalQty,
-      items
-    });
+    const result = computeWacCostFacts(req.params.logistics_batch_id);
+    res.json(result);
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
-// WAC 确认：从物流批次触发 WAC 计算，写入 wac_history + 更新 inventory.weighted_avg_cost
-// 只更新成本，不更新库存数量；不写入 logistics_batches 状态字段
+// WAC 确认：重新读取 DB facts + 重新调用计算器。前端只传 items[{sku_code, old_qty}]。
+// blockers > 0 时不可确认（0 DB writes）。成功后只写 wac_history + 更新 inventory.weighted_avg_cost。
+// 不修改 available_qty、inventory_value、不创建入库数量事实、不修改 SKU reference price、不写 cost_update_logs。
 app.post('/api/wac/confirm/:logistics_batch_id', requireApiPermission('ci_edit'), asyncHandler((req, res) => {
   try {
-    const batch = queryOne('SELECT * FROM logistics_batches WHERE id = ?', [req.params.logistics_batch_id]);
-    if (!batch) return res.status(404).json({ error: '物流批次不存在' });
+    // ── 1. Re-read DB facts via shared calculator ──
+    const { blockers, items, meta } = computeWacCostFacts(req.params.logistics_batch_id);
 
-    // 入口条件：物流"已到仓"状态（使用常量，不绑定 completed 字符串）
-    if (batch.logistics_status !== LOGISTICS_STATUS_ARRIVED) {
-      return res.status(400).json({ error: '物流批次必须为「已到仓」状态才能进行WAC确认' });
+    // ── 2. Blockers > 0 → no DB writes ──
+    if (blockers.length > 0) {
+      return res.status(422).json({ error: '存在阻断器，无法确认WAC', blockers, meta });
     }
 
-    // 重复确认检查：以 wac_history 记录为事实来源
-    const existingWac = queryOne('SELECT 1 FROM wac_history WHERE logistics_batch_id = ? LIMIT 1', [batch.id]);
-    if (existingWac) {
+    // ── 3. Already confirmed check ──
+    if (meta.already_confirmed) {
       return res.status(409).json({ error: '该物流批次已完成WAC确认' });
     }
 
-    const pl = queryOne('SELECT * FROM packing_lists WHERE logistics_batch_id = ?', [batch.id]);
-    if (!pl) return res.status(400).json({ error: '该物流批次未关联PL' });
-
-    const plItems = query('SELECT * FROM packing_list_items WHERE pl_id = ? ORDER BY created_at', [pl.id]).rows;
-    if (plItems.length === 0) return res.status(400).json({ error: 'PL无明细数据' });
-
-    const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [batch.related_ci_id || pl.related_ci_id]);
-    if (!ci) return res.status(400).json({ error: '未找到关联CI' });
-
-    // WAC-MODEL-V2: 优先从 commercial_invoice_items 读取SKU级采购成本
-    const ciItems = query('SELECT * FROM commercial_invoice_items WHERE ci_id = ? ORDER BY created_at', [ci.id]).rows;
-    const useCiItems = ciItems.length > 0;
-
-    // 按SKU聚合：确保每个SKU只执行一次WAC计算
-    const skuMap = new Map();
-    if (useCiItems) {
-      // 从CI明细聚合：保留SKU级采购成本（同SKU不同单价时加权合并）+ 关税税率
-      ciItems.forEach(item => {
-        const skuCode = item.sku_code;
-        const qty = item.shipped_qty || 0;
-        const unitPrice = (item.net_unit_price > 0 ? item.net_unit_price : (item.unit_price || 0));
-        const lineCost = qty * unitPrice;
-        const customsRate = (item.actual_customs_rate !== null && item.actual_customs_rate !== '' && item.actual_customs_rate !== undefined)
-          ? Number(item.actual_customs_rate) : null;
-        if (skuMap.has(skuCode)) {
-          const existing = skuMap.get(skuCode);
-          existing.totalQty += qty;
-          existing.totalCost += lineCost;
-          if (existing.customsRate === null && customsRate !== null) existing.customsRate = customsRate;
-        } else {
-          skuMap.set(skuCode, { skuCode, totalQty: qty, totalCost: lineCost, customsRate });
-        }
-      });
-    } else {
-      // 回退：从PL聚合（仅有数量，无价格）
-      plItems.forEach(plItem => {
-        const skuCode = plItem.sku_code;
-        const plQty = plItem.total_qty || 0;
-        if (skuMap.has(skuCode)) {
-          skuMap.get(skuCode).totalQty += plQty;
-        } else {
-          skuMap.set(skuCode, { skuCode, totalQty: plQty, totalCost: 0, customsRate: null });
-        }
-      });
-    }
-    const aggregatedItems = Array.from(skuMap.values());
-
+    // ── 4. Validate old_qty from frontend ──
     const userItems = req.body.items || [];
-    if (userItems.length === 0) return res.status(400).json({ error: '请提供库存数量数据' });
+    if (!Array.isArray(userItems) || userItems.length === 0) {
+      return res.status(400).json({ error: '请提供库存数量数据 (items[{sku_code, old_qty}])' });
+    }
 
-    const totalQty = aggregatedItems.reduce((sum, it) => sum + it.totalQty, 0);
-    // CI明细模式：totalProductCost = 各SKU采购成本之和；回退模式：使用 ci.goods_amount
-    const totalProductCost = useCiItems
-      ? aggregatedItems.reduce((sum, it) => sum + it.totalCost, 0)
-      : (ci.goods_amount || 0);
-    // WAC-COST-SOURCE-V2: 从 ci_cost_items.payable_amount 读取成本事实
-    // 如果已生成成本记录，使用 ci_cost_items；否则回退到 logistics_batches 静态字段
-    const costSummary = getCiCostSummary(ci.id, batch);
-    const totalFreight = costSummary.totalFreight;
-    const totalCustoms = costSummary.totalCustoms;
-    const totalOther = costSummary.totalOther;
+    // Build old_qty map with strict validation — no auto-zeroing
+    const oldQtyMap = new Map();
+    const oldQtyErrors = [];
+    for (const ui of userItems) {
+      const skuCode = String(ui.sku_code || '').trim();
+      if (!skuCode) continue;
+      const raw = ui.old_qty;
+      if (raw === null || raw === undefined || raw === '') {
+        oldQtyErrors.push({ sku_code: skuCode, code: 'OLD_QTY_MISSING', message: `SKU ${skuCode} 缺少 old_qty` });
+        continue;
+      }
+      const num = Number(raw);
+      if (!Number.isFinite(num) || num < 0) {
+        oldQtyErrors.push({ sku_code: skuCode, code: 'OLD_QTY_INVALID', message: `SKU ${skuCode} 的 old_qty="${raw}" 无效 (非有限数或负数)` });
+        continue;
+      }
+      oldQtyMap.set(skuCode, num);
+    }
+    if (oldQtyErrors.length > 0) {
+      return res.status(400).json({ error: 'old_qty 数据校验失败', errors: oldQtyErrors });
+    }
 
-    // WAC-MODEL-V2.1: 关税按SKU税率权重分摊（F-A2规则）
-    let customsAllocations = null;
-    const useCustomsRateModel = useCiItems && totalCustoms > 0;
-    if (useCustomsRateModel) {
-      aggregatedItems.forEach(it => {
-        it.customsWeight = (it.customsRate !== null && it.customsRate !== undefined && it.customsRate > 0)
-          ? it.totalCost * it.customsRate : 0;
-      });
-      const totalCustomsWeight = aggregatedItems.reduce((sum, it) => sum + it.customsWeight, 0);
-      if (totalCustomsWeight > 0) {
-        const rawAlloc = aggregatedItems.map(it => {
-          const ratio = it.customsWeight / totalCustomsWeight;
-          const theoretical = totalCustoms * ratio;
-          const rounded = Math.round(theoretical * 10000) / 10000;
-          return { skuCode: it.skuCode, theoretical, rounded, final: rounded, adjustment: 0 };
-        });
-        const anchor = rawAlloc.slice().sort((a, b) => b.theoretical - a.theoretical)[0];
-        const roundedTotal = rawAlloc.reduce((sum, r) => sum + r.rounded, 0);
-        const remainder = Math.round(totalCustoms * 10000) / 10000 - roundedTotal;
-        if (anchor) {
-          anchor.adjustment = remainder;
-          anchor.final = Math.round((anchor.rounded + anchor.adjustment) * 10000) / 10000;
-        }
-        customsAllocations = new Map(rawAlloc.map(r => [r.skuCode, r.final]));
+    // Ensure every SKU in items has an old_qty
+    const missingOldQty = items.filter(it => !oldQtyMap.has(it.sku_code)).map(it => it.sku_code);
+    if (missingOldQty.length > 0) {
+      return res.status(400).json({ error: `以下SKU缺少 old_qty: ${missingOldQty.join(', ')}` });
+    }
+
+    // ── 4b. WAC_DENOMINATOR_ZERO: old_qty + batch_qty <= 0 → reject ──
+    const denomErrors = [];
+    for (const item of items) {
+      const oldQty = oldQtyMap.get(item.sku_code) ?? 0;
+      if (oldQty + item.batch_qty <= 0) {
+        denomErrors.push({ sku_code: item.sku_code, code: 'WAC_DENOMINATOR_ZERO', message: `SKU ${item.sku_code}: old_qty(${oldQty}) + batch_qty(${item.batch_qty}) <= 0` });
       }
     }
+    if (denomErrors.length > 0) {
+      return res.status(422).json({ error: 'WAC分母为零或负数', errors: denomErrors });
+    }
 
-    const country = batch.target_country || pl.country || '';
-    const warehouse = batch.target_warehouse || pl.target_warehouse || '';
-
+    // ── 5. Write WAC history + update inventory.weighted_avg_cost only ──
+    const batch = queryOne('SELECT * FROM logistics_batches WHERE id = ?', [req.params.logistics_batch_id]);
     const user = queryOne('SELECT name FROM users WHERE id = ?', [req.currentUserId]);
     const userName = user ? user.name : '';
     const today = new Date().toISOString().split('T')[0];
     const logs = [];
 
+    // Load CI for wac_history fields
+    const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [meta.ci_id]);
+
     transaction(() => {
-      aggregatedItems.forEach(aggItem => {
-        const skuCode = aggItem.skuCode;
-        const itemQty = aggItem.totalQty;
-        if (itemQty <= 0) return;
+      for (const item of items) {
+        const skuCode = item.sku_code;
+        const batchQty = item.batch_qty;
+        if (batchQty <= 0) continue;
 
-        // 从用户提交数据中获取 old_qty
-        const userInput = userItems.find(it => it.sku_code === skuCode);
-        const oldQty = userInput ? (parseFloat(userInput.old_qty) || 0) : 0;
-
-        // 读取当前 WAC（从 inventory 总表）
-        const invRecord = queryOne('SELECT id, available_qty, weighted_avg_cost FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
-          [skuCode, country, warehouse]);
-        const oldAvgCost = invRecord ? (invRecord.weighted_avg_cost || 0) : 0;
+        const oldQty = oldQtyMap.get(skuCode) ?? 0; // 0 is legal
+        const unitLandingCost = item.unit_landing_cost;
+        const totalLandingCost = item.total_landing_cost_local;
+        const oldAvgCost = item.current_wac;
         const originalInventoryValue = oldQty * oldAvgCost;
 
-        // SKU级加权采购成本
-        const weightedUnitPrice = itemQty > 0 ? aggItem.totalCost / itemQty : 0;
-        // CI明细模式：productCost = 实际SKU级采购成本；回退模式：按数量从ci.goods_amount分摊
-        const productCost = useCiItems
-          ? aggItem.totalCost
-          : (totalQty > 0 ? (ci.goods_amount || 0) * (itemQty / totalQty) : 0);
-
-        // 运费/其他费用分摊比例：CI明细模式按产品成本比例，回退模式按数量比例
-        const allocationRatio = useCiItems
-          ? (totalProductCost > 0 ? aggItem.totalCost / totalProductCost : 0)
-          : (totalQty > 0 ? itemQty / totalQty : 0);
-        const freightCost = totalFreight * allocationRatio;
-        // 关税：优先使用税率模型分摊，无税率时回退到成本比例
-        const customsCost = customsAllocations
-          ? (customsAllocations.get(skuCode) || 0)
-          : totalCustoms * allocationRatio;
-        const otherCost = totalOther * allocationRatio;
-        const totalLandingCost = productCost + freightCost + customsCost + otherCost;
-        const unitLandingCost = itemQty > 0 ? totalLandingCost / itemQty : 0;
-
-        // WAC 移动加权公式
-        const newQty = oldQty + itemQty;
+        // WAC moving weighted average formula
+        const newQty = oldQty + batchQty;
         const newAvgCost = newQty > 0
-          ? (oldQty * oldAvgCost + itemQty * unitLandingCost) / newQty
+          ? (oldQty * oldAvgCost + batchQty * unitLandingCost) / newQty
           : unitLandingCost;
         const roundedAvgCost = Math.round(newAvgCost * 10000) / 10000;
 
         const skuInfo = queryOne('SELECT model, brand FROM skus WHERE sku_code = ?', [skuCode]);
 
-        // 生成并锁定 WAC 历史版本（记录 logistics_batch_id 追踪来源）
+        // Write wac_history
         const wacVer = generateWacVersion({
-          ci_id: ci.id,
-          ci_no: ci.ci_no,
-          po_id: ci.related_po_id || '',
-          po_no: ci.related_po_no || '',
-          pi_id: ci.related_pi_id || '',
-          pi_no: ci.related_pi_no || '',
+          ci_id: meta.ci_id,
+          ci_no: meta.ci_no,
+          po_id: ci ? (ci.related_po_id || '') : '',
+          po_no: ci ? (ci.related_po_no || '') : '',
+          pi_id: ci ? (ci.related_pi_id || '') : '',
+          pi_no: ci ? (ci.related_pi_no || '') : '',
           sku_code: skuCode,
           model: skuInfo ? (skuInfo.model || '') : '',
-          brand: ci.brand || (skuInfo ? (skuInfo.brand || '') : ''),
-          country: country,
-          warehouse: warehouse,
+          brand: ci ? (ci.brand || '') : (skuInfo ? (skuInfo.brand || '') : ''),
+          country: item.country,
+          warehouse: item.warehouse,
           original_qty: oldQty,
           original_avg_cost: oldAvgCost,
           original_inventory_value: originalInventoryValue,
-          inbound_qty: itemQty,
+          inbound_qty: batchQty,
           unit_landing_cost: unitLandingCost,
           inbound_total_cost: totalLandingCost,
           new_avg_cost: roundedAvgCost,
@@ -15101,22 +15238,25 @@ app.post('/api/wac/confirm/:logistics_batch_id', requireApiPermission('ci_edit')
           logistics_batch_id: batch.id
         });
 
-        // 只更新 inventory.weighted_avg_cost 和 inventory_value，不更新 available_qty
+        // Only update inventory.weighted_avg_cost — NOT available_qty, NOT inventory_value
+        const invRecord = queryOne('SELECT id FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
+          [skuCode, item.country, item.warehouse]);
         if (invRecord) {
-          const newInvValue = (invRecord.available_qty || 0) * roundedAvgCost;
-          run('UPDATE inventory SET weighted_avg_cost = ?, inventory_value = ?, updated_at = datetime(\'now\') WHERE id = ?',
-            [roundedAvgCost, newInvValue, invRecord.id]);
+          run('UPDATE inventory SET weighted_avg_cost = ?, updated_at = datetime(\'now\') WHERE id = ?',
+            [roundedAvgCost, invRecord.id]);
         }
 
-        // 记录成本更新日志
-        const logId = genId('cul');
-        run(`INSERT INTO cost_update_logs (id, sku_code, country, warehouse, related_po_no, related_pi_no, related_ci_no, original_qty, old_avg_cost, inbound_qty, ci_unit_cost, unit_landing_cost, new_qty, new_avg_cost, operator_id, operator_name, import_file, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [logId, skuCode, country, warehouse, ci.related_po_no || '', ci.related_pi_no || '', ci.ci_no,
-           oldQty, oldAvgCost, itemQty, weightedUnitPrice, unitLandingCost, newQty, roundedAvgCost,
-           req.currentUserId, userName, '', `WAC确认-物流批次:${batch.batch_no}`]);
-
-        logs.push({ sku_code: skuCode, version_no: wacVer.version_no, wac_id: wacVer.id, original_qty: oldQty, old_avg_cost: oldAvgCost, inbound_qty: itemQty, unit_landing_cost: unitLandingCost, new_avg_cost: roundedAvgCost });
-      });
+        logs.push({
+          sku_code: skuCode,
+          version_no: wacVer.version_no,
+          wac_id: wacVer.id,
+          original_qty: oldQty,
+          old_avg_cost: oldAvgCost,
+          inbound_qty: batchQty,
+          unit_landing_cost: unitLandingCost,
+          new_avg_cost: roundedAvgCost
+        });
+      }
     });
 
     res.json({ success: true, confirmed_count: logs.length, logs });
@@ -16737,76 +16877,6 @@ process.on('uncaughtException', (err) => {
 process.on('unhandledRejection', (reason) => {
   console.error('[FATAL] 未处理的 Promise 拒绝:', reason);
 });
-
-// ==================== 启动前环境诊断（Render 部署排查用）====================
-// 在任何 DB 操作之前检查所有必需环境变量，避免进程静默退出导致 Render 只显示 "Application exited early"
-if (require.main === module) {
-  console.log('\n========== 启动前环境诊断 ==========');
-  console.log(`[DIAG] NODE_ENV = ${NODE_ENV || '(未设置)'}`);
-  console.log(`[DIAG] DB_DRIVER = ${process.env.DB_DRIVER || '(默认 sqlite)'}`);
-  console.log(`[DIAG] PORT = ${PORT}`);
-  console.log(`[DIAG] DATABASE_URL = ${process.env.DATABASE_URL ? '已设置 (长度=' + process.env.DATABASE_URL.length + ')' : '❌ 未设置'}`);
-  console.log(`[DIAG] BREAKGLASS_ADMIN_PASSWORD = ${BREAKGLASS_ADMIN_PASSWORD ? '已设置 (长度=' + BREAKGLASS_ADMIN_PASSWORD.length + ', 强度=' + (isStrongPassword(BREAKGLASS_ADMIN_PASSWORD) ? '合格' : '❌不合格') + ')' : '❌ 未设置'}`);
-  console.log(`[DIAG] FEISHU_APP_ID = ${FEISHU_APP_ID ? '已设置' : '(未设置)'}`);
-  console.log(`[DIAG] FEISHU_APP_SECRET = ${FEISHU_APP_SECRET ? '已设置' : '(未设置)'}`);
-  console.log(`[DIAG] FEISHU_REDIRECT_URI = ${FEISHU_REDIRECT_URI || '(未设置)'}`);
-  console.log(`[DIAG] TRUSTED_ORIGINS = ${TRUSTED_ORIGINS.length > 0 ? TRUSTED_ORIGINS.join(', ') : '(未设置)'}`);
-  console.log(`[DIAG] COOKIE_SECURE = ${COOKIE_SECURE}`);
-  console.log(`[DIAG] CSRF_DISABLE = ${CSRF_DISABLE}`);
-
-  // PG 模式下 DATABASE_URL 是必需的
-  if ((process.env.DB_DRIVER || '').toLowerCase() === 'pg' && !process.env.DATABASE_URL) {
-    console.error('\n[FATAL] DB_DRIVER=pg 但 DATABASE_URL 未设置！请在 Render Dashboard → Environment 中配置 DATABASE_URL（Supabase 直连串）。');
-    console.error('[FATAL] 格式：postgresql://postgres:<密码>@db.<项目ref>.supabase.co:5432/postgres');
-    process.exit(1);
-  }
-
-  // BREAKGLASS_ADMIN_PASSWORD 缺失或弱密码会导致 bootstrapBreakGlass 抛异常
-  if (!BREAKGLASS_ADMIN_PASSWORD || !isStrongPassword(BREAKGLASS_ADMIN_PASSWORD)) {
-    console.error('\n[FATAL] BREAKGLASS_ADMIN_PASSWORD 未设置或强度不足（需≥12位且含大小写与数字）！');
-    console.error('[FATAL] 请在 Render Dashboard → Environment 中配置 BREAKGLASS_ADMIN_PASSWORD。');
-    console.error('[FATAL] bootstrapBreakGlass() 会在 app.listen() 之前抛出异常，导致进程立即退出。');
-    process.exit(1);
-  }
-
-  console.log('[DIAG] 环境变量检查通过 ✓');
-  console.log('=====================================\n');
-}
-
-// break-glass 本地管理员初始化（fail-closed：缺强密码则启动失败）
-// P0-FIX-1：仅在直接运行 server.js 时执行启动副作用（app.listen / bootstrapBreakGlass / initDatabase）
-// require(server.js) 作为模块时不执行，避免脚本污染真实库
-if (require.main === module) {
-  // 用 try-catch 包裹启动序列，确保任何异常都有清晰的日志输出（Render 排查用）
-  try {
-    console.log('[STARTUP] 开始初始化 break-glass 管理员...');
-    bootstrapBreakGlass();
-    console.log('[STARTUP] break-glass 管理员初始化完成 ✓');
-  } catch (e) {
-    console.error('\n[FATAL] bootstrapBreakGlass() 失败:', e.message);
-    console.error(e.stack);
-    console.error('\n[FATAL] 服务无法启动。请检查上述错误并修正环境变量配置。');
-    process.exit(1);
-  }
-
-  console.log('[STARTUP] 正在启动 HTTP 服务 (端口 ' + PORT + ')...');
-  const server = app.listen(PORT, () => {
-    console.log(`\n[Server] 进销存管理系统已启动: http://localhost:${PORT}`);
-    console.log(`[Server] 登录方式：飞书 OAuth（中国/印尼团队统一）；应急入口：登录页底部"应急登录入口"`);
-    console.log(`[Server] 默认账号 admin/admin 已停用；break-glass 本地管理员须通过 BREAKGLASS_ADMIN_PASSWORD 初始化\n`);
-  });
-
-  server.on('error', (err) => {
-    if (err.code === 'EADDRINUSE') {
-      console.error(`\n[ERROR] 端口 ${PORT} 已被占用，服务无法启动。`);
-      console.error(`        请先停止占用该端口的程序，或修改 server.js 中的 PORT 后重试。`);
-      console.error(`        否则前端访问时会提示 "Failed to fetch"（连不上后端）。\n`);
-    } else {
-      console.error('[ERROR] 服务启动失败:', err && err.stack || err);
-    }
-    process.exit(1);
-  });
-}
 
 // PAY-CORE P0-1：供 scripts/backfill-payable-items.js 复用，不影响运行时
 module.exports = {

@@ -10597,11 +10597,137 @@ async function viewLogDetail(id){
       '<div class="detail-item"><span class="detail-label">'+t('logistics.detail.total_freight','综合运费')+'</span><span class="detail-value">'+fmtMoney(l.total_freight,l.freight_currency)+'</span></div>'+
       '<div class="detail-item"><span class="detail-label">'+t('logistics.detail.fee_status','费用状态')+'</span><span class="detail-value">'+t('logistics.fee.'+l.fee_status, l.fee_status)+'</span></div>'+
       '</div></div>'+
+      // ── Freight payment facts section ──
+      (function(){
+        var fpf=l.freight_payment_facts;
+        if(!fpf){
+          return '';
+        }
+        if(!fpf.has_real_settlement){
+          return '<div class="detail-section"><h3>'+t('logistics.detail.payment_facts','付款事实')+'</h3>'+
+            '<div style="background:#fffbe6;border:1px solid #ffe58f;border-radius:6px;padding:10px 14px;font-size:13px;color:#d48806">'+
+            '⚠️ '+t('logistics.detail.payment_fact_missing','付款事实缺失，需要历史付款记录')+
+            '</div></div>';
+        }
+        var pb=fpf.payment_breakdown||[];
+        var pbHtml=pb.length?'<div style="margin-top:8px"><table class="data-table" style="font-size:11px;min-width:500px"><thead><tr>'+
+          '<th>PR ID</th><th>'+t('wac.original_amount','原始金额')+'</th><th>'+t('logistics.detail.local_currency','本币')+'</th><th>'+t('logistics.detail.frozen_fx_rate','冻结汇率')+'</th><th>'+t('logistics.detail.fx_rate_date','汇率日期')+'</th><th>'+t('logistics.detail.actual_payment_date','付款日期')+'</th><th>'+t('logistics.detail.local_amount','本币金额')+'</th>'+
+          '</tr></thead><tbody>'+
+          pb.map(function(pd){return '<tr>'+
+            '<td class="cell-id">'+esc(pd.payment_request_id)+'</td>'+
+            '<td class="text-right">'+Number(pd.amount).toFixed(2)+'</td>'+
+            '<td>'+esc(pd.local_currency)+'</td>'+
+            '<td class="text-right">'+Number(pd.local_rate).toFixed(4)+'</td>'+
+            '<td class="cell-date">'+fmtDate(pd.local_rate_date)+'</td>'+
+            '<td class="cell-date">'+fmtDate(pd.paid_date)+'</td>'+
+            '<td class="text-right">'+Number(pd.local_amount).toFixed(2)+'</td>'+
+          '</tr>';}).join('')+
+          '</tbody></table></div>':'';
+        return '<div class="detail-section"><h3>'+t('logistics.detail.payment_facts','付款事实')+'</h3><div class="detail-grid">'+
+          '<div class="detail-item"><span class="detail-label">'+t('logistics.detail.payment_status','付款状态')+'</span><span class="detail-value">✅ '+t('wac.import_ok','就绪')+'</span></div>'+
+          '<div class="detail-item"><span class="detail-label">'+t('logistics.detail.original_currency','原始货币')+'</span><span class="detail-value">'+esc(l.freight_currency)+'</span></div>'+
+          '<div class="detail-item"><span class="detail-label">'+t('logistics.detail.business_freight','业务运费金额')+'</span><span class="detail-value">'+fmtMoney(l.total_freight,l.freight_currency)+'</span></div>'+
+          '<div class="detail-item"><span class="detail-label">'+t('logistics.detail.actual_payment_date','实际付款日期')+'</span><span class="detail-value">'+fmtDate(fpf.last_paid_date)+'</span></div>'+
+          '<div class="detail-item"><span class="detail-label">'+t('logistics.detail.local_currency','本币')+'</span><span class="detail-value">'+esc(pb[0]?pb[0].local_currency:'')+'</span></div>'+
+          '<div class="detail-item"><span class="detail-label">'+t('logistics.detail.effective_rate','有效汇率')+'</span><span class="detail-value">'+(fpf.effective_rate!=null?Number(fpf.effective_rate).toFixed(4):'-')+'</span></div>'+
+          '<div class="detail-item"><span class="detail-label">'+t('logistics.detail.local_amount','本币金额')+'</span><span class="detail-value">'+Number(fpf.local_total||0).toFixed(2)+'</span></div>'+
+          '</div>'+pbHtml+'</div>';
+      })()+
       (l.remark?'<div class="detail-section"><h3>'+t('logistics.detail.remark','备注')+'</h3><div>'+esc(l.remark)+'</div></div>':'')+
       '</div>',
-      '<button class="btn btn-secondary" onclick="closeModal()">'+t('common.close','关闭')+'</button>'+(hasPermission('logistics_edit')?'<button class="btn btn-primary" onclick="closeModal();editLog(\''+id+'\')">'+t('common.edit','编辑')+'</button>':''),'modal-ci-create');
+      '<button class="btn btn-secondary" onclick="closeModal()">'+t('common.close','关闭')+'</button>'+
+      (hasPermission('logistics_edit')?'<button class="btn btn-secondary" onclick="backfillArrival(\''+id+'\')">'+t('wac.backfill_btn_arrival','补录到货')+'</button>':'')+
+      (hasPermission('payment_create')?'<button class="btn btn-secondary" onclick="backfillFreightPayment(\''+id+'\')">'+t('wac.backfill_btn_freight','补录运费付款')+'</button>':'')+
+      (hasPermission('logistics_edit')?'<button class="btn btn-primary" onclick="closeModal();editLog(\''+id+'\')">'+t('common.edit','编辑')+'</button>':''),'modal-ci-create');
   }catch(e){showToast(e.message,'danger')}
 }
+
+// ==================== 历史事实补录 (Historical Backfill) ====================
+
+async function backfillArrival(batchId){
+  try{
+    const l=await api('/api/logistics-batches/'+batchId);
+    openModal(t('wac.backfill_arrival_title','补录到货事实')+' - '+esc(l.batch_no),
+      '<div class="form-card" style="box-shadow:none;padding:0">'+
+      '<div class="form-grid">'+
+      '<div class="form-group form-group-full"><label>'+t('wac.backfill_actual_arrival','实际到港日期')+' <span class="required">*</span></label>'+
+      '<input type="date" id="bf-arrival-date" value="'+esc(l.actual_arrival_date||'')+'" style="width:100%"></div>'+
+      '<div class="form-group form-group-full"><label>'+t('wac.backfill_evidence','凭证/审计信息')+'</label>'+
+      '<input type="text" id="bf-evidence" placeholder="'+t('wac.backfill_evidence','凭证/审计信息')+'" style="width:100%"></div>'+
+      '</div>'+
+      '<div style="font-size:12px;color:#999;margin-top:8px">'+t('wac.backfill_arrival_hint','补录实际到港日期和审计信息')+'</div>'+
+      '</div>',
+      '<button class="btn btn-secondary" onclick="closeModal()">'+t('common.cancel','取消')+'</button>'+
+      '<button class="btn btn-primary" onclick="submitBackfillArrival(\''+batchId+'\')">'+t('wac.backfill_submit','提交补录')+'</button>',
+      'modal-ci-create');
+  }catch(e){showToast(e.message,'danger')}
+}
+
+async function submitBackfillArrival(batchId){
+  const date=document.getElementById('bf-arrival-date').value;
+  const evidence=document.getElementById('bf-evidence').value;
+  if(!date){showToast(t('wac.backfill_arrival_date','到港日期')+' required','danger');return;}
+  try{
+    await api('/api/logistics-batches/'+batchId+'/backfill-arrival','POST',{actual_arrival_date:date,evidence:evidence});
+    closeModal();
+    showToast(t('wac.backfill_success','补录成功'),'success');
+    viewLogDetail(batchId);
+  }catch(e){showToast(e.message,'danger')}
+}
+
+async function backfillFreightPayment(batchId){
+  try{
+    const l=await api('/api/logistics-batches/'+batchId);
+    openModal(t('wac.backfill_freight_title','补录运费付款事实')+' - '+esc(l.batch_no),
+      '<div class="form-card" style="box-shadow:none;padding:0">'+
+      '<div class="form-grid">'+
+      '<div class="form-group"><label>'+t('wac.backfill_original_amount','原始金额')+' <span class="required">*</span></label>'+
+      '<input type="number" id="bf-orig-amt" value="'+(l.total_freight||0)+'" step="0.01" style="width:100%"></div>'+
+      '<div class="form-group"><label>'+t('wac.backfill_original_currency','原始货币')+' <span class="required">*</span></label>'+
+      '<input type="text" id="bf-orig-cur" value="'+esc(l.freight_currency||'USD')+'" style="width:100%"></div>'+
+      '<div class="form-group"><label>'+t('wac.backfill_paid_date','付款日期')+' <span class="required">*</span></label>'+
+      '<input type="date" id="bf-paid-date" style="width:100%"></div>'+
+      '<div class="form-group"><label>'+t('wac.backfill_local_currency','本币')+' <span class="required">*</span></label>'+
+      '<input type="text" id="bf-local-cur" placeholder="IDR" style="width:100%"></div>'+
+      '<div class="form-group"><label>'+t('wac.backfill_local_rate','本币汇率')+' <span class="required">*</span></label>'+
+      '<input type="number" id="bf-local-rate" step="0.0001" style="width:100%"></div>'+
+      '<div class="form-group"><label>'+t('wac.backfill_local_rate_date','汇率日期')+' <span class="required">*</span></label>'+
+      '<input type="date" id="bf-rate-date" style="width:100%"></div>'+
+      '<div class="form-group"><label>'+t('wac.backfill_local_amount','本币金额')+' <span class="required">*</span></label>'+
+      '<input type="number" id="bf-local-amt" step="0.01" style="width:100%"></div>'+
+      '<div class="form-group form-group-full"><label>'+t('wac.backfill_evidence','凭证/审计信息')+'</label>'+
+      '<input type="text" id="bf-freight-evidence" placeholder="'+t('wac.backfill_evidence','凭证/审计信息')+'" style="width:100%"></div>'+
+      '</div>'+
+      '<div style="font-size:12px;color:#999;margin-top:8px">'+t('wac.backfill_freight_hint','补录真实付款记录到正式事实模型')+'</div>'+
+      '</div>',
+      '<button class="btn btn-secondary" onclick="closeModal()">'+t('common.cancel','取消')+'</button>'+
+      '<button class="btn btn-primary" onclick="submitBackfillFreightPayment(\''+batchId+'\')">'+t('wac.backfill_submit','提交补录')+'</button>',
+      'modal-ci-create');
+  }catch(e){showToast(e.message,'danger')}
+}
+
+async function submitBackfillFreightPayment(batchId){
+  const d={
+    original_amount:parseFloat(document.getElementById('bf-orig-amt').value),
+    original_currency:document.getElementById('bf-orig-cur').value,
+    paid_date:document.getElementById('bf-paid-date').value,
+    local_currency:document.getElementById('bf-local-cur').value,
+    local_rate:parseFloat(document.getElementById('bf-local-rate').value),
+    local_rate_date:document.getElementById('bf-rate-date').value,
+    local_amount:parseFloat(document.getElementById('bf-local-amt').value),
+    evidence:document.getElementById('bf-freight-evidence').value
+  };
+  if(!d.original_amount||!d.original_currency||!d.paid_date||!d.local_currency||!d.local_rate||!d.local_rate_date||!d.local_amount){
+    showToast('All fields required','danger');return;
+  }
+  try{
+    await api('/api/logistics-batches/'+batchId+'/backfill-freight-payment','POST',d);
+    closeModal();
+    showToast(t('wac.backfill_success','补录成功'),'success');
+    viewLogDetail(batchId);
+  }catch(e){showToast(e.message,'danger')}
+}
+
 // ===== LOGISTICS-LISTING-01 前端：上架状态/负责人 helpers（2026-08-07）=====
 const LISTING_STATUS_OPTIONS=[{v:'pending_plan',l:'待提交上架计划'},{v:'preparing',l:'准备中'},{v:'ready',l:'已准备完成'},{v:'listed',l:'已上架'}];
 function listingStatusOptions(selected){
@@ -11031,94 +11157,178 @@ async function wacConfirm(batchId){
   try{
     const p=await api('/api/wac/preview/'+batchId);
     window._wacPreview=p;
-    // 每个批次独立初始化导入状态，防止跨批次串号（old_qty / status / 缺失 / 异常）
-    window._wacImport={batchId:batchId,matched:[],missing:[],unknown:[],duplicate:[],invalid:[]};
+    const m=p.meta||{};
+    const blockers=p.blockers||[];
     const items=p.items||[];
-    // 防御性去重：按 sku_code 建立 行索引映射（preview 已聚合，这里再保证唯一）
+    window._wacImport={batchId:batchId,matched:[],missing:[],unknown:[],duplicate:[],invalid:[]};
     const skuIndex={};
     items.forEach((it,i)=>{const k=String(it.sku_code);if(!(k in skuIndex))skuIndex[k]=i;});
     window._wacSkuIndex=skuIndex;
-    const rowsHtml=items.map((it,i)=>{
-      // 旧库存数量默认为0，由用户手动输入或导入（不使用 inventory.available_qty 替代）
-      const oldQty=0;
-      const oldWac=it.current_wac||0;
-      const plQty=it.pl_qty||0;
-      const unitCost=it.unit_landing_cost||0;
-      const newQty=oldQty+plQty;
-      const newWac=newQty>0?Math.round((oldQty*oldWac+plQty*unitCost)/newQty*10000)/10000:unitCost;
-      return '<tr>'+
-        '<td class="cell-id">'+esc(it.sku_code)+'</td>'+
-        '<td>'+esc(it.product_name||it.model||'-')+'</td>'+
-        '<td class="text-right">'+plQty+'</td>'+
-        (it.pl_row_count>1?'<td class="text-center" style="color:#fa8c16" title="'+t('wac.aggregated_tip','同SKU多行已聚合')+'">×'+it.pl_row_count+'</td>':'<td></td>')+
-        '<td class="text-right">'+(it.weighted_unit_price||0).toFixed(4)+'</td>'+
-        '<td class="text-right">'+(it.customs_rate!==null&&it.customs_rate!==undefined?Number(it.customs_rate).toFixed(4):'-')+'</td>'+
-        '<td class="text-right" style="color:#999">'+(it.available_qty||0)+'</td>'+
-        '<td><input type="number" id="wac-old-'+i+'" value="'+oldQty+'" placeholder="0" min="0" step="1" style="width:90px;padding:4px;text-align:right;background:#fffbe6" onchange="recalcWacRow('+i+');wacValidateInputs()"></td>'+
-        '<td class="text-right">'+(it.current_wac||0).toFixed(4)+'</td>'+
-        '<td class="text-right">'+(it.product_cost||0).toFixed(2)+'</td>'+
-        '<td class="text-right">'+(it.freight_cost||0).toFixed(2)+'</td>'+
-        '<td class="text-right">'+(it.customs_cost||0).toFixed(2)+'</td>'+
-        '<td class="text-right">'+(it.other_cost||0).toFixed(2)+'</td>'+
-        '<td class="text-right font-bold">'+(it.unit_landing_cost||0).toFixed(4)+'</td>'+
-        '<td class="text-right font-bold" id="wac-new-'+i+'" style="color:#1890ff">'+newWac.toFixed(4)+'</td>'+
-      '</tr>';
-    }).join('');
 
-    const opBar='<div class="wac-opbar">'+
-      '<button class="btn btn-secondary btn-sm" onclick="exportWacOldInventoryTemplate()">📥 '+t('wac.btn_export_old','导出旧库存模板')+'</button>'+
-      '<button class="btn btn-secondary btn-sm" onclick="importWacOldInventory()">📤 '+t('wac.btn_import_old','导入旧库存')+'</button>'+
-      '<span class="wac-import-status" id="wac-import-status"><span class="warn">'+t('wac.import_not_imported','未导入')+'</span></span>'+
+    // ── Blocker panel (if any) ──
+    let blockerHtml='';
+    if(blockers.length>0){
+      blockerHtml='<div style="background:#fff2f0;border:1px solid #ffccc7;border-radius:6px;padding:12px 16px;margin-bottom:12px">'+
+        '<div style="font-size:14px;font-weight:bold;color:#cf1322">⚠️ '+t('wac.cannot_confirm','当前批次不可确认WAC')+'</div>'+
+        '<div style="font-size:12px;color:#999;margin-bottom:8px">'+t('wac.blocker_title','WAC确认阻断')+' ('+blockers.length+')</div>'+
+        blockers.map(b=>{
+          const friendly=t('blocker.'+b.code,b.message||b.code);
+          const detailStr=b.detail?(Object.entries(b.detail).map(([k,v])=>esc(k)+'='+esc(String(v))).join(', ')):'';
+          return '<div style="padding:4px 0;border-bottom:1px solid #fff0f0">'+
+            '<span style="color:#cf1322">● '+esc(friendly)+'</span> '+
+            '<span style="font-size:11px;color:#999">'+esc(b.code)+'</span>'+
+            (detailStr?'<div style="font-size:11px;color:#999;margin-left:16px">'+detailStr+'</div>':'')+
+          '</div>';
+        }).join('')+
+      '</div>';
+    }
+
+    // ── Batch info ──
+    const batchInfo='<div style="background:#f0f8ff;padding:12px 16px;border-radius:6px;margin-bottom:12px;font-size:13px">'+
+      '<b>'+t('wac.batch_info','物流批次')+'</b>：'+esc(m.batch_no||'')+' ｜ '+
+      '<b>CI</b>：'+esc(m.ci_no||'-')+' ｜ '+
+      '<b>'+t('wac.target_currency','目标货币')+'</b>：'+esc(m.local_currency||'-')+' ｜ '+
+      '<b>'+t('wac.arrival','到货日期')+'</b>：'+fmtDate(m.actual_arrival_date)+' ｜ '+
+      '<b>'+t('wac.allocation_basis','分摊基准')+'</b>：'+esc(m.transport_basis?String(m.transport_basis).toUpperCase():'-')+
+      (m.already_confirmed?' ｜ <span style="color:#fa8c16">'+t('wac.already_confirmed','该批次已完成WAC确认')+'</span>':'')+
     '</div>';
 
-    const head='<div class="form-card" style="box-shadow:none;padding:0;display:flex;flex-direction:column;overflow:hidden">'+
-      '<div style="background:#f0f8ff;padding:12px 16px;border-radius:6px;margin-bottom:12px;font-size:13px">'+
-        '<b>'+t('wac.batch_info','物流批次')+'</b>：'+esc(p.batch_no)+' ｜ '+
-        '<b>CI</b>：'+esc(p.ci_no||'-')+' ｜ '+
-        '<b>'+t('wac.country','国家')+'</b>：'+countryLabel(p.country)+' ｜ '+
-        '<b>'+t('wac.warehouse','仓库')+'</b>：'+esc(p.warehouse||'-')+' ｜ '+
-        '<b>'+t('wac.arrival','到货日期')+'</b>：'+fmtDate(p.actual_arrival_date)+' ｜ '+
-        '<b>'+t('wac.cost_source','成本来源')+'</b>：'+
-        (p.cost_source==='ci_items'?'<span style="color:#52c41a">CI明细(SKU级)</span>':'<span style="color:#fa8c16">PL回退(数量分摊)</span>')+' ｜ '+
-        '<b>'+t('wac.cost_data_source','费用来源')+'</b>：'+
-        (p.cost_data_source==='ci_cost_items'?'<span style="color:#52c41a">成本记录(ci_cost_items)</span>':'<span style="color:#fa8c16">物流单静态字段</span>')+' ｜ '+
-        '<b>'+t('wac.customs_alloc','关税分摊')+'</b>：'+
-        (p.customs_allocation==='tax_rate_model'?'<span style="color:#52c41a">税率模型</span>':'<span style="color:#fa8c16">成本比例(无税率)</span>')+
-      '</div>'+
-      '<div style="background:#fffbe6;padding:10px 14px;border-radius:6px;margin-bottom:12px;font-size:12px;color:#666">'+
+    // ── Cost facts sections (only when no blockers) ──
+    let costFactsHtml='';
+    if(blockers.length===0 && items.length>0){
+      const it0=items[0];
+      // Product Cost section
+      costFactsHtml+='<div style="background:#f6ffed;border:1px solid #d9f7be;border-radius:6px;padding:10px 14px;margin-bottom:8px">'+
+        '<div style="font-weight:bold;font-size:13px;margin-bottom:6px">📦 '+t('wac.product_cost_section','产品成本')+'</div>'+
+        '<div style="display:flex;gap:20px;font-size:12px;flex-wrap:wrap">'+
+          '<span>'+t('wac.original_currency','原始货币')+': <b>'+esc(m.ci_currency||'')+'</b></span>'+
+          '<span>'+t('wac.original_amount','原始金额')+': <b>'+fmtMoney(m.ci_goods_amount_total,m.ci_currency)+'</b></span>'+
+          '<span>'+t('wac.actual_payment_date','到货日期')+': <b>'+fmtDate(m.actual_arrival_date)+'</b></span>'+
+          '<span>'+t('wac.product_fx','产品汇率')+': <b>'+(it0.product_fx_rate!=null?Number(it0.product_fx_rate).toFixed(4)+' ('+esc(it0.product_fx_direction||'')+')':'-')+'</b></span>'+
+          '<span>'+t('wac.fx_rate_date','汇率日期')+': <b>'+fmtDate(m.actual_arrival_date)+'</b></span>'+
+        '</div></div>';
+
+      // Freight section
+      const pb=m.freight_payment_breakdown||[];
+      const pbHtml=pb.length?'<div style="margin-top:6px"><div style="font-size:12px;font-weight:bold;margin-bottom:4px">'+t('wac.payment_breakdown','付款明细')+'</div>'+
+        '<table class="data-table" style="font-size:11px;min-width:400px"><thead><tr>'+
+        '<th>PR ID</th><th>'+t('wac.original_amount','原始金额')+'</th><th>'+t('wac.local_currency','本币')+'</th><th>'+t('wac.effective_fx_rate','有效汇率')+'</th><th>'+t('wac.fx_rate_date','汇率日期')+'</th><th>'+t('wac.actual_payment_date','付款日期')+'</th><th>'+t('wac.local_amount','本币金额')+'</th>'+
+        '</tr></thead><tbody>'+
+        pb.map(pd=>'<tr>'+
+          '<td class="cell-id">'+esc(pd.payment_request_id)+'</td>'+
+          '<td class="text-right">'+Number(pd.amount).toFixed(2)+'</td>'+
+          '<td>'+esc(pd.local_currency)+'</td>'+
+          '<td class="text-right">'+Number(pd.local_rate).toFixed(4)+'</td>'+
+          '<td class="cell-date">'+fmtDate(pd.local_rate_date)+'</td>'+
+          '<td class="cell-date">'+fmtDate(pd.paid_date)+'</td>'+
+          '<td class="text-right">'+Number(pd.local_amount).toFixed(2)+'</td>'+
+        '</tr>').join('')+
+        '</tbody></table></div>':'<div style="font-size:11px;color:#999;margin-top:4px">'+t('wac.no_payment_breakdown','暂无付款明细')+'</div>';
+
+      costFactsHtml+='<div style="background:#f6ffed;border:1px solid #d9f7be;border-radius:6px;padding:10px 14px;margin-bottom:8px">'+
+        '<div style="font-weight:bold;font-size:13px;margin-bottom:6px">🚢 '+t('wac.freight_section','运费')+'</div>'+
+        '<div style="display:flex;gap:20px;font-size:12px;flex-wrap:wrap">'+
+          '<span>'+t('wac.original_currency','原始货币')+': <b>'+esc(m.freight_currency||'')+'</b></span>'+
+          '<span>'+t('wac.business_amount','业务金额')+': <b>'+fmtMoney(m.freight_business_amount,m.freight_currency)+'</b></span>'+
+          '<span>'+t('wac.payment_status','付款状态')+': <b>'+(pb.length>0?'✅ '+t('wac.import_ok','就绪'):'❌')+'</b></span>'+
+          '<span>'+t('wac.last_paid_date','最后付款日期')+': <b>'+fmtDate(m.freight_last_paid_date)+'</b></span>'+
+          '<span>'+t('wac.effective_rate','有效汇率')+': <b>'+(m.freight_effective_rate!=null?Number(m.freight_effective_rate).toFixed(4):'-')+'</b></span>'+
+          '<span>'+t('wac.local_amount','本币金额')+': <b>'+fmtMoney(m.freight_local_amount,m.local_currency)+'</b></span>'+
+        '</div>'+pbHtml+'</div>';
+
+      // Duty section
+      costFactsHtml+='<div style="background:#f6ffed;border:1px solid #d9f7be;border-radius:6px;padding:10px 14px;margin-bottom:8px">'+
+        '<div style="font-weight:bold;font-size:13px;margin-bottom:6px">📋 '+t('wac.duty_section','关税')+'</div>'+
+        '<div style="display:flex;gap:20px;font-size:12px;flex-wrap:wrap">'+
+          '<span>'+t('wac.original_amount','原始金额')+': <b>'+fmtMoney(m.duty_business_amount,m.freight_currency)+'</b></span>'+
+          '<span>'+t('wac.vat_excluded','增值税已排除')+': ✅</span>'+
+          '<span>'+t('wac.local_amount','本币金额')+': <b>'+fmtMoney(m.duty_local_amount,m.local_currency)+'</b></span>'+
+        '</div></div>';
+
+      // Inspection/Other section
+      const inspTotal=(m.inspection_local_total||0)+(m.other_local_total||0);
+      costFactsHtml+='<div style="background:#f6ffed;border:1px solid #d9f7be;border-radius:6px;padding:10px 14px;margin-bottom:8px">'+
+        '<div style="font-weight:bold;font-size:13px;margin-bottom:6px">🔧 '+t('wac.inspection_section','检验/其他')+'</div>'+
+        '<div style="display:flex;gap:20px;font-size:12px;flex-wrap:wrap">'+
+          '<span>'+t('wac.local_amount','本币金额')+': <b>'+fmtMoney(inspTotal,m.local_currency)+'</b></span>'+
+          '<span style="font-size:11px;color:#999">('+t('wac.inspection_section','检验/其他')+': '+(m.inspection_local_total||0).toFixed(2)+' + '+(m.other_local_total||0).toFixed(2)+')</span>'+
+        '</div></div>';
+    }
+
+    // ── SKU table (only when no blockers) ──
+    let skuTableHtml='';
+    if(blockers.length===0 && items.length>0){
+      const rowsHtml=items.map((it,i)=>{
+        const oldQty=it.old_qty||it.available_qty||0;
+        const oldWac=it.current_wac||0;
+        const batchQty=it.batch_qty||0;
+        const unitCost=it.unit_landing_cost||0;
+        const newQty=oldQty+batchQty;
+        const newWac=it.new_wac||0;
+        return '<tr>'+
+          '<td class="cell-id">'+esc(it.sku_code)+'</td>'+
+          '<td>'+esc(it.product_name||it.model||'-')+'</td>'+
+          '<td class="text-right">'+batchQty+'</td>'+
+          '<td class="text-right">'+(it.weighted_purchase_unit_price||0).toFixed(4)+'</td>'+
+          '<td class="text-right">'+(it.customs_rate!==null&&it.customs_rate!==undefined?Number(it.customs_rate).toFixed(4):'-')+'</td>'+
+          '<td class="text-right" style="color:#999">'+(it.old_qty||it.available_qty||0)+'</td>'+
+          '<td><input type="number" id="wac-old-'+i+'" value="'+oldQty+'" placeholder="0" min="0" step="1" style="width:90px;padding:4px;text-align:right;background:#fffbe6" onchange="recalcWacRow('+i+');wacValidateInputs()"></td>'+
+          '<td class="text-right">'+(it.current_wac||0).toFixed(4)+' <span style="font-size:10px;color:#999">'+esc(m.local_currency||'')+'</span></td>'+
+          '<td class="text-right">'+(it.product_cost_local||0).toFixed(2)+'</td>'+
+          '<td class="text-right">'+(it.freight_cost_local||0).toFixed(2)+'</td>'+
+          '<td class="text-right">'+(it.customs_cost_local||0).toFixed(2)+'</td>'+
+          '<td class="text-right">'+((it.inspection_cost_local||0)+(it.other_cost_local||0)).toFixed(2)+'</td>'+
+          '<td class="text-right font-bold">'+(it.unit_landing_cost||0).toFixed(4)+' <span style="font-size:10px;color:#999">'+esc(m.local_currency||'')+'</span></td>'+
+          '<td class="text-right font-bold" id="wac-new-'+i+'" style="color:#1890ff">'+newWac.toFixed(4)+' <span style="font-size:10px;color:#999">'+esc(m.local_currency||'')+'</span></td>'+
+        '</tr>';
+      }).join('');
+
+      const opBar='<div class="wac-opbar">'+
+        '<button class="btn btn-secondary btn-sm" onclick="exportWacOldInventoryTemplate()">📥 '+t('wac.btn_export_old','导出旧库存模板')+'</button>'+
+        '<button class="btn btn-secondary btn-sm" onclick="importWacOldInventory()">📤 '+t('wac.btn_import_old','导入旧库存')+'</button>'+
+        '<span class="wac-import-status" id="wac-import-status"><span class="warn">'+t('wac.import_not_imported','未导入')+'</span></span>'+
+      '</div>';
+
+      const formulaHint='<div style="background:#fffbe6;padding:10px 14px;border-radius:6px;margin-bottom:12px;font-size:12px;color:#666">'+
         t('wac.formula_hint','移动加权公式：新WAC = (旧库存数量 × 当前WAC + 本批次数量 × 单位落地成本) ÷ (旧库存数量 + 本批次数量)')+'<br>'+
         t('wac.landing_cost_hint_v2','单位落地成本 = (SKU级采购成本 + 按成本比例分摊的物流/其他费用 + 按税率权重分摊的关税) ÷ SKU数量')+'<br>'+
-        (p.customs_allocation==='tax_rate_model'?t('wac.customs_rate_hint','✅ 关税按SKU税率权重分摊：理论关税=SKU货值×SKU税率，实际总关税按理论关税比例分配，残差给最大SKU')+'<br>':'')+
-        (p.cost_source==='ci_items'?t('wac.ci_items_hint','✅ 成本来源：CI明细，同SKU不同单价已加权聚合，费用按产品成本比例分摊')+'<br>':'')+
         t('wac.old_qty_hint','⚠️ 旧库存数量需人工输入，请根据实际盘点填写，不可直接使用系统库存数量')+
-      '</div>'+
-      opBar+
-      '<div class="wac-table-scroll">'+
-      '<table class="data-table" style="table-layout:auto;min-width:1100px"><thead><tr>'+
-        '<th>SKU</th><th>'+t('wac.col_product','产品')+'</th>'+
-        '<th>'+t('wac.col_pl_qty','PL数量')+'</th>'+
-        '<th>'+t('wac.col_agg','聚合')+'</th>'+
-        '<th>'+t('wac.col_weighted_price','加权采购单价')+'</th>'+
-        '<th>'+t('wac.col_customs_rate','关税税率')+'</th>'+
-        '<th>'+t('wac.col_avail','当前库存')+'</th>'+
-        '<th>'+t('wac.col_old_qty','旧库存数量')+'</th>'+
-        '<th>'+t('wac.col_current_wac','当前WAC')+'</th>'+
-        '<th>'+t('wac.col_product_cost','产品货值')+'</th>'+
-        '<th>'+t('wac.col_freight','物流费')+'</th>'+
-        '<th>'+t('wac.col_customs','清关费')+'</th>'+
-        '<th>'+t('wac.col_other','其他费')+'</th>'+
-        '<th>'+t('wac.col_unit_landing','单位落地成本')+'</th>'+
-        '<th>'+t('wac.col_new_wac','新WAC')+'</th>'+
-      '</tr></thead><tbody>'+rowsHtml+'</tbody></table></div>'+
+      '</div>';
+
+      skuTableHtml=formulaHint+opBar+
+        '<div class="wac-table-scroll">'+
+        '<table class="data-table" style="table-layout:auto;min-width:1100px"><thead><tr>'+
+          '<th>SKU</th><th>'+t('wac.col_product','产品')+'</th>'+
+          '<th>'+t('wac.col_pl_qty','PL数量')+'</th>'+
+          '<th>'+t('wac.col_weighted_price','加权采购单价')+'</th>'+
+          '<th>'+t('wac.col_customs_rate','关税税率')+'</th>'+
+          '<th>'+t('wac.col_avail','当前库存')+'</th>'+
+          '<th>'+t('wac.col_old_qty','旧库存数量')+'</th>'+
+          '<th>'+t('wac.col_current_wac','当前WAC')+'</th>'+
+          '<th>'+t('wac.col_product_cost_local','产品成本(本币)')+'</th>'+
+          '<th>'+t('wac.col_freight_local','运费分摊(本币)')+'</th>'+
+          '<th>'+t('wac.col_duty_local','关税分摊(本币)')+'</th>'+
+          '<th>'+t('wac.col_inspection_local','检验分摊(本币)')+'</th>'+
+          '<th>'+t('wac.col_unit_landing','单位落地成本')+'</th>'+
+          '<th>'+t('wac.col_new_wac','新WAC')+'</th>'+
+        '</tr></thead><tbody>'+rowsHtml+'</tbody></table></div>';
+    }
+
+    const head='<div class="form-card" style="box-shadow:none;padding:0;display:flex;flex-direction:column;overflow:hidden">'+
+      batchInfo+blockerHtml+costFactsHtml+skuTableHtml+
     '</div>';
 
+    const footerBtns='<button class="btn btn-secondary" onclick="closeModal()">'+t('common.cancel','取消')+'</button>'+
+      (blockers.length===0||m.already_confirmed
+        ? '<button class="btn btn-primary" id="wac-confirm-btn" '+(m.already_confirmed?'disabled':'')+' onclick="submitWacConfirm(\''+batchId+'\')">'+t('wac.btn_submit','确认WAC')+'</button>'
+        : '<button class="btn btn-primary" id="wac-confirm-btn" disabled>'+t('wac.cannot_confirm','当前批次不可确认WAC')+'</button>');
+
     openModal(
-      t('wac.modal_title','WAC确认')+' - '+p.batch_no,
+      t('wac.modal_title','WAC确认')+' - '+(m.batch_no||''),
       head,
-      '<button class="btn btn-secondary" onclick="closeModal()">'+t('common.cancel','取消')+'</button>'+
-      '<button class="btn btn-primary" id="wac-confirm-btn" onclick="submitWacConfirm(\''+batchId+'\')">'+t('wac.btn_submit','确认WAC')+'</button>'
-    ,'modal-wac');
-    wacValidateInputs();
+      footerBtns,
+    'modal-wac');
+    if(blockers.length===0&&!m.already_confirmed) wacValidateInputs();
   }catch(e){showToast(e.message,'danger')}
 }
 
@@ -11129,10 +11339,10 @@ function recalcWacRow(i){
   const it=p.items[i];
   const oldQty=parseFloat(document.getElementById('wac-old-'+i)?.value)||0;
   const oldWac=it.current_wac||0;
-  const plQty=it.pl_qty||0;
+  const batchQty=it.batch_qty||0;
   const unitCost=it.unit_landing_cost||0;
-  const newQty=oldQty+plQty;
-  const newWac=newQty>0?Math.round((oldQty*oldWac+plQty*unitCost)/newQty*10000)/10000:unitCost;
+  const newQty=oldQty+batchQty;
+  const newWac=newQty>0?Math.round((oldQty*oldWac+batchQty*unitCost)/newQty*10000)/10000:unitCost;
   const cell=document.getElementById('wac-new-'+i);
   if(cell)cell.textContent=newWac.toFixed(4);
 }
