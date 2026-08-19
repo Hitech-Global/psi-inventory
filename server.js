@@ -2105,24 +2105,44 @@ app.get('/api/warehouses/countries', requireLogin, asyncHandler((req, res) => {
 // 仅用于订单预测相关查询过滤，不影响库存模块 / WAC / 寄售库存本身。
 // executor-aware：传 exec 时所有查询走 exec.all（同一事务连接）；
 // 不传 exec 时保持现有 global query 行为（页面路由/ generate 现网路径不变）。
-function getConsignmentWarehouseNames(exec) {
-  const names = new Set();
-  const runQ = (sql) => exec ? exec.all(sql, []) : (query(sql, []).rows || []);
-  const res1 = runQ("SELECT DISTINCT warehouse_name FROM consignment_inventory_lots WHERE warehouse_name IS NOT NULL AND warehouse_name != ''");
-  (res1 || []).forEach(r => { if (r.warehouse_name) names.add(r.warehouse_name); });
-  const res2 = runQ("SELECT DISTINCT name FROM warehouses WHERE LOWER(name) LIKE '%consign%' AND status = 'active'");
-  (res2 || []).forEach(r => { if (r.name) names.add(r.name); });
-  return Array.from(names);
-}
-// 在已有 SQL 的 WHERE 后追加排除寄售仓条件（名单为空时不拼接，避免 NOT IN () 非法 SQL）。
+// 纯 SQL 构造：把寄售仓名单追加为 NOT IN 排除条件（名单为空时不拼接，避免 NOT IN () 非法 SQL）。
 // 自动处理前导：有 WHERE 内容用 AND，尚无则用 WHERE 起头。
-function appendConsignmentExclusion(sql, params, columnExpr, exec) {
-  const names = getConsignmentWarehouseNames(exec);
-  if (names.length > 0) {
+// 同步 reader（global query）与异步 transaction reader（exec.all）共用此纯函数，避免两套“哪些仓算寄售”口径漂移。
+function buildConsignmentExclusion(names, sql, params, columnExpr) {
+  if (names && names.length > 0) {
     sql += (sql ? ' AND' : ' WHERE') + ' ' + columnExpr + ' NOT IN (' + names.map(() => '?').join(',') + ')';
     params.push(...names);
   }
   return sql;
+}
+// 同步 reader：走 global query，供历史同步页面 / generate 调用（不进入事务连接）。
+function getConsignmentWarehouseNames() {
+  const names = new Set();
+  const src = (sql) => (query(sql, []).rows || []);
+  const res1 = src("SELECT DISTINCT warehouse_name FROM consignment_inventory_lots WHERE warehouse_name IS NOT NULL AND warehouse_name != ''");
+  (res1 || []).forEach(r => { if (r.warehouse_name) names.add(r.warehouse_name); });
+  const res2 = src("SELECT DISTINCT name FROM warehouses WHERE LOWER(name) LIKE '%consign%' AND status = 'active'");
+  (res2 || []).forEach(r => { if (r.name) names.add(r.name); });
+  return Array.from(names);
+}
+// 异步 transaction reader：经 exec.all（Promise）读取，仍使用同一事务连接，供 DELETE/refresh 等事务路径调用。
+async function getConsignmentWarehouseNamesWithExec(exec) {
+  const names = new Set();
+  const res1 = await exec.all("SELECT DISTINCT warehouse_name FROM consignment_inventory_lots WHERE warehouse_name IS NOT NULL AND warehouse_name != ''", []);
+  (res1 || []).forEach(r => { if (r.warehouse_name) names.add(r.warehouse_name); });
+  const res2 = await exec.all("SELECT DISTINCT name FROM warehouses WHERE LOWER(name) LIKE '%consign%' AND status = 'active'", []);
+  (res2 || []).forEach(r => { if (r.name) names.add(r.name); });
+  return Array.from(names);
+}
+// 同步版：供同步页面 / generate 调用，口径与异步版完全一致（共用 buildConsignmentExclusion）。
+function appendConsignmentExclusion(sql, params, columnExpr, exec) {
+  const names = getConsignmentWarehouseNames();
+  return buildConsignmentExclusion(names, sql, params, columnExpr);
+}
+// 异步事务版：DELETE / refresh 路径专用，所有查询经 await exec.all 走同一事务连接。
+async function appendConsignmentExclusionWithExec(sql, params, columnExpr, exec) {
+  const names = await getConsignmentWarehouseNamesWithExec(exec);
+  return buildConsignmentExclusion(names, sql, params, columnExpr);
 }
 
 // 按国家筛选仓库（用于订单预测等页面的下拉联动）
@@ -6401,7 +6421,7 @@ async function resolveAndValidateRefreshTargets(exec, affectedKeys) {
   const inPh = skuCodes.map(() => '?').join(',');
   const invParams = skuCodes.slice();
   let invSql = 'SELECT DISTINCT i.sku_code, i.country, i.warehouse, i.available_qty, i.in_transit_qty, i.pi_confirmed_unshipped_qty, i.po_unconfirmed_pi_qty, i.last_inbound_date, i.first_inbound_date, i.last_outbound_date, i.target_turnover_months FROM inventory i LEFT JOIN skus s ON i.sku_code = s.sku_code WHERE i.sku_code IN (' + inPh + ')';
-  invSql = appendConsignmentExclusion(invSql, invParams, 'i.warehouse', exec);
+  invSql = await appendConsignmentExclusionWithExec(invSql, invParams, 'i.warehouse', exec);
   const inventoryItems = await exec.all(invSql, invParams);
   const invMap = {};
   for (const it of inventoryItems) invMap[it.sku_code + '|' + it.country + '|' + it.warehouse] = it;
