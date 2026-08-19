@@ -27,11 +27,6 @@ const path = require('path');
 const crypto = require('crypto');
 const { query, queryOne, run, transaction, genId, initDatabase } = require('./db');
 const { withGenerateClient, withAsyncPoolClient } = require('./pg-async'); // 专用异步 Pool：generate / 销售导入库存重算不阻塞主线程
-// Batch 1.0a: PG async DB 接口 + driver 检测（仅用于已迁移的函数）
-const dbPg = require('./db-pg');
-function isPgDriver() {
-  return (process.env.DB_DRIVER || 'sqlite').toLowerCase() === 'pg';
-}
 const {
   createSqliteSalesImportAdapter,
   createPostgresSalesImportAdapter,
@@ -1105,61 +1100,23 @@ console.log(`  版本: ${APP_VERSION}`);
 console.log(`  端口: ${PORT}`);
 console.log('========================================\n');
 
-// ==================== 唯一启动序列（Batch 0.5） ====================
-// 严格顺序：环境验证 → core schema → supplemental migrations → bootstrap → HTTP listen
-// 后一步必须严格等待前一步完成，禁止并行 race。
-async function validateStartupEnvironment() {
-  console.log('\n========== 启动前环境诊断 ==========');
-  console.log(`[DIAG] NODE_ENV = ${NODE_ENV || '(未设置)'}`);
-  console.log(`[DIAG] DB_DRIVER = ${process.env.DB_DRIVER || '(默认 sqlite)'}`);
-  console.log(`[DIAG] PORT = ${PORT}`);
-  const _hasDbUrl = !!process.env.DATABASE_URL;
-  const _hasPoolerUrl = !!process.env.POOLER_DATABASE_URL;
-  console.log(`[DIAG] DATABASE_URL = ${_hasDbUrl ? '已设置 (长度=' + process.env.DATABASE_URL.length + ')' : '❌ 未设置'}`);
-  console.log(`[DIAG] POOLER_DATABASE_URL = ${_hasPoolerUrl ? '已设置 (长度=' + process.env.POOLER_DATABASE_URL.length + ')' : '❌ 未设置'}`);
-  console.log(`[DIAG] BREAKGLASS_ADMIN_PASSWORD = ${BREAKGLASS_ADMIN_PASSWORD ? '已设置 (长度=' + BREAKGLASS_ADMIN_PASSWORD.length + ', 强度=' + (isStrongPassword(BREAKGLASS_ADMIN_PASSWORD) ? '合格' : '❌不合格') + ')' : '❌ 未设置'}`);
-  console.log(`[DIAG] FEISHU_APP_ID = ${FEISHU_APP_ID ? '已设置' : '(未设置)'}`);
-  console.log(`[DIAG] FEISHU_APP_SECRET = ${FEISHU_APP_SECRET ? '已设置' : '(未设置)'}`);
-  console.log(`[DIAG] FEISHU_REDIRECT_URI = ${FEISHU_REDIRECT_URI || '(未设置)'}`);
-  console.log(`[DIAG] TRUSTED_ORIGINS = ${TRUSTED_ORIGINS.length > 0 ? TRUSTED_ORIGINS.join(', ') : '(未设置)'}`);
-  console.log(`[DIAG] COOKIE_SECURE = ${COOKIE_SECURE}`);
-  console.log(`[DIAG] CSRF_DISABLE = ${CSRF_DISABLE}`);
-
-  // PG 模式下至少需要一个连接串
-  if ((process.env.DB_DRIVER || '').toLowerCase() === 'pg' && !_hasDbUrl && !_hasPoolerUrl) {
-    console.error('\n[FATAL] DB_DRIVER=pg 但 DATABASE_URL / POOLER_DATABASE_URL 均未设置！');
-    console.error('[FATAL] 请在 Render Dashboard → Environment 中配置 POOLER_DATABASE_URL（推荐）或 DATABASE_URL。');
-    process.exit(1);
-  }
-
-  // BREAKGLASS_ADMIN_PASSWORD 缺失或弱密码会导致 bootstrapBreakGlass 抛异常
-  if (!BREAKGLASS_ADMIN_PASSWORD || !isStrongPassword(BREAKGLASS_ADMIN_PASSWORD)) {
-    console.error('\n[FATAL] BREAKGLASS_ADMIN_PASSWORD 未设置或强度不足（需≥12位且含大小写与数字）！');
-    console.error('[FATAL] 请在 Render Dashboard → Environment 中配置 BREAKGLASS_ADMIN_PASSWORD。');
-    process.exit(1);
-  }
-
-  console.log('[DIAG] 环境变量检查通过 ✓');
-  console.log('=====================================\n');
+// 初始化数据库
+// P0-FIX-1：仅在直接运行 server.js 时初始化数据库，避免 require 时连接/seed 真实库
+if (require.main === module) {
+  initDatabase();
+  // 库存导入日期归一化回填：修复 M/D/YY 文本导致快照 MAX 字典序误判（根因 A）
+  normalizeImportDatesBackfill();
+  // 日期归一化后重新计算库存快照，使修正后的"最新批次"立即生效
+  // （已导入但停留在旧快照的批次无需手动重新导入即可修正）
+  refreshInventoryTotals('').then(() => {
+    console.log('[STARTUP] 库存快照已按修正后的最新导入日期重算完成');
+  }).catch(e => console.error('[STARTUP] 库存快照重算失败:', e && e.message));
 }
 
-async function startServer() {
-  // 1. 环境验证
-  await validateStartupEnvironment();
-
-  // 2. Core schema（PG 模式：db-pg.js initDatabase 幂等建表 + 种子数据）
-  if ((process.env.DB_DRIVER || '').toLowerCase() === 'pg') {
-    console.log('[STARTUP] 执行 db-pg.js initDatabase（幂等建表 + 种子数据）...');
-    const dbPg = require('./db-pg');
-    await dbPg.initDatabase();
-    console.log('[STARTUP] core schema completed ✓');
-  }
-
-  // 3. Supplemental migrations（db.js 同步内联迁移：ALTER/补建索引，幂等）
-  initDatabase();
-  console.log('[STARTUP] supplemental migrations completed ✓');
-
-  // 4. 角色权限迁移（幂等）
+// PAY-CORE Phase 2 V2.1 第 12 节：为现有 role_admin 添加 payment_execute 权限（幂等迁移）
+// 仅影响 role_admin；role_operator/role_viewer 不添加
+// P0-FIX-1：仅在直接运行 server.js 时执行迁移，避免 require 时写入真实库
+if (require.main === module) {
   (function ensureRoleAdminPaymentExecute() {
     try {
       const adminRole = queryOne("SELECT permissions FROM roles WHERE id = 'role_admin'");
@@ -1175,13 +1132,22 @@ async function startServer() {
       console.warn('[Migration] role_admin payment_execute 迁移失败（非致命）:', e.message);
     }
   })();
+}
 
+// P2：为现有 role_admin 添加 outbound_delete 权限（幂等迁移）
+// 高风险删除权限仅限超级管理员；role_operator / role_viewer 不添加（B1）
+// 沿用 payment_execute 迁移模式：仅在直接运行 server.js 时执行，避免 require 时写入真实库
+if (require.main === module) {
   (function ensureRoleAdminOutboundDelete() {
     try {
       const adminRole = queryOne("SELECT permissions FROM roles WHERE id = 'role_admin'");
       if (!adminRole || !adminRole.permissions) return;
       const perms = JSON.parse(adminRole.permissions);
       if (!Array.isArray(perms)) return;
+      // P2.1-1：即便已含 '*' 也显式追加 outbound_delete。
+      // 原因：requireApiPermission 仅做字面 includes 校验（见其定义），'*' 不会通配授予该权限；
+      // 若 role_admin 为 ['*'] 却未显式含 outbound_delete，则 requireApiPermission('outbound_delete') 会 403。
+      // 约束：不覆盖其它权限、不删除 '*'、不修改其它角色、幂等（已含则跳过）。
       if (!perms.includes('outbound_delete')) {
         perms.push('outbound_delete');
         run("UPDATE roles SET permissions = ? WHERE id = 'role_admin'", [JSON.stringify(perms)]);
@@ -1191,7 +1157,11 @@ async function startServer() {
       console.warn('[Migration] role_admin outbound_delete 迁移失败（非致命）:', e.message);
     }
   })();
+}
 
+// Phase 2：为拥有审批权限的角色自动追加 approval_view（幂等迁移）
+// 仅处理含 po_approve/payment_approve/check_approve 的角色，不处理含 '*' 的超级管理员（通配符已覆盖所有权限）
+if (require.main === module) {
   (function ensureApprovalView() {
     try {
       const roles = query("SELECT id, permissions FROM roles").rows;
@@ -1201,7 +1171,7 @@ async function startServer() {
         let perms;
         try { perms = JSON.parse(role.permissions || '[]'); } catch(_) { return; }
         if (!Array.isArray(perms)) return;
-        if (perms.includes('*')) return;
+        if (perms.includes('*')) return; // 超级管理员通配符已覆盖
         const hasApprovePerm = approvePerms.some(p => perms.includes(p));
         if (hasApprovePerm && !perms.includes('approval_view')) {
           perms.push('approval_view');
@@ -1216,7 +1186,12 @@ async function startServer() {
       console.warn('[Migration] approval_view 迁移失败（非致命）:', e.message);
     }
   })();
+}
 
+// ==================== 寄售库存表迁移（CONSIGNMENT-INVENTORY） ====================
+// 幂等建表：consignment_inventory_lots（寄售库存批次行）+ consignment_inventory_import_batches（导入批次）
+// 仅在直接运行 server.js 时执行，避免 require 时写入真实库
+if (require.main === module) {
   (function ensureConsignmentInventoryTables() {
     try {
       run(`CREATE TABLE IF NOT EXISTS consignment_inventory_lots (
@@ -1263,64 +1238,11 @@ async function startServer() {
       console.warn('[Migration] 寄售库存表迁移失败（非致命）:', e.message);
     }
   })();
-
-  // 库存导入日期归一化回填 + 快照重算（fire-and-forget，保持原有业务语义）
-  normalizeImportDatesBackfill();
-  refreshInventoryTotals('').then(() => {
-    console.log('[STARTUP] 库存快照已按修正后的最新导入日期重算完成');
-  }).catch(e => console.error('[STARTUP] 库存快照重算失败:', e && e.message));
-
-  // 5. Bootstrap break-glass 管理员
-  try {
-    console.log('[STARTUP] 开始初始化 break-glass 管理员...');
-    bootstrapBreakGlass();
-    console.log('[STARTUP] bootstrap completed ✓');
-  } catch (e) {
-    console.error('\n[FATAL] bootstrapBreakGlass() 失败:', e.message);
-    console.error(e.stack);
-    process.exit(1);
-  }
-
-  // 6. 运行时诊断
-  diag.startEventLoopMonitor();
-  diag.startMetricsLogger();
-  console.log('[STARTUP] 运行时诊断已启用（事件循环直方图 + 慢请求 + 连接池水位）');
-
-  // 7. HTTP listen
-  console.log('[STARTUP] 正在启动 HTTP 服务 (端口 ' + PORT + ')...');
-  const server = app.listen(PORT, () => {
-    console.log(`\n[STARTUP] HTTP listening ✓ (端口 ${PORT})`);
-    console.log(`[Server] 进销存管理系统已启动: http://localhost:${PORT}`);
-    console.log(`[Server] 登录方式：飞书 OAuth（中国/印尼团队统一）；应急入口：登录页底部"应急登录入口"`);
-    console.log(`[Server] 默认账号 admin/admin 已停用；break-glass 本地管理员须通过 BREAKGLASS_ADMIN_PASSWORD 初始化\n`);
-  });
-
-  server.on('error', (err) => {
-    if (err.code === 'EADDRINUSE') {
-      console.error(`\n[ERROR] 端口 ${PORT} 已被占用，服务无法启动。`);
-    } else {
-      console.error('[ERROR] 服务启动失败:', err && err.stack || err);
-    }
-    process.exit(1);
-  });
-}
-
-if (require.main === module) {
-  startServer().catch(e => {
-    console.error('\n[FATAL] 启动失败:', e.message);
-    console.error(e.stack);
-    process.exit(1);
-  });
 }
 
 // ==================== Express 初始化 ====================
 const app = express();
 app.set('trust proxy', 1); // Render 反向代理 TLS 终止后，使 req.protocol/req.secure 正确反映客户端原始协议
-
-// DB-BATCH0 运行时诊断（只观测，不改业务）：必须是第一个中间件，才能覆盖 body 解析、
-// 鉴权、DB 等全部耗时。慢请求日志只记录 method/path/status/ms，不含 body/query/参数。
-const diag = require('./runtime-diagnostics');
-app.use(diag.requestTimingMiddleware);
 
 function asyncHandler(fn) {
   return function (req, res, next) {
@@ -1379,21 +1301,6 @@ app.get('/api/version', asyncHandler((req, res) => {
     timestamp: new Date().toISOString()
   });
 }));
-
-// 运行时诊断端点（不查库）：默认 404，仅在设置 DIAG_ENDPOINT_TOKEN 且请求头
-// x-diag-token 匹配时返回事件循环延迟 / 连接池水位 / 内存；?reset=1 清空直方图窗口。
-// 放在 csrfGuard / apiAuth 之前，使压测脚本在主线程被拖住时也能取到指标。
-app.get(diag.DIAG_ROUTE, diag.runtimeHandler);
-// 故障注入端点：非生产专用，代码级硬门禁。
-// NODE_ENV === 'production' 时**根本不注册这个 route**（不是靠 handler 里 404 兜底），
-// 因此生产环境不可能通过改 DIAG_FAULT_INJECTION / DIAG_ENDPOINT_TOKEN 激活 pg_sleep、
-// 锁等待或事件循环阻塞注入。非生产环境仍需 DIAG_FAULT_INJECTION=1 + token 才生效。
-if (diag.isFaultInjectionAllowed()) {
-  app.get(diag.FAULT_ROUTE, diag.faultHandler);
-  console.warn('[DIAG-FAULT] 故障注入端点已启用（仅非生产环境）: ' + diag.FAULT_ROUTE);
-} else if (diag.isProduction()) {
-  console.log('[DIAG-FAULT] NODE_ENV=production：故障注入 route 未注册（代码级硬门禁）');
-}
 
 // ==================== 认证与权限中间件 ====================
 // 写请求可信 Origin 校验（CSRF 防护；test 环境自动绕过）
@@ -4060,27 +3967,14 @@ function getSnapshotCutoffMap() {
 }
 
 // P1-03-B: 查询最新已确认且锁定的 WAC 版本（唯一读取规则）
-// Batch 1.0a: 拆分 PG async / SQLite sync 两条内部路径，消除 transaction(async) 提前 COMMIT bug。
-// 公共 API 保持 async（返回 Promise），17 个 callers 无需修改。
-const _wacLatestSql = `
+async function latestConfirmedWac(skuCode, country, warehouse) {
+  return await queryOne(`
     SELECT * FROM wac_history
     WHERE sku_code = ? AND country = ? AND warehouse = ?
       AND confirmation_status = 'confirmed' AND is_locked = 1
     ORDER BY version_no DESC
     LIMIT 1
-  `;
-
-function _latestConfirmedWacSqliteSync(skuCode, country, warehouse) {
-  return queryOne(_wacLatestSql, [skuCode, country, warehouse]);
-}
-
-async function _latestConfirmedWacPg(skuCode, country, warehouse) {
-  return await dbPg.queryOne(_wacLatestSql, [skuCode, country, warehouse]);
-}
-
-async function latestConfirmedWac(skuCode, country, warehouse) {
-  if (isPgDriver()) return await _latestConfirmedWacPg(skuCode, country, warehouse);
-  return _latestConfirmedWacSqliteSync(skuCode, country, warehouse);
+  `, [skuCode, country, warehouse]);
 }
 
 // P1-03-B: 在事务内生成下一版本号并插入锁定的 WAC 历史
@@ -4200,18 +4094,13 @@ function latestImportsSql() {
 }
 
 // 刷新库存总表（根据导入记录和业务数据重新计算）
-// Batch 1.0a: 拆分 PG async / SQLite sync 两条内部路径，消除 transaction(async) 提前 COMMIT bug。
-// 公共 API 保持 async，callers 无需修改。
 async function refreshInventoryTotals(snapshotCutoffDate) {
-  if (isPgDriver()) return await _refreshInventoryTotalsPg(snapshotCutoffDate);
-  return _refreshInventoryTotalsSqliteSync(snapshotCutoffDate);
-}
-
-function _refreshInventoryTotalsSqliteSync(snapshotCutoffDate) {
+  // P1-03-B: WAC 不再从文件列读取，改为查 latest confirmed locked WAC 版本
   const warnings = [];
+  // 获取每个 SKU+国家+仓库 的最新可用库存（连同 snapshot_cutoff_date）
   const latestImports = query(latestImportsSql()).rows;
 
-  transaction(() => {
+  transaction(async () => {
     for (const imp of latestImports) {
       const cutoff = imp.snapshot_cutoff_date || snapshotCutoffDate || '';
       const existing = queryOne('SELECT id, weighted_avg_cost, last_inbound_date, first_inbound_date FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
@@ -4222,12 +4111,13 @@ function _refreshInventoryTotalsSqliteSync(snapshotCutoffDate) {
       //   2. existing inventory WAC (≠0) — 已存在有效成本，不覆盖
       //   3. opening import WAC (>0) — 库存导入时提供的加权平均成本，用于无正式 WAC 的新库存初始化
       //   4. 0 — 兜底，表示无有效成本
-      const wacRecord = _latestConfirmedWacSqliteSync(imp.sku_code, imp.country, imp.warehouse);
+      const wacRecord = await latestConfirmedWac(imp.sku_code, imp.country, imp.warehouse);
       let wac, wacSource;
       if (wacRecord) {
         wac = wacRecord.new_avg_cost || 0;
         wacSource = 'confirmed';
       } else if (existing && (existing.weighted_avg_cost || 0) !== 0) {
+        // 保留已有有效 WAC，不被新的库存同步覆盖
         wac = existing.weighted_avg_cost || 0;
         wacSource = 'existing';
         warnings.push({
@@ -4236,9 +4126,11 @@ function _refreshInventoryTotalsSqliteSync(snapshotCutoffDate) {
           message: '未找到最新已确认加权平均成本，已保留原成本，请完成成本确认。'
         });
       } else if (imp.weighted_avg_cost && Number(imp.weighted_avg_cost) > 0) {
+        // 库存初始化：使用导入文件中的加权平均成本
         wac = Number(imp.weighted_avg_cost);
         wacSource = 'opening';
       } else {
+        // 无有效成本，使用 0
         wac = 0;
         wacSource = 'none';
         warnings.push({
@@ -4249,7 +4141,9 @@ function _refreshInventoryTotalsSqliteSync(snapshotCutoffDate) {
       }
       const invValue = (parseInt(imp.available_qty) || 0) * wac;
 
+      // last_inbound_date 更新规则：导入文件有值则更新，否则保留原值
       const newLastInbound = (imp.last_inbound_date && String(imp.last_inbound_date).trim()) ? imp.last_inbound_date : (existing ? existing.last_inbound_date : '');
+      // first_inbound_date 更新规则：导入文件填写新日期才更新；为空则保留旧值
       const newFirstInbound = (imp.first_inbound_date && String(imp.first_inbound_date).trim()) ? imp.first_inbound_date : (existing ? existing.first_inbound_date : '');
       if (existing) {
         run(`UPDATE inventory SET available_qty = ?, weighted_avg_cost = ?, inventory_value = ?, last_import_date = ?, snapshot_cutoff_date = ?, last_inbound_date = ?, first_inbound_date = ?, updated_at = datetime('now') WHERE id = ?`,
@@ -4260,73 +4154,13 @@ function _refreshInventoryTotalsSqliteSync(snapshotCutoffDate) {
       }
     }
     // 更新在途、PI未发货、PO未确认等
-    _updateInventoryTransitDataSqliteSync();
-  });
-  return { warnings };
-}
-
-async function _refreshInventoryTotalsPg(snapshotCutoffDate) {
-  const warnings = [];
-  const latestImports = (await dbPg.query(latestImportsSql())).rows;
-
-  await dbPg.transaction(async () => {
-    for (const imp of latestImports) {
-      const cutoff = imp.snapshot_cutoff_date || snapshotCutoffDate || '';
-      const existing = await dbPg.queryOne('SELECT id, weighted_avg_cost, last_inbound_date, first_inbound_date FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
-        [imp.sku_code, imp.country, imp.warehouse]);
-
-      const wacRecord = await _latestConfirmedWacPg(imp.sku_code, imp.country, imp.warehouse);
-      let wac, wacSource;
-      if (wacRecord) {
-        wac = wacRecord.new_avg_cost || 0;
-        wacSource = 'confirmed';
-      } else if (existing && (existing.weighted_avg_cost || 0) !== 0) {
-        wac = existing.weighted_avg_cost || 0;
-        wacSource = 'existing';
-        warnings.push({
-          sku_code: imp.sku_code, country: imp.country, warehouse: imp.warehouse,
-          priority: 'warning',
-          message: '未找到最新已确认加权平均成本，已保留原成本，请完成成本确认。'
-        });
-      } else if (imp.weighted_avg_cost && Number(imp.weighted_avg_cost) > 0) {
-        wac = Number(imp.weighted_avg_cost);
-        wacSource = 'opening';
-      } else {
-        wac = 0;
-        wacSource = 'none';
-        warnings.push({
-          sku_code: imp.sku_code, country: imp.country, warehouse: imp.warehouse,
-          priority: 'high',
-          message: '未找到已确认加权平均成本，成本与金额暂为 0，请尽快完成成本确认。'
-        });
-      }
-      const invValue = (parseInt(imp.available_qty) || 0) * wac;
-
-      const newLastInbound = (imp.last_inbound_date && String(imp.last_inbound_date).trim()) ? imp.last_inbound_date : (existing ? existing.last_inbound_date : '');
-      const newFirstInbound = (imp.first_inbound_date && String(imp.first_inbound_date).trim()) ? imp.first_inbound_date : (existing ? existing.first_inbound_date : '');
-      if (existing) {
-        await dbPg.run(`UPDATE inventory SET available_qty = ?, weighted_avg_cost = ?, inventory_value = ?, last_import_date = ?, snapshot_cutoff_date = ?, last_inbound_date = ?, first_inbound_date = ?, updated_at = datetime('now') WHERE id = ?`,
-          [imp.available_qty, wac, invValue, imp.import_date, cutoff, newLastInbound, newFirstInbound, existing.id]);
-      } else {
-        await dbPg.run(`INSERT INTO inventory (id, sku_code, country, warehouse, available_qty, weighted_avg_cost, inventory_value, last_import_date, snapshot_cutoff_date, last_inbound_date, first_inbound_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [genId('inv'), imp.sku_code, imp.country, imp.warehouse, imp.available_qty, wac, invValue, imp.import_date, cutoff, newLastInbound, newFirstInbound]);
-      }
-    }
-    // 更新在途、PI未发货、PO未确认等（嵌套事务 → SAVEPOINT，同一 ALS client）
-    await _updateInventoryTransitDataPg();
+    await updateInventoryTransitData();
   });
   return { warnings };
 }
 
 // 更新库存的在途数据
-// Batch 1.0a: 拆分 PG async / SQLite sync 两条内部路径。
-// 公共 API 保持 async，17 个 callers 无需修改。
 async function updateInventoryTransitData() {
-  if (isPgDriver()) return await _updateInventoryTransitDataPg();
-  return _updateInventoryTransitDataSqliteSync();
-}
-
-function _updateInventoryTransitDataSqliteSync() {
   // 采购链状态变化自动回写库存总表的在途类字段：
   //   po_unconfirmed_pi_qty / pi_confirmed_unshipped_qty / in_transit_qty
   // 全量重算（SET 聚合值，非 +=），幂等，与导入流程不冲突。
@@ -4421,95 +4255,6 @@ function _updateInventoryTransitDataSqliteSync() {
       [pd.sku_code, pd.country, pd.warehouse]);
     if (inv) {
       run('UPDATE inventory SET po_unconfirmed_pi_qty = ? WHERE id = ?', [pd.po_unconfirmed || 0, inv.id]);
-    }
-  }
-  });
-}
-
-async function _updateInventoryTransitDataPg() {
-  await dbPg.transaction(async () => {
-  await dbPg.run('UPDATE inventory SET in_transit_qty = 0');
-  const transitData = (await dbPg.query(`
-    WITH shipped AS (
-      SELECT cii.ci_id, cii.sku_code,
-             SUM(COALESCE(cii.shipped_qty, 0)) AS shipped_qty
-      FROM commercial_invoice_items cii
-      JOIN commercial_invoices ci ON ci.id = cii.ci_id
-      WHERE ci.ci_status NOT IN ('cancelled')
-      GROUP BY cii.ci_id, cii.sku_code
-    ),
-    arrived AS (
-      SELECT lb.related_ci_id AS ci_id, pli.sku_code,
-             SUM(COALESCE(pli.total_qty, 0)) AS arrived_qty
-      FROM logistics_batches lb
-      JOIN packing_lists pl ON pl.logistics_batch_id = lb.id
-      JOIN packing_list_items pli ON pli.pl_id = pl.id
-      WHERE lb.logistics_status = 'completed'
-        AND lb.related_ci_id IS NOT NULL
-      GROUP BY lb.related_ci_id, pli.sku_code
-    ),
-    per_ci_transit AS (
-      SELECT s.sku_code, ci.country, ci.target_warehouse AS warehouse,
-             CASE WHEN COALESCE(s.shipped_qty, 0) - COALESCE(a.arrived_qty, 0) < 0 THEN 0
-                  ELSE COALESCE(s.shipped_qty, 0) - COALESCE(a.arrived_qty, 0) END AS in_transit_qty
-      FROM shipped s
-      JOIN commercial_invoices ci ON ci.id = s.ci_id
-      LEFT JOIN arrived a ON a.ci_id = s.ci_id AND a.sku_code = s.sku_code
-      WHERE ci.country != '' AND ci.target_warehouse != ''
-    )
-    SELECT sku_code, country, warehouse, SUM(in_transit_qty) AS in_transit_qty
-    FROM per_ci_transit
-    GROUP BY sku_code, country, warehouse
-    HAVING SUM(in_transit_qty) > 0
-  `)).rows;
-
-  for (const td of transitData) {
-    const inv = await dbPg.queryOne('SELECT id FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
-      [td.sku_code, td.country, td.warehouse]);
-    if (inv) {
-      await dbPg.run('UPDATE inventory SET in_transit_qty = ? WHERE id = ?', [td.in_transit_qty || 0, inv.id]);
-    }
-  }
-
-  await dbPg.run('UPDATE inventory SET pi_confirmed_unshipped_qty = 0');
-  const piData = (await dbPg.query(`
-    SELECT pii.sku_code,
-           COALESCE(NULLIF(pi.country,''), po.country) as country,
-           COALESCE(NULLIF(pi.target_warehouse,''), po.target_warehouse) as warehouse,
-           SUM(pii.pi_confirmed_qty - pii.shipped_qty) as pi_unshipped
-    FROM proforma_invoice_items pii
-    JOIN proforma_invoices pi ON pii.pi_id = pi.id
-    LEFT JOIN purchase_orders po ON pi.related_po_id = po.id
-    WHERE pi.pi_status NOT IN ('cancelled', 'completed')
-      AND (pii.pi_confirmed_qty - pii.shipped_qty) > 0
-    GROUP BY pii.sku_code,
-             COALESCE(NULLIF(pi.country,''), po.country),
-             COALESCE(NULLIF(pi.target_warehouse,''), po.target_warehouse)
-  `)).rows;
-
-  for (const pd of piData) {
-    const inv = await dbPg.queryOne('SELECT id FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
-      [pd.sku_code, pd.country, pd.warehouse]);
-    if (inv) {
-      await dbPg.run('UPDATE inventory SET pi_confirmed_unshipped_qty = ? WHERE id = ?', [pd.pi_unshipped || 0, inv.id]);
-    }
-  }
-
-  await dbPg.run('UPDATE inventory SET po_unconfirmed_pi_qty = 0');
-  const poData = (await dbPg.query(`
-    SELECT poi.sku_code, po.country, po.target_warehouse as warehouse,
-           SUM(poi.po_qty - poi.transferred_pi_qty) as po_unconfirmed
-    FROM purchase_order_items poi
-    JOIN purchase_orders po ON poi.po_id = po.id
-    WHERE po.po_status NOT IN ('cancelled', 'transferred_pi') AND (poi.po_qty - poi.transferred_pi_qty) > 0
-    GROUP BY poi.sku_code, po.country, po.target_warehouse
-  `)).rows;
-
-  for (const pd of poData) {
-    const inv = await dbPg.queryOne('SELECT id FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
-      [pd.sku_code, pd.country, pd.warehouse]);
-    if (inv) {
-      await dbPg.run('UPDATE inventory SET po_unconfirmed_pi_qty = ? WHERE id = ?', [pd.po_unconfirmed || 0, inv.id]);
     }
   }
   });
@@ -16877,6 +16622,76 @@ process.on('uncaughtException', (err) => {
 process.on('unhandledRejection', (reason) => {
   console.error('[FATAL] 未处理的 Promise 拒绝:', reason);
 });
+
+// ==================== 启动前环境诊断（Render 部署排查用）====================
+// 在任何 DB 操作之前检查所有必需环境变量，避免进程静默退出导致 Render 只显示 "Application exited early"
+if (require.main === module) {
+  console.log('\n========== 启动前环境诊断 ==========');
+  console.log(`[DIAG] NODE_ENV = ${NODE_ENV || '(未设置)'}`);
+  console.log(`[DIAG] DB_DRIVER = ${process.env.DB_DRIVER || '(默认 sqlite)'}`);
+  console.log(`[DIAG] PORT = ${PORT}`);
+  console.log(`[DIAG] DATABASE_URL = ${process.env.DATABASE_URL ? '已设置 (长度=' + process.env.DATABASE_URL.length + ')' : '❌ 未设置'}`);
+  console.log(`[DIAG] BREAKGLASS_ADMIN_PASSWORD = ${BREAKGLASS_ADMIN_PASSWORD ? '已设置 (长度=' + BREAKGLASS_ADMIN_PASSWORD.length + ', 强度=' + (isStrongPassword(BREAKGLASS_ADMIN_PASSWORD) ? '合格' : '❌不合格') + ')' : '❌ 未设置'}`);
+  console.log(`[DIAG] FEISHU_APP_ID = ${FEISHU_APP_ID ? '已设置' : '(未设置)'}`);
+  console.log(`[DIAG] FEISHU_APP_SECRET = ${FEISHU_APP_SECRET ? '已设置' : '(未设置)'}`);
+  console.log(`[DIAG] FEISHU_REDIRECT_URI = ${FEISHU_REDIRECT_URI || '(未设置)'}`);
+  console.log(`[DIAG] TRUSTED_ORIGINS = ${TRUSTED_ORIGINS.length > 0 ? TRUSTED_ORIGINS.join(', ') : '(未设置)'}`);
+  console.log(`[DIAG] COOKIE_SECURE = ${COOKIE_SECURE}`);
+  console.log(`[DIAG] CSRF_DISABLE = ${CSRF_DISABLE}`);
+
+  // PG 模式下 DATABASE_URL 是必需的
+  if ((process.env.DB_DRIVER || '').toLowerCase() === 'pg' && !process.env.DATABASE_URL) {
+    console.error('\n[FATAL] DB_DRIVER=pg 但 DATABASE_URL 未设置！请在 Render Dashboard → Environment 中配置 DATABASE_URL（Supabase 直连串）。');
+    console.error('[FATAL] 格式：postgresql://postgres:<密码>@db.<项目ref>.supabase.co:5432/postgres');
+    process.exit(1);
+  }
+
+  // BREAKGLASS_ADMIN_PASSWORD 缺失或弱密码会导致 bootstrapBreakGlass 抛异常
+  if (!BREAKGLASS_ADMIN_PASSWORD || !isStrongPassword(BREAKGLASS_ADMIN_PASSWORD)) {
+    console.error('\n[FATAL] BREAKGLASS_ADMIN_PASSWORD 未设置或强度不足（需≥12位且含大小写与数字）！');
+    console.error('[FATAL] 请在 Render Dashboard → Environment 中配置 BREAKGLASS_ADMIN_PASSWORD。');
+    console.error('[FATAL] bootstrapBreakGlass() 会在 app.listen() 之前抛出异常，导致进程立即退出。');
+    process.exit(1);
+  }
+
+  console.log('[DIAG] 环境变量检查通过 ✓');
+  console.log('=====================================\n');
+}
+
+// break-glass 本地管理员初始化（fail-closed：缺强密码则启动失败）
+// P0-FIX-1：仅在直接运行 server.js 时执行启动副作用（app.listen / bootstrapBreakGlass / initDatabase）
+// require(server.js) 作为模块时不执行，避免脚本污染真实库
+if (require.main === module) {
+  // 用 try-catch 包裹启动序列，确保任何异常都有清晰的日志输出（Render 排查用）
+  try {
+    console.log('[STARTUP] 开始初始化 break-glass 管理员...');
+    bootstrapBreakGlass();
+    console.log('[STARTUP] break-glass 管理员初始化完成 ✓');
+  } catch (e) {
+    console.error('\n[FATAL] bootstrapBreakGlass() 失败:', e.message);
+    console.error(e.stack);
+    console.error('\n[FATAL] 服务无法启动。请检查上述错误并修正环境变量配置。');
+    process.exit(1);
+  }
+
+  console.log('[STARTUP] 正在启动 HTTP 服务 (端口 ' + PORT + ')...');
+  const server = app.listen(PORT, () => {
+    console.log(`\n[Server] 进销存管理系统已启动: http://localhost:${PORT}`);
+    console.log(`[Server] 登录方式：飞书 OAuth（中国/印尼团队统一）；应急入口：登录页底部"应急登录入口"`);
+    console.log(`[Server] 默认账号 admin/admin 已停用；break-glass 本地管理员须通过 BREAKGLASS_ADMIN_PASSWORD 初始化\n`);
+  });
+
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`\n[ERROR] 端口 ${PORT} 已被占用，服务无法启动。`);
+      console.error(`        请先停止占用该端口的程序，或修改 server.js 中的 PORT 后重试。`);
+      console.error(`        否则前端访问时会提示 "Failed to fetch"（连不上后端）。\n`);
+    } else {
+      console.error('[ERROR] 服务启动失败:', err && err.stack || err);
+    }
+    process.exit(1);
+  });
+}
 
 // PAY-CORE P0-1：供 scripts/backfill-payable-items.js 复用，不影响运行时
 module.exports = {
