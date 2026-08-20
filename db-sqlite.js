@@ -2005,7 +2005,7 @@ function initDatabase() {
   // LOGISTICS-COST-LINK：ci_cost_items 新增 logistics_batch_id，用于追溯费用来自哪个物流单
   try { d.exec("ALTER TABLE ci_cost_items ADD COLUMN logistics_batch_id TEXT DEFAULT ''"); } catch(e) {}
   // LOGISTICS-COST-LINK-V2：ci_cost_items 新增 payable_item_id，关联 payable_items（成本流→资金流桥接）
-  try { d.exec("ALTER TABLE ci_cost_items ADD COLUMN payable_item_id TEXT DEFAULT ''"); } catch(e) {}
+  try { d.exec("ALTER TABLE ci_cost_items ADD COLUMN payable_item_id TEXT"); } catch(e) {}
 
   // 成本更新日志（每次更新加权平均成本时记录）
   d.exec(`

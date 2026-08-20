@@ -1923,7 +1923,7 @@ async function initDatabase() {
   await exec("ALTER TABLE ci_cost_items ADD COLUMN IF NOT EXISTS logistics_batch_id TEXT DEFAULT ''");
   // LOGISTICS-COST-LINK-V2：ci_cost_items 新增 payable_item_id，关联 payable_items（成本流→资金流桥接）
   // 物流单费用生成 ci_cost_items 时同时创建 payable_items，付款申请从 payable_items 手动提交
-  await exec("ALTER TABLE ci_cost_items ADD COLUMN IF NOT EXISTS payable_item_id TEXT DEFAULT ''");
+  await exec("ALTER TABLE ci_cost_items ADD COLUMN IF NOT EXISTS payable_item_id TEXT");
 
   await exec(`
     CREATE TABLE IF NOT EXISTS cost_update_logs (

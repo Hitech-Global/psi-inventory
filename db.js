@@ -277,6 +277,9 @@ if (driver === 'pg') {
         "CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at)",
         // WAC-V2: ci_cost_items 新增 logistics_batch_id，追溯费用来自哪个物流单
         "ALTER TABLE ci_cost_items ADD COLUMN IF NOT EXISTS logistics_batch_id TEXT DEFAULT ''",
+        // LOGISTICS-COST-LINK-V2: ci_cost_items 新增 payable_item_id，关联 payable_items（成本流→资金流桥接）
+        // nullable / no default：历史 ci_cost_items 的 linkage 未知时为 NULL，不伪造 ''
+        "ALTER TABLE ci_cost_items ADD COLUMN IF NOT EXISTS payable_item_id TEXT",
         // WAC-V2: wac_history 新增 logistics_batch_id，标记 WAC 确认来自哪个物流批次
         "ALTER TABLE wac_history ADD COLUMN IF NOT EXISTS logistics_batch_id TEXT"
       ];
