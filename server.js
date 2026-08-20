@@ -10530,11 +10530,19 @@ function payableItemSourceExpenseCountry(item) {
   } else if (sourceType === 'logistics') {
     // LOGISTICS-COST-LINK-V2: logistics 费用通过 source_ci_id 关联 CI，从 CI 获取国家
     const ciId = String(item && item.source_ci_id || '').trim();
-    if (ciId) {
-      source = queryOne('SELECT ci_no AS source_no, country FROM commercial_invoices WHERE id = ?', [ciId]);
+    if (!ciId) {
+      throw new SettlementError(400, `应付费用 ${item.fee_no || item.id || ''} 缺少来源CI，不能创建付款申请`);
     }
+    source = queryOne('SELECT ci_no AS source_no, country FROM commercial_invoices WHERE id = ?', [ciId]);
     if (!source) {
       throw new SettlementError(400, `应付费用 ${item.fee_no || item.id || ''} 的来源CI不存在，不能创建付款申请`);
+    }
+    var batch = queryOne('SELECT related_ci_id FROM logistics_batches WHERE id = ?', [sourceId]);
+    if (!batch) {
+      throw new SettlementError(400, `应付费用 ${item.fee_no || item.id || ''} 的来源物流批次不存在，不能创建付款申请`);
+    }
+    if (String(batch.related_ci_id || '') !== ciId) {
+      throw new SettlementError(400, `应付费用 ${item.fee_no || item.id || ''} 的来源CI与物流批次关联CI不一致，不能创建付款申请`);
     }
   } else {
     throw new SettlementError(400, `应付费用 ${item.fee_no || item.id || ''} 的来源类型无法确定国家，不能创建付款申请`);
@@ -13420,7 +13428,7 @@ app.post('/api/payment-requests/multi-expense', requireApiPermission('payment_cr
     // 2. 查询所有 payable_items
     const placeholders = payable_item_ids.map(() => '?').join(',');
     const items = await query(
-      `SELECT id, fee_no, source_type, source_id, source_no, fee_type, category_code, subcategory_code,
+      `SELECT id, fee_no, source_type, source_id, source_no, source_ci_id, fee_type, category_code, subcategory_code,
               payee_type, payee_key, payee_name_snapshot, currency, payable_amount_minor, lifecycle_status
        FROM payable_items WHERE id IN (${placeholders})`,
       payable_item_ids
@@ -16921,5 +16929,6 @@ module.exports = {
   releasePayableItem,
   releasePayableItemsByPR,
   syncMultiSourcePiStatus,
-  recalculatePaymentSettlement
+  recalculatePaymentSettlement,
+  payableItemSourceExpenseCountry
 };
