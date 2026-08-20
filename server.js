@@ -11500,6 +11500,66 @@ function exactSettlementRate(fromCurrency, toCurrency, paidDate) {
   throw new SettlementError(400, `缺少 ${paidDate} ${fromCurrency}→${toCurrency} 的 realtime 付款汇率`);
 }
 
+var FX_PROVIDER_TIMEOUT_MS = 5000;
+
+function isValidRateDate(s) {
+  if (typeof s !== 'string') return false;
+  var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return false;
+  var y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+  if (mo < 1 || mo > 12) return false;
+  if (d < 1 || d > 31) return false;
+  var dt = new Date(Date.UTC(y, mo - 1, d));
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d) return false;
+  return true;
+}
+
+async function resolvePaymentFxRate({ fromCurrency, toCurrency, rateDate, timeoutMs }) {
+  if (fromCurrency === toCurrency) {
+    return { rate: 1, rate_date: rateDate, rate_type: 'identity', direction: 'identity', source: 'identity' };
+  }
+  var direct = queryOne('SELECT * FROM exchange_rates WHERE from_currency = ? AND to_currency = ? AND rate_date = ? AND rate_type = ? ORDER BY created_at DESC, id DESC LIMIT 1', [fromCurrency, toCurrency, rateDate, SETTLEMENT_RATE_TYPE]);
+  if (direct && Number(direct.rate) > 0) {
+    return { rate: Number(direct.rate), rate_date: direct.rate_date, rate_type: direct.rate_type || '', direction: 'direct', source: 'db_direct' };
+  }
+  var reverse = queryOne('SELECT * FROM exchange_rates WHERE from_currency = ? AND to_currency = ? AND rate_date = ? AND rate_type = ? ORDER BY created_at DESC, id DESC LIMIT 1', [toCurrency, fromCurrency, rateDate, SETTLEMENT_RATE_TYPE]);
+  if (reverse && Number(reverse.rate) > 0) {
+    return { rate: 1 / Number(reverse.rate), rate_date: reverse.rate_date, rate_type: reverse.rate_type || '', direction: 'reverse', source: 'db_reverse' };
+  }
+  var apiFrom = CURRENCY_API_MAP[fromCurrency] || fromCurrency;
+  var apiTo = CURRENCY_API_MAP[toCurrency] || toCurrency;
+  var providerRate = null;
+  var providerDate = null;
+  var abortMs = (typeof timeoutMs === 'number' && timeoutMs > 0) ? timeoutMs : FX_PROVIDER_TIMEOUT_MS;
+  try {
+    var resp = await fetch('https://api.frankfurter.dev/v1/' + rateDate + '?base=' + encodeURIComponent(apiFrom) + '&symbols=' + encodeURIComponent(apiTo), { signal: AbortSignal.timeout(abortMs) });
+    if (resp.ok) {
+      var data = await resp.json();
+      if (data && data.rates && data.rates[apiTo]) {
+        providerRate = Number(data.rates[apiTo]);
+        providerDate = data.date;
+      }
+    }
+  } catch (fetchErr) {
+    // provider error/timeout/abort → fall through to blocker
+  }
+  if (!providerRate || !(providerRate > 0) || providerDate !== rateDate) {
+    throw new SettlementError(400, '缺少 ' + rateDate + ' ' + fromCurrency + '→' + toCurrency + ' 的 realtime 付款汇率');
+  }
+  var cacheId = 'fxauto_' + rateDate + '_' + fromCurrency + '_' + toCurrency + '_' + SETTLEMENT_RATE_TYPE;
+  try {
+    run('INSERT INTO exchange_rates (id, from_currency, to_currency, rate, rate_date, rate_type) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING',
+      [cacheId, fromCurrency, toCurrency, providerRate, rateDate, SETTLEMENT_RATE_TYPE]);
+  } catch (e) {
+    // ON CONFLICT not supported or duplicate — ignore, reread will get existing
+  }
+  var cached = queryOne('SELECT * FROM exchange_rates WHERE from_currency = ? AND to_currency = ? AND rate_date = ? AND rate_type = ? ORDER BY created_at DESC, id DESC LIMIT 1', [fromCurrency, toCurrency, rateDate, SETTLEMENT_RATE_TYPE]);
+  if (cached && Number(cached.rate) > 0) {
+    return { rate: Number(cached.rate), rate_date: cached.rate_date, rate_type: cached.rate_type || '', direction: 'direct', source: 'provider_cached' };
+  }
+  throw new SettlementError(400, '缺少 ' + rateDate + ' ' + fromCurrency + '→' + toCurrency + ' 的 realtime 付款汇率');
+}
+
 async function buildPaymentRateSnapshot(payment, amount, paidDate) {
   if (payment.payment_category === 'goods') {
     return {
@@ -13561,6 +13621,48 @@ app.post('/api/payment-requests/multi-expense', requireApiPermission('payment_cr
 // 以修复被 :id 抢先匹配导致 404「付款申请不存在」的问题。请勿将其移回 :id 之后。
 
 // PAY-CORE P0-3：批量撤回付款申请（仅 pending 审批 + 无 payment_transactions + 无有效 settlement_logs 可撤回）
+// 付款日汇率解析 — 前端选择 actual_paid_date 后调用，解析并缓存汇率
+// 货款付款跳过；非货款费用按 exact-date 规则解析，missing 时不 fallback
+// 权限与 confirm-paid 一致：payment_approve / payment_execute 任一即可
+app.post('/api/payment-requests/:id/payment-fx/resolve', requireApiPermission('payment_approve', 'payment_execute'), asyncHandler(async (req, res) => {
+  var rateDate = String((req.body || {}).rate_date || '').trim();
+  if (!rateDate) return res.status(400).json({ error: '缺少 rate_date' });
+  if (!isValidRateDate(rateDate)) return res.status(400).json({ error: 'rate_date 格式无效，必须为 YYYY-MM-DD' });
+  var payment = await queryOne('SELECT * FROM payment_requests WHERE id = ?', [req.params.id]);
+  if (!payment) return res.status(404).json({ error: '付款申请不存在' });
+  if (payment.payment_category === 'goods') {
+    return res.json({ skip: true, reason: 'goods_payment' });
+  }
+  try {
+    var country = resolveSettlementCountry(payment);
+    var originalCurrency = String(payment.currency || '').trim();
+    if (!originalCurrency) return res.status(400).json({ error: '付款申请未配置原币币种' });
+    var localResult = await resolvePaymentFxRate({ fromCurrency: originalCurrency, toCurrency: country.currency, rateDate: rateDate });
+    var rmbResult = { rate: 1, source: 'identity' };
+    if (originalCurrency !== 'RMB') {
+      rmbResult = await resolvePaymentFxRate({ fromCurrency: originalCurrency, toCurrency: 'RMB', rateDate: rateDate });
+    }
+    var originalAmount = Number(payment.payable_amount) || 0;
+    res.json({
+      rate: localResult.rate,
+      rate_date: localResult.rate_date,
+      source: localResult.source,
+      direction: localResult.direction,
+      local_currency: country.currency,
+      local_amount: Math.round(originalAmount * localResult.rate * 100) / 100,
+      rmb_rate: rmbResult.rate,
+      rmb_source: rmbResult.source,
+      original_currency: originalCurrency,
+      original_amount: originalAmount
+    });
+  } catch (e) {
+    if (e.name === 'SettlementError') {
+      return res.status(400).json({ error: e.message, blocker: true });
+    }
+    throw e;
+  }
+}));
+
 // 撤回事务内严格顺序：校验 → 释放 payable_items → 更新 PR → 更新 approval_records → 恢复 PI
 // payment_request_items 保留（不删除），cancelled PR 仍可查看原关联费用
 app.post('/api/payment-requests/batch-cancel', requireApiPermission('payment_create'), asyncHandler(async (req, res) => {
@@ -16930,5 +17032,10 @@ module.exports = {
   releasePayableItemsByPR,
   syncMultiSourcePiStatus,
   recalculatePaymentSettlement,
-  payableItemSourceExpenseCountry
+  payableItemSourceExpenseCountry,
+  resolvePaymentFxRate,
+  exactSettlementRate,
+  buildPaymentRateSnapshot,
+  isValidRateDate,
+  app
 };
