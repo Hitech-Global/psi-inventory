@@ -16,9 +16,6 @@ let _wacQueryCount = 0;
 function _q(sql, params) { _wacQueryCount++; return query(sql, params); }
 function _q1(sql, params) { _wacQueryCount++; return queryOne(sql, params); }
 
-// FX memoization cache — cleared at start of each computeWacCostFacts call
-let _fxCache = new Map();
-
 const WAC_FX_POLICIES = {
   'inspection_fee/inspection': 'PAYMENT_DATE_FX',
 };
@@ -29,13 +26,13 @@ const WAC_ALLOCATION_POLICIES = {
 // Exact-date FX resolver for WAC (purpose=INVENTORY_VALUATION).
 // Does NOT expose payment settlement semantics. Only same-day direct or reverse-reciprocal.
 // Returns null if no exact-date rate found — caller must produce a blocker.
-function resolveExactFxRate(fromCurrency, toCurrency, date) {
+function resolveExactFxRate(fromCurrency, toCurrency, date, cache) {
   if (!date) return null;
   if (fromCurrency === toCurrency) {
     return { rate: 1, rate_date: date, rate_type: 'identity', direction: 'identity' };
   }
   const cacheKey = `${fromCurrency}|${toCurrency}|${date}`;
-  if (_fxCache.has(cacheKey)) return _fxCache.get(cacheKey);
+  if (cache && cache.has(cacheKey)) return cache.get(cacheKey);
   const direct = _q1(
     `SELECT * FROM exchange_rates
      WHERE from_currency = ? AND to_currency = ? AND rate_date = ? AND rate_type = ?
@@ -44,7 +41,7 @@ function resolveExactFxRate(fromCurrency, toCurrency, date) {
   );
   if (direct && Number(direct.rate) > 0) {
     const result = { rate: Number(direct.rate), rate_date: direct.rate_date, rate_type: direct.rate_type || '', direction: 'direct' };
-    _fxCache.set(cacheKey, result);
+    if (cache) cache.set(cacheKey, result);
     return result;
   }
   const reverse = _q1(
@@ -55,10 +52,10 @@ function resolveExactFxRate(fromCurrency, toCurrency, date) {
   );
   if (reverse && Number(reverse.rate) > 0) {
     const result = { rate: 1 / Number(reverse.rate), rate_date: reverse.rate_date, rate_type: reverse.rate_type || '', direction: 'reverse' };
-    _fxCache.set(cacheKey, result);
+    if (cache) cache.set(cacheKey, result);
     return result;
   }
-  _fxCache.set(cacheKey, null);
+  if (cache) cache.set(cacheKey, null);
   return null;
 }
 
@@ -90,7 +87,7 @@ function allocateByWeight(skuCodes, weightMap, totalAmount) {
 function computeWacCostFacts(logisticsBatchId) {
   const blockers = [];
   _wacQueryCount = 0;
-  _fxCache = new Map();
+  const fxCache = new Map();
 
   // ── 1. Load batch ──
   const batch = _q1('SELECT * FROM logistics_batches WHERE id = ?', [logisticsBatchId]);
@@ -221,7 +218,7 @@ function computeWacCostFacts(logisticsBatchId) {
   const ciCurrency = String(ci.currency || 'USD').trim();
   let productFxRate = null;
   if (arrivalDate && localCurrency) {
-    productFxRate = resolveExactFxRate(ciCurrency, localCurrency, arrivalDate);
+    productFxRate = resolveExactFxRate(ciCurrency, localCurrency, arrivalDate, fxCache);
     if (!productFxRate && ciCurrency !== localCurrency) {
       blockers.push({ code: 'PRODUCT_FX_RATE_MISSING', message: `缺少 ${arrivalDate} ${ciCurrency}→${localCurrency} 的 realtime 汇率` });
     }
