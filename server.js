@@ -9250,29 +9250,36 @@ app.put('/api/logistics-batches/:id', requireApiPermission('logistics_edit'), as
       if (dup) return res.status(409).json({ error: `物流单号 ${d.batch_no} 已存在` });
     }
 
-    const fields = [];
-    const values = [];
-    const allowed = ['batch_no', 'forwarder_id', 'forwarder_name', 'transport_mode', 'origin_port', 'dest_port', 'target_country', 'target_warehouse', 'pickup_date', 'depart_date', 'eta_date', 'actual_arrival_date', 'customs_start_date', 'customs_end_date', 'delivery_date', 'inbound_complete_date', 'logistics_status', 'total_cartons', 'total_weight', 'total_cbm', 'freight_currency', 'international_freight', 'local_charges', 'customs_service_fee', 'delivery_fee', 'customs_duty', 'vat_gst', 'other_fees', 'fee_status', 'remark'];
-    allowed.forEach(f => {
-      if (d[f] !== undefined) { fields.push(`${f} = ?`); values.push(d[f]); }
+    // 物流保存 + 费用事实同步 — 同一事务，原子保证
+    const syncResult = await transaction(async () => {
+      const fields = [];
+      const values = [];
+      const allowed = ['batch_no', 'forwarder_id', 'forwarder_name', 'transport_mode', 'origin_port', 'dest_port', 'target_country', 'target_warehouse', 'pickup_date', 'depart_date', 'eta_date', 'actual_arrival_date', 'customs_start_date', 'customs_end_date', 'delivery_date', 'inbound_complete_date', 'logistics_status', 'total_cartons', 'total_weight', 'total_cbm', 'freight_currency', 'international_freight', 'local_charges', 'customs_service_fee', 'delivery_fee', 'customs_duty', 'vat_gst', 'other_fees', 'fee_status', 'remark'];
+      allowed.forEach(f => {
+        if (d[f] !== undefined) { fields.push(`${f} = ?`); values.push(d[f]); }
+      });
+      if (d.international_freight !== undefined || d.local_charges !== undefined || d.customs_service_fee !== undefined || d.delivery_fee !== undefined) {
+        const intl = d.international_freight !== undefined ? d.international_freight : existing.international_freight;
+        const local = d.local_charges !== undefined ? d.local_charges : existing.local_charges;
+        const customs = d.customs_service_fee !== undefined ? d.customs_service_fee : existing.customs_service_fee;
+        const delivery = d.delivery_fee !== undefined ? d.delivery_fee : existing.delivery_fee;
+        const total = (intl || 0) + (local || 0) + (customs || 0) + (delivery || 0);
+        fields.push('total_freight = ?');
+        values.push(total);
+      }
+      fields.push(`updated_at = datetime('now')`);
+      values.push(id);
+      run(`UPDATE logistics_batches SET ${fields.join(', ')} WHERE id = ?`, values);
+
+      // Re-read updated batch and sync cost facts
+      const updatedBatch = queryOne('SELECT * FROM logistics_batches WHERE id = ?', [id]);
+      return syncLogisticsCostFactsCore(updatedBatch, {
+        createdBy: (req.currentUserId || (req.user && req.user.id)) || '',
+        payeeName: ''
+      });
     });
-    // 重新计算综合运费（使用已查询的 existing 记录，避免二次查询）
-    if (d.international_freight !== undefined || d.local_charges !== undefined || d.customs_service_fee !== undefined || d.delivery_fee !== undefined) {
-      const intl = d.international_freight !== undefined ? d.international_freight : existing.international_freight;
-      const local = d.local_charges !== undefined ? d.local_charges : existing.local_charges;
-      const customs = d.customs_service_fee !== undefined ? d.customs_service_fee : existing.customs_service_fee;
-      const delivery = d.delivery_fee !== undefined ? d.delivery_fee : existing.delivery_fee;
-      const total = (intl || 0) + (local || 0) + (customs || 0) + (delivery || 0);
-      fields.push('total_freight = ?');
-      values.push(total);
-    }
-    fields.push(`updated_at = datetime('now')`);
-    values.push(id);
-    run(`UPDATE logistics_batches SET ${fields.join(', ')} WHERE id = ?`, values);
-    // 在途物理口径：物流批次 completed(已到仓) <-> 其他 状态 跨越时，触发在途重算。
-    // 这样「已到仓」的 SKU 数量会立即退出订单预测在途；状态回退则恢复在途。
-    // 仅边界跨越才重算，pending→in_transit→customs 等内部流转不触发。
-    // 若此处重算失败，订单预测 GET 自身仍会在读取前兜底重算，属确定性自愈链路，故仅记录错误日志。
+
+    // Post-transaction: transit recalc + status logging (outside tx, failure-safe)
     if (d.logistics_status !== undefined && d.logistics_status !== existing.logistics_status) {
       const wasArrived = existing.logistics_status === LOGISTICS_STATUS_ARRIVED;
       const nowArrived = d.logistics_status === LOGISTICS_STATUS_ARRIVED;
@@ -9284,8 +9291,6 @@ app.put('/api/logistics-batches/:id', requireApiPermission('logistics_edit'), as
         }
       }
     }
-    // 物流展示状态变化通知：仅当「业务展示状态」（非底层枚举）真正变化才记录 + 通知。
-    // 例 arrived→customs 同为「清关中」，展示状态未变，不记录也不通知；清关中→待派送才触发。
     if (d.logistics_status !== undefined) {
       const oldDisplay = deriveLogisticsDisplayStatus(existing.logistics_status);
       const newDisplay = deriveLogisticsDisplayStatus(d.logistics_status);
@@ -9301,8 +9306,11 @@ app.put('/api/logistics-batches/:id', requireApiPermission('logistics_edit'), as
         notifyListingStatusChanged(id, existing.logistics_status, d.logistics_status, 'logistics').catch(() => {});
       }
     }
-    res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    res.json({ success: true, cost_sync: (syncResult && syncResult.synced) || [] });
+  } catch (e) {
+    if (e.status) res.status(e.status).json({ error: e.message, code: e.code || '', detail: e.detail || {} });
+    else res.status(500).json({ error: e.message });
+  }
 }));
 
 // ==================== LOGISTICS-LISTING-01：Listing 上架状态管理 ====================
@@ -10712,6 +10720,295 @@ function cancelPayableItem(payableItemId, cancelledBy, cancelReason) {
     [cancelledBy || '', cancelReason || '', payableItemId]
   );
   return result.changes > 0;
+}
+
+/**
+ * 物流保存后自动同步财务应付费用事实
+ * 核心：确保 payable_items + ci_cost_items 与物流费用一致
+ * 自身不启动 transaction — 由调用方负责事务边界
+ */
+function syncLogisticsCostFactsCore(batch, context) {
+  var ctx = context || {};
+  var createdBy = ctx.createdBy || '';
+  var payeeName = ctx.payeeName || '';
+
+  if (!batch.related_ci_id) return { synced: [] };
+
+  var ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [batch.related_ci_id]);
+  if (!ci) return { synced: [] };
+
+  // cost_confirmed 作为 flag 传递给 _syncOneFeeCategory，仅在需要 mutation 时检查
+  // 不在此处无条件 throw — 否则会阻止用户修改 ETA 等非费用字段
+  var costConfirmed = ci.cost_confirmed ? true : false;
+
+  var currency = batch.freight_currency || 'USD';
+  var defaultPayee = payeeName || batch.forwarder_name || '';
+
+  var freightAmount = (Number(batch.international_freight) || 0) + (Number(batch.local_charges) || 0) +
+                      (Number(batch.customs_service_fee) || 0) + (Number(batch.delivery_fee) || 0);
+  var dutyAmount = (Number(batch.customs_duty) || 0) + (Number(batch.vat_gst) || 0);
+  var otherAmount = Number(batch.other_fees) || 0;
+
+  var categories = [
+    { feeType: 'freight', categoryCode: 'warehouse_arrival', subcategoryCode: 'freight',
+      payeeType: 'service_provider', payeeKey: 'service_provider:' + defaultPayee,
+      amount: freightAmount, remark: '运费 ' + batch.batch_no },
+    { feeType: 'duty', categoryCode: 'customs_duty', subcategoryCode: 'duty',
+      payeeType: 'customs', payeeKey: 'customs:' + defaultPayee,
+      amount: dutyAmount, remark: '关税 ' + batch.batch_no, isDuty: true },
+    { feeType: 'other_local', categoryCode: 'warehouse_arrival', subcategoryCode: 'other_local',
+      payeeType: 'service_provider', payeeKey: 'service_provider:' + defaultPayee,
+      amount: otherAmount, remark: '其他费用 ' + batch.batch_no }
+  ];
+
+  var synced = [];
+  for (var i = 0; i < categories.length; i++) {
+    var cat = categories[i];
+    var result = _syncOneFeeCategory(batch, ci, cat, currency, defaultPayee, createdBy, costConfirmed);
+    if (result) synced.push(result);
+  }
+
+  // fee_status 只在真实 mutation 后更新（NO_CHANGE 返回 null，不进入 synced）
+  var anyDuty = false;
+  for (var j = 0; j < synced.length; j++) {
+    if (synced[j].feeType === 'duty') { anyDuty = true; break; }
+  }
+  if (synced.length > 0) {
+    run('UPDATE logistics_batches SET fee_status = ?, updated_at = datetime(\'now\') WHERE id = ?', ['cost_generated', batch.id]);
+  }
+  if (anyDuty && dutyAmount > 0) {
+    run('UPDATE commercial_invoices SET import_duty_total = ?, has_customs_duty = 1, updated_at = datetime(\'now\') WHERE id = ?', [dutyAmount, ci.id]);
+  }
+
+  return { synced: synced };
+}
+
+function _syncOneFeeCategory(batch, ci, cat, currency, defaultPayee, createdBy, costConfirmed) {
+  var amount = cat.amount;
+  var amountMinor = Math.round((Number(amount) || 0) * 100);
+
+  // Find the single payable for this source+fee_type+ci
+  var payable = queryOne(
+    'SELECT * FROM payable_items WHERE source_type = ? AND source_id = ? AND fee_type = ? AND source_ci_id = ?',
+    ['logistics', batch.id, cat.feeType, ci.id]
+  );
+
+  // Find current ci_cost_item (enabled)
+  var ciCost = queryOne(
+    'SELECT * FROM ci_cost_items WHERE logistics_batch_id = ? AND cost_category = ? AND cost_subcategory = ? AND include_in_landing_cost = 1',
+    [batch.id, cat.categoryCode, cat.subcategoryCode]
+  );
+
+  // Find disabled ci_cost_item (for reactivation)
+  var disabledCiCost = queryOne(
+    'SELECT * FROM ci_cost_items WHERE logistics_batch_id = ? AND cost_category = ? AND cost_subcategory = ? AND include_in_landing_cost = 0 ORDER BY created_at DESC LIMIT 1',
+    [batch.id, cat.categoryCode, cat.subcategoryCode]
+  );
+
+  // Lifecycle classification
+  var payableLifecycle = payable ? payable.lifecycle_status : null;
+  var isPayableActive = payableLifecycle === 'active';
+  var isPayableCancelled = payableLifecycle === 'cancelled';
+  var isPayableInPaymentFlow = ['reserved', 'partially_paid', 'paid'].indexOf(payableLifecycle) >= 0;
+  // "present" = exists and not cancelled (active or in payment flow)
+  var isPayablePresent = payable && !isPayableCancelled;
+
+  var hasCurrentCiCost = !!ciCost;
+  var hasDisabledCiCost = !!disabledCiCost;
+
+  // paymentFlowStarted = flag only, NOT an immediate error
+  // A: only ACTIVE (non-terminal) payment_request_items linked to this payable
+  //    Terminal PR states (rejected/cancelled/paid etc.) do NOT block editing —
+  //    payment_request_items are retained for audit even after reject/cancel.
+  // B: lifecycle in reserved/partially_paid/paid
+  var paymentFlowStarted = false;
+  if (payable) {
+    var activePri = queryOne(
+      `SELECT 1 FROM payment_request_items pri
+       JOIN payment_requests pr ON pr.id = pri.payment_request_id
+       WHERE pri.payable_item_id = ?
+         AND pr.payment_status NOT IN ('cancelled','rejected','paid','partial_paid',
+                                       'partial_payment_partial_deduction','deduction_settled','partial_rounding')
+         AND pr.approval_status NOT IN ('cancelled','rejected')
+       LIMIT 1`,
+      [payable.id]
+    );
+    if (activePri) paymentFlowStarted = true;
+    if (isPayableInPaymentFlow) paymentFlowStarted = true;
+  }
+
+  // ── CONFLICT checks (data integrity errors — always throw regardless of amount) ──
+
+  // CONFLICT: payable present (active/payment-flow) but no ci_cost_item at all
+  if (isPayablePresent && !hasCurrentCiCost && !hasDisabledCiCost) {
+    throw { status: 409, code: 'COST_GENERATION_STATE_CONFLICT',
+            message: '数据完整性异常：payable存在但ci_cost_item缺失',
+            detail: { batch_id: batch.id, fee_type: cat.feeType, payable_count: 1, ci_cost_count: 0 } };
+  }
+  // CONFLICT: ci_cost_item exists (current) but no payable at all
+  if (!payable && hasCurrentCiCost) {
+    throw { status: 409, code: 'COST_GENERATION_STATE_CONFLICT',
+            message: '数据完整性异常：ci_cost_item存在但payable缺失',
+            detail: { batch_id: batch.id, fee_type: cat.feeType, payable_count: 0, ci_cost_count: 1 } };
+  }
+  // CONFLICT: cancelled payable + enabled ci_cost (normal cancel = cancelled + disabled)
+  if (isPayableCancelled && hasCurrentCiCost) {
+    throw { status: 409, code: 'COST_GENERATION_STATE_CONFLICT',
+            message: '数据完整性异常：payable已取消但ci_cost_item仍启用',
+            detail: { batch_id: batch.id, fee_type: cat.feeType, payable_lifecycle: 'cancelled', ci_cost_include_in_landing_cost: 1 } };
+  }
+
+  if (amount > 0) {
+    // NONE: no payable, no ci_cost → CREATE new
+    if (!payable && !hasCurrentCiCost && !hasDisabledCiCost) {
+      if (costConfirmed) {
+        throw { status: 409, code: 'CI_COST_CONFIRMED', message: '该CI费用已确认，不能继续新增/修改费用' };
+      }
+      // CI-level dup check
+      var ciDup = queryOne(
+        'SELECT id, logistics_batch_id FROM ci_cost_items WHERE ci_id = ? AND cost_category = ? AND cost_subcategory = ? AND include_in_landing_cost = 1 AND logistics_batch_id != ? LIMIT 1',
+        [ci.id, cat.categoryCode, cat.subcategoryCode, batch.id]
+      );
+      if (ciDup) {
+        throw { status: 409, code: 'CI_COST_ITEM_DUPLICATE',
+                message: '该CI已存在相同类型的成本记录（来自其他物流批次）',
+                detail: { ci_id: ci.id, fee_type: cat.feeType, existing_batch_id: ciDup.logistics_batch_id } };
+      }
+      var piResult = createPayableItemFromSource({
+        sourceType: 'logistics', sourceId: batch.id, sourceNo: batch.batch_no,
+        feeType: cat.feeType, categoryCode: cat.categoryCode, subcategoryCode: cat.subcategoryCode,
+        payeeType: cat.payeeType, payeeKey: cat.payeeKey, payeeName: defaultPayee,
+        currency: currency, payableAmount: amount, sourceCiId: ci.id, createdBy: createdBy
+      });
+      var payableItemId = (piResult && piResult.id) ? piResult.id : '';
+      var cciId = genId('cci');
+      run('INSERT INTO ci_cost_items (id, ci_id, ci_no, payment_request_id, request_no, cost_category, cost_subcategory, payable_amount, paid_amount, include_in_landing_cost, payee_name, currency, remark, logistics_batch_id, payable_item_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [cciId, ci.id, ci.ci_no, '', '', cat.categoryCode, cat.subcategoryCode, amount, 0, 1, defaultPayee, currency, cat.remark, batch.id, payableItemId]);
+      return { feeType: cat.feeType, action: 'CREATE', payable_item_id: payableItemId, ci_cost_item_id: cciId, amount: amount, currency: currency };
+    }
+
+    // REACTIVATE: cancelled payable → active
+    if (isPayableCancelled) {
+      if (paymentFlowStarted) {
+        throw { status: 409, code: 'LOGISTICS_COST_ALREADY_IN_PAYMENT_FLOW',
+                message: '该费用已进入付款流程，不能修改金额/币种',
+                detail: { batch_id: batch.id, fee_type: cat.feeType, payable_item_id: payable.id, lifecycle_status: payable.lifecycle_status } };
+      }
+      if (costConfirmed) {
+        throw { status: 409, code: 'CI_COST_CONFIRMED', message: '该CI费用已确认，不能继续新增/修改费用' };
+      }
+      run('UPDATE payable_items SET lifecycle_status = ?, payable_amount_minor = ?, currency = ?, cancelled_by = ?, cancelled_at = ?, cancel_reason = ? WHERE id = ?',
+        ['active', amountMinor, currency, '', '', '', payable.id]);
+      if (hasDisabledCiCost) {
+        run('UPDATE ci_cost_items SET include_in_landing_cost = 1, payable_amount = ?, currency = ? WHERE id = ?', [amount, currency, disabledCiCost.id]);
+      } else if (!hasCurrentCiCost) {
+        var cciId2 = genId('cci');
+        run('INSERT INTO ci_cost_items (id, ci_id, ci_no, payment_request_id, request_no, cost_category, cost_subcategory, payable_amount, paid_amount, include_in_landing_cost, payee_name, currency, remark, logistics_batch_id, payable_item_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [cciId2, ci.id, ci.ci_no, '', '', cat.categoryCode, cat.subcategoryCode, amount, 0, 1, defaultPayee, currency, cat.remark, batch.id, payable.id]);
+      }
+      return { feeType: cat.feeType, action: 'REACTIVATE', payable_item_id: payable.id, amount: amount, currency: currency };
+    }
+
+    // Payable present (active / reserved / partially_paid / paid) + amount > 0
+    if (isPayablePresent) {
+      // ── NO_CHANGE check: payable + ci_cost + linkage all consistent ──
+      // 全部使用 minor units (整数 cents) 比较，避免 float 精度问题
+      if (hasCurrentCiCost) {
+        var payableAmountMinor = Number(payable.payable_amount_minor);
+        var ciCostAmountMinor = Math.round((Number(ciCost.payable_amount) || 0) * 100);
+
+        var payableAmtOk = (payableAmountMinor === amountMinor);
+        var payableCurOk = (payable.currency === currency);
+        var ciCostAmtOk = (ciCostAmountMinor === amountMinor);
+        var ciCostCurOk = (ciCost.currency === currency);
+        var linkageOk = (ciCost.payable_item_id === payable.id);
+
+        // NO_CHANGE: everything consistent → no mutation, no guards, no throw
+        if (payableAmtOk && payableCurOk && ciCostAmtOk && ciCostCurOk && linkageOk) {
+          return null;
+        }
+
+        // ── Drift: payable and ci_cost disagree with each other ──
+        var drift = (payableAmountMinor !== ciCostAmountMinor
+                     || payable.currency !== ciCost.currency
+                     || !linkageOk);
+
+        if (drift) {
+          // Can't silently fix settlement-linked facts if payment flow started
+          if (paymentFlowStarted) {
+            throw { status: 409, code: 'COST_GENERATION_STATE_CONFLICT',
+                    message: '数据完整性异常：payable与ci_cost_item金额/币种/linkage不一致',
+                    detail: { batch_id: batch.id, fee_type: cat.feeType,
+                              payable_amount_minor: payableAmountMinor, ci_cost_amount_minor: ciCostAmountMinor,
+                              payable_currency: payable.currency, ci_cost_currency: ciCost.currency,
+                              payable_item_id: payable.id, ci_cost_payable_item_id: ciCost.payable_item_id } };
+          }
+          // Not in payment flow → sync to fix drift
+          if (costConfirmed) {
+            throw { status: 409, code: 'CI_COST_CONFIRMED', message: '该CI费用已确认，不能继续新增/修改费用' };
+          }
+          run('UPDATE payable_items SET payable_amount_minor = ?, currency = ? WHERE id = ?',
+            [amountMinor, currency, payable.id]);
+          run('UPDATE ci_cost_items SET payable_amount = ?, currency = ?, payable_item_id = ? WHERE id = ?',
+            [amount, currency, payable.id, ciCost.id]);
+          return { feeType: cat.feeType, action: 'SYNC', payable_item_id: payable.id, amount: amount, currency: currency };
+        }
+
+        // Payable and ci_cost agree with each other, but differ from desired → needs UPDATE
+        if (paymentFlowStarted) {
+          throw { status: 409, code: 'LOGISTICS_COST_ALREADY_IN_PAYMENT_FLOW',
+                  message: '该费用已进入付款流程，不能修改金额/币种',
+                  detail: { batch_id: batch.id, fee_type: cat.feeType, payable_item_id: payable.id, lifecycle_status: payable.lifecycle_status } };
+        }
+        if (costConfirmed) {
+          throw { status: 409, code: 'CI_COST_CONFIRMED', message: '该CI费用已确认，不能继续新增/修改费用' };
+        }
+        run('UPDATE payable_items SET payable_amount_minor = ?, currency = ? WHERE id = ?',
+          [amountMinor, currency, payable.id]);
+        run('UPDATE ci_cost_items SET payable_amount = ?, currency = ? WHERE id = ?',
+          [amount, currency, ciCost.id]);
+        return { feeType: cat.feeType, action: 'SYNC', payable_item_id: payable.id, amount: amount, currency: currency };
+      }
+
+      // payable present + disabled ci_cost (no current) → re-enable (recoverable)
+      if (hasDisabledCiCost) {
+        if (paymentFlowStarted) {
+          throw { status: 409, code: 'LOGISTICS_COST_ALREADY_IN_PAYMENT_FLOW',
+                  message: '该费用已进入付款流程，不能修改',
+                  detail: { batch_id: batch.id, fee_type: cat.feeType, payable_item_id: payable.id, lifecycle_status: payable.lifecycle_status } };
+        }
+        if (costConfirmed) {
+          throw { status: 409, code: 'CI_COST_CONFIRMED', message: '该CI费用已确认，不能继续新增/修改费用' };
+        }
+        run('UPDATE payable_items SET payable_amount_minor = ?, currency = ? WHERE id = ?',
+          [amountMinor, currency, payable.id]);
+        run('UPDATE ci_cost_items SET include_in_landing_cost = 1, payable_amount = ?, currency = ? WHERE id = ?',
+          [amount, currency, disabledCiCost.id]);
+        return { feeType: cat.feeType, action: 'SYNC', payable_item_id: payable.id, amount: amount, currency: currency };
+      }
+      // Should not reach here (CONFLICT check catches no ci_cost at all)
+    }
+  } else {
+    // amount = 0: soft-cancel if payable present and no payment flow
+    if (isPayablePresent && (hasCurrentCiCost || hasDisabledCiCost)) {
+      if (paymentFlowStarted) {
+        throw { status: 409, code: 'LOGISTICS_COST_ALREADY_IN_PAYMENT_FLOW',
+                message: '该费用已进入付款流程，不能取消',
+                detail: { batch_id: batch.id, fee_type: cat.feeType, payable_item_id: payable.id, lifecycle_status: payable.lifecycle_status } };
+      }
+      if (costConfirmed) {
+        throw { status: 409, code: 'CI_COST_CONFIRMED', message: '该CI费用已确认，不能继续新增/修改费用' };
+      }
+      cancelPayableItem(payable.id, createdBy, '物流费用改为0');
+      if (hasCurrentCiCost) {
+        run('UPDATE ci_cost_items SET include_in_landing_cost = 0 WHERE id = ?', [ciCost.id]);
+      }
+      return { feeType: cat.feeType, action: 'CANCEL', payable_item_id: payable.id, amount: 0, currency: currency };
+    }
+    // No payable present (cancelled or absent) → nothing to do → NO_CHANGE
+  }
+
+  return null;
 }
 
 /**
@@ -13440,6 +13737,8 @@ app.post('/api/payment-requests/batch-cancel', requireApiPermission('payment_cre
 // 成本流：logistics_batches → ci_cost_items（payable_amount，供 WAC 读取）
 // 资金流：payable_items → payment_request（人工提交）→ payment_settlement_logs → ci_cost_items.paid_amount 回写
 // 两条流独立，互不阻塞
+// NOTE: 内部实现已统一调用 syncLogisticsCostFactsCore，与 PUT /api/logistics-batches/:id 共享同一逻辑。
+//       不再有第二套 INSERT 逻辑。保留此端点用于"生成成本记录"按钮及 admin repair。
 app.post('/api/logistics-batches/:id/generate-cost-items', requireApiPermission('payment_create'), asyncHandler(async (req, res) => {
   try {
     const batch = queryOne('SELECT * FROM logistics_batches WHERE id = ?', [req.params.id]);
@@ -13452,106 +13751,25 @@ app.post('/api/logistics-batches/:id/generate-cost-items', requireApiPermission(
 
     if (ci.cost_confirmed) return res.status(409).json({ error: '该CI费用已确认，不能继续新增费用' });
 
-    // 防重：检查是否已从该物流单生成过 ci_cost_items
-    const existingItems = queryOne('SELECT 1 FROM ci_cost_items WHERE logistics_batch_id = ? LIMIT 1', [batch.id]);
-    if (existingItems) return res.status(409).json({ error: '该物流批次已生成成本记录，不能重复生成' });
-
     const { payee_name } = req.body;
-    const currency = batch.freight_currency || 'USD';
-    const defaultPayee = payee_name || batch.forwarder_name || '';
-    const createdBy = (req.currentUserId || req.user && req.user.id) || '';
+    const createdBy = (req.currentUserId || (req.user && req.user.id)) || '';
 
-    // 计算各费用组金额
-    const freightTotal = (Number(batch.international_freight) || 0) + (Number(batch.local_charges) || 0) +
-                         (Number(batch.customs_service_fee) || 0) + (Number(batch.delivery_fee) || 0);
-    const dutyTotal = (Number(batch.customs_duty) || 0) + (Number(batch.vat_gst) || 0);
-    const otherTotal = Number(batch.other_fees) || 0;
-
-    if (freightTotal <= 0 && dutyTotal <= 0 && otherTotal <= 0) {
-      return res.status(400).json({ error: '物流单费用均为0，无需生成成本记录' });
-    }
-
-    // CI 级别防重检查：检查是否已存在同费用类型的 ci_cost_items（排除已取消的）
-    const ciCostDupCheck = (costCat, costSub) => {
-      const dup = queryOne(
-        `SELECT id FROM ci_cost_items
-         WHERE ci_id = ? AND cost_category = ? AND cost_subcategory = ?
-         LIMIT 1`,
-        [ci.id, costCat, costSub]
-      );
-      return dup;
-    };
-    if (freightTotal > 0 && ciCostDupCheck('warehouse_arrival', 'freight')) {
-      return res.status(409).json({ error: '该CI已存在运费成本记录，不能重复生成' });
-    }
-    if (dutyTotal > 0 && ciCostDupCheck('customs_duty', 'duty')) {
-      return res.status(409).json({ error: '该CI已存在关税成本记录，不能重复生成' });
-    }
-    if (otherTotal > 0 && ciCostDupCheck('warehouse_arrival', 'other_local')) {
-      return res.status(409).json({ error: '该CI已存在其他费用成本记录，不能重复生成' });
-    }
-
-    const generated = [];
-
-    await transaction(async () => {
-      // 1. 运费 → ci_cost_items + payable_items
-      if (freightTotal > 0) {
-        const payeeKey = `service_provider:${defaultPayee}`;
-        // 创建 payable_item（进入应付费用列表，待人工提交付款申请）
-        const piResult = createPayableItemFromSource({
-          sourceType: 'logistics', sourceId: batch.id, sourceNo: batch.batch_no,
-          feeType: 'freight', categoryCode: 'warehouse_arrival', subcategoryCode: 'freight',
-          payeeType: 'service_provider', payeeKey, payeeName: defaultPayee,
-          currency, payableAmount: freightTotal, sourceCiId: ci.id, createdBy
-        });
-        const payableItemId = piResult?.id || '';
-        // 创建 ci_cost_item（成本事实，WAC 读取 payable_amount）
-        const cciId = genId('cci');
-        await run(`INSERT INTO ci_cost_items (id, ci_id, ci_no, payment_request_id, request_no, cost_category, cost_subcategory, payable_amount, paid_amount, include_in_landing_cost, payee_name, currency, remark, logistics_batch_id, payable_item_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [cciId, ci.id, ci.ci_no, '', '', 'warehouse_arrival', 'freight', freightTotal, 0, 1, defaultPayee, currency, `运费 ${batch.batch_no}`, batch.id, payableItemId]);
-        generated.push({ cost_category: 'warehouse_arrival', cost_subcategory: 'freight', ci_cost_item_id: cciId, payable_item_id: payableItemId, fee_no: piResult?.fee_no || '', amount: freightTotal });
-      }
-
-      // 2. 关税 → ci_cost_items + payable_items
-      if (dutyTotal > 0) {
-        const payeeKey = `customs:${defaultPayee}`;
-        const piResult = createPayableItemFromSource({
-          sourceType: 'logistics', sourceId: batch.id, sourceNo: batch.batch_no,
-          feeType: 'duty', categoryCode: 'customs_duty', subcategoryCode: 'duty',
-          payeeType: 'customs', payeeKey, payeeName: defaultPayee,
-          currency, payableAmount: dutyTotal, sourceCiId: ci.id, createdBy
-        });
-        const payableItemId = piResult?.id || '';
-        const cciId = genId('cci');
-        await run(`INSERT INTO ci_cost_items (id, ci_id, ci_no, payment_request_id, request_no, cost_category, cost_subcategory, payable_amount, paid_amount, include_in_landing_cost, payee_name, currency, remark, logistics_batch_id, payable_item_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [cciId, ci.id, ci.ci_no, '', '', 'customs_duty', 'duty', dutyTotal, 0, 1, defaultPayee, currency, `关税 ${batch.batch_no}`, batch.id, payableItemId]);
-        // 更新 CI 关税总额和标记
-        run('UPDATE commercial_invoices SET import_duty_total = ?, has_customs_duty = 1, updated_at = datetime(\'now\') WHERE id = ?', [dutyTotal, ci.id]);
-        generated.push({ cost_category: 'customs_duty', cost_subcategory: 'duty', ci_cost_item_id: cciId, payable_item_id: payableItemId, fee_no: piResult?.fee_no || '', amount: dutyTotal });
-      }
-
-      // 3. 其他费用 → ci_cost_items + payable_items
-      if (otherTotal > 0) {
-        const payeeKey = `service_provider:${defaultPayee}`;
-        const piResult = createPayableItemFromSource({
-          sourceType: 'logistics', sourceId: batch.id, sourceNo: batch.batch_no,
-          feeType: 'other_local', categoryCode: 'warehouse_arrival', subcategoryCode: 'other_local',
-          payeeType: 'service_provider', payeeKey, payeeName: defaultPayee,
-          currency, payableAmount: otherTotal, sourceCiId: ci.id, createdBy
-        });
-        const payableItemId = piResult?.id || '';
-        const cciId = genId('cci');
-        await run(`INSERT INTO ci_cost_items (id, ci_id, ci_no, payment_request_id, request_no, cost_category, cost_subcategory, payable_amount, paid_amount, include_in_landing_cost, payee_name, currency, remark, logistics_batch_id, payable_item_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [cciId, ci.id, ci.ci_no, '', '', 'warehouse_arrival', 'other_local', otherTotal, 0, 1, defaultPayee, currency, `其他费用 ${batch.batch_no}`, batch.id, payableItemId]);
-        generated.push({ cost_category: 'warehouse_arrival', cost_subcategory: 'other_local', ci_cost_item_id: cciId, payable_item_id: payableItemId, fee_no: piResult?.fee_no || '', amount: otherTotal });
-      }
-
-      // 更新物流单费用状态
-      run('UPDATE logistics_batches SET fee_status = ?, updated_at = datetime(\'now\') WHERE id = ?', ['cost_generated', batch.id]);
+    const syncResult = await transaction(async () => {
+      return syncLogisticsCostFactsCore(batch, {
+        createdBy: createdBy,
+        payeeName: payee_name || ''
+      });
     });
 
+    const generated = (syncResult && syncResult.synced) || [];
+    if (generated.length === 0) {
+      return res.json({ generated: [], batch_no: batch.batch_no, ci_no: ci.ci_no, message: '物流单费用均为0，无需生成成本记录' });
+    }
     res.json({ generated, batch_no: batch.batch_no, ci_no: ci.ci_no });
-  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+  } catch (e) {
+    if (e.status) res.status(e.status).json({ error: e.message, code: e.code || '', detail: e.detail || {} });
+    else res.status(500).json({ error: e.message });
+  }
 }));
 
 // 生成付款申请（到仓费用）— 可关联CI
@@ -16695,6 +16913,7 @@ if (require.main === module) {
 
 // PAY-CORE P0-1：供 scripts/backfill-payable-items.js 复用，不影响运行时
 module.exports = {
+  syncLogisticsCostFactsCore,
   createPayableItemFromSource,
   findActivePayableItem,
   syncPayableItemAmount,
