@@ -11,6 +11,14 @@ const { query, queryOne } = require('./db');
 const WAC_FX_RATE_TYPE = 'realtime';
 const WAC_MONETARY_TOLERANCE = 0.01;
 
+// Query-count instrumentation for performance testing
+let _wacQueryCount = 0;
+function _q(sql, params) { _wacQueryCount++; return query(sql, params); }
+function _q1(sql, params) { _wacQueryCount++; return queryOne(sql, params); }
+
+// FX memoization cache — cleared at start of each computeWacCostFacts call
+let _fxCache = new Map();
+
 const WAC_FX_POLICIES = {
   'inspection_fee/inspection': 'PAYMENT_DATE_FX',
 };
@@ -26,24 +34,31 @@ function resolveExactFxRate(fromCurrency, toCurrency, date) {
   if (fromCurrency === toCurrency) {
     return { rate: 1, rate_date: date, rate_type: 'identity', direction: 'identity' };
   }
-  const direct = queryOne(
+  const cacheKey = `${fromCurrency}|${toCurrency}|${date}`;
+  if (_fxCache.has(cacheKey)) return _fxCache.get(cacheKey);
+  const direct = _q1(
     `SELECT * FROM exchange_rates
      WHERE from_currency = ? AND to_currency = ? AND rate_date = ? AND rate_type = ?
      ORDER BY created_at DESC, id DESC LIMIT 1`,
     [fromCurrency, toCurrency, date, WAC_FX_RATE_TYPE]
   );
   if (direct && Number(direct.rate) > 0) {
-    return { rate: Number(direct.rate), rate_date: direct.rate_date, rate_type: direct.rate_type || '', direction: 'direct' };
+    const result = { rate: Number(direct.rate), rate_date: direct.rate_date, rate_type: direct.rate_type || '', direction: 'direct' };
+    _fxCache.set(cacheKey, result);
+    return result;
   }
-  const reverse = queryOne(
+  const reverse = _q1(
     `SELECT * FROM exchange_rates
      WHERE from_currency = ? AND to_currency = ? AND rate_date = ? AND rate_type = ?
      ORDER BY created_at DESC, id DESC LIMIT 1`,
     [toCurrency, fromCurrency, date, WAC_FX_RATE_TYPE]
   );
   if (reverse && Number(reverse.rate) > 0) {
-    return { rate: 1 / Number(reverse.rate), rate_date: reverse.rate_date, rate_type: reverse.rate_type || '', direction: 'reverse' };
+    const result = { rate: 1 / Number(reverse.rate), rate_date: reverse.rate_date, rate_type: reverse.rate_type || '', direction: 'reverse' };
+    _fxCache.set(cacheKey, result);
+    return result;
   }
+  _fxCache.set(cacheKey, null);
   return null;
 }
 
@@ -74,16 +89,18 @@ function allocateByWeight(skuCodes, weightMap, totalAmount) {
 // Main shared calculator
 function computeWacCostFacts(logisticsBatchId) {
   const blockers = [];
+  _wacQueryCount = 0;
+  _fxCache = new Map();
 
   // ── 1. Load batch ──
-  const batch = queryOne('SELECT * FROM logistics_batches WHERE id = ?', [logisticsBatchId]);
+  const batch = _q1('SELECT * FROM logistics_batches WHERE id = ?', [logisticsBatchId]);
   if (!batch) {
     blockers.push({ code: 'BATCH_NOT_FOUND', message: '物流批次不存在' });
     return { blockers, items: [], meta: {} };
   }
 
   // ── 2. Check PL count (exactly one) ──
-  const linkedPLs = query('SELECT * FROM packing_lists WHERE logistics_batch_id = ?', [batch.id]).rows;
+  const linkedPLs = _q('SELECT * FROM packing_lists WHERE logistics_batch_id = ?', [batch.id]).rows;
   if (linkedPLs.length === 0) {
     blockers.push({ code: 'BATCH_PL_MISSING', message: '该物流批次未关联PL' });
   } else if (linkedPLs.length > 1) {
@@ -106,14 +123,14 @@ function computeWacCostFacts(logisticsBatchId) {
   }
 
   const ciId = batchCiId;
-  const ci = ciId ? queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [ciId]) : null;
+  const ci = ciId ? _q1('SELECT * FROM commercial_invoices WHERE id = ?', [ciId]) : null;
   if (!ci) {
     blockers.push({ code: 'CI_MISSING', message: '未找到关联CI' });
     return { blockers, items: [], meta: { batch } };
   }
 
   // ── 4. Load CI items → compute per-SKU weighted purchase unit price ──
-  const ciItems = query('SELECT * FROM commercial_invoice_items WHERE ci_id = ? ORDER BY created_at, id', [ci.id]).rows;
+  const ciItems = _q('SELECT * FROM commercial_invoice_items WHERE ci_id = ? ORDER BY created_at, id', [ci.id]).rows;
   if (ciItems.length === 0) {
     blockers.push({ code: 'CI_ITEMS_MISSING', message: 'CI无明细数据，无法计算加权采购单价' });
     return { blockers, items: [], meta: { batch, ci } };
@@ -149,7 +166,7 @@ function computeWacCostFacts(logisticsBatchId) {
 
   // ── 5. Load PL items → compute batch_qty per SKU ──
   const plItems = pl
-    ? query('SELECT * FROM packing_list_items WHERE pl_id = ? ORDER BY created_at, id', [pl.id]).rows
+    ? _q('SELECT * FROM packing_list_items WHERE pl_id = ? ORDER BY created_at, id', [pl.id]).rows
     : [];
   if (pl && plItems.length === 0) {
     blockers.push({ code: 'PL_ITEMS_MISSING', message: 'PL无明细数据' });
@@ -174,17 +191,17 @@ function computeWacCostFacts(logisticsBatchId) {
   const warehouseName = String(batch.target_warehouse || '').trim();
   let targetCountry = '';
   let localCurrency = '';
-  const wh = warehouseName ? queryOne('SELECT * FROM warehouses WHERE name = ? OR id = ?', [warehouseName, warehouseName]) : null;
+  const wh = warehouseName ? _q1('SELECT * FROM warehouses WHERE name = ? OR id = ?', [warehouseName, warehouseName]) : null;
   if (wh) {
     if (wh.country_id) {
-      const c = queryOne('SELECT * FROM countries WHERE id = ?', [wh.country_id]);
+      const c = _q1('SELECT * FROM countries WHERE id = ?', [wh.country_id]);
       if (c) {
         targetCountry = c.name || '';
         localCurrency = String(c.default_currency || '').trim();
       }
     }
     if (!localCurrency && wh.country_name) {
-      const c = queryOne('SELECT * FROM countries WHERE name = ?', [wh.country_name]);
+      const c = _q1('SELECT * FROM countries WHERE name = ?', [wh.country_name]);
       if (c) {
         targetCountry = c.name || '';
         localCurrency = String(c.default_currency || '').trim();
@@ -220,7 +237,7 @@ function computeWacCostFacts(logisticsBatchId) {
 
   if (freightBusinessAmount > 0) {
     // Batch-scoped query: ONLY this batch's freight cost items
-    const freightCostItems = query(
+    const freightCostItems = _q(
       `SELECT id, payment_request_id, cost_category, cost_subcategory, payable_amount, currency, logistics_batch_id
        FROM ci_cost_items
        WHERE ci_id = ? AND logistics_batch_id = ? AND include_in_landing_cost = 1 AND cost_category = 'warehouse_arrival' AND cost_subcategory = 'freight'`,
@@ -229,7 +246,7 @@ function computeWacCostFacts(logisticsBatchId) {
 
     if (freightCostItems.length === 0) {
       // No batch-scoped freight cost items — check if unscoped/other-batch items exist
-      const anyFreightItems = query(
+      const anyFreightItems = _q(
         `SELECT id, logistics_batch_id FROM ci_cost_items
          WHERE ci_id = ? AND include_in_landing_cost = 1 AND cost_category = 'warehouse_arrival' AND cost_subcategory = 'freight'`,
         [ci.id]
@@ -254,7 +271,7 @@ function computeWacCostFacts(logisticsBatchId) {
         blockers.push({ code: 'FREIGHT_PAYMENT_FACT_MISSING', message: `运费${freightBusinessAmount}无关联付款记录` });
       } else {
         const ph = freightPrIds.map(() => '?').join(',');
-        const freightPrs = query(`SELECT id, currency FROM payment_requests WHERE id IN (${ph})`, freightPrIds).rows;
+        const freightPrs = _q(`SELECT id, currency FROM payment_requests WHERE id IN (${ph})`, freightPrIds).rows;
 
         // C. Currency mismatch
         const currencyMismatch = freightPrs.some(pr => String(pr.currency || '').toUpperCase() !== freightCurrency.toUpperCase());
@@ -263,7 +280,7 @@ function computeWacCostFacts(logisticsBatchId) {
         }
 
         // Query ALL raw applied payment logs — no grouping, no deduplication
-        const freightLogs = query(
+        const freightLogs = _q(
           `SELECT payment_request_id, amount, local_amount, local_rate, local_rate_date, local_currency, paid_date
            FROM payment_settlement_logs
            WHERE payment_request_id IN (${ph})
@@ -405,7 +422,7 @@ function computeWacCostFacts(logisticsBatchId) {
   }
 
   // ── 11. Inspection + Other costs (from ci_cost_items) ──
-  const allCostItems = query(
+  const allCostItems = _q(
     `SELECT id, payment_request_id, cost_category, cost_subcategory, payable_amount, currency
      FROM ci_cost_items
      WHERE ci_id = ? AND include_in_landing_cost = 1`,
@@ -455,7 +472,7 @@ function computeWacCostFacts(logisticsBatchId) {
         continue;
       }
       const ph = prIds.map(() => '?').join(',');
-      const logs = query(
+      const logs = _q(
         `SELECT payment_request_id, amount, local_amount
          FROM payment_settlement_logs
          WHERE payment_request_id IN (${ph})
@@ -510,35 +527,81 @@ function computeWacCostFacts(logisticsBatchId) {
   }
 
   // ── 12. Conservation check: PRODUCT_COST_ALLOCATION_NOT_CONSERVED ──
-  if (pl && ciItems.length > 0) {
-    for (const [skuCode, ciEntry] of ciSkuMap) {
-      const allFormalPlQty = queryOne(
-        `SELECT COALESCE(SUM(pli.total_qty), 0) AS total
-         FROM packing_list_items pli
-         JOIN packing_lists pl ON pl.id = pli.pl_id
-         WHERE pl.related_ci_id = ? AND pli.sku_code = ? AND COALESCE(pl.status, '') != 'draft'`,
-        [ci.id, skuCode]
-      );
-      const allFormalQty = Number(allFormalPlQty?.total) || 0;
+  // Batch-loaded: all per-SKU queries replaced with preloaded Maps
+  let allFormalPlQtyBySku = new Map();
+  let batchPlItemsByPlId = new Map();
+  let allBatchIdsForCi = [];
+  let batchPlByBatchId = new Map();
 
-      if (allFormalQty === ciEntry.shipped_qty) {
-        const allBatches = query(
-          `SELECT lb.id FROM logistics_batches lb
-           JOIN packing_lists pl ON pl.logistics_batch_id = lb.id
-           WHERE lb.related_ci_id = ? AND COALESCE(pl.status, '') != 'draft'`,
-          [ci.id]
+  if (pl && ciItems.length > 0) {
+    // Preload 1: formal PL qty per SKU for this CI
+    const formalPlQtys = _q(
+      `SELECT pli.sku_code, COALESCE(SUM(pli.total_qty), 0) AS total
+       FROM packing_list_items pli
+       JOIN packing_lists pl ON pl.id = pli.pl_id
+       WHERE pl.related_ci_id = ? AND COALESCE(pl.status, '') != 'draft'
+       GROUP BY pli.sku_code`,
+      [ci.id]
+    ).rows;
+    for (const r of formalPlQtys) {
+      allFormalPlQtyBySku.set(r.sku_code, Number(r.total) || 0);
+    }
+
+    // Preload 2: all logistics batch IDs for this CI
+    allBatchIdsForCi = _q(
+      `SELECT lb.id FROM logistics_batches lb
+       JOIN packing_lists pl ON pl.logistics_batch_id = lb.id
+       WHERE lb.related_ci_id = ? AND COALESCE(pl.status, '') != 'draft'`,
+      [ci.id]
+    ).rows.map(r => r.id);
+
+    // Preload 3: PL IDs for each batch
+    if (allBatchIdsForCi.length > 0) {
+      const batchPh = allBatchIdsForCi.map(() => '?').join(',');
+      const batchPls = _q(
+        `SELECT id, logistics_batch_id FROM packing_lists
+         WHERE logistics_batch_id IN (${batchPh}) AND COALESCE(status, '') != 'draft'`,
+        allBatchIdsForCi
+      ).rows;
+      for (const r of batchPls) {
+        batchPlByBatchId.set(r.logistics_batch_id, r.id);
+      }
+
+      // Preload 4: all PL items for each batch PL
+      const allBatchPlIds = [...batchPlByBatchId.values()];
+      if (allBatchPlIds.length > 0) {
+        const plPh = allBatchPlIds.map(() => '?').join(',');
+        const allBatchPlItems = _q(
+          `SELECT pl_id, sku_code, total_qty FROM packing_list_items WHERE pl_id IN (${plPh})`,
+          allBatchPlIds
         ).rows;
-        let totalBatchProductCost = 0;
-        for (const lbRow of allBatches) {
-          const lbPl = queryOne(`SELECT id FROM packing_lists WHERE logistics_batch_id = ? AND COALESCE(status, '') != 'draft'`, [lbRow.id]);
-          if (!lbPl) continue;
-          const lbPlItems = query('SELECT sku_code, total_qty FROM packing_list_items WHERE pl_id = ? AND sku_code = ?', [lbPl.id, skuCode]).rows;
-          const lbBatchQty = lbPlItems.reduce((s, i) => s + (Number(i.total_qty) || 0), 0);
-          totalBatchProductCost += lbBatchQty * ciEntry.weighted_purchase_unit_price;
+        for (const r of allBatchPlItems) {
+          if (!batchPlItemsByPlId.has(r.pl_id)) {
+            batchPlItemsByPlId.set(r.pl_id, []);
+          }
+          batchPlItemsByPlId.get(r.pl_id).push(r);
         }
-        if (Math.abs(totalBatchProductCost - ciEntry.goods_amount) > WAC_MONETARY_TOLERANCE) {
-          blockers.push({ code: 'PRODUCT_COST_ALLOCATION_NOT_CONSERVED', message: `SKU ${skuCode}: 各批次产品成本合计${totalBatchProductCost.toFixed(2)} ≠ CI货值${ciEntry.goods_amount.toFixed(2)}` });
-        }
+      }
+    }
+  }
+
+  for (const [skuCode, ciEntry] of ciSkuMap) {
+    if (!pl || ciItems.length === 0) break;
+    const allFormalQty = allFormalPlQtyBySku.get(skuCode) || 0;
+
+    if (allFormalQty === ciEntry.shipped_qty) {
+      let totalBatchProductCost = 0;
+      for (const lbId of allBatchIdsForCi) {
+        const lbPlId = batchPlByBatchId.get(lbId);
+        if (!lbPlId) continue;
+        const lbItems = batchPlItemsByPlId.get(lbPlId) || [];
+        const lbBatchQty = lbItems
+          .filter(i => i.sku_code === skuCode)
+          .reduce((s, i) => s + (Number(i.total_qty) || 0), 0);
+        totalBatchProductCost += lbBatchQty * ciEntry.weighted_purchase_unit_price;
+      }
+      if (Math.abs(totalBatchProductCost - ciEntry.goods_amount) > WAC_MONETARY_TOLERANCE) {
+        blockers.push({ code: 'PRODUCT_COST_ALLOCATION_NOT_CONSERVED', message: `SKU ${skuCode}: 各批次产品成本合计${totalBatchProductCost.toFixed(2)} ≠ CI货值${ciEntry.goods_amount.toFixed(2)}` });
       }
     }
   }
@@ -547,6 +610,35 @@ function computeWacCostFacts(logisticsBatchId) {
   const skuCodes = [...new Set([...ciSkuMap.keys(), ...batchSkuMap.keys()])];
   const country2 = targetCountry;
   const warehouse = warehouseName;
+
+  // Preload all inventory rows for every SKU in one query
+  const inventoryRowsBySku = new Map();
+  if (skuCodes.length > 0) {
+    const invPh = skuCodes.map(() => '?').join(',');
+    const invRows = _q(
+      `SELECT id, available_qty, weighted_avg_cost, country, warehouse, sku_code FROM inventory WHERE sku_code IN (${invPh})`,
+      skuCodes
+    ).rows;
+    for (const r of invRows) {
+      if (!inventoryRowsBySku.has(r.sku_code)) {
+        inventoryRowsBySku.set(r.sku_code, []);
+      }
+      inventoryRowsBySku.get(r.sku_code).push(r);
+    }
+  }
+
+  // Preload all SKU master data in one query
+  const skuMasterByCode = new Map();
+  if (skuCodes.length > 0) {
+    const skuPh = skuCodes.map(() => '?').join(',');
+    const skuRows = _q(
+      `SELECT product_name, model, brand, sku_code FROM skus WHERE sku_code IN (${skuPh})`,
+      skuCodes
+    ).rows;
+    for (const r of skuRows) {
+      skuMasterByCode.set(r.sku_code, r);
+    }
+  }
 
   const items = skuCodes.map(skuCode => {
     const ciEntry = ciSkuMap.get(skuCode);
@@ -570,9 +662,8 @@ function computeWacCostFacts(logisticsBatchId) {
     const totalLandingCostLocal = productCostLocal + freightAllocated + dutyAllocated + inspectionAllocated + otherAllocated;
     const unitLandingCost = batchQty > 0 ? totalLandingCostLocal / batchQty : 0;
 
-    // Query all inventory rows for this SKU to check context match
-    const allInvRows = query('SELECT id, available_qty, weighted_avg_cost, country, warehouse FROM inventory WHERE sku_code = ?',
-      [skuCode]).rows;
+    // Lookup from preloaded inventory Map
+    const allInvRows = inventoryRowsBySku.get(skuCode) || [];
     const matchingInv = allInvRows.find(r =>
       String(r.country || '') === String(country2 || '') && String(r.warehouse || '') === String(warehouse || '')
     );
@@ -598,7 +689,8 @@ function computeWacCostFacts(logisticsBatchId) {
       }
     }
 
-    const skuInfo = queryOne('SELECT product_name, model, brand FROM skus WHERE sku_code = ?', [skuCode]);
+    // Lookup from preloaded SKU master Map
+    const skuInfo = skuMasterByCode.get(skuCode);
 
     return {
       sku_code: skuCode,
@@ -631,7 +723,7 @@ function computeWacCostFacts(logisticsBatchId) {
   });
 
   // ── 14. Build meta ──
-  const existingWac = queryOne('SELECT 1 FROM wac_history WHERE logistics_batch_id = ? LIMIT 1', [batch.id]);
+  const existingWac = _q1('SELECT 1 FROM wac_history WHERE logistics_batch_id = ? LIMIT 1', [batch.id]);
   const meta = {
     batch_id: batch.id,
     batch_no: batch.batch_no,
@@ -665,4 +757,4 @@ function computeWacCostFacts(logisticsBatchId) {
   return { blockers, items, meta };
 }
 
-module.exports = { computeWacCostFacts, resolveExactFxRate, allocateByWeight, WAC_MONETARY_TOLERANCE, WAC_FX_POLICIES, WAC_ALLOCATION_POLICIES };
+module.exports = { computeWacCostFacts, resolveExactFxRate, allocateByWeight, WAC_MONETARY_TOLERANCE, WAC_FX_POLICIES, WAC_ALLOCATION_POLICIES, _getQueryCount: () => _wacQueryCount, _resetQueryCount: () => { _wacQueryCount = 0; } };

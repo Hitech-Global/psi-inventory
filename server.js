@@ -9522,7 +9522,7 @@ app.post('/api/logistics-batches/:id/backfill-freight-payment', requireApiPermis
     const prNo = `PR-FREIGHT-${batch.batch_no}-${Date.now().toString().slice(-6)}`;
     await run(
       `INSERT INTO payment_requests (id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no, payee_type, payee_key, payee_name_snapshot, supplier_name, payable_amount, paid_amount, unpaid_amount, currency, payment_status, approval_status, remark)
-       VALUES (?, ?, 'logistics', 'freight', 'logistics_batch', ?, ?, 'forwarder', ?, ?, ?, ?, ?, 0, ?, 'approved', 'approved', ?)`,
+       VALUES (?, ?, 'logistics', 'freight', 'logistics_batch', ?, ?, 'forwarder', ?, ?, ?, ?, 0, 0, ?, 'approved', 'approved', ?)`,
       [prId, prNo, batch.id, batch.batch_no, batch.forwarder_name || 'forwarder', batch.forwarder_name || 'forwarder', batch.forwarder_name || '',
        d.original_amount, d.original_currency, `[历史补录] ${d.evidence || ''}`]
     );
