@@ -12960,7 +12960,7 @@ async function viewPayment(id, mode){
     // PAY-CORE Phase 2：最终节点需要填写实际付款信息
     const _now=new Date(),_today=new Date(_now.getTime()-_now.getTimezoneOffset()*60000).toISOString().slice(0,10);
     // 固定缓存本单基准未结，供抵扣/抹零联动与实时未结计算使用（不改动后端逻辑，仅为前端展示）
-    window._finalPayCtx={outstanding:Number(p.outstanding||p.unpaid_amount||0)};
+    window._finalPayCtx={outstanding:Number(p.outstanding||p.unpaid_amount||0),prId:id,paymentCategory:p.payment_category||'',dateInputId:'pay-final-date',amountInputId:'pay-final-amount'};
     const paymentFormHtml=(mode==='finance'&&canApprove&&((isPendingApproval&&isFinalLevel)||isPendingPaymentConfirmation))
       ? '<div class="detail-section"><h3>'+t("payment.final_payment_info","最终付款信息")+'</h3>'
         +'<div class="form-grid">'
@@ -12968,7 +12968,8 @@ async function viewPayment(id, mode){
         +'<input type="number" min="0" step="0.01" id="pay-final-amount" value="'+Number(p.outstanding||p.unpaid_amount||0).toFixed(2)+'" oninput="onPayAmountChanged()"></div>'
         + (p.payment_mode==='multi' && p.items && p.items.length ? buildMultiAllocationTable(p.items, p.currency) : '')
         +'<div class="form-group"><label>'+t("payment.actual_paid_date","实际付款日期")+' <span class="required">*</span></label>'
-        +'<input type="date" id="pay-final-date" value="'+_today+'"></div>'
+        +'<input type="date" id="pay-final-date" value="'+_today+'" onchange="onPayDateChanged()"></div>'
+        +'<div id="pay-fx-display" style="grid-column:1/-1;margin-top:-4px;padding:8px 12px;background:#f5f5f5;border-radius:6px;display:none"></div>'
         +'<div class="form-group form-group-full"><label>'+t("payment.bank_ref_no","银行流水号")+'</label>'
         +'<input type="text" id="pay-final-bank-ref"></div>'
         +'<div class="form-group form-group-full"><label>'+t("payment.payment_account","付款账户")+'</label>'
@@ -13017,6 +13018,7 @@ async function viewPayment(id, mode){
     openModal(t('modal.title.viewPayment', '付款申请详情 - {v1}', {v1: esc(p.request_no)}), body, footer);
     // 渲染后校正"预估未结金额"初始值（实际付款默认=当前未结，故初始未结应为0）
     if(paymentFormHtml){ try{ recalcFinalPay(); }catch(_){} }
+    if(paymentFormHtml&&p.payment_category!=='goods'){ setTimeout(function(){ onPayDateChanged(); }, 0); }
   }catch(e){showToast(e.message,'danger')}
 }
 // ===== 付款申请附件（Layer 4：多文件上传/展示/删除/粘贴图片自动上传）=====
@@ -13351,7 +13353,7 @@ async function confirmPaid(id){
     openModal(t('modal.title.confirmPaid', '确认付款 - {v1}', {v1: esc(p.request_no)}),
       (function(){ var _b=t('modal.body.confirmPaid', '<div class="form-card" style="box-shadow:none;padding:0"><input type="hidden" id="pay-settle-idempotency" value="{v1}"><div class="detail-grid mb-16"><div class="detail-item"><span class="detail-label">当前未付</span><span class="detail-value">{v2}</span></div><div class="detail-item"><span class="detail-label">币种</span><span class="detail-value">{v3}</span></div></div><div class="form-grid"><div class="form-group"><label>本次实际付款金额 <span class="required">*</span></label><input type="number" min="0" step="0.01" id="pay-settle-amount" value="{v4}" oninput="onPayAmountChanged()"></div><div class="form-group"><label>实际付款日期 <span class="required">*</span></label><input type="date" id="pay-settle-date" value="{v5}" onchange="onPayDateChanged()"></div><div class="form-group form-group-full"><label>付款凭证号</label><input type="text" id="pay-settle-voucher"></div><div class="form-group"><label>抹零金额</label><input type="number" min="0" step="0.01" id="pay-settle-rounding" placeholder="选填，不抹零请留空" oninput="recalcFinalPay()"></div><div class="form-group form-group-full"><label>抹零原因</label><input type="text" id="pay-settle-rounding-reason" placeholder="建议填写，未填将记录为人工抹零"></div></div><div style="font-size:12px;color:#999">非货款费用将严格按实际付款日期读取系统 realtime 汇率并保存快照；缺少汇率时不会确认付款。</div><div id="pay-fx-display" style="margin-top:12px;padding:8px 12px;background:#f5f5f5;border-radius:6px;display:none"></div></div>', {v1: idempotencyKey, v2: fmtMoney(p.outstanding,p.currency), v3: esc(p.currency||''), v4: Number(p.outstanding||0).toFixed(2), v5: today}); if(p.payment_mode==='multi'&&p.items&&p.items.length){ _b+=buildMultiAllocationTable(p.items, p.currency); } return _b; })(),
       t('modal.footer.confirmPaid', `<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" id="pay-settle-save" onclick="saveConfirmedPayment('{v1}')">确认付款</button>`, {v1: id}));
-    window._finalPayCtx={outstanding:Number(p.outstanding||0),prId:id,paymentCategory:p.payment_category||''};
+    window._finalPayCtx={outstanding:Number(p.outstanding||0),prId:id,paymentCategory:p.payment_category||'',dateInputId:'pay-settle-date',amountInputId:'pay-settle-amount'};
     if(p.payment_category!=='goods'){setTimeout(function(){onPayDateChanged();},0);}
   }catch(e){showToast(e.message,'danger')}
 }
@@ -13359,7 +13361,7 @@ function renderPayFxDisplay(){
   var ctx=window._finalPayCtx||{};
   var fxDiv=document.getElementById('pay-fx-display');
   if(!fxDiv||!ctx.fxRate){return;}
-  var amtInput=document.getElementById('pay-settle-amount');
+  var amtInput=document.getElementById(ctx.amountInputId||'pay-settle-amount');
   var currentAmt=amtInput?parseFloat(amtInput.value):0;
   if(!Number.isFinite(currentAmt)||currentAmt<=0){currentAmt=ctx.outstanding||0;}
   var localAmt=Math.round(currentAmt*ctx.fxRate*100)/100;
@@ -13373,7 +13375,7 @@ function renderPayFxDisplay(){
 async function onPayDateChanged(){
   var ctx=window._finalPayCtx||{};
   if(ctx.paymentCategory==='goods'){return;}
-  var dateInput=document.getElementById('pay-settle-date');
+  var dateInput=document.getElementById(ctx.dateInputId||'pay-settle-date');
   var fxDiv=document.getElementById('pay-fx-display');
   if(!dateInput||!fxDiv){return;}
   var paidDate=dateInput.value;
