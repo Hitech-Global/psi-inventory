@@ -4526,10 +4526,10 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.zh["att.name"]="文件名"; I18N.dict.en["att.name"]="File name"; I18N.dict.id["att.name"]="Nama file";
 
   // ===================== 寄售库存初始化 三语 =====================
-  I18N.dict.zh["btn.consignment_init"]="📦 寄售库存初始化"; I18N.dict.en["btn.consignment_init"]="📦 Consignment Init"; I18N.dict.id["btn.consignment_init"]="📦 Inisiasi Konsinyasi";
-  I18N.dict.zh["ci.title"]="📦 寄售库存初始化"; I18N.dict.en["ci.title"]="📦 Consignment Inventory Init"; I18N.dict.id["ci.title"]="📦 Inisiasi Persediaan Konsinyasi";
+  I18N.dict.zh["btn.consignment_init"]="📦 导入寄售库存"; I18N.dict.en["btn.consignment_init"]="📦 Consignment Init"; I18N.dict.id["btn.consignment_init"]="📦 Inisiasi Konsinyasi";
+  I18N.dict.zh["ci.title"]="📦 导入寄售库存"; I18N.dict.en["ci.title"]="📦 Consignment Inventory Init"; I18N.dict.id["ci.title"]="📦 Inisiasi Persediaan Konsinyasi";
   I18N.dict.zh["ci.step1"]="步骤 1：选择寄售仓库"; I18N.dict.en["ci.step1"]="Step 1: Select consignment warehouse"; I18N.dict.id["ci.step1"]="Langkah 1: Pilih gudang konsinyasi";
-  I18N.dict.zh["ci.note"]="选择本次寄售库存初始化的目标仓库。上传的出库明细将按此仓库归集，导入后会覆盖该仓库此前的寄售批次。"; I18N.dict.en["ci.note"]="Select the target warehouse for this consignment init. Uploaded outbound details are grouped under this warehouse; importing overwrites previous consignment lots for this warehouse."; I18N.dict.id["ci.note"]="Pilih gudang target untuk inisiasi konsinyasi ini. Rincian barang keluar yang diunggah dikelompokkan di gudang ini; impor akan menimpa lot konsinyasi sebelumnya.";
+  I18N.dict.zh["ci.note"]="导入当前寄售剩余库存。寄售库存独立管理，不参与订单预测。"; I18N.dict.en["ci.note"]="Select the target warehouse for this consignment init. Uploaded outbound details are grouped under this warehouse; importing overwrites previous consignment lots for this warehouse."; I18N.dict.id["ci.note"]="Pilih gudang target untuk inisiasi konsinyasi ini. Rincian barang keluar yang diunggah dikelompokkan di gudang ini; impor akan menimpa lot konsinyasi sebelumnya.";
   I18N.dict.zh["ci.select_wh"]="请选择仓库"; I18N.dict.en["ci.select_wh"]="Select warehouse"; I18N.dict.id["ci.select_wh"]="Pilih gudang";
   I18N.dict.zh["ci.select_wh_first"]="请先选择寄售仓库"; I18N.dict.en["ci.select_wh_first"]="Please select a consignment warehouse first"; I18N.dict.id["ci.select_wh_first"]="Silakan pilih gudang konsinyasi terlebih dahulu";
   I18N.dict.zh["ci.drop_hint"]="点击上传或拖拽文件到此处"; I18N.dict.en["ci.drop_hint"]="Click to upload or drag a file here"; I18N.dict.id["ci.drop_hint"]="Klik untuk unggah atau seret file ke sini";

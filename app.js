@@ -3356,15 +3356,12 @@ function downloadInvImportErrors(){
 }
 
 // ==================== 寄售库存初始化（批量导入） ====================
+// 简化模型：只导入“当前寄售剩余库存”，4 列模板。国家/仓库取自页面选择，不出现在 Excel 中。
 // 列别名映射：同时兼容中文与英文表头
 var CI_IMPORT_COLUMNS=[
-  {key:'sku_code',aliases:['SKU','sku_code','SKU编码','sku']},
   {key:'customer_name',aliases:['客户名称','customer_name','客户','customer']},
-  {key:'outbound_no',aliases:['出库单号','outbound_no','出库单','单号']},
-  {key:'outbound_date',aliases:['出库时间','outbound_date','出库日期','date']},
-  {key:'outbound_qty',aliases:['出库数量','outbound_qty','数量','qty'],num:true},
-  {key:'sold_qty',aliases:['已销售数量','sold_qty','已售数量','已售','sold'],num:true},
-  {key:'returned_qty',aliases:['已退货数量','returned_qty','已退数量','已退','returned'],num:true},
+  {key:'sku_code',aliases:['SKU','sku_code','sku','sku编码']},
+  {key:'remaining_qty',aliases:['剩余数量','remaining_qty','剩余','remain_qty','qty'],num:true},
   {key:'unit_cost',aliases:['寄售成本单价','unit_cost','成本单价','单价','cost'],num:true}
 ];
 
@@ -3412,10 +3409,10 @@ function openConsignmentImport(){
 }
 
 function downloadConsignmentTemplate(){
-  var headers=['国家','寄售仓库','客户名称','出库单号','出库时间','SKU','出库数量','已销售数量','已退货数量','寄售成本单价'];
+  var headers=['客户名称','SKU','剩余数量','寄售成本单价'];
   var sample=[
-    ['印尼','Jakarta寄售仓','PT Maju Jaya','OUT-2026-0701-001','2026-07-01','RD-K585-RGB','500','120','30','85.50'],
-    ['印尼','Jakarta寄售仓','CV Sentosa','OUT-2026-0705-002','2026-07-05','RD-M601-BK','200','0','0','92.00']
+    ['PT Maju Jaya','RD-K585-RGB','370','85.50'],
+    ['CV Sentosa','RD-M601-BK','200','92.00']
   ];
   var ws=XLSX.utils.aoa_to_sheet([headers].concat(sample));
   ws['!cols']=headers.map(function(h){return {wch:h.length*2.2+6}});
@@ -3515,12 +3512,12 @@ function renderConsignmentPreview(d){
   var valid=d.valid_items||[];
   html+='<div style="font-weight:600;margin-bottom:6px">'+t('ci.valid_preview','有效行预览')+'（'+t('ci.showing_first','前 ')+(Math.min(valid.length,20))+'/'+valid.length+'）</div>'+
     '<div class="table-container" style="max-height:320px;overflow:auto;box-shadow:none;border:1px solid #f0f0f0"><table class="data-table"><thead><tr>'+
-    '<th>'+t('col.row','行')+'</th><th>SKU</th><th>'+t('ci.customer','客户名称')+'</th><th>'+t('ci.outbound_no','出库单号')+'</th><th>'+t('ci.outbound_date','出库时间')+'</th><th>'+t('ci.outbound_qty','出库数量')+'</th><th>'+t('ci.sold_qty','已销售')+'</th><th>'+t('ci.returned_qty','已退货')+'</th><th>'+t('ci.remaining_qty','剩余数量')+'</th><th>'+t('ci.unit_cost','成本单价')+'</th><th>'+t('ci.remaining_value','剩余金额')+'</th></tr></thead><tbody>';
+    '<th>'+t('col.row','行')+'</th><th>SKU</th><th>'+t('ci.customer','客户名称')+'</th><th>'+t('ci.remaining_qty','剩余数量')+'</th><th>'+t('ci.unit_cost','寄售成本单价')+'</th><th>'+t('ci.remaining_value','剩余金额')+'</th></tr></thead><tbody>';
   valid.slice(0,20).forEach(function(v,idx){
-    html+='<tr><td>'+(idx+1)+'</td><td class="cell-id">'+esc(v.sku_code)+'</td><td>'+esc(v.customer_name||'-')+'</td><td>'+esc(v.outbound_no||'-')+'</td><td class="cell-date">'+esc(v.outbound_date||'-')+'</td><td class="text-right">'+esc(v.outbound_qty)+'</td><td class="text-right">'+esc(v.sold_qty)+'</td><td class="text-right">'+esc(v.returned_qty)+'</td><td class="text-right">'+esc(v.remaining_qty)+'</td><td class="text-right">'+fmtMoney(v.unit_cost)+'</td><td class="text-right">'+fmtMoney(v.remaining_inventory_value)+'</td></tr>';
+    html+='<tr><td>'+(idx+1)+'</td><td class="cell-id">'+esc(v.sku_code)+'</td><td>'+esc(v.customer_name||'-')+'</td><td class="text-right">'+esc(v.remaining_qty)+'</td><td class="text-right">'+fmtMoney(v.unit_cost)+'</td><td class="text-right">'+fmtMoney(v.remaining_inventory_value)+'</td></tr>';
   });
-  if(valid.length>20)html+='<tr><td colspan="11" style="text-align:center;color:#999;padding:8px">... '+(valid.length-20)+' '+t('ci.more_rows','条')+'</td></tr>';
-  if(!valid.length)html+='<tr><td colspan="11" style="text-align:center;color:#999;padding:16px">'+t('ci.no_valid','无有效行')+'</td></tr>';
+  if(valid.length>20)html+='<tr><td colspan="6" style="text-align:center;color:#999;padding:8px">... '+(valid.length-20)+' '+t('ci.more_rows','条')+'</td></tr>';
+  if(!valid.length)html+='<tr><td colspan="6" style="text-align:center;color:#999;padding:16px">'+t('ci.no_valid','无有效行')+'</td></tr>';
   html+='</tbody></table></div>';
   document.getElementById('consignment-preview').innerHTML=html;
 }
@@ -3573,9 +3570,9 @@ async function viewConsignmentLots(warehouse,skuCode){
     }
     var html='<div style="margin-bottom:8px;font-size:13px;color:#555">'+t('ci.lots_count','共 {v1} 条活跃批次',{v1:lots.length})+'（'+esc(warehouse)+'）</div>'+
       '<div class="table-container" style="max-height:60vh;overflow:auto;box-shadow:none;border:1px solid #f0f0f0"><table class="data-table"><thead><tr>'+
-      '<th>'+t('ci.customer','客户名称')+'</th><th>'+t('ci.outbound_no','出库单号')+'</th><th>'+t('ci.outbound_date','出库时间')+'</th><th>'+t('ci.outbound_qty','出库数量')+'</th><th>'+t('ci.sold_qty','已销售')+'</th><th>'+t('ci.returned_qty','已退货')+'</th><th>'+t('ci.remaining_qty','当前剩余数量')+'</th><th>'+t('ci.unit_cost','寄售成本单价')+'</th><th>'+t('ci.remaining_value','当前剩余库存金额')+'</th></tr></thead><tbody>';
+      '<th>'+t('ci.customer','客户名称')+'</th><th>SKU</th><th>'+t('ci.remaining_qty','当前剩余数量')+'</th><th>'+t('ci.unit_cost','寄售成本单价')+'</th><th>'+t('ci.remaining_value','当前剩余库存金额')+'</th></tr></thead><tbody>';
     lots.forEach(function(l){
-      html+='<tr><td>'+esc(l.customer_name||'-')+'</td><td>'+esc(l.outbound_no||'-')+'</td><td class="cell-date">'+esc(l.outbound_date||'-')+'</td><td class="text-right">'+esc(l.outbound_qty)+'</td><td class="text-right">'+esc(l.sold_qty)+'</td><td class="text-right">'+esc(l.returned_qty)+'</td><td class="text-right">'+esc(l.remaining_qty)+'</td><td class="text-right">'+fmtMoney(l.unit_cost)+'</td><td class="text-right">'+fmtMoney(l.remaining_inventory_value)+'</td></tr>';
+      html+='<tr><td>'+esc(l.customer_name||'-')+'</td><td class="cell-id">'+esc(l.sku_code||'-')+'</td><td class="text-right">'+esc(l.remaining_qty)+'</td><td class="text-right">'+fmtMoney(l.unit_cost)+'</td><td class="text-right">'+fmtMoney(l.remaining_inventory_value)+'</td></tr>';
     });
     html+='</tbody></table></div>';
     body.innerHTML=html;
@@ -3625,21 +3622,18 @@ async function loadConsignment(){
       '<th>'+t('ci.customer','客户名称')+'</th>'+
       '<th>SKU</th>'+
       '<th>'+t('nav.warehouse','仓库')+'</th>'+
-      '<th>'+t('ci.outbound_no','出库单号')+'</th>'+
       '<th class="text-right">'+t('ci.remaining_qty','当前剩余数量')+'</th>'+
       '<th class="text-right">'+t('ci.unit_cost','寄售成本单价')+'</th>'+
       '<th class="text-right">'+t('ci.remaining_value','当前剩余库存金额')+'</th>'+
-      '<th class="text-right">'+t('ci.sold_qty','已销售')+'</th>'+
     '</tr></thead><tbody>';
     let sumQty=0, sumVal=0;
     lots.forEach(function(l){
       const qty=Number(l.remaining_qty||0), val=Number(l.remaining_inventory_value||0);
       sumQty+=qty; sumVal+=val;
-      html+='<tr><td>'+esc(l.customer_name||'-')+'</td><td>'+esc(l.sku_code||'-')+'</td><td>'+esc(l.warehouse_name||'-')+'</td><td>'+esc(l.outbound_no||'-')+'</td>'+
+      html+='<tr><td>'+esc(l.customer_name||'-')+'</td><td>'+esc(l.sku_code||'-')+'</td><td>'+esc(l.warehouse_name||'-')+'</td>'+
         '<td class="text-right">'+qty.toLocaleString()+'</td>'+
         '<td class="text-right">'+fmtMoney(l.unit_cost)+'</td>'+
-        '<td class="text-right">'+fmtMoney(l.remaining_inventory_value)+'</td>'+
-        '<td class="text-right">'+Number(l.sold_qty||0).toLocaleString()+'</td></tr>';
+        '<td class="text-right">'+fmtMoney(l.remaining_inventory_value)+'</td></tr>';
     });
     html+='</tbody></table></div>';
     box.innerHTML=html;

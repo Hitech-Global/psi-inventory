@@ -3667,6 +3667,8 @@ app.post('/api/consignment-inventory/preview', requireApiPermission('inventory_i
     const seenKeys = new Set();
     let duplicateCount = 0;
 
+    // 简化模型：只导入“当前寄售剩余库存”。
+    // 直接读取 remaining_qty（用户 Excel 输入值），不再通过 outbound_qty - sold_qty - returned_qty 反算。
     rows.forEach((item, idx) => {
       const rowNo = idx + 1;
       const pushError = (field, value, reason) => errors.push({ row: rowNo, field, value, reason });
@@ -3675,46 +3677,35 @@ app.post('/api/consignment-inventory/preview', requireApiPermission('inventory_i
       if (!skuCode) { pushError('sku_code', item && item.sku_code, 'SKU编码不能为空'); return; }
       if (!skuExistMap[skuCode]) { pushError('sku_code', skuCode, 'SKU不存在于SKU主数据表'); return; }
 
-      // 数量校验：outbound_qty / sold_qty / returned_qty 必须为数字且 >= 0
-      const numFields = ['outbound_qty', 'sold_qty', 'returned_qty'];
-      const nums = {};
-      for (const f of numFields) {
-        const raw = item ? item[f] : undefined;
-        if (raw === null || raw === undefined || String(raw).trim() === '') {
-          nums[f] = 0;
-        } else {
-          const v = Number(raw);
-          if (!Number.isFinite(v) || v < 0) {
-            pushError(f, raw, '数量必须为非负数字');
-            return;
-          }
-          nums[f] = v;
-        }
-      }
-      // sold_qty + returned_qty <= outbound_qty
-      if (nums.sold_qty + nums.returned_qty > nums.outbound_qty) {
-        pushError('outbound_qty', nums.outbound_qty, '已售+已退不能大于出库数量');
+      // 剩余数量：必填，>= 0（直接采用用户 Excel 输入值）
+      const rawQty = item ? item.remaining_qty : undefined;
+      if (rawQty === null || rawQty === undefined || String(rawQty).trim() === '') {
+        pushError('remaining_qty', rawQty, '剩余数量不能为空');
         return;
       }
-      // unit_cost >= 0
-      const rawCost = item ? item.unit_cost : undefined;
-      let unitCost = 0;
-      if (rawCost !== null && rawCost !== undefined && String(rawCost).trim() !== '') {
-        const c = Number(rawCost);
-        if (!Number.isFinite(c) || c < 0) {
-          pushError('unit_cost', rawCost, '单位成本必须为非负数字');
-          return;
-        }
-        unitCost = c;
+      const remainingQty = Number(rawQty);
+      if (!Number.isFinite(remainingQty) || remainingQty < 0) {
+        pushError('remaining_qty', rawQty, '剩余数量必须为非负数字');
+        return;
       }
 
-      const remainingQty = nums.outbound_qty - nums.sold_qty - nums.returned_qty;
+      // 单位成本：必填，>= 0
+      const rawCost = item ? item.unit_cost : undefined;
+      if (rawCost === null || rawCost === undefined || String(rawCost).trim() === '') {
+        pushError('unit_cost', rawCost, '寄售成本单价不能为空');
+        return;
+      }
+      const unitCost = Number(rawCost);
+      if (!Number.isFinite(unitCost) || unitCost < 0) {
+        pushError('unit_cost', rawCost, '寄售成本单价必须为非负数字');
+        return;
+      }
+
       const remainingValue = Math.round((remainingQty * unitCost + Number.EPSILON) * 10000) / 10000;
 
-      // 重复行检测：(sku_code, customer_name, outbound_no)
+      // 重复行检测：(sku_code, customer_name)
       const customerName = (item && item.customer_name != null ? String(item.customer_name) : '').trim();
-      const outboundNo = (item && item.outbound_no != null ? String(item.outbound_no) : '').trim();
-      const dupKey = `${skuCode}|${customerName}|${outboundNo}`;
+      const dupKey = `${skuCode}|${customerName}`;
       if (seenKeys.has(dupKey)) {
         duplicateCount++;
       } else {
@@ -3724,13 +3715,8 @@ app.post('/api/consignment-inventory/preview', requireApiPermission('inventory_i
       validItems.push({
         sku_code: skuCode,
         customer_name: customerName,
-        outbound_no: outboundNo,
-        outbound_date: (item && item.outbound_date != null ? String(item.outbound_date) : '').trim(),
-        outbound_qty: nums.outbound_qty,
-        sold_qty: nums.sold_qty,
-        returned_qty: nums.returned_qty,
-        unit_cost: unitCost,
         remaining_qty: remainingQty,
+        unit_cost: unitCost,
         remaining_inventory_value: remainingValue
       });
     });
@@ -3782,6 +3768,7 @@ app.post('/api/consignment-inventory/import', requireApiPermission('inventory_im
       query(`SELECT sku_code FROM skus WHERE sku_code IN (${placeholders})`, skuCodes).rows.forEach(r => { skuExistMap[r.sku_code] = true; });
     }
 
+    // 简化模型：只导入“当前寄售剩余库存”。直接采用 remaining_qty，不再反算出库过程。
     const validItems = [];
     const errors = [];
     rows.forEach((item, idx) => {
@@ -3790,30 +3777,20 @@ app.post('/api/consignment-inventory/import', requireApiPermission('inventory_im
       const skuCode = (item && item.sku_code != null ? String(item.sku_code) : '').trim();
       if (!skuCode) { pushError('sku_code', item && item.sku_code, 'SKU编码不能为空'); return; }
       if (!skuExistMap[skuCode]) { pushError('sku_code', skuCode, 'SKU不存在于SKU主数据表'); return; }
-      const nums = {};
-      for (const f of ['outbound_qty', 'sold_qty', 'returned_qty']) {
-        const raw = item ? item[f] : undefined;
-        if (raw === null || raw === undefined || String(raw).trim() === '') { nums[f] = 0; }
-        else { const v = Number(raw); if (!Number.isFinite(v) || v < 0) { pushError(f, raw, '数量必须为非负数字'); return; } nums[f] = v; }
-      }
-      if (nums.sold_qty + nums.returned_qty > nums.outbound_qty) { pushError('outbound_qty', nums.outbound_qty, '已售+已退不能大于出库数量'); return; }
+      const rawQty = item ? item.remaining_qty : undefined;
+      if (rawQty === null || rawQty === undefined || String(rawQty).trim() === '') { pushError('remaining_qty', rawQty, '剩余数量不能为空'); return; }
+      const remainingQty = Number(rawQty);
+      if (!Number.isFinite(remainingQty) || remainingQty < 0) { pushError('remaining_qty', rawQty, '剩余数量必须为非负数字'); return; }
       const rawCost = item ? item.unit_cost : undefined;
-      let unitCost = 0;
-      if (rawCost !== null && rawCost !== undefined && String(rawCost).trim() !== '') {
-        const c = Number(rawCost); if (!Number.isFinite(c) || c < 0) { pushError('unit_cost', rawCost, '单位成本必须为非负数字'); return; } unitCost = c;
-      }
-      const remainingQty = nums.outbound_qty - nums.sold_qty - nums.returned_qty;
+      if (rawCost === null || rawCost === undefined || String(rawCost).trim() === '') { pushError('unit_cost', rawCost, '寄售成本单价不能为空'); return; }
+      const unitCost = Number(rawCost);
+      if (!Number.isFinite(unitCost) || unitCost < 0) { pushError('unit_cost', rawCost, '寄售成本单价必须为非负数字'); return; }
       const remainingValue = Math.round((remainingQty * unitCost + Number.EPSILON) * 10000) / 10000;
       validItems.push({
         sku_code: skuCode,
         customer_name: (item && item.customer_name != null ? String(item.customer_name) : '').trim(),
-        outbound_no: (item && item.outbound_no != null ? String(item.outbound_no) : '').trim(),
-        outbound_date: (item && item.outbound_date != null ? String(item.outbound_date) : '').trim(),
-        outbound_qty: nums.outbound_qty,
-        sold_qty: nums.sold_qty,
-        returned_qty: nums.returned_qty,
-        unit_cost: unitCost,
         remaining_qty: remainingQty,
+        unit_cost: unitCost,
         remaining_inventory_value: remainingValue
       });
     });
@@ -3846,15 +3823,15 @@ app.post('/api/consignment-inventory/import', requireApiPermission('inventory_im
          customerSet.size, skuSet.size, totalRemainingQty,
          Math.round((totalRemainingValue + Number.EPSILON) * 10000) / 10000, userId]);
 
-      // 2. 写入所有批次行（status 默认 'active'）
+      // 2. 写入所有批次行（status 默认 'active'）；简化模型不管理出库历史，outbound_*/sold/returned 置 0/NULL
       validItems.forEach((v, i) => {
         run(`INSERT INTO consignment_inventory_lots
-          (id, country_name, warehouse_name, customer_name, outbound_no, outbound_date, sku_code,
+          (id, country_name, warehouse_name, customer_name, sku_code,
            outbound_qty, sold_qty, returned_qty, remaining_qty, unit_cost, remaining_inventory_value,
            import_batch_id, source_line_no, source_type, status, created_by, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'excel', 'active', ?, datetime('now'))`,
-          [genId('cil'), country, warehouse, v.customer_name, v.outbound_no, v.outbound_date, v.sku_code,
-           v.outbound_qty, v.sold_qty, v.returned_qty, v.remaining_qty, v.unit_cost, v.remaining_inventory_value,
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'excel', 'active', ?, datetime('now'))`,
+          [genId('cil'), country, warehouse, v.customer_name, v.sku_code,
+           0, 0, 0, v.remaining_qty, v.unit_cost, v.remaining_inventory_value,
            batchId, i + 1, userId]);
       });
 
