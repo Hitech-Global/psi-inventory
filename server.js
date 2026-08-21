@@ -10466,7 +10466,70 @@ async function syncPaymentSource(payment, facts, paymentStatus) {
          WHERE id = ?`, [aggregate.sourcePayStatus, aggregate.effectivePaid, aggregate.outstanding, balanceCiId]);
   }
 
-  if (payment.source_type === 'logistics' && payment.source_id) {
+  // --- 物流 freight fee_status 同步（权威互斥顺序）---
+  // 1) 若本 PR 存在 freight payable item（payment_request_items → payable_items WHERE fee_type='freight'）
+  //    → 只走 canonical per-payable 路径，legacy PR-level 分支不得写这些 freight batch。
+  // 2) 否则若历史 PR 满足 legacy 条件（source_type='logistics' && source_id 非空）
+  //    → 作为 historical fallback 写一次 fee_status。
+  // 互斥保证：canonical 优先；legacy 不会覆盖/预写 canonical batch，
+  //   也不会在 canonical >1 冲突时先预写（因为 hasFreightPayableItems 为真时 legacy 完全不进入）。
+  const fpRows0 = await query(
+    `SELECT DISTINCT pri.payable_item_id
+     FROM payment_request_items pri
+     JOIN payable_items pi ON pi.id = pri.payable_item_id
+     WHERE pri.payment_request_id = ? AND pi.fee_type = 'freight'`,
+    [payment.id]
+  );
+  const fpIds0 = (fpRows0.rows || []).map(r => r.payable_item_id).filter(Boolean);
+  const hasFreightPayableItems = fpIds0.length > 0;
+
+  if (hasFreightPayableItems) {
+    // canonical per-payable 路径：从 freight payable 反查批次，按该批次 canonical freight linkage 推导
+    //   0 canonical → 不猜测、不动 fee_status
+    //   1 canonical → 按其 lifecycle_status 映射（paid→paid / partially_paid→partial_paid / 其它→unpaid）
+    //   >1 canonical → 数据冲突，fail closed，不静默 aggregate，保留现状并留诊断
+    const batchRows = await query(
+      `SELECT DISTINCT logistics_batch_id AS batch_id
+       FROM ci_cost_items
+       WHERE payable_item_id IN (${fpIds0.map(() => '?').join(',')})
+         AND logistics_batch_id IS NOT NULL AND logistics_batch_id != ''`,
+      fpIds0
+    );
+    const seen = new Set();
+    for (const br of (batchRows.rows || [])) {
+      const batchId = br.batch_id; // 兼容字段名差异
+      if (!br.batch_id || seen.has(br.batch_id)) continue;
+      seen.add(br.batch_id);
+      // canonical freight linkage：该批次纳入落地成本的 freight payable（排除已取消）
+      const canon = await query(
+        `SELECT DISTINCT cci.payable_item_id AS pid
+         FROM ci_cost_items cci
+         JOIN payable_items pi ON pi.id = cci.payable_item_id
+         WHERE cci.logistics_batch_id = ?
+           AND cci.cost_category = 'warehouse_arrival'
+           AND cci.cost_subcategory = 'freight'
+           AND cci.include_in_landing_cost = 1
+           AND cci.payable_item_id IS NOT NULL
+           AND pi.lifecycle_status != 'cancelled'`,
+        [br.batch_id]
+      );
+      const canonIds = (canon.rows || []).map(r => r.pid).filter(Boolean);
+      if (canonIds.length === 0) {
+        // 0 canonical：不猜测、不动 fee_status
+        continue;
+      }
+      if (canonIds.length > 1) {
+        // >1：数据冲突 → fail closed，不静默 aggregate（legacy 不会先预写，因 hasFreightPayableItems 为真）
+        console.warn('[fee_status] batch ' + br.batch_id + ' 存在多个 canonical freight payable_item_id: ' + canonIds.join(',') + '，跳过 fee_status 推导');
+        continue;
+      }
+      const p = await queryOne('SELECT lifecycle_status FROM payable_items WHERE id = ?', [canonIds[0]]);
+      const ls = p ? p.lifecycle_status : 'active';
+      const fee = ls === 'paid' ? 'paid' : (ls === 'partially_paid' ? 'partial_paid' : 'unpaid');
+      await run('UPDATE logistics_batches SET fee_status = ? WHERE id = ?', [fee, br.batch_id]);
+    }
+  } else if (payment.source_type === 'logistics' && payment.source_id) {
+    // historical legacy fallback：仅当本 PR 无 canonical freight payable 时
     await run('UPDATE logistics_batches SET fee_status = ? WHERE id = ?', [isSettled ? 'paid' : (hasSettlement ? 'partial_paid' : 'unpaid'), payment.source_id]);
   }
 
@@ -17032,6 +17095,7 @@ module.exports = {
   releasePayableItemsByPR,
   syncMultiSourcePiStatus,
   recalculatePaymentSettlement,
+  syncPaymentSource,
   payableItemSourceExpenseCountry,
   resolvePaymentFxRate,
   exactSettlementRate,

@@ -4651,7 +4651,7 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.zh["logistics.col.mode"]="方式"; I18N.dict.en["logistics.col.mode"]="Mode"; I18N.dict.id["logistics.col.mode"]="Mode";
   I18N.dict.zh["logistics.col.country"]="国家"; I18N.dict.en["logistics.col.country"]="Country"; I18N.dict.id["logistics.col.country"]="Negara";
   I18N.dict.zh["logistics.col.eta"]="预计到港日期"; I18N.dict.en["logistics.col.eta"]="ETA"; I18N.dict.id["logistics.col.eta"]="ETA";
-  I18N.dict.zh["logistics.col.inbound_date"]="入库完成"; I18N.dict.en["logistics.col.inbound_date"]="Inbound Done"; I18N.dict.id["logistics.col.inbound_date"]="Inbound Selesai";
+  I18N.dict.zh["logistics.col.inbound_date"]="到货日期"; I18N.dict.en["logistics.col.inbound_date"]="Arrival Date"; I18N.dict.id["logistics.col.inbound_date"]="Tanggal Tiba";
   I18N.dict.zh["logistics.col.cartons"]="箱数"; I18N.dict.en["logistics.col.cartons"]="Cartons"; I18N.dict.id["logistics.col.cartons"]="Karton";
   I18N.dict.zh["logistics.col.total_freight"]="综合运费"; I18N.dict.en["logistics.col.total_freight"]="Total Freight"; I18N.dict.id["logistics.col.total_freight"]="Total Ongkos Kirim";
 
