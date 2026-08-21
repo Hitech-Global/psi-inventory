@@ -4568,6 +4568,10 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.zh["ci.remaining_value"]="剩余金额"; I18N.dict.en["ci.remaining_value"]="Remaining Value"; I18N.dict.id["ci.remaining_value"]="Nilai Sisa";
   I18N.dict.zh["ci.import_done"]="导入完成"; I18N.dict.en["ci.import_done"]="Import completed"; I18N.dict.id["ci.import_done"]="Impor selesai";
   I18N.dict.zh["ci.import_failed"]="导入失败"; I18N.dict.en["ci.import_failed"]="Import failed"; I18N.dict.id["ci.import_failed"]="Impor gagal";
+  // 寄售库存顶部汇总卡（复用库存总表汇率口径：country→currency、rate=cnyToForeign）
+  I18N.dict.zh["ci.summary_qty"]="寄售剩余库存"; I18N.dict.en["ci.summary_qty"]="Consignment Stock"; I18N.dict.id["ci.summary_qty"]="Sisa Stok Konsinyasi";
+  I18N.dict.zh["ci.summary_rmb"]="寄售库存货值（人民币）"; I18N.dict.en["ci.summary_rmb"]="Consignment Value (CNY)"; I18N.dict.id["ci.summary_rmb"]="Nilai Konsinyasi (CNY)";
+  I18N.dict.zh["ci.summary_local"]="原币货值"; I18N.dict.en["ci.summary_local"]="Local Currency Value"; I18N.dict.id["ci.summary_local"]="Nilai Mata Uang Lokal";
   I18N.dict.zh["ci.import_success"]="寄售库存导入成功"; I18N.dict.en["ci.import_success"]="Consignment inventory imported successfully"; I18N.dict.id["ci.import_success"]="Persediaan konsinyasi berhasil diimpor";
   I18N.dict.zh["ci.import_stats"]="共导入 {v1} 条有效行，剩余总数量 {v2}，剩余库存金额 {v3}。"; I18N.dict.en["ci.import_stats"]="Imported {v1} valid rows, total remaining qty {v2}, remaining value {v3}."; I18N.dict.id["ci.import_stats"]="Mengimpor {v1} baris valid, total sisa qty {v2}, nilai sisa {v3}.";
   I18N.dict.zh["ci.batch_id"]="批次号"; I18N.dict.en["ci.batch_id"]="Batch ID"; I18N.dict.id["ci.batch_id"]="ID Batch";

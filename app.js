@@ -3595,8 +3595,8 @@ async function renderConsignment(){
     '</div></div>'+
     '<div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🤝 '+t('nav.consignment','寄售库存')+'</div>'+
       '<div class="table-section-title-right"><button class="btn btn-secondary btn-sm" onclick="openConsignmentImport()">'+t('btn.consignment_init','📦 寄售库存初始化')+'</button></div></div>'+
+      '<div id="cs-summary" class="stats-grid" style="margin-bottom:12px"></div>'+
       '<div id="cs-table"></div>'+
-      '<div id="cs-total" class="stats-grid" style="margin-top:12px"></div>'+
     '</div>';
   loadConsignment();
 }
@@ -3606,16 +3606,30 @@ async function loadConsignment(){
     const c=document.getElementById('cs-c')?.value||'';
     const cust=document.getElementById('cs-cust')?.value||'';
     const sku=document.getElementById('cs-sku')?.value||'';
+    // 顶部汇总与明细列表使用完全相同的筛选范围（国家 + 客户 + SKU）
+    // 注意：customer_name 仅作为普通筛选条件参与查询，不新增按客户分组/统计卡/报表
     const q=[];
     if(c) q.push('country='+encodeURIComponent(c));
     if(cust) q.push('customer_name='+encodeURIComponent(cust));
     if(sku) q.push('sku_code='+encodeURIComponent(sku));
-    const lots=await api('/api/consignment-inventory/lots'+(q.length?'?'+q.join('&'):''));
+    // 复用库存总表汇率口径（/api/inventory/currency-rates）：country→currency、rate=cnyToForeign（1 CNY = X 本币）
+    const [lots, rateInfo, sumLots] = await Promise.all([
+      api('/api/consignment-inventory/lots'+(q.length?'?'+q.join('&'):'')),
+      api('/api/inventory/currency-rates'),
+      api('/api/consignment-inventory/lots'+(q.length?'?'+q.join('&'):''))
+    ]);
+    const countryCurrency={};
+    (rateInfo.countries||[]).forEach(function(co){
+      var curr=co.default_currency||'';
+      var rateObj=(rateInfo.rates||{})[curr];
+      countryCurrency[co.country]={code:curr, symbol:co.symbol||'', rate:rateObj?rateObj.rate:null};
+    });
+    renderConsignmentSummary(sumLots||[], countryCurrency);
     const box=document.getElementById('cs-table');
     if(!box)return;
     if(!lots||!lots.length){
       box.innerHTML='<div style="text-align:center;color:#999;padding:30px">'+t('ci.no_lots','无寄售批次记录')+'</div>';
-      const tot=document.getElementById('cs-total'); if(tot)tot.innerHTML='';
+      const sumEl=document.getElementById('cs-summary'); if(sumEl)sumEl.innerHTML='';
       return;
     }
     let html='<div class="table-container" style="box-shadow:none"><table class="data-table"><thead><tr>'+
@@ -3637,13 +3651,49 @@ async function loadConsignment(){
     });
     html+='</tbody></table></div>';
     box.innerHTML=html;
-    const tot=document.getElementById('cs-total');
-    if(tot)tot.innerHTML='<div class="stat-card"><div class="stat-label">'+t('ci.total_remaining_qty','剩余数量合计')+'</div><div class="stat-value">'+sumQty.toLocaleString()+'</div></div>'+
-      '<div class="stat-card"><div class="stat-label">'+t('ci.total_remaining_value','库存金额合计')+'</div><div class="stat-value">'+fmtMoney(sumVal)+'</div></div>';
   }catch(e){
     const box=document.getElementById('cs-table');
     if(box)box.innerHTML='<div style="text-align:center;color:#ff4d4f;padding:30px">'+esc((e&&e.message)||t('ci.load_fail','加载失败'))+'</div>';
   }
+}
+
+// 寄售库存顶部汇总：复用库存总表 countryCurrency（rate=cnyToForeign，CNY=本币/rate）
+// 1) 寄售剩余数量 = Σ remaining_qty
+// 2) 原币货值 = 按 country/currency 分别 Σ remaining_inventory_value（不同币种不相加）
+// 3) 人民币货值 = 各币种原币货值按系统汇率折算为 RMB 后合计
+function renderConsignmentSummary(lots, countryCurrency){
+  const el=document.getElementById('cs-summary');
+  if(!el) return;
+  const fmtN=function(v){return Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});};
+  let totalQty=0;
+  const byCur={}; let rmbTotal=0;
+  (lots||[]).forEach(function(l){
+    const qty=Number(l.remaining_qty||0);
+    const val=Number(l.remaining_inventory_value||0);
+    totalQty+=qty;
+    const ci=countryCurrency[l.country_name]||{};
+    const code=ci.code||t('inv.kpi.unknown_cur','未知');
+    if(!byCur[code]) byCur[code]={symbol:(ci.symbol||''), amount:0, hasRate:!!ci.rate};
+    byCur[code].amount+=val;
+    if(ci.rate) rmbTotal += val / ci.rate; // rate=cnyToForeign，CNY = 本币 / rate
+  });
+  const curCodes=Object.keys(byCur);
+  let localHtml;
+  if(curCodes.length===1){
+    const code=curCodes[0];
+    localHtml=(byCur[code].symbol?byCur[code].symbol+' ':'')+fmtN(byCur[code].amount);
+  } else if(curCodes.length>1){
+    localHtml=curCodes.map(function(code){
+      return (byCur[code].symbol?byCur[code].symbol+' ':'')+fmtN(byCur[code].amount);
+    }).join('　/　');
+  } else {
+    localHtml='-';
+  }
+  const rmbValue='¥ '+fmtN(rmbTotal);
+  el.innerHTML=
+    '<div class="stat-card"><div class="stat-label">'+t('ci.summary_qty','寄售剩余库存')+'</div><div class="stat-number">'+Number(totalQty).toLocaleString('en-US')+' '+t('inv.kpi.unit','件')+'</div></div>'+
+    '<div class="stat-card"><div class="stat-label">'+t('ci.summary_rmb','寄售库存货值（人民币）')+'</div><div class="stat-number">'+esc(rmbValue)+'</div></div>'+
+    '<div class="stat-card"><div class="stat-label">'+t('ci.summary_local','原币货值')+'</div><div class="stat-number">'+esc(localHtml)+'</div></div>';
 }
 
 function resetConsignmentFilters(){
