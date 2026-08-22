@@ -130,7 +130,13 @@ const analyzed = TARGETS.map(t => {
   const scope = enclosingScope(t);
   const txs = transactionCallsIn(scope);
   const cb = txs.length === 1 ? txs[0].arguments[0] : null;
-  const bodySrc = cb && cb.body ? src.slice(cb.body.start, cb.body.end) : '';
+  let bodySrc = cb && cb.body ? src.slice(cb.body.start, cb.body.end) : '';
+  if (t.name === 'applyPaymentSettlement') {
+    // Batch 2B 已将业务体抽为 applyPaymentSettlementInTx；wrapper 回调仅委托，
+    // 关键财务写位于 InTx core 内（仍受 wrapper 的 transaction 保护）。
+    const inTx = findNamedFunction('applyPaymentSettlementInTx');
+    bodySrc = inTx ? src.slice(inTx.body.start, inTx.body.end) : bodySrc;
+  }
   return { ...t, scope, txCount: txs.length, arrow: cb, bodySrc,
     async: cb ? cb.async : null, awaitCount: cb ? countAwait(cb.body) : null };
 });
@@ -158,9 +164,9 @@ test('2A-MIGRATION-INVARIANT: 全仓 transaction() 调用总数 == 70（sync 化
     n.callee && n.callee.type === 'Identifier' && n.callee.name === 'transaction'
   );
   assert.strictEqual(all.length, 70, `transaction() 总数应为 70，实际 ${all.length}`);
-  // 11 条 Batch 2A 已全部 sync；剩余 async 不应落在 2A 范围
+  // 11 条 Batch 2A 已全部 sync；剩余 async 为 2B/2C/2D（2B 已实施 → 仅剩 2D×2 + 2C×1 = 3）
   const asyncTx = all.filter(n => n.arguments[0] && n.arguments[0].type === 'ArrowFunctionExpression' && n.arguments[0].async);
-  assert.strictEqual(asyncTx.length, 9, `剩余 async transaction 应为 9（2B/2C/2D），实际 ${asyncTx.length}`);
+  assert.strictEqual(asyncTx.length, 3, `剩余 async transaction 应为 3（2D×2 + 2C×1），实际 ${asyncTx.length}`);
   for (const a of analyzed) {
     assert.strictEqual(a.async, false, `2A target ${a.key} 仍被标记为 async`);
   }

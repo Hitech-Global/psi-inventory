@@ -11446,9 +11446,9 @@ function finalPaymentApprovalInput(payment, body = {}) {
   };
 }
 
-async function settleFinalPaymentApproval(payment, body, req) {
+function settleFinalPaymentApprovalInTx(payment, body, req) {
   const input = finalPaymentApprovalInput(payment, body);
-  await run(
+  run(
     `UPDATE payment_requests
      SET attachment = ?, updated_at = datetime('now')
      WHERE id = ?`,
@@ -11456,7 +11456,7 @@ async function settleFinalPaymentApproval(payment, body, req) {
   );
   // PAY-CORE Phase 2：透传 rounding_amount / rounding_reason / bank_ref_no，与 confirm-paid 路径一致
   // PAY-CORE 人工分摊：透传 allocations（合并付款确认时前端逐项填写），缺省则走原自动比例分摊
-  return await applyPaymentSettlement(
+  return applyPaymentSettlementInTx(
     payment.id,
     input.actualPaidAmount,
     input.actualPaidDate,
@@ -11690,8 +11690,7 @@ function paymentIdempotencyResult(existing, payment, requestedAmount, paidDate, 
   };
 }
 
-async function applyPaymentSettlement(paymentRequestId, rawAmount, rawPaidDate, voucher, req, rawIdempotencyKey, options = {}) {
-  return transaction(() => {
+function applyPaymentSettlementInTx(paymentRequestId, rawAmount, rawPaidDate, voucher, req, rawIdempotencyKey, options = {}) {
     const payment = queryOne('SELECT * FROM payment_requests WHERE id = ?', [paymentRequestId]);
     if (!payment) throw new SettlementError(404, '付款申请不存在');
     if (payment.approval_status !== 'approved') throw new SettlementError(409, '付款申请尚未审批通过，不能确认付款');
@@ -11886,6 +11885,11 @@ async function applyPaymentSettlement(paymentRequestId, rawAmount, rawPaidDate, 
       }
     }
     return { idempotent: false, log_id: logId, transaction_id: txId, trans_no: transNo, rounding_amount: roundOffAmount, effectivePaid: actualPaidAmount, ...result };
+}
+
+async function applyPaymentSettlement(paymentRequestId, rawAmount, rawPaidDate, voucher, req, rawIdempotencyKey, options = {}) {
+  return transaction(() => {
+    return applyPaymentSettlementInTx(paymentRequestId, rawAmount, rawPaidDate, voucher, req, rawIdempotencyKey, options);
   });
 }
 
@@ -14232,28 +14236,28 @@ async function createApprovalInstance(prId, payment, req) {
   const submitterName = (req.body.submitter_name || req.currentUserName || '').toString();
   const approvalId = genId('appr');
 
-  await transaction(async () => {
-    await run(`DELETE FROM approval_records WHERE business_id = ? AND business_type = ? AND status IN ('pending','rejected','withdrawn')`, [prId, businessType]);
+  transaction(() => {
+    run(`DELETE FROM approval_records WHERE business_id = ? AND business_type = ? AND status IN ('pending','rejected','withdrawn')`, [prId, businessType]);
     const approversSnapshot = JSON.stringify({ levels: approvers, completion_cc_user_ids: completionCcUserIds });
-    await run(`INSERT INTO approval_records (id, business_type, business_id, business_code, submitter_id, submitter_name, current_level, max_level, approvers, approval_history, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    run(`INSERT INTO approval_records (id, business_type, business_id, business_code, submitter_id, submitter_name, current_level, max_level, approvers, approval_history, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [approvalId, businessType, prId, payment.request_no, req.currentUserId, submitterName, 1, maxLevel, approversSnapshot,
        JSON.stringify([{ level: 0, action: 'submit', user_id: req.currentUserId, user_name: submitterName, time: new Date().toISOString(), remark: '提交审批' }]),
        'pending']);
     try {
       for (const lv of approvers) {
         for (const ccUid of (lv.cc_user_ids || [])) {
-          await run(`INSERT INTO business_participants (id, business_type, business_id, participant_type, user_id, user_name) VALUES (?, ?, ?, ?, ?, ?)`,
+          run(`INSERT INTO business_participants (id, business_type, business_id, participant_type, user_id, user_name) VALUES (?, ?, ?, ?, ?, ?)`,
             [genId('bp'), 'approval', approvalId, 'node_cc', ccUid, '']);
         }
       }
       for (const ccUid of completionCcUserIds) {
-        await run(`INSERT INTO business_participants (id, business_type, business_id, participant_type, user_id, user_name) VALUES (?, ?, ?, ?, ?, ?)`,
+        run(`INSERT INTO business_participants (id, business_type, business_id, participant_type, user_id, user_name) VALUES (?, ?, ?, ?, ?, ?)`,
           [genId('bp'), 'approval', approvalId, 'completion_cc', ccUid, '']);
       }
     } catch (bpErr) {
       console.error('[PAY-CORE] business_participants 写入失败 approvalId=' + approvalId + '：', bpErr.message);
     }
-    await run(`UPDATE payment_requests SET approval_status = ?, approval_remark = ?, approver_name = ?, approved_at = ?, updated_at = datetime('now') WHERE id = ?`,
+    run(`UPDATE payment_requests SET approval_status = ?, approval_remark = ?, approver_name = ?, approved_at = ?, updated_at = datetime('now') WHERE id = ?`,
       ['pending', '', '', '', prId]);
   });
 
@@ -14410,57 +14414,53 @@ app.post('/api/payment-requests/:id/approve', requireApiPermission('payment_appr
             }
           }
           history.push({ level: approval.current_level, action: 'approve', user_id: req.currentUserId, user_name: userName, time: new Date().toISOString(), remark: apprRemark });
-          await transaction(async () => {
-            await ensureSettlementLegacyBaselines(payment);
-            await run(`UPDATE approval_records SET status = ?, approval_history = ?, updated_at = datetime('now') WHERE id = ?`, ['approved', JSON.stringify(history), approval.id]);
-            await run(`UPDATE payment_requests SET approval_status = ?, approval_remark = ?, approver_name = ?, approved_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`, ['approved', apprRemark, userName, req.params.id]);
+          let settlementResult = null;
+          transaction(() => {
+            ensureSettlementLegacyBaselines(payment);
+            run(`UPDATE approval_records SET status = ?, approval_history = ?, updated_at = datetime('now') WHERE id = ?`, ['approved', JSON.stringify(history), approval.id]);
+            run(`UPDATE payment_requests SET approval_status = ?, approval_remark = ?, approver_name = ?, approved_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`, ['approved', apprRemark, userName, req.params.id]);
+            // PAY-CORE Phase 2：最终审批 + 本次实际付款合并为同一事务边界（P0 原子性修复）
+            if (req.body.actual_paid_amount != null) {
+              const approvedPayment = queryOne('SELECT * FROM payment_requests WHERE id = ?', [req.params.id]);
+              settlementResult = settleFinalPaymentApprovalInTx(approvedPayment, req.body, req);
+            }
           });
           // 事务外 best-effort 通知提交人 + CC
           notifyPaymentApprovalParticipants(approval.id, 'approved_final', Object.assign({}, notifyCtx, { approver: userName })).catch(() => {});
           // PAY-CORE Phase 2：最终审批通过后，若附带付款信息则直接执行结算（创建→审批→付款闭环）
           if (req.body.actual_paid_amount != null) {
-            try {
-              const updatedPayment = await queryOne('SELECT * FROM payment_requests WHERE id = ?', [req.params.id]);
-              const settleResult = await settleFinalPaymentApproval(updatedPayment, req.body, req);
-              return res.json({
-                success: true,
-                settlement: {
-                  idempotent: settleResult.idempotent,
-                  log_id: settleResult.log_id,
-                  transaction_id: settleResult.transaction_id,
-                  trans_no: settleResult.trans_no,
-                  rounding_amount: settleResult.rounding_amount,
-                  paid_amount: settleResult.effectivePaid,
-                  outstanding: settleResult.outstanding,
-                  payment_status: settleResult.payment_status
-                }
-              });
-            } catch (settleErr) {
-              return res.status(settleErr.status || 500).json({
-                error: '审批已通过，但付款结算失败：' + settleErr.message,
-                approval_success: true,
-                settlement_failed: true
-              });
-            }
+            return res.json({
+              success: true,
+              settlement: {
+                idempotent: settlementResult.idempotent,
+                log_id: settlementResult.log_id,
+                transaction_id: settlementResult.transaction_id,
+                trans_no: settlementResult.trans_no,
+                rounding_amount: settlementResult.rounding_amount,
+                paid_amount: settlementResult.effectivePaid,
+                outstanding: settlementResult.outstanding,
+                payment_status: settlementResult.payment_status
+              }
+            });
           }
         } else {
           // 中间级次通过：approval_records.current_level=nextLevel，payment_requests.approval_status 保持 pending
           history.push({ level: approval.current_level, action: 'approve', user_id: req.currentUserId, user_name: userName, time: new Date().toISOString(), remark: apprRemark });
-          await transaction(async () => {
-            await run(`UPDATE approval_records SET current_level = ?, approval_history = ?, updated_at = datetime('now') WHERE id = ?`, [nextLevel, JSON.stringify(history), approval.id]);
-            await run(`UPDATE payment_requests SET approval_remark = ?, approver_name = ?, updated_at = datetime('now') WHERE id = ?`, [apprRemark, userName, req.params.id]);
-            await recalculatePaymentSettlement(req.params.id);
+          transaction(() => {
+            run(`UPDATE approval_records SET current_level = ?, approval_history = ?, updated_at = datetime('now') WHERE id = ?`, [nextLevel, JSON.stringify(history), approval.id]);
+            run(`UPDATE payment_requests SET approval_remark = ?, approver_name = ?, updated_at = datetime('now') WHERE id = ?`, [apprRemark, userName, req.params.id]);
+            recalculatePaymentSettlement(req.params.id);
           });
           notifyPaymentApprovalParticipants(approval.id, 'approved_intermediate', Object.assign({}, notifyCtx, { approver: userName, level: nextLevel })).catch(() => {});
         }
       } else {
         // reject：approval_records.status='rejected' + payment_requests.approval_status='rejected'
         history.push({ level: approval.current_level, action: 'reject', user_id: req.currentUserId, user_name: userName, time: new Date().toISOString(), remark: apprRemark });
-        await transaction(async () => {
-          await ensureSettlementLegacyBaselines(payment);
-          await run(`UPDATE approval_records SET status = ?, approval_history = ?, updated_at = datetime('now') WHERE id = ?`, ['rejected', JSON.stringify(history), approval.id]);
-          await run(`UPDATE payment_requests SET approval_status = ?, approval_remark = ?, approver_name = ?, approved_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`, ['rejected', apprRemark, userName, req.params.id]);
-          await recalculatePaymentSettlement(req.params.id);
+        transaction(() => {
+          ensureSettlementLegacyBaselines(payment);
+          run(`UPDATE approval_records SET status = ?, approval_history = ?, updated_at = datetime('now') WHERE id = ?`, ['rejected', JSON.stringify(history), approval.id]);
+          run(`UPDATE payment_requests SET approval_status = ?, approval_remark = ?, approver_name = ?, approved_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`, ['rejected', apprRemark, userName, req.params.id]);
+          recalculatePaymentSettlement(req.params.id);
           // reject 时释放关联的 payable_items（reserved → active），single / multi 均执行
           releasePayableItemsByPR(req.params.id);
         });
@@ -14480,30 +14480,30 @@ app.post('/api/payment-requests/:id/approve', requireApiPermission('payment_appr
     // 后续要求：Phase 2 前端完全切换到 approval_records 流程后，再限制新付款申请必须经过 approval_records，
     //          不允许新业务绕过审批实例（届时在此处加入 status=2 直接拒绝并引导走 submit-approval）
     if (action === 'approve') {
-      await transaction(async () => {
-        await ensureSettlementLegacyBaselines(payment);
-        await run(`UPDATE payment_requests SET approval_status = ?, approval_remark = ?, approver_name = ?,
+      transaction(() => {
+        ensureSettlementLegacyBaselines(payment);
+        run(`UPDATE payment_requests SET approval_status = ?, approval_remark = ?, approver_name = ?,
              approved_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`,
           ['approved', apprRemark, userName, req.params.id]);
         // 候选戊([PAY-CORE-TD-001] 补全)：旧单步兼容路径补写 approval_records，
         // 让审批链完整，详情接口可返回审批记录（修复 Bug B“暂无审批流程记录”）。
-        await run(`INSERT INTO approval_records (id, business_type, business_id, business_code, submitter_id, submitter_name, current_level, max_level, approvers, approval_history, status) VALUES (?, ?, ?, ?, ?, ?, 1, 1, ?, ?, 'approved')`,
+        run(`INSERT INTO approval_records (id, business_type, business_id, business_code, submitter_id, submitter_name, current_level, max_level, approvers, approval_history, status) VALUES (?, ?, ?, ?, ?, ?, 1, 1, ?, ?, 'approved')`,
           [genId('appr'), paymentRequestToBusinessType(payment) || 'payment', payment.id, payment.request_no, req.currentUserId, userName,
            JSON.stringify([{level:1, approver_id: req.currentUserId, approver_name: userName}]),
            JSON.stringify([{level:1, action:'approve', user_id: req.currentUserId, user_name: userName, time: new Date().toISOString(), remark: apprRemark}])]);
       });
     } else { // reject
-      await transaction(async () => {
-        await ensureSettlementLegacyBaselines(payment);
-        await run(`UPDATE payment_requests SET approval_status = ?, approval_remark = ?, approver_name = ?,
+      transaction(() => {
+        ensureSettlementLegacyBaselines(payment);
+        run(`UPDATE payment_requests SET approval_status = ?, approval_remark = ?, approver_name = ?,
              approved_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`,
           ['rejected', apprRemark, userName, req.params.id]);
         // 候选戊([PAY-CORE-TD-001] 补全)：旧单步兼容路径补写 approval_records（reject）
-        await run(`INSERT INTO approval_records (id, business_type, business_id, business_code, submitter_id, submitter_name, current_level, max_level, approvers, approval_history, status) VALUES (?, ?, ?, ?, ?, ?, 1, 1, ?, ?, 'rejected')`,
+        run(`INSERT INTO approval_records (id, business_type, business_id, business_code, submitter_id, submitter_name, current_level, max_level, approvers, approval_history, status) VALUES (?, ?, ?, ?, ?, ?, 1, 1, ?, ?, 'rejected')`,
           [genId('appr'), paymentRequestToBusinessType(payment) || 'payment', payment.id, payment.request_no, req.currentUserId, userName,
            JSON.stringify([{level:1, approver_id: req.currentUserId, approver_name: userName}]),
            JSON.stringify([{level:1, action:'reject', user_id: req.currentUserId, user_name: userName, time: new Date().toISOString(), remark: apprRemark}])]);
-        await recalculatePaymentSettlement(req.params.id);
+        recalculatePaymentSettlement(req.params.id);
         // reject 时释放关联的 payable_items（reserved → active），single / multi 均执行
         releasePayableItemsByPR(req.params.id);
       });
