@@ -3944,8 +3944,8 @@ function getSnapshotCutoffMap() {
 }
 
 // P1-03-B: 查询最新已确认且锁定的 WAC 版本（唯一读取规则）
-async function latestConfirmedWac(skuCode, country, warehouse) {
-  return await queryOne(`
+function latestConfirmedWac(skuCode, country, warehouse) {
+  return queryOne(`
     SELECT * FROM wac_history
     WHERE sku_code = ? AND country = ? AND warehouse = ?
       AND confirmation_status = 'confirmed' AND is_locked = 1
@@ -4077,7 +4077,7 @@ async function refreshInventoryTotals(snapshotCutoffDate) {
   // 获取每个 SKU+国家+仓库 的最新可用库存（连同 snapshot_cutoff_date）
   const latestImports = query(latestImportsSql()).rows;
 
-  transaction(async () => {
+  transaction(() => {
     for (const imp of latestImports) {
       const cutoff = imp.snapshot_cutoff_date || snapshotCutoffDate || '';
       const existing = queryOne('SELECT id, weighted_avg_cost, last_inbound_date, first_inbound_date FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
@@ -4088,7 +4088,7 @@ async function refreshInventoryTotals(snapshotCutoffDate) {
       //   2. existing inventory WAC (≠0) — 已存在有效成本，不覆盖
       //   3. opening import WAC (>0) — 库存导入时提供的加权平均成本，用于无正式 WAC 的新库存初始化
       //   4. 0 — 兜底，表示无有效成本
-      const wacRecord = await latestConfirmedWac(imp.sku_code, imp.country, imp.warehouse);
+      const wacRecord = latestConfirmedWac(imp.sku_code, imp.country, imp.warehouse);
       let wac, wacSource;
       if (wacRecord) {
         wac = wacRecord.new_avg_cost || 0;
@@ -4130,8 +4130,10 @@ async function refreshInventoryTotals(snapshotCutoffDate) {
           [genId('inv'), imp.sku_code, imp.country, imp.warehouse, imp.available_qty, wac, invValue, imp.import_date, cutoff, newLastInbound, newFirstInbound]);
       }
     }
-    // 更新在途、PI未发货、PO未确认等
-    await updateInventoryTransitData();
+    // 更新在途、PI未发货、PO未确认等（派生数据，COMMIT 后刷新，脱离事务边界）
+  });
+  updateInventoryTransitData().catch(err => {
+    console.warn('[refreshInventoryTotals] 在途数据刷新失败（事务已提交）:', err && err.message);
   });
   return { warnings };
 }
@@ -7009,7 +7011,7 @@ app.post('/api/purchase-orders', requireApiPermission('po_create'), asyncHandler
     }
 
     let totalAmount = 0;
-    transaction(async () => {
+    transaction(() => {
       run(`INSERT INTO purchase_orders (id, po_no, supplier_id, supplier_name, brand, country, target_warehouse, po_date, expected_delivery, currency, total_amount, created_by, created_by_name, po_status, approval_status, from_suggestion, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [poId, poNo, d.supplier_id || '', d.supplier_name, d.brand || '', d.country || '', d.target_warehouse || '', d.po_date || new Date().toISOString().split('T')[0], d.expected_delivery || '', currency, 0, d.created_by || '', d.created_by_name || '', 'draft', 'pending', d.from_suggestion || 0, d.remark || '']);
 
@@ -7022,9 +7024,15 @@ app.post('/api/purchase-orders', requireApiPermission('po_create'), asyncHandler
         });
         run('UPDATE purchase_orders SET total_amount = ? WHERE id = ?', [totalAmount, poId]);
       }
-      // 新建 PO 后刷新在途字段（po_unconfirmed_pi_qty 等）
-      await updateInventoryTransitData();
     });
+
+    // 在途字段刷新（派生数据，幂等；失败仅告警，不影响已提交主事实）
+    // 注意：原 handler 为同步函数，transaction() 同步返回、并不等待异步回调，
+    // 故 Phase C 采用 fire-and-forget .catch()，保持原“响应不等待 transit”的语义。
+    updateInventoryTransitData().catch((err) => {
+      console.warn('[PO-CREATE] updateInventoryTransitData failed (best-effort, ignored):', err && err.message);
+    });
+
     res.json({ id: poId, po_no: poNo, ...d, currency, total_amount: totalAmount, price_warnings: priceWarnings });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
@@ -8175,7 +8183,7 @@ app.post('/api/commercial-invoices', requireApiPermission('ci_create'), asyncHan
     let goodsAmount = 0;
     let totalShouldDeduct = 0;
 
-    await transaction(async () => {
+    transaction(() => {
       // CI Header INSERT — related_pi_ids/related_pi_nos JSON 数组 + 旧字段首 PI 兼容
       const relatedPiIdsJson = JSON.stringify(relatedPiIds);
       const relatedPiNosJson = JSON.stringify(relatedPiNos);
@@ -8300,10 +8308,16 @@ app.post('/api/commercial-invoices', requireApiPermission('ci_create'), asyncHan
         run('UPDATE commercial_invoices SET should_deduct_deposit = ?, actual_deducted_deposit = ?, payable_balance = ?, unpaid_balance = ? WHERE id = ?',
           [totalShouldDeduct, totalShouldDeduct, payableBalanceTotal, payableBalanceTotal, ciId]);
 
-        // 更新库存的在途数据
-        await updateInventoryTransitData();
       }
     });
+
+    // 在途数据刷新（派生数据，幂等；失败仅告警，不影响已提交主事实）
+    // 原 handler 为异步函数，但 transaction() 同步返回、并不等待异步回调，
+    // 故 Phase C 采用 fire-and-forget .catch()，保持原“响应不等待 transit”的语义。
+    updateInventoryTransitData().catch((err) => {
+      console.warn('[CI-CREATE] updateInventoryTransitData failed (best-effort, ignored):', err && err.message);
+    });
+
     const payableBalanceResp = goodsAmount - totalShouldDeduct;
     res.json({ id: ciId, ci_no: ciNo, ...d, goods_amount: goodsAmount, pi_total_amount: piTotalAmount, amount_difference: 0, should_deduct_deposit: totalShouldDeduct, payable_balance: payableBalanceResp });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -8415,7 +8429,7 @@ app.post('/api/commercial-invoices/:id/reverse', requireApiPermission('ci_edit')
     const operatorId = req.currentUserId || '';
     const ts = new Date().toISOString().slice(0, 19).replace('T', ' ');
 
-    await transaction(async () => {
+    transaction(() => {
       // 1. 查询关联数据
       const ciItems = query('SELECT * FROM commercial_invoice_items WHERE ci_id = ?', [ci.id]).rows;
       const inbounds = query('SELECT * FROM inbound_records WHERE source_ci_id = ?', [ci.id]).rows;
@@ -8519,8 +8533,13 @@ app.post('/api/commercial-invoices/:id/reverse', requireApiPermission('ci_edit')
       run('UPDATE commercial_invoices SET ci_status = \'reversed\', wac_confirmed = 0, wac_version_id = \'\', cost_confirmed = 0, cost_allocated = 0, original_inventory_imported = 0, remark = ?, updated_at = datetime(\'now\') WHERE id = ?',
         [ciRemark, ci.id]);
 
-      // 更新在途数据
-      await updateInventoryTransitData();
+    });
+
+    // 在途数据刷新（派生数据，幂等；失败仅告警，不影响已提交主事实）
+    // 原 handler 为异步函数，transaction() 同步返回、并不等待异步回调，
+    // 故 Phase C 采用 fire-and-forget .catch()，保持原“响应不等待 transit”的语义。
+    updateInventoryTransitData().catch((err) => {
+      console.warn('[CI-REVERSE] updateInventoryTransitData failed (best-effort, ignored):', err && err.message);
     });
 
     logOperation({
@@ -8620,7 +8639,6 @@ app.post('/api/proforma-invoices/batch-import', requireApiPermission('pi_create'
   try {
     const rows = Array.isArray(req.body.items) ? req.body.items : [];
     const result = { success: 0, failed: 0, total: rows.length, errors: [] };
-    transaction(async () => {
       rows.forEach((row, idx) => {
         // P0-FIX-2：每行独立 transaction（SAVEPOINT），单行失败只回滚当前行
         try {
@@ -8699,8 +8717,9 @@ app.post('/api/proforma-invoices/batch-import', requireApiPermission('pi_create'
         }
       });
       // PI 批量导入后刷新在途字段（po_unconfirmed_pi_qty / pi_confirmed_unshipped_qty）
-      await updateInventoryTransitData();
-    });
+      updateInventoryTransitData().catch((err) =>
+        console.warn('[PI-BATCH] updateInventoryTransitData failed (best-effort, ignored):', err && err.message)
+      );
     res.json(importResultWithMessages(result));
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
@@ -8709,7 +8728,7 @@ app.post('/api/commercial-invoices/batch-import', requireApiPermission('ci_creat
   try {
     const rows = Array.isArray(req.body.items) ? req.body.items : [];
     const result = { success: 0, failed: 0, total: rows.length, errors: [] };
-    transaction(async () => {
+    transaction(() => {
       rows.forEach((row, idx) => {
         try {
           const poNo = s(pick(row, ['关联PO编号', 'PO编号', 'related_po_no', 'po_no']));
@@ -8808,9 +8827,11 @@ app.post('/api/commercial-invoices/batch-import', requireApiPermission('ci_creat
           result.errors.push({ row: idx + 2, reason: e.message });
         }
       });
-      // CI 批量导入（发货）后刷新在途字段（in_transit_qty / pi_confirmed_unshipped_qty）
-      await updateInventoryTransitData();
     });
+      // CI 批量导入（发货）后刷新在途字段（in_transit_qty / pi_confirmed_unshipped_qty）
+      updateInventoryTransitData().catch((err) =>
+        console.warn('[CI-BATCH] updateInventoryTransitData failed (best-effort, ignored):', err && err.message)
+      );
     res.json(importResultWithMessages(result));
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
@@ -9830,7 +9851,7 @@ app.post('/api/inbound-records', requireApiPermission('inbound_create'), asyncHa
     const iId = genId('inbound');
     const iNo = d.inbound_no || `IN-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
 
-    transaction(async () => {
+    transaction(() => {
       // 更新 CI 明细累计入库（异常件按全额 actual_qty 计入，与既有语义一致）
       const accumulated = (ciItem.inbound_qty || 0) + actualQty;
       const uninbound = (ciItem.shipped_qty || 0) - accumulated;
@@ -9854,8 +9875,13 @@ app.post('/api/inbound-records', requireApiPermission('inbound_create'), asyncHa
         run('UPDATE commercial_invoices SET ci_status = ? WHERE id = ?', ['partial_inbound', sourceCiId]);
       }
 
-      // 更新在途数据
-      await updateInventoryTransitData();
+    });
+
+    // 在途数据刷新（派生数据，幂等；失败仅告警，不影响已提交主事实）
+    // 原 handler 为同步函数，transaction() 同步返回、并不等待异步回调，
+    // 故 Phase C 采用 fire-and-forget .catch()，保持原“响应不等待 transit”的语义。
+    updateInventoryTransitData().catch((err) => {
+      console.warn('[INBOUND-CREATE] updateInventoryTransitData failed (best-effort, ignored):', err && err.message);
     });
 
     res.json({ id: iId, inbound_no: iNo, source_pl_id: sourcePlId, source_pl_item_id: sourcePlItemId, source_ci_id: sourceCiId, source_ci_no: sourceCiNo, ...d });
@@ -9874,7 +9900,7 @@ app.post('/api/inbound-records/batch-import', requireApiPermission('inbound_crea
     let success = 0;
     let failed = 0;
 
-    transaction(async () => {
+    transaction(() => {
       records.forEach((rec, idx) => {
         const rowNum = idx + 1;
         try {
@@ -9979,10 +10005,10 @@ app.post('/api/inbound-records/batch-import', requireApiPermission('inbound_crea
           errors.push({ row: rowNum, sku: rec.sku_code || '', error: e.message });
         }
       });
-
-      // 最后更新一次在途数据
-      try { await updateInventoryTransitData(); } catch (e) { /* ignore */ }
     });
+
+      // 最后更新一次在途数据（Phase C，best-effort，失败不回滚已提交主事实）
+      updateInventoryTransitData().catch((e) => { /* ignore */ });
 
     res.json({ success, failed, total: records.length, errors: errors.slice(0, 50) });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -10233,8 +10259,8 @@ async function ensureSettlementLegacyBaselines(payment) {
   }
 }
 
-async function paymentSettlementFacts(payment) {
-  const logs = await paymentSettlementLogs(payment.id);
+function paymentSettlementFacts(payment) {
+  const logs = paymentSettlementLogs(payment.id);
   const paymentLogs = logs.filter(log => log.event_type === 'payment');
   const deductionLogs = logs.filter(log => log.event_type === 'deduction');
   const roundingLogs = logs.filter(log => log.event_type === 'rounding');
@@ -10243,7 +10269,7 @@ async function paymentSettlementFacts(payment) {
   const activeRoundings = roundingLogs.filter(log => log.status === 'applied');
   // PAY-CORE Phase 2 SSOT：effectivePaid 拆分为 newTransactionPaid + legacyPaid
   // 1. 新付款：从 payment_transactions 读取（唯一银行资金事实源）
-  const txRows = await query(
+  const txRows = query(
     `SELECT paid_amount_minor FROM payment_transactions
      WHERE payment_request_id = ? AND trans_status = 'reconciled'`,
     [payment.id]
@@ -10297,10 +10323,10 @@ function derivePaymentStatus(payment, facts) {
   return payment.approval_status === 'approved' ? 'approved' : 'pending_approval';
 }
 
-async function aggregateSourceSettlement(rows) {
+function aggregateSourceSettlement(rows) {
     const entries = [];
   for (const row of rows) {
-    entries.push({ row, facts: await paymentSettlementFacts(row) });
+    entries.push({ row, facts: paymentSettlementFacts(row) });
   }
   const effectivePaid = settlementMoney(entries.reduce((sum, entry) => sum + entry.facts.effectivePaid, 0));
   const effectiveDeduction = settlementMoney(entries.reduce((sum, entry) => sum + entry.facts.effectiveDeduction, 0));
@@ -10335,8 +10361,8 @@ function sourceGoodsPaymentRows(sourceType, sourceId, subcategory) {
 
 // PAY-CORE multi-PI-deposit：聚合某个 PI 下所有定金 payable_items 的实际付款状态
 // 跨 multi/single PR 统一通过 payment_allocations 聚合，避免串单
-async function aggregatePiDepositSettlement(piId) {
-  const items = await query(
+function aggregatePiDepositSettlement(piId) {
+  const items = query(
     `SELECT id, payable_amount_minor, lifecycle_status
      FROM payable_items
      WHERE source_type = 'pi' AND source_id = ?
@@ -10354,7 +10380,7 @@ async function aggregatePiDepositSettlement(piId) {
   for (const item of items.rows) {
     const itemPayableMinor = Number(item.payable_amount_minor || 0);
     totalPayableMinor += itemPayableMinor;
-    const pris = await query(
+    const pris = query(
       `SELECT pri.id, pri.payment_request_id
        FROM payment_request_items pri
        WHERE pri.payable_item_id = ?`,
@@ -10362,11 +10388,11 @@ async function aggregatePiDepositSettlement(piId) {
     );
     let itemPaidMinor = 0;
     for (const pri of pris.rows || []) {
-      const pr = await queryOne('SELECT approval_status, payment_status FROM payment_requests WHERE id = ?', [pri.payment_request_id]);
+      const pr = queryOne('SELECT approval_status, payment_status FROM payment_requests WHERE id = ?', [pri.payment_request_id]);
       if (!pr) continue;
       if (pr.approval_status === 'rejected' || pr.payment_status === 'cancelled' || pr.payment_status === 'rejected') continue;
       if (pr.approval_status === 'pending') hasPendingApproval = true;
-      const allocs = await query(
+      const allocs = query(
         `SELECT allocated_amount_minor FROM payment_allocations
          WHERE payment_request_item_id = ? AND status = 'reconciled'`,
         [pri.id]
@@ -10391,7 +10417,7 @@ async function aggregatePiDepositSettlement(piId) {
   return { effectivePaid, payableAmount, outstanding, allSettled, hasSettlement, hasPendingApproval, sourcePayStatus };
 }
 
-async function syncPaymentSource(payment, facts, paymentStatus) {
+function syncPaymentSource(payment, facts, paymentStatus) {
   const isSettled = facts.outstanding <= 0;
   const hasSettlement = facts.effectivePaid > 0 || facts.effectiveDeduction > 0 || facts.effectiveRounding > 0;
 
@@ -10399,7 +10425,7 @@ async function syncPaymentSource(payment, facts, paymentStatus) {
   // 原因：multi PR 主表 source_type/source_id 为空，原分支无法触发；需通过 payment_request_items JOIN payable_items
   // 找到关联的所有 PI，分别聚合其定金付款状态后回写
   if (payment.payment_mode === 'multi') {
-    const piRows = await query(
+    const piRows = query(
       `SELECT DISTINCT pi.source_id AS pi_id
        FROM payment_request_items pri
        JOIN payable_items pi ON pi.id = pri.payable_item_id
@@ -10409,13 +10435,13 @@ async function syncPaymentSource(payment, facts, paymentStatus) {
     );
     for (const piRow of piRows.rows || []) {
       const piId = piRow.pi_id;
-      const aggregate = await aggregatePiDepositSettlement(piId);
-      const pi = await queryOne('SELECT pi_status FROM proforma_invoices WHERE id = ?', [piId]);
+      const aggregate = aggregatePiDepositSettlement(piId);
+      const pi = queryOne('SELECT pi_status FROM proforma_invoices WHERE id = ?', [piId]);
       if (pi) {
         let piStatus = pi.pi_status;
         if (aggregate.allSettled && ['pending', 'uploaded', 'confirmed', 'pending_deposit'].includes(piStatus)) piStatus = 'deposit_paid';
         if (!aggregate.allSettled && piStatus === 'deposit_paid') piStatus = 'pending_deposit';
-        await run(`UPDATE proforma_invoices
+        run(`UPDATE proforma_invoices
              SET deposit_payment_status = ?, paid_deposit = ?, pi_status = ?, updated_at = datetime('now')
              WHERE id = ?`, [aggregate.sourcePayStatus, aggregate.effectivePaid, piStatus, piId]);
       }
@@ -10423,13 +10449,13 @@ async function syncPaymentSource(payment, facts, paymentStatus) {
   }
 
   if (payment.payment_category === 'goods' && payment.payment_subcategory === 'deposit' && payment.source_type === 'pi' && payment.source_id) {
-    const aggregate = await aggregateSourceSettlement(await sourceGoodsPaymentRows('pi', payment.source_id, 'deposit'));
-    const pi = await queryOne('SELECT pi_status FROM proforma_invoices WHERE id = ?', [payment.source_id]);
+    const aggregate = aggregateSourceSettlement(sourceGoodsPaymentRows('pi', payment.source_id, 'deposit'));
+    const pi = queryOne('SELECT pi_status FROM proforma_invoices WHERE id = ?', [payment.source_id]);
     if (pi) {
       let piStatus = pi.pi_status;
       if (aggregate.allSettled && ['pending', 'uploaded', 'confirmed', 'pending_deposit'].includes(piStatus)) piStatus = 'deposit_paid';
       if (!aggregate.allSettled && piStatus === 'deposit_paid') piStatus = 'pending_deposit';
-      await run(`UPDATE proforma_invoices
+      run(`UPDATE proforma_invoices
            SET deposit_payment_status = ?, paid_deposit = ?, pi_status = ?, updated_at = datetime('now')
            WHERE id = ?`, [aggregate.sourcePayStatus, aggregate.effectivePaid, piStatus, payment.source_id]);
     }
@@ -10437,8 +10463,8 @@ async function syncPaymentSource(payment, facts, paymentStatus) {
 
   const balanceCiId = payment.source_type === 'ci' ? payment.source_id : payment.related_ci_id;
   if (payment.payment_category === 'goods' && payment.payment_subcategory === 'balance' && balanceCiId) {
-    const aggregate = await aggregateSourceSettlement(await sourceGoodsPaymentRows('ci', balanceCiId, 'balance'));
-    await run(`UPDATE commercial_invoices
+    const aggregate = aggregateSourceSettlement(sourceGoodsPaymentRows('ci', balanceCiId, 'balance'));
+    run(`UPDATE commercial_invoices
          SET balance_payment_status = ?, paid_balance = ?, unpaid_balance = ?, updated_at = datetime('now')
          WHERE id = ?`, [aggregate.sourcePayStatus, aggregate.effectivePaid, aggregate.outstanding, balanceCiId]);
   }
@@ -10450,7 +10476,7 @@ async function syncPaymentSource(payment, facts, paymentStatus) {
   //    → 作为 historical fallback 写一次 fee_status。
   // 互斥保证：canonical 优先；legacy 不会覆盖/预写 canonical batch，
   //   也不会在 canonical >1 冲突时先预写（因为 hasFreightPayableItems 为真时 legacy 完全不进入）。
-  const fpRows0 = await query(
+  const fpRows0 = query(
     `SELECT DISTINCT pri.payable_item_id
      FROM payment_request_items pri
      JOIN payable_items pi ON pi.id = pri.payable_item_id
@@ -10465,7 +10491,7 @@ async function syncPaymentSource(payment, facts, paymentStatus) {
     //   0 canonical → 不猜测、不动 fee_status
     //   1 canonical → 按其 lifecycle_status 映射（paid→paid / partially_paid→partial_paid / 其它→unpaid）
     //   >1 canonical → 数据冲突，fail closed，不静默 aggregate，保留现状并留诊断
-    const batchRows = await query(
+    const batchRows = query(
       `SELECT DISTINCT logistics_batch_id AS batch_id
        FROM ci_cost_items
        WHERE payable_item_id IN (${fpIds0.map(() => '?').join(',')})
@@ -10478,7 +10504,7 @@ async function syncPaymentSource(payment, facts, paymentStatus) {
       if (!br.batch_id || seen.has(br.batch_id)) continue;
       seen.add(br.batch_id);
       // canonical freight linkage：该批次纳入落地成本的 freight payable（排除已取消）
-      const canon = await query(
+      const canon = query(
         `SELECT DISTINCT cci.payable_item_id AS pid
          FROM ci_cost_items cci
          JOIN payable_items pi ON pi.id = cci.payable_item_id
@@ -10500,23 +10526,23 @@ async function syncPaymentSource(payment, facts, paymentStatus) {
         console.warn('[fee_status] batch ' + br.batch_id + ' 存在多个 canonical freight payable_item_id: ' + canonIds.join(',') + '，跳过 fee_status 推导');
         continue;
       }
-      const p = await queryOne('SELECT lifecycle_status FROM payable_items WHERE id = ?', [canonIds[0]]);
+      const p = queryOne('SELECT lifecycle_status FROM payable_items WHERE id = ?', [canonIds[0]]);
       const ls = p ? p.lifecycle_status : 'active';
       const fee = ls === 'paid' ? 'paid' : (ls === 'partially_paid' ? 'partial_paid' : 'unpaid');
-      await run('UPDATE logistics_batches SET fee_status = ? WHERE id = ?', [fee, br.batch_id]);
+      run('UPDATE logistics_batches SET fee_status = ? WHERE id = ?', [fee, br.batch_id]);
     }
   } else if (payment.source_type === 'logistics' && payment.source_id) {
     // historical legacy fallback：仅当本 PR 无 canonical freight payable 时
-    await run('UPDATE logistics_batches SET fee_status = ? WHERE id = ?', [isSettled ? 'paid' : (hasSettlement ? 'partial_paid' : 'unpaid'), payment.source_id]);
+    run('UPDATE logistics_batches SET fee_status = ? WHERE id = ?', [isSettled ? 'paid' : (hasSettlement ? 'partial_paid' : 'unpaid'), payment.source_id]);
   }
 
-  await run('UPDATE ci_cost_items SET paid_amount = ? WHERE payment_request_id = ?', [facts.effectivePaid, payment.id]);
+  run('UPDATE ci_cost_items SET paid_amount = ? WHERE payment_request_id = ?', [facts.effectivePaid, payment.id]);
 }
 
-async function recalculatePaymentSettlement(paymentRequestId) {
-  const payment = await queryOne('SELECT * FROM payment_requests WHERE id = ?', [paymentRequestId]);
+function recalculatePaymentSettlement(paymentRequestId) {
+  const payment = queryOne('SELECT * FROM payment_requests WHERE id = ?', [paymentRequestId]);
   if (!payment) throw new SettlementError(404, '付款申请不存在');
-  const facts = await paymentSettlementFacts(payment);
+  const facts = paymentSettlementFacts(payment);
   if (facts.outstanding < 0 || settlementMoney(facts.effectivePaid + facts.effectiveDeduction + facts.effectiveRounding) > facts.grossPayable) {
     throw new SettlementError(409, '有效付款、抵扣与抹零金额之和不能超过应付总额');
   }
@@ -10526,7 +10552,7 @@ async function recalculatePaymentSettlement(paymentRequestId) {
   const localAmount = settlementMoney(facts.activePayments.reduce((sum, log) => sum + Number(log.local_amount || 0), 0));
   const rmbAmount = settlementMoney(facts.activePayments.reduce((sum, log) => sum + Number(log.rmb_amount || 0), 0));
   const usdAmount = payment.currency === 'USD' ? facts.effectivePaid : 0;
-  await run(`UPDATE payment_requests
+  run(`UPDATE payment_requests
        SET paid_amount = ?, deduction_amount = ?, has_deduction = ?, rounding_amount = ?, rounding_reason = ?, actual_pay_amount = ?,
            unpaid_amount = ?, payment_status = ?, paid_date = ?, actual_rate = ?,
            local_amount = ?, rmb_amount = ?, usd_amount = ?, payment_voucher = ?, updated_at = datetime('now')
@@ -10535,7 +10561,7 @@ async function recalculatePaymentSettlement(paymentRequestId) {
       settlementMoney(facts.grossPayable - facts.effectiveDeduction - facts.effectiveRounding), Math.max(0, facts.outstanding), paymentStatus,
       latest ? latest.paid_date || '' : '', latest ? Number(latest.local_rate || 0) : 0,
       localAmount, rmbAmount, usdAmount, latest ? latest.payment_voucher || '' : '', payment.id]);
-  await syncPaymentSource(payment, facts, paymentStatus);
+  syncPaymentSource(payment, facts, paymentStatus);
   return { ...facts, outstanding: Math.max(0, facts.outstanding), payment_status: paymentStatus };
 }
 
@@ -12204,17 +12230,17 @@ async function createHistoricalCI(body, req) {
     [normalized.historical_ci_no, normalized.supplier_identity, normalized.country]);
   if (duplicate) throw new SettlementError(409, `历史 CI“${normalized.historical_ci_no}”在该供应商和国家下已存在，不能重复导入`);
 
-  return await transaction(async () => {
-    const racedKey = await queryOne('SELECT * FROM historical_commercial_invoices WHERE idempotency_key = ?', [normalized.idempotency_key]);
+  const result = transaction(() => {
+    const racedKey = queryOne('SELECT * FROM historical_commercial_invoices WHERE idempotency_key = ?', [normalized.idempotency_key]);
     if (racedKey) return historicalCIIdempotencyResult(racedKey, normalized);
-    const racedIdentity = await queryOne(`SELECT id FROM historical_commercial_invoices
+    const racedIdentity = queryOne(`SELECT id FROM historical_commercial_invoices
                                     WHERE historical_ci_no = ? COLLATE NOCASE AND supplier_identity = ? AND country = ? COLLATE NOCASE`,
       [normalized.historical_ci_no, normalized.supplier_identity, normalized.country]);
     if (racedIdentity) throw new SettlementError(409, `历史 CI“${normalized.historical_ci_no}”在该供应商和国家下已存在，不能重复导入`);
 
-    const operator = await settlementOperator(req);
-    const historicalId = await genId('hci');
-    const paymentRequestId = await genId('pay');
+    const operator = settlementOperator(req);
+    const historicalId = genId('hci');
+    const paymentRequestId = genId('pay');
     const paymentRequestNo = `PAY-HCI-${String(paymentRequestId).replace(/^pay_/, '').toUpperCase()}`;
     // PAY-CREDIT-DUE-01（修复）：优先使用录入的 due_date（历史CI已录业务事实），否则按出货日+Credit天数推算
     const historicalPayableDate = resolvePayableDate({ dueDate: normalized.due_date, creditDays: normalized.credit_days, baseDate: normalized.actual_ship_date });
@@ -12226,14 +12252,14 @@ async function createHistoricalCI(body, req) {
     ])];
     let hciDepositDeductMinor = 0;
     for (const piId of hciLinkedPiIds) {
-      const pi = await queryOne('SELECT id, pi_no, available_deduct_deposit FROM proforma_invoices WHERE id = ?', [piId]);
+      const pi = queryOne('SELECT id, pi_no, available_deduct_deposit FROM proforma_invoices WHERE id = ?', [piId]);
       if (!pi) continue;
       hciDepositDeductMinor += Math.round((pi.available_deduct_deposit || 0) * 100);
     }
     const hciGrossMinor = Math.round(normalized.gross_goods_amount * 100);
     const hciBalanceMinor = Math.max(0, hciGrossMinor - hciDepositDeductMinor);
     const hciBalanceAmount = hciBalanceMinor / 100;
-    await run(`INSERT INTO historical_commercial_invoices
+    run(`INSERT INTO historical_commercial_invoices
          (id, historical_ci_no, supplier_id, supplier_name, supplier_identity, brand_id, brand_name,
           country, ci_date, actual_ship_date, payment_term_id, credit_days, currency, gross_goods_amount, historical_paid_amount, historical_paid_date,
           payment_terms, due_date, source_note, source_mode, idempotency_key, payload_hash,
@@ -12248,7 +12274,7 @@ async function createHistoricalCI(body, req) {
     // PAY-CORE Phase 1.5 Task 2：派生 payee_key/payee_name_snapshot（格式 ${payee_type}:${identity}，与 payable_items 一致）
     const historicalPayeeKey = `supplier:${normalized.supplier_id || normalized.supplier_name}`;
     const historicalPayeeNameSnapshot = normalized.supplier_name || '';
-    await run(`INSERT INTO payment_requests
+    run(`INSERT INTO payment_requests
          (id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no,
           payee_type, payee_key, payee_name_snapshot, supplier_name, payable_amount, paid_amount, unpaid_amount, currency, payment_terms,
           payable_date, approval_status, approver_name, approved_at, remark, expense_country)
@@ -12270,22 +12296,22 @@ async function createHistoricalCI(body, req) {
       createdBy: operator.id
     });
     if (hciPayableItem && hciPayableItem.id && hciPayableItem.lifecycle_status === 'active') {
-      await run(
+      run(
         `INSERT INTO payment_request_items (id, payment_request_id, payable_item_id, requested_amount_minor) VALUES (?, ?, ?, ?)`,
-        [await genId('pri'), paymentRequestId, hciPayableItem.id, hciPayableItem.payable_amount_minor || hciBalanceMinor]
+        [genId('pri'), paymentRequestId, hciPayableItem.id, hciPayableItem.payable_amount_minor || hciBalanceMinor]
       );
       reservePayableItem(hciPayableItem.id, paymentRequestId);
     }
 
-    await run('UPDATE historical_commercial_invoices SET payment_request_id = ?, updated_at = datetime(\'now\') WHERE id = ?',
+    run('UPDATE historical_commercial_invoices SET payment_request_id = ?, updated_at = datetime(\'now\') WHERE id = ?',
       [paymentRequestId, historicalId]);
 
     if (normalized.historical_paid_amount > 0) {
-      await run(`INSERT INTO payment_settlement_logs
+      run(`INSERT INTO payment_settlement_logs
            (id, payment_request_id, event_type, amount, status, reason, paid_date, original_currency,
             operator_id, operator_name, idempotency_key, is_legacy)
            VALUES (?, ?, 'payment', ?, 'applied', ?, ?, ?, ?, ?, ?, 1)`,
-        [await genId('settle'), paymentRequestId, normalized.historical_paid_amount,
+        [genId('settle'), paymentRequestId, normalized.historical_paid_amount,
           normalized.source_note || `历史 CI ${normalized.historical_ci_no} 已付款导入`,
           normalized.historical_paid_date, normalized.currency, operator.id,
           operator.name || 'historical_import', `historical-ci-payment:${normalized.idempotency_key}`]);
@@ -12301,18 +12327,18 @@ async function createHistoricalCI(body, req) {
     if (hciItems.length > 0) {
       const piIds = [...new Set(hciItems.map(i => i.pi_id))];
       for (const piId of piIds) {
-        const pi = await queryOne('SELECT id, pi_no, total_amount, shipped_amount FROM proforma_invoices WHERE id = ?', [piId]);
+        const pi = queryOne('SELECT id, pi_no, total_amount, shipped_amount FROM proforma_invoices WHERE id = ?', [piId]);
         if (!pi) continue;
         let piGoodsAmount = 0;
         const piItemUpdates = hciItems.filter(i => i.pi_id === piId);
         for (const item of piItemUpdates) {
           const qty = item.shipped_qty || 0;
           if (qty <= 0) continue;
-          await run(
+          run(
             'UPDATE proforma_invoice_items SET shipped_qty = shipped_qty + ?, unshipped_qty = unshipped_qty - ? WHERE pi_id = ? AND sku_code = ?',
             [qty, qty, piId, item.sku_code]
           );
-          const priceRow = await queryOne('SELECT unit_price, discount FROM proforma_invoice_items WHERE pi_id = ? AND sku_code = ?', [piId, item.sku_code]);
+          const priceRow = queryOne('SELECT unit_price, discount FROM proforma_invoice_items WHERE pi_id = ? AND sku_code = ?', [piId, item.sku_code]);
           if (priceRow) {
             const disc = priceRow.discount || 0;
             const netUnitPrice = priceRow.unit_price * (1 - disc);
@@ -12323,7 +12349,7 @@ async function createHistoricalCI(body, req) {
         if (piGoodsAmount > 0) {
           const newShippedAmount = (pi.shipped_amount || 0) + piGoodsAmount;
           const newUnshippedAmount = Math.max(0, (pi.total_amount || 0) - newShippedAmount);
-          await run('UPDATE proforma_invoices SET shipped_amount = ?, unshipped_amount = ? WHERE id = ?',
+          run('UPDATE proforma_invoices SET shipped_amount = ?, unshipped_amount = ? WHERE id = ?',
             [newShippedAmount, newUnshippedAmount, piId]);
         }
         // Update PI ship status
@@ -12331,13 +12357,13 @@ async function createHistoricalCI(body, req) {
         const allShipped = piItems.length > 0 && piItems.every(i => i.shipped_qty >= i.pi_confirmed_qty);
         const anyShipped = piItems.some(i => i.shipped_qty > 0);
         if (allShipped) {
-          await run('UPDATE proforma_invoices SET pi_status = ? WHERE id = ?', ['shipped_complete', piId]);
+          run('UPDATE proforma_invoices SET pi_status = ? WHERE id = ?', ['shipped_complete', piId]);
         } else if (anyShipped) {
-          await run('UPDATE proforma_invoices SET pi_status = ? WHERE id = ?', ['partial_shipped', piId]);
+          run('UPDATE proforma_invoices SET pi_status = ? WHERE id = ?', ['partial_shipped', piId]);
         }
       }
       // HCI-PI-LINK-01: PI 发货数量更新后刷新库存预测数据（在途/已确认未发货/PO未确认PI）
-      await updateInventoryTransitData();
+      // transit 刷新已移至事务提交后 Phase C（见函数末尾），此处不再于事务内调用
     }
 
     // 保存 SKU 级成交价格快照（后端计算，不信任前端传值）
@@ -12345,25 +12371,25 @@ async function createHistoricalCI(body, req) {
       for (const item of hciItems) {
         const qty = item.shipped_qty || 0;
         if (qty <= 0) continue;
-        const priceRow = await queryOne('SELECT unit_price, discount FROM proforma_invoice_items WHERE pi_id = ? AND sku_code = ?', [item.pi_id, item.sku_code]);
+        const priceRow = queryOne('SELECT unit_price, discount FROM proforma_invoice_items WHERE pi_id = ? AND sku_code = ?', [item.pi_id, item.sku_code]);
         if (!priceRow) continue;
         const up = priceRow.unit_price || 0;
         const disc = priceRow.discount || 0;
         const netUp = up * (1 - disc);
         const ciAmt = qty * netUp;
-        const piRow = await queryOne('SELECT pi_no FROM proforma_invoices WHERE id = ?', [item.pi_id]);
-        await run(
+        const piRow = queryOne('SELECT pi_no FROM proforma_invoices WHERE id = ?', [item.pi_id]);
+        run(
           `INSERT INTO historical_commercial_invoice_items
            (id, hci_id, hci_no, pi_id, pi_no, sku_code, shipped_qty, unit_price, discount, net_unit_price, ci_amount)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [await genId('hcii'), historicalId, normalized.historical_ci_no,
+          [genId('hcii'), historicalId, normalized.historical_ci_no,
            item.pi_id || '', piRow ? piRow.pi_no : '', item.sku_code,
            qty, up, disc, netUp, ciAmt]
         );
       }
     }
 
-    const settlement = await recalculatePaymentSettlement(paymentRequestId);
+    const settlement = recalculatePaymentSettlement(paymentRequestId);
     return {
       idempotent: false,
       id: historicalId,
@@ -12373,6 +12399,8 @@ async function createHistoricalCI(body, req) {
       payment_status: settlement.payment_status
     };
   });
+  updateInventoryTransitData().catch(err => console.warn('[createHistoricalCI] 在途数据刷新失败（事务已提交）:', err && err.message));
+  return result;
 }
 
 function historicalCISelectSql() {

@@ -62,19 +62,34 @@ test('B. SQLite: sync transaction callback rolls back on throw (no residue)', ()
   assert.strictEqual(rows.length, 0, 'rollback 必须不留残留');
 });
 
-// ---------- C/D：静态扫描识别现有违规 ----------
-test('C. static scan identifies existing transaction(async) callbacks', () => {
+// ---------- C/D：frozen baseline 子集契约（live 可减不可增；total 非永久契约） ----------
+// 说明：迁移过程中 live 违规数必然从初始快照(29/9/1)下降，因此 C/D 不再硬断言 live 等于初始值，
+// 改为断言「live ⊆ frozen baseline（无新增）」+ baseline 初始快照作为历史记录保留。
+test('C. live scanner: 当前 async 违规数被 frozen baseline 覆盖（迁移可减不可增）', () => {
+  const baseline = JSON.parse(fs.readFileSync(BASELINE_PATH, 'utf8'));
   const { summary } = scanner.analyze(scanner.DEFAULT_FILES);
-  assert.strictEqual(summary.async, 29, '当前 server.js 有 29 个 async transaction 回调');
+  assert.strictEqual(baseline.frozen, true, 'baseline 必须保持 frozen');
+  assert.strictEqual(baseline.summary.async, 29, 'baseline 初始 async 快照 = 29（历史记录，非 live 永久契约）');
+  assert.ok(summary.async >= 0, 'live async 不能为负');
+  assert.ok(
+    summary.async <= baseline.summary.async,
+    `live async(${summary.async}) 必须 <= frozen(${baseline.summary.async})，禁止新增违规`
+  );
 });
 
-test('D. static scan identifies nested-transit (transaction containing updateInventoryTransitData)', () => {
-  const { summary } = scanner.analyze(scanner.DEFAULT_FILES);
-  // 9 个 transit：refreshInventoryTotals@4080 + PO/CI/CI-reverse/PI-batch/CI-batch/inbound/inbound-batch/historical CI
-  assert.strictEqual(summary.transit, 9, '9 个 nested-transit 违规');
-  // 1 个直接嵌套事务（PI batch 8623 内嵌 8627）
-  assert.strictEqual(summary.nested, 1, '1 个直接嵌套事务');
-  assert.strictEqual(summary.total, 71, 'AST 真实 transaction 调用总数 = 71（与 raw grep 一致）');
+test('D. live scanner: 当前违规是 frozen baseline 的子集（无新增）；total 不是永久契约', () => {
+  const baseline = JSON.parse(fs.readFileSync(BASELINE_PATH, 'utf8'));
+  const { summary, violations } = scanner.analyze(scanner.DEFAULT_FILES);
+  // baseline 初始快照（历史记录，仅作文档，不要求 live 永远等于它）
+  assert.strictEqual(baseline.summary.transit, 9, 'baseline 初始 transit 快照 = 9');
+  assert.strictEqual(baseline.summary.nested, 1, 'baseline 初始 nested 快照 = 1');
+  assert.strictEqual(baseline.summary.total, 71, 'baseline 初始 total 快照 = 71');
+  // 真正契约：live 违规必须是 frozen baseline 的子集，任何新增 key 都 FAIL
+  const res = scanner.compare(violations, baseline.violations);
+  assert.ok(!res.hasNew, '不得有新增违规（current ⊆ frozen baseline）');
+  assert.strictEqual(res.newViolations.length, 0, 'new violations 必须 = 0');
+  // total 不是永久契约：删除失效 outer transaction（如 PI batch）是合法的，只断言为正整型
+  assert.ok(Number.isInteger(summary.total) && summary.total > 0, 'live total 必须是正整型');
 });
 
 // ---------- E：baseline 集合比较（set-based，非数量比较） ----------
