@@ -4609,6 +4609,12 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.zh["fro.inbound_partial"]="部分入库"; I18N.dict.en["fro.inbound_partial"]="Partially Inbound"; I18N.dict.id["fro.inbound_partial"]="Diterima Sebagian";
   I18N.dict.zh["fro.inbound_none"]="未入库"; I18N.dict.en["fro.inbound_none"]="Not Inbound"; I18N.dict.id["fro.inbound_none"]="Belum Diterima";
   I18N.dict.zh["fro.hero_title"]="供应链资产"; I18N.dict.en["fro.hero_title"]="Supply Chain Assets"; I18N.dict.id["fro.hero_title"]="Aset Rantai Pasokan";
+  // ==================== 资金风险总览 V2：库存总资产 = 可用 + 在途 + 寄售 ====================
+  I18N.dict.zh["fro.total_inventory_assets"]="库存总资产"; I18N.dict.en["fro.total_inventory_assets"]="Total Inventory Assets"; I18N.dict.id["fro.total_inventory_assets"]="Total Aset Inventaris";
+  I18N.dict.zh["fro.available_assets"]="可用库存"; I18N.dict.en["fro.available_assets"]="Available Inventory"; I18N.dict.id["fro.available_assets"]="Inventaris Tersedia";
+  I18N.dict.zh["fro.transit_inventory_assets"]="在途库存"; I18N.dict.en["fro.transit_inventory_assets"]="In-Transit Inventory"; I18N.dict.id["fro.transit_inventory_assets"]="Inventaris Dalam Pengiriman";
+  I18N.dict.zh["fro.consignment_assets"]="寄售库存"; I18N.dict.en["fro.consignment_assets"]="Consignment Inventory"; I18N.dict.id["fro.consignment_assets"]="Inventaris Konsinyasi";
+  I18N.dict.zh["fro.asset_total_label"]="库存总资产（CNY）"; I18N.dict.en["fro.asset_total_label"]="Total Inventory Assets (CNY)"; I18N.dict.id["fro.asset_total_label"]="Total Aset Inventaris (CNY)";
   I18N.dict.zh["fro.hero_sub"]="当前供应链资金占用"; I18N.dict.en["fro.hero_sub"]="Current supply chain capital tied up"; I18N.dict.id["fro.hero_sub"]="Modal rantai pasokan saat ini terikat";
   I18N.dict.zh["fro.view_detail"]="查看明细"; I18N.dict.en["fro.view_detail"]="View Details"; I18N.dict.id["fro.view_detail"]="Lihat Detail";
   I18N.dict.zh["fro.payable_has"]="有待付款"; I18N.dict.en["fro.payable_has"]="Pending Payment"; I18N.dict.id["fro.payable_has"]="Ada Tagihan";

@@ -15907,17 +15907,17 @@ app.get('/api/financial-risk/overview', requireApiPermission('dashboard_view'), 
       }
     }
 
-    // --- 1. 库存资产(CNY) ---
-    // 与库存总表 renderInvCards 完全一致：
-    //   invVal = available_qty × weighted_avg_cost（本币）
-    //   rmbTotal += invVal × foreignToRmb（按 inventory.country 确定本币）
-    //   缺失汇率时跳过（与库存总表 if(ci.rate) 行为一致）
+    // --- 1. 可用库存资产(CNY) — 仅普通库存（inventory 表 WAC），天然排除寄售 ---
+    // 口径与库存总表 renderInvCards 完全一致；寄售仓已于 server.js:3845 解耦，不再投影进 inventory，
+    // 故普通库存 WAC 计算不含寄售，无需额外过滤。缺失汇率跳过（与库存总表一致，禁止 fallback=1）。
+    // 同时按 canonCountry 累加到 availableByCountry，供首页「按国家」下钻（与在途/寄售统一到标准国家值）。
     const invRows = query(`
       SELECT i.available_qty, i.weighted_avg_cost, i.country
       FROM inventory i
       WHERE i.available_qty > 0 AND i.weighted_avg_cost > 0
     `).rows;
-    let inventoryAssets = 0;
+    let availableAssets = 0;
+    const availableByCountry = {};
     const invMissingRates = []; // 记录缺失汇率的库存行
     for (const r of invRows) {
       let currency = countryToCurrency[r.country] || '';
@@ -15927,32 +15927,47 @@ app.get('/api/financial-risk/overview', requireApiPermission('dashboard_view'), 
       }
       const rate = currency ? (foreignToRmbMap[currency] || null) : null;
       if (rate) {
-        inventoryAssets += Number(r.available_qty) * Number(r.weighted_avg_cost) * rate;
+        const amt = Number(r.available_qty) * Number(r.weighted_avg_cost) * rate;
+        availableAssets += amt;
+        const code = canonCountry(r.country || '');
+        availableByCountry[code] = (availableByCountry[code] || 0) + amt;
       } else {
         // rate 缺失时跳过该行并记录（与库存总表一致，不fallback=1）
         invMissingRates.push({ country: r.country, currency: currency || '(unknown)' });
       }
     }
-    // 寄售库存资产（CNY，与公司资产口径一致）：按 country_name 折算，复用同一汇率表与缺失汇率跳过逻辑
-    // 注：本接口 inventory 查询未套用数据权限 scope，寄售此处同样不套用，保持与 inventory 完全一致
+    if (invMissingRates.length > 0) {
+      console.warn('[financial-risk] 可用库存：' + invMissingRates.length + ' 行缺失汇率，已跳过:', JSON.stringify(invMissingRates.slice(0, 5)));
+    }
+
+    // --- 1b. 寄售库存资产(CNY) — 独立口径，事实源 consignment_inventory_lots ---
+    // 仅统计剩余寄售：remaining_inventory_value（= remaining_qty × consignment_cost_unit_price），不计入原始寄出量。
+    // 与 overview / inventory-breakdown 一致：缺失汇率跳过，复用同一汇率表；不套数据权限 scope（与 inventory 一致）。
+    // 这里是「寄售」唯一计入点；普通可用库存已排除寄售，故三类资产互斥、不重复计算。
     const consignAssetRows = query(`SELECT country_name, COALESCE(SUM(remaining_inventory_value), 0) as v FROM consignment_inventory_lots WHERE status = 'active' GROUP BY country_name`).rows;
+    let consignmentAssets = 0;
+    const consignmentByCountry = {};
+    const consignMissingRates = [];
     for (const l of consignAssetRows) {
       const rate = getInventoryRate({ country: l.country_name }, countryToCurrency, foreignToRmbMap);
       if (rate) {
-        inventoryAssets += Number(l.v) * rate;
+        const amt = Number(l.v) * rate;
+        consignmentAssets += amt;
+        const code = canonCountry(l.country_name || '');
+        consignmentByCountry[code] = (consignmentByCountry[code] || 0) + amt;
       } else {
-        invMissingRates.push({ country: l.country_name, currency: countryToCurrency[l.country_name] || '(unknown)' });
+        consignMissingRates.push({ country: l.country_name, currency: countryToCurrency[l.country_name] || '(unknown)' });
       }
     }
-    if (invMissingRates.length > 0) {
-      console.warn('[financial-risk] 库存资产：' + invMissingRates.length + ' 行缺失汇率，已跳过:', JSON.stringify(invMissingRates.slice(0, 5)));
+    if (consignMissingRates.length > 0) {
+      console.warn('[financial-risk] 寄售库存：' + consignMissingRates.length + ' 行缺失汇率，已跳过:', JSON.stringify(consignMissingRates.slice(0, 5)));
     }
 
     // --- 2. 在途资产(CNY) ---
     // 按 CI 明细行计算：ci_amount × foreignToRmb × (shipped_qty - inbound_qty) / shipped_qty
     // 仅统计已发货且未完全入库的 CI item，不计入 PO/PI/未发货/已入库
     const transitRows = query(`
-      SELECT cii.ci_amount, cii.shipped_qty, cii.inbound_qty, ci.currency
+      SELECT cii.ci_amount, cii.shipped_qty, cii.inbound_qty, ci.currency, ci.country
       FROM commercial_invoice_items cii
       JOIN commercial_invoices ci ON cii.ci_id = ci.id
       WHERE ci.ci_status NOT IN ('cancelled', 'completed')
@@ -15960,6 +15975,7 @@ app.get('/api/financial-risk/overview', requireApiPermission('dashboard_view'), 
         AND (cii.shipped_qty - COALESCE(cii.inbound_qty, 0)) > 0
     `).rows;
     let inTransitAssets = 0;
+    const transitByCountry = {};
     const transitMissingRates = []; // 记录缺失汇率的CI明细（禁止 fallback=1）
     for (const r of transitRows) {
       const curr = (r.currency || '').toUpperCase();
@@ -15973,7 +15989,10 @@ app.get('/api/financial-risk/overview', requireApiPermission('dashboard_view'), 
       const inboundQty = Number(r.inbound_qty || 0);
       const uninboundRatio = (shippedQty - inboundQty) / shippedQty;
       const ciAmountRmb = Number(r.ci_amount || 0) * rate;
-      inTransitAssets += ciAmountRmb * uninboundRatio;
+      const amt = ciAmountRmb * uninboundRatio;
+      inTransitAssets += amt;
+      const code = canonCountry(r.country || '');
+      transitByCountry[code] = (transitByCountry[code] || 0) + amt;
     }
     if (transitMissingRates.length > 0) {
       console.warn('[financial-risk] 在途资产：' + transitMissingRates.length + ' 条 CI 明细缺失汇率，已跳过:', JSON.stringify(transitMissingRates.slice(0, 5)));
@@ -16042,13 +16061,49 @@ app.get('/api/financial-risk/overview', requireApiPermission('dashboard_view'), 
       console.warn('[financial-risk] 未来应付：' + payMissingRates.length + ' 条应付项缺失汇率，已跳过:', JSON.stringify(payMissingRates.slice(0, 5)));
     }
 
-    const totalAssets = inventoryAssets + inTransitAssets;
+    // --- 国家维度聚合（标准国家值：canonCountry → displayCountry） ---
+    // 三类资产各自按 canonCountry 归并，保证 Indonesia/印度尼西亚/印尼 视为同一国家，不拆行。
+    // 各国 total = 可用 + 在途 + 寄售；全局 total = Σ各国 total（由构造保证恒等式）。
+    const availableTotal = availableAssets;
+    const transitTotal = inTransitAssets;
+    const consignmentTotal = consignmentAssets;
+    const grandTotal = availableTotal + transitTotal + consignmentTotal;
     const round2 = (v) => Math.round(v * 100) / 100;
+    const countryCodeSet = new Set([
+      ...Object.keys(availableByCountry),
+      ...Object.keys(transitByCountry),
+      ...Object.keys(consignmentByCountry)
+    ]);
+    const countries = [];
+    for (const code of countryCodeSet) {
+      const a = availableByCountry[code] || 0;
+      const t = transitByCountry[code] || 0;
+      const c = consignmentByCountry[code] || 0;
+      const ct = a + t + c;
+      countries.push({
+        country: displayCountry(code),
+        country_code: code,
+        total_asset: round2(ct),
+        available_asset: round2(a),
+        transit_asset: round2(t),
+        consignment_asset: round2(c),
+        percentage: grandTotal > 0 ? Math.round(ct / grandTotal * 1000) / 10 : 0
+      });
+    }
+    countries.sort((x, y) => y.total_asset - x.total_asset);
+
+    const totalAssets = grandTotal;
 
     res.json({
       total_assets: { value: round2(totalAssets), currency: 'CNY' },
-      inventory_assets: { value: round2(inventoryAssets), currency: 'CNY' },
-      in_transit_assets: { value: round2(inTransitAssets), currency: 'CNY' },
+      available_assets: { value: round2(availableTotal), currency: 'CNY' },
+      in_transit_assets: { value: round2(transitTotal), currency: 'CNY' },
+      consignment_assets: { value: round2(consignmentTotal), currency: 'CNY' },
+      // 保持旧语义不变：inventory_assets = 可用库存 + 寄售库存（不含在途）。
+      // 旧调用者若仍依赖此字段，其金额与改造前完全一致，避免 silent semantic regression。
+      // 新首页请改用 available_assets / in_transit_assets / consignment_assets / total_assets。
+      inventory_assets: { value: round2(availableTotal + consignmentTotal), currency: 'CNY' },
+      countries: countries,
       future_payables: {
         days_7: { value: round2(pay7), currency: 'CNY', pending: round2(pay7Pending), approved: round2(pay7Approved) },
         days_30: { value: round2(pay30), currency: 'CNY', pending: round2(pay30Pending), approved: round2(pay30Approved) },

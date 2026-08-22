@@ -497,27 +497,34 @@ async function renderDashboard(){
     '<div class="fro-overview">'+
       '<section class="fro-hero">'+
         '<div class="fro-hero-main">'+
-          '<div class="fro-hero-label">'+t("fro.hero_title","供应链资产")+'</div>'+
-          '<div class="fro-hero-value">¥ <span id="fro-total">'+t("common.loading","加载中...")+'</span></div>'+
+          '<div class="fro-hero-label">'+t("fro.total_inventory_assets","库存总资产")+'</div>'+
+          '<div class="fro-hero-value fro-clickable" onclick="renderFroInventoryAnalysis()" style="cursor:pointer" title="'+t("fro.inv_dist_title","库存资金分布")+'">¥ <span id="fro-total">'+t("common.loading","加载中...")+'</span></div>'+
           '<div class="fro-hero-sub">'+t("fro.hero_sub","当前供应链资金占用")+'</div>'+
         '</div>'+
         '<div class="fro-hero-structure">'+
           '<div class="fro-structure-bar">'+
             '<div class="fro-structure-seg inv" id="fro-inv-bar"></div>'+
             '<div class="fro-structure-seg trs" id="fro-trs-bar"></div>'+
+            '<div class="fro-structure-seg csn" id="fro-csn-bar"></div>'+
           '</div>'+
           '<div class="fro-structure-legend">'+
             '<div class="fro-legend-item fro-clickable" onclick="renderFroInventoryAnalysis()" style="cursor:pointer">'+
               '<span class="fro-legend-dot inv"></span>'+
-              '<span class="fro-legend-name">'+t("fro.inventory_assets","库存资产")+'</span>'+
+              '<span class="fro-legend-name">'+t("fro.available_assets","可用库存")+'</span>'+
               '<span class="fro-legend-amount">¥ <span id="fro-inventory">'+t("common.loading","...")+'</span></span>'+
               '<span class="fro-legend-pct" id="fro-inventory-pct"></span>'+
             '</div>'+
             '<div class="fro-legend-item fro-clickable" onclick="renderFroTransitAnalysis()" style="cursor:pointer">'+
               '<span class="fro-legend-dot trs"></span>'+
-              '<span class="fro-legend-name">'+t("fro.in_transit_assets","在途资产")+'</span>'+
+              '<span class="fro-legend-name">'+t("fro.transit_inventory_assets","在途库存")+'</span>'+
               '<span class="fro-legend-amount">¥ <span id="fro-transit">'+t("common.loading","...")+'</span></span>'+
               '<span class="fro-legend-pct" id="fro-transit-pct"></span>'+
+            '</div>'+
+            '<div class="fro-legend-item fro-clickable" onclick="renderFroInventoryAnalysis()" style="cursor:pointer">'+
+              '<span class="fro-legend-dot csn"></span>'+
+              '<span class="fro-legend-name">'+t("fro.consignment_assets","寄售库存")+'</span>'+
+              '<span class="fro-legend-amount">¥ <span id="fro-consign">'+t("common.loading","...")+'</span></span>'+
+              '<span class="fro-legend-pct" id="fro-consign-pct"></span>'+
             '</div>'+
           '</div>'+
         '</div>'+
@@ -536,23 +543,30 @@ async function renderDashboard(){
     const d=await api('/api/financial-risk/overview');
     // 竞态防护：页面已切走则静默结束
     if(!document.getElementById('fro-total')) return;
-    document.getElementById('fro-total').textContent=fmtMoney(d.total_assets.value,'');
-    document.getElementById('fro-inventory').textContent=fmtMoney(d.inventory_assets.value,'');
-    document.getElementById('fro-transit').textContent=fmtMoney(d.in_transit_assets.value,'');
-    // 占比显示 + 资产结构条（纯展示，数据不变）
     var totalVal=Number(d.total_assets.value||0);
-    var invVal=Number(d.inventory_assets.value||0);
+    var availVal=Number(d.available_assets.value||0);
     var trsVal=Number(d.in_transit_assets.value||0);
-    var invPct=totalVal>0?invVal/totalVal*100:0;
+    var csnVal=Number(d.consignment_assets.value||0);
+    document.getElementById('fro-total').textContent=fmtMoney(totalVal,'');
+    document.getElementById('fro-inventory').textContent=fmtMoney(availVal,'');
+    document.getElementById('fro-transit').textContent=fmtMoney(trsVal,'');
+    document.getElementById('fro-consign').textContent=fmtMoney(csnVal,'');
+    // 占比 = 各组件 / 库存总资产（总额为 0 时显示空，防 NaN/Infinity）
+    var availPct=totalVal>0?availVal/totalVal*100:0;
     var trsPct=totalVal>0?trsVal/totalVal*100:0;
-    var invPctEl=document.getElementById('fro-inventory-pct');
+    var csnPct=totalVal>0?csnVal/totalVal*100:0;
+    var availPctEl=document.getElementById('fro-inventory-pct');
     var trsPctEl=document.getElementById('fro-transit-pct');
-    if(invPctEl) invPctEl.textContent=totalVal>0?invPct.toFixed(1)+'%':'';
+    var csnPctEl=document.getElementById('fro-consign-pct');
+    if(availPctEl) availPctEl.textContent=totalVal>0?availPct.toFixed(1)+'%':'';
     if(trsPctEl) trsPctEl.textContent=totalVal>0?trsPct.toFixed(1)+'%':'';
+    if(csnPctEl) csnPctEl.textContent=totalVal>0?csnPct.toFixed(1)+'%':'';
     var invBar=document.getElementById('fro-inv-bar');
     var trsBar=document.getElementById('fro-trs-bar');
-    if(invBar) invBar.style.width=invPct.toFixed(1)+'%';
+    var csnBar=document.getElementById('fro-csn-bar');
+    if(invBar) invBar.style.width=availPct.toFixed(1)+'%';
     if(trsBar) trsBar.style.width=trsPct.toFixed(1)+'%';
+    if(csnBar) csnBar.style.width=csnPct.toFixed(1)+'%';
     document.getElementById('fro-pay7').textContent=fmtMoney(d.future_payables.days_7.value,'');
     document.getElementById('fro-pay30').textContent=fmtMoney(d.future_payables.days_30.value,'');
     document.getElementById('fro-pay90').textContent=fmtMoney(d.future_payables.days_90.value,'');
@@ -574,135 +588,120 @@ async function renderDashboard(){
 // ==================== 资金风险总览 - 下钻分析 ====================
 let _froInvSeq=0;
 
-function renderFroInventoryAnalysis(country, brand, warehouse){
-  const mySeq=++_froInvSeq;
-  country=country||''; brand=brand||''; warehouse=warehouse||'';
-
-  // 面包屑
-  var crumbs=[{label:t('fro.total_assets','供应链总资产'),action:'renderFroInventoryAnalysis()'}];
-  if(country) crumbs.push({label:country,action:'renderFroInventoryAnalysis(\''+esc(country).replace(/'/g,"\\'")+'\')'});
-  if(brand) crumbs.push({label:brand,action:'renderFroInventoryAnalysis(\''+esc(country).replace(/'/g,"\\'")+'\',\''+esc(brand).replace(/'/g,"\\'")+'\')'});
-  if(warehouse) crumbs.push({label:warehouse,action:'renderFroInventoryAnalysis(\''+esc(country).replace(/'/g,"\\'")+'\',\''+esc(brand).replace(/'/g,"\\'")+'\',\''+esc(warehouse).replace(/'/g,"\\'")+'\')'});
-
-  var crumbHtml=crumbs.map(function(c,i){
-    return (i>0?' <span class="fro-crumb-sep">›</span> ':'')+
-      (i<crumbs.length-1?'<a class="fro-crumb-link" href="javascript:'+c.action+'">'+esc(c.label)+'</a>':'<span class="fro-crumb-current">'+esc(c.label)+'</span>');
-  }).join('');
-
-  // 当前维度标题
-  var dimTitle;
-  if(!country) dimTitle=t('fro.dim_country','按国家');
-  else if(country&&!brand) dimTitle=t('fro.dim_brand','按品牌');
-  else if(country&&brand&&!warehouse) dimTitle=t('fro.dim_warehouse','按仓库');
-  else dimTitle=t('fro.dim_sku','SKU 明细');
-
+function renderFroInventoryAnalysis(){
   document.getElementById('content-inner').innerHTML='<div id="flash-container"></div>'+
     '<div class="fro-analysis">'+
       '<div class="fro-analysis-header">'+
         '<div class="fro-analysis-back"><a href="javascript:showPage(\'dashboard\')" class="fro-back-link">← '+t('fro.back_overview','返回总览')+'</a></div>'+
-        '<div class="fro-breadcrumb">'+crumbHtml+'</div>'+
       '</div>'+
       '<div class="fro-analysis-title">'+t('fro.inv_dist_title','库存资金分布')+'</div>'+
-      '<div class="fro-analysis-subtitle">'+dimTitle+'</div>'+
-      '<div class="fro-inv-ctx" id="fro-inv-ctx"></div>'+
+      '<div class="fro-analysis-subtitle">'+t('fro.dim_country','按国家')+'</div>'+
       '<div class="fro-analysis-total" id="fro-inv-total">'+t('common.loading','加载中...')+'</div>'+
       '<div class="fro-analysis-table" id="fro-inv-table"></div>'+
     '</div>';
 
-  // 构建API URL
-  var url='/api/financial-risk/inventory-breakdown?';
-  var parts=[];
-  if(country) parts.push('country='+encodeURIComponent(country));
-  if(brand) parts.push('brand='+encodeURIComponent(brand));
-  if(warehouse) parts.push('warehouse='+encodeURIComponent(warehouse));
-  url+=parts.join('&');
-
-  api(url).then(function(d){
-    if(mySeq!==_froInvSeq) return; // 竞态防护
+  api('/api/financial-risk/overview').then(function(d){
     var totalEl=document.getElementById('fro-inv-total');
     if(!totalEl) return;
-    totalEl.innerHTML='<span class="fro-total-label">'+t('fro.inventory_assets','库存资产')+'（CNY）</span> <span class="fro-total-amount">¥ '+fmtMoney(d.total,'')+'</span>';
+    var grandTotal=Number(d.total_assets.value||0);
+    totalEl.innerHTML='<span class="fro-total-label">'+t('fro.asset_total_label','库存总资产（CNY）')+'</span> <span class="fro-total-amount">¥ '+fmtMoney(grandTotal,'')+'</span>';
 
     var tableEl=document.getElementById('fro-inv-table');
     if(!tableEl) return;
+    var countries=(d.countries||[]);
+    if(countries.length===0){
+      tableEl.innerHTML='<div class="fro-empty">'+t('common.no_data','暂无数据')+'</div>';
+      return;
+    }
+    var hdr='<tr><th>'+t('common.country','国家')+'</th><th>'+t('fro.asset_total_label','库存总资产（CNY）')+'</th><th>'+t('common.percentage','占比')+'</th><th></th></tr>';
+    function rowHtml(g){
+      var pct=grandTotal>0?(Number(g.total_asset||0)/grandTotal*100):0;
+      var clickFn="renderFroCountryAssetDetail('"+String(g.country_code).replace(/'/g,"\\'")+"')";
+      return '<tr>'+
+        '<td class="td-bold">'+esc(g.country||'—')+'</td>'+
+        '<td class="td-num td-bold">¥ '+fmtMoney(g.total_asset,'')+'</td>'+
+        '<td class="td-num">'+pct.toFixed(1)+'%</td>'+
+        '<td><a class="fro-drill-link" href="javascript:'+clickFn+'">'+t('fro.drill_down','下钻 ›')+'</a></td>'+
+      '</tr>';
+    }
+    function barHtml(g){
+      var pct=grandTotal>0?(Number(g.total_asset||0)/grandTotal*100):0;
+      var clickFn="renderFroCountryAssetDetail('"+String(g.country_code).replace(/'/g,"\\'")+"')";
+      return '<div class="fro-bar-row" onclick="'+clickFn+'" style="cursor:pointer">'+
+        '<div class="fro-bar-label">'+esc(g.country||'—')+'</div>'+
+        '<div class="fro-bar-track"><div class="fro-bar-fill" style="width:'+Math.min(pct,100)+'%"></div></div>'+
+        '<div class="fro-bar-val">¥ '+fmtMoney(g.total_asset,'')+' ('+pct.toFixed(1)+'%)</div>'+
+      '</div>';
+    }
+    tableEl.innerHTML=
+      '<div class="fro-bars">'+countries.map(barHtml).join('')+'</div>'+
+      '<table class="data-table fro-data-table" style="margin-top:16px"><thead>'+hdr+'</thead><tbody>'+countries.map(rowHtml).join('')+'</tbody></table>';
+  }).catch(function(e){
+    var el=document.getElementById('fro-inv-table');
+    if(el) el.innerHTML='<div class="fro-empty fro-error">'+esc(e.message)+'</div>';
+  });
+}
 
-    if(d.dimension==='sku'){
-      // SKU 明细表格
-      if(!d.items||d.items.length===0){
-        tableEl.innerHTML='<div class="fro-empty">'+t('common.no_data','暂无数据')+'</div>';
-        return;
-      }
-      var hdr='<tr><th>SKU</th><th>'+t('common.product_name','品名')+'</th><th>'+t('common.available_qty','可用库存')+'</th><th>'+t('common.wac','WAC')+'</th><th>'+t('fro.amount_cny','金额(CNY)')+'</th><th>'+t('common.percentage','占比')+'</th></tr>';
-      var rows=d.items.map(function(it){
+// 第二层：国家资产详情（可用 / 在途 / 寄售 三段拆解 + 三段比例条）
+function renderFroCountryAssetDetail(code){
+  code=code||'';
+  document.getElementById('content-inner').innerHTML='<div id="flash-container"></div>'+
+    '<div class="fro-analysis">'+
+      '<div class="fro-analysis-header">'+
+        '<div class="fro-analysis-back"><a href="javascript:renderFroInventoryAnalysis()" class="fro-back-link">← '+t('fro.back_overview','返回总览')+'</a></div>'+
+      '</div>'+
+      '<div class="fro-analysis-title" id="fro-country-title">'+t('common.loading','加载中...')+'</div>'+
+      '<div class="fro-analysis-total" id="fro-country-total">'+t('common.loading','加载中...')+'</div>'+
+      '<div class="fro-country-bars" id="fro-country-bars"></div>'+
+      '<div class="fro-analysis-table" id="fro-country-table"></div>'+
+    '</div>';
+
+  api('/api/financial-risk/overview').then(function(d){
+    var countries=(d.countries||[]);
+    var g=null;
+    for(var i=0;i<countries.length;i++){ if(countries[i].country_code===code){ g=countries[i]; break; } }
+    var titleEl=document.getElementById('fro-country-title');
+    var totalEl=document.getElementById('fro-country-total');
+    var barsEl=document.getElementById('fro-country-bars');
+    var tableEl=document.getElementById('fro-country-table');
+    if(!g){ if(titleEl) titleEl.textContent=t('common.no_data','暂无数据'); return; }
+
+    var name=esc(g.country||code);
+    if(titleEl) titleEl.innerHTML=name+' '+t('fro.total_inventory_assets','库存总资产');
+    if(totalEl) totalEl.innerHTML='<span class="fro-total-label">'+t('fro.asset_total_label','库存总资产（CNY）')+'</span> <span class="fro-total-amount">¥ '+fmtMoney(g.total_asset,'')+'</span>';
+
+    var total=Number(g.total_asset||0);
+    var a=Number(g.available_asset||0);
+    var tr=Number(g.transit_asset||0);
+    var cs=Number(g.consignment_asset||0);
+    var aPct=total>0?a/total*100:0;
+    var trPct=total>0?tr/total*100:0;
+    var csPct=total>0?cs/total*100:0;
+
+    if(barsEl) barsEl.innerHTML=
+      '<div class="fro-structure-bar" style="margin-bottom:14px">'+
+        '<div class="fro-structure-seg inv" style="width:'+aPct.toFixed(1)+'%"></div>'+
+        '<div class="fro-structure-seg trs" style="width:'+trPct.toFixed(1)+'%"></div>'+
+        '<div class="fro-structure-seg csn" style="width:'+csPct.toFixed(1)+'%"></div>'+
+      '</div>';
+
+    if(tableEl){
+      var hdr='<tr><th>'+t('fro.assets_structure','资产结构')+'</th><th>'+t('fro.amount_cny','金额(CNY)')+'</th><th>'+t('common.percentage','占比')+'</th></tr>';
+      function row(cls,label,val,pct){
         return '<tr>'+
-          '<td class="td-mono">'+esc(it.sku_code)+'</td>'+
-          '<td>'+esc(it.product_name||'—')+'</td>'+
-          '<td class="td-num">'+formatQuantityDisplay(it.available_qty)+'</td>'+
-          '<td class="td-num">'+fmtMoney(it.weighted_avg_cost,'')+'</td>'+
-          '<td class="td-num td-bold">¥ '+fmtMoney(it.amount_cny,'')+'</td>'+
-          '<td class="td-num">'+(it.percentage||0).toFixed(1)+'%</td>'+
+          '<td class="td-bold"><span class="fro-legend-dot '+cls+'"></span> '+label+'</td>'+
+          '<td class="td-num td-bold">¥ '+fmtMoney(val,'')+'</td>'+
+          '<td class="td-num">'+pct.toFixed(1)+'%</td>'+
         '</tr>';
-      }).join('');
+      }
+      var rows=row('inv',t('fro.available_assets','可用库存'),a,aPct)+
+               row('trs',t('fro.transit_inventory_assets','在途库存'),tr,trPct)+
+               row('csn',t('fro.consignment_assets','寄售库存'),cs,csPct);
       tableEl.innerHTML='<table class="data-table fro-data-table"><thead>'+hdr+'</thead><tbody>'+rows+'</tbody></table>';
-      // SKU 明细层顶部上下文信息（纯 UI，复用现有数据：层级路径 / 资产金额 / SKU 数量）
-      var ctxEl=document.getElementById('fro-inv-ctx');
-      if(ctxEl){
-        var levelPath=[country,brand,warehouse].filter(Boolean).join(' › ');
-        ctxEl.innerHTML=
-          '<div class="fro-ctx-item"><span class="fro-ctx-label">'+t('fro.cur_level','当前层级')+'</span><span class="fro-ctx-val">'+esc(levelPath)+'</span></div>'+
-          '<div class="fro-ctx-item"><span class="fro-ctx-label">'+t('fro.asset_amount','资产金额')+'</span><span class="fro-ctx-val">¥ '+fmtMoney(d.total,'')+'</span></div>'+
-          '<div class="fro-ctx-item"><span class="fro-ctx-label">'+t('fro.sku_count','SKU 数量')+'</span><span class="fro-ctx-val">'+d.items.length+'</span></div>';
-      }
-    }else{
-      // 维度聚合表格
-      if(!d.groups||d.groups.length===0){
-        tableEl.innerHTML='<div class="fro-empty">'+t('common.no_data','暂无数据')+'</div>';
-        return;
-      }
-      // 构建下钻onclick
-      function drillClick(key){
-        if(d.dimension==='country') return "renderFroInventoryAnalysis('"+key.replace(/'/g,"\\'")+"')";
-        if(d.dimension==='brand') return "renderFroInventoryAnalysis('"+country.replace(/'/g,"\\'")+"','"+key.replace(/'/g,"\\'")+"')";
-        if(d.dimension==='warehouse') return "renderFroInventoryAnalysis('"+country.replace(/'/g,"\\'")+"','"+brand.replace(/'/g,"\\'")+"','"+key.replace(/'/g,"\\'")+"')";
-        return '';
-      }
-
-      var dimName=d.dimension==='country'?'国家':(d.dimension==='brand'?'品牌':'仓库');
-      var hdr='<tr><th>'+dimName+'</th><th>'+t('fro.amount_cny','金额(CNY)')+'</th><th>'+t('common.percentage','占比')+'</th><th></th></tr>';
-      var rowsHtml=d.groups.map(function(g){
-        var label=g.label||'—';
-        if(d.dimension==='brand'&&(!label||label==='未分类')) label=t('common.unclassified','未分类');
-        var clickFn=drillClick(g.key);
-        var clickable=clickFn?'<a class="fro-drill-link" href="javascript:'+clickFn+'">'+t('fro.drill_down','下钻 ›')+'</a>':'';
-        return '<tr>'+
-          '<td class="td-bold">'+esc(label)+'</td>'+
-          '<td class="td-num">¥ '+fmtMoney(g.amount_cny,'')+'</td>'+
-          '<td class="td-num">'+(g.percentage||0).toFixed(1)+'%</td>'+
-          '<td>'+clickable+'</td>'+
-        '</tr>';
-      }).join('');
-      // 进度条可视化
-      var barsHtml=d.groups.map(function(g){
-        var label=g.label||'—';
-        if(d.dimension==='brand'&&(!label||label==='未分类')) label=t('common.unclassified','未分类');
-        var clickFn=drillClick(g.key);
-        var barStyle=clickFn?'cursor:pointer':'';
-        var onClickAttr=clickFn?'onclick="'+clickFn+'"':'';
-        return '<div class="fro-bar-row" '+onClickAttr+' style="'+barStyle+'">'+
-          '<div class="fro-bar-label">'+esc(label)+'</div>'+
-          '<div class="fro-bar-track"><div class="fro-bar-fill" style="width:'+Math.min(g.percentage||0,100)+'%"></div></div>'+
-          '<div class="fro-bar-val">¥ '+fmtMoney(g.amount_cny,'')+' ('+(g.percentage||0).toFixed(1)+'%)</div>'+
-        '</div>';
-      }).join('');
-      tableEl.innerHTML=
-        '<div class="fro-bars">'+barsHtml+'</div>'+
-        '<table class="data-table fro-data-table" style="margin-top:16px"><thead>'+hdr+'</thead><tbody>'+rowsHtml+'</tbody></table>';
     }
   }).catch(function(e){
-    if(mySeq===_froInvSeq){
-      var el=document.getElementById('fro-inv-table');
-      if(el) el.innerHTML='<div class="fro-empty fro-error">'+esc(e.message)+'</div>';
-    }
+    var el=document.getElementById('fro-country-table');
+    if(el) el.innerHTML='<div class="fro-empty fro-error">'+esc(e.message)+'</div>';
   });
 }
 
