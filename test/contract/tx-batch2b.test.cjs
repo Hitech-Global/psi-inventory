@@ -17,7 +17,7 @@
  *
  * 迁移不变量（Batch 2B gate）：
  *   - 全仓 transaction() 调用总数 == 70（sync 化不得删 wrapper、core 抽取不得增 wrapper）
- *   - 剩余 async transaction == 3（2D×2 + 2C×1）
+ *   - 剩余 async transaction == 1（仅 runSalesDeletionInTx = 2C）
  *
  * 行为回归（better-sqlite3，仅证明同步事务 rollback 模型，对应真实代码的失败注入点）：
  *   P0-A. final approve + actual_paid_amount 成功 → 审批 approved + 付款 settlement 全部一起 COMMIT
@@ -219,14 +219,14 @@ test('2B-REGRESSION: bulk-import-result 仍走 applyPaymentSettlement wrapper（
 
 // ---------- 5. 迁移不变量（Batch 2B gate） ----------
 
-test('2B-MIGRATION-INVARIANT: transaction() 总数 == 70 / async == 3（不增不减）', () => {
+test('2B-MIGRATION-INVARIANT: transaction() 总数 == 70 / async == 1（不增不减）', () => {
   const all = findAll(ast, n =>
     n.type === 'CallExpression' &&
     n.callee && n.callee.type === 'Identifier' && n.callee.name === 'transaction'
   );
   assert.strictEqual(all.length, 70, `transaction() 总数应为 70（不得因 core 抽取而增减），实际 ${all.length}`);
   const asyncTx = all.filter(n => n.arguments[0] && n.arguments[0].type === 'ArrowFunctionExpression' && n.arguments[0].async);
-  assert.strictEqual(asyncTx.length, 3, `剩余 async transaction 应为 3（2D×2 + 2C×1），实际 ${asyncTx.length}`);
+  assert.strictEqual(asyncTx.length, 1, `剩余 async transaction 应为 1（仅 runSalesDeletionInTx=2C），实际 ${asyncTx.length}`);
 });
 
 // ---------- 6. 行为回归（better-sqlite3 同步事务模型） ----------

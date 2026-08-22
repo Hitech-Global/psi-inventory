@@ -9249,7 +9249,7 @@ app.put('/api/logistics-batches/:id', requireApiPermission('logistics_edit'), as
     }
 
     // 物流保存 + 费用事实同步 — 同一事务，原子保证
-    const syncResult = await transaction(async () => {
+    const syncResult = await transaction(() => {
       const fields = [];
       const values = [];
       const allowed = ['batch_no', 'forwarder_id', 'forwarder_name', 'transport_mode', 'origin_port', 'dest_port', 'target_country', 'target_warehouse', 'pickup_date', 'depart_date', 'eta_date', 'actual_arrival_date', 'customs_start_date', 'customs_end_date', 'delivery_date', 'inbound_complete_date', 'logistics_status', 'total_cartons', 'total_weight', 'total_cbm', 'freight_currency', 'international_freight', 'local_charges', 'customs_service_fee', 'delivery_fee', 'customs_duty', 'vat_gst', 'other_fees', 'fee_status', 'remark'];
@@ -13936,7 +13936,7 @@ app.post('/api/logistics-batches/:id/generate-cost-items', requireApiPermission(
     const { payee_name } = req.body;
     const createdBy = (req.currentUserId || (req.user && req.user.id)) || '';
 
-    const syncResult = await transaction(async () => {
+    const syncResult = await transaction(() => {
       return syncLogisticsCostFactsCore(batch, {
         createdBy: createdBy,
         payeeName: payee_name || ''

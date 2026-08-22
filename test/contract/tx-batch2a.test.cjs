@@ -164,9 +164,9 @@ test('2A-MIGRATION-INVARIANT: 全仓 transaction() 调用总数 == 70（sync 化
     n.callee && n.callee.type === 'Identifier' && n.callee.name === 'transaction'
   );
   assert.strictEqual(all.length, 70, `transaction() 总数应为 70，实际 ${all.length}`);
-  // 11 条 Batch 2A 已全部 sync；剩余 async 为 2B/2C/2D（2B 已实施 → 仅剩 2D×2 + 2C×1 = 3）
+  // 11 条 Batch 2A 已全部 sync；剩余 async 为 2B/2C/2D（2B 已实施 → 仅剩 2D×2 + 2C×1 = 3；2D 已实施 → 仅剩 2C×1 = 1）
   const asyncTx = all.filter(n => n.arguments[0] && n.arguments[0].type === 'ArrowFunctionExpression' && n.arguments[0].async);
-  assert.strictEqual(asyncTx.length, 3, `剩余 async transaction 应为 3（2D×2 + 2C×1），实际 ${asyncTx.length}`);
+  assert.strictEqual(asyncTx.length, 1, `剩余 async transaction 应为 1（仅 runSalesDeletionInTx=2C），实际 ${asyncTx.length}`);
   for (const a of analyzed) {
     assert.strictEqual(a.async, false, `2A target ${a.key} 仍被标记为 async`);
   }
