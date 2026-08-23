@@ -11440,6 +11440,9 @@ function payableItemRemainingMinor(item) {
   return Math.max(0, Number(item.payable_amount_minor || 0) - settled);
 }
 
+// 最大允许抹零阈值：仅允许小额尾差（< 1 元），杜绝以抹零抵消未付款金额
+const MAX_ROUND_OFF_AMOUNT = 1;
+
 function finalPaymentApprovalInput(payment, body = {}) {
   // PAY-CORE Phase 2：读取付款账户，透传至 applyPaymentSettlement（与 confirm-paid 路径一致）
   const paymentAccount = body.payment_account != null ? String(body.payment_account) : '';
@@ -11452,31 +11455,43 @@ function finalPaymentApprovalInput(payment, body = {}) {
   if (actualPaidAmount > requestedAmount) {
     throw new SettlementError(400, '实际付款金额不能大于申请金额');
   }
-  // PAY-CORE Phase 2：支持部分付款（actualPaidAmount < requestedAmount 且无抹零）
-  const isPartialPayment = actualPaidAmount < requestedAmount;
+  // PAY-CORE Phase 2（修正）：以「最终结算金额」判断部分付款，不再误伤尾差抹零
+  //   真实部分付款 = 实际付款金额 < 应付金额 − 抹零金额
+  //   即「整数实际付款 + 尾差抹零 = 应付金额」视为全额结清，不属于部分付款，应允许提交。
   const submittedRounding = body.rounding_amount != null ? settlementMoney(body.rounding_amount) : 0;
 
   let roundingAmount = 0;
   let applyRoundOff = false;
 
-  if (isPartialPayment) {
-    if (submittedRounding > 0) {
-      throw new SettlementError(400, '部分付款不支持抹零，请清除抹零金额后重试');
-    }
-    roundingAmount = 0;
-    applyRoundOff = false;
-  } else {
-    roundingAmount = settlementMoney(requestedAmount - actualPaidAmount);
+  if (submittedRounding > 0) {
+    // 抹零模式：抹零金额必须等于「应付 − 实际付款」（仅允许小数尾差抹零）
+    const expectedRounding = settlementMoney(requestedAmount - actualPaidAmount);
     if (!Number.isFinite(submittedRounding) || submittedRounding < 0) {
       throw new SettlementError(400, '抹零金额无效');
     }
-    if (Math.abs(submittedRounding - roundingAmount) > 0.005) {
+    if (Math.abs(submittedRounding - expectedRounding) > 0.005) {
       throw new SettlementError(400, '抹零金额必须等于申请金额减实际付款金额');
     }
-    if (roundingAmount > 0 && Math.abs(actualPaidAmount - Math.floor(requestedAmount)) > 0.005) {
+    // 仅允许小数尾差抹零：实际付款应为应付金额向下取整（整数付款）
+    if (expectedRounding > 0 && Math.abs(actualPaidAmount - Math.floor(requestedAmount)) > 0.005) {
       throw new SettlementError(400, '现有付款核心仅支持小数尾差抹零');
     }
+    roundingAmount = settlementMoney(submittedRounding);
+    // 明确最大抹零阈值：尾差必须 < 1 元，禁止以抹零抵消未付款金额
+    if (roundingAmount >= MAX_ROUND_OFF_AMOUNT) {
+      throw new SettlementError(400, '抹零金额仅支持小于 1 元的小额尾差，不能通过扩大抹零抵消未付款');
+    }
     applyRoundOff = roundingAmount > 0;
+  }
+
+  // 真实部分付款判断：实际付款 + 抹零 仍不足以覆盖应付金额（统一结算公式口径）
+  //   outstanding = 应付 − 实际付款 − 抵扣 − 抹零；此处无抵扣，故判断 实际付款 < 应付 − 抹零
+  const isPartialPayment = actualPaidAmount < settlementMoney(requestedAmount - roundingAmount);
+
+  if (isPartialPayment) {
+    // 真实部分付款：尾差抹零仅用于结清，不可用于放大部分付款，清零抹零后按部分付款流程处理
+    roundingAmount = 0;
+    applyRoundOff = false;
   }
 
   const attachmentValue = body.attachment !== undefined ? body.attachment : payment.attachment;
@@ -11500,6 +11515,7 @@ function finalPaymentApprovalInput(payment, body = {}) {
     actualPaidDate,
     roundingAmount,
     applyRoundOff,
+    isPartialPayment,
     attachment,
     paymentAccount,
     idempotencyKey: String(body.idempotency_key || `approval:${payment.id}`).trim()
@@ -17218,5 +17234,8 @@ module.exports = {
   buildPaymentRateSnapshot,
   isValidRateDate,
   getEffectiveTransitRows,
+  finalPaymentApprovalInput,
+  paymentSettlementFacts,
+  derivePaymentStatus,
   app
 };
