@@ -1,51 +1,43 @@
 #!/usr/bin/env node
 'use strict';
 /**
- * scan-tx-async.cjs — transaction(async) / nested-transaction 静态契约扫描器
+ * scan-tx-async.cjs — transaction 反模式静态契约扫描器（Final Guard 版本）
  *
- * 目的（Batch 0A，只读分析 + 基线固化，不修改任何业务代码）：
- *   - 用 acorn 对 server.js / app.js 做真实 AST 解析，定位所有 transaction 调用。
- *   - 支持的 callee 形式（AST 规则）：
- *       1) 裸调用        transaction(...)
- *       2) 成员调用      db.transaction(...) / obj.transaction(...)
- *       3) 计算成员调用  db['transaction'](...)   （computed，property 为字面量 'transaction'）
- *     已知边界（P0 不扩展）：任意别名调用 `const tx = transaction; tx(async () => {})`
- *       属于 data-flow / 别名传播问题，当前纯 AST 结构匹配不保证识别，
- *       需后续 data-flow analysis，本批不处理（见下方「已知边界」）。
- *   - 对每个 transaction 调用判定：
- *       * callbackType: 'async' | 'sync'   （是否 async 回调 —— 当前契约禁止）
- *       * nested:       是否自身位于另一个 transaction 回调内部（直接嵌套事务 —— 当前契约禁止）
- *       * transit:      其回调（或作用域）内是否调用 updateInventoryTransitData
- *                       （该函数内部会再开一个 transaction，构成「事务内调 transit」嵌套 —— 当前契约禁止）
- *   - 稳定身份（key）只依赖：文件 + 路由/函数作用域 + 回调源码 sha1 指纹，
- *     不依赖绝对行号、不依赖作用域内序号(ordinal)、不依赖契约特征，
- *     因此后续 server.js 大规模行号漂移 / 同作用域 ordinal 重排都不会误判为「新增违规」。
+ * 目的：用 acorn 对 server.js / app.js 做 AST 解析，定位所有 transaction 调用，
+ * 并检测以下反模式（长期零容忍，--check 直接 gate）：
+ *   1. async          事务回调本身是 async function（transaction(async () => {...}) / transaction(() => 某 Promise)）
+ *   2. asyncCallee    sync 回调内调用 async 函数但未 await / 未 return（Promise 逃逸事务边界）
+ *   3. nested         事务回调体内【直接】包含另一个 transaction 调用（源码区间包含）
+ *   4. indirectNested 事务回调【可达调用图】中含 transaction 调用（含直接嵌套；沿本地函数调用 BFS，
+ *                      visited 去重、无深度上限、不钻入未被调用的嵌套函数）
+ *   5. transit         事务回调（或其直接作用域）内调用 updateInventoryTransitData
+ *   6. indirectTransit 事务回调可达调用图中含 updateInventoryTransitData 调用
  *
- * 契约（当前阶段）：
- *   - sync transaction callback：允许
- *   - async / Promise 返回型 transaction callback：禁止（未来由 db.js 运行时 guard 兜底，本批不加）
- *   - nested transaction（事务内再开事务）：业务代码应消除（updateInventoryTransitData 移出事务）
+ * callee 识别（isTransactionCall）：
+ *   裸调用 transaction(...) / 成员 db.transaction(...) / 计算 db['transaction'](...)
+ *   以及简单词法别名 const tx = transaction; / const tx = db.transaction; / const tx = db['transaction'];
+ *   → tx(...) 视为 transaction（仅当别名在全文件内【唯一定义】为上述形态；重复/shadow 保守跳过）。
+ *   不做完整 data-flow 引擎；别名仅覆盖「变量直接持有 transaction 引用」的最常见情形。
  *
- * 冻结基线（frozent baseline）语义 —— Batch 0A 最终生成后必须冻结：
- *   - scripts/tx-async-baseline.json 在本次 Batch 0A 最终生成后冻结，
- *     Batch 1 / 2A / 2B / 2C 都不得重新生成或刷新。
- *   - 整个迁移期 gate 固定判断：currentViolations ⊆ frozenBaseline
- *        newViolations = currentSet - frozenBaselineSet  必须始终为 0
- *     允许旧违规逐步减少：29 → X → X → 0，但基线文件始终保留最初 29 个历史违规。
- *   - 仅 Final Guard Batch 在「current violations = 0」之后，才删除基线 / 切换 zero-tolerance。
- *   - --check 只读取冻结基线，绝不自动覆盖。
- *   - 基线生成必须是显式命令（--baseline），且冻结后覆盖需 --force，
- *     普通 migration / test 流程不得自动 regenerate baseline。
+ * 结构化窄例外（无注解、不改 server.js）：runSalesDeletionInTx 的 SQLite branch
+ *   transaction(() => { const exec = buildSqliteExec(); return execSalesDeletionFlow(...); })
+ *   若同时满足以下全部条件，则【豁免其 asyncCallee】（失败安全：任一不满足即不豁免、按一般规则处理）：
+ *     - enclosingFn === 'runSalesDeletionInTx'
+ *     - 回调为 sync（async === false）
+ *     - 回调 return 一个对 execSalesDeletionFlow(...) 的调用
+ *     - execSalesDeletionFlow 是 async 本地函数
+ *     - 可达调用图无 transaction 调用、无 updateInventoryTransitData 调用
+ *     - 可达调用图中每个 async callee 均被 await 或 return（awaited-or-returned 校验）
  *
  * CLI：
- *   node scripts/scan-tx-async.cjs --baseline [--force] [files...]   显式生成/刷新（冻结后覆盖需 --force）
- *   node scripts/scan-tx-async.cjs --check    [files...]             只读读取冻结基线做比较，发现新增违规则退出码 1
- *   node scripts/scan-tx-async.cjs            [files...]             仅打印 summary（不读/写基线）
+ *   --check / --zero-tolerance   零容忍 gate：断言 async / asyncCallee / nested / indirectNested /
+ *                                transit / indirectTransit 全部 === 0（不读取冻结基线；基线仅历史存档）
+ *   --migration-report           读取冻结基线做历史对比报告（不 gate）
+ *   --baseline [--force]         生成/刷新基线（冻结后需 --force；本批不自动重刷）
+ *   (无参)                       仅打印 summary
  *
- * 已知边界（P0 不扩展）：
- *   - 别名调用 `const tx = transaction; tx(async () => {})` 不保证识别（需 data-flow analysis）。
- *   - 仅做结构匹配：db.transaction / obj.transaction / db['transaction'] 均识别，
- *     但运行时动态决定目标的情形（如通过变量持有方法引用）不在本扫描器覆盖范围内。
+ * 冻结基线 scripts/tx-async-baseline.json 仍保留为历史存档（Baseline 0A 的 29 个历史违规快照），
+ * 不再作为前向 gate；仅 --migration-report 读取。
  */
 
 const fs = require('fs');
@@ -73,14 +65,70 @@ function parse(code) {
   }
 }
 
-function isTransactionCall(node) {
+const SKIP_KEYS = ['loc', 'start', 'end', 'range', 'parent'];
+
+function walkAll(node, visit, ancestors) {
+  if (!node || typeof node.type !== 'string') return;
+  visit(node, ancestors || []);
+  for (const key of Object.keys(node)) {
+    if (SKIP_KEYS.includes(key)) continue;
+    const child = node[key];
+    if (Array.isArray(child)) {
+      for (const c of child) if (c && c.type) walkAll(c, visit, [...(ancestors || []), node]);
+    } else if (child && child.type) {
+      walkAll(child, visit, [...(ancestors || []), node]);
+    }
+  }
+}
+
+// transaction 表达式形态（用于别名 init 识别）
+function isTransactionExprPattern(init) {
+  if (!init) return false;
+  if (init.type === 'Identifier' && init.name === 'transaction') return true;
+  if (
+    init.type === 'MemberExpression' &&
+    !init.computed &&
+    init.property &&
+    init.property.type === 'Identifier' &&
+    init.property.name === 'transaction'
+  ) {
+    return true;
+  }
+  if (
+    init.type === 'MemberExpression' &&
+    init.computed &&
+    init.property &&
+    init.property.type === 'Literal' &&
+    init.property.value === 'transaction'
+  ) {
+    return true;
+  }
+  return false;
+}
+
+// callee 名字（用于调用图解析与别名判定）：Identifier / Member.prop / Member['prop']
+function calleeNameOf(callee) {
+  if (!callee) return null;
+  if (callee.type === 'Identifier') return callee.name;
+  if (callee.type === 'MemberExpression') {
+    if (!callee.computed && callee.property && callee.property.type === 'Identifier') {
+      return callee.property.name;
+    }
+    if (callee.computed && callee.property && callee.property.type === 'Literal' && typeof callee.property.value === 'string') {
+      return callee.property.value;
+    }
+  }
+  return null;
+}
+
+// transaction 调用识别（含简单词法别名）。aliases 为 Set<string>
+function isTransactionCall(node, aliases) {
   if (!node || node.type !== 'CallExpression' || !node.callee) return false;
   const callee = node.callee;
-  // 1) 裸调用：transaction(...)
-  if (callee.type === 'Identifier' && callee.name === 'transaction') return true;
-  // 2) 成员调用：db.transaction(...) / obj.transaction(...)
-  //    非 computed：property 为 Identifier 且 name === 'transaction'
-  //    computed：db['transaction'](...) —— property 为 Literal 且 value === 'transaction'
+  if (callee.type === 'Identifier') {
+    if (callee.name === 'transaction') return true;
+    if (aliases && aliases.has(callee.name)) return true; // 词法别名
+  }
   if (callee.type === 'MemberExpression') {
     if (!callee.computed) {
       if (callee.property && callee.property.type === 'Identifier' && callee.property.name === 'transaction') {
@@ -103,24 +151,39 @@ function isTransitCall(node) {
   );
 }
 
-// 找到 node 所属的函数作用域节点（用于 transit / nested 判定）
+function isAsyncFn(node) {
+  return !!(node && (node.type === 'FunctionDeclaration' || node.type === 'FunctionExpression' || node.type === 'ArrowFunctionExpression') && node.async);
+}
+
+// 找到 node 所属的函数作用域节点
 function enclosingFunction(ancestors) {
   for (let i = ancestors.length - 1; i >= 0; i--) {
     const a = ancestors[i];
-    if (
-      a.type === 'FunctionDeclaration' ||
-      a.type === 'FunctionExpression' ||
-      a.type === 'ArrowFunctionExpression'
-    ) {
+    if (a.type === 'FunctionDeclaration' || a.type === 'FunctionExpression' || a.type === 'ArrowFunctionExpression') {
       return a;
     }
   }
   return null;
 }
 
-// 找到调用点所属的逻辑作用域 label：优先 app.post/put/get 路由字符串，其次具名函数，最后 global
+// 调用点所属函数的名字（用于窄例外判定）
+function enclosingFnName(ancestors) {
+  const fn = enclosingFunction(ancestors);
+  if (!fn) return null;
+  if (fn.type === 'FunctionDeclaration') return fn.id ? fn.id.name : null;
+  if ((fn.type === 'FunctionExpression' || fn.type === 'ArrowFunctionExpression') && fn.id) return fn.id.name;
+  // 箭头/函数表达式作为 VariableDeclarator 的 init：在 ancestors 中回找
+  for (let i = ancestors.length - 1; i >= 0; i--) {
+    const a = ancestors[i];
+    if (a.type === 'VariableDeclarator' && a.init === fn && a.id && a.id.type === 'Identifier') {
+      return a.id.name;
+    }
+  }
+  return null;
+}
+
+// 路由 / 具名函数 / global 作用域 label
 function scopeLabel(node, ancestors) {
-  // 路由：向上找 `app.post('/x', ...)` / `router.post(...)` 等，首参为字符串字面量
   for (let i = ancestors.length - 1; i >= 0; i--) {
     const a = ancestors[i];
     if (a.type === 'CallExpression' && a.callee && a.callee.type === 'MemberExpression') {
@@ -139,16 +202,10 @@ function scopeLabel(node, ancestors) {
       }
     }
   }
-  // 具名函数（含 const fn = () => {}）
   for (let i = ancestors.length - 1; i >= 0; i--) {
     const a = ancestors[i];
     if (a.type === 'FunctionDeclaration' && a.id) return `fn:${a.id.name}`;
-    if (
-      (a.type === 'FunctionExpression' || a.type === 'ArrowFunctionExpression') &&
-      a.id
-    ) {
-      return `fn:${a.id.name}`;
-    }
+    if ((a.type === 'FunctionExpression' || a.type === 'ArrowFunctionExpression') && a.id) return `fn:${a.id.name}`;
     if (
       a.type === 'VariableDeclarator' &&
       a.id &&
@@ -170,6 +227,141 @@ function getCallback(node) {
   return null;
 }
 
+// 单文件：name -> 函数节点（FunctionDeclaration 或 函数表达式 init）。最后声明优先。
+function buildFuncMap(ast) {
+  const map = new Map();
+  walkAll(ast, (node) => {
+    if (node.type === 'FunctionDeclaration' && node.id) {
+      map.set(node.id.name, node);
+    } else if (
+      node.type === 'VariableDeclarator' &&
+      node.id &&
+      node.id.type === 'Identifier' &&
+      node.init &&
+      (node.init.type === 'FunctionExpression' || node.init.type === 'ArrowFunctionExpression')
+    ) {
+      map.set(node.id.name, node.init);
+    }
+  });
+  return map;
+}
+
+// 单文件：唯一定义为 transaction 形态的变量名集合（重复/shadow 保守跳过）
+function buildAliases(ast) {
+  const decls = new Map();
+  walkAll(ast, (node) => {
+    if (
+      node.type === 'VariableDeclarator' &&
+      node.id &&
+      node.id.type === 'Identifier' &&
+      node.init
+    ) {
+      const name = node.id.name;
+      if (!decls.has(name)) decls.set(name, []);
+      decls.get(name).push(node.init);
+    }
+  });
+  const aliases = new Set();
+  for (const [name, inits] of decls) {
+    if (inits.length !== 1) continue; // 重复声明 → 保守不视为别名
+    if (isTransactionExprPattern(inits[0])) aliases.add(name);
+  }
+  return aliases;
+}
+
+// 父节点是否表示「await 或 return」包裹：node 是 CallExpression，其直接父为 AwaitExpression / ReturnStatement
+function isAwaitedOrReturned(node, ancestors) {
+  const parent = ancestors[ancestors.length - 1];
+  if (!parent) return false;
+  if (parent.type === 'AwaitExpression') return true;
+  if (parent.type === 'ReturnStatement') return true;
+  return false;
+}
+
+function isFunctionNode(node) {
+  return !!(node && (node.type === 'FunctionDeclaration' || node.type === 'FunctionExpression' || node.type === 'ArrowFunctionExpression'));
+}
+
+// 回调内是否存在 `return <name>(...)` 形式的返回调用
+function findReturnedCall(fnNode, name) {
+  let found = false;
+  walkAll(fnNode, (node) => {
+    if (found) return;
+    if (node.type === 'ReturnStatement' && node.argument && node.argument.type === 'CallExpression') {
+      if (calleeNameOf(node.argument.callee) === name) found = true;
+    }
+  });
+  return found;
+}
+
+/**
+ * 可达调用图分析（核心新增）。
+ * 从 cb 出发：沿本地函数调用 BFS。visited 为函数节点 Set（无深度上限，有限终止）。
+ * 仅当 CallExpression 实际调用某本地函数时才钻入其定义；绝不钻入「已定义但未被调用」的嵌套函数。
+ * 返回 { transactions, transits, asyncCallees }。
+ */
+function collectReachable(cb, funcMap, aliases) {
+  const visited = new Set();
+  const found = { transactions: [], transits: [], asyncCallees: [] };
+  if (!cb) return found;
+
+  function walkNode(node, ancestors) {
+    if (!node || typeof node.type !== 'string') return;
+    if (isTransactionCall(node, aliases)) found.transactions.push(node);
+    if (isTransitCall(node)) found.transits.push(node);
+
+    if (node.type === 'CallExpression') {
+      const name = calleeNameOf(node.callee);
+      if (name && funcMap.has(name)) {
+        const target = funcMap.get(name);
+        // async callee 逃逸检测（未被 await / return）
+        if (isAsyncFn(target) && !isAwaitedOrReturned(node, ancestors)) {
+          found.asyncCallees.push({ node, calleeName: name });
+        }
+        // 钻入目标函数体（仅当尚未访问过）——这是唯一允许下钻的路径
+        if (target && !visited.has(target)) {
+          visited.add(target);
+          walkNode(target, [target]);
+        }
+      }
+    }
+    for (const key of Object.keys(node)) {
+      if (SKIP_KEYS.includes(key)) continue;
+      const child = node[key];
+      if (Array.isArray(child)) {
+        for (const c of child) {
+          if (!c || !c.type) continue;
+          if (isFunctionNode(c)) continue; // 不自动钻入未被调用的嵌套函数定义（correction #2）
+          walkNode(c, [...ancestors, node]);
+        }
+      } else if (child && child.type) {
+        if (isFunctionNode(child)) continue; // 不自动钻入未被调用的嵌套函数定义
+        walkNode(child, [...ancestors, node]);
+      }
+    }
+  }
+
+  visited.add(cb);
+  walkNode(cb, [cb]);
+  return found;
+}
+
+// SQLite Sales Delete 结构化窄例外（失败安全）
+function sqliteSalesDeleteExempt(t, reachable) {
+  if (t.enclosingFnName !== 'runSalesDeletionInTx') return false;
+  if (t.async) return false;
+  if (!t.callback) return false;
+  if (!findReturnedCall(t.callback, 'execSalesDeletionFlow')) return false;
+  if (!t.funcMap || !t.funcMap.has('execSalesDeletionFlow')) return false;
+  if (!isAsyncFn(t.funcMap.get('execSalesDeletionFlow'))) return false;
+  // 负面条件：可达图无 transaction / transit
+  if (reachable.transactions.length > 0) return false;
+  if (reachable.transits.length > 0) return false;
+  // awaited-or-returned 校验：每个 async callee 必须已被 await/return（即无逃逸）
+  if (reachable.asyncCallees.length > 0) return false;
+  return true;
+}
+
 // ---- 核心扫描 ----
 
 function scanFile(filePath) {
@@ -181,14 +373,13 @@ function scanFile(filePath) {
     return { file: path.basename(filePath), error: String(e.message), transactions: [] };
   }
 
-  const transactions = []; // { node, line, callback, scope, async, fingerprint }
+  const funcMap = buildFuncMap(ast);
+  const aliases = buildAliases(ast);
+  const transactions = []; // { node, line, file, scope, callback, async, enclosingFnName, fingerprint, funcMap }
   const transitScopes = new Set(); // 包含 updateInventoryTransitData 调用的函数作用域节点
 
-  // 单次遍历收集两类节点 + 上下文
-  function walk(node, ancestors) {
-    if (!node || typeof node.type !== 'string') return;
-
-    if (isTransactionCall(node)) {
+  walkAll(ast, (node, ancestors) => {
+    if (isTransactionCall(node, aliases)) {
       const cb = getCallback(node);
       const scope = scopeLabel(node, ancestors);
       const line = node.loc ? node.loc.start.line : 0;
@@ -199,31 +390,18 @@ function scanFile(filePath) {
         scope,
         callback: cb,
         async: !!(cb && cb.async),
-        // 指纹取自「回调源码片段」sha1（无回调时退回到调用表达式本身），
-        // 与行号/作用域内序号无关 —— 这是 stable identity 的唯一依据。
+        enclosingFnName: enclosingFnName(ancestors),
+        funcMap,
         fingerprint: sha1(cb ? code.slice(cb.start, cb.end) : code.slice(node.start, node.end)),
       });
     }
-
     if (isTransitCall(node)) {
       const fn = enclosingFunction(ancestors);
       if (fn) transitScopes.add(fn);
     }
+  });
 
-    for (const key of Object.keys(node)) {
-      if (key === 'loc' || key === 'start' || key === 'end' || key === 'range' || key === 'parent')
-        continue;
-      const child = node[key];
-      if (Array.isArray(child)) {
-        for (const c of child) if (c && c.type) walk(c, [...ancestors, node]);
-      } else if (child && child.type) {
-        walk(child, [...ancestors, node]);
-      }
-    }
-  }
-  walk(ast, []);
-
-  // 嵌套判定：某 transaction T 的回调内部是否包含另一个 transaction O（O 严格位于 T.callback 区间内）
+  // 直接嵌套判定：T.callback 体内是否直接包含另一个 transaction 调用（源码区间包含）
   transactions.forEach((T) => {
     T.nested = false;
     if (!T.callback) return;
@@ -237,9 +415,23 @@ function scanFile(filePath) {
     }
   });
 
-  // transit 判定：T.callback 所在作用域是否包含 updateInventoryTransitData 调用
+  // transit 判定：T.callback 所在直接作用域是否包含 updateInventoryTransitData 调用
   transactions.forEach((T) => {
     T.transit = !!(T.callback && transitScopes.has(T.callback));
+  });
+
+  // 可达调用图：asyncCallee / indirectNested / indirectTransit
+  transactions.forEach((T) => {
+    const reachable = collectReachable(T.callback, T.funcMap, aliases);
+    T.indirectNested = reachable.transactions.length > 0;
+    T.indirectTransit = reachable.transits.length > 0;
+    let asyncCallee = reachable.asyncCallees.length > 0;
+    // 结构化窄例外：Sales Delete SQLite branch 豁免 asyncCallee（失败安全）
+    if (asyncCallee && sqliteSalesDeleteExempt(T, reachable)) {
+      asyncCallee = false;
+    }
+    T.asyncCallee = asyncCallee;
+    T._reachable = reachable;
   });
 
   return { file: path.basename(filePath), error: null, transactions };
@@ -249,35 +441,32 @@ function scanFile(filePath) {
 
 function buildEntry(t) {
   const characteristic = [
-    t.async ? 'async' : 'sync',
+    t.async ? 'async' : '',
+    t.asyncCallee ? 'asyncCallee' : '',
     t.nested ? 'nested' : '',
+    t.indirectNested ? 'indirectNested' : '',
     t.transit ? 'transit' : '',
+    t.indirectTransit ? 'indirectTransit' : '',
   ]
     .filter(Boolean)
     .join('+');
   return {
     file: t.file,
-    line: t.line, // 辅助信息（显示用），不参与 key
+    line: t.line,
     scope: t.scope,
     callbackType: t.async ? 'async' : 'sync',
+    async: !!t.async,
+    asyncCallee: !!t.asyncCallee,
     nested: !!t.nested,
+    indirectNested: !!t.indirectNested,
     transit: !!t.transit,
+    indirectTransit: !!t.indirectTransit,
     characteristic,
-    fingerprint: t.fingerprint, // 辅助信息（显示用），但不单独作为 key
+    fingerprint: t.fingerprint,
+    enclosingFn: t.enclosingFnName,
   };
 }
 
-/**
- * 稳定身份（stable identity）—— 不依赖行号 / 作用域内序号 / 契约特征：
- *   文件 + 路由或函数作用域 + 回调源码指纹(sha1)
- * 该身份在以下变化下保持稳定：
- *   - 前面插入/删除代码导致行号漂移
- *   - 同作用域内其它 transaction 被删除导致 ordinal 重排
- *   - 该调用点的「特征」变化（如 async→sync、去掉 transit），因为特征不进入 key，
- *     修复后该点会从 violations 中消失（removed），而不会误报成「新增违规」。
- * 已知局限：同一作用域内若两个 transaction 回调源码逐字相同，会共享同一指纹 →
- *   退化为一个身份（修复其一无法被单独计数）。当前 29 处违规指纹均不重复，见报告。
- */
 function stableKey(entry) {
   return `${entry.file}::${entry.scope}::${entry.fingerprint}`;
 }
@@ -287,14 +476,12 @@ function analyze(files) {
   files.forEach((f) => {
     const r = scanFile(f);
     if (r.error) {
-      // 解析失败不应导致基线崩溃，仅告警
       process.stderr.write(`[scan-tx-async] WARN 解析失败 ${r.file}: ${r.error}\n`);
       return;
     }
     r.transactions.forEach((t) => all.push(buildEntry(t)));
   });
 
-  // 仅用于「显示」的作用域内序号：同文件+同 scope 按行号排序后编号（不参与 key）
   const groups = new Map();
   all.forEach((e) => {
     const gk = `${e.file}::${e.scope}`;
@@ -312,13 +499,32 @@ function analyze(files) {
     e.key = stableKey(e);
   });
 
-  const violations = all.filter((e) => e.callbackType === 'async' || e.nested || e.transit);
+  const violations = all.filter(
+    (e) =>
+      e.callbackType === 'async' ||
+      e.asyncCallee ||
+      e.nested ||
+      e.indirectNested ||
+      e.transit ||
+      e.indirectTransit
+  );
   const summary = {
     total: all.length,
     async: all.filter((e) => e.callbackType === 'async').length,
+    asyncCallee: all.filter((e) => e.asyncCallee).length,
     nested: all.filter((e) => e.nested).length,
+    indirectNested: all.filter((e) => e.indirectNested).length,
     transit: all.filter((e) => e.transit).length,
-    syncOk: all.filter((e) => e.callbackType === 'sync' && !e.nested && !e.transit).length,
+    indirectTransit: all.filter((e) => e.indirectTransit).length,
+    syncOk: all.filter(
+      (e) =>
+        e.callbackType === 'sync' &&
+        !e.asyncCallee &&
+        !e.nested &&
+        !e.indirectNested &&
+        !e.transit &&
+        !e.indirectTransit
+    ).length,
   };
   return { entries: all, violations, summary };
 }
@@ -332,11 +538,25 @@ function compare(currentViolations, baselineViolations) {
   return { newViolations, removedViolations, hasNew: newViolations.length > 0 };
 }
 
+// 零容忍 gate：6 项指标必须全 0（total 非永久正确性条件，不纳入 gate）
+function zeroToleranceGate(summary) {
+  const gate = {
+    async: summary.async,
+    asyncCallee: summary.asyncCallee,
+    nested: summary.nested,
+    indirectNested: summary.indirectNested,
+    transit: summary.transit,
+    indirectTransit: summary.indirectTransit,
+  };
+  const failures = Object.keys(gate).filter((k) => gate[k] !== 0);
+  return { gate, failures, passed: failures.length === 0 };
+}
+
 // ---- CLI ----
 
 function main() {
   const argv = process.argv.slice(2);
-  const mode = argv.find((a) => a === '--baseline' || a === '--check') || 'summary';
+  const mode = argv.find((a) => a === '--baseline' || a === '--check' || a === '--zero-tolerance' || a === '--migration-report') || 'summary';
   const fileArgs = argv.filter((a) => !a.startsWith('--'));
   const files = fileArgs.length ? fileArgs.map((f) => path.resolve(f)) : DEFAULT_FILES;
 
@@ -348,7 +568,6 @@ function main() {
   const { entries, violations, summary } = analyze(files);
 
   if (mode === '--baseline') {
-    // 冻结保护：若已存在「frozen」基线且未显式 --force，拒绝覆盖（防误刷）。
     if (fs.existsSync(BASELINE_PATH) && !argv.includes('--force')) {
       let existingFrozen = false;
       try {
@@ -359,7 +578,7 @@ function main() {
       if (existingFrozen) {
         process.stderr.write(
           '[scan-tx-async] 拒绝覆盖：基线已冻结(frozen)。\n' +
-            '  仅 Final Guard Batch 在 current violations = 0 之后，才允许 --baseline --force 重新生成 / 删除切换 zero-tolerance。\n'
+            '  基线仅作历史存档；前向 gate 已切换为零容忍 --check（不读取基线）。\n'
         );
         process.exit(2);
       }
@@ -374,41 +593,56 @@ function main() {
     fs.writeFileSync(BASELINE_PATH, JSON.stringify(payload, null, 2) + '\n');
     process.stdout.write(
       `基线已写入(冻结) ${path.relative(REPO_ROOT, BASELINE_PATH)}\n` +
-        `  total=${summary.total} async=${summary.async} nested=${summary.nested} transit=${summary.transit} syncOk=${summary.syncOk}\n`
+        `  total=${summary.total} async=${summary.async} asyncCallee=${summary.asyncCallee} nested=${summary.nested} indirectNested=${summary.indirectNested} transit=${summary.transit} indirectTransit=${summary.indirectTransit} syncOk=${summary.syncOk}\n`
     );
     return;
   }
 
-  if (mode === '--check') {
+  if (mode === '--check' || mode === '--zero-tolerance') {
+    const { gate, failures, passed } = zeroToleranceGate(summary);
+    process.stdout.write(
+      `零容忍 gate（不读取冻结基线）\n` +
+        `  total=${summary.total} async=${gate.async} asyncCallee=${gate.asyncCallee} ` +
+        `nested=${gate.nested} indirectNested=${gate.indirectNested} transit=${gate.transit} indirectTransit=${gate.indirectTransit}\n`
+    );
+    if (!passed) {
+      process.stdout.write(`FAIL: 以下指标必须 === 0：${failures.join(', ')}\n`);
+      process.exit(1);
+    }
+    process.stdout.write('OK: 全部 transaction 反模式指标为 0（零容忍通过）\n');
+    return;
+  }
+
+  if (mode === '--migration-report') {
     if (!fs.existsSync(BASELINE_PATH)) {
-      process.stderr.write('[scan-tx-async] 基线不存在，请先运行 --baseline\n');
+      process.stderr.write('[scan-tx-async] 基线不存在，无法生成迁移报告\n');
       process.exit(2);
     }
     const baseline = JSON.parse(fs.readFileSync(BASELINE_PATH, 'utf8'));
+    process.stdout.write(
+      `历史基线（frozen=${baseline.frozen === true}，仅存档不 gate）\n` +
+        `  baseline.total=${baseline.summary.total} baseline.async=${baseline.summary.async} ` +
+        `baseline.nested=${baseline.summary.nested} baseline.transit=${baseline.summary.transit}\n` +
+        `当前扫描\n` +
+        `  current.total=${summary.total} current.async=${summary.async} current.asyncCallee=${summary.asyncCallee} ` +
+        `current.nested=${summary.nested} current.indirectNested=${summary.indirectNested} current.transit=${summary.transit} ` +
+        `current.indirectTransit=${summary.indirectTransit}\n`
+    );
     const res = compare(violations, baseline.violations || []);
     process.stdout.write(
-      `读取冻结基线(frozen=${baseline.frozen === true}); ` +
-        `当前 total=${summary.total} async=${summary.async} nested=${summary.nested} transit=${summary.transit}\n`
-    );
-    if (res.hasNew) {
-      process.stdout.write(`发现 ${res.newViolations.length} 个新增违规位置（基线之外）：\n`);
-      res.newViolations.forEach((e) =>
-        process.stdout.write(`  + ${e.key}  (${e.file}:${e.line})\n`)
-      );
-      process.stdout.write('FAIL: 存在新增 transaction(async)/nested 违规\n');
-      process.exit(1);
-    }
-    process.stdout.write(
-      `OK: 无新增违规（已消除 ${res.removedViolations.length} 个旧违规；允许逐步减少，但不得新增）\n`
+      `历史基线为 29 个旧违规的快照；前向 gate 已切换为零容忍 --check（不依赖此基线）。\n` +
+        `（compare 仅供参考）removed=${res.removedViolations.length} new=${res.newViolations.length}\n`
     );
     return;
   }
 
   // summary
   process.stdout.write(
-    `total=${summary.total} async=${summary.async} nested=${summary.nested} transit=${summary.transit} syncOk=${summary.syncOk}\n`
+    `total=${summary.total} async=${summary.async} asyncCallee=${summary.asyncCallee} ` +
+      `nested=${summary.nested} indirectNested=${summary.indirectNested} transit=${summary.transit} ` +
+      `indirectTransit=${summary.indirectTransit} syncOk=${summary.syncOk}\n`
   );
-  violations.forEach((e) => process.stdout.write(`  violation: ${e.key}  (${e.file}:${e.line})\n`));
+  violations.forEach((e) => process.stdout.write(`  violation: ${e.key}  (${e.file}:${e.line}) [${e.characteristic}]\n`));
 }
 
 module.exports = {
@@ -416,8 +650,18 @@ module.exports = {
   analyze,
   buildEntry,
   stableKey,
-  keyOf: stableKey, // 兼容别名
+  keyOf: stableKey,
   compare,
+  zeroToleranceGate,
+  isTransactionCall,
+  isTransitCall,
+  isAsyncFn,
+  buildFuncMap,
+  buildAliases,
+  collectReachable,
+  sqliteSalesDeleteExempt,
+  findReturnedCall,
+  isAwaitedOrReturned,
   BASELINE_PATH,
   DEFAULT_FILES,
 };

@@ -195,9 +195,25 @@ if (driver === 'pg') {
       return { changes: data.rowCount == null ? 0 : data.rowCount };
     },
     transaction: function (fn) {
+      // Final Guard 运行时护栏 1：async 回调在 syncRequest('begin') 之前拒绝，
+      // 绝不进入同步事务桥（PG sync 桥不支持 async callback）。
+      if (fn && fn.constructor && fn.constructor.name === 'AsyncFunction') {
+        var asyncErr = new Error('PG sync transaction does not support async callbacks');
+        asyncErr.code = 'DB_SYNC_ASYNC_TX_UNSUPPORTED';
+        throw asyncErr; // BEFORE syncRequest('begin')
+      }
       syncRequest('begin');
       try {
         var result = fn();
+        // Final Guard 运行时护栏 2（第二张网）：sync 回调却返回 Promise（thenable）→
+        // 事务边界外才有机会 resolve，COMMIT 若在 thenable resolve 之前发出会导致半套提交。
+        // 在 try 内抛出 → 统一的 catch 只做一次 rollback（不会双重 rollback）。
+        // 注意：此 guard 不能取消【已经开始】的 Promise continuation（仅声明，无法拦截）。
+        if (result && typeof result.then === 'function') {
+          var promiseErr = new Error('PG sync transaction does not support Promise-returning callbacks');
+          promiseErr.code = 'DB_SYNC_PROMISE_TX_UNSUPPORTED';
+          throw promiseErr; // inside try → unified catch does exactly one rollback
+        }
         syncRequest('commit');
         return result;
       } catch (e) {

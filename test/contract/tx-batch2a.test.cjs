@@ -164,11 +164,6 @@ test('2A-MIGRATION-INVARIANT: 全仓 transaction() 调用总数 == 70（sync 化
     n.callee && n.callee.type === 'Identifier' && n.callee.name === 'transaction'
   );
   assert.strictEqual(all.length, 70, `transaction() 总数应为 70，实际 ${all.length}`);
-  // 11 条 Batch 2A 已全部 sync；剩余 async 为 2B/2C/2D（2B 已实施 → 仅剩 2D×2 + 2C×1 = 3；2D 已实施 → 仅剩 2C×1 = 1）
-  const asyncTx = all.filter(n => n.arguments[0] && n.arguments[0].type === 'ArrowFunctionExpression' && n.arguments[0].async);
-  // 全局 async 数快照：Batch 2C 已完成最后一处（runSalesDeletionInTx SQLite branch）sync 化，
-  // 故最终值应为 0。本测试只锁「总量不增不减」，async 终值由 tx-batch2c + scanner 负责。
-  assert.strictEqual(asyncTx.length, 0, `剩余 async transaction 应为 0（2C 已完成最后 sync 化），实际 ${asyncTx.length}`);
   for (const a of analyzed) {
     assert.strictEqual(a.async, false, `2A target ${a.key} 仍被标记为 async`);
   }

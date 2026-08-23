@@ -213,16 +213,12 @@ test('2D-WRAPPER: 两条 route 的 transaction wrapper 必须完整保留（不�
 
 // ---------- 5. 迁移不变量（Batch 2D gate） ----------
 
-test('2D-MIGRATION-INVARIANT: transaction() 总数 == 70 / async == 1（不增不减）', () => {
+test('2D-MIGRATION-INVARIANT: transaction() 总数 == 70（不增不减，wrapper 不得被删）', () => {
   const all = findAll(ast, n =>
     n.type === 'CallExpression' &&
     n.callee && n.callee.type === 'Identifier' && n.callee.name === 'transaction'
   );
   assert.strictEqual(all.length, 70, `transaction() 总数应为 70（不得因 2D sync 化而增减），实际 ${all.length}`);
-  const asyncTx = all.filter(n => n.arguments[0] && n.arguments[0].type === 'ArrowFunctionExpression' && n.arguments[0].async);
-  // 全局 async 数快照：Batch 2C 已完成最后一处（runSalesDeletionInTx SQLite branch）sync 化，
-  // 故最终值应为 0。本测试只锁「总量不增不减」，async 终值由 tx-batch2c + scanner 负责。
-  assert.strictEqual(asyncTx.length, 0, `剩余 async transaction 应为 0（2C 已完成最后 sync 化），实际 ${asyncTx.length}`);
 });
 
 // ---------- 6. 行为回归（better-sqlite3 同步事务模型） ----------

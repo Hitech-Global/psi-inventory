@@ -81,26 +81,30 @@ function parseTransactions() {
 
 function scannerCheck() {
   const out = execFileSync('node', [SCANNER, '--check'], { encoding: 'utf8' });
-  const m = out.match(/当前 total=(\d+) async=(\d+) nested=(\d+) transit=(\d+)/);
-  const removed = (out.match(/已消除 (\d+) 个旧违规/) || [])[1];
+  const m = out.match(/total=(\d+) async=(\d+) asyncCallee=(\d+) nested=(\d+) indirectNested=(\d+) transit=(\d+) indirectTransit=(\d+)/);
   return {
     raw: out,
     total: m ? Number(m[1]) : null,
     async: m ? Number(m[2]) : null,
-    nested: m ? Number(m[3]) : null,
-    transit: m ? Number(m[4]) : null,
-    removed: removed ? Number(removed) : 0,
-    ok: /OK: 无新增违规/.test(out),
+    asyncCallee: m ? Number(m[3]) : null,
+    nested: m ? Number(m[4]) : null,
+    indirectNested: m ? Number(m[5]) : null,
+    transit: m ? Number(m[6]) : null,
+    indirectTransit: m ? Number(m[7]) : null,
+    ok: /OK: 全部 transaction 反模式指标为 0/.test(out),
   };
 }
 
-test('1A-SCANNER: 无新增违规，且已消除 7 个历史违规（1A 4 + 1B 3）', () => {
+test('1A-SCANNER: 零容忍 gate 通过（6 指标全 0）且 wrapper 保留（total=70）', () => {
   const r = scannerCheck();
-  assert.ok(r.ok, 'scanner --check 必须 OK（new violations = 0）\n' + r.raw);
-  assert.ok(r.removed >= 7, `应至少消除 7 个旧违规（Batch 1A 修 4 + 1B 修 3），实际 removed=${r.removed}`);
-  assert.ok(r.async <= 22, `async 应 <=22（原 29 - 7），实际 ${r.async}`);
-  assert.ok(r.transit <= 2, `transit 应 <=2（原 9 - 7），实际 ${r.transit}`);
-  assert.strictEqual(r.nested, 0, `nested 应 =0（PI batch outer transaction 已删），实际 ${r.nested}`);
+  assert.ok(r.ok, 'scanner --check 必须 OK（零容忍全 0）\n' + r.raw);
+  assert.strictEqual(r.total, 70, `transaction wrapper 不得被删，实际 ${r.total}`);
+  assert.strictEqual(r.async, 0, `async 必须 =0，实际 ${r.async}`);
+  assert.strictEqual(r.asyncCallee, 0, `asyncCallee 必须 =0，实际 ${r.asyncCallee}`);
+  assert.strictEqual(r.nested, 0, `nested 必须 =0，实际 ${r.nested}`);
+  assert.strictEqual(r.indirectNested, 0, `indirectNested 必须 =0，实际 ${r.indirectNested}`);
+  assert.strictEqual(r.transit, 0, `transit 必须 =0，实际 ${r.transit}`);
+  assert.strictEqual(r.indirectTransit, 0, `indirectTransit 必须 =0，实际 ${r.indirectTransit}`);
 });
 
 test('1A-STATIC: 全仓 (async && hasTransit) 的 transaction 已清零（1A 4 + 1B 3 + 1C 2 = 9 → 0）', () => {

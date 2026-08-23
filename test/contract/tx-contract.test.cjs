@@ -164,9 +164,10 @@ test('F1. stable identity 与特征无关：async->sync 修复被识别为 remov
   assert.strictEqual(res.newViolations.length, 0, '修复不应误报为新增违规');
 });
 
-test('F2. 本批（Batch 0A）不向 db.js 注入运行时 guard', () => {
+test('F2. Final Guard 已向 db.js 注入两道运行时 guard（稳定错误码）', () => {
   const dbSrc = fs.readFileSync(path.resolve(REPO, 'db.js'), 'utf8');
-  assert.ok(!/DB_SYNC_ASYNC_TX_UNSUPPORTED/.test(dbSrc), '运行时 guard 本轮不得出现');
+  assert.ok(/DB_SYNC_ASYNC_TX_UNSUPPORTED/.test(dbSrc), '必须存在 async guard 错误码');
+  assert.ok(/DB_SYNC_PROMISE_TX_UNSUPPORTED/.test(dbSrc), '必须存在 thenable guard 错误码');
 });
 
 // ---------- 冻结基线回归测试（用户要求 A-E）----------
@@ -258,10 +259,11 @@ test('Member-D. 裸 transaction(async () => {}) 仍被识别（回归保护）',
   assert.strictEqual(summary.async, 1);
 });
 
-test('Member-E. 别名调用 const tx = transaction; tx(async () => {}) 不被识别（已知边界，P0 不扩展）', () => {
+test('Member-E. 别名调用 const tx = transaction; tx(async () => {}) 现在被识别为 async 违规（Final Guard 已支持简单词法别名）', () => {
   const p = writeTemp('m5.js', 'const tx = transaction;\ntx(async () => { await v(); });\n');
   const { summary } = scanner.analyze([p]);
-  assert.strictEqual(summary.total, 0, '别名调用(data-flow)不在 P0 纯 AST 覆盖范围内');
+  assert.strictEqual(summary.total, 1, '别名调用现在应计入 transaction 总数');
+  assert.strictEqual(summary.async, 1, 'async 回调应被识别');
 });
 
 test('teardown: 清理临时扫描文件', () => {
