@@ -7928,6 +7928,65 @@ function deriveLogisticsDisplayStatus(rawStatus) {
   return STAGE_KEYS[rank];
 }
 
+// 有效在途（batch / item-level，统一口径）
+// 复用 updateInventoryTransitData() 的权威定义（server.js:4140 附近）：
+//   在途量 = CI 已发货数量 - 已完成到仓(completed)物流批次对应 PL 的 SKU 数量
+//   —— 按 (ci_id, sku_code) 聚合；只剔除已到仓 batch 承载的那部分货，保留仍在途 batch 的部分。
+//   —— 不读取 inbound_qty；物理到仓由 logistics_status='completed' + PL items 决定（与在途库存页完全一致）。
+// 事实判断用 logistics_status = 'completed'（系统正式枚举 LOGISTICS_STATUS_ARRIVED），
+// 不使用 display status（display helper 仅用于 UI 展示）。
+//
+// ⚠️ 业务假设（请勿改回 CI-level 整票排除）：
+//   completed 物流批次对应的 PL item 数量 = 该批次已退出在途的货量。
+//   即：arrived_qty 的权威事实源是「logistics_status='completed' 的 logistics_batches
+//       经 packing_lists.logistics_batch_id 关联到的 packing_list_items.total_qty」。
+//   —— 一个 CI 可挂多个物流批次、且各批次处于不同物流阶段（如 Batch A 已到仓 / Batch B 在途）；
+//      CI 状态（含 completed）不代表所有批次都已到仓，最终在途 = 发货量 − 已到仓批次承载量。
+//   —— 历史实现曾用「整票 CI 排除」(getArrivedCiIds)，方向错误：会把仍运输中的同 CI 其他批次一起误剔除。
+//   —— 未来若需支持「部分到仓 / batch partial arrival」，应在此扩展 received_qty 或 inbound allocation，
+//     而非回退到 CI 整票排除。本轮不扩大范围。
+// 可选 ciScopeSql / ciScopeParams：对 commercial_invoices 的额外过滤（如数据权限 country/brand），
+//   形如 " AND (ci.country IN (?,?) OR ci.brand IN (?))"，仅作用于 shipped 集合（arrived 为全局扣减，正确）。
+// 返回每行（已按 (ci_id, sku_code) 聚合）：
+//   { ci_id, ci_no, currency, country, target_warehouse, sku_code,
+//     shipped_qty, ci_amount_total, arrived_qty, transit_qty }
+// 其中 transit_qty = max(0, shipped_qty - arrived_qty)。
+function getEffectiveTransitRows(ciScopeSql, ciScopeParams) {
+  const scopeSql = (ciScopeSql && String(ciScopeSql).trim()) ? ' AND ' + ciScopeSql : '';
+  const scopeParams = Array.isArray(ciScopeParams) ? ciScopeParams : [];
+  const rows = query(`
+    WITH shipped AS (
+      SELECT cii.ci_id, cii.sku_code,
+             SUM(COALESCE(cii.shipped_qty, 0)) AS shipped_qty,
+             SUM(COALESCE(cii.ci_amount, 0)) AS ci_amount_total
+      FROM commercial_invoice_items cii
+      JOIN commercial_invoices ci ON ci.id = cii.ci_id
+      WHERE ci.ci_status NOT IN ('cancelled') ${scopeSql}
+      GROUP BY cii.ci_id, cii.sku_code
+    ),
+    arrived AS (
+      SELECT lb.related_ci_id AS ci_id, pli.sku_code,
+             SUM(COALESCE(pli.total_qty, 0)) AS arrived_qty
+      FROM logistics_batches lb
+      JOIN packing_lists pl ON pl.logistics_batch_id = lb.id
+      JOIN packing_list_items pli ON pli.pl_id = pl.id
+      WHERE lb.logistics_status = 'completed'
+        AND lb.related_ci_id IS NOT NULL
+      GROUP BY lb.related_ci_id, pli.sku_code
+    )
+    SELECT s.ci_id, ci.ci_no, ci.currency, ci.country, ci.target_warehouse,
+           s.sku_code, s.shipped_qty, s.ci_amount_total,
+           COALESCE(a.arrived_qty, 0) AS arrived_qty,
+           CASE WHEN COALESCE(s.shipped_qty, 0) - COALESCE(a.arrived_qty, 0) < 0 THEN 0
+                ELSE COALESCE(s.shipped_qty, 0) - COALESCE(a.arrived_qty, 0) END AS transit_qty
+    FROM shipped s
+    JOIN commercial_invoices ci ON ci.id = s.ci_id
+    LEFT JOIN arrived a ON a.ci_id = s.ci_id AND a.sku_code = s.sku_code
+    WHERE s.shipped_qty > 0
+  `, scopeParams).rows;
+  return rows;
+}
+
 app.get('/api/commercial-invoices', requireApiPermission('ci_view'), asyncHandler((req, res) => {
   const { inbound_status, keyword, related_pi, country, warehouse, brand } = req.query;
   // 差异 = CI金额 - 已付定金 - 应付尾款（付款闭环校验）
@@ -15763,13 +15822,20 @@ app.get('/api/dashboard', requireApiPermission('dashboard_view'), asyncHandler((
     const totalConsign = queryOne('SELECT COALESCE(SUM(remaining_inventory_value), 0) as val FROM consignment_inventory_lots WHERE status = \'active\'' + consignScope.sql, consignScope.params)?.val || 0;
     const totalInv = (Number(totalInvBase) || 0) + (Number(totalConsign) || 0);
 
-    // 在途库存金额（用标准采购价估算）
-    const transitInv = queryOne(`
-      SELECT COALESCE(SUM((cii.shipped_qty - cii.inbound_qty) * cii.unit_price), 0) as val
-      FROM commercial_invoice_items cii
-      JOIN commercial_invoices ci ON cii.ci_id = ci.id
-      WHERE ci.ci_status NOT IN ('cancelled', 'completed')
-    ` + dsf.ciAlias.sql, dsf.ciAlias.params)?.val || 0;
+    // 在途库存金额（batch / item-level，统一口径）
+    // 复用 getEffectiveTransitRows()：在途量 = 发货量 - 已到仓(completed)物流批次对应 PL 的 SKU 数量，
+    // 只剔除已到仓 batch 承载的那部分货。估值采用 SKU 聚合口径（与 financial-risk overview 一致）。
+    // 这里用 ci_amount 比例法（unit_value = ci_amount_total / shipped_qty），保持三页同口径。
+    // 数据权限 scope（country/brand）透传给 helper，与 inventory/consignment 保持一致。
+    const transitRowsDash = getEffectiveTransitRows(dsf.ciAlias.sql, dsf.ciAlias.params);
+    let transitInv = 0;
+    for (const r of transitRowsDash) {
+      const transitQty = Number(r.transit_qty || 0);
+      if (transitQty <= 0) continue; // 已全部到仓 → 不在途
+      const shippedQty = Number(r.shipped_qty || 0);
+      const unitValue = shippedQty > 0 ? Number(r.ci_amount_total || 0) / shippedQty : 0;
+      transitInv += unitValue * transitQty; // 原币口径（与 total_inventory_value 一致，不折 CNY）
+    }
 
     // 呆滞库存金额
     const stagnantInv = queryOne(`
@@ -15993,38 +16059,35 @@ app.get('/api/financial-risk/overview', requireApiPermission('dashboard_view'), 
     }
 
     // --- 2. 在途资产(CNY) ---
-    // 按 CI 明细行计算：ci_amount × foreignToRmb × (shipped_qty - inbound_qty) / shipped_qty
-    // 仅统计已发货且未完全入库的 CI item，不计入 PO/PI/未发货/已入库
-    const transitRows = query(`
-      SELECT cii.ci_amount, cii.shipped_qty, cii.inbound_qty, ci.currency, ci.country
-      FROM commercial_invoice_items cii
-      JOIN commercial_invoices ci ON cii.ci_id = ci.id
-      WHERE ci.ci_status NOT IN ('cancelled', 'completed')
-        AND cii.shipped_qty > 0
-        AND (cii.shipped_qty - COALESCE(cii.inbound_qty, 0)) > 0
-    `).rows;
+    // 复用 getEffectiveTransitRows()（batch / item-level，统一口径）：
+    //   在途量 = CI 已发货数量 - 已完成到仓(completed)物流批次对应 PL 的 SKU 数量
+    //   —— 按 (ci_id, sku_code) 聚合；只剔除已到仓 batch 承载的那部分货，保留仍在途 batch 的部分。
+    //   —— 估值采用 SKU 聚合口径：unit_value = ci_amount_total / shipped_qty，
+    //      transit_asset = unit_value × transit_qty（即 ci_amount_total × transit_qty / shipped_qty）。
+    //   —— 不读 inbound_qty；物理到仓由 logistics_status='completed' + PL items 决定（与在途库存页完全一致）。
+    const transitRows = getEffectiveTransitRows();
     let inTransitAssets = 0;
     const transitByCountry = {};
     const transitMissingRates = []; // 记录缺失汇率的CI明细（禁止 fallback=1）
     for (const r of transitRows) {
+      const transitQty = Number(r.transit_qty || 0);
+      if (transitQty <= 0) continue; // 已全部到仓 → 不在途
       const curr = (r.currency || '').toUpperCase();
       const rate = foreignToRmbMap[curr];
       if (!rate) {
-        // 缺失汇率：禁止 fallback=1，跳过该行并记录
-        transitMissingRates.push({ ci_currency: r.currency, ci_amount: r.ci_amount });
+        // 缺失汇率：禁止 fallback=1，跳过该 SKU 并记录
+        transitMissingRates.push({ ci_currency: r.currency, ci_no: r.ci_no, sku: r.sku_code, ci_amount: r.ci_amount_total });
         continue;
       }
-      const shippedQty = Number(r.shipped_qty);
-      const inboundQty = Number(r.inbound_qty || 0);
-      const uninboundRatio = (shippedQty - inboundQty) / shippedQty;
-      const ciAmountRmb = Number(r.ci_amount || 0) * rate;
-      const amt = ciAmountRmb * uninboundRatio;
+      const shippedQty = Number(r.shipped_qty || 0);
+      const unitValue = shippedQty > 0 ? Number(r.ci_amount_total || 0) / shippedQty : 0;
+      const amt = unitValue * transitQty * rate; // 原币资产 × 汇率 → CNY
       inTransitAssets += amt;
       const code = canonCountry(r.country || '');
       transitByCountry[code] = (transitByCountry[code] || 0) + amt;
     }
     if (transitMissingRates.length > 0) {
-      console.warn('[financial-risk] 在途资产：' + transitMissingRates.length + ' 条 CI 明细缺失汇率，已跳过:', JSON.stringify(transitMissingRates.slice(0, 5)));
+      console.warn('[financial-risk] 在途资产：' + transitMissingRates.length + ' 条 SKU 明细缺失汇率，已跳过:', JSON.stringify(transitMissingRates.slice(0, 5)));
     }
 
     // --- 3. 未来应付资金压力(CNY) ---
@@ -16317,78 +16380,70 @@ app.get('/api/financial-risk/in-transit-breakdown', requireApiPermission('dashbo
 
     const foreignToRmbMap = await buildForeignToRmbMap(today, allCurrenciesSet);
 
-    // 查在途 CI 明细（与 overview 相同条件）
-    const transitRows = query(`
-      SELECT cii.ci_id, cii.ci_amount, cii.shipped_qty, cii.inbound_qty,
-             ci.ci_no, ci.currency, ci.brand, ci.country, ci.target_warehouse, ci.ci_status
-      FROM commercial_invoice_items cii
-      JOIN commercial_invoices ci ON cii.ci_id = ci.id
-      WHERE ci.ci_status NOT IN ('cancelled', 'completed')
-        AND cii.shipped_qty > 0
-        AND (cii.shipped_qty - COALESCE(cii.inbound_qty, 0)) > 0
-    `).rows;
+    // 有效在途（batch / item-level，统一口径），复用 getEffectiveTransitRows()
+    // 已到仓(completed)物流批次对应 PL 的 SKU 数量已从在途量中扣减（只剔除该部分货，保留仍在途部分）。
+    const transitRows = getEffectiveTransitRows();
 
-    // 查关联物流批次状态（用于 logistics_display_status）
     const ciIds = [...new Set(transitRows.map(r => r.ci_id))];
-    const lbMap = {}; // ci_id → 最高阶段 logistics_display_status
+
+    // 查关联物流批次状态（取最高阶段，display helper 仅用于 UI 展示，与 CI 列表页一致；多批次时显示最高阶段）
+    const lbMap = {}; // ci_id → { raw, display }
     if (ciIds.length > 0) {
       const lbRows = query(`SELECT related_ci_id, logistics_status FROM logistics_batches WHERE related_ci_id IN (${ciIds.map(() => '?').join(',')})`, ciIds).rows;
       for (const lb of lbRows) {
         const displayStatus = deriveLogisticsDisplayStatus(lb.logistics_status);
-        lbMap[lb.related_ci_id] = displayStatus;
+        const cur = lbMap[lb.related_ci_id];
+        // 取最高阶段（已到仓 > 待派送 > 清关中 > 运输中 > 待出运）
+        if (!cur || LOGISTICS_STAGE_RANK[lb.logistics_status] > LOGISTICS_STAGE_RANK[cur.raw]) {
+          lbMap[lb.related_ci_id] = { raw: lb.logistics_status, display: displayStatus };
+        }
       }
     }
 
-    // 按 CI 聚合
+    // 按 CI 聚合（金额 = unit_value × 在途量；unit_value = ci_amount_total / shipped_qty，SKU 聚合口径）
     const ciMap = {}; // ci_id → 聚合数据
     let total = 0;
     for (const r of transitRows) {
+      const transitQty = Number(r.transit_qty || 0);
+      if (transitQty <= 0) continue; // 已全部到仓 → 不在途
       const curr = (r.currency || '').toUpperCase();
       const rate = foreignToRmbMap[curr];
       if (!rate) continue; // 缺失汇率跳过（与 overview 一致）
 
-      const shippedQty = Number(r.shipped_qty);
-      const inboundQty = Number(r.inbound_qty || 0);
-      const uninboundRatio = (shippedQty - inboundQty) / shippedQty;
-      const ciAmountRmb = Number(r.ci_amount || 0) * rate;
-      const amountCny = ciAmountRmb * uninboundRatio;
-
+      const shippedQty = Number(r.shipped_qty || 0);
+      const unitValue = shippedQty > 0 ? Number(r.ci_amount_total || 0) / shippedQty : 0;
+      const amountCny = unitValue * transitQty * rate;
       total += amountCny;
 
       if (!ciMap[r.ci_id]) {
-        // 派生入库状态
-        let inboundStatus = 'none';
-        if (inboundQty >= shippedQty) inboundStatus = 'completed';
-        else if (inboundQty > 0) inboundStatus = 'partial';
-
         ciMap[r.ci_id] = {
           ci_no: r.ci_no,
           country: r.country || '',
           brand: r.brand || '',
           warehouse: r.target_warehouse || '',
-          logistics_display_status: lbMap[r.ci_id] || 'pending_shipment',
-          inbound_derived_status: inboundStatus,
+          logistics_display_status: (lbMap[r.ci_id] && lbMap[r.ci_id].display) || 'pending_shipment',
+          inbound_derived_status: 'none',
           amount_cny: 0,
           _totalShipped: 0,
-          _totalInbound: 0
+          _totalArrived: 0
         };
       }
       ciMap[r.ci_id].amount_cny += amountCny;
       ciMap[r.ci_id]._totalShipped += shippedQty;
-      ciMap[r.ci_id]._totalInbound += inboundQty;
+      ciMap[r.ci_id]._totalArrived += Number(r.arrived_qty || 0);
     }
 
-    // 重新计算 CI 级入库状态（基于所有明细行的汇总）
+    // 重新计算 CI 级到仓状态（基于物流到仓量汇总：已到仓 batch 对应 PL 的 SKU 数量）
     const items = Object.values(ciMap).map(ci => {
-      let inboundStatus = 'none';
-      if (ci._totalInbound > 0 && ci._totalInbound >= ci._totalShipped) inboundStatus = 'completed';
-      else if (ci._totalInbound > 0) inboundStatus = 'partial';
+      let arrivedStatus = 'none';
+      if (ci._totalArrived > 0 && ci._totalArrived >= ci._totalShipped) arrivedStatus = 'completed';
+      else if (ci._totalArrived > 0) arrivedStatus = 'partial';
 
       delete ci._totalShipped;
-      delete ci._totalInbound;
+      delete ci._totalArrived;
       return {
         ...ci,
-        inbound_derived_status: inboundStatus,
+        inbound_derived_status: arrivedStatus,
         amount_cny: Math.round(ci.amount_cny * 100) / 100
       };
     }).sort((a, b) => b.amount_cny - a.amount_cny);
@@ -17162,5 +17217,6 @@ module.exports = {
   exactSettlementRate,
   buildPaymentRateSnapshot,
   isValidRateDate,
+  getEffectiveTransitRows,
   app
 };
