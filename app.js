@@ -530,17 +530,6 @@ async function renderDashboard(){
         '</div>'+
       '</section>'+
       '<section class="fro-section">'+
-        '<div class="fro-section-title">'+t("fro.prepaid_purchase_asset","采购预付款占用")+'</div>'+
-        '<div class="fro-pay-grid">'+
-          '<div class="fro-pay-card">'+
-            '<div class="fro-pay-top"><span class="fro-pay-status">'+t("fro.payable_has","有待付款")+'</span></div>'+
-            '<div class="fro-pay-amount">¥ <span id="fro-prepaid">'+t("common.loading","...")+'</span></div>'+
-            '<div class="fro-pay-split" style="font-size:12px;color:#888;margin-top:4px">'+t("fro.prepaid_purchase_asset_desc","已付定金未发货 PI 占用的资金，独立风险指标，不计入库存总资产")+'</div>'+
-            '<div class="fro-pay-label">'+t("fro.prepaid_purchase_asset","采购预付款占用")+'</div>'+
-          '</div>'+
-        '</div>'+
-      '</section>'+
-      '<section class="fro-section">'+
         '<div class="fro-section-title">'+t("fro.future_payables","未来应付资金压力")+'</div>'+
         '<div class="fro-pay-grid">'+
           froPayCard('fro-pay7', t("fro.days_7","未来7天"))+
@@ -562,10 +551,6 @@ async function renderDashboard(){
     document.getElementById('fro-inventory').textContent=fmtMoney(availVal,'');
     document.getElementById('fro-transit').textContent=fmtMoney(trsVal,'');
     document.getElementById('fro-consign').textContent=fmtMoney(csnVal,'');
-    // 采购预付款占用（独立风险指标，不参与上方三段结构/占比）
-    var preVal=Number((d.prepaid_purchase_assets&&d.prepaid_purchase_assets.value)||0);
-    var preEl=document.getElementById('fro-prepaid');
-    if(preEl) preEl.textContent=fmtMoney(preVal,'');
     // 占比 = 各组件 / 库存总资产（总额为 0 时显示空，防 NaN/Infinity）
     var availPct=totalVal>0?availVal/totalVal*100:0;
     var trsPct=totalVal>0?trsVal/totalVal*100:0;
@@ -628,14 +613,13 @@ function renderFroInventoryAnalysis(){
       tableEl.innerHTML='<div class="fro-empty">'+t('common.no_data','暂无数据')+'</div>';
       return;
     }
-    var hdr='<tr><th>'+t('common.country','国家')+'</th><th>'+t('fro.asset_total_label','库存总资产（CNY）')+'</th><th>'+t('fro.prepaid_purchase_asset','采购预付款占用')+'</th><th>'+t('common.percentage','占比')+'</th><th></th></tr>';
+    var hdr='<tr><th>'+t('common.country','国家')+'</th><th>'+t('fro.asset_total_label','库存总资产（CNY）')+'</th><th>'+t('common.percentage','占比')+'</th><th></th></tr>';
     function rowHtml(g){
       var pct=grandTotal>0?(Number(g.total_asset||0)/grandTotal*100):0;
       var clickFn="renderFroCountryAssetDetail('"+String(g.country_code).replace(/'/g,"\\'")+"')";
       return '<tr>'+
         '<td class="td-bold">'+esc(g.country||'—')+'</td>'+
         '<td class="td-num td-bold">¥ '+fmtMoney(g.total_asset,'')+'</td>'+
-        '<td class="td-num">¥ '+fmtMoney(g.prepaid_purchase_asset||0,'')+'</td>'+
         '<td class="td-num">'+pct.toFixed(1)+'%</td>'+
         '<td><a class="fro-drill-link" href="javascript:'+clickFn+'">'+t('fro.drill_down','下钻 ›')+'</a></td>'+
       '</tr>';
@@ -713,13 +697,7 @@ function renderFroCountryAssetDetail(code){
       var rows=row('inv',t('fro.available_assets','可用库存'),a,aPct)+
                row('trs',t('fro.transit_inventory_assets','在途库存'),tr,trPct)+
                row('csn',t('fro.consignment_assets','寄售库存'),cs,csPct);
-      // 采购预付款占用：独立风险指标，不并入三段库存资产结构
-      var pp=Number(g.prepaid_purchase_asset||0);
-      tableEl.innerHTML='<table class="data-table fro-data-table"><thead>'+hdr+'</thead><tbody>'+rows+'</tbody></table>'+
-        '<div style="margin-top:12px;padding:10px 12px;border:1px dashed #f57f17;border-radius:8px;background:rgba(245,127,23,0.04)">'+
-          '<div style="font-size:12px;color:#f57f17;margin-bottom:4px">'+t('fro.prepaid_purchase_asset','采购预付款占用')+' · '+t('fro.prepaid_purchase_asset_desc','已付定金未发货 PI 占用的资金，独立风险指标，不计入库存总资产')+'</div>'+
-          '<div style="font-size:18px;font-weight:700">¥ '+fmtMoney(pp,'')+'</div>'+
-        '</div>';
+      tableEl.innerHTML='<table class="data-table fro-data-table"><thead>'+hdr+'</thead><tbody>'+rows+'</tbody></table>';
     }
   }).catch(function(e){
     var el=document.getElementById('fro-country-table');
@@ -734,9 +712,10 @@ function renderFroTransitAnalysis(){
         '<div class="fro-analysis-back"><a href="javascript:showPage(\'dashboard\')" class="fro-back-link">← '+t('fro.back_overview','返回总览')+'</a></div>'+
       '</div>'+
       '<div class="fro-analysis-title">'+t('fro.transit_title','运输中资产')+'</div>'+
-      '<div class="fro-analysis-subtitle">'+t('fro.transit_detail_desc','已发货未完全入库的 CI 明细')+'</div>'+
+      '<div class="fro-analysis-subtitle">'+t('fro.transit_detail_desc','物流在途 CI + 采购在途 PI')+'</div>'+
       '<div class="fro-analysis-total" id="fro-trs-total">'+t('common.loading','加载中...')+'</div>'+
-      '<div class="fro-analysis-table" id="fro-trs-table"></div>'+
+      '<div class="fro-analysis-table" id="fro-trs-ci-section"></div>'+
+      '<div class="fro-analysis-table" id="fro-trs-pi-section" style="margin-top:24px"></div>'+
     '</div>';
 
   api('/api/financial-risk/in-transit-breakdown').then(function(d){
@@ -744,56 +723,104 @@ function renderFroTransitAnalysis(){
     if(!totalEl) return;
     totalEl.innerHTML='<span class="fro-total-label">'+t('fro.in_transit_assets','在途资产')+'（CNY）</span> <span class="fro-total-amount">¥ '+fmtMoney(d.total,'')+'</span>';
 
-    var tableEl=document.getElementById('fro-trs-table');
-    if(!tableEl) return;
-
-    if(!d.items||d.items.length===0){
-      tableEl.innerHTML='<div class="fro-empty">'+t('common.no_data','暂无数据')+'</div>';
-      return;
-    }
-
-    function inboundStatusLabel(s){
-      if(s==='completed') return t('fro.inbound_complete','已入库');
-      if(s==='partial') return t('fro.inbound_partial','部分入库');
-      return t('fro.inbound_none','未入库');
-    }
-    function inboundBadgeClass(s){
-      if(s==='completed') return 'status-completed';
-      if(s==='partial') return 'status-warning';
-      return 'status-pending';
-    }
-
-    var hdr='<tr>'+
-      '<th>CI '+t('common.number','编号')+'</th>'+
-      '<th>'+t('common.country','国家')+'</th>'+
-      '<th>'+t('common.brand','品牌')+'</th>'+
-      '<th>'+t('common.warehouse','仓库')+'</th>'+
-      '<th>'+t('fro.logistics_status','物流状态')+'</th>'+
-      '<th>'+t('fro.inbound_status','入库状态')+'</th>'+
-      '<th>'+t('fro.amount_cny','金额(CNY)')+'</th>'+
-      '<th>'+t('common.percentage','占比')+'</th>'+
-    '</tr>';
     var total=d.total||0;
-    var rowsHtml=d.items.map(function(it){
-      var logLabel=logisticsStatusLabelByKey(it.logistics_display_status);
-      var logBadge=logisticsStatusBadgeClassByKey(it.logistics_display_status);
-      var inbLabel=inboundStatusLabel(it.inbound_derived_status);
-      var inbBadge=inboundBadgeClass(it.inbound_derived_status);
-      var pct=total>0?(Number(it.amount_cny||0)/total*100).toFixed(1):'0.0';
-      return '<tr>'+
-        '<td class="td-mono td-bold">'+esc(it.ci_no)+'</td>'+
-        '<td>'+esc(it.country||'—')+'</td>'+
-        '<td>'+esc(it.brand||'—')+'</td>'+
-        '<td>'+esc(it.warehouse||'—')+'</td>'+
-        '<td><span class="status-badge '+logBadge+'">'+esc(logLabel)+'</span></td>'+
-        '<td><span class="status-badge '+inbBadge+'">'+esc(inbLabel)+'</span></td>'+
-        '<td class="td-num td-bold">¥ '+fmtMoney(it.amount_cny,'')+'</td>'+
-        '<td class="td-num">'+pct+'%</td>'+
+    var ciItems=(d.items||[]).filter(function(it){return it.type==='CI_TRANSIT';});
+    var piItems=(d.items||[]).filter(function(it){return it.type==='PI_TRANSIT';});
+
+    // --- A. 物流在途 ---
+    var ciSection=document.getElementById('fro-trs-ci-section');
+    if(!ciSection) return;
+    var ciSubtotal=d.ci_transit_total||0;
+    ciSection.innerHTML=
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">'+
+        '<div style="font-size:15px;font-weight:700">'+t('fro.transit_section_logistics','物流在途')+'</div>'+
+        '<div style="font-size:14px;color:#666">小计: ¥ '+fmtMoney(ciSubtotal,'')+'</div>'+
+      '</div>';
+    if(ciItems.length===0){
+      ciSection.innerHTML+='<div class="fro-empty">'+t('common.no_data','暂无数据')+'</div>';
+    }else{
+      function inboundStatusLabel(s){
+        if(s==='completed') return t('fro.inbound_complete','已入库');
+        if(s==='partial') return t('fro.inbound_partial','部分入库');
+        return t('fro.inbound_none','未入库');
+      }
+      function inboundBadgeClass(s){
+        if(s==='completed') return 'status-completed';
+        if(s==='partial') return 'status-warning';
+        return 'status-pending';
+      }
+      var ciHdr='<tr>'+
+        '<th>CI '+t('common.number','编号')+'</th>'+
+        '<th>'+t('common.country','国家')+'</th>'+
+        '<th>'+t('common.brand','品牌')+'</th>'+
+        '<th>'+t('common.warehouse','仓库')+'</th>'+
+        '<th>'+t('fro.logistics_status','物流状态')+'</th>'+
+        '<th>'+t('fro.inbound_status','入库状态')+'</th>'+
+        '<th>'+t('fro.amount_cny','金额(CNY)')+'</th>'+
+        '<th>'+t('common.percentage','占比')+'</th>'+
       '</tr>';
-    }).join('');
-    tableEl.innerHTML='<table class="data-table fro-data-table"><thead>'+hdr+'</thead><tbody>'+rowsHtml+'</tbody></table>';
+      var ciRowsHtml=ciItems.map(function(it){
+        var logLabel=logisticsStatusLabelByKey(it.logistics_display_status);
+        var logBadge=logisticsStatusBadgeClassByKey(it.logistics_display_status);
+        var inbLabel=inboundStatusLabel(it.inbound_derived_status);
+        var inbBadge=inboundBadgeClass(it.inbound_derived_status);
+        var pct=total>0?(Number(it.amount_cny||0)/total*100).toFixed(1):'0.0';
+        return '<tr>'+
+          '<td class="td-mono td-bold">'+esc(it.ci_no)+'</td>'+
+          '<td>'+esc(it.country||'—')+'</td>'+
+          '<td>'+esc(it.brand||'—')+'</td>'+
+          '<td>'+esc(it.warehouse||'—')+'</td>'+
+          '<td><span class="status-badge '+logBadge+'">'+esc(logLabel)+'</span></td>'+
+          '<td><span class="status-badge '+inbBadge+'">'+esc(inbLabel)+'</span></td>'+
+          '<td class="td-num td-bold">¥ '+fmtMoney(it.amount_cny,'')+'</td>'+
+          '<td class="td-num">'+pct+'%</td>'+
+        '</tr>';
+      }).join('');
+      ciSection.innerHTML+='<table class="data-table fro-data-table"><thead>'+ciHdr+'</thead><tbody>'+ciRowsHtml+'</tbody></table>';
+    }
+
+    // --- B. 采购在途 ---
+    var piSection=document.getElementById('fro-trs-pi-section');
+    if(!piSection) return;
+    var piSubtotal=d.pi_transit_total||0;
+    piSection.innerHTML=
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">'+
+        '<div style="font-size:15px;font-weight:700">'+t('fro.transit_section_purchase','采购在途')+'</div>'+
+        '<div style="font-size:14px;color:#666">小计: ¥ '+fmtMoney(piSubtotal,'')+'</div>'+
+      '</div>';
+    if(piItems.length===0){
+      piSection.innerHTML+='<div class="fro-empty">'+t('common.no_data','暂无数据')+'</div>';
+    }else{
+      var piHdr='<tr>'+
+        '<th>PI '+t('common.number','编号')+'</th>'+
+        '<th>'+t('common.country','国家')+'</th>'+
+        '<th>'+t('common.brand','品牌')+'</th>'+
+        '<th>'+t('common.warehouse','仓库')+'</th>'+
+        '<th>'+t('fro.pi_total_amount','PI总额')+'</th>'+
+        '<th>'+t('fro.paid_deposit','已付定金')+'</th>'+
+        '<th>'+t('fro.active_ci_value','已转CI')+'</th>'+
+        '<th>'+t('fro.amount_cny','在途贡献(CNY)')+'</th>'+
+        '<th>'+t('common.percentage','占比')+'</th>'+
+      '</tr>';
+      var piRowsHtml=piItems.map(function(it){
+        var pct=total>0?(Number(it.amount_cny||0)/total*100).toFixed(1):'0.0';
+        var curr=esc(it.pi_currency||'');
+        return '<tr>'+
+          '<td class="td-mono td-bold">'+esc(it.pi_no)+'</td>'+
+          '<td>'+esc(it.country||'—')+'</td>'+
+          '<td>'+esc(it.brand||'—')+'</td>'+
+          '<td>'+esc(it.warehouse||'—')+'</td>'+
+          '<td class="td-num">'+fmtMoney(it.pi_total_amount||0,'')+' '+curr+'</td>'+
+          '<td class="td-num">'+fmtMoney(it.paid_deposit||0,'')+' '+curr+'</td>'+
+          '<td class="td-num">'+fmtMoney(it.active_ci_value||0,'')+' '+curr+'</td>'+
+          '<td class="td-num td-bold">¥ '+fmtMoney(it.amount_cny,'')+'</td>'+
+          '<td class="td-num">'+pct+'%</td>'+
+        '</tr>';
+      }).join('');
+      piSection.innerHTML+='<table class="data-table fro-data-table"><thead>'+piHdr+'</thead><tbody>'+piRowsHtml+'</tbody></table>';
+    }
   }).catch(function(e){
-    var el=document.getElementById('fro-trs-table');
+    var el=document.getElementById('fro-trs-ci-section');
     if(el) el.innerHTML='<div class="fro-empty fro-error">'+esc(e.message)+'</div>';
   });
 }

@@ -4602,7 +4602,7 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.zh["fro.dim_sku"]="SKU 明细"; I18N.dict.en["fro.dim_sku"]="SKU Details"; I18N.dict.id["fro.dim_sku"]="Detail SKU";
   I18N.dict.zh["fro.amount_cny"]="金额(CNY)"; I18N.dict.en["fro.amount_cny"]="Amount (CNY)"; I18N.dict.id["fro.amount_cny"]="Jumlah (CNY)";
   I18N.dict.zh["fro.drill_down"]="下钻 ›"; I18N.dict.en["fro.drill_down"]="Drill Down ›"; I18N.dict.id["fro.drill_down"]="Detail ›";
-  I18N.dict.zh["fro.transit_detail_desc"]="已发货未完全入库的 CI 明细"; I18N.dict.en["fro.transit_detail_desc"]="Shipped but not fully inbound CI details"; I18N.dict.id["fro.transit_detail_desc"]="Detail CI yang dikirim namun belum diterima sepenuhnya";
+  I18N.dict.zh["fro.transit_detail_desc"]="物流在途 CI + 采购在途 PI"; I18N.dict.en["fro.transit_detail_desc"]="Logistics in-transit CIs + Purchase in-transit PIs"; I18N.dict.id["fro.transit_detail_desc"]="CI dalam pengiriman + PI dalam pembelian";
   I18N.dict.zh["fro.logistics_status"]="物流状态"; I18N.dict.en["fro.logistics_status"]="Logistics Status"; I18N.dict.id["fro.logistics_status"]="Status Logistik";
   I18N.dict.zh["fro.inbound_status"]="入库状态"; I18N.dict.en["fro.inbound_status"]="Inbound Status"; I18N.dict.id["fro.inbound_status"]="Status Penerimaan";
   I18N.dict.zh["fro.inbound_complete"]="已入库"; I18N.dict.en["fro.inbound_complete"]="Fully Inbound"; I18N.dict.id["fro.inbound_complete"]="Diterima Sepenuhnya";
@@ -4614,9 +4614,12 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.zh["fro.available_assets"]="可用库存"; I18N.dict.en["fro.available_assets"]="Available Inventory"; I18N.dict.id["fro.available_assets"]="Inventaris Tersedia";
   I18N.dict.zh["fro.transit_inventory_assets"]="在途库存"; I18N.dict.en["fro.transit_inventory_assets"]="In-Transit Inventory"; I18N.dict.id["fro.transit_inventory_assets"]="Inventaris Dalam Pengiriman";
   I18N.dict.zh["fro.consignment_assets"]="寄售库存"; I18N.dict.en["fro.consignment_assets"]="Consignment Inventory"; I18N.dict.id["fro.consignment_assets"]="Inventaris Konsinyasi";
-  // 采购预付款占用（独立风险指标，不并入库存总资产）
-  I18N.dict.zh["fro.prepaid_purchase_asset"]="采购预付款占用"; I18N.dict.en["fro.prepaid_purchase_asset"]="Prepaid Purchase Deposit"; I18N.dict.id["fro.prepaid_purchase_asset"]="Uang Muka Pembelian";
-  I18N.dict.zh["fro.prepaid_purchase_asset_desc"]="已付定金未发货 PI 占用的资金，独立风险指标，不计入库存总资产"; I18N.dict.en["fro.prepaid_purchase_asset_desc"]="Paid deposit on unshipped PIs; independent risk indicator, not included in total inventory assets"; I18N.dict.id["fro.prepaid_purchase_asset_desc"]="Deposit dibayar untuk PI yang belum dikirim; indikator risiko independen, tidak termasuk total aset inventaris";
+  // 在途下钻：物流在途 + 采购在途
+  I18N.dict.zh["fro.transit_section_logistics"]="物流在途"; I18N.dict.en["fro.transit_section_logistics"]="Logistics in Transit"; I18N.dict.id["fro.transit_section_logistics"]="Logistik Dalam Pengiriman";
+  I18N.dict.zh["fro.transit_section_purchase"]="采购在途"; I18N.dict.en["fro.transit_section_purchase"]="Purchase in Transit"; I18N.dict.id["fro.transit_section_purchase"]="Pembelian Dalam Pengiriman";
+  I18N.dict.zh["fro.pi_total_amount"]="PI总额"; I18N.dict.en["fro.pi_total_amount"]="PI Total"; I18N.dict.id["fro.pi_total_amount"]="Total PI";
+  I18N.dict.zh["fro.paid_deposit"]="已付定金"; I18N.dict.en["fro.paid_deposit"]="Deposit Paid"; I18N.dict.id["fro.paid_deposit"]="Deposit Dibayar";
+  I18N.dict.zh["fro.active_ci_value"]="已转CI"; I18N.dict.en["fro.active_ci_value"]="CI Converted"; I18N.dict.id["fro.active_ci_value"]="CI Dikonversi";
   I18N.dict.zh["fro.asset_total_label"]="库存总资产（CNY）"; I18N.dict.en["fro.asset_total_label"]="Total Inventory Assets (CNY)"; I18N.dict.id["fro.asset_total_label"]="Total Aset Inventaris (CNY)";
   I18N.dict.zh["fro.hero_sub"]="当前供应链资金占用"; I18N.dict.en["fro.hero_sub"]="Current supply chain capital tied up"; I18N.dict.id["fro.hero_sub"]="Modal rantai pasokan saat ini terikat";
   I18N.dict.zh["fro.view_detail"]="查看明细"; I18N.dict.en["fro.view_detail"]="View Details"; I18N.dict.id["fro.view_detail"]="Lihat Detail";

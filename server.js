@@ -7987,50 +7987,51 @@ function getEffectiveTransitRows(ciScopeSql, ciScopeParams) {
   return rows;
 }
 
-// 采购预付款占用（paid_unshipped_asset / prepaid_purchase_asset）：
-// 事实源 = 实时 UNION 聚合「已转化货值」(active_shipped_value)，按 pi_id 归集。
+// PI 采购在途资产（pi_transit_asset）：
+// 事实源 = 实时 UNION 聚合「active_ci_value」（已转 CI 货值），按 pi_id 归集。
 //   - 正常 CI：commercial_invoice_items JOIN commercial_invoices
-//       WHERE ci_status NOT IN ('cancelled','reversed')  -- 排除作废(void 不回滚→残留) / 冲销(reverse 已回滚)
+//       WHERE ci_status NOT IN ('cancelled','reversed')  -- 排除作废 / 冲销
 //         AND cii.pi_id IS NOT NULL AND cii.pi_id <> ''
 //   - 历史 CI：historical_commercial_invoice_items JOIN historical_commercial_invoices
 //       WHERE hcii.pi_id IS NOT NULL AND hcii.pi_id <> ''
-//   二者 UNION 后按 pi_id 汇总 → 每个 PI 的 active_shipped_value。
+//   二者 UNION 后按 pi_id 汇总 → 每个 PI 的 active_ci_value。
 // 不使用 proforma_invoices.shipped_amount（缓存：void 不回滚→残留；CI item 修改→漂移）。
-// 预付款占用 = paid_deposit × MAX(0, (total_amount − active_shipped_value) / total_amount) × FX。
-// 返回：{ totalOrig, totalCny, byCountryCny, missingRates }。
+// PI 在途贡献 = MAX(0, total_amount − active_ci_value) × FX。
+// 返回：{ totalOrig, totalCny, byCountryCny, missingRates, details }。
+// details 供 in-transit-breakdown 下钻使用；overview/dashboard 仅消费总额/按国家。
 // 复用 foreignToRmbMap（缺失汇率跳过该行，与在途一致，禁止 fallback=1）与 dsf.pi 数据权限过滤。
-function getPrepaidPurchaseAssets(foreignToRmbMap, piScopeSql, piScopeParams) {
+function getPiTransitAssets(foreignToRmbMap, piScopeSql, piScopeParams) {
   const scopeSql = (piScopeSql && String(piScopeSql).trim()) ? ' AND ' + piScopeSql : '';
   const scopeParams = Array.isArray(piScopeParams) ? piScopeParams : [];
 
-  // 1) 实时聚合 active_shipped_value（按 pi_id），UNION 正常 CI + 历史 CI
-  const shippedRows = query(`
-    WITH shipped AS (
-      SELECT cii.pi_id AS pi_id, SUM(COALESCE(cii.ci_amount, 0)) AS shipped_value
+  // 1) 实时聚合 active_ci_value（按 pi_id），UNION 正常 CI + 历史 CI
+  const ciValueRows = query(`
+    WITH ci_values AS (
+      SELECT cii.pi_id AS pi_id, SUM(COALESCE(cii.ci_amount, 0)) AS ci_value
       FROM commercial_invoice_items cii
       JOIN commercial_invoices ci ON ci.id = cii.ci_id
       WHERE ci.ci_status NOT IN ('cancelled', 'reversed')
         AND cii.pi_id IS NOT NULL AND cii.pi_id <> ''
       GROUP BY cii.pi_id
       UNION ALL
-      SELECT hcii.pi_id AS pi_id, SUM(COALESCE(hcii.ci_amount, 0)) AS shipped_value
+      SELECT hcii.pi_id AS pi_id, SUM(COALESCE(hcii.ci_amount, 0)) AS ci_value
       FROM historical_commercial_invoice_items hcii
       JOIN historical_commercial_invoices hci ON hci.id = hcii.hci_id
       WHERE hcii.pi_id IS NOT NULL AND hcii.pi_id <> ''
       GROUP BY hcii.pi_id
     )
-    SELECT pi_id, SUM(shipped_value) AS active_shipped_value
-    FROM shipped
+    SELECT pi_id, SUM(ci_value) AS active_ci_value
+    FROM ci_values
     GROUP BY pi_id
   `).rows;
-  const shippedByPi = {};
-  for (const r of shippedRows) {
-    if (r.pi_id) shippedByPi[r.pi_id] = (shippedByPi[r.pi_id] || 0) + Number(r.active_shipped_value || 0);
+  const ciValueByPi = {};
+  for (const r of ciValueRows) {
+    if (r.pi_id) ciValueByPi[r.pi_id] = (ciValueByPi[r.pi_id] || 0) + Number(r.active_ci_value || 0);
   }
 
-  // 2) 逐 PI 计算采购预付款占用（已付定金未发货部分）
+  // 2) 逐 PI 计算 PI 采购在途贡献（已付定金、未完全转 CI 部分总额）
   const piRows = query(`
-    SELECT id, pi_no, country, currency, total_amount, paid_deposit
+    SELECT id, pi_no, country, brand, target_warehouse, currency, total_amount, paid_deposit
     FROM proforma_invoices
     WHERE pi_status NOT IN ('cancelled')
       AND paid_deposit > 0
@@ -8042,27 +8043,38 @@ function getPrepaidPurchaseAssets(foreignToRmbMap, piScopeSql, piScopeParams) {
   let totalCny = 0;
   const byCountryCny = {};
   const missingRates = [];
+  const details = [];
   for (const pi of piRows) {
     const total = Number(pi.total_amount || 0);
     const paid = Number(pi.paid_deposit || 0);
     if (total <= 0 || paid <= 0) continue;
-    const shipped = shippedByPi[pi.id] || 0;
-    const unshippedRatio = Math.max(0, (total - shipped) / total);
-    const prepaidOrig = paid * unshippedRatio;
+    const activeCiValue = ciValueByPi[pi.id] || 0;
+    const transitOrig = Math.max(0, total - activeCiValue);
+    if (transitOrig <= 0) continue; // 已全部转 CI → 不在途
     const curr = (pi.currency || '').toUpperCase();
     const rate = foreignToRmbMap ? foreignToRmbMap[curr] : null;
     if (!rate) {
-      // 缺失汇率：禁止 fallback=1，跳过并记录（与在途资产一致）
-      missingRates.push({ pi_no: pi.pi_no, currency: pi.currency, prepaid_orig: prepaidOrig });
+      missingRates.push({ pi_no: pi.pi_no, currency: pi.currency, transit_orig: transitOrig });
       continue;
     }
-    const prepaidCny = prepaidOrig * rate;
-    totalOrig += prepaidOrig;
-    totalCny += prepaidCny;
+    const transitCny = transitOrig * rate;
+    totalOrig += transitOrig;
+    totalCny += transitCny;
     const code = canonCountry(pi.country || '');
-    byCountryCny[code] = (byCountryCny[code] || 0) + prepaidCny;
+    byCountryCny[code] = (byCountryCny[code] || 0) + transitCny;
+    details.push({
+      pi_no: pi.pi_no,
+      country: pi.country || '',
+      brand: pi.brand || '',
+      warehouse: pi.target_warehouse || '',
+      pi_total_amount: total,
+      pi_currency: pi.currency || '',
+      paid_deposit: paid,
+      active_ci_value: activeCiValue,
+      amount_cny: Math.round(transitCny * 100) / 100
+    });
   }
-  return { totalOrig, totalCny, byCountryCny, missingRates };
+  return { totalOrig, totalCny, byCountryCny, missingRates, details };
 }
 
 app.get('/api/commercial-invoices', requireApiPermission('ci_view'), asyncHandler((req, res) => {
@@ -15931,10 +15943,10 @@ app.get('/api/dashboard', requireApiPermission('dashboard_view'), asyncHandler((
       transitInv += unitValue * transitQty; // 原币口径（与 total_inventory_value 一致，不折 CNY）
     }
 
-    // 采购预付款占用（独立风险指标，原币口径，与 in_transit_value 一致不折 CNY）
-    // 实时 UNION 聚合 active_shipped_value（排除 cancelled/reversed + 历史 CI），不读 PI.shipped_amount 缓存。
-    const prepaidDash = getPrepaidPurchaseAssets(null, dsf.pi.sql, dsf.pi.params);
-    const paidUnshippedValue = prepaidDash.totalOrig; // 原币混合口径，与 in_transit_value 对齐
+    // PI 采购在途（原币口径，与 in_transit_value 一致不折 CNY）
+    // PI 已付定金但未完全转 CI 的采购资产 = MAX(0, total_amount − active_ci_value)
+    const piTransitDash = getPiTransitAssets(null, dsf.pi.sql, dsf.pi.params);
+    transitInv += piTransitDash.totalOrig; // PI 在途贡献并入在途库存（原币混合口径）
 
     // 呆滞库存金额
     const stagnantInv = queryOne(`
@@ -15998,7 +16010,6 @@ app.get('/api/dashboard', requireApiPermission('dashboard_view'), asyncHandler((
       total_inventory_value: Math.round(totalInv * 100) / 100,
       available_inventory_value: Math.round(totalInv * 100) / 100,
       in_transit_value: Math.round(transitInv * 100) / 100,
-      paid_unshipped_value: Math.round(paidUnshippedValue * 100) / 100,
       stagnant_value: Math.round(stagnantInv * 100) / 100,
       shortage_sku_count: shortageSkus,
       suggest_purchase_amount: Math.round(suggestAmount * 100) / 100,
@@ -16030,7 +16041,7 @@ app.get('/api/dashboard', requireApiPermission('dashboard_view'), asyncHandler((
 app.get('/api/financial-risk/overview', requireApiPermission('dashboard_view'), asyncHandler(async (req, res) => {
   try {
     const today = new Date().toISOString().split('T')[0];
-    // DATA-SCOPE: 首页资金风险总览数据权限过滤（prepaid 指标复用 dsf.pi 与 piPending 一致）
+    // DATA-SCOPE: 首页资金风险总览数据权限过滤（PI 采购在途复用 dsf.pi 与 piPending 一致）
     const dsf = buildDashboardScopeFilters(req);
 
     // --- 国家→货币映射（与库存总表 /api/inventory/currency-rates 完全一致） ---
@@ -16192,13 +16203,15 @@ app.get('/api/financial-risk/overview', requireApiPermission('dashboard_view'), 
       console.warn('[financial-risk] 在途资产：' + transitMissingRates.length + ' 条 SKU 明细缺失汇率，已跳过:', JSON.stringify(transitMissingRates.slice(0, 5)));
     }
 
-    // --- 2b. 采购预付款占用(CNY)（独立风险指标，不并入库存资产） ---
-    // 实时 UNION 聚合 active_shipped_value（排除 cancelled/reversed + 历史 CI），不读 PI.shipped_amount 缓存。
-    const prepaid = getPrepaidPurchaseAssets(foreignToRmbMap, dsf.pi.sql, dsf.pi.params);
-    let prepaidAssets = prepaid.totalCny;
-    const prepaidByCountry = prepaid.byCountryCny;
-    if (prepaid.missingRates.length > 0) {
-      console.warn('[financial-risk] 采购预付款占用：' + prepaid.missingRates.length + ' 条 PI 缺失汇率，已跳过:', JSON.stringify(prepaid.missingRates.slice(0, 5)));
+    // --- 2b. PI 采购在途(CNY)（并入在途库存资产） ---
+    // PI 已付定金但未完全转 CI 的采购资产 = MAX(0, total_amount − active_ci_value) × FX
+    const piTransit = getPiTransitAssets(foreignToRmbMap, dsf.pi.sql, dsf.pi.params);
+    inTransitAssets += piTransit.totalCny;
+    for (const [code, val] of Object.entries(piTransit.byCountryCny)) {
+      transitByCountry[code] = (transitByCountry[code] || 0) + val;
+    }
+    if (piTransit.missingRates.length > 0) {
+      console.warn('[financial-risk] PI 采购在途：' + piTransit.missingRates.length + ' 条 PI 缺失汇率，已跳过:', JSON.stringify(piTransit.missingRates.slice(0, 5)));
     }
 
     // --- 3. 未来应付资金压力(CNY) ---
@@ -16275,15 +16288,13 @@ app.get('/api/financial-risk/overview', requireApiPermission('dashboard_view'), 
     const countryCodeSet = new Set([
       ...Object.keys(availableByCountry),
       ...Object.keys(transitByCountry),
-      ...Object.keys(consignmentByCountry),
-      ...Object.keys(prepaidByCountry)
+      ...Object.keys(consignmentByCountry)
     ]);
     const countries = [];
     for (const code of countryCodeSet) {
       const a = availableByCountry[code] || 0;
       const t = transitByCountry[code] || 0;
       const c = consignmentByCountry[code] || 0;
-      const p = prepaidByCountry[code] || 0;
       const ct = a + t + c;
       countries.push({
         country: displayCountry(code),
@@ -16292,7 +16303,6 @@ app.get('/api/financial-risk/overview', requireApiPermission('dashboard_view'), 
         available_asset: round2(a),
         transit_asset: round2(t),
         consignment_asset: round2(c),
-        prepaid_purchase_asset: round2(p),
         percentage: grandTotal > 0 ? Math.round(ct / grandTotal * 1000) / 10 : 0
       });
     }
@@ -16305,8 +16315,6 @@ app.get('/api/financial-risk/overview', requireApiPermission('dashboard_view'), 
       available_assets: { value: round2(availableTotal), currency: 'CNY' },
       in_transit_assets: { value: round2(transitTotal), currency: 'CNY' },
       consignment_assets: { value: round2(consignmentTotal), currency: 'CNY' },
-      // 采购预付款占用（独立风险指标，不并入 total_assets 恒等式：available + transit + consignment）
-      prepaid_purchase_assets: { value: round2(prepaidAssets), currency: 'CNY' },
       // 保持旧语义不变：inventory_assets = 可用库存 + 寄售库存（不含在途）。
       // 旧调用者若仍依赖此字段，其金额与改造前完全一致，避免 silent semantic regression。
       // 新首页请改用 available_assets / in_transit_assets / consignment_assets / total_assets。
@@ -16489,10 +16497,12 @@ app.get('/api/financial-risk/in-transit-breakdown', requireApiPermission('dashbo
     const countryToCurrency = {};
     for (const c of allCountries) { countryToCurrency[c.name] = c.default_currency; }
 
-    // 收集 CI 币种
+    // 收集 CI + PI 币种（PI 采购在途也需要 FX）
     const ciCurrencies = query("SELECT DISTINCT currency FROM commercial_invoices WHERE currency IS NOT NULL AND currency != ''").rows.map(r => r.currency);
+    const piCurrencies = query("SELECT DISTINCT currency FROM proforma_invoices WHERE currency IS NOT NULL AND currency != ''").rows.map(r => r.currency);
     const allCurrenciesSet = new Set(['RMB', 'CNY']);
     ciCurrencies.forEach(curr => allCurrenciesSet.add(curr));
+    piCurrencies.forEach(curr => allCurrenciesSet.add(curr));
 
     const foreignToRmbMap = await buildForeignToRmbMap(today, allCurrenciesSet);
 
@@ -16550,7 +16560,7 @@ app.get('/api/financial-risk/in-transit-breakdown', requireApiPermission('dashbo
     }
 
     // 重新计算 CI 级到仓状态（基于物流到仓量汇总：已到仓 batch 对应 PL 的 SKU 数量）
-    const items = Object.values(ciMap).map(ci => {
+    const ciItems = Object.values(ciMap).map(ci => {
       let arrivedStatus = 'none';
       if (ci._totalArrived > 0 && ci._totalArrived >= ci._totalShipped) arrivedStatus = 'completed';
       else if (ci._totalArrived > 0) arrivedStatus = 'partial';
@@ -16558,15 +16568,32 @@ app.get('/api/financial-risk/in-transit-breakdown', requireApiPermission('dashbo
       delete ci._totalShipped;
       delete ci._totalArrived;
       return {
+        type: 'CI_TRANSIT',
         ...ci,
         inbound_derived_status: arrivedStatus,
         amount_cny: Math.round(ci.amount_cny * 100) / 100
       };
     }).sort((a, b) => b.amount_cny - a.amount_cny);
 
+    // PI 采购在途明细（已付定金、未完全转 CI 的采购资产）
+    const piTransit = getPiTransitAssets(foreignToRmbMap, '', []);
+    const piItems = piTransit.details.map(d => ({
+      type: 'PI_TRANSIT',
+      ...d
+    })).sort((a, b) => b.amount_cny - a.amount_cny);
+
+    if (piTransit.missingRates.length > 0) {
+      console.warn('[in-transit-breakdown] PI 采购在途：' + piTransit.missingRates.length + ' 条 PI 缺失汇率，已跳过:', JSON.stringify(piTransit.missingRates.slice(0, 5)));
+    }
+
+    const ciTransitTotal = Math.round(total * 100) / 100;
+    const piTransitTotal = Math.round(piTransit.totalCny * 100) / 100;
+
     res.json({
-      total: Math.round(total * 100) / 100,
-      items
+      total: ciTransitTotal + piTransitTotal,
+      ci_transit_total: ciTransitTotal,
+      pi_transit_total: piTransitTotal,
+      items: [...ciItems, ...piItems]
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
@@ -17334,7 +17361,7 @@ module.exports = {
   buildPaymentRateSnapshot,
   isValidRateDate,
   getEffectiveTransitRows,
-  getPrepaidPurchaseAssets,
+  getPiTransitAssets,
   finalPaymentApprovalInput,
   paymentSettlementFacts,
   derivePaymentStatus,
