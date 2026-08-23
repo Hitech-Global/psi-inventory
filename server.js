@@ -4786,7 +4786,7 @@ app.post('/api/sales-records/delete-preflight', requireApiPermission('outbound_d
   }
 
   let result;
-  if (process.env.DATABASE_URL) {
+  if ((process.env.DB_DRIVER || 'sqlite').toLowerCase() === 'pg') {
     result = await withGenerateClient(async (aq, aqOne, run) => doPreflight(buildPgExec(aq, aqOne, run)));
   } else {
     result = await doPreflight(buildSqliteExec());
@@ -4878,15 +4878,16 @@ async function execSalesDeletionFlow(exec, req, requestedIds, dialect) {
 
 // §1 构造统一 exec + 选择正确驱动事务（PG: withGenerateClient / SQLite: db.transaction）
 async function runSalesDeletionInTx(req, requestedIds) {
-  if (process.env.DATABASE_URL) {
+  if ((process.env.DB_DRIVER || 'sqlite').toLowerCase() === 'pg') {
     return await withGenerateClient(async (aq, aqOne, run) => {
       const exec = buildPgExec(aq, aqOne, run);
       return await execSalesDeletionFlow(exec, req, requestedIds, 'pg');
     });
   }
-  return await transaction(async () => {
+  return await transaction(() => {
     const exec = buildSqliteExec();
-    return await execSalesDeletionFlow(exec, req, requestedIds, 'sqlite');
+
+    return execSalesDeletionFlow(exec, req, requestedIds, 'sqlite');
   });
 }
 
