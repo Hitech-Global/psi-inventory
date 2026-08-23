@@ -7974,7 +7974,7 @@ function getEffectiveTransitRows(ciScopeSql, ciScopeParams) {
         AND lb.related_ci_id IS NOT NULL
       GROUP BY lb.related_ci_id, pli.sku_code
     )
-    SELECT s.ci_id, ci.ci_no, ci.currency, ci.country, ci.target_warehouse,
+    SELECT s.ci_id, ci.ci_no, ci.currency, ci.country, ci.target_warehouse, ci.brand,
            s.sku_code, s.shipped_qty, s.ci_amount_total,
            COALESCE(a.arrived_qty, 0) AS arrived_qty,
            CASE WHEN COALESCE(s.shipped_qty, 0) - COALESCE(a.arrived_qty, 0) < 0 THEN 0
