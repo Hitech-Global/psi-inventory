@@ -4614,6 +4614,9 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.zh["fro.available_assets"]="可用库存"; I18N.dict.en["fro.available_assets"]="Available Inventory"; I18N.dict.id["fro.available_assets"]="Inventaris Tersedia";
   I18N.dict.zh["fro.transit_inventory_assets"]="在途库存"; I18N.dict.en["fro.transit_inventory_assets"]="In-Transit Inventory"; I18N.dict.id["fro.transit_inventory_assets"]="Inventaris Dalam Pengiriman";
   I18N.dict.zh["fro.consignment_assets"]="寄售库存"; I18N.dict.en["fro.consignment_assets"]="Consignment Inventory"; I18N.dict.id["fro.consignment_assets"]="Inventaris Konsinyasi";
+  // 采购预付款占用（独立风险指标，不并入库存总资产）
+  I18N.dict.zh["fro.prepaid_purchase_asset"]="采购预付款占用"; I18N.dict.en["fro.prepaid_purchase_asset"]="Prepaid Purchase Deposit"; I18N.dict.id["fro.prepaid_purchase_asset"]="Uang Muka Pembelian";
+  I18N.dict.zh["fro.prepaid_purchase_asset_desc"]="已付定金未发货 PI 占用的资金，独立风险指标，不计入库存总资产"; I18N.dict.en["fro.prepaid_purchase_asset_desc"]="Paid deposit on unshipped PIs; independent risk indicator, not included in total inventory assets"; I18N.dict.id["fro.prepaid_purchase_asset_desc"]="Deposit dibayar untuk PI yang belum dikirim; indikator risiko independen, tidak termasuk total aset inventaris";
   I18N.dict.zh["fro.asset_total_label"]="库存总资产（CNY）"; I18N.dict.en["fro.asset_total_label"]="Total Inventory Assets (CNY)"; I18N.dict.id["fro.asset_total_label"]="Total Aset Inventaris (CNY)";
   I18N.dict.zh["fro.hero_sub"]="当前供应链资金占用"; I18N.dict.en["fro.hero_sub"]="Current supply chain capital tied up"; I18N.dict.id["fro.hero_sub"]="Modal rantai pasokan saat ini terikat";
   I18N.dict.zh["fro.view_detail"]="查看明细"; I18N.dict.en["fro.view_detail"]="View Details"; I18N.dict.id["fro.view_detail"]="Lihat Detail";

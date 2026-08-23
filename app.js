@@ -530,6 +530,17 @@ async function renderDashboard(){
         '</div>'+
       '</section>'+
       '<section class="fro-section">'+
+        '<div class="fro-section-title">'+t("fro.prepaid_purchase_asset","采购预付款占用")+'</div>'+
+        '<div class="fro-pay-grid">'+
+          '<div class="fro-pay-card">'+
+            '<div class="fro-pay-top"><span class="fro-pay-status">'+t("fro.payable_has","有待付款")+'</span></div>'+
+            '<div class="fro-pay-amount">¥ <span id="fro-prepaid">'+t("common.loading","...")+'</span></div>'+
+            '<div class="fro-pay-split" style="font-size:12px;color:#888;margin-top:4px">'+t("fro.prepaid_purchase_asset_desc","已付定金未发货 PI 占用的资金，独立风险指标，不计入库存总资产")+'</div>'+
+            '<div class="fro-pay-label">'+t("fro.prepaid_purchase_asset","采购预付款占用")+'</div>'+
+          '</div>'+
+        '</div>'+
+      '</section>'+
+      '<section class="fro-section">'+
         '<div class="fro-section-title">'+t("fro.future_payables","未来应付资金压力")+'</div>'+
         '<div class="fro-pay-grid">'+
           froPayCard('fro-pay7', t("fro.days_7","未来7天"))+
@@ -551,6 +562,10 @@ async function renderDashboard(){
     document.getElementById('fro-inventory').textContent=fmtMoney(availVal,'');
     document.getElementById('fro-transit').textContent=fmtMoney(trsVal,'');
     document.getElementById('fro-consign').textContent=fmtMoney(csnVal,'');
+    // 采购预付款占用（独立风险指标，不参与上方三段结构/占比）
+    var preVal=Number((d.prepaid_purchase_assets&&d.prepaid_purchase_assets.value)||0);
+    var preEl=document.getElementById('fro-prepaid');
+    if(preEl) preEl.textContent=fmtMoney(preVal,'');
     // 占比 = 各组件 / 库存总资产（总额为 0 时显示空，防 NaN/Infinity）
     var availPct=totalVal>0?availVal/totalVal*100:0;
     var trsPct=totalVal>0?trsVal/totalVal*100:0;
@@ -613,13 +628,14 @@ function renderFroInventoryAnalysis(){
       tableEl.innerHTML='<div class="fro-empty">'+t('common.no_data','暂无数据')+'</div>';
       return;
     }
-    var hdr='<tr><th>'+t('common.country','国家')+'</th><th>'+t('fro.asset_total_label','库存总资产（CNY）')+'</th><th>'+t('common.percentage','占比')+'</th><th></th></tr>';
+    var hdr='<tr><th>'+t('common.country','国家')+'</th><th>'+t('fro.asset_total_label','库存总资产（CNY）')+'</th><th>'+t('fro.prepaid_purchase_asset','采购预付款占用')+'</th><th>'+t('common.percentage','占比')+'</th><th></th></tr>';
     function rowHtml(g){
       var pct=grandTotal>0?(Number(g.total_asset||0)/grandTotal*100):0;
       var clickFn="renderFroCountryAssetDetail('"+String(g.country_code).replace(/'/g,"\\'")+"')";
       return '<tr>'+
         '<td class="td-bold">'+esc(g.country||'—')+'</td>'+
         '<td class="td-num td-bold">¥ '+fmtMoney(g.total_asset,'')+'</td>'+
+        '<td class="td-num">¥ '+fmtMoney(g.prepaid_purchase_asset||0,'')+'</td>'+
         '<td class="td-num">'+pct.toFixed(1)+'%</td>'+
         '<td><a class="fro-drill-link" href="javascript:'+clickFn+'">'+t('fro.drill_down','下钻 ›')+'</a></td>'+
       '</tr>';
@@ -697,7 +713,13 @@ function renderFroCountryAssetDetail(code){
       var rows=row('inv',t('fro.available_assets','可用库存'),a,aPct)+
                row('trs',t('fro.transit_inventory_assets','在途库存'),tr,trPct)+
                row('csn',t('fro.consignment_assets','寄售库存'),cs,csPct);
-      tableEl.innerHTML='<table class="data-table fro-data-table"><thead>'+hdr+'</thead><tbody>'+rows+'</tbody></table>';
+      // 采购预付款占用：独立风险指标，不并入三段库存资产结构
+      var pp=Number(g.prepaid_purchase_asset||0);
+      tableEl.innerHTML='<table class="data-table fro-data-table"><thead>'+hdr+'</thead><tbody>'+rows+'</tbody></table>'+
+        '<div style="margin-top:12px;padding:10px 12px;border:1px dashed #f57f17;border-radius:8px;background:rgba(245,127,23,0.04)">'+
+          '<div style="font-size:12px;color:#f57f17;margin-bottom:4px">'+t('fro.prepaid_purchase_asset','采购预付款占用')+' · '+t('fro.prepaid_purchase_asset_desc','已付定金未发货 PI 占用的资金，独立风险指标，不计入库存总资产')+'</div>'+
+          '<div style="font-size:18px;font-weight:700">¥ '+fmtMoney(pp,'')+'</div>'+
+        '</div>';
     }
   }).catch(function(e){
     var el=document.getElementById('fro-country-table');
