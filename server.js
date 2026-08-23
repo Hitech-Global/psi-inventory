@@ -7988,23 +7988,25 @@ function getEffectiveTransitRows(ciScopeSql, ciScopeParams) {
 }
 
 // PI 采购在途资产（pi_transit_asset）：
-// 事实源 = 实时 UNION 聚合「active_ci_value」（已转 CI 货值），按 pi_id 归集。
-//   - 正常 CI：commercial_invoice_items JOIN commercial_invoices
-//       WHERE ci_status NOT IN ('cancelled','reversed')  -- 排除作废 / 冲销
-//         AND cii.pi_id IS NOT NULL AND cii.pi_id <> ''
-//   - 历史 CI：historical_commercial_invoice_items JOIN historical_commercial_invoices
-//       WHERE hcii.pi_id IS NOT NULL AND hcii.pi_id <> ''
-//   二者 UNION 后按 pi_id 汇总 → 每个 PI 的 active_ci_value。
-// 不使用 proforma_invoices.shipped_amount（缓存：void 不回滚→残留；CI item 修改→漂移）。
-// PI 在途贡献 = MAX(0, total_amount − active_ci_value) × FX。
+// 业务定义：采购在途 PI = 已付款 + 未发货的采购承诺。
+//   PI 在途贡献 = MAX(0, total_amount − shipped_amount) × FX
+//   WHERE paid_deposit > 0
+//     AND pi_status NOT IN ('cancelled')
+//     AND COALESCE(shipped_amount, 0) < total_amount
+// 事实源 main = proforma_invoices.shipped_amount（供应商已发货货值）。
+//   shipped_amount 由 CI 创建(+)/reverse(-)/void(-)/batch-import(+) 全程维护；
+//   已修复 void 不回滚、batch-import 不累加两处缺口，成为可靠事实字段。
+// active_ci_value 保留为 AUDIT/校验字段：实时 UNION 聚合已转 CI 货值（排除 cancelled/reversed）。
+//   仅用于校验：若出现 active_ci_value > shipped_amount + 容差 → console.warn 告警
+//   （不改变业务结果、不阻断请求；shipped_amount > active_ci_value 为预期，不告警）。
 // 返回：{ totalOrig, totalCny, byCountryCny, missingRates, details }。
-// details 供 in-transit-breakdown 下钻使用；overview/dashboard 仅消费总额/按国家。
+// details 返回 { shipped_amount, active_ci_value, amount_cny }；amount_cny 仅基于 MAX(0, total − shipped)。
 // 复用 foreignToRmbMap（缺失汇率跳过该行，与在途一致，禁止 fallback=1）与 dsf.pi 数据权限过滤。
 function getPiTransitAssets(foreignToRmbMap, piScopeSql, piScopeParams) {
   const scopeSql = (piScopeSql && String(piScopeSql).trim()) ? ' AND ' + piScopeSql : '';
   const scopeParams = Array.isArray(piScopeParams) ? piScopeParams : [];
 
-  // 1) 实时聚合 active_ci_value（按 pi_id），UNION 正常 CI + 历史 CI
+  // 1) AUDIT/校验字段：实时聚合 active_ci_value（按 pi_id），UNION 正常 CI + 历史 CI（保留不删除）
   const ciValueRows = query(`
     WITH ci_values AS (
       SELECT cii.pi_id AS pi_id, SUM(COALESCE(cii.ci_amount, 0)) AS ci_value
@@ -8029,13 +8031,16 @@ function getPiTransitAssets(foreignToRmbMap, piScopeSql, piScopeParams) {
     if (r.pi_id) ciValueByPi[r.pi_id] = (ciValueByPi[r.pi_id] || 0) + Number(r.active_ci_value || 0);
   }
 
-  // 2) 逐 PI 计算 PI 采购在途贡献（已付定金、未完全转 CI 部分总额）
+  // 2) 逐 PI 计算 PI 采购在途贡献（已付定金 + 未发货部分总额）
+  //    主判断依据 = shipped_amount（已发货货值），不再依赖 active_ci_value。
   const piRows = query(`
-    SELECT id, pi_no, country, brand, target_warehouse, currency, total_amount, paid_deposit
+    SELECT id, pi_no, country, brand, target_warehouse, currency, total_amount, paid_deposit,
+           COALESCE(shipped_amount, 0) AS shipped_amount
     FROM proforma_invoices
     WHERE pi_status NOT IN ('cancelled')
       AND paid_deposit > 0
       AND total_amount > 0
+      AND COALESCE(shipped_amount, 0) < total_amount
       ${scopeSql}
   `, scopeParams).rows;
 
@@ -8048,9 +8053,15 @@ function getPiTransitAssets(foreignToRmbMap, piScopeSql, piScopeParams) {
     const total = Number(pi.total_amount || 0);
     const paid = Number(pi.paid_deposit || 0);
     if (total <= 0 || paid <= 0) continue;
+    const shippedAmount = Number(pi.shipped_amount || 0);
     const activeCiValue = ciValueByPi[pi.id] || 0;
-    const transitOrig = Math.max(0, total - activeCiValue);
-    if (transitOrig <= 0) continue; // 已全部转 CI → 不在途
+    // 主判断：未发货部分 = total − shipped_amount
+    const transitOrig = Math.max(0, total - shippedAmount);
+    if (transitOrig <= 0) continue; // 已全部发货 → 不在途
+    // AUDIT warning：active_ci_value 不应显著大于 shipped_amount（不改业务结果、不阻断请求）
+    if (activeCiValue > shippedAmount + 0.01) {
+      console.warn(`[PI-TRANSIT-AUDIT] pi ${pi.pi_no}: active_ci_value=${activeCiValue} > shipped_amount=${shippedAmount} (+${((activeCiValue - shippedAmount)).toFixed(2)})，可能源于 CI 作废未回滚或 shipped_amount 漂移`);
+    }
     const curr = (pi.currency || '').toUpperCase();
     const rate = foreignToRmbMap ? foreignToRmbMap[curr] : null;
     if (!rate) {
@@ -8070,6 +8081,7 @@ function getPiTransitAssets(foreignToRmbMap, piScopeSql, piScopeParams) {
       pi_total_amount: total,
       pi_currency: pi.currency || '',
       paid_deposit: paid,
+      shipped_amount: shippedAmount,
       active_ci_value: activeCiValue,
       amount_cny: Math.round(transitCny * 100) / 100
     });
@@ -8545,6 +8557,36 @@ app.post('/api/commercial-invoices/:id/void', requireApiPermission('ci_edit'), a
     const ts = new Date().toISOString().slice(0, 19).replace('T', ' ');
     const newRemark = (ci.remark ? ci.remark + '\n' : '') + `[作废 ${ts} by ${req.currentUserName || ''}] 原因: ${void_reason}`;
     run("UPDATE commercial_invoices SET ci_status = 'cancelled', remark = ?, updated_at = datetime('now') WHERE id = ?", [newRemark, ci.id]);
+    // 回滚 PI 的 shipped（仅发货量/发货货值，不触碰定金/付款/WAC/库存；reverse 已入库情形不受影响）。
+    // 幂等保护：上方已拦截 ci_status==='cancelled'（重复作废直接 400），不会二次回滚。
+    const voidCiItems = query('SELECT * FROM commercial_invoice_items WHERE ci_id = ?', [ci.id]).rows;
+    const voidPiIds = [...new Set(voidCiItems.map(i => i.pi_id).filter(Boolean))];
+    // 回退 PI items shipped_qty / unshipped_qty（按本 CI 已贡献部分）
+    for (const citem of voidCiItems) {
+      const piItem = queryOne('SELECT id, pi_confirmed_qty, shipped_qty FROM proforma_invoice_items WHERE pi_id = ? AND sku_code = ?', [citem.pi_id, citem.sku_code]);
+      if (piItem) {
+        const newShipped = Math.max(0, (piItem.shipped_qty || 0) - (citem.shipped_qty || 0));
+        run('UPDATE proforma_invoice_items SET shipped_qty = ?, unshipped_qty = ? WHERE id = ?',
+          [newShipped, Math.max(0, (piItem.pi_confirmed_qty || 0) - newShipped), piItem.id]);
+      }
+    }
+    // 回退 PI headers shipped_amount / unshipped_amount / pi_status（不含定金/付款）
+    for (const piId of voidPiIds) {
+      const pi = queryOne('SELECT * FROM proforma_invoices WHERE id = ?', [piId]);
+      if (!pi) continue;
+      const piCiAmount = voidCiItems.filter(i => i.pi_id === piId).reduce((s, i) => s + (i.ci_amount || 0), 0);
+      const newShippedAmount = Math.max(0, (pi.shipped_amount || 0) - piCiAmount);
+      const newUnshippedAmount = Math.max(0, (pi.total_amount || 0) - newShippedAmount);
+      run('UPDATE proforma_invoices SET shipped_amount = ?, unshipped_amount = ? WHERE id = ?', [newShippedAmount, newUnshippedAmount, piId]);
+      // 重算 PI 发货状态（cancelled 跳过）
+      if (pi.pi_status === 'cancelled') continue;
+      const piItems2 = query('SELECT pi_confirmed_qty, shipped_qty FROM proforma_invoice_items WHERE pi_id = ?', [piId]).rows;
+      const allShipped = piItems2.length > 0 && piItems2.every(i => i.shipped_qty >= i.pi_confirmed_qty);
+      const anyShipped = piItems2.some(i => i.shipped_qty > 0);
+      if (allShipped) run('UPDATE proforma_invoices SET pi_status = ? WHERE id = ?', ['shipped_complete', piId]);
+      else if (anyShipped) run('UPDATE proforma_invoices SET pi_status = ? WHERE id = ?', ['partial_shipped', piId]);
+      else run('UPDATE proforma_invoices SET pi_status = ? WHERE id = ?', ['pending', piId]);
+    }
     await updateInventoryTransitData();
     logOperation({ operator_id: req.currentUserId, operator_name: req.currentUserName, page: 'commercial_invoice', operation_type: 'void', target_ids: [ci.id], affected_count: 1, old_values: { ci_status: ci.ci_status }, new_values: { ci_status: 'cancelled', void_reason }, reason: void_reason, triggered_recalc: 0, is_rollbackable: 0 });
     res.json({ success: true });
@@ -8879,6 +8921,7 @@ app.post('/api/commercial-invoices/batch-import', requireApiPermission('ci_creat
     const rows = Array.isArray(req.body.items) ? req.body.items : [];
     const result = { success: 0, failed: 0, total: rows.length, errors: [] };
     transaction(() => {
+      const createdCiIds = new Set();
       rows.forEach((row, idx) => {
         try {
           const poNo = s(pick(row, ['关联PO编号', 'PO编号', 'related_po_no', 'po_no']));
@@ -8930,9 +8973,28 @@ app.post('/api/commercial-invoices/batch-import', requireApiPermission('ci_creat
           if (!exist) {
             run(`INSERT INTO commercial_invoices (id, ci_no, related_po_id, related_po_no, related_pi_id, related_pi_no, supplier_id, supplier_name, brand, country, target_warehouse, ci_date, actual_ship_date, payment_term_id, credit_days, currency, goods_amount, pi_total_amount, amount_difference, difference_reason, ci_status, attachment, pl_attachment, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
               [ciId, ciNo, po.id, po.po_no, pi ? pi.id : '', pi ? pi.pi_no : '', po.supplier_id || '', po.supplier_name || '', po.brand || '', po.country || '', po.target_warehouse || '', s(pick(row, ['CI日期', 'ci_date'])) || new Date().toISOString().split('T')[0], actualShipDate, ciCredit.paymentTermId, ciCredit.creditDays, s(pick(row, ['币种', 'currency'])) || po.currency || 'USD', 0, pi ? (pi.total_amount || 0) : 0, 0, s(pick(row, ['差异原因', 'difference_reason'])), 'uploaded', parseAttachment(row.attachment || ''), parseAttachment(row.pl_attachment || ''), s(pick(row, ['备注', 'remark']))]);
+            createdCiIds.add(ciId);
           }
           run(`INSERT INTO commercial_invoice_items (id, ci_id, ci_no, pi_no, pi_id, sku_code, shipped_qty, unit_price, discount, net_unit_price, ci_amount, actual_customs_rate, inbound_qty, uninbound_qty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [genId('cii'), ciId, ciNo, pi ? pi.pi_no : '', pi ? pi.id : '', sku, qty, price, discountRate, netUnitPrice, amount, actualCustomsRate, 0, qty]);
+          // 【shipped_amount 同步】仅本次新建的 CI 累加 PI 已发货量/货值（幂等：重复导入命中 exist → 跳过 → 杜绝 double count）
+          if (createdCiIds.has(ciId) && pi) {
+            const piItem = queryOne('SELECT id, pi_confirmed_qty, shipped_qty FROM proforma_invoice_items WHERE pi_id = ? AND sku_code = ?', [pi.id, sku]);
+            if (piItem) {
+              const newShipped = (piItem.shipped_qty || 0) + qty;
+              run('UPDATE proforma_invoice_items SET shipped_qty = ?, unshipped_qty = ? WHERE id = ?',
+                [newShipped, (piItem.pi_confirmed_qty || 0) - newShipped, piItem.id]);
+            }
+            const piFresh = queryOne('SELECT * FROM proforma_invoices WHERE id = ?', [pi.id]);
+            const piNewShippedAmount = (piFresh.shipped_amount || 0) + amount;
+            run('UPDATE proforma_invoices SET shipped_amount = ?, unshipped_amount = ? WHERE id = ?',
+              [piNewShippedAmount, (piFresh.total_amount || 0) - piNewShippedAmount, pi.id]);
+            const piItems2 = query('SELECT pi_confirmed_qty, shipped_qty FROM proforma_invoice_items WHERE pi_id = ?', [pi.id]).rows;
+            const allShipped = piItems2.length > 0 && piItems2.every(i => i.shipped_qty >= i.pi_confirmed_qty);
+            const anyShipped = piItems2.some(i => i.shipped_qty > 0);
+            if (allShipped) run('UPDATE proforma_invoices SET pi_status = ? WHERE id = ?', ['shipped_complete', pi.id]);
+            else if (anyShipped) run('UPDATE proforma_invoices SET pi_status = ? WHERE id = ?', ['partial_shipped', pi.id]);
+          }
           const totals = queryOne('SELECT COALESCE(SUM(ci_amount),0) as total FROM commercial_invoice_items WHERE ci_id = ?', [ciId]);
           const goodsAmount = totals.total || 0;
           const piTotal = pi ? (pi.total_amount || 0) : 0;

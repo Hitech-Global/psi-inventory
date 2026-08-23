@@ -798,7 +798,7 @@ function renderFroTransitAnalysis(){
         '<th>'+t('common.warehouse','仓库')+'</th>'+
         '<th>'+t('fro.pi_total_amount','PI总额')+'</th>'+
         '<th>'+t('fro.paid_deposit','已付定金')+'</th>'+
-        '<th>'+t('fro.active_ci_value','已转CI')+'</th>'+
+        '<th>'+t('fro.shipped_amount','已发货')+'</th>'+
         '<th>'+t('fro.amount_cny','在途贡献(CNY)')+'</th>'+
         '<th>'+t('common.percentage','占比')+'</th>'+
       '</tr>';
@@ -812,7 +812,7 @@ function renderFroTransitAnalysis(){
           '<td>'+esc(it.warehouse||'—')+'</td>'+
           '<td class="td-num">'+fmtMoney(it.pi_total_amount||0,'')+' '+curr+'</td>'+
           '<td class="td-num">'+fmtMoney(it.paid_deposit||0,'')+' '+curr+'</td>'+
-          '<td class="td-num">'+fmtMoney(it.active_ci_value||0,'')+' '+curr+'</td>'+
+          '<td class="td-num">'+fmtMoney(it.shipped_amount||0,'')+' '+curr+'</td>'+
           '<td class="td-num td-bold">¥ '+fmtMoney(it.amount_cny,'')+'</td>'+
           '<td class="td-num">'+pct+'%</td>'+
         '</tr>';
