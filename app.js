@@ -6317,6 +6317,11 @@ window._rpCache={
   views:{},
   viewOrder:[]
 };
+// 建议采购「手工输入保护层」：仅前端，记录用户在线上/线下渠道明确输入过的建议采购数量。
+// 不新增数据库字段、不新增 API、不改变现有 PUT 与预测计算公式。
+// 仅作为「切换查看方式 / 筛选 / 重渲染」场景下恢复用户输入的冗余保护，
+// 只有明确「重新计算」后才允许清除（见 genRp / saveRpParams）。
+window._rpManualStock={online:{},offline:{}};
 function rpBaseUrl(){return '/api/replenishment-suggestions?'+rpQuery();}
 function rpMonthlySalesUrl(){
   var r=rpMonthColRange();
@@ -6432,6 +6437,23 @@ function rpClearViewForTab(tab){
 function rpClearDataCache(){
   window._rpCache.data.clear();
   window._rpCache.pending.clear();
+}
+// 读取某渠道某行(rid)的手动建议采购值：
+// 用 hasOwnProperty 严格区分「未设置」(返回 undefined) 与「显式输入 0」(返回 0)，
+// 防止用户输入 0 被系统值覆盖。
+function rpGetManualStock(channel, rid){
+  if(!window._rpManualStock) return undefined;
+  var m=window._rpManualStock[channel];
+  if(m && Object.prototype.hasOwnProperty.call(m, rid)) return m[rid];
+  return undefined;
+}
+function rpSetManualStock(channel, rid, qty){
+  if(!window._rpManualStock) window._rpManualStock={online:{},offline:{}};
+  if(!window._rpManualStock[channel]) window._rpManualStock[channel]={};
+  window._rpManualStock[channel][rid]=qty;
+}
+function rpClearManualStock(){
+  window._rpManualStock={online:{},offline:{}};
 }
 function rpSaveScroll(viewKey){
   var v=window._rpCache.views[viewKey];
@@ -7635,8 +7657,9 @@ async function loadRpChannelMonthly(channel){
     Cols.target_stock={th:rpThCompact(t('forecast.compact.suggested_purchase','建议\n采购'),t("app.809", "\u57fa\u4e8e\u9500\u91cf\u7edf\u8ba1\u5468\u671f(\u8fd1 N \u5929)\u6708\u5747\u9500\u91cf\u4e0e\u76ee\u6807\u5468\u8f6c\u8ba1\u7b97\u7684\u5efa\u8bae\u8865\u8d27\u6570\u91cf\u3002\u6162\u9500\u3001\u5446\u6ede\u3001\u9ad8\u5e93\u5b58\u7b49 SKU \u4f1a\u88ab\u62a6\u622a\u4e3a 0\u3002"),'text-right','',true),
       td:function(r,c){
         var _blocked=shouldBlockReplenish(r.sales_status||'',r.risk_tags||'');
-        var _val=_blocked?0:Math.round(c.suggestedQty||0);
-        return '<td class="text-right"><input type="number" class="rp-target-stock-input" data-rid="'+r.id+'" data-channel="'+channel+'" value="'+_val+'" min="0" style="width:75px;padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-weight:bold;text-align:center" onchange="onChannelTargetStockChange(this)"></td>';
+        var _manual=rpGetManualStock(channel,r.id);
+        var _val=_blocked?0:(_manual!==undefined?_manual:Math.round(c.suggestedQty||0));
+        return '<td class="text-right"><input type="number" class="rp-target-stock-input" data-rid="'+r.id+'" data-channel="'+channel+'" value="'+_val+'" min="0" style="width:75px;padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-weight:bold;text-align:center" oninput="onChannelTargetStockInput(this)" onchange="onChannelTargetStockChange(this)"></td>';
       },
       sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.suggestedQty)+'</td>';}};
     Cols.last_inbound_date={th:rpThCompact(t('forecast.compact.last_inbound_date','最近\n入库日期'),t("app.806", "\u8be5 SKU \u6700\u8fd1\u4e00\u6b21\u5165\u5e93\u7684\u65e5\u671f\uff0c\u7528\u4e8e\u5224\u65ad\u5e93\u9f84\u548c\u662f\u5426\u957f\u671f\u672a\u8865\u8d27\u3002"),'text-center','',true),
@@ -8114,12 +8137,27 @@ function onTargetTurnChange(input){
   });
 }
 
+// 轻量 oninput：仅把用户当前输入同步到前端 manual override 保护层，绝不发送 PUT。
+// 目的：避免「输入只活在 DOM、blur 前发生重渲染即丢」；正式落库仍由 onchange 触发，写库频率不变。
+function onChannelTargetStockInput(input){
+  var rid=input.dataset.rid;
+  var channel=input.dataset.channel;
+  if(!rid||!channel) return;
+  var qty=parseInt(input.value)||0;
+  rpSetManualStock(channel, rid, qty);
+}
+
 // 线上/线下建议采购数量修改 → 自动保存 + 换算预计下单后周转 + 反馈
 // input 显示的是最终建议值（suggestedQty），用户编辑后反推 target_stock = 输入值 + allocatedStock
 async function onChannelTargetStockChange(input){
   var rid=input.dataset.rid;
   var channel=input.dataset.channel;
   var qty=parseInt(input.value)||0;
+  // 进入时立即捕获被编辑的 view key，并记录 manual override（在 await/fetch/PUT 之前）。
+  // 防止「等 PUT 成功后再记录」导致输入期间若发生重渲染即丢；
+  // 同时避免 await 之后 rpCurrentViewKey() 已指向切换后的目标 view，导致 stale 标错。
+  var editedViewKey=rpCurrentViewKey();
+  rpSetManualStock(channel, rid, qty);
   var vc=input.closest('.rp-view-container')||rpActiveContainer();
   // 从缓存读取行数据用于换算
   var cache=window._rpChannelData&&window._rpChannelData[channel];
@@ -8157,7 +8195,7 @@ async function onChannelTargetStockChange(input){
     }
     showRpAutoSaved(input);
     rpClearDataCache();
-    var vk2=rpCurrentViewKey();
+    var vk2=editedViewKey;
     if(window._rpCache.views[vk2])window._rpCache.views[vk2].signature='__STALE__';
   }catch(e){
     showRpSaveFailed(input);
@@ -8169,6 +8207,8 @@ async function onChannelRemarkBlur(input){
   var rid=input.dataset.rid;
   var channel=input.dataset.channel;
   var val=input.value;
+  // 进入时捕获被编辑的 view key，避免 await 之后 current view 已变化导致 stale 标错 view。
+  var editedViewKey=rpCurrentViewKey();
   var data={};
   if(channel==='online') data.online_remark=val;
   else data.offline_remark=val;
@@ -8176,7 +8216,7 @@ async function onChannelRemarkBlur(input){
     await api('/api/replenishment-suggestions/'+rid,'PUT',data);
     showRpAutoSaved(input);
     rpClearDataCache();
-    var vk3=rpCurrentViewKey();
+    var vk3=editedViewKey;
     if(window._rpCache.views[vk3])window._rpCache.views[vk3].signature='__STALE__';
   }catch(e){
     showRpSaveFailed(input);
@@ -8249,10 +8289,12 @@ function onFinalQtyChange(input){
 function onAdjReasonChange(sel){
   var rid=sel.dataset.rid;
   var reason=sel.value;
+  // 调用前捕获被编辑的 view key，避免异步完成后 current view 已变化导致 stale 标错 view。
+  var editedViewKey=rpCurrentViewKey();
   api('/api/replenishment-suggestions/'+rid,'PUT',{adjustment_reason:reason}).then(function(){
     showToast(t('gen.L4853.1','调整原因已保存'),'success');
     rpClearDataCache();
-    var vk=rpCurrentViewKey();
+    var vk=editedViewKey;
     if(window._rpCache.views[vk])window._rpCache.views[vk].signature='__STALE__';
   }).catch(function(e){showToast(e.message,'danger')});
 }
@@ -8260,6 +8302,8 @@ function onAdjReasonChange(sel){
 // 保存渠道变更（目标周转+备注）
 async function saveChannelChanges(rid,channel){
   var vc=rpActiveContainer();
+  // 进入时捕获被编辑的 view key，避免 await 之后 current view 已变化导致 stale 标错 view。
+  var editedViewKey=rpCurrentViewKey();
   var turnInput=vc?vc.querySelector('.rp-target-turn[data-rid="'+rid+'"][data-channel="'+channel+'"]'):document.querySelector('.rp-target-turn[data-rid="'+rid+'"][data-channel="'+channel+'"]');
   var remarkInput=vc?vc.querySelector('.rp-channel-remark[data-rid="'+rid+'"][data-channel="'+channel+'"]'):document.querySelector('.rp-channel-remark[data-rid="'+rid+'"][data-channel="'+channel+'"]');
   if(!turnInput) return;
@@ -8283,7 +8327,7 @@ async function saveChannelChanges(rid,channel){
     }
     showToast(t('gen.L4880.1','已保存，目标库存已回写总预测'),'success');
     rpClearDataCache();
-    var vk=rpCurrentViewKey();
+    var vk=editedViewKey;
     if(window._rpCache.views[vk])window._rpCache.views[vk].signature='__STALE__';
   }catch(e){showToast(e.message,'danger')}
 }
@@ -8587,6 +8631,7 @@ async function genRp(){
       return;
     }
     showToast(t('toast.suggestionsGenerated','已生成{count}条建议',{count:r.count}),'success');
+    rpClearManualStock();
     rpClearDataCache();
     rpClearAllViews();
     await loadRpSummary();
@@ -8811,6 +8856,9 @@ async function saveRpParams(){
     if(generated&&generated.success===false){
       throw new Error(t('forecast.generate.unmatched','存在未配置目标周转的维度，预测参数已保存但重新计算未完成'));
     }
+    // 保存预测参数后系统会按最新参数重新生成建议，等价于一次显式重算：清除手动保护层，
+    // 让页面回到系统计算值（与 genRp 一致）。
+    rpClearManualStock();
     await loadRpSummary();
     await loadRpWithHistorical();
     showToast(t('gen.L5253.1','预测参数已保存，页面指标和建议已同步更新'),'success');
