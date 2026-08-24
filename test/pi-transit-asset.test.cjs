@@ -47,8 +47,10 @@ function createSchema() {
     );
     CREATE TABLE IF NOT EXISTS proforma_invoice_items (
       id TEXT PRIMARY KEY, pi_id TEXT DEFAULT '', sku_code TEXT DEFAULT '',
-      pi_confirmed_qty NUMERIC DEFAULT 0, shipped_qty NUMERIC DEFAULT 0, unshipped_qty NUMERIC DEFAULT 0
+      pi_confirmed_qty NUMERIC DEFAULT 0, shipped_qty NUMERIC DEFAULT 0, unshipped_qty NUMERIC DEFAULT 0,
+      unit_price NUMERIC DEFAULT 0, discount NUMERIC DEFAULT 0
     );
+    CREATE TABLE IF NOT EXISTS skus (sku_code TEXT PRIMARY KEY, brand TEXT DEFAULT '');
     CREATE TABLE IF NOT EXISTS commercial_invoices (
       id TEXT PRIMARY KEY, ci_no TEXT NOT NULL, ci_status TEXT DEFAULT 'draft', remark TEXT DEFAULT ''
     );
@@ -78,6 +80,7 @@ function clearAll() {
     DELETE FROM commercial_invoices;
     DELETE FROM proforma_invoice_items;
     DELETE FROM proforma_invoices;
+    DELETE FROM skus;
   `);
 }
 
@@ -435,4 +438,31 @@ test('Regression: active_ci_value 仅审计，金额由 shipped_amount 驱动', 
   assert.ok(approx(r.totalCny, 20000), '金额由 shipped_amount 驱动（20000），而非 active_ci_value');
   assert.ok(approx(r.details[0].active_ci_value, 40000), 'active_ci_value 仍为 40000（仅审计展示）');
   assert.ok(approx(r.details[0].shipped_amount, 80000));
+});
+
+// ───────────────────────────────────────────────
+// 回归：getPiTransitAssets 默认不执行 SKU attribution（opt-in 边界）
+// ───────────────────────────────────────────────
+test('Regression: 默认调用不构建 detailsBySku（不影响 PI 主链）', () => {
+  clearAll();
+  const pi = uniq('PI');
+  seedPI(pi, { total: 10000, paid: 5000, shippedAmount: 0, currency: 'USD' });
+  // 同时 seed skus + PI items，证明默认模式不会触碰这些表
+  run("INSERT INTO skus (sku_code, brand) VALUES ('SKU-X', 'Redragon')");
+  run("INSERT INTO proforma_invoice_items (id, pi_id, sku_code, unshipped_qty, unit_price, discount) VALUES ('i1', ?, 'SKU-X', 100, 100, 0)", [pi]);
+
+  // 默认模式
+  const rDefault = call();
+  assert.ok(approx(rDefault.totalCny, 70000), '默认 totalCny 不变');
+  assert.equal(rDefault.details.length, 1, 'details 不变');
+  assert.ok(!rDefault.detailsBySku || rDefault.detailsBySku.length === 0, '默认不构建 detailsBySku');
+
+  // opt-in 模式
+  const rSku = getPiTransitAssets(FX, '', [], { includeSkuDetails: true });
+  assert.equal(rSku.detailsBySku.length, 1, 'opt-in 构建 detailsBySku');
+  assert.equal(rSku.detailsBySku[0].resolved_brand, 'Redragon');
+  assert.equal(rSku.detailsBySku[0].reconciliation_status, 'exact');
+  // 两种模式 PI 主链金额完全一致
+  assert.ok(approx(rSku.totalCny, rDefault.totalCny), 'opt-in 不改变 totalCny');
+  assert.ok(approx(rSku.details[0].amount_cny, rDefault.details[0].amount_cny), 'opt-in 不改变 details');
 });

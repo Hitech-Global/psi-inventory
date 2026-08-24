@@ -654,6 +654,7 @@ function renderFroCountryAssetDetail(code){
       '<div class="fro-analysis-total" id="fro-country-total">'+t('common.loading','加载中...')+'</div>'+
       '<div class="fro-country-bars" id="fro-country-bars"></div>'+
       '<div class="fro-analysis-table" id="fro-country-table"></div>'+
+      '<div class="fro-analysis-table" id="fro-country-brand-table" style="margin-top:24px"></div>'+
     '</div>';
 
   api('/api/financial-risk/overview').then(function(d){
@@ -699,6 +700,44 @@ function renderFroCountryAssetDetail(code){
                row('csn',t('fro.consignment_assets','寄售库存'),cs,csPct);
       tableEl.innerHTML='<table class="data-table fro-data-table"><thead>'+hdr+'</thead><tbody>'+rows+'</tbody></table>';
     }
+
+    // --- 品牌维度汇总（国家 → 品牌 → 三类库存），复用后端 /api/financial-risk/inventory-breakdown/by-brand ---
+    api('/api/financial-risk/inventory-breakdown/by-brand?country='+encodeURIComponent(code)).then(function(bd){
+      var be=document.getElementById('fro-country-brand-table');
+      if(!be) return;
+      if(!bd || !bd.brands || bd.brands.length===0){
+        be.innerHTML='<div class="fro-empty">'+t('common.no_data','暂无数据')+'</div>';
+        return;
+      }
+      var cTotal=Number(bd.country_total||0);
+      var bHdr='<tr>'+
+        '<th>'+t('fro.brand','品牌')+'</th>'+
+        '<th>'+t('fro.asset_total_label','总资产(CNY)')+'</th>'+
+        '<th>'+t('fro.available_assets','可用库存')+'</th>'+
+        '<th>'+t('fro.transit_inventory_assets','在途库存')+'</th>'+
+        '<th>'+t('fro.consignment_assets','寄售库存')+'</th>'+
+        '<th>'+t('common.percentage','占国家比例')+'</th>'+
+      '</tr>';
+      function bRow(br){
+        var pct=cTotal>0?(Number(br.total_asset||0)/cTotal*100):0;
+        return '<tr>'+
+          '<td class="td-bold">'+esc(br.brand||'—')+'</td>'+
+          '<td class="td-num td-bold">¥ '+fmtMoney(br.total_asset,'')+'</td>'+
+          '<td class="td-num">¥ '+fmtMoney(br.available_asset,'')+'</td>'+
+          '<td class="td-num">¥ '+fmtMoney(br.transit_asset,'')+'</td>'+
+          '<td class="td-num">¥ '+fmtMoney(br.consignment_asset,'')+'</td>'+
+          '<td class="td-num">'+pct.toFixed(1)+'%</td>'+
+        '</tr>';
+      }
+      var sub='<div style="font-size:15px;font-weight:700;margin-bottom:8px">'+t('fro.brand_summary','品牌库存汇总')+'</div>';
+      if(bd.unclassified_count>0){
+        sub+='<div style="font-size:12px;color:#999;margin-bottom:8px">'+t('fro.unclassified_hint','未分类资产')+': ¥ '+fmtMoney(bd.unclassified_asset,'')+' ('+bd.unclassified_count+' 行)</div>';
+      }
+      be.innerHTML=sub+'<table class="data-table fro-data-table"><thead>'+bHdr+'</thead><tbody>'+bd.brands.map(bRow).join('')+'</tbody></table>';
+    }).catch(function(e){
+      var be=document.getElementById('fro-country-brand-table');
+      if(be) be.innerHTML='<div class="fro-empty fro-error">'+esc(e.message)+'</div>';
+    });
   }).catch(function(e){
     var el=document.getElementById('fro-country-table');
     if(el) el.innerHTML='<div class="fro-empty fro-error">'+esc(e.message)+'</div>';
