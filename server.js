@@ -384,8 +384,8 @@ async function notifyFeishuGroupsCard(zhCard, enCard) {
 // lang: 'zh' | 'en'；mode: 'manual'（手动提醒/创建同步）| 'owner_added'（编辑新增负责人）。
 // 群通知按群语言分别构造中文/英文正文，个人通知按收件人 language_preference 走同一函数，互不干扰。
 const LISTING_BLOCK_FIELDS = {
-  zh: { batch: '物流批次', brand: '品牌', country: '国家', warehouse: '仓库', cargo: '货物信息', cartons: '总箱数', weight: '总重量', cbm: '总体积', ci: '关联CI', owners: '当前负责人', cartonUnit: '箱', weightUnit: 'KG', cbmUnit: 'CBM' },
-  en: { batch: 'Logistics Batch', brand: 'Brand', country: 'Country', warehouse: 'Warehouse', cargo: 'Cargo Info', cartons: 'Total Cartons', weight: 'Total Weight', cbm: 'Total Volume', ci: 'Related CI', owners: 'Current Owners', cartonUnit: 'ctns', weightUnit: 'KG', cbmUnit: 'CBM' }
+  zh: { batch: '物流批次', brand: '品牌', country: '国家', warehouse: '仓库', cargo: '货物信息', batchQty: '批次总数量', ciQty: '关联CI总数量', qtyUnit: 'PCS', cartons: '总箱数', weight: '总重量', cbm: '总体积', ci: '关联CI', owners: '当前负责人', status: '当前状态', cartonUnit: '箱', weightUnit: 'KG', cbmUnit: 'CBM' },
+  en: { batch: 'Logistics Batch', brand: 'Brand', country: 'Country', warehouse: 'Warehouse', cargo: 'Cargo Info', batchQty: 'Batch Qty', ciQty: 'Related CI Qty', qtyUnit: 'PCS', cartons: 'Total Cartons', weight: 'Total Weight', cbm: 'Total Volume', ci: 'Related CI', owners: 'Current Owners', status: 'Current Status', cartonUnit: 'ctns', weightUnit: 'KG', cbmUnit: 'CBM' }
 };
 const LISTING_BLOCK_I18N = {
   zh: {
@@ -405,19 +405,25 @@ function buildListingNotifyBlock(batchNo, ctx, lang, mode) {
   const brand = (ctx && ctx.brand) || '-';
   const country = (ctx && ctx.country) || '-';
   const warehouse = (ctx && ctx.warehouse) || '-';
+  const batchQty = (ctx && ctx.batch_total_quantity != null) ? (ctx.batch_total_quantity + ' ' + F.qtyUnit) : '—';
+  const ciQty = (ctx && ctx.related_ci_total_quantity != null) ? (ctx.related_ci_total_quantity + ' ' + F.qtyUnit) : '—';
   const cartons = (ctx && typeof ctx.total_cartons !== 'undefined') ? (ctx.total_cartons || 0) : '-';
   const weight = (ctx && typeof ctx.total_weight !== 'undefined') ? (ctx.total_weight || 0) : '-';
-  const cbm = (ctx && typeof ctx.total_cbm !== 'undefined') ? (ctx.total_cbm || 0) : '-';
+  const cbm = (ctx && typeof ctx.total_cbm !== 'undefined') ? (Number(ctx.total_cbm || 0).toFixed(2)) : '-';
   const ci = (ctx && ctx.related_ci) || '-';
   const owners = (ctx && ctx.current_owners) || '-';
+  const status = (ctx && typeof ctx.listing_status !== 'undefined') ? listingStatusLabel(lang, ctx.listing_status) : '-';
   return L.title + '\n\n'
     + F.batch + '：\n' + (batchNo || '-')
     + '\n\n' + F.brand + '：\n' + brand
+    + '\n\n' + F.batchQty + '：\n' + batchQty
+    + '\n\n' + F.ci + '：\n' + ci
+    + '\n\n' + F.ciQty + '：\n' + ciQty
     + '\n\n' + F.country + '：\n' + country
     + '\n\n' + F.warehouse + '：\n' + warehouse
     + '\n\n' + F.cargo + '：\n' + F.cartons + '：' + cartons + ' ' + F.cartonUnit + '\n' + F.weight + '：' + weight + ' ' + F.weightUnit + '\n' + F.cbm + '：' + cbm + ' ' + F.cbmUnit
-    + '\n\n' + F.ci + '：\n' + ci
     + '\n\n' + F.owners + '：\n' + owners
+    + '\n\n' + F.status + '：\n' + status
     + '\n\n' + L.footer;
 }
 // 同时构造中/英两份上架准备正文（群通知按群语言分别发送；个人通知走 notifyBusinessParticipants 按收件人语言）
@@ -441,9 +447,11 @@ function buildListingNotifyCard(batchNo, ctx, lang, mode, statusChange) {
   const brand = (ctx && ctx.brand) || '-';
   const country = (ctx && ctx.country) ? countryLabel(lang, ctx.country) : '-';
   const warehouse = (ctx && ctx.warehouse) || '-';
+  const batchQty = (ctx && ctx.batch_total_quantity != null) ? (ctx.batch_total_quantity + ' ' + F.qtyUnit) : '—';
+  const ciQty = (ctx && ctx.related_ci_total_quantity != null) ? (ctx.related_ci_total_quantity + ' ' + F.qtyUnit) : '—';
   const cartons = (ctx && typeof ctx.total_cartons !== 'undefined') ? (ctx.total_cartons || 0) : '-';
   const weight = (ctx && typeof ctx.total_weight !== 'undefined') ? (ctx.total_weight || 0) : '-';
-  const cbm = (ctx && typeof ctx.total_cbm !== 'undefined') ? (ctx.total_cbm || 0) : '-';
+  const cbm = (ctx && typeof ctx.total_cbm !== 'undefined') ? (Number(ctx.total_cbm || 0).toFixed(2)) : '-';
   const ci = (ctx && ctx.related_ci) || '-';
   const owners = (ctx && ctx.current_owners) || '-';
   let statusValue;
@@ -457,12 +465,14 @@ function buildListingNotifyCard(batchNo, ctx, lang, mode, statusChange) {
   const fields = [
     { is_short: false, text: { tag: 'lark_md', content: '**' + F.batch + '**\n' + (batchNo || '-') } },
     { is_short: true, text: { tag: 'lark_md', content: '**' + F.brand + '**\n' + brand } },
+    { is_short: true, text: { tag: 'lark_md', content: '**' + F.batchQty + '**\n' + batchQty } },
+    { is_short: true, text: { tag: 'lark_md', content: '**' + F.ci + '**\n' + ci } },
+    { is_short: true, text: { tag: 'lark_md', content: '**' + F.ciQty + '**\n' + ciQty } },
     { is_short: true, text: { tag: 'lark_md', content: '**' + F.country + '**\n' + country } },
     { is_short: true, text: { tag: 'lark_md', content: '**' + F.warehouse + '**\n' + warehouse } },
     { is_short: true, text: { tag: 'lark_md', content: '**' + F.cartons + '**\n' + cartons + ' ' + F.cartonUnit } },
     { is_short: true, text: { tag: 'lark_md', content: '**' + F.weight + '**\n' + weight + ' ' + F.weightUnit } },
     { is_short: true, text: { tag: 'lark_md', content: '**' + F.cbm + '**\n' + cbm + ' ' + F.cbmUnit } },
-    { is_short: true, text: { tag: 'lark_md', content: '**' + F.ci + '**\n' + ci } },
     { is_short: false, text: { tag: 'lark_md', content: '**' + F.owners + '**\n' + owners } },
     { is_short: true, text: { tag: 'lark_md', content: '**' + statusField + '**\n' + statusValue } }
   ];
@@ -518,7 +528,9 @@ function buildListingNotifyCards(batchNo, ctx) {
 // brand 来自 CI，其余来自物流单主表；同时返回 code(批次号) 与 plan_date(eta)，供 notifyBusinessParticipants 定位「物流批次」行。
 function loadListingNotifyCtx(batchId) {
   const lbRow = queryOne(
-    'SELECT lb.id, lb.batch_no, lb.eta_date, lb.target_country, lb.target_warehouse, lb.total_cartons, lb.total_weight, lb.total_cbm, lb.related_ci_no, lb.listing_owner_ids, lb.listing_status, ci.brand '
+    'SELECT lb.id, lb.batch_no, lb.eta_date, lb.target_country, lb.target_warehouse, lb.total_cartons, lb.total_weight, lb.total_cbm, lb.related_ci_no, lb.listing_owner_ids, lb.listing_status, ci.brand, '
+    + '(SELECT SUM(pli.total_qty) FROM packing_list_items pli JOIN packing_lists pl2 ON pli.pl_id = pl2.id WHERE pl2.logistics_batch_id = lb.id) AS batch_total_quantity, '
+    + 'CASE WHEN lb.related_ci_id IS NULL OR lb.related_ci_id = \'\' THEN NULL ELSE (SELECT COALESCE(SUM(cii.shipped_qty), 0) FROM commercial_invoice_items cii WHERE cii.ci_id = lb.related_ci_id) END AS related_ci_total_quantity '
     + 'FROM logistics_batches lb LEFT JOIN commercial_invoices ci ON lb.related_ci_id = ci.id WHERE lb.id = ?',
     [batchId]
   );
@@ -530,6 +542,8 @@ function loadListingNotifyCtx(batchId) {
     brand: lbRow.brand || '-',
     country: lbRow.target_country || '-',
     warehouse: lbRow.target_warehouse || '-',
+    batch_total_quantity: lbRow.batch_total_quantity,
+    related_ci_total_quantity: lbRow.related_ci_total_quantity,
     total_cartons: lbRow.total_cartons || 0,
     total_weight: lbRow.total_weight || 0,
     total_cbm: lbRow.total_cbm || 0,
@@ -9176,7 +9190,15 @@ app.post('/api/packing-lists/batch-import', requireApiPermission('ci_create'), a
 app.get('/api/logistics-batches', requireApiPermission('logistics_view'), asyncHandler((req, res) => {
   const { logistics_display_status, keyword, forwarder_id, listing_status } = req.query;
   // LOGISTICS-LISTING-01（2026-08-07 owner 多选）：listing_owner_ids 为逗号分隔多 ID，姓名由 resolveOwnerNames 解析，避免对逗号列表做 JOIN
-  let sql = 'SELECT lb.*, pl.pl_no, pl.id AS pl_id, pl.status AS pl_status FROM logistics_batches lb LEFT JOIN packing_lists pl ON pl.logistics_batch_id = lb.id WHERE 1=1';
+  // 品牌直接读取关联 CI 的 brand 字段（不另建品牌来源）；
+  // 批次总数量 = 本批次关联 PL 的 packing_list_items.total_qty 之和（以批次实际承载量为事实来源，无关联 PL 时为 NULL，表示数据缺失而非 0）；
+  // 关联 CI 总数量 = 关联 CI 的 commercial_invoice_items.shipped_qty 之和（以 CI 为事实来源；无关联 CI 时为 NULL）。
+  // 两者独立：一个 CI 可挂多个物流批次，批次数量 ≠ CI 总量。子查询避免 join 行爆炸。
+  let sql = 'SELECT lb.*, pl.pl_no, pl.id AS pl_id, pl.status AS pl_status, ci.brand AS brand, '
+    + '(SELECT SUM(pli.total_qty) FROM packing_list_items pli JOIN packing_lists pl2 ON pli.pl_id = pl2.id WHERE pl2.logistics_batch_id = lb.id) AS batch_total_quantity, '
+    + 'CASE WHEN lb.related_ci_id IS NULL OR lb.related_ci_id = \'\' THEN NULL ELSE (SELECT COALESCE(SUM(cii.shipped_qty), 0) FROM commercial_invoice_items cii WHERE cii.ci_id = lb.related_ci_id) END AS related_ci_total_quantity '
+    + 'FROM logistics_batches lb LEFT JOIN packing_lists pl ON pl.logistics_batch_id = lb.id '
+    + 'LEFT JOIN commercial_invoices ci ON lb.related_ci_id = ci.id WHERE 1=1';
   const params = [];
   if (forwarder_id) { sql += ' AND lb.forwarder_id = ?'; params.push(forwarder_id); }
   if (keyword) { sql += ' AND (lb.batch_no LIKE ? OR lb.forwarder_name LIKE ? OR lb.related_ci_no LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`); }
@@ -9292,7 +9314,22 @@ app.get('/api/logistics-batches/:id', requireApiPermission('logistics_view'), as
     }
   }
 
-  res.json({ ...batch, pl_id: pl ? pl.id : '', pl_no: pl ? pl.pl_no : '', pl_status: pl ? pl.status : '', logistics_display_status: deriveLogisticsDisplayStatus(batch.logistics_status), inbound_derived_status: inboundDerivedStatus, listing_owner_ids: gOwnerIds, listing_owner_names: resolveOwnerNames(gOwnerIds), freight_payment_facts: freightPaymentFacts });
+  // 品牌：直接读取关联 CI 的 brand 字段（不另建品牌来源）
+  let detailCiBrand = '';
+  if (batch.related_ci_id) {
+    const ciRow = queryOne('SELECT brand FROM commercial_invoices WHERE id = ?', [batch.related_ci_id]);
+    detailCiBrand = ciRow ? (ciRow.brand || '') : '';
+  }
+  // 批次总数量：本批次关联 PL 的 packing_list_items.total_qty 之和（无关联 PL 时为 NULL，表示数据缺失而非 0）
+  const btqRow = queryOne('SELECT SUM(pli.total_qty) AS q FROM packing_list_items pli JOIN packing_lists pl2 ON pli.pl_id = pl2.id WHERE pl2.logistics_batch_id = ?', [batch.id]);
+  const detailBatchTotalQty = (btqRow && btqRow.q != null) ? btqRow.q : null;
+  // 关联 CI 总数量：关联 CI 的 commercial_invoice_items.shipped_qty 之和（无关联 CI 时为 NULL）
+  let detailCiTotalQty = null;
+  if (batch.related_ci_id) {
+    const tqRow = queryOne('SELECT COALESCE(SUM(shipped_qty), 0) AS tq FROM commercial_invoice_items WHERE ci_id = ?', [batch.related_ci_id]);
+    detailCiTotalQty = (tqRow && tqRow.tq != null) ? tqRow.tq : 0;
+  }
+  res.json({ ...batch, brand: detailCiBrand, batch_total_quantity: detailBatchTotalQty, related_ci_total_quantity: detailCiTotalQty, pl_id: pl ? pl.id : '', pl_no: pl ? pl.pl_no : '', pl_status: pl ? pl.status : '', logistics_display_status: deriveLogisticsDisplayStatus(batch.logistics_status), inbound_derived_status: inboundDerivedStatus, listing_owner_ids: gOwnerIds, listing_owner_names: resolveOwnerNames(gOwnerIds), freight_payment_facts: freightPaymentFacts });
 }));
 
 // 注意：这是无前端调用方的遗留裸接口（前端统一走 /create-with-pl）。
