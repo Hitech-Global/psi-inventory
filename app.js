@@ -6438,6 +6438,15 @@ function rpClearDataCache(){
   window._rpCache.data.clear();
   window._rpCache.pending.clear();
 }
+// 建议采购相关 view 的统一失效组（仅标记 DOM view cache，不清 manual override）：
+// 任意「渠道数量相关」PUT 成功后，server 可能同时改写 suggested_qty / online_suggested_qty /
+// offline_suggested_qty 及派生展示，因此 total/online/offline 三视图（monthly + daily）都属于
+// 同一 invalidation dependency group。只把已存在的节点 signature 置 '__STALE__'，
+// 下次 switchRpTab 命中即失效、触发重新 load，使用最新 server 数据。
+function rpInvalidateSuggestionViews(){
+  ['total-monthly','total-daily','online-monthly','online-daily','offline-monthly','offline-daily']
+    .forEach(function(k){ if(window._rpCache.views[k]) window._rpCache.views[k].signature='__STALE__'; });
+}
 // 读取某渠道某行(rid)的手动建议采购值：
 // 用 hasOwnProperty 严格区分「未设置」(返回 undefined) 与「显式输入 0」(返回 0)，
 // 防止用户输入 0 被系统值覆盖。
@@ -8190,8 +8199,7 @@ function onTargetTurnChange(input){
   var field=channel==='online'?'online_target_turnover':'offline_target_turnover';
   api('/api/replenishment-suggestions/'+rid,'PUT',{online_target_turnover:channel==='online'?months:undefined,offline_target_turnover:channel==='offline'?months:undefined}).then(function(){
     rpClearDataCache();
-    var vk=rpCurrentViewKey();
-    if(window._rpCache.views[vk])window._rpCache.views[vk].signature='__STALE__';
+    rpInvalidateSuggestionViews();
   });
 }
 
@@ -8280,8 +8288,7 @@ async function onChannelTargetStockChange(input){
     }
     showRpAutoSaved(input);
     rpClearDataCache();
-    var vk2=editedViewKey;
-    if(window._rpCache.views[vk2])window._rpCache.views[vk2].signature='__STALE__';
+    rpInvalidateSuggestionViews();
   }catch(e){
     showRpSaveFailed(input);
   }
@@ -8412,8 +8419,7 @@ async function saveChannelChanges(rid,channel){
     }
     showToast(t('gen.L4880.1','已保存，目标库存已回写总预测'),'success');
     rpClearDataCache();
-    var vk=editedViewKey;
-    if(window._rpCache.views[vk])window._rpCache.views[vk].signature='__STALE__';
+    rpInvalidateSuggestionViews();
   }catch(e){showToast(e.message,'danger')}
 }
 
