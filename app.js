@@ -11010,7 +11010,7 @@ async function changeListingStatus(id, sel){
 }
 function listingStatusCell(l){
   const st=l.listing_status||'pending_plan';
-  return '<td style="white-space:nowrap"><select class="listing-status-select" style="width:110px;padding:2px 4px" data-prev="'+esc(st)+'" onchange="changeListingStatus(\''+l.id+'\', this)" onclick="event.stopPropagation()">'+listingStatusOptions(st)+'</select></td>';
+  return '<td style="white-space:nowrap"><select class="listing-status-select" data-prev="'+esc(st)+'" onchange="changeListingStatus(\''+l.id+'\', this)" onclick="event.stopPropagation()">'+listingStatusOptions(st)+'</select></td>';
 }
 function listingOwnerCell(l){
   const names=l.listing_owner_names||[];

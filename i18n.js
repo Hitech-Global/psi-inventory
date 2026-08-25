@@ -4670,6 +4670,9 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.zh["logistics.col.inbound_date"]="到货日期"; I18N.dict.en["logistics.col.inbound_date"]="Arrival Date"; I18N.dict.id["logistics.col.inbound_date"]="Tanggal Tiba";
   I18N.dict.zh["logistics.col.cartons"]="箱数"; I18N.dict.en["logistics.col.cartons"]="Cartons"; I18N.dict.id["logistics.col.cartons"]="Karton";
   I18N.dict.zh["logistics.col.total_freight"]="综合运费"; I18N.dict.en["logistics.col.total_freight"]="Total Freight"; I18N.dict.id["logistics.col.total_freight"]="Total Ongkos Kirim";
+  I18N.dict.zh["logistics.col.brand"]="品牌"; I18N.dict.en["logistics.col.brand"]="Brand"; I18N.dict.id["logistics.col.brand"]="Merek";
+  I18N.dict.zh["logistics.col.batch_total_quantity"]="批次总数量"; I18N.dict.en["logistics.col.batch_total_quantity"]="Batch Qty"; I18N.dict.id["logistics.col.batch_total_quantity"]="Jml Batch";
+  I18N.dict.zh["logistics.col.related_ci_total_quantity"]="关联CI总数量"; I18N.dict.en["logistics.col.related_ci_total_quantity"]="Related CI Qty"; I18N.dict.id["logistics.col.related_ci_total_quantity"]="Jml CI Terkait";
 
   // LOGISTICS-LISTING-01：Listing 上架状态管理（列表新增两列 + 创建/编辑/内联改状态）
   I18N.dict.zh["logistics.col.listing_status"]="Listing 状态"; I18N.dict.en["logistics.col.listing_status"]="Listing Status"; I18N.dict.id["logistics.col.listing_status"]="Status Listing";
@@ -4725,6 +4728,9 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.zh["logistics.detail.pl_no"]="PL单号"; I18N.dict.en["logistics.detail.pl_no"]="PL No."; I18N.dict.id["logistics.detail.pl_no"]="No. PL";
   I18N.dict.zh["logistics.detail.related_ci"]="关联CI"; I18N.dict.en["logistics.detail.related_ci"]="Related CI"; I18N.dict.id["logistics.detail.related_ci"]="CI Terkait";
   I18N.dict.zh["logistics.detail.forwarder"]="货代"; I18N.dict.en["logistics.detail.forwarder"]="Forwarder"; I18N.dict.id["logistics.detail.forwarder"]="Forwarder";
+  I18N.dict.zh["logistics.detail.brand"]="品牌"; I18N.dict.en["logistics.detail.brand"]="Brand"; I18N.dict.id["logistics.detail.brand"]="Merek";
+  I18N.dict.zh["logistics.detail.batch_total_quantity"]="批次总数量"; I18N.dict.en["logistics.detail.batch_total_quantity"]="Batch Total Qty"; I18N.dict.id["logistics.detail.batch_total_quantity"]="Total Jml Batch";
+  I18N.dict.zh["logistics.detail.related_ci_total_quantity"]="关联CI总数量"; I18N.dict.en["logistics.detail.related_ci_total_quantity"]="Related CI Total Qty"; I18N.dict.id["logistics.detail.related_ci_total_quantity"]="Total Jml CI Terkait";
   I18N.dict.zh["logistics.detail.transport_mode"]="运输方式"; I18N.dict.en["logistics.detail.transport_mode"]="Transport Mode"; I18N.dict.id["logistics.detail.transport_mode"]="Mode Transportasi";
   I18N.dict.zh["logistics.detail.target_country"]="目标国家"; I18N.dict.en["logistics.detail.target_country"]="Target Country"; I18N.dict.id["logistics.detail.target_country"]="Negara Tujuan";
   I18N.dict.zh["logistics.detail.target_warehouse"]="目标仓库"; I18N.dict.en["logistics.detail.target_warehouse"]="Target Warehouse"; I18N.dict.id["logistics.detail.target_warehouse"]="Gudang Tujuan";
