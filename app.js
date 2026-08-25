@@ -6455,6 +6455,49 @@ function rpSetManualStock(channel, rid, qty){
 function rpClearManualStock(){
   window._rpManualStock={online:{},offline:{}};
 }
+// 统一“当前计划采购数量”口径：用户手工 override（含显式 0）优先，否则用服务端落库渠道分量。
+// 注意：绝不修改 row._c.suggestedQty 本身语义（它仍代表 server 真值，供 PUT 同步使用）。
+function rpGetEffectiveSuggestedQty(channel, row){
+  var manual=rpGetManualStock(channel, row.id);
+  if(manual!==undefined) return manual;            // 用户明确填过（含 0）→ 用 override
+  return (row._c && row._c.suggestedQty) || 0;     // 否则用服务端渠道分量
+}
+// 统一“预计下单后周转”口径：渠道分摊库存池 + effectiveSuggestedQty ÷ 渠道月均销量。
+// avgSalesPeriod<=0 → 返回 null（无销量）；qty=0 合法；绝不使用 c.pool（总库存池）。
+function rpComputeChannelAfterOrderTurnover(c, effectiveQty){
+  if(!c || !(c.avgSalesPeriod>0)) return null;
+  return Math.round((c.poolAllocatedPeriod + effectiveQty)/c.avgSalesPeriod*10)/10;
+}
+// 实时刷新当前渠道视图的两个汇总 cell：建议采购数量汇总 + 预计下单后周转汇总。
+// 直接遍历渠道缓存（与重渲染同一数据源），按 effectiveSuggestedQty 重算，消除“输入≠汇总”不一致。
+// 仅更新前端展示，不发 PUT、不写库。
+function rpRefreshChannelSummaries(channel, vc){
+  if(!vc) return;
+  var cache=window._rpChannelData&&window._rpChannelData[channel];
+  if(!cache) return;
+  var sumQty=0, availWS=0, transitWS=0, poWS=0, piWS=0, suggWS=0, avgWS=0;
+  Object.keys(cache).forEach(function(rid){
+    var r=cache[rid]; var c=r._c||{};
+    var eff=rpGetEffectiveSuggestedQty(channel, r);
+    sumQty+=Math.round(eff||0);
+    if(c.avgSalesPeriod>0){
+      availWS+=(c.availAllocatedPeriod||0);
+      transitWS+=(c.effectiveTransitAllocated||0);
+      poWS+=(c.poAllocatedPeriod||0);
+      piWS+=(c.piUnshippedAllocatedPeriod||0);
+      suggWS+=Math.round(eff||0);
+      avgWS+=(c.avgSalesPeriod||0);
+    }
+  });
+  var qtyCell=vc.querySelector('.rp-summary-row td[data-summary="target_stock"]');
+  if(qtyCell) qtyCell.textContent=formatQuantityDisplay(sumQty);
+  var turnCell=vc.querySelector('.rp-summary-row td[data-summary="after_order_turnover"]');
+  if(turnCell){
+    if(avgWS>0){
+      turnCell.textContent=Math.round((availWS+transitWS+poWS+piWS+suggWS)/avgWS*10)/10;
+    }
+  }
+}
 function rpSaveScroll(viewKey){
   var v=window._rpCache.views[viewKey];
   if(!v||!v.node)return;
@@ -7545,7 +7588,7 @@ async function loadRpChannelMonthly(channel){
       r._c.availTurnover = avgSalesPeriod>0 ? Math.round(availAllocatedPeriod/avgSalesPeriod*10)/10 : null;
       r._c.currentTurn = avgSalesPeriod>0 ? Math.round(poolAllocatedPeriod/avgSalesPeriod*10)/10 : t("app.799", "\u65e0\u9500\u91cf");
       r._c.transitTurnover = avgSalesPeriod>0 ? Math.round((availAllocatedPeriod+effectiveTransitAllocated)/avgSalesPeriod*10)/10 : null;
-      r._c.afterOrderTurnover = avgSalesPeriod>0 ? Math.round((poolAllocatedPeriod+r._c.suggestedQty)/avgSalesPeriod*10)/10 : null;
+      r._c.afterOrderTurnover = rpComputeChannelAfterOrderTurnover(r._c, rpGetEffectiveSuggestedQty(channel, r));
     });
     // 缓存行数据（含 _c 计算字段）供复盘弹窗读取
     window._rpChannelData = window._rpChannelData || {};
@@ -7628,7 +7671,7 @@ async function loadRpChannelMonthly(channel){
       sum:function(t){return '<td class="text-right">'+(t.avgSalesPeriod>0?Math.round((t.availWS+t.transitWS)/t.avgSalesPeriod*10)/10:'-')+'</td>';}};
     Cols.after_order_turnover={th:rpThCompact(t('forecast.compact.after_order_turnover','\u9884\u8ba1\u4e0b\u5355\u540e\n\u5468\u8f6c'),t("app.803", "\uff08\u5f53\u524d\u5e93\u5b58\u6c60 + \u672c\u6b21\u5efa\u8bae\u91c7\u8d2d\u6570\u91cf\uff09\u00f7 \u5f53\u524d\u9884\u6d4b\u5468\u671f\u6708\u5747\u9509\u91cf\u3002"),'text-right','',true),
       td:function(r,c){return '<td class="text-right rp-after-order-turn" data-rid="'+r.id+'" '+(c.afterOrderTurnover!==null?(c.afterOrderTurnover<2?'text-danger':c.afterOrderTurnover>6?'text-secondary':'text-success'):'text-muted')+'>'+(c.afterOrderTurnover!==null?c.afterOrderTurnover:'-')+'</td>';},
-      sum:function(t){return '<td class="text-right">'+(t.avgSalesPeriod>0?Math.round((t.availWS+t.transitWS+t.poWS+t.piUnshippedWS+t.suggestedQtyWS)/t.avgSalesPeriod*10)/10:'-')+'</td>';}};
+      sum:function(t){return '<td class="text-right" data-summary="after_order_turnover">'+(t.avgSalesPeriod>0?Math.round((t.availWS+t.transitWS+t.poWS+t.piUnshippedWS+t.suggestedQtyWS)/t.avgSalesPeriod*10)/10:'-')+'</td>';}};
     Cols.sales_status={th:rpThCompact(t('forecast.compact.sales_status','销量\n状态'),t("app.804", "\u7cfb\u7edf\u6839\u636e\u9500\u91cf\u8d8b\u52bf\u3001\u5e93\u5b58\u72b6\u6001\u3001\u5e93\u5b58\u5468\u8f6c\u548c\u751f\u547d\u5468\u671f\u7efc\u5408\u5224\u65ad\u5f53\u524d SKU \u9500\u552e\u72b6\u6001\uff0c\u5e76\u81ea\u52a8\u9009\u62e9\u5bf9\u5e94\u8865\u8d27\u8ba1\u7b97\u65b9\u5f0f\u3002\u7528\u6237\u65e0\u9700\u7406\u89e3\u8ba1\u7b97\u89c4\u5219\uff0c\u53ea\u9700\u6839\u636e\u7cfb\u7edf\u5224\u65ad\u6267\u884c\u590d\u6838\u3001\u8865\u8d27\u6216\u505c\u6b62\u91c7\u8d2d\u3002"),'text-center','',true),
       td:function(r,c){return '<td class="text-center rp-sales-status-cell"><span class="status-badge">'+formatForecastSalesStatus(r.sales_status||'')+'</span></td>';},
       sum:function(t){return '<td class="text-center"></td>';}};
@@ -7656,12 +7699,11 @@ async function loadRpChannelMonthly(channel){
       sum:function(t){return '<td class="text-right"></td>';}};
     Cols.target_stock={th:rpThCompact(t('forecast.compact.suggested_purchase','建议\n采购'),t("app.809", "\u57fa\u4e8e\u9500\u91cf\u7edf\u8ba1\u5468\u671f(\u8fd1 N \u5929)\u6708\u5747\u9500\u91cf\u4e0e\u76ee\u6807\u5468\u8f6c\u8ba1\u7b97\u7684\u5efa\u8bae\u8865\u8d27\u6570\u91cf\u3002\u6162\u9500\u3001\u5446\u6ede\u3001\u9ad8\u5e93\u5b58\u7b49 SKU \u4f1a\u88ab\u62a6\u622a\u4e3a 0\u3002"),'text-right','',true),
       td:function(r,c){
-        var _blocked=shouldBlockReplenish(r.sales_status||'',r.risk_tags||'');
         var _manual=rpGetManualStock(channel,r.id);
-        var _val=_blocked?0:(_manual!==undefined?_manual:Math.round(c.suggestedQty||0));
+        var _val=(_manual!==undefined?_manual:Math.round(c.suggestedQty||0));
         return '<td class="text-right"><input type="number" class="rp-target-stock-input" data-rid="'+r.id+'" data-channel="'+channel+'" value="'+_val+'" min="0" style="width:75px;padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-weight:bold;text-align:center" oninput="onChannelTargetStockInput(this)" onchange="onChannelTargetStockChange(this)"></td>';
       },
-      sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t.suggestedQty)+'</td>';}};
+      sum:function(t){return '<td class="text-right" data-summary="target_stock">'+formatQuantityDisplay(t.suggestedQty)+'</td>';}};
     Cols.last_inbound_date={th:rpThCompact(t('forecast.compact.last_inbound_date','最近\n入库日期'),t("app.806", "\u8be5 SKU \u6700\u8fd1\u4e00\u6b21\u5165\u5e93\u7684\u65e5\u671f\uff0c\u7528\u4e8e\u5224\u65ad\u5e93\u9f84\u548c\u662f\u5426\u957f\u671f\u672a\u8865\u8d27\u3002"),'text-center','',true),
       td:function(r,c){return '<td class="cell-date text-center">'+(r.last_inbound_date?fmtDate(r.last_inbound_date):t("app.673", "\u672a\u77e5"))+'</td>';},
       sum:function(t){return '<td class="text-center"></td>';}};
@@ -7701,13 +7743,13 @@ async function loadRpChannelMonthly(channel){
       totals.piUnshippedAllocatedPeriod+=(c.piUnshippedAllocatedPeriod||0);
       totals.poAllocatedPeriod+=(c.poAllocatedPeriod||0);
       totals.allocatedStock+=c.allocatedStock;totals.poolAllocatedPeriod+=(c.poolAllocatedPeriod||0);totals.targetStock+=c.targetStock;
-      totals.suggestedQty+=Math.round(c.suggestedQty||0);
+      totals.suggestedQty+=Math.round(rpGetEffectiveSuggestedQty(channel,r));
       if(c.avgSalesPeriod>0){
         totals.availWS+=c.availAllocatedPeriod||0;
         totals.transitWS+=c.effectiveTransitAllocated||0;
         totals.poWS+=c.poAllocatedPeriod||0;
         totals.piUnshippedWS+=c.piUnshippedAllocatedPeriod||0;
-        totals.suggestedQtyWS+=Math.round(c.suggestedQty||0);
+        totals.suggestedQtyWS+=Math.round(rpGetEffectiveSuggestedQty(channel,r));
       }
     });
     addHistoricalColsToActive(activeKeys,Cols,totals,data);
@@ -8074,7 +8116,7 @@ function openRpReview(rid, channel){
       var dataHtml = '<div class="detail-grid" style="grid-template-columns:1fr 1fr 1fr">'
         +kv(t('forecast.review.monthly_avg','{channel} 月均', {channel:refLabel}), c.avgSalesPeriod!==undefined?formatQuantityDisplay(c.avgSalesPeriod):'')
         +kv(t('forecast.review.ref_sales','补货参考销量'), formatQuantityDisplay(maxMonthly)+'<br><span style="font-size:11px;color:var(--text-secondary)">'+t('forecast.review.ref_sales_hint','（过去4个月最高月销量）')+'</span>', true)
-        +kv(t("app.109", "\u5efa\u8bae\u91c7\u8d2d\u6570\u91cf"), formatQuantityDisplay(c.suggestedQty))
+        +kv(t("app.109", "\u5efa\u8bae\u91c7\u8d2d\u6570\u91cf"), formatQuantityDisplay(rpGetEffectiveSuggestedQty(channel, r)))
         +'</div>';
       return t('forecast.review.distortion_title','<div class="detail-section"><h3>2.5 补货参考说明</h3>')+explainHtml+dataHtml+'</div>';
     })()
@@ -8100,7 +8142,7 @@ function openRpReview(rid, channel){
     +kv(t("app.733", "\u5728\u9014\u5e93\u5b58\u5468\u8f6c"), c.transitTurnover!==null?c.transitTurnover:t("app.799", "\u65e0\u9500\u91cf"))
     +kv(t("app.731", "PI\u5df2\u786e\u8ba4\u672a\u53d1\u8d27"), formatQuantityDisplay(c.piUnshipped))
     +kv(t("app.660", "\u76ee\u6807\u5468\u8f6c"), c.targetTurn)
-    +kv(t("app.109", "\u5efa\u8bae\u91c7\u8d2d\u6570\u91cf"), formatQuantityDisplay(c.suggestedQty))
+    +kv(t("app.109", "\u5efa\u8bae\u91c7\u8d2d\u6570\u91cf"), formatQuantityDisplay(rpGetEffectiveSuggestedQty(channel, r)))
     +kv(t("app.734", "\u9884\u8ba1\u4e0b\u5355\u540e\u5468\u8f6c"), c.afterOrderTurnover!==null?c.afterOrderTurnover:t("app.799", "\u65e0\u9500\u91cf"))
     +kv(t("po.012", "\u6700\u540e\u5165\u5e93\u65e5\u671f"), r.last_inbound_date?fmtDate(r.last_inbound_date):t("app.673", "\u672a\u77e5"))
     +kv(t("app.663", "\u8ddd\u6700\u540e\u5165\u5e93\u5929\u6570"), r.days_since_last_inbound!==null?r.days_since_last_inbound:t("app.673", "\u672a\u77e5"))
@@ -8145,6 +8187,27 @@ function onChannelTargetStockInput(input){
   if(!rid||!channel) return;
   var qty=parseInt(input.value)||0;
   rpSetManualStock(channel, rid, qty);
+  // 仅更新前端派生展示（不发 PUT、不写库）：当前行预计下单后周转 + 两个汇总 cell
+  var vc=input.closest('.rp-view-container')||rpActiveContainer();
+  var cache=window._rpChannelData&&window._rpChannelData[channel];
+  var r=cache?cache[rid]:null;
+  var c=r?r._c:null;
+  if(c){
+    var newAfter=rpComputeChannelAfterOrderTurnover(c, qty);
+    c.afterOrderTurnover=newAfter; // 同步缓存，供复盘弹窗读取
+    var turnEl=vc?vc.querySelector('.rp-after-order-turn[data-rid="'+rid+'"]'):document.querySelector('.rp-after-order-turn[data-rid="'+rid+'"]');
+    if(turnEl){
+      if(newAfter!==null){
+        turnEl.textContent=newAfter;
+        var cls=newAfter<2?'text-danger':newAfter>6?'text-secondary':'text-success';
+        turnEl.className='text-right rp-after-order-turn '+cls;
+      }else{
+        turnEl.textContent='-';
+        turnEl.className='text-right rp-after-order-turn text-muted';
+      }
+    }
+  }
+  rpRefreshChannelSummaries(channel, vc);
 }
 
 // 线上/线下建议采购数量修改 → 自动保存 + 换算预计下单后周转 + 反馈
@@ -8166,16 +8229,22 @@ async function onChannelTargetStockChange(input){
   // 反推 target_stock = 用户输入的最终建议值 + 渠道分摊库存
   var allocatedStock=c?c.allocatedStock:0;
   var targetStock=qty+allocatedStock;
-  // 前端实时换算预计下单后周转（当前库存池 + 新建议采购）
+  // 前端实时换算预计下单后周转（渠道分摊库存池 + 用户输入数量；用户输入值即 manual override）
   if(c){
-    var newAfterOrder=c.avgSalesPeriod>0?Math.round((c.pool+qty)/c.avgSalesPeriod*10)/10:null;
+    var newAfterOrder=rpComputeChannelAfterOrderTurnover(c, qty);
     c.afterOrderTurnover=newAfterOrder; // 同步缓存，供复盘弹窗读取
     var turnEl=vc?vc.querySelector('.rp-after-order-turn[data-rid="'+rid+'"]'):document.querySelector('.rp-after-order-turn[data-rid="'+rid+'"]');
-    if(turnEl&&newAfterOrder!==null){
-      turnEl.textContent=newAfterOrder;
-      var cls=newAfterOrder<2?'text-danger':newAfterOrder>6?'text-secondary':'text-success';
-      turnEl.className='text-right rp-after-order-turn '+cls;
+    if(turnEl){
+      if(newAfterOrder!==null){
+        turnEl.textContent=newAfterOrder;
+        var cls=newAfterOrder<2?'text-danger':newAfterOrder>6?'text-secondary':'text-success';
+        turnEl.className='text-right rp-after-order-turn '+cls;
+      }else{
+        turnEl.textContent='-';
+        turnEl.className='text-right rp-after-order-turn text-muted';
+      }
     }
+    rpRefreshChannelSummaries(channel, vc);
   }
   // 异步保存（后端按反推后的 target_stock 重算 suggested_qty）
   var data={};
