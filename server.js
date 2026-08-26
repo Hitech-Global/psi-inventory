@@ -6369,7 +6369,7 @@ function assertRefreshUpdateOnly(result, key) {
 async function writeSuggestionRefreshSqlite(exec, updateRows) {
   for (const r of updateRows) {
     assertRefreshUpdateOnly(r, r.id || '(no-id)');
-    const setClause = RS_SET_COLS.map(c => c + ' = ?').join(', ');
+    const setClause = RS_SET_COLS.map(c => c + ' = ?').join(', ') + ', online_write_seq = COALESCE(online_write_seq,0)+1, offline_write_seq = COALESCE(offline_write_seq,0)+1, recalc_revision = COALESCE(recalc_revision,0)+1';
     const params = r.values.concat([r.id]);
     await exec.run('UPDATE replenishment_suggestions SET ' + setClause + ' WHERE id = ?', params);
   }
@@ -6388,7 +6388,7 @@ async function writeSuggestionRefreshPg(exec, updateRows) {
     const t = r.data_type;
     typeMap[r.column_name] = t === 'integer' ? 'integer' : t === 'double precision' ? 'double precision' : 'text';
   });
-  const setClause = RS_SET_COLS.map(c => c + ' = v.' + c + '::' + (typeMap[c] || 'text')).join(', ');
+  const setClause = RS_SET_COLS.map(c => c + ' = v.' + c + '::' + (typeMap[c] || 'text')).join(', ') + ', online_write_seq = COALESCE(t.online_write_seq,0)+1, offline_write_seq = COALESCE(t.offline_write_seq,0)+1, recalc_revision = COALESCE(t.recalc_revision,0)+1';
   const valueRows = updateRows.map(r => '(' + Array(r.values.length + 1).fill('?').join(', ') + ')').join(', ');
   const params = [];
   updateRows.forEach(r => { params.push(r.id); r.values.forEach(v => params.push(v)); });
@@ -6799,6 +6799,63 @@ app.put('/api/replenishment-suggestions/:id', requireApiPermission('replenishmen
     const fields = [];
     const values = [];
 
+    // ===== 手工「建议采购数量」保存：server-managed revision + expected revision CAS =====
+    // 与实例数 / 请求到达顺序无关的 latest-wins。客户端不生成 DB revision，仅携带 server baseline。
+    // revision 不匹配（expected 不等于 server 当前值）→ changes=0 → 返回 stale；旧请求绝不能覆盖新值或系统重算结果。
+    if (d.online_suggested_qty !== undefined || d.offline_suggested_qty !== undefined) {
+      const channel = d.online_suggested_qty !== undefined ? 'online' : 'offline';
+      const expOnline = d.expected_online_write_seq;
+      const expOffline = d.expected_offline_write_seq;
+      const expRecalc = d.expected_recalc_revision;
+      const isNonNegInt = (x) => typeof x === 'number' && Number.isInteger(x) && x >= 0;
+      if (channel === 'online' && (!isNonNegInt(expOnline) || !isNonNegInt(expRecalc)))
+        return res.status(400).json({ success: false, error: 'SUGGESTION_REVISION_REQUIRED' });
+      if (channel === 'offline' && (!isNonNegInt(expOffline) || !isNonNegInt(expRecalc)))
+        return res.status(400).json({ success: false, error: 'SUGGESTION_REVISION_REQUIRED' });
+
+      const rs = queryOne(
+        'SELECT offline_suggested_qty, online_suggested_qty, other_suggested_qty, sales_status, risk_tags, lifecycle_status FROM replenishment_suggestions WHERE id = ?',
+        [req.params.id]
+      );
+      if (!rs) return res.status(404).json({ success: false, error: 'SUGGESTION_NOT_FOUND' });
+
+      const blocked = shouldBlockReplenish(rs.sales_status || '', rs.risk_tags || '');
+      const isStopped = (rs.sales_status || '') === '停采/清库存';
+      const rawVal = parseInt(channel === 'online' ? d.online_suggested_qty : d.offline_suggested_qty) || 0;
+      const effVal = (blocked || isStopped) ? 0 : rawVal;            // 停采/拦截硬规则：强制 0
+      const otherVal = rs.other_suggested_qty || 0;
+      const otherCh = channel === 'online' ? 'offline' : 'online';
+      const otherChVal = (channel === 'online' ? rs.offline_suggested_qty : rs.online_suggested_qty) || 0;
+      const expSeq = channel === 'online' ? expOnline : expOffline;
+
+      const resUp = run(
+        `UPDATE replenishment_suggestions
+           SET ${channel}_suggested_qty = ?,
+               suggested_qty = ? + COALESCE(${otherCh}_suggested_qty, 0) + COALESCE(other_suggested_qty, 0),
+               ${channel}_write_seq = COALESCE(${channel}_write_seq, 0) + 1,
+               suggestion = CASE
+                 WHEN sales_status IN ('停采/清库存','停采/停产') OR lifecycle_status IN ('clearance','stopped')
+                   THEN '停止采购，优先消化现有库存'
+                 WHEN lifecycle_status = 'new_test' THEN '新品测试期，暂不自动生成采购建议'
+                 WHEN lifecycle_status = 'new_launch' THEN '新品导入期，建议人工复核采购数量'
+                 WHEN sales_status = '呆滞' THEN '近30天无销量，建议清库存并暂停采购'
+                 WHEN sales_status = '慢销' THEN '库存周转偏高，建议观察并谨慎采购'
+                 WHEN (? + COALESCE(${otherCh}_suggested_qty, 0) + COALESCE(other_suggested_qty, 0)) > 0
+                   THEN '建议采购 ' || CAST(CAST((? + COALESCE(${otherCh}_suggested_qty, 0) + COALESCE(other_suggested_qty, 0)) AS INTEGER) AS TEXT)
+                 ELSE '当前库存池充足，建议观察' END
+         WHERE id = ? AND COALESCE(${channel}_write_seq, 0) = ? AND COALESCE(recalc_revision, 0) = ?`,
+        [effVal, effVal, effVal, effVal, req.params.id, expSeq, expRecalc]
+      );
+
+      if (resUp.changes === 0) {
+        const cur = queryOne('SELECT * FROM replenishment_suggestions WHERE id = ?', [req.params.id]);
+        if (!cur) return res.status(404).json({ success: false, error: 'SUGGESTION_NOT_FOUND' });
+        return res.json({ success: true, stale: true, data: cur });
+      }
+      const updated = queryOne('SELECT * FROM replenishment_suggestions WHERE id = ?', [req.params.id]);
+      return res.json({ success: true, stale: false, data: updated });
+    }
+
     // generate_po
     if (d.generate_po !== undefined) { fields.push('generate_po = ?'); values.push(parseInt(d.generate_po) || 0); }
 
@@ -6819,6 +6876,7 @@ app.put('/api/replenishment-suggestions/:id', requireApiPermission('replenishmen
       const foq = (rs.final_order_qty != null && rs.final_order_qty >= 0) ? rs.final_order_qty : suggestedQty;
       const afterOrder = avgPeriod > 0 ? (pool + foq) / avgPeriod : 99;
       fields.push('online_target_turnover = ?', 'online_target_stock = ?', 'online_suggested_qty = ?', 'offline_suggested_qty = ?', 'other_suggested_qty = ?', 'suggested_qty = ?', 'after_order_turnover_months = ?', 'suggestion = ?');
+      fields.push('online_write_seq = COALESCE(online_write_seq,0)+1', 'offline_write_seq = COALESCE(offline_write_seq,0)+1', 'recalc_revision = COALESCE(recalc_revision,0)+1');
       values.push(onlineTurn, onlineStock, onComp, offComp, otherComp, suggestedQty, Math.round(afterOrder * 10) / 10, buildSuggestionText(rs.sales_status, rs.lifecycle_status, suggestedQty, isStopped));
     }
 
@@ -6839,6 +6897,7 @@ app.put('/api/replenishment-suggestions/:id', requireApiPermission('replenishmen
       const foq = (rs.final_order_qty != null && rs.final_order_qty >= 0) ? rs.final_order_qty : suggestedQty;
       const afterOrder = avgPeriod > 0 ? (pool + foq) / avgPeriod : 99;
       fields.push('offline_target_turnover = ?', 'offline_target_stock = ?', 'online_suggested_qty = ?', 'offline_suggested_qty = ?', 'other_suggested_qty = ?', 'suggested_qty = ?', 'after_order_turnover_months = ?', 'suggestion = ?');
+      fields.push('online_write_seq = COALESCE(online_write_seq,0)+1', 'offline_write_seq = COALESCE(offline_write_seq,0)+1', 'recalc_revision = COALESCE(recalc_revision,0)+1');
       values.push(offlineTurn, offlineStock, onComp, offComp, otherComp, suggestedQty, Math.round(afterOrder * 10) / 10, buildSuggestionText(rs.sales_status, rs.lifecycle_status, suggestedQty, isStopped));
     }
 
@@ -6854,8 +6913,16 @@ app.put('/api/replenishment-suggestions/:id', requireApiPermission('replenishmen
       values.push(foq, Math.round(afterOrder * 10) / 10, Math.round(onlineAfter * 10) / 10, Math.round(offlineAfter * 10) / 10);
     }
 
+    // 线上「建议采购数量」手动覆盖：用户最终值直接落库，不做有损往返重算。
+    // 仅更新 online_suggested_qty 与恒等式 suggested_qty = online + offline + other，
+    // 同步 suggestion 文本（直接依赖 suggested_qty）。不动 target_stock / 周转 / MOQ / final_order_qty。
+    // 保留停采/拦截硬规则：被拦截行强制为 0。
+    // 注意：online/offline「建议采购数量」手工保存已由上方 early-return CAS 分支统一处理（含 expected revision 校验、
+    // 停采/拦截强制 0、suggested_qty 恒等式、suggestion SQL CASE）。以下分支不再处理 suggested_qty 直接保存。
+
     // 线上建议采购数量（手动改线上目标库存）→ 重算线上分量 + 三分量（与 generate 同源）
-    if (d.online_target_stock !== undefined) {
+    // 守卫：仅当未走「直接保存 suggested」分支时才执行（前端手工编辑建议采购不再发 target_stock）。
+    if (d.online_target_stock !== undefined && d.online_suggested_qty === undefined) {
       const rs = queryOne('SELECT avg_sales_period, total_inventory_pool, offline_target_stock, sales_status, risk_tags, final_order_qty, lifecycle_status FROM replenishment_suggestions WHERE id = ?', [req.params.id]);
       const newOnlineStock = parseInt(d.online_target_stock) || 0;
       const pool = rs.total_inventory_pool || 0;
@@ -6870,11 +6937,13 @@ app.put('/api/replenishment-suggestions/:id', requireApiPermission('replenishmen
       const foq = (rs.final_order_qty != null && rs.final_order_qty >= 0) ? rs.final_order_qty : suggestedQty;
       const afterOrder = avgPeriod > 0 ? (pool + foq) / avgPeriod : 99;
       fields.push('online_target_stock = ?', 'online_suggested_qty = ?', 'offline_suggested_qty = ?', 'other_suggested_qty = ?', 'suggested_qty = ?', 'after_order_turnover_months = ?', 'suggestion = ?');
+      fields.push('online_write_seq = COALESCE(online_write_seq,0)+1', 'offline_write_seq = COALESCE(offline_write_seq,0)+1', 'recalc_revision = COALESCE(recalc_revision,0)+1');
       values.push(newOnlineStock, onComp, offComp, otherComp, suggestedQty, Math.round(afterOrder * 10) / 10, buildSuggestionText(rs.sales_status, rs.lifecycle_status, suggestedQty, isStopped));
     }
 
     // 线下建议采购数量（手动改线下目标库存）→ 重算线下分量 + 三分量（与 generate 同源）
-    if (d.offline_target_stock !== undefined) {
+    // 守卫：仅当未走「直接保存 suggested」分支时才执行。
+    if (d.offline_target_stock !== undefined && d.offline_suggested_qty === undefined) {
       const rs = queryOne('SELECT avg_sales_period, total_inventory_pool, online_target_stock, sales_status, risk_tags, final_order_qty, lifecycle_status FROM replenishment_suggestions WHERE id = ?', [req.params.id]);
       const newOfflineStock = parseInt(d.offline_target_stock) || 0;
       const pool = rs.total_inventory_pool || 0;
@@ -6889,6 +6958,7 @@ app.put('/api/replenishment-suggestions/:id', requireApiPermission('replenishmen
       const foq = (rs.final_order_qty != null && rs.final_order_qty >= 0) ? rs.final_order_qty : suggestedQty;
       const afterOrder = avgPeriod > 0 ? (pool + foq) / avgPeriod : 99;
       fields.push('offline_target_stock = ?', 'online_suggested_qty = ?', 'offline_suggested_qty = ?', 'other_suggested_qty = ?', 'suggested_qty = ?', 'after_order_turnover_months = ?', 'suggestion = ?');
+      fields.push('online_write_seq = COALESCE(online_write_seq,0)+1', 'offline_write_seq = COALESCE(offline_write_seq,0)+1', 'recalc_revision = COALESCE(recalc_revision,0)+1');
       values.push(newOfflineStock, onComp, offComp, otherComp, suggestedQty, Math.round(afterOrder * 10) / 10, buildSuggestionText(rs.sales_status, rs.lifecycle_status, suggestedQty, isStopped));
     }
 
@@ -17659,6 +17729,22 @@ if (require.main === module) {
     console.error('\n[FATAL] bootstrapBreakGlass() 失败:', e.message);
     console.error(e.stack);
     console.error('\n[FATAL] 服务无法启动。请检查上述错误并修正环境变量配置。');
+    process.exit(1);
+  }
+
+  // 建议采购数量持久化：replenishment revision 列迁移（PG）。
+  // 必须在 app.listen() 之前同步完成；任一 SQL 失败 → 抛错 → 进程启动失败，绝不静默继续。
+  // SQLite 迁移由 db-sqlite.js 处理，本调用在 isPg=false 时直接返回。
+  try {
+    console.log('[STARTUP] 确保 replenishment revision 列（online_write_seq / offline_write_seq / recalc_revision）...');
+    require('./migrations/replenishment-revision').ensureReplenishmentRevisionColumns(
+      run, (process.env.DB_DRIVER || 'sqlite').toLowerCase() === 'pg'
+    );
+    console.log('[STARTUP] revision 列就绪 ✓');
+  } catch (e) {
+    console.error('\n[FATAL] replenishment revision 迁移失败:', e.message);
+    console.error(e.stack);
+    console.error('\n[FATAL] 服务无法启动。请修正数据库后重试。');
     process.exit(1);
   }
 

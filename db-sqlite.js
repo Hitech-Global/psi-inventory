@@ -779,6 +779,9 @@ function initDatabase() {
       sales_reason TEXT DEFAULT '',
       action TEXT DEFAULT '',
       ai_business_advice TEXT DEFAULT '',
+      online_write_seq INTEGER DEFAULT 0,
+      offline_write_seq INTEGER DEFAULT 0,
+      recalc_revision INTEGER DEFAULT 0,
       created_at TEXT DEFAULT (datetime('now'))
     )
   `);
@@ -884,6 +887,26 @@ function initDatabase() {
   ].forEach(col => {
     try { d.exec(`ALTER TABLE replenishment_suggestions ADD COLUMN ${col}`); } catch(e) {}
   });
+  // 订单预测「建议采购数量」持久化 — revision 列。
+  // 必须逐列检测后独立 ALTER，杜绝「首个列 duplicate → catch 中断后续列 → 永久 partial schema」。
+  // 用 PRAGMA table_info 取现有列集合，仅对缺失列执行 ALTER（每列独立，互不影响）。
+  (function ensureReplenishmentRevisionColumnsSqlite() {
+    let existing = new Set();
+    try {
+      const rows = d.prepare('PRAGMA table_info(replenishment_suggestions)').all();
+      (rows || []).forEach(function (c) { if (c && c.name) existing.add(c.name); });
+    } catch (e) { existing = new Set(); }
+    const REV_COLS = [
+      { name: 'online_write_seq', sql: 'INTEGER DEFAULT 0' },
+      { name: 'offline_write_seq', sql: 'INTEGER DEFAULT 0' },
+      { name: 'recalc_revision', sql: 'INTEGER DEFAULT 0' }
+    ];
+    REV_COLS.forEach(function (col) {
+      if (!existing.has(col.name)) {
+        try { d.exec(`ALTER TABLE replenishment_suggestions ADD COLUMN ${col.name} ${col.sql}`); } catch (e) {}
+      }
+    });
+  })();
 
   // PI 明细：折扣列（比例 0~1，默认 0；向后兼容，已有明细折扣=0 行为不变）
   try { d.exec(`ALTER TABLE proforma_invoice_items ADD COLUMN discount REAL DEFAULT 0`); } catch(e) {}

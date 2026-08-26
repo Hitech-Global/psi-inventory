@@ -6273,6 +6273,7 @@ function saveRpPreferences(){
   return _rpPreferencesSaveQueue;
 }
 function onRpFilterChange(){
+  rpFlushAllPending();   // 筛选/搜索变化前主动 flush 手工作业（普通查看，不重算、不覆盖）
   saveRpPreferences();
   rpClearDataCache();
   rpClearAllViews();
@@ -6280,6 +6281,7 @@ function onRpFilterChange(){
   loadRpWithHistorical();
 }
 async function resetRpFilters(){
+  rpFlushAllPending();   // 重置筛选前主动 flush 手工作业（普通查看，不重算、不覆盖）
   ['rp-c','rp-w','rp-b','rp-status','rp-lifecycle','rp-s'].forEach(function(id){
     var el=document.getElementById(id);
     if(el)el.value='';
@@ -6464,6 +6466,234 @@ function rpSetManualStock(channel, rid, qty){
 function rpClearManualStock(){
   window._rpManualStock={online:{},offline:{}};
 }
+// ==================== 建议采购「手工值可靠持久化」基础设施 ====================
+// 三层 truth 模型：
+//   DB            = 唯一持久化业务 truth
+//   memory override (_rpManualStock) = 当前页面 PUT 未确认期间的 UI 保护（临时）
+//   sessionStorage journal (_rpSaveJournal) = 同一页面 session 内，防刷新导致 pending 丢失（临时，非 truth）
+// 手工改「建议采购数量」直接 PUT online_suggested_qty / offline_suggested_qty（后端精确落库，不重算）。
+// 单飞 + coalesce 保证同一 channel:rid 任意时刻最多 1 个 PUT 在途，最终 DB = 最后用户值（latest wins，非依赖 response seq）。
+window._rpSaveState={online:{},offline:{}};   // channel -> rid -> {pending, inFlight, timer, flightPromise}
+window._rpSaveJournalPrefix='rpj::';          // sessionStorage key = rpj::<rid>::<channel>
+function rpGetSaveState(channel, rid){
+  if(!window._rpSaveState) window._rpSaveState={online:{},offline:{}};
+  if(!window._rpSaveState[channel]) window._rpSaveState[channel]={};
+  if(!window._rpSaveState[channel][rid]) window._rpSaveState[channel][rid]={pending:null,inFlight:false,timer:null,flightPromise:null};
+  return window._rpSaveState[channel][rid];
+}
+// 同步写 sessionStorage journal（同一 session 内刷新可 replay 最新 pending）。不使用 localStorage，避免陈旧值跨 session 覆盖。
+// journal 保存结构：{v: 用户值, localOp: 本 session 单调递增序号, baseRecalcRevision: 写入时的 server recalc_revision}
+// localOp 仅前端用于区分最新用户输入；baseRecalcRevision 用于刷新 replay / stale 时判断系统重算是否失效。
+// 注意：journal 不参与数据库 WHERE，也不是 DB revision。
+function rpWriteJournal(channel, rid, qty){
+  try{
+    var r=rpGetRow(channel, rid);
+    var baseRecalc = r ? (r._serverRecalc||0) : 0;
+    window._rpLocalOp = (window._rpLocalOp||0)+1;
+    var entry={v:qty, localOp:window._rpLocalOp, baseRecalcRevision:baseRecalc};
+    sessionStorage.setItem(window._rpSaveJournalPrefix+rid+'::'+channel, JSON.stringify(entry));
+    var st=rpGetSaveState(channel, rid); st.journal=entry;
+  }catch(e){}
+}
+function rpClearJournalKey(channel, rid){
+  try{ sessionStorage.removeItem(window._rpSaveJournalPrefix+rid+'::'+channel); }catch(e){}
+  var st=rpGetSaveState(channel, rid); if(st) st.journal=null;
+}
+// 取某渠道缓存行（含 server baseline revision）
+function rpGetRow(channel, rid){
+  var cache=window._rpChannelData&&window._rpChannelData[channel];
+  return cache?cache[rid]:null;
+}
+// target-turnover in-flight 期间临时锁住该 rid 双渠道「建议采购」输入，避免生成 journal/pending。
+function rpSetRecalcInFlight(rid, val){
+  ['online','offline'].forEach(function(ch){
+    var rr=rpGetRow(ch, rid); if(rr) rr._recalcInFlight=!!val;
+  });
+}
+function rpIsRecalcInFlight(rid){
+  var hit=false;
+  ['online','offline'].forEach(function(ch){
+    var rr=rpGetRow(ch, rid); if(rr&&rr._recalcInFlight) hit=true;
+  });
+  return hit;
+}
+// target-turnover in-flight 期间，真实禁用该 rid 双渠道「建议采购」input。
+// 这是第二层 UI 锁（第一层是 rpIsRecalcInFlight 的 handler 早返回）。
+// 仅依赖 DOM 属性 .disabled，turnover 进行中用户无法在「建议采购」框里键入值（不会静默丢数据）。
+function rpSetSuggestedInputsDisabled(rid, disabled){
+  try{
+    var els=document.querySelectorAll('.rp-target-stock-input[data-rid="'+rid+'"]');
+    for(var i=0;i<els.length;i++){ els[i].disabled = !!disabled; }
+  }catch(e){}
+}
+function rpClearSaveJournal(){
+  try{
+    var keys=[];
+    for(var i=0;i<sessionStorage.length;i++){ var k=sessionStorage.key(i); if(k&&k.indexOf(window._rpSaveJournalPrefix)===0) keys.push(k); }
+    keys.forEach(function(k){ sessionStorage.removeItem(k); });
+  }catch(e){}
+}
+// 页面加载后 replay 尚未确认的 journal：恢复用户最后输入并立即重发（保证刷新不丢最新值）。
+function rpReplayJournal(){
+  try{
+    for(var i=0;i<sessionStorage.length;i++){
+      var k=sessionStorage.key(i);
+      if(!k||k.indexOf(window._rpSaveJournalPrefix)!==0) continue;
+      var parts=k.substring(window._rpSaveJournalPrefix.length).split('::');
+      if(parts.length!==2) continue;
+      var rid=parts[0], channel=parts[1];
+      var raw=sessionStorage.getItem(k);
+      var entry;
+      try{ entry=JSON.parse(raw); }catch(e){ entry=null; }
+      if(!entry||typeof entry.v!=='number') continue;
+      var r=rpGetRow(channel, rid);
+      // 刷新后先比对：journal.baseRecalcRevision 与当前 GET hydrate 的 server recalc_revision
+      // 不一致 = 期间发生过系统重算 → journal 已失效，丢弃（不 replay、不覆盖系统结果）。
+      if(r && entry.baseRecalcRevision!==undefined && entry.baseRecalcRevision!==(r._serverRecalc||0)){
+        rpClearJournalKey(channel, rid);
+        continue;
+      }
+      rpSetManualStock(channel, rid, entry.v);       // 先恢复 UI 显示
+      var st=rpGetSaveState(channel, rid); st.pending=entry.v; st.journal=entry; // 标记待发
+      rpScheduleSaveStock(channel, rid);             // 立即（debounce 后）重发（expected 用当前 r baseline）
+    }
+  }catch(e){}
+}
+// 单飞 + coalesce：同一 channel:rid 最多 1 个 PUT 在途；在途期间继续输入只更新 pending（最新值），
+// 当前请求完成后若仍有 newer pending 立即链式发送最新值。最终 DB 收敛到最后一个用户值。
+function rpFlushOne(channel, rid){
+  var st=rpGetSaveState(channel, rid);
+  if(st.inFlight) return st.flightPromise||Promise.resolve(true);
+  if(st.pending===null) return Promise.resolve(true);
+  var val=st.pending; st.pending=null; st.inFlight=true;
+  var sentVal=val;
+  var r=rpGetRow(channel, rid);
+  var expRecalc = r ? (r._serverRecalc||0) : 0;
+  var data={};
+  if(channel==='online'){ data.online_suggested_qty=val; data.expected_online_write_seq = r ? (r._serverRevOnline||0) : 0; }
+  else { data.offline_suggested_qty=val; data.expected_offline_write_seq = r ? (r._serverRevOffline||0) : 0; }
+  data.expected_recalc_revision = expRecalc;
+  st.flightPromise=api('/api/replenishment-suggestions/'+rid,'PUT',data)
+    .then(function(resp){
+      var d=resp&&resp.data;
+      var r2=rpGetRow(channel, rid);
+      var c=r2?rpGetChannelC(channel,r2):null;
+      if(r2&&d){
+        // 成功或 stale 都先用 server 当前 revision 更新本地 baseline
+        r2._serverRevOnline = (d.online_write_seq!=null)?d.online_write_seq:r2._serverRevOnline;
+        r2._serverRevOffline = (d.offline_write_seq!=null)?d.offline_write_seq:r2._serverRevOffline;
+        r2._serverRecalc = (d.recalc_revision!=null)?d.recalc_revision:r2._serverRecalc;
+        if(resp.stale===true){
+          // stale：区分 manual conflict 与 system recompute invalidation
+          var jRecalc = (st.journal && st.journal.baseRecalcRevision!=null) ? st.journal.baseRecalcRevision : r2._serverRecalc;
+          if(jRecalc !== r2._serverRecalc){
+            // 系统重算已发生 → journal 失效，禁止 retry，清保护层，接受 server truth
+            if(window._rpManualStock&&window._rpManualStock[channel]) delete window._rpManualStock[channel][rid];
+            rpClearJournalKey(channel, rid);
+            st.pending=null;
+            rpClearDataCache(); rpInvalidateSuggestionViews();
+            return true;
+          }
+          // manual conflict：若仍有 newer pending（用户已输入更新值），.finally 用新 baseline 重发最新值
+          if(st.pending!==null){ rpClearDataCache(); rpInvalidateSuggestionViews(); return true; }
+          // 无更新意图：接受 server truth，清保护层
+          if(window._rpManualStock&&window._rpManualStock[channel]) delete window._rpManualStock[channel][rid];
+          rpClearJournalKey(channel, rid);
+          rpClearDataCache(); rpInvalidateSuggestionViews();
+          return true;
+        }
+        // success：同步 server truth 到内存缓存
+        if(channel==='online'){ r2.online_suggested_qty=d.online_suggested_qty; }
+        else { r2.offline_suggested_qty=d.offline_suggested_qty; }
+        r2.suggested_qty=d.suggested_qty;
+        if(c) c.suggestedQty = channel==='online' ? (d.online_suggested_qty||0) : (d.offline_suggested_qty||0);
+        // 仅当无 newer pending 时才清 override + journal，回归 DB truth
+        if(st.pending===null){
+          if(window._rpManualStock&&window._rpManualStock[channel]) delete window._rpManualStock[channel][rid];
+          rpClearJournalKey(channel, rid);
+        }
+      }
+      rpClearDataCache();
+      rpInvalidateSuggestionViews();
+      return true;
+    })
+    .catch(function(){
+      st.pending=sentVal; // 网络失败：保留待重试（override + journal 已含此值，下次操作重试）
+      return false;
+    })
+    .finally(function(){
+      st.inFlight=false; st.flightPromise=null;
+      // 在途期间用户又输入了新值（coalesce 后的最新值）→ 重新发起一次请求（此时 inFlight 已 false）。
+      // 注意：不可在 .then 中 return rpFlushOne()，否则 inFlight 仍为真会返回自身 promise 形成死锁。
+      if(st.pending!==null) rpFlushOne(channel, rid);
+    });
+  return st.flightPromise;
+}
+// 防抖调度：每 key 独立 ~500ms 定时器，连打只发一次（取 pending 最新值）。
+function rpScheduleSaveStock(channel, rid){
+  var st=rpGetSaveState(channel, rid);
+  if(st.timer){ clearTimeout(st.timer); st.timer=null; }
+  st.timer=setTimeout(function(){
+    st.timer=null;
+    rpFlushOne(channel, rid);
+  }, 500);
+}
+// 切换 Tab / mode / 筛选 / 重置前：主动把在途+pending 全部发出（fire-and-forget，单飞保证顺序）。
+function rpFlushAllPending(){
+  if(!window._rpSaveState) return;
+  ['online','offline'].forEach(function(ch){
+    var cm=window._rpSaveState[ch]; if(!cm) return;
+    Object.keys(cm).forEach(function(rid){ rpFlushOne(ch, rid); });
+  });
+}
+// 重新计算前必须排空所有手工作业：全部成功才返回 true；任一失败返回 false，禁止继续 generate。
+async function rpDrainAllPending(){
+  rpFlushAllPending();
+  var ps=[];
+  if(window._rpSaveState){
+    ['online','offline'].forEach(function(ch){
+      var cm=window._rpSaveState[ch]; if(!cm) return;
+      Object.keys(cm).forEach(function(rid){
+        var st=cm[rid];
+        if(st.flightPromise) ps.push(st.flightPromise);
+      });
+    });
+  }
+  if(!ps.length) return true;
+  var results=await Promise.all(ps);
+  return results.every(function(x){ return x===true; });
+}
+// 页面卸载兜底：keepalive 尽力发送尚未确认的手工作业（仅兜底，正确性由 sessionStorage replay 保证）。
+// 不依赖 response seq / AbortController，仅作为「快速关闭页面」的最后缓冲；幂等（后端直接 SET 指定值）。
+function rpFlushAllPendingKeepalive(){
+  if(!window._rpSaveState) return;
+  ['online','offline'].forEach(function(ch){
+    var cm=window._rpSaveState[ch]; if(!cm) return;
+    Object.keys(cm).forEach(function(rid){
+      var st=cm[rid];
+      var val=st.inFlight?null:st.pending;   // 在途的请求由 rpFlushOne 自身完成，避免重复
+      if(val===null) return;
+      var r=rpGetRow(ch, rid);
+      var data={};
+      if(ch==='online'){ data.online_suggested_qty=val; data.expected_online_write_seq=r?(r._serverRevOnline||0):0; }
+      else { data.offline_suggested_qty=val; data.expected_offline_write_seq=r?(r._serverRevOffline||0):0; }
+      data.expected_recalc_revision=r?(r._serverRecalc||0):0;
+      try{
+        fetch('/api/replenishment-suggestions/'+rid,{method:'PUT',headers:{'Content-Type':'application/json','Accept-Language':(typeof getLang==='function'?getLang():'zh')},body:JSON.stringify(data),credentials:'same-origin',keepalive:true});
+      }catch(e){}
+    });
+  });
+}
+// 启动钩子：加载即 replay 上次 session 未确认的 journal（保证刷新不丢最新手工值），并注册卸载兜底。
+(function(){
+  try{
+    if(typeof window.addEventListener==='function'){
+      window.addEventListener('pagehide', rpFlushAllPendingKeepalive);
+      window.addEventListener('beforeunload', rpFlushAllPendingKeepalive);
+    }
+    rpReplayJournal();
+  }catch(e){}
+})();
 // 统一“当前计划采购数量”口径：用户手工 override（含显式 0）优先，否则用服务端落库渠道分量。
 // 注意：绝不修改 row._channelC[channel].suggestedQty 本身语义（它仍代表 server 真值，供 PUT 同步使用）。
 // 安全读取某渠道的隔离 context；缺失时返回 null（不回退到其它渠道，避免算出“看起来正常但错误”的数字）。
@@ -6537,6 +6767,7 @@ function rpRestoreScroll(viewKey){
 // ==================== 订单预测：Tab/Mode 切换 ====================
 function switchRpTab(tab){
   var _t0=performance.now();
+  rpFlushAllPending();   // 切 Tab 前主动 flush 手工作业（普通查看，不重算、不覆盖）
   rpTab=tab;
   document.querySelectorAll('#content-inner .tab-bar .tab-item').forEach((t,i)=>{
     const tabs=['total','online','offline'];
@@ -6562,6 +6793,7 @@ function switchRpTab(tab){
 }
 function switchRpMode(mode){
   var _t0=performance.now();
+  rpFlushAllPending();   // 切月/天前主动 flush 手工作业（普通查看，不重算、不覆盖）
   rpMode=mode;
   document.querySelectorAll('.rp-mode-btn').forEach(b=>b.classList.remove('active'));
   event.target.classList.add('active');
@@ -7618,7 +7850,14 @@ async function loadRpChannelMonthly(channel){
     // 缓存行数据（含 _c 计算字段）供复盘弹窗读取
     window._rpChannelData = window._rpChannelData || {};
     var channelCache = {};
-    data.forEach(function(r){ channelCache[r.id] = r; });
+    data.forEach(function(r){
+      channelCache[r.id] = r;
+      // server-managed revision baseline：GET 返回的当前 revision 本地镜像（客户端不生成 DB revision）。
+      r._serverRevOnline = (r.online_write_seq || 0);
+      r._serverRevOffline = (r.offline_write_seq || 0);
+      r._serverRecalc = (r.recalc_revision || 0);
+      r._recalcInFlight = false;
+    });
     window._rpChannelData[channel] = channelCache;
     // 列渲染器 — key 必须与 rpChannelColMeta() 中的 key 一致
     var Cols={};
@@ -8195,12 +8434,33 @@ function onTargetTurnChange(input){
   var vc=input.closest('.rp-view-container')||rpActiveContainer();
   var stockEl=vc?vc.querySelector('.rp-target-stock-'+rid):document.querySelector('.rp-target-stock-'+rid);
   if(stockEl) stockEl.textContent=stock;
-  // 异步保存目标周转
+  // 目标周转 in-flight：临时锁住该 rid 双渠道「建议采购」输入，避免系统在重算期间被旧 manual journal 覆盖。
+  // 解锁后前端用 response 的新 revision 更新 baseline，此后再手工输入会带上新 recalc_revision，正常保存。
+  rpSetRecalcInFlight(rid, true);
+  rpSetSuggestedInputsDisabled(rid, true); // 真实 UI 锁：禁用该 rid 双渠道「建议采购」input
   var field=channel==='online'?'online_target_turnover':'offline_target_turnover';
-  api('/api/replenishment-suggestions/'+rid,'PUT',{online_target_turnover:channel==='online'?months:undefined,offline_target_turnover:channel==='offline'?months:undefined}).then(function(){
-    rpClearDataCache();
-    rpInvalidateSuggestionViews();
-  });
+  api('/api/replenishment-suggestions/'+rid,'PUT',{online_target_turnover:channel==='online'?months:undefined,offline_target_turnover:channel==='offline'?months:undefined})
+    .then(function(resp){
+      rpClearDataCache();
+      rpInvalidateSuggestionViews();
+      var d=resp&&resp.data;
+      if(d){
+        // 用系统重算返回的 revision 更新该 rid 双渠道 baseline
+        ['online','offline'].forEach(function(ch){
+          var rr=rpGetRow(ch, rid);
+          if(rr){
+            rr._serverRevOnline = (d.online_write_seq!=null)?d.online_write_seq:rr._serverRevOnline;
+            rr._serverRevOffline = (d.offline_write_seq!=null)?d.offline_write_seq:rr._serverRevOffline;
+            rr._serverRecalc = (d.recalc_revision!=null)?d.recalc_revision:rr._serverRecalc;
+          }
+        });
+      }
+    })
+    .catch(function(){ showRpSaveFailed(input); })
+    .finally(function(){
+      rpSetRecalcInFlight(rid, false);
+      rpSetSuggestedInputsDisabled(rid, false); // 成功/失败都恢复双渠道「建议采购」input
+    });
 }
 
 // 轻量 oninput：仅把用户当前输入同步到前端 manual override 保护层，绝不发送 PUT。
@@ -8209,8 +8469,13 @@ function onChannelTargetStockInput(input){
   var rid=input.dataset.rid;
   var channel=input.dataset.channel;
   if(!rid||!channel) return;
+  if(rpIsRecalcInFlight(rid)) return; // target-turnover in-flight 期间锁住，禁止生成 journal/pending
   var qty=parseInt(input.value)||0;
+  // 三层写：override（UI 保护）+ pending（latest 值）+ sessionStorage journal（防刷新丢 pending）
   rpSetManualStock(channel, rid, qty);
+  var st=rpGetSaveState(channel, rid); st.pending=qty;
+  rpWriteJournal(channel, rid, qty);
+  rpScheduleSaveStock(channel, rid);
   // 仅更新前端派生展示（不发 PUT、不写库）：当前行预计下单后周转 + 两个汇总 cell
   var vc=input.closest('.rp-view-container')||rpActiveContainer();
   var cache=window._rpChannelData&&window._rpChannelData[channel];
@@ -8234,26 +8499,25 @@ function onChannelTargetStockInput(input){
   rpRefreshChannelSummaries(channel, vc);
 }
 
-// 线上/线下建议采购数量修改 → 自动保存 + 换算预计下单后周转 + 反馈
-// input 显示的是最终建议值（suggestedQty），用户编辑后反推 target_stock = 输入值 + allocatedStock
+// 线上/线下建议采购数量修改 → 立即持久化（单飞 + coalesce）。
+// 用户编辑的是「建议采购数量」最终业务值，直接 PUT online_suggested_qty / offline_suggested_qty，
+// 后端精确落库（不反推 target_stock、不重算）。oninput 已做防抖，onchange(blur) 立即 flush。
 async function onChannelTargetStockChange(input){
   var rid=input.dataset.rid;
   var channel=input.dataset.channel;
+  if(rpIsRecalcInFlight(rid)) return; // target-turnover in-flight 期间锁住，禁止生成 journal/pending
   var qty=parseInt(input.value)||0;
-  // 进入时立即捕获被编辑的 view key，并记录 manual override（在 await/fetch/PUT 之前）。
-  // 防止「等 PUT 成功后再记录」导致输入期间若发生重渲染即丢；
-  // 同时避免 await 之后 rpCurrentViewKey() 已指向切换后的目标 view，导致 stale 标错。
-  var editedViewKey=rpCurrentViewKey();
+  // 取消防抖定时器并立即发送最新值（blur 即代表用户停手）
+  var st=rpGetSaveState(channel, rid);
+  if(st.timer){ clearTimeout(st.timer); st.timer=null; }
   rpSetManualStock(channel, rid, qty);
+  st.pending=qty;
+  rpWriteJournal(channel, rid, qty);
   var vc=input.closest('.rp-view-container')||rpActiveContainer();
-  // 从缓存读取行数据用于换算
+  // 从缓存读取行数据用于前端派生展示
   var cache=window._rpChannelData&&window._rpChannelData[channel];
   var r=cache?cache[rid]:null;
   var c=r?rpGetChannelC(channel,r):null;
-  // 反推 target_stock = 用户输入的最终建议值 + 渠道分摊库存
-  var allocatedStock=c?c.allocatedStock:0;
-  var targetStock=qty+allocatedStock;
-  // 前端实时换算预计下单后周转（渠道分摊库存池 + 用户输入数量；用户输入值即 manual override）
   if(c){
     var newAfterOrder=rpComputeChannelAfterOrderTurnover(c, qty);
     c.afterOrderTurnover=newAfterOrder; // 同步缓存，供复盘弹窗读取
@@ -8270,25 +8534,10 @@ async function onChannelTargetStockChange(input){
     }
     rpRefreshChannelSummaries(channel, vc);
   }
-  // 异步保存（后端按反推后的 target_stock 重算 suggested_qty）
-  var data={};
-  if(channel==='online') data.online_target_stock=targetStock;
-  else data.offline_target_stock=targetStock;
+  // 立即单飞保存；失败提示，但不静默回退（override + journal 保留待重试）
   try{
-    var resp=await api('/api/replenishment-suggestions/'+rid,'PUT',data);
-    var d=resp.data;
-    if(d){
-      // 同步缓存：target_stock（反推值）+ suggested_qty（后端重算）+ suggestedQty（前端显示值）
-      if(r){
-        if(channel==='online'){ r.online_target_stock=targetStock; r.online_suggested_qty=d.online_suggested_qty; }
-        else { r.offline_target_stock=targetStock; r.offline_suggested_qty=d.offline_suggested_qty; }
-        r.suggested_qty=d.suggested_qty;
-        if(c) c.suggestedQty = channel==='online' ? (d.online_suggested_qty||0) : (d.offline_suggested_qty||0);
-      }
-    }
+    await rpFlushOne(channel, rid);
     showRpAutoSaved(input);
-    rpClearDataCache();
-    rpInvalidateSuggestionViews();
   }catch(e){
     showRpSaveFailed(input);
   }
@@ -8715,6 +8964,17 @@ async function genRp(){
   buttons.forEach(b=>{b.disabled=true;b.innerHTML=t("app.829", "\u8ba1\u7b97\u4e2d...");});
   showToast(t('gen.L5026.1','正在重新计算，请稍候...'),'info');
   try{
+    // 1) 先排空所有人工作业：任一保存失败则中止重新计算，避免把未保存人工值直接丢弃。
+    var drained=await rpDrainAllPending();
+    if(!drained){
+      showToast(t('app.884', '仍有建议采购修改未保存成功，已中止重新计算。请检查网络后重试。'),'danger');
+      buttons.forEach((b,i)=>{b.disabled=false;b.innerHTML=oldLabels[i]||t("shell.058", "\ud83d\udd04 \u91cd\u65b0\u8ba1\u7b97");});
+      return;
+    }
+    // 2) drain 成功后才清保护层（override + journal + save state），让页面回归 DB 系统值
+    rpClearManualStock();
+    rpClearSaveJournal();
+    if(window._rpSaveState) window._rpSaveState={online:{},offline:{}};
     const r=await api('/api/replenishment-suggestions/generate','POST',rpFilterBody());
     if(!r||!r.success){
       if(r&&r.unmatched){ showUnmatchedRules(r.unmatched); }
@@ -8941,15 +9201,24 @@ async function saveRpParams(){
   ];
   try{
     await api('/api/system-config','POST',{configs:configs});
+    // 1) 先排空所有人工作业：任一保存失败则中止重新计算（保存预测参数也等价于一次显式重算）。
+    var drained=await rpDrainAllPending();
+    if(!drained){
+      showToast(t('app.884', '仍有建议采购修改未保存成功，已中止重新计算。请检查网络后重试。'),'danger');
+      return;
+    }
+    // 2) drain 成功后才清保护层，让页面回归 DB 系统值
+    rpClearManualStock();
+    rpClearSaveJournal();
+    if(window._rpSaveState) window._rpSaveState={online:{},offline:{}};
     // 刷新销量统计周期缓存，并立即重算当前筛选范围，保证页面指标和建议同步变化。
     rpSalesStatsDays=parseInt(sd)||90; _rpSdPromise=null;
     var generated=await api('/api/replenishment-suggestions/generate','POST',rpFilterBody());
     if(generated&&generated.success===false){
       throw new Error(t('forecast.generate.unmatched','存在未配置目标周转的维度，预测参数已保存但重新计算未完成'));
     }
-    // 保存预测参数后系统会按最新参数重新生成建议，等价于一次显式重算：清除手动保护层，
-    // 让页面回到系统计算值（与 genRp 一致）。
-    rpClearManualStock();
+    // 保存预测参数后系统会按最新参数重新生成建议，等价于一次显式重算：手动保护层已在 drain 后清除，
+    // 页面回到系统计算值（与 genRp 一致）。
     await loadRpSummary();
     await loadRpWithHistorical();
     showToast(t('gen.L5253.1','预测参数已保存，页面指标和建议已同步更新'),'success');
