@@ -4161,95 +4161,198 @@ async function updateInventoryTransitData() {
   // 整段重算包成单个事务：reset+逐行回写 原子提交，任何一步失败整体 ROLLBACK，
   // 避免出现「先清零、只写回一部分」的半更新状态。
   transaction(() => {
-  // 在途口径（方案 B）：CI 已发货数量 - 已完成到仓(completed)物流批次对应 PL 的 SKU 数量
-  // 不读取 inbound_qty；物理到仓由 logistics_status='completed' + PL items 决定。
-  // 先全量清零（保证被作废/删除后贡献降为 0 的 SKU 也能回落，而非残留旧值），再按事实聚合写入
-  run('UPDATE inventory SET in_transit_qty = 0');
-  const transitData = (query(`
-    WITH shipped AS (
-      SELECT cii.ci_id, cii.sku_code,
-             SUM(COALESCE(cii.shipped_qty, 0)) AS shipped_qty
-      FROM commercial_invoice_items cii
-      JOIN commercial_invoices ci ON ci.id = cii.ci_id
-      WHERE ci.ci_status NOT IN ('cancelled')
-      GROUP BY cii.ci_id, cii.sku_code
-    ),
-    arrived AS (
-      SELECT lb.related_ci_id AS ci_id, pli.sku_code,
-             SUM(COALESCE(pli.total_qty, 0)) AS arrived_qty
-      FROM logistics_batches lb
-      JOIN packing_lists pl ON pl.logistics_batch_id = lb.id
-      JOIN packing_list_items pli ON pli.pl_id = pl.id
-      WHERE lb.logistics_status = 'completed'
-        AND lb.related_ci_id IS NOT NULL
-      GROUP BY lb.related_ci_id, pli.sku_code
-    ),
-    per_ci_transit AS (
-      SELECT s.sku_code, ci.country, ci.target_warehouse AS warehouse,
-             CASE WHEN COALESCE(s.shipped_qty, 0) - COALESCE(a.arrived_qty, 0) < 0 THEN 0
-                  ELSE COALESCE(s.shipped_qty, 0) - COALESCE(a.arrived_qty, 0) END AS in_transit_qty
-      FROM shipped s
-      JOIN commercial_invoices ci ON ci.id = s.ci_id
-      LEFT JOIN arrived a ON a.ci_id = s.ci_id AND a.sku_code = s.sku_code
-      WHERE ci.country != '' AND ci.target_warehouse != ''
-    )
-    SELECT sku_code, country, warehouse, SUM(in_transit_qty) AS in_transit_qty
-    FROM per_ci_transit
-    GROUP BY sku_code, country, warehouse
-    HAVING SUM(in_transit_qty) > 0
-  `)).rows;
+    const driver = (process.env.DB_DRIVER || 'sqlite').toLowerCase();
 
-  for (const td of transitData) {
-    const inv = queryOne('SELECT id FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
-      [td.sku_code, td.country, td.warehouse]);
-    if (inv) {
-      run('UPDATE inventory SET in_transit_qty = ? WHERE id = ?', [td.in_transit_qty || 0, inv.id]);
+    if (driver === 'pg') {
+      // ================================================================
+      // PG: set-based UPDATE ... FROM（6 SQL calls，常数级，不随行数增长）
+      // 聚合 SQL 与 SQLite 路径完全一致，仅将「JS 循环 + queryOne + run」
+      // 替换为单条 UPDATE ... FROM。业务口径、过滤条件、数值计算不变。
+      // ================================================================
+
+      // --- Section 1: in_transit_qty ---
+      run('UPDATE inventory SET in_transit_qty = 0');
+      run(`
+        UPDATE inventory i
+        SET in_transit_qty = src.in_transit_qty
+        FROM (
+          WITH shipped AS (
+            SELECT cii.ci_id, cii.sku_code,
+                   SUM(COALESCE(cii.shipped_qty, 0)) AS shipped_qty
+            FROM commercial_invoice_items cii
+            JOIN commercial_invoices ci ON ci.id = cii.ci_id
+            WHERE ci.ci_status NOT IN ('cancelled')
+            GROUP BY cii.ci_id, cii.sku_code
+          ),
+          arrived AS (
+            SELECT lb.related_ci_id AS ci_id, pli.sku_code,
+                   SUM(COALESCE(pli.total_qty, 0)) AS arrived_qty
+            FROM logistics_batches lb
+            JOIN packing_lists pl ON pl.logistics_batch_id = lb.id
+            JOIN packing_list_items pli ON pli.pl_id = pl.id
+            WHERE lb.logistics_status = 'completed'
+              AND lb.related_ci_id IS NOT NULL
+            GROUP BY lb.related_ci_id, pli.sku_code
+          ),
+          per_ci_transit AS (
+            SELECT s.sku_code, ci.country, ci.target_warehouse AS warehouse,
+                   CASE WHEN COALESCE(s.shipped_qty, 0) - COALESCE(a.arrived_qty, 0) < 0 THEN 0
+                        ELSE COALESCE(s.shipped_qty, 0) - COALESCE(a.arrived_qty, 0) END AS in_transit_qty
+            FROM shipped s
+            JOIN commercial_invoices ci ON ci.id = s.ci_id
+            LEFT JOIN arrived a ON a.ci_id = s.ci_id AND a.sku_code = s.sku_code
+            WHERE ci.country != '' AND ci.target_warehouse != ''
+          )
+          SELECT sku_code, country, warehouse, SUM(in_transit_qty) AS in_transit_qty
+          FROM per_ci_transit
+          GROUP BY sku_code, country, warehouse
+          HAVING SUM(in_transit_qty) > 0
+        ) src
+        WHERE
+          i.sku_code = src.sku_code
+          AND i.country = src.country
+          AND i.warehouse = src.warehouse
+      `);
+
+      // --- Section 2: pi_confirmed_unshipped_qty ---
+      run('UPDATE inventory SET pi_confirmed_unshipped_qty = 0');
+      run(`
+        UPDATE inventory i
+        SET pi_confirmed_unshipped_qty = src.pi_unshipped
+        FROM (
+          SELECT pii.sku_code,
+                 COALESCE(NULLIF(pi.country,''), po.country) as country,
+                 COALESCE(NULLIF(pi.target_warehouse,''), po.target_warehouse) as warehouse,
+                 SUM(pii.pi_confirmed_qty - pii.shipped_qty) as pi_unshipped
+          FROM proforma_invoice_items pii
+          JOIN proforma_invoices pi ON pii.pi_id = pi.id
+          LEFT JOIN purchase_orders po ON pi.related_po_id = po.id
+          WHERE pi.pi_status NOT IN ('cancelled', 'completed')
+            AND (pii.pi_confirmed_qty - pii.shipped_qty) > 0
+          GROUP BY pii.sku_code,
+                   COALESCE(NULLIF(pi.country,''), po.country),
+                   COALESCE(NULLIF(pi.target_warehouse,''), po.target_warehouse)
+        ) src
+        WHERE
+          i.sku_code = src.sku_code
+          AND i.country = src.country
+          AND i.warehouse = src.warehouse
+      `);
+
+      // --- Section 3: po_unconfirmed_pi_qty ---
+      run('UPDATE inventory SET po_unconfirmed_pi_qty = 0');
+      run(`
+        UPDATE inventory i
+        SET po_unconfirmed_pi_qty = src.po_unconfirmed
+        FROM (
+          SELECT poi.sku_code, po.country, po.target_warehouse as warehouse,
+                 SUM(poi.po_qty - poi.transferred_pi_qty) as po_unconfirmed
+          FROM purchase_order_items poi
+          JOIN purchase_orders po ON poi.po_id = po.id
+          WHERE po.po_status NOT IN ('cancelled', 'transferred_pi') AND (poi.po_qty - poi.transferred_pi_qty) > 0
+          GROUP BY poi.sku_code, po.country, po.target_warehouse
+        ) src
+        WHERE
+          i.sku_code = src.sku_code
+          AND i.country = src.country
+          AND i.warehouse = src.warehouse
+      `);
+
+    } else {
+      // ================================================================
+      // SQLite: 保持原有 loop 实现（dev/test 用，生产 PG 不走此路径）
+      // ================================================================
+
+      // 在途口径（方案 B）：CI 已发货数量 - 已完成到仓(completed)物流批次对应 PL 的 SKU 数量
+      // 不读取 inbound_qty；物理到仓由 logistics_status='completed' + PL items 决定。
+      // 先全量清零（保证被作废/删除后贡献降为 0 的 SKU 也能回落，而非残留旧值），再按事实聚合写入
+      run('UPDATE inventory SET in_transit_qty = 0');
+      const transitData = (query(`
+        WITH shipped AS (
+          SELECT cii.ci_id, cii.sku_code,
+                 SUM(COALESCE(cii.shipped_qty, 0)) AS shipped_qty
+          FROM commercial_invoice_items cii
+          JOIN commercial_invoices ci ON ci.id = cii.ci_id
+          WHERE ci.ci_status NOT IN ('cancelled')
+          GROUP BY cii.ci_id, cii.sku_code
+        ),
+        arrived AS (
+          SELECT lb.related_ci_id AS ci_id, pli.sku_code,
+                 SUM(COALESCE(pli.total_qty, 0)) AS arrived_qty
+          FROM logistics_batches lb
+          JOIN packing_lists pl ON pl.logistics_batch_id = lb.id
+          JOIN packing_list_items pli ON pli.pl_id = pl.id
+          WHERE lb.logistics_status = 'completed'
+            AND lb.related_ci_id IS NOT NULL
+          GROUP BY lb.related_ci_id, pli.sku_code
+        ),
+        per_ci_transit AS (
+          SELECT s.sku_code, ci.country, ci.target_warehouse AS warehouse,
+                 CASE WHEN COALESCE(s.shipped_qty, 0) - COALESCE(a.arrived_qty, 0) < 0 THEN 0
+                      ELSE COALESCE(s.shipped_qty, 0) - COALESCE(a.arrived_qty, 0) END AS in_transit_qty
+          FROM shipped s
+          JOIN commercial_invoices ci ON ci.id = s.ci_id
+          LEFT JOIN arrived a ON a.ci_id = s.ci_id AND a.sku_code = s.sku_code
+          WHERE ci.country != '' AND ci.target_warehouse != ''
+        )
+        SELECT sku_code, country, warehouse, SUM(in_transit_qty) AS in_transit_qty
+        FROM per_ci_transit
+        GROUP BY sku_code, country, warehouse
+        HAVING SUM(in_transit_qty) > 0
+      `)).rows;
+
+      for (const td of transitData) {
+        const inv = queryOne('SELECT id FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
+          [td.sku_code, td.country, td.warehouse]);
+        if (inv) {
+          run('UPDATE inventory SET in_transit_qty = ? WHERE id = ?', [td.in_transit_qty || 0, inv.id]);
+        }
+      }
+
+      // PI已确认未发货
+      run('UPDATE inventory SET pi_confirmed_unshipped_qty = 0');
+      const piData = (query(`
+        SELECT pii.sku_code,
+               COALESCE(NULLIF(pi.country,''), po.country) as country,
+               COALESCE(NULLIF(pi.target_warehouse,''), po.target_warehouse) as warehouse,
+               SUM(pii.pi_confirmed_qty - pii.shipped_qty) as pi_unshipped
+        FROM proforma_invoice_items pii
+        JOIN proforma_invoices pi ON pii.pi_id = pi.id
+        LEFT JOIN purchase_orders po ON pi.related_po_id = po.id
+        WHERE pi.pi_status NOT IN ('cancelled', 'completed')
+          AND (pii.pi_confirmed_qty - pii.shipped_qty) > 0
+        GROUP BY pii.sku_code,
+                 COALESCE(NULLIF(pi.country,''), po.country),
+                 COALESCE(NULLIF(pi.target_warehouse,''), po.target_warehouse)
+      `)).rows;
+
+      for (const pd of piData) {
+        const inv = queryOne('SELECT id FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
+          [pd.sku_code, pd.country, pd.warehouse]);
+        if (inv) {
+          run('UPDATE inventory SET pi_confirmed_unshipped_qty = ? WHERE id = ?', [pd.pi_unshipped || 0, inv.id]);
+        }
+      }
+
+      // PO已生成未确认PI
+      run('UPDATE inventory SET po_unconfirmed_pi_qty = 0');
+      const poData = (query(`
+        SELECT poi.sku_code, po.country, po.target_warehouse as warehouse,
+               SUM(poi.po_qty - poi.transferred_pi_qty) as po_unconfirmed
+        FROM purchase_order_items poi
+        JOIN purchase_orders po ON poi.po_id = po.id
+        WHERE po.po_status NOT IN ('cancelled', 'transferred_pi') AND (poi.po_qty - poi.transferred_pi_qty) > 0
+        GROUP BY poi.sku_code, po.country, po.target_warehouse
+      `)).rows;
+
+      for (const pd of poData) {
+        const inv = queryOne('SELECT id FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
+          [pd.sku_code, pd.country, pd.warehouse]);
+        if (inv) {
+          run('UPDATE inventory SET po_unconfirmed_pi_qty = ? WHERE id = ?', [pd.po_unconfirmed || 0, inv.id]);
+        }
+      }
     }
-  }
-
-  // PI已确认未发货
-  run('UPDATE inventory SET pi_confirmed_unshipped_qty = 0');
-  const piData = (query(`
-    SELECT pii.sku_code,
-           COALESCE(NULLIF(pi.country,''), po.country) as country,
-           COALESCE(NULLIF(pi.target_warehouse,''), po.target_warehouse) as warehouse,
-           SUM(pii.pi_confirmed_qty - pii.shipped_qty) as pi_unshipped
-    FROM proforma_invoice_items pii
-    JOIN proforma_invoices pi ON pii.pi_id = pi.id
-    LEFT JOIN purchase_orders po ON pi.related_po_id = po.id
-    WHERE pi.pi_status NOT IN ('cancelled', 'completed')
-      AND (pii.pi_confirmed_qty - pii.shipped_qty) > 0
-    GROUP BY pii.sku_code,
-             COALESCE(NULLIF(pi.country,''), po.country),
-             COALESCE(NULLIF(pi.target_warehouse,''), po.target_warehouse)
-  `)).rows;
-
-  for (const pd of piData) {
-    const inv = queryOne('SELECT id FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
-      [pd.sku_code, pd.country, pd.warehouse]);
-    if (inv) {
-      run('UPDATE inventory SET pi_confirmed_unshipped_qty = ? WHERE id = ?', [pd.pi_unshipped || 0, inv.id]);
-    }
-  }
-
-  // PO已生成未确认PI
-  run('UPDATE inventory SET po_unconfirmed_pi_qty = 0');
-  const poData = (query(`
-    SELECT poi.sku_code, po.country, po.target_warehouse as warehouse,
-           SUM(poi.po_qty - poi.transferred_pi_qty) as po_unconfirmed
-    FROM purchase_order_items poi
-    JOIN purchase_orders po ON poi.po_id = po.id
-    WHERE po.po_status NOT IN ('cancelled', 'transferred_pi') AND (poi.po_qty - poi.transferred_pi_qty) > 0
-    GROUP BY poi.sku_code, po.country, po.target_warehouse
-  `)).rows;
-
-  for (const pd of poData) {
-    const inv = queryOne('SELECT id FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
-      [pd.sku_code, pd.country, pd.warehouse]);
-    if (inv) {
-      run('UPDATE inventory SET po_unconfirmed_pi_qty = ? WHERE id = ?', [pd.po_unconfirmed || 0, inv.id]);
-    }
-  }
   });
 }
 
@@ -17790,5 +17893,6 @@ module.exports = {
   finalPaymentApprovalInput,
   paymentSettlementFacts,
   derivePaymentStatus,
-  app
+  app,
+  updateInventoryTransitData
 };
