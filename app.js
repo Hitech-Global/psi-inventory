@@ -13484,9 +13484,22 @@ async function viewPayment(id, mode){
     const qtyHtml=(p.total_qty!==null&&p.total_qty!==undefined)?'<b>'+Number(p.total_qty).toLocaleString('en-US')+'</b>':'<span style="color:#999">—'+t("payment.no_qty_detail","（费用/无货物明细）")+'</span>';
     // 返回上下文：从付款详情点开 PI/CI 后，需能返回本条付款详情（保留 mode）
     const backArg="'"+id+"','"+mode+"'";
+    // PAY-SOURCE-TRACE-01：来源追溯统一取后端 source_summary / sources（与付款管理列表同口径）
+    const traceSum=p.source_summary||{};
+    const traceSources=Array.isArray(p.sources)?p.sources:[];
+    const traceOne=traceSources.length===1?traceSources[0]:null;
     // 来源单号可点击：定金→PI，尾款/费用→CI（带返回上下文）
-    let srcHtml=esc(p.source_no||'—');
-    if(p.source_id&&(p.source_type==='pi'||p.source_type==='ci'||p.source_type==='historical_ci')){
+    const traceSrcNo=traceSum.source_nos_display||String(p.source_no||'');
+    const traceCiNo=traceSum.related_ci_nos_display||String(p.related_ci_no||'');
+    const traceTerms=traceSum.payment_terms_display||String(p.payment_terms||'');
+    let srcHtml=esc(traceSrcNo||'—');
+    // 单一来源时可点击跳转；多来源时改为纯文本紧凑展示（避免误跳到第一条）
+    const clickType=traceOne?(traceOne.source_type||''):(p.source_type||'');
+    const clickId=traceOne?(traceOne.source_id||''):(p.source_id||'');
+    if(traceOne&&clickId&&(clickType==='pi'||clickType==='ci'||clickType==='historical_ci')){
+      const fn=clickType==='pi'?'viewPI':(clickType==='ci'?'viewCI':'viewHistoricalCI');
+      srcHtml='<a href="javascript:void(0)" style="color:#1d6fd3;cursor:pointer;text-decoration:underline" onclick="'+fn+'(\''+clickId+'\','+backArg+')">'+esc(traceOne.source_no||clickId)+'</a>';
+    }else if(!traceOne&&p.source_id&&(p.source_type==='pi'||p.source_type==='ci'||p.source_type==='historical_ci')){
       const fn=p.source_type==='pi'?'viewPI':(p.source_type==='ci'?'viewCI':'viewHistoricalCI');
       srcHtml='<a href="javascript:void(0)" style="color:#1d6fd3;cursor:pointer;text-decoration:underline" onclick="'+fn+'(\''+p.source_id+'\','+backArg+')">'+esc(p.source_no||p.source_id)+'</a>';
     }
@@ -13494,7 +13507,7 @@ async function viewPayment(id, mode){
       + fld(t("app.303", "\u7533\u8bf7\u53f7"), esc(p.request_no))
       + fld(t("app.1136", "\u4ed8\u6b3e\u9636\u6bb5 / \u7c7b\u578b"), esc(catLabel+(subLabel?' / '+subLabel:'')))
       + fld(t("app.305", "\u6765\u6e90\u5355\u53f7"), srcHtml)
-      + fld(t("app.213", "\u5173\u8054CI"), esc(p.related_ci_no||'—'))
+      + fld(t("app.213", "\u5173\u8054CI"), traceCiNo?esc(traceCiNo):'—')
       + fld(t("app.127", "\u5173\u8054PO"), esc(p.related_po_no||'—'))
       + fld(t("app.209", "\u4ed8\u6b3e\u5bf9\u8c61"), esc(p.supplier_name||'—'))
       + fld(t("app.129", "\u603b\u91d1\u989d"), fmtMoney(p.payable_amount, cur))
@@ -13509,7 +13522,7 @@ async function viewPayment(id, mode){
       + fld(t("app.195", "\u603b\u6570\u91cf"), qtyHtml)
       + fld(t("status.label", "\u72b6\u6001"), esc(stLabel))
       + fld(t("app.1140", "\u5ba1\u6279\u72b6\u6001"), statusLabel(p.approval_status))
-      + fld(t("nav.payment_terms", "\u4ed8\u6b3e\u6761\u4ef6"), esc(p.payment_terms||'—'))
+      + fld(t("nav.payment_terms", "\u4ed8\u6b3e\u6761\u4ef6"), traceTerms?esc(traceTerms):'—')
       + fld(t("app.025", "\u5907\u6ce8"), esc(p.remark||'—'))
       + (p.approval_remark?fld(t("app.1141", "\u5ba1\u6279\u610f\u89c1"), esc(p.approval_remark)+(p.approver_name?'（'+esc(p.approver_name)+'）':'')):'')
       +'</div>';
@@ -13644,7 +13657,7 @@ async function viewPayment(id, mode){
     const opinionHtml=(mode==='finance'&&isPendingApproval&&canApprove)
       ? '<div class="detail-section"><h3>'+t("payment.opinion_title","审批意见")+'</h3><textarea id="pay-appr-remark" rows="3" placeholder="'+t("payment.approve_opinion_placeholder","填写审批意见（驳回时必填）；在框内粘贴图片可自动上传为附件")+'" style="width:100%;box-sizing:border-box" onpaste="onPayRemarkPaste(event)"></textarea></div>'
       : '';
-    const body='<div class="detail-card" style="box-shadow:none;padding:0"><div class="detail-section"><h3>'+t("payment.summary","付款申请摘要")+'</h3>'+summary+'</div>'+relHtml+settlementSection+attSection+paymentFormHtml+opinionHtml+'</div>';
+    const body='<div class="detail-card" style="box-shadow:none;padding:0"><div class="detail-section"><h3>'+t("payment.summary","付款申请摘要")+'</h3>'+summary+'</div>'+buildPaymentSourceTraceSection(p,cur)+relHtml+settlementSection+attSection+paymentFormHtml+opinionHtml+'</div>';
     // footer：finance 模式待审 → 通过/驳回；否则仅关闭
     let footer='<button class="btn btn-secondary" onclick="closeModal()">'+t("common.close","关闭")+'</button>';
     if(mode==='finance'&&canApprove&&isPendingPaymentConfirmation){
@@ -13783,6 +13796,49 @@ function recalcFinalPay(){
   }catch(_){}
 }
 
+// PAY-SOURCE-TRACE-01：付款申请「付款来源明细」只读表格
+// 数据来源：GET /api/payment-requests/:id 的 sources[]（后端统一解析器，与付款管理列表同口径）
+// 展示：来源类型 / 来源单号 / 费用单号 / 关联CI / 付款条件 / 来源金额 / 本次申请金额
+// 只读：不提供任何编辑入口，不参与分摊与结算计算
+function buildPaymentSourceTraceSection(p, currency){
+  const sources=(p&&Array.isArray(p.sources))?p.sources:[];
+  if(!sources.length){
+    return '<div class="detail-section"><h3>'+t('payment.source_trace_title','付款来源明细')+'</h3>'
+      +'<div style="color:#999;font-size:13px">'+t('payment.source_trace_empty','未解析到来源明细（该付款申请在数据库中没有保存来源关系）')+'</div></div>';
+  }
+  const rows=sources.map(function(s){
+    const cc=(s&&s.currency)||currency||'';
+    const srcAmt=(s&&s.source_amount!==null&&s.source_amount!==undefined&&s.source_amount!=='')?fmtMoney(s.source_amount,cc):'—';
+    return '<tr>'
+      +'<td>'+esc((s&&s.source_type_label)||(s&&s.source_type)||'—')+'</td>'
+      +'<td class="cell-id">'+esc((s&&s.source_no)||'—')+'</td>'
+      +'<td class="cell-id">'+esc((s&&s.fee_no)||'—')+'</td>'
+      +'<td class="cell-id">'+esc((s&&s.related_ci_no)||'—')+'</td>'
+      +'<td>'+esc((s&&s.payment_terms_display)||'—')+'</td>'
+      +'<td class="text-right">'+srcAmt+'</td>'
+      +'<td class="text-right font-bold">'+fmtMoney((s&&s.requested_amount)||0,cc)+'</td>'
+      +'</tr>';
+  }).join('');
+  const sum=(p&&p.source_summary)||{};
+  const totalReq=sources.reduce(function(a,s){ return a+(Number(s&&s.requested_amount)||0); },0);
+  return '<div class="detail-section"><h3>'+t('payment.source_trace_title','付款来源明细')+'（'+sources.length+'）</h3>'
+    +'<div class="table-container" style="box-shadow:none;border:1px solid #eee"><table class="data-table"><thead><tr>'
+    +'<th>'+t('payment.source_th_type','来源类型')+'</th>'
+    +'<th>'+t('payment.source_th_no','来源单号')+'</th>'
+    +'<th>'+t('payment.source_th_fee','费用单号')+'</th>'
+    +'<th>'+t('payment.source_th_ci','关联CI')+'</th>'
+    +'<th>'+t('payment.source_th_terms','付款条件')+'</th>'
+    +'<th class="text-right">'+t('payment.source_th_src_amount','来源金额')+'</th>'
+    +'<th class="text-right">'+t('payment.source_th_req_amount','本次申请金额')+'</th>'
+    +'</tr></thead><tbody>'+rows+'</tbody>'
+    +'<tfoot><tr><td colspan="6" class="text-right">'+t('payment.source_total_req','合计本次申请')+'</td>'
+    +'<td class="text-right font-bold">'+fmtMoney(totalReq,currency||'')+'</td></tr></tfoot>'
+    +'</table></div>'
+    +'<div style="font-size:12px;color:#999;margin-top:6px">'
+    +esc(t('payment.source_trace_hint','来源关系来自 payment_request_items → payable_items（multi 模式）或付款申请主表字段（旧单）；本表仅用于追溯与展示，不参与应付/抵扣/已付/未付计算。'))
+    +(sum.source_nos&&sum.source_nos.length?' '+esc(t('payment.source_trace_all_nos','全部来源单号：'))+esc(sum.source_nos.join('、')):'')
+    +'</div></div>';
+}
 // 合并付款确认付款：渲染各费用单人工分摊表（费用单 / 剩余未付 / 本次分摊 / 已分配 / 差额提示）
 // items: GET /api/payment-requests/:id 返回的 items[]（含 id(pri.id), payable_item_id, fee_no, requested_amount_minor）
 // 初始化不填默认分摊金额：分摊在用户输入「实际付款金额」后由 autoDistributePayAllocations 按剩余未付比例生成
@@ -13972,7 +14028,7 @@ async function loadPay(){
   try{
     const s=document.getElementById('pay-fs')?.value||'',c=document.getElementById('pay-fc')?.value||'',k=document.getElementById('pay-fk')?.value||'';
     const data=await api('/api/payment-requests?status='+s+'&category='+c+'&keyword='+encodeURIComponent(k));
-    document.getElementById('pay-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">💳</div>'+t('empty.noPaymentData','暂无付款数据')+'</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>'+t("html.pay.th.applyNo","申请号")+'</th><th>'+t("html.pay.th.category","大类")+'</th><th>'+t("html.pay.th.subcategory","小类")+'</th><th>'+t("html.pay.th.sourceNo","来源单号")+'</th><th>'+t("html.pay.th.relCI","关联CI")+'</th><th>'+t("html.pay.th.payee","付款对象")+'</th><th>'+t("html.pay.th.payable","应付金额")+'</th><th>'+t("html.pay.th.deduct","抵扣金额")+'</th><th>'+t("html.pay.th.actualPayable","实际应付")+'</th><th>'+t("html.pay.th.paid","已付")+'</th><th>'+t("html.pay.th.unpaid","未付")+'</th><th>'+t("html.pay.th.currency","币种")+'</th><th>'+t("html.pay.th.status","状态")+'</th><th>'+t("html.pay.th.action","操作")+'</th></tr></thead><tbody>'+data.map(p=>{
+    document.getElementById('pay-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">💳</div>'+t('empty.noPaymentData','暂无付款数据')+'</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>'+t("html.pay.th.applyNo","申请号")+'</th><th>'+t("html.pay.th.category","大类")+'</th><th>'+t("html.pay.th.subcategory","小类")+'</th><th>'+t("html.pay.th.sourceNo","来源单号")+'</th><th>'+t("html.pay.th.relCI","关联CI")+'</th><th>'+t("html.pay.th.payee","付款对象")+'</th><th>'+t("html.pay.th.ciTerms","CI付款条件")+'</th><th>'+t("html.pay.th.payable","应付金额")+'</th><th>'+t("html.pay.th.deduct","抵扣金额")+'</th><th>'+t("html.pay.th.actualPayable","实际应付")+'</th><th>'+t("html.pay.th.paid","已付")+'</th><th>'+t("html.pay.th.unpaid","未付")+'</th><th>'+t("html.pay.th.currency","币种")+'</th><th>'+t("html.pay.th.status","状态")+'</th><th>'+t("html.pay.th.action","操作")+'</th></tr></thead><tbody>'+data.map(p=>{
       const catLabel=PAY_CATEGORIES[p.payment_category]||p.payment_category;
       const subLabel=(PAY_SUBCATS[p.payment_category]&&PAY_SUBCATS[p.payment_category][p.payment_subcategory])||p.payment_subcategory||'';
       const stLabel=PAY_STATUS_MAP[p.payment_status]||p.payment_status;
@@ -13982,7 +14038,13 @@ async function loadPay(){
       const canRound=p.approval_status==='approved'&&Number(p.unpaid_amount||0)>0&&Number(p.rounding_amount||0)<=0&&!['rejected','cancelled'].includes(p.payment_status);
       const needsExpenseCountry=p.payment_category!=='goods'&&!String(p.expense_country||'').trim();
       const actualDisplay=Number(p.actual_pay_amount||0)>0||Number(p.deduction_amount||0)>0||Number(p.rounding_amount||0)>0?p.actual_pay_amount:p.payable_amount;
-      return '<tr'+(hasPermission('payment_view')?(' class="clickable-detail-row" onclick="rowClickView(event,\'viewPayment\',\''+p.id+'\')"'):'')+'><td class="cell-id">'+esc(p.request_no)+'</td><td>'+esc(catLabel)+'</td><td>'+esc(subLabel)+'</td><td class="cell-id">'+esc(p.source_no)+'</td><td class="cell-id">'+esc(p.related_ci_no||'')+'</td><td>'+esc(p.supplier_name)+'</td><td class="text-right font-bold">'+fmtMoney(p.payable_amount)+'</td><td class="text-right '+(p.deduction_amount>0?'text-warning':'')+'">'+(p.deduction_amount>0?fmtMoney(p.deduction_amount):'-')+'</td><td class="text-right font-bold">'+fmtMoney(actualDisplay)+'</td><td class="text-right">'+fmtMoney(p.paid_amount)+'</td><td class="text-right '+(p.unpaid_amount>0?'text-danger':'')+'">'+fmtMoney(p.unpaid_amount)+'</td><td>'+esc(p.currency)+'</td><td><span class="status-badge '+stClass+'">'+esc(stLabel)+'</span></td><td class="cell-actions">'+(hasPermission('payment_view')?'<button class="action-btn" onclick="viewPayment(\''+p.id+'\')" title="'+t('title.viewDetail','查看详情')+'">👁️</button>':'')+(needsExpenseCountry&&hasPermission('payment_approve')?'<button class="action-btn" onclick="openPaymentExpenseCountry(\''+p.id+'\')" title="'+t('term.fin.supplement_expense_country','补录费用归属国家')+'">'+t("payment.fill_country","补国家")+'</button>':'')+(canRound&&hasPermission('payment_approve')?'<button class="action-btn" onclick="openPaymentRounding(\''+p.id+'\')" title="'+t("payment.manual_rounding","手动抹零")+'">'+t("payment.type_rounding","抹零")+'</button>':'')+(canDeduct&&hasPermission('payment_create')?'<button class="action-btn" onclick="editDeduction(\''+p.id+'\')" title="'+t('title.editDeduction','编辑抵扣')+'">✂️</button>':'')+'</td></tr>';
+      // PAY-SOURCE-TRACE-01：来源追溯（后端统一解析 source_summary；多来源紧凑展示 A、B +N，绝不显示 —）
+      const psum=p.source_summary||{};
+      const pSrcNo=psum.source_nos_display||String(p.source_no||'');
+      const pCiNo=psum.related_ci_nos_display||String(p.related_ci_no||'');
+      const pTerms=psum.payment_terms_display||String(p.payment_terms||'');
+      const pCell=(v)=>'<td class="cell-id"'+(v?(' title="'+esc(v)+'"'):'')+'>'+(v?esc(v):'—')+'</td>';
+      return '<tr'+(hasPermission('payment_view')?(' class="clickable-detail-row" onclick="rowClickView(event,\'viewPayment\',\''+p.id+'\')"'):'')+'><td class="cell-id">'+esc(p.request_no)+'</td><td>'+esc(catLabel)+'</td><td>'+esc(subLabel)+'</td>'+pCell(pSrcNo)+pCell(pCiNo)+'<td>'+esc(p.supplier_name)+'</td><td>'+(pTerms?esc(pTerms):'—')+'</td><td class="text-right font-bold">'+fmtMoney(p.payable_amount)+'</td><td class="text-right '+(p.deduction_amount>0?'text-warning':'')+'">'+(p.deduction_amount>0?fmtMoney(p.deduction_amount):'-')+'</td><td class="text-right font-bold">'+fmtMoney(actualDisplay)+'</td><td class="text-right">'+fmtMoney(p.paid_amount)+'</td><td class="text-right '+(p.unpaid_amount>0?'text-danger':'')+'">'+fmtMoney(p.unpaid_amount)+'</td><td>'+esc(p.currency)+'</td><td><span class="status-badge '+stClass+'">'+esc(stLabel)+'</span></td><td class="cell-actions">'+(hasPermission('payment_view')?'<button class="action-btn" onclick="viewPayment(\''+p.id+'\')" title="'+t('title.viewDetail','查看详情')+'">👁️</button>':'')+(needsExpenseCountry&&hasPermission('payment_approve')?'<button class="action-btn" onclick="openPaymentExpenseCountry(\''+p.id+'\')" title="'+t('term.fin.supplement_expense_country','补录费用归属国家')+'">'+t("payment.fill_country","补国家")+'</button>':'')+(canRound&&hasPermission('payment_approve')?'<button class="action-btn" onclick="openPaymentRounding(\''+p.id+'\')" title="'+t("payment.manual_rounding","手动抹零")+'">'+t("payment.type_rounding","抹零")+'</button>':'')+(canDeduct&&hasPermission('payment_create')?'<button class="action-btn" onclick="editDeduction(\''+p.id+'\')" title="'+t('title.editDeduction','编辑抵扣')+'">✂️</button>':'')+'</td></tr>';
     }).join('')+'</tbody></table></div>';
   }catch(e){showFlash(e.message,'danger')}
 }

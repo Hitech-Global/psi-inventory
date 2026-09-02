@@ -13333,6 +13333,249 @@ app.post('/api/payable-items/:id/cancel', requireApiPermission('payment_create')
   res.json({ success: true, id: req.params.id, lifecycle_status: 'cancelled' });
 }));
 
+// ==================== PAY-SOURCE-TRACE-01：付款申请来源追溯统一解析器 ====================
+// 背景（根因）：
+//   multi 模式（PAY-MULTI-*）付款申请的来源关系只落在 payment_request_items → payable_items
+//   （source_type / source_id / source_no / source_ci_id）；payment_requests 主表的
+//   source_type / source_id / source_no / related_ci_id / related_ci_no / payment_terms 恒为空。
+//   列表 API 原样 SELECT * 返回主表，详情 API 仅在 multi 模式返回 items[] 且未解析 CI 与付款条件，
+//   因此「来源单号 / 关联CI / 付款条件 / 费用单组成」在列表与详情全部显示为 —。
+// 红线（严格遵守）：
+//   1. 只读派生：不写入、不回填任何来源关系；不改 payable_items / payment_request_items / 主表结构。
+//   2. 不参与任何金额计算：应付 / 抵扣 / 已付 / 未付 / rounding / settlement logs 一律不触碰。
+//   3. 列表与详情必须共用本解析器，禁止各写一套。
+//   4. 任一环节查不到来源 → 安全降级为空数组 / 空串，绝不抛错中断接口。
+//   5. 不 hardcode 任何单号；来源关系以数据库已存内容为准。
+const PAY_SOURCE_TYPE_LABEL = Object.freeze({
+  pi: 'PI', ci: 'CI', historical_ci: '历史CI', logistics: '物流', manual: '手动录入'
+});
+const PAY_SOURCE_FEE_TYPE_LABEL = Object.freeze({
+  deposit: '定金', balance: '尾款', freight: '运费', customs_clearance: '清关费',
+  port_charges: '港口费', delivery: '派送费', warehouse: '仓储费', other_local: '其他本地费',
+  duty: '关税', inspection: '商检费'
+});
+
+// 紧凑单号展示：'HITxxxx、HITyyyy +2'（最多展示 max 个，其余折叠为 +N；无单号返回 ''）
+function compactSourceNos(list, max) {
+  const uniq = [];
+  (Array.isArray(list) ? list : []).forEach(v => {
+    const s = String(v == null ? '' : v).trim();
+    if (s && uniq.indexOf(s) < 0) uniq.push(s);
+  });
+  if (!uniq.length) return '';
+  const n = max || 2;
+  const head = uniq.slice(0, n);
+  const rest = uniq.length - head.length;
+  return head.join('、') + (rest > 0 ? ` +${rest}` : '');
+}
+
+// 付款条件展示：'Credit · 45天' / 'Credit 45 days' / 'Credit' / ''
+function formatPaymentTermsDisplay(rawTerms, creditDays) {
+  const raw = String(rawTerms == null ? '' : rawTerms).trim();
+  const cd = Number(creditDays) || 0;
+  if (!raw) return cd > 0 ? `${cd}天` : '';
+  if (cd > 0 && !/\d+\s*(天|days?)/i.test(raw)) return `${raw} · ${cd}天`;
+  return raw;
+}
+
+// 来源上下文批量查询（CI / 历史CI / PI / 物流批次），一次查完避免 N+1；任何异常安全降级为空表
+function buildPaymentSourceContext(rawRows) {
+  const ctx = { ciById: {}, ciByNo: {}, hciById: {}, hciByNo: {}, piById: {}, piByNo: {}, batchById: {}, batchByNo: {} };
+  const rows = Array.isArray(rawRows) ? rawRows : [];
+  if (!rows.length) return ctx;
+  const pick = (fn) => [...new Set(rows.map(fn).filter(v => !!String(v || '').trim()))];
+  // source_ci_id 可能指向运营 CI，也可能指向历史 CI（历史类应付项沿用同一字段引用）
+  const allCiIds = pick(r => r.source_ci_id);
+  const idsByType = {
+    ci: pick(r => (r.source_type === 'ci' ? r.source_id : '')),
+    historical_ci: pick(r => (r.source_type === 'historical_ci' ? r.source_id : '')),
+    pi: pick(r => (r.source_type === 'pi' ? r.source_id : '')),
+    logistics: pick(r => (r.source_type === 'logistics' ? r.source_id : ''))
+  };
+  const nosByType = {
+    ci: pick(r => (r.source_type === 'ci' ? r.source_no : '')),
+    historical_ci: pick(r => (r.source_type === 'historical_ci' ? r.source_no : '')),
+    pi: pick(r => (r.source_type === 'pi' ? r.source_no : '')),
+    logistics: pick(r => (r.source_type === 'logistics' ? r.source_no : ''))
+  };
+  const placeholders = (arr) => arr.map(() => '?').join(',');
+  // 每段独立 try/catch：任一来源表/列不可用（如本地 SQLite 与生产 PG 的 schema 漂移）
+  // 只降级该段，不得连累其它来源类型的解析，更不得中断接口
+  const safeQuery = (fn) => { try { fn(); } catch (e) { /* 安全降级：跳过该来源表 */ } };
+
+  const ciIds = [...new Set(allCiIds.concat(idsByType.ci))];
+  if (ciIds.length) {
+    safeQuery(() => {
+      const sql = `SELECT id, ci_no, related_pi_no, supplier_name, payment_terms, credit_days
+                   FROM commercial_invoices
+                   WHERE id IN (${placeholders(ciIds)})` +
+        (nosByType.ci.length ? ` OR ci_no IN (${placeholders(nosByType.ci)})` : '');
+      query(sql, ciIds.concat(nosByType.ci)).rows.forEach(c => { ctx.ciById[c.id] = c; if (c.ci_no) ctx.ciByNo[c.ci_no] = c; });
+    });
+  }
+  const hciIds = [...new Set(allCiIds.concat(idsByType.historical_ci))];
+  if (hciIds.length) {
+    safeQuery(() => {
+      const sql = `SELECT id, historical_ci_no AS ci_no, supplier_name, payment_terms, credit_days
+                   FROM historical_commercial_invoices
+                   WHERE id IN (${placeholders(hciIds)})` +
+        (nosByType.historical_ci.length ? ` OR historical_ci_no IN (${placeholders(nosByType.historical_ci)})` : '');
+      query(sql, hciIds.concat(nosByType.historical_ci)).rows.forEach(c => { ctx.hciById[c.id] = c; if (c.ci_no) ctx.hciByNo[c.ci_no] = c; });
+    });
+  }
+  if (idsByType.pi.length) {
+    safeQuery(() => {
+      const sql = `SELECT id, pi_no, supplier_name, payment_terms
+                   FROM proforma_invoices
+                   WHERE id IN (${placeholders(idsByType.pi)})` +
+        (nosByType.pi.length ? ` OR pi_no IN (${placeholders(nosByType.pi)})` : '');
+      query(sql, idsByType.pi.concat(nosByType.pi)).rows.forEach(p => { ctx.piById[p.id] = p; if (p.pi_no) ctx.piByNo[p.pi_no] = p; });
+    });
+  }
+  if (idsByType.logistics.length) {
+    safeQuery(() => {
+      const sql = `SELECT id, batch_no FROM logistics_batches
+                   WHERE id IN (${placeholders(idsByType.logistics)})` +
+        (nosByType.logistics.length ? ` OR batch_no IN (${placeholders(nosByType.logistics)})` : '');
+      query(sql, idsByType.logistics.concat(nosByType.logistics)).rows.forEach(b => { ctx.batchById[b.id] = b; if (b.batch_no) ctx.batchByNo[b.batch_no] = b; });
+    });
+  }
+  return ctx;
+}
+
+// 单条来源解析（与来源类型无关的统一口径：source_ci_id 优先 → 自身来源单据 → 单号回退）
+function resolvePaymentSourceRow(raw, ctx, pr) {
+  const st = String((raw && raw.source_type) || '').trim();
+  const sid = String((raw && raw.source_id) || '').trim();
+  const sno = String((raw && raw.source_no) || '').trim();
+  const ciId = String((raw && raw.source_ci_id) || '').trim();
+  const safeCtx = ctx || {};
+  // 自身来源单据（CI / 历史CI / PI / 物流批次）
+  let own = null;
+  if (st === 'ci') own = (safeCtx.ciById && safeCtx.ciById[sid]) || (safeCtx.ciByNo && safeCtx.ciByNo[sno]) || null;
+  else if (st === 'historical_ci') own = (safeCtx.hciById && safeCtx.hciById[sid]) || (safeCtx.hciByNo && safeCtx.hciByNo[sno]) || null;
+  else if (st === 'pi') own = (safeCtx.piById && safeCtx.piById[sid]) || (safeCtx.piByNo && safeCtx.piByNo[sno]) || null;
+  else if (st === 'logistics') own = (safeCtx.batchById && safeCtx.batchById[sid]) || (safeCtx.batchByNo && safeCtx.batchByNo[sno]) || null;
+  // 关联 CI：source_ci_id 指向的 CI（运营 CI 或历史 CI）；历史 CI 来源则自身即 CI
+  let ciCtx = ciId ? ((safeCtx.ciById && safeCtx.ciById[ciId]) || (safeCtx.hciById && safeCtx.hciById[ciId]) || null) : null;
+  if (!ciCtx && (st === 'ci' || st === 'historical_ci')) ciCtx = own;
+  const termsSrc = ciCtx || own;
+  const rawTerms = termsSrc ? termsSrc.payment_terms : '';
+  const creditDays = termsSrc ? termsSrc.credit_days : 0;
+  const isLinked = !!(raw && raw.payable_item_id);
+  return {
+    payment_request_item_id: isLinked ? String(raw.pri_id || '') : '',
+    payable_item_id: isLinked ? String(raw.payable_item_id || '') : '',
+    fee_no: isLinked ? String(raw.fee_no || '') : '',
+    source_type: st,
+    source_type_label: PAY_SOURCE_TYPE_LABEL[st] || (st || ''),
+    source_id: sid,
+    source_no: sno,
+    related_ci_id: ciId || (ciCtx ? String(ciCtx.id || '') : ''),
+    related_ci_no: ciCtx ? String(ciCtx.ci_no || '') : '',
+    payment_terms: String(rawTerms || ''),
+    credit_days: Number(creditDays) || 0,
+    payment_terms_display: formatPaymentTermsDisplay(rawTerms, creditDays)
+      || (pr ? formatPaymentTermsDisplay(pr.payment_terms, '') : ''),
+    fee_type: isLinked ? String(raw.fee_type || '') : '',
+    fee_type_label: isLinked ? (PAY_SOURCE_FEE_TYPE_LABEL[String(raw.fee_type || '')] || String(raw.fee_type || '')) : '',
+    currency: isLinked ? String(raw.currency || '') : (pr ? String(pr.currency || '') : ''),
+    // 来源原始金额 = payable_items.payable_amount_minor（无关联费用单时为 null，不臆造）
+    source_amount: isLinked ? minorToAmount(raw.payable_amount_minor) : null,
+    // 本次申请纳入金额 = payment_request_items.requested_amount_minor（旧单无关联时回退主表应付金额）
+    requested_amount: isLinked ? minorToAmount(raw.requested_amount_minor) : (pr ? Number(pr.payable_amount || 0) : 0)
+  };
+}
+
+// 来源汇总（列表紧凑展示用）
+function summarizePaymentSources(sources) {
+  const list = Array.isArray(sources) ? sources : [];
+  const map = (fn) => [...new Set(list.map(fn).filter(v => !!String(v == null ? '' : v).trim()))];
+  return {
+    count: list.length,
+    source_nos: map(s => s.source_no),
+    source_nos_display: compactSourceNos(list.map(s => s.source_no)),
+    related_ci_nos: map(s => s.related_ci_no),
+    related_ci_nos_display: compactSourceNos(list.map(s => s.related_ci_no)),
+    payment_terms_display: compactSourceNos(list.map(s => s.payment_terms_display)),
+    fee_nos: map(s => s.fee_no),
+    source_types: map(s => s.source_type),
+    source_types_display: compactSourceNos(list.map(s => s.source_type_label), 3)
+  };
+}
+
+// 批量解析：入参 payment_requests 行数组 → Map<prId, resolvedSources[]>
+// 兼容两种来源存储方式：
+//   ① multi / 有关联明细：payment_request_items JOIN payable_items（唯一真实来源关系）
+//   ② 旧单无关联明细：回退主表 source_type / source_id / source_no / related_ci_id / related_ci_no
+function resolvePaymentSourcesForRequests(prRows) {
+  const out = new Map();
+  const list = Array.isArray(prRows) ? prRows : [];
+  if (!list.length) return out;
+  const ids = list.map(r => r && r.id).filter(Boolean);
+  let linkRows = [];
+  try {
+    linkRows = ids.length ? query(
+      `SELECT pri.id AS pri_id, pri.payment_request_id, pri.payable_item_id, pri.requested_amount_minor,
+              pi.fee_no, pi.source_type, pi.source_id, pi.source_no, pi.source_ci_id,
+              pi.fee_type, pi.currency, pi.payable_amount_minor
+       FROM payment_request_items pri
+       JOIN payable_items pi ON pi.id = pri.payable_item_id
+       WHERE pri.payment_request_id IN (${ids.map(() => '?').join(',')})
+       ORDER BY pri.payment_request_id, pi.fee_type, pi.created_at`, ids).rows : [];
+  } catch (e) { linkRows = []; }
+  const byPr = {};
+  linkRows.forEach(r => { (byPr[r.payment_request_id] = byPr[r.payment_request_id] || []).push(r); });
+  // 无任何关联明细的旧单：用主表字段构造回退行（保持与 multi 相同的解析口径）
+  const rawByPr = {};
+  list.forEach(pr => {
+    if (!pr || !pr.id) return;
+    rawByPr[pr.id] = (byPr[pr.id] && byPr[pr.id].length)
+      ? byPr[pr.id]
+      : [{
+        source_type: pr.source_type, source_id: pr.source_id, source_no: pr.source_no,
+        source_ci_id: pr.related_ci_id || ''
+      }];
+  });
+  const allRaw = [];
+  Object.keys(rawByPr).forEach(k => { rawByPr[k].forEach(r => allRaw.push(r)); });
+  const ctx = buildPaymentSourceContext(allRaw);
+  list.forEach(pr => {
+    if (!pr || !pr.id) return;
+    const raws = rawByPr[pr.id] || [];
+    let resolved = [];
+    try {
+      resolved = raws.map(r => resolvePaymentSourceRow(r, ctx, pr));
+    } catch (e) { resolved = []; }
+    // 本单既无 payment_request_items 明细、主表也没有任何来源信息 → 视为「数据库未保存来源关系」，
+    // 返回空数组（安全降级，不臆造）。判断必须按单进行，不能被同批其它单的明细带偏。
+    const hadLinks = !!(byPr[pr.id] && byPr[pr.id].length);
+    if (!hadLinks && resolved.length === 1) {
+      const r0 = resolved[0];
+      if (!r0.source_type && !r0.source_id && !r0.source_no && !r0.related_ci_no) resolved = [];
+    }
+    out.set(pr.id, resolved);
+  });
+  return out;
+}
+
+// 就地附加来源追溯字段（列表 / 详情共用入口）
+function attachPaymentSourceTrace(prRows) {
+  const list = Array.isArray(prRows) ? prRows : [];
+  if (!list.length) return list;
+  let map;
+  try {
+    map = resolvePaymentSourcesForRequests(list);
+  } catch (e) { map = new Map(); }
+  list.forEach(pr => {
+    if (!pr) return;
+    const sources = map.get(pr.id) || [];
+    pr.sources = sources;
+    pr.source_summary = summarizePaymentSources(sources);
+  });
+  return list;
+}
+
 app.get('/api/payment-requests', requireApiPermission('payment_view'), asyncHandler((req, res) => {
   const { status, category, keyword } = req.query;
   let sql = "SELECT * FROM payment_requests WHERE 1=1 AND (approval_status = 'approved' OR payment_status IN ('paid','partial_paid','cancelled'))";
@@ -13341,7 +13584,10 @@ app.get('/api/payment-requests', requireApiPermission('payment_view'), asyncHand
   if (category) { sql += ' AND payment_category = ?'; params.push(category); }
   if (keyword) { sql += ' AND (request_no LIKE ? OR supplier_name LIKE ? OR source_no LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`); }
   sql += ' ORDER BY payable_date ASC, created_at DESC';
-  res.json(query(sql, params).rows);
+  const rows = query(sql, params).rows;
+  // PAY-SOURCE-TRACE-01：附加来源追溯明细（只读派生；不参与应付/抵扣/已付/未付任何计算）
+  attachPaymentSourceTrace(rows);
+  res.json(rows);
 }));
 
 // ==================== FIN-DASHBOARD-01：财务应付驾驶舱（只读聚合，不改任何业务规则/表结构/付款链）====================
@@ -13757,7 +14003,7 @@ app.get('/api/payment-requests/:id', requireApiPermission('payment_view'), async
     if (pr.payment_mode === 'multi') {
       const itemRows = await query(
         `SELECT pri.id, pri.payable_item_id, pri.requested_amount_minor,
-                pi.fee_no, pi.source_type, pi.source_id, pi.source_no, pi.fee_type,
+                pi.fee_no, pi.source_type, pi.source_id, pi.source_no, pi.source_ci_id, pi.fee_type,
                 pi.category_code, pi.subcategory_code,
                 pi.payee_type, pi.payee_key, pi.payee_name_snapshot,
                 pi.currency, pi.payable_amount_minor, pi.lifecycle_status
@@ -13769,6 +14015,12 @@ app.get('/api/payment-requests/:id', requireApiPermission('payment_view'), async
       );
       items = itemRows.rows;
     }
+    // PAY-SOURCE-TRACE-01：来源追溯明细（复用列表同一解析器 resolvePaymentSourcesForRequests，
+    // 保证列表与详情口径一致；只读派生，不参与应付/抵扣/已付/未付任何计算）
+    let sources = [];
+    try {
+      sources = resolvePaymentSourcesForRequests([pr]).get(pr.id) || [];
+    } catch (e) { sources = []; }
     let pi_summary = null, ci_summary = null, historical_ci_summary = null;
     if (pr.source_type === 'pi' && pr.source_id) {
       pi_summary = queryOne('SELECT id, pi_no, supplier_name, brand, country, target_warehouse, total_amount, currency, pi_status, pi_date FROM proforma_invoices WHERE id = ?', [pr.source_id]);
@@ -13822,7 +14074,7 @@ app.get('/api/payment-requests/:id', requireApiPermission('payment_view'), async
         };
       }
     }
-    res.json({ ...pr, pi_summary, ci_summary, historical_ci_summary, settlement_logs, effective_paid: settlement.effectivePaid, effective_deduction: settlement.effectiveDeduction, effective_rounding: settlement.effectiveRounding, outstanding: Math.max(0, settlement.outstanding), approval, items });
+    res.json({ ...pr, pi_summary, ci_summary, historical_ci_summary, settlement_logs, effective_paid: settlement.effectivePaid, effective_deduction: settlement.effectiveDeduction, effective_rounding: settlement.effectiveRounding, outstanding: Math.max(0, settlement.outstanding), approval, items, sources, source_summary: summarizePaymentSources(sources) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
@@ -17893,6 +18145,14 @@ module.exports = {
   finalPaymentApprovalInput,
   paymentSettlementFacts,
   derivePaymentStatus,
+  // PAY-SOURCE-TRACE-01：付款申请来源追溯（列表 / 详情共用同一口径；导出供回归测试直接调用）
+  resolvePaymentSourcesForRequests,
+  buildPaymentSourceContext,
+  resolvePaymentSourceRow,
+  summarizePaymentSources,
+  attachPaymentSourceTrace,
+  compactSourceNos,
+  formatPaymentTermsDisplay,
   app,
   updateInventoryTransitData
 };

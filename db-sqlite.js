@@ -2279,6 +2279,21 @@ function initDatabase() {
     }
   })();
 
+  // PAY-SOURCE-TRACE-01：补齐 commercial_invoices.payment_terms / due_date（与生产 PostgreSQL 对齐）
+  // 背景：生产库（db-pg.js）commercial_invoices 已有 payment_terms、due_date 两列，
+  // 但本地 SQLite 建表语句未包含，导致新起的本地/内存库缺少付款条件列，与生产口径不一致。
+  // 仅做补齐（ADD COLUMN + 默认空串），不回填历史数据、不改任何现有列与业务逻辑。
+  (function ciPaymentTermsParityMigration() {
+    const d = getDB();
+    const cols = d.prepare(`PRAGMA table_info(commercial_invoices)`).all().map(c => c.name);
+    if (!cols.includes('payment_terms')) {
+      d.exec(`ALTER TABLE commercial_invoices ADD COLUMN payment_terms TEXT DEFAULT ''`);
+    }
+    if (!cols.includes('due_date')) {
+      d.exec(`ALTER TABLE commercial_invoices ADD COLUMN due_date TEXT DEFAULT ''`);
+    }
+  })();
+
   // PUR-OPS-COLLAB-01：电商运营上架准备（V1）— commercial_invoices 新增 3 列；CC/owner 存 business_participants(business_type='ci')
   (function opsPrepMigration() {
     const d = getDB();
