@@ -1431,12 +1431,20 @@ async function loadFinanceApprovalList(){
         const qtyTxt=(p.total_qty!==null&&p.total_qty!==undefined)?Number(p.total_qty).toLocaleString('en-US'):'—';
         const isPayConfirm=(p.approval_status==='approved'&&p.payment_status!=='paid');
         const btnTitle=isPayConfirm?t('payment.finance_pay_confirm','付款确认'):(canApprove?t('gen.L822.1','查看/审批'):t("app.389", "\u67e5\u770b\u8be6\u60c5"));
+        // PAY-SOURCE-TRACE-02：来源追溯与「付款管理列表 / 付款申请详情」同口径 —— 统一读后端
+        // 统一解析器产出的 source_summary，主表字段仅作为无 source_summary 时的兼容回退。
+        // 不再直接依赖 PAY-MULTI 主表（其 source_no / related_ci_no 恒为空）。
+        const psum=p.source_summary||{};
+        const pSrcNo=psum.source_nos_display||String(p.source_no||'');
+        const pCiNo=psum.related_ci_nos_display||String(p.related_ci_no||'');
+        // 多来源时紧凑展示 A、B +N，title 保留完整值；确无来源才降级为 —
+        const pCell=(v)=>'<td class="cell-id"'+(v?(' title="'+esc(v)+'"'):'')+'>'+(v?esc(v):'—')+'</td>';
         return '<tr class="clickable-detail-row" onclick="rowClickView(event,\'viewPayment\',\''+p.id+'\',\'finance\')">'+
           '<td class="cell-id">'+esc(p.request_no)+'</td>'+
           '<td>'+esc(catLabel)+'</td>'+
           '<td>'+esc(subLabel)+'</td>'+
-          '<td class="cell-id">'+esc(p.source_no||'')+'</td>'+
-          '<td class="cell-id">'+esc(p.related_ci_no||'')+'</td>'+
+          pCell(pSrcNo)+
+          pCell(pCiNo)+
           '<td>'+esc(p.supplier_name||'')+'</td>'+
           '<td class="text-right">'+qtyTxt+'</td>'+
           '<td class="text-right font-bold">'+fmtMoney(p.payable_amount,p.currency)+'</td>'+

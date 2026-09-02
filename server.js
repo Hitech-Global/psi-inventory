@@ -13919,12 +13919,18 @@ app.get('/api/payment-requests/pending', requireApiPermission('payment_approve')
     const rows = query(`
       SELECT id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no,
              payee_type, supplier_name, payable_amount, currency, related_ci_no, related_po_no,
+             payment_terms, related_ci_id,
              approval_status, payment_status, remark, created_at
       FROM payment_requests
       WHERE approval_status = 'pending'
          OR (approval_status = 'approved' AND payment_status IN ('pending_approval','approved','partial_deduction'))
       ORDER BY created_at DESC
     `).rows;
+    // PAY-SOURCE-TRACE-02：审批中心接入来源追溯，复用与「付款管理列表 / 付款申请详情」完全相同的
+    // 统一解析器 attachPaymentSourceTrace，保证三处口径一致（只读派生，不参与任何金额计算）。
+    // SELECT 已补 payment_terms / related_ci_id：旧 single 单没有 payment_request_items 时，
+    // resolver 的回退路径需要这两个主表字段才能与列表 / 详情完全对齐。
+    attachPaymentSourceTrace(rows);
     // PAY-CORE Phase 2-B：附加只读 approval 摘要（与 Phase 2-A 详情接口同款模式）
     // 复用 paymentRequestToBusinessType 派生 bt，避免硬编码 business_type 列表
     rows.forEach(r => {

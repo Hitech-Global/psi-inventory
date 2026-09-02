@@ -1,9 +1,9 @@
 'use strict';
 
 /**
- * PAY-SOURCE-TRACE-01 — 付款申请来源追溯链路 回归测试
+ * PAY-SOURCE-TRACE — 付款申请来源追溯链路 回归测试
  *
- * 覆盖场景：
+ * PAY-SOURCE-TRACE-01（付款管理 列表 / 详情）覆盖：
  *   1. 单 CI 付款（payable_items.source_type='ci'）
  *   2. 多 CI 的 PAY-MULTI（payment_mode='multi' + 多条 payment_request_items）
  *   3. CI + 费用单混合付款（pi/尾款 + logistics/运费 混合）
@@ -12,6 +12,14 @@
  *   6. 来源缺失时安全降级（无 items 且主表字段为空 / 来源单据已被删除）→ 不报错
  *   7. 列表与详情使用同一套来源解析口径（同一 resolver 产出完全一致）
  *   8. PAY-MULTI-2026-409982 生产等价夹具：来源组成 + 金额（结算结果不受影响）
+ *
+ * PAY-SOURCE-TRACE-02（审批中心 → 财务类审批列表）覆盖：
+ *   9.  PAY-MULTI（logistics 费用单来源，主表字段全空）在待审列表可追溯
+ *   10. 多 CI PAY-MULTI 待审：紧凑展示 A、B +N，不只取第一条
+ *   11. PI 定金待审：关联 CI 允许为 —（定金本就没有 CI），来源单号照常显示
+ *   12. historical_ci 待审：与付款管理列表解析结果完全一致
+ *   13. 来源缺失待审：安全降级，不报错
+ *   14. 三处同口径：付款管理列表 / 付款申请详情 / 审批中心待审列表 产出完全一致
  *
  * 只读断言：不修改任何金额/状态/结算逻辑。
  */
@@ -438,7 +446,222 @@ describe('PAY-SOURCE-TRACE-01 付款申请来源追溯', () => {
   });
 });
 
-describe('PAY-SOURCE-TRACE-01 展示工具函数', () => {
+// ==================== PAY-SOURCE-TRACE-02：审批中心 → 财务类审批列表 ====================
+
+// 复刻 GET /api/payment-requests/pending 的 SELECT 列与过滤条件（与 server.js 保持一致）。
+// 列集合变化会由下方 T14 的静态守卫拦截，避免测试与实现悄悄分叉。
+const PENDING_SELECT_COLUMNS = `id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no,
+             payee_type, supplier_name, payable_amount, currency, related_ci_no, related_po_no,
+             payment_terms, related_ci_id,
+             approval_status, payment_status, remark, created_at`;
+
+function pendingRows() {
+  const q = query(
+    `SELECT ${PENDING_SELECT_COLUMNS}
+     FROM payment_requests
+     WHERE approval_status = 'pending'
+        OR (approval_status = 'approved' AND payment_status IN ('pending_approval','approved','partial_deduction'))
+     ORDER BY created_at DESC`
+  ).rows;
+  attachPaymentSourceTrace(q);
+  return q;
+}
+
+describe('PAY-SOURCE-TRACE-02 审批中心财务审批列表来源追溯', () => {
+
+  beforeEach(() => resetDB());
+
+  test('T10 — PAY-MULTI（logistics 费用单，主表字段全空）在待审列表可追溯', () => {
+    seedCI('ci_1787537587118_o8h68m', 'NHT260807A', { paymentTerms: 'Credit 45 days', creditDays: 45 });
+    seedBatch('log_1787622553724_o7p9mn', 'R50968TRG', 'ci_1787537587118_o8h68m', 'NHT260807A');
+    seedPayable('payitem_1788248172017_pwybjp', 'PAY-ITEM-2026-172017-btm',
+      'logistics', 'log_1787622553724_o7p9mn', {
+        sourceNo: 'R50968TRG', sourceCiId: 'ci_1787537587118_o8h68m', feeType: 'freight',
+        categoryCode: 'warehouse_arrival', subcategoryCode: 'freight', amountMinor: 1057325
+      });
+    // 生产真实待审单 PAY-MULTI-2026-644983：主表来源字段全部为空
+    seedPR('pay_1788312644983_brx5kr', 'PAY-MULTI-2026-644983', {
+      paymentMode: 'multi', payableAmount: 10573.25, currency: 'RMB',
+      paymentStatus: 'pending_approval', approvalStatus: 'pending'
+    });
+    linkItem('pay_1788312644983_brx5kr', 'payitem_1788248172017_pwybjp', 1057325);
+
+    const rows = pendingRows();
+    assert.equal(rows.length, 1, '该单应命中待审过滤条件');
+    const p = rows[0];
+    assert.equal(p.source_no, '', '主表来源字段仍为空（未改动主表）');
+    assert.equal(p.related_ci_no, '');
+
+    assert.equal(p.source_summary.count, 1);
+    assert.equal(p.source_summary.source_nos_display, 'R50968TRG', '待审列表来源单号不得再显示 —');
+    assert.equal(p.source_summary.related_ci_nos_display, 'NHT260807A');
+    assert.equal(p.source_summary.payment_terms_display, 'Credit 45 days');
+    assert.equal(p.sources[0].source_type, 'logistics');
+    assert.equal(p.sources[0].source_type_label, '物流');
+    assert.equal(p.sources[0].fee_no, 'PAY-ITEM-2026-172017-btm');
+    assert.equal(p.sources[0].source_amount, 10573.25);
+    assert.equal(p.sources[0].requested_amount, 10573.25);
+  });
+
+  test('T11 — 多 CI PAY-MULTI 待审：紧凑展示 A、B +N，不只取第一条', () => {
+    seedHCI('hci_a', 'HIT20251212-1A', { paymentTerms: 'Credit' });
+    seedHCI('hci_b', 'HIT20251205-1A', { paymentTerms: 'Credit' });
+    seedHCI('hci_c', 'HIT20251118-1A', { paymentTerms: 'Credit' });
+    seedPayable('pay_a', 'PAY-ITEM-A', 'historical_ci', 'hci_a', { sourceNo: 'HIT20251212-1A', amountMinor: 82373718 });
+    seedPayable('pay_b', 'PAY-ITEM-B', 'historical_ci', 'hci_b', { sourceNo: 'HIT20251205-1A', amountMinor: 29961344 });
+    seedPayable('pay_c', 'PAY-ITEM-C', 'historical_ci', 'hci_c', { sourceNo: 'HIT20251118-1A', amountMinor: 1194809 });
+    seedPR('pr_multi3', 'PAY-MULTI-MULTI3', { payableAmount: 1135298.71, approvalStatus: 'pending', paymentStatus: 'pending_approval' });
+    linkItem('pr_multi3', 'pay_a', 82373718);
+    linkItem('pr_multi3', 'pay_b', 29961344);
+    linkItem('pr_multi3', 'pay_c', 1194809);
+
+    const p = pendingRows()[0];
+    assert.equal(p.sources.length, 3, '多来源必须全部返回');
+    assert.equal(p.source_summary.count, 3);
+    assert.equal(p.source_summary.source_nos_display, 'HIT20251212-1A、HIT20251205-1A +1');
+    assert.equal(p.source_summary.related_ci_nos_display, 'HIT20251212-1A、HIT20251205-1A +1');
+    assert.equal(p.source_summary.source_nos.length, 3, 'source_nos 保留全部单号，供 title 展示');
+    assert.equal(p.source_summary.fee_nos.length, 3, '三个费用单号都要能追溯');
+  });
+
+  test('T12 — PI 定金待审：关联 CI 允许为 —，来源单号照常显示', () => {
+    seedPI('pi_t12', 'NHT260807A', { paymentTerms: 'Credit 45 days （45天）' });
+    seedPayable('pay_t12', 'PAY-ITEM-T12', 'pi', 'pi_t12', {
+      sourceNo: 'NHT260807A', feeType: 'deposit',
+      categoryCode: 'goods', subcategoryCode: 'deposit', amountMinor: 5743571
+    });
+    seedPR('pr_t12', 'PAY-MULTI-599132', {
+      paymentMode: 'multi', payableAmount: 57435.71,
+      approvalStatus: 'pending', paymentStatus: 'pending_approval'
+    });
+    linkItem('pr_t12', 'pay_t12', 5743571);
+
+    const p = pendingRows()[0];
+    assert.equal(p.sources[0].source_type, 'pi');
+    assert.equal(p.sources[0].source_type_label, 'PI');
+    assert.equal(p.sources[0].fee_type_label, '定金');
+    assert.equal(p.source_summary.source_nos_display, 'NHT260807A', '定金来源单号必须显示');
+    assert.equal(p.source_summary.related_ci_nos_display, '', '定金本就没有关联 CI，空是正确结果而非 bug');
+    assert.equal(p.source_summary.payment_terms_display, 'Credit 45 days （45天）');
+    assert.equal(p.sources[0].related_ci_no, '');
+  });
+
+  test('T13 — historical_ci 待审：与付款管理列表解析结果完全一致', () => {
+    seedHCI('hci_1785853312118_6a7rzp', 'HIT20251118-1A', {
+      supplierName: 'Redragon', country: 'ID', currency: 'RMB',
+      grossAmount: 272539.09, paymentTerms: 'Credit', creditDays: 0
+    });
+    seedPayable('payitem_1785944000846_luqy4w', 'PAY-ITEM-2026-000846-ym9',
+      'historical_ci', 'hci_1785853312118_6a7rzp',
+      { sourceNo: 'HIT20251118-1A', feeType: 'balance', amountMinor: 27253909 });
+    seedPR('pay_1786243409982_5eqebp', 'PAY-MULTI-2026-409982', {
+      paymentMode: 'multi', payableAmount: 272539.09, currency: 'RMB',
+      approvalStatus: 'pending', paymentStatus: 'pending_approval'
+    });
+    linkItem('pay_1786243409982_5eqebp', 'payitem_1785944000846_luqy4w', 27253909);
+
+    const p = pendingRows()[0];
+    assert.equal(p.sources[0].source_type, 'historical_ci');
+    assert.equal(p.sources[0].source_no, 'HIT20251118-1A');
+    assert.equal(p.sources[0].related_ci_no, 'HIT20251118-1A');
+    assert.equal(p.sources[0].payment_terms_display, 'Credit');
+    assert.equal(p.source_summary.source_nos_display, 'HIT20251118-1A');
+    assert.equal(p.source_summary.related_ci_nos_display, 'HIT20251118-1A');
+  });
+
+  test('T14 — 来源缺失待审：安全降级，不报错', () => {
+    // 14a：待审单无任何来源（主表字段空、无 items）
+    seedPR('pr_t14a', 'PAY-MULTI-T14A', { payableAmount: 1000, approvalStatus: 'pending', paymentStatus: 'pending_approval' });
+    // 14b：有 items 但来源单据已被删除（悬空引用）
+    seedPayable('pay_t14b', 'PAY-ITEM-T14B', 'ci', 'ci_gone', { sourceNo: 'CI-GONE', amountMinor: 500000 });
+    seedPR('pr_t14b', 'PAY-MULTI-T14B', { payableAmount: 5000, approvalStatus: 'pending', paymentStatus: 'pending_approval' });
+    linkItem('pr_t14b', 'pay_t14b', 500000);
+    // 14c：旧 single 单，主表有来源字段但无 items（回退路径）
+    seedHCI('hci_t14c', 'HITOLD-1', { paymentTerms: 'Credit' });
+    seedPR('pr_t14c', 'PAY-HCI-T14C', {
+      paymentMode: 'single', sourceType: 'historical_ci', sourceId: 'hci_t14c',
+      sourceNo: 'HITOLD-1', relatedCiId: 'hci_t14c', paymentTerms: 'Credit',
+      payableAmount: 2000, approvalStatus: 'pending', paymentStatus: 'pending_approval'
+    });
+
+    let rows;
+    assert.doesNotThrow(() => { rows = pendingRows(); });
+    assert.equal(rows.length, 3);
+    const byNo = {};
+    rows.forEach(r => { byNo[r.request_no] = r; });
+
+    assert.deepEqual(byNo['PAY-MULTI-T14A'].sources, [], '无来源关系时返回空数组，不臆造');
+    assert.equal(byNo['PAY-MULTI-T14A'].source_summary.source_nos_display, '');
+
+    assert.equal(byNo['PAY-MULTI-T14B'].sources.length, 1, '悬空引用仍保留 payable_items 已存单号');
+    assert.equal(byNo['PAY-MULTI-T14B'].source_summary.source_nos_display, 'CI-GONE');
+    assert.equal(byNo['PAY-MULTI-T14B'].source_summary.related_ci_nos_display, '');
+
+    // 回退路径依赖 SELECT 中的 related_ci_id / payment_terms
+    assert.equal(byNo['PAY-HCI-T14C'].source_summary.source_nos_display, 'HITOLD-1');
+    assert.equal(byNo['PAY-HCI-T14C'].source_summary.related_ci_nos_display, 'HITOLD-1');
+    assert.equal(byNo['PAY-HCI-T14C'].source_summary.payment_terms_display, 'Credit');
+  });
+
+  test('T15 — 三处同口径：付款管理列表 / 付款申请详情 / 审批中心待审列表 完全一致', () => {
+    seedCI('ci_t15', 'NHT260514A', { paymentTerms: 'Credit 45 days', creditDays: 45, relatedPiNo: 'NHT260417A' });
+    seedPI('pi_t15', 'NHT260417A');
+    seedBatch('log_t15', 'SZIAF014533', 'ci_t15', 'NHT260514A');
+    seedPayable('pay_t15a', 'PAY-ITEM-T15A', 'pi', 'pi_t15', {
+      sourceNo: 'NHT260417A', sourceCiId: 'ci_t15', feeType: 'balance', amountMinor: 20846996
+    });
+    seedPayable('pay_t15b', 'PAY-ITEM-T15B', 'logistics', 'log_t15', {
+      sourceNo: 'SZIAF014533', sourceCiId: 'ci_t15', feeType: 'freight',
+      categoryCode: 'warehouse_arrival', subcategoryCode: 'freight', amountMinor: 1360100
+    });
+    seedPR('pr_t15', 'PAY-MULTI-T15', {
+      paymentMode: 'multi', payableAmount: 222070.96,
+      approvalStatus: 'pending', paymentStatus: 'pending_approval'
+    });
+    linkItem('pr_t15', 'pay_t15a', 20846996);
+    linkItem('pr_t15', 'pay_t15b', 1360100);
+
+    // ① 付款管理列表路径（SELECT * + attachPaymentSourceTrace）
+    const listRow = query('SELECT * FROM payment_requests WHERE id = ?', ['pr_t15']).rows;
+    attachPaymentSourceTrace(listRow);
+
+    // ② 付款申请详情路径（resolvePaymentSourcesForRequests + summarizePaymentSources）
+    const detailRow = queryOne('SELECT * FROM payment_requests WHERE id = ?', ['pr_t15']);
+    const detailSources = resolvePaymentSourcesForRequests([detailRow]).get('pr_t15');
+    const detailSummary = summarizePaymentSources(detailSources);
+
+    // ③ 审批中心待审列表路径（pending 固定列 SELECT + attachPaymentSourceTrace）
+    const approvalRow = pendingRows()[0];
+
+    assert.deepEqual(approvalRow.sources, listRow[0].sources, '审批中心 sources 必须等于付款管理列表 sources');
+    assert.deepEqual(approvalRow.source_summary, listRow[0].source_summary, '审批中心 source_summary 必须等于付款管理列表');
+    assert.deepEqual(detailSources, listRow[0].sources, '详情 sources 必须等于付款管理列表 sources');
+    assert.deepEqual(detailSummary, listRow[0].source_summary, '详情 source_summary 必须等于付款管理列表');
+
+    // 关键口径断言：CI + 费用单混合，且多来源不能只取第一条
+    assert.equal(approvalRow.source_summary.count, 2);
+    assert.equal(approvalRow.source_summary.source_nos_display, 'NHT260417A、SZIAF014533');
+    assert.equal(approvalRow.source_summary.related_ci_nos_display, 'NHT260514A');
+    assert.equal(approvalRow.source_summary.source_types.length, 2);
+    assert.equal(approvalRow.source_summary.fee_nos.length, 2);
+  });
+
+  test('T16 — 静态守卫：pending API 必须接入统一解析器且 SELECT 含回退所需列', () => {
+    const src = require('fs').readFileSync(require('path').join(__dirname, 'server.js'), 'utf8');
+    const start = src.indexOf("app.get('/api/payment-requests/pending'");
+    assert.ok(start > 0, '未找到 pending 路由');
+    const body = src.slice(start, start + 1400);
+
+    assert.ok(/attachPaymentSourceTrace\(rows\)/.test(body),
+      'pending 路由必须调用 attachPaymentSourceTrace（与列表/详情同一解析器）');
+    assert.ok(/payment_terms/.test(body), 'pending SELECT 必须含 payment_terms（resolver 回退路径需要）');
+    assert.ok(/related_ci_id/.test(body), 'pending SELECT 必须含 related_ci_id（resolver 回退路径需要）');
+    assert.ok(!/resolvePaymentSourcesForRequests\s*\(/.test(body),
+      'pending 路由不得自行另写解析逻辑，必须复用 attachPaymentSourceTrace');
+  });
+});
+
+describe('PAY-SOURCE-TRACE 展示工具函数', () => {
   test('compactSourceNos — 去重 / 空值 / 折叠计数', () => {
     assert.equal(compactSourceNos([]), '');
     assert.equal(compactSourceNos(null), '');
