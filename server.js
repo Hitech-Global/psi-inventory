@@ -4084,73 +4084,298 @@ function latestImportsSql() {
       )`;
 }
 
+// P0-B-HELPER: original refreshInventoryTotals loop（字节级原样保留旧 for 逻辑）
+// 用途：duplicate import / duplicate inventory 时 fallback；SQLite 路径；parity 基准
+// 禁止任何"等价重写"，保持 helper 内容与旧 for 循环完全一致。
+function runOriginalInventoryTotalsLoop(latestImports, snapshotCutoffDate, warnings) {
+  for (const imp of latestImports) {
+    const cutoff = imp.snapshot_cutoff_date || snapshotCutoffDate || '';
+    const existing = queryOne('SELECT id, weighted_avg_cost, last_inbound_date, first_inbound_date FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
+      [imp.sku_code, imp.country, imp.warehouse]);
+
+    // WAC 来源优先级（按权威性从高到低）：
+    //   1. confirmed wac_history — 后续 CI 成本确认产生的正式 WAC
+    //   2. existing inventory WAC (≠0) — 已存在有效成本，不覆盖
+    //   3. opening import WAC (>0) — 库存导入时提供的加权平均成本，用于无正式 WAC 的新库存初始化
+    //   4. 0 — 兜底，表示无有效成本
+    const wacRecord = latestConfirmedWac(imp.sku_code, imp.country, imp.warehouse);
+    let wac, wacSource;
+    if (wacRecord) {
+      wac = wacRecord.new_avg_cost || 0;
+      wacSource = 'confirmed';
+    } else if (existing && (existing.weighted_avg_cost || 0) !== 0) {
+      // 保留已有有效 WAC，不被新的库存同步覆盖
+      wac = existing.weighted_avg_cost || 0;
+      wacSource = 'existing';
+      warnings.push({
+        sku_code: imp.sku_code, country: imp.country, warehouse: imp.warehouse,
+        priority: 'warning',
+        message: '未找到最新已确认加权平均成本，已保留原成本，请完成成本确认。'
+      });
+    } else if (imp.weighted_avg_cost && Number(imp.weighted_avg_cost) > 0) {
+      // 库存初始化：使用导入文件中的加权平均成本
+      wac = Number(imp.weighted_avg_cost);
+      wacSource = 'opening';
+    } else {
+      // 无有效成本，使用 0
+      wac = 0;
+      wacSource = 'none';
+      warnings.push({
+        sku_code: imp.sku_code, country: imp.country, warehouse: imp.warehouse,
+        priority: 'high',
+        message: '未找到已确认加权平均成本，成本与金额暂为 0，请尽快完成成本确认。'
+      });
+    }
+    const invValue = (parseInt(imp.available_qty) || 0) * wac;
+
+    // last_inbound_date 更新规则：导入文件有值则更新，否则保留原值
+    const newLastInbound = (imp.last_inbound_date && String(imp.last_inbound_date).trim()) ? imp.last_inbound_date : (existing ? existing.last_inbound_date : '');
+    // first_inbound_date 更新规则：导入文件填写新日期才更新；为空则保留旧值
+    const newFirstInbound = (imp.first_inbound_date && String(imp.first_inbound_date).trim()) ? imp.first_inbound_date : (existing ? existing.first_inbound_date : '');
+    if (existing) {
+      run(`UPDATE inventory SET available_qty = ?, weighted_avg_cost = ?, inventory_value = ?, last_import_date = ?, snapshot_cutoff_date = ?, last_inbound_date = ?, first_inbound_date = ?, updated_at = datetime('now') WHERE id = ?`,
+        [imp.available_qty, wac, invValue, imp.import_date, cutoff, newLastInbound, newFirstInbound, existing.id]);
+    } else {
+      run(`INSERT INTO inventory (id, sku_code, country, warehouse, available_qty, weighted_avg_cost, inventory_value, last_import_date, snapshot_cutoff_date, last_inbound_date, first_inbound_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [genId('inv'), imp.sku_code, imp.country, imp.warehouse, imp.available_qty, wac, invValue, imp.import_date, cutoff, newLastInbound, newFirstInbound]);
+    }
+
+  }
+}
 // 刷新库存总表（根据导入记录和业务数据重新计算）
 async function refreshInventoryTotals(snapshotCutoffDate) {
   // P1-03-B: WAC 不再从文件列读取，改为查 latest confirmed locked WAC 版本
   const warnings = [];
   // 获取每个 SKU+国家+仓库 的最新可用库存（连同 snapshot_cutoff_date）
+  // P0-B: 必须保持在 transaction 之外执行（与 OLD 并发边界一致）
   const latestImports = query(latestImportsSql()).rows;
 
-  transaction(() => {
-    for (const imp of latestImports) {
-      const cutoff = imp.snapshot_cutoff_date || snapshotCutoffDate || '';
-      const existing = queryOne('SELECT id, weighted_avg_cost, last_inbound_date, first_inbound_date FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
-        [imp.sku_code, imp.country, imp.warehouse]);
+  const driver = (process.env.DB_DRIVER || 'sqlite').toLowerCase();
 
-      // WAC 来源优先级（按权威性从高到低）：
-      //   1. confirmed wac_history — 后续 CI 成本确认产生的正式 WAC
-      //   2. existing inventory WAC (≠0) — 已存在有效成本，不覆盖
-      //   3. opening import WAC (>0) — 库存导入时提供的加权平均成本，用于无正式 WAC 的新库存初始化
-      //   4. 0 — 兜底，表示无有效成本
-      const wacRecord = latestConfirmedWac(imp.sku_code, imp.country, imp.warehouse);
-      let wac, wacSource;
-      if (wacRecord) {
-        wac = wacRecord.new_avg_cost || 0;
-        wacSource = 'confirmed';
-      } else if (existing && (existing.weighted_avg_cost || 0) !== 0) {
-        // 保留已有有效 WAC，不被新的库存同步覆盖
-        wac = existing.weighted_avg_cost || 0;
-        wacSource = 'existing';
-        warnings.push({
-          sku_code: imp.sku_code, country: imp.country, warehouse: imp.warehouse,
-          priority: 'warning',
-          message: '未找到最新已确认加权平均成本，已保留原成本，请完成成本确认。'
-        });
-      } else if (imp.weighted_avg_cost && Number(imp.weighted_avg_cost) > 0) {
-        // 库存初始化：使用导入文件中的加权平均成本
-        wac = Number(imp.weighted_avg_cost);
-        wacSource = 'opening';
-      } else {
-        // 无有效成本，使用 0
-        wac = 0;
-        wacSource = 'none';
-        warnings.push({
-          sku_code: imp.sku_code, country: imp.country, warehouse: imp.warehouse,
-          priority: 'high',
-          message: '未找到已确认加权平均成本，成本与金额暂为 0，请尽快完成成本确认。'
-        });
-      }
-      const invValue = (parseInt(imp.available_qty) || 0) * wac;
+  if (driver === 'pg' && latestImports.length > 0) {
 
-      // last_inbound_date 更新规则：导入文件有值则更新，否则保留原值
-      const newLastInbound = (imp.last_inbound_date && String(imp.last_inbound_date).trim()) ? imp.last_inbound_date : (existing ? existing.last_inbound_date : '');
-      // first_inbound_date 更新规则：导入文件填写新日期才更新；为空则保留旧值
-      const newFirstInbound = (imp.first_inbound_date && String(imp.first_inbound_date).trim()) ? imp.first_inbound_date : (existing ? existing.first_inbound_date : '');
-      if (existing) {
-        run(`UPDATE inventory SET available_qty = ?, weighted_avg_cost = ?, inventory_value = ?, last_import_date = ?, snapshot_cutoff_date = ?, last_inbound_date = ?, first_inbound_date = ?, updated_at = datetime('now') WHERE id = ?`,
-          [imp.available_qty, wac, invValue, imp.import_date, cutoff, newLastInbound, newFirstInbound, existing.id]);
-      } else {
-        run(`INSERT INTO inventory (id, sku_code, country, warehouse, available_qty, weighted_avg_cost, inventory_value, last_import_date, snapshot_cutoff_date, last_inbound_date, first_inbound_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [genId('inv'), imp.sku_code, imp.country, imp.warehouse, imp.available_qty, wac, invValue, imp.import_date, cutoff, newLastInbound, newFirstInbound]);
-      }
+    const keySeen = new Map();
+    let hasDupImportKey = false;
+    for (let i = 0; i < latestImports.length; i++) {
+      const imp = latestImports[i];
+      const k = imp.sku_code + '\0' + imp.country + '\0' + imp.warehouse;
+      if (keySeen.has(k)) { hasDupImportKey = true; break; }
+      keySeen.set(k, true);
     }
-    // 更新在途、PI未发货、PO未确认等（派生数据，COMMIT 后刷新，脱离事务边界）
-  });
+
+    if (hasDupImportKey) {
+      transaction(() => {
+        runOriginalInventoryTotalsLoop(latestImports, snapshotCutoffDate, warnings);
+      });
+    } else {
+
+    const pgSnapshotSql = `      WITH inp AS (
+        SELECT ord, sku_code, country, warehouse
+        FROM jsonb_to_recordset($1::jsonb) AS j(
+          ord integer,
+          sku_code text,
+          country text,
+          warehouse text
+        )
+      )
+      SELECT inp.ord,
+             inp.sku_code, inp.country, inp.warehouse,
+             COALESCE(ex.inventory_match_count, 0)::bigint AS inventory_match_count,
+             ex.id            AS ex_id,
+             ex.wac           AS ex_wac,
+             ex.li            AS ex_li,
+             ex.fi            AS ex_fi,
+             wc.id            AS wc_id,
+             wc.cost          AS wc_cost
+      FROM inp
+      LEFT JOIN LATERAL (
+        SELECT
+          i.id,
+          i.weighted_avg_cost AS wac,
+          i.last_inbound_date AS li,
+          i.first_inbound_date AS fi,
+          COUNT(*) OVER() AS inventory_match_count
+        FROM inventory i
+        WHERE i.sku_code = inp.sku_code
+          AND i.country  = inp.country
+          AND i.warehouse = inp.warehouse
+        LIMIT 1
+      ) ex ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT w.id, w.new_avg_cost AS cost
+        FROM wac_history w
+        WHERE w.sku_code = inp.sku_code
+          AND w.country  = inp.country
+          AND w.warehouse = inp.warehouse
+          AND w.confirmation_status = 'confirmed'
+          AND w.is_locked = 1
+        ORDER BY w.version_no DESC
+        LIMIT 1
+      ) wc ON TRUE
+      ORDER BY inp.ord`;
+    const pgBatchUpdateSql = `      UPDATE inventory i SET
+        available_qty         = src.available_qty::integer,
+        weighted_avg_cost     = src.weighted_avg_cost::numeric,
+        inventory_value       = src.inventory_value::numeric,
+        last_import_date      = src.last_import_date::text,
+        snapshot_cutoff_date  = src.snapshot_cutoff_date::text,
+        last_inbound_date     = src.last_inbound_date::text,
+        first_inbound_date    = src.first_inbound_date::text,
+        updated_at            = to_char(CURRENT_TIMESTAMP, 'YYYY-MM-DD HH24:MI:SS')
+      FROM jsonb_to_recordset($1::jsonb) AS src(
+        id                    text,
+        available_qty         numeric,
+        weighted_avg_cost     numeric,
+        inventory_value       numeric,
+        last_import_date      text,
+        snapshot_cutoff_date  text,
+        last_inbound_date     text,
+        first_inbound_date    text
+      )
+      WHERE i.id = src.id::text`;
+    const pgBatchInsertSql = `      INSERT INTO inventory (
+        id, sku_code, country, warehouse,
+        available_qty, weighted_avg_cost, inventory_value,
+        last_import_date, snapshot_cutoff_date,
+        last_inbound_date, first_inbound_date
+      )
+      SELECT
+        id::text, sku_code::text, country::text, warehouse::text,
+        available_qty::integer, weighted_avg_cost::numeric, inventory_value::numeric,
+        last_import_date::text, snapshot_cutoff_date::text,
+        last_inbound_date::text, first_inbound_date::text
+      FROM jsonb_to_recordset($1::jsonb) AS j(
+        id                    text,
+        sku_code              text,
+        country               text,
+        warehouse             text,
+        available_qty         numeric,
+        weighted_avg_cost     numeric,
+        inventory_value       numeric,
+        last_import_date      text,
+        snapshot_cutoff_date  text,
+        last_inbound_date     text,
+        first_inbound_date    text
+      )`;
+
+    const inputKeys = latestImports.map((imp, ord) => ({
+      ord,
+      sku_code: imp.sku_code,
+      country:  imp.country,
+      warehouse: imp.warehouse
+    }));
+    const inputKeysJson = JSON.stringify(inputKeys);
+
+    let snapshotRows;
+
+    transaction(() => {
+      const snapRes = query(pgSnapshotSql, [inputKeysJson]);
+      snapshotRows = snapRes && snapRes.rows ? snapRes.rows : [];
+
+      if (snapshotRows.length !== latestImports.length) {
+        throw new Error('[refreshInventoryTotals P0-B] snapshot length mismatch: ' + snapshotRows.length + ' !== ' + latestImports.length);
+      }
+      for (let i = 0; i < latestImports.length; i++) {
+        const r = snapshotRows[i];
+        const imp = latestImports[i];
+        if (r.ord !== i ||
+            r.sku_code  !== imp.sku_code ||
+            r.country   !== imp.country ||
+            r.warehouse !== imp.warehouse) {
+          throw new Error('[refreshInventoryTotals P0-B] snapshot ord/key mismatch at index ' + i);
+        }
+      }
+
+      if (snapshotRows.some(r => Number(r.inventory_match_count) > 1)) {
+        runOriginalInventoryTotalsLoop(latestImports, snapshotCutoffDate, warnings);
+        return;
+      }
+
+      const updatePayload = [];
+      const insertPayload = [];
+      for (let i = 0; i < snapshotRows.length; i++) {
+        const r = snapshotRows[i];
+        const imp = latestImports[i];
+        const cutoff = imp.snapshot_cutoff_date || snapshotCutoffDate || '';
+        let wac;
+        if (r.wc_id != null) {
+          wac = r.wc_cost != null ? Number(r.wc_cost) || 0 : 0;
+        } else if (r.ex_id != null && ((r.ex_wac == null ? 0 : Number(r.ex_wac)) || 0) !== 0) {
+          wac = (r.ex_wac == null ? 0 : Number(r.ex_wac)) || 0;
+          warnings.push({
+            sku_code: imp.sku_code, country: imp.country, warehouse: imp.warehouse,
+            priority: 'warning',
+            message: '未找到最新已确认加权平均成本，已保留原成本，请完成成本确认。'
+          });
+        } else if (imp.weighted_avg_cost && Number(imp.weighted_avg_cost) > 0) {
+          wac = Number(imp.weighted_avg_cost);
+        } else {
+          wac = 0;
+          warnings.push({
+            sku_code: imp.sku_code, country: imp.country, warehouse: imp.warehouse,
+            priority: 'high',
+            message: '未找到已确认加权平均成本，成本与金额暂为 0，请尽快完成成本确认。'
+          });
+        }
+        const invValue = (parseInt(imp.available_qty) || 0) * wac;
+        const newLastInbound =
+          (imp.last_inbound_date && String(imp.last_inbound_date).trim())
+            ? imp.last_inbound_date
+            : (r.ex_id != null ? r.ex_li : '');
+        const newFirstInbound =
+          (imp.first_inbound_date && String(imp.first_inbound_date).trim())
+            ? imp.first_inbound_date
+            : (r.ex_id != null ? r.ex_fi : '');
+        if (r.ex_id != null) {
+          updatePayload.push({
+            id: r.ex_id,
+            available_qty: parseInt(imp.available_qty) || 0,
+            weighted_avg_cost: wac,
+            inventory_value: invValue,
+            last_import_date: imp.import_date,
+            snapshot_cutoff_date: cutoff,
+            last_inbound_date: newLastInbound,
+            first_inbound_date: newFirstInbound
+          });
+        } else {
+          insertPayload.push({
+            id: genId('inv'),
+            sku_code: imp.sku_code,
+            country: imp.country,
+            warehouse: imp.warehouse,
+            available_qty: parseInt(imp.available_qty) || 0,
+            weighted_avg_cost: wac,
+            inventory_value: invValue,
+            last_import_date: imp.import_date,
+            snapshot_cutoff_date: cutoff,
+            last_inbound_date: newLastInbound,
+            first_inbound_date: newFirstInbound
+          });
+        }
+      }
+
+      if (updatePayload.length > 0) {
+        run(pgBatchUpdateSql, [JSON.stringify(updatePayload)]);
+      }
+      if (insertPayload.length > 0) {
+        run(pgBatchInsertSql, [JSON.stringify(insertPayload)]);
+      }
+    });
+
+    } // end else (non-dup-import PG fast path)
+  } else {
+    // SQLite / empty latestImports: OLD loop (no-op when empty)
+    transaction(() => {
+      runOriginalInventoryTotalsLoop(latestImports, snapshotCutoffDate, warnings);
+    });
+  }
+
   updateInventoryTransitData().catch(err => {
     console.warn('[refreshInventoryTotals] 在途数据刷新失败（事务已提交）:', err && err.message);
   });
   return { warnings };
 }
+
 
 // 更新库存的在途数据
 async function updateInventoryTransitData() {
@@ -18160,5 +18385,7 @@ module.exports = {
   compactSourceNos,
   formatPaymentTermsDisplay,
   app,
-  updateInventoryTransitData
+  updateInventoryTransitData,
+  refreshInventoryTotals,
+  runOriginalInventoryTotalsLoop
 };
