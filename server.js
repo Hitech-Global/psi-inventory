@@ -3522,10 +3522,155 @@ app.get('/api/inventory-imports', requireApiPermission('inventory_view'), asyncH
   res.json(query(sql, params).rows);
 }));
 
+// ==================== 库存导入预检查（INV-IMPORT-PRECHECK-01） ====================
+// 核心原则：SKU 主数据（skus 表）是 SKU 与品牌的唯一权威来源，库存导入不负责补 SKU 主数据。
+//   · Excel 的 brand 是「可选校验字段」：只用于与 skus.brand 做一致性校验，
+//     既不写入库存事实、也绝不回写 skus.brand（本函数与 bulk-import 全链路对 skus 只读）。
+//   · Excel 无 brand 而主数据有 brand → 允许导入（品牌权威来源是 SKU 主数据，不要求 Excel 重复维护）。
+// 本函数是纯只读校验：只做 SELECT，不做任何 INSERT/UPDATE/DELETE，也不开启事务。
+// 存在任意一条 blocking → 整批库存导入不得写库（调用方必须在 transaction 之前拦截）。
+const INV_IMPORT_ISSUE_META = {
+  SKU_EMPTY:          { label: 'SKU 为空',                       suggestion: '在 Excel 中补全 SKU 编码后重新导入' },
+  IMPORT_DATE_EMPTY:  { label: '导入日期为空',                   suggestion: '在 Excel 中补全导入日期（YYYY-MM-DD）后重新导入' },
+  SKU_MASTER_MISSING: { label: 'SKU 主数据不存在',               suggestion: '前往「SKU 主数据」新建该 SKU 后再重新导入库存' },
+  SKU_BRAND_EMPTY:    { label: 'SKU 主数据品牌为空',             suggestion: '前往「SKU 主数据」补全该 SKU 的品牌后再重新导入库存' },
+  BRAND_MISMATCH:     { label: 'Excel 品牌与 SKU 主数据品牌不一致', suggestion: '库存总表品牌以 SKU 主数据为准：修正 Excel 品牌，或前往「SKU 主数据」更正品牌' },
+  QTY_INVALID:        { label: '库存数量格式非法',               suggestion: '可用数量必须为非负整数（不接受小数、空值、负数）' },
+  WAC_INVALID:        { label: '加权平均成本格式非法',           suggestion: '加权平均成本可留空表示不提供；若填写必须为非负数字' }
+};
+
+// 品牌一致性比较：trim 后忽略大小写（"Redragon" 与 "REDRAGON" 视为一致，避免大小写差异造成误阻断）。
+// 若后续要求严格区分大小写，只改本函数即可。
+function normalizeBrandForCompare(v) {
+  return String(v === null || v === undefined ? '' : v).trim().toLowerCase();
+}
+
+function validateInventoryImportRows(items) {
+  const rows = Array.isArray(items) ? items : [];
+  const blocking = [];
+  const pushIssue = (rowNo, skuCode, type, currentValue, extra) => {
+    const meta = INV_IMPORT_ISSUE_META[type] || { label: type, suggestion: '' };
+    blocking.push(Object.assign({
+      row: rowNo,
+      sku_code: skuCode,
+      issue_type: type,
+      issue_label: meta.label,
+      current_value: (currentValue === null || currentValue === undefined) ? '' : String(currentValue),
+      suggestion: meta.suggestion
+    }, extra || {}));
+  };
+
+  // 预取本批 SKU 的主数据（分块 IN 查询，避免逐行查库与超长参数列表）
+  const skuCodes = Array.from(new Set(rows
+    .map(r => (r && r.sku_code !== null && r.sku_code !== undefined) ? String(r.sku_code).trim() : '')
+    .filter(Boolean)));
+  const masterMap = new Map();
+  const CHUNK = 500;
+  for (let s = 0; s < skuCodes.length; s += CHUNK) {
+    const chunk = skuCodes.slice(s, s + CHUNK);
+    const placeholders = chunk.map(() => '?').join(',');
+    const found = query(`SELECT sku_code, brand FROM skus WHERE sku_code IN (${placeholders})`, chunk).rows;
+    found.forEach(r => { masterMap.set(r.sku_code, r); });
+  }
+
+  rows.forEach((item, i) => {
+    const src = item || {};
+    // 行号：优先使用前端传入的真实 Excel 行号，缺失时退回既有口径 i + 2
+    const rowNo = Number(src._row_num) > 0 ? Number(src._row_num) : (i + 2);
+    const skuCode = (src.sku_code === null || src.sku_code === undefined) ? '' : String(src.sku_code).trim();
+
+    // ① SKU 为空
+    if (!skuCode) pushIssue(rowNo, '', 'SKU_EMPTY', src.sku_code);
+
+    // ② 导入日期为空（import_date 是 inventory_imports NOT NULL 列，且参与快照 MAX 比较）
+    const importDate = (src.import_date === null || src.import_date === undefined) ? '' : String(src.import_date).trim();
+    if (!importDate) pushIssue(rowNo, skuCode, 'IMPORT_DATE_EMPTY', src.import_date);
+
+    // ③ 库存数量格式非法（与 P1-INBOUND-01 既有口径完全一致：严格非负整数）
+    const rawQty = src.available_qty;
+    if (rawQty === null || rawQty === undefined || String(rawQty).trim() === '') {
+      pushIssue(rowNo, skuCode, 'QTY_INVALID', rawQty);
+    } else {
+      const qty = Number(rawQty);
+      if (!Number.isFinite(qty) || !Number.isInteger(qty) || qty < 0) {
+        pushIssue(rowNo, skuCode, 'QTY_INVALID', rawQty);
+      }
+    }
+
+    // ④ WAC / 成本格式非法（留空 = 不提供，允许；填写则必须为非负有限数字）
+    const rawWac = src.weighted_avg_cost;
+    if (!(rawWac === null || rawWac === undefined || String(rawWac).trim() === '')) {
+      const wac = Number(rawWac);
+      if (!Number.isFinite(wac) || wac < 0) pushIssue(rowNo, skuCode, 'WAC_INVALID', rawWac);
+    }
+
+    if (!skuCode) return; // SKU 为空时无法做主数据校验，已在 ① 记录
+
+    // ⑤ SKU 主数据不存在
+    const master = masterMap.get(skuCode);
+    if (!master) { pushIssue(rowNo, skuCode, 'SKU_MASTER_MISSING', skuCode); return; }
+
+    // ⑥ SKU 主数据 brand 为空（NULL 与空串同等对待）
+    const masterBrand = (master.brand === null || master.brand === undefined) ? '' : String(master.brand).trim();
+    if (!masterBrand) { pushIssue(rowNo, skuCode, 'SKU_BRAND_EMPTY', '', { master_brand: '' }); return; }
+
+    // ⑦ Excel brand 与 SKU 主数据 brand 不一致（Excel 无 brand 时允许通过）
+    const excelBrand = (src.brand === null || src.brand === undefined) ? '' : String(src.brand).trim();
+    if (excelBrand && normalizeBrandForCompare(excelBrand) !== normalizeBrandForCompare(masterBrand)) {
+      pushIssue(rowNo, skuCode, 'BRAND_MISMATCH', excelBrand, { excel_brand: excelBrand, master_brand: masterBrand });
+    }
+  });
+
+  // 按问题类型聚合（供前端分组展示主提示 + 涉及 SKU / 行号）
+  const summaryMap = new Map();
+  blocking.forEach(b => {
+    if (!summaryMap.has(b.issue_type)) {
+      summaryMap.set(b.issue_type, { issue_type: b.issue_type, issue_label: b.issue_label, count: 0, sku_codes: [], rows: [] });
+    }
+    const g = summaryMap.get(b.issue_type);
+    g.count++;
+    if (b.sku_code && !g.sku_codes.includes(b.sku_code)) g.sku_codes.push(b.sku_code);
+    if (!g.rows.includes(b.row)) g.rows.push(b.row);
+  });
+
+  return {
+    ok: blocking.length === 0,
+    total_rows: rows.length,
+    blocking_count: blocking.length,
+    blocking,
+    summary: Array.from(summaryMap.values())
+  };
+}
+
+// 库存导入预检查端点：纯只读，不写任何表、不开事务。
+// 前端上传 Excel 后先调本端点；只有 ok === true 才允许调用 bulk-import。
+app.post('/api/inventory-imports/precheck', requireApiPermission('inventory_import'), asyncHandler((req, res) => {
+  try {
+    const items = req.body.items || [];
+    res.json(validateInventoryImportRows(items));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+}));
+
 app.post('/api/inventory-imports/bulk-import', requireApiPermission('inventory_import'), asyncHandler(async (req, res) => {
   try {
     const items = req.body.items || [];
     const snapshotCutoffDate = req.body.snapshot_cutoff_date || '';
+    // INV-IMPORT-PRECHECK-01：整批前置预检查闸门 —— 必须在任何 INSERT / UPDATE 之前完成。
+    // 存在任意阻断型错误即整批拒绝：不进入 transaction、不写 inventory_imports、
+    // 不调用 refreshInventoryTotals（即库存总表 inventory 亦零写入）。
+    const precheck = validateInventoryImportRows(items);
+    if (!precheck.ok) {
+      return res.status(422).json({
+        error: '库存导入预检查未通过，本次导入已整批阻断，数据库未发生任何写入',
+        blocked: true,
+        created: 0,
+        updated: 0,
+        failed: precheck.blocking_count,
+        precheck,
+        blocking: precheck.blocking,
+        summary: precheck.summary
+      });
+    }
     const result = { created: 0, updated: 0, failed: 0, errors: [] };
     transaction(() => {
       items.forEach((item, i) => {
@@ -18387,5 +18532,7 @@ module.exports = {
   app,
   updateInventoryTransitData,
   refreshInventoryTotals,
-  runOriginalInventoryTotalsLoop
+  runOriginalInventoryTotalsLoop,
+  // INV-IMPORT-PRECHECK-01：库存导入预检查（纯只读），导出供回归测试直接调用
+  validateInventoryImportRows
 };
