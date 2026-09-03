@@ -27,6 +27,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { query, queryOne, run, transaction, genId, initDatabase } = require('./db');
 const { withGenerateClient, withAsyncPoolClient } = require('./pg-async'); // 专用异步 Pool：generate / 销售导入库存重算不阻塞主线程
+const { slimReplenishmentRow, projectDailySalesRow } = require('./rp-projection'); // RP-P0-R1 订单预测响应投影（仅序列化瘦身，不动计算逻辑）
 const {
   createSqliteSalesImportAdapter,
   createPostgresSalesImportAdapter,
@@ -6266,26 +6267,8 @@ app.get('/api/replenishment-suggestions/daily-sales', requireApiPermission('repl
     if (recent7 > prev7 * 1.1) trend = 'up';
     else if (recent7 < prev7 * 0.9 && prev7 > 0) trend = 'down';
     else if (recent7 === 0 && prev7 === 0) trend = 'flat';
-    return {
-      ...sku,
-      daily_sales: daily,
-      last_7_days: last7,
-      last_14_days: last14,
-      last_30_days: last30,
-      avg_daily_sales: avgDaily,
-      trend
-    };
-  });
-
-  // 按请求语言翻译展示层字段：仅 sales_reason / ai_business_advice（确定性最终说明文案）
-  // sales_status / action / risk_tags / sales_group / lifecycle_status 保持数据库原始值（前端按原始值格式化三语）
-  const dLang = req.i18nLang || 'zh';
-  if (dLang !== 'zh') {
-    result.forEach(function(s) {
-      if (s.sales_reason) s.sales_reason = forecastDisplayT(dLang, s.sales_reason);
-      if (s.ai_business_advice) s.ai_business_advice = forecastDisplayT(dLang, s.ai_business_advice);
+      return projectDailySalesRow(sku, daily, last7, last14, last30, avgDaily, trend);
     });
-  }
 
   res.json({ dates, skus: result });
 }));
@@ -6519,7 +6502,7 @@ app.get('/api/replenishment-suggestions', requireApiPermission('replenishment_vi
     }
     r.days_since_last_inbound = daysSince;
     return r;
-  });
+  }).map(slimReplenishmentRow); // RP-P0-R1：投影掉经审计零引用的死字段（仅序列化瘦身）
   // 按请求语言翻译展示层字段：仅 sales_reason / ai_business_advice（确定性最终说明文案）
   // sales_status / action / risk_tags / sales_group / lifecycle_status / suggestion 保持数据库原始值
   const rLang = req.i18nLang || 'zh';
