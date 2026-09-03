@@ -316,6 +316,40 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 .rp-review-reason-wrap{display:flex;flex-direction:column;gap:20px}
 .rp-review-reason-item{display:flex;flex-direction:column;gap:6px;padding:10px 14px;background:#fafbfc;border-radius:6px}
 .rp-review-reason-text{font-size:14px;font-weight:500;color:var(--text);line-height:1.55;white-space:normal;word-break:normal;overflow-wrap:anywhere}
+/* ===== 订单预测 → 库存周转复盘报告 V1（只读展示层） ===== */
+.rp-rv-meta,.rp-rv-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px}
+.rp-rv-meta-item{background:#fafbfc;border:1px solid var(--border);border-radius:8px;padding:8px 10px}
+.rp-rv-meta-k{font-size:11px;color:var(--text-muted);margin-bottom:2px}
+.rp-rv-meta-v{font-size:13px;font-weight:600;color:var(--text);word-break:break-all}
+.rp-rv-kpi{background:#fff;border:1px solid var(--border);border-radius:8px;padding:10px 12px}
+.rp-rv-kpi .k{font-size:11px;color:var(--text-muted)}
+.rp-rv-kpi .v{font-size:20px;font-weight:700;line-height:1.25;color:var(--text)}
+.rp-rv-sec{margin:20px 0 8px;font-size:15px;font-weight:700;color:var(--text)}
+.rp-rv-summary{background:#f7f8ff;border:1px solid #e3e6ff;border-radius:8px;padding:12px 14px}
+.rp-rv-summary .hl{font-size:14px;font-weight:600;line-height:1.6;color:var(--text)}
+.rp-rv-summary ol{margin:8px 0 0 18px;padding:0;font-size:13px;line-height:1.75;color:var(--text-secondary)}
+.rp-rv-scroll{max-height:340px;overflow:auto;border:1px solid var(--border);border-radius:8px}
+.rp-rv-tbl{width:100%;border-collapse:collapse;font-size:12px}
+.rp-rv-tbl th,.rp-rv-tbl td{border:1px solid var(--border);padding:5px 7px;white-space:nowrap}
+.rp-rv-tbl th{background:#f5f6f8;font-weight:600;text-align:left;position:sticky;top:0;z-index:1}
+.rp-rv-empty{color:var(--text-muted);font-size:13px;padding:8px 0}
+.rp-rv-p0{color:#c0392b;font-weight:700}
+.rp-rv-p1{color:#d68910;font-weight:700}
+.rp-rv-p2{color:#5d6d7e;font-weight:700}
+/* 打印 / PDF：只打印复盘报告弹窗，隐藏其余页面元素（仅 @media print 生效，零运行时影响） */
+@media print{
+  body>*:not(#modal-overlay){display:none!important}
+  #modal-overlay{position:static!important;display:block!important;background:none!important;z-index:auto!important;padding:0!important}
+  #modal-content{max-width:none!important;width:100%!important;max-height:none!important;overflow:visible!important;border-radius:0!important;box-shadow:none!important}
+  .rp-review-modal{max-width:none!important;width:100%!important;max-height:none!important;overflow:visible!important}
+  .rp-review-modal .modal-header,.rp-review-modal .modal-body,.rp-review-modal .modal-footer{overflow:visible!important;max-height:none!important}
+  .rp-rv-scroll{max-height:none!important;overflow:visible!important}
+  .rp-rv-tbl th{position:static!important}
+  .rp-rv-tbl{page-break-inside:auto}
+  .rp-rv-tbl tr{page-break-inside:avoid;page-break-after:auto}
+  .rp-rv-sec{page-break-after:avoid}
+  .modal-close,.modal-footer{display:none!important}
+}
 /* ===== Phase 3-F2P-2：PI 专用宽弹窗 ===== */
 .modal-pi{position:fixed;display:flex;flex-direction:column;overflow:hidden;max-width:none;max-height:calc(100vh - 48px - 24px);top:calc(48px + 12px)}
 .modal-pi.pi-sidebar-expanded{left:calc(140px + 14px);width:calc(100vw - 140px - 28px)}
@@ -812,6 +846,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 <div id="global-tooltip"></div>
 <script src="i18n.js"></script>
 <script src="assets/inv-import-rules.js"></script>
+<script src="assets/rp-review-report.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

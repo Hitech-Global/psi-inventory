@@ -6548,6 +6548,7 @@ async function renderReplenishment(){
       +['new_test','new_launch','growth','stable','slow','stagnant','clearance','stopped'].map(function(v){return '<option value="'+v+'">'+esc(fmtLifecycleDyn(v))+'</option>';}).join('')
       +'</select>';
     rpFilterActions.parentNode.insertBefore(lifecycleFilter,rpFilterActions);
+    rpFilterActions.insertAdjacentHTML('afterbegin','<button class="btn btn-primary btn-sm" onclick="openRpReviewReport()" title="'+esc(t('rp.review.btn_title','根据当前筛选条件生成库存周转复盘报告'))+'">📋 '+esc(t('rp.review.btn','生成周转复盘报告'))+'</button>');
     rpFilterActions.insertAdjacentHTML('beforeend','<button class="btn btn-default btn-sm" onclick="resetRpFilters()">↺ '+t('common.reset','重置筛选')+'</button>');
   }
   var rpWarehouse=document.getElementById('rp-w');
@@ -9497,6 +9498,272 @@ function showUnmatchedRules(unmatched){
     +'</div>';
   openModal(t("app.836", "\u26a0\ufe0f \u65e0\u6cd5\u91cd\u65b0\u8ba1\u7b97\uff1a\u76ee\u6807\u5468\u8f6c\u89c4\u5219\u672a\u8986\u76d6"), html, t('gen.L5058.1','<button class="btn btn-primary" onclick="closeModal()">知道了</button>'));
 }
+// ============ 订单预测 → 库存周转复盘报告 V1（只读展示层）============
+// 强约束（不得越界）：
+//   1) 不接任何 AI / LLM / OpenAI API；全部文案由 assets/rp-review-report.js 的固定模板生成。
+//   2) 不重算任何预测口径：所有数值直接读页面已生成的视图模型
+//      （总预测 r._totalC / 线上·线下 r._channelC[tab]），与订单预测页面严格同源。
+//   3) 不写库、不发 PUT、不改订单预测的保存 / Tab 切换 / 刷新行为；无 migration、无新 API。
+window.__rpReviewReport=null;  // 当前报告快照：复制 / 导出 / 打印共用同一对象，保证三者数值完全一致
+
+// 当前页面筛选条件（与 rpQuery 同源的 DOM 取值，保证「报告 = 页面」）
+function rpReviewCurrentFilters(){
+  function v(id){var el=document.getElementById(id);return el?String(el.value||'').trim():'';}
+  return {
+    country: v('rp-c'), warehouse: v('rp-w'), brand: v('rp-b'),
+    keyword: v('rp-s'), salesStatus: v('rp-status'), lifecycleStatus: v('rp-lifecycle')
+  };
+}
+
+// 确保当前 Tab 的页面视图模型已就绪：完全复用页面既有 load，不新建任何计算
+async function rpReviewEnsureViewModel(tab){
+  var data=await rpFetchCached(rpBaseUrl());
+  if(!data) data=[];
+  // 合法空结果：筛选条件（SKU 搜索 / 国家 / 仓库 / 品牌 / 状态）无匹配行。
+  // 此时必须生成「空报告」，不能抛错——否则用户搜索不存在的 SKU 只会看到红字报错。
+  if(!data.length) return data;
+  if(tab==='total'){
+    if(!data[0]._totalC){ await loadRp(); }
+    if(!data[0]._totalC){ throw new Error(t('gen.L5408.1','总预测数据未就绪，请先在「按月」模式下打开总预测 Tab 后重试')); }
+  }else{
+    if(!data[0]._channelC || !data[0]._channelC[tab]){ await loadRpChannelMonthly(tab); }
+    if(!data[0]._channelC || !data[0]._channelC[tab]){ throw new Error(t('gen.L5409.1','渠道预测数据未就绪，请先打开对应渠道 Tab 后重试')); }
+  }
+  return data;
+}
+
+async function openRpReviewReport(){
+  try{
+    if(typeof window.RpReviewReport==='undefined'){
+      showFlash(t('rp.review.lib_missing','复盘报告组件未加载，请刷新页面后重试'),'danger');
+      return;
+    }
+    var tab=rpTab||'total';
+    if(rpMode==='daily'){
+      showToast(t('rp.review.daily_unsupported','「按天」模式暂不支持复盘报告，请先切换到「按月」模式'),'warning');
+      return;
+    }
+    showToast(t('rp.review.generating','正在生成复盘报告...'),'info');
+    var data=await rpReviewEnsureViewModel(tab);
+    var R=window.RpReviewReport;
+    // 报告只读：手工 override 与 blocked 都复用页面既有权威口径，报告层不重算
+    var report=R.rpReviewBuildReport({
+      rows: data,
+      tab: tab,
+      filters: rpReviewCurrentFilters(),
+      t: (typeof window.t==='function')?window.t:undefined,
+      effectiveQtyFn: function(ch,row){ return rpGetEffectiveSuggestedQty(ch,row); },
+      blockedFn: function(row){ return shouldBlockReplenish(row.sales_status||'', row.risk_tags||''); }
+    });
+    window.__rpReviewReport=report;
+    rpReviewRenderModal(report);
+  }catch(e){ showFlash((e&&e.message)?e.message:String(e),'danger'); }
+}
+
+// ---------- 展示层小工具（只做格式化，不产生任何新数值）----------
+function rpReviewQty(v){ return formatQuantityDisplay(v); }
+function rpReviewTurn(v){ return window.RpReviewReport.rpReviewTurnText(v, window.t); }
+// 目标周转展示：总预测线上/线下目标周转不同时并列展示「线上 X / 线下 Y」，
+// 绝不用线上单值冒充「总目标周转」（页面本就是两个独立列，DIM 两字段可分别配置）。
+function rpReviewTarget(d){
+  if(!d) return '';
+  if(d.targetTurnSplit && d.onlineTargetTurn!=null && d.offlineTargetTurn!=null){
+    return String(d.onlineTargetTurn)+' / '+String(d.offlineTargetTurn);
+  }
+  return String(d.targetTurn!=null?d.targetTurn:'');
+}
+function rpReviewTrendCls(trend){
+  if(trend.trend==='up') return 'text-success';
+  if(trend.trend==='down') return 'text-danger';
+  return 'text-muted';
+}
+function rpReviewTbl(headers, rows){
+  if(!rows.length) return '<div class="rp-rv-empty">'+esc(t('rp.review.no_data','无数据'))+'</div>';
+  return '<div class="rp-rv-scroll"><table class="rp-rv-tbl"><thead><tr>'
+    + headers.map(function(h){ return '<th>'+esc(h)+'</th>'; }).join('')
+    + '</tr></thead><tbody>'
+    + rows.map(function(r){ return '<tr>'+r.map(function(c){ return '<td>'+c+'</td>'; }).join('')+'</tr>'; }).join('')
+    + '</tbody></table></div>';
+}
+function rpReviewPriCls(p){ return p==='P0'?'rp-rv-p0':(p==='P1'?'rp-rv-p1':'rp-rv-p2'); }
+
+// ---------- 报告 Modal ----------
+function rpReviewRenderModal(rep){
+  var R=window.RpReviewReport;
+  var m=rep.meta, h=rep.health;
+  var isTotal=(m.tab==='total');
+  function val(v){ var s=String(v==null?'':v).trim(); return s?esc(s):esc(t('common.all','全部')); }
+
+  var metaHtml='<div class="rp-rv-meta">'
+    + [ [t('rp.review.meta.country','国家'), val(m.country)],
+        [t('rp.review.meta.warehouse','仓库'), val(m.warehouse)],
+        [t('rp.review.meta.brand','品牌'), val(m.brand)],
+        [t('rp.review.meta.dim','预测维度'), esc(m.tabLabel)],
+        [t('rp.review.meta.generated','生成时间'), esc(m.generatedAtText)],
+        [t('rp.review.meta.sku_total','SKU 总数'), esc(String(m.skuTotal))]
+      ].map(function(p){ return '<div class="rp-rv-meta-item"><div class="rp-rv-meta-k">'+p[0]+'</div><div class="rp-rv-meta-v">'+p[1]+'</div></div>'; }).join('')
+    + '</div>';
+
+  var kpiHtml='<div class="rp-rv-kpis">'
+    + [ [t('rp.review.meta.sku_total','SKU 总数'), h.skuTotal],
+        [t('rp.review.meta.target','目标周转'), esc(h.targetTurnoverText)],
+        [t('rp.review.health.purchase','建议采购 SKU'), h.purchaseCount],
+        [t('rp.review.health.overstock','高库存 SKU'), h.overstockCount],
+        [t('rp.review.health.blocked','Blocked / 慢销'), h.blockedCount],
+        [t('rp.review.health.no_sales','无销量 SKU'), h.noSalesCount]
+      ].map(function(p){ return '<div class="rp-rv-kpi"><div class="k">'+p[0]+'</div><div class="v">'+p[1]+'</div></div>'; }).join('')
+    + '</div>'
+    + (h.blockedCount>0
+        ? '<div class="rp-rv-empty" style="margin-top:-6px">'
+          + esc(t('rp.review.overlap_note','注：「Blocked / 慢销」为独立维度（系统拦截补货，含慢销/呆滞/停采/清仓/高库存标签），与「高库存 SKU」存在重叠（{n} 个同时命中），不可与其余分类直接相加。',{n:h.blockedOverlapCount}))
+          + '</div>' : '');
+
+  var summaryHtml='<div class="rp-rv-summary"><div class="hl">'+esc(rep.summary.headline)+'</div>'
+    + '<ol>'+(rep.summary.highlights||[]).map(function(x){ return '<li>'+esc(x)+'</li>'; }).join('')+'</ol></div>';
+
+  // 1) 建议采购 SKU
+  var pHeaders=[t('rp.review.col.sku','SKU'),t('rp.review.col.brand','Brand'),
+    t('rp.review.col.pool','当前库存池'),t('rp.review.col.avg_sales','月均销量'),
+    t('rp.review.col.current_turn','当前周转'),t('rp.review.col.target_turn','目标周转')];
+  if(isTotal){
+    pHeaders.push(t('rp.review.col.online_qty','线上建议'),t('rp.review.col.offline_qty','线下建议'));
+  }
+  pHeaders.push(t('rp.review.col.suggested','建议采购数量'));
+  if(isTotal) pHeaders.push(t('rp.review.col.other_qty','其他'));
+  pHeaders.push(t('rp.review.col.after_turn','采购后预计周转'),t('rp.review.col.judgement','判断'));
+  var pRows=rep.purchase.map(function(d){
+    var r=[esc(d.sku),esc(d.brand),rpReviewQty(d.pool),rpReviewQty(d.avgSales),
+      esc(rpReviewTurn(d.currentTurnover)),esc(rpReviewTarget(d))];
+    if(isTotal) r.push(rpReviewQty(d.onlineQty),rpReviewQty(d.offlineQty));
+    r.push('<b>'+rpReviewQty(d.suggestedQty)+'</b>');
+    if(isTotal) r.push(rpReviewQty(d.otherQty));
+    r.push(esc(rpReviewTurn(d.afterOrderTurnover)),esc(d.systemSuggestion||''));
+    return r;
+  });
+  // 总预测底部合计行：保证 online + offline + other = suggested
+  var pFoot='';
+  if(isTotal && rep.purchase.length){
+    var so=0,sf=0,ss=0,sx=0;
+    rep.purchase.forEach(function(d){ so+=d.onlineQty; sf+=d.offlineQty; ss+=d.suggestedQty; sx+=d.otherQty; });
+    var cells=['<b>'+esc(t('common.total','合计'))+'</b>','', '', '', '', ''];
+    cells.push('<b>'+rpReviewQty(so)+'</b>','<b>'+rpReviewQty(sf)+'</b>','<b>'+rpReviewQty(ss)+'</b>','<b>'+rpReviewQty(sx)+'</b>','','');
+    pFoot='<div style="margin-top:6px;font-size:12px;color:var(--text-secondary)">'
+      + esc(t('rp.review.split_check','合计校验：线上 {a} + 线下 {b} + 其他 {c} = 建议采购 {d}',
+          {a:rpReviewQty(so),b:rpReviewQty(sf),c:rpReviewQty(sx),d:rpReviewQty(ss)}))
+      + '</div>';
+  }
+
+  // 2) 高库存 / 积压 SKU
+  var oHeaders=[t('rp.review.col.sku','SKU'),t('rp.review.col.brand','Brand'),
+    t('rp.review.col.pool','当前库存池'),t('rp.review.col.avg_sales','月均销量'),
+    t('rp.review.col.current_turn','当前周转'),t('rp.review.col.target_turn','目标周转'),
+    t('rp.review.col.trend','最近销量趋势'),t('rp.review.col.trend_rate','变化率'),
+    t('rp.review.col.sales_status','动销状态'),t('rp.review.col.risk_tags','风险标签'),
+    t('rp.review.col.action','建议动作')];
+  var oRows=rep.overstock.map(function(d){
+    return [esc(d.sku),esc(d.brand),rpReviewQty(d.pool),rpReviewQty(d.avgSales),
+      esc(rpReviewTurn(d.currentTurnover)),esc(rpReviewTarget(d)),
+      '<span class="'+rpReviewTrendCls(d.trend)+'">'+esc(R.rpReviewTrendLabel(d.trend,window.t))+'</span>',
+      esc(R.rpReviewTrendRateText(d.trend)),
+      esc(formatForecastSalesStatus(d.salesStatus)),esc(formatForecastRiskTags(d.riskTags.join(','))),
+      esc(R.rpReviewOverstockAction(d,window.t))];
+  });
+
+  // 3) 无销量 SKU
+  var nHeaders=[t('rp.review.col.sku','SKU'),t('rp.review.col.brand','Brand'),
+    t('rp.review.col.pool','当前库存池'),t('rp.review.col.avg_sales','月均销量'),
+    t('rp.review.col.current_turn','当前周转'),t('rp.review.col.target_turn','目标周转'),
+    t('rp.review.col.sales_status','动销状态'),t('rp.review.col.action','建议动作')];
+  var nRows=rep.noSales.map(function(d){
+    return [esc(d.sku),esc(d.brand),rpReviewQty(d.pool),rpReviewQty(d.avgSales),
+      '<span class="text-muted">'+esc(R.NO_SALES_TEXT)+'</span>',esc(rpReviewTarget(d)),
+      esc(formatForecastSalesStatus(d.salesStatus)),
+      esc(t('rp.review.action.check_no_sales','检查是否停采 / 是否新品 / 是否缺少销售数据'))];
+  });
+
+  // 4) 管理行动清单
+  var aHeaders=[t('rp.review.col.priority','优先级'),t('rp.review.col.sku','SKU'),
+    t('rp.review.col.brand','Brand'),t('rp.review.col.issue','问题'),
+    t('rp.review.col.data','核心数据'),t('rp.review.col.action','建议动作')];
+  var aRows=rep.actions.map(function(a){
+    return ['<span class="'+rpReviewPriCls(a.priority)+'">'+esc(a.priority)+'</span>',
+      esc(a.sku),esc(a.brand),esc(a.issue),esc(a.data),esc(a.action)];
+  });
+
+  var body='<div id="rp-review-root">'
+    + metaHtml
+    + '<div class="rp-rv-sec">📌 '+esc(t('rp.review.sec.summary','管理摘要'))+'</div>'+summaryHtml
+    + '<div class="rp-rv-sec">📊 '+esc(t('rp.review.sec.health','周转健康度'))+'</div>'+kpiHtml
+    + (h.targetTurnover===null && h.targetTurnoverByBrand.length
+        ? '<div class="rp-rv-empty" style="margin-top:-8px">'
+          + esc(t('rp.review.target.by_brand','目标周转（按品牌）'))+'：'
+          + h.targetTurnoverByBrand.map(function(b){
+              // 总预测线上/线下目标周转不同时并列展示，不合并成单一数字
+              return b.split
+                ? esc(b.brand)+' '+esc(t('rp.review.target.split_short','线上 {on} / 线下 {off}',{on:String(b.onlineTarget),off:String(b.offlineTarget)}))
+                : esc(b.brand)+' '+esc(String(b.target!=null?b.target:''))+esc(t('rp.review.unit_month',' 个月'));
+            }).join('　')
+        + '</div>' : '')
+    + '<div class="rp-rv-sec">🛒 '+esc(t('rp.review.sec.purchase','建议采购 SKU'))+'（'+rep.purchase.length+'）</div>'
+      + rpReviewTbl(pHeaders,pRows)+pFoot
+    + '<div class="rp-rv-sec">📦 '+esc(t('rp.review.sec.overstock','高库存 / 积压 SKU'))+'（'+rep.overstock.length+'）</div>'
+      + rpReviewTbl(oHeaders,oRows)
+    + '<div class="rp-rv-sec">🚫 '+esc(t('rp.review.sec.no_sales','无销量 SKU'))+'（'+rep.noSales.length+'）</div>'
+      + rpReviewTbl(nHeaders,nRows)
+    + '<div class="rp-rv-sec">✅ '+esc(t('rp.review.sec.actions','管理行动清单'))+'（'+rep.actions.length+'）</div>'
+      + rpReviewTbl(aHeaders,aRows)
+    + '</div>';
+
+  var footer='<button class="btn btn-secondary" onclick="closeModal()">'+esc(t('common.close','关闭'))+'</button>'
+    + '<button class="btn btn-default" onclick="rpReviewPrint()">🖨 '+esc(t('rp.review.print','打印 / PDF'))+'</button>'
+    + '<button class="btn btn-default" onclick="rpReviewExportExcel()">⬇ '+esc(t('rp.review.export','导出 Excel'))+'</button>'
+    + '<button class="btn btn-primary" onclick="rpReviewCopy()">📋 '+esc(t('rp.review.copy','复制报告'))+'</button>';
+  openModal(t('rp.review.title','库存周转复盘报告'), body, footer, 'rp-review-modal');
+}
+
+// ---------- 复制报告（纯文本，适合直接发飞书/聊天）----------
+async function rpReviewCopy(){
+  var rep=window.__rpReviewReport;
+  if(!rep){ showToast(t('rp.review.no_report','请先生成复盘报告'),'warning'); return; }
+  var txt=window.RpReviewReport.rpReviewText(rep,{t:window.t});
+  try{
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      await navigator.clipboard.writeText(txt);
+    }else{
+      var ta=document.createElement('textarea');
+      ta.value=txt; ta.style.position='fixed'; ta.style.opacity='0';
+      document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+    }
+    showToast(t('rp.review.copied','管理摘要已复制，可直接粘贴到飞书/聊天'),'success');
+  }catch(e){
+    showFlash(t('rp.review.copy_failed','复制失败，请手动选择文本复制'),'danger');
+  }
+}
+
+// ---------- 导出 Excel（复用页面既有 XLSX，不引入新依赖）----------
+function rpReviewExportExcel(){
+  var rep=window.__rpReviewReport;
+  if(!rep){ showToast(t('rp.review.no_report','请先生成复盘报告'),'warning'); return; }
+  try{
+    if(typeof XLSX==='undefined'){ showFlash(t('toast.xlsx_missing','XLSX库未加载'),'danger'); return; }
+    var sheets=window.RpReviewReport.rpReviewSheets(rep,{t:window.t});
+    var wb=XLSX.utils.book_new();
+    sheets.forEach(function(s){
+      var ws=XLSX.utils.aoa_to_sheet([s.headers].concat(s.rows));
+      XLSX.utils.book_append_sheet(wb, ws, s.name);
+    });
+    var fname=t('rp.review.file_name','库存周转复盘报告_')+new Date().toISOString().slice(0,10)+'.xlsx';
+    XLSX.writeFile(wb, fname);
+    showToast(t('rp.review.exported','已导出 {n} 个 Sheet',{n:sheets.length}),'success');
+  }catch(e){ showFlash((e&&e.message)?e.message:String(e),'danger'); }
+}
+
+// ---------- 打印 / PDF（复用浏览器打印，不引入重量级 PDF 依赖）----------
+function rpReviewPrint(){
+  if(!window.__rpReviewReport){ showToast(t('rp.review.no_report','请先生成复盘报告'),'warning'); return; }
+  try{ window.print(); }catch(e){ showFlash((e&&e.message)?e.message:String(e),'danger'); }
+}
+
 // ============ 订单预测 Excel 导出（前端生成，复用页面视图模型）============
 // 强约束：不在本文件重写任何预测/库存/采购业务计算。
 // 数据直接复用页面已生成的视图模型：r._totalC（总预测）、r._channelC[channel]（线上/线下）。
