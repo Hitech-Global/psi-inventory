@@ -4626,6 +4626,13 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.zh["fro.payable_has"]="有待付款"; I18N.dict.en["fro.payable_has"]="Pending Payment"; I18N.dict.id["fro.payable_has"]="Ada Tagihan";
   I18N.dict.zh["fro.payable_none"]="无待付款"; I18N.dict.en["fro.payable_none"]="No Pending Payment"; I18N.dict.id["fro.payable_none"]="Tidak Ada Tagihan";
   I18N.dict.zh["fro.inv_dist_title"]="库存资金分布"; I18N.dict.en["fro.inv_dist_title"]="Inventory Fund Distribution"; I18N.dict.id["fro.inv_dist_title"]="Distribusi Dana Inventaris";
+  // ==================== 资金风险总览 V3：品牌维度下钻（库存总资产 → 品牌 → 国家） ====================
+  I18N.dict.zh["fro.brand_summary"]="品牌库存汇总"; I18N.dict.en["fro.brand_summary"]="Brand Inventory Summary"; I18N.dict.id["fro.brand_summary"]="Ringkasan Inventaris Merek";
+  I18N.dict.zh["fro.unclassified_hint"]="未分类资产"; I18N.dict.en["fro.unclassified_hint"]="Unclassified Assets"; I18N.dict.id["fro.unclassified_hint"]="Aset Tidak Terklasifikasi";
+  I18N.dict.zh["fro.by_country"]="按国家汇总"; I18N.dict.en["fro.by_country"]="By Country"; I18N.dict.id["fro.by_country"]="Berdasarkan Negara";
+  I18N.dict.zh["fro.brand"]="品牌"; I18N.dict.en["fro.brand"]="Brand"; I18N.dict.id["fro.brand"]="Merek";
+  I18N.dict.zh["fro.asset_structure"]="资产结构"; I18N.dict.en["fro.asset_structure"]="Asset Structure"; I18N.dict.id["fro.asset_structure"]="Struktur Aset";
+  I18N.dict.zh["common.total"]="合计"; I18N.dict.en["common.total"]="Total"; I18N.dict.id["common.total"]="Total";
   I18N.dict.zh["fro.transit_title"]="运输中资产"; I18N.dict.en["fro.transit_title"]="Assets In Transit"; I18N.dict.id["fro.transit_title"]="Aset Dalam Pengiriman";
   I18N.dict.zh["fro.cur_level"]="当前层级"; I18N.dict.en["fro.cur_level"]="Current Level"; I18N.dict.id["fro.cur_level"]="Level Saat Ini";
   I18N.dict.zh["fro.asset_amount"]="资产金额"; I18N.dict.en["fro.asset_amount"]="Asset Amount"; I18N.dict.id["fro.asset_amount"]="Jumlah Aset";

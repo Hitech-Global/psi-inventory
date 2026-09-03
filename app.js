@@ -500,7 +500,7 @@ async function renderDashboard(){
       '<section class="fro-hero">'+
         '<div class="fro-hero-main">'+
           '<div class="fro-hero-label">'+t("fro.total_inventory_assets","库存总资产")+'</div>'+
-          '<div class="fro-hero-value fro-clickable" onclick="renderFroInventoryAnalysis()" style="cursor:pointer" title="'+t("fro.inv_dist_title","库存资金分布")+'">¥ <span id="fro-total">'+t("common.loading","加载中...")+'</span></div>'+
+          '<div class="fro-hero-value fro-clickable" onclick="renderFroBrandAssetOverview()" style="cursor:pointer" title="'+t("fro.inv_dist_title","库存资金分布")+'">¥ <span id="fro-total">'+t("common.loading","加载中...")+'</span></div>'+
           '<div class="fro-hero-sub">'+t("fro.hero_sub","当前供应链资金占用")+'</div>'+
         '</div>'+
         '<div class="fro-hero-structure">'+
@@ -510,7 +510,7 @@ async function renderDashboard(){
             '<div class="fro-structure-seg csn" id="fro-csn-bar"></div>'+
           '</div>'+
           '<div class="fro-structure-legend">'+
-            '<div class="fro-legend-item fro-clickable" onclick="renderFroInventoryAnalysis()" style="cursor:pointer">'+
+            '<div class="fro-legend-item fro-clickable" onclick="renderFroBrandAssetOverview()" style="cursor:pointer">'+
               '<span class="fro-legend-dot inv"></span>'+
               '<span class="fro-legend-name">'+t("fro.available_assets","可用库存")+'</span>'+
               '<span class="fro-legend-amount">¥ <span id="fro-inventory">'+t("common.loading","...")+'</span></span>'+
@@ -522,7 +522,7 @@ async function renderDashboard(){
               '<span class="fro-legend-amount">¥ <span id="fro-transit">'+t("common.loading","...")+'</span></span>'+
               '<span class="fro-legend-pct" id="fro-transit-pct"></span>'+
             '</div>'+
-            '<div class="fro-legend-item fro-clickable" onclick="renderFroInventoryAnalysis()" style="cursor:pointer">'+
+            '<div class="fro-legend-item fro-clickable" onclick="renderFroBrandAssetOverview()" style="cursor:pointer">'+
               '<span class="fro-legend-dot csn"></span>'+
               '<span class="fro-legend-name">'+t("fro.consignment_assets","寄售库存")+'</span>'+
               '<span class="fro-legend-amount">¥ <span id="fro-consign">'+t("common.loading","...")+'</span></span>'+
@@ -744,6 +744,153 @@ function renderFroCountryAssetDetail(code){
     var el=document.getElementById('fro-country-table');
     if(el) el.innerHTML='<div class="fro-empty fro-error">'+esc(e.message)+'</div>';
   });
+}
+
+// 共用：顶部资产卡（总额 + 三类资产 + 比例条），可用 / 在途 / 寄售 三段拆解
+function froAssetCardHtml(total,a,tr,cs,totalLabel){
+  var aPct=total>0?a/total*100:0;
+  var trPct=total>0?tr/total*100:0;
+  var csPct=total>0?cs/total*100:0;
+  function r(cls,label,val,pct){
+    return '<tr><td class="td-bold"><span class="fro-legend-dot '+cls+'"></span> '+label+'</td>'+
+      '<td class="td-num td-bold">¥ '+fmtMoney(val,'')+'</td>'+
+      '<td class="td-num">'+pct.toFixed(1)+'%</td></tr>';
+  }
+  return '<div class="fro-analysis-total"><span class="fro-total-label">'+esc(totalLabel)+'</span> <span class="fro-total-amount">¥ '+fmtMoney(total,'')+'</span></div>'+
+    '<div class="fro-structure-bar" style="margin:14px 0">'+
+      '<div class="fro-structure-seg inv" style="width:'+aPct.toFixed(1)+'%"></div>'+
+      '<div class="fro-structure-seg trs" style="width:'+trPct.toFixed(1)+'%"></div>'+
+      '<div class="fro-structure-seg csn" style="width:'+csPct.toFixed(1)+'%"></div>'+
+    '</div>'+
+    '<table class="data-table fro-data-table" style="margin-bottom:8px"><thead><tr>'+
+      '<th>'+t('fro.asset_structure','资产结构')+'</th><th>'+t('fro.amount_cny','金额(CNY)')+'</th><th>'+t('common.percentage','占比')+'</th>'+
+    '</tr></thead><tbody>'+
+      r('inv',t('fro.available_assets','可用库存'),a,aPct)+
+      r('trs',t('fro.transit_inventory_assets','在途库存'),tr,trPct)+
+      r('csn',t('fro.consignment_assets','寄售库存'),cs,csPct)+
+    '</tbody></table>';
+}
+
+// ==================== 资金风险总览 V3：品牌维度下钻 ====================
+// 第一层：品牌汇总（顶部资产卡口径权威来自 /api/financial-risk/overview；下表来自 by-brand?country=all）
+async function renderFroBrandAssetOverview(){
+  document.getElementById('content-inner').innerHTML='<div id="flash-container"></div>'+
+    '<div class="fro-analysis">'+
+      '<div class="fro-analysis-header">'+
+        '<div class="fro-analysis-back"><a href="javascript:showPage(\'dashboard\')" class="fro-back-link">← '+t('fro.back_overview','返回总览')+'</a></div>'+
+      '</div>'+
+      '<div class="fro-analysis-title">'+t('fro.brand_summary','品牌库存汇总')+'</div>'+
+      '<div class="fro-analysis-subtitle">'+t('fro.dim_brand','按品牌')+'</div>'+
+      '<div class="fro-analysis-top" id="fro-brand-top">'+t('common.loading','加载中...')+'</div>'+
+      '<div class="fro-analysis-table" id="fro-brand-table"></div>'+
+    '</div>';
+  try{
+    // 顶部资产卡：权威口径来自 overview（与首页 库存总资产 完全一致）
+    const ov=await api('/api/financial-risk/overview');
+    const topEl=document.getElementById('fro-brand-top');
+    if(topEl){
+      var total=Number(ov.total_assets.value||0);
+      var a=Number(ov.available_assets.value||0);
+      var tr=Number(ov.in_transit_assets.value||0);
+      var cs=Number(ov.consignment_assets.value||0);
+      topEl.innerHTML=froAssetCardHtml(total,a,tr,cs,t('fro.asset_total_label','库存总资产（CNY）'));
+    }
+    // 品牌汇总表：全局品牌维度（by-brand?country=all）
+    const bd=await api('/api/financial-risk/inventory-breakdown/by-brand?country=all');
+    const tableEl=document.getElementById('fro-brand-table');
+    if(!tableEl) return;
+    var brands=(bd&&bd.brands)||[];
+    if(brands.length===0){ tableEl.innerHTML='<div class="fro-empty">'+t('common.no_data','暂无数据')+'</div>'; return; }
+    var grandTotal=Number(bd.country_total||0);
+    var sumTotal=0,sumA=0,sumTr=0,sumCs=0;
+    brands.forEach(function(br){ sumTotal+=Number(br.total_asset||0); sumA+=Number(br.available_asset||0); sumTr+=Number(br.transit_asset||0); sumCs+=Number(br.consignment_asset||0); });
+    var hdr='<tr><th>'+t('fro.brand','品牌')+'</th><th>'+t('fro.asset_total_label','总资产(CNY)')+'</th><th>'+t('common.percentage','资产占比')+'</th><th>'+t('fro.available_assets','可用库存')+'</th><th>'+t('fro.transit_inventory_assets','在途库存')+'</th><th>'+t('fro.consignment_assets','寄售库存')+'</th><th></th></tr>';
+    function brandRowHtml(br){
+      var pct=grandTotal>0?Number(br.total_asset||0)/grandTotal*100:0;
+      var clickFn="renderFroBrandAssetDetail('"+String(br.brand).replace(/'/g,"\\'")+"')";
+      return '<tr>'+
+        '<td class="td-bold">'+esc(br.brand||'—')+'</td>'+
+        '<td class="td-num td-bold">¥ '+fmtMoney(br.total_asset,'')+'</td>'+
+        '<td class="td-num">'+pct.toFixed(1)+'%</td>'+
+        '<td class="td-num">¥ '+fmtMoney(br.available_asset,'')+'</td>'+
+        '<td class="td-num">¥ '+fmtMoney(br.transit_asset,'')+'</td>'+
+        '<td class="td-num">¥ '+fmtMoney(br.consignment_asset,'')+'</td>'+
+        '<td><a class="fro-drill-link" href="javascript:'+clickFn+'">'+t('fro.drill_down','下钻 ›')+'</a></td>'+
+      '</tr>';
+    }
+    var totalRow='<tr class="fro-total-row"><td class="td-bold">'+t('common.total','合计')+'</td>'+
+      '<td class="td-num td-bold">¥ '+fmtMoney(sumTotal,'')+'</td>'+
+      '<td class="td-num">100.0%</td>'+
+      '<td class="td-num">¥ '+fmtMoney(sumA,'')+'</td>'+
+      '<td class="td-num">¥ '+fmtMoney(sumTr,'')+'</td>'+
+      '<td class="td-num">¥ '+fmtMoney(sumCs,'')+'</td>'+
+      '<td></td></tr>';
+    var sub='';
+    if(bd.unclassified_count>0){
+      sub='<div style="font-size:12px;color:#999;margin:10px 0 4px">'+t('fro.unclassified_hint','未分类资产')+': ¥ '+fmtMoney(bd.unclassified_asset,'')+' ('+bd.unclassified_count+' 行)</div>';
+    }
+    tableEl.innerHTML=sub+'<table class="data-table fro-data-table"><thead>'+hdr+'</thead><tbody>'+brands.map(brandRowHtml).join('')+totalRow+'</tbody></table>';
+  }catch(e){
+    var el=document.getElementById('fro-brand-table');
+    if(el) el.innerHTML='<div class="fro-empty fro-error">'+esc(e.message)+'</div>';
+  }
+}
+
+// 第二层：品牌详情（顶部 = 该品牌资产；下表 = 按国家汇总，来自 by-country?brand=）
+async function renderFroBrandAssetDetail(brand){
+  brand=brand||'';
+  document.getElementById('content-inner').innerHTML='<div id="flash-container"></div>'+
+    '<div class="fro-analysis">'+
+      '<div class="fro-analysis-header">'+
+        '<div class="fro-analysis-back"><a href="javascript:renderFroBrandAssetOverview()" class="fro-back-link">← '+t('fro.back_overview','返回总览')+'</a></div>'+
+      '</div>'+
+      '<div class="fro-analysis-title" id="fro-brand-detail-title">'+t('common.loading','加载中...')+'</div>'+
+      '<div class="fro-analysis-top" id="fro-brand-detail-top">'+t('common.loading','加载中...')+'</div>'+
+      '<div class="fro-analysis-table" id="fro-brand-detail-country" style="margin-top:20px"></div>'+
+    '</div>';
+  try{
+    const bd=await api('/api/financial-risk/inventory-breakdown/by-country?brand='+encodeURIComponent(brand));
+    var titleEl=document.getElementById('fro-brand-detail-title');
+    var topEl=document.getElementById('fro-brand-detail-top');
+    if(titleEl) titleEl.innerHTML=esc(bd.brand||brand)+' '+t('fro.total_inventory_assets','库存总资产');
+    if(topEl){
+      var total=Number(bd.brand_total||0);
+      var a=Number(bd.available_asset||0);
+      var tr=Number(bd.transit_asset||0);
+      var cs=Number(bd.consignment_asset||0);
+      topEl.innerHTML=froAssetCardHtml(total,a,tr,cs,t('fro.asset_total_label','库存总资产（CNY）'));
+    }
+    var tableEl=document.getElementById('fro-brand-detail-country');
+    if(!tableEl) return;
+    var countries=(bd&&bd.countries)||[];
+    if(countries.length===0){ tableEl.innerHTML='<div class="fro-empty">'+t('common.no_data','暂无数据')+'</div>'; return; }
+    var brandTotal=Number(bd.brand_total||0);
+    var sumTotal=0,sumA=0,sumTr=0,sumCs=0;
+    countries.forEach(function(g){ sumTotal+=Number(g.total_asset||0); sumA+=Number(g.available_asset||0); sumTr+=Number(g.transit_asset||0); sumCs+=Number(g.consignment_asset||0); });
+    var hdr='<tr><th>'+t('common.country','国家')+'</th><th>'+t('fro.asset_total_label','总资产(CNY)')+'</th><th>'+t('common.percentage','占品牌比例')+'</th><th>'+t('fro.available_assets','可用库存')+'</th><th>'+t('fro.transit_inventory_assets','在途库存')+'</th><th>'+t('fro.consignment_assets','寄售库存')+'</th></tr>';
+    function cRow(g){
+      var pct=brandTotal>0?Number(g.total_asset||0)/brandTotal*100:0;
+      return '<tr>'+
+        '<td class="td-bold">'+esc(g.country||'—')+'</td>'+
+        '<td class="td-num td-bold">¥ '+fmtMoney(g.total_asset,'')+'</td>'+
+        '<td class="td-num">'+pct.toFixed(1)+'%</td>'+
+        '<td class="td-num">¥ '+fmtMoney(g.available_asset,'')+'</td>'+
+        '<td class="td-num">¥ '+fmtMoney(g.transit_asset,'')+'</td>'+
+        '<td class="td-num">¥ '+fmtMoney(g.consignment_asset,'')+'</td>'+
+      '</tr>';
+    }
+    var totalRow='<tr class="fro-total-row"><td class="td-bold">'+t('common.total','合计')+'</td>'+
+      '<td class="td-num td-bold">¥ '+fmtMoney(sumTotal,'')+'</td>'+
+      '<td class="td-num">100.0%</td>'+
+      '<td class="td-num">¥ '+fmtMoney(sumA,'')+'</td>'+
+      '<td class="td-num">¥ '+fmtMoney(sumTr,'')+'</td>'+
+      '<td class="td-num">¥ '+fmtMoney(sumCs,'')+'</td></tr>';
+    var sub='<div style="font-size:15px;font-weight:700;margin-bottom:8px">'+t('fro.by_country','按国家汇总')+'</div>';
+    tableEl.innerHTML=sub+'<table class="data-table fro-data-table"><thead>'+hdr+'</thead><tbody>'+countries.map(cRow).join('')+totalRow+'</tbody></table>';
+  }catch(e){
+    var el=document.getElementById('fro-brand-detail-country');
+    if(el) el.innerHTML='<div class="fro-empty fro-error">'+esc(e.message)+'</div>';
+  }
 }
 
 function renderFroTransitAnalysis(){

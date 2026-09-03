@@ -17468,143 +17468,192 @@ app.get('/api/financial-risk/inventory-breakdown', requireApiPermission('dashboa
 // 品牌归属：优先 skus.brand（按 sku_code 命中主数据），未命中 fallback 原业务单据 brand（CI=ci.brand / PI=pi.brand），仍空归「未分类」。
 // 返回与端点一致的 JSON 负载；country_total 由后端基于同口径原始聚合生成（前端不重新累加）。
 async function computeInventoryByBrand(rawCountry, foreignToRmbMap, opts = {}) {
-  const code = canonCountry(rawCountry || ''); // 统一归一为国家标准码（'Indonesia'→'ID'），与 overview 同口径
-  // 国家→币种映射（与 overview 完全一致）
   const allCountries = query("SELECT name, default_currency FROM countries WHERE status = 'active' AND default_currency IS NOT NULL AND default_currency != ''").rows;
   const countryToCurrency = {};
   for (const c of allCountries) { countryToCurrency[c.name] = c.default_currency; }
 
-  // SKU → brand 主数据映射（统一品牌归属的唯一事实源）
+  // 全局模式（allCountries=true）：不按国家过滤，用于「品牌维度」首页第一层
+  const allCountriesMode = !!(opts && opts.allCountries);
+  const code = allCountriesMode ? '' : canonCountry(rawCountry || '');
+  const groupBy = (opts && opts.groupBy) || 'brand';
+  const filterBrand = (opts && opts.filterBrand) || null;
+  const piScopeSql = (opts && opts.piSql) || '';
+  const piScopeParams = (opts && opts.piParams) || [];
+
+  // SKU -> brand 主数据映射（统一品牌归属唯一事实源；未命中 -> 单据 brand -> 未分类）
   const skuBrandMap = {};
   query("SELECT sku_code, brand FROM skus").rows.forEach(r => { skuBrandMap[r.sku_code] = r.brand || ''; });
   const resolveBrand = (skuCode, docBrand) =>
     (skuCode && skuBrandMap[skuCode]) ? skuBrandMap[skuCode] : (docBrand || '未分类');
 
-  // --- 1. 可用库存（同 overview:16184 公式，逐行按 sku 取品牌）---
-  const invRows = query(`
-    SELECT i.sku_code, i.available_qty, i.weighted_avg_cost, i.country
-    FROM inventory i
-    WHERE i.available_qty > 0 AND i.weighted_avg_cost > 0
-  `).rows;
-  const availByBrand = {};
-  const brandRowCount = {};
-  let availableTotal = 0;
+  // 原子分区：每个货币化行 -> 一个 (brand, countryCode) 桶，含 a/t/c 原始 CNY（缺失汇率的行跳过，与 overview 一致）
+  const tuples = [];
+  let availableTotal = 0, ciTransitTotal = 0, piTransitTotal = 0, consignmentTotal = 0;
+  const passCountry = (cc) => (allCountriesMode ? true : cc === code);
+
+  // 1. 可用库存（inventory WAC，天然不含寄售）
+  const invRows = query(`SELECT i.sku_code, i.available_qty, i.weighted_avg_cost, i.country FROM inventory i WHERE i.available_qty > 0 AND i.weighted_avg_cost > 0`).rows;
   for (const r of invRows) {
-    if (canonCountry(r.country || '') !== code) continue;
+    const cc = canonCountry(r.country || '');
+    if (!passCountry(cc)) continue;
     const rate = getInventoryRate({ country: r.country }, countryToCurrency, foreignToRmbMap);
-    if (!rate) continue; // 缺失汇率跳过（与 overview 一致，禁止 fallback=1）
+    if (!rate) continue;
     const amt = Number(r.available_qty) * Number(r.weighted_avg_cost) * rate;
     availableTotal += amt;
-    const b = resolveBrand(r.sku_code, '');
-    availByBrand[b] = (availByBrand[b] || 0) + amt;
-    brandRowCount[b] = (brandRowCount[b] || 0) + 1;
+    tuples.push({ brand: resolveBrand(r.sku_code, ''), countryCode: cc, countryName: displayCountry(cc), a: amt, t: 0, c: 0 });
   }
-
-  // --- 1b. 寄售库存（同 overview:16217 公式，逐行按 sku 取品牌）---
+  // 1b. 寄售库存（consignment_inventory_lots.remaining_inventory_value）
   const consignRows = query(`SELECT sku_code, country_name, COALESCE(remaining_inventory_value, 0) as v FROM consignment_inventory_lots WHERE status = 'active'`).rows;
-  const consignByBrand = {};
-  let consignmentTotal = 0;
   for (const l of consignRows) {
-    if (canonCountry(l.country_name || '') !== code) continue;
+    const cc = canonCountry(l.country_name || '');
+    if (!passCountry(cc)) continue;
     const rate = getInventoryRate({ country: l.country_name }, countryToCurrency, foreignToRmbMap);
     if (!rate) continue;
     const amt = Number(l.v) * rate;
     consignmentTotal += amt;
-    const b = resolveBrand(l.sku_code, '');
-    consignByBrand[b] = (consignByBrand[b] || 0) + amt;
-    brandRowCount[b] = (brandRowCount[b] || 0) + 1;
+    tuples.push({ brand: resolveBrand(l.sku_code, ''), countryCode: cc, countryName: displayCountry(cc), a: 0, t: 0, c: amt });
   }
-
-  // --- 2. 在途 CI（复用 getEffectiveTransitRows，品牌=skus.brand 优先，否则 ci.brand）---
+  // 2. 在途 CI（复用 getEffectiveTransitRows，品牌=skus.brand 优先，否则 ci.brand）
   const transitRows = getEffectiveTransitRows();
-  const ciTransitByBrand = {};
-  let ciTransitTotal = 0;
   for (const r of transitRows) {
     const transitQty = Number(r.transit_qty || 0);
-    if (transitQty <= 0) continue; // 已全部到仓 → 不在途（沿用生产口径）
-    if (canonCountry(r.country || '') !== code) continue;
+    if (transitQty <= 0) continue;
+    const cc = canonCountry(r.country || '');
+    if (!passCountry(cc)) continue;
     const curr = (r.currency || '').toUpperCase();
     const rate = foreignToRmbMap[curr];
-    if (!rate) continue; // 缺失汇率跳过（禁止 fallback=1）
+    if (!rate) continue;
     const shippedQty = Number(r.shipped_qty || 0);
     const unitValue = shippedQty > 0 ? Number(r.ci_amount_total || 0) / shippedQty : 0;
     const amt = unitValue * transitQty * rate;
     ciTransitTotal += amt;
-    const b = resolveBrand(r.sku_code, r.brand || '');
-    ciTransitByBrand[b] = (ciTransitByBrand[b] || 0) + amt;
-    brandRowCount[b] = (brandRowCount[b] || 0) + 1;
+    tuples.push({ brand: resolveBrand(r.sku_code, r.brand || ''), countryCode: cc, countryName: displayCountry(cc), a: 0, t: amt, c: 0 });
   }
-
-  // --- 2b. PI 采购在途（复用 getPiTransitAssets.detailsBySku，按 SKU 主数据品牌优先归属）---
-  const piTransit = getPiTransitAssets(foreignToRmbMap, '', [], { includeSkuDetails: true });
-  const piTransitByBrand = {};
-  let piTransitTotal = 0;
+  // 2b. PI 采购在途（带数据权限 scope，与 overview 一致）
+  const piTransit = getPiTransitAssets(foreignToRmbMap, piScopeSql, piScopeParams, { includeSkuDetails: true });
   for (const d of piTransit.detailsBySku) {
-    if (canonCountry(d.country || '') !== code) continue;
-    const amt = Number(d.amount_raw || 0); // 原始未 round 金额，保证 raw 恒等式精确
+    const cc = canonCountry(d.country || '');
+    if (!passCountry(cc)) continue;
+    const amt = Number(d.amount_raw || 0);
     piTransitTotal += amt;
-    const b = d.resolved_brand;
-    piTransitByBrand[b] = (piTransitByBrand[b] || 0) + amt;
-    brandRowCount[b] = (brandRowCount[b] || 0) + 1;
+    tuples.push({ brand: d.resolved_brand, countryCode: cc, countryName: displayCountry(cc), a: 0, t: amt, c: 0 });
   }
 
-  // --- 品牌聚合（同一组行按品牌重分组，保证恒等式）---
-  const brandSet = new Set([
-    ...Object.keys(availByBrand),
-    ...Object.keys(consignByBrand),
-    ...Object.keys(ciTransitByBrand),
-    ...Object.keys(piTransitByBrand)
-  ]);
-  const round2 = (v) => Math.round(v * 100) / 100;
-  const rawBrands = []; // round 之前原始金额，用于恒等式验收（证明 round 之前 Σ 品牌 == 国家）
-  const brands = [];
-  for (const b of brandSet) {
-    const a = availByBrand[b] || 0;
-    const t = (ciTransitByBrand[b] || 0) + (piTransitByBrand[b] || 0);
-    const c = consignByBrand[b] || 0;
-    const total = a + t + c;
-    rawBrands.push({ brand: b, total_asset: total, available_asset: a, transit_asset: t, consignment_asset: c });
-    brands.push({ brand: b, total_asset: round2(total), available_asset: round2(a), transit_asset: round2(t), consignment_asset: round2(c), percentage: 0 });
+  const round2 = (v) => Math.round(Number(v) * 100) / 100;
+  // 权威口径目标值（与 overview 同构：A/T/C 各自 round2，合计 = round2(A+T+C)）
+  const targets = {
+    available: round2(availableTotal),
+    transit: round2(ciTransitTotal + piTransitTotal),
+    consignment: round2(consignmentTotal),
+    total: round2(availableTotal + ciTransitTotal + piTransitTotal + consignmentTotal)
+  };
+
+  // 品牌聚合（统一基准，作为国家下钻的对账基准）
+  const brandMap = {};
+  const brandRowCount = {};
+  for (const tp of tuples) {
+    if (!brandMap[tp.brand]) brandMap[tp.brand] = { brand: tp.brand, a: 0, t: 0, c: 0 };
+    brandMap[tp.brand].a += tp.a; brandMap[tp.brand].t += tp.t; brandMap[tp.brand].c += tp.c;
+    brandRowCount[tp.brand] = (brandRowCount[tp.brand] || 0) + 1;
   }
-  const countryTotal = availableTotal + ciTransitTotal + piTransitTotal + consignmentTotal;
-  brands.forEach(br => { br.percentage = countryTotal > 0 ? Math.round((br.total_asset / round2(countryTotal)) * 1000) / 10 : 0; });
-  brands.sort((x, y) => y.total_asset - x.total_asset); // 默认按总资产从高到低
+  const brandsRaw = Object.values(brandMap);
+  reconcileGroups(brandsRaw, targets);
+  brandsRaw.forEach(b => { b.total_asset = round2(b.available_asset + b.transit_asset + b.consignment_asset); });
+  brandsRaw.forEach(b => { b.percentage = targets.total > 0 ? Math.round((b.total_asset / targets.total) * 1000) / 10 : 0; });
+  brandsRaw.sort((x, y) => y.total_asset - x.total_asset);
+  const brandTotals = {};
+  brandsRaw.forEach(b => { brandTotals[b.brand] = b; });
 
-  const unclassified = brands.find(br => br.brand === '未分类') || null;
+  if (groupBy === 'country') {
+    const bt = brandTotals[filterBrand];
+    if (!bt) {
+      return { brand: filterBrand || '', brand_total: 0, available_asset: 0, transit_asset: 0, consignment_asset: 0, countries: [] };
+    }
+    const cMap = {};
+    for (const tp of tuples) {
+      if (tp.brand !== filterBrand) continue;
+      if (!cMap[tp.countryCode]) cMap[tp.countryCode] = { country: tp.countryName, country_code: tp.countryCode, a: 0, t: 0, c: 0 };
+      cMap[tp.countryCode].a += tp.a; cMap[tp.countryCode].t += tp.t; cMap[tp.countryCode].c += tp.c;
+    }
+    const countriesRaw = Object.values(cMap);
+    reconcileGroups(countriesRaw, { available: bt.available_asset, transit: bt.transit_asset, consignment: bt.consignment_asset, total: bt.total_asset });
+    countriesRaw.forEach(g => { g.total_asset = round2(g.available_asset + g.transit_asset + g.consignment_asset); });
+    countriesRaw.forEach(g => { g.percentage = bt.total_asset > 0 ? Math.round((g.total_asset / bt.total_asset) * 1000) / 10 : 0; });
+    countriesRaw.sort((x, y) => y.total_asset - x.total_asset);
+    return {
+      brand: filterBrand,
+      brand_total: bt.total_asset,
+      available_asset: bt.available_asset,
+      transit_asset: bt.transit_asset,
+      consignment_asset: bt.consignment_asset,
+      countries: countriesRaw
+    };
+  }
 
+  // 默认：品牌维度（全局或单国家）
+  const unclassified = brandsRaw.find(br => br.brand === '未分类') || null;
   const result = {
-    country: displayCountry(code),
+    country: allCountriesMode ? '全部' : displayCountry(code),
     country_code: code,
-    country_total: round2(countryTotal),
-    available_asset: round2(availableTotal),
-    transit_asset: round2(ciTransitTotal + piTransitTotal),
-    consignment_asset: round2(consignmentTotal),
-    brands: brands,
+    country_total: targets.total,
+    available_asset: targets.available,
+    transit_asset: targets.transit,
+    consignment_asset: targets.consignment,
+    brands: brandsRaw,
     unclassified_count: unclassified ? (brandRowCount['未分类'] || 0) : 0,
     unclassified_asset: unclassified ? unclassified.total_asset : 0
   };
-  // raw 模式（仅测试/调试用）：暴露 round 之前的原始金额，用于恒等式验收
   if (opts && opts.raw) {
     result.raw = {
-      country_total: countryTotal,
+      country_total: availableTotal + ciTransitTotal + piTransitTotal + consignmentTotal,
       available_asset: availableTotal,
       transit_asset: ciTransitTotal + piTransitTotal,
       consignment_asset: consignmentTotal,
-      brands: rawBrands
+      brands: Object.values(brandMap).map(b => ({ brand: b.brand, available_asset: b.a, transit_asset: b.t, consignment_asset: b.c, total_asset: b.a + b.t + b.c }))
     };
   }
   return result;
 }
 
+// 组内四舍五入尾差归位：各分项 round2 后，将 Σ组值与权威目标值之差，归到该项金额最大的组。
+// 保证 Σ组 = 目标（不通过修改顶部总资产来掩盖明细误差）。total 项亦同理兜底。
+function reconcileGroups(groups, targets) {
+  const round2 = (v) => Math.round(Number(v) * 100) / 100;
+  groups.forEach(g => {
+    g.available_asset = round2(g.a);
+    g.transit_asset = round2(g.t);
+    g.consignment_asset = round2(g.c);
+  });
+  const applyComp = (field, rawF, target) => {
+    let sum = 0; groups.forEach(g => { sum += g[field]; });
+    let diff = round2(target - sum);
+    if (diff === 0 || groups.length === 0) return;
+    let bi = 0, bm = -Infinity;
+    groups.forEach((g, i) => { if (g[rawF] > bm) { bm = g[rawF]; bi = i; } });
+    groups[bi][field] = round2(groups[bi][field] + diff);
+  };
+  applyComp('available_asset', 'a', targets.available);
+  applyComp('transit_asset', 't', targets.transit);
+  applyComp('consignment_asset', 'c', targets.consignment);
+  // 合计尾差（仅当 overview 自身 total != 各分项 round2 之和的极端情形）：归最大组
+  groups.forEach(g => { g.total_asset = round2(g.available_asset + g.transit_asset + g.consignment_asset); });
+  let sumTot = 0; groups.forEach(g => { sumTot += g.total_asset; });
+  let diffT = round2(targets.total - sumTot);
+  if (diffT !== 0 && groups.length > 0) {
+    let bi = 0, bm = -Infinity;
+    groups.forEach((g, i) => { const raw = g.a + g.t + g.c; if (raw > bm) { bm = raw; bi = i; } });
+    groups[bi].total_asset = round2(groups[bi].total_asset + diffT);
+  }
+}
 app.get('/api/financial-risk/inventory-breakdown/by-brand', requireApiPermission('dashboard_view'), asyncHandler(async (req, res) => {
   try {
     const today = new Date().toISOString().split('T')[0];
-    const { country } = req.query;
-    if (!country) return res.status(400).json({ error: 'country is required' });
-    const code = canonCountry(country || '');
-    if (!code) return res.status(400).json({ error: 'invalid country' });
+    const { country, brand } = req.query;
+    const dsf = buildDashboardScopeFilters(req);
+    const isGlobal = !country || country === 'all' || country === '__all__';
+    const code = isGlobal ? '' : canonCountry(country || '');
+    if (!isGlobal && !code) return res.status(400).json({ error: 'invalid country' });
 
-    // 收集涉及币种（库存国家 + CI + PI）与 overview 同构
     const allCountries = query("SELECT name, default_currency FROM countries WHERE status = 'active' AND default_currency IS NOT NULL AND default_currency != ''").rows;
     const countryToCurrency = {};
     for (const c of allCountries) { countryToCurrency[c.name] = c.default_currency; }
@@ -17621,11 +17670,40 @@ app.get('/api/financial-risk/inventory-breakdown/by-brand', requireApiPermission
     piCurrencies.forEach(curr => allCurrenciesSet.add(curr));
 
     const foreignToRmbMap = await buildForeignToRmbMap(today, allCurrenciesSet);
-    const result = await computeInventoryByBrand(code, foreignToRmbMap);
+    const opts = { allCountries: isGlobal, piSql: dsf.pi.sql, piParams: dsf.pi.params };
+    const result = await computeInventoryByBrand(isGlobal ? '' : code, foreignToRmbMap, opts);
     res.json(result);
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
+// 品牌详情下钻：品牌 -> 国家 资产分布（三类资产按国家聚合，尾差归最大国家，合计 = 该品牌顶部）
+app.get('/api/financial-risk/inventory-breakdown/by-country', requireApiPermission('dashboard_view'), asyncHandler(async (req, res) => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const { brand } = req.query;
+    if (!brand) return res.status(400).json({ error: 'brand is required' });
+    const dsf = buildDashboardScopeFilters(req);
+
+    const allCountries = query("SELECT name, default_currency FROM countries WHERE status = 'active' AND default_currency IS NOT NULL AND default_currency != ''").rows;
+    const countryToCurrency = {};
+    for (const c of allCountries) { countryToCurrency[c.name] = c.default_currency; }
+    const invCountries = query("SELECT DISTINCT country FROM inventory WHERE country IS NOT NULL AND country != ''").rows.map(r => r.country);
+    const ciCurrencies = query("SELECT DISTINCT currency FROM commercial_invoices WHERE currency IS NOT NULL AND currency != ''").rows.map(r => r.currency);
+    const piCurrencies = query("SELECT DISTINCT currency FROM proforma_invoices WHERE currency IS NOT NULL AND currency != ''").rows.map(r => r.currency);
+    const allCurrenciesSet = new Set(['RMB', 'CNY']);
+    invCountries.forEach(c => {
+      let curr = countryToCurrency[c];
+      if (!curr && COUNTRY_ALIAS_MAP[c]) curr = countryToCurrency[COUNTRY_ALIAS_MAP[c]];
+      if (curr) allCurrenciesSet.add(curr);
+    });
+    ciCurrencies.forEach(curr => allCurrenciesSet.add(curr));
+    piCurrencies.forEach(curr => allCurrenciesSet.add(curr));
+
+    const foreignToRmbMap = await buildForeignToRmbMap(today, allCurrenciesSet);
+    const result = await computeInventoryByBrand('', foreignToRmbMap, { allCountries: true, piSql: dsf.pi.sql, piParams: dsf.pi.params, groupBy: 'country', filterBrand: brand });
+    res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+}));
 // 2. 在途资产下钻：CI 级明细列表
 app.get('/api/financial-risk/in-transit-breakdown', requireApiPermission('dashboard_view'), asyncHandler(async (req, res) => {
   try {
