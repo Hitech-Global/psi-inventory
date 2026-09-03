@@ -17941,35 +17941,277 @@ async function recalcInventoryForSkusBackground(importId, affectedSkus) {
 
 // ==================== 库存总表批量操作 ====================
 
+// ============================================================================
+// P0-C1：库存总表批量设置（set-based 性能优化）
+// ----------------------------------------------------------------------------
+// 背景：原实现为「逐 id 循环」——每行 1 lookup + 1 UPDATE + recalcInventoryForSku(4)
+//       + logOperation(1) = 7N + 2 次 application DB call。库存总表「全选筛选结果」
+//       时 N 可等于整张 inventory 表行数；叠加 db.js 的 PG 同步桥
+//       （worker_threads + Atomics.wait），每一次 DB call 都会完全阻塞 Node 主线程，
+//       导致 /api/version、首页、审批页等全部排队。
+//
+// 事务契约（沿用 Final Guard，不得破坏）：
+//   - 每请求恰好 1 个 transaction()，回调为同步函数、体内零 await
+//   - 禁止嵌套事务、禁止事务内 updateInventoryTransitData
+//   - createBatchTask / finishBatchTask 保持在事务外（与原语义一致，不做顺手重构）
+//
+// PG 失败行为（硬性）：
+//   - PG 批量路径失败 = rollback + throw，端点返回明确 error。
+//   - 禁止 PG 失败后回退旧逐行路径：一次异常就可能重新触发数千次 sync DB call，
+//     让整个 Node 服务再次冻结（正是 P0-C1 要消除的问题）。
+// ============================================================================
+
+// 单次批量操作允许的 id 数量上限。超限 → HTTP 400 + 明确文案，绝不静默截断。
+// 依据：当前生产 inventory 约 573 行；2000 提供明显 headroom，同时限制
+//       JSONB payload 体积与单事务持锁时长。
+const MAX_BATCH_SET_ITEMS = 2000;
+
+// 允许批量设置的列 → PG jsonb_to_recordset 里的目标类型。
+// 用于校验 column 白名单（column 会拼接进 SQL，绝不接受外部输入）。
+const BATCH_SET_COLUMNS = {
+  'inventory_status':       'text',
+  'safety_stock':           'integer',
+  'target_turnover_months': 'double precision'
+};
+
+function isPgDriver() {
+  return String(process.env.DB_DRIVER || 'sqlite').toLowerCase() === 'pg';
+}
+
+// ---- PG set-based SQL（与 refreshInventoryTotals 的 jsonb 批量写法同族）--------
+
+// 1) 一次批量 lookup：按输入顺序返回，重复 id 保留重复行（与旧逐行语义一致）
+function pgBatchSetLookupSql() {
+  return `
+      SELECT i.id, i.sku_code, i.country, i.warehouse,
+             i.available_qty, i.weighted_avg_cost,
+             i.inventory_status, i.safety_stock, i.target_turnover_months
+      FROM jsonb_to_recordset($1::jsonb) AS j(id text, ord integer)
+      JOIN inventory i ON i.id = j.id::text
+      ORDER BY j.ord`;
+}
+
+// 2) 一次批量 UPDATE：只更新目标列 + updated_at，不顺手更新其它字段
+function pgBatchSetUpdateSql(column, pgType) {
+  return `
+      UPDATE inventory i
+      SET ${column} = src.new_value::${pgType},
+          updated_at = datetime('now')
+      FROM jsonb_to_recordset($1::jsonb) AS src(id text, new_value ${pgType})
+      WHERE i.id = src.id::text`;
+}
+
+// 3) 一次批量聚合销售事实：替代 recalcInventoryForSku 内的两次逐 SKU 查询。
+//    语义等价性：
+//      MAX(order_date)  —— 与原第一条查询同样的 WHERE（is_valid_order=1 + sku）
+//      qty90            —— CASE 把不满足 90 天窗口的行计为 0，等价于
+//                          原第二条查询的 `AND order_date >= date('now','-90 days')`；
+//                          COALESCE 处理空集 / NULL quantity，与原写法一致。
+//    date('now','-90 days') 由 db-pg.js normalizeSql 转成 PG 语法，与 recalc 内一致。
+function pgSalesFactsSql() {
+  return `
+      SELECT sku_code,
+             MAX(order_date) AS d,
+             COALESCE(SUM(CASE WHEN order_date >= date('now','-90 days') THEN quantity ELSE 0 END), 0) AS qty90
+      FROM sales_records
+      WHERE is_valid_order = 1
+        AND sku_code IN (SELECT value FROM jsonb_array_elements_text($1::jsonb))
+      GROUP BY sku_code`;
+}
+
+// 4) 一次批量写 operation_logs：每成功 id 一条，字段与旧 logOperation 完全一致
+function pgBatchLogInsertSql() {
+  return `
+      INSERT INTO operation_logs (id, operator_id, operator_name, page, operation_type, target_ids, affected_count, old_values, new_values, reason, triggered_recalc, is_rollbackable)
+      SELECT id::text, operator_id::text, operator_name::text, page::text, operation_type::text,
+             target_ids::text, affected_count::integer, old_values::text, new_values::text,
+             reason::text, triggered_recalc::integer, is_rollbackable::integer
+      FROM jsonb_to_recordset($1::jsonb) AS j(
+        id text, operator_id text, operator_name text, page text, operation_type text,
+        target_ids text, affected_count integer, old_values text, new_values text,
+        reason text, triggered_recalc integer, is_rollbackable integer
+      )`;
+}
+
+// 逐 business key 计算派生列。语义与 recalcInventoryForSku(sku, country, warehouse)
+// （options 默认 → skipStatus=false → autoStatus 分支）逐字符一致，
+// 唯一区别：两次销售查询由批量聚合结果 facts 提供，targetColumn 的值取 UPDATE 后的新值。
+function computeInventoryDerivedFromFacts(row, targetColumn, newTargetValue, facts) {
+  const lastOutD = (facts && facts.d) || '';
+  const salesQty = (facts && facts.qty90) || 0;
+  const avgMonthly = Math.round(salesQty / 3);
+  const available = row.available_qty || 0;
+  const safetyStock = (targetColumn === 'safety_stock') ? newTargetValue : (row.safety_stock || 0);
+  const targetTurnover = (targetColumn === 'target_turnover_months') ? newTargetValue : (row.target_turnover_months || 0);
+  const turnover = avgMonthly > 0 ? Math.round((available / avgMonthly) * 10) / 10 : 0;
+  const inventoryValue = Math.round(((available * (Number(row.weighted_avg_cost) || 0)) + Number.EPSILON) * 100) / 100;
+  let autoStatus = 'normal';
+  if (available <= 0) autoStatus = 'out_of_stock_risk';
+  else if (targetTurnover > 0 && turnover > targetTurnover * 1.5) autoStatus = 'high_stock';
+  else if (avgMonthly > 0 && turnover > targetTurnover * 2) autoStatus = 'slow_moving';
+  else if (available <= safetyStock) autoStatus = 'out_of_stock_risk';
+  return { lastOutboundDate: lastOutD, turnover, inventoryValue, autoStatus };
+}
+
+// SQLite（及任何非 PG 驱动）：保留旧逐行路径——每 row 独立 try/catch、
+// 每 row 一次 lookup / UPDATE / 一条 operation log；recalc 逐 row 调用。
+// 注意：recalc 是否调用与 PG 路径保持一致（status 不调用），以保证双 driver 结果 parity。
+function applyInventoryBatchSetRowByRow(cfg) {
+  const { ids, value, column, operationType, taskName, recalcMode, oldValueKey, reason, req } = cfg;
+  const taskId = createBatchTask({task_name:taskName, operation_type:operationType, operator_id:req.currentUserId, operator_name:req.currentUserName, page:'inventory', total_count:ids.length, is_rollbackable:true});
+  const errors = [];
+  let success = 0, failed = 0, skipped = 0;
+
+  transaction(() => {
+    ids.forEach(id => {
+      try {
+        const inv = queryOne('SELECT * FROM inventory WHERE id=?', [id]);
+        if (!inv) { skipped++; errors.push({id, reason:'记录不存在'}); return; }
+        const oldVal = inv[oldValueKey];
+        run(`UPDATE inventory SET ${column}=?, updated_at=datetime('now') WHERE id=?`, [value, id]);
+        if (recalcMode === 'status') {
+          recalcInventoryForSku(inv.sku_code, inv.country, inv.warehouse);
+        }
+        logOperation({
+          operator_id:req.currentUserId, operator_name:req.currentUserName, page:'inventory',
+          operation_type:operationType, target_ids:[id], affected_count:1,
+          old_values:{[oldValueKey]:oldVal}, new_values:{[oldValueKey]:value},
+          reason:reason||'', triggered_recalc:1, is_rollbackable:1
+        });
+        success++;
+      } catch(e) { failed++; errors.push({id, reason:e.message}); }
+    });
+  });
+
+  finishBatchTask(taskId, {success, failed, skipped, errors, is_rollbackable:true});
+  return {success, failed, skipped, errors, task_id:taskId};
+}
+
+// PG：set-based 批量路径。
+// 失败即抛出（由 transaction 统一 rollback），绝不回退旧逐行路径。
+function applyInventoryBatchSetPg(cfg) {
+  const { ids, value, column, pgColumnType, operationType, taskName, recalcMode, oldValueKey, reason, req } = cfg;
+  const taskId = createBatchTask({task_name:taskName, operation_type:operationType, operator_id:req.currentUserId, operator_name:req.currentUserName, page:'inventory', total_count:ids.length, is_rollbackable:true});
+  const errors = [];
+  let success = 0, failed = 0, skipped = 0;
+
+  const idPayload = ids.map((id, ord) => ({ id: String(id), ord }));
+
+  transaction(() => {
+    // 1) 一次批量 lookup（重复 id 保留重复行，ORDER BY ord 保证顺序确定）
+    const lookupRes = query(pgBatchSetLookupSql(), [JSON.stringify(idPayload)]);
+    const rows = (lookupRes && lookupRes.rows) ? lookupRes.rows : [];
+
+    const rowById = new Map();
+    for (const r of rows) {
+      if (!rowById.has(r.id)) rowById.set(r.id, r);
+    }
+
+    // 2) 未找到的 id → skipped（按输入顺序，重复 id 各计一次，与旧语义一致）
+    for (const id of ids) {
+      if (!rowById.has(String(id))) { skipped++; errors.push({id, reason:'记录不存在'}); }
+    }
+
+    // 3) 组装批量 UPDATE payload 与唯一 business key 列表
+    const updatePayload = [];
+    const ordered = [];           // 成功行（含重复 id），用于按输入顺序写 operation log
+    const keySeen = new Set();
+    const keyRows = [];           // 唯一 (sku_code,country,warehouse) 的代表行（输入顺序第一个）
+    for (const id of ids) {
+      const r = rowById.get(String(id));
+      if (!r) continue;
+      updatePayload.push({ id: String(id), new_value: value });
+      ordered.push(r);
+      if (recalcMode === 'status') {
+        const k = r.sku_code + '\0' + (r.country || '') + '\0' + (r.warehouse || '');
+        if (!keySeen.has(k)) { keySeen.add(k); keyRows.push(r); }
+      }
+    }
+
+    // 4) 一次批量 UPDATE（只写目标列）
+    if (updatePayload.length > 0) {
+      run(pgBatchSetUpdateSql(column, pgColumnType), [JSON.stringify(updatePayload)]);
+    }
+
+    // 5) 需要重算时：一次批量聚合销售事实 + 按唯一 business key 逐 key UPDATE。
+    //    最终 UPDATE 仍按 business key 匹配（不是 WHERE id=?），
+    //    因此同一 business key 下的所有 inventory 行派生列保持一致（与旧 recalc 语义一致）。
+    if (recalcMode === 'status' && keyRows.length > 0) {
+      const skuList = Array.from(new Set(keyRows.map(r => r.sku_code)));
+      const factsRes = query(pgSalesFactsSql(), [JSON.stringify(skuList)]);
+      const factsMap = new Map();
+      for (const f of ((factsRes && factsRes.rows) || [])) factsMap.set(f.sku_code, f);
+      for (const r of keyRows) {
+        const d = computeInventoryDerivedFromFacts(r, column, value, factsMap.get(r.sku_code));
+        run(`UPDATE inventory SET last_outbound_date=?, turnover_months=?, inventory_status=?, inventory_value=?, updated_at=datetime('now') WHERE sku_code=? AND country=? AND warehouse=?`,
+          [d.lastOutboundDate, d.turnover, d.autoStatus, d.inventoryValue, r.sku_code, r.country, r.warehouse]);
+      }
+    }
+
+    // 6) 一次批量写 operation_logs：每成功 id 一条（数量与字段同旧逐行 logOperation）
+    if (ordered.length > 0) {
+      const logPayload = ordered.map(r => ({
+        id: genId('oplog'),
+        operator_id: req.currentUserId || '',
+        operator_name: req.currentUserName || '',
+        page: 'inventory',
+        operation_type: operationType,
+        target_ids: JSON.stringify([r.id]),
+        affected_count: 1,
+        old_values: JSON.stringify({ [oldValueKey]: (r[oldValueKey] == null ? null : r[oldValueKey]) }),
+        new_values: JSON.stringify({ [oldValueKey]: value }),
+        reason: reason || '',
+        triggered_recalc: 1,
+        is_rollbackable: 1
+      }));
+      run(pgBatchLogInsertSql(), [JSON.stringify(logPayload)]);
+    }
+
+    success = ordered.length;
+  });
+
+  finishBatchTask(taskId, {success, failed, skipped, errors, is_rollbackable:true});
+  return {success, failed, skipped, errors, task_id:taskId};
+}
+
+// 统一入口：PG → set-based 批量；其它驱动 → 旧逐行路径。
+function applyInventoryBatchSet(cfg) {
+  const { ids, column } = cfg;
+  if (!Array.isArray(ids) || ids.length === 0) throw new Error('未选择记录');
+  if (ids.length > MAX_BATCH_SET_ITEMS) {
+    throw new Error(`最多可批量操作 ${MAX_BATCH_SET_ITEMS} 条，当前选择 ${ids.length} 条。`);
+  }
+  if (!Object.prototype.hasOwnProperty.call(BATCH_SET_COLUMNS, column)) {
+    throw new Error('不支持的批量设置字段: ' + column);
+  }
+  cfg.pgColumnType = BATCH_SET_COLUMNS[column];
+  if (isPgDriver()) return applyInventoryBatchSetPg(cfg);
+  return applyInventoryBatchSetRowByRow(cfg);
+}
+
 // 批量设置库存状态
 app.post('/api/inventory/batch-set-status', requireApiPermission('inventory_import'), asyncHandler((req, res) => {
   try {
     const { ids, status, reason } = req.body;
     if (!ids || !Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: '未选择记录' });
+    if (ids.length > MAX_BATCH_SET_ITEMS) return res.status(400).json({ error: `最多可批量操作 ${MAX_BATCH_SET_ITEMS} 条，当前选择 ${ids.length} 条。` });
     const statusVal = INVENTORY_STATUS_MAP[status] || status;
     if (!INVENTORY_STATUS_MAP[statusVal]) return res.status(400).json({ error: '无效的库存状态' });
 
-    const taskId = createBatchTask({task_name:'批量设置库存状态', operation_type:'set_status', operator_id:req.currentUserId, operator_name:req.currentUserName, page:'inventory', total_count:ids.length, is_rollbackable:true});
-    const errors = [];
-    let success = 0, failed = 0, skipped = 0;
-
-    transaction(() => {
-      ids.forEach(id => {
-        try {
-          const inv = queryOne('SELECT * FROM inventory WHERE id=?', [id]);
-          if (!inv) { skipped++; errors.push({id, reason:'记录不存在'}); return; }
-          const oldVal = inv.inventory_status;
-          run('UPDATE inventory SET inventory_status=?, updated_at=datetime(\'now\') WHERE id=?', [statusVal, id]);
-          // 触发重算（跳过状态覆盖，保留手动设置的状态）
-          recalcInventoryForSku(inv.sku_code, inv.country, inv.warehouse, {skipStatus: true});
-          logOperation({operator_id:req.currentUserId, operator_name:req.currentUserName, page:'inventory', operation_type:'set_status', target_ids:[id], affected_count:1, old_values:{inventory_status:oldVal}, new_values:{inventory_status:statusVal}, reason:reason||'', triggered_recalc:1, is_rollbackable:1});
-          success++;
-        } catch(e) { failed++; errors.push({id, reason:e.message}); }
-      });
+    // P0-C1：inventory_status 不影响 last_outbound_date / turnover_months /
+    // inventory_value 三个派生列的任何输入，旧实现的 recalcInventoryForSku
+    // (skipStatus:true) 只会重算出一模一样的值 → 直接取消，省下 4N 次 DB call。
+    const result = applyInventoryBatchSet({
+      ids, value: statusVal, column: 'inventory_status',
+      operationType: 'set_status', taskName: '批量设置库存状态',
+      recalcMode: 'none', oldValueKey: 'inventory_status', reason, req
     });
-    finishBatchTask(taskId, {success, failed, skipped, errors, is_rollbackable:true});
-    res.json({success, failed, skipped, errors, task_id:taskId});
-  } catch(e) { res.status(500).json({error:e.message}); }
+    res.json(result);
+  } catch(e) {
+    const msg = e && e.message ? e.message : String(e);
+    if (msg.indexOf('最多可批量操作') === 0) return res.status(400).json({ error: msg });
+    res.status(500).json({error:msg});
+  }
 }));
 
 // 批量设置是否重点关注
@@ -18004,25 +18246,21 @@ app.post('/api/inventory/batch-set-safety-stock', requireApiPermission('inventor
     if (!ids || !Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: '未选择记录' });
     const val = parseInt(safety_stock);
     if (isNaN(val) || val < 0) return res.status(400).json({ error: '安全库存必须为非负整数' });
-    const taskId = createBatchTask({task_name:'批量设置安全库存', operation_type:'set_safety_stock', operator_id:req.currentUserId, operator_name:req.currentUserName, page:'inventory', total_count:ids.length, is_rollbackable:true});
-    const errors = [];
-    let success = 0, failed = 0, skipped = 0;
-    transaction(() => {
-      ids.forEach(id => {
-        try {
-          const inv = queryOne('SELECT * FROM inventory WHERE id=?', [id]);
-          if (!inv) { skipped++; errors.push({id, reason:'记录不存在'}); return; }
-          const oldVal = inv.safety_stock;
-          run('UPDATE inventory SET safety_stock=?, updated_at=datetime(\'now\') WHERE id=?', [val, id]);
-          recalcInventoryForSku(inv.sku_code, inv.country, inv.warehouse);
-          logOperation({operator_id:req.currentUserId, operator_name:req.currentUserName, page:'inventory', operation_type:'set_safety_stock', target_ids:[id], affected_count:1, old_values:{safety_stock:oldVal}, new_values:{safety_stock:val}, reason:reason||'', triggered_recalc:1, is_rollbackable:1});
-          success++;
-        } catch(e) { failed++; errors.push({id, reason:e.message}); }
-      });
+    if (ids.length > MAX_BATCH_SET_ITEMS) return res.status(400).json({ error: `最多可批量操作 ${MAX_BATCH_SET_ITEMS} 条，当前选择 ${ids.length} 条。` });
+
+    // P0-C1：safety_stock 会影响 recalc 的 autoStatus 第 4 分支（available <= safety_stock），
+    // 因此 recalc 仍需执行，但改为按唯一 business key 执行（U 次，不是 N 次）。
+    const result = applyInventoryBatchSet({
+      ids, value: val, column: 'safety_stock',
+      operationType: 'set_safety_stock', taskName: '批量设置安全库存',
+      recalcMode: 'status', oldValueKey: 'safety_stock', reason, req
     });
-    finishBatchTask(taskId, {success, failed, skipped, errors, is_rollbackable:true});
-    res.json({success, failed, skipped, errors, task_id:taskId});
-  } catch(e) { res.status(500).json({error:e.message}); }
+    res.json(result);
+  } catch(e) {
+    const msg = e && e.message ? e.message : String(e);
+    if (msg.indexOf('最多可批量操作') === 0) return res.status(400).json({ error: msg });
+    res.status(500).json({error:msg});
+  }
 }));
 
 // 批量设置目标周转月数
@@ -18032,25 +18270,21 @@ app.post('/api/inventory/batch-set-turnover', requireApiPermission('inventory_im
     if (!ids || !Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: '未选择记录' });
     const val = parseFloat(target_turnover_months);
     if (isNaN(val) || val < 0) return res.status(400).json({ error: '目标周转月数必须为非负数' });
-    const taskId = createBatchTask({task_name:'批量设置目标周转月数', operation_type:'set_turnover', operator_id:req.currentUserId, operator_name:req.currentUserName, page:'inventory', total_count:ids.length, is_rollbackable:true});
-    const errors = [];
-    let success = 0, failed = 0, skipped = 0;
-    transaction(() => {
-      ids.forEach(id => {
-        try {
-          const inv = queryOne('SELECT * FROM inventory WHERE id=?', [id]);
-          if (!inv) { skipped++; errors.push({id, reason:'记录不存在'}); return; }
-          const oldVal = inv.target_turnover_months;
-          run('UPDATE inventory SET target_turnover_months=?, updated_at=datetime(\'now\') WHERE id=?', [val, id]);
-          recalcInventoryForSku(inv.sku_code, inv.country, inv.warehouse);
-          logOperation({operator_id:req.currentUserId, operator_name:req.currentUserName, page:'inventory', operation_type:'set_turnover', target_ids:[id], affected_count:1, old_values:{target_turnover_months:oldVal}, new_values:{target_turnover_months:val}, reason:reason||'', triggered_recalc:1, is_rollbackable:1});
-          success++;
-        } catch(e) { failed++; errors.push({id, reason:e.message}); }
-      });
+    if (ids.length > MAX_BATCH_SET_ITEMS) return res.status(400).json({ error: `最多可批量操作 ${MAX_BATCH_SET_ITEMS} 条，当前选择 ${ids.length} 条。` });
+
+    // P0-C1：target_turnover_months 会影响 recalc 的 autoStatus 第 2/3 分支，
+    // 因此 recalc 仍需执行，但改为按唯一 business key 执行（U 次，不是 N 次）。
+    const result = applyInventoryBatchSet({
+      ids, value: val, column: 'target_turnover_months',
+      operationType: 'set_turnover', taskName: '批量设置目标周转月数',
+      recalcMode: 'status', oldValueKey: 'target_turnover_months', reason, req
     });
-    finishBatchTask(taskId, {success, failed, skipped, errors, is_rollbackable:true});
-    res.json({success, failed, skipped, errors, task_id:taskId});
-  } catch(e) { res.status(500).json({error:e.message}); }
+    res.json(result);
+  } catch(e) {
+    const msg = e && e.message ? e.message : String(e);
+    if (msg.indexOf('最多可批量操作') === 0) return res.status(400).json({ error: msg });
+    res.status(500).json({error:msg});
+  }
 }));
 
 // 批量设置补货规则
@@ -18603,5 +18837,16 @@ module.exports = {
   refreshInventoryTotals,
   runOriginalInventoryTotalsLoop,
   // INV-IMPORT-PRECHECK-01：库存导入预检查（纯只读），导出供回归测试直接调用
-  validateInventoryImportRows
+  validateInventoryImportRows,
+  // P0-C1：库存总表批量设置（导出供 call-count / parity 回归测试直接调用）
+  MAX_BATCH_SET_ITEMS,
+  applyInventoryBatchSet,
+  applyInventoryBatchSetPg,
+  applyInventoryBatchSetRowByRow,
+  computeInventoryDerivedFromFacts,
+  recalcInventoryForSku,
+  pgBatchSetLookupSql,
+  pgBatchSetUpdateSql,
+  pgSalesFactsSql,
+  pgBatchLogInsertSql
 };
