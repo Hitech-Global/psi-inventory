@@ -3539,11 +3539,10 @@ const INV_IMPORT_ISSUE_META = {
   WAC_INVALID:        { label: '加权平均成本格式非法',           suggestion: '加权平均成本可留空表示不提供；若填写必须为非负数字' }
 };
 
-// 品牌一致性比较：trim 后忽略大小写（"Redragon" 与 "REDRAGON" 视为一致，避免大小写差异造成误阻断）。
-// 若后续要求严格区分大小写，只改本函数即可。
-function normalizeBrandForCompare(v) {
-  return String(v === null || v === undefined ? '' : v).trim().toLowerCase();
-}
+// INV-IMPORT-PRECHECK-01 严格品牌规则：逐字符完全一致，禁止 trim / 大小写 / 空格压缩 / alias。
+// 比较对象为 Excel 原始 brand 字符串（前端 handleInvFile 已不再 trim brand）与 skus.brand 原始值；
+// 纯空格等“已填写但非空白”内容必须参与比较并产生 BRAND_MISMATCH（不得按“Excel 空”放行）。
+// 比较逻辑见下方 ⑦；本注释替代原 normalizeBrandForCompare（已删除）。
 
 function validateInventoryImportRows(items) {
   const rows = Array.isArray(items) ? items : [];
@@ -3610,14 +3609,23 @@ function validateInventoryImportRows(items) {
     const master = masterMap.get(skuCode);
     if (!master) { pushIssue(rowNo, skuCode, 'SKU_MASTER_MISSING', skuCode); return; }
 
-    // ⑥ SKU 主数据 brand 为空（NULL 与空串同等对待）
-    const masterBrand = (master.brand === null || master.brand === undefined) ? '' : String(master.brand).trim();
-    if (!masterBrand) { pushIssue(rowNo, skuCode, 'SKU_BRAND_EMPTY', '', { master_brand: '' }); return; }
+    // ⑥ SKU 主数据 brand 未维护（NULL / 空串 / 纯空格 视为未维护；trim 仅用于“是否未填写”判断，不参与比较）
+    const masterBrandRaw = (master.brand === null || master.brand === undefined) ? '' : String(master.brand);
+    if (masterBrandRaw.trim() === '') {
+      pushIssue(rowNo, skuCode, 'SKU_BRAND_EMPTY', '', { master_brand: '' });
+      return;
+    }
 
-    // ⑦ Excel brand 与 SKU 主数据 brand 不一致（Excel 无 brand 时允许通过）
-    const excelBrand = (src.brand === null || src.brand === undefined) ? '' : String(src.brand).trim();
-    if (excelBrand && normalizeBrandForCompare(excelBrand) !== normalizeBrandForCompare(masterBrand)) {
-      pushIssue(rowNo, skuCode, 'BRAND_MISMATCH', excelBrand, { excel_brand: excelBrand, master_brand: masterBrand });
+    // ⑦ Excel brand 与 SKU 主数据 brand 严格逐字符比较（INV-IMPORT-PRECHECK-01 严格品牌）：
+    //    · 禁止任何 trim / toLowerCase / toUpperCase / 空格压缩 / alias；
+    //    · Excel brand 为空（null / undefined / ''）才视为“未填写”→ 允许，品牌以主数据为准；
+    //    · Excel brand 为纯空格等“已填写但非空白”内容 → 视为不一致，必须阻断；
+    //    · 一旦 Excel 有填值，必须与 masterBrandRaw 原始字符串 === 完全一致。
+    const excelBrandRaw = (src.brand === null || src.brand === undefined) ? '' : String(src.brand);
+    if (excelBrandRaw !== '') {
+      if (excelBrandRaw !== masterBrandRaw) {
+        pushIssue(rowNo, skuCode, 'BRAND_MISMATCH', excelBrandRaw, { excel_brand: excelBrandRaw, master_brand: masterBrandRaw });
+      }
     }
   });
 

@@ -9,7 +9,7 @@
  * 覆盖 6 个场景：
  *   1) SKU 不存在于 skus → 整批阻断
  *   2) SKU 存在但主数据品牌为空 → 整批阻断
- *   3) Excel 品牌与 SKU 主数据品牌不一致 → 整批阻断（大小写不敏感：REDRAGON == Redragon 不算不一致）
+ *   3) Excel 品牌与 SKU 主数据品牌不一致 → 整批阻断（严格逐字符一致：区分大小写与首尾空格，REDRAGON != Redragon）
  *   4) Excel 无品牌但主数据有品牌 → 允许（品牌权威来源是 SKU 主数据）
  *   5) 全部合法 → 预检查通过，且真实路由实际写入 inventory_imports
  *   6) 校验失败时 → 真实路由整批拒绝（422），数据库零写入（无部分写入）
@@ -243,14 +243,17 @@ test('3) Excel 品牌与 SKU 主数据品牌不一致 → 整批阻断', () => {
   assert.equal(b.master_brand, 'Redragon');
 });
 
-test('3b) 品牌大小写不敏感 → REDRAGON 与 Redragon 视为一致，不阻断', () => {
+test('3b) 严格品牌：REDRAGON 与 Redragon 视为不一致 → 阻断（区分大小写）', () => {
   resetSkus();
   run("INSERT INTO skus (sku_code, brand) VALUES ('SKU-A','Redragon')");
   const items = [
     { sku_code: 'SKU-A', import_date: '2026-07-05', brand: 'REDRAGON', available_qty: 10, weighted_avg_cost: 80, _row_num: 2 }
   ];
   const r = validateInventoryImportRows(items);
-  assert.equal(r.ok, true, '大小写差异不应造成误阻断');
+  assert.equal(r.ok, false, '大小写差异必须阻断');
+  assert.equal(r.blocking[0].issue_type, 'BRAND_MISMATCH');
+  assert.equal(r.blocking[0].excel_brand, 'REDRAGON');
+  assert.equal(r.blocking[0].master_brand, 'Redragon');
 });
 
 // ==================== 场景 4：Excel 无品牌 + 主数据有品牌 → 允许 ====================
@@ -317,16 +320,67 @@ test('6) 真实路由：含阻断行的批次整批拒绝（422），数据库�
   assert.equal(afterInv, beforeInv, 'inventory 不应产生任何写入');
 });
 
-// ==================== 场景 3c：品牌首尾空格 / 大小写 → 归一化后视为一致 ====================
-test('3c) Excel 品牌含首尾空格 + 大小写差异（" Redragon " vs "REDRAGON"）→ 允许', () => {
+// ==================== 场景 3c：品牌首尾空格 / 大小写 → 严格比较，禁止 trim ====================
+test('3c) 严格品牌：Excel 品牌含首尾空格（" Redragon "）与主数据 "Redragon" 不一致 → 阻断（禁止 trim）', () => {
   resetSkus();
-  run("INSERT INTO skus (sku_code, brand) VALUES ('SKU-A','REDRAGON')");
+  run("INSERT INTO skus (sku_code, brand) VALUES ('SKU-A','Redragon')");
   const items = [
-    { sku_code: 'SKU-A', import_date: '2026-07-05', brand: '  Redragon  ', available_qty: 10, weighted_avg_cost: 80, _row_num: 2 }
+    { sku_code: 'SKU-A', import_date: '2026-07-05', brand: ' Redragon ', available_qty: 10, weighted_avg_cost: 80, _row_num: 2 }
   ];
   const r = validateInventoryImportRows(items);
-  assert.equal(r.ok, true, '首尾空格 + 大小写差异不应造成误阻断');
-  assert.equal(r.blocking_count, 0);
+  assert.equal(r.ok, false, '首尾空格差异必须阻断（禁止提前 trim）');
+  assert.equal(r.blocking[0].issue_type, 'BRAND_MISMATCH');
+  assert.equal(r.blocking[0].excel_brand, ' Redragon ');
+});
+
+// ==================== 场景 3d：品牌严格比较矩阵（逐字符 ===）================
+test('3d) 品牌严格比较矩阵：仅完全一致放行，大小写 / 首尾空格 / 内部空格 / 纯空格均阻断，真空允许', () => {
+  resetSkus();
+  run("INSERT INTO skus (sku_code, brand) VALUES ('SKU-A','Redragon')");
+  const cases = [
+    { brand: 'Redragon', expect: 'pass' },   // 1 完全一致
+    { brand: 'REDRAGON', expect: 'block' },  // 2 全大写
+    { brand: 'redragon', expect: 'block' },  // 3 全小写
+    { brand: ' Redragon', expect: 'block' }, // 4 前导空格
+    { brand: 'Redragon ', expect: 'block' },  // 5 尾部空格
+    { brand: ' Redragon ', expect: 'block' }, // 6 前后空格
+    { brand: 'Red Dragon', expect: 'block' }, // 7 内部空格
+    { brand: '   ', expect: 'block' },        // 8 纯空格（已填写，非“空”）
+    { brand: '', expect: 'pass' }             // 9 真正空（允许，品牌以主数据为准）
+  ];
+  cases.forEach(function (c) {
+    const items = [{ sku_code: 'SKU-A', import_date: '2026-07-05', brand: c.brand, available_qty: 10, weighted_avg_cost: 80, _row_num: 2 }];
+    const r = validateInventoryImportRows(items);
+    if (c.expect === 'pass') {
+      assert.equal(r.ok, true, '品牌 ' + JSON.stringify(c.brand) + ' 应放行');
+      assert.equal(r.blocking_count, 0);
+    } else {
+      assert.equal(r.ok, false, '品牌 ' + JSON.stringify(c.brand) + ' 应阻断');
+      assert.equal(r.blocking[0].issue_type, 'BRAND_MISMATCH', '品牌 ' + JSON.stringify(c.brand) + ' 应为 BRAND_MISMATCH');
+    }
+  });
+});
+
+// ==================== 场景 3e：大小写不一致经真实 bulk-import 闸门 → 422 零写入 ====================
+test('3e) 后端闸门：Excel 品牌 REDRAGON（大小写不一致）直连 bulk-import → 422 零写入', async () => {
+  seedSingleValidSku('Redragon');
+  const items = [{ sku_code: 'SKU-A', import_date: VALID_DATE, brand: 'REDRAGON', available_qty: VALID_QTY, weighted_avg_cost: VALID_WAC, _row_num: 2 }];
+  const beforeImp = count('inventory_imports'), beforeInv = count('inventory');
+  const { status, body } = await postBulkImport(items, VALID_DATE);
+  assert.equal(status, 422, '大小写不一致应 422');
+  assert.equal(body.blocking[0].issue_type, 'BRAND_MISMATCH');
+  assert.equal(count('inventory_imports'), beforeImp, '闸门先于 write，零写入 inventory_imports');
+  assert.equal(count('inventory'), beforeInv, '零写入 inventory');
+});
+
+// ==================== 场景 3f：Excel 品牌为空 + 主数据有品牌 → 真实路由允许写入 ====================
+test('3f) 后端闸门：Excel 品牌为空 + 主数据有品牌 → 200 允许写入（品牌以主数据为准）', async () => {
+  seedSingleValidSku('Redragon');
+  const items = [{ sku_code: 'SKU-A', import_date: VALID_DATE, brand: '', available_qty: VALID_QTY, weighted_avg_cost: VALID_WAC, _row_num: 2 }];
+  const beforeImp = count('inventory_imports');
+  const { status, body } = await postBulkImport(items, VALID_DATE);
+  assert.ok(!(status === 422 && body.blocked === true), '空品牌不应被阻断');
+  assert.equal(count('inventory_imports'), beforeImp + 1, '空品牌应正常写入 1 行');
 });
 
 // ===== 以下场景全部通过真实 bulk-import 路由驱动（绕过 /precheck 直连写入闸门）=====
