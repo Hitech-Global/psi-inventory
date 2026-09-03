@@ -9506,9 +9506,9 @@ function exportRpExcel(){
     var body=''
       +'<div style="padding:6px 2px">'
       +'<div style="font-size:13px;color:#666;margin-bottom:12px">'+t('gen.L5400.1','选择要导出的 Sheet（默认全部导出）：')+'</div>'
-      +'<label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid #e1e5ea;border-radius:6px;margin-bottom:8px;cursor:pointer;font-size:14px"><input type="checkbox" id="rp-exp-total" checked> <span>'+t('app.782','总预测')+'</span></label>'
-      +'<label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid #e1e5ea;border-radius:6px;margin-bottom:8px;cursor:pointer;font-size:14px"><input type="checkbox" id="rp-exp-online" checked> <span>'+t('app.783','线上预测')+'</span></label>'
-      +'<label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid #e1e5ea;border-radius:6px;margin-bottom:12px;cursor:pointer;font-size:14px"><input type="checkbox" id="rp-exp-offline" checked> <span>'+t('app.784','线下预测')+'</span></label>'
+      +'<label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid #e1e5ea;border-radius:6px;margin-bottom:8px;cursor:pointer;font-size:14px"><input type="checkbox" id="rp-exp-total" checked> <span>'+t('gen.L3578.1','总预测')+'</span></label>'
+      +'<label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid #e1e5ea;border-radius:6px;margin-bottom:8px;cursor:pointer;font-size:14px"><input type="checkbox" id="rp-exp-online" checked> <span>'+t('gen.L3578.2','线上预测')+'</span></label>'
+      +'<label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid #e1e5ea;border-radius:6px;margin-bottom:12px;cursor:pointer;font-size:14px"><input type="checkbox" id="rp-exp-offline" checked> <span>'+t('gen.L3578.3','线下预测')+'</span></label>'
       +'<div style="font-size:12px;color:#999">'+t('gen.L5401.1','导出使用当前筛选条件（国家/仓库/品牌/动销状态/生命周期/SKU搜索），列字段遵循各 Tab 当前显隐配置。')+'</div>'
       +'</div>';
     var footer='<button class="btn btn-secondary" onclick="closeModal()">'+t('common.cancel','取消')+'</button>'
@@ -9563,7 +9563,7 @@ async function rpSheetModel(tab){
     var c = tab==='total' ? r._totalC : (r._channelC?r._channelC[tab]:null);
     return keys.map(function(k){ return rpCellText(tab,k,r,c); });
   });
-  var name = tab==='total' ? t('app.782','总预测') : (tab==='online'?t('app.783','线上预测'):t('app.784','线下预测'));
+  var name = tab==='total' ? t('gen.L3578.1','总预测') : (tab==='online'?t('gen.L3578.2','线上预测'):t('gen.L3578.3','线下预测'));
   return {name:name, headers:headers, rows:rows};
 }
 // 展示层转换：把页面现有列渲染器的显示值映射为纯文本。
