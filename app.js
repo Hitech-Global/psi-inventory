@@ -9497,11 +9497,154 @@ function showUnmatchedRules(unmatched){
     +'</div>';
   openModal(t("app.836", "\u26a0\ufe0f \u65e0\u6cd5\u91cd\u65b0\u8ba1\u7b97\uff1a\u76ee\u6807\u5468\u8f6c\u89c4\u5219\u672a\u8986\u76d6"), html, t('gen.L5058.1','<button class="btn btn-primary" onclick="closeModal()">知道了</button>'));
 }
+// ============ 订单预测 Excel 导出（前端生成，复用页面视图模型）============
+// 强约束：不在本文件重写任何预测/库存/采购业务计算。
+// 数据直接复用页面已生成的视图模型：r._totalC（总预测）、r._channelC[channel]（线上/线下）。
+// 列字段顺序与显隐直接沿用 getRpColConfig(tab)（与页面当前 Tab 完全一致）。
 function exportRpExcel(){
   try{
-    const url='/api/replenishment-suggestions/export?'+rpQuery();
-    window.open(url,'_blank');
+    var body=''
+      +'<div style="padding:6px 2px">'
+      +'<div style="font-size:13px;color:#666;margin-bottom:12px">'+t('gen.L5400.1','选择要导出的 Sheet（默认全部导出）：')+'</div>'
+      +'<label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid #e1e5ea;border-radius:6px;margin-bottom:8px;cursor:pointer;font-size:14px"><input type="checkbox" id="rp-exp-total" checked> <span>'+t('app.782','总预测')+'</span></label>'
+      +'<label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid #e1e5ea;border-radius:6px;margin-bottom:8px;cursor:pointer;font-size:14px"><input type="checkbox" id="rp-exp-online" checked> <span>'+t('app.783','线上预测')+'</span></label>'
+      +'<label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid #e1e5ea;border-radius:6px;margin-bottom:12px;cursor:pointer;font-size:14px"><input type="checkbox" id="rp-exp-offline" checked> <span>'+t('app.784','线下预测')+'</span></label>'
+      +'<div style="font-size:12px;color:#999">'+t('gen.L5401.1','导出使用当前筛选条件（国家/仓库/品牌/动销状态/生命周期/SKU搜索），列字段遵循各 Tab 当前显隐配置。')+'</div>'
+      +'</div>';
+    var footer='<button class="btn btn-secondary" onclick="closeModal()">'+t('common.cancel','取消')+'</button>'
+      +'<button class="btn btn-primary" onclick="rpDoExportExcel()">'+t('gen.L5402.1','导出 Excel')+'</button>';
+    openModal(t('gen.L5403.1','导出订单预测 Excel'), body, footer);
   }catch(e){showToast(e.message,'danger')}
+}
+// 弹窗确认：校验至少选择一个，按勾选生成对应 Sheet
+async function rpDoExportExcel(){
+  var sel=[];
+  if(document.getElementById('rp-exp-total') && document.getElementById('rp-exp-total').checked) sel.push('total');
+  if(document.getElementById('rp-exp-online') && document.getElementById('rp-exp-online').checked) sel.push('online');
+  if(document.getElementById('rp-exp-offline') && document.getElementById('rp-exp-offline').checked) sel.push('offline');
+  if(!sel.length){ showToast(t('gen.L5404.1','请至少选择一个 Sheet'),'warning'); return; }
+  closeModal();
+  try{
+    showToast(t('gen.L5405.1','正在生成 Excel...'),'info');
+    if(typeof XLSX==='undefined'){ showFlash(t('toast.xlsx_missing','XLSX库未加载'),'danger'); return; }
+    var wb=XLSX.utils.book_new();
+    for(var i=0;i<sel.length;i++){
+      var model=await rpSheetModel(sel[i]);   // 复用页面已生成视图模型 + 列配置
+      var aoa=[model.headers].concat(model.rows);
+      var ws=XLSX.utils.aoa_to_sheet(aoa);
+      XLSX.utils.book_append_sheet(wb, ws, model.name);
+    }
+    var fname=t('gen.L5406.1','订单预测导出_')+new Date().toISOString().slice(0,10)+'.xlsx';
+    XLSX.writeFile(wb, fname);
+    showToast(t('gen.L5407.1','已导出 {n} 个 Sheet',{n:sel.length}),'success');
+  }catch(e){ showFlash((e&&e.message)?e.message:String(e),'danger'); }
+}
+// 构建单个 Tab 的 {name, headers, rows}；视图模型复用页面既有 loadRp / loadRpChannelMonthly 计算结果
+async function rpSheetModel(tab){
+  var data=await rpFetchCached(rpBaseUrl());   // 与页面完全同源同筛选、复用缓存
+  if(!data) data=[];
+  if(tab==='total'){
+    if(!data.length || !data[0]._totalC){ await loadRp(); }   // 复用页面既有「总预测」计算（含月度销量合并）
+    if(!data.length || !data[0]._totalC){ throw new Error(t('gen.L5408.1','总预测数据未就绪，请先在「按月」模式下打开总预测 Tab 后重试')); }
+  }else{
+    if(!data.length || !data[0]._channelC || !data[0]._channelC[tab]){ await loadRpChannelMonthly(tab); }  // 复用页面既有渠道计算
+    if(!data.length || !data[0]._channelC || !data[0]._channelC[tab]){ throw new Error(t('gen.L5409.1','渠道预测数据未就绪，请先打开对应渠道 Tab 后重试')); }
+  }
+  var cfg=getRpColConfig(tab);   // 与页面当前 Tab 完全一致的列顺序 + 显隐
+  var headers=[], keys=[];
+  cfg.forEach(function(c){
+    if(c.key==='check'||c.key==='spacer'||c.key==='actions'||c.key==='review') return; // 非数据列（选择/占位/操作/复盘）
+    if(c.visible || c.fixed){
+      headers.push(c.label);
+      keys.push(c.key);
+    }
+  });
+  var rows=data.map(function(r){
+    var c = tab==='total' ? r._totalC : (r._channelC?r._channelC[tab]:null);
+    return keys.map(function(k){ return rpCellText(tab,k,r,c); });
+  });
+  var name = tab==='total' ? t('app.782','总预测') : (tab==='online'?t('app.783','线上预测'):t('app.784','线下预测'));
+  return {name:name, headers:headers, rows:rows};
+}
+// 展示层转换：把页面现有列渲染器的显示值映射为纯文本。
+// 不重新计算业务值，只读页面已生成的视图模型 c / 原始行 r，并复用现有显示辅助函数。
+function rpCellText(tab, key, r, c){
+  if(!r) return '';
+  c = c || {};
+  if(tab==='total'){
+    if(key==='sku') return r.sku_code||'';
+    if(key==='model') return r.model||'';
+    if(key.indexOf('ms_')===0){ var ym=key.replace('ms_','').replace(/_/g,'-'); return formatQuantityDisplay(Number((c.monthly&&c.monthly[ym])||0)); }
+    if(key==='online_avg') return formatQuantityDisplay(c.oaPeriod||0);
+    if(key==='offline_avg') return formatQuantityDisplay(c.ofaPeriod||0);
+    if(key==='total_avg') return formatQuantityDisplay(c.taPeriod||0);
+    if(key==='avail') return formatQuantityDisplay(r.available_qty||0);
+    if(key==='transit') return formatQuantityDisplay(r.in_transit_qty||0);
+    if(key==='pi_unshipped') return formatQuantityDisplay(c.piUnshipped||0);
+    if(key==='po_unconfirmed') return formatQuantityDisplay(r.po_unconfirmed_pi_qty||0);
+    if(key==='total_target_stock') return formatQuantityDisplay(c.sq||0);
+    if(key==='avail_turnover') return c.availTurnover!==null?String(c.availTurnover):'-';
+    if(key==='transit_turnover') return c.transitTurnover!==null?String(c.transitTurnover):'-';
+    if(key==='after_order_turnover') return c.afterOrderTurnover!==null?String(c.afterOrderTurnover):'-';
+    if(key==='last_inbound_date') return r.last_inbound_date?fmtDate(r.last_inbound_date):t('app.673','未知');
+    if(key==='days_since_last_inbound'){ var d=r.days_since_last_inbound; return (d!==null&&d!==undefined)?String(d):t('gen.L5410.1','未知'); }
+    if(key==='sales_status') return formatForecastSalesStatus(r.sales_status||'');
+    if(key==='risk_tags') return formatForecastRiskTags(r.risk_tags||'');
+    if(key==='action_rec') return formatForecastAction(r.action||'');
+    if(key==='suggestion') return r.suggestion||'';
+    if(key==='ai_business_advice') return r.ai_business_advice||'';
+    if(key==='online_pct') return c.taPeriod>0?(c.opct+'%'):'-';
+    if(key==='offline_pct') return c.taPeriod>0?(c.ofpct+'%'):'-';
+    if(key==='pool') return formatQuantityDisplay(c.pool||0);
+    if(key==='sales_reason') return r.sales_reason||'';
+    if(key==='online_target_turn') return String(c.ot!=null?c.ot:'');
+    if(key==='offline_target_turn') return String(c.oft!=null?c.oft:'');
+    if(key==='online_target_stock') return formatQuantityDisplay(c.os||0);
+    if(key==='offline_target_stock') return formatQuantityDisplay(c.ofs||0);
+    if(key==='arrival_month') return r.arrival_month||'';
+    return '';
+  }
+  // 线上/线下渠道
+  if(key==='sku') return r.sku_code||'';
+  if(key==='model') return r.model||'';
+  if(key==='sales_m4') return formatQuantityDisplay(c.salesM4||0);
+  if(key==='sales_m3') return formatQuantityDisplay(c.salesM3||0);
+  if(key==='sales_m2') return formatQuantityDisplay(c.salesM2||0);
+  if(key==='sales_m1') return formatQuantityDisplay(c.salesM1||0);
+  if(key==='channel_avg') return formatQuantityDisplay(c.avgSalesPeriod||0);
+  if(key==='channel_pct'){
+    if(c.channelAllocationStatus==='allocated'){
+      var sl = c.channelRatioSource==='historical_sales'?'(历史)':(c.channelRatioSource==='pre_stockout'?'(缺货前)':(c.channelRatioSource==='manual_config'?'(人工)':''));
+      return Math.round(c.pctPeriod)+'%'+sl;
+    }
+    if(c.channelAllocationStatus==='unallocated') return t('forecast.channel.unallocated','未分配');
+    return (c.totalAvgPeriod>0?Math.round(c.pctPeriod)+'%':'-');
+  }
+  if(key==='avail') return formatQuantityDisplay(c.availAllocatedPeriod||0);
+  if(key==='avail_turnover') return c.availTurnover!==null?String(c.availTurnover):'-';
+  if(key==='transit_allocated') return formatQuantityDisplay(c.effectiveTransitAllocated||0);
+  if(key==='transit_total') return formatQuantityDisplay(c.transitTotalDisplay||0);
+  if(key==='transit_unallocated') return formatQuantityDisplay(c.transitUnallocated||0);
+  if(key==='transit_turnover') return c.transitTurnover!==null?String(c.transitTurnover):'-';
+  if(key==='po_unconfirmed') return formatQuantityDisplay(c.poAllocatedPeriod||0);
+  if(key==='pi_unshipped') return formatQuantityDisplay(c.piUnshippedAllocatedPeriod||0);
+  if(key==='target_turn') return String(c.targetTurn!=null?c.targetTurn:'');
+  if(key==='target_stock'){ var _m=rpGetManualStock(tab,r.id); var _v=(_m!==undefined?_m:Math.round(c.suggestedQty||0)); return formatQuantityDisplay(_v); }
+  if(key==='after_order_turnover') return c.afterOrderTurnover!==null?String(c.afterOrderTurnover):'-';
+  if(key==='sales_judgement'){ // 复用页面渲染器 buildSalesJudgement 再去标签，确保与页面显示文本逐字一致
+    var sjHtml=(typeof buildSalesJudgement==='function')?buildSalesJudgement(r):'';
+    return String(sjHtml||'').replace(/<[^>]+>/g,'');
+  }
+  if(key==='action_rec') return formatForecastAction(r.action||'');
+  if(key==='suggestion') return r.suggestion||'';
+  if(key==='sales_status') return formatForecastSalesStatus(r.sales_status||'');
+  if(key==='risk_tags') return formatForecastRiskTags(r.risk_tags||'');
+  if(key==='sales_reason') return r.sales_reason||'';
+  if(key==='ai_business_advice') return r.ai_business_advice||'';
+  if(key==='last_inbound_date') return r.last_inbound_date?fmtDate(r.last_inbound_date):t('app.673','未知');
+  if(key==='days_since_last_inbound'){ var d2=r.days_since_last_inbound; return (d2!==null&&d2!==undefined)?String(d2):t('gen.L5410.1','未知'); }
+  if(key==='remark') return c.remark||'';
+  return '';
 }
 var _rpDimRowCount=0;
 var _rpLoadedDimRules=[]; // openRpParams 暂存现有 dim_default_config，供 saveRpParams 做 upsert
