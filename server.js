@@ -9126,6 +9126,14 @@ app.get('/api/commercial-invoices/:id', requireApiPermission('ci_view'), asyncHa
   // CI/PAYMENT UNIFY：运营 CI 尾款付款事实统一取自 payable_items settlement
   const opBalFacts = computeOperatingCIBalancePaymentFacts(ci.id);
   if (opBalFacts) Object.assign(ci, opBalFacts);
+  // CI DETAIL PAY RECORDS：尾款（balance）应付项的付款记录（不含 PI 定金——定金为独立存列 actual_deducted_deposit）
+  // source 条件与 computeOperatingCIBalancePaymentFacts 完全一致；批量聚合只读，不改付款流程。
+  const balPayItems = query(
+    `SELECT id FROM payable_items
+     WHERE fee_type = 'balance' AND ((source_type = 'ci' AND source_id = ?) OR (source_type = 'pi' AND source_ci_id = ?))`,
+    [ci.id, ci.id]
+  ).rows;
+  ci.payment_records = ciPaymentRecords(balPayItems.map(i => i.id));
   const items = query('SELECT * FROM commercial_invoice_items WHERE ci_id = ? ORDER BY created_at', [req.params.id]).rows;
   // LOGISTICS-CLOSED-LOOP-PHASE1: 改 queryOne→query，返回 packing_lists 数组（支持一 CI 多 PL）
   const pls = query('SELECT * FROM packing_lists WHERE related_ci_id = ? ORDER BY created_at', [req.params.id]).rows;
@@ -13682,6 +13690,97 @@ function computeOperatingCIBalancePaymentFacts(ciId) {
   return { balance_gross_amount: grossBalance, balance_paid_amount: paidAmount, balance_deduction_amount: deductionAmount, balance_rounding_amount: roundingAmount, balance_unpaid_amount: unpaidAmount, balance_payment_status: paymentStatus };
 }
 
+// CI DETAIL PAY RECORDS：CI 详情付款记录（只读聚合，复用财务 settlement SSOT，不改任何付款流程）
+// 输入 payable_item_ids，由调用方按 CI 类型给出口径：
+//   - 运营 CI：balance（尾款）应付项 —— 与 computeOperatingCIBalancePaymentFacts 同 source 条件（不含 PI 定金，定金为独立存列 actual_deducted_deposit）
+//   - 历史 CI：该 HCI 全部应付项 —— 与 computeHistoricalCIPaymentFacts 同 source 条件
+// 实现为批量聚合：payment_requests / payment_settlement_logs / payment_transactions 各查询一次（无循环单条调用、无 N+1），
+// 每 PR 金额与状态公式与 paymentSettlementFacts / derivePaymentStatus 逐字段一致。
+function ciPaymentRecords(payableItemIds) {
+  const ids = [...new Set((Array.isArray(payableItemIds) ? payableItemIds : []).filter(Boolean))];
+  if (!ids.length) return [];
+  const ph = ids.map(() => '?').join(',');
+  // 1) 桥 + PR 概要（同 /api/payment-requests/by-payable-items 口径：排除 cancelled/rejected）。
+  //    PR 概要用 pr.*（驱动无关，避免 SQLite/PG 列名漂移；payee 显示字段两驱动同为 payee_name_snapshot）
+  const rows = query(
+    `SELECT pri.payable_item_id AS payable_item_id, pr.*
+     FROM payment_request_items pri
+     JOIN payment_requests pr ON pr.id = pri.payment_request_id
+     WHERE pri.payable_item_id IN (${ph})
+       AND pr.payment_status NOT IN ('cancelled','rejected')
+       AND pr.approval_status NOT IN ('cancelled','rejected')
+     ORDER BY pr.created_at DESC, pr.id`,
+    ids
+  ).rows;
+  const prMap = new Map(); // PR 去重（一个 PR 可关联多个 payable item），保持 created_at DESC 首见顺序
+  for (const r of rows) { if (!prMap.has(r.id)) prMap.set(r.id, r); }
+  if (!prMap.size) return [];
+  const prIds = [...prMap.keys()];
+  const ph2 = prIds.map(() => '?').join(',');
+  // 2) settlement logs 全量一次取（与 paymentSettlementLogs 同排序），按 PR 内存分组
+  const logRows = query(
+    `SELECT * FROM payment_settlement_logs WHERE payment_request_id IN (${ph2}) ORDER BY created_at, id`,
+    prIds
+  ).rows;
+  // 3) transactions（与 paymentSettlementFacts 同口径：仅 reconciled 计入实付）
+  const txRows = query(
+    `SELECT payment_request_id, trans_no, paid_amount_minor, paid_date, payment_account, trans_status, created_at
+     FROM payment_transactions
+     WHERE payment_request_id IN (${ph2}) AND trans_status = 'reconciled'
+     ORDER BY paid_date, created_at, id`,
+    prIds
+  ).rows;
+  const logsByPR = new Map();
+  for (const l of logRows) { if (!logsByPR.has(l.payment_request_id)) logsByPR.set(l.payment_request_id, []); logsByPR.get(l.payment_request_id).push(l); }
+  const txsByPR = new Map();
+  for (const tx of txRows) { if (!txsByPR.has(tx.payment_request_id)) txsByPR.set(tx.payment_request_id, []); txsByPR.get(tx.payment_request_id).push(tx); }
+  const out = [];
+  for (const pr of prMap.values()) {
+    const logs = logsByPR.get(pr.id) || [];
+    const txs = txsByPR.get(pr.id) || [];
+    const paymentLogs = logs.filter(l => l.event_type === 'payment');
+    const deductionLogs = logs.filter(l => l.event_type === 'deduction');
+    const roundingLogs = logs.filter(l => l.event_type === 'rounding');
+    const activeDeductions = deductionLogs.filter(l => l.status === 'applied');
+    const activeRoundings = roundingLogs.filter(l => l.status === 'applied');
+    // ↓↓↓ 与 paymentSettlementFacts 同公式：实付 = reconciled transactions（minor→元） + legacy payment logs（元）
+    const newTransactionPaidMinor = txs.reduce((s, tx) => s + (Number(tx.paid_amount_minor) || 0), 0);
+    const newTransactionPaid = minorToAmount(newTransactionPaidMinor);
+    const legacyPaid = paymentLogs.filter(l => l.status === 'applied' && Number(l.is_legacy) === 1)
+      .reduce((s, l) => s + (Number(l.amount) || 0), 0);
+    const effectivePaid = settlementMoney(newTransactionPaid + legacyPaid);
+    const effectiveDeduction = settlementMoney(deductionLogs.length
+      ? activeDeductions.reduce((s, l) => s + (Number(l.amount) || 0), 0)
+      : Number(pr.deduction_amount || 0));
+    const effectiveRounding = settlementMoney(roundingLogs.length
+      ? activeRoundings.reduce((s, l) => s + (Number(l.amount) || 0), 0)
+      : Number(pr.rounding_amount || 0));
+    const grossPayable = settlementMoney(Number(pr.payable_amount || 0));
+    const outstanding = settlementMoney(grossPayable - effectivePaid - effectiveDeduction - effectiveRounding);
+    const facts = {
+      effectivePaid, effectiveDeduction, effectiveRounding, outstanding,
+      hasReversal: logs.some(l => l.status === 'reversed' || l.event_type === 'rounding_reversal')
+    };
+    const accounts = [...new Set(txs.map(tx => tx.payment_account).filter(Boolean))];
+    out.push({
+      payment_request_id: pr.id,
+      payment_no: pr.request_no || '',
+      actual_paid_amount: effectivePaid,
+      deduction_amount: effectiveDeduction,
+      rounding_amount: effectiveRounding,
+      outstanding,
+      paid_date: pr.paid_date || (txs.map(tx => tx.paid_date).filter(Boolean).sort().slice(-1)[0] || ''),
+      payment_account: accounts.join(' / '),
+      payment_status: derivePaymentStatus(pr, facts),
+      approval_status: pr.approval_status || '',
+      currency: pr.currency || '',
+      payee_name: pr.payee_name_snapshot || '',
+      transactions: txs.map(tx => ({ trans_no: tx.trans_no || '', paid_amount: minorToAmount(Number(tx.paid_amount_minor) || 0), paid_date: tx.paid_date || '', payment_account: tx.payment_account || '' }))
+    });
+  }
+  return out;
+}
+
 function historicalCISelectSql() {
   return `SELECT h.* FROM historical_commercial_invoices h`;
 }
@@ -13778,6 +13877,12 @@ app.get('/api/historical-commercial-invoices/:id', requireApiPermission('ci_view
     // CI/PAYMENT UNIFY：付款事实统一取自 payable_items settlement
     const f = computeHistoricalCIPaymentFacts(historical.id);
     if (f) Object.assign(historical, f);
+    // CI DETAIL PAY RECORDS：历史 CI 全部应付项的付款记录（source 条件与 computeHistoricalCIPaymentFacts 一致）
+    const hciPayItems = query(
+      `SELECT id FROM payable_items WHERE source_type = 'historical_ci' AND source_id = ?`,
+      [historical.id]
+    ).rows;
+    historical.payment_records = ciPaymentRecords(hciPayItems.map(i => i.id));
     historical.items = query('SELECT sku_code, shipped_qty, unit_price, discount, net_unit_price, ci_amount FROM historical_commercial_invoice_items WHERE hci_id = ? ORDER BY created_at, id', [req.params.id]).rows;
     res.json(historical);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -19452,6 +19557,7 @@ module.exports = {
   derivePaymentStatus,
   computeHistoricalCIPaymentFacts,
   computeOperatingCIBalancePaymentFacts,
+  ciPaymentRecords,
   // PAY-SOURCE-TRACE-01：付款申请来源追溯（列表 / 详情共用同一口径；导出供回归测试直接调用）
   resolvePaymentSourcesForRequests,
   buildPaymentSourceContext,
