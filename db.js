@@ -297,7 +297,18 @@ if (driver === 'pg') {
         // nullable / no default：历史 ci_cost_items 的 linkage 未知时为 NULL，不伪造 ''
         "ALTER TABLE ci_cost_items ADD COLUMN IF NOT EXISTS payable_item_id TEXT",
         // WAC-V2: wac_history 新增 logistics_batch_id，标记 WAC 确认来自哪个物流批次
-        "ALTER TABLE wac_history ADD COLUMN IF NOT EXISTS logistics_batch_id TEXT"
+        "ALTER TABLE wac_history ADD COLUMN IF NOT EXISTS logistics_batch_id TEXT",
+        // SCHEMA-BOOTSTRAP-P0: packing_lists 基础表 + 状态/物流关联/更新时间列迁移。
+        // 该 CREATE TABLE + ALTER 原本只写在 db-pg.js 的 initDatabase（worker_threads 模式下是死代码、生产从未执行），
+        // 导致空白/重置 PG 库 bootstrap 后 packing_lists 表从未创建，updateInventoryTransitData 引用的
+        // packing_lists.logistics_batch_id 列缺失 → transit 刷新在空白库失败。
+        // 补到此处的生产实际执行入口（db.js initDatabase 硬编码列表），使生产库补齐缺失表/列。
+        // 全部幂等（CREATE TABLE IF NOT EXISTS / ADD COLUMN IF NOT EXISTS）：生产已有该表则 no-op、零数据风险；
+        // 空白库则补齐 ⇒ 关闭 TRANSIT-P0。不改动 transit SQL、不动 packing_list_items、不动其它 schema drift。
+        "CREATE TABLE IF NOT EXISTS packing_lists (id TEXT PRIMARY KEY, pl_no TEXT NOT NULL UNIQUE, related_po_id TEXT DEFAULT '', related_po_no TEXT DEFAULT '', related_pi_id TEXT DEFAULT '', related_pi_no TEXT DEFAULT '', related_ci_id TEXT DEFAULT '', related_ci_no TEXT DEFAULT '', supplier_id TEXT DEFAULT '', supplier_name TEXT DEFAULT '', brand TEXT DEFAULT '', country TEXT DEFAULT '', target_warehouse TEXT DEFAULT '', pl_date TEXT DEFAULT '', total_qty INTEGER DEFAULT 0, total_cartons INTEGER DEFAULT 0, total_gross_weight DOUBLE PRECISION DEFAULT 0, total_net_weight DOUBLE PRECISION DEFAULT 0, total_cbm DOUBLE PRECISION DEFAULT 0, attachment TEXT DEFAULT '', remark TEXT DEFAULT '', created_at TEXT DEFAULT NOW())",
+        "ALTER TABLE packing_lists ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'draft'",
+        "ALTER TABLE packing_lists ADD COLUMN IF NOT EXISTS logistics_batch_id TEXT DEFAULT ''",
+        "ALTER TABLE packing_lists ADD COLUMN IF NOT EXISTS updated_at TEXT DEFAULT NOW()"
       ];
       for (var i = 0; i < migrations.length; i++) {
         try {
