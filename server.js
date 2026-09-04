@@ -3697,6 +3697,66 @@ app.post('/api/inventory-imports/bulk-import', requireApiPermission('inventory_i
       });
     }
     const result = { created: 0, updated: 0, failed: 0, tombstones_lifted: 0, errors: [] };
+    // 单次批量导入行数上限（禁止静默截断 / slice）
+    if (items.length > MAX_INVENTORY_IMPORT_ROWS) {
+      return res.status(400).json({
+        error: `单次库存导入最多 ${MAX_INVENTORY_IMPORT_ROWS} 条，当前 ${items.length} 条（已拒绝，零写入）`,
+        blocked: true, created: 0, updated: 0, failed: items.length
+      });
+    }
+    // ===== P0-C2: PG set-based fast path（all-or-nothing，无 fallback）=====
+    if (isPgDriver()) {
+      // 1) 全量前校验：任何一行无效 → 整批拒绝，零写入
+      const validated = [];
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (!item.sku_code || !item.import_date) { result.failed++; result.errors.push({ row: i + 2, reason: 'SKU或导入日期为空' }); continue; }
+        const rawAvailQty = item.available_qty;
+        if (rawAvailQty === null || rawAvailQty === undefined || String(rawAvailQty).trim() === '') { result.failed++; result.errors.push({ row: i + 2, reason: '可用数量必须为非负整数' }); continue; }
+        const availQty = Number(rawAvailQty);
+        if (!Number.isFinite(availQty) || !Number.isInteger(availQty) || availQty < 0) { result.failed++; result.errors.push({ row: i + 2, reason: '可用数量必须为非负整数' }); continue; }
+        validated.push({
+          id: genId('inv_imp'),
+          import_date: normalizeImportDate(item.import_date),
+          country: item.country || '',
+          warehouse: item.warehouse || '',
+          channel: item.channel || '',
+          sku_code: item.sku_code,
+          available_qty: availQty,
+          remark: item.remark || '',
+          snapshot_cutoff_date: snapshotCutoffDate,
+          brand: item.brand || '',
+          weighted_avg_cost: parseFloat(item.weighted_avg_cost) || 0,
+          last_inbound_date: item.last_inbound_date || '',
+          first_inbound_date: item.first_inbound_date || ''
+        });
+      }
+      if (result.failed > 0) {
+        return res.status(422).json({ error: '库存导入校验未通过，PG 要求整批原子写入，已拒绝本次导入（零写入）', created: 0, updated: 0, failed: result.failed, errors: result.errors });
+      }
+      // 2) 去重 business keys（使用与存储一致的 '' 归一：item.country||'' / item.warehouse||''）
+      const keyMap = new Map();
+      for (const r of validated) {
+        const k = r.sku_code + '\0' + r.country + '\0' + r.warehouse;
+        if (!keyMap.has(k)) keyMap.set(k, { sku_code: r.sku_code, country: r.country, warehouse: r.warehouse });
+      }
+      const keys = Array.from(keyMap.values());
+      const liftTuples = keys.map(k => ({ sku_code: k.sku_code, country: k.country, warehouse: k.warehouse }));
+      // 3) 事务内：批量 INSERT + 批量解除 tombstone（任一失败 → ROLLBACK → throw → 500，无逐行 retry / 无慢路径 fallback）
+      try {
+        transaction(() => {
+          run(pgBatchImportInsertSql(), [JSON.stringify(validated)]);
+          const lifted = run(pgBatchTombstoneLiftSql(), [JSON.stringify(liftTuples)]);
+          result.tombstones_lifted = Number((lifted && (lifted.changes != null ? lifted.changes : lifted.rowCount)) || 0);
+        });
+        result.created = validated.length;
+      } catch (e) {
+        return res.status(500).json({ error: 'PG 批量导入失败，整批已回滚: ' + e.message, created: 0, updated: 0, failed: validated.length });
+      }
+      // 4) 仅刷新受影响 K 个 key（scoped refresh，绝不重处理全库 M）
+      const refreshResult = await refreshInventoryTotalsForKeys(keys, snapshotCutoffDate);
+      return res.json({ ...result, snapshot_cutoff_date: snapshotCutoffDate, wac_warnings: refreshResult.warnings || [] });
+    }
     transaction(() => {
       items.forEach((item, i) => {
         let imported = false; // 本条 inventory_imports 是否已成功写入（用于区分「导入前失败」与「导入后失败」）
@@ -4300,6 +4360,39 @@ function latestImportsSql() {
       )`;
 }
 
+// P0-C2: scoped sibling of latestImportsSql —— 仅查本次 affected K 个 business key。
+// 与 latestImportsSql() 唯一区别：末尾追加 (sku,country,warehouse) IN (jsonb key set)。
+// 保留完全相同的 tombstone 过滤与 latest-per-key MAX(import_date) 语义；旧函数不动。
+function latestImportsSqlForKeySet() {
+  const driver = (process.env.DB_DRIVER || 'sqlite').toLowerCase();
+  if (driver === 'pg') {
+    return `
+      SELECT sku_code, country, warehouse, available_qty, import_date, snapshot_cutoff_date, weighted_avg_cost, last_inbound_date, first_inbound_date
+      FROM inventory_imports i1
+      WHERE i1.import_date IS NOT NULL AND i1.import_date <> ''
+        AND NOT EXISTS (
+          SELECT 1 FROM inventory_delete_tombstones t1
+          WHERE t1.sku_code = i1.sku_code AND t1.country = i1.country AND t1.warehouse = i1.warehouse
+        )
+        AND i1.import_date::date = (
+          SELECT MAX(i2.import_date::date)
+          FROM inventory_imports i2
+          WHERE i2.sku_code = i1.sku_code AND i2.country = i1.country AND i2.warehouse = i1.warehouse
+            AND i2.import_date IS NOT NULL AND i2.import_date <> ''
+            AND NOT EXISTS (
+              SELECT 1 FROM inventory_delete_tombstones t2
+              WHERE t2.sku_code = i2.sku_code AND t2.country = i2.country AND t2.warehouse = i2.warehouse
+            )
+        )
+        AND (i1.sku_code, i1.country, i1.warehouse) IN (
+          SELECT j.sku_code, j.country, j.warehouse
+          FROM jsonb_to_recordset($1::jsonb) AS j(sku_code text, country text, warehouse text)
+        )`;
+  }
+  // 非 PG：refreshInventoryTotalsForKeys 已委托回旧全量函数，本分支不会命中；返回空结果以防万一。
+  return `SELECT sku_code, country, warehouse, available_qty, import_date, snapshot_cutoff_date, weighted_avg_cost, last_inbound_date, first_inbound_date FROM inventory_imports WHERE 1 = 0`;
+}
+
 // P0-B-HELPER: original refreshInventoryTotals loop（字节级原样保留旧 for 逻辑）
 // 用途：duplicate import / duplicate inventory 时 fallback；SQLite 路径；parity 基准
 // 禁止任何"等价重写"，保持 helper 内容与旧 for 循环完全一致。
@@ -4588,6 +4681,152 @@ async function refreshInventoryTotals(snapshotCutoffDate) {
 
   updateInventoryTransitData().catch(err => {
     console.warn('[refreshInventoryTotals] 在途数据刷新失败（事务已提交）:', err && err.message);
+  });
+  return { warnings };
+}
+
+// P0-C2: scoped sibling of refreshInventoryTotals —— 只刷新本次导入影响的 K 个 business key。
+// 不修改共享的 latestImportsSql()（启动期全量刷新仍走旧函数）；duplicate 语义沿用
+// runOriginalInventoryTotalsLoop，但 fallback 输入仅限本次 affected scoped rows（绝不重处理全库 M）。
+async function refreshInventoryTotalsForKeys(keys, snapshotCutoffDate) {
+  if (!isPgDriver()) {
+    // 非 PG（SQLite / 测试）：保持旧全量 loop 语义（本轮只优化 PG）
+    return refreshInventoryTotals(snapshotCutoffDate);
+  }
+  const warnings = [];
+  if (!keys || keys.length === 0) {
+    updateInventoryTransitData().catch(err => {
+      console.warn('[refreshInventoryTotalsForKeys] 在途数据刷新失败（事务已提交）:', err && err.message);
+    });
+    return { warnings };
+  }
+  const latestImports = query(latestImportsSqlForKeySet(), [JSON.stringify(keys)]).rows;
+  if (latestImports.length === 0) {
+    updateInventoryTransitData().catch(err => {
+      console.warn('[refreshInventoryTotalsForKeys] 在途数据刷新失败（事务已提交）:', err && err.message);
+    });
+    return { warnings };
+  }
+
+  const keySeen = new Map();
+  let hasDupImportKey = false;
+  for (let i = 0; i < latestImports.length; i++) {
+    const imp = latestImports[i];
+    const k = imp.sku_code + '\0' + imp.country + '\0' + imp.warehouse;
+    if (keySeen.has(k)) { hasDupImportKey = true; break; }
+    keySeen.set(k, true);
+  }
+
+  if (hasDupImportKey) {
+    transaction(() => {
+      runOriginalInventoryTotalsLoop(latestImports, snapshotCutoffDate, warnings);
+    });
+  } else {
+    const inputKeys = latestImports.map((imp, ord) => ({
+      ord,
+      sku_code: imp.sku_code,
+      country:  imp.country,
+      warehouse: imp.warehouse
+    }));
+    const inputKeysJson = JSON.stringify(inputKeys);
+
+    transaction(() => {
+      const snapRes = query(PG_REFRESH_SNAPSHOT_SQL, [inputKeysJson]);
+      const snapshotRows = snapRes && snapRes.rows ? snapRes.rows : [];
+
+      if (snapshotRows.length !== latestImports.length) {
+        throw new Error('[refreshInventoryTotalsForKeys P0-C2] snapshot length mismatch: ' + snapshotRows.length + ' !== ' + latestImports.length);
+      }
+      for (let i = 0; i < latestImports.length; i++) {
+        const r = snapshotRows[i];
+        const imp = latestImports[i];
+        if (r.ord !== i ||
+            r.sku_code  !== imp.sku_code ||
+            r.country   !== imp.country ||
+            r.warehouse !== imp.warehouse) {
+          throw new Error('[refreshInventoryTotalsForKeys P0-C2] snapshot ord/key mismatch at index ' + i);
+        }
+      }
+
+      if (snapshotRows.some(r => Number(r.inventory_match_count) > 1)) {
+        runOriginalInventoryTotalsLoop(latestImports, snapshotCutoffDate, warnings);
+        return;
+      }
+
+      const updatePayload = [];
+      const insertPayload = [];
+      for (let i = 0; i < snapshotRows.length; i++) {
+        const r = snapshotRows[i];
+        const imp = latestImports[i];
+        const cutoff = imp.snapshot_cutoff_date || snapshotCutoffDate || '';
+        let wac;
+        if (r.wc_id != null) {
+          wac = r.wc_cost != null ? Number(r.wc_cost) || 0 : 0;
+        } else if (r.ex_id != null && ((r.ex_wac == null ? 0 : Number(r.ex_wac)) || 0) !== 0) {
+          wac = (r.ex_wac == null ? 0 : Number(r.ex_wac)) || 0;
+          warnings.push({
+            sku_code: imp.sku_code, country: imp.country, warehouse: imp.warehouse,
+            priority: 'warning',
+            message: '未找到最新已确认加权平均成本，已保留原成本，请完成成本确认。'
+          });
+        } else if (imp.weighted_avg_cost && Number(imp.weighted_avg_cost) > 0) {
+          wac = Number(imp.weighted_avg_cost);
+        } else {
+          wac = 0;
+          warnings.push({
+            sku_code: imp.sku_code, country: imp.country, warehouse: imp.warehouse,
+            priority: 'high',
+            message: '未找到已确认加权平均成本，成本与金额暂为 0，请尽快完成成本确认。'
+          });
+        }
+        const invValue = (parseInt(imp.available_qty) || 0) * wac;
+        const newLastInbound =
+          (imp.last_inbound_date && String(imp.last_inbound_date).trim())
+            ? imp.last_inbound_date
+            : (r.ex_id != null ? r.ex_li : '');
+        const newFirstInbound =
+          (imp.first_inbound_date && String(imp.first_inbound_date).trim())
+            ? imp.first_inbound_date
+            : (r.ex_id != null ? r.ex_fi : '');
+        if (r.ex_id != null) {
+          updatePayload.push({
+            id: r.ex_id,
+            available_qty: parseInt(imp.available_qty) || 0,
+            weighted_avg_cost: wac,
+            inventory_value: invValue,
+            last_import_date: imp.import_date,
+            snapshot_cutoff_date: cutoff,
+            last_inbound_date: newLastInbound,
+            first_inbound_date: newFirstInbound
+          });
+        } else {
+          insertPayload.push({
+            id: genId('inv'),
+            sku_code: imp.sku_code,
+            country: imp.country,
+            warehouse: imp.warehouse,
+            available_qty: parseInt(imp.available_qty) || 0,
+            weighted_avg_cost: wac,
+            inventory_value: invValue,
+            last_import_date: imp.import_date,
+            snapshot_cutoff_date: cutoff,
+            last_inbound_date: newLastInbound,
+            first_inbound_date: newFirstInbound
+          });
+        }
+      }
+
+      if (updatePayload.length > 0) {
+        run(PG_REFRESH_UPDATE_SQL, [JSON.stringify(updatePayload)]);
+      }
+      if (insertPayload.length > 0) {
+        run(PG_REFRESH_INSERT_SQL, [JSON.stringify(insertPayload)]);
+      }
+    });
+  }
+
+  updateInventoryTransitData().catch(err => {
+    console.warn('[refreshInventoryTotalsForKeys] 在途数据刷新失败（事务已提交）:', err && err.message);
   });
   return { warnings };
 }
@@ -18027,6 +18266,7 @@ async function recalcInventoryForSkusBackground(importId, affectedSkus) {
 // 依据：当前生产 inventory 约 573 行；2000 提供明显 headroom，同时限制
 //       JSONB payload 体积与单事务持锁时长。
 const MAX_BATCH_SET_ITEMS = 2000;
+const MAX_INVENTORY_IMPORT_ROWS = 5000;
 
 // 允许批量设置的列 → PG jsonb_to_recordset 里的目标类型。
 // 用于校验 column 白名单（column 会拼接进 SQL，绝不接受外部输入）。
@@ -18062,6 +18302,126 @@ function pgBatchSetUpdateSql(column, pgType) {
       FROM jsonb_to_recordset($1::jsonb) AS src(id text, new_value ${pgType})
       WHERE i.id = src.id::text`;
 }
+
+// ============================================================
+// P0-C2: 库存导入批量写入（PG set-based，all-or-nothing，无 fallback）
+// ============================================================
+function pgBatchImportInsertSql() {
+  return `
+      INSERT INTO inventory_imports (
+        id, import_date, country, warehouse, channel, sku_code,
+        available_qty, remark, snapshot_cutoff_date, brand,
+        weighted_avg_cost, last_inbound_date, first_inbound_date
+      )
+      SELECT
+        id::text, import_date::text, country::text, warehouse::text, channel::text, sku_code::text,
+        available_qty::integer, remark::text, snapshot_cutoff_date::text, brand::text,
+        weighted_avg_cost::numeric, last_inbound_date::text, first_inbound_date::text
+      FROM jsonb_to_recordset($1::jsonb) AS j(
+        id text, import_date text, country text, warehouse text, channel text, sku_code text,
+        available_qty integer, remark text, snapshot_cutoff_date text, brand text,
+        weighted_avg_cost numeric, last_inbound_date text, first_inbound_date text
+      )`;
+}
+function pgBatchTombstoneLiftSql() {
+  return `
+      DELETE FROM inventory_delete_tombstones
+      WHERE (sku_code, country, warehouse) IN (
+        SELECT j.sku_code, j.country, j.warehouse
+        FROM jsonb_to_recordset($1::jsonb) AS j(sku_code text, country text, warehouse text)
+      )`;
+}
+// 以下三条与 refreshInventoryTotals 内部的 pgSnapshotSql / pgBatchUpdateSql /
+// pgBatchInsertSql 逐字一致（verbatim copy），仅抽成模块级常量供 scoped refresh 复用；
+// 旧 refreshInventoryTotals 本体保持不变。
+const PG_REFRESH_SNAPSHOT_SQL = `      WITH inp AS (
+        SELECT ord, sku_code, country, warehouse
+        FROM jsonb_to_recordset($1::jsonb) AS j(
+          ord integer,
+          sku_code text,
+          country text,
+          warehouse text
+        )
+      )
+      SELECT inp.ord,
+             inp.sku_code, inp.country, inp.warehouse,
+             COALESCE(ex.inventory_match_count, 0)::bigint AS inventory_match_count,
+             ex.id            AS ex_id,
+             ex.wac           AS ex_wac,
+             ex.li            AS ex_li,
+             ex.fi            AS ex_fi,
+             wc.id            AS wc_id,
+             wc.cost          AS wc_cost
+      FROM inp
+      LEFT JOIN LATERAL (
+        SELECT
+          i.id,
+          i.weighted_avg_cost AS wac,
+          i.last_inbound_date AS li,
+          i.first_inbound_date AS fi,
+          COUNT(*) OVER() AS inventory_match_count
+        FROM inventory i
+        WHERE i.sku_code = inp.sku_code
+          AND i.country  = inp.country
+          AND i.warehouse = inp.warehouse
+        LIMIT 1
+      ) ex ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT w.id, w.new_avg_cost AS cost
+        FROM wac_history w
+        WHERE w.sku_code = inp.sku_code
+          AND w.country  = inp.country
+          AND w.warehouse = inp.warehouse
+          AND w.confirmation_status = 'confirmed'
+          AND w.is_locked = 1
+        ORDER BY w.version_no DESC
+        LIMIT 1
+      ) wc ON TRUE
+      ORDER BY inp.ord`;
+const PG_REFRESH_UPDATE_SQL = `      UPDATE inventory i SET
+        available_qty         = src.available_qty::integer,
+        weighted_avg_cost     = src.weighted_avg_cost::numeric,
+        inventory_value       = src.inventory_value::numeric,
+        last_import_date      = src.last_import_date::text,
+        snapshot_cutoff_date  = src.snapshot_cutoff_date::text,
+        last_inbound_date     = src.last_inbound_date::text,
+        first_inbound_date    = src.first_inbound_date::text,
+        updated_at            = to_char(CURRENT_TIMESTAMP, 'YYYY-MM-DD HH24:MI:SS')
+      FROM jsonb_to_recordset($1::jsonb) AS src(
+        id                    text,
+        available_qty         numeric,
+        weighted_avg_cost     numeric,
+        inventory_value       numeric,
+        last_import_date      text,
+        snapshot_cutoff_date  text,
+        last_inbound_date     text,
+        first_inbound_date    text
+      )
+      WHERE i.id = src.id::text`;
+const PG_REFRESH_INSERT_SQL = `      INSERT INTO inventory (
+        id, sku_code, country, warehouse,
+        available_qty, weighted_avg_cost, inventory_value,
+        last_import_date, snapshot_cutoff_date,
+        last_inbound_date, first_inbound_date
+      )
+      SELECT
+        id::text, sku_code::text, country::text, warehouse::text,
+        available_qty::integer, weighted_avg_cost::numeric, inventory_value::numeric,
+        last_import_date::text, snapshot_cutoff_date::text,
+        last_inbound_date::text, first_inbound_date::text
+      FROM jsonb_to_recordset($1::jsonb) AS j(
+        id                    text,
+        sku_code              text,
+        country               text,
+        warehouse             text,
+        available_qty         numeric,
+        weighted_avg_cost     numeric,
+        inventory_value       numeric,
+        last_import_date      text,
+        snapshot_cutoff_date  text,
+        last_inbound_date     text,
+        first_inbound_date    text
+      )`;
 
 // 3) 一次批量聚合销售事实：替代 recalcInventoryForSku 内的两次逐 SKU 查询。
 //    语义等价性：
@@ -18979,6 +19339,7 @@ module.exports = {
   validateInventoryImportRows,
   // P0-C1：库存总表批量设置（导出供 call-count / parity 回归测试直接调用）
   MAX_BATCH_SET_ITEMS,
+  MAX_INVENTORY_IMPORT_ROWS,
   applyInventoryBatchSet,
   applyInventoryBatchSetPg,
   applyInventoryBatchSetRowByRow,
@@ -18987,5 +19348,10 @@ module.exports = {
   pgBatchSetLookupSql,
   pgBatchSetUpdateSql,
   pgSalesFactsSql,
-  pgBatchLogInsertSql
+  pgBatchLogInsertSql,
+  // P0-C2：库存导入批量写入（导出供 call-count / parity / real-PG 回归测试直接调用）
+  pgBatchImportInsertSql,
+  pgBatchTombstoneLiftSql,
+  latestImportsSqlForKeySet,
+  refreshInventoryTotalsForKeys
 };
