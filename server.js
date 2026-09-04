@@ -9020,6 +9020,12 @@ app.get('/api/commercial-invoices', requireApiPermission('ci_view'), asyncHandle
   sql += ' ORDER BY created_at DESC';
   let rows = query(sql, params).rows;
 
+  // CI/PAYMENT UNIFY：运营 CI 尾款付款事实统一取自 payable_items settlement（Single Source of Truth）
+  rows.forEach(r => {
+    const f = computeOperatingCIBalancePaymentFacts(r.id);
+    if (f) Object.assign(r, f);
+  });
+
   // ── 展示层派生字段：关联物流单、物流展示状态、入库状态（不修改底层 ci_status） ──
   // 1. 批量查询每个 CI 关联的物流单
   const ciIds = rows.map(r => r.id);
@@ -9117,6 +9123,9 @@ app.get('/api/commercial-invoices/:id', requireApiPermission('ci_view'), asyncHa
   const ci = queryOne('SELECT *, (goods_amount - COALESCE(actual_deducted_deposit, 0) - COALESCE(payable_balance, 0)) AS amount_difference FROM commercial_invoices WHERE id = ?', [req.params.id]);
   if (!ci) return res.status(404).json({ error: 'CI不存在' });
   ci.payable_date = String(ci.due_date || '').trim() || computePayableDate(ci.actual_ship_date, ci.credit_days);
+  // CI/PAYMENT UNIFY：运营 CI 尾款付款事实统一取自 payable_items settlement
+  const opBalFacts = computeOperatingCIBalancePaymentFacts(ci.id);
+  if (opBalFacts) Object.assign(ci, opBalFacts);
   const items = query('SELECT * FROM commercial_invoice_items WHERE ci_id = ? ORDER BY created_at', [req.params.id]).rows;
   // LOGISTICS-CLOSED-LOOP-PHASE1: 改 queryOne→query，返回 packing_lists 数组（支持一 CI 多 PL）
   const pls = query('SELECT * FROM packing_lists WHERE related_ci_id = ? ORDER BY created_at', [req.params.id]).rows;
@@ -12452,7 +12461,11 @@ function payableItemsSettledMinor(itemIds) {
 //   deductionMinor= PR 级抵扣（applied，按本项在该 PR 内占比分摊）
 //   roundingMinor = PR 级抹零（applied，按本项占比分摊）
 // 剩余可付 = payable_amount_minor - paidMinor - deductionMinor - roundingMinor。
-function payableItemsSettlementBreakdown(itemIds) {
+function payableItemsSettlementBreakdown(itemIds, opts) {
+  // CI/PAYMENT UNIFY：opts.excludeLegacy=true 时排除 is_legacy=1 导入期付款。
+  // 仅历史 CI 读取路径使用（导入历史已付已在 historical_paid_amount 展示，legacy 再计入会双算）；
+  // 不传 opts 时行为与旧版完全一致（财务既有调用零影响）。
+  const excludeLegacy = !!(opts && opts.excludeLegacy);
   const result = new Map();
   const ids = [...new Set((itemIds || []).filter(Boolean))];
   ids.forEach(id => result.set(id, { paidMinor: 0, deductionMinor: 0, roundingMinor: 0 }));
@@ -12480,14 +12493,16 @@ function payableItemsSettlementBreakdown(itemIds) {
   ).rows.forEach(r => paidByPri.set(r.payment_request_item_id, Number(r.paid_minor || 0)));
   // 历史 legacy 付款（applied 的 payment 事件，is_legacy=1），PR 级，需按占比分摊到各 pri
   const legacyPaidByPr = new Map();
-  query(
-    `SELECT payment_request_id, SUM(amount) AS amt
-     FROM payment_settlement_logs
-     WHERE status = 'applied' AND event_type = 'payment' AND is_legacy = 1
-       AND payment_request_id IN (${prIds.map(() => '?').join(',')})
-     GROUP BY payment_request_id`,
-    prIds
-  ).rows.forEach(r => legacyPaidByPr.set(r.payment_request_id, amountToMinor(r.amt)));
+  if (!excludeLegacy) {
+    query(
+      `SELECT payment_request_id, SUM(amount) AS amt
+       FROM payment_settlement_logs
+       WHERE status = 'applied' AND event_type = 'payment' AND is_legacy = 1
+         AND payment_request_id IN (${prIds.map(() => '?').join(',')})
+       GROUP BY payment_request_id`,
+      prIds
+    ).rows.forEach(r => legacyPaidByPr.set(r.payment_request_id, amountToMinor(r.amt)));
+  }
   // PR 级抵扣 + 抹零（applied），按本项占比分摊
   const dedByPr = new Map();
   const rndByPr = new Map();
@@ -13576,24 +13591,105 @@ async function createHistoricalCI(body, req) {
   return result;
 }
 
+// CI/PAYMENT UNIFY：payment_status 派生 —— 严格镜像 aggregateSourceSettlement().sourcePayStatus（财务冻结口径）
+// allSettled ? 'paid' : hasSettlement ? 'partial_paid' : hasPendingApproval ? 'pending_approval' : 'unpaid'
+function ciPaymentStatusFromFacts(itemCount, unpaidAmount, hasSettlement, hasPendingApproval) {
+  const allSettled = itemCount > 0 && unpaidAmount <= 0;
+  if (allSettled) return 'paid';
+  if (hasSettlement) return 'partial_paid';
+  if (hasPendingApproval) return 'pending_approval';
+  return 'unpaid';
+}
+
+// CI/PAYMENT UNIFY：检查 payable items 上是否存在 pending 审批中的付款申请（与财务 hasPendingApproval 同口径）
+function hasPendingApprovalOnPayableItems(ids) {
+  if (!ids.length) return false;
+  const row = queryOne(
+    `SELECT 1 AS x FROM payment_request_items pri
+     JOIN payment_requests pr ON pr.id = pri.payment_request_id
+     WHERE pri.payable_item_id IN (${ids.map(() => '?').join(',')})
+       AND pr.approval_status = 'pending'
+       AND pr.payment_status NOT IN ('cancelled','rejected')
+       AND pr.approval_status NOT IN ('cancelled','rejected')
+     LIMIT 1`,
+    ids
+  );
+  return !!row;
+}
+
+// CI/PAYMENT UNIFY：历史 CI 付款事实（复用 payableItemsSettlementBreakdown SSOT）
+// 导入历史已付 = historical_commercial_invoices.historical_paid_amount（线下/旧系统已付，独立展示）。
+// 后续已付   = 当前系统 balance payable_item（source_type='historical_ci', source_id=hciId）的 settlement，
+//              且排除 is_legacy=1（导入期 legacy log = 导入已付本身，计入会与 imported 双算——
+//              createHistoricalCI 是 hci legacy payment 的唯一写入点，运费补录 legacy 走 logistics_batch 不经过此链路）。
+// 应付基数   = Σ payable_items.payable_amount_minor（财务冻结口径 = gross − PI 定金抵扣）；
+//              无 payable item 时防御性回退 gross_goods_amount。
+function computeHistoricalCIPaymentFacts(hciId) {
+  const hci = queryOne('SELECT id, historical_ci_no, historical_paid_amount, gross_goods_amount FROM historical_commercial_invoices WHERE id = ?', [hciId]);
+  if (!hci) return null;
+  const items = query("SELECT id, payable_amount_minor FROM payable_items WHERE source_type = 'historical_ci' AND source_id = ?", [hciId]).rows;
+  const ids = items.map(i => i.id);
+  const bd = payableItemsSettlementBreakdown(ids, { excludeLegacy: true });
+  let paidMinor = 0, dedMinor = 0, rndMinor = 0;
+  ids.forEach(id => {
+    const b = bd.get(id) || { paidMinor: 0, deductionMinor: 0, roundingMinor: 0 };
+    paidMinor += b.paidMinor; dedMinor += b.deductionMinor; rndMinor += b.roundingMinor;
+  });
+  const historicalPaidAmount = settlementMoney(Number(hci.historical_paid_amount || 0));
+  const baseGross = items.length > 0
+    ? settlementMoney(minorToAmount(items.reduce((s, i) => s + (Number(i.payable_amount_minor) || 0), 0)))
+    : settlementMoney(Number(hci.gross_goods_amount || 0));
+  const subsequentPaidAmount = settlementMoney(minorToAmount(paidMinor));
+  const deductionAmount = settlementMoney(minorToAmount(dedMinor));
+  const roundingAmount = settlementMoney(minorToAmount(rndMinor));
+  const unpaidAmount = settlementMoney(Math.max(0, baseGross - historicalPaidAmount - subsequentPaidAmount - deductionAmount - roundingAmount));
+  const hasSettlement = historicalPaidAmount > 0 || subsequentPaidAmount > 0 || deductionAmount > 0 || roundingAmount > 0;
+  const paymentStatus = ciPaymentStatusFromFacts(items.length, unpaidAmount, hasSettlement, hasPendingApprovalOnPayableItems(ids));
+  // 返回 snake_case，与前端历史 CI 列表/详情读取字段严格对齐
+  return { subsequent_paid_amount: subsequentPaidAmount, deduction_amount: deductionAmount, rounding_amount: roundingAmount, unpaid_amount: unpaidAmount, payment_status: paymentStatus };
+}
+
+// CI/PAYMENT UNIFY：运营 CI 尾款付款事实（复用 payableItemsSettlementBreakdown SSOT）
+// 运营 CI 尾款付款经 per-PI balance 应付项（source_type='pi', source_ci_id=ciId, fee_type='balance'）
+// 以及（如有）CI 级 balance 应付项（source_type='ci', source_id=ciId）。
+// 已付定金(actual_deducted_deposit) 为独立存列，不在此事实内重复计算；
+// 运营 CI 为系统内生单据、无 imported-paid 概念，legacy settlement（如有）计入已付尾款。
+function computeOperatingCIBalancePaymentFacts(ciId) {
+  const items = query(
+    `SELECT id, payable_amount_minor FROM payable_items
+     WHERE fee_type = 'balance' AND ((source_type = 'ci' AND source_id = ?) OR (source_type = 'pi' AND source_ci_id = ?))`,
+    [ciId, ciId]
+  ).rows;
+  const ids = items.map(i => i.id);
+  const bd = payableItemsSettlementBreakdown(ids);
+  let paidMinor = 0, dedMinor = 0, rndMinor = 0;
+  ids.forEach(id => {
+    const b = bd.get(id) || { paidMinor: 0, deductionMinor: 0, roundingMinor: 0 };
+    paidMinor += b.paidMinor; dedMinor += b.deductionMinor; rndMinor += b.roundingMinor;
+  });
+  // 尾款应付总额（gross）以 payable_items SSOT 为准；无 balance 应付项时回退 stored payable_balance（导入期快照）。
+  const priGrossMinor = items.reduce((s, i) => s + (Number(i.payable_amount_minor) || 0), 0);
+  const ciRow = queryOne('SELECT COALESCE(payable_balance, 0) AS payable_balance FROM commercial_invoices WHERE id = ?', [ciId]);
+  const storedGross = settlementMoney(Number(ciRow ? ciRow.payable_balance : 0) || 0);
+  const grossBalance = priGrossMinor > 0 ? settlementMoney(minorToAmount(priGrossMinor)) : storedGross;
+  const paidAmount = settlementMoney(minorToAmount(paidMinor));
+  const deductionAmount = settlementMoney(minorToAmount(dedMinor));
+  const roundingAmount = settlementMoney(minorToAmount(rndMinor));
+  const unpaidAmount = settlementMoney(Math.max(0, grossBalance - paidAmount - deductionAmount - roundingAmount));
+  const hasSettlement = paidAmount > 0 || deductionAmount > 0 || roundingAmount > 0;
+  const paymentStatus = ciPaymentStatusFromFacts(items.length, unpaidAmount, hasSettlement, hasPendingApprovalOnPayableItems(ids));
+  // 返回 snake_case，与前端运营 CI 列表/详情读取字段严格对齐
+  return { balance_gross_amount: grossBalance, balance_paid_amount: paidAmount, balance_deduction_amount: deductionAmount, balance_rounding_amount: roundingAmount, balance_unpaid_amount: unpaidAmount, balance_payment_status: paymentStatus };
+}
+
 function historicalCISelectSql() {
-  return `SELECT h.*, pr.request_no, pr.payable_amount, pr.paid_amount, pr.deduction_amount,
-                 pr.rounding_amount, pr.unpaid_amount, pr.payment_status, pr.approval_status,
-                 COALESCE((SELECT SUM(l.amount) FROM payment_settlement_logs l
-                           WHERE l.payment_request_id = h.payment_request_id AND l.event_type = 'payment'
-                             AND l.is_legacy = 1 AND l.status = 'applied'), 0) AS historical_paid_effective,
-                 COALESCE((SELECT SUM(l.amount) FROM payment_settlement_logs l
-                           WHERE l.payment_request_id = h.payment_request_id AND l.event_type = 'payment'
-                             AND l.is_legacy = 0 AND l.status = 'applied'), 0) AS subsequent_paid_amount
-          FROM historical_commercial_invoices h
-          JOIN payment_requests pr ON pr.id = h.payment_request_id`;
+  return `SELECT h.* FROM historical_commercial_invoices h`;
 }
 
 app.get('/api/historical-commercial-invoices', requireApiPermission('ci_view'), asyncHandler((req, res) => {
   try {
     let sql = historicalCISelectSql() + ' WHERE 1=1';
     const params = [];
-    if (req.query.status) { sql += ' AND pr.payment_status = ?'; params.push(req.query.status); }
     if (req.query.keyword) {
       sql += ' AND (h.historical_ci_no LIKE ? OR h.supplier_name LIKE ? OR h.brand_name LIKE ?)';
       const pattern = `%${req.query.keyword}%`;
@@ -13602,7 +13698,15 @@ app.get('/api/historical-commercial-invoices', requireApiPermission('ci_view'), 
     if (req.query.country) { const al = countryAliases(req.query.country); sql += ' AND h.country IN (' + al.map(() => '?').join(',') + ')'; al.forEach(a => params.push(a)); }
     if (req.query.brand) { sql += ' AND h.brand_name = ?'; params.push(req.query.brand); }
     sql += ' ORDER BY h.ci_date DESC, h.created_at DESC';
-    res.json(query(sql, params).rows);
+    const rows = query(sql, params).rows;
+    // CI/PAYMENT UNIFY：付款事实统一取自 payable_items settlement（Single Source of Truth）
+    rows.forEach(r => {
+      const f = computeHistoricalCIPaymentFacts(r.id);
+      if (f) Object.assign(r, f);
+    });
+    // 付款状态过滤（payment_status 现由 settlement 实时派生，不再依赖 payment_requests 主表）
+    const out = req.query.status ? rows.filter(r => (r.payment_status || '') === req.query.status) : rows;
+    res.json(out);
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
@@ -13671,6 +13775,9 @@ app.get('/api/historical-commercial-invoices/:id', requireApiPermission('ci_view
   try {
     const historical = queryOne(historicalCISelectSql() + ' WHERE h.id = ?', [req.params.id]);
     if (!historical) return res.status(404).json({ error: '历史 CI 不存在' });
+    // CI/PAYMENT UNIFY：付款事实统一取自 payable_items settlement
+    const f = computeHistoricalCIPaymentFacts(historical.id);
+    if (f) Object.assign(historical, f);
     historical.items = query('SELECT sku_code, shipped_qty, unit_price, discount, net_unit_price, ci_amount FROM historical_commercial_invoice_items WHERE hci_id = ? ORDER BY created_at, id', [req.params.id]).rows;
     res.json(historical);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -15038,11 +15145,31 @@ app.post('/api/payment-requests/multi-expense', requireApiPermission('payment_cr
     const totalAmountMinor = items.rows.reduce((s, r) => s + (remainingByItem.get(r.id) || 0), 0);
     const totalAmount = minorToAmount(totalAmountMinor); // 仅作展示参考，不作为审批/付款依据
     const itemCount = items.rows.length;
-    // PAY-MULTI category 推导（创建逻辑修复）：合并来源全部为货款(pi/ci/historical_ci)时标记为 goods，
-    // 审批时自动跳过付款日 realtime 汇率校验；含非货款来源时保持 ''（仍走付款日汇率校验，符合非货款费用要求）。
-    // historical_ci 为 CI 历史形态，本质仍属 CI 货款，需纳入 goods 判定，否则会误判为 non-goods 触发汇率校验。
+    // PAY-MULTI category 推导（修复 #5E 潜伏正确性 bug）：
+    // payment_category='goods' 业务语义 = 「这笔 payable 的付款性质属于货款，并因此不使用付款日 realtime FX」。
+    // 不能仅按 source_type ∈ {pi,ci,historical_ci} 判定（否则 CI 内嵌 freight/customs/inspection 会被误判
+    // goods 而跳过付款日 realtime 汇率校验，导致结算台账本币/人民币金额写 0 的财务错报）。
+    // 权威判定（组合真实费用分类字段，非单一 fee_type 判断）：
+    //   货物来源  source_type  ∈ {pi,ci,historical_ci}
+    //   AND 货款费用分类 category_code = 'goods'
+    //   AND 货款费类   fee_type     ∈ {deposit,balance}
+    //   AND (subcategory_code 为空 OR ∈ {deposit,balance})
+    // 注意：保留 _goodsSources 中的 'ci'（真实 CI 货款尾款/定金仍依赖 ci 来源判定），但必须同时满足
+    // category_code='goods' 才判 goods；CI 内嵌 freight/customs/inspection 等费用分类非 'goods' 即判 non-goods。
     const _goodsSources = new Set(['pi', 'ci', 'historical_ci']);
-    const _allGoods = items.rows.length > 0 && items.rows.every(r => _goodsSources.has(String(r.source_type || '').toLowerCase()));
+    const _goodsFeeTypes = new Set(['deposit', 'balance']);
+    function _isGoodsPayableItem(r) {
+      if (!r) return false;
+      const sourceType = String(r.source_type || '').toLowerCase();
+      const feeType = String(r.fee_type || '').toLowerCase();
+      const categoryCode = String(r.category_code || '').toLowerCase();
+      const subcategoryCode = String(r.subcategory_code || '').toLowerCase();
+      return _goodsSources.has(sourceType)
+          && categoryCode === 'goods'
+          && _goodsFeeTypes.has(feeType)
+          && (subcategoryCode === '' || _goodsFeeTypes.has(subcategoryCode));
+    }
+    const _allGoods = items.rows.length > 0 && items.rows.every(r => _isGoodsPayableItem(r));
     const prCategory = _allGoods ? 'goods' : '';
     const prSubcategory = _allGoods
       ? (items.rows.every(r => String(r.fee_type || '') === 'deposit') ? 'deposit' : 'balance')
@@ -19323,6 +19450,8 @@ module.exports = {
   finalPaymentApprovalInput,
   paymentSettlementFacts,
   derivePaymentStatus,
+  computeHistoricalCIPaymentFacts,
+  computeOperatingCIBalancePaymentFacts,
   // PAY-SOURCE-TRACE-01：付款申请来源追溯（列表 / 详情共用同一口径；导出供回归测试直接调用）
   resolvePaymentSourcesForRequests,
   buildPaymentSourceContext,
