@@ -1119,6 +1119,22 @@ console.log('========================================\n');
 // P0-FIX-1：仅在直接运行 server.js 时初始化数据库，避免 require 时连接/seed 真实库
 if (require.main === module) {
   initDatabase();
+  // 库存安全删除 tombstone 表（PG 端由 migrations/ 建表；SQLite 端已由 db-sqlite.js 的 schema 初始化创建）。
+  // 【启动顺序门禁】必须在下方 refreshInventoryTotals('') 之前完成：
+  // latestImportsSql() 会引用 inventory_delete_tombstones，若建表未完成就执行 refresh，
+  // 首次部署会直接报 relation does not exist 并启动异常。
+  // 建表失败必须 fail-fast（process.exit），绝不可 catch 后继续走到引用该表的 SQL。
+  try {
+    require('./migrations/inventory-delete-tombstone').ensureInventoryDeleteTombstoneTable(
+      run, (process.env.DB_DRIVER || 'sqlite').toLowerCase() === 'pg'
+    );
+    console.log('[STARTUP] inventory_delete_tombstones 表就绪 ✓');
+  } catch (e) {
+    console.error('\n[FATAL] inventory_delete_tombstones 建表失败:', e.message);
+    console.error(e.stack);
+    console.error('\n[FATAL] 服务无法启动。请修正数据库后重试。');
+    process.exit(1);
+  }
   // 库存导入日期归一化回填：修复 M/D/YY 文本导致快照 MAX 字典序误判（根因 A）
   normalizeImportDatesBackfill();
   // 日期归一化后重新计算库存快照，使修正后的"最新批次"立即生效
@@ -3680,9 +3696,10 @@ app.post('/api/inventory-imports/bulk-import', requireApiPermission('inventory_i
         summary: precheck.summary
       });
     }
-    const result = { created: 0, updated: 0, failed: 0, errors: [] };
+    const result = { created: 0, updated: 0, failed: 0, tombstones_lifted: 0, errors: [] };
     transaction(() => {
       items.forEach((item, i) => {
+        let imported = false; // 本条 inventory_imports 是否已成功写入（用于区分「导入前失败」与「导入后失败」）
         try {
           if (!item.sku_code || !item.import_date) { result.failed++; result.errors.push({ row: i + 2, reason: 'SKU或导入日期为空' }); return; }
           // P1-INBOUND-01: 可用数量必须是严格非负整数；拒绝小数/带尾随字符/空/null/undefined/负数；禁止截断或静默变 0
@@ -3699,8 +3716,28 @@ app.post('/api/inventory-imports/bulk-import', requireApiPermission('inventory_i
           const importDate = normalizeImportDate(item.import_date);
           run(`INSERT INTO inventory_imports (id, import_date, country, warehouse, channel, sku_code, available_qty, remark, snapshot_cutoff_date, brand, weighted_avg_cost, last_inbound_date, first_inbound_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [id, importDate, item.country || '', item.warehouse || '', item.channel || '', item.sku_code, availQty, item.remark || '', snapshotCutoffDate, item.brand || '', parseFloat(item.weighted_avg_cost) || 0, item.last_inbound_date || '', item.first_inbound_date || '']);
+          imported = true;
+
+          // ── TOMBSTONE LIFT（库存安全删除的"解除封禁"）───────────────────────────
+          // 位置至关重要：必须在这条 INSERT 成功之后、result.created++ 之前。
+          //   * 本条 INSERT 抛错 → 进入 catch，lift 不执行 → tombstone 保留。
+          //   * 后续条目抛错 / 事务失败 → 整批 ROLLBACK，已执行的 lift 一并回滚 → tombstone 保留。
+          // 无条件 lift（不做 import_date 比较）：历史快照回填可能产生早于删除日的 import_date，
+          // 按日期比较会导致 tombstone 永远无法解除，形成隐蔽的永久封禁。
+          const lifted = run(
+            'DELETE FROM inventory_delete_tombstones WHERE sku_code=? AND country=? AND warehouse=?',
+            [item.sku_code || '', item.country || '', item.warehouse || '']);
+          if (!lifted) throw new Error('tombstone 解除执行失败');
+          if (Number(lifted.changes || 0) > 0) result.tombstones_lifted++;
+
           result.created++;
-        } catch (e) { result.failed++; result.errors.push({ row: i + 2, reason: e.message }); }
+        } catch (e) {
+          // 导入记录已写入之后的任何失败（当前只有 tombstone lift）必须让错误逃逸出本条 catch，
+          // 由 transaction 整批回滚。否则会留下「inventory_imports 已写入但 tombstone 仍在」的
+          // 不一致状态：该 tuple 被 tombstone 持续抑制，库存永远建不回来，且前端看到 created>0 的假成功。
+          if (imported) throw new Error(`第 ${i + 2} 行：库存导入已写入但 tombstone 解除失败，整批回滚 — ${e.message}`);
+          result.failed++; result.errors.push({ row: i + 2, reason: e.message });
+        }
       });
     });
     // 更新库存总表，传入 snapshotCutoffDate
@@ -4212,6 +4249,15 @@ function normalizeImportDatesBackfill() {
 // 关键修复：原本 `import_date = (SELECT MAX(import_date) ...)` 在 TEXT 列上做字典序
 // 比较，遇到 M/D/YY 文本会选错批次。改为按真实日期比较（PG 用 ::date，SQLite 用 date()），
 // 即便历史数据未完全归一也能选出正确的"最新"导入日期。
+//
+// TOMBSTONE EXCLUSION（库存安全删除）：已被用户主动删除的 (sku_code, country, warehouse)
+// 在 inventory_delete_tombstones 中留有一行；这类 tuple 的 inventory_imports 是历史审计记录，
+// 不得再作为当前库存的重建源（否则删除会被"复活"）。
+// 两层都加 NOT EXISTS：
+//   (1) i1 候选集 —— 抑制生效的充要条件；
+//   (2) i2 MAX(import_date) 子查询 —— 在当前"tombstone 按 tuple 全有全无"语义下逻辑上冗余，
+//       但可防止将来若改为按日期比较时静默失效，且零性能代价。
+// 注意：不得改动日期比较语义（::date / date()）、SELECT 列清单与聚合逻辑。
 function latestImportsSql() {
   const driver = (process.env.DB_DRIVER || 'sqlite').toLowerCase();
   if (driver === 'pg') {
@@ -4219,22 +4265,38 @@ function latestImportsSql() {
       SELECT sku_code, country, warehouse, available_qty, import_date, snapshot_cutoff_date, weighted_avg_cost, last_inbound_date, first_inbound_date
       FROM inventory_imports i1
       WHERE i1.import_date IS NOT NULL AND i1.import_date <> ''
+        AND NOT EXISTS (
+          SELECT 1 FROM inventory_delete_tombstones t1
+          WHERE t1.sku_code = i1.sku_code AND t1.country = i1.country AND t1.warehouse = i1.warehouse
+        )
         AND i1.import_date::date = (
           SELECT MAX(i2.import_date::date)
           FROM inventory_imports i2
           WHERE i2.sku_code = i1.sku_code AND i2.country = i1.country AND i2.warehouse = i1.warehouse
             AND i2.import_date IS NOT NULL AND i2.import_date <> ''
+            AND NOT EXISTS (
+              SELECT 1 FROM inventory_delete_tombstones t2
+              WHERE t2.sku_code = i2.sku_code AND t2.country = i2.country AND t2.warehouse = i2.warehouse
+            )
         )`;
   }
   return `
     SELECT sku_code, country, warehouse, available_qty, import_date, snapshot_cutoff_date, weighted_avg_cost, last_inbound_date, first_inbound_date
     FROM inventory_imports i1
     WHERE i1.import_date IS NOT NULL AND i1.import_date <> ''
+      AND NOT EXISTS (
+        SELECT 1 FROM inventory_delete_tombstones t1
+        WHERE t1.sku_code = i1.sku_code AND t1.country = i1.country AND t1.warehouse = i1.warehouse
+      )
       AND date(i1.import_date) = (
         SELECT MAX(date(i2.import_date))
         FROM inventory_imports i2
         WHERE i2.sku_code = i1.sku_code AND i2.country = i1.country AND i2.warehouse = i1.warehouse
           AND i2.import_date IS NOT NULL AND i2.import_date <> ''
+          AND NOT EXISTS (
+            SELECT 1 FROM inventory_delete_tombstones t2
+            WHERE t2.sku_code = i2.sku_code AND t2.country = i2.country AND t2.warehouse = i2.warehouse
+          )
       )`;
 }
 
@@ -18365,49 +18427,126 @@ app.post('/api/inventory/batch-adjust', requireApiPermission('inventory_import')
   } catch(e) { res.status(500).json({error:e.message}); }
 }));
 
-// 库存批量删除（带关联数据检查，强制 reason）
+// 库存安全删除：删除守卫表清单。
+//
+// 设计变更（原实现把 inventory_imports 也当作阻删项，导致生产 573/573 行库存全部不可删）：
+//   * inventory_imports 是历史导入审计记录，它记录「曾经导入过什么」，不是当前库存事实，
+//     因此不再作为「不可删除」守卫 —— 且它永不因删除库存而被删除。
+//     是否被旧导入记录"复活"由 inventory_delete_tombstones 专门控制。
+//   * 真实业务事实（出库 / 调整 / 入库 / 盘点 / 销售）仍然阻止删除。
+const INV_DELETE_GUARDS = [
+  { table: 'outbound_records',      label: '出库记录',   scope: 'warehouse' },
+  { table: 'inventory_adjustments', label: '库存调整单', scope: 'warehouse' },
+  { table: 'inbound_records',       label: '入库记录',   scope: 'warehouse' },
+  { table: 'inventory_checks',      label: '库存盘点',   scope: 'warehouse' },
+  // sales_records 没有 warehouse 列。采取保守口径：同一 sku + country 存在销售记录时，
+  // 该 country 下任何 warehouse 的库存都阻止删除。禁止拼接不存在的 warehouse 条件（会导致 SQL 报错）。
+  { table: 'sales_records',         label: '销售明细',   scope: 'country' }
+];
+
+// 写入/刷新 inventory_delete_tombstones。
+// 不使用 ON CONFLICT —— db-pg.js 属既有 transaction-stability WIP，其 UPSERT 翻译层
+// 不作为新功能强依赖；SELECT-then-INSERT/UPDATE 在 PG / SQLite 双端行为完全一致。
+// 返回 tombstone id；写入失败返回 null，调用方必须视为硬错误并回滚。
+function upsertInventoryTombstone(skuCode, country, warehouse, deletedBy, reason) {
+  const ex = queryOne(
+    'SELECT id FROM inventory_delete_tombstones WHERE sku_code=? AND country=? AND warehouse=?',
+    [skuCode, country, warehouse]
+  );
+  if (ex && ex.id) {
+    // datetime('now')：PG 端由 db-pg.js 翻译为 to_char(NOW(),'YYYY-MM-DD HH24:MI:SS')，双端一致。
+    run(`UPDATE inventory_delete_tombstones
+         SET deleted_at=datetime('now'), deleted_by=?, reason=? WHERE id=?`,
+        [deletedBy || '', reason || '', ex.id]);
+    const after = queryOne('SELECT id FROM inventory_delete_tombstones WHERE id=?', [ex.id]);
+    return after && after.id ? ex.id : null;
+  }
+  const id = genId('inv_tomb');
+  run(`INSERT INTO inventory_delete_tombstones (id, sku_code, country, warehouse, deleted_by, reason)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [id, skuCode, country, warehouse, deletedBy || '', reason || '']);
+  const chk = queryOne('SELECT id FROM inventory_delete_tombstones WHERE id=?', [id]);
+  return chk && chk.id ? id : null;
+}
+
+// 库存批量删除（安全删除：tombstone + inventory 原子成对删除，强制 reason）
 app.post('/api/inventory/batch-delete', requireApiPermission('inventory_import'), asyncHandler((req, res) => {
   try {
     const { ids, reason } = req.body;
     if (!ids || !Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: '未选择记录' });
     if (!reason || !reason.trim()) return res.status(400).json({ error: '删除原因不能为空' });
-    // 关联数据检查
-    const checks = [
-      { table: 'inventory_imports', label: '库存导入' },
-      { table: 'outbound_records', label: '出库记录' },
-      { table: 'sales_records', label: '销售明细' },
-      { table: 'inventory_adjustments', label: '库存调整单' }
-    ];
-    const result = { deleted: 0, failed: 0, errors: [] };
-    transaction(() => {
-      ids.forEach(id => {
-        try {
-          const inv = queryOne('SELECT * FROM inventory WHERE id=?', [id]);
-          if (!inv) { result.failed++; result.errors.push({id, reason:'记录不存在'}); return; }
-          // 检查关联数据
-          for (const c of checks) {
-            const keyCol = c.table === 'inventory_imports' || c.table === 'inventory_adjustments' ? 'sku_code' : 'sku_code';
-            const r = queryOne(`SELECT COUNT(*) as cnt FROM ${c.table} WHERE sku_code=? AND country=? AND warehouse=?`, [inv.sku_code, inv.country, inv.warehouse]);
-            if (r.cnt > 0) {
-              result.failed++;
-              result.errors.push({id, sku_code:inv.sku_code, country:inv.country, warehouse:inv.warehouse, reason:`已关联${c.label}（${r.cnt}条），不允许删除`});
-              return;
-            }
-          }
-          run('DELETE FROM inventory WHERE id=?', [id]);
-          logOperation({
-            operator_id:req.currentUserId, operator_name:req.currentUserName,
-            page:'inventory', operation_type:'delete',
-            target_ids:[id], affected_count:1,
-            old_values:{sku_code:inv.sku_code, country:inv.country, warehouse:inv.warehouse, available_qty:inv.available_qty},
-            new_values:{},
-            reason:reason.trim(), triggered_recalc:1, is_rollbackable:0
-          });
-          result.deleted++;
-        } catch(e) { result.failed++; result.errors.push({id, reason:e.message}); }
-      });
+
+    // 与同族 batch-set-* endpoint 保持一致的 batch contract。删除不可逆 → is_rollbackable:false。
+    const taskId = createBatchTask({
+      task_name: '批量删除库存', operation_type: 'delete',
+      operator_id: req.currentUserId, operator_name: req.currentUserName,
+      page: 'inventory', total_count: ids.length, is_rollbackable: false
     });
-    res.json(result);
+
+    const errors = [];
+    let success = 0, failed = 0, skipped = 0;
+
+    transaction(() => {
+      // ══ PHASE 1：只读预检（行存在性 + 业务事实守卫）。此阶段不产生任何写入。══
+      // 被业务事实拦截 / 记录不存在的条目仅记 failed / skipped，不影响其余合法条目继续删除。
+      const plan = [];
+      for (const id of ids) {
+        const inv = queryOne('SELECT * FROM inventory WHERE id=?', [id]);
+        if (!inv) { skipped++; errors.push({ id, reason: '记录不存在' }); continue; }
+
+        let blocked = null;
+        for (const c of INV_DELETE_GUARDS) {
+          const r = c.scope === 'warehouse'
+            ? queryOne(`SELECT COUNT(*) AS cnt FROM ${c.table} WHERE sku_code=? AND country=? AND warehouse=?`,
+                       [inv.sku_code, inv.country, inv.warehouse])
+            : queryOne(`SELECT COUNT(*) AS cnt FROM ${c.table} WHERE sku_code=? AND country=?`,
+                       [inv.sku_code, inv.country]);
+          if (r && Number(r.cnt) > 0) {
+            blocked = `已关联${c.label}（${r.cnt}条），不允许删除`;
+            break;
+          }
+        }
+        if (blocked) {
+          failed++;
+          errors.push({ id, sku_code: inv.sku_code, country: inv.country, warehouse: inv.warehouse, reason: blocked });
+          continue;
+        }
+        plan.push({ id, inv });
+      }
+
+      // ══ PHASE 2：变更写入。任一硬错误 → throw → transaction 整批 ROLLBACK。══
+      // 项目 Final Guard 禁止嵌套事务，故无法按条 SAVEPOINT，只能整批原子。
+      // guard 拦截已在 PHASE 1 排除，因此整批回滚不会误伤本可正常删除的条目。
+      for (const { id, inv } of plan) {
+        // 顺序不可颠倒：先写 tombstone 再删 inventory。
+        // 这样绝不可能出现「inventory 已删除但 tombstone 未写入」→ refresh 后复活。
+        const tombId = upsertInventoryTombstone(inv.sku_code, inv.country, inv.warehouse,
+                                                req.currentUserId, reason.trim());
+        if (!tombId) {
+          throw new Error(`tombstone 写入失败，已整批回滚：${inv.sku_code}/${inv.country}/${inv.warehouse}`);
+        }
+
+        const del = run('DELETE FROM inventory WHERE id=?', [id]);
+        if (!del || Number(del.changes || 0) < 1) {
+          throw new Error(`inventory 删除失败（changes=0），已整批回滚：${id}`);
+        }
+
+        logOperation({
+          operator_id:req.currentUserId, operator_name:req.currentUserName,
+          page:'inventory', operation_type:'delete',
+          target_ids:[id], affected_count:1,
+          old_values:{sku_code:inv.sku_code, country:inv.country, warehouse:inv.warehouse,
+                      available_qty:inv.available_qty, weighted_avg_cost:inv.weighted_avg_cost,
+                      tombstone_id:tombId},
+          new_values:{},
+          reason:reason.trim(), triggered_recalc:1, is_rollbackable:0
+        });
+        success++;
+      }
+    });
+
+    finishBatchTask(taskId, { success, failed, skipped, errors, is_rollbackable: false });
+    res.json({ success, failed, skipped, errors, task_id: taskId });
   } catch(e) { res.status(500).json({error:e.message}); }
 }));
 

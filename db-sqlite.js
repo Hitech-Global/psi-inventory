@@ -613,6 +613,28 @@ function initDatabase() {
     )
   `);
 
+  // 库存安全删除 tombstone：记录用户主动删除的 (sku_code, country, warehouse)。
+  // refreshInventoryTotals 重建库存时排除该 tuple，使旧 inventory_imports 不再把已删除的库存复活；
+  // 新的库存导入成功时在同一 transaction 内 DELETE 该行（lift），从而允许重新建立库存。
+  // inventory_imports 历史导入记录始终保留，不因库存删除而删除。
+  // 字段与默认值须与 migrations/inventory-delete-tombstone.js 的 PG 建表语句逐字段对齐
+  // （SQLite 用 (datetime('now'))，PG 用 NOW()）。
+  // 注意：id 显式声明 NOT NULL —— SQLite 的 `TEXT PRIMARY KEY` 不隐式 NOT NULL
+  // （仅 INTEGER PRIMARY KEY 才隐式），不显式声明会与 PG 的 NULL 语义不一致。
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS inventory_delete_tombstones (
+      id TEXT PRIMARY KEY NOT NULL,
+      sku_code TEXT NOT NULL DEFAULT '',
+      country TEXT NOT NULL DEFAULT '',
+      warehouse TEXT NOT NULL DEFAULT '',
+      deleted_at TEXT DEFAULT (datetime('now')),
+      deleted_by TEXT DEFAULT '',
+      reason TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE (sku_code, country, warehouse)
+    )
+  `);
+
   // 库存总表
   d.exec(`
     CREATE TABLE IF NOT EXISTS inventory (
