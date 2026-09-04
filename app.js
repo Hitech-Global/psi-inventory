@@ -11430,9 +11430,10 @@ function renderCIPaymentRecords(records){
   const canPay=hasPermission('payment_view');
   return t('ci.payrec.title','<div class="detail-section"><h3>付款记录</h3>')+
     '<div class="table-container"><table class="data-table" style="box-shadow:none;font-size:12px">'+
-    '<thead><tr><th>'+t('ci.payrec.no','付款单号')+'</th><th class="ci-col-right">'+t('ci.payrec.actual_paid','实际付款')+'</th><th class="ci-col-right">'+t('ci.payrec.deduction','抵扣')+'</th><th class="ci-col-right">'+t('ci.payrec.rounding','抹零')+'</th><th class="ci-col-right">'+t('ci.payrec.outstanding','未结')+'</th><th>'+t('ci.payrec.paid_date','付款日期')+'</th><th>'+t('ci.payrec.account','付款账户')+'</th><th>'+t('ci.payrec.status','状态')+'</th></tr></thead><tbody>'+
+    '<thead><tr><th>'+t('ci.payrec.no','付款单号')+'</th><th class="ci-col-right">'+t('ci.payrec.payable','应付')+'</th><th class="ci-col-right">'+t('ci.payrec.actual_paid','实际付款')+'</th><th class="ci-col-right">'+t('ci.payrec.deduction','抵扣')+'</th><th class="ci-col-right">'+t('ci.payrec.rounding','抹零')+'</th><th class="ci-col-right">'+t('ci.payrec.outstanding','未结')+'</th><th>'+t('ci.payrec.paid_date','付款日期')+'</th><th>'+t('ci.payrec.account','付款账户')+'</th><th>'+t('ci.payrec.status','状态')+'</th></tr></thead><tbody>'+
     list.map(r=>'<tr'+(canPay?' class="clickable-detail-row" onclick="viewPayment(\''+r.payment_request_id+'\')"':'')+'>'+
       '<td class="cell-id">'+esc(r.payment_no||'—')+'</td>'+
+      '<td class="ci-col-right">'+fmtMoney(r.payable_amount,r.currency)+'</td>'+
       '<td class="ci-col-right font-bold">'+fmtMoney(r.actual_paid_amount,r.currency)+'</td>'+
       '<td class="ci-col-right">'+(Number(r.deduction_amount)>0?fmtMoney(r.deduction_amount,r.currency):'—')+'</td>'+
       '<td class="ci-col-right">'+(Number(r.rounding_amount)>0?fmtMoney(r.rounding_amount,r.currency):'—')+'</td>'+
@@ -11442,7 +11443,7 @@ function renderCIPaymentRecords(records){
       '<td><span class="status-badge '+(r.payment_status==='paid'?'status-paid':String(r.payment_status||'').includes('partial')?'status-pending':'status-unpaid')+'">'+esc(PAY_STATUS_MAP[r.payment_status]||r.payment_status||'—')+'</span></td>'+
       '</tr>').join('')+
     '</tbody></table></div>'+
-    '<div style="font-size:12px;color:#999;margin-top:8px">'+t('ci.payrec.note','金额口径与财务付款结算一致；行点击可查看付款详情。')+'</div></div>';
+    '<div style="font-size:12px;color:#999;margin-top:8px">'+t('ci.payrec.note','金额为该CI在本付款单内的分摊金额；行点击可查看付款详情。')+'</div></div>';
 }
 async function viewCI(id, backPay, backMode){
   try{const ci=await api('/api/commercial-invoices/'+id);
