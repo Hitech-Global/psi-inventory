@@ -2652,6 +2652,24 @@ function initDatabase() {
     });
   } catch (e) { console.warn('[DB] 付款类目种子部分失败(可忽略):', e.message); }
 
+  // CI/PL PERF-01：CI 付款链路与筛选列索引（幂等，与 db.js PG 迁移数组同款同名）。
+  // 置于 initDatabase 末尾：所有表创建/列迁移完成之后执行，保证全新建库可一次通过。
+  // 部分索引 SQLite 端已存在（ix_payable_src/ix_pri_item/ix_pri_req/ix_tx_req/ix_alloc_item 为
+  // 老代码遗产；ix_payment_settlement_request 见上方三列强定义），IF NOT EXISTS 时为 no-op；
+  // 缺失的（source_ci_fee/CI 筛选列/hci 筛选列）在此补齐，保证全新建库与既有库行为一致。
+  d.exec(`CREATE INDEX IF NOT EXISTS ix_payable_src ON payable_items(source_type, source_id)`);
+  d.exec(`CREATE INDEX IF NOT EXISTS ix_payable_items_source_ci_fee ON payable_items(source_ci_id, fee_type)`);
+  d.exec(`CREATE INDEX IF NOT EXISTS ix_pri_item ON payment_request_items(payable_item_id)`);
+  d.exec(`CREATE INDEX IF NOT EXISTS ix_pri_req ON payment_request_items(payment_request_id)`);
+  d.exec(`CREATE INDEX IF NOT EXISTS ix_alloc_item ON payment_allocations(payment_request_item_id)`);
+  d.exec(`CREATE INDEX IF NOT EXISTS ix_tx_req ON payment_transactions(payment_request_id)`);
+  d.exec(`CREATE INDEX IF NOT EXISTS ix_ci_brand ON commercial_invoices(brand)`);
+  d.exec(`CREATE INDEX IF NOT EXISTS ix_ci_country ON commercial_invoices(country)`);
+  d.exec(`CREATE INDEX IF NOT EXISTS ix_ci_warehouse ON commercial_invoices(target_warehouse)`);
+  d.exec(`CREATE INDEX IF NOT EXISTS ix_ci_created_at ON commercial_invoices(created_at)`);
+  d.exec(`CREATE INDEX IF NOT EXISTS ix_hci_brand_name ON historical_commercial_invoices(brand_name)`);
+  d.exec(`CREATE INDEX IF NOT EXISTS ix_hci_country ON historical_commercial_invoices(country)`);
+
   console.log('[DB] 数据库表初始化完成');
   return true;
 }

@@ -10817,6 +10817,12 @@ async function renderCI(){
   document.getElementById('content-inner').innerHTML=t('html.renderCI', '<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>单据类型</label><select id="ci-source-mode" onchange="onCISourceModeChange()"><option value="operational">运营 CI</option><option value="historical">历史 CI</option><option value="all">全部</option></select></div><div class="filter-group"><label>入库状态</label><select id="ci-inbound-fs"><option value="">全部</option><option value="none">未入库</option><option value="partial">部分入库</option><option value="completed">已入库</option></select></div>' + ciFilterControls + '<div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadCI()">搜索</button>{v1}{v2}</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🚚 CI/PL列表</div></div><div id="ci-purchase-summary"></div><div id="ci-table"></div></div>', {v1: hasPermission('ci_create')?t('gen.L5756.1','<button class="btn btn-primary btn-sm" onclick="createCI()">➕ 新建CI</button>'):'', v2: ''});
   refreshCIFilterOptions();
   loadCI();
+  // CI/PL PERF-01：purchase-amount-summary 为全局口径（不随筛选/单据类型变化），页面渲染时拉取一次；
+  // 筛选与模式切换（loadCI）不再重复请求。拉取失败不影响列表渲染。
+  api('/api/purchase-amount-summary').then(function(s){
+    const el=document.getElementById('ci-purchase-summary');
+    if(el&&s) el.innerHTML=renderPurchaseAmountSummary(s);
+  }).catch(function(){ /* 汇总拉取失败不影响列表 */ });
 }
 function onCISourceModeChange(){const mode=document.getElementById('ci-source-mode')?.value||'operational',fs=document.getElementById('ci-inbound-fs');if(fs)fs.disabled=mode==='historical';refreshCIFilterOptions();loadCI()}
 async function refreshCIFilterOptions(){
@@ -10883,9 +10889,8 @@ async function loadCI(){
     const brand=document.getElementById('ci-brand')?.value||'';
     const opQ='inbound_status='+encodeURIComponent(s)+(country?'&country='+encodeURIComponent(country):'')+(warehouse?'&warehouse='+encodeURIComponent(warehouse):'')+(brand?'&brand='+encodeURIComponent(brand):'');
     const histQ=(country?'country='+encodeURIComponent(country):'')+(brand?'&brand='+encodeURIComponent(brand):'');
-    const results=await Promise.all([mode==='historical'?Promise.resolve([]):api('/api/commercial-invoices?'+opQ),mode==='operational'?Promise.resolve([]):api('/api/historical-commercial-invoices'+(histQ?'?'+histQ:'')),api('/api/purchase-amount-summary')]);
-    const table=document.getElementById('ci-table'),summary=document.getElementById('ci-purchase-summary');if(!table||!summary)return;
-    summary.innerHTML=renderPurchaseAmountSummary(results[2]);
+    const results=await Promise.all([mode==='historical'?Promise.resolve([]):api('/api/commercial-invoices?'+opQ),mode==='operational'?Promise.resolve([]):api('/api/historical-commercial-invoices'+(histQ?'?'+histQ:''))]);
+    const table=document.getElementById('ci-table');if(!table)return;
     if(mode==='operational')table.innerHTML=renderOperationalCITable(results[0]);
     else if(mode==='historical')table.innerHTML=renderHistoricalCITable(results[1]);
     else table.innerHTML=t('html.loadCI', '<h3 style="margin:8px 0 10px;font-size:15px">运营 CI</h3>{v1}<h3 style="margin:20px 0 10px;font-size:15px">历史 CI</h3>{v2}', {v1: renderOperationalCITable(results[0]), v2: renderHistoricalCITable(results[1])});

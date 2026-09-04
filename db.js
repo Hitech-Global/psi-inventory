@@ -308,7 +308,24 @@ if (driver === 'pg') {
         "CREATE TABLE IF NOT EXISTS packing_lists (id TEXT PRIMARY KEY, pl_no TEXT NOT NULL UNIQUE, related_po_id TEXT DEFAULT '', related_po_no TEXT DEFAULT '', related_pi_id TEXT DEFAULT '', related_pi_no TEXT DEFAULT '', related_ci_id TEXT DEFAULT '', related_ci_no TEXT DEFAULT '', supplier_id TEXT DEFAULT '', supplier_name TEXT DEFAULT '', brand TEXT DEFAULT '', country TEXT DEFAULT '', target_warehouse TEXT DEFAULT '', pl_date TEXT DEFAULT '', total_qty INTEGER DEFAULT 0, total_cartons INTEGER DEFAULT 0, total_gross_weight DOUBLE PRECISION DEFAULT 0, total_net_weight DOUBLE PRECISION DEFAULT 0, total_cbm DOUBLE PRECISION DEFAULT 0, attachment TEXT DEFAULT '', remark TEXT DEFAULT '', created_at TEXT DEFAULT NOW())",
         "ALTER TABLE packing_lists ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'draft'",
         "ALTER TABLE packing_lists ADD COLUMN IF NOT EXISTS logistics_batch_id TEXT DEFAULT ''",
-        "ALTER TABLE packing_lists ADD COLUMN IF NOT EXISTS updated_at TEXT DEFAULT NOW()"
+        "ALTER TABLE packing_lists ADD COLUMN IF NOT EXISTS updated_at TEXT DEFAULT NOW()",
+        // CI/PL PERF-01：CI 付款链路与筛选列索引（全部幂等 CREATE INDEX IF NOT EXISTS，零数据触碰）。
+        // 此前 payable_items(source)/pri/alloc/settlement/tx 索引只存在于 db-sqlite.js initDatabase，
+        // PG 生产从未拥有 → 历史/运营 CI 列表付款事实 N+1 查询在生产全表扫描。
+        // 命名与 db-sqlite.js 既有索引保持一致（SQLite 端同名 no-op，PG 端新建），双端行为对齐。
+        "CREATE INDEX IF NOT EXISTS ix_payable_src ON payable_items(source_type, source_id)",
+        "CREATE INDEX IF NOT EXISTS ix_payable_items_source_ci_fee ON payable_items(source_ci_id, fee_type)",
+        "CREATE INDEX IF NOT EXISTS ix_pri_item ON payment_request_items(payable_item_id)",
+        "CREATE INDEX IF NOT EXISTS ix_pri_req ON payment_request_items(payment_request_id)",
+        "CREATE INDEX IF NOT EXISTS ix_payment_settlement_request ON payment_settlement_logs(payment_request_id, event_type, status)",
+        "CREATE INDEX IF NOT EXISTS ix_alloc_item ON payment_allocations(payment_request_item_id, status)",
+        "CREATE INDEX IF NOT EXISTS ix_tx_req ON payment_transactions(payment_request_id)",
+        "CREATE INDEX IF NOT EXISTS ix_ci_brand ON commercial_invoices(brand)",
+        "CREATE INDEX IF NOT EXISTS ix_ci_country ON commercial_invoices(country)",
+        "CREATE INDEX IF NOT EXISTS ix_ci_warehouse ON commercial_invoices(target_warehouse)",
+        "CREATE INDEX IF NOT EXISTS ix_ci_created_at ON commercial_invoices(created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_hci_brand_name ON historical_commercial_invoices(brand_name)",
+        "CREATE INDEX IF NOT EXISTS ix_hci_country ON historical_commercial_invoices(country)"
       ];
       for (var i = 0; i < migrations.length; i++) {
         try {
