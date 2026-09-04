@@ -10829,6 +10829,7 @@ async function refreshCIFilterOptions(){
     const opts=await api('/api/ci-filter-options?'+q);
     fillCISelect('ci-country', opts.countries||[], country);
     fillCISelect('ci-warehouse', opts.warehouses||[], warehouse);
+    fillCISelect('ci-brand', opts.brands||[], brand);
     const wh=document.getElementById('ci-warehouse'); if(wh) wh.disabled=(mode==='historical');
   }catch(e){ /* 选项刷新失败不影响列表渲染 */ }
 }
