@@ -15038,11 +15038,31 @@ app.post('/api/payment-requests/multi-expense', requireApiPermission('payment_cr
     const totalAmountMinor = items.rows.reduce((s, r) => s + (remainingByItem.get(r.id) || 0), 0);
     const totalAmount = minorToAmount(totalAmountMinor); // 仅作展示参考，不作为审批/付款依据
     const itemCount = items.rows.length;
-    // PAY-MULTI category 推导（创建逻辑修复）：合并来源全部为货款(pi/ci/historical_ci)时标记为 goods，
-    // 审批时自动跳过付款日 realtime 汇率校验；含非货款来源时保持 ''（仍走付款日汇率校验，符合非货款费用要求）。
-    // historical_ci 为 CI 历史形态，本质仍属 CI 货款，需纳入 goods 判定，否则会误判为 non-goods 触发汇率校验。
+    // PAY-MULTI category 推导（修复 #5E 潜伏正确性 bug）：
+    // payment_category='goods' 业务语义 = 「这笔 payable 的付款性质属于货款，并因此不使用付款日 realtime FX」。
+    // 不能仅按 source_type ∈ {pi,ci,historical_ci} 判定（否则 CI 内嵌 freight/customs/inspection 会被误判
+    // goods 而跳过付款日 realtime 汇率校验，导致结算台账本币/人民币金额写 0 的财务错报）。
+    // 权威判定（组合真实费用分类字段，非单一 fee_type 判断）：
+    //   货物来源  source_type  ∈ {pi,ci,historical_ci}
+    //   AND 货款费用分类 category_code = 'goods'
+    //   AND 货款费类   fee_type     ∈ {deposit,balance}
+    //   AND (subcategory_code 为空 OR ∈ {deposit,balance})
+    // 注意：保留 _goodsSources 中的 'ci'（真实 CI 货款尾款/定金仍依赖 ci 来源判定），但必须同时满足
+    // category_code='goods' 才判 goods；CI 内嵌 freight/customs/inspection 等费用分类非 'goods' 即判 non-goods。
     const _goodsSources = new Set(['pi', 'ci', 'historical_ci']);
-    const _allGoods = items.rows.length > 0 && items.rows.every(r => _goodsSources.has(String(r.source_type || '').toLowerCase()));
+    const _goodsFeeTypes = new Set(['deposit', 'balance']);
+    function _isGoodsPayableItem(r) {
+      if (!r) return false;
+      const sourceType = String(r.source_type || '').toLowerCase();
+      const feeType = String(r.fee_type || '').toLowerCase();
+      const categoryCode = String(r.category_code || '').toLowerCase();
+      const subcategoryCode = String(r.subcategory_code || '').toLowerCase();
+      return _goodsSources.has(sourceType)
+          && categoryCode === 'goods'
+          && _goodsFeeTypes.has(feeType)
+          && (subcategoryCode === '' || _goodsFeeTypes.has(subcategoryCode));
+    }
+    const _allGoods = items.rows.length > 0 && items.rows.every(r => _isGoodsPayableItem(r));
     const prCategory = _allGoods ? 'goods' : '';
     const prSubcategory = _allGoods
       ? (items.rows.every(r => String(r.fee_type || '') === 'deposit') ? 'deposit' : 'balance')
