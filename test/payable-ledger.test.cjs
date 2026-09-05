@@ -475,3 +475,228 @@ test('ledger #26: 传 lifecycle_status=paid 的历史精确查询仍可用（兼
   assert.ok(fees.has('FEE_DED_compat'));
   assert.ok(!fees.has('FEE_UNPAID_compat'), '精确查询仍按传参过滤');
 });
+
+// ===========================================================================
+// 多选筛选（同维度 OR / 跨维度 AND）+ 本月/上月快捷按钮
+// 标准场景数据（tag 后缀）速查：
+//   UNPAID: Netac/印度尼西亚 balance+ci active ｜ PARTIAL: Redragon/印尼 balance+ci partially_paid(付8月两次)
+//   PAID:   Redragon/印尼 balance+ci paid(付8月两次+9-01) ｜ DED: Netac/ID(代码) balance+historical_ci paid 纯抵扣
+//   CANCEL: BOYA/泰国 balance+ci cancelled ｜ MANUAL: 无品牌 other_local+manual active
+//   CANPR:  Joypeer/马来西亚 balance+ci active(仅cancelled PR付款) ｜ MYPAID: Netac/马来西亚 balance+ci paid(付7-15)
+//   DEP:    Netac/印尼 deposit+pi active
+// ===========================================================================
+
+test('multi #27: payment_status 单值兼容（=unpaid 与多选格式单元素等价）', async () => {
+  buildStandardScenario('ms1');
+  const a = await getList('?payment_status=unpaid');
+  const b = await getList('?payment_status=unpaid,unpaid');
+  const c = await getList('?payment_status=unpaid&payment_status=unpaid');
+  assert.equal(feeSet(a).size, feeSet(b).size);
+  assert.equal(feeSet(a).size, feeSet(c).size);
+  assert.ok(feeSet(a).has('FEE_UNPAID_ms1'));
+  assert.ok(!feeSet(a).has('FEE_PARTIAL_ms1'));
+});
+
+test('multi #28: payment_status 逗号多选 OR（unpaid,partial）', async () => {
+  buildStandardScenario('ms2');
+  const body = await getList('?payment_status=unpaid,partial');
+  const fees = feeSet(body);
+  assert.ok(fees.has('FEE_UNPAID_ms2'));
+  assert.ok(fees.has('FEE_PARTIAL_ms2'), 'OR：partial 也在结果中');
+  assert.ok(fees.has('FEE_MANUAL_ms2'));
+  assert.ok(!fees.has('FEE_PAID_ms2'), 'paid 不在 OR 集合内');
+  assert.ok(!fees.has('FEE_DED_ms2'));
+  assert.ok(!fees.has('FEE_MYPAID_ms2'));
+  body.items.forEach(it => assert.ok(['unpaid', 'partial'].includes(it.payment_state), '仅 unpaid/partial'));
+});
+
+test('multi #29: payment_status 重复 query param 多选（paid&unpaid）', async () => {
+  buildStandardScenario('ms3');
+  const body = await getList('?payment_status=paid&payment_status=unpaid');
+  const fees = feeSet(body);
+  assert.ok(fees.has('FEE_PAID_ms3'));
+  assert.ok(fees.has('FEE_DED_ms3'), '纯抵扣结清=已付清，在 paid 集合内');
+  assert.ok(fees.has('FEE_MYPAID_ms3'));
+  assert.ok(fees.has('FEE_UNPAID_ms3'));
+  assert.ok(!fees.has('FEE_PARTIAL_ms3'), 'OR 集合={paid,unpaid}，partial 不命中');
+});
+
+test('multi #30: brand 逗号多选 OR + 大小写不敏感', async () => {
+  buildStandardScenario('ms4');
+  const body = await getList('?brand=Redragon,netac');
+  const fees = feeSet(body);
+  assert.ok(fees.has('FEE_UNPAID_ms4'), 'Netac(大小写不敏感)命中');
+  assert.ok(fees.has('FEE_PARTIAL_ms4'));
+  assert.ok(fees.has('FEE_PAID_ms4'));
+  assert.ok(fees.has('FEE_DEP_ms4'));
+  assert.ok(fees.has('FEE_DED_ms4'));
+  assert.ok(!fees.has('FEE_MANUAL_ms4'), '无品牌费用不在品牌筛选中');
+  assert.ok(!fees.has('FEE_CANPR_ms4'), 'Joypeer 不在 OR 集合');
+});
+
+test('multi #31: brand 重复 param 多选（混合大小写）', async () => {
+  buildStandardScenario('ms5');
+  const body = await getList('?brand=REDRAGON&brand=Netac');
+  const fees = feeSet(body);
+  assert.ok(fees.has('FEE_PARTIAL_ms5'));
+  assert.ok(fees.has('FEE_PAID_ms5'));
+  assert.ok(fees.has('FEE_MYPAID_ms5'));
+  assert.ok(fees.has('FEE_DEP_ms5'), 'DEP 品牌来自 PI.brand=Netac，应命中');
+  assert.ok(!fees.has('FEE_CANPR_ms5'), 'Joypeer 不在 OR 集合');
+});
+
+test('multi #32: country 多选 OR（中文+ISO 代码混合归一）', async () => {
+  buildStandardScenario('ms6');
+  const body = await getList('?country=' + encodeURIComponent('印度尼西亚') + ',ID');
+  const fees = feeSet(body);
+  assert.ok(fees.has('FEE_UNPAID_ms6'), '中文「印度尼西亚」命中');
+  assert.ok(fees.has('FEE_PARTIAL_ms6'));
+  assert.ok(fees.has('FEE_PAID_ms6'));
+  assert.ok(fees.has('FEE_DED_ms6'), '历史 CI 存代码 ID，归一后命中同一国');
+  assert.ok(fees.has('FEE_DEP_ms6'));
+  assert.ok(!fees.has('FEE_MYPAID_ms6'), '马来西亚不在 OR 集合');
+  assert.ok(!fees.has('FEE_CANPR_ms6'));
+  assert.ok(!fees.has('FEE_MANUAL_ms6'), '无国家费用不在国家筛选中');
+});
+
+test('multi #33: fee_type 多选 OR', async () => {
+  buildStandardScenario('ms7');
+  const a = await getList('?fee_type=deposit,other_local');
+  const fa = feeSet(a);
+  assert.ok(fa.has('FEE_DEP_ms7'));
+  assert.ok(fa.has('FEE_MANUAL_ms7'));
+  assert.ok(!fa.has('FEE_UNPAID_ms7'), 'balance 不在 OR 集合');
+  const b = await getList('?fee_type=balance&fee_type=deposit');
+  const fb = feeSet(b);
+  assert.ok(fb.has('FEE_UNPAID_ms7'));
+  assert.ok(fb.has('FEE_DEP_ms7'));
+  assert.ok(!fb.has('FEE_MANUAL_ms7'));
+});
+
+test('multi #34: source_type 多选 OR', async () => {
+  buildStandardScenario('ms8');
+  const a = await getList('?source_type=pi,manual');
+  const fa = feeSet(a);
+  assert.ok(fa.has('FEE_DEP_ms8'));
+  assert.ok(fa.has('FEE_MANUAL_ms8'));
+  assert.ok(!fa.has('FEE_UNPAID_ms8'), 'ci 来源不在 OR 集合');
+  const b = await getList('?source_type=ci,historical_ci');
+  const fb = feeSet(b);
+  assert.ok(fb.has('FEE_UNPAID_ms8'));
+  assert.ok(fb.has('FEE_DED_ms8'));
+  assert.ok(!fb.has('FEE_DEP_ms8'));
+});
+
+test('multi #35: 多维组合 AND（状态OR × 品牌OR × 国家）', async () => {
+  buildStandardScenario('ms9');
+  const body = await getList('?payment_status=paid,partial&brand=Redragon,Netac&country=' + encodeURIComponent('印度尼西亚'));
+  const fees = feeSet(body);
+  assert.ok(fees.has('FEE_PARTIAL_ms9'), 'Redragon+印尼+partial');
+  assert.ok(fees.has('FEE_PAID_ms9'), 'Redragon+印尼+paid');
+  assert.ok(fees.has('FEE_DED_ms9'), 'Netac + 历史CI国家代码ID归一=印尼 + paid → 三维度全满足，命中');
+  assert.ok(!fees.has('FEE_MYPAID_ms9'), 'Netac+马来西亚，国家维度不符（AND 排除）');
+  assert.ok(!fees.has('FEE_UNPAID_ms9'), '状态不在 OR 集合');
+});
+
+test('multi #36: 多选 + 付款日期区间组合（真实流水口径）', async () => {
+  buildStandardScenario('ms10');
+  const body = await getList('?payment_status=paid&pay_date_from=2026-08-01&pay_date_to=2026-08-31');
+  const fees = feeSet(body);
+  assert.ok(fees.has('FEE_PAID_ms10'), '8月有真实付款的已付清命中');
+  assert.ok(!fees.has('FEE_DED_ms10'), '纯抵扣结清无真实付款，日期不命中');
+  assert.ok(!fees.has('FEE_MYPAID_ms10'), '7月付款不在8月区间');
+  // 多选品牌 + 日期：Netac 已付清的两种都不在 8 月付款 → 结果为空
+  const empty = await getList('?brand=Netac&payment_status=paid&pay_date_from=2026-08-01&pay_date_to=2026-08-31');
+  assert.equal(empty.items.length, 0, '组合后无命中应返回空集');
+});
+
+test('multi #37: 多选 + keyword 组合', async () => {
+  buildStandardScenario('ms11');
+  const body = await getList('?brand=Redragon,Netac&keyword=' + encodeURIComponent('MYPAID'));
+  const fees = feeSet(body);
+  assert.ok(fees.has('FEE_MYPAID_ms11'), '关键词在品牌 OR 集合内进一步收窄');
+  assert.ok(!fees.has('FEE_PAID_ms11'), 'Redragon 但不匹配关键词');
+  assert.equal(body.items.length, 1);
+});
+
+test('multi #38: 空值/空参数 = 全部（不筛选），cancelled 仍不回流', async () => {
+  buildStandardScenario('ms12');
+  const all = await getList('');
+  const n = all.items.length;
+  assert.ok(n >= 8, '标准场景非 cancelled 应有 8 笔');
+  const v1 = await getList('?payment_status=&brand=&country=');
+  assert.equal(v1.items.length, n, '空值参数等同全部');
+  const v2 = await getList('?brand=,,');
+  assert.equal(v2.items.length, n, '纯逗号空值等同全部');
+  const v3 = await getList('?payment_status=unpaid,paid&country=&fee_type=&source_type=');
+  assert.equal(v3.items.length < n, true, '有值维度生效，空值维度不限');
+  const v4 = await getList('?payment_status=foo');
+  assert.equal(v4.items.length, n, '非法付款状态值忽略（旧行为：等同全部）');
+  const v5 = await getList('?payment_status=foo,unpaid');
+  assert.ok(v5.items.length < n, '合法值参与筛选，非法值忽略');
+  assert.ok(v5.items.every(it => it.payment_state === 'unpaid'));
+  [all, v1, v2, v3, v4, v5].forEach(b => assert.ok(!feeSet(b).has('FEE_CANCEL_ms12'), 'cancelled 在任何多选组合下都不回流'));
+});
+
+// ---------------------------------------------------------------------------
+// 本月/上月快捷按钮：paylMonthRange 从 app.js 提取真实实现执行（fake Date 注入固定时钟）
+// ---------------------------------------------------------------------------
+const fs = require('fs');
+const path = require('path');
+const APP_SRC = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
+const M_RANGE = APP_SRC.match(/function paylMonthRange\([\s\S]*?\n\}/);
+assert.ok(M_RANGE, 'app.js 应包含 paylMonthRange 纯函数');
+// 参数名 Date 遮蔽全局：new Date() 无参 → 固定时钟；new Date(y,m,d) → 真实构造
+function paylMonthRangeAt(iso) {
+  const RealDate = Date;
+  function FakeDate(...args) {
+    if (args.length === 0) return new RealDate(iso);
+    return new RealDate(...args);
+  }
+  FakeDate.prototype = RealDate.prototype;
+  return new Function('Date', M_RANGE[0] + '; return paylMonthRange;')(FakeDate);
+}
+
+test('multi #39: 本月/上月自然月计算（2026-09-05 → 09-01~09-30 / 08-01~08-31）', () => {
+  const r = paylMonthRangeAt('2026-09-05T12:00:00');
+  const t = r(0), l = r(-1);
+  assert.deepEqual(t, { from: '2026-09-01', to: '2026-09-30' }, '本月=完整自然月，不是今天截止');
+  assert.deepEqual(l, { from: '2026-08-01', to: '2026-08-31' });
+});
+
+test('multi #40: 上月跨年（2027-01 → 2026-12-01~2026-12-31）', () => {
+  const r = paylMonthRangeAt('2027-01-15T00:30:00');
+  assert.deepEqual(r(-1), { from: '2026-12-01', to: '2026-12-31' }, '1 月的上月是去年 12 月');
+});
+
+test('multi #41: 闰年 2 月（2024 → 02-29）与非闰年 2 月（2026 → 02-28）', () => {
+  const leap = paylMonthRangeAt('2024-02-10T08:00:00');
+  assert.deepEqual(leap(0), { from: '2024-02-01', to: '2024-02-29' }, '闰年 2 月 29 天');
+  const nonLeap = paylMonthRangeAt('2026-02-10T08:00:00');
+  assert.deepEqual(nonLeap(0), { from: '2026-02-01', to: '2026-02-28' }, '非闰年 2 月 28 天');
+  const leapPrev = paylMonthRangeAt('2024-03-05T08:00:00');
+  assert.deepEqual(leapPrev(-1), { from: '2024-02-01', to: '2024-02-29' }, '2024-03 的上月含 02-29');
+});
+
+test('multi #42: 31 天月与 30 天月月末正确（10月/4月）', () => {
+  const oct = paylMonthRangeAt('2026-10-09T08:00:00');
+  assert.deepEqual(oct(0), { from: '2026-10-01', to: '2026-10-31' });
+  const apr = paylMonthRangeAt('2026-04-18T08:00:00');
+  assert.deepEqual(apr(0), { from: '2026-04-01', to: '2026-04-30' });
+});
+
+test('multi #43: 快捷按钮覆盖语义与 active 判断（源码级断言）', () => {
+  // 覆盖：paylQuickMonth 内部直接赋值 pfd/pft（点击即覆盖已有自定义日期），并触发查询
+  const MQ = APP_SRC.match(/function paylQuickMonth\([\s\S]*?\n\}/);
+  assert.ok(MQ, 'app.js 应包含 paylQuickMonth');
+  assert.ok(/pfd\.value=r\.from/.test(MQ[0]) && /pft\.value=r\.to/.test(MQ[0]), '点击快捷按钮覆盖日期开始/结束');
+  assert.ok(/loadPayableList\(\)/.test(MQ[0]), '点击后立即按新日期查询');
+  assert.ok(/which==='last'\?-1:0/.test(MQ[0]), 'last → 上月，其余 → 本月');
+  // active 状态：当前区间正好等于完整本月/上月才亮，自定义区间不亮
+  const MA = APP_SRC.match(/function paylMsUpdateQuickActive\([\s\S]*?\n\}/);
+  assert.ok(MA, 'app.js 应包含 paylMsUpdateQuickActive');
+  assert.ok(/cur===mt\.from\+'~'\+mt\.to/.test(MA[0]) && /cur===ml\.from\+'~'\+ml\.to/.test(MA[0]), 'active 仅在完整本月/上月区间时');
+  // 按钮接线：onclick 绑定正确
+  assert.ok(APP_SRC.includes("paylQuickMonth('this')") || APP_SRC.includes("paylQuickMonth(\\'this\\')"), '本月按钮接线');
+  assert.ok(APP_SRC.includes("paylQuickMonth('last')") || APP_SRC.includes("paylQuickMonth(\\'last\\')"), '上月按钮接线');
+});

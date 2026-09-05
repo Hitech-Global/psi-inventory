@@ -4502,6 +4502,10 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.zh["payable_list.col_brand"]="品牌"; I18N.dict.en["payable_list.col_brand"]="Brand"; I18N.dict.id["payable_list.col_brand"]="Merek";
   I18N.dict.zh["payable_list.col_paystate"]="付款状态"; I18N.dict.en["payable_list.col_paystate"]="Pay Status"; I18N.dict.id["payable_list.col_paystate"]="Status Bayar";
   I18N.dict.zh["payable_list.col_lastpaydate"]="最近付款日期"; I18N.dict.en["payable_list.col_lastpaydate"]="Last Payment"; I18N.dict.id["payable_list.col_lastpaydate"]="Tanggal Bayar Terakhir";
+  I18N.dict.zh["payable_list.ms_selected"]="已选 {n} 项"; I18N.dict.en["payable_list.ms_selected"]="{n} selected"; I18N.dict.id["payable_list.ms_selected"]="{n} dipilih";
+  I18N.dict.zh["payable_list.quick_range"]="日期快捷"; I18N.dict.en["payable_list.quick_range"]="Quick Range"; I18N.dict.id["payable_list.quick_range"]="Tanggal Cepat";
+  I18N.dict.zh["payable_list.quick_this_month"]="本月"; I18N.dict.en["payable_list.quick_this_month"]="This Month"; I18N.dict.id["payable_list.quick_this_month"]="Bulan Ini";
+  I18N.dict.zh["payable_list.quick_last_month"]="上月"; I18N.dict.en["payable_list.quick_last_month"]="Last Month"; I18N.dict.id["payable_list.quick_last_month"]="Bulan Lalu";
   I18N.dict.zh["payable_list.summary_title"]="所选费用摘要"; I18N.dict.en["payable_list.summary_title"]="Selected Expense Summary"; I18N.dict.id["payable_list.summary_title"]="Ringkasan Biaya Terpilih";
   I18N.dict.zh["payable_list.summary_multi"]="已选 {v1} 项（仅摘要，查看明细请单选）"; I18N.dict.en["payable_list.summary_multi"]="Selected {v1} (summary only; select one to view detail)"; I18N.dict.id["payable_list.summary_multi"]="Terpilih {v1} (ringkasan saja; pilih satu untuk detail)";
   I18N.dict.zh["payable_list.related_pr"]="关联付款申请"; I18N.dict.en["payable_list.related_pr"]="Related Payment Requests"; I18N.dict.id["payable_list.related_pr"]="Permintaan Pembayaran Terkait";

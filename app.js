@@ -14011,19 +14011,120 @@ async function loadPayablePrStatusMap(items){
   }
 }
 
+// ── 应付费用列表：多选下拉（checkbox，轻量实现无新依赖）──
+// 同维度 OR / 跨维度 AND 由后端实现；未选任何值 = 不限（全部）。
+function paylMsHtml(ddId, options){
+  const items=options.map(o=>'<label class="payl-ms-item"><input type="checkbox" class="payl-ms-cb" data-dd="'+ddId+'" value="'+esc(o.value)+'" onchange="paylMsChange(\''+ddId+'\')"><span>'+esc(o.label)+'</span></label>').join('');
+  return '<div class="payl-ms" id="'+ddId+'">'+
+    '<button type="button" class="payl-ms-trigger" onclick="togglePaylMs(\''+ddId+'\')"><span class="payl-ms-text" id="'+ddId+'-text">'+t('payable_list.all','全部')+'</span><span class="payl-ms-caret">▾</span></button>'+
+    '<div class="payl-ms-panel" id="'+ddId+'-panel">'+items+'</div></div>';
+}
+function paylMsSelected(ddId){ return [...document.querySelectorAll('#'+ddId+' .payl-ms-cb:checked')]; }
+function paylMsLabel(cb){ const s=cb.closest('label')&&cb.closest('label').querySelector('span'); return s?s.textContent:cb.value; }
+function togglePaylMs(ddId){
+  const panel=document.getElementById(ddId+'-panel');
+  if(!panel)return;
+  const willOpen=panel.style.display!=='block';
+  closePaylMsAll();
+  panel.style.display=willOpen?'block':'none';
+}
+function closePaylMsAll(){ document.querySelectorAll('.payl-ms-panel').forEach(function(p){p.style.display='none';}); }
+let _paylMsDocBound=false;
+function bindPaylMsOutside(){
+  if(_paylMsDocBound)return;
+  _paylMsDocBound=true;
+  document.addEventListener('click', function(e){
+    if(!e.target||!e.target.closest||!e.target.closest('.payl-ms')) closePaylMsAll();
+  }, true);
+}
+// 收起态 trigger 文案：未选=全部 / 1个=名称 / 2个=名称拼接 / 3+个=已选 N 项
+function paylMsChange(ddId){
+  const cbs=paylMsSelected(ddId);
+  const txtEl=document.getElementById(ddId+'-text');
+  if(txtEl){
+    let txt;
+    if(cbs.length===0)txt=t('payable_list.all','全部');
+    else if(cbs.length===1)txt=paylMsLabel(cbs[0]);
+    else if(cbs.length===2)txt=cbs.map(paylMsLabel).join('、');
+    else txt=t('payable_list.ms_selected','已选 {n} 项').replace('{n}',cbs.length);
+    txtEl.textContent=txt;
+  }
+}
+// 把某多选下拉的已选值写入 URLSearchParams（多值重复 param，特殊字符由 URLSearchParams 编码）
+function paylMsParam(ddId, name, params){
+  paylMsSelected(ddId).map(function(cb){return cb.value;}).filter(Boolean)
+    .forEach(function(v){ params.append(name, v); });
+}
+// ── 付款日期快捷按钮：本月 / 上月（自然月，含跨年与闰年；月末用 Date(y,m+1,0) 计算，不手写天数表）──
+function paylMonthRange(offset){
+  const now=new Date();
+  const base=new Date(now.getFullYear(), now.getMonth()+offset, 1);
+  const first=new Date(base.getFullYear(), base.getMonth(), 1);
+  const last=new Date(base.getFullYear(), base.getMonth()+1, 0);
+  const fmt=function(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); };
+  return {from:fmt(first), to:fmt(last)};
+}
+function paylQuickMonth(which){
+  const r=paylMonthRange(which==='last'?-1:0);
+  const pfd=document.getElementById('payl-pfd'), pft=document.getElementById('payl-pft');
+  if(pfd)pfd.value=r.from;
+  if(pft)pft.value=r.to;
+  paylMsUpdateQuickActive();
+  loadPayableList();
+}
+// 当前日期区间正好等于完整本月/上月时对应按钮高亮 active；自定义区间两个都不亮
+function paylMsUpdateQuickActive(){
+  const pfd=document.getElementById('payl-pfd'), pft=document.getElementById('payl-pft');
+  const cur=(pfd?pfd.value:'')+'~'+(pft?pft.value:'');
+  const mt=paylMonthRange(0), ml=paylMonthRange(-1);
+  const bt=document.getElementById('payl-qthis'), bl=document.getElementById('payl-qlast');
+  if(bt)bt.classList.toggle('active', cur===mt.from+'~'+mt.to);
+  if(bl)bl.classList.toggle('active', cur===ml.from+'~'+ml.to);
+}
+
 async function renderPayableList(){
   // 完整台账：先拉品牌/国家动态选项（独立全量聚合，不随筛选变化），失败降级为仅「全部」
   await loadPayableFacets();
   const el=document.getElementById('content-inner');
-  el.innerHTML='<div id="flash-container"></div>'+
+  // 重建筛选区前保留已选状态（语言切换 / facets 刷新场景不丢已选）
+  const prevSel={};
+  ['payl-ms-fps','payl-ms-fb','payl-ms-fc','payl-ms-ft','payl-ms-st'].forEach(function(id){
+    const ex=document.getElementById(id); if(ex)prevSel[id]=paylMsSelected(id).map(function(cb){return cb.value;});
+  });
+  const prevInputs={};
+  ['payl-pfd','payl-pft','payl-fk'].forEach(function(id){
+    const ex=document.getElementById(id); if(ex)prevInputs[id]=ex.value;
+  });
+  el.innerHTML='<style>'+
+    '.payl-ms{position:relative;display:inline-block;min-width:132px}'+
+    '.payl-ms-trigger{display:flex;align-items:center;justify-content:space-between;gap:6px;width:100%;min-width:132px;padding:6px 10px;border:1px solid var(--border,#d7dae0);border-radius:8px;background:var(--card,#fff);color:inherit;font-size:13px;cursor:pointer}'+
+    '.payl-ms-trigger .payl-ms-caret{color:#98a0ab;font-size:11px}'+
+    '.payl-ms-panel{display:none;position:absolute;z-index:60;top:100%;left:0;margin-top:4px;background:var(--card,#fff);border:1px solid var(--border,#d7dae0);border-radius:10px;box-shadow:0 8px 24px rgba(15,23,42,.14);padding:6px;max-height:240px;overflow-y:auto;min-width:160px}'+
+    '.payl-ms-item{display:flex;align-items:center;gap:7px;padding:5px 8px;border-radius:6px;cursor:pointer;white-space:nowrap;font-size:13px;color:inherit}'+
+    '.payl-ms-item:hover{background:rgba(80,70,229,.08)}'+
+    '.payl-ms-item input{accent-color:#5046E5}'+
+    '.payl-quick{display:flex;gap:6px}'+
+    '.payl-quick button{padding:5px 12px;border:1px solid var(--border,#d7dae0);border-radius:8px;background:var(--card,#fff);color:inherit;font-size:13px;cursor:pointer}'+
+    '.payl-quick button:hover{border-color:#5046E5;color:#5046E5}'+
+    '.payl-quick button.active{background:#5046E5;border-color:#5046E5;color:#fff}'+
+    '</style>'+
+    '<div id="flash-container"></div>'+
     '<div class="filter-bar"><div class="filter-form">'+
-      '<div class="filter-group"><label>'+t('payable_list.filter_paystatus','付款状态')+'</label><select id="payl-fps"><option value="">'+t('payable_list.all','全部')+'</option><option value="unpaid">'+t('payable_list.paystate_unpaid','未付款')+'</option><option value="partial">'+t('payable_list.paystate_partial','部分付款')+'</option><option value="paid">'+t('payable_list.paystate_paid','已付清')+'</option></select></div>'+
-      '<div class="filter-group"><label>'+t('payable_list.filter_brand','品牌')+'</label><select id="payl-fb"><option value="">'+t('payable_list.all','全部')+'</option>'+_payableFacets.brands.map(function(b){return '<option value="'+esc(b)+'">'+esc(b)+'</option>';}).join('')+'</select></div>'+
-      '<div class="filter-group"><label>'+t('payable_list.filter_country','国家')+'</label><select id="payl-fc"><option value="">'+t('payable_list.all','全部')+'</option>'+_payableFacets.countries.map(function(c){return '<option value="'+esc(c.code)+'">'+esc(c.name)+'</option>';}).join('')+'</select></div>'+
-      '<div class="filter-group"><label>'+t('payable_list.filter_feetype','费用类型')+'</label><select id="payl-ft"><option value="">'+t('payable_list.all','全部')+'</option>'+Object.keys(PAY_FEE_TYPE_LABELS).map(function(k){return '<option value="'+k+'">'+PAY_FEE_TYPE_LABELS[k]+'</option>';}).join('')+'</select></div>'+
-      '<div class="filter-group"><label>'+t('payable_list.filter_sourcetype','来源')+'</label><select id="payl-st"><option value="">'+t('payable_list.all','全部')+'</option>'+Object.keys(PAY_SOURCE_TYPE_LABELS).map(function(k){return '<option value="'+k+'">'+PAY_SOURCE_TYPE_LABELS[k]+'</option>';}).join('')+'</select></div>'+
-      '<div class="filter-group"><label>'+t('payable_list.filter_paydate_from','付款日期开始')+'</label><input type="date" id="payl-pfd"></div>'+
-      '<div class="filter-group"><label>'+t('payable_list.filter_paydate_to','付款日期结束')+'</label><input type="date" id="payl-pft"></div>'+
+      '<div class="filter-group"><label>'+t('payable_list.filter_paystatus','付款状态')+'</label>'+paylMsHtml('payl-ms-fps',[
+        {value:'unpaid',label:t('payable_list.paystate_unpaid','未付款')},
+        {value:'partial',label:t('payable_list.paystate_partial','部分付款')},
+        {value:'paid',label:t('payable_list.paystate_paid','已付清')}
+      ])+'</div>'+
+      '<div class="filter-group"><label>'+t('payable_list.filter_brand','品牌')+'</label>'+paylMsHtml('payl-ms-fb',_payableFacets.brands.map(function(b){return {value:b,label:b};}))+'</div>'+
+      '<div class="filter-group"><label>'+t('payable_list.filter_country','国家')+'</label>'+paylMsHtml('payl-ms-fc',_payableFacets.countries.map(function(c){return {value:c.code,label:c.name};}))+'</div>'+
+      '<div class="filter-group"><label>'+t('payable_list.filter_feetype','费用类型')+'</label>'+paylMsHtml('payl-ms-ft',Object.keys(PAY_FEE_TYPE_LABELS).map(function(k){return {value:k,label:PAY_FEE_TYPE_LABELS[k]};}))+'</div>'+
+      '<div class="filter-group"><label>'+t('payable_list.filter_sourcetype','来源')+'</label>'+paylMsHtml('payl-ms-st',Object.keys(PAY_SOURCE_TYPE_LABELS).map(function(k){return {value:k,label:PAY_SOURCE_TYPE_LABELS[k]};}))+'</div>'+
+      '<div class="filter-group"><label>'+t('payable_list.quick_range','日期快捷')+'</label><div class="payl-quick">'+
+        '<button type="button" id="payl-qthis" onclick="paylQuickMonth(\'this\')">'+t('payable_list.quick_this_month','本月')+'</button>'+
+        '<button type="button" id="payl-qlast" onclick="paylQuickMonth(\'last\')">'+t('payable_list.quick_last_month','上月')+'</button>'+
+      '</div></div>'+
+      '<div class="filter-group"><label>'+t('payable_list.filter_paydate_from','付款日期开始')+'</label><input type="date" id="payl-pfd" oninput="paylMsUpdateQuickActive()"></div>'+
+      '<div class="filter-group"><label>'+t('payable_list.filter_paydate_to','付款日期结束')+'</label><input type="date" id="payl-pft" oninput="paylMsUpdateQuickActive()"></div>'+
       '<div class="filter-group"><label>'+t('payable_list.filter_keyword','关键词')+'</label><input type="text" id="payl-fk" placeholder="'+t('payable_list.filter_keyword_ph','费用号/来源单号/收款方/供应商')+'" onkeypress="if(event.key===\'Enter\')loadPayableList()"></div>'+
       '<div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadPayableList()">'+t('common.search','搜索')+'</button></div>'+
     '</div></div>'+
@@ -14032,27 +14133,34 @@ async function renderPayableList(){
     '<div id="payl-hint" class="payl-hint"></div>'+
     '<div id="payl-table"></div></div>';
   _payableListSel=new Set();
+  // 恢复已选状态并刷新 trigger 文案 / 快捷按钮 active
+  Object.keys(prevSel).forEach(function(id){
+    const want=prevSel[id]||[];
+    document.querySelectorAll('#'+id+' .payl-ms-cb').forEach(function(cb){ if(want.indexOf(cb.value)>=0)cb.checked=true; });
+    paylMsChange(id);
+  });
+  Object.keys(prevInputs).forEach(function(id){
+    const el=document.getElementById(id); if(el&&prevInputs[id])el.value=prevInputs[id];
+  });
+  paylMsUpdateQuickActive();
+  bindPaylMsOutside();
   await loadPayableList();
 }
 
 async function loadPayableList(){
-  const fps=document.getElementById('payl-fps');
-  const fb=document.getElementById('payl-fb');
-  const fc=document.getElementById('payl-fc');
-  const ft=document.getElementById('payl-ft');
-  const st=document.getElementById('payl-st');
   const pfd=document.getElementById('payl-pfd');
   const pft=document.getElementById('payl-pft');
   const fk=document.getElementById('payl-fk');
   const params=new URLSearchParams();
-  // 完整台账筛选：付款状态（金额事实口径）/ 品牌 / 国家 / 付款日期区间（真实付款流水）
-  if(fps&&fps.value)params.set('payment_status',fps.value);
-  if(fb&&fb.value)params.set('brand',fb.value);
-  if(fc&&fc.value)params.set('country',fc.value);
+  // 完整台账筛选（多选）：付款状态 / 品牌 / 国家 / 费用类型 / 来源 —— 同维度 OR（重复 param），
+  // 跨维度 AND（后端）；付款日期区间走真实付款流水；keyword 单值。
+  paylMsParam('payl-ms-fps','payment_status',params);
+  paylMsParam('payl-ms-fb','brand',params);
+  paylMsParam('payl-ms-fc','country',params);
+  paylMsParam('payl-ms-ft','fee_type',params);
+  paylMsParam('payl-ms-st','source_type',params);
   if(pfd&&pfd.value)params.set('pay_date_from',pfd.value);
   if(pft&&pft.value)params.set('pay_date_to',pft.value);
-  if(ft&&ft.value)params.set('fee_type',ft.value);
-  if(st&&st.value)params.set('source_type',st.value);
   if(fk&&fk.value)params.set('keyword',fk.value);
   const q=params.toString();
   let data;

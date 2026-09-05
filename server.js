@@ -14379,6 +14379,22 @@ app.get('/api/payable-items/facets', requireApiPermission('payment_view'), async
   res.json({ brands, countries, total: rows.length });
 }));
 
+// 台账多值筛选参数解析：兼容 "a,b" 逗号分隔与重复 query param（?brand=A&brand=B），可混合。
+// 去空/去重/去首尾空格；返回数组为空 = 该维度不限（等同「全部」）。
+// 仅用于 /api/payable-items 筛选参数，不改任何业务数据口径。
+function parseMultiParam(v) {
+  const parts = Array.isArray(v) ? v : [v];
+  const out = [];
+  for (const part of parts) {
+    if (part == null) continue;
+    for (const s of String(part).split(',')) {
+      const t = s.trim();
+      if (t) out.push(t);
+    }
+  }
+  return [...new Set(out)];
+}
+
 app.get('/api/payable-items', requireApiPermission('payment_view'), asyncHandler((req, res) => {
   const { lifecycle_status, fee_type, source_type, source_id, payee_key, keyword } = req.query;
   // 完整台账新筛参：付款状态（unpaid/partial/paid，金额事实口径）/ 品牌 / 国家 / 付款日期区间
@@ -14406,8 +14422,11 @@ app.get('/api/payable-items', requireApiPermission('payment_view'), asyncHandler
   // 调用方主动传 lifecycle_status 参数时按精确值查询（历史查询仍可用）。
   if (lifecycle_status) { sql += ' AND lifecycle_status = ?'; params.push(lifecycle_status); }
   else { sql += " AND lifecycle_status IN ('active','reserved','partially_paid','paid')"; }
-  if (fee_type) { sql += ' AND fee_type = ?'; params.push(fee_type); }
-  if (source_type) { sql += ' AND source_type = ?'; params.push(source_type); }
+  // 费用类型 / 来源：支持多选（同维度 OR = SQL IN；单值旧调用兼容——单值 IN 单元素等价于 =）
+  const feeTypes = parseMultiParam(fee_type);
+  if (feeTypes.length) { sql += ` AND fee_type IN (${feeTypes.map(() => '?').join(',')})`; params.push(...feeTypes); }
+  const sourceTypes = parseMultiParam(source_type);
+  if (sourceTypes.length) { sql += ` AND source_type IN (${sourceTypes.map(() => '?').join(',')})`; params.push(...sourceTypes); }
   if (source_id) { sql += ' AND source_id = ?'; params.push(source_id); }
   if (payee_key) { sql += ' AND payee_key = ?'; params.push(payee_key); }
   // 付款日期区间筛选（真实付款流水口径）：EXISTS 任意一笔真实 payment 流水 paid_date 落在区间即命中。
@@ -14471,18 +14490,18 @@ app.get('/api/payable-items', requireApiPermission('payment_view'), asyncHandler
     };
   });
   // 内存筛选（先完成所有筛选，再产出 total / items —— 本端点无分页，保持现状不引入）：
-  // 付款状态：与响应 payment_state 同一函数派生，筛选口径 = 展示口径。
+  // 多选语义：同一维度内部 OR，不同维度之间 AND；某维度无有效值 = 不限（等同「全部」）。
+  // 付款状态：与响应 payment_state 同一函数派生，筛选口径 = 展示口径；非法值忽略（与旧单值行为一致）。
   // 品牌：大小写不敏感精确匹配；无品牌费用只出现在「全部」（不因 brand 为空丢数据）。
-  // 国家：canonCountry 归一后比对（中文 / ISO 代码均可命中同一费用）。
-  let psFilter = String(payment_status || '').trim();
-  if (!['unpaid', 'partial', 'paid'].includes(psFilter)) psFilter = '';
-  const brandFilter = String(brand || '').trim().toLowerCase();
-  const countryFilter = canonCountry(String(country || '').trim());
-  if (psFilter || brandFilter || countryFilter) {
+  // 国家：canonCountry 归一后比对（中文 / ISO 代码均可命中同一费用），归一后为空的值忽略。
+  const psSet = parseMultiParam(payment_status).filter(v => ['unpaid', 'partial', 'paid'].includes(v));
+  const brandSet = new Set(parseMultiParam(brand).map(v => v.toLowerCase()));
+  const countrySet = new Set(parseMultiParam(country).map(v => canonCountry(v)).filter(Boolean));
+  if (psSet.length || brandSet.size || countrySet.size) {
     items = items.filter(it => {
-      if (psFilter && it.payment_state !== psFilter) return false;
-      if (brandFilter && String(it.brand || '').trim().toLowerCase() !== brandFilter) return false;
-      if (countryFilter && String(it.country_code || '').trim() !== countryFilter) return false;
+      if (psSet.length && !psSet.includes(it.payment_state)) return false;
+      if (brandSet.size && !brandSet.has(String(it.brand || '').trim().toLowerCase())) return false;
+      if (countrySet.size && !countrySet.has(String(it.country_code || '').trim())) return false;
       return true;
     });
   }
