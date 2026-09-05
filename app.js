@@ -6659,7 +6659,7 @@ async function onRpCountryChange(skipDataReload){
   if(!skipDataReload){
     saveRpPreferences();
     loadRpSummary();
-    loadRpWithHistorical();
+    rpShowCachedViewOrLoad();
   }
 }
 // RC-FILTER-PRESERVE：语言切换时保存/恢复订单预测筛选稳定值（会话内）
@@ -6727,7 +6727,7 @@ async function onRpBrandChange(){
     }
   }catch(e){console.warn('onRpBrandChange failed',e)}
   saveRpPreferences();
-  loadRpSummary();loadRpWithHistorical();
+  loadRpSummary();rpShowCachedViewOrLoad();
 }
 function collectRpPreferences(){
   return {
@@ -6763,10 +6763,8 @@ function saveRpPreferences(){
 function onRpFilterChange(){
   rpFlushAllPending();   // 筛选/搜索变化前主动 flush 手工作业（普通查看，不重算、不覆盖）
   saveRpPreferences();
-  rpClearDataCache();
-  rpClearAllViews();
   loadRpSummary();
-  loadRpWithHistorical();
+  rpShowCachedViewOrLoad();
 }
 async function resetRpFilters(){
   rpFlushAllPending();   // 重置筛选前主动 flush 手工作业（普通查看，不重算、不覆盖）
@@ -6799,7 +6797,7 @@ function rpFilterBody(){
   };
 }
 // ==================== 订单预测：缓存基础设施 ====================
-var RP_MAX_DOM_VIEWS=3;
+var RP_MAX_DOM_VIEWS=6;
 var RP_MAX_DATA_ENTRIES=20;
 window._rpCache={
   data:new Map(),
@@ -6807,6 +6805,13 @@ window._rpCache={
   views:{},
   viewOrder:[]
 };
+// ===== 性能 instrumentation（仅 ?rp_perf=1 或 localStorage rp_perf=1 时打印，不依赖任何外部库）=====
+var RP_PERF=(function(){
+  try{ return /[?&]rp_perf=1/.test((typeof location!=='undefined'&&location.search)||'') || (typeof localStorage!=='undefined'&&localStorage.getItem('rp_perf')==='1'); }catch(e){ return false; }
+})();
+function rpPerfStart(){ if(!RP_PERF)return null; var p={t0:performance.now(),m:{}}; window._rpPerfP=p; return p; }
+function rpPerfSet(p,stage,val){ if(!RP_PERF||!p)return; p.m[stage]=(val!=null)?val:Math.round((performance.now()-p.t0)*100)/100; }
+function rpPerfEnd(p,extra){ if(!RP_PERF||!p)return; p.m.total=Math.round((performance.now()-p.t0)*100)/100; if(extra)Object.assign(p.m,extra); console.log('[RP PERF]', JSON.stringify(p.m)); }
 // 建议采购「手工输入保护层」：仅前端，记录用户在线上/线下渠道明确输入过的建议采购数量。
 // 不新增数据库字段、不新增 API、不改变现有 PUT 与预测计算公式。
 // 仅作为「切换查看方式 / 筛选 / 重渲染」场景下恢复用户输入的冗余保护，
@@ -6832,19 +6837,51 @@ function rpDailyUrl(){
   }
   return url;
 }
-function rpCurrentViewKey(){return rpTab+'-'+rpMode;}
+function rpCanonicalFilterKey(){
+  // 仅纳入「会真正触发服务端重新查询」的筛选字段，固定顺序 + 归一化，保证：
+  // 相同筛选条件 → 相同 key；不同数据结果的筛选 → 绝不误命中同一 key。
+  function norm(v){ return (v==null?'':String(v)).trim(); }
+  function e(v){ return encodeURIComponent(norm(v)); }
+  var hist='0';
+  if(window._rpHistoricalSalesConfig&&window._rpHistoricalSalesConfig.start&&window._rpHistoricalSalesConfig.end){
+    hist='h:'+norm(window._rpHistoricalSalesConfig.start)+'-'+norm(window._rpHistoricalSalesConfig.end);
+  }
+  return [
+    't='+e(rpTab),
+    'm='+e(rpMode),
+    'c='+e(document.getElementById('rp-c')?document.getElementById('rp-c').value:''),
+    'w='+e(document.getElementById('rp-w')?document.getElementById('rp-w').value:''),
+    'b='+e(document.getElementById('rp-b')?document.getElementById('rp-b').value:''),
+    'k='+e(document.getElementById('rp-s')?document.getElementById('rp-s').value:''),
+    'ss='+e(document.getElementById('rp-status')?document.getElementById('rp-status').value:''),
+    'ls='+e(document.getElementById('rp-lifecycle')?document.getElementById('rp-lifecycle').value:''),
+    'h='+e(hist)
+  ].join('|');
+}
+function rpCurrentViewKey(){ return rpTab+'-'+rpMode+'-'+rpCanonicalFilterKey(); }
 function rpSignature(viewKey){
-  if(viewKey==='total-monthly')return rpBaseUrl()+'|'+rpMonthlySalesUrl();
-  if(viewKey==='online-monthly'||viewKey==='offline-monthly')return rpBaseUrl();
-  return rpDailyUrl();
+  // 自包含：signature 直接等于 viewKey 本身（viewKey 已编码全部数据决定维度：
+  // tab/mode + country/warehouse/brand/keyword/sales_status/lifecycle_status/historical），
+  // 绝不读取当前全局筛选状态。
+  // 这样「传入旧 key、而当前全局处于其它筛选」时也不会误判：
+  // 例：rpGetViewNode(MalaysiaKey) 在当前全局为 Indonesia 时，rpSignature(MalaysiaKey)===MalaysiaKey，
+  // 与 store 时写入的 signature 完全一致 → 正确命中 Malaysia 节点，不会误用 Indonesia 的 signature。
+  // 杜绝「参数 viewKey 被忽略、完全依赖当前全局变量」的隐患。
+  return viewKey;
 }
 async function rpFetchCached(url){
-  if(window._rpCache.data.has(url)){return window._rpCache.data.get(url);}
+  if(window._rpCache.data.has(url)){ if(RP_PERF&&window._rpPerfP) rpPerfSet(window._rpPerfP,'data_cache','HIT'); return window._rpCache.data.get(url); }
   if(window._rpCache.pending.has(url)){return window._rpCache.pending.get(url);}
   var p=api(url);
   window._rpCache.pending.set(url,p);
+  var _ts=performance.now();
   try{
     var resp=await p;
+    if(RP_PERF&&window._rpPerfP){
+      var _dt=Math.round((performance.now()-_ts)*100)/100;
+      if(url.indexOf('monthly-sales')>=0) rpPerfSet(window._rpPerfP,'get_monthly_ms',_dt);
+      else rpPerfSet(window._rpPerfP,'get_suggestions_ms',_dt);
+    }
     window._rpCache.data.set(url,resp);
     if(window._rpCache.data.size>RP_MAX_DATA_ENTRIES){
       var firstKey=window._rpCache.data.keys().next().value;
@@ -6934,8 +6971,28 @@ function rpClearDataCache(){
 // 同一 invalidation dependency group。只把已存在的节点 signature 置 '__STALE__'，
 // 下次 switchRpTab 命中即失效、触发重新 load，使用最新 server 数据。
 function rpInvalidateSuggestionViews(){
-  ['total-monthly','total-daily','online-monthly','online-daily','offline-monthly','offline-daily']
-    .forEach(function(k){ if(window._rpCache.views[k]) window._rpCache.views[k].signature='__STALE__'; });
+  // filter-aware 后固定 6 key 已不存在；改为标记全部已缓存视图为 stale，
+  // 任意「真数据变更」(generate/保存/系统重算) 后，所有筛选组合下次访问都会重新 load 最新 server 数据。
+  Object.keys(window._rpCache.views).forEach(function(k){ if(window._rpCache.views[k]) window._rpCache.views[k].signature='__STALE__'; });
+}
+// 统一筛选/切 Tab/切 Mode 入口：优先命中 DOM view cache（瞬间显示），miss 才走正常 load。
+// 不改变 override / sessionStorage journal / CAS 保存逻辑。
+async function rpShowCachedViewOrLoad(){
+  if(RP_PERF){ window._rpPerfP=rpPerfStart(); }
+  var viewKey=rpCurrentViewKey();
+  var cached=rpGetViewNode(viewKey);
+  if(cached){
+    if(RP_PERF){ rpPerfEnd(window._rpPerfP,{result:'VIEW_HIT', viewKey:viewKey, data_cache:'-'}); }
+    rpShowView(viewKey);
+    rpRestoreScroll(viewKey);
+    rpTouchView(viewKey);
+    rpReconcileEffectiveValues(cached.node);
+    updateRpFieldConfigBtn(rpTab);
+    return;
+  }
+  if(RP_PERF){ rpPerfSet(window._rpPerfP,'view_cache_miss'); }
+  await loadRpWithHistorical();
+  if(RP_PERF){ rpPerfEnd(window._rpPerfP,{result:'VIEW_MISS', viewKey:viewKey}); }
 }
 // 读取某渠道某行(rid)的手动建议采购值：
 // 用 hasOwnProperty 严格区分「未设置」(返回 undefined) 与「显式输入 0」(返回 0)，
@@ -7204,6 +7261,30 @@ function rpGetEffectiveSuggestedQty(channel, row){
   if(typeof console!=='undefined' && console.warn) console.warn('[rp] missing channel context for effective suggestedQty', channel, row && row.id);
   return 0;
 }
+// 缓存视图恢复（rpShowView / cached view restore）时，以「现有 override / journal / CAS 权威状态」
+// 为准，对建议采购数量 input 执行一次 effective-state reconcile。
+// 不重新 GET、不重新 innerHTML、不改变保存业务语义。
+// 关键：仅 _rpManualStock（override）是「跨筛选切换稳定」的权威源——它不会因切换到其它筛选导致
+// _rpChannelData 被覆盖而失效；若某 rid 当前有在途/待发保存（override 仍设置），以此值同步 DOM。
+// 若 override 未设置，DOM 当前值（render 初值或用户手输值）即为权威，绝不回退到可能已被其它筛选
+// 覆盖的 _rpChannelData（避免把过期/错误 server 值写回 DOM，造成「旧 cached DOM 显示过期值」）。
+function rpReconcileEffectiveValues(container){
+  if(!container) return;
+  try{
+    var inputs=container.querySelectorAll('.rp-target-stock-input');
+    for(var i=0;i<inputs.length;i++){
+      var inp=inputs[i];
+      var rid=inp.getAttribute('data-rid');
+      var channel=inp.getAttribute('data-channel');
+      if(!rid||!channel) continue;
+      var manual=rpGetManualStock(channel, rid);
+      if(manual!==undefined){
+        var cur=(inp.value==='')?null:Number(inp.value);
+        if(cur!==manual){ inp.value=manual; }
+      }
+    }
+  }catch(e){}
+}
 // 统一“预计下单后周转”口径：渠道分摊库存池 + effectiveSuggestedQty ÷ 渠道月均销量。
 // avgSalesPeriod<=0 → 返回 null（无销量）；qty=0 合法；绝不使用 c.pool（总库存池）。
 function rpComputeChannelAfterOrderTurnover(c, effectiveQty){
@@ -7266,13 +7347,14 @@ function switchRpTab(tab){
   var poBtn=document.getElementById('rp-po-btn');
   if(poBtn){poBtn.style.display=(tab==='total')?'':'none';}
   saveRpPreferences();
-  var viewKey=tab+'-'+rpMode;
+  var viewKey=rpCurrentViewKey();
   var cached=rpGetViewNode(viewKey);
   if(cached){
     rpSaveScroll(rpCurrentViewKey());
     rpShowView(viewKey);
     rpRestoreScroll(viewKey);
     rpTouchView(viewKey);
+    rpReconcileEffectiveValues(cached.node);
     updateRpFieldConfigBtn(tab);
     return;
   }
@@ -7286,13 +7368,14 @@ function switchRpMode(mode){
   document.querySelectorAll('.rp-mode-btn').forEach(b=>b.classList.remove('active'));
   event.target.classList.add('active');
   saveRpPreferences();
-  var viewKey=rpTab+'-'+mode;
+  var viewKey=rpCurrentViewKey();
   var cached=rpGetViewNode(viewKey);
   if(cached){
     rpSaveScroll(rpCurrentViewKey());
     rpShowView(viewKey);
     rpRestoreScroll(viewKey);
     rpTouchView(viewKey);
+    rpReconcileEffectiveValues(cached.node);
     updateRpFieldConfigBtn(rpTab);
     return;
   }
@@ -7338,7 +7421,7 @@ async function loadRp(){
   if(rpMode==='daily'){return loadRpDaily();}
   if(rpTab==='online'){return loadRpChannelMonthly('online');}
   if(rpTab==='offline'){return loadRpChannelMonthly('offline');}
-  var myViewKey='total-monthly';
+  var myViewKey=rpCurrentViewKey();
   try{
     await getSalesStatsDays();
     var bUrl=rpBaseUrl();
@@ -7532,14 +7615,18 @@ async function loadRp(){
       ? '<tr><td colspan="'+colCount+t('gen.L4175.1','" style="text-align:center;padding:40px 20px;color:#999;background:#fafbfc">💡 当前筛选条件下暂无建议，请调整国家/仓库/品牌或点击"重新计算"</td></tr>')
       : '';
     var html='<div class="table-container" style="box-shadow:none;border-radius:0;overflow:auto;max-height:70vh"><table class="data-table rp-monthly-table" style="width:'+rpColWidthTotal(activeKeys)+'px;min-width:'+rpColWidthTotal(activeKeys)+'px">'+rpColgroupHtml(activeKeys)+'<thead><tr style="height:34px">'+th+'</tr>'+sum+'</thead><tbody>'+rows+tableFoot+'</tbody></table></div>';
+    var _rStart=performance.now();
     var container=rpEnsureContainer(myViewKey);
+    if(RP_PERF&&window._rpPerfP){ rpPerfSet(window._rpPerfP,'html_build_ms', Math.round((performance.now()-_rStart)*100)/100); }
     container.innerHTML=html;
+    if(RP_PERF&&window._rpPerfP){ rpPerfSet(window._rpPerfP,'innerHTML_ms', Math.round((performance.now()-_rStart)*100)/100); }
     rpStoreViewNode(myViewKey,container);
     if(rpCurrentViewKey()===myViewKey){
       rpShowView(myViewKey);
       applyChannelFreezeColumns('total', activeKeys, container);
       syncRpHeaderHeight(container);
       initRpTableDrag('total', container);
+      if(RP_PERF&&window._rpPerfP){ rpPerfSet(window._rpPerfP,'post_render_ms', Math.round((performance.now()-_rStart)*100)/100); }
     }
   }catch(e){showFlash(e.message,'danger')}
 }
@@ -8155,7 +8242,7 @@ function formatPIDepositStatus(status) {
 
 // 线上/线下预测 + 按月：设置目标周转
 async function loadRpChannelMonthly(channel){
-  var myViewKey=channel+'-monthly';
+  var myViewKey=rpCurrentViewKey();
   var isOnline=channel==='online';
   var chLabel=isOnline?t('gen.L4185.1','线上'):t('gen.L4185.2','线下');
   var now=new Date();
@@ -8516,14 +8603,18 @@ async function loadRpChannelMonthly(channel){
       ? '<tr><td colspan="'+colCount+t('gen.L4389.1','" style="text-align:center;padding:40px 20px;color:#999;background:#fafbfc">💡 当前筛选条件下暂无建议，请调整国家/仓库/品牌或点击"重新计算"</td></tr>')
       : '';
     var html='<div class="table-container" style="box-shadow:none;border-radius:0;overflow:auto;max-height:70vh"><table class="data-table rp-monthly-table" style="width:'+rpColWidthTotal(activeKeys)+'px;min-width:'+rpColWidthTotal(activeKeys)+'px">'+rpColgroupHtml(activeKeys)+'<thead><tr style="height:34px">'+th+'</tr>'+sum+'</thead><tbody>'+rows+tableFoot+'</tbody></table></div>';
+    var _rStart=performance.now();
     var container=rpEnsureContainer(myViewKey);
+    if(RP_PERF&&window._rpPerfP){ rpPerfSet(window._rpPerfP,'html_build_ms', Math.round((performance.now()-_rStart)*100)/100); }
     container.innerHTML=html;
+    if(RP_PERF&&window._rpPerfP){ rpPerfSet(window._rpPerfP,'innerHTML_ms', Math.round((performance.now()-_rStart)*100)/100); }
     rpStoreViewNode(myViewKey,container);
     if(rpCurrentViewKey()===myViewKey){
       rpShowView(myViewKey);
       applyChannelFreezeColumns(tabKey, activeKeys, container);
       syncRpHeaderHeight(container);
       initRpTableDrag(channel, container);
+      if(RP_PERF&&window._rpPerfP){ rpPerfSet(window._rpPerfP,'post_render_ms', Math.round((performance.now()-_rStart)*100)/100); }
     }
   }catch(e){showFlash(e.message,'danger')}
 }
@@ -9253,7 +9344,7 @@ async function saveFinalQty(rid){
 
 // 按天模式：冻结左侧列 + 冻结汇总行
 async function loadRpDaily(){
-  var myViewKey=rpTab+'-daily';
+  var myViewKey=rpCurrentViewKey();
   try{
     var url=rpDailyUrl();
     const resp=await rpFetchCached(url);
@@ -9395,12 +9486,16 @@ async function loadRpDaily(){
       +'<thead>'+headRow+summaryRow+'</thead>'
       +'<tbody>'+rows+emptyFoot+'</tbody>'
       +'</table></div>';
+    var _rStart=performance.now();
     var container=rpEnsureContainer(myViewKey);
+    if(RP_PERF&&window._rpPerfP){ rpPerfSet(window._rpPerfP,'html_build_ms', Math.round((performance.now()-_rStart)*100)/100); }
     container.innerHTML=html;
+    if(RP_PERF&&window._rpPerfP){ rpPerfSet(window._rpPerfP,'innerHTML_ms', Math.round((performance.now()-_rStart)*100)/100); }
     rpStoreViewNode(myViewKey,container);
     if(rpCurrentViewKey()===myViewKey){
       rpShowView(myViewKey);
       syncRpDailyHeaderHeight(container);
+      if(RP_PERF&&window._rpPerfP){ rpPerfSet(window._rpPerfP,'post_render_ms', Math.round((performance.now()-_rStart)*100)/100); }
     }
   }catch(e){showFlash(e.message,'danger')}
 }
