@@ -14168,12 +14168,16 @@ async function loadPayableList(){
     data=await api('/api/payable-items'+(q?'?'+q:''));
   }catch(e){
     const tb=document.getElementById('payl-table');if(tb)tb.innerHTML='<div class="flash flash-danger show">'+esc(e.message)+'</div>';
+    // 失败路径同样刷新快捷按钮 active，避免高亮残留（session 过期等场景）
+    paylMsUpdateQuickActive();
     return;
   }
   _payableListData=(data&&data.items)||[];
   await loadPayablePrStatusMap(_payableListData);
   renderPayableTable();
   updatePayableMenu();
+  // 兜底刷新快捷按钮 active：任何路径改动日期（含程序赋值/清空）后状态都同步
+  paylMsUpdateQuickActive();
 }
 
 function renderPayableTable(){
