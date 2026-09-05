@@ -15207,7 +15207,10 @@ app.get('/api/payment-requests/by-payable-items', requireApiPermission('payment_
       whereExtra = ` AND pr.payment_status NOT IN ('cancelled','rejected') AND pr.approval_status NOT IN ('cancelled','rejected')`;
     }
     const rows = query(
-      `SELECT DISTINCT pr.id, pr.request_no, pr.payment_status, pr.approval_status, pr.payment_mode, pri.payable_item_id AS payable_item_id
+      // pr.created_at 必须在 SELECT 列表内：PG 要求 DISTINCT 的 ORDER BY 列出现在 SELECT 中
+      //（缺列会在 PostgreSQL 报 "for SELECT DISTINCT, ORDER BY expressions must appear in select list" → 500；
+      //  SQLite 不强制所以本地测不出。07-31 ea15f5c 引入，2026-09-05 修复。响应多一个 created_at 字段，纯增量。）
+      `SELECT DISTINCT pr.id, pr.request_no, pr.payment_status, pr.approval_status, pr.payment_mode, pr.created_at, pri.payable_item_id AS payable_item_id
        FROM payment_requests pr
        JOIN payment_request_items pri ON pri.payment_request_id = pr.id
        WHERE pri.payable_item_id IN (${placeholders})${whereExtra}

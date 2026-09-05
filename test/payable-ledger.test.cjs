@@ -700,3 +700,75 @@ test('multi #43: 快捷按钮覆盖语义与 active 判断（源码级断言）'
   assert.ok(APP_SRC.includes("paylQuickMonth('this')") || APP_SRC.includes("paylQuickMonth(\\'this\\')"), '本月按钮接线');
   assert.ok(APP_SRC.includes("paylQuickMonth('last')") || APP_SRC.includes("paylQuickMonth(\\'last\\')"), '上月按钮接线');
 });
+
+// ---------------------------------------------------------------------------
+// /api/payment-requests/by-payable-items（详情弹窗数据源）
+// PG 兼容回归：SELECT DISTINCT + ORDER BY pr.created_at 曾缺列导致生产 500
+//（"for SELECT DISTINCT, ORDER BY expressions must appear in select list"，
+//  SQLite 不强制故本地测不出；PG 17.11 已实测：补列后成功、排序正确）
+// ---------------------------------------------------------------------------
+async function getByPayableItems(qs) {
+  const server = app.listen(0);
+  try {
+    const port = server.address().port;
+    const res = await fetch(`http://127.0.0.1:${port}/api/payment-requests/by-payable-items${qs || ''}`, {
+      headers: { 'Cookie': `session_token=${AUTH_TOKEN}` }
+    });
+    const body = await res.json().catch(() => ({}));
+    return { status: res.status, body };
+  } finally {
+    await new Promise(r => server.close(r));
+  }
+}
+
+test('ledger #44: by-payable-items 正常返回 + created_at 字段在 SELECT 列表（PG DISTINCT 兼容回归）', async () => {
+  buildStandardScenario('bpp');
+  // FEE_PAID 有 3 笔真实付款 = 3 个 PR
+  const { status, body } = await getByPayableItems('?ids=' + encodeURIComponent(byFeeNoForSeed('bpp').paid));
+  assert.equal(status, 200);
+  assert.ok(Array.isArray(body.payment_requests));
+  assert.equal(body.payment_requests.length, 3, '3 次付款 = 3 个 PR');
+  for (const pr of body.payment_requests) {
+    for (const k of ['id', 'request_no', 'payment_status', 'approval_status', 'payment_mode', 'created_at', 'payable_item_id']) {
+      assert.ok(k in pr, '响应应包含字段 ' + k + '（created_at 缺失即 PG DISTINCT 兼容回归失败）');
+    }
+    assert.equal(pr.payable_item_id, byFeeNoForSeed('bpp').paid);
+  }
+});
+
+test('ledger #45: 从未创建 PR 的费用返回空数组（详情弹窗场景 C：不 500）', async () => {
+  buildStandardScenario('bpn');
+  const { status, body } = await getByPayableItems('?ids=' + encodeURIComponent(byFeeNoForSeed('bpn').manual));
+  assert.equal(status, 200, '无 PR 费用也必须 200');
+  assert.deepEqual(body.payment_requests, []);
+});
+
+test('ledger #46: cancelled PR 默认排除，include_history=true 时包含', async () => {
+  buildStandardScenario('bpc');
+  const cancelPaidId = byFeeNoForSeed('bpc').canpr;
+  const a = await getByPayableItems('?ids=' + encodeURIComponent(cancelPaidId));
+  assert.equal(a.status, 200);
+  assert.equal(a.body.payment_requests.length, 0, 'cancelled PR 默认排除');
+  const b = await getByPayableItems('?ids=' + encodeURIComponent(cancelPaidId) + '&include_history=true');
+  assert.equal(b.status, 200);
+  assert.equal(b.body.payment_requests.length, 1, 'include_history=true 包含 cancelled');
+  assert.equal(b.body.payment_requests[0].payment_status, 'cancelled');
+});
+
+test('ledger #47: 空 ids 参数返回 400（保持原有校验）', async () => {
+  buildStandardScenario('bpe');
+  const { status, body } = await getByPayableItems('');
+  assert.equal(status, 400);
+  assert.ok(body.error);
+});
+
+// 从种子里反查 payable_item id（按 fee_no 前缀约定 FEE_*_<tag>）
+function byFeeNoForSeed(tag) {
+  const rows = query("SELECT id, fee_no FROM payable_items WHERE fee_no LIKE 'FEE_%_' || ?", [tag]).rows;
+  const map = {};
+  for (const r of rows) {
+    const key = r.fee_no.slice('FEE_'.length, r.fee_no.length - tag.length - 1).toLowerCase();
+    map[key] = r.id;
+  }
+  return map;
+}
