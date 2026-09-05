@@ -4460,7 +4460,7 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.zh["payable_list.status_active"]="待处理"; I18N.dict.en["payable_list.status_active"]="Pending"; I18N.dict.id["payable_list.status_active"]="Tertunda";
   I18N.dict.zh["payable_list.status_reserved"]="已占用"; I18N.dict.en["payable_list.status_reserved"]="Reserved"; I18N.dict.id["payable_list.status_reserved"]="Dicadangkan";
   I18N.dict.zh["payable_list.status_partially_paid"]="部分已付"; I18N.dict.en["payable_list.status_partially_paid"]="Partially Paid"; I18N.dict.id["payable_list.status_partially_paid"]="Sebagian Dibayar";
-  I18N.dict.zh["payable_list.empty"]="暂无应付费用（默认显示待处理/已占用/部分已付）"; I18N.dict.en["payable_list.empty"]="No payable expenses (Pending/Reserved/Partially Paid shown by default)"; I18N.dict.id["payable_list.empty"]="Tidak ada biaya hutang (Tertunda/Dicadangkan/Sebagian Dibayar ditampilkan secara default)";
+  I18N.dict.zh["payable_list.empty"]="暂无应付费用（完整费用台账：未付款 / 部分付款 / 已付清；已作废费用不显示）"; I18N.dict.en["payable_list.empty"]="No payable expenses (Full ledger: Unpaid / Partially Paid / Paid in full; cancelled excluded)"; I18N.dict.id["payable_list.empty"]="Tidak ada biaya hutang (Buku besar lengkap: Belum Dibayar / Sebagian / Lunas; yang dibatalkan tidak ditampilkan)";
   I18N.dict.zh["payable_list.col_feeno"]="费用号"; I18N.dict.en["payable_list.col_feeno"]="Fee No."; I18N.dict.id["payable_list.col_feeno"]="No. Biaya";
   I18N.dict.zh["payable_list.col_source"]="来源"; I18N.dict.en["payable_list.col_source"]="Source"; I18N.dict.id["payable_list.col_source"]="Sumber";
   I18N.dict.zh["payable_list.col_feetype"]="费用类型"; I18N.dict.en["payable_list.col_feetype"]="Fee Type"; I18N.dict.id["payable_list.col_feetype"]="Jenis Biaya";
@@ -4490,6 +4490,18 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.zh["payable_list.withdraw_confirm"]="确认撤回所选 {v1} 项付款申请？此操作将释放已占用费用。"; I18N.dict.en["payable_list.withdraw_confirm"]="Withdraw {v1} selected payment request(s)? This releases the reserved expenses."; I18N.dict.id["payable_list.withdraw_confirm"]="Tarik {v1} permintaan pembayaran terpilih? Ini akan melepaskan biaya yang dicadangkan.";
   I18N.dict.zh["payable_list.view_fail"]="加载失败：{v1}"; I18N.dict.en["payable_list.view_fail"]="Load failed: {v1}"; I18N.dict.id["payable_list.view_fail"]="Gagal memuat: {v1}";
   I18N.dict.zh["payable_list.detail_title"]="应付费用明细"; I18N.dict.en["payable_list.detail_title"]="Payable Expense Detail"; I18N.dict.id["payable_list.detail_title"]="Detail Biaya Hutang";
+  // 完整费用台账：新筛选与新列（付款状态 / 品牌 / 国家 / 付款日期区间 / 品牌 / 最近付款日期）
+  I18N.dict.zh["payable_list.filter_paystatus"]="付款状态"; I18N.dict.en["payable_list.filter_paystatus"]="Pay Status"; I18N.dict.id["payable_list.filter_paystatus"]="Status Bayar";
+  I18N.dict.zh["payable_list.filter_brand"]="品牌"; I18N.dict.en["payable_list.filter_brand"]="Brand"; I18N.dict.id["payable_list.filter_brand"]="Merek";
+  I18N.dict.zh["payable_list.filter_country"]="国家"; I18N.dict.en["payable_list.filter_country"]="Country"; I18N.dict.id["payable_list.filter_country"]="Negara";
+  I18N.dict.zh["payable_list.filter_paydate_from"]="付款日期开始"; I18N.dict.en["payable_list.filter_paydate_from"]="Paid From"; I18N.dict.id["payable_list.filter_paydate_from"]="Tanggal Bayar Dari";
+  I18N.dict.zh["payable_list.filter_paydate_to"]="付款日期结束"; I18N.dict.en["payable_list.filter_paydate_to"]="Paid To"; I18N.dict.id["payable_list.filter_paydate_to"]="Tanggal Bayar Sampai";
+  I18N.dict.zh["payable_list.paystate_unpaid"]="未付款"; I18N.dict.en["payable_list.paystate_unpaid"]="Unpaid"; I18N.dict.id["payable_list.paystate_unpaid"]="Belum Dibayar";
+  I18N.dict.zh["payable_list.paystate_partial"]="部分付款"; I18N.dict.en["payable_list.paystate_partial"]="Partially Paid"; I18N.dict.id["payable_list.paystate_partial"]="Dibayar Sebagian";
+  I18N.dict.zh["payable_list.paystate_paid"]="已付清"; I18N.dict.en["payable_list.paystate_paid"]="Paid in Full"; I18N.dict.id["payable_list.paystate_paid"]="Lunas";
+  I18N.dict.zh["payable_list.col_brand"]="品牌"; I18N.dict.en["payable_list.col_brand"]="Brand"; I18N.dict.id["payable_list.col_brand"]="Merek";
+  I18N.dict.zh["payable_list.col_paystate"]="付款状态"; I18N.dict.en["payable_list.col_paystate"]="Pay Status"; I18N.dict.id["payable_list.col_paystate"]="Status Bayar";
+  I18N.dict.zh["payable_list.col_lastpaydate"]="最近付款日期"; I18N.dict.en["payable_list.col_lastpaydate"]="Last Payment"; I18N.dict.id["payable_list.col_lastpaydate"]="Tanggal Bayar Terakhir";
   I18N.dict.zh["payable_list.summary_title"]="所选费用摘要"; I18N.dict.en["payable_list.summary_title"]="Selected Expense Summary"; I18N.dict.id["payable_list.summary_title"]="Ringkasan Biaya Terpilih";
   I18N.dict.zh["payable_list.summary_multi"]="已选 {v1} 项（仅摘要，查看明细请单选）"; I18N.dict.en["payable_list.summary_multi"]="Selected {v1} (summary only; select one to view detail)"; I18N.dict.id["payable_list.summary_multi"]="Terpilih {v1} (ringkasan saja; pilih satu untuk detail)";
   I18N.dict.zh["payable_list.related_pr"]="关联付款申请"; I18N.dict.en["payable_list.related_pr"]="Related Payment Requests"; I18N.dict.id["payable_list.related_pr"]="Permintaan Pembayaran Terkait";

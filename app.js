@@ -13935,6 +13935,24 @@ const PAY_SOURCE_TYPE_LABELS={pi:'PI',ci:'CI',manual:'手动录入',historical_c
 const PAY_LIFECYCLE_LABELS={active:'待处理',reserved:'已占用',partially_paid:'部分已付',released:'已释放',paid:'已付款',cancelled:'已取消'};
 // 合并行「付款申请状态」聚合：取底层所有成员业务态的最高优先级（已付款 > 部分付款 > 已通过 > 审批中 > 草稿 > 未申请）
 const _PR_STATUS_PRI={'已付款':6,'部分付款':5,'已通过':4,'审批中':3,'草稿':2,'未申请':1};
+// 完整台账：费用级付款状态标签（口径 = 金额事实：settled=0 未付款 / remaining>0 部分付款 / remaining=0 已付清）
+function payStateLabel(s){
+  if(s==='unpaid')return t('payable_list.paystate_unpaid','未付款');
+  if(s==='partial')return t('payable_list.paystate_partial','部分付款');
+  if(s==='paid')return t('payable_list.paystate_paid','已付清');
+  return s||'';
+}
+// 完整台账：品牌/国家动态选项（来自 /api/payable-items/facets，独立全量聚合，
+// 不随当前筛选变化；拉取失败降级为仅「全部」，不硬编码品牌/国家）
+let _payableFacets={brands:[],countries:[]};
+async function loadPayableFacets(){
+  try{
+    const f=await api('/api/payable-items/facets');
+    _payableFacets={brands:(f&&f.brands)||[],countries:(f&&f.countries)||[]};
+  }catch(e){
+    _payableFacets={brands:[],countries:[]};
+  }
+}
 function mergedPayablePrStatus(r){
   if(!r.merged||!r.ids)return '未申请';
   let bestP=0,best='未申请';
@@ -13994,13 +14012,19 @@ async function loadPayablePrStatusMap(items){
 }
 
 async function renderPayableList(){
+  // 完整台账：先拉品牌/国家动态选项（独立全量聚合，不随筛选变化），失败降级为仅「全部」
+  await loadPayableFacets();
   const el=document.getElementById('content-inner');
   el.innerHTML='<div id="flash-container"></div>'+
     '<div class="filter-bar"><div class="filter-form">'+
-      '<div class="filter-group"><label>'+t('payable_list.filter_status','状态')+'</label><select id="payl-fs"><option value="">'+t('payable_list.all','全部')+'</option><option value="active">'+t('payable_list.status_active','待处理')+'</option><option value="reserved">'+t('payable_list.status_reserved','已占用')+'</option><option value="partially_paid">'+t('payable_list.status_partially_paid','部分已付')+'</option></select></div>'+
+      '<div class="filter-group"><label>'+t('payable_list.filter_paystatus','付款状态')+'</label><select id="payl-fps"><option value="">'+t('payable_list.all','全部')+'</option><option value="unpaid">'+t('payable_list.paystate_unpaid','未付款')+'</option><option value="partial">'+t('payable_list.paystate_partial','部分付款')+'</option><option value="paid">'+t('payable_list.paystate_paid','已付清')+'</option></select></div>'+
+      '<div class="filter-group"><label>'+t('payable_list.filter_brand','品牌')+'</label><select id="payl-fb"><option value="">'+t('payable_list.all','全部')+'</option>'+_payableFacets.brands.map(function(b){return '<option value="'+esc(b)+'">'+esc(b)+'</option>';}).join('')+'</select></div>'+
+      '<div class="filter-group"><label>'+t('payable_list.filter_country','国家')+'</label><select id="payl-fc"><option value="">'+t('payable_list.all','全部')+'</option>'+_payableFacets.countries.map(function(c){return '<option value="'+esc(c.code)+'">'+esc(c.name)+'</option>';}).join('')+'</select></div>'+
       '<div class="filter-group"><label>'+t('payable_list.filter_feetype','费用类型')+'</label><select id="payl-ft"><option value="">'+t('payable_list.all','全部')+'</option>'+Object.keys(PAY_FEE_TYPE_LABELS).map(function(k){return '<option value="'+k+'">'+PAY_FEE_TYPE_LABELS[k]+'</option>';}).join('')+'</select></div>'+
       '<div class="filter-group"><label>'+t('payable_list.filter_sourcetype','来源')+'</label><select id="payl-st"><option value="">'+t('payable_list.all','全部')+'</option>'+Object.keys(PAY_SOURCE_TYPE_LABELS).map(function(k){return '<option value="'+k+'">'+PAY_SOURCE_TYPE_LABELS[k]+'</option>';}).join('')+'</select></div>'+
-      '<div class="filter-group"><label>'+t('payable_list.filter_keyword','关键词')+'</label><input type="text" id="payl-fk" placeholder="'+t('payable_list.filter_keyword_ph','费用号/来源单号/收款方')+'" onkeypress="if(event.key===\'Enter\')loadPayableList()"></div>'+
+      '<div class="filter-group"><label>'+t('payable_list.filter_paydate_from','付款日期开始')+'</label><input type="date" id="payl-pfd"></div>'+
+      '<div class="filter-group"><label>'+t('payable_list.filter_paydate_to','付款日期结束')+'</label><input type="date" id="payl-pft"></div>'+
+      '<div class="filter-group"><label>'+t('payable_list.filter_keyword','关键词')+'</label><input type="text" id="payl-fk" placeholder="'+t('payable_list.filter_keyword_ph','费用号/来源单号/收款方/供应商')+'" onkeypress="if(event.key===\'Enter\')loadPayableList()"></div>'+
       '<div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadPayableList()">'+t('common.search','搜索')+'</button></div>'+
     '</div></div>'+
     '<div class="table-section"><div class="table-section-title"><div class="table-section-title-left">📋 '+t('nav.payable_list','应付费用列表')+'</div><div class="table-section-title-right" id="payl-selinfo"></div></div>'+
@@ -14012,12 +14036,21 @@ async function renderPayableList(){
 }
 
 async function loadPayableList(){
-  const fs=document.getElementById('payl-fs');
+  const fps=document.getElementById('payl-fps');
+  const fb=document.getElementById('payl-fb');
+  const fc=document.getElementById('payl-fc');
   const ft=document.getElementById('payl-ft');
   const st=document.getElementById('payl-st');
+  const pfd=document.getElementById('payl-pfd');
+  const pft=document.getElementById('payl-pft');
   const fk=document.getElementById('payl-fk');
   const params=new URLSearchParams();
-  if(fs&&fs.value)params.set('lifecycle_status',fs.value);
+  // 完整台账筛选：付款状态（金额事实口径）/ 品牌 / 国家 / 付款日期区间（真实付款流水）
+  if(fps&&fps.value)params.set('payment_status',fps.value);
+  if(fb&&fb.value)params.set('brand',fb.value);
+  if(fc&&fc.value)params.set('country',fc.value);
+  if(pfd&&pfd.value)params.set('pay_date_from',pfd.value);
+  if(pft&&pft.value)params.set('pay_date_to',pft.value);
   if(ft&&ft.value)params.set('fee_type',ft.value);
   if(st&&st.value)params.set('source_type',st.value);
   if(fk&&fk.value)params.set('keyword',fk.value);
@@ -14042,13 +14075,14 @@ function renderPayableTable(){
   rows.forEach(function(r){ if(r.merged)_mergedRowsMap[r.id]=r.ids.map(function(id){ return _payableListData.find(function(x){return x.id===id;})||{id:id}; }); });
   const tb=document.getElementById('payl-table');if(!tb)return;
   if(!rows.length){
-    tb.innerHTML='<div class="flash flash-info show">'+t('payable_list.empty','暂无应付费用（默认显示待处理/已占用/部分已付）')+'</div>';
+    tb.innerHTML='<div class="flash flash-info show">'+t('payable_list.empty','暂无应付费用（完整费用台账：未付款 / 部分付款 / 已付清；已作废费用不显示）')+'</div>';
     return;
   }
   let html='<table class="data-table"><thead><tr>'+
     '<th style="width:36px"><input type="checkbox" id="payl-selall" onchange="togglePayableSelAll(this.checked)"></th>'+
     '<th>'+t('payable_list.col_feeno','费用号')+'</th>'+
     '<th>'+t('payable_list.col_source','来源')+'</th>'+
+    '<th>'+t('payable_list.col_brand','品牌')+'</th>'+
     '<th>'+t('payable_list.col_country','国家')+'</th>'+
     '<th>'+t('payable_list.col_supplier','供应商')+'</th>'+
     '<th>'+t('payable_list.col_feetype','费用类型')+'</th>'+
@@ -14059,7 +14093,9 @@ function renderPayableTable(){
     '<th style="text-align:right" class="muted-col">'+t('payable_list.col_deduction','抵扣')+'</th>'+
     '<th style="text-align:right" class="muted-col">'+t('payable_list.col_rounding','抹零')+'</th>'+
     '<th style="text-align:right">'+t('payable_list.col_remaining','剩余未付')+'</th>'+
+    '<th>'+t('payable_list.col_paystate','付款状态')+'</th>'+
     '<th class="col-paydate">'+t('payable_list.col_paydate','应付日期')+' ⭐</th>'+
+    '<th>'+t('payable_list.col_lastpaydate','最近付款日期')+'</th>'+
     '<th>'+t('payable_list.col_status','状态')+'</th>'+
     '<th>'+t('payable_list.col_pr_status','付款申请状态')+'</th>'+
     '<th class="muted-col">'+t('payable_list.col_created','创建时间')+'</th>'+
@@ -14074,6 +14110,18 @@ function renderPayableTable(){
     const deductionNum=Number(r.deduction_amount||0);
     const roundingNum=Number(r.rounding_amount||0);
     const remainNum=r.remaining_amount!=null?Number(r.remaining_amount):Math.max(0,payableNum-paidNum-deductionNum-roundingNum);
+    // 完整台账：品牌 / 最近付款日期 / 付款状态（单行直接用后端口径字段；
+    // 合并行从底层 items 派生：品牌取首个非空、最近付款日期取 MAX、付款状态按合并汇总金额事实推）
+    let brandVal=String(r.brand||'').trim();
+    let lastPayVal=String(r.last_payment_date||'');
+    let payState=String(r.payment_state||'');
+    if(r.merged){
+      const members=(r.ids||[]).map(function(id){return _payableListData.find(function(x){return x.id===id;});}).filter(Boolean);
+      brandVal=members.map(function(x){return String(x.brand||'').trim();}).find(Boolean)||'';
+      lastPayVal=members.map(function(x){return String(x.last_payment_date||'');}).filter(Boolean).sort().slice(-1)[0]||'';
+      const settledMerged=paidNum+deductionNum+roundingNum;
+      payState= settledMerged<=0?'unpaid':(remainNum>0?'partial':'paid');
+    }
     const paidTxt=paidNum.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
     const deductionTxt=deductionNum.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
     const roundingTxt=roundingNum.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -14084,6 +14132,7 @@ function renderPayableTable(){
       '<td onclick="event.stopPropagation()"><input type="checkbox" class="payl-cb" data-id="'+esc(rKey)+'" onchange="togglePayableSel(\''+esc(rKey)+'\',this.checked)"></td>'+
       '<td>'+esc(r.fee_no||'')+'</td>'+
       '<td>'+srcTxt+'</td>'+
+      '<td>'+esc(brandVal||'—')+'</td>'+
       '<td>'+esc(r.country_display||r.country||'—')+'</td>'+
       '<td>'+esc(r.supplier_name||r.payee_name_snapshot||'—')+'</td>'+
       '<td>'+esc(PAY_FEE_TYPE_LABELS[r.fee_type]||r.fee_type||'')+'</td>'+
@@ -14094,7 +14143,9 @@ function renderPayableTable(){
       '<td style="text-align:right" class="muted-col'+(deductionNum>0?'':' muted')+'">'+deductionTxt+'</td>'+
       '<td style="text-align:right" class="muted-col'+(roundingNum>0?'':' muted')+'">'+roundingTxt+'</td>'+
       '<td style="text-align:right"><b>'+remainTxt+'</b></td>'+
+      '<td>'+esc(payStateLabel(payState))+'</td>'+
       '<td class="col-paydate'+(r.payable_date?'':' muted')+'">'+ (r.payable_date?esc(fmtDate(r.payable_date)):'—') +'</td>'+
+      '<td'+(lastPayVal?'':' class="muted"')+'>'+ (lastPayVal?esc(lastPayVal):'—') +'</td>'+
       '<td>'+esc(PAY_LIFECYCLE_LABELS[r.lifecycle_status]||r.lifecycle_status||'')+'</td>'+
       '<td>'+esc(r.merged?mergedPayablePrStatus(r):(_payablePrStatusMap[r.id]||'未申请'))+'</td>'+
       '<td class="muted-col muted">'+esc((r.created_at||'').slice(0,19))+'</td>'+

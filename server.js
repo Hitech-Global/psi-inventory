@@ -14261,23 +14261,26 @@ app.get('/api/purchase-amount-summary', requireApiPermission('ci_view'), asyncHa
 //  - 尾款(balance) 及有 CI 关联 → commercial_invoices.ci_no / historical_commercial_invoices.historical_ci_no
 //  - 历史CI 且 source_ci_id 为空 → 回退 source_no 关联 historical_commercial_invoices.historical_ci_no
 // 不修改 payable_items / source_type / source_id / CI-PI 关联 / 付款流程，仅返回展示字段。
+// 完整台账扩展：同时返回 brand（定金→PI.brand；source_ci_id→CI.brand/历史CI.brand_name；
+// 历史CI 回退 source_no）与 country_code（canonCountry 归一化，供筛选比对）。
+// 仅查询期派生，零 DDL、零回填。
 function derivePayableSourceRefs(rows) {
   const ciIds = [...new Set(rows.map(r => r.source_ci_id).filter(Boolean))];
   const ciMap = {};
   if (ciIds.length) {
     // commercial_invoices 含 related_pi_no；historical_commercial_invoices 不含该列（与驾驶舱现有查询一致）
-    query(`SELECT id, ci_no, related_pi_no, country FROM commercial_invoices WHERE id IN (${ciIds.map(() => '?').join(',')})`, ciIds)
+    query(`SELECT id, ci_no, related_pi_no, country, brand FROM commercial_invoices WHERE id IN (${ciIds.map(() => '?').join(',')})`, ciIds)
       .rows.forEach(c => { ciMap[c.id] = c; });
-    query(`SELECT id, historical_ci_no AS ci_no, country FROM historical_commercial_invoices WHERE id IN (${ciIds.map(() => '?').join(',')})`, ciIds)
+    query(`SELECT id, historical_ci_no AS ci_no, country, brand_name AS brand FROM historical_commercial_invoices WHERE id IN (${ciIds.map(() => '?').join(',')})`, ciIds)
       .rows.forEach(c => { ciMap[c.id] = c; });
   }
   const hciByNo = {};
-  query('SELECT historical_ci_no, historical_ci_no AS ci_no, country FROM historical_commercial_invoices')
+  query('SELECT historical_ci_no, historical_ci_no AS ci_no, country, brand_name AS brand FROM historical_commercial_invoices')
     .rows.forEach(c => { if (c.historical_ci_no) hciByNo[c.historical_ci_no] = c; });
   const piIds = [...new Set(rows.map(r => r.source_id).filter(Boolean))];
   const piMap = {};
   if (piIds.length) {
-    query(`SELECT id, pi_no, country FROM proforma_invoices WHERE id IN (${piIds.map(() => '?').join(',')})`, piIds)
+    query(`SELECT id, pi_no, country, brand FROM proforma_invoices WHERE id IN (${piIds.map(() => '?').join(',')})`, piIds)
       .rows.forEach(p => { piMap[p.id] = p; });
   }
   const out = new Map();
@@ -14295,13 +14298,99 @@ function derivePayableSourceRefs(rows) {
       ? (piCtx ? (piCtx.country || '') : '')
       : (ciCtx ? (ciCtx.country || '') : (piCtx ? (piCtx.country || '') : ''));
     const countryDisplay = displayCountry(canonCountry(rawCountry));
-    out.set(r.id, { related_pi_no: relatedPiNo, related_ci_no: relatedCiNo, country_display: countryDisplay });
+    // 品牌：定金→PI.brand；CI 关联→CI.brand（历史 CI 为 brand_name）；无来源单据（如手动录入）→ ''，保留在「全部」中
+    const brand = sub === 'deposit'
+      ? (piCtx ? (piCtx.brand || '') : '')
+      : (ciCtx ? (ciCtx.brand || '') : (piCtx ? (piCtx.brand || '') : ''));
+    out.set(r.id, {
+      related_pi_no: relatedPiNo,
+      related_ci_no: relatedCiNo,
+      country_display: countryDisplay,
+      country_code: canonCountry(rawCountry),
+      brand: brand
+    });
   }
   return out;
 }
 
+// 完整台账：批量取每笔费用的「最近付款日期」。
+// 口径（与用户拍板一致）：只认真实付款流水 payment_settlement_logs（event_type='payment'，status='applied'，
+// paid_date 非空），PR 排除 cancelled/rejected —— 与 payableItemsSettlementBreakdown 的 PR 过滤完全同口径。
+// 纯抵扣/抹零结清（无 payment 事件）不产生日期；MAX(paid_date) 仅用于展示，不用于付款日期筛选。
+function payableItemsLastPaymentDateMap(itemIds) {
+  const result = new Map();
+  const ids = [...new Set((itemIds || []).filter(Boolean))];
+  ids.forEach(id => result.set(id, ''));
+  if (!ids.length) return result;
+  const rows = query(
+    `SELECT pri.payable_item_id AS pid, MAX(substr(psl.paid_date, 1, 10)) AS last_paid
+     FROM payment_request_items pri
+     JOIN payment_requests pr ON pr.id = pri.payment_request_id
+     JOIN payment_settlement_logs psl ON psl.payment_request_id = pr.id
+     WHERE pri.payable_item_id IN (${ids.map(() => '?').join(',')})
+       AND psl.event_type = 'payment' AND psl.status = 'applied' AND psl.paid_date != ''
+       AND pr.payment_status NOT IN ('cancelled','rejected')
+       AND pr.approval_status NOT IN ('cancelled','rejected')
+     GROUP BY pri.payable_item_id`,
+    ids
+  ).rows || [];
+  rows.forEach(r => { if (r.last_paid) result.set(r.pid, String(r.last_paid)); });
+  return result;
+}
+
+// 完整台账：费用级付款状态（权威口径 = 金额事实，与用户拍板一致）：
+//   settled = paid + deduction + rounding；remaining = payable - settled
+//   settled = 0            → 'unpaid'（未付款）
+//   settled > 0 且 remaining > 0 → 'partial'（部分付款）
+//   remaining <= 0         → 'paid'（已付清，含纯抵扣/抹零结清）
+// 不读取 payment_requests.payment_status（PR 级状态不作为费用级付款状态）。
+function derivePayableItemPaymentState(payableMinor, paidMinor, deductionMinor, roundingMinor) {
+  const settledMinor = paidMinor + deductionMinor + roundingMinor;
+  const remainingMinor = Math.max(0, payableMinor - settledMinor);
+  if (settledMinor <= 0) return 'unpaid';
+  if (remainingMinor <= 0) return 'paid';
+  return 'partial';
+}
+
+// 完整台账 facets：品牌 / 国家下拉选项（动态取自实际数据，禁止前端硬编码）。
+// 范围与费用台账一致：lifecycle IN (active, reserved, partially_paid, paid)，排除 cancelled。
+// 国家统一 canonCountry 归一（历史 CI 的 ID 与中文「印度尼西亚」归到同一筛选值），显示用 displayCountry。
+// 独立全量聚合：不随列表当前筛选变化，避免「选了 A 品牌后其他品牌选项消失」。
+app.get('/api/payable-items/facets', requireApiPermission('payment_view'), asyncHandler((req, res) => {
+  const rows = query(
+    `SELECT id, source_type, source_id, source_no, source_ci_id, subcategory_code
+     FROM payable_items
+     WHERE lifecycle_status IN ('active','reserved','partially_paid','paid')`
+  ).rows;
+  const refMap = derivePayableSourceRefs(rows);
+  const brandSet = {};
+  const countrySet = {};
+  for (const r of rows) {
+    const refs = refMap.get(r.id) || {};
+    const brand = String(refs.brand || '').trim();
+    if (brand) brandSet[brand] = 1;
+    const code = String(refs.country_code || '').trim();
+    if (code) countrySet[code] = 1;
+  }
+  const brands = Object.keys(brandSet).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  const countries = Object.keys(countrySet)
+    .map(code => ({ code, name: displayCountry(code) }))
+    .sort((a, b) => String(a.name).localeCompare(String(b.name), 'zh-CN'));
+  res.json({ brands, countries, total: rows.length });
+}));
+
 app.get('/api/payable-items', requireApiPermission('payment_view'), asyncHandler((req, res) => {
   const { lifecycle_status, fee_type, source_type, source_id, payee_key, keyword } = req.query;
+  // 完整台账新筛参：付款状态（unpaid/partial/paid，金额事实口径）/ 品牌 / 国家 / 付款日期区间
+  const { payment_status, brand, country, pay_date_from, pay_date_to } = req.query;
+  // 付款日期参数校验：统一 YYYY-MM-DD；支持只传 from / 只传 to / 两者
+  const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+  if (pay_date_from && !DATE_RE.test(pay_date_from)) {
+    return res.status(400).json({ error: 'pay_date_from 必须为 YYYY-MM-DD 格式' });
+  }
+  if (pay_date_to && !DATE_RE.test(pay_date_to)) {
+    return res.status(400).json({ error: 'pay_date_to 必须为 YYYY-MM-DD 格式' });
+  }
   // 关联来源单据取供应商名称（仅用于列表展示「供应商」列，不改任何业务规则/金额/状态）
   let sql = `SELECT pi.*,
       COALESCE(ci.supplier_name, hci.supplier_name, pii.supplier_name) AS supplier_name
@@ -14311,37 +14400,63 @@ app.get('/api/payable-items', requireApiPermission('payment_view'), asyncHandler
     LEFT JOIN proforma_invoices pii ON pi.source_type = 'pi' AND pi.source_id = pii.id
     WHERE 1=1`;
   const params = [];
-  // 业务规则：应付费用工作台只列出未结清项（active + reserved + partially_paid）。
-  // 全部付清（paid）以及已取消（cancelled）移出本列表。
+  // 业务规则（完整费用台账）：默认列出 未付款 + 部分付款 + 已付清（active/reserved/partially_paid/paid）。
+  // 已付清（paid）费用保留在台账中展示历史付款事实；已作废（cancelled）继续排除，不混入正常台账。
   // partially_paid = 已付一部分、仍有剩余未付，继续留在列表并可再次发起付款申请。
   // 调用方主动传 lifecycle_status 参数时按精确值查询（历史查询仍可用）。
   if (lifecycle_status) { sql += ' AND lifecycle_status = ?'; params.push(lifecycle_status); }
-  else { sql += " AND lifecycle_status IN ('active','reserved','partially_paid')"; }
+  else { sql += " AND lifecycle_status IN ('active','reserved','partially_paid','paid')"; }
   if (fee_type) { sql += ' AND fee_type = ?'; params.push(fee_type); }
   if (source_type) { sql += ' AND source_type = ?'; params.push(source_type); }
   if (source_id) { sql += ' AND source_id = ?'; params.push(source_id); }
   if (payee_key) { sql += ' AND payee_key = ?'; params.push(payee_key); }
-  if (keyword) { sql += ' AND (fee_no LIKE ? OR source_no LIKE ? OR payee_name_snapshot LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`); }
+  // 付款日期区间筛选（真实付款流水口径）：EXISTS 任意一笔真实 payment 流水 paid_date 落在区间即命中。
+  // 只认 payment_settlement_logs event_type='payment' / status='applied' / paid_date 非空，
+  // PR 排除 cancelled/rejected（与 payableItemsSettlementBreakdown 同口径）；
+  // 不用 due_date / created_at / 审批时间；不用 MAX(paid_date) 做筛选（MAX 仅用于「最近付款日期」展示）；
+  // 纯抵扣/抹零结清（无 payment 事件）与从未付款的费用均不命中。
+  // substr(paid_date,1,10)：兼容 legacy paid_date 可能带时间后缀的写法，统一按日比较（PG/SQLite 均支持）。
+  if (pay_date_from || pay_date_to) {
+    sql += ` AND EXISTS (
+      SELECT 1 FROM payment_request_items pri
+      JOIN payment_requests pr ON pr.id = pri.payment_request_id
+      JOIN payment_settlement_logs psl ON psl.payment_request_id = pr.id
+      WHERE pri.payable_item_id = pi.id
+        AND psl.event_type = 'payment' AND psl.status = 'applied' AND psl.paid_date != ''
+        AND pr.payment_status NOT IN ('cancelled','rejected')
+        AND pr.approval_status NOT IN ('cancelled','rejected')`;
+    if (pay_date_from) { sql += ' AND substr(psl.paid_date, 1, 10) >= ?'; params.push(pay_date_from); }
+    if (pay_date_to) { sql += ' AND substr(psl.paid_date, 1, 10) <= ?'; params.push(pay_date_to); }
+    sql += ' )';
+  }
+  // 关键词：费用号 / 来源单号 / 收款方快照 / 供应商（JOIN 派生列，PG WHERE 不支持别名，写完整 COALESCE 表达式）
+  if (keyword) { sql += ' AND (fee_no LIKE ? OR source_no LIKE ? OR payee_name_snapshot LIKE ? OR COALESCE(ci.supplier_name, hci.supplier_name, pii.supplier_name) LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`, `%${keyword}%`); }
   sql += ' ORDER BY created_at DESC';
   const rows = query(sql, params).rows;
   // PAY-CORE 多次付款：附加「已付款 / 抵扣 / 抹零 / 剩余未付」拆分（应付事实不变，金额动态推导）
   const breakdownMap = payableItemsSettlementBreakdown(rows.map(r => r.id));
-  // 来源编号派生（仅展示用，与驾驶舱同口径：定金→PI号，尾款→CI号）
+  // 来源编号派生（仅展示用，与驾驶舱同口径：定金→PI号，尾款→CI号）+ 品牌 / 国家归一码
   const refMap = derivePayableSourceRefs(rows);
+  // 最近付款日期（真实 payment 流水 MAX(paid_date)，仅展示）
+  const lastPayMap = payableItemsLastPaymentDateMap(rows.map(r => r.id));
   // 金额转换为元（便于前端展示）
-  const items = rows.map(r => {
+  let items = rows.map(r => {
     const b = breakdownMap.get(r.id) || { paidMinor: 0, deductionMinor: 0, roundingMinor: 0 };
     const payableMinor = Number(r.payable_amount_minor || 0);
     const paidMinor = b.paidMinor;
     const deductionMinor = b.deductionMinor;
     const roundingMinor = b.roundingMinor;
     const remainingMinor = Math.max(0, payableMinor - paidMinor - deductionMinor - roundingMinor);
-    const refs = refMap.get(r.id) || { related_pi_no: '', related_ci_no: '', country_display: '' };
+    const refs = refMap.get(r.id) || { related_pi_no: '', related_ci_no: '', country_display: '', country_code: '', brand: '' };
     return {
       ...r,
       related_pi_no: refs.related_pi_no,
       related_ci_no: refs.related_ci_no,
       country_display: refs.country_display,
+      country_code: refs.country_code,
+      brand: refs.brand,
+      last_payment_date: lastPayMap.get(r.id) || '',
+      payment_state: derivePayableItemPaymentState(payableMinor, paidMinor, deductionMinor, roundingMinor),
       payable_amount: payableMinor / 100,
       paid_amount_minor: paidMinor,
       paid_amount: minorToAmount(paidMinor),
@@ -14355,6 +14470,22 @@ app.get('/api/payable-items', requireApiPermission('payment_view'), asyncHandler
       remaining_amount: minorToAmount(remainingMinor)
     };
   });
+  // 内存筛选（先完成所有筛选，再产出 total / items —— 本端点无分页，保持现状不引入）：
+  // 付款状态：与响应 payment_state 同一函数派生，筛选口径 = 展示口径。
+  // 品牌：大小写不敏感精确匹配；无品牌费用只出现在「全部」（不因 brand 为空丢数据）。
+  // 国家：canonCountry 归一后比对（中文 / ISO 代码均可命中同一费用）。
+  let psFilter = String(payment_status || '').trim();
+  if (!['unpaid', 'partial', 'paid'].includes(psFilter)) psFilter = '';
+  const brandFilter = String(brand || '').trim().toLowerCase();
+  const countryFilter = canonCountry(String(country || '').trim());
+  if (psFilter || brandFilter || countryFilter) {
+    items = items.filter(it => {
+      if (psFilter && it.payment_state !== psFilter) return false;
+      if (brandFilter && String(it.brand || '').trim().toLowerCase() !== brandFilter) return false;
+      if (countryFilter && String(it.country_code || '').trim() !== countryFilter) return false;
+      return true;
+    });
+  }
   res.json({ items, total: items.length });
 }));
 
