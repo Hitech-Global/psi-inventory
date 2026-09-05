@@ -40,6 +40,7 @@ const {
   normalizeLanguage,
   resolveRequestLanguage,
   localizeResponseBody,
+  serverT,
   notifyT,
   forecastDisplayT,
   paymentBusinessTypeLabel,
@@ -1280,6 +1281,75 @@ function asyncHandler(fn) {
     return Promise.resolve(fn(req, res, next)).catch(next);
   };
 }
+
+// ==================== Wave 0A：批量导入 Guardrails（Stability > Correctness > Performance） ====================
+// (1) Pre-parse body 上限：8 条重导入路由在全局 50mb parser 之前挂 10mb json parser。
+//     注册顺序 = 执行顺序：本中间件注册于下方 express.json(50mb) 之前，命中路径时由 10mb parser
+//     先消费 body —— Content-Length 超限时 body-parser 在读取/缓冲完整 body 之前即返回 413，
+//     是真正的 parse 前内存保护；body ≤ 10mb 时正常解析并置 req._body=true，
+//     全局 50mb parser 检测 req._body 已解析直接跳过（body-parser 1.20 jsonParser 官方行为，见
+//     node_modules/body-parser/lib/types/json.js 开头 if (req._body) 分支）。
+const HEAVY_IMPORT_BODY_LIMIT = '10mb';
+const HEAVY_IMPORT_BODY_PATHS = new Set([
+  '/api/proforma-invoices/batch-import',
+  '/api/commercial-invoices/batch-import',
+  '/api/packing-lists/batch-import',
+  '/api/skus/bulk-import',
+  '/api/consignment-inventory/import',
+  '/api/original-inventory/import',
+  '/api/inventory-checks/bulk-import',
+  '/api/payment-requests/bulk-import-result'
+]);
+const heavyImportJsonParser = express.json({ limit: HEAVY_IMPORT_BODY_LIMIT });
+app.use((req, res, next) => {
+  if (!HEAVY_IMPORT_BODY_PATHS.has(req.path)) return next();
+  heavyImportJsonParser(req, res, (err) => {
+    if (!err) return next();
+    const status = err.status || err.statusCode || 400;
+    const lang = resolveRequestLanguage(req);
+    // 覆盖 Express 默认 HTML 错误页：返回 JSON（前端 api() 取 d.error 直接展示）
+    res.status(status).json({
+      error: serverT(lang, 'api.252', '导入请求体过大（上限 {0}），请拆分后重试。', { 0: HEAVY_IMPORT_BODY_LIMIT }),
+      code: 'IMPORT_BODY_TOO_LARGE',
+      limit: err.limit || HEAVY_IMPORT_BODY_LIMIT
+    });
+  });
+});
+
+// (2) 行数硬上限：超限必须在任何事务/DB 写入之前整批拒绝（不 truncate、不拆批部分导入）。
+const BATCH_IMPORT_ROW_LIMITS = Object.freeze({
+  'proforma-invoices/batch-import': 1000,     // PI 批量导入：~8-9 sync calls/行
+  'commercial-invoices/batch-import': 1000,   // CI 批量导入：~8-11 sync calls/行（最重）
+  'packing-lists/batch-import': 2000,         // PL 批量导入：~6 calls/行，行大而轻
+  'skus/bulk-import': 2000,                   // SKU 主数据导入：~2 calls/行
+  'consignment-inventory/import': 2000,       // 寄售库存导入（仅 remaining qty）：~2 calls/行
+  'original-inventory/import': 2000,          // 原库存数量导入：受单 CI 明细数天然约束
+  'inventory-checks/bulk-import': 5000,       // 盘点导入：~2 calls/行，代价低
+  'payment-requests/bulk-import-result': 1000 // 付款结果回填：行数天然少
+});
+
+// 超限返回 { limit, actual }；未超限 / 非数组 / 未配置路由返回 null（不改变既有行为）。
+// 必须在 route handler 内任何 transaction()/run()/INSERT/DB 读之前调用。
+function batchImportRowLimitExceeded(routeKey, rows) {
+  const limit = BATCH_IMPORT_ROW_LIMITS[routeKey];
+  if (!limit || !Array.isArray(rows)) return null;
+  if (rows.length <= limit) return null;
+  return { limit, actual: rows.length };
+}
+
+// 统一 422 拒绝响应（前端 api() 通用错误通道取 d.error 展示，无需前端改动）
+function rejectBatchImportRowLimit(req, res, exceeded) {
+  const lang = req.i18nLang || resolveRequestLanguage(req);
+  res.status(422).json({
+    error: serverT(lang, 'api.253',
+      '本次导入共 {rows} 行，单次最多支持 {limit} 行，请拆分后重试。',
+      { rows: exceeded.actual, limit: exceeded.limit }),
+    code: 'IMPORT_ROW_LIMIT_EXCEEDED',
+    limit: exceeded.limit,
+    actual: exceeded.actual
+  });
+}
+
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use((req, res, next) => {
@@ -3391,6 +3461,9 @@ app.post('/api/skus/bulk-import', requireApiPermission('sku_import'), asyncHandl
   try {
     const items = req.body.items || [];
     const result = { created: 0, updated: 0, failed: 0, errors: [] };
+    // Wave 0A：行数硬上限 —— 必须在任何事务/DB 工作之前整批拒绝（不 truncate）
+    const _rowLimit = batchImportRowLimitExceeded('skus/bulk-import', items);
+    if (_rowLimit) return rejectBatchImportRowLimit(req, res, _rowLimit);
 
     // 生命周期中文标签 → 代码
     const LIFECYCLE_MAP = {
@@ -4065,6 +4138,9 @@ app.post('/api/consignment-inventory/import', requireApiPermission('inventory_im
 
     if (!warehouse) return res.status(400).json({ error: 'warehouse_name 不能为空' });
     if (!rows.length) return res.status(400).json({ error: 'items 不能为空' });
+    // Wave 0A：行数硬上限 —— 必须在任何事务/DB 工作之前整批拒绝（不 truncate）
+    const _rowLimit = batchImportRowLimitExceeded('consignment-inventory/import', rows);
+    if (_rowLimit) return rejectBatchImportRowLimit(req, res, _rowLimit);
     const wh = queryOne("SELECT name FROM warehouses WHERE name = ? AND status = 'active'", [warehouse]);
     if (!wh) return res.status(400).json({ error: `仓库不存在或未启用：${warehouse}` });
 
@@ -9816,6 +9892,9 @@ app.post('/api/proforma-invoices/batch-import', requireApiPermission('pi_create'
   try {
     const rows = Array.isArray(req.body.items) ? req.body.items : [];
     const result = { success: 0, failed: 0, total: rows.length, errors: [] };
+    // Wave 0A：行数硬上限 —— 必须在任何事务/DB 工作之前整批拒绝（不 truncate）
+    const _rowLimit = batchImportRowLimitExceeded('proforma-invoices/batch-import', rows);
+    if (_rowLimit) return rejectBatchImportRowLimit(req, res, _rowLimit);
       rows.forEach((row, idx) => {
         // P0-FIX-2：每行独立 transaction（SAVEPOINT），单行失败只回滚当前行
         try {
@@ -9905,6 +9984,9 @@ app.post('/api/commercial-invoices/batch-import', requireApiPermission('ci_creat
   try {
     const rows = Array.isArray(req.body.items) ? req.body.items : [];
     const result = { success: 0, failed: 0, total: rows.length, errors: [] };
+    // Wave 0A：行数硬上限 —— 必须在任何事务/DB 工作之前整批拒绝（不 truncate）
+    const _rowLimit = batchImportRowLimitExceeded('commercial-invoices/batch-import', rows);
+    if (_rowLimit) return rejectBatchImportRowLimit(req, res, _rowLimit);
     transaction(() => {
       const createdCiIds = new Set();
       rows.forEach((row, idx) => {
@@ -10037,6 +10119,9 @@ app.post('/api/packing-lists/batch-import', requireApiPermission('ci_create'), a
   try {
     const rows = Array.isArray(req.body.items) ? req.body.items : [];
     const result = { success: 0, failed: 0, total: rows.length, errors: [] };
+    // Wave 0A：行数硬上限 —— 必须在任何事务/DB 工作之前整批拒绝（不 truncate）
+    const _rowLimit = batchImportRowLimitExceeded('packing-lists/batch-import', rows);
+    if (_rowLimit) return rejectBatchImportRowLimit(req, res, _rowLimit);
     transaction(() => {
       rows.forEach((row, idx) => {
         try {
@@ -16600,6 +16685,9 @@ app.post('/api/payment-requests/bulk-import-result', requireApiPermission('payme
   try {
     const items = req.body.items || [];
     const result = { updated: 0, idempotent: 0, failed: 0, errors: [] };
+    // Wave 0A：行数硬上限 —— 必须在任何事务/DB 工作之前整批拒绝（不 truncate）
+    const _rowLimit = batchImportRowLimitExceeded('payment-requests/bulk-import-result', items);
+    if (_rowLimit) return rejectBatchImportRowLimit(req, res, _rowLimit);
         let i = 0;
     for (const item of items) {
 
@@ -16883,6 +16971,9 @@ app.post('/api/original-inventory/import', requireApiPermission('cost_view'), as
   try {
     const { ci_id, items } = req.body;
     if (!ci_id) return res.status(400).json({ error: '必须关联CI' });
+    // Wave 0A：行数硬上限 —— 必须在任何事务/DB 工作之前整批拒绝（不 truncate）
+    const _rowLimit = batchImportRowLimitExceeded('original-inventory/import', items);
+    if (_rowLimit) return rejectBatchImportRowLimit(req, res, _rowLimit);
     const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [ci_id]);
     if (!ci) return res.status(400).json({ error: 'CI不存在' });
     if (!Array.isArray(items) || items.length === 0) {
@@ -17611,6 +17702,9 @@ app.post('/api/inventory-checks/bulk-import', requireApiPermission('check_create
   try {
     const items = req.body.items || [];
     const result = { created: 0, failed: 0, errors: [] };
+    // Wave 0A：行数硬上限 —— 必须在任何事务/DB 工作之前整批拒绝（不 truncate）
+    const _rowLimit = batchImportRowLimitExceeded('inventory-checks/bulk-import', items);
+    if (_rowLimit) return rejectBatchImportRowLimit(req, res, _rowLimit);
     transaction(() => {
       items.forEach((item, i) => {
         try {
@@ -19971,6 +20065,8 @@ module.exports = {
   // P0-C1：库存总表批量设置（导出供 call-count / parity 回归测试直接调用）
   MAX_BATCH_SET_ITEMS,
   MAX_INVENTORY_IMPORT_ROWS,
+  // Wave 0A：批量导入行数硬上限（导出供回归测试直接断言）
+  BATCH_IMPORT_ROW_LIMITS,
   applyInventoryBatchSet,
   applyInventoryBatchSetPg,
   applyInventoryBatchSetRowByRow,
