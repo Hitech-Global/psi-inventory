@@ -3883,6 +3883,12 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.en["forecast.hist.api_failed"] = "Historical sales query failed: "; I18N.dict.id["forecast.hist.api_failed"] = "Kueri penjualan historis gagal: ";
   I18N.dict.en["forecast.hist.api_error"] = "Query failed: "; I18N.dict.id["forecast.hist.api_error"] = "Kueri gagal: ";
   I18N.dict.en["forecast.hist.api_no_data"] = "No historical sales data retrieved"; I18N.dict.id["forecast.hist.api_no_data"] = "Tidak ada data penjualan historis";
+  // ===== 订单预测首次加载 / Snapshot bootstrap（macOS 风格 loading，zh 走 t() 内联 fallback）=====
+  I18N.dict.en["rp.loading.title"] = "Preparing order forecast…"; I18N.dict.id["rp.loading.title"] = "Menyiapkan prediksi pesanan…";
+  I18N.dict.en["rp.loading.subtitle"] = "Loading inventory, sales and forecast data"; I18N.dict.id["rp.loading.subtitle"] = "Memuat data stok, penjualan, dan prediksi";
+  I18N.dict.en["rp.loading.error_title"] = "Order forecast failed to load"; I18N.dict.id["rp.loading.error_title"] = "Gagal memuat prediksi pesanan";
+  I18N.dict.en["rp.loading.error_desc"] = "Network error or data unavailable. Please try again."; I18N.dict.id["rp.loading.error_desc"] = "Kesalahan jaringan atau data tidak tersedia. Silakan coba lagi.";
+  I18N.dict.en["rp.loading.retry"] = "Reload"; I18N.dict.id["rp.loading.retry"] = "Muat Ulang";
   // ===== 订单预测系统生成值三语映射（显示层翻译，不改原始数据）=====
   // Suggested Action (action 列)
   I18N.dict.en["forecast.action.clearance"] = "Stop purchasing, prioritize inventory clearance"; I18N.dict.id["forecast.action.clearance"] = "Hentikan pembelian, prioritaskan pengurangan stok";

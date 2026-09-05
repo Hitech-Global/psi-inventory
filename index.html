@@ -590,6 +590,26 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
 .rp-monthly-table tbody tr:hover .rp-freeze-last{box-shadow:2px 0 6px rgba(0,0,0,0.12)}
 /* 渠道表格容器需 relative，作为冻结线 absolute 定位基准 */
 #rp-table .table-container{position:relative}
+/* ===== RP-SNAPSHOT：首次加载 skeleton + macOS 风格 loading card ===== */
+/* skeleton/card 锚定在 #rp-table 自身；boot 期间由 JS 设置 data-rp-boot + min-height */
+#rp-table[data-rp-boot]{position:relative;min-height:340px}
+.rp-boot-skeleton{position:absolute;inset:0;overflow:hidden;background:var(--card-bg,#fff);border-radius:8px;z-index:5;transition:opacity .22s ease}
+.rp-skeleton-table{width:100%;border-collapse:collapse;table-layout:fixed}
+.rp-skeleton-table th{height:34px;padding:6px 8px;border-bottom:1px solid var(--border,#e5e9f0);background:var(--bg,#f7f8fa);text-align:left}
+.rp-skeleton-table td{height:38px;padding:6px 8px;border-bottom:1px solid var(--border,#eef1f5)}
+.rp-sk-line{display:inline-block;height:12px;border-radius:6px;background:linear-gradient(90deg,#e9edf3 25%,#f3f6fa 45%,#e9edf3 65%);background-size:200% 100%;animation:rpShimmer 1.4s linear infinite}
+@keyframes rpShimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+.rp-boot-card{position:absolute;top:40%;left:50%;transform:translate(-50%,-50%);z-index:6;display:flex;flex-direction:column;align-items:center;gap:10px;padding:22px 30px;min-width:256px;background:rgba(255,255,255,.72);backdrop-filter:blur(18px) saturate(1.4);-webkit-backdrop-filter:blur(18px) saturate(1.4);border:1px solid rgba(0,0,0,.06);border-radius:16px;box-shadow:0 8px 32px rgba(0,0,0,.08);transition:opacity .22s ease}
+.rp-boot-out{opacity:0;pointer-events:none}
+.rp-boot-spinner{width:20px;height:20px;border-radius:50%;border:2px solid rgba(0,0,0,.08);border-top-color:var(--primary,#5046E5);animation:rpBootSpin .8s linear infinite}
+@keyframes rpBootSpin{to{transform:rotate(360deg)}}
+.rp-boot-title{font-size:14px;font-weight:600;color:var(--text,#1f2329)}
+.rp-boot-sub{font-size:12px;color:var(--text-secondary,#6b7280);text-align:center;max-width:220px}
+.rp-boot-retry{margin-top:2px}
+/* boot 期间筛选区整体降透明（select/input 本身已 disabled，cursor:not-allowed 由浏览器默认） */
+#rp-collapsible.rp-boot-loading .filter-group select,
+#rp-collapsible.rp-boot-loading .filter-group input{opacity:.55}
+#rp-collapsible.rp-boot-loading .filter-group{opacity:.75}
 /* ===== ORDER-FORECAST-FIXED-COLUMNS-01：固定列宽 + colgroup ===== */
 /* colgroup 统一列宽：header/summary/body 共用，保证严格对齐 */
 .rp-monthly-table colgroup col{display:table-column}

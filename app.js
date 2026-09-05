@@ -6588,6 +6588,9 @@ async function renderReplenishment(){
     window.__restoreRpFilterState();
   }
   loadRpSummary();
+  // RP-SNAPSHOT：页面框架已上屏，立即启动 snapshot bootstrap（并行 4 请求 + loading UI）；
+  // ready 后高频筛选全部本地化。同会话再次进入且 snapshot 仍 ready → 直接复用（不发请求、无 loading）。
+  rpBootstrapSnapshot();
   if(loadHistoricalSalesConfig())fetchHistoricalSales();
   else loadRp();
   updateRpFieldConfigBtn(rpTab||'total');
@@ -6619,7 +6622,15 @@ function applyRpCollapse(){
 async function loadRpFilterOptions(){
   try{
     // 国家列表从 warehouses 表获取（与仓库管理页一致）
-    const countries=await api('/api/warehouses/countries');
+    // RP-SNAPSHOT：优先使用 bootstrap 并行拉取的国家列表（同一接口，服务端 ORDER BY country_name 语义不变）；
+    // master 未就绪（bootstrap 失败/未启用）时回退原有按需请求。
+    let countries=null;
+    var _snapC=await rpGetWarehouseMaster();
+    if(_snapC){
+      countries=_snapC.countries||rpDeriveCountriesFallback(_snapC.warehouseMaster||[]);
+    }else{
+      countries=await api('/api/warehouses/countries');
+    }
     const cSel=document.getElementById('rp-c');
     if(!cSel) return;
     const prevCountry=cSel.value||'';
@@ -6645,8 +6656,11 @@ async function onRpCountryChange(skipDataReload){
   var restoreWarehouse = savedState && savedState.warehouse ? savedState.warehouse : '';
   var restoreBrand = savedState && savedState.brand ? savedState.brand : '';
   try{
-    const url='/api/warehouses/by-country'+(country?('?country='+encodeURIComponent(country)):'');
-    const whs=await api(url);
+    // RP-SNAPSHOT：仓库选项由 master 本地派生（filter 保序 = 服务端 ORDER BY sort_order,name），不再每次切国家发请求
+    var _snapW=await rpGetWarehouseMaster();
+    const whs=(_snapW&&_snapW.warehouseMaster)
+      ? rpFilterWarehousesByCountry(_snapW.warehouseMaster,country)
+      : await api('/api/warehouses/by-country'+(country?('?country='+encodeURIComponent(country)):''));
     // 填充仓库下拉
     const wSel=document.getElementById('rp-w');
     if(wSel){
@@ -6729,16 +6743,22 @@ async function onRpBrandChange(){
   const brand=document.getElementById('rp-b')?.value||'';
   const prevWarehouse=document.getElementById('rp-w')?.value||'';
   try{
-    let url='/api/warehouses/by-country';
-    const params=[];
-    if(country) params.push('country='+encodeURIComponent(country));
-    if(brand) params.push('brand='+encodeURIComponent(brand));
-    if(params.length) url+='?'+params.join('&');
-    // 如果有品牌筛选，用 by-country-brand 接口
-    if(brand){
-      url='/api/warehouses/by-country-brand'+(params.length?('?'+params.join('&')):'');
-    }
-    const whs=await api(url);
+    // RP-SNAPSHOT：仓库选项由 master 本地派生（复刻 by-country-brand 的 `brands='' OR LIKE '%brand%'`），不再发请求
+    var _snapB=await rpGetWarehouseMaster();
+    const whs=(_snapB&&_snapB.warehouseMaster)
+      ? rpFilterWarehousesByCountryBrand(_snapB.warehouseMaster,country,brand)
+      : await (function(){
+          let url='/api/warehouses/by-country';
+          const params=[];
+          if(country) params.push('country='+encodeURIComponent(country));
+          if(brand) params.push('brand='+encodeURIComponent(brand));
+          if(params.length) url+='?'+params.join('&');
+          // 如果有品牌筛选，用 by-country-brand 接口
+          if(brand){
+            url='/api/warehouses/by-country-brand'+(params.length?('?'+params.join('&')):'');
+          }
+          return api(url);
+        })();
     const wSel=document.getElementById('rp-w');
     if(wSel){
       wSel.innerHTML=t('html.onRpBrandChange', '<option value="">全部</option>{v1}', {v1: (whs||[]).map(w=>'<option value="'+esc(w.name)+'">'+esc(w.name)+'</option>').join('')});
@@ -6860,7 +6880,8 @@ function rpDailyUrl(){
 function rpCanonicalFilterKey(){
   // 仅纳入「会真正触发服务端重新查询」的筛选字段，固定顺序 + 归一化，保证：
   // 相同筛选条件 → 相同 key；不同数据结果的筛选 → 绝不误命中同一 key。
-  function norm(v){ return (v==null?'':String(v)).trim(); }
+  // 注意：不做 trim —— 服务端 WHERE/LIKE 均不 trim，key 必须与数据语义完全一致（' x' 与 'x' 是不同结果）。
+  function norm(v){ return (v==null?'':String(v)); }
   function e(v){ return encodeURIComponent(norm(v)); }
   var hist='0';
   if(window._rpHistoricalSalesConfig&&window._rpHistoricalSalesConfig.start&&window._rpHistoricalSalesConfig.end){
@@ -6985,6 +7006,230 @@ function rpClearDataCache(){
   window._rpCache.data.clear();
   window._rpCache.pending.clear();
 }
+// ==================== RP SNAPSHOT L0（快照式加载，RP-SNAPSHOT-DESIGN）====================
+// RP-SNAPSHOT-BEGIN（测试切片标记：vm harness 按此标记抽取真实函数）
+// 架构：L0 = 单一权威 raw snapshot（rows + monthlySales + 仓库/国家 master）
+//      L1 = 当前筛选的即时 derived rows（filter 保序，不缓存、不复制）
+//      L2 = 现有 DOM view LRU（RP_MAX_DOM_VIEWS）
+//      L3 = server reload（仅 generate / 显式 retry）
+// 红线：不改任何后端接口/公式；DATA-SCOPE 与寄售排除仍由服务端在无筛选 GET 中固定应用；
+//      effective 显示永远以 _rpManualStock / _rpSaveJournal 为最高优先级，snapshot 仅是 server baseline。
+window._rpSnapshot={
+  status:'idle',            // idle | loading | ready | error
+  rows:[],                  // 无筛选 GET /api/replenishment-suggestions（服务端已排序：stopped/discontinued 沉底 → sku_code）
+  monthlySales:{},          // 无筛选 GET /monthly-sales（rpMonthColRange 口径 24 个月）
+  warehouseMaster:null,     // /api/warehouses/by-country（无参=全部 active 非寄售仓，服务端已按 sort_order,name 排序）
+  countries:null,           // /api/warehouses/countries（保持服务端 ORDER BY country_name 语义）
+  loadedAt:null,
+  error:null,
+  _promise:null
+};
+// 仅 RP_PERF 下打印 snapshot bootstrap 专项计时（独立于单次 load 的 window._rpPerfP）
+function rpPerfLogSnapshot(obj){ if(RP_PERF){ try{ console.log('[RP PERF]', JSON.stringify(obj)); }catch(e){} } }
+function rpVal(id){ var el=document.getElementById(id); return el?String(el.value||''):''; }
+// L1：本地筛选。严格复刻服务端 WHERE 语义：
+//   - 参数为空 → 不加条件（与 server `if (country)…` 一致）
+//   - country/warehouse/brand/sales_status/lifecycle_status → 严格相等
+//   - keyword → sku_code 或 product_name 子串（indexOf，区分大小写，与生产 PG `LIKE '%kw%'` 一致；不做 trim，server 也不 trim）
+//   - 不重排：无筛选 GET 已按 ORDER BY 排序，filter 保序 ⇒ 与「带筛选的服务端查询」顺序逐行一致
+function rpLocalSnapshotRows(){
+  var rows=(window._rpSnapshot&&window._rpSnapshot.rows)||[];
+  var c=rpVal('rp-c'), w=rpVal('rp-w'), b=rpVal('rp-b'), k=rpVal('rp-s'), ss=rpVal('rp-status'), ls=rpVal('rp-lifecycle');
+  var _t0=RP_PERF?performance.now():0;
+  var out=[];
+  for(var i=0;i<rows.length;i++){
+    var r=rows[i];
+    if(c && r.country!==c) continue;
+    if(w && r.target_warehouse!==w) continue;
+    if(b && r.brand!==b) continue;
+    if(ss && r.sales_status!==ss) continue;
+    if(ls && r.lifecycle_status!==ls) continue;
+    if(k && (r.sku_code||'').indexOf(k)<0 && (r.product_name||'').indexOf(k)<0) continue;
+    out.push(r);
+  }
+  if(RP_PERF&&window._rpPerfP) rpPerfSet(window._rpPerfP,'local_filter_ms',Math.round((performance.now()-_t0)*100)/100);
+  return out;
+}
+// PUT 成功 / CAS stale 返回的 server 权威行 → 按 id 精确 merge 进 L0（不复制 snapshot、不动其他行）。
+// 注意：内存中的 _rpRowData/_rpChannelData 持有的就是 snapshot 行对象引用，因此既有 r2.xxx=d.xxx 同步
+// 与本 merge 幂等叠加，语义一致；effective 显示仍由 override/journal 规则决定，本函数只更新 server baseline。
+function rpPatchSnapshotRow(authRow){
+  if(!authRow||authRow.id==null||!window._rpSnapshot||window._rpSnapshot.status!=='ready') return false;
+  var rows=window._rpSnapshot.rows;
+  for(var i=0;i<rows.length;i++){
+    if(rows[i].id===authRow.id){ Object.assign(rows[i],authRow); return true; }
+  }
+  return false;
+}
+// 仓库 master 的本地级联派生（语义与现有三个接口逐条对齐）：
+//   countries          → 优先用 bootstrap 并行拉取的 /api/warehouses/countries（服务端 ORDER BY country_name）
+//   warehouses(country)→ master.filter(country_name===country)，保序=服务端 ORDER BY sort_order,name
+//   warehouses(c+b)    → 追加 (brands==='' || brands 含 brand)，复刻 by-country-brand 的 `brands='' OR LIKE '%brand%'`
+function rpDeriveCountriesFallback(master){
+  var seen={}, out=[];
+  (master||[]).forEach(function(w){ var c=w&&w.country_name; if(c&&!seen[c]){seen[c]=true;out.push(c);} });
+  return out;
+}
+function rpFilterWarehousesByCountry(master,country){
+  if(!country) return (master||[]).slice();
+  return (master||[]).filter(function(w){ return w.country_name===country; });
+}
+function rpFilterWarehousesByCountryBrand(master,country,brand){
+  return rpFilterWarehousesByCountry(master,country).filter(function(w){
+    if(!brand) return true;
+    var bstr=String(w.brands||'');
+    return bstr==='' || bstr.indexOf(brand)>=0;
+  });
+}
+async function rpGetWarehouseMaster(){
+  var s=window._rpSnapshot;
+  if(s&&s.status==='ready') return s;
+  if(s&&s._promise){ await s._promise; if(s.status==='ready') return s; }
+  return null;
+}
+function rpSetFiltersDisabled(dis){
+  ['rp-c','rp-w','rp-b','rp-s','rp-status','rp-lifecycle'].forEach(function(id){
+    var el=document.getElementById(id); if(el) el.disabled=dis;
+  });
+  var col=document.getElementById('rp-collapsible');
+  if(col) col.classList.toggle('rp-boot-loading',dis);
+}
+// skeleton：复用列配置真实列宽 + 行高接近真实表（8 行 shimmer），不是整块灰矩形
+function rpSkeletonHtml(){
+  var activeKeys=[];
+  try{
+    activeKeys=getRpColConfig('total').filter(function(c){return c.visible||c.fixed;}).map(function(c){return c.key;});
+  }catch(e){ activeKeys=['model','sku','suggested_qty']; }
+  if(!activeKeys.length) activeKeys=['model','sku','suggested_qty'];
+  var defs={}; try{ defs=rpColWidthDefs()||{}; }catch(e){}
+  var ths=activeKeys.map(function(k){
+    var w=(defs[k]&&defs[k].default)||90;
+    return '<th style="width:'+w+'px;min-width:'+w+'px"><span class="rp-sk-line" style="width:'+Math.min(Math.max(28,w-18),60)+'px"></span></th>';
+  }).join('');
+  var trs='';
+  for(var i=0;i<8;i++){
+    trs+='<tr>'+activeKeys.map(function(k){
+      var w=(defs[k]&&defs[k].default)||90;
+      return '<td><span class="rp-sk-line" style="width:'+Math.max(24,Math.round(w*0.62))+'px"></span></td>';
+    }).join('')+'</tr>';
+  }
+  return '<table class="rp-monthly-table rp-skeleton-table"><thead><tr>'+ths+'</tr></thead><tbody>'+trs+'</tbody></table>';
+}
+function rpLoadingShow(){
+  var host=document.getElementById('rp-table'); if(!host) return;
+  rpLoadingHide(true);
+  host.setAttribute('data-rp-boot','1');
+  var sk=document.createElement('div');
+  sk.id='rp-boot-skeleton'; sk.className='rp-boot-skeleton';
+  sk.innerHTML=rpSkeletonHtml();
+  host.appendChild(sk);
+  var card=document.createElement('div');
+  card.id='rp-boot-card'; card.className='rp-boot-card';
+  card.innerHTML='<div class="rp-boot-spinner" aria-hidden="true"></div>'
+    +'<div class="rp-boot-title">'+esc(t('rp.loading.title','正在准备订单预测…'))+'</div>'
+    +'<div class="rp-boot-sub">'+esc(t('rp.loading.subtitle','正在加载库存、销量与预测数据'))+'</div>';
+  host.appendChild(card);
+  rpSetFiltersDisabled(true);
+}
+function rpLoadingHide(instant){
+  var card=document.getElementById('rp-boot-card');
+  var sk=document.getElementById('rp-boot-skeleton');
+  if(card){
+    if(instant){ card.remove(); }
+    else{ card.classList.add('rp-boot-out'); setTimeout(function(){ if(card.parentNode) card.remove(); },240); }
+  }
+  if(sk){
+    if(instant){ sk.remove(); }
+    else{ sk.classList.add('rp-boot-out'); setTimeout(function(){ if(sk.parentNode) sk.remove(); },240); }
+  }
+  var host=document.getElementById('rp-table');
+  if(host) host.removeAttribute('data-rp-boot');
+  rpSetFiltersDisabled(false);
+}
+function rpLoadingError(err){
+  var card=document.getElementById('rp-boot-card');
+  if(!card){ // 理论上 error 前必有 loading；兜底重建卡片
+    var host=document.getElementById('rp-table'); if(!host) return;
+    card=document.createElement('div'); card.id='rp-boot-card'; card.className='rp-boot-card'; host.appendChild(card);
+  }
+  if(document.getElementById('rp-boot-skeleton')) document.getElementById('rp-boot-skeleton').classList.add('rp-boot-out');
+  card.classList.add('rp-boot-error');
+  card.innerHTML='<div class="rp-boot-title">'+esc(t('rp.loading.error_title','订单预测加载失败'))+'</div>'
+    +'<div class="rp-boot-sub">'+esc(t('rp.loading.error_desc','网络异常或数据加载失败，请稍后重试'))+'</div>'
+    +'<button class="btn btn-primary btn-sm rp-boot-retry" onclick="rpRetrySnapshot()">'+esc(t('rp.loading.retry','重新加载'))+'</button>';
+  if(err) console.error('[RP] snapshot bootstrap failed:',err);
+}
+// 失败恢复：只重跑 snapshot bootstrap（绝不 location.reload）
+function rpRetrySnapshot(){
+  rpInvalidateSnapshot();
+  return rpBootstrapSnapshot().then(function(ok){
+    if(ok && document.getElementById('rp-table')) loadRpWithHistorical();
+    return ok;
+  });
+}
+function rpInvalidateSnapshot(){
+  var s=window._rpSnapshot; if(!s) return;
+  s.status='idle'; s.rows=[]; s.monthlySales={}; s.warehouseMaster=null; s.countries=null;
+  s.loadedAt=null; s.error=null; s._promise=null;
+}
+// bootstrap：并行拉取 4 个现有接口（不新增后端）
+//   1) suggestions（核心，失败 → error 态）
+//   2) monthly-sales（容错：失败降级为空 map，与旧 loadRp 的 .catch(()=>null) 行为一致）
+//   3) warehouses/by-country 无参（容错：失败回退 legacy 级联 API）
+//   4) warehouses/countries（容错：失败由 3) 推导）
+async function rpBootstrapSnapshot(){
+  var s=window._rpSnapshot; if(!s) return false;
+  if(s.status==='ready') return true;
+  if(s.status==='loading'&&s._promise) return s._promise;
+  rpLoadingShow();
+  s.status='loading'; s.error=null; s._promise=null;
+  var _bt=RP_PERF?performance.now():0;
+  var _ms={};
+  function _tap(p,key){ if(!RP_PERF) return p; var t0=performance.now(); return p.then(function(r){ _ms[key]=Math.round((performance.now()-t0)*100)/100; return r; },function(e){ _ms[key]='ERR'; throw e; }); }
+  var _mr=rpMonthColRange();
+  var pRows=_tap(api('/api/replenishment-suggestions'),'get_suggestions_ms');
+  var pMonthly=_tap(api('/api/replenishment-suggestions/monthly-sales?start='+_mr.start+'&end='+_mr.end),'get_monthly_ms').catch(function(){ return null; });
+  var pMaster=_tap(api('/api/warehouses/by-country'),'get_warehouse_ms').catch(function(){ return null; });
+  var pCountries=_tap(api('/api/warehouses/countries'),'get_countries_ms').catch(function(){ return null; });
+  var pAll=Promise.all([pRows,pMonthly,pMaster,pCountries]).then(function(res){
+    var rows=res[0];
+    if(!Array.isArray(rows)) throw new Error('replenishment-suggestions: unexpected response');
+    var _pt=RP_PERF?performance.now():0;
+    var monthly=(res[1]&&res[1].success)?(res[1].data||{}):{};
+    var master=Array.isArray(res[2])?res[2]:null;
+    var countries=Array.isArray(res[3])?res[3]:(master?rpDeriveCountriesFallback(master):null);
+    s.rows=rows; s.monthlySales=monthly; s.warehouseMaster=master; s.countries=countries;
+    s.status='ready'; s.loadedAt=Date.now(); s._promise=null;
+    if(RP_PERF&&window._rpPerfP) rpPerfSet(window._rpPerfP,'snapshot','MISS');
+    rpPerfLogSnapshot({snapshot_bootstrap_total:Math.round((performance.now()-_bt)*100)/100,
+      prepare_ms:Math.round((performance.now()-_pt)*100)/100,
+      get_suggestions_ms:_ms.get_suggestions_ms, get_monthly_ms:_ms.get_monthly_ms,
+      get_warehouse_ms:_ms.get_warehouse_ms, get_countries_ms:_ms.get_countries_ms,
+      snapshot_rows:rows.length});
+    rpLoadingHide();   // 数据已 ready，立即开始 fade；真实表格由 await 方随即渲染
+    return true;
+  }).catch(function(e){
+    s.status='error'; s.error=e; s._promise=null;
+    rpPerfLogSnapshot({snapshot_bootstrap:'ERROR',total_ms:Math.round((performance.now()-_bt)*100)/100});
+    rpLoadingError(e);
+    return false;
+  });
+  s._promise=pAll;
+  return pAll;
+}
+// 显式重载入口（generate / 其他数据事实变更后使用）：失效 + 重新 bootstrap（渲染由调用方负责）
+function rpReloadSnapshot(){
+  rpInvalidateSnapshot();
+  return rpBootstrapSnapshot();
+}
+async function rpEnsureSnapshotReady(){
+  var s=window._rpSnapshot;
+  if(s&&s.status==='ready') return true;
+  if(s&&s.status==='loading'&&s._promise) return !!(await s._promise);
+  if(s&&s.status==='error') return false;   // 错误态不自动重试，等待用户点「重新加载」
+  return await rpBootstrapSnapshot();
+}
+// RP-SNAPSHOT-END
 // 建议采购相关 view 的统一失效组（仅标记 DOM view cache，不清 manual override）：
 // 任意「渠道数量相关」PUT 成功后，server 可能同时改写 suggested_qty / online_suggested_qty /
 // offline_suggested_qty 及派生展示，因此 total/online/offline 三视图（monthly + daily）都属于
@@ -7141,6 +7386,7 @@ function rpFlushOne(channel, rid){
   st.flightPromise=api('/api/replenishment-suggestions/'+rid,'PUT',data)
     .then(function(resp){
       var d=resp&&resp.data;
+      rpPatchSnapshotRow(d);   // RP-SNAPSHOT：server 权威行就地 merge 进 L0（success 与 stale 都要，防「切走再回来显示旧值」）
       var r2=rpGetRow(channel, rid);
       var c=r2?rpGetChannelC(channel,r2):null;
       if(r2&&d){
@@ -7444,12 +7690,12 @@ async function loadRp(){
   var myViewKey=rpCurrentViewKey();
   try{
     await getSalesStatsDays();
-    var bUrl=rpBaseUrl();
-    var msUrl=rpMonthlySalesUrl();
-    var bResult=await rpFetchCached(bUrl);
-    var msResult=await rpFetchCached(msUrl).catch(function(){return null;});
-    var data=bResult;
-    var monthlySales=(msResult&&msResult.success)?(msResult.data||{}):{};
+    // RP-SNAPSHOT L0：不再按筛选请求服务端 —— 全量 snapshot 已在内存（DATA-SCOPE/寄售排除仍由服务端固定应用）
+    if(RP_PERF&&window._rpPerfP) rpPerfSet(window._rpPerfP,'snapshot',(window._rpSnapshot&&window._rpSnapshot.status==='ready')?'HIT':'MISS');
+    var _snapOk=await rpEnsureSnapshotReady();
+    if(!_snapOk) return;   // error 态：错误卡片已展示，等待用户「重新加载」
+    var data=rpLocalSnapshotRows();
+    var monthlySales=(window._rpSnapshot&&window._rpSnapshot.monthlySales)||{};
     var turnColor=function(v){return v<2?'text-danger':v>=2&&v<4?'text-success':v>=4&&v<6?'text-primary':'text-secondary';};
     var ADJ=[t('gen.L4014.1','MOQ限制'),t("app.786", "\u6574\u7bb1\u53d6\u6574"),t("app.787", "\u5de5\u5382\u6392\u4ea7"),t("app.788", "\u4f9b\u5e94\u5546\u4ea7\u80fd"),t("app.789", "\u51d1\u67dc"),t("app.790", "\u9884\u7b97\u63a7\u5236"),t("app.791", "\u8001\u677f\u786e\u8ba4"),t("app.792", "\u6e20\u9053\u7b56\u7565"),t('gen.L4014.2','其他')];
     // 预计算 + 存储行数据（供 onFinalQtyChange 使用）
@@ -8273,7 +8519,11 @@ async function loadRpChannelMonthly(channel){
   }
   try{
     await getSalesStatsDays();
-    var data=await rpFetchCached(rpBaseUrl());
+    // RP-SNAPSHOT L0：total/online/offline 共用同一份 snapshot rows（本函数不再发 GET）
+    if(RP_PERF&&window._rpPerfP) rpPerfSet(window._rpPerfP,'snapshot',(window._rpSnapshot&&window._rpSnapshot.status==='ready')?'HIT':'MISS');
+    var _snapOk=await rpEnsureSnapshotReady();
+    if(!_snapOk) return;   // error 态：错误卡片已展示，等待用户「重新加载」
+    var data=rpLocalSnapshotRows();
     // 预处理
     // 月份字段语义统一约定：m1=本月，m2=上月，m3=上上月，m4=当前四个月窗口中的最早自然月。
     // 表头从左到右：真实年月(m4) → 真实年月(m3) → 真实年月(m2) → 真实年月本月(m1)。
@@ -9043,6 +9293,7 @@ function onTargetTurnChange(input){
       rpClearDataCache();
       rpInvalidateSuggestionViews();
       var d=resp&&resp.data;
+      rpPatchSnapshotRow(d);   // RP-SNAPSHOT：目标周转重算后的权威行（含新 revision）merge 进 L0
       if(d){
         // 用系统重算返回的 revision 更新该 rid 双渠道 baseline
         ['online','offline'].forEach(function(ch){
@@ -9153,7 +9404,8 @@ async function onChannelRemarkBlur(input){
   if(channel==='online') data.online_remark=val;
   else data.offline_remark=val;
   try{
-    await api('/api/replenishment-suggestions/'+rid,'PUT',data);
+    var _resp=await api('/api/replenishment-suggestions/'+rid,'PUT',data);
+    rpPatchSnapshotRow(_resp&&_resp.data);   // RP-SNAPSHOT：备注权威行 merge 进 L0
     showRpAutoSaved(input);
     rpClearDataCache();
     var vk3=editedViewKey;
@@ -9231,7 +9483,8 @@ function onAdjReasonChange(sel){
   var reason=sel.value;
   // 调用前捕获被编辑的 view key，避免异步完成后 current view 已变化导致 stale 标错 view。
   var editedViewKey=rpCurrentViewKey();
-  api('/api/replenishment-suggestions/'+rid,'PUT',{adjustment_reason:reason}).then(function(){
+  api('/api/replenishment-suggestions/'+rid,'PUT',{adjustment_reason:reason}).then(function(_resp){
+    rpPatchSnapshotRow(_resp&&_resp.data);   // RP-SNAPSHOT：调整原因权威行 merge 进 L0
     showToast(t('gen.L4853.1','调整原因已保存'),'success');
     rpClearDataCache();
     var vk=editedViewKey;
@@ -9258,6 +9511,7 @@ async function saveChannelChanges(rid,channel){
   try{
     var resp=await api('/api/replenishment-suggestions/'+rid,'PUT',body);
     var d=resp.data;
+    rpPatchSnapshotRow(d);   // RP-SNAPSHOT：目标周转+备注权威行 merge 进 L0
     if(d){
       var stockEl=vc?vc.querySelector('.rp-target-stock-'+rid):document.querySelector('.rp-target-stock-'+rid);
       if(stockEl){
@@ -9323,7 +9577,8 @@ async function saveTransitAllocation(rid,channel,val){
     body.manual_online_transit_qty=otherManualVal;
   }
   try{
-    await api('/api/replenishment-suggestions/'+rid,'PUT',body);
+    var _respTA=await api('/api/replenishment-suggestions/'+rid,'PUT',body);
+    rpPatchSnapshotRow(_respTA&&_respTA.data);   // RP-SNAPSHOT：在途分配权威行先 merge 进 L0，随后的 loadRp 本地渲染即为最新值
     showToast(t('forecast.transit.saved','在途分配已保存，库存池已更新'),'success');
     // 保存滚动位置，刷新后恢复（避免保存后页面跳到顶部）
     var scrollContainer=vc?vc.querySelector('.table-container'):document.querySelector('#rp-table .table-container');
@@ -9355,6 +9610,7 @@ async function saveFinalQty(rid){
   if(reasonSel && !reasonSel.disabled) body.adjustment_reason=reasonSel.value;
   try{
     var resp=await api('/api/replenishment-suggestions/'+rid,'PUT',body);
+    rpPatchSnapshotRow(resp&&resp.data);   // RP-SNAPSHOT：最终下单数量权威行 merge 进 L0
     showToast(t('gen.L4894.1','已保存'),'success');
     rpClearDataCache();
     var vk=rpCurrentViewKey();
@@ -9588,6 +9844,9 @@ async function genRp(){
     rpClearManualStock();
     rpClearDataCache();
     rpClearAllViews();
+    // RP-SNAPSHOT：generate = 数据事实变更 → L0 全量失效并重新 bootstrap（loading UI 允许再次出现）
+    rpInvalidateSnapshot();
+    await rpReloadSnapshot();
     await loadRpSummary();
     await loadRp();
   }catch(e){
