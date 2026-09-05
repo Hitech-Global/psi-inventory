@@ -3658,12 +3658,32 @@ function renderInvPrecheck(res){
       });
     html+='</tbody></table></div></div>';
   }
+  // 仓库合法性问题（INV-IMPORT-WAREHOUSE-01）：渲染成「第 N 行：…」句式，清晰告知国家/仓库与允许仓库
+  var whTypes=['WAREHOUSE_EMPTY','WAREHOUSE_MISSING','COUNTRY_NO_WAREHOUSE'];
+  var whIssues=blocking.filter(function(b){return whTypes.indexOf(b.issue_type)>=0;});
+  if(whIssues.length){
+    html+='<div style="margin-top:4px;margin-bottom:8px"><div style="font-weight:600;margin-bottom:4px">'+t('inv.warehouse_block_title','仓库合法性校验')+'</div>';
+    whIssues.slice(0,200).forEach(function(b){
+      var msg;
+      if(b.issue_type==='WAREHOUSE_EMPTY'){
+        msg=t('inv.warehouse_empty_msg','第 {n} 行：仓库不能为空，请选择/填写系统已有仓库。',{n:String(b.row||'')});
+      }else if(b.issue_type==='COUNTRY_NO_WAREHOUSE'){
+        msg=t('inv.country_no_wh_msg','第 {n} 行：国家 {c} 不存在有效仓库，请检查国家和仓库名称。',{n:String(b.row||''),c:(b.country||'')});
+      }else{
+        var allowed=(b.allowed_warehouses&&b.allowed_warehouses.length)?b.allowed_warehouses.join('、'):t('inv.warehouse_none','（无）');
+        msg=t('inv.warehouse_missing_msg','第 {n} 行：{c} / {w} 不存在，请修改后重新导入。允许仓库：{a}。',{n:String(b.row||''),c:(b.country||''),w:(b.warehouse||''),a:allowed});
+      }
+      html+='<div style="padding:6px 10px;background:#fff;border-radius:4px;border-left:3px solid #ff4d4f;white-space:pre-wrap">'+esc(msg)+'</div>';
+    });
+    html+='</div>';
+  }
   // 全量问题明细
   html+='<div style="font-weight:600;margin-bottom:4px">'+t('inv.blocking_detail_title','问题明细')+'</div>'+
     '<div class="table-container" style="max-height:260px;overflow:auto;box-shadow:none;border:1px solid #ffccc7;background:#fff"><table class="data-table"><thead><tr>'+
       '<th>'+t('col.row_no','行号')+'</th><th>'+t('col.sku_code','SKU编码')+'</th><th>'+t('inv.col_issue','问题类型')+'</th><th>'+t('inv.col_current','当前值')+'</th><th>'+t('inv.col_master_brand','SKU主数据品牌')+'</th><th>'+t('inv.col_suggestion','建议处理方式')+'</th>'+
     '</tr></thead><tbody>';
   blocking.slice(0,200).forEach(function(b){
+    if(whTypes.indexOf(b.issue_type)>=0)return; // 仓库类问题已在上方句式区单独展示，避免重复
     var cur=(b.current_value===''||b.current_value===undefined||b.current_value===null)?t('inv.value_empty','(空)'):b.current_value;
     html+='<tr>'+
       '<td>'+esc(String(b.row||''))+'</td>'+
@@ -3691,8 +3711,8 @@ function downloadInvPrecheckErrors(){
   var pc=window._invPrecheck;
   var blocking=(pc&&pc.blocking)||[];
   if(blocking.length===0)return;
-  var head=[t('col.row_no','行号'),t('col.sku_code','SKU编码'),t('inv.col_issue','问题类型'),t('inv.col_current','当前值'),t('inv.col_excel_brand','Excel品牌'),t('inv.col_master_brand','SKU主数据品牌'),t('inv.col_suggestion','建议处理方式')];
-  var body=blocking.map(function(b){return [b.row,b.sku_code||'',invIssueLabel(b.issue_type,b.issue_label),b.current_value||'',b.excel_brand||'',b.master_brand||'',invIssueSuggestion(b.issue_type,b.suggestion)]});
+  var head=[t('col.row_no','行号'),t('col.sku_code','SKU编码'),t('col.country','国家'),t('inv.col_warehouse','仓库'),t('inv.col_allowed_wh','允许仓库'),t('inv.col_issue','问题类型'),t('inv.col_suggestion','建议处理方式')];
+  var body=blocking.map(function(b){return [b.row,b.sku_code||'',b.country||'',b.warehouse||'',(b.allowed_warehouses&&b.allowed_warehouses.length)?b.allowed_warehouses.join('、'):'',invIssueLabel(b.issue_type,b.issue_label),invIssueSuggestion(b.issue_type,b.suggestion)]});
   var ws=XLSX.utils.aoa_to_sheet([head].concat(body));
   var wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,ws,t('inv.blocking_detail_title','问题明细'));

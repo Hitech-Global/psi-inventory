@@ -3553,7 +3553,11 @@ const INV_IMPORT_ISSUE_META = {
   SKU_BRAND_EMPTY:    { label: 'SKU 主数据品牌为空',             suggestion: '前往「SKU 主数据」补全该 SKU 的品牌后再重新导入库存' },
   BRAND_MISMATCH:     { label: 'Excel 品牌与 SKU 主数据品牌不一致', suggestion: '库存总表品牌以 SKU 主数据为准：修正 Excel 品牌，或前往「SKU 主数据」更正品牌' },
   QTY_INVALID:        { label: '库存数量格式非法',               suggestion: '可用数量必须为非负整数（不接受小数、空值、负数）' },
-  WAC_INVALID:        { label: '加权平均成本格式非法',           suggestion: '加权平均成本可留空表示不提供；若填写必须为非负数字' }
+  WAC_INVALID:        { label: '加权平均成本格式非法',           suggestion: '加权平均成本可留空表示不提供；若填写必须为非负数字' },
+  // INV-IMPORT-WAREHOUSE-01：仓库合法性强校验（country + warehouse + status='active'）
+  WAREHOUSE_EMPTY:     { label: '仓库不能为空',   suggestion: '仓库不能为空，请选择/填写系统已有仓库' },
+  WAREHOUSE_MISSING:   { label: '仓库不存在',     suggestion: '该仓库不存在，请修改后重新导入' },
+  COUNTRY_NO_WAREHOUSE:{ label: '国家无有效仓库', suggestion: '国家不存在有效仓库，请检查国家和仓库名称' }
 };
 
 // INV-IMPORT-PRECHECK-01 严格品牌规则：逐字符完全一致，禁止 trim / 大小写 / 空格压缩 / alias。
@@ -3589,11 +3593,50 @@ function validateInventoryImportRows(items) {
     found.forEach(r => { masterMap.set(r.sku_code, r); });
   }
 
+  // 预取仓库主数据（INV-IMPORT-WAREHOUSE-01）：每批仅查一次 warehouses（status='active'），
+  // 在内存构建两个索引，禁止逐行 query：
+  //   whSet        —— key = trim(country_name) + '\0' + trim(name)，用于 (country, warehouse) 精确命中
+  //   whByCountry  —— trim(country_name) -> [trim(name)...]，用于返回“该国家当前允许仓库”清单
+  // 匹配口径：country + warehouse + status='active'，trim 前后空格后精确比较；不做大小写不敏感、不做模糊、不做 alias。
+  const whSet = new Set();
+  const whByCountry = new Map();
+  query(`SELECT country_name, name FROM warehouses WHERE status = ?`, ['active']).rows.forEach(r => {
+    const cn = (r.country_name === null || r.country_name === undefined) ? '' : String(r.country_name).trim();
+    const wn = (r.name === null || r.name === undefined) ? '' : String(r.name).trim();
+    if (!cn) return; // 无国家的仓库不参与匹配（无法构成 country+warehouse 维度）
+    whSet.add(cn + '\0' + wn);
+    if (!whByCountry.has(cn)) whByCountry.set(cn, []);
+    if (wn && !whByCountry.get(cn).includes(wn)) whByCountry.get(cn).push(wn);
+  });
+
   rows.forEach((item, i) => {
     const src = item || {};
     // 行号：优先使用前端传入的真实 Excel 行号，缺失时退回既有口径 i + 2
     const rowNo = Number(src._row_num) > 0 ? Number(src._row_num) : (i + 2);
     const skuCode = (src.sku_code === null || src.sku_code === undefined) ? '' : String(src.sku_code).trim();
+
+    // ⑧ 仓库合法性强校验（INV-IMPORT-WAREHOUSE-01）：校验独立于 SKU 是否有效，
+    //    即使 SKU 为空也应能同时报出仓库问题，故置于「if (!skuCode) return;」之前。
+    //    维度 = country + warehouse + status='active'；trim 前后空格后精确比较（大小写敏感、非模糊、非 alias）。
+    const countryRaw = (src.country === null || src.country === undefined) ? '' : String(src.country);
+    const warehouseRaw = (src.warehouse === null || src.warehouse === undefined) ? '' : String(src.warehouse);
+    const country = countryRaw.trim();
+    const warehouse = warehouseRaw.trim();
+    if (warehouse === '') {
+      // 规则 1：仓库为空必须阻断，禁止空仓库进入 inventory_imports / inventory
+      pushIssue(rowNo, skuCode, 'WAREHOUSE_EMPTY', country, { country, warehouse: '', allowed_warehouses: whByCountry.get(country) || [] });
+    } else if (!whByCountry.has(country)) {
+      // 国家本身不存在有效（active）仓库：无法构成 (country, warehouse) 维度
+      pushIssue(rowNo, skuCode, 'COUNTRY_NO_WAREHOUSE', country, { country, warehouse, allowed_warehouses: [] });
+    } else if (!whSet.has(country + '\0' + warehouse)) {
+      // 国家存在，但该仓库不属于此国家 / 名称不精确匹配 / 为 inactive
+      const allowed = whByCountry.get(country) || [];
+      pushIssue(rowNo, skuCode, 'WAREHOUSE_MISSING', country + ' / ' + warehouse, {
+        country, warehouse, allowed_warehouses: allowed,
+        // 动态覆盖静态 suggestion，带出“允许仓库”清单（frontend 通用表格与下载明细均消费）
+        suggestion: `该仓库不存在，请修改后重新导入。允许仓库：${allowed.join('、')}。`
+      });
+    }
 
     // ① SKU 为空
     if (!skuCode) pushIssue(rowNo, '', 'SKU_EMPTY', src.sku_code);

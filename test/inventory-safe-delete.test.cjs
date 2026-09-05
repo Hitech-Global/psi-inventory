@@ -88,6 +88,7 @@ function createSchema() {
     DROP TABLE IF EXISTS roles;
     DROP TABLE IF EXISTS role_data_scope;
     DROP TABLE IF EXISTS user_data_scope;
+    DROP TABLE IF EXISTS warehouses;
   `);
   d.exec(`
     CREATE TABLE inventory_imports (
@@ -232,10 +233,24 @@ function createSchema() {
     CREATE TABLE user_data_scope (
       user_id TEXT PRIMARY KEY, countries TEXT DEFAULT '[]', brands TEXT DEFAULT '[]', warehouses TEXT DEFAULT '[]'
     );
+    -- INV-IMPORT-WAREHOUSE-01：库存导入预检查要求 warehouses 主数据（country_name + name + status）
+    CREATE TABLE warehouses (
+      id TEXT PRIMARY KEY,
+      name TEXT DEFAULT '',
+      country_id TEXT DEFAULT '',
+      country_name TEXT DEFAULT '',
+      warehouse_type TEXT DEFAULT 'self',
+      address TEXT DEFAULT '',
+      status TEXT DEFAULT 'active',
+      brands TEXT DEFAULT '',
+      sort_order INTEGER DEFAULT 0
+    );
   `);
   // tombstone 表使用从 db-sqlite.js 抽取的真实 DDL
   d.exec(TOMBSTONE_DDL_SQLITE);
   d.exec('PRAGMA foreign_keys=ON;');
+  // 种子：本文件全部导入行使用 印度尼西亚 / Bekasi Warehouse，预检查仓库校验需要该 active 仓库存在
+  run("INSERT INTO warehouses (id, name, country_id, country_name, status) VALUES ('wh_id_1','Bekasi Warehouse','ID','印度尼西亚','active')");
 }
 
 let AUTH_TOKEN = null;
