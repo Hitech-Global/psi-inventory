@@ -1598,7 +1598,10 @@ async function initDatabase() {
       CHECK (is_active IN (0,1))
     )
   `);
-  await exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_payable_active ON payable_items(source_type, source_id, fee_type) WHERE is_active = 1`);
+  // PAY-SCHEMA-CORRECTION-01: permanent payable identity uniqueness
+  // 全生命周期唯一：UNIQUE(source_type, source_id, COALESCE(source_ci_id, ''), fee_type)
+  // 无 partial predicate —— identity 与 lifecycle 完全分离
+  await exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_payable_identity ON payable_items(source_type, source_id, COALESCE(source_ci_id, ''), fee_type)`);
   await exec(`CREATE INDEX IF NOT EXISTS ix_payable_src ON payable_items(source_type, source_id)`);
 
   // PAY-CORE Phase 1.5 Task 0：payable_items 生命周期字段（V5 修正 1：与 is_active 解耦）

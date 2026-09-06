@@ -395,6 +395,117 @@ if (driver === 'pg') {
       } catch (e) {
         console.error('[DB] WAC guard bootstrap skipped (non-fatal): ' + e.message);
       }
+      // ==========================================================================
+      // PAY-SCHEMA-CORRECTION-01: payable_items permanent identity uniqueness
+      //
+      // canonical index name（db.js / db-pg.js / db-sqlite.js 三处 source-of-truth 完全一致）：
+      //   uq_payable_identity
+      // 目标定义（无 partial predicate —— identity 与 lifecycle 完全分离）：
+      //   UNIQUE (source_type, source_id, COALESCE(source_ci_id, ''), fee_type)
+      //
+      // 严格迁移顺序：
+      //   Step 0  metadata check（已收敛 → 零 DDL，Render 每次 restart 都不重建索引）
+      //   Step 1  CREATE UNIQUE INDEX CONCURRENTLY uq_payable_identity
+      //   Step 2  验证 indisvalid / indisready / indisunique / COALESCE / predicate IS NULL
+      //   Step 3  仅当 Step 2 全通过 → DROP INDEX CONCURRENTLY uq_payable_active
+      //   不 rename：保留 uq_payable_identity 名称
+      //
+      // dual-index 期间旧 3-field index 比新 business key 更严格（同 PI 多 CI 仍被阻塞），
+      // 因此旧索引未 DROP 完成前 Wave 2A 不得解冻。任一步失败立即中止 —— 旧索引保留。
+      // CONCURRENTLY 不能在 transaction block → 走 syncRequest('query')（autocommit 模式）。
+      //
+      // rollback 时间边界（重要）：
+      //   旧 uq_payable_active 是错误 business key（缺 source_ci_id），只能作为
+      //   【Wave 2A 上线之前、生产尚未产生合法 multi-CI payable 数据】的临时 schema 应急回滚目标。
+      //   一旦 Wave 2A 上线并产出「同 PI + CI-A / CI-B 两条 payable」，旧 3-field index
+      //   可能因重复键而无法重新 CREATE。
+      //   ⇒ Wave 2A 上线之后：schema 不回滚到旧 business key；
+      //     只允许「保留正确的 uq_payable_identity + 回滚 Wave 2A 应用代码」。
+      // ==========================================================================
+      try {
+        var PAY_NEW_IDX = 'uq_payable_identity';
+        var PAY_OLD_IDX = 'uq_payable_active';
+
+        // 读取索引 catalog 现状（不存在 → null）
+        var payReadIndex = function (name) {
+          var res = syncRequest('query', [
+            "SELECT i.indisvalid, i.indisready, i.indisunique,",
+            "  pg_get_expr(i.indpred, i.indrelid) AS predicate,",
+            "  pg_get_indexdef(i.indexrelid) AS indexdef",
+            "FROM pg_index i",
+            "JOIN pg_class c ON c.oid = i.indexrelid",
+            "WHERE c.relname = $1"
+          ].join(' '), [name]);
+          return (res.rows && res.rows[0]) || null;
+        };
+
+        // 目标定义判定：valid + ready + unique + COALESCE(source_ci_id, ...) + 无 partial predicate
+        var payIndexIsTarget = function (r) {
+          if (!r) return false;
+          if (r.indisvalid !== true || r.indisready !== true || r.indisunique !== true) return false;
+          var def = String(r.indexdef || '');
+          if (def.indexOf('COALESCE') === -1 || def.indexOf('source_ci_id') === -1) return false;
+          if (def.toLowerCase().indexOf(' where ') !== -1) return false;
+          var pred = r.predicate;
+          if (pred !== null && pred !== undefined && String(pred).trim() !== '') return false;
+          return true;
+        };
+
+        var payOld = payReadIndex(PAY_OLD_IDX);
+        var payNew = payReadIndex(PAY_NEW_IDX);
+
+        if (payIndexIsTarget(payNew) && !payOld) {
+          // 已收敛：新索引为目标定义 + 旧索引不存在 → 零 DDL（不重建、不重建、不重建）
+          console.log('[DB] PAY-SCHEMA-CORRECTION-01: already converged — uq_payable_identity valid，旧索引不存在，零 DDL');
+        } else {
+          if (payNew && !payIndexIsTarget(payNew)) {
+            // 存在但 INVALID（前次 CREATE CONCURRENTLY 失败遗留）或定义漂移 → DROP 后重建。
+            // 此时旧索引仍完整保护（未删除前永远优先保护旧索引）
+            console.log('[DB] PAY-SCHEMA-CORRECTION-01: uq_payable_identity 存在但 INVALID 或定义不符 — DROP 后重建');
+            syncRequest('query', 'DROP INDEX CONCURRENTLY IF EXISTS ' + PAY_NEW_IDX);
+            payNew = null;
+          }
+
+          if (!payNew) {
+            // Step 1
+            console.log('[DB] PAY-SCHEMA-CORRECTION-01: Step 1 — CREATE UNIQUE INDEX CONCURRENTLY ' + PAY_NEW_IDX);
+            syncRequest('query', [
+              'CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS ' + PAY_NEW_IDX,
+              "ON payable_items (source_type, source_id, COALESCE(source_ci_id, ''), fee_type)"
+            ].join(' '));
+            payNew = payReadIndex(PAY_NEW_IDX);
+          }
+
+          // Step 2
+          if (!payIndexIsTarget(payNew)) {
+            console.error('[DB] PAY-SCHEMA-CORRECTION-01: Step 2 verify FAILED — ' + JSON.stringify({
+              indisvalid: payNew && payNew.indisvalid,
+              indisready: payNew && payNew.indisready,
+              indisunique: payNew && payNew.indisunique,
+              indexdef: payNew && payNew.indexdef,
+              predicate: payNew && payNew.predicate
+            }) + ' — 中止迁移（旧索引保留，Wave 2A 不得解冻）');
+          } else {
+            console.log('[DB] PAY-SCHEMA-CORRECTION-01: Step 2 OK — valid + ready + unique + COALESCE + 无 partial predicate');
+            // Step 3：仅当新索引就绪才移除旧索引
+            if (payOld) {
+              console.log('[DB] PAY-SCHEMA-CORRECTION-01: Step 3 — DROP INDEX CONCURRENTLY ' + PAY_OLD_IDX);
+              syncRequest('query', 'DROP INDEX CONCURRENTLY IF EXISTS ' + PAY_OLD_IDX);
+              var payOldAfter = payReadIndex(PAY_OLD_IDX);
+              if (payOldAfter) {
+                console.error('[DB] PAY-SCHEMA-CORRECTION-01: 旧索引 DROP 后仍存在（可能仍被查询占用）— 需人工复查');
+              } else {
+                console.log('[DB] PAY-SCHEMA-CORRECTION-01: Step 3 OK — 旧索引已删除（Wave 2A 解冻前置条件满足）');
+              }
+            } else {
+              console.log('[DB] PAY-SCHEMA-CORRECTION-01: 旧索引不存在 — 无需 Step 3');
+            }
+          }
+        }
+      } catch (e) {
+        console.error('[DB] PAY-SCHEMA-CORRECTION-01: migration FAILED: ' + e.message + ' — 旧索引保留');
+      }
+
       console.log('[DB] PG migrations completed.');
     },
     getDB: function () { throw new Error('getDB() not available in worker_threads mode'); }

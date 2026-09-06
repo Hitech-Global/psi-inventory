@@ -1416,14 +1416,20 @@ function initDatabase() {
     )
   `);
 
-  // 有效费用单唯一约束（部分唯一索引）：同一 (source_type, source_id, fee_type, source_ci_id) 只允许一张 is_active=1
-  // source_ci_id 用于多PI CI场景：同一PI在不同CI下各有一条active balance payable_item
-  // 作废（is_active=0）不进入索引，可无限累积历史并允许重建
-  d.exec(`
-    CREATE UNIQUE INDEX IF NOT EXISTS uq_payable_active
-      ON payable_items(source_type, source_id, fee_type, source_ci_id)
-      WHERE is_active = 1
-  `);
+  // PAY-SCHEMA-CORRECTION-01: permanent payable identity uniqueness
+  // canonical name（db.js / db-pg.js / db-sqlite.js 三处一致）：uq_payable_identity
+  // 全生命周期唯一：UNIQUE(source_type, source_id, COALESCE(source_ci_id, ''), fee_type)
+  // 无 partial predicate —— identity 与 lifecycle 完全分离
+  // COALESCE 保证 NULL 与 '' 属于同一 identity（防御：SQLite source_ci_id 可为 NULL）
+  // 存量重复 identity 时建索引会失败：只告警不中断启动（保留既有索引保护，由下方迁移段兜底）
+  try {
+    d.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_payable_identity
+        ON payable_items(source_type, source_id, COALESCE(source_ci_id, ''), fee_type)
+    `);
+  } catch (e) {
+    console.warn('[DB-SQLITE] PAY-SCHEMA-CORRECTION-01: 创建 uq_payable_identity 失败（保留既有索引保护）: ' + (e && e.message));
+  }
 
   // 按来源 / 费用单定位的普通索引
   d.exec(`CREATE INDEX IF NOT EXISTS ix_payable_src ON payable_items(source_type, source_id)`);
@@ -1453,10 +1459,28 @@ function initDatabase() {
   try { d.exec("ALTER TABLE commercial_invoice_items ADD COLUMN discount REAL DEFAULT 0"); } catch(e) {}
   try { d.exec("ALTER TABLE commercial_invoice_items ADD COLUMN net_unit_price REAL DEFAULT 0"); } catch(e) {}
 
-  // UNIQUE 索引迁移：从 3 列 (source_type, source_id, fee_type) 扩展为 4 列 (+ source_ci_id)
-  // 存量数据 source_ci_id 全部 ''，3列唯一等价于4列唯一，不会产生冲突
-  try { d.exec("DROP INDEX IF EXISTS uq_payable_active"); } catch(e) {}
-  try { d.exec("CREATE UNIQUE INDEX IF NOT EXISTS uq_payable_active ON payable_items(source_type, source_id, fee_type, source_ci_id) WHERE is_active = 1"); } catch(e) {}
+  // PAY-SCHEMA-CORRECTION-01: 迁移到 permanent identity uniqueness
+  // canonical: uq_payable_identity = UNIQUE(source_type, source_id, COALESCE(source_ci_id,''), fee_type)
+  // 顺序（与 PG 一致）：先确保新 identity 索引就位 → 成功后再移除遗留 uq_payable_active（任何定义）。
+  // 旧 3/4-field partial index 对「同 PI 多 CI」更严格，故必须在新索引就位后才移除。
+  try {
+    var _payIdxRow = d.prepare("SELECT sql FROM sqlite_master WHERE type='index' AND name='uq_payable_identity'").get();
+    var _payIdxSql = _payIdxRow ? String(_payIdxRow.sql || '') : '';
+    var _payDefOk = _payIdxSql.indexOf('COALESCE') !== -1 && _payIdxSql.toLowerCase().indexOf('is_active') === -1;
+    if (!_payDefOk) {
+      if (_payIdxSql) { try { d.exec("DROP INDEX IF EXISTS uq_payable_identity"); } catch(e) {} }
+      try {
+        d.exec("CREATE UNIQUE INDEX IF NOT EXISTS uq_payable_identity ON payable_items(source_type, source_id, COALESCE(source_ci_id, ''), fee_type)");
+      } catch(e) {
+        console.warn('[DB-SQLITE] PAY-SCHEMA-CORRECTION-01: 创建 uq_payable_identity 失败（保留旧索引）: ' + (e && e.message));
+      }
+    }
+    // 仅当新 identity 索引就位后才移除历史遗留索引
+    var _payNewOk = d.prepare("SELECT 1 FROM sqlite_master WHERE type='index' AND name='uq_payable_identity'").get();
+    if (_payNewOk) {
+      try { d.exec("DROP INDEX IF EXISTS uq_payable_active"); } catch(e) {}
+    }
+  } catch(e) {}
 
   // 存量回填：ci_items.pi_id = ci.related_pi_id（存量单 PI CI）
   try { d.exec("UPDATE commercial_invoice_items SET pi_id = (SELECT ci.related_pi_id FROM commercial_invoices ci WHERE ci.id = commercial_invoice_items.ci_id) WHERE pi_id = ''"); } catch(e) {}
