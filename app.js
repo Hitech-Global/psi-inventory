@@ -4610,7 +4610,8 @@ async function loadInv(){
     const mySeq = ++_invLoadSeq;
     const [data, rateInfo] = await Promise.all([
       api('/api/inventory?country='+encodeURIComponent(c)+'&warehouse='+encodeURIComponent(w)+'&brand='+encodeURIComponent(b)+'&keyword='+encodeURIComponent(k)),
-      api('/api/inventory/currency-rates')
+      // 汇率获取容错：即使汇率接口/外部服务异常，库存表仍正常打开（缺失汇率仅显示为 -，不阻断整页）
+      api('/api/inventory/currency-rates').catch(function(){ return {countries:[],rates:{},rate_date:'',used_fallback:false}; })
     ]);
     if(mySeq !== _invLoadSeq) return; // 丢弃过期响应：避免快速切换筛选时旧请求覆盖新结果
     window._invRateInfo = rateInfo; // 缓存供导出使用
@@ -4649,10 +4650,13 @@ async function loadInv(){
       }
     });
     if(rateRowsHtml){
-      rateRowsHtml = t('gen.L2884.1','<span style="color:#999;margin-right:4px;align-self:center">汇率(') + (rateInfo.rate_date||'') + '):</span>'
-        + '<div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end">' + rateRowsHtml + '</div>'
-        + '<button class="btn btn-sm btn-secondary" style="padding:2px 8px;font-size:11px;margin-left:6px;align-self:center" onclick="refreshInvRates()">'+'🔄 '+t("action.refresh", "刷新")+'</button>'
-        + '<button class="btn btn-sm btn-primary" style="padding:2px 8px;font-size:11px;margin-left:6px;align-self:center" onclick="openManualRateModal()">➕ 手工录入汇率</button>';
+      // 标题如实显示汇率日期：正常=今天；外部获取失败回退=最近可用日期（绝不伪装成今天）
+      let __ratePrefix = '汇率(' + (rateInfo.rate_date || '') + ')';
+      if (rateInfo.used_fallback) {
+        __ratePrefix = '汇率(至 ' + (rateInfo.rate_date || '') + ' · 实时获取失败，用最近值)';
+      }
+      rateRowsHtml = '<span style="color:#999;margin-right:4px;align-self:center">' + __ratePrefix + '</span>'
+        + '<div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end">' + rateRowsHtml + '</div>';
     }
     var rateEl = document.getElementById('inv-rate-display');
     if(rateEl) rateEl.innerHTML = rateRowsHtml;
@@ -4925,91 +4929,6 @@ function resetInvFilters(){
   loadInv();
 }
 
-async function refreshInvRates(){
-  try{
-    // 删除今天的缓存汇率，强制重新从API获取
-    await api('/api/exchange-rates/refresh','POST',{});
-    showToast(t("toast.rate_refreshed", "汇率已刷新"),'success');
-    loadInv();
-  }catch(e){
-    // 如果没有refresh接口，直接重新加载（会从DB取或重新获取）
-    showToast(t("toast.rate_refreshing", "正在刷新汇率..."),'info');
-    loadInv();
-  }
-}
-
-// ===== 手工录入历史汇率（最小修复：补 exact-date WAC 所需历史汇率前端入口）=====
-// 边界：复用现有 POST /api/exchange-rates（rate_type 默认 realtime）；不新建表、不改 WAC、不做最近日 fallback、保留自动刷新。
-// 后端该接口为 plain INSERT 且无唯一约束 → 重复脏数据防护在前端做（同日期 + 同货币对 + realtime 已存在则阻断）。
-async function openManualRateModal(){
-  let curRows=[];
-  try{ curRows = await api('/api/currencies','GET') || []; }catch(e){ curRows=[]; }
-  if(!curRows.length){
-    curRows = ['RMB','USD','IDR','EUR','JPY','SGD','MYR','THB','VND'].map(function(c){return {code:c,name:c};});
-  }
-  const opts = curRows.map(function(c){
-    return '<option value="'+esc(c.code)+'">'+esc(c.code)+(c.name&&c.name!==c.code?(' · '+esc(c.name)):'')+'</option>';
-  }).join('');
-  const html =
-    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">'
-    + '<h3 style="margin:0;font-size:16px">手工录入历史汇率</h3>'
-    + '<button class="btn btn-sm btn-secondary" onclick="closeModal()">✕</button></div>'
-    + '<div id="manual-rate-err" style="color:#ff4d4f;font-size:12px;margin-bottom:8px;min-height:16px"></div>'
-    + '<div class="form-group"><label>日期 <span class="required">*</span></label>'
-    + '<input id="mr-date" type="date" class="form-control"></div>'
-    + '<div class="form-group"><label>From Currency <span class="required">*</span></label>'
-    + '<select id="mr-from" class="form-control">'+opts+'</select></div>'
-    + '<div class="form-group"><label>To Currency <span class="required">*</span></label>'
-    + '<select id="mr-to" class="form-control">'+opts+'</select></div>'
-    + '<div class="form-group"><label>Rate (1 From = ? To) <span class="required">*</span></label>'
-    + '<input id="mr-rate" type="number" step="any" min="0" class="form-control"></div>'
-    + '<div style="font-size:11px;color:#888;margin:6px 0 12px">说明：保存后写入 rate_type=realtime 的精确日期汇率，供 WAC 按到货日折算使用；系统不自动取最近日期。</div>'
-    + '<div style="display:flex;gap:8px;justify-content:flex-end">'
-    + '<button class="btn btn-secondary" onclick="closeModal()">取消</button>'
-    + '<button class="btn btn-primary" id="mr-save">保存</button></div>';
-  showModal(html);
-  const saveBtn=document.getElementById('mr-save');
-  if(saveBtn) saveBtn.onclick=saveManualRate;
-}
-
-async function saveManualRate(){
-  const errEl=document.getElementById('manual-rate-err');
-  const dateEl=document.getElementById('mr-date');
-  const fromEl=document.getElementById('mr-from');
-  const toEl=document.getElementById('mr-to');
-  const rateEl=document.getElementById('mr-rate');
-  if(errEl) errEl.textContent='';
-  if(!dateEl || !fromEl || !toEl || !rateEl) return;
-  const date=dateEl.value;
-  const from=fromEl.value;
-  const to=toEl.value;
-  const rate=parseFloat(rateEl.value);
-  if(!date){ if(errEl) errEl.textContent='请填写日期'; return; }
-  if(!from || !to){ if(errEl) errEl.textContent='请选择 From / To 币种'; return; }
-  if(from===to){ if(errEl) errEl.textContent='From 与 To 不能相同'; return; }
-  if(isNaN(rate) || !(rate>0)){ if(errEl) errEl.textContent='Rate 必须大于 0'; return; }
-  // 重复脏数据防护：同日期 + 同货币对 + realtime 已存在则阻断（后端 plain INSERT 无唯一约束）
-  try{
-    const existing = await api('/api/exchange-rates?from='+encodeURIComponent(from)+'&to='+encodeURIComponent(to),'GET') || [];
-    const dup = existing.find(function(r){ return String(r.rate_date).slice(0,10)===date && (r.rate_type||'realtime')==='realtime'; });
-    if(dup){
-      if(errEl) errEl.textContent='该日期 '+date+' 的 '+from+'→'+to+' 已存在 realtime 汇率，请勿重复录入。';
-      return;
-    }
-  }catch(e){ /* 查询失败不阻断录入，交给后端最终校验 */ }
-  const saveBtn=document.getElementById('mr-save');
-  if(saveBtn){ saveBtn.disabled=true; saveBtn.textContent='保存中…'; }
-  try{
-    await api('/api/exchange-rates','POST',{ from_currency:from, to_currency:to, rate:rate, rate_date:date, rate_type:'realtime' });
-    showToast('历史汇率已保存（'+date+' '+from+'→'+to+' = '+rate+'）','success');
-    closeModal();
-    if(typeof loadInv==='function') loadInv();
-  }catch(e){
-    if(errEl) errEl.textContent='保存失败：'+((e&&e.message)?e.message:e);
-  }finally{
-    if(saveBtn){ saveBtn.disabled=false; saveBtn.textContent='保存'; }
-  }
-}
 
 function invGetSelectedIds(){
   if(invSelectAllMode) return invAllFilteredIds;

@@ -2573,6 +2573,78 @@ const COUNTRY_ALIAS_MAP = {
   '马来西亚': '马来', '马来西亚联邦': '马来',
   '泰王国': '泰国',
 };
+// 库存总表汇率解析核心（抽离为可单测纯函数）：以【日期】为缓存边界
+//   - 今天汇率已存在(DB) → 直接使用，不请求外部
+//   - 今天汇率缺失 → 自动调用 provider 获取并保存当天汇率
+//   - provider 失败 → 回退 DB 中最近一次成功汇率，标记 used_fallback + 实际日期，绝不抛错
+// 复用系统既有 UTC 业务日期口径（new Date().toISOString().split('T')[0]，与 /api/exchange-rates/refresh 一致）。
+async function resolveInventoryCurrencyRates({ currencies, today, fetchImpl }) {
+  const rates = {};
+  const missingCurrencies = []; // 今天缺失、需要后端自动获取的币种
+  let usedFallback = false;
+  let fallbackMaxDate = '';      // fallback 时使用的最近成功日期（用于页面如实展示）
+
+  for (const curr of currencies) {
+    if (curr === 'RMB' || curr === 'CNY') { rates[curr] = { rate: 1, date: today, source: 'base' }; continue; }
+    // 仅以【今天】作为命中条件：今天有则直接用，无则进入自动获取流程（不再静默回退到旧日期）
+    const row = queryOne('SELECT rate, rate_date FROM exchange_rates WHERE from_currency = ? AND to_currency = ? AND rate_date = ? ORDER BY created_at DESC LIMIT 1', [curr, 'RMB', today]);
+    if (row) {
+      // DB中存的是 1外币=X人民币（foreignToRmb），转换为 1人民币=X外币（cnyToForeign）
+      const cnyToForeign = row.rate > 0 ? Math.round((1 / row.rate) * 1000000) / 1000000 : 0;
+      rates[curr] = { rate: cnyToForeign, date: today, source: 'db_today' };
+    } else {
+      missingCurrencies.push(curr); // 今天缺失 → 待自动获取
+    }
+  }
+
+  // 对今天缺失的币种，批量从免费API自动获取并保存当天汇率
+  if (missingCurrencies.length > 0) {
+    try {
+      const resp = await fetchImpl('https://open.er-api.com/v6/latest/CNY');
+      const data = await resp.json();
+      if (data && data.rates) {
+        for (const curr of missingCurrencies) {
+          const apiCurr = CURRENCY_API_MAP[curr] || curr;
+          const cnyToForeign = data.rates[apiCurr]; // 1 CNY = X 外币（API直接返回）
+          if (cnyToForeign && cnyToForeign > 0) {
+            const foreignToRmb = 1 / cnyToForeign; // 换算为 1外币=X人民币 用于缓存
+            rates[curr] = { rate: cnyToForeign, date: today, source: 'realtime' };
+            // 缓存到DB（存foreignToRmb方便复用）；当天已存在则跳过，避免重复行
+            const exists = queryOne('SELECT 1 FROM exchange_rates WHERE from_currency = ? AND to_currency = ? AND rate_date = ? AND rate_type = ?', [curr, 'RMB', today, 'realtime']);
+            if (!exists) run('INSERT INTO exchange_rates (id, from_currency, to_currency, rate, rate_date, rate_type) VALUES (?, ?, ?, ?, ?, ?)',
+              [genId('rate'), curr, 'RMB', foreignToRmb, today, 'realtime']);
+          } else {
+            applyFallback(curr); // API 返回但无该币种汇率
+          }
+        }
+      } else {
+        missingCurrencies.forEach(applyFallback); // API 返回结构异常 → 全部回退
+      }
+    } catch (fetchErr) {
+      // 外部服务临时失败：记录明确错误日志，回退到最近成功汇率（不导致 500 / 页面打不开）
+      console.error('[currency-rates] 实时汇率获取失败，已回退最近成功汇率:', fetchErr && fetchErr.message);
+      missingCurrencies.forEach(applyFallback);
+    }
+  }
+
+  // 回退函数：今天缺失且无法获取时，使用DB中最近一次成功汇率，并如实标记实际日期
+  function applyFallback(curr) {
+    const row = queryOne('SELECT rate, rate_date FROM exchange_rates WHERE from_currency = ? AND to_currency = ? ORDER BY rate_date DESC, created_at DESC LIMIT 1', [curr, 'RMB']);
+    if (row) {
+      const cnyToForeign = row.rate > 0 ? Math.round((1 / row.rate) * 1000000) / 1000000 : 0;
+      rates[curr] = { rate: cnyToForeign, date: row.rate_date, source: 'fallback' };
+      usedFallback = true;
+      if (row.rate_date > fallbackMaxDate) fallbackMaxDate = row.rate_date;
+    } else {
+      rates[curr] = null; // 完全无任何历史汇率，无法回退
+    }
+  }
+
+  // 页面展示日期：今天全部命中 → 今天；发生回退 → 如实显示最近可用日期（绝不伪装成今天）
+  const rate_date = usedFallback ? (fallbackMaxDate || today) : today;
+  return { rates, rate_date, used_fallback: usedFallback };
+}
+
 app.get('/api/inventory/currency-rates', requireLogin, asyncHandler(async (req, res) => {
   try {
     // 0. 获取countries表的标准国家名→货币映射
@@ -2612,53 +2684,10 @@ app.get('/api/inventory/currency-rates', requireLogin, asyncHandler(async (req, 
     countries.forEach(c => { if (c.default_currency) currencySet.add(c.default_currency); });
     const currencies = Array.from(currencySet);
 
-    // 3. 逐个查汇率（先查DB，无则从API获取）
+    // 3. 解析库存总表汇率（以【日期】为缓存边界：今天命中直接用 / 缺失自动获取 / 失败回退最近成功值）
     const today = new Date().toISOString().split('T')[0];
-    const rates = {};
-
-    for (const curr of currencies) {
-      if (curr === 'RMB' || curr === 'CNY') { rates[curr] = { rate: 1, date: today, source: 'base' }; continue; }
-      // 查DB中今天的汇率
-      let row = queryOne('SELECT rate, rate_date FROM exchange_rates WHERE from_currency = ? AND to_currency = ? AND rate_date = ? ORDER BY created_at DESC LIMIT 1', [curr, 'RMB', today]);
-      if (!row) {
-        // 查DB中最新汇率（不限日期）
-        row = queryOne('SELECT rate, rate_date FROM exchange_rates WHERE from_currency = ? AND to_currency = ? ORDER BY rate_date DESC, created_at DESC LIMIT 1', [curr, 'RMB']);
-      }
-      if (row) {
-        // DB中存的是 1外币=X人民币（foreignToRmb），转换为 1人民币=X外币（cnyToForeign）
-        const cnyToForeign = row.rate > 0 ? Math.round((1 / row.rate) * 1000000) / 1000000 : 0;
-        rates[curr] = { rate: cnyToForeign, date: row.rate_date, source: row.rate_date === today ? 'db_today' : 'db_cached' };
-      } else {
-        rates[curr] = null; // 标记为需要从API获取
-      }
-    }
-
-    // 4. 对缺失的汇率，批量从免费API获取
-    const missingCurrencies = currencies.filter(c => c !== 'RMB' && c !== 'CNY' && !rates[c]);
-    if (missingCurrencies.length > 0) {
-      try {
-        const apiCode = 'CNY';
-        const resp = await fetch(`https://open.er-api.com/v6/latest/${apiCode}`);
-        const data = await resp.json();
-        if (data && data.rates) {
-          for (const curr of missingCurrencies) {
-            const apiCurr = CURRENCY_API_MAP[curr] || curr;
-            const cnyToForeign = data.rates[apiCurr]; // 1 CNY = X 外币（API直接返回）
-            if (cnyToForeign && cnyToForeign > 0) {
-              const foreignToRmb = 1 / cnyToForeign; // 换算为 1外币=X人民币 用于缓存
-              rates[curr] = { rate: cnyToForeign, date: today, source: 'realtime' };
-              // 缓存到DB（存foreignToRmb方便复用）
-              run('INSERT INTO exchange_rates (id, from_currency, to_currency, rate, rate_date, rate_type) VALUES (?, ?, ?, ?, ?, ?)',
-                [genId('rate'), curr, 'RMB', foreignToRmb, today, 'realtime']);
-            }
-          }
-        }
-      } catch (fetchErr) {
-        console.warn('[currency-rates] Failed to fetch real-time rates:', fetchErr.message);
-      }
-    }
-
-    res.json({ countries, currencies, rates, base_currency: 'RMB', rate_date: today });
+    const { rates, rate_date, used_fallback } = await resolveInventoryCurrencyRates({ currencies, today, fetchImpl: fetch });
+    res.json({ countries, currencies, rates, base_currency: 'RMB', rate_date, used_fallback });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -20111,6 +20140,7 @@ module.exports = {
   getEffectiveTransitRows,
   getPiTransitAssets,
   computeInventoryByBrand,
+  resolveInventoryCurrencyRates,
   finalPaymentApprovalInput,
   paymentSettlementFacts,
   derivePaymentStatus,
