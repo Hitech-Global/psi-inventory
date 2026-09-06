@@ -51,6 +51,33 @@ END;
 $wacguard$ LANGUAGE plpgsql;
 `;
 
+// DELETE 守卫函数（生产现状语义：locked 行无条件禁止 DELETE，无解锁通道 —— 比 UPDATE 守卫更强）
+const GUARD_DELETE_FN_SQL = `
+CREATE OR REPLACE FUNCTION trg_block_wac_history_delete() RETURNS trigger AS $wacguard$
+BEGIN
+  IF OLD.is_locked = 1 THEN
+    RAISE EXCEPTION 'LOCKED_WAC_HISTORY_DELETE_FORBIDDEN';
+  END IF;
+  RETURN OLD;
+END;
+$wacguard$ LANGUAGE plpgsql;
+`;
+
+// 触发器 DDL 单一来源（SCHEMA-CONSOLIDATION-01）：boot 时仅对缺失的触发器执行
+// drop+create（幂等）；生产已就位时 catalog 检查跳过，零 DDL 零锁。
+const GUARD_TRIGGERS = [
+  {
+    name: 'trg_wac_history_block_update',
+    drop: 'DROP TRIGGER IF EXISTS trg_wac_history_block_update ON wac_history',
+    create: 'CREATE TRIGGER trg_wac_history_block_update BEFORE UPDATE ON wac_history FOR EACH ROW EXECUTE FUNCTION trg_block_wac_history_update()'
+  },
+  {
+    name: 'trg_wac_history_block_delete',
+    drop: 'DROP TRIGGER IF EXISTS trg_wac_history_block_delete ON wac_history',
+    create: 'CREATE TRIGGER trg_wac_history_block_delete BEFORE DELETE ON wac_history FOR EACH ROW EXECUTE FUNCTION trg_block_wac_history_delete()'
+  }
+];
+
 // reverse 事务开始时调用：查询 pg_proc 判断守卫是否已应用；缺失则幂等补齐。
 // 正常热路径成本 = 1 次 catalog SELECT。
 //   aq / run：withGenerateClient 提供的 async 执行器（SQL 经 _normalizeSql，兼容）
@@ -66,4 +93,4 @@ function ensureGuardInTx(aq, run) {
   })();
 }
 
-module.exports = { GUARD_FN_NAME, GUARD_UPDATE_FN_SQL, ensureGuardInTx };
+module.exports = { GUARD_FN_NAME, GUARD_UPDATE_FN_SQL, GUARD_DELETE_FN_SQL, GUARD_TRIGGERS, ensureGuardInTx };

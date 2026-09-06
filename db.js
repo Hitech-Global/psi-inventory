@@ -325,7 +325,26 @@ if (driver === 'pg') {
         "CREATE INDEX IF NOT EXISTS ix_ci_warehouse ON commercial_invoices(target_warehouse)",
         "CREATE INDEX IF NOT EXISTS ix_ci_created_at ON commercial_invoices(created_at)",
         "CREATE INDEX IF NOT EXISTS ix_hci_brand_name ON historical_commercial_invoices(brand_name)",
-        "CREATE INDEX IF NOT EXISTS ix_hci_country ON historical_commercial_invoices(country)"
+        "CREATE INDEX IF NOT EXISTS ix_hci_country ON historical_commercial_invoices(country)",
+        // SCHEMA-CONSOLIDATION-01：生产带外 schema 对象收编（一）—— 索引。
+        // 以下对象在生产 pg_indexes 实测存在（2026-09-06 只读探针），但生产生效迁移入口
+        // （本硬编码列表）与 db-pg.js 死代码之外均无 DDL 源头 → DB 重建时会静默缺失：
+        //   - uq_inventory_key：inventory 业务键唯一约束（并发重复键防线，reverse guard A
+        //     的数据库级兜底；生产为带外 UNIQUE 约束，底层即同名唯一索引）
+        //   - sales_records 6 索引（含 idx_sales_records_unique 唯一索引）与
+        //     sales_import_runs 2 索引：销售导入查询/幂等依赖
+        // 生产同名对象已存在 → IF NOT EXISTS no-op（零 DDL 零锁）；空白/重建库 → 补齐。
+        // 表不存在时（极端环境）由逐条 try/catch 记录并继续，与其他条目行为一致。
+        // SQLite 端（db-sqlite.js）已有同名索引，不在本收编范围、保持不动。
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_inventory_key ON inventory(sku_code, country, warehouse)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_sales_records_unique ON sales_records(source_system, order_no, sku_code, COALESCE(shop_platform, ''))",
+        "CREATE INDEX IF NOT EXISTS idx_sales_records_sku ON sales_records(sku_code)",
+        "CREATE INDEX IF NOT EXISTS idx_sales_records_date ON sales_records(order_date)",
+        "CREATE INDEX IF NOT EXISTS idx_sales_records_valid ON sales_records(is_valid_order)",
+        "CREATE INDEX IF NOT EXISTS idx_sales_records_batch ON sales_records(import_batch_id)",
+        "CREATE INDEX IF NOT EXISTS idx_sales_records_country ON sales_records(country)",
+        "CREATE INDEX IF NOT EXISTS idx_sales_import_runs_status ON sales_import_runs(status)",
+        "CREATE INDEX IF NOT EXISTS idx_sales_import_runs_updated ON sales_import_runs(updated_at)"
       ];
       for (var i = 0; i < migrations.length; i++) {
         try {
@@ -334,6 +353,47 @@ if (driver === 'pg') {
         } catch (e) {
           console.error('[DB] migration FAILED: ' + e.message);
         }
+      }
+      // SCHEMA-CONSOLIDATION-01：生产带外 schema 对象收编（二）—— WAC trigger guard。
+      // wac_history 双触发器与守卫函数当年带外创建（本列表/死代码均无源头），DB 重建时
+      // WAC 锁保护会静默消失。启动时按现状收敛（与 Wave 1 ensureGuardInTx 同一 SQL 来源，
+      // 复用 db-migrations/wac-trigger-guard.cjs 单一出处）：
+      //   - 守卫函数缺失或为旧版（prosrc 不含 app.wac_unlock）→ CREATE OR REPLACE 升级为
+      //     fail-secure 新守卫（幂等；生产已升级则跳过，零 DDL）
+      //   - wac_history 表存在且触发器缺失 → 补建（生产已就位 → 仅 1 次 catalog SELECT，零 DDL 零锁）
+      // 失败仅告警不阻塞启动：boot 期 fail-open，但运行时护栏仍在 —— 每条 reverse 事务内的
+      // ensureGuardInTx 会再次自愈（fail-closed）。
+      try {
+        var WAC_TRIGGER_GUARD = require('./db-migrations/wac-trigger-guard.cjs');
+        var wacFnRes = syncRequest('query', "SELECT prosrc FROM pg_proc WHERE proname = 'trg_block_wac_history_update'");
+        var wacFnRows = wacFnRes.rows || [];
+        var needsGuardFn = (wacFnRows.length === 0) || wacFnRows.every(function (r) {
+          return String(r.prosrc || '').indexOf('app.wac_unlock') === -1;
+        });
+        if (needsGuardFn) {
+          syncRequest('query', WAC_TRIGGER_GUARD.GUARD_UPDATE_FN_SQL);
+          console.log('[DB] WAC guard function created/upgraded (fail-secure).');
+        }
+        var wacDelRes = syncRequest('query', "SELECT to_regproc('trg_block_wac_history_delete') AS f");
+        if (!(wacDelRes.rows && wacDelRes.rows[0] && wacDelRes.rows[0].f)) {
+          syncRequest('query', WAC_TRIGGER_GUARD.GUARD_DELETE_FN_SQL);
+          console.log('[DB] WAC delete guard function created.');
+        }
+        var wacTblRes = syncRequest('query', "SELECT to_regclass('wac_history') AS t");
+        if (wacTblRes.rows && wacTblRes.rows[0] && wacTblRes.rows[0].t) {
+          var wacTrgRes = syncRequest('query', "SELECT tgname FROM pg_trigger WHERE tgrelid = 'wac_history'::regclass AND NOT tgisinternal");
+          var haveTrg = {};
+          (wacTrgRes.rows || []).forEach(function (r) { haveTrg[r.tgname] = true; });
+          WAC_TRIGGER_GUARD.GUARD_TRIGGERS.forEach(function (t) {
+            if (!haveTrg[t.name]) {
+              syncRequest('query', t.drop);
+              syncRequest('query', t.create);
+              console.log('[DB] WAC guard trigger created: ' + t.name);
+            }
+          });
+        }
+      } catch (e) {
+        console.error('[DB] WAC guard bootstrap skipped (non-fatal): ' + e.message);
       }
       console.log('[DB] PG migrations completed.');
     },
