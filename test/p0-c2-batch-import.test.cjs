@@ -548,8 +548,8 @@ describe('P0-C2 inventory bulk-import (PG fast path)', () => {
     setPg(true); resetCounters();
     await refreshInventoryTotalsForKeys([{ sku_code: 'SKU-A', country: 'Indonesia', warehouse: 'WH-A' }], cutoff);
   setPg(false);
-  assert.strictEqual(counters.txBegin, 2, '非 dup 场景 refresh 应恰好 2 个事务（1 scoped refresh + 1 末尾 transit 重算）');
-  assert.strictEqual(counters.txCommit, 2);
+  assert.strictEqual(counters.txBegin, 1, '非 dup 场景 refresh 应恰好 1 个事务（scoped refresh）；Wave 0B 后末尾 transit 重算改走 pg-async 池（updateInventoryTransitDataAsync），不再占用 db 同步桥事务');
+  assert.strictEqual(counters.txCommit, 1);
   assert.strictEqual(counters.txRollback, 0);
   // 无逐行 queryOne 慢路径（证明是 set-based）
   assert.strictEqual(counters.queryOne, 0, 'PG set-based 路径不应出现 queryOne 逐行调用');

@@ -4798,7 +4798,7 @@ async function refreshInventoryTotals(snapshotCutoffDate) {
     });
   }
 
-  updateInventoryTransitData().catch(err => {
+  updateInventoryTransitDataAsync().catch(err => {
     console.warn('[refreshInventoryTotals] 在途数据刷新失败（事务已提交）:', err && err.message);
   });
   return { warnings };
@@ -4814,14 +4814,14 @@ async function refreshInventoryTotalsForKeys(keys, snapshotCutoffDate) {
   }
   const warnings = [];
   if (!keys || keys.length === 0) {
-    updateInventoryTransitData().catch(err => {
+    updateInventoryTransitDataAsync().catch(err => {
       console.warn('[refreshInventoryTotalsForKeys] 在途数据刷新失败（事务已提交）:', err && err.message);
     });
     return { warnings };
   }
   const latestImports = query(latestImportsSqlForKeySet(), [JSON.stringify(keys)]).rows;
   if (latestImports.length === 0) {
-    updateInventoryTransitData().catch(err => {
+    updateInventoryTransitDataAsync().catch(err => {
       console.warn('[refreshInventoryTotalsForKeys] 在途数据刷新失败（事务已提交）:', err && err.message);
     });
     return { warnings };
@@ -4944,34 +4944,22 @@ async function refreshInventoryTotalsForKeys(keys, snapshotCutoffDate) {
     });
   }
 
-  updateInventoryTransitData().catch(err => {
+  updateInventoryTransitDataAsync().catch(err => {
     console.warn('[refreshInventoryTotalsForKeys] 在途数据刷新失败（事务已提交）:', err && err.message);
   });
   return { warnings };
 }
 
 
-// 更新库存的在途数据
-async function updateInventoryTransitData() {
-  // 采购链状态变化自动回写库存总表的在途类字段：
-  //   po_unconfirmed_pi_qty / pi_confirmed_unshipped_qty / in_transit_qty
-  // 全量重算（SET 聚合值，非 +=），幂等，与导入流程不冲突。
-  // 注：本函数只更新已存在的 inventory 行；新采购 SKU 若无 inventory 行则 transit 字段保持原值。
-  // 整段重算包成单个事务：reset+逐行回写 原子提交，任何一步失败整体 ROLLBACK，
-  // 避免出现「先清零、只写回一部分」的半更新状态。
-  transaction(() => {
-    const driver = (process.env.DB_DRIVER || 'sqlite').toLowerCase();
-
-    if (driver === 'pg') {
-      // ================================================================
-      // PG: set-based UPDATE ... FROM（6 SQL calls，常数级，不随行数增长）
-      // 聚合 SQL 与 SQLite 路径完全一致，仅将「JS 循环 + queryOne + run」
-      // 替换为单条 UPDATE ... FROM。业务口径、过滤条件、数值计算不变。
-      // ================================================================
-
-      // --- Section 1: in_transit_qty ---
-      run('UPDATE inventory SET in_transit_qty = 0');
-      run(`
+// ==================== Wave 0B：在途数据刷新（transit refresh） ====================
+// PG 在途刷新 SQL 常量（3 组「清零 + set-based UPDATE...FROM」共 6 条，顺序不可变）。
+// sync 版（updateInventoryTransitData，经 db 同步桥）与 async 版
+// （updateInventoryTransitDataAsync，经 pg-async 池）共享同一常量——
+// 两条执行路径逐字节同一组 SQL，杜绝口径漂移。
+const TRANSIT_PG_REFRESH_SQLS = Object.freeze([
+  // --- Section 1: in_transit_qty ---
+  'UPDATE inventory SET in_transit_qty = 0',
+  `
         UPDATE inventory i
         SET in_transit_qty = src.in_transit_qty
         FROM (
@@ -5011,11 +4999,10 @@ async function updateInventoryTransitData() {
           i.sku_code = src.sku_code
           AND i.country = src.country
           AND i.warehouse = src.warehouse
-      `);
-
-      // --- Section 2: pi_confirmed_unshipped_qty ---
-      run('UPDATE inventory SET pi_confirmed_unshipped_qty = 0');
-      run(`
+      `,
+  // --- Section 2: pi_confirmed_unshipped_qty ---
+  'UPDATE inventory SET pi_confirmed_unshipped_qty = 0',
+  `
         UPDATE inventory i
         SET pi_confirmed_unshipped_qty = src.pi_unshipped
         FROM (
@@ -5036,11 +5023,10 @@ async function updateInventoryTransitData() {
           i.sku_code = src.sku_code
           AND i.country = src.country
           AND i.warehouse = src.warehouse
-      `);
-
-      // --- Section 3: po_unconfirmed_pi_qty ---
-      run('UPDATE inventory SET po_unconfirmed_pi_qty = 0');
-      run(`
+      `,
+  // --- Section 3: po_unconfirmed_pi_qty ---
+  'UPDATE inventory SET po_unconfirmed_pi_qty = 0',
+  `
         UPDATE inventory i
         SET po_unconfirmed_pi_qty = src.po_unconfirmed
         FROM (
@@ -5055,7 +5041,50 @@ async function updateInventoryTransitData() {
           i.sku_code = src.sku_code
           AND i.country = src.country
           AND i.warehouse = src.warehouse
-      `);
+      `
+]);
+
+// Wave 0B 新增：在途数据刷新——原生 async 实现（不经过 db 同步桥，不冻结事件循环）。
+// PG：withGenerateClient 单事务执行共享常量 SQL（BEGIN -> 6 SQL -> COMMIT，失败整体
+// ROLLBACK，与 sync 版「整段重算包成单个事务」的原子语义一致）。SQL 经 _normalizeSql
+// 恒等变换（transit SQL 无 ?/datetime()/strftime() 等规则命中，已逐一核对）。
+// SQLite/dev：转调既有 sync 实现（better-sqlite3 本地同步执行，无冻结问题）。
+async function updateInventoryTransitDataAsync() {
+  const driver = (process.env.DB_DRIVER || 'sqlite').toLowerCase();
+  if (driver !== 'pg') {
+    return updateInventoryTransitData();
+  }
+  const t0 = Date.now();
+  await withGenerateClient(async (aq, aqOne, arun) => {
+    for (const sql of TRANSIT_PG_REFRESH_SQLS) {
+      await arun(sql);
+    }
+  });
+  return { duration_ms: Date.now() - t0 };
+}
+
+// 更新库存的在途数据
+async function updateInventoryTransitData() {
+  // 采购链状态变化自动回写库存总表的在途类字段：
+  //   po_unconfirmed_pi_qty / pi_confirmed_unshipped_qty / in_transit_qty
+  // 全量重算（SET 聚合值，非 +=），幂等，与导入流程不冲突。
+  // 注：本函数只更新已存在的 inventory 行；新采购 SKU 若无 inventory 行则 transit 字段保持原值。
+  // 整段重算包成单个事务：reset+逐行回写 原子提交，任何一步失败整体 ROLLBACK，
+  // 避免出现「先清零、只写回一部分」的半更新状态。
+  transaction(() => {
+    const driver = (process.env.DB_DRIVER || 'sqlite').toLowerCase();
+
+    if (driver === 'pg') {
+      // ================================================================
+      // PG: set-based UPDATE ... FROM（6 SQL calls，常数级，不随行数增长）
+      // 聚合 SQL 与 SQLite 路径完全一致，仅将「JS 循环 + queryOne + run」
+      // 替换为单条 UPDATE ... FROM。业务口径、过滤条件、数值计算不变。
+      // Wave 0B: SQL 迁移至共享常量 TRANSIT_PG_REFRESH_SQLS（与 async 版
+      // updateInventoryTransitDataAsync 逐字节同一组 SQL，防口径漂移）。
+      // ================================================================
+      for (const sql of TRANSIT_PG_REFRESH_SQLS) {
+        run(sql);
+      }
 
     } else {
       // ================================================================
@@ -6884,11 +6913,21 @@ app.get('/api/replenishment-suggestions/monthly-sales', requireApiPermission('re
   return res.json({ success: true, range: { start, end }, columns, data });
 }));
 
+// Wave 0B: 管理员兜底端点——手动触发在途数据全量重算。
+// 原生 async 实现（pg-async 池 + 单事务），await 期间事件循环自由，
+// 不占用 db 同步桥、不冻结其他请求；与 GET replenishment 自愈移除后的
+// 「确定性校正」语义对接（mutation 后台刷新失败时的最终兜底）。
+app.post('/api/admin/refresh-transit', requireApiPermission('user_manage'), asyncHandler(async (req, res) => {
+  const r = await updateInventoryTransitDataAsync();
+  res.json({ success: true, ...r });
+}));
+
 app.get('/api/replenishment-suggestions', requireApiPermission('replenishment_view'), asyncHandler(async (req, res) => {
-  // 读取前兜底重算：物流状态(completed)是「是否在途」的唯一物理事实源，
-  // inventory.in_transit_qty 只是可重新生成的派生数据。即便物流 PUT 后即时重算失败，
-  // 用户刷新订单预测时此处必会按源事实校正，形成确定性自愈链路。
-  await updateInventoryTransitData();
+  // Wave 0B: GET 纯读化——移除读取前的全表 transit 重算（6 条 UPDATE，曾每次进页
+  // 冻结事件循环）。自愈职责移交：所有 transit 源 mutation（PO/PI/CI/PL/logistics/
+  // inbound）在 COMMIT 后原生 async 刷新（本轮已补齐 PO PUT / PL PUT / logistics
+  // create 钩子）；另有 POST /api/admin/refresh-transit 管理员兜底端点。
+  // 本端点自此保持纯 SELECT。
   const { country, warehouse, brand, keyword, sales_status, lifecycle_status } = req.query;
   let sql = `SELECT rs.*, s.product_name, s.brand, s.category, s.model, s.standard_purchase_price, s.qty_per_carton, s.purchase_currency, i.last_inbound_date,
       i.id AS inv_row_id,
@@ -7998,7 +8037,7 @@ app.post('/api/purchase-orders', requireApiPermission('po_create'), asyncHandler
     // 在途字段刷新（派生数据，幂等；失败仅告警，不影响已提交主事实）
     // 注意：原 handler 为同步函数，transaction() 同步返回、并不等待异步回调，
     // 故 Phase C 采用 fire-and-forget .catch()，保持原“响应不等待 transit”的语义。
-    updateInventoryTransitData().catch((err) => {
+    updateInventoryTransitDataAsync().catch((err) => {
       console.warn('[PO-CREATE] updateInventoryTransitData failed (best-effort, ignored):', err && err.message);
     });
 
@@ -8083,6 +8122,12 @@ app.put('/api/purchase-orders/:id', requireApiPermission('po_create'), asyncHand
       });
       run('UPDATE purchase_orders SET total_amount = ? WHERE id = ?', [totalAmount, id]);
     }
+    // Wave 0B: 补 transit 刷新钩子——PO PUT 修改 po_qty/untransferred_pi_qty 直接
+    // 改变 po_unconfirmed_pi_qty 聚合输入（旧实现依赖 GET replenishment 自愈掩盖，
+    // GET 纯读化后必须在此刷新）。原生 async fire-and-forget，不阻塞响应。
+    updateInventoryTransitDataAsync().catch((err) => {
+      console.warn('[PO-PUT] updateInventoryTransitDataAsync failed (best-effort, ignored):', err && err.message);
+    });
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
@@ -8104,7 +8149,10 @@ app.delete('/api/purchase-orders/:id', requireApiPermission('po_create'), asyncH
       run('DELETE FROM purchase_order_items WHERE po_id = ?', [req.params.id]);
       run('DELETE FROM purchase_orders WHERE id = ?', [req.params.id]);
     });
-    await updateInventoryTransitData(); // 删除后回落 po_unconfirmed_pi_qty
+    // Wave 0B: COMMIT 后原生 async 刷新（删除后回落 po_unconfirmed_pi_qty），不阻塞响应
+    updateInventoryTransitDataAsync().catch((err) => {
+      console.warn('[PO-DELETE] updateInventoryTransitDataAsync failed (best-effort, ignored):', err && err.message);
+    });
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
@@ -8120,7 +8168,10 @@ app.post('/api/purchase-orders/:id/void', requireApiPermission('po_create'), asy
     const ts = new Date().toISOString().slice(0, 19).replace('T', ' ');
     const newRemark = (po.remark ? po.remark + '\n' : '') + `[作废 ${ts} by ${req.currentUserName || ''}] 原因: ${void_reason}`;
     run("UPDATE purchase_orders SET po_status = 'cancelled', remark = ?, updated_at = datetime('now') WHERE id = ?", [newRemark, po.id]);
-    await updateInventoryTransitData();
+    // Wave 0B: COMMIT 后原生 async 刷新（作废回落 po_unconfirmed_pi_qty），不阻塞响应
+    updateInventoryTransitDataAsync().catch((err) => {
+      console.warn('[PO-VOID] updateInventoryTransitDataAsync failed (best-effort, ignored):', err && err.message);
+    });
     logOperation({ operator_id: req.currentUserId, operator_name: req.currentUserName, page: 'purchase_order', operation_type: 'void', target_ids: [po.id], affected_count: 1, old_values: { po_status: po.po_status }, new_values: { po_status: 'cancelled', void_reason }, reason: void_reason, triggered_recalc: 0, is_rollbackable: 0 });
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -8614,16 +8665,13 @@ app.post('/api/proforma-invoices', requireApiPermission('pi_create'), asyncHandl
     }
 
     // 派生/在途汇总刷新（可重算，放事务外，确保原子 PI 已落库后再算）。
-    // 失败属于「派生数据刷新失败」，绝不影响「PI 已创建成功」这一原子事实：
-    // 改为记录 warning 并随响应返回非阻塞 transit_refresh_warning，不撤销 PI 创建。
-    // 后续任意 PO/CI/PI 变更都会再次触发 updateInventoryTransitData，派生值会被重算补齐。
-    let transitRefreshWarning = null;
-    try {
-      await updateInventoryTransitData();
-    } catch (transitErr) {
-      transitRefreshWarning = (transitErr && transitErr.message) ? transitErr.message : String(transitErr);
-      console.error('[PI-CREATE] 派生在途数据刷新失败（PI 已落库，不影响创建成功）:', transitErr);
-    }
+    // Wave 0B: 改为 COMMIT 后原生 async 后台刷新（fire-and-forget），响应不再等待
+    // 全表重算；失败仅告警，绝不影响「PI 已创建成功」这一原子事实。
+    // transit_refresh_warning 字段移除（前端无消费，已核实 app.js 零引用）。
+    // 后续任意 PO/CI/PI 变更都会再次触发刷新，派生值会被重算补齐。
+    updateInventoryTransitDataAsync().catch((transitErr) => {
+      console.warn('[PI-CREATE] updateInventoryTransitDataAsync failed (best-effort, ignored):', transitErr && transitErr.message);
+    });
 
     const payableDeposit = (d.items && d.items.length > 0) ? (needDeposit ? totalAmount * depositRatio / 100 : 0) : 0;
     res.json({
@@ -8633,8 +8681,7 @@ app.post('/api/proforma-invoices', requireApiPermission('pi_create'), asyncHandl
       total_amount: totalAmount,
       need_deposit: needDeposit,
       deposit_ratio: depositRatio,
-      payable_deposit: payableDeposit,
-      transit_refresh_warning: transitRefreshWarning
+      payable_deposit: payableDeposit
     });
   } catch (e) {
     const msg = e && e.message;
@@ -8826,7 +8873,7 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
     res.once('finish', () => {
       if (!invAffectingChanged) return;
       setImmediate(() => {
-        updateInventoryTransitData().catch((rfErr) => {
+        updateInventoryTransitDataAsync().catch((rfErr) => {
           // 仅记录刷新失败，绝不 throw / 不调用 next / 不再写 res。
           // PI 已成功提交，刷新失败不影响"PI 保存成功"的语义。
           console.error('[PI-REFRESH] inventory refresh failed for ' + id + ':', rfErr && rfErr.message);
@@ -8870,7 +8917,10 @@ app.post('/api/proforma-invoices/:id/void', requireApiPermission('pi_edit'), asy
     const ts = new Date().toISOString().slice(0, 19).replace('T', ' ');
     const newRemark = (pi.remark ? pi.remark + '\n' : '') + `[作废 ${ts} by ${req.currentUserName || ''}] 原因: ${void_reason}`;
     run("UPDATE proforma_invoices SET pi_status = 'cancelled', remark = ?, updated_at = datetime('now') WHERE id = ?", [newRemark, pi.id]);
-    await updateInventoryTransitData();
+    // Wave 0B: COMMIT 后原生 async 刷新（作废回落 pi_confirmed_unshipped_qty），不阻塞响应
+    updateInventoryTransitDataAsync().catch((err) => {
+      console.warn('[PI-VOID] updateInventoryTransitDataAsync failed (best-effort, ignored):', err && err.message);
+    });
     logOperation({ operator_id: req.currentUserId, operator_name: req.currentUserName, page: 'proforma_invoice', operation_type: 'void', target_ids: [pi.id], affected_count: 1, old_values: { pi_status: pi.pi_status }, new_values: { pi_status: 'cancelled', void_reason }, reason: void_reason, triggered_recalc: 0, is_rollbackable: 0 });
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -9537,7 +9587,7 @@ app.post('/api/commercial-invoices', requireApiPermission('ci_create'), asyncHan
     // 在途数据刷新（派生数据，幂等；失败仅告警，不影响已提交主事实）
     // 原 handler 为异步函数，但 transaction() 同步返回、并不等待异步回调，
     // 故 Phase C 采用 fire-and-forget .catch()，保持原“响应不等待 transit”的语义。
-    updateInventoryTransitData().catch((err) => {
+    updateInventoryTransitDataAsync().catch((err) => {
       console.warn('[CI-CREATE] updateInventoryTransitData failed (best-effort, ignored):', err && err.message);
     });
 
@@ -9648,7 +9698,10 @@ app.post('/api/commercial-invoices/:id/void', requireApiPermission('ci_edit'), a
       else if (anyShipped) run('UPDATE proforma_invoices SET pi_status = ? WHERE id = ?', ['partial_shipped', piId]);
       else run('UPDATE proforma_invoices SET pi_status = ? WHERE id = ?', ['pending', piId]);
     }
-    await updateInventoryTransitData();
+    // Wave 0B: COMMIT 后原生 async 刷新（CI 作废回写 PI 发货状态后重算在途），不阻塞响应
+    updateInventoryTransitDataAsync().catch((err) => {
+      console.warn('[CI-VOID] updateInventoryTransitDataAsync failed (best-effort, ignored):', err && err.message);
+    });
     logOperation({ operator_id: req.currentUserId, operator_name: req.currentUserName, page: 'commercial_invoice', operation_type: 'void', target_ids: [ci.id], affected_count: 1, old_values: { ci_status: ci.ci_status }, new_values: { ci_status: 'cancelled', void_reason }, reason: void_reason, triggered_recalc: 0, is_rollbackable: 0 });
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -9791,7 +9844,7 @@ app.post('/api/commercial-invoices/:id/reverse', requireApiPermission('ci_edit')
     // 在途数据刷新（派生数据，幂等；失败仅告警，不影响已提交主事实）
     // 原 handler 为异步函数，transaction() 同步返回、并不等待异步回调，
     // 故 Phase C 采用 fire-and-forget .catch()，保持原“响应不等待 transit”的语义。
-    updateInventoryTransitData().catch((err) => {
+    updateInventoryTransitDataAsync().catch((err) => {
       console.warn('[CI-REVERSE] updateInventoryTransitData failed (best-effort, ignored):', err && err.message);
     });
 
@@ -9973,7 +10026,7 @@ app.post('/api/proforma-invoices/batch-import', requireApiPermission('pi_create'
         }
       });
       // PI 批量导入后刷新在途字段（po_unconfirmed_pi_qty / pi_confirmed_unshipped_qty）
-      updateInventoryTransitData().catch((err) =>
+      updateInventoryTransitDataAsync().catch((err) =>
         console.warn('[PI-BATCH] updateInventoryTransitData failed (best-effort, ignored):', err && err.message)
       );
     res.json(importResultWithMessages(result));
@@ -10108,7 +10161,7 @@ app.post('/api/commercial-invoices/batch-import', requireApiPermission('ci_creat
       });
     });
       // CI 批量导入（发货）后刷新在途字段（in_transit_qty / pi_confirmed_unshipped_qty）
-      updateInventoryTransitData().catch((err) =>
+      updateInventoryTransitDataAsync().catch((err) =>
         console.warn('[CI-BATCH] updateInventoryTransitData failed (best-effort, ignored):', err && err.message)
       );
     res.json(importResultWithMessages(result));
@@ -10356,6 +10409,12 @@ app.post('/api/logistics-batches', requireApiPermission('logistics_create'), asy
         notifyFeishuGroupsCard(gc.zh, gc.en).catch(() => {});
       }
     }
+    // Wave 0B: 补 transit 刷新钩子——logistics create 接受 d.logistics_status（可为
+    // 'completed'），新批次直接改变 arrived 事实 → in_transit_qty 需重算。
+    // COMMIT 后原生 async 刷新（fire-and-forget），不阻塞响应。
+    updateInventoryTransitDataAsync().catch((err) => {
+      console.warn('[LOGISTICS-CREATE] updateInventoryTransitDataAsync failed (best-effort, ignored):', err && err.message);
+    });
     res.json({ id: bId, batch_no: bNo, ...d, total_freight: totalFreight });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
@@ -10513,6 +10572,11 @@ app.post('/api/logistics-batches/create-with-pl', requireApiPermission('logistic
       notifyFeishuGroupsCard(gc.zh, gc.en).catch(() => {});
     }
 
+    // Wave 0B: 补 transit 刷新钩子——create-with-pl 同样接受 d.logistics_status；
+    // 事务 COMMIT 后原生 async 刷新（fire-and-forget），不阻塞响应。
+    updateInventoryTransitDataAsync().catch((err) => {
+      console.warn('[LOGISTICS-CREATE-WITH-PL] updateInventoryTransitDataAsync failed (best-effort, ignored):', err && err.message);
+    });
     res.json({
       pl_id: plId,
       pl_no: plNo,
@@ -10587,11 +10651,10 @@ app.put('/api/logistics-batches/:id', requireApiPermission('logistics_edit'), as
       const wasArrived = existing.logistics_status === LOGISTICS_STATUS_ARRIVED;
       const nowArrived = d.logistics_status === LOGISTICS_STATUS_ARRIVED;
       if (wasArrived !== nowArrived) {
-        try {
-          await updateInventoryTransitData();
-        } catch (err) {
+        // Wave 0B: 原生 async 后台刷新（arrived 边界变更即触发，不阻塞响应）
+        updateInventoryTransitDataAsync().catch((err) => {
           console.error('[transit-recalc] 物流状态边界变更后重算在途失败:', err && err.message ? err.message : err);
-        }
+        });
       }
     }
     if (d.logistics_status !== undefined) {
@@ -11050,6 +11113,12 @@ app.put('/api/packing-lists/:id', requireApiPermission('logistics_edit'), asyncH
       }
     });
 
+    // Wave 0B: 补 transit 刷新钩子——PL 明细 total_qty/sku_code 编辑会改变 arrived
+    // 事实（批次已 completed 时直接影响 in_transit_qty）。事务 COMMIT 后原生 async
+    // 刷新（fire-and-forget），不阻塞响应。
+    updateInventoryTransitDataAsync().catch((err) => {
+      console.warn('[PL-PUT] updateInventoryTransitDataAsync failed (best-effort, ignored):', err && err.message);
+    });
     res.json({ success: true });
   } catch (e) {
     const msg = e.message || '';
@@ -11185,7 +11254,7 @@ app.post('/api/inbound-records', requireApiPermission('inbound_create'), asyncHa
     // 在途数据刷新（派生数据，幂等；失败仅告警，不影响已提交主事实）
     // 原 handler 为同步函数，transaction() 同步返回、并不等待异步回调，
     // 故 Phase C 采用 fire-and-forget .catch()，保持原“响应不等待 transit”的语义。
-    updateInventoryTransitData().catch((err) => {
+    updateInventoryTransitDataAsync().catch((err) => {
       console.warn('[INBOUND-CREATE] updateInventoryTransitData failed (best-effort, ignored):', err && err.message);
     });
 
@@ -11313,7 +11382,9 @@ app.post('/api/inbound-records/batch-import', requireApiPermission('inbound_crea
     });
 
       // 最后更新一次在途数据（Phase C，best-effort，失败不回滚已提交主事实）
-      updateInventoryTransitData().catch((e) => { /* ignore */ });
+      updateInventoryTransitDataAsync().catch((e) => {
+        console.warn('[INBOUND-BATCH] updateInventoryTransitDataAsync failed (best-effort, ignored):', e && e.message ? e.message : e);
+      });
 
     res.json({ success, failed, total: records.length, errors: errors.slice(0, 50) });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -13730,7 +13801,7 @@ async function createHistoricalCI(body, req) {
       payment_status: settlement.payment_status
     };
   });
-  updateInventoryTransitData().catch(err => console.warn('[createHistoricalCI] 在途数据刷新失败（事务已提交）:', err && err.message));
+  updateInventoryTransitDataAsync().catch(err => console.warn('[createHistoricalCI] 在途数据刷新失败（事务已提交）:', err && err.message));
   return result;
 }
 
@@ -20058,6 +20129,8 @@ module.exports = {
   formatPaymentTermsDisplay,
   app,
   updateInventoryTransitData,
+  updateInventoryTransitDataAsync,
+  TRANSIT_PG_REFRESH_SQLS,
   refreshInventoryTotals,
   runOriginalInventoryTotalsLoop,
   // INV-IMPORT-PRECHECK-01：库存导入预检查（纯只读），导出供回归测试直接调用

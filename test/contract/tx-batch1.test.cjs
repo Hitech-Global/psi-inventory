@@ -61,7 +61,7 @@ function parseTransactions() {
           if (!n || typeof n !== 'object') return;
           if (n.type === 'CallExpression') {
             const c = n.callee;
-            if (c.type === 'Identifier' && c.name === 'updateInventoryTransitData') hasTransit = true;
+            if (c.type === 'Identifier' && (c.name === 'updateInventoryTransitData' || c.name === 'updateInventoryTransitDataAsync')) hasTransit = true;
           }
           for (const k of Object.keys(n)) {
             if (n[k] && typeof n[k] === 'object') scan(n[k]);
@@ -287,7 +287,9 @@ function analyzeHandler(handler) {
       ) {
         forEachs.push(node);
       }
-      if (node.callee.type === 'Identifier' && node.callee.name === 'updateInventoryTransitData') {
+      if (node.callee.type === 'Identifier' && (node.callee.name === 'updateInventoryTransitData' || node.callee.name === 'updateInventoryTransitDataAsync')) {
+        // Wave 0B: 接受 sync 版与原生 async 版（updateInventoryTransitDataAsync）——
+        // Phase C 语义断言（transit 刷新位于事务外、fire-and-forget）不变。
         transits.push(node);
       }
     }
