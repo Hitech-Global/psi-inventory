@@ -324,9 +324,10 @@ describe('T3 静态结构：共享 SQL 常量 + 调用点接线', () => {
     assert.equal(literalCount, 2, '清零 SQL 字面量 = 常量数组 1 + SQLite 路径 1');
   });
 
-  test('23 个 mutation/后台调用点已接 updateInventoryTransitDataAsync（生产路径零 sync 桥刷新）', () => {
+  test('24 个 mutation/后台调用点已接 updateInventoryTransitDataAsync（生产路径零 sync 桥刷新）', () => {
     const callSites = (src.match(/updateInventoryTransitDataAsync\(\)\.catch/g) || []).length;
-    assert.equal(callSites, 23, 'PO create/put/delete/void, PI create/put/void/batch, CI create/void/batch/reverse, inbound create/batch, logistics put/create/create-with-pl, PL put, historical-CI, refreshInventoryTotals×3');
+    // Wave 1: CI reverse PG 原生分支新增 1 个 after-COMMIT hook（SQLite legacy 分支 hook 不变）
+    assert.equal(callSites, 24, 'PO create/put/delete/void, PI create/put/void/batch, CI create/void/batch/reverse(PG 分支+1), inbound create/batch, logistics put/create/create-with-pl, PL put, historical-CI, refreshInventoryTotals×3');
     // sync 版仅剩：定义本身 + async 版 SQLite 转调 + 注释；任何路由不得直接调用 sync 版
     assert.doesNotMatch(src, /await updateInventoryTransitData\(\)/, '不得有 await sync 版（事件循环冻结）');
   });
@@ -498,9 +499,9 @@ describe('T6 并发 refresh 最终值收敛（SQLite；非 PG row-lock 证明，
     assert.doesNotMatch(TRANSIT_PG_REFRESH_SQLS.join('\n'), /SET\s+\w+\s*=\s*\w+\s*\+/i, '不得出现增量叠加写法');
   });
 
-  test('fire-and-forget 可观测性：全部 23 个调用点均带 .catch 且非 silent（§三）', () => {
+  test('fire-and-forget 可观测性：全部 24 个调用点均带 .catch 且非 silent（§三）', () => {
     const fireAndForget = (src.match(/updateInventoryTransitDataAsync\(\)\.catch/g) || []).length;
-    assert.equal(fireAndForget, 23, 'fire-and-forget 调用点数量');
+    assert.equal(fireAndForget, 24, 'fire-and-forget 调用点数量（Wave 1 +1: CI reverse PG 分支）');
     // 不得出现静默吞错的 catch 体：.catch(() => {}) / .catch((e) => { /* ignore */ })
     const silentPatterns = [
       /updateInventoryTransitDataAsync\(\)\.catch\(\(\)\s*=>\s*\{\s*\}\s*\)/,
@@ -512,7 +513,7 @@ describe('T6 并发 refresh 最终值收敛（SQLite；非 PG row-lock 证明，
     }
     // 每个 catch 分支必须落 console.warn/console.error
     const consoleLogs = (src.match(/updateInventoryTransitDataAsync\(\)\.catch[\s\S]{0,220}?console\.(warn|error)/g) || []).length;
-    assert.equal(consoleLogs, 23, '每个 .catch 分支都必须有 console.warn/error（可观测）');
+    assert.equal(consoleLogs, 24, '每个 .catch 分支都必须有 console.warn/error（可观测；Wave 1 +1）');
   });
 
   // 用真实 AST 判定（正则无法做括号匹配，会把「事务已闭合之后再刷新」误判为违规）
@@ -548,7 +549,7 @@ describe('T6 并发 refresh 最终值收敛（SQLite；非 PG row-lock 证明，
       }
     })(ast, []);
 
-    assert.equal(sites.length, 24, '调用点总数 = 23 fire-and-forget + 1 admin await');
+    assert.equal(sites.length, 25, '调用点总数 = 24 fire-and-forget（Wave 1 +1: CI reverse PG 分支）+ 1 admin await');
     const inside = sites.filter((s) => s.insideTx);
     assert.deepEqual(inside, [], '不得存在「事务仍打开 → 触发 refresh」的调用点：' + JSON.stringify(inside));
 

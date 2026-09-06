@@ -9736,8 +9736,252 @@ app.post('/api/commercial-invoices/:id/void', requireApiPermission('ci_edit'), a
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
+// ==================== WAVE1-CI-REVERSE-01：PG 原生 async 事务分支 ====================
+// 设计稿：WAVE1-CI-REVERSE-DESIGN.md。scope 仅 CI reverse；SQLite 分支保持 legacy sync 语义不动。
+// 核心约束（Wave 1 gate）：
+//   - 单 client 事务 owner = withGenerateClient：BEGIN → 守卫自愈 → SET LOCAL 解锁权限 →
+//     固定锁序（CI 行 → PI headers id 序 → PI items id 序）→ duplicate fail-closed 守卫 →
+//     set-based reverse → COMMIT / ROLLBACK；核心 transaction path 零 sync bridge
+//   - 无 ALTER TABLE / DISABLE TRIGGER（AccessExclusiveLock 类别性消除）：
+//     WAC 解锁 = set_config('app.wac_unlock','1',true)（SET LOCAL 语义，仅本事务可见，
+//     COMMIT/ROLLBACK 自动消失，其他会话不受影响）+ fail-secure 触发器函数守卫
+//     （db-migrations/wac-trigger-guard.cjs，仅 CREATE OR REPLACE FUNCTION，幂等、无表级 DDL）
+//   - after-COMMIT 才允许：updateInventoryTransitDataAsync（fire-and-forget）+ logOperation
+//     （logOperation 保留 1 次 sync call，仅在 COMMIT + client 释放后 → P2-ASYNC-MIGRATION-DEBT）
+const WAC_TRIGGER_GUARD = require('./db-migrations/wac-trigger-guard.cjs');
+
+async function reverseCiCorePg(req, res) {
+  const ciId = req.params.id;
+  const operatorName = req.currentUserName || '';
+  const operatorId = req.currentUserId || '';
+  const ts = new Date().toISOString().slice(0, 19).replace('T', ' ');
+  try {
+    const outcome = await withGenerateClient(async (aq, aqOne, run) => {
+      // W1-0. WAC 触发器守卫自愈确保（幂等 CREATE OR REPLACE FUNCTION；热路径 = 1 次 catalog SELECT）
+      await WAC_TRIGGER_GUARD.ensureGuardInTx(aq, run);
+      // W1-1. 事务本地解锁权限（SET LOCAL 语义）
+      await run(`SELECT set_config('app.wac_unlock', '1', true)`);
+
+      // W1-2. CI 行锁（FOR UPDATE：并发同 CI reverse 在此串行化；EvalPlanQual 保证
+      // 等锁方在对方 COMMIT 后拿到最新行版本 → 第二次 reverse 必见 'reversed' → 400）
+      const ci = await aqOne(`SELECT * FROM commercial_invoices WHERE id = ? FOR UPDATE`, [ciId]);
+      if (!ci) return { status: 404, body: { error: 'CI不存在' } };
+      if (ci.ci_status === 'reversed') return { status: 400, body: { error: '该 CI 已冲销，不能重复冲销' } };
+      if (ci.ci_status === 'cancelled') return { status: 400, body: { error: '已作废的 CI 不允许冲销' } };
+      if (ci.ci_status === 'draft' || ci.ci_status === 'uploaded' || ci.ci_status === 'ci_pl_uploaded' || ci.ci_status === 'shipped') {
+        return { status: 400, body: { error: '仅已入库的 CI 允许冲销，请使用作废功能' } };
+      }
+
+      // W1-3. 尾款付款检查（与 legacy 同一 SQL，移入事务内执行）
+      const paidBalances = await aq(
+        `SELECT pi.id FROM payable_items pi
+         JOIN payment_request_items pri ON pri.payable_item_id = pi.id
+         JOIN payment_allocations pa ON pa.payment_request_item_id = pri.id AND pa.status = 'reconciled'
+         WHERE pi.source_ci_id = ? AND pi.fee_type = 'balance' AND pi.lifecycle_status != 'released'
+         LIMIT 1`, [ci.id]);
+      if (paidBalances.length > 0) {
+        return { status: 400, body: { error: '该 CI 的尾款已有付款记录，请先处理尾款付款后再冲销 CI' } };
+      }
+
+      // W1-4. 关联事实读取（事务内快照）
+      const ciItems = await aq(`SELECT * FROM commercial_invoice_items WHERE ci_id = ?`, [ci.id]);
+      const inbounds = await aq(`SELECT * FROM inbound_records WHERE source_ci_id = ?`, [ci.id]);
+      const pls = await aq(`SELECT * FROM packing_lists WHERE related_ci_id = ?`, [ci.id]);
+      const piIds = [...new Set(ciItems.map((i) => i.pi_id).filter(Boolean))];
+      const ph = (n) => Array(n).fill('?').join(',');
+
+      // W1-5. 固定锁序：PI headers（id 序）→ PI items（id 序），单语句锁定
+      //（所有 reverse 使用同一语句形态 → 一致的加锁顺序；同一 CI 先被 W1-2 串行化）
+      const piRows = piIds.length
+        ? await aq(`SELECT * FROM proforma_invoices WHERE id IN (${ph(piIds.length)}) ORDER BY id FOR UPDATE`, piIds)
+        : [];
+      if (piIds.length) {
+        await aq(`SELECT id FROM proforma_invoice_items WHERE pi_id IN (${ph(piIds.length)}) ORDER BY id FOR UPDATE`, piIds);
+      }
+
+      // W1-6. duplicate fail-closed 守卫（锁后、任何 mutation 前；命中即整体拒绝，不做部分执行）
+      //   A. inventory 同 (country, warehouse, sku_code) 多行（仅限本单涉及 keys）
+      //      —— UPDATE...FROM 会扣所有匹配行，与 legacy queryOne 单行语义不等价 → fail-closed
+      //   B. proforma_invoice_items 同 (pi_id, sku_code) 多行（仅限本单涉及 keys）
+      //      —— legacy queryOne 无序首行语义不定 → fail-closed
+      const invKeys = [];
+      const invKeySeen = new Set();
+      for (const ib of inbounds) {
+        const c = (ib.country && String(ib.country)) || (ci.country ?? null);
+        const w = (ib.warehouse && String(ib.warehouse)) || (ci.target_warehouse ?? null);
+        const k = `${ib.sku_code}\u0000${c}\u0000${w}`;
+        if (!invKeySeen.has(k)) { invKeySeen.add(k); invKeys.push([ib.sku_code, c, w]); }
+      }
+      if (invKeys.length) {
+        const dupInv = await aq(
+          `SELECT k.sku_code, k.country, k.warehouse, COUNT(*) AS n
+             FROM inventory i
+             JOIN (VALUES ${invKeys.map(() => '(?, ?, ?)').join(', ')}) AS k(sku_code, country, warehouse)
+               ON i.sku_code = k.sku_code AND i.country = k.country AND i.warehouse = k.warehouse
+            GROUP BY k.sku_code, k.country, k.warehouse
+           HAVING COUNT(*) > 1`,
+          invKeys.flat());
+        if (dupInv.length) {
+          return { status: 400, body: { error: '检测到关联数据异常，无法安全撤销 CI，请先处理重复数据（inventory 重复键: ' + dupInv.map((r) => `${r.sku_code}/${r.country}/${r.warehouse}`).join(', ') + '）' } };
+        }
+      }
+      if (piIds.length) {
+        const dupPi = await aq(
+          `SELECT pit.pi_id, pit.sku_code, COUNT(*) AS n
+             FROM proforma_invoice_items pit
+             JOIN (SELECT DISTINCT pi_id, sku_code FROM commercial_invoice_items WHERE ci_id = ?) c
+               ON pit.pi_id = c.pi_id AND pit.sku_code = c.sku_code
+            GROUP BY pit.pi_id, pit.sku_code
+           HAVING COUNT(*) > 1`, [ci.id]);
+        if (dupPi.length) {
+          return { status: 400, body: { error: '检测到关联数据异常，无法安全撤销 CI，请先处理重复数据（PI 明细重复键: ' + dupPi.map((r) => `${r.pi_id}/${r.sku_code}`).join(', ') + '）' } };
+        }
+      }
+
+      // ===== 以下为 mutation（仅在全部守卫通过后执行） =====
+
+      // W1-7. 冲销入库记录（set-based 单语句；remark 追加与 legacy 逐行等价）
+      const ibSuffix = `[冲销 ${ts} by ${operatorName}] CI ${ci.ci_no}`;
+      await run(`UPDATE inbound_records SET inbound_status = 'reversed',
+                   remark = CASE WHEN remark IS NOT NULL AND remark <> '' THEN remark || chr(10) || ? ELSE ? END,
+                   updated_at = datetime('now')
+                 WHERE source_ci_id = ?`, [ibSuffix, ibSuffix, ci.id]);
+
+      // W1-8. 冲销 PL（remark 标记，与 legacy 逐行等价）
+      const plSuffix = `[冲销 ${ts} by ${operatorName}] CI ${ci.ci_no} 已冲销`;
+      await run(`UPDATE packing_lists SET remark = CASE WHEN remark IS NOT NULL AND remark <> '' THEN remark || chr(10) || ? ELSE ? END
+                 WHERE related_ci_id = ?`, [plSuffix, plSuffix, ci.id]);
+
+      // W1-9. 回退库存（set-based）：
+      //   - COALESCE(NULLIF(x,''), ci 值) ≡ legacy JS `ib.x || ci.x` 空串/null 回退
+      //   - SUM(COALESCE(actual_qty,0)) ≡ legacy 逐行 (ib.actual_qty || 0) 连减（INTEGER 域结合律恒等）
+      //   - available_qty 算术与 legacy 完全一致（无 clamp、无 NULL 包装，保持原语义）
+      //   - legacy `if (inv)` 跳过无匹配 key ≡ UPDATE...FROM 内连接不命中
+      //   - GROUP BY 1,2,3（序号）：PG 要求 GROUP BY 表达式与 SELECT 逐字匹配，
+      //     参数占位符重复写会导致 $n 编号不同而失配，故用序号引用输出列
+      await run(`UPDATE inventory i
+                   SET available_qty = i.available_qty - src.qty,
+                       updated_at = datetime('now')
+                 FROM (
+                   SELECT ib.sku_code AS sku_code,
+                          COALESCE(NULLIF(ib.country, ''), ?) AS country,
+                          COALESCE(NULLIF(ib.warehouse, ''), ?) AS warehouse,
+                          SUM(COALESCE(ib.actual_qty, 0)) AS qty
+                     FROM inbound_records ib
+                    WHERE ib.source_ci_id = ?
+                 GROUP BY 1, 2, 3
+                 ) src
+                 WHERE i.sku_code = src.sku_code AND i.country = src.country AND i.warehouse = src.warehouse`,
+        [ci.country, ci.target_warehouse, ci.id]);
+
+      // W1-10. WAC 解锁（守卫触发器放行本事务；legacy 的 DISABLE/ENABLE DDL 已类别性消除）
+      await run(`UPDATE wac_history SET is_locked = 0, confirmation_status = 'reversed' WHERE ci_id = ?`, [ci.id]);
+
+      // W1-11. 回退成本分摊（与 legacy 同一 SQL）
+      await run(`UPDATE cost_allocations SET allocation_basis = COALESCE(allocation_basis, '') || ' [reversed ' || ? || ']', ci_id = '' WHERE ci_id = ?`, [ts, ci.id]);
+
+      // W1-12. 回退 PI items（set-based）：
+      //   - 0-clamp 减法链恒等：max(0, max(0, x-a) - b) ≡ max(0, x-a-b)
+      //   - unshipped = max(0, confirmed - 最终 shipped) ≡ legacy 逐轮重算的最终值
+      //   - (pi_id,sku) 缺失行不命中 ≡ legacy `if (piItem)` 跳过；NULL 金额 COALESCE ≡ JS || 0
+      await run(`UPDATE proforma_invoice_items pit
+                   SET shipped_qty = GREATEST(0, COALESCE(pit.shipped_qty, 0) - COALESCE(ci.shipped_qty, 0)),
+                       unshipped_qty = GREATEST(0, COALESCE(pit.pi_confirmed_qty, 0)
+                                                 - GREATEST(0, COALESCE(pit.shipped_qty, 0) - COALESCE(ci.shipped_qty, 0)))
+                 FROM (
+                   SELECT pi_id, sku_code, SUM(COALESCE(shipped_qty, 0)) AS shipped_qty
+                     FROM commercial_invoice_items
+                    WHERE ci_id = ?
+                 GROUP BY pi_id, sku_code
+                 ) ci
+                 WHERE pit.pi_id = ci.pi_id AND pit.sku_code = ci.sku_code`, [ci.id]);
+
+      // W1-13. 回退 PI headers 金额（Math.round 必须留在 JS —— jsonb 模式逐位等价，不复刻到 SQL）
+      const totalCiAmount = ciItems.reduce((s, i) => s + (i.ci_amount || 0), 0);
+      const perPiAmount = {};
+      for (const it of ciItems) {
+        if (it.pi_id) perPiAmount[it.pi_id] = (perPiAmount[it.pi_id] || 0) + (it.ci_amount || 0);
+      }
+      const updRows = piRows.map((pi) => {
+        const piCiAmount = perPiAmount[pi.id] || 0;
+        const piDeductRatio = totalCiAmount > 0 ? piCiAmount / totalCiAmount : 0;
+        const piDeducted = Math.round((ci.actual_deducted_deposit || 0) * piDeductRatio * 100) / 100;
+        const newDeducted = Math.max(0, (pi.deducted_deposit || 0) - piDeducted);
+        const newAvailable = Math.max(0, (pi.payable_deposit || 0) - newDeducted);
+        const newShippedAmount = Math.max(0, (pi.shipped_amount || 0) - piCiAmount);
+        const newUnshippedAmount = Math.max(0, (pi.total_amount || 0) - newShippedAmount);
+        return { id: pi.id, deducted_deposit: newDeducted, available_deduct_deposit: newAvailable,
+                 shipped_amount: newShippedAmount, unshipped_amount: newUnshippedAmount };
+      });
+      if (updRows.length) {
+        await run(`UPDATE proforma_invoices p
+                     SET deducted_deposit = v.deducted_deposit,
+                         available_deduct_deposit = v.available_deduct_deposit,
+                         shipped_amount = v.shipped_amount,
+                         unshipped_amount = v.unshipped_amount
+                   FROM jsonb_to_recordset(?::jsonb) AS v(id text, deducted_deposit numeric, available_deduct_deposit numeric, shipped_amount numeric, unshipped_amount numeric)
+                   WHERE p.id = v.id`, [JSON.stringify(updRows)]);
+      }
+
+      // W1-14. PI 状态重算（set-based；位于 W1-12 之后 → 聚合看到回退后的最新 shipped_qty；
+      //   n=0 → 'pending'（≡ legacy piItems2.length>0 守卫）；cancelled 跳过；
+      //   NULL 比较 COALESCE 到 false ≡ JS null>=x / null>0 为 falsy）
+      if (piIds.length) {
+        await run(`UPDATE proforma_invoices p
+                     SET pi_status = CASE
+                       WHEN COALESCE(agg.n, 0) = 0 THEN 'pending'
+                       WHEN agg.allshipped THEN 'shipped_complete'
+                       WHEN agg.anyshipped THEN 'partial_shipped'
+                       ELSE 'pending' END
+                   FROM (
+                     SELECT p2.id AS pi_id, COUNT(pit.id) AS n,
+                            bool_and(COALESCE(pit.shipped_qty >= pit.pi_confirmed_qty, false)) AS allshipped,
+                            bool_or(COALESCE(pit.shipped_qty > 0, false)) AS anyshipped
+                       FROM proforma_invoices p2
+                  LEFT JOIN proforma_invoice_items pit ON pit.pi_id = p2.id
+                      WHERE p2.id IN (${ph(piIds.length)})
+                   GROUP BY p2.id
+                   ) agg
+                   WHERE p.id = agg.pi_id AND p.pi_status <> 'cancelled'`, piIds);
+      }
+
+      // W1-15. 释放 balance payable_items（与 legacy 同一 SQL）
+      await run(`UPDATE payable_items SET lifecycle_status = 'released' WHERE source_ci_id = ? AND fee_type = 'balance' AND lifecycle_status = 'active'`, [ci.id]);
+
+      // W1-16. CI 状态 → reversed（与 legacy 同一 SQL）
+      const ciRemark = (ci.remark ? ci.remark + '\n' : '') + `[冲销 ${ts} by ${operatorName}]`;
+      await run(`UPDATE commercial_invoices SET ci_status = 'reversed', wac_confirmed = 0, wac_version_id = '', cost_confirmed = 0, cost_allocated = 0, original_inventory_imported = 0, remark = ?, updated_at = datetime('now') WHERE id = ?`, [ciRemark, ci.id]);
+
+      return { status: 200, body: { success: true, id: ci.id, ci_no: ci.ci_no }, oldCiStatus: ci.ci_status };
+    });
+
+    res.status(outcome.status).json(outcome.body);
+
+    if (outcome.status === 200) {
+      // ---- after-COMMIT（事务 owner 已释放；与 Wave 0B 纪律一致）----
+      updateInventoryTransitDataAsync().catch((err) => {
+        console.warn('[CI-REVERSE] updateInventoryTransitData failed (best-effort, ignored):', err && err.message);
+      });
+      logOperation({
+        operator_id: operatorId, operator_name: operatorName,
+        page: 'commercial_invoice', operation_type: 'reverse', target_ids: [ciId], affected_count: 1,
+        old_values: { ci_status: outcome.oldCiStatus }, new_values: { ci_status: 'reversed' },
+        reason: '冲销已入库CI', triggered_recalc: 0, is_rollbackable: 0
+      });
+    }
+  } catch (e) {
+    console.warn('[CI-REVERSE] reverse failed:', e && e.message);
+    if (!res.headersSent) res.status(500).json({ error: e.message });
+  }
+}
+
 // CI-REVERSE-01：冲销已入库 CI（反向恢复 PI 发货状态、库存、WAC、成本分摊等）
+// WAVE1：PG 走原生 async 事务（reverseCiCorePg，零 sync bridge / 无 trigger DDL）；
+// SQLite 保持 legacy sync 分支逐字节不动（无 SET LOCAL/current_setting 能力，parity 先例）。
 app.post('/api/commercial-invoices/:id/reverse', requireApiPermission('ci_edit'), asyncHandler(async (req, res) => {
+  if (process.env.DB_DRIVER === 'pg') {
+    return reverseCiCorePg(req, res);
+  }
   try {
     const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [req.params.id]);
     if (!ci) return res.status(404).json({ error: 'CI不存在' });
