@@ -169,11 +169,17 @@ function _refKeyForUrl(url){
 // 任何缓存异常均降级为透传网络，绝不阻断业务。
 async function api(url,method='GET',body=null,opts){
   opts = opts || {};
+  if((!method || method==='GET') && window.AppStore){
+    // 1) reference 端点全局去重 + session 缓存。
+    //    必须独立于下方缓存 try/catch：ref() 自带 401→doLogout / 非2xx / {error} 语义，
+    //    抛错必须直接上抛给调用方 —— 不能落入外层 catch 再 fallback apiRaw，
+    //    否则服务器已明确返回认证/业务错误时同一请求会被重复打第二遍（双倍网络 + 双 doLogout）。
+    var rk = null;
+    try{ rk = _refKeyForUrl(url); }catch(e){ rk = null; }
+    if(rk){ return await window.AppStore.ref(rk); }
+  }
   try{
     if((!method || method==='GET')){
-      // 1) reference 端点全局去重 + session 缓存
-      var rk = _refKeyForUrl(url);
-      if(rk && window.AppStore){ return await window.AppStore.ref(rk); }
       // 2) 页面数据快照缓存
       if(opts.cacheKey && window.AppStore){
         var _sig = (opts.signature!=null) ? opts.signature : url;

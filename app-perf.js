@@ -41,7 +41,8 @@
     try { return (typeof global.getLang === 'function' && global.getLang()) || 'zh'; } catch (e) { return 'zh'; }
   }
 
-  // 内部 raw fetch（不带缓存），供 background refresh 与 ref 使用
+  // 内部 raw fetch（不带缓存，吞 status 仅供调试）；ref() 已改为带 HTTP status 检查的独立请求，
+  // 页面数据后台刷新由调用方传入 fetcher（app.js 传 apiRaw，自带 401/403/error 处理）
   function rawFetch(url, opts) {
     var h = { 'Content-Type': 'application/json', 'Accept-Language': langHeader() };
     return fetch(url, { method: (opts && opts.method) || 'GET', headers: h, credentials: 'same-origin', body: opts && opts.body ? JSON.stringify(opts.body) : null })
@@ -71,17 +72,36 @@
     if (refCache.has(key)) { perf('ref', key, 'HIT'); return Promise.resolve(refCache.get(key)); }
     if (refInflight.has(key)) { perf('ref', key, 'INFLIGHT'); return refInflight.get(key); }
     perf('ref', key, 'MISS');
-    var p = rawFetch(url).then(function (d) {
-      try { refCache.set(key, d); } catch (e) {}
-      refInflight.delete(key);
-      return d;
-    }).catch(function (e) {
-      refInflight.delete(key);
-      refCache.delete(key);
-      throw e;
-    });
-    refInflight.set(key, p);
-    return p;
+    // 健壮性：不使用 rawFetch（它吞掉 HTTP status）。与 api() 语义对齐：
+    // 401→doLogout；非 2xx / {error:...}→抛错；任何失败都不写缓存（refCache/refInflight 清理），
+    // 调用方（api() GET reference 路径 / bootstrapRefs）可安全重试。
+    var p = fetch(url, { method: 'GET', headers: { 'Content-Type': 'application/json', 'Accept-Language': langHeader() }, credentials: 'same-origin' })
+      .then(function (r) {
+        if (r.status === 401) {
+          try { if (typeof global.doLogout === 'function') global.doLogout(); } catch (e) {}
+          throw new Error('HTTP 401 ' + url);
+        }
+        if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + url);
+        return r.json();
+      })
+      .then(function (d) {
+        if (d && typeof d === 'object' && d.error) throw new Error(String(d.error));
+        try { refCache.set(key, d); } catch (e) {}
+        return d;
+      })
+      .catch(function (e) {
+        try { refCache.delete(key); } catch (e2) {}
+        throw e;
+      });
+    // inflight 在整条链 settle（成功写缓存后 / 失败）后才清：
+    // fetch 返回 → 缓存写入之间存在窗口，过早删除会让并发调用者重复发同一请求；
+    // 失败路径同样 settle 后即清，不留下 rejected inflight（调用方可安全重试）。
+    var wrapped = p.then(
+      function (d) { refInflight.delete(key); return d; },
+      function (e) { refInflight.delete(key); throw e; }
+    );
+    refInflight.set(key, wrapped);
+    return wrapped;
   }
   function invalidateRef(key) {
     try {
@@ -179,6 +199,33 @@
     if (has('/api/inventory') && method !== 'GET') { pages.push('inventory', 'replenishment'); }
     if (has('/api/proforma-invoices')) { pages.push('pi', 'po', 'payable-list', 'payable-cockpit', 'replenishment'); }
     if (has('/api/commercial-invoices')) { pages.push('ci', 'pi', 'payable-list', 'payable-cockpit', 'replenishment'); }
+    // historical CI：与 CI 同链路（createHistoricalCI 写 historical_commercial_invoices/items + payment_requests +
+    // payment_request_items + payment_settlement_logs + proforma_invoice_items.shipped_qty + payable_items）。
+    // 注意：URL 不含子串 /api/commercial-invoices，必须单列，否则 payable-list 最多陈旧 30s。
+    if (has('/api/historical-commercial-invoices')) { pages.push('ci', 'pi', 'payable-list', 'payable-cockpit', 'payment', 'replenishment'); }
+    // 物流批次 —— 精准失效（route-by-route 写表审计 2026-09-07，server.js 实测）：
+    // 真实费用/付款 mutation 只有 3 条（写 payable_items / ci_cost_items / payment_requests / commercial_invoices）：
+    //   PUT  /api/logistics-batches/:id                → syncLogisticsCostFactsCore：payable_items + ci_cost_items +
+    //                                                    commercial_invoices.import_duty_total + logistics_batches.fee_status
+    //   POST /api/logistics-batches/:id/generate-cost-items      → payment_requests + ci_cost_items + import_duty_total
+    //   POST /api/logistics-batches/:id/backfill-freight-payment → payment_requests + ci_cost_items + payment_settlement_logs
+    //   （PUT :id 是唯一 PUT 路由；只改 ETA 等非费用字段时后端 NO_CHANGE 不产生 mutation，
+    //     客户端无法区分 URL → 保守打脏，属可接受范围）
+    // 其余 mutation 不写 payable/payment/CI cost，禁止打脏四页（负向测试覆盖）：
+    //   POST /api/logistics-batches            → 仅 logistics_batches + business_participants + transit 重算
+    //   POST /api/logistics-batches/create-with-pl → 另写 packing_lists(+items) + commercial_invoices.ci_status
+    //   POST /:id/listing | /:id/notify | /:id/backfill-arrival → 仅 listing 状态/通知/到达补录，零费用链路写入
+    var isLogi = has('/api/logistics-batches');
+    if (isLogi && (method === 'PUT' || has('generate-cost-items') || has('backfill-freight-payment'))) {
+      pages.push('payable-list', 'payable-cockpit', 'ci', 'payment');
+    }
+    // 创建类（根路径 / create-with-pl）触发 updateInventoryTransitDataAsync 在途重算 → inventory 族；
+    // listing/notify/backfill-arrival 无 transit 影响，不打脏任何页面。
+    if (isLogi && method === 'POST' && !has('generate-cost-items') && !has('backfill-freight-payment') &&
+        !has('/listing') && !has('/notify') && !has('/backfill-arrival')) {
+      pages.push('inventory', 'replenishment', 'dashboard');
+      if (has('create-with-pl')) pages.push('ci'); // 写 commercial_invoices.ci_status='ci_pl_uploaded'
+    }
     if (has('/api/packing-lists')) { pages.push('ci', 'replenishment'); }
     if (has('/api/payment-requests')) { pages.push('payment', 'payable-list', 'payable-cockpit', 'ci', 'pi'); }
     if (has('/api/payable-items')) { pages.push('payable-list', 'payable-cockpit', 'payment'); }
