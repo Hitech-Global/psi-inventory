@@ -723,10 +723,16 @@ async function importCommercialInvoicesPg(rows, req) {
         // 无 active balance payable → 新建（per-CI）
         var payeeKey = 'supplier:' + (pair.pi_supplier_id || pair.pi_supplier_name || pair.po_supplier_name || '');
         var payeeName = pair.pi_supplier_name || pair.po_supplier_name || '';
+        // fee_no 唯一性（原有缺陷修复，独立于 P1 MUTABILITY）：
+        //   原实现随机段仅 3 位（36^3 ≈ 4.6万），单批创建上百条 payable 时按生日问题
+        //   碰撞概率约 14% → 撞 payable_items_fee_no_key → 整批 500（大批量导入真实风险）。
+        //   改为复用本行 id 的随机后缀（genId = 毫秒时间戳 + 6 位随机，批内碰撞概率 ~3e-6），
+        //   保证批内唯一，且 fee_no 格式不变。
+        var payItemId = genId('payitem');
         toInsert.push({
-          id: genId('payitem'),
+          id: payItemId,
           fee_no: 'PAY-ITEM-' + new Date().getFullYear() + '-' +
-            String(Date.now()).slice(-6) + '-' + Math.random().toString(36).substring(2, 5),
+            String(Date.now()).slice(-6) + '-' + payItemId.slice(-6),
           source_id: pair.pi_id,
           source_no: pair.pi_no,
           source_ci_id: pair.ci_id,

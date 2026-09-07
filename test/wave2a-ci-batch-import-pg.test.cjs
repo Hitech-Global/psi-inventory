@@ -94,7 +94,7 @@ async function ensureEmbeddedPg() {
   if (process.env.W2A_PG_DSN) {
     const u = new URL(process.env.W2A_PG_DSN);
     if (!LOCAL_HOSTS.has(u.hostname)) throw new Error('W2A-PG-GUARD: 主机不在白名单: ' + u.hostname);
-    return { dsn: process.env.W2A_PG_DSN, dataDir: null, pgCtl: null };
+    return { dsn: process.env.W2A_PG_DSN, dataDir: null, pgCtl: null, proc: null };
   }
   const pgtestDir = path.join(REPO, '.pgtest');
   const binDir = path.join(pgtestDir, 'pg16bin');
@@ -131,7 +131,7 @@ async function ensureEmbeddedPg() {
       await c.query('SELECT 1');
       await c.end();
       console.log('[W2A-PG] server up on port ' + port);
-      return { dsn, dataDir, pgCtl: path.join(pgBin, 'pg_ctl') };
+      return { dsn, dataDir, pgCtl: path.join(pgBin, 'pg_ctl'), proc: pgProc };
     } catch (e) { await sleep(500); }
   }
   // 失败时打印日志，便于定位
@@ -143,7 +143,7 @@ async function ensureEmbeddedPg() {
 // ---------------------------------------------------------------------------
 // 全局状态
 // ---------------------------------------------------------------------------
-let emb, dataDir, testDsn, admin, schema, srv, port;
+let emb, dataDir, testDsn, admin, schema, srv, port, pgProc;
 let recording = false;
 let syncLog = [];
 
@@ -245,6 +245,7 @@ describe('Wave 2A: CI batch-import async rewrite (真 PG)', { timeout: 900000 },
       emb = await ensureEmbeddedPg();
       dataDir = emb.dataDir;
       testDsn = emb.dsn;
+      pgProc = emb.proc || null;
       admin = new Client({ connectionString: emb.dsn });
       await admin.connect();
       const ver = await admin.query('SELECT version() AS v');
@@ -300,6 +301,24 @@ describe('Wave 2A: CI batch-import async rewrite (真 PG)', { timeout: 900000 },
       delete require.cache[require.resolve('../server')];
       delete require.cache[require.resolve('../wave2a-ci-batch-import-pg.js')];
 
+      // 测试侧 instrumentation：db-sync-worker 是 new Worker(...) 且 db.js 未导出 shutdown，
+      // 该 worker 会一直持有事件循环 → 测试跑完后 node 进程永不退出（表现为“挂起”）。
+      // 这里在 require('../db') 之前给 Worker 打补丁使其 unref：db.js 在自身 require 时
+      // 解构 worker_threads.Worker，故此刻打补丁可被其捕获。不修改任何生产代码。
+      try {
+        const wt = require('worker_threads');
+        const OrigWorker = wt.Worker;
+        function UnrefWorker() {
+          const w = new (Function.prototype.bind.apply(OrigWorker, [null].concat(Array.prototype.slice.call(arguments))))();
+          try { w.unref(); } catch (e) {}
+          return w;
+        }
+        UnrefWorker.prototype = OrigWorker.prototype;
+        wt.Worker = UnrefWorker;
+      } catch (e) {
+        console.warn('[W2A-PG] worker unref patch warn:', e && e.message);
+      }
+
       const dbmod = require('../db');
       dbmod.initDatabase();
 
@@ -354,11 +373,27 @@ describe('Wave 2A: CI batch-import async rewrite (真 PG)', { timeout: 900000 },
         await c.query('DROP SCHEMA IF EXISTS "' + schema + '" CASCADE');
         await c.end();
       } catch (e) { console.warn('[W2A-PG] schema cleanup warn:', e.message); }
-      try { fs.rmSync(dataDir, { recursive: true, force: true }); } catch (e) {}
     }
-    // 步骤三：最后停嵌入式 PG。
+    // 步骤三：停嵌入式 PG（此时 data dir 必须仍在，pg_ctl 需要它）。
     if (emb && emb.pgCtl && dataDir) {
       try { exec('"' + emb.pgCtl + '" -D "' + dataDir + '" -m fast stop', { timeout: 60000 }); } catch (e) {}
+    }
+    // 步骤四：await postgres 子进程真正退出（确定性 teardown；主机制是 exit 事件，不是 sleep）
+    if (pgProc) {
+      await new Promise(function (res) {
+        if (pgProc.exitCode !== null || pgProc.signalCode !== null) return res();
+        var guard = setTimeout(res, 60000); // 仅兜底守卫，正常路径由 exit 事件驱动
+        pgProc.once('exit', function () { clearTimeout(guard); res(); });
+      });
+    }
+    // 步骤五：postgres 已退出后才删除本轮 data dir（ownership：仅本轮自建目录）
+    if (dataDir) {
+      try {
+        fs.rmSync(dataDir, { recursive: true, force: true });
+      } catch (e) {
+        // 不静默：删除失败必须可观测（teardown 确定性要求），但不影响测试结果判定
+        console.warn('[W2A-PG] data dir cleanup warn: ' + dataDir + ' -> ' + (e && e.code) + ' ' + (e && e.message));
+      }
     }
   });
 
