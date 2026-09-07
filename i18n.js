@@ -4702,6 +4702,9 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.zh["logistics.col.brand"]="品牌"; I18N.dict.en["logistics.col.brand"]="Brand"; I18N.dict.id["logistics.col.brand"]="Merek";
   I18N.dict.zh["logistics.col.batch_total_quantity"]="批次总数量"; I18N.dict.en["logistics.col.batch_total_quantity"]="Batch Qty"; I18N.dict.id["logistics.col.batch_total_quantity"]="Jml Batch";
   I18N.dict.zh["logistics.col.related_ci_total_quantity"]="关联CI总数量"; I18N.dict.en["logistics.col.related_ci_total_quantity"]="Related CI Qty"; I18N.dict.id["logistics.col.related_ci_total_quantity"]="Jml CI Terkait";
+  // FREIGHT-RATIO-01：物流批次列表新增两列
+  I18N.dict.zh["logistics.col.actual_transit_days"]="实际运输时效"; I18N.dict.en["logistics.col.actual_transit_days"]="Transit Days"; I18N.dict.id["logistics.col.actual_transit_days"]="Hari Transit";
+  I18N.dict.zh["logistics.col.freight_value_ratio"]="运费/货值"; I18N.dict.en["logistics.col.freight_value_ratio"]="Freight/Value"; I18N.dict.id["logistics.col.freight_value_ratio"]="Ongkos/Nilai";
 
   // LOGISTICS-LISTING-01：Listing 上架状态管理（列表新增两列 + 创建/编辑/内联改状态）
   I18N.dict.zh["logistics.col.listing_status"]="Listing 状态"; I18N.dict.en["logistics.col.listing_status"]="Listing Status"; I18N.dict.id["logistics.col.listing_status"]="Status Listing";
