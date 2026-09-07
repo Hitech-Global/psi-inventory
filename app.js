@@ -129,7 +129,8 @@ function showFatalNotice(msg){
 }
 
 // --- API ---
-async function api(url,method='GET',body=null){
+// 原始网络层（保留全部既有错误语义：401 登出 / 403 提示 / 非 JSON / d.error payload）
+async function apiRaw(url,method='GET',body=null){
   const h={'Content-Type':'application/json','Accept-Language':(typeof getLang==='function'?getLang():'zh')};
   const o={method,headers:h,credentials:'same-origin'};if(body)o.body=JSON.stringify(body);
   let r;
@@ -149,6 +150,52 @@ async function api(url,method='GET',body=null){
   // 向后兼容：e.message 语义不变；额外挂载 status / payload，供需要读取错误响应体的调用方使用
   // （INV-IMPORT-PRECHECK-01 的 422 阻断明细需要它）
   if(d&&d.error){const _e=new Error(d.error);_e.status=r.status;_e.payload=d;throw _e;}
+  return d;
+}
+
+// 已知 reference 端点 → ref key（query 忽略，精确匹配；/api/warehouses 与 /api/warehouses/by-country 区分）
+function _refKeyForUrl(url){
+  if(!url) return null;
+  var base = url.split('?')[0];
+  var eps = (window.AppStore && window.AppStore._internal && window.AppStore._internal.REF_ENDPOINTS) || {};
+  for(var k in eps){ if(eps[k]===base) return k; }
+  return null;
+}
+
+// 公开 api()：在 apiRaw 之上叠加性能缓存层（纯前端数据生命周期，不改后端口径）
+//  - GET 命中已知 reference 端点 → AppStore.ref（session 缓存 + inflight 去重）
+//  - GET 带 opts.cacheKey → 页面快照缓存（hit 同步返回 + 后台 stale-while-revalidate）
+//  - 非 GET 成功 → AppStore.onMutation 依赖失效
+// 任何缓存异常均降级为透传网络，绝不阻断业务。
+async function api(url,method='GET',body=null,opts){
+  opts = opts || {};
+  try{
+    if((!method || method==='GET')){
+      // 1) reference 端点全局去重 + session 缓存
+      var rk = _refKeyForUrl(url);
+      if(rk && window.AppStore){ return await window.AppStore.ref(rk); }
+      // 2) 页面数据快照缓存
+      if(opts.cacheKey && window.AppStore){
+        var _sig = (opts.signature!=null) ? opts.signature : url;
+        var _ttl = opts.ttl || 30000;
+        var _hit = window.AppStore.page.hit(opts.cacheKey, _sig, _ttl);
+        if(_hit !== undefined){
+          window.AppStore.page.maybeBackground(opts.cacheKey, _sig, _ttl, function(){ return apiRaw(url,'GET',null); });
+          return _hit;
+        }
+      }
+    }
+  }catch(e){ /* 缓存层异常 → 透传网络 */ }
+  var d = await apiRaw(url, method, body);
+  try{
+    if((!method || method==='GET')){
+      if(opts.cacheKey && window.AppStore && d && !d.error){
+        window.AppStore.page.set(opts.cacheKey, (opts.signature!=null)?opts.signature:url, d, {ttl: (opts.ttl||30000)});
+      }
+    } else if(window.AppStore){
+      window.AppStore.onMutation(method, url, body);
+    }
+  }catch(e){}
   return d;
 }
 
@@ -208,6 +255,8 @@ function showPendingPage(data){
 function doLogout(){
   api('/api/logout','POST').catch(()=>{}).finally(()=>{
     currentUser=null;
+    // 会话级缓存清空：logout / 用户切换不得泄露旧页面数据（correctness gate C11/C12）
+    try{ if(window.AppStore) window.AppStore.clearSession(); }catch(e){}
     const lp=document.getElementById('login-page'); if(lp) lp.style.display='flex';
     const pp=document.getElementById('pending-page'); if(pp) pp.style.display='none';
     const app=document.getElementById('app'); if(app) app.style.display='none';
@@ -217,6 +266,8 @@ function showApp(){
   const lp=document.getElementById('login-page');if(lp)lp.style.display='none';
   const pp=document.getElementById('pending-page');if(pp)pp.style.display='none';
   document.getElementById('app').style.display='flex';
+  // 性能层：登录后一次拉取跨页共享 reference data（fire-and-forget，不阻塞首屏；页面仍可各自回退 api()）
+  try{ if(window.AppStore) window.AppStore.bootstrapRefs(); }catch(e){}
   showEnterSplash();
   // break-glass 本地应急账号：内置系统标签按语言显示；真实飞书用户姓名保持原文
   const isLocal=currentUser.auth_source==='local' || currentUser.username==='admin';
@@ -4599,6 +4650,8 @@ async function renderInventory(){
       if(fk && saved.k!=null) fk.value=saved.k;
     }
   }catch(e){}
+  // 性能层：注册库存总表后台刷新重渲染器（mutation 失效后 / TTL 到期后台刷新即时重绘当前页）
+  try{ if(window.AppStore) AppStore.page.onRefresh('inventory', function(){ try{ loadInv(); }catch(e){} }); }catch(e){}
   loadInv();
 }
 
@@ -4608,8 +4661,10 @@ async function loadInv(){
     // 保存库存总表筛选状态（仅本页面 localStorage，不写数据库、不影响其他页面）
     try{ localStorage.setItem('psi_inv_filters_v1', JSON.stringify({c,w,b,k})); }catch(e){}
     const mySeq = ++_invLoadSeq;
+    const _invUrl = '/api/inventory?country='+encodeURIComponent(c)+'&warehouse='+encodeURIComponent(w)+'&brand='+encodeURIComponent(b)+'&keyword='+encodeURIComponent(k);
     const [data, rateInfo] = await Promise.all([
-      api('/api/inventory?country='+encodeURIComponent(c)+'&warehouse='+encodeURIComponent(w)+'&brand='+encodeURIComponent(b)+'&keyword='+encodeURIComponent(k)),
+      // 性能层：库存总表主数据走页面快照缓存（signature=完整筛选 URL；命中立即渲染，后台 stale-while-revalidate）
+      api(_invUrl, 'GET', null, {cacheKey:'inventory', ttl:30000, signature:_invUrl}),
       // 汇率获取容错：即使汇率接口/外部服务异常，库存表仍正常打开（缺失汇率仅显示为 -，不阻断整页）
       api('/api/inventory/currency-rates').catch(function(){ return {countries:[],rates:{},rate_date:'',used_fallback:false}; })
     ]);
@@ -10499,8 +10554,12 @@ async function renderPO(){
 }
 async function loadPO(){
   try{
+    // 性能层：注册 PO 列表后台刷新重渲染器
+    try{ if(window.AppStore) AppStore.page.onRefresh('po', function(){ try{ loadPO(); }catch(e){} }); }catch(e){}
     const s=document.getElementById('po-fs')?.value||'',k=document.getElementById('po-fk')?.value||'';
-    const data=await api('/api/purchase-orders?status='+s+'&keyword='+encodeURIComponent(k));
+    const _poUrl='/api/purchase-orders?status='+s+'&keyword='+encodeURIComponent(k);
+    // 性能层：PO 列表走页面快照缓存（signature=筛选 URL）
+    const data=await api(_poUrl,'GET',null,{cacheKey:'po',ttl:30000,signature:_poUrl});
     document.getElementById('po-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">🛒</div>'+t("empty.no_po","暂无PO")+'</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>'+t("col.po_no","PO号")+'</th><th>'+t("col.supplier","供应商")+'</th><th>'+t("app.112","品牌")+'</th><th>'+t("app.113","国家")+'</th><th>'+t("app.114","仓库")+'</th><th>'+t("col.po_date","PO日期")+'</th><th>'+t("html.pay.th.currency","币种")+'</th><th>'+t("col.detail","明细")+'</th><th>'+t("po.price_status","价格状态")+'</th><th>'+t("col.po_status","PO状态")+'</th><th>'+t("col.approval","审批")+'</th><th>'+t("common.actions","操作")+'</th></tr></thead><tbody>'+data.map(p=>'<tr class="clickable-detail-row" onclick="rowClickView(event,\'viewPO\',\''+p.id+'\')"><td class="cell-id"><span class="link-text" onclick="viewPO(\''+p.id+'\')">'+esc(p.po_no)+'</span></td><td>'+esc(p.supplier_name)+'</td><td>'+esc(p.brand)+'</td><td>'+esc(p.country)+'</td><td>'+esc(p.target_warehouse)+'</td><td class="cell-date">'+fmtDate(p.po_date)+'</td><td>'+esc(p.currency)+'</td><td class="text-center">'+(p.item_count||0)+'</td><td><span class="status-badge '+(p.price_status==='confirmed'?'status-completed':'status-pending')+'">'+(p.price_status==='confirmed'?t("po.price_confirmed","已确认价格"):t("po.price_pending","待补充FOB价格"))+'</span></td><td><span class="status-badge '+((p.po_status==='approved'||p.po_status==='transferred_pi')?'status-completed':p.po_status==='pending_approval'?'status-pending':'status-draft')+'">'+statusLabel(p.po_status)+'</span></td><td><span class="status-badge '+(p.approval_status==='approved'?'status-approved':p.approval_status==='rejected'?'status-rejected':'status-pending')+'">'+statusLabel(p.approval_status)+'</span></td><td class="cell-actions"><button class="action-btn" onclick="viewPO(\''+p.id+'\')">👁️</button>'+(p.po_status==='draft'&&hasPermission('po_create')?'<button class="action-btn" onclick="submitPO(\''+p.id+'\')" title="'+t("po.submit_approval","提交审批")+'">📤</button>':'')+(p.po_status==='approved'&&hasPermission('po_create')?'<button class="action-btn" onclick="sendFactory(\''+p.id+'\')" title="'+t("po.send_factory","发工厂")+'">📨</button>':'')+((hasPermission('po_export')||hasPermission('po_create'))?'<button class="action-btn" onclick="exportPO(\''+p.id+'\')" title="'+t("action.export_excel","导出Excel")+'">📊</button>':'')+(hasPermission('po_create')?'<button class="action-btn" onclick="voidPO(\''+p.id+'\')" title="'+t("action.void","作废")+'">'+t("action.void","作废")+'</button>':'')+(hasPermission('po_create')&&p.po_status==='draft'?'<button class="action-btn" style="color:#d4380d" onclick="deletePO(\''+p.id+'\')" title="'+t("action.delete","删除")+'">'+t("action.delete","删除")+'</button>':'')+'</td></tr>').join('')+'</tbody></table></div>';
   }catch(e){showFlash(e.message,'danger')}
 }
@@ -10604,7 +10663,11 @@ async function renderPI(){
 }
 async function loadPI(){
   try{
-    const raw=await api('/api/proforma-invoices?keyword='+encodeURIComponent(_piKeyword));
+    // 性能层：注册 PI 列表后台刷新重渲染器
+    try{ if(window.AppStore) AppStore.page.onRefresh('pi', function(){ try{ loadPI(); }catch(e){} }); }catch(e){}
+    const _piUrl='/api/proforma-invoices?keyword='+encodeURIComponent(_piKeyword);
+    // 性能层：PI 列表走页面快照缓存（signature=关键词 URL；发货状态为客户端过滤，不改变服务端返回）
+    const raw=await api(_piUrl,'GET',null,{cacheKey:'pi',ttl:30000,signature:_piUrl});
     const _piSel=piSelectedStatuses();
     const data = _piSel.length ? raw.filter(p=>_piSel.includes(computePIShipStatus(p))) : raw;
     document.getElementById('pi-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">📄</div>'+t("empty.no_pi","暂无PI")+'</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>'+t("col.pi_no","PI号")+'</th><th>'+t("col.related_po","关联PO")+'</th><th>'+t("col.supplier","供应商")+'</th><th>'+t("app.112","品牌")+'</th><th>'+t("app.113","国家")+'</th><th>'+t("app.114","仓库")+'</th><th>'+t("col.date","日期")+'</th><th>'+t("html.pay.th.currency","币种")+'</th><th>'+t("col.total_amount","总金额")+'</th><th>'+t("col.is_deposit","是否定金")+'</th><th>'+t("col.deposit_ratio","定金比例")+'</th><th>'+t("col.deposit_amount","定金金额")+'</th><th>'+t("col.deposit_status","定金状态")+'</th><th>'+t("pi.field.ship_status","发货状态")+'</th><th>'+t("pi.col.attachment","PI附件")+'</th><th>'+t("common.actions","操作")+'</th></tr></thead><tbody>'+data.map(p=>'<tr class="clickable-detail-row" onclick="rowClickView(event,\'viewPI\',\''+p.id+'\')"><td class="cell-id"><span class="link-text" onclick="viewPI(\''+p.id+'\')">'+esc(p.pi_no)+'</span></td><td class="cell-id">'+esc(p.related_po_no)+'</td><td>'+esc(p.supplier_name)+'</td><td>'+esc(p.brand)+'</td><td>'+esc(p.country)+'</td><td>'+esc(p.target_warehouse)+'</td><td class="cell-date">'+fmtDate(p.pi_date)+'</td><td>'+esc(p.currency)+'</td><td class="text-right">'+fmtMoney(p.total_amount)+'</td><td>'+(piNeedsDeposit(p.need_deposit)?'<span class="status-badge status-pending">'+t("enum.yes","是")+'</span>':'<span class="status-badge status-completed">'+t("enum.no","否")+'</span>')+'</td><td class="text-right">'+(p.deposit_ratio||0)+'%</td><td class="text-right">'+fmtMoney(p.payable_deposit)+'</td><td>'+(piNeedsDeposit(p.need_deposit)?'<span class="status-badge '+(p.deposit_paid?'status-paid':'status-unpaid')+'">'+esc(formatPIDepositStatus(p.deposit_paid?'paid':'unpaid'))+'</span>':'<span class="status-badge status-completed">'+t('pi.deposit_status.none','无需定金')+'</span>')+'</td><td>'+renderPIShipStatusBadge(p)+'</td><td id="pi-att-'+p.id+'">'+renderPIAttachmentCell(p)+'</td><td class="cell-actions"><button class="action-btn" onclick="viewPI(\''+p.id+'\')">👁️</button>'+(hasPermission('pi_edit')?('<button class="action-btn" '+(p.locked?('disabled title="'+t("pi.locked_note","已锁定，不可编辑：")+''+esc(p.lock_reason||''+t("pi.locked","已锁定")+'')+'" style="opacity:.3;cursor:not-allowed">✏️</button>'):('onclick="editPI(\''+p.id+'\')" title="'+t("action.edit","编辑")+'">✏️</button>'))):'')+'<button class="action-btn" onclick="uploadDocAttachment(\'pi\',\''+p.id+'\',\'attachment\')" title="'+t("pi.upload_attachment","上传PI附件")+'">📎</button>'+(piNeedsDeposit(p.need_deposit)&&p.payable_deposit>0&&p.deposit_payment_status==='unpaid'&&hasPermission('payment_create')?'<button class="action-btn" onclick="createDepPay(\''+p.id+'\')" title="'+t("pi.deposit_pay","定金付款")+'">💰</button>':'')+(hasPermission('pi_edit')?'<button class="action-btn" '+(p.pi_status==='completed'?'disabled title="'+t("pi.cannot_void_completed","已完成状态不可作废")+'" style="opacity:.3;cursor:not-allowed"':'onclick="voidPI(\''+p.id+'\')" title="'+t("action.void","作废")+'"')+'>'+t("action.void","作废")+'</button>':'')+'</td></tr>').join('')+'</tbody></table></div>';
@@ -11176,13 +11239,30 @@ function togglePICell(uid,total){
 
 async function loadCI(){
   try{
+    // 性能层：注册 CI 列表后台刷新重渲染器
+    try{ if(window.AppStore) AppStore.page.onRefresh('ci', function(){ try{ loadCI(); }catch(e){} }); }catch(e){}
     const mode=document.getElementById('ci-source-mode')?.value||'operational',s=document.getElementById('ci-inbound-fs')?.value||'';
     const country=document.getElementById('ci-country')?.value||'';
     const warehouse=document.getElementById('ci-warehouse')?.value||'';
     const brand=document.getElementById('ci-brand')?.value||'';
     const opQ='inbound_status='+encodeURIComponent(s)+(country?'&country='+encodeURIComponent(country):'')+(warehouse?'&warehouse='+encodeURIComponent(warehouse):'')+(brand?'&brand='+encodeURIComponent(brand):'');
     const histQ=(country?'country='+encodeURIComponent(country):'')+(brand?'&brand='+encodeURIComponent(brand):'');
-    const results=await Promise.all([mode==='historical'?Promise.resolve([]):api('/api/commercial-invoices?'+opQ),mode==='operational'?Promise.resolve([]):api('/api/historical-commercial-invoices'+(histQ?'?'+histQ:''))]);
+    // 性能层：CI/PL 列表走页面快照缓存（signature=mode+筛选；命中立即渲染，后台 stale-while-revalidate）
+    const _ciSig=JSON.stringify([mode,opQ,histQ]);
+    function _fetchCI(){
+      return Promise.all([mode==='historical'?Promise.resolve([]):api('/api/commercial-invoices?'+opQ),mode==='operational'?Promise.resolve([]):api('/api/historical-commercial-invoices'+(histQ?'?'+histQ:''))]);
+    }
+    let results;
+    if(window.AppStore){
+      try{
+        const _cached=AppStore.page.hit('ci',_ciSig,30000);
+        if(_cached!==undefined){ results=_cached; AppStore.page.maybeBackground('ci',_ciSig,30000,_fetchCI); }
+      }catch(e){}
+    }
+    if(results===undefined){
+      results=await _fetchCI();
+      if(window.AppStore) AppStore.page.set('ci',_ciSig,results,{ttl:30000});
+    }
     const table=document.getElementById('ci-table');if(!table)return;
     if(mode==='operational')table.innerHTML=renderOperationalCITable(results[0]);
     else if(mode==='historical')table.innerHTML=renderHistoricalCITable(results[1]);
@@ -14235,6 +14315,15 @@ function payStateLabel(s){
   if(s==='paid')return t('payable_list.paystate_paid','已付清');
   return s||'';
 }
+// PAYABLE-LIST-UI-01：轻量状态 pill（纯展示层 class 映射，不参与/不改变任何状态判定与金额逻辑）
+const PAY_LIFECYCLE_PILL={active:'neutral',reserved:'info',partially_paid:'partial',released:'muted',paid:'paid',cancelled:'muted'};
+const PAY_PR_STATUS_PILL={'已付款':'paid','部分付款':'partial','已通过':'paid','审批中':'info','草稿':'neutral','未申请':'muted'};
+function paylPill(kind,txt){ return '<span class="payl-pill '+(kind||'neutral')+'">'+esc(txt||'')+'</span>'; }
+function paylPayStatePill(s){ return paylPill(s==='paid'?'paid':(s==='partial'?'partial':'unpaid'), payStateLabel(s)); }
+function paylPrStatusPill(r){
+  const txt=r.merged?mergedPayablePrStatus(r):(_payablePrStatusMap[r.id]||'未申请');
+  return paylPill(PAY_PR_STATUS_PILL[txt]||'muted', txt);
+}
 // 完整台账：品牌/国家动态选项（来自 /api/payable-items/facets，独立全量聚合，
 // 不随当前筛选变化；拉取失败降级为仅「全部」，不硬编码品牌/国家）
 let _payableFacets={brands:[],countries:[]};
@@ -14388,19 +14477,71 @@ async function renderPayableList(){
   ['payl-pfd','payl-pft','payl-fk'].forEach(function(id){
     const ex=document.getElementById(id); if(ex)prevInputs[id]=ex.value;
   });
+  // PAYABLE-LIST-UI-01：轻量 macOS 风格 + 横向滚动结构修复。
+  // 全部样式 scoped 在 .payl-page 下，不污染其它页面；纯 CSS，无 JS 驱动滚动。
   el.innerHTML='<style>'+
-    '.payl-ms{position:relative;display:inline-block;min-width:132px}'+
-    '.payl-ms-trigger{display:flex;align-items:center;justify-content:space-between;gap:6px;width:100%;min-width:132px;padding:6px 10px;border:1px solid var(--border,#d7dae0);border-radius:8px;background:var(--card,#fff);color:inherit;font-size:13px;cursor:pointer}'+
-    '.payl-ms-trigger .payl-ms-caret{color:#98a0ab;font-size:11px}'+
-    '.payl-ms-panel{display:none;position:absolute;z-index:60;top:100%;left:0;margin-top:4px;background:var(--card,#fff);border:1px solid var(--border,#d7dae0);border-radius:10px;box-shadow:0 8px 24px rgba(15,23,42,.14);padding:6px;max-height:240px;overflow-y:auto;min-width:160px}'+
-    '.payl-ms-item{display:flex;align-items:center;gap:7px;padding:5px 8px;border-radius:6px;cursor:pointer;white-space:nowrap;font-size:13px;color:inherit}'+
-    '.payl-ms-item:hover{background:rgba(80,70,229,.08)}'+
-    '.payl-ms-item input{accent-color:#5046E5}'+
-    '.payl-quick{display:flex;gap:6px}'+
-    '.payl-quick button{padding:5px 12px;border:1px solid var(--border,#d7dae0);border-radius:8px;background:var(--card,#fff);color:inherit;font-size:13px;cursor:pointer}'+
-    '.payl-quick button:hover{border-color:#5046E5;color:#5046E5}'+
-    '.payl-quick button.active{background:#5046E5;border-color:#5046E5;color:#fff}'+
+    // ── ① 结构层：page / filter card / list card 均固定；唯一横向滚动层 = .payl-table-scroll ──
+    '.payl-page{max-width:100%;min-width:0;background:#f5f5f7;color:#1d1d1f;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Helvetica Neue",Arial,sans-serif}'+
+    '.payl-page .filter-bar,.payl-page .table-section{max-width:100%;min-width:0;background:rgba(255,255,255,.96);border:1px solid rgba(0,0,0,.06);border-radius:12px;box-shadow:0 1px 2px rgba(0,0,0,.04),0 6px 18px rgba(0,0,0,.03)}'+
+    '.payl-page .filter-bar{margin-bottom:12px;padding:12px 14px}'+
+    '.payl-page .filter-form{gap:10px;row-gap:10px}'+
+    '.payl-page .table-section{margin-bottom:12px}'+
+    // ── ② 标题 / 工具条 / 已选 X 项：位于滚动层之外，横向滚动时保持固定 ──
+    '.payl-page .table-section-title{padding:12px 16px;border-bottom:1px solid rgba(0,0,0,.06)}'+
+    '.payl-page .table-section-title-left{font-size:14px;font-weight:600;color:#1d1d1f}'+
+    '.payl-page .table-section-title-right{font-size:13px;color:#6e6e73;white-space:nowrap}'+
+    '.payl-page .payl-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 16px;border-bottom:1px solid rgba(0,0,0,.06)}'+
+    '.payl-page .payl-hint{padding:8px 16px 0;font-size:12px;color:#6e6e73}'+
+    '.payl-page .payl-hint:empty{display:none}'+
+    // ── ③ 筛选控件：36px / 圆角 9px / 浅边框 / 轻量 focus ring ──
+    '.payl-page .filter-group label{font-size:12px;font-weight:500;color:#6e6e73;padding-left:2px}'+
+    '.payl-page .filter-group input,.payl-page .filter-group select{height:36px;padding:0 10px;border:1px solid rgba(0,0,0,.10);border-radius:9px;background:#fff;color:#1d1d1f;font-size:13px;font-family:inherit;outline:none;transition:border-color .12s ease,box-shadow .12s ease}'+
+    '.payl-page .filter-group input::placeholder{color:#8e8e93}'+
+    '.payl-page .filter-group input:focus,.payl-page .filter-group select:focus,.payl-page .payl-ms-trigger:focus-visible{border-color:rgba(52,199,89,.55);box-shadow:0 0 0 3px rgba(52,199,89,.12)}'+
+    // ── ④ 本月 / 上月：macOS segmented control ──
+    '.payl-page .payl-quick{display:inline-flex;align-items:center;gap:2px;height:36px;padding:2px;background:#f2f2f4;border-radius:9px}'+
+    '.payl-page .payl-quick button{height:30px;padding:0 14px;border:none;border-radius:7px;background:transparent;color:#1d1d1f;font-size:13px;font-family:inherit;cursor:pointer;transition:background .12s ease}'+
+    '.payl-page .payl-quick button:hover{background:rgba(255,255,255,.72)}'+
+    '.payl-page .payl-quick button.active{background:#fff;font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.08)}'+
+    // ── ⑤ 搜索按钮：保留 PSI 绿色品牌色，去掉厚重感 ──
+    '.payl-page .filter-actions .btn{height:36px;padding:0 18px;border-radius:9px;font-size:13px;font-weight:600}'+
+    '.payl-page .filter-actions .btn-primary{background:#2e7d32;box-shadow:0 1px 2px rgba(0,0,0,.06)}'+
+    '.payl-page .filter-actions .btn-primary:hover{background:#1b5e20}'+
+    // ── ⑥ 多选下拉 ──
+    '.payl-page .payl-ms{position:relative;display:inline-block;min-width:140px}'+
+    '.payl-page .payl-ms-trigger{display:flex;align-items:center;justify-content:space-between;gap:6px;width:100%;height:36px;padding:0 10px;border:1px solid rgba(0,0,0,.10);border-radius:9px;background:#fff;color:#1d1d1f;font-size:13px;font-family:inherit;cursor:pointer}'+
+    '.payl-page .payl-ms-trigger:hover{border-color:rgba(0,0,0,.18)}'+
+    '.payl-page .payl-ms-trigger .payl-ms-caret{color:#8e8e93;font-size:11px}'+
+    '.payl-page .payl-ms-panel{display:none;position:absolute;z-index:60;top:calc(100% + 4px);left:0;background:#fff;border:1px solid rgba(0,0,0,.08);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.10);padding:6px;max-height:260px;overflow-y:auto;min-width:170px}'+
+    '.payl-page .payl-ms-item{display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:7px;cursor:pointer;white-space:nowrap;font-size:13px;color:#1d1d1f}'+
+    '.payl-page .payl-ms-item:hover{background:#f5f5f7}'+
+    '.payl-page .payl-ms-item input{accent-color:#2e7d32;width:14px;height:14px}'+
+    // ── ⑦ 表格：.payl-table-scroll 是唯一 overflow-x:auto 层，table 可宽于视口 ──
+    '.payl-page .payl-table-scroll{max-width:100%;min-width:0;overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:0 0 12px 12px}'+
+    '.payl-page .data-table{font-size:13px}'+
+    '.payl-page .data-table thead{background:#fafafa;border-bottom:1px solid rgba(0,0,0,.06)}'+
+    '.payl-page .data-table thead th{background:#fafafa;color:#6e6e73;font-size:12px;font-weight:600;padding:9px 12px;white-space:nowrap}'+
+    '.payl-page .data-table td{padding:11px 12px;border-bottom:1px solid rgba(0,0,0,.06);color:#1d1d1f;white-space:nowrap}'+
+    '.payl-page .data-table tbody tr{height:44px}'+
+    '.payl-page .data-table tbody tr:hover{background:#f7f7f9}'+
+    '.payl-page .data-table tbody tr:last-child td{border-bottom:none}'+
+    '.payl-page .data-table td.muted-col{color:#86868b}'+
+    '.payl-page .data-table td.muted{color:#c7c7cc}'+
+    '.payl-page .data-table th[style*="text-align:right"],.payl-page .data-table td[style*="text-align:right"]{font-variant-numeric:tabular-nums}'+
+    // ── ⑧ 轻量状态 pill（低饱和，无大面积强色） ──
+    '.payl-page .payl-pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:500;line-height:1.5;white-space:nowrap;background:#f2f2f4;color:#6e6e73}'+
+    '.payl-page .payl-pill.unpaid{background:#fdeceb;color:#a94442}'+
+    '.payl-page .payl-pill.partial{background:#fff6e5;color:#9a6b00}'+
+    '.payl-page .payl-pill.paid{background:#e8f5ec;color:#1e7a45}'+
+    '.payl-page .payl-pill.info{background:#eef1f8;color:#4a5578}'+
+    '.payl-page .payl-pill.muted{background:#f2f2f4;color:#8e8e93}'+
+    // ── ⑨ macOS 风格细滚动条：仅样式，保留浏览器原生滚动行为（无 JS） ──
+    '.payl-page .payl-table-scroll::-webkit-scrollbar{height:10px}'+
+    '.payl-page .payl-table-scroll::-webkit-scrollbar-track{background:transparent}'+
+    '.payl-page .payl-table-scroll::-webkit-scrollbar-thumb{background:rgba(0,0,0,.22);background-clip:content-box;border:2px solid transparent;border-radius:6px}'+
+    '.payl-page .payl-table-scroll::-webkit-scrollbar-thumb:hover{background:rgba(0,0,0,.34);background-clip:content-box}'+
     '</style>'+
+    '<div class="payl-page">'+
     '<div id="flash-container"></div>'+
     '<div class="filter-bar"><div class="filter-form">'+
       '<div class="filter-group"><label>'+t('payable_list.filter_paystatus','付款状态')+'</label>'+paylMsHtml('payl-ms-fps',[
@@ -14424,7 +14565,9 @@ async function renderPayableList(){
     '<div class="table-section"><div class="table-section-title"><div class="table-section-title-left">📋 '+t('nav.payable_list','应付费用列表')+'</div><div class="table-section-title-right" id="payl-selinfo"></div></div>'+
     '<div id="payl-toolbar" class="payl-toolbar"></div>'+
     '<div id="payl-hint" class="payl-hint"></div>'+
-    '<div id="payl-table"></div></div>';
+    // 唯一横向滚动层：table 可宽于视口，但不能把 page / card / main / body 撑宽
+    '<div id="payl-table" class="payl-table-scroll"></div></div>'+
+    '</div>';
   _payableListSel=new Set();
   // 恢复已选状态并刷新 trigger 文案 / 快捷按钮 active
   Object.keys(prevSel).forEach(function(id){
@@ -14441,6 +14584,8 @@ async function renderPayableList(){
 }
 
 async function loadPayableList(){
+  // 性能层：注册应付费用列表后台刷新重渲染器
+  try{ if(window.AppStore) AppStore.page.onRefresh('payable-list', function(){ try{ loadPayableList(); }catch(e){} }); }catch(e){}
   const pfd=document.getElementById('payl-pfd');
   const pft=document.getElementById('payl-pft');
   const fk=document.getElementById('payl-fk');
@@ -14456,14 +14601,25 @@ async function loadPayableList(){
   if(pft&&pft.value)params.set('pay_date_to',pft.value);
   if(fk&&fk.value)params.set('keyword',fk.value);
   const q=params.toString();
+  const _paylUrl='/api/payable-items'+(q?'?'+q:'');
   let data;
+  // 性能层：应付费用列表走页面快照缓存（signature=完整筛选 URL；命中立即渲染，后台 stale-while-revalidate）
   try{
-    data=await api('/api/payable-items'+(q?'?'+q:''));
-  }catch(e){
-    const tb=document.getElementById('payl-table');if(tb)tb.innerHTML='<div class="flash flash-danger show">'+esc(e.message)+'</div>';
-    // 失败路径同样刷新快捷按钮 active，避免高亮残留（session 过期等场景）
-    paylMsUpdateQuickActive();
-    return;
+    if(window.AppStore){
+      const _cached=AppStore.page.hit('payable-list',_paylUrl,30000);
+      if(_cached!==undefined){ data=_cached; AppStore.page.maybeBackground('payable-list',_paylUrl,30000, function(){ return apiRaw(_paylUrl); }); }
+    }
+  }catch(e){}
+  if(data===undefined){
+    try{
+      data=await api(_paylUrl);
+    }catch(e){
+      const tb=document.getElementById('payl-table');if(tb)tb.innerHTML='<div class="flash flash-danger show">'+esc(e.message)+'</div>';
+      // 失败路径同样刷新快捷按钮 active，避免高亮残留（session 过期等场景）
+      paylMsUpdateQuickActive();
+      return;
+    }
+    if(window.AppStore) AppStore.page.set('payable-list',_paylUrl,data,{ttl:30000});
   }
   _payableListData=(data&&data.items)||[];
   await loadPayablePrStatusMap(_payableListData);
@@ -14548,11 +14704,11 @@ function renderPayableTable(){
       '<td style="text-align:right" class="muted-col'+(deductionNum>0?'':' muted')+'">'+deductionTxt+'</td>'+
       '<td style="text-align:right" class="muted-col'+(roundingNum>0?'':' muted')+'">'+roundingTxt+'</td>'+
       '<td style="text-align:right"><b>'+remainTxt+'</b></td>'+
-      '<td>'+esc(payStateLabel(payState))+'</td>'+
+      '<td>'+paylPayStatePill(payState)+'</td>'+
       '<td class="col-paydate'+(r.payable_date?'':' muted')+'">'+ (r.payable_date?esc(fmtDate(r.payable_date)):'—') +'</td>'+
       '<td'+(lastPayVal?'':' class="muted"')+'>'+ (lastPayVal?esc(lastPayVal):'—') +'</td>'+
-      '<td>'+esc(PAY_LIFECYCLE_LABELS[r.lifecycle_status]||r.lifecycle_status||'')+'</td>'+
-      '<td>'+esc(r.merged?mergedPayablePrStatus(r):(_payablePrStatusMap[r.id]||'未申请'))+'</td>'+
+      '<td>'+paylPill(PAY_LIFECYCLE_PILL[r.lifecycle_status]||'neutral', PAY_LIFECYCLE_LABELS[r.lifecycle_status]||r.lifecycle_status||'')+'</td>'+
+      '<td>'+paylPrStatusPill(r)+'</td>'+
       '<td class="muted-col muted">'+esc((r.created_at||'').slice(0,19))+'</td>'+
       '</tr>';
   });
@@ -15341,8 +15497,12 @@ async function financeConfirmPay(id){
 }
 async function loadPay(){
   try{
+    // 性能层：注册付款管理列表后台刷新重渲染器
+    try{ if(window.AppStore) AppStore.page.onRefresh('payment', function(){ try{ loadPay(); }catch(e){} }); }catch(e){}
     const s=document.getElementById('pay-fs')?.value||'',c=document.getElementById('pay-fc')?.value||'',k=document.getElementById('pay-fk')?.value||'';
-    const data=await api('/api/payment-requests?status='+s+'&category='+c+'&keyword='+encodeURIComponent(k));
+    const _payUrl='/api/payment-requests?status='+s+'&category='+c+'&keyword='+encodeURIComponent(k);
+    // 性能层：付款管理列表走页面快照缓存（signature=筛选 URL）
+    const data=await api(_payUrl,'GET',null,{cacheKey:'payment',ttl:30000,signature:_payUrl});
     document.getElementById('pay-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">💳</div>'+t('empty.noPaymentData','暂无付款数据')+'</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>'+t("html.pay.th.applyNo","申请号")+'</th><th>'+t("html.pay.th.category","大类")+'</th><th>'+t("html.pay.th.subcategory","小类")+'</th><th>'+t("html.pay.th.sourceNo","来源单号")+'</th><th>'+t("html.pay.th.relCI","关联CI")+'</th><th>'+t("html.pay.th.payee","付款对象")+'</th><th>'+t("html.pay.th.ciTerms","CI付款条件")+'</th><th>'+t("html.pay.th.payable","应付金额")+'</th><th>'+t("html.pay.th.deduct","抵扣金额")+'</th><th>'+t("html.pay.th.actualPayable","实际应付")+'</th><th>'+t("html.pay.th.paid","已付")+'</th><th>'+t("html.pay.th.unpaid","未付")+'</th><th>'+t("html.pay.th.currency","币种")+'</th><th>'+t("html.pay.th.status","状态")+'</th><th>'+t("html.pay.th.action","操作")+'</th></tr></thead><tbody>'+data.map(p=>{
       const catLabel=PAY_CATEGORIES[p.payment_category]||p.payment_category;
       const subLabel=(PAY_SUBCATS[p.payment_category]&&PAY_SUBCATS[p.payment_category][p.payment_subcategory])||p.payment_subcategory||'';
