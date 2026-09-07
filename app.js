@@ -14486,12 +14486,21 @@ async function renderPayableList(){
   // PAYABLE-LIST-UI-01：轻量 macOS 风格 + 横向滚动结构修复。
   // 全部样式 scoped 在 .payl-page 下，不污染其它页面；纯 CSS，无 JS 驱动滚动。
   el.innerHTML='<style>'+
-    // ── ① 结构层：page / filter card / list card 均固定；唯一横向滚动层 = .payl-table-scroll ──
-    '.payl-page{max-width:100%;min-width:0;background:#f5f5f7;color:#1d1d1f;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Helvetica Neue",Arial,sans-serif}'+
+    // ── ① 结构层：page / filter card / list card 均固定；唯一滚动层 = .payl-table-scroll（纵+横）──
+    // PAYABLE-FREEZE-HEAD：page 高度锁定为一屏。
+    // 78px 来源（index.html 均为硬编码，无 CSS variable 可继承）：54px topbar（.topbar{height:54px}，index.html:38）
+    //   + 12px × 2 content 上下 padding（.content{padding:12px 14px}，index.html:52）= 78px。
+    // 若未来 topbar/content 尺寸调整，需同步改这里。
+    // 用 100vh 而非 100dvh：桌面 Chrome/Safari 无 dynamic viewport 概念，两者等价；dvh 仅影响移动端地址栏场景。
+    // 纵向滚动收敛进 .payl-table-scroll —— 这是 thead sticky 可行的前提：
+    // overflow-x:auto 的 wrapper 是 th 的 sticky containing block（computed overflow-y:auto），
+    // 若保持页面级纵滚，th sticky 会相对 wrapper 粘滞而页面滚动时表头不冻结（实测证实）。
+    // 单 table + 原生 CSS sticky，无 JS / 无 scroll listener / 无双 table 列宽同步。
+    '.payl-page{max-width:100%;min-width:0;display:flex;flex-direction:column;height:calc(100vh - 78px);min-height:420px;background:#f5f5f7;color:#1d1d1f;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Helvetica Neue",Arial,sans-serif}'+
     '.payl-page .filter-bar,.payl-page .table-section{max-width:100%;min-width:0;background:rgba(255,255,255,.96);border:1px solid rgba(0,0,0,.06);border-radius:12px;box-shadow:0 1px 2px rgba(0,0,0,.04),0 6px 18px rgba(0,0,0,.03)}'+
     '.payl-page .filter-bar{margin-bottom:12px;padding:12px 14px}'+
     '.payl-page .filter-form{gap:10px;row-gap:10px}'+
-    '.payl-page .table-section{margin-bottom:12px}'+
+    '.payl-page .table-section{margin-bottom:12px;flex:1;display:flex;flex-direction:column;min-height:0}'+
     // ── ② 标题 / 工具条 / 已选 X 项：位于滚动层之外，横向滚动时保持固定 ──
     '.payl-page .table-section-title{padding:12px 16px;border-bottom:1px solid rgba(0,0,0,.06)}'+
     '.payl-page .table-section-title-left{font-size:14px;font-weight:600;color:#1d1d1f}'+
@@ -14522,11 +14531,15 @@ async function renderPayableList(){
     '.payl-page .payl-ms-item{display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:7px;cursor:pointer;white-space:nowrap;font-size:13px;color:#1d1d1f}'+
     '.payl-page .payl-ms-item:hover{background:#f5f5f7}'+
     '.payl-page .payl-ms-item input{accent-color:#2e7d32;width:14px;height:14px}'+
-    // ── ⑦ 表格：.payl-table-scroll 是唯一 overflow-x:auto 层，table 可宽于视口 ──
-    '.payl-page .payl-table-scroll{max-width:100%;min-width:0;overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:0 0 12px 12px}'+
-    '.payl-page .data-table{font-size:13px}'+
+    // ── ⑦ 表格：.payl-table-scroll 是唯一滚动层（overflow:auto = 纵向冻结容器 + 横向滚动），table 可宽于/高于视口 ──
+    '.payl-page .payl-table-scroll{max-width:100%;min-width:0;flex:1;min-height:220px;overflow:auto;-webkit-overflow-scrolling:touch;border-radius:0 0 12px 12px}'+
+    // border-collapse:separate —— 全局 .data-table 为 collapse，Chrome 下 collapse 的 cell 不支持
+    // position:sticky（实测表头不冻结）；本页无横向 cell border，separate+spacing:0 视觉与列宽无差异。
+    '.payl-page .data-table{font-size:13px;border-collapse:separate;border-spacing:0}'+
     '.payl-page .data-table thead{background:#fafafa;border-bottom:1px solid rgba(0,0,0,.06)}'+
-    '.payl-page .data-table thead th{background:#fafafa;color:#6e6e73;font-size:12px;font-weight:600;padding:9px 12px;white-space:nowrap}'+
+    // thead th sticky：相对 .payl-table-scroll 顶部冻结；分隔线用 inset box-shadow（collapse 模式下
+    // cell border 会随内容滚离，box-shadow 跟随 sticky th 本体）；背景 #fafafa 不透明防穿透。
+    '.payl-page .data-table thead th{position:sticky;top:0;z-index:2;background:#fafafa;color:#6e6e73;font-size:12px;font-weight:600;padding:9px 12px;white-space:nowrap;box-shadow:inset 0 -1px 0 rgba(0,0,0,.08)}'+
     '.payl-page .data-table td{padding:11px 12px;border-bottom:1px solid rgba(0,0,0,.06);color:#1d1d1f;white-space:nowrap}'+
     '.payl-page .data-table tbody tr{height:44px}'+
     '.payl-page .data-table tbody tr:hover{background:#f7f7f9}'+
