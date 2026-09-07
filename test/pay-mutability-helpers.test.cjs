@@ -31,18 +31,11 @@ const assert = require('node:assert/strict');
 const crypto = require('crypto');
 const { query, queryOne, run } = require('../db');
 
-// 必须在 require('./server') 之前初始化全量真实 schema
+// 必须在 require('./server') 之前初始化全量真实 schema。
+// 注意：本套件刻意不做任何 schema 补丁 —— S3 用例与 seedPi 直接使用
+// proforma_invoice_items.discount，全新 :memory: 库若缺该列（db-sqlite.js
+// 初始化顺序回归）将在此处立即失败，作为该修复的常驻回归守卫。
 require('../db').initDatabase();
-
-// 【测试环境 schema 对齐 + 既有债务登记】db-sqlite.js 的
-// `ALTER TABLE proforma_invoice_items ADD COLUMN discount`（db-sqlite.js:934）
-// 位于 `CREATE TABLE proforma_invoice_items`（db-sqlite.js:1020）之前 —— 全新 SQLite 库上
-// ALTER 静默失败且 CREATE 不含 discount，导致 server.js 自身路径（:8633 INSERT /
-// :10354 SELECT discount）在全新库上必崩。生产 PG schema（db-pg.js）自带 discount 不受影响。
-// 本轮范围不含 db*.js，故仅在测试库补齐该列；db-sqlite.js 初始化顺序修复另开一轮。
-try {
-  require('../db').getDB().exec('ALTER TABLE proforma_invoice_items ADD COLUMN discount REAL DEFAULT 0');
-} catch (e) { /* 已存在则忽略 */ }
 
 // 真实 express app（require 不会起服务：app.listen 在 require.main 守卫内）
 const { app } = require('../server');

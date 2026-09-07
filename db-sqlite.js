@@ -1029,6 +1029,7 @@ function initDatabase() {
       pi_amount REAL DEFAULT 0,
       shipped_qty INTEGER DEFAULT 0,
       unshipped_qty INTEGER DEFAULT 0,
+      discount REAL DEFAULT 0,
       created_at TEXT DEFAULT (datetime('now'))
     )
   `);
