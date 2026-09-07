@@ -28,6 +28,7 @@ const crypto = require('crypto');
 const { query, queryOne, run, transaction, genId, initDatabase } = require('./db');
 const { withGenerateClient, withAsyncPoolClient } = require('./pg-async'); // 专用异步 Pool：generate / 销售导入库存重算不阻塞主线程
 const { importCommercialInvoicesPg } = require('./wave2a-ci-batch-import-pg.js'); // Wave 2A: CI batch-import PG async path
+const { importProformaInvoicesPg } = require('./wave2b-pi-batch-import-pg.js'); // Wave 2B: PI batch-import PG async path
 const { slimReplenishmentRow, projectDailySalesRow } = require('./rp-projection'); // RP-P0-R1 订单预测响应投影（仅序列化瘦身，不动计算逻辑）
 const {
   createSqliteSalesImportAdapter,
@@ -10257,13 +10258,24 @@ function importResultWithMessages(result) {
   return result;
 }
 
-app.post('/api/proforma-invoices/batch-import', requireApiPermission('pi_create'), asyncHandler((req, res) => {
+app.post('/api/proforma-invoices/batch-import', requireApiPermission('pi_create'), asyncHandler(async (req, res) => {
   try {
     const rows = Array.isArray(req.body.items) ? req.body.items : [];
     const result = { success: 0, failed: 0, total: rows.length, errors: [] };
     // Wave 0A：行数硬上限 —— 必须在任何事务/DB 工作之前整批拒绝（不 truncate）
     const _rowLimit = batchImportRowLimitExceeded('proforma-invoices/batch-import', rows);
     if (_rowLimit) return rejectBatchImportRowLimit(req, res, _rowLimit);
+    // Wave 2B: PG 走原生 async 事务（零 sync bridge / set-based mutations）；SQLite 保持 legacy sync 分支
+    if (process.env.DB_DRIVER === 'pg') {
+      const pgResult = await importProformaInvoicesPg(rows, req);
+      // PI 批量导入后刷新在途字段（po_unconfirmed_pi_qty / pi_confirmed_unshipped_qty）
+      if (pgResult.success > 0) {
+        updateInventoryTransitDataAsync().catch((err) =>
+          console.warn('[PI-BATCH] updateInventoryTransitData failed (best-effort, ignored):', err && err.message)
+        );
+      }
+      return res.json(importResultWithMessages(pgResult));
+    }
       rows.forEach((row, idx) => {
         // P0-FIX-2：每行独立 transaction（SAVEPOINT），单行失败只回滚当前行
         try {
