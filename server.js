@@ -8746,6 +8746,48 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
       : 0;
     const balanceRatio = 100 - depositRatio;
 
+    // PAY-MUTABILITY（S1，P1 shared-helper 债务收口）：定金应付已进入付款流程
+    //   （reserved/partially_paid/paid）且本次编辑会改变定金金额 → 409 拒绝整次编辑。
+    // 红线：payable_deposit（PI header 字段）与 payable_items 池的同步（syncPayableItemAmount，
+    //   active-only UPDATE）是同一原子语义；终态时 sync 是静默 no-op，放行即造成两表金额永久分裂。
+    //   本检查必须在下方 transaction 的任何 mutation（DELETE/INSERT/UPDATE）之前完成。
+    //   cancelled 不在本守卫内（拒 PR 后重编辑场景，显式顺延独立处理）。
+    const depositAffectingEdit =
+      (d.items !== undefined && Array.isArray(d.items)) ||
+      d.need_deposit !== undefined ||
+      d.deposit_ratio !== undefined;
+    if (depositAffectingEdit) {
+      let prospectiveTotal = pi.total_amount || 0;
+      if (d.items !== undefined && Array.isArray(d.items)) {
+        prospectiveTotal = 0;
+        d.items.forEach(item => {
+          const itemDiscount = n(item.discount, 0);
+          const itemBase = (item.pi_confirmed_qty || 0) * (item.unit_price || 0);
+          prospectiveTotal += (item.pi_amount !== undefined && item.pi_amount !== null && item.pi_amount !== '')
+            ? n(item.pi_amount, 0)
+            : itemBase * (1 - itemDiscount);
+        });
+      }
+      const prospectiveDeposit = needDeposit ? prospectiveTotal * depositRatio / 100 : 0;
+      const depPayable = queryOne(
+        `SELECT id, lifecycle_status, payable_amount_minor FROM payable_items
+         WHERE source_type = 'pi' AND source_id = ? AND fee_type = 'deposit'
+           AND lifecycle_status IN ('reserved','partially_paid','paid')
+         ORDER BY created_at DESC LIMIT 1`,
+        [id]
+      );
+      if (depPayable && Math.round(prospectiveDeposit * 100) !== Number(depPayable.payable_amount_minor)) {
+        return res.status(409).json({
+          error: '定金应付已进入付款流程（' + depPayable.lifecycle_status + '），本次编辑将改变定金金额（' +
+            (Number(depPayable.payable_amount_minor) / 100).toFixed(2) + ' → ' + prospectiveDeposit.toFixed(2) +
+            '），不可修改；如需调整请先处理该定金付款',
+          locked: true,
+          field: 'deposit',
+          lifecycle_status: depPayable.lifecycle_status
+        });
+      }
+    }
+
     const fields = [];
     const values = [];
     // PI号：允许编辑为供应商真实编号（仅未进入后续业务阶段时可改，前端+后端双重校验）
@@ -10256,6 +10298,29 @@ app.post('/api/proforma-invoices/batch-import', requireApiPermission('pi_create'
           }
           const exist = queryOne('SELECT * FROM proforma_invoices WHERE pi_no = ?', [piNo]);
           let piId = exist ? exist.id : genId('pi');
+          // PAY-MUTABILITY（S2，P1 shared-helper 债务收口）：deposit 应付已进入付款流程
+          //   （reserved/partially_paid/paid）且本行导入会改变定金金额 → 行级拒绝（failed），零 mutation。
+          // 红线：本检查必须早于本行任何 mutation（PI header INSERT、PI item INSERT、PI header UPDATE、
+          //   PO transferred_qty UPDATE），否则就是 Wave 2A 已修复的 half-commit 换位置复发：
+          //   expected validation failure → 该行 DB mutation = 0。
+          //   金额完全一致 → 放行直通（无事可做，与物流 NO_CHANGE 语义一致）。
+          //   cancelled 不在本守卫内（显式顺延独立处理）。
+          if (exist && needDeposit) {
+            const existItemsTotal = queryOne('SELECT COALESCE(SUM(pi_amount),0) AS t FROM proforma_invoice_items WHERE pi_id = ?', [piId]).t || 0;
+            const prospectiveDeposit = ((existItemsTotal + amount) * depositRatio) / 100;
+            const depPayable = queryOne(
+              `SELECT id, lifecycle_status, payable_amount_minor FROM payable_items
+               WHERE source_type = 'pi' AND source_id = ? AND fee_type = 'deposit'
+                 AND lifecycle_status IN ('reserved','partially_paid','paid')
+               ORDER BY created_at DESC LIMIT 1`,
+              [piId]
+            );
+            if (depPayable && Math.round(prospectiveDeposit * 100) !== Number(depPayable.payable_amount_minor)) {
+              throw new Error('定金应付已进入付款流程（' + depPayable.lifecycle_status + '），本次导入将改变定金金额（' +
+                (Number(depPayable.payable_amount_minor) / 100).toFixed(2) + ' → ' + prospectiveDeposit.toFixed(2) +
+                '），导入不可修改，该行已拒绝（零变更）');
+            }
+          }
           if (!exist) {
             run(`INSERT INTO proforma_invoices (id, pi_no, related_po_id, related_po_no, supplier_id, supplier_name, brand, country, target_warehouse, pi_date, currency, total_amount, need_deposit, deposit_ratio, balance_ratio, payment_terms, expected_delivery, attachment, remark, pi_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
               [piId, piNo, po.id, po.po_no, po.supplier_id || '', po.supplier_name || '', po.brand || '', po.country || '', po.target_warehouse || '', s(pick(row, ['PI日期', 'pi_date'])) || new Date().toISOString().split('T')[0], s(pick(row, ['币种', 'currency'])) || po.currency || 'USD', 0, needDeposit, depositRatio, 100 - depositRatio, s(pick(row, ['付款条件', 'payment_terms'])), s(pick(row, ['预计交期', 'expected_delivery'])), parseAttachment(row.attachment || ''), s(pick(row, ['备注', 'remark'])), 'uploaded']);
@@ -10375,6 +10440,21 @@ app.post('/api/commercial-invoices/batch-import', requireApiPermission('ci_creat
             }
           }
           let ciId = exist ? exist.id : genId('ci');
+          // PAY-MUTABILITY（S3，与 Wave 2A PG 分支 parity）：balance payable（identity=pi_id+ci_id）非 active
+          //   → 本行拒绝（failed），零 mutation（该 CI 未做任何变更）。
+          // 红线：必须早于本行任何 mutation（CI header/item INSERT、PI shipped UPDATE、CI totals UPDATE），
+          //   与 PG 侧 wave2a 模块 2b-2 阶段同一语义同一文案，双架构行为一致。
+          if (exist) {
+            const lockedBalancePayable = queryOne(
+              `SELECT id, lifecycle_status FROM payable_items
+               WHERE source_type = 'pi' AND source_id = ? AND fee_type = 'balance' AND source_ci_id = ?
+                 AND lifecycle_status != 'active' LIMIT 1`,
+              [pi.id, ciId]
+            );
+            if (lockedBalancePayable) {
+              throw new Error('该CI的尾款应付已处于' + lockedBalancePayable.lifecycle_status + '状态，导入不可修改或新增应付（该CI未做任何变更）：' + ciNo);
+            }
+          }
           if (!exist) {
             run(`INSERT INTO commercial_invoices (id, ci_no, related_po_id, related_po_no, related_pi_id, related_pi_no, supplier_id, supplier_name, brand, country, target_warehouse, ci_date, actual_ship_date, payment_term_id, credit_days, currency, goods_amount, pi_total_amount, amount_difference, difference_reason, ci_status, attachment, pl_attachment, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
               [ciId, ciNo, po.id, po.po_no, pi ? pi.id : '', pi ? pi.pi_no : '', po.supplier_id || '', po.supplier_name || '', po.brand || '', po.country || '', po.target_warehouse || '', s(pick(row, ['CI日期', 'ci_date'])) || new Date().toISOString().split('T')[0], actualShipDate, ciCredit.paymentTermId, ciCredit.creditDays, s(pick(row, ['币种', 'currency'])) || po.currency || 'USD', 0, pi ? (pi.total_amount || 0) : 0, 0, s(pick(row, ['差异原因', 'difference_reason'])), 'uploaded', parseAttachment(row.attachment || ''), parseAttachment(row.pl_attachment || ''), s(pick(row, ['备注', 'remark']))]);
