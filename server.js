@@ -27,6 +27,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { query, queryOne, run, transaction, genId, initDatabase } = require('./db');
 const { withGenerateClient, withAsyncPoolClient } = require('./pg-async'); // 专用异步 Pool：generate / 销售导入库存重算不阻塞主线程
+const { importCommercialInvoicesPg } = require('./wave2a-ci-batch-import-pg.js'); // Wave 2A: CI batch-import PG async path
 const { slimReplenishmentRow, projectDailySalesRow } = require('./rp-projection'); // RP-P0-R1 订单预测响应投影（仅序列化瘦身，不动计算逻辑）
 const {
   createSqliteSalesImportAdapter,
@@ -10306,13 +10307,24 @@ app.post('/api/proforma-invoices/batch-import', requireApiPermission('pi_create'
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
-app.post('/api/commercial-invoices/batch-import', requireApiPermission('ci_create'), asyncHandler((req, res) => {
+app.post('/api/commercial-invoices/batch-import', requireApiPermission('ci_create'), asyncHandler(async (req, res) => {
   try {
     const rows = Array.isArray(req.body.items) ? req.body.items : [];
     const result = { success: 0, failed: 0, total: rows.length, errors: [] };
     // Wave 0A：行数硬上限 —— 必须在任何事务/DB 工作之前整批拒绝（不 truncate）
     const _rowLimit = batchImportRowLimitExceeded('commercial-invoices/batch-import', rows);
     if (_rowLimit) return rejectBatchImportRowLimit(req, res, _rowLimit);
+    // Wave 2A: PG 走原生 async 事务（零 sync bridge / set-based mutations）；SQLite 保持 legacy sync 分支
+    if (process.env.DB_DRIVER === 'pg') {
+      const pgResult = await importCommercialInvoicesPg(rows, req);
+      // CI 批量导入（发货）后刷新在途字段（in_transit_qty / pi_confirmed_unshipped_qty）
+      if (pgResult.success > 0) {
+        updateInventoryTransitDataAsync().catch((err) =>
+          console.warn('[CI-BATCH] updateInventoryTransitData failed (best-effort, ignored):', err && err.message)
+        );
+      }
+      return res.json(importResultWithMessages(pgResult));
+    }
     transaction(() => {
       const createdCiIds = new Set();
       rows.forEach((row, idx) => {
