@@ -389,6 +389,70 @@ async function importCommercialInvoicesPg(rows, req) {
     }
     validated = validated.filter(function (r) { return !r._invalid; });
 
+    // ---- 2b-2. PAY MUTABILITY 验证（mutation 前；按 CI identity 分组 fail-closed）----
+    // 业务事实：balance payable 的 identity = (source_type='pi', source_id=pi_id,
+    //   source_ci_id=ci_id, fee_type='balance')，它是**整条 CI 的事实**，不是单个 SKU row 的事实。
+    //   active                                        → 允许导入创建 / 同步金额
+    //   partially_paid / reserved / paid / cancelled / released → 终态/锁定态，导入不可修改，
+    //     且不可新增第二条（uq_payable_identity 全生命周期唯一，二次 INSERT 会撞唯一约束）。
+    // 顺序红线：本检查必须早于 2c（sequential deposit deduct）与 2d~2l（任何 business mutation）。
+    //   - 若晚于 2c：被拒行会先消耗 PI 定金池，导致其余行的 deduct 分摊错误；
+    //   - 若晚于 2f/2g/2h：会出现「failed=1 但 CI header/item 已插入、PI shipped_qty 已改变」，
+    //     违反 Wave 2A 已锁定的 partial-success 标准：expected validation failure → 该行 DB mutation = 0。
+    // 分组规则（§四）：同一 CI（pi_id + ci_id）本批所有 source rows 命运一致，要么全过要么全拒，
+    //   避免 CI total 与 payable business fact 分裂；errors 仍按 source_row_no 逐行回报。
+    var PAY_LOCKED_STATES = { partially_paid: 1, reserved: 1, paid: 1, cancelled: 1, released: 1 };
+
+    // 仅已存在的 CI 才可能已有 payable（新 CI 的 ci_id 是本批新生成，DB 中不可能有对应 payable）
+    var existingCiPairs = [];
+    var existingCiPairSeen = {};
+    for (var mi = 0; mi < validated.length; mi++) {
+      var mr = validated[mi];
+      if (mr.is_new_ci) continue;
+      var mk = mr.pi_id + '\u0000' + mr.ci_id;
+      if (existingCiPairSeen[mk]) continue;
+      existingCiPairSeen[mk] = true;
+      existingCiPairs.push({ pi_id: mr.pi_id, ci_id: mr.ci_id, ci_no: mr.ci_no });
+    }
+
+    // 一次性 set-based lookup（SQL 调用数不随行数增长）
+    var lockedCiKey = {}; // (pi_id \0 ci_id) -> lifecycle_status
+    if (existingCiPairs.length) {
+      var mutJson = JSON.stringify(existingCiPairs.map(function (p) {
+        return { pi_id: p.pi_id, ci_id: p.ci_id };
+      }));
+      var lockedRows = await aq(
+        'SELECT pi.source_id AS pi_id, pi.source_ci_id AS ci_id, pi.lifecycle_status AS lifecycle_status ' +
+        'FROM payable_items pi ' +
+        'JOIN jsonb_to_recordset($1::jsonb) AS k(pi_id text, ci_id text) ' +
+        'ON pi.source_id = k.pi_id AND pi.source_ci_id = k.ci_id ' +
+        'WHERE pi.source_type = \'pi\' AND pi.fee_type = \'balance\'',
+        [mutJson]
+      );
+      sqlCalls++;
+      for (var li = 0; li < lockedRows.length; li++) {
+        var lr = lockedRows[li];
+        if (PAY_LOCKED_STATES[lr.lifecycle_status]) {
+          lockedCiKey[lr.pi_id + '\u0000' + lr.ci_id] = lr.lifecycle_status;
+        }
+      }
+    }
+
+    // 按 CI group 拒绝：命中锁定态的 CI，其本批所有 source rows 全部标记 invalid
+    if (Object.keys(lockedCiKey).length) {
+      for (var mj = 0; mj < validated.length; mj++) {
+        var mrow = validated[mj];
+        var mstat = lockedCiKey[mrow.pi_id + '\u0000' + mrow.ci_id];
+        if (!mstat) continue;
+        mrow._invalid = true;
+        validationErrors.push({
+          row: mrow.source_row_no,
+          reason: '该CI的尾款应付已处于' + mstat + '状态，导入不可修改或新增应付（该CI未做任何变更）：' + mrow.ci_no
+        });
+      }
+      validated = validated.filter(function (r) { return !r._invalid; });
+    }
+
     if (validated.length === 0) {
       return {
         success: 0,
@@ -672,12 +736,19 @@ async function importCommercialInvoicesPg(rows, req) {
     // 权威 identity（已随 PAY-SCHEMA-CORRECTION-01 上线）：
     //   uq_payable_identity = (source_type, source_id, COALESCE(source_ci_id,''), fee_type)
     //   —— 无 partial predicate，全生命周期唯一（db-pg.js / db-sqlite.js / db.js 三处 source-of-truth 一致）
-    // 说明：本模块的 existing-payable 查找沿用 legacy is_active=1 口径（与 findActivePayableItem 一致），
-    //   不区分 lifecycle_status；partially_paid/reserved/paid 重导的金额同步约束（MUTABILITY）属
-    //   P1-PAY-CURRENT-ITEM-SEMANTICS，按 §17 顺延、本轮不改。
+    // MUTABILITY（§4，已在本模块落地 P1-PAY-CURRENT-ITEM-SEMANTICS）：
+    //   active          → 允许导入自动同步金额（authoritative UPDATE，本段执行）
+    //   partially_paid / reserved / paid / cancelled / released → 终态/锁定态，导入不可修改，
+    //     也不能插第二条（uq_payable_identity 全生命周期唯一，二次 INSERT 会撞唯一约束）。
+    //   强制点在 **2b-2（mutation 之前）**：命中锁定态的 CI 整组在 staging/mutation 前就被剔除，
+    //     因此本段（2l）在正常情况下只会见到 active —— 见不到被拒的 CI。
+    //   本段保留 race guard：若 payable 在 validation→mutation 之间被并发推进到锁定态，则 throw
+    //     触发整批 ROLLBACK（unexpected failure），绝不 half-commit。
+    //   server.js legacy helpers（findActivePayableItem / syncPayableItemAmount）的同语义修复属 §17 独立轮，本轮不动。
     var payPairs = ciFinalList.filter(function (r) { return r.payable_balance > 0; });
 
-    // 查找已存在的 active balance payables：按 (pi_id, ci_id) pair 精确匹配
+    // 查找已存在的 balance payables：按 (pi_id, ci_id) pair 精确匹配（不限定 is_active，
+    // 以便识别终态/锁定态行并 fail-closed 拒绝，避免二次 INSERT 撞 uq_payable_identity 致整批 ROLLBACK）
     var existingPayables = [];
     if (payPairs.length) {
       var payQueryJson = JSON.stringify(payPairs.map(function (r) {
@@ -687,7 +758,7 @@ async function importCommercialInvoicesPg(rows, req) {
         'SELECT pi.* FROM payable_items pi ' +
         'JOIN jsonb_to_recordset($1::jsonb) AS k(pi_id text, ci_id text) ' +
         'ON pi.source_id = k.pi_id AND pi.source_ci_id = k.ci_id ' +
-        'WHERE pi.source_type = \'pi\' AND pi.fee_type = \'balance\' AND pi.is_active = 1',
+        'WHERE pi.source_type = \'pi\' AND pi.fee_type = \'balance\'',
         [payQueryJson]
       );
       sqlCalls++;
@@ -713,9 +784,21 @@ async function importCommercialInvoicesPg(rows, req) {
       });
 
       if (existingByKey[pkey]) {
-        // 已有 active balance payable → authoritative update 金额（与 legacy UPDATE 语义一致）
+        var exRow = existingByKey[pkey];
+        if (exRow.lifecycle_status !== 'active') {
+          // 防御性 race guard（MUTABILITY §4）：
+          //   2b-2 已在任何 mutation 之前按 CI identity 拒绝锁定态 payable，正常路径到不了这里。
+          //   若仍命中，说明 validation 与 mutation 之间该 payable 被并发事务推进到锁定态
+          //   （payable_items 未加锁，READ COMMITTED 下后发起的查询可见新提交）。
+          //   此时三个选择都不安全：UPDATE 会改终态、INSERT 会撞 uq_payable_identity、
+          //   静默跳过会造成 half-commit。
+          //   → 按 partial-success 模型的 unexpected failure 处理：throw → 整个 mutation ROLLBACK。
+          throw new Error('PAY-MUTABILITY-RACE: 应付在导入过程中被并发修改为' +
+            exRow.lifecycle_status + '状态，本批已整体回滚：' + pair.ci_no);
+        }
+        // active → authoritative update 金额（与 legacy UPDATE 语义一致）
         toUpdate.push({
-          id: existingByKey[pkey].id,
+          id: exRow.id,
           amount_minor: payableAmountMinor,
           payable_date: payableDate
         });

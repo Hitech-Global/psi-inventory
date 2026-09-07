@@ -290,6 +290,9 @@ describe('Wave 2A: CI batch-import async rewrite (真 PG)', { timeout: 900000 },
 
       // 创建唯一索引（与生产一致）
       try { await admin.query('CREATE UNIQUE INDEX IF NOT EXISTS uq_payable_active ON "' + schema + '".payable_items(source_type, source_id, source_ci_id, fee_type) WHERE is_active = 1'); } catch (e) {}
+      // 权威 identity（PAY-SCHEMA-CORRECTION-01 已上线，全生命周期唯一、无 partial predicate）：
+      // 作为 MUTABILITY 守卫的安全网——若守卫漏拒，二次 INSERT 会撞唯一约束 → 整批 ROLLBACK → 测试显式失败。
+      try { await admin.query('CREATE UNIQUE INDEX IF NOT EXISTS uq_payable_identity ON "' + schema + '".payable_items(source_type, source_id, COALESCE(source_ci_id, \'\'), fee_type)'); } catch (e) {}
 
       // ---- 全栈启动 ----
       process.env.DB_DRIVER = 'pg';
@@ -948,5 +951,168 @@ describe('Wave 2A: CI batch-import async rewrite (真 PG)', { timeout: 900000 },
     assert.equal(payB.payable_amount_minor, 100000, 'CI-B amount = 1000.00 correct');
     // 验证 CI-A 的 payable 不被 CI-B 覆盖（per-CI 独立）
     assert.notEqual(payA.id, payB.id, 'different payable_item ids');
+  });
+
+  // =====================================================================
+  // PAY MUTABILITY GATE (P5-P12) — P1-PAY-CURRENT-ITEM-SEMANTICS
+  // 终态/锁定态应付不可被导入修改/新增，且必须在**任何 mutation 之前**按 CI identity 整组拒绝。
+  // 核心标准（延续 C4）：expected validation failure → 该失败业务行 DB mutation = 0。
+  //   不能出现 failed=1 但 CI header/item 已插入、PI shipped_qty 已改变的情况。
+  // 复现路径与 C12 一致（重导同一 CI，模块支持），仅差别在 payable lifecycle_status。
+  // =====================================================================
+
+  // 业务状态快照（mutation 前后对比，用于 zero-mutation 证明）
+  async function snapshotState(ciNo, piId) {
+    const ciRow = await q1('SELECT * FROM commercial_invoices WHERE ci_no = $1', [ciNo]);
+    const ciItems = ciRow
+      ? await q('SELECT sku_code, shipped_qty, ci_amount, discount, net_unit_price FROM commercial_invoice_items WHERE ci_id = $1 ORDER BY sku_code, shipped_qty', [ciRow.id])
+      : [];
+    const pii = await q('SELECT sku_code, shipped_qty, unshipped_qty FROM proforma_invoice_items WHERE pi_id = $1 ORDER BY sku_code', [piId]);
+    const pi = await q1('SELECT shipped_amount, unshipped_amount, pi_status FROM proforma_invoices WHERE id = $1', [piId]);
+    const pay = ciRow
+      ? await q1('SELECT id, lifecycle_status, payable_amount_minor, is_active FROM payable_items WHERE source_ci_id = $1 AND fee_type = $2', [ciRow.id, 'balance'])
+      : null;
+    const counts = await q1(
+      'SELECT (SELECT COUNT(*)::int FROM commercial_invoices) AS ci_n,' +
+      ' (SELECT COUNT(*)::int FROM commercial_invoice_items) AS cii_n,' +
+      ' (SELECT COUNT(*)::int FROM payable_items) AS pay_n'
+    );
+    return { ciRow, ciItems, pii, pi, pay, counts };
+  }
+
+  // zero-mutation 断言：被拒的 CI 不得产生任何 business mutation
+  function assertZeroMutation(before, after, label) {
+    // 1) 表行数：无新增 CI / CI item / payable
+    assert.deepEqual(
+      { ci: after.counts.ci_n, cii: after.counts.cii_n, pay: after.counts.pay_n },
+      { ci: before.counts.ci_n, cii: before.counts.cii_n, pay: before.counts.pay_n },
+      label + ': 表行数必须完全一致（无新增 CI / CI item / payable）'
+    );
+    // 2) CI header 关键金额与状态未被改写
+    if (before.ciRow) {
+      assert.ok(after.ciRow, label + ': CI header 仍存在');
+      assert.equal(Number(after.ciRow.goods_amount), Number(before.ciRow.goods_amount), label + ': CI goods_amount 未被改写');
+      assert.equal(Number(after.ciRow.payable_balance), Number(before.ciRow.payable_balance), label + ': CI payable_balance 未被改写');
+      assert.equal(after.ciRow.ci_status, before.ciRow.ci_status, label + ': CI ci_status 未被改写');
+    }
+    // 3) CI items / PI item / PI header / payable 完全一致
+    assert.deepEqual(after.ciItems, before.ciItems, label + ': CI items 完全一致（无新增/无修改）');
+    assert.deepEqual(after.pii, before.pii, label + ': PI item shipped_qty/unshipped_qty 未被改变');
+    assert.deepEqual(after.pi, before.pi, label + ': PI header shipped/unshipped/status 未被改变');
+    assert.deepEqual(after.pay, before.pay, label + ': payable 完全一致（未更新/未新增）');
+  }
+
+  // P5-P9：五个锁定态逐个证明 zero mutation
+  [
+    { tag: 'P5', state: 'partially_paid' },
+    { tag: 'P6', state: 'reserved' },
+    { tag: 'P7', state: 'paid' },
+    { tag: 'P8', state: 'cancelled' },
+    { tag: 'P9', state: 'released' }
+  ].forEach(function (c) {
+    test(c.tag + ': MUTABILITY — ' + c.state + ' 重导 → 该 CI zero business mutation', { timeout: 30000 }, async () => {
+      const f = await seedFixture(c.tag, { piTotal: 1000, piConfirmedQty: 100, unitPrice: 10 });
+      const ciNo = 'CI-' + c.tag;
+      // 首次导入：创建 CI + active payable（100.00）
+      const r0 = await fetchJSON('POST', '/api/commercial-invoices/batch-import', {
+        items: [{ 'CI编号': ciNo, '关联PI编号': f.piNo, '关联PO编号': f.poNo, SKU: f.sku, '数量': 10, '单价': 10, '实际出货日期': '2026-08-15' }]
+      });
+      assert.strictEqual(r0.status, 200, JSON.stringify(r0.json));
+      const pay0 = await q1('SELECT * FROM payable_items WHERE source_ci_id IN (SELECT id FROM commercial_invoices WHERE ci_no = $1) AND fee_type = $2', [ciNo, 'balance']);
+      assert.ok(pay0, 'payable should exist after first import');
+      assert.equal(pay0.lifecycle_status, 'active');
+      assert.equal(Number(pay0.payable_amount_minor), 10000);
+
+      // 推进到锁定态（cancelled/released 同时置 is_active=0，与生产语义一致）
+      const inactive = (c.state === 'cancelled' || c.state === 'released') ? 0 : 1;
+      await q('UPDATE payable_items SET lifecycle_status = $1, is_active = $2 WHERE id = $3', [c.state, inactive, pay0.id]);
+
+      // mutation 前快照
+      const before = await snapshotState(ciNo, f.piId);
+
+      // 重导同一 CI（金额会变 → 若放行就是改终态应付）
+      const r1 = await fetchJSON('POST', '/api/commercial-invoices/batch-import', {
+        items: [{ 'CI编号': ciNo, '关联PI编号': f.piNo, '关联PO编号': f.poNo, SKU: f.sku, '数量': 5, '单价': 10, '实际出货日期': '2026-08-15' }]
+      });
+      assert.strictEqual(r1.status, 200, JSON.stringify(r1.json));
+      assert.equal(r1.json.success, 0, c.state + ': 锁定态 CI 不得成功');
+      assert.equal(r1.json.failed, 1, c.state + ': 该行必须 failed');
+      const reasons = (r1.json.errors || []).map(e => e.reason).join(' | ');
+      assert.ok(reasons.indexOf(c.state) >= 0, 'error reason 应提及 ' + c.state + '，实际: ' + reasons);
+
+      // ZERO MUTATION 证明
+      const after = await snapshotState(ciNo, f.piId);
+      assertZeroMutation(before, after, c.tag + '/' + c.state);
+    });
+  });
+
+  // P10: 分组一致性 — PAY identity 是 (pi_id, ci_id) 不是单个 SKU row
+  test('P10: MUTABILITY — 同 CI 多 SKU 分组一致(不能只 fail 一个 SKU), zero mutation', { timeout: 30000 }, async () => {
+    const f = await seedMultiSkuFixture('P10', 2, { piTotal: 10000, qtyPerSku: 100, pricePerSku: 10 });
+    const ciNo = 'CI-P10';
+    const r0 = await fetchJSON('POST', '/api/commercial-invoices/batch-import', {
+      items: f.skus.map(function (s) {
+        return { 'CI编号': ciNo, '关联PI编号': f.piNo, '关联PO编号': f.poNo, SKU: s, '数量': 10, '单价': 10, '实际出货日期': '2026-08-15' };
+      })
+    });
+    assert.strictEqual(r0.status, 200, JSON.stringify(r0.json));
+    assert.equal(r0.json.success, 2, 'first import: 2 SKU rows ok');
+    const pay0 = await q1('SELECT * FROM payable_items WHERE source_ci_id IN (SELECT id FROM commercial_invoices WHERE ci_no = $1) AND fee_type = $2', [ciNo, 'balance']);
+    assert.ok(pay0, 'one accumulated payable for the CI');
+    await q('UPDATE payable_items SET lifecycle_status = $1 WHERE id = $2', ['paid', pay0.id]);
+
+    const before = await snapshotState(ciNo, f.piId);
+
+    // 重导同一 CI 的两个 SKU → 两行必须一起被拒（不能只拒一个、另一个继续改同一个 CI）
+    const r1 = await fetchJSON('POST', '/api/commercial-invoices/batch-import', {
+      items: f.skus.map(function (s) {
+        return { 'CI编号': ciNo, '关联PI编号': f.piNo, '关联PO编号': f.poNo, SKU: s, '数量': 5, '单价': 10, '实际出货日期': '2026-08-15' };
+      })
+    });
+    assert.strictEqual(r1.status, 200, JSON.stringify(r1.json));
+    assert.equal(r1.json.success, 0, 'both SKU rows must fail');
+    assert.equal(r1.json.failed, 2, '两个 source rows 都 failed（CI group 一致）');
+    // source_row_no 采用 Excel 行号约定：sourceRowNo = idx + 2（跳过表头行，见模块 2b 前处理）
+    const rows = (r1.json.errors || []).map(e => e.row).sort((a, b) => a - b);
+    assert.deepEqual(rows, [2, 3], 'errors 映射回每个 source_row_no');
+
+    const after = await snapshotState(ciNo, f.piId);
+    assertZeroMutation(before, after, 'P10/group');
+  });
+
+  // P11: 对照组 — active 重导仍允许 authoritative update（金额同步，不算 failed）
+  test('P11: 对照 — active 重导仍 authoritative UPDATE(金额同步, 不 failed)', { timeout: 30000 }, async () => {
+    const f = await seedFixture('P11', { piTotal: 1000, piConfirmedQty: 100, unitPrice: 10 });
+    const ciNo = 'CI-P11';
+    await fetchJSON('POST', '/api/commercial-invoices/batch-import', {
+      items: [{ 'CI编号': ciNo, '关联PI编号': f.piNo, '关联PO编号': f.poNo, SKU: f.sku, '数量': 10, '单价': 10, '实际出货日期': '2026-08-15' }]
+    });
+    const r1 = await fetchJSON('POST', '/api/commercial-invoices/batch-import', {
+      items: [{ 'CI编号': ciNo, '关联PI编号': f.piNo, '关联PO编号': f.poNo, SKU: f.sku, '数量': 5, '单价': 10, '实际出货日期': '2026-08-15' }]
+    });
+    assert.strictEqual(r1.status, 200, JSON.stringify(r1.json));
+    assert.equal(r1.json.success, 1, 'active 重导仍成功');
+    assert.equal(r1.json.failed, 0, 'active 不算 failed');
+    const pay = await q1('SELECT * FROM payable_items WHERE source_ci_id IN (SELECT id FROM commercial_invoices WHERE ci_no = $1) AND fee_type = $2', [ciNo, 'balance']);
+    assert.equal(pay.lifecycle_status, 'active', 'still active');
+    assert.equal(Number(pay.payable_amount_minor), 15000, 'authoritative update 100→150');
+    const cnt = await q1('SELECT COUNT(*)::int AS n FROM payable_items WHERE source_type = $1 AND source_id = $2 AND fee_type = $3', ['pi', f.piId, 'balance']);
+    assert.equal(cnt.n, 1, 'exactly one row (update not insert)');
+  });
+
+  // P12: 对照组 — 无 payable 时正常创建（锁定态判定不得误伤正常新建）
+  test('P12: 对照 — 无 payable 时正常创建 active payable', { timeout: 30000 }, async () => {
+    const f = await seedFixture('P12', { piTotal: 1000, piConfirmedQty: 100, unitPrice: 10 });
+    const ciNo = 'CI-P12';
+    const r = await fetchJSON('POST', '/api/commercial-invoices/batch-import', {
+      items: [{ 'CI编号': ciNo, '关联PI编号': f.piNo, '关联PO编号': f.poNo, SKU: f.sku, '数量': 10, '单价': 10, '实际出货日期': '2026-08-15' }]
+    });
+    assert.strictEqual(r.status, 200, JSON.stringify(r.json));
+    assert.equal(r.json.success, 1);
+    assert.equal(r.json.failed, 0);
+    const pay = await q1('SELECT * FROM payable_items WHERE source_ci_id IN (SELECT id FROM commercial_invoices WHERE ci_no = $1) AND fee_type = $2', [ciNo, 'balance']);
+    assert.ok(pay, 'payable created');
+    assert.equal(pay.lifecycle_status, 'active');
+    assert.equal(Number(pay.payable_amount_minor), 10000, '100.00');
   });
 });
