@@ -198,6 +198,24 @@ describe('PAY-SCHEMA-CORRECTION-01: permanent payable identity uniqueness', () =
     process.env.DATABASE_URL = testDsn;
     process.env.NODE_ENV = 'test';
 
+    // 测试侧 instrumentation：db-sync-worker 是 new Worker(...) 且 db.js 未导出 shutdown，
+    // 该 worker 会一直持有事件循环 → 测试跑完后 node 进程永不退出（表现为"挂起"）。
+    // 与 wave2a harness 相同的修复：在 require('../db') 之前给 Worker 打补丁使其 unref。
+    // db.js 在自身 require 时解构 worker_threads.Worker，故此刻打补丁可被其捕获。不修改任何生产代码。
+    try {
+      const wt = require('worker_threads');
+      const OrigWorker = wt.Worker;
+      function UnrefWorker() {
+        const w = new (Function.prototype.bind.apply(OrigWorker, [null].concat(Array.prototype.slice.call(arguments))))();
+        try { w.unref(); } catch (e) {}
+        return w;
+      }
+      UnrefWorker.prototype = OrigWorker.prototype;
+      wt.Worker = UnrefWorker;
+    } catch (e) {
+      console.warn('[PAY-PG] worker unref patch warn:', e && e.message);
+    }
+
     console.log('[PAY-PG] schema=' + schema + ' ready');
   });
 
