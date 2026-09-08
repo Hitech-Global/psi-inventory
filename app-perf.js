@@ -219,7 +219,7 @@
     // LOGISTICS-WARM-RETURN-P1：列表页缓存失效——任何物流批次写操作都影响列表展示
     // （状态/费用/Listing/到货/时效），必须打脏 logistics 页缓存；onMutation 仅非 GET 触发，navigation 不打脏。
     // 例外：/notify 为纯通知（不改列表任何展示列）→ 不打脏，避免无效刷新。
-    if (isLogi && !has('/notify')) pages.push('logistics');
+    if (isLogi && !has('/notify')) { pages.push('logistics'); pages.push('logistics-decision-summary'); }
     if (isLogi && (method === 'PUT' || has('generate-cost-items') || has('backfill-freight-payment'))) {
       pages.push('payable-list', 'payable-cockpit', 'ci', 'payment');
     }
@@ -244,15 +244,20 @@
     if (has('/api/sales')) { pages.push('outbound', 'replenishment'); }
     return { pages: Array.from(new Set(pages)), refs: Array.from(new Set(refs)) };
   }
-  function onMutation(method, url, body) {
-    if (!method || method === 'GET') return;
-    try {
-      var m = pagesForMutation(url, method);
-      m.pages.forEach(function (p) { markDirty(p); });
-      m.refs.forEach(function (r) { invalidateRef(r); });
-      perf('mutation', method, url, { pages: m.pages, refs: m.refs });
-    } catch (e) {}
-  }
+function onMutation(method, url, body) {
+  if (!method || method === 'GET') return;
+  try {
+    var m = pagesForMutation(url, method);
+    m.pages.forEach(function (p) { markDirty(p); });
+    m.refs.forEach(function (r) { invalidateRef(r); });
+    // 物流决策 detail 缓存按 combo 分键（logistics-decision-detail|range|country|transport），
+    // 无法预知具体 combo，故按前缀精准打脏所有已缓存的 detail 桶（不全局清 AppStore）。
+    if (url && url.indexOf('/api/logistics-batches') !== -1 && url.indexOf('/notify') === -1) {
+      try { pageCache.forEach(function (e, k) { if (typeof k === 'string' && (k.indexOf('logistics-decision-summary|') === 0 || k.indexOf('logistics-decision-detail|') === 0)) markDirty(k); }); } catch (e2) {}
+    }
+    perf('mutation', method, url, { pages: m.pages, refs: m.refs });
+  } catch (e) {}
+}
 
   // ==========================================================================
   // 会话级清空（logout / 用户切换）

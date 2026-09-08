@@ -18349,6 +18349,222 @@ app.get('/api/freight-forwarder-analysis', requireApiPermission('forwarder_view'
   res.json(result);
 }));
 
+// ==================== 物流决策（老板快速决策工具） ====================
+// 独立接口，不改动现有 /api/freight-forwarder-analysis 响应语义（复用其成本/时效口径）。
+// 硬性验收：
+//   - 海运 = RMB/CBM（SUM(total_freight)/SUM(total_cbm)），空运 = RMB/KG（SUM(total_freight)/SUM(total_weight)），永不通算。
+//   - 时效权威口径 = actual_arrival_date − depart_date（与现有 forwarder 分析一致）。
+//   - 小样本不伪造：n<3 不展示 P90，n<5 不展示稳定性等级（仅返回原始 p50/p90/cv 供以后校准）。
+//   - 仅 completed 且具备有效到发日期/到仓日期的批次参与；land/express v1 排除。
+//   - 币种防护：仅 freight_currency='RMB'（NULL/'' 视为 RMB，与物流管理列表一致）参与；非 RMB 计入 excluded_currency_count。
+const LD_TIME_RANGE_MONTHS = { '3m': 3, '6m': 6, '12m': 12, 'all': null };
+function ldResolveRangeStart(timeRange) {
+  const m = LD_TIME_RANGE_MONTHS[timeRange];
+  if (m == null) return null;
+  const d = new Date();
+  d.setMonth(d.getMonth() - m);
+  return d.toISOString().split('T')[0];
+}
+// 有效数据 WHERE（summary/detail/count 共用，保证口径一致）
+function ldValidWhere(timeRange, country, transport) {
+  const start = ldResolveRangeStart(timeRange);
+  const conds = [
+    "logistics_status = 'completed'",
+    "depart_date IS NOT NULL AND depart_date != ''",
+    "actual_arrival_date IS NOT NULL AND actual_arrival_date != ''",
+    "actual_arrival_date >= depart_date",
+    "total_freight > 0",
+    "(freight_currency = 'RMB' OR freight_currency IS NULL OR freight_currency = '')",
+    "transport_mode IN ('sea','air')",
+    "((transport_mode = 'sea' AND total_cbm > 0) OR (transport_mode = 'air' AND total_weight > 0))"
+  ];
+  const params = [];
+  if (start) { conds.push('depart_date >= ?'); params.push(start); }
+  if (country) { conds.push('target_country = ?'); params.push(country); }
+  if (transport) { conds.push('transport_mode = ?'); params.push(transport); }
+  return { where: conds.join(' AND '), params };
+}
+function ldRound2(v) { return Math.round((Number(v) || 0) * 100) / 100; }
+function ldRound3(v) { return Math.round((Number(v) || 0) * 1000) / 1000; }
+
+// 单一 set-based 聚合：按 (country, transport, forwarder) 分组，加权单位运费 + 窗口函数百分位（P50/P90）。
+// 返回结果极小（每组一行），历史批次增长不会线性恶化（百分位在 DB 内完成，不拉全量到 Node）。
+function ldAggregateGroups(timeRange, country, transport) {
+  const { where, params } = ldValidWhere(timeRange, country, transport);
+  const sql = `
+    WITH valid AS (
+      -- forwarder_id / forwarder_name 均为 nullable TEXT：先 COALESCE 归一，
+      -- 否则下游 grp JOIN pct 的等值匹配会因 NULL=NULL 为假而静默丢整组货代
+      -- （valid_count 仍会计入该批次 → 表格行数与有效批次数对不上）。
+      SELECT target_country AS country, transport_mode AS transport,
+        COALESCE(forwarder_id, '') AS forwarder_id,
+        COALESCE(forwarder_name, '') AS forwarder_name,
+        total_freight, total_cbm, total_weight,
+        CAST(julianday(actual_arrival_date) - julianday(depart_date) AS INTEGER) AS days
+      FROM logistics_batches
+      WHERE ${where}
+    ),
+    grp AS (
+      SELECT country, transport, forwarder_id, forwarder_name,
+        COUNT(*) AS n, SUM(total_freight) AS sum_freight,
+        SUM(total_cbm) AS sum_cbm, SUM(total_weight) AS sum_weight
+      FROM valid GROUP BY country, transport, forwarder_id, forwarder_name
+    ),
+    ranked AS (
+      SELECT country, transport, forwarder_id, forwarder_name, days,
+        ROW_NUMBER() OVER (PARTITION BY country, transport, forwarder_id, forwarder_name ORDER BY days) AS rn,
+        COUNT(*) OVER (PARTITION BY country, transport, forwarder_id, forwarder_name) AS cnt
+      FROM valid
+    ),
+    pos AS (
+      -- 百分位口径 = nearest-rank（向上取整），纯整数除法实现，SQLite / PostgreSQL 语义一致：
+      --   P50 位置 = ceil(n/2)     = (n+1)/2
+      --   P90 位置 = ceil(n*0.9)   = (9n+9)/10
+      -- 两者恒落在 [1, n]，无需 MAX/MIN/CEIL（注意：MAX(a,b) 是 SQLite 专有标量，PG 下会报错）。
+      -- 不做插值：天数是整数事实值，插值会产出未真实发生过的天数。
+      SELECT country, transport, forwarder_id, forwarder_name, days, rn,
+        (cnt+1)/2 AS p50_pos,
+        (9*cnt+9)/10 AS p90_pos
+      FROM ranked
+    ),
+    pct AS (
+      SELECT country, transport, forwarder_id, forwarder_name,
+        MAX(CASE WHEN rn = p50_pos THEN days END) AS p50_days,
+        MAX(CASE WHEN rn = p90_pos THEN days END) AS p90_days
+      FROM pos GROUP BY country, transport, forwarder_id, forwarder_name
+    )
+    SELECT g.country, g.transport, g.forwarder_id, g.forwarder_name, g.n,
+      g.sum_freight, g.sum_cbm, g.sum_weight, p.p50_days, p.p90_days
+    FROM grp g
+    JOIN pct p ON p.country=g.country AND p.transport=g.transport AND p.forwarder_id=g.forwarder_id AND p.forwarder_name=g.forwarder_name
+    ORDER BY g.country, g.transport, g.forwarder_name
+  `;
+  return query(sql, params).rows;
+}
+
+// 纯计算核心：返回 { meta, rows }。rows 为按 (country, transport) 聚合的决策建议。
+// country/transport 同时给定 → 仅返回该组合（detail）；否则返回全部（summary）。
+function computeLogisticsDecision(timeRange, country, transport) {
+  const tr = LD_TIME_RANGE_MONTHS[timeRange] != null ? timeRange : '12m';
+  const { where: vWhere, params: vParams } = ldValidWhere(tr, country, transport);
+  const start = ldResolveRangeStart(tr);
+
+  // 数据质量计数（set-based COUNT，均返回单值）
+  const validCount = queryOne(`SELECT COUNT(*) AS c FROM logistics_batches WHERE ${vWhere}`, vParams)?.c || 0;
+  const cConds = ["logistics_status = 'completed'"];
+  const cParams = [];
+  if (start) { cConds.push('depart_date >= ?'); cParams.push(start); }
+  const completedInRange = queryOne(`SELECT COUNT(*) AS c FROM logistics_batches WHERE ${cConds.join(' AND ')}`, cParams)?.c || 0;
+  const curConds = ["logistics_status = 'completed'", "freight_currency IS NOT NULL", "freight_currency != ''", "freight_currency != 'RMB'"];
+  const curParams = [];
+  if (start) { curConds.push('depart_date >= ?'); curParams.push(start); }
+  const excludedCurrency = queryOne(`SELECT COUNT(*) AS c FROM logistics_batches WHERE ${curConds.join(' AND ')}`, curParams)?.c || 0;
+
+  const raw = ldAggregateGroups(tr, country, transport);
+  // 原始行 → 货代事实
+  const groups = raw.map(r => {
+    const isSea = r.transport === 'sea';
+    const denom = isSea ? (Number(r.sum_cbm) || 0) : (Number(r.sum_weight) || 0);
+    const unitCost = denom > 0 ? ldRound2(Number(r.sum_freight) / denom) : null;
+    const n = Number(r.n) || 0;
+    const p50 = r.p50_days == null ? null : Number(r.p50_days);
+    const p90 = r.p90_days == null ? null : Number(r.p90_days);
+    return {
+      country: r.country, transport: r.transport,
+      forwarder_id: r.forwarder_id, name: r.forwarder_name,
+      n, unit_cost: unitCost,
+      unit: isSea ? 'RMB/CBM' : 'RMB/KG',
+      normal_days: p50,
+      conservative_days: n >= 3 ? p90 : null,
+      has_conservative: n >= 3,
+      stability_ready: n >= 5,
+      stability_calc: n >= 5 && p50 != null && p90 != null
+        ? { p50, p90, p90_minus_p50: ldRound2(p90 - p50), cv: p50 > 0 ? ldRound3((p90 - p50) / p50) : 0 }
+        : null,
+      low_sample: n < 3
+    };
+  });
+
+  // 按 (country, transport) 聚合为决策行
+  const byKey = {};
+  groups.forEach(g => {
+    const key = g.country + '|' + g.transport;
+    (byKey[key] = byKey[key] || []).push(g);
+  });
+  const rows = Object.keys(byKey).map(key => {
+    const [c, t] = key.split('|');
+    const fs = byKey[key].slice().sort((a, b) => (a.unit_cost == null ? Infinity : a.unit_cost) - (b.unit_cost == null ? Infinity : b.unit_cost));
+    // 被支配判定：存在其它货代「不更贵 且 不更慢 且 至少一项严格更优」→ 不建议
+    fs.forEach(f => {
+      f.not_recommended = fs.some(o => o !== f
+        && (o.unit_cost == null || f.unit_cost == null || o.unit_cost <= f.unit_cost)
+        && o.normal_days <= f.normal_days
+        && (o.unit_cost < f.unit_cost || o.normal_days < f.normal_days));
+    });
+    const unit = t === 'sea' ? 'RMB/CBM' : 'RMB/KG';
+    let verdict_code = null, no_compare = false, sample_adequate = true;
+    let primary = null, normal_replenish = null, urgent_replenish = null;
+    if (fs.length === 1) {
+      verdict_code = 'only_forwarder'; no_compare = true; sample_adequate = false;
+    } else {
+      const cheapest = fs[0];
+      const fastest = fs.reduce((a, b) => (b.normal_days < a.normal_days ? b : a));
+      const adequate = f => f.n >= 3;
+      if (cheapest.name === fastest.name) {
+        if (adequate(cheapest)) { verdict_code = 'cheaper_faster'; primary = cheapest; }
+        else { verdict_code = 'record_both'; primary = cheapest; sample_adequate = false; }
+      } else {
+        normal_replenish = cheapest;
+        const delta_cost = ldRound2((fastest.unit_cost == null ? 0 : fastest.unit_cost) - (cheapest.unit_cost == null ? 0 : cheapest.unit_cost));
+        const delta_days = Math.abs(fastest.normal_days - cheapest.normal_days);
+        urgent_replenish = Object.assign({}, fastest, { delta_cost, delta_days });
+        if (adequate(cheapest) && adequate(fastest)) { verdict_code = 'split'; }
+        else { verdict_code = cheapest.unit_cost <= fastest.unit_cost ? 'record_lower_cost' : 'record_faster'; sample_adequate = false; }
+      }
+    }
+    // 白名单投影。注意：urgent_replenish 额外带 delta_cost/delta_days（前端 split 结论文案
+    // 「每 <unit> 多花 ¥X，但快 Y 天」直接读这两个字段），必须显式保留，否则前端渲染出 undefined。
+    const slim = f => {
+      const o = { name: f.name, n: f.n, unit_cost: f.unit_cost, normal_days: f.normal_days, conservative_days: f.conservative_days, has_conservative: f.has_conservative, stability_ready: f.stability_ready, stability_calc: f.stability_calc, low_sample: f.low_sample, not_recommended: !!f.not_recommended };
+      if (f.delta_cost !== undefined) o.delta_cost = f.delta_cost;
+      if (f.delta_days !== undefined) o.delta_days = f.delta_days;
+      return o;
+    };
+    return {
+      country: c, transport: t, unit, forwarders: fs.map(slim),
+      verdict_code, no_compare, sample_adequate,
+      primary: primary ? slim(primary) : null,
+      normal_replenish: normal_replenish ? slim(normal_replenish) : null,
+      urgent_replenish: urgent_replenish ? slim(urgent_replenish) : null
+    };
+  });
+
+  return {
+    time_range: tr,
+    valid_count: validCount,
+    excluded_count: Math.max(0, (completedInRange || 0) - (validCount || 0)),
+    excluded_currency_count: excludedCurrency || 0,
+    rows
+  };
+}
+
+app.get('/api/logistics-decision-summary', requireApiPermission('logistics_view'), asyncHandler((req, res) => {
+  try {
+    const timeRange = ['3m', '6m', '12m', 'all'].includes(req.query.time_range) ? req.query.time_range : '12m';
+    res.json(computeLogisticsDecision(timeRange, null, null));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+}));
+
+app.get('/api/logistics-decision-detail', requireApiPermission('logistics_view'), asyncHandler((req, res) => {
+  try {
+    const timeRange = ['3m', '6m', '12m', 'all'].includes(req.query.time_range) ? req.query.time_range : '12m';
+    const country = req.query.country || null;
+    const transport = req.query.transport_type || null;
+    if (!country || !transport) return res.status(400).json({ error: 'country and transport_type required' });
+    res.json(computeLogisticsDecision(timeRange, country, transport));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+}));
+
 // ③ 应付到期/逾期提醒手动/外部 cron 触发端点（不增加定时任务/进程内 cron；best-effort）
 app.post('/api/finance/payment-reminders/scan', requireApiPermission('payment_approve'), asyncHandler(async (req, res) => {
   try {
@@ -20531,6 +20747,7 @@ module.exports = {
   compactSourceNos,
   formatPaymentTermsDisplay,
   app,
+  computeLogisticsDecision,
   updateInventoryTransitData,
   updateInventoryTransitDataAsync,
   TRANSIT_PG_REFRESH_SQLS,

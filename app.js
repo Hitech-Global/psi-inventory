@@ -386,6 +386,7 @@ const NAV_MODULES=[
     {id:'ci',key:'nav.ci',icon:'🚚',label:t("nav.ci", "CI/PL\u7ba1\u7406"),perm:'ci_view'},
     {id:'logistics',key:'nav.logistics',icon:'🚢',label:t("nav.logistics", "\u7269\u6d41\u7ba1\u7406"),perm:'logistics_view'},
     {id:'inbound',key:'nav.wac_confirm',icon:'💰',label:t("nav.wac_confirm", "WAC确认"),perm:'inbound_view'},
+    {id:'logistics-decision',key:'nav.logistics_decision',icon:'🧭',label:t("nav.logistics_decision","物流决策"),perm:'logistics_view'},
   ]},
   {id:'approval',key:'nav.approval',label:t("nav.approval_center", "\u5ba1\u6279\u4e2d\u5fc3"),items:[
     {id:'approval-center',key:'nav.approval_center',icon:'✅',label:t("nav.approval_center", "\u5ba1\u6279\u4e2d\u5fc3"),perm:'approval_view'},
@@ -423,7 +424,7 @@ var NAV_ZH={
   'nav.inventory_total':'库存总表','nav.consignment':'寄售库存','nav.skus':'SKU主数据','nav.stock_check':'库存盘点',
   'nav.stagnant':'呆滞分析','nav.sales':'销售','nav.sales_data':'销售数据',
   'nav.forecast':'订单预测','nav.procurement':'采购链','nav.po':'PO管理',
-  'nav.pi':'PI管理','nav.ci':'CI/PL管理','nav.logistics':'物流管理','nav.inbound':'WAC确认',
+  'nav.pi':'PI管理','nav.ci':'CI/PL管理','nav.logistics':'物流管理','nav.inbound':'WAC确认','nav.logistics_decision':'物流决策',
   'nav.approval':'审批中心','nav.approval_center':'审批中心','nav.finance':'财务',
   'nav.payable_cockpit':'应付驾驶舱','nav.payment':'付款管理','nav.cost':'成本管理','nav.payable_list':'应付费用列表',
   'nav.system':'系统管理','nav.users':'用户管理','nav.roles':'角色权限',
@@ -518,9 +519,9 @@ function showPage(page){
   }
   document.querySelectorAll('.sidebar-item').forEach(el=>el.classList.toggle('active',el.dataset.page===page));
   document.querySelectorAll('.topnav-item').forEach((el,i)=>{if(NAV_MODULES[i]&&NAV_MODULES[i].id===currentModule)el.classList.add('active');else el.classList.remove('active')});
-  const titles={dashboard:t("nav.dashboard", "\u9996\u9875\u770b\u677f"),skus:t("nav.skus", "SKU\u4e3b\u6570\u636e"),inventory:t("page.inventory_total","库存总表"),outbound:t("nav.outbound","销售数据"),replenishment:t("nav.replenishment","订单预测"),stagnant:t("nav.stagnant", "\u5446\u6ede\u5206\u6790"),check:t("nav.stock_check", "\u5e93\u5b58\u76d8\u70b9"),po:t("nav.po", "PO\u7ba1\u7406"),pi:t("nav.pi", "PI\u7ba1\u7406"),ci:t("nav.ci", "CI/PL\u7ba1\u7406"),logistics:t("nav.logistics", "\u7269\u6d41\u7ba1\u7406"),inbound:t("nav.wac_confirm", "WAC确认"),cost:t("nav.cost", "\u6210\u672c\u7ba1\u7406"),payment:t("nav.payment", "\u4ed8\u6b3e\u7ba1\u7406"),'payable-cockpit':t("nav.payable_cockpit","应付驾驶舱"),'payable-list':t("nav.payable_list","应付费用列表"),forwarder:t("nav.forwarder_analysis", "\u8d27\u4ee3\u5206\u6790"),countries:t("nav.countries", "\u56fd\u5bb6\u7ba1\u7406"),warehouses:t("nav.warehouses", "\u4ed3\u5e93\u7ba1\u7406"),suppliers:t("nav.suppliers", "\u4f9b\u5e94\u5546\u7ba1\u7406"),'freight-forwarders':t("nav.freight_forwarders", "\u8d27\u4ee3\u7ba1\u7406"),currencies:t("nav.currencies", "\u5e01\u79cd\u8bbe\u7f6e"),config:t("nav.config", "\u7cfb\u7edf\u53c2\u6570"),'payment-terms':t("nav.payment_terms", "\u4ed8\u6b3e\u6761\u4ef6"),'approval-flows':t("nav.approval_flows", "\u5ba1\u6279\u6d41\u7ba1\u7406"),'approval-center':t("nav.approval_center", "\u5ba1\u6279\u4e2d\u5fc3"),'expense-types':t("nav.expense_types", "\u8d39\u7528\u7c7b\u578b"),'allocation-rules':t("nav.allocation_rules", "\u5206\u644a\u89c4\u5219"),users:t("nav.users", "\u7528\u6237\u7ba1\u7406"),roles:t("nav.roles","角色权限"),'batch-tasks':t("nav.batch_tasks", "\u6279\u91cf\u4efb\u52a1\u4e2d\u5fc3"),'brand-settings':t("nav.brand_settings", "\u54c1\u724c\u8bbe\u7f6e"),'operation-logs':t("nav.operation_logs", "\u64cd\u4f5c\u65e5\u5fd7"),'payment-categories':t("nav.payment_categories", "\u4ed8\u6b3e\u7c7b\u76ee\u7ba1\u7406"),'payer-entities':t("nav.payer_entities", "\u4ed8\u6b3e\u4e3b\u4f53")};
+  const titles={dashboard:t("nav.dashboard", "\u9996\u9875\u770b\u677f"),skus:t("nav.skus", "SKU\u4e3b\u6570\u636e"),inventory:t("page.inventory_total","库存总表"),outbound:t("nav.outbound","销售数据"),replenishment:t("nav.replenishment","订单预测"),stagnant:t("nav.stagnant", "\u5446\u6ede\u5206\u6790"),check:t("nav.stock_check", "\u5e93\u5b58\u76d8\u70b9"),po:t("nav.po", "PO\u7ba1\u7406"),pi:t("nav.pi", "PI\u7ba1\u7406"),ci:t("nav.ci", "CI/PL\u7ba1\u7406"),logistics:t("nav.logistics", "\u7269\u6d41\u7ba1\u7406"),inbound:t("nav.wac_confirm", "WAC确认"),'logistics-decision':t("nav.logistics_decision","物流决策"),cost:t("nav.cost", "\u6210\u672c\u7ba1\u7406"),payment:t("nav.payment", "\u4ed8\u6b3e\u7ba1\u7406"),'payable-cockpit':t("nav.payable_cockpit","应付驾驶舱"),'payable-list':t("nav.payable_list","应付费用列表"),forwarder:t("nav.forwarder_analysis", "\u8d27\u4ee3\u5206\u6790"),countries:t("nav.countries", "\u56fd\u5bb6\u7ba1\u7406"),warehouses:t("nav.warehouses", "\u4ed3\u5e93\u7ba1\u7406"),suppliers:t("nav.suppliers", "\u4f9b\u5e94\u5546\u7ba1\u7406"),'freight-forwarders':t("nav.freight_forwarders", "\u8d27\u4ee3\u7ba1\u7406"),currencies:t("nav.currencies", "\u5e01\u79cd\u8bbe\u7f6e"),config:t("nav.config", "\u7cfb\u7edf\u53c2\u6570"),'payment-terms':t("nav.payment_terms", "\u4ed8\u6b3e\u6761\u4ef6"),'approval-flows':t("nav.approval_flows", "\u5ba1\u6279\u6d41\u7ba1\u7406"),'approval-center':t("nav.approval_center", "\u5ba1\u6279\u4e2d\u5fc3"),'expense-types':t("nav.expense_types", "\u8d39\u7528\u7c7b\u578b"),'allocation-rules':t("nav.allocation_rules", "\u5206\u644a\u89c4\u5219"),users:t("nav.users", "\u7528\u6237\u7ba1\u7406"),roles:t("nav.roles","角色权限"),'batch-tasks':t("nav.batch_tasks", "\u6279\u91cf\u4efb\u52a1\u4e2d\u5fc3"),'brand-settings':t("nav.brand_settings", "\u54c1\u724c\u8bbe\u7f6e"),'operation-logs':t("nav.operation_logs", "\u64cd\u4f5c\u65e5\u5fd7"),'payment-categories':t("nav.payment_categories", "\u4ed8\u6b3e\u7c7b\u76ee\u7ba1\u7406"),'payer-entities':t("nav.payer_entities", "\u4ed8\u6b3e\u4e3b\u4f53")};
   document.getElementById('content-inner').innerHTML='<div id="flash-container"></div>';
-  const R={dashboard:renderDashboard,skus:renderSKUs,inventory:renderInventory,consignment:renderConsignment,outbound:renderOutbound,replenishment:renderReplenishment,stagnant:renderStagnant,check:renderCheck,po:renderPO,pi:renderPI,ci:renderCI,logistics:renderLogistics,inbound:renderInbound,cost:renderCost,payment:renderPayment,'payable-cockpit':renderPayableCockpit,'payable-list':renderPayableList,forwarder:renderForwarderAnalysis,countries:renderCountries,warehouses:renderWarehouses,suppliers:renderSuppliers,'freight-forwarders':renderFreightForwarders,currencies:renderCurrencies,config:renderConfig,'payment-terms':renderPaymentTerms,'approval-flows':renderApprovalFlows,'approval-center':renderApprovalCenter,'expense-types':renderExpenseTypes,'allocation-rules':renderAllocationRules,users:renderUsers,roles:renderRoles,'batch-tasks':renderBatchTasks,'brand-settings':renderBrandSettings,'operation-logs':renderOperationLogs,'payment-categories':renderPaymentCategories,'payer-entities':renderPayerEntities};
+  const R={dashboard:renderDashboard,skus:renderSKUs,inventory:renderInventory,consignment:renderConsignment,outbound:renderOutbound,replenishment:renderReplenishment,stagnant:renderStagnant,check:renderCheck,po:renderPO,pi:renderPI,ci:renderCI,logistics:renderLogistics,inbound:renderInbound,cost:renderCost,payment:renderPayment,'payable-cockpit':renderPayableCockpit,'payable-list':renderPayableList,forwarder:renderForwarderAnalysis,'logistics-decision':renderLogisticsDecision,countries:renderCountries,warehouses:renderWarehouses,suppliers:renderSuppliers,'freight-forwarders':renderFreightForwarders,currencies:renderCurrencies,config:renderConfig,'payment-terms':renderPaymentTerms,'approval-flows':renderApprovalFlows,'approval-center':renderApprovalCenter,'expense-types':renderExpenseTypes,'allocation-rules':renderAllocationRules,users:renderUsers,roles:renderRoles,'batch-tasks':renderBatchTasks,'brand-settings':renderBrandSettings,'operation-logs':renderOperationLogs,'payment-categories':renderPaymentCategories,'payer-entities':renderPayerEntities};
   if(R[page])R[page]();
 }
 
@@ -15882,6 +15883,248 @@ async function loadFF(){
     const data=await api('/api/freight-forwarder-analysis?country='+encodeURIComponent(c)+'&transport_mode='+m);
     document.getElementById('ff-table').innerHTML=!data.length?t('gen.L7295.1','<div class="empty-state"><div class="empty-icon">📈</div>暂无货代分析数据</div>'):t('gen.L7295.2','<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>货代</th><th>国家</th><th>方式</th><th>批次</th><th>CI总额</th><th>总CBM</th><th>总重量</th><th>综合运费</th><th>关税</th><th>运费占比</th><th>每CBM</th><th>每KG</th><th>运输天</th><th>清关天</th><th>派送天</th></tr></thead><tbody>')+data.map(f=>'<tr><td class="cell-name">'+esc(f.forwarder_name)+'</td><td>'+esc(f.target_country)+'</td><td>'+esc(f.transport_mode)+'</td><td class="text-center">'+f.batch_count+'</td><td class="text-right">'+fmtMoney(f.total_ci_amount)+'</td><td class="text-right">'+(Number(f.total_cbm||0).toFixed(2))+'</td><td class="text-right">'+(f.total_weight||0)+'</td><td class="text-right font-bold">'+fmtMoney(f.total_freight)+'</td><td class="text-right">'+fmtMoney(f.total_duty)+'</td><td class="text-right '+(f.freight_ratio>15?'text-danger':f.freight_ratio>10?'text-warning':'')+'">'+f.freight_ratio+'%</td><td class="text-right">'+(f.freight_per_cbm||0)+'</td><td class="text-right">'+(f.freight_per_kg||0)+'</td><td class="text-right">'+(f.avg_transport_days||'-')+'</td><td class="text-right">'+(f.avg_customs_days||'-')+'</td><td class="text-right">'+(f.avg_delivery_days||'-')+'</td></tr>').join('')+'</tbody></table></div>';
   }catch(e){showFlash(e.message,'danger')}
+}
+
+// ==================== 物流决策（老板快速决策工具） ====================
+// 瞬开：renderLogisticsDecision 先同步渲染完整框架（标题/筛选/决策表骨架/对比图骨架），
+// 再异步分层填数据（第一层 summary，第二层 detail 非阻塞预取默认组合）。
+// 缓存复用 AppStore.page（cacheKey 区分 timeRange / country / transport），命中即瞬开。
+let _ldSummary = null;
+let _ldState = { timeRange: '12m', country: 'all', transport: 'all', reqToken: 0, detailToken: 0 };
+
+function ldRangeBtns() {
+  const opts = [['3m', t('ld.range.3m', '近3个月')], ['6m', t('ld.range.6m', '近6个月')], ['12m', t('ld.range.12m', '近12个月')], ['all', t('ld.range.all', '全部历史')]];
+  return opts.map(o => '<button class="ld-seg-btn' + (o[0] === _ldState.timeRange ? ' active' : '') + '" data-v="' + o[0] + '" onclick="ldSetRange(\'' + o[0] + '\')">' + o[1] + '</button>').join('');
+}
+function ldSkeletonTable() { return '<div style="display:flex;flex-direction:column;gap:8px;padding:6px 2px">' + '<div class="ld-skel" style="height:30px"></div>'.repeat(4) + '</div>'; }
+function ldSkeletonChart() { return '<div class="ld-skel" style="height:300px;width:100%"></div>'; }
+function ldErrState(msg) { return '<div class="ld-empty">' + esc(msg) + '</div>'; }
+
+async function renderLogisticsDecision() {
+  document.getElementById('content-inner').innerHTML =
+    '<div id="flash-container"></div>' +
+    '<div class="ld-page">' +
+      '<div class="ld-header"><div class="ld-title">' + t('ld.title', '物流决策') + '</div>' +
+      '<div class="ld-sub">' + t('ld.subtitle', '准备发哪个国家 → 走海运还是空运 → 现在选哪个货代性价比最高') + '</div></div>' +
+      '<div class="ld-filterbar">' +
+        '<div class="ld-filter"><label>' + t('ld.filter.timeRange', '时间范围') + '</label><div class="ld-seg" id="ld-range">' + ldRangeBtns() + '</div></div>' +
+        '<div class="ld-filter"><label>' + t('ld.filter.country', '国家') + '</label><select id="ld-country" class="ld-select"><option value="all">' + t('ld.transport.all', '全部') + '</option></select></div>' +
+        '<div class="ld-filter"><label>' + t('ld.filter.transport', '运输方式') + '</label><div class="ld-seg" id="ld-transport">' +
+          '<button class="ld-seg-btn active" data-v="all" onclick="ldSetTransport(\'all\')">' + t('ld.transport.all', '全部') + '</button>' +
+          '<button class="ld-seg-btn" data-v="sea" onclick="ldSetTransport(\'sea\')">' + t('ld.transport.sea', '海运') + '</button>' +
+          '<button class="ld-seg-btn" data-v="air" onclick="ldSetTransport(\'air\')">' + t('ld.transport.air', '空运') + '</button>' +
+        '</div></div>' +
+      '</div>' +
+      '<div class="ld-meta" id="ld-meta"></div>' +
+      '<div class="ld-card"><div class="ld-card-title">' + t('ld.section.decision', '各国家物流决策建议') + '</div>' +
+        '<div id="ld-table" class="ld-table-skeleton">' + ldSkeletonTable() + '</div></div>' +
+      '<div class="ld-card"><div class="ld-card-title">' + t('ld.section.chart', '货代性价比分布图') + ' <span id="ld-chart-sub" class="ld-chart-sub"></span></div>' +
+        '<div id="ld-chart" class="ld-chart-skeleton">' + ldSkeletonChart() + '</div>' +
+        '<div id="ld-conclusion" class="ld-conclusion-skeleton"></div>' +
+        '<div class="ld-note" id="ld-chart-hint"></div></div>' +
+    '</div>';
+  _ldSummary = null;
+  _ldState = { timeRange: '12m', country: 'all', transport: 'all', reqToken: 0, detailToken: 0 };
+  loadLdSummary();
+}
+
+function ldSetRange(v) {
+  if (_ldState.timeRange === v) return;
+  _ldState.timeRange = v;
+  document.querySelectorAll('#ld-range .ld-seg-btn').forEach(b => b.classList.toggle('active', b.dataset.v === v));
+  loadLdSummary(); // 仅 timeRange 变化触发 summary 重新拉取（按 range 缓存）
+}
+function ldSetTransport(v) {
+  if (_ldState.transport === v) return;
+  _ldState.transport = v;
+  document.querySelectorAll('#ld-transport .ld-seg-btn').forEach(b => b.classList.toggle('active', b.dataset.v === v));
+  renderLdSummaryTable(); // 前端过滤，不重拉 summary
+  loadLdDetail();          // 对比图组合可能变化
+}
+
+async function loadLdSummary() {
+  const token = ++_ldState.reqToken;
+  const tr = _ldState.timeRange;
+  const cacheKey = 'logistics-decision-summary|' + tr;
+  const url = '/api/logistics-decision-summary?time_range=' + encodeURIComponent(tr);
+  let data;
+  try { data = await api(url, 'GET', null, { cacheKey: cacheKey, signature: url, ttl: 60000 }); }
+  catch (e) { const el = document.getElementById('ld-table'); if (el) el.innerHTML = ldErrState(e.message); return; }
+  if (token !== _ldState.reqToken) return; // 旧请求防护
+  _ldSummary = data;
+  // 国家下拉
+  const sel = document.getElementById('ld-country');
+  if (sel) {
+    const countries = Array.from(new Set((data.rows || []).map(r => r.country)));
+    const cur = sel.value;
+    sel.innerHTML = '<option value="all">' + t('ld.transport.all', '全部') + '</option>' + countries.map(c => '<option value="' + esc(c) + '">' + esc(c) + '</option>').join('');
+    if (cur && (cur === 'all' || countries.includes(cur))) sel.value = cur;
+    sel.onchange = function () { _ldState.country = sel.value; renderLdSummaryTable(); loadLdDetail(); };
+  }
+  renderLdMeta(data);
+  renderLdSummaryTable();
+  loadLdDetail(); // 第二层（非阻塞）
+}
+
+function renderLdMeta(data) {
+  const el = document.getElementById('ld-meta'); if (!el || !data) return;
+  let html = '<span>' + t('ld.validCount', '有效样本 {n}', { n: data.valid_count }) + '</span>';
+  if (data.excluded_count) html += '<span>' + t('ld.excludedCount', '已排除 {n}', { n: data.excluded_count }) + '</span>';
+  if (data.excluded_currency_count) html += '<span>' + t('ld.excludedCurrency', '有 {n} 个非 RMB 批次未参与成本比较', { n: data.excluded_currency_count }) + '</span>';
+  el.innerHTML = html;
+}
+
+function renderLdSummaryTable() {
+  const el = document.getElementById('ld-table'); if (!el) return;
+  const rows = (_ldSummary && _ldSummary.rows) || [];
+  let view = rows;
+  if (_ldState.country !== 'all') view = view.filter(r => r.country === _ldState.country);
+  if (_ldState.transport !== 'all') view = view.filter(r => r.transport === _ldState.transport);
+  if (!view.length) { el.innerHTML = '<div class="ld-empty">' + t('ld.empty', '暂无已完成物流批次数据') + '</div>'; return; }
+  const head = '<tr><th>' + t('ld.col.country', '国家') + '</th><th>' + t('ld.col.transport', '运输方式') + '</th><th>' + t('ld.col.primary', '当前首选货代') + '</th><th>' + t('ld.col.secondary', '备选货代') + '</th><th>' + t('ld.col.unitCost', '单位运费') + '</th><th>' + t('ld.col.normalDays', '正常多久到') + '</th><th>' + t('ld.col.conservativeDays', '保守按多久准备') + '</th><th>' + t('ld.col.stability', '稳定性') + '</th><th>' + t('ld.col.decision', '决策建议') + '</th></tr>';
+  const body = view.map(r => {
+    const tLabel = t('ld.transport.' + r.transport, r.transport);
+    const p = r.primary || r.normal_replenish;
+    const s = r.urgent_replenish;
+    const primaryName = p ? esc(p.name) : '—';
+    const secondaryName = (s && s.name !== (p && p.name)) ? esc(s.name) : '—';
+    const unitCost = p ? ('¥' + p.unit_cost + ' ' + r.unit) : (r.forwarders[0] ? ('¥' + r.forwarders[0].unit_cost + ' ' + r.unit) : '—');
+    const normalDays = p ? (p.normal_days + '天') : (r.forwarders[0] && r.forwarders[0].normal_days != null ? r.forwarders[0].normal_days + '天' : t('ld.noConservative', '样本不足'));
+    const consDays = p ? (p.has_conservative ? p.conservative_days + '天' : t('ld.noConservative', '样本不足')) : t('ld.noConservative', '样本不足');
+    const stab = (p && p.stability_ready) ? '—' : t('ld.stabilityInsufficient', '样本不足');
+    const lowCls = r.sample_adequate ? '' : ' class="ld-low-row"';
+    const lowTag = r.sample_adequate ? '' : ' <span class="ld-lowsample">' + t('ld.sampleInsufficient', '数据较少，仅供参考') + '</span>';
+    return '<tr' + lowCls + '><td>' + esc(r.country) + '</td><td>' + tLabel + '</td><td>' + primaryName + '</td><td>' + secondaryName + '</td><td>' + unitCost + '</td><td>' + normalDays + '</td><td>' + consDays + '</td><td>' + stab + '</td><td>' + ldVerdictText(r) + lowTag + '</td></tr>';
+  }).join('');
+  el.innerHTML = '<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table">' + head + body + '</table></div>';
+}
+
+function ldVerdictText(row) {
+  switch (row.verdict_code) {
+    case 'only_forwarder': return t('ld.onlyForwarder', '当前仅有 {name} 历史数据', { name: row.forwarders[0] ? row.forwarders[0].name : '—' });
+    case 'record_both': return t('ld.recordBoth', '当前记录：{name} 更便宜且更快', { name: row.primary.name });
+    case 'cheaper_faster': return t('ld.cheaperFaster', '首选 {name}（更便宜且更快）', { name: row.primary.name });
+    case 'record_lower_cost': return t('ld.recordLowerCost', '当前记录：{name} 成本更低', { name: row.primary.name });
+    case 'record_faster': return t('ld.recordFaster', '当前记录：{name} 更快', { name: row.primary.name });
+    case 'split': {
+      const n = row.normal_replenish, u = row.urgent_replenish;
+      let base = t('ld.splitNormal', '常规补货：{name}', { name: n.name }) + '；' +
+        t('ld.splitUrgent', '紧急补货：{name}', { name: u.name });
+      if (u.delta_cost != null) base += '（每' + row.unit + '多花 ¥' + u.delta_cost + '，但快 ' + u.delta_days + ' 天）';
+      return base;
+    }
+    default: return '';
+  }
+}
+
+function ldDeriveDetailCombo() {
+  const rows = (_ldSummary && _ldSummary.rows) || [];
+  if (!rows.length) return null;
+  let c = _ldState.country !== 'all' ? _ldState.country : rows[0].country;
+  let tp = _ldState.transport !== 'all' ? _ldState.transport : 'sea';
+  if (!rows.find(r => r.country === c && r.transport === tp)) {
+    const cr = rows.find(r => r.country === c);
+    if (cr) { tp = cr.transport; }
+    else { c = rows[0].country; tp = rows[0].transport; }
+  }
+  return { country: c, transport: tp };
+}
+
+async function loadLdDetail() {
+  const combo = ldDeriveDetailCombo();
+  const sub = document.getElementById('ld-chart-sub');
+  const hint = document.getElementById('ld-chart-hint');
+  if (!combo) {
+    const el = document.getElementById('ld-chart'); if (el) el.innerHTML = '<div class="ld-empty">' + t('ld.empty', '暂无已完成物流批次数据') + '</div>';
+    const cv = document.getElementById('ld-conclusion'); if (cv) cv.innerHTML = '';
+    if (sub) sub.textContent = ''; if (hint) hint.textContent = '';
+    return;
+  }
+  const token = ++_ldState.detailToken;
+  const tr = _ldState.timeRange;
+  const cacheKey = 'logistics-decision-detail|' + tr + '|' + combo.country + '|' + combo.transport;
+  const url = '/api/logistics-decision-detail?time_range=' + encodeURIComponent(tr) + '&country=' + encodeURIComponent(combo.country) + '&transport_type=' + encodeURIComponent(combo.transport);
+  if (sub) sub.textContent = combo.country + ' · ' + t('ld.transport.' + combo.transport, combo.transport);
+  if (hint) hint.textContent = _ldState.transport === 'all' ? t('ld.chartHintAll', '运输方式选「全部」时对比图默认显示海运，切换上方运输方式可查看空运') : '';
+  let data;
+  try { data = await api(url, 'GET', null, { cacheKey: cacheKey, signature: url, ttl: 60000 }); }
+  catch (e) { const el = document.getElementById('ld-chart'); if (el) el.innerHTML = ldErrState(e.message); return; }
+  if (token !== _ldState.detailToken) return; // 旧请求防护
+  renderLdChart(data, combo);
+  renderLdConclusion(data, combo);
+}
+
+function renderLdChart(data, combo) {
+  const el = document.getElementById('ld-chart'); if (!el) return;
+  const row = (data.rows && data.rows[0]) || null;
+  if (!row) { el.innerHTML = '<div class="ld-empty">' + t('ld.empty', '暂无已完成物流批次数据') + '</div>'; return; }
+  el.innerHTML = buildLdScatter(row, combo);
+}
+
+function buildLdScatter(row, combo) {
+  const fs = row.forwarders || [];
+  if (!fs.length) return '<div class="ld-empty">' + t('ld.empty', '暂无已完成物流批次数据') + '</div>';
+  const isSea = combo.transport === 'sea';
+  const W = 680, H = 360, ml = 58, mr = 22, mt = 20, mb = 46;
+  const pw = W - ml - mr, ph = H - mt - mb;
+  const xs = fs.map(f => f.unit_cost).filter(v => v != null);
+  const ys = fs.map(f => f.normal_days).filter(v => v != null);
+  if (!xs.length || !ys.length) return '<div class="ld-empty">数据不足</div>';
+  let minX = Math.min.apply(null, xs), maxX = Math.max.apply(null, xs);
+  let minY = Math.min.apply(null, ys), maxY = Math.max.apply(null, ys);
+  if (minX === maxX) { minX = minX * 0.9; maxX = (maxX * 1.1) || (minX + 1); }
+  if (minY === maxY) { minY = Math.max(0, minY - 2); maxY = maxY + 2; }
+  const padX = (maxX - minX) * 0.15, padY = (maxY - minY) * 0.15;
+  minX -= padX; maxX += padX; minY = Math.max(0, minY - padY); maxY += padY;
+  const xPos = v => ml + (v - minX) / (maxX - minX) * pw;
+  const yPos = v => mt + ph - (v - minY) / (maxY - minY) * ph;
+  let svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" style="max-width:680px">';
+  svg += '<line x1="' + ml + '" y1="' + mt + '" x2="' + ml + '" y2="' + (mt + ph) + '" stroke="#e6e8eb"/>';
+  svg += '<line x1="' + ml + '" y1="' + (mt + ph) + '" x2="' + (ml + pw) + '" y2="' + (mt + ph) + '" stroke="#e6e8eb"/>';
+  svg += '<text x="' + (ml + 8) + '" y="' + (mt + 14) + '" font-size="11" fill="#34c759">' + t('ld.quadrant.cheapFast', '便宜又快') + '</text>';
+  svg += '<text x="' + (ml + pw - 8) + '" y="' + (mt + ph - 8) + '" text-anchor="end" font-size="11" fill="#ff3b30">' + t('ld.quadrant.expensiveSlow', '又贵又慢') + '</text>';
+  const xLabel = isSea ? t('ld.axis.x.cbm', '运费 ¥/CBM（越左越便宜）') : t('ld.axis.x.kg', '运费 ¥/KG（越左越便宜）');
+  svg += '<text x="' + (ml + pw / 2) + '" y="' + (H - 10) + '" text-anchor="middle" font-size="11" fill="#646a73">' + esc(xLabel) + '</text>';
+  svg += '<text x="14" y="' + (mt + ph / 2) + '" text-anchor="middle" font-size="11" fill="#646a73" transform="rotate(-90 14 ' + (mt + ph / 2) + ')">' + esc(t('ld.axis.y', '正常到货天数（越下越快）')) + '</text>';
+  fs.forEach(f => {
+    const x = xPos(f.unit_cost), y = yPos(f.normal_days);
+    let color = '#9aa0a6';
+    if (f.not_recommended) color = '#ff3b30';
+    else if ((row.primary && f.name === row.primary.name) || (row.normal_replenish && f.name === row.normal_replenish.name) || (row.urgent_replenish && f.name === row.urgent_replenish.name)) color = '#34c759';
+    svg += '<circle cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="8" fill="' + color + '" fill-opacity="0.85"/>';
+    if (f.not_recommended) svg += '<circle cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="11" fill="none" stroke="#ff3b30" stroke-width="1.5"/>';
+    const lx = x + 12, ly = y + 4;
+    svg += '<text x="' + lx.toFixed(1) + '" y="' + ly.toFixed(1) + '" font-size="12" fill="#1d1d1f" font-weight="' + (color === '#34c759' ? '600' : '400') + '">' + esc(f.name) + '</text>';
+    svg += '<text x="' + lx.toFixed(1) + '" y="' + (ly + 15).toFixed(1) + '" font-size="10" fill="#8a9099">¥' + f.unit_cost + (isSea ? '/CBM' : '/KG') + ' · ' + f.normal_days + '天</text>';
+  });
+  svg += '</svg>';
+  return svg;
+}
+
+function renderLdConclusion(data, combo) {
+  const el = document.getElementById('ld-conclusion'); if (!el) return;
+  const row = (data.rows && data.rows[0]) || null;
+  if (!row) { el.innerHTML = ''; return; }
+  const tLabel = t('ld.transport.' + combo.transport, combo.transport);
+  let html = '<div class="ld-route"><span class="ld-rec-dot"></span>' + esc(combo.country) + ' · ' + tLabel + '</div>';
+  const nr = row.normal_replenish || row.primary;
+  if (nr) {
+    html += '<div class="ld-line"><span class="ld-tag-rec">' + t('ld.splitNormal', '常规补货：{name}', { name: nr.name }) + '</span>';
+    html += ' · ¥' + nr.unit_cost + ' ' + row.unit + ' · ' + t('ld.normalDays', '正常多久到') + ' ' + nr.normal_days + '天';
+    html += ' · ' + t('ld.conservativeDays', '保守按多久准备') + ' ' + (nr.has_conservative ? nr.conservative_days + '天' : t('ld.noConservative', '样本不足')) + '</div>';
+  }
+  const ur = row.urgent_replenish;
+  if (ur && ur.name !== (nr && nr.name)) {
+    html += '<div class="ld-line"><span class="ld-tag-rec">' + t('ld.splitUrgent', '紧急补货：{name}', { name: ur.name }) + '</span>';
+    html += ' · ¥' + ur.unit_cost + ' ' + row.unit + ' · ' + ur.normal_days + '天';
+    if (ur.delta_cost != null) html += ' · 每' + row.unit + '多花 ¥' + ur.delta_cost + '，快 ' + ur.delta_days + '天';
+    html += '</div>';
+  }
+  html += '<div class="ld-verdict">' + ldVerdictText(row) + (row.sample_adequate ? '' : ' <span class="ld-lowsample">' + t('ld.sampleInsufficient', '数据较少，仅供参考') + '</span>') + '</div>';
+  const bad = row.forwarders.filter(f => f.not_recommended);
+  if (bad.length) html += '<div class="ld-line" style="margin-top:6px"><span class="ld-bad">' + t('ld.notRecommended', '不建议') + '：</span> ' + bad.map(f => esc(f.name)).join('、') + '</div>';
+  if (data.excluded_currency_count) html += '<div class="ld-note">' + t('ld.excludedCurrency', '有 {n} 个非 RMB 批次未参与成本比较', { n: data.excluded_currency_count }) + '</div>';
+  el.innerHTML = html;
 }
 
 // ==================== 库存盘点 ====================
