@@ -193,6 +193,8 @@ async function api(url,method='GET',body=null,opts){
     }
   }catch(e){ /* 缓存层异常 → 透传网络 */ }
   var d = await apiRaw(url, method, body);
+  // RP-WARM-RETURN-P1：非 GET 成功后，外部数据变更需让补货 warm view 失效（RP 自身保存除外）
+  if(method&&method!=='GET'){ try{ rpWarmInvalidateForMutation(url); }catch(e){} }
   try{
     if((!method || method==='GET')){
       if(opts.cacheKey && window.AppStore && d && !d.error){
@@ -263,6 +265,7 @@ function doLogout(){
     currentUser=null;
     // 会话级缓存清空：logout / 用户切换不得泄露旧页面数据（correctness gate C11/C12）
     try{ if(window.AppStore) window.AppStore.clearSession(); }catch(e){}
+    try{ rpInvalidateWarmViews(); }catch(e){}   // RP-WARM-RETURN-P1：logout 清空补货 warm view
     const lp=document.getElementById('login-page'); if(lp) lp.style.display='flex';
     const pp=document.getElementById('pending-page'); if(pp) pp.style.display='none';
     const app=document.getElementById('app'); if(app) app.style.display='none';
@@ -6534,9 +6537,13 @@ function initRpTableDrag(tabKey, container){
 }
 
 async function renderReplenishment(){
+  // RP-WARM-RETURN-P1：warm re-entry = 已有 ready snapshot + 可复用 view + 无 invalidation。
+  // 此路径不清 data/view cache、不等 preferences GET、不重渲染表格，直接恢复上一次 view。
+  var _warmT0=RP_PERF?performance.now():0;
+  var _warm=rpWarmEntryState();
+  rpPerfLog({warm_entry:_warm?'HIT':'MISS'});
   rpTab = 'total';
-  rpClearDataCache();
-  rpClearAllViews();
+  if(!_warm){ rpClearDataCache(); rpClearAllViews(); }
   document.getElementById('content-inner').innerHTML=t('html.renderReplenishment', `<div id="flash-container"></div><div id="rp-collapsible"><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>国家</label><select id="rp-c" onchange="onRpCountryChange()"><option value="">全部</option></select></div><div class="filter-group"><label>仓库</label><select id="rp-w" onchange="loadRpSummary();loadRp()"><option value="">全部</option></select></div><div class="filter-group"><label>品牌</label><select id="rp-b" onchange="onRpBrandChange()"><option value="">全部</option></select></div><div class="filter-actions">{v1}<button class="btn btn-default btn-sm" onclick="exportRpExcel()">⬇ 导出Excel</button><button class="btn btn-default btn-sm" onclick="openRpParams()">⚙ 预测参数设置</button></div></div></div></div><div class="tab-bar" style="margin:12px 20px 0;display:flex;justify-content:space-between;align-items:center"><div style="display:flex"><div class="tab-item active" onclick="switchRpTab('total')">📊 总预测</div><div class="tab-item" onclick="switchRpTab('online')">🛒 线上预测</div><div class="tab-item" onclick="switchRpTab('offline')">🏪 线下预测</div></div><div style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-secondary)"><span>显示方式：</span><div class="rp-mode-switch"><button class="rp-mode-btn active" onclick="switchRpMode('monthly')">按月</button><button class="rp-mode-btn" onclick="switchRpMode('daily')">按天</button></div><button class="btn btn-default btn-sm rp-collapse-btn" id="rp-collapse-btn" onclick="toggleRpCollapse()" title="收起/展开 顶部筛选区与指标卡片">▾ 收起</button></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left" id="rp-tab-title">📊 SKU动销与订单预测（总预测）</div><div class="table-section-actions"><input type="text" id="rp-s" placeholder="SKU搜索" onkeypress="if(event.key==='Enter')loadRp()" style="width:140px;height:28px;padding:4px 8px;border:1px solid #d0d7de;border-radius:4px;font-size:13px;margin-right:8px">{v2}{v3}<button class="btn btn-default btn-sm" id="rp-field-config-btn" onclick="openRpFieldConfig(rpTab)" title="字段显示与排序" style="margin-left:8px">⚙ 字段配置</button></div></div><div id="rp-table"></div></div>`, {v1: hasPermission('replenishment_edit')?t('gen.L3813.1','<button class="btn btn-success btn-sm rp-gen-btn" onclick="genRp()">🔄 重新计算</button>'):'', v2: hasPermission('replenishment_edit')?t('gen.L3813.2','<button class="btn btn-success btn-sm rp-gen-btn" onclick="genRp()" style="margin-right:8px">🔄 重新计算</button>'):'', v3: hasPermission('po_create')?t('gen.L3813.3','<button class="btn btn-primary btn-sm" id="rp-po-btn" onclick="genPOModal()">🛒 生成PO</button>'):''});
   var rpFilterActions=document.querySelector('#rp-collapsible .filter-actions');
   if(rpFilterActions){
@@ -6560,7 +6567,13 @@ async function renderReplenishment(){
   var rpSearch=document.getElementById('rp-s');
   if(rpSearch)rpSearch.setAttribute('onkeypress',"if(event.key==='Enter'){onRpFilterChange();}");
   // 优先恢复语言切换期间的内存状态；否则读取账号级订单预测偏好。
-  if(!window.__rpFilterState){
+  // warm re-entry：直接用会话内存态（含 rpTab/rpMode/historical）→ 零 GET、不阻塞首屏。
+  if(_warm){
+    window.__rpFilterState={country:_warm.country,warehouse:_warm.warehouse,brand:_warm.brand,
+      search:_warm.search,sales_status:_warm.sales_status,lifecycle_status:_warm.lifecycle_status,
+      rpTab:_warm.rpTab,rpMode:_warm.rpMode};
+    if(_warm.historical)window._rpHistoricalSalesConfig=_warm.historical;
+  }else if(!window.__rpFilterState){
     var savedPreferences=await loadRpPreferences();
     if(savedPreferences)window.__rpFilterState=savedPreferences;
   }
@@ -6575,7 +6588,21 @@ async function renderReplenishment(){
   // RP-SNAPSHOT：页面框架已上屏，立即启动 snapshot bootstrap（并行 4 请求 + loading UI）；
   // ready 后高频筛选全部本地化。同会话再次进入且 snapshot 仍 ready → 直接复用（不发请求、无 loading）。
   rpBootstrapSnapshot();
-  if(loadHistoricalSalesConfig())fetchHistoricalSales();
+  if(_warm){
+    // 把上一次的 DOM view 重新挂回新建的 #rp-table，再走现有缓存命中路径
+    rpReattachCachedViews();
+    var _wvk=rpCurrentViewKey();
+    var _wv=window._rpCache.views[_wvk];
+    if(_wv&&_wv.signature===rpSignature(_wvk)){
+      rpShowCachedViewOrLoad();   // 命中 → 直接上屏；manual 建议值由 rpReconcileEffectiveValues 校正
+      rpPerfLog({warm_restore:'HIT',viewKey:_wvk,blocking_get:0,table_visible_ms:Math.round((performance.now()-_warmT0)*100)/100});
+    }else{
+      rpPerfLog({warm_restore:'MISS',reason:'view_signature_mismatch'});
+      if(loadHistoricalSalesConfig())fetchHistoricalSales();
+      else loadRp();
+    }
+  }
+  else if(loadHistoricalSalesConfig())fetchHistoricalSales();
   else loadRp();
   updateRpFieldConfigBtn(rpTab||'total');
   applyRpCollapse();
@@ -6797,6 +6824,7 @@ async function resetRpFilters(){
     if(el)el.value='';
   });
   window.__rpFilterState=null;
+  window.__rpSessionState=null;   // RP-WARM-RETURN-P1：重置筛选 = 数据视图变更，warm view 失效
   rpClearDataCache();
   rpClearAllViews();
   await onRpCountryChange(true);
@@ -6946,6 +6974,7 @@ function rpShowView(viewKey){
   });
   var target=document.getElementById('rp-view-'+viewKey);
   if(target)target.style.display='block';
+  rpCaptureSessionState(viewKey);
 }
 function rpStoreViewNode(viewKey,container){
   window._rpCache.views[viewKey]={node:container,signature:rpSignature(viewKey),scrollTop:0,scrollLeft:0};
@@ -6953,6 +6982,7 @@ function rpStoreViewNode(viewKey,container){
   if(idx>=0)window._rpCache.viewOrder.splice(idx,1);
   window._rpCache.viewOrder.push(viewKey);
   rpEvictOldViews();
+  rpCaptureSessionState(viewKey);
 }
 function rpTouchView(viewKey){
   var idx=window._rpCache.viewOrder.indexOf(viewKey);
@@ -7243,6 +7273,77 @@ async function rpShowCachedViewOrLoad(){
   await loadRpWithHistorical();
   if(RP_PERF){ rpPerfEnd(window._rpPerfP,{result:'VIEW_MISS', viewKey:viewKey}); }
 }
+// ==================== RP WARM-RETURN-P1（跨模块 warm re-entry）====================
+// 原则：**navigation ≠ invalidation**。切走再切回不得 clear；只有「真正的数据失效」才 clear。
+// 完全复用现有架构（_rpCache.views + viewKey + rpSignature + rpShowCachedViewOrLoad），
+// 不新增第二套缓存、不改业务口径、不改后端、不改订单预测计算。
+// RP-WARM-BEGIN（测试切片标记：vm harness 按此标记抽取真实函数）
+function rpPerfLog(obj){ if(RP_PERF){ try{ console.log('[RP PERF]', JSON.stringify(obj)); }catch(e){} } }
+// 会话内「屏幕上真实显示的 view」的稳定描述（tab/mode/筛选/historical/viewKey）。
+// 由 rpStoreViewNode（新建 view）与 rpShowView（切到已缓存 view）两处维护，始终 = 当前可见 view。
+window.__rpSessionState=null;
+function rpCaptureSessionState(viewKey){
+  try{
+    if(!viewKey) return null;
+    var st={
+      viewKey:viewKey,
+      rpTab:(typeof rpTab!=='undefined')?(rpTab||'total'):'total',
+      rpMode:(typeof rpMode!=='undefined')?(rpMode||'monthly'):'monthly',
+      country:rpVal('rp-c'), warehouse:rpVal('rp-w'), brand:rpVal('rp-b'),
+      search:rpVal('rp-s'), sales_status:rpVal('rp-status'), lifecycle_status:rpVal('rp-lifecycle'),
+      historical:(window._rpHistoricalSalesConfig||null)
+    };
+    window.__rpSessionState=st;
+    return st;
+  }catch(e){ return null; }
+}
+// warm 判定：会话态存在 + snapshot ready + 对应 view 仍存活且 signature 未被标 stale
+function rpWarmEntryState(){
+  try{
+    if(window.__rpWarmDisabled) return null;
+    var st=window.__rpSessionState;
+    if(!st||!st.viewKey) return null;
+    var s=window._rpSnapshot;
+    if(!s||s.status!=='ready') return null;
+    var views=window._rpCache&&window._rpCache.views;
+    var v=views?views[st.viewKey]:null;
+    if(!v||!v.node) return null;
+    if(v.signature!==rpSignature(st.viewKey)) return null;
+    return st;
+  }catch(e){ return null; }
+}
+// 把仍存活、但被 content-inner innerHTML 重建 detach 掉的 cached view 重新挂回当前 #rp-table
+function rpReattachCachedViews(){
+  var host=document.getElementById('rp-table');
+  if(!host) return 0;
+  var n=0;
+  try{
+    Object.keys(window._rpCache.views).forEach(function(k){
+      var v=window._rpCache.views[k];
+      if(v&&v.node&&v.node.parentNode!==host){ host.appendChild(v.node); n++; }
+    });
+  }catch(e){}
+  return n;
+}
+// 真正的 invalidation 入口（logout / 外部 mutation / 数据事实变更）
+function rpInvalidateWarmViews(){
+  window.__rpSessionState=null;
+  try{ rpClearAllViews(); rpClearDataCache(); }catch(e){}
+}
+// 外部 mutation 失效：inventory / import / PI / CI / PL / sales 变化会让补货视图过期。
+// RP 自身保存（/api/replenishment-suggestions*）**不**清 view —— 手工作业值由
+// _rpManualStock + rpReconcileEffectiveValues 保证（R11 不回退）。
+function rpWarmInvalidateForMutation(url){
+  if(!url||typeof url!=='string') return false;
+  if(url.indexOf('/api/replenishment-suggestions')===0) return false;
+  var pats=['/api/inventory','/api/proforma-invoices','/api/commercial-invoices',
+    '/api/historical-commercial-invoices','/api/packing-lists','/api/sales'];
+  for(var i=0;i<pats.length;i++){
+    if(url.indexOf(pats[i])>=0){ rpInvalidateWarmViews(); return true; }
+  }
+  return false;
+}
+// RP-WARM-END
 // 读取某渠道某行(rid)的手动建议采购值：
 // 用 hasOwnProperty 严格区分「未设置」(返回 undefined) 与「显式输入 0」(返回 0)，
 // 防止用户输入 0 被系统值覆盖。
@@ -9826,6 +9927,7 @@ async function genRp(){
     }
     showToast(t('toast.suggestionsGenerated','已生成{count}条建议',{count:r.count}),'success');
     rpClearManualStock();
+    window.__rpSessionState=null;   // RP-WARM-RETURN-P1：重新计算 = 数据事实变更，warm view 失效
     rpClearDataCache();
     rpClearAllViews();
     // RP-SNAPSHOT：generate = 数据事实变更 → L0 全量失效并重新 bootstrap（loading UI 允许再次出现）
