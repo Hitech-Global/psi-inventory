@@ -367,8 +367,8 @@ const NAV_MODULES=[
     {id:'dashboard',key:'nav.dashboard',icon:'📊',label:t("nav.dashboard", "\u9996\u9875\u770b\u677f"),perm:'dashboard_view'},
   ]},
   {id:'inventory',key:'nav.inventory',label:t("nav.inventory", "\u5e93\u5b58\u7ba1\u7406"),items:[
-    {id:'skus',key:'nav.skus',icon:'🏷️',label:t("nav.skus", "SKU\u4e3b\u6570\u636e"),perm:'sku_view'},
     {id:'inventory',key:'nav.inventory_total',icon:'📦',label:t("nav.inventory_total","库存总表"),perm:'inventory_view'},
+    {id:'skus',key:'nav.skus',icon:'🏷️',label:t("nav.skus", "SKU\u4e3b\u6570\u636e"),perm:'sku_view'},
     {id:'consignment',key:'nav.consignment',icon:'🤝',label:t("nav.consignment","寄售库存"),perm:'inventory_view'},
     {id:'check',key:'nav.stock_check',icon:'🔍',label:t("nav.stock_check", "\u5e93\u5b58\u76d8\u70b9"),perm:'check_view'},
     {id:'stagnant',key:'nav.stagnant',icon:'⚠️',label:t("nav.stagnant", "\u5446\u6ede\u5206\u6790"),perm:'stagnant_view'},
