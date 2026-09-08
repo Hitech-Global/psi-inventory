@@ -12723,16 +12723,9 @@ function _syncOneFeeCategory(batch, ci, cat, currency, defaultPayee, createdBy, 
       if (costConfirmed) {
         throw { status: 409, code: 'CI_COST_CONFIRMED', message: '该CI费用已确认，不能继续新增/修改费用' };
       }
-      // CI-level dup check
-      var ciDup = queryOne(
-        'SELECT id, logistics_batch_id FROM ci_cost_items WHERE ci_id = ? AND cost_category = ? AND cost_subcategory = ? AND include_in_landing_cost = 1 AND logistics_batch_id != ? LIMIT 1',
-        [ci.id, cat.categoryCode, cat.subcategoryCode, batch.id]
-      );
-      if (ciDup) {
-        throw { status: 409, code: 'CI_COST_ITEM_DUPLICATE',
-                message: '该CI已存在相同类型的成本记录（来自其他物流批次）',
-                detail: { ci_id: ci.id, fee_type: cat.feeType, existing_batch_id: ciDup.logistics_batch_id } };
-      }
+      // 同一 CI 可合法关联多个物流批次（logistics_batches.related_ci_id 无 UNIQUE；ci_cost_items 无批次级唯一索引）。
+      // 成本记录按 logistics_batch_id / payable_items.source_id 隔离（见上方 payable/ciCost/disabledCiCost 查询），
+      // 因此严禁跨批次用 ci_id + cost_type 查重，否则会误拦「同 CI 拆到多个物流批次」的合法业务结构。
       var piResult = createPayableItemFromSource({
         sourceType: 'logistics', sourceId: batch.id, sourceNo: batch.batch_no,
         feeType: cat.feeType, categoryCode: cat.categoryCode, subcategoryCode: cat.subcategoryCode,

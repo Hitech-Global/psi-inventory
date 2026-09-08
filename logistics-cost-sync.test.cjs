@@ -1139,3 +1139,126 @@ describe('TEST 25: rejected PR + new pending PR → active PR blocks', () => {
     assert.strictEqual(payable.payable_amount_minor, 1360100, 'payable unchanged');
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TEST 26: 跨物流批次同 CI 成本误判 409 回归 (CI_COST_ITEM_DUPLICATE 移除)
+//   同一 CI 可合法关联多个物流批次（related_ci_id 无 UNIQUE；ci_cost_items 无批次级唯一索引）。
+//   成本记录按 logistics_batch_id / payable_items.source_id 隔离；删除跨批次 ci_id+cost_type 查重后，
+//   PUT 与 generate-cost-items（两者共用 syncLogisticsCostFactsCore）行为一致。
+// ─────────────────────────────────────────────────────────────────────────────
+describe('TEST 26: 跨物流批次同 CI 成本误判 409 回归 (CI_COST_ITEM_DUPLICATE 移除)', () => {
+  const CI_A = 'ci_xbatch_001';
+  const BATCH_A = 'lb_xbatch_A';
+  const BATCH_B = 'lb_xbatch_B';
+  const CI_B = 'ci_xbatch_002';
+  const BATCH_C = 'lb_xbatch_C';
+
+  beforeEach(() => {
+    resetDB();
+    seedCI(CI_A, 'CI-XB-A', {});
+    seedCI(CI_B, 'CI-XB-B', {});
+  });
+
+  // A: 同 batch + 同 CI + 同类型 → 幂等，不产生第二条重复记录
+  test('26-A 同 batch 再次同步 → 仅 1 payable + 1 ci_cost（无重复）', () => {
+    seedBatch(BATCH_A, 'LB-XB-A', CI_A, { freightCurrency: 'RMB', internationalFreight: 5000, feeStatus: 'unpaid' });
+    run(`UPDATE logistics_batches SET total_freight = 5000 WHERE id = ?`, [BATCH_A]);
+
+    const first = transaction(() => syncLogisticsCostFactsCore(getBatch(BATCH_A), { createdBy: 'u', payeeName: '' }));
+    assert.ok(first.synced.length > 0, 'first sync creates');
+
+    transaction(() => syncLogisticsCostFactsCore(getBatch(BATCH_A), { createdBy: 'u', payeeName: '' }));
+    assert.strictEqual(countActivePayables(BATCH_A, 'freight'), 1, '同 batch 仍只有 1 payable');
+    assert.strictEqual(countCurrentCiCost(BATCH_A, 'freight'), 1, '同 batch 仍只有 1 ci_cost');
+  });
+
+  // B: 不同 batch + 同 CI + 同类型 → 允许（原 409 误拦点，核心回归）
+  test('26-B 不同 batch 同 CI 同类型 → 允许，各自持有记录（不 409）', () => {
+    seedBatch(BATCH_A, 'LB-XB-A', CI_A, { freightCurrency: 'RMB', internationalFreight: 5000, feeStatus: 'unpaid' });
+    seedBatch(BATCH_B, 'LB-XB-B', CI_A, { freightCurrency: 'RMB', internationalFreight: 8000, feeStatus: 'unpaid' });
+    run(`UPDATE logistics_batches SET total_freight = 5000 WHERE id = ?`, [BATCH_A]);
+    run(`UPDATE logistics_batches SET total_freight = 8000 WHERE id = ?`, [BATCH_B]);
+
+    transaction(() => syncLogisticsCostFactsCore(getBatch(BATCH_A), { createdBy: 'u', payeeName: '' }));
+
+    let caught = null;
+    let resB = null;
+    try {
+      resB = transaction(() => syncLogisticsCostFactsCore(getBatch(BATCH_B), { createdBy: 'u', payeeName: '' }));
+    } catch (e) { caught = e; }
+
+    assert.strictEqual(caught, null, 'Batch B 保存不应抛 409（跨批次同 CI 合法）');
+    assert.ok(resB && resB.synced.length > 0, 'Batch B 应成功生成成本');
+
+    assert.strictEqual(countActivePayables(BATCH_A, 'freight'), 1, 'Batch A 有 1 payable');
+    assert.strictEqual(countCurrentCiCost(BATCH_A, 'freight'), 1, 'Batch A 有 1 ci_cost');
+    assert.strictEqual(countActivePayables(BATCH_B, 'freight'), 1, 'Batch B 有 1 payable');
+    assert.strictEqual(countCurrentCiCost(BATCH_B, 'freight'), 1, 'Batch B 有 1 ci_cost');
+
+    const totalPayable = Number(queryOne(`SELECT COUNT(*) AS c FROM payable_items WHERE source_type='logistics' AND fee_type='freight'`).c);
+    const totalCiCost = Number(queryOne(`SELECT COUNT(*) AS c FROM ci_cost_items WHERE cost_subcategory='freight' AND include_in_landing_cost=1`).c);
+    assert.strictEqual(totalPayable, 2, '两个批次各 1 条 payable，共 2');
+    assert.strictEqual(totalCiCost, 2, '两个批次各 1 条 ci_cost，共 2');
+  });
+
+  // C: 编辑 Batch A 自身（在 Batch B 已存在同 CI 成本后）→ 正常保存，不命中自身误判
+  test('26-C Batch B 已存在后，再次编辑 Batch A 自身 → 正常幂等', () => {
+    seedBatch(BATCH_A, 'LB-XB-A', CI_A, { freightCurrency: 'RMB', internationalFreight: 5000, feeStatus: 'unpaid' });
+    seedBatch(BATCH_B, 'LB-XB-B', CI_A, { freightCurrency: 'RMB', internationalFreight: 8000, feeStatus: 'unpaid' });
+    run(`UPDATE logistics_batches SET total_freight = 5000 WHERE id = ?`, [BATCH_A]);
+    run(`UPDATE logistics_batches SET total_freight = 8000 WHERE id = ?`, [BATCH_B]);
+    transaction(() => syncLogisticsCostFactsCore(getBatch(BATCH_A), { createdBy: 'u', payeeName: '' }));
+    transaction(() => syncLogisticsCostFactsCore(getBatch(BATCH_B), { createdBy: 'u', payeeName: '' }));
+
+    let caught = null;
+    try {
+      transaction(() => syncLogisticsCostFactsCore(getBatch(BATCH_A), { createdBy: 'u', payeeName: '' }));
+    } catch (e) { caught = e; }
+    assert.strictEqual(caught, null, '编辑 Batch A 自身不应抛 409');
+    assert.strictEqual(countActivePayables(BATCH_A, 'freight'), 1, 'Batch A 仍仅 1 payable');
+    assert.strictEqual(countCurrentCiCost(BATCH_A, 'freight'), 1, 'Batch A 仍仅 1 ci_cost');
+  });
+
+  // D: 不同 CI → 不受影响（各自独立）
+  test('26-D 不同 CI 的批次 → 各自独立，互不影响', () => {
+    seedBatch(BATCH_A, 'LB-XB-A', CI_A, { freightCurrency: 'RMB', internationalFreight: 5000, feeStatus: 'unpaid' });
+    seedBatch(BATCH_C, 'LB-XB-C', CI_B, { freightCurrency: 'RMB', internationalFreight: 7000, feeStatus: 'unpaid' });
+    run(`UPDATE logistics_batches SET total_freight = 5000 WHERE id = ?`, [BATCH_A]);
+    run(`UPDATE logistics_batches SET total_freight = 7000 WHERE id = ?`, [BATCH_C]);
+    transaction(() => syncLogisticsCostFactsCore(getBatch(BATCH_A), { createdBy: 'u', payeeName: '' }));
+    transaction(() => syncLogisticsCostFactsCore(getBatch(BATCH_C), { createdBy: 'u', payeeName: '' }));
+    assert.strictEqual(countActivePayables(BATCH_A, 'freight'), 1, 'Batch A 1 payable');
+    assert.strictEqual(countActivePayables(BATCH_C, 'freight'), 1, 'Batch C 1 payable');
+  });
+
+  // E: generate-cost-items 路径一致性（该路由内部即调用 syncLogisticsCostFactsCore）—— 同 CI 跨批次不冲突
+  test('26-E generate-cost-items 等价调用（sync core）对跨批次同 CI → 不产生 CI_COST_ITEM_DUPLICATE', () => {
+    seedBatch(BATCH_A, 'LB-XB-A', CI_A, { freightCurrency: 'RMB', internationalFreight: 5000, feeStatus: 'unpaid' });
+    seedBatch(BATCH_B, 'LB-XB-B', CI_A, { freightCurrency: 'RMB', internationalFreight: 8000, feeStatus: 'unpaid' });
+    run(`UPDATE logistics_batches SET total_freight = 5000 WHERE id = ?`, [BATCH_A]);
+    run(`UPDATE logistics_batches SET total_freight = 8000 WHERE id = ?`, [BATCH_B]);
+    // PUT 路径先生成 A
+    transaction(() => syncLogisticsCostFactsCore(getBatch(BATCH_A), { createdBy: 'u', payeeName: '' }));
+    // generate-cost-items 路径再生成 B（同一 core 函数，差异仅事务包裹）
+    let code = null;
+    try {
+      transaction(() => syncLogisticsCostFactsCore(getBatch(BATCH_B), { createdBy: 'u', payeeName: '' }));
+    } catch (e) { code = e && e.code; }
+    assert.notStrictEqual(code, 'CI_COST_ITEM_DUPLICATE', 'generate-cost-items 路径不得产生跨批次误判 409');
+    assert.strictEqual(countActivePayables(BATCH_B, 'freight'), 1, 'Batch B 经 generate-cost-items 路径成功生成');
+  });
+
+  // F: 保留 CI_COST_CONFIRMED 守卫（确认后不允许新增/修改）—— 证明移除的是 dup 守卫而非 confirmed 守卫
+  test('26-F CI 已确认 → 仍抛 CI_COST_CONFIRMED（保留的守卫正常）', () => {
+    const CI_F = 'ci_xbatch_F';
+    const BATCH_F = 'lb_xbatch_F';
+    seedCI(CI_F, 'CI-XB-F', { costConfirmed: 1 });
+    seedBatch(BATCH_F, 'LB-XB-F', CI_F, { freightCurrency: 'RMB', internationalFreight: 5000, feeStatus: 'unpaid' });
+    run(`UPDATE logistics_batches SET total_freight = 5000 WHERE id = ?`, [BATCH_F]);
+    let code = null;
+    try {
+      transaction(() => syncLogisticsCostFactsCore(getBatch(BATCH_F), { createdBy: 'u', payeeName: '' }));
+    } catch (e) { code = e && e.code; }
+    assert.strictEqual(code, 'CI_COST_CONFIRMED', '确认后守卫仍在');
+  });
+});
