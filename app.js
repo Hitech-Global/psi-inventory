@@ -4672,7 +4672,8 @@ async function loadInv(){
       // 性能层：库存总表主数据走页面快照缓存（signature=完整筛选 URL；命中立即渲染，后台 stale-while-revalidate）
       api(_invUrl, 'GET', null, {cacheKey:'inventory', ttl:30000, signature:_invUrl}),
       // 汇率获取容错：即使汇率接口/外部服务异常，库存表仍正常打开（缺失汇率仅显示为 -，不阻断整页）
-      api('/api/inventory/currency-rates').catch(function(){ return {countries:[],rates:{},rate_date:'',used_fallback:false}; })
+      // 性能层：currency-rates 为 session 级稳定数据，加 page 缓存（warm return 不再重拉，消除 secondary blocking GET）
+      api('/api/inventory/currency-rates', 'GET', null, {cacheKey:'inv-currency-rates', ttl:300000}).catch(function(){ return {countries:[],rates:{},rate_date:'',used_fallback:false}; })
     ]);
     if(mySeq !== _invLoadSeq) return; // 丢弃过期响应：避免快速切换筛选时旧请求覆盖新结果
     window._invRateInfo = rateInfo; // 缓存供导出使用
@@ -4850,7 +4851,10 @@ async function refreshInvFilterOptions(){
   if(!fc||!fw||!fb) return;
   var c=fc.value||'', w=fw.value||'', b=fb.value||'';
   try{
-    var opts=await api('/api/inventory/filter-options?country='+encodeURIComponent(c)+'&warehouse='+encodeURIComponent(w)+'&brand='+encodeURIComponent(b));
+    // 性能层：filter-options 为 inventory 专属且随筛选条件变化；URL 含 country/warehouse/brand 作为 signature，
+    // 相同筛选 warm return 命中缓存（0 blocking GET），切换筛选时 signature 变化自然 miss 重拉（行为不变）
+    var _foUrl='/api/inventory/filter-options?country='+encodeURIComponent(c)+'&warehouse='+encodeURIComponent(w)+'&brand='+encodeURIComponent(b);
+    var opts=await api(_foUrl, 'GET', null, {cacheKey:'inv-filter-options', ttl:300000});
     _rebuildInvSelect(fc, opts.countries, c);
     _rebuildInvSelect(fw, opts.warehouses, w);
     _rebuildInvSelect(fb, opts.brands, b);
