@@ -10619,13 +10619,20 @@ app.get('/api/logistics-batches', requireApiPermission('logistics_view'), asyncH
     + 'CASE WHEN lb.related_ci_id IS NULL OR lb.related_ci_id = \'\' THEN NULL ELSE (SELECT COALESCE(SUM(cii.shipped_qty), 0) FROM commercial_invoice_items cii WHERE cii.ci_id = lb.related_ci_id) END AS related_ci_total_quantity, '
     + 'CASE WHEN lb.actual_arrival_date IS NOT NULL AND lb.actual_arrival_date != \'\' AND ci.actual_ship_date IS NOT NULL AND ci.actual_ship_date != \'\' '
     + 'THEN CAST(julianday(lb.actual_arrival_date) - julianday(ci.actual_ship_date) AS INTEGER) ELSE NULL END AS actual_transit_days, '
-    + '(SELECT COALESCE(SUM(pli.total_qty * ci_agg.unit_price), 0) '
-    + 'FROM packing_lists pl2 JOIN packing_list_items pli ON pli.pl_id = pl2.id '
-    + 'JOIN (SELECT sku_code, COALESCE(SUM(ci_amount) / NULLIF(SUM(shipped_qty), 0), 0) AS unit_price '
-    + 'FROM commercial_invoice_items WHERE ci_id = lb.related_ci_id GROUP BY sku_code) ci_agg ON ci_agg.sku_code = pli.sku_code '
-    + 'WHERE pl2.logistics_batch_id = lb.id) AS cargo_value '
+    + 'COALESCE(bv.cargo_value, 0) AS cargo_value '
     + 'FROM logistics_batches lb LEFT JOIN packing_lists pl ON pl.logistics_batch_id = lb.id '
-    + 'LEFT JOIN commercial_invoices ci ON lb.related_ci_id = ci.id WHERE 1=1';
+    + 'LEFT JOIN commercial_invoices ci ON lb.related_ci_id = ci.id '
+    // FREIGHT-RATIO-02：货值 set-based 预聚合，避免每批次 correlated 全表扫描。
+    //   1) CI 按 (ci_id, sku_code) 聚合加权单价 = SUM(ci_amount)/SUM(shipped_qty)（与系统 CI/WAC 口径一致）；
+    //   2) PL+PLI 按 (logistics_batch_id, sku_code) 聚合本批次实际数量；
+    //   3) JOIN key = (ci_id, sku_code)，SUM(数量×单价) 按 logistics_batch_id 汇总。
+    //   CI 同 SKU 多行先聚合再 JOIN，杜绝行爆炸与货值倍增。
+    + 'LEFT JOIN (SELECT pl2.logistics_batch_id, SUM(pli.total_qty * ci_agg.unit_price) AS cargo_value '
+    + 'FROM packing_lists pl2 JOIN packing_list_items pli ON pli.pl_id = pl2.id '
+    + 'JOIN (SELECT ci_id, sku_code, COALESCE(SUM(ci_amount) / NULLIF(SUM(shipped_qty), 0), 0) AS unit_price '
+    + 'FROM commercial_invoice_items GROUP BY ci_id, sku_code) ci_agg '
+    + 'ON ci_agg.ci_id = pl2.related_ci_id AND ci_agg.sku_code = pli.sku_code '
+    + 'GROUP BY pl2.logistics_batch_id) bv ON bv.logistics_batch_id = lb.id WHERE 1=1';
   const params = [];
   if (forwarder_id) { sql += ' AND lb.forwarder_id = ?'; params.push(forwarder_id); }
   if (keyword) { sql += ' AND (lb.batch_no LIKE ? OR lb.forwarder_name LIKE ? OR lb.related_ci_no LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`); }
@@ -10671,58 +10678,17 @@ app.get('/api/logistics-batches', requireApiPermission('logistics_view'), asyncH
     return true;
   });
 
-  // FREIGHT-RATIO-01：运费/货值 = 综合运费 ÷ 本批次实际运输货值 × 100%
-  // 分子分母必须同币种：货值以 CI 原币种计算；若 freight_currency ≠ ci_currency，
-  // 复用现有 exchange_rates 权威口径（精确日期 → 最新可用，正反向互查）换算运费到 CI 币种。
-  // 无汇率/货值为 0 时返回 null（前端展示 '-'）。按币种对缓存，避免 N+1。
-  const fxRateCache = new Map();
-  function resolveFxRateForList(fromCur, toCur, rateDate) {
-    if (!fromCur || !toCur) return null;
-    const f = fromCur.toUpperCase(), t = toCur.toUpperCase();
-    if (f === t) return 1;
-    const key = f + '|' + t;
-    if (fxRateCache.has(key)) return fxRateCache.get(key);
-    const rt = 'realtime';
-    let row = null;
-    if (rateDate) {
-      row = queryOne('SELECT rate FROM exchange_rates WHERE from_currency = ? AND to_currency = ? AND rate_date = ? AND rate_type = ? ORDER BY created_at DESC LIMIT 1', [f, t, rateDate, rt]);
-    }
-    if (!row) row = queryOne('SELECT rate FROM exchange_rates WHERE from_currency = ? AND to_currency = ? AND rate_type = ? ORDER BY rate_date DESC, created_at DESC LIMIT 1', [f, t, rt]);
-    let rate = null;
-    if (row && Number(row.rate) > 0) {
-      rate = Number(row.rate);
-    } else {
-      let rev = null;
-      if (rateDate) {
-        rev = queryOne('SELECT rate FROM exchange_rates WHERE from_currency = ? AND to_currency = ? AND rate_date = ? AND rate_type = ? ORDER BY created_at DESC LIMIT 1', [t, f, rateDate, rt]);
-      }
-      if (!rev) rev = queryOne('SELECT rate FROM exchange_rates WHERE from_currency = ? AND to_currency = ? AND rate_type = ? ORDER BY rate_date DESC, created_at DESC LIMIT 1', [t, f, rt]);
-      if (rev && Number(rev.rate) > 0) rate = 1 / Number(rev.rate);
-    }
-    fxRateCache.set(key, rate);
-    return rate;
-  }
-
+  // FREIGHT-RATIO-02：运费/货值 = 综合运费 ÷ 本批次实际运输货值 × 100%
+  // 币种一致性保护：仅当 freight_currency === ci_currency 且货值 > 0 时计算；
+  // 跨币种一律返回 null（前端 '-'），本任务不引入任何 FX 换算（无 latest fallback、无实时汇率、无历史猜测）。
   rows.forEach(r => {
     const ciCurrency = String(r.ci_currency || '').trim();
-    const freightCurrency = String(r.freight_currency || 'USD').trim();
+    const freightCurrency = String(r.freight_currency || '').trim();
     const cargoValue = Number(r.cargo_value) || 0;
     const totalFreight = Number(r.total_freight) || 0;
     let ratio = null;
-    if (cargoValue > 0 && ciCurrency) {
-      let freightInCiCurrency = totalFreight;
-      if (ciCurrency.toUpperCase() !== freightCurrency.toUpperCase()) {
-        const rateDate = (r.actual_arrival_date && r.actual_arrival_date !== '') ? r.actual_arrival_date : r.actual_ship_date;
-        const fxRate = resolveFxRateForList(freightCurrency, ciCurrency, rateDate);
-        if (fxRate === null) {
-          freightInCiCurrency = null;
-        } else {
-          freightInCiCurrency = totalFreight * fxRate;
-        }
-      }
-      if (freightInCiCurrency !== null) {
-        ratio = (freightInCiCurrency / cargoValue) * 100;
-      }
+    if (cargoValue > 0 && ciCurrency && freightCurrency && ciCurrency.toUpperCase() === freightCurrency.toUpperCase()) {
+      ratio = (totalFreight / cargoValue) * 100;
     }
     r.freight_value_ratio = ratio;
   });
