@@ -12507,8 +12507,12 @@ async function saveInspectionFeePay(ciId){
 // LOGISTICS-WARM-RETURN-P1：会话级筛选/滚动态（warm return 保持，navigation 不重置）
 let _logStatusFilter='';
 let _logScrollTop=0;
+let _logCountryFilter='';
+let _logBrandFilter='';
+let _logWarehouseFilter='';
+let _logRawRows=[];
 async function renderLogistics(){
-  document.getElementById('content-inner').innerHTML=t('html.renderLogistics', '<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>'+t('logistics.filter.status','状态')+'</label><select id="log-fs"><option value="">'+t('common.all','全部')+'</option>'+logisticsFilterOptions(_logStatusFilter)+'</select></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadLog()">'+t('common.search','搜索')+'</button>{v1}</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">'+t('logistics.title','🚢 物流批次')+'</div></div><div id="log-table"></div></div>', {v1: hasPermission('logistics_create')?'<button class="btn btn-primary btn-sm" onclick="createLogWithPL()">'+t('logistics.btn.create','➕ 新建物流批次')+'</button>':''});
+  document.getElementById('content-inner').innerHTML=t('html.renderLogistics', '<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>'+t('logistics.filter.status','状态')+'</label><select id="log-fs"><option value="">'+t('common.all','全部')+'</option>'+logisticsFilterOptions(_logStatusFilter)+'</select></div><div class="filter-group"><label>'+t('logistics.filter.country','国家')+'</label><select id="log-country" onchange="applyLogFilters()"><option value="">'+t('common.all','全部')+'</option></select></div><div class="filter-group"><label>'+t('logistics.filter.brand','品牌')+'</label><select id="log-brand" onchange="applyLogFilters()"><option value="">'+t('common.all','全部')+'</option></select></div><div class="filter-group"><label>'+t('logistics.filter.warehouse','仓库')+'</label><select id="log-warehouse" onchange="applyLogFilters()"><option value="">'+t('common.all','全部')+'</option></select></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadLog()">'+t('common.search','搜索')+'</button>{v1}</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">'+t('logistics.title','🚢 物流批次')+'</div></div><div id="log-table"></div></div>', {v1: hasPermission('logistics_create')?'<button class="btn btn-primary btn-sm" onclick="createLogWithPL()">'+t('logistics.btn.create','➕ 新建物流批次')+'</button>':''});
   // 注册后台刷新重渲染（stale-while-revalidate），仅当物流页仍可见时重绘
   try{ if(window.AppStore) AppStore.page.onRefresh('logistics', function(){ try{ if(currentPage==='logistics') loadLog(); }catch(e){} }); }catch(e){}
   // 捕获滚动位置（warm return 保持）
@@ -12525,7 +12529,10 @@ async function loadLog(retry){
     // 命中且新鲜 → 同步返回、0 阻塞 GET；接近过期 → 后台 stale-while-revalidate 重绘；mutation 打脏后自然 cold reload。
     const _sig='log:'+s;
     const data=await api('/api/logistics-batches?logistics_display_status='+encodeURIComponent(s), 'GET', null, {cacheKey:'logistics', signature:_sig, ttl:30000});
-    document.getElementById('log-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">🚢</div>'+t('logistics.empty','暂无物流数据')+'</div>':'<div class="table-container" style="box-shadow:none;border-radius:0;overflow-x:auto"><table class="data-table" style="table-layout:fixed;width:100%;min-width:0"><colgroup><col style="width:120px"><col style="width:100px"><col style="width:90px"><col style="width:100px"><col style="width:140px"><col style="width:110px"><col style="width:100px"><col style="width:70px"><col style="width:80px"><col style="width:110px"><col style="width:100px"><col style="width:90px"><col style="width:70px"><col style="width:70px"><col style="width:100px"><col style="width:90px"><col style="width:110px"><col style="width:110px"><col style="width:160px"><col style="width:120px"></colgroup><thead><tr><th>'+t('logistics.col.batch_no','物流单号')+'</th><th>'+t('logistics.col.pl_no','PL号')+'</th><th>'+t('logistics.col.brand','品牌')+'</th><th>'+t('logistics.col.batch_total_quantity','批次总数量')+'</th><th>'+t('logistics.col.related_ci','关联CI')+'</th><th>'+t('logistics.col.related_ci_total_quantity','关联CI总数量')+'</th><th>'+t('logistics.col.forwarder','货代')+'</th><th>'+t('logistics.col.mode','方式')+'</th><th>'+t('logistics.col.country','国家')+'</th><th>'+t('logistics.col.eta','预计到港日期')+'</th><th>'+t('logistics.col.inbound_date','到货日期')+'</th><th>'+t('logistics.col.actual_transit_days','实际运输时效')+'</th><th>'+t('logistics.col.cartons','箱数')+'</th><th>CBM</th><th>'+t('logistics.col.total_freight','综合运费')+'</th><th>'+t('logistics.col.freight_value_ratio','运费/货值')+'</th><th>'+t('common.status','状态')+'</th><th>'+t('logistics.col.listing_status','Listing状态')+'</th><th>'+t('logistics.col.listing_owner','上架负责人')+'</th><th>'+t('common.actions','操作')+'</th></tr></thead><tbody>'+data.map(l=>{return '<tr class="clickable-detail-row" onclick="rowClickView(event,\'viewLogDetail\',\''+l.id+'\')"><td class="cell-id" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(l.batch_no)+'</td><td class="cell-id">'+esc(l.pl_no||'-')+'</td><td class="cell-id" title="'+esc(l.related_ci_no)+'" style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(l.brand||'-')+'</td><td>'+(l.batch_total_quantity!=null?l.batch_total_quantity+' PCS':'—')+'</td><td class="cell-id" title="'+esc(l.related_ci_no)+'" style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(l.related_ci_no)+'</td><td>'+(l.related_ci_total_quantity!=null?l.related_ci_total_quantity+' PCS':'—')+'</td><td style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(l.forwarder_name)+'</td><td>'+t('logistics.mode.'+l.transport_mode, l.transport_mode)+'</td><td>'+countryLabel(l.target_country)+'</td><td class="cell-date">'+fmtDate(l.eta_date)+'</td><td class="cell-date '+(hasPermission('logistics_edit')?'cell-clickable':'')+'" '+(hasPermission('logistics_edit')?'data-id="'+l.id+'" onclick="event.stopPropagation();editArrivalDate(this.dataset.id)"':'')+'>'+fmtDate(l.actual_arrival_date)+'</td>'+'<td class="cell-date">'+(l.actual_transit_days!=null?l.actual_transit_days+' 天':'-')+'</td><td>'+(l.total_cartons||0)+'</td><td>'+(Number(l.total_cbm||0).toFixed(2))+'</td><td>'+fmtMoney(l.total_freight,l.freight_currency)+'</td><td class="text-right">'+(l.freight_value_ratio!=null?Number(l.freight_value_ratio).toFixed(2)+'%':'-')+'</td><td style="white-space:nowrap"><span class="status-badge '+logisticsStatusBadgeClassByKey(l.logistics_display_status)+'">'+logisticsStatusLabelByKey(l.logistics_display_status)+'</span></td>'+listingStatusCell(l)+listingOwnerCell(l)+'<td class="cell-actions" style="white-space:nowrap"><button class="action-btn" onclick="viewLogDetail(\''+l.id+'\')" title="'+t('common.view','查看')+'">👁️</button>'+(hasPermission('logistics_edit')?'<button class="action-btn" onclick="editLog(\''+l.id+'\')" title="'+t('common.edit','编辑')+'">✏️</button>':'')+(hasPermission('logistics_edit')?'<button class="action-btn" onclick="notifyListing(\''+l.id+'\')" title="'+t('logistics.action.notify','发送上架提醒')+'">🔔</button>':'')+((l.total_freight>0||l.customs_duty>0||l.other_fees>0)&&l.fee_status==='unpaid'&&l.related_ci_id&&hasPermission('payment_create')?'<button class="action-btn" onclick="generateCostItems(\''+l.id+'\')" title="'+t('logistics.btn.generate_cost','生成成本记录')+'">📋</button>':'')+'</td></tr>';}).join('')+'</tbody></table></div>';
+    _logRawRows=data; // 完整 raw 快照，供国家/品牌/仓库前端本地筛选（网络/UI 筛选分离）
+    const _view=applyLogisticsFilters(data,{country:_logCountryFilter,brand:_logBrandFilter,warehouse:_logWarehouseFilter});
+    populateLogFacets(); // 从已加载 raw list 动态生成 facets（不新增 facet GET）
+    document.getElementById('log-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">🚢</div>'+t('logistics.empty','暂无物流数据')+'</div>':'<div class="table-container" style="box-shadow:none;border-radius:0;overflow-x:auto"><table class="data-table" style="table-layout:fixed;width:100%;min-width:0"><colgroup><col style="width:120px"><col style="width:100px"><col style="width:90px"><col style="width:100px"><col style="width:140px"><col style="width:110px"><col style="width:100px"><col style="width:70px"><col style="width:80px"><col style="width:110px"><col style="width:100px"><col style="width:90px"><col style="width:70px"><col style="width:70px"><col style="width:100px"><col style="width:90px"><col style="width:110px"><col style="width:110px"><col style="width:160px"><col style="width:120px"></colgroup><thead><tr><th>'+t('logistics.col.batch_no','物流单号')+'</th><th>'+t('logistics.col.pl_no','PL号')+'</th><th>'+t('logistics.col.brand','品牌')+'</th><th>'+t('logistics.col.batch_total_quantity','批次总数量')+'</th><th>'+t('logistics.col.related_ci','关联CI')+'</th><th>'+t('logistics.col.related_ci_total_quantity','关联CI总数量')+'</th><th>'+t('logistics.col.forwarder','货代')+'</th><th>'+t('logistics.col.mode','方式')+'</th><th>'+t('logistics.col.country','国家')+'</th><th>'+t('logistics.col.eta','预计到港日期')+'</th><th>'+t('logistics.col.inbound_date','到货日期')+'</th><th>'+t('logistics.col.actual_transit_days','实际运输时效')+'</th><th>'+t('logistics.col.cartons','箱数')+'</th><th>CBM</th><th>'+t('logistics.col.total_freight','综合运费')+'</th><th>'+t('logistics.col.freight_value_ratio','运费/货值')+'</th><th>'+t('common.status','状态')+'</th><th>'+t('logistics.col.listing_status','Listing状态')+'</th><th>'+t('logistics.col.listing_owner','上架负责人')+'</th><th>'+t('common.actions','操作')+'</th></tr></thead><tbody>'+_view.map(l=>{return '<tr class="clickable-detail-row" onclick="rowClickView(event,\'viewLogDetail\',\''+l.id+'\')"><td class="cell-id" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(l.batch_no)+'</td><td class="cell-id">'+esc(l.pl_no||'-')+'</td><td class="cell-id" title="'+esc(l.related_ci_no)+'" style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(l.brand||'-')+'</td><td>'+(l.batch_total_quantity!=null?l.batch_total_quantity+' PCS':'—')+'</td><td class="cell-id" title="'+esc(l.related_ci_no)+'" style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(l.related_ci_no)+'</td><td>'+(l.related_ci_total_quantity!=null?l.related_ci_total_quantity+' PCS':'—')+'</td><td style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(l.forwarder_name)+'</td><td>'+t('logistics.mode.'+l.transport_mode, l.transport_mode)+'</td><td>'+countryLabel(l.target_country)+'</td><td class="cell-date">'+fmtDate(l.eta_date)+'</td><td class="cell-date '+(hasPermission('logistics_edit')?'cell-clickable':'')+'" '+(hasPermission('logistics_edit')?'data-id="'+l.id+'" onclick="event.stopPropagation();editArrivalDate(this.dataset.id)"':'')+'>'+fmtDate(l.actual_arrival_date)+'</td>'+'<td class="cell-date">'+(l.actual_transit_days!=null?l.actual_transit_days+' 天':'-')+'</td><td>'+(l.total_cartons||0)+'</td><td>'+(Number(l.total_cbm||0).toFixed(2))+'</td><td>'+fmtMoney(l.total_freight,l.freight_currency)+'</td><td class="text-right">'+(l.freight_value_ratio!=null?Number(l.freight_value_ratio).toFixed(2)+'%':'-')+'</td><td style="white-space:nowrap"><span class="status-badge '+logisticsStatusBadgeClassByKey(l.logistics_display_status)+'">'+logisticsStatusLabelByKey(l.logistics_display_status)+'</span></td>'+listingStatusCell(l)+listingOwnerCell(l)+'<td class="cell-actions" style="white-space:nowrap"><button class="action-btn" onclick="viewLogDetail(\''+l.id+'\')" title="'+t('common.view','查看')+'">👁️</button>'+(hasPermission('logistics_edit')?'<button class="action-btn" onclick="editLog(\''+l.id+'\')" title="'+t('common.edit','编辑')+'">✏️</button>':'')+(hasPermission('logistics_edit')?'<button class="action-btn" onclick="notifyListing(\''+l.id+'\')" title="'+t('logistics.action.notify','发送上架提醒')+'">🔔</button>':'')+((l.total_freight>0||l.customs_duty>0||l.other_fees>0)&&l.fee_status==='unpaid'&&l.related_ci_id&&hasPermission('payment_create')?'<button class="action-btn" onclick="generateCostItems(\''+l.id+'\')" title="'+t('logistics.btn.generate_cost','生成成本记录')+'">📋</button>':'')+'</td></tr>';}).join('')+'</tbody></table></div>';
   }catch(e){
     if(!retry){
       document.getElementById('log-table').innerHTML='<div class="empty-state"><div class="empty-icon">⏳</div>'+t('logistics.toast.loading','加载中，请稍候...')+'</div>';
@@ -12535,6 +12542,69 @@ async function loadLog(retry){
     }
   }
 }
+// LOGISTICS-FILTERS-UX：国家/品牌/仓库 前端本地筛选（纯函数，网络/UI 筛选分离）
+// rows 来自缓存的完整 raw 快照(_logRawRows)，status 已在服务端按 signature 过滤。
+function applyLogisticsFilters(rows, opts){
+  opts=opts||{};
+  const country=opts.country||'';
+  const brand=opts.brand||'';
+  const warehouse=opts.warehouse||'';
+  return (rows||[]).filter(function(r){
+    if(country && (r.target_country||'')!==country) return false;
+    if(warehouse && (r.target_warehouse||'')!==warehouse) return false;
+    if(brand){
+      // 支持标量 brand 或 brands 数组（防御多品牌 batch），精确匹配，不做 substring
+      const brands=Array.isArray(r.brands)?r.brands:(r.brand!=null?[r.brand]:[]);
+      if(!brands.map(function(b){return String(b);}).includes(String(brand))) return false;
+    }
+    return true;
+  });
+}
+// 切换 国家/品牌/仓库 → 仅本地重筛，0 阻塞 GET（status 不变 → 命中 logistics 快照缓存）
+function applyLogFilters(){
+  _logCountryFilter=document.getElementById('log-country')?.value||'';
+  _logBrandFilter=document.getElementById('log-brand')?.value||'';
+  _logWarehouseFilter=document.getElementById('log-warehouse')?.value||'';
+  loadLog();
+}
+// 从已加载 raw list 动态生成 facets（去重+排序），不新增任何 facet endpoint
+function populateLogFacets(){
+  try{
+    const cSel=document.getElementById('log-country');
+    const bSel=document.getElementById('log-brand');
+    const wSel=document.getElementById('log-warehouse');
+    if(cSel){
+      const vals=[...new Set(_logRawRows.map(function(r){return r.target_country;}).filter(Boolean))].sort();
+      const cur=_logCountryFilter;
+      const opt=['<option value="">'+t('common.all','全部')+'</option>'];
+      if(cur && !vals.includes(cur)) opt.push('<option value="'+esc(cur)+'">'+esc(countryLabel(cur))+'</option>');
+      vals.forEach(function(v){ opt.push('<option value="'+esc(v)+'"'+(v===cur?' selected':'')+'>'+esc(countryLabel(v))+'</option>'); });
+      cSel.innerHTML=opt.join('');
+    }
+    if(bSel){
+      const bset=new Set();
+      _logRawRows.forEach(function(r){
+        const arr=Array.isArray(r.brands)?r.brands:(r.brand!=null?[r.brand]:[]);
+        arr.forEach(function(b){ if(b!=null&&b!=='') bset.add(String(b)); });
+      });
+      const vals=[...bset].sort();
+      const cur=_logBrandFilter;
+      const opt=['<option value="">'+t('common.all','全部')+'</option>'];
+      if(cur && !vals.includes(cur)) opt.push('<option value="'+esc(cur)+'">'+esc(cur)+'</option>');
+      vals.forEach(function(v){ opt.push('<option value="'+esc(v)+'"'+(v===cur?' selected':'')+'>'+esc(v)+'</option>'); });
+      bSel.innerHTML=opt.join('');
+    }
+    if(wSel){
+      const vals=[...new Set(_logRawRows.map(function(r){return r.target_warehouse;}).filter(Boolean))].sort();
+      const cur=_logWarehouseFilter;
+      const opt=['<option value="">'+t('common.all','全部')+'</option>'];
+      if(cur && !vals.includes(cur)) opt.push('<option value="'+esc(cur)+'">'+esc(cur)+'</option>');
+      vals.forEach(function(v){ opt.push('<option value="'+esc(v)+'"'+(v===cur?' selected':'')+'>'+esc(v)+'</option>'); });
+      wSel.innerHTML=opt.join('');
+    }
+  }catch(e){}
+}
+
 async function viewLogDetail(id){
   try{
     const l=await api('/api/logistics-batches/'+id);
