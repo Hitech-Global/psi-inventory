@@ -216,6 +216,10 @@
     //   POST /api/logistics-batches/create-with-pl → 另写 packing_lists(+items) + commercial_invoices.ci_status
     //   POST /:id/listing | /:id/notify | /:id/backfill-arrival → 仅 listing 状态/通知/到达补录，零费用链路写入
     var isLogi = has('/api/logistics-batches');
+    // LOGISTICS-WARM-RETURN-P1：列表页缓存失效——任何物流批次写操作都影响列表展示
+    // （状态/费用/Listing/到货/时效），必须打脏 logistics 页缓存；onMutation 仅非 GET 触发，navigation 不打脏。
+    // 例外：/notify 为纯通知（不改列表任何展示列）→ 不打脏，避免无效刷新。
+    if (isLogi && !has('/notify')) pages.push('logistics');
     if (isLogi && (method === 'PUT' || has('generate-cost-items') || has('backfill-freight-payment'))) {
       pages.push('payable-list', 'payable-cockpit', 'ci', 'payment');
     }

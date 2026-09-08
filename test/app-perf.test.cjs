@@ -353,14 +353,17 @@ test('LOG-2: POST backfill-freight-payment → 四页 dirty', async () => {
   }
 });
 
-test('LOG-3: 负向 — notify / backfill-arrival / listing 不打脏任何页面', async () => {
+test('LOG-3: 精准 invalidation — notify 不脏；backfill-arrival / listing 仅脏 logistics 列表页', async () => {
   const A = setupGlobals();
+  // notify 为纯通知（不改列表任何展示列）→ 不打脏任何页面
   const m1 = A._internal.pagesForMutation('/api/logistics-batches/abc/notify', 'POST');
   assert.deepStrictEqual(m1.pages, [], 'notify 零写表 → 不应失效任何页面，实际=' + JSON.stringify(m1.pages));
+  // backfill-arrival（修改时效/到货状态，LIST 展示列）→ 仅脏 logistics 列表页，不脏费用四页/在途族
   const m2 = A._internal.pagesForMutation('/api/logistics-batches/abc/backfill-arrival', 'POST');
-  assert.deepStrictEqual(m2.pages, [], 'backfill-arrival 只写 logistics_batches 日期/备注 → 不应失效任何页面');
+  assert.deepStrictEqual(m2.pages, ['logistics'], 'backfill-arrival 应仅脏 logistics 列表页，实际=' + JSON.stringify(m2.pages));
+  // listing（变更上架状态，LIST 展示列）→ 仅脏 logistics 列表页
   const m3 = A._internal.pagesForMutation('/api/logistics-batches/abc/listing', 'POST');
-  assert.deepStrictEqual(m3.pages, [], 'listing 只写 listing_status/participants → 不应失效任何页面');
+  assert.deepStrictEqual(m3.pages, ['logistics'], 'listing 应仅脏 logistics 列表页，实际=' + JSON.stringify(m3.pages));
 });
 
 test('LOG-4: POST 创建批次 → inventory 族 dirty，但不打脏 payable/ci/payment', async () => {
