@@ -374,8 +374,8 @@ const NAV_MODULES=[
     {id:'stagnant',key:'nav.stagnant',icon:'⚠️',label:t("nav.stagnant", "\u5446\u6ede\u5206\u6790"),perm:'stagnant_view'},
   ]},
   {id:'sales',key:'nav.sales',label:t("nav.sales","销售"),items:[
-    {id:'outbound',key:'nav.sales_data',icon:'🛒',label:t("nav.sales_data","销售数据"),perm:'outbound_view'},
     {id:'replenishment',key:'nav.forecast',icon:'📈',label:t("nav.forecast","订单预测"),perm:'replenishment_view'},
+    {id:'outbound',key:'nav.sales_data',icon:'🛒',label:t("nav.sales_data","销售数据"),perm:'outbound_view'},
   ]},
   {id:'procurement',key:'nav.procurement',label:t("nav.procurement", "\u91c7\u8d2d\u94fe"),items:[
     {id:'po',key:'nav.po',icon:'🛒',label:t("nav.po", "PO\u7ba1\u7406"),perm:'po_view'},
