@@ -11933,10 +11933,11 @@ function renderCIPaymentRecords(records, ciId, ciType){
 }
 async function viewCI(id, backPay, backMode){
   try{const ci=await api('/api/commercial-invoices/'+id);
-    const pl=ci.packing_list||{};const plItems=pl.items||[];
+    const pl=ci.packing_list||{};const plItems=[];
+    window.__ciDetailCtx={ciId:id, ci};
     // 若来自付款申请详情，提供【← 返回付款申请详情】入口，保留原上下文（含 mode）
     const ciBackFooter=backPay?'<button class="btn btn-secondary" onclick="viewPayment(\''+backPay+'\',\''+(backMode||'view')+t('gen.L5836.1','\')">← 返回付款申请详情</button><button class="btn btn-secondary" onclick="closeModal()">关闭</button>'):'';
-    openModal(t('modal.title.viewCI', 'CI/PL详情 - {v1}', {v1: ci.ci_no}),t('modal.body.viewCI', '<div class="detail-card" style="box-shadow:none;padding:0"><div class="detail-section"><h3>'+t('section.basic_info','基本信息')+'</h3><div class="detail-grid">{v1}<div class="detail-item"><span class="detail-label">'+t('field.actual_ship_date','实际出货日期')+'</span><span class="detail-value{v2}">{v3}</span></div>{v4}{v5}{v6}</div></div><div class="detail-section"><h3>'+t('section.ci_items','CI明细')+'</h3><div class="table-container"><table class="data-table"><thead><tr><th>SKU</th><th>数量</th><th>原单价</th><th>折扣</th><th>折后单价</th><th>金额</th><th>实际关税税率(%)</th><th>已入库</th><th>未入库</th></tr></thead><tbody>{v7}</tbody></table></div></div><div class="detail-section"><h3>'+t('section.pl_items','PL明细')+'</h3>{v8}</div></div>', {v1: (function(fields){
+    openModal(t('modal.title.viewCI', 'CI/PL详情 - {v1}', {v1: ci.ci_no}),t('modal.body.viewCI', '<div class="detail-card" style="box-shadow:none;padding:0"><div class="detail-section"><h3>'+t('section.basic_info','基本信息')+'</h3><div class="detail-grid">{v1}<div class="detail-item"><span class="detail-label">'+t('field.actual_ship_date','实际出货日期')+'</span><span class="detail-value{v2}">{v3}</span></div>{v4}{v5}{v6}</div></div></div>', {v1: (function(fields){
       var labels={ci_no:t('field.ci_no','CI号'),related_pi_no:t('field.related_pi_no','关联PI'),supplier_name:t('field.supplier_name','供应商'),brand:t('field.brand','品牌'),country:t('field.country','国家'),target_warehouse:t('field.target_warehouse','目标仓库'),ci_date:t('field.ci_date','CI日期'),payable_date:t('field.payable_date','应付日期'),currency:t('field.currency','币种'),ci_total_qty:t('ci.detail.total_qty','CI总数量'),goods_amount:t('field.goods_amount','CI金额'),pi_total_amount:t('ci.detail.pi_total','PI总金额'),amount_difference:t('ci.detail.amount_diff','金额差异'),difference_reason:t('ci.detail.diff_reason','差异原因'),actual_deducted_deposit:t('ci.detail.deposit','已抵扣定金'),balance_unpaid_amount:t('ci.detail.balance','应付尾款'),balance_paid_amount:t('ci.detail.bal_paid','已付尾款'),transport_basis:t('ci.detail.transport','运输方式'),import_duty_total:t('ci.detail.duty','进口关税'),ci_status:t('field.ci_status','CI状态'),balance_payment_status:t('ci.detail.bal_status','尾款付款状态')};
       var buf='';fields.forEach(function(f){
         var v;if(f==='related_pi_no'){var pns=[];try{pns=JSON.parse(ci.related_pi_nos||'[]');}catch(e){}if(pns.length===0&&ci.related_pi_no)pns=[ci.related_pi_no];v=pns.length>0?pns.map(esc).join('<br>'):'—';}
@@ -11945,7 +11946,9 @@ async function viewCI(id, backPay, backMode){
         else v=esc(ci[f]);
         buf+='<div class=\"detail-item\"><span class=\"detail-label\">'+(labels[f]||f)+'</span><span class=\"detail-value\">'+v+'</span></div>';
       });return buf;
-    })(ci._v1fields||['ci_no','related_pi_no','supplier_name','brand','country','target_warehouse','ci_date','payable_date','currency','ci_total_qty','goods_amount','pi_total_amount','amount_difference','difference_reason','actual_deducted_deposit','balance_unpaid_amount','balance_paid_amount','transport_basis','import_duty_total','ci_status','balance_payment_status']), v2: !ci.actual_ship_date?' text-warning':'', v3: ci.actual_ship_date?esc(fmtDate(ci.actual_ship_date)):t("app.998", "\u5f85\u8865\u5145"), v4: hasPermission('ci_edit')?'<div class="detail-item" style="grid-column:1/-1"><button class="btn btn-secondary btn-sm" onclick="editActualShipDate(\'commercial\',\''+ci.id+'\',\''+(ci.actual_ship_date||'')+t('gen.L5837.1','\')">补充/更正实际出货日期</button></div>'):'', v5: '<div class="detail-item" style="grid-column:1/-1"><span class="detail-label">'+t("ci.005", "CI / PL 附件")+'</span><span class="detail-value">'+ciUnifiedAttachmentHtml(ci)+'</span></div>', v6: '', v7: (ci.items||[]).map(i=>{var dsc=i.discount||0;var nup=i.net_unit_price||(i.unit_price*(1-dsc));return '<tr><td class="cell-id">'+esc(i.sku_code)+'</td><td class="text-right">'+i.shipped_qty+'</td><td class="text-right">'+fmtMoney(i.unit_price)+'</td><td class="text-right">'+(dsc>0?(dsc*100).toFixed(1)+'%':'—')+'</td><td class="text-right">'+fmtMoney(nup)+'</td><td class="text-right">'+fmtMoney(i.ci_amount)+'</td><td class="text-right">'+(i.actual_customs_rate===null||i.actual_customs_rate===''?'—':esc(i.actual_customs_rate))+'</td><td class="text-right">'+(i.inbound_qty||0)+'</td><td class="text-right">'+(i.uninbound_qty||0)+'</td></tr>';}).join(''), v8: plItems.length?t('gen.L5837.2','<div class="table-container"><table class="data-table"><thead><tr><th>SKU</th><th>每箱数量</th><th>箱数</th><th>总数量</th><th>总毛重</th><th>总净重</th><th>总体积</th></tr></thead><tbody>')+plItems.map(i=>'<tr><td class="cell-id">'+esc(i.sku_code)+'</td><td class="text-right">'+i.qty_per_carton+'</td><td class="text-right">'+i.cartons+'</td><td class="text-right">'+i.total_qty+'</td><td class="text-right">'+i.gross_weight+'</td><td class="text-right">'+i.net_weight+'</td><td class="text-right">'+i.cbm+'</td></tr>').join('')+'</tbody></table></div>':t('gen.L5837.3','<div class="empty-state"><div class="empty-icon">📦</div>暂无PL明细</div>')}),ciBackFooter,'modal-ci-create');
+    })(ci._v1fields||['ci_no','related_pi_no','supplier_name','brand','country','target_warehouse','ci_date','payable_date','currency','ci_total_qty','goods_amount','pi_total_amount','amount_difference','difference_reason','actual_deducted_deposit','balance_unpaid_amount','balance_paid_amount','transport_basis','import_duty_total','ci_status','balance_payment_status']), v2: !ci.actual_ship_date?' text-warning':'', v3: ci.actual_ship_date?esc(fmtDate(ci.actual_ship_date)):t("app.998", "\u5f85\u8865\u5145"), v4: hasPermission('ci_edit')?'<div class="detail-item" style="grid-column:1/-1"><button class="btn btn-secondary btn-sm" onclick="editActualShipDate(\'commercial\',\''+ci.id+'\',\''+(ci.actual_ship_date||'')+t('gen.L5837.1','\')">补充/更正实际出货日期</button></div>'):'', v5: '<div class="detail-item" style="grid-column:1/-1"><span class="detail-label">'+t("ci.005", "CI / PL 附件")+'</span><span class="detail-value">'+ciUnifiedAttachmentHtml(ci)+'</span></div>', v6: '', v7: '', v8: plItems.length?t('gen.L5837.2','<div class="table-container"><table class="data-table"><thead><tr><th>SKU</th><th>每箱数量</th><th>箱数</th><th>总数量</th><th>总毛重</th><th>总净重</th><th>总体积</th></tr></thead><tbody>')+plItems.map(i=>'<tr><td class="cell-id">'+esc(i.sku_code)+'</td><td class="text-right">'+i.qty_per_carton+'</td><td class="text-right">'+i.cartons+'</td><td class="text-right">'+i.total_qty+'</td><td class="text-right">'+i.gross_weight+'</td><td class="text-right">'+i.net_weight+'</td><td class="text-right">'+i.cbm+'</td></tr>').join('')+'</tbody></table></div>':t('gen.L5837.3','<div class="empty-state"><div class="empty-icon">📦</div>暂无PL明细</div>')}),ciBackFooter,'modal-ci-create');
+    const _ciShellMb=document.querySelector('#modal-content .modal-body');
+    if(_ciShellMb)_ciShellMb.insertAdjacentHTML('beforeend', renderCIItemsShell(ci)+renderCIPLShell(ci)+renderCILogisticsShell(id));
     // CI DETAIL PAY RECORDS：付款记录分区（先注入，置于上架准备分区之前；只读，不改任何现有分区）
     const payMb=document.querySelector('#modal-content .modal-body');
     if(payMb) payMb.insertAdjacentHTML('beforeend', renderCIPaymentRecords(ci.payment_records||[], id, 'operating'));
@@ -11954,8 +11957,294 @@ async function viewCI(id, backPay, backMode){
     let opsCands=[]; try{ opsCands=await api('/api/cc-candidates'); }catch(e){ opsCands=[]; }
     const opsMb=document.querySelector('#modal-content .modal-body');
     if(opsMb) opsMb.insertAdjacentHTML('beforeend', renderOpsPrepSection(ci.id, opsState, opsCands));
+    // CI/PL × 物流合并 PHASE A：物流批次异步加载（绝不 await，不阻塞 modal）
+    loadCILogistics(id).catch(err=>{ console.error('[CI-logi] load failed', err); });
   }catch(e){showToast(e.message,'danger')}
 }
+// ==================== CI/PL × 物流合并 PHASE A（前端）====================
+// 折叠壳 + 懒渲染：CI/PL 明细初始不生成 item 行（data-rendered 控制首展渲染）；物流批次异步加载（绝不阻塞 modal）。
+// 所有 render/build 函数均为纯字符串/数据 builder，便于无 DOM 单测；复用既有 selectCIForPL/editLog 业务实现。
+const __ciLogiCache = new Map(); // ciId → { ts, data }
+function __ciCtx(){ return window.__ciDetailCtx || { ci:null, ciId:null }; }
+function invalidateCILogistics(ciId){ if(ciId) __ciLogiCache.delete(ciId); }
+function ciAccHead(key, label, countHtml){
+  const caret = '<span class="ci-acc-caret" id="ci-caret-'+key+'">▶</span>';
+  const count = countHtml!=null ? ' <span class="ci-acc-count">'+countHtml+'</span>' : '';
+  return '<h3 class="ci-acc-head" onclick="toggleCISection(\''+key+'\')">'+caret+' '+esc(label)+count+'</h3>';
+}
+function renderCIItemsShell(ci){
+  const count=(ci.items||[]).length;
+  return '<div class="detail-section ci-acc" id="ci-acc-items">'
+    + ciAccHead('items', t('section.ci_items','CI明细'), '('+count+')')
+    + '<div class="ci-acc-body" id="ci-acc-body-items" data-rendered="0" hidden></div></div>';
+}
+function renderCIItemsRows(ci){
+  const items=(ci&&ci.items)||[];
+  if(!items.length) return '<div class="empty-state" style="padding:12px">'+t('ci.items.empty','暂无CI明细')+'</div>';
+  return '<div class="table-container"><table class="data-table"><thead><tr>'
+    +'<th>SKU</th><th>数量</th><th>原单价</th><th>折扣</th><th>折后单价</th><th>金额</th><th>实际关税税率(%)</th><th>已入库</th><th>未入库</th></tr></thead><tbody>'
+    + items.map(function(i){ var dsc=i.discount||0; var nup=i.net_unit_price||(i.unit_price*(1-dsc));
+        return '<tr><td class="cell-id">'+esc(i.sku_code)+'</td><td class="text-right">'+i.shipped_qty+'</td><td class="text-right">'+fmtMoney(i.unit_price)+'</td><td class="text-right">'+(dsc>0?(dsc*100).toFixed(1)+'%':'—')+'</td><td class="text-right">'+fmtMoney(nup)+'</td><td class="text-right">'+fmtMoney(i.ci_amount)+'</td><td class="text-right">'+(i.actual_customs_rate===null||i.actual_customs_rate===''?'—':esc(i.actual_customs_rate))+'</td><td class="text-right">'+(i.inbound_qty||0)+'</td><td class="text-right">'+(i.uninbound_qty||0)+'</td></tr>';
+      }).join('')
+    + '</tbody></table></div>';
+}
+function renderCIPLShell(ci){
+  const pls=(ci.packing_lists)||[];
+  return '<div class="detail-section ci-acc" id="ci-acc-pl">'
+    + ciAccHead('pl', t('section.pl_items','PL明细'), '('+pls.length+')')
+    + '<div class="ci-acc-body" id="ci-acc-body-pl" data-rendered="0" hidden>'
+    + pls.map(renderPLSubShell).join('')
+    + '</div></div>';
+}
+function renderPLSubShell(pl){
+  const qty=pl.total_qty!=null?pl.total_qty:'';
+  const ctns=pl.total_cartons!=null?pl.total_cartons:'';
+  const cbm=pl.total_cbm!=null?pl.total_cbm:'';
+  return '<div class="ci-acc ci-acc-sub" id="ci-pl-sub-'+esc(pl.id)+'">'
+    + '<h4 class="ci-acc-head ci-acc-sub-head" onclick="togglePLSection(\''+esc(pl.id)+'\')">'
+    + '<span class="ci-acc-caret" id="ci-pl-caret-'+esc(pl.id)+'">▶</span> '+esc(pl.pl_no||'?')
+    + ' <span class="ci-acc-sub-meta">'+t('pl.meta.qty','数量')+' '+qty+' · '+t('pl.meta.ctns','箱数')+' '+ctns+' · CBM '+cbm+'</span></h4>'
+    + '<div class="ci-acc-body" id="ci-pl-body-'+esc(pl.id)+'" data-rendered="0" hidden></div>'
+    + '</div>';
+}
+function toggleCISection(key){
+  const body=document.getElementById('ci-acc-body-'+key);
+  if(!body) return;
+  const caret=document.getElementById('ci-caret-'+key);
+  if(body.hasAttribute('hidden')){
+    if(key==='items' && body.getAttribute('data-rendered')!=='1'){ body.innerHTML=renderCIItemsRows(__ciCtx().ci); body.setAttribute('data-rendered','1'); }
+    // pl：子壳已在 renderCIPLShell 内生成，展开即显示子壳（默认折叠）；logi：由 loadCILogistics 异步填充
+    body.removeAttribute('hidden');
+    if(caret) caret.textContent='▼';
+  } else { body.setAttribute('hidden',''); if(caret) caret.textContent='▶'; }
+}
+function togglePLSection(plId){
+  const body=document.getElementById('ci-pl-body-'+plId);
+  if(!body) return;
+  const caret=document.getElementById('ci-pl-caret-'+plId);
+  if(body.hasAttribute('hidden')){
+    if(body.getAttribute('data-rendered')!=='1'){ body.innerHTML=renderPLItemsRows(plId); body.setAttribute('data-rendered','1'); }
+    body.removeAttribute('hidden');
+    if(caret) caret.textContent='▼';
+  } else { body.setAttribute('hidden',''); if(caret) caret.textContent='▶'; }
+}
+function renderPLItemsRows(plId){
+  const ctx=__ciCtx(); const ci=ctx.ci; if(!ci) return '';
+  const pl=(ci.packing_lists||[]).find(function(p){return p.id===plId;});
+  if(!pl||!pl.items) return '';
+  return '<div class="table-container"><table class="data-table"><thead><tr>'
+    +'<th>SKU</th><th>每箱数量</th><th>箱数</th><th>总数量</th><th>总毛重</th><th>总净重</th><th>总体积</th></tr></thead><tbody>'
+    + pl.items.map(function(i){ return '<tr><td class="cell-id">'+esc(i.sku_code)+'</td><td class="text-right">'+(i.qty_per_carton||0)+'</td><td class="text-right">'+(i.cartons||0)+'</td><td class="text-right">'+(i.total_qty||0)+'</td><td class="text-right">'+(i.gross_weight||0)+'</td><td class="text-right">'+(i.net_weight||0)+'</td><td class="text-right">'+(i.cbm||0)+'</td></tr>'; }).join('')
+    + '</tbody></table></div>';
+}
+function renderCILogisticsShell(ciId){
+  const canCreate=hasPermission('logistics_create');
+  const createBtn = canCreate ? '<button class="btn btn-primary btn-sm" style="margin-left:8px" onclick="createLogFromCI(\''+esc(ciId)+'\')">+ '+t('logistics.new_batch','新建物流批次')+'</button>' : '';
+  return '<div class="detail-section ci-acc" id="ci-acc-logi">'
+    + ciAccHead('logi', t('logistics.title','物流批次'), null)
+    + '<div class="ci-acc-body" id="ci-acc-body-logi" data-rendered="0" hidden><div class="empty-state" style="padding:12px">'+t('common.loading','加载中…')+'</div></div>'
+    + createBtn
+    + '</div>';
+}
+async function loadCILogistics(ciId){
+  const body=document.getElementById('ci-acc-body-logi');
+  if(!body) return;
+  try{
+    let data;
+    if(__ciLogiCache.has(ciId)){ data=__ciLogiCache.get(ciId).data; }
+    else{
+      data=await api('/api/commercial-invoices/'+ciId+'/logistics-batches');
+      __ciLogiCache.set(ciId,{ts:Date.now(),data:data});
+    }
+    body.innerHTML=renderCILogisticsTable(data||[], ciId);
+    body.setAttribute('data-rendered','1');
+  }catch(e){
+    body.innerHTML='<div class="empty-state" style="padding:12px;color:#fa8c16">'+esc(e.message||'加载失败')+' <button class="btn btn-secondary btn-sm" onclick="loadCILogistics(\''+esc(ciId)+'\')">'+t('common.retry','重试')+'</button></div>';
+  }
+}
+function renderCILogisticsTable(batches, ciId){
+  if(!batches||!batches.length){
+    return '<div class="empty-state" style="padding:12px">'+t('logistics.no_batch','该CI暂无关联物流批次')+'</div>';
+  }
+  const rows=batches.map(function(b){
+    const plNos=(b.pls||[]).map(function(p){return esc(p.pl_no||'');}).join('<br>');
+    const cbm=(b.pls||[]).reduce(function(s,p){return s+(Number(p.total_cbm)||0);},0);
+    const fv = (b.freight_value_ratio==null)?'—':(Number(b.freight_value_ratio).toFixed(2)+'%');
+    return '<tr>'
+      +'<td class="cell-id">'+esc(b.batch_no||'')+'</td>'
+      +'<td>'+(plNos||'—')+'</td>'
+      +'<td>'+esc(b.transport_mode||'')+'</td>'
+      +'<td>'+fmtDate(b.eta_date)+'</td>'
+      +'<td>'+fmtDate(b.actual_arrival_date)+'</td>'
+      +'<td class="text-right">'+(b.actual_transit_days!=null?b.actual_transit_days:'—')+'</td>'
+      +'<td class="text-right">'+(b.total_cartons||0)+'</td>'
+      +'<td class="text-right">'+cbm.toFixed(2)+'</td>'
+      +'<td class="text-right">'+fmtMoney(b.total_freight,b.freight_currency)+'</td>'
+      +'<td class="text-right">'+fv+'</td>'
+      +'<td>'+esc(b.logistics_display_status||b.logistics_status||'')+'</td>'
+      +'<td>'+esc(b.listing_status||'pending_plan')+'</td>'
+      +'<td>'+(b.listing_owner_names&&b.listing_owner_names.length?esc(b.listing_owner_names.join('、')):'—')+'</td>'
+      +'<td class="cell-actions"><button class="action-btn" title="编辑" onclick="editLogFromCI(\''+esc(b.id)+'\',\''+esc(ciId)+'\')">✏️</button> <button class="action-btn" title="导出" onclick="toggleBatchExportMenu(\''+esc(b.id)+'\')">⬇️</button>'
+      +'<div id="ci-logi-export-'+esc(b.id)+'" style="display:none;margin-top:6px"></div></td>'
+      +'</tr>';
+  }).join('');
+  return '<div class="table-container"><table class="data-table" style="font-size:12px"><thead><tr>'
+    +'<th>'+t('logistics.col.batch_no','物流单号')+'</th>'
+    +'<th>'+t('logistics.col.pl_no','PL号')+'</th>'
+    +'<th>'+t('logistics.col.transport','运输方式')+'</th>'
+    +'<th>'+t('logistics.col.eta','预计到港')+'</th>'
+    +'<th>'+t('logistics.col.arrival','到货日期')+'</th>'
+    +'<th>'+t('logistics.col.transit_days','运输时效')+'</th>'
+    +'<th>'+t('logistics.col.cartons','箱数')+'</th>'
+    +'<th>'+t('logistics.col.cbm','CBM')+'</th>'
+    +'<th>'+t('logistics.col.freight','综合运费')+'</th>'
+    +'<th>'+t('logistics.col.freight_ratio','运费/货值')+'</th>'
+    +'<th>'+t('logistics.col.status','状态')+'</th>'
+    +'<th>'+t('logistics.col.listing_status','Listing状态')+'</th>'
+    +'<th>'+t('logistics.col.owners','负责人')+'</th>'
+    +'<th>'+t('common.actions','操作')+'</th>'
+    +'</tr></thead><tbody>'+rows+'</tbody></table></div>';
+}
+function toggleBatchExportMenu(batchId){
+  const el=document.getElementById('ci-logi-export-'+batchId);
+  if(!el) return;
+  if(el.style.display!=='none'){ el.style.display='none'; el.innerHTML=''; return; }
+  el.style.display='block';
+  el.innerHTML='<button class="btn btn-secondary btn-sm" onclick="exportBatchPL(\''+esc(batchId)+'\')">'+t('export.pl_only','导出PL')+'</button> '
+    +'<button class="btn btn-secondary btn-sm" onclick="exportBatchCIAndPL(\''+esc(batchId)+'\')">'+t('export.ci_and_pl','导出CI&PL')+'</button>';
+}
+async function exportBatchPL(batchId){
+  try{
+    const data=await api('/api/logistics-batches/'+batchId+'/export-data');
+    if(data.export_blocked){ showToast(exportBlockReason(data),'warning'); return; }
+    const wb=buildPLWorkbook(data, false);
+    XLSX.writeFile(wb, 'PL_'+sanitizeFileBase(data.ci.ci_no)+'_'+sanitizeFileBase(data.batch.batch_no)+'.xlsx');
+  }catch(e){ showToast(e.message,'danger'); }
+}
+async function exportBatchCIAndPL(batchId){
+  try{
+    const data=await api('/api/logistics-batches/'+batchId+'/export-data');
+    if(data.export_blocked){ showToast(exportBlockReason(data),'warning'); return; }
+    const wb=buildPLWorkbook(data, true);
+    XLSX.writeFile(wb, 'CI_PL_'+sanitizeFileBase(data.ci.ci_no)+'_'+sanitizeFileBase(data.batch.batch_no)+'.xlsx');
+  }catch(e){ showToast(e.message,'danger'); }
+}
+function exportBlockReason(data){
+  if(data.blocking_reason==='no_ci') return t('export.block.no_ci','该物流批次未关联CI，无法导出');
+  if(data.blocking_reason==='no_pl') return t('export.block.no_pl','该物流批次尚未关联PL，无法导出');
+  if(data.blocking_issues&&data.blocking_issues.length){
+    const cur=(data.ci&&data.ci.currency)||'';
+    const lines=data.blocking_issues.map(function(b){ return '- '+esc(b.sku_code)+'：'+(b.distinct_unit_prices||[]).map(function(p){return fmtMoney(p,cur);}).join(' / '); }).join('\n');
+    return t('export.block.ambiguous','无法导出：以下SKU存在多个不同原单价，无法确定PL对应的CI单价：')+'\n'+lines;
+  }
+  return t('export.block.generic','无法导出');
+}
+function sanitizeFileBase(s){ return String(s||'batch').replace(/[\\/:*?"<>|]/g,'_'); }
+// 价格 lookup（纯函数，可单测）：同 SKU 多行同价 → exact；异价 → ambiguous；范围最小化（仅校验 inScopeSkus）
+function buildPLPriceLookup(ciItems, ciCurrency){
+  const lookup={};
+  (ciItems||[]).forEach(function(it){
+    const sku=it.sku_code; const price=Number(it.unit_price);
+    const r=lookup[sku]||{sku_code:sku,currency:ciCurrency,unit_prices:new Set(),status:'exact'};
+    r.unit_prices.add(Math.round(price*1e6)/1e6);
+    lookup[sku]=r;
+  });
+  Object.keys(lookup).forEach(function(sku){
+    const r=lookup[sku]; const arr=Array.from(r.unit_prices);
+    r.distinct_unit_prices=arr; r.unit_price=arr.length?arr[0]:null;
+    r.status=arr.length>1?'ambiguous':'exact';
+  });
+  return lookup;
+}
+function validatePLExport(lookup, inScopeSkus){
+  const issues=[];
+  (inScopeSkus||[]).forEach(function(sku){
+    const r=lookup[sku];
+    if(!r || !r.distinct_unit_prices || r.distinct_unit_prices.length===0){ issues.push({sku_code:sku,reason:'missing'}); return; }
+    if(r.status==='ambiguous'){ issues.push({sku_code:sku,reason:'ambiguous',distinct_unit_prices:r.distinct_unit_prices}); }
+  });
+  return issues;
+}
+function sanitizeSheetName(name, used){
+  used=used||{};
+  let s=String(name==null?'':name).replace(/[\[\]:*?/\\]/g,'');
+  if(s.length>31) s=s.substring(0,31);
+  if(s.length===0) s='Sheet1';
+  let out=s, i=2;
+  while(used[out]){ out=s+'~'+i; if(out.length>31) out=s.substring(0,31-(('~'+i).length))+'~'+i; i++; }
+  used[out]=true;
+  return out;
+}
+function buildPLSheetRows(pl, ci, priceLookup){
+  const cur=(ci&&ci.currency)||'';
+  const ciNo=(ci&&ci.ci_no)||'';
+  return (pl.items||[]).map(function(it){
+    const lu=(priceLookup&&priceLookup[it.sku_code])||null;
+    return {
+      'SKU': it.sku_code,
+      '每箱数量': it.qty_per_carton||0,
+      '箱数': it.cartons||0,
+      '总数量': it.total_qty||0,
+      '总毛重': it.gross_weight||0,
+      '总净重': it.net_weight||0,
+      '总体积': it.cbm||0,
+      '备注': it.remark||'',
+      'CI单价': lu?lu.unit_price:null,
+      'CI币种': cur,
+      'CI No.': ciNo,
+      'PL No.': pl.pl_no
+    };
+  });
+}
+function buildPLWorkbook(data, withCI){
+  const wb=XLSX.utils.book_new();
+  const used={};
+  (data.pls||[]).forEach(function(pl){
+    const rows=buildPLSheetRows(pl, data.ci, data.price_lookup);
+    const ws=XLSX.utils.json_to_sheet(rows);
+    const name=sanitizeSheetName('PL_'+(pl.pl_no||pl.id), used);
+    XLSX.utils.book_append_sheet(wb, ws, name);
+  });
+  if(withCI && data.ci){
+    const ciRows=[{字段:'CI号',内容:data.ci.ci_no},{字段:'供应商',内容:data.ci.supplier_name||''},{字段:'币种',内容:data.ci.currency||''}];
+    const ciWs=XLSX.utils.json_to_sheet(ciRows);
+    const itemRows=(data.ci_items||[]).map(function(it){return {SKU:it.sku_code,数量:it.shipped_qty,原单价:it.unit_price,折扣:it.discount||0,折后单价:it.net_unit_price!=null?it.net_unit_price:it.unit_price,金额:it.ci_amount};});
+    XLSX.utils.sheet_add_json(ciWs, itemRows, {origin:-1});
+    const name=sanitizeSheetName('CI', used);
+    XLSX.utils.book_append_sheet(wb, ciWs, name);
+  }
+  return wb;
+}
+// CI-context 新建/编辑 wrapper：复用 selectCIForPL/editLog 业务实现，仅管理 context + 局部刷新（陷阱 0.2/0.3/0.5）
+async function createLogFromCI(ciId){
+  try{
+    const ci=await api('/api/commercial-invoices/'+ciId);
+    const remaining=(ci.pl_check||[]).reduce(function(s,p){return s+((Number(p.ci_qty)||0)-(Number(p.pl_qty)||0));},0);
+    if(remaining<=0){ showToast(t('logistics.no_remain_pl','该CI无剩余可生成PL数量'),'warning'); return; }
+    window._ffs=await api('/api/freight-forwarders'); // 陷阱 0.2：CI-context 必须自备 window._ffs
+    window.__logiCtx={source:'ci-detail', ciId:ciId};
+    await selectCIForPL(ciId);
+    appendCILogiBackFooter(ciId);
+  }catch(e){ showToast(e.message,'danger'); }
+}
+async function editLogFromCI(batchId, ciId){
+  try{
+    window.__logiCtx={source:'ci-detail', ciId:ciId};
+    await editLog(batchId);
+    appendCILogiBackFooter(ciId);
+  }catch(e){ showToast(e.message,'danger'); }
+}
+function appendCILogiBackFooter(ciId){
+  const mb=document.querySelector('#modal-content .modal-footer');
+  if(mb && !mb.querySelector('.ci-logi-back')){
+    const b=document.createElement('button');
+    b.className='btn btn-secondary ci-logi-back';
+    b.textContent='← '+t('logistics.back_to_ci','返回CI详情');
+    b.onclick=function(){ viewCI(ciId); };
+    mb.insertBefore(b, mb.firstChild);
+  }
+}
+
 // ==================== PUR-OPS-COLLAB-01：电商运营上架准备（V1）前端 ====================
 // 仅展示/编辑：负责人、抄送(CC)、计划上架日期、就绪(Ready)状态；不含图片/Listing/广告/活动。
 function renderOpsPrepSection(ciId, opsState, opsCands){
@@ -13027,7 +13316,12 @@ async function saveLogWithPL(){
   d.listing_owner_ids=ownerIds; d.listing_cc_user_ids=ccIds;
   const result=await api('/api/logistics-batches/create-with-pl','POST',d);
     showToast('创建成功：PL '+result.pl_no+' / 物流 '+result.batch_no,'success');
-    closeModal();loadLog();
+    closeModal();
+    if(window.__logiCtx && window.__logiCtx.source==='ci-detail'){
+      const cid=window.__logiCtx.ciId; window.__logiCtx=null;
+      invalidateCILogistics(cid);
+      await viewCI(cid);
+    } else { loadLog(); }
   }catch(e){showToast(e.message,'danger')}
 }
 async function editLog(id){
@@ -13081,7 +13375,12 @@ async function saveEditLog(logId,plId){
     await api('/api/logistics-batches/'+logId,'PUT',d);
     if(plId){await api('/api/packing-lists/'+plId,'PUT',{pl_no:document.getElementById('el-plno').value});}
     await api('/api/logistics-batches/'+logId+'/listing','POST',{listing_owner_ids:ownerIds,listing_cc_user_ids:ccIds});
-    showToast(t('logistics.toast.save_success','保存成功'),'success');closeModal();loadLog();
+    showToast(t('logistics.toast.save_success','保存成功'),'success');closeModal();
+    if(window.__logiCtx && window.__logiCtx.source==='ci-detail'){
+      const cid=window.__logiCtx.ciId; window.__logiCtx=null;
+      invalidateCILogistics(cid);
+      await viewCI(cid);
+    } else { loadLog(); }
   }catch(e){showToast(e.message,'danger')}
 }
 

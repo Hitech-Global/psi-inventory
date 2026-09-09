@@ -9404,6 +9404,66 @@ app.get('/api/commercial-invoices/:id', requireApiPermission('ci_view'), asyncHa
   res.json({ ...ci, items, packing_list: pl, packing_lists, pl_check });
 }));
 
+// ===== CI/PL × 物流合并 PHASE A：CI 作用域物流批次汇总（只读）=====
+// 设计要点（见 PHASE A PLAN §0.1 / §1.2）：
+//  - batch 级主查询，不 JOIN packing_lists → 规避「1 batch : N PL」行爆炸（旧物流列表既有缺陷，新入口绝不复现）
+//  - PL 信息单独 set-based 查询按 logistics_batch_id 分组挂回 → 与 batch 数量无关，结构性无 N+1
+//  - 不返回任何 packing_list_items（前端按 batch 维度展示，PL item 由前端已有 ci.packing_lists 零请求渲染）
+app.get('/api/commercial-invoices/:id/logistics-batches', requireApiPermission('logistics_view'), asyncHandler((req, res) => {
+  const ciId = req.params.id;
+  const sql = 'SELECT lb.*, ci.brand, ci.actual_ship_date, ci.currency AS ci_currency' + LOGI_DERIVED_COLS
+    + '\nFROM logistics_batches lb\nLEFT JOIN commercial_invoices ci ON lb.related_ci_id = ci.id\n'
+    + LOGI_CARGO_VALUE_JOIN
+    + 'WHERE lb.related_ci_id = ?\nORDER BY lb.created_at DESC';
+  let rows = query(sql, [ciId]).rows;
+  rows = decorateLogisticsRows(rows);
+  // PL summary：set-based 一次取回，按 logistics_batch_id 分组（无 N+1、无行爆炸）
+  const plsByBatch = {};
+  if (rows.length > 0) {
+    const batchIds = rows.map(r => r.id);
+    const ph = batchIds.map(() => '?').join(',');
+    const pls = query(`SELECT id, pl_no, status, logistics_batch_id, total_qty, total_cartons, total_gross_weight, total_net_weight, total_cbm FROM packing_lists WHERE logistics_batch_id IN (${ph})`, batchIds).rows;
+    pls.forEach(pl => { (plsByBatch[pl.logistics_batch_id] = plsByBatch[pl.logistics_batch_id] || []).push(pl); });
+  }
+  rows.forEach(r => { r.pls = plsByBatch[r.id] || []; });
+  res.json(rows);
+}));
+
+// ===== CI/PL × 物流合并 PHASE A：批次导出数据（含权威 ambiguity 判定）=====
+// 固定 4~5 条 set-based 查询，绝不对 commercial_invoice_items 做 JOIN（避免 row-amplify）。
+// 导出判定（exact / ambiguous / missing）放在后端：可测、不可绕过、口径唯一。
+app.get('/api/logistics-batches/:id/export-data', requireApiPermission('logistics_view'), asyncHandler((req, res) => {
+  const batchId = req.params.id;
+  const batch = queryOne('SELECT * FROM logistics_batches WHERE id = ?', [batchId]);
+  if (!batch) return res.status(404).json({ error: '物流批次不存在' });
+  const ci = batch.related_ci_id ? queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [batch.related_ci_id]) : null;
+  // 全部 PL（绝不用 queryOne 只取首张 —— 导出必须覆盖全部 PL）
+  const pls = query('SELECT * FROM packing_lists WHERE logistics_batch_id = ?', [batchId]).rows;
+  const ciItems = ci ? query('SELECT * FROM commercial_invoice_items WHERE ci_id = ? ORDER BY created_at', [ci.id]).rows : [];
+  // PL items：一次取全，按 pl_id 分组（前端/后端按 pl_id 取，绝不 SQL JOIN）
+  let plItemsByPl = {};
+  if (pls.length > 0) {
+    const plIds = pls.map(p => p.id);
+    const ph = plIds.map(() => '?').join(',');
+    const plItems = query(`SELECT * FROM packing_list_items WHERE pl_id IN (${ph}) ORDER BY created_at`, plIds).rows;
+    plItems.forEach(it => { (plItemsByPl[it.pl_id] = plItemsByPl[it.pl_id] || []).push(it); });
+  }
+  const priceLookup = computePriceLookup(ciItems, ci ? ci.currency : null);
+  const inScopeSkus = new Set();
+  pls.forEach(pl => (plItemsByPl[pl.id] || []).forEach(it => inScopeSkus.add(it.sku_code)));
+  const blockingIssues = validateInScopePrices(priceLookup, [...inScopeSkus]);
+  const exportBlocked = blockingIssues.length > 0 || !ci || pls.length === 0;
+  const blockingReason = !ci ? 'no_ci' : (pls.length === 0 ? 'no_pl' : (blockingIssues.length > 0 ? 'price_ambiguous_or_missing' : null));
+  res.json({
+    batch, ci, ci_items: ciItems,
+    pls: pls.map(pl => ({ ...pl, items: plItemsByPl[pl.id] || [] })),
+    price_lookup: priceLookup,
+    export_blocked: exportBlocked,
+    blocking_reason: blockingReason,
+    blocking_issues: blockingIssues
+  });
+}));
+
 // 多 PI 改造：查询 CI 关联的各 PI 尾款明细（供合并付款选择）
 app.get('/api/commercial-invoices/:id/pi-balances', requireApiPermission('ci_view'), asyncHandler((req, res) => {
   const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [req.params.id]);
@@ -10604,6 +10664,96 @@ app.post('/api/packing-lists/batch-import', requireApiPermission('ci_create'), a
 }));
 
 // ==================== 物流批次 ====================
+
+// ===== CI/PL × 物流合并 PHASE A：共用派生口径（code motion，与旧物流列表逐字一致）=====
+// 仅搬迁，不做任何语义改动；旧列表 route 与新 CI-scoped route 共用，保证口径单一来源（TEST 5）。
+const LOGI_DERIVED_COLS =
+  ',\n  (SELECT SUM(pli.total_qty) FROM packing_list_items pli JOIN packing_lists pl2 ON pli.pl_id = pl2.id WHERE pl2.logistics_batch_id = lb.id) AS batch_total_quantity, '
+  + 'CASE WHEN lb.related_ci_id IS NULL OR lb.related_ci_id = \'\' THEN NULL ELSE (SELECT COALESCE(SUM(cii.shipped_qty), 0) FROM commercial_invoice_items cii WHERE cii.ci_id = lb.related_ci_id) END AS related_ci_total_quantity, '
+  + 'CASE WHEN lb.actual_arrival_date IS NOT NULL AND lb.actual_arrival_date != \'\' AND ci.actual_ship_date IS NOT NULL AND ci.actual_ship_date != \'\' '
+  + 'THEN CAST(julianday(lb.actual_arrival_date) - julianday(ci.actual_ship_date) AS INTEGER) ELSE NULL END AS actual_transit_days, '
+  + 'COALESCE(bv.cargo_value, 0) AS cargo_value';
+
+// 货值 set-based 预聚合（FREIGHT-RATIO-02），批量化、跨 PG/SQLite 兼容（db-pg.js 翻译 julianday）。
+const LOGI_CARGO_VALUE_JOIN =
+  'LEFT JOIN (SELECT pl2.logistics_batch_id, SUM(pli.total_qty * ci_agg.unit_price) AS cargo_value '
+  + 'FROM packing_lists pl2 JOIN packing_list_items pli ON pli.pl_id = pl2.id '
+  + 'JOIN (SELECT ci_id, sku_code, COALESCE(SUM(ci_amount) / NULLIF(SUM(shipped_qty), 0), 0) AS unit_price '
+  + 'FROM commercial_invoice_items GROUP BY ci_id, sku_code) ci_agg '
+  + 'ON ci_agg.ci_id = pl2.related_ci_id AND ci_agg.sku_code = pli.sku_code '
+  + 'GROUP BY pl2.logistics_batch_id) bv ON bv.logistics_batch_id = lb.id ';
+
+// 复用旧物流列表的逐行派生：owner 姓名 / display status / inbound 状态 / listing_owner_names / freight_value_ratio。
+// 仅搬迁，不含旧列表的两个 status 筛选（筛选由各自 route 负责）。
+function decorateLogisticsRows(rows) {
+  if (!Array.isArray(rows)) return rows;
+  const ownerNameMap = resolveOwnerNameMap(rows.flatMap(r => splitIdCsv(r.listing_owner_ids)));
+  const ciIds = [...new Set(rows.map(r => r.related_ci_id).filter(Boolean))];
+  const ciInboundMap = {};
+  if (ciIds.length > 0) {
+    const placeholders = ciIds.map(() => '?').join(',');
+    const itemRows = query(`SELECT ci_id, shipped_qty, inbound_qty FROM commercial_invoice_items WHERE ci_id IN (${placeholders})`, ciIds).rows;
+    const ciItemMap = {};
+    itemRows.forEach(it => {
+      if (!ciItemMap[it.ci_id]) ciItemMap[it.ci_id] = { totalShipped: 0, totalInbound: 0 };
+      ciItemMap[it.ci_id].totalShipped += (it.shipped_qty || 0);
+      ciItemMap[it.ci_id].totalInbound += (it.inbound_qty || 0);
+    });
+    ciIds.forEach(cid => {
+      const agg = ciItemMap[cid];
+      if (!agg || agg.totalShipped === 0) { ciInboundMap[cid] = 'none'; return; }
+      if (agg.totalInbound >= agg.totalShipped) { ciInboundMap[cid] = 'completed'; return; }
+      if (agg.totalInbound > 0) { ciInboundMap[cid] = 'partial'; return; }
+      ciInboundMap[cid] = 'none';
+    });
+  }
+  rows.forEach(r => {
+    r.logistics_display_status = deriveLogisticsDisplayStatus(r.logistics_status);
+    r.inbound_derived_status = r.related_ci_id ? (ciInboundMap[r.related_ci_id] || 'none') : 'none';
+    if (!r.listing_status) r.listing_status = 'pending_plan';
+    const oids = splitIdCsv(r.listing_owner_ids);
+    r.listing_owner_ids = oids;
+    r.listing_owner_names = namesFromMap(oids, ownerNameMap);
+    const ciCurrency = String(r.ci_currency || '').trim();
+    const freightCurrency = String(r.freight_currency || '').trim();
+    const cargoValue = Number(r.cargo_value) || 0;
+    const totalFreight = Number(r.total_freight) || 0;
+    let ratio = null;
+    if (cargoValue > 0 && ciCurrency && freightCurrency && ciCurrency.toUpperCase() === freightCurrency.toUpperCase()) {
+      ratio = (totalFreight / cargoValue) * 100;
+    }
+    r.freight_value_ratio = ratio;
+  });
+  return rows;
+}
+
+// CI/PL × 物流合并 PHASE A：导出价格 lookup（纯函数，可单测）。同 SKU 多行同价 → exact；异价 → ambiguous。
+function computePriceLookup(ciItems, ciCurrency) {
+  const lookup = {};
+  (ciItems || []).forEach(it => {
+    const sku = it.sku_code;
+    if (!lookup[sku]) lookup[sku] = { unit_price: null, currency: ciCurrency || null, status: 'missing', distinct_unit_prices: [] };
+    const up = Number(it.unit_price);
+    if (!lookup[sku].distinct_unit_prices.some(x => Math.abs(x - up) < 1e-6)) lookup[sku].distinct_unit_prices.push(up);
+  });
+  Object.keys(lookup).forEach(sku => {
+    const e = lookup[sku];
+    if (e.distinct_unit_prices.length === 1) { e.status = 'exact'; e.unit_price = e.distinct_unit_prices[0]; }
+    else { e.status = 'ambiguous'; e.unit_price = null; }
+  });
+  return lookup;
+}
+// 仅对「当前 batch 名下 PL 的 items 实际出现的 sku」做校验（范围最小化，CI 内其它 SKU 不阻断）
+function validateInScopePrices(lookup, inScopeSkus) {
+  const issues = [];
+  (inScopeSkus || []).forEach(sku => {
+    const e = lookup[sku];
+    if (!e || e.distinct_unit_prices.length === 0) issues.push({ sku_code: sku, reason: 'missing', distinct_unit_prices: [] });
+    else if (e.status === 'ambiguous') issues.push({ sku_code: sku, reason: 'ambiguous', distinct_unit_prices: e.distinct_unit_prices });
+  });
+  return issues;
+}
+
 app.get('/api/logistics-batches', requireApiPermission('logistics_view'), asyncHandler((req, res) => {
   const { logistics_display_status, keyword, forwarder_id, listing_status } = req.query;
   // LOGISTICS-LISTING-01（2026-08-07 owner 多选）：listing_owner_ids 为逗号分隔多 ID，姓名由 resolveOwnerNames 解析，避免对逗号列表做 JOIN
@@ -10639,59 +10789,11 @@ app.get('/api/logistics-batches', requireApiPermission('logistics_view'), asyncH
   sql += ' ORDER BY lb.created_at DESC';
   let rows = query(sql, params).rows;
 
-  // LOGISTICS-LISTING-01（2026-08-07 修复）：一次性批量解析所有上架负责人姓名，避免逐行 N+1 查询
-  const ownerNameMap = resolveOwnerNameMap(rows.flatMap(r => splitIdCsv(r.listing_owner_ids)));
-
-  // ── 派生 logistics_display_status + inbound_derived_status（不修改底层 logistics_status） ──
-  // 物流展示状态纯粹由 logistics_status 映射，入库状态由 Inbound 事实派生
-  const ciIds = [...new Set(rows.map(r => r.related_ci_id).filter(Boolean))];
-  const ciInboundMap = {}; // ci_id → 'none' | 'partial' | 'completed'
-  if (ciIds.length > 0) {
-    const placeholders = ciIds.map(() => '?').join(',');
-    const itemRows = query(`SELECT ci_id, shipped_qty, inbound_qty FROM commercial_invoice_items WHERE ci_id IN (${placeholders})`, ciIds).rows;
-    const ciItemMap = {};
-    itemRows.forEach(it => {
-      if (!ciItemMap[it.ci_id]) ciItemMap[it.ci_id] = { totalShipped: 0, totalInbound: 0 };
-      ciItemMap[it.ci_id].totalShipped += (it.shipped_qty || 0);
-      ciItemMap[it.ci_id].totalInbound += (it.inbound_qty || 0);
-    });
-    ciIds.forEach(cid => {
-      const agg = ciItemMap[cid];
-      if (!agg || agg.totalShipped === 0) { ciInboundMap[cid] = 'none'; return; }
-      if (agg.totalInbound >= agg.totalShipped) { ciInboundMap[cid] = 'completed'; return; }
-      if (agg.totalInbound > 0) { ciInboundMap[cid] = 'partial'; return; }
-      ciInboundMap[cid] = 'none';
-    });
-  }
-
-  // 注入派生字段 + 按 logistics_display_status / listing_status 筛选
-  rows = rows.filter(r => {
-    r.logistics_display_status = deriveLogisticsDisplayStatus(r.logistics_status);
-    r.inbound_derived_status = r.related_ci_id ? (ciInboundMap[r.related_ci_id] || 'none') : 'none';
-    // LOGISTICS-LISTING-01（2026-08-07 owner 多选）：listing_owner_ids 解析为数组 + 姓名数组
-    if (!r.listing_status) r.listing_status = 'pending_plan';
-    const oids = splitIdCsv(r.listing_owner_ids);
-    r.listing_owner_ids = oids;
-    r.listing_owner_names = namesFromMap(oids, ownerNameMap);
-    if (logistics_display_status && r.logistics_display_status !== logistics_display_status) return false;
-    if (listing_status && r.listing_status !== listing_status) return false;
-    return true;
-  });
-
-  // FREIGHT-RATIO-02：运费/货值 = 综合运费 ÷ 本批次实际运输货值 × 100%
-  // 币种一致性保护：仅当 freight_currency === ci_currency 且货值 > 0 时计算；
-  // 跨币种一律返回 null（前端 '-'），本任务不引入任何 FX 换算（无 latest fallback、无实时汇率、无历史猜测）。
-  rows.forEach(r => {
-    const ciCurrency = String(r.ci_currency || '').trim();
-    const freightCurrency = String(r.freight_currency || '').trim();
-    const cargoValue = Number(r.cargo_value) || 0;
-    const totalFreight = Number(r.total_freight) || 0;
-    let ratio = null;
-    if (cargoValue > 0 && ciCurrency && freightCurrency && ciCurrency.toUpperCase() === freightCurrency.toUpperCase()) {
-      ratio = (totalFreight / cargoValue) * 100;
-    }
-    r.freight_value_ratio = ratio;
-  });
+  // CI/PL × 物流合并 PHASE A：逐字复用 decorateLogisticsRows（owner 姓名 / display status / inbound / listing_owner_names / freight_value_ratio）
+  rows = decorateLogisticsRows(rows);
+  // 旧列表的 status 筛选（与 helper 解耦，保持旧入口行为逐字节不变）
+  if (logistics_display_status) rows = rows.filter(r => r.logistics_display_status === logistics_display_status);
+  if (listing_status) rows = rows.filter(r => r.listing_status === listing_status);
 
   res.json(rows);
 }));
