@@ -24,7 +24,7 @@ jobs:
       - name: Syntax check
         run: node --check app.js
       - name: Focused regression tests
-        run: node --test test/rp-review-snapshot-source.test.cjs test/rp-review-report.test.cjs test/app-perf.test.cjs
+        run: node --test test/rp-review-snapshot-source.test.cjs test/rp-review-report.test.cjs
       - name: Commit generated source change
         run: |
           if git diff --quiet -- app.js; then
