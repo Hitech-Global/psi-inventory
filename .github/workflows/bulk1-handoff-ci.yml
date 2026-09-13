@@ -44,14 +44,14 @@ jobs:
       - name: BULK-1 index safety
         run: node --test test/bulk1-index-safety.test.cjs
       - name: BULK-1 tie semantics on PostgreSQL
-        run: node --test test/bulk1-latest-imports-tie.test.cjs
+        run: node --test --test-force-exit test/bulk1-latest-imports-tie.test.cjs
       - name: P0-C2 regression
-        run: node --test test/p0-c2-batch-import.test.cjs
+        run: node --test --test-force-exit test/p0-c2-batch-import.test.cjs
       - name: Inventory import regressions
         run: |
-          TZ=Asia/Jakarta node --test test/wac-import-resolution.test.cjs
-          node --test test/inventory-safe-delete.test.cjs
-          node --test test/inventory-import-precheck.test.cjs
+          TZ=Asia/Jakarta node --test --test-force-exit test/wac-import-resolution.test.cjs
+          node --test --test-force-exit test/inventory-safe-delete.test.cjs
+          node --test --test-force-exit test/inventory-import-precheck.test.cjs
       - name: PostgreSQL 500k x 5000 benchmark at work_mem=4MB
         env:
           DB_DRIVER: pg
@@ -147,5 +147,7 @@ jobs:
             } finally {
               await c.end();
             }
-          })().catch(err => { console.error(err); process.exit(1); });
+          })()
+            .then(() => process.exit(0))
+            .catch(err => { console.error(err); process.exit(1); });
           NODE
