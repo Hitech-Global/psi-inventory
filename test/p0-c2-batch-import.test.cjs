@@ -590,7 +590,15 @@ describe('P0-C2 structural guards', () => {
     const j = SRC.indexOf('\nfunction ', i + 10);
     const body = SRC.slice(i, j > 0 ? j : i + 1200);
     assert.ok(/inventory_delete_tombstones/.test(body), '必须保留 NOT EXISTS tombstone 过滤');
-    assert.ok(/MAX\(i2\.import_date/.test(body), '必须保留 MAX\(import_date\) latest-per-key 语义');
+    // BULK-1 前：correlated `MAX(i2.import_date::date)` 子查询；
+    // BULK-1 后：窗口 `MAX(l.import_day) OVER (PARTITION BY key)` + 外层等值过滤。
+    // 两种写法都必须保留 latest-per-key 语义，故按"任一形态"断言（等价性由
+    // test/bulk1-latest-imports-tie.test.cjs 在真 PG 上做旧/新输出多重集差分证明）。
+    const hasLatestPerKey = /MAX\(\s*i2\.import_date/.test(body) ||
+      /MAX\(\s*l\.import_day\s*\)\s*OVER\s*\(\s*PARTITION\s+BY/.test(body);
+    assert.ok(hasLatestPerKey, '必须保留 latest-per-key 语义（ correlated MAX(i2.import_date) 或 窗口 MAX(l.import_day) OVER (PARTITION BY key) ）');
+    // 不得为了性能做 arbitrary pick，否则 tie 会被吞掉、绕过 duplicate-key fallback
+    assert.ok(!/DISTINCT\s+ON/i.test(body), '禁止 DISTINCT ON（会 arbitrary pick 单行，绕过 duplicate fallback）');
     assert.ok(/jsonb_to_recordset\(\$1::jsonb\) AS j\(sku_code text, country text, warehouse text\)/.test(body), '必须以 K key 集合做 scoped IN 过滤');
   });
 });
