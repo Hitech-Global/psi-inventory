@@ -1,0 +1,52 @@
+var invImportPollTimer=null;
+function stopInvImportPolling(){if(invImportPollTimer){clearTimeout(invImportPollTimer);invImportPollTimer=null;}}
+function invImportPhaseLabel(phase){var m={validating:'正在校验导入数据',preparing:'预检查通过，正在准备写入',validating_rows:'正在校验数据行',writing:'正在写入库存数据',written:'库存数据写入完成',refreshing_inventory:'正在更新库存总表',finalizing:'正在完成导入校验',completed:'导入完成',blocked:'导入已阻断',failed:'导入失败'};return m[phase]||'正在导入库存';}
+function renderInvImportProgress(run){
+  if(!run)return;
+  var p=Math.max(0,Math.min(100,Number(run.percent)||0));
+  var total=Math.max(0,Number(run.total_count)||0),done=Math.max(0,Number(run.processed_count)||0);
+  var terminal=run.status==='completed'||run.status==='failed'||run.status==='blocked';
+  var ok=run.status==='completed',bad=run.status==='failed'||run.status==='blocked';
+  var title=run.message||invImportPhaseLabel(run.phase);
+  var accent=ok?'#30a85a':(bad?'#ff3b30':'#2e7d32');
+  var box=document.getElementById('inv-result');
+  if(box){box.innerHTML='<div style="margin-top:12px;padding:18px 18px 16px;border-radius:16px;background:rgba(248,248,250,.96);border:1px solid rgba(0,0,0,.06);box-shadow:0 8px 24px rgba(0,0,0,.06)">'+
+    '<div style="display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:12px"><div><div style="font-size:14px;font-weight:600;color:#1d1d1f">'+esc(title)+'</div><div style="font-size:12px;color:#86868b;margin-top:3px">'+(total?(done+' / '+total+' 条'):'正在准备…')+'</div></div><div style="font-size:28px;line-height:1;font-weight:650;letter-spacing:-.03em;color:'+accent+'">'+Math.round(p)+'%</div></div>'+ 
+    '<div style="height:7px;border-radius:999px;background:#e8e8ed;overflow:hidden"><div style="height:100%;width:'+p+'%;border-radius:999px;background:'+accent+';transition:width .35s ease"></div></div>'+ 
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:9px;font-size:11px;color:#86868b"><span>'+esc(invImportPhaseLabel(run.phase))+'</span><span>'+(terminal?(ok?'✓ 已完成':'已停止'):'请保持窗口打开，无需重复操作')+'</span></div></div>';}
+  var btn=document.getElementById('inv-import-btn');if(btn&&!terminal){btn.disabled=true;btn.textContent='正在导入 '+Math.round(p)+'%';}
+}
+async function pollInvImportStatus(importId){
+  if(!importId)return;
+  try{var run=await api('/api/inventory-imports/bulk-import/'+encodeURIComponent(importId)+'/status');renderInvImportProgress(run);if(run.status==='completed'||run.status==='failed'||run.status==='blocked'){stopInvImportPolling();return;}}catch(e){if(!(e&&e.status===404)){/* best-effort */}}
+  stopInvImportPolling();invImportPollTimer=setTimeout(function(){pollInvImportStatus(importId)},400);
+}
+function startInvImportPolling(importId){stopInvImportPolling();invImportPollTimer=setTimeout(function(){pollInvImportStatus(importId)},120);}
+
+async function submitInvBatchImport(){
+  var records=window._invImportData||[];
+  if(records.length===0){showToast(t("toast.no_valid_data", "没有可导入的有效数据"),'danger');return}
+  var hasLocalError=records.some(function(r){return r._errors&&r._errors.length>0});if(hasLocalError){showToast(t('inv.toast_blocked','存在阻断型错误，本次库存导入已整批拒绝'),'danger');return}
+  var snapshotDate=window._invSnapshotDate||'';if(!snapshotDate){showToast(t("toast.fill_snapshot_date", "请填写库存快照截止日期"),'danger');return}
+  if(!invImportRulesReady()){showToast(t('inv.rules_missing_toast','库存导入规则模块未能加载，已取消本次导入。请刷新页面后重试。'),'danger');return;}
+  var fp=InvImportRules.computeInvImportFingerprint(records,snapshotDate);var pc=window._invPrecheck;var pcOk=!!(pc&&pc.ok===true&&pc.blocking&&pc.blocking.length===0);
+  if(!pcOk||fp!==window._invPassedFingerprint){if(pc&&!pcOk){renderInvPrecheck(pc);}else{runInvPrecheck();}showToast(t('inv.toast_recheck_before_submit','当前数据尚未通过预检查，正在重新校验……'),'warning');return;}
+  var btn=document.getElementById('inv-import-btn');btn.disabled=true;btn.textContent='正在导入 0%';
+  var importId='';try{importId=(window.crypto&&crypto.randomUUID)?crypto.randomUUID():'inv-import-'+Date.now()+'-'+Math.random().toString(36).slice(2)}catch(_){importId='inv-import-'+Date.now()}
+  renderInvImportProgress({status:'running',phase:'validating',percent:0,processed_count:0,total_count:records.length,message:'正在启动库存导入'});startInvImportPolling(importId);
+  try{
+    var items=records.map(buildInvImportItem);
+    var res=await api('/api/inventory-imports/bulk-import','POST',{items:items,snapshot_cutoff_date:snapshotDate,import_id:importId});
+    stopInvImportPolling();renderInvImportProgress({status:'completed',phase:'completed',percent:100,processed_count:records.length,total_count:records.length,message:'导入完成'});
+    window._lastInvImportErrors=res.errors||[];
+    var html='<div style="background:'+(res.failed>0?'#fffbe6':'#f6ffed')+';border:1px solid '+(res.failed>0?'#ffe58f':'#b7eb8f')+';border-radius:12px;padding:14px 16px;font-size:13px;margin-top:12px"><div style="font-weight:600;margin-bottom:8px">'+t("toast.import_done", "导入完成")+'</div><div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">'+t("html.import.added_open", "<span>已新增：")+(res.created||0)+t("html.unit.tiao_close", " 条</span>")+t("html.import.fail_open", "<span>失败：")+(res.failed||0)+t("html.unit.tiao_close", " 条</span>")+'<span style="color:#1890ff">快照截止日期：'+esc(res.snapshot_cutoff_date||snapshotDate)+'</span></div>';
+    if(res.wac_warnings&&res.wac_warnings.length>0){var highWarnings=res.wac_warnings.filter(function(w){return w.priority==='high'}),normalWarnings=res.wac_warnings.filter(function(w){return w.priority!=='high'});html+='<div style="margin-top:10px;padding:10px 12px;border-radius:8px;background:'+(highWarnings.length>0?'#fff1f0':'#fffbe6')+';border:1px solid '+(highWarnings.length>0?'#ffa39e':'#ffe58f')+'"><div style="font-weight:600;color:'+(highWarnings.length>0?'#ff3b30':'#faad14')+';margin-bottom:6px">加权平均成本匹配结果</div>';if(highWarnings.length>0){html+='<div style="color:#ff3b30;margin-bottom:4px;font-weight:600">⚠️ 高优先级（成本为 0，请尽快完成成本确认）</div>';highWarnings.forEach(function(w){html+='<div style="color:#666;margin-left:12px">'+esc(w.sku_code)+' / '+esc(w.country||'')+' / '+esc(w.warehouse||'')+'：'+esc(w.message)+'</div>';});}if(normalWarnings.length>0){html+='<div style="color:#faad14;margin-bottom:4px;margin-top:'+(highWarnings.length>0?'6px':'0')+'">ℹ️ 已保留原成本（请完成成本确认以更新）</div>';normalWarnings.forEach(function(w){html+='<div style="color:#666;margin-left:12px">'+esc(w.sku_code)+' / '+esc(w.country||'')+' / '+esc(w.warehouse||'')+'：'+esc(w.message)+'</div>';});}html+='</div>';}
+    if(window._lastInvImportErrors.length>0){html+='<div style="margin-top:10px"><div style="font-weight:600;color:#ff3b30;margin-bottom:6px">'+t("html.inv.fail_detail", "失败明细")+'</div>';html+=window._lastInvImportErrors.slice(0,20).map(function(e){return '<div style="color:#666">第 '+e.row+' 行：'+esc(e.reason)+'</div>'}).join('');if(window._lastInvImportErrors.length>20)html+='<div style="color:#999">还有 '+(window._lastInvImportErrors.length-20)+' 条失败...</div>';html+='<button type="button" class="btn btn-secondary" style="margin-top:10px" onclick="downloadInvImportErrors()">'+t("html.inv.download_fail", "下载失败明细")+'</button></div>';}
+    html+='</div>';var resultBox=document.getElementById('inv-result');if(resultBox)resultBox.insertAdjacentHTML('beforeend',html);
+    var createdN=res.created||0,failedN=res.failed||0,toastMsg,toastType;if(createdN>0&&failedN===0){toastMsg=t('toast.importDone2','导入完成：新增{c}，失败{f}',{c:createdN,f:failedN});toastType='success';}else if(createdN>0&&failedN>0){toastMsg=t('toast.import_partial','导入部分完成：新增{c}，失败{f}',{c:createdN,f:failedN});toastType='warning';}else if(createdN===0&&failedN>0){toastMsg=t('toast.import_failed2','导入失败：新增{c}，失败{f}',{c:createdN,f:failedN});toastType='danger';}else{toastMsg=t('toast.import_no_data','无有效数据：新增{c}，失败{f}',{c:createdN,f:failedN});toastType='danger';}showToast(toastMsg,toastType);loadInv();
+  }catch(e){
+    stopInvImportPolling();var pl=e&&e.payload;
+    if(pl&&pl.blocked===true){window._invPrecheck=pl.precheck||{ok:false,blocking:pl.blocking||[],summary:pl.summary||[],blocking_count:(pl.blocking||[]).length,total_rows:records.length};window._invPassedFingerprint=null;renderInvPrecheck(window._invPrecheck);renderInvStatus();var rbox=document.getElementById('inv-result');if(rbox)rbox.innerHTML='<div style="background:#fff1f0;border:1px solid #ffa39e;border-radius:12px;padding:12px 14px;font-size:13px;color:#a8071a">'+esc(t('inv.blocked_zero_write','本次库存导入已整批阻断，数据库未发生任何写入。请按下方问题明细修复后重新导入。'))+'</div>';var pbox=document.getElementById('inv-precheck');if(pbox&&pbox.scrollIntoView)pbox.scrollIntoView({behavior:'auto',block:'center'});showToast(t('inv.toast_blocked','存在阻断型错误，本次库存导入已整批拒绝'),'danger');}
+    else{renderInvImportProgress({status:'failed',phase:'failed',percent:(pl&&pl.percent)||0,processed_count:0,total_count:records.length,message:(e&&e.message)||'导入失败'});showToast(e.message||t("toast.import_failed", "导入失败"),'danger');}
+  }finally{stopInvImportPolling();btn.disabled=false;btn.textContent=t("app.067", "开始导入");updateInvImportBtnState();}
+}
