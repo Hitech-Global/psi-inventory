@@ -1138,6 +1138,19 @@ if (require.main === module) {
     console.error('\n[FATAL] 服务无法启动。请修正数据库后重试。');
     process.exit(1);
   }
+
+  // BULK-1：inventory_imports latest-per-key 复合索引 (sku_code, country, warehouse, import_date)。
+  // 幂等：已存在则 no-op；表过大（> 25 万行）只 WARNING 跳过，绝不长时间锁表 —— 那种情况
+  // 需由运维先用 CREATE INDEX CONCURRENTLY 手工建（scripts/create-inventory-imports-index-concurrently.cjs）。
+  // 索引缺失只影响性能不影响正确性（旧 correlated 写法仍可跑），故失败不 fail-fast，仅告警。
+  try {
+    require('./migrations/inventory-imports-latest-index').ensureInventoryImportsLatestIndex(
+      run, (process.env.DB_DRIVER || 'sqlite').toLowerCase() === 'pg'
+    );
+    console.log('[STARTUP] inventory_imports latest-per-key 索引就绪 ✓');
+  } catch (e) {
+    console.warn('[STARTUP][BULK-1] inventory_imports 索引创建跳过（不影响正确性，仅性能）:', e.message);
+  }
   // 库存导入日期归一化回填：修复 M/D/YY 文本导致快照 MAX 字典序误判（根因 A）
   normalizeImportDatesBackfill();
   // 日期归一化后重新计算库存快照，使修正后的"最新批次"立即生效
@@ -4510,37 +4523,89 @@ function latestImportsSql() {
       )`;
 }
 
-// P0-C2: scoped sibling of latestImportsSql —— 仅查本次 affected K 个 business key。
-// 与 latestImportsSql() 唯一区别：末尾追加 (sku,country,warehouse) IN (jsonb key set)。
-// 保留完全相同的 tombstone 过滤与 latest-per-key MAX(import_date) 语义；旧函数不动。
+// BULK-1 v2: affected keys only; tombstones suppress the entire business key.
+// Select the latest calendar day, then the latest created_at event within that day.
+// Keep every exact-event tie (including all-null created_at), so the downstream
+// duplicate-import fallback remains reachable. created_at retains its stored TEXT
+// ordering, matching the audited import event format; no arbitrary row winner.
 function latestImportsSqlForKeySet() {
   const driver = (process.env.DB_DRIVER || 'sqlite').toLowerCase();
   if (driver === 'pg') {
     return `
-      SELECT sku_code, country, warehouse, available_qty, import_date, snapshot_cutoff_date, weighted_avg_cost, last_inbound_date, first_inbound_date
-      FROM inventory_imports i1
-      WHERE i1.import_date IS NOT NULL AND i1.import_date <> ''
-        AND NOT EXISTS (
-          SELECT 1 FROM inventory_delete_tombstones t1
-          WHERE t1.sku_code = i1.sku_code AND t1.country = i1.country AND t1.warehouse = i1.warehouse
-        )
-        AND i1.import_date::date = (
-          SELECT MAX(i2.import_date::date)
-          FROM inventory_imports i2
-          WHERE i2.sku_code = i1.sku_code AND i2.country = i1.country AND i2.warehouse = i1.warehouse
-            AND i2.import_date IS NOT NULL AND i2.import_date <> ''
-            AND NOT EXISTS (
-              SELECT 1 FROM inventory_delete_tombstones t2
-              WHERE t2.sku_code = i2.sku_code AND t2.country = i2.country AND t2.warehouse = i2.warehouse
-            )
-        )
-        AND (i1.sku_code, i1.country, i1.warehouse) IN (
-          SELECT j.sku_code, j.country, j.warehouse
-          FROM jsonb_to_recordset($1::jsonb) AS j(sku_code text, country text, warehouse text)
-        )`;
+      WITH ks AS (
+        SELECT DISTINCT j.sku_code, j.country, j.warehouse
+        FROM jsonb_to_recordset($1::jsonb) AS j(sku_code text, country text, warehouse text)
+      ),
+      live AS (
+        SELECT i1.sku_code, i1.country, i1.warehouse,
+               i1.available_qty, i1.import_date, i1.snapshot_cutoff_date,
+               i1.weighted_avg_cost, i1.last_inbound_date, i1.first_inbound_date,
+               SUBSTRING(BTRIM(i1.import_date) FROM 1 FOR 10)::date AS import_day,
+               i1.created_at
+        FROM inventory_imports i1
+        JOIN ks ON ks.sku_code = i1.sku_code AND ks.country = i1.country AND ks.warehouse = i1.warehouse
+        WHERE i1.import_date IS NOT NULL AND i1.import_date <> ''
+          AND NOT EXISTS (
+            SELECT 1 FROM inventory_delete_tombstones t
+            WHERE t.sku_code = i1.sku_code AND t.country = i1.country AND t.warehouse = i1.warehouse
+          )
+      ),
+      ranked AS (
+        SELECT l.*, MAX(l.import_day) OVER (PARTITION BY l.sku_code, l.country, l.warehouse) AS max_import_day
+        FROM live l
+      ),
+      latest_day AS (
+        SELECT * FROM ranked WHERE import_day = max_import_day
+      ),
+      events AS (
+        SELECT d.*, MAX(d.created_at) OVER (PARTITION BY d.sku_code, d.country, d.warehouse) AS max_created_at
+        FROM latest_day d
+      )
+      SELECT sku_code, country, warehouse, available_qty, import_date,
+             snapshot_cutoff_date, weighted_avg_cost, last_inbound_date, first_inbound_date
+      FROM events
+      WHERE created_at IS NOT DISTINCT FROM max_created_at`;
   }
   // 非 PG：refreshInventoryTotalsForKeys 已委托回旧全量函数，本分支不会命中；返回空结果以防万一。
   return `SELECT sku_code, country, warehouse, available_qty, import_date, snapshot_cutoff_date, weighted_avg_cost, last_inbound_date, first_inbound_date FROM inventory_imports WHERE 1 = 0`;
+}
+
+// ===========================================================================
+// 统一库存导入 WAC 解析（单一事实来源，三条路径共用）
+// 冻结优先级（2026-09-13 用户裁定）：
+//   1. confirmed + locked wac_history  —— 最高优先级，Excel 不可覆盖
+//   2. 本次导入文件中有效的 file WAC    —— 允许用 Excel 新成本覆盖旧 inventory 成本
+//   3. existing inventory WAC          —— 仅当本次文件没有有效 WAC 时兜底（不归零）
+//   4. 0                               —— 兜底
+// 历史说明：5bd085c 曾把 file WAC 设计成“新 SKU 专用、低于 existing”，
+//   导致已有 SKU 重导时 Excel 新成本被忽略；本次改为 confirmed→file→existing→0。
+// 返回 { wac, wacSource, warning }；warning ∈ {'preserve'|'zero'|null}，
+//   调用方负责补 sku_code/country/warehouse 上下文后 push 到 warnings。
+// ===========================================================================
+function resolveImportWac(opts) {
+  const wacRecord = opts && opts.wacRecord;
+  const fileWacRaw = opts ? opts.fileWacRaw : undefined;
+  const existingWacRaw = opts ? opts.existingWacRaw : undefined;
+
+  // 1) confirmed + locked wac_history（最高优先级，Excel 不可覆盖）
+  if (wacRecord) {
+    return { wac: Number(wacRecord.new_avg_cost) || 0, wacSource: 'confirmed', warning: null };
+  }
+
+  // 2) 本次导入文件中有效的 file WAC
+  const fw = Number(fileWacRaw);
+  if (fileWacRaw !== undefined && fileWacRaw !== null && String(fileWacRaw).trim() !== '' && !Number.isNaN(fw) && fw > 0) {
+    return { wac: fw, wacSource: 'file', warning: null };
+  }
+
+  // 3) existing inventory WAC（仅当本次文件没有有效 WAC 时兜底）
+  const ew = Number(existingWacRaw);
+  if (existingWacRaw !== undefined && existingWacRaw !== null && String(existingWacRaw).trim() !== '' && !Number.isNaN(ew) && ew !== 0) {
+    return { wac: ew, wacSource: 'existing', warning: 'preserve' };
+  }
+
+  // 4) 兜底 0
+  return { wac: 0, wacSource: 'none', warning: 'zero' };
 }
 
 // P0-B-HELPER: original refreshInventoryTotals loop（字节级原样保留旧 for 逻辑）
@@ -4552,33 +4617,22 @@ function runOriginalInventoryTotalsLoop(latestImports, snapshotCutoffDate, warni
     const existing = queryOne('SELECT id, weighted_avg_cost, last_inbound_date, first_inbound_date FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
       [imp.sku_code, imp.country, imp.warehouse]);
 
-    // WAC 来源优先级（按权威性从高到低）：
-    //   1. confirmed wac_history — 后续 CI 成本确认产生的正式 WAC
-    //   2. existing inventory WAC (≠0) — 已存在有效成本，不覆盖
-    //   3. opening import WAC (>0) — 库存导入时提供的加权平均成本，用于无正式 WAC 的新库存初始化
-    //   4. 0 — 兜底，表示无有效成本
+    // WAC 来源优先级由 resolveImportWac 统一解析（confirmed+locked → file WAC → existing → 0）
     const wacRecord = latestConfirmedWac(imp.sku_code, imp.country, imp.warehouse);
-    let wac, wacSource;
-    if (wacRecord) {
-      wac = wacRecord.new_avg_cost || 0;
-      wacSource = 'confirmed';
-    } else if (existing && (existing.weighted_avg_cost || 0) !== 0) {
-      // 保留已有有效 WAC，不被新的库存同步覆盖
-      wac = existing.weighted_avg_cost || 0;
-      wacSource = 'existing';
+    const rw = resolveImportWac({
+      wacRecord,
+      fileWacRaw: imp.weighted_avg_cost,
+      existingWacRaw: existing ? existing.weighted_avg_cost : undefined
+    });
+    const wac = rw.wac;
+    const wacSource = rw.wacSource;
+    if (rw.warning === 'preserve') {
       warnings.push({
         sku_code: imp.sku_code, country: imp.country, warehouse: imp.warehouse,
         priority: 'warning',
         message: '未找到最新已确认加权平均成本，已保留原成本，请完成成本确认。'
       });
-    } else if (imp.weighted_avg_cost && Number(imp.weighted_avg_cost) > 0) {
-      // 库存初始化：使用导入文件中的加权平均成本
-      wac = Number(imp.weighted_avg_cost);
-      wacSource = 'opening';
-    } else {
-      // 无有效成本，使用 0
-      wac = 0;
-      wacSource = 'none';
+    } else if (rw.warning === 'zero') {
       warnings.push({
         sku_code: imp.sku_code, country: imp.country, warehouse: imp.warehouse,
         priority: 'high',
@@ -4756,20 +4810,19 @@ async function refreshInventoryTotals(snapshotCutoffDate) {
         const r = snapshotRows[i];
         const imp = latestImports[i];
         const cutoff = imp.snapshot_cutoff_date || snapshotCutoffDate || '';
-        let wac;
-        if (r.wc_id != null) {
-          wac = r.wc_cost != null ? Number(r.wc_cost) || 0 : 0;
-        } else if (r.ex_id != null && ((r.ex_wac == null ? 0 : Number(r.ex_wac)) || 0) !== 0) {
-          wac = (r.ex_wac == null ? 0 : Number(r.ex_wac)) || 0;
+        const rw = resolveImportWac({
+          wacRecord: r.wc_id != null ? { new_avg_cost: r.wc_cost } : null,
+          fileWacRaw: imp.weighted_avg_cost,
+          existingWacRaw: r.ex_id != null ? r.ex_wac : undefined
+        });
+        const wac = rw.wac;
+        if (rw.warning === 'preserve') {
           warnings.push({
             sku_code: imp.sku_code, country: imp.country, warehouse: imp.warehouse,
             priority: 'warning',
             message: '未找到最新已确认加权平均成本，已保留原成本，请完成成本确认。'
           });
-        } else if (imp.weighted_avg_cost && Number(imp.weighted_avg_cost) > 0) {
-          wac = Number(imp.weighted_avg_cost);
-        } else {
-          wac = 0;
+        } else if (rw.warning === 'zero') {
           warnings.push({
             sku_code: imp.sku_code, country: imp.country, warehouse: imp.warehouse,
             priority: 'high',
@@ -4909,20 +4962,19 @@ async function refreshInventoryTotalsForKeys(keys, snapshotCutoffDate) {
         const r = snapshotRows[i];
         const imp = latestImports[i];
         const cutoff = imp.snapshot_cutoff_date || snapshotCutoffDate || '';
-        let wac;
-        if (r.wc_id != null) {
-          wac = r.wc_cost != null ? Number(r.wc_cost) || 0 : 0;
-        } else if (r.ex_id != null && ((r.ex_wac == null ? 0 : Number(r.ex_wac)) || 0) !== 0) {
-          wac = (r.ex_wac == null ? 0 : Number(r.ex_wac)) || 0;
+        const rw = resolveImportWac({
+          wacRecord: r.wc_id != null ? { new_avg_cost: r.wc_cost } : null,
+          fileWacRaw: imp.weighted_avg_cost,
+          existingWacRaw: r.ex_id != null ? r.ex_wac : undefined
+        });
+        const wac = rw.wac;
+        if (rw.warning === 'preserve') {
           warnings.push({
             sku_code: imp.sku_code, country: imp.country, warehouse: imp.warehouse,
             priority: 'warning',
             message: '未找到最新已确认加权平均成本，已保留原成本，请完成成本确认。'
           });
-        } else if (imp.weighted_avg_cost && Number(imp.weighted_avg_cost) > 0) {
-          wac = Number(imp.weighted_avg_cost);
-        } else {
-          wac = 0;
+        } else if (rw.warning === 'zero') {
           warnings.push({
             sku_code: imp.sku_code, country: imp.country, warehouse: imp.warehouse,
             priority: 'high',
@@ -20875,5 +20927,6 @@ module.exports = {
   pgBatchImportInsertSql,
   pgBatchTombstoneLiftSql,
   latestImportsSqlForKeySet,
-  refreshInventoryTotalsForKeys
+  refreshInventoryTotalsForKeys,
+  resolveImportWac
 };

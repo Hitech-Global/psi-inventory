@@ -70,27 +70,15 @@ function asArray(jsonOrStr) {
 
 // ---- PG-SIM：6 条 jsonb SQL 的等价 SQLite 翻译 ----
 
-// 1) latestImportsSqlForKeySet → 按 K key 各取 latest-per-key（保留 NOT EXISTS tombstone + MAX(import_date) 语义）
+// 1) Execute the production windows in SQLite, translating only PG syntax.
+// True PG differential tests cover date casting and the JSON recordset boundary.
 function simLatestImportsForKeys(sql, params) {
-  const keys = asArray(params[0]);
-  const g = db.getDB();
-  const out = [];
-  for (const k of keys) {
-    const rows = g.prepare(`
-      SELECT sku_code, country, warehouse, available_qty, import_date, snapshot_cutoff_date, weighted_avg_cost, last_inbound_date, first_inbound_date
-      FROM inventory_imports i1
-      WHERE i1.import_date IS NOT NULL AND i1.import_date <> ''
-        AND NOT EXISTS (SELECT 1 FROM inventory_delete_tombstones t WHERE t.sku_code=i1.sku_code AND t.country=i1.country AND t.warehouse=i1.warehouse)
-        AND i1.sku_code=? AND i1.country=? AND i1.warehouse=?
-        AND i1.import_date = (
-          SELECT MAX(import_date) FROM inventory_imports i2
-          WHERE i2.sku_code=? AND i2.country=? AND i2.warehouse=?
-            AND i2.import_date IS NOT NULL AND i2.import_date <> ''
-            AND NOT EXISTS (SELECT 1 FROM inventory_delete_tombstones t2 WHERE t2.sku_code=i2.sku_code AND t2.country=i2.country AND t2.warehouse=i2.warehouse)
-        )`).all(k.sku_code, k.country, k.warehouse, k.sku_code, k.country, k.warehouse);
-    for (const r of rows) out.push(r);
-  }
-  return { rows: out };
+  const translated = sql.replace(
+    /SELECT DISTINCT j.sku_code, j.country, j.warehouse\s+FROM jsonb_to_recordset\(\$1::jsonb\) AS j\(sku_code text, country text, warehouse text\)/,
+    "SELECT DISTINCT json_extract(value,'$.sku_code') AS sku_code, json_extract(value,'$.country') AS country, json_extract(value,'$.warehouse') AS warehouse FROM json_each(?)"
+  ).replace(/SUBSTRING\(BTRIM\(i1.import_date\) FROM 1 FOR 10\)::date/g,
+    'date(substr(trim(i1.import_date),1,10))');
+  return { rows: db.getDB().prepare(translated).all(params[0]) };
 }
 
 // 2) PG_REFRESH_SNAPSHOT_SQL → 按 K key 取 inventory 匹配（含 match count）+ latest confirmed wac
@@ -224,12 +212,13 @@ function resetAll() {
   g.exec('DELETE FROM inventory_imports; DELETE FROM inventory_delete_tombstones; DELETE FROM inventory; DELETE FROM wac_history;');
 }
 function seedImport(o) {
-  G().prepare('INSERT INTO inventory_imports (id, import_date, country, warehouse, channel, sku_code, available_qty, remark, snapshot_cutoff_date, brand, weighted_avg_cost, last_inbound_date, first_inbound_date) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
+  G().prepare('INSERT INTO inventory_imports (id, import_date, country, warehouse, channel, sku_code, available_qty, remark, snapshot_cutoff_date, brand, weighted_avg_cost, last_inbound_date, first_inbound_date, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
     .run(o.id || ('IMP_' + Math.random().toString(36).slice(2, 9)),
       o.import_date || '2026-01-15', o.country || 'Indonesia', o.warehouse || 'WH-JKT',
       o.channel || 'default', o.sku_code, o.available_qty, o.remark || '', o.snapshot_cutoff_date || '2026-01-01',
       o.brand || 'redragon', o.weighted_avg_cost == null ? 0 : o.weighted_avg_cost,
-      o.last_inbound_date || '', o.first_inbound_date || '');
+      o.last_inbound_date || '', o.first_inbound_date || '',
+      o.created_at === undefined ? '2026-09-13 08:00:00' : o.created_at);
 }
 function seedInv(o) {
   G().prepare('INSERT INTO inventory (id, sku_code, country, warehouse, available_qty, weighted_avg_cost, inventory_value, last_import_date, last_inbound_date, first_inbound_date, inventory_status) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
@@ -393,6 +382,46 @@ describe('P0-C2 inventory bulk-import (PG fast path)', () => {
 
     assert.strictEqual(callsDup5k, callsDup50, `duplicate import 回退 call count 必须不随 M 增长 (5k=${callsDup5k}, 50=${callsDup50})`);
     assert.ok(callsDup5k < 100, `duplicate 回退必须 scoped（< 100 calls），实际 ${callsDup5k}，证明未重处理全库 5000`);
+  });
+
+  test('v2: exact-event ambiguity actually enters row fallback', async () => {
+    resetAll();
+    for (const [n, created_at] of [[1,'2026-09-13 08:00:00'],[2,'2026-09-13 09:00:00'],[3,'2026-09-13 09:00:00']]) {
+      seedImport({sku_code:'EXACT', available_qty:n, created_at});
+    }
+    setPg(true); resetCounters();
+    try {
+      const keys = [{sku_code:'EXACT', country:'Indonesia', warehouse:'WH-JKT'}];
+      assert.equal(db.query(latestImportsSqlForKeySet(), [JSON.stringify(keys)]).rows.length, 2);
+      resetCounters();
+      await refreshInventoryTotalsForKeys(keys, '2026-01-01');
+      assert.ok(counters.queryOne > 0, 'exact-event ambiguity must execute row fallback');
+      assert.ok(!counters.statements.some(s => /WITH inp AS/.test(s)), 'must bypass set-based snapshot');
+    } finally { setPg(false); }
+  });
+
+  test('v2: 577 keys x 14 same-day events use bounded refresh calls, no row fallback', async () => {
+    const counts = [];
+    for (const size of [2, 577]) {
+      resetAll();
+      const keys = [];
+      for (let k = 0; k < size; k++) {
+        keys.push({sku_code:'REPEAT-'+k, country:'Indonesia', warehouse:'WH-JKT'});
+        for (let e = 1; e <= 14; e++) seedImport({
+          sku_code:'REPEAT-'+k, available_qty:e,
+          created_at:'2026-09-13 '+String(e).padStart(2,'0')+':00:00'
+        });
+      }
+      setPg(true); resetCounters();
+      try {
+        await refreshInventoryTotalsForKeys(keys, '2026-01-01');
+        counts.push(appCalls());
+        assert.equal(counters.queryOne, 0, 'reimports must not trigger per-row fallback');
+        assert.equal(G().prepare('SELECT count(*) AS n FROM inventory WHERE available_qty=14').get().n, size);
+      } finally { setPg(false); }
+    }
+    assert.equal(counts[0], counts[1]);
+    assert.ok(counts[1] <= 4, 'refresh must remain bounded: '+counts);
   });
 
   // ---------------------------------------------------------------- §14 duplicate inventory → scoped fallback
@@ -590,7 +619,15 @@ describe('P0-C2 structural guards', () => {
     const j = SRC.indexOf('\nfunction ', i + 10);
     const body = SRC.slice(i, j > 0 ? j : i + 1200);
     assert.ok(/inventory_delete_tombstones/.test(body), '必须保留 NOT EXISTS tombstone 过滤');
-    assert.ok(/MAX\(i2\.import_date/.test(body), '必须保留 MAX\(import_date\) latest-per-key 语义');
+    // BULK-1 前：correlated `MAX(i2.import_date::date)` 子查询；
+    // BULK-1 后：窗口 `MAX(l.import_day) OVER (PARTITION BY key)` + 外层等值过滤。
+    // 两种写法都必须保留 latest-per-key 语义，故按"任一形态"断言（等价性由
+    // test/bulk1-latest-imports-tie.test.cjs 在真 PG 上做旧/新输出多重集差分证明）。
+    const hasLatestPerKey = /MAX\(\s*i2\.import_date/.test(body) ||
+      /MAX\(\s*l\.import_day\s*\)\s*OVER\s*\(\s*PARTITION\s+BY/.test(body);
+    assert.ok(hasLatestPerKey, '必须保留 latest-per-key 语义（ correlated MAX(i2.import_date) 或 窗口 MAX(l.import_day) OVER (PARTITION BY key) ）');
+    // 不得为了性能做 arbitrary pick，否则 tie 会被吞掉、绕过 duplicate-key fallback
+    assert.ok(!/DISTINCT\s+ON/i.test(body), '禁止 DISTINCT ON（会 arbitrary pick 单行，绕过 duplicate fallback）');
     assert.ok(/jsonb_to_recordset\(\$1::jsonb\) AS j\(sku_code text, country text, warehouse text\)/.test(body), '必须以 K key 集合做 scoped IN 过滤');
   });
 });
