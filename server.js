@@ -1123,8 +1123,8 @@ console.log('========================================\n');
 if (require.main === module) {
   initDatabase();
   // 库存安全删除 tombstone 表（PG 端由 migrations/ 建表；SQLite 端已由 db-sqlite.js 的 schema 初始化创建）。
-  // 【启动顺序门禁】必须在下方 refreshInventoryTotals('') 之前完成：
-  // latestImportsSql() 会引用 inventory_delete_tombstones，若建表未完成就执行 refresh，
+  // 【启动顺序门禁】必须在下方库存日期 backfill/scoped refresh 之前完成：
+  // latest import SQL 会引用 inventory_delete_tombstones，若建表未完成就执行 refresh，
   // 首次部署会直接报 relation does not exist 并启动异常。
   // 建表失败必须 fail-fast（process.exit），绝不可 catch 后继续走到引用该表的 SQL。
   try {
@@ -1152,12 +1152,10 @@ if (require.main === module) {
     console.warn('[STARTUP][BULK-1] inventory_imports 索引创建跳过（不影响正确性，仅性能）:', e.message);
   }
   // 库存导入日期归一化回填：修复 M/D/YY 文本导致快照 MAX 字典序误判（根因 A）
-  normalizeImportDatesBackfill();
-  // 日期归一化后重新计算库存快照，使修正后的"最新批次"立即生效
-  // （已导入但停留在旧快照的批次无需手动重新导入即可修正）
-  refreshInventoryTotals('').then(() => {
-    console.log('[STARTUP] 库存快照已按修正后的最新导入日期重算完成');
-  }).catch(e => console.error('[STARTUP] 库存快照重算失败:', e && e.message));
+  // 只有实际改动日期时才刷新受影响 key，避免健康启动进入全库库存重算慢路径。
+  runStartupInventoryDateRefresh().catch(e => {
+    console.error('[STARTUP] 库存日期归一化后的 scoped 快照刷新失败:', e && e.message);
+  });
 }
 
 // PAY-CORE Phase 2 V2.1 第 12 节：为现有 role_admin 添加 payment_execute 权限（幂等迁移）
@@ -4450,8 +4448,9 @@ function normalizeImportDate(v) {
 // 启动期一次性回填：把历史 inventory_imports.import_date 统一归一为 ISO。
 // 幂等——已为 ISO 的行不改动；仅修正混存的 M/D/YY 文本。
 function normalizeImportDatesBackfill() {
+  const affectedKeyMap = new Map();
   try {
-    const rows = query('SELECT id, import_date FROM inventory_imports WHERE import_date IS NOT NULL AND import_date <> \'\'').rows;
+    const rows = query('SELECT id, sku_code, country, warehouse, import_date FROM inventory_imports WHERE import_date IS NOT NULL AND import_date <> \'\'').rows;
     let changed = 0;
     transaction(() => {
       for (const r of rows) {
@@ -4459,13 +4458,49 @@ function normalizeImportDatesBackfill() {
         if (norm && norm !== r.import_date) {
           run('UPDATE inventory_imports SET import_date = ? WHERE id = ?', [norm, r.id]);
           changed++;
+          const k = [r.sku_code || '', r.country || '', r.warehouse || ''].join('\0');
+          if (!affectedKeyMap.has(k)) {
+            affectedKeyMap.set(k, {
+              sku_code: r.sku_code || '',
+              country: r.country || '',
+              warehouse: r.warehouse || ''
+            });
+          }
         }
       }
     });
     if (changed) console.log(`[BACKFILL] 归一化 inventory_imports.import_date 共 ${changed} 行（M/D/YY → ISO）`);
+    return { changed, keys: Array.from(affectedKeyMap.values()) };
   } catch (e) {
     console.error('[BACKFILL] import_date 归一化失败:', e.message);
+    return { changed: 0, keys: [], error: e };
   }
+}
+
+async function runStartupInventoryDateRefresh(opts) {
+  const normalizeFn = opts && opts.normalizeImportDatesBackfill ? opts.normalizeImportDatesBackfill : normalizeImportDatesBackfill;
+  const refreshForKeysFn = opts && opts.refreshInventoryTotalsForKeys ? opts.refreshInventoryTotalsForKeys : refreshInventoryTotalsForKeys;
+  const backfill = normalizeFn() || { changed: 0, keys: [] };
+  const changed = Number(backfill.changed) || 0;
+  if (changed === 0) {
+    console.log('[STARTUP] 库存快照重算已跳过：import_date 归一化无改动');
+    return { skipped: true, changed: 0, keyCount: 0 };
+  }
+  const keyMap = new Map();
+  for (const key of backfill.keys || []) {
+    if (!key) continue;
+    const sku = key.sku_code || '';
+    const country = key.country || '';
+    const warehouse = key.warehouse || '';
+    const mapKey = [sku, country, warehouse].join('\0');
+    if (!keyMap.has(mapKey)) {
+      keyMap.set(mapKey, { sku_code: sku, country, warehouse });
+    }
+  }
+  const keys = Array.from(keyMap.values());
+  await refreshForKeysFn(keys, '');
+  console.log(`[STARTUP] 库存快照已按归一化日期 scoped 重算完成（changed=${changed}, keys=${keys.length}）`);
+  return { skipped: false, changed, keyCount: keys.length };
 }
 
 // 取每个 SKU+国家+仓库 最新批次的 SQL。
@@ -20928,5 +20963,7 @@ module.exports = {
   pgBatchTombstoneLiftSql,
   latestImportsSqlForKeySet,
   refreshInventoryTotalsForKeys,
+  normalizeImportDatesBackfill,
+  runStartupInventoryDateRefresh,
   resolveImportWac
 };
