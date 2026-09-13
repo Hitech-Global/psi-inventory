@@ -3425,14 +3425,30 @@ function downloadSkuImportErrors(){
 
 // ==================== 库存总表批量导入 ====================
 // 日期字符串解析（用于导入）
+// 纯日期字段必须按“日历日期”处理：禁止 new Date(v).toISOString() 转 UTC，
+// 否则 Jakarta/Shanghai 等正时区会把本地午夜回退成前一天（2026/7/18 → 2026-07-17）。
 function parseDateStr(v){
   if(!v)return '';
-  if(v instanceof Date)return v.toISOString().slice(0,10);
+  // JS Date / Excel 日期单元格（cellDates:true）：取本地日历分量，不转 UTC
+  if(v instanceof Date){
+    var y=v.getFullYear(), m=v.getMonth()+1, d=v.getDate();
+    return y+'-'+String(m).padStart(2,'0')+'-'+String(d).padStart(2,'0');
+  }
   var s=String(v).trim();
+  if(s==='')return '';
+  // 已为 ISO 日期：原样返回
   if(/^\d{4}-\d{2}-\d{2}$/.test(s))return s;
-  // 尝试解析其他格式
-  var d=new Date(v);
-  if(!isNaN(d))return d.toISOString().slice(0,10);
+  // 兼容 2026/7/18、2026.7.18 等斜杠/点分隔（按日历分量解析，不依赖 toISOString）
+  var m2=s.match(/^(\d{4})[\/\.\-](\d{1,2})[\/\.\-](\d{1,2})$/);
+  if(m2){
+    var yy=+m2[1], mm=+m2[2], dd=+m2[3];
+    if(mm>=1&&mm<=12&&dd>=1&&dd<=31)return yy+'-'+String(mm).padStart(2,'0')+'-'+String(dd).padStart(2,'0');
+  }
+  // 兜底：按本地午夜解析后取本地日历分量（不使用 toISOString）
+  var dt=new Date(s);
+  if(!isNaN(dt)){
+    return dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0');
+  }
   return '';
 }
 

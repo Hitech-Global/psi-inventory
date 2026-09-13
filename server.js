@@ -4543,6 +4543,44 @@ function latestImportsSqlForKeySet() {
   return `SELECT sku_code, country, warehouse, available_qty, import_date, snapshot_cutoff_date, weighted_avg_cost, last_inbound_date, first_inbound_date FROM inventory_imports WHERE 1 = 0`;
 }
 
+// ===========================================================================
+// 统一库存导入 WAC 解析（单一事实来源，三条路径共用）
+// 冻结优先级（2026-09-13 用户裁定）：
+//   1. confirmed + locked wac_history  —— 最高优先级，Excel 不可覆盖
+//   2. 本次导入文件中有效的 file WAC    —— 允许用 Excel 新成本覆盖旧 inventory 成本
+//   3. existing inventory WAC          —— 仅当本次文件没有有效 WAC 时兜底（不归零）
+//   4. 0                               —— 兜底
+// 历史说明：5bd085c 曾把 file WAC 设计成“新 SKU 专用、低于 existing”，
+//   导致已有 SKU 重导时 Excel 新成本被忽略；本次改为 confirmed→file→existing→0。
+// 返回 { wac, wacSource, warning }；warning ∈ {'preserve'|'zero'|null}，
+//   调用方负责补 sku_code/country/warehouse 上下文后 push 到 warnings。
+// ===========================================================================
+function resolveImportWac(opts) {
+  const wacRecord = opts && opts.wacRecord;
+  const fileWacRaw = opts ? opts.fileWacRaw : undefined;
+  const existingWacRaw = opts ? opts.existingWacRaw : undefined;
+
+  // 1) confirmed + locked wac_history（最高优先级，Excel 不可覆盖）
+  if (wacRecord) {
+    return { wac: Number(wacRecord.new_avg_cost) || 0, wacSource: 'confirmed', warning: null };
+  }
+
+  // 2) 本次导入文件中有效的 file WAC
+  const fw = Number(fileWacRaw);
+  if (fileWacRaw !== undefined && fileWacRaw !== null && String(fileWacRaw).trim() !== '' && !Number.isNaN(fw) && fw > 0) {
+    return { wac: fw, wacSource: 'file', warning: null };
+  }
+
+  // 3) existing inventory WAC（仅当本次文件没有有效 WAC 时兜底）
+  const ew = Number(existingWacRaw);
+  if (existingWacRaw !== undefined && existingWacRaw !== null && String(existingWacRaw).trim() !== '' && !Number.isNaN(ew) && ew !== 0) {
+    return { wac: ew, wacSource: 'existing', warning: 'preserve' };
+  }
+
+  // 4) 兜底 0
+  return { wac: 0, wacSource: 'none', warning: 'zero' };
+}
+
 // P0-B-HELPER: original refreshInventoryTotals loop（字节级原样保留旧 for 逻辑）
 // 用途：duplicate import / duplicate inventory 时 fallback；SQLite 路径；parity 基准
 // 禁止任何"等价重写"，保持 helper 内容与旧 for 循环完全一致。
@@ -4552,33 +4590,22 @@ function runOriginalInventoryTotalsLoop(latestImports, snapshotCutoffDate, warni
     const existing = queryOne('SELECT id, weighted_avg_cost, last_inbound_date, first_inbound_date FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
       [imp.sku_code, imp.country, imp.warehouse]);
 
-    // WAC 来源优先级（按权威性从高到低）：
-    //   1. confirmed wac_history — 后续 CI 成本确认产生的正式 WAC
-    //   2. existing inventory WAC (≠0) — 已存在有效成本，不覆盖
-    //   3. opening import WAC (>0) — 库存导入时提供的加权平均成本，用于无正式 WAC 的新库存初始化
-    //   4. 0 — 兜底，表示无有效成本
+    // WAC 来源优先级由 resolveImportWac 统一解析（confirmed+locked → file WAC → existing → 0）
     const wacRecord = latestConfirmedWac(imp.sku_code, imp.country, imp.warehouse);
-    let wac, wacSource;
-    if (wacRecord) {
-      wac = wacRecord.new_avg_cost || 0;
-      wacSource = 'confirmed';
-    } else if (existing && (existing.weighted_avg_cost || 0) !== 0) {
-      // 保留已有有效 WAC，不被新的库存同步覆盖
-      wac = existing.weighted_avg_cost || 0;
-      wacSource = 'existing';
+    const rw = resolveImportWac({
+      wacRecord,
+      fileWacRaw: imp.weighted_avg_cost,
+      existingWacRaw: existing ? existing.weighted_avg_cost : undefined
+    });
+    const wac = rw.wac;
+    const wacSource = rw.wacSource;
+    if (rw.warning === 'preserve') {
       warnings.push({
         sku_code: imp.sku_code, country: imp.country, warehouse: imp.warehouse,
         priority: 'warning',
         message: '未找到最新已确认加权平均成本，已保留原成本，请完成成本确认。'
       });
-    } else if (imp.weighted_avg_cost && Number(imp.weighted_avg_cost) > 0) {
-      // 库存初始化：使用导入文件中的加权平均成本
-      wac = Number(imp.weighted_avg_cost);
-      wacSource = 'opening';
-    } else {
-      // 无有效成本，使用 0
-      wac = 0;
-      wacSource = 'none';
+    } else if (rw.warning === 'zero') {
       warnings.push({
         sku_code: imp.sku_code, country: imp.country, warehouse: imp.warehouse,
         priority: 'high',
@@ -4756,20 +4783,19 @@ async function refreshInventoryTotals(snapshotCutoffDate) {
         const r = snapshotRows[i];
         const imp = latestImports[i];
         const cutoff = imp.snapshot_cutoff_date || snapshotCutoffDate || '';
-        let wac;
-        if (r.wc_id != null) {
-          wac = r.wc_cost != null ? Number(r.wc_cost) || 0 : 0;
-        } else if (r.ex_id != null && ((r.ex_wac == null ? 0 : Number(r.ex_wac)) || 0) !== 0) {
-          wac = (r.ex_wac == null ? 0 : Number(r.ex_wac)) || 0;
+        const rw = resolveImportWac({
+          wacRecord: r.wc_id != null ? { new_avg_cost: r.wc_cost } : null,
+          fileWacRaw: imp.weighted_avg_cost,
+          existingWacRaw: r.ex_id != null ? r.ex_wac : undefined
+        });
+        const wac = rw.wac;
+        if (rw.warning === 'preserve') {
           warnings.push({
             sku_code: imp.sku_code, country: imp.country, warehouse: imp.warehouse,
             priority: 'warning',
             message: '未找到最新已确认加权平均成本，已保留原成本，请完成成本确认。'
           });
-        } else if (imp.weighted_avg_cost && Number(imp.weighted_avg_cost) > 0) {
-          wac = Number(imp.weighted_avg_cost);
-        } else {
-          wac = 0;
+        } else if (rw.warning === 'zero') {
           warnings.push({
             sku_code: imp.sku_code, country: imp.country, warehouse: imp.warehouse,
             priority: 'high',
@@ -4909,20 +4935,19 @@ async function refreshInventoryTotalsForKeys(keys, snapshotCutoffDate) {
         const r = snapshotRows[i];
         const imp = latestImports[i];
         const cutoff = imp.snapshot_cutoff_date || snapshotCutoffDate || '';
-        let wac;
-        if (r.wc_id != null) {
-          wac = r.wc_cost != null ? Number(r.wc_cost) || 0 : 0;
-        } else if (r.ex_id != null && ((r.ex_wac == null ? 0 : Number(r.ex_wac)) || 0) !== 0) {
-          wac = (r.ex_wac == null ? 0 : Number(r.ex_wac)) || 0;
+        const rw = resolveImportWac({
+          wacRecord: r.wc_id != null ? { new_avg_cost: r.wc_cost } : null,
+          fileWacRaw: imp.weighted_avg_cost,
+          existingWacRaw: r.ex_id != null ? r.ex_wac : undefined
+        });
+        const wac = rw.wac;
+        if (rw.warning === 'preserve') {
           warnings.push({
             sku_code: imp.sku_code, country: imp.country, warehouse: imp.warehouse,
             priority: 'warning',
             message: '未找到最新已确认加权平均成本，已保留原成本，请完成成本确认。'
           });
-        } else if (imp.weighted_avg_cost && Number(imp.weighted_avg_cost) > 0) {
-          wac = Number(imp.weighted_avg_cost);
-        } else {
-          wac = 0;
+        } else if (rw.warning === 'zero') {
           warnings.push({
             sku_code: imp.sku_code, country: imp.country, warehouse: imp.warehouse,
             priority: 'high',
@@ -20875,5 +20900,6 @@ module.exports = {
   pgBatchImportInsertSql,
   pgBatchTombstoneLiftSql,
   latestImportsSqlForKeySet,
-  refreshInventoryTotalsForKeys
+  refreshInventoryTotalsForKeys,
+  resolveImportWac
 };
