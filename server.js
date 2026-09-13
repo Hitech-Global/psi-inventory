@@ -3834,37 +3834,92 @@ app.post('/api/inventory-imports/precheck', requireApiPermission('inventory_impo
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
+// 库存导入实时进度：只记录执行状态，不改变库存事实表/事务边界；1 小时 TTL 防止内存累积。
+// 库存导入实时进度：只记录执行状态，不改变库存事实表/事务边界；1 小时 TTL 防止内存累积。
+const inventoryImportRuns = new Map();
+const INVENTORY_IMPORT_RUN_TTL_MS = 60 * 60 * 1000;
+function inventoryImportProgressBody(run) {
+  if (!run) return null;
+  return {
+    import_id: run.import_id,
+    status: run.status,
+    phase: run.phase,
+    percent: run.percent,
+    processed_count: run.processed_count,
+    total_count: run.total_count,
+    message: run.message || '',
+    created: run.created || 0,
+    failed: run.failed || 0,
+    started_at: run.started_at,
+    updated_at: run.updated_at,
+    finished_at: run.finished_at || null
+  };
+}
+function cleanupInventoryImportRuns(nowMs) {
+  const now = Number(nowMs || Date.now());
+  for (const [id, run] of inventoryImportRuns.entries()) {
+    const t = Date.parse(run.updated_at || run.started_at || 0);
+    if (Number.isFinite(t) && now - t > INVENTORY_IMPORT_RUN_TTL_MS) inventoryImportRuns.delete(id);
+  }
+}
+function setInventoryImportProgress(importId, patch) {
+  cleanupInventoryImportRuns();
+  const now = new Date().toISOString();
+  const prev = inventoryImportRuns.get(importId) || {
+    import_id: importId,
+    status: 'running', phase: 'validating', percent: 0,
+    processed_count: 0, total_count: 0, created: 0, failed: 0,
+    started_at: now
+  };
+  const next = Object.assign({}, prev, patch || {}, { updated_at: now });
+  next.percent = Math.max(0, Math.min(100, Number(next.percent) || 0));
+  next.processed_count = Math.max(0, Number(next.processed_count) || 0);
+  next.total_count = Math.max(0, Number(next.total_count) || 0);
+  inventoryImportRuns.set(importId, next);
+  return next;
+}
+function finishInventoryImportProgress(importId, status, patch) {
+  return setInventoryImportProgress(importId, Object.assign({}, patch || {}, {
+    status,
+    percent: status === 'completed' ? 100 : ((patch && patch.percent) || 0),
+    finished_at: new Date().toISOString()
+  }));
+}
+function yieldInventoryImportProgress() { return new Promise(resolve => setImmediate(resolve)); }
+
+app.get('/api/inventory-imports/bulk-import/:importId/status', requireApiPermission('inventory_import'), asyncHandler(async (req, res) => {
+  const run = inventoryImportRuns.get(String(req.params.importId || ''));
+  if (!run) return res.status(404).json({ error: '导入任务不存在', import_id: req.params.importId });
+  res.json(inventoryImportProgressBody(run));
+}));
+
 app.post('/api/inventory-imports/bulk-import', requireApiPermission('inventory_import'), asyncHandler(async (req, res) => {
+  const items = req.body.items || [];
+  const snapshotCutoffDate = req.body.snapshot_cutoff_date || '';
+  const importId = String(req.body.import_id || genId('invjob')).trim();
+  const totalCount = items.length;
+  setInventoryImportProgress(importId, { status: 'running', phase: 'validating', percent: 2, processed_count: 0, total_count: totalCount, message: '正在校验导入数据' });
+  await yieldInventoryImportProgress();
   try {
-    const items = req.body.items || [];
-    const snapshotCutoffDate = req.body.snapshot_cutoff_date || '';
-    // INV-IMPORT-PRECHECK-01：整批前置预检查闸门 —— 必须在任何 INSERT / UPDATE 之前完成。
-    // 存在任意阻断型错误即整批拒绝：不进入 transaction、不写 inventory_imports、
-    // 不调用 refreshInventoryTotals（即库存总表 inventory 亦零写入）。
     const precheck = validateInventoryImportRows(items);
     if (!precheck.ok) {
+      finishInventoryImportProgress(importId, 'blocked', { phase: 'blocked', percent: 5, failed: precheck.blocking_count, message: '预检查未通过，数据库零写入' });
       return res.status(422).json({
         error: '库存导入预检查未通过，本次导入已整批阻断，数据库未发生任何写入',
-        blocked: true,
-        created: 0,
-        updated: 0,
-        failed: precheck.blocking_count,
-        precheck,
-        blocking: precheck.blocking,
-        summary: precheck.summary
+        blocked: true, import_id: importId, created: 0, updated: 0, failed: precheck.blocking_count,
+        precheck, blocking: precheck.blocking, summary: precheck.summary
       });
     }
+    setInventoryImportProgress(importId, { phase: 'preparing', percent: 12, processed_count: 0, message: '预检查通过，正在准备写入' });
+    await yieldInventoryImportProgress();
+
     const result = { created: 0, updated: 0, failed: 0, tombstones_lifted: 0, errors: [] };
-    // 单次批量导入行数上限（禁止静默截断 / slice）
     if (items.length > MAX_INVENTORY_IMPORT_ROWS) {
-      return res.status(400).json({
-        error: `单次库存导入最多 ${MAX_INVENTORY_IMPORT_ROWS} 条，当前 ${items.length} 条（已拒绝，零写入）`,
-        blocked: true, created: 0, updated: 0, failed: items.length
-      });
+      finishInventoryImportProgress(importId, 'blocked', { phase: 'blocked', percent: 12, failed: items.length, message: `超过单次导入上限 ${MAX_INVENTORY_IMPORT_ROWS} 条` });
+      return res.status(400).json({ error: `单次库存导入最多 ${MAX_INVENTORY_IMPORT_ROWS} 条，当前 ${items.length} 条（已拒绝，零写入）`, blocked: true, import_id: importId, created: 0, updated: 0, failed: items.length });
     }
-    // ===== P0-C2: PG set-based fast path（all-or-nothing，无 fallback）=====
+
     if (isPgDriver()) {
-      // 1) 全量前校验：任何一行无效 → 整批拒绝，零写入
       const validated = [];
       for (let i = 0; i < items.length; i++) {
         const item = items[i];
@@ -3874,25 +3929,20 @@ app.post('/api/inventory-imports/bulk-import', requireApiPermission('inventory_i
         const availQty = Number(rawAvailQty);
         if (!Number.isFinite(availQty) || !Number.isInteger(availQty) || availQty < 0) { result.failed++; result.errors.push({ row: i + 2, reason: '可用数量必须为非负整数' }); continue; }
         validated.push({
-          id: genId('inv_imp'),
-          import_date: normalizeImportDate(item.import_date),
-          country: item.country || '',
-          warehouse: item.warehouse || '',
-          channel: item.channel || '',
-          sku_code: item.sku_code,
-          available_qty: availQty,
-          remark: item.remark || '',
-          snapshot_cutoff_date: snapshotCutoffDate,
-          brand: item.brand || '',
-          weighted_avg_cost: parseFloat(item.weighted_avg_cost) || 0,
-          last_inbound_date: item.last_inbound_date || '',
-          first_inbound_date: item.first_inbound_date || ''
+          id: genId('inv_imp'), import_date: normalizeImportDate(item.import_date), country: item.country || '', warehouse: item.warehouse || '', channel: item.channel || '',
+          sku_code: item.sku_code, available_qty: availQty, remark: item.remark || '', snapshot_cutoff_date: snapshotCutoffDate, brand: item.brand || '',
+          weighted_avg_cost: parseFloat(item.weighted_avg_cost) || 0, last_inbound_date: item.last_inbound_date || '', first_inbound_date: item.first_inbound_date || ''
         });
+        if ((i + 1) % 50 === 0 || i === items.length - 1) {
+          const validationPercent = 12 + Math.round(((i + 1) / Math.max(1, totalCount)) * 13);
+          setInventoryImportProgress(importId, { phase: 'validating_rows', percent: validationPercent, processed_count: i + 1, message: `正在校验 ${i + 1} / ${totalCount} 条` });
+          await yieldInventoryImportProgress();
+        }
       }
       if (result.failed > 0) {
-        return res.status(422).json({ error: '库存导入校验未通过，PG 要求整批原子写入，已拒绝本次导入（零写入）', created: 0, updated: 0, failed: result.failed, errors: result.errors });
+        finishInventoryImportProgress(importId, 'blocked', { phase: 'blocked', percent: 25, failed: result.failed, message: '数据校验未通过，整批零写入' });
+        return res.status(422).json({ error: '库存导入校验未通过，PG 要求整批原子写入，已拒绝本次导入（零写入）', import_id: importId, created: 0, updated: 0, failed: result.failed, errors: result.errors });
       }
-      // 2) 去重 business keys（使用与存储一致的 '' 归一：item.country||'' / item.warehouse||''）
       const keyMap = new Map();
       for (const r of validated) {
         const k = r.sku_code + '\0' + r.country + '\0' + r.warehouse;
@@ -3900,7 +3950,8 @@ app.post('/api/inventory-imports/bulk-import', requireApiPermission('inventory_i
       }
       const keys = Array.from(keyMap.values());
       const liftTuples = keys.map(k => ({ sku_code: k.sku_code, country: k.country, warehouse: k.warehouse }));
-      // 3) 事务内：批量 INSERT + 批量解除 tombstone（任一失败 → ROLLBACK → throw → 500，无逐行 retry / 无慢路径 fallback）
+      setInventoryImportProgress(importId, { phase: 'writing', percent: 32, processed_count: 0, message: '正在写入库存数据' });
+      await yieldInventoryImportProgress();
       try {
         transaction(() => {
           run(pgBatchImportInsertSql(), [JSON.stringify(validated)]);
@@ -3909,59 +3960,61 @@ app.post('/api/inventory-imports/bulk-import', requireApiPermission('inventory_i
         });
         result.created = validated.length;
       } catch (e) {
-        return res.status(500).json({ error: 'PG 批量导入失败，整批已回滚: ' + e.message, created: 0, updated: 0, failed: validated.length });
+        finishInventoryImportProgress(importId, 'failed', { phase: 'failed', percent: 32, failed: validated.length, message: '库存写入失败，整批已回滚' });
+        return res.status(500).json({ error: 'PG 批量导入失败，整批已回滚: ' + e.message, import_id: importId, created: 0, updated: 0, failed: validated.length });
       }
-      // 4) 仅刷新受影响 K 个 key（scoped refresh，绝不重处理全库 M）
+      setInventoryImportProgress(importId, { phase: 'written', percent: 68, processed_count: totalCount, created: result.created, message: `库存数据已写入 ${totalCount} / ${totalCount} 条` });
+      await yieldInventoryImportProgress();
+      setInventoryImportProgress(importId, { phase: 'refreshing_inventory', percent: 76, processed_count: totalCount, message: '正在更新库存总表' });
+      await yieldInventoryImportProgress();
       const refreshResult = await refreshInventoryTotalsForKeys(keys, snapshotCutoffDate);
-      return res.json({ ...result, snapshot_cutoff_date: snapshotCutoffDate, wac_warnings: refreshResult.warnings || [] });
+      setInventoryImportProgress(importId, { phase: 'finalizing', percent: 96, processed_count: totalCount, created: result.created, message: '正在完成导入校验' });
+      await yieldInventoryImportProgress();
+      const body = { ...result, import_id: importId, snapshot_cutoff_date: snapshotCutoffDate, wac_warnings: refreshResult.warnings || [] };
+      finishInventoryImportProgress(importId, 'completed', { phase: 'completed', processed_count: totalCount, created: result.created, failed: result.failed, message: '导入完成' });
+      return res.json(body);
     }
+
+    setInventoryImportProgress(importId, { phase: 'writing', percent: 30, processed_count: 0, message: '正在写入库存数据' });
+    await yieldInventoryImportProgress();
     transaction(() => {
       items.forEach((item, i) => {
-        let imported = false; // 本条 inventory_imports 是否已成功写入（用于区分「导入前失败」与「导入后失败」）
+        let imported = false;
         try {
           if (!item.sku_code || !item.import_date) { result.failed++; result.errors.push({ row: i + 2, reason: 'SKU或导入日期为空' }); return; }
-          // P1-INBOUND-01: 可用数量必须是严格非负整数；拒绝小数/带尾随字符/空/null/undefined/负数；禁止截断或静默变 0
           const rawAvailQty = item.available_qty;
-          if (rawAvailQty === null || rawAvailQty === undefined || String(rawAvailQty).trim() === '') {
-            result.failed++; result.errors.push({ row: i + 2, reason: '可用数量必须为非负整数' }); return;
-          }
+          if (rawAvailQty === null || rawAvailQty === undefined || String(rawAvailQty).trim() === '') { result.failed++; result.errors.push({ row: i + 2, reason: '可用数量必须为非负整数' }); return; }
           const availQty = Number(rawAvailQty);
-          if (!Number.isFinite(availQty) || !Number.isInteger(availQty) || availQty < 0) {
-            result.failed++; result.errors.push({ row: i + 2, reason: '可用数量必须为非负整数' }); return;
-          }
+          if (!Number.isFinite(availQty) || !Number.isInteger(availQty) || availQty < 0) { result.failed++; result.errors.push({ row: i + 2, reason: '可用数量必须为非负整数' }); return; }
           const id = genId('inv_imp');
-          // 归一化导入日期为 ISO，避免 M/D/YY 文本再次混入导致快照 MAX 比较失真
           const importDate = normalizeImportDate(item.import_date);
           run(`INSERT INTO inventory_imports (id, import_date, country, warehouse, channel, sku_code, available_qty, remark, snapshot_cutoff_date, brand, weighted_avg_cost, last_inbound_date, first_inbound_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [id, importDate, item.country || '', item.warehouse || '', item.channel || '', item.sku_code, availQty, item.remark || '', snapshotCutoffDate, item.brand || '', parseFloat(item.weighted_avg_cost) || 0, item.last_inbound_date || '', item.first_inbound_date || '']);
           imported = true;
-
-          // ── TOMBSTONE LIFT（库存安全删除的"解除封禁"）───────────────────────────
-          // 位置至关重要：必须在这条 INSERT 成功之后、result.created++ 之前。
-          //   * 本条 INSERT 抛错 → 进入 catch，lift 不执行 → tombstone 保留。
-          //   * 后续条目抛错 / 事务失败 → 整批 ROLLBACK，已执行的 lift 一并回滚 → tombstone 保留。
-          // 无条件 lift（不做 import_date 比较）：历史快照回填可能产生早于删除日的 import_date，
-          // 按日期比较会导致 tombstone 永远无法解除，形成隐蔽的永久封禁。
-          const lifted = run(
-            'DELETE FROM inventory_delete_tombstones WHERE sku_code=? AND country=? AND warehouse=?',
-            [item.sku_code || '', item.country || '', item.warehouse || '']);
+          const lifted = run('DELETE FROM inventory_delete_tombstones WHERE sku_code=? AND country=? AND warehouse=?', [item.sku_code || '', item.country || '', item.warehouse || '']);
           if (!lifted) throw new Error('tombstone 解除执行失败');
           if (Number(lifted.changes || 0) > 0) result.tombstones_lifted++;
-
           result.created++;
         } catch (e) {
-          // 导入记录已写入之后的任何失败（当前只有 tombstone lift）必须让错误逃逸出本条 catch，
-          // 由 transaction 整批回滚。否则会留下「inventory_imports 已写入但 tombstone 仍在」的
-          // 不一致状态：该 tuple 被 tombstone 持续抑制，库存永远建不回来，且前端看到 created>0 的假成功。
           if (imported) throw new Error(`第 ${i + 2} 行：库存导入已写入但 tombstone 解除失败，整批回滚 — ${e.message}`);
           result.failed++; result.errors.push({ row: i + 2, reason: e.message });
         }
       });
     });
-    // 更新库存总表，传入 snapshotCutoffDate
+    setInventoryImportProgress(importId, { phase: 'written', percent: 68, processed_count: totalCount, created: result.created, failed: result.failed, message: `库存数据已处理 ${totalCount} / ${totalCount} 条` });
+    await yieldInventoryImportProgress();
+    setInventoryImportProgress(importId, { phase: 'refreshing_inventory', percent: 76, processed_count: totalCount, message: '正在更新库存总表' });
+    await yieldInventoryImportProgress();
     const refreshResult = await refreshInventoryTotals(snapshotCutoffDate);
-    res.json({ ...result, snapshot_cutoff_date: snapshotCutoffDate, wac_warnings: refreshResult.warnings || [] });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    setInventoryImportProgress(importId, { phase: 'finalizing', percent: 96, processed_count: totalCount, created: result.created, failed: result.failed, message: '正在完成导入校验' });
+    await yieldInventoryImportProgress();
+    const body = { ...result, import_id: importId, snapshot_cutoff_date: snapshotCutoffDate, wac_warnings: refreshResult.warnings || [] };
+    finishInventoryImportProgress(importId, 'completed', { phase: 'completed', processed_count: totalCount, created: result.created, failed: result.failed, message: '导入完成' });
+    res.json(body);
+  } catch (e) {
+    finishInventoryImportProgress(importId, 'failed', { phase: 'failed', message: e.message || '导入失败' });
+    res.status(500).json({ error: e.message, import_id: importId });
+  }
 }));
 
 // ==================== 库存总表 ====================
