@@ -9951,7 +9951,12 @@ function rpReviewCurrentFilters(){
 
 // 确保当前 Tab 的页面视图模型已就绪：完全复用页面既有 load，不新建任何计算
 async function rpReviewEnsureViewModel(tab){
-  var data=await rpFetchCached(rpBaseUrl());
+  // RP-SNAPSHOT: report/export must read the same L0 snapshot rows as the visible page.
+  // Using the legacy rpFetchCached(rpBaseUrl()) creates a second row array that loadRp() no longer enriches,
+  // causing false _totalC/_channelC 'not ready' errors even while the monthly table is already rendered.
+  var _snapOk=await rpEnsureSnapshotReady();
+  if(!_snapOk) throw new Error(t('forecast.data_unavailable','订单预测数据未就绪，请重新加载后重试'));
+  var data=rpLocalSnapshotRows();
   if(!data) data=[];
   // 合法空结果：筛选条件（SKU 搜索 / 国家 / 仓库 / 品牌 / 状态）无匹配行。
   // 此时必须生成「空报告」，不能抛错——否则用户搜索不存在的 SKU 只会看到红字报错。
