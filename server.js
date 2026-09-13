@@ -4523,35 +4523,11 @@ function latestImportsSql() {
       )`;
 }
 
-// P0-C2: scoped sibling of latestImportsSql —— 仅查本次 affected K 个 business key。
-// 与 latestImportsSql() 唯一区别：作用域收敛到 (sku,country,warehouse) IN (jsonb key set)。
-// 保留完全相同的 tombstone 过滤与 latest-per-key MAX(import_date) 语义；旧函数不动。
-//
-// ===================== BULK-1（2026-09-13）set-based 重写 =====================
-// 背景：旧写法为 correlated MAX 子查询 —— i1 的每一个候选行都要对 inventory_imports
-//   跑一次 `SELECT MAX(import_date::date) FROM inventory_imports i2 WHERE key = i1.key`。
-//   在 inventory_imports 无任何索引的生产库上，这等价于 M(历史总行数) × K(affected keys)
-//   量级的嵌套循环；实测 M=500k/K=5000 达 ~20s，M=10k 无索引已 ~7.5s（≈O(M²)）。
-//
-// 新写法（set-based，单次扫描）：
-//   ks     = affected key 集合（DISTINCT 去重，保证重复 key 不放大输出行）
-//   live   = 这些 key 下、日期非空且未被 tombstone 抑制的候选行（一次扫描，索引收敛）
-//   ranked = 窗口函数 MAX(import_day) OVER (PARTITION BY key)，一次排序即得到每 key 的最大日期
-//   最外层只按 import_day = max_import_day 过滤（不 join、不二次扫描）
-//
-// 为什么是窗口函数而不是 "latest CTE 再自连接 live"：
-//   实测（孤立 PG，M=250k/K=5000，无索引）自连接写法会让 planner 走
-//   Nested Loop（latest 5000 行 × 物化 live 25 万行）→ 超过 120s 超时；
-//   窗口写法 860ms。两种写法语义完全相同，前者纯粹是 plan 形状问题，故不采用。
-//
-// TIE 语义（冻结，禁止为性能牺牲）：
-//   某 key 的最大 import_date 若存在多条记录，旧 SQL 会【全部返回】，
-//   从而使下游 inventory_match_count > 1 → 触发 runOriginalInventoryTotalsLoop fallback。
-//   本重写刻意保持该行为：
-//     - 不使用 DISTINCT ON（会 arbitrary pick 单行，绕过 duplicate-key fallback）
-//     - 不使用 MAX(id) / ORDER BY id DESC LIMIT 1
-//     - 只在最外层用 import_day = max_import_day 过滤，日期相同的多行全部保留
-//   ⇒ 除性能外，输出行集合与旧 SQL 逐行一致（见 test/bulk1-latest-imports-tie.test.cjs）。
+// BULK-1 v2: affected keys only; tombstones suppress the entire business key.
+// Select the latest calendar day, then the latest created_at event within that day.
+// Keep every exact-event tie (including all-null created_at), so the downstream
+// duplicate-import fallback remains reachable. created_at retains its stored TEXT
+// ordering, matching the audited import event format; no arbitrary row winner.
 function latestImportsSqlForKeySet() {
   const driver = (process.env.DB_DRIVER || 'sqlite').toLowerCase();
   if (driver === 'pg') {
@@ -4564,7 +4540,8 @@ function latestImportsSqlForKeySet() {
         SELECT i1.sku_code, i1.country, i1.warehouse,
                i1.available_qty, i1.import_date, i1.snapshot_cutoff_date,
                i1.weighted_avg_cost, i1.last_inbound_date, i1.first_inbound_date,
-               i1.import_date::date AS import_day
+               SUBSTRING(BTRIM(i1.import_date) FROM 1 FOR 10)::date AS import_day,
+               i1.created_at
         FROM inventory_imports i1
         JOIN ks ON ks.sku_code = i1.sku_code AND ks.country = i1.country AND ks.warehouse = i1.warehouse
         WHERE i1.import_date IS NOT NULL AND i1.import_date <> ''
@@ -4576,11 +4553,18 @@ function latestImportsSqlForKeySet() {
       ranked AS (
         SELECT l.*, MAX(l.import_day) OVER (PARTITION BY l.sku_code, l.country, l.warehouse) AS max_import_day
         FROM live l
+      ),
+      latest_day AS (
+        SELECT * FROM ranked WHERE import_day = max_import_day
+      ),
+      events AS (
+        SELECT d.*, MAX(d.created_at) OVER (PARTITION BY d.sku_code, d.country, d.warehouse) AS max_created_at
+        FROM latest_day d
       )
       SELECT sku_code, country, warehouse, available_qty, import_date,
              snapshot_cutoff_date, weighted_avg_cost, last_inbound_date, first_inbound_date
-      FROM ranked
-      WHERE import_day = max_import_day`;
+      FROM events
+      WHERE created_at IS NOT DISTINCT FROM max_created_at`;
   }
   // 非 PG：refreshInventoryTotalsForKeys 已委托回旧全量函数，本分支不会命中；返回空结果以防万一。
   return `SELECT sku_code, country, warehouse, available_qty, import_date, snapshot_cutoff_date, weighted_avg_cost, last_inbound_date, first_inbound_date FROM inventory_imports WHERE 1 = 0`;

@@ -2,11 +2,12 @@
 /**
  * BULK-1 — latestImportsSqlForKeySet set-based 重写的 tie 语义等价性证明（真实 PostgreSQL）
  * ===========================================================================================
- * 目标：证明"性能重写"没有偷偷改变库存选择规则。
+ * v2：共同 created_at 的旧 tie fixtures 保留旧多重集；不同事件按最新日、最新 created_at 选择。
  *
  * 方法：在同一份真实 PG 数据上【同时】跑旧 SQL（BULK-1 之前的 correlated-MAX 版本，
  *      以 LEGACY_SQL 字面量冻结在本文件内）与当前 server.js 实际导出的
- *      latestImportsSqlForKeySet()，逐行比较多重集（multiset），要求完全相等。
+ *      latestImportsSqlForKeySet()，在共同 created_at fixtures 上比较多重集。
+ *      v2 不同事件另用定向用例及独立 JS oracle 做差分验证。
  *
  * 覆盖：
  *   Case 1  同 key，2026-09-10 单行        → 返回 1 条
@@ -80,6 +81,7 @@ async function ensureEmbeddedPg() {
 }
 
 // ---------------------------------------------------------------------------
+// Legacy differential fixtures deliberately share one created_at event; v2 must preserve all old ties.
 // LEGACY SQL —— BULK-1 之前的 server.js:4516-4540 原样冻结（差分基准，禁止修改）
 // ---------------------------------------------------------------------------
 const LEGACY_SQL = `
@@ -157,13 +159,14 @@ async function reset() {
 async function addImport(sku, date, opts) {
   opts = opts || {};
   await admin.query(
-    'INSERT INTO inventory_imports (id, import_date, country, warehouse, sku_code, available_qty, weighted_avg_cost, last_inbound_date, first_inbound_date, snapshot_cutoff_date) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+    'INSERT INTO inventory_imports (id, import_date, country, warehouse, sku_code, available_qty, weighted_avg_cost, last_inbound_date, first_inbound_date, snapshot_cutoff_date, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
     ['IMP' + (++seq), String(date), opts.country || COUNTRY, opts.warehouse || WH, sku,
       opts.qty === undefined ? 10 : opts.qty,
       opts.wac === undefined ? 5 : opts.wac,
       opts.lastInbound === undefined ? '' : opts.lastInbound,
       opts.firstInbound === undefined ? '' : opts.firstInbound,
-      opts.cutoff === undefined ? '' : opts.cutoff]);
+      opts.cutoff === undefined ? '' : opts.cutoff,
+      opts.createdAt === undefined ? '2026-09-13 08:00:00' : opts.createdAt]);
 }
 async function tombstone(sku, country, warehouse) {
   await admin.query('INSERT INTO inventory_delete_tombstones (id, sku_code, country, warehouse) VALUES ($1,$2,$3,$4)',
@@ -324,6 +327,75 @@ describe('BULK-1: latestImportsSqlForKeySet tie 语义等价性（真 PG）', { 
     }
   });
 
+  test('v2: latest day first, then newest event; defensive date prefix', async () => {
+    await reset();
+    await addImport('EVENT', '2026-09-09', { qty: 99, createdAt: '2026-09-14 00:00:00' });
+    await addImport('EVENT', '2026-09-10', { qty: 10, createdAt: '2026-09-13 08:00:00' });
+    await addImport('EVENT', ' 2026-09-10T23:45:00+07:00 ', { qty: 20, createdAt: '2026-09-13 09:00:00' });
+    const r = await admin.query(NEW_SQL, [JSON.stringify([{sku_code: 'EVENT', country: COUNTRY, warehouse: WH}])]);
+    assert.deepEqual(r.rows.map(x => x.available_qty), [20]);
+  });
+
+  test('v2: conflicting exact max event ties survive, null-safe event selection', async () => {
+    await reset();
+    await addImport('TIE', '2026-09-10', { qty: 1, createdAt: '2026-09-13 08:00:00' });
+    await addImport('TIE', '2026-09-10', { qty: 2, createdAt: '2026-09-13 09:00:00' });
+    await addImport('TIE', '2026-09-10', { qty: 3, createdAt: '2026-09-13 09:00:00' });
+    await addImport('TIE', '2026-09-10', { qty: 4, createdAt: null });
+    await addImport('NULL', '2026-09-10', { qty: 5, createdAt: null });
+    await addImport('NULL', '2026-09-10', { qty: 6, createdAt: null });
+    const keys = ['TIE', 'NULL'].map(sku_code => ({sku_code, country: COUNTRY, warehouse: WH}));
+    const r = await admin.query(NEW_SQL, [JSON.stringify(keys)]);
+    assert.deepEqual(r.rows.map(x => x.available_qty).sort(), [2, 3, 5, 6]);
+  });
+
+  test('v2: repeated same-day imports for 577 keys collapse to 577 latest events', async () => {
+    await reset();
+    await admin.query(`INSERT INTO inventory_imports
+      (id, sku_code, country, warehouse, import_date, created_at, available_qty)
+      SELECT k||'-'||e, 'PROD-'||k, 'Indonesia', 'Bekasi', '2026-09-10',
+             '2026-09-13 '||lpad(e::text,2,'0')||':00:00', e
+      FROM generate_series(1,577) k CROSS JOIN generate_series(1,14) e`);
+    const keys = Array.from({length:577}, (_, i) => ({sku_code:'PROD-'+(i+1), country:COUNTRY, warehouse:WH}));
+    const r = await admin.query(NEW_SQL, [JSON.stringify(keys)]);
+    assert.equal(r.rows.length, 577);
+    assert.ok(r.rows.every(x => x.available_qty === 14));
+    assert.equal(new Set(r.rows.map(x => x.sku_code)).size, 577);
+  });
+
+  test('v2: randomized event differential against independent JS oracle (100 sets)', async () => {
+    let seed = 913;
+    const rnd = n => { seed = (Math.imul(seed,1664525)+1013904223) >>> 0; return seed % n; };
+    for (let iteration=0; iteration<100; iteration++) {
+      await reset();
+      const suppressed = new Set();
+      const keys = [];
+      for (let k=0; k<5; k++) {
+        const sku = 'FUZZ-'+k;
+        if (k<4) keys.push({sku_code:sku,country:COUNTRY,warehouse:WH});
+        if (rnd(4)===0) { await tombstone(sku); suppressed.add(sku); }
+        for (let row=0; row<8; row++) {
+          await addImport(sku, '2026-09-0'+(1+rnd(3)), {
+            qty:rnd(100), createdAt:[null,'','2026-09-13 08:00:00','2026-09-13 09:00:00'][rnd(4)]
+          });
+        }
+      }
+      keys.push(keys[0]); // duplicate input must not amplify rows
+      const all = (await admin.query('SELECT * FROM inventory_imports')).rows;
+      const expected = [];
+      for (const sku of new Set(keys.map(k=>k.sku_code))) {
+        if (suppressed.has(sku)) continue;
+        const rows = all.filter(r=>r.sku_code===sku);
+        const day = rows.map(r=>r.import_date.trim().slice(0,10)).sort().at(-1);
+        const latest = rows.filter(r=>r.import_date.trim().slice(0,10)===day);
+        const maxCreated = latest.map(r=>r.created_at).filter(x=>x!==null).sort().at(-1) ?? null;
+        expected.push(...latest.filter(r=>r.created_at===maxCreated));
+      }
+      const actual = (await admin.query(NEW_SQL,[JSON.stringify(keys)])).rows;
+      assert.deepEqual(norm(actual),norm(expected),'event oracle iteration '+iteration);
+    }
+  });
+
   test('Case 8: 静态约束 —— 新 SQL 不得出现 arbitrary-pick 写法', () => {
     const s = NEW_SQL;
     assert.ok(!/DISTINCT\s+ON/i.test(s), '禁止 DISTINCT ON（会 arbitrary pick 单行，绕过 duplicate fallback）');
@@ -343,7 +415,7 @@ describe('BULK-1: latestImportsSqlForKeySet tie 语义等价性（真 PG）', { 
 
   test('Case 9: 下游 inventory_match_count>1 fallback 前置条件仍在', () => {
     const src = fs.readFileSync(path.join(REPO, 'server.js'), 'utf8');
-    assert.ok(/inventory_match_count\s*>\s*1/.test(src), 'refreshInventoryTotalsForKeys 的 duplicate 守卫不得移除');
+    assert.ok(/Number\(r\.inventory_match_count\)\s*>\s*1/.test(src), 'refreshInventoryTotalsForKeys 的 duplicate 守卫不得移除');
     assert.ok(/runOriginalInventoryTotalsLoop/.test(src), 'fallback 函数不得移除');
   });
 });
