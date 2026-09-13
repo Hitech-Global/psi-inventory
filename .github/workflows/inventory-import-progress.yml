@@ -1,0 +1,42 @@
+name: Inventory Import Progress Patch
+
+on:
+  push:
+    branches:
+      - inv-import-progress-20260913
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - name: Apply source patch
+        run: node scripts/apply-inventory-import-progress.cjs
+      - name: Syntax checks
+        run: |
+          node --check server.js
+          node --check app.js
+      - name: Focused tests
+        run: |
+          node --test test/inventory-import-progress.test.cjs
+          npm install --ignore-scripts --no-audit --no-fund
+          node --test test/inventory-import-precheck.test.cjs
+      - name: Commit generated source changes
+        run: |
+          if git diff --quiet -- server.js app.js; then
+            echo "No generated source changes"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add server.js app.js
+          git commit -m "feat(inventory): show real-time import progress [generated]"
+          git push origin HEAD:inv-import-progress-20260913
