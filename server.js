@@ -1138,6 +1138,19 @@ if (require.main === module) {
     console.error('\n[FATAL] 服务无法启动。请修正数据库后重试。');
     process.exit(1);
   }
+
+  // BULK-1：inventory_imports latest-per-key 复合索引 (sku_code, country, warehouse, import_date)。
+  // 幂等：已存在则 no-op；表过大（> 25 万行）只 WARNING 跳过，绝不长时间锁表 —— 那种情况
+  // 需由运维先用 CREATE INDEX CONCURRENTLY 手工建（scripts/create-inventory-imports-index-concurrently.cjs）。
+  // 索引缺失只影响性能不影响正确性（旧 correlated 写法仍可跑），故失败不 fail-fast，仅告警。
+  try {
+    require('./migrations/inventory-imports-latest-index').ensureInventoryImportsLatestIndex(
+      run, (process.env.DB_DRIVER || 'sqlite').toLowerCase() === 'pg'
+    );
+    console.log('[STARTUP] inventory_imports latest-per-key 索引就绪 ✓');
+  } catch (e) {
+    console.warn('[STARTUP][BULK-1] inventory_imports 索引创建跳过（不影响正确性，仅性能）:', e.message);
+  }
   // 库存导入日期归一化回填：修复 M/D/YY 文本导致快照 MAX 字典序误判（根因 A）
   normalizeImportDatesBackfill();
   // 日期归一化后重新计算库存快照，使修正后的"最新批次"立即生效
@@ -4511,33 +4524,63 @@ function latestImportsSql() {
 }
 
 // P0-C2: scoped sibling of latestImportsSql —— 仅查本次 affected K 个 business key。
-// 与 latestImportsSql() 唯一区别：末尾追加 (sku,country,warehouse) IN (jsonb key set)。
+// 与 latestImportsSql() 唯一区别：作用域收敛到 (sku,country,warehouse) IN (jsonb key set)。
 // 保留完全相同的 tombstone 过滤与 latest-per-key MAX(import_date) 语义；旧函数不动。
+//
+// ===================== BULK-1（2026-09-13）set-based 重写 =====================
+// 背景：旧写法为 correlated MAX 子查询 —— i1 的每一个候选行都要对 inventory_imports
+//   跑一次 `SELECT MAX(import_date::date) FROM inventory_imports i2 WHERE key = i1.key`。
+//   在 inventory_imports 无任何索引的生产库上，这等价于 M(历史总行数) × K(affected keys)
+//   量级的嵌套循环；实测 M=500k/K=5000 达 ~20s，M=10k 无索引已 ~7.5s（≈O(M²)）。
+//
+// 新写法（set-based，单次扫描）：
+//   ks     = affected key 集合（DISTINCT 去重，保证重复 key 不放大输出行）
+//   live   = 这些 key 下、日期非空且未被 tombstone 抑制的候选行（一次扫描，索引收敛）
+//   ranked = 窗口函数 MAX(import_day) OVER (PARTITION BY key)，一次排序即得到每 key 的最大日期
+//   最外层只按 import_day = max_import_day 过滤（不 join、不二次扫描）
+//
+// 为什么是窗口函数而不是 "latest CTE 再自连接 live"：
+//   实测（孤立 PG，M=250k/K=5000，无索引）自连接写法会让 planner 走
+//   Nested Loop（latest 5000 行 × 物化 live 25 万行）→ 超过 120s 超时；
+//   窗口写法 860ms。两种写法语义完全相同，前者纯粹是 plan 形状问题，故不采用。
+//
+// TIE 语义（冻结，禁止为性能牺牲）：
+//   某 key 的最大 import_date 若存在多条记录，旧 SQL 会【全部返回】，
+//   从而使下游 inventory_match_count > 1 → 触发 runOriginalInventoryTotalsLoop fallback。
+//   本重写刻意保持该行为：
+//     - 不使用 DISTINCT ON（会 arbitrary pick 单行，绕过 duplicate-key fallback）
+//     - 不使用 MAX(id) / ORDER BY id DESC LIMIT 1
+//     - 只在最外层用 import_day = max_import_day 过滤，日期相同的多行全部保留
+//   ⇒ 除性能外，输出行集合与旧 SQL 逐行一致（见 test/bulk1-latest-imports-tie.test.cjs）。
 function latestImportsSqlForKeySet() {
   const driver = (process.env.DB_DRIVER || 'sqlite').toLowerCase();
   if (driver === 'pg') {
     return `
-      SELECT sku_code, country, warehouse, available_qty, import_date, snapshot_cutoff_date, weighted_avg_cost, last_inbound_date, first_inbound_date
-      FROM inventory_imports i1
-      WHERE i1.import_date IS NOT NULL AND i1.import_date <> ''
-        AND NOT EXISTS (
-          SELECT 1 FROM inventory_delete_tombstones t1
-          WHERE t1.sku_code = i1.sku_code AND t1.country = i1.country AND t1.warehouse = i1.warehouse
-        )
-        AND i1.import_date::date = (
-          SELECT MAX(i2.import_date::date)
-          FROM inventory_imports i2
-          WHERE i2.sku_code = i1.sku_code AND i2.country = i1.country AND i2.warehouse = i1.warehouse
-            AND i2.import_date IS NOT NULL AND i2.import_date <> ''
-            AND NOT EXISTS (
-              SELECT 1 FROM inventory_delete_tombstones t2
-              WHERE t2.sku_code = i2.sku_code AND t2.country = i2.country AND t2.warehouse = i2.warehouse
-            )
-        )
-        AND (i1.sku_code, i1.country, i1.warehouse) IN (
-          SELECT j.sku_code, j.country, j.warehouse
-          FROM jsonb_to_recordset($1::jsonb) AS j(sku_code text, country text, warehouse text)
-        )`;
+      WITH ks AS (
+        SELECT DISTINCT j.sku_code, j.country, j.warehouse
+        FROM jsonb_to_recordset($1::jsonb) AS j(sku_code text, country text, warehouse text)
+      ),
+      live AS (
+        SELECT i1.sku_code, i1.country, i1.warehouse,
+               i1.available_qty, i1.import_date, i1.snapshot_cutoff_date,
+               i1.weighted_avg_cost, i1.last_inbound_date, i1.first_inbound_date,
+               i1.import_date::date AS import_day
+        FROM inventory_imports i1
+        JOIN ks ON ks.sku_code = i1.sku_code AND ks.country = i1.country AND ks.warehouse = i1.warehouse
+        WHERE i1.import_date IS NOT NULL AND i1.import_date <> ''
+          AND NOT EXISTS (
+            SELECT 1 FROM inventory_delete_tombstones t
+            WHERE t.sku_code = i1.sku_code AND t.country = i1.country AND t.warehouse = i1.warehouse
+          )
+      ),
+      ranked AS (
+        SELECT l.*, MAX(l.import_day) OVER (PARTITION BY l.sku_code, l.country, l.warehouse) AS max_import_day
+        FROM live l
+      )
+      SELECT sku_code, country, warehouse, available_qty, import_date,
+             snapshot_cutoff_date, weighted_avg_cost, last_inbound_date, first_inbound_date
+      FROM ranked
+      WHERE import_day = max_import_day`;
   }
   // 非 PG：refreshInventoryTotalsForKeys 已委托回旧全量函数，本分支不会命中；返回空结果以防万一。
   return `SELECT sku_code, country, warehouse, available_qty, import_date, snapshot_cutoff_date, weighted_avg_cost, last_inbound_date, first_inbound_date FROM inventory_imports WHERE 1 = 0`;
