@@ -40,9 +40,12 @@ jobs:
           node --check migrations/inventory-imports-latest-index.js
           node --check scripts/create-inventory-imports-index-concurrently.cjs
           node --check test/bulk1-index-safety.test.cjs
+          node --check test/bulk1-index-pg.test.cjs
           node --check test/bulk1-latest-imports-tie.test.cjs
       - name: BULK-1 index safety
         run: node --test test/bulk1-index-safety.test.cjs
+      - name: BULK-1 index guard on PostgreSQL
+        run: node --test --test-force-exit test/bulk1-index-pg.test.cjs
       - name: BULK-1 tie semantics on PostgreSQL
         run: node --test --test-force-exit test/bulk1-latest-imports-tie.test.cjs
       - name: P0-C2 regression
