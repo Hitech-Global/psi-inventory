@@ -797,16 +797,15 @@ test('FIRST-DEPLOY) 静态顺序门禁：server.js 启动块中 migration 调用
 
   const iInit = src.indexOf('initDatabase();', blockStart);
   const iMigr = src.indexOf('inventory-delete-tombstone', blockStart);
-  // 用真实调用形态（含 .then(）定位，避免匹配到注释里出现的同名字符串
-  const iRefresh = src.indexOf("refreshInventoryTotals('').then(", blockStart);
-  const iNormalize = src.indexOf('normalizeImportDatesBackfill();', blockStart);
+  const iRefresh = src.indexOf('runStartupInventoryDateRefresh()', blockStart);
 
   assert.notEqual(iInit, -1, '启动块中应有 initDatabase()');
   assert.notEqual(iMigr, -1, '启动块中应有 tombstone migration 调用');
-  assert.notEqual(iRefresh, -1, '启动块中应有 refreshInventoryTotals');
+  assert.notEqual(iRefresh, -1, '启动块中应有日期 backfill 后的 scoped refresh 入口');
   assert.ok(iInit < iMigr, `initDatabase 必须先于 migration（init=${iInit}, migr=${iMigr}）`);
-  assert.ok(iMigr < iNormalize, `migration 必须先于 normalizeImportDatesBackfill（migr=${iMigr}, norm=${iNormalize}）`);
-  assert.ok(iMigr < iRefresh, `migration 必须先于 refreshInventoryTotals（migr=${iMigr}, refresh=${iRefresh}）`);
+  assert.ok(iMigr < iRefresh, `migration 必须先于日期 backfill/scoped refresh（migr=${iMigr}, refresh=${iRefresh}）`);
+  assert.doesNotMatch(src.slice(blockStart, iRefresh), /refreshInventoryTotals\(\s*['"]{2}\s*\)/,
+    '启动块不得在日期归一化后无条件调用全量 refreshInventoryTotals');
 
   // 失败必须 fail-fast，不得 catch 后继续
   const seg = src.slice(iMigr - 400, iRefresh);
