@@ -10,7 +10,8 @@ function replaceRange(path, startMarker, endMarker, replacement) {
   fs.writeFileSync(path, src.slice(0, start) + replacement.trimEnd() + '\n\n' + src.slice(end));
 }
 
-const serverBlock = fs.readFileSync('scripts/inventory-import-progress.server.txt', 'utf8');
+const serverBlock = fs.readFileSync('scripts/inventory-import-progress.server.txt', 'utf8')
+  .replace("phase: 'preparing', percent: 12, processed_count: totalCount", "phase: 'preparing', percent: 12, processed_count: 0");
 const appBlock = fs.readFileSync('scripts/inventory-import-progress.app.txt', 'utf8');
 
 replaceRange('server.js', "app.post('/api/inventory-imports/bulk-import'", '// ==================== 库存总表 ====================', serverBlock);
