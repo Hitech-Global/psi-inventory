@@ -3835,6 +3835,7 @@ app.post('/api/inventory-imports/precheck', requireApiPermission('inventory_impo
 }));
 
 // 库存导入实时进度：只记录执行状态，不改变库存事实表/事务边界；1 小时 TTL 防止内存累积。
+// 库存导入实时进度：只记录执行状态，不改变库存事实表/事务边界；1 小时 TTL 防止内存累积。
 const inventoryImportRuns = new Map();
 const INVENTORY_IMPORT_RUN_TTL_MS = 60 * 60 * 1000;
 function inventoryImportProgressBody(run) {
@@ -3909,7 +3910,7 @@ app.post('/api/inventory-imports/bulk-import', requireApiPermission('inventory_i
         precheck, blocking: precheck.blocking, summary: precheck.summary
       });
     }
-    setInventoryImportProgress(importId, { phase: 'preparing', percent: 12, processed_count: totalCount, message: '预检查通过，正在准备写入' });
+    setInventoryImportProgress(importId, { phase: 'preparing', percent: 12, processed_count: 0, message: '预检查通过，正在准备写入' });
     await yieldInventoryImportProgress();
 
     const result = { created: 0, updated: 0, failed: 0, tombstones_lifted: 0, errors: [] };
