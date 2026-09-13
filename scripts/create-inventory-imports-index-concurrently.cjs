@@ -1,24 +1,12 @@
 #!/usr/bin/env node
 'use strict';
 /**
- * BULK-1 — 生产在线创建 inventory_imports latest-per-key 索引（CREATE INDEX CONCURRENTLY）
+ * BULK-1 — 生产在线创建 inventory_imports latest-per-key 索引。
+ * 默认 dry-run；真正执行必须显式 --apply，远程数据库还必须显式 --allow-remote。
  *
- * 为什么必须独立脚本、不能放进启动流程：
- *   * CREATE INDEX CONCURRENTLY 不能在 transaction block 内执行；
- *   * 它需要在多个事务里多次扫描表并等待所有并发写事务结束，耗时不可预测，
- *     放在启动路径上会拖长发布窗口甚至触发健康检查失败。
- *
- * 用法（只读预检，默认行为）：
- *   node scripts/create-inventory-imports-index-concurrently.cjs --dsn "$DATABASE_URL"
- *
- * 真正执行（需显式加 --apply）：
- *   node scripts/create-inventory-imports-index-concurrently.cjs --dsn "$DATABASE_URL" --apply
- *
- * 安全护栏：
- *   * 主机白名单：仅允许 localhost / 127.0.0.1 / ::1，或显式 --allow-remote 才放行
- *     （生产 Supabase 是远程主机，运维需显式确认）
- *   * 默认 dry-run：只打印将执行的 SQL 与当前行数/索引状态，不落任何 DDL
- *   * 若已存在同名 INVALID 索引，先提示 DROP INDEX 后再重建（INVALID 索引不会被使用）
+ * CREATE INDEX CONCURRENTLY 不能在 transaction block 内执行；若执行中断，PostgreSQL
+ * 可能留下同名 INVALID / NOT READY 索引。脚本对此状态 fail-closed：不会依赖
+ * IF NOT EXISTS 静默跳过，而是直接报错，要求先处理坏索引后再重试。
  */
 
 const { Client } = require('pg');
@@ -39,6 +27,26 @@ function parseArgs(argv) {
 }
 
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
+const INDEX_STATUS_SQL = `
+  SELECT idx.relname, i.indisvalid, i.indisready,
+         pg_size_pretty(pg_relation_size(idx.oid)) AS size
+  FROM pg_class idx
+  JOIN pg_namespace ns ON ns.oid = idx.relnamespace
+  JOIN pg_index i ON i.indexrelid = idx.oid
+  JOIN pg_class tbl ON tbl.oid = i.indrelid
+  WHERE ns.nspname = 'public'
+    AND tbl.relname = 'inventory_imports'
+    AND idx.relname = $1
+    AND idx.relkind = 'i'`;
+
+function unhealthyIndexError(row) {
+  const valid = row ? row.indisvalid : null;
+  const ready = row ? row.indisready : null;
+  return new Error(
+    '索引 ' + M.INDEX_NAME + ' 已存在但不可用 (indisvalid=' + valid + ', indisready=' + ready + ')。' +
+    '请先确认没有并发建索引任务，然后执行：DROP INDEX CONCURRENTLY IF EXISTS public.' + M.INDEX_NAME + '; 再重跑本脚本。'
+  );
+}
 
 async function main() {
   const args = parseArgs(process.argv);
@@ -46,71 +54,95 @@ async function main() {
     console.log('用法: node scripts/create-inventory-imports-index-concurrently.cjs --dsn <DSN> [--apply] [--allow-remote] [--statement-timeout 0]');
     return;
   }
+
   const dsn = args.dsn || process.env.DATABASE_URL;
-  if (!dsn) {
-    console.error('缺少 DSN：请用 --dsn 或环境变量 DATABASE_URL 提供连接串。');
-    process.exit(2);
-  }
+  if (!dsn) throw new Error('缺少 DSN：请用 --dsn 或环境变量 DATABASE_URL 提供连接串。');
+
   const url = new URL(dsn.replace(/^postgres(ql)?:\/\//, 'postgresql://'));
   if (!LOCAL_HOSTS.has(url.hostname) && !args.allowRemote) {
-    console.error('拒绝执行：主机 ' + url.hostname + ' 不在本地白名单。');
-    console.error('若确认这是目标生产库且已评估影响，请追加 --allow-remote。');
-    process.exit(2);
+    throw new Error('拒绝执行：主机 ' + url.hostname + ' 不在本地白名单；确认目标远程库后追加 --allow-remote。');
   }
 
-  const client = new Client({ connectionString: dsn, ssl: /sslmode=require|ssl=true|supabase|amazonaws|render\.com/.test(dsn) ? { rejectUnauthorized: false } : undefined });
+  const client = new Client({
+    connectionString: dsn,
+    ssl: /sslmode=require|ssl=true|supabase|amazonaws|render\.com/.test(dsn)
+      ? { rejectUnauthorized: false }
+      : undefined
+  });
+
   await client.connect();
   try {
-    const exists = await client.query(
-      "SELECT c.relname, i.indisvalid, i.indisready, pg_size_pretty(pg_relation_size(c.oid)) AS size " +
-      "FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid " +
-      "WHERE c.relname = $1", [M.INDEX_NAME]);
+    const table = await client.query("SELECT to_regclass('public.inventory_imports') AS reg");
+    if (!table.rows[0] || !table.rows[0].reg) {
+      throw new Error('public.inventory_imports 不存在，拒绝建索引。');
+    }
 
-    const cnt = await client.query('SELECT count(*)::bigint AS n, (SELECT c.reltuples FROM pg_class c WHERE c.oid = \'public.inventory_imports\'::regclass) AS est FROM public.inventory_imports');
+    const exists = await client.query(INDEX_STATUS_SQL, [M.INDEX_NAME]);
+    const state = M.classifyPgIndexRows(exists.rows);
+
+    const cnt = await client.query(
+      "SELECT count(*)::bigint AS n, " +
+      "(SELECT c.reltuples FROM pg_class c WHERE c.oid = 'public.inventory_imports'::regclass) AS est " +
+      'FROM public.inventory_imports'
+    );
     const rows = cnt.rows[0];
 
     console.log('--- 现状 ---');
     console.log('inventory_imports 行数（精确）: ' + rows.n + '   planner 估计: ' + rows.est);
-    if (exists.rows.length === 0) {
+    if (state === 'missing') {
       console.log('索引 ' + M.INDEX_NAME + ': 不存在');
     } else {
-      for (const r of exists.rows) {
-        console.log('索引 ' + r.relname + ': 已存在  valid=' + r.indisvalid + ' ready=' + r.indisready + ' size=' + r.size);
-        if (!r.indisvalid) {
-          console.log('  ⚠ INVALID：该索引不会被 planner 使用，建议先 DROP INDEX ' + M.INDEX_NAME + '; 再重建。');
-        }
-      }
+      const r = exists.rows[0];
+      console.log('索引 ' + r.relname + ': 已存在  valid=' + r.indisvalid + ' ready=' + r.indisready + ' size=' + r.size);
+    }
+
+    if (state === 'unhealthy') {
+      throw unhealthyIndexError(exists.rows[0]);
+    }
+    if (state === 'ready') {
+      console.log('\n索引已存在且 valid+ready → 无需执行。');
+      return;
     }
 
     console.log('\n--- 将执行的 SQL ---');
     console.log(M.PG_CONCURRENTLY_SQL + ';');
-    console.log('\n（CONCURRENTLY 不阻塞读写；若中途失败会留下 INVALID 索引，需 DROP 后重跑。）');
+    console.log('\n（CONCURRENTLY 不阻塞普通业务写入，但会等待部分并发事务；若中途失败可能留下 INVALID 索引。）');
 
     if (!args.apply) {
       console.log('\n[dry-run] 未做任何修改。确认后追加 --apply 执行。');
       return;
     }
-    if (exists.rows.length > 0 && exists.rows[0].indisvalid) {
-      console.log('\n索引已存在且 valid → 无需执行，退出。');
-      return;
-    }
 
-    if (args.statementTimeout) {
+    if (args.statementTimeout !== undefined) {
+      if (!/^\d+$/.test(String(args.statementTimeout))) {
+        throw new Error('--statement-timeout 必须是非负整数毫秒。');
+      }
       await client.query('SET statement_timeout = ' + String(args.statementTimeout));
     } else {
-      // CONCURRENTLY 需要等待并发事务，禁止被 statement_timeout 打断
+      // CONCURRENTLY 可能需要等待旧事务结束；默认不因 statement_timeout 半途留下 INVALID 索引。
       await client.query('SET statement_timeout = 0');
       await client.query('SET lock_timeout = 0');
     }
+
     const t0 = Date.now();
-    console.log('\n[apply] 开始创建（不阻塞业务写入）...');
+    console.log('\n[apply] 开始 CREATE INDEX CONCURRENTLY ...');
     await client.query(M.PG_CONCURRENTLY_SQL);
-    console.log('[apply] 完成，耗时 ' + ((Date.now() - t0) / 1000).toFixed(1) + 's');
-    const after = await client.query("SELECT c.relname, i.indisvalid FROM pg_class c JOIN pg_index i ON i.indexrelid=c.oid WHERE c.relname=$1", [M.INDEX_NAME]);
-    console.log('[apply] 校验: ' + JSON.stringify(after.rows));
+    console.log('[apply] SQL 返回，耗时 ' + ((Date.now() - t0) / 1000).toFixed(1) + 's');
+
+    const after = await client.query(INDEX_STATUS_SQL, [M.INDEX_NAME]);
+    const afterState = M.classifyPgIndexRows(after.rows);
+    if (afterState !== 'ready') {
+      if (afterState === 'unhealthy') throw unhealthyIndexError(after.rows[0]);
+      throw new Error('CREATE INDEX CONCURRENTLY 返回后未找到 ' + M.INDEX_NAME + '，校验失败。');
+    }
+    console.log('[apply] 校验通过：indisvalid=true, indisready=true');
   } finally {
     await client.end();
   }
 }
 
-main().catch(e => { console.error('FAILED:', e.message); process.exit(1); });
+if (require.main === module) {
+  main().catch(e => { console.error('FAILED:', e.message); process.exit(1); });
+}
+
+module.exports = { parseArgs, unhealthyIndexError, INDEX_STATUS_SQL, main };
