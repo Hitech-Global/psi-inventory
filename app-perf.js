@@ -304,3 +304,79 @@ function onMutation(method, url, body) {
 
   perf('init', 'app-perf', 'LOADED');
 })(typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : this));
+
+// CI detail logistics presentation patch.
+// app-perf.js is loaded before app.js; install only after DOMContentLoaded so the app.js
+// function declarations already exist. No document access occurs during app-perf.js load.
+(function (global) {
+  'use strict';
+  if (!global || typeof global.addEventListener !== 'function') return;
+
+  global.addEventListener('DOMContentLoaded', function () {
+    if (typeof global.renderCILogisticsShell !== 'function' || typeof global.renderCILogisticsTable !== 'function') return;
+
+    global.renderCILogisticsShell = function (ciId) {
+      var canCreate = typeof global.hasPermission === 'function' && global.hasPermission('logistics_create');
+      var escFn = typeof global.esc === 'function' ? global.esc : function (v) { return String(v == null ? '' : v); };
+      var tFn = typeof global.t === 'function' ? global.t : function (_key, fallback) { return fallback || _key; };
+      var createBtn = canCreate
+        ? '<button class="btn btn-primary btn-sm" style="margin-left:8px" onclick="createLogFromCI(\'' + escFn(ciId) + '\')">+ ' + tFn('logistics.new_batch', '新建物流批次') + '</button>'
+        : '';
+      return '<div class="detail-section ci-acc" id="ci-acc-logi">'
+        + '<h3 class="ci-acc-head" onclick="toggleCISection(\'logi\')"><span class="ci-acc-caret" id="ci-caret-logi">▼</span> ' + escFn(tFn('logistics.title', '物流批次')) + '</h3>'
+        + '<div class="ci-acc-body" id="ci-acc-body-logi" data-rendered="0"><div class="empty-state" style="padding:12px">' + tFn('common.loading', '加载中…') + '</div></div>'
+        + createBtn
+        + '</div>';
+    };
+
+    global.renderCILogisticsTable = function (batches, ciId) {
+      var escFn = typeof global.esc === 'function' ? global.esc : function (v) { return String(v == null ? '' : v); };
+      var tFn = typeof global.t === 'function' ? global.t : function (_key, fallback) { return fallback || _key; };
+      var fmtDateFn = typeof global.fmtDate === 'function' ? global.fmtDate : function (v) { return v || ''; };
+      var fmtMoneyFn = typeof global.fmtMoney === 'function' ? global.fmtMoney : function (v, c) { return (c ? c + ' ' : '') + Number(v || 0).toFixed(2); };
+      if (!batches || !batches.length) {
+        return '<div class="empty-state" style="padding:12px">' + tFn('logistics.no_batch', '该CI暂无关联物流批次') + '</div>';
+      }
+      var rows = batches.map(function (b) {
+        var cbm = (b.pls || []).reduce(function (s, p) { return s + (Number(p.total_cbm) || 0); }, 0);
+        var fv = b.freight_value_ratio == null ? '—' : (Number(b.freight_value_ratio).toFixed(2) + '%');
+        var cargoValue = b.cargo_value == null ? '—' : fmtMoneyFn(b.cargo_value, b.ci_currency || '');
+        return '<tr>'
+          + '<td class="cell-id">' + escFn(b.batch_no || '') + '</td>'
+          + '<td>' + escFn(b.forwarder_name || '—') + '</td>'
+          + '<td>' + escFn(b.transport_mode || '') + '</td>'
+          + '<td>' + fmtDateFn(b.eta_date) + '</td>'
+          + '<td>' + fmtDateFn(b.actual_arrival_date) + '</td>'
+          + '<td class="text-right">' + (b.actual_transit_days != null ? b.actual_transit_days : '—') + '</td>'
+          + '<td class="text-right">' + (b.total_cartons || 0) + '</td>'
+          + '<td class="text-right">' + cbm.toFixed(2) + '</td>'
+          + '<td class="text-right">' + cargoValue + '</td>'
+          + '<td class="text-right">' + fmtMoneyFn(b.total_freight, b.freight_currency) + '</td>'
+          + '<td class="text-right">' + fv + '</td>'
+          + '<td>' + escFn(b.logistics_display_status || b.logistics_status || '') + '</td>'
+          + '<td>' + escFn(b.listing_status || 'pending_plan') + '</td>'
+          + '<td>' + (b.listing_owner_names && b.listing_owner_names.length ? escFn(b.listing_owner_names.join('、')) : '—') + '</td>'
+          + '<td class="cell-actions"><button class="action-btn" title="编辑" onclick="editLogFromCI(\'' + escFn(b.id) + '\',\'' + escFn(ciId) + '\')">✏️</button> <button class="action-btn" title="导出" onclick="toggleBatchExportMenu(\'' + escFn(b.id) + '\')">⬇️</button>'
+          + '<div id="ci-logi-export-' + escFn(b.id) + '" style="display:none;margin-top:6px"></div></td>'
+          + '</tr>';
+      }).join('');
+      return '<div class="table-container"><table class="data-table" style="font-size:12px"><thead><tr>'
+        + '<th>' + tFn('logistics.col.batch_no', '物流单号') + '</th>'
+        + '<th>' + tFn('logistics.col.forwarder', '货代') + '</th>'
+        + '<th>' + tFn('logistics.col.transport', '运输方式') + '</th>'
+        + '<th>' + tFn('logistics.col.eta', '预计到港') + '</th>'
+        + '<th>' + tFn('logistics.col.arrival', '到货日期') + '</th>'
+        + '<th>' + tFn('logistics.col.transit_days', '运输时效') + '</th>'
+        + '<th>' + tFn('logistics.col.cartons', '箱数') + '</th>'
+        + '<th>' + tFn('logistics.col.cbm', 'CBM') + '</th>'
+        + '<th>' + tFn('logistics.col.cargo_value', '总货值') + '</th>'
+        + '<th>' + tFn('logistics.col.freight', '综合运费') + '</th>'
+        + '<th>' + tFn('logistics.col.freight_ratio', '运费/货值') + '</th>'
+        + '<th>' + tFn('logistics.col.status', '状态') + '</th>'
+        + '<th>' + tFn('logistics.col.listing_status', 'Listing状态') + '</th>'
+        + '<th>' + tFn('logistics.col.owners', '负责人') + '</th>'
+        + '<th>' + tFn('common.actions', '操作') + '</th>'
+        + '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+    };
+  }, { once: true });
+})(typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : this));
