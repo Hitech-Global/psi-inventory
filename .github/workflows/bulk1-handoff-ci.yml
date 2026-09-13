@@ -1,0 +1,151 @@
+name: BULK-1 handoff validation
+
+on:
+  push:
+    branches:
+      - handoff/bulk-import-stability-20260913
+
+permissions:
+  contents: read
+
+jobs:
+  bulk1:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      BULK1_PG_DSN: postgres://postgres:postgres@127.0.0.1:5432/postgres
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.2'
+          cache: npm
+      - run: npm ci
+      - name: Syntax checks
+        run: |
+          node --check server.js
+          node --check migrations/inventory-imports-latest-index.js
+          node --check scripts/create-inventory-imports-index-concurrently.cjs
+          node --check test/bulk1-index-safety.test.cjs
+          node --check test/bulk1-latest-imports-tie.test.cjs
+      - name: BULK-1 index safety
+        run: node --test test/bulk1-index-safety.test.cjs
+      - name: BULK-1 tie semantics on PostgreSQL
+        run: node --test test/bulk1-latest-imports-tie.test.cjs
+      - name: P0-C2 regression
+        run: node --test test/p0-c2-batch-import.test.cjs
+      - name: Inventory import regressions
+        run: |
+          TZ=Asia/Jakarta node --test test/wac-import-resolution.test.cjs
+          node --test test/inventory-safe-delete.test.cjs
+          node --test test/inventory-import-precheck.test.cjs
+      - name: PostgreSQL 500k x 5000 benchmark at work_mem=4MB
+        env:
+          DB_DRIVER: pg
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+        run: |
+          node <<'NODE'
+          const { Client } = require('pg');
+          process.env.DB_DRIVER = 'pg';
+          process.env.DATABASE_URL = process.env.BULK1_PG_DSN;
+          process.env.NODE_ENV = 'test';
+          const S = require('./server.js');
+
+          const c = new Client({ connectionString: process.env.BULK1_PG_DSN });
+          const sumPlan = (node, out = { tempRead: 0, tempWritten: 0, sorts: [] }) => {
+            out.tempRead += Number(node['Temp Read Blocks'] || 0);
+            out.tempWritten += Number(node['Temp Written Blocks'] || 0);
+            if (node['Sort Method']) out.sorts.push({
+              method: node['Sort Method'],
+              spaceKb: node['Sort Space Used'] || 0,
+              spaceType: node['Sort Space Type'] || ''
+            });
+            for (const child of node.Plans || []) sumPlan(child, out);
+            return out;
+          };
+
+          (async () => {
+            await c.connect();
+            try {
+              await c.query('DROP TABLE IF EXISTS inventory_delete_tombstones');
+              await c.query('DROP TABLE IF EXISTS inventory_imports');
+              await c.query(`CREATE TABLE inventory_imports (
+                id text PRIMARY KEY,
+                import_date text NOT NULL,
+                country text NOT NULL,
+                warehouse text NOT NULL,
+                channel text DEFAULT '',
+                sku_code text NOT NULL,
+                available_qty integer DEFAULT 0,
+                last_inbound_date text DEFAULT '',
+                first_inbound_date text DEFAULT '',
+                remark text DEFAULT '',
+                snapshot_cutoff_date text DEFAULT '',
+                brand text DEFAULT '',
+                weighted_avg_cost numeric(18,4) DEFAULT 0,
+                created_at text DEFAULT ''
+              )`);
+              await c.query(`CREATE TABLE inventory_delete_tombstones (
+                id text PRIMARY KEY,
+                sku_code text NOT NULL,
+                country text NOT NULL,
+                warehouse text NOT NULL,
+                deleted_at text DEFAULT '',
+                deleted_by text DEFAULT '',
+                reason text DEFAULT '',
+                created_at text DEFAULT '',
+                UNIQUE (sku_code, country, warehouse)
+              )`);
+              await c.query(`
+                INSERT INTO inventory_imports
+                  (id, import_date, country, warehouse, sku_code, available_qty, weighted_avg_cost)
+                SELECT
+                  'I' || g::text,
+                  to_char(date '2026-01-01' + (((g - 1) / 5000)::int), 'YYYY-MM-DD'),
+                  'Indonesia', 'Bekasi',
+                  'SKU-' || (((g - 1) % 5000) + 1)::text,
+                  (g % 100)::int,
+                  100
+                FROM generate_series(1, 500000) AS g
+              `);
+              await c.query('CREATE INDEX idx_inventory_imports_latest ON inventory_imports (sku_code, country, warehouse, import_date)');
+              await c.query('ANALYZE inventory_imports');
+              await c.query("SET work_mem = '4MB'");
+
+              const keys = Array.from({ length: 5000 }, (_, i) => ({
+                sku_code: 'SKU-' + (i + 1), country: 'Indonesia', warehouse: 'Bekasi'
+              }));
+              const sql = S.latestImportsSqlForKeySet();
+              const r = await c.query('EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ' + sql, [JSON.stringify(keys)]);
+              const root = r.rows[0]['QUERY PLAN'][0];
+              const stats = sumPlan(root.Plan);
+              const summary = {
+                planningTimeMs: root['Planning Time'],
+                executionTimeMs: root['Execution Time'],
+                actualRows: root.Plan['Actual Rows'],
+                tempReadBlocks: stats.tempRead,
+                tempWrittenBlocks: stats.tempWritten,
+                sorts: stats.sorts
+              };
+              console.log('BULK1_WORKMEM_4MB=' + JSON.stringify(summary));
+              if (!(Number(root['Execution Time']) < 15000)) {
+                throw new Error('500k/5000 work_mem=4MB regression: ' + root['Execution Time'] + 'ms');
+              }
+            } finally {
+              await c.end();
+            }
+          })().catch(err => { console.error(err); process.exit(1); });
+          NODE
