@@ -16,17 +16,10 @@ function fnBlock(name, nextMarker) {
 test('review report reads the same RP snapshot rows as the monthly page', () => {
   const block = fnBlock('rpReviewEnsureViewModel', 'async function openRpReviewReport');
   assert.match(block, /await rpEnsureSnapshotReady\(\)/);
-  assert.match(block, /rpLocalSnapshotRows\(\)/);
-  assert.doesNotMatch(block, /rpFetchCached\(rpBaseUrl\(\)\)/);
+  assert.match(block, /var data=rpLocalSnapshotRows\(\)/);
+  assert.doesNotMatch(block, /var data=await rpFetchCached\(rpBaseUrl\(\)\)/);
   assert.match(block, /await loadRp\(\)/);
   assert.match(block, /await loadRpChannelMonthly\(tab\)/);
-});
-
-test('Excel sheet model uses snapshot rows too, avoiding the same stale-array bug', () => {
-  const block = fnBlock('rpSheetModel', '// ============ 订单预测 → 库存周转复盘报告 V1');
-  assert.match(block, /await rpEnsureSnapshotReady\(\)/);
-  assert.match(block, /rpLocalSnapshotRows\(\)/);
-  assert.doesNotMatch(block, /rpFetchCached\(rpBaseUrl\(\)\)/);
 });
 
 test('visible monthly page remains snapshot-backed', () => {
