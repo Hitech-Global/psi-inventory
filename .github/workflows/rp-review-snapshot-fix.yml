@@ -1,0 +1,38 @@
+name: RP Review Snapshot Fix
+
+on:
+  push:
+    branches:
+      - fix/rp-review-snapshot-20260913
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-test:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - name: Apply source patch
+        run: node scripts/apply-rp-review-snapshot-fix.cjs
+      - name: Syntax check
+        run: node --check app.js
+      - name: Focused regression tests
+        run: node --test test/rp-review-snapshot-source.test.cjs test/rp-review-report.test.cjs test/app-perf.test.cjs
+      - name: Commit generated source change
+        run: |
+          if git diff --quiet -- app.js; then
+            echo "No app.js changes to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app.js
+          git commit -m "fix(forecast): align review report with snapshot cache [generated]"
+          git push origin HEAD:fix/rp-review-snapshot-20260913
