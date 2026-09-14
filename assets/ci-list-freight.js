@@ -1,5 +1,6 @@
-// CI list freight summary presentation patch.
+// CI list presentation patch.
 // Adds "总运费 / 运费占比" immediately after CI amount for operational CI rows.
+// Removes the redundant "入库状态" column because logistics status already covers the list-level flow state.
 // Total freight = SUM(total_freight) across UNIQUE logistics batches linked by related_ci_id.
 // Ratio = total freight / CI goods_amount. Cross-currency freight is never guessed or converted.
 (function (global) {
@@ -79,6 +80,31 @@
     return raw.indexOf('viewCI') !== -1 && raw.indexOf('viewHistoricalCI') === -1;
   }
 
+  function removeInboundColumn(table) {
+    var heads = table.querySelectorAll('thead th');
+    if (!heads.length) return;
+    var inboundLabel = '入库状态';
+    try {
+      if (typeof global.t === 'function') inboundLabel = global.t('ci.col.inbound_status', '入库状态');
+    } catch (e) {}
+    var idx = -1;
+    for (var i = 0; i < heads.length; i++) {
+      var label = String(heads[i].textContent || '').trim();
+      if (label === inboundLabel || label === '入库状态') {
+        idx = i;
+        break;
+      }
+    }
+    // Guarded fallback for the current base operational schema before freight columns are injected.
+    if (idx < 0 && heads.length === 19) idx = 16;
+    if (idx < 0) return;
+    if (heads[idx] && heads[idx].parentNode) heads[idx].parentNode.removeChild(heads[idx]);
+    Array.prototype.forEach.call(table.querySelectorAll('tbody tr'), function (row) {
+      var cell = row.children[idx];
+      if (cell && cell.parentNode) cell.parentNode.removeChild(cell);
+    });
+  }
+
   function ensureColumnsAndCells() {
     var root = document.getElementById('ci-table');
     if (!root) return [];
@@ -86,6 +112,7 @@
     var targets = [];
     Array.prototype.forEach.call(root.querySelectorAll('table'), function (table) {
       if (!isOperationalTable(table)) return;
+      removeInboundColumn(table);
       var heads = table.querySelectorAll('thead th');
       if (heads.length < 10) return;
       // Operational CI schema is stable: [CI号, CI类型, 关联PI, 供应商, 品牌, 国家, 仓库, 出货日期, 币种, CI金额, ...]
