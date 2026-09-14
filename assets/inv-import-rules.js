@@ -94,3 +94,16 @@
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.InvImportRules = api;
 })(typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : this));
+
+// Independent CI-list freight extension. Kept as a separate asset; this bootstrap is browser-only.
+// It is loaded dynamically here to avoid coupling the large app.js bundle to a presentation-only enhancement.
+(function (root) {
+  'use strict';
+  if (typeof document === 'undefined') return;
+  if (document.querySelector('script[data-ci-list-freight]')) return;
+  var s = document.createElement('script');
+  s.src = 'assets/ci-list-freight.js';
+  s.defer = true;
+  s.setAttribute('data-ci-list-freight', '1');
+  document.head.appendChild(s);
+})(typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : this));
