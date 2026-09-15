@@ -6,8 +6,9 @@
  * Goals:
  * 1) Keep settlement FX exact-date only (never use a prior/stale business day).
  * 2) If Frankfurter has not published the requested same-day snapshot yet, try
- *    Open Exchange Rate API's latest snapshot and accept it ONLY when its own
- *    time_last_update_utc resolves to the exact requested UTC date.
+ *    Open Exchange Rate API's latest USD snapshot and accept it ONLY when its own
+ *    time_last_update_utc resolves to the exact requested UTC date. Cross rates
+ *    are derived from that single same-date snapshot.
  * 3) Make /api/payment-requests/:id/payment-fx/resolve return JSON for every
  *    failure path so the browser never misreports an HTML 500 as "server not running".
  *
@@ -50,10 +51,11 @@ function patchPaymentFxSource(input) {
 
   // Preserve exact-date semantics. Open ER is accepted only if the provider's own
   // UTC snapshot date exactly matches rateDate; otherwise we keep the blocker.
+  // Use USD as the stable public base and derive from->to from one identical snapshot.
   source = replaceExactlyOnce(
     source,
     "  if (!providerRate || !(providerRate > 0) || providerDate !== rateDate) {\n    throw new SettlementError(400, '缺少 ' + rateDate + ' ' + fromCurrency + '→' + toCurrency + ' 的 realtime 付款汇率');\n  }\n  var cacheId = 'fxauto_' + rateDate + '_' + fromCurrency + '_' + toCurrency + '_' + SETTLEMENT_RATE_TYPE;",
-    "  // PAY-FX-HOTFIX: exact-date secondary provider. Never accept a stale snapshot.\n  if (!providerRate || !(providerRate > 0) || providerDate !== rateDate) {\n    try {\n      var secondaryResp = await fetch('https://open.er-api.com/v6/latest/' + encodeURIComponent(apiFrom), { signal: AbortSignal.timeout(abortMs) });\n      if (secondaryResp.ok) {\n        var secondaryData = await secondaryResp.json();\n        var secondaryRawDate = secondaryData && secondaryData.time_last_update_utc;\n        var secondaryParsedDate = secondaryRawDate ? new Date(secondaryRawDate) : null;\n        var secondaryDate = secondaryParsedDate && !Number.isNaN(secondaryParsedDate.getTime())\n          ? secondaryParsedDate.toISOString().split('T')[0]\n          : null;\n        var secondaryRate = secondaryData && secondaryData.rates ? Number(secondaryData.rates[apiTo]) : 0;\n        if (secondaryDate === rateDate && secondaryRate > 0) {\n          providerRate = secondaryRate;\n          providerDate = secondaryDate;\n        }\n      }\n    } catch (secondaryErr) {\n      // Secondary provider unavailable/invalid -> retain strict exact-date blocker below.\n    }\n  }\n  if (!providerRate || !(providerRate > 0) || providerDate !== rateDate) {\n    throw new SettlementError(400, '缺少 ' + rateDate + ' ' + fromCurrency + '→' + toCurrency + ' 的 realtime 付款汇率');\n  }\n  var cacheId = 'fxauto_' + rateDate + '_' + fromCurrency + '_' + toCurrency + '_' + SETTLEMENT_RATE_TYPE;",
+    "  // PAY-FX-HOTFIX: exact-date secondary provider. Never accept a stale snapshot.\n  if (!providerRate || !(providerRate > 0) || providerDate !== rateDate) {\n    try {\n      var secondaryResp = await fetch('https://open.er-api.com/v6/latest/USD', { signal: AbortSignal.timeout(abortMs) });\n      if (secondaryResp.ok) {\n        var secondaryData = await secondaryResp.json();\n        var secondaryRawDate = secondaryData && secondaryData.time_last_update_utc;\n        var secondaryParsedDate = secondaryRawDate ? new Date(secondaryRawDate) : null;\n        var secondaryDate = secondaryParsedDate && !Number.isNaN(secondaryParsedDate.getTime())\n          ? secondaryParsedDate.toISOString().split('T')[0]\n          : null;\n        var secondaryRates = secondaryData && secondaryData.rates ? secondaryData.rates : null;\n        var secondaryFromUsd = apiFrom === 'USD' ? 1 : Number(secondaryRates && secondaryRates[apiFrom]);\n        var secondaryToUsd = apiTo === 'USD' ? 1 : Number(secondaryRates && secondaryRates[apiTo]);\n        var secondaryRate = secondaryFromUsd > 0 && secondaryToUsd > 0 ? (secondaryToUsd / secondaryFromUsd) : 0;\n        if (secondaryDate === rateDate && secondaryRate > 0) {\n          providerRate = secondaryRate;\n          providerDate = secondaryDate;\n        }\n      }\n    } catch (secondaryErr) {\n      // Secondary provider unavailable/invalid -> retain strict exact-date blocker below.\n    }\n  }\n  if (!providerRate || !(providerRate > 0) || providerDate !== rateDate) {\n    throw new SettlementError(400, '缺少 ' + rateDate + ' ' + fromCurrency + '→' + toCurrency + ' 的 realtime 付款汇率');\n  }\n  var cacheId = 'fxauto_' + rateDate + '_' + fromCurrency + '_' + toCurrency + '_' + SETTLEMENT_RATE_TYPE;",
     'secondary-provider'
   );
 
