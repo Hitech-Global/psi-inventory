@@ -2,9 +2,7 @@
 
 module.exports = function installQuotationManagement(deps) {
   const { app, query, queryOne, run, transaction, genId, asyncHandler, requireApiPermission } = deps;
-  const BRAND_CCY = Object.freeze({ Netac: 'USD', Redragon: 'RMB', BOYA: 'RMB', Joypeer: 'RMB' });
-  const PURCHASE_FX_RATE_TYPE = 'quotation_purchase';
-  const MAX_FX_WARM_REQUESTS = 20;
+  const BRAND_CCY = Object.freeze({ Netac: 'RMB', Redragon: 'RMB', BOYA: 'RMB', Joypeer: 'RMB' });
 
   run("CREATE TABLE IF NOT EXISTS quotation_prices (id TEXT PRIMARY KEY, sku_code TEXT NOT NULL, brand TEXT NOT NULL, product_type TEXT NOT NULL, quote_price NUMERIC NOT NULL, currency TEXT NOT NULL, quote_date TEXT NOT NULL, remark TEXT DEFAULT '', import_batch_id TEXT, created_at TEXT, updated_at TEXT)");
   run('CREATE UNIQUE INDEX IF NOT EXISTS uq_quotation_prices_sku_brand_date ON quotation_prices (sku_code,brand,quote_date)');
@@ -19,8 +17,6 @@ module.exports = function installQuotationManagement(deps) {
   };
   const isQuoted = r => !!r && Number(r.quote_price) > 0;
   const pairKey = (brand, sku) => String(brand || '') + '|' + String(sku || '');
-  const fxKey = (date, from, to) => [date, String(from || '').toUpperCase(), String(to || '').toUpperCase()].join('|');
-  const apiCurrency = c => String(c || '').toUpperCase() === 'RMB' ? 'CNY' : String(c || '').toUpperCase();
 
   function parseIdList(value) {
     if (!value) return [];
@@ -34,31 +30,17 @@ module.exports = function installQuotationManagement(deps) {
     return s.split(/[,&;|]/).map(x => x.trim()).filter(Boolean);
   }
 
-  function cachedFxMap(requirements) {
-    const reqs = [...new Map((requirements || []).filter(x => x && x.rate_date && x.from_currency && x.to_currency).map(x => [fxKey(x.rate_date, x.from_currency, x.to_currency), x])).values()];
-    const out = new Map();
-    if (!reqs.length) return out;
-    const dates = [...new Set(reqs.map(x => x.rate_date))];
-    const currencies = [...new Set(reqs.flatMap(x => [String(x.from_currency).toUpperCase(), String(x.to_currency).toUpperCase()]))];
-    const dph = dates.map(() => '?').join(','), cph = currencies.map(() => '?').join(',');
-    const rows = query(`SELECT rate_date,from_currency,to_currency,rate,rate_type,created_at,id FROM exchange_rates WHERE rate_date IN (${dph}) AND from_currency IN (${cph}) AND to_currency IN (${cph}) ORDER BY created_at DESC,id DESC`, [...dates, ...currencies, ...currencies]).rows;
-    for (const r of rows) {
-      const rate = Number(r.rate);
-      if (!(rate > 0)) continue;
-      const direct = fxKey(r.rate_date, r.from_currency, r.to_currency);
-      if (!out.has(direct)) out.set(direct, { rate, rate_type: r.rate_type || '', source: 'cache' });
-      const reverse = fxKey(r.rate_date, r.to_currency, r.from_currency);
-      if (!out.has(reverse)) out.set(reverse, { rate: 1 / rate, rate_type: r.rate_type || '', source: 'cache_reverse' });
-    }
-    return out;
-  }
-
+  // Resolve the latest purchase baseline in two set-based queries at most:
+  // 1) latest CI containing each brand+SKU;
+  // 2) only for a latest CI where the same SKU has different CI prices, inspect the
+  //    PIs linked to that CI and use that SKU's FOB from the latest-dated linked PI.
+  // Currency is never converted here. A mismatch is surfaced as currency_mismatch.
   function purchaseBaselines(pairs) {
     const uniq = [...new Map((pairs || []).filter(p => p && p.sku && p.brand).map(p => [pairKey(p.brand, p.sku), {
       brand: String(p.brand), sku: String(p.sku), target_currency: String(p.currency || BRAND_CCY[p.brand] || '').toUpperCase()
     }])).values()];
     const out = new Map();
-    if (!uniq.length) return { map: out, missing_fx: [] };
+    if (!uniq.length) return out;
 
     const wanted = new Map(uniq.map(p => [pairKey(p.brand, p.sku), p]));
     const skus = [...new Set(uniq.map(p => p.sku))];
@@ -75,7 +57,6 @@ module.exports = function installQuotationManagement(deps) {
                COALESCE(NULLIF(ci.actual_ship_date,''),NULLIF(ci.ci_date,''),ci.created_at) DESC,
                ci.created_at DESC,ci.id DESC,cii.created_at DESC,cii.id DESC`, skus).rows;
 
-    // One latest CI per brand + SKU. Keep every row for that SKU inside that CI so merged-PI ambiguity is visible.
     const latestGroups = new Map();
     for (const r of ciRows) {
       const k = pairKey(r.brand, r.sku_code);
@@ -107,7 +88,6 @@ module.exports = function installQuotationManagement(deps) {
       }
     }
 
-    // Merged CI fallback: for duplicate SKU + different prices, use the SKU FOB from the latest-dated PI linked to that CI.
     const allPiIds = [...new Set(ambiguous.flatMap(x => x.pi_ids))];
     if (ambiguous.length && allPiIds.length) {
       const piph = allPiIds.map(() => '?').join(','), sph = skus.map(() => '?').join(',');
@@ -143,7 +123,8 @@ module.exports = function installQuotationManagement(deps) {
           out.set(a.key, {
             status: 'ambiguous', source_kind: 'ci', source_reason: 'merged_ci_pi_missing',
             ci_id: a.group.meta.ci_id, ci_no: a.group.meta.ci_no,
-            purchase_date: a.group.meta.purchase_date, currency: String(a.group.meta.currency || '').toUpperCase(), unit_price: null
+            purchase_date: a.group.meta.purchase_date,
+            currency: String(a.group.meta.currency || '').toUpperCase(), unit_price: null
           });
           continue;
         }
@@ -154,7 +135,8 @@ module.exports = function installQuotationManagement(deps) {
             ci_id: a.group.meta.ci_id, ci_no: a.group.meta.ci_no,
             pi_id: chosen.meta.pi_id, pi_no: chosen.meta.pi_no,
             source_doc_no: chosen.meta.pi_no, source_date: chosen.meta.pi_date,
-            purchase_date: a.group.meta.purchase_date, currency: String(chosen.meta.currency || '').toUpperCase(), unit_price: null
+            purchase_date: a.group.meta.purchase_date,
+            currency: String(chosen.meta.currency || '').toUpperCase(), unit_price: null
           });
           continue;
         }
@@ -169,45 +151,14 @@ module.exports = function installQuotationManagement(deps) {
       }
     }
 
-    const fxRequirements = [];
     for (const [k, p] of out) {
       const target = wanted.get(k) && wanted.get(k).target_currency;
-      if (p && p.status === 'exact' && p.unit_price != null && target && p.currency && target !== p.currency) {
-        fxRequirements.push({ rate_date: String(p.source_date || p.purchase_date || '').slice(0, 10), from_currency: p.currency, to_currency: target });
-      }
-    }
-    const fxMap = cachedFxMap(fxRequirements), missingFx = new Map();
-    for (const [k, p] of out) {
-      const target = wanted.get(k) && wanted.get(k).target_currency;
-      p.original_unit_price = p.unit_price;
-      p.original_currency = p.currency;
       p.target_currency = target || p.currency;
-      if (p.status !== 'exact' || p.unit_price == null || !target || !p.currency) continue;
-      if (target === p.currency) {
-        p.comparable_unit_price = Number(p.unit_price);
-        p.comparable_currency = target;
-        p.fx_rate = 1;
-        p.comparison_status = 'exact';
-        continue;
-      }
-      const rateDate = String(p.source_date || p.purchase_date || '').slice(0, 10);
-      const cached = fxMap.get(fxKey(rateDate, p.currency, target));
-      if (cached && cached.rate > 0) {
-        p.comparable_unit_price = Number(p.unit_price) * Number(cached.rate);
-        p.comparable_currency = target;
-        p.fx_rate = Number(cached.rate);
-        p.fx_rate_date = rateDate;
-        p.fx_rate_type = cached.rate_type || PURCHASE_FX_RATE_TYPE;
-        p.comparison_status = 'converted';
-      } else {
-        p.comparable_unit_price = null;
-        p.comparable_currency = target;
-        p.comparison_status = 'fx_missing';
-        const req = { rate_date: rateDate, from_currency: p.currency, to_currency: target };
-        if (rateDate) missingFx.set(fxKey(rateDate, p.currency, target), req);
-      }
+      p.comparison_status = p.status !== 'exact'
+        ? p.status
+        : (target && p.currency && target !== p.currency ? 'currency_mismatch' : 'exact');
     }
-    return { map: out, missing_fx: [...missingFx.values()] };
+    return out;
   }
 
   function buildSummary(req) {
@@ -222,31 +173,27 @@ module.exports = function installQuotationManagement(deps) {
 
     const history = query(sql, ps).rows, by = new Map();
     for (const r of history) { const k = pairKey(r.brand, r.sku_code); if (!by.has(k)) by.set(k, []); by.get(k).push(r); }
-    const purchase = purchaseBaselines([...by.values()].map(a => ({ brand: a[0].brand, sku: a[0].sku_code, currency: a[0].currency || BRAND_CCY[a[0].brand] })));
-    const pmap = purchase.map, rows = [];
+    const pmap = purchaseBaselines([...by.values()].map(a => ({ brand: a[0].brand, sku: a[0].sku_code, currency: a[0].currency || BRAND_CCY[a[0].brand] })));
+    const rows = [];
 
     for (const [k, a] of by) {
       const event = a[0], latest = isQuoted(event) ? event : null, prev = latest ? a.slice(1).find(isQuoted) || null : null, p = pmap.get(k) || null;
-      const comparable = !!latest && !!p && p.status === 'exact' && p.comparable_unit_price != null && String(p.comparable_currency || '').toUpperCase() === String(latest.currency || '').toUpperCase();
+      const sameCurrency = !!latest && !!p && p.status === 'exact' && p.unit_price != null && String(p.currency || '').toUpperCase() === String(latest.currency || '').toUpperCase();
       rows.push({
         sku_code: event.sku_code, brand: event.brand, product_type: event.product_type,
         latest_price: latest ? Number(latest.quote_price) : null, currency: event.currency, latest_date: event.quote_date,
         quote_status: latest ? 'quoted' : 'no_quote', previous_price: prev ? Number(prev.quote_price) : null,
         vs_previous_pct: latest && prev ? pct(latest.quote_price, prev.quote_price) : null,
-        last_purchase_price: comparable ? Number(p.comparable_unit_price) : null,
-        last_purchase_currency: comparable ? p.comparable_currency : (p ? p.currency : null),
-        last_purchase_original_price: p && p.unit_price != null ? Number(p.unit_price) : null,
-        last_purchase_original_currency: p ? p.currency : null,
+        last_purchase_price: sameCurrency ? Number(p.unit_price) : null,
+        last_purchase_currency: p ? p.currency : null,
         last_purchase_date: p ? p.purchase_date : null,
         last_purchase_source_date: p ? p.source_date : null,
         last_purchase_ci_no: p ? p.ci_no : null,
         last_purchase_pi_no: p ? p.pi_no || null : null,
         last_purchase_source_kind: p ? p.source_kind || null : null,
         last_purchase_source_reason: p ? p.source_reason || null : null,
-        last_purchase_fx_rate: p && p.fx_rate ? p.fx_rate : null,
-        last_purchase_fx_rate_date: p && p.fx_rate_date ? p.fx_rate_date : null,
-        purchase_status: latest ? (p ? (p.status !== 'exact' ? p.status : (p.comparison_status || 'exact')) : 'missing') : 'no_quote',
-        vs_purchase_pct: latest && comparable ? pct(latest.quote_price, p.comparable_unit_price) : null,
+        purchase_status: latest ? (p ? (p.status !== 'exact' ? p.status : (sameCurrency ? 'exact' : 'currency_mismatch')) : 'missing') : 'no_quote',
+        vs_purchase_pct: latest && sameCurrency ? pct(latest.quote_price, p.unit_price) : null,
         history_count: a.length, quoted_history_count: a.filter(isQuoted).length
       });
     }
@@ -267,7 +214,7 @@ module.exports = function installQuotationManagement(deps) {
     const distinctSkuCount = new Set(rows.map(r => String(r.sku_code || '').trim().toUpperCase())).size;
 
     return {
-      brands, product_types: productTypes, rows, missing_purchase_fx: purchase.missing_fx,
+      brands, product_types: productTypes, rows,
       report: {
         brand: brand || null, currency: brand ? (BRAND_CCY[brand] || (rows[0] && rows[0].currency) || '') : '',
         sku_count: distinctSkuCount, history_count: history.length, quoted_history_count: quotedHistoryCount, no_quote_count: noQuoteCount,
@@ -276,7 +223,7 @@ module.exports = function installQuotationManagement(deps) {
         avg_change_pct: changes.length ? Math.round(changes.reduce((s, v) => s + v, 0) / changes.length * 100) / 100 : null,
         above_purchase_count: pchanges.filter(v => v > 0).length, below_purchase_count: pchanges.filter(v => v < 0).length,
         comparable_purchase_count: pchanges.length,
-        fx_pending_count: rows.filter(r => r.purchase_status === 'fx_missing').length,
+        currency_mismatch_count: rows.filter(r => r.purchase_status === 'currency_mismatch').length,
         product_types: types,
         top_movers: rows.filter(r => r.vs_previous_pct !== null).sort((a, b) => Math.abs(b.vs_previous_pct) - Math.abs(a.vs_previous_pct)).slice(0, 5),
         top_purchase_gaps: rows.filter(r => r.vs_purchase_pct !== null).sort((a, b) => Math.abs(b.vs_purchase_pct) - Math.abs(a.vs_purchase_pct)).slice(0, 5), trend
@@ -284,48 +231,8 @@ module.exports = function installQuotationManagement(deps) {
     };
   }
 
-  async function fetchExactFx(rateDate, fromCurrency, toCurrency) {
-    const from = String(fromCurrency || '').toUpperCase(), to = String(toCurrency || '').toUpperCase();
-    if (!rateDate || !from || !to) throw new Error('汇率参数不完整');
-    if (from === to) return 1;
-    const apiFrom = apiCurrency(from), apiTo = apiCurrency(to);
-    const url = `https://api.frankfurter.dev/v1/${encodeURIComponent(rateDate)}?base=${encodeURIComponent(apiFrom)}&symbols=${encodeURIComponent(apiTo)}`;
-    const resp = await fetch(url, { signal: AbortSignal.timeout(4500), headers: { accept: 'application/json' } });
-    if (!resp.ok) throw new Error('历史汇率服务 HTTP ' + resp.status);
-    const data = await resp.json();
-    const providerDate = String(data && data.date || '');
-    const rate = Number(data && data.rates && data.rates[apiTo]);
-    if (providerDate !== rateDate || !(rate > 0)) throw new Error('历史汇率服务未返回精确日期 ' + rateDate);
-    return rate;
-  }
-
   app.get('/api/quotation-management/summary', requireApiPermission('cost_view'), asyncHandler((req, res) => {
     try { res.json(buildSummary(req)); } catch (e) { res.status(500).json({ error: e.message }); }
-  }));
-
-  app.post('/api/quotation-management/purchase-fx/warm', requireApiPermission('cost_view'), asyncHandler(async (req, res) => {
-    try {
-      const raw = Array.isArray((req.body || {}).requests) ? req.body.requests : [];
-      const reqs = [...new Map(raw.map(x => ({
-        rate_date: String(x && x.rate_date || '').slice(0, 10),
-        from_currency: String(x && x.from_currency || '').toUpperCase(),
-        to_currency: String(x && x.to_currency || '').toUpperCase()
-      })).filter(x => /^\d{4}-\d{2}-\d{2}$/.test(x.rate_date) && x.from_currency && x.to_currency).map(x => [fxKey(x.rate_date, x.from_currency, x.to_currency), x])).values()].slice(0, MAX_FX_WARM_REQUESTS);
-      if (!reqs.length) return res.json({ success: true, warmed: 0, cached: 0, failed: [] });
-      const existing = cachedFxMap(reqs); let warmed = 0, cached = 0; const failed = [];
-      for (const x of reqs) {
-        const k = fxKey(x.rate_date, x.from_currency, x.to_currency);
-        if (existing.has(k)) { cached++; continue; }
-        try {
-          const rate = await fetchExactFx(x.rate_date, x.from_currency, x.to_currency);
-          const id = ['qfx', x.rate_date, x.from_currency, x.to_currency].join('_');
-          const now = new Date().toISOString();
-          run(`INSERT INTO exchange_rates (id,from_currency,to_currency,rate,rate_date,rate_type,created_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET rate=EXCLUDED.rate,rate_date=EXCLUDED.rate_date,rate_type=EXCLUDED.rate_type,created_at=EXCLUDED.created_at`, [id, x.from_currency, x.to_currency, rate, x.rate_date, PURCHASE_FX_RATE_TYPE, now]);
-          warmed++;
-        } catch (e) { failed.push({ ...x, error: e.message }); }
-      }
-      res.json({ success: failed.length === 0, warmed, cached, failed });
-    } catch (e) { res.status(500).json({ error: e.message }); }
   }));
 
   app.get('/api/quotation-management/sku/:sku', requireApiPermission('cost_view'), asyncHandler((req, res) => {
@@ -334,14 +241,13 @@ module.exports = function installQuotationManagement(deps) {
       if (!sku || !brand) return res.status(400).json({ error: '缺少 SKU 或品牌' });
       const h = query('SELECT * FROM quotation_prices WHERE sku_code=? AND brand=? ORDER BY quote_date DESC,created_at DESC', [sku, brand]).rows;
       const targetCurrency = (h[0] && h[0].currency) || BRAND_CCY[brand] || '';
-      const purchase = purchaseBaselines([{ sku, brand, currency: targetCurrency }]);
-      const p = purchase.map.get(pairKey(brand, sku)) || null;
+      const p = purchaseBaselines([{ sku, brand, currency: targetCurrency }]).get(pairKey(brand, sku)) || null;
       res.json({
-        sku_code: sku, brand, purchase: p, missing_purchase_fx: purchase.missing_fx,
+        sku_code: sku, brand, purchase: p,
         history: h.map((r, i) => {
           const quoted = isQuoted(r), prev = quoted ? h.slice(i + 1).find(isQuoted) || null : null;
-          const comparable = quoted && p && p.status === 'exact' && p.comparable_unit_price != null && String(p.comparable_currency || '').toUpperCase() === String(r.currency || '').toUpperCase();
-          return { ...r, quote_price: quoted ? Number(r.quote_price) : null, quote_status: quoted ? 'quoted' : 'no_quote', vs_previous_pct: quoted && prev ? pct(r.quote_price, prev.quote_price) : null, vs_purchase_pct: comparable ? pct(r.quote_price, p.comparable_unit_price) : null };
+          const sameCurrency = quoted && p && p.status === 'exact' && p.unit_price != null && String(p.currency || '').toUpperCase() === String(r.currency || '').toUpperCase();
+          return { ...r, quote_price: quoted ? Number(r.quote_price) : null, quote_status: quoted ? 'quoted' : 'no_quote', vs_previous_pct: quoted && prev ? pct(r.quote_price, prev.quote_price) : null, vs_purchase_pct: sameCurrency ? pct(r.quote_price, p.unit_price) : null };
         })
       });
     } catch (e) { res.status(500).json({ error: e.message }); }
