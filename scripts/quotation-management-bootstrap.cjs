@@ -3,7 +3,7 @@ const fs=require('node:fs');
 const path=require('node:path');
 const SERVER_MARKER='// QUOTATION-MANAGEMENT-V1';
 const BODY_GUARD_MARKER='// QUOTATION-IMPORT-BODY-GUARD-V1';
-const ASSET_VERSION='20260916g';
+const ASSET_VERSION='20260916h';
 const INDEX_MARKER='<script src="quotation-management.js?v='+ASSET_VERSION+'"></script>';
 const IMPORT_NORMALIZER_MARKER='<script src="quotation-import-normalizer.js?v='+ASSET_VERSION+'"></script>';
 const IMPORT_PROGRESS_MARKER='<script src="quotation-import-progress.js?v='+ASSET_VERSION+'"></script>';
@@ -33,16 +33,23 @@ function patchIndexSource(src){
 }
 function patchQuotationServerSource(src){
   let out=src;
+  out=out.replace("const BRAND_CCY = Object.freeze({ Netac: 'RMB', Redragon: 'RMB', BOYA: 'RMB', Joypeer: 'RMB' });","const BRAND_CCY = Object.freeze({ Netac: 'USD', Redragon: 'RMB', BOYA: 'RMB', Joypeer: 'RMB' });");
   const old='sku_count:rows.length,history_count:history.length';
   const next="sku_count:new Set(rows.map(r=>String(r.sku_code||'').trim().toUpperCase())).size,history_count:history.length";
   if(out.includes(old))out=out.replace(old,next);
   return out;
 }
+function patchQuotationImportFastSource(src){
+  return src.replace("const BRAND_CCY=Object.freeze({Netac:'RMB',Redragon:'RMB',BOYA:'RMB',Joypeer:'RMB'});","const BRAND_CCY=Object.freeze({Netac:'USD',Redragon:'RMB',BOYA:'RMB',Joypeer:'RMB'});");
+}
+function patchQuotationImportNormalizerSource(src){
+  return src.replace("const BRAND_CCY={Netac:'RMB',Redragon:'RMB',BOYA:'RMB',Joypeer:'RMB'};","const BRAND_CCY={Netac:'USD',Redragon:'RMB',BOYA:'RMB',Joypeer:'RMB'};");
+}
 function patchQuotationManagementSource(src){
   let out=src;
-  out=out.replace("const CCY={Netac:'USD',Redragon:'RMB',BOYA:'RMB',Joypeer:'RMB'};","const CCY={Netac:'RMB',Redragon:'RMB',BOYA:'RMB',Joypeer:'RMB'};");
-  out=out.replace('Netac 默认 USD；Redragon / BOYA / Joypeer 默认 RMB。','当前品牌报价均按原采购币种比较；Netac / Redragon / BOYA / Joypeer 默认 RMB。');
-  out=out.replace("品牌:'Netac',产品类型:'U盘',FOB价格:10.5,币种:'USD'","品牌:'Netac',产品类型:'U盘',FOB价格:75,币种:'RMB'");
+  out=out.replace("const CCY={Netac:'RMB',Redragon:'RMB',BOYA:'RMB',Joypeer:'RMB'};","const CCY={Netac:'USD',Redragon:'RMB',BOYA:'RMB',Joypeer:'RMB'};");
+  out=out.replace('当前品牌报价均按原采购币种比较；Netac / Redragon / BOYA / Joypeer 默认 RMB。','Netac 默认 USD；Redragon / BOYA / Joypeer 默认 RMB。报价与上次采购价只有同币种时才比较，不做汇率换算。');
+  out=out.replace("品牌:'Netac',产品类型:'U盘',FOB价格:75,币种:'RMB'","品牌:'Netac',产品类型:'U盘',FOB价格:10.5,币种:'USD'");
   out=out.replace("$('#qm-count').textContent='共 '+r.length+' 个 SKU';","$('#qm-count').textContent='共 '+new Set(r.map(x=>String(x.sku_code||\'\').trim().toUpperCase())).size+' 个去重 SKU';");
   out=out.replace('<span>SKU 总数</span>','<span>SKU 总数（去重）</span>');
   out=out.replace('<span>历史记录</span>','<span>历史报价记录</span>');
@@ -50,7 +57,7 @@ function patchQuotationManagementSource(src){
   out=out.replace('SKU数:r.sku_count,历史记录数:r.history_count','去重SKU数:r.sku_count,历史报价记录数:r.history_count');
   if(!out.includes('function purchaseBaselineText(p)')){
     const anchor='function renderSku(){';
-    const helper=`function purchaseBaselineText(p){\n  if(!p)return '暂无可比采购价';\n  if(p.status==='ambiguous')return '最近采购记录同 SKU 价格仍存在歧义，暂不比较';\n  if(p.status!=='exact')return '暂无可比采购价';\n  const doc=p.source_kind==='pi'?'PI '+(p.pi_no||p.source_doc_no||''):'CI '+(p.ci_no||p.source_doc_no||'');\n  const merged=p.source_reason==='merged_ci_latest_pi'?' · 合并 CI 同 SKU 多价，取关联日期最新 PI':'';\n  const mismatch=p.comparison_status==='currency_mismatch'?' · 币种与当前报价不一致，不做换算':'';\n  return E(doc)+' · '+money(p.unit_price,p.currency)+' · '+E(p.source_date||p.purchase_date||'')+merged+mismatch;\n}\n`;
+    const helper=`function purchaseBaselineText(p){\n  if(!p)return '暂无可比采购价';\n  if(p.status==='ambiguous')return '最近采购记录同 SKU 价格仍存在歧义，暂不比较';\n  if(p.status!=='exact')return '暂无可比采购价';\n  const doc=p.source_kind==='pi'?'PI '+(p.pi_no||p.source_doc_no||''):'CI '+(p.ci_no||p.source_doc_no||'');\n  const merged=p.source_reason==='merged_ci_latest_pi'?' · 合并 CI 同 SKU 多价，取关联日期最新 PI':'';\n  const mismatch=p.comparison_status==='currency_mismatch'?' · 币种与当前报价不一致，暂不比较':'';\n  return E(doc)+' · '+money(p.unit_price,p.currency)+' · '+E(p.source_date||p.purchase_date||'')+merged+mismatch;\n}\n`;
     if(out.includes(anchor))out=out.replace(anchor,helper+anchor);
   }
   out=out.replace("${p&&p.status==='exact'?`${E(p.ci_no)} · ${money(p.unit_price,p.currency)} · ${E(p.purchase_date||'')}`:p&&p.status==='ambiguous'?'最近 CI 同 SKU 存在不同原单价，已阻止比较':'暂无可比采购价'}","${purchaseBaselineText(p)}");
@@ -60,11 +67,11 @@ function patchQuotationManagementSource(src){
   return out;
 }
 function apply(){
-  const sp=path.resolve(process.cwd(),'server.js'),ip=path.resolve(process.cwd(),'index.html'),qsp=path.resolve(process.cwd(),'quotation-server.js'),qmp=path.resolve(process.cwd(),'quotation-management.js');
-  const s=fs.readFileSync(sp,'utf8'),i=fs.readFileSync(ip,'utf8'),qs=fs.readFileSync(qsp,'utf8'),qm=fs.readFileSync(qmp,'utf8');
-  const ps=patchServerSource(s),pi=patchIndexSource(i),pqs=patchQuotationServerSource(qs),pqm=patchQuotationManagementSource(qm);
-  if(ps!==s)fs.writeFileSync(sp,ps);if(pi!==i)fs.writeFileSync(ip,pi);if(pqs!==qs)fs.writeFileSync(qsp,pqs);if(pqm!==qm)fs.writeFileSync(qmp,pqm);
+  const sp=path.resolve(process.cwd(),'server.js'),ip=path.resolve(process.cwd(),'index.html'),qsp=path.resolve(process.cwd(),'quotation-server.js'),qfp=path.resolve(process.cwd(),'quotation-import-fast.js'),qnp=path.resolve(process.cwd(),'quotation-import-normalizer.js'),qmp=path.resolve(process.cwd(),'quotation-management.js');
+  const s=fs.readFileSync(sp,'utf8'),i=fs.readFileSync(ip,'utf8'),qs=fs.readFileSync(qsp,'utf8'),qf=fs.readFileSync(qfp,'utf8'),qn=fs.readFileSync(qnp,'utf8'),qm=fs.readFileSync(qmp,'utf8');
+  const ps=patchServerSource(s),pi=patchIndexSource(i),pqs=patchQuotationServerSource(qs),pqf=patchQuotationImportFastSource(qf),pqn=patchQuotationImportNormalizerSource(qn),pqm=patchQuotationManagementSource(qm);
+  if(ps!==s)fs.writeFileSync(sp,ps);if(pi!==i)fs.writeFileSync(ip,pi);if(pqs!==qs)fs.writeFileSync(qsp,pqs);if(pqf!==qf)fs.writeFileSync(qfp,pqf);if(pqn!==qn)fs.writeFileSync(qnp,pqn);if(pqm!==qm)fs.writeFileSync(qmp,pqm);
   console.log('[QUOTATION] runtime patch applied');
 }
 if(require.main===module){if(process.env.NODE_ENV==='production'||process.env.RENDER)apply();else console.log('[QUOTATION] non-production install; skipped');}
-module.exports={SERVER_MARKER,BODY_GUARD_MARKER,ASSET_VERSION,INDEX_MARKER,IMPORT_NORMALIZER_MARKER,IMPORT_PROGRESS_MARKER,PROCUREMENT_BRIEF_MARKER,patchServerSource,patchIndexSource,patchQuotationServerSource,patchQuotationManagementSource,apply};
+module.exports={SERVER_MARKER,BODY_GUARD_MARKER,ASSET_VERSION,INDEX_MARKER,IMPORT_NORMALIZER_MARKER,IMPORT_PROGRESS_MARKER,PROCUREMENT_BRIEF_MARKER,patchServerSource,patchIndexSource,patchQuotationServerSource,patchQuotationImportFastSource,patchQuotationImportNormalizerSource,patchQuotationManagementSource,apply};
