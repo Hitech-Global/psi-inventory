@@ -65,6 +65,8 @@ function validateRows(rows){
   return errors;
 }
 
+window.QuotationImportNormalizer=Object.freeze({normalizeDate,normalizeRow,validateRows,BRAND_CCY});
+
 function install(){
   if(typeof window.api!=='function')return false;
   if(window.api.__quotationImportNormalizer)return true;
