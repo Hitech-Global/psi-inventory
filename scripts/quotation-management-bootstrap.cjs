@@ -3,11 +3,12 @@ const fs=require('node:fs');
 const path=require('node:path');
 const SERVER_MARKER='// QUOTATION-MANAGEMENT-V1';
 const BODY_GUARD_MARKER='// QUOTATION-IMPORT-BODY-GUARD-V1';
-const ASSET_VERSION='20260916d';
+const ASSET_VERSION='20260916e';
 const INDEX_MARKER='<script src="quotation-management.js?v='+ASSET_VERSION+'"></script>';
 const IMPORT_NORMALIZER_MARKER='<script src="quotation-import-normalizer.js?v='+ASSET_VERSION+'"></script>';
 const IMPORT_PROGRESS_MARKER='<script src="quotation-import-progress.js?v='+ASSET_VERSION+'"></script>';
-const INDEX_BLOCK=INDEX_MARKER+'\n'+IMPORT_NORMALIZER_MARKER+'\n'+IMPORT_PROGRESS_MARKER;
+const PROCUREMENT_BRIEF_MARKER='<script src="quotation-procurement-brief.js?v='+ASSET_VERSION+'"></script>';
+const INDEX_BLOCK=INDEX_MARKER+'\n'+IMPORT_NORMALIZER_MARKER+'\n'+IMPORT_PROGRESS_MARKER+'\n'+PROCUREMENT_BRIEF_MARKER;
 function once(src,needle,repl,label){const a=src.indexOf(needle);if(a<0)throw new Error('[QUOTATION] missing '+label);if(src.indexOf(needle,a+needle.length)>=0)throw new Error('[QUOTATION] duplicate '+label);return src.slice(0,a)+repl+src.slice(a+needle.length);}
 function patchServerSource(src){
   let out=src;
@@ -26,7 +27,8 @@ function patchIndexSource(src){
   let out=src
     .replace(/\s*<script src="quotation-management\.js(?:\?[^\"]*)?"><\/script>/g,'')
     .replace(/\s*<script src="quotation-import-normalizer\.js(?:\?[^\"]*)?"><\/script>/g,'')
-    .replace(/\s*<script src="quotation-import-progress\.js(?:\?[^\"]*)?"><\/script>/g,'');
+    .replace(/\s*<script src="quotation-import-progress\.js(?:\?[^\"]*)?"><\/script>/g,'')
+    .replace(/\s*<script src="quotation-procurement-brief\.js(?:\?[^\"]*)?"><\/script>/g,'');
   return once(out,'</body>',INDEX_BLOCK+'\n</body>','index anchor');
 }
 function patchQuotationServerSource(src){
@@ -53,4 +55,4 @@ function apply(){
   console.log('[QUOTATION] runtime patch applied');
 }
 if(require.main===module){if(process.env.NODE_ENV==='production'||process.env.RENDER)apply();else console.log('[QUOTATION] non-production install; skipped');}
-module.exports={SERVER_MARKER,BODY_GUARD_MARKER,ASSET_VERSION,INDEX_MARKER,IMPORT_NORMALIZER_MARKER,IMPORT_PROGRESS_MARKER,patchServerSource,patchIndexSource,patchQuotationServerSource,patchQuotationManagementSource,apply};
+module.exports={SERVER_MARKER,BODY_GUARD_MARKER,ASSET_VERSION,INDEX_MARKER,IMPORT_NORMALIZER_MARKER,IMPORT_PROGRESS_MARKER,PROCUREMENT_BRIEF_MARKER,patchServerSource,patchIndexSource,patchQuotationServerSource,patchQuotationManagementSource,apply};
