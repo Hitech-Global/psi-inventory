@@ -3,7 +3,7 @@ const fs=require('node:fs');
 const path=require('node:path');
 const SERVER_MARKER='// QUOTATION-MANAGEMENT-V1';
 const BODY_GUARD_MARKER='// QUOTATION-IMPORT-BODY-GUARD-V1';
-const ASSET_VERSION='20260916f';
+const ASSET_VERSION='20260916g';
 const INDEX_MARKER='<script src="quotation-management.js?v='+ASSET_VERSION+'"></script>';
 const IMPORT_NORMALIZER_MARKER='<script src="quotation-import-normalizer.js?v='+ASSET_VERSION+'"></script>';
 const IMPORT_PROGRESS_MARKER='<script src="quotation-import-progress.js?v='+ASSET_VERSION+'"></script>';
@@ -40,6 +40,9 @@ function patchQuotationServerSource(src){
 }
 function patchQuotationManagementSource(src){
   let out=src;
+  out=out.replace("const CCY={Netac:'USD',Redragon:'RMB',BOYA:'RMB',Joypeer:'RMB'};","const CCY={Netac:'RMB',Redragon:'RMB',BOYA:'RMB',Joypeer:'RMB'};");
+  out=out.replace('Netac 默认 USD；Redragon / BOYA / Joypeer 默认 RMB。','当前品牌报价均按原采购币种比较；Netac / Redragon / BOYA / Joypeer 默认 RMB。');
+  out=out.replace("品牌:'Netac',产品类型:'U盘',FOB价格:10.5,币种:'USD'","品牌:'Netac',产品类型:'U盘',FOB价格:75,币种:'RMB'");
   out=out.replace("$('#qm-count').textContent='共 '+r.length+' 个 SKU';","$('#qm-count').textContent='共 '+new Set(r.map(x=>String(x.sku_code||\'\').trim().toUpperCase())).size+' 个去重 SKU';");
   out=out.replace('<span>SKU 总数</span>','<span>SKU 总数（去重）</span>');
   out=out.replace('<span>历史记录</span>','<span>历史报价记录</span>');
@@ -47,7 +50,7 @@ function patchQuotationManagementSource(src){
   out=out.replace('SKU数:r.sku_count,历史记录数:r.history_count','去重SKU数:r.sku_count,历史报价记录数:r.history_count');
   if(!out.includes('function purchaseBaselineText(p)')){
     const anchor='function renderSku(){';
-    const helper=`function purchaseBaselineText(p){\n  if(!p)return '暂无可比采购价';\n  if(p.status==='ambiguous')return '最近采购记录同 SKU 价格仍存在歧义，暂不比较';\n  if(p.status!=='exact')return '暂无可比采购价';\n  const doc=p.source_kind==='pi'?'PI '+(p.pi_no||p.source_doc_no||''):'CI '+(p.ci_no||p.source_doc_no||'');\n  if(p.comparison_status==='fx_missing')return E(doc)+' · '+money(p.unit_price,p.currency)+' · 正在换算为 '+E(p.target_currency||'')+'…';\n  const display=p.comparable_unit_price!=null?money(p.comparable_unit_price,p.comparable_currency||p.currency):money(p.unit_price,p.currency);\n  const original=p.comparable_unit_price!=null&&p.original_currency&&p.comparable_currency&&p.original_currency!==p.comparable_currency?'（原 '+money(p.original_unit_price,p.original_currency)+'）':'';\n  const merged=p.source_reason==='merged_ci_latest_pi'?' · 合并 CI 同 SKU 多价，取关联日期最新 PI':'';\n  const fx=p.fx_rate_date?' · 汇率日 '+E(p.fx_rate_date):'';\n  return E(doc)+' · '+display+original+' · '+E(p.source_date||p.purchase_date||'')+merged+fx;\n}\n`;
+    const helper=`function purchaseBaselineText(p){\n  if(!p)return '暂无可比采购价';\n  if(p.status==='ambiguous')return '最近采购记录同 SKU 价格仍存在歧义，暂不比较';\n  if(p.status!=='exact')return '暂无可比采购价';\n  const doc=p.source_kind==='pi'?'PI '+(p.pi_no||p.source_doc_no||''):'CI '+(p.ci_no||p.source_doc_no||'');\n  const merged=p.source_reason==='merged_ci_latest_pi'?' · 合并 CI 同 SKU 多价，取关联日期最新 PI':'';\n  const mismatch=p.comparison_status==='currency_mismatch'?' · 币种与当前报价不一致，不做换算':'';\n  return E(doc)+' · '+money(p.unit_price,p.currency)+' · '+E(p.source_date||p.purchase_date||'')+merged+mismatch;\n}\n`;
     if(out.includes(anchor))out=out.replace(anchor,helper+anchor);
   }
   out=out.replace("${p&&p.status==='exact'?`${E(p.ci_no)} · ${money(p.unit_price,p.currency)} · ${E(p.purchase_date||'')}`:p&&p.status==='ambiguous'?'最近 CI 同 SKU 存在不同原单价，已阻止比较':'暂无可比采购价'}","${purchaseBaselineText(p)}");
