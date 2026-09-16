@@ -3,9 +3,10 @@
 
 let latestSummary=null;
 let latestUrl='';
+const warmedSignatures=new Set();
+let warmInFlight=false;
 
 function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
-function pct(v){return v==null?'—':(Number(v)>0?'+':'')+Number(v).toFixed(2)+'%';}
 function currentSummaryUrl(){
   const q=new URLSearchParams();
   const brand=document.getElementById('qm-brand')?.value||'';
@@ -29,7 +30,8 @@ function makeBrief(r){
   const lower=Number(r.below_purchase_count)||0;
   const higher=Number(r.above_purchase_count)||0;
   const noQuote=Number(r.no_quote_count)||0;
-  const comparable=lower+higher;
+  const comparable=Number(r.comparable_purchase_count)||(lower+higher);
+  const fxPending=Number(r.fx_pending_count)||0;
   const up=Number(r.up_count)||0;
   const down=Number(r.down_count)||0;
   let headline='';
@@ -42,8 +44,10 @@ function makeBrief(r){
   if(comparable>0){
     items.push(`<div class="qm-procurement-item good"><b>${lower} 个 SKU 低于上次采购价</b><span>这些 SKU 当前报价更有采购优势，可优先结合补货需求复核。</span></div>`);
     items.push(`<div class="qm-procurement-item ${higher?'risk':'muted'}"><b>${higher} 个 SKU 高于上次采购价</b><span>${higher?'建议优先议价或核对涨价原因，再决定是否下单。':'当前没有高于上次采购价的可比 SKU。'}</span></div>`);
+  }else if(fxPending>0){
+    items.push(`<div class="qm-procurement-item warn"><b>${fxPending} 个 SKU 正在准备采购价对比</b><span>历史 CI/PI 币种与当前报价币种不同，系统正在后台补齐对应日期汇率；页面会自动刷新，不阻塞当前操作。</span></div>`);
   }else{
-    items.push(`<div class="qm-procurement-item warn"><b>暂无可比 CI 采购价</b><span>现在只能看报价趋势，暂时不能判断新报价是否比上次采购更划算。</span></div>`);
+    items.push(`<div class="qm-procurement-item warn"><b>暂无可比采购价</b><span>当前筛选范围内没有能与报价 SKU 对上的历史 CI/PI 采购记录。</span></div>`);
   }
   items.push(`<div class="qm-procurement-item ${noQuote?'warn':'muted'}"><b>${noQuote} 个 SKU 当前未报价</b><span>${noQuote?'这部分应先向供应商补报价，不进入价格优劣判断。':'当前所选范围内没有未报价 SKU。'}</span></div>`);
   items.push(`<div class="qm-procurement-item muted"><b>${down} 个降价 · ${up} 个涨价</b><span>优先查看波动最大的 SKU，确认是否需要提前锁价、议价或延后采购。</span></div>`);
@@ -68,12 +72,32 @@ function apply(){
   const reportTitle=right.querySelector('.qm-report-title');
   if(reportTitle&&brief.previousElementSibling!==reportTitle)reportTitle.insertAdjacentElement('afterend',brief);
 }
+function schedulePurchaseFxWarm(summary,originalApi){
+  const requests=Array.isArray(summary&&summary.missing_purchase_fx)?summary.missing_purchase_fx:[];
+  if(!requests.length||warmInFlight)return;
+  const sig=JSON.stringify(requests.map(x=>[x.rate_date,x.from_currency,x.to_currency]).sort());
+  if(warmedSignatures.has(sig))return;
+  warmedSignatures.add(sig);
+  warmInFlight=true;
+  const run=async()=>{
+    try{
+      const result=await originalApi('/api/quotation-management/purchase-fx/warm','POST',{requests});
+      if(result&&(Number(result.warmed)||Number(result.cached))&&typeof window.refreshQuotationManagement==='function'){
+        await window.refreshQuotationManagement();
+      }
+    }catch(_e){}
+    finally{warmInFlight=false;}
+  };
+  if('requestIdleCallback'in window)window.requestIdleCallback(()=>run(),{timeout:500});else setTimeout(run,0);
+}
 function wrapApi(){
   if(typeof window.api!=='function'||window.api.__qmProcurementWrapped)return;
   const original=window.api;
   const wrapped=async function(url,method,body,opts){
     const out=await original.apply(this,arguments);
-    if((!method||method==='GET')&&String(url||'').startsWith('/api/quotation-management/summary?')&&out&&out.report){latestSummary=out;latestUrl=String(url);queueMicrotask(apply);}
+    if((!method||method==='GET')&&String(url||'').startsWith('/api/quotation-management/summary?')&&out&&out.report){
+      latestSummary=out;latestUrl=String(url);queueMicrotask(apply);schedulePurchaseFxWarm(out,original);
+    }
     return out;
   };
   wrapped.__qmProcurementWrapped=true;
