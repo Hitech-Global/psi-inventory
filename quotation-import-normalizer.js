@@ -1,7 +1,7 @@
 (function(){
 'use strict';
 
-const BRAND_CCY={Netac:'USD',Redragon:'RMB',BOYA:'RMB',Joypeer:'RMB'};
+const BRAND_CCY={Netac:'RMB',Redragon:'RMB',BOYA:'RMB',Joypeer:'RMB'};
 const pad=n=>String(n).padStart(2,'0');
 
 function excelSerialToISO(value){
