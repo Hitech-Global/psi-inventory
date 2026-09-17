@@ -2,6 +2,9 @@
 // 纯逻辑：用 mock fetch/localStorage 在 node 下驱动 AppStore，不涉及真实 DOM / 后端。
 const test = require('node:test');
 const assert = require('node:assert');
+const path = require('node:path');
+const APP_ROOT = path.resolve(__dirname, '..');
+const APP_PERF_JS = path.join(APP_ROOT, 'app-perf.js');
 
 // ---- 构造隔离的全局环境（每次 test 前重置）----
 function setupGlobals() {
@@ -36,8 +39,8 @@ function setupGlobals() {
   globalThis.window = globalThis;
   globalThis.doLogout = globalThis.__doLogoutMock || (() => {});
   // 重新加载 app-perf.js 以得到干净 AppStore
-  delete require.cache[require.resolve('/Users/a1-6/Workbuddy/2026-07-04-17-45-01/inventory-app/app-perf.js')];
-  require('/Users/a1-6/Workbuddy/2026-07-04-17-45-01/inventory-app/app-perf.js');
+  delete require.cache[require.resolve(APP_PERF_JS)];
+  require(APP_PERF_JS);
   return globalThis.AppStore;
 }
 
@@ -410,7 +413,7 @@ test('LOG-6: 端到端 — notify mutation 不打脏已缓存页面', async () =
 // ============================================================================
 const fs = require('node:fs');
 const vm = require('node:vm');
-const APP_JS = '/Users/a1-6/Workbuddy/2026-07-04-17-45-01/inventory-app/app.js';
+const APP_JS = path.join(APP_ROOT, 'app.js');
 
 function extractFunction(src, sig) {
   const i = src.indexOf(sig);
@@ -428,6 +431,9 @@ function setupApiSandbox() {
   const A = setupGlobals(); // AppStore + mock fetch + location/localStorage 就绪
   const src = fs.readFileSync(APP_JS, 'utf8');
   const code = [
+    "const PAGE_NAV_CANCELLED='__PAGE_NAV_CANCELLED__';let _pageNavSeq=0;",
+    extractFunction(src, 'function pageNavigationTokenForMethod('),
+    extractFunction(src, 'function assertPageNavigationCurrent('),
     extractFunction(src, 'async function apiRaw('),
     extractFunction(src, 'function _refKeyForUrl('),
     extractFunction(src, 'async function api('),
