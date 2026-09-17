@@ -1,6 +1,16 @@
 // ==================== 进销存管理系统 - 前端逻辑 ====================
 let currentUser=null;let currentPage='dashboard';
 
+// Page render generation: a GET started by an old page must not update the next page's DOM.
+// Mutations are deliberately excluded so navigation never interrupts a business write.
+const PAGE_NAV_CANCELLED='__PAGE_NAV_CANCELLED__';
+let _pageNavSeq=0;
+function pageNavigationTokenForMethod(method){return(!method||method==='GET')?_pageNavSeq:null}
+function assertPageNavigationCurrent(token){
+  if(token!==null&&token!==_pageNavSeq){const e=new Error(PAGE_NAV_CANCELLED);e.code='PAGE_NAV_CANCELLED';throw e;}
+}
+function isPageNavigationCancelledMessage(msg){return String(msg||'').indexOf(PAGE_NAV_CANCELLED)!==-1}
+
 // --- 工具函数 ---
 function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
 function fmtMoney(v,c){const n=Number(v||0);return(c?c+' ':'')+n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}
@@ -12,8 +22,8 @@ function fmtDate(d){return d?String(d).split('T')[0]:''}
 function todayStr(){return new Date().toISOString().split('T')[0]}
 function b64EncodeUnicode(s){return btoa(unescape(encodeURIComponent(String(s||''))))}
 function b64DecodeUnicode(s){return decodeURIComponent(escape(atob(String(s||''))))}
-function showToast(msg,type='info'){const c=document.getElementById('toast-container');const t=document.createElement('div');t.className='toast toast-'+type;t.innerHTML='<div>'+esc(msg)+'</div>';c.appendChild(t);setTimeout(()=>{t.style.opacity='0';setTimeout(()=>t.remove(),300)},3500)}
-function showFlash(msg,type='info'){const c=document.getElementById('flash-container');if(!c)return;c.innerHTML='<div class="flash flash-'+type+' show">'+esc(msg)+'</div>';setTimeout(()=>{if(c)c.innerHTML=''},4000)}
+function showToast(msg,type='info'){if(isPageNavigationCancelledMessage(msg))return;const c=document.getElementById('toast-container');const t=document.createElement('div');t.className='toast toast-'+type;t.innerHTML='<div>'+esc(msg)+'</div>';c.appendChild(t);setTimeout(()=>{t.style.opacity='0';setTimeout(()=>t.remove(),300)},3500)}
+function showFlash(msg,type='info'){if(isPageNavigationCancelledMessage(msg))return;const c=document.getElementById('flash-container');if(!c)return;c.innerHTML='<div class="flash flash-'+type+' show">'+esc(msg)+'</div>';setTimeout(()=>{if(c)c.innerHTML=''},4000)}
 function openModal(title,body,footer='',size=''){window._modalBack=null;const mc=document.getElementById('modal-content');mc.className='modal'+(size?' '+size:'');const ov=document.getElementById('modal-overlay');ov.classList.remove('ci-mode','ci-sb-collapsed','wac-mode','wac-sb-collapsed');if(size&&size.indexOf('modal-pi')!==-1){const sb=document.querySelector('.sidebar');if(sb&&sb.classList.contains('collapsed')){mc.classList.add('pi-sidebar-collapsed')}else{mc.classList.add('pi-sidebar-expanded')}}if(size==='modal-ci-create'){const sb=document.querySelector('.sidebar');ov.classList.add('ci-mode');if(sb&&sb.classList.contains('collapsed')){ov.classList.add('ci-sb-collapsed')}}if(size==='modal-wac'){const sb=document.querySelector('.sidebar');ov.classList.add('wac-mode');if(sb&&sb.classList.contains('collapsed')){ov.classList.add('wac-sb-collapsed')}}mc.innerHTML='<div class="modal-header"><span class="modal-title">'+esc(title)+'</span><button class="modal-close" onclick="closeModal()">&times;</button></div><div class="modal-body">'+body+'</div>'+(footer?'<div class="modal-footer">'+footer+'</div>':'');ov.classList.add('show')}
 function closeModal(){if(window._modalBack){const fn=window._modalBack;window._modalBack=null;fn();return;}const ov=document.getElementById('modal-overlay');ov.classList.remove('show','ci-mode','ci-sb-collapsed','wac-mode','wac-sb-collapsed')}
 function rowClickView(e,fn){var t=e.target;if(t.closest('button,a,input,select,textarea,label,[contenteditable="true"],[role="button"],[data-row-click-ignore],.link-text,.action-btn,.checkbox,[onclick]:not(tr)'))return;var args=Array.prototype.slice.call(arguments,2);if(typeof window[fn]==='function')window[fn].apply(null,args);}
@@ -169,6 +179,7 @@ function _refKeyForUrl(url){
 // 任何缓存异常均降级为透传网络，绝不阻断业务。
 async function api(url,method='GET',body=null,opts){
   opts = opts || {};
+  var _pageNavToken=pageNavigationTokenForMethod(method);
   if((!method || method==='GET') && window.AppStore){
     // 1) reference 端点全局去重 + session 缓存。
     //    必须独立于下方缓存 try/catch：ref() 自带 401→doLogout / 非2xx / {error} 语义，
@@ -176,7 +187,10 @@ async function api(url,method='GET',body=null,opts){
     //    否则服务器已明确返回认证/业务错误时同一请求会被重复打第二遍（双倍网络 + 双 doLogout）。
     var rk = null;
     try{ rk = _refKeyForUrl(url); }catch(e){ rk = null; }
-    if(rk){ return await window.AppStore.ref(rk); }
+    if(rk){
+      try{var _refData=await window.AppStore.ref(rk);assertPageNavigationCurrent(_pageNavToken);return _refData;}
+      catch(_refErr){assertPageNavigationCurrent(_pageNavToken);throw _refErr;}
+    }
   }
   try{
     if((!method || method==='GET')){
@@ -187,12 +201,15 @@ async function api(url,method='GET',body=null,opts){
         var _hit = window.AppStore.page.hit(opts.cacheKey, _sig, _ttl);
         if(_hit !== undefined){
           window.AppStore.page.maybeBackground(opts.cacheKey, _sig, _ttl, function(){ return apiRaw(url,'GET',null); });
+          assertPageNavigationCurrent(_pageNavToken);
           return _hit;
         }
       }
     }
-  }catch(e){ /* 缓存层异常 → 透传网络 */ }
-  var d = await apiRaw(url, method, body);
+  }catch(e){if(e&&e.code==='PAGE_NAV_CANCELLED')throw e;/* 缓存层异常 → 透传网络 */}
+  var d;
+  try{d=await apiRaw(url, method, body);}
+  catch(_apiErr){assertPageNavigationCurrent(_pageNavToken);throw _apiErr;}
   // RP-WARM-RETURN-P1：非 GET 成功后，外部数据变更需让补货 warm view 失效（RP 自身保存除外）
   if(method&&method!=='GET'){ try{ rpWarmInvalidateForMutation(url); }catch(e){} }
   try{
@@ -204,6 +221,7 @@ async function api(url,method='GET',body=null,opts){
       window.AppStore.onMutation(method, url, body);
     }
   }catch(e){}
+  assertPageNavigationCurrent(_pageNavToken);
   return d;
 }
 
@@ -506,6 +524,7 @@ function showPage(page){
     showToast(t('toast.no_page_permission','无权限访问该页面'), 'danger');
     return;
   }
+  _pageNavSeq+=1;
   // CI-DETAIL-UX：切换页面时关闭 CI 详情/编辑 modal，避免弹窗残留（不影响其他 modal）
   const _ov=document.getElementById('modal-overlay');
   if(_ov&&_ov.classList.contains('ci-mode')) closeModal();
@@ -12366,6 +12385,7 @@ async function createOperationalCI(){
     openModal(t('ci.new_op_ci','新建运营 CI'),body,
       '<button class="btn btn-secondary" onclick="closeModal()">'+t('app.cancel','取消')+'</button>'+
       '<button class="btn btn-primary" id="nci-save-btn" onclick="saveNewCI()">'+t('app.create','创建')+'</button>','modal-ci-create');
+    window._ciLoadEpoch=(Number(window._ciLoadEpoch)||0)+1;
     window._ciR=0;window._ciAllItems=[];window._ciSelectedPiIds={};window._allTermOpts=termOpts;
   if(!window._nciPiDocListener){window._nciPiDocListener=true;document.addEventListener('click',function(e){if(!e.target.closest('#nci-pi-trigger')&&!e.target.closest('#nci-pi-dropdown')){closeNciPiDropdown();}});}
   }catch(e){showToast(e.message,'danger')}
@@ -12375,6 +12395,7 @@ function onCISupplierChange(){
   var sel=document.getElementById('nci-supplier'),list=document.getElementById('nci-pi-dropdown'),cur=document.getElementById('nci-cur'),preview=document.getElementById('ci-items-preview'),summary=document.getElementById('ci-items-summary');
   if(!list||!sel)return;
   var supId=sel.value;
+  window._ciLoadEpoch=(Number(window._ciLoadEpoch)||0)+1;
   // Clear currency + items
   if(cur)cur.value='';
   if(preview)preview.innerHTML='<div style="padding:12px;color:#999">'+t('ci.select_pi_first','请先选择供应商和PI')+'</div>';
@@ -12457,14 +12478,33 @@ function onCIPISelectionChange(){
   Object.keys(oldIds).forEach(function(id){if(!newIds[id])removed.push(id);});
   window._ciSelectedPiIds=newIds;
   if(added.length>0||removed.length>0){
-    loadMultiPIItems(added,removed);
+    loadMultiPIItems(added,removed,window._ciLoadEpoch);
   }
   updateNciPiTriggerText();
   resolveCIWarehouse('.nci-pi-cb','nci-wh','nci-wh-id');
 }
-async function loadMultiPIItems(addedPiIds,removedPiIds){
+function appendLoadedCIPiItems(pi,loadEpoch){
+  if(!pi||loadEpoch!==window._ciLoadEpoch)return [];
+  var piId=String(pi.id||'');
+  if(!piId||!window._ciSelectedPiIds||!window._ciSelectedPiIds[piId])return [];
+  window._ciAllItems=window._ciAllItems||[];
+  // A rapid uncheck/recheck can leave two requests for the same PI in flight.
+  if(window._ciAllItems.some(function(it){return String(it.pi_id)===piId;}))return [];
+  var added=[];
+  (pi.items||[]).forEach(function(it){
+    if((it.unshipped_qty||0)>0){
+      var idx=Number(window._ciR)||0;
+      window._ciR=idx+1;
+      var row={pi_id:pi.id,pi_no:pi.pi_no,sku_code:it.sku_code,pi_confirmed_qty:it.pi_confirmed_qty||0,shipped_qty:it.shipped_qty||0,unshipped_qty:it.unshipped_qty,unit_price:it.unit_price,discount:it.discount||0,reference_customs_rate:it.reference_customs_rate,idx:idx,currency:pi.currency};
+      window._ciAllItems.push(row);added.push(row);
+    }
+  });
+  return added;
+}
+async function loadMultiPIItems(addedPiIds,removedPiIds,loadEpoch){
   var preview=document.getElementById('ci-items-preview'),summary=document.getElementById('ci-items-summary');
   if(!preview)return;
+  if(loadEpoch===undefined)loadEpoch=window._ciLoadEpoch;
 
   // Handle full reset (no delta args — caller wants full refresh)
   var isFull=!addedPiIds&&!removedPiIds;
@@ -12478,9 +12518,7 @@ async function loadMultiPIItems(addedPiIds,removedPiIds){
   if(removedPiIds&&removedPiIds.length>0){
     var removedSet={};removedPiIds.forEach(function(id){removedSet[id]=true;});
     window._ciAllItems=(window._ciAllItems||[]).filter(function(it){return !removedSet[it.pi_id];});
-    // Re-index
-    window._ciAllItems.forEach(function(it,i){it.idx=i;});
-    window._ciR=window._ciAllItems.length;
+    // Keep row ids monotonic. Re-indexing here can collide with rows that remain in the DOM.
     // Remove DOM rows
     removedPiIds.forEach(function(piId){
       var rows=preview.querySelectorAll('[data-pi-id="'+piId+'"]');
@@ -12490,22 +12528,17 @@ async function loadMultiPIItems(addedPiIds,removedPiIds){
 
   // Fetch and add items for newly checked PIs
   if(addedPiIds&&addedPiIds.length>0){
-    var curR=window._ciR||0;
     for(var i=0;i<addedPiIds.length;i++){
       try{
         var pi=window._availPiMap&&window._availPiMap[addedPiIds[i]];
         // _availPiMap comes from list endpoint (no items), so always fetch single PI for item details
         if(!pi||!pi.items||pi.items.length===0){try{pi=await api('/api/proforma-invoices/'+addedPiIds[i]);}catch(e){continue;}}
-        (pi.items||[]).forEach(function(it){
-          if((it.unshipped_qty||0)>0){
-            window._ciAllItems=(window._ciAllItems||[]);
-            window._ciAllItems.push({pi_id:pi.id,pi_no:pi.pi_no,sku_code:it.sku_code,pi_confirmed_qty:it.pi_confirmed_qty||0,shipped_qty:it.shipped_qty||0,unshipped_qty:it.unshipped_qty,unit_price:it.unit_price,discount:it.discount||0,reference_customs_rate:it.reference_customs_rate,idx:curR++,currency:pi.currency});
-          }
-        });
+        appendLoadedCIPiItems(pi,loadEpoch);
       }catch(e){}
     }
-    window._ciR=curR;
   }
+
+  if(loadEpoch!==window._ciLoadEpoch)return;
 
   var allItems=window._ciAllItems||[];
   if(allItems.length===0){
