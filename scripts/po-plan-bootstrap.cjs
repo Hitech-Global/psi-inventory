@@ -2,7 +2,7 @@
 const fs=require('node:fs');
 const path=require('node:path');
 const SERVER_MARKER='// PO-DYNAMIC-PLAN-V1';
-const ASSET_VERSION='20260917a';
+const ASSET_VERSION='20260917b';
 const UI_MARKER='<script src="po-plan-ui.js?v='+ASSET_VERSION+'"></script>';
 function once(src,needle,repl,label){const i=src.indexOf(needle);if(i<0)throw new Error('[PO-PLAN] missing '+label);if(src.indexOf(needle,i+needle.length)>=0)throw new Error('[PO-PLAN] duplicate '+label);return src.slice(0,i)+repl+src.slice(i+needle.length);}
 function patchServer(src){if(src.includes(SERVER_MARKER))return src;const code=SERVER_MARKER+"\nrequire('./po-plan-server.js')({ app, query, queryOne, run, transaction, genId, asyncHandler, requireApiPermission, updateInventoryTransitDataAsync });\n\n";return once(src,'// ==================== 原库存数量导入 ====================',code+'// ==================== 原库存数量导入 ====================','server anchor');}
