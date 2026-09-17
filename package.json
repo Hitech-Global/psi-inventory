@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "postinstall": "node scripts/payment-fx-hotfix.cjs && node scripts/quotation-management-bootstrap.cjs && node scripts/po-plan-bootstrap.cjs && node scripts/ci-ui-hotfix.cjs && node test/ci-ui-hotfix-transform.test.cjs && node --check server.js && node --check app-perf.js && node --check quotation-server.js && node --check quotation-management.js && node --check quotation-import-normalizer.js && node --check quotation-import-fast.js && node --check quotation-import-progress.js && node --check po-plan-server.js && node --check po-plan-ui.js",
+    "postinstall": "node scripts/payment-fx-hotfix.cjs && node scripts/quotation-management-bootstrap.cjs && node scripts/po-plan-bootstrap.cjs && node scripts/ci-ui-hotfix.cjs && node test/ci-ui-hotfix-transform.test.cjs && node scripts/ci-edit-before-pl-hotfix.cjs && node test/ci-edit-before-pl-hotfix.test.cjs && node --check server.js && node --check app-perf.js && node --check quotation-server.js && node --check quotation-management.js && node --check quotation-import-normalizer.js && node --check quotation-import-fast.js && node --check quotation-import-progress.js && node --check po-plan-server.js && node --check po-plan-ui.js",
     "seed": "node insert_demo_data.js"
   },
   "engines": {
