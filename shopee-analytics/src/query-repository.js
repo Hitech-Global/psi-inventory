@@ -282,6 +282,35 @@ class ShopeeQueryRepository {
     return events.filter(event => event.at).sort((a, b) => a.at.localeCompare(b.at));
   }
 
+  async listKnownGmsCampaignIds({ shopId }) {
+    const result = await this.pool.query(
+      `SELECT campaign_id
+       FROM shopee_ad_campaigns
+       WHERE shop_id=$1
+         AND (campaign_type_normalized='GMS' OR campaign_type_raw='GMS')
+       ORDER BY campaign_id`,
+      [shopId],
+    );
+    return result.rows.map(row => Number(row.campaign_id));
+  }
+
+  async listLatestMembershipItemIds({ shopId }) {
+    const result = await this.pool.query(
+      `WITH latest AS (
+         SELECT MAX(event_date) AS event_date
+         FROM shopee_ad_campaign_membership_daily
+         WHERE shop_id=$1
+       )
+       SELECT DISTINCT m.item_id
+       FROM shopee_ad_campaign_membership_daily m
+       JOIN latest l ON l.event_date=m.event_date
+       WHERE m.shop_id=$1
+       ORDER BY m.item_id`,
+      [shopId],
+    );
+    return result.rows.map(row => Number(row.item_id));
+  }
+
   async getCampaignItemNames({ shopId, itemIds }) {
     const ids = (itemIds || []).map(Number).filter(Number.isSafeInteger);
     if (!ids.length) return new Map();
