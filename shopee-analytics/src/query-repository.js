@@ -871,7 +871,13 @@ class ShopeeQueryRepository {
           WHERE shop_id=$1) AS vouchers,
          (SELECT COUNT(*)::int
           FROM shopee_discounts
-          WHERE shop_id=$1) AS discounts`,
+          WHERE shop_id=$1) AS discounts,
+         (SELECT COUNT(*)::int
+          FROM shopee_product_card_period
+          WHERE shop_id=$1 AND start_date=$2 AND end_date=$3) AS product_card_period_rows,
+         (SELECT COUNT(DISTINCT event_date)::int
+          FROM shopee_ad_campaign_membership_daily
+          WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3) AS membership_snapshot_days`,
       [shopId, startDate, endDate, timezone],
     );
     const row = result.rows[0] || {};
@@ -885,6 +891,8 @@ class ShopeeQueryRepository {
       products: Number(row.products || 0),
       vouchers: Number(row.vouchers || 0),
       discounts: Number(row.discounts || 0),
+      productCardPeriodRows: Number(row.product_card_period_rows || 0),
+      membershipSnapshotDays: Number(row.membership_snapshot_days || 0),
     };
   }
 
