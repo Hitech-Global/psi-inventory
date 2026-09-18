@@ -470,6 +470,7 @@ class ShopeeQueryRepository {
       const totalSales = row.total_sales === null ? null : Number(row.total_sales);
       const adExpense = Number(row.ad_expense || 0);
       const broadGmv = Number(row.broad_gmv || 0);
+      const directGmv = Number(row.direct_gmv || 0);
       return {
         itemId: Number(row.item_id),
         itemName: row.item_name,
