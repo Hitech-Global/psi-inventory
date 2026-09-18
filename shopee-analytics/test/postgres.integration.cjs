@@ -225,6 +225,13 @@ const { ShopeePromotionRepository } = require('../src/promotion-repository');
         ad_spend_ratio_limit=EXCLUDED.ad_spend_ratio_limit,
         weekly_order_reference=EXCLUDED.weekly_order_reference`
     );
+    const strategyRepoForItems = new ShopeeStrategyRepository({ pool });
+    await strategyRepoForItems.upsertItemBreakEven({
+      shopId: 1,
+      itemId: 101,
+      breakEvenRoas: 5.7,
+      note: 'integration',
+    });
 
     await pool.query(
       `INSERT INTO shopee_shop_bi_daily
@@ -497,6 +504,7 @@ const { ShopeePromotionRepository } = require('../src/promotion-repository');
     assert.strictEqual(skuApiOnly.length, 1);
     assert.strictEqual(skuApiOnly[0].itemId, 101);
     assert.strictEqual(skuApiOnly[0].adExpense, 80000);
+    assert.strictEqual(skuApiOnly[0].breakEvenRoas, 5.7);
     assert.strictEqual(skuApiOnly[0].hasProductCard, false);
 
     const skuWithProductCard = await queryRepository.getShopSkuOverview({
