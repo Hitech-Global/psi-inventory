@@ -45,11 +45,13 @@ for (const required of [
 const appLines = app.split('\n').map(line => line.trimStart());
 assert(
   !appLines.some(line => line.startsWith("$('[data-business-country]').forEach")),
-  'business group rows must use querySelectorAll helper ($), not single querySelector',
+  'business group rows must use querySelectorAll helper ($$), not single querySelector',
 );
 assert(
-  appLines.some(line => line.startsWith("$('[data-business-country]').forEach")),
+  appLines.some(line => line.startsWith("$$('[data-business-country]').forEach")),
   'business group row binding is missing',
 );
 
-console.log(`shopee web contract tests: ok (${htmlIds.size} ids, ${staticIdSelectors.size} static selectors)`);
+console.log(
+  `shopee web contract tests: ok (${htmlIds.size} ids, ${staticIdSelectors.size} static selectors)`,
+);
