@@ -10,6 +10,7 @@
     "timezone": "Asia/Jakarta",
     "brandPortalTimezone": "GMT+7",
     "marketplaceRegion": "ID",
+    "analyticsStartDate": "2026-05-01",
     "gmsCampaignSeedIds": [],
     "active": true,
     "sortOrder": 10
@@ -25,6 +26,7 @@
     "timezone": "Asia/Bangkok",
     "brandPortalTimezone": "GMT+7",
     "marketplaceRegion": "TH",
+    "analyticsStartDate": "2026-05-01",
     "gmsCampaignSeedIds": [],
     "active": true,
     "sortOrder": 20
