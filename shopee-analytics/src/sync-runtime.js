@@ -12,6 +12,7 @@ const { ShopeePromotionRepository } = require('./promotion-repository');
 const { ShopeeOrderRepository } = require('./order-repository');
 const { ShopeeReturnRepository } = require('./return-repository');
 const { ShopeeShopBiRepository } = require('./shop-bi-repository');
+const { ShopeeShopRepository } = require('./shop-repository');
 const { ShopeeQueryRepository } = require('./query-repository');
 
 function createSyncRuntime({
@@ -48,6 +49,7 @@ function createSyncRuntime({
     orderRepository: new ShopeeOrderRepository({ pool }),
     returnRepository: new ShopeeReturnRepository({ pool }),
     shopBiRepository: new ShopeeShopBiRepository({ pool }),
+    shopRepository: new ShopeeShopRepository({ pool }),
     queryRepository: new ShopeeQueryRepository({ pool }),
   };
 }
