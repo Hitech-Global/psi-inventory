@@ -154,7 +154,17 @@ function renderAnalysis(data) {
     metric('Direct ROAS', roas(c.directRoas), '用于观察广告商品自身'),
     metric('Direct订单', num(c.directOrders), `Broad订单 ${num(c.broadOrders)}`),
     metric('CPC', money(c.cpc), c.targetVsRecommended || ''),
+    metric('预算利用率', c.budgetUtilization == null ? '—' : pct(c.budgetUtilization), c.dailyBudget ? `日预算 ${money(c.dailyBudget)} / 日均花费 ${money(c.avgDailySpend)}` : '未读取日预算'),
   ].join('');
+
+  $('#actionList').innerHTML = (d.actions || []).length
+    ? d.actions.map(action => `<div class="action-card">
+        <div class="action-code">${escapeHtml(action.code)}</div>
+        <strong>${escapeHtml(action.title)}</strong>
+        <p>${escapeHtml(action.reason || '')}</p>
+        <div class="action-do">${escapeHtml(action.action || '')}</div>
+      </div>`).join('')
+    : '<div class="empty-inline">当前没有结构性动作，继续观察完整周期。</div>';
 
   $('#ordinaryMetrics').innerHTML = miniMetrics(data.baseline.ordinary || {});
   $('#eventMetrics').innerHTML = miniMetrics(data.baseline.event || {});
@@ -166,7 +176,7 @@ function renderAnalysis(data) {
       : '—';
     return `<tr>
       <td><div class="item-name"><strong>${escapeHtml(item.itemSku || ('#' + item.itemId))}</strong><small>${escapeHtml(item.itemName || '')}</small></div></td>
-      <td><span class="state ${itemStateClass(item.state)}">${escapeHtml(item.state)}</span></td>
+      <td title="${escapeHtml(item.action && item.action.action || '')}"><span class="state ${itemStateClass(item.state)}">${escapeHtml(item.state)}</span></td>
       <td>${num(item.directOrders)}</td>
       <td>${roas(item.directRoas)}</td>
       <td>${roas(item.broadRoas)}</td>
