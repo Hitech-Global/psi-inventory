@@ -48,8 +48,17 @@ assert(
   'business group rows must use querySelectorAll helper ($$), not single querySelector',
 );
 assert(
-  appLines.some(line => line.startsWith("$$('[data-business-country]').forEach")),
+  appLines.some(line => line.startsWith("$('[data-business-country]').forEach")),
   'business group row binding is missing',
+);
+
+const singleSelectorForEach = appLines.filter(line =>
+  /(?<!\\$)\\$\\([^)]*\\)\\.forEach/.test(line)
+);
+assert.deepStrictEqual(
+  singleSelectorForEach,
+  [],
+  `querySelector result cannot use forEach: ${singleSelectorForEach.join(' | ')}`,
 );
 
 console.log(
