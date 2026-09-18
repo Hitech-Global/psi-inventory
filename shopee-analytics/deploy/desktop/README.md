@@ -109,3 +109,28 @@ Example:
 `shop-1101364305__Product_Card.20260901_20260907.xlsx`
 
 Files are imported transactionally into PostgreSQL, then moved from `runtime/product-card/inbox` to `archive`. Invalid or failed files are moved to `failed` with an adjacent error text file. The worker never guesses the shop from product data.
+
+
+## First live-shop pilot gate
+
+Use exactly one shop for the first real-data acceptance. Do not start historical backfill yet.
+
+1. Run a daily sync filtered to the pilot shop.
+2. Use a fixed 7-day period that has finished in the shop timezone.
+3. Run `validation-report.cjs` and confirm there are no blocking token/source errors.
+4. In Seller Centre, record the same fixed-period Shop BI Sales/Orders and Ads Broad/Direct metrics into a local copy of `config/seller-centre-reconciliation.example.json`.
+5. Run `reconcile-seller-centre.cjs`. The default tolerance is 1% per supplied metric; any failure blocks backfill and must be explained by timezone, attribution, pagination, or source completeness before proceeding.
+6. Import the Product Card export for exactly the same period, then rerun the validation report to validate item-level CVR/funnel coverage.
+7. Only after fixed-period reconciliation passes should historical backfill be enabled.
+
+Example:
+
+```bash
+SHOPEE_RECONCILE_SHOP_ID=<shopId> \
+SHOPEE_RECONCILE_START_DATE=2026-09-01 \
+SHOPEE_RECONCILE_END_DATE=2026-09-07 \
+SHOPEE_RECONCILE_EXPECTED_FILE=/secure/local/seller-centre-expected.json \
+node shopee-analytics/scripts/reconcile-seller-centre.cjs
+```
+
+The expected-values file is local acceptance evidence. Do not commit real shop exports, credentials, or token files.
