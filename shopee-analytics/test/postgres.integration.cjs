@@ -16,6 +16,7 @@ const { ShopeeProductCardRepository } = require('../src/product-card-repository'
 const { ShopeeTokenRepository } = require('../src/token-repository');
 const { ShopeeQueryRepository } = require('../src/query-repository');
 const { ShopeeShopProfileRepository } = require('../src/shop-profile-repository');
+const { ShopeeShopRepository } = require('../src/shop-repository');
 
 (async () => {
   const pool = new Pool({ connectionString: url, max: 3 });
@@ -134,6 +135,18 @@ const { ShopeeShopProfileRepository } = require('../src/shop-profile-repository'
     assert.strictEqual(decrypted.accessToken, 'access-secret');
     assert.strictEqual(decrypted.refreshToken, 'refresh-secret');
 
+    const shopRepository = new ShopeeShopRepository({ pool });
+    await shopRepository.upsert({
+      requestedShopId: 1,
+      shop: {
+        shopId: 1,
+        shopName: 'API Redragon ID',
+        region: 'ID',
+        status: 'NORMAL',
+        raw: { shop_id: 1, shop_name: 'API Redragon ID' },
+      },
+    });
+
     const shopProfiles = new ShopeeShopProfileRepository({ pool });
     await shopProfiles.upsertMany([
       {
@@ -185,6 +198,7 @@ const { ShopeeShopProfileRepository } = require('../src/shop-profile-repository'
     assert.strictEqual(shops.length, 2);
     assert.strictEqual(shops[0].countryCode, 'ID');
     assert.strictEqual(shops[0].brandPortalTimezone, 'GMT+7');
+    assert.strictEqual(shops[0].apiShopName, 'API Redragon ID');
     assert.strictEqual(shops[1].currency, 'THB');
 
     const portfolio = await queryRepository.getPortfolioOverview({
