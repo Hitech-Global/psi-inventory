@@ -10,6 +10,18 @@ function signShopRequest({ partnerId, partnerKey, path, timestamp, accessToken, 
   return crypto.createHmac('sha256', partnerKey).update(baseString).digest('hex');
 }
 
+function appendQueryParam(params, key, value) {
+  if (value === undefined || value === null || value === '') return;
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      if (entry === undefined || entry === null || entry === '') continue;
+      params.append(key, String(entry));
+    }
+    return;
+  }
+  params.set(key, String(value));
+}
+
 class ShopeeClient {
   constructor({ partnerId, partnerKey, baseUrl = 'https://partner.shopeemobile.com', fetchImpl = global.fetch }) {
     if (!fetchImpl) throw new Error('fetch implementation is required');
@@ -37,9 +49,7 @@ class ShopeeClient {
       shop_id: String(shopId),
       access_token: accessToken,
     });
-    for (const [key, value] of Object.entries(query || {})) {
-      if (value !== undefined && value !== null && value !== '') params.set(key, String(value));
-    }
+    for (const [key, value] of Object.entries(query || {})) appendQueryParam(params, key, value);
 
     const response = await this.fetch(`${this.baseUrl}${path}?${params.toString()}`, {
       method,
@@ -63,4 +73,4 @@ class ShopeeClient {
   }
 }
 
-module.exports = { ShopeeClient, signShopRequest };
+module.exports = { ShopeeClient, signShopRequest, appendQueryParam };
