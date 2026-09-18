@@ -12,6 +12,7 @@ function createBackupStatusProvider({
       const parsed = JSON.parse(raw);
       return {
         ok: parsed.ok === true,
+        lastAttemptAt: parsed.lastAttemptAt || null,
         completedAt: parsed.completedAt || null,
         fileName: parsed.fileName || null,
         sizeBytes: Number(parsed.sizeBytes || 0),
@@ -24,6 +25,7 @@ function createBackupStatusProvider({
       if (error && error.code === 'ENOENT') return null;
       return {
         ok: false,
+        lastAttemptAt: null,
         completedAt: null,
         fileName: null,
         sizeBytes: 0,
