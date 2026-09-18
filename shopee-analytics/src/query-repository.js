@@ -311,6 +311,123 @@ class ShopeeQueryRepository {
     return result.rows.map(row => Number(row.item_id));
   }
 
+  async getCampaignCoverageContext({ shopId, campaignId, startDate, endDate }) {
+    const [membership, items] = await Promise.all([
+      this.pool.query(
+        `WITH latest AS (
+           SELECT MAX(event_date) AS event_date
+           FROM shopee_ad_campaign_membership_daily
+           WHERE shop_id=$1 AND campaign_id=$2 AND event_date <= $3
+         )
+         SELECT COUNT(*)::int AS membership_count
+         FROM shopee_ad_campaign_membership_daily m
+         JOIN latest l ON l.event_date=m.event_date
+         WHERE m.shop_id=$1 AND m.campaign_id=$2`,
+        [shopId, campaignId, endDate],
+      ),
+      this.pool.query(
+        `SELECT
+           COALESCE(SUM(expense),0) AS item_expense,
+           COUNT(DISTINCT item_id) FILTER (
+             WHERE expense <> 0 OR impressions <> 0 OR clicks <> 0 OR
+                   broad_orders <> 0 OR direct_orders <> 0
+           )::int AS performance_item_count,
+           COUNT(DISTINCT item_id)::int AS stored_item_count
+         FROM shopee_ad_item_daily
+         WHERE shop_id=$1 AND campaign_id=$2
+           AND event_date BETWEEN $3 AND $4`,
+        [shopId, campaignId, startDate, endDate],
+      ),
+    ]);
+    const itemRow = items.rows[0] || {};
+    return {
+      membershipCount: Number(membership.rows[0] && membership.rows[0].membership_count || 0),
+      performanceItemCount: Number(itemRow.performance_item_count || 0),
+      storedItemCount: Number(itemRow.stored_item_count || 0),
+      itemExpense: Number(itemRow.item_expense || 0),
+    };
+  }
+
+  async getSystemStatus({ shopId }) {
+    const [sourcesResult, tokensResult, syncResult] = await Promise.all([
+      this.pool.query(
+        `SELECT source, last_synced_at, latest_data_date
+         FROM (
+           SELECT 'GMS_ADS'::text AS source,
+                  MAX(synced_at) AS last_synced_at,
+                  MAX(event_date)::text AS latest_data_date
+           FROM shopee_ad_campaign_daily WHERE shop_id=$1
+           UNION ALL
+           SELECT 'ORDERS', MAX(synced_at),
+                  to_char(to_timestamp(MAX(update_time)), 'YYYY-MM-DD')
+           FROM shopee_orders WHERE shop_id=$1
+           UNION ALL
+           SELECT 'RETURNS', MAX(synced_at),
+                  to_char(to_timestamp(MAX(update_time)), 'YYYY-MM-DD')
+           FROM shopee_returns WHERE shop_id=$1
+           UNION ALL
+           SELECT 'SHOP_BI', MAX(synced_at), MAX(event_date)::text
+           FROM shopee_shop_bi_daily WHERE shop_id=$1
+           UNION ALL
+           SELECT 'PRODUCT_CARD', MAX(imported_at), MAX(end_date)::text
+           FROM shopee_product_card_period WHERE shop_id=$1
+           UNION ALL
+           SELECT 'PRODUCTS', MAX(synced_at),
+                  to_char(to_timestamp(MAX(update_time)), 'YYYY-MM-DD')
+           FROM shopee_products WHERE shop_id=$1
+           UNION ALL
+           SELECT 'PROMOTIONS', MAX(synced_at),
+                  to_char(to_timestamp(GREATEST(MAX(voucher_end),MAX(discount_end))), 'YYYY-MM-DD')
+           FROM (
+             SELECT MAX(synced_at) AS synced_at, MAX(end_time) AS voucher_end, NULL::bigint AS discount_end
+             FROM shopee_vouchers WHERE shop_id=$1
+             UNION ALL
+             SELECT MAX(synced_at), NULL::bigint, MAX(end_time)
+             FROM shopee_discounts WHERE shop_id=$1
+           ) p
+         ) s
+         ORDER BY source`,
+        [shopId],
+      ),
+      this.pool.query(
+        `SELECT app_role, expires_at, last_refresh_at, refresh_error, updated_at
+         FROM shopee_app_tokens
+         WHERE shop_id=$1
+         ORDER BY app_role`,
+        [shopId],
+      ),
+      this.pool.query(
+        `SELECT app_role,endpoint_key,last_success_at,last_error,cursor_json
+         FROM shopee_sync_state
+         WHERE shop_id=$1
+         ORDER BY app_role,endpoint_key`,
+        [shopId],
+      ),
+    ]);
+
+    return {
+      sources: sourcesResult.rows.map(row => ({
+        source: row.source,
+        lastSyncedAt: row.last_synced_at,
+        latestDataDate: row.latest_data_date,
+      })),
+      tokens: tokensResult.rows.map(row => ({
+        appRole: row.app_role,
+        expiresAt: row.expires_at,
+        lastRefreshAt: row.last_refresh_at,
+        refreshError: row.refresh_error,
+        updatedAt: row.updated_at,
+      })),
+      syncStates: syncResult.rows.map(row => ({
+        appRole: row.app_role,
+        endpointKey: row.endpoint_key,
+        lastSuccessAt: row.last_success_at,
+        lastError: row.last_error,
+        cursor: row.cursor_json || {},
+      })),
+    };
+  }
+
   async getCampaignItemNames({ shopId, itemIds }) {
     const ids = (itemIds || []).map(Number).filter(Number.isSafeInteger);
     if (!ids.length) return new Map();
