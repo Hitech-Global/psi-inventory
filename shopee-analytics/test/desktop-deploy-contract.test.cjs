@@ -10,6 +10,9 @@ const compose = fs.readFileSync(path.join(deploy, 'docker-compose.yml'), 'utf8')
 const dockerfile = fs.readFileSync(path.join(deploy, 'Dockerfile'), 'utf8');
 const envExample = fs.readFileSync(path.join(deploy, 'runtime.env.example'), 'utf8');
 const dockerIgnore = fs.readFileSync(path.join(deploy, 'Dockerfile.dockerignore'), 'utf8');
+const preparePs1 = fs.readFileSync(path.join(deploy, 'prepare-desktop.ps1'), 'utf8');
+const installPs1 = fs.readFileSync(path.join(deploy, 'install-desktop.ps1'), 'utf8');
+const backupTasksPs1 = fs.readFileSync(path.join(deploy, 'install-backup-tasks.ps1'), 'utf8');
 const gitignore = fs.readFileSync(path.join(root, '..', '.gitignore'), 'utf8');
 
 const postgresSection = compose.slice(
@@ -58,5 +61,11 @@ assert(
   dockerIgnore.startsWith('*\n'),
   'Docker build context should deny everything by default and opt in only required files',
 );
+assert(preparePs1.includes('prepare-desktop-runtime.cjs'), 'Windows preparation must use safe runtime initializer');
+assert(installPs1.includes('--profile tools run --rm preflight'), 'Windows installer must run deployment preflight');
+assert(installPs1.includes('Historical backfill remains disabled'), 'Windows installer must keep backfill gated');
+assert(backupTasksPs1.includes('Shopee Analytics NAS Backup'), 'Windows task installer must schedule NAS backup');
+assert(backupTasksPs1.includes('Shopee Analytics Restore Verification'), 'Windows task installer must schedule restore verification');
+assert(backupTasksPs1.includes('-StartWhenAvailable'), 'Scheduled backups must recover from missed runs');
 
 console.log('shopee desktop deployment contract tests: ok');
