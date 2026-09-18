@@ -486,6 +486,7 @@ function renderStoreDetail(data) {
     <article class="store-signal ${signal.severity || 'neutral'}">
       <span class="pill ${signalClass(signal)}">${escapeHtml(signal.title)}</span>
       <p>${escapeHtml(signal.detail || '')}</p>
+      ${signal.action ? `<div class="signal-action">${escapeHtml(signal.action)}</div>` : ''}
     </article>
   `).join('') || '<div class="empty-inline">暂无经营变化信号。</div>';
 
@@ -529,7 +530,10 @@ function renderStoreDetail(data) {
         <td>${roas(item.broadRoas)}</td>
         <td>${num(item.directOrders)}</td>
         <td>${item.estimatedNaturalSales == null ? '—' : formatMoney(item.estimatedNaturalSales, shop.currency)}</td>
-        <td title="${escapeHtml(item.primarySignal && item.primarySignal.detail || '')}"><span class="pill ${signalClass(item.primarySignal)}">${escapeHtml(item.primarySignal && item.primarySignal.title || '—')}</span></td>
+        <td title="${escapeHtml([
+          item.primarySignal && item.primarySignal.detail,
+          item.primarySignal && item.primarySignal.action,
+        ].filter(Boolean).join(' '))}"><span class="pill ${signalClass(item.primarySignal)}">${escapeHtml(item.primarySignal && item.primarySignal.title || '—')}</span></td>
       </tr>`).join('')
     : '<tr><td colspan="12" class="empty">当前周期没有商品层数据。</td></tr>';
 
