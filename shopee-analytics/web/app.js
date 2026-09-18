@@ -511,9 +511,10 @@ function renderStoreDetail(data) {
 
   const skus = data.skus || [];
   $('#storeSkuCount').textContent = `${num(skus.length)} SKU`;
+  const skuDiagnosis = data.skuDiagnosis || {};
   $('#storeSkuSubtitle').textContent = data.productCardExactPeriod
-    ? '已匹配当前周期 Product Card：可同时看商品总表现、自然/广告结构与商品漏斗。'
-    : '当前周期没有精确匹配的 Product Card，先显示 API 广告数据；商品总 CVR / 加购率等待导入。';
+    ? `已匹配当前周期 Product Card；店内总CVR中位数 ${skuDiagnosis.cvrMedian == null ? '—' : pct(skuDiagnosis.cvrMedian)}，${num(skuDiagnosis.attentionCount)} 个商品需优先关注。`
+    : `当前周期没有精确匹配的 Product Card；先显示 API 广告数据，${num(skuDiagnosis.attentionCount)} 个商品出现广告侧风险信号。`;
 
   $('#storeSkuRows').innerHTML = skus.length
     ? skus.map(item => `<tr data-store-item="${item.itemId}">
@@ -528,8 +529,9 @@ function renderStoreDetail(data) {
         <td>${roas(item.broadRoas)}</td>
         <td>${num(item.directOrders)}</td>
         <td>${item.estimatedNaturalSales == null ? '—' : formatMoney(item.estimatedNaturalSales, shop.currency)}</td>
+        <td title="${escapeHtml(item.primarySignal && item.primarySignal.detail || '')}"><span class="pill ${signalClass(item.primarySignal)}">${escapeHtml(item.primarySignal && item.primarySignal.title || '—')}</span></td>
       </tr>`).join('')
-    : '<tr><td colspan="11" class="empty">当前周期没有商品层数据。</td></tr>';
+    : '<tr><td colspan="12" class="empty">当前周期没有商品层数据。</td></tr>';
 
   $('[data-store-item]').forEach(row => {
     row.addEventListener('click', () => {
