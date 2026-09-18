@@ -322,7 +322,7 @@ function renderPortfolio(data) {
         <div class="currency-label">销售额</div>
         <div class="currency-metrics">
           <div><span>广告花费</span><strong>${formatMoney(group.adExpense, group.currency)}</strong></div>
-          <div><span>广告占比</span><strong class="${group.adSpendRatioToBiSales > .15 ? 'negative' : ''}">${group.adSpendRatioToBiSales == null ? '—' : pct(group.adSpendRatioToBiSales)}</strong></div>
+          <div><span>广告占比</span><strong>${group.adSpendRatioToBiSales == null ? '—' : pct(group.adSpendRatioToBiSales)}</strong></div>
           <div><span>Broad ROAS</span><strong>${roas(group.broadRoas)}</strong></div>
           <div><span>广告GMV占比</span><strong>${group.adGmvShareOfBiSales == null ? '—' : pct(group.adGmvShareOfBiSales)}</strong></div>
           <div><span>估算自然销售</span><strong>${formatMoney(group.estimatedNaturalSales, group.currency)}</strong></div>
@@ -396,7 +396,7 @@ function renderPortfolio(data) {
           <td>${num(group.orders)}</td>
           <td>${formatMoney(group.estimatedNaturalSales, group.currency)}</td>
           <td>${formatMoney(group.adExpense, group.currency)}</td>
-          <td class="${group.adSpendRatioToBiSales > .15 ? 'negative' : ''}">${group.adSpendRatioToBiSales == null ? '—' : pct(group.adSpendRatioToBiSales)}</td>
+          <td class="${group.adSpendRatioLimit != null && group.adSpendRatioToBiSales > group.adSpendRatioLimit ? 'negative' : ''}" title="${group.mixedAdSpendRatioLimits ? '组内店铺广告花费占比约束不同，不用统一15%判断' : (group.adSpendRatioLimit == null ? '' : '当前组约束 ≤ ' + pct(group.adSpendRatioLimit))}">${group.adSpendRatioToBiSales == null ? '—' : pct(group.adSpendRatioToBiSales)}</td>
           <td>${group.adGmvShareOfBiSales == null ? '—' : pct(group.adGmvShareOfBiSales)}</td>
           <td>${roas(group.broadRoas)}</td>
           <td title="${escapeHtml(signal && signal.detail || '')}"><span class="pill ${signalClass(signal)}">${escapeHtml(signal && signal.title || '—')}</span></td>
@@ -423,7 +423,7 @@ function renderPortfolio(data) {
         <td>${formatMoney(shop.sales, shop.currency)}</td>
         <td>${num(shop.orders)}</td>
         <td>${formatMoney(shop.adExpense, shop.currency)}</td>
-        <td class="${shop.adSpendRatioToBiSales > .15 ? 'negative' : ''}">${shop.adSpendRatioToBiSales == null ? '—' : pct(shop.adSpendRatioToBiSales)}</td>
+        <td class="${shop.adSpendRatioToBiSales > shop.adSpendRatioLimit ? 'negative' : ''}" title="经营约束 ≤ ${pct(shop.adSpendRatioLimit)}">${shop.adSpendRatioToBiSales == null ? '—' : pct(shop.adSpendRatioToBiSales)}</td>
         <td>${shop.adGmvShareOfBiSales == null ? '—' : pct(shop.adGmvShareOfBiSales)}</td>
         <td>${formatMoney(shop.estimatedNaturalSales, shop.currency)}</td>
         <td>${roas(shop.broadRoas)}</td>
@@ -476,7 +476,7 @@ function renderStoreDetail(data) {
     portfolioKpi('商品点击', num(current.productClicks), `较上期 ${changePct(changes.productClicks)}`),
     portfolioKpi('点击→订单', current.orderPerProductClick == null ? '—' : pct(current.orderPerProductClick), `较上期 ${changePct(changes.clickToOrder)}`),
     portfolioKpi('客单价', current.orders ? formatMoney(current.sales / current.orders, shop.currency) : '—', `较上期 ${changePct(changes.aov)}`),
-    portfolioKpi('广告花费占比', current.adSpendRatioToBiSales == null ? '—' : pct(current.adSpendRatioToBiSales), '经营约束 ≤ 15%'),
+    portfolioKpi('广告花费占比', current.adSpendRatioToBiSales == null ? '—' : pct(current.adSpendRatioToBiSales), `经营约束 ≤ ${pct(current.adSpendRatioLimit)}`),
     portfolioKpi('Broad ROAS', roas(current.broadRoas)),
     portfolioKpi('估算自然销售', formatMoney(current.estimatedNaturalSales, shop.currency), `较上期 ${changePct(changes.estimatedNaturalSales)}`),
   ].join('');
