@@ -27,6 +27,9 @@
   function hasPermission(p) {
     return typeof global.hasPermission === 'function' ? global.hasPermission(p) : false;
   }
+  function canViewAmounts() {
+    return hasPermission('ci_amount_view');
+  }
   function isModalOpen() {
     if (typeof global.isModalOpen === 'function') return global.isModalOpen();
     var ov = document.getElementById('modal-overlay');
@@ -164,6 +167,7 @@
 
   function renderPanel(batches, ciId) {
     var list = Array.isArray(batches) ? batches : [];
+    var showAmounts = canViewAmounts();
     var rowsHtml = '';
 
     if (list.length) {
@@ -181,9 +185,11 @@
           '<td>' + (b.actual_transit_days != null ? esc(b.actual_transit_days) : '—') + '</td>' +
           '<td>' + (b.total_cartons != null ? esc(b.total_cartons) : '0') + '</td>' +
           '<td>' + cbm.toFixed(2) + '</td>' +
-          '<td>' + esc(fmtMoney(b.cargo_value || 0, cargoCur)) + '</td>' +
-          '<td>' + esc(fmtMoney(b.total_freight || 0, b.freight_currency)) + '</td>' +
-          '<td>' + esc(ratio) + '</td>' +
+          (showAmounts
+            ? '<td>' + esc(fmtMoney(b.cargo_value || 0, cargoCur)) + '</td>' +
+              '<td>' + esc(fmtMoney(b.total_freight || 0, b.freight_currency)) + '</td>' +
+              '<td>' + esc(ratio) + '</td>'
+            : '') +
           '<td>' + esc(b.logistics_display_status || b.logistics_status || '—') + '</td>' +
           '<td>' + esc(b.listing_status || 'pending_plan') + '</td>' +
           '<td class="ci-list-logi-owners">' + (b.listing_owner_names && b.listing_owner_names.length ? esc(b.listing_owner_names.join('、')) : '—') + '</td>' +
@@ -206,9 +212,11 @@
           '<th>' + esc(tr('logistics.col.transit_days', '运输时效')) + '</th>' +
           '<th>' + esc(tr('logistics.col.cartons', '箱数')) + '</th>' +
           '<th>' + esc(tr('logistics.col.cbm', 'CBM')) + '</th>' +
-          '<th>' + esc(tr('logistics.col.cargo_value', '总货值')) + '</th>' +
-          '<th>' + esc(tr('logistics.col.freight', '综合运费')) + '</th>' +
-          '<th>' + esc(tr('logistics.col.freight_ratio', '运费/货值')) + '</th>' +
+          (showAmounts
+            ? '<th>' + esc(tr('logistics.col.cargo_value', '总货值')) + '</th>' +
+              '<th>' + esc(tr('logistics.col.freight', '综合运费')) + '</th>' +
+              '<th>' + esc(tr('logistics.col.freight_ratio', '运费/货值')) + '</th>'
+            : '') +
           '<th>' + esc(tr('logistics.col.status', '状态')) + '</th>' +
           '<th>' + esc(tr('logistics.col.listing_status', 'Listing状态')) + '</th>' +
           '<th>' + esc(tr('logistics.col.owners', '负责人')) + '</th>' +
@@ -282,8 +290,10 @@
     }
     el.style.display = 'block';
     el.innerHTML =
-      '<button class="btn btn-secondary btn-sm" data-ci-logi-export-pl="' + esc(batchId) + '">' + esc(tr('export.pl_only', '导出PL')) + '</button> ' +
-      '<button class="btn btn-secondary btn-sm" data-ci-logi-export-ci-pl="' + esc(batchId) + '">' + esc(tr('export.ci_and_pl', '导出CI&PL')) + '</button>';
+      '<button class="btn btn-secondary btn-sm" data-ci-logi-export-pl="' + esc(batchId) + '">' + esc(tr('export.pl_only', '导出PL')) + '</button>' +
+      (canViewAmounts()
+        ? ' <button class="btn btn-secondary btn-sm" data-ci-logi-export-ci-pl="' + esc(batchId) + '">' + esc(tr('export.ci_and_pl', '导出CI&PL')) + '</button>'
+        : '');
   }
 
   async function openCreate(ciId) {
