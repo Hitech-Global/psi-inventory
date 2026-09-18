@@ -174,7 +174,7 @@ function renderAnalysis(data) {
     const rec = item.recommendedRoi && item.recommendedRoi.exact
       ? roas(item.recommendedRoi.exact.value)
       : '—';
-    return `<tr>
+    return `<tr data-item="${item.itemId}">
       <td><div class="item-name"><strong>${escapeHtml(item.itemSku || ('#' + item.itemId))}</strong><small>${escapeHtml(item.itemName || '')}</small></div></td>
       <td title="${escapeHtml(item.action && item.action.action || '')}"><span class="state ${itemStateClass(item.state)}">${escapeHtml(item.state)}</span></td>
       <td>${num(item.directOrders)}</td>
@@ -191,6 +191,68 @@ function renderAnalysis(data) {
   }).join('') : '<tr><td colspan="12" class="empty">没有商品层数据。</td></tr>';
 
   $('#diagnosisNotes').innerHTML = (d.notes || []).map(note => `<div>• ${escapeHtml(note)}</div>`).join('');
+
+  document.querySelectorAll('[data-item]').forEach(row => {
+    row.addEventListener('click', event => {
+      event.stopPropagation();
+      loadItemTimeline(Number(row.dataset.item), row);
+    });
+  });
+}
+
+function timelineDetail(event) {
+  const d = event.detail || {};
+  if (event.type === 'VOUCHER_START') {
+    return [
+      d.percentage == null ? null : `折扣 ${(Number(d.percentage) <= 1 ? Number(d.percentage) * 100 : Number(d.percentage)).toFixed(1)}%`,
+      d.discountAmount == null ? null : `固定减免 ${money(d.discountAmount)}`,
+      d.minBasketPrice == null ? null : `门槛 ${money(d.minBasketPrice)}`,
+    ].filter(Boolean).join(' · ');
+  }
+  if (event.type === 'DISCOUNT_START') {
+    return [
+      d.originalPrice == null ? null : `原价 ${money(d.originalPrice)}`,
+      d.promotionPrice == null ? null : `活动价 ${money(d.promotionPrice)}`,
+      d.modelId ? `Model #${d.modelId}` : null,
+    ].filter(Boolean).join(' · ');
+  }
+  if (event.type === 'RETURN') {
+    return [
+      d.status || null,
+      d.quantity == null ? null : `${d.quantity} 件`,
+      d.refundAmount == null ? null : `退款 ${money(d.refundAmount)} ${d.currency || ''}`,
+    ].filter(Boolean).join(' · ');
+  }
+  if (event.type === 'RECOMMENDED_ROAS') {
+    return `预估范围 ${roas(d.lower)} / ${roas(d.exact)} / ${roas(d.upper)}`;
+  }
+  return d.after ? JSON.stringify(d.after) : '';
+}
+
+async function loadItemTimeline(itemId, rowEl) {
+  document.querySelectorAll('[data-item]').forEach(row => row.classList.toggle('selected', row === rowEl));
+  $('#timelineTitle').textContent = `SKU 时间线 · #${itemId}`;
+  $('#timeline').innerHTML = '<div class="empty-inline">读取中…</div>';
+  try {
+    const params = new URLSearchParams({
+      shop_id: $('#shopId').value.trim(),
+      start_date: $('#startDate').value,
+      end_date: $('#endDate').value,
+    });
+    const data = await json(`/api/shopee-analytics/items/${itemId}/timeline?${params}`);
+    const events = data.events || [];
+    $('#timeline').innerHTML = events.length ? events.map(event => `
+      <div class="timeline-event">
+        <div class="timeline-dot"></div>
+        <div class="timeline-main">
+          <div class="timeline-meta"><span>${escapeHtml(String(event.at).slice(0, 16).replace('T', ' '))}</span><b>${escapeHtml(event.type)}</b></div>
+          <strong>${escapeHtml(event.title || event.type)}</strong>
+          <p>${escapeHtml(timelineDetail(event))}</p>
+        </div>
+      </div>`).join('') : '<div class="empty-inline">这个周期没有已记录的运营事件。</div>';
+  } catch (error) {
+    $('#timeline').innerHTML = `<div class="empty-inline">${escapeHtml(error.message)}</div>`;
+  }
 }
 
 async function loadAnalysis(campaignId) {
