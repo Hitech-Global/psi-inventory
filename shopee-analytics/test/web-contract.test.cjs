@@ -38,22 +38,21 @@ for (const required of [
   'storeSkuRows',
   'campaignRows',
   'systemStatus',
+  'historyCoverageGrid',
+  'historyCoverageRange',
 ]) {
   assert(htmlIds.has(required), `missing required frontend id ${required}`);
 }
 
 const appLines = app.split('\n').map(line => line.trimStart());
+
 assert(
-  !appLines.some(line => line.startsWith("$('[data-business-country]').forEach")),
-  'business group rows must use querySelectorAll helper ($$), not single querySelector',
-);
-assert(
-  appLines.some(line => line.startsWith("$('[data-business-country]').forEach")),
+  appLines.some(line => line.startsWith("$$('[data-business-country]').forEach")),
   'business group row binding is missing',
 );
 
 const singleSelectorForEach = appLines.filter(line =>
-  /(?<!\\$)\\$\\([^)]*\\)\\.forEach/.test(line)
+  /(?<!\$)\$\([^)]*\)\.forEach/.test(line)
 );
 assert.deepStrictEqual(
   singleSelectorForEach,
