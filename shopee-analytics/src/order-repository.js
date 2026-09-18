@@ -33,17 +33,22 @@ class ShopeeOrderRepository {
       for (const item of order.items || []) {
         await client.query(
           `INSERT INTO shopee_order_items
-           (shop_id, order_sn, item_id, model_id, item_sku, model_sku, quantity, unit_price, raw_json)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)
+           (shop_id, order_sn, item_id, model_id, item_sku, model_sku, quantity,
+            original_price, unit_price, promotion_type, promotion_id, raw_json)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb)
            ON CONFLICT (shop_id, order_sn, item_id, model_id) DO UPDATE SET
             item_sku=EXCLUDED.item_sku,
             model_sku=EXCLUDED.model_sku,
             quantity=EXCLUDED.quantity,
+            original_price=EXCLUDED.original_price,
             unit_price=EXCLUDED.unit_price,
+            promotion_type=EXCLUDED.promotion_type,
+            promotion_id=EXCLUDED.promotion_id,
             raw_json=EXCLUDED.raw_json`,
           [
             shopId, order.orderSn, item.itemId, item.modelId || 0,
-            item.itemSku, item.modelSku, item.quantity, item.discountedPrice,
+            item.itemSku, item.modelSku, item.quantity, item.originalPrice,
+            item.discountedPrice, item.promotionType, item.promotionId,
             JSON.stringify(item.raw || {}),
           ],
         );
