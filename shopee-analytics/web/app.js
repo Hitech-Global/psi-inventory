@@ -324,8 +324,8 @@ function renderPortfolio(data) {
           <div><span>广告花费</span><strong>${formatMoney(group.adExpense, group.currency)}</strong></div>
           <div><span>广告占比</span><strong>${group.adSpendRatioToBiSales == null ? '—' : pct(group.adSpendRatioToBiSales)}</strong></div>
           <div><span>Broad ROAS</span><strong>${roas(group.broadRoas)}</strong></div>
-          <div><span>广告GMV占比</span><strong>${group.adGmvShareOfBiSales == null ? '—' : pct(group.adGmvShareOfBiSales)}</strong></div>
-          <div><span>估算自然销售</span><strong>${formatMoney(group.estimatedNaturalSales, group.currency)}</strong></div>
+          <div><span>Broad GMV占比</span><strong>${group.adGmvShareOfBiSales == null ? '—' : pct(group.adGmvShareOfBiSales)}</strong></div>
+          <div><span>估算非广告归因销售</span><strong>${formatMoney(group.estimatedNaturalSales, group.currency)}</strong></div>
           <div><span>退款</span><strong>${formatMoney(group.refundAmount, group.currency)}</strong></div>
         </div>
       </article>`).join('')
@@ -482,7 +482,7 @@ function renderStoreDetail(data) {
     portfolioKpi('客单价', current.orders ? formatMoney(current.sales / current.orders, shop.currency) : '—', `较上期 ${changePct(changes.aov)}`),
     portfolioKpi('广告花费占比', current.adSpendRatioToBiSales == null ? '—' : pct(current.adSpendRatioToBiSales), `经营约束 ≤ ${pct(current.adSpendRatioLimit)}`),
     portfolioKpi('Broad ROAS', roas(current.broadRoas)),
-    portfolioKpi('估算自然销售', formatMoney(current.estimatedNaturalSales, shop.currency), `较上期 ${changePct(changes.estimatedNaturalSales)}`),
+    portfolioKpi('估算非广告归因销售', formatMoney(current.estimatedNaturalSales, shop.currency), `较上期 ${changePct(changes.estimatedNaturalSales)}`),
   ].join('');
 
   const signals = diagnosis.signals || [];
@@ -530,7 +530,7 @@ function renderStoreDetail(data) {
         <td>${item.addToCartRate == null ? '—' : pct(item.addToCartRate)}</td>
         <td>${formatMoney(item.adExpense, shop.currency)}</td>
         <td>${formatMoney(item.broadGmv, shop.currency)}</td>
-        <td>${item.adGmvShareOfSales == null ? '—' : pct(item.adGmvShareOfSales)}</td>
+        <td>${item.directGmvShareOfSales == null ? '—' : pct(item.directGmvShareOfSales)}</td>
         <td>${roas(item.broadRoas)}</td>
         <td>${num(item.directOrders)}</td>
         <td>${item.estimatedNaturalSales == null ? '—' : formatMoney(item.estimatedNaturalSales, shop.currency)}</td>
