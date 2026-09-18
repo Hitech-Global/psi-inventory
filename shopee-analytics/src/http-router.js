@@ -3,6 +3,7 @@
 const express = require('express');
 const { analyzeCampaignWindow } = require('./analysis-service');
 const { buildShopeeSeaEventCalendar, toEventDateSet } = require('./event-calendar');
+const { evaluateItemCoverage, buildSystemWarnings } = require('./data-quality');
 
 function positiveInt(value, name) {
   const n = Number(value);
@@ -32,6 +33,18 @@ function createShopeeAnalyticsRouter({
 
   router.get('/health', (req, res) => {
     res.json({ ok: true, module: 'shopee-analytics', mode: 'read-only' });
+  });
+
+  router.get('/status', async (req, res, next) => {
+    try {
+      const shopId = positiveInt(req.query.shop_id, 'shop_id');
+      const status = await queryRepository.getSystemStatus({ shopId });
+      status.warnings = buildSystemWarnings(status);
+      status.ok = !status.warnings.some(warning => warning.severity === 'error');
+      res.json({ shopId, ...status });
+    } catch (error) {
+      next(error);
+    }
   });
 
   router.get('/campaigns', async (req, res, next) => {
@@ -75,10 +88,11 @@ function createShopeeAnalyticsRouter({
       });
 
       const ids = analysis.diagnosis.items.map(item => item.itemId).filter(Boolean);
-      const [names, recommended, productCard] = await Promise.all([
+      const [names, recommended, productCard, coverageContext] = await Promise.all([
         queryRepository.getCampaignItemNames({ shopId, itemIds: ids }),
         queryRepository.getLatestRecommendedRoiMap({ shopId, itemIds: ids }),
         queryRepository.getProductCardPeriodMap({ shopId, startDate, endDate, itemIds: ids }),
+        queryRepository.getCampaignCoverageContext({ shopId, campaignId, startDate, endDate }),
       ]);
       analysis.diagnosis.items = analysis.diagnosis.items.map(item => ({
         ...item,
@@ -87,6 +101,13 @@ function createShopeeAnalyticsRouter({
         productCard: productCard.get(String(item.itemId)) || null,
       }));
       analysis.latestSetting = latest;
+      analysis.dataQuality = evaluateItemCoverage({
+        campaignExpense: analysis.diagnosis.campaign.expense,
+        itemExpense: coverageContext.itemExpense,
+        membershipCount: coverageContext.membershipCount,
+        performanceItemCount: coverageContext.performanceItemCount,
+      });
+      analysis.dataQuality.storedItemCount = coverageContext.storedItemCount;
       res.json(analysis);
     } catch (error) {
       next(error);
