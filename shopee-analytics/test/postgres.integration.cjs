@@ -14,6 +14,7 @@ const { Pool } = require('pg');
 const { ShopeeAnalyticsRepository } = require('../src/repository');
 const { ShopeeProductCardRepository } = require('../src/product-card-repository');
 const { ShopeeTokenRepository } = require('../src/token-repository');
+const { ShopeeQueryRepository } = require('../src/query-repository');
 
 (async () => {
   const pool = new Pool({ connectionString: url, max: 3 });
@@ -131,6 +132,23 @@ const { ShopeeTokenRepository } = require('../src/token-repository');
     const decrypted = await tokenRepo.load({ appRole: 'ADS', shopId: 1 });
     assert.strictEqual(decrypted.accessToken, 'access-secret');
     assert.strictEqual(decrypted.refreshToken, 'refresh-secret');
+
+    const queryRepository = new ShopeeQueryRepository({ pool });
+    const coverage = await queryRepository.getCampaignCoverageContext({
+      shopId: 1,
+      campaignId: 7,
+      startDate: '2026-09-17',
+      endDate: '2026-09-17',
+    });
+    assert.strictEqual(coverage.membershipCount, 2);
+    assert.strictEqual(coverage.performanceItemCount, 1);
+    assert.strictEqual(coverage.storedItemCount, 1);
+    assert.strictEqual(coverage.itemExpense, 80000);
+
+    const status = await queryRepository.getSystemStatus({ shopId: 1 });
+    assert(status.sources.some(source => source.source === 'GMS_ADS'));
+    assert(status.sources.some(source => source.source === 'PRODUCT_CARD'));
+    assert(status.tokens.some(token => token.appRole === 'ADS'));
 
     console.log(`shopee PostgreSQL integration tests: ok (${names.size} analytics tables)`);
   } finally {
