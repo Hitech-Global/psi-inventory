@@ -21,6 +21,18 @@ function Write-Status([hashtable]$Status) {
   $runtime = Join-Path $ScriptDir "runtime"
   New-Item -ItemType Directory -Force -Path $runtime | Out-Null
   $statusPath = Join-Path $runtime "backup-status.json"
+
+  if (Test-Path $statusPath) {
+    try {
+      $existing = Get-Content $statusPath -Raw | ConvertFrom-Json
+      foreach ($name in @("completedAt","fileName","sizeBytes","sha256","nasCopiedAt","restoreVerifiedAt","restoreVerifiedFileName","restoreVerifiedTableCount")) {
+        if (!$Status.ContainsKey($name) -and $null -ne $existing.$name) {
+          $Status[$name] = $existing.$name
+        }
+      }
+    } catch {}
+  }
+
   $Status | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 $statusPath
 }
 
@@ -93,6 +105,7 @@ try {
   $completed = (Get-Date).ToUniversalTime().ToString("o")
   Write-Status @{
     ok = $true
+    lastAttemptAt = $completed
     completedAt = $completed
     fileName = $fileName
     sizeBytes = $size
@@ -106,11 +119,7 @@ try {
 catch {
   Write-Status @{
     ok = $false
-    completedAt = $null
-    fileName = $fileName
-    sizeBytes = 0
-    sha256 = $null
-    nasCopiedAt = $null
+    lastAttemptAt = (Get-Date).ToUniversalTime().ToString("o")
     error = $_.Exception.Message
   }
   throw
