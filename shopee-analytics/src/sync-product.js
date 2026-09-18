@@ -49,7 +49,7 @@ async function fetchItemList({
     const query = {
       offset,
       page_size: pageSize,
-      item_status: Array.isArray(itemStatus) ? itemStatus.join(',') : itemStatus,
+      item_status: itemStatus,
       update_time_from: updateTimeFrom,
       update_time_to: updateTimeTo,
     };
