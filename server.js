@@ -1204,6 +1204,33 @@ if (require.main === module) {
   })();
 }
 
+if (require.main === module) {
+  (function ensureCIAmountViewPermissionOnce() {
+    const migrationKey = 'migration_ci_amount_view_v1';
+    try {
+      const done = queryOne('SELECT value FROM system_config WHERE key = ?', [migrationKey]);
+      if (done) return;
+      const roles = query('SELECT id, permissions FROM roles').rows;
+      let migrated = 0;
+      roles.forEach(role => {
+        let perms;
+        try { perms = JSON.parse(role.permissions || '[]'); } catch (_) { return; }
+        if (!Array.isArray(perms)) return;
+        const alreadyCanViewCI = perms.includes('ci_view') || perms.includes('*');
+        if (alreadyCanViewCI && !perms.includes(CI_AMOUNT_PERMISSION)) {
+          perms.push(CI_AMOUNT_PERMISSION);
+          run('UPDATE roles SET permissions = ? WHERE id = ?', [JSON.stringify(perms), role.id]);
+          migrated++;
+        }
+      });
+      run("INSERT INTO system_config (key, value, description, updated_at) VALUES (?, ?, ?, datetime('now')) ON CONFLICT(key) DO UPDATE SET value=excluded.value, description=excluded.description, updated_at=excluded.updated_at",
+        [migrationKey, '1', 'CI查看金额权限兼容迁移已执行']);
+      console.log('[Migration] ci_amount_view 初始化完成，兼容补齐角色数=' + migrated);
+    } catch (e) {
+      console.warn('[Migration] ci_amount_view 初始化失败（非致命）:', e.message);
+    }
+  })();
+}
 // Phase 2：为拥有审批权限的角色自动追加 approval_view（幂等迁移）
 // 仅处理含 po_approve/payment_approve/check_approve 的角色，不处理含 '*' 的超级管理员（通配符已覆盖所有权限）
 if (require.main === module) {
@@ -1496,6 +1523,67 @@ function requireApiPermission(...perms) {
 function requireLogin(req, res, next) {
   if (!req.currentUserId) return res.status(401).json({ error: '未登录' });
   next();
+}
+// CI-AMOUNT-VIEW-PERMISSION-V1
+const CI_AMOUNT_PERMISSION = 'ci_amount_view';
+const CI_HEADER_AMOUNT_FIELDS = [
+  'goods_amount','pi_total_amount','amount_difference','should_deduct_deposit',
+  'actual_deducted_deposit','payable_balance','paid_balance','unpaid_balance',
+  'balance_gross_amount','balance_paid_amount','balance_deduction_amount',
+  'balance_rounding_amount','balance_unpaid_amount','import_duty_total'
+];
+const CI_ITEM_AMOUNT_FIELDS = ['unit_price','discount','net_unit_price','ci_amount','actual_customs_rate'];
+const HCI_AMOUNT_FIELDS = ['gross_goods_amount','historical_paid_amount','subsequent_paid_amount','deduction_amount','rounding_amount','unpaid_amount'];
+const LOGISTICS_CI_AMOUNT_FIELDS = ['international_freight','local_charges','customs_service_fee','delivery_fee','total_freight','customs_duty','vat_gst','other_fees','cargo_value','freight_value_ratio'];
+
+function ciCanViewAmounts(req) {
+  const perms = req.currentUserPermissions || [];
+  return perms.includes('*') || perms.includes(CI_AMOUNT_PERMISSION);
+}
+function requireCIAmountView(req, res, next) {
+  if (!req.currentUserId) return res.status(401).json({ error: '未登录' });
+  if (!ciCanViewAmounts(req)) return res.status(403).json({ error: '没有查看CI金额的权限' });
+  next();
+}
+function ciStripFields(obj, fields) {
+  if (!obj || typeof obj !== 'object') return obj;
+  fields.forEach(k => { if (Object.prototype.hasOwnProperty.call(obj, k)) delete obj[k]; });
+  return obj;
+}
+function ciRedactPaymentRecords(records) {
+  (records || []).forEach(r => {
+    ciStripFields(r, ['payable_amount','actual_paid_amount','deduction_amount','rounding_amount','outstanding']);
+    (r.transactions || []).forEach(tx => ciStripFields(tx, ['paid_amount']));
+  });
+  return records;
+}
+function ciRedactOperational(row, detail) {
+  if (!row) return row;
+  ciStripFields(row, CI_HEADER_AMOUNT_FIELDS);
+  row.amount_view_allowed = false;
+  if (detail) {
+    (row.items || []).forEach(it => ciStripFields(it, CI_ITEM_AMOUNT_FIELDS));
+    ciRedactPaymentRecords(row.payment_records || []);
+    delete row.attachment;
+  }
+  return row;
+}
+function ciRedactHistorical(row, detail) {
+  if (!row) return row;
+  ciStripFields(row, HCI_AMOUNT_FIELDS);
+  row.amount_view_allowed = false;
+  if (detail) {
+    (row.items || []).forEach(it => ciStripFields(it, CI_ITEM_AMOUNT_FIELDS));
+    ciRedactPaymentRecords(row.payment_records || []);
+    delete row.attachment;
+  }
+  return row;
+}
+function ciRedactLogistics(row) {
+  if (!row) return row;
+  ciStripFields(row, LOGISTICS_CI_AMOUNT_FIELDS);
+  row.amount_view_allowed = false;
+  return row;
 }
 
 // ==================== 数据权限（Data Scope） ====================
@@ -2052,6 +2140,7 @@ const PERM_LABELS = {
   pi_create: { label: '创建', module: '采购链', submodule: 'PI管理' },
   pi_edit: { label: '编辑', module: '采购链', submodule: 'PI管理' },
   ci_view: { label: '查看', module: '采购链', submodule: 'CI管理' },
+  ci_amount_view: { label: '查看金额', module: '采购链', submodule: 'CI管理' },
   ci_create: { label: '创建', module: '采购链', submodule: 'CI管理' },
   ci_edit: { label: '编辑', module: '采购链', submodule: 'CI管理' },
   logistics_view: { label: '查看', module: '采购链', submodule: '物流管理' },
@@ -9475,6 +9564,7 @@ app.get('/api/commercial-invoices', requireApiPermission('ci_view'), asyncHandle
     return true;
   });
 
+  if (!ciCanViewAmounts(req)) rows.forEach(r => ciRedactOperational(r, false));
   res.json(rows);
 }));
 
@@ -9541,7 +9631,10 @@ app.get('/api/commercial-invoices/:id', requireApiPermission('ci_view'), asyncHa
   });
   const checkSkus = [...new Set(Object.keys(ciQtyBySku).concat(Object.keys(plQtyBySku)))];
   const pl_check = checkSkus.map(sku => ({ sku_code: sku, ci_qty: ciQtyBySku[sku] || 0, pl_qty: plQtyBySku[sku] || 0, diff_qty: (plQtyBySku[sku] || 0) - (ciQtyBySku[sku] || 0) }));
-  res.json({ ...ci, items, packing_list: pl, packing_lists, pl_check });
+  const payload = { ...ci, items, packing_list: pl, packing_lists, pl_check };
+  if (!ciCanViewAmounts(req)) ciRedactOperational(payload, true);
+  else payload.amount_view_allowed = true;
+  res.json(payload);
 }));
 
 // ===== CI/PL × 物流合并 PHASE A：CI 作用域物流批次汇总（只读）=====
@@ -9566,6 +9659,7 @@ app.get('/api/commercial-invoices/:id/logistics-batches', requireApiPermission('
     pls.forEach(pl => { (plsByBatch[pl.logistics_batch_id] = plsByBatch[pl.logistics_batch_id] || []).push(pl); });
   }
   rows.forEach(r => { r.pls = plsByBatch[r.id] || []; });
+  if (!ciCanViewAmounts(req)) rows.forEach(ciRedactLogistics);
   res.json(rows);
 }));
 
@@ -9574,13 +9668,14 @@ app.get('/api/commercial-invoices/:id/logistics-batches', requireApiPermission('
 // 导出判定（exact / ambiguous / missing）放在后端：可测、不可绕过、口径唯一。
 app.get('/api/logistics-batches/:id/export-data', requireApiPermission('logistics_view'), asyncHandler((req, res) => {
   const batchId = req.params.id;
+  const scope = req.query.scope === 'ci_pl' ? 'ci_pl' : 'pl';
+  if (scope === 'ci_pl' && !ciCanViewAmounts(req)) {
+    return res.status(403).json({ error: '没有查看CI金额的权限，不能导出CI&PL' });
+  }
   const batch = queryOne('SELECT * FROM logistics_batches WHERE id = ?', [batchId]);
   if (!batch) return res.status(404).json({ error: '物流批次不存在' });
   const ci = batch.related_ci_id ? queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [batch.related_ci_id]) : null;
-  // 全部 PL（绝不用 queryOne 只取首张 —— 导出必须覆盖全部 PL）
   const pls = query('SELECT * FROM packing_lists WHERE logistics_batch_id = ?', [batchId]).rows;
-  const ciItems = ci ? query('SELECT * FROM commercial_invoice_items WHERE ci_id = ? ORDER BY created_at', [ci.id]).rows : [];
-  // PL items：一次取全，按 pl_id 分组（前端/后端按 pl_id 取，绝不 SQL JOIN）
   let plItemsByPl = {};
   if (pls.length > 0) {
     const plIds = pls.map(p => p.id);
@@ -9588,6 +9683,19 @@ app.get('/api/logistics-batches/:id/export-data', requireApiPermission('logistic
     const plItems = query(`SELECT * FROM packing_list_items WHERE pl_id IN (${ph}) ORDER BY created_at`, plIds).rows;
     plItems.forEach(it => { (plItemsByPl[it.pl_id] = plItemsByPl[it.pl_id] || []).push(it); });
   }
+  const plPayload = pls.map(pl => ({ ...pl, items: plItemsByPl[pl.id] || [] }));
+  if (scope === 'pl') {
+    const exportBlocked = !ci || pls.length === 0;
+    const blockingReason = !ci ? 'no_ci' : (pls.length === 0 ? 'no_pl' : null);
+    return res.json({
+      scope: 'pl',
+      batch: { id: batch.id, batch_no: batch.batch_no, related_ci_id: batch.related_ci_id || '', related_ci_no: batch.related_ci_no || '' },
+      ci: ci ? { id: ci.id, ci_no: ci.ci_no, currency: ci.currency } : null,
+      ci_items: [], pls: plPayload, price_lookup: {},
+      export_blocked: exportBlocked, blocking_reason: blockingReason, blocking_issues: []
+    });
+  }
+  const ciItems = ci ? query('SELECT * FROM commercial_invoice_items WHERE ci_id = ? ORDER BY created_at', [ci.id]).rows : [];
   const priceLookup = computePriceLookup(ciItems, ci ? ci.currency : null);
   const inScopeSkus = new Set();
   pls.forEach(pl => (plItemsByPl[pl.id] || []).forEach(it => inScopeSkus.add(it.sku_code)));
@@ -9595,17 +9703,13 @@ app.get('/api/logistics-batches/:id/export-data', requireApiPermission('logistic
   const exportBlocked = blockingIssues.length > 0 || !ci || pls.length === 0;
   const blockingReason = !ci ? 'no_ci' : (pls.length === 0 ? 'no_pl' : (blockingIssues.length > 0 ? 'price_ambiguous_or_missing' : null));
   res.json({
-    batch, ci, ci_items: ciItems,
-    pls: pls.map(pl => ({ ...pl, items: plItemsByPl[pl.id] || [] })),
-    price_lookup: priceLookup,
-    export_blocked: exportBlocked,
-    blocking_reason: blockingReason,
-    blocking_issues: blockingIssues
+    scope: 'ci_pl', batch, ci, ci_items: ciItems, pls: plPayload, price_lookup: priceLookup,
+    export_blocked: exportBlocked, blocking_reason: blockingReason, blocking_issues: blockingIssues
   });
 }));
 
 // 多 PI 改造：查询 CI 关联的各 PI 尾款明细（供合并付款选择）
-app.get('/api/commercial-invoices/:id/pi-balances', requireApiPermission('ci_view'), asyncHandler((req, res) => {
+app.get('/api/commercial-invoices/:id/pi-balances', requireApiPermission('ci_view'), requireCIAmountView, asyncHandler((req, res) => {
   const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [req.params.id]);
   if (!ci) return res.status(404).json({ error: 'CI不存在' });
   // 从 ci_items 取所有来源 PI
@@ -14846,6 +14950,7 @@ app.get('/api/historical-commercial-invoices', requireApiPermission('ci_view'), 
     });
     // 付款状态过滤（payment_status 现由 settlement 实时派生，不再依赖 payment_requests 主表）
     const out = req.query.status ? rows.filter(r => (r.payment_status || '') === req.query.status) : rows;
+    if (!ciCanViewAmounts(req)) out.forEach(r => ciRedactHistorical(r, false));
     res.json(out);
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
@@ -14925,6 +15030,8 @@ app.get('/api/historical-commercial-invoices/:id', requireApiPermission('ci_view
     ).rows;
     historical.payment_records = ciPaymentRecords(hciPayItems.map(i => i.id), { excludeLegacy: true });
     historical.items = query('SELECT sku_code, shipped_qty, unit_price, discount, net_unit_price, ci_amount FROM historical_commercial_invoice_items WHERE hci_id = ? ORDER BY created_at, id', [req.params.id]).rows;
+    if (!ciCanViewAmounts(req)) ciRedactHistorical(historical, true);
+    else historical.amount_view_allowed = true;
     res.json(historical);
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
@@ -15084,6 +15191,7 @@ function purchaseAmountScope(rows) {
 
 app.get('/api/purchase-amount-summary', requireApiPermission('ci_view'), asyncHandler((req, res) => {
   try {
+    if (!ciCanViewAmounts(req)) return res.json({ amount_view_allowed: false });
     const operationalRows = query(`SELECT currency, goods_amount AS amount FROM commercial_invoices
                                    WHERE ci_status != 'cancelled'`).rows;
     const historicalRows = query(`SELECT currency, gross_goods_amount AS amount FROM historical_commercial_invoices`).rows;
