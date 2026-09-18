@@ -790,6 +790,38 @@ function timelineDetail(event) {
     }
     return changes.join(' · ');
   }
+  if (event.type === 'VOUCHER_CHANGE') {
+    const before = d.before || {};
+    const after = d.after || {};
+    const changes = [];
+    if (String(before.percentage ?? '') !== String(after.percentage ?? '')) {
+      changes.push(`折扣 ${before.percentage ?? '—'} → ${after.percentage ?? '—'}`);
+    }
+    if (String(before.discountAmount ?? '') !== String(after.discountAmount ?? '')) {
+      changes.push(`固定减免 ${formatMoney(before.discountAmount, shop && shop.currency)} → ${formatMoney(after.discountAmount, shop && shop.currency)}`);
+    }
+    if (String(before.minBasketPrice ?? '') !== String(after.minBasketPrice ?? '')) {
+      changes.push(`门槛 ${formatMoney(before.minBasketPrice, shop && shop.currency)} → ${formatMoney(after.minBasketPrice, shop && shop.currency)}`);
+    }
+    if (JSON.stringify(before.itemIds || []) !== JSON.stringify(after.itemIds || [])) {
+      changes.push('适用商品变化');
+    }
+    return changes.join(' · ') || 'Voucher配置变化';
+  }
+  if (event.type === 'DISCOUNT_CHANGE') {
+    const beforeRows = Array.isArray(d.before && d.before.itemRows) ? d.before.itemRows : [];
+    const afterRows = Array.isArray(d.after && d.after.itemRows) ? d.after.itemRows : [];
+    const beforePrice = beforeRows[0] && beforeRows[0].promotionPrice;
+    const afterPrice = afterRows[0] && afterRows[0].promotionPrice;
+    const parts = [];
+    if (beforePrice != null || afterPrice != null) {
+      parts.push(`活动价 ${formatMoney(beforePrice, shop && shop.currency)} → ${formatMoney(afterPrice, shop && shop.currency)}`);
+    }
+    if (String(d.before && d.before.endTime || '') !== String(d.after && d.after.endTime || '')) {
+      parts.push('活动结束时间变化');
+    }
+    return parts.join(' · ') || 'Discount配置变化';
+  }
   if (event.type === 'SKU_ADDED_TO_CAMPAIGN') return '加入广告组';
   if (event.type === 'SKU_REMOVED_FROM_CAMPAIGN') return '移出广告组';
   return d.after ? JSON.stringify(d.after) : '';
