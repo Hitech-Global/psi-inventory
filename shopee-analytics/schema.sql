@@ -177,7 +177,10 @@ CREATE TABLE IF NOT EXISTS shopee_order_items (
   item_sku TEXT,
   model_sku TEXT,
   quantity INTEGER NOT NULL DEFAULT 0,
+  original_price NUMERIC(20,6),
   unit_price NUMERIC(20,6),
+  promotion_type TEXT,
+  promotion_id BIGINT,
   raw_json JSONB NOT NULL DEFAULT '{}'::jsonb,
   PRIMARY KEY (shop_id, order_sn, item_id, model_id)
 );
@@ -241,6 +244,7 @@ CREATE TABLE IF NOT EXISTS shopee_returns (
   order_sn TEXT,
   status TEXT,
   reason TEXT,
+  currency TEXT,
   refund_amount NUMERIC(20,6),
   create_time BIGINT,
   update_time BIGINT,
@@ -255,6 +259,8 @@ CREATE TABLE IF NOT EXISTS shopee_return_items (
   item_id BIGINT NOT NULL,
   model_id BIGINT NOT NULL DEFAULT 0,
   quantity INTEGER NOT NULL DEFAULT 0,
+  item_price NUMERIC(20,6),
+  refund_amount NUMERIC(20,6),
   raw_json JSONB NOT NULL DEFAULT '{}'::jsonb,
   PRIMARY KEY (shop_id, return_sn, item_id, model_id)
 );
