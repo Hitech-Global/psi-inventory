@@ -49,7 +49,10 @@ try {
   $statusPath = Join-Path $ScriptDir "runtime\backup-status.json"
   $status = @{}
   if (Test-Path $statusPath) {
-    $status = Get-Content $statusPath -Raw | ConvertFrom-Json -AsHashtable
+    $existing = Get-Content $statusPath -Raw | ConvertFrom-Json
+    $existing.PSObject.Properties | ForEach-Object {
+      $status[$_.Name] = $_.Value
+    }
   }
   $status["restoreVerifiedAt"] = (Get-Date).ToUniversalTime().ToString("o")
   $status["restoreVerifiedFileName"] = $latest.Name
