@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS shopee_shop_profiles (
   brand_name TEXT,
   currency TEXT NOT NULL,
   timezone TEXT NOT NULL,
+  brand_portal_timezone TEXT,
   marketplace_region TEXT,
   active BOOLEAN NOT NULL DEFAULT true,
   sort_order INTEGER NOT NULL DEFAULT 0,
