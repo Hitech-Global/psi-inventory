@@ -69,3 +69,5 @@
 .event-tag.special{background:#fff4d9;color:#966300}
 .store-sku-table-wrap tbody tr[data-store-item]{cursor:pointer}.store-sku-table-wrap tbody tr[data-store-item]:hover{background:#f8fbff}
 @media(max-width:1000px){.store-signal-list{grid-template-columns:1fr 1fr}}@media(max-width:680px){.store-signal-list{grid-template-columns:1fr}}
+
+.store-sku-table-wrap td .pill{max-width:180px;overflow:hidden;text-overflow:ellipsis}
