@@ -112,3 +112,32 @@ assert(
   !mixedLimit.signals.some(row => row.code === 'AD_SPEND_RATIO_OVER_LIMIT'),
   'mixed-limit business groups must not be judged against a hardcoded 15% threshold',
 );
+
+
+const attributionMismatch = diagnoseRow(
+  {
+    sales: 100,
+    orders: 2,
+    productClicks: 20,
+    adExpense: 10,
+    broadGmv: 120,
+    estimatedNaturalSales: -20,
+    adAttributionExceedsBiSales: true,
+  },
+  {
+    sales: 100,
+    orders: 2,
+    productClicks: 20,
+    adExpense: 10,
+    broadGmv: 110,
+    estimatedNaturalSales: -10,
+    adAttributionExceedsBiSales: true,
+  },
+);
+assert(
+  attributionMismatch.signals.some(row => row.code === 'AD_ATTRIBUTION_EXCEEDS_BI_SALES'),
+);
+assert(
+  !attributionMismatch.signals.some(row => row.code === 'NATURAL_SALES_DOWN'),
+  'non-ad attribution delta must not be interpreted while ad attribution exceeds BI sales',
+);
