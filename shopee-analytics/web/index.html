@@ -24,6 +24,19 @@
       <button id="loadBtn" class="primary">读取分析</button>
     </section>
 
+    <section id="systemStatus" class="status-panel hidden">
+      <div class="status-panel-head">
+        <div>
+          <div class="section-label">DATA HEALTH</div>
+          <h2>数据状态</h2>
+          <p id="statusSubtitle">检查 API 同步、新鲜度与 Token 状态。</p>
+        </div>
+        <button id="refreshStatusBtn" class="ghost" type="button">刷新状态</button>
+      </div>
+      <div id="sourceStatusGrid" class="source-status-grid"></div>
+      <div id="systemWarnings" class="system-warnings hidden"></div>
+    </section>
+
     <section id="summary" class="kpi-grid hidden"></section>
 
     <main class="grid">
@@ -79,6 +92,8 @@
       </div>
 
       <div class="metric-grid" id="campaignMetrics"></div>
+
+      <div id="dataQualityBox" class="quality-box"></div>
 
       <div class="section-head action-head">
         <div>
