@@ -29,6 +29,25 @@ CREATE TABLE IF NOT EXISTS shopee_raw_api_snapshots (
 CREATE INDEX IF NOT EXISTS idx_shopee_raw_endpoint_shop_synced
   ON shopee_raw_api_snapshots(endpoint_key, shop_id, synced_at DESC);
 
+CREATE TABLE IF NOT EXISTS shopee_shop_profiles (
+  shop_id BIGINT PRIMARY KEY,
+  display_name TEXT NOT NULL,
+  country_code TEXT NOT NULL,
+  country_name TEXT,
+  brand_code TEXT NOT NULL,
+  brand_name TEXT,
+  currency TEXT NOT NULL,
+  timezone TEXT NOT NULL,
+  marketplace_region TEXT,
+  active BOOLEAN NOT NULL DEFAULT true,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  note TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_shopee_shop_profiles_country_brand
+  ON shopee_shop_profiles(country_code, brand_code, active, sort_order, shop_id);
+
 CREATE TABLE IF NOT EXISTS shopee_shops (
   shop_id BIGINT PRIMARY KEY,
   shop_name TEXT,
