@@ -550,6 +550,8 @@ function renderStoreDetail(data) {
         <td>${formatMoney(item.broadGmv, shop.currency)}</td>
         <td>${item.directGmvShareOfSales == null ? '—' : pct(item.directGmvShareOfSales)}</td>
         <td>${roas(item.broadRoas)}</td>
+        <td>${roas(item.directRoas)}</td>
+        <td>${item.breakEvenRoas == null ? '未配置' : roas(item.breakEvenRoas)}</td>
         <td>${num(item.directOrders)}</td>
         <td>${item.estimatedNaturalSales == null ? '—' : formatMoney(item.estimatedNaturalSales, shop.currency)}</td>
         <td title="${escapeHtml([
@@ -557,7 +559,7 @@ function renderStoreDetail(data) {
           item.primarySignal && item.primarySignal.action,
         ].filter(Boolean).join(' '))}"><span class="pill ${signalClass(item.primarySignal)}">${escapeHtml(item.primarySignal && item.primarySignal.title || '—')}</span></td>
       </tr>`).join('')
-    : '<tr><td colspan="12" class="empty">当前周期没有商品层数据。</td></tr>';
+    : '<tr><td colspan="14" class="empty">当前周期没有商品层数据。</td></tr>';
 
   $$('[data-store-item]').forEach(row => {
     row.addEventListener('click', () => {
