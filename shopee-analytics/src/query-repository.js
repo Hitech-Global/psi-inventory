@@ -148,6 +148,140 @@ class ShopeeQueryRepository {
     ]));
   }
 
+  async getItemTimeline({ shopId, itemId, startDate, endDate }) {
+    const startEpoch = Math.floor(new Date(`${startDate}T00:00:00Z`).getTime() / 1000);
+    const endEpoch = Math.floor(new Date(`${endDate}T23:59:59Z`).getTime() / 1000);
+
+    const [voucherRows, discountRows, returnRows, roiRows, operationRows] = await Promise.all([
+      this.pool.query(
+        `SELECT v.voucher_id,v.voucher_name,v.percentage,v.discount_amount,v.min_basket_price,
+                v.start_time,v.end_time,v.current_usage,v.usage_quantity
+         FROM shopee_vouchers v
+         JOIN shopee_voucher_items i
+           ON i.shop_id=v.shop_id AND i.voucher_id=v.voucher_id
+         WHERE v.shop_id=$1 AND i.item_id=$2
+           AND COALESCE(v.end_time,0) >= $3 AND COALESCE(v.start_time,0) <= $4
+         ORDER BY v.start_time`,
+        [shopId, itemId, startEpoch, endEpoch],
+      ),
+      this.pool.query(
+        `SELECT d.discount_id,d.discount_name,d.status,d.start_time,d.end_time,
+                i.model_id,i.original_price,i.promotion_price
+         FROM shopee_discounts d
+         JOIN shopee_discount_items i
+           ON i.shop_id=d.shop_id AND i.discount_id=d.discount_id
+         WHERE d.shop_id=$1 AND i.item_id=$2
+           AND COALESCE(d.end_time,0) >= $3 AND COALESCE(d.start_time,0) <= $4
+         ORDER BY d.start_time,i.model_id`,
+        [shopId, itemId, startEpoch, endEpoch],
+      ),
+      this.pool.query(
+        `SELECT r.return_sn,r.order_sn,r.status,r.reason,r.refund_amount,r.currency,r.create_time,
+                i.model_id,i.quantity,i.item_price,i.refund_amount AS item_refund_amount
+         FROM shopee_returns r
+         JOIN shopee_return_items i
+           ON i.shop_id=r.shop_id AND i.return_sn=r.return_sn
+         WHERE r.shop_id=$1 AND i.item_id=$2
+           AND r.create_time BETWEEN $3 AND $4
+         ORDER BY r.create_time`,
+        [shopId, itemId, startEpoch, endEpoch],
+      ),
+      this.pool.query(
+        `SELECT observed_at,lower_value,exact_value,upper_value
+         FROM shopee_recommended_roi_history
+         WHERE shop_id=$1 AND item_id=$2
+           AND observed_at >= $3::date AND observed_at < ($4::date + interval '1 day')
+         ORDER BY observed_at`,
+        [shopId, itemId, startDate, endDate],
+      ),
+      this.pool.query(
+        `SELECT operation_type,reason,before_json,after_json,effective_from,effective_to
+         FROM shopee_operation_history
+         WHERE shop_id=$1 AND item_id=$2
+           AND effective_from >= $3::date AND effective_from < ($4::date + interval '1 day')
+         ORDER BY effective_from`,
+        [shopId, itemId, startDate, endDate],
+      ),
+    ]);
+
+    const events = [];
+    const epochIso = value => value ? new Date(Number(value) * 1000).toISOString() : null;
+    for (const row of voucherRows.rows) {
+      events.push({
+        at: epochIso(row.start_time),
+        type: 'VOUCHER_START',
+        title: row.voucher_name || `Voucher #${row.voucher_id}`,
+        detail: {
+          voucherId: Number(row.voucher_id),
+          percentage: row.percentage === null ? null : Number(row.percentage),
+          discountAmount: row.discount_amount === null ? null : Number(row.discount_amount),
+          minBasketPrice: row.min_basket_price === null ? null : Number(row.min_basket_price),
+          currentUsage: row.current_usage,
+          usageQuantity: row.usage_quantity,
+          endAt: epochIso(row.end_time),
+        },
+      });
+    }
+    for (const row of discountRows.rows) {
+      events.push({
+        at: epochIso(row.start_time),
+        type: 'DISCOUNT_START',
+        title: row.discount_name || `Discount #${row.discount_id}`,
+        detail: {
+          discountId: Number(row.discount_id),
+          status: row.status,
+          modelId: Number(row.model_id || 0),
+          originalPrice: row.original_price === null ? null : Number(row.original_price),
+          promotionPrice: row.promotion_price === null ? null : Number(row.promotion_price),
+          endAt: epochIso(row.end_time),
+        },
+      });
+    }
+    for (const row of returnRows.rows) {
+      events.push({
+        at: epochIso(row.create_time),
+        type: 'RETURN',
+        title: row.reason || 'Return / Refund',
+        detail: {
+          returnSn: row.return_sn,
+          orderSn: row.order_sn,
+          status: row.status,
+          quantity: row.quantity,
+          refundAmount: row.item_refund_amount === null
+            ? (row.refund_amount === null ? null : Number(row.refund_amount))
+            : Number(row.item_refund_amount),
+          currency: row.currency,
+        },
+      });
+    }
+    for (const row of roiRows.rows) {
+      events.push({
+        at: new Date(row.observed_at).toISOString(),
+        type: 'RECOMMENDED_ROAS',
+        title: '平台预估 ROAS 更新',
+        detail: {
+          lower: row.lower_value === null ? null : Number(row.lower_value),
+          exact: row.exact_value === null ? null : Number(row.exact_value),
+          upper: row.upper_value === null ? null : Number(row.upper_value),
+        },
+      });
+    }
+    for (const row of operationRows.rows) {
+      events.push({
+        at: new Date(row.effective_from).toISOString(),
+        type: row.operation_type,
+        title: row.reason || row.operation_type,
+        detail: {
+          before: row.before_json,
+          after: row.after_json,
+          effectiveTo: row.effective_to,
+        },
+      });
+    }
+
+    return events.filter(event => event.at).sort((a, b) => a.at.localeCompare(b.at));
+  }
+
   async getCampaignItemNames({ shopId, itemIds }) {
     const ids = (itemIds || []).map(Number).filter(Number.isSafeInteger);
     if (!ids.length) return new Map();
