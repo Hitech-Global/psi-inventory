@@ -183,7 +183,8 @@ class ShopeeQueryRepository {
         refundAmount: Number(row.refund_amount || 0),
         adSpendRatioToBiSales: sales > 0 ? adExpense / sales : null,
         adGmvShareOfBiSales: sales > 0 ? broadGmv / sales : null,
-        estimatedNaturalSales: Math.max(0, sales - broadGmv),
+        estimatedNaturalSales: sales - broadGmv,
+        adAttributionExceedsBiSales: broadGmv > sales,
         broadRoas: adExpense > 0 ? broadGmv / adExpense : 0,
         adCtr: Number(row.ad_impressions || 0) > 0
           ? Number(row.ad_clicks || 0) / Number(row.ad_impressions || 0)
@@ -374,6 +375,7 @@ class ShopeeQueryRepository {
       const productClicks = row.product_clicks === null ? null : Number(row.product_clicks);
       const adExpense = Number(row.ad_expense || 0);
       const broadGmv = Number(row.broad_gmv || 0);
+      const directGmv = Number(row.direct_gmv || 0);
       return {
         eventDate: String(row.event_date).slice(0, 10),
         sales,
@@ -395,7 +397,8 @@ class ShopeeQueryRepository {
         directOrders: Number(row.direct_orders || 0),
         broadRoas: adExpense > 0 ? broadGmv / adExpense : 0,
         adSpendRatioToSales: sales && sales > 0 ? adExpense / sales : null,
-        estimatedNaturalSales: sales === null ? null : Math.max(0, sales - broadGmv),
+        estimatedNaturalSales: sales === null ? null : sales - broadGmv,
+        adAttributionExceedsBiSales: sales !== null && broadGmv > sales,
         clickToOrder: productClicks && productClicks > 0 && orders !== null ? orders / productClicks : null,
         aov: orders && orders > 0 && sales !== null ? sales / orders : null,
       };
@@ -489,12 +492,17 @@ class ShopeeQueryRepository {
         adExpense,
         broadGmv,
         broadOrders: Number(row.broad_orders || 0),
-        directGmv: Number(row.direct_gmv || 0),
+        directGmv,
         directOrders: Number(row.direct_orders || 0),
         broadRoas: adExpense > 0 ? broadGmv / adExpense : 0,
+        directRoas: adExpense > 0 ? directGmv / adExpense : 0,
         adSpendRatioToSales: totalSales && totalSales > 0 ? adExpense / totalSales : null,
-        adGmvShareOfSales: totalSales && totalSales > 0 ? broadGmv / totalSales : null,
-        estimatedNaturalSales: totalSales === null ? null : Math.max(0, totalSales - broadGmv),
+        directGmvShareOfSales: totalSales && totalSales > 0 ? directGmv / totalSales : null,
+        // Backward-compatible alias. Item-level total sales must be reconciled with
+        // Direct GMV, not Broad GMV, because Broad attribution can include other shop items.
+        adGmvShareOfSales: totalSales && totalSales > 0 ? directGmv / totalSales : null,
+        estimatedNaturalSales: totalSales === null ? null : totalSales - directGmv,
+        adAttributionExceedsTotalSales: totalSales !== null && directGmv > totalSales,
         hasProductCard: totalSales !== null,
       };
     });
