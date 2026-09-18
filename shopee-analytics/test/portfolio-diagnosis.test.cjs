@@ -38,6 +38,7 @@ const down = diagnoseRow(
   },
 );
 assert.strictEqual(down.primarySignal.code, 'AD_SPEND_RATIO_OVER_LIMIT');
+assert(down.primarySignal.action && down.primarySignal.action.length > 10);
 assert(down.signals.some(row => row.code === 'SALES_DOWN'));
 assert(down.signals.some(row => row.code === 'TRAFFIC_DOWN'));
 assert(down.signals.some(row => row.code === 'NATURAL_SALES_DOWN'));
