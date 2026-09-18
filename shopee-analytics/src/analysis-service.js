@@ -45,6 +45,7 @@ async function analyzeCampaignWindow({
   targetRoas,
   breakEvenRoas,
   recommendedRoi,
+  campaignBudget,
   eventDateSet = new Set(),
 }) {
   const [campaignRows, itemRows] = await Promise.all([
@@ -64,6 +65,7 @@ async function analyzeCampaignWindow({
     targetRoas,
     breakEvenRoas,
     recommendedRoi,
+    campaignBudget,
     days,
     settings: enriched.settings,
   });
