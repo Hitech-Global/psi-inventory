@@ -140,10 +140,35 @@
     </section>
 
     <section id="view-status" class="view-section hidden">
-      <div id="statusShopPrompt" class="selection-prompt hidden">
-        <strong>数据状态需要选择单个店铺</strong>
-        <span>不同店铺的 Token、API 同步和数据新鲜度需要分别检查。</span>
-      </div>
+      <section id="statusPortfolioSummary" class="kpi-grid hidden"></section>
+
+      <section id="statusPortfolioPanel" class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>全部店铺数据状态</h2>
+            <p>先看哪个国家 / 品牌 / 店铺出现同步或 Token 异常，再下钻单店详情。</p>
+          </div>
+          <button id="refreshStatusPortfolioBtn" class="ghost" type="button">刷新全部</button>
+        </div>
+        <div class="table-wrap status-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>国家</th>
+                <th>品牌</th>
+                <th>店铺</th>
+                <th>状态</th>
+                <th>最后同步</th>
+                <th>错误</th>
+                <th>提醒</th>
+              </tr>
+            </thead>
+            <tbody id="statusPortfolioRows">
+              <tr><td colspan="7" class="empty">读取店铺状态中…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
 
       <section id="systemStatus" class="status-panel hidden">
         <div class="status-panel-head">
@@ -152,7 +177,7 @@
             <h2 id="statusTitle">数据状态</h2>
             <p id="statusSubtitle">检查 API 同步、新鲜度与 Token 状态。</p>
           </div>
-          <button id="refreshStatusBtn" class="ghost" type="button">刷新状态</button>
+          <button id="refreshStatusBtn" class="ghost" type="button">刷新单店</button>
         </div>
         <div id="sourceStatusGrid" class="source-status-grid"></div>
         <div id="systemWarnings" class="system-warnings hidden"></div>
