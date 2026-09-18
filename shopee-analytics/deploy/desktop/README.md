@@ -22,14 +22,16 @@ From this directory:
 
 1. Copy `runtime.env.example` to `runtime/.env`.
 2. Fill the PostgreSQL password, token master key and Shopee Partner credentials.
-3. Start PostgreSQL only: `docker compose --env-file runtime/.env up -d postgres`.
-4. Apply schema explicitly: `docker compose --env-file runtime/.env --profile tools run --rm schema`.
-5. Configure shop profiles and per-shop strategy with the gated scripts.
-6. Bootstrap encrypted shop token bundles.
-7. Start app + worker: `docker compose --env-file runtime/.env up -d app worker`.
-8. Open `http://127.0.0.1:3090` on the desktop.
-9. Run one real-shop sync and reconcile against Seller Centre.
-10. Only after the pilot store passes reconciliation, run historical backfill.
+3. Run the offline env check before starting containers: `node ../../scripts/validate-desktop-env.cjs runtime/.env`.
+4. Start PostgreSQL only: `docker compose --env-file runtime/.env up -d postgres`.
+5. Apply schema explicitly: `docker compose --env-file runtime/.env --profile tools run --rm schema`.
+6. Configure shop profiles and per-shop strategy with the gated scripts.
+7. Bootstrap encrypted shop token bundles.
+8. Run the full deployment preflight: `docker compose --env-file runtime/.env --profile tools run --rm preflight`.
+9. Start app + worker: `docker compose --env-file runtime/.env up -d app worker`.
+10. Open `http://127.0.0.1:3090` on the desktop.
+11. Run one real-shop sync and reconcile against Seller Centre.
+12. Only after the pilot store passes reconciliation, run historical backfill.
 
 The host port is intentionally bound to `127.0.0.1`. Later remote access should use a private layer such as Tailscale rather than exposing PostgreSQL or the web app directly to the public internet.
 
