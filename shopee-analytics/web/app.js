@@ -726,6 +726,8 @@ function renderAnalysis(data) {
       <td title="${escapeHtml(item.action && item.action.action || '')}"><span class="state ${itemStateClass(item.state)}">${escapeHtml(stateLabel(item.state))}</span></td>
       <td>${num(item.directOrders)}</td>
       <td>${roas(item.directRoas)}</td>
+      <td title="商品自身保本ROAS；0表示尚未配置">${item.itemBreakEvenRoas ? roas(item.itemBreakEvenRoas) : '未配置'}</td>
+      <td title="max(商品保本ROAS, 店铺广告花费占比约束对应ROAS)">${roas(item.viabilityRoas)}</td>
       <td>${roas(item.broadRoas)}</td>
       <td>${pct(item.spendShare)}</td>
       <td>${pct(item.directGmvShare)}</td>
@@ -735,7 +737,7 @@ function renderAnalysis(data) {
       <td>${item.productCard ? pct(item.productCard.addToCartRate) : '—'}</td>
       <td>${rec}</td>
     </tr>`;
-  }).join('') : '<tr><td colspan="12" class="empty">没有商品层数据。</td></tr>';
+  }).join('') : '<tr><td colspan="14" class="empty">没有商品层数据。</td></tr>';
 
   $('#diagnosisNotes').innerHTML =
     (d.notes || []).map(note => `<div>• ${escapeHtml(note)}</div>`).join('');
