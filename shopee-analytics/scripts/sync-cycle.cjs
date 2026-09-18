@@ -19,8 +19,6 @@ const { syncGmsWindow } = require('../src/sync-window');
 const {
   localIsoDate,
   addDays,
-  startOfUtcDayEpoch,
-  endOfUtcDayEpoch,
   parseCampaignIds,
   mergeCampaignIds,
 } = require('../src/sync-cycle-utils');
@@ -39,7 +37,9 @@ async function main() {
   if (!timeZone) throw new Error('SHOPEE_SHOP_TIMEZONE is required');
   if (mode === 'daily' && !brandPortalTimezone) throw new Error('SHOPEE_BI_TIMEZONE is required for daily mode');
 
-  const today = localIsoDate(new Date(), timeZone);
+  const now = new Date();
+  const nowEpoch = Math.floor(now.getTime() / 1000);
+  const today = localIsoDate(now, timeZone);
   const yesterday = addDays(today, -1);
   const pool = createAnalyticsPool();
 
@@ -107,19 +107,19 @@ async function main() {
     }
 
     await run('orders-recent', () => service.syncOrders({
-      timeFrom: startOfUtcDayEpoch(addDays(today, -2)),
-      timeTo: endOfUtcDayEpoch(today),
+      timeFrom: nowEpoch - 3 * 86400,
+      timeTo: nowEpoch,
     }));
 
     if (mode === 'daily') {
       await run('products', () => service.syncProducts({
-        updateTimeFrom: startOfUtcDayEpoch(addDays(today, -2)),
-        updateTimeTo: endOfUtcDayEpoch(today),
+        updateTimeFrom: nowEpoch - 3 * 86400,
+        updateTimeTo: nowEpoch,
       }));
       await run('promotions', () => service.syncPromotions());
       await run('returns', () => service.syncReturns({
-        updateTimeFrom: startOfUtcDayEpoch(addDays(today, -14)),
-        updateTimeTo: endOfUtcDayEpoch(today),
+        updateTimeFrom: nowEpoch - 14 * 86400,
+        updateTimeTo: nowEpoch,
       }));
       await run('shop-bi-yesterday', () => service.syncShopBiDay({
         date: yesterday,
