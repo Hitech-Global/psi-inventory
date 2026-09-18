@@ -43,3 +43,7 @@
 @media(max-width:1250px){.multi-filter{grid-template-columns:1fr 1fr 1.4fr 1fr 1fr}.multi-filter .primary{grid-column:1/-1}.currency-grid{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:800px){.view-tabs{width:100%;overflow:auto}.multi-filter{grid-template-columns:1fr 1fr}.multi-filter label:nth-child(3){grid-column:1/-1}.currency-grid{grid-template-columns:1fr}.shop-cell{min-width:150px}}
 @media(max-width:560px){.multi-filter{grid-template-columns:1fr}.multi-filter label:nth-child(3){grid-column:auto}.view-tab{padding:0 10px;font-size:11px}}
+
+.status-table-wrap{max-height:650px}
+.status-table-wrap tbody tr[data-status-shop]{cursor:pointer}
+.status-table-wrap tbody tr[data-status-shop]:hover{background:#f8fbff}
