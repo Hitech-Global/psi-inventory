@@ -243,8 +243,14 @@ function updateSingleShopPrompts() {
   const shop = selectedShop();
   $('#adsShopPrompt').classList.toggle('hidden', Boolean(shop));
   $('#adsGrid').classList.toggle('hidden', !shop);
-  $('#statusShopPrompt').classList.toggle('hidden', Boolean(shop));
-  $('#systemStatus').classList.toggle('hidden', !shop);
+
+  if (shop) {
+    $('#statusPortfolioPanel').classList.add('hidden');
+    $('#statusPortfolioSummary').classList.add('hidden');
+  } else {
+    $('#statusPortfolioPanel').classList.remove('hidden');
+    $('#systemStatus').classList.add('hidden');
+  }
 }
 
 function portfolioKpi(label, value, sub = '') {
@@ -588,6 +594,59 @@ async function loadAnalysis(campaignId) {
   }
 }
 
+function renderStatusPortfolio(data) {
+  const statuses = data.statuses || [];
+  const warningTotal = statuses.reduce(
+    (sum, status) => sum + Number(status.warningCount || 0),
+    0,
+  );
+
+  $('#statusPortfolioSummary').innerHTML = [
+    portfolioKpi('店铺数', num(data.shopCount)),
+    portfolioKpi('正常店铺', num(data.okShopCount)),
+    portfolioKpi('异常店铺', num(data.errorShopCount)),
+    portfolioKpi('提醒数量', num(warningTotal)),
+    portfolioKpi('覆盖国家', num(new Set(statuses.map(row => row.shop.countryCode)).size)),
+  ].join('');
+  $('#statusPortfolioSummary').classList.remove('hidden');
+
+  $('#statusPortfolioRows').innerHTML = statuses.length
+    ? statuses.map(row => `<tr data-status-shop="${row.shop.shopId}">
+        <td>${escapeHtml(row.shop.countryName || row.shop.countryCode)}</td>
+        <td>${escapeHtml(row.shop.brandName || row.shop.brandCode)}</td>
+        <td><div class="shop-cell"><strong>${escapeHtml(row.shop.displayName)}</strong><small>#${row.shop.shopId}</small></div></td>
+        <td><span class="pill ${row.ok ? 'good' : 'bad'}">${row.ok ? '正常' : '需处理'}</span></td>
+        <td>${escapeHtml(formatDateTime(row.lastAnySyncAt))}</td>
+        <td class="${row.errorCount ? 'negative' : ''}">${num(row.errorCount)}</td>
+        <td>${num(row.warningCount)}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="7" class="empty">当前筛选没有店铺。</td></tr>';
+
+  $('[data-status-shop]').forEach(row => {
+    row.addEventListener('click', () => {
+      $('#shopSelect').value = row.dataset.statusShop;
+      updateSingleShopPrompts();
+      loadSystemStatus();
+    });
+  });
+}
+
+async function loadStatusPortfolio() {
+  const filters = currentFilters();
+  const params = new URLSearchParams();
+  if (filters.country) params.set('country', filters.country);
+  if (filters.brand) params.set('brand', filters.brand);
+
+  const button = $('#refreshStatusPortfolioBtn');
+  if (button) button.disabled = true;
+  try {
+    const data = await json(`/api/shopee-analytics/status/portfolio?${params}`);
+    renderStatusPortfolio(data);
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
 function renderSystemStatus(data) {
   const shop = selectedShop();
   const sources = data.sources || [];
@@ -679,7 +738,10 @@ async function loadCurrentView() {
   try {
     if (state.view === 'overview') await loadPortfolio();
     else if (state.view === 'ads' && selectedShop()) await loadCampaigns();
-    else if (state.view === 'status' && selectedShop()) await loadSystemStatus();
+    else if (state.view === 'status') {
+      if (selectedShop()) await loadSystemStatus();
+      else await loadStatusPortfolio();
+    }
   } catch (error) {
     if (state.view === 'overview') {
       $('#portfolioRows').innerHTML =
@@ -727,5 +789,6 @@ $('#brandFilter').addEventListener('change', onDimensionChanged);
 $('#shopSelect').addEventListener('change', onShopChanged);
 $('#loadBtn').addEventListener('click', loadCurrentView);
 $('#refreshStatusBtn').addEventListener('click', loadSystemStatus);
+$('#refreshStatusPortfolioBtn').addEventListener('click', loadStatusPortfolio);
 
 init();
