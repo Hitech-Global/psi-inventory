@@ -1,0 +1,7 @@
+*
+!package.json
+!package-lock.json
+!shopee-analytics/
+!shopee-analytics/**
+shopee-analytics/deploy/desktop/runtime/
+shopee-analytics/deploy/desktop/*.dump
