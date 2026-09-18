@@ -407,7 +407,7 @@ function renderPortfolio(data) {
       }).join('')
     : '<tr><td colspan="14" class="empty">当前筛选没有国家 × 品牌汇总数据。</td></tr>';
 
-  $('[data-business-country]').forEach(row => {
+  $$('[data-business-country]').forEach(row => {
     row.addEventListener('click', () => {
       $('#countryFilter').value = row.dataset.businessCountry;
       $('#brandFilter').value = row.dataset.businessBrand;
