@@ -231,11 +231,11 @@ module.exports = function installQuotationManagement(deps) {
     };
   }
 
-  app.get('/api/quotation-management/summary', requireApiPermission('cost_view'), asyncHandler((req, res) => {
+  app.get('/api/quotation-management/summary', requireApiPermission('quotation_view'), asyncHandler((req, res) => {
     try { res.json(buildSummary(req)); } catch (e) { res.status(500).json({ error: e.message }); }
   }));
 
-  app.get('/api/quotation-management/sku/:sku', requireApiPermission('cost_view'), asyncHandler((req, res) => {
+  app.get('/api/quotation-management/sku/:sku', requireApiPermission('quotation_view'), asyncHandler((req, res) => {
     try {
       const sku = String(req.params.sku || '').trim(), brand = String(req.query.brand || '').trim();
       if (!sku || !brand) return res.status(400).json({ error: '缺少 SKU 或品牌' });
@@ -254,7 +254,7 @@ module.exports = function installQuotationManagement(deps) {
   }));
 
   // Legacy route retained for local/dev compatibility. Production registers quotation-import-fast.js first.
-  app.post('/api/quotation-management/import', requireApiPermission('cost_view'), asyncHandler((req, res) => {
+  app.post('/api/quotation-management/import', requireApiPermission('quotation_view'), asyncHandler((req, res) => {
     try {
       const input = Array.isArray((req.body || {}).rows) ? req.body.rows : [], mode = (req.body || {}).duplicate_mode === 'overwrite' ? 'overwrite' : 'skip';
       if (!input.length) return res.status(400).json({ error: '导入数据不能为空' });
