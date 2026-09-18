@@ -332,8 +332,10 @@ function renderPortfolio(data) {
     : '<div class="empty-inline">所选范围没有金额数据。</div>';
   $('#currencyGroups').classList.remove('hidden');
 
+  const portfolioContext = data.comparisonContext || {};
   $('#portfolioCompareSubtitle').textContent =
-    `当前 ${data.startDate} → ${data.endDate}，对比上一等长周期 ${data.previousStartDate} → ${data.previousEndDate}。经营信号用于定位下钻方向，不直接视为因果结论。`;
+    `当前 ${data.startDate} → ${data.endDate}，对比上一等长周期 ${data.previousStartDate} → ${data.previousEndDate}。经营信号用于定位下钻方向，不直接视为因果结论。` +
+    (portfolioContext.warning ? ` ⚠ ${portfolioContext.warning}` : '');
 
   const diagnosisRows = shops.map(shop => ({
     shop,
@@ -464,8 +466,10 @@ function renderStoreDetail(data) {
 
   $('#storeTitle').textContent =
     `${shop.countryName || shop.countryCode} · ${shop.brandName || shop.brandCode} · ${shop.displayName}`;
+  const storeContext = data.comparisonContext || {};
   $('#storeCompareSubtitle').textContent =
-    `当前 ${data.startDate} → ${data.endDate}，对比上一等长周期 ${data.previousStartDate} → ${data.previousEndDate}。`;
+    `当前 ${data.startDate} → ${data.endDate}，对比上一等长周期 ${data.previousStartDate} → ${data.previousEndDate}。` +
+    (storeContext.warning ? ` ⚠ ${storeContext.warning}` : '');
 
   $('#storePrimarySignal').textContent = primarySignal ? primarySignal.title : '等待数据';
   $('#storePrimarySignal').className = `pill ${signalClass(primarySignal)}`;
@@ -493,7 +497,7 @@ function renderStoreDetail(data) {
   $('#storeTrendRows').innerHTML = (data.daily || []).length
     ? data.daily.map(row => {
         const eventText = row.event
-          ? (row.event.eventType === 'DOUBLE_DAY' ? '双日' : row.event.eventType === 'PAYDAY' ? '25日' : row.event.eventType)
+          ? (row.event.eventType === 'DOUBLE_DAY' ? '双日' : row.event.eventType === 'PAYDAY_25' ? '25日' : row.event.eventType)
           : '普通日';
         return `<tr>
           <td>${escapeHtml(row.eventDate)}</td>
