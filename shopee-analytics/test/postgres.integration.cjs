@@ -19,6 +19,7 @@ const { ShopeeShopProfileRepository } = require('../src/shop-profile-repository'
 const { ShopeeShopRepository } = require('../src/shop-repository');
 const { ShopeeCampaignRepository } = require('../src/campaign-repository');
 const { ShopeeProductRepository } = require('../src/product-repository');
+const { ShopeePromotionRepository } = require('../src/promotion-repository');
 
 (async () => {
   const pool = new Pool({ connectionString: url, max: 3 });
@@ -328,6 +329,115 @@ const { ShopeeProductRepository } = require('../src/product-repository');
     assert.strictEqual(priceOps.rows[0].operation_type, 'PRICE_CHANGE');
     assert.strictEqual(Number(priceOps.rows[0].before_json.currentPrice), 399000);
     assert.strictEqual(Number(priceOps.rows[0].after_json.currentPrice), 379000);
+
+    const promotionRepository = new ShopeePromotionRepository({ pool });
+    await promotionRepository.upsertVoucher({
+      shopId: 1,
+      observedAt: new Date('2026-09-17T04:00:00Z'),
+      voucher: {
+        voucherId: 500,
+        voucherCode: 'V10',
+        voucherName: 'Voucher 10',
+        voucherType: 2,
+        rewardType: 1,
+        startTime: 1758067200,
+        endTime: 1758672000,
+        percentage: 10,
+        discountAmount: null,
+        maxPrice: 50000,
+        minBasketPrice: 100000,
+        usageQuantity: 100,
+        currentUsage: 0,
+        isAdmin: false,
+        itemIds: [101],
+        raw: {},
+      },
+    });
+    await promotionRepository.upsertVoucher({
+      shopId: 1,
+      observedAt: new Date('2026-09-17T05:00:00Z'),
+      voucher: {
+        voucherId: 500,
+        voucherCode: 'V12',
+        voucherName: 'Voucher 12',
+        voucherType: 2,
+        rewardType: 1,
+        startTime: 1758067200,
+        endTime: 1758672000,
+        percentage: 12,
+        discountAmount: null,
+        maxPrice: 50000,
+        minBasketPrice: 100000,
+        usageQuantity: 100,
+        currentUsage: 1,
+        isAdmin: false,
+        itemIds: [101, 102],
+        raw: {},
+      },
+    });
+    const voucherOps = await pool.query(
+      `SELECT operation_type,item_id
+       FROM shopee_operation_history
+       WHERE shop_id=1 AND operation_type='VOUCHER_CHANGE'
+       ORDER BY item_id`,
+    );
+    assert(voucherOps.rows.some(row => Number(row.item_id) === 101));
+    assert(voucherOps.rows.some(row => Number(row.item_id) === 102));
+
+    await promotionRepository.upsertDiscount({
+      shopId: 1,
+      observedAt: new Date('2026-09-17T06:00:00Z'),
+      discount: {
+        discountId: 600,
+        discountName: 'Payday',
+        status: 'ongoing',
+        startTime: 1758067200,
+        endTime: 1758672000,
+        source: 0,
+        itemRows: [{
+          itemId: 101,
+          modelId: 1,
+          originalPrice: 399000,
+          promotionPrice: 359000,
+          promotionStock: 100,
+          raw: {},
+        }],
+        raw: {},
+      },
+    });
+    await promotionRepository.upsertDiscount({
+      shopId: 1,
+      observedAt: new Date('2026-09-17T07:00:00Z'),
+      discount: {
+        discountId: 600,
+        discountName: 'Payday',
+        status: 'ongoing',
+        startTime: 1758067200,
+        endTime: 1758672000,
+        source: 0,
+        itemRows: [{
+          itemId: 101,
+          modelId: 1,
+          originalPrice: 399000,
+          promotionPrice: 349000,
+          promotionStock: 95,
+          raw: {},
+        }],
+        raw: {},
+      },
+    });
+    const discountOps = await pool.query(
+      `SELECT operation_type,item_id,before_json,after_json
+       FROM shopee_operation_history
+       WHERE shop_id=1 AND operation_type='DISCOUNT_CHANGE'
+       ORDER BY id`,
+    );
+    assert.strictEqual(discountOps.rows.length, 1);
+    assert.strictEqual(Number(discountOps.rows[0].item_id), 101);
+    assert.strictEqual(
+      Number(discountOps.rows[0].after_json.itemRows[0].promotionPrice),
+      349000,
+    );
 
     const queryRepository = new ShopeeQueryRepository({ pool });
     const shops = await queryRepository.listShops();
