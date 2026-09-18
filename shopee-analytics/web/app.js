@@ -158,7 +158,7 @@ function backupStatusCard(backup) {
   return `<div class="source-card ${cls}">
     <div class="source-card-top"><strong>PostgreSQL备份</strong><span class="source-state ${cls}">${label}</span></div>
     <div class="source-date">NAS：${backup.nasCopiedAt ? formatDateTime(backup.nasCopiedAt) : '未确认'}</div>
-    <div class="source-sync">最近备份：${formatDateTime(backup.completedAt)} · ${sizeMb} MB</div>
+    <div class="source-sync">最近成功：${formatDateTime(backup.completedAt)} · ${sizeMb} MB${backup.error ? ' · 最近失败：' + escapeHtml(backup.error) : ''}</div>
   </div>`;
 }
 
