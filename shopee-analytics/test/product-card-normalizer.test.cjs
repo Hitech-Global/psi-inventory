@@ -9,7 +9,7 @@ const {
 } = require('../src/product-card-normalizer');
 
 assert.strictEqual(numeric('Rp1,234,567'), 1234567);
-assert.strictEqual(rate('1.93%'), 0.0193);
+assert(Math.abs(rate('1.93%') - 0.0193) < 1e-12);
 assert.strictEqual(rate(0.0193), 0.0193);
 assert.deepStrictEqual(
   parseDateRangeFromFilename('8月producttraffic_Product_Card.20260801_20260812(3).xlsx'),
@@ -40,8 +40,8 @@ assert.strictEqual(result.rows.length, 1);
 assert.strictEqual(result.rows[0].startDate, '2026-08-01');
 assert.strictEqual(result.rows[0].endDate, '2026-08-12');
 assert.strictEqual(result.rows[0].impressions, 59580);
-assert.strictEqual(result.rows[0].ctr, 0.0177);
-assert.strictEqual(result.rows[0].conversionRate, 0.0233);
+assert(Math.abs(result.rows[0].ctr - 0.0177) < 1e-12);
+assert(Math.abs(result.rows[0].conversionRate - 0.0233) < 1e-12);
 assert.strictEqual(result.rows[0].sales, 15050200);
 assert.strictEqual(result.skipped.length, 0);
 
