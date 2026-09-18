@@ -15,6 +15,7 @@ const { ShopeeAnalyticsRepository } = require('../src/repository');
 const { ShopeeProductCardRepository } = require('../src/product-card-repository');
 const { ShopeeTokenRepository } = require('../src/token-repository');
 const { ShopeeQueryRepository } = require('../src/query-repository');
+const { ShopeeShopProfileRepository } = require('../src/shop-profile-repository');
 
 (async () => {
   const pool = new Pool({ connectionString: url, max: 3 });
@@ -133,7 +134,75 @@ const { ShopeeQueryRepository } = require('../src/query-repository');
     assert.strictEqual(decrypted.accessToken, 'access-secret');
     assert.strictEqual(decrypted.refreshToken, 'refresh-secret');
 
+    const shopProfiles = new ShopeeShopProfileRepository({ pool });
+    await shopProfiles.upsertMany([
+      {
+        shopId: 1,
+        displayName: 'Redragon Indonesia',
+        countryCode: 'ID',
+        countryName: 'Indonesia',
+        brandCode: 'REDRAGON',
+        brandName: 'Redragon',
+        currency: 'IDR',
+        timezone: 'Asia/Jakarta',
+        marketplaceRegion: 'ID',
+      },
+      {
+        shopId: 2,
+        displayName: 'Redragon Thailand',
+        countryCode: 'TH',
+        countryName: 'Thailand',
+        brandCode: 'REDRAGON',
+        brandName: 'Redragon',
+        currency: 'THB',
+        timezone: 'Asia/Bangkok',
+        marketplaceRegion: 'TH',
+      },
+    ]);
+
+    await pool.query(
+      `INSERT INTO shopee_shop_bi_daily
+       (shop_id,event_date,sales,orders,units_sold,product_clicks,product_views,unique_visitors,
+        item_conversion_rate,order_conversion_rate,voucher_sales,voucher_buyers,voucher_usage_rate,
+        voucher_cir,voucher_cost)
+       VALUES
+       (1,'2026-09-17',1000000,10,11,200,500,150,0.05,0.04,200000,2,0.1,0.02,20000),
+       (2,'2026-09-17',5000,5,6,100,250,80,0.05,0.04,1000,1,0.1,0.02,100)`
+    );
+    await pool.query(
+      `INSERT INTO shopee_ad_campaign_daily
+       (shop_id,campaign_id,event_date,impressions,clicks,expense,broad_gmv,broad_orders,broad_units,
+        direct_gmv,direct_orders,direct_units)
+       VALUES
+       (2,8,'2026-09-17',500,15,500,3000,3,3,2500,2,2)
+       ON CONFLICT DO NOTHING`
+    );
+
     const queryRepository = new ShopeeQueryRepository({ pool });
+    const shops = await queryRepository.listShops();
+    assert.strictEqual(shops.length, 2);
+    assert.strictEqual(shops[0].countryCode, 'ID');
+    assert.strictEqual(shops[1].currency, 'THB');
+
+    const portfolio = await queryRepository.getPortfolioOverview({
+      startDate: '2026-09-17',
+      endDate: '2026-09-17',
+    });
+    assert.strictEqual(portfolio.shops.length, 2);
+    assert.strictEqual(portfolio.dimensions.multiCurrency, true);
+    assert.deepStrictEqual(portfolio.dimensions.currencies, ['IDR', 'THB']);
+    assert.strictEqual(portfolio.currencyGroups.length, 2);
+    assert.strictEqual(portfolio.totals.orders, 15);
+    assert(!Object.prototype.hasOwnProperty.call(portfolio.totals, 'sales'));
+
+    const idOnly = await queryRepository.getPortfolioOverview({
+      startDate: '2026-09-17',
+      endDate: '2026-09-17',
+      countryCode: 'ID',
+    });
+    assert.strictEqual(idOnly.shops.length, 1);
+    assert.strictEqual(idOnly.shops[0].currency, 'IDR');
+
     const coverage = await queryRepository.getCampaignCoverageContext({
       shopId: 1,
       campaignId: 7,
