@@ -38,6 +38,15 @@ services:
       - "127.0.0.1:${SHOPEE_ANALYTICS_HOST_PORT:-3090}:3090"
     volumes:
       - ./runtime:/runtime:ro
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3090/api/shopee-analytics/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 5
     depends_on:
       postgres:
         condition: service_healthy
