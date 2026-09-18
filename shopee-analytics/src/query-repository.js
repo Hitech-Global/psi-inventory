@@ -240,8 +240,11 @@ class ShopeeQueryRepository {
           sales: 0,
           orders: 0,
           unitsSold: 0,
+          productClicks: 0,
+          productViews: 0,
           adExpense: 0,
           broadGmv: 0,
+          directGmv: 0,
           broadOrders: 0,
           directOrders: 0,
           refundAmount: 0,
@@ -254,8 +257,11 @@ class ShopeeQueryRepository {
       group.sales += shop.sales;
       group.orders += shop.orders;
       group.unitsSold += shop.unitsSold;
+      group.productClicks += shop.productClicks;
+      group.productViews += shop.productViews;
       group.adExpense += shop.adExpense;
       group.broadGmv += shop.broadGmv;
+      group.directGmv += shop.directGmv;
       group.broadOrders += shop.broadOrders;
       group.directOrders += shop.directOrders;
       group.refundAmount += shop.refundAmount;
