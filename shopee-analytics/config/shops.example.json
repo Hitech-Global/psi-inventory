@@ -8,6 +8,7 @@
     "brandName": "Redragon",
     "currency": "IDR",
     "timezone": "Asia/Jakarta",
+    "brandPortalTimezone": "GMT+7",
     "marketplaceRegion": "ID",
     "active": true,
     "sortOrder": 10
@@ -21,6 +22,7 @@
     "brandName": "Redragon",
     "currency": "THB",
     "timezone": "Asia/Bangkok",
+    "brandPortalTimezone": "GMT+7",
     "marketplaceRegion": "TH",
     "active": true,
     "sortOrder": 20
