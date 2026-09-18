@@ -49,6 +49,35 @@
 
       <section id="currencyGroups" class="currency-grid hidden"></section>
 
+      <section class="panel portfolio-diagnosis-panel">
+        <div class="panel-head">
+          <div>
+            <h2>经营变化诊断</h2>
+            <p id="portfolioCompareSubtitle">与上一等长周期比较；这里显示经营信号，不把相关变化直接当作因果。</p>
+          </div>
+          <span id="portfolioIssueCount" class="pill neutral">0 需关注</span>
+        </div>
+        <div class="table-wrap portfolio-diagnosis-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>店铺</th>
+                <th>销售额变化</th>
+                <th>商品点击变化</th>
+                <th>点击→订单</th>
+                <th>客单价变化</th>
+                <th>估算自然销售</th>
+                <th>广告GMV变化</th>
+                <th>主要信号</th>
+              </tr>
+            </thead>
+            <tbody id="portfolioDiagnosisRows">
+              <tr><td colspan="8" class="empty">等待周期对比数据。</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
       <section id="businessGroupPanel" class="panel business-group-panel">
         <div class="panel-head">
           <div>
@@ -66,17 +95,19 @@
                 <th>店铺数</th>
                 <th>币种</th>
                 <th>销售额</th>
+                <th>销售变化</th>
                 <th>订单</th>
                 <th>估算自然销售</th>
                 <th>广告花费</th>
                 <th>广告占比</th>
                 <th>广告GMV占比</th>
                 <th>Broad ROAS</th>
+                <th>主要信号</th>
                 <th>退款金额</th>
               </tr>
             </thead>
             <tbody id="businessGroupRows">
-              <tr><td colspan="12" class="empty">等待数据。</td></tr>
+              <tr><td colspan="14" class="empty">等待数据。</td></tr>
             </tbody>
           </table>
         </div>
