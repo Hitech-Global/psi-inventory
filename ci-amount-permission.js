@@ -70,6 +70,12 @@
           if (row.children[idx]) row.removeChild(row.children[idx]);
         });
       });
+      table.querySelectorAll('.ci-list-logi-row > td[colspan]').forEach(function (td) {
+        td.colSpan = headRow.children.length;
+      });
+    });
+    host.querySelectorAll('button[onclick*="viewCICost("],button[onclick*="createBalPay("]').forEach(function (btn) {
+      btn.remove();
     });
     return host.innerHTML;
   }
@@ -100,11 +106,11 @@
       });
     }
     if (isHistorical) {
-      host.querySelectorAll('.detail-section').forEach(function (section) {
-        var h = section.querySelector('h3,h4');
-        var txt = norm(h && h.textContent);
-        if (txt.indexOf('历史ci附件') !== -1 || txt.indexOf('historicalciattachment') !== -1) section.remove();
-      });
+      var attList = host.querySelector('#hci-att-list');
+      if (attList) {
+        var attSection = attList.closest('.detail-section');
+        if (attSection) attSection.remove();
+      }
     }
     return host.innerHTML;
   }
