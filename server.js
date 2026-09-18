@@ -1231,6 +1231,25 @@ if (require.main === module) {
     }
   })();
 }
+// QUOTATION-VIEW-PERMISSION-V1：仅给内置超级管理员兼容补齐；普通角色保持未勾选，必须显式授权。
+if (require.main === module) {
+  (function ensureRoleAdminQuotationView() {
+    try {
+      const adminRole = queryOne("SELECT permissions FROM roles WHERE id = 'role_admin'");
+      if (!adminRole || !adminRole.permissions) return;
+      const perms = JSON.parse(adminRole.permissions);
+      if (!Array.isArray(perms)) return;
+      if (!perms.includes('quotation_view')) {
+        perms.push('quotation_view');
+        run("UPDATE roles SET permissions = ? WHERE id = 'role_admin'", [JSON.stringify(perms)]);
+        console.log('[Migration] role_admin 已添加 quotation_view 权限');
+      }
+    } catch (e) {
+      console.warn('[Migration] role_admin quotation_view 迁移失败（非致命）:', e.message);
+    }
+  })();
+}
+
 // Phase 2：为拥有审批权限的角色自动追加 approval_view（幂等迁移）
 // 仅处理含 po_approve/payment_approve/check_approve 的角色，不处理含 '*' 的超级管理员（通配符已覆盖所有权限）
 if (require.main === module) {
@@ -2143,6 +2162,7 @@ const PERM_LABELS = {
   ci_amount_view: { label: '查看金额', module: '采购链', submodule: 'CI管理' },
   ci_create: { label: '创建', module: '采购链', submodule: 'CI管理' },
   ci_edit: { label: '编辑', module: '采购链', submodule: 'CI管理' },
+  quotation_view: { label: '查看', module: '采购链', submodule: '报价管理' },
   logistics_view: { label: '查看', module: '采购链', submodule: '物流管理' },
   logistics_create: { label: '创建', module: '采购链', submodule: '物流管理' },
   logistics_edit: { label: '编辑', module: '采购链', submodule: '物流管理' },
@@ -9642,7 +9662,7 @@ app.get('/api/commercial-invoices/:id', requireApiPermission('ci_view'), asyncHa
 //  - batch 级主查询，不 JOIN packing_lists → 规避「1 batch : N PL」行爆炸（旧物流列表既有缺陷，新入口绝不复现）
 //  - PL 信息单独 set-based 查询按 logistics_batch_id 分组挂回 → 与 batch 数量无关，结构性无 N+1
 //  - 不返回任何 packing_list_items（前端按 batch 维度展示，PL item 由前端已有 ci.packing_lists 零请求渲染）
-app.get('/api/commercial-invoices/:id/logistics-batches', requireApiPermission('logistics_view'), asyncHandler((req, res) => {
+app.get('/api/commercial-invoices/:id/logistics-batches', requireApiPermission('logistics_view', 'ci_view'), asyncHandler((req, res) => {
   const ciId = req.params.id;
   const sql = 'SELECT lb.*, ci.brand, ci.actual_ship_date, ci.currency AS ci_currency' + LOGI_DERIVED_COLS
     + '\nFROM logistics_batches lb\nLEFT JOIN commercial_invoices ci ON lb.related_ci_id = ci.id\n'
@@ -9666,7 +9686,7 @@ app.get('/api/commercial-invoices/:id/logistics-batches', requireApiPermission('
 // ===== CI/PL × 物流合并 PHASE A：批次导出数据（含权威 ambiguity 判定）=====
 // 固定 4~5 条 set-based 查询，绝不对 commercial_invoice_items 做 JOIN（避免 row-amplify）。
 // 导出判定（exact / ambiguous / missing）放在后端：可测、不可绕过、口径唯一。
-app.get('/api/logistics-batches/:id/export-data', requireApiPermission('logistics_view'), asyncHandler((req, res) => {
+app.get('/api/logistics-batches/:id/export-data', requireApiPermission('logistics_view', 'ci_view'), asyncHandler((req, res) => {
   const batchId = req.params.id;
   const scope = req.query.scope === 'ci_pl' ? 'ci_pl' : 'pl';
   if (scope === 'ci_pl' && !ciCanViewAmounts(req)) {
