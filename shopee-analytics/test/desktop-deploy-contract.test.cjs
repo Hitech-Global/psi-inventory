@@ -9,6 +9,7 @@ const deploy = path.join(root, 'deploy', 'desktop');
 const compose = fs.readFileSync(path.join(deploy, 'docker-compose.yml'), 'utf8');
 const dockerfile = fs.readFileSync(path.join(deploy, 'Dockerfile'), 'utf8');
 const envExample = fs.readFileSync(path.join(deploy, 'runtime.env.example'), 'utf8');
+const dockerIgnore = fs.readFileSync(path.join(deploy, 'Dockerfile.dockerignore'), 'utf8');
 const gitignore = fs.readFileSync(path.join(root, '..', '.gitignore'), 'utf8');
 
 const postgresSection = compose.slice(
@@ -44,6 +45,14 @@ assert(
 assert(
   envExample.includes('POSTGRES_PASSWORD=CHANGE_TO_A_LONG_RANDOM_PASSWORD'),
   'runtime env example must not contain a real database password',
+);
+assert(
+  dockerIgnore.includes('shopee-analytics/deploy/desktop/runtime/'),
+  'Docker build context must exclude desktop runtime secrets',
+);
+assert(
+  dockerIgnore.startsWith('*\n'),
+  'Docker build context should deny everything by default and opt in only required files',
 );
 
 console.log('shopee desktop deployment contract tests: ok');
