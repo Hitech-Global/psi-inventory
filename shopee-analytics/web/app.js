@@ -174,9 +174,11 @@ function renderAnalysis(data) {
       <td>${pct(item.directGmvShare)}</td>
       <td>${pct(item.ctr)}</td>
       <td>${pct(item.directCvr)}</td>
+      <td>${item.productCard ? pct(item.productCard.conversionRate) : '—'}</td>
+      <td>${item.productCard ? pct(item.productCard.addToCartRate) : '—'}</td>
       <td>${rec}</td>
     </tr>`;
-  }).join('') : '<tr><td colspan="10" class="empty">没有商品层数据。</td></tr>';
+  }).join('') : '<tr><td colspan="12" class="empty">没有商品层数据。</td></tr>';
 
   $('#diagnosisNotes').innerHTML = (d.notes || []).map(note => `<div>• ${escapeHtml(note)}</div>`).join('');
 }
