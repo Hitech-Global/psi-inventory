@@ -3,7 +3,7 @@
 function comparableSetting(row) {
   if (!row) return null;
   return {
-    status: row.status ?? row.campaign_status ?? null,
+    status: row.status ?? row.campaign_status ?? row.campaignStatus ?? null,
     biddingMethod: row.bidding_method ?? row.biddingMethod ?? null,
     campaignBudget: row.campaign_budget === null || row.campaign_budget === undefined
       ? (row.campaignBudget ?? null)
