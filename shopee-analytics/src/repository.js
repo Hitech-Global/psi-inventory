@@ -146,7 +146,7 @@ class ShopeeAnalyticsRepository {
     }
   }
 
-  async saveGmsDay({ shopId, campaignId, eventDate, campaign, items, membershipItemIds = [], rawSnapshots = [] }) {
+  async saveGmsDay({ shopId, campaignId, eventDate, campaign, items, membershipItemIds = null, rawSnapshots = [] }) {
     return this.withTransaction(async client => {
       await this.upsertCampaign({ shopId, campaignId, campaignTypeRaw: 'GMS', campaignTypeNormalized: 'GMS', queryable: client });
       await this.upsertCampaignDaily({
@@ -158,11 +158,17 @@ class ShopeeAnalyticsRepository {
         queryable: client,
       });
 
-      const membership = membershipItemIds.length
-        ? membershipItemIds
-        : (items || []).map(x => x.itemId).filter(x => x !== null && x !== undefined);
-      if (membership.length) {
-        await this.replaceMembershipDay({ shopId, campaignId, eventDate, itemIds: membership, queryable: client });
+      // GMS item-performance only returns items with performance. It must never be
+      // treated as a complete campaign-membership snapshot when historical membership
+      // is unavailable.
+      if (Array.isArray(membershipItemIds) && membershipItemIds.length) {
+        await this.replaceMembershipDay({
+          shopId,
+          campaignId,
+          eventDate,
+          itemIds: membershipItemIds,
+          queryable: client,
+        });
       }
 
       for (const item of items || []) {
@@ -212,6 +218,22 @@ class ShopeeAnalyticsRepository {
       [shopId, campaignId, eventDate],
     );
     return result.rows.map(row => Number(row.item_id));
+  }
+
+  async getSyncState({ appRole, endpointKey, shopId }) {
+    const result = await this.pool.query(
+      `SELECT cursor_json,last_success_at,last_error
+       FROM shopee_sync_state
+       WHERE app_role=$1 AND endpoint_key=$2 AND shop_id=$3`,
+      [appRole, endpointKey, shopId],
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    return {
+      cursor: row.cursor_json || {},
+      lastSuccessAt: row.last_success_at,
+      lastError: row.last_error,
+    };
   }
 
   async markSyncSuccess({ appRole, endpointKey, shopId, cursor = {} }) {
