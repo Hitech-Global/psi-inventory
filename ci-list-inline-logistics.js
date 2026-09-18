@@ -194,7 +194,7 @@
           '<td>' + esc(b.listing_status || 'pending_plan') + '</td>' +
           '<td class="ci-list-logi-owners">' + (b.listing_owner_names && b.listing_owner_names.length ? esc(b.listing_owner_names.join('、')) : '—') + '</td>' +
           '<td class="cell-actions">' +
-            '<button class="action-btn" data-ci-logi-edit="' + esc(b.id) + '" data-ci-id="' + esc(ciId) + '" title="' + esc(tr('common.edit', '编辑')) + '">✏️</button> ' +
+            (hasPermission('logistics_edit') ? '<button class="action-btn" data-ci-logi-edit="' + esc(b.id) + '" data-ci-id="' + esc(ciId) + '" title="' + esc(tr('common.edit', '编辑')) + '">✏️</button> ' : '') +
             '<button class="action-btn" data-ci-logi-export="' + esc(b.id) + '" title="' + esc(tr('common.export', '导出')) + '">⬇️</button>' +
             '<div id="ci-list-logi-export-' + esc(b.id) + '" class="ci-list-logi-export" style="display:none"></div>' +
           '</td>' +
