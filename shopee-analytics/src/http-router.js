@@ -4,6 +4,7 @@ const express = require('express');
 const { analyzeCampaignWindow } = require('./analysis-service');
 const { buildShopeeSeaEventCalendar, toEventDateSet } = require('./event-calendar');
 const { evaluateItemCoverage, buildSystemWarnings } = require('./data-quality');
+const { previousPeriod, diagnosePortfolio } = require('./portfolio-diagnosis');
 
 function positiveInt(value, name) {
   const n = Number(value);
@@ -73,18 +74,33 @@ function createShopeeAnalyticsRouter({
       const brandCode = optionalCode(req.query.brand, 'brand');
       const shopIds = parseShopIds(req.query.shop_ids);
 
-      const overview = await queryRepository.getPortfolioOverview({
-        startDate,
-        endDate,
-        countryCode,
-        brandCode,
-        shopIds,
-      });
+      const previous = previousPeriod(startDate, endDate);
+      const [overview, previousOverview] = await Promise.all([
+        queryRepository.getPortfolioOverview({
+          startDate,
+          endDate,
+          countryCode,
+          brandCode,
+          shopIds,
+        }),
+        queryRepository.getPortfolioOverview({
+          startDate: previous.startDate,
+          endDate: previous.endDate,
+          countryCode,
+          brandCode,
+          shopIds,
+        }),
+      ]);
+      const comparison = diagnosePortfolio(overview, previousOverview);
+
       res.json({
         startDate,
         endDate,
+        previousStartDate: previous.startDate,
+        previousEndDate: previous.endDate,
         filters: { countryCode, brandCode, shopIds },
         ...overview,
+        comparison,
         currencyPolicy: overview.dimensions.multiCurrency
           ? 'MONETARY_TOTALS_SPLIT_BY_CURRENCY'
           : 'SINGLE_CURRENCY',
