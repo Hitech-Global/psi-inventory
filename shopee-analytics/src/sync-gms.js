@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('crypto');
 const { ENDPOINTS } = require('./catalog');
 const { normalizePerformance } = require('./metrics');
 
@@ -40,26 +41,33 @@ function normalizeItemRow(row) {
   };
 }
 
-async function fetchAllGmsItemPerformance({ client, shopId, accessToken, campaignId, date, limit = 50 }) {
+function fingerprint(value) {
+  return crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
+async function fetchAllGmsItemPerformanceWithRaw({ client, shopId, accessToken, campaignId, date, limit = 50 }) {
   const endpoint = ENDPOINTS.adsGmsItemPerformance;
   const shopeeDate = toShopeeDate(date);
   const all = [];
+  const rawPages = [];
   let offset = 0;
 
   for (;;) {
+    const requestBody = {
+      campaign_id: campaignId,
+      start_date: shopeeDate,
+      end_date: shopeeDate,
+      offset,
+      limit,
+    };
     const payload = await client.shopRequest({
       path: endpoint.path,
       shopId,
       accessToken,
       method: endpoint.method,
-      body: {
-        campaign_id: campaignId,
-        start_date: shopeeDate,
-        end_date: shopeeDate,
-        offset,
-        limit,
-      },
+      body: requestBody,
     });
+    rawPages.push({ requestBody, payload });
     const response = unwrapResponse(payload);
     const rows = extractItemRows(payload);
     all.push(...rows.map(normalizeItemRow));
@@ -69,24 +77,37 @@ async function fetchAllGmsItemPerformance({ client, shopId, accessToken, campaig
     if (response.has_next_page !== true && rows.length < limit) break;
     offset += rows.length;
   }
-  return all;
+  return { rows: all, rawPages };
 }
 
-async function fetchGmsCampaignPerformance({ client, shopId, accessToken, campaignId, date }) {
+async function fetchAllGmsItemPerformance(args) {
+  return (await fetchAllGmsItemPerformanceWithRaw(args)).rows;
+}
+
+async function fetchGmsCampaignPerformanceWithRaw({ client, shopId, accessToken, campaignId, date }) {
   const endpoint = ENDPOINTS.adsGmsCampaignPerformance;
   const shopeeDate = toShopeeDate(date);
+  const requestBody = {
+    campaign_id: campaignId,
+    start_date: shopeeDate,
+    end_date: shopeeDate,
+  };
   const payload = await client.shopRequest({
     path: endpoint.path,
     shopId,
     accessToken,
     method: endpoint.method,
-    body: {
-      campaign_id: campaignId,
-      start_date: shopeeDate,
-      end_date: shopeeDate,
-    },
+    body: requestBody,
   });
-  return extractCampaignPerformance(payload);
+  return {
+    performance: extractCampaignPerformance(payload),
+    requestBody,
+    payload,
+  };
+}
+
+async function fetchGmsCampaignPerformance(args) {
+  return (await fetchGmsCampaignPerformanceWithRaw(args)).performance;
 }
 
 function leftJoinMembershipPerformance(itemIds, performanceRows) {
@@ -104,26 +125,54 @@ function leftJoinMembershipPerformance(itemIds, performanceRows) {
 }
 
 async function syncGmsDay({ client, shopId, accessToken, campaignId, date, membershipItemIds = [] }) {
-  const [campaign, itemPerformance] = await Promise.all([
-    fetchGmsCampaignPerformance({ client, shopId, accessToken, campaignId, date }),
-    fetchAllGmsItemPerformance({ client, shopId, accessToken, campaignId, date }),
+  const [campaignResult, itemResult] = await Promise.all([
+    fetchGmsCampaignPerformanceWithRaw({ client, shopId, accessToken, campaignId, date }),
+    fetchAllGmsItemPerformanceWithRaw({ client, shopId, accessToken, campaignId, date }),
   ]);
+
+  const eventDate = String(date).slice(0, 10);
+  const rawSnapshots = [
+    {
+      appRole: 'ADS',
+      endpointKey: 'adsGmsCampaignPerformance',
+      eventDateFrom: eventDate,
+      eventDateTo: eventDate,
+      requestFingerprint: fingerprint(campaignResult.requestBody),
+      requestJson: campaignResult.requestBody,
+      responseJson: campaignResult.payload,
+    },
+    ...itemResult.rawPages.map(page => ({
+      appRole: 'ADS',
+      endpointKey: 'adsGmsItemPerformance',
+      eventDateFrom: eventDate,
+      eventDateTo: eventDate,
+      requestFingerprint: fingerprint(page.requestBody),
+      requestJson: page.requestBody,
+      responseJson: page.payload,
+    })),
+  ];
+
   return {
-    eventDate: String(date).slice(0, 10),
-    campaign,
+    eventDate,
+    campaign: campaignResult.performance,
     items: membershipItemIds.length
-      ? leftJoinMembershipPerformance(membershipItemIds, itemPerformance)
-      : itemPerformance,
+      ? leftJoinMembershipPerformance(membershipItemIds, itemResult.rows)
+      : itemResult.rows,
+    rawSnapshots,
   };
 }
 
 module.exports = {
   toShopeeDate,
+  unwrapResponse,
   extractCampaignPerformance,
   extractItemRows,
   normalizeItemRow,
+  fingerprint,
   leftJoinMembershipPerformance,
   fetchAllGmsItemPerformance,
+  fetchAllGmsItemPerformanceWithRaw,
   fetchGmsCampaignPerformance,
+  fetchGmsCampaignPerformanceWithRaw,
   syncGmsDay,
 };
