@@ -42,9 +42,14 @@ for (const required of [
   assert(htmlIds.has(required), `missing required frontend id ${required}`);
 }
 
+const appLines = app.split('\n').map(line => line.trimStart());
 assert(
-  !app.includes("$('[data-business-country]').forEach"),
-  'business group rows must use querySelectorAll helper ($$), not single querySelector',
+  !appLines.some(line => line.startsWith("$('[data-business-country]').forEach")),
+  'business group rows must use querySelectorAll helper ($), not single querySelector',
+);
+assert(
+  appLines.some(line => line.startsWith("$('[data-business-country]').forEach")),
+  'business group row binding is missing',
 );
 
 console.log(`shopee web contract tests: ok (${htmlIds.size} ids, ${staticIdSelectors.size} static selectors)`);
