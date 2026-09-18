@@ -438,3 +438,8 @@ CREATE INDEX IF NOT EXISTS idx_shopee_orders_update_time
   ON shopee_orders(shop_id, update_time DESC);
 CREATE INDEX IF NOT EXISTS idx_shopee_returns_update_time
   ON shopee_returns(shop_id, update_time DESC);
+
+CREATE INDEX IF NOT EXISTS idx_shopee_operation_item_time
+  ON shopee_operation_history(shop_id, item_id, effective_from DESC);
+CREATE INDEX IF NOT EXISTS idx_shopee_operation_campaign_time
+  ON shopee_operation_history(shop_id, campaign_id, effective_from DESC);
