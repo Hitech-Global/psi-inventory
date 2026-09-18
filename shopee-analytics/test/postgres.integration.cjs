@@ -146,6 +146,8 @@ const { ShopeeShopProfileRepository } = require('../src/shop-profile-repository'
         currency: 'IDR',
         timezone: 'Asia/Jakarta',
         marketplaceRegion: 'ID',
+        brandPortalTimezone: 'GMT+7',
+        gmsCampaignSeedIds: [7001, 7002],
       },
       {
         shopId: 2,
@@ -182,6 +184,7 @@ const { ShopeeShopProfileRepository } = require('../src/shop-profile-repository'
     const shops = await queryRepository.listShops();
     assert.strictEqual(shops.length, 2);
     assert.strictEqual(shops[0].countryCode, 'ID');
+    assert.strictEqual(shops[0].brandPortalTimezone, 'GMT+7');
     assert.strictEqual(shops[1].currency, 'THB');
 
     const portfolio = await queryRepository.getPortfolioOverview({
@@ -194,6 +197,9 @@ const { ShopeeShopProfileRepository } = require('../src/shop-profile-repository'
     assert.strictEqual(portfolio.currencyGroups.length, 2);
     assert.strictEqual(portfolio.totals.orders, 15);
     assert(!Object.prototype.hasOwnProperty.call(portfolio.totals, 'sales'));
+    const idPortfolioShop = portfolio.shops.find(shop => shop.shopId === 1);
+    assert.strictEqual(idPortfolioShop.estimatedNaturalSales, 300000);
+    assert(Math.abs(idPortfolioShop.adGmvShareOfBiSales - 0.7) < 1e-12);
 
     const idOnly = await queryRepository.getPortfolioOverview({
       startDate: '2026-09-17',
