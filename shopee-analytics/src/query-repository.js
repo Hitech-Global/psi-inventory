@@ -226,12 +226,62 @@ class ShopeeQueryRepository {
       adGmvShareOfBiSales: group.sales > 0 ? group.broadGmv / group.sales : null,
     }));
 
+    const byBusinessGroup = new Map();
+    for (const shop of shops) {
+      const key = [shop.countryCode, shop.brandCode, shop.currency].join('|');
+      if (!byBusinessGroup.has(key)) {
+        byBusinessGroup.set(key, {
+          countryCode: shop.countryCode,
+          countryName: shop.countryName,
+          brandCode: shop.brandCode,
+          brandName: shop.brandName,
+          currency: shop.currency,
+          shopCount: 0,
+          sales: 0,
+          orders: 0,
+          unitsSold: 0,
+          adExpense: 0,
+          broadGmv: 0,
+          broadOrders: 0,
+          directOrders: 0,
+          refundAmount: 0,
+          returnCount: 0,
+          estimatedNaturalSales: 0,
+        });
+      }
+      const group = byBusinessGroup.get(key);
+      group.shopCount += 1;
+      group.sales += shop.sales;
+      group.orders += shop.orders;
+      group.unitsSold += shop.unitsSold;
+      group.adExpense += shop.adExpense;
+      group.broadGmv += shop.broadGmv;
+      group.broadOrders += shop.broadOrders;
+      group.directOrders += shop.directOrders;
+      group.refundAmount += shop.refundAmount;
+      group.returnCount += shop.returnCount;
+      group.estimatedNaturalSales += shop.estimatedNaturalSales;
+    }
+    const businessGroups = Array.from(byBusinessGroup.values())
+      .map(group => ({
+        ...group,
+        adSpendRatioToBiSales: group.sales > 0 ? group.adExpense / group.sales : null,
+        adGmvShareOfBiSales: group.sales > 0 ? group.broadGmv / group.sales : null,
+        broadRoas: group.adExpense > 0 ? group.broadGmv / group.adExpense : 0,
+      }))
+      .sort((a, b) =>
+        a.countryCode.localeCompare(b.countryCode) ||
+        a.brandCode.localeCompare(b.brandCode) ||
+        a.currency.localeCompare(b.currency)
+      );
+
     const countries = Array.from(new Set(shops.map(shop => shop.countryCode))).sort();
     const brands = Array.from(new Set(shops.map(shop => shop.brandCode))).sort();
     const currencies = Array.from(new Set(shops.map(shop => shop.currency))).sort();
 
     return {
       shops,
+      businessGroups,
       currencyGroups,
       dimensions: {
         countries,
