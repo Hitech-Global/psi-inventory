@@ -20,8 +20,8 @@ Never commit Partner Keys, access/refresh tokens, token master key, PostgreSQL p
 
 From this directory:
 
-1. Copy `runtime.env.example` to `runtime/.env`.
-2. Fill the PostgreSQL password, token master key and Shopee Partner credentials.
+1. Prepare the gitignored runtime directory: `SHOPEE_ANALYTICS_PREPARE_DESKTOP_RUNTIME=YES node ../../scripts/prepare-desktop-runtime.cjs`. This generates the local PostgreSQL password and token master key without printing their values.
+2. Edit `runtime/.env`: fill only the Shopee Partner credentials and the desktop/NAS backup paths. Keep the generated PostgreSQL password and token master key.
 3. Run the offline env check before starting containers: `node ../../scripts/validate-desktop-env.cjs runtime/.env`.
 4. Start PostgreSQL only: `docker compose --env-file runtime/.env up -d postgres`.
 5. Apply schema explicitly: `docker compose --env-file runtime/.env --profile tools run --rm schema`.
