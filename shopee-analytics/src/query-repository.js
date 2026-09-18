@@ -838,6 +838,54 @@ class ShopeeQueryRepository {
     };
   }
 
+  async getBackfillCoverage({ shopId, startDate, endDate, timezone }) {
+    const result = await this.pool.query(
+      `SELECT
+         (SELECT COUNT(*)::int
+          FROM shopee_ad_campaign_daily
+          WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3) AS campaign_day_rows,
+         (SELECT COUNT(DISTINCT campaign_id)::int
+          FROM shopee_ad_campaign_daily
+          WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3) AS campaign_count,
+         (SELECT COUNT(DISTINCT event_date)::int
+          FROM shopee_ad_campaign_daily
+          WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3) AS gms_distinct_days,
+         (SELECT COUNT(*)::int
+          FROM shopee_shop_bi_daily
+          WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3) AS shop_bi_days,
+         (SELECT COUNT(*)::int
+          FROM shopee_orders
+          WHERE shop_id=$1
+            AND (to_timestamp(create_time) AT TIME ZONE $4)::date BETWEEN $2 AND $3) AS orders,
+         (SELECT COUNT(*)::int
+          FROM shopee_returns
+          WHERE shop_id=$1
+            AND (to_timestamp(create_time) AT TIME ZONE $4)::date BETWEEN $2 AND $3) AS returns,
+         (SELECT COUNT(*)::int
+          FROM shopee_products
+          WHERE shop_id=$1) AS products,
+         (SELECT COUNT(*)::int
+          FROM shopee_vouchers
+          WHERE shop_id=$1) AS vouchers,
+         (SELECT COUNT(*)::int
+          FROM shopee_discounts
+          WHERE shop_id=$1) AS discounts`,
+      [shopId, startDate, endDate, timezone],
+    );
+    const row = result.rows[0] || {};
+    return {
+      campaignDayRows: Number(row.campaign_day_rows || 0),
+      campaignCount: Number(row.campaign_count || 0),
+      gmsDistinctDays: Number(row.gms_distinct_days || 0),
+      shopBiDays: Number(row.shop_bi_days || 0),
+      orders: Number(row.orders || 0),
+      returns: Number(row.returns || 0),
+      products: Number(row.products || 0),
+      vouchers: Number(row.vouchers || 0),
+      discounts: Number(row.discounts || 0),
+    };
+  }
+
   async getSystemStatus({ shopId }) {
     const [sourcesResult, tokensResult, syncResult] = await Promise.all([
       this.pool.query(
