@@ -6,6 +6,8 @@ const { buildShopeeSeaEventCalendar, toEventDateSet } = require('./event-calenda
 const { evaluateItemCoverage, buildSystemWarnings } = require('./data-quality');
 const { previousPeriod, diagnosePortfolio, diagnoseRow } = require('./portfolio-diagnosis');
 const { diagnoseStoreSkus } = require('./store-sku-diagnosis');
+const { localIsoDate, addDays } = require('./sync-cycle-utils');
+const { daysInclusive } = require('./backfill-utils');
 
 function positiveInt(value, name) {
   const n = Number(value);
@@ -286,10 +288,62 @@ function createShopeeAnalyticsRouter({
   router.get('/status', async (req, res, next) => {
     try {
       const shopId = positiveInt(req.query.shop_id, 'shop_id');
-      const status = await queryRepository.getSystemStatus({ shopId });
+      const [status, shops] = await Promise.all([
+        queryRepository.getSystemStatus({ shopId }),
+        queryRepository.listShops({ activeOnly: false }),
+      ]);
+      const shop = shops.find(row => row.shopId === shopId) || null;
+
       status.warnings = buildSystemWarnings(status);
       status.ok = !status.warnings.some(warning => warning.severity === 'error');
-      res.json({ shopId, ...status });
+
+      let historyCoverage = null;
+      if (shop && shop.analyticsStartDate) {
+        const requestedEndDate = req.query.history_end_date
+          ? isoDate(req.query.history_end_date, 'history_end_date')
+          : addDays(localIsoDate(new Date(), shop.timezone), -1);
+
+        if (shop.analyticsStartDate <= requestedEndDate) {
+          const coverage = await queryRepository.getBackfillCoverage({
+            shopId,
+            startDate: shop.analyticsStartDate,
+            endDate: requestedEndDate,
+            timezone: shop.timezone,
+          });
+          const expectedDays = daysInclusive(shop.analyticsStartDate, requestedEndDate);
+          const expectedGmsRows = coverage.campaignCount * expectedDays;
+          const backfillStates = (status.syncStates || []).filter(row =>
+            String(row.endpointKey || '').startsWith('BACKFILL_')
+          );
+
+          historyCoverage = {
+            startDate: shop.analyticsStartDate,
+            endDate: requestedEndDate,
+            expectedDays,
+            ...coverage,
+            expectedGmsCampaignDayRows: expectedGmsRows,
+            gmsCampaignDayCoverage: expectedGmsRows > 0
+              ? Math.min(1, coverage.campaignDayRows / expectedGmsRows)
+              : null,
+            shopBiDayCoverage: Math.min(1, coverage.shopBiDays / expectedDays),
+            backfillStateCount: backfillStates.length,
+            backfillErrorCount: backfillStates.filter(row => row.lastError).length,
+            backfillStates,
+            limitations: [
+              'Historical campaign membership is only trusted where a real membership snapshot exists.',
+              'Orders/returns are event records, so record counts do not have an expected daily coverage percentage.',
+              'Product Card exact-period coverage is separate from API backfill.',
+            ],
+          };
+        }
+      }
+
+      res.json({
+        shopId,
+        shop,
+        historyCoverage,
+        ...status,
+      });
     } catch (error) {
       next(error);
     }
