@@ -12,7 +12,7 @@ class ShopeeQueryRepository {
     const result = await this.pool.query(
       `SELECT
          p.shop_id,p.display_name,p.country_code,p.country_name,p.brand_code,p.brand_name,
-         p.currency,p.timezone,p.marketplace_region,p.active,p.sort_order,p.note,p.updated_at,
+         p.currency,p.timezone,p.brand_portal_timezone,p.marketplace_region,p.active,p.sort_order,p.note,p.updated_at,
          s.shop_name AS api_shop_name,s.region AS api_region,s.status AS api_status,s.synced_at AS api_synced_at
        FROM shopee_shop_profiles p
        LEFT JOIN shopee_shops s ON s.shop_id=p.shop_id
@@ -29,6 +29,7 @@ class ShopeeQueryRepository {
       brandName: row.brand_name,
       currency: row.currency,
       timezone: row.timezone,
+      brandPortalTimezone: row.brand_portal_timezone,
       marketplaceRegion: row.marketplace_region,
       active: row.active,
       sortOrder: Number(row.sort_order || 0),
