@@ -47,6 +47,7 @@ async function runShopSyncCycle({
     orderRepository: runtime.orderRepository,
     returnRepository: runtime.returnRepository,
     shopBiRepository: runtime.shopBiRepository,
+    shopRepository: runtime.shopRepository,
   });
 
   const summary = {
@@ -79,6 +80,10 @@ async function runShopSyncCycle({
       return null;
     }
   };
+
+  if (mode === 'daily') {
+    await run('shop-info', () => service.syncShopInfo());
+  }
 
   await run('campaign-settings', () => service.syncCampaignSettings({ eventDate: today }));
 
