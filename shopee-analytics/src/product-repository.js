@@ -1,5 +1,29 @@
 'use strict';
 
+function comparableModel(row) {
+  if (!row) return null;
+  return {
+    modelId: Number(row.model_id ?? row.modelId),
+    modelName: row.model_name ?? row.modelName ?? null,
+    modelSku: row.model_sku ?? row.modelSku ?? null,
+    currentPrice: row.current_price === null || row.current_price === undefined
+      ? (row.currentPrice ?? null)
+      : Number(row.current_price),
+    originalPrice: row.original_price === null || row.original_price === undefined
+      ? (row.originalPrice ?? null)
+      : Number(row.original_price),
+    stock: row.stock === null || row.stock === undefined ? null : Number(row.stock),
+  };
+}
+
+function priceChanged(before, after) {
+  if (!before || !after) return false;
+  return (
+    String(before.currentPrice ?? null) !== String(after.currentPrice ?? null) ||
+    String(before.originalPrice ?? null) !== String(after.originalPrice ?? null)
+  );
+}
+
 class ShopeeProductRepository {
   constructor({ pool }) {
     if (!pool || typeof pool.query !== 'function' || typeof pool.connect !== 'function') {
@@ -29,12 +53,30 @@ class ShopeeProductRepository {
     );
   }
 
-  async replaceModels({ shopId, itemId, models }) {
+  async replaceModels({ shopId, itemId, models, observedAt = new Date() }) {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
-      await client.query('DELETE FROM shopee_product_models WHERE shop_id=$1 AND item_id=$2', [shopId, itemId]);
+
+      const previousResult = await client.query(
+        `SELECT model_id,model_name,model_sku,current_price,original_price,stock
+         FROM shopee_product_models
+         WHERE shop_id=$1 AND item_id=$2`,
+        [shopId, itemId],
+      );
+      const previousById = new Map(
+        previousResult.rows.map(row => [String(row.model_id), comparableModel(row)]),
+      );
+
+      await client.query(
+        'DELETE FROM shopee_product_models WHERE shop_id=$1 AND item_id=$2',
+        [shopId, itemId],
+      );
+
       for (const model of models || []) {
+        const current = comparableModel(model);
+        const before = previousById.get(String(current.modelId)) || null;
+
         await client.query(
           `INSERT INTO shopee_product_models
            (shop_id, item_id, model_id, model_name, model_sku, current_price, original_price, stock, raw_json, synced_at)
@@ -53,7 +95,24 @@ class ShopeeProductRepository {
             JSON.stringify(model.raw || {}),
           ],
         );
+
+        if (before && priceChanged(before, current)) {
+          await client.query(
+            `INSERT INTO shopee_operation_history
+             (shop_id,item_id,operation_type,reason,before_json,after_json,effective_from)
+             VALUES ($1,$2,'PRICE_CHANGE',$3,$4::jsonb,$5::jsonb,$6)`,
+            [
+              shopId,
+              itemId,
+              `Price changed for model ${current.modelSku || current.modelName || current.modelId}`,
+              JSON.stringify(before),
+              JSON.stringify(current),
+              observedAt,
+            ],
+          );
+        }
       }
+
       await client.query('COMMIT');
     } catch (error) {
       try { await client.query('ROLLBACK'); } catch {}
@@ -82,4 +141,8 @@ class ShopeeProductRepository {
   }
 }
 
-module.exports = { ShopeeProductRepository };
+module.exports = {
+  comparableModel,
+  priceChanged,
+  ShopeeProductRepository,
+};
