@@ -4361,6 +4361,8 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.en["permission.label.pi_create"] = "Create"; I18N.dict.id["permission.label.pi_create"] = "Buat";
   I18N.dict.en["permission.label.pi_edit"] = "Edit"; I18N.dict.id["permission.label.pi_edit"] = "Edit";
   I18N.dict.en["permission.label.ci_view"] = "View"; I18N.dict.id["permission.label.ci_view"] = "Lihat";
+  // CI-AMOUNT-VIEW-I18N-V1
+  I18N.dict.en["permission.label.ci_amount_view"] = "View Amounts"; I18N.dict.id["permission.label.ci_amount_view"] = "Lihat Nilai";
   I18N.dict.en["permission.label.ci_create"] = "Create"; I18N.dict.id["permission.label.ci_create"] = "Buat";
   I18N.dict.en["permission.label.ci_edit"] = "Edit"; I18N.dict.id["permission.label.ci_edit"] = "Edit";
   I18N.dict.en["permission.label.logistics_view"] = "View"; I18N.dict.id["permission.label.logistics_view"] = "Lihat";
