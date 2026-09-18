@@ -299,6 +299,33 @@ CREATE TABLE IF NOT EXISTS shopee_shop_bi_daily (
   PRIMARY KEY (shop_id, event_date)
 );
 
+CREATE TABLE IF NOT EXISTS shopee_product_card_period (
+  shop_id BIGINT NOT NULL,
+  start_date DATE NOT NULL,
+  end_date DATE NOT NULL,
+  item_id BIGINT NOT NULL,
+  item_name TEXT,
+  parent_sku TEXT,
+  item_sku TEXT,
+  impressions BIGINT,
+  clicks BIGINT,
+  ctr NUMERIC(20,8),
+  visitors BIGINT,
+  page_views BIGINT,
+  add_to_cart_visitors BIGINT,
+  add_to_cart_units BIGINT,
+  add_to_cart_rate NUMERIC(20,8),
+  orders BIGINT,
+  buyers BIGINT,
+  units BIGINT,
+  sales NUMERIC(20,6),
+  conversion_rate NUMERIC(20,8),
+  source_file TEXT,
+  raw_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  imported_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (shop_id, start_date, end_date, item_id)
+);
+
 CREATE TABLE IF NOT EXISTS shopee_product_card_daily (
   shop_id BIGINT NOT NULL,
   item_id BIGINT NOT NULL,
