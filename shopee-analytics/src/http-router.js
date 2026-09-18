@@ -16,6 +16,22 @@ function isoDate(value, name) {
   return String(value);
 }
 
+function optionalCode(value, name) {
+  if (value === undefined || value === null || value === '') return null;
+  const normalized = String(value).trim().toUpperCase();
+  if (!/^[A-Z0-9_-]{1,32}$/.test(normalized)) throw new Error(`${name} contains invalid characters`);
+  return normalized;
+}
+
+function parseShopIds(value) {
+  if (value === undefined || value === null || value === '') return [];
+  const ids = String(value)
+    .split(',')
+    .map(part => Number(part.trim()))
+    .filter(Number.isSafeInteger);
+  return Array.from(new Set(ids));
+}
+
 function eventSetForRange(startDate, endDate) {
   const startYear = Number(startDate.slice(0, 4));
   const endYear = Number(endDate.slice(0, 4));
@@ -30,6 +46,53 @@ function createShopeeAnalyticsRouter({
   queryRepository,
 }) {
   const router = express.Router();
+
+  router.get('/shops', async (req, res, next) => {
+    try {
+      const shops = await queryRepository.listShops({ activeOnly: req.query.include_inactive !== '1' });
+      const countries = Array.from(new Map(shops.map(shop => [
+        shop.countryCode,
+        { code: shop.countryCode, name: shop.countryName || shop.countryCode },
+      ])).values()).sort((a, b) => a.code.localeCompare(b.code));
+      const brands = Array.from(new Map(shops.map(shop => [
+        shop.brandCode,
+        { code: shop.brandCode, name: shop.brandName || shop.brandCode },
+      ])).values()).sort((a, b) => a.code.localeCompare(b.code));
+      res.json({ shops, countries, brands });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get('/overview', async (req, res, next) => {
+    try {
+      const startDate = isoDate(req.query.start_date, 'start_date');
+      const endDate = isoDate(req.query.end_date, 'end_date');
+      if (startDate > endDate) throw new Error('start_date must be <= end_date');
+      const countryCode = optionalCode(req.query.country, 'country');
+      const brandCode = optionalCode(req.query.brand, 'brand');
+      const shopIds = parseShopIds(req.query.shop_ids);
+
+      const overview = await queryRepository.getPortfolioOverview({
+        startDate,
+        endDate,
+        countryCode,
+        brandCode,
+        shopIds,
+      });
+      res.json({
+        startDate,
+        endDate,
+        filters: { countryCode, brandCode, shopIds },
+        ...overview,
+        currencyPolicy: overview.dimensions.multiCurrency
+          ? 'MONETARY_TOTALS_SPLIT_BY_CURRENCY'
+          : 'SINGLE_CURRENCY',
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
 
   router.get('/health', (req, res) => {
     res.json({ ok: true, module: 'shopee-analytics', mode: 'read-only' });
@@ -136,6 +199,8 @@ function createShopeeAnalyticsRouter({
 module.exports = {
   positiveInt,
   isoDate,
+  optionalCode,
+  parseShopIds,
   eventSetForRange,
   createShopeeAnalyticsRouter,
 };
