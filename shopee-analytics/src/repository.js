@@ -148,7 +148,7 @@ class ShopeeAnalyticsRepository {
 
   async saveGmsDay({ shopId, campaignId, eventDate, campaign, items, membershipItemIds = [], rawSnapshots = [] }) {
     return this.withTransaction(async client => {
-      await this.upsertCampaign({ shopId, campaignId, campaignTypeRaw: 'GMS', queryable: client });
+      await this.upsertCampaign({ shopId, campaignId, campaignTypeRaw: 'GMS', campaignTypeNormalized: 'GMS', queryable: client });
       await this.upsertCampaignDaily({
         shopId,
         campaignId,
