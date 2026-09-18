@@ -88,6 +88,44 @@ const { ShopeeShopRepository } = require('../src/shop-repository');
     });
     assert.deepStrictEqual(membership, [101, 102]);
 
+    await repository.saveGmsDay({
+      shopId: 1,
+      campaignId: 99,
+      eventDate: '2026-08-01',
+      campaign: {
+        impressions: 10,
+        clicks: 1,
+        expense: 1000,
+        broadGmv: 0,
+        broadOrders: 0,
+        directGmv: 0,
+        directOrders: 0,
+        raw: { source: 'historical-test' },
+      },
+      items: [{
+        itemId: 999,
+        impressions: 10,
+        clicks: 1,
+        expense: 1000,
+        broadGmv: 0,
+        broadOrders: 0,
+        directGmv: 0,
+        directOrders: 0,
+        raw: { item_id: 999 },
+      }],
+      rawSnapshots: [],
+    });
+    const unknownHistoricalMembership = await repository.loadMembershipItemIds({
+      shopId: 1,
+      campaignId: 99,
+      eventDate: '2026-08-01',
+    });
+    assert.deepStrictEqual(
+      unknownHistoricalMembership,
+      [],
+      'item-performance rows must not be promoted to full historical membership',
+    );
+
     const productCard = new ShopeeProductCardRepository({ pool });
     await productCard.upsertPeriodRows({
       shopId: 1,
@@ -268,6 +306,34 @@ const { ShopeeShopRepository } = require('../src/shop-repository');
     assert.strictEqual(skuWithProductCard.length, 1);
     assert.strictEqual(skuWithProductCard[0].totalSales, 800000);
     assert.strictEqual(skuWithProductCard[0].hasProductCard, true);
+
+    const backfillCoverage = await queryRepository.getBackfillCoverage({
+      shopId: 1,
+      startDate: '2026-09-17',
+      endDate: '2026-09-17',
+      timezone: 'Asia/Jakarta',
+    });
+    assert.strictEqual(backfillCoverage.campaignDayRows, 1);
+    assert.strictEqual(backfillCoverage.campaignCount, 1);
+    assert.strictEqual(backfillCoverage.gmsDistinctDays, 1);
+    assert.strictEqual(backfillCoverage.shopBiDays, 1);
+
+    await repository.markSyncSuccess({
+      appRole: 'ADS',
+      endpointKey: 'BACKFILL_ORDERS_TEST',
+      shopId: 1,
+      cursor: {
+        requestedStartDate: '2026-09-01',
+        requestedEndDate: '2026-09-17',
+        completedThrough: '2026-09-14',
+      },
+    });
+    const backfillState = await repository.getSyncState({
+      appRole: 'ADS',
+      endpointKey: 'BACKFILL_ORDERS_TEST',
+      shopId: 1,
+    });
+    assert.strictEqual(backfillState.cursor.completedThrough, '2026-09-14');
 
     const coverage = await queryRepository.getCampaignCoverageContext({
       shopId: 1,
