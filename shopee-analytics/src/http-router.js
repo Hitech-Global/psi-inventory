@@ -4,7 +4,7 @@ const express = require('express');
 const { analyzeCampaignWindow } = require('./analysis-service');
 const { buildShopeeSeaEventCalendar, toEventDateSet } = require('./event-calendar');
 const { evaluateItemCoverage, buildSystemWarnings } = require('./data-quality');
-const { previousPeriod, diagnosePortfolio } = require('./portfolio-diagnosis');
+const { previousPeriod, diagnosePortfolio, diagnoseRow } = require('./portfolio-diagnosis');
 
 function positiveInt(value, name) {
   const n = Number(value);
@@ -60,6 +60,76 @@ function createShopeeAnalyticsRouter({
         { code: shop.brandCode, name: shop.brandName || shop.brandCode },
       ])).values()).sort((a, b) => a.code.localeCompare(b.code));
       res.json({ shops, countries, brands });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get('/shops/:shopId/detail', async (req, res, next) => {
+    try {
+      const shopId = positiveInt(req.params.shopId, 'shopId');
+      const startDate = isoDate(req.query.start_date, 'start_date');
+      const endDate = isoDate(req.query.end_date, 'end_date');
+      if (startDate > endDate) throw new Error('start_date must be <= end_date');
+
+      const shops = await queryRepository.listShops({ activeOnly: false });
+      const shop = shops.find(row => row.shopId === shopId);
+      if (!shop) {
+        res.status(404).json({ error: 'SHOP_NOT_CONFIGURED', message: `Shop ${shopId} is not configured` });
+        return;
+      }
+
+      const previous = previousPeriod(startDate, endDate);
+      const [currentOverview, previousOverview, daily, skus] = await Promise.all([
+        queryRepository.getPortfolioOverview({
+          startDate,
+          endDate,
+          shopIds: [shopId],
+        }),
+        queryRepository.getPortfolioOverview({
+          startDate: previous.startDate,
+          endDate: previous.endDate,
+          shopIds: [shopId],
+        }),
+        queryRepository.getShopDailyTrend({ shopId, startDate, endDate }),
+        queryRepository.getShopSkuOverview({ shopId, startDate, endDate, limit: 200 }),
+      ]);
+
+      const current = currentOverview.shops[0] || null;
+      const prior = previousOverview.shops[0] || null;
+      const diagnosis = current ? diagnoseRow(current, prior) : null;
+
+      const startYear = Number(startDate.slice(0, 4));
+      const endYear = Number(endDate.slice(0, 4));
+      const eventMap = new Map();
+      for (let year = startYear; year <= endYear; year += 1) {
+        for (const row of buildShopeeSeaEventCalendar(year)) {
+          if (row.eventDate >= startDate && row.eventDate <= endDate) {
+            eventMap.set(row.eventDate, {
+              eventType: row.eventType,
+              intensity: row.intensity,
+              note: row.note,
+            });
+          }
+        }
+      }
+
+      res.json({
+        shop,
+        startDate,
+        endDate,
+        previousStartDate: previous.startDate,
+        previousEndDate: previous.endDate,
+        current,
+        previous: prior,
+        diagnosis,
+        daily: daily.map(row => ({
+          ...row,
+          event: eventMap.get(row.eventDate) || null,
+        })),
+        skus,
+        productCardExactPeriod: skus.some(row => row.hasProductCard),
+      });
     } catch (error) {
       next(error);
     }
