@@ -456,11 +456,14 @@ class ShopeeQueryRepository {
          COALESCE(a.broad_gmv,0) AS broad_gmv,
          COALESCE(a.broad_orders,0) AS broad_orders,
          COALESCE(a.direct_gmv,0) AS direct_gmv,
-         COALESCE(a.direct_orders,0) AS direct_orders
+         COALESCE(a.direct_orders,0) AS direct_orders,
+         strategy.break_even_roas
        FROM ids
        LEFT JOIN pc ON pc.item_id=ids.item_id
        LEFT JOIN ads a ON a.item_id=ids.item_id
        LEFT JOIN shopee_products p ON p.shop_id=$1 AND p.item_id=ids.item_id
+       LEFT JOIN shopee_item_strategy_config strategy
+         ON strategy.shop_id=$1 AND strategy.item_id=ids.item_id
        ORDER BY COALESCE(pc.sales,a.broad_gmv,0) DESC, ids.item_id
        LIMIT $4`,
       [shopId, startDate, endDate, safeLimit],
@@ -489,6 +492,9 @@ class ShopeeQueryRepository {
         totalUnits: row.total_units === null ? null : Number(row.total_units),
         totalSales,
         totalConversionRate: row.total_conversion_rate === null ? null : Number(row.total_conversion_rate),
+        breakEvenRoas: row.break_even_roas === null || row.break_even_roas === undefined
+          ? null
+          : Number(row.break_even_roas),
         adImpressions: Number(row.ad_impressions || 0),
         adClicks: Number(row.ad_clicks || 0),
         adExpense,
