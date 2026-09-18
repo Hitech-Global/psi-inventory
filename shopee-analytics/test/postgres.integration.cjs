@@ -17,6 +17,8 @@ const { ShopeeTokenRepository } = require('../src/token-repository');
 const { ShopeeQueryRepository } = require('../src/query-repository');
 const { ShopeeShopProfileRepository } = require('../src/shop-profile-repository');
 const { ShopeeShopRepository } = require('../src/shop-repository');
+const { ShopeeCampaignRepository } = require('../src/campaign-repository');
+const { ShopeeProductRepository } = require('../src/product-repository');
 
 (async () => {
   const pool = new Pool({ connectionString: url, max: 3 });
@@ -239,6 +241,93 @@ const { ShopeeShopRepository } = require('../src/shop-repository');
        (2,8,'2026-09-17',500,15,500,3000,3,3,2500,2,2)
        ON CONFLICT DO NOTHING`
     );
+
+    const campaignRepository = new ShopeeCampaignRepository({ pool });
+    await campaignRepository.saveCampaignSettingsSnapshot({
+      shopId: 1,
+      observedAt: new Date('2026-09-17T00:00:00Z'),
+      eventDate: '2026-09-17',
+      settings: [{
+        campaignId: 123,
+        adType: 'auto',
+        campaignStatus: 'ONGOING',
+        biddingMethod: 'GMV_MAX',
+        campaignBudget: 100000,
+        targetRoas: 8.3,
+        itemIds: [101, 102],
+        raw: { v: 1 },
+      }],
+    });
+    await campaignRepository.saveCampaignSettingsSnapshot({
+      shopId: 1,
+      observedAt: new Date('2026-09-17T01:00:00Z'),
+      eventDate: '2026-09-17',
+      settings: [{
+        campaignId: 123,
+        adType: 'auto',
+        campaignStatus: 'ONGOING',
+        biddingMethod: 'GMV_MAX',
+        campaignBudget: 120000,
+        targetRoas: 7.2,
+        itemIds: [101, 103],
+        raw: { v: 2 },
+      }],
+    });
+    const campaignOps = await pool.query(
+      `SELECT operation_type,item_id
+       FROM shopee_operation_history
+       WHERE shop_id=1 AND campaign_id=123
+       ORDER BY id`,
+    );
+    assert(campaignOps.rows.some(row =>
+      row.operation_type === 'CAMPAIGN_SETTING_CHANGE' && Number(row.item_id) === 101
+    ));
+    assert(campaignOps.rows.some(row =>
+      row.operation_type === 'SKU_ADDED_TO_CAMPAIGN' && Number(row.item_id) === 103
+    ));
+    assert(campaignOps.rows.some(row =>
+      row.operation_type === 'SKU_REMOVED_FROM_CAMPAIGN' && Number(row.item_id) === 102
+    ));
+
+    const productRepository = new ShopeeProductRepository({ pool });
+    await productRepository.replaceModels({
+      shopId: 1,
+      itemId: 888,
+      observedAt: new Date('2026-09-17T02:00:00Z'),
+      models: [{
+        modelId: 1,
+        modelName: 'Black',
+        modelSku: 'H888-BLK',
+        currentPrice: 399000,
+        originalPrice: 499000,
+        stock: 10,
+        raw: {},
+      }],
+    });
+    await productRepository.replaceModels({
+      shopId: 1,
+      itemId: 888,
+      observedAt: new Date('2026-09-17T03:00:00Z'),
+      models: [{
+        modelId: 1,
+        modelName: 'Black',
+        modelSku: 'H888-BLK',
+        currentPrice: 379000,
+        originalPrice: 499000,
+        stock: 8,
+        raw: {},
+      }],
+    });
+    const priceOps = await pool.query(
+      `SELECT operation_type,before_json,after_json
+       FROM shopee_operation_history
+       WHERE shop_id=1 AND item_id=888
+       ORDER BY id`,
+    );
+    assert.strictEqual(priceOps.rows.length, 1);
+    assert.strictEqual(priceOps.rows[0].operation_type, 'PRICE_CHANGE');
+    assert.strictEqual(Number(priceOps.rows[0].before_json.currentPrice), 399000);
+    assert.strictEqual(Number(priceOps.rows[0].after_json.currentPrice), 379000);
 
     const queryRepository = new ShopeeQueryRepository({ pool });
     const shops = await queryRepository.listShops();
