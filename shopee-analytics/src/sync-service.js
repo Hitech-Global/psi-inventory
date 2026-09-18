@@ -1,7 +1,7 @@
 'use strict';
 
 const { fetchCampaignIds, fetchCampaignSettings } = require('./sync-campaigns');
-const { fetchItemList, fetchModelList } = require('./sync-product');
+const { fetchItemList, fetchItemBaseInfo, fetchModelList } = require('./sync-product');
 const { fetchRecommendedRoi } = require('./sync-roi');
 const { fetchAllVoucherDetails } = require('./sync-voucher');
 const { fetchAllDiscountDetails } = require('./sync-discount');
@@ -93,8 +93,29 @@ class ShopeeSyncService {
       pages: list.rawPages,
     });
 
+    const itemIds = list.rows.map(item => item.itemId).filter(Boolean);
+    const baseInfo = await fetchItemBaseInfo({
+      client, shopId: this.shopId, accessToken, itemIds,
+    });
+    await recordPages({
+      repository: this.rawRepository,
+      appRole: 'ADS',
+      endpointKey: 'productBaseInfo',
+      shopId: this.shopId,
+      pages: baseInfo.rawPages,
+    });
+
+    const baseById = new Map(baseInfo.rows.map(item => [String(item.itemId), item]));
     for (const item of list.rows) {
-      if (this.productRepository) await this.productRepository.upsertItem({ shopId: this.shopId, item });
+      const base = baseById.get(String(item.itemId));
+      const merged = {
+        ...item,
+        ...(base || {}),
+        itemStatus: item.itemStatus,
+        updateTime: (base && base.updateTime) || item.updateTime,
+        raw: { item_list: item.raw, base_info: base && base.raw },
+      };
+      if (this.productRepository) await this.productRepository.upsertItem({ shopId: this.shopId, item: merged });
       if (!includeModels || !item.itemId) continue;
       const models = await fetchModelList({
         client, shopId: this.shopId, accessToken, itemId: item.itemId,
@@ -115,7 +136,7 @@ class ShopeeSyncService {
         });
       }
     }
-    return { itemCount: list.rows.length };
+    return { itemCount: list.rows.length, baseInfoCount: baseInfo.rows.length };
   }
 
   async syncRecommendedRoi({ itemIds, observedAt = new Date() }) {
