@@ -11,14 +11,21 @@ class ShopeeProductRepository {
   async upsertItem({ shopId, item }) {
     await this.pool.query(
       `INSERT INTO shopee_products
-       (shop_id, item_id, item_status, update_time, raw_json, synced_at)
-       VALUES ($1,$2,$3,$4,$5::jsonb,now())
+       (shop_id, item_id, item_name, item_sku, item_status, category_id, update_time, raw_json, synced_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,now())
        ON CONFLICT (shop_id, item_id) DO UPDATE SET
-        item_status=EXCLUDED.item_status,
-        update_time=EXCLUDED.update_time,
-        raw_json=EXCLUDED.raw_json,
+        item_name=COALESCE(EXCLUDED.item_name,shopee_products.item_name),
+        item_sku=COALESCE(EXCLUDED.item_sku,shopee_products.item_sku),
+        item_status=COALESCE(EXCLUDED.item_status,shopee_products.item_status),
+        category_id=COALESCE(EXCLUDED.category_id,shopee_products.category_id),
+        update_time=COALESCE(EXCLUDED.update_time,shopee_products.update_time),
+        raw_json=CASE WHEN EXCLUDED.raw_json='{}'::jsonb THEN shopee_products.raw_json ELSE EXCLUDED.raw_json END,
         synced_at=now()`,
-      [shopId, item.itemId, item.itemStatus, item.updateTime, JSON.stringify(item.raw || {})],
+      [
+        shopId, item.itemId, item.itemName || null, item.itemSku || null,
+        item.itemStatus || null, item.categoryId ?? null, item.updateTime ?? null,
+        JSON.stringify(item.raw || {}),
+      ],
     );
   }
 
