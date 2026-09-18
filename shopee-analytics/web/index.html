@@ -49,6 +49,39 @@
 
       <section id="currencyGroups" class="currency-grid hidden"></section>
 
+      <section id="businessGroupPanel" class="panel business-group-panel">
+        <div class="panel-head">
+          <div>
+            <h2>国家 × 品牌汇总</h2>
+            <p>先看业务板块，再下钻到具体店铺。金额仍按当地币种展示。</p>
+          </div>
+          <span id="businessGroupCount" class="pill">0 组</span>
+        </div>
+        <div class="table-wrap business-group-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>国家</th>
+                <th>品牌</th>
+                <th>店铺数</th>
+                <th>币种</th>
+                <th>销售额</th>
+                <th>订单</th>
+                <th>估算自然销售</th>
+                <th>广告花费</th>
+                <th>广告占比</th>
+                <th>广告GMV占比</th>
+                <th>Broad ROAS</th>
+                <th>退款金额</th>
+              </tr>
+            </thead>
+            <tbody id="businessGroupRows">
+              <tr><td colspan="12" class="empty">等待数据。</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
       <section class="panel portfolio-panel">
         <div class="panel-head">
           <div>
