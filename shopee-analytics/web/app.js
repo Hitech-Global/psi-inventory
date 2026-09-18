@@ -1,6 +1,7 @@
 'use strict';
 
 const $ = selector => document.querySelector(selector);
+const $$ = selector => Array.from(document.querySelectorAll(selector));
 const fmt = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
 const pct = value => Number.isFinite(Number(value)) ? `${(Number(value) * 100).toFixed(1)}%` : '—';
 const roas = value => Number.isFinite(Number(value)) ? Number(value).toFixed(2) : '—';
@@ -27,8 +28,66 @@ const STATE_LABELS = Object.freeze({
   OBSERVE: '继续观察',
 });
 
-function stateLabel(state) {
-  return STATE_LABELS[state] || state || '—';
+const state = {
+  view: 'overview',
+  shops: [],
+  countries: [],
+  brands: [],
+  selectedCampaignId: null,
+};
+
+function moneyCompact(value) {
+  const n = Number(value || 0);
+  if (Math.abs(n) >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}B`;
+  if (Math.abs(n) >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+  if (Math.abs(n) >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return num(n);
+}
+
+function formatMoney(value, currency) {
+  const n = Number(value || 0);
+  if (!currency) return moneyCompact(n);
+  try {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency,
+      maximumFractionDigits: currency === 'IDR' ? 0 : 2,
+    }).format(n);
+  } catch {
+    return `${currency} ${moneyCompact(n)}`;
+  }
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;').replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;').replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
+function stateLabel(value) {
+  return STATE_LABELS[value] || value || '—';
+}
+
+function stateClass(value) {
+  if (/TARGET_MET|WITHIN_SPEND|CORE_CANDIDATE/.test(value || '')) return 'good';
+  if (/BELOW_BREAK|OVER_SPEND|HIGH_RISK/.test(value || '')) return 'bad';
+  if (/LOW_VOLUME|BELOW_TARGET|OPTIMIZATION|ZERO_ORDER/.test(value || '')) return 'warn';
+  return 'neutral';
+}
+
+function itemStateClass(value) {
+  if (value === 'CORE_CANDIDATE') return 'core';
+  if (value === 'EXPLORATION_KEEP' || value === 'INSUFFICIENT_EXPLORATION') return 'explore';
+  if (value === 'HIGH_RISK_ZERO_ORDER') return 'risk';
+  if (value === 'PRODUCT_OPTIMIZATION_CANDIDATE' || value === 'ZERO_ORDER_STILL_TESTING') return 'optimize';
+  return '';
+}
+
+function dateDaysAgo(days) {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  return d.toISOString().slice(0, 10);
 }
 
 function formatDateTime(value) {
@@ -54,51 +113,17 @@ function freshnessClass(lastSyncedAt) {
 }
 
 function freshnessLabel(lastSyncedAt) {
-  const cls = freshnessClass(lastSyncedAt);
-  return ({ fresh: '最新', aging: '待刷新', stale: '已过期', missing: '无数据' })[cls];
-}
-
-function money(value) {
-  const n = Number(value || 0);
-  if (Math.abs(n) >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}B`;
-  if (Math.abs(n) >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  if (Math.abs(n) >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return num(n);
-}
-
-function escapeHtml(value) {
-  return String(value ?? '')
-    .replaceAll('&', '&amp;').replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;').replaceAll('"', '&quot;')
-    .replaceAll("'", '&#039;');
-}
-
-function stateClass(state) {
-  if (/TARGET_MET|WITHIN_SPEND|CORE_CANDIDATE/.test(state || '')) return 'good';
-  if (/BELOW_BREAK|OVER_SPEND|HIGH_RISK/.test(state || '')) return 'bad';
-  if (/LOW_VOLUME|BELOW_TARGET|OPTIMIZATION|ZERO_ORDER/.test(state || '')) return 'warn';
-  return 'neutral';
-}
-
-function itemStateClass(state) {
-  if (state === 'CORE_CANDIDATE') return 'core';
-  if (state === 'EXPLORATION_KEEP' || state === 'INSUFFICIENT_EXPLORATION') return 'explore';
-  if (state === 'HIGH_RISK_ZERO_ORDER') return 'risk';
-  if (state === 'PRODUCT_OPTIMIZATION_CANDIDATE' || state === 'ZERO_ORDER_STILL_TESTING') return 'optimize';
-  return '';
-}
-
-function dateDaysAgo(days) {
-  const d = new Date();
-  d.setDate(d.getDate() - days);
-  return d.toISOString().slice(0, 10);
+  return ({
+    fresh: '最新',
+    aging: '待刷新',
+    stale: '已过期',
+    missing: '无数据',
+  })[freshnessClass(lastSyncedAt)];
 }
 
 function initDates() {
   $('#endDate').value = dateDaysAgo(1);
   $('#startDate').value = dateDaysAgo(7);
-  const remembered = localStorage.getItem('shopee-analytics-shop-id');
-  if (remembered) $('#shopId').value = remembered;
 }
 
 async function json(url) {
@@ -114,91 +139,197 @@ async function checkHealth() {
     await json('/api/shopee-analytics/health');
     badge.textContent = '只读分析服务正常';
     badge.className = 'health ok';
-  } catch (error) {
+  } catch {
     badge.textContent = '分析服务不可用';
     badge.className = 'health bad';
   }
 }
 
-function renderSystemStatus(data) {
-  const panel = $('#systemStatus');
-  const sources = data.sources || [];
-  const tokens = data.tokens || [];
-  const tokenByRole = new Map(tokens.map(token => [token.appRole, token]));
-  const warnings = data.warnings || [];
-
-  $('#statusSubtitle').textContent = data.ok
-    ? '同步链路无严重错误；仍请关注单个数据源的新鲜度。'
-    : '发现需要处理的数据连接问题，诊断结论可能不完整。';
-
-  $('#sourceStatusGrid').innerHTML = sources.map(source => {
-    const cls = freshnessClass(source.lastSyncedAt);
-    return `<div class="source-card ${cls}">
-      <div class="source-card-top">
-        <strong>${escapeHtml(source.source)}</strong>
-        <span class="source-state ${cls}">${freshnessLabel(source.lastSyncedAt)}</span>
-      </div>
-      <div class="source-date">最新数据：${escapeHtml(source.latestDataDate || '—')}</div>
-      <div class="source-sync">同步：${escapeHtml(formatDateTime(source.lastSyncedAt))}</div>
-    </div>`;
-  }).join('');
-
-  const requiredRoles = ['ADS', 'STORE_OPS', 'ERP', 'BRAND_PORTAL'];
-  const tokenHtml = requiredRoles.map(role => {
-    const token = tokenByRole.get(role);
-    const expires = token && token.expiresAt ? new Date(token.expiresAt) : null;
-    const remainingHours = expires && !Number.isNaN(expires.getTime())
-      ? (expires.getTime() - Date.now()) / 3600000
-      : null;
-    let cls = 'fresh';
-    let label = '正常';
-    if (!token) { cls = 'missing'; label = '未配置'; }
-    else if (token.refreshError) { cls = 'stale'; label = '刷新失败'; }
-    else if (remainingHours !== null && remainingHours <= 0) { cls = 'aging'; label = '待自动刷新'; }
-    return `<div class="source-card token-card ${cls}">
-      <div class="source-card-top">
-        <strong>${role} Token</strong>
-        <span class="source-state ${cls}">${label}</span>
-      </div>
-      <div class="source-date">过期：${escapeHtml(token ? formatDateTime(token.expiresAt) : '—')}</div>
-      <div class="source-sync">上次刷新：${escapeHtml(token ? formatDateTime(token.lastRefreshAt) : '—')}</div>
-    </div>`;
-  }).join('');
-  $('#sourceStatusGrid').insertAdjacentHTML('beforeend', tokenHtml);
-
-  const warningBox = $('#systemWarnings');
-  if (warnings.length) {
-    warningBox.innerHTML = warnings.map(warning => `
-      <div class="warning-row ${warning.severity || 'warning'}">
-        <span>${escapeHtml(warning.code)}</span>
-        <strong>${escapeHtml(warning.message)}</strong>
-      </div>`).join('');
-    warningBox.classList.remove('hidden');
-  } else {
-    warningBox.innerHTML = '';
-    warningBox.classList.add('hidden');
-  }
-  panel.classList.remove('hidden');
+function currentFilters() {
+  return {
+    country: $('#countryFilter').value,
+    brand: $('#brandFilter').value,
+    shopId: $('#shopSelect').value ? Number($('#shopSelect').value) : null,
+    startDate: $('#startDate').value,
+    endDate: $('#endDate').value,
+  };
 }
 
-async function loadSystemStatus() {
-  const shopId = $('#shopId').value.trim();
-  if (!shopId) return;
-  const button = $('#refreshStatusBtn');
-  if (button) button.disabled = true;
-  try {
-    const data = await json(`/api/shopee-analytics/status?shop_id=${encodeURIComponent(shopId)}`);
-    renderSystemStatus(data);
-  } catch (error) {
-    $('#systemStatus').classList.remove('hidden');
-    $('#statusSubtitle').textContent = `数据状态读取失败：${error.message}`;
-    $('#sourceStatusGrid').innerHTML = '';
-  } finally {
-    if (button) button.disabled = false;
+function filteredShops() {
+  const { country, brand } = currentFilters();
+  return state.shops.filter(shop =>
+    (!country || shop.countryCode === country) &&
+    (!brand || shop.brandCode === brand)
+  );
+}
+
+function selectedShop() {
+  const id = currentFilters().shopId;
+  return id ? state.shops.find(shop => shop.shopId === id) || null : null;
+}
+
+function renderDimensionOptions() {
+  const countrySelect = $('#countryFilter');
+  const brandSelect = $('#brandFilter');
+  const existingCountry = countrySelect.value;
+  const existingBrand = brandSelect.value;
+
+  countrySelect.innerHTML = '<option value="">全部国家</option>' +
+    state.countries.map(row =>
+      `<option value="${escapeHtml(row.code)}">${escapeHtml(row.name || row.code)}</option>`
+    ).join('');
+
+  brandSelect.innerHTML = '<option value="">全部品牌</option>' +
+    state.brands.map(row =>
+      `<option value="${escapeHtml(row.code)}">${escapeHtml(row.name || row.code)}</option>`
+    ).join('');
+
+  if (state.countries.some(row => row.code === existingCountry)) countrySelect.value = existingCountry;
+  if (state.brands.some(row => row.code === existingBrand)) brandSelect.value = existingBrand;
+}
+
+function renderShopOptions({ preserve = true } = {}) {
+  const select = $('#shopSelect');
+  const previous = preserve ? select.value : '';
+  const shops = filteredShops();
+
+  const groups = new Map();
+  for (const shop of shops) {
+    const key = `${shop.countryCode} · ${shop.brandName || shop.brandCode}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(shop);
+  }
+
+  let html = '<option value="">全部店铺</option>';
+  for (const [label, group] of groups.entries()) {
+    html += `<optgroup label="${escapeHtml(label)}">`;
+    html += group.map(shop =>
+      `<option value="${shop.shopId}">${escapeHtml(shop.displayName)}</option>`
+    ).join('');
+    html += '</optgroup>';
+  }
+  select.innerHTML = html;
+
+  if (previous && shops.some(shop => String(shop.shopId) === previous)) select.value = previous;
+  else select.value = '';
+}
+
+async function loadShopDirectory() {
+  const data = await json('/api/shopee-analytics/shops');
+  state.shops = data.shops || [];
+  state.countries = data.countries || [];
+  state.brands = data.brands || [];
+  renderDimensionOptions();
+  renderShopOptions({ preserve: false });
+
+  if (!state.shops.length) {
+    $('#portfolioRows').innerHTML =
+      '<tr><td colspan="12" class="empty">尚未配置店铺档案。先配置国家 / 品牌 / 店铺后即可使用多店总览。</td></tr>';
   }
 }
 
-function renderSummary(campaigns) {
+function switchView(view) {
+  state.view = view;
+  $$('.view-tab').forEach(button =>
+    button.classList.toggle('active', button.dataset.view === view)
+  );
+  $$('.view-section').forEach(section => section.classList.add('hidden'));
+  $('#view-${view}').classList.remove('hidden');
+  updateSingleShopPrompts();
+  loadCurrentView();
+}
+
+function updateSingleShopPrompts() {
+  const shop = selectedShop();
+  $('#adsShopPrompt').classList.toggle('hidden', Boolean(shop));
+  $('#adsGrid').classList.toggle('hidden', !shop);
+  $('#statusShopPrompt').classList.toggle('hidden', Boolean(shop));
+  $('#systemStatus').classList.toggle('hidden', !shop);
+}
+
+function portfolioKpi(label, value, sub = '') {
+  return `<div class="kpi"><div class="label">${label}</div><div class="value">${value}</div>${sub ? `<div class="kpi-sub">${escapeHtml(sub)}</div>` : ''}</div>`;
+}
+
+function renderPortfolio(data) {
+  const totals = data.totals || {};
+  const dimensions = data.dimensions || {};
+  const shops = data.shops || [];
+
+  $('#portfolioShopCount').textContent = `${num(totals.shopCount)} 店`;
+  $('#portfolioSubtitle').textContent = dimensions.multiCurrency
+    ? '当前包含多个币种：金额按币种分别汇总，不直接做跨币种 GMV / ROAS 合计。'
+    : '当前为单一币种，可直接比较金额与广告效率。';
+
+  $('#portfolioSummary').innerHTML = [
+    portfolioKpi('店铺数', num(totals.shopCount)),
+    portfolioKpi('总订单', num(totals.orders), '来自 Shop BI'),
+    portfolioKpi('总销量', num(totals.unitsSold)),
+    portfolioKpi('广告 Broad 订单', num(totals.broadOrders)),
+    portfolioKpi('退货/退款单', num(totals.returnCount)),
+  ].join('');
+  $('#portfolioSummary').classList.remove('hidden');
+
+  const currencyGroups = data.currencyGroups || [];
+  $('#currencyGroups').innerHTML = currencyGroups.length
+    ? currencyGroups.map(group => `
+      <article class="currency-card">
+        <div class="currency-card-head">
+          <strong>${escapeHtml(group.currency)}</strong>
+          <span>${num(group.shopCount)} 店</span>
+        </div>
+        <div class="currency-money">${formatMoney(group.sales, group.currency)}</div>
+        <div class="currency-label">销售额</div>
+        <div class="currency-metrics">
+          <div><span>广告花费</span><strong>${formatMoney(group.adExpense, group.currency)}</strong></div>
+          <div><span>广告占比</span><strong class="${group.adSpendRatioToBiSales > .15 ? 'negative' : ''}">${group.adSpendRatioToBiSales == null ? '—' : pct(group.adSpendRatioToBiSales)}</strong></div>
+          <div><span>Broad ROAS</span><strong>${roas(group.broadRoas)}</strong></div>
+          <div><span>退款</span><strong>${formatMoney(group.refundAmount, group.currency)}</strong></div>
+        </div>
+      </article>`).join('')
+    : '<div class="empty-inline">所选范围没有金额数据。</div>';
+  $('#currencyGroups').classList.remove('hidden');
+
+  $('#portfolioRows').innerHTML = shops.length
+    ? shops.map(shop => `<tr data-portfolio-shop="${shop.shopId}">
+        <td>${escapeHtml(shop.countryName || shop.countryCode)}</td>
+        <td>${escapeHtml(shop.brandName || shop.brandCode)}</td>
+        <td><div class="shop-cell"><strong>${escapeHtml(shop.displayName)}</strong><small>#${shop.shopId}</small></div></td>
+        <td>${escapeHtml(shop.currency)}</td>
+        <td>${formatMoney(shop.sales, shop.currency)}</td>
+        <td>${num(shop.orders)}</td>
+        <td>${formatMoney(shop.adExpense, shop.currency)}</td>
+        <td class="${shop.adSpendRatioToBiSales > .15 ? 'negative' : ''}">${shop.adSpendRatioToBiSales == null ? '—' : pct(shop.adSpendRatioToBiSales)}</td>
+        <td>${roas(shop.broadRoas)}</td>
+        <td>${num(shop.directOrders)}</td>
+        <td>${formatMoney(shop.refundAmount, shop.currency)}</td>
+        <td>${num(shop.returnCount)}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="12" class="empty">当前筛选没有店铺数据。</td></tr>';
+
+  $$('[data-portfolio-shop]').forEach(row => {
+    row.addEventListener('click', () => {
+      $('#shopSelect').value = row.dataset.portfolioShop;
+      switchView('ads');
+    });
+  });
+}
+
+async function loadPortfolio() {
+  const filters = currentFilters();
+  const params = new URLSearchParams({
+    start_date: filters.startDate,
+    end_date: filters.endDate,
+  });
+  if (filters.country) params.set('country', filters.country);
+  if (filters.brand) params.set('brand', filters.brand);
+  if (filters.shopId) params.set('shop_ids', String(filters.shopId));
+
+  const data = await json(`/api/shopee-analytics/overview?${params}`);
+  renderPortfolio(data);
+}
+
+function renderCampaignSummary(campaigns, shop) {
   const sum = campaigns.reduce((acc, row) => {
     const p = row.performance || {};
     acc.expense += Number(p.expense || 0);
@@ -208,25 +339,27 @@ function renderSummary(campaigns) {
     acc.impressions += Number(p.impressions || 0);
     return acc;
   }, { expense: 0, gmv: 0, orders: 0, clicks: 0, impressions: 0 });
-  const ratio = sum.gmv ? sum.expense / sum.gmv : 0;
+  const ratio = sum.gmv ? sum.expense / sum.gmv : null;
   const totalRoas = sum.expense ? sum.gmv / sum.expense : 0;
 
   $('#summary').innerHTML = [
-    ['广告花费', money(sum.expense), ''],
-    ['Broad GMV', money(sum.gmv), ''],
+    ['广告花费', formatMoney(sum.expense, shop.currency), ''],
+    ['Broad GMV', formatMoney(sum.gmv, shop.currency), ''],
     ['Broad订单', num(sum.orders), ''],
     ['ROAS', roas(totalRoas), ''],
-    ['广告花费占比', pct(ratio), ratio > .15 ? 'negative' : 'positive'],
+    ['花费/Broad GMV', ratio == null ? '—' : pct(ratio), ratio > .15 ? 'negative' : 'positive'],
   ].map(([label, value, cls]) =>
     `<div class="kpi"><div class="label">${label}</div><div class="value ${cls}">${value}</div></div>`
   ).join('');
   $('#summary').classList.remove('hidden');
 }
 
-function renderCampaigns(data) {
+function renderCampaigns(data, shop) {
   const rows = data.campaigns || [];
   $('#campaignCount').textContent = rows.length;
-  renderSummary(rows);
+  $('#campaignSubtitle').textContent =
+    `${shop.countryName || shop.countryCode} · ${shop.brandName || shop.brandCode} · ${shop.displayName}`;
+  renderCampaignSummary(rows, shop);
 
   if (!rows.length) {
     $('#campaignRows').innerHTML = '<tr><td colspan="6" class="empty">这个区间没有 Campaign 数据。</td></tr>';
@@ -235,40 +368,56 @@ function renderCampaigns(data) {
 
   $('#campaignRows').innerHTML = rows.map(row => {
     const p = row.performance || {};
-    const spendRatio = p.broadGmv ? p.expense / p.broadGmv : 0;
+    const spendRatio = p.broadGmv ? p.expense / p.broadGmv : null;
     const status = row.status || row.campaignTypeRaw || 'unknown';
     return `<tr data-campaign="${row.campaignId}">
       <td><div class="campaign-name"><strong>#${row.campaignId}</strong><small>${escapeHtml(row.biddingMethod || row.adType || '')}</small></div></td>
       <td>${num(p.broadOrders)}</td>
       <td>${roas(p.broadRoas)}</td>
-      <td class="${spendRatio > .15 ? 'negative' : ''}">${pct(spendRatio)}</td>
+      <td class="${spendRatio > .15 ? 'negative' : ''}">${spendRatio == null ? '—' : pct(spendRatio)}</td>
       <td>${row.targetRoas == null ? '—' : roas(row.targetRoas)}</td>
       <td><span class="pill neutral">${escapeHtml(status)}</span></td>
     </tr>`;
   }).join('');
 
-  document.querySelectorAll('[data-campaign]').forEach(row => {
+  $$('[data-campaign]').forEach(row => {
     row.addEventListener('click', () => loadAnalysis(Number(row.dataset.campaign)));
   });
 }
 
-function metric(label, value, sub = '', cls = '') {
-  return `<div class="metric"><div class="label">${label}</div><div class="value ${cls}">${value}</div><div class="sub">${sub}</div></div>`;
+async function loadCampaigns() {
+  const shop = selectedShop();
+  if (!shop) return;
+  const filters = currentFilters();
+  const params = new URLSearchParams({
+    shop_id: String(shop.shopId),
+    start_date: filters.startDate,
+    end_date: filters.endDate,
+  });
+  const data = await json(`/api/shopee-analytics/campaigns?${params}`);
+  renderCampaigns(data, shop);
 }
 
-function miniMetrics(p) {
+function metric(label, value, sub = '', cls = '') {
+  return `<div class="metric"><div class="label">${label}</div><div class="value ${cls}">${value}</div><div class="sub">${escapeHtml(sub)}</div></div>`;
+}
+
+function miniMetrics(p, currency) {
   return [
     `<div><strong>${num(p.broadOrders)}</strong><span>订单</span></div>`,
     `<div><strong>${roas(p.broadRoas)}</strong><span>ROAS</span></div>`,
-    `<div><strong>${money(p.expense)}</strong><span>花费</span></div>`,
+    `<div><strong>${formatMoney(p.expense, currency)}</strong><span>花费</span></div>`,
   ].join('');
 }
 
 function renderAnalysis(data) {
+  const shop = selectedShop();
   const d = data.diagnosis;
   const c = d.campaign;
+
   $('#diagnosisTitle').textContent = `Campaign #${data.campaignId}`;
-  $('#diagnosisSubtitle').textContent = `${data.startDate} → ${data.endDate} · ${c.days} 个数据日`;
+  $('#diagnosisSubtitle').textContent =
+    `${shop.displayName} · ${data.startDate} → ${data.endDate} · ${c.days} 个数据日`;
   $('#diagnosisState').textContent = stateLabel(c.roasState);
   $('#diagnosisState').className = `pill ${stateClass(c.roasState)}`;
 
@@ -283,9 +432,23 @@ function renderAnalysis(data) {
     metric('Broad CVR', pct(c.broadCvr), '订单 / 点击'),
     metric('Direct ROAS', roas(c.directRoas), '用于观察广告商品自身'),
     metric('Direct订单', num(c.directOrders), `Broad订单 ${num(c.broadOrders)}`),
-    metric('CPC', money(c.cpc), c.targetVsRecommended || ''),
-    metric('预算利用率', c.budgetUtilization == null ? '—' : pct(c.budgetUtilization), c.dailyBudget ? `日预算 ${money(c.dailyBudget)} / 日均花费 ${money(c.avgDailySpend)}` : '未读取日预算'),
+    metric('CPC', formatMoney(c.cpc, shop.currency), c.targetVsRecommended || ''),
+    metric('预算利用率', c.budgetUtilization == null ? '—' : pct(c.budgetUtilization), c.dailyBudget ? `日预算 ${formatMoney(c.dailyBudget, shop.currency)} / 日均花费 ${formatMoney(c.avgDailySpend, shop.currency)}` : '未读取日预算'),
   ].join('');
+
+  const quality = data.dataQuality || {};
+  const qualityWarnings = quality.warnings || [];
+  $('#dataQualityBox').innerHTML = `
+    <div class="quality-summary">
+      <div><span>商品层花费覆盖</span><strong>${quality.spendCoverage == null ? '—' : pct(quality.spendCoverage)}</strong></div>
+      <div><span>成员 Performance 覆盖</span><strong>${quality.itemCoverage == null ? '—' : pct(quality.itemCoverage)}</strong></div>
+      <div><span>广告组成员</span><strong>${num(quality.membershipCount)}</strong></div>
+      <div><span>有表现商品</span><strong>${num(quality.performanceItemCount)}</strong></div>
+    </div>
+    ${qualityWarnings.length
+      ? `<div class="quality-warnings">${qualityWarnings.map(warning => `<div>⚠ ${escapeHtml(warning.message)}</div>`).join('')}</div>`
+      : '<div class="quality-ok">数据覆盖未发现明显异常。</div>'}
+  `;
 
   $('#actionList').innerHTML = (d.actions || []).length
     ? d.actions.map(action => `<div class="action-card">
@@ -296,8 +459,8 @@ function renderAnalysis(data) {
       </div>`).join('')
     : '<div class="empty-inline">当前没有结构性动作，继续观察完整周期。</div>';
 
-  $('#ordinaryMetrics').innerHTML = miniMetrics(data.baseline.ordinary || {});
-  $('#eventMetrics').innerHTML = miniMetrics(data.baseline.event || {});
+  $('#ordinaryMetrics').innerHTML = miniMetrics(data.baseline.ordinary || {}, shop.currency);
+  $('#eventMetrics').innerHTML = miniMetrics(data.baseline.event || {}, shop.currency);
 
   const items = d.items || [];
   $('#itemRows').innerHTML = items.length ? items.map(item => {
@@ -320,24 +483,10 @@ function renderAnalysis(data) {
     </tr>`;
   }).join('') : '<tr><td colspan="12" class="empty">没有商品层数据。</td></tr>';
 
-  const quality = data.dataQuality || {};
-  const qualityWarnings = quality.warnings || [];
-  const spendCoverageText = quality.spendCoverage == null ? '—' : pct(quality.spendCoverage);
-  const itemCoverageText = quality.itemCoverage == null ? '—' : pct(quality.itemCoverage);
-  $('#dataQualityBox').innerHTML = `
-    <div class="quality-summary">
-      <div><span>商品层花费覆盖</span><strong>${spendCoverageText}</strong></div>
-      <div><span>成员 Performance 覆盖</span><strong>${itemCoverageText}</strong></div>
-      <div><span>广告组成员</span><strong>${num(quality.membershipCount)}</strong></div>
-      <div><span>有表现商品</span><strong>${num(quality.performanceItemCount)}</strong></div>
-    </div>
-    ${qualityWarnings.length ? `<div class="quality-warnings">${qualityWarnings.map(warning =>
-      `<div>⚠ ${escapeHtml(warning.message)}</div>`).join('')}</div>` : '<div class="quality-ok">数据覆盖未发现明显异常。</div>'}
-  `;
+  $('#diagnosisNotes').innerHTML =
+    (d.notes || []).map(note => `<div>• ${escapeHtml(note)}</div>`).join('');
 
-  $('#diagnosisNotes').innerHTML = (d.notes || []).map(note => `<div>• ${escapeHtml(note)}</div>`).join('');
-
-  document.querySelectorAll('[data-item]').forEach(row => {
+  $$('[data-item]').forEach(row => {
     row.addEventListener('click', event => {
       event.stopPropagation();
       loadItemTimeline(Number(row.dataset.item), row);
@@ -347,17 +496,19 @@ function renderAnalysis(data) {
 
 function timelineDetail(event) {
   const d = event.detail || {};
+  const shop = selectedShop();
+
   if (event.type === 'VOUCHER_START') {
     return [
       d.percentage == null ? null : `折扣 ${(Number(d.percentage) <= 1 ? Number(d.percentage) * 100 : Number(d.percentage)).toFixed(1)}%`,
-      d.discountAmount == null ? null : `固定减免 ${money(d.discountAmount)}`,
-      d.minBasketPrice == null ? null : `门槛 ${money(d.minBasketPrice)}`,
+      d.discountAmount == null ? null : `固定减免 ${formatMoney(d.discountAmount, shop && shop.currency)}`,
+      d.minBasketPrice == null ? null : `门槛 ${formatMoney(d.minBasketPrice, shop && shop.currency)}`,
     ].filter(Boolean).join(' · ');
   }
   if (event.type === 'DISCOUNT_START') {
     return [
-      d.originalPrice == null ? null : `原价 ${money(d.originalPrice)}`,
-      d.promotionPrice == null ? null : `活动价 ${money(d.promotionPrice)}`,
+      d.originalPrice == null ? null : `原价 ${formatMoney(d.originalPrice, shop && shop.currency)}`,
+      d.promotionPrice == null ? null : `活动价 ${formatMoney(d.promotionPrice, shop && shop.currency)}`,
       d.modelId ? `Model #${d.modelId}` : null,
     ].filter(Boolean).join(' · ');
   }
@@ -365,7 +516,7 @@ function timelineDetail(event) {
     return [
       d.status || null,
       d.quantity == null ? null : `${d.quantity} 件`,
-      d.refundAmount == null ? null : `退款 ${money(d.refundAmount)} ${d.currency || ''}`,
+      d.refundAmount == null ? null : `退款 ${formatMoney(d.refundAmount, d.currency || (shop && shop.currency))}`,
     ].filter(Boolean).join(' · ');
   }
   if (event.type === 'RECOMMENDED_ROAS') {
@@ -375,14 +526,19 @@ function timelineDetail(event) {
 }
 
 async function loadItemTimeline(itemId, rowEl) {
-  document.querySelectorAll('[data-item]').forEach(row => row.classList.toggle('selected', row === rowEl));
+  const shop = selectedShop();
+  if (!shop) return;
+
+  $$('[data-item]').forEach(row => row.classList.toggle('selected', row === rowEl));
   $('#timelineTitle').textContent = `SKU 时间线 · #${itemId}`;
   $('#timeline').innerHTML = '<div class="empty-inline">读取中…</div>';
+
   try {
+    const filters = currentFilters();
     const params = new URLSearchParams({
-      shop_id: $('#shopId').value.trim(),
-      start_date: $('#startDate').value,
-      end_date: $('#endDate').value,
+      shop_id: String(shop.shopId),
+      start_date: filters.startDate,
+      end_date: filters.endDate,
     });
     const data = await json(`/api/shopee-analytics/items/${itemId}/timeline?${params}`);
     const events = data.events || [];
@@ -401,52 +557,171 @@ async function loadItemTimeline(itemId, rowEl) {
 }
 
 async function loadAnalysis(campaignId) {
-  document.querySelectorAll('[data-campaign]').forEach(row => {
+  const shop = selectedShop();
+  if (!shop) return;
+
+  state.selectedCampaignId = campaignId;
+  $$('[data-campaign]').forEach(row => {
     row.classList.toggle('selected', Number(row.dataset.campaign) === campaignId);
   });
   $('#diagnosisState').textContent = '读取中';
   $('#diagnosisState').className = 'pill neutral';
 
   try {
+    const filters = currentFilters();
     const params = new URLSearchParams({
-      shop_id: $('#shopId').value.trim(),
-      start_date: $('#startDate').value,
-      end_date: $('#endDate').value,
+      shop_id: String(shop.shopId),
+      start_date: filters.startDate,
+      end_date: filters.endDate,
     });
     const data = await json(`/api/shopee-analytics/campaigns/${campaignId}/analysis?${params}`);
     renderAnalysis(data);
   } catch (error) {
-    $('#diagnosisBody').innerHTML = `<div class="empty-state"><strong>读取失败</strong><span>${escapeHtml(error.message)}</span></div>`;
+    $('#diagnosisBody').innerHTML =
+      `<div class="empty-state"><strong>读取失败</strong><span>${escapeHtml(error.message)}</span></div>`;
     $('#diagnosisState').textContent = '错误';
     $('#diagnosisState').className = 'pill bad';
   }
 }
 
-async function loadCampaigns() {
-  const button = $('#loadBtn');
-  const shopId = $('#shopId').value.trim();
-  const startDate = $('#startDate').value;
-  const endDate = $('#endDate').value;
-  if (!shopId || !startDate || !endDate) return;
+function renderSystemStatus(data) {
+  const shop = selectedShop();
+  const sources = data.sources || [];
+  const tokens = data.tokens || [];
+  const tokenByRole = new Map(tokens.map(token => [token.appRole, token]));
+  const warnings = data.warnings || [];
 
-  localStorage.setItem('shopee-analytics-shop-id', shopId);
+  $('#statusTitle').textContent = `数据状态 · ${shop ? shop.displayName : ''}`;
+  $('#statusSubtitle').textContent = data.ok
+    ? '同步链路无严重错误；仍请关注单个数据源的新鲜度。'
+    : '发现需要处理的数据连接问题，诊断结论可能不完整。';
+
+  $('#sourceStatusGrid').innerHTML = sources.map(source => {
+    const cls = freshnessClass(source.lastSyncedAt);
+    return `<div class="source-card ${cls}">
+      <div class="source-card-top">
+        <strong>${escapeHtml(source.source)}</strong>
+        <span class="source-state ${cls}">${freshnessLabel(source.lastSyncedAt)}</span>
+      </div>
+      <div class="source-date">最新数据：${escapeHtml(source.latestDataDate || '—')}</div>
+      <div class="source-sync">同步：${escapeHtml(formatDateTime(source.lastSyncedAt))}</div>
+    </div>`;
+  }).join('');
+
+  const requiredRoles = ['ADS', 'STORE_OPS', 'ERP', 'BRAND_PORTAL'];
+  $('#sourceStatusGrid').insertAdjacentHTML('beforeend', requiredRoles.map(role => {
+    const token = tokenByRole.get(role);
+    const expires = token && token.expiresAt ? new Date(token.expiresAt) : null;
+    const remainingHours = expires && !Number.isNaN(expires.getTime())
+      ? (expires.getTime() - Date.now()) / 3600000
+      : null;
+
+    let cls = 'fresh';
+    let label = '正常';
+    if (!token) { cls = 'missing'; label = '未配置'; }
+    else if (token.refreshError) { cls = 'stale'; label = '刷新失败'; }
+    else if (remainingHours !== null && remainingHours <= 0) { cls = 'aging'; label = '待自动刷新'; }
+
+    return `<div class="source-card token-card ${cls}">
+      <div class="source-card-top">
+        <strong>${role} Token</strong>
+        <span class="source-state ${cls}">${label}</span>
+      </div>
+      <div class="source-date">过期：${escapeHtml(token ? formatDateTime(token.expiresAt) : '—')}</div>
+      <div class="source-sync">上次刷新：${escapeHtml(token ? formatDateTime(token.lastRefreshAt) : '—')}</div>
+    </div>`;
+  }).join(''));
+
+  const warningBox = $('#systemWarnings');
+  if (warnings.length) {
+    warningBox.innerHTML = warnings.map(warning => `
+      <div class="warning-row ${warning.severity || 'warning'}">
+        <span>${escapeHtml(warning.code)}</span>
+        <strong>${escapeHtml(warning.message)}</strong>
+      </div>`).join('');
+    warningBox.classList.remove('hidden');
+  } else {
+    warningBox.innerHTML = '';
+    warningBox.classList.add('hidden');
+  }
+  $('#systemStatus').classList.remove('hidden');
+}
+
+async function loadSystemStatus() {
+  const shop = selectedShop();
+  if (!shop) return;
+  const button = $('#refreshStatusBtn');
+  if (button) button.disabled = true;
+
+  try {
+    const data = await json(`/api/shopee-analytics/status?shop_id=${shop.shopId}`);
+    renderSystemStatus(data);
+  } catch (error) {
+    $('#systemStatus').classList.remove('hidden');
+    $('#statusSubtitle').textContent = `数据状态读取失败：${error.message}`;
+    $('#sourceStatusGrid').innerHTML = '';
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function loadCurrentView() {
+  updateSingleShopPrompts();
+  if (!$('#startDate').value || !$('#endDate').value) return;
+
+  const button = $('#loadBtn');
   button.disabled = true;
   button.textContent = '读取中…';
   try {
-    const params = new URLSearchParams({ shop_id: shopId, start_date: startDate, end_date: endDate });
-    const data = await json(`/api/shopee-analytics/campaigns?${params}`);
-    renderCampaigns(data);
-    loadSystemStatus();
+    if (state.view === 'overview') await loadPortfolio();
+    else if (state.view === 'ads' && selectedShop()) await loadCampaigns();
+    else if (state.view === 'status' && selectedShop()) await loadSystemStatus();
   } catch (error) {
-    $('#campaignRows').innerHTML = `<tr><td colspan="6" class="empty">${escapeHtml(error.message)}</td></tr>`;
+    if (state.view === 'overview') {
+      $('#portfolioRows').innerHTML =
+        `<tr><td colspan="12" class="empty">${escapeHtml(error.message)}</td></tr>`;
+    } else if (state.view === 'ads') {
+      $('#campaignRows').innerHTML =
+        `<tr><td colspan="6" class="empty">${escapeHtml(error.message)}</td></tr>`;
+    } else {
+      $('#statusSubtitle').textContent = error.message;
+    }
   } finally {
     button.disabled = false;
     button.textContent = '读取分析';
   }
 }
 
-initDates();
-checkHealth();
-$('#loadBtn').addEventListener('click', loadCampaigns);
+function onDimensionChanged() {
+  renderShopOptions();
+  updateSingleShopPrompts();
+}
+
+function onShopChanged() {
+  state.selectedCampaignId = null;
+  updateSingleShopPrompts();
+  if (state.view !== 'overview') loadCurrentView();
+}
+
+async function init() {
+  initDates();
+  await checkHealth();
+  try {
+    await loadShopDirectory();
+    await loadCurrentView();
+  } catch (error) {
+    $('#portfolioRows').innerHTML =
+      `<tr><td colspan="12" class="empty">${escapeHtml(error.message)}</td></tr>`;
+  }
+}
+
+$$('.view-tab').forEach(button => {
+  button.addEventListener('click', () => switchView(button.dataset.view));
+});
+$('#countryFilter').addEventListener('change', onDimensionChanged);
+$('#brandFilter').addEventListener('change', onDimensionChanged);
+$('#shopSelect').addEventListener('change', onShopChanged);
+$('#loadBtn').addEventListener('click', loadCurrentView);
 $('#refreshStatusBtn').addEventListener('click', loadSystemStatus);
-if ($('#shopId').value.trim()) loadSystemStatus();
+
+init();
