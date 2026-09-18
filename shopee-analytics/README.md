@@ -214,3 +214,37 @@ node shopee-analytics/scripts/validation-report.cjs
 ```
 
 The report prints no Partner Key / access token / refresh token. It includes shop identity, store BI totals, campaign totals/settings, item-coverage checks, token expiry metadata, Product Card coverage and a Seller Centre acceptance checklist.
+
+
+## Historical backfill
+
+Use the resumable backfill runner before accepting the first live dashboard. It is designed for multi-country / multi-brand / multi-shop onboarding and keeps progress per shop/source in `shopee_sync_state`.
+
+```bash
+SHOPEE_ANALYTICS_ENABLE_BACKFILL=YES \
+SHOPEE_BACKFILL_START_DATE=2026-05-01 \
+SHOPEE_BACKFILL_END_DATE=2026-09-17 \
+node shopee-analytics/scripts/backfill-all-shops.cjs
+```
+
+Optional filters:
+
+```bash
+SHOPEE_BACKFILL_COUNTRY=ID
+SHOPEE_BACKFILL_BRAND=REDRAGON
+SHOPEE_BACKFILL_SHOP_IDS=123456789,987654321
+SHOPEE_BACKFILL_SOURCES=gms,orders,returns,shop-bi
+```
+
+Behavior and safety rules:
+
+- Orders are backfilled by `create_time` in 14-day chunks, inside Shopee's documented 15-day order-list maximum window.
+- Returns use conservative 7-day chunks.
+- Shop BI is requested one local day at a time.
+- GMS performance is persisted one day at a time and the runner checkpoints every 7-day chunk.
+- Campaign settings / membership are synced as **current-state metadata only**. The runner never backdates today's membership into historical dates.
+- GMS item-performance rows are never treated as proof of full historical membership. This preserves the distinction between "member with zero performance" and "not known to be a member."
+- Product/model and Recommended ROI are current-state snapshots. They are not fabricated historically.
+- Voucher/Discount history is limited to records retained and returned by Shopee.
+- Product Card remains a separate exact-period BI import.
+- Rerunning the same date range resumes from the last successful chunk and all normalized writes remain idempotent.
