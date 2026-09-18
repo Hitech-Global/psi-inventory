@@ -12,8 +12,17 @@ const { recordPages, recordSnapshot } = require('./raw-snapshot');
 
 function requireRole(roleClients, role) {
   const entry = roleClients && roleClients[role];
-  if (!entry || !entry.client || !entry.accessToken) throw new Error(`Missing configured Shopee role client: ${role}`);
+  if (!entry || !entry.client) throw new Error(`Missing configured Shopee role client: ${role}`);
   return entry;
+}
+
+async function resolveRole(roleClients, role, shopId) {
+  const entry = requireRole(roleClients, role);
+  const accessToken = typeof entry.getAccessToken === 'function'
+    ? await entry.getAccessToken(shopId)
+    : entry.accessToken;
+  if (!accessToken) throw new Error(`Missing access token for Shopee role: ${role}`);
+  return { client: entry.client, accessToken };
 }
 
 class ShopeeSyncService {
@@ -40,7 +49,7 @@ class ShopeeSyncService {
   }
 
   async syncCampaignSettings({ eventDate = new Date().toISOString().slice(0, 10), adType = 'all' } = {}) {
-    const { client, accessToken } = requireRole(this.roleClients, 'ADS');
+    const { client, accessToken } = await resolveRole(this.roleClients, 'ADS', this.shopId);
     const list = await fetchCampaignIds({
       client, shopId: this.shopId, accessToken, adType,
     });
@@ -80,7 +89,7 @@ class ShopeeSyncService {
     updateTimeTo,
     includeModels = true,
   } = {}) {
-    const { client, accessToken } = requireRole(this.roleClients, 'ADS');
+    const { client, accessToken } = await resolveRole(this.roleClients, 'ADS', this.shopId);
     const list = await fetchItemList({
       client, shopId: this.shopId, accessToken,
       itemStatus, updateTimeFrom, updateTimeTo,
@@ -140,7 +149,7 @@ class ShopeeSyncService {
   }
 
   async syncRecommendedRoi({ itemIds, observedAt = new Date() }) {
-    const { client, accessToken } = requireRole(this.roleClients, 'ADS');
+    const { client, accessToken } = await resolveRole(this.roleClients, 'ADS', this.shopId);
     let count = 0;
     for (const itemId of itemIds || []) {
       const result = await fetchRecommendedRoi({
@@ -168,7 +177,7 @@ class ShopeeSyncService {
   }
 
   async syncPromotions({ discountStatus = 'all' } = {}) {
-    const { client, accessToken } = requireRole(this.roleClients, 'STORE_OPS');
+    const { client, accessToken } = await resolveRole(this.roleClients, 'STORE_OPS', this.shopId);
 
     const vouchers = await fetchAllVoucherDetails({
       client, shopId: this.shopId, accessToken,
@@ -224,7 +233,7 @@ class ShopeeSyncService {
   }
 
   async syncOrders({ timeFrom, timeTo, timeRangeField = 'update_time', orderStatus }) {
-    const { client, accessToken } = requireRole(this.roleClients, 'ADS');
+    const { client, accessToken } = await resolveRole(this.roleClients, 'ADS', this.shopId);
     const list = await fetchOrderList({
       client, shopId: this.shopId, accessToken,
       timeFrom, timeTo, timeRangeField, orderStatus,
@@ -259,7 +268,7 @@ class ShopeeSyncService {
   }
 
   async syncShopBiDay({ date, timezone, currency = 'LOCAL' }) {
-    const { client, accessToken } = requireRole(this.roleClients, 'BRAND_PORTAL');
+    const { client, accessToken } = await resolveRole(this.roleClients, 'BRAND_PORTAL', this.shopId);
     const result = await fetchShopBiDay({
       client,
       shopId: this.shopId,
@@ -287,7 +296,7 @@ class ShopeeSyncService {
   }
 
   async syncReturns({ createTimeFrom, createTimeTo, updateTimeFrom, updateTimeTo, status }) {
-    const { client, accessToken } = requireRole(this.roleClients, 'ERP');
+    const { client, accessToken } = await resolveRole(this.roleClients, 'ERP', this.shopId);
     const result = await fetchAllReturnDetails({
       client,
       shopId: this.shopId,
@@ -325,4 +334,4 @@ class ShopeeSyncService {
   }
 }
 
-module.exports = { ShopeeSyncService, requireRole };
+module.exports = { ShopeeSyncService, requireRole, resolveRole };
