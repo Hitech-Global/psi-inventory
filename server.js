@@ -17676,7 +17676,7 @@ function allocateFeeWithRemainder(fee, skuFacts, basisValues) {
 }
 
 // 获取CI费用归集汇总
-app.get('/api/commercial-invoices/:id/cost-summary', requireApiPermission('ci_view'), asyncHandler((req, res) => {
+app.get('/api/commercial-invoices/:id/cost-summary', requireApiPermission('ci_view'), requireCIAmountView, asyncHandler((req, res) => {
   try {
     const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [req.params.id]);
     if (!ci) return res.status(404).json({ error: 'CI不存在' });
