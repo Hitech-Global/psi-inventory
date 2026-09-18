@@ -12,7 +12,8 @@ class ShopeeQueryRepository {
     const result = await this.pool.query(
       `SELECT
          p.shop_id,p.display_name,p.country_code,p.country_name,p.brand_code,p.brand_name,
-         p.currency,p.timezone,p.brand_portal_timezone,p.marketplace_region,p.analytics_start_date,
+         p.currency,p.timezone,p.brand_portal_timezone,p.marketplace_region,
+         to_char(p.analytics_start_date,'YYYY-MM-DD') AS analytics_start_date,
          p.active,p.sort_order,p.note,p.updated_at,
          s.shop_name AS api_shop_name,s.region AS api_region,s.status AS api_status,s.synced_at AS api_synced_at
        FROM shopee_shop_profiles p
