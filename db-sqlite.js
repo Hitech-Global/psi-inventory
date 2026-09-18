@@ -2411,6 +2411,7 @@ function initDatabase() {
     }
   })();
 
+  // CI-AMOUNT-VIEW-DEFAULT-V1
   // ==================== 插入默认数据 ====================
 
   // 默认角色
@@ -2423,7 +2424,7 @@ function initDatabase() {
       'replenishment_view', 'replenishment_edit',
       'po_view', 'po_create', 'po_edit', 'po_approve', 'po_export',
       'pi_view', 'pi_create', 'pi_edit',
-      'ci_view', 'ci_create', 'ci_edit',
+      'ci_view', 'ci_amount_view', 'ci_create', 'ci_edit',
       'logistics_view', 'logistics_create', 'logistics_edit',
       'inbound_view', 'inbound_create', 'inbound_edit', 'inbound_confirm',
       'cost_view',
@@ -2441,7 +2442,7 @@ function initDatabase() {
       'replenishment_view', 'replenishment_edit',
       'po_view', 'po_create', 'po_edit', 'po_export',
       'pi_view', 'pi_create', 'pi_edit',
-      'ci_view', 'ci_create', 'ci_edit',
+      'ci_view', 'ci_amount_view', 'ci_create', 'ci_edit',
       'logistics_view', 'logistics_create', 'logistics_edit',
       'inbound_view', 'inbound_create', 'inbound_edit', 'inbound_confirm',
       'cost_view',
@@ -2453,7 +2454,7 @@ function initDatabase() {
     const viewerPerms = JSON.stringify([
       'dashboard_view', 'sku_view', 'inventory_view',
       'outbound_view', 'replenishment_view',
-      'po_view', 'pi_view', 'ci_view', 'logistics_view', 'inbound_view',
+      'po_view', 'pi_view', 'ci_view', 'ci_amount_view', 'logistics_view', 'inbound_view',
       'cost_view', 'payment_view', 'check_view',
       'stagnant_view', 'forwarder_view'
     ]);
