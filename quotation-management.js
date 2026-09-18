@@ -155,6 +155,7 @@ async function prefetchDefault(){
 
 window.showQuotationManagement=show;
 function boot(){
+  if(!canView())return;
   css();nav();
   const n=$('#sidebar-nav');if(n)new MutationObserver(nav).observe(n,{childList:true,subtree:true});
   const warm=()=>prefetchDefault();
