@@ -201,6 +201,7 @@ const { ShopeePromotionRepository } = require('../src/promotion-repository');
         timezone: 'Asia/Jakarta',
         marketplaceRegion: 'ID',
         brandPortalTimezone: 'GMT+7',
+        analyticsStartDate: '2026-05-01',
         gmsCampaignSeedIds: [7001, 7002],
       },
       {
@@ -444,6 +445,7 @@ const { ShopeePromotionRepository } = require('../src/promotion-repository');
     assert.strictEqual(shops.length, 2);
     assert.strictEqual(shops[0].countryCode, 'ID');
     assert.strictEqual(shops[0].brandPortalTimezone, 'GMT+7');
+    assert.strictEqual(shops[0].analyticsStartDate, '2026-05-01');
     assert.strictEqual(shops[0].apiShopName, 'API Redragon ID');
     assert.strictEqual(shops[1].currency, 'THB');
 
@@ -516,6 +518,8 @@ const { ShopeePromotionRepository } = require('../src/promotion-repository');
     assert.strictEqual(backfillCoverage.campaignCount, 1);
     assert.strictEqual(backfillCoverage.gmsDistinctDays, 1);
     assert.strictEqual(backfillCoverage.shopBiDays, 1);
+    assert.strictEqual(backfillCoverage.membershipSnapshotDays, 1);
+    assert.strictEqual(backfillCoverage.productCardPeriodRows, 0);
 
     await repository.markSyncSuccess({
       appRole: 'ADS',
@@ -533,6 +537,16 @@ const { ShopeePromotionRepository } = require('../src/promotion-repository');
       shopId: 1,
     });
     assert.strictEqual(backfillState.cursor.completedThrough, '2026-09-14');
+
+    const operationTimeline = await queryRepository.getItemTimeline({
+      shopId: 1,
+      itemId: 101,
+      startDate: '2026-09-17',
+      endDate: '2026-09-17',
+    });
+    assert(operationTimeline.some(row => row.type === 'CAMPAIGN_SETTING_CHANGE'));
+    assert(operationTimeline.some(row => row.type === 'VOUCHER_CHANGE'));
+    assert(operationTimeline.some(row => row.type === 'DISCOUNT_CHANGE'));
 
     const coverage = await queryRepository.getCampaignCoverageContext({
       shopId: 1,
