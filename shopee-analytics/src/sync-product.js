@@ -15,6 +15,17 @@ function normalizeItem(row) {
   };
 }
 
+function normalizeBaseInfo(row) {
+  return {
+    itemId: row.item_id,
+    itemName: row.item_name || null,
+    itemSku: row.item_sku || null,
+    categoryId: row.category_id ?? null,
+    updateTime: row.update_time ?? null,
+    raw: row,
+  };
+}
+
 function normalizeModel(row) {
   const priceInfo = Array.isArray(row.price_info) ? row.price_info[0] || {} : (row.price_info || {});
   const stockInfo = Array.isArray(row.stock_info_v2)
@@ -72,6 +83,31 @@ async function fetchItemList({
   return { rows, rawPages };
 }
 
+async function fetchItemBaseInfo({ client, shopId, accessToken, itemIds }) {
+  const endpoint = ENDPOINTS.productBaseInfo;
+  const ids = Array.from(new Set((itemIds || []).map(Number).filter(Number.isSafeInteger)));
+  const rows = [];
+  const rawPages = [];
+
+  for (let i = 0; i < ids.length; i += 50) {
+    const chunk = ids.slice(i, i + 50);
+    const query = { item_id_list: chunk };
+    const payload = await client.shopRequest({
+      path: endpoint.path,
+      shopId,
+      accessToken,
+      method: endpoint.method,
+      query,
+    });
+    rawPages.push({ query, payload });
+    const response = unwrap(payload);
+    const pageRows = Array.isArray(response.item_list) ? response.item_list : [];
+    rows.push(...pageRows.map(normalizeBaseInfo));
+  }
+
+  return { rows, rawPages };
+}
+
 async function fetchModelList({ client, shopId, accessToken, itemId }) {
   const endpoint = ENDPOINTS.productModels;
   const query = { item_id: itemId };
@@ -90,7 +126,9 @@ async function fetchModelList({ client, shopId, accessToken, itemId }) {
 module.exports = {
   unwrap,
   normalizeItem,
+  normalizeBaseInfo,
   normalizeModel,
   fetchItemList,
+  fetchItemBaseInfo,
   fetchModelList,
 };
