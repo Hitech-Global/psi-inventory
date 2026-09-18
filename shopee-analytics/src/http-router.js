@@ -74,14 +74,16 @@ function createShopeeAnalyticsRouter({
       });
 
       const ids = analysis.diagnosis.items.map(item => item.itemId).filter(Boolean);
-      const [names, recommended] = await Promise.all([
+      const [names, recommended, productCard] = await Promise.all([
         queryRepository.getCampaignItemNames({ shopId, itemIds: ids }),
         queryRepository.getLatestRecommendedRoiMap({ shopId, itemIds: ids }),
+        queryRepository.getProductCardPeriodMap({ shopId, startDate, endDate, itemIds: ids }),
       ]);
       analysis.diagnosis.items = analysis.diagnosis.items.map(item => ({
         ...item,
         ...(names.get(String(item.itemId)) || {}),
         recommendedRoi: recommended.get(String(item.itemId)) || null,
+        productCard: productCard.get(String(item.itemId)) || null,
       }));
       analysis.latestSetting = latest;
       res.json(analysis);
