@@ -98,6 +98,54 @@ function createShopeeAnalyticsRouter({
     res.json({ ok: true, module: 'shopee-analytics', mode: 'read-only' });
   });
 
+  router.get('/status/portfolio', async (req, res, next) => {
+    try {
+      const countryCode = optionalCode(req.query.country, 'country');
+      const brandCode = optionalCode(req.query.brand, 'brand');
+      const shopIds = new Set(parseShopIds(req.query.shop_ids));
+
+      let shops = await queryRepository.listShops({ activeOnly: true });
+      if (countryCode) shops = shops.filter(shop => shop.countryCode === countryCode);
+      if (brandCode) shops = shops.filter(shop => shop.brandCode === brandCode);
+      if (shopIds.size) shops = shops.filter(shop => shopIds.has(shop.shopId));
+
+      const statuses = await Promise.all(shops.map(async shop => {
+        const status = await queryRepository.getSystemStatus({ shopId: shop.shopId });
+        const warnings = buildSystemWarnings(status);
+        const errorCount = warnings.filter(warning => warning.severity === 'error').length;
+        const warningCount = warnings.filter(warning => warning.severity !== 'error').length;
+        const sourceDates = status.sources
+          .map(source => source.lastSyncedAt)
+          .filter(Boolean)
+          .map(value => new Date(value))
+          .filter(value => !Number.isNaN(value.getTime()));
+        const lastAnySyncAt = sourceDates.length
+          ? new Date(Math.max(...sourceDates.map(value => value.getTime()))).toISOString()
+          : null;
+        return {
+          shop,
+          ok: errorCount === 0,
+          errorCount,
+          warningCount,
+          lastAnySyncAt,
+          sources: status.sources,
+          tokens: status.tokens,
+          warnings,
+        };
+      }));
+
+      res.json({
+        filters: { countryCode, brandCode, shopIds: Array.from(shopIds) },
+        shopCount: statuses.length,
+        okShopCount: statuses.filter(status => status.ok).length,
+        errorShopCount: statuses.filter(status => !status.ok).length,
+        statuses,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.get('/status', async (req, res, next) => {
     try {
       const shopId = positiveInt(req.query.shop_id, 'shop_id');
