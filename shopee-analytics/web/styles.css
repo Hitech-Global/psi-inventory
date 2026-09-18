@@ -71,3 +71,5 @@
 @media(max-width:1000px){.store-signal-list{grid-template-columns:1fr 1fr}}@media(max-width:680px){.store-signal-list{grid-template-columns:1fr}}
 
 .store-sku-table-wrap td .pill{max-width:180px;overflow:hidden;text-overflow:ellipsis}
+
+.signal-action{margin-top:8px;padding-top:8px;border-top:1px solid #ececef;font-size:10px;line-height:1.55;color:#3a3a3c}
