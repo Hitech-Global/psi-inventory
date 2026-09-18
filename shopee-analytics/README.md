@@ -248,3 +248,20 @@ Behavior and safety rules:
 - Voucher/Discount history is limited to records retained and returned by Shopee.
 - Product Card remains a separate exact-period BI import.
 - Rerunning the same date range resumes from the last successful chunk and all normalized writes remain idempotent.
+
+
+## Item-level break-even ROAS
+
+SKU diagnosis supports a shop + item specific break-even ROAS. This is a business profitability threshold, not a Shopee platform rule.
+
+Example file: `config/item-strategy.example.json`
+
+Apply with:
+
+```bash
+SHOPEE_ANALYTICS_CONFIGURE_ITEM_STRATEGY=YES \
+SHOPEE_ITEM_STRATEGY_FILE=/secure/path/item-strategy.json \
+node shopee-analytics/scripts/configure-item-strategy.cjs
+```
+
+Campaign SKU race and store SKU diagnosis compare Direct ROAS against this item-level break-even value. The effective minimum acceptable ROAS in campaign diagnosis is the stricter of item break-even and the shop ad-spend-ratio constraint.
