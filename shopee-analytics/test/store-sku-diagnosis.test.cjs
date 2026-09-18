@@ -58,4 +58,23 @@ assert.strictEqual(result.items[2].primarySignal.code, 'AD_SPEND_ZERO_ORDER');
 assert(result.items[2].signals.some(row => row.code === 'PRODUCT_CARD_MISSING'));
 assert.strictEqual(result.attentionCount, 2);
 
+const mismatch = diagnoseStoreSkus([{
+  itemId: 4,
+  hasProductCard: true,
+  totalConversionRate: 0.1,
+  totalSales: 100,
+  adExpense: 10,
+  broadGmv: 150,
+  directGmv: 120,
+  directGmvShareOfSales: 1.2,
+  estimatedNaturalSales: -20,
+  adAttributionExceedsTotalSales: true,
+  broadOrders: 1,
+  directOrders: 1,
+  adSpendRatioToSales: 0.1,
+}]);
+assert(
+  mismatch.items[0].signals.some(row => row.code === 'DIRECT_ATTRIBUTION_EXCEEDS_ITEM_SALES'),
+);
+
 console.log('shopee store SKU diagnosis tests: ok');
