@@ -227,6 +227,36 @@ const { ShopeeShopRepository } = require('../src/shop-repository');
     assert.strictEqual(idOnly.shops.length, 1);
     assert.strictEqual(idOnly.shops[0].currency, 'IDR');
 
+    const trend = await queryRepository.getShopDailyTrend({
+      shopId: 1,
+      startDate: '2026-09-17',
+      endDate: '2026-09-17',
+    });
+    assert.strictEqual(trend.length, 1);
+    assert.strictEqual(trend[0].sales, 1000000);
+    assert.strictEqual(trend[0].adExpense, 100000);
+    assert.strictEqual(trend[0].estimatedNaturalSales, 300000);
+    assert(Math.abs(trend[0].clickToOrder - 0.05) < 1e-12);
+
+    const skuApiOnly = await queryRepository.getShopSkuOverview({
+      shopId: 1,
+      startDate: '2026-09-17',
+      endDate: '2026-09-17',
+    });
+    assert.strictEqual(skuApiOnly.length, 1);
+    assert.strictEqual(skuApiOnly[0].itemId, 101);
+    assert.strictEqual(skuApiOnly[0].adExpense, 80000);
+    assert.strictEqual(skuApiOnly[0].hasProductCard, false);
+
+    const skuWithProductCard = await queryRepository.getShopSkuOverview({
+      shopId: 1,
+      startDate: '2026-09-01',
+      endDate: '2026-09-07',
+    });
+    assert.strictEqual(skuWithProductCard.length, 1);
+    assert.strictEqual(skuWithProductCard[0].totalSales, 800000);
+    assert.strictEqual(skuWithProductCard[0].hasProductCard, true);
+
     const coverage = await queryRepository.getCampaignCoverageContext({
       shopId: 1,
       campaignId: 7,
