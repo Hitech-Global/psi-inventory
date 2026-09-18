@@ -987,6 +987,49 @@ function renderSystemStatus(data) {
     </div>`;
   }).join(''));
 
+  const history = data.historyCoverage;
+  const historyGrid = $('#historyCoverageGrid');
+  const historyRange = $('#historyCoverageRange');
+  const historyNote = $('#historyCoverageNote');
+
+  if (history) {
+    historyRange.textContent = `${history.startDate} → ${history.endDate}`;
+    historyRange.className = 'pill neutral';
+    historyGrid.innerHTML = [
+      ['GMS日覆盖', history.gmsCampaignDayCoverage == null ? '—' : pct(history.gmsCampaignDayCoverage),
+        history.campaignCount ? `${num(history.campaignDayRows)} / ${num(history.expectedGmsCampaignDayRows)} campaign-days` : '暂无已识别GMS Campaign'],
+      ['Shop BI日覆盖', pct(history.shopBiDayCoverage),
+        `${num(history.shopBiDays)} / ${num(history.expectedDays)} days`],
+      ['订单记录', num(history.orders), '事件型数据，不计算每日覆盖率'],
+      ['退货/退款记录', num(history.returns), '事件型数据，不计算每日覆盖率'],
+      ['商品主数据', num(history.products), '当前商品 / Model 状态'],
+      ['Voucher / Discount', `${num(history.vouchers)} / ${num(history.discounts)}`, '平台仍可返回的活动记录'],
+      ['Product Card', num(history.productCardPeriodRows), '与完整历史区间精确匹配的导入行'],
+      ['Membership快照日', num(history.membershipSnapshotDays), '只信任真实成员快照，不由广告表现反推'],
+    ].map(([label,value,sub]) => `
+      <div class="history-card">
+        <span>${escapeHtml(label)}</span>
+        <strong>${escapeHtml(value)}</strong>
+        <small>${escapeHtml(sub)}</small>
+      </div>`).join('');
+
+    const notes = [
+      ...(history.limitations || []),
+      history.backfillErrorCount
+        ? `有 ${history.backfillErrorCount} 个历史回填状态仍记录错误。`
+        : null,
+    ].filter(Boolean);
+    historyNote.innerHTML = notes.map(note => `<div>• ${escapeHtml(note)}</div>`).join('');
+    historyNote.classList.toggle('hidden', notes.length === 0);
+  } else {
+    historyRange.textContent = '未配置起始日期';
+    historyRange.className = 'pill warn';
+    historyGrid.innerHTML =
+      '<div class="empty-inline">这个店铺还没有 analyticsStartDate，暂时无法判断历史数据完整度。</div>';
+    historyNote.innerHTML = '';
+    historyNote.classList.add('hidden');
+  }
+
   const warningBox = $('#systemWarnings');
   if (warnings.length) {
     warningBox.innerHTML = warnings.map(warning => `
