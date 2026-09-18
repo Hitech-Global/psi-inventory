@@ -94,5 +94,26 @@ services:
       postgres:
         condition: service_healthy
 
+  preflight:
+    profiles: ["tools"]
+    build:
+      context: ../../..
+      dockerfile: shopee-analytics/deploy/desktop/Dockerfile
+    command: ["node", "shopee-analytics/scripts/deployment-preflight.cjs"]
+    env_file:
+      - ./runtime/.env
+    environment:
+      SHOPEE_ANALYTICS_PGHOST: postgres
+      SHOPEE_ANALYTICS_PGPORT: "5432"
+      SHOPEE_ANALYTICS_PGDATABASE: ${POSTGRES_DB}
+      SHOPEE_ANALYTICS_PGUSER: ${POSTGRES_USER}
+      SHOPEE_ANALYTICS_PGPASSWORD: ${POSTGRES_PASSWORD}
+      SHOPEE_BACKUP_STATUS_FILE: /runtime/backup-status.json
+    volumes:
+      - ./runtime:/runtime:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   shopee_pgdata:
