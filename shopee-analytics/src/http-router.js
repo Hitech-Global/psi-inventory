@@ -5,6 +5,7 @@ const { analyzeCampaignWindow } = require('./analysis-service');
 const { buildShopeeSeaEventCalendar, toEventDateSet } = require('./event-calendar');
 const { evaluateItemCoverage, buildSystemWarnings } = require('./data-quality');
 const { previousPeriod, diagnosePortfolio, diagnoseRow } = require('./portfolio-diagnosis');
+const { diagnoseStoreSkus } = require('./store-sku-diagnosis');
 
 function positiveInt(value, name) {
   const n = Number(value);
@@ -98,6 +99,7 @@ function createShopeeAnalyticsRouter({
       const current = currentOverview.shops[0] || null;
       const prior = previousOverview.shops[0] || null;
       const diagnosis = current ? diagnoseRow(current, prior) : null;
+      const skuDiagnosis = diagnoseStoreSkus(skus);
 
       const startYear = Number(startDate.slice(0, 4));
       const endYear = Number(endDate.slice(0, 4));
@@ -127,7 +129,11 @@ function createShopeeAnalyticsRouter({
           ...row,
           event: eventMap.get(row.eventDate) || null,
         })),
-        skus,
+        skus: skuDiagnosis.items,
+        skuDiagnosis: {
+          cvrMedian: skuDiagnosis.cvrMedian,
+          attentionCount: skuDiagnosis.attentionCount,
+        },
         productCardExactPeriod: skus.some(row => row.hasProductCard),
       });
     } catch (error) {
