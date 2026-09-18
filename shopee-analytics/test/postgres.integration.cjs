@@ -176,6 +176,15 @@ const { ShopeeShopRepository } = require('../src/shop-repository');
     ]);
 
     await pool.query(
+      `INSERT INTO shopee_shop_strategy_config
+       (shop_id,ad_spend_ratio_limit,weekly_order_reference)
+       VALUES (1,0.15,25),(2,0.20,25)
+       ON CONFLICT (shop_id) DO UPDATE SET
+        ad_spend_ratio_limit=EXCLUDED.ad_spend_ratio_limit,
+        weekly_order_reference=EXCLUDED.weekly_order_reference`
+    );
+
+    await pool.query(
       `INSERT INTO shopee_shop_bi_daily
        (shop_id,event_date,sales,orders,units_sold,product_clicks,product_views,unique_visitors,
         item_conversion_rate,order_conversion_rate,voucher_sales,voucher_buyers,voucher_usage_rate,
@@ -217,7 +226,10 @@ const { ShopeeShopRepository } = require('../src/shop-repository');
     assert(!Object.prototype.hasOwnProperty.call(portfolio.totals, 'sales'));
     const idPortfolioShop = portfolio.shops.find(shop => shop.shopId === 1);
     assert.strictEqual(idPortfolioShop.estimatedNaturalSales, 300000);
+    assert.strictEqual(idPortfolioShop.adSpendRatioLimit, 0.15);
     assert(Math.abs(idPortfolioShop.adGmvShareOfBiSales - 0.7) < 1e-12);
+    const thPortfolioShop = portfolio.shops.find(shop => shop.shopId === 2);
+    assert.strictEqual(thPortfolioShop.adSpendRatioLimit, 0.20);
 
     const idOnly = await queryRepository.getPortfolioOverview({
       startDate: '2026-09-17',
