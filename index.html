@@ -841,9 +841,9 @@ input[type="number"]{-moz-appearance:textfield;appearance:textfield}
 #ci-acc-body-logi .action-btn{margin-right:4px}
 /* AUTH-BOOT-NO-FLASH-V1：首屏先鉴权；只有 session 结果明确后才显示登录/待授权/业务页 */
 .auth-boot{position:fixed;inset:0;z-index:100000;display:flex;align-items:center;justify-content:center;background:#f5f6f8}
-.auth-boot-inner{display:flex;flex-direction:column;align-items:center;gap:14px;color:#646a73;font-size:13px}
-.auth-boot-logo{width:72px;height:48px;object-fit:contain}
-.auth-boot-spinner{width:20px;height:20px;border:2px solid #d2d2d7;border-top-color:#1d1d1f;border-radius:50%;animation:authBootSpin .75s linear infinite}
+.auth-boot-inner{display:flex;flex-direction:column;align-items:center;gap:18px;color:#646a73;font-size:17px;font-weight:500;letter-spacing:.01em}
+.auth-boot-logo{width:132px;height:88px;object-fit:contain}
+.auth-boot-spinner{width:28px;height:28px;border:3px solid #d2d2d7;border-top-color:#1d1d1f;border-radius:50%;animation:authBootSpin .75s linear infinite}
 @keyframes authBootSpin{to{transform:rotate(360deg)}}
 /* showApp / showPendingPage / doLogout 都会把目标容器 inline display=flex；此时自动撤掉 boot gate。网络错误则保持 boot，不误闪登录页。 */
 body:has(#app[style*="display: flex"]) #auth-boot,
