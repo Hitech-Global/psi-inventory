@@ -16,6 +16,7 @@ const money=(v,c)=>v==null?'—':(c==='RMB'?'¥ ':'$ ')+Number(v).toLocaleString
 const quoteMoney=(v,c,status)=>status==='no_quote'||v==null?'<span class="qm-noquote">未报价</span>':money(v,c);
 const change=v=>v==null?'—':`<span class="qm-change ${v>0?'up':v<0?'down':''}">${v>0?'↑ +':v<0?'↓ ':''}${Number(v).toFixed(2)}%</span>`;
 const call=(u,m='GET',b)=>window.api(u,m,b);
+const canView=()=>typeof window.hasPermission==='function'&&window.hasPermission('quotation_view');
 
 function lruSet(map,key,value,max){if(map.has(key))map.delete(key);map.set(key,value);while(map.size>max)map.delete(map.keys().next().value);}
 function summaryKey(){return [S.brand||'',S.type||'',S.keyword||'',S.from||'',S.to||''].join('|');}
@@ -31,11 +32,13 @@ function css(){
 
 function nav(){
   const n=$('#sidebar-nav');if(!n||$('#qm-nav'))return;
+  if(!canView())return;
   if(![...n.querySelectorAll('.sidebar-item')].some(x=>/PO管理|PI管理|CI\/PL/.test(x.textContent)))return;
   const e=document.createElement('div');e.id='qm-nav';e.className='sidebar-item';e.innerHTML='<span class="icon">🏷️</span><span>报价管理</span>';e.onclick=show;n.appendChild(e);
 }
 
 function show(){
+  if(!canView())return;
   css();
   document.querySelectorAll('.sidebar-item.active').forEach(x=>x.classList.remove('active'));
   $('#qm-nav')?.classList.add('active');
