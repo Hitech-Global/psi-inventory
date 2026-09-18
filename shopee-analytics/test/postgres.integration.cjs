@@ -20,6 +20,7 @@ const { ShopeeShopRepository } = require('../src/shop-repository');
 const { ShopeeCampaignRepository } = require('../src/campaign-repository');
 const { ShopeeProductRepository } = require('../src/product-repository');
 const { ShopeePromotionRepository } = require('../src/promotion-repository');
+const { ShopeeStrategyRepository } = require('../src/strategy-repository');
 
 (async () => {
   const pool = new Pool({ connectionString: url, max: 3 });
