@@ -51,3 +51,44 @@ Product Card item-level funnel data remains import-capable through `shopee_produ
 ```bash
 node shopee-analytics/test/diagnosis.test.cjs
 ```
+
+
+## Current onboarding flow
+
+The production connection is intentionally the last step:
+
+1. Apply `schema.sql` to the dedicated analytics PostgreSQL database with the explicit schema gate.
+2. Put Partner ID / Partner Key and the initial access + refresh tokens in server environment variables.
+3. Generate a 32-byte master key, base64 encode it, and set `SHOPEE_TOKEN_MASTER_KEY`.
+4. Run `scripts/bootstrap-tokens.cjs` once with `SHOPEE_ANALYTICS_BOOTSTRAP_TOKENS=YES`.
+5. Remove the plaintext access/refresh-token bootstrap environment variables after verification. Partner ID/Key remain server secrets.
+6. Runtime sync reads the encrypted token bundle from PostgreSQL and refreshes the Shopee access token automatically before expiry.
+7. Run the read-only sync commands and compare the first real campaign against Seller Centre before enabling recurring sync.
+
+No secret should be pasted into chat or committed to Git.
+
+## Product Card bridge
+
+The item-level Product Card funnel export is supported as a period import while a complete official item-level BI API is not yet verified.
+
+```bash
+SHOPEE_ANALYTICS_IMPORT_PRODUCT_CARD=YES \
+SHOPEE_PRODUCT_CARD_FILE=/secure/path/Product_Card.20260801_20260812.xlsx \
+node shopee-analytics/scripts/import-product-card.cjs
+```
+
+The importer can infer `start_date/end_date` from filenames containing `YYYYMMDD_YYYYMMDD`; explicit date env values override inference. It maps common English/Chinese Shopee headers, preserves the raw row JSON, and upserts by shop + period + item.
+
+## Read-only V1 UI
+
+`src/standalone-server.js` exposes only read endpoints:
+
+- Campaign overview
+- Campaign diagnostic detail
+- Ordinary-day vs Double-Day/25th-event baseline
+- SKU race table with Direct/Broad metrics and Product Card funnel context
+- Recommended ROI context
+- Next-step validation actions
+- SKU event timeline (voucher, discount, return/refund, recommended ROAS and operation history)
+
+The standalone server binds to loopback by default. It is not yet integrated into the existing inventory navigation/auth stack.
