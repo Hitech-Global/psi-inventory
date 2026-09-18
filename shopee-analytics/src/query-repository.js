@@ -8,6 +8,242 @@ class ShopeeQueryRepository {
     this.pool = pool;
   }
 
+  async listShops({ activeOnly = true } = {}) {
+    const result = await this.pool.query(
+      `SELECT
+         p.shop_id,p.display_name,p.country_code,p.country_name,p.brand_code,p.brand_name,
+         p.currency,p.timezone,p.marketplace_region,p.active,p.sort_order,p.note,p.updated_at,
+         s.shop_name AS api_shop_name,s.region AS api_region,s.status AS api_status,s.synced_at AS api_synced_at
+       FROM shopee_shop_profiles p
+       LEFT JOIN shopee_shops s ON s.shop_id=p.shop_id
+       WHERE ($1::boolean=false OR p.active=true)
+       ORDER BY p.country_code,p.brand_code,p.sort_order,p.display_name,p.shop_id`,
+      [activeOnly],
+    );
+    return result.rows.map(row => ({
+      shopId: Number(row.shop_id),
+      displayName: row.display_name,
+      countryCode: row.country_code,
+      countryName: row.country_name,
+      brandCode: row.brand_code,
+      brandName: row.brand_name,
+      currency: row.currency,
+      timezone: row.timezone,
+      marketplaceRegion: row.marketplace_region,
+      active: row.active,
+      sortOrder: Number(row.sort_order || 0),
+      note: row.note,
+      updatedAt: row.updated_at,
+      apiShopName: row.api_shop_name,
+      apiRegion: row.api_region,
+      apiStatus: row.api_status,
+      apiSyncedAt: row.api_synced_at,
+    }));
+  }
+
+  async getPortfolioOverview({
+    startDate,
+    endDate,
+    countryCode = null,
+    brandCode = null,
+    shopIds = [],
+  }) {
+    const ids = (shopIds || []).map(Number).filter(Number.isSafeInteger);
+    const result = await this.pool.query(
+      `WITH selected AS (
+         SELECT *
+         FROM shopee_shop_profiles p
+         WHERE p.active=true
+           AND ($3::text IS NULL OR p.country_code=$3)
+           AND ($4::text IS NULL OR p.brand_code=$4)
+           AND (cardinality($5::bigint[])=0 OR p.shop_id=ANY($5::bigint[]))
+       ),
+       bi AS (
+         SELECT
+           b.shop_id,
+           COALESCE(SUM(b.sales),0) AS sales,
+           COALESCE(SUM(b.orders),0) AS orders,
+           COALESCE(SUM(b.units_sold),0) AS units_sold,
+           COALESCE(SUM(b.product_clicks),0) AS product_clicks,
+           COALESCE(SUM(b.product_views),0) AS product_views,
+           COALESCE(SUM(b.unique_visitors),0) AS visitor_days,
+           AVG(b.item_conversion_rate) AS avg_item_conversion_rate,
+           AVG(b.order_conversion_rate) AS avg_order_conversion_rate,
+           COALESCE(SUM(b.voucher_sales),0) AS voucher_sales,
+           COALESCE(SUM(b.voucher_buyers),0) AS voucher_buyers,
+           COALESCE(SUM(b.voucher_cost),0) AS voucher_cost
+         FROM shopee_shop_bi_daily b
+         JOIN selected s ON s.shop_id=b.shop_id
+         WHERE b.event_date BETWEEN $1 AND $2
+         GROUP BY b.shop_id
+       ),
+       ads AS (
+         SELECT
+           d.shop_id,
+           COALESCE(SUM(d.impressions),0) AS ad_impressions,
+           COALESCE(SUM(d.clicks),0) AS ad_clicks,
+           COALESCE(SUM(d.expense),0) AS ad_expense,
+           COALESCE(SUM(d.broad_gmv),0) AS broad_gmv,
+           COALESCE(SUM(d.broad_orders),0) AS broad_orders,
+           COALESCE(SUM(d.direct_gmv),0) AS direct_gmv,
+           COALESCE(SUM(d.direct_orders),0) AS direct_orders
+         FROM shopee_ad_campaign_daily d
+         JOIN selected s ON s.shop_id=d.shop_id
+         WHERE d.event_date BETWEEN $1 AND $2
+         GROUP BY d.shop_id
+       ),
+       returns AS (
+         SELECT
+           r.shop_id,
+           COUNT(*)::bigint AS return_count,
+           COALESCE(SUM(r.refund_amount),0) AS refund_amount
+         FROM shopee_returns r
+         JOIN selected s ON s.shop_id=r.shop_id
+         WHERE (to_timestamp(r.create_time) AT TIME ZONE s.timezone)::date BETWEEN $1 AND $2
+         GROUP BY r.shop_id
+       )
+       SELECT
+         s.shop_id,s.display_name,s.country_code,s.country_name,s.brand_code,s.brand_name,
+         s.currency,s.timezone,s.marketplace_region,
+         COALESCE(bi.sales,0) AS sales,
+         COALESCE(bi.orders,0) AS orders,
+         COALESCE(bi.units_sold,0) AS units_sold,
+         COALESCE(bi.product_clicks,0) AS product_clicks,
+         COALESCE(bi.product_views,0) AS product_views,
+         COALESCE(bi.visitor_days,0) AS visitor_days,
+         bi.avg_item_conversion_rate,
+         bi.avg_order_conversion_rate,
+         COALESCE(bi.voucher_sales,0) AS voucher_sales,
+         COALESCE(bi.voucher_buyers,0) AS voucher_buyers,
+         COALESCE(bi.voucher_cost,0) AS voucher_cost,
+         COALESCE(ads.ad_impressions,0) AS ad_impressions,
+         COALESCE(ads.ad_clicks,0) AS ad_clicks,
+         COALESCE(ads.ad_expense,0) AS ad_expense,
+         COALESCE(ads.broad_gmv,0) AS broad_gmv,
+         COALESCE(ads.broad_orders,0) AS broad_orders,
+         COALESCE(ads.direct_gmv,0) AS direct_gmv,
+         COALESCE(ads.direct_orders,0) AS direct_orders,
+         COALESCE(returns.return_count,0) AS return_count,
+         COALESCE(returns.refund_amount,0) AS refund_amount
+       FROM selected s
+       LEFT JOIN bi ON bi.shop_id=s.shop_id
+       LEFT JOIN ads ON ads.shop_id=s.shop_id
+       LEFT JOIN returns ON returns.shop_id=s.shop_id
+       ORDER BY s.country_code,s.brand_code,s.sort_order,s.display_name,s.shop_id`,
+      [
+        startDate,
+        endDate,
+        countryCode || null,
+        brandCode || null,
+        ids,
+      ],
+    );
+
+    const shops = result.rows.map(row => {
+      const adExpense = Number(row.ad_expense || 0);
+      const broadGmv = Number(row.broad_gmv || 0);
+      const sales = Number(row.sales || 0);
+      const productClicks = Number(row.product_clicks || 0);
+      const orders = Number(row.orders || 0);
+      return {
+        shopId: Number(row.shop_id),
+        displayName: row.display_name,
+        countryCode: row.country_code,
+        countryName: row.country_name,
+        brandCode: row.brand_code,
+        brandName: row.brand_name,
+        currency: row.currency,
+        timezone: row.timezone,
+        marketplaceRegion: row.marketplace_region,
+        sales,
+        orders,
+        unitsSold: Number(row.units_sold || 0),
+        productClicks,
+        productViews: Number(row.product_views || 0),
+        visitorDays: Number(row.visitor_days || 0),
+        avgItemConversionRate: row.avg_item_conversion_rate === null ? null : Number(row.avg_item_conversion_rate),
+        avgOrderConversionRate: row.avg_order_conversion_rate === null ? null : Number(row.avg_order_conversion_rate),
+        voucherSales: Number(row.voucher_sales || 0),
+        voucherBuyers: Number(row.voucher_buyers || 0),
+        voucherCost: Number(row.voucher_cost || 0),
+        adImpressions: Number(row.ad_impressions || 0),
+        adClicks: Number(row.ad_clicks || 0),
+        adExpense,
+        broadGmv,
+        broadOrders: Number(row.broad_orders || 0),
+        directGmv: Number(row.direct_gmv || 0),
+        directOrders: Number(row.direct_orders || 0),
+        returnCount: Number(row.return_count || 0),
+        refundAmount: Number(row.refund_amount || 0),
+        adSpendRatioToBiSales: sales > 0 ? adExpense / sales : null,
+        broadRoas: adExpense > 0 ? broadGmv / adExpense : 0,
+        adCtr: Number(row.ad_impressions || 0) > 0
+          ? Number(row.ad_clicks || 0) / Number(row.ad_impressions || 0)
+          : 0,
+        orderPerProductClick: productClicks > 0 ? orders / productClicks : null,
+      };
+    });
+
+    const byCurrency = new Map();
+    for (const shop of shops) {
+      if (!byCurrency.has(shop.currency)) {
+        byCurrency.set(shop.currency, {
+          currency: shop.currency,
+          shopCount: 0,
+          sales: 0,
+          adExpense: 0,
+          broadGmv: 0,
+          voucherSales: 0,
+          voucherCost: 0,
+          refundAmount: 0,
+          orders: 0,
+          broadOrders: 0,
+          directOrders: 0,
+        });
+      }
+      const group = byCurrency.get(shop.currency);
+      group.shopCount += 1;
+      group.sales += shop.sales;
+      group.adExpense += shop.adExpense;
+      group.broadGmv += shop.broadGmv;
+      group.voucherSales += shop.voucherSales;
+      group.voucherCost += shop.voucherCost;
+      group.refundAmount += shop.refundAmount;
+      group.orders += shop.orders;
+      group.broadOrders += shop.broadOrders;
+      group.directOrders += shop.directOrders;
+    }
+
+    const currencyGroups = Array.from(byCurrency.values()).map(group => ({
+      ...group,
+      broadRoas: group.adExpense > 0 ? group.broadGmv / group.adExpense : 0,
+      adSpendRatioToBiSales: group.sales > 0 ? group.adExpense / group.sales : null,
+    }));
+
+    const countries = Array.from(new Set(shops.map(shop => shop.countryCode))).sort();
+    const brands = Array.from(new Set(shops.map(shop => shop.brandCode))).sort();
+    const currencies = Array.from(new Set(shops.map(shop => shop.currency))).sort();
+
+    return {
+      shops,
+      currencyGroups,
+      dimensions: {
+        countries,
+        brands,
+        currencies,
+        multiCurrency: currencies.length > 1,
+      },
+      totals: {
+        shopCount: shops.length,
+        orders: shops.reduce((sum, shop) => sum + shop.orders, 0),
+        unitsSold: shops.reduce((sum, shop) => sum + shop.unitsSold, 0),
+        broadOrders: shops.reduce((sum, shop) => sum + shop.broadOrders, 0),
+        directOrders: shops.reduce((sum, shop) => sum + shop.directOrders, 0),
+        returnCount: shops.reduce((sum, shop) => sum + shop.returnCount, 0),
+      },
+    };
+  }
+
   async listCampaignOverview({ shopId, startDate, endDate }) {
     const result = await this.pool.query(
       `SELECT
