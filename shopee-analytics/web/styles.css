@@ -58,3 +58,14 @@
 .portfolio-diagnosis-table-wrap tbody tr[data-diagnosis-shop]{cursor:pointer}
 .portfolio-diagnosis-table-wrap tbody tr[data-diagnosis-shop]:hover{background:#f8fbff}
 .portfolio-diagnosis-table-wrap td .pill{max-width:220px;overflow:hidden;text-overflow:ellipsis}
+
+.store-signal-panel,.store-trend-panel,.store-sku-panel{margin-bottom:16px}
+.store-signal-list{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;padding:14px}
+.store-signal{border:1px solid #ececef;border-radius:12px;padding:11px;background:#fbfbfc}
+.store-signal.high{border-color:#f2c8bf;background:#fff9f7}.store-signal.medium{border-color:#f2dfaa;background:#fffdf7}.store-signal.positive{border-color:#dcefe2;background:#f9fdf9}
+.store-signal p{font-size:10px;color:#6e6e73;line-height:1.5;margin:8px 0 0}
+.store-trend-table-wrap{max-height:430px}.store-sku-table-wrap{max-height:560px}
+.event-tag{font-size:9px;border-radius:999px;padding:4px 7px;background:#f0f0f2;color:#6e6e73;font-weight:700}
+.event-tag.special{background:#fff4d9;color:#966300}
+.store-sku-table-wrap tbody tr[data-store-item]{cursor:pointer}.store-sku-table-wrap tbody tr[data-store-item]:hover{background:#f8fbff}
+@media(max-width:1000px){.store-signal-list{grid-template-columns:1fr 1fr}}@media(max-width:680px){.store-signal-list{grid-template-columns:1fr}}
