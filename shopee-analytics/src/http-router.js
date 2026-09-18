@@ -81,6 +81,7 @@ function createShopeeAnalyticsRouter({
   repository,
   strategyRepository,
   queryRepository,
+  backupStatusProvider = async () => null,
 }) {
   const router = express.Router();
 
@@ -252,7 +253,8 @@ function createShopeeAnalyticsRouter({
       if (brandCode) shops = shops.filter(shop => shop.brandCode === brandCode);
       if (shopIds.size) shops = shops.filter(shop => shopIds.has(shop.shopId));
 
-      const statuses = await Promise.all(shops.map(async shop => {
+      const [statuses, backupStatus] = await Promise.all([
+        Promise.all(shops.map(async shop => {
         const status = await queryRepository.getSystemStatus({ shopId: shop.shopId });
         const warnings = buildSystemWarnings(status);
         const errorCount = warnings.filter(warning => warning.severity === 'error').length;
@@ -275,10 +277,13 @@ function createShopeeAnalyticsRouter({
           tokens: status.tokens,
           warnings,
         };
-      }));
+        })),
+        backupStatusProvider(),
+      ]);
 
       res.json({
         filters: { countryCode, brandCode, shopIds: Array.from(shopIds) },
+        backup: backupStatus,
         shopCount: statuses.length,
         okShopCount: statuses.filter(status => status.ok).length,
         errorShopCount: statuses.filter(status => !status.ok).length,
@@ -292,9 +297,10 @@ function createShopeeAnalyticsRouter({
   router.get('/status', async (req, res, next) => {
     try {
       const shopId = positiveInt(req.query.shop_id, 'shop_id');
-      const [status, shops] = await Promise.all([
+      const [status, shops, backupStatus] = await Promise.all([
         queryRepository.getSystemStatus({ shopId }),
         queryRepository.listShops({ activeOnly: false }),
+        backupStatusProvider(),
       ]);
       const shop = shops.find(row => row.shopId === shopId) || null;
 
@@ -346,6 +352,7 @@ function createShopeeAnalyticsRouter({
         shopId,
         shop,
         historyCoverage,
+        backup: backupStatus,
         ...status,
       });
     } catch (error) {
