@@ -70,6 +70,7 @@ function createShopeeAnalyticsRouter({
         endDate,
         targetRoas,
         breakEvenRoas,
+        campaignBudget: latest && latest.campaignBudget,
         eventDateSet: eventSetForRange(startDate, endDate),
       });
 
