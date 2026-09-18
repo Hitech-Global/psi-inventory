@@ -220,7 +220,7 @@ module.exports=function installQuotationImportFast(deps){
     }
   }
 
-  app.get('/api/quotation-management/import/:importId/status',requireApiPermission('cost_view'),asyncHandler(async(req,res)=>{
+  app.get('/api/quotation-management/import/:importId/status',requireApiPermission('quotation_view'),asyncHandler(async(req,res)=>{
     const id=String(req.params.importId||'').trim();
     if(!id)return res.status(400).json({error:'import_id 不能为空'});
     if(!isPg())return res.status(404).json({error:'本地模式不保留任务状态',status:'unknown'});
@@ -230,7 +230,7 @@ module.exports=function installQuotationImportFast(deps){
     res.json(r);
   }));
 
-  app.post('/api/quotation-management/import',requireApiPermission('cost_view'),asyncHandler(async(req,res)=>{
+  app.post('/api/quotation-management/import',requireApiPermission('quotation_view'),asyncHandler(async(req,res)=>{
     const importId=String((req.body||{}).import_id||genId('quoteimp')).trim();
     try{
       const {rows,mode}=parseRows(req);
