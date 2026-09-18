@@ -66,6 +66,11 @@ services:
       SHOPEE_ANALYTICS_PGUSER: ${POSTGRES_USER}
       SHOPEE_ANALYTICS_PGPASSWORD: ${POSTGRES_PASSWORD}
       SHOPEE_ANALYTICS_ENABLE_SYNC_ALL_SHOPS: "YES"
+      SHOPEE_PRODUCT_CARD_INBOX_DIR: /runtime/product-card/inbox
+      SHOPEE_PRODUCT_CARD_ARCHIVE_DIR: /runtime/product-card/archive
+      SHOPEE_PRODUCT_CARD_FAILED_DIR: /runtime/product-card/failed
+    volumes:
+      - ./runtime:/runtime
     depends_on:
       postgres:
         condition: service_healthy
