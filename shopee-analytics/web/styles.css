@@ -52,3 +52,9 @@
 .business-group-table-wrap{max-height:430px}
 .business-group-table-wrap tbody tr[data-business-country]{cursor:pointer}
 .business-group-table-wrap tbody tr[data-business-country]:hover{background:#f8fbff}
+
+.portfolio-diagnosis-panel{margin-bottom:16px}
+.portfolio-diagnosis-table-wrap{max-height:430px}
+.portfolio-diagnosis-table-wrap tbody tr[data-diagnosis-shop]{cursor:pointer}
+.portfolio-diagnosis-table-wrap tbody tr[data-diagnosis-shop]:hover{background:#f8fbff}
+.portfolio-diagnosis-table-wrap td .pill{max-width:220px;overflow:hidden;text-overflow:ellipsis}
