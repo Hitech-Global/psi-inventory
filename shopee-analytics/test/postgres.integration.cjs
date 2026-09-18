@@ -209,6 +209,10 @@ const { ShopeeShopRepository } = require('../src/shop-repository');
     assert.strictEqual(portfolio.dimensions.multiCurrency, true);
     assert.deepStrictEqual(portfolio.dimensions.currencies, ['IDR', 'THB']);
     assert.strictEqual(portfolio.currencyGroups.length, 2);
+    assert.strictEqual(portfolio.businessGroups.length, 2);
+    assert(portfolio.businessGroups.some(group =>
+      group.countryCode === 'ID' && group.brandCode === 'REDRAGON' && group.currency === 'IDR'
+    ));
     assert.strictEqual(portfolio.totals.orders, 15);
     assert(!Object.prototype.hasOwnProperty.call(portfolio.totals, 'sales'));
     const idPortfolioShop = portfolio.shops.find(shop => shop.shopId === 1);
