@@ -22,7 +22,7 @@ const ENDPOINTS = Object.freeze({
   discountDetail: { app: 'STORE_OPS', method: 'GET', path: '/api/v2/discount/get_discount' },
   returns: { app: 'ERP', method: 'GET', path: '/api/v2/returns/get_return_list' },
   returnDetail: { app: 'ERP', method: 'GET', path: '/api/v2/returns/get_return_detail' },
-  shopSalesPerformance: { app: 'BRAND_PORTAL', method: 'GET', path: '/api/v2/principal/get_shop_sales_performance_detail' },
+  shopSalesPerformance: { app: 'BRAND_PORTAL', method: 'POST', path: '/api/v2/principal/get_shop_sales_performance_detail' },
   marketingHotListing: { app: 'ERP', method: 'GET', path: '/api/v2/business_insights/get_marketing_hot_listing' },
 });
 
