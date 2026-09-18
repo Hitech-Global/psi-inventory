@@ -29,6 +29,7 @@ function diagnoseStoreSkus(rows, {
 
   const diagnosed = input.map(row => {
     const signals = [];
+    const directGmvShare = row.directGmvShareOfSales ?? row.adGmvShareOfSales ?? null;
 
     if (!row.hasProductCard) {
       signals.push(signal(
@@ -54,9 +55,19 @@ function diagnoseStoreSkus(rows, {
       signals.push(signal(
         'ITEM_AD_SPEND_RATIO_OVER_LIMIT',
         'high',
-        '商品广告花费占比超 15%',
-        '广告花费 / 商品总销售额超过当前经营约束，需要结合 ROAS 与自然销售承接判断。',
+        '商品广告花费占比超经营约束',
+        `广告花费 / 商品总销售额为 ${(row.adSpendRatioToSales * 100).toFixed(1)}%，高于当前店铺 ${(adSpendRatioLimit * 100).toFixed(1)}% 约束。`,
         '先保护利润，不增加预算；检查该 SKU 所在 Campaign 和商品 CVR，恢复至约束内再测试放量。',
+      ));
+    }
+
+    if (row.adAttributionExceedsTotalSales) {
+      signals.push(signal(
+        'DIRECT_ATTRIBUTION_EXCEEDS_ITEM_SALES',
+        'medium',
+        'Direct广告GMV高于商品总销售',
+        '同周期 Direct Ads GMV 高于 Product Card 商品总销售，当前两个来源不可直接相减解释自然销售。',
+        '先核对 Product Card 日期范围、店铺时区与广告归因回溯，再做商品自然/广告结构判断。',
       ));
     }
 
@@ -76,30 +87,30 @@ function diagnoseStoreSkus(rows, {
     }
 
     if (
-      row.adGmvShareOfSales !== null &&
-      row.adGmvShareOfSales >= highAdGmvShare &&
+      directGmvShare !== null &&
+      directGmvShare >= highAdGmvShare &&
       Number(row.totalSales || 0) > 0
     ) {
       signals.push(signal(
         'AD_LED_SALES',
         'medium',
-        '销售高度依赖广告归因',
-        'Broad Ads GMV 占商品总销售较高；关注停止或收缩广告后自然承接是否足够。',
-        '不要直接停广告；先观察自然销售趋势，并在效率达标时小幅调整广告变量验证依赖程度。',
+        '商品销售高度依赖Direct广告归因',
+        'Direct Ads GMV 占商品总销售较高；这是广告商品自身归因口径，比 Broad 更适合与商品总销售比较。',
+        '不要直接停广告；先观察估算非Direct销售趋势，并在效率达标时小幅调整广告变量验证依赖程度。',
       ));
     }
 
     if (
-      row.adGmvShareOfSales !== null &&
-      row.adGmvShareOfSales <= lowAdGmvShare &&
+      directGmvShare !== null &&
+      directGmvShare <= lowAdGmvShare &&
       Number(row.estimatedNaturalSales || 0) > 0
     ) {
       signals.push(signal(
         'NATURAL_LED_SALES',
         'positive',
-        '自然销售占比较高',
-        '估算自然销售占比高，可作为商品自身承接能力的积极信号继续观察。',
-        '保护商品价格、评价与主链接承接，广告放量时关注是否仍能保持自然销售和整体广告占比约束。',
+        '估算非Direct销售占比较高',
+        '商品总销售减 Direct Ads GMV 的差值较高，可作为非Direct承接的积极信号，但不等同于纯自然流。',
+        '保护商品价格、评价与主链接承接；放量时同时观察 Direct 占比、总CVR和整体广告花费约束。',
       ));
     }
 
