@@ -6,6 +6,7 @@ const {
   explorationCostMultiple,
   safeDiv,
 } = require('./metrics');
+const { itemAction, campaignActions } = require('./action-engine');
 
 const DEFAULTS = Object.freeze({
   weeklyVolumeReference: 25,
@@ -39,12 +40,16 @@ function diagnoseCampaign({
   targetRoas,
   breakEvenRoas,
   recommendedRoi,
+  campaignBudget,
   days = 7,
   settings = {},
 }) {
   const cfg = { ...DEFAULTS, ...settings };
   const perf = normalizePerformance(campaign);
   const weeklyEquivalentOrders = days > 0 ? perf.broadOrders * 7 / days : 0;
+  const avgDailySpend = days > 0 ? perf.expense / days : 0;
+  const dailyBudget = Number(campaignBudget || 0);
+  const budgetUtilization = dailyBudget > 0 ? avgDailySpend / dailyBudget : null;
   const adCostRatio = safeDiv(perf.expense, perf.broadGmv);
   const spendLimitRoas = requiredRoasForSpendLimit(cfg.adSpendRatioLimit);
 
@@ -75,24 +80,38 @@ function diagnoseCampaign({
     config: cfg,
   }));
 
+  const campaignResult = {
+    ...perf,
+    days,
+    weeklyEquivalentOrders,
+    volumeState,
+    roasState,
+    avgDailySpend,
+    dailyBudget,
+    budgetUtilization,
+    adCostRatio,
+    adSpendRatioLimit: cfg.adSpendRatioLimit,
+    spendLimitRoas,
+    spendLimitState,
+    targetRoas: Number(targetRoas || 0),
+    breakEvenRoas: Number(breakEvenRoas || 0),
+    targetVsRecommended: recommendedRangeState(targetRoas, recommendedRoi),
+    recommendedRoi: recommendedRoi || null,
+  };
+
+  const efficient = campaignResult.roasState === 'TARGET_MET' &&
+    campaignResult.spendLimitState === 'WITHIN_SPEND_LIMIT';
+  const lowVolume = campaignResult.volumeState === 'LOW_VOLUME_SIGNAL';
+  const itemsWithActions = itemResults.map(item => ({
+    ...item,
+    action: itemAction(item.state, { lowVolumeAndEfficient: lowVolume && efficient }),
+  }));
+
   return {
     sequence: ['ORDERS', 'ROAS', 'FUNNEL', 'ITEM_STRUCTURE', 'ACTION'],
-    campaign: {
-      ...perf,
-      days,
-      weeklyEquivalentOrders,
-      volumeState,
-      roasState,
-      adCostRatio,
-      adSpendRatioLimit: cfg.adSpendRatioLimit,
-      spendLimitRoas,
-      spendLimitState,
-      targetRoas: Number(targetRoas || 0),
-      breakEvenRoas: Number(breakEvenRoas || 0),
-      targetVsRecommended: recommendedRangeState(targetRoas, recommendedRoi),
-      recommendedRoi: recommendedRoi || null,
-    },
-    items: itemResults,
+    campaign: campaignResult,
+    actions: campaignActions({ campaign: campaignResult, items: itemsWithActions }),
+    items: itemsWithActions,
     notes: [
       'weeklyVolumeReference is an internal maturity/reference signal, not an official Shopee learning-complete rule.',
       'Item competitiveness should prefer direct metrics when evaluating the promoted item itself.',
