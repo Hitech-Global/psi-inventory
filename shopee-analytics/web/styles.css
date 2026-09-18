@@ -47,3 +47,8 @@
 .status-table-wrap{max-height:650px}
 .status-table-wrap tbody tr[data-status-shop]{cursor:pointer}
 .status-table-wrap tbody tr[data-status-shop]:hover{background:#f8fbff}
+
+.business-group-panel{margin-bottom:16px}
+.business-group-table-wrap{max-height:430px}
+.business-group-table-wrap tbody tr[data-business-country]{cursor:pointer}
+.business-group-table-wrap tbody tr[data-business-country]:hover{background:#f8fbff}
