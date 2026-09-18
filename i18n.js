@@ -4365,6 +4365,8 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.en["permission.label.ci_amount_view"] = "View Amounts"; I18N.dict.id["permission.label.ci_amount_view"] = "Lihat Nilai";
   I18N.dict.en["permission.label.ci_create"] = "Create"; I18N.dict.id["permission.label.ci_create"] = "Buat";
   I18N.dict.en["permission.label.ci_edit"] = "Edit"; I18N.dict.id["permission.label.ci_edit"] = "Edit";
+  I18N.dict.en["permission.submodule.报价管理"] = "Quotation Management"; I18N.dict.id["permission.submodule.报价管理"] = "Manajemen Penawaran";
+  I18N.dict.en["permission.label.quotation_view"] = "View"; I18N.dict.id["permission.label.quotation_view"] = "Lihat";
   I18N.dict.en["permission.label.logistics_view"] = "View"; I18N.dict.id["permission.label.logistics_view"] = "Lihat";
   I18N.dict.en["permission.label.logistics_create"] = "Create"; I18N.dict.id["permission.label.logistics_create"] = "Buat";
   I18N.dict.en["permission.label.logistics_edit"] = "Edit"; I18N.dict.id["permission.label.logistics_edit"] = "Edit";
