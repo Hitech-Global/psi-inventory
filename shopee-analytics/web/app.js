@@ -264,6 +264,10 @@ function switchView(view) {
 
 function updateSingleShopPrompts() {
   const shop = selectedShop();
+
+  $('#storeShopPrompt').classList.toggle('hidden', Boolean(shop));
+  $('#storeDetail').classList.toggle('hidden', !shop);
+
   $('#adsShopPrompt').classList.toggle('hidden', Boolean(shop));
   $('#adsGrid').classList.toggle('hidden', !shop);
 
@@ -370,7 +374,7 @@ function renderPortfolio(data) {
   $('[data-diagnosis-shop]').forEach(row => {
     row.addEventListener('click', () => {
       $('#shopSelect').value = row.dataset.diagnosisShop;
-      switchView('ads');
+      switchView('store');
     });
   });
 
@@ -432,7 +436,7 @@ function renderPortfolio(data) {
   $$('[data-portfolio-shop]').forEach(row => {
     row.addEventListener('click', () => {
       $('#shopSelect').value = row.dataset.portfolioShop;
-      switchView('ads');
+      switchView('store');
     });
   });
 }
@@ -449,6 +453,106 @@ async function loadPortfolio() {
 
   const data = await json(`/api/shopee-analytics/overview?${params}`);
   renderPortfolio(data);
+}
+
+function renderStoreDetail(data) {
+  const shop = data.shop;
+  const current = data.current || {};
+  const diagnosis = data.diagnosis || {};
+  const changes = diagnosis.changes || {};
+  const primarySignal = diagnosis.primarySignal || null;
+
+  $('#storeTitle').textContent =
+    `${shop.countryName || shop.countryCode} · ${shop.brandName || shop.brandCode} · ${shop.displayName}`;
+  $('#storeCompareSubtitle').textContent =
+    `当前 ${data.startDate} → ${data.endDate}，对比上一等长周期 ${data.previousStartDate} → ${data.previousEndDate}。`;
+
+  $('#storePrimarySignal').textContent = primarySignal ? primarySignal.title : '等待数据';
+  $('#storePrimarySignal').className = `pill ${signalClass(primarySignal)}`;
+
+  $('#storeSummary').innerHTML = [
+    portfolioKpi('销售额', formatMoney(current.sales, shop.currency), `较上期 ${changePct(changes.sales)}`),
+    portfolioKpi('订单', num(current.orders), `较上期 ${changePct(changes.orders)}`),
+    portfolioKpi('商品点击', num(current.productClicks), `较上期 ${changePct(changes.productClicks)}`),
+    portfolioKpi('点击→订单', current.orderPerProductClick == null ? '—' : pct(current.orderPerProductClick), `较上期 ${changePct(changes.clickToOrder)}`),
+    portfolioKpi('客单价', current.orders ? formatMoney(current.sales / current.orders, shop.currency) : '—', `较上期 ${changePct(changes.aov)}`),
+    portfolioKpi('广告花费占比', current.adSpendRatioToBiSales == null ? '—' : pct(current.adSpendRatioToBiSales), '经营约束 ≤ 15%'),
+    portfolioKpi('Broad ROAS', roas(current.broadRoas)),
+    portfolioKpi('估算自然销售', formatMoney(current.estimatedNaturalSales, shop.currency), `较上期 ${changePct(changes.estimatedNaturalSales)}`),
+  ].join('');
+
+  const signals = diagnosis.signals || [];
+  $('#storeSignalList').innerHTML = signals.map(signal => `
+    <article class="store-signal ${signal.severity || 'neutral'}">
+      <span class="pill ${signalClass(signal)}">${escapeHtml(signal.title)}</span>
+      <p>${escapeHtml(signal.detail || '')}</p>
+    </article>
+  `).join('') || '<div class="empty-inline">暂无经营变化信号。</div>';
+
+  $('#storeTrendRows').innerHTML = (data.daily || []).length
+    ? data.daily.map(row => {
+        const eventText = row.event
+          ? (row.event.eventType === 'DOUBLE_DAY' ? '双日' : row.event.eventType === 'PAYDAY' ? '25日' : row.event.eventType)
+          : '普通日';
+        return `<tr>
+          <td>${escapeHtml(row.eventDate)}</td>
+          <td><span class="event-tag ${row.event ? 'special' : ''}">${escapeHtml(eventText)}</span></td>
+          <td>${row.sales == null ? '—' : formatMoney(row.sales, shop.currency)}</td>
+          <td>${row.orders == null ? '—' : num(row.orders)}</td>
+          <td>${row.productClicks == null ? '—' : num(row.productClicks)}</td>
+          <td>${row.clickToOrder == null ? '—' : pct(row.clickToOrder)}</td>
+          <td>${row.aov == null ? '—' : formatMoney(row.aov, shop.currency)}</td>
+          <td>${formatMoney(row.adExpense, shop.currency)}</td>
+          <td>${roas(row.broadRoas)}</td>
+          <td>${row.estimatedNaturalSales == null ? '—' : formatMoney(row.estimatedNaturalSales, shop.currency)}</td>
+        </tr>`;
+      }).join('')
+    : '<tr><td colspan="10" class="empty">这个周期没有每日店铺数据。</td></tr>';
+
+  const skus = data.skus || [];
+  $('#storeSkuCount').textContent = `${num(skus.length)} SKU`;
+  $('#storeSkuSubtitle').textContent = data.productCardExactPeriod
+    ? '已匹配当前周期 Product Card：可同时看商品总表现、自然/广告结构与商品漏斗。'
+    : '当前周期没有精确匹配的 Product Card，先显示 API 广告数据；商品总 CVR / 加购率等待导入。';
+
+  $('#storeSkuRows').innerHTML = skus.length
+    ? skus.map(item => `<tr data-store-item="${item.itemId}">
+        <td><div class="item-name"><strong>${escapeHtml(item.itemSku || ('#' + item.itemId))}</strong><small>${escapeHtml(item.itemName || '')}</small></div></td>
+        <td>${item.totalSales == null ? '—' : formatMoney(item.totalSales, shop.currency)}</td>
+        <td>${item.totalOrders == null ? '—' : num(item.totalOrders)}</td>
+        <td>${item.totalConversionRate == null ? '—' : pct(item.totalConversionRate)}</td>
+        <td>${item.addToCartRate == null ? '—' : pct(item.addToCartRate)}</td>
+        <td>${formatMoney(item.adExpense, shop.currency)}</td>
+        <td>${formatMoney(item.broadGmv, shop.currency)}</td>
+        <td>${item.adGmvShareOfSales == null ? '—' : pct(item.adGmvShareOfSales)}</td>
+        <td>${roas(item.broadRoas)}</td>
+        <td>${num(item.directOrders)}</td>
+        <td>${item.estimatedNaturalSales == null ? '—' : formatMoney(item.estimatedNaturalSales, shop.currency)}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="11" class="empty">当前周期没有商品层数据。</td></tr>';
+
+  $('[data-store-item]').forEach(row => {
+    row.addEventListener('click', () => {
+      const itemId = Number(row.dataset.storeItem);
+      switchView('ads');
+      setTimeout(() => {
+        const target = document.querySelector(`[data-item="${itemId}"]`);
+        if (target) target.scrollIntoView({ block: 'center' });
+      }, 0);
+    });
+  });
+}
+
+async function loadStoreDetail() {
+  const shop = selectedShop();
+  if (!shop) return;
+  const filters = currentFilters();
+  const params = new URLSearchParams({
+    start_date: filters.startDate,
+    end_date: filters.endDate,
+  });
+  const data = await json(`/api/shopee-analytics/shops/${shop.shopId}/detail?${params}`);
+  renderStoreDetail(data);
 }
 
 function renderCampaignSummary(campaigns, shop) {
@@ -849,6 +953,7 @@ async function loadCurrentView() {
   button.textContent = '读取中…';
   try {
     if (state.view === 'overview') await loadPortfolio();
+    else if (state.view === 'store' && selectedShop()) await loadStoreDetail();
     else if (state.view === 'ads' && selectedShop()) await loadCampaigns();
     else if (state.view === 'status') {
       if (selectedShop()) await loadSystemStatus();
