@@ -46,7 +46,10 @@ async function main() {
         runtime,
         shop,
         mode,
-        seededGmsCampaignIds,
+        seededGmsCampaignIds: Array.from(new Set([
+          ...seededGmsCampaignIds,
+          ...(shop.gmsCampaignSeedIds || []),
+        ])),
       });
       summaries.push(summary);
     }
