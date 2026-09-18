@@ -1,6 +1,19 @@
 -- Shopee Analytics V1 schema (PostgreSQL)
 -- Isolated foundation only. This file is NOT wired into inventory startup migrations.
 
+CREATE TABLE IF NOT EXISTS shopee_app_tokens (
+  app_role TEXT NOT NULL,
+  shop_id BIGINT NOT NULL,
+  token_blob TEXT NOT NULL,
+  token_iv TEXT NOT NULL,
+  token_tag TEXT NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  last_refresh_at TIMESTAMPTZ,
+  refresh_error TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (app_role, shop_id)
+);
+
 CREATE TABLE IF NOT EXISTS shopee_raw_api_snapshots (
   id BIGSERIAL PRIMARY KEY,
   app_role TEXT NOT NULL,
