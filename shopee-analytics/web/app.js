@@ -758,6 +758,40 @@ function timelineDetail(event) {
   if (event.type === 'RECOMMENDED_ROAS') {
     return `预估范围 ${roas(d.lower)} / ${roas(d.exact)} / ${roas(d.upper)}`;
   }
+  if (event.type === 'PRICE_CHANGE') {
+    const before = d.before || {};
+    const after = d.after || {};
+    return [
+      after.modelSku || after.modelName || (after.modelId ? `Model #${after.modelId}` : null),
+      before.currentPrice == null || after.currentPrice == null
+        ? null
+        : `${formatMoney(before.currentPrice, shop && shop.currency)} → ${formatMoney(after.currentPrice, shop && shop.currency)}`,
+      before.originalPrice == null || after.originalPrice == null ||
+        Number(before.originalPrice) === Number(after.originalPrice)
+        ? null
+        : `原价 ${formatMoney(before.originalPrice, shop && shop.currency)} → ${formatMoney(after.originalPrice, shop && shop.currency)}`,
+    ].filter(Boolean).join(' · ');
+  }
+  if (event.type === 'CAMPAIGN_SETTING_CHANGE') {
+    const before = d.before || {};
+    const after = d.after || {};
+    const changes = [];
+    if (String(before.targetRoas ?? '') !== String(after.targetRoas ?? '')) {
+      changes.push(`Target ROAS ${roas(before.targetRoas)} → ${roas(after.targetRoas)}`);
+    }
+    if (String(before.campaignBudget ?? '') !== String(after.campaignBudget ?? '')) {
+      changes.push(`预算 ${formatMoney(before.campaignBudget, shop && shop.currency)} → ${formatMoney(after.campaignBudget, shop && shop.currency)}`);
+    }
+    if (String(before.status ?? '') !== String(after.status ?? '')) {
+      changes.push(`状态 ${before.status || '—'} → ${after.status || '—'}`);
+    }
+    if (String(before.biddingMethod ?? '') !== String(after.biddingMethod ?? '')) {
+      changes.push(`出价方式 ${before.biddingMethod || '—'} → ${after.biddingMethod || '—'}`);
+    }
+    return changes.join(' · ');
+  }
+  if (event.type === 'SKU_ADDED_TO_CAMPAIGN') return '加入广告组';
+  if (event.type === 'SKU_REMOVED_FROM_CAMPAIGN') return '移出广告组';
   return d.after ? JSON.stringify(d.after) : '';
 }
 
