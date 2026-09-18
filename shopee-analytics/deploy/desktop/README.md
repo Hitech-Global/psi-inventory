@@ -1,3 +1,18 @@
+
+## Windows first-install shortcut
+
+For the always-on Windows desktop, the normal path is now:
+
+1. Install Git, Node.js LTS and Docker Desktop once.
+2. Clone the repository and open PowerShell in `shopee-analytics/deploy/desktop`.
+3. Run `.\\prepare-desktop.ps1`. It creates the gitignored runtime folders and generates the database/token-encryption secrets locally.
+4. Fill the Shopee Partner credentials and the NAS backup path in `runtime/.env`, then rerun `.\\prepare-desktop.ps1` until the env check passes.
+5. Configure the pilot shop profile and encrypted tokens.
+6. Run `.\\install-desktop.ps1`. It starts PostgreSQL, applies the schema, runs preflight, and only starts app/worker after the gate passes.
+7. Run `.\\install-backup-tasks.ps1` once from an elevated PowerShell. It schedules daily 03:30 backup and Sunday 04:30 restore verification, both with missed-run recovery.
+
+Do not paste Partner Keys, access tokens, refresh tokens, database passwords, or the token master key into chat. They stay in `runtime/.env` or the encrypted token store on the desktop.
+
 # Shopee Analytics desktop deployment
 
 This is the production target for the always-on desktop + NAS architecture.
