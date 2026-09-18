@@ -177,6 +177,8 @@ class ShopeeQueryRepository {
         returnCount: Number(row.return_count || 0),
         refundAmount: Number(row.refund_amount || 0),
         adSpendRatioToBiSales: sales > 0 ? adExpense / sales : null,
+        adGmvShareOfBiSales: sales > 0 ? broadGmv / sales : null,
+        estimatedNaturalSales: Math.max(0, sales - broadGmv),
         broadRoas: adExpense > 0 ? broadGmv / adExpense : 0,
         adCtr: Number(row.ad_impressions || 0) > 0
           ? Number(row.ad_clicks || 0) / Number(row.ad_impressions || 0)
@@ -197,6 +199,7 @@ class ShopeeQueryRepository {
           voucherSales: 0,
           voucherCost: 0,
           refundAmount: 0,
+          estimatedNaturalSales: 0,
           orders: 0,
           broadOrders: 0,
           directOrders: 0,
@@ -210,6 +213,7 @@ class ShopeeQueryRepository {
       group.voucherSales += shop.voucherSales;
       group.voucherCost += shop.voucherCost;
       group.refundAmount += shop.refundAmount;
+      group.estimatedNaturalSales += shop.estimatedNaturalSales;
       group.orders += shop.orders;
       group.broadOrders += shop.broadOrders;
       group.directOrders += shop.directOrders;
@@ -219,6 +223,7 @@ class ShopeeQueryRepository {
       ...group,
       broadRoas: group.adExpense > 0 ? group.broadGmv / group.adExpense : 0,
       adSpendRatioToBiSales: group.sales > 0 ? group.adExpense / group.sales : null,
+      adGmvShareOfBiSales: group.sales > 0 ? group.broadGmv / group.sales : null,
     }));
 
     const countries = Array.from(new Set(shops.map(shop => shop.countryCode))).sort();
