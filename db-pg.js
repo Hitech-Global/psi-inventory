@@ -2082,6 +2082,7 @@ async function initDatabase() {
     throw new Error('P1-03-C migration failed: wac_history triggers missing. Found=' + JSON.stringify(triggers.rows.map((r) => r.tgname)));
   }
 
+  // CI-AMOUNT-VIEW-DEFAULT-V1
   // ---------- 默认数据（幂等，ON CONFLICT DO NOTHING） ----------
   const roleCount = (await queryOne('SELECT COUNT(*) as cnt FROM roles')).cnt;
   if (roleCount === 0) {
@@ -2092,7 +2093,7 @@ async function initDatabase() {
       'replenishment_view','replenishment_edit',
       'po_view','po_create','po_edit','po_approve','po_export',
       'pi_view','pi_create','pi_edit',
-      'ci_view','ci_create','ci_edit',
+      'ci_view','ci_amount_view','ci_create','ci_edit',
       'logistics_view','logistics_create','logistics_edit',
       'inbound_view','inbound_create','inbound_edit','inbound_confirm',
       'cost_view',
@@ -2110,7 +2111,7 @@ async function initDatabase() {
       'replenishment_view','replenishment_edit',
       'po_view','po_create','po_edit','po_export',
       'pi_view','pi_create','pi_edit',
-      'ci_view','ci_create','ci_edit',
+      'ci_view','ci_amount_view','ci_create','ci_edit',
       'logistics_view','logistics_create','logistics_edit',
       'inbound_view','inbound_create','inbound_edit','inbound_confirm',
       'cost_view',
@@ -2122,7 +2123,7 @@ async function initDatabase() {
     const viewerPerms = JSON.stringify([
       'dashboard_view','sku_view','inventory_view',
       'outbound_view','replenishment_view',
-      'po_view','pi_view','ci_view','logistics_view','inbound_view',
+      'po_view','pi_view','ci_view','ci_amount_view','logistics_view','inbound_view',
       'cost_view','payment_view','check_view',
       'stagnant_view','forwarder_view'
     ]);
