@@ -25,8 +25,8 @@ class ShopeeShopProfileRepository {
     await this.pool.query(
       `INSERT INTO shopee_shop_profiles
        (shop_id,display_name,country_code,country_name,brand_code,brand_name,currency,timezone,
-        brand_portal_timezone,marketplace_region,active,sort_order,note,updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,now())
+        brand_portal_timezone,marketplace_region,gms_campaign_seed_ids,active,sort_order,note,updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,now())
        ON CONFLICT (shop_id) DO UPDATE SET
         display_name=EXCLUDED.display_name,
         country_code=EXCLUDED.country_code,
@@ -37,6 +37,7 @@ class ShopeeShopProfileRepository {
         timezone=EXCLUDED.timezone,
         brand_portal_timezone=EXCLUDED.brand_portal_timezone,
         marketplace_region=EXCLUDED.marketplace_region,
+        gms_campaign_seed_ids=EXCLUDED.gms_campaign_seed_ids,
         active=EXCLUDED.active,
         sort_order=EXCLUDED.sort_order,
         note=EXCLUDED.note,
@@ -52,6 +53,8 @@ class ShopeeShopProfileRepository {
         timezone,
         profile.brandPortalTimezone ?? profile.brand_portal_timezone ?? null,
         profile.marketplaceRegion ?? profile.marketplace_region ?? null,
+        (profile.gmsCampaignSeedIds ?? profile.gms_campaign_seed_ids ?? [])
+          .map(Number).filter(Number.isSafeInteger),
         profile.active === undefined ? true : Boolean(profile.active),
         Number.isFinite(Number(profile.sortOrder ?? profile.sort_order))
           ? Number(profile.sortOrder ?? profile.sort_order)
@@ -70,7 +73,8 @@ class ShopeeShopProfileRepository {
     const result = await this.pool.query(
       `SELECT
          p.shop_id,p.display_name,p.country_code,p.country_name,p.brand_code,p.brand_name,
-         p.currency,p.timezone,p.brand_portal_timezone,p.marketplace_region,p.active,p.sort_order,p.note,p.updated_at,
+         p.currency,p.timezone,p.brand_portal_timezone,p.marketplace_region,p.gms_campaign_seed_ids,
+         p.active,p.sort_order,p.note,p.updated_at,
          s.shop_name AS api_shop_name,s.region AS api_region,s.status AS api_status,s.synced_at AS api_synced_at
        FROM shopee_shop_profiles p
        LEFT JOIN shopee_shops s ON s.shop_id=p.shop_id
@@ -89,6 +93,7 @@ class ShopeeShopProfileRepository {
       timezone: row.timezone,
       brandPortalTimezone: row.brand_portal_timezone,
       marketplaceRegion: row.marketplace_region,
+      gmsCampaignSeedIds: (row.gms_campaign_seed_ids || []).map(Number),
       active: row.active,
       sortOrder: row.sort_order,
       note: row.note,
