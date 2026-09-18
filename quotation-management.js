@@ -149,13 +149,13 @@ function exportReport(){
 }
 
 async function prefetchDefault(){
+  if(!canView())return;
   const key='Netac||||';if(summaryCache.has(key)||typeof window.api!=='function')return;
   try{const d=await call('/api/quotation-management/summary?brand=Netac');lruSet(summaryCache,key,d,SUMMARY_CACHE_MAX);}catch(_e){}
 }
 
 window.showQuotationManagement=show;
 function boot(){
-  if(!canView())return;
   css();nav();
   const n=$('#sidebar-nav');if(n)new MutationObserver(nav).observe(n,{childList:true,subtree:true});
   const warm=()=>prefetchDefault();
