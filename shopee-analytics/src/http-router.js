@@ -386,6 +386,8 @@ module.exports = {
   isoDate,
   optionalCode,
   parseShopIds,
+  eventMixForRange,
+  comparisonContext,
   eventSetForRange,
   createShopeeAnalyticsRouter,
 };
