@@ -111,6 +111,43 @@ class ShopeeQueryRepository {
     ]));
   }
 
+  async getProductCardPeriodMap({ shopId, startDate, endDate, itemIds }) {
+    const ids = (itemIds || []).map(Number).filter(Number.isSafeInteger);
+    if (!ids.length) return new Map();
+    const result = await this.pool.query(
+      `SELECT item_id,item_name,parent_sku,item_sku,impressions,clicks,ctr,visitors,page_views,
+              add_to_cart_visitors,add_to_cart_units,add_to_cart_rate,orders,buyers,units,sales,
+              conversion_rate,source_file,imported_at
+       FROM shopee_product_card_period
+       WHERE shop_id=$1 AND start_date=$2 AND end_date=$3
+         AND item_id = ANY($4::bigint[])`,
+      [shopId, startDate, endDate, ids],
+    );
+    return new Map(result.rows.map(row => [
+      String(row.item_id),
+      {
+        itemName: row.item_name,
+        parentSku: row.parent_sku,
+        itemSku: row.item_sku,
+        impressions: row.impressions === null ? null : Number(row.impressions),
+        clicks: row.clicks === null ? null : Number(row.clicks),
+        ctr: row.ctr === null ? null : Number(row.ctr),
+        visitors: row.visitors === null ? null : Number(row.visitors),
+        pageViews: row.page_views === null ? null : Number(row.page_views),
+        addToCartVisitors: row.add_to_cart_visitors === null ? null : Number(row.add_to_cart_visitors),
+        addToCartUnits: row.add_to_cart_units === null ? null : Number(row.add_to_cart_units),
+        addToCartRate: row.add_to_cart_rate === null ? null : Number(row.add_to_cart_rate),
+        orders: row.orders === null ? null : Number(row.orders),
+        buyers: row.buyers === null ? null : Number(row.buyers),
+        units: row.units === null ? null : Number(row.units),
+        sales: row.sales === null ? null : Number(row.sales),
+        conversionRate: row.conversion_rate === null ? null : Number(row.conversion_rate),
+        sourceFile: row.source_file,
+        importedAt: row.imported_at,
+      },
+    ]));
+  }
+
   async getCampaignItemNames({ shopId, itemIds }) {
     const ids = (itemIds || []).map(Number).filter(Number.isSafeInteger);
     if (!ids.length) return new Map();
