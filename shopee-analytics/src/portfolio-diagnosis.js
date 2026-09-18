@@ -89,8 +89,8 @@ function changeSet(current, previous) {
   };
 }
 
-function signal(code, severity, title, detail) {
-  return { code, severity, title, detail };
+function signal(code, severity, title, detail, action = null) {
+  return { code, severity, title, detail, action };
 }
 
 function buildSignals(current, previous, changes, {
@@ -106,6 +106,7 @@ function buildSignals(current, previous, changes, {
       'high',
       '广告花费占比超出经营约束',
       `当前广告花费 / BI销售额为 ${(current.adSpendRatio * 100).toFixed(1)}%，高于 ${(adSpendRatioLimit * 100).toFixed(0)}% 约束。`,
+      '先停止追求额外放量，进入广告诊断检查 ROAS、弱 SKU 与商品转化，恢复到经营约束内再测试扩量。',
     ));
   }
 
@@ -115,6 +116,7 @@ function buildSignals(current, previous, changes, {
       'high',
       '销售额下降',
       '先拆流量、转化、客单价以及广告/自然销售变化，不直接把下降归因于广告。',
+      '按 Product Clicks → 点击到订单 → AOV → 广告GMV/估算自然销售的顺序定位下降环节，再只改最主要变量。',
     ));
   }
 
@@ -124,6 +126,7 @@ function buildSignals(current, previous, changes, {
       'medium',
       '商品点击流量下降',
       'Product Clicks 相比上一等长周期下降，优先检查流量获取与商品曝光/点击承接。',
+      '先看活动日差异、商品曝光/点击变化和广告流量是否同步下降；不要先用降价解决纯流量问题。',
     ));
   }
 
@@ -133,6 +136,7 @@ function buildSignals(current, previous, changes, {
       'high',
       '点击到订单转化下降',
       'Orders / Product Clicks 下降，优先下钻商品价格、优惠、详情与广告流量质量。',
+      '进入商品矩阵找低 CVR SKU，对照价格、Voucher/Discount、Product Card 与广告 Direct CVR 做单变量验证。',
     ));
   }
 
@@ -142,6 +146,7 @@ function buildSignals(current, previous, changes, {
       'medium',
       '客单价下降',
       '销售额下降可能部分来自订单结构或售价变化，而不只是流量或转化。',
+      '检查价格/优惠变化与高低客单 SKU 销量结构，确认是否是商品结构变化造成。',
     ));
   }
 
@@ -151,6 +156,7 @@ function buildSignals(current, previous, changes, {
       'medium',
       '估算自然销售下降',
       'BI销售额减 Broad Ads GMV 的估算自然销售下降；需要结合 Product Card 与订单结构继续验证。',
+      '优先找自然销售下降最大的 SKU，检查其商品流量、CVR、价格和活动变化；该指标是估算值，不单独作为归因结论。',
     ));
   }
 
@@ -160,6 +166,7 @@ function buildSignals(current, previous, changes, {
       'medium',
       '广告归因 GMV 下降',
       'Broad Ads GMV 下降；进入广告诊断页确认是订单量、ROAS、流量还是 SKU 结构问题。',
+      '下钻 Campaign，严格按整体订单量 → ROAS → Funnel → SKU 赛马定位广告侧变化。',
     ));
   }
 
@@ -178,6 +185,7 @@ function buildSignals(current, previous, changes, {
       'positive',
       '销售额增长',
       drivers.length ? `同步增长信号：${drivers.join('、')}。` : '销售额增长，但主要驱动项暂未达到 10% 变化阈值。',
+      '记录本周期增长驱动，尽量保持其他变量稳定，再验证增长是否能延续到下一普通周期。',
     ));
   }
 
@@ -187,6 +195,7 @@ function buildSignals(current, previous, changes, {
       'neutral',
       '经营表现相对稳定',
       '与上一等长周期相比，没有指标越过当前 10% 变化阈值。',
+      '保持核心变量稳定，继续积累一个完整周期后再判断是否需要调整。',
     ));
   }
 
@@ -208,6 +217,7 @@ function diagnoseRow(currentRow, previousRow = null, options = {}) {
         'neutral',
         '缺少上一周期数据',
         '先完成上一等长周期同步，再做变化拆解。',
+        '先补齐上一周期数据，不在缺少基线时生成增长/下降结论。',
       )];
 
   return {
