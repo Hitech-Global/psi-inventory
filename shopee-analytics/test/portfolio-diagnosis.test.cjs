@@ -86,3 +86,29 @@ assert.strictEqual(portfolio.businessGroups.length, 1);
 assert(portfolio.shops[0].diagnosis.changes.sales > 0);
 
 console.log('shopee portfolio diagnosis tests: ok');
+
+
+const mixedLimit = diagnoseRow(
+  {
+    sales: 1000,
+    orders: 10,
+    productClicks: 100,
+    adExpense: 180,
+    broadGmv: 700,
+    estimatedNaturalSales: 300,
+    adSpendRatioLimit: null,
+  },
+  {
+    sales: 1000,
+    orders: 10,
+    productClicks: 100,
+    adExpense: 100,
+    broadGmv: 700,
+    estimatedNaturalSales: 300,
+    adSpendRatioLimit: null,
+  },
+);
+assert(
+  !mixedLimit.signals.some(row => row.code === 'AD_SPEND_RATIO_OVER_LIMIT'),
+  'mixed-limit business groups must not be judged against a hardcoded 15% threshold',
+);
