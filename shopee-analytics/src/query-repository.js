@@ -106,6 +106,7 @@ class ShopeeQueryRepository {
        SELECT
          s.shop_id,s.display_name,s.country_code,s.country_name,s.brand_code,s.brand_name,
          s.currency,s.timezone,s.marketplace_region,
+         COALESCE(cfg.ad_spend_ratio_limit,0.15) AS ad_spend_ratio_limit,
          COALESCE(bi.sales,0) AS sales,
          COALESCE(bi.orders,0) AS orders,
          COALESCE(bi.units_sold,0) AS units_sold,
@@ -127,6 +128,7 @@ class ShopeeQueryRepository {
          COALESCE(returns.return_count,0) AS return_count,
          COALESCE(returns.refund_amount,0) AS refund_amount
        FROM selected s
+       LEFT JOIN shopee_shop_strategy_config cfg ON cfg.shop_id=s.shop_id
        LEFT JOIN bi ON bi.shop_id=s.shop_id
        LEFT JOIN ads ON ads.shop_id=s.shop_id
        LEFT JOIN returns ON returns.shop_id=s.shop_id
@@ -156,6 +158,7 @@ class ShopeeQueryRepository {
         currency: row.currency,
         timezone: row.timezone,
         marketplaceRegion: row.marketplace_region,
+        adSpendRatioLimit: Number(row.ad_spend_ratio_limit || 0.15),
         sales,
         orders,
         unitsSold: Number(row.units_sold || 0),
@@ -200,6 +203,8 @@ class ShopeeQueryRepository {
           voucherCost: 0,
           refundAmount: 0,
           estimatedNaturalSales: 0,
+          adSpendRatioLimitMin: null,
+          adSpendRatioLimitMax: null,
           orders: 0,
           broadOrders: 0,
           directOrders: 0,
@@ -214,6 +219,12 @@ class ShopeeQueryRepository {
       group.voucherCost += shop.voucherCost;
       group.refundAmount += shop.refundAmount;
       group.estimatedNaturalSales += shop.estimatedNaturalSales;
+      group.adSpendRatioLimitMin = group.adSpendRatioLimitMin === null
+        ? shop.adSpendRatioLimit
+        : Math.min(group.adSpendRatioLimitMin, shop.adSpendRatioLimit);
+      group.adSpendRatioLimitMax = group.adSpendRatioLimitMax === null
+        ? shop.adSpendRatioLimit
+        : Math.max(group.adSpendRatioLimitMax, shop.adSpendRatioLimit);
       group.orders += shop.orders;
       group.broadOrders += shop.broadOrders;
       group.directOrders += shop.directOrders;
@@ -269,12 +280,24 @@ class ShopeeQueryRepository {
       group.estimatedNaturalSales += shop.estimatedNaturalSales;
     }
     const businessGroups = Array.from(byBusinessGroup.values())
-      .map(group => ({
-        ...group,
-        adSpendRatioToBiSales: group.sales > 0 ? group.adExpense / group.sales : null,
-        adGmvShareOfBiSales: group.sales > 0 ? group.broadGmv / group.sales : null,
-        broadRoas: group.adExpense > 0 ? group.broadGmv / group.adExpense : 0,
-      }))
+      .map(group => {
+        const {
+          adSpendRatioLimitMin,
+          adSpendRatioLimitMax,
+          ...base
+        } = group;
+        const sameLimit = adSpendRatioLimitMin !== null &&
+          adSpendRatioLimitMax !== null &&
+          Math.abs(adSpendRatioLimitMin - adSpendRatioLimitMax) < 1e-12;
+        return {
+          ...base,
+          adSpendRatioLimit: sameLimit ? adSpendRatioLimitMin : null,
+          mixedAdSpendRatioLimits: !sameLimit,
+          adSpendRatioToBiSales: group.sales > 0 ? group.adExpense / group.sales : null,
+          adGmvShareOfBiSales: group.sales > 0 ? group.broadGmv / group.sales : null,
+          broadRoas: group.adExpense > 0 ? group.broadGmv / group.adExpense : 0,
+        };
+      })
       .sort((a, b) =>
         a.countryCode.localeCompare(b.countryCode) ||
         a.brandCode.localeCompare(b.brandCode) ||
