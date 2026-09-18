@@ -168,3 +168,35 @@ node shopee-analytics/scripts/bootstrap-multi-shop-tokens.cjs
 ```
 
 The script never prints token values. Delete the plaintext file after the encrypted DB records are verified. Missing roles are allowed per shop so onboarding can be phased; the data-health page will show which role is not yet configured.
+
+
+## Per-shop strategy
+
+Different countries / brands / stores can use different operating constraints. Do not assume one global ad-spend ratio or weekly-order reference.
+
+Example strategy config:
+
+```json
+[
+  {
+    "shopId": 123456789,
+    "adSpendRatioLimit": 0.15,
+    "weeklyOrderReference": 25
+  },
+  {
+    "shopId": 987654321,
+    "adSpendRatioLimit": 0.20,
+    "weeklyOrderReference": 25
+  }
+]
+```
+
+Apply with the explicit gate:
+
+```bash
+SHOPEE_ANALYTICS_CONFIGURE_STRATEGY=YES \
+SHOPEE_STRATEGY_CONFIG_FILE=/secure/path/shopee-strategy.json \
+node shopee-analytics/scripts/configure-strategy.cjs
+```
+
+The portfolio and store-diagnosis pages use the configured shop-specific limit. Country × brand aggregates only judge the combined ad-spend ratio against a threshold when all shops in that aggregate share the same limit.
