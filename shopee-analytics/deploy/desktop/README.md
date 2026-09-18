@@ -88,3 +88,22 @@ Recommended cadence: monthly, immediately after the monthly backup.
 - PostgreSQL has no host/public port in this compose file.
 - NAS connectivity failure must not stop the primary database.
 - Backup and restore status is visible in the application's Data Health view.
+
+
+## Product Card drop folder
+
+Until a complete item-level Business Insights API is verified, Product Card remains an export/import bridge.
+
+The desktop worker can process a local drop folder automatically. Enable:
+
+`SHOPEE_PRODUCT_CARD_INBOX_ENABLE=YES`
+
+Use this filename convention so the worker can identify the shop and exact report period:
+
+`shop-<shopId>__Product_Card.YYYYMMDD_YYYYMMDD.xlsx`
+
+Example:
+
+`shop-1101364305__Product_Card.20260901_20260907.xlsx`
+
+Files are imported transactionally into PostgreSQL, then moved from `runtime/product-card/inbox` to `archive`. Invalid or failed files are moved to `failed` with an adjacent error text file. The worker never guesses the shop from product data.
