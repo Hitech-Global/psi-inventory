@@ -144,6 +144,24 @@ function freshnessLabel(lastSyncedAt) {
   })[freshnessClass(lastSyncedAt)];
 }
 
+function backupStatusCard(backup) {
+  if (!backup) {
+    return `<div class="source-card missing">
+      <div class="source-card-top"><strong>PostgreSQL备份</strong><span class="source-state missing">未配置</span></div>
+      <div class="source-date">尚未读取到备份状态</div>
+      <div class="source-sync">台式机部署后由本机→NAS备份任务更新</div>
+    </div>`;
+  }
+  const cls = backup.ok ? 'fresh' : 'stale';
+  const label = backup.ok ? '正常' : '失败';
+  const sizeMb = backup.sizeBytes ? (Number(backup.sizeBytes) / 1024 / 1024).toFixed(1) : '—';
+  return `<div class="source-card ${cls}">
+    <div class="source-card-top"><strong>PostgreSQL备份</strong><span class="source-state ${cls}">${label}</span></div>
+    <div class="source-date">NAS：${backup.nasCopiedAt ? formatDateTime(backup.nasCopiedAt) : '未确认'}</div>
+    <div class="source-sync">最近备份：${formatDateTime(backup.completedAt)} · ${sizeMb} MB</div>
+  </div>`;
+}
+
 function initDates() {
   $('#endDate').value = dateDaysAgo(1);
   $('#startDate').value = dateDaysAgo(7);
@@ -899,6 +917,13 @@ function renderStatusPortfolio(data) {
     portfolioKpi('异常店铺', num(data.errorShopCount)),
     portfolioKpi('提醒数量', num(warningTotal)),
     portfolioKpi('覆盖国家', num(new Set(statuses.map(row => row.shop.countryCode)).size)),
+    portfolioKpi(
+      '最近NAS备份',
+      data.backup && data.backup.ok ? formatDateTime(data.backup.nasCopiedAt || data.backup.completedAt) : '未确认',
+      data.backup && data.backup.restoreVerifiedAt
+        ? `恢复验证 ${formatDateTime(data.backup.restoreVerifiedAt)}`
+        : '恢复验证尚未记录',
+    ),
   ].join('');
   $('#statusPortfolioSummary').classList.remove('hidden');
 
@@ -964,6 +989,8 @@ function renderSystemStatus(data) {
   }).join('');
 
   const requiredRoles = ['ADS', 'STORE_OPS', 'ERP', 'BRAND_PORTAL'];
+  $('#sourceStatusGrid').insertAdjacentHTML('beforeend', backupStatusCard(data.backup));
+
   $('#sourceStatusGrid').insertAdjacentHTML('beforeend', requiredRoles.map(role => {
     const token = tokenByRole.get(role);
     const expires = token && token.expiresAt ? new Date(token.expiresAt) : null;
