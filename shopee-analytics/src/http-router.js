@@ -134,7 +134,11 @@ function createShopeeAnalyticsRouter({
       const current = currentOverview.shops[0] || null;
       const prior = previousOverview.shops[0] || null;
       const diagnosis = current ? diagnoseRow(current, prior) : null;
-      const skuDiagnosis = diagnoseStoreSkus(skus);
+      const skuDiagnosis = diagnoseStoreSkus(skus, {
+        adSpendRatioLimit: current && current.adSpendRatioLimit != null
+          ? current.adSpendRatioLimit
+          : 0.15,
+      });
 
       const startYear = Number(startDate.slice(0, 4));
       const endYear = Number(endDate.slice(0, 4));
