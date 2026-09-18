@@ -234,7 +234,7 @@ function switchView(view) {
     button.classList.toggle('active', button.dataset.view === view)
   );
   $$('.view-section').forEach(section => section.classList.add('hidden'));
-  $('#view-${view}').classList.remove('hidden');
+  $(`#view-${view}`).classList.remove('hidden');
   updateSingleShopPrompts();
   loadCurrentView();
 }
