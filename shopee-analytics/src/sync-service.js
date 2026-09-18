@@ -8,6 +8,7 @@ const { fetchAllDiscountDetails } = require('./sync-discount');
 const { fetchOrderList, fetchOrderDetails } = require('./sync-orders');
 const { fetchAllReturnDetails } = require('./sync-returns');
 const { fetchShopBiDay } = require('./sync-shop-bi');
+const { fetchShopInfo } = require('./sync-shop');
 const { recordPages, recordSnapshot } = require('./raw-snapshot');
 
 function requireRole(roleClients, role) {
@@ -36,6 +37,7 @@ class ShopeeSyncService {
     orderRepository,
     returnRepository,
     shopBiRepository,
+    shopRepository,
   }) {
     this.shopId = shopId;
     this.roleClients = roleClients;
@@ -46,6 +48,36 @@ class ShopeeSyncService {
     this.orderRepository = orderRepository;
     this.returnRepository = returnRepository;
     this.shopBiRepository = shopBiRepository;
+    this.shopRepository = shopRepository;
+  }
+
+  async syncShopInfo() {
+    const { client, accessToken } = await resolveRole(this.roleClients, 'ADS', this.shopId);
+    const result = await fetchShopInfo({
+      client,
+      shopId: this.shopId,
+      accessToken,
+    });
+    await recordSnapshot({
+      repository: this.rawRepository,
+      appRole: 'ADS',
+      endpointKey: 'shopInfo',
+      shopId: this.shopId,
+      requestJson: {},
+      responseJson: result.payload,
+    });
+    if (this.shopRepository) {
+      await this.shopRepository.upsert({
+        requestedShopId: this.shopId,
+        shop: result.shop,
+      });
+    }
+    return {
+      shopId: result.shop.shopId || this.shopId,
+      shopName: result.shop.shopName,
+      region: result.shop.region,
+      status: result.shop.status,
+    };
   }
 
   async syncCampaignSettings({ eventDate = new Date().toISOString().slice(0, 10), adType = 'all' } = {}) {
