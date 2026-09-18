@@ -100,12 +100,17 @@ function buildSignals(current, previous, changes, {
 } = {}) {
   const signals = [];
 
-  if (current.adSpendRatio !== null && current.adSpendRatio > adSpendRatioLimit) {
+  if (
+    adSpendRatioLimit !== null &&
+    Number.isFinite(Number(adSpendRatioLimit)) &&
+    current.adSpendRatio !== null &&
+    current.adSpendRatio > Number(adSpendRatioLimit)
+  ) {
     signals.push(signal(
       'AD_SPEND_RATIO_OVER_LIMIT',
       'high',
       '广告花费占比超出经营约束',
-      `当前广告花费 / BI销售额为 ${(current.adSpendRatio * 100).toFixed(1)}%，高于 ${(adSpendRatioLimit * 100).toFixed(0)}% 约束。`,
+      `当前广告花费 / BI销售额为 ${(current.adSpendRatio * 100).toFixed(1)}%，高于 ${(Number(adSpendRatioLimit) * 100).toFixed(0)}% 约束。`,
       '先停止追求额外放量，进入广告诊断检查 ROAS、弱 SKU 与商品转化，恢复到经营约束内再测试扩量。',
     ));
   }
@@ -210,8 +215,16 @@ function diagnoseRow(currentRow, previousRow = null, options = {}) {
   const previous = metricSnapshot(previousRow || {});
   const hasPrevious = Boolean(previousRow);
   const changes = hasPrevious ? changeSet(current, previous) : {};
+  const hasRowLimit = currentRow &&
+    Object.prototype.hasOwnProperty.call(currentRow, 'adSpendRatioLimit');
+  const effectiveOptions = {
+    ...options,
+    adSpendRatioLimit: hasRowLimit
+      ? currentRow.adSpendRatioLimit
+      : (options.adSpendRatioLimit === undefined ? 0.15 : options.adSpendRatioLimit),
+  };
   const signals = hasPrevious
-    ? buildSignals(current, previous, changes, options)
+    ? buildSignals(current, previous, changes, effectiveOptions)
     : [signal(
         'NO_PREVIOUS_PERIOD',
         'neutral',
