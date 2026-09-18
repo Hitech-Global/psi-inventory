@@ -200,3 +200,17 @@ node shopee-analytics/scripts/configure-strategy.cjs
 ```
 
 The portfolio and store-diagnosis pages use the configured shop-specific limit. Country × brand aggregates only judge the combined ad-spend ratio against a threshold when all shops in that aggregate share the same limit.
+
+
+## First live-data acceptance
+
+After real credentials are connected and the first sync completes, generate a read-only validation pack before treating the dashboard as production-accepted:
+
+```bash
+SHOPEE_VALIDATION_SHOP_ID=123456789 \
+SHOPEE_VALIDATION_START_DATE=2026-09-01 \
+SHOPEE_VALIDATION_END_DATE=2026-09-07 \
+node shopee-analytics/scripts/validation-report.cjs
+```
+
+The report prints no Partner Key / access token / refresh token. It includes shop identity, store BI totals, campaign totals/settings, item-coverage checks, token expiry metadata, Product Card coverage and a Seller Centre acceptance checklist.
