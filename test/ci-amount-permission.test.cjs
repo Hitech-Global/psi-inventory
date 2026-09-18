@@ -81,7 +81,9 @@ assert.doesNotMatch(wbBlock, /CI单价|unit_price|price_lookup|CI币种/, 'PL-on
 
 must(inline, /function canViewAmounts\(\)[\s\S]{0,120}ci_amount_view/, 'inline logistics permission check missing');
 must(inline, /var showAmounts = canViewAmounts\(\)/, 'inline logistics amount-column gate missing');
-must(inline, /showAmounts[\s\S]*cargo_value[\s\S]*total_freight[\s\S]*freight_value_ratio/, 'inline logistics monetary columns must be conditional');
+must(inline, /showAmounts[\s\S]*cargo_value[\s\S]*total_freight/, 'inline logistics cargo/freight columns must be conditional');
+must(inline, /var ratio = b\.freight_value_ratio/, 'inline logistics freight ratio source missing');
+must(inline, /showAmounts[\s\S]*logistics\.col\.freight_ratio/, 'inline logistics freight ratio column must be conditional');
 must(inline, /canViewAmounts\(\)[\s\S]*data-ci-logi-export-ci-pl/, 'inline export menu must hide CI&PL without permission');
 
 // Role UI label and script ordering.
