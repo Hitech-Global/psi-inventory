@@ -31,6 +31,10 @@ assert(
   'worker must use the recurring sync scheduler',
 );
 assert(
+  compose.includes('command: ["node", "shopee-analytics/scripts/deployment-preflight.cjs"]'),
+  'desktop stack must expose the explicit deployment preflight gate',
+);
+assert(
   dockerfile.includes('FROM node:22.22.2-bookworm-slim'),
   'desktop image should match the repository Node runtime',
 );
