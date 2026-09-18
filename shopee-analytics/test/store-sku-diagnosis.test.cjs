@@ -78,3 +78,27 @@ assert(
 );
 
 console.log('shopee store SKU diagnosis tests: ok');
+
+
+const belowBreakEven = diagnoseStoreSkus([{
+  itemId: 5,
+  hasProductCard: true,
+  totalConversionRate: 0.08,
+  totalSales: 1000,
+  adExpense: 200,
+  broadGmv: 900,
+  directGmv: 700,
+  broadOrders: 4,
+  directOrders: 3,
+  broadRoas: 4.5,
+  directRoas: 3.5,
+  breakEvenRoas: 5.7,
+  adSpendRatioToSales: 0.2,
+  directGmvShareOfSales: 0.7,
+  estimatedNaturalSales: 300,
+}], { adSpendRatioLimit: 0.25 });
+
+assert.strictEqual(
+  belowBreakEven.items[0].primarySignal.code,
+  'DIRECT_ROAS_BELOW_BREAK_EVEN',
+);
