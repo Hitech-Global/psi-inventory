@@ -41,6 +41,22 @@ function diagnoseStoreSkus(rows, {
       ));
     }
 
+    if (
+      row.breakEvenRoas !== null &&
+      row.breakEvenRoas !== undefined &&
+      Number(row.breakEvenRoas) > 0 &&
+      Number(row.directOrders || 0) > 0 &&
+      Number(row.directRoas || 0) < Number(row.breakEvenRoas)
+    ) {
+      signals.push(signal(
+        'DIRECT_ROAS_BELOW_BREAK_EVEN',
+        'high',
+        'Direct ROAS低于商品保本线',
+        `Direct ROAS ${Number(row.directRoas || 0).toFixed(2)}，低于商品保本 ROAS ${Number(row.breakEvenRoas).toFixed(2)}。`,
+        '先检查广告组流量结构和商品转化，不在亏损状态继续扩大预算；价格/优惠调整后再验证是否恢复到保本线上。',
+      ));
+    }
+
     if (row.adExpense > 0 && Number(row.broadOrders || 0) === 0) {
       signals.push(signal(
         'AD_SPEND_ZERO_ORDER',
