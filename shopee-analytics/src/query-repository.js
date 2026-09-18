@@ -88,6 +88,29 @@ class ShopeeQueryRepository {
     };
   }
 
+  async getLatestRecommendedRoiMap({ shopId, itemIds }) {
+    const ids = (itemIds || []).map(Number).filter(Number.isSafeInteger);
+    if (!ids.length) return new Map();
+    const result = await this.pool.query(
+      `SELECT DISTINCT ON (item_id)
+         item_id, observed_at, lower_value, lower_percentile,
+         exact_value, exact_percentile, upper_value, upper_percentile
+       FROM shopee_recommended_roi_history
+       WHERE shop_id=$1 AND item_id = ANY($2::bigint[])
+       ORDER BY item_id, observed_at DESC`,
+      [shopId, ids],
+    );
+    return new Map(result.rows.map(row => [
+      String(row.item_id),
+      {
+        observedAt: row.observed_at,
+        lower: { value: row.lower_value === null ? null : Number(row.lower_value), percentile: row.lower_percentile },
+        exact: { value: row.exact_value === null ? null : Number(row.exact_value), percentile: row.exact_percentile },
+        upper: { value: row.upper_value === null ? null : Number(row.upper_value), percentile: row.upper_percentile },
+      },
+    ]));
+  }
+
   async getCampaignItemNames({ shopId, itemIds }) {
     const ids = (itemIds || []).map(Number).filter(Number.isSafeInteger);
     if (!ids.length) return new Map();
