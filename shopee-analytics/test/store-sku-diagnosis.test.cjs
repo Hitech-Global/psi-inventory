@@ -52,6 +52,7 @@ const result = diagnoseStoreSkus([
 assert.strictEqual(result.cvrMedian, 0.07);
 assert(result.items[0].signals.some(row => row.code === 'NATURAL_LED_SALES'));
 assert.strictEqual(result.items[1].primarySignal.code, 'ITEM_AD_SPEND_RATIO_OVER_LIMIT');
+assert(result.items[1].primarySignal.action && result.items[1].primarySignal.action.length > 10);
 assert(result.items[1].signals.some(row => row.code === 'CVR_BELOW_STORE_MEDIAN'));
 assert.strictEqual(result.items[2].primarySignal.code, 'AD_SPEND_ZERO_ORDER');
 assert(result.items[2].signals.some(row => row.code === 'PRODUCT_CARD_MISSING'));
