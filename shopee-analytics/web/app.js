@@ -373,7 +373,7 @@ function renderPortfolio(data) {
       }).join('')
     : '<tr><td colspan="8" class="empty">当前筛选没有店铺诊断数据。</td></tr>';
 
-  $('[data-diagnosis-shop]').forEach(row => {
+  $$('[data-diagnosis-shop]').forEach(row => {
     row.addEventListener('click', () => {
       $('#shopSelect').value = row.dataset.diagnosisShop;
       switchView('store');
@@ -541,7 +541,7 @@ function renderStoreDetail(data) {
       </tr>`).join('')
     : '<tr><td colspan="12" class="empty">当前周期没有商品层数据。</td></tr>';
 
-  $('[data-store-item]').forEach(row => {
+  $$('[data-store-item]').forEach(row => {
     row.addEventListener('click', () => {
       const itemId = Number(row.dataset.storeItem);
       switchView('ads');
@@ -914,7 +914,7 @@ function renderStatusPortfolio(data) {
       </tr>`).join('')
     : '<tr><td colspan="7" class="empty">当前筛选没有店铺。</td></tr>';
 
-  $('[data-status-shop]').forEach(row => {
+  $$('[data-status-shop]').forEach(row => {
     row.addEventListener('click', () => {
       $('#shopSelect').value = row.dataset.statusShop;
       updateSingleShopPrompts();
