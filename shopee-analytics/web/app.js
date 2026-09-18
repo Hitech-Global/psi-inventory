@@ -298,6 +298,34 @@ function renderPortfolio(data) {
     : '<div class="empty-inline">所选范围没有金额数据。</div>';
   $('#currencyGroups').classList.remove('hidden');
 
+  const businessGroups = data.businessGroups || [];
+  $('#businessGroupCount').textContent = `${num(businessGroups.length)} 组`;
+  $('#businessGroupRows').innerHTML = businessGroups.length
+    ? businessGroups.map(group => `<tr data-business-country="${escapeHtml(group.countryCode)}" data-business-brand="${escapeHtml(group.brandCode)}">
+        <td>${escapeHtml(group.countryName || group.countryCode)}</td>
+        <td>${escapeHtml(group.brandName || group.brandCode)}</td>
+        <td>${num(group.shopCount)}</td>
+        <td>${escapeHtml(group.currency)}</td>
+        <td>${formatMoney(group.sales, group.currency)}</td>
+        <td>${num(group.orders)}</td>
+        <td>${formatMoney(group.estimatedNaturalSales, group.currency)}</td>
+        <td>${formatMoney(group.adExpense, group.currency)}</td>
+        <td class="${group.adSpendRatioToBiSales > .15 ? 'negative' : ''}">${group.adSpendRatioToBiSales == null ? '—' : pct(group.adSpendRatioToBiSales)}</td>
+        <td>${group.adGmvShareOfBiSales == null ? '—' : pct(group.adGmvShareOfBiSales)}</td>
+        <td>${roas(group.broadRoas)}</td>
+        <td>${formatMoney(group.refundAmount, group.currency)}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="12" class="empty">当前筛选没有国家 × 品牌汇总数据。</td></tr>';
+
+  $('[data-business-country]').forEach(row => {
+    row.addEventListener('click', () => {
+      $('#countryFilter').value = row.dataset.businessCountry;
+      $('#brandFilter').value = row.dataset.businessBrand;
+      renderShopOptions({ preserve: false });
+      loadCurrentView();
+    });
+  });
+
   $('#portfolioRows').innerHTML = shops.length
     ? shops.map(shop => `<tr data-portfolio-shop="${shop.shopId}">
         <td>${escapeHtml(shop.countryName || shop.countryCode)}</td>
