@@ -10,6 +10,7 @@
     "timezone": "Asia/Jakarta",
     "brandPortalTimezone": "GMT+7",
     "marketplaceRegion": "ID",
+    "gmsCampaignSeedIds": [],
     "active": true,
     "sortOrder": 10
   },
@@ -24,6 +25,7 @@
     "timezone": "Asia/Bangkok",
     "brandPortalTimezone": "GMT+7",
     "marketplaceRegion": "TH",
+    "gmsCampaignSeedIds": [],
     "active": true,
     "sortOrder": 20
   }
