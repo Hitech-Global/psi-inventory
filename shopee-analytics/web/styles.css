@@ -73,3 +73,11 @@
 .store-sku-table-wrap td .pill{max-width:180px;overflow:hidden;text-overflow:ellipsis}
 
 .signal-action{margin-top:8px;padding-top:8px;border-top:1px solid #ececef;font-size:10px;line-height:1.55;color:#3a3a3c}
+
+.history-coverage-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:18px 0 10px;padding-top:14px;border-top:1px solid #ececef}
+.history-coverage-head h3{margin:0;font-size:15px}
+.history-coverage-grid{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:9px}
+.history-card{border:1px solid #ececef;border-radius:12px;padding:11px;background:#fbfbfc;display:flex;flex-direction:column;gap:4px;min-width:0}
+.history-card span{font-size:9px;color:#86868b}.history-card strong{font-size:16px}.history-card small{font-size:9px;color:#86868b;line-height:1.35}
+.history-coverage-note{margin-top:10px;border-radius:10px;background:#fafafa;padding:9px 11px;color:#6e6e73;font-size:9px;line-height:1.5}
+@media(max-width:1100px){.history-coverage-grid{grid-template-columns:repeat(2,1fr)}}@media(max-width:680px){.history-coverage-grid{grid-template-columns:1fr}}
