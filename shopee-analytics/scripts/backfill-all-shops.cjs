@@ -23,9 +23,10 @@ async function main() {
     );
   }
 
-  const startDate = isoDate(process.env.SHOPEE_BACKFILL_START_DATE, 'SHOPEE_BACKFILL_START_DATE');
+  const globalStartDate = process.env.SHOPEE_BACKFILL_START_DATE
+    ? isoDate(process.env.SHOPEE_BACKFILL_START_DATE, 'SHOPEE_BACKFILL_START_DATE')
+    : null;
   const endDate = isoDate(process.env.SHOPEE_BACKFILL_END_DATE, 'SHOPEE_BACKFILL_END_DATE');
-  if (startDate > endDate) throw new Error('SHOPEE_BACKFILL_START_DATE must be <= SHOPEE_BACKFILL_END_DATE');
 
   const sources = parseSources(process.env.SHOPEE_BACKFILL_SOURCES);
   const countryFilter = String(process.env.SHOPEE_BACKFILL_COUNTRY || '').trim().toUpperCase();
@@ -47,6 +48,16 @@ async function main() {
 
     const summaries = [];
     for (const shop of shops) {
+      const startDate = globalStartDate || shop.analyticsStartDate;
+      if (!startDate) {
+        throw new Error(
+          `Shop ${shop.shopId} has no analyticsStartDate and SHOPEE_BACKFILL_START_DATE is not set`,
+        );
+      }
+      if (startDate > endDate) {
+        throw new Error(`Shop ${shop.shopId}: backfill start date must be <= end date`);
+      }
+
       const summary = await runBackfillShop({
         runtime,
         shop,
@@ -61,7 +72,7 @@ async function main() {
     const failed = summaries.filter(summary => !summary.ok);
     const output = {
       mode: 'historical-backfill',
-      startDate,
+      globalStartDate,
       endDate,
       sources,
       shopCount: summaries.length,
