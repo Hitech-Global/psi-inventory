@@ -93,6 +93,22 @@ function createShopeeAnalyticsRouter({
     }
   });
 
+  router.get('/items/:itemId/timeline', async (req, res, next) => {
+    try {
+      const shopId = positiveInt(req.query.shop_id, 'shop_id');
+      const itemId = positiveInt(req.params.itemId, 'itemId');
+      const startDate = isoDate(req.query.start_date, 'start_date');
+      const endDate = isoDate(req.query.end_date, 'end_date');
+      if (startDate > endDate) throw new Error('start_date must be <= end_date');
+      const events = await queryRepository.getItemTimeline({
+        shopId, itemId, startDate, endDate,
+      });
+      res.json({ shopId, itemId, startDate, endDate, events });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   return router;
 }
 
