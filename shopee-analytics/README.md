@@ -133,3 +133,38 @@ node shopee-analytics/scripts/sync-all-shops.cjs daily
 ```
 
 Optional scheduler filters can limit a run to one country, brand, or set of shop IDs. Each shop keeps its own encrypted token bundle and timezone.
+
+
+### Multi-shop token bootstrap
+
+Each authorized shop has a separate encrypted token bundle per app role. For many shops, use a temporary plaintext file **outside the repository**:
+
+```json
+[
+  {
+    "shopId": 123456789,
+    "tokens": {
+      "ADS": {
+        "accessToken": "<temporary access token>",
+        "refreshToken": "<temporary refresh token>",
+        "expiresAt": "2026-09-18T12:00:00Z"
+      },
+      "STORE_OPS": {
+        "accessToken": "<temporary access token>",
+        "refreshToken": "<temporary refresh token>",
+        "expiresAt": "2026-09-18T12:00:00Z"
+      }
+    }
+  }
+]
+```
+
+Import once with:
+
+```bash
+SHOPEE_ANALYTICS_BOOTSTRAP_MULTI_SHOP_TOKENS=YES \
+SHOPEE_MULTI_SHOP_TOKEN_FILE=/secure/outside-git/shopee-tokens.json \
+node shopee-analytics/scripts/bootstrap-multi-shop-tokens.cjs
+```
+
+The script never prints token values. Delete the plaintext file after the encrypted DB records are verified. Missing roles are allowed per shop so onboarding can be phased; the data-health page will show which role is not yet configured.
