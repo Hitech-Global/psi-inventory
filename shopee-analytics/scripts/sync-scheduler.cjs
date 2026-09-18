@@ -4,22 +4,43 @@ const path = require('path');
 const { spawn } = require('child_process');
 const { schedulerConfig, dueJobs, utcKeys } = require('../src/scheduler-utils');
 
-function runSync(mode) {
-  const script = path.join(__dirname, 'sync-all-shops.cjs');
+function runNodeScript(scriptName, args = [], envExtra = {}) {
+  const script = path.join(__dirname, scriptName);
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [script, mode], {
+    const child = spawn(process.execPath, [script, ...args], {
       env: {
         ...process.env,
-        SHOPEE_ANALYTICS_ENABLE_SYNC_ALL_SHOPS: 'YES',
+        ...envExtra,
       },
       stdio: 'inherit',
     });
     child.once('error', reject);
     child.once('exit', code => {
       if (code === 0) resolve();
-      else reject(new Error(`sync-all-shops ${mode} exited with code ${code}`));
+      else reject(new Error(`${scriptName} exited with code ${code}`));
     });
   });
+}
+
+function runSync(mode) {
+  return runNodeScript('sync-all-shops.cjs', [mode], {
+    SHOPEE_ANALYTICS_ENABLE_SYNC_ALL_SHOPS: 'YES',
+  });
+}
+
+async function processProductCardInbox() {
+  if (process.env.SHOPEE_PRODUCT_CARD_INBOX_ENABLE !== 'YES') return;
+  try {
+    await runNodeScript('process-product-card-inbox.cjs', [], {
+      SHOPEE_PRODUCT_CARD_INBOX_ENABLE: 'YES',
+    });
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: 'product-card-inbox-failure',
+      failedAt: new Date().toISOString(),
+      error: error && error.message ? error.message : String(error),
+    }));
+  }
 }
 
 async function main() {
@@ -60,6 +81,7 @@ async function main() {
         mode: job.mode,
         completedAt: new Date().toISOString(),
       }));
+      await processProductCardInbox();
     } catch (error) {
       // Mark the slot as attempted so a persistent API error does not hot-loop every
       // 30 seconds. The next normal schedule slot will retry.
