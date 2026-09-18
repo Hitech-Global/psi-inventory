@@ -1,8 +1,11 @@
 'use strict';
 
 const { createAnalyticsPool } = require('../src/pg');
-const { loadShopId } = require('../src/config');
+const { loadShopId, loadAppCredential } = require('../src/config');
 const { createRoleClient } = require('../src/client-factory');
+const { loadMasterKey } = require('../src/token-crypto');
+const { ShopeeTokenRepository } = require('../src/token-repository');
+const { ShopeeTokenManager } = require('../src/token-manager');
 const { ShopeeAnalyticsRepository } = require('../src/repository');
 const { ShopeeCampaignRepository } = require('../src/campaign-repository');
 const { ShopeeProductRepository } = require('../src/product-repository');
@@ -19,8 +22,8 @@ function required(name) {
   return value;
 }
 
-function roleMap(role) {
-  return { [role]: createRoleClient(role) };
+function roleMap(role, tokenManager) {
+  return { [role]: createRoleClient(role, { tokenManager }) };
 }
 
 async function main() {
@@ -34,15 +37,21 @@ async function main() {
   const shopId = loadShopId();
   const pool = createAnalyticsPool();
   const rawRepository = new ShopeeAnalyticsRepository({ pool });
+  const tokenRepository = new ShopeeTokenRepository({ pool, masterKey: loadMasterKey() });
+  const tokenManager = new ShopeeTokenManager({
+    tokenRepository,
+    credentialLoader: role => loadAppCredential(role, { requireToken: false }),
+  });
 
   try {
     if (command === 'gms') {
-      const ads = createRoleClient('ADS');
+      const ads = createRoleClient('ADS', { tokenManager });
+      const accessToken = await ads.getAccessToken(shopId);
       const result = await syncGmsWindow({
         client: ads.client,
         repository: rawRepository,
         shopId,
-        accessToken: ads.accessToken,
+        accessToken,
         campaignId: Number(required('SHOPEE_GMS_CAMPAIGN_ID')),
         startDate: required('SHOPEE_GMS_START_DATE'),
         endDate: required('SHOPEE_GMS_END_DATE'),
@@ -58,22 +67,22 @@ async function main() {
     };
 
     if (command === 'campaigns') {
-      serviceArgs.roleClients = roleMap('ADS');
+      serviceArgs.roleClients = roleMap('ADS', tokenManager);
       serviceArgs.campaignRepository = new ShopeeCampaignRepository({ pool });
     } else if (command === 'products' || command === 'roi') {
-      serviceArgs.roleClients = roleMap('ADS');
+      serviceArgs.roleClients = roleMap('ADS', tokenManager);
       serviceArgs.productRepository = new ShopeeProductRepository({ pool });
     } else if (command === 'promotions') {
-      serviceArgs.roleClients = roleMap('STORE_OPS');
+      serviceArgs.roleClients = roleMap('STORE_OPS', tokenManager);
       serviceArgs.promotionRepository = new ShopeePromotionRepository({ pool });
     } else if (command === 'orders') {
-      serviceArgs.roleClients = roleMap('ADS');
+      serviceArgs.roleClients = roleMap('ADS', tokenManager);
       serviceArgs.orderRepository = new ShopeeOrderRepository({ pool });
     } else if (command === 'returns') {
-      serviceArgs.roleClients = roleMap('ERP');
+      serviceArgs.roleClients = roleMap('ERP', tokenManager);
       serviceArgs.returnRepository = new ShopeeReturnRepository({ pool });
     } else if (command === 'shop-bi') {
-      serviceArgs.roleClients = roleMap('BRAND_PORTAL');
+      serviceArgs.roleClients = roleMap('BRAND_PORTAL', tokenManager);
       serviceArgs.shopBiRepository = new ShopeeShopBiRepository({ pool });
     } else {
       throw new Error(`Unknown command: ${command}`);
