@@ -92,3 +92,44 @@ The importer can infer `start_date/end_date` from filenames containing `YYYYMMDD
 - SKU event timeline (voucher, discount, return/refund, recommended ROAS and operation history)
 
 The standalone server binds to loopback by default. It is not yet integrated into the existing inventory navigation/auth stack.
+
+
+## Multi-country / multi-brand / multi-shop
+
+The analytics layer is shop-scoped end to end. Every operational fact keeps `shop_id`, and the shop directory adds the business dimensions that Shopee API data does not reliably provide:
+
+- country / marketplace
+- brand
+- display name
+- local currency
+- IANA timezone
+- Brand Portal timezone
+- active / sort order
+
+Configure shops with the gated script:
+
+```bash
+SHOPEE_ANALYTICS_CONFIGURE_SHOPS=YES \
+SHOPEE_SHOP_PROFILES_FILE=/secure/path/shops.json \
+node shopee-analytics/scripts/configure-shops.cjs
+```
+
+See `config/shops.example.json` for the shape.
+
+The frontend is built around the same hierarchy:
+
+`Country → Brand → Shop → Campaign → SKU`
+
+The portfolio page supports all shops or filtered subsets. Monetary values are **never summed across different currencies**. Cross-shop order/unit counts can be totaled, while GMV, ad spend, refunds and ROAS are grouped by currency until a dedicated reporting-FX layer is explicitly added.
+
+For recurring sync across all active shops:
+
+```bash
+SHOPEE_ANALYTICS_ENABLE_SYNC_ALL_SHOPS=YES \
+node shopee-analytics/scripts/sync-all-shops.cjs hourly
+
+SHOPEE_ANALYTICS_ENABLE_SYNC_ALL_SHOPS=YES \
+node shopee-analytics/scripts/sync-all-shops.cjs daily
+```
+
+Optional scheduler filters can limit a run to one country, brand, or set of shop IDs. Each shop keeps its own encrypted token bundle and timezone.
