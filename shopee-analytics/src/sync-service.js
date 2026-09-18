@@ -7,6 +7,7 @@ const { fetchAllVoucherDetails } = require('./sync-voucher');
 const { fetchAllDiscountDetails } = require('./sync-discount');
 const { fetchOrderList, fetchOrderDetails } = require('./sync-orders');
 const { fetchAllReturnDetails } = require('./sync-returns');
+const { fetchShopBiDay } = require('./sync-shop-bi');
 const { recordPages, recordSnapshot } = require('./raw-snapshot');
 
 function requireRole(roleClients, role) {
@@ -25,6 +26,7 @@ class ShopeeSyncService {
     promotionRepository,
     orderRepository,
     returnRepository,
+    shopBiRepository,
   }) {
     this.shopId = shopId;
     this.roleClients = roleClients;
@@ -34,6 +36,7 @@ class ShopeeSyncService {
     this.promotionRepository = promotionRepository;
     this.orderRepository = orderRepository;
     this.returnRepository = returnRepository;
+    this.shopBiRepository = shopBiRepository;
   }
 
   async syncCampaignSettings({ eventDate = new Date().toISOString().slice(0, 10), adType = 'all' } = {}) {
@@ -232,6 +235,34 @@ class ShopeeSyncService {
       }
     }
     return { orderCount: details.orders.length };
+  }
+
+  async syncShopBiDay({ date, timezone, currency = 'LOCAL' }) {
+    const { client, accessToken } = requireRole(this.roleClients, 'BRAND_PORTAL');
+    const result = await fetchShopBiDay({
+      client,
+      shopId: this.shopId,
+      accessToken,
+      date,
+      timezone,
+      currency,
+    });
+    await recordSnapshot({
+      repository: this.rawRepository,
+      appRole: 'BRAND_PORTAL',
+      endpointKey: 'shopSalesPerformance',
+      shopId: this.shopId,
+      eventDateFrom: date,
+      eventDateTo: date,
+      requestJson: result.body,
+      responseJson: result.payload,
+    });
+    if (this.shopBiRepository) {
+      for (const detail of result.details) {
+        await this.shopBiRepository.upsertDaily({ eventDate: date, detail });
+      }
+    }
+    return { detailCount: result.details.length };
   }
 
   async syncReturns({ createTimeFrom, createTimeTo, updateTimeFrom, updateTimeTo, status }) {
