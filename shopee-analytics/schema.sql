@@ -298,6 +298,22 @@ CREATE TABLE IF NOT EXISTS shopee_product_card_daily (
   PRIMARY KEY (shop_id, item_id, event_date)
 );
 
+CREATE TABLE IF NOT EXISTS shopee_shop_strategy_config (
+  shop_id BIGINT PRIMARY KEY,
+  ad_spend_ratio_limit NUMERIC(12,8) NOT NULL DEFAULT 0.15,
+  weekly_order_reference INTEGER NOT NULL DEFAULT 25,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS shopee_item_strategy_config (
+  shop_id BIGINT NOT NULL,
+  item_id BIGINT NOT NULL,
+  break_even_roas NUMERIC(20,8),
+  note TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (shop_id, item_id)
+);
+
 CREATE TABLE IF NOT EXISTS shopee_operation_history (
   id BIGSERIAL PRIMARY KEY,
   shop_id BIGINT NOT NULL,
