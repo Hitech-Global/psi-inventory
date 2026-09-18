@@ -64,9 +64,9 @@ async function fetchAllGmsItemPerformance({ client, shopId, accessToken, campaig
     const rows = extractItemRows(payload);
     all.push(...rows.map(normalizeItemRow));
 
-    const hasNext = response.has_next_page === true;
-    if (!hasNext && rows.length < limit) break;
     if (rows.length === 0) break;
+    if (response.has_next_page === false) break;
+    if (response.has_next_page !== true && rows.length < limit) break;
     offset += rows.length;
   }
   return all;
