@@ -839,10 +839,20 @@ input[type="number"]{-moz-appearance:textfield;appearance:textfield}
 .ci-acc-sub-meta{font-size:12px;color:var(--text-muted);font-weight:normal}
 .ci-acc-body{padding:4px 0 4px 16px}
 #ci-acc-body-logi .action-btn{margin-right:4px}
+/* AUTH-BOOT-NO-FLASH-V1：首屏先鉴权；只有 session 结果明确后才显示登录/待授权/业务页 */
+.auth-boot{position:fixed;inset:0;z-index:100000;display:flex;align-items:center;justify-content:center;background:#f5f6f8}
+.auth-boot-inner{display:flex;flex-direction:column;align-items:center;gap:14px;color:#646a73;font-size:13px}
+.auth-boot-logo{width:72px;height:48px;object-fit:contain}
+.auth-boot-spinner{width:20px;height:20px;border:2px solid #d2d2d7;border-top-color:#1d1d1f;border-radius:50%;animation:authBootSpin .75s linear infinite}
+@keyframes authBootSpin{to{transform:rotate(360deg)}}
+/* showApp / showPendingPage / doLogout 都会把目标容器 inline display=flex；此时自动撤掉 boot gate。网络错误则保持 boot，不误闪登录页。 */
+body:has(#app[style*="display: flex"]) #auth-boot,
+body:has(#login-page[style*="display: flex"]) #auth-boot,
+body:has(#pending-page[style*="display: flex"]) #auth-boot{display:none}
 </style>
 </head>
 <body>
-<div id="login-page" class="login-page">
+<div id="auth-boot" class="auth-boot" role="status" aria-live="polite"><div class="auth-boot-inner"><img class="auth-boot-logo" src="/assets/brand/hnm-logo.png" alt="PSI"><span class="auth-boot-spinner" aria-hidden="true"></span><span>正在进入 PSI…</span></div></div>\n<div id="login-page" class="login-page" style="display:none">
   <div class="login-container"><div class="login-card">
     <div class="login-logo"><img src="/assets/brand/hnm-logo.png" alt="PSI"></div>
     <h1 data-i18n="auth.login_title">PSI系统</h1>
