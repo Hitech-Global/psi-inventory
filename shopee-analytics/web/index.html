@@ -10,79 +10,152 @@
   <div class="shell">
     <header class="topbar">
       <div>
-        <div class="eyebrow">SHOPEE · OPERATIONS ANALYTICS</div>
+        <div class="eyebrow">SHOPEE · MULTI-STORE OPERATIONS</div>
         <h1>Shopee 运营分析</h1>
-        <p class="subtitle">先订单量 → ROAS → 漏斗 → SKU 赛马 → 商品问题 → 下一步验证动作</p>
+        <p class="subtitle">国家 × 品牌 × 店铺统一管理；先看经营，再下钻广告组与 SKU。</p>
       </div>
       <div class="health" id="healthBadge">检查数据源…</div>
     </header>
 
-    <section class="filter-card">
-      <label>Shop ID<input id="shopId" inputmode="numeric" placeholder="Shopee Shop ID"></label>
+    <nav class="view-tabs" aria-label="Shopee analytics views">
+      <button class="view-tab active" data-view="overview" type="button">店铺经营总览</button>
+      <button class="view-tab" data-view="ads" type="button">广告诊断</button>
+      <button class="view-tab" data-view="status" type="button">数据状态</button>
+    </nav>
+
+    <section class="filter-card multi-filter">
+      <label>国家
+        <select id="countryFilter">
+          <option value="">全部国家</option>
+        </select>
+      </label>
+      <label>品牌
+        <select id="brandFilter">
+          <option value="">全部品牌</option>
+        </select>
+      </label>
+      <label>店铺
+        <select id="shopSelect">
+          <option value="">全部店铺</option>
+        </select>
+      </label>
       <label>开始日期<input id="startDate" type="date"></label>
       <label>结束日期<input id="endDate" type="date"></label>
-      <button id="loadBtn" class="primary">读取分析</button>
+      <button id="loadBtn" class="primary" type="button">读取分析</button>
     </section>
 
-    <section id="systemStatus" class="status-panel hidden">
-      <div class="status-panel-head">
-        <div>
-          <div class="section-label">DATA HEALTH</div>
-          <h2>数据状态</h2>
-          <p id="statusSubtitle">检查 API 同步、新鲜度与 Token 状态。</p>
-        </div>
-        <button id="refreshStatusBtn" class="ghost" type="button">刷新状态</button>
-      </div>
-      <div id="sourceStatusGrid" class="source-status-grid"></div>
-      <div id="systemWarnings" class="system-warnings hidden"></div>
-    </section>
+    <section id="view-overview" class="view-section">
+      <section id="portfolioSummary" class="kpi-grid hidden"></section>
 
-    <section id="summary" class="kpi-grid hidden"></section>
+      <section id="currencyGroups" class="currency-grid hidden"></section>
 
-    <main class="grid">
-      <section class="panel campaigns-panel">
+      <section class="panel portfolio-panel">
         <div class="panel-head">
           <div>
-            <h2>广告 Campaign</h2>
-            <p>按花费排序；点击查看 7 天/所选周期诊断。</p>
+            <h2>店铺经营矩阵</h2>
+            <p id="portfolioSubtitle">按国家、品牌和店铺比较；跨币种金额不会直接相加。</p>
           </div>
-          <span id="campaignCount" class="pill">0</span>
+          <span id="portfolioShopCount" class="pill">0 店</span>
         </div>
-        <div class="table-wrap">
+        <div class="table-wrap portfolio-table-wrap">
           <table>
             <thead>
               <tr>
-                <th>Campaign</th>
+                <th>国家</th>
+                <th>品牌</th>
+                <th>店铺</th>
+                <th>币种</th>
+                <th>销售额</th>
                 <th>订单</th>
-                <th>ROAS</th>
-                <th>花费占比</th>
-                <th>Target</th>
-                <th>状态</th>
+                <th>广告花费</th>
+                <th>广告占比</th>
+                <th>Broad ROAS</th>
+                <th>Direct订单</th>
+                <th>退款金额</th>
+                <th>退货/退款</th>
               </tr>
             </thead>
-            <tbody id="campaignRows">
-              <tr><td colspan="6" class="empty">输入 Shop ID 后读取。</td></tr>
+            <tbody id="portfolioRows">
+              <tr><td colspan="12" class="empty">正在读取店铺配置…</td></tr>
             </tbody>
           </table>
         </div>
       </section>
+    </section>
 
-      <section class="panel diagnosis-panel">
-        <div class="panel-head">
-          <div>
-            <h2 id="diagnosisTitle">广告组诊断</h2>
-            <p id="diagnosisSubtitle">选择左侧 Campaign。</p>
+    <section id="view-ads" class="view-section hidden">
+      <div id="adsShopPrompt" class="selection-prompt hidden">
+        <strong>广告诊断需要选择单个店铺</strong>
+        <span>国家/品牌可以先筛选，再从“店铺”选择具体店铺。</span>
+      </div>
+
+      <section id="summary" class="kpi-grid hidden"></section>
+
+      <main id="adsGrid" class="grid">
+        <section class="panel campaigns-panel">
+          <div class="panel-head">
+            <div>
+              <h2>广告 Campaign</h2>
+              <p id="campaignSubtitle">按花费排序；点击查看所选周期诊断。</p>
+            </div>
+            <span id="campaignCount" class="pill">0</span>
           </div>
-          <span id="diagnosisState" class="pill neutral">等待</span>
-        </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Campaign</th>
+                  <th>订单</th>
+                  <th>ROAS</th>
+                  <th>花费占比</th>
+                  <th>Target</th>
+                  <th>状态</th>
+                </tr>
+              </thead>
+              <tbody id="campaignRows">
+                <tr><td colspan="6" class="empty">选择单个店铺后读取。</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
 
-        <div id="diagnosisBody" class="empty-state">
-          <div class="empty-icon">◎</div>
-          <strong>还没有选择 Campaign</strong>
-          <span>系统会按我们的诊断顺序分析整体和商品层。</span>
+        <section class="panel diagnosis-panel">
+          <div class="panel-head">
+            <div>
+              <h2 id="diagnosisTitle">广告组诊断</h2>
+              <p id="diagnosisSubtitle">选择左侧 Campaign。</p>
+            </div>
+            <span id="diagnosisState" class="pill neutral">等待</span>
+          </div>
+
+          <div id="diagnosisBody" class="empty-state">
+            <div class="empty-icon">◎</div>
+            <strong>还没有选择 Campaign</strong>
+            <span>系统会按订单量 → ROAS → Funnel → SKU结构 → Action 分析。</span>
+          </div>
+        </section>
+      </main>
+    </section>
+
+    <section id="view-status" class="view-section hidden">
+      <div id="statusShopPrompt" class="selection-prompt hidden">
+        <strong>数据状态需要选择单个店铺</strong>
+        <span>不同店铺的 Token、API 同步和数据新鲜度需要分别检查。</span>
+      </div>
+
+      <section id="systemStatus" class="status-panel hidden">
+        <div class="status-panel-head">
+          <div>
+            <div class="section-label">DATA HEALTH</div>
+            <h2 id="statusTitle">数据状态</h2>
+            <p id="statusSubtitle">检查 API 同步、新鲜度与 Token 状态。</p>
+          </div>
+          <button id="refreshStatusBtn" class="ghost" type="button">刷新状态</button>
         </div>
+        <div id="sourceStatusGrid" class="source-status-grid"></div>
+        <div id="systemWarnings" class="system-warnings hidden"></div>
       </section>
-    </main>
+    </section>
   </div>
 
   <template id="diagnosisTemplate">
@@ -92,7 +165,6 @@
       </div>
 
       <div class="metric-grid" id="campaignMetrics"></div>
-
       <div id="dataQualityBox" class="quality-box"></div>
 
       <div class="section-head action-head">
