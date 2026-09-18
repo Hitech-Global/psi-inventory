@@ -44,7 +44,10 @@ async function main() {
       runtime,
       shop,
       mode,
-      seededGmsCampaignIds: parseCampaignIds(process.env.SHOPEE_GMS_CAMPAIGN_IDS),
+      seededGmsCampaignIds: Array.from(new Set([
+        ...parseCampaignIds(process.env.SHOPEE_GMS_CAMPAIGN_IDS),
+        ...(shop.gmsCampaignSeedIds || []),
+      ])),
     });
 
     console.log(JSON.stringify(summary, null, 2));
