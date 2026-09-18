@@ -34,6 +34,39 @@ function parseShopIds(value) {
   return Array.from(new Set(ids));
 }
 
+function eventMixForRange(startDate, endDate) {
+  const startYear = Number(startDate.slice(0, 4));
+  const endYear = Number(endDate.slice(0, 4));
+  const events = [];
+  for (let year = startYear; year <= endYear; year += 1) {
+    for (const row of buildShopeeSeaEventCalendar(year)) {
+      if (row.eventDate >= startDate && row.eventDate <= endDate) events.push(row);
+    }
+  }
+  return {
+    totalEventDays: events.length,
+    doubleDayCount: events.filter(row => row.eventType === 'DOUBLE_DAY').length,
+    payday25Count: events.filter(row => row.eventType === 'PAYDAY_25').length,
+    dates: events.map(row => row.eventDate),
+  };
+}
+
+function comparisonContext(startDate, endDate, previousStartDate, previousEndDate) {
+  const currentEventMix = eventMixForRange(startDate, endDate);
+  const previousEventMix = eventMixForRange(previousStartDate, previousEndDate);
+  const eventMixMismatch =
+    currentEventMix.doubleDayCount !== previousEventMix.doubleDayCount ||
+    currentEventMix.payday25Count !== previousEventMix.payday25Count;
+  return {
+    currentEventMix,
+    previousEventMix,
+    eventMixMismatch,
+    warning: eventMixMismatch
+      ? '当前周期与上一周期的大促日构成不同，环比只作为经营信号；请结合普通日与活动日明细验证。'
+      : null,
+  };
+}
+
 function eventSetForRange(startDate, endDate) {
   const startYear = Number(startDate.slice(0, 4));
   const endYear = Number(endDate.slice(0, 4));
@@ -122,6 +155,12 @@ function createShopeeAnalyticsRouter({
         endDate,
         previousStartDate: previous.startDate,
         previousEndDate: previous.endDate,
+        comparisonContext: comparisonContext(
+          startDate,
+          endDate,
+          previous.startDate,
+          previous.endDate,
+        ),
         current,
         previous: prior,
         diagnosis,
@@ -174,6 +213,12 @@ function createShopeeAnalyticsRouter({
         endDate,
         previousStartDate: previous.startDate,
         previousEndDate: previous.endDate,
+        comparisonContext: comparisonContext(
+          startDate,
+          endDate,
+          previous.startDate,
+          previous.endDate,
+        ),
         filters: { countryCode, brandCode, shopIds },
         ...overview,
         comparison,
