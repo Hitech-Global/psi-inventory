@@ -224,7 +224,7 @@ async function loadShopDirectory() {
 
   if (!state.shops.length) {
     $('#portfolioRows').innerHTML =
-      '<tr><td colspan="12" class="empty">尚未配置店铺档案。先配置国家 / 品牌 / 店铺后即可使用多店总览。</td></tr>';
+      '<tr><td colspan="14" class="empty">尚未配置店铺档案。先配置国家 / 品牌 / 店铺后即可使用多店总览。</td></tr>';
   }
 }
 
@@ -284,6 +284,8 @@ function renderPortfolio(data) {
           <div><span>广告花费</span><strong>${formatMoney(group.adExpense, group.currency)}</strong></div>
           <div><span>广告占比</span><strong class="${group.adSpendRatioToBiSales > .15 ? 'negative' : ''}">${group.adSpendRatioToBiSales == null ? '—' : pct(group.adSpendRatioToBiSales)}</strong></div>
           <div><span>Broad ROAS</span><strong>${roas(group.broadRoas)}</strong></div>
+          <div><span>广告GMV占比</span><strong>${group.adGmvShareOfBiSales == null ? '—' : pct(group.adGmvShareOfBiSales)}</strong></div>
+          <div><span>估算自然销售</span><strong>${formatMoney(group.estimatedNaturalSales, group.currency)}</strong></div>
           <div><span>退款</span><strong>${formatMoney(group.refundAmount, group.currency)}</strong></div>
         </div>
       </article>`).join('')
@@ -300,12 +302,14 @@ function renderPortfolio(data) {
         <td>${num(shop.orders)}</td>
         <td>${formatMoney(shop.adExpense, shop.currency)}</td>
         <td class="${shop.adSpendRatioToBiSales > .15 ? 'negative' : ''}">${shop.adSpendRatioToBiSales == null ? '—' : pct(shop.adSpendRatioToBiSales)}</td>
+        <td>${shop.adGmvShareOfBiSales == null ? '—' : pct(shop.adGmvShareOfBiSales)}</td>
+        <td>${formatMoney(shop.estimatedNaturalSales, shop.currency)}</td>
         <td>${roas(shop.broadRoas)}</td>
         <td>${num(shop.directOrders)}</td>
         <td>${formatMoney(shop.refundAmount, shop.currency)}</td>
         <td>${num(shop.returnCount)}</td>
       </tr>`).join('')
-    : '<tr><td colspan="12" class="empty">当前筛选没有店铺数据。</td></tr>';
+    : '<tr><td colspan="14" class="empty">当前筛选没有店铺数据。</td></tr>';
 
   $$('[data-portfolio-shop]').forEach(row => {
     row.addEventListener('click', () => {
@@ -679,7 +683,7 @@ async function loadCurrentView() {
   } catch (error) {
     if (state.view === 'overview') {
       $('#portfolioRows').innerHTML =
-        `<tr><td colspan="12" class="empty">${escapeHtml(error.message)}</td></tr>`;
+        `<tr><td colspan="14" class="empty">${escapeHtml(error.message)}</td></tr>`;
     } else if (state.view === 'ads') {
       $('#campaignRows').innerHTML =
         `<tr><td colspan="6" class="empty">${escapeHtml(error.message)}</td></tr>`;
@@ -711,7 +715,7 @@ async function init() {
     await loadCurrentView();
   } catch (error) {
     $('#portfolioRows').innerHTML =
-      `<tr><td colspan="12" class="empty">${escapeHtml(error.message)}</td></tr>`;
+      `<tr><td colspan="14" class="empty">${escapeHtml(error.message)}</td></tr>`;
   }
 }
 
