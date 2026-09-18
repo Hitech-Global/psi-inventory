@@ -26,9 +26,35 @@ CONTAINER_FILE="/tmp/$FILE"
 LOCAL_FILE="$SHOPEE_BACKUP_LOCAL_DIR/$FILE"
 STATUS_FILE="$SCRIPT_DIR/runtime/backup-status.json"
 
+write_status() {
+  MODE="$1"
+  MSG="${2:-}"
+  COMPLETED="${3:-}"
+  SIZE="${4:-0}"
+  HASH="${5:-}"
+  node - "$STATUS_FILE" "$MODE" "$MSG" "$FILE" "$COMPLETED" "$SIZE" "$HASH" <<'NODE'
+const fs = require("fs");
+const [file, mode, message, fileName, completed, size, hash] = process.argv.slice(2);
+let status = {};
+try { status = JSON.parse(fs.readFileSync(file, "utf8")); } catch {}
+status.ok = mode === "success";
+status.lastAttemptAt = completed || new Date().toISOString();
+if (mode === "success") {
+  status.completedAt = completed;
+  status.fileName = fileName;
+  status.sizeBytes = Number(size || 0);
+  status.sha256 = hash || null;
+  status.nasCopiedAt = completed;
+  status.error = null;
+} else {
+  status.error = message || "backup failed";
+}
+fs.writeFileSync(file, JSON.stringify(status, null, 2));
+NODE
+}
+
 write_fail() {
-  MSG="$1"
-  printf '{"ok":false,"completedAt":null,"fileName":"%s","sizeBytes":0,"sha256":null,"nasCopiedAt":null,"error":"%s"}\n' "$FILE" "$MSG" > "$STATUS_FILE"
+  write_status failure "$1" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }
 
 cleanup_container_file() {
@@ -74,6 +100,6 @@ find "$SHOPEE_NAS_BACKUP_DIR/weekly" -type f -name 'shopee-analytics-*.dump' -mt
 find "$SHOPEE_NAS_BACKUP_DIR/monthly" -type f -name 'shopee-analytics-*.dump' -mtime +730 -delete
 
 COMPLETED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-printf '{"ok":true,"completedAt":"%s","fileName":"%s","sizeBytes":%s,"sha256":"%s","nasCopiedAt":"%s","error":null}\n' "$COMPLETED" "$FILE" "$SIZE" "$HASH" "$COMPLETED" > "$STATUS_FILE"
+write_status success "" "$COMPLETED" "$SIZE" "$HASH"
 
 echo "Backup OK: $FILE"
