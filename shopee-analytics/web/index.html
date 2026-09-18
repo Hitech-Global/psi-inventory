@@ -18,7 +18,8 @@
     </header>
 
     <nav class="view-tabs" aria-label="Shopee analytics views">
-      <button class="view-tab active" data-view="overview" type="button">店铺经营总览</button>
+      <button class="view-tab active" data-view="overview" type="button">经营总览</button>
+      <button class="view-tab" data-view="store" type="button">店铺诊断</button>
       <button class="view-tab" data-view="ads" type="button">广告诊断</button>
       <button class="view-tab" data-view="status" type="button">数据状态</button>
     </nav>
@@ -147,6 +148,90 @@
           </table>
         </div>
       </section>
+    </section>
+
+    <section id="view-store" class="view-section hidden">
+      <div id="storeShopPrompt" class="selection-prompt hidden">
+        <strong>店铺诊断需要选择单个店铺</strong>
+        <span>先按国家/品牌筛选，再选择具体店铺。</span>
+      </div>
+
+      <div id="storeDetail" class="hidden">
+        <section id="storeSummary" class="kpi-grid"></section>
+
+        <section class="panel store-signal-panel">
+          <div class="panel-head">
+            <div>
+              <h2 id="storeTitle">店铺经营诊断</h2>
+              <p id="storeCompareSubtitle">与上一等长周期比较。</p>
+            </div>
+            <span id="storePrimarySignal" class="pill neutral">等待</span>
+          </div>
+          <div id="storeSignalList" class="store-signal-list"></div>
+        </section>
+
+        <section class="panel store-trend-panel">
+          <div class="panel-head">
+            <div>
+              <h2>每日经营趋势</h2>
+              <p>双日和每月25日单独标记，避免把活动日直接当普通日基线。</p>
+            </div>
+          </div>
+          <div class="table-wrap store-trend-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>日期</th>
+                  <th>事件</th>
+                  <th>销售额</th>
+                  <th>订单</th>
+                  <th>商品点击</th>
+                  <th>点击→订单</th>
+                  <th>客单价</th>
+                  <th>广告花费</th>
+                  <th>Broad ROAS</th>
+                  <th>估算自然销售</th>
+                </tr>
+              </thead>
+              <tbody id="storeTrendRows">
+                <tr><td colspan="10" class="empty">等待店铺数据。</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel store-sku-panel">
+          <div class="panel-head">
+            <div>
+              <h2>商品经营矩阵</h2>
+              <p id="storeSkuSubtitle">商品总表现 × 广告表现；有 Product Card 时会补充总 CVR / 加购率。</p>
+            </div>
+            <span id="storeSkuCount" class="pill">0 SKU</span>
+          </div>
+          <div class="table-wrap store-sku-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>商品</th>
+                  <th>总销售额</th>
+                  <th>总订单</th>
+                  <th>总CVR</th>
+                  <th>加购率</th>
+                  <th>广告花费</th>
+                  <th>Broad GMV</th>
+                  <th>广告GMV占比</th>
+                  <th>Broad ROAS</th>
+                  <th>Direct订单</th>
+                  <th>估算自然销售</th>
+                </tr>
+              </thead>
+              <tbody id="storeSkuRows">
+                <tr><td colspan="11" class="empty">等待商品数据。</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
     </section>
 
     <section id="view-ads" class="view-section hidden">
