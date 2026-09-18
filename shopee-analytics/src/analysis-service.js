@@ -18,14 +18,33 @@ function aggregateItemRows(rows) {
   return { item_id: itemId, ...sumPerformance(rows) };
 }
 
+async function enrichStrategy({ strategyRepository, shopId, items }) {
+  if (!strategyRepository) return { items, settings: {} };
+  const shopStrategy = await strategyRepository.getShopStrategy(shopId);
+  const itemIds = items.map(item => Number(item.item_id)).filter(Number.isSafeInteger);
+  const breakEvenMap = await strategyRepository.getItemBreakEvenMap({ shopId, itemIds });
+  return {
+    items: items.map(item => ({
+      ...item,
+      breakEvenRoas: breakEvenMap.get(String(item.item_id)) || 0,
+    })),
+    settings: {
+      adSpendRatioLimit: shopStrategy.adSpendRatioLimit,
+      weeklyVolumeReference: shopStrategy.weeklyOrderReference,
+    },
+  };
+}
+
 async function analyzeCampaignWindow({
   repository,
+  strategyRepository,
   shopId,
   campaignId,
   startDate,
   endDate,
   targetRoas,
   breakEvenRoas,
+  recommendedRoi,
   eventDateSet = new Set(),
 }) {
   const [campaignRows, itemRows] = await Promise.all([
@@ -35,15 +54,18 @@ async function analyzeCampaignWindow({
 
   const campaign = sumPerformance(campaignRows);
   const itemGroups = groupRowsByItem(itemRows);
-  const items = Array.from(itemGroups.values()).map(aggregateItemRows);
+  const aggregatedItems = Array.from(itemGroups.values()).map(aggregateItemRows);
+  const enriched = await enrichStrategy({ strategyRepository, shopId, items: aggregatedItems });
   const days = Math.max(1, campaignRows.length);
 
   const diagnosis = diagnoseCampaign({
     campaign,
-    items,
+    items: enriched.items,
     targetRoas,
     breakEvenRoas,
+    recommendedRoi,
     days,
+    settings: enriched.settings,
   });
 
   const { eventRows, ordinaryRows } = splitEventBaseline(campaignRows, eventDateSet);
@@ -62,4 +84,9 @@ async function analyzeCampaignWindow({
   };
 }
 
-module.exports = { groupRowsByItem, aggregateItemRows, analyzeCampaignWindow };
+module.exports = {
+  groupRowsByItem,
+  aggregateItemRows,
+  enrichStrategy,
+  analyzeCampaignWindow,
+};
