@@ -306,6 +306,175 @@ class ShopeeQueryRepository {
     };
   }
 
+  async getShopDailyTrend({ shopId, startDate, endDate }) {
+    const result = await this.pool.query(
+      `WITH dates AS (
+         SELECT generate_series($2::date,$3::date,interval '1 day')::date AS event_date
+       ),
+       ads AS (
+         SELECT event_date,
+                COALESCE(SUM(impressions),0) AS impressions,
+                COALESCE(SUM(clicks),0) AS clicks,
+                COALESCE(SUM(expense),0) AS expense,
+                COALESCE(SUM(broad_gmv),0) AS broad_gmv,
+                COALESCE(SUM(broad_orders),0) AS broad_orders,
+                COALESCE(SUM(direct_gmv),0) AS direct_gmv,
+                COALESCE(SUM(direct_orders),0) AS direct_orders
+         FROM shopee_ad_campaign_daily
+         WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3
+         GROUP BY event_date
+       )
+       SELECT
+         d.event_date,
+         bi.sales,bi.orders,bi.units_sold,bi.product_clicks,bi.product_views,bi.unique_visitors,
+         bi.item_conversion_rate,bi.order_conversion_rate,bi.voucher_sales,bi.voucher_cost,
+         COALESCE(a.impressions,0) AS ad_impressions,
+         COALESCE(a.clicks,0) AS ad_clicks,
+         COALESCE(a.expense,0) AS ad_expense,
+         COALESCE(a.broad_gmv,0) AS broad_gmv,
+         COALESCE(a.broad_orders,0) AS broad_orders,
+         COALESCE(a.direct_gmv,0) AS direct_gmv,
+         COALESCE(a.direct_orders,0) AS direct_orders
+       FROM dates d
+       LEFT JOIN shopee_shop_bi_daily bi
+         ON bi.shop_id=$1 AND bi.event_date=d.event_date
+       LEFT JOIN ads a ON a.event_date=d.event_date
+       ORDER BY d.event_date`,
+      [shopId, startDate, endDate],
+    );
+
+    return result.rows.map(row => {
+      const sales = row.sales === null ? null : Number(row.sales);
+      const orders = row.orders === null ? null : Number(row.orders);
+      const productClicks = row.product_clicks === null ? null : Number(row.product_clicks);
+      const adExpense = Number(row.ad_expense || 0);
+      const broadGmv = Number(row.broad_gmv || 0);
+      return {
+        eventDate: String(row.event_date).slice(0, 10),
+        sales,
+        orders,
+        unitsSold: row.units_sold === null ? null : Number(row.units_sold),
+        productClicks,
+        productViews: row.product_views === null ? null : Number(row.product_views),
+        uniqueVisitors: row.unique_visitors === null ? null : Number(row.unique_visitors),
+        itemConversionRate: row.item_conversion_rate === null ? null : Number(row.item_conversion_rate),
+        orderConversionRate: row.order_conversion_rate === null ? null : Number(row.order_conversion_rate),
+        voucherSales: row.voucher_sales === null ? null : Number(row.voucher_sales),
+        voucherCost: row.voucher_cost === null ? null : Number(row.voucher_cost),
+        adImpressions: Number(row.ad_impressions || 0),
+        adClicks: Number(row.ad_clicks || 0),
+        adExpense,
+        broadGmv,
+        broadOrders: Number(row.broad_orders || 0),
+        directGmv: Number(row.direct_gmv || 0),
+        directOrders: Number(row.direct_orders || 0),
+        broadRoas: adExpense > 0 ? broadGmv / adExpense : 0,
+        adSpendRatioToSales: sales && sales > 0 ? adExpense / sales : null,
+        estimatedNaturalSales: sales === null ? null : Math.max(0, sales - broadGmv),
+        clickToOrder: productClicks && productClicks > 0 && orders !== null ? orders / productClicks : null,
+        aov: orders && orders > 0 && sales !== null ? sales / orders : null,
+      };
+    });
+  }
+
+  async getShopSkuOverview({ shopId, startDate, endDate, limit = 100 }) {
+    const safeLimit = Math.max(1, Math.min(500, Number(limit) || 100));
+    const result = await this.pool.query(
+      `WITH ads AS (
+         SELECT item_id,
+                COALESCE(SUM(impressions),0) AS ad_impressions,
+                COALESCE(SUM(clicks),0) AS ad_clicks,
+                COALESCE(SUM(expense),0) AS ad_expense,
+                COALESCE(SUM(broad_gmv),0) AS broad_gmv,
+                COALESCE(SUM(broad_orders),0) AS broad_orders,
+                COALESCE(SUM(direct_gmv),0) AS direct_gmv,
+                COALESCE(SUM(direct_orders),0) AS direct_orders
+         FROM shopee_ad_item_daily
+         WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3
+         GROUP BY item_id
+       ),
+       pc AS (
+         SELECT *
+         FROM shopee_product_card_period
+         WHERE shop_id=$1 AND start_date=$2 AND end_date=$3
+       ),
+       ids AS (
+         SELECT item_id FROM ads
+         UNION
+         SELECT item_id FROM pc
+       )
+       SELECT
+         ids.item_id,
+         COALESCE(pc.item_name,p.item_name) AS item_name,
+         COALESCE(pc.item_sku,p.item_sku) AS item_sku,
+         pc.parent_sku,
+         pc.impressions AS total_impressions,
+         pc.clicks AS total_clicks,
+         pc.ctr AS total_ctr,
+         pc.visitors,
+         pc.page_views,
+         pc.add_to_cart_visitors,
+         pc.add_to_cart_units,
+         pc.add_to_cart_rate,
+         pc.orders AS total_orders,
+         pc.buyers,
+         pc.units AS total_units,
+         pc.sales AS total_sales,
+         pc.conversion_rate AS total_conversion_rate,
+         COALESCE(a.ad_impressions,0) AS ad_impressions,
+         COALESCE(a.ad_clicks,0) AS ad_clicks,
+         COALESCE(a.ad_expense,0) AS ad_expense,
+         COALESCE(a.broad_gmv,0) AS broad_gmv,
+         COALESCE(a.broad_orders,0) AS broad_orders,
+         COALESCE(a.direct_gmv,0) AS direct_gmv,
+         COALESCE(a.direct_orders,0) AS direct_orders
+       FROM ids
+       LEFT JOIN pc ON pc.item_id=ids.item_id
+       LEFT JOIN ads a ON a.item_id=ids.item_id
+       LEFT JOIN shopee_products p ON p.shop_id=$1 AND p.item_id=ids.item_id
+       ORDER BY COALESCE(pc.sales,a.broad_gmv,0) DESC, ids.item_id
+       LIMIT $4`,
+      [shopId, startDate, endDate, safeLimit],
+    );
+
+    return result.rows.map(row => {
+      const totalSales = row.total_sales === null ? null : Number(row.total_sales);
+      const adExpense = Number(row.ad_expense || 0);
+      const broadGmv = Number(row.broad_gmv || 0);
+      return {
+        itemId: Number(row.item_id),
+        itemName: row.item_name,
+        itemSku: row.item_sku,
+        parentSku: row.parent_sku,
+        totalImpressions: row.total_impressions === null ? null : Number(row.total_impressions),
+        totalClicks: row.total_clicks === null ? null : Number(row.total_clicks),
+        totalCtr: row.total_ctr === null ? null : Number(row.total_ctr),
+        visitors: row.visitors === null ? null : Number(row.visitors),
+        pageViews: row.page_views === null ? null : Number(row.page_views),
+        addToCartVisitors: row.add_to_cart_visitors === null ? null : Number(row.add_to_cart_visitors),
+        addToCartUnits: row.add_to_cart_units === null ? null : Number(row.add_to_cart_units),
+        addToCartRate: row.add_to_cart_rate === null ? null : Number(row.add_to_cart_rate),
+        totalOrders: row.total_orders === null ? null : Number(row.total_orders),
+        buyers: row.buyers === null ? null : Number(row.buyers),
+        totalUnits: row.total_units === null ? null : Number(row.total_units),
+        totalSales,
+        totalConversionRate: row.total_conversion_rate === null ? null : Number(row.total_conversion_rate),
+        adImpressions: Number(row.ad_impressions || 0),
+        adClicks: Number(row.ad_clicks || 0),
+        adExpense,
+        broadGmv,
+        broadOrders: Number(row.broad_orders || 0),
+        directGmv: Number(row.direct_gmv || 0),
+        directOrders: Number(row.direct_orders || 0),
+        broadRoas: adExpense > 0 ? broadGmv / adExpense : 0,
+        adSpendRatioToSales: totalSales && totalSales > 0 ? adExpense / totalSales : null,
+        adGmvShareOfSales: totalSales && totalSales > 0 ? broadGmv / totalSales : null,
+        estimatedNaturalSales: totalSales === null ? null : Math.max(0, totalSales - broadGmv),
+        hasProductCard: totalSales !== null,
+      };
+    });
+  }
+
   async listCampaignOverview({ shopId, startDate, endDate }) {
     const result = await this.pool.query(
       `SELECT
