@@ -69,6 +69,29 @@ function stateLabel(value) {
   return STATE_LABELS[value] || value || '—';
 }
 
+function changePct(value) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return '—';
+  const n = Number(value);
+  const sign = n > 0 ? '+' : '';
+  return `${sign}${(n * 100).toFixed(1)}%`;
+}
+
+function changeClass(value, invert = false) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return '';
+  const n = Number(value);
+  if (Math.abs(n) < 0.001) return '';
+  const positive = invert ? n < 0 : n > 0;
+  return positive ? 'positive' : 'negative';
+}
+
+function signalClass(signal) {
+  if (!signal) return 'neutral';
+  if (signal.severity === 'high') return 'bad';
+  if (signal.severity === 'medium') return 'warn';
+  if (signal.severity === 'positive') return 'good';
+  return 'neutral';
+}
+
 function stateClass(value) {
   if (/TARGET_MET|WITHIN_SPEND|CORE_CANDIDATE/.test(value || '')) return 'good';
   if (/BELOW_BREAK|OVER_SPEND|HIGH_RISK/.test(value || '')) return 'bad';
@@ -261,6 +284,13 @@ function renderPortfolio(data) {
   const totals = data.totals || {};
   const dimensions = data.dimensions || {};
   const shops = data.shops || [];
+  const comparison = data.comparison || { shops: [], businessGroups: [] };
+  const shopDiagnosisMap = new Map(
+    (comparison.shops || []).map(row => [String(row.shopId), row.diagnosis])
+  );
+  const groupDiagnosisMap = new Map(
+    (comparison.businessGroups || []).map(row => [row.key, row.diagnosis])
+  );
 
   $('#portfolioShopCount').textContent = `${num(totals.shopCount)} 店`;
   $('#portfolioSubtitle').textContent = dimensions.multiCurrency
@@ -298,24 +328,78 @@ function renderPortfolio(data) {
     : '<div class="empty-inline">所选范围没有金额数据。</div>';
   $('#currencyGroups').classList.remove('hidden');
 
+  $('#portfolioCompareSubtitle').textContent =
+    `当前 ${data.startDate} → ${data.endDate}，对比上一等长周期 ${data.previousStartDate} → ${data.previousEndDate}。经营信号用于定位下钻方向，不直接视为因果结论。`;
+
+  const diagnosisRows = shops.map(shop => ({
+    shop,
+    diagnosis: shopDiagnosisMap.get(String(shop.shopId)) || null,
+  }));
+  const attentionCount = diagnosisRows.filter(row =>
+    row.diagnosis && row.diagnosis.primarySignal &&
+    ['high', 'medium'].includes(row.diagnosis.primarySignal.severity)
+  ).length;
+  $('#portfolioIssueCount').textContent = `${attentionCount} 需关注`;
+  $('#portfolioIssueCount').className = `pill ${attentionCount ? 'warn' : 'good'}`;
+
+  $('#portfolioDiagnosisRows').innerHTML = diagnosisRows.length
+    ? diagnosisRows
+      .sort((a, b) => {
+        const ac = a.diagnosis && a.diagnosis.changes && a.diagnosis.changes.sales;
+        const bc = b.diagnosis && b.diagnosis.changes && b.diagnosis.changes.sales;
+        if (ac === null || ac === undefined) return 1;
+        if (bc === null || bc === undefined) return -1;
+        return ac - bc;
+      })
+      .map(({ shop, diagnosis }) => {
+        const changes = diagnosis && diagnosis.changes || {};
+        const signal = diagnosis && diagnosis.primarySignal;
+        return `<tr data-diagnosis-shop="${shop.shopId}">
+          <td><div class="shop-cell"><strong>${escapeHtml(shop.displayName)}</strong><small>${escapeHtml(shop.countryCode)} · ${escapeHtml(shop.brandName || shop.brandCode)}</small></div></td>
+          <td class="${changeClass(changes.sales)}">${changePct(changes.sales)}</td>
+          <td class="${changeClass(changes.productClicks)}">${changePct(changes.productClicks)}</td>
+          <td class="${changeClass(changes.clickToOrder)}">${changePct(changes.clickToOrder)}</td>
+          <td class="${changeClass(changes.aov)}">${changePct(changes.aov)}</td>
+          <td class="${changeClass(changes.estimatedNaturalSales)}">${changePct(changes.estimatedNaturalSales)}</td>
+          <td class="${changeClass(changes.broadGmv)}">${changePct(changes.broadGmv)}</td>
+          <td title="${escapeHtml(signal && signal.detail || '')}"><span class="pill ${signalClass(signal)}">${escapeHtml(signal && signal.title || '等待数据')}</span></td>
+        </tr>`;
+      }).join('')
+    : '<tr><td colspan="8" class="empty">当前筛选没有店铺诊断数据。</td></tr>';
+
+  $('[data-diagnosis-shop]').forEach(row => {
+    row.addEventListener('click', () => {
+      $('#shopSelect').value = row.dataset.diagnosisShop;
+      switchView('ads');
+    });
+  });
+
   const businessGroups = data.businessGroups || [];
   $('#businessGroupCount').textContent = `${num(businessGroups.length)} 组`;
   $('#businessGroupRows').innerHTML = businessGroups.length
-    ? businessGroups.map(group => `<tr data-business-country="${escapeHtml(group.countryCode)}" data-business-brand="${escapeHtml(group.brandCode)}">
-        <td>${escapeHtml(group.countryName || group.countryCode)}</td>
-        <td>${escapeHtml(group.brandName || group.brandCode)}</td>
-        <td>${num(group.shopCount)}</td>
-        <td>${escapeHtml(group.currency)}</td>
-        <td>${formatMoney(group.sales, group.currency)}</td>
-        <td>${num(group.orders)}</td>
-        <td>${formatMoney(group.estimatedNaturalSales, group.currency)}</td>
-        <td>${formatMoney(group.adExpense, group.currency)}</td>
-        <td class="${group.adSpendRatioToBiSales > .15 ? 'negative' : ''}">${group.adSpendRatioToBiSales == null ? '—' : pct(group.adSpendRatioToBiSales)}</td>
-        <td>${group.adGmvShareOfBiSales == null ? '—' : pct(group.adGmvShareOfBiSales)}</td>
-        <td>${roas(group.broadRoas)}</td>
-        <td>${formatMoney(group.refundAmount, group.currency)}</td>
-      </tr>`).join('')
-    : '<tr><td colspan="12" class="empty">当前筛选没有国家 × 品牌汇总数据。</td></tr>';
+    ? businessGroups.map(group => {
+        const key = [group.countryCode, group.brandCode, group.currency].join('|');
+        const diagnosis = groupDiagnosisMap.get(key);
+        const salesChange = diagnosis && diagnosis.changes && diagnosis.changes.sales;
+        const signal = diagnosis && diagnosis.primarySignal;
+        return `<tr data-business-country="${escapeHtml(group.countryCode)}" data-business-brand="${escapeHtml(group.brandCode)}">
+          <td>${escapeHtml(group.countryName || group.countryCode)}</td>
+          <td>${escapeHtml(group.brandName || group.brandCode)}</td>
+          <td>${num(group.shopCount)}</td>
+          <td>${escapeHtml(group.currency)}</td>
+          <td>${formatMoney(group.sales, group.currency)}</td>
+          <td class="${changeClass(salesChange)}">${changePct(salesChange)}</td>
+          <td>${num(group.orders)}</td>
+          <td>${formatMoney(group.estimatedNaturalSales, group.currency)}</td>
+          <td>${formatMoney(group.adExpense, group.currency)}</td>
+          <td class="${group.adSpendRatioToBiSales > .15 ? 'negative' : ''}">${group.adSpendRatioToBiSales == null ? '—' : pct(group.adSpendRatioToBiSales)}</td>
+          <td>${group.adGmvShareOfBiSales == null ? '—' : pct(group.adGmvShareOfBiSales)}</td>
+          <td>${roas(group.broadRoas)}</td>
+          <td title="${escapeHtml(signal && signal.detail || '')}"><span class="pill ${signalClass(signal)}">${escapeHtml(signal && signal.title || '—')}</span></td>
+          <td>${formatMoney(group.refundAmount, group.currency)}</td>
+        </tr>`;
+      }).join('')
+    : '<tr><td colspan="14" class="empty">当前筛选没有国家 × 品牌汇总数据。</td></tr>';
 
   $('[data-business-country]').forEach(row => {
     row.addEventListener('click', () => {
