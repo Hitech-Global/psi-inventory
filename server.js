@@ -1217,8 +1217,8 @@ if (require.main === module) {
         try { perms = JSON.parse(role.permissions || '[]'); } catch (_) { return; }
         if (!Array.isArray(perms)) return;
         const alreadyCanViewCI = perms.includes('ci_view') || perms.includes('*');
-        if (alreadyCanViewCI && !perms.includes(CI_AMOUNT_PERMISSION)) {
-          perms.push(CI_AMOUNT_PERMISSION);
+        if (alreadyCanViewCI && !perms.includes('ci_amount_view')) {
+          perms.push('ci_amount_view');
           run('UPDATE roles SET permissions = ? WHERE id = ?', [JSON.stringify(perms), role.id]);
           migrated++;
         }
