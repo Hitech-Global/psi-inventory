@@ -7,6 +7,7 @@ const { ShopeeAnalyticsRepository } = require('./repository');
 const { ShopeeStrategyRepository } = require('./strategy-repository');
 const { ShopeeQueryRepository } = require('./query-repository');
 const { createShopeeAnalyticsRouter } = require('./http-router');
+const { createBackupStatusProvider } = require('./backup-status');
 
 function resolveBindAddress(env = process.env) {
   const requested = env.SHOPEE_ANALYTICS_HOST || '127.0.0.1';
@@ -32,11 +33,13 @@ function createApp({ pool }) {
   const repository = new ShopeeAnalyticsRepository({ pool });
   const strategyRepository = new ShopeeStrategyRepository({ pool });
   const queryRepository = new ShopeeQueryRepository({ pool });
+  const backupStatusProvider = createBackupStatusProvider();
 
   app.use('/api/shopee-analytics', createShopeeAnalyticsRouter({
     repository,
     strategyRepository,
     queryRepository,
+    backupStatusProvider,
   }));
 
   const webDir = path.join(__dirname, '..', 'web');
