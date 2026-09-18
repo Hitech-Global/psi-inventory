@@ -47,8 +47,11 @@ function metricSnapshot(row = {}) {
   const broadGmv = toNumber(row.broadGmv);
   const directGmv = toNumber(row.directGmv);
   const estimatedNaturalSales = row.estimatedNaturalSales === undefined
-    ? Math.max(0, sales - broadGmv)
+    ? sales - broadGmv
     : toNumber(row.estimatedNaturalSales);
+  const adAttributionExceedsSales = row.adAttributionExceedsBiSales === undefined
+    ? broadGmv > sales
+    : Boolean(row.adAttributionExceedsBiSales);
 
   return {
     sales,
@@ -67,6 +70,7 @@ function metricSnapshot(row = {}) {
     adSpendRatio: safeRatio(adExpense, sales),
     adGmvShare: safeRatio(broadGmv, sales),
     estimatedNaturalSales,
+    adAttributionExceedsSales,
     refundAmount: toNumber(row.refundAmount),
     returnCount: toNumber(row.returnCount),
   };
@@ -100,6 +104,16 @@ function buildSignals(current, previous, changes, {
 } = {}) {
   const signals = [];
 
+  if (current.adAttributionExceedsSales) {
+    signals.push(signal(
+      'AD_ATTRIBUTION_EXCEEDS_BI_SALES',
+      'medium',
+      '广告归因GMV高于BI销售额',
+      '当前周期 Broad Ads GMV 高于同周期 BI 销售额，说明归因口径、回溯窗口或数据时间口径存在差异，不能把差值直接解释为自然销售。',
+      '先核对日期、时区和 Shopee 归因回溯；在口径一致前，不用“BI销售额－Broad GMV”指导自然流动作。',
+    ));
+  }
+
   if (
     adSpendRatioLimit !== null &&
     Number.isFinite(Number(adSpendRatioLimit)) &&
@@ -120,8 +134,8 @@ function buildSignals(current, previous, changes, {
       'SALES_DOWN',
       'high',
       '销售额下降',
-      '先拆流量、转化、客单价以及广告/自然销售变化，不直接把下降归因于广告。',
-      '按 Product Clicks → 点击到订单 → AOV → 广告GMV/估算自然销售的顺序定位下降环节，再只改最主要变量。',
+      '先拆流量、转化、客单价以及广告归因/非广告归因销售变化，不直接把下降归因于广告。',
+      '按 Product Clicks → 点击到订单 → AOV → 广告GMV/估算非广告归因销售的顺序定位下降环节，再只改最主要变量。',
     ));
   }
 
@@ -155,13 +169,18 @@ function buildSignals(current, previous, changes, {
     ));
   }
 
-  if (changes.estimatedNaturalSales !== null && changes.estimatedNaturalSales <= declineThreshold) {
+  if (
+    !current.adAttributionExceedsSales &&
+    !previous.adAttributionExceedsSales &&
+    changes.estimatedNaturalSales !== null &&
+    changes.estimatedNaturalSales <= declineThreshold
+  ) {
     signals.push(signal(
       'NATURAL_SALES_DOWN',
       'medium',
-      '估算自然销售下降',
-      'BI销售额减 Broad Ads GMV 的估算自然销售下降；需要结合 Product Card 与订单结构继续验证。',
-      '优先找自然销售下降最大的 SKU，检查其商品流量、CVR、价格和活动变化；该指标是估算值，不单独作为归因结论。',
+      '估算非广告归因销售下降',
+      'BI销售额减 Broad Ads GMV 的估算非广告归因销售下降；需要结合 Product Card 与订单结构继续验证。',
+      '先定位差值下降最大的店铺/商品，再结合 Product Card、Direct 指标、价格和活动验证；不单独用这个差值下结论。',
     ));
   }
 
@@ -181,7 +200,7 @@ function buildSignals(current, previous, changes, {
       ['clickToOrder', '转化'],
       ['aov', '客单价'],
       ['broadGmv', '广告GMV'],
-      ['estimatedNaturalSales', '估算自然销售'],
+      ['estimatedNaturalSales', '估算非广告归因销售'],
     ]
       .filter(([key]) => changes[key] !== null && changes[key] >= growthThreshold)
       .map(([, label]) => label);
