@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS shopee_shop_profiles (
   timezone TEXT NOT NULL,
   brand_portal_timezone TEXT,
   marketplace_region TEXT,
+  gms_campaign_seed_ids BIGINT[] NOT NULL DEFAULT '{}'::bigint[],
   active BOOLEAN NOT NULL DEFAULT true,
   sort_order INTEGER NOT NULL DEFAULT 0,
   note TEXT,
