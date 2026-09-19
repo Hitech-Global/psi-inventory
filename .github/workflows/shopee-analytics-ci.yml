@@ -1,0 +1,51 @@
+name: Shopee Analytics CI
+
+on:
+  pull_request:
+    paths:
+      - "shopee-analytics/**"
+      - ".github/workflows/shopee-analytics-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: shopee_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d shopee_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install runtime dependencies without repo postinstall
+        run: npm ci --ignore-scripts
+      - name: Run Shopee analytics pure tests
+        run: node shopee-analytics/test/run-all.cjs
+      - name: Run PostgreSQL integration test
+        env:
+          SHOPEE_ANALYTICS_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/shopee_test
+        run: node shopee-analytics/test/postgres.integration.cjs
+      - name: Validate desktop compose and backup scripts
+        run: |
+          cp shopee-analytics/deploy/desktop/runtime.env.example shopee-analytics/deploy/desktop/runtime/.env 2>/dev/null || {
+            mkdir -p shopee-analytics/deploy/desktop/runtime
+            cp shopee-analytics/deploy/desktop/runtime.env.example shopee-analytics/deploy/desktop/runtime/.env
+          }
+          (cd shopee-analytics/deploy/desktop && docker compose --env-file runtime/.env config -q)
+          sh -n shopee-analytics/deploy/desktop/backup-postgres.sh
+          sh -n shopee-analytics/deploy/desktop/verify-restore.sh

@@ -1,0 +1,119 @@
+name: shopee-analytics
+
+services:
+  postgres:
+    image: postgres:16.15-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - shopee_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    stop_grace_period: 60s
+
+  app:
+    build:
+      context: ../../..
+      dockerfile: shopee-analytics/deploy/desktop/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ./runtime/.env
+    environment:
+      SHOPEE_ANALYTICS_PGHOST: postgres
+      SHOPEE_ANALYTICS_PGPORT: "5432"
+      SHOPEE_ANALYTICS_PGDATABASE: ${POSTGRES_DB}
+      SHOPEE_ANALYTICS_PGUSER: ${POSTGRES_USER}
+      SHOPEE_ANALYTICS_PGPASSWORD: ${POSTGRES_PASSWORD}
+      SHOPEE_ANALYTICS_HOST: 0.0.0.0
+      SHOPEE_ANALYTICS_ALLOW_REMOTE: "YES"
+      SHOPEE_ANALYTICS_PORT: "3090"
+      SHOPEE_BACKUP_STATUS_FILE: /runtime/backup-status.json
+    ports:
+      - "127.0.0.1:${SHOPEE_ANALYTICS_HOST_PORT:-3090}:3090"
+    volumes:
+      - ./runtime:/runtime:ro
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3090/api/shopee-analytics/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ../../..
+      dockerfile: shopee-analytics/deploy/desktop/Dockerfile
+    restart: unless-stopped
+    command: ["node", "shopee-analytics/scripts/sync-scheduler.cjs"]
+    env_file:
+      - ./runtime/.env
+    environment:
+      SHOPEE_ANALYTICS_PGHOST: postgres
+      SHOPEE_ANALYTICS_PGPORT: "5432"
+      SHOPEE_ANALYTICS_PGDATABASE: ${POSTGRES_DB}
+      SHOPEE_ANALYTICS_PGUSER: ${POSTGRES_USER}
+      SHOPEE_ANALYTICS_PGPASSWORD: ${POSTGRES_PASSWORD}
+      SHOPEE_ANALYTICS_ENABLE_SYNC_ALL_SHOPS: "YES"
+      SHOPEE_PRODUCT_CARD_INBOX_DIR: /runtime/product-card/inbox
+      SHOPEE_PRODUCT_CARD_ARCHIVE_DIR: /runtime/product-card/archive
+      SHOPEE_PRODUCT_CARD_FAILED_DIR: /runtime/product-card/failed
+    volumes:
+      - ./runtime:/runtime
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  schema:
+    profiles: ["tools"]
+    build:
+      context: ../../..
+      dockerfile: shopee-analytics/deploy/desktop/Dockerfile
+    command: ["node", "shopee-analytics/scripts/apply-schema.cjs"]
+    env_file:
+      - ./runtime/.env
+    environment:
+      SHOPEE_ANALYTICS_PGHOST: postgres
+      SHOPEE_ANALYTICS_PGPORT: "5432"
+      SHOPEE_ANALYTICS_PGDATABASE: ${POSTGRES_DB}
+      SHOPEE_ANALYTICS_PGUSER: ${POSTGRES_USER}
+      SHOPEE_ANALYTICS_PGPASSWORD: ${POSTGRES_PASSWORD}
+      SHOPEE_ANALYTICS_APPLY_SCHEMA: "YES"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  preflight:
+    profiles: ["tools"]
+    build:
+      context: ../../..
+      dockerfile: shopee-analytics/deploy/desktop/Dockerfile
+    command: ["node", "shopee-analytics/scripts/deployment-preflight.cjs"]
+    env_file:
+      - ./runtime/.env
+    environment:
+      SHOPEE_ANALYTICS_PGHOST: postgres
+      SHOPEE_ANALYTICS_PGPORT: "5432"
+      SHOPEE_ANALYTICS_PGDATABASE: ${POSTGRES_DB}
+      SHOPEE_ANALYTICS_PGUSER: ${POSTGRES_USER}
+      SHOPEE_ANALYTICS_PGPASSWORD: ${POSTGRES_PASSWORD}
+      SHOPEE_BACKUP_STATUS_FILE: /runtime/backup-status.json
+    volumes:
+      - ./runtime:/runtime:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  shopee_pgdata:
