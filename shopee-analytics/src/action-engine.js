@@ -59,6 +59,7 @@ function campaignActions({ campaign, items = [] }) {
     campaign.spendLimitState === 'WITHIN_SPEND_LIMIT';
   const lowVolume = campaign.volumeState === 'LOW_VOLUME_SIGNAL';
   const hasCore = items.some(item => item.state === 'CORE_CANDIDATE');
+  const maturityStatus = campaign.maturityStatus || (campaign.maturity && campaign.maturity.status) || 'UNKNOWN';
   const weakCount = items.filter(item =>
     item.state === 'HIGH_RISK_ZERO_ORDER' ||
     item.state === 'PRODUCT_OPTIMIZATION_CANDIDATE'
@@ -104,12 +105,24 @@ function campaignActions({ campaign, items = [] }) {
     });
   }
 
-  if (!lowVolume && efficient) {
+  if (maturityStatus === 'LEARNING' || maturityStatus === 'CONVERGING') {
+    actions.push({
+      priority: 4,
+      code: 'WAIT_FOR_CONVERGENCE',
+      title: maturityStatus === 'LEARNING' ? '学习期保持变量稳定' : '继续收敛观察',
+      reason: maturityStatus === 'LEARNING'
+        ? '仍处于最低学习观察窗口，单日高 ROAS 或单 SKU 高花费不能证明稳定。'
+        : '运行时间已达到观察窗口，但订单/分配/CVR/ROAS/扩量证据尚未共同收敛。',
+      action: '避免同时修改 Target ROAS、Budget 与商品结构；继续累计 Direct Orders，并观察 SKU 花费占比、CVR、ROAS 与主力订单来源的连续性。',
+    });
+  }
+
+  if (!lowVolume && efficient && maturityStatus === 'STABLE') {
     actions.push({
       priority: 4,
       code: 'HOLD_AND_SCALE_TEST',
-      title: '进入稳定/放量验证',
-      reason: '周订单参考量与广告效率同时满足。',
+      title: '进入稳定后的放量验证',
+      reason: '订单参考量、广告效率与多维稳定性证据同时满足。',
       action: '先保持结构跑完整周期；若预算持续跑满且广告花费占比仍≤硬约束，再做小幅单变量预算测试。',
     });
   }
