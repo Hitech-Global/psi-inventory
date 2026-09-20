@@ -152,10 +152,13 @@ function diagnoseCampaign({
     }),
   }));
 
+  const actionPlan = campaignActions({ campaign: campaignResult, items: itemsWithActions });
+
   return {
     sequence: ['DIRECT_ORDERS', 'ROAS', 'PROFITABILITY', 'SKU_SPEND_ALLOCATION', 'SKU_DIRECT_ORDERS', 'SKU_DIRECT_ROAS', 'CTR', 'CVR', 'GMV_PER_ORDER', 'MULTI_DAY_CONTINUITY', 'SIGNAL_CONFIDENCE', 'ACTION'],
     campaign: campaignResult,
-    actions: campaignActions({ campaign: campaignResult, items: itemsWithActions }),
+    actions: actionPlan.recommendations,
+    actionGates: actionPlan.gates,
     items: itemsWithActions,
     notes: [
       'weeklyVolumeReference is an internal maturity/reference signal, not an official Shopee learning-complete rule.',
