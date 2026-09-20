@@ -1,7 +1,7 @@
 'use strict';
 
 const assert = require('assert');
-const { itemAction, campaignActions, structuralActionGates } = require('../src/action-engine');
+const { itemAction, campaignActions, structuralActionGates, recentOperationGuard } = require('../src/action-engine');
 
 const item = itemAction('PRODUCT_OPTIMIZATION_CANDIDATE');
 assert.strictEqual(item.code, 'PRODUCT_TEST_FIRST');
@@ -69,3 +69,25 @@ const underSpendGates = structuralActionGates({
 });
 assert.strictEqual(underSpendGates.LOWER_TARGET_ROAS.allowed, true);
 assert.strictEqual(underSpendGates.INCREASE_BUDGET.allowed, false);
+
+const recentGuard = recentOperationGuard({
+  asOfDate: '2026-09-20',
+  cooldownDays: 3,
+  operations: [{ operationType: 'CAMPAIGN_SETTING_CHANGE', effectiveFrom: '2026-09-19T10:00:00Z' }],
+});
+assert.strictEqual(recentGuard.blocked, true);
+const cooledGates = structuralActionGates({
+  campaign: { maturityStatus: 'STABLE', roasState: 'TARGET_MET', spendLimitState: 'WITHIN_SPEND_LIMIT', budgetUtilization: 0.95 },
+  items: [{ state: 'CORE_CANDIDATE', scaleEligibility: { eligible: true } }],
+  operationGuard: recentGuard,
+});
+assert.strictEqual(cooledGates.SPLIT_SINGLE_ITEM.allowed, false);
+assert.strictEqual(cooledGates.INCREASE_BUDGET.allowed, false);
+assert(cooledGates.INCREASE_BUDGET.reason.includes('CAMPAIGN_SETTING_CHANGE'));
+
+const expiredGuard = recentOperationGuard({
+  asOfDate: '2026-09-20',
+  cooldownDays: 3,
+  operations: [{ operationType: 'SKU_ADDED_TO_CAMPAIGN', effectiveFrom: '2026-09-15T10:00:00Z' }],
+});
+assert.strictEqual(expiredGuard.blocked, false);
