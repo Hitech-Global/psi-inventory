@@ -770,6 +770,15 @@ function renderAnalysis(data) {
       </div>`).join('')
     : '<div class="empty-inline">当前没有结构性动作，继续观察完整周期。</div>';
 
+  $('#actionGateList').innerHTML = (d.actionGates || []).length
+    ? `<div class="section-label">STRUCTURAL ACTION GATES · 结构性动作前置条件</div>` +
+      d.actionGates.map(gate => `<div class="action-card ${gate.allowed ? 'gate-allowed' : 'gate-blocked'}">
+        <div class="action-code">${escapeHtml(gate.code)}</div>
+        <strong>${escapeHtml(gate.title)} · ${gate.allowed ? '允许受控验证' : '当前阻断'}</strong>
+        <p>${escapeHtml(gate.reason || '')}</p>
+      </div>`).join('')
+    : '';
+
   $('#ordinaryMetrics').innerHTML = miniMetrics(data.baseline.ordinary || {}, shop.currency);
   $('#eventMetrics').innerHTML = miniMetrics(data.baseline.event || {}, shop.currency);
 
