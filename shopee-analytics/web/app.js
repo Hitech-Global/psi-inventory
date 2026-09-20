@@ -782,6 +782,8 @@ function renderAnalysis(data) {
       <td><div class="item-name"><strong>${escapeHtml(item.itemSku || ('#' + item.itemId))}</strong><small>${escapeHtml(item.itemName || '')}</small></div></td>
       <td title="${escapeHtml(item.action && item.action.action || '')}"><span class="state ${itemStateClass(item.state)}">${escapeHtml(stateLabel(item.state))}</span></td>
       <td title="Signal 与 Confidence 分开；高ROAS小样本不会自动成为主力">${escapeHtml(item.signalConfidence && item.signalConfidence.confidence || '—')}</td>
+      <td title="内部分析模型，不是 Shopee 官方字段"><span class="state">${escapeHtml(item.trafficStage || '—')}</span></td>
+      <td title="${escapeHtml(item.scaleEligibility && item.scaleEligibility.reason || '')}">${item.scaleEligibility && item.scaleEligibility.eligible ? '可受控验证' : '暂不放大'}</td>
       <td>${num(item.directOrders)}</td>
       <td>${roas(item.directRoas)}</td>
       <td title="商品自身保本ROAS；0表示尚未配置">${item.itemBreakEvenRoas ? roas(item.itemBreakEvenRoas) : '未配置'}</td>
@@ -795,7 +797,7 @@ function renderAnalysis(data) {
       <td>${item.productCard ? pct(item.productCard.addToCartRate) : '—'}</td>
       <td>${rec}</td>
     </tr>`;
-  }).join('') : '<tr><td colspan="15" class="empty">没有商品层数据。</td></tr>';
+  }).join('') : '<tr><td colspan="17" class="empty">没有商品层数据。</td></tr>';
 
   $('#diagnosisNotes').innerHTML =
     (d.notes || []).map(note => `<div>• ${escapeHtml(note)}</div>`).join('');
