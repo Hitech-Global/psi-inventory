@@ -674,8 +674,8 @@ function renderAnalysis(data) {
   $('#diagnosisTitle').textContent = `Campaign #${data.campaignId}`;
   $('#diagnosisSubtitle').textContent =
     `${shop.displayName} · ${data.startDate} → ${data.endDate} · ${c.days} 个数据日`;
-  $('#diagnosisState').textContent = stateLabel(c.roasState);
-  $('#diagnosisState').className = `pill ${stateClass(c.roasState)}`;
+  $('#diagnosisState').textContent = stateLabel(c.maturityStatus || c.roasState);
+  $('#diagnosisState').className = `pill ${stateClass(c.maturityStatus || c.roasState)}`;
 
   const template = $('#diagnosisTemplate').content.cloneNode(true);
   $('#diagnosisBody').replaceChildren(template);
@@ -691,6 +691,34 @@ function renderAnalysis(data) {
     metric('CPC', formatMoney(c.cpc, shop.currency), c.targetVsRecommended || ''),
     metric('预算利用率', c.budgetUtilization == null ? '—' : pct(c.budgetUtilization), c.dailyBudget ? `日预算 ${formatMoney(c.dailyBudget, shop.currency)} / 日均花费 ${formatMoney(c.avgDailySpend, shop.currency)}` : '未读取日预算'),
   ].join('');
+
+  const maturity = c.maturity || {};
+  const maturityEvidence = maturity.evidence || {};
+  const maturityDiagnostics = maturity.diagnostics || {};
+  const evidenceLabel = (key, label) => {
+    const value = maturityEvidence[key];
+    const cls = value === true ? 'good' : value === false ? 'bad' : 'neutral';
+    const text = value === true ? '已满足' : value === false ? '未满足' : '待更多数据';
+    return `<div><span>${escapeHtml(label)}</span><strong class="${cls}">${text}</strong></div>`;
+  };
+  $('#maturityBox').innerHTML = `
+    <div class="section-label">MATURITY · 成熟度判断</div>
+    <div class="quality-summary">
+      <div><span>当前阶段</span><strong>${escapeHtml(stateLabel(c.maturityStatus || 'UNKNOWN'))}</strong></div>
+      <div><span>Confidence</span><strong>${escapeHtml(maturity.confidence || '—')}</strong></div>
+      <div><span>稳定证据</span><strong>${num(maturity.evidencePassed)} / ${num(maturity.evidenceEvaluated)}</strong></div>
+      <div><span>SKU花费日均变动</span><strong>${maturityDiagnostics.allocationMeanAbsDelta == null ? '—' : pct(maturityDiagnostics.allocationMeanAbsDelta)}</strong></div>
+    </div>
+    <div class="quality-summary maturity-evidence">
+      ${evidenceLabel('sample', 'Direct订单样本')}
+      ${evidenceLabel('allocation', 'SKU花费分配')}
+      ${evidenceLabel('orderSource', '订单来源持续性')}
+      ${evidenceLabel('cvr', 'CVR稳定性')}
+      ${evidenceLabel('roas', 'ROAS稳定性')}
+      ${evidenceLabel('scale', '扩量承接')}
+    </div>
+    <div class="quality-ok">7天仅为最低观察窗口；25 Direct Orders 为内部成熟度参考，不是 Shopee 官方“学习完成”规则。</div>
+  `;
 
   const quality = data.dataQuality || {};
   const qualityWarnings = quality.warnings || [];
@@ -726,6 +754,7 @@ function renderAnalysis(data) {
     return `<tr data-item="${item.itemId}">
       <td><div class="item-name"><strong>${escapeHtml(item.itemSku || ('#' + item.itemId))}</strong><small>${escapeHtml(item.itemName || '')}</small></div></td>
       <td title="${escapeHtml(item.action && item.action.action || '')}"><span class="state ${itemStateClass(item.state)}">${escapeHtml(stateLabel(item.state))}</span></td>
+      <td title="Signal 与 Confidence 分开；高ROAS小样本不会自动成为主力">${escapeHtml(item.signalConfidence && item.signalConfidence.confidence || '—')}</td>
       <td>${num(item.directOrders)}</td>
       <td>${roas(item.directRoas)}</td>
       <td title="商品自身保本ROAS；0表示尚未配置">${item.itemBreakEvenRoas ? roas(item.itemBreakEvenRoas) : '未配置'}</td>
@@ -739,7 +768,7 @@ function renderAnalysis(data) {
       <td>${item.productCard ? pct(item.productCard.addToCartRate) : '—'}</td>
       <td>${rec}</td>
     </tr>`;
-  }).join('') : '<tr><td colspan="14" class="empty">没有商品层数据。</td></tr>';
+  }).join('') : '<tr><td colspan="15" class="empty">没有商品层数据。</td></tr>';
 
   $('#diagnosisNotes').innerHTML =
     (d.notes || []).map(note => `<div>• ${escapeHtml(note)}</div>`).join('');
