@@ -8,6 +8,10 @@ const { ShopeeStrategyRepository } = require('./strategy-repository');
 const { ShopeeQueryRepository } = require('./query-repository');
 const { createShopeeAnalyticsRouter } = require('./http-router');
 const { createBackupStatusProvider } = require('./backup-status');
+const { SkillReportRepository } = require('./skill-report-repository');
+const { SkillRunner } = require('./skill-runner');
+const { createSkillExecutor, disabledSkillProvider } = require('./skill-executor');
+const { buildCampaignSkillPackage } = require('./skill-analysis-service');
 
 function resolveBindAddress(env = process.env) {
   const requested = env.SHOPEE_ANALYTICS_HOST || '127.0.0.1';
@@ -26,7 +30,7 @@ function resolvePort(env = process.env) {
   return value;
 }
 
-function createApp({ pool }) {
+function createApp({ pool, skillProvider = null }) {
   const app = express();
   app.disable('x-powered-by');
 
@@ -34,12 +38,28 @@ function createApp({ pool }) {
   const strategyRepository = new ShopeeStrategyRepository({ pool });
   const queryRepository = new ShopeeQueryRepository({ pool });
   const backupStatusProvider = createBackupStatusProvider();
+  const skillReportRepository = new SkillReportRepository(pool);
+  const skillExecutor = createSkillExecutor({ provider: skillProvider || disabledSkillProvider() });
+  const skillRunner = new SkillRunner({ executor: skillExecutor, reportRepository: skillReportRepository });
+  const runSkillAnalysis = async ({
+    shopId, campaignId, startDate, endDate, triggerType, triggerReason,
+  }) => {
+    const analysisPackage = await buildCampaignSkillPackage({
+      repository, queryRepository, strategyRepository,
+      shopId, campaignId, startDate, endDate,
+      dataCutoff: new Date().toISOString(),
+      triggerType, triggerReason,
+    });
+    return skillRunner.run(analysisPackage);
+  };
 
   app.use('/api/shopee-analytics', createShopeeAnalyticsRouter({
     repository,
     strategyRepository,
     queryRepository,
     backupStatusProvider,
+    skillReportRepository,
+    runSkillAnalysis,
   }));
 
   const webDir = path.join(__dirname, '..', 'web');
