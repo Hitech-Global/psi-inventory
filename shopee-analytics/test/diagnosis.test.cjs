@@ -25,7 +25,10 @@ const result = diagnoseCampaign({
   days: 7,
 });
 
-assert.strictEqual(result.sequence[0], 'ORDERS');
+assert.strictEqual(result.sequence[0], 'DIRECT_ORDERS');
+assert.strictEqual(result.campaign.maturityStatus, 'CONVERGING');
+assert(result.sequence.includes('SIGNAL_CONFIDENCE'));
+assert.strictEqual(result.items[0].signalConfidence.confidence, 'MEDIUM');
 assert.strictEqual(result.campaign.volumeState, 'LOW_VOLUME_SIGNAL');
 assert.strictEqual(result.campaign.roasState, 'TARGET_MET');
 assert.strictEqual(result.items[0].state, 'CORE_CANDIDATE');
