@@ -43,6 +43,20 @@ async function processProductCardInbox() {
   }
 }
 
+async function runDailySkillAnalysis() {
+  try {
+    await runNodeScript('run-daily-skill-reports.cjs');
+  } catch (error) {
+    // Skill execution must never turn a successful Shopee data sync into a failed
+    // sync slot. The report runner itself stays fail-closed and records no fake report.
+    console.error(JSON.stringify({
+      event: 'skill-daily-failure',
+      failedAt: new Date().toISOString(),
+      error: error && error.message ? error.message : String(error),
+    }));
+  }
+}
+
 async function main() {
   const config = schedulerConfig();
   const state = {
@@ -82,6 +96,7 @@ async function main() {
         completedAt: new Date().toISOString(),
       }));
       await processProductCardInbox();
+      if (job.mode === 'daily') await runDailySkillAnalysis();
     } catch (error) {
       // Mark the slot as attempted so a persistent API error does not hot-loop every
       // 30 seconds. The next normal schedule slot will retry.
