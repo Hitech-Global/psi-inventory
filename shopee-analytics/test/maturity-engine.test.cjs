@@ -4,6 +4,7 @@ const assert = require('assert');
 const {
   coefficientVariation,
   allocationStability,
+  leaderContinuity,
   evaluateCampaignMaturity,
   evaluateSignalConfidence,
 } = require('../src/maturity-engine');
@@ -17,6 +18,9 @@ for (let day = 1; day <= 8; day += 1) {
   stableItems.push({ date, item_id: 2, expense: 400, direct_order: 1 });
 }
 assert(allocationStability(stableItems).meanAbsDelta < 0.001);
+const leader = leaderContinuity(stableItems);
+assert.strictEqual(leader.leaderItemId, '1');
+assert.strictEqual(leader.continuity, 1);
 
 const stableDaily = Array.from({ length: 8 }, (_, i) => ({
   date: `2026-09-${String(i + 1).padStart(2, '0')}`,
@@ -34,6 +38,8 @@ const stable = evaluateCampaignMaturity({
 assert.strictEqual(stable.status, 'STABLE');
 assert.strictEqual(stable.evidence.sample, true);
 assert.strictEqual(stable.evidence.allocation, true);
+assert.strictEqual(stable.evidence.leaderContinuity, true);
+assert(stable.explanation.positives.some(x => x.includes('主力 SKU')));
 
 const learning = evaluateCampaignMaturity({
   days: 5,
@@ -65,6 +71,8 @@ const unstable = evaluateCampaignMaturity({
 });
 assert.strictEqual(unstable.status, 'UNSTABLE');
 assert.strictEqual(unstable.evidence.allocation, false);
+assert.strictEqual(unstable.evidence.leaderContinuity, false);
+assert(unstable.explanation.blockers.some(x => x.includes('主力 SKU')));
 
 const lowSample = evaluateCampaignMaturity({
   days: 10,
