@@ -45,6 +45,28 @@ class ShopeeQueryRepository {
     }));
   }
 
+
+  async loadCampaignOperations({ shopId, campaignId, startDate, endDate }) {
+    const result = await this.pool.query(
+      `SELECT operation_type,reason,before_json,after_json,effective_from,effective_to,item_id
+       FROM shopee_operation_history
+       WHERE shop_id=$1 AND campaign_id=$2
+         AND effective_from >= $3::date
+         AND effective_from < ($4::date + interval '1 day')
+       ORDER BY effective_from ASC`,
+      [shopId, campaignId, startDate, endDate],
+    );
+    return result.rows.map(row => ({
+      operationType: row.operation_type,
+      reason: row.reason,
+      before: row.before_json,
+      after: row.after_json,
+      effectiveFrom: row.effective_from,
+      effectiveTo: row.effective_to,
+      itemId: row.item_id == null ? null : Number(row.item_id),
+    }));
+  }
+
   async getPortfolioOverview({
     startDate,
     endDate,
