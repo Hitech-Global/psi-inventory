@@ -37,6 +37,7 @@ function readFileSync(file) {
 (async () => {
   const strict = toOpenAIStrictSchema(outputSchema);
   assert.deepStrictEqual(strict.required, ['stage', 'limitations', 'signal']);
+  assert.strictEqual(strict.properties.stage.type, 'string');
   assert.strictEqual(strict.additionalProperties, false);
   assert.deepStrictEqual(strict.signal, undefined);
   assert.strictEqual(strict.properties.signal.additionalProperties, false);
