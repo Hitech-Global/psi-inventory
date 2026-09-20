@@ -1,0 +1,164 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Shopee GMV Max Analysis Package",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "shop",
+    "period",
+    "trigger",
+    "campaign",
+    "campaignDaily",
+    "items",
+    "itemDaily",
+    "operations"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0"
+    },
+    "shop": {
+      "type": "object",
+      "required": [
+        "shopId",
+        "timezone"
+      ],
+      "properties": {
+        "shopId": {
+          "type": [
+            "string",
+            "number"
+          ]
+        },
+        "country": {
+          "type": "string"
+        },
+        "brand": {
+          "type": "string"
+        },
+        "timezone": {
+          "type": "string"
+        },
+        "currency": {
+          "type": "string"
+        }
+      }
+    },
+    "period": {
+      "type": "object",
+      "required": [
+        "startDate",
+        "endDate",
+        "dataCutoff"
+      ],
+      "properties": {
+        "startDate": {
+          "type": "string"
+        },
+        "endDate": {
+          "type": "string"
+        },
+        "dataCutoff": {
+          "type": "string"
+        }
+      }
+    },
+    "trigger": {
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "DAILY_AUTO",
+            "MANUAL",
+            "EVENT_REVIEW"
+          ]
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "campaign": {
+      "type": "object",
+      "required": [
+        "campaignId"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "campaignId": {
+          "type": [
+            "string",
+            "number"
+          ]
+        },
+        "targetRoas": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "budget": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "breakEvenRoas": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "adSpendRatioLimit": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      }
+    },
+    "campaignDaily": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "itemDaily": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "operations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "deterministicMetrics": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "dataQuality": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}
