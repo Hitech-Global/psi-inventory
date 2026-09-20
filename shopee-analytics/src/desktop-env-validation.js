@@ -39,6 +39,19 @@ function validateDesktopEnv(env) {
     }
   }
 
+  const skillProvider = String(env.SHOPEE_SKILL_RUNTIME_PROVIDER || '').trim().toUpperCase();
+  if (skillProvider && skillProvider !== 'OPENAI') {
+    errors.push(`Unsupported SHOPEE_SKILL_RUNTIME_PROVIDER: ${skillProvider}`);
+  }
+  if (skillProvider === 'OPENAI' && !isRealSecret(env.SHOPEE_SKILL_OPENAI_API_KEY || env.OPENAI_API_KEY)) {
+    errors.push('SHOPEE_SKILL_OPENAI_API_KEY is missing');
+  }
+
+  const dailyWindow = Number(env.SHOPEE_SKILL_DAILY_WINDOW_DAYS || 14);
+  if (!Number.isSafeInteger(dailyWindow) || dailyWindow < 1 || dailyWindow > 90) {
+    errors.push('SHOPEE_SKILL_DAILY_WINDOW_DAYS must be an integer from 1 to 90');
+  }
+
   if (!env.SHOPEE_BACKUP_LOCAL_DIR) warnings.push('SHOPEE_BACKUP_LOCAL_DIR not configured');
   if (!env.SHOPEE_NAS_BACKUP_DIR) warnings.push('SHOPEE_NAS_BACKUP_DIR not configured');
 
