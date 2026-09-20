@@ -422,6 +422,29 @@ CREATE TABLE IF NOT EXISTS shopee_diagnosis_results (
   diagnosis_json JSONB NOT NULL
 );
 
+
+CREATE TABLE IF NOT EXISTS shopee_skill_reports (
+  id BIGSERIAL PRIMARY KEY,
+  shop_id BIGINT NOT NULL,
+  campaign_id BIGINT NOT NULL,
+  period_start DATE NOT NULL,
+  period_end DATE NOT NULL,
+  data_cutoff TIMESTAMPTZ NOT NULL,
+  trigger_type TEXT NOT NULL CHECK (trigger_type IN ('DAILY_AUTO','MANUAL','EVENT_REVIEW')),
+  trigger_reason TEXT,
+  skill_name TEXT NOT NULL,
+  skill_version TEXT NOT NULL,
+  package_schema_version TEXT NOT NULL,
+  input_snapshot_json JSONB NOT NULL,
+  report_json JSONB,
+  status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING','COMPLETED','FAILED')),
+  error_text TEXT,
+  generated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_shopee_skill_reports_campaign_time
+  ON shopee_skill_reports(shop_id, campaign_id, generated_at DESC);
+
 CREATE TABLE IF NOT EXISTS shopee_sync_state (
   app_role TEXT NOT NULL,
   endpoint_key TEXT NOT NULL,
