@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "shopee-analytics/**"
+      - "skills/shopee-gmv-max/**"
       - ".github/workflows/shopee-analytics-ci.yml"
   workflow_dispatch:
 
