@@ -64,6 +64,9 @@ assert.deepStrictEqual(
 assert(html.includes('Signal×Confidence'), 'diagnosis stepbar must expose Signal × Confidence');
 assert(html.includes('<th>Confidence</th>'), 'SKU race must expose confidence');
 assert(app.includes("$('#maturityBox').innerHTML"), 'campaign analysis must render maturity evidence');
+assert(app.includes('当前卡点'), 'maturity UI must explain blockers');
+assert(app.includes('主力连续率'), 'maturity UI must expose leader continuity');
+assert(app.includes('扩量 ROAS 保持'), 'maturity UI must expose scale resilience');
 assert(app.includes("maturityEvidence['") === false, 'maturity evidence should use explicit helper keys, not dynamic unsafe selector logic');
 
 console.log(
