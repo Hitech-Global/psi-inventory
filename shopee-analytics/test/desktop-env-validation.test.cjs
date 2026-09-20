@@ -28,4 +28,26 @@ const bad = validateDesktopEnv({ ...env, POSTGRES_PASSWORD: 'CHANGE_TO_A_LONG_RA
 assert.strictEqual(bad.ok, false);
 assert(bad.errors.some(row => row.includes('POSTGRES_PASSWORD')));
 
+const skillEnv = validateDesktopEnv({
+  ...env,
+  SHOPEE_SKILL_RUNTIME_PROVIDER: 'OPENAI',
+  SHOPEE_SKILL_OPENAI_API_KEY: 'local-secret-key',
+  SHOPEE_SKILL_DAILY_WINDOW_DAYS: '14',
+});
+assert.strictEqual(skillEnv.ok, true);
+
+const missingSkillKey = validateDesktopEnv({
+  ...env,
+  SHOPEE_SKILL_RUNTIME_PROVIDER: 'OPENAI',
+});
+assert.strictEqual(missingSkillKey.ok, false);
+assert(missingSkillKey.errors.some(row => row.includes('SHOPEE_SKILL_OPENAI_API_KEY')));
+
+const invalidSkillWindow = validateDesktopEnv({
+  ...env,
+  SHOPEE_SKILL_DAILY_WINDOW_DAYS: '0',
+});
+assert.strictEqual(invalidSkillWindow.ok, false);
+assert(invalidSkillWindow.errors.some(row => row.includes('SHOPEE_SKILL_DAILY_WINDOW_DAYS')));
+
 console.log('shopee desktop env validation tests: ok');
