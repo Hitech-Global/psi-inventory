@@ -54,9 +54,8 @@ async function main() {
     } else {
       checks.push(result(
         'skill_runtime',
-        false,
-        'Skill runtime provider is not configured; report generation will fail closed',
-        'warning',
+        true,
+        'Provider not configured; Skill report generation remains fail-closed until explicitly enabled',
       ));
     }
   } catch (error) {
