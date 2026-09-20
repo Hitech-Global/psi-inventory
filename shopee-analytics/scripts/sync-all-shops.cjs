@@ -5,6 +5,7 @@ const { createSyncRuntime } = require('../src/sync-runtime');
 const { ShopeeShopProfileRepository } = require('../src/shop-profile-repository');
 const { runShopSyncCycle } = require('../src/shop-sync-runner');
 const { parseCampaignIds } = require('../src/sync-cycle-utils');
+const { assertOnlineOperationAllowed } = require('../src/deployment-mode');
 
 function parseIdFilter(value) {
   return new Set(
@@ -16,6 +17,7 @@ function parseIdFilter(value) {
 }
 
 async function main() {
+  assertOnlineOperationAllowed('Shopee multi-shop sync');
   if (process.env.SHOPEE_ANALYTICS_ENABLE_SYNC_ALL_SHOPS !== 'YES') {
     throw new Error('Refusing multi-shop sync. Set SHOPEE_ANALYTICS_ENABLE_SYNC_ALL_SHOPS=YES explicitly.');
   }

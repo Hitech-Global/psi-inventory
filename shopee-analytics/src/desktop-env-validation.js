@@ -2,6 +2,11 @@
 
 const fs = require('fs');
 const path = require('path');
+const {
+  PRODUCTION,
+  OFFLINE_BASELINE,
+  resolveDeploymentMode,
+} = require('./deployment-mode');
 
 function isRealSecret(value) {
   const text = String(value || '').trim();
@@ -16,6 +21,12 @@ function isRealSecret(value) {
 function validateDesktopEnv(env) {
   const errors = [];
   const warnings = [];
+  let deploymentMode = PRODUCTION;
+  try {
+    deploymentMode = resolveDeploymentMode(env);
+  } catch (error) {
+    errors.push(error.message);
+  }
 
   for (const name of ['POSTGRES_DB', 'POSTGRES_USER', 'POSTGRES_PASSWORD']) {
     if (!isRealSecret(env[name])) errors.push(`${name} is missing or still a placeholder`);
@@ -31,25 +42,43 @@ function validateDesktopEnv(env) {
   }
 
   for (const role of ['ADS', 'STORE_OPS', 'ERP', 'BRAND_PORTAL']) {
-    if (!isRealSecret(env[`SHOPEE_${role}_PARTNER_ID`])) {
-      errors.push(`SHOPEE_${role}_PARTNER_ID is missing`);
-    }
-    if (!isRealSecret(env[`SHOPEE_${role}_PARTNER_KEY`])) {
-      errors.push(`SHOPEE_${role}_PARTNER_KEY is missing`);
+    const idName = `SHOPEE_${role}_PARTNER_ID`;
+    const keyName = `SHOPEE_${role}_PARTNER_KEY`;
+    if (deploymentMode === OFFLINE_BASELINE) {
+      if (String(env[idName] || '').trim() || String(env[keyName] || '').trim()) {
+        errors.push(`${idName} and ${keyName} must be empty in OFFLINE_BASELINE`);
+      }
+    } else {
+      if (!isRealSecret(env[idName])) errors.push(`${idName} is missing`);
+      if (!isRealSecret(env[keyName])) errors.push(`${keyName} is missing`);
     }
   }
 
   const skillProvider = String(env.SHOPEE_SKILL_RUNTIME_PROVIDER || '').trim().toUpperCase();
-  if (skillProvider && skillProvider !== 'OPENAI') {
+  if (deploymentMode === OFFLINE_BASELINE && skillProvider) {
+    errors.push('SHOPEE_SKILL_RUNTIME_PROVIDER must be empty in OFFLINE_BASELINE');
+  } else if (skillProvider && skillProvider !== 'OPENAI') {
     errors.push(`Unsupported SHOPEE_SKILL_RUNTIME_PROVIDER: ${skillProvider}`);
   }
-  if (skillProvider === 'OPENAI' && !isRealSecret(env.SHOPEE_SKILL_OPENAI_API_KEY || env.OPENAI_API_KEY)) {
+  if (deploymentMode === OFFLINE_BASELINE &&
+      (String(env.SHOPEE_SKILL_OPENAI_API_KEY || '').trim() || String(env.OPENAI_API_KEY || '').trim())) {
+    errors.push('OpenAI API key must be empty in OFFLINE_BASELINE');
+  } else if (skillProvider === 'OPENAI' && !isRealSecret(env.SHOPEE_SKILL_OPENAI_API_KEY || env.OPENAI_API_KEY)) {
     errors.push('SHOPEE_SKILL_OPENAI_API_KEY is missing');
   }
 
   const dailyWindow = Number(env.SHOPEE_SKILL_DAILY_WINDOW_DAYS || 14);
   if (!Number.isSafeInteger(dailyWindow) || dailyWindow < 1 || dailyWindow > 90) {
     errors.push('SHOPEE_SKILL_DAILY_WINDOW_DAYS must be an integer from 1 to 90');
+  }
+
+  if (deploymentMode === OFFLINE_BASELINE) {
+    if (env.SHOPEE_SYNC_RUN_ON_START === 'YES') {
+      errors.push('SHOPEE_SYNC_RUN_ON_START must not be YES in OFFLINE_BASELINE');
+    }
+    if (env.SHOPEE_PRODUCT_CARD_INBOX_ENABLE === 'YES') {
+      errors.push('SHOPEE_PRODUCT_CARD_INBOX_ENABLE must not be YES in OFFLINE_BASELINE');
+    }
   }
 
   if (!env.SHOPEE_BACKUP_LOCAL_DIR) warnings.push('SHOPEE_BACKUP_LOCAL_DIR not configured');

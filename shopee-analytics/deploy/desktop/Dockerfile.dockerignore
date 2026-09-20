@@ -3,5 +3,8 @@
 !package-lock.json
 !shopee-analytics/
 !shopee-analytics/**
+!skills/
+!skills/shopee-gmv-max/
+!skills/shopee-gmv-max/**
 shopee-analytics/deploy/desktop/runtime/
 shopee-analytics/deploy/desktop/*.dump

@@ -8,6 +8,7 @@ const { loadMasterKey } = require('../src/token-crypto');
 const { ShopeeShopProfileRepository } = require('../src/shop-profile-repository');
 const { ShopeeTokenRepository } = require('../src/token-repository');
 const { createConfiguredSkillProvider } = require('../src/openai-skill-provider');
+const { PRODUCTION, OFFLINE_BASELINE, resolveDeploymentMode } = require('../src/deployment-mode');
 
 function result(name, ok, detail, severity = 'error') {
   return { name, ok, severity: ok ? 'info' : severity, detail };
@@ -22,9 +23,43 @@ function canReadDir(dir) {
   }
 }
 
+function offlineBaselineConfigurationErrors(env = process.env) {
+  const errors = [];
+  for (const role of Object.keys(APP_ENV)) {
+    for (const suffix of ['PARTNER_ID', 'PARTNER_KEY']) {
+      const name = `SHOPEE_${role}_${suffix}`;
+      if (String(env[name] || '').trim()) errors.push(`${name} must be empty`);
+    }
+  }
+  for (const name of ['SHOPEE_SKILL_RUNTIME_PROVIDER', 'SHOPEE_SKILL_OPENAI_API_KEY', 'OPENAI_API_KEY']) {
+    if (String(env[name] || '').trim()) errors.push(`${name} must be empty`);
+  }
+  if (env.SHOPEE_SYNC_RUN_ON_START === 'YES') errors.push('SHOPEE_SYNC_RUN_ON_START must not be YES');
+  if (env.SHOPEE_PRODUCT_CARD_INBOX_ENABLE === 'YES') {
+    errors.push('SHOPEE_PRODUCT_CARD_INBOX_ENABLE must not be YES');
+  }
+  return errors;
+}
+
 async function main() {
   const checks = [];
   let pool;
+  let deploymentMode = PRODUCTION;
+  try {
+    deploymentMode = resolveDeploymentMode();
+    checks.push(result('deployment_mode', true, deploymentMode));
+  } catch (error) {
+    checks.push(result('deployment_mode', false, error.message));
+  }
+  const offlineBaseline = deploymentMode === OFFLINE_BASELINE;
+  if (offlineBaseline) {
+    const errors = offlineBaselineConfigurationErrors();
+    checks.push(result(
+      'offline_baseline_configuration',
+      errors.length === 0,
+      errors.length ? errors : 'No Partner, OpenAI, scheduler-start, or Product Card configuration enabled',
+    ));
+  }
 
   try {
     const key = loadMasterKey();
@@ -33,33 +68,45 @@ async function main() {
     checks.push(result('token_master_key', false, error.message));
   }
 
-  for (const role of Object.keys(APP_ENV)) {
-    try {
-      const credential = loadAppCredential(role, { requireToken: false });
-      checks.push(result(`partner_${role.toLowerCase()}`, Boolean(credential.partnerId && credential.partnerKey), 'Partner ID/key configured'));
-    } catch (error) {
-      checks.push(result(`partner_${role.toLowerCase()}`, false, error.message));
+  if (offlineBaseline) {
+    checks.push(result(
+      'shopee_sync',
+      true,
+      'OFFLINE_BASELINE: Shopee sync entry points are disabled',
+    ));
+  } else {
+    for (const role of Object.keys(APP_ENV)) {
+      try {
+        const credential = loadAppCredential(role, { requireToken: false });
+        checks.push(result(`partner_${role.toLowerCase()}`, Boolean(credential.partnerId && credential.partnerKey), 'Partner ID/key configured'));
+      } catch (error) {
+        checks.push(result(`partner_${role.toLowerCase()}`, false, error.message));
+      }
     }
   }
 
-  try {
-    const provider = createConfiguredSkillProvider();
-    if (provider) {
-      checks.push(result('skill_runtime', true, {
-        provider: String(process.env.SHOPEE_SKILL_RUNTIME_PROVIDER || '').toUpperCase(),
-        model: process.env.SHOPEE_SKILL_OPENAI_MODEL || 'gpt-5.6-terra',
-        dailyWindowDays: Number(process.env.SHOPEE_SKILL_DAILY_WINDOW_DAYS || 14),
-        secret: 'configured',
-      }));
-    } else {
-      checks.push(result(
-        'skill_runtime',
-        true,
-        'Provider not configured; Skill report generation remains fail-closed until explicitly enabled',
-      ));
+  if (offlineBaseline) {
+    checks.push(result('skill_runtime', true, 'OFFLINE_BASELINE: Skill Runtime is disabled'));
+  } else {
+    try {
+      const provider = createConfiguredSkillProvider();
+      if (provider) {
+        checks.push(result('skill_runtime', true, {
+          provider: String(process.env.SHOPEE_SKILL_RUNTIME_PROVIDER || '').toUpperCase(),
+          model: process.env.SHOPEE_SKILL_OPENAI_MODEL || 'gpt-5.6-terra',
+          dailyWindowDays: Number(process.env.SHOPEE_SKILL_DAILY_WINDOW_DAYS || 14),
+          secret: 'configured',
+        }));
+      } else {
+        checks.push(result(
+          'skill_runtime',
+          true,
+          'Provider not configured; Skill report generation remains fail-closed until explicitly enabled',
+        ));
+      }
+    } catch (error) {
+      checks.push(result('skill_runtime', false, error.message));
     }
-  } catch (error) {
-    checks.push(result('skill_runtime', false, error.message));
   }
 
   try {
@@ -79,7 +126,7 @@ async function main() {
     const tableCount = Number(schema.rows[0].count);
     checks.push(result('analytics_schema', tableCount >= 32, { tableCount, expectedMinimum: 32 }));
 
-    if (tableCount >= 32) {
+    if (tableCount >= 32 && !offlineBaseline) {
       const profileRepo = new ShopeeShopProfileRepository({ pool });
       const tokenRepo = new ShopeeTokenRepository({
         pool,
@@ -111,7 +158,9 @@ async function main() {
   }
 
   const inboxEnabled = process.env.SHOPEE_PRODUCT_CARD_INBOX_ENABLE === 'YES';
-  if (inboxEnabled) {
+  if (offlineBaseline) {
+    checks.push(result('product_card_inbox', !inboxEnabled, 'OFFLINE_BASELINE: Product Card import is disabled'));
+  } else if (inboxEnabled) {
     const inbox = process.env.SHOPEE_PRODUCT_CARD_INBOX_DIR;
     checks.push(result(
       'product_card_inbox',
@@ -137,12 +186,16 @@ async function main() {
   const warnings = checks.filter(row => !row.ok && row.severity === 'warning');
   const report = {
     generatedAt: new Date().toISOString(),
-    readyForPilot: blocking.length === 0 && warnings.length === 0,
+    deploymentMode,
+    readyForPilot: !offlineBaseline && blocking.length === 0 && warnings.length === 0,
+    readyForBaseline: offlineBaseline && blocking.length === 0,
     blockingCount: blocking.length,
     warningCount: warnings.length,
     checks,
     nextGate: blocking.length
       ? 'FIX_BLOCKING_PREFLIGHT'
+      : offlineBaseline
+        ? 'OFFLINE_BASELINE_READY_NO_SYNC_OR_SKILL_RUNTIME'
       : warnings.length
         ? 'CONFIGURE_SHOPS_AND_TOKENS'
         : 'RUN_ONE_PILOT_SHOP_SYNC_AND_SELLER_CENTRE_RECONCILIATION',
@@ -157,3 +210,5 @@ main().catch(error => {
   console.error(error.stack || error.message);
   process.exitCode = 2;
 });
+
+module.exports = { offlineBaselineConfigurationErrors };

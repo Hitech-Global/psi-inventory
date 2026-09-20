@@ -3,6 +3,8 @@
 const path = require('path');
 const { spawn } = require('child_process');
 const { schedulerConfig, dueJobs, utcKeys } = require('../src/scheduler-utils');
+const { createAnalyticsPool } = require('../src/pg');
+const { isOfflineBaseline } = require('../src/deployment-mode');
 
 function runNodeScript(scriptName, args = [], envExtra = {}) {
   const script = path.join(__dirname, scriptName);
@@ -57,7 +59,38 @@ async function runDailySkillAnalysis() {
   }
 }
 
+async function runOfflineBaselineWorker({ poolFactory = createAnalyticsPool, keepAlive = true } = {}) {
+  const pool = poolFactory();
+  try {
+    await pool.query('SELECT 1');
+  } finally {
+    await pool.end();
+  }
+
+  console.log(JSON.stringify({
+    event: 'offline-baseline-worker-idle',
+    deploymentMode: 'OFFLINE_BASELINE',
+    detail: 'PostgreSQL reachable; sync scheduler, Product Card import, and Skill reports are disabled.',
+  }));
+
+  if (!keepAlive) return;
+
+  const timer = setInterval(() => {}, 60_000);
+  const stop = signal => {
+    console.log(JSON.stringify({ event: 'offline-baseline-worker-stop', signal }));
+    clearInterval(timer);
+    process.exit(0);
+  };
+  process.on('SIGTERM', () => stop('SIGTERM'));
+  process.on('SIGINT', () => stop('SIGINT'));
+}
+
 async function main() {
+  if (isOfflineBaseline()) {
+    await runOfflineBaselineWorker();
+    return;
+  }
+
   const config = schedulerConfig();
   const state = {
     lastHourlyKey: null,
@@ -138,7 +171,11 @@ async function main() {
   process.on('SIGINT', () => stop('SIGINT'));
 }
 
-main().catch(error => {
-  console.error(error.stack || error.message);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch(error => {
+    console.error(error.stack || error.message);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { main, runOfflineBaselineWorker };

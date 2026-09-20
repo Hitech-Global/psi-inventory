@@ -46,6 +46,16 @@ assert(
   'analytics image must not execute PSI repository postinstall scripts',
 );
 assert(
+  dockerfile.includes('COPY skills/shopee-gmv-max ./skills/shopee-gmv-max'),
+  'desktop image must copy the versioned GMV Max Skill artifact',
+);
+for (const rule of ['!skills/', '!skills/shopee-gmv-max/', '!skills/shopee-gmv-max/**']) {
+  assert(
+    dockerIgnore.split(/\r?\n/).includes(rule),
+    `Docker build context must allow ${rule} required by the Dockerfile COPY instruction`,
+  );
+}
+assert(
   gitignore.includes('shopee-analytics/deploy/desktop/runtime/'),
   'desktop runtime secrets must be gitignored',
 );

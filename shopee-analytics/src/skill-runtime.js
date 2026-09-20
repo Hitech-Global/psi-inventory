@@ -7,6 +7,7 @@ const { SkillReportRepository } = require('./skill-report-repository');
 const { SkillRunner } = require('./skill-runner');
 const { createSkillExecutor, disabledSkillProvider } = require('./skill-executor');
 const { buildCampaignSkillPackage } = require('./skill-analysis-service');
+const { assertOnlineOperationAllowed } = require('./deployment-mode');
 
 function createSkillRuntime({
   pool,
@@ -35,6 +36,7 @@ function createSkillRuntime({
     triggerType,
     triggerReason,
   }) => {
+    assertOnlineOperationAllowed('Skill Runtime analysis');
     const analysisPackage = await buildCampaignSkillPackage({
       repository,
       queryRepository,

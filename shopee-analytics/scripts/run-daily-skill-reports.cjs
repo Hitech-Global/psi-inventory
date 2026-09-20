@@ -5,6 +5,7 @@ const { createConfiguredSkillProvider } = require('../src/openai-skill-provider'
 const { createSkillRuntime } = require('../src/skill-runtime');
 const { runDailySkillReports } = require('../src/skill-scheduler');
 const { localIsoDate } = require('../src/sync-cycle-utils');
+const { assertOnlineOperationAllowed } = require('../src/deployment-mode');
 
 function positiveWindowDays(value) {
   if (value === undefined || value === null || value === '') return 14;
@@ -16,6 +17,7 @@ function positiveWindowDays(value) {
 }
 
 async function main() {
+  assertOnlineOperationAllowed('DAILY_AUTO Skill reports');
   const skillProvider = createConfiguredSkillProvider();
   if (!skillProvider) {
     throw new Error('Skill runtime provider is not configured');

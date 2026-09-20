@@ -15,6 +15,7 @@ const { ShopeeReturnRepository } = require('../src/return-repository');
 const { ShopeeShopBiRepository } = require('../src/shop-bi-repository');
 const { ShopeeSyncService } = require('../src/sync-service');
 const { syncGmsWindow } = require('../src/sync-window');
+const { assertOnlineOperationAllowed } = require('../src/deployment-mode');
 
 function required(name) {
   const value = process.env[name];
@@ -27,6 +28,7 @@ function roleMap(role, tokenManager) {
 }
 
 async function main() {
+  assertOnlineOperationAllowed('Shopee read-only sync');
   if (process.env.SHOPEE_ANALYTICS_ENABLE_SYNC !== 'YES') {
     throw new Error('Refusing analytics DB sync. Set SHOPEE_ANALYTICS_ENABLE_SYNC=YES explicitly.');
   }
