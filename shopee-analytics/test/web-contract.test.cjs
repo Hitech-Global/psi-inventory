@@ -37,6 +37,7 @@ for (const required of [
   'storeTrendRows',
   'storeSkuRows',
   'campaignRows',
+  'maturityBox',
   'systemStatus',
   'historyCoverageGrid',
   'historyCoverageRange',
@@ -59,6 +60,11 @@ assert.deepStrictEqual(
   [],
   `querySelector result cannot use forEach: ${singleSelectorForEach.join(' | ')}`,
 );
+
+assert(html.includes('Signal×Confidence'), 'diagnosis stepbar must expose Signal × Confidence');
+assert(html.includes('<th>Confidence</th>'), 'SKU race must expose confidence');
+assert(app.includes("$('#maturityBox').innerHTML"), 'campaign analysis must render maturity evidence');
+assert(app.includes("maturityEvidence['") === false, 'maturity evidence should use explicit helper keys, not dynamic unsafe selector logic');
 
 console.log(
   `shopee web contract tests: ok (${htmlIds.size} ids, ${staticIdSelectors.size} static selectors)`,
