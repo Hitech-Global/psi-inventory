@@ -7,6 +7,7 @@ const {
   safeDiv,
 } = require('./metrics');
 const { itemAction, campaignActions } = require('./action-engine');
+const { evaluateCampaignMaturity, evaluateSignalConfidence } = require('./maturity-engine');
 
 const DEFAULTS = Object.freeze({
   weeklyVolumeReference: 25,
@@ -43,6 +44,8 @@ function diagnoseCampaign({
   campaignBudget,
   days = 7,
   settings = {},
+  dailyRows = [],
+  itemDailyRows = [],
 }) {
   const cfg = { ...DEFAULTS, ...settings };
   const perf = normalizePerformance(campaign);
@@ -73,11 +76,19 @@ function diagnoseCampaign({
     ? 'VOLUME_REFERENCE_MET'
     : 'LOW_VOLUME_SIGNAL';
 
+  const maturity = evaluateCampaignMaturity({
+    days,
+    directOrders: perf.directOrders,
+    dailyRows,
+    itemDailyRows,
+    settings,
+  });
   const itemResults = items.map(row => diagnoseItem({
     item: row,
     groupPerformance: perf,
     targetRoas,
     config: cfg,
+    days,
   }));
 
   const campaignResult = {
@@ -97,6 +108,9 @@ function diagnoseCampaign({
     breakEvenRoas: Number(breakEvenRoas || 0),
     targetVsRecommended: recommendedRangeState(targetRoas, recommendedRoi),
     recommendedRoi: recommendedRoi || null,
+    maturity,
+    maturityStatus: maturity.status,
+    confidence: maturity.confidence,
   };
 
   const efficient = campaignResult.roasState === 'TARGET_MET' &&
@@ -108,7 +122,7 @@ function diagnoseCampaign({
   }));
 
   return {
-    sequence: ['ORDERS', 'ROAS', 'FUNNEL', 'ITEM_STRUCTURE', 'ACTION'],
+    sequence: ['DIRECT_ORDERS', 'ROAS', 'PROFITABILITY', 'SKU_SPEND_ALLOCATION', 'SKU_DIRECT_ORDERS', 'SKU_DIRECT_ROAS', 'CTR', 'CVR', 'GMV_PER_ORDER', 'MULTI_DAY_CONTINUITY', 'SIGNAL_CONFIDENCE', 'ACTION'],
     campaign: campaignResult,
     actions: campaignActions({ campaign: campaignResult, items: itemsWithActions }),
     items: itemsWithActions,
@@ -117,11 +131,13 @@ function diagnoseCampaign({
       'Item competitiveness should prefer direct metrics when evaluating the promoted item itself.',
       'Event-day performance should be separated from ordinary-day baseline before making persistent changes.',
       'The ad-spend-ratio limit is a business constraint, not a Shopee platform rule.',
+      'Stable status requires converging evidence across sample, allocation, CVR, ROAS, order-source continuity and scale resilience; elapsed days alone never imply stability.',
+      'A/B/C traffic is an internal analytical model; highest spend alone does not imply an A-pool SKU.',
     ],
   };
 }
 
-function diagnoseItem({ item, groupPerformance, targetRoas, config = DEFAULTS }) {
+function diagnoseItem({ item, groupPerformance, targetRoas, config = DEFAULTS, days = 7 }) {
   const p = normalizePerformance(item);
   const shares = deriveItemShares(item, groupPerformance);
   const directAov = p.directOrders > 0 ? safeDiv(p.directGmv, p.directOrders) : 0;
@@ -150,6 +166,8 @@ function diagnoseItem({ item, groupPerformance, targetRoas, config = DEFAULTS })
     state = 'PRODUCT_OPTIMIZATION_CANDIDATE';
   }
 
+  const signalConfidence = evaluateSignalConfidence(item, { days, matureOrdersReference: config.weeklyVolumeReference });
+
   return {
     itemId: item.item_id ?? item.itemId ?? null,
     ...p,
@@ -160,6 +178,7 @@ function diagnoseItem({ item, groupPerformance, targetRoas, config = DEFAULTS })
     spendLimitRoas,
     viabilityRoas,
     explorationCostMultiple: explorationMultiple,
+    signalConfidence,
     state,
   };
 }
