@@ -67,6 +67,57 @@ function itemAction(state, context = {}) {
   }
 }
 
+function structuralActionGates({ campaign, items = [] }) {
+  const maturity = campaign.maturityStatus || (campaign.maturity && campaign.maturity.status) || 'UNKNOWN';
+  const stable = maturity === 'STABLE';
+  const profitable = campaign.roasState !== 'BELOW_BREAK_EVEN' && campaign.spendLimitState !== 'OVER_SPEND_LIMIT';
+  const targetMet = campaign.roasState === 'TARGET_MET';
+  const budgetUtilization = campaign.budgetUtilization;
+  const highRiskZero = items.filter(item => item.state === 'HIGH_RISK_ZERO_ORDER');
+  const scalable = items.filter(item => item.scaleEligibility && item.scaleEligibility.eligible);
+  const gates = {
+    REMOVE_SKU: {
+      allowed: maturity !== 'LEARNING' && highRiskZero.length > 0,
+      reason: maturity === 'LEARNING'
+        ? '学习期默认不做永久性剔除；先完成最低观察窗口。'
+        : highRiskZero.length ? '存在已达到高风险测试成本且零订单的 SKU。' : '没有达到高风险空烧证据的 SKU。',
+    },
+    SPLIT_SINGLE_ITEM: {
+      allowed: stable && scalable.length > 0,
+      reason: stable && scalable.length > 0
+        ? '广告组已稳定且存在通过 A阶段/High Confidence/利润门槛的 SKU。'
+        : '仅在广告组稳定且 SKU 通过放大资格 Gate 后才允许裂变单跑。',
+    },
+    LOWER_TARGET_ROAS: {
+      allowed: stable && profitable && targetMet && budgetUtilization != null && budgetUtilization < 0.8,
+      reason: !stable ? '广告组尚未稳定，避免用降 Target ROAS 干扰收敛。'
+        : !profitable ? '利润/广告花费占比约束未通过，不能用降 ROAS 换量。'
+        : !targetMet ? '实际 ROAS 尚未达到当前 Target ROAS。'
+        : budgetUtilization == null ? '缺少预算利用率，无法判断是否存在花不完预算。'
+        : budgetUtilization >= 0.8 ? '预算利用率并不低，暂不存在明确的降 ROAS 放量前提。'
+        : '稳定且效率达标，但预算利用率偏低，可做小幅单变量 Target ROAS 测试。',
+    },
+    INCREASE_BUDGET: {
+      allowed: stable && profitable && scalable.length > 0 && budgetUtilization != null && budgetUtilization >= 0.9,
+      reason: !stable ? '广告组尚未稳定，暂不加预算。'
+        : !profitable ? '利润/广告花费占比约束未通过，暂不加预算。'
+        : !scalable.length ? '没有 SKU 通过受控放大资格。'
+        : budgetUtilization == null ? '缺少预算利用率，无法证明预算正在成为瓶颈。'
+        : budgetUtilization < 0.9 ? '预算尚未持续接近跑满，不优先加预算。'
+        : '稳定、利润约束通过、存在可放大 SKU 且预算接近跑满，可小幅单变量加预算。',
+    },
+    DISABLE_RAPID_BOOST: {
+      allowed: maturity === 'UNSTABLE' || items.some(item => item.state === 'HIGH_RISK_ZERO_ORDER'),
+      reason: maturity === 'UNSTABLE'
+        ? '长期未稳定，优先收缩探索变量并检查 Rapid Boost。'
+        : items.some(item => item.state === 'HIGH_RISK_ZERO_ORDER')
+          ? '存在高风险空烧 SKU，优先减少低置信探索。'
+          : '当前没有足够证据仅凭短期波动关闭 Rapid Boost。',
+    },
+  };
+  return gates;
+}
+
 function campaignActions({ campaign, items = [] }) {
   const actions = [];
   const efficient = campaign.roasState === 'TARGET_MET' &&
@@ -74,6 +125,7 @@ function campaignActions({ campaign, items = [] }) {
   const lowVolume = campaign.volumeState === 'LOW_VOLUME_SIGNAL';
   const hasCore = items.some(item => item.state === 'CORE_CANDIDATE');
   const maturityStatus = campaign.maturityStatus || (campaign.maturity && campaign.maturity.status) || 'UNKNOWN';
+  const gates = structuralActionGates({ campaign, items });
   const weakCount = items.filter(item =>
     item.state === 'HIGH_RISK_ZERO_ORDER' ||
     item.state === 'PRODUCT_OPTIMIZATION_CANDIDATE'
@@ -141,7 +193,14 @@ function campaignActions({ campaign, items = [] }) {
     });
   }
 
-  return actions.sort((a, b) => a.priority - b.priority);
+  const gatedActions = [
+    ['REMOVE_SKU', '剔除 SKU'],
+    ['SPLIT_SINGLE_ITEM', '裂变单品广告'],
+    ['LOWER_TARGET_ROAS', '降低 Target ROAS'],
+    ['INCREASE_BUDGET', '增加 Budget'],
+    ['DISABLE_RAPID_BOOST', '关闭 Rapid Boost'],
+  ].map(([code, title]) => ({ code, title, ...gates[code] }));
+  return { recommendations: actions.sort((a, b) => a.priority - b.priority), gates: gatedActions };
 }
 
-module.exports = { itemAction, campaignActions };
+module.exports = { itemAction, structuralActionGates, campaignActions };
