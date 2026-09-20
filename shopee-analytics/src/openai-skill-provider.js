@@ -31,7 +31,14 @@ function inferConstType(value) {
 function toOpenAIStrictSchema(schema) {
   if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return schema;
   if (Object.keys(schema).length === 0) {
-    return { type: ['string', 'number', 'boolean', 'null'] };
+    return {
+      anyOf: [
+        { type: 'string' },
+        { type: 'number' },
+        { type: 'boolean' },
+        { type: 'null' },
+      ],
+    };
   }
 
   const out = {};
@@ -60,6 +67,11 @@ function toOpenAIStrictSchema(schema) {
       continue;
     }
     out[key] = value;
+  }
+
+  if (!out.type && Array.isArray(out.enum) && out.enum.length > 0) {
+    const enumTypes = Array.from(new Set(out.enum.map(inferConstType)));
+    if (enumTypes.length === 1) out.type = enumTypes[0];
   }
 
   const objectType = out.type === 'object' ||
