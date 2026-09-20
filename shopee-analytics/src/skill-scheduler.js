@@ -6,6 +6,13 @@ function dailyAnalysisWindow(localDate, days = 14) {
   return { startDate: addDays(localDate, -(days - 1)), endDate: localDate };
 }
 
+function isDailyAnalysisCampaign(campaign) {
+  const status = String(campaign && campaign.status || '').trim().toUpperCase();
+  // Legacy fixtures and partially synchronized campaigns may not have a status yet.
+  // Once Shopee supplies status, only ONGOING campaigns consume daily model calls.
+  return !status || status === 'ONGOING';
+}
+
 async function runDailySkillReports({
   shops,
   queryRepository,
@@ -20,7 +27,7 @@ async function runDailySkillReports({
     const campaigns = await queryRepository.listCampaignOverview({
       shopId: shop.shopId, startDate, endDate,
     });
-    for (const campaign of campaigns) {
+    for (const campaign of campaigns.filter(isDailyAnalysisCampaign)) {
       const campaignId = campaign.campaignId ?? campaign.campaign_id;
       if (!campaignId) continue;
       try {
@@ -41,4 +48,4 @@ async function runDailySkillReports({
   return results;
 }
 
-module.exports = { dailyAnalysisWindow, runDailySkillReports };
+module.exports = { dailyAnalysisWindow, isDailyAnalysisCampaign, runDailySkillReports };
