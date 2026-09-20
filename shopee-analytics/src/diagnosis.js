@@ -143,7 +143,13 @@ function diagnoseCampaign({
   const lowVolume = campaignResult.volumeState === 'LOW_VOLUME_SIGNAL';
   const itemsWithActions = itemResults.map(item => ({
     ...item,
-    action: itemAction(item.state, { lowVolumeAndEfficient: lowVolume && efficient }),
+    action: itemAction(item.state, {
+      lowVolumeAndEfficient: lowVolume && efficient,
+      maturityStatus: campaignResult.maturityStatus,
+      trafficStage: item.trafficStage,
+      confidence: item.signalConfidence && item.signalConfidence.confidence,
+      scaleEligible: item.scaleEligibility && item.scaleEligibility.eligible,
+    }),
   }));
 
   return {
