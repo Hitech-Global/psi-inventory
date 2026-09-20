@@ -7,6 +7,7 @@ const { APP_ENV, loadAppCredential } = require('../src/config');
 const { loadMasterKey } = require('../src/token-crypto');
 const { ShopeeShopProfileRepository } = require('../src/shop-profile-repository');
 const { ShopeeTokenRepository } = require('../src/token-repository');
+const { createConfiguredSkillProvider } = require('../src/openai-skill-provider');
 
 function result(name, ok, detail, severity = 'error') {
   return { name, ok, severity: ok ? 'info' : severity, detail };
@@ -42,6 +43,27 @@ async function main() {
   }
 
   try {
+    const provider = createConfiguredSkillProvider();
+    if (provider) {
+      checks.push(result('skill_runtime', true, {
+        provider: String(process.env.SHOPEE_SKILL_RUNTIME_PROVIDER || '').toUpperCase(),
+        model: process.env.SHOPEE_SKILL_OPENAI_MODEL || 'gpt-5.6-terra',
+        dailyWindowDays: Number(process.env.SHOPEE_SKILL_DAILY_WINDOW_DAYS || 14),
+        secret: 'configured',
+      }));
+    } else {
+      checks.push(result(
+        'skill_runtime',
+        false,
+        'Skill runtime provider is not configured; report generation will fail closed',
+        'warning',
+      ));
+    }
+  } catch (error) {
+    checks.push(result('skill_runtime', false, error.message));
+  }
+
+  try {
     pool = createAnalyticsPool();
     const db = await pool.query('SELECT current_database() AS database, current_user AS user, version() AS version');
     checks.push(result('postgres_connection', true, {
@@ -56,9 +78,9 @@ async function main() {
        WHERE table_schema='public' AND table_name LIKE 'shopee_%'`,
     );
     const tableCount = Number(schema.rows[0].count);
-    checks.push(result('analytics_schema', tableCount >= 31, { tableCount, expectedMinimum: 31 }));
+    checks.push(result('analytics_schema', tableCount >= 32, { tableCount, expectedMinimum: 32 }));
 
-    if (tableCount >= 31) {
+    if (tableCount >= 32) {
       const profileRepo = new ShopeeShopProfileRepository({ pool });
       const tokenRepo = new ShopeeTokenRepository({
         pool,
