@@ -48,9 +48,21 @@ async function analyzeCampaignWindow({
   campaignBudget,
   eventDateSet = new Set(),
 }) {
-  const [campaignRows, itemRows] = await Promise.all([
+  const [campaignRows, itemRows, operations] = await Promise.all([
     repository.loadCampaignDaily({ shopId, campaignId, startDate, endDate }),
     repository.loadItemDaily({ shopId, campaignId, startDate, endDate }),
+    typeof repository.loadCampaignOperations === 'function'
+      ? repository.loadCampaignOperations({
+          shopId,
+          campaignId,
+          startDate: (() => {
+            const d = new Date(`${startDate}T00:00:00Z`);
+            d.setUTCDate(d.getUTCDate() - 3);
+            return d.toISOString().slice(0, 10);
+          })(),
+          endDate,
+        })
+      : Promise.resolve([]),
   ]);
 
   const campaign = sumPerformance(campaignRows);
@@ -70,6 +82,8 @@ async function analyzeCampaignWindow({
     settings: enriched.settings,
     dailyRows: campaignRows,
     itemDailyRows: itemRows,
+    operations,
+    asOfDate: endDate,
   });
 
   const { eventRows, ordinaryRows } = splitEventBaseline(campaignRows, eventDateSet);
