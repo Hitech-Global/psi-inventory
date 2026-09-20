@@ -63,6 +63,9 @@ assert.deepStrictEqual(
 
 assert(html.includes('Signal×Confidence'), 'diagnosis stepbar must expose Signal × Confidence');
 assert(html.includes('<th>Confidence</th>'), 'SKU race must expose confidence');
+assert(html.includes('<th>内部A/B/C</th>'), 'SKU race must expose internal ABC stage');
+assert(html.includes('<th>放大资格</th>'), 'SKU race must expose scale eligibility');
+assert(app.includes('可受控验证'), 'SKU race must render controlled-scale eligibility');
 assert(app.includes("$('#maturityBox').innerHTML"), 'campaign analysis must render maturity evidence');
 assert(app.includes('当前卡点'), 'maturity UI must explain blockers');
 assert(app.includes('主力连续率'), 'maturity UI must expose leader continuity');
