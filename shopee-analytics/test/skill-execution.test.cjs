@@ -32,11 +32,12 @@ const { dailyAnalysisWindow, runDailySkillReports } = require('../src/skill-sche
   const calls = [];
   const results = await runDailySkillReports({
     shops:[{ shopId:1, timezone:'Asia/Jakarta' }],
-    queryRepository:{ async listCampaignOverview() { return [{ campaignId:11 }, { campaignId:12 }]; } },
+    queryRepository:{ async listCampaignOverview() { return [{ campaignId:11, status:'ONGOING' }, { campaignId:12, status:'PAUSED' }, { campaignId:13 }]; } },
     localDateForShop:() => '2026-09-20',
     runSkillAnalysis:async args => { calls.push(args); return { reportId:args.campaignId + 100 }; },
   });
   assert.strictEqual(results.length, 2);
+  assert.deepStrictEqual(calls.map(row => row.campaignId), [11, 13]);
   assert.strictEqual(calls[0].triggerType, 'DAILY_AUTO');
   assert.strictEqual(calls[0].startDate, '2026-09-07');
   console.log('shopee skill execution/scheduler tests: ok');
