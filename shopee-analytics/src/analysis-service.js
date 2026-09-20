@@ -68,6 +68,8 @@ async function analyzeCampaignWindow({
     campaignBudget,
     days,
     settings: enriched.settings,
+    dailyRows: campaignRows,
+    itemDailyRows: itemRows,
   });
 
   const { eventRows, ordinaryRows } = splitEventBaseline(campaignRows, eventDateSet);
