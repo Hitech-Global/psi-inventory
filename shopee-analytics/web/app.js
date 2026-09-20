@@ -26,6 +26,10 @@ const STATE_LABELS = Object.freeze({
   ZERO_ORDER_STILL_TESTING: '零订单继续测试',
   NO_ORDER_NEEDS_AOV_CONTEXT: '零订单 / 缺少AOV',
   OBSERVE: '继续观察',
+  LEARNING: '学习期',
+  CONVERGING: '收敛观察期',
+  STABLE: '稳定期',
+  UNSTABLE: '长期未稳定',
 });
 
 const state = {
@@ -93,9 +97,9 @@ function signalClass(signal) {
 }
 
 function stateClass(value) {
-  if (/TARGET_MET|WITHIN_SPEND|CORE_CANDIDATE/.test(value || '')) return 'good';
-  if (/BELOW_BREAK|OVER_SPEND|HIGH_RISK/.test(value || '')) return 'bad';
-  if (/LOW_VOLUME|BELOW_TARGET|OPTIMIZATION|ZERO_ORDER/.test(value || '')) return 'warn';
+  if (/TARGET_MET|WITHIN_SPEND|CORE_CANDIDATE|STABLE/.test(value || '') && value !== 'UNSTABLE') return 'good';
+  if (/BELOW_BREAK|OVER_SPEND|HIGH_RISK|UNSTABLE/.test(value || '')) return 'bad';
+  if (/LOW_VOLUME|BELOW_TARGET|OPTIMIZATION|ZERO_ORDER|LEARNING|CONVERGING/.test(value || '')) return 'warn';
   return 'neutral';
 }
 
@@ -718,6 +722,29 @@ function renderAnalysis(data) {
       ${evidenceLabel('scale', '扩量承接')}
     </div>
     <div class="quality-ok">7天仅为最低观察窗口；25 Direct Orders 为内部成熟度参考，不是 Shopee 官方“学习完成”规则。</div>
+  `;
+
+  const explanation = maturity.explanation || {};
+  const leader = maturityDiagnostics.leader || {};
+  const scale = maturityDiagnostics.scale || {};
+  $('#maturityBox').innerHTML += `
+    <div class="maturity-explanation">
+      <strong>${escapeHtml(explanation.headline || '')}</strong>
+      <div class="maturity-columns">
+        <div><span>当前卡点</span>${(explanation.blockers || []).length
+          ? (explanation.blockers || []).map(x => `<p>• ${escapeHtml(x)}</p>`).join('')
+          : '<p>• 暂无主要稳定性卡点</p>'}</div>
+        <div><span>已形成证据</span>${(explanation.positives || []).length
+          ? (explanation.positives || []).map(x => `<p>• ${escapeHtml(x)}</p>`).join('')
+          : '<p>• 继续累计数据</p>'}</div>
+      </div>
+      <div class="quality-summary">
+        <div><span>连续主力 SKU</span><strong>${leader.leaderItemId ? '#' + escapeHtml(leader.leaderItemId) : '—'}</strong></div>
+        <div><span>主力连续率</span><strong>${leader.continuity == null ? '—' : pct(leader.continuity)}</strong></div>
+        <div><span>扩量 CVR 保持</span><strong>${scale.cvrRetention == null ? '—' : pct(scale.cvrRetention)}</strong></div>
+        <div><span>扩量 ROAS 保持</span><strong>${scale.roasRetention == null ? '—' : pct(scale.roasRetention)}</strong></div>
+      </div>
+    </div>
   `;
 
   const quality = data.dataQuality || {};
