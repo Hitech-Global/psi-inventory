@@ -83,11 +83,14 @@ function deriveItemShares(itemRow, groupPerformance) {
   const item = normalizePerformance(itemRow);
   const group = normalizePerformance(groupPerformance);
   return {
+    impressionShare: safeDiv(item.impressions, group.impressions),
+    clickShare: safeDiv(item.clicks, group.clicks),
     spendShare: safeDiv(item.expense, group.expense),
     broadGmvShare: safeDiv(item.broadGmv, group.broadGmv),
     directGmvShare: safeDiv(item.directGmv, group.directGmv),
     broadOrderShare: safeDiv(item.broadOrders, group.broadOrders),
     directOrderShare: safeDiv(item.directOrders, group.directOrders),
+    gmvPerDirectOrder: safeDiv(item.directGmv, item.directOrders),
   };
 }
 
