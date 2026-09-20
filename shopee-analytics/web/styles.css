@@ -94,3 +94,8 @@
 .maturity-columns span { display: block; font-size: 12px; font-weight: 700; margin-bottom: 6px; }
 .maturity-columns p { margin: 4px 0; font-size: 13px; line-height: 1.5; }
 @media (max-width: 900px) { .maturity-columns { grid-template-columns: 1fr; } }
+
+.action-gates { margin-top: 12px; }
+.action-gates .section-label { margin: 4px 0 8px; }
+.action-card.gate-allowed { border-left: 3px solid currentColor; }
+.action-card.gate-blocked { opacity: .82; }
