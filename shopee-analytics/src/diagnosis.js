@@ -6,7 +6,7 @@ const {
   explorationCostMultiple,
   safeDiv,
 } = require('./metrics');
-const { itemAction, campaignActions } = require('./action-engine');
+const { itemAction, campaignActions, recentOperationGuard } = require('./action-engine');
 const { evaluateCampaignMaturity, evaluateSignalConfidence } = require('./maturity-engine');
 
 const DEFAULTS = Object.freeze({
@@ -70,6 +70,8 @@ function diagnoseCampaign({
   settings = {},
   dailyRows = [],
   itemDailyRows = [],
+  operations = [],
+  asOfDate = null,
 }) {
   const cfg = { ...DEFAULTS, ...settings };
   const perf = normalizePerformance(campaign);
@@ -152,13 +154,19 @@ function diagnoseCampaign({
     }),
   }));
 
-  const actionPlan = campaignActions({ campaign: campaignResult, items: itemsWithActions });
+  const operationGuard = recentOperationGuard({
+    operations,
+    asOfDate: asOfDate || (dailyRows.length ? (dailyRows[dailyRows.length - 1].date || dailyRows[dailyRows.length - 1].event_date) : null),
+    cooldownDays: 3,
+  });
+  const actionPlan = campaignActions({ campaign: campaignResult, items: itemsWithActions, operationGuard });
 
   return {
     sequence: ['DIRECT_ORDERS', 'ROAS', 'PROFITABILITY', 'SKU_SPEND_ALLOCATION', 'SKU_DIRECT_ORDERS', 'SKU_DIRECT_ROAS', 'CTR', 'CVR', 'GMV_PER_ORDER', 'MULTI_DAY_CONTINUITY', 'SIGNAL_CONFIDENCE', 'ACTION'],
     campaign: campaignResult,
     actions: actionPlan.recommendations,
     actionGates: actionPlan.gates,
+    operationGuard,
     items: itemsWithActions,
     notes: [
       'weeklyVolumeReference is an internal maturity/reference signal, not an official Shopee learning-complete rule.',
@@ -167,6 +175,7 @@ function diagnoseCampaign({
       'The ad-spend-ratio limit is a business constraint, not a Shopee platform rule.',
       'Stable status requires converging evidence across sample, allocation, CVR, ROAS, order-source continuity and scale resilience; elapsed days alone never imply stability.',
       'A/B/C traffic is an internal analytical model; highest spend alone does not imply an A-pool SKU.',
+      'Recent campaign-setting or SKU-membership changes trigger an internal cooldown guard before another structural action.',
     ],
   };
 }
