@@ -3,16 +3,10 @@
 const path = require('path');
 const express = require('express');
 const { createAnalyticsPool } = require('./pg');
-const { ShopeeAnalyticsRepository } = require('./repository');
-const { ShopeeStrategyRepository } = require('./strategy-repository');
-const { ShopeeQueryRepository } = require('./query-repository');
 const { createShopeeAnalyticsRouter } = require('./http-router');
 const { createBackupStatusProvider } = require('./backup-status');
-const { SkillReportRepository } = require('./skill-report-repository');
-const { SkillRunner } = require('./skill-runner');
-const { createSkillExecutor, disabledSkillProvider } = require('./skill-executor');
 const { createConfiguredSkillProvider } = require('./openai-skill-provider');
-const { buildCampaignSkillPackage } = require('./skill-analysis-service');
+const { createSkillRuntime } = require('./skill-runtime');
 
 function resolveBindAddress(env = process.env) {
   const requested = env.SHOPEE_ANALYTICS_HOST || '127.0.0.1';
@@ -35,24 +29,14 @@ function createApp({ pool, skillProvider = null }) {
   const app = express();
   app.disable('x-powered-by');
 
-  const repository = new ShopeeAnalyticsRepository({ pool });
-  const strategyRepository = new ShopeeStrategyRepository({ pool });
-  const queryRepository = new ShopeeQueryRepository({ pool });
+  const {
+    repository,
+    strategyRepository,
+    queryRepository,
+    skillReportRepository,
+    runSkillAnalysis,
+  } = createSkillRuntime({ pool, skillProvider });
   const backupStatusProvider = createBackupStatusProvider();
-  const skillReportRepository = new SkillReportRepository(pool);
-  const skillExecutor = createSkillExecutor({ provider: skillProvider || disabledSkillProvider() });
-  const skillRunner = new SkillRunner({ executor: skillExecutor, reportRepository: skillReportRepository });
-  const runSkillAnalysis = async ({
-    shopId, campaignId, startDate, endDate, triggerType, triggerReason,
-  }) => {
-    const analysisPackage = await buildCampaignSkillPackage({
-      repository, queryRepository, strategyRepository,
-      shopId, campaignId, startDate, endDate,
-      dataCutoff: new Date().toISOString(),
-      triggerType, triggerReason,
-    });
-    return skillRunner.run(analysisPackage);
-  };
 
   app.use('/api/shopee-analytics', createShopeeAnalyticsRouter({
     repository,
