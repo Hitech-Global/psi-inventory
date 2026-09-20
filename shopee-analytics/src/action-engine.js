@@ -3,6 +3,20 @@
 function itemAction(state, context = {}) {
   switch (state) {
     case 'CORE_CANDIDATE':
+      if (context.scaleEligible) {
+        return {
+          code: 'CONTROLLED_SINGLE_ITEM_SCALE',
+          title: '已具备受控放大资格',
+          action: '该 SKU 已达到内部 A 阶段、高 Confidence 且广告组稳定；只做小幅单变量预算/单品广告验证，并继续监控 Direct CVR、Direct ROAS 与广告花费占比。',
+        };
+      }
+      if (context.maturityStatus === 'LEARNING' || context.maturityStatus === 'CONVERGING' || context.confidence !== 'HIGH') {
+        return {
+          code: 'PROTECT_CORE_SIGNAL',
+          title: '保护主力信号，暂不裂变',
+          action: '当前只是主力候选，尚未满足稳定放大证据；保持结构稳定，继续累计 Direct Orders 与连续表现，不因单日高 ROAS 或高花费占比单独拿出。',
+        };
+      }
       return context.lowVolumeAndEfficient
         ? {
             code: 'CORE_VOUCHER_TEST',
