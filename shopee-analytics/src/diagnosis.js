@@ -35,6 +35,30 @@ function recommendedRangeState(targetRoas, recommendedRoi) {
   return 'UNKNOWN';
 }
 
+function classifyInternalTrafficStage({ state, signalConfidence, directOrders, directRoas, viabilityRoas, spendShare, maturityStatus }) {
+  const confidence = signalConfidence && signalConfidence.confidence || 'LOW';
+  if (state === 'HIGH_RISK_ZERO_ORDER' || state === 'PRODUCT_OPTIMIZATION_CANDIDATE') return 'C';
+  if (state === 'INSUFFICIENT_EXPLORATION' || state === 'ZERO_ORDER_STILL_TESTING' || directOrders <= 0) return 'C';
+  const efficient = viabilityRoas > 0 ? directRoas >= viabilityRoas : directRoas > 0;
+  if (maturityStatus === 'STABLE' && confidence === 'HIGH' && efficient && directOrders >= 1) return 'A';
+  if (efficient || confidence === 'MEDIUM' || spendShare > 0) return 'B';
+  return 'C';
+}
+
+function scaleEligibility({ trafficStage, signalConfidence, maturityStatus, directRoas, viabilityRoas }) {
+  const confidence = signalConfidence && signalConfidence.confidence || 'LOW';
+  const profitable = viabilityRoas > 0 ? directRoas >= viabilityRoas : directRoas > 0;
+  if (trafficStage === 'A' && maturityStatus === 'STABLE' && confidence === 'HIGH' && profitable) {
+    return { eligible: true, code: 'ELIGIBLE_FOR_CONTROLLED_SCALE', reason: '高置信主力且广告组已稳定，可进入小幅单变量放量验证。' };
+  }
+  const reasons = [];
+  if (maturityStatus !== 'STABLE') reasons.push('广告组尚未稳定');
+  if (confidence !== 'HIGH') reasons.push('SKU Confidence 尚未达到 HIGH');
+  if (!profitable) reasons.push('Direct ROAS 尚未达到 SKU 可行性门槛');
+  if (trafficStage !== 'A') reasons.push('尚未形成内部 A 阶段证据');
+  return { eligible: false, code: 'NOT_READY_TO_SCALE', reason: reasons.join('；') || '证据不足' };
+}
+
 function diagnoseCampaign({
   campaign,
   items = [],
@@ -89,6 +113,7 @@ function diagnoseCampaign({
     targetRoas,
     config: cfg,
     days,
+    maturityStatus: maturity.status,
   }));
 
   const campaignResult = {
@@ -137,7 +162,7 @@ function diagnoseCampaign({
   };
 }
 
-function diagnoseItem({ item, groupPerformance, targetRoas, config = DEFAULTS, days = 7 }) {
+function diagnoseItem({ item, groupPerformance, targetRoas, config = DEFAULTS, days = 7, maturityStatus = 'UNKNOWN' }) {
   const p = normalizePerformance(item);
   const shares = deriveItemShares(item, groupPerformance);
   const directAov = p.directOrders > 0 ? safeDiv(p.directGmv, p.directOrders) : 0;
@@ -167,6 +192,22 @@ function diagnoseItem({ item, groupPerformance, targetRoas, config = DEFAULTS, d
   }
 
   const signalConfidence = evaluateSignalConfidence(item, { days, matureOrdersReference: config.weeklyVolumeReference });
+  const trafficStage = classifyInternalTrafficStage({
+    state,
+    signalConfidence,
+    directOrders: p.directOrders,
+    directRoas: p.directRoas,
+    viabilityRoas,
+    spendShare: shares.spendShare,
+    maturityStatus,
+  });
+  const scale = scaleEligibility({
+    trafficStage,
+    signalConfidence,
+    maturityStatus,
+    directRoas: p.directRoas,
+    viabilityRoas,
+  });
 
   return {
     itemId: item.item_id ?? item.itemId ?? null,
@@ -179,6 +220,8 @@ function diagnoseItem({ item, groupPerformance, targetRoas, config = DEFAULTS, d
     viabilityRoas,
     explorationCostMultiple: explorationMultiple,
     signalConfidence,
+    trafficStage,
+    scaleEligibility: scale,
     state,
   };
 }
@@ -197,6 +240,8 @@ module.exports = {
   DEFAULTS,
   requiredRoasForSpendLimit,
   recommendedRangeState,
+  classifyInternalTrafficStage,
+  scaleEligibility,
   diagnoseCampaign,
   diagnoseItem,
   splitEventBaseline,
