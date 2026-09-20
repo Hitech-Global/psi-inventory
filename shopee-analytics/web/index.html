@@ -351,10 +351,15 @@
   <template id="diagnosisTemplate">
     <div class="diagnosis-content">
       <div class="stepbar">
-        <span>1 订单量</span><span>2 ROAS</span><span>3 Funnel</span><span>4 SKU 结构</span><span>5 Action</span>
+        <span>1 Direct订单</span><span>2 ROAS/盈亏</span><span>3 SKU分配</span><span>4 CTR/CVR</span><span>5 Signal×Confidence</span><span>6 Action</span>
       </div>
 
       <div class="metric-grid" id="campaignMetrics"></div>
+
+      <div id="maturityBox" class="quality-box maturity-box">
+        <div class="empty-inline">等待成熟度证据。</div>
+      </div>
+
       <div id="dataQualityBox" class="quality-box"></div>
 
       <div class="section-head action-head">
@@ -389,6 +394,7 @@
             <tr>
               <th>商品</th>
               <th>状态</th>
+              <th>Confidence</th>
               <th>Direct订单</th>
               <th>Direct ROAS</th>
               <th>保本ROAS</th>
