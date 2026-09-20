@@ -11,6 +11,7 @@ const { createBackupStatusProvider } = require('./backup-status');
 const { SkillReportRepository } = require('./skill-report-repository');
 const { SkillRunner } = require('./skill-runner');
 const { createSkillExecutor, disabledSkillProvider } = require('./skill-executor');
+const { createConfiguredSkillProvider } = require('./openai-skill-provider');
 const { buildCampaignSkillPackage } = require('./skill-analysis-service');
 
 function resolveBindAddress(env = process.env) {
@@ -86,7 +87,8 @@ async function main() {
   const host = resolveBindAddress();
   const port = resolvePort();
   const pool = createAnalyticsPool();
-  const app = createApp({ pool });
+  const skillProvider = createConfiguredSkillProvider();
+  const app = createApp({ pool, skillProvider });
 
   const server = app.listen(port, host, () => {
     console.log(`Shopee Analytics V1: http://${host}:${port}`);
