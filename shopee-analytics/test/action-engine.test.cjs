@@ -33,3 +33,17 @@ assert.strictEqual(overSpend[0].code, 'PROTECT_PROFIT');
 assert(overSpend.some(x => x.code === 'CONCENTRATE_BUDGET'));
 
 console.log('shopee action engine tests: ok');
+
+const protectedCore = itemAction('CORE_CANDIDATE', {
+  maturityStatus: 'CONVERGING',
+  confidence: 'LOW',
+  scaleEligible: false,
+});
+assert.strictEqual(protectedCore.code, 'PROTECT_CORE_SIGNAL');
+
+const scalableCore = itemAction('CORE_CANDIDATE', {
+  maturityStatus: 'STABLE',
+  confidence: 'HIGH',
+  scaleEligible: true,
+});
+assert.strictEqual(scalableCore.code, 'CONTROLLED_SINGLE_ITEM_SCALE');
