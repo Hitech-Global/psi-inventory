@@ -67,7 +67,39 @@ function itemAction(state, context = {}) {
   }
 }
 
-function structuralActionGates({ campaign, items = [] }) {
+const STRUCTURAL_OPERATION_TYPES = new Set([
+  'CAMPAIGN_SETTING_CHANGE',
+  'SKU_ADDED_TO_CAMPAIGN',
+  'SKU_REMOVED_FROM_CAMPAIGN',
+]);
+
+function recentOperationGuard({ operations = [], asOfDate = null, cooldownDays = 3 }) {
+  const asOf = asOfDate ? new Date(asOfDate) : new Date();
+  const cutoffMs = asOf.getTime() - Math.max(0, Number(cooldownDays || 0)) * 86400000;
+  const relevant = (operations || [])
+    .filter(op => STRUCTURAL_OPERATION_TYPES.has(op.operationType || op.operation_type))
+    .map(op => ({
+      ...op,
+      operationType: op.operationType || op.operation_type,
+      effectiveFrom: op.effectiveFrom || op.effective_from,
+    }))
+    .filter(op => {
+      const ts = new Date(op.effectiveFrom).getTime();
+      return Number.isFinite(ts) && ts <= asOf.getTime() && ts >= cutoffMs;
+    })
+    .sort((a, b) => new Date(b.effectiveFrom) - new Date(a.effectiveFrom));
+  const latest = relevant[0] || null;
+  return {
+    blocked: Boolean(latest),
+    cooldownDays: Number(cooldownDays || 0),
+    latest,
+    reason: latest
+      ? `最近 ${cooldownDays} 天存在结构性操作 ${latest.operationType}（${String(latest.effectiveFrom).slice(0, 10)}），先观察操作后的完整数据再做下一次结构调整。`
+      : null,
+  };
+}
+
+function structuralActionGates({ campaign, items = [], operationGuard = null }) {
   const maturity = campaign.maturityStatus || (campaign.maturity && campaign.maturity.status) || 'UNKNOWN';
   const stable = maturity === 'STABLE';
   const profitable = campaign.roasState !== 'BELOW_BREAK_EVEN' && campaign.spendLimitState !== 'OVER_SPEND_LIMIT';
@@ -75,22 +107,23 @@ function structuralActionGates({ campaign, items = [] }) {
   const budgetUtilization = campaign.budgetUtilization;
   const highRiskZero = items.filter(item => item.state === 'HIGH_RISK_ZERO_ORDER');
   const scalable = items.filter(item => item.scaleEligibility && item.scaleEligibility.eligible);
+  const recentChangeBlocked = Boolean(operationGuard && operationGuard.blocked);
   const gates = {
     REMOVE_SKU: {
-      allowed: maturity !== 'LEARNING' && highRiskZero.length > 0,
-      reason: maturity === 'LEARNING'
+      allowed: !recentChangeBlocked && maturity !== 'LEARNING' && highRiskZero.length > 0,
+      reason: recentChangeBlocked ? operationGuard.reason : maturity === 'LEARNING'
         ? '学习期默认不做永久性剔除；先完成最低观察窗口。'
         : highRiskZero.length ? '存在已达到高风险测试成本且零订单的 SKU。' : '没有达到高风险空烧证据的 SKU。',
     },
     SPLIT_SINGLE_ITEM: {
-      allowed: stable && scalable.length > 0,
-      reason: stable && scalable.length > 0
+      allowed: !recentChangeBlocked && stable && scalable.length > 0,
+      reason: recentChangeBlocked ? operationGuard.reason : stable && scalable.length > 0
         ? '广告组已稳定且存在通过 A阶段/High Confidence/利润门槛的 SKU。'
         : '仅在广告组稳定且 SKU 通过放大资格 Gate 后才允许裂变单跑。',
     },
     LOWER_TARGET_ROAS: {
-      allowed: stable && profitable && targetMet && budgetUtilization != null && budgetUtilization < 0.8,
-      reason: !stable ? '广告组尚未稳定，避免用降 Target ROAS 干扰收敛。'
+      allowed: !recentChangeBlocked && stable && profitable && targetMet && budgetUtilization != null && budgetUtilization < 0.8,
+      reason: recentChangeBlocked ? operationGuard.reason : !stable ? '广告组尚未稳定，避免用降 Target ROAS 干扰收敛。'
         : !profitable ? '利润/广告花费占比约束未通过，不能用降 ROAS 换量。'
         : !targetMet ? '实际 ROAS 尚未达到当前 Target ROAS。'
         : budgetUtilization == null ? '缺少预算利用率，无法判断是否存在花不完预算。'
@@ -98,8 +131,8 @@ function structuralActionGates({ campaign, items = [] }) {
         : '稳定且效率达标，但预算利用率偏低，可做小幅单变量 Target ROAS 测试。',
     },
     INCREASE_BUDGET: {
-      allowed: stable && profitable && scalable.length > 0 && budgetUtilization != null && budgetUtilization >= 0.9,
-      reason: !stable ? '广告组尚未稳定，暂不加预算。'
+      allowed: !recentChangeBlocked && stable && profitable && scalable.length > 0 && budgetUtilization != null && budgetUtilization >= 0.9,
+      reason: recentChangeBlocked ? operationGuard.reason : !stable ? '广告组尚未稳定，暂不加预算。'
         : !profitable ? '利润/广告花费占比约束未通过，暂不加预算。'
         : !scalable.length ? '没有 SKU 通过受控放大资格。'
         : budgetUtilization == null ? '缺少预算利用率，无法证明预算正在成为瓶颈。'
@@ -118,14 +151,14 @@ function structuralActionGates({ campaign, items = [] }) {
   return gates;
 }
 
-function campaignActions({ campaign, items = [] }) {
+function campaignActions({ campaign, items = [], operationGuard = null }) {
   const actions = [];
   const efficient = campaign.roasState === 'TARGET_MET' &&
     campaign.spendLimitState === 'WITHIN_SPEND_LIMIT';
   const lowVolume = campaign.volumeState === 'LOW_VOLUME_SIGNAL';
   const hasCore = items.some(item => item.state === 'CORE_CANDIDATE');
   const maturityStatus = campaign.maturityStatus || (campaign.maturity && campaign.maturity.status) || 'UNKNOWN';
-  const gates = structuralActionGates({ campaign, items });
+  const gates = structuralActionGates({ campaign, items, operationGuard });
   const weakCount = items.filter(item =>
     item.state === 'HIGH_RISK_ZERO_ORDER' ||
     item.state === 'PRODUCT_OPTIMIZATION_CANDIDATE'
@@ -203,4 +236,4 @@ function campaignActions({ campaign, items = [] }) {
   return { recommendations: actions.sort((a, b) => a.priority - b.priority), gates: gatedActions };
 }
 
-module.exports = { itemAction, structuralActionGates, campaignActions };
+module.exports = { itemAction, recentOperationGuard, structuralActionGates, campaignActions };
