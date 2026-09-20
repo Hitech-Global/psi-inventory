@@ -36,7 +36,7 @@ Never commit Partner Keys, access/refresh tokens, token master key, PostgreSQL p
 From this directory:
 
 1. Prepare the gitignored runtime directory: `SHOPEE_ANALYTICS_PREPARE_DESKTOP_RUNTIME=YES node ../../scripts/prepare-desktop-runtime.cjs`. This generates the local PostgreSQL password and token master key without printing their values.
-2. Edit `runtime/.env`: fill only the Shopee Partner credentials and the desktop/NAS backup paths. Keep the generated PostgreSQL password and token master key.
+2. Edit `runtime/.env`: fill the Shopee Partner credentials, desktop/NAS backup paths, and—when Skill reports are being enabled—the local OpenAI Skill Runtime settings described below. Keep the generated PostgreSQL password and token master key.
 3. Run the offline env check before starting containers: `node ../../scripts/validate-desktop-env.cjs runtime/.env`.
 4. Start PostgreSQL only: `docker compose --env-file runtime/.env up -d postgres`.
 5. Apply schema explicitly: `docker compose --env-file runtime/.env --profile tools run --rm schema`.
@@ -58,6 +58,30 @@ Default worker schedule:
 - daily sync at 02:30 UTC
 
 02:30 UTC is 09:30 in Jakarta/Bangkok and 10:30 in Kuala Lumpur/Singapore. The values are configurable in `runtime/.env`.
+
+## GMV Max Skill Runtime
+
+The analytics app and worker use the same versioned runtime chain:
+
+`Analysis Package -> Skill Executor -> Skill Runner -> shopee_skill_reports`
+
+To enable real model-generated reports, configure these values only in the gitignored `runtime/.env`:
+
+```dotenv
+SHOPEE_SKILL_RUNTIME_PROVIDER=OPENAI
+SHOPEE_SKILL_OPENAI_API_KEY=<local secret>
+SHOPEE_SKILL_OPENAI_MODEL=gpt-5.6-terra
+SHOPEE_SKILL_OPENAI_REASONING_EFFORT=medium
+SHOPEE_SKILL_OPENAI_MAX_OUTPUT_TOKENS=12000
+SHOPEE_SKILL_OPENAI_TIMEOUT_MS=180000
+SHOPEE_SKILL_DAILY_WINDOW_DAYS=14
+```
+
+Do not commit or paste the API key into chat or logs. The runtime reads `skills/shopee-gmv-max/SKILL.md` and its output schema from the deployed image, then sends that versioned skill plus the normalized Analysis Package to the configured provider.
+
+After each successful daily sync, the worker runs `DAILY_AUTO` reports for campaigns whose latest Shopee campaign status is `ONGOING`. Manual report generation uses the same runtime and reasoning contract with `trigger=MANUAL`.
+
+If no provider is configured, report generation fails closed with an explicit runtime-configuration error; legacy diagnosis logic is never substituted as a Skill report. A Skill failure also does not convert an already-successful Shopee data sync into a failed sync slot.
 
 ## NAS backup
 
