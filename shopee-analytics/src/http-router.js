@@ -82,6 +82,8 @@ function createShopeeAnalyticsRouter({
   strategyRepository,
   queryRepository,
   backupStatusProvider = async () => null,
+  skillReportRepository = null,
+  runSkillAnalysis = null,
 }) {
   const router = express.Router();
 
@@ -422,6 +424,44 @@ function createShopeeAnalyticsRouter({
       });
       analysis.dataQuality.storedItemCount = coverageContext.storedItemCount;
       res.json(analysis);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get('/campaigns/:campaignId/skill-report', async (req, res, next) => {
+    try {
+      if (!skillReportRepository) throw new Error('Skill report repository is not configured');
+      const shopId = positiveInt(req.query.shop_id, 'shop_id');
+      const campaignId = positiveInt(req.params.campaignId, 'campaignId');
+      const report = await skillReportRepository.latest({ shopId, campaignId });
+      if (!report) {
+        res.status(404).json({ error: 'SKILL_REPORT_NOT_FOUND' });
+        return;
+      }
+      res.json(report);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post('/campaigns/:campaignId/skill-report', express.json({ limit: '32kb' }), async (req, res, next) => {
+    try {
+      if (typeof runSkillAnalysis !== 'function') throw new Error('Skill execution is not configured');
+      const shopId = positiveInt(req.query.shop_id, 'shop_id');
+      const campaignId = positiveInt(req.params.campaignId, 'campaignId');
+      const startDate = isoDate(req.body && req.body.start_date, 'start_date');
+      const endDate = isoDate(req.body && req.body.end_date, 'end_date');
+      if (startDate > endDate) throw new Error('start_date must be <= end_date');
+      const result = await runSkillAnalysis({
+        shopId,
+        campaignId,
+        startDate,
+        endDate,
+        triggerType: 'MANUAL',
+        triggerReason: req.body && req.body.reason ? String(req.body.reason).slice(0, 500) : null,
+      });
+      res.status(201).json(result);
     } catch (error) {
       next(error);
     }
