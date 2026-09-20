@@ -13,6 +13,7 @@ const MATURITY_DEFAULTS = Object.freeze({
   scaleTrafficIncreaseMinimum: 0.20,
   scaleEfficiencyRetentionMinimum: 0.80,
   stableEvidenceMinimum: 4,
+  leaderContinuityMinimum: 0.60,
 });
 
 function number(value) {
@@ -89,6 +90,72 @@ function orderSourceConcentration(itemDailyRows = []) {
   };
 }
 
+function leaderContinuity(itemDailyRows = []) {
+  const byDate = new Map();
+  for (const row of itemDailyRows) {
+    const date = String(row.date || row.event_date || '').slice(0, 10);
+    const id = String(row.item_id ?? row.itemId ?? '');
+    if (!date || !id) continue;
+    if (!byDate.has(date)) byDate.set(date, []);
+    byDate.get(date).push(row);
+  }
+  const leaders = [...byDate.keys()].sort().map(date => {
+    const rows = byDate.get(date);
+    const ranked = [...rows].sort((a, b) => {
+      const orderDiff = dailyMetric(b, ['direct_order', 'directOrders']) - dailyMetric(a, ['direct_order', 'directOrders']);
+      if (orderDiff) return orderDiff;
+      return dailyMetric(b, ['expense', 'spend']) - dailyMetric(a, ['expense', 'spend']);
+    });
+    return ranked[0] ? String(ranked[0].item_id ?? ranked[0].itemId) : null;
+  }).filter(Boolean);
+  const counts = new Map();
+  for (const id of leaders) counts.set(id, (counts.get(id) || 0) + 1);
+  const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  const leaderItemId = ranked[0] ? ranked[0][0] : null;
+  const leaderDays = ranked[0] ? ranked[0][1] : 0;
+  return {
+    leaderItemId,
+    leaderDays,
+    observedDays: leaders.length,
+    continuity: leaders.length ? leaderDays / leaders.length : null,
+    distinctLeaders: counts.size,
+  };
+}
+
+function maturityExplanations({ status, evidence, diagnostics, config, days, directOrders }) {
+  const blockers = [];
+  const positives = [];
+  if (days < config.minimumLearningDays) blockers.push(`运行 ${days} 天，尚未达到最低 ${config.minimumLearningDays} 天观察窗口`);
+  if (!evidence.sample) blockers.push(`Direct Orders ${number(directOrders)}，低于内部成熟度参考 ${config.matureDirectOrdersReference}`);
+  else positives.push('Direct Orders 样本达到内部成熟度参考');
+  if (evidence.allocation === false) blockers.push('SKU 花费占比仍在明显切换，分配尚未收敛');
+  else if (evidence.allocation === true) positives.push('SKU 花费分配已趋于稳定');
+  if (evidence.orderSource === false) blockers.push('主要 Direct Orders 来源仍较分散');
+  else if (evidence.orderSource === true) positives.push('主要订单来源已形成集中度');
+  if (evidence.leaderContinuity === false) blockers.push('主力 SKU 仍频繁切换，连续性不足');
+  else if (evidence.leaderContinuity === true) positives.push('主力 SKU 已连续多日保持领先');
+  if (evidence.cvr === false) blockers.push('Direct CVR 日间波动仍较大');
+  else if (evidence.cvr === true) positives.push('Direct CVR 已趋于稳定');
+  if (evidence.roas === false) blockers.push('Direct ROAS 日间波动仍较大');
+  else if (evidence.roas === true) positives.push('Direct ROAS 已趋于稳定');
+  if (evidence.scale === false) blockers.push('流量扩大后 CVR/ROAS 保持不足，扩量承接尚未验证');
+  else if (evidence.scale === true) positives.push('流量扩大后 CVR/ROAS 仍能维持');
+  if (evidence.scale == null) blockers.push('尚未出现可评估的流量扩大量，扩量承接待验证');
+  return {
+    headline: status === 'STABLE'
+      ? '多维证据已开始共同收敛'
+      : status === 'UNSTABLE'
+        ? '样本已较充分，但关键效率/分配证据仍长期波动'
+        : status === 'LEARNING'
+          ? '仍处于最低学习观察窗口'
+          : '已进入收敛观察，但证据尚不足以判定稳定',
+    blockers,
+    positives,
+    nextValidation: blockers.slice(0, 3),
+    leader: diagnostics.leader,
+  };
+}
+
 function scaleResilience(dailyRows = [], config = MATURITY_DEFAULTS) {
   if (dailyRows.length < 4) return { evaluable: false, pass: null };
   const sorted = [...dailyRows].sort((a, b) =>
@@ -120,6 +187,7 @@ function evaluateCampaignMaturity({ days = 0, directOrders = 0, dailyRows = [], 
   const cfg = { ...MATURITY_DEFAULTS, ...settings };
   const allocation = allocationStability(itemDailyRows);
   const source = orderSourceConcentration(itemDailyRows);
+  const leader = leaderContinuity(itemDailyRows);
   const cvrValues = dailyRows.map(row => safeDiv(
     dailyMetric(row, ['direct_order', 'directOrders']),
     dailyMetric(row, ['clicks', 'click']),
@@ -136,6 +204,7 @@ function evaluateCampaignMaturity({ days = 0, directOrders = 0, dailyRows = [], 
     sample: number(directOrders) >= cfg.matureDirectOrdersReference,
     allocation: allocation.meanAbsDelta != null && allocation.meanAbsDelta <= cfg.allocationMeanAbsDeltaStable,
     orderSource: source.topTwoShare != null && source.topTwoShare >= cfg.orderSourceConcentrationStable,
+    leaderContinuity: leader.continuity != null && leader.continuity >= cfg.leaderContinuityMinimum,
     cvr: cvrCv != null && cvrCv <= cfg.cvrCoefficientVariationStable,
     roas: roasCv != null && roasCv <= cfg.roasCoefficientVariationStable,
     scale: scale.evaluable ? scale.pass : null,
@@ -156,6 +225,16 @@ function evaluateCampaignMaturity({ days = 0, directOrders = 0, dailyRows = [], 
     evaluated.length >= 4 && evidenceRatio < 0.5) status = 'UNSTABLE';
   else status = 'CONVERGING';
 
+  const diagnostics = {
+    allocationMeanAbsDelta: allocation.meanAbsDelta,
+    orderSourceTopTwoShare: source.topTwoShare,
+    leader,
+    cvrCoefficientVariation: cvrCv,
+    roasCoefficientVariation: roasCv,
+    scale,
+  };
+  const explanation = maturityExplanations({ status, evidence, diagnostics, config: cfg, days, directOrders });
+
   return {
     status,
     confidence,
@@ -163,13 +242,8 @@ function evaluateCampaignMaturity({ days = 0, directOrders = 0, dailyRows = [], 
     evidencePassed: passed,
     evidenceEvaluated: evaluated.length,
     evidenceRatio,
-    diagnostics: {
-      allocationMeanAbsDelta: allocation.meanAbsDelta,
-      orderSourceTopTwoShare: source.topTwoShare,
-      cvrCoefficientVariation: cvrCv,
-      roasCoefficientVariation: roasCv,
-      scale,
-    },
+    diagnostics,
+    explanation,
     notes: [
       '7 days is a minimum observation window, not a stable-state guarantee.',
       '25 Direct Orders is an internal maturity/confidence reference, not an official Shopee learning-complete rule.',
@@ -201,6 +275,8 @@ module.exports = {
   coefficientVariation,
   allocationStability,
   orderSourceConcentration,
+  leaderContinuity,
+  maturityExplanations,
   scaleResilience,
   evaluateCampaignMaturity,
   evaluateSignalConfidence,
