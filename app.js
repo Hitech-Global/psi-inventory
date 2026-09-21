@@ -3857,7 +3857,12 @@ function renderInvImportProgress(run){
     '<div style="display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:12px"><div><div style="font-size:14px;font-weight:600;color:#1d1d1f">'+esc(title)+'</div><div style="font-size:12px;color:#86868b;margin-top:3px">'+(total?(done+' / '+total+' 条'):'正在准备…')+'</div></div><div style="font-size:28px;line-height:1;font-weight:650;letter-spacing:-.03em;color:'+accent+'">'+Math.round(p)+'%</div></div>'+ 
     '<div style="height:7px;border-radius:999px;background:#e8e8ed;overflow:hidden"><div style="height:100%;width:'+p+'%;border-radius:999px;background:'+accent+';transition:width .35s ease"></div></div>'+ 
     '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:9px;font-size:11px;color:#86868b"><span>'+esc(invImportPhaseLabel(run.phase))+'</span><span>'+(terminal?(ok?'✓ 已完成':'已停止'):'请保持窗口打开，无需重复操作')+'</span></div></div>';}
-  var btn=document.getElementById('inv-import-btn');if(btn&&!terminal){btn.disabled=true;btn.textContent='正在导入 '+Math.round(p)+'%';}
+  var btn=document.getElementById('inv-import-btn');
+  if(btn){
+    if(!terminal){btn.disabled=true;btn.textContent='正在导入 '+Math.round(p)+'%';}
+    else if(ok){btn.disabled=true;btn.textContent='导入完成';}
+    else{btn.disabled=false;btn.textContent=t("html.inv.start_import", "开始导入");}
+  }
 }
 async function pollInvImportStatus(importId){
   if(!importId)return;
