@@ -9,11 +9,17 @@ const {
   rolesForDeploymentMode,
   assertRoleAllowed,
   loadPilotGmvMaxConfig,
+  resolvePilotCampaignAllowlist,
   assertPilotShopAllowed,
   assertPilotCampaignAllowed,
+  assertPilotCampaignSetAllowed,
+  validatePilotProfileCampaignSeeds,
 } = require('../src/deployment-mode');
 const { validateDesktopEnv } = require('../src/desktop-env-validation');
-const { selectPilotShop } = require('../scripts/sync-all-shops.cjs');
+const {
+  selectPilotShop,
+  resolveSeededGmsCampaignIds,
+} = require('../scripts/sync-all-shops.cjs');
 
 const root = path.join(__dirname, '..', '..');
 const pilotEnv = {
@@ -32,10 +38,46 @@ assert.doesNotThrow(() => assertRoleAllowed('BRAND_PORTAL', { SHOPEE_ANALYTICS_D
 assert.deepStrictEqual(rolesForDeploymentMode(pilotEnv), ['ADS']);
 assert.throws(() => assertRoleAllowed('ERP', pilotEnv), /Shopee role ERP is disabled/);
 const config = loadPilotGmvMaxConfig(pilotEnv);
+assert.deepStrictEqual(resolvePilotCampaignAllowlist(pilotEnv), [2001, 2002]);
 assert.doesNotThrow(() => assertPilotShopAllowed(1101, pilotEnv));
 assert.throws(() => assertPilotShopAllowed(1102, pilotEnv), /refuses shop 1102/);
 assert.doesNotThrow(() => assertPilotCampaignAllowed(2001, pilotEnv));
 assert.throws(() => assertPilotCampaignAllowed(2003, pilotEnv), /refuses campaign 2003/);
+assert.doesNotThrow(() => assertPilotCampaignSetAllowed([2001, 2002], pilotEnv));
+assert.throws(() => assertPilotCampaignSetAllowed([2003], pilotEnv), /refuses campaign IDs outside/);
+
+// Empty, subset, and complete profile seed sets are valid, but the runtime set
+// remains the canonical env allowlist. Profile seeds must never expand it.
+for (const gmsCampaignSeedIds of [[], [2001], [2001, 2002]]) {
+  const shop = { shopId: 1101, countryCode: 'ID', brandCode: 'REDRAGON', gmsCampaignSeedIds };
+  assert.doesNotThrow(() => validatePilotProfileCampaignSeeds(shop, config));
+  assert.deepStrictEqual(resolveSeededGmsCampaignIds({
+    shop,
+    pilot: true,
+    pilotConfig: config,
+    globalGmsSeeds: config.campaignIds,
+  }), [2001, 2002]);
+}
+for (const gmsCampaignSeedIds of [[2003], [2001, 2003]]) {
+  const shop = { shopId: 1101, countryCode: 'ID', brandCode: 'REDRAGON', gmsCampaignSeedIds };
+  assert.throws(() => validatePilotProfileCampaignSeeds(shop, config), /profile gmsCampaignSeedIds contains campaign IDs outside/);
+  assert.throws(() => resolveSeededGmsCampaignIds({
+    shop,
+    pilot: true,
+    pilotConfig: config,
+    globalGmsSeeds: config.campaignIds,
+  }), /profile gmsCampaignSeedIds contains campaign IDs outside/);
+}
+assert.deepStrictEqual(resolveSeededGmsCampaignIds({
+  shop: { gmsCampaignSeedIds: [7002] },
+  pilot: false,
+  pilotConfig: null,
+  globalGmsSeeds: [7001],
+}), [7001, 7002]);
+assert.strictEqual(validateDesktopEnv({
+  ...pilotEnv,
+  SHOPEE_PILOT_GMV_MAX_CAMPAIGN_IDS: '2001,not-a-campaign',
+}).ok, false);
 assert.deepStrictEqual(selectPilotShop([
   { shopId: 1101, countryCode: 'ID', brandCode: 'REDRAGON' },
   { shopId: 1102, countryCode: 'ID', brandCode: 'REDRAGON' },

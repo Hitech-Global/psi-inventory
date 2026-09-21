@@ -1,6 +1,7 @@
 'use strict';
 
 const { syncGmsDay } = require('./sync-gms');
+const { assertPilotCampaignAllowed } = require('./deployment-mode');
 
 function toIsoDate(date) {
   const d = date instanceof Date ? new Date(date.getTime()) : new Date(`${date}T00:00:00Z`);
@@ -50,6 +51,7 @@ async function syncGmsWindow({
   if (!repository || typeof repository.saveGmsDay !== 'function') {
     throw new Error('repository.saveGmsDay is required');
   }
+  assertPilotCampaignAllowed(campaignId);
 
   const dates = dateRangeInclusive(startDate, endDate);
   const results = [];

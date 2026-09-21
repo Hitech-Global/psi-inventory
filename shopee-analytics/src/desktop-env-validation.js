@@ -7,6 +7,7 @@ const {
   OFFLINE_BASELINE,
   PILOT_GMV_MAX,
   resolveDeploymentMode,
+  resolvePilotCampaignAllowlist,
 } = require('./deployment-mode');
 
 function isRealSecret(value) {
@@ -97,9 +98,11 @@ function validateDesktopEnv(env) {
     if (!String(env.SHOPEE_PILOT_GMV_MAX_BRAND || '').trim()) {
       errors.push('SHOPEE_PILOT_GMV_MAX_BRAND is missing');
     }
-    const campaignIds = String(env.SHOPEE_PILOT_GMV_MAX_CAMPAIGN_IDS || '')
-      .split(',').map(value => Number(value.trim())).filter(Number.isSafeInteger);
-    if (!campaignIds.length) errors.push('SHOPEE_PILOT_GMV_MAX_CAMPAIGN_IDS requires one or more campaign IDs');
+    try {
+      resolvePilotCampaignAllowlist(env);
+    } catch (error) {
+      errors.push(error.message);
+    }
     if (env.SHOPEE_PRODUCT_CARD_INBOX_ENABLE === 'YES') {
       errors.push('SHOPEE_PRODUCT_CARD_INBOX_ENABLE must not be YES in PILOT_GMV_MAX');
     }

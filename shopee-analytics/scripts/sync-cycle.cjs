@@ -6,7 +6,11 @@ const { ShopeeShopProfileRepository } = require('../src/shop-profile-repository'
 const { createSyncRuntime } = require('../src/sync-runtime');
 const { runShopSyncCycle } = require('../src/shop-sync-runner');
 const { parseCampaignIds } = require('../src/sync-cycle-utils');
-const { isPilotGmvMax, assertPilotShopAllowed } = require('../src/deployment-mode');
+const {
+  isPilotGmvMax,
+  assertPilotShopAllowed,
+  validatePilotProfileCampaignSeeds,
+} = require('../src/deployment-mode');
 
 async function main() {
   if (process.env.SHOPEE_ANALYTICS_ENABLE_SYNC_CYCLE !== 'YES') {
@@ -46,6 +50,7 @@ async function main() {
       String(shop.brandCode || '').trim().toUpperCase() !== pilotConfig.brand.toUpperCase())) {
       throw new Error('PILOT_GMV_MAX requires a matching configured Indonesia shop profile');
     }
+    if (pilot) validatePilotProfileCampaignSeeds(shop, pilotConfig);
     const runtime = createSyncRuntime({ pool });
     const summary = await runShopSyncCycle({
       runtime,

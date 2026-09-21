@@ -8,7 +8,14 @@ const { loadMasterKey } = require('../src/token-crypto');
 const { ShopeeShopProfileRepository } = require('../src/shop-profile-repository');
 const { ShopeeTokenRepository } = require('../src/token-repository');
 const { createConfiguredSkillProvider } = require('../src/openai-skill-provider');
-const { PRODUCTION, OFFLINE_BASELINE, PILOT_GMV_MAX, resolveDeploymentMode, loadPilotGmvMaxConfig } = require('../src/deployment-mode');
+const {
+  PRODUCTION,
+  OFFLINE_BASELINE,
+  PILOT_GMV_MAX,
+  resolveDeploymentMode,
+  loadPilotGmvMaxConfig,
+  validatePilotProfileCampaignSeeds,
+} = require('../src/deployment-mode');
 
 function result(name, ok, detail, severity = 'error') {
   return { name, ok, severity: ok ? 'info' : severity, detail };
@@ -159,6 +166,15 @@ async function main() {
         expectedShopId: pilotConfig && pilotConfig.shopId,
         activeShopCount: shops.length,
       }));
+      try {
+        const seedIds = shop ? validatePilotProfileCampaignSeeds(shop, pilotConfig) : [];
+        checks.push(result('pilot_campaign_seed_scope', Boolean(shop), {
+          profileSeedIds: seedIds,
+          canonicalAllowlist: pilotConfig && pilotConfig.campaignIds,
+        }));
+      } catch (error) {
+        checks.push(result('pilot_campaign_seed_scope', false, error.message));
+      }
       let adsToken = null;
       if (shop) adsToken = await tokenRepo.load({ appRole: 'ADS', shopId: shop.shopId });
       checks.push(result('encrypted_ads_token', Boolean(adsToken), {

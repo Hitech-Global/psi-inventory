@@ -5,7 +5,12 @@ const { createSyncRuntime } = require('../src/sync-runtime');
 const { ShopeeShopProfileRepository } = require('../src/shop-profile-repository');
 const { runShopSyncCycle } = require('../src/shop-sync-runner');
 const { parseCampaignIds } = require('../src/sync-cycle-utils');
-const { assertOnlineOperationAllowed, isPilotGmvMax, loadPilotGmvMaxConfig } = require('../src/deployment-mode');
+const {
+  assertOnlineOperationAllowed,
+  isPilotGmvMax,
+  loadPilotGmvMaxConfig,
+  validatePilotProfileCampaignSeeds,
+} = require('../src/deployment-mode');
 
 function parseIdFilter(value) {
   return new Set(
@@ -21,7 +26,19 @@ function selectPilotShop(shops, pilotConfig) {
     String(shop.countryCode || '').toUpperCase() === 'ID' &&
     String(shop.brandCode || '').trim().toUpperCase() === pilotConfig.brand.toUpperCase());
   if (matches.length !== 1) throw new Error('PILOT_GMV_MAX requires exactly one matching active Indonesia shop profile');
+  validatePilotProfileCampaignSeeds(matches[0], pilotConfig);
   return matches;
+}
+
+function resolveSeededGmsCampaignIds({ shop, pilot, pilotConfig, globalGmsSeeds }) {
+  if (pilot) {
+    validatePilotProfileCampaignSeeds(shop, pilotConfig);
+    return pilotConfig.campaignIds;
+  }
+  return Array.from(new Set([
+    ...(globalGmsSeeds || []),
+    ...(shop.gmsCampaignSeedIds || []),
+  ]));
 }
 
 async function main() {
@@ -64,10 +81,12 @@ async function main() {
         runtime,
         shop,
         mode,
-        seededGmsCampaignIds: Array.from(new Set([
-          ...seededGmsCampaignIds,
-          ...(shop.gmsCampaignSeedIds || []),
-        ])),
+        seededGmsCampaignIds: resolveSeededGmsCampaignIds({
+          shop,
+          pilot,
+          pilotConfig,
+          globalGmsSeeds: seededGmsCampaignIds,
+        }),
       });
       summaries.push(summary);
     }
@@ -94,4 +113,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { parseIdFilter, selectPilotShop, main };
+module.exports = { parseIdFilter, selectPilotShop, resolveSeededGmsCampaignIds, main };

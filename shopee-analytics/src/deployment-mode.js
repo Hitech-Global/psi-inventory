@@ -56,12 +56,22 @@ function loadPilotGmvMaxConfig(env = process.env) {
   }
   const brand = String(env.SHOPEE_PILOT_GMV_MAX_BRAND || '').trim();
   if (!brand) throw new Error('SHOPEE_PILOT_GMV_MAX_BRAND is required in PILOT_GMV_MAX');
-  const campaignIds = Array.from(new Set(String(env.SHOPEE_PILOT_GMV_MAX_CAMPAIGN_IDS || '')
-    .split(',').map(value => Number(value.trim())).filter(Number.isSafeInteger)));
-  if (!campaignIds.length) {
-    throw new Error('SHOPEE_PILOT_GMV_MAX_CAMPAIGN_IDS requires one or more campaign IDs in PILOT_GMV_MAX');
-  }
+  const campaignIds = resolvePilotCampaignAllowlist(env);
   return { shopId, brand, campaignIds };
+}
+
+function resolvePilotCampaignAllowlist(env = process.env) {
+  const raw = String(env.SHOPEE_PILOT_GMV_MAX_CAMPAIGN_IDS || '');
+  const values = raw.split(',').map(value => value.trim());
+  if (!raw.trim() || values.some(value => !value)) {
+    throw new Error('SHOPEE_PILOT_GMV_MAX_CAMPAIGN_IDS requires one or more comma-separated campaign IDs in PILOT_GMV_MAX');
+  }
+
+  const campaignIds = values.map(value => Number(value));
+  if (campaignIds.some(value => !Number.isSafeInteger(value) || value <= 0)) {
+    throw new Error('SHOPEE_PILOT_GMV_MAX_CAMPAIGN_IDS must contain only positive safe integer campaign IDs');
+  }
+  return Array.from(new Set(campaignIds));
 }
 
 function assertPilotShopAllowed(shopId, env = process.env) {
@@ -81,6 +91,38 @@ function assertPilotCampaignAllowed(campaignId, env = process.env) {
   return config;
 }
 
+function assertPilotCampaignSetAllowed(campaignIds, env = process.env) {
+  const config = loadPilotGmvMaxConfig(env);
+  if (!config) return Array.from(new Set((campaignIds || []).map(Number).filter(Number.isSafeInteger)));
+
+  const normalized = Array.from(new Set((campaignIds || []).map(Number)));
+  const invalid = normalized.filter(campaignId =>
+    !Number.isSafeInteger(campaignId) || campaignId <= 0 || !config.campaignIds.includes(campaignId));
+  if (invalid.length) {
+    throw new Error(
+      `PILOT_GMV_MAX refuses campaign IDs outside SHOPEE_PILOT_GMV_MAX_CAMPAIGN_IDS: ${invalid.join(', ')}`,
+    );
+  }
+  return normalized;
+}
+
+function validatePilotProfileCampaignSeeds(profile, pilotConfig = loadPilotGmvMaxConfig()) {
+  if (!pilotConfig) return [];
+  const rawSeeds = profile && (profile.gmsCampaignSeedIds ?? profile.gms_campaign_seed_ids) || [];
+  if (!Array.isArray(rawSeeds)) {
+    throw new Error('PILOT_GMV_MAX profile gmsCampaignSeedIds must be an array of campaign IDs');
+  }
+  const seedIds = Array.from(new Set(rawSeeds.map(Number)));
+  const invalid = seedIds.filter(campaignId =>
+    !Number.isSafeInteger(campaignId) || campaignId <= 0 || !pilotConfig.campaignIds.includes(campaignId));
+  if (invalid.length) {
+    throw new Error(
+      `PILOT_GMV_MAX profile gmsCampaignSeedIds contains campaign IDs outside SHOPEE_PILOT_GMV_MAX_CAMPAIGN_IDS: ${invalid.join(', ')}`,
+    );
+  }
+  return seedIds;
+}
+
 module.exports = {
   PRODUCTION,
   OFFLINE_BASELINE,
@@ -93,6 +135,9 @@ module.exports = {
   assertOperationAllowed,
   assertOnlineOperationAllowed,
   loadPilotGmvMaxConfig,
+  resolvePilotCampaignAllowlist,
   assertPilotShopAllowed,
   assertPilotCampaignAllowed,
+  assertPilotCampaignSetAllowed,
+  validatePilotProfileCampaignSeeds,
 };

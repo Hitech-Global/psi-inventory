@@ -7,7 +7,7 @@ const {
   addDays,
   mergeCampaignIds,
 } = require('./sync-cycle-utils');
-const { isPilotGmvMax } = require('./deployment-mode');
+const { isPilotGmvMax, assertPilotCampaignSetAllowed } = require('./deployment-mode');
 
 function normalizeShopProfile(shop) {
   const shopId = Number(shop.shopId ?? shop.shop_id);
@@ -94,7 +94,7 @@ async function runShopSyncCycle({
 
   const knownGms = await runtime.queryRepository.listKnownGmsCampaignIds({ shopId });
   const gmsCampaignIds = pilot
-    ? Array.from(new Set(seededGmsCampaignIds.map(Number).filter(Number.isSafeInteger)))
+    ? assertPilotCampaignSetAllowed(seededGmsCampaignIds)
     : mergeCampaignIds(knownGms, seededGmsCampaignIds);
   const ads = runtime.roleClients.ADS;
   let adsToken = null;
