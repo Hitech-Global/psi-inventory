@@ -100,6 +100,7 @@ function buildAnalysisPackage({
   campaign,
   campaignDaily = [],
   itemDaily = [],
+  itemMetadata = new Map(),
   operations = [],
   startDate,
   endDate,
@@ -121,6 +122,8 @@ function buildAnalysisPackage({
     const itemAllocation = allocation.filter(row => row.itemId === id);
     return {
       itemId: id,
+      itemName: (itemMetadata.get && itemMetadata.get(id) || {}).itemName || null,
+      itemSku: (itemMetadata.get && itemMetadata.get(id) || {}).itemSku || null,
       ...p,
       gmvPerDirectOrder: safeDiv(p.directGmv, p.directOrders),
       consecutiveOrderDays: consecutiveOrderDays(rows, endDate),

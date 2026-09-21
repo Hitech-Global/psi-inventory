@@ -4,6 +4,7 @@ const { createAnalyticsPool } = require('../src/pg');
 const { APP_ENV, loadAppCredential, loadBootstrapToken, loadShopId } = require('../src/config');
 const { loadMasterKey } = require('../src/token-crypto');
 const { ShopeeTokenRepository } = require('../src/token-repository');
+const { rolesForDeploymentMode } = require('../src/deployment-mode');
 
 async function main() {
   if (process.env.SHOPEE_ANALYTICS_BOOTSTRAP_TOKENS !== 'YES') {
@@ -16,7 +17,7 @@ async function main() {
 
   try {
     const stored = [];
-    for (const role of Object.keys(APP_ENV)) {
+    for (const role of rolesForDeploymentMode()) {
       loadAppCredential(role, { requireToken: false });
       const token = loadBootstrapToken(role);
       await repository.save({

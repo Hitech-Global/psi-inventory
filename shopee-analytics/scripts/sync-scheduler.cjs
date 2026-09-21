@@ -4,7 +4,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const { schedulerConfig, dueJobs, utcKeys } = require('../src/scheduler-utils');
 const { createAnalyticsPool } = require('../src/pg');
-const { isOfflineBaseline } = require('../src/deployment-mode');
+const { isOfflineBaseline, isPilotGmvMax } = require('../src/deployment-mode');
 
 function runNodeScript(scriptName, args = [], envExtra = {}) {
   const script = path.join(__dirname, scriptName);
@@ -129,7 +129,7 @@ async function main() {
         completedAt: new Date().toISOString(),
       }));
       await processProductCardInbox();
-      if (job.mode === 'daily') await runDailySkillAnalysis();
+      if (job.mode === 'daily' && !isPilotGmvMax()) await runDailySkillAnalysis();
     } catch (error) {
       // Mark the slot as attempted so a persistent API error does not hot-loop every
       // 30 seconds. The next normal schedule slot will retry.

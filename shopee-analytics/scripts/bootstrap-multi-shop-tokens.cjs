@@ -5,6 +5,7 @@ const { createAnalyticsPool } = require('../src/pg');
 const { APP_ENV, loadAppCredential } = require('../src/config');
 const { loadMasterKey } = require('../src/token-crypto');
 const { ShopeeTokenRepository } = require('../src/token-repository');
+const { rolesForDeploymentMode, isPilotGmvMax, loadPilotGmvMaxConfig } = require('../src/deployment-mode');
 
 function loadBundleFile() {
   const file = process.env.SHOPEE_MULTI_SHOP_TOKEN_FILE;
@@ -40,11 +41,16 @@ async function main() {
   }
 
   // Validate app credentials without ever logging their values.
-  for (const role of Object.keys(APP_ENV)) {
+  const rolesForMode = rolesForDeploymentMode();
+  for (const role of rolesForMode) {
     loadAppCredential(role, { requireToken: false });
   }
 
   const { file, rows } = loadBundleFile();
+  const pilotConfig = loadPilotGmvMaxConfig();
+  if (isPilotGmvMax() && (rows.length !== 1 || Number(rows[0].shopId ?? rows[0].shop_id) !== pilotConfig.shopId)) {
+    throw new Error('PILOT_GMV_MAX token bootstrap requires exactly the configured pilot shop');
+  }
   const pool = createAnalyticsPool();
   const repository = new ShopeeTokenRepository({ pool, masterKey: loadMasterKey() });
 
@@ -58,7 +64,10 @@ async function main() {
         throw new Error('Every token row requires a positive shopId');
       }
       const roles = [];
-      for (const role of Object.keys(APP_ENV)) {
+      if (isPilotGmvMax() && Object.keys(row.tokens || {}).some(role => role !== 'ADS')) {
+        throw new Error('PILOT_GMV_MAX token bootstrap accepts ADS token only');
+      }
+      for (const role of rolesForMode) {
         if (!row.tokens || !row.tokens[role]) continue;
         const token = normalizeToken(row.tokens[role], role, shopId);
         await repository.save({

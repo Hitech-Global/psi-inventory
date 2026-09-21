@@ -6,7 +6,7 @@ const { createAnalyticsPool } = require('../src/pg');
 const { loadShopId } = require('../src/config');
 const { normalizeProductCardRows } = require('../src/product-card-normalizer');
 const { ShopeeProductCardRepository } = require('../src/product-card-repository');
-const { assertOnlineOperationAllowed } = require('../src/deployment-mode');
+const { assertOperationAllowed } = require('../src/deployment-mode');
 
 function required(name) {
   const value = process.env[name];
@@ -15,7 +15,7 @@ function required(name) {
 }
 
 async function main() {
-  assertOnlineOperationAllowed('Product Card direct import');
+  assertOperationAllowed('Product Card direct import', { allowPilot: false });
   if (process.env.SHOPEE_ANALYTICS_IMPORT_PRODUCT_CARD !== 'YES') {
     throw new Error('Refusing Product Card DB import. Set SHOPEE_ANALYTICS_IMPORT_PRODUCT_CARD=YES explicitly.');
   }

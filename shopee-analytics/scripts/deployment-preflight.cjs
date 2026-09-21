@@ -8,7 +8,7 @@ const { loadMasterKey } = require('../src/token-crypto');
 const { ShopeeShopProfileRepository } = require('../src/shop-profile-repository');
 const { ShopeeTokenRepository } = require('../src/token-repository');
 const { createConfiguredSkillProvider } = require('../src/openai-skill-provider');
-const { PRODUCTION, OFFLINE_BASELINE, resolveDeploymentMode } = require('../src/deployment-mode');
+const { PRODUCTION, OFFLINE_BASELINE, PILOT_GMV_MAX, resolveDeploymentMode, loadPilotGmvMaxConfig } = require('../src/deployment-mode');
 
 function result(name, ok, detail, severity = 'error') {
   return { name, ok, severity: ok ? 'info' : severity, detail };
@@ -52,6 +52,20 @@ async function main() {
     checks.push(result('deployment_mode', false, error.message));
   }
   const offlineBaseline = deploymentMode === OFFLINE_BASELINE;
+  const pilotGmvMax = deploymentMode === PILOT_GMV_MAX;
+  let pilotConfig = null;
+  if (pilotGmvMax) {
+    try {
+      pilotConfig = loadPilotGmvMaxConfig();
+      checks.push(result('pilot_gmv_max_configuration', true, {
+        shopId: pilotConfig.shopId,
+        brand: pilotConfig.brand,
+        campaignCount: pilotConfig.campaignIds.length,
+      }));
+    } catch (error) {
+      checks.push(result('pilot_gmv_max_configuration', false, error.message));
+    }
+  }
   if (offlineBaseline) {
     const errors = offlineBaselineConfigurationErrors();
     checks.push(result(
@@ -74,6 +88,14 @@ async function main() {
       true,
       'OFFLINE_BASELINE: Shopee sync entry points are disabled',
     ));
+  } else if (pilotGmvMax) {
+    try {
+      const credential = loadAppCredential('ADS', { requireToken: false });
+      checks.push(result('partner_ads', Boolean(credential.partnerId && credential.partnerKey), 'Partner ID/key configured'));
+    } catch (error) {
+      checks.push(result('partner_ads', false, error.message));
+    }
+    checks.push(result('pilot_role_scope', true, 'PILOT_GMV_MAX initializes ADS only'));
   } else {
     for (const role of Object.keys(APP_ENV)) {
       try {
@@ -126,7 +148,24 @@ async function main() {
     const tableCount = Number(schema.rows[0].count);
     checks.push(result('analytics_schema', tableCount >= 32, { tableCount, expectedMinimum: 32 }));
 
-    if (tableCount >= 32 && !offlineBaseline) {
+    if (tableCount >= 32 && pilotGmvMax) {
+      const profileRepo = new ShopeeShopProfileRepository({ pool });
+      const tokenRepo = new ShopeeTokenRepository({ pool, masterKey: loadMasterKey() });
+      const shops = await profileRepo.list({ activeOnly: true });
+      const shop = pilotConfig && shops.find(row => Number(row.shopId) === pilotConfig.shopId &&
+        String(row.countryCode || '').toUpperCase() === 'ID' &&
+        String(row.brandCode || '').trim().toUpperCase() === pilotConfig.brand.toUpperCase());
+      checks.push(result('pilot_shop_isolation', Boolean(shop), {
+        expectedShopId: pilotConfig && pilotConfig.shopId,
+        activeShopCount: shops.length,
+      }));
+      let adsToken = null;
+      if (shop) adsToken = await tokenRepo.load({ appRole: 'ADS', shopId: shop.shopId });
+      checks.push(result('encrypted_ads_token', Boolean(adsToken), {
+        shopId: shop && shop.shopId,
+        role: 'ADS',
+      }));
+    } else if (tableCount >= 32 && !offlineBaseline) {
       const profileRepo = new ShopeeShopProfileRepository({ pool });
       const tokenRepo = new ShopeeTokenRepository({
         pool,
@@ -160,6 +199,8 @@ async function main() {
   const inboxEnabled = process.env.SHOPEE_PRODUCT_CARD_INBOX_ENABLE === 'YES';
   if (offlineBaseline) {
     checks.push(result('product_card_inbox', !inboxEnabled, 'OFFLINE_BASELINE: Product Card import is disabled'));
+  } else if (pilotGmvMax) {
+    checks.push(result('product_card_inbox', !inboxEnabled, 'PILOT_GMV_MAX: Product Card import is disabled'));
   } else if (inboxEnabled) {
     const inbox = process.env.SHOPEE_PRODUCT_CARD_INBOX_DIR;
     checks.push(result(
@@ -189,6 +230,7 @@ async function main() {
     deploymentMode,
     readyForPilot: !offlineBaseline && blocking.length === 0 && warnings.length === 0,
     readyForBaseline: offlineBaseline && blocking.length === 0,
+    readyForGmvMaxPilot: pilotGmvMax && blocking.length === 0 && warnings.length === 0,
     blockingCount: blocking.length,
     warningCount: warnings.length,
     checks,
@@ -196,6 +238,8 @@ async function main() {
       ? 'FIX_BLOCKING_PREFLIGHT'
       : offlineBaseline
         ? 'OFFLINE_BASELINE_READY_NO_SYNC_OR_SKILL_RUNTIME'
+      : pilotGmvMax
+        ? 'RUN_ONE_GMV_MAX_PILOT_SHOP_SYNC'
       : warnings.length
         ? 'CONFIGURE_SHOPS_AND_TOKENS'
         : 'RUN_ONE_PILOT_SHOP_SYNC_AND_SELLER_CENTRE_RECONCILIATION',

@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const { parseInboxFileName, isProductCardFile } = require('../src/product-card-inbox');
-const { assertOnlineOperationAllowed } = require('../src/deployment-mode');
+const { assertOperationAllowed } = require('../src/deployment-mode');
 
 function required(name) {
   const value = process.env[name];
@@ -53,7 +53,7 @@ async function moveFile(source, targetDir) {
 }
 
 async function main() {
-  assertOnlineOperationAllowed('Product Card inbox processing');
+  assertOperationAllowed('Product Card inbox processing', { allowPilot: false });
   if (process.env.SHOPEE_PRODUCT_CARD_INBOX_ENABLE !== 'YES') {
     throw new Error(
       'Refusing Product Card inbox processing. Set SHOPEE_PRODUCT_CARD_INBOX_ENABLE=YES explicitly.',

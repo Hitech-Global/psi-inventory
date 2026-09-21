@@ -5,6 +5,7 @@ const path = require('path');
 const {
   PRODUCTION,
   OFFLINE_BASELINE,
+  PILOT_GMV_MAX,
   resolveDeploymentMode,
 } = require('./deployment-mode');
 
@@ -48,6 +49,13 @@ function validateDesktopEnv(env) {
       if (String(env[idName] || '').trim() || String(env[keyName] || '').trim()) {
         errors.push(`${idName} and ${keyName} must be empty in OFFLINE_BASELINE`);
       }
+    } else if (deploymentMode === PILOT_GMV_MAX) {
+      if (role === 'ADS') {
+        if (!isRealSecret(env[idName])) errors.push(`${idName} is missing`);
+        if (!isRealSecret(env[keyName])) errors.push(`${keyName} is missing`);
+      } else if (String(env[idName] || '').trim() || String(env[keyName] || '').trim()) {
+        errors.push(`${idName} and ${keyName} must be empty in PILOT_GMV_MAX`);
+      }
     } else {
       if (!isRealSecret(env[idName])) errors.push(`${idName} is missing`);
       if (!isRealSecret(env[keyName])) errors.push(`${keyName} is missing`);
@@ -78,6 +86,22 @@ function validateDesktopEnv(env) {
     }
     if (env.SHOPEE_PRODUCT_CARD_INBOX_ENABLE === 'YES') {
       errors.push('SHOPEE_PRODUCT_CARD_INBOX_ENABLE must not be YES in OFFLINE_BASELINE');
+    }
+  }
+
+  if (deploymentMode === PILOT_GMV_MAX) {
+    const shopId = Number(env.SHOPEE_PILOT_GMV_MAX_SHOP_ID);
+    if (!Number.isSafeInteger(shopId) || shopId <= 0) {
+      errors.push('SHOPEE_PILOT_GMV_MAX_SHOP_ID must be a positive safe integer');
+    }
+    if (!String(env.SHOPEE_PILOT_GMV_MAX_BRAND || '').trim()) {
+      errors.push('SHOPEE_PILOT_GMV_MAX_BRAND is missing');
+    }
+    const campaignIds = String(env.SHOPEE_PILOT_GMV_MAX_CAMPAIGN_IDS || '')
+      .split(',').map(value => Number(value.trim())).filter(Number.isSafeInteger);
+    if (!campaignIds.length) errors.push('SHOPEE_PILOT_GMV_MAX_CAMPAIGN_IDS requires one or more campaign IDs');
+    if (env.SHOPEE_PRODUCT_CARD_INBOX_ENABLE === 'YES') {
+      errors.push('SHOPEE_PRODUCT_CARD_INBOX_ENABLE must not be YES in PILOT_GMV_MAX');
     }
   }
 

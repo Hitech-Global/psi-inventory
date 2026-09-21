@@ -12,6 +12,7 @@ const { buildCampaignSkillPackage } = require('../src/skill-analysis-service');
   const queryRepository = {
     async listShops() { return [{ shopId:1, countryCode:'ID', brandCode:'REDRAGON', timezone:'Asia/Jakarta', currency:'IDR' }]; },
     async getLatestCampaignSetting() { return { targetRoas:7, campaignBudget:300000 }; },
+    async getCampaignItemNames() { return new Map([['7', { itemName:'Mouse', itemSku:'M-7' }]]); },
   };
   const strategyRepository = {
     async getShopStrategy() { return { adSpendRatioLimit:0.15 }; },
@@ -26,6 +27,8 @@ const { buildCampaignSkillPackage } = require('../src/skill-analysis-service');
   assert.strictEqual(pkg.campaign.adSpendRatioLimit, 0.15);
   assert.strictEqual(pkg.trigger.type, 'MANUAL');
   assert.strictEqual(pkg.operations.length, 1);
+  assert.strictEqual(pkg.items[0].itemName, 'Mouse');
+  assert.strictEqual(pkg.items[0].itemSku, 'M-7');
   assert.strictEqual(pkg.deterministicMetrics.campaign.directOrders7d, 2);
   console.log('shopee skill analysis service tests: ok');
 })().catch(error => {

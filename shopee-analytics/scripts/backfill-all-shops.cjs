@@ -6,6 +6,7 @@ const { ShopeeShopProfileRepository } = require('../src/shop-profile-repository'
 const { runBackfillShop } = require('../src/backfill-runner');
 const { parseSources, isoDate } = require('../src/backfill-utils');
 const { parseCampaignIds } = require('../src/sync-cycle-utils');
+const { assertOperationAllowed } = require('../src/deployment-mode');
 
 function parseIdFilter(value) {
   return new Set(
@@ -17,6 +18,7 @@ function parseIdFilter(value) {
 }
 
 async function main() {
+  assertOperationAllowed('Historical backfill', { allowPilot: false });
   if (process.env.SHOPEE_ANALYTICS_ENABLE_BACKFILL !== 'YES') {
     throw new Error(
       'Refusing historical backfill. Set SHOPEE_ANALYTICS_ENABLE_BACKFILL=YES explicitly.',

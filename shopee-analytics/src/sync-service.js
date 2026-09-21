@@ -80,20 +80,25 @@ class ShopeeSyncService {
     };
   }
 
-  async syncCampaignSettings({ eventDate = new Date().toISOString().slice(0, 10), adType = 'all' } = {}) {
+  async syncCampaignSettings({ eventDate = new Date().toISOString().slice(0, 10), adType = 'all', campaignIds: requestedCampaignIds = null } = {}) {
     const { client, accessToken } = await resolveRole(this.roleClients, 'ADS', this.shopId);
-    const list = await fetchCampaignIds({
-      client, shopId: this.shopId, accessToken, adType,
-    });
-    await recordPages({
-      repository: this.rawRepository,
-      appRole: 'ADS',
-      endpointKey: 'adsCampaignIds',
-      shopId: this.shopId,
-      pages: list.rawPages,
-    });
-
-    const campaignIds = list.rows.map(row => row.campaignId);
+    const suppliedIds = Array.isArray(requestedCampaignIds)
+      ? Array.from(new Set(requestedCampaignIds.map(Number).filter(Number.isSafeInteger)))
+      : null;
+    let campaignIds = suppliedIds;
+    if (!campaignIds) {
+      const list = await fetchCampaignIds({
+        client, shopId: this.shopId, accessToken, adType,
+      });
+      await recordPages({
+        repository: this.rawRepository,
+        appRole: 'ADS',
+        endpointKey: 'adsCampaignIds',
+        shopId: this.shopId,
+        pages: list.rawPages,
+      });
+      campaignIds = list.rows.map(row => row.campaignId);
+    }
     const settings = await fetchCampaignSettings({
       client, shopId: this.shopId, accessToken, campaignIds,
     });

@@ -15,7 +15,12 @@ const { ShopeeReturnRepository } = require('../src/return-repository');
 const { ShopeeShopBiRepository } = require('../src/shop-bi-repository');
 const { ShopeeSyncService } = require('../src/sync-service');
 const { syncGmsWindow } = require('../src/sync-window');
-const { assertOnlineOperationAllowed } = require('../src/deployment-mode');
+const {
+  assertOnlineOperationAllowed,
+  isPilotGmvMax,
+  assertPilotShopAllowed,
+  assertPilotCampaignAllowed,
+} = require('../src/deployment-mode');
 
 function required(name) {
   const value = process.env[name];
@@ -35,8 +40,14 @@ async function main() {
 
   const command = process.argv[2];
   if (!command) throw new Error('Usage: node sync-readonly.cjs <campaigns|products|promotions|orders|returns|shop-bi|roi|gms>');
+  if (isPilotGmvMax() && !new Set(['campaigns', 'products', 'orders', 'gms']).has(command)) {
+    throw new Error(`sync-readonly command ${command} is disabled in PILOT_GMV_MAX deployment mode.`);
+  }
 
   const shopId = loadShopId();
+  const pilotConfig = assertPilotShopAllowed(shopId);
+  const gmsCampaignId = command === 'gms' ? Number(required('SHOPEE_GMS_CAMPAIGN_ID')) : null;
+  if (command === 'gms') assertPilotCampaignAllowed(gmsCampaignId);
   const pool = createAnalyticsPool();
   const rawRepository = new ShopeeAnalyticsRepository({ pool });
   const tokenRepository = new ShopeeTokenRepository({ pool, masterKey: loadMasterKey() });
@@ -54,7 +65,7 @@ async function main() {
         repository: rawRepository,
         shopId,
         accessToken,
-        campaignId: Number(required('SHOPEE_GMS_CAMPAIGN_ID')),
+        campaignId: gmsCampaignId,
         startDate: required('SHOPEE_GMS_START_DATE'),
         endDate: required('SHOPEE_GMS_END_DATE'),
       });
@@ -94,7 +105,9 @@ async function main() {
     let result;
 
     if (command === 'campaigns') {
-      result = await service.syncCampaignSettings();
+      result = await service.syncCampaignSettings({
+        campaignIds: pilotConfig ? pilotConfig.campaignIds : null,
+      });
     } else if (command === 'products') {
       result = await service.syncProducts();
     } else if (command === 'promotions') {

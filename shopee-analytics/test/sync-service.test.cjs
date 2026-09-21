@@ -7,6 +7,7 @@ assert.throws(() => requireRole({}, 'ADS'), /Missing configured Shopee role clie
 
 const promotionWrites = [];
 const rawWrites = [];
+const campaignRequests = [];
 const roleClients = {
   STORE_OPS: {
     accessToken: 'token',
@@ -50,11 +51,38 @@ const service = new ShopeeSyncService({
   },
 });
 
+const campaignService = new ShopeeSyncService({
+  shopId: 1,
+  roleClients: {
+    ADS: {
+      accessToken: 'token',
+      client: {
+        async shopRequest(req) {
+          campaignRequests.push(req);
+          assert(req.path.includes('get_product_level_campaign_setting_info'));
+          assert.strictEqual(req.query.campaign_id_list, '2001,2002');
+          return { response: { campaign_list: [] } };
+        },
+      },
+    },
+  },
+  rawRepository: {
+    async insertRawSnapshot() {},
+  },
+  campaignRepository: {
+    async saveCampaignSettingsSnapshot() {},
+  },
+});
+
 (async () => {
   const result = await service.syncPromotions();
   assert.deepStrictEqual(result, { voucherCount: 1, discountCount: 1 });
   assert.strictEqual(promotionWrites.length, 2);
   assert(rawWrites.length >= 4);
+
+  const settings = await campaignService.syncCampaignSettings({ campaignIds: [2001, '2002', 2001] });
+  assert.deepStrictEqual(settings, { campaignCount: 2, settingsCount: 0 });
+  assert.strictEqual(campaignRequests.length, 1);
   console.log('shopee sync service tests: ok');
 })().catch(error => {
   console.error(error);

@@ -26,6 +26,11 @@ async function buildCampaignSkillPackage({
   const shop = shops.find(row => Number(row.shopId) === Number(shopId));
   if (!shop) throw new Error(`Shop ${shopId} is not configured`);
 
+  const itemIds = Array.from(new Set(itemDaily.map(row => Number(row.itemId ?? row.item_id)).filter(Number.isSafeInteger)));
+  const itemMetadata = typeof queryRepository.getCampaignItemNames === 'function'
+    ? await queryRepository.getCampaignItemNames({ shopId, itemIds })
+    : new Map();
+
   let strategy = {};
   if (strategyRepository) strategy = await strategyRepository.getShopStrategy(shopId);
 
@@ -45,6 +50,7 @@ async function buildCampaignSkillPackage({
     },
     campaignDaily,
     itemDaily,
+    itemMetadata,
     operations,
     startDate,
     endDate,

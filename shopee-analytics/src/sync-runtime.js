@@ -14,6 +14,7 @@ const { ShopeeReturnRepository } = require('./return-repository');
 const { ShopeeShopBiRepository } = require('./shop-bi-repository');
 const { ShopeeShopRepository } = require('./shop-repository');
 const { ShopeeQueryRepository } = require('./query-repository');
+const { rolesForDeploymentMode } = require('./deployment-mode');
 
 function createSyncRuntime({
   pool,
@@ -28,7 +29,7 @@ function createSyncRuntime({
     credentialLoader,
   });
   const roleClients = createRoleClients(
-    ['ADS', 'STORE_OPS', 'ERP', 'BRAND_PORTAL'],
+    rolesForDeploymentMode(),
     {
       ADS: { tokenManager },
       STORE_OPS: { tokenManager },

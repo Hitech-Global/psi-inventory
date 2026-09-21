@@ -7,6 +7,7 @@ const {
   addDays,
   mergeCampaignIds,
 } = require('./sync-cycle-utils');
+const { isPilotGmvMax } = require('./deployment-mode');
 
 function normalizeShopProfile(shop) {
   const shopId = Number(shop.shopId ?? shop.shop_id);
@@ -32,6 +33,7 @@ async function runShopSyncCycle({
   if (!['hourly', 'daily'].includes(mode)) throw new Error('mode must be hourly or daily');
 
   const profile = normalizeShopProfile(shop);
+  const pilot = isPilotGmvMax();
   const shopId = profile.shopId;
   const nowEpoch = Math.floor(now.getTime() / 1000);
   const today = localIsoDate(now, profile.timezone);
@@ -85,10 +87,15 @@ async function runShopSyncCycle({
     await run('shop-info', () => service.syncShopInfo());
   }
 
-  await run('campaign-settings', () => service.syncCampaignSettings({ eventDate: today }));
+  await run('campaign-settings', () => service.syncCampaignSettings({
+    eventDate: today,
+    campaignIds: pilot ? seededGmsCampaignIds : null,
+  }));
 
   const knownGms = await runtime.queryRepository.listKnownGmsCampaignIds({ shopId });
-  const gmsCampaignIds = mergeCampaignIds(knownGms, seededGmsCampaignIds);
+  const gmsCampaignIds = pilot
+    ? Array.from(new Set(seededGmsCampaignIds.map(Number).filter(Number.isSafeInteger)))
+    : mergeCampaignIds(knownGms, seededGmsCampaignIds);
   const ads = runtime.roleClients.ADS;
   let adsToken = null;
 
@@ -127,6 +134,15 @@ async function runShopSyncCycle({
       updateTimeFrom: nowEpoch - 3 * 86400,
       updateTimeTo: nowEpoch,
     }));
+
+    if (pilot) {
+      for (const name of ['promotions', 'returns', 'shop-bi-yesterday', 'recommended-roi']) {
+        summary.steps.push({ name, ok: true, required: false, skipped: 'PILOT_GMV_MAX_ADS_ONLY' });
+      }
+      summary.failedRequiredSteps = summary.steps.filter(step => step.required && step.ok === false).map(step => step.name);
+      summary.failedOptionalSteps = [];
+      return summary;
+    }
 
     await run('promotions', () => service.syncPromotions(), { required: false });
 

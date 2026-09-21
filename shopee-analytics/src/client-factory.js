@@ -2,8 +2,10 @@
 
 const { ShopeeClient } = require('./shopee-client');
 const { loadAppCredential } = require('./config');
+const { assertRoleAllowed } = require('./deployment-mode');
 
 function createRoleClient(role, options = {}) {
+  assertRoleAllowed(role);
   const credential = options.credential || loadAppCredential(role, { requireToken: !options.tokenManager });
   const client = new ShopeeClient({
     partnerId: credential.partnerId,
