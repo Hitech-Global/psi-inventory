@@ -153,9 +153,9 @@ async function main() {
        WHERE table_schema='public' AND table_name LIKE 'shopee_%'`,
     );
     const tableCount = Number(schema.rows[0].count);
-    checks.push(result('analytics_schema', tableCount >= 32, { tableCount, expectedMinimum: 32 }));
+    checks.push(result('analytics_schema', tableCount >= 33, { tableCount, expectedMinimum: 33 }));
 
-    if (tableCount >= 32 && pilotGmvMax) {
+    if (tableCount >= 33 && pilotGmvMax) {
       const profileRepo = new ShopeeShopProfileRepository({ pool });
       const tokenRepo = new ShopeeTokenRepository({ pool, masterKey: loadMasterKey() });
       const shops = await profileRepo.list({ activeOnly: true });
@@ -181,7 +181,7 @@ async function main() {
         shopId: shop && shop.shopId,
         role: 'ADS',
       }));
-    } else if (tableCount >= 32 && !offlineBaseline) {
+    } else if (tableCount >= 33 && !offlineBaseline) {
       const profileRepo = new ShopeeShopProfileRepository({ pool });
       const tokenRepo = new ShopeeTokenRepository({
         pool,

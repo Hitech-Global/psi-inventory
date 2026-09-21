@@ -69,6 +69,36 @@ class ShopeeAuthClient {
       },
     });
   }
+
+  buildAuthorizationUrl({ redirectUri, timestamp = Math.floor(Date.now() / 1000) }) {
+    const path = '/api/v2/shop/auth_partner';
+    if (!redirectUri) throw new Error('OAuth redirect URI is required');
+    const sign = signPublicRequest({
+      partnerId: this.partnerId,
+      partnerKey: this.partnerKey,
+      path,
+      timestamp,
+    });
+    const params = new URLSearchParams({
+      partner_id: this.partnerId,
+      timestamp: String(timestamp),
+      redirect: redirectUri,
+      sign,
+    });
+    return `${this.baseUrl}${path}?${params.toString()}`;
+  }
+
+  async exchangeAuthorizationCode({ code, shopId }) {
+    const path = '/api/v2/auth/token/get';
+    return this.publicPost({
+      path,
+      body: {
+        code: String(code || ''),
+        partner_id: Number(this.partnerId),
+        shop_id: Number(shopId),
+      },
+    });
+  }
 }
 
 module.exports = { signPublicRequest, ShopeeAuthClient };

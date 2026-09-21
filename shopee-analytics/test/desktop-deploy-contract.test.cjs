@@ -63,6 +63,8 @@ assert(
   envExample.includes('POSTGRES_PASSWORD=CHANGE_TO_A_LONG_RANDOM_PASSWORD'),
   'runtime env example must not contain a real database password',
 );
+assert(envExample.includes('SHOPEE_OAUTH_ENABLE=NO'), 'OAuth must default disabled');
+assert(envExample.includes('SHOPEE_OAUTH_LIVE_REDIRECT_URL='), 'OAuth live redirect config must be documented');
 assert(
   dockerIgnore.includes('shopee-analytics/deploy/desktop/runtime/'),
   'Docker build context must exclude desktop runtime secrets',

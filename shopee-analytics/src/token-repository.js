@@ -1,6 +1,7 @@
 'use strict';
 
 const { encryptTokenBundle, decryptTokenBundle } = require('./token-crypto');
+const { sanitizeForPersistence } = require('./oauth-security');
 
 class ShopeeTokenRepository {
   constructor({ pool, masterKey }) {
@@ -67,7 +68,7 @@ class ShopeeTokenRepository {
       `UPDATE shopee_app_tokens
        SET refresh_error=$3, updated_at=now()
        WHERE app_role=$1 AND shop_id=$2`,
-      [appRole, shopId, String(error && error.message || error).slice(0, 2000)],
+      [appRole, shopId, sanitizeForPersistence(error)],
     );
   }
 }

@@ -1,6 +1,7 @@
 'use strict';
 
 const { ShopeeAuthClient } = require('./auth-client');
+const { sanitizeForPersistence, safeError } = require('./oauth-security');
 
 class ShopeeTokenManager {
   constructor({
@@ -78,8 +79,9 @@ class ShopeeTokenManager {
       });
       return payload.access_token;
     } catch (error) {
-      await this.tokenRepository.markRefreshError({ appRole, shopId, error });
-      throw error;
+      const sanitized = safeError(error, 'SHOPEE_TOKEN_REFRESH_FAILED');
+      await this.tokenRepository.markRefreshError({ appRole, shopId, error: sanitizeForPersistence(sanitized) });
+      throw sanitized;
     }
   }
 }

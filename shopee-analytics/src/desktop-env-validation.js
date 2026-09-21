@@ -9,6 +9,7 @@ const {
   resolveDeploymentMode,
   resolvePilotCampaignAllowlist,
 } = require('./deployment-mode');
+const { loadLiveRedirectUrl, validateOAuthStateTtl } = require('./oauth-security');
 
 function isRealSecret(value) {
   const text = String(value || '').trim();
@@ -90,6 +91,14 @@ function validateDesktopEnv(env) {
     }
   }
 
+  const oauthEnabled = String(env.SHOPEE_OAUTH_ENABLE || 'NO').trim();
+  if (!['YES', 'NO'].includes(oauthEnabled)) {
+    errors.push('SHOPEE_OAUTH_ENABLE must be YES or NO');
+  }
+  if (oauthEnabled === 'YES' && deploymentMode !== PILOT_GMV_MAX) {
+    errors.push('SHOPEE_OAUTH_ENABLE may only be YES in PILOT_GMV_MAX');
+  }
+
   if (deploymentMode === PILOT_GMV_MAX) {
     const shopId = Number(env.SHOPEE_PILOT_GMV_MAX_SHOP_ID);
     if (!Number.isSafeInteger(shopId) || shopId <= 0) {
@@ -106,7 +115,12 @@ function validateDesktopEnv(env) {
     if (env.SHOPEE_PRODUCT_CARD_INBOX_ENABLE === 'YES') {
       errors.push('SHOPEE_PRODUCT_CARD_INBOX_ENABLE must not be YES in PILOT_GMV_MAX');
     }
+    if (oauthEnabled === 'YES') {
+      try { loadLiveRedirectUrl(env); } catch (error) { errors.push(error.message); }
+    }
   }
+
+  try { validateOAuthStateTtl(env); } catch (error) { errors.push(error.message); }
 
   if (!env.SHOPEE_BACKUP_LOCAL_DIR) warnings.push('SHOPEE_BACKUP_LOCAL_DIR not configured');
   if (!env.SHOPEE_NAS_BACKUP_DIR) warnings.push('SHOPEE_NAS_BACKUP_DIR not configured');

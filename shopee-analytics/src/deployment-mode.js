@@ -48,6 +48,15 @@ function assertOnlineOperationAllowed(operation, env = process.env) {
   assertOperationAllowed(operation, {}, env);
 }
 
+function assertPilotOAuthAllowed(env = process.env) {
+  const mode = resolveDeploymentMode(env);
+  if (mode !== PILOT_GMV_MAX || env.SHOPEE_OAUTH_ENABLE !== 'YES') {
+    throw new Error(`Shopee OAuth is disabled in ${mode} deployment mode.`);
+  }
+  assertRoleAllowed('ADS', env);
+  return loadPilotGmvMaxConfig(env);
+}
+
 function loadPilotGmvMaxConfig(env = process.env) {
   if (!isPilotGmvMax(env)) return null;
   const shopId = Number(env.SHOPEE_PILOT_GMV_MAX_SHOP_ID);
@@ -134,6 +143,7 @@ module.exports = {
   assertRoleAllowed,
   assertOperationAllowed,
   assertOnlineOperationAllowed,
+  assertPilotOAuthAllowed,
   loadPilotGmvMaxConfig,
   resolvePilotCampaignAllowlist,
   assertPilotShopAllowed,

@@ -455,6 +455,19 @@ CREATE TABLE IF NOT EXISTS shopee_sync_state (
   PRIMARY KEY (app_role, endpoint_key, shop_id)
 );
 
+CREATE TABLE IF NOT EXISTS shopee_oauth_states (
+  state_hash TEXT PRIMARY KEY,
+  app_role TEXT NOT NULL CHECK (app_role IN ('ADS')),
+  expected_shop_id BIGINT NOT NULL,
+  redirect_uri TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at TIMESTAMPTZ NOT NULL,
+  consumed_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_shopee_oauth_states_expiry
+  ON shopee_oauth_states(expires_at) WHERE consumed_at IS NULL;
+
 CREATE INDEX IF NOT EXISTS idx_shopee_ad_item_daily_campaign_date
   ON shopee_ad_item_daily(shop_id, campaign_id, event_date DESC);
 CREATE INDEX IF NOT EXISTS idx_shopee_orders_update_time

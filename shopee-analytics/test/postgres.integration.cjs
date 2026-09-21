@@ -14,6 +14,7 @@ const { Pool } = require('pg');
 const { ShopeeAnalyticsRepository } = require('../src/repository');
 const { ShopeeProductCardRepository } = require('../src/product-card-repository');
 const { ShopeeTokenRepository } = require('../src/token-repository');
+const { ShopeeOAuthStateRepository } = require('../src/oauth-state-repository');
 const { ShopeeQueryRepository } = require('../src/query-repository');
 const { ShopeeShopProfileRepository } = require('../src/shop-profile-repository');
 const { ShopeeShopRepository } = require('../src/shop-repository');
@@ -38,11 +39,13 @@ const { ShopeeStrategyRepository } = require('../src/strategy-repository');
       'shopee_ad_item_daily',
       'shopee_product_card_period',
       'shopee_app_tokens',
+      'shopee_oauth_states',
       'shopee_vouchers',
       'shopee_returns',
     ]) {
       assert(names.has(expected), `missing table ${expected}`);
     }
+    assert.strictEqual(names.size, 33, 'schema must expose exactly 33 shopee_* tables');
 
     const repository = new ShopeeAnalyticsRepository({ pool });
     await repository.saveGmsDay({
@@ -176,6 +179,26 @@ const { ShopeeStrategyRepository } = require('../src/strategy-repository');
     const decrypted = await tokenRepo.load({ appRole: 'ADS', shopId: 1 });
     assert.strictEqual(decrypted.accessToken, 'access-secret');
     assert.strictEqual(decrypted.refreshToken, 'refresh-secret');
+
+    const oauthStateRepo = new ShopeeOAuthStateRepository({ pool });
+    const rawState = 'raw-state-must-not-be-stored';
+    const stateHash = require('crypto').createHash('sha256').update(rawState).digest('hex');
+    const stateExpiresAt = new Date(Date.now() + 60_000);
+    await oauthStateRepo.create({
+      stateHash,
+      appRole: 'ADS',
+      expectedShopId: 1,
+      redirectUri: 'https://oauth.example.com/oauth/shopee/callback',
+      expiresAt: stateExpiresAt,
+    });
+    const rawStateRow = await pool.query('SELECT state_hash FROM shopee_oauth_states WHERE state_hash=$1', [stateHash]);
+    assert.strictEqual(rawStateRow.rows[0].state_hash, stateHash);
+    assert.notStrictEqual(rawStateRow.rows[0].state_hash, rawState);
+    const consumes = await Promise.all([
+      oauthStateRepo.consume({ stateHash, now: new Date() }),
+      oauthStateRepo.consume({ stateHash, now: new Date() }),
+    ]);
+    assert.strictEqual(consumes.filter(Boolean).length, 1, 'OAuth state must be atomically consumed once');
 
     const shopRepository = new ShopeeShopRepository({ pool });
     await shopRepository.upsert({
