@@ -5560,6 +5560,68 @@ function rpTh(label, help, cls, extra){
   }
   return '<th class="'+c+'" '+e+'>'+esc(label)+h+'</th>';
 }
+// 订单预测表格排序：纯前端 DOM 排序，不重新请求接口、不修改 snapshot / 预测口径。
+// 点击任意非选择/操作列的表头：默认 → 降序 → 升序 → 默认。
+var _rpTableSort=new WeakMap();
+function rpSortCellValue(td){
+  if(!td)return '';
+  var raw=(td.textContent||'').trim();
+  if(raw===''||raw==='-'||raw==='—'||raw==='未知')return null;
+  var normalized=raw.replace(/,/g,'').replace(/%$/,'');
+  if(/^[-+]?\\d+(?:\\.\\d+)?$/.test(normalized))return Number(normalized);
+  var date=Date.parse(raw);
+  if(/^\\d{4}[-/]\\d{1,2}[-/]\\d{1,2}/.test(raw)&&!isNaN(date))return date;
+  return raw.toLocaleLowerCase();
+}
+function rpCompareSortValue(a,b,dir){
+  if(a==null&&b==null)return 0;
+  if(a==null)return 1;
+  if(b==null)return -1;
+  var c=(typeof a==='number'&&typeof b==='number')?(a-b):String(a).localeCompare(String(b),undefined,{numeric:true,sensitivity:'base'});
+  return dir==='desc'?-c:c;
+}
+function rpApplyTableSort(table,colIndex,dir){
+  if(!table||!table.tBodies||!table.tBodies[0])return;
+  var tbody=table.tBodies[0];
+  var rows=Array.prototype.slice.call(tbody.querySelectorAll(':scope > tr'));
+  if(!rows.length)return;
+  rows.forEach(function(tr,i){if(tr.dataset.rpOriginalOrder==null)tr.dataset.rpOriginalOrder=String(i);});
+  rows.sort(function(a,b){
+    if(dir==='none')return Number(a.dataset.rpOriginalOrder)-Number(b.dataset.rpOriginalOrder);
+    var av=rpSortCellValue(a.children[colIndex]),bv=rpSortCellValue(b.children[colIndex]);
+    var c=rpCompareSortValue(av,bv,dir);
+    return c||Number(a.dataset.rpOriginalOrder)-Number(b.dataset.rpOriginalOrder);
+  });
+  rows.forEach(function(tr){tbody.appendChild(tr);});
+}
+function initRpTableSort(container){
+  if(!container)return;
+  var table=container.querySelector('.rp-monthly-table, .daily-table-wrap table');
+  if(!table||!table.tHead||!table.tHead.rows.length)return;
+  var head=table.tHead.rows[0];
+  Array.prototype.forEach.call(head.cells,function(th,idx){
+    if(th.querySelector('input,button,select')||th.classList.contains('rp-sort-ready'))return;
+    th.classList.add('rp-sort-ready');
+    th.style.cursor='pointer';
+    th.title=th.title||t('forecast.sort.hint','点击排序：降序 / 升序 / 默认');
+    var indicator=document.createElement('span');
+    indicator.className='rp-sort-indicator';
+    indicator.textContent='↕';
+    indicator.style.cssText='margin-left:4px;font-size:10px;color:#a0a7b0;vertical-align:1px;user-select:none';
+    th.appendChild(indicator);
+    th.addEventListener('click',function(e){
+      if(e.target.closest&&e.target.closest('.rp-th-help'))return;
+      var state=_rpTableSort.get(table)||{col:-1,dir:'none'};
+      var next=(state.col!==idx||state.dir==='none')?'desc':(state.dir==='desc'?'asc':'none');
+      _rpTableSort.set(table,{col:idx,dir:next});
+      Array.prototype.forEach.call(head.cells,function(h){var x=h.querySelector('.rp-sort-indicator');if(x){x.textContent='↕';x.style.color='#a0a7b0';}});
+      indicator.textContent=next==='desc'?'▼':(next==='asc'?'▲':'↕');
+      indicator.style.color=next==='none'?'#a0a7b0':'var(--primary,#1976d2)';
+      rpApplyTableSort(table,idx,next);
+    });
+  });
+}
+
 // 全局 tooltip：事件委托，hover/focus 显示，mouseout/blur/外部点击 关闭
 // 渲染到 body 下的 #global-tooltip，fixed 定位，避免被 table-container 裁剪
 var _rpTooltipEl=null;
@@ -7949,6 +8011,7 @@ async function loadRp(){
       applyChannelFreezeColumns('total', activeKeys, container);
       syncRpHeaderHeight(container);
       initRpTableDrag('total', container);
+      initRpTableSort(container);
       if(RP_PERF&&window._rpPerfP){ rpPerfSet(window._rpPerfP,'post_render_ms', Math.round((performance.now()-_rStart)*100)/100); }
     }
   }catch(e){showFlash(e.message,'danger')}
@@ -8941,6 +9004,7 @@ async function loadRpChannelMonthly(channel){
       applyChannelFreezeColumns(tabKey, activeKeys, container);
       syncRpHeaderHeight(container);
       initRpTableDrag(channel, container);
+      initRpTableSort(container);
       if(RP_PERF&&window._rpPerfP){ rpPerfSet(window._rpPerfP,'post_render_ms', Math.round((performance.now()-_rStart)*100)/100); }
     }
   }catch(e){showFlash(e.message,'danger')}
@@ -9828,6 +9892,7 @@ async function loadRpDaily(){
     if(rpCurrentViewKey()===myViewKey){
       rpShowView(myViewKey);
       syncRpDailyHeaderHeight(container);
+      initRpTableSort(container);
       if(RP_PERF&&window._rpPerfP){ rpPerfSet(window._rpPerfP,'post_render_ms', Math.round((performance.now()-_rStart)*100)/100); }
     }
   }catch(e){showFlash(e.message,'danger')}
