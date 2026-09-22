@@ -25,6 +25,18 @@ assert(
   compose.includes('"127.0.0.1:${SHOPEE_ANALYTICS_HOST_PORT:-3090}:3090"'),
   'analytics app must bind host port to loopback by default',
 );
+const oauthSection = compose.slice(
+  compose.indexOf('  oauth:'),
+  compose.indexOf('\n  worker:'),
+);
+assert(oauthSection.includes('command: ["node", "shopee-analytics/src/oauth-server.js"]'), 'desktop stack must expose a dedicated OAuth server');
+assert(
+  oauthSection.includes('"127.0.0.1:${SHOPEE_OAUTH_HOST_PORT:-3091}:3091"'),
+  'OAuth server must bind its host port to loopback',
+);
+assert(oauthSection.includes('SHOPEE_OAUTH_HOST: 0.0.0.0'), 'OAuth server must listen on the container interface only');
+assert(oauthSection.includes('SHOPEE_OAUTH_ALLOW_REMOTE: "YES"'), 'OAuth container must explicitly permit its isolated container bind');
+assert(oauthSection.includes("fetch('http://127.0.0.1:3091/health')"), 'OAuth server must have a localhost healthcheck');
 assert(
   compose.includes('SHOPEE_BACKUP_STATUS_FILE: /runtime/backup-status.json'),
   'backup status file must be visible to the app',
