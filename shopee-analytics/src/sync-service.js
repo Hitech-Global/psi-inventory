@@ -150,6 +150,18 @@ class ShopeeSyncService {
         .map(row => Number(row.campaignId))
         .filter(Number.isSafeInteger);
 
+      if (this.rawRepository && typeof this.rawRepository.upsertCampaign === 'function') {
+        for (const campaignId of campaignIds) {
+          await this.rawRepository.upsertCampaign({
+            shopId: this.shopId,
+            campaignId,
+            adType,
+            campaignTypeRaw: 'PRODUCT_AD',
+            campaignTypeNormalized: campaignFamilyForAdType(adType),
+          });
+        }
+      }
+
       const settings = await fetchCampaignSettings({
         client, shopId: this.shopId, accessToken, campaignIds,
       });

@@ -8,6 +8,8 @@ const { previousPeriod, diagnosePortfolio, diagnoseRow } = require('./portfolio-
 const { diagnoseStoreSkus } = require('./store-sku-diagnosis');
 const { localIsoDate, addDays } = require('./sync-cycle-utils');
 const { daysInclusive } = require('./backfill-utils');
+const { sumPerformance } = require('./metrics');
+const { productAdDiagnosis } = require('./product-ads-diagnosis');
 
 function positiveInt(value, name) {
   const n = Number(value);
@@ -397,6 +399,103 @@ function createShopeeAnalyticsRouter({
       const endDate = isoDate(req.query.end_date, 'end_date');
       const items = await queryRepository.listProductAdItems({ shopId, campaignId, endDate });
       res.json({ shopId, campaignId, endDate, items });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get('/product-ads/:campaignId/detail', async (req, res, next) => {
+    try {
+      const shopId = positiveInt(req.query.shop_id, 'shop_id');
+      const campaignId = positiveInt(req.params.campaignId, 'campaignId');
+      const startDate = isoDate(req.query.start_date, 'start_date');
+      const endDate = isoDate(req.query.end_date, 'end_date');
+      if (startDate > endDate) throw new Error('start_date must be <= end_date');
+      const adType = String(req.query.ad_type || '').toLowerCase();
+      if (!['manual', 'auto'].includes(adType)) throw new Error('ad_type must be manual or auto');
+
+      const campaigns = await queryRepository.listProductAdsOverview({ shopId, startDate, endDate, adType });
+      const campaign = campaigns.find(row => row.campaignId === campaignId);
+      if (!campaign) {
+        res.status(404).json({ error: 'PRODUCT_AD_NOT_FOUND', message: `Campaign ${campaignId} is not a ${adType} Product Ad` });
+        return;
+      }
+
+      const [latestSetting, items, daily, shopStrategy] = await Promise.all([
+        queryRepository.getLatestCampaignSetting({ shopId, campaignId }),
+        queryRepository.listProductAdItems({ shopId, campaignId, endDate }),
+        repository.loadCampaignDaily({ shopId, campaignId, startDate, endDate }),
+        strategyRepository && typeof strategyRepository.getShopStrategy === 'function'
+          ? strategyRepository.getShopStrategy(shopId)
+          : Promise.resolve({ weeklyOrderReference: 25 }),
+      ]);
+
+      let breakEvenRoas = 0;
+      let breakEvenByItem = {};
+      if (strategyRepository && typeof strategyRepository.getItemBreakEvenMap === 'function' && items.length) {
+        const map = await strategyRepository.getItemBreakEvenMap({
+          shopId,
+          itemIds: items.map(item => item.itemId),
+        });
+        breakEvenByItem = Object.fromEntries(
+          items.map(item => [String(item.itemId), Number(map.get(String(item.itemId)) || 0)]),
+        );
+        if (adType === 'manual' && items.length === 1) {
+          breakEvenRoas = breakEvenByItem[String(items[0].itemId)] || 0;
+        }
+      }
+
+      const raw = latestSetting && latestSetting.raw || {};
+      const autoInfo = Array.isArray(raw.auto_product_ads_info) ? raw.auto_product_ads_info : [];
+      const autoStatusMap = new Map(autoInfo.map(row => [String(row.item_id), row.status || null]));
+      const detailedItems = items.map(item => ({
+        ...item,
+        autoProductStatus: autoStatusMap.get(String(item.itemId)) || null,
+        breakEvenRoas: breakEvenByItem[String(item.itemId)] || 0,
+      }));
+
+      const performance = sumPerformance(daily);
+      const diagnosis = productAdDiagnosis({
+        performance,
+        days: daysInclusive(startDate, endDate),
+        targetRoas: latestSetting && latestSetting.targetRoas || campaign.targetRoas || 0,
+        breakEvenRoas,
+        weeklyOrderReference: Number(shopStrategy.weeklyOrderReference || 25),
+        adType,
+        itemCount: detailedItems.length,
+      });
+
+      res.json({
+        shopId,
+        campaignId,
+        adType,
+        startDate,
+        endDate,
+        campaign,
+        latestSetting: latestSetting ? {
+          status: latestSetting.status,
+          biddingMethod: latestSetting.biddingMethod,
+          campaignBudget: latestSetting.campaignBudget,
+          targetRoas: latestSetting.targetRoas,
+          observedAt: latestSetting.observedAt,
+          adName: raw.common_info && raw.common_info.ad_name || campaign.adName || null,
+          campaignPlacement: raw.common_info && raw.common_info.campaign_placement || campaign.campaignPlacement || null,
+          enhancedCpc: raw.manual_bidding_info && raw.manual_bidding_info.enhanced_cpc,
+          selectedKeywordCount: Array.isArray(raw.manual_bidding_info && raw.manual_bidding_info.selected_keywords)
+            ? raw.manual_bidding_info.selected_keywords.length
+            : 0,
+        } : null,
+        diagnosis,
+        items: detailedItems,
+        daily: daily.map(row => ({
+          eventDate: String(row.event_date).slice(0, 10),
+          performance: sumPerformance([row]),
+        })),
+        itemPerformanceAvailable: false,
+        itemPerformanceNote: adType === 'auto'
+          ? '当前接入的 Product Ads 日表现接口提供 Campaign 级数据；自动选品只展示真实 Membership/状态，不伪造 SKU 贡献。'
+          : null,
+      });
     } catch (error) {
       next(error);
     }

@@ -550,6 +550,8 @@ class ShopeeQueryRepository {
          s.bidding_method,
          s.campaign_budget,
          s.target_roas,
+         s.ad_name,
+         s.campaign_placement,
          s.observed_at AS setting_observed_at,
          COALESCE(SUM(d.impressions),0) AS impressions,
          COALESCE(SUM(d.clicks),0) AS clicks,
@@ -563,7 +565,10 @@ class ShopeeQueryRepository {
          MAX(d.event_date) AS latest_performance_date
        FROM shopee_ad_campaigns c
        LEFT JOIN LATERAL (
-         SELECT status, bidding_method, campaign_budget, target_roas, observed_at
+         SELECT
+           status,bidding_method,campaign_budget,target_roas,observed_at,
+           raw_json->'common_info'->>'ad_name' AS ad_name,
+           raw_json->'common_info'->>'campaign_placement' AS campaign_placement
          FROM shopee_ad_campaign_setting_history s0
          WHERE s0.shop_id=c.shop_id AND s0.campaign_id=c.campaign_id
          ORDER BY observed_at DESC
@@ -577,7 +582,7 @@ class ShopeeQueryRepository {
          AND ($4::text IS NULL OR c.campaign_type_normalized=$4)
        GROUP BY
          c.campaign_id,c.ad_type,c.campaign_type_raw,c.campaign_type_normalized,c.region,
-         s.status,s.bidding_method,s.campaign_budget,s.target_roas,s.observed_at
+         s.status,s.bidding_method,s.campaign_budget,s.target_roas,s.ad_name,s.campaign_placement,s.observed_at
        ORDER BY COALESCE(SUM(d.expense),0) DESC, c.campaign_id`,
       [shopId, startDate, endDate, campaignTypeNormalized],
     );
@@ -592,6 +597,8 @@ class ShopeeQueryRepository {
       biddingMethod: row.bidding_method,
       campaignBudget: row.campaign_budget === null ? null : Number(row.campaign_budget),
       targetRoas: row.target_roas === null ? null : Number(row.target_roas),
+      adName: row.ad_name,
+      campaignPlacement: row.campaign_placement,
       settingObservedAt: row.setting_observed_at,
       latestPerformanceDate: row.latest_performance_date,
       performance: normalizePerformance(row),

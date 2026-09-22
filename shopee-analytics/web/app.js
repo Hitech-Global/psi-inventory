@@ -690,7 +690,7 @@ function renderProductAds(data, shop) {
     ? rows.map(row => {
         const p = row.performance || {};
         const diagnosis = productAdDiagnosis(row);
-        return `<tr ${type === 'auto' ? `data-auto-campaign="${row.campaignId}"` : ''}>
+        return `<tr data-product-ad-campaign="${row.campaignId}" data-product-ad-type="${type}">
           <td><div class="campaign-name"><strong>#${row.campaignId}</strong><small>${escapeHtml(row.biddingMethod || row.adType || '')}</small></div></td>
           <td><span class="pill neutral" title="${escapeHtml(diagnosis)}">${escapeHtml(row.status || diagnosis)}</span></td>
           <td>${row.campaignBudget == null ? '—' : formatMoney(row.campaignBudget, shop.currency)}</td>
@@ -706,11 +706,10 @@ function renderProductAds(data, shop) {
       }).join('')
     : `<tr><td colspan="11" class="empty">当前周期没有${type === 'manual' ? '单品广告' : '全店广告'}数据。</td></tr>`;
 
-  if (type === 'auto') {
-    $$('[data-auto-campaign]').forEach(row => {
-      row.addEventListener('click', () => loadAutoAdItems(Number(row.dataset.autoCampaign)));
-    });
-  }
+  $$('[data-product-ad-campaign]').forEach(row => {
+    if (row.dataset.productAdType !== type) return;
+    row.addEventListener('click', () => loadProductAdDetail(type, Number(row.dataset.productAdCampaign)));
+  });
 }
 
 async function loadProductAds(type) {
@@ -727,21 +726,57 @@ async function loadProductAds(type) {
   renderProductAds(data, shop);
 }
 
-async function loadAutoAdItems(campaignId) {
+function renderProductAdDetail(data) {
+  const d = data.diagnosis || {};
+  const p = d.performance || {};
+  const setting = data.latestSetting || {};
+  const detailId = data.adType === 'manual' ? '#manualAdDetail' : '#autoAdDetail';
+  const itemLabel = data.adType === 'manual' ? '关联商品' : '当前自动选品';
+
+  $(detailId).innerHTML = `
+    <div class="product-ad-detail-head">
+      <div>
+        <div class="section-label">${data.adType === 'manual' ? 'MANUAL PRODUCT AD' : 'AUTO PRODUCT AD'}</div>
+        <h3>${escapeHtml(setting.adName || data.campaign.adName || ('Campaign #' + data.campaignId))}</h3>
+        <p>${escapeHtml(setting.campaignPlacement || data.campaign.campaignPlacement || 'placement 未返回')} · ${escapeHtml(setting.biddingMethod || data.campaign.biddingMethod || 'bidding 未返回')}</p>
+      </div>
+      <span class="pill neutral">${escapeHtml(d.primarySignal || '等待数据')}</span>
+    </div>
+    <div class="product-ad-detail-metrics">
+      ${metric('周等效订单', Number(d.weeklyEquivalentOrders || 0).toFixed(1), `门槛 ${num(d.weeklyOrderReference || 25)}`)}
+      ${metric('Broad ROAS', roas(p.broadRoas), d.targetRoas ? `Target ${roas(d.targetRoas)}` : '无Target')}
+      ${metric('CTR', pct(p.ctr), `${num(p.clicks)} clicks`)}
+      ${metric('Broad CVR', pct(p.broadCvr), `${num(p.broadOrders)} orders`)}
+      ${metric('广告花费', formatMoney(p.expense, selectedShop().currency), `${data.startDate} → ${data.endDate}`)}
+      ${metric(itemLabel, num(data.items.length), data.adType === 'auto' ? '仅真实Membership' : '不假设永远只有1个')}
+    </div>
+    <div class="product-ad-action"><strong>下一步</strong><span>${escapeHtml(d.action || '继续观察。')}</span></div>
+  `;
+
+  const items = data.items || [];
+  if (data.adType === 'auto') {
+    $('#autoAdItems').innerHTML = items.length
+      ? `<strong>当前自动选品范围 · ${num(items.length)} 个商品</strong>
+         <div class="product-ad-item-list">${items.map(item =>
+           `<span><b>${escapeHtml(item.itemName || ('Item #' + item.itemId))}</b><small>${escapeHtml(item.itemSku || String(item.itemId))} · ${escapeHtml(item.autoProductStatus || item.membershipState || 'ACTIVE')}</small></span>`
+         ).join('')}</div>
+         <div class="product-ad-note">${escapeHtml(data.itemPerformanceNote || '')}</div>`
+      : '<div class="empty-inline">当前没有可用的真实 Membership 快照；系统不会用广告表现反推自动选品。</div>';
+  }
+}
+
+async function loadProductAdDetail(type, campaignId) {
   const shop = selectedShop();
   if (!shop) return;
   const filters = currentFilters();
   const params = new URLSearchParams({
     shop_id: String(shop.shopId),
+    start_date: filters.startDate,
     end_date: filters.endDate,
+    ad_type: type,
   });
-  const data = await json(`/api/shopee-analytics/product-ads/${campaignId}/items?${params}`);
-  const items = data.items || [];
-  $('#autoAdItems').innerHTML = items.length
-    ? `<strong>当前自动选品范围 · ${num(items.length)} 个商品</strong><div class="product-ad-item-list">${items.map(item =>
-        `<span><b>${escapeHtml(item.itemName || ('Item #' + item.itemId))}</b><small>${escapeHtml(item.itemSku || String(item.itemId))}</small></span>`
-      ).join('')}</div>`
-    : '<div class="empty-inline">当前没有可用的真实 Membership 快照；系统不会用广告表现反推自动选品。</div>';
+  const data = await json(`/api/shopee-analytics/product-ads/${campaignId}/detail?${params}`);
+  renderProductAdDetail(data);
 }
 
 function metric(label, value, sub = '', cls = '') {

@@ -43,6 +43,8 @@ for (const required of [
   'adsAutoPanel',
   'autoAdRows',
   'autoAdItems',
+  'manualAdDetail',
+  'autoAdDetail',
   'maturityBox',
   'actionGateList',
   'systemStatus',
@@ -73,6 +75,8 @@ assert(html.includes('data-ads-type="gms"'), 'Ads view must expose GMV Max tab')
 assert(html.includes('data-ads-type="manual"'), 'Ads view must expose manual Product Ads tab');
 assert(html.includes('data-ads-type="auto"'), 'Ads view must expose auto Product Ads tab');
 assert(app.includes('/api/shopee-analytics/product-ads?'), 'frontend must query Product Ads read API');
+assert(app.includes('/detail?'), 'frontend must expose Product Ads campaign detail diagnostics');
+assert(app.includes('周等效订单'), 'Product Ads detail must follow order-volume-first diagnosis');
 assert(html.includes('<th>Confidence</th>'), 'SKU race must expose confidence');
 assert(html.includes('<th>内部A/B/C</th>'), 'SKU race must expose internal ABC stage');
 assert(html.includes('<th>放大资格</th>'), 'SKU race must expose scale eligibility');

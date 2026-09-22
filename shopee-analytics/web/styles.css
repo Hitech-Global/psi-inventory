@@ -116,3 +116,16 @@
 .product-ad-item-list small{font-size:9px;color:#86868b}
 @media(max-width:800px){.ads-type-tabs{width:100%;overflow:auto}.product-ad-item-list{grid-template-columns:1fr 1fr}}
 @media(max-width:560px){.product-ad-item-list{grid-template-columns:1fr}}
+
+.product-ads-table-wrap tbody tr[data-product-ad-campaign]{cursor:pointer}
+.product-ads-table-wrap tbody tr[data-product-ad-campaign]:hover{background:#f8fbff}
+.product-ad-detail{margin:12px 14px 14px}
+.product-ad-detail-head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start;margin-bottom:12px}
+.product-ad-detail-head h3{font-size:15px;margin:3px 0 4px}
+.product-ad-detail-head p{font-size:10px;color:#86868b;margin:0}
+.product-ad-detail-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.product-ad-action{margin-top:10px;border-top:1px solid #ececef;padding-top:10px;display:flex;gap:10px;align-items:flex-start;font-size:11px}
+.product-ad-action strong{white-space:nowrap}.product-ad-action span{color:#6e6e73;line-height:1.5}
+.product-ad-note{margin-top:9px;color:#86868b;font-size:9px;line-height:1.45}
+@media(max-width:900px){.product-ad-detail-metrics{grid-template-columns:1fr 1fr}}
+@media(max-width:560px){.product-ad-detail-metrics{grid-template-columns:1fr}}

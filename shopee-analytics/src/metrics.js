@@ -25,10 +25,10 @@ function normalizePerformance(row = {}) {
   const clicks = pickMetric(row, ['click', 'clicks']);
   const broadGmv = pickMetric(row, ['broad_gmv', 'broadGmv', 'gmv', 'sales']);
   const broadOrders = pickMetric(row, ['broad_order', 'broad_orders', 'broadOrders', 'orders']);
-  const broadUnits = pickMetric(row, ['broad_order_amount', 'broad_units', 'broadUnits', 'units']);
+  const broadUnits = pickMetric(row, ['broad_order_amount', 'broad_item_sold', 'broad_units', 'broadUnits', 'units']);
   const directGmv = pickMetric(row, ['direct_gmv', 'directGmv']);
   const directOrders = pickMetric(row, ['direct_order', 'direct_orders', 'directOrders']);
-  const directUnits = pickMetric(row, ['direct_order_amount', 'direct_units', 'directUnits']);
+  const directUnits = pickMetric(row, ['direct_order_amount', 'direct_item_sold', 'direct_units', 'directUnits']);
 
   return {
     impressions,
