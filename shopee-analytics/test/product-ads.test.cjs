@@ -8,7 +8,7 @@ const {
   fetchProductCampaignDailyPerformance,
 } = require('../src/sync-product-ads');
 
-assert.strictEqual(toShopeeAdsDate('2026-09-22'), '09-22-2026');
+assert.strictEqual(toShopeeAdsDate('2026-09-22'), '22-09-2026');
 assert.strictEqual(campaignFamilyForAdType('manual'), 'MANUAL_PRODUCT_AD');
 assert.strictEqual(campaignFamilyForAdType('auto'), 'AUTO_PRODUCT_AD');
 assert.throws(() => campaignFamilyForAdType('all'), /manual or auto/);
@@ -22,7 +22,7 @@ const sample = {
       campaign_placement: 'search',
       ad_name: 'Manual Product',
       metrics_list: [{
-        date: '09-22-2026',
+        date: '22-09-2026',
         impression: 1000,
         clicks: 50,
         expense: 100,
@@ -53,8 +53,8 @@ assert.strictEqual(rows[0].performance.directOrders, 7);
   assert.strictEqual(calls.length, 2);
   assert.strictEqual(calls[0].query.campaign_id_list.split(',').length, 100);
   assert.strictEqual(calls[1].query.campaign_id_list.split(',').length, 1);
-  assert.strictEqual(calls[0].query.start_date, '09-16-2026');
-  assert.strictEqual(calls[0].query.end_date, '09-22-2026');
+  assert.strictEqual(calls[0].query.start_date, '16-09-2026');
+  assert.strictEqual(calls[0].query.end_date, '22-09-2026');
   assert(calls.every(call => call.path.includes('get_product_campaign_daily_performance')));
   assert.strictEqual(result.rawPages.length, 2);
   console.log('shopee product ads tests: ok');

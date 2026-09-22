@@ -7,9 +7,9 @@ const { normalizePerformance } = require('./metrics');
 function toShopeeDate(input) {
   const d = input instanceof Date ? input : new Date(`${input}T00:00:00Z`);
   if (Number.isNaN(d.getTime())) throw new Error(`Invalid date: ${input}`);
-  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
   const dd = String(d.getUTCDate()).padStart(2, '0');
-  return `${mm}-${dd}-${d.getUTCFullYear()}`;
+  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+  return `${dd}-${mm}-${d.getUTCFullYear()}`;
 }
 
 function unwrapResponse(payload) {

@@ -8,15 +8,15 @@ function toShopeeAdsDate(value) {
   if (/^\d{2}-\d{2}-\d{4}$/.test(raw)) return raw;
   const d = value instanceof Date ? value : new Date(`${raw}T00:00:00Z`);
   if (Number.isNaN(d.getTime())) throw new Error(`Invalid date: ${value}`);
-  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
   const dd = String(d.getUTCDate()).padStart(2, '0');
-  return `${mm}-${dd}-${d.getUTCFullYear()}`;
+  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+  return `${dd}-${mm}-${d.getUTCFullYear()}`;
 }
 
 function toIsoDate(value) {
   const raw = String(value || '');
   const match = raw.match(/^(\d{2})-(\d{2})-(\d{4})$/);
-  if (match) return `${match[3]}-${match[1]}-${match[2]}`;
+  if (match) return `${match[3]}-${match[2]}-${match[1]}`;
   if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
   throw new Error(`Invalid Shopee Ads date: ${value}`);
 }

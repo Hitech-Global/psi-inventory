@@ -8,7 +8,7 @@ const {
 } = require('../src/sync-gms');
 const { buildShopeeSeaEventCalendar } = require('../src/event-calendar');
 
-assert.strictEqual(toShopeeDate('2026-09-18'), '09-18-2026');
+assert.strictEqual(toShopeeDate('2026-09-18'), '18-09-2026');
 const events = buildShopeeSeaEventCalendar(2026);
 assert(events.some(x => x.eventDate === '2026-09-09' && x.eventType === 'DOUBLE_DAY' && x.intensity === 'MAX'));
 assert(events.some(x => x.eventDate === '2026-09-25' && x.eventType === 'PAYDAY_25'));
