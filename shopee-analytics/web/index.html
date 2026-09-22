@@ -243,6 +243,13 @@
         <span>国家/品牌可以先筛选，再从“店铺”选择具体店铺。</span>
       </div>
 
+      <div class="ads-type-tabs" aria-label="广告类型">
+        <button class="ads-type-tab active" data-ads-type="gms" type="button">GMV Max</button>
+        <button class="ads-type-tab" data-ads-type="manual" type="button">单品广告</button>
+        <button class="ads-type-tab" data-ads-type="auto" type="button">全店广告</button>
+      </div>
+
+      <div id="adsGmsPanel">
       <section id="summary" class="kpi-grid hidden"></section>
 
       <main id="adsGrid" class="grid">
@@ -289,6 +296,46 @@
           </div>
         </section>
       </main>
+      </div>
+
+      <section id="adsManualPanel" class="panel hidden product-ads-panel">
+        <div class="panel-head">
+          <div>
+            <h2>单品广告</h2>
+            <p>Product Ads · manual。按 Campaign 看订单、ROAS、CTR/CVR 与花费，不套用广告组 SKU 赛马。</p>
+          </div>
+          <span id="manualAdCount" class="pill">0</span>
+        </div>
+        <div class="table-wrap product-ads-table-wrap">
+          <table>
+            <thead><tr>
+              <th>Campaign</th><th>状态</th><th>预算</th><th>订单</th><th>Direct订单</th>
+              <th>ROAS</th><th>Direct ROAS</th><th>CTR</th><th>CVR</th><th>花费</th><th>Target</th>
+            </tr></thead>
+            <tbody id="manualAdRows"><tr><td colspan="11" class="empty">选择店铺后读取单品广告。</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="adsAutoPanel" class="panel hidden product-ads-panel">
+        <div class="panel-head">
+          <div>
+            <h2>全店广告 <small>（自动商品广告）</small></h2>
+            <p>Product Ads · auto。先看整体订单量与 ROAS，再看真实自动选品范围；不会把它解释成手工广告组。</p>
+          </div>
+          <span id="autoAdCount" class="pill">0</span>
+        </div>
+        <div class="table-wrap product-ads-table-wrap">
+          <table>
+            <thead><tr>
+              <th>Campaign</th><th>状态</th><th>预算</th><th>订单</th><th>Direct订单</th>
+              <th>ROAS</th><th>Direct ROAS</th><th>CTR</th><th>CVR</th><th>花费</th><th>Target</th>
+            </tr></thead>
+            <tbody id="autoAdRows"><tr><td colspan="11" class="empty">选择店铺后读取全店广告。</td></tr></tbody>
+          </table>
+        </div>
+        <div id="autoAdItems" class="product-ad-items empty-inline">点击一个全店广告 Campaign 查看当前自动选品范围。</div>
+      </section>
     </section>
 
     <section id="view-status" class="view-section hidden">

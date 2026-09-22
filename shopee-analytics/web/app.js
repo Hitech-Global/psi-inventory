@@ -38,6 +38,7 @@ const state = {
   countries: [],
   brands: [],
   selectedCampaignId: null,
+  adsType: 'gms',
 };
 
 function moneyCompact(value) {
@@ -658,6 +659,91 @@ async function loadCampaigns() {
   renderCampaigns(data, shop);
 }
 
+function switchAdsType(type) {
+  if (!['gms', 'manual', 'auto'].includes(type)) return;
+  state.adsType = type;
+  $$('.ads-type-tab').forEach(button =>
+    button.classList.toggle('active', button.dataset.adsType === type)
+  );
+  $('#adsGmsPanel').classList.toggle('hidden', type !== 'gms');
+  $('#adsManualPanel').classList.toggle('hidden', type !== 'manual');
+  $('#adsAutoPanel').classList.toggle('hidden', type !== 'auto');
+  loadCurrentView();
+}
+
+function productAdDiagnosis(row) {
+  const p = row.performance || {};
+  if (!p.broadOrders && p.expense > 0) return '有花费无订单';
+  if (row.targetRoas && p.broadRoas < row.targetRoas) return '低于Target';
+  if (p.broadOrders >= 25) return '订单样本较充分';
+  return '继续积累样本';
+}
+
+function renderProductAds(data, shop) {
+  const type = data.adType;
+  const rows = data.campaigns || [];
+  const targetId = type === 'manual' ? '#manualAdRows' : '#autoAdRows';
+  const countId = type === 'manual' ? '#manualAdCount' : '#autoAdCount';
+  $(countId).textContent = `${num(rows.length)} 个`;
+
+  $(targetId).innerHTML = rows.length
+    ? rows.map(row => {
+        const p = row.performance || {};
+        const diagnosis = productAdDiagnosis(row);
+        return `<tr ${type === 'auto' ? `data-auto-campaign="${row.campaignId}"` : ''}>
+          <td><div class="campaign-name"><strong>#${row.campaignId}</strong><small>${escapeHtml(row.biddingMethod || row.adType || '')}</small></div></td>
+          <td><span class="pill neutral" title="${escapeHtml(diagnosis)}">${escapeHtml(row.status || diagnosis)}</span></td>
+          <td>${row.campaignBudget == null ? '—' : formatMoney(row.campaignBudget, shop.currency)}</td>
+          <td>${num(p.broadOrders)}</td>
+          <td>${num(p.directOrders)}</td>
+          <td>${roas(p.broadRoas)}</td>
+          <td>${roas(p.directRoas)}</td>
+          <td>${pct(p.ctr)}</td>
+          <td>${pct(p.broadCvr)}</td>
+          <td>${formatMoney(p.expense, shop.currency)}</td>
+          <td>${row.targetRoas == null ? '—' : roas(row.targetRoas)}</td>
+        </tr>`;
+      }).join('')
+    : `<tr><td colspan="11" class="empty">当前周期没有${type === 'manual' ? '单品广告' : '全店广告'}数据。</td></tr>`;
+
+  if (type === 'auto') {
+    $$('[data-auto-campaign]').forEach(row => {
+      row.addEventListener('click', () => loadAutoAdItems(Number(row.dataset.autoCampaign)));
+    });
+  }
+}
+
+async function loadProductAds(type) {
+  const shop = selectedShop();
+  if (!shop) return;
+  const filters = currentFilters();
+  const params = new URLSearchParams({
+    shop_id: String(shop.shopId),
+    start_date: filters.startDate,
+    end_date: filters.endDate,
+    ad_type: type,
+  });
+  const data = await json(`/api/shopee-analytics/product-ads?${params}`);
+  renderProductAds(data, shop);
+}
+
+async function loadAutoAdItems(campaignId) {
+  const shop = selectedShop();
+  if (!shop) return;
+  const filters = currentFilters();
+  const params = new URLSearchParams({
+    shop_id: String(shop.shopId),
+    end_date: filters.endDate,
+  });
+  const data = await json(`/api/shopee-analytics/product-ads/${campaignId}/items?${params}`);
+  const items = data.items || [];
+  $('#autoAdItems').innerHTML = items.length
+    ? `<strong>当前自动选品范围 · ${num(items.length)} 个商品</strong><div class="product-ad-item-list">${items.map(item =>
+        `<span><b>${escapeHtml(item.itemName || ('Item #' + item.itemId))}</b><small>${escapeHtml(item.itemSku || String(item.itemId))}</small></span>`
+      ).join('')}</div>`
+    : '<div class="empty-inline">当前没有可用的真实 Membership 快照；系统不会用广告表现反推自动选品。</div>';
+}
+
 function metric(label, value, sub = '', cls = '') {
   return `<div class="metric"><div class="label">${label}</div><div class="value ${cls}">${value}</div><div class="sub">${escapeHtml(sub)}</div></div>`;
 }
@@ -1176,7 +1262,10 @@ async function loadCurrentView() {
   try {
     if (state.view === 'overview') await loadPortfolio();
     else if (state.view === 'store' && selectedShop()) await loadStoreDetail();
-    else if (state.view === 'ads' && selectedShop()) await loadCampaigns();
+    else if (state.view === 'ads' && selectedShop()) {
+      if (state.adsType === 'gms') await loadCampaigns();
+      else await loadProductAds(state.adsType);
+    }
     else if (state.view === 'status') {
       if (selectedShop()) await loadSystemStatus();
       else await loadStatusPortfolio();
@@ -1186,8 +1275,9 @@ async function loadCurrentView() {
       $('#portfolioRows').innerHTML =
         `<tr><td colspan="14" class="empty">${escapeHtml(error.message)}</td></tr>`;
     } else if (state.view === 'ads') {
-      $('#campaignRows').innerHTML =
-        `<tr><td colspan="6" class="empty">${escapeHtml(error.message)}</td></tr>`;
+      const target = state.adsType === 'gms' ? '#campaignRows' : state.adsType === 'manual' ? '#manualAdRows' : '#autoAdRows';
+      const colspan = state.adsType === 'gms' ? 6 : 11;
+      $(target).innerHTML = `<tr><td colspan="${colspan}" class="empty">${escapeHtml(error.message)}</td></tr>`;
     } else {
       $('#statusSubtitle').textContent = error.message;
     }
@@ -1222,6 +1312,9 @@ async function init() {
 
 $$('.view-tab').forEach(button => {
   button.addEventListener('click', () => switchView(button.dataset.view));
+});
+$$('.ads-type-tab').forEach(button => {
+  button.addEventListener('click', () => switchAdsType(button.dataset.adsType));
 });
 $('#countryFilter').addEventListener('change', onDimensionChanged);
 $('#brandFilter').addEventListener('change', onDimensionChanged);

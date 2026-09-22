@@ -99,3 +99,20 @@
 .action-gates .section-label { margin: 4px 0 8px; }
 .action-card.gate-allowed { border-left: 3px solid currentColor; }
 .action-card.gate-blocked { opacity: .82; }
+
+
+.ads-type-tabs{display:flex;gap:6px;margin:0 0 14px;padding:4px;background:#f0f0f2;border-radius:11px;width:max-content;max-width:100%}
+.ads-type-tab{height:32px;padding:0 13px;border:0;border-radius:8px;background:transparent;color:#6e6e73;font-weight:700;cursor:pointer;white-space:nowrap}
+.ads-type-tab.active{background:#fff;color:#1d1d1f;box-shadow:0 1px 4px rgba(0,0,0,.08)}
+.product-ads-panel{margin-bottom:16px}
+.product-ads-panel h2 small{font-size:11px;color:#86868b;font-weight:600}
+.product-ads-table-wrap{max-height:620px}
+.product-ads-table-wrap tbody tr[data-auto-campaign]{cursor:pointer}
+.product-ads-table-wrap tbody tr[data-auto-campaign]:hover{background:#f8fbff}
+.product-ad-items{margin:12px 14px 14px}
+.product-ad-item-list{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:10px}
+.product-ad-item-list span{display:flex;flex-direction:column;gap:2px;border:1px solid #ececef;border-radius:10px;padding:9px;background:#fff}
+.product-ad-item-list b{font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.product-ad-item-list small{font-size:9px;color:#86868b}
+@media(max-width:800px){.ads-type-tabs{width:100%;overflow:auto}.product-ad-item-list{grid-template-columns:1fr 1fr}}
+@media(max-width:560px){.product-ad-item-list{grid-template-columns:1fr}}
