@@ -368,8 +368,35 @@ function createShopeeAnalyticsRouter({
       const startDate = isoDate(req.query.start_date, 'start_date');
       const endDate = isoDate(req.query.end_date, 'end_date');
       if (startDate > endDate) throw new Error('start_date must be <= end_date');
-      const campaigns = await queryRepository.listCampaignOverview({ shopId, startDate, endDate });
+      const campaigns = await queryRepository.listCampaignOverview({ shopId, startDate, endDate, campaignTypeNormalized: 'GMS' });
       res.json({ shopId, startDate, endDate, campaigns });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get('/product-ads', async (req, res, next) => {
+    try {
+      const shopId = positiveInt(req.query.shop_id, 'shop_id');
+      const startDate = isoDate(req.query.start_date, 'start_date');
+      const endDate = isoDate(req.query.end_date, 'end_date');
+      if (startDate > endDate) throw new Error('start_date must be <= end_date');
+      const adType = String(req.query.ad_type || '').toLowerCase();
+      if (!['manual', 'auto'].includes(adType)) throw new Error('ad_type must be manual or auto');
+      const campaigns = await queryRepository.listProductAdsOverview({ shopId, startDate, endDate, adType });
+      res.json({ shopId, startDate, endDate, adType, campaigns });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get('/product-ads/:campaignId/items', async (req, res, next) => {
+    try {
+      const shopId = positiveInt(req.query.shop_id, 'shop_id');
+      const campaignId = positiveInt(req.params.campaignId, 'campaignId');
+      const endDate = isoDate(req.query.end_date, 'end_date');
+      const items = await queryRepository.listProductAdItems({ shopId, campaignId, endDate });
+      res.json({ shopId, campaignId, endDate, items });
     } catch (error) {
       next(error);
     }

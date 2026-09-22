@@ -144,6 +144,12 @@ async function runShopSyncCycle({
       return summary;
     }
 
+    await run('product-ads-7d', () => service.syncProductAdsDaily({
+      startDate: addDays(today, -6),
+      endDate: today,
+      adTypes: ['manual', 'auto'],
+    }), { required: false });
+
     await run('promotions', () => service.syncPromotions(), { required: false });
 
     await run('returns', () => service.syncReturns({

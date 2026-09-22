@@ -1,6 +1,7 @@
 'use strict';
 
 const { fetchCampaignIds, fetchCampaignSettings } = require('./sync-campaigns');
+const { fetchProductCampaignDailyPerformance, campaignFamilyForAdType } = require('./sync-product-ads');
 const { fetchItemList, fetchItemBaseInfo, fetchModelList } = require('./sync-product');
 const { fetchRecommendedRoi } = require('./sync-roi');
 const { fetchAllVoucherDetails } = require('./sync-voucher');
@@ -118,6 +119,98 @@ class ShopeeSyncService {
       });
     }
     return { campaignCount: campaignIds.length, settingsCount: settings.rows.length };
+  }
+
+  async syncProductAdsDaily({
+    startDate,
+    endDate,
+    adTypes = ['manual', 'auto'],
+  } = {}) {
+    if (!startDate || !endDate) throw new Error('startDate and endDate are required');
+    const requestedTypes = Array.from(new Set((adTypes || []).map(value => String(value || '').toLowerCase())));
+    if (!requestedTypes.length || requestedTypes.some(value => !['manual', 'auto'].includes(value))) {
+      throw new Error('adTypes must contain manual and/or auto');
+    }
+
+    const { client, accessToken } = await resolveRole(this.roleClients, 'ADS', this.shopId);
+    const summary = { campaignCount: 0, dailyRowCount: 0, byType: {} };
+
+    for (const adType of requestedTypes) {
+      const list = await fetchCampaignIds({ client, shopId: this.shopId, accessToken, adType });
+      await recordPages({
+        repository: this.rawRepository,
+        appRole: 'ADS',
+        endpointKey: `adsCampaignIds:${adType}`,
+        shopId: this.shopId,
+        pages: list.rawPages,
+      });
+
+      const campaignIds = list.rows
+        .filter(row => String(row.adType || '').toLowerCase() === adType)
+        .map(row => Number(row.campaignId))
+        .filter(Number.isSafeInteger);
+
+      const settings = await fetchCampaignSettings({
+        client, shopId: this.shopId, accessToken, campaignIds,
+      });
+      await recordPages({
+        repository: this.rawRepository,
+        appRole: 'ADS',
+        endpointKey: `adsCampaignSettings:${adType}`,
+        shopId: this.shopId,
+        pages: settings.rawPages,
+      });
+      if (this.campaignRepository) {
+        await this.campaignRepository.saveCampaignSettingsSnapshot({
+          shopId: this.shopId,
+          eventDate: endDate,
+          settings: settings.rows,
+        });
+      }
+
+      const daily = await fetchProductCampaignDailyPerformance({
+        client,
+        shopId: this.shopId,
+        accessToken,
+        campaignIds,
+        startDate,
+        endDate,
+      });
+      await recordPages({
+        repository: this.rawRepository,
+        appRole: 'ADS',
+        endpointKey: `adsDailyPerformance:${adType}`,
+        shopId: this.shopId,
+        pages: daily.rawPages,
+      });
+
+      for (const row of daily.rows) {
+        if (!this.rawRepository) continue;
+        await this.rawRepository.upsertCampaign({
+          shopId: this.shopId,
+          campaignId: row.campaignId,
+          adType: row.adType,
+          campaignTypeRaw: 'PRODUCT_AD',
+          campaignTypeNormalized: campaignFamilyForAdType(row.adType),
+        });
+        await this.rawRepository.upsertCampaignDaily({
+          shopId: this.shopId,
+          campaignId: row.campaignId,
+          eventDate: row.eventDate,
+          performance: row.performance,
+          rawJson: row.raw,
+        });
+      }
+
+      summary.campaignCount += campaignIds.length;
+      summary.dailyRowCount += daily.rows.length;
+      summary.byType[adType] = {
+        campaignCount: campaignIds.length,
+        settingCount: settings.rows.length,
+        dailyRowCount: daily.rows.length,
+      };
+    }
+    return summary;
   }
 
   async syncProducts({

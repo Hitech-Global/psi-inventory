@@ -7,6 +7,7 @@ const ENDPOINTS = Object.freeze({
   adsGmsItemPerformance: { app: 'ADS', method: 'POST', path: '/api/v2/ads/get_gms_item_performance' },
   adsDailyPerformance: { app: 'ADS', method: 'GET', path: '/api/v2/ads/get_product_campaign_daily_performance' },
   adsHourlyPerformance: { app: 'ADS', method: 'GET', path: '/api/v2/ads/get_product_campaign_hourly_performance' },
+  adsAllCpcDailyPerformance: { app: 'ADS', method: 'GET', path: '/api/v2/ads/get_all_cpc_ads_daily_performance' },
   adsRecommendedRoi: { app: 'ADS', method: 'GET', path: '/api/v2/ads/get_product_recommended_roi_target' },
   adsDeletedGmsItems: { app: 'ADS', method: 'POST', path: '/api/v2/ads/list_gms_user_deleted_item' },
   products: { app: 'ADS', method: 'GET', path: '/api/v2/product/get_item_list' },

@@ -538,7 +538,7 @@ class ShopeeQueryRepository {
     });
   }
 
-  async listCampaignOverview({ shopId, startDate, endDate }) {
+  async listCampaignOverview({ shopId, startDate, endDate, campaignTypeNormalized = null }) {
     const result = await this.pool.query(
       `SELECT
          c.campaign_id,
@@ -574,11 +574,12 @@ class ShopeeQueryRepository {
         AND d.campaign_id=c.campaign_id
         AND d.event_date BETWEEN $2 AND $3
        WHERE c.shop_id=$1
+         AND ($4::text IS NULL OR c.campaign_type_normalized=$4)
        GROUP BY
          c.campaign_id,c.ad_type,c.campaign_type_raw,c.campaign_type_normalized,c.region,
          s.status,s.bidding_method,s.campaign_budget,s.target_roas,s.observed_at
        ORDER BY COALESCE(SUM(d.expense),0) DESC, c.campaign_id`,
-      [shopId, startDate, endDate],
+      [shopId, startDate, endDate, campaignTypeNormalized],
     );
 
     return result.rows.map(row => ({
@@ -594,6 +595,41 @@ class ShopeeQueryRepository {
       settingObservedAt: row.setting_observed_at,
       latestPerformanceDate: row.latest_performance_date,
       performance: normalizePerformance(row),
+    }));
+  }
+
+  async listProductAdsOverview({ shopId, startDate, endDate, adType }) {
+    const normalized = String(adType || '').toLowerCase();
+    if (!['manual', 'auto'].includes(normalized)) throw new Error('adType must be manual or auto');
+    return this.listCampaignOverview({
+      shopId,
+      startDate,
+      endDate,
+      campaignTypeNormalized: normalized === 'manual' ? 'MANUAL_PRODUCT_AD' : 'AUTO_PRODUCT_AD',
+    });
+  }
+
+  async listProductAdItems({ shopId, campaignId, endDate }) {
+    const result = await this.pool.query(
+      `WITH latest AS (
+         SELECT MAX(event_date) AS event_date
+         FROM shopee_ad_campaign_membership_daily
+         WHERE shop_id=$1 AND campaign_id=$2 AND event_date <= $3
+       )
+       SELECT m.item_id,p.item_name,p.item_sku,m.membership_state,m.event_date
+       FROM shopee_ad_campaign_membership_daily m
+       JOIN latest l ON l.event_date=m.event_date
+       LEFT JOIN shopee_products p ON p.shop_id=m.shop_id AND p.item_id=m.item_id
+       WHERE m.shop_id=$1 AND m.campaign_id=$2
+       ORDER BY m.item_id`,
+      [shopId, campaignId, endDate],
+    );
+    return result.rows.map(row => ({
+      itemId: Number(row.item_id),
+      itemName: row.item_name,
+      itemSku: row.item_sku,
+      membershipState: row.membership_state,
+      eventDate: row.event_date,
     }));
   }
 
