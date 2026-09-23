@@ -4,7 +4,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const { schedulerConfig, dueJobs, utcKeys } = require('../src/scheduler-utils');
 const { createAnalyticsPool } = require('../src/pg');
-const { isOfflineBaseline, isPilotGmvMax } = require('../src/deployment-mode');
+const { isOfflineBaseline, isPilotGmvMax, isPilotOAuthBootstrap } = require('../src/deployment-mode');
 
 function runNodeScript(scriptName, args = [], envExtra = {}) {
   const script = path.join(__dirname, scriptName);
@@ -49,8 +49,6 @@ async function runDailySkillAnalysis() {
   try {
     await runNodeScript('run-daily-skill-reports.cjs');
   } catch (error) {
-    // Skill execution must never turn a successful Shopee data sync into a failed
-    // sync slot. The report runner itself stays fail-closed and records no fake report.
     console.error(JSON.stringify({
       event: 'skill-daily-failure',
       failedAt: new Date().toISOString(),
@@ -59,7 +57,13 @@ async function runDailySkillAnalysis() {
   }
 }
 
-async function runOfflineBaselineWorker({ poolFactory = createAnalyticsPool, keepAlive = true } = {}) {
+async function runIdleWorker({
+  poolFactory = createAnalyticsPool,
+  keepAlive = true,
+  event,
+  deploymentMode,
+  detail,
+} = {}) {
   const pool = poolFactory();
   try {
     await pool.query('SELECT 1');
@@ -67,17 +71,12 @@ async function runOfflineBaselineWorker({ poolFactory = createAnalyticsPool, kee
     await pool.end();
   }
 
-  console.log(JSON.stringify({
-    event: 'offline-baseline-worker-idle',
-    deploymentMode: 'OFFLINE_BASELINE',
-    detail: 'PostgreSQL reachable; sync scheduler, Product Card import, and Skill reports are disabled.',
-  }));
-
+  console.log(JSON.stringify({ event, deploymentMode, detail }));
   if (!keepAlive) return;
 
   const timer = setInterval(() => {}, 60_000);
   const stop = signal => {
-    console.log(JSON.stringify({ event: 'offline-baseline-worker-stop', signal }));
+    console.log(JSON.stringify({ event: `${event}-stop`, signal }));
     clearInterval(timer);
     process.exit(0);
   };
@@ -85,9 +84,31 @@ async function runOfflineBaselineWorker({ poolFactory = createAnalyticsPool, kee
   process.on('SIGINT', () => stop('SIGINT'));
 }
 
+async function runOfflineBaselineWorker(options = {}) {
+  return runIdleWorker({
+    ...options,
+    event: 'offline-baseline-worker-idle',
+    deploymentMode: 'OFFLINE_BASELINE',
+    detail: 'PostgreSQL reachable; sync scheduler, Product Card import, and Skill reports are disabled.',
+  });
+}
+
+async function runPilotOAuthBootstrapWorker(options = {}) {
+  return runIdleWorker({
+    ...options,
+    event: 'pilot-oauth-bootstrap-worker-idle',
+    deploymentMode: 'PILOT_GMV_MAX',
+    detail: 'OAuth bootstrap enabled; recurring Shopee sync, Product Card import, and Skill reports remain disabled until a GMV Max campaign allowlist is configured.',
+  });
+}
+
 async function main() {
   if (isOfflineBaseline()) {
     await runOfflineBaselineWorker();
+    return;
+  }
+  if (isPilotOAuthBootstrap()) {
+    await runPilotOAuthBootstrapWorker();
     return;
   }
 
@@ -131,8 +152,6 @@ async function main() {
       await processProductCardInbox();
       if (job.mode === 'daily' && !isPilotGmvMax()) await runDailySkillAnalysis();
     } catch (error) {
-      // Mark the slot as attempted so a persistent API error does not hot-loop every
-      // 30 seconds. The next normal schedule slot will retry.
       if (job.mode === 'daily') state.lastDailyDate = job.key;
       else state.lastHourlyKey = job.key;
       console.error(JSON.stringify({
@@ -178,4 +197,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { main, runOfflineBaselineWorker };
+module.exports = { main, runOfflineBaselineWorker, runPilotOAuthBootstrapWorker };

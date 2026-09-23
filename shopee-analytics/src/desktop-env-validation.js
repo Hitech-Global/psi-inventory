@@ -107,11 +107,14 @@ function validateDesktopEnv(env) {
     if (!String(env.SHOPEE_PILOT_GMV_MAX_BRAND || '').trim()) {
       errors.push('SHOPEE_PILOT_GMV_MAX_BRAND is missing');
     }
-    try {
-      resolvePilotCampaignAllowlist(env);
-    } catch (error) {
-      errors.push(error.message);
+
+    const campaignRaw = String(env.SHOPEE_PILOT_GMV_MAX_CAMPAIGN_IDS || '').trim();
+    if (campaignRaw) {
+      try { resolvePilotCampaignAllowlist(env); } catch (error) { errors.push(error.message); }
+    } else if (oauthEnabled !== 'YES') {
+      errors.push('SHOPEE_PILOT_GMV_MAX_CAMPAIGN_IDS requires one or more comma-separated campaign IDs in PILOT_GMV_MAX');
     }
+
     if (env.SHOPEE_PRODUCT_CARD_INBOX_ENABLE === 'YES') {
       errors.push('SHOPEE_PRODUCT_CARD_INBOX_ENABLE must not be YES in PILOT_GMV_MAX');
     }

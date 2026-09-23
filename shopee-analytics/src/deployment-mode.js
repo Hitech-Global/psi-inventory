@@ -48,16 +48,7 @@ function assertOnlineOperationAllowed(operation, env = process.env) {
   assertOperationAllowed(operation, {}, env);
 }
 
-function assertPilotOAuthAllowed(env = process.env) {
-  const mode = resolveDeploymentMode(env);
-  if (mode !== PILOT_GMV_MAX || env.SHOPEE_OAUTH_ENABLE !== 'YES') {
-    throw new Error(`Shopee OAuth is disabled in ${mode} deployment mode.`);
-  }
-  assertRoleAllowed('ADS', env);
-  return loadPilotGmvMaxConfig(env);
-}
-
-function loadPilotGmvMaxConfig(env = process.env) {
+function loadPilotIdentityConfig(env = process.env) {
   if (!isPilotGmvMax(env)) return null;
   const shopId = Number(env.SHOPEE_PILOT_GMV_MAX_SHOP_ID);
   if (!Number.isSafeInteger(shopId) || shopId <= 0) {
@@ -65,8 +56,29 @@ function loadPilotGmvMaxConfig(env = process.env) {
   }
   const brand = String(env.SHOPEE_PILOT_GMV_MAX_BRAND || '').trim();
   if (!brand) throw new Error('SHOPEE_PILOT_GMV_MAX_BRAND is required in PILOT_GMV_MAX');
+  return { shopId, brand };
+}
+
+function isPilotOAuthBootstrap(env = process.env) {
+  return isPilotGmvMax(env) &&
+    env.SHOPEE_OAUTH_ENABLE === 'YES' &&
+    !String(env.SHOPEE_PILOT_GMV_MAX_CAMPAIGN_IDS || '').trim();
+}
+
+function assertPilotOAuthAllowed(env = process.env) {
+  const mode = resolveDeploymentMode(env);
+  if (mode !== PILOT_GMV_MAX || env.SHOPEE_OAUTH_ENABLE !== 'YES') {
+    throw new Error(`Shopee OAuth is disabled in ${mode} deployment mode.`);
+  }
+  assertRoleAllowed('ADS', env);
+  return loadPilotIdentityConfig(env);
+}
+
+function loadPilotGmvMaxConfig(env = process.env) {
+  const identity = loadPilotIdentityConfig(env);
+  if (!identity) return null;
   const campaignIds = resolvePilotCampaignAllowlist(env);
-  return { shopId, brand, campaignIds };
+  return { ...identity, campaignIds };
 }
 
 function resolvePilotCampaignAllowlist(env = process.env) {
@@ -139,11 +151,13 @@ module.exports = {
   resolveDeploymentMode,
   isOfflineBaseline,
   isPilotGmvMax,
+  isPilotOAuthBootstrap,
   rolesForDeploymentMode,
   assertRoleAllowed,
   assertOperationAllowed,
   assertOnlineOperationAllowed,
   assertPilotOAuthAllowed,
+  loadPilotIdentityConfig,
   loadPilotGmvMaxConfig,
   resolvePilotCampaignAllowlist,
   assertPilotShopAllowed,
