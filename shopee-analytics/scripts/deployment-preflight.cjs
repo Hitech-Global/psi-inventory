@@ -13,9 +13,12 @@ const {
   OFFLINE_BASELINE,
   PILOT_GMV_MAX,
   resolveDeploymentMode,
+  isPilotOAuthBootstrap,
+  loadPilotIdentityConfig,
   loadPilotGmvMaxConfig,
   validatePilotProfileCampaignSeeds,
 } = require('../src/deployment-mode');
+const { loadLiveRedirectUrl, validateOAuthStateTtl } = require('../src/oauth-security');
 
 function result(name, ok, detail, severity = 'error') {
   return { name, ok, severity: ok ? 'info' : severity, detail };
@@ -48,6 +51,49 @@ function offlineBaselineConfigurationErrors(env = process.env) {
   return errors;
 }
 
+function evaluatePilotPreflightStage(
+  env = process.env,
+  { adsCredentialProvider = () => loadAppCredential('ADS', { requireToken: false }) } = {},
+) {
+  if (resolveDeploymentMode(env) !== PILOT_GMV_MAX) return null;
+
+  if (!isPilotOAuthBootstrap(env)) {
+    return {
+      stage: 'GMV_MAX_READY',
+      pilotConfig: loadPilotGmvMaxConfig(env),
+      requiresProfileAndToken: true,
+    };
+  }
+
+  const identity = loadPilotIdentityConfig(env);
+  if (env.SHOPEE_SYNC_RUN_ON_START === 'YES') {
+    throw new Error('SHOPEE_SYNC_RUN_ON_START must not be YES in PILOT_OAUTH_BOOTSTRAP');
+  }
+  if (env.SHOPEE_PRODUCT_CARD_INBOX_ENABLE === 'YES') {
+    throw new Error('SHOPEE_PRODUCT_CARD_INBOX_ENABLE must not be YES in PILOT_OAUTH_BOOTSTRAP');
+  }
+  loadLiveRedirectUrl(env);
+  validateOAuthStateTtl(env);
+
+  const credential = adsCredentialProvider(env);
+  if (!credential || !credential.partnerId || !credential.partnerKey) {
+    throw new Error('SHOPEE_ADS_PARTNER_ID and SHOPEE_ADS_PARTNER_KEY are required in PILOT_OAUTH_BOOTSTRAP');
+  }
+
+  return {
+    stage: 'OAUTH_BOOTSTRAP',
+    pilotConfig: identity,
+    requiresProfileAndToken: false,
+    detail: {
+      shopId: identity.shopId,
+      brand: identity.brand,
+      campaignAllowlistBlank: true,
+      oauthEnabled: true,
+      recurringSyncDisabled: true,
+    },
+  };
+}
+
 async function main() {
   const checks = [];
   let pool;
@@ -61,16 +107,26 @@ async function main() {
   const offlineBaseline = deploymentMode === OFFLINE_BASELINE;
   const pilotGmvMax = deploymentMode === PILOT_GMV_MAX;
   let pilotConfig = null;
+  let pilotStage = null;
   if (pilotGmvMax) {
     try {
-      pilotConfig = loadPilotGmvMaxConfig();
-      checks.push(result('pilot_gmv_max_configuration', true, {
-        shopId: pilotConfig.shopId,
-        brand: pilotConfig.brand,
-        campaignCount: pilotConfig.campaignIds.length,
-      }));
+      pilotStage = evaluatePilotPreflightStage();
+      pilotConfig = pilotStage.pilotConfig;
+      if (pilotStage.stage === 'OAUTH_BOOTSTRAP') {
+        checks.push(result('pilot_oauth_bootstrap', true, pilotStage.detail));
+      } else {
+        checks.push(result('pilot_gmv_max_configuration', true, {
+          shopId: pilotConfig.shopId,
+          brand: pilotConfig.brand,
+          campaignCount: pilotConfig.campaignIds.length,
+        }));
+      }
     } catch (error) {
-      checks.push(result('pilot_gmv_max_configuration', false, error.message));
+      checks.push(result(
+        isPilotOAuthBootstrap() ? 'pilot_oauth_bootstrap' : 'pilot_gmv_max_configuration',
+        false,
+        error.message,
+      ));
     }
   }
   if (offlineBaseline) {
@@ -96,11 +152,13 @@ async function main() {
       'OFFLINE_BASELINE: Shopee sync entry points are disabled',
     ));
   } else if (pilotGmvMax) {
-    try {
-      const credential = loadAppCredential('ADS', { requireToken: false });
-      checks.push(result('partner_ads', Boolean(credential.partnerId && credential.partnerKey), 'Partner ID/key configured'));
-    } catch (error) {
-      checks.push(result('partner_ads', false, error.message));
+    if (!pilotStage || pilotStage.stage !== 'OAUTH_BOOTSTRAP') {
+      try {
+        const credential = loadAppCredential('ADS', { requireToken: false });
+        checks.push(result('partner_ads', Boolean(credential.partnerId && credential.partnerKey), 'Partner ID/key configured'));
+      } catch (error) {
+        checks.push(result('partner_ads', false, error.message));
+      }
     }
     checks.push(result('pilot_role_scope', true, 'PILOT_GMV_MAX initializes ADS only'));
   } else {
@@ -155,7 +213,7 @@ async function main() {
     const tableCount = Number(schema.rows[0].count);
     checks.push(result('analytics_schema', tableCount >= 33, { tableCount, expectedMinimum: 33 }));
 
-    if (tableCount >= 33 && pilotGmvMax) {
+    if (tableCount >= 33 && pilotGmvMax && pilotStage && pilotStage.requiresProfileAndToken) {
       const profileRepo = new ShopeeShopProfileRepository({ pool });
       const tokenRepo = new ShopeeTokenRepository({ pool, masterKey: loadMasterKey() });
       const shops = await profileRepo.list({ activeOnly: true });
@@ -181,6 +239,17 @@ async function main() {
         shopId: shop && shop.shopId,
         role: 'ADS',
       }));
+    } else if (tableCount >= 33 && pilotGmvMax && pilotStage && !pilotStage.requiresProfileAndToken) {
+      const profileRepo = new ShopeeShopProfileRepository({ pool });
+      const tokenRepo = new ShopeeTokenRepository({ pool, masterKey: loadMasterKey() });
+      const shops = await profileRepo.list({ activeOnly: true });
+      const shop = shops.find(row => Number(row.shopId) === pilotConfig.shopId);
+      const adsToken = await tokenRepo.load({ appRole: 'ADS', shopId: pilotConfig.shopId });
+      checks.push(result('pilot_oauth_bootstrap_state', true, {
+        activeShopCount: shops.length,
+        configuredShopProfile: Boolean(shop),
+        adsTokenPresent: Boolean(adsToken),
+      }, 'info'));
     } else if (tableCount >= 33 && !offlineBaseline) {
       const profileRepo = new ShopeeShopProfileRepository({ pool });
       const tokenRepo = new ShopeeTokenRepository({
@@ -241,12 +310,14 @@ async function main() {
 
   const blocking = checks.filter(row => !row.ok && row.severity === 'error');
   const warnings = checks.filter(row => !row.ok && row.severity === 'warning');
+  const oauthBootstrap = Boolean(pilotStage && pilotStage.stage === 'OAUTH_BOOTSTRAP');
   const report = {
     generatedAt: new Date().toISOString(),
     deploymentMode,
-    readyForPilot: !offlineBaseline && blocking.length === 0 && warnings.length === 0,
+    readyForPilot: !offlineBaseline && !oauthBootstrap && blocking.length === 0 && warnings.length === 0,
+    readyForOAuthBootstrap: oauthBootstrap && blocking.length === 0 && warnings.length === 0,
     readyForBaseline: offlineBaseline && blocking.length === 0,
-    readyForGmvMaxPilot: pilotGmvMax && blocking.length === 0 && warnings.length === 0,
+    readyForGmvMaxPilot: pilotGmvMax && !oauthBootstrap && blocking.length === 0 && warnings.length === 0,
     blockingCount: blocking.length,
     warningCount: warnings.length,
     checks,
@@ -254,7 +325,9 @@ async function main() {
       ? 'FIX_BLOCKING_PREFLIGHT'
       : offlineBaseline
         ? 'OFFLINE_BASELINE_READY_NO_SYNC_OR_SKILL_RUNTIME'
-      : pilotGmvMax
+        : oauthBootstrap
+          ? 'PILOT_OAUTH_BOOTSTRAP_READY'
+        : pilotGmvMax
         ? 'RUN_ONE_GMV_MAX_PILOT_SHOP_SYNC'
       : warnings.length
         ? 'CONFIGURE_SHOPS_AND_TOKENS'
@@ -266,9 +339,11 @@ async function main() {
   else if (warnings.length) process.exitCode = 1;
 }
 
-main().catch(error => {
-  console.error(error.stack || error.message);
-  process.exitCode = 2;
-});
+if (require.main === module) {
+  main().catch(error => {
+    console.error(error.stack || error.message);
+    process.exitCode = 2;
+  });
+}
 
-module.exports = { offlineBaselineConfigurationErrors };
+module.exports = { offlineBaselineConfigurationErrors, evaluatePilotPreflightStage, main };
