@@ -53,7 +53,7 @@ class MemoryStateRepository {
   }
 }
 
-function createService({ env = pilotEnv, response, now = () => fixedNow, stateRepository = new MemoryStateRepository() } = {}) {
+function createService({ env = pilotEnv, response, now = () => fixedNow, stateRepository = new MemoryStateRepository(), logger = console } = {}) {
   const saved = [];
   let fetchCalls = 0;
   const service = new ShopeeOAuthService({
@@ -63,6 +63,7 @@ function createService({ env = pilotEnv, response, now = () => fixedNow, stateRe
     env,
     now,
     randomBytes: () => Buffer.alloc(32, 7),
+    logger,
     fetchImpl: async (url, options) => {
       fetchCalls += 1;
       assert(!url.includes('SUPER_SECRET_PARTNER_KEY'));
@@ -128,7 +129,7 @@ assert.throws(
   for (const [label, args, expected] of [
     ['missing code', { code: '', shopId: 1101 }, /OAUTH_MISSING_CODE/],
     ['missing shop', { code: 'SUPER_SECRET_CODE', shopId: '' }, /OAUTH_INVALID_SHOP_ID/],
-    ['wrong shop', { code: 'SUPER_SECRET_CODE', shopId: 1102 }, /OAUTH_SHOP_NOT_ALLOWED/],
+    ['wrong shop', { code: 'SUPER_SECRET_CODE', shopId: 1102 }, /OAUTH_INVALID_SHOP_ID/],
     ['provider error', { code: 'SUPER_SECRET_CODE', shopId: 1101, providerError: 'denied' }, /OAUTH_PROVIDER_ERROR/],
   ]) {
     const test = createService();
@@ -137,6 +138,26 @@ assert.throws(
     assert.strictEqual(test.fetchCalls, 0, `${label} must not exchange a token`);
     assert.strictEqual(test.saved.length, 0);
   }
+
+  const diagnosticLogs = [];
+  const diagnostic = createService({
+    logger: { error(message) { diagnosticLogs.push(String(message)); } },
+  });
+  const diagnosticStart = await diagnostic.service.beginAuthorization();
+  await assert.rejects(
+    () => diagnostic.service.completeAuthorization({
+      state: diagnosticStart.state,
+      code: 'SUPER_SECRET_CODE',
+      shopId: 1102,
+    }),
+    /OAUTH_INVALID_SHOP_ID/,
+  );
+  assert.strictEqual(diagnostic.fetchCalls, 0);
+  assert.strictEqual(diagnostic.saved.length, 0);
+  assert.deepStrictEqual(diagnosticLogs, [
+    '[Shopee OAuth] OAUTH_INVALID_SHOP_ID callbackShopId=1102 expectedShopId=1101',
+  ]);
+  assert(!diagnosticLogs.join('\n').includes('SUPER_SECRET_'));
 
   const mismatch = createService({ response: { shop_id: 1102, access_token: 'SUPER_SECRET_ACCESS', refresh_token: 'SUPER_SECRET_REFRESH', expire_in: 3600 } });
   const mismatchStart = await mismatch.service.beginAuthorization();

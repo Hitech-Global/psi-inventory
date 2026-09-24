@@ -27,6 +27,7 @@ class ShopeeOAuthService {
     randomBytes,
     authClientFactory = options => new ShopeeAuthClient(options),
     fetchImpl = global.fetch,
+    logger = console,
   }) {
     if (!stateRepository) throw new Error('stateRepository is required');
     if (typeof tokenRepositoryFactory !== 'function') throw new Error('tokenRepositoryFactory is required');
@@ -39,6 +40,7 @@ class ShopeeOAuthService {
     this.randomBytes = randomBytes;
     this.authClientFactory = authClientFactory;
     this.fetchImpl = fetchImpl;
+    this.logger = logger;
   }
 
   policy() {
@@ -89,7 +91,12 @@ class ShopeeOAuthService {
 
     const callbackShopId = positiveSafeInteger(shopId, 'OAUTH_INVALID_SHOP_ID');
     if (callbackShopId !== pilot.shopId || Number(active.expected_shop_id) !== pilot.shopId) {
-      throw oauthError('OAUTH_SHOP_NOT_ALLOWED', 403);
+      // Both values have passed integer validation. Deliberately do not log callback
+      // parameters such as code or state, nor any credential or token material.
+      this.logger.error(
+        `[Shopee OAuth] OAUTH_INVALID_SHOP_ID callbackShopId=${callbackShopId} expectedShopId=${pilot.shopId}`,
+      );
+      throw oauthError('OAUTH_INVALID_SHOP_ID', 403);
     }
 
     const consumed = await this.stateRepository.consume({ stateHash, now });
