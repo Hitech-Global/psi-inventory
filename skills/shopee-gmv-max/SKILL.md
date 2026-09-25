@@ -1,6 +1,6 @@
 ---
 name: shopee-gmv-max-analysis
-version: 0.2.0
+version: 0.3.0
 description: Analyze Shopee ads from a normalized analysis package using evidence-separated, stage-aware, experiment-driven reasoning.
 ---
 
@@ -33,22 +33,24 @@ Data-source differences must be surfaced as evidence-quality context, but the re
 12. Missing data is unknown, not zero. Never manufacture a metric from another metric unless the deterministic formula is explicitly valid for that metric.
 13. One case is evidence, not a rule. Reusable rules require repeated validation across comparable cases.
 14. Prefer controlled, low-risk tests over uncontrolled simultaneous changes when a mechanism is uncertain.
+15. Treat candidate-pool architecture as a first-order diagnostic variable. Same category and similar price are not sufficient evidence that an Ad Group is structurally healthy.
 
 ## Required reasoning order
 1. Campaign/ad-group stage: LEARNING / CONVERGING / STABLE / UNSTABLE.
 2. Campaign/ad-group orders and evidence density.
 3. Campaign/ad-group ROAS versus break-even, ad-spend-ratio constraint and Target ROAS.
-4. Traffic and conversion structure: impressions, clicks, CTR, add-to-cart when available, CVR, spend, orders and GMV.
-5. Daily SKU allocation: impression/click/spend/direct-order/direct-GMV shares.
-6. Order-source concentration and leader switching.
-7. SKU Direct Orders / Direct CVR / Direct ROAS.
-8. CTR and click quality.
-9. GMV per Direct Order / value contribution.
-10. Multi-day continuity and Signal x Confidence.
-11. Scale Stability.
-12. Recent operation history, campaign-setting changes and cooldown.
-13. Event context such as double-date campaigns or monthly 25th promotions; do not treat event traffic as directly representative of normal days.
-14. Only then generate actions or experiments.
+4. Candidate-pool architecture: prior evidence strength, anchor/challenger structure, concentration, leader switching and whether the group contains only weak homogeneous candidates.
+5. Traffic and conversion structure: impressions, clicks, CTR, add-to-cart when available, CVR, spend, orders and GMV.
+6. Daily SKU allocation: impression/click/spend/direct-order/direct-GMV shares.
+7. Order-source concentration and leader switching.
+8. SKU Direct Orders / Direct CVR / Direct ROAS.
+9. CTR and click quality.
+10. GMV per Direct Order / value contribution.
+11. Multi-day continuity and Signal x Confidence.
+12. Scale Stability.
+13. Recent operation history, campaign-setting changes and cooldown.
+14. Event context such as double-date campaigns or monthly 25th promotions; do not treat event traffic as directly representative of normal days.
+15. Only then generate actions or experiments.
 
 ## Evidence classes
 Every substantive report statement must be typed:
@@ -120,6 +122,49 @@ Examples of interpretation:
 - Target inside/near Estimated, Actual materially below both: investigate traffic quality, conversion acceptance, offer/price, product structure, event context and allocation changes.
 - Estimated ROAS is absent: mark the comparison as unavailable rather than inferring it.
 
+## Candidate-pool architecture gate
+Before concluding that an Ad Group mainly has a pricing, voucher, budget or Target ROAS problem, inspect the structure of the item pool itself.
+
+A structurally weak pool can exist even when all items are in the same category and similar price band. A common risk pattern is:
+- all items have weak or immature historical sales evidence;
+- no item has enough order/conversion evidence to act as a trusted anchor;
+- allocation remains dispersed across multiple items;
+- the daily leader changes frequently;
+- a commercial stimulus such as a large voucher is applied across the pool, but the group still does not converge toward a clear high-confidence candidate.
+
+Do not treat this pattern as proof of Shopee's private allocation logic. Treat it as a mechanism hypothesis to be tested.
+
+### Candidate-pool health signals
+Prefer to inspect:
+- total group orders and evidence density;
+- weekly item order evidence when available;
+- Top-1 / Top-3 impression share;
+- Top-1 / Top-3 click share;
+- Top-1 / Top-3 spend share;
+- Top-1 / Top-3 Direct Order share;
+- Top-1 / Top-3 Direct GMV share;
+- day-to-day leader switching;
+- whether spend concentration is matched by order/GMV concentration;
+- whether the apparent leader has enough sample to be trusted;
+- whether the group has a plausible anchor/core candidate plus credible challengers, or only weak homogeneous candidates.
+
+Useful internal labels:
+- `ANCHOR_CANDIDATE`: materially stronger prior order/conversion evidence and a plausible core candidate.
+- `CREDIBLE_CHALLENGER`: enough signal to justify continued comparison against the anchor.
+- `WEAK_HOMOGENEOUS_POOL`: low group evidence plus low item differentiation/concentration; do not assume more discount alone will solve it.
+- `CONVERGING_POOL`: allocation and order contribution are increasingly concentrating on a stable subset.
+
+These are internal analytical labels, not Shopee fields.
+
+### Pool-architecture hypothesis
+Case-derived working hypothesis:
+
+> A large voucher can improve the commercial offer, but it may fail to solve an Ad Group whose primary bottleneck is candidate-pool architecture. If every candidate is weak and similar in evidence strength, the group may continue exploration without producing a clear traffic/order concentration hierarchy.
+
+Because this originated from an operator-reported case, keep it at `CASE RESULT / HYPOTHESIS` maturity until repeated comparable cases validate it.
+
+See `cases/ad-group-homogeneous-weak-pool-voucher-failure.md`.
+
 ## Change-log / experiment model
 When operation history is available, reason about changes as causal candidates rather than merely displaying them.
 
@@ -168,6 +213,12 @@ Useful observation chain after a change:
 `setting/action -> impressions -> clicks -> CTR -> add-to-cart (if available) -> CVR -> spend -> orders -> ROAS -> item allocation/order-share changes`
 
 Use the chain to locate where the response occurred instead of attributing every outcome directly to the changed setting.
+
+For candidate-pool experiments, a useful controlled comparison is:
+
+`weak homogeneous pool -> restructure around stronger anchor + limited challengers -> observe concentration, orders and ROAS`
+
+Hold other major commercial variables as stable as practical so that any change in allocation/concentration can be interpreted with higher causal confidence.
 
 ## Knowledge maturity: case is not rule
 Never promote a single successful or failed case directly into Skill knowledge.
@@ -242,4 +293,5 @@ Where relevant, the narrative must also make clear:
 - what remains uncertain;
 - what evidence is missing;
 - what controlled experiment should answer the next question;
+- whether candidate-pool architecture is a likely bottleneck;
 - whether a conclusion is a one-off case, repeated pattern or validated operating rule.
