@@ -5,6 +5,8 @@ const {
   requiredIsoDate,
   assertPilotDiscoveryAllowed,
   discoverGmsCampaign,
+  runPilotGmsDiscovery,
+  safeDiscoveryError,
 } = require('../scripts/discover-pilot-gms.cjs');
 
 const env = {
@@ -77,6 +79,82 @@ assert.throws(() => requiredIsoDate('BAD_DATE', { BAD_DATE: '16-09-2026' }), /YY
     }),
     /did not return a valid campaign_id/,
   );
+
+  function response() {
+    return {
+      response: {
+        campaign_id: 492245682,
+        report: {
+          impression: 1000, clicks: 50, expense: 100,
+          broad_gmv: 700, broad_order: 10, direct_gmv: 500, direct_order: 7,
+        },
+      },
+    };
+  }
+
+  // A valid encrypted DB token is accessed only through the shared role client;
+  // no SHOPEE_ADS_ACCESS_TOKEN environment value is required.
+  let validAccessCalls = 0;
+  let validAdsCalls = 0;
+  const validResult = await runPilotGmsDiscovery({
+    env,
+    pool: {},
+    createRuntime: () => ({ roleClients: { ADS: {
+      async getAccessToken(shopId) { validAccessCalls += 1; assert.strictEqual(shopId, 1101364305); return 'fixture-db-token'; },
+      client: { async shopRequest() { validAdsCalls += 1; return response(); } },
+    } } }),
+  });
+  assert.strictEqual(validResult.persisted, false);
+  assert.strictEqual(validAccessCalls, 1);
+  assert.strictEqual(validAdsCalls, 1);
+  assert.strictEqual(Object.hasOwn(env, 'SHOPEE_ADS_ACCESS_TOKEN'), false);
+  assert(!JSON.stringify(validResult).includes('fixture-db-token'));
+
+  // An expired DB token is refreshed by the shared TokenManager-backed role client
+  // before discovery receives the access token.
+  let refreshPathCalls = 0;
+  let refreshedAdsCalls = 0;
+  await runPilotGmsDiscovery({
+    env,
+    pool: {},
+    createRuntime: () => ({ roleClients: { ADS: {
+      async getAccessToken() { refreshPathCalls += 1; return 'refreshed-db-token'; },
+      client: { async shopRequest() { refreshedAdsCalls += 1; return response(); } },
+    } } }),
+  });
+  assert.strictEqual(refreshPathCalls, 1);
+  assert.strictEqual(refreshedAdsCalls, 1);
+
+  let missingTokenAdsCalls = 0;
+  await assert.rejects(
+    () => runPilotGmsDiscovery({
+      env,
+      pool: {},
+      createRuntime: () => ({ roleClients: { ADS: {
+        async getAccessToken() { throw new Error('No token stored'); },
+        client: { async shopRequest() { missingTokenAdsCalls += 1; return response(); } },
+      } } }),
+    }),
+    /No token stored/,
+  );
+  assert.strictEqual(missingTokenAdsCalls, 0);
+
+  let refreshFailureAdsCalls = 0;
+  await assert.rejects(
+    () => runPilotGmsDiscovery({
+      env,
+      pool: {},
+      createRuntime: () => ({ roleClients: { ADS: {
+        async getAccessToken() { throw new Error('SHOPEE_TOKEN_REFRESH_FAILED'); },
+        client: { async shopRequest() { refreshFailureAdsCalls += 1; return response(); } },
+      } } }),
+    }),
+    /SHOPEE_TOKEN_REFRESH_FAILED/,
+  );
+  assert.strictEqual(refreshFailureAdsCalls, 0);
+
+  const sanitized = safeDiscoveryError(new Error('access_token=SUPER_SECRET_ACCESS refresh_token=SUPER_SECRET_REFRESH partner_key=SUPER_SECRET_PARTNER_KEY'));
+  assert(!JSON.stringify(sanitized).includes('SUPER_SECRET_'));
   console.log('shopee pilot GMS discovery tests: ok');
 })().catch(error => {
   console.error(error.stack || error.message);
