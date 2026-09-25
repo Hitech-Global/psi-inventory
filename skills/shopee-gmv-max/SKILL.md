@@ -1,6 +1,6 @@
 ---
 name: shopee-gmv-max-analysis
-version: 0.3.0
+version: 0.4.0
 description: Analyze Shopee ads from a normalized analysis package using evidence-separated, stage-aware, experiment-driven reasoning.
 ---
 
@@ -34,6 +34,7 @@ Data-source differences must be surfaced as evidence-quality context, but the re
 13. One case is evidence, not a rule. Reusable rules require repeated validation across comparable cases.
 14. Prefer controlled, low-risk tests over uncontrolled simultaneous changes when a mechanism is uncertain.
 15. Treat candidate-pool architecture as a first-order diagnostic variable. Same category and similar price are not sufficient evidence that an Ad Group is structurally healthy.
+16. Treat major-promotion scaling as both GMV capture and a controlled ceiling test; do not generalize event-period capacity directly to normal days.
 
 ## Required reasoning order
 1. Campaign/ad-group stage: LEARNING / CONVERGING / STABLE / UNSTABLE.
@@ -50,7 +51,8 @@ Data-source differences must be surfaced as evidence-quality context, but the re
 12. Scale Stability.
 13. Recent operation history, campaign-setting changes and cooldown.
 14. Event context such as double-date campaigns or monthly 25th promotions; do not treat event traffic as directly representative of normal days.
-15. Only then generate actions or experiments.
+15. If an event-period budget is exhausted while economics remain healthy, evaluate controlled scale expansion and latest-increment economics.
+16. Only then generate actions or experiments.
 
 ## Evidence classes
 Every substantive report statement must be typed:
@@ -220,6 +222,55 @@ For candidate-pool experiments, a useful controlled comparison is:
 
 Hold other major commercial variables as stable as practical so that any change in allocation/concentration can be interpreted with higher causal confidence.
 
+## Event-period scaling and ceiling test
+Major-promotion periods can provide unusually high-intent traffic and therefore a useful environment for controlled scale testing across `INDIVIDUAL_AD`, `AD_GROUP` and `SHOP_GMV_MAX`.
+
+The operating idea is:
+
+`budget exhausted while ROAS is still healthy -> increase budget in controlled steps -> evaluate the latest increment -> continue only while marginal economics remain acceptable`
+
+This serves two goals:
+1. capture additional profitable GMV while high-intent demand is available;
+2. estimate the event-period scale ceiling of the promoted link, group or store campaign.
+
+### Do not use blended ROAS alone
+A strong early period can keep full-day blended ROAS high even after newly added budget starts buying weaker traffic.
+
+Where the data allows, calculate:
+
+`marginal_roas = incremental_gmv / incremental_ad_spend`
+
+For example, compare the spend/GMV accumulated after each budget increase rather than judging only the day's final aggregate.
+
+The most recent increment should carry more weight when deciding whether to add another increment.
+
+### Event scaling guardrails
+Before another budget increase, check:
+- budget is actually binding/exhausted;
+- current and latest-increment ROAS remain above the relevant profitability floor;
+- ad-spend-ratio constraint remains acceptable;
+- orders rise meaningfully with additional spend;
+- CVR has not materially collapsed;
+- stock / fulfillment risk is acceptable;
+- for Ad Groups, additional spend is not simply leaking into weak explorers;
+- no overlapping structural change makes attribution unusable.
+
+Stop further expansion when the latest increment approaches or crosses the profitability floor, unless an explicitly authorized loss-leading objective exists.
+
+### Ceiling interpretation
+The result is `EVENT_SCALE_CEILING_EVIDENCE`, not automatically a normal-day ceiling.
+
+Major-event traffic quality, buyer intent, vouchers, platform subsidies and competitor behavior may differ from ordinary days. Never generalize an event-period ceiling to normal periods without repeated non-event evidence.
+
+### Promotion-type interpretation
+- `INDIVIDUAL_AD`: test how much traffic/spend one link can absorb before CVR/ROAS deteriorates.
+- `AD_GROUP`: test both group-level scale and whether added budget reinforces strong candidates or diffuses into weak candidates.
+- `SHOP_GMV_MAX`: test whether additional store-level spend continues to generate profitable GMV and healthy item contribution when item-level data is available.
+
+Every event-period budget change should enter the operation/change log with timestamp, old/new budget, decision-time ROAS, budget utilization, profitability floor, reason and next observation window.
+
+See `principles/event-period-scaling-and-ceiling-test.md`.
+
 ## Knowledge maturity: case is not rule
 Never promote a single successful or failed case directly into Skill knowledge.
 
@@ -294,4 +345,6 @@ Where relevant, the narrative must also make clear:
 - what evidence is missing;
 - what controlled experiment should answer the next question;
 - whether candidate-pool architecture is a likely bottleneck;
+- whether an event-period budget expansion is still profitable at the latest increment;
+- whether a scale-ceiling conclusion is event-specific or transferable;
 - whether a conclusion is a one-off case, repeated pattern or validated operating rule.
