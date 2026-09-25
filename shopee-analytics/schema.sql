@@ -133,7 +133,8 @@ CREATE TABLE IF NOT EXISTS shopee_ad_campaign_daily (
   broad_gmv NUMERIC(20,6) NOT NULL DEFAULT 0,
   broad_orders BIGINT NOT NULL DEFAULT 0,
   broad_units BIGINT NOT NULL DEFAULT 0,
-  direct_gmv NUMERIC(20,6) NOT NULL DEFAULT 0,
+  direct_gmv NUMERIC(20,6),
+  direct_roas NUMERIC(20,6),
   direct_orders BIGINT NOT NULL DEFAULT 0,
   direct_units BIGINT NOT NULL DEFAULT 0,
   synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -151,7 +152,8 @@ CREATE TABLE IF NOT EXISTS shopee_ad_campaign_hourly (
   expense NUMERIC(20,6) NOT NULL DEFAULT 0,
   broad_gmv NUMERIC(20,6) NOT NULL DEFAULT 0,
   broad_orders BIGINT NOT NULL DEFAULT 0,
-  direct_gmv NUMERIC(20,6) NOT NULL DEFAULT 0,
+  direct_gmv NUMERIC(20,6),
+  direct_roas NUMERIC(20,6),
   direct_orders BIGINT NOT NULL DEFAULT 0,
   synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   raw_json JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -169,7 +171,8 @@ CREATE TABLE IF NOT EXISTS shopee_ad_item_daily (
   broad_gmv NUMERIC(20,6) NOT NULL DEFAULT 0,
   broad_orders BIGINT NOT NULL DEFAULT 0,
   broad_units BIGINT NOT NULL DEFAULT 0,
-  direct_gmv NUMERIC(20,6) NOT NULL DEFAULT 0,
+  direct_gmv NUMERIC(20,6),
+  direct_roas NUMERIC(20,6),
   direct_orders BIGINT NOT NULL DEFAULT 0,
   direct_units BIGINT NOT NULL DEFAULT 0,
   synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -479,3 +482,22 @@ CREATE INDEX IF NOT EXISTS idx_shopee_operation_item_time
   ON shopee_operation_history(shop_id, item_id, effective_from DESC);
 CREATE INDEX IF NOT EXISTS idx_shopee_operation_campaign_time
   ON shopee_operation_history(shop_id, campaign_id, effective_from DESC);
+
+-- Direct GMV is nullable by contract: an absent source field is unknown, not 0.
+-- These ALTERs make the change safe for already-initialized desktop databases.
+ALTER TABLE shopee_ad_campaign_daily
+  ALTER COLUMN direct_gmv DROP NOT NULL,
+  ALTER COLUMN direct_gmv DROP DEFAULT;
+ALTER TABLE shopee_ad_campaign_hourly
+  ALTER COLUMN direct_gmv DROP NOT NULL,
+  ALTER COLUMN direct_gmv DROP DEFAULT;
+ALTER TABLE shopee_ad_item_daily
+  ALTER COLUMN direct_gmv DROP NOT NULL,
+  ALTER COLUMN direct_gmv DROP DEFAULT;
+
+ALTER TABLE shopee_ad_campaign_daily
+  ADD COLUMN IF NOT EXISTS direct_roas NUMERIC(20,6);
+ALTER TABLE shopee_ad_campaign_hourly
+  ADD COLUMN IF NOT EXISTS direct_roas NUMERIC(20,6);
+ALTER TABLE shopee_ad_item_daily
+  ADD COLUMN IF NOT EXISTS direct_roas NUMERIC(20,6);

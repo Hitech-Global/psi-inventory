@@ -69,7 +69,9 @@ function buildDailyAllocation(itemDailyRows = []) {
         clickShare: safeDiv(p.clicks, total.clicks),
         spendShare: safeDiv(p.expense, total.expense),
         directOrderShare: safeDiv(p.directOrders, total.directOrders),
-        directGmvShare: safeDiv(p.directGmv, total.directGmv),
+        directGmvShare: p.directGmv === null || total.directGmv === null
+          ? null
+          : safeDiv(p.directGmv, total.directGmv),
       });
     }
   }
@@ -125,7 +127,7 @@ function buildAnalysisPackage({
       itemName: (itemMetadata.get && itemMetadata.get(id) || {}).itemName || null,
       itemSku: (itemMetadata.get && itemMetadata.get(id) || {}).itemSku || null,
       ...p,
-      gmvPerDirectOrder: safeDiv(p.directGmv, p.directOrders),
+      gmvPerDirectOrder: p.directGmv === null ? null : safeDiv(p.directGmv, p.directOrders),
       consecutiveOrderDays: consecutiveOrderDays(rows, endDate),
       activeOrderDays: new Set(rows.filter(r => normalizePerformance(r).directOrders > 0).map(rowDate)).size,
       spendShareVolatility: coefficientVariation(itemAllocation.map(r => r.spendShare)),

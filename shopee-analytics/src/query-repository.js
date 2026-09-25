@@ -2,6 +2,14 @@
 
 const { normalizePerformance } = require('./metrics');
 
+function nullableNumber(value) {
+  return value === null || value === undefined ? null : Number(value);
+}
+
+function directMetricComplete(value) {
+  return value === true || value === 't' || value === 1 || value === '1';
+}
+
 class ShopeeQueryRepository {
   constructor({ pool }) {
     if (!pool || typeof pool.query !== 'function') throw new Error('pg pool/query adapter is required');
@@ -111,7 +119,8 @@ class ShopeeQueryRepository {
            COALESCE(SUM(d.expense),0) AS ad_expense,
            COALESCE(SUM(d.broad_gmv),0) AS broad_gmv,
            COALESCE(SUM(d.broad_orders),0) AS broad_orders,
-           COALESCE(SUM(d.direct_gmv),0) AS direct_gmv,
+           CASE WHEN BOOL_AND(d.direct_gmv IS NOT NULL) THEN SUM(d.direct_gmv) ELSE NULL END AS direct_gmv,
+           COALESCE(BOOL_AND(d.direct_gmv IS NOT NULL),false) AS direct_metric_complete,
            COALESCE(SUM(d.direct_orders),0) AS direct_orders
          FROM shopee_ad_campaign_daily d
          JOIN selected s ON s.shop_id=d.shop_id
@@ -148,7 +157,8 @@ class ShopeeQueryRepository {
          COALESCE(ads.ad_expense,0) AS ad_expense,
          COALESCE(ads.broad_gmv,0) AS broad_gmv,
          COALESCE(ads.broad_orders,0) AS broad_orders,
-         COALESCE(ads.direct_gmv,0) AS direct_gmv,
+         ads.direct_gmv AS direct_gmv,
+         COALESCE(ads.direct_metric_complete,false) AS direct_metric_complete,
          COALESCE(ads.direct_orders,0) AS direct_orders,
          COALESCE(returns.return_count,0) AS return_count,
          COALESCE(returns.refund_amount,0) AS refund_amount
@@ -200,7 +210,9 @@ class ShopeeQueryRepository {
         adExpense,
         broadGmv,
         broadOrders: Number(row.broad_orders || 0),
-        directGmv: Number(row.direct_gmv || 0),
+        directGmv: nullableNumber(row.direct_gmv),
+        directMetricComplete: directMetricComplete(row.direct_metric_complete),
+        dataQualityFlags: directMetricComplete(row.direct_metric_complete) ? [] : ['SOURCE_DIRECT_GMV_MISSING'],
         directOrders: Number(row.direct_orders || 0),
         returnCount: Number(row.return_count || 0),
         refundAmount: Number(row.refund_amount || 0),
@@ -282,6 +294,7 @@ class ShopeeQueryRepository {
           adExpense: 0,
           broadGmv: 0,
           directGmv: 0,
+          directMetricComplete: true,
           broadOrders: 0,
           directOrders: 0,
           refundAmount: 0,
@@ -298,7 +311,8 @@ class ShopeeQueryRepository {
       group.productViews += shop.productViews;
       group.adExpense += shop.adExpense;
       group.broadGmv += shop.broadGmv;
-      group.directGmv += shop.directGmv;
+      if (!shop.directMetricComplete || shop.directGmv === null) group.directMetricComplete = false;
+      else group.directGmv += shop.directGmv;
       group.broadOrders += shop.broadOrders;
       group.directOrders += shop.directOrders;
       group.refundAmount += shop.refundAmount;
@@ -317,6 +331,8 @@ class ShopeeQueryRepository {
           Math.abs(adSpendRatioLimitMin - adSpendRatioLimitMax) < 1e-12;
         return {
           ...base,
+          directGmv: base.directMetricComplete ? base.directGmv : null,
+          dataQualityFlags: base.directMetricComplete ? [] : ['SOURCE_DIRECT_GMV_MISSING'],
           adSpendRatioLimit: sameLimit ? adSpendRatioLimitMin : null,
           mixedAdSpendRatioLimits: !sameLimit,
           adSpendRatioToBiSales: group.sales > 0 ? group.adExpense / group.sales : null,
@@ -367,7 +383,8 @@ class ShopeeQueryRepository {
                 COALESCE(SUM(expense),0) AS expense,
                 COALESCE(SUM(broad_gmv),0) AS broad_gmv,
                 COALESCE(SUM(broad_orders),0) AS broad_orders,
-                COALESCE(SUM(direct_gmv),0) AS direct_gmv,
+                CASE WHEN BOOL_AND(direct_gmv IS NOT NULL) THEN SUM(direct_gmv) ELSE NULL END AS direct_gmv,
+                COALESCE(BOOL_AND(direct_gmv IS NOT NULL),false) AS direct_metric_complete,
                 COALESCE(SUM(direct_orders),0) AS direct_orders
          FROM shopee_ad_campaign_daily
          WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3
@@ -382,7 +399,8 @@ class ShopeeQueryRepository {
          COALESCE(a.expense,0) AS ad_expense,
          COALESCE(a.broad_gmv,0) AS broad_gmv,
          COALESCE(a.broad_orders,0) AS broad_orders,
-         COALESCE(a.direct_gmv,0) AS direct_gmv,
+         a.direct_gmv AS direct_gmv,
+         COALESCE(a.direct_metric_complete,false) AS direct_metric_complete,
          COALESCE(a.direct_orders,0) AS direct_orders
        FROM dates d
        LEFT JOIN shopee_shop_bi_daily bi
@@ -398,7 +416,8 @@ class ShopeeQueryRepository {
       const productClicks = row.product_clicks === null ? null : Number(row.product_clicks);
       const adExpense = Number(row.ad_expense || 0);
       const broadGmv = Number(row.broad_gmv || 0);
-      const directGmv = Number(row.direct_gmv || 0);
+      const directGmv = nullableNumber(row.direct_gmv);
+      const isDirectMetricComplete = directMetricComplete(row.direct_metric_complete);
       return {
         eventDate: String(row.event_date).slice(0, 10),
         sales,
@@ -416,9 +435,12 @@ class ShopeeQueryRepository {
         adExpense,
         broadGmv,
         broadOrders: Number(row.broad_orders || 0),
-        directGmv: Number(row.direct_gmv || 0),
+        directGmv,
+        directMetricComplete: isDirectMetricComplete,
+        dataQualityFlags: isDirectMetricComplete ? [] : ['SOURCE_DIRECT_GMV_MISSING'],
         directOrders: Number(row.direct_orders || 0),
         broadRoas: adExpense > 0 ? broadGmv / adExpense : 0,
+        directRoas: directGmv !== null && adExpense > 0 ? directGmv / adExpense : null,
         adSpendRatioToSales: sales && sales > 0 ? adExpense / sales : null,
         estimatedNaturalSales: sales === null ? null : sales - broadGmv,
         adAttributionExceedsBiSales: sales !== null && broadGmv > sales,
@@ -438,7 +460,9 @@ class ShopeeQueryRepository {
                 COALESCE(SUM(expense),0) AS ad_expense,
                 COALESCE(SUM(broad_gmv),0) AS broad_gmv,
                 COALESCE(SUM(broad_orders),0) AS broad_orders,
-                COALESCE(SUM(direct_gmv),0) AS direct_gmv,
+                CASE WHEN BOOL_AND(direct_gmv IS NOT NULL) THEN SUM(direct_gmv) ELSE NULL END AS direct_gmv,
+                COALESCE(BOOL_AND(direct_gmv IS NOT NULL),false) AS direct_metric_complete,
+                CASE WHEN MIN(direct_roas) IS NOT DISTINCT FROM MAX(direct_roas) THEN MIN(direct_roas) ELSE NULL END AS source_direct_roas,
                 COALESCE(SUM(direct_orders),0) AS direct_orders
          FROM shopee_ad_item_daily
          WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3
@@ -477,7 +501,9 @@ class ShopeeQueryRepository {
          COALESCE(a.ad_expense,0) AS ad_expense,
          COALESCE(a.broad_gmv,0) AS broad_gmv,
          COALESCE(a.broad_orders,0) AS broad_orders,
-         COALESCE(a.direct_gmv,0) AS direct_gmv,
+         a.direct_gmv AS direct_gmv,
+         COALESCE(a.direct_metric_complete,false) AS direct_metric_complete,
+         a.source_direct_roas,
          COALESCE(a.direct_orders,0) AS direct_orders,
          strategy.break_even_roas
        FROM ids
@@ -495,7 +521,9 @@ class ShopeeQueryRepository {
       const totalSales = row.total_sales === null ? null : Number(row.total_sales);
       const adExpense = Number(row.ad_expense || 0);
       const broadGmv = Number(row.broad_gmv || 0);
-      const directGmv = Number(row.direct_gmv || 0);
+      const directGmv = nullableNumber(row.direct_gmv);
+      const isDirectMetricComplete = directMetricComplete(row.direct_metric_complete);
+      const sourceDirectRoas = nullableNumber(row.source_direct_roas);
       return {
         itemId: Number(row.item_id),
         itemName: row.item_name,
@@ -523,16 +551,18 @@ class ShopeeQueryRepository {
         broadGmv,
         broadOrders: Number(row.broad_orders || 0),
         directGmv,
+        directMetricComplete: isDirectMetricComplete,
+        dataQualityFlags: isDirectMetricComplete ? [] : ['SOURCE_DIRECT_GMV_MISSING'],
         directOrders: Number(row.direct_orders || 0),
         broadRoas: adExpense > 0 ? broadGmv / adExpense : 0,
-        directRoas: adExpense > 0 ? directGmv / adExpense : 0,
+        directRoas: sourceDirectRoas ?? (directGmv !== null && adExpense > 0 ? directGmv / adExpense : null),
         adSpendRatioToSales: totalSales && totalSales > 0 ? adExpense / totalSales : null,
-        directGmvShareOfSales: totalSales && totalSales > 0 ? directGmv / totalSales : null,
+        directGmvShareOfSales: directGmv !== null && totalSales && totalSales > 0 ? directGmv / totalSales : null,
         // Backward-compatible alias. Item-level total sales must be reconciled with
         // Direct GMV, not Broad GMV, because Broad attribution can include other shop items.
-        adGmvShareOfSales: totalSales && totalSales > 0 ? directGmv / totalSales : null,
-        estimatedNaturalSales: totalSales === null ? null : totalSales - directGmv,
-        adAttributionExceedsTotalSales: totalSales !== null && directGmv > totalSales,
+        adGmvShareOfSales: directGmv !== null && totalSales && totalSales > 0 ? directGmv / totalSales : null,
+        estimatedNaturalSales: totalSales === null || directGmv === null ? null : totalSales - directGmv,
+        adAttributionExceedsTotalSales: directGmv !== null && totalSales !== null && directGmv > totalSales,
         hasProductCard: totalSales !== null,
       };
     });
@@ -559,7 +589,8 @@ class ShopeeQueryRepository {
          COALESCE(SUM(d.broad_gmv),0) AS broad_gmv,
          COALESCE(SUM(d.broad_orders),0) AS broad_orders,
          COALESCE(SUM(d.broad_units),0) AS broad_units,
-         COALESCE(SUM(d.direct_gmv),0) AS direct_gmv,
+         CASE WHEN BOOL_AND(d.direct_gmv IS NOT NULL) THEN SUM(d.direct_gmv) ELSE NULL END AS direct_gmv,
+         COALESCE(BOOL_AND(d.direct_gmv IS NOT NULL),false) AS direct_metric_complete,
          COALESCE(SUM(d.direct_orders),0) AS direct_orders,
          COALESCE(SUM(d.direct_units),0) AS direct_units,
          MAX(d.event_date) AS latest_performance_date
@@ -601,7 +632,11 @@ class ShopeeQueryRepository {
       campaignPlacement: row.campaign_placement,
       settingObservedAt: row.setting_observed_at,
       latestPerformanceDate: row.latest_performance_date,
-      performance: normalizePerformance(row),
+      performance: {
+        ...normalizePerformance(row),
+        directMetricComplete: directMetricComplete(row.direct_metric_complete),
+        dataQualityFlags: directMetricComplete(row.direct_metric_complete) ? [] : ['SOURCE_DIRECT_GMV_MISSING'],
+      },
     }));
   }
 

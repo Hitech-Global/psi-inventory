@@ -12,6 +12,7 @@ function safeRatio(numerator, denominator) {
 }
 
 function pctChange(current, previous) {
+  if (current === null || current === undefined || previous === null || previous === undefined) return null;
   const c = toNumber(current);
   const p = toNumber(previous);
   if (p === 0) return c === 0 ? 0 : null;
@@ -45,7 +46,7 @@ function metricSnapshot(row = {}) {
   const productViews = toNumber(row.productViews);
   const adExpense = toNumber(row.adExpense);
   const broadGmv = toNumber(row.broadGmv);
-  const directGmv = toNumber(row.directGmv);
+  const directGmv = row.directGmv === null || row.directGmv === undefined ? null : toNumber(row.directGmv);
   const estimatedNaturalSales = row.estimatedNaturalSales === undefined
     ? sales - broadGmv
     : toNumber(row.estimatedNaturalSales);

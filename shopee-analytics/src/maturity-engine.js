@@ -37,6 +37,13 @@ function dailyMetric(row, names) {
   return 0;
 }
 
+function optionalDailyMetric(row, names) {
+  for (const name of names) {
+    if (row[name] != null) return number(row[name]);
+  }
+  return null;
+}
+
 function allocationStability(itemDailyRows = []) {
   const byDate = new Map();
   for (const row of itemDailyRows) {
@@ -167,8 +174,9 @@ function scaleResilience(dailyRows = [], config = MATURITY_DEFAULTS) {
     const clicks = rows.reduce((s, r) => s + dailyMetric(r, ['clicks', 'click']), 0);
     const orders = rows.reduce((s, r) => s + dailyMetric(r, ['direct_order', 'directOrders']), 0);
     const expense = rows.reduce((s, r) => s + dailyMetric(r, ['expense', 'spend']), 0);
-    const gmv = rows.reduce((s, r) => s + dailyMetric(r, ['direct_gmv', 'directGmv']), 0);
-    return { clicks, cvr: safeDiv(orders, clicks), roas: safeDiv(gmv, expense) };
+    const gmvs = rows.map(r => optionalDailyMetric(r, ['direct_gmv', 'directGmv']));
+    const gmv = gmvs.some(value => value === null) ? null : gmvs.reduce((s, value) => s + value, 0);
+    return { clicks, cvr: safeDiv(orders, clicks), roas: gmv === null ? null : safeDiv(gmv, expense) };
   };
   const a = aggregate(first);
   const b = aggregate(last);
@@ -176,7 +184,7 @@ function scaleResilience(dailyRows = [], config = MATURITY_DEFAULTS) {
     return { evaluable: false, pass: null, first: a, last: b };
   }
   const cvrRetention = a.cvr > 0 ? b.cvr / a.cvr : null;
-  const roasRetention = a.roas > 0 ? b.roas / a.roas : null;
+  const roasRetention = a.roas !== null && b.roas !== null && a.roas > 0 ? b.roas / a.roas : null;
   const pass = cvrRetention != null && roasRetention != null &&
     cvrRetention >= config.scaleEfficiencyRetentionMinimum &&
     roasRetention >= config.scaleEfficiencyRetentionMinimum;
@@ -192,10 +200,12 @@ function evaluateCampaignMaturity({ days = 0, directOrders = 0, dailyRows = [], 
     dailyMetric(row, ['direct_order', 'directOrders']),
     dailyMetric(row, ['clicks', 'click']),
   )).filter(value => value > 0);
-  const roasValues = dailyRows.map(row => safeDiv(
-    dailyMetric(row, ['direct_gmv', 'directGmv']),
-    dailyMetric(row, ['expense', 'spend']),
-  )).filter(value => value > 0);
+  const roasValues = dailyRows.map(row => {
+    const sourceRoas = optionalDailyMetric(row, ['direct_roi', 'direct_roas', 'directRoas']);
+    if (sourceRoas !== null) return sourceRoas;
+    const gmv = optionalDailyMetric(row, ['direct_gmv', 'directGmv']);
+    return gmv === null ? null : safeDiv(gmv, dailyMetric(row, ['expense', 'spend']));
+  }).filter(value => value !== null && value > 0);
   const cvrCv = coefficientVariation(cvrValues);
   const roasCv = coefficientVariation(roasValues);
   const scale = scaleResilience(dailyRows, cfg);
@@ -256,8 +266,9 @@ function evaluateSignalConfidence(item, { days = 7, matureOrdersReference = 25 }
   const directOrders = dailyMetric(item, ['direct_order', 'directOrders']);
   const clicks = dailyMetric(item, ['clicks', 'click']);
   const expense = dailyMetric(item, ['expense', 'spend']);
-  const directGmv = dailyMetric(item, ['direct_gmv', 'directGmv']);
-  const directRoas = safeDiv(directGmv, expense);
+  const directGmv = optionalDailyMetric(item, ['direct_gmv', 'directGmv']);
+  const sourceDirectRoas = optionalDailyMetric(item, ['direct_roi', 'direct_roas', 'directRoas']);
+  const directRoas = sourceDirectRoas ?? (directGmv === null ? null : safeDiv(directGmv, expense));
   const cvr = safeDiv(directOrders, clicks);
   const confidenceScore = Math.min(1,
     0.65 * Math.min(1, directOrders / matureOrdersReference) +
@@ -280,4 +291,5 @@ module.exports = {
   scaleResilience,
   evaluateCampaignMaturity,
   evaluateSignalConfidence,
+  optionalDailyMetric,
 };

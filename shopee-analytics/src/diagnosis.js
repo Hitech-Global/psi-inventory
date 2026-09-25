@@ -183,9 +183,9 @@ function diagnoseCampaign({
 function diagnoseItem({ item, groupPerformance, targetRoas, config = DEFAULTS, days = 7, maturityStatus = 'UNKNOWN' }) {
   const p = normalizePerformance(item);
   const shares = deriveItemShares(item, groupPerformance);
-  const directAov = p.directOrders > 0 ? safeDiv(p.directGmv, p.directOrders) : 0;
+  const directAov = p.directGmv !== null && p.directOrders > 0 ? safeDiv(p.directGmv, p.directOrders) : null;
   const broadAov = p.broadOrders > 0 ? safeDiv(p.broadGmv, p.broadOrders) : 0;
-  const aovForCpa = directAov || broadAov;
+  const aovForCpa = directAov ?? broadAov;
   const explorationMultiple = explorationCostMultiple({
     spend: p.expense,
     aov: aovForCpa,
