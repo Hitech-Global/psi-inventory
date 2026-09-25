@@ -247,6 +247,7 @@
         <button class="ads-type-tab active" data-ads-type="gms" type="button">GMV Max</button>
         <button class="ads-type-tab" data-ads-type="manual" type="button">单品广告</button>
         <button class="ads-type-tab" data-ads-type="auto" type="button">全店广告</button>
+        <button class="ads-type-tab" data-ads-type="groups" type="button">广告组导入</button>
       </div>
 
       <div id="adsGmsPanel">
@@ -337,6 +338,12 @@
         </div>
         <div id="autoAdDetail" class="product-ad-detail empty-inline">点击一个全店广告 Campaign 查看诊断。</div>
         <div id="autoAdItems" class="product-ad-items empty-inline">点击一个全店广告 Campaign 查看当前自动选品范围。</div>
+      </section>
+
+      <section id="adsGroupImportPanel" class="panel hidden product-ads-panel">
+        <div class="panel-head"><div><h2>Shopee 广告组导入</h2><p>上传 Shopee 原生 CSV/XLSX，先预览父子结构、期间和数据质量；确认后才写入。</p></div></div>
+        <div class="ad-group-import-controls"><input id="adGroupFile" type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"><button id="adGroupPreviewBtn" class="ghost" type="button">预览</button><button id="adGroupImportBtn" class="primary" type="button" disabled>确认导入</button></div>
+        <div id="adGroupImportResult" class="product-ad-detail empty-inline">请选择 Shopee 原生广告组 CSV 或 XLSX。预览不会写入数据。</div>
       </section>
     </section>
 

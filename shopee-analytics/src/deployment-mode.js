@@ -95,6 +95,32 @@ function resolvePilotCampaignAllowlist(env = process.env) {
   return Array.from(new Set(campaignIds));
 }
 
+function resolvePilotTypedCampaignAllowlist(type, env = process.env) {
+  const names = {
+    SHOP_GMV_MAX: 'SHOPEE_PILOT_SHOP_GMV_MAX_CAMPAIGN_IDS',
+    INDIVIDUAL_AD: 'SHOPEE_PILOT_INDIVIDUAL_AD_CAMPAIGN_IDS',
+  };
+  const name = names[type];
+  if (!name) throw new Error(`Unsupported pilot promotion type: ${type}`);
+  if (!isPilotGmvMax(env)) return [];
+  const raw = String(env[name] || '').trim();
+  if (!raw) return [];
+  const parts = raw.split(',').map(value => value.trim());
+  if (parts.some(value => !/^\d+$/.test(value))) throw new Error(`${name} must contain only positive safe integer campaign IDs`);
+  const ids = parts.map(Number);
+  if (ids.some(value => !Number.isSafeInteger(value) || value <= 0)) throw new Error(`${name} must contain only positive safe integer campaign IDs`);
+  return Array.from(new Set(ids));
+}
+
+function assertPilotTypedCampaignAllowed(type, campaignId, env = process.env) {
+  const ids = resolvePilotTypedCampaignAllowlist(type, env);
+  const normalized = Number(campaignId);
+  if (isPilotGmvMax(env) && (!ids.length || !ids.includes(normalized))) {
+    throw new Error(`PILOT_GMV_MAX refuses ${type} campaign ${campaignId}; it is not in its independent allowlist`);
+  }
+  return ids;
+}
+
 function assertPilotShopAllowed(shopId, env = process.env) {
   const config = loadPilotGmvMaxConfig(env);
   if (config && Number(shopId) !== config.shopId) {
@@ -160,6 +186,8 @@ module.exports = {
   loadPilotIdentityConfig,
   loadPilotGmvMaxConfig,
   resolvePilotCampaignAllowlist,
+  resolvePilotTypedCampaignAllowlist,
+  assertPilotTypedCampaignAllowed,
   assertPilotShopAllowed,
   assertPilotCampaignAllowed,
   assertPilotCampaignSetAllowed,

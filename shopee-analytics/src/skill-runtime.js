@@ -3,6 +3,7 @@
 const { ShopeeAnalyticsRepository } = require('./repository');
 const { ShopeeStrategyRepository } = require('./strategy-repository');
 const { ShopeeQueryRepository } = require('./query-repository');
+const { ShopeeAdPromotionRepository } = require('./ad-promotion-repository');
 const { SkillReportRepository } = require('./skill-report-repository');
 const { SkillRunner } = require('./skill-runner');
 const { createSkillExecutor, disabledSkillProvider } = require('./skill-executor');
@@ -19,6 +20,7 @@ function createSkillRuntime({
   const repository = new ShopeeAnalyticsRepository({ pool });
   const strategyRepository = new ShopeeStrategyRepository({ pool });
   const queryRepository = new ShopeeQueryRepository({ pool });
+  const adPromotionRepository = new ShopeeAdPromotionRepository({ pool });
   const skillReportRepository = new SkillReportRepository(pool);
   const skillExecutor = createSkillExecutor({
     provider: skillProvider || disabledSkillProvider(),
@@ -56,6 +58,7 @@ function createSkillRuntime({
     repository,
     strategyRepository,
     queryRepository,
+    adPromotionRepository,
     skillReportRepository,
     skillRunner,
     runSkillAnalysis,

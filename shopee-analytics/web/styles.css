@@ -127,5 +127,6 @@
 .product-ad-action{margin-top:10px;border-top:1px solid #ececef;padding-top:10px;display:flex;gap:10px;align-items:flex-start;font-size:11px}
 .product-ad-action strong{white-space:nowrap}.product-ad-action span{color:#6e6e73;line-height:1.5}
 .product-ad-note{margin-top:9px;color:#86868b;font-size:9px;line-height:1.45}
+.ad-group-import-controls{display:flex;gap:10px;align-items:center;padding:16px 18px;border-bottom:1px solid #ececef;flex-wrap:wrap}.ad-group-import-controls input{max-width:420px;font:inherit}.ad-group-import-controls .primary{height:36px}.ad-group-import-controls .ghost{height:36px}
 @media(max-width:900px){.product-ad-detail-metrics{grid-template-columns:1fr 1fr}}
 @media(max-width:560px){.product-ad-detail-metrics{grid-template-columns:1fr}}

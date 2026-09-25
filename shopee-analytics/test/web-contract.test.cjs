@@ -45,6 +45,10 @@ for (const required of [
   'autoAdItems',
   'manualAdDetail',
   'autoAdDetail',
+  'adsGroupImportPanel',
+  'adGroupFile',
+  'adGroupPreviewBtn',
+  'adGroupImportBtn',
   'maturityBox',
   'actionGateList',
   'systemStatus',
@@ -74,6 +78,8 @@ assert(html.includes('Signal×Confidence'), 'diagnosis stepbar must expose Signa
 assert(html.includes('data-ads-type="gms"'), 'Ads view must expose GMV Max tab');
 assert(html.includes('data-ads-type="manual"'), 'Ads view must expose manual Product Ads tab');
 assert(html.includes('data-ads-type="auto"'), 'Ads view must expose auto Product Ads tab');
+assert(html.includes('data-ads-type="groups"'), 'Ads view must expose native Ad Group import tab');
+assert(app.includes('/api/shopee-analytics/ad-groups/import?'), 'frontend must use the preview-first native Ad Group import API');
 assert(app.includes('/api/shopee-analytics/product-ads?'), 'frontend must query Product Ads read API');
 assert(app.includes('/detail?'), 'frontend must expose Product Ads campaign detail diagnostics');
 assert(app.includes('周等效订单'), 'Product Ads detail must follow order-volume-first diagnosis');

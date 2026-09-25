@@ -501,3 +501,66 @@ ALTER TABLE shopee_ad_campaign_hourly
   ADD COLUMN IF NOT EXISTS direct_roas NUMERIC(20,6);
 ALTER TABLE shopee_ad_item_daily
   ADD COLUMN IF NOT EXISTS direct_roas NUMERIC(20,6);
+
+-- Unified promotion contract. API and manual ad-group data share the same
+-- business fields; nullable metrics mean unavailable, never zero-by-default.
+CREATE TABLE IF NOT EXISTS shopee_ad_promotion_daily (
+  shop_id BIGINT NOT NULL,
+  promotion_key TEXT NOT NULL,
+  period_start DATE NOT NULL,
+  period_end DATE NOT NULL,
+  granularity TEXT NOT NULL CHECK (granularity IN ('DAY','RANGE')),
+  event_date DATE NOT NULL,
+  promotion_type TEXT NOT NULL CHECK (promotion_type IN ('SHOP_GMV_MAX','AD_GROUP','INDIVIDUAL_AD')),
+  data_source TEXT NOT NULL CHECK (data_source IN ('SHOPEE_API','MANUAL','MANUAL_IMPORT')),
+  campaign_id BIGINT,
+  campaign_name TEXT,
+  source_ad_type TEXT,
+  campaign_status TEXT,
+  campaign_budget NUMERIC(20,6),
+  target_roas NUMERIC(20,6),
+  estimated_roas NUMERIC(20,6),
+  impressions BIGINT,
+  clicks BIGINT,
+  expense NUMERIC(20,6),
+  orders BIGINT,
+  gmv NUMERIC(20,6),
+  source_roas NUMERIC(20,6),
+  ctr NUMERIC(20,8),
+  cvr NUMERIC(20,8),
+  add_to_cart BIGINT,
+  item_count INTEGER,
+  data_quality_status TEXT NOT NULL CHECK (data_quality_status IN ('COMPLETE','PARTIAL','DATA_MISMATCH')),
+  quality_flags JSONB NOT NULL DEFAULT '[]'::jsonb,
+  remark TEXT,
+  raw_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (shop_id,promotion_key,period_start,period_end)
+);
+CREATE TABLE IF NOT EXISTS shopee_ad_promotion_item_daily (
+  shop_id BIGINT NOT NULL,
+  promotion_key TEXT NOT NULL,
+  period_start DATE NOT NULL,
+  period_end DATE NOT NULL,
+  event_date DATE NOT NULL,
+  item_id BIGINT NOT NULL,
+  item_sku TEXT,
+  product_name TEXT,
+  impressions BIGINT,
+  clicks BIGINT,
+  expense NUMERIC(20,6),
+  orders BIGINT,
+  gmv NUMERIC(20,6),
+  source_roas NUMERIC(20,6),
+  ctr NUMERIC(20,8),
+  cvr NUMERIC(20,8),
+  add_to_cart BIGINT,
+  weekly_sales NUMERIC(20,6),
+  data_quality_status TEXT NOT NULL CHECK (data_quality_status IN ('COMPLETE','PARTIAL','DATA_MISMATCH')),
+  quality_flags JSONB NOT NULL DEFAULT '[]'::jsonb,
+  remark TEXT,
+  raw_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (shop_id,promotion_key,period_start,period_end,item_id)
+);
+CREATE INDEX IF NOT EXISTS idx_shopee_ad_promotion_daily_shop_period ON shopee_ad_promotion_daily(shop_id,period_start DESC,period_end DESC,promotion_type);

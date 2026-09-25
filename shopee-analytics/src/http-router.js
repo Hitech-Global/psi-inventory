@@ -10,6 +10,8 @@ const { localIsoDate, addDays } = require('./sync-cycle-utils');
 const { daysInclusive } = require('./backfill-utils');
 const { sumPerformance } = require('./metrics');
 const { productAdDiagnosis } = require('./product-ads-diagnosis');
+const { normalizeManualPromotion, normalizeManualItem } = require('./manual-ad-group');
+const { parseShopeeAdGroupFile } = require('./shopee-ad-group-import');
 
 function positiveInt(value, name) {
   const n = Number(value);
@@ -83,6 +85,7 @@ function createShopeeAnalyticsRouter({
   repository,
   strategyRepository,
   queryRepository,
+  adPromotionRepository = null,
   backupStatusProvider = async () => null,
   skillReportRepository = null,
   runSkillAnalysis = null,
@@ -375,6 +378,45 @@ function createShopeeAnalyticsRouter({
     } catch (error) {
       next(error);
     }
+  });
+
+  router.get('/ad-promotions', async (req, res, next) => {
+    try {
+      if (!adPromotionRepository) throw new Error('Unified ad promotions are unavailable');
+      const shopId = positiveInt(req.query.shop_id, 'shop_id');
+      const startDate = isoDate(req.query.start_date, 'start_date');
+      const endDate = isoDate(req.query.end_date, 'end_date');
+      const promotionType = req.query.promotion_type || null;
+      const dataSource = req.query.data_source || null;
+      const campaignStatus = req.query.campaign_status || null;
+      const productId = req.query.product_id === undefined ? null : positiveInt(req.query.product_id, 'product_id');
+      res.json({ shopId, startDate, endDate, promotions: await adPromotionRepository.list({ shopId, startDate, endDate, promotionType, dataSource, campaignStatus, productId }) });
+    } catch (error) { next(error); }
+  });
+
+  router.post('/ad-groups/manual', express.json({ limit: '256kb' }), async (req, res, next) => {
+    try {
+      if (!adPromotionRepository) throw new Error('Unified ad promotions are unavailable');
+      const row = normalizeManualPromotion(req.body, { source: 'MANUAL' });
+      if (row.promotionType !== 'AD_GROUP') throw new Error('manual endpoint accepts AD_GROUP only');
+      const items = Array.isArray(req.body && req.body.items) ? req.body.items.map(normalizeManualItem) : [];
+      row.itemCount = items.length;
+      const saved = await adPromotionRepository.saveWithItems(row, items);
+      res.status(201).json({ ok: true, ...saved, itemCount: items.length, dataQualityStatus: row.dataQualityStatus, qualityFlags: row.qualityFlags });
+    } catch (error) { next(error); }
+  });
+
+  router.post('/ad-groups/import', express.raw({ type: ['text/csv', 'application/csv', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'], limit: '16mb' }), async (req, res, next) => {
+    try {
+      if (!adPromotionRepository) throw new Error('Unified ad promotions are unavailable');
+      if (!req.body || !Buffer.isBuffer(req.body) || !req.body.length) throw new Error('a CSV or XLSX request body is required');
+      const filename = String(req.query.filename || req.headers['x-filename'] || 'report.csv');
+      const { report, preview } = parseShopeeAdGroupFile({ buffer: req.body, filename });
+      const persist = req.query.confirm === 'YES';
+      if (!persist) { res.json({ ok: true, persisted: false, ...preview }); return; }
+      for (const entry of report.groups) await adPromotionRepository.saveWithItems(entry.group, entry.items);
+      res.status(201).json({ ok: true, persisted: true, ...preview });
+    } catch (error) { next(error); }
   });
 
   router.get('/product-ads', async (req, res, next) => {

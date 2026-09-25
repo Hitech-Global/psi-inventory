@@ -211,9 +211,9 @@ async function main() {
        WHERE table_schema='public' AND table_name LIKE 'shopee_%'`,
     );
     const tableCount = Number(schema.rows[0].count);
-    checks.push(result('analytics_schema', tableCount >= 33, { tableCount, expectedMinimum: 33 }));
+  checks.push(result('analytics_schema', tableCount >= 35, { tableCount, expectedMinimum: 35 }));
 
-    if (tableCount >= 33 && pilotGmvMax && pilotStage && pilotStage.requiresProfileAndToken) {
+  if (tableCount >= 35 && pilotGmvMax && pilotStage && pilotStage.requiresProfileAndToken) {
       const profileRepo = new ShopeeShopProfileRepository({ pool });
       const tokenRepo = new ShopeeTokenRepository({ pool, masterKey: loadMasterKey() });
       const shops = await profileRepo.list({ activeOnly: true });
@@ -239,7 +239,7 @@ async function main() {
         shopId: shop && shop.shopId,
         role: 'ADS',
       }));
-    } else if (tableCount >= 33 && pilotGmvMax && pilotStage && !pilotStage.requiresProfileAndToken) {
+  } else if (tableCount >= 35 && pilotGmvMax && pilotStage && !pilotStage.requiresProfileAndToken) {
       const profileRepo = new ShopeeShopProfileRepository({ pool });
       const tokenRepo = new ShopeeTokenRepository({ pool, masterKey: loadMasterKey() });
       const shops = await profileRepo.list({ activeOnly: true });
@@ -250,7 +250,7 @@ async function main() {
         configuredShopProfile: Boolean(shop),
         adsTokenPresent: Boolean(adsToken),
       }, 'info'));
-    } else if (tableCount >= 33 && !offlineBaseline) {
+  } else if (tableCount >= 35 && !offlineBaseline) {
       const profileRepo = new ShopeeShopProfileRepository({ pool });
       const tokenRepo = new ShopeeTokenRepository({
         pool,

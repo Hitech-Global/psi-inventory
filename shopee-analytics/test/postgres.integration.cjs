@@ -22,6 +22,7 @@ const { ShopeeCampaignRepository } = require('../src/campaign-repository');
 const { ShopeeProductRepository } = require('../src/product-repository');
 const { ShopeePromotionRepository } = require('../src/promotion-repository');
 const { ShopeeStrategyRepository } = require('../src/strategy-repository');
+const { ShopeeAdPromotionRepository } = require('../src/ad-promotion-repository');
 
 (async () => {
   const pool = new Pool({ connectionString: url, max: 3 });
@@ -42,12 +43,22 @@ const { ShopeeStrategyRepository } = require('../src/strategy-repository');
       'shopee_oauth_states',
       'shopee_vouchers',
       'shopee_returns',
+      'shopee_ad_promotion_daily',
+      'shopee_ad_promotion_item_daily',
     ]) {
       assert(names.has(expected), `missing table ${expected}`);
     }
-    assert.strictEqual(names.size, 33, 'schema must expose exactly 33 shopee_* tables');
+    assert.strictEqual(names.size, 35, 'schema must expose exactly 35 shopee_* tables');
 
     const repository = new ShopeeAnalyticsRepository({ pool });
+    const unifiedPromotionRepository = new ShopeeAdPromotionRepository({ pool });
+    await unifiedPromotionRepository.saveWithItems({
+      shopId: 1, promotionKey: 'MANUAL_IMPORT:group:example', periodStart: '2026-09-11', periodEnd: '2026-09-17', granularity: 'RANGE', eventDate: '2026-09-11', promotionType: 'AD_GROUP', dataSource: 'MANUAL_IMPORT', campaignName: 'Example group', impressions: 10, clicks: 1, expense: 5, orders: 1, gmv: 20, sourceRoas: 4, ctr: 0.1, cvr: 1, itemCount: 2, dataQualityStatus: 'COMPLETE', qualityFlags: [], raw: {},
+    }, [{ itemId: 101, expense: 5, orders: 1, gmv: 20, dataQualityStatus: 'COMPLETE', qualityFlags: [], raw: {} }, { itemId: 102, expense: null, orders: null, gmv: null, dataQualityStatus: 'PARTIAL', qualityFlags: [], raw: {} }]);
+    const unifiedRows = await unifiedPromotionRepository.list({ shopId: 1, startDate: '2026-09-01', endDate: '2026-09-30' });
+    assert.strictEqual(unifiedRows.length, 1);
+    assert.strictEqual(unifiedRows[0].period_start.toISOString().slice(0, 10), '2026-09-11');
+    assert.strictEqual(unifiedRows[0].period_end.toISOString().slice(0, 10), '2026-09-17');
     await repository.saveGmsDay({
       shopId: 1,
       campaignId: 7,
@@ -181,7 +192,7 @@ const { ShopeeStrategyRepository } = require('../src/strategy-repository');
     assert.strictEqual(decrypted.refreshToken, 'refresh-secret');
 
     const oauthStateRepo = new ShopeeOAuthStateRepository({ pool });
-    const rawState = 'raw-state-must-not-be-stored';
+    const rawState = `raw-state-must-not-be-stored-${require('crypto').randomBytes(12).toString('hex')}`;
     const stateHash = require('crypto').createHash('sha256').update(rawState).digest('hex');
     const stateExpiresAt = new Date(Date.now() + 60_000);
     await oauthStateRepo.create({

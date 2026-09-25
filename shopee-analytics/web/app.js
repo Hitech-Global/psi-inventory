@@ -660,7 +660,7 @@ async function loadCampaigns() {
 }
 
 function switchAdsType(type) {
-  if (!['gms', 'manual', 'auto'].includes(type)) return;
+  if (!['gms', 'manual', 'auto', 'groups'].includes(type)) return;
   state.adsType = type;
   $$('.ads-type-tab').forEach(button =>
     button.classList.toggle('active', button.dataset.adsType === type)
@@ -668,7 +668,23 @@ function switchAdsType(type) {
   $('#adsGmsPanel').classList.toggle('hidden', type !== 'gms');
   $('#adsManualPanel').classList.toggle('hidden', type !== 'manual');
   $('#adsAutoPanel').classList.toggle('hidden', type !== 'auto');
+  $('#adsGroupImportPanel').classList.toggle('hidden', type !== 'groups');
   loadCurrentView();
+}
+
+function renderAdGroupImportResult(payload) {
+  const summary = [`${payload.adGroupCount || 0} 个广告组`, `${payload.itemRowCount || 0} 个商品行`, `${payload.periodStart || '—'} 至 ${payload.periodEnd || '—'} · ${payload.granularity || '—'}`, `完整 ${payload.completeCount || 0} · 部分 ${payload.partialCount || 0} · 不一致 ${payload.mismatchCount || 0}`];
+  const warning = (payload.warnings || []).length ? `<p class="product-ad-note">质量提示：${escapeHtml((payload.warnings || []).map(x => x.code || x).join('、'))}</p>` : '';
+  $('#adGroupImportResult').innerHTML = `<strong>${payload.persisted ? '已按幂等键写入' : '预览完成，尚未写入'}</strong><p>${escapeHtml(summary.join('；'))}</p>${warning}`;
+  $('#adGroupImportBtn').disabled = Boolean(payload.persisted);
+}
+
+async function uploadAdGroup({ persist = false } = {}) {
+  const file = $('#adGroupFile').files && $('#adGroupFile').files[0];
+  if (!file) throw new Error('请先选择 CSV 或 XLSX 文件');
+  const query = new URLSearchParams({ filename: file.name }); if (persist) query.set('confirm', 'YES');
+  const response = await fetch(`/api/shopee-analytics/ad-groups/import?${query}`, { method: 'POST', headers: { 'content-type': file.type || (file.name.endsWith('.xlsx') ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'text/csv') }, body: file });
+  const payload = await response.json().catch(() => ({})); if (!response.ok) throw new Error(payload.message || `HTTP ${response.status}`); renderAdGroupImportResult(payload);
 }
 
 function productAdDiagnosis(row) {
@@ -1297,6 +1313,7 @@ async function loadCurrentView() {
   try {
     if (state.view === 'overview') await loadPortfolio();
     else if (state.view === 'store' && selectedShop()) await loadStoreDetail();
+    else if (state.view === 'ads' && state.adsType === 'groups') return;
     else if (state.view === 'ads' && selectedShop()) {
       if (state.adsType === 'gms') await loadCampaigns();
       else await loadProductAds(state.adsType);
@@ -1309,7 +1326,7 @@ async function loadCurrentView() {
     if (state.view === 'overview') {
       $('#portfolioRows').innerHTML =
         `<tr><td colspan="14" class="empty">${escapeHtml(error.message)}</td></tr>`;
-    } else if (state.view === 'ads') {
+    } else if (state.view === 'ads' && state.adsType !== 'groups') {
       const target = state.adsType === 'gms' ? '#campaignRows' : state.adsType === 'manual' ? '#manualAdRows' : '#autoAdRows';
       const colspan = state.adsType === 'gms' ? 6 : 11;
       $(target).innerHTML = `<tr><td colspan="${colspan}" class="empty">${escapeHtml(error.message)}</td></tr>`;
@@ -1357,5 +1374,7 @@ $('#shopSelect').addEventListener('change', onShopChanged);
 $('#loadBtn').addEventListener('click', loadCurrentView);
 $('#refreshStatusBtn').addEventListener('click', loadSystemStatus);
 $('#refreshStatusPortfolioBtn').addEventListener('click', loadStatusPortfolio);
+$('#adGroupPreviewBtn').addEventListener('click', () => uploadAdGroup().catch(error => { $('#adGroupImportResult').textContent = error.message; }));
+$('#adGroupImportBtn').addEventListener('click', () => uploadAdGroup({ persist: true }).catch(error => { $('#adGroupImportResult').textContent = error.message; }));
 
 init();

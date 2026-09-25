@@ -33,6 +33,7 @@ function createApp({ pool, skillProvider = null }) {
     repository,
     strategyRepository,
     queryRepository,
+    adPromotionRepository,
     skillReportRepository,
     runSkillAnalysis,
   } = createSkillRuntime({ pool, skillProvider });
@@ -42,6 +43,7 @@ function createApp({ pool, skillProvider = null }) {
     repository,
     strategyRepository,
     queryRepository,
+    adPromotionRepository,
     backupStatusProvider,
     skillReportRepository,
     runSkillAnalysis,
