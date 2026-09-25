@@ -17,6 +17,15 @@ function positiveSafeInteger(value, errorCode) {
   return number;
 }
 
+function positiveSafeIntegerList(value, errorCode, { optional = false } = {}) {
+  if (value === undefined || value === null) {
+    if (optional) return [];
+    throw oauthError(errorCode, 502);
+  }
+  if (!Array.isArray(value)) throw oauthError(errorCode, 502);
+  return [...new Set(value.map(entry => positiveSafeInteger(entry, errorCode)))];
+}
+
 class ShopeeOAuthService {
   constructor({
     stateRepository,
@@ -79,7 +88,7 @@ class ShopeeOAuthService {
     return { state, ttlSeconds, authorizationUrl, expectedShopId: pilot.shopId, expiresAt };
   }
 
-  async completeAuthorization({ state, code, shopId, providerError = null }) {
+  async completeAuthorization({ state, code, providerError = null }) {
     const pilot = this.policy(); // Gate before state reads, writes, or token exchange.
     const stateHash = hashState(state);
     const now = this.now();
@@ -89,15 +98,7 @@ class ShopeeOAuthService {
     if (providerError) throw oauthError('OAUTH_PROVIDER_ERROR', 400);
     if (!code || typeof code !== 'string') throw oauthError('OAUTH_MISSING_CODE', 400);
 
-    const callbackShopId = positiveSafeInteger(shopId, 'OAUTH_INVALID_SHOP_ID');
-    if (callbackShopId !== pilot.shopId || Number(active.expected_shop_id) !== pilot.shopId) {
-      // Both values have passed integer validation. Deliberately do not log callback
-      // parameters such as code or state, nor any credential or token material.
-      this.logger.error(
-        `[Shopee OAuth] OAUTH_INVALID_SHOP_ID callbackShopId=${callbackShopId} expectedShopId=${pilot.shopId}`,
-      );
-      throw oauthError('OAUTH_INVALID_SHOP_ID', 403);
-    }
+    if (Number(active.expected_shop_id) !== pilot.shopId) throw oauthError('OAUTH_SHOP_NOT_ALLOWED', 403);
 
     const consumed = await this.stateRepository.consume({ stateHash, now });
     if (!consumed) throw oauthError('OAUTH_INVALID_OR_REPLAYED_STATE', 400);
@@ -107,10 +108,22 @@ class ShopeeOAuthService {
       // Instantiate the encrypted repository before exchanging the code so a missing local key
       // cannot leave a successful code exchange without a secure persistence path.
       const tokenRepository = this.tokenRepositoryFactory();
-      response = await this.createAuthClient().exchangeAuthorizationCode({ code, shopId: callbackShopId });
-      const responseShopId = positiveSafeInteger(response && response.shop_id, 'OAUTH_RESPONSE_SHOP_MISMATCH');
-      if (responseShopId !== callbackShopId || responseShopId !== pilot.shopId) {
-        throw oauthError('OAUTH_RESPONSE_SHOP_MISMATCH', 400);
+      response = await this.createAuthClient().exchangeAuthorizationCode({ code });
+      const authorizedShopIds = positiveSafeIntegerList(response && response.shop_id_list, 'OAUTH_INVALID_TOKEN_RESPONSE');
+      // Merchant IDs are normalized as part of the response contract, but the Pilot
+      // boundary is a shop-level allowlist and can only be satisfied by shop_id_list.
+      const authorizedMerchantIds = positiveSafeIntegerList(
+        response && response.merchant_id_list,
+        'OAUTH_INVALID_TOKEN_RESPONSE',
+        { optional: true },
+      );
+      if (!authorizedShopIds.includes(pilot.shopId)) {
+        // These are validated numeric identifiers only. Never log the code, state,
+        // token fields, credentials, or the complete provider response.
+        this.logger.error(
+          `[Shopee OAuth] OAUTH_SHOP_NOT_ALLOWED expectedShopId=${pilot.shopId} authorizedShopIds=[${authorizedShopIds.join(',')}] merchantIdCount=${authorizedMerchantIds.length}`,
+        );
+        throw oauthError('OAUTH_SHOP_NOT_ALLOWED', 403);
       }
       const expireIn = Number(response && response.expire_in);
       if (!response.access_token || !response.refresh_token || !Number.isFinite(expireIn) || expireIn <= 0) {
@@ -119,18 +132,18 @@ class ShopeeOAuthService {
       const expiresAt = new Date(now.getTime() + expireIn * 1000);
       await tokenRepository.save({
         appRole: 'ADS',
-        shopId: callbackShopId,
+        shopId: pilot.shopId,
         accessToken: response.access_token,
         refreshToken: response.refresh_token,
         expiresAt,
         lastRefreshAt: now,
         refreshError: null,
       });
-      return { appRole: 'ADS', shopId: callbackShopId, expiresAt };
+      return { appRole: 'ADS', shopId: pilot.shopId, expiresAt };
     } catch (error) {
       throw safeError(error, 'OAUTH_TOKEN_EXCHANGE_FAILED');
     }
   }
 }
 
-module.exports = { ShopeeOAuthService, positiveSafeInteger };
+module.exports = { ShopeeOAuthService, positiveSafeInteger, positiveSafeIntegerList };

@@ -56,6 +56,7 @@ class MemoryStateRepository {
 function createService({ env = pilotEnv, response, now = () => fixedNow, stateRepository = new MemoryStateRepository(), logger = console } = {}) {
   const saved = [];
   let fetchCalls = 0;
+  let lastRequestBody = null;
   const service = new ShopeeOAuthService({
     stateRepository,
     tokenRepositoryFactory: () => ({ async save(value) { saved.push(value); } }),
@@ -67,16 +68,24 @@ function createService({ env = pilotEnv, response, now = () => fixedNow, stateRe
     fetchImpl: async (url, options) => {
       fetchCalls += 1;
       assert(!url.includes('SUPER_SECRET_PARTNER_KEY'));
-      assert.strictEqual(JSON.parse(options.body).code, 'SUPER_SECRET_CODE');
+      lastRequestBody = JSON.parse(options.body);
+      assert.strictEqual(lastRequestBody.code, 'SUPER_SECRET_CODE');
       return { ok: true, status: 200, text: async () => JSON.stringify(response || {
-        shop_id: 1101,
+        shop_id_list: [1101],
+        merchant_id_list: [9001],
         access_token: 'SUPER_SECRET_ACCESS',
         refresh_token: 'SUPER_SECRET_REFRESH',
         expire_in: 3600,
       }) };
     },
   });
-  return { service, stateRepository, saved, get fetchCalls() { return fetchCalls; } };
+  return {
+    service,
+    stateRepository,
+    saved,
+    get fetchCalls() { return fetchCalls; },
+    get lastRequestBody() { return lastRequestBody; },
+  };
 }
 
 const client = new ShopeeAuthClient({ partnerId: '123', partnerKey: 'SUPER_SECRET_PARTNER_KEY', fetchImpl: async () => { throw new Error('not called'); } });
@@ -104,33 +113,50 @@ assert.throws(
   assert.strictEqual(valid.fetchCalls, 0);
   assert(begin.authorizationUrl.includes('/api/v2/shop/auth_partner'));
   assert.strictEqual(begin.ttlSeconds, 600);
-  const result = await valid.service.completeAuthorization({ state: begin.state, code: 'SUPER_SECRET_CODE', shopId: 1101 });
+  const result = await valid.service.completeAuthorization({ state: begin.state, code: 'SUPER_SECRET_CODE' });
   assert.strictEqual(result.shopId, 1101);
   assert.strictEqual(valid.fetchCalls, 1);
+  assert.deepStrictEqual(valid.lastRequestBody, { code: 'SUPER_SECRET_CODE', partner_id: 123 });
   assert.strictEqual(valid.saved.length, 1);
   assert.strictEqual(valid.saved[0].accessToken, 'SUPER_SECRET_ACCESS');
   assert(valid.saved[0].expiresAt > fixedNow);
 
+  let optionalRequestBody = null;
+  const optionalClient = new ShopeeAuthClient({
+    partnerId: '123',
+    partnerKey: 'SUPER_SECRET_PARTNER_KEY',
+    fetchImpl: async (url, options) => {
+      optionalRequestBody = JSON.parse(options.body);
+      return { ok: true, status: 200, text: async () => '{}' };
+    },
+  });
+  await optionalClient.exchangeAuthorizationCode({ code: 'SUPER_SECRET_CODE', shopId: 1101, mainAccountId: 9001 });
+  assert.deepStrictEqual(optionalRequestBody, {
+    code: 'SUPER_SECRET_CODE', partner_id: 123, shop_id: 1101, main_account_id: 9001,
+  });
   await assert.rejects(
-    () => valid.service.completeAuthorization({ state: begin.state, code: 'SUPER_SECRET_CODE', shopId: 1101 }),
+    () => new ShopeeAuthClient({ partnerId: '', partnerKey: 'SUPER_SECRET_PARTNER_KEY' }).exchangeAuthorizationCode({ code: 'SUPER_SECRET_CODE' }),
+    /partner_id is required/,
+  );
+
+  await assert.rejects(
+    () => valid.service.completeAuthorization({ state: begin.state, code: 'SUPER_SECRET_CODE' }),
     /OAUTH_INVALID_OR_EXPIRED_STATE|OAUTH_INVALID_OR_REPLAYED_STATE/,
   );
   assert.strictEqual(valid.fetchCalls, 1);
 
   const invalid = createService();
-  await assert.rejects(() => invalid.service.completeAuthorization({ state: 'unknown', code: 'SUPER_SECRET_CODE', shopId: 1101 }), /OAUTH_INVALID_OR_EXPIRED_STATE/);
+  await assert.rejects(() => invalid.service.completeAuthorization({ state: 'unknown', code: 'SUPER_SECRET_CODE' }), /OAUTH_INVALID_OR_EXPIRED_STATE/);
   assert.strictEqual(invalid.fetchCalls, 0);
 
   const expired = createService({ now: () => new Date('2026-09-21T10:20:01.000Z') });
   await expired.stateRepository.create({ stateHash: hashState('expired'), appRole: 'ADS', expectedShopId: 1101, redirectUri: pilotEnv.SHOPEE_OAUTH_LIVE_REDIRECT_URL, expiresAt: new Date('2026-09-21T10:20:00.000Z') });
-  await assert.rejects(() => expired.service.completeAuthorization({ state: 'expired', code: 'SUPER_SECRET_CODE', shopId: 1101 }), /OAUTH_INVALID_OR_EXPIRED_STATE/);
+  await assert.rejects(() => expired.service.completeAuthorization({ state: 'expired', code: 'SUPER_SECRET_CODE' }), /OAUTH_INVALID_OR_EXPIRED_STATE/);
   assert.strictEqual(expired.fetchCalls, 0);
 
   for (const [label, args, expected] of [
-    ['missing code', { code: '', shopId: 1101 }, /OAUTH_MISSING_CODE/],
-    ['missing shop', { code: 'SUPER_SECRET_CODE', shopId: '' }, /OAUTH_INVALID_SHOP_ID/],
-    ['wrong shop', { code: 'SUPER_SECRET_CODE', shopId: 1102 }, /OAUTH_INVALID_SHOP_ID/],
-    ['provider error', { code: 'SUPER_SECRET_CODE', shopId: 1101, providerError: 'denied' }, /OAUTH_PROVIDER_ERROR/],
+    ['missing code', { code: '' }, /OAUTH_MISSING_CODE/],
+    ['provider error', { code: 'SUPER_SECRET_CODE', providerError: 'denied' }, /OAUTH_PROVIDER_ERROR/],
   ]) {
     const test = createService();
     const started = await test.service.beginAuthorization();
@@ -139,44 +165,43 @@ assert.throws(
     assert.strictEqual(test.saved.length, 0);
   }
 
-  const diagnosticLogs = [];
-  const diagnostic = createService({
-    logger: { error(message) { diagnosticLogs.push(String(message)); } },
-  });
-  const diagnosticStart = await diagnostic.service.beginAuthorization();
+  const deniedScopeLogs = [];
+  const deniedScope = createService({
+    logger: { error(message) { deniedScopeLogs.push(String(message)); } },
+    response: {
+    shop_id_list: [1102, 1103, 1102], merchant_id_list: [9001],
+    access_token: 'SUPER_SECRET_ACCESS', refresh_token: 'SUPER_SECRET_REFRESH', expire_in: 3600,
+  } });
+  const deniedScopeStart = await deniedScope.service.beginAuthorization();
   await assert.rejects(
-    () => diagnostic.service.completeAuthorization({
-      state: diagnosticStart.state,
-      code: 'SUPER_SECRET_CODE',
-      shopId: 1102,
-    }),
-    /OAUTH_INVALID_SHOP_ID/,
+    () => deniedScope.service.completeAuthorization({ state: deniedScopeStart.state, code: 'SUPER_SECRET_CODE' }),
+    /OAUTH_SHOP_NOT_ALLOWED/,
   );
-  assert.strictEqual(diagnostic.fetchCalls, 0);
-  assert.strictEqual(diagnostic.saved.length, 0);
-  assert.deepStrictEqual(diagnosticLogs, [
-    '[Shopee OAuth] OAUTH_INVALID_SHOP_ID callbackShopId=1102 expectedShopId=1101',
+  assert.strictEqual(deniedScope.fetchCalls, 1);
+  assert.strictEqual(deniedScope.saved.length, 0);
+  assert.deepStrictEqual(deniedScopeLogs, [
+    '[Shopee OAuth] OAUTH_SHOP_NOT_ALLOWED expectedShopId=1101 authorizedShopIds=[1102,1103] merchantIdCount=1',
   ]);
-  assert(!diagnosticLogs.join('\n').includes('SUPER_SECRET_'));
+  assert(!deniedScopeLogs.join('\n').includes('SUPER_SECRET_'));
 
-  const mismatch = createService({ response: { shop_id: 1102, access_token: 'SUPER_SECRET_ACCESS', refresh_token: 'SUPER_SECRET_REFRESH', expire_in: 3600 } });
+  const mismatch = createService({ response: { shop_id_list: [1101], merchant_id_list: ['not-a-number'], access_token: 'SUPER_SECRET_ACCESS', refresh_token: 'SUPER_SECRET_REFRESH', expire_in: 3600 } });
   const mismatchStart = await mismatch.service.beginAuthorization();
-  await assert.rejects(() => mismatch.service.completeAuthorization({ state: mismatchStart.state, code: 'SUPER_SECRET_CODE', shopId: 1101 }), /OAUTH_RESPONSE_SHOP_MISMATCH/);
+  await assert.rejects(() => mismatch.service.completeAuthorization({ state: mismatchStart.state, code: 'SUPER_SECRET_CODE' }), /OAUTH_INVALID_TOKEN_RESPONSE/);
   assert.strictEqual(mismatch.fetchCalls, 1);
   assert.strictEqual(mismatch.saved.length, 0);
 
   const concurrent = createService();
   const concurrentStart = await concurrent.service.beginAuthorization();
   const attempts = await Promise.allSettled([
-    concurrent.service.completeAuthorization({ state: concurrentStart.state, code: 'SUPER_SECRET_CODE', shopId: 1101 }),
-    concurrent.service.completeAuthorization({ state: concurrentStart.state, code: 'SUPER_SECRET_CODE', shopId: 1101 }),
+    concurrent.service.completeAuthorization({ state: concurrentStart.state, code: 'SUPER_SECRET_CODE' }),
+    concurrent.service.completeAuthorization({ state: concurrentStart.state, code: 'SUPER_SECRET_CODE' }),
   ]);
   assert.strictEqual(attempts.filter(row => row.status === 'fulfilled').length, 1);
   assert.strictEqual(concurrent.fetchCalls, 1);
 
   const offline = createService({ env: { ...pilotEnv, SHOPEE_ANALYTICS_DEPLOYMENT_MODE: OFFLINE_BASELINE } });
   await assert.rejects(() => offline.service.beginAuthorization(), /OAUTH_DISABLED/);
-  await assert.rejects(() => offline.service.completeAuthorization({ state: 'anything', code: 'SUPER_SECRET_CODE', shopId: 1101 }), /OAUTH_DISABLED/);
+  await assert.rejects(() => offline.service.completeAuthorization({ state: 'anything', code: 'SUPER_SECRET_CODE' }), /OAUTH_DISABLED/);
   assert.strictEqual(offline.fetchCalls, 0);
 
   const production = createService({ env: { ...pilotEnv, SHOPEE_ANALYTICS_DEPLOYMENT_MODE: PRODUCTION } });
@@ -219,12 +244,13 @@ assert.throws(
     assert.strictEqual(start.headers.get('location'), 'https://partner.shopeemobile.com/authorize');
     const setCookie = start.headers.get('set-cookie');
     assert(setCookie.includes('Secure') && setCookie.includes('HttpOnly'));
-    const callback = await fetch(`${base}/oauth/shopee/callback?code=SUPER_SECRET_CODE&shop_id=1101`, {
+    const callback = await fetch(`${base}/oauth/shopee/callback?code=SUPER_SECRET_CODE`, {
       headers: { cookie: 'shopee_oauth_state=router-state' },
     });
     assert.strictEqual(callback.status, 200);
     assert.strictEqual(callbackInput.state, 'router-state');
     assert.strictEqual(callbackInput.code, 'SUPER_SECRET_CODE');
+    assert.strictEqual(Object.hasOwn(callbackInput, 'shopId'), false);
   } finally {
     await new Promise(resolve => server.close(resolve));
   }

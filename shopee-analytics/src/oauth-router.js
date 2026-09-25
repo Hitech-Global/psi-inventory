@@ -30,7 +30,6 @@ function createOAuthRouter({ oauthService, logger = console }) {
       const result = await oauthService.completeAuthorization({
         state,
         code: typeof req.query.code === 'string' ? req.query.code : '',
-        shopId: req.query.shop_id,
         providerError: req.query.error || null,
       });
       res.setHeader('Set-Cookie', clearStateCookie());

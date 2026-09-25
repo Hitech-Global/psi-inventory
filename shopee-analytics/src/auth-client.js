@@ -88,15 +88,24 @@ class ShopeeAuthClient {
     return `${this.baseUrl}${path}?${params.toString()}`;
   }
 
-  async exchangeAuthorizationCode({ code, shopId }) {
+  async exchangeAuthorizationCode({ code, shopId, mainAccountId }) {
+    const normalizedCode = String(code || '').trim();
+    const partnerId = Number(this.partnerId);
+    if (!normalizedCode) throw new Error('Shopee authorization code is required');
+    if (!Number.isSafeInteger(partnerId) || partnerId <= 0) throw new Error('Shopee partner_id is required');
+
+    const body = {
+      code: normalizedCode,
+      partner_id: partnerId,
+    };
+    if (shopId !== undefined && shopId !== null && shopId !== '') body.shop_id = Number(shopId);
+    if (mainAccountId !== undefined && mainAccountId !== null && mainAccountId !== '') {
+      body.main_account_id = Number(mainAccountId);
+    }
     const path = '/api/v2/auth/token/get';
     return this.publicPost({
       path,
-      body: {
-        code: String(code || ''),
-        partner_id: Number(this.partnerId),
-        shop_id: Number(shopId),
-      },
+      body,
     });
   }
 }
