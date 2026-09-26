@@ -1,0 +1,267 @@
+# Shopee Analytics V1
+
+Isolated, read-only foundation for the Shopee operations analytics system. It is intentionally kept outside the existing inventory runtime so current production modules remain untouched until an explicit integration gate.
+
+## V1 decision flow
+
+1. Ad-group order volume first.
+2. Actual ROAS vs target ROAS and break-even ROAS.
+3. Funnel: impressions → clicks → CTR → conversion → orders.
+4. Item race: spend share, direct GMV share, direct order share, Broad vs Direct.
+5. Classify evidence: core candidate / exploration keep / insufficient exploration / product optimization / high-risk zero-order.
+6. Separate Double-Day and 25th-payday event performance from ordinary-day baseline.
+7. Only after ad-group validation can an item become a single-item-ad candidate.
+
+`25 conversions/week` is stored as a volume / maturity reference and ROAS Protection-related signal; it is **not** encoded as an official "learning complete" rule.
+
+## Confirmed API families
+
+The endpoint catalog in `src/catalog.js` covers the audited Open Platform APIs:
+
+- Ads: campaign IDs/settings, GMS campaign/item performance, daily/hourly performance, recommended ROI, deleted GMS items.
+- Product: item list/base info/models/promotion.
+- Orders: list/detail.
+- Voucher + Discount.
+- Returns.
+- Shop info.
+- Brand Portal shop sales performance.
+- BusinessInsights marketing hot listing (supplemental only, not a replacement for Product Card).
+
+Product Card item-level funnel data remains import-capable through `shopee_product_card_daily` until a complete item-level BI API is verified.
+
+## Security / deployment boundary
+
+- No Shopee partner key, access token, refresh token, or production secret belongs in Git.
+- App credentials must come from environment variables / secret storage.
+- No write endpoint is invoked by V1.
+- `schema.sql` is not wired into existing inventory startup migrations.
+- This branch does not deploy or modify production data.
+
+## Core files
+
+- `schema.sql` — PostgreSQL model for raw snapshots, normalized facts, history, event calendar, analysis cycles and diagnosis output.
+- `src/shopee-client.js` — shop-scoped signed request client.
+- `src/catalog.js` — audited endpoints and sync cadence policy.
+- `src/metrics.js` — Broad/Direct metrics, shares, target CPA and exploration-cost calculations.
+- `src/diagnosis.js` — first-pass 7-day diagnosis engine following the agreed order of operations.
+- `test/diagnosis.test.cjs` — pure regression tests.
+
+## Local test
+
+```bash
+node shopee-analytics/test/diagnosis.test.cjs
+```
+
+
+## Current onboarding flow
+
+The production connection is intentionally the last step:
+
+1. Apply `schema.sql` to the dedicated analytics PostgreSQL database with the explicit schema gate.
+2. Put Partner ID / Partner Key and the initial access + refresh tokens in server environment variables.
+3. Generate a 32-byte master key, base64 encode it, and set `SHOPEE_TOKEN_MASTER_KEY`.
+4. Run `scripts/bootstrap-tokens.cjs` once with `SHOPEE_ANALYTICS_BOOTSTRAP_TOKENS=YES`.
+5. Remove the plaintext access/refresh-token bootstrap environment variables after verification. Partner ID/Key remain server secrets.
+6. Runtime sync reads the encrypted token bundle from PostgreSQL and refreshes the Shopee access token automatically before expiry.
+7. Run the read-only sync commands and compare the first real campaign against Seller Centre before enabling recurring sync.
+
+No secret should be pasted into chat or committed to Git.
+
+## Product Card bridge
+
+The item-level Product Card funnel export is supported as a period import while a complete official item-level BI API is not yet verified.
+
+```bash
+SHOPEE_ANALYTICS_IMPORT_PRODUCT_CARD=YES \
+SHOPEE_PRODUCT_CARD_FILE=/secure/path/Product_Card.20260801_20260812.xlsx \
+node shopee-analytics/scripts/import-product-card.cjs
+```
+
+The importer can infer `start_date/end_date` from filenames containing `YYYYMMDD_YYYYMMDD`; explicit date env values override inference. It maps common English/Chinese Shopee headers, preserves the raw row JSON, and upserts by shop + period + item.
+
+## Read-only V1 UI
+
+`src/standalone-server.js` exposes only read endpoints:
+
+- Campaign overview
+- Campaign diagnostic detail
+- Ordinary-day vs Double-Day/25th-event baseline
+- SKU race table with Direct/Broad metrics and Product Card funnel context
+- Recommended ROI context
+- Next-step validation actions
+- SKU event timeline (voucher, discount, return/refund, recommended ROAS and operation history)
+
+The standalone server binds to loopback by default. It is not yet integrated into the existing inventory navigation/auth stack.
+
+
+## Multi-country / multi-brand / multi-shop
+
+The analytics layer is shop-scoped end to end. Every operational fact keeps `shop_id`, and the shop directory adds the business dimensions that Shopee API data does not reliably provide:
+
+- country / marketplace
+- brand
+- display name
+- local currency
+- IANA timezone
+- Brand Portal timezone
+- active / sort order
+
+Configure shops with the gated script:
+
+```bash
+SHOPEE_ANALYTICS_CONFIGURE_SHOPS=YES \
+SHOPEE_SHOP_PROFILES_FILE=/secure/path/shops.json \
+node shopee-analytics/scripts/configure-shops.cjs
+```
+
+See `config/shops.example.json` for the shape.
+
+The frontend is built around the same hierarchy:
+
+`Country → Brand → Shop → Campaign → SKU`
+
+The portfolio page supports all shops or filtered subsets. Monetary values are **never summed across different currencies**. Cross-shop order/unit counts can be totaled, while GMV, ad spend, refunds and ROAS are grouped by currency until a dedicated reporting-FX layer is explicitly added.
+
+For recurring sync across all active shops:
+
+```bash
+SHOPEE_ANALYTICS_ENABLE_SYNC_ALL_SHOPS=YES \
+node shopee-analytics/scripts/sync-all-shops.cjs hourly
+
+SHOPEE_ANALYTICS_ENABLE_SYNC_ALL_SHOPS=YES \
+node shopee-analytics/scripts/sync-all-shops.cjs daily
+```
+
+Optional scheduler filters can limit a run to one country, brand, or set of shop IDs. Each shop keeps its own encrypted token bundle and timezone.
+
+
+### Multi-shop token bootstrap
+
+Each authorized shop has a separate encrypted token bundle per app role. For many shops, use a temporary plaintext file **outside the repository**:
+
+```json
+[
+  {
+    "shopId": 123456789,
+    "tokens": {
+      "ADS": {
+        "accessToken": "<temporary access token>",
+        "refreshToken": "<temporary refresh token>",
+        "expiresAt": "2026-09-18T12:00:00Z"
+      },
+      "STORE_OPS": {
+        "accessToken": "<temporary access token>",
+        "refreshToken": "<temporary refresh token>",
+        "expiresAt": "2026-09-18T12:00:00Z"
+      }
+    }
+  }
+]
+```
+
+Import once with:
+
+```bash
+SHOPEE_ANALYTICS_BOOTSTRAP_MULTI_SHOP_TOKENS=YES \
+SHOPEE_MULTI_SHOP_TOKEN_FILE=/secure/outside-git/shopee-tokens.json \
+node shopee-analytics/scripts/bootstrap-multi-shop-tokens.cjs
+```
+
+The script never prints token values. Delete the plaintext file after the encrypted DB records are verified. Missing roles are allowed per shop so onboarding can be phased; the data-health page will show which role is not yet configured.
+
+
+## Per-shop strategy
+
+Different countries / brands / stores can use different operating constraints. Do not assume one global ad-spend ratio or weekly-order reference.
+
+Example strategy config:
+
+```json
+[
+  {
+    "shopId": 123456789,
+    "adSpendRatioLimit": 0.15,
+    "weeklyOrderReference": 25
+  },
+  {
+    "shopId": 987654321,
+    "adSpendRatioLimit": 0.20,
+    "weeklyOrderReference": 25
+  }
+]
+```
+
+Apply with the explicit gate:
+
+```bash
+SHOPEE_ANALYTICS_CONFIGURE_STRATEGY=YES \
+SHOPEE_STRATEGY_CONFIG_FILE=/secure/path/shopee-strategy.json \
+node shopee-analytics/scripts/configure-strategy.cjs
+```
+
+The portfolio and store-diagnosis pages use the configured shop-specific limit. Country × brand aggregates only judge the combined ad-spend ratio against a threshold when all shops in that aggregate share the same limit.
+
+
+## First live-data acceptance
+
+After real credentials are connected and the first sync completes, generate a read-only validation pack before treating the dashboard as production-accepted:
+
+```bash
+SHOPEE_VALIDATION_SHOP_ID=123456789 \
+SHOPEE_VALIDATION_START_DATE=2026-09-01 \
+SHOPEE_VALIDATION_END_DATE=2026-09-07 \
+node shopee-analytics/scripts/validation-report.cjs
+```
+
+The report prints no Partner Key / access token / refresh token. It includes shop identity, store BI totals, campaign totals/settings, item-coverage checks, token expiry metadata, Product Card coverage and a Seller Centre acceptance checklist.
+
+
+## Historical backfill
+
+Use the resumable backfill runner before accepting the first live dashboard. It is designed for multi-country / multi-brand / multi-shop onboarding and keeps progress per shop/source in `shopee_sync_state`.
+
+```bash
+SHOPEE_ANALYTICS_ENABLE_BACKFILL=YES \
+SHOPEE_BACKFILL_START_DATE=2026-05-01 \
+SHOPEE_BACKFILL_END_DATE=2026-09-17 \
+node shopee-analytics/scripts/backfill-all-shops.cjs
+```
+
+Optional filters:
+
+```bash
+SHOPEE_BACKFILL_COUNTRY=ID
+SHOPEE_BACKFILL_BRAND=REDRAGON
+SHOPEE_BACKFILL_SHOP_IDS=123456789,987654321
+SHOPEE_BACKFILL_SOURCES=gms,orders,returns,shop-bi
+```
+
+Behavior and safety rules:
+
+- Orders are backfilled by `create_time` in 14-day chunks, inside Shopee's documented 15-day order-list maximum window.
+- Returns use conservative 7-day chunks.
+- Shop BI is requested one local day at a time.
+- GMS performance is persisted one day at a time and the runner checkpoints every 7-day chunk.
+- Campaign settings / membership are synced as **current-state metadata only**. The runner never backdates today's membership into historical dates.
+- GMS item-performance rows are never treated as proof of full historical membership. This preserves the distinction between "member with zero performance" and "not known to be a member."
+- Product/model and Recommended ROI are current-state snapshots. They are not fabricated historically.
+- Voucher/Discount history is limited to records retained and returned by Shopee.
+- Product Card remains a separate exact-period BI import.
+- Rerunning the same date range resumes from the last successful chunk and all normalized writes remain idempotent.
+
+
+## Item-level break-even ROAS
+
+SKU diagnosis supports a shop + item specific break-even ROAS. This is a business profitability threshold, not a Shopee platform rule.
+
+Example file: `config/item-strategy.example.json`
+
+Apply with:
+
+```bash
+SHOPEE_ANALYTICS_CONFIGURE_ITEM_STRATEGY=YES \
+SHOPEE_ITEM_STRATEGY_FILE=/secure/path/item-strategy.json \
+node shopee-analytics/scripts/configure-item-strategy.cjs
+```
+
+Campaign SKU race and store SKU diagnosis compare Direct ROAS against this item-level break-even value. The effective minimum acceptable ROAS in campaign diagnosis is the stricter of item break-even and the shop ad-spend-ratio constraint.
