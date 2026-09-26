@@ -96,6 +96,7 @@ function publicJob(job) {
     periodStart: job.periodStart,
     periodEnd: job.periodEnd,
     granularity: job.granularity,
+    result: job.result || null,
     errorCode: job.errorCode,
     errorMessage: job.errorMessage,
     createdAt: job.createdAt,
@@ -117,6 +118,17 @@ async function waitForTerminal(jobRepository, id, { timeoutMs = 10 * 60 * 1000 }
   throw httpError('IMPORT_JOB_TIMEOUT', 'Import job did not finish before the request timeout; it may still complete in the background', 504);
 }
 
+async function existingReusableFile(jobRepository, { sha256, targetShopId }) {
+  const preview = await jobRepository.findReusablePreview({ sha256, targetShopId });
+  if (!preview || !preview.filePath) return null;
+  try {
+    await fsp.access(preview.filePath, fs.constants.R_OK);
+    return preview;
+  } catch {
+    return null;
+  }
+}
+
 function createAdGroupImportAsyncRouter({
   pool,
   tmpDir = process.env.SHOPEE_AD_GROUP_IMPORT_TMP_DIR || '/import-tmp',
@@ -136,36 +148,75 @@ function createAdGroupImportAsyncRouter({
   });
 
   router.post('/ad-groups/import', async (req, res, next) => {
-    let staged = null;
+    let cleanupPath = null;
     try {
       const targetShopId = positiveShopId(req.query.target_shop_id);
       const filename = String(req.query.filename || req.headers['x-filename'] || 'report.csv');
+      const operation = req.query.confirm === 'YES' ? 'IMPORT' : 'PREVIEW';
       const contentLength = Number(req.headers['content-length'] || 0);
       if (contentLength && contentLength > maxFileBytes) {
         throw httpError('FILE_TOO_LARGE', `file exceeds ${maxFileBytes} bytes`, 413);
       }
-      staged = await stageUploadStream(req, {
+
+      const staged = await stageUploadStream(req, {
         tmpDir,
         filename,
         contentType: req.headers['content-type'],
         maxBytes: maxFileBytes,
       });
-      const operation = req.query.confirm === 'YES' ? 'IMPORT' : 'PREVIEW';
+      cleanupPath = staged.filePath;
+      let jobFilePath = staged.filePath;
+
+      // A successful preview retains its staged artifact for a short TTL.  An
+      // import of the same file/shop can reuse that artifact instead of keeping
+      // a second copy on disk.  The current UI may still re-upload the bytes;
+      // the async job API can later avoid even that network transfer.
+      if (operation === 'IMPORT') {
+        const reusable = await existingReusableFile(jobs, {
+          sha256: staged.sha256,
+          targetShopId,
+        });
+        if (reusable) {
+          await fsp.unlink(staged.filePath).catch(error => { if (error.code !== 'ENOENT') throw error; });
+          cleanupPath = null;
+          jobFilePath = reusable.filePath;
+        }
+      }
+
       const queued = await jobs.enqueue({
         operation,
         filename: staged.filename,
-        filePath: staged.filePath,
+        filePath: jobFilePath,
         fileSize: staged.fileSize,
         sha256: staged.sha256,
         targetShopId,
         request: { previewOnly: req.query.preview_only === 'YES' },
       });
+
       if (queued.reused) {
-        await fsp.unlink(staged.filePath).catch(error => { if (error.code !== 'ENOENT') throw error; });
+        if (cleanupPath) {
+          await fsp.unlink(cleanupPath).catch(error => { if (error.code !== 'ENOENT') throw error; });
+          cleanupPath = null;
+        }
+      } else if (jobFilePath === cleanupPath) {
+        // Ownership of a newly queued staged file transfers to the worker.
+        cleanupPath = null;
       }
-      // Ownership of a newly queued file transfers to the worker. Never delete
-      // it from the web request if the client disconnects or the wait times out.
-      staged = null;
+
+      // Opt-in nonblocking mode is the final UI contract: the upload request
+      // returns immediately after queueing, while heavy parsing/persistence runs
+      // in the dedicated worker process.  Legacy callers keep the old response
+      // shape until the frontend migration is complete.
+      if (req.query.async === 'YES' || req.query.wait === 'NO') {
+        res.status(202).json({
+          ok: true,
+          accepted: true,
+          reused: queued.reused,
+          job: publicJob(queued.job),
+        });
+        return;
+      }
+
       const job = await waitForTerminal(jobs, queued.job.id, { timeoutMs: waitTimeoutMs });
       if (job.status === 'SUCCEEDED') {
         res.status(operation === 'IMPORT' ? 201 : 200).json(job.result || { ok: true });
@@ -177,8 +228,8 @@ function createAdGroupImportAsyncRouter({
         message: job.errorMessage || 'Ad Group import job failed',
       });
     } catch (error) {
-      if (staged && staged.filePath) {
-        await fsp.unlink(staged.filePath).catch(unlinkError => { if (unlinkError.code !== 'ENOENT') console.warn('[Ad Group Import] cleanup failed:', unlinkError.message); });
+      if (cleanupPath) {
+        await fsp.unlink(cleanupPath).catch(unlinkError => { if (unlinkError.code !== 'ENOENT') console.warn('[Ad Group Import] cleanup failed:', unlinkError.message); });
       }
       next(error);
     }
@@ -192,6 +243,7 @@ module.exports = {
   ALLOWED_EXTENSIONS,
   DEFAULT_MAX_FILE_BYTES,
   createAdGroupImportAsyncRouter,
+  existingReusableFile,
   httpError,
   publicJob,
   safeOriginalFilename,
