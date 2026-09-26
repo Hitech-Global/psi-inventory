@@ -10,6 +10,7 @@ const express = require('express');
 const { ShopeeAdGroupImportJobRepository, TERMINAL } = require('./ad-group-import-job-repository');
 
 const DEFAULT_MAX_FILE_BYTES = 10 * 1024 * 1024;
+const DEFAULT_MAX_TMP_BYTES = 200 * 1024 * 1024;
 const ALLOWED_EXTENSIONS = new Set(['.csv', '.xlsx']);
 const ALLOWED_CONTENT_TYPES = new Set([
   'text/csv',
@@ -46,6 +47,19 @@ function validateContentType(value) {
   if (type && !ALLOWED_CONTENT_TYPES.has(type)) {
     throw httpError('UNSUPPORTED_FILE_TYPE', `unsupported content-type: ${type}`, 415);
   }
+}
+
+async function tempUsageBytes(tmpDir) {
+  let entries;
+  try { entries = await fsp.readdir(tmpDir, { withFileTypes: true }); }
+  catch (error) { if (error.code === 'ENOENT') return 0; throw error; }
+  let total = 0;
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    try { total += (await fsp.stat(path.join(tmpDir, entry.name))).size; }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+  }
+  return total;
 }
 
 async function stageUploadStream(readable, {
@@ -150,6 +164,7 @@ function createAdGroupImportAsyncRouter({
   pool,
   tmpDir = process.env.SHOPEE_AD_GROUP_IMPORT_TMP_DIR || '/import-tmp',
   maxFileBytes = Number(process.env.SHOPEE_AD_GROUP_IMPORT_MAX_FILE_BYTES || DEFAULT_MAX_FILE_BYTES),
+  maxTmpBytes = Number(process.env.SHOPEE_AD_GROUP_IMPORT_MAX_TMP_BYTES || DEFAULT_MAX_TMP_BYTES),
   waitTimeoutMs = Number(process.env.SHOPEE_AD_GROUP_IMPORT_WAIT_TIMEOUT_MS || 10 * 60 * 1000),
 } = {}) {
   if (!pool || typeof pool.query !== 'function') throw new Error('import job pg pool is required');
@@ -204,6 +219,10 @@ function createAdGroupImportAsyncRouter({
         maxBytes: maxFileBytes,
       });
       cleanupPath = staged.filePath;
+      const tmpBytes = await tempUsageBytes(tmpDir);
+      if (tmpBytes > maxTmpBytes) {
+        throw httpError('IMPORT_TEMP_LIMIT', `import temp storage exceeds ${maxTmpBytes} bytes`, 507);
+      }
       let jobFilePath = staged.filePath;
 
       // Backward-compatible confirm uploads can reuse a retained preview
@@ -275,6 +294,7 @@ module.exports = {
   ALLOWED_CONTENT_TYPES,
   ALLOWED_EXTENSIONS,
   DEFAULT_MAX_FILE_BYTES,
+  DEFAULT_MAX_TMP_BYTES,
   createAdGroupImportAsyncRouter,
   existingReusableFile,
   httpError,
@@ -282,6 +302,7 @@ module.exports = {
   requireReusablePreview,
   safeOriginalFilename,
   stageUploadStream,
+  tempUsageBytes,
   validateContentType,
   waitForTerminal,
 };
