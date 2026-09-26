@@ -5,6 +5,7 @@ const express = require('express');
 const { createAnalyticsPool } = require('./pg');
 const { createShopeeAnalyticsRouter } = require('./http-router');
 const { createAdGroupImportAsyncRouter } = require('./ad-group-import-async-router');
+const { createProductAdsV2Router } = require('./product-ads-v2-router');
 const { createBackupStatusProvider } = require('./backup-status');
 const { createConfiguredSkillProvider } = require('./openai-skill-provider');
 const { createSkillRuntime } = require('./skill-runtime');
@@ -49,6 +50,8 @@ function createApp({ pool, skillProvider = null, importJobPool = null }) {
   if (importJobPool) {
     app.use('/api/shopee-analytics', createAdGroupImportAsyncRouter({ pool: importJobPool }));
   }
+
+  app.use('/api/shopee-analytics', createProductAdsV2Router({ pool }));
 
   app.use('/api/shopee-analytics', createShopeeAnalyticsRouter({
     repository,
