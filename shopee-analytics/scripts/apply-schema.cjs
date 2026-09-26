@@ -10,7 +10,10 @@ async function main() {
   }
   const pool = createAnalyticsPool();
   try {
-    const sql = fs.readFileSync(path.join(__dirname, '..', 'schema.sql'), 'utf8');
+    const schemaFiles = ['schema.sql', 'schema-import-jobs.sql'];
+    const sql = schemaFiles
+      .map(name => fs.readFileSync(path.join(__dirname, '..', name), 'utf8'))
+      .join('\n\n');
     await pool.query('BEGIN');
     try {
       await pool.query(sql);
