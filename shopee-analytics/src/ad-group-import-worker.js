@@ -164,8 +164,10 @@ async function runWorker({ env = process.env } = {}) {
       }, Math.max(15000, Math.floor(leaseSeconds * 1000 / 3)));
       heartbeat.unref();
 
+      let completed = false;
       try {
         await processJob({ job, jobRepository, adPromotionRepository, shopScopeRepository, tmpDir });
+        completed = true;
       } catch (error) {
         const info = errorInfo(error);
         await jobRepository.fail(job.id, info).catch(failError => {
@@ -174,10 +176,16 @@ async function runWorker({ env = process.env } = {}) {
         console.error(`[Ad Group Import Worker] ${job.id} ${info.code}: ${info.message}`);
       } finally {
         clearInterval(heartbeat);
-        try {
-          await fsp.unlink(safeJobPath(job.filePath, tmpDir));
-        } catch (error) {
-          if (error.code !== 'ENOENT') console.warn('[Ad Group Import Worker] staged file cleanup failed:', error.message);
+        // Successful previews keep the staged artifact for a short TTL so a
+        // later confirm can reuse it.  Failed previews and completed imports
+        // release their file immediately; cleanupTemp removes old previews.
+        const retainPreviewArtifact = completed && job.operation === 'PREVIEW';
+        if (!retainPreviewArtifact) {
+          try {
+            await fsp.unlink(safeJobPath(job.filePath, tmpDir));
+          } catch (error) {
+            if (error.code !== 'ENOENT') console.warn('[Ad Group Import Worker] staged file cleanup failed:', error.message);
+          }
         }
       }
     }
