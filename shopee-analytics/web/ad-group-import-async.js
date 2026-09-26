@@ -393,6 +393,187 @@
     }
   }
 
+  function toLocalIso(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  function presetRange(name) {
+    const today = new Date();
+    today.setHours(12, 0, 0, 0);
+    const start = new Date(today);
+    const end = new Date(today);
+    if (name === 'today') return [toLocalIso(start), toLocalIso(end)];
+    if (name === 'yesterday') {
+      start.setDate(start.getDate() - 1);
+      end.setDate(end.getDate() - 1);
+    } else if (name === 'month') {
+      start.setDate(1);
+    } else if (name === 'last-month') {
+      start.setMonth(start.getMonth() - 1, 1);
+      end.setDate(0);
+    } else if (name === '7d') {
+      start.setDate(start.getDate() - 6);
+    } else if (name === '30d') {
+      start.setDate(start.getDate() - 29);
+    } else if (name === '6m') {
+      start.setMonth(start.getMonth() - 6);
+    }
+    return [toLocalIso(start), toLocalIso(end)];
+  }
+
+  function formatRangeDate(value) {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || ''));
+    return match ? `${match[1]}/${match[2]}/${match[3]}` : '选择日期';
+  }
+
+  function enhanceDateRangeFilter() {
+    const start = $('#startDate');
+    const end = $('#endDate');
+    if (!start || !end || $('#dateRangeField')) return;
+
+    const startLabel = start.closest('label');
+    const endLabel = end.closest('label');
+    if (!startLabel || !endLabel || !startLabel.parentNode) return;
+
+    const style = document.createElement('style');
+    style.id = 'dateRangeFilterStyles';
+    style.textContent = `
+      .date-source-hidden{display:none!important}
+      .multi-filter{grid-template-columns:minmax(130px,.75fr) minmax(130px,.75fr) minmax(220px,1.15fr) minmax(590px,2.5fr) auto!important}
+      .date-range-field{display:flex;flex-direction:column;gap:7px;min-width:0;position:relative}
+      .date-range-label{font-size:12px;font-weight:600;color:#6e6e73}
+      .date-range-tools{display:flex;align-items:center;gap:6px;min-width:0;white-space:nowrap}
+      .date-range-button{height:40px;min-width:178px;border:1px solid #d8d8dc;border-radius:10px;background:#fff;color:#1d1d1f;padding:0 12px;display:inline-flex;align-items:center;justify-content:space-between;gap:10px;font:inherit;font-weight:600;cursor:pointer}
+      .date-range-button:hover{background:#f8f8fa}.date-range-button:focus{outline:2px solid rgba(0,113,227,.18);border-color:#0071e3}
+      .date-range-icon{font-size:15px;color:#6e6e73}
+      .date-preset{height:34px;padding:0 9px;border:1px solid #dedee2;border-radius:9px;background:#fff;color:#515154;font-size:11px;font-weight:650;cursor:pointer}
+      .date-preset:hover{background:#f5f5f7}.date-preset.active{border-color:#0071e3;background:#eef6ff;color:#0567c5}
+      .date-range-popover{position:absolute;z-index:40;top:calc(100% + 8px);left:0;width:330px;padding:14px;background:#fff;border:1px solid #dedee2;border-radius:14px;box-shadow:0 14px 42px rgba(0,0,0,.14)}
+      .date-range-popover.hidden{display:none!important}
+      .date-range-popover-title{font-size:12px;font-weight:750;margin-bottom:10px;color:#1d1d1f}
+      .date-range-popover-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+      .date-range-popover label{font-size:11px;font-weight:600;color:#6e6e73;display:flex;flex-direction:column;gap:6px}
+      .date-range-popover input{height:38px;border:1px solid #d8d8dc;border-radius:9px;padding:0 9px;font:inherit;color:#1d1d1f;background:#fff}
+      .date-range-popover-actions{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px}
+      .date-range-error{font-size:10px;color:#b9361d;min-height:14px}
+      .date-range-apply{height:34px;border:0;border-radius:9px;padding:0 14px;background:#0071e3;color:#fff;font-size:11px;font-weight:700;cursor:pointer}
+      @media(max-width:1250px){.multi-filter{grid-template-columns:1fr 1fr 1.4fr!important}.date-range-field{grid-column:1/-1}.multi-filter .primary{grid-column:1/-1}.date-range-tools{flex-wrap:wrap}}
+      @media(max-width:800px){.multi-filter{grid-template-columns:1fr 1fr!important}.date-range-field{grid-column:1/-1}.date-range-tools{white-space:normal;flex-wrap:wrap}.date-range-button{min-width:100%;width:100%}.date-range-popover{width:min(330px,calc(100vw - 56px))}}
+      @media(max-width:560px){.multi-filter{grid-template-columns:1fr!important}.date-range-popover-grid{grid-template-columns:1fr}}
+    `;
+    document.head.appendChild(style);
+
+    startLabel.classList.add('date-source-hidden');
+    endLabel.classList.add('date-source-hidden');
+
+    const field = document.createElement('div');
+    field.id = 'dateRangeField';
+    field.className = 'date-range-field';
+    field.innerHTML = `
+      <span class="date-range-label">日期</span>
+      <div class="date-range-tools">
+        <button id="dateRangeButton" class="date-range-button" type="button" aria-haspopup="dialog" aria-expanded="false">
+          <span id="dateRangeText"></span><span class="date-range-icon">▣</span>
+        </button>
+        <button class="date-preset" type="button" data-date-preset="month">本月</button>
+        <button class="date-preset" type="button" data-date-preset="last-month">上月</button>
+        <button class="date-preset" type="button" data-date-preset="today">今天</button>
+        <button class="date-preset" type="button" data-date-preset="yesterday">昨天</button>
+        <button class="date-preset" type="button" data-date-preset="7d">近7天</button>
+        <button class="date-preset" type="button" data-date-preset="30d">近30天</button>
+        <button class="date-preset" type="button" data-date-preset="6m">近半年</button>
+      </div>
+      <div id="dateRangePopover" class="date-range-popover hidden" role="dialog" aria-label="日期范围">
+        <div class="date-range-popover-title">自定义日期范围</div>
+        <div class="date-range-popover-grid">
+          <label>开始日期<input id="dateRangeStart" type="date"></label>
+          <label>结束日期<input id="dateRangeEnd" type="date"></label>
+        </div>
+        <div class="date-range-popover-actions">
+          <span id="dateRangeError" class="date-range-error"></span>
+          <button id="dateRangeApply" class="date-range-apply" type="button">应用</button>
+        </div>
+      </div>`;
+    startLabel.parentNode.insertBefore(field, startLabel);
+
+    const rangeButton = $('#dateRangeButton');
+    const popover = $('#dateRangePopover');
+    const pickerStart = $('#dateRangeStart');
+    const pickerEnd = $('#dateRangeEnd');
+    const error = $('#dateRangeError');
+
+    function refresh() {
+      $('#dateRangeText').textContent = `${formatRangeDate(start.value)} – ${formatRangeDate(end.value)}`;
+      pickerStart.value = start.value;
+      pickerEnd.value = end.value;
+      document.querySelectorAll('[data-date-preset]').forEach(button => {
+        const [presetStart, presetEnd] = presetRange(button.dataset.datePreset);
+        button.classList.toggle('active', start.value === presetStart && end.value === presetEnd);
+      });
+    }
+
+    function setRange(nextStart, nextEnd) {
+      if (!nextStart || !nextEnd || nextStart > nextEnd) return false;
+      start.value = nextStart;
+      end.value = nextEnd;
+      error.textContent = '';
+      refresh();
+      return true;
+    }
+
+    function closePopover() {
+      popover.classList.add('hidden');
+      rangeButton.setAttribute('aria-expanded', 'false');
+    }
+
+    rangeButton.addEventListener('click', event => {
+      event.preventDefault();
+      const willOpen = popover.classList.contains('hidden');
+      popover.classList.toggle('hidden', !willOpen);
+      rangeButton.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+      if (willOpen) {
+        pickerStart.value = start.value;
+        pickerEnd.value = end.value;
+        error.textContent = '';
+      }
+    });
+
+    document.querySelectorAll('[data-date-preset]').forEach(button => {
+      button.addEventListener('click', event => {
+        event.preventDefault();
+        const [nextStart, nextEnd] = presetRange(button.dataset.datePreset);
+        setRange(nextStart, nextEnd);
+        closePopover();
+      });
+    });
+
+    $('#dateRangeApply').addEventListener('click', event => {
+      event.preventDefault();
+      if (!pickerStart.value || !pickerEnd.value) {
+        error.textContent = '请选择完整的日期范围';
+        return;
+      }
+      if (pickerStart.value > pickerEnd.value) {
+        error.textContent = '开始日期不能晚于结束日期';
+        return;
+      }
+      setRange(pickerStart.value, pickerEnd.value);
+      closePopover();
+    });
+
+    document.addEventListener('click', event => {
+      if (!field.contains(event.target)) closePopover();
+    });
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape') closePopover();
+    });
+
+    refresh();
+  }
+
   document.addEventListener('change', event => {
     if (event.target && event.target.id === 'adGroupFile') {
       selectFiles(Array.from(event.target.files || []));
@@ -426,5 +607,6 @@
     });
   }, true);
 
+  enhanceDateRangeFilter();
   restoreBatch();
 })();
