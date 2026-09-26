@@ -56,6 +56,10 @@
 
   function persistBatch() {
     try {
+      if (batch.entries.length && batch.entries.every(entry => entry.done)) {
+        sessionStorage.removeItem(STORAGE_KEY);
+        return;
+      }
       const serializable = batch.entries
         .filter(entry => entry.previewJobId && entry.preview && entry.preview.shopScope === 'MATCH')
         .map(entry => ({
@@ -70,7 +74,8 @@
           error: entry.error || null,
           status: entry.status || null,
         }));
-      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(serializable));
+      if (serializable.length) sessionStorage.setItem(STORAGE_KEY, JSON.stringify(serializable));
+      else sessionStorage.removeItem(STORAGE_KEY);
     } catch {}
   }
 
@@ -343,7 +348,6 @@
 
       if (batch.entries.length && batch.entries.every(entry => entry.done)) {
         setMessage(`批量导入完成：${batch.entries.length} / ${batch.entries.length}。`);
-        sessionStorage.removeItem(STORAGE_KEY);
         const load = $('#loadBtn');
         if (load) load.click();
       }
@@ -356,14 +360,15 @@
   async function recoverJobs() {
     for (const entry of batch.entries) {
       if (!entry.importJobId || entry.done) continue;
-      const payload = await api(`/api/shopee-analytics/ad-group-import-jobs/${encodeURIComponent(entry.importJobId)}`);
-      const job = payload.job;
-      if (!job || !terminal.has(job.status)) continue;
+      let payload = await api(`/api/shopee-analytics/ad-group-import-jobs/${encodeURIComponent(entry.importJobId)}`);
+      let job = payload.job;
+      if (job && !terminal.has(job.status)) job = await pollJob(entry.importJobId);
+      if (!job) continue;
       if (job.status === 'SUCCEEDED') {
         entry.done = true;
         entry.error = null;
         entry.status = 'DONE';
-      } else {
+      } else if (terminal.has(job.status)) {
         entry.error = `${job.errorCode || 'IMPORT_FAILED'}: ${job.errorMessage || '导入失败'}`;
         entry.status = 'FAILED';
       }
