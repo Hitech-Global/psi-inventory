@@ -162,7 +162,12 @@ function parseShopeeAdGroupReport(rows) {
     current.items.push(rowToItem(row));
   }
   if (!groups.length) throw new Error('report has no parent ad groups');
-  for (const group of groups) warnings.push(...validateParentChild(group));
+  for (const group of groups) {
+    // The canonical parent carries its finalized membership count so preview
+    // and persistence share the exact same contract.
+    group.group.itemCount = group.items.length;
+    warnings.push(...validateParentChild(group));
+  }
   return { metadata: normalizedMetadata, groups, warnings };
 }
 
