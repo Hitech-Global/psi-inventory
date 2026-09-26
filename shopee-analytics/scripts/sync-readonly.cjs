@@ -19,6 +19,7 @@ const { syncGmsWindow } = require('../src/sync-window');
 const {
   assertOnlineOperationAllowed,
   isPilotGmvMax,
+  loadPilotIdentityConfig,
   assertFormalGmsPilotScope,
 } = require('../src/deployment-mode');
 
@@ -30,6 +31,13 @@ function required(name) {
 
 function roleMap(role, tokenManager) {
   return { [role]: createRoleClient(role, { tokenManager }) };
+}
+
+function resolveShopIdForCommand(command, env = process.env) {
+  if (command === 'gms' && isPilotGmvMax(env)) {
+    return loadPilotIdentityConfig(env).shopId;
+  }
+  return loadShopId(env);
 }
 
 async function main() {
@@ -44,7 +52,7 @@ async function main() {
     throw new Error(`sync-readonly command ${command} is disabled in PILOT_GMV_MAX deployment mode.`);
   }
 
-  const shopId = loadShopId();
+  const shopId = resolveShopIdForCommand(command);
   const gmsCampaignId = command === 'gms' ? Number(required('SHOPEE_GMS_CAMPAIGN_ID')) : null;
   if (command === 'gms') assertFormalGmsPilotScope({ shopId, campaignId: gmsCampaignId });
   const pool = createAnalyticsPool();
@@ -149,4 +157,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { main };
+module.exports = { main, resolveShopIdForCommand };

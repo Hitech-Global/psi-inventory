@@ -9,9 +9,15 @@ const { parseCampaignIds } = require('../src/sync-cycle-utils');
 const {
   isPilotGmvMax,
   assertPilotIdentityShopAllowed,
+  loadPilotIdentityConfig,
   loadPilotShopGmvMaxSyncConfig,
   validatePilotProfileCampaignSeeds,
 } = require('../src/deployment-mode');
+
+function resolveShopIdForSyncCycle(env = process.env) {
+  if (isPilotGmvMax(env)) return loadPilotIdentityConfig(env).shopId;
+  return loadShopId(env);
+}
 
 async function main() {
   if (process.env.SHOPEE_ANALYTICS_ENABLE_SYNC_CYCLE !== 'YES') {
@@ -21,8 +27,8 @@ async function main() {
   const mode = process.argv[2] || 'hourly';
   if (!['hourly', 'daily'].includes(mode)) throw new Error('sync-cycle mode must be hourly or daily');
 
-  const shopId = loadShopId();
   const pilot = isPilotGmvMax();
+  const shopId = resolveShopIdForSyncCycle();
   const pilotConfig = pilot ? loadPilotShopGmvMaxSyncConfig() : assertPilotIdentityShopAllowed(shopId);
   assertPilotIdentityShopAllowed(shopId);
   const pool = createAnalyticsPool();
@@ -73,7 +79,11 @@ async function main() {
   }
 }
 
-main().catch(error => {
-  console.error(error.stack || error.message);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch(error => {
+    console.error(error.stack || error.message);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { main, resolveShopIdForSyncCycle };

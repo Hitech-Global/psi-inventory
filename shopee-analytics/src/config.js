@@ -31,8 +31,8 @@ const APP_ENV = Object.freeze({
   },
 });
 
-function readEnv(name, { required = true } = {}) {
-  const value = process.env[name];
+function readEnv(name, { required = true, env = process.env } = {}) {
+  const value = env[name];
   if (required && !value) throw new Error(`Missing environment variable: ${name}`);
   return value || '';
 }
@@ -65,8 +65,8 @@ function loadBootstrapToken(role) {
   return { accessToken, refreshToken, expiresAt };
 }
 
-function loadShopId() {
-  const raw = readEnv('SHOPEE_SHOP_ID');
+function loadShopId(env = process.env) {
+  const raw = readEnv('SHOPEE_SHOP_ID', { env });
   const shopId = Number(raw);
   if (!Number.isSafeInteger(shopId) || shopId <= 0) {
     throw new Error('SHOPEE_SHOP_ID must be a positive safe integer');

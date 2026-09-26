@@ -20,6 +20,7 @@ const {
   selectPilotShop,
   resolveSeededGmsCampaignIds,
 } = require('../scripts/sync-all-shops.cjs');
+const { resolveShopIdForSyncCycle } = require('../scripts/sync-cycle.cjs');
 
 const root = path.join(__dirname, '..', '..');
 const pilotEnv = {
@@ -98,17 +99,14 @@ for (const script of [
   assert.match(`${run.stdout}\n${run.stderr}`, /disabled in PILOT_GMV_MAX deployment mode/);
 }
 
-const wrongShopCycle = spawnSync(process.execPath, [path.join(root, 'shopee-analytics/scripts/sync-cycle.cjs'), 'hourly'], {
-  env: {
-    ...process.env,
-    ...pilotEnv,
-    SHOPEE_ANALYTICS_ENABLE_SYNC_CYCLE: 'YES',
-    SHOPEE_SHOP_ID: '1102',
-  },
-  encoding: 'utf8',
-});
-assert.notStrictEqual(wrongShopCycle.status, 0);
-assert.match(`${wrongShopCycle.stdout}\n${wrongShopCycle.stderr}`, /refuses shop 1102/);
+assert.strictEqual(resolveShopIdForSyncCycle({
+  ...pilotEnv,
+  SHOPEE_SHOP_ID: '1102',
+}), 1101);
+assert.strictEqual(resolveShopIdForSyncCycle({
+  SHOPEE_ANALYTICS_DEPLOYMENT_MODE: PRODUCTION,
+  SHOPEE_SHOP_ID: '1102',
+}), 1102);
 
 const outsideAllowlistGms = spawnSync(process.execPath, [path.join(root, 'shopee-analytics/scripts/sync-readonly.cjs'), 'gms'], {
   env: {
