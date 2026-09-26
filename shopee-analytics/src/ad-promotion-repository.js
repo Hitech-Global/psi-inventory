@@ -28,11 +28,11 @@ class ShopeeAdPromotionRepository {
     const granularity = row.granularity || (periodStart === periodEnd ? 'DAY' : 'RANGE');
     await queryable.query(
       `INSERT INTO shopee_ad_promotion_daily
-       (shop_id,promotion_key,period_start,period_end,granularity,event_date,promotion_type,data_source,campaign_id,campaign_name,source_ad_type,campaign_status,campaign_budget,target_roas,estimated_roas,impressions,clicks,expense,orders,gmv,source_roas,ctr,cvr,add_to_cart,item_count,data_quality_status,quality_flags,remark,raw_json,synced_at)
-       VALUES ($1,$2,$3,$4,$5,$3,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26::jsonb,$27,$28::jsonb,now())
+       (shop_id,promotion_key,period_start,period_end,granularity,event_date,promotion_type,data_source,campaign_id,campaign_name,source_ad_type,campaign_status,campaign_budget,target_roas,estimated_roas,impressions,clicks,expense,orders,gmv,source_roas,direct_gmv,direct_roas,ctr,cvr,add_to_cart,item_count,data_quality_status,quality_flags,remark,raw_json,synced_at)
+       VALUES ($1,$2,$3,$4,$5,$3,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28::jsonb,$29,$30::jsonb,now())
        ON CONFLICT (shop_id,promotion_key,period_start,period_end) DO UPDATE SET
-         granularity=EXCLUDED.granularity,event_date=EXCLUDED.event_date,promotion_type=EXCLUDED.promotion_type,data_source=EXCLUDED.data_source,campaign_id=EXCLUDED.campaign_id,campaign_name=EXCLUDED.campaign_name,source_ad_type=EXCLUDED.source_ad_type,campaign_status=EXCLUDED.campaign_status,campaign_budget=EXCLUDED.campaign_budget,target_roas=EXCLUDED.target_roas,estimated_roas=EXCLUDED.estimated_roas,impressions=EXCLUDED.impressions,clicks=EXCLUDED.clicks,expense=EXCLUDED.expense,orders=EXCLUDED.orders,gmv=EXCLUDED.gmv,source_roas=EXCLUDED.source_roas,ctr=EXCLUDED.ctr,cvr=EXCLUDED.cvr,add_to_cart=EXCLUDED.add_to_cart,item_count=EXCLUDED.item_count,data_quality_status=EXCLUDED.data_quality_status,quality_flags=EXCLUDED.quality_flags,remark=EXCLUDED.remark,raw_json=EXCLUDED.raw_json,synced_at=now()`,
-      [row.shopId,promotionKey,periodStart,periodEnd,granularity,row.promotionType,row.dataSource,row.campaignId ?? null,row.campaignName ?? null,row.sourceAdType ?? null,row.campaignStatus ?? null,row.campaignBudget ?? null,row.targetRoas ?? null,row.estimatedRoas ?? null,row.impressions ?? null,row.clicks ?? null,row.expense ?? null,row.orders ?? null,row.gmv ?? null,row.sourceRoas ?? null,row.ctr ?? null,row.cvr ?? null,row.addToCart ?? null,row.itemCount ?? null,row.dataQualityStatus,row.qualityFlags || [],row.remark ?? null,JSON.stringify(row.raw || {})],
+          granularity=EXCLUDED.granularity,event_date=EXCLUDED.event_date,promotion_type=EXCLUDED.promotion_type,data_source=EXCLUDED.data_source,campaign_id=EXCLUDED.campaign_id,campaign_name=EXCLUDED.campaign_name,source_ad_type=EXCLUDED.source_ad_type,campaign_status=EXCLUDED.campaign_status,campaign_budget=EXCLUDED.campaign_budget,target_roas=EXCLUDED.target_roas,estimated_roas=EXCLUDED.estimated_roas,impressions=EXCLUDED.impressions,clicks=EXCLUDED.clicks,expense=EXCLUDED.expense,orders=EXCLUDED.orders,gmv=EXCLUDED.gmv,source_roas=EXCLUDED.source_roas,direct_gmv=EXCLUDED.direct_gmv,direct_roas=EXCLUDED.direct_roas,ctr=EXCLUDED.ctr,cvr=EXCLUDED.cvr,add_to_cart=EXCLUDED.add_to_cart,item_count=EXCLUDED.item_count,data_quality_status=EXCLUDED.data_quality_status,quality_flags=EXCLUDED.quality_flags,remark=EXCLUDED.remark,raw_json=EXCLUDED.raw_json,synced_at=now()`,
+       [row.shopId,promotionKey,periodStart,periodEnd,granularity,row.promotionType,row.dataSource,row.campaignId ?? null,row.campaignName ?? null,row.sourceAdType ?? null,row.campaignStatus ?? null,row.campaignBudget ?? null,row.targetRoas ?? null,row.estimatedRoas ?? null,row.impressions ?? null,row.clicks ?? null,row.expense ?? null,row.orders ?? null,row.gmv ?? null,row.sourceRoas ?? null,row.directGmv ?? null,row.directRoas ?? null,row.ctr ?? null,row.cvr ?? null,row.addToCart ?? null,row.itemCount ?? null,row.dataQualityStatus,JSON.stringify(row.qualityFlags || []),row.remark ?? null,JSON.stringify(row.raw || {})],
     );
     return { promotionKey, periodStart, periodEnd };
   }
@@ -42,15 +42,20 @@ class ShopeeAdPromotionRepository {
     for (const item of items) {
       await queryable.query(
         `INSERT INTO shopee_ad_promotion_item_daily
-         (shop_id,promotion_key,period_start,period_end,event_date,item_id,item_sku,product_name,impressions,clicks,expense,orders,gmv,source_roas,ctr,cvr,add_to_cart,weekly_sales,data_quality_status,quality_flags,remark,raw_json,synced_at)
-         VALUES ($1,$2,$3,$4,$3,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20,$21::jsonb,now())
-         ON CONFLICT (shop_id,promotion_key,period_start,period_end,item_id) DO UPDATE SET item_sku=EXCLUDED.item_sku,product_name=EXCLUDED.product_name,impressions=EXCLUDED.impressions,clicks=EXCLUDED.clicks,expense=EXCLUDED.expense,orders=EXCLUDED.orders,gmv=EXCLUDED.gmv,source_roas=EXCLUDED.source_roas,ctr=EXCLUDED.ctr,cvr=EXCLUDED.cvr,add_to_cart=EXCLUDED.add_to_cart,weekly_sales=EXCLUDED.weekly_sales,data_quality_status=EXCLUDED.data_quality_status,quality_flags=EXCLUDED.quality_flags,remark=EXCLUDED.remark,raw_json=EXCLUDED.raw_json,synced_at=now()`,
-        [shopId,promotionKey,periodStart,periodEnd,item.itemId,item.itemSku ?? null,item.productName ?? null,item.impressions ?? null,item.clicks ?? null,item.expense ?? null,item.orders ?? null,item.gmv ?? null,item.sourceRoas ?? null,item.ctr ?? null,item.cvr ?? null,item.addToCart ?? null,item.weeklySales ?? null,item.dataQualityStatus || 'PARTIAL',item.qualityFlags || [],item.remark ?? null,JSON.stringify(item.raw || {})],
+          (shop_id,promotion_key,period_start,period_end,event_date,item_id,item_sku,product_name,impressions,clicks,expense,orders,gmv,source_roas,direct_gmv,direct_roas,ctr,cvr,add_to_cart,weekly_sales,data_quality_status,quality_flags,remark,raw_json,synced_at)
+          VALUES ($1,$2,$3,$4,$3,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21::jsonb,$22,$23::jsonb,now())
+          ON CONFLICT (shop_id,promotion_key,period_start,period_end,item_id) DO UPDATE SET item_sku=EXCLUDED.item_sku,product_name=EXCLUDED.product_name,impressions=EXCLUDED.impressions,clicks=EXCLUDED.clicks,expense=EXCLUDED.expense,orders=EXCLUDED.orders,gmv=EXCLUDED.gmv,source_roas=EXCLUDED.source_roas,direct_gmv=EXCLUDED.direct_gmv,direct_roas=EXCLUDED.direct_roas,ctr=EXCLUDED.ctr,cvr=EXCLUDED.cvr,add_to_cart=EXCLUDED.add_to_cart,weekly_sales=EXCLUDED.weekly_sales,data_quality_status=EXCLUDED.data_quality_status,quality_flags=EXCLUDED.quality_flags,remark=EXCLUDED.remark,raw_json=EXCLUDED.raw_json,synced_at=now()`,
+         [shopId,promotionKey,periodStart,periodEnd,item.itemId,item.itemSku ?? null,item.productName ?? null,item.impressions ?? null,item.clicks ?? null,item.expense ?? null,item.orders ?? null,item.gmv ?? null,item.sourceRoas ?? null,item.directGmv ?? null,item.directRoas ?? null,item.ctr ?? null,item.cvr ?? null,item.addToCart ?? null,item.weeklySales ?? null,item.dataQualityStatus || 'PARTIAL',JSON.stringify(item.qualityFlags || []),item.remark ?? null,JSON.stringify(item.raw || {})],
       );
     }
   }
 
-  async saveWithItems(row, items = []) {
+  async saveWithItems(row, items = [], { queryable = null } = {}) {
+    if (queryable) {
+      const saved = await this.upsertDaily(row, queryable);
+      await this.replaceItems({ shopId: row.shopId, promotionKey: saved.promotionKey, periodStart: saved.periodStart, periodEnd: saved.periodEnd, items, queryable });
+      return saved;
+    }
     return this.withTransaction(async queryable => {
       const saved = await this.upsertDaily(row, queryable);
       await this.replaceItems({ shopId: row.shopId, promotionKey: saved.promotionKey, periodStart: saved.periodStart, periodEnd: saved.periodEnd, items, queryable });

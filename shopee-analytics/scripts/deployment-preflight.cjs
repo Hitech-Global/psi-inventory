@@ -15,7 +15,8 @@ const {
   resolveDeploymentMode,
   isPilotOAuthBootstrap,
   loadPilotIdentityConfig,
-  loadPilotGmvMaxConfig,
+  loadPilotShopGmvMaxSyncConfig,
+  resolvePilotTypedCampaignAllowlist,
   validatePilotProfileCampaignSeeds,
 } = require('../src/deployment-mode');
 const { loadLiveRedirectUrl, validateOAuthStateTtl } = require('../src/oauth-security');
@@ -58,9 +59,13 @@ function evaluatePilotPreflightStage(
   if (resolveDeploymentMode(env) !== PILOT_GMV_MAX) return null;
 
   if (!isPilotOAuthBootstrap(env)) {
+    const pilotConfig = loadPilotShopGmvMaxSyncConfig(env);
+    if (!pilotConfig.campaignIds.length) {
+      throw new Error('SHOPEE_PILOT_SHOP_GMV_MAX_CAMPAIGN_IDS requires one or more campaign IDs for formal SHOP_GMV_MAX sync');
+    }
     return {
       stage: 'GMV_MAX_READY',
-      pilotConfig: loadPilotGmvMaxConfig(env),
+      pilotConfig,
       requiresProfileAndToken: true,
     };
   }
@@ -84,10 +89,11 @@ function evaluatePilotPreflightStage(
     stage: 'OAUTH_BOOTSTRAP',
     pilotConfig: identity,
     requiresProfileAndToken: false,
-    detail: {
-      shopId: identity.shopId,
-      brand: identity.brand,
-      campaignAllowlistBlank: true,
+      detail: {
+        shopId: identity.shopId,
+        brand: identity.brand,
+        shopGmvMaxCampaignAllowlistBlank: true,
+        individualAdCampaignAllowlistBlank: resolvePilotTypedCampaignAllowlist('INDIVIDUAL_AD', env).length === 0,
       oauthEnabled: true,
       recurringSyncDisabled: true,
     },
@@ -128,6 +134,20 @@ async function main() {
         error.message,
       ));
     }
+  }
+  if (pilotGmvMax) {
+    const shopGmvMaxAllowlist = resolvePilotTypedCampaignAllowlist('SHOP_GMV_MAX');
+    const individualAdAllowlist = resolvePilotTypedCampaignAllowlist('INDIVIDUAL_AD');
+    checks.push(result('pilot_shop_gmv_max_allowlist', shopGmvMaxAllowlist.length > 0 || Boolean(pilotStage && pilotStage.stage === 'OAUTH_BOOTSTRAP'), {
+      ids: shopGmvMaxAllowlist,
+      source: 'SHOPEE_PILOT_SHOP_GMV_MAX_CAMPAIGN_IDS',
+      legacyAllowlistIsNotAuthoritative: true,
+    }));
+    checks.push(result('pilot_individual_ad_allowlist', true, {
+      ids: individualAdAllowlist,
+      source: 'SHOPEE_PILOT_INDIVIDUAL_AD_CAMPAIGN_IDS',
+      disabled: individualAdAllowlist.length === 0,
+    }));
   }
   if (offlineBaseline) {
     const errors = offlineBaselineConfigurationErrors();
@@ -218,7 +238,6 @@ async function main() {
       const tokenRepo = new ShopeeTokenRepository({ pool, masterKey: loadMasterKey() });
       const shops = await profileRepo.list({ activeOnly: true });
       const shop = pilotConfig && shops.find(row => Number(row.shopId) === pilotConfig.shopId &&
-        String(row.countryCode || '').toUpperCase() === 'ID' &&
         String(row.brandCode || '').trim().toUpperCase() === pilotConfig.brand.toUpperCase());
       checks.push(result('pilot_shop_isolation', Boolean(shop), {
         expectedShopId: pilotConfig && pilotConfig.shopId,

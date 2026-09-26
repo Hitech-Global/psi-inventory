@@ -24,6 +24,7 @@ const bootstrapEnv = {
   SHOPEE_PILOT_GMV_MAX_SHOP_ID: '1101364305',
   SHOPEE_PILOT_GMV_MAX_BRAND: 'REDRAGON',
   SHOPEE_PILOT_GMV_MAX_CAMPAIGN_IDS: '',
+  SHOPEE_PILOT_SHOP_GMV_MAX_CAMPAIGN_IDS: '',
   SHOPEE_OAUTH_ENABLE: 'YES',
   SHOPEE_OAUTH_LIVE_REDIRECT_URL: 'https://auth.hitechanalysis.top/oauth/shopee/callback',
   SHOPEE_OAUTH_STATE_TTL_SECONDS: '600',
@@ -43,17 +44,17 @@ assert.strictEqual(validateDesktopEnv(bootstrapEnv).ok, true);
 
 const oauthDisabled = validateDesktopEnv({ ...bootstrapEnv, SHOPEE_OAUTH_ENABLE: 'NO' });
 assert.strictEqual(oauthDisabled.ok, false);
-assert(oauthDisabled.errors.some(error => error.includes('SHOPEE_PILOT_GMV_MAX_CAMPAIGN_IDS')));
+assert(oauthDisabled.errors.some(error => error.includes('SHOPEE_PILOT_SHOP_GMV_MAX_CAMPAIGN_IDS')));
 
 const malformedAllowlist = validateDesktopEnv({
   ...bootstrapEnv,
-  SHOPEE_PILOT_GMV_MAX_CAMPAIGN_IDS: '2001,not-a-campaign',
+  SHOPEE_PILOT_SHOP_GMV_MAX_CAMPAIGN_IDS: '2001,not-a-campaign',
 });
 assert.strictEqual(malformedAllowlist.ok, false);
 assert(malformedAllowlist.errors.some(error => error.includes('must contain only positive safe integer campaign IDs')));
 assert.strictEqual(isPilotOAuthBootstrap({
   ...bootstrapEnv,
-  SHOPEE_PILOT_GMV_MAX_CAMPAIGN_IDS: '2001',
+  SHOPEE_PILOT_SHOP_GMV_MAX_CAMPAIGN_IDS: '2001',
 }), false);
 
 (async () => {

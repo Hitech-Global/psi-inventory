@@ -7,7 +7,7 @@ const {
   addDays,
   mergeCampaignIds,
 } = require('./sync-cycle-utils');
-const { isPilotGmvMax, assertPilotCampaignSetAllowed } = require('./deployment-mode');
+const { isPilotGmvMax, assertPilotTypedCampaignAllowed } = require('./deployment-mode');
 
 function normalizeShopProfile(shop) {
   const shopId = Number(shop.shopId ?? shop.shop_id);
@@ -83,18 +83,23 @@ async function runShopSyncCycle({
     }
   };
 
-  if (mode === 'daily') {
+  if (mode === 'daily' && !pilot) {
     await run('shop-info', () => service.syncShopInfo());
   }
 
-  await run('campaign-settings', () => service.syncCampaignSettings({
-    eventDate: today,
-    campaignIds: pilot ? seededGmsCampaignIds : null,
-  }));
+  if (!pilot) {
+    await run('campaign-settings', () => service.syncCampaignSettings({
+      eventDate: today,
+      campaignIds: null,
+    }));
+  }
 
   const knownGms = await runtime.queryRepository.listKnownGmsCampaignIds({ shopId });
   const gmsCampaignIds = pilot
-    ? assertPilotCampaignSetAllowed(seededGmsCampaignIds)
+    ? Array.from(new Set(seededGmsCampaignIds.map(Number))).map(id => {
+      assertPilotTypedCampaignAllowed('SHOP_GMV_MAX', id);
+      return id;
+    })
     : mergeCampaignIds(knownGms, seededGmsCampaignIds);
   const ads = runtime.roleClients.ADS;
   let adsToken = null;
@@ -108,6 +113,7 @@ async function runShopSyncCycle({
       await run(`gms-${campaignId}`, () => syncGmsWindow({
         client: ads.client,
         repository: runtime.rawRepository,
+        adPromotionRepository: runtime.adPromotionRepository,
         shopId,
         accessToken: adsToken,
         campaignId,
@@ -124,25 +130,18 @@ async function runShopSyncCycle({
     });
   }
 
-  await run('orders-recent', () => service.syncOrders({
-    timeFrom: nowEpoch - 3 * 86400,
-    timeTo: nowEpoch,
-  }));
+  if (!pilot) {
+    await run('orders-recent', () => service.syncOrders({
+      timeFrom: nowEpoch - 3 * 86400,
+      timeTo: nowEpoch,
+    }));
+  }
 
-  if (mode === 'daily') {
+  if (mode === 'daily' && !pilot) {
     await run('products', () => service.syncProducts({
       updateTimeFrom: nowEpoch - 3 * 86400,
       updateTimeTo: nowEpoch,
     }));
-
-    if (pilot) {
-      for (const name of ['promotions', 'returns', 'shop-bi-yesterday', 'recommended-roi']) {
-        summary.steps.push({ name, ok: true, required: false, skipped: 'PILOT_GMV_MAX_ADS_ONLY' });
-      }
-      summary.failedRequiredSteps = summary.steps.filter(step => step.required && step.ok === false).map(step => step.name);
-      summary.failedOptionalSteps = [];
-      return summary;
-    }
 
     await run('product-ads-7d', () => service.syncProductAdsDaily({
       startDate: addDays(today, -6),

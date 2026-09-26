@@ -526,6 +526,8 @@ CREATE TABLE IF NOT EXISTS shopee_ad_promotion_daily (
   orders BIGINT,
   gmv NUMERIC(20,6),
   source_roas NUMERIC(20,6),
+  direct_gmv NUMERIC(20,6),
+  direct_roas NUMERIC(20,6),
   ctr NUMERIC(20,8),
   cvr NUMERIC(20,8),
   add_to_cart BIGINT,
@@ -552,6 +554,8 @@ CREATE TABLE IF NOT EXISTS shopee_ad_promotion_item_daily (
   orders BIGINT,
   gmv NUMERIC(20,6),
   source_roas NUMERIC(20,6),
+  direct_gmv NUMERIC(20,6),
+  direct_roas NUMERIC(20,6),
   ctr NUMERIC(20,8),
   cvr NUMERIC(20,8),
   add_to_cart BIGINT,
@@ -564,3 +568,9 @@ CREATE TABLE IF NOT EXISTS shopee_ad_promotion_item_daily (
   PRIMARY KEY (shop_id,promotion_key,period_start,period_end,item_id)
 );
 CREATE INDEX IF NOT EXISTS idx_shopee_ad_promotion_daily_shop_period ON shopee_ad_promotion_daily(shop_id,period_start DESC,period_end DESC,promotion_type);
+-- Additive and idempotent for databases created before Direct GMV was modeled
+-- as a nullable source metric in the unified promotion contract.
+ALTER TABLE shopee_ad_promotion_daily ADD COLUMN IF NOT EXISTS direct_gmv NUMERIC(20,6);
+ALTER TABLE shopee_ad_promotion_daily ADD COLUMN IF NOT EXISTS direct_roas NUMERIC(20,6);
+ALTER TABLE shopee_ad_promotion_item_daily ADD COLUMN IF NOT EXISTS direct_gmv NUMERIC(20,6);
+ALTER TABLE shopee_ad_promotion_item_daily ADD COLUMN IF NOT EXISTS direct_roas NUMERIC(20,6);

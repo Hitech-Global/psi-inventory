@@ -62,7 +62,7 @@ function loadPilotIdentityConfig(env = process.env) {
 function isPilotOAuthBootstrap(env = process.env) {
   return isPilotGmvMax(env) &&
     env.SHOPEE_OAUTH_ENABLE === 'YES' &&
-    !String(env.SHOPEE_PILOT_GMV_MAX_CAMPAIGN_IDS || '').trim();
+    !String(env.SHOPEE_PILOT_SHOP_GMV_MAX_CAMPAIGN_IDS || '').trim();
 }
 
 function assertPilotOAuthAllowed(env = process.env) {
@@ -82,6 +82,8 @@ function loadPilotGmvMaxConfig(env = process.env) {
 }
 
 function resolvePilotCampaignAllowlist(env = process.env) {
+  // Deprecated compatibility reader. Discovery and historical code may still
+  // inspect this value, but no formal sync path may use it for authorization.
   const raw = String(env.SHOPEE_PILOT_GMV_MAX_CAMPAIGN_IDS || '');
   const values = raw.split(',').map(value => value.trim());
   if (!raw.trim() || values.some(value => !value)) {
@@ -93,6 +95,20 @@ function resolvePilotCampaignAllowlist(env = process.env) {
     throw new Error('SHOPEE_PILOT_GMV_MAX_CAMPAIGN_IDS must contain only positive safe integer campaign IDs');
   }
   return Array.from(new Set(campaignIds));
+}
+
+function loadPilotShopGmvMaxSyncConfig(env = process.env) {
+  const identity = loadPilotIdentityConfig(env);
+  if (!identity) return null;
+  return { ...identity, campaignIds: resolvePilotTypedCampaignAllowlist('SHOP_GMV_MAX', env) };
+}
+
+function assertPilotIdentityShopAllowed(shopId, env = process.env) {
+  const identity = loadPilotIdentityConfig(env);
+  if (identity && Number(shopId) !== identity.shopId) {
+    throw new Error(`PILOT_GMV_MAX refuses shop ${shopId}; configured pilot shop is ${identity.shopId}`);
+  }
+  return identity;
 }
 
 function resolvePilotTypedCampaignAllowlist(type, env = process.env) {
@@ -121,12 +137,13 @@ function assertPilotTypedCampaignAllowed(type, campaignId, env = process.env) {
   return ids;
 }
 
+function assertFormalGmsPilotScope({ shopId, campaignId, env = process.env }) {
+  assertPilotIdentityShopAllowed(shopId, env);
+  assertPilotTypedCampaignAllowed('SHOP_GMV_MAX', campaignId, env);
+}
+
 function assertPilotShopAllowed(shopId, env = process.env) {
-  const config = loadPilotGmvMaxConfig(env);
-  if (config && Number(shopId) !== config.shopId) {
-    throw new Error(`PILOT_GMV_MAX refuses shop ${shopId}; configured pilot shop is ${config.shopId}`);
-  }
-  return config;
+  return assertPilotIdentityShopAllowed(shopId, env) && loadPilotGmvMaxConfig(env);
 }
 
 function assertPilotCampaignAllowed(campaignId, env = process.env) {
@@ -185,10 +202,13 @@ module.exports = {
   assertPilotOAuthAllowed,
   loadPilotIdentityConfig,
   loadPilotGmvMaxConfig,
+  loadPilotShopGmvMaxSyncConfig,
   resolvePilotCampaignAllowlist,
   resolvePilotTypedCampaignAllowlist,
   assertPilotTypedCampaignAllowed,
+  assertFormalGmsPilotScope,
   assertPilotShopAllowed,
+  assertPilotIdentityShopAllowed,
   assertPilotCampaignAllowed,
   assertPilotCampaignSetAllowed,
   validatePilotProfileCampaignSeeds,

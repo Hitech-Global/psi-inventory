@@ -100,7 +100,7 @@ async function runPilotProductAdsDiscovery({ env = process.env, pool, createRunt
     listRequestCount: result.listRequestCount,
     settingRequestCount: result.settingRequestCount,
     persisted: false,
-    next: 'Verify API source classifications against Seller Centre before writing SHOPEE_PILOT_GMV_MAX_CAMPAIGN_IDS.',
+    next: 'Verify API source classifications against Seller Centre before writing the type-specific Pilot allowlist.',
   };
 }
 

@@ -96,7 +96,7 @@ async function runPilotGmsDiscovery({ env = process.env, pool, createRuntime = c
       directRoas: result.performance.directRoas,
     },
     persisted: false,
-    next: 'Verify this campaign ID and metrics against Seller Centre before writing SHOPEE_PILOT_GMV_MAX_CAMPAIGN_IDS.',
+    next: 'Verify this campaign ID and metrics against Seller Centre before writing SHOPEE_PILOT_SHOP_GMV_MAX_CAMPAIGN_IDS.',
   };
 }
 

@@ -7,7 +7,7 @@ const {
   OFFLINE_BASELINE,
   PILOT_GMV_MAX,
   resolveDeploymentMode,
-  resolvePilotCampaignAllowlist,
+  resolvePilotTypedCampaignAllowlist,
 } = require('./deployment-mode');
 const { loadLiveRedirectUrl, validateOAuthStateTtl } = require('./oauth-security');
 
@@ -108,12 +108,13 @@ function validateDesktopEnv(env) {
       errors.push('SHOPEE_PILOT_GMV_MAX_BRAND is missing');
     }
 
-    const campaignRaw = String(env.SHOPEE_PILOT_GMV_MAX_CAMPAIGN_IDS || '').trim();
+    const campaignRaw = String(env.SHOPEE_PILOT_SHOP_GMV_MAX_CAMPAIGN_IDS || '').trim();
     if (campaignRaw) {
-      try { resolvePilotCampaignAllowlist(env); } catch (error) { errors.push(error.message); }
+      try { resolvePilotTypedCampaignAllowlist('SHOP_GMV_MAX', env); } catch (error) { errors.push(error.message); }
     } else if (oauthEnabled !== 'YES') {
-      errors.push('SHOPEE_PILOT_GMV_MAX_CAMPAIGN_IDS requires one or more comma-separated campaign IDs in PILOT_GMV_MAX');
+      errors.push('SHOPEE_PILOT_SHOP_GMV_MAX_CAMPAIGN_IDS requires one or more campaign IDs when OAuth bootstrap is disabled');
     }
+    try { resolvePilotTypedCampaignAllowlist('INDIVIDUAL_AD', env); } catch (error) { errors.push(error.message); }
 
     if (env.SHOPEE_PRODUCT_CARD_INBOX_ENABLE === 'YES') {
       errors.push('SHOPEE_PRODUCT_CARD_INBOX_ENABLE must not be YES in PILOT_GMV_MAX');

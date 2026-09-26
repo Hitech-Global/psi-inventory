@@ -8,7 +8,7 @@ const { parseCampaignIds } = require('../src/sync-cycle-utils');
 const {
   assertOnlineOperationAllowed,
   isPilotGmvMax,
-  loadPilotGmvMaxConfig,
+  loadPilotShopGmvMaxSyncConfig,
   validatePilotProfileCampaignSeeds,
 } = require('../src/deployment-mode');
 
@@ -23,9 +23,8 @@ function parseIdFilter(value) {
 
 function selectPilotShop(shops, pilotConfig) {
   const matches = (shops || []).filter(shop => Number(shop.shopId) === pilotConfig.shopId &&
-    String(shop.countryCode || '').toUpperCase() === 'ID' &&
     String(shop.brandCode || '').trim().toUpperCase() === pilotConfig.brand.toUpperCase());
-  if (matches.length !== 1) throw new Error('PILOT_GMV_MAX requires exactly one matching active Indonesia shop profile');
+  if (matches.length !== 1) throw new Error('PILOT_GMV_MAX requires exactly one matching active shop profile');
   validatePilotProfileCampaignSeeds(matches[0], pilotConfig);
   return matches;
 }
@@ -54,7 +53,7 @@ async function main() {
   const brandFilter = String(process.env.SHOPEE_SYNC_BRAND || '').trim().toUpperCase();
   const shopIdFilter = parseIdFilter(process.env.SHOPEE_SYNC_SHOP_IDS);
   const pilot = isPilotGmvMax();
-  const pilotConfig = loadPilotGmvMaxConfig();
+  const pilotConfig = loadPilotShopGmvMaxSyncConfig();
   const seededGmsCampaignIds = pilot
     ? pilotConfig.campaignIds
     : parseCampaignIds(process.env.SHOPEE_GMS_CAMPAIGN_IDS);

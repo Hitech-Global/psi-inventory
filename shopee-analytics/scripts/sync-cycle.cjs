@@ -8,7 +8,8 @@ const { runShopSyncCycle } = require('../src/shop-sync-runner');
 const { parseCampaignIds } = require('../src/sync-cycle-utils');
 const {
   isPilotGmvMax,
-  assertPilotShopAllowed,
+  assertPilotIdentityShopAllowed,
+  loadPilotShopGmvMaxSyncConfig,
   validatePilotProfileCampaignSeeds,
 } = require('../src/deployment-mode');
 
@@ -22,7 +23,8 @@ async function main() {
 
   const shopId = loadShopId();
   const pilot = isPilotGmvMax();
-  const pilotConfig = assertPilotShopAllowed(shopId);
+  const pilotConfig = pilot ? loadPilotShopGmvMaxSyncConfig() : assertPilotIdentityShopAllowed(shopId);
+  assertPilotIdentityShopAllowed(shopId);
   const pool = createAnalyticsPool();
   try {
     const profileRepository = new ShopeeShopProfileRepository({ pool });
@@ -46,9 +48,9 @@ async function main() {
       };
     }
 
-    if (pilot && (!shop || String(shop.countryCode || '').toUpperCase() !== 'ID' ||
+    if (pilot && (!shop ||
       String(shop.brandCode || '').trim().toUpperCase() !== pilotConfig.brand.toUpperCase())) {
-      throw new Error('PILOT_GMV_MAX requires a matching configured Indonesia shop profile');
+      throw new Error('PILOT_GMV_MAX requires a matching configured shop profile');
     }
     if (pilot) validatePilotProfileCampaignSeeds(shop, pilotConfig);
     const runtime = createSyncRuntime({ pool });

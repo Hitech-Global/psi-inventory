@@ -70,7 +70,9 @@ const { ShopeeAdPromotionRepository } = require('../src/ad-promotion-repository'
         broadGmv: 700000,
         broadOrders: 4,
         broadUnits: 4,
-        directGmv: 600000,
+        // Shopee may provide direct ROI/orders while omitting direct GMV.
+        directGmv: null,
+        directRoas: 3.97,
         directOrders: 3,
         directUnits: 3,
         raw: { source: 'test' },
@@ -82,12 +84,14 @@ const { ShopeeAdPromotionRepository } = require('../src/ad-promotion-repository'
         expense: 80000,
         broadGmv: 600000,
         broadOrders: 3,
-        directGmv: 550000,
+        directGmv: null,
+        directRoas: 3.97,
         directOrders: 3,
         raw: { item_id: 101 },
       }],
       membershipItemIds: [101, 102],
       rawSnapshots: [],
+      adPromotionRepository: unifiedPromotionRepository,
     });
 
     const campaigns = await repository.loadCampaignDaily({
@@ -98,6 +102,15 @@ const { ShopeeAdPromotionRepository } = require('../src/ad-promotion-repository'
     });
     assert.strictEqual(campaigns.length, 1);
     assert.strictEqual(Number(campaigns[0].broad_orders), 4);
+
+    const gmsUnifiedRows = await unifiedPromotionRepository.list({ shopId: 1, startDate: '2026-09-17', endDate: '2026-09-17' });
+    const gmsUnified = gmsUnifiedRows.find(row => Number(row.campaign_id) === 7);
+    assert(gmsUnified, 'formal GMS must write a unified promotion row');
+    assert.strictEqual(gmsUnified.promotion_type, 'SHOP_GMV_MAX');
+    assert.strictEqual(gmsUnified.data_source, 'SHOPEE_API');
+    assert.strictEqual(gmsUnified.direct_gmv, null);
+    assert.strictEqual(Number(gmsUnified.direct_roas), 3.97);
+    assert(gmsUnified.quality_flags.includes('SOURCE_DIRECT_GMV_MISSING'));
 
     const membership = await repository.loadMembershipItemIds({
       shopId: 1,

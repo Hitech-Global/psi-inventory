@@ -1,5 +1,7 @@
 'use strict';
 
+const { persistPilotGmsDay } = require('./unified-promotion-writers');
+
 class ShopeeAnalyticsRepository {
   constructor({ pool }) {
     if (!pool || typeof pool.query !== 'function') throw new Error('pg pool/query adapter is required');
@@ -148,7 +150,7 @@ class ShopeeAnalyticsRepository {
     }
   }
 
-  async saveGmsDay({ shopId, campaignId, eventDate, campaign, items, membershipItemIds = null, rawSnapshots = [] }) {
+  async saveGmsDay({ shopId, campaignId, eventDate, campaign, items, membershipItemIds = null, rawSnapshots = [], adPromotionRepository = null, env = process.env }) {
     return this.withTransaction(async client => {
       await this.upsertCampaign({ shopId, campaignId, campaignTypeRaw: 'GMS', campaignTypeNormalized: 'GMS', queryable: client });
       await this.upsertCampaignDaily({
@@ -188,6 +190,23 @@ class ShopeeAnalyticsRepository {
 
       for (const snapshot of rawSnapshots) {
         await this.insertRawSnapshot({ ...snapshot, shopId, queryable: client });
+      }
+
+      // The legacy raw/relational records and unified promotion row form one
+      // unit of work. A unified write failure rolls back all legacy writes.
+      if (adPromotionRepository) {
+        await persistPilotGmsDay({
+          repository: {
+            saveWithItems: (row, promotionItems) => adPromotionRepository.saveWithItems(row, promotionItems, { queryable: client }),
+          },
+          shopId,
+          campaignId,
+          eventDate,
+          performance: campaign,
+          items,
+          raw: campaign.raw || {},
+          env,
+        });
       }
     });
   }

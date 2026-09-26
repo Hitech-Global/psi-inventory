@@ -111,6 +111,14 @@ async function main() {
     await runPilotOAuthBootstrapWorker();
     return;
   }
+  if (isPilotGmvMax()) {
+    await runIdleWorker({
+      event: 'pilot-gmv-max-worker-idle',
+      deploymentMode: 'PILOT_GMV_MAX',
+      detail: 'Recurring sync remains disabled; run the explicitly scoped formal GMS command for a controlled sync.',
+    });
+    return;
+  }
 
   const config = schedulerConfig();
   const state = {

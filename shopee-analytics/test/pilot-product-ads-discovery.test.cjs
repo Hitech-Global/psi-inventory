@@ -13,13 +13,14 @@ const env = {
   SHOPEE_PILOT_GMV_MAX_SHOP_ID: '1770037299',
   SHOPEE_PILOT_GMV_MAX_BRAND: 'REDRAGON',
   SHOPEE_PILOT_GMV_MAX_CAMPAIGN_IDS: '',
+  SHOPEE_PILOT_SHOP_GMV_MAX_CAMPAIGN_IDS: '',
   SHOPEE_OAUTH_ENABLE: 'YES',
   SHOPEE_PILOT_PRODUCT_ADS_DISCOVERY_ENABLE: 'YES',
 };
 
 assert.deepStrictEqual(assertPilotProductAdsDiscoveryAllowed(env), { shopId: 1770037299, brand: 'REDRAGON' });
 assert.throws(() => assertPilotProductAdsDiscoveryAllowed({ ...env, SHOPEE_PILOT_PRODUCT_ADS_DISCOVERY_ENABLE: 'NO' }), /Refusing Pilot Product Ads discovery/);
-assert.throws(() => assertPilotProductAdsDiscoveryAllowed({ ...env, SHOPEE_PILOT_GMV_MAX_CAMPAIGN_IDS: '1' }), /blank campaign allowlist/);
+assert.throws(() => assertPilotProductAdsDiscoveryAllowed({ ...env, SHOPEE_PILOT_SHOP_GMV_MAX_CAMPAIGN_IDS: '1' }), /blank campaign allowlist/);
 assert.throws(() => assertPilotProductAdsDiscoveryAllowed({ ...env, SHOPEE_PILOT_GMV_MAX_SHOP_ID: '1' }), /restricted to shop 1770037299/);
 
 const oneItem = summarizeCampaign({ listed: { campaignId: 1, adType: 'manual' }, setting: {

@@ -30,6 +30,7 @@ const pilotEnv = {
   SHOPEE_ADS_PARTNER_ID: 'ads-id', SHOPEE_ADS_PARTNER_KEY: 'ads-key',
   SHOPEE_PILOT_GMV_MAX_SHOP_ID: '1101', SHOPEE_PILOT_GMV_MAX_BRAND: 'REDRAGON',
   SHOPEE_PILOT_GMV_MAX_CAMPAIGN_IDS: '2001,2002',
+  SHOPEE_PILOT_SHOP_GMV_MAX_CAMPAIGN_IDS: '2001,2002',
 };
 
 assert.strictEqual(validateDesktopEnv(pilotEnv).ok, true);
@@ -76,7 +77,7 @@ assert.deepStrictEqual(resolveSeededGmsCampaignIds({
 }), [7001, 7002]);
 assert.strictEqual(validateDesktopEnv({
   ...pilotEnv,
-  SHOPEE_PILOT_GMV_MAX_CAMPAIGN_IDS: '2001,not-a-campaign',
+  SHOPEE_PILOT_SHOP_GMV_MAX_CAMPAIGN_IDS: '2001,not-a-campaign',
 }).ok, false);
 assert.deepStrictEqual(selectPilotShop([
   { shopId: 1101, countryCode: 'ID', brandCode: 'REDRAGON' },
@@ -120,6 +121,6 @@ const outsideAllowlistGms = spawnSync(process.execPath, [path.join(root, 'shopee
   encoding: 'utf8',
 });
 assert.notStrictEqual(outsideAllowlistGms.status, 0);
-assert.match(`${outsideAllowlistGms.stdout}\n${outsideAllowlistGms.stderr}`, /refuses campaign 2003/);
+assert.match(`${outsideAllowlistGms.stdout}\n${outsideAllowlistGms.stderr}`, /refuses SHOP_GMV_MAX campaign 2003/);
 
 console.log('shopee GMV Max pilot tests: ok');

@@ -1,7 +1,7 @@
 'use strict';
 
 const { syncGmsDay } = require('./sync-gms');
-const { assertPilotCampaignAllowed } = require('./deployment-mode');
+const { assertPilotTypedCampaignAllowed } = require('./deployment-mode');
 
 function toIsoDate(date) {
   const d = date instanceof Date ? new Date(date.getTime()) : new Date(`${date}T00:00:00Z`);
@@ -41,6 +41,7 @@ async function resolveMembership({ repository, shopId, campaignId, eventDate, me
 async function syncGmsWindow({
   client,
   repository,
+  adPromotionRepository = null,
   shopId,
   accessToken,
   campaignId,
@@ -51,7 +52,7 @@ async function syncGmsWindow({
   if (!repository || typeof repository.saveGmsDay !== 'function') {
     throw new Error('repository.saveGmsDay is required');
   }
-  assertPilotCampaignAllowed(campaignId);
+  assertPilotTypedCampaignAllowed('SHOP_GMV_MAX', campaignId);
 
   const dates = dateRangeInclusive(startDate, endDate);
   const results = [];
@@ -81,6 +82,7 @@ async function syncGmsWindow({
         items: day.items,
         membershipItemIds,
         rawSnapshots: day.rawSnapshots,
+        adPromotionRepository,
       });
       results.push({
         eventDate,

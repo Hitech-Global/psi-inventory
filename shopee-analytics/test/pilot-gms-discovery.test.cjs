@@ -14,6 +14,7 @@ const env = {
   SHOPEE_PILOT_GMV_MAX_SHOP_ID: '1101364305',
   SHOPEE_PILOT_GMV_MAX_BRAND: 'REDRAGON',
   SHOPEE_PILOT_GMV_MAX_CAMPAIGN_IDS: '',
+  SHOPEE_PILOT_SHOP_GMV_MAX_CAMPAIGN_IDS: '',
   SHOPEE_OAUTH_ENABLE: 'YES',
   SHOPEE_PILOT_DISCOVERY_ENABLE: 'YES',
   SHOPEE_PILOT_DISCOVERY_START_DATE: '2026-09-16',
@@ -26,7 +27,7 @@ assert.throws(
   /Refusing Pilot GMS discovery/,
 );
 assert.throws(
-  () => assertPilotDiscoveryAllowed({ ...env, SHOPEE_PILOT_GMV_MAX_CAMPAIGN_IDS: '492245682' }),
+  () => assertPilotDiscoveryAllowed({ ...env, SHOPEE_PILOT_SHOP_GMV_MAX_CAMPAIGN_IDS: '492245682' }),
   /allowed only during PILOT_GMV_MAX OAuth bootstrap/,
 );
 assert.strictEqual(requiredIsoDate('SHOPEE_PILOT_DISCOVERY_START_DATE', env), '2026-09-16');

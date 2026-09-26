@@ -13,13 +13,13 @@ const { ShopeePromotionRepository } = require('../src/promotion-repository');
 const { ShopeeOrderRepository } = require('../src/order-repository');
 const { ShopeeReturnRepository } = require('../src/return-repository');
 const { ShopeeShopBiRepository } = require('../src/shop-bi-repository');
+const { createSyncRuntime } = require('../src/sync-runtime');
 const { ShopeeSyncService } = require('../src/sync-service');
 const { syncGmsWindow } = require('../src/sync-window');
 const {
   assertOnlineOperationAllowed,
   isPilotGmvMax,
-  assertPilotShopAllowed,
-  assertPilotCampaignAllowed,
+  assertFormalGmsPilotScope,
 } = require('../src/deployment-mode');
 
 function required(name) {
@@ -40,14 +40,13 @@ async function main() {
 
   const command = process.argv[2];
   if (!command) throw new Error('Usage: node sync-readonly.cjs <campaigns|products|promotions|orders|returns|shop-bi|roi|gms>');
-  if (isPilotGmvMax() && !new Set(['campaigns', 'products', 'orders', 'gms']).has(command)) {
+  if (isPilotGmvMax() && command !== 'gms') {
     throw new Error(`sync-readonly command ${command} is disabled in PILOT_GMV_MAX deployment mode.`);
   }
 
   const shopId = loadShopId();
-  const pilotConfig = assertPilotShopAllowed(shopId);
   const gmsCampaignId = command === 'gms' ? Number(required('SHOPEE_GMS_CAMPAIGN_ID')) : null;
-  if (command === 'gms') assertPilotCampaignAllowed(gmsCampaignId);
+  if (command === 'gms') assertFormalGmsPilotScope({ shopId, campaignId: gmsCampaignId });
   const pool = createAnalyticsPool();
   const rawRepository = new ShopeeAnalyticsRepository({ pool });
   const tokenRepository = new ShopeeTokenRepository({ pool, masterKey: loadMasterKey() });
@@ -58,11 +57,13 @@ async function main() {
 
   try {
     if (command === 'gms') {
-      const ads = createRoleClient('ADS', { tokenManager });
+      const runtime = createSyncRuntime({ pool });
+      const ads = runtime.roleClients.ADS;
       const accessToken = await ads.getAccessToken(shopId);
       const result = await syncGmsWindow({
         client: ads.client,
-        repository: rawRepository,
+        repository: runtime.rawRepository,
+        adPromotionRepository: runtime.adPromotionRepository,
         shopId,
         accessToken,
         campaignId: gmsCampaignId,
@@ -106,7 +107,7 @@ async function main() {
 
     if (command === 'campaigns') {
       result = await service.syncCampaignSettings({
-        campaignIds: pilotConfig ? pilotConfig.campaignIds : null,
+        campaignIds: null,
       });
     } else if (command === 'products') {
       result = await service.syncProducts();
@@ -141,7 +142,11 @@ async function main() {
   }
 }
 
-main().catch(error => {
-  console.error(error.stack || error.message);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch(error => {
+    console.error(error.stack || error.message);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { main };
