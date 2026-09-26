@@ -176,11 +176,13 @@ async function runWorker({ env = process.env } = {}) {
         console.error(`[Ad Group Import Worker] ${job.id} ${info.code}: ${info.message}`);
       } finally {
         clearInterval(heartbeat);
-        // Successful previews keep the staged artifact for a short TTL so a
-        // later confirm can reuse it.  Failed previews and completed imports
-        // release their file immediately; cleanupTemp removes old previews.
-        const retainPreviewArtifact = completed && job.operation === 'PREVIEW';
-        if (!retainPreviewArtifact) {
+        // Preview artifacts are retained for confirm.  A failed IMPORT created
+        // from a preview is also retained so the user can explicitly resume it
+        // without re-uploading; TTL cleanup eventually removes abandoned files.
+        const retainArtifact =
+          (completed && job.operation === 'PREVIEW') ||
+          (!completed && job.operation === 'IMPORT' && Boolean(job.request && job.request.sourcePreviewJobId));
+        if (!retainArtifact) {
           try {
             await fsp.unlink(safeJobPath(job.filePath, tmpDir));
           } catch (error) {
