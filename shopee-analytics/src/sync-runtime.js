@@ -15,6 +15,7 @@ const { ShopeeShopBiRepository } = require('./shop-bi-repository');
 const { ShopeeShopRepository } = require('./shop-repository');
 const { ShopeeQueryRepository } = require('./query-repository');
 const { ShopeeAdPromotionRepository } = require('./ad-promotion-repository');
+const { ShopeeProductAdsShopRepository } = require('./product-ads-shop-repository');
 const { rolesForDeploymentMode } = require('./deployment-mode');
 
 function createSyncRuntime({
@@ -54,6 +55,7 @@ function createSyncRuntime({
     shopRepository: new ShopeeShopRepository({ pool }),
     queryRepository: new ShopeeQueryRepository({ pool }),
     adPromotionRepository: new ShopeeAdPromotionRepository({ pool }),
+    productAdsShopRepository: new ShopeeProductAdsShopRepository({ pool }),
   };
 }
 
