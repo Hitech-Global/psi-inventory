@@ -14,6 +14,7 @@ async function main() {
       'schema.sql',
       'schema-import-jobs.sql',
       'schema-shop-profile-corrections.sql',
+      'schema-product-ads-overview.sql',
     ];
     const sql = schemaFiles
       .map(name => fs.readFileSync(path.join(__dirname, '..', name), 'utf8'))
