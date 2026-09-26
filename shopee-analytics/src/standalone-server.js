@@ -4,6 +4,7 @@ const path = require('path');
 const express = require('express');
 const { createAnalyticsPool } = require('./pg');
 const { createShopeeAnalyticsRouter } = require('./http-router');
+const { createAdGroupImportAsyncRouter } = require('./ad-group-import-async-router');
 const { createBackupStatusProvider } = require('./backup-status');
 const { createConfiguredSkillProvider } = require('./openai-skill-provider');
 const { createSkillRuntime } = require('./skill-runtime');
@@ -26,7 +27,7 @@ function resolvePort(env = process.env) {
   return value;
 }
 
-function createApp({ pool, skillProvider = null }) {
+function createApp({ pool, skillProvider = null, importJobPool = null }) {
   const app = express();
   app.disable('x-powered-by');
 
@@ -40,6 +41,14 @@ function createApp({ pool, skillProvider = null }) {
   } = createSkillRuntime({ pool, skillProvider });
   const shopScopeRepository = new ShopeeShopScopeRepository({ pool });
   const backupStatusProvider = createBackupStatusProvider();
+
+  // Production can move CPU-heavy CSV/XLSX parsing and Ad Group persistence to
+  // the dedicated import worker while preserving the existing HTTP contract.
+  // Mount this before the legacy router so the legacy synchronous route remains
+  // available for tests/dev only when the async gate is disabled.
+  if (importJobPool) {
+    app.use('/api/shopee-analytics', createAdGroupImportAsyncRouter({ pool: importJobPool }));
+  }
 
   app.use('/api/shopee-analytics', createShopeeAnalyticsRouter({
     repository,
@@ -78,18 +87,25 @@ async function main() {
   const host = resolveBindAddress();
   const port = resolvePort();
   const pool = createAnalyticsPool();
+  const asyncImports = process.env.SHOPEE_AD_GROUP_IMPORT_ASYNC === 'YES';
+  // Queue/status polling is deliberately isolated from the normal read pool so
+  // a long import cannot exhaust connections required by interactive pages.
+  const importJobPool = asyncImports ? createAnalyticsPool({ max: 1 }) : null;
   const skillProvider = createConfiguredSkillProvider();
-  const app = createApp({ pool, skillProvider });
+  const app = createApp({ pool, skillProvider, importJobPool });
 
   const server = app.listen(port, host, () => {
     console.log(`Shopee Analytics V1: http://${host}:${port}`);
-    console.log('Mode: read-only UI/API; analytics DB writes are not exposed through HTTP.');
+    console.log(`Ad Group imports: ${asyncImports ? 'dedicated-worker' : 'legacy-inline'}`);
   });
 
   const close = async signal => {
     console.log(`\nReceived ${signal}, shutting down...`);
     server.close(async () => {
-      await pool.end();
+      await Promise.all([
+        pool.end(),
+        importJobPool ? importJobPool.end() : Promise.resolve(),
+      ]);
       process.exit(0);
     });
   };
