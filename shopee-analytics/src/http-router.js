@@ -128,11 +128,11 @@ function createShopeeAnalyticsRouter({
       const countries = Array.from(new Map(shops.map(shop => [
         shop.countryCode,
         { code: shop.countryCode, name: shop.countryName || shop.countryCode },
-      ])).values()).sort((a, b) => a.code.localeCompare(b.code));
+      ])).values()).sort((a, b) => String(a.code || '').localeCompare(String(b.code || '')));
       const brands = Array.from(new Map(shops.map(shop => [
         shop.brandCode,
         { code: shop.brandCode, name: shop.brandName || shop.brandCode },
-      ])).values()).sort((a, b) => a.code.localeCompare(b.code));
+      ])).values()).sort((a, b) => String(a.code || '').localeCompare(String(b.code || '')));
       res.json({ shops, countries, brands });
     } catch (error) {
       next(error);
