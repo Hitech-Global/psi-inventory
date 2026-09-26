@@ -67,6 +67,9 @@ class ShopeeClient {
       err.status = response.status;
       err.code = payload.error || null;
       err.requestId = payload.request_id || null;
+      err.kind = err.code === 'ads_rate_limit_shop_api' ? 'RATE_LIMIT' : 'SHOPEE_API_ERROR';
+      const retryAfter = response.headers && response.headers.get('retry-after');
+      if (/^\d+$/.test(String(retryAfter || ''))) err.retryAfterSeconds = Number(retryAfter);
       throw err;
     }
     return payload;

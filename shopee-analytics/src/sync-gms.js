@@ -45,7 +45,43 @@ function fingerprint(value) {
   return crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
 
-async function fetchAllGmsItemPerformanceWithRaw({ client, shopId, accessToken, campaignId, date, limit = 50 }) {
+function resolveGmsMinRequestIntervalMs(env = process.env) {
+  const raw = env.SHOPEE_ADS_MIN_REQUEST_INTERVAL_MS;
+  if (raw === undefined || raw === '') return 1500;
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 0 || value > 60_000) {
+    throw new Error('SHOPEE_ADS_MIN_REQUEST_INTERVAL_MS must be an integer from 0 to 60000');
+  }
+  return value;
+}
+
+function createGmsRequestPacer({ minIntervalMs = resolveGmsMinRequestIntervalMs(), now = () => Date.now(), sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), audit = [] } = {}) {
+  let lastStartedAt = null;
+  let sequence = 0;
+  return {
+    audit,
+    async beforeRequest(metadata) {
+      const observedAt = now();
+      const waitMs = lastStartedAt === null ? 0 : Math.max(0, minIntervalMs - (observedAt - lastStartedAt));
+      if (waitMs) await sleep(waitMs);
+      const startedAt = now();
+      sequence += 1;
+      audit.push({
+        endpointKey: metadata.endpointKey,
+        sequence,
+        shopId: Number(metadata.shopId),
+        campaignId: Number(metadata.campaignId),
+        eventDate: String(metadata.eventDate),
+        offset: metadata.offset ?? null,
+        waitMs,
+        relativeMs: lastStartedAt === null ? 0 : startedAt - lastStartedAt,
+      });
+      lastStartedAt = startedAt;
+    },
+  };
+}
+
+async function fetchAllGmsItemPerformanceWithRaw({ client, shopId, accessToken, campaignId, date, limit = 50, requestPacer = null }) {
   const endpoint = ENDPOINTS.adsGmsItemPerformance;
   const shopeeDate = toShopeeDate(date);
   const all = [];
@@ -60,6 +96,7 @@ async function fetchAllGmsItemPerformanceWithRaw({ client, shopId, accessToken, 
       offset,
       limit,
     };
+    if (requestPacer) await requestPacer.beforeRequest({ endpointKey: 'adsGmsItemPerformance', shopId, campaignId, eventDate: date, offset });
     const payload = await client.shopRequest({
       path: endpoint.path,
       shopId,
@@ -84,7 +121,7 @@ async function fetchAllGmsItemPerformance(args) {
   return (await fetchAllGmsItemPerformanceWithRaw(args)).rows;
 }
 
-async function fetchGmsCampaignPerformanceWithRaw({ client, shopId, accessToken, campaignId, date }) {
+async function fetchGmsCampaignPerformanceWithRaw({ client, shopId, accessToken, campaignId, date, requestPacer = null }) {
   const endpoint = ENDPOINTS.adsGmsCampaignPerformance;
   const shopeeDate = toShopeeDate(date);
   const requestBody = {
@@ -92,6 +129,7 @@ async function fetchGmsCampaignPerformanceWithRaw({ client, shopId, accessToken,
     start_date: shopeeDate,
     end_date: shopeeDate,
   };
+  if (requestPacer) await requestPacer.beforeRequest({ endpointKey: 'adsGmsCampaignPerformance', shopId, campaignId, eventDate: date, offset: null });
   const payload = await client.shopRequest({
     path: endpoint.path,
     shopId,
@@ -124,11 +162,9 @@ function leftJoinMembershipPerformance(itemIds, performanceRows) {
   });
 }
 
-async function syncGmsDay({ client, shopId, accessToken, campaignId, date, membershipItemIds = [] }) {
-  const [campaignResult, itemResult] = await Promise.all([
-    fetchGmsCampaignPerformanceWithRaw({ client, shopId, accessToken, campaignId, date }),
-    fetchAllGmsItemPerformanceWithRaw({ client, shopId, accessToken, campaignId, date }),
-  ]);
+async function syncGmsDay({ client, shopId, accessToken, campaignId, date, membershipItemIds = [], requestPacer = null }) {
+  const campaignResult = await fetchGmsCampaignPerformanceWithRaw({ client, shopId, accessToken, campaignId, date, requestPacer });
+  const itemResult = await fetchAllGmsItemPerformanceWithRaw({ client, shopId, accessToken, campaignId, date, requestPacer });
 
   const eventDate = String(date).slice(0, 10);
   const rawSnapshots = [
@@ -169,6 +205,8 @@ module.exports = {
   extractItemRows,
   normalizeItemRow,
   fingerprint,
+  resolveGmsMinRequestIntervalMs,
+  createGmsRequestPacer,
   leftJoinMembershipPerformance,
   fetchAllGmsItemPerformance,
   fetchAllGmsItemPerformanceWithRaw,

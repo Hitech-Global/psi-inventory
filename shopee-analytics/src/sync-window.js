@@ -1,6 +1,6 @@
 'use strict';
 
-const { syncGmsDay } = require('./sync-gms');
+const { syncGmsDay, createGmsRequestPacer } = require('./sync-gms');
 const { assertPilotTypedCampaignAllowed } = require('./deployment-mode');
 
 function toIsoDate(date) {
@@ -48,6 +48,7 @@ async function syncGmsWindow({
   startDate,
   endDate,
   membershipProvider,
+  requestPacer = createGmsRequestPacer(),
 }) {
   if (!repository || typeof repository.saveGmsDay !== 'function') {
     throw new Error('repository.saveGmsDay is required');
@@ -73,6 +74,7 @@ async function syncGmsWindow({
         campaignId,
         date: eventDate,
         membershipItemIds,
+        requestPacer,
       });
       await repository.saveGmsDay({
         shopId,
@@ -100,6 +102,7 @@ async function syncGmsWindow({
         cursor: { campaignId, startDate: dates[0], endDate: dates[dates.length - 1] },
       });
     }
+    results.requestAudit = requestPacer.audit || [];
     return results;
   } catch (error) {
     if (typeof repository.markSyncFailure === 'function') {

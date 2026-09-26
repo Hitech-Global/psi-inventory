@@ -5,6 +5,8 @@ const {
   toShopeeDate,
   leftJoinMembershipPerformance,
   syncGmsDay,
+  createGmsRequestPacer,
+  resolveGmsMinRequestIntervalMs,
 } = require('../src/sync-gms');
 const { buildShopeeSeaEventCalendar } = require('../src/event-calendar');
 
@@ -22,6 +24,14 @@ assert.strictEqual(joined[1].hasPerformance, false);
 assert.strictEqual(joined[1].expense, 0);
 
 const calls = [];
+let clock = 0;
+const requestAudit = [];
+const pacer = createGmsRequestPacer({
+  minIntervalMs: 1500,
+  now: () => clock,
+  sleep: async ms => { clock += ms; },
+  audit: requestAudit,
+});
 const fakeClient = {
   async shopRequest(req) {
     calls.push(req);
@@ -50,11 +60,19 @@ const fakeClient = {
     campaignId: 7,
     date: '2026-09-18',
     membershipItemIds: [11, 22, 33],
+    requestPacer: pacer,
   });
   assert.strictEqual(result.campaign.broadRoas, 7);
   assert.strictEqual(result.items.length, 3);
   assert.strictEqual(result.items[2].hasPerformance, false);
   assert(calls.some(x => x.body && x.body.offset === 1));
+  assert.deepStrictEqual(requestAudit.map(row => row.endpointKey), [
+    'adsGmsCampaignPerformance', 'adsGmsItemPerformance', 'adsGmsItemPerformance',
+  ]);
+  assert.deepStrictEqual(requestAudit.map(row => row.waitMs), [0, 1500, 1500]);
+  assert.deepStrictEqual(requestAudit.map(row => row.offset), [null, 0, 1]);
+  assert.strictEqual(resolveGmsMinRequestIntervalMs({}), 1500);
+  assert.throws(() => resolveGmsMinRequestIntervalMs({ SHOPEE_ADS_MIN_REQUEST_INTERVAL_MS: '-1' }));
   console.log('shopee gms sync tests: ok');
 })().catch(err => {
   console.error(err);

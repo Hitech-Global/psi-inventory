@@ -37,6 +37,17 @@ const client = new ShopeeClient({
   const parsed = new URL(capturedUrl);
   assert.deepStrictEqual(parsed.searchParams.getAll('item_status'), ['NORMAL', 'BANNED']);
   assert.strictEqual(parsed.searchParams.get('page_size'), '100');
+  const rateLimited = new ShopeeClient({
+    partnerId: '123', partnerKey: 'secret',
+    fetchImpl: async () => ({
+      ok: false, status: 429, text: async () => '{"error":"ads_rate_limit_shop_api"}',
+      headers: { get: name => name === 'retry-after' ? '12' : null },
+    }),
+  });
+  await assert.rejects(
+    () => rateLimited.shopRequest({ path: '/api/v2/ads/get_gms_item_performance', shopId: 456, accessToken: 'token' }),
+    error => error.kind === 'RATE_LIMIT' && error.code === 'ads_rate_limit_shop_api' && error.retryAfterSeconds === 12,
+  );
   console.log('shopee client tests: ok');
 })().catch(error => {
   console.error(error);

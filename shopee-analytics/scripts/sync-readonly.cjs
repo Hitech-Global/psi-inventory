@@ -78,7 +78,7 @@ async function main() {
         startDate: required('SHOPEE_GMS_START_DATE'),
         endDate: required('SHOPEE_GMS_END_DATE'),
       });
-      console.log(JSON.stringify({ command, days: result.length, result }, null, 2));
+      console.log(JSON.stringify({ command, days: result.length, result, requestAudit: result.requestAudit || [] }, null, 2));
       return;
     }
 
