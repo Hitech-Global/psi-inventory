@@ -67,6 +67,30 @@ class ShopeeShopProfileRepository {
     );
   }
 
+  async registerApiAuthorized({ shopId, operatorLabel = null }) {
+    const id = Number(shopId);
+    if (!Number.isSafeInteger(id) || id <= 0) throw new Error('shopId must be a positive integer');
+    const label = operatorLabel == null ? null : String(operatorLabel).trim() || null;
+    const token = await this.pool.query(
+      `SELECT 1 FROM shopee_app_tokens WHERE app_role='ADS' AND shop_id=$1 LIMIT 1`,
+      [id],
+    );
+    if (!token.rows.length) {
+      const error = new Error(`No matching ADS OAuth token exists for shop ${id}`);
+      error.code = 'ADS_TOKEN_REQUIRED'; error.status = 422; throw error;
+    }
+    await this.pool.query(
+      `INSERT INTO shopee_shop_profiles
+       (shop_id,display_name,operator_label,import_source_shop_name,data_source_capability,active,updated_at)
+       VALUES ($1,$2,$3,NULL,'API_AND_MANUAL',true,now())
+       ON CONFLICT (shop_id) DO UPDATE SET
+         display_name=EXCLUDED.display_name,operator_label=EXCLUDED.operator_label,
+         import_source_shop_name=NULL,data_source_capability='API_AND_MANUAL',active=true,updated_at=now()`,
+      [id, `Shop ${id}`, label],
+    );
+    return (await this.list({ activeOnly: false })).find(row => row.shopId === id) || null;
+  }
+
   async upsertMany(profiles) {
     for (const profile of profiles || []) await this.upsert(profile);
     return { configured: (profiles || []).length };
@@ -78,7 +102,7 @@ class ShopeeShopProfileRepository {
          p.shop_id,p.display_name,p.country_code,p.country_name,p.brand_code,p.brand_name,
          p.currency,p.timezone,p.brand_portal_timezone,p.marketplace_region,
          to_char(p.analytics_start_date,'YYYY-MM-DD') AS analytics_start_date,
-         p.gms_campaign_seed_ids,p.active,p.sort_order,p.note,p.updated_at,
+         p.gms_campaign_seed_ids,p.active,p.sort_order,p.note,p.updated_at,p.operator_label,p.import_source_shop_name,p.data_source_capability,
          s.shop_name AS api_shop_name,s.region AS api_region,s.status AS api_status,s.synced_at AS api_synced_at
        FROM shopee_shop_profiles p
        LEFT JOIN shopee_shops s ON s.shop_id=p.shop_id
@@ -88,7 +112,10 @@ class ShopeeShopProfileRepository {
     );
     return result.rows.map(row => ({
       shopId: Number(row.shop_id),
-      displayName: row.display_name,
+      displayName: row.operator_label || row.display_name,
+      operatorLabel: row.operator_label,
+      importSourceShopName: row.import_source_shop_name,
+      dataSourceCapability: row.data_source_capability,
       countryCode: row.country_code,
       countryName: row.country_name,
       brandCode: row.brand_code,

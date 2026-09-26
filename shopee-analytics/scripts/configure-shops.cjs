@@ -16,6 +16,12 @@ function loadProfiles() {
   return parsed;
 }
 
+function option(name) {
+  const prefix = `--${name}=`;
+  const match = process.argv.find(value => value.startsWith(prefix));
+  return match ? match.slice(prefix.length) : null;
+}
+
 async function main() {
   if (process.env.SHOPEE_ANALYTICS_CONFIGURE_SHOPS !== 'YES') {
     throw new Error('Refusing shop profile write. Set SHOPEE_ANALYTICS_CONFIGURE_SHOPS=YES explicitly.');
@@ -24,14 +30,20 @@ async function main() {
   const pool = createAnalyticsPool();
   try {
     const repository = new ShopeeShopProfileRepository({ pool });
-    const profiles = loadProfiles();
-    const result = await repository.upsertMany(profiles);
+    const apiAuthorized = process.argv.includes('--api-authorized');
+    const result = apiAuthorized
+      ? { registered: await repository.registerApiAuthorized({
+        shopId: option('shop-id'), operatorLabel: option('operator-label'),
+      }) }
+      : await repository.upsertMany(loadProfiles());
     const listed = await repository.list({ activeOnly: false });
     console.log(JSON.stringify({
       ...result,
       shops: listed.map(shop => ({
         shopId: shop.shopId,
         displayName: shop.displayName,
+        operatorLabel: shop.operatorLabel,
+        apiShopName: shop.apiShopName,
         countryCode: shop.countryCode,
         brandCode: shop.brandCode,
         currency: shop.currency,

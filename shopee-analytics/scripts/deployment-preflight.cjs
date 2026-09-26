@@ -237,11 +237,11 @@ async function main() {
       const profileRepo = new ShopeeShopProfileRepository({ pool });
       const tokenRepo = new ShopeeTokenRepository({ pool, masterKey: loadMasterKey() });
       const shops = await profileRepo.list({ activeOnly: true });
-      const shop = pilotConfig && shops.find(row => Number(row.shopId) === pilotConfig.shopId &&
-        String(row.brandCode || '').trim().toUpperCase() === pilotConfig.brand.toUpperCase());
+      const shop = pilotConfig && shops.find(row => Number(row.shopId) === pilotConfig.shopId);
       checks.push(result('pilot_shop_isolation', Boolean(shop), {
         expectedShopId: pilotConfig && pilotConfig.shopId,
         activeShopCount: shops.length,
+        sourceMetadataAvailable: Boolean(shop && (shop.apiShopName || shop.countryCode || shop.currency || shop.timezone)),
       }));
       try {
         const seedIds = shop ? validatePilotProfileCampaignSeeds(shop, pilotConfig) : [];

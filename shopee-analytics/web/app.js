@@ -252,7 +252,7 @@ function renderShopOptions({ preserve = true } = {}) {
   for (const [label, group] of groups.entries()) {
     html += `<optgroup label="${escapeHtml(label)}">`;
     html += group.map(shop =>
-      `<option value="${shop.shopId}">${escapeHtml(shop.displayName)}</option>`
+      `<option value="${shop.shopId}">${escapeHtml(shop.operatorLabel ? `${shop.operatorLabel} · Shop ${shop.shopId} (operator label)` : shop.displayName)}</option>`
     ).join('');
     html += '</optgroup>';
   }

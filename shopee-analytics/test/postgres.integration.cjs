@@ -633,6 +633,26 @@ const { ShopeeShopScopeRepository } = require('../src/shop-scope-repository');
     assert(status.sources.some(source => source.source === 'PRODUCT_CARD'));
     assert(status.tokens.some(token => token.appRole === 'ADS'));
 
+    await tokenRepo.save({
+      appRole: 'ADS', shopId: 3, accessToken: 'api-authorized-access', refreshToken: 'api-authorized-refresh',
+      expiresAt: new Date('2026-09-18T10:00:00Z'),
+    });
+    const apiAuthorized = await shopProfiles.registerApiAuthorized({
+      shopId: 3, operatorLabel: 'Operator-only label',
+    });
+    assert.strictEqual(apiAuthorized.active, true);
+    assert.strictEqual(apiAuthorized.operatorLabel, 'Operator-only label');
+    assert.strictEqual(apiAuthorized.apiShopName, null, 'operator label must not become an API source name');
+    assert.strictEqual(apiAuthorized.countryCode, null);
+    assert.strictEqual(apiAuthorized.currency, null);
+    assert.strictEqual(apiAuthorized.timezone, null);
+    await shopProfiles.registerApiAuthorized({ shopId: 3, operatorLabel: 'Updated operator label' });
+    assert.strictEqual((await shopProfiles.list({ activeOnly: false })).find(shop => shop.shopId === 3).operatorLabel, 'Updated operator label');
+    await assert.rejects(
+      () => shopProfiles.registerApiAuthorized({ shopId: 4, operatorLabel: 'must fail' }),
+      /No matching ADS OAuth token/,
+    );
+
     console.log(`shopee PostgreSQL integration tests: ok (${names.size} analytics tables)`);
   } finally {
     await pool.end();
