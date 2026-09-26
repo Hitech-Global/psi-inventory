@@ -8,6 +8,7 @@ const { Readable } = require('stream');
 const {
   existingReusableFile,
   publicJob,
+  requireReusablePreview,
   safeOriginalFilename,
   stageUploadStream,
   validateContentType,
@@ -52,6 +53,20 @@ const {
     }, { sha256: 'abc', targetShopId: 123 });
     assert.strictEqual(missing, null);
 
+    const previewForConfirm = await requireReusablePreview({
+      get: async () => ({
+        id: 'preview-job', operation: 'PREVIEW', status: 'SUCCEEDED', filePath: reusablePath,
+        result: { shopScope: 'MATCH' },
+      }),
+    }, 'preview-job');
+    assert.strictEqual(previewForConfirm.id, 'preview-job');
+    await assert.rejects(
+      requireReusablePreview({
+        get: async () => ({ id: 'bad-preview', operation: 'PREVIEW', status: 'SUCCEEDED', filePath: reusablePath, result: { shopScope: 'MISMATCH' } }),
+      }, 'bad-preview'),
+      error => error.code === 'SHOP_SCOPE_MISMATCH',
+    );
+
     const exposed = publicJob({
       id: 'job-1', operation: 'PREVIEW', status: 'SUCCEEDED', filename: 'report.csv', fileSize: 8,
       targetShopId: 123, sourceShopId: 123, result: { ok: true, shopScope: 'MATCH' },
@@ -71,7 +86,16 @@ const {
     assert(!repositorySource.includes('for (const item of items)'), 'item persistence must not issue one SQL round-trip per item');
 
     const workerSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'ad-group-import-worker.js'), 'utf8');
-    assert(workerSource.includes("retainPreviewArtifact = completed && job.operation === 'PREVIEW'"), 'successful preview artifacts must be retained for confirm reuse');
+    assert(workerSource.includes("completed && job.operation === 'PREVIEW'"), 'successful preview artifacts must be retained for confirm reuse');
+    assert(workerSource.includes('sourcePreviewJobId'), 'failed imports created from previews must remain resumable until TTL cleanup');
+
+    const webIndex = fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html'), 'utf8');
+    assert(webIndex.includes('/ad-group-import-async.js'), 'web UI must load the nonblocking import controller');
+    const asyncUi = fs.readFileSync(path.join(__dirname, '..', 'web', 'ad-group-import-async.js'), 'utf8');
+    assert(asyncUi.includes('MAX_FILES = 20'), 'batch UI must cap file count');
+    assert(asyncUi.includes('MAX_BATCH_BYTES = 50 * 1024 * 1024'), 'batch UI must cap total upload size');
+    assert(asyncUi.includes('/confirm'), 'confirm must reuse the retained preview artifact instead of uploading the file again');
+    assert(asyncUi.includes("async: 'YES'"), 'preview uploads must use nonblocking queue mode');
 
     console.log('ad-group import isolation tests passed');
   } finally {
