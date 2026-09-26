@@ -10,7 +10,11 @@ async function main() {
   }
   const pool = createAnalyticsPool();
   try {
-    const schemaFiles = ['schema.sql', 'schema-import-jobs.sql'];
+    const schemaFiles = [
+      'schema.sql',
+      'schema-import-jobs.sql',
+      'schema-shop-profile-corrections.sql',
+    ];
     const sql = schemaFiles
       .map(name => fs.readFileSync(path.join(__dirname, '..', name), 'utf8'))
       .join('\n\n');
