@@ -2,12 +2,17 @@
 
 const { ShopeeSyncService } = require('./sync-service');
 const { syncGmsWindow } = require('./sync-window');
+const { syncProductAdsOverviewWindow } = require('./sync-product-ads-overview');
 const {
   localIsoDate,
   addDays,
   mergeCampaignIds,
 } = require('./sync-cycle-utils');
-const { isPilotGmvMax, assertPilotTypedCampaignAllowed } = require('./deployment-mode');
+const {
+  isPilotGmvMax,
+  assertPilotTypedCampaignAllowed,
+  assertPilotIdentityShopAllowed,
+} = require('./deployment-mode');
 
 function normalizeShopProfile(shop) {
   const shopId = Number(shop.shopId ?? shop.shop_id);
@@ -19,6 +24,7 @@ function normalizeShopProfile(shop) {
     shopId,
     timezone,
     brandPortalTimezone: shop.brandPortalTimezone ?? shop.brand_portal_timezone ?? null,
+    syncScope: shop.syncScope ?? shop.sync_scope ?? 'API_AND_MANUAL',
   };
 }
 
@@ -35,6 +41,7 @@ async function runShopSyncCycle({
   const profile = normalizeShopProfile(shop);
   const pilot = isPilotGmvMax();
   const shopId = profile.shopId;
+  const apiCapable = String(profile.syncScope || '').toUpperCase() !== 'MANUAL_IMPORT';
   const nowEpoch = Math.floor(now.getTime() / 1000);
   const today = localIsoDate(now, profile.timezone);
   const yesterday = addDays(today, -1);
@@ -128,6 +135,28 @@ async function runShopSyncCycle({
       required: false,
       skipped: 'NO_KNOWN_GMS_CAMPAIGN',
     });
+  }
+
+  // Product Ads overview must come from Shopee's shop-level CPC aggregate API,
+  // not from summing whichever campaign families happen to be available locally.
+  // Manual-import-only shops intentionally skip this source because they have no
+  // authorized ADS token and therefore cannot claim full-shop Product Ads totals.
+  if (mode === 'daily' && apiCapable) {
+    if (!adsToken) {
+      adsToken = await run('ads-token-product-ads-overview', () => ads.getAccessToken(shopId), { required: false });
+    }
+    if (adsToken) {
+      if (pilot) assertPilotIdentityShopAllowed(shopId);
+      await run('product-ads-overview-7d', () => syncProductAdsOverviewWindow({
+        client: ads.client,
+        repository: runtime.productAdsShopRepository,
+        rawRepository: runtime.rawRepository,
+        shopId,
+        accessToken: adsToken,
+        startDate: addDays(today, -6),
+        endDate: today,
+      }), { required: false });
+    }
   }
 
   if (!pilot) {
