@@ -93,13 +93,15 @@ function rowToPromotion(row, metadata) {
   const input = {
     shopId: metadata.shopId, periodStart: metadata.periodStart, periodEnd: metadata.periodEnd, promotionType: 'AD_GROUP',
     campaignName: row['Ad / Product Name'], campaignStatus: row.Status, sourceAdType: row['Ads Type'],
-    targetRoas: rawNumber(row, 'ROAS'), impressions: rawNumber(row, 'Impression'), clicks: rawNumber(row, 'Clicks'),
+    // Seller Centre ROAS is realized performance, never a bidding target.
+    sourceRoas: rawNumber(row, 'ROAS'), impressions: rawNumber(row, 'Impression'), clicks: rawNumber(row, 'Clicks'),
     orders: rawNumber(row, 'Conversions'), gmv: rawNumber(row, 'GMV'), expense: rawNumber(row, 'Expense'), ctr: rawRatio(row, 'CTR'), cvr: rawRatio(row, 'Conversion Rate'),
     remark: null,
   };
   const group = normalizeManualPromotion(input, { source: 'MANUAL_IMPORT' });
   group.promotionKey = sourceKey({ shopId: metadata.shopId, name: group.campaignName, startDate: row['Start Date'] });
-  group.sourceAdType = row['Ads Type']; group.targetRoas = rawNumber(row, 'ROAS'); group.sourceRoas = rawNumber(row, 'ROAS');
+  group.sourceAdType = row['Ads Type']; group.targetRoas = null; group.estimatedRoas = null;
+  group.sourceRoas = rawNumber(row, 'ROAS'); group.directGmv = rawNumber(row, 'Direct GMV'); group.directRoas = rawNumber(row, 'Direct ROAS');
   group.raw = { sourceFormat: 'SHOPEE_AD_GROUP_EXPORT', sourceShopName: metadata.shopName, sourcePeriodStart: metadata.periodStart, sourcePeriodEnd: metadata.periodEnd, parent: row };
   return group;
 }
@@ -108,6 +110,8 @@ function rowToItem(row) {
   const item = normalizeManualItem({
     itemId: row['Product ID'], productName: row['Ad / Product Name'], impressions: rawNumber(row, 'Impression'), clicks: rawNumber(row, 'Clicks'), orders: rawNumber(row, 'Conversions'), gmv: rawNumber(row, 'GMV'), expense: rawNumber(row, 'Expense'), ctr: rawRatio(row, 'CTR'), cvr: rawRatio(row, 'Conversion Rate'), roas: rawNumber(row, 'ROAS'),
   });
+  item.directGmv = rawNumber(row, 'Direct GMV');
+  item.directRoas = rawNumber(row, 'Direct ROAS');
   item.raw = { child: row, directConversions: rawNumber(row, 'Direct Conversions'), directItemsSold: rawNumber(row, 'Direct Items Sold'), directGmv: rawNumber(row, 'Direct GMV'), directRoas: rawNumber(row, 'Direct ROAS'), voucherAmount: rawNumber(row, 'Voucher Amount'), voucheredSales: rawNumber(row, 'Vouchered Sales') };
   return item;
 }

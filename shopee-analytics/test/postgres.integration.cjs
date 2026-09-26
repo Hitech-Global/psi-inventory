@@ -60,6 +60,62 @@ const { ShopeeShopScopeRepository } = require('../src/shop-scope-repository');
     assert.strictEqual(unifiedRows.length, 1);
     assert.strictEqual(unifiedRows[0].period_start.toISOString().slice(0, 10), '2026-09-11');
     assert.strictEqual(unifiedRows[0].period_end.toISOString().slice(0, 10), '2026-09-17');
+
+    // A complete manual Ad Group report persists parents/items in one outer
+    // transaction. Repeating the identical report replaces deterministic rows.
+    const adGroupShopId = 990177003;
+    const adGroupEntries = [
+      { key: 'MANUAL_IMPORT:group:ad-group-1:2026-09-22', name: 'Ad Group 1', impressions: 778, clicks: 33, orders: 1, gmv: 98, expense: 8.10, sourceRoas: 12.10, directGmv: 98, directRoas: 12.10, itemCount: 7 },
+      { key: 'MANUAL_IMPORT:group:ad-group-2:2026-09-22', name: 'Ad Group 2', impressions: 442, clicks: 16, orders: 0, gmv: 0, expense: 2.76, sourceRoas: 0, directGmv: 0, directRoas: 0, itemCount: 6 },
+    ];
+    const persistAdGroupFixture = async () => unifiedPromotionRepository.withTransaction(async queryable => {
+      for (let index = 0; index < adGroupEntries.length; index += 1) {
+        const entry = adGroupEntries[index];
+        const itemCount = entry.itemCount;
+        const items = Array.from({ length: itemCount }, (_, itemIndex) => ({
+          itemId: 990100000 + (index * 100) + itemIndex, productName: `Fixture ${index}-${itemIndex}`, impressions: 1, clicks: 0,
+          expense: 0, orders: 0, gmv: 0, sourceRoas: 0, directGmv: 0, directRoas: 0,
+          dataQualityStatus: 'COMPLETE', qualityFlags: [], raw: {},
+        }));
+        if (index === 0) Object.assign(items[0], { itemId: 50157527763, impressions: 82, clicks: 6, expense: 0.63, orders: 1, gmv: 98, sourceRoas: 155.94, directGmv: 98, directRoas: 155.94 });
+        await unifiedPromotionRepository.saveWithItems({
+          shopId: adGroupShopId, promotionKey: entry.key, periodStart: '2026-09-22', periodEnd: '2026-09-22', granularity: 'DAY',
+          promotionType: 'AD_GROUP', dataSource: 'MANUAL_IMPORT', campaignName: entry.name, impressions: entry.impressions, clicks: entry.clicks,
+          expense: entry.expense, orders: entry.orders, gmv: entry.gmv, targetRoas: null, estimatedRoas: null, sourceRoas: entry.sourceRoas,
+          directGmv: entry.directGmv, directRoas: entry.directRoas, itemCount, dataQualityStatus: 'COMPLETE', qualityFlags: [], raw: {},
+        }, items, { queryable });
+      }
+    });
+    await persistAdGroupFixture();
+    await persistAdGroupFixture();
+    const adGroupCounts = await pool.query(
+      `SELECT
+         (SELECT count(*) FROM shopee_ad_promotion_daily WHERE shop_id=$1 AND promotion_type='AD_GROUP') AS daily_count,
+         (SELECT count(*) FROM shopee_ad_promotion_item_daily WHERE shop_id=$1) AS item_count`,
+      [adGroupShopId],
+    );
+    assert.deepStrictEqual(adGroupCounts.rows[0], { daily_count: '2', item_count: '13' }, 'repeat import must remain idempotent');
+    const mappedAdGroup = await pool.query(
+      `SELECT target_roas,estimated_roas,source_roas,direct_gmv,direct_roas
+       FROM shopee_ad_promotion_daily WHERE shop_id=$1 AND promotion_key=$2`,
+      [adGroupShopId, adGroupEntries[0].key],
+    );
+    assert.deepStrictEqual(mappedAdGroup.rows[0], { target_roas: null, estimated_roas: null, source_roas: '12.100000', direct_gmv: '98.000000', direct_roas: '12.100000' });
+    const mappedItem = await pool.query(
+      `SELECT source_roas,direct_gmv,direct_roas FROM shopee_ad_promotion_item_daily
+       WHERE shop_id=$1 AND item_id=50157527763`,
+      [adGroupShopId],
+    );
+    assert.deepStrictEqual(mappedItem.rows[0], { source_roas: '155.940000', direct_gmv: '98.000000', direct_roas: '155.940000' });
+    await assert.rejects(() => unifiedPromotionRepository.withTransaction(async queryable => {
+      await unifiedPromotionRepository.saveWithItems({
+        shopId: adGroupShopId, promotionKey: 'MANUAL_IMPORT:group:rollback:2026-09-22', periodStart: '2026-09-22', periodEnd: '2026-09-22', granularity: 'DAY',
+        promotionType: 'AD_GROUP', dataSource: 'MANUAL_IMPORT', campaignName: 'Rollback group', dataQualityStatus: 'COMPLETE', qualityFlags: [], raw: {},
+      }, [], { queryable });
+      throw new Error('fixture item persistence failure');
+    }), /fixture item persistence failure/);
+    const rollbackCount = await pool.query(`SELECT count(*) FROM shopee_ad_promotion_daily WHERE shop_id=$1 AND promotion_key='MANUAL_IMPORT:group:rollback:2026-09-22'`, [adGroupShopId]);
+    assert.strictEqual(rollbackCount.rows[0].count, '0', 'a failed file transaction must roll back its parent row');
     await repository.saveGmsDay({
       shopId: 1,
       campaignId: 7,
