@@ -18,8 +18,9 @@ async function startApp() {
   const shopScopeRepository = {
     async list() { return Array.from(scopes.values()); },
     async find(shopId) { return scopes.get(Number(shopId)) || null; },
-    async registerImportOnly({ shopId, importSourceShopName }) {
-      const scope = { shopId: Number(shopId), oauthAuthorized: false, dataSourceCapability: 'MANUAL_IMPORT', importSourceShopName };
+    async registerImportOnly({ shopId, importSourceShopName, countryCode, brandCode }) {
+      if (!countryCode || !brandCode) throw new Error('country/brand required');
+      const scope = { shopId: Number(shopId), oauthAuthorized: false, active: true, dataSourceCapability: 'MANUAL_IMPORT', importSourceShopName, countryCode, brandCode };
       scopes.set(scope.shopId, scope); return scope;
     },
   };
@@ -86,10 +87,16 @@ async function post(base, suffix) {
 
     const secondShop = await fetch(`${runtime.base}/shop-scopes/import-only`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ shopId: 1101364306, importSourceShopName: 'Another CSV Shop' }),
+      body: JSON.stringify({ shopId: 1101364306, importSourceShopName: 'Another CSV Shop', countryCode: 'ID', brandCode: 'REDRAGON' }),
     });
     assert.strictEqual(secondShop.status, 201);
     assert.strictEqual((await secondShop.json()).shopScope.oauthAuthorized, false);
+
+    const discovery = await post(runtime.base, '/ad-groups/import?filename=fixture.csv&target_shop_id=1770037299&preview_only=YES');
+    assert.strictEqual(discovery.response.status, 200);
+    assert.strictEqual(discovery.body.shopScope, 'MISMATCH');
+    assert.strictEqual(discovery.body.persisted, false);
+    assert.strictEqual(runtime.writes.length, 1, 'discovery preview must not write');
 
     assert.throws(() => assertFormalGmsPilotScope({ shopId: 1101364305, campaignId: 1, env: {
       SHOPEE_ANALYTICS_DEPLOYMENT_MODE: 'PILOT_GMV_MAX', SHOPEE_PILOT_GMV_MAX_SHOP_ID: '1770037299',

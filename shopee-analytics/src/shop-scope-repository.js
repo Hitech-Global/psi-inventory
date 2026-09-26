@@ -63,10 +63,14 @@ class ShopeeShopScopeRepository {
     return (await this.list()).find(scope => scope.shopId === id) || null;
   }
 
-  async registerImportOnly({ shopId, operatorLabel = null, importSourceShopName = null }) {
+  async registerImportOnly({ shopId, operatorLabel = null, importSourceShopName = null, countryCode, brandCode }) {
     const id = positiveShopId(shopId);
     const sourceName = importSourceShopName == null ? null : String(importSourceShopName).trim() || null;
     const label = operatorLabel == null ? null : String(operatorLabel).trim() || null;
+    const country = String(countryCode || '').trim().toUpperCase();
+    const brand = String(brandCode || '').trim().toUpperCase();
+    if (!country) throw new Error('countryCode is required for import-only registration');
+    if (!brand) throw new Error('brandCode is required for import-only registration');
     const existing = await this.find(id);
     if (existing && existing.oauthAuthorized) {
       const error = new Error(`Shop ${id} is already OAuth-authorized and cannot be registered as import-only`);
@@ -74,13 +78,14 @@ class ShopeeShopScopeRepository {
     }
     await this.pool.query(
       `INSERT INTO shopee_shop_profiles
-       (shop_id,display_name,operator_label,import_source_shop_name,data_source_capability,active,updated_at)
-       VALUES ($1,$2,$3,$4,$5,false,now())
+       (shop_id,display_name,operator_label,import_source_shop_name,country_code,brand_code,data_source_capability,active,updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,true,now())
        ON CONFLICT (shop_id) DO UPDATE SET
          display_name=EXCLUDED.display_name,operator_label=EXCLUDED.operator_label,
          import_source_shop_name=EXCLUDED.import_source_shop_name,
-         data_source_capability=EXCLUDED.data_source_capability,active=false,updated_at=now()`,
-      [id, label || displayFallback(id), label, sourceName, IMPORT_ONLY],
+         country_code=EXCLUDED.country_code,brand_code=EXCLUDED.brand_code,
+         data_source_capability=EXCLUDED.data_source_capability,active=true,updated_at=now()`,
+      [id, label || sourceName || displayFallback(id), label, sourceName, country, brand, IMPORT_ONLY],
     );
     return this.find(id);
   }

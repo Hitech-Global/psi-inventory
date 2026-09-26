@@ -247,7 +247,7 @@
         <button class="ads-type-tab active" data-ads-type="gms" type="button">GMV Max</button>
         <button class="ads-type-tab" data-ads-type="manual" type="button">单品广告</button>
         <button class="ads-type-tab" data-ads-type="auto" type="button">全店广告</button>
-        <button class="ads-type-tab" data-ads-type="groups" type="button">广告组导入</button>
+        <button class="ads-type-tab" data-ads-type="groups" type="button">广告组</button>
       </div>
 
       <div id="adsGmsPanel">
@@ -341,15 +341,19 @@
       </section>
 
       <section id="adsGroupImportPanel" class="panel hidden product-ads-panel">
-        <div class="panel-head"><div><h2>Shopee 广告组导入</h2><p>上传 Shopee 原生 CSV/XLSX，先预览父子结构、期间和数据质量；确认后才写入。</p></div></div>
-        <div class="ad-group-import-controls"><input id="adGroupFile" type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"><button id="adGroupPreviewBtn" class="ghost" type="button">预览</button></div>
-        <div id="adGroupScopeGate" class="ad-group-scope-gate hidden">
-          <strong>目标店铺范围</strong>
-          <p id="adGroupScopeNotice">请先预览报告。</p>
-          <div class="ad-group-scope-controls"><select id="adGroupTargetShop" disabled><option value="">先预览报告</option></select><button id="adGroupRegisterImportOnlyBtn" class="ghost" type="button" disabled>注册 import-only 店铺</button><button id="adGroupImportBtn" class="primary" type="button" disabled>确认导入</button></div>
-        </div>
-        <div id="adGroupImportResult" class="product-ad-detail empty-inline">请选择 Shopee 原生广告组 CSV 或 XLSX。预览不会写入数据。</div>
+        <div class="panel-head"><div><h2>广告组</h2><p>Seller Centre 广告组数据 · 手动导入</p></div><button id="openAdGroupImportBtn" class="primary" type="button">批量导入</button></div>
+        <div class="table-wrap"><table><thead><tr><th>日期</th><th>广告组</th><th>状态</th><th>商品数</th><th>展示</th><th>点击</th><th>CTR</th><th>订单</th><th>GMV</th><th>花费</th><th>ROAS</th><th>Direct GMV</th><th>Direct ROAS</th><th>数据质量</th></tr></thead><tbody id="adGroupRows"><tr><td colspan="14" class="empty">选择店铺后读取广告组数据。</td></tr></tbody></table></div>
+        <div id="adGroupEmptyState" class="product-ad-detail empty-inline hidden">当前周期暂无广告组数据。可以通过右上角【批量导入】上传 Shopee Seller Centre 报表。</div>
       </section>
+      <div id="adGroupImportModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-label="批量导入广告组">
+        <section class="ad-group-modal"><div class="panel-head"><div><h2>批量导入广告组</h2><p>先 preview 全部文件；只有全部通过正式范围校验后才可确认。</p></div><button id="closeAdGroupImportBtn" class="ghost" type="button">关闭</button></div>
+          <label id="adGroupDropzone" class="ad-group-dropzone">拖拽或选择 CSV / XLSX 文件<input id="adGroupFile" type="file" multiple accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"></label>
+          <div class="ad-group-import-controls"><button id="adGroupPreviewBtn" class="ghost" type="button">Preview 全部文件</button><button id="adGroupImportBtn" class="primary" type="button" disabled>确认批量导入</button><button id="adGroupResumeBtn" class="ghost hidden" type="button">继续导入未完成文件</button></div>
+          <div id="adGroupBatchRows" class="ad-group-batch-list empty-inline">尚未选择文件。Preview 不会写入数据。</div>
+          <div id="adGroupOnboarding" class="ad-group-scope-gate hidden"><strong>注册新店铺 · Manual Import Only</strong><p id="adGroupScopeNotice"></p><div class="ad-group-scope-controls"><input id="adGroupCountry" placeholder="国家 *（例如 MY）"><input id="adGroupBrand" placeholder="品牌 *"><input id="adGroupOperatorLabel" placeholder="内部显示名称（可选）"><button id="adGroupRegisterImportOnlyBtn" class="ghost" type="button">注册店铺并继续</button></div></div>
+          <div id="adGroupImportResult" class="product-ad-detail empty-inline"></div>
+        </section>
+      </div>
     </section>
 
     <section id="view-status" class="view-section hidden">

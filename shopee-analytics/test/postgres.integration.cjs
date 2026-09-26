@@ -326,10 +326,14 @@ const { ShopeeShopScopeRepository } = require('../src/shop-scope-repository');
     const importOnlyScope = await shopScopeRepository.registerImportOnly({
       shopId: 1101364305,
       importSourceShopName: 'CSV-only shop',
+      countryCode: 'ID',
+      brandCode: 'REDRAGON',
     });
     assert.strictEqual(importOnlyScope.shopId, 1101364305);
     assert.strictEqual(importOnlyScope.dataSourceCapability, 'MANUAL_IMPORT');
     assert.strictEqual(importOnlyScope.oauthAuthorized, false);
+    assert.strictEqual(importOnlyScope.active, true);
+    assert.strictEqual(importOnlyScope.countryCode, 'ID');
     const scopes = await shopScopeRepository.list();
     assert.strictEqual(scopes.find(scope => scope.shopId === 1).oauthAuthorized, true);
     assert.strictEqual(scopes.find(scope => scope.shopId === 1101364305).apiShopName, null);
@@ -566,22 +570,27 @@ const { ShopeeShopScopeRepository } = require('../src/shop-scope-repository');
 
     const queryRepository = new ShopeeQueryRepository({ pool });
     const shops = await queryRepository.listShops();
-    assert.strictEqual(shops.length, 2);
-    assert.strictEqual(shops[0].countryCode, 'ID');
-    assert.strictEqual(shops[0].brandPortalTimezone, 'GMT+7');
-    assert.strictEqual(shops[0].analyticsStartDate, '2026-05-01');
-    assert.strictEqual(shops[0].apiShopName, 'API Redragon ID');
-    assert.strictEqual(shops[1].currency, 'THB');
+    assert.strictEqual(shops.length, 3, 'active import-only shops must remain visible to analytics');
+    const idShop = shops.find(shop => shop.shopId === 1);
+    const thShop = shops.find(shop => shop.shopId === 2);
+    const importOnlyShop = shops.find(shop => shop.shopId === 1101364305);
+    assert.strictEqual(idShop.countryCode, 'ID');
+    assert.strictEqual(idShop.brandPortalTimezone, 'GMT+7');
+    assert.strictEqual(idShop.analyticsStartDate, '2026-05-01');
+    assert.strictEqual(idShop.apiShopName, 'API Redragon ID');
+    assert.strictEqual(thShop.currency, 'THB');
+    assert.strictEqual(importOnlyShop.dataSourceCapability, 'MANUAL_IMPORT');
+    assert.strictEqual(importOnlyShop.oauthAuthorized, false);
 
     const portfolio = await queryRepository.getPortfolioOverview({
       startDate: '2026-09-17',
       endDate: '2026-09-17',
     });
-    assert.strictEqual(portfolio.shops.length, 2);
+    assert.strictEqual(portfolio.shops.length, 3);
     assert.strictEqual(portfolio.dimensions.multiCurrency, true);
-    assert.deepStrictEqual(portfolio.dimensions.currencies, ['IDR', 'THB']);
-    assert.strictEqual(portfolio.currencyGroups.length, 2);
-    assert.strictEqual(portfolio.businessGroups.length, 2);
+    assert.deepStrictEqual(portfolio.dimensions.currencies, ['IDR', 'THB', null]);
+    assert.strictEqual(portfolio.currencyGroups.length, 3);
+    assert.strictEqual(portfolio.businessGroups.length, 3);
     assert(portfolio.businessGroups.some(group =>
       group.countryCode === 'ID' && group.brandCode === 'REDRAGON' && group.currency === 'IDR'
     ));
@@ -599,8 +608,8 @@ const { ShopeeShopScopeRepository } = require('../src/shop-scope-repository');
       endDate: '2026-09-17',
       countryCode: 'ID',
     });
-    assert.strictEqual(idOnly.shops.length, 1);
-    assert.strictEqual(idOnly.shops[0].currency, 'IDR');
+    assert.strictEqual(idOnly.shops.length, 2);
+    assert.strictEqual(idOnly.shops.find(shop => shop.shopId === 1).currency, 'IDR');
 
     const trend = await queryRepository.getShopDailyTrend({
       shopId: 1,

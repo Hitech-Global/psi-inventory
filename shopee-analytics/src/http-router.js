@@ -115,6 +115,8 @@ function createShopeeAnalyticsRouter({
         shopId,
         operatorLabel: req.body && req.body.operatorLabel,
         importSourceShopName: req.body && req.body.importSourceShopName,
+        countryCode: optionalCode(req.body && req.body.countryCode, 'countryCode'),
+        brandCode: optionalCode(req.body && req.body.brandCode, 'brandCode'),
       });
       res.status(201).json({ ok: true, shopScope: scope });
     } catch (error) { next(error); }
@@ -448,7 +450,12 @@ function createShopeeAnalyticsRouter({
       const targetShopId = positiveInt(req.query.target_shop_id, 'target_shop_id');
       const filename = String(req.query.filename || req.headers['x-filename'] || 'report.csv');
       const { report, preview } = parseShopeeAdGroupFile({ buffer: req.body, filename });
+      const persist = req.query.confirm === 'YES';
       if (report.metadata.shopId !== targetShopId) {
+        if (!persist && req.query.preview_only === 'YES') {
+          res.json({ ok: true, persisted: false, ...preview, targetShopId, shopScope: 'MISMATCH' });
+          return;
+        }
         throw scopeError(
           'SHOP_SCOPE_MISMATCH',
           `Source shop ${report.metadata.shopId} does not match target shop ${targetShopId}`,
@@ -456,7 +463,6 @@ function createShopeeAnalyticsRouter({
         );
       }
       const scopedPreview = { ...preview, targetShopId, shopScope: 'MATCH' };
-      const persist = req.query.confirm === 'YES';
       if (!persist) { res.json({ ok: true, persisted: false, ...scopedPreview }); return; }
       if (!shopScopeRepository) throw new Error('Shop scope registry is unavailable');
       const targetScope = await shopScopeRepository.find(targetShopId);

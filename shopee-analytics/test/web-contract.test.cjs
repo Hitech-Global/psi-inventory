@@ -79,7 +79,12 @@ assert(html.includes('data-ads-type="gms"'), 'Ads view must expose GMV Max tab')
 assert(html.includes('data-ads-type="manual"'), 'Ads view must expose manual Product Ads tab');
 assert(html.includes('data-ads-type="auto"'), 'Ads view must expose auto Product Ads tab');
 assert(html.includes('data-ads-type="groups"'), 'Ads view must expose native Ad Group import tab');
+assert(html.includes('>广告组<'), 'Ads navigation must name the business object, not only its import action');
+assert(html.includes('multiple'), 'Ad Group upload must accept multiple files');
+assert(html.includes('批量导入'), 'Ad Group page must expose batch import entry');
 assert(app.includes('/api/shopee-analytics/ad-groups/import?'), 'frontend must use the preview-first native Ad Group import API');
+assert(app.includes('OVERLAPPING_DAY_RANGE'), 'batch workflow must block overlapping DAY and RANGE reports');
+assert(app.includes('confirmAdGroupBatch'), 'batch workflow must retain serial confirm semantics');
 assert(app.includes('target_shop_id'), 'frontend must send an explicit target shop on confirmed import');
 assert(app.includes('sourceShopId'), 'frontend must show the parsed source shop identity');
 assert(app.includes('/shop-scopes/import-only'), 'frontend must require explicit import-only shop registration');

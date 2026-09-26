@@ -40,6 +40,8 @@ const state = {
   selectedCampaignId: null,
   adsType: 'gms',
   adGroupPreview: null,
+  adGroupBatch: [],
+  adGroupFiles: [],
   shopScopes: [],
 };
 
@@ -674,77 +676,66 @@ function switchAdsType(type) {
   loadCurrentView();
 }
 
-function renderAdGroupScopeGate(payload) {
-  state.adGroupPreview = payload;
-  const sourceShopId = Number(payload.sourceShopId ?? payload.shopId);
-  const sourceShopName = payload.sourceShopName ?? payload.shopName ?? '未提供';
-  const exactScope = state.shopScopes.find(scope => scope.shopId === sourceShopId) || null;
-  const current = selectedShop();
-  const select = $('#adGroupTargetShop');
-  const targetOptions = [`<option value="">请选择确认导入的目标 Shop</option>`]
-    .concat(state.shopScopes.map(scope => `<option value="${scope.shopId}">${escapeHtml(scope.displayName)} · ${scope.shopId}${scope.oauthAuthorized ? ' · OAuth API' : ' · import-only'}</option>`));
-  select.innerHTML = targetOptions.join('');
-  select.disabled = false;
-  select.value = exactScope ? String(sourceShopId) : '';
-  const anotherShop = current && current.shopId !== sourceShopId;
-  $('#adGroupScopeNotice').textContent = anotherShop
-    ? `This report belongs to another shop: ${sourceShopId} (${sourceShopName}). Import into current shop is blocked.`
-    : exactScope
-      ? `报告来源店铺 ${sourceShopId} 已注册。确认导入只能选择同一 Shop ID。`
-      : `报告来源店铺 ${sourceShopId} 尚未注册。请先明确注册为 import-only 店铺。`;
-  $('#adGroupRegisterImportOnlyBtn').disabled = Boolean(exactScope);
-  $('#adGroupRegisterImportOnlyBtn').textContent = `注册 import-only 店铺 ${sourceShopId}`;
-  $('#adGroupScopeGate').classList.remove('hidden');
-  updateAdGroupImportButton();
-}
-
-function updateAdGroupImportButton() {
-  const preview = state.adGroupPreview;
-  const sourceShopId = Number(preview && (preview.sourceShopId ?? preview.shopId));
-  const targetShopId = Number($('#adGroupTargetShop').value);
-  const targetScope = state.shopScopes.find(scope => scope.shopId === targetShopId);
-  $('#adGroupImportBtn').disabled = !preview || !targetScope || sourceShopId !== targetShopId || Boolean(preview.persisted);
-}
-
 async function loadShopScopes() {
   const data = await json('/api/shopee-analytics/shop-scopes');
   state.shopScopes = data.shopScopes || [];
 }
 
-function renderAdGroupImportResult(payload) {
-  const summary = [`${payload.adGroupCount || 0} 个广告组`, `${payload.itemRowCount || 0} 个商品行`, `${payload.periodStart || '—'} 至 ${payload.periodEnd || '—'} · ${payload.granularity || '—'}`, `完整 ${payload.completeCount || 0} · 部分 ${payload.partialCount || 0} · 不一致 ${payload.mismatchCount || 0}`];
-  const warning = (payload.warnings || []).length ? `<p class="product-ad-note">质量提示：${escapeHtml((payload.warnings || []).map(x => x.code || x).join('、'))}</p>` : '';
-  const source = `来源 Shop ID：${payload.sourceShopId ?? payload.shopId ?? '—'} · 目标 Shop ID：${payload.targetShopId ?? '—'} · Scope：${payload.shopScope || '—'} · 来源店名：${payload.sourceShopName ?? payload.shopName ?? '未提供'} · 报告来源：${payload.reportSource || 'SHOPEE_AD_GROUP_EXPORT'}`;
-  $('#adGroupImportResult').innerHTML = `<strong>${payload.persisted ? '已按幂等键写入' : '预览完成，尚未写入'}</strong><p>${escapeHtml(source)}</p><p>${escapeHtml(summary.join('；'))}</p>${warning}`;
-  if (!payload.persisted) renderAdGroupScopeGate(payload);
-  else $('#adGroupImportBtn').disabled = true;
+function adGroupQuery() { const shop = selectedShop(); const filters = currentFilters(); return shop ? new URLSearchParams({ shop_id: shop.shopId, start_date: filters.startDate, end_date: filters.endDate, promotion_type: 'AD_GROUP', data_source: 'MANUAL_IMPORT' }) : null; }
+async function loadAdGroups() {
+  const query = adGroupQuery(); if (!query) return;
+  const data = await json(`/api/shopee-analytics/ad-promotions?${query}`); const rows = data.promotions || [];
+  $('#adGroupRows').innerHTML = rows.length ? rows.map(row => `<tr><td>${escapeHtml(String(row.event_date).slice(0, 10))}</td><td>${escapeHtml(row.campaign_name)}</td><td>${escapeHtml(row.campaign_status || '—')}</td><td>${num(row.item_count)}</td><td>${num(row.impressions)}</td><td>${num(row.clicks)}</td><td>${pct(row.ctr)}</td><td>${num(row.orders)}</td><td>${formatMoney(row.gmv, selectedShop().currency)}</td><td>${formatMoney(row.expense, selectedShop().currency)}</td><td>${roas(row.source_roas)}</td><td>${formatMoney(row.direct_gmv, selectedShop().currency)}</td><td>${roas(row.direct_roas)}</td><td><span class="pill neutral">${escapeHtml(row.data_quality_status || 'COMPLETE')}</span></td></tr>`).join('') : '<tr><td colspan="14" class="empty">当前周期暂无广告组数据。</td></tr>';
+  $('#adGroupEmptyState').classList.toggle('hidden', Boolean(rows.length));
 }
-
-async function uploadAdGroup({ persist = false } = {}) {
-  const file = $('#adGroupFile').files && $('#adGroupFile').files[0];
-  if (!file) throw new Error('请先选择 CSV 或 XLSX 文件');
-  const query = new URLSearchParams({ filename: file.name });
-  const targetShopId = persist ? $('#adGroupTargetShop').value : String((selectedShop() || {}).shopId || '');
-  if (!targetShopId) throw new Error('TARGET_SHOP_REQUIRED: 请选择当前目标 Shop 后再预览');
-  query.set('target_shop_id', targetShopId);
-  if (persist) {
-    query.set('confirm', 'YES');
-  }
-  const response = await fetch(`/api/shopee-analytics/ad-groups/import?${query}`, { method: 'POST', headers: { 'content-type': file.type || (file.name.endsWith('.xlsx') ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'text/csv') }, body: file });
-  const payload = await response.json().catch(() => ({})); if (!response.ok) throw new Error(`${payload.error || 'REQUEST_FAILED'}: ${payload.message || `HTTP ${response.status}`}`); if (!persist) await loadShopScopes(); renderAdGroupImportResult(payload);
-}
-
-async function registerImportOnlyScope() {
-  const preview = state.adGroupPreview;
-  if (!preview) throw new Error('请先预览报告');
-  const shopId = Number(preview.sourceShopId ?? preview.shopId);
-  const response = await fetch('/api/shopee-analytics/shop-scopes/import-only', {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ shopId, importSourceShopName: preview.sourceShopName ?? preview.shopName ?? null }),
-  });
+function fileContentType(file) { return file.type || (file.name.toLowerCase().endsWith('.xlsx') ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'text/csv'); }
+async function previewAdGroupFile(file, targetShopId) {
+  const query = new URLSearchParams({ filename: file.name, target_shop_id: String(targetShopId), preview_only: 'YES' });
+  const response = await fetch(`/api/shopee-analytics/ad-groups/import?${query}`, { method: 'POST', headers: { 'content-type': fileContentType(file) }, body: file });
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(`${payload.error || 'REQUEST_FAILED'}: ${payload.message || `HTTP ${response.status}`}`);
-  await loadShopScopes(); renderAdGroupScopeGate(preview);
+  return { response, payload };
+}
+function overlapGuard(entries) {
+  const ranges = entries.filter(x => x.preview && x.preview.granularity === 'RANGE'); const days = entries.filter(x => x.preview && x.preview.granularity === 'DAY');
+  for (const range of ranges) for (const day of days) if (range.shopId === day.shopId && day.preview.periodStart >= range.preview.periodStart && day.preview.periodStart <= range.preview.periodEnd) range.overlap = day.overlap = true;
+}
+function renderAdGroupBatch() {
+  const entries = state.adGroupBatch; overlapGuard(entries);
+  $('#adGroupBatchRows').innerHTML = entries.length ? entries.map(entry => { const p = entry.preview || {}; const status = entry.error ? entry.error : entry.done ? '已导入' : entry.overlap ? 'OVERLAPPING_DAY_RANGE' : entry.registered ? (entry.existing ? '已存在 · 将更新' : '✓ Ready') : '需要注册店铺'; return `<div class="ad-group-batch-row"><strong>${escapeHtml(entry.file.name)}</strong><span>${escapeHtml(String(p.sourceShopId || '—'))} · ${escapeHtml(p.sourceShopName || '—')}</span><span>${escapeHtml(p.periodStart || '—')} · ${escapeHtml(p.granularity || '—')}</span><span>${num(p.adGroupCount)} groups · ${num(p.itemRowCount)} products</span><span>${(p.warnings || []).length ? `⚠ ${p.warnings.length} warnings` : '正常'}</span><b>${escapeHtml(status)}</b></div>`; }).join('') : '尚未选择文件。Preview 不会写入数据。';
+  const ready = entries.length && entries.every(x => x.preview && !x.error && x.registered && !x.overlap && !x.done);
+  $('#adGroupImportBtn').disabled = !ready;
+  const unknown = entries.find(x => x.preview && !x.registered); $('#adGroupOnboarding').classList.toggle('hidden', !unknown); if (unknown) $('#adGroupScopeNotice').textContent = `${unknown.preview.sourceShopName || 'Shopee Shop'} · ${unknown.shopId}，未授权 · Manual Import Only`;
+}
+async function detectExistingAdGroupData(entry) {
+  if (!entry.registered || !entry.preview || entry.preview.granularity !== 'DAY') return false;
+  const params = new URLSearchParams({ shop_id: entry.shopId, start_date: entry.preview.periodStart, end_date: entry.preview.periodEnd, promotion_type: 'AD_GROUP', data_source: 'MANUAL_IMPORT' });
+  const data = await json(`/api/shopee-analytics/ad-promotions?${params}`); return Boolean((data.promotions || []).length);
+}
+async function previewAdGroupBatch() {
+  const files = state.adGroupFiles.length ? state.adGroupFiles : Array.from($('#adGroupFile').files || []); if (!files.length) throw new Error('请选择一个或多个 CSV / XLSX 文件');
+  state.adGroupBatch = [];
+  for (const file of files) {
+    const target = selectedShop() ? selectedShop().shopId : 1; const { response, payload } = await previewAdGroupFile(file, target);
+    const shopId = Number(payload.sourceShopId ?? payload.shopId); const scope = state.shopScopes.find(x => x.shopId === shopId); const entry = { file, preview: payload, shopId, registered: Boolean(scope), error: response.ok && payload.shopScope === 'MATCH' ? null : `${payload.error || 'PREVIEW_FAILED'}: ${payload.message || 'shop scope validation failed'}` };
+    if (scope && shopId !== target) { const retry = await previewAdGroupFile(file, shopId); entry.preview = retry.payload; entry.error = retry.response.ok && retry.payload.shopScope === 'MATCH' ? null : `${retry.payload.error || 'PREVIEW_FAILED'}: ${retry.payload.message || 'failed'}`; }
+    entry.existing = await detectExistingAdGroupData(entry); state.adGroupBatch.push(entry);
+  }
+  renderAdGroupBatch();
+}
+async function registerImportOnlyScope() {
+  const entry = state.adGroupBatch.find(x => x.preview && !x.registered); if (!entry) return;
+  const countryCode = $('#adGroupCountry').value.trim(), brandCode = $('#adGroupBrand').value.trim(); if (!countryCode || !brandCode) throw new Error('国家和品牌为必填项');
+  const response = await fetch('/api/shopee-analytics/shop-scopes/import-only', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ shopId: entry.shopId, importSourceShopName: entry.preview.sourceShopName, countryCode, brandCode, operatorLabel: $('#adGroupOperatorLabel').value.trim() || null }) });
+  const payload = await response.json().catch(() => ({})); if (!response.ok) throw new Error(`${payload.error || 'REQUEST_FAILED'}: ${payload.message || `HTTP ${response.status}`}`);
+  await loadShopScopes(); await loadShopDirectory(); entry.registered = true; entry.error = null; const retry = await previewAdGroupFile(entry.file, entry.shopId); entry.preview = retry.payload; renderAdGroupBatch();
+}
+async function confirmAdGroupBatch({ resume = false } = {}) {
+  for (const entry of state.adGroupBatch) { if (entry.done) continue; if (entry.error && !resume) break; if (!entry.registered || entry.overlap) break;
+    entry.error = null;
+    const query = new URLSearchParams({ filename: entry.file.name, target_shop_id: String(entry.shopId), confirm: 'YES' }); const response = await fetch(`/api/shopee-analytics/ad-groups/import?${query}`, { method: 'POST', headers: { 'content-type': fileContentType(entry.file) }, body: entry.file }); const payload = await response.json().catch(() => ({}));
+    if (!response.ok) { entry.error = `${payload.error || 'IMPORT_FAILED'}: ${payload.message || `HTTP ${response.status}`}`; $('#adGroupResumeBtn').classList.remove('hidden'); break; } entry.done = true;
+  }
+  renderAdGroupBatch(); await loadAdGroups();
 }
 
 function productAdDiagnosis(row) {
@@ -1373,7 +1364,7 @@ async function loadCurrentView() {
   try {
     if (state.view === 'overview') await loadPortfolio();
     else if (state.view === 'store' && selectedShop()) await loadStoreDetail();
-    else if (state.view === 'ads' && state.adsType === 'groups') return;
+    else if (state.view === 'ads' && state.adsType === 'groups' && selectedShop()) await loadAdGroups();
     else if (state.view === 'ads' && selectedShop()) {
       if (state.adsType === 'gms') await loadCampaigns();
       else await loadProductAds(state.adsType);
@@ -1434,9 +1425,15 @@ $('#shopSelect').addEventListener('change', onShopChanged);
 $('#loadBtn').addEventListener('click', loadCurrentView);
 $('#refreshStatusBtn').addEventListener('click', loadSystemStatus);
 $('#refreshStatusPortfolioBtn').addEventListener('click', loadStatusPortfolio);
-$('#adGroupPreviewBtn').addEventListener('click', () => uploadAdGroup().catch(error => { $('#adGroupImportResult').textContent = error.message; }));
-$('#adGroupImportBtn').addEventListener('click', () => uploadAdGroup({ persist: true }).catch(error => { $('#adGroupImportResult').textContent = error.message; }));
-$('#adGroupTargetShop').addEventListener('change', updateAdGroupImportButton);
+$('#openAdGroupImportBtn').addEventListener('click', () => $('#adGroupImportModal').classList.remove('hidden'));
+$('#closeAdGroupImportBtn').addEventListener('click', () => $('#adGroupImportModal').classList.add('hidden'));
+$('#adGroupPreviewBtn').addEventListener('click', () => previewAdGroupBatch().catch(error => { $('#adGroupImportResult').textContent = error.message; }));
+$('#adGroupImportBtn').addEventListener('click', () => confirmAdGroupBatch().catch(error => { $('#adGroupImportResult').textContent = error.message; }));
+$('#adGroupResumeBtn').addEventListener('click', () => confirmAdGroupBatch({ resume: true }).catch(error => { $('#adGroupImportResult').textContent = error.message; }));
 $('#adGroupRegisterImportOnlyBtn').addEventListener('click', () => registerImportOnlyScope().catch(error => { $('#adGroupImportResult').textContent = error.message; }));
+$('#adGroupFile').addEventListener('change', event => { state.adGroupFiles = Array.from(event.target.files || []); });
+['dragenter', 'dragover'].forEach(type => $('#adGroupDropzone').addEventListener(type, event => { event.preventDefault(); $('#adGroupDropzone').classList.add('dragging'); }));
+['dragleave', 'drop'].forEach(type => $('#adGroupDropzone').addEventListener(type, event => { event.preventDefault(); $('#adGroupDropzone').classList.remove('dragging'); }));
+$('#adGroupDropzone').addEventListener('drop', event => { state.adGroupFiles = Array.from(event.dataTransfer.files || []).filter(file => /\.(csv|xlsx)$/i.test(file.name)); });
 
 init();

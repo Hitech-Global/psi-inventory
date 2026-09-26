@@ -23,7 +23,8 @@ class ShopeeQueryRepository {
          p.currency,p.timezone,p.brand_portal_timezone,p.marketplace_region,
          to_char(p.analytics_start_date,'YYYY-MM-DD') AS analytics_start_date,
          p.active,p.sort_order,p.note,p.updated_at,p.operator_label,p.import_source_shop_name,p.data_source_capability,
-         s.shop_name AS api_shop_name,s.region AS api_region,s.status AS api_status,s.synced_at AS api_synced_at
+         s.shop_name AS api_shop_name,s.region AS api_region,s.status AS api_status,s.synced_at AS api_synced_at,
+         EXISTS (SELECT 1 FROM shopee_app_tokens t WHERE t.app_role='ADS' AND t.shop_id=p.shop_id) AS oauth_authorized
        FROM shopee_shop_profiles p
        LEFT JOIN shopee_shops s ON s.shop_id=p.shop_id
        WHERE ($1::boolean=false OR p.active=true)
@@ -53,6 +54,7 @@ class ShopeeQueryRepository {
       apiRegion: row.api_region,
       apiStatus: row.api_status,
       apiSyncedAt: row.api_synced_at,
+      oauthAuthorized: Boolean(row.oauth_authorized),
     }));
   }
 
