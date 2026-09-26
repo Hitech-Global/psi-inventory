@@ -8,6 +8,8 @@ const { resolvePilotTypedCampaignAllowlist, assertFormalGmsPilotScope } = requir
 const configure = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'configure-shops.cjs'), 'utf8');
 const profiles = fs.readFileSync(path.join(__dirname, '..', 'src', 'shop-profile-repository.js'), 'utf8');
 const preflight = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'deployment-preflight.cjs'), 'utf8');
+const applySchema = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'apply-schema.cjs'), 'utf8');
+const profileCorrections = fs.readFileSync(path.join(__dirname, '..', 'schema-shop-profile-corrections.sql'), 'utf8');
 
 assert(configure.includes("process.argv.includes('--api-authorized')"), 'configure-shops must expose explicit API-authorized mode');
 assert(configure.includes('registerApiAuthorized'), 'explicit mode must use token-gated registration');
@@ -15,6 +17,10 @@ assert(profiles.includes("app_role='ADS' AND shop_id=$1"), 'registration must re
 assert(profiles.includes("import_source_shop_name=NULL"), 'operator registration must clear any claimed source name');
 assert(profiles.includes("'API_AND_MANUAL'"), 'API registration must record API-capable scope');
 assert(!preflight.includes('String(row.brandCode || \'\').trim().toUpperCase() === pilotConfig.brand.toUpperCase()'), 'preflight must not block source-metadata-null API profiles by brand');
+assert(applySchema.includes("'schema-shop-profile-corrections.sql'"), 'schema apply must include canonical shop profile corrections');
+assert(profileCorrections.includes('shop_id = 1770037299'), 'Malaysia Redragon 3PF correction must target the exact shop id');
+assert(profileCorrections.includes("country_code = 'MY'"), 'Malaysia Redragon 3PF must be grouped under MY');
+assert(profileCorrections.includes("brand_code = 'REDRAGON'"), 'Malaysia Redragon 3PF must be grouped under REDRAGON');
 
 const env = {
   SHOPEE_ANALYTICS_DEPLOYMENT_MODE: 'PILOT_GMV_MAX',
