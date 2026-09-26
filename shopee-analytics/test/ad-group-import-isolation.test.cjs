@@ -6,11 +6,13 @@ const os = require('os');
 const path = require('path');
 const { Readable } = require('stream');
 const {
+  DEFAULT_MAX_TMP_BYTES,
   existingReusableFile,
   publicJob,
   requireReusablePreview,
   safeOriginalFilename,
   stageUploadStream,
+  tempUsageBytes,
   validateContentType,
 } = require('../src/ad-group-import-async-router');
 
@@ -21,6 +23,7 @@ const {
     assert.throws(() => safeOriginalFilename('report.exe'), error => error.code === 'UNSUPPORTED_FILE_TYPE');
     assert.doesNotThrow(() => validateContentType('text/csv; charset=utf-8'));
     assert.throws(() => validateContentType('text/html'), error => error.code === 'UNSUPPORTED_FILE_TYPE');
+    assert.strictEqual(DEFAULT_MAX_TMP_BYTES, 200 * 1024 * 1024);
 
     const staged = await stageUploadStream(Readable.from([Buffer.from('a,b\n1,2\n')]), {
       tmpDir: tmp,
@@ -31,6 +34,7 @@ const {
     assert.strictEqual(staged.fileSize, 8);
     assert.strictEqual(staged.sha256.length, 64);
     assert(fs.existsSync(staged.filePath));
+    assert.strictEqual(await tempUsageBytes(tmp), 8);
 
     await assert.rejects(
       stageUploadStream(Readable.from([Buffer.alloc(11)]), {
@@ -86,7 +90,8 @@ const {
     assert(!repositorySource.includes('for (const item of items)'), 'item persistence must not issue one SQL round-trip per item');
 
     const workerSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'ad-group-import-worker.js'), 'utf8');
-    assert(workerSource.includes("completed && job.operation === 'PREVIEW'"), 'successful preview artifacts must be retained for confirm reuse');
+    assert(workerSource.includes("completed && job.operation === 'PREVIEW'"), 'successful MATCH preview artifacts must be retained for confirm reuse');
+    assert(workerSource.includes("completedResult.shopScope === 'MATCH'"), 'mismatch discovery artifacts must not be retained');
     assert(workerSource.includes('sourcePreviewJobId'), 'failed imports created from previews must remain resumable until TTL cleanup');
 
     const webIndex = fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html'), 'utf8');
