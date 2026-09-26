@@ -38,16 +38,85 @@ class ShopeeAdPromotionRepository {
   }
 
   async replaceItems({ shopId, promotionKey, periodStart, periodEnd = periodStart, items = [], queryable = this.pool }) {
-    await queryable.query(`DELETE FROM shopee_ad_promotion_item_daily WHERE shop_id=$1 AND promotion_key=$2 AND period_start=$3 AND period_end=$4`, [shopId, promotionKey, periodStart, periodEnd]);
-    for (const item of items) {
-      await queryable.query(
-        `INSERT INTO shopee_ad_promotion_item_daily
-          (shop_id,promotion_key,period_start,period_end,event_date,item_id,item_sku,product_name,impressions,clicks,expense,orders,gmv,source_roas,direct_gmv,direct_roas,ctr,cvr,add_to_cart,weekly_sales,data_quality_status,quality_flags,remark,raw_json,synced_at)
-          VALUES ($1,$2,$3,$4,$3,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21::jsonb,$22,$23::jsonb,now())
-          ON CONFLICT (shop_id,promotion_key,period_start,period_end,item_id) DO UPDATE SET item_sku=EXCLUDED.item_sku,product_name=EXCLUDED.product_name,impressions=EXCLUDED.impressions,clicks=EXCLUDED.clicks,expense=EXCLUDED.expense,orders=EXCLUDED.orders,gmv=EXCLUDED.gmv,source_roas=EXCLUDED.source_roas,direct_gmv=EXCLUDED.direct_gmv,direct_roas=EXCLUDED.direct_roas,ctr=EXCLUDED.ctr,cvr=EXCLUDED.cvr,add_to_cart=EXCLUDED.add_to_cart,weekly_sales=EXCLUDED.weekly_sales,data_quality_status=EXCLUDED.data_quality_status,quality_flags=EXCLUDED.quality_flags,remark=EXCLUDED.remark,raw_json=EXCLUDED.raw_json,synced_at=now()`,
-         [shopId,promotionKey,periodStart,periodEnd,item.itemId,item.itemSku ?? null,item.productName ?? null,item.impressions ?? null,item.clicks ?? null,item.expense ?? null,item.orders ?? null,item.gmv ?? null,item.sourceRoas ?? null,item.directGmv ?? null,item.directRoas ?? null,item.ctr ?? null,item.cvr ?? null,item.addToCart ?? null,item.weeklySales ?? null,item.dataQualityStatus || 'PARTIAL',JSON.stringify(item.qualityFlags || []),item.remark ?? null,JSON.stringify(item.raw || {})],
-      );
-    }
+    await queryable.query(
+      'DELETE FROM shopee_ad_promotion_item_daily WHERE shop_id=$1 AND promotion_key=$2 AND period_start=$3 AND period_end=$4',
+      [shopId, promotionKey, periodStart, periodEnd],
+    );
+    if (!items.length) return;
+
+    const payload = items.map(item => ({
+      item_id: item.itemId,
+      item_sku: item.itemSku ?? null,
+      product_name: item.productName ?? null,
+      impressions: item.impressions ?? null,
+      clicks: item.clicks ?? null,
+      expense: item.expense ?? null,
+      orders: item.orders ?? null,
+      gmv: item.gmv ?? null,
+      source_roas: item.sourceRoas ?? null,
+      direct_gmv: item.directGmv ?? null,
+      direct_roas: item.directRoas ?? null,
+      ctr: item.ctr ?? null,
+      cvr: item.cvr ?? null,
+      add_to_cart: item.addToCart ?? null,
+      weekly_sales: item.weeklySales ?? null,
+      data_quality_status: item.dataQualityStatus || 'PARTIAL',
+      quality_flags: item.qualityFlags || [],
+      remark: item.remark ?? null,
+      raw_json: item.raw || {},
+    }));
+
+    // One set-based insert per group keeps import DB pressure bounded.  The old
+    // implementation executed one PostgreSQL round-trip per child item, which
+    // scales poorly for large multi-group Seller Centre exports.
+    await queryable.query(
+      `INSERT INTO shopee_ad_promotion_item_daily
+        (shop_id,promotion_key,period_start,period_end,event_date,item_id,item_sku,product_name,impressions,clicks,expense,orders,gmv,source_roas,direct_gmv,direct_roas,ctr,cvr,add_to_cart,weekly_sales,data_quality_status,quality_flags,remark,raw_json,synced_at)
+       SELECT $1,$2,$3::date,$4::date,$3::date,
+              x.item_id,x.item_sku,x.product_name,x.impressions,x.clicks,x.expense,x.orders,x.gmv,x.source_roas,x.direct_gmv,x.direct_roas,x.ctr,x.cvr,x.add_to_cart,x.weekly_sales,x.data_quality_status,x.quality_flags,x.remark,x.raw_json,now()
+       FROM jsonb_to_recordset($5::jsonb) AS x(
+         item_id bigint,
+         item_sku text,
+         product_name text,
+         impressions bigint,
+         clicks bigint,
+         expense numeric,
+         orders bigint,
+         gmv numeric,
+         source_roas numeric,
+         direct_gmv numeric,
+         direct_roas numeric,
+         ctr numeric,
+         cvr numeric,
+         add_to_cart bigint,
+         weekly_sales numeric,
+         data_quality_status text,
+         quality_flags jsonb,
+         remark text,
+         raw_json jsonb
+       )
+       ON CONFLICT (shop_id,promotion_key,period_start,period_end,item_id) DO UPDATE SET
+         item_sku=EXCLUDED.item_sku,
+         product_name=EXCLUDED.product_name,
+         impressions=EXCLUDED.impressions,
+         clicks=EXCLUDED.clicks,
+         expense=EXCLUDED.expense,
+         orders=EXCLUDED.orders,
+         gmv=EXCLUDED.gmv,
+         source_roas=EXCLUDED.source_roas,
+         direct_gmv=EXCLUDED.direct_gmv,
+         direct_roas=EXCLUDED.direct_roas,
+         ctr=EXCLUDED.ctr,
+         cvr=EXCLUDED.cvr,
+         add_to_cart=EXCLUDED.add_to_cart,
+         weekly_sales=EXCLUDED.weekly_sales,
+         data_quality_status=EXCLUDED.data_quality_status,
+         quality_flags=EXCLUDED.quality_flags,
+         remark=EXCLUDED.remark,
+         raw_json=EXCLUDED.raw_json,
+         synced_at=now()`,
+      [shopId, promotionKey, periodStart, periodEnd, JSON.stringify(payload)],
+    );
   }
 
   async saveWithItems(row, items = [], { queryable = null } = {}) {
