@@ -129,6 +129,23 @@ async function existingReusableFile(jobRepository, { sha256, targetShopId }) {
   }
 }
 
+async function requireReusablePreview(jobRepository, id) {
+  const preview = await jobRepository.get(id);
+  if (!preview) throw httpError('IMPORT_JOB_NOT_FOUND', `Preview job ${id} was not found`, 404);
+  if (preview.operation !== 'PREVIEW') throw httpError('PREVIEW_JOB_REQUIRED', 'confirm requires a PREVIEW job', 409);
+  if (preview.status !== 'SUCCEEDED') throw httpError('PREVIEW_NOT_READY', 'preview must succeed before confirm', 409);
+  if (!preview.result || preview.result.shopScope !== 'MATCH') {
+    throw httpError('SHOP_SCOPE_MISMATCH', 'preview shop scope must be MATCH before confirm', 409);
+  }
+  if (!preview.filePath) throw httpError('PREVIEW_ARTIFACT_EXPIRED', 'preview artifact is unavailable; preview the file again', 410);
+  try {
+    await fsp.access(preview.filePath, fs.constants.R_OK);
+  } catch {
+    throw httpError('PREVIEW_ARTIFACT_EXPIRED', 'preview artifact expired; preview the file again', 410);
+  }
+  return preview;
+}
+
 function createAdGroupImportAsyncRouter({
   pool,
   tmpDir = process.env.SHOPEE_AD_GROUP_IMPORT_TMP_DIR || '/import-tmp',
@@ -144,6 +161,28 @@ function createAdGroupImportAsyncRouter({
       const job = await jobs.get(req.params.id);
       if (!job) { res.status(404).json({ error: 'IMPORT_JOB_NOT_FOUND' }); return; }
       res.json({ ok: true, job: publicJob(job) });
+    } catch (error) { next(error); }
+  });
+
+  router.post('/ad-group-import-jobs/:id/confirm', async (req, res, next) => {
+    try {
+      const preview = await requireReusablePreview(jobs, req.params.id);
+      const queued = await jobs.enqueue({
+        operation: 'IMPORT',
+        filename: preview.filename,
+        filePath: preview.filePath,
+        fileSize: preview.fileSize,
+        sha256: preview.sha256,
+        targetShopId: preview.targetShopId,
+        request: { sourcePreviewJobId: preview.id },
+      });
+      res.status(202).json({
+        ok: true,
+        accepted: true,
+        reused: queued.reused,
+        sourcePreviewJobId: preview.id,
+        job: publicJob(queued.job),
+      });
     } catch (error) { next(error); }
   });
 
@@ -167,10 +206,9 @@ function createAdGroupImportAsyncRouter({
       cleanupPath = staged.filePath;
       let jobFilePath = staged.filePath;
 
-      // A successful preview retains its staged artifact for a short TTL.  An
-      // import of the same file/shop can reuse that artifact instead of keeping
-      // a second copy on disk.  The current UI may still re-upload the bytes;
-      // the async job API can later avoid even that network transfer.
+      // Backward-compatible confirm uploads can reuse a retained preview
+      // artifact.  The preferred UI path uses /:previewJobId/confirm and avoids
+      // the second upload entirely.
       if (operation === 'IMPORT') {
         const reusable = await existingReusableFile(jobs, {
           sha256: staged.sha256,
@@ -199,14 +237,9 @@ function createAdGroupImportAsyncRouter({
           cleanupPath = null;
         }
       } else if (jobFilePath === cleanupPath) {
-        // Ownership of a newly queued staged file transfers to the worker.
         cleanupPath = null;
       }
 
-      // Opt-in nonblocking mode is the final UI contract: the upload request
-      // returns immediately after queueing, while heavy parsing/persistence runs
-      // in the dedicated worker process.  Legacy callers keep the old response
-      // shape until the frontend migration is complete.
       if (req.query.async === 'YES' || req.query.wait === 'NO') {
         res.status(202).json({
           ok: true,
@@ -246,6 +279,7 @@ module.exports = {
   existingReusableFile,
   httpError,
   publicJob,
+  requireReusablePreview,
   safeOriginalFilename,
   stageUploadStream,
   validateContentType,
