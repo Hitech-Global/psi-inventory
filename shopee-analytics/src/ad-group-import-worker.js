@@ -165,8 +165,9 @@ async function runWorker({ env = process.env } = {}) {
       heartbeat.unref();
 
       let completed = false;
+      let completedResult = null;
       try {
-        await processJob({ job, jobRepository, adPromotionRepository, shopScopeRepository, tmpDir });
+        completedResult = await processJob({ job, jobRepository, adPromotionRepository, shopScopeRepository, tmpDir });
         completed = true;
       } catch (error) {
         const info = errorInfo(error);
@@ -176,11 +177,12 @@ async function runWorker({ env = process.env } = {}) {
         console.error(`[Ad Group Import Worker] ${job.id} ${info.code}: ${info.message}`);
       } finally {
         clearInterval(heartbeat);
-        // Preview artifacts are retained for confirm.  A failed IMPORT created
-        // from a preview is also retained so the user can explicitly resume it
-        // without re-uploading; TTL cleanup eventually removes abandoned files.
+        // Only MATCH previews are confirmable and worth retaining.  Discovery
+        // previews that merely reveal a mismatched source shop are discarded.
+        // Failed imports spawned from a retained preview stay retryable until
+        // TTL cleanup, so explicit resume does not require another upload.
         const retainArtifact =
-          (completed && job.operation === 'PREVIEW') ||
+          (completed && job.operation === 'PREVIEW' && completedResult && completedResult.shopScope === 'MATCH') ||
           (!completed && job.operation === 'IMPORT' && Boolean(job.request && job.request.sourcePreviewJobId));
         if (!retainArtifact) {
           try {
