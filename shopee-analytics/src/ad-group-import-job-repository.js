@@ -90,6 +90,21 @@ class ShopeeAdGroupImportJobRepository {
     return result.rows.map(mapRow);
   }
 
+  async findReusablePreview({ sha256, targetShopId, maxAgeHours = 24 }) {
+    const result = await this.pool.query(
+      `SELECT * FROM shopee_ad_group_import_jobs
+       WHERE operation='PREVIEW'
+         AND status='SUCCEEDED'
+         AND sha256=$1
+         AND target_shop_id=$2
+         AND finished_at >= now()-($3::text || ' hours')::interval
+       ORDER BY finished_at DESC,id DESC
+       LIMIT 1`,
+      [sha256, targetShopId, String(maxAgeHours)],
+    );
+    return mapRow(result.rows[0]);
+  }
+
   async claimNext({ workerId, leaseSeconds = 1800 }) {
     const client = typeof this.pool.connect === 'function' ? await this.pool.connect() : this.pool;
     const release = client !== this.pool && typeof client.release === 'function';
