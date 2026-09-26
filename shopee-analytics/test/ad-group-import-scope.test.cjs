@@ -46,12 +46,24 @@ async function post(base, suffix) {
 (async () => {
   const runtime = await startApp();
   try {
-    const preview = await post(runtime.base, '/ad-groups/import?filename=fixture.csv');
+    const noTargetPreview = await post(runtime.base, '/ad-groups/import?filename=fixture.csv');
+    assert.strictEqual(noTargetPreview.response.status, 422);
+    assert.strictEqual(noTargetPreview.body.error, 'TARGET_SHOP_REQUIRED');
+    assert.strictEqual(runtime.writes.length, 0, 'a target-less preview must never write');
+
+    const mismatchPreview = await post(runtime.base, '/ad-groups/import?filename=fixture.csv&target_shop_id=1770037299');
+    assert.strictEqual(mismatchPreview.response.status, 409);
+    assert.strictEqual(mismatchPreview.body.error, 'SHOP_SCOPE_MISMATCH');
+    assert.strictEqual(runtime.writes.length, 0, 'a mismatch preview must never write');
+
+    const preview = await post(runtime.base, '/ad-groups/import?filename=fixture.csv&target_shop_id=1101364305');
     assert.strictEqual(preview.response.status, 200);
     assert.strictEqual(preview.body.persisted, false);
     assert.strictEqual(preview.body.sourceShopId, 1101364305);
     assert.strictEqual(preview.body.sourceShopName, 'Scope Fixture Shop');
     assert.strictEqual(preview.body.reportSource, 'SHOPEE_AD_GROUP_EXPORT');
+    assert.strictEqual(preview.body.targetShopId, 1101364305);
+    assert.strictEqual(preview.body.shopScope, 'MATCH');
     assert.strictEqual(runtime.writes.length, 0, 'preview must never write');
 
     const missingTarget = await post(runtime.base, '/ad-groups/import?filename=fixture.csv&confirm=YES');

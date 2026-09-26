@@ -442,15 +442,12 @@ function createShopeeAnalyticsRouter({
     try {
       if (!adPromotionRepository) throw new Error('Unified ad promotions are unavailable');
       if (!req.body || !Buffer.isBuffer(req.body) || !req.body.length) throw new Error('a CSV or XLSX request body is required');
-      const filename = String(req.query.filename || req.headers['x-filename'] || 'report.csv');
-      const { report, preview } = parseShopeeAdGroupFile({ buffer: req.body, filename });
-      const persist = req.query.confirm === 'YES';
-      if (!persist) { res.json({ ok: true, persisted: false, ...preview }); return; }
-      if (!shopScopeRepository) throw new Error('Shop scope registry is unavailable');
       if (req.query.target_shop_id === undefined || req.query.target_shop_id === '') {
-        throw scopeError('TARGET_SHOP_REQUIRED', 'target_shop_id is required when confirming an Ad Group import');
+        throw scopeError('TARGET_SHOP_REQUIRED', 'target_shop_id is required for an Ad Group preview or import');
       }
       const targetShopId = positiveInt(req.query.target_shop_id, 'target_shop_id');
+      const filename = String(req.query.filename || req.headers['x-filename'] || 'report.csv');
+      const { report, preview } = parseShopeeAdGroupFile({ buffer: req.body, filename });
       if (report.metadata.shopId !== targetShopId) {
         throw scopeError(
           'SHOP_SCOPE_MISMATCH',
@@ -458,6 +455,10 @@ function createShopeeAnalyticsRouter({
           409,
         );
       }
+      const scopedPreview = { ...preview, targetShopId, shopScope: 'MATCH' };
+      const persist = req.query.confirm === 'YES';
+      if (!persist) { res.json({ ok: true, persisted: false, ...scopedPreview }); return; }
+      if (!shopScopeRepository) throw new Error('Shop scope registry is unavailable');
       const targetScope = await shopScopeRepository.find(targetShopId);
       if (!targetScope) {
         throw scopeError('TARGET_SHOP_NOT_REGISTERED', `Shop ${targetShopId} must be explicitly registered before import`);
@@ -467,7 +468,7 @@ function createShopeeAnalyticsRouter({
           await adPromotionRepository.saveWithItems(entry.group, entry.items, { queryable });
         }
       });
-      res.status(201).json({ ok: true, persisted: true, ...preview });
+      res.status(201).json({ ok: true, persisted: true, ...scopedPreview });
     } catch (error) { next(error); }
   });
 
