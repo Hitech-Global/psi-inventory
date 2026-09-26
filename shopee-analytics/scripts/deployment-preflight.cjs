@@ -268,6 +268,13 @@ async function main() {
         activeShopCount: shops.length,
         configuredShopProfile: Boolean(shop),
         adsTokenPresent: Boolean(adsToken),
+        profile: shop ? {
+          shopId: shop.shopId,
+          active: shop.active,
+          operatorLabel: shop.operatorLabel || null,
+          apiShopName: shop.apiShopName || null,
+          sourceMetadataAvailable: Boolean(shop.apiShopName || shop.countryCode || shop.currency || shop.timezone),
+        } : null,
       }, 'info'));
   } else if (tableCount >= 35 && !offlineBaseline) {
       const profileRepo = new ShopeeShopProfileRepository({ pool });
