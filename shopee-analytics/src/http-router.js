@@ -86,11 +86,39 @@ function createShopeeAnalyticsRouter({
   strategyRepository,
   queryRepository,
   adPromotionRepository = null,
+  shopScopeRepository = null,
   backupStatusProvider = async () => null,
   skillReportRepository = null,
   runSkillAnalysis = null,
 }) {
   const router = express.Router();
+
+  function scopeError(code, message, status = 422) {
+    const error = new Error(message);
+    error.code = code;
+    error.status = status;
+    return error;
+  }
+
+  router.get('/shop-scopes', async (req, res, next) => {
+    try {
+      if (!shopScopeRepository) throw new Error('Shop scope registry is unavailable');
+      res.json({ shopScopes: await shopScopeRepository.list() });
+    } catch (error) { next(error); }
+  });
+
+  router.post('/shop-scopes/import-only', express.json({ limit: '32kb' }), async (req, res, next) => {
+    try {
+      if (!shopScopeRepository) throw new Error('Shop scope registry is unavailable');
+      const shopId = positiveInt(req.body && req.body.shopId, 'shopId');
+      const scope = await shopScopeRepository.registerImportOnly({
+        shopId,
+        operatorLabel: req.body && req.body.operatorLabel,
+        importSourceShopName: req.body && req.body.importSourceShopName,
+      });
+      res.status(201).json({ ok: true, shopScope: scope });
+    } catch (error) { next(error); }
+  });
 
   router.get('/shops', async (req, res, next) => {
     try {
@@ -399,6 +427,10 @@ function createShopeeAnalyticsRouter({
       if (!adPromotionRepository) throw new Error('Unified ad promotions are unavailable');
       const row = normalizeManualPromotion(req.body, { source: 'MANUAL' });
       if (row.promotionType !== 'AD_GROUP') throw new Error('manual endpoint accepts AD_GROUP only');
+      if (!shopScopeRepository) throw new Error('Shop scope registry is unavailable');
+      if (!await shopScopeRepository.find(row.shopId)) {
+        throw scopeError('TARGET_SHOP_NOT_REGISTERED', `Shop ${row.shopId} must be registered before manual import`);
+      }
       const items = Array.isArray(req.body && req.body.items) ? req.body.items.map(normalizeManualItem) : [];
       row.itemCount = items.length;
       const saved = await adPromotionRepository.saveWithItems(row, items);
@@ -414,7 +446,27 @@ function createShopeeAnalyticsRouter({
       const { report, preview } = parseShopeeAdGroupFile({ buffer: req.body, filename });
       const persist = req.query.confirm === 'YES';
       if (!persist) { res.json({ ok: true, persisted: false, ...preview }); return; }
-      for (const entry of report.groups) await adPromotionRepository.saveWithItems(entry.group, entry.items);
+      if (!shopScopeRepository) throw new Error('Shop scope registry is unavailable');
+      if (req.query.target_shop_id === undefined || req.query.target_shop_id === '') {
+        throw scopeError('TARGET_SHOP_REQUIRED', 'target_shop_id is required when confirming an Ad Group import');
+      }
+      const targetShopId = positiveInt(req.query.target_shop_id, 'target_shop_id');
+      if (report.metadata.shopId !== targetShopId) {
+        throw scopeError(
+          'SHOP_SCOPE_MISMATCH',
+          `Source shop ${report.metadata.shopId} does not match target shop ${targetShopId}`,
+          409,
+        );
+      }
+      const targetScope = await shopScopeRepository.find(targetShopId);
+      if (!targetScope) {
+        throw scopeError('TARGET_SHOP_NOT_REGISTERED', `Shop ${targetShopId} must be explicitly registered before import`);
+      }
+      await adPromotionRepository.withTransaction(async queryable => {
+        for (const entry of report.groups) {
+          await adPromotionRepository.saveWithItems(entry.group, entry.items, { queryable });
+        }
+      });
       res.status(201).json({ ok: true, persisted: true, ...preview });
     } catch (error) { next(error); }
   });

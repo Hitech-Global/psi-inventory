@@ -17,6 +17,9 @@ assert.strictEqual(report.groups[0].items[0].ctr, 0.1, 'percentages are normaliz
 assert(report.warnings.some(w => w.code === 'ROUNDING_ACCEPTED' && w.field === 'expense'));
 assert.strictEqual(SHOPEE_AD_GROUP_MONEY_ROUNDING_TOLERANCE, 1);
 assert.strictEqual(previewShopeeAdGroupReport(report).roundingWarningCount, 1);
+assert.strictEqual(previewShopeeAdGroupReport(report).sourceShopId, 1101364305);
+assert.strictEqual(previewShopeeAdGroupReport(report).sourceShopName, 'Redacted Shop');
+assert.strictEqual(previewShopeeAdGroupReport(report).reportSource, 'SHOPEE_AD_GROUP_EXPORT');
 const XLSX = require('xlsx');
 const workbook = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(parseCsv(csv)), 'Report');
 const xlsxReport = parseShopeeAdGroupFile({ buffer: XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }), filename: 'report.xlsx' }).report;

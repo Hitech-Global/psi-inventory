@@ -7,6 +7,7 @@ const { createShopeeAnalyticsRouter } = require('./http-router');
 const { createBackupStatusProvider } = require('./backup-status');
 const { createConfiguredSkillProvider } = require('./openai-skill-provider');
 const { createSkillRuntime } = require('./skill-runtime');
+const { ShopeeShopScopeRepository } = require('./shop-scope-repository');
 
 function resolveBindAddress(env = process.env) {
   const requested = env.SHOPEE_ANALYTICS_HOST || '127.0.0.1';
@@ -37,6 +38,7 @@ function createApp({ pool, skillProvider = null }) {
     skillReportRepository,
     runSkillAnalysis,
   } = createSkillRuntime({ pool, skillProvider });
+  const shopScopeRepository = new ShopeeShopScopeRepository({ pool });
   const backupStatusProvider = createBackupStatusProvider();
 
   app.use('/api/shopee-analytics', createShopeeAnalyticsRouter({
@@ -44,6 +46,7 @@ function createApp({ pool, skillProvider = null }) {
     strategyRepository,
     queryRepository,
     adPromotionRepository,
+    shopScopeRepository,
     backupStatusProvider,
     skillReportRepository,
     runSkillAnalysis,
@@ -58,10 +61,12 @@ function createApp({ pool, skillProvider = null }) {
 
   app.use((error, req, res, next) => {
     if (res.headersSent) return next(error);
-    const status = /must be|start_date|end_date|Invalid/.test(String(error.message)) ? 400 : 500;
+    const status = Number.isInteger(error.status)
+      ? error.status
+      : /must be|start_date|end_date|Invalid/.test(String(error.message)) ? 400 : 500;
     console.error('[Shopee Analytics]', error.stack || error);
     res.status(status).json({
-      error: status === 400 ? 'INVALID_REQUEST' : 'INTERNAL_ERROR',
+      error: error.code || (status === 400 ? 'INVALID_REQUEST' : 'INTERNAL_ERROR'),
       message: error.message,
     });
   });

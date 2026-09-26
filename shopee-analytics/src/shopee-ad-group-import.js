@@ -144,7 +144,7 @@ function parseShopeeAdGroupReport(rows) {
 
 function previewShopeeAdGroupReport(report) {
   const states = report.groups.map(({ group }) => group.dataQualityStatus);
-  return { shopId: report.metadata.shopId, shopName: report.metadata.shopName, periodStart: report.metadata.periodStart, periodEnd: report.metadata.periodEnd, granularity: report.metadata.granularity, adGroupCount: report.groups.length, itemRowCount: report.groups.reduce((n, entry) => n + entry.items.length, 0), completeCount: states.filter(x => x === 'COMPLETE').length, partialCount: states.filter(x => x === 'PARTIAL').length, mismatchCount: states.filter(x => x === 'DATA_MISMATCH').length, roundingWarningCount: report.warnings.filter(w => w.code === 'ROUNDING_ACCEPTED').length, warnings: report.warnings, errors: [] };
+  return { sourceShopId: report.metadata.shopId, sourceShopName: report.metadata.shopName, reportSource: 'SHOPEE_AD_GROUP_EXPORT', shopId: report.metadata.shopId, shopName: report.metadata.shopName, periodStart: report.metadata.periodStart, periodEnd: report.metadata.periodEnd, granularity: report.metadata.granularity, adGroupCount: report.groups.length, itemRowCount: report.groups.reduce((n, entry) => n + entry.items.length, 0), completeCount: states.filter(x => x === 'COMPLETE').length, partialCount: states.filter(x => x === 'PARTIAL').length, mismatchCount: states.filter(x => x === 'DATA_MISMATCH').length, roundingWarningCount: report.warnings.filter(w => w.code === 'ROUNDING_ACCEPTED').length, warnings: report.warnings, errors: [] };
 }
 
 function parseShopeeAdGroupFile({ buffer, filename = '' }) {

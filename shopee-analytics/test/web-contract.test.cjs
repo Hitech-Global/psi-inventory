@@ -80,6 +80,9 @@ assert(html.includes('data-ads-type="manual"'), 'Ads view must expose manual Pro
 assert(html.includes('data-ads-type="auto"'), 'Ads view must expose auto Product Ads tab');
 assert(html.includes('data-ads-type="groups"'), 'Ads view must expose native Ad Group import tab');
 assert(app.includes('/api/shopee-analytics/ad-groups/import?'), 'frontend must use the preview-first native Ad Group import API');
+assert(app.includes('target_shop_id'), 'frontend must send an explicit target shop on confirmed import');
+assert(app.includes('sourceShopId'), 'frontend must show the parsed source shop identity');
+assert(app.includes('/shop-scopes/import-only'), 'frontend must require explicit import-only shop registration');
 assert(app.includes('/api/shopee-analytics/product-ads?'), 'frontend must query Product Ads read API');
 assert(app.includes('/detail?'), 'frontend must expose Product Ads campaign detail diagnostics');
 assert(app.includes('周等效订单'), 'Product Ads detail must follow order-volume-first diagnosis');

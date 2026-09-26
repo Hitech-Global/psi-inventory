@@ -23,6 +23,7 @@ const { ShopeeProductRepository } = require('../src/product-repository');
 const { ShopeePromotionRepository } = require('../src/promotion-repository');
 const { ShopeeStrategyRepository } = require('../src/strategy-repository');
 const { ShopeeAdPromotionRepository } = require('../src/ad-promotion-repository');
+const { ShopeeShopScopeRepository } = require('../src/shop-scope-repository');
 
 (async () => {
   const pool = new Pool({ connectionString: url, max: 3 });
@@ -264,6 +265,18 @@ const { ShopeeAdPromotionRepository } = require('../src/ad-promotion-repository'
         marketplaceRegion: 'TH',
       },
     ]);
+
+    const shopScopeRepository = new ShopeeShopScopeRepository({ pool });
+    const importOnlyScope = await shopScopeRepository.registerImportOnly({
+      shopId: 1101364305,
+      importSourceShopName: 'CSV-only shop',
+    });
+    assert.strictEqual(importOnlyScope.shopId, 1101364305);
+    assert.strictEqual(importOnlyScope.dataSourceCapability, 'MANUAL_IMPORT');
+    assert.strictEqual(importOnlyScope.oauthAuthorized, false);
+    const scopes = await shopScopeRepository.list();
+    assert.strictEqual(scopes.find(scope => scope.shopId === 1).oauthAuthorized, true);
+    assert.strictEqual(scopes.find(scope => scope.shopId === 1101364305).apiShopName, null);
 
     await pool.query(
       `INSERT INTO shopee_shop_strategy_config

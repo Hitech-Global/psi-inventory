@@ -39,6 +39,8 @@ const state = {
   brands: [],
   selectedCampaignId: null,
   adsType: 'gms',
+  adGroupPreview: null,
+  shopScopes: [],
 };
 
 function moneyCompact(value) {
@@ -672,19 +674,75 @@ function switchAdsType(type) {
   loadCurrentView();
 }
 
+function renderAdGroupScopeGate(payload) {
+  state.adGroupPreview = payload;
+  const sourceShopId = Number(payload.sourceShopId ?? payload.shopId);
+  const sourceShopName = payload.sourceShopName ?? payload.shopName ?? '未提供';
+  const exactScope = state.shopScopes.find(scope => scope.shopId === sourceShopId) || null;
+  const current = selectedShop();
+  const select = $('#adGroupTargetShop');
+  const targetOptions = [`<option value="">请选择确认导入的目标 Shop</option>`]
+    .concat(state.shopScopes.map(scope => `<option value="${scope.shopId}">${escapeHtml(scope.displayName)} · ${scope.shopId}${scope.oauthAuthorized ? ' · OAuth API' : ' · import-only'}</option>`));
+  select.innerHTML = targetOptions.join('');
+  select.disabled = false;
+  select.value = exactScope ? String(sourceShopId) : '';
+  const anotherShop = current && current.shopId !== sourceShopId;
+  $('#adGroupScopeNotice').textContent = anotherShop
+    ? `This report belongs to another shop: ${sourceShopId} (${sourceShopName}). Import into current shop is blocked.`
+    : exactScope
+      ? `报告来源店铺 ${sourceShopId} 已注册。确认导入只能选择同一 Shop ID。`
+      : `报告来源店铺 ${sourceShopId} 尚未注册。请先明确注册为 import-only 店铺。`;
+  $('#adGroupRegisterImportOnlyBtn').disabled = Boolean(exactScope);
+  $('#adGroupRegisterImportOnlyBtn').textContent = `注册 import-only 店铺 ${sourceShopId}`;
+  $('#adGroupScopeGate').classList.remove('hidden');
+  updateAdGroupImportButton();
+}
+
+function updateAdGroupImportButton() {
+  const preview = state.adGroupPreview;
+  const sourceShopId = Number(preview && (preview.sourceShopId ?? preview.shopId));
+  const targetShopId = Number($('#adGroupTargetShop').value);
+  const targetScope = state.shopScopes.find(scope => scope.shopId === targetShopId);
+  $('#adGroupImportBtn').disabled = !preview || !targetScope || sourceShopId !== targetShopId || Boolean(preview.persisted);
+}
+
+async function loadShopScopes() {
+  const data = await json('/api/shopee-analytics/shop-scopes');
+  state.shopScopes = data.shopScopes || [];
+}
+
 function renderAdGroupImportResult(payload) {
   const summary = [`${payload.adGroupCount || 0} 个广告组`, `${payload.itemRowCount || 0} 个商品行`, `${payload.periodStart || '—'} 至 ${payload.periodEnd || '—'} · ${payload.granularity || '—'}`, `完整 ${payload.completeCount || 0} · 部分 ${payload.partialCount || 0} · 不一致 ${payload.mismatchCount || 0}`];
   const warning = (payload.warnings || []).length ? `<p class="product-ad-note">质量提示：${escapeHtml((payload.warnings || []).map(x => x.code || x).join('、'))}</p>` : '';
-  $('#adGroupImportResult').innerHTML = `<strong>${payload.persisted ? '已按幂等键写入' : '预览完成，尚未写入'}</strong><p>${escapeHtml(summary.join('；'))}</p>${warning}`;
-  $('#adGroupImportBtn').disabled = Boolean(payload.persisted);
+  const source = `来源 Shop ID：${payload.sourceShopId ?? payload.shopId ?? '—'} · 来源店名：${payload.sourceShopName ?? payload.shopName ?? '未提供'} · 报告来源：${payload.reportSource || 'SHOPEE_AD_GROUP_EXPORT'}`;
+  $('#adGroupImportResult').innerHTML = `<strong>${payload.persisted ? '已按幂等键写入' : '预览完成，尚未写入'}</strong><p>${escapeHtml(source)}</p><p>${escapeHtml(summary.join('；'))}</p>${warning}`;
+  if (!payload.persisted) renderAdGroupScopeGate(payload);
+  else $('#adGroupImportBtn').disabled = true;
 }
 
 async function uploadAdGroup({ persist = false } = {}) {
   const file = $('#adGroupFile').files && $('#adGroupFile').files[0];
   if (!file) throw new Error('请先选择 CSV 或 XLSX 文件');
-  const query = new URLSearchParams({ filename: file.name }); if (persist) query.set('confirm', 'YES');
+  const query = new URLSearchParams({ filename: file.name });
+  if (persist) {
+    query.set('confirm', 'YES');
+    query.set('target_shop_id', $('#adGroupTargetShop').value);
+  }
   const response = await fetch(`/api/shopee-analytics/ad-groups/import?${query}`, { method: 'POST', headers: { 'content-type': file.type || (file.name.endsWith('.xlsx') ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'text/csv') }, body: file });
-  const payload = await response.json().catch(() => ({})); if (!response.ok) throw new Error(payload.message || `HTTP ${response.status}`); renderAdGroupImportResult(payload);
+  const payload = await response.json().catch(() => ({})); if (!response.ok) throw new Error(`${payload.error || 'REQUEST_FAILED'}: ${payload.message || `HTTP ${response.status}`}`); if (!persist) await loadShopScopes(); renderAdGroupImportResult(payload);
+}
+
+async function registerImportOnlyScope() {
+  const preview = state.adGroupPreview;
+  if (!preview) throw new Error('请先预览报告');
+  const shopId = Number(preview.sourceShopId ?? preview.shopId);
+  const response = await fetch('/api/shopee-analytics/shop-scopes/import-only', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ shopId, importSourceShopName: preview.sourceShopName ?? preview.shopName ?? null }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(`${payload.error || 'REQUEST_FAILED'}: ${payload.message || `HTTP ${response.status}`}`);
+  await loadShopScopes(); renderAdGroupScopeGate(preview);
 }
 
 function productAdDiagnosis(row) {
@@ -1376,5 +1434,7 @@ $('#refreshStatusBtn').addEventListener('click', loadSystemStatus);
 $('#refreshStatusPortfolioBtn').addEventListener('click', loadStatusPortfolio);
 $('#adGroupPreviewBtn').addEventListener('click', () => uploadAdGroup().catch(error => { $('#adGroupImportResult').textContent = error.message; }));
 $('#adGroupImportBtn').addEventListener('click', () => uploadAdGroup({ persist: true }).catch(error => { $('#adGroupImportResult').textContent = error.message; }));
+$('#adGroupTargetShop').addEventListener('change', updateAdGroupImportButton);
+$('#adGroupRegisterImportOnlyBtn').addEventListener('click', () => registerImportOnlyScope().catch(error => { $('#adGroupImportResult').textContent = error.message; }));
 
 init();

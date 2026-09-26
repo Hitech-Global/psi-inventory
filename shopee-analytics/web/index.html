@@ -342,7 +342,12 @@
 
       <section id="adsGroupImportPanel" class="panel hidden product-ads-panel">
         <div class="panel-head"><div><h2>Shopee 广告组导入</h2><p>上传 Shopee 原生 CSV/XLSX，先预览父子结构、期间和数据质量；确认后才写入。</p></div></div>
-        <div class="ad-group-import-controls"><input id="adGroupFile" type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"><button id="adGroupPreviewBtn" class="ghost" type="button">预览</button><button id="adGroupImportBtn" class="primary" type="button" disabled>确认导入</button></div>
+        <div class="ad-group-import-controls"><input id="adGroupFile" type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"><button id="adGroupPreviewBtn" class="ghost" type="button">预览</button></div>
+        <div id="adGroupScopeGate" class="ad-group-scope-gate hidden">
+          <strong>目标店铺范围</strong>
+          <p id="adGroupScopeNotice">请先预览报告。</p>
+          <div class="ad-group-scope-controls"><select id="adGroupTargetShop" disabled><option value="">先预览报告</option></select><button id="adGroupRegisterImportOnlyBtn" class="ghost" type="button" disabled>注册 import-only 店铺</button><button id="adGroupImportBtn" class="primary" type="button" disabled>确认导入</button></div>
+        </div>
         <div id="adGroupImportResult" class="product-ad-detail empty-inline">请选择 Shopee 原生广告组 CSV 或 XLSX。预览不会写入数据。</div>
       </section>
     </section>

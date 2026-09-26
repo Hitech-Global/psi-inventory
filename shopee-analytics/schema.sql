@@ -48,6 +48,32 @@ CREATE TABLE IF NOT EXISTS shopee_shop_profiles (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- A profile is also the canonical shop-scope registry.  Import-only shops may
+-- legitimately have no API-reported country, currency, or timezone yet; those
+-- facts must remain unavailable rather than being guessed during CSV import.
+ALTER TABLE shopee_shop_profiles
+  ALTER COLUMN country_code DROP NOT NULL,
+  ALTER COLUMN brand_code DROP NOT NULL,
+  ALTER COLUMN currency DROP NOT NULL,
+  ALTER COLUMN timezone DROP NOT NULL;
+ALTER TABLE shopee_shop_profiles
+  ADD COLUMN IF NOT EXISTS operator_label TEXT,
+  ADD COLUMN IF NOT EXISTS import_source_shop_name TEXT,
+  ADD COLUMN IF NOT EXISTS data_source_capability TEXT NOT NULL DEFAULT 'MANUAL_IMPORT';
+ALTER TABLE shopee_shop_profiles
+  ALTER COLUMN data_source_capability SET DEFAULT 'MANUAL_IMPORT';
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'shopee_shop_profiles_data_source_capability_check'
+  ) THEN
+    ALTER TABLE shopee_shop_profiles
+      ADD CONSTRAINT shopee_shop_profiles_data_source_capability_check
+      CHECK (data_source_capability IN ('API_AND_MANUAL', 'MANUAL_IMPORT'));
+  END IF;
+END $$;
+
 CREATE INDEX IF NOT EXISTS idx_shopee_shop_profiles_country_brand
   ON shopee_shop_profiles(country_code, brand_code, active, sort_order, shop_id);
 
