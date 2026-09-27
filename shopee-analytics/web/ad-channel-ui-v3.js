@@ -40,7 +40,6 @@
       $('#productCardParent'),
       $('.ads-type-tabs'),
       $('#adsGmsPanel'),
-      $('#adsGmvMaxPanel'),
       $('#adsManualPanel'),
       $('#adsAutoPanel'),
       $('#adsGroupImportPanel'),

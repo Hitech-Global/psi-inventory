@@ -42,12 +42,12 @@
   }
 
   function activeType() {
-    return $('.ads-type-tab.active')?.dataset.adsType || 'gms';
+    return $('.ads-type-tab.active')?.dataset.adsType || 'manual';
   }
 
   function setPanelVisibility(type) {
-    $('#adsGmsPanel')?.classList.toggle('hidden', type !== 'gms');
-    $('#adsGmvMaxPanel')?.classList.toggle('hidden', type !== 'gmvmax');
+    $('#adsGmsPanel')?.classList.remove('hidden');
+    $('#adsGmvMaxPanel')?.classList.add('hidden');
     $('#adsManualPanel')?.classList.toggle('hidden', type !== 'manual');
     $('#adsAutoPanel')?.classList.toggle('hidden', type !== 'auto');
     $('#adsGroupImportPanel')?.classList.toggle('hidden', type !== 'groups');
@@ -80,7 +80,7 @@
     const tabs = $('.ads-type-tabs');
     if (!tabs) return;
     tabs.setAttribute('aria-label', 'Product Card 广告类型');
-    const labels = { gms: '总览', gmvmax: 'GMV Max', manual: '单品广告', auto: '全店推', groups: '广告组' };
+    const labels = { manual: '单品广告', groups: '广告组', auto: '全店推' };
     $$('.ads-type-tab').forEach(button => {
       if (labels[button.dataset.adsType]) button.textContent = labels[button.dataset.adsType];
     });
@@ -367,13 +367,12 @@
     const type = activeType();
     setPanelVisibility(type);
     try {
-      if (type === 'gms') await loadProductCardOverviewV2();
-      else if (type === 'gmvmax') { /* legacy GMV Max loader is owned by app.js */ }
-      else if (type === 'manual' || type === 'auto') await loadProductAdsV2(type);
+      await loadProductCardOverviewV2();
+      if (type === 'manual' || type === 'auto') await loadProductAdsV2(type);
       else if (type === 'groups') await loadAdGroupsV2();
     } catch (error) {
       if (seq !== refreshSeq) return;
-      if (type === 'gms' && $('#productCardDailyRowsV2')) $('#productCardDailyRowsV2').innerHTML = `<tr><td colspan="12" class="empty">${esc(error.message)}</td></tr>`;
+      if ($('#productCardDailyRowsV2')) $('#productCardDailyRowsV2').innerHTML = `<tr><td colspan="12" class="empty">${esc(error.message)}</td></tr>`;
       if (type === 'groups' && $('#adGroupRows')) $('#adGroupRows').innerHTML = `<tr><td colspan="14" class="empty">${esc(error.message)}</td></tr>`;
     }
   }
@@ -400,7 +399,7 @@
     $('#dateRangeApply')?.addEventListener('click', () => scheduleRefresh(80));
     $$('[data-date-preset]').forEach(button => button.addEventListener('click', () => scheduleRefresh(80)));
 
-    if (activeType() === 'gms') scheduleRefresh(0);
+    scheduleRefresh(0);
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => init());

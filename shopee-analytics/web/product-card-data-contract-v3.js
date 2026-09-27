@@ -5,11 +5,9 @@
   const $$ = selector => Array.from(document.querySelectorAll(selector));
 
   const TAB_META = Object.freeze({
-    gms: { label: '总览', source: 'SHOPEE API', sourceClass: 'good' },
-    gmvmax: { label: 'GMV Max', source: 'SHOPEE API', sourceClass: 'good' },
     manual: { label: '单品广告', source: 'SHOPEE API', sourceClass: 'good' },
-    auto: { label: '全店推', source: 'SHOPEE API', sourceClass: 'good' },
     groups: { label: '广告组', source: 'MANUAL IMPORT', sourceClass: 'warn' },
+    auto: { label: '全店推', source: 'SHOPEE API', sourceClass: 'good' },
   });
 
   function addStyles() {
@@ -24,7 +22,7 @@
   }
 
   function syncContext(type) {
-    const meta = TAB_META[type] || TAB_META.gms;
+    const meta = TAB_META[type] || TAB_META.manual;
     const context = $('#productCardContextV2');
     const source = $('#productCardSourceV2');
     if (context) context.textContent = meta.label;
@@ -57,7 +55,7 @@
     addStyles();
     annotateTabs();
     alignCopy();
-    syncContext($('.ads-type-tab.active')?.dataset.adsType || 'gms');
+    syncContext($('.ads-type-tab.active')?.dataset.adsType || 'manual');
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

@@ -75,7 +75,8 @@ assert.deepStrictEqual(
 );
 
 assert(html.includes('Signal×Confidence'), 'diagnosis stepbar must expose Signal × Confidence');
-assert(html.includes('data-ads-type="gms"'), 'Ads view must expose GMV Max tab');
+assert(!html.includes('data-ads-type="gms"'), 'Product Card overview must not be a child tab');
+assert(!html.includes('data-ads-type="gmvmax"'), 'GMV Max is an algorithm, not a Product Card child tab');
 assert(html.includes('data-ads-type="manual"'), 'Ads view must expose manual Product Ads tab');
 assert(html.includes('data-ads-type="auto"'), 'Ads view must expose auto Product Ads tab');
 assert(html.includes('data-ads-type="groups"'), 'Ads view must expose native Ad Group import tab');

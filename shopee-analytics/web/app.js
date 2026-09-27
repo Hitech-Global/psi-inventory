@@ -39,7 +39,7 @@ const state = {
   countries: [],
   brands: [],
   selectedCampaignId: null,
-  adsType: 'gms',
+  adsType: 'manual',
   adGroupPreview: null,
   adGroupBatch: [],
   adGroupFiles: [],
@@ -669,13 +669,13 @@ async function loadCampaigns() {
 }
 
 function switchAdsType(type) {
-  if (!['gms', 'gmvmax', 'manual', 'auto', 'groups'].includes(type)) return;
+  if (!['manual', 'auto', 'groups'].includes(type)) return;
   state.adsType = type;
   $$('.ads-type-tab').forEach(button =>
     button.classList.toggle('active', button.dataset.adsType === type)
   );
-  $('#adsGmsPanel').classList.toggle('hidden', type !== 'gms');
-  $('#adsGmvMaxPanel')?.classList.toggle('hidden', type !== 'gmvmax');
+  $('#adsGmsPanel')?.classList.remove('hidden');
+  $('#adsGmvMaxPanel')?.classList.add('hidden');
   $('#adsManualPanel').classList.toggle('hidden', type !== 'manual');
   $('#adsAutoPanel').classList.toggle('hidden', type !== 'auto');
   $('#adsGroupImportPanel').classList.toggle('hidden', type !== 'groups');
@@ -1372,9 +1372,8 @@ async function loadCurrentView() {
     else if (state.view === 'store' && selectedShop()) await loadStoreDetail();
     else if (state.view === 'ads' && state.adsType === 'groups' && selectedShop()) await loadAdGroups();
     else if (state.view === 'ads' && selectedShop()) {
-      if (state.adsType === 'gms') await window.loadCampaigns();
-      else if (state.adsType === 'gmvmax') await loadGmvMaxCampaigns();
-      else await loadProductAds(state.adsType);
+      await window.loadCampaigns?.();
+      await loadProductAds(state.adsType);
     }
     else if (state.view === 'status') {
       if (selectedShop()) await loadSystemStatus();
@@ -1385,9 +1384,8 @@ async function loadCurrentView() {
       $('#portfolioRows').innerHTML =
         `<tr><td colspan="14" class="empty">${escapeHtml(error.message)}</td></tr>`;
     } else if (state.view === 'ads' && state.adsType !== 'groups') {
-      const target = state.adsType === 'gms' ? '#productCardDailyRowsV2' : state.adsType === 'gmvmax' ? '#campaignRows' : state.adsType === 'manual' ? '#manualAdRows' : '#autoAdRows';
-      const colspan = state.adsType === 'gms' ? 12 : state.adsType === 'gmvmax' ? 6 : 11;
-      $(target).innerHTML = `<tr><td colspan="${colspan}" class="empty">${escapeHtml(error.message)}</td></tr>`;
+      const target = state.adsType === 'manual' ? '#manualAdRows' : '#autoAdRows';
+      $(target).innerHTML = `<tr><td colspan="11" class="empty">${escapeHtml(error.message)}</td></tr>`;
     } else {
       $('#statusSubtitle').textContent = error.message;
     }
