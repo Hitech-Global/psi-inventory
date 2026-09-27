@@ -1,7 +1,10 @@
 'use strict';
 
 const assert = require('assert');
-const { selectProductionApiShops } = require('../scripts/sync-all-shops.cjs');
+const { parseIdFilter, selectProductionApiShops } = require('../scripts/sync-all-shops.cjs');
+
+assert.strictEqual(parseIdFilter('').size, 0);
+assert.deepStrictEqual(Array.from(parseIdFilter('1770037299, ,0,-1,bad')), [1770037299]);
 
 const selection = selectProductionApiShops([
   { shopId: 1, oauthAuthorized: true, timezone: 'Asia/Kuala_Lumpur' },

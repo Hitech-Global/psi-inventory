@@ -17,8 +17,10 @@ function parseIdFilter(value) {
   return new Set(
     String(value || '')
       .split(',')
-      .map(part => Number(part.trim()))
-      .filter(Number.isSafeInteger),
+      .map(part => part.trim())
+      .filter(Boolean)
+      .map(Number)
+      .filter(value => Number.isSafeInteger(value) && value > 0),
   );
 }
 
