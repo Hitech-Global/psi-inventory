@@ -9,16 +9,15 @@
     .replaceAll('>', '&gt;').replaceAll('"', '&quot;')
     .replaceAll("'", '&#039;');
 
-  const int = value => Number.isFinite(Number(value))
+  const present = value => value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value));
+  const int = value => present(value)
     ? new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(Number(value))
     : '—';
-  const fixed2 = value => Number.isFinite(Number(value))
+  const fixed2 = value => present(value)
     ? new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(value))
     : '—';
-  const pct2 = value => Number.isFinite(Number(value))
-    ? `${(Number(value) * 100).toFixed(2)}%`
-    : '—';
-  const money2 = value => Number.isFinite(Number(value)) ? fixed2(value) : '—';
+  const pct2 = value => present(value) ? `${(Number(value) * 100).toFixed(2)}%` : '—';
+  const money2 = value => present(value) ? fixed2(value) : '—';
 
   let shopDirectory = [];
   let lastGroupRows = [];
@@ -67,8 +66,8 @@
       .product-card-daily-panel .panel-head{border-bottom:1px solid #ececef}
       .metric-exact{font-variant-numeric:tabular-nums}
       #adGroupRows tr[data-ad-group-index]{cursor:pointer}#adGroupRows tr[data-ad-group-index]:hover{background:#f8fbff}#adGroupRows tr.selected{background:#eef6ff}
-      .ad-group-item-detail-v2{border-top:1px solid #ececef;background:#fbfbfc}
-      .ad-group-item-detail-v2 .panel-head{padding:14px 20px}.ad-group-item-detail-v2 .table-wrap{max-height:420px}
+      .ad-group-inline-detail>td{padding:0!important;background:#fbfbfc;border-bottom:1px solid #ececef}.ad-group-inline-box{padding:0 0 12px}
+      .ad-group-inline-box .panel-head{padding:12px 18px}.ad-group-inline-box .table-wrap{max-height:420px;border-top:1px solid #ececef}
       .ad-group-item-name{display:flex;flex-direction:column;gap:2px;min-width:190px;text-align:left}.ad-group-item-name strong{font-size:12px}.ad-group-item-name small{font-size:10px;color:#86868b;white-space:normal}
       .product-card-source{font-size:10px;color:#86868b}.ads-type-tabs{margin-bottom:10px}
       @media(max-width:800px){.product-card-parent{align-items:flex-start;flex-direction:column}.product-card-overview .kpi-grid{grid-template-columns:repeat(2,1fr)}}
@@ -127,27 +126,43 @@
       gmsPanel.insertBefore(overview, gmsPanel.firstChild);
     }
 
-    const groupPanel = $('#adsGroupImportPanel');
-    if (groupPanel && !$('#adGroupItemDetailV2')) {
-      const detail = document.createElement('div');
-      detail.id = 'adGroupItemDetailV2';
-      detail.className = 'ad-group-item-detail-v2';
-      detail.innerHTML = `
-        <div class="panel-head">
-          <div><h3>商品明细</h3><p>选择广告组后查看 Seller Centre 商品层数据。</p></div>
-          <span id="adGroupItemCountV2" class="pill neutral">未选择</span>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr>
-              <th>商品</th><th>${sl('impressions')}</th><th>${sl('clicks')}</th><th>${sl('ctr')}</th><th>${sl('conversions')}</th><th>${sl('gmv')}</th><th>${sl('expense')}</th><th>${sl('roas')}</th>
-              <th>${sl('directGmv')}</th><th>${sl('directRoas')}</th><th>${sl('conversionRate')}</th><th>${sl('addToCart')}</th><th>数据质量</th>
-            </tr></thead>
-            <tbody id="adGroupItemRowsV2"><tr><td colspan="13" class="empty">先点击一个广告组。</td></tr></tbody>
-          </table>
-        </div>`;
-      groupPanel.appendChild(detail);
-    }
+    configureAdMetricTables();
+
+  }
+
+  const metricCol = key => ({ key });
+  const textCol = label => ({ label });
+  const MANUAL_COLUMNS = [textCol('Campaign'),textCol('状态'),textCol('竞价方式'),textCol('预算'),
+    metricCol('impressions'),metricCol('clicks'),metricCol('ctr'),metricCol('addToCart'),metricCol('addToCartRate'),
+    metricCol('conversions'),metricCol('directConversions'),metricCol('conversionRate'),metricCol('directConversionRate'),
+    metricCol('costPerConversion'),metricCol('costPerDirectConversion'),metricCol('itemsSold'),metricCol('directItemsSold'),
+    metricCol('gmv'),metricCol('directGmv'),metricCol('expense'),metricCol('roas'),metricCol('directRoas'),metricCol('acos'),metricCol('directAcos'),
+    textCol('平均排名'),metricCol('voucherAmount'),metricCol('voucheredSales'),textCol('Target ROAS')];
+  const GMS_COLUMNS = [textCol('Campaign / 投放算法'),metricCol('impressions'),metricCol('clicks'),metricCol('ctr'),
+    metricCol('conversions'),metricCol('directConversions'),metricCol('conversionRate'),metricCol('directConversionRate'),
+    metricCol('costPerConversion'),metricCol('costPerDirectConversion'),metricCol('itemsSold'),metricCol('directItemsSold'),
+    metricCol('gmv'),metricCol('directGmv'),metricCol('expense'),metricCol('roas'),metricCol('directRoas'),metricCol('acos'),metricCol('directAcos'),
+    metricCol('voucherAmount'),metricCol('voucheredSales')];
+  const GROUP_COLUMNS = [textCol('报表日期'),metricCol('adProductName'),metricCol('status'),metricCol('adsType'),metricCol('biddingMethod'),
+    metricCol('startDate'),metricCol('endDate'),textCol('商品数'),metricCol('impressions'),metricCol('clicks'),metricCol('ctr'),
+    metricCol('conversions'),metricCol('directConversions'),metricCol('conversionRate'),metricCol('directConversionRate'),
+    metricCol('costPerConversion'),metricCol('costPerDirectConversion'),metricCol('itemsSold'),metricCol('directItemsSold'),metricCol('gmv'),metricCol('directGmv'),
+    metricCol('expense'),metricCol('roas'),metricCol('directRoas'),metricCol('acos'),metricCol('directAcos'),metricCol('voucherAmount'),metricCol('voucheredSales'),textCol('数据质量')];
+
+  function headerHtml(columns) {
+    return columns.map(column => column.key
+      ? `<th data-shopee-metric="${column.key}">${esc(sl(column.key))}</th>`
+      : `<th>${esc(column.label)}</th>`).join('');
+  }
+
+  function configureAdMetricTables() {
+    const manualHead = $('#adsManualPanel thead tr');
+    const autoHead = $('#adsAutoPanel thead tr');
+    const groupHead = $('#adsGroupImportPanel thead tr');
+    if (manualHead) manualHead.innerHTML = headerHtml(MANUAL_COLUMNS);
+    if (autoHead) autoHead.innerHTML = headerHtml(GMS_COLUMNS);
+    if (groupHead) groupHead.innerHTML = headerHtml(GROUP_COLUMNS);
+    window.ShopeeMetricLabels?.apply?.();
   }
 
   function kpi(label, value, sub = '') {
@@ -224,21 +239,28 @@
     </tr>`).join('');
   }
 
+  function unavailable(source = '当前 Shopee API 未返回该字段') {
+    return `<span title="${esc(source)}">—</span>`;
+  }
+
   function productAdRowsHtml(rows, type) {
     return rows.map(row => {
       const p = row.performance || {};
-      return `<tr data-product-card-campaign="${row.campaignId}" data-product-card-type="${type}">
-        <td><div class="campaign-name"><strong>#${row.campaignId}</strong><small>${esc(row.biddingMethod || (type === 'auto' ? 'GMV Max · GMS' : row.adType || ''))}</small></div></td>
-        <td><span class="pill neutral">${esc(row.status || '—')}</span></td>
-        <td>${row.campaignBudget == null ? '—' : money2(row.campaignBudget)}</td>
-        <td>${int(p.broadOrders)}</td>
-        <td>${int(p.directOrders)}</td>
-        <td>${fixed2(p.broadRoas)}</td>
-        <td>${fixed2(p.directRoas)}</td>
-        <td>${pct2(p.ctr)}</td>
-        <td>${pct2(p.broadCvr)}</td>
-        <td>${money2(p.expense)}</td>
-        <td>${row.targetRoas == null ? '—' : fixed2(row.targetRoas)}</td>
+      if (type === 'manual') return `<tr data-product-card-campaign="${row.campaignId}" data-product-card-type="manual">
+        <td><div class="campaign-name"><strong>#${row.campaignId}</strong><small>${esc(row.adName || '')}</small></div></td>
+        <td><span class="pill neutral">${esc(row.status || '—')}</span></td><td>${esc(row.biddingMethod || '—')}</td><td>${money2(row.campaignBudget)}</td>
+        <td>${int(p.impressions)}</td><td>${int(p.clicks)}</td><td>${pct2(p.ctr)}</td><td>${int(p.addToCart)}</td><td>${pct2(p.addToCartRate)}</td>
+        <td>${int(p.broadOrders)}</td><td>${int(p.directOrders)}</td><td>${pct2(p.broadCvr)}</td><td>${pct2(p.directCvr)}</td>
+        <td>${money2(p.costPerConversion)}</td><td>${money2(p.costPerDirectConversion)}</td><td>${int(p.broadUnits)}</td><td>${int(p.directUnits)}</td>
+        <td>${money2(p.broadGmv)}</td><td>${money2(p.directGmv)}</td><td>${money2(p.expense)}</td><td>${fixed2(p.broadRoas)}</td><td>${fixed2(p.directRoas)}</td>
+        <td>${pct2(p.broadAcos)}</td><td>${pct2(p.directAcos)}</td><td>${unavailable()}</td><td>${unavailable()}</td><td>${unavailable()}</td><td>${fixed2(row.targetRoas)}</td>
+      </tr>`;
+      return `<tr data-product-card-campaign="${row.campaignId}" data-product-card-type="auto">
+        <td><div class="campaign-name"><strong>#${row.campaignId}</strong><small>GMV Max · GMS</small></div></td>
+        <td>${int(p.impressions)}</td><td>${int(p.clicks)}</td><td>${pct2(p.ctr)}</td><td>${int(p.broadOrders)}</td><td>${int(p.directOrders)}</td>
+        <td>${pct2(p.broadCvr)}</td><td>${pct2(p.directCvr)}</td><td>${money2(p.costPerConversion)}</td><td>${money2(p.costPerDirectConversion)}</td>
+        <td>${int(p.broadUnits)}</td><td>${int(p.directUnits)}</td><td>${money2(p.broadGmv)}</td><td>${money2(p.directGmv)}</td><td>${money2(p.expense)}</td>
+        <td>${fixed2(p.broadRoas)}</td><td>${fixed2(p.directRoas)}</td><td>${pct2(p.broadAcos)}</td><td>${pct2(p.directAcos)}</td><td>${unavailable('GMS API 未返回 Voucher Amount')}</td><td>${unavailable('GMS API 未返回 Vouchered Sales')}</td>
       </tr>`;
     }).join('');
   }
@@ -260,7 +282,7 @@
     if (count) count.textContent = `${int(rows.length)} 个`;
     target.innerHTML = rows.length
       ? productAdRowsHtml(rows, type)
-      : `<tr><td colspan="11" class="empty">当前周期没有${type === 'manual' ? '单品广告' : '全店推'}数据。</td></tr>`;
+      : `<tr><td colspan="${type === 'manual' ? MANUAL_COLUMNS.length : GMS_COLUMNS.length}" class="empty">当前周期没有${type === 'manual' ? '单品广告' : '全店推'}数据。</td></tr>`;
     $$('[data-product-card-campaign]').forEach(row => {
       if (row.dataset.productCardType !== type) return;
       row.addEventListener('click', () => loadProductAdDetailV2(type, Number(row.dataset.productCardCampaign)));
@@ -302,71 +324,68 @@
 
     if (type === 'auto' && $('#autoAdItems')) {
       const items = d.items || [];
-      $('#autoAdItems').innerHTML = items.length
-        ? `<strong>全店推商品表现 · ${int(items.length)} 个商品</strong><div class="product-ad-item-list">${items.map(item => `<span>#${esc(item.itemId)}${item.itemSku ? ` · ${esc(item.itemSku)}` : ''} · ${int(item.broadOrders)} 转化</span>`).join('')}</div>`
+      $('#autoAdItems').innerHTML = items.length ? `
+        <div class="panel-head"><div><h3>商品明细</h3><p>全店推 · GMS Item Performance · ${int(items.length)} 商品</p></div></div>
+        <div class="table-wrap"><table><thead><tr>
+          <th>商品</th><th>${sl('productId')}</th><th>${sl('impressions')}</th><th>${sl('clicks')}</th><th>${sl('ctr')}</th>
+          <th>${sl('conversions')}</th><th>${sl('directConversions')}</th><th>${sl('conversionRate')}</th><th>${sl('directConversionRate')}</th>
+          <th>${sl('costPerConversion')}</th><th>${sl('costPerDirectConversion')}</th><th>${sl('itemsSold')}</th><th>${sl('directItemsSold')}</th>
+          <th>${sl('gmv')}</th><th>${sl('directGmv')}</th><th>${sl('expense')}</th><th>${sl('roas')}</th><th>${sl('directRoas')}</th><th>${sl('acos')}</th><th>${sl('directAcos')}</th>
+        </tr></thead><tbody>${items.map(item => `<tr>
+          <td><div class="ad-group-item-name"><strong>${esc(item.itemName || ('#' + item.itemId))}</strong><small>${esc(item.itemSku || '')}</small></div></td><td>${esc(item.itemId)}</td>
+          <td>${int(item.impressions)}</td><td>${int(item.clicks)}</td><td>${pct2(item.ctr)}</td><td>${int(item.broadOrders)}</td><td>${int(item.directOrders)}</td>
+          <td>${pct2(item.broadCvr)}</td><td>${pct2(item.directCvr)}</td><td>${money2(item.costPerConversion)}</td><td>${money2(item.costPerDirectConversion)}</td>
+          <td>${int(item.broadUnits)}</td><td>${int(item.directUnits)}</td><td>${money2(item.broadGmv)}</td><td>${money2(item.directGmv)}</td><td>${money2(item.expense)}</td>
+          <td>${fixed2(item.broadRoas)}</td><td>${fixed2(item.directRoas)}</td><td>${pct2(item.broadAcos)}</td><td>${pct2(item.directAcos)}</td>
+        </tr>`).join('')}</tbody></table></div>`
         : '<div class="empty-inline">当前周期没有 GMS 商品层表现。</div>';
     }
   }
 
-  function renderGroupItems(row, rowEl) {
-    $$('#adGroupRows tr[data-ad-group-index]').forEach(el => el.classList.toggle('selected', el === rowEl));
+  function adGroupItemTable(row) {
     const items = Array.isArray(row.items) ? row.items : [];
-    const count = $('#adGroupItemCountV2');
-    const body = $('#adGroupItemRowsV2');
-    if (count) count.textContent = `${esc(String(row.campaign_name || '广告组'))} · ${int(items.length)} 商品`;
-    if (!body) return;
-    body.innerHTML = items.length ? items.map(item => `<tr>
-      <td><div class="ad-group-item-name"><strong>${esc(item.itemSku || ('#' + item.itemId))}</strong><small>${esc(item.productName || '')}</small></div></td>
-      <td>${int(item.impressions)}</td>
-      <td>${int(item.clicks)}</td>
-      <td>${pct2(item.ctr)}</td>
-      <td>${int(item.orders)}</td>
-      <td>${money2(item.gmv)}</td>
-      <td>${money2(item.expense)}</td>
-      <td>${fixed2(item.sourceRoas)}</td>
-      <td>${money2(item.directGmv)}</td>
-      <td>${fixed2(item.directRoas)}</td>
-      <td>${pct2(item.cvr)}</td>
-      <td>${int(item.addToCart)}</td>
-      <td><span class="pill neutral">${esc(item.dataQualityStatus || '—')}</span></td>
-    </tr>`).join('') : '<tr><td colspan="13" class="empty">这个广告组没有保存商品层明细。</td></tr>';
+    if (!items.length) return '<div class="empty-inline">这个广告组没有保存商品层明细。</div>';
+    return `<div class="ad-group-inline-box"><div class="panel-head"><div><h3>商品明细</h3><p>${esc(row.campaign_name || '广告组')} · ${int(items.length)} 商品</p></div></div>
+      <div class="table-wrap"><table><thead><tr>
+        <th>${sl('adProductName')}</th><th>${sl('productId')}</th><th>${sl('impressions')}</th><th>${sl('clicks')}</th><th>${sl('ctr')}</th>
+        <th>${sl('conversions')}</th><th>${sl('directConversions')}</th><th>${sl('conversionRate')}</th><th>${sl('directConversionRate')}</th>
+        <th>${sl('costPerConversion')}</th><th>${sl('costPerDirectConversion')}</th><th>${sl('itemsSold')}</th><th>${sl('directItemsSold')}</th>
+        <th>${sl('gmv')}</th><th>${sl('directGmv')}</th><th>${sl('expense')}</th><th>${sl('roas')}</th><th>${sl('directRoas')}</th><th>${sl('acos')}</th><th>${sl('directAcos')}</th><th>${sl('voucherAmount')}</th><th>${sl('voucheredSales')}</th>
+      </tr></thead><tbody>${items.map(item => `<tr>
+        <td><div class="ad-group-item-name"><strong>${esc(item.productName || ('#' + item.itemId))}</strong><small>${esc(item.itemSku || '')}</small></div></td><td>${esc(item.itemId)}</td>
+        <td>${int(item.impressions)}</td><td>${int(item.clicks)}</td><td>${pct2(item.ctr)}</td><td>${int(item.orders)}</td><td>${int(item.directConversions)}</td><td>${pct2(item.cvr)}</td><td>${pct2(item.directCvr)}</td>
+        <td>${money2(item.costPerConversion)}</td><td>${money2(item.costPerDirectConversion)}</td><td>${int(item.itemsSold)}</td><td>${int(item.directItemsSold)}</td>
+        <td>${money2(item.gmv)}</td><td>${money2(item.directGmv)}</td><td>${money2(item.expense)}</td><td>${fixed2(item.sourceRoas)}</td><td>${fixed2(item.directRoas)}</td>
+        <td>${pct2(item.acos)}</td><td>${pct2(item.directAcos)}</td><td>${money2(item.voucherAmount)}</td><td>${money2(item.voucheredSales)}</td>
+      </tr>`).join('')}</tbody></table></div></div>`;
+  }
+
+  function toggleGroupItems(index, rowEl) {
+    const detail = $(`#adGroupRows tr[data-ad-group-detail-index="${index}"]`);
+    if (!detail) return;
+    const willOpen = detail.classList.contains('hidden');
+    $$('#adGroupRows tr[data-ad-group-detail-index]').forEach(el => el.classList.add('hidden'));
+    $$('#adGroupRows tr[data-ad-group-index]').forEach(el => el.classList.remove('selected'));
+    if (willOpen) { detail.classList.remove('hidden'); rowEl.classList.add('selected'); }
   }
 
   async function loadAdGroupsV2() {
-    const ctx = selectedContext();
-    const body = $('#adGroupRows');
-    if (!body || !ctx.shopId) return;
-    const params = new URLSearchParams({
-      shop_id: String(ctx.shopId),
-      start_date: ctx.startDate,
-      end_date: ctx.endDate,
-      promotion_type: 'AD_GROUP',
-      data_source: 'MANUAL_IMPORT',
-    });
-    const data = await api(`/api/shopee-analytics/ad-promotions?${params}`);
-    lastGroupRows = data.promotions || [];
-    body.innerHTML = lastGroupRows.length ? lastGroupRows.map((row, index) => `<tr data-ad-group-index="${index}">
-      <td>${esc(String(row.event_date).slice(0, 10))}</td>
-      <td>${esc(row.campaign_name || '—')}</td>
-      <td>${esc(row.campaign_status || '—')}</td>
-      <td>${int(row.item_count)}</td>
-      <td>${int(row.impressions)}</td>
-      <td>${int(row.clicks)}</td>
-      <td>${pct2(row.ctr)}</td>
-      <td>${int(row.orders)}</td>
-      <td>${money2(row.gmv)}</td>
-      <td>${money2(row.expense)}</td>
-      <td>${fixed2(row.source_roas)}</td>
-      <td>${money2(row.direct_gmv)}</td>
-      <td>${fixed2(row.direct_roas)}</td>
-      <td><span class="pill neutral">${esc(row.data_quality_status || 'COMPLETE')}</span></td>
-    </tr>`).join('') : '<tr><td colspan="14" class="empty">当前周期暂无广告组数据。</td></tr>';
+    const ctx = selectedContext(); const body = $('#adGroupRows'); if (!body || !ctx.shopId) return;
+    const params = new URLSearchParams({ shop_id:String(ctx.shopId),start_date:ctx.startDate,end_date:ctx.endDate,promotion_type:'AD_GROUP',data_source:'MANUAL_IMPORT' });
+    const data = await api(`/api/shopee-analytics/ad-promotions?${params}`); lastGroupRows = data.promotions || [];
+    body.innerHTML = lastGroupRows.length ? lastGroupRows.map((row,index) => {
+      const groupKey = `ad-group-${index}`;
+      return `<tr data-ad-group-index="${index}" data-sort-group="${groupKey}" title="点击展开/收起商品明细">
+        <td>${esc(String(row.event_date).slice(0,10))}</td><td>${esc(row.campaign_name || '—')}</td><td>${esc(row.campaign_status || '—')}</td><td>${esc(row.source_ad_type || '—')}</td>
+        <td>${esc(row.biddingMethod || '—')}</td><td>${esc(row.groupStartDate || '—')}</td><td>${esc(row.groupEndDate || '—')}</td><td>${int(row.item_count)}</td>
+        <td>${int(row.impressions)}</td><td>${int(row.clicks)}</td><td>${pct2(row.ctr)}</td><td>${int(row.orders)}</td><td>${int(row.directConversions)}</td><td>${pct2(row.cvr)}</td><td>${pct2(row.directCvr)}</td>
+        <td>${money2(row.costPerConversion)}</td><td>${money2(row.costPerDirectConversion)}</td><td>${int(row.itemsSold)}</td><td>${int(row.directItemsSold)}</td><td>${money2(row.gmv)}</td><td>${money2(row.direct_gmv)}</td>
+        <td>${money2(row.expense)}</td><td>${fixed2(row.source_roas)}</td><td>${fixed2(row.direct_roas)}</td><td>${pct2(row.acos)}</td><td>${pct2(row.directAcos)}</td><td>${money2(row.voucherAmount)}</td><td>${money2(row.voucheredSales)}</td>
+        <td><span class="pill neutral">${esc(row.data_quality_status || 'COMPLETE')}</span></td></tr>
+        <tr class="ad-group-inline-detail hidden" data-ad-group-detail-index="${index}" data-sort-detail="1" data-sort-group="${groupKey}"><td colspan="${GROUP_COLUMNS.length}">${adGroupItemTable(row)}</td></tr>`;
+    }).join('') : `<tr><td colspan="${GROUP_COLUMNS.length}" class="empty">当前周期暂无广告组数据。</td></tr>`;
     $('#adGroupEmptyState')?.classList.toggle('hidden', Boolean(lastGroupRows.length));
-    if ($('#adGroupItemRowsV2')) $('#adGroupItemRowsV2').innerHTML = '<tr><td colspan="13" class="empty">点击上方一个广告组查看商品明细。</td></tr>';
-    if ($('#adGroupItemCountV2')) $('#adGroupItemCountV2').textContent = '未选择';
-    $$('#adGroupRows tr[data-ad-group-index]').forEach(rowEl => {
-      rowEl.addEventListener('click', () => renderGroupItems(lastGroupRows[Number(rowEl.dataset.adGroupIndex)], rowEl));
-    });
+    $$('#adGroupRows tr[data-ad-group-index]').forEach(rowEl => rowEl.addEventListener('click', () => toggleGroupItems(Number(rowEl.dataset.adGroupIndex), rowEl)));
   }
 
   async function refreshActivePanel() {
@@ -380,7 +399,7 @@
     } catch (error) {
       if (seq !== refreshSeq) return;
       if ($('#productCardDailyRowsV2')) $('#productCardDailyRowsV2').innerHTML = `<tr><td colspan="12" class="empty">${esc(error.message)}</td></tr>`;
-      if (type === 'groups' && $('#adGroupRows')) $('#adGroupRows').innerHTML = `<tr><td colspan="14" class="empty">${esc(error.message)}</td></tr>`;
+      if (type === 'groups' && $('#adGroupRows')) $('#adGroupRows').innerHTML = `<tr><td colspan="${GROUP_COLUMNS.length}" class="empty">${esc(error.message)}</td></tr>`;
     }
   }
 

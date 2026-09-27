@@ -1,6 +1,7 @@
 'use strict';
 
 const { normalizePerformance } = require('./metrics');
+const { sumSourceAwarePerformance } = require('./source-aware-metrics');
 
 function nullableNumber(value) {
   return value === null || value === undefined ? null : Number(value);
@@ -576,73 +577,39 @@ class ShopeeQueryRepository {
   async listCampaignOverview({ shopId, startDate, endDate, campaignTypeNormalized = null }) {
     const result = await this.pool.query(
       `SELECT
-         c.campaign_id,
-         c.ad_type,
-         c.campaign_type_raw,
-         c.campaign_type_normalized,
-         c.region,
-         s.status,
-         s.bidding_method,
-         s.campaign_budget,
-         s.target_roas,
-         s.ad_name,
-         s.campaign_placement,
-         s.observed_at AS setting_observed_at,
-         COALESCE(SUM(d.impressions),0) AS impressions,
-         COALESCE(SUM(d.clicks),0) AS clicks,
-         COALESCE(SUM(d.expense),0) AS expense,
-         COALESCE(SUM(d.broad_gmv),0) AS broad_gmv,
-         COALESCE(SUM(d.broad_orders),0) AS broad_orders,
-         COALESCE(SUM(d.broad_units),0) AS broad_units,
-         CASE WHEN BOOL_AND(d.direct_gmv IS NOT NULL) THEN SUM(d.direct_gmv) ELSE NULL END AS direct_gmv,
+         c.campaign_id,c.ad_type,c.campaign_type_raw,c.campaign_type_normalized,c.region,
+         s.status,s.bidding_method,s.campaign_budget,s.target_roas,s.ad_name,s.campaign_placement,s.observed_at AS setting_observed_at,
+         COALESCE(jsonb_agg(to_jsonb(d) ORDER BY d.event_date) FILTER (WHERE d.event_date IS NOT NULL),'[]'::jsonb) AS daily_rows,
          COALESCE(BOOL_AND(d.direct_gmv IS NOT NULL),false) AS direct_metric_complete,
-         COALESCE(SUM(d.direct_orders),0) AS direct_orders,
-         COALESCE(SUM(d.direct_units),0) AS direct_units,
          MAX(d.event_date) AS latest_performance_date
        FROM shopee_ad_campaigns c
        LEFT JOIN LATERAL (
-         SELECT
-           status,bidding_method,campaign_budget,target_roas,observed_at,
+         SELECT status,bidding_method,campaign_budget,target_roas,observed_at,
            raw_json->'common_info'->>'ad_name' AS ad_name,
            raw_json->'common_info'->>'campaign_placement' AS campaign_placement
          FROM shopee_ad_campaign_setting_history s0
          WHERE s0.shop_id=c.shop_id AND s0.campaign_id=c.campaign_id
-         ORDER BY observed_at DESC
-         LIMIT 1
+         ORDER BY observed_at DESC LIMIT 1
        ) s ON true
-       LEFT JOIN shopee_ad_campaign_daily d
-         ON d.shop_id=c.shop_id
-        AND d.campaign_id=c.campaign_id
-        AND d.event_date BETWEEN $2 AND $3
-       WHERE c.shop_id=$1
-         AND ($4::text IS NULL OR c.campaign_type_normalized=$4)
-       GROUP BY
-         c.campaign_id,c.ad_type,c.campaign_type_raw,c.campaign_type_normalized,c.region,
+       LEFT JOIN shopee_ad_campaign_daily d ON d.shop_id=c.shop_id AND d.campaign_id=c.campaign_id AND d.event_date BETWEEN $2 AND $3
+       WHERE c.shop_id=$1 AND ($4::text IS NULL OR c.campaign_type_normalized=$4)
+       GROUP BY c.campaign_id,c.ad_type,c.campaign_type_raw,c.campaign_type_normalized,c.region,
          s.status,s.bidding_method,s.campaign_budget,s.target_roas,s.ad_name,s.campaign_placement,s.observed_at
-       ORDER BY COALESCE(SUM(d.expense),0) DESC, c.campaign_id`,
-      [shopId, startDate, endDate, campaignTypeNormalized],
+       ORDER BY COALESCE(SUM(d.expense),0) DESC,c.campaign_id`,
+      [shopId,startDate,endDate,campaignTypeNormalized],
     );
-
-    return result.rows.map(row => ({
-      campaignId: Number(row.campaign_id),
-      adType: row.ad_type,
-      campaignTypeRaw: row.campaign_type_raw,
-      campaignTypeNormalized: row.campaign_type_normalized,
-      region: row.region,
-      status: row.status,
-      biddingMethod: row.bidding_method,
-      campaignBudget: row.campaign_budget === null ? null : Number(row.campaign_budget),
-      targetRoas: row.target_roas === null ? null : Number(row.target_roas),
-      adName: row.ad_name,
-      campaignPlacement: row.campaign_placement,
-      settingObservedAt: row.setting_observed_at,
-      latestPerformanceDate: row.latest_performance_date,
-      performance: {
-        ...normalizePerformance(row),
-        directMetricComplete: directMetricComplete(row.direct_metric_complete),
-        dataQualityFlags: directMetricComplete(row.direct_metric_complete) ? [] : ['SOURCE_DIRECT_GMV_MISSING'],
-      },
-    }));
+    return result.rows.map(row => {
+      const dailyRows = Array.isArray(row.daily_rows) ? row.daily_rows : [];
+      const performance = dailyRows.length ? sumSourceAwarePerformance(dailyRows) : normalizePerformance(row);
+      const directComplete = dailyRows.length ? performance.directGmv !== null : directMetricComplete(row.direct_metric_complete);
+      return {
+        campaignId:Number(row.campaign_id),adType:row.ad_type,campaignTypeRaw:row.campaign_type_raw,
+        campaignTypeNormalized:row.campaign_type_normalized,region:row.region,status:row.status,biddingMethod:row.bidding_method,
+        campaignBudget:nullableNumber(row.campaign_budget),targetRoas:nullableNumber(row.target_roas),adName:row.ad_name,
+        campaignPlacement:row.campaign_placement,settingObservedAt:row.setting_observed_at,latestPerformanceDate:row.latest_performance_date,
+        performance:{...performance,directMetricComplete:directComplete,dataQualityFlags:performance.dataQualityFlags?.length ? performance.dataQualityFlags : (directComplete ? [] : ['SOURCE_DIRECT_GMV_MISSING'])},
+      };
+    });
   }
 
   async listProductAdsOverview({ shopId, startDate, endDate, adType }) {

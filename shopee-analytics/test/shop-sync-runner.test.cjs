@@ -99,9 +99,9 @@ assert.throws(
     assert.strictEqual(summary.ok, true);
     assert.strictEqual(saved.length, 7);
     assert.strictEqual(productOverviewSaved.length, 1);
-    assert.strictEqual(productCampaignDailySaved.length, 2);
+    assert.strictEqual(productCampaignDailySaved.length, 1);
     assert(productCampaignDailySaved.some(row => row.campaignId === 2001));
-    assert(productCampaignDailySaved.some(row => row.campaignId === 2002));
+    assert(!productCampaignDailySaved.some(row => row.campaignId === 2002));
     assert(!summary.steps.some(step => ['shop-info', 'campaign-settings', 'orders-recent', 'products'].includes(step.name)));
     assert(summary.steps.some(step => step.name === 'product-ads-overview-7d' && step.ok));
     assert(summary.steps.some(step => step.name === 'product-ads-7d' && step.ok));

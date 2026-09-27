@@ -1,5 +1,30 @@
 'use strict';
 
+function sourceMetric(raw, key, { percentage = false } = {}) {
+  const value = raw && raw[key];
+  if (value === null || value === undefined || String(value).trim() === '' || String(value).trim() === '-') return null;
+  const text = String(value).trim().replace(/,/g, '');
+  const isPercent = text.endsWith('%');
+  const numeric = Number(isPercent ? text.slice(0, -1) : text);
+  if (!Number.isFinite(numeric)) return null;
+  return percentage || isPercent ? numeric / 100 : numeric;
+}
+
+function sourceFields(raw = {}) {
+  return {
+    directConversions: sourceMetric(raw, 'Direct Conversions'),
+    directCvr: sourceMetric(raw, 'Direct Conversion Rate', { percentage: true }),
+    costPerConversion: sourceMetric(raw, 'Cost per Conversion'),
+    costPerDirectConversion: sourceMetric(raw, 'Cost per Direct Conversion'),
+    itemsSold: sourceMetric(raw, 'Items Sold'),
+    directItemsSold: sourceMetric(raw, 'Direct Items Sold'),
+    acos: sourceMetric(raw, 'ACOS', { percentage: true }),
+    directAcos: sourceMetric(raw, 'Direct ACOS', { percentage: true }),
+    voucherAmount: sourceMetric(raw, 'Voucher Amount'),
+    voucheredSales: sourceMetric(raw, 'Vouchered Sales'),
+  };
+}
+
 class ShopeeAdPromotionRepository {
   constructor({ pool }) {
     if (!pool || typeof pool.query !== 'function') throw new Error('pg pool/query adapter is required');
@@ -153,7 +178,8 @@ class ShopeeAdPromotionRepository {
            'weeklySales', i.weekly_sales,
            'dataQualityStatus', i.data_quality_status,
            'qualityFlags', i.quality_flags,
-           'remark', i.remark
+           'remark', i.remark,
+           'rawJson', i.raw_json
          ) ORDER BY i.item_id
        ) FILTER (WHERE i.item_id IS NOT NULL) ELSE '[]'::jsonb END AS items
        FROM shopee_ad_promotion_daily d
@@ -163,7 +189,22 @@ class ShopeeAdPromotionRepository {
        ORDER BY d.period_start DESC,d.period_end DESC,d.promotion_key`,
       [shopId,startDate,endDate,promotionType,dataSource,campaignStatus,productId],
     );
-    return result.rows;
+    return result.rows.map(row => {
+      const parent = row.raw_json && row.raw_json.parent || {};
+      return {
+        ...row,
+        biddingMethod: parent['Bidding Method'] || null,
+        groupStartDate: parent['Start Date'] || null,
+        groupEndDate: parent['End Date'] || null,
+        ...sourceFields(parent),
+        items: (row.items || []).map(item => {
+          const child = item.rawJson && item.rawJson.child || {};
+          const enriched = { ...item, ...sourceFields(child) };
+          delete enriched.rawJson;
+          return enriched;
+        }),
+      };
+    });
   }
 }
 

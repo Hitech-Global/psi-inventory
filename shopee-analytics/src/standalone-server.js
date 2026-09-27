@@ -76,7 +76,7 @@ function createApp({ pool, skillProvider = null, importJobPool = null }) {
   }
   const injectedScripts = [
     '/product-card-ui-v2.js', '/product-card-copy-v2.js', '/ad-channel-ui-v3.js',
-    '/product-card-data-contract-v3.js', '/product-card-coverage-v4.js',
+    '/product-card-data-contract-v3.js', '/product-card-coverage-v4.js', '/table-sort-v1.js',
   ].map(src => `  <script src="${src}?v=${assetVersion}" defer></script>`).join('\n');
   indexHtml = indexHtml.replace('</body>', `${injectedScripts}\n</body>`);
 

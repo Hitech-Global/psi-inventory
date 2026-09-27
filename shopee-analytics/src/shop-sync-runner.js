@@ -163,16 +163,17 @@ async function runShopSyncCycle({
     }
   }
 
-  // Product Card child families are also read-only ADS data.  In pilot mode we
-  // keep them confined to the configured pilot shop, but do not suppress them:
-  // otherwise the Product Card page would show a correct total with permanently
-  // empty Manual / Auto child views.  Ad Group remains MANUAL_IMPORT only.
-  if (mode === 'daily' && apiCapable) {
+  // Single-product ads are live Product Card data and must stay fresh during
+  // the day, not only after the daily cycle. Refresh the recent performance
+  // window hourly; campaign settings are slower-moving and remain daily-only.
+  // Shop-wide ads use the dedicated GMS sync above; Ad Group remains MANUAL_IMPORT.
+  if (apiCapable) {
     if (pilot) assertPilotIdentityShopAllowed(shopId);
     await run('product-ads-7d', () => service.syncProductAdsDaily({
       startDate: addDays(today, -6),
       endDate: today,
-      adTypes: ['manual', 'auto'],
+      adTypes: ['manual'],
+      includeSettings: mode === 'daily',
     }), { required: false });
   }
 
