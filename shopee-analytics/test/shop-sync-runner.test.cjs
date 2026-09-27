@@ -20,6 +20,7 @@ assert.throws(
 
 (async () => {
   const saved = [];
+  const productOverviewSaved = [];
   const calls = [];
   const original = {
     mode: process.env.SHOPEE_ANALYTICS_DEPLOYMENT_MODE,
@@ -36,12 +37,24 @@ assert.throws(
   try {
     const runtime = {
       queryRepository: { async listKnownGmsCampaignIds() { return []; } },
-      rawRepository: { async loadMembershipItemIds() { return []; }, async saveGmsDay(input) { saved.push(input); }, async markSyncSuccess() {}, async markSyncFailure() {} },
+      rawRepository: {
+        async loadMembershipItemIds() { return []; },
+        async saveGmsDay(input) { saved.push(input); },
+        async insertRawSnapshot() {},
+        async markSyncSuccess() {},
+        async markSyncFailure() {},
+      },
       adPromotionRepository: {},
+      productAdsShopRepository: {
+        async upsertMany(input) { productOverviewSaved.push(input); return { rowCount: input.rows.length }; },
+      },
       roleClients: { ADS: { async getAccessToken() { return 'fixture-token'; }, client: { async shopRequest(request) {
         calls.push(request.path);
         if (request.path.includes('get_gms_campaign_performance')) return { response: { campaign_id: 7, report: {} } };
         if (request.path.includes('get_gms_item_performance')) return { response: { has_next_page: false, result_list: [] } };
+        if (request.path.includes('get_all_cpc_ads_daily_performance')) {
+          return { response: [{ date: '18-09-2026', impression: 10, click: 1, broad_order: 1, broad_gmv: 100, expense: 10, broad_roi: 10 }] };
+        }
         throw new Error(`unexpected endpoint ${request.path}`);
       } } } },
       campaignRepository: {}, productRepository: {}, promotionRepository: {}, orderRepository: {}, returnRepository: {}, shopBiRepository: {}, shopRepository: {},
@@ -49,8 +62,10 @@ assert.throws(
     const summary = await runShopSyncCycle({ runtime, shop: { shopId: 123, timezone: 'Asia/Kuala_Lumpur' }, mode: 'daily', now: new Date('2026-09-18T00:00:00Z'), seededGmsCampaignIds: [7] });
     assert.strictEqual(summary.ok, true);
     assert.strictEqual(saved.length, 7);
-    assert(calls.every(path => path.includes('get_gms_')));
+    assert.strictEqual(productOverviewSaved.length, 1);
+    assert(calls.every(path => path.includes('get_gms_') || path.includes('get_all_cpc_ads_daily_performance')));
     assert(!summary.steps.some(step => ['shop-info', 'campaign-settings', 'orders-recent', 'products'].includes(step.name)));
+    assert(summary.steps.some(step => step.name === 'product-ads-overview-7d' && step.ok));
   } finally {
     for (const [key, value] of Object.entries(original)) {
       if (value === undefined) delete process.env[{ mode: 'SHOPEE_ANALYTICS_DEPLOYMENT_MODE', shop: 'SHOPEE_PILOT_GMV_MAX_SHOP_ID', brand: 'SHOPEE_PILOT_GMV_MAX_BRAND', gms: 'SHOPEE_PILOT_SHOP_GMV_MAX_CAMPAIGN_IDS' }[key]];
