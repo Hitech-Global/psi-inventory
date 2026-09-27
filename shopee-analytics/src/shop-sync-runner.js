@@ -137,11 +137,12 @@ async function runShopSyncCycle({
     });
   }
 
-  // Product Ads overview must come from Shopee's shop-level CPC aggregate API,
-  // not from summing whichever campaign families happen to be available locally.
+  // Product Card is the shop-level Product Ads total. Refresh the recent daily
+  // window on hourly as well as daily cycles so its total stays aligned with
+  // Seller Centre instead of lagging behind the campaign-level views.
   // Manual-import-only shops intentionally skip this source because they have no
   // authorized ADS token and therefore cannot claim full-shop Product Ads totals.
-  if (mode === 'daily' && apiCapable) {
+  if (apiCapable) {
     if (!adsToken) {
       adsToken = await run('ads-token-product-ads-overview', () => ads.getAccessToken(shopId), { required: false });
     }
