@@ -30,6 +30,16 @@ function selectPilotShop(shops, pilotConfig) {
   return matches;
 }
 
+function selectProductionApiShops(shops) {
+  const skippedShops = [];
+  const eligible = [];
+  for (const shop of shops || []) {
+    if (!shop.oauthAuthorized) skippedShops.push({ shopId: shop.shopId, reason: 'NO_ADS_TOKEN' });
+    else if (!shop.timezone) skippedShops.push({ shopId: shop.shopId, reason: 'NO_TIMEZONE' });
+    else eligible.push(shop);
+  }
+  return { shops: eligible, skippedShops };
+}
 function resolveSeededGmsCampaignIds({ shop, pilot, pilotConfig, globalGmsSeeds }) {
   if (pilot) {
     validatePilotProfileCampaignSeeds(shop, pilotConfig);
@@ -65,15 +75,22 @@ async function main() {
     const runtime = createSyncRuntime({ pool });
     let shops = await profileRepository.list({ activeOnly: true });
 
+    let skippedShops = [];
     if (pilot) {
       shops = selectPilotShop(shops, pilotConfig);
     } else {
+      const productionSelection = selectProductionApiShops(shops);
+      shops = productionSelection.shops;
+      skippedShops = productionSelection.skippedShops;
       if (countryFilter) shops = shops.filter(shop => shop.countryCode === countryFilter);
       if (brandFilter) shops = shops.filter(shop => shop.brandCode === brandFilter);
       if (shopIdFilter.size) shops = shops.filter(shop => shopIdFilter.has(shop.shopId));
     }
 
-    if (!shops.length) throw new Error('No active shops matched the sync filters');
+    if (!shops.length) {
+      console.log(JSON.stringify({ mode, shopCount: 0, okShopCount: 0, failedShopCount: 0, skippedShops }, null, 2));
+      return;
+    }
 
     const summaries = [];
     for (const shop of shops) {
@@ -115,6 +132,7 @@ async function main() {
       shopCount: summaries.length,
       okShopCount: summaries.length - failed.length,
       failedShopCount: failed.length,
+      skippedShops,
       summaries,
     }, null, 2));
 
@@ -131,4 +149,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { parseIdFilter, selectPilotShop, resolveSeededGmsCampaignIds, main };
+module.exports = { parseIdFilter, selectPilotShop, selectProductionApiShops, resolveSeededGmsCampaignIds, main };
