@@ -1,6 +1,33 @@
 'use strict';
 
 const { persistPilotGmsDay } = require('./unified-promotion-writers');
+const { normalizeCampaignMetric } = require('./sync-product-ads');
+
+function hydrateCampaignDailySourceMetrics(row) {
+  if (!row) return row;
+  const metric = row.raw_json && row.raw_json.metric && typeof row.raw_json.metric === 'object'
+    ? row.raw_json.metric
+    : null;
+  if (!metric) return row;
+
+  const source = normalizeCampaignMetric(metric);
+  return {
+    ...row,
+    ctr: row.ctr == null ? source.ctr : Number(row.ctr),
+    broad_cvr: row.broad_cvr == null ? source.broadCvr : Number(row.broad_cvr),
+    direct_cvr: row.direct_cvr == null ? source.directCvr : Number(row.direct_cvr),
+    broad_roas: row.broad_roas == null ? source.broadRoas : Number(row.broad_roas),
+    direct_roas: row.direct_roas == null ? source.directRoas : Number(row.direct_roas),
+    add_to_cart: row.add_to_cart == null ? source.addToCart : Number(row.add_to_cart),
+    add_to_cart_rate: row.add_to_cart_rate == null ? source.addToCartRate : Number(row.add_to_cart_rate),
+    cost_per_conversion: row.cost_per_conversion == null ? source.costPerConversion : Number(row.cost_per_conversion),
+    cost_per_direct_conversion: row.cost_per_direct_conversion == null
+      ? source.costPerDirectConversion
+      : Number(row.cost_per_direct_conversion),
+    broad_acos: row.broad_acos == null ? source.broadAcos : Number(row.broad_acos),
+    direct_acos: row.direct_acos == null ? source.directAcos : Number(row.direct_acos),
+  };
+}
 
 class ShopeeAnalyticsRepository {
   constructor({ pool }) {
@@ -79,8 +106,11 @@ class ShopeeAnalyticsRepository {
     await queryable.query(
       `INSERT INTO shopee_ad_campaign_daily
        (shop_id, campaign_id, event_date, impressions, clicks, expense,
-        broad_gmv, broad_orders, broad_units, direct_gmv, direct_roas, direct_orders, direct_units, raw_json, synced_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,now())
+        broad_gmv, broad_orders, broad_units, direct_gmv, direct_roas, direct_orders, direct_units,
+        ctr, broad_cvr, direct_cvr, broad_roas, add_to_cart, add_to_cart_rate,
+        cost_per_conversion, cost_per_direct_conversion, broad_acos, direct_acos,
+        raw_json, synced_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24::jsonb,now())
        ON CONFLICT (shop_id, campaign_id, event_date) DO UPDATE SET
         impressions=EXCLUDED.impressions,
         clicks=EXCLUDED.clicks,
@@ -92,6 +122,16 @@ class ShopeeAnalyticsRepository {
         direct_roas=EXCLUDED.direct_roas,
         direct_orders=EXCLUDED.direct_orders,
         direct_units=EXCLUDED.direct_units,
+        ctr=EXCLUDED.ctr,
+        broad_cvr=EXCLUDED.broad_cvr,
+        direct_cvr=EXCLUDED.direct_cvr,
+        broad_roas=EXCLUDED.broad_roas,
+        add_to_cart=EXCLUDED.add_to_cart,
+        add_to_cart_rate=EXCLUDED.add_to_cart_rate,
+        cost_per_conversion=EXCLUDED.cost_per_conversion,
+        cost_per_direct_conversion=EXCLUDED.cost_per_direct_conversion,
+        broad_acos=EXCLUDED.broad_acos,
+        direct_acos=EXCLUDED.direct_acos,
         raw_json=EXCLUDED.raw_json,
         synced_at=now()`,
       [
@@ -99,6 +139,10 @@ class ShopeeAnalyticsRepository {
         p.impressions || 0, p.clicks || 0, p.expense || 0,
         p.broadGmv || 0, p.broadOrders || 0, p.broadUnits || 0,
         p.directGmv ?? null, p.directRoas ?? null, p.directOrders || 0, p.directUnits || 0,
+        p.ctr ?? null, p.broadCvr ?? null, p.directCvr ?? null, p.broadRoas ?? null,
+        p.addToCart ?? null, p.addToCartRate ?? null,
+        p.costPerConversion ?? null, p.costPerDirectConversion ?? null,
+        p.broadAcos ?? null, p.directAcos ?? null,
         JSON.stringify(rawJson || {}),
       ],
     );
@@ -162,9 +206,6 @@ class ShopeeAnalyticsRepository {
         queryable: client,
       });
 
-      // GMS item-performance only returns items with performance. It must never be
-      // treated as a complete campaign-membership snapshot when historical membership
-      // is unavailable.
       if (Array.isArray(membershipItemIds) && membershipItemIds.length) {
         await this.replaceMembershipDay({
           shopId,
@@ -192,8 +233,6 @@ class ShopeeAnalyticsRepository {
         await this.insertRawSnapshot({ ...snapshot, shopId, queryable: client });
       }
 
-      // The legacy raw/relational records and unified promotion row form one
-      // unit of work. A unified write failure rolls back all legacy writes.
       if (adPromotionRepository) {
         await persistPilotGmsDay({
           repository: {
@@ -218,7 +257,7 @@ class ShopeeAnalyticsRepository {
        ORDER BY event_date ASC`,
       [shopId, campaignId, startDate, endDate],
     );
-    return result.rows;
+    return result.rows.map(hydrateCampaignDailySourceMetrics);
   }
 
   async loadItemDaily({ shopId, campaignId, startDate, endDate }) {
@@ -279,4 +318,4 @@ class ShopeeAnalyticsRepository {
   }
 }
 
-module.exports = { ShopeeAnalyticsRepository };
+module.exports = { hydrateCampaignDailySourceMetrics, ShopeeAnalyticsRepository };
