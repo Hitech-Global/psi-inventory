@@ -4,6 +4,8 @@ const crypto = require('crypto');
 const { ENDPOINTS } = require('./catalog');
 const { normalizePerformance } = require('./metrics');
 
+const GMS_COST_FIXED_POINT_SCALE = 100000;
+
 function toShopeeDate(input) {
   const d = input instanceof Date ? input : new Date(`${input}T00:00:00Z`);
   if (Number.isNaN(d.getTime())) throw new Error(`Invalid date: ${input}`);
@@ -16,12 +18,51 @@ function unwrapResponse(payload) {
   return payload && payload.response ? payload.response : payload || {};
 }
 
+function decodeGmsFixedPointCost(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n / GMS_COST_FIXED_POINT_SCALE : null;
+}
+
+function normalizeGmsPerformance(report = {}) {
+  const base = normalizePerformance(report);
+  const sourceCostPerConversion = decodeGmsFixedPointCost(report.cpc);
+  const sourceCostPerDirectConversion = decodeGmsFixedPointCost(report.cpdc);
+
+  const costPerConversion = sourceCostPerConversion !== null
+    ? sourceCostPerConversion
+    : base.costPerConversion;
+  const costPerDirectConversion = sourceCostPerDirectConversion !== null
+    ? sourceCostPerDirectConversion
+    : base.costPerDirectConversion;
+
+  // GMS `expense` is rounded to the display currency precision, while cpc/cpdc
+  // carry fixed-point source precision. Use cpc * orders for ACOS when GMV exists,
+  // but never manufacture Direct GMV from ROAS/cost because the source omits it.
+  const preciseBroadExpense = base.broadOrders > 0 && sourceCostPerConversion !== null
+    ? sourceCostPerConversion * base.broadOrders
+    : base.expense;
+  const broadAcos = base.broadGmv > 0 ? preciseBroadExpense / base.broadGmv : 0;
+
+  return {
+    ...base,
+    costPerConversion,
+    costPerDirectConversion,
+    broadAcos,
+    gmsCostPrecision: {
+      scale: GMS_COST_FIXED_POINT_SCALE,
+      sourceCostPerConversionAvailable: sourceCostPerConversion !== null,
+      sourceCostPerDirectConversionAvailable: sourceCostPerDirectConversion !== null,
+    },
+  };
+}
+
 function extractCampaignPerformance(payload) {
   const response = unwrapResponse(payload);
   const report = response.report || response.performance || response;
   return {
     campaignId: response.campaign_id ?? report.campaign_id ?? null,
-    ...normalizePerformance(report),
+    ...normalizeGmsPerformance(report),
     raw: response,
   };
 }
@@ -36,7 +77,7 @@ function normalizeItemRow(row) {
   const report = row.report || row.performance || row;
   return {
     itemId: row.item_id ?? report.item_id ?? null,
-    ...normalizePerformance(report),
+    ...normalizeGmsPerformance(report),
     raw: row,
   };
 }
@@ -156,7 +197,7 @@ function leftJoinMembershipPerformance(itemIds, performanceRows) {
     return {
       itemId,
       hasPerformance: false,
-      ...normalizePerformance({}),
+      ...normalizeGmsPerformance({}),
       raw: null,
     };
   });
@@ -199,8 +240,11 @@ async function syncGmsDay({ client, shopId, accessToken, campaignId, date, membe
 }
 
 module.exports = {
+  GMS_COST_FIXED_POINT_SCALE,
   toShopeeDate,
   unwrapResponse,
+  decodeGmsFixedPointCost,
+  normalizeGmsPerformance,
   extractCampaignPerformance,
   extractItemRows,
   normalizeItemRow,
