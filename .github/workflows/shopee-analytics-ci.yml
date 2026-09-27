@@ -50,3 +50,24 @@ jobs:
           (cd shopee-analytics/deploy/desktop && docker compose --env-file runtime/.env config -q)
           sh -n shopee-analytics/deploy/desktop/backup-postgres.sh
           sh -n shopee-analytics/deploy/desktop/verify-restore.sh
+
+  windows-powershell-syntax:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse desktop PowerShell verifier
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path 'shopee-analytics/deploy/desktop/verify-m612-readonly.ps1'),
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
+          Write-Host 'verify-m612-readonly.ps1 syntax: ok'
