@@ -32,10 +32,45 @@ const EXPECTED = {
   directAcos: 21.89 / 98,
 };
 
-function requiredPositiveInt(name) {
-  const value = Number(process.env[name]);
+function optionalPositiveInt(name) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === null || String(raw).trim() === '') return null;
+  const value = Number(raw);
   if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${name} must be a positive integer`);
   return value;
+}
+
+async function resolveShopId(pool) {
+  const explicit = optionalPositiveInt('SHOPEE_VERIFY_SHOP_ID');
+  if (explicit !== null) return { shopId: explicit, source: 'ENV' };
+
+  const result = await pool.query(
+    `SELECT DISTINCT shop_id
+       FROM (
+         SELECT shop_id
+           FROM shopee_ad_campaigns
+          WHERE campaign_id=$1
+         UNION
+         SELECT shop_id
+           FROM shopee_ad_campaign_daily
+          WHERE campaign_id=$1 AND event_date=$2::date
+       ) candidates
+      ORDER BY shop_id`,
+    [CAMPAIGN_ID, EVENT_DATE],
+  );
+
+  const shopIds = result.rows
+    .map(row => Number(row.shop_id))
+    .filter(Number.isSafeInteger);
+
+  if (shopIds.length === 1) return { shopId: shopIds[0], source: 'AUTO_DETECTED' };
+  if (shopIds.length === 0) {
+    throw new Error(`M612 campaign ${CAMPAIGN_ID} was not found in stored campaign/daily data`);
+  }
+  throw new Error(
+    `M612 campaign ${CAMPAIGN_ID} exists under multiple shops (${shopIds.join(', ')}). ` +
+    'Set SHOPEE_VERIFY_SHOP_ID explicitly; no shop will be guessed.',
+  );
 }
 
 function collectAtcValues(value, path = '$', out = []) {
@@ -98,9 +133,10 @@ async function findStoredAtcCandidates(pool, { shopId, campaignId, itemId, event
 }
 
 async function main() {
-  const shopId = requiredPositiveInt('SHOPEE_VERIFY_SHOP_ID');
   const pool = createAnalyticsPool();
   try {
+    const resolvedShop = await resolveShopId(pool);
+    const shopId = resolvedShop.shopId;
     const campaigns = await listProductAdsSourceAccurate(pool, {
       shopId,
       startDate: EVENT_DATE,
@@ -126,6 +162,7 @@ async function main() {
       purpose: 'M612_2026_09_21_READ_ONLY_RECONCILIATION',
       generatedAt: new Date().toISOString(),
       shopId,
+      shopIdSource: resolvedShop.source,
       campaign: {
         campaignId: campaign.campaignId,
         adType: campaign.adType,
