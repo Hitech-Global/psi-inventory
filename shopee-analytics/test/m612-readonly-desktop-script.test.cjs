@@ -37,6 +37,7 @@ assert(script.includes("exit 3"), 'INCOMPLETE must remain distinct from PASS');
 assert(!script.includes('function Run-Git([string[]]$Args)'), 'PowerShell automatic $Args must not be reused as a function parameter');
 assert(script.includes('function Run-Git([string[]]$GitArgs)'), 'verifier must use an explicit non-reserved GitArgs parameter');
 assert(script.includes("Run-Git -GitArgs @('branch', '--show-current')"), 'Git helper calls must bind GitArgs explicitly');
+assert(script.includes("$status = @(Run-Git -GitArgs @('status', '--porcelain'))"), 'clean git status output must stay an array under StrictMode');
 
 assert(reconcile.includes("source: 'AUTO_DETECTED'"), 'reconciliation must report automatic shop detection provenance');
 assert(reconcile.includes('SELECT DISTINCT shop_id'), 'automatic shop detection must use stored database evidence');
