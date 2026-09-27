@@ -33,7 +33,7 @@ if ($branch -ne $ExpectedBranch) {
   Fail "Wrong branch: $branch. Expected $ExpectedBranch. No checkout/pull/merge will be performed automatically." 12
 }
 
-$status = Run-Git -GitArgs @('status', '--porcelain')
+$status = @(Run-Git -GitArgs @('status', '--porcelain'))
 if ($status.Count -gt 0 -and ($status -join '').Trim().Length -gt 0) {
   Fail "Git worktree is not clean. Refusing to rebuild the runtime. No stash/reset/clean was performed." 13
 }
