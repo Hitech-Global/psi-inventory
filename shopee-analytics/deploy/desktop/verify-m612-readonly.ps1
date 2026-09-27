@@ -1,6 +1,5 @@
 param(
-  [Parameter(Mandatory = $true)]
-  [long]$ShopId
+  [long]$ShopId = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -53,7 +52,11 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "M612 read-only verification"
 Write-Host "  branch : $branch"
 Write-Host "  HEAD   : $head"
-Write-Host "  shopId : $ShopId"
+if ($ShopId -gt 0) {
+  Write-Host "  shopId : $ShopId (explicit)"
+} else {
+  Write-Host "  shopId : auto-detect from stored M612 campaign data"
+}
 Write-Host "Safety: app-only rebuild; worker untouched; no Shopee API call; no sync; no schema; reconciliation uses SELECT only."
 
 Push-Location $ScriptDir
@@ -106,7 +109,11 @@ console.log('M612_SOURCE_PRECISION_RUNTIME=PASS');
   if ($LASTEXITCODE -ne 0) { Fail 'Running app container does not have the required M612 source-precision contract.' 23 }
 
   Write-Host 'Running SELECT-only reconciliation against the existing PostgreSQL data...'
-  & docker compose --env-file runtime/.env exec -T -e "SHOPEE_VERIFY_SHOP_ID=$ShopId" app node shopee-analytics/scripts/reconcile-m612-readonly.cjs
+  if ($ShopId -gt 0) {
+    & docker compose --env-file runtime/.env exec -T -e "SHOPEE_VERIFY_SHOP_ID=$ShopId" app node shopee-analytics/scripts/reconcile-m612-readonly.cjs
+  } else {
+    & docker compose --env-file runtime/.env exec -T app node shopee-analytics/scripts/reconcile-m612-readonly.cjs
+  }
   $reconcileExit = $LASTEXITCODE
 
   if ($reconcileExit -eq 0) {
