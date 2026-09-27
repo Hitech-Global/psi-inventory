@@ -2,7 +2,10 @@
 
 const assert = require('assert');
 const {
+  GMS_COST_FIXED_POINT_SCALE,
   toShopeeDate,
+  decodeGmsFixedPointCost,
+  normalizeGmsPerformance,
   leftJoinMembershipPerformance,
   syncGmsDay,
   createGmsRequestPacer,
@@ -11,6 +14,46 @@ const {
 const { buildShopeeSeaEventCalendar } = require('../src/event-calendar');
 
 assert.strictEqual(toShopeeDate('2026-09-18'), '18-09-2026');
+assert.strictEqual(GMS_COST_FIXED_POINT_SCALE, 100000);
+assert.strictEqual(decodeGmsFixedPointCost(79664), 0.79664);
+const k521 = normalizeGmsPerformance({
+  impression: 167,
+  clicks: 6,
+  expense: 0.8,
+  broad_gmv: 61,
+  broad_order: 1,
+  broad_order_amount: 1,
+  direct_order: 1,
+  direct_order_amount: 1,
+  broad_roi: 76.57,
+  direct_roi: 76.57,
+  cpc: 79664,
+  cpdc: 79664,
+});
+assert.strictEqual(k521.costPerConversion, 0.79664);
+assert.strictEqual(k521.costPerDirectConversion, 0.79664);
+assert(Math.abs(k521.broadAcos - (0.79664 / 61)) < 1e-12);
+assert.strictEqual(k521.broadRoas, 76.57);
+assert.strictEqual(k521.directGmv, null);
+assert.strictEqual(k521.directAcos, null);
+
+const meteor = normalizeGmsPerformance({
+  impression: 628,
+  clicks: 34,
+  expense: 8.7,
+  broad_gmv: 46,
+  broad_order: 2,
+  broad_order_amount: 2,
+  direct_order: 2,
+  direct_order_amount: 2,
+  broad_roi: 5.28,
+  direct_roi: 5.28,
+  cpc: 435212,
+  cpdc: 435212,
+});
+assert.strictEqual(meteor.costPerConversion, 4.35212);
+assert(Math.abs(meteor.broadAcos - (8.70424 / 46)) < 1e-12);
+
 const events = buildShopeeSeaEventCalendar(2026);
 assert(events.some(x => x.eventDate === '2026-09-09' && x.eventType === 'DOUBLE_DAY' && x.intensity === 'MAX'));
 assert(events.some(x => x.eventDate === '2026-09-25' && x.eventType === 'PAYDAY_25'));
