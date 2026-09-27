@@ -244,13 +244,15 @@
       </div>
 
       <div class="ads-type-tabs" aria-label="广告类型">
-        <button class="ads-type-tab active" data-ads-type="gms" type="button">GMV Max</button>
+        <button class="ads-type-tab active" data-ads-type="gms" type="button">总览</button>
+        <button class="ads-type-tab" data-ads-type="gmvmax" type="button">GMV Max</button>
         <button class="ads-type-tab" data-ads-type="manual" type="button">单品广告</button>
-        <button class="ads-type-tab" data-ads-type="auto" type="button">全店广告</button>
+        <button class="ads-type-tab" data-ads-type="auto" type="button">全店推</button>
         <button class="ads-type-tab" data-ads-type="groups" type="button">广告组</button>
       </div>
 
-      <div id="adsGmsPanel">
+      <div id="adsGmsPanel"></div>
+      <div id="adsGmvMaxPanel" class="hidden">
       <section id="summary" class="kpi-grid hidden"></section>
 
       <main id="adsGrid" class="grid">

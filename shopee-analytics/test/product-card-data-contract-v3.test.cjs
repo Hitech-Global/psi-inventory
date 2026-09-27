@@ -7,7 +7,7 @@ const path = require('path');
 const ui = fs.readFileSync(path.join(__dirname, '..', 'web', 'product-card-data-contract-v3.js'), 'utf8');
 const server = fs.readFileSync(path.join(__dirname, '..', 'src', 'standalone-server.js'), 'utf8');
 
-for (const label of ['总览', '单品广告', '全店推', '广告组']) assert(ui.includes(label));
+for (const label of ['总览', 'GMV Max', '单品广告', '全店推', '广告组']) assert(ui.includes(label));
 assert(ui.includes('SHOPEE API'));
 assert(ui.includes('MANUAL IMPORT'));
 assert(ui.includes('productCardContextV2'));

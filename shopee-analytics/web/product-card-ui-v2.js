@@ -47,6 +47,7 @@
 
   function setPanelVisibility(type) {
     $('#adsGmsPanel')?.classList.toggle('hidden', type !== 'gms');
+    $('#adsGmvMaxPanel')?.classList.toggle('hidden', type !== 'gmvmax');
     $('#adsManualPanel')?.classList.toggle('hidden', type !== 'manual');
     $('#adsAutoPanel')?.classList.toggle('hidden', type !== 'auto');
     $('#adsGroupImportPanel')?.classList.toggle('hidden', type !== 'groups');
@@ -79,7 +80,7 @@
     const tabs = $('.ads-type-tabs');
     if (!tabs) return;
     tabs.setAttribute('aria-label', 'Product Card 广告类型');
-    const labels = { gms: '总览', manual: '单品广告', auto: '全店推', groups: '广告组' };
+    const labels = { gms: '总览', gmvmax: 'GMV Max', manual: '单品广告', auto: '全店推', groups: '广告组' };
     $$('.ads-type-tab').forEach(button => {
       if (labels[button.dataset.adsType]) button.textContent = labels[button.dataset.adsType];
     });
@@ -100,9 +101,6 @@
         </div>`;
       tabs.parentNode.insertBefore(parent, tabs);
     }
-
-    $('#summary')?.classList.add('product-card-legacy-hidden');
-    $('#adsGrid')?.classList.add('product-card-legacy-hidden');
 
     const gmsPanel = $('#adsGmsPanel');
     if (gmsPanel && !$('#productCardOverviewV2')) {
@@ -370,6 +368,7 @@
     setPanelVisibility(type);
     try {
       if (type === 'gms') await loadProductCardOverviewV2();
+      else if (type === 'gmvmax') { /* legacy GMV Max loader is owned by app.js */ }
       else if (type === 'manual' || type === 'auto') await loadProductAdsV2(type);
       else if (type === 'groups') await loadAdGroupsV2();
     } catch (error) {

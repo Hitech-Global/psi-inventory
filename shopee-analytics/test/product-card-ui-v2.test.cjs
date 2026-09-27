@@ -8,7 +8,7 @@ const ui = fs.readFileSync(path.join(__dirname, '..', 'web', 'product-card-ui-v2
 const repo = fs.readFileSync(path.join(__dirname, '..', 'src', 'ad-promotion-repository.js'), 'utf8');
 const server = fs.readFileSync(path.join(__dirname, '..', 'src', 'standalone-server.js'), 'utf8');
 
-for (const label of ['PRODUCT CARD', 'Product Card', '总览', '单品广告', '全店推', '广告组']) {
+for (const label of ['PRODUCT CARD', 'Product Card', '总览', 'GMV Max', '单品广告', '全店推', '广告组']) {
   assert(ui.includes(label), `Product Card hierarchy must include ${label}`);
 }
 
