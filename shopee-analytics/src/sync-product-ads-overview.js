@@ -18,13 +18,14 @@ function countNumber(row, names) {
   return optionalNumber(row, names) ?? 0;
 }
 
-function ratioValue(row, names) {
+function percentNumberToFraction(row, names) {
   const value = optionalNumber(row, names);
   if (value === null) return null;
-  // Shopee endpoints have historically exposed rate fields in either fraction
-  // form (0.028) or percentage-number form (2.8). Normalize for storage while
-  // retaining the exact source row in raw_json for reconciliation.
-  return value > 1 && value <= 100 ? value / 100 : value;
+  // Shopee Ads documents CTR / CR / CIR as percentage-number fields:
+  // e.g. 0.50 means 0.50%, not 50%.  Store all rates internally as
+  // fractions so the web layer can render them with a single percent formatter.
+  // Do not use magnitude heuristics here: they corrupt legitimate sub-1% rates.
+  return value / 100;
 }
 
 function responseRows(payload) {
@@ -52,9 +53,9 @@ function normalizeShopProductAdsRow(row) {
   const expense = optionalNumber(row, ['expense', 'spend']);
   const directRoas = optionalNumber(row, ['direct_roas', 'direct_roi']);
   const broadRoas = optionalNumber(row, ['broad_roas', 'broad_roi']);
-  const directCvr = ratioValue(row, ['direct_conversions', 'direct_cvr', 'direct_cr']);
-  const broadCvr = ratioValue(row, ['broad_conversions', 'broad_cvr', 'cr']);
-  const ctr = ratioValue(row, ['ctr']);
+  const directCvr = percentNumberToFraction(row, ['direct_conversions', 'direct_cvr', 'direct_cr']);
+  const broadCvr = percentNumberToFraction(row, ['broad_conversions', 'broad_cvr', 'cr']);
+  const ctr = percentNumberToFraction(row, ['ctr']);
   return {
     eventDate,
     impressions,
@@ -74,8 +75,8 @@ function normalizeShopProductAdsRow(row) {
     costPerDirectConversion: optionalNumber(row, ['cost_per_direct_conversion', 'cpdc']),
     directRoas: directRoas ?? (expense && directGmv !== null ? directGmv / expense : null),
     broadRoas: broadRoas ?? (expense && broadGmv !== null ? broadGmv / expense : null),
-    directAcos: ratioValue(row, ['direct_acos', 'direct_cir']),
-    broadAcos: ratioValue(row, ['broad_acos', 'broad_cir']),
+    directAcos: percentNumberToFraction(row, ['direct_acos', 'direct_cir']),
+    broadAcos: percentNumberToFraction(row, ['broad_acos', 'broad_cir']),
     raw: row,
   };
 }
@@ -127,6 +128,8 @@ async function syncProductAdsOverviewWindow({
 
 module.exports = {
   responseRows,
+  optionalNumber,
+  percentNumberToFraction,
   normalizeShopProductAdsRow,
   normalizeShopProductAdsPayload,
   fetchAllCpcAdsDailyPerformance,
