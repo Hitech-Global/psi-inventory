@@ -26,7 +26,13 @@ assert.strictEqual(partial.directRoas, null);
 (async () => {
   const repositoryCalls = [];
   const repository = new ShopeeAnalyticsRepository({
-    pool: { query: async (...args) => { repositoryCalls.push(args); return { rows: [] }; } },
+    pool: {
+      query: async (...args) => {
+        repositoryCalls.push(args);
+        if (String(args[0]).includes('information_schema.columns')) return { rows: [{ available: false }] };
+        return { rows: [] };
+      },
+    },
   });
   await repository.upsertCampaignDaily({
     shopId: 1,
@@ -34,7 +40,9 @@ assert.strictEqual(partial.directRoas, null);
     eventDate: '2026-09-18',
     performance: missing,
   });
-  const saved = repositoryCalls[0][1];
+  const insertCall = repositoryCalls.find(([sql]) => String(sql).includes('INSERT INTO shopee_ad_campaign_daily'));
+  assert(insertCall, 'campaign daily insert must execute after schema capability probe');
+  const saved = insertCall[1];
   assert.strictEqual(saved[9], null, 'missing Direct GMV must persist as NULL');
   assert.strictEqual(saved[10], 3.97, 'source Direct ROI must persist unchanged');
 
