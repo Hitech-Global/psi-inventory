@@ -1,7 +1,7 @@
 'use strict';
 
 const { ENDPOINTS } = require('./catalog');
-const { normalizePerformance } = require('./metrics');
+const { normalizePerformance, safeDiv } = require('./metrics');
 
 function toShopeeAdsDate(value) {
   const raw = String(value || '');
@@ -39,9 +39,21 @@ function adsPercentToFraction(value) {
   if (value === undefined || value === null || value === '') return null;
   const number = Number(value);
   if (!Number.isFinite(number)) return null;
-  // Shopee Ads documents CTR / CR / CIR as percentage-number values.  In
-  // particular 0.50 means 0.50%, not 50%, so magnitude heuristics are unsafe.
   return number / 100;
+}
+
+function optionalNumber(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function firstNumber(row, keys) {
+  for (const key of keys) {
+    const value = optionalNumber(row && row[key]);
+    if (value !== null) return value;
+  }
+  return null;
 }
 
 function normalizeCampaignMetric(metric = {}) {
@@ -52,7 +64,30 @@ function normalizeCampaignMetric(metric = {}) {
   if (ctr !== null) source.ctr = ctr;
   if (broadCvr !== null) source.broad_cvr = broadCvr;
   if (directCvr !== null) source.direct_cvr = directCvr;
-  return normalizePerformance(source);
+
+  const normalized = normalizePerformance(source);
+  const broadRoas = firstNumber(metric, ['broad_roi', 'broad_roas', 'roi', 'roas']);
+  const directRoas = firstNumber(metric, ['direct_roi', 'direct_roas']);
+  const addToCart = firstNumber(metric, ['add_to_cart', 'add_to_cart_num', 'add_to_cart_count']) ?? 0;
+  const costPerConversion = firstNumber(metric, ['cpc', 'cost_per_conversion']);
+  const costPerDirectConversion = firstNumber(metric, ['cpdc', 'cost_per_direct_conversion']);
+
+  return {
+    ...normalized,
+    ctr: ctr ?? normalized.ctr,
+    broadCvr: broadCvr ?? normalized.broadCvr,
+    directCvr: directCvr ?? normalized.directCvr,
+    broadRoas: broadRoas ?? normalized.broadRoas,
+    directRoas: directRoas ?? normalized.directRoas,
+    addToCart,
+    addToCartRate: safeDiv(addToCart, normalized.clicks),
+    costPerConversion: costPerConversion ?? safeDiv(normalized.expense, normalized.broadOrders),
+    costPerDirectConversion: costPerDirectConversion ?? safeDiv(normalized.expense, normalized.directOrders),
+    // Seller Centre ACOS is expense / attributed GMV. The API CIR field can
+    // be rounded more coarsely, so derive from exact additive source metrics.
+    broadAcos: safeDiv(normalized.expense, normalized.broadGmv),
+    directAcos: normalized.directGmv === null ? null : safeDiv(normalized.expense, normalized.directGmv),
+  };
 }
 
 function unwrapResponseList(payload) {
@@ -130,6 +165,8 @@ module.exports = {
   normalizeProductAdType,
   campaignFamilyForAdType,
   adsPercentToFraction,
+  optionalNumber,
+  firstNumber,
   normalizeCampaignMetric,
   normalizeProductCampaignDailyPayload,
   fetchProductCampaignDailyPerformance,
