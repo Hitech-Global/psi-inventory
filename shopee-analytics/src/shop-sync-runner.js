@@ -160,6 +160,19 @@ async function runShopSyncCycle({
     }
   }
 
+  // Product Card child families are also read-only ADS data.  In pilot mode we
+  // keep them confined to the configured pilot shop, but do not suppress them:
+  // otherwise the Product Card page would show a correct total with permanently
+  // empty Manual / Auto child views.  Ad Group remains MANUAL_IMPORT only.
+  if (mode === 'daily' && apiCapable) {
+    if (pilot) assertPilotIdentityShopAllowed(shopId);
+    await run('product-ads-7d', () => service.syncProductAdsDaily({
+      startDate: addDays(today, -6),
+      endDate: today,
+      adTypes: ['manual', 'auto'],
+    }), { required: false });
+  }
+
   if (!pilot) {
     await run('orders-recent', () => service.syncOrders({
       timeFrom: nowEpoch - 3 * 86400,
@@ -172,12 +185,6 @@ async function runShopSyncCycle({
       updateTimeFrom: nowEpoch - 3 * 86400,
       updateTimeTo: nowEpoch,
     }));
-
-    await run('product-ads-7d', () => service.syncProductAdsDaily({
-      startDate: addDays(today, -6),
-      endDate: today,
-      adTypes: ['manual', 'auto'],
-    }), { required: false });
 
     await run('promotions', () => service.syncPromotions(), { required: false });
 
