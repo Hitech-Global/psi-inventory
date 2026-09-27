@@ -134,7 +134,28 @@ class ShopeeAdPromotionRepository {
 
   async list({ shopId, startDate, endDate, promotionType = null, dataSource = null, campaignStatus = null, productId = null }) {
     const result = await this.pool.query(
-      `SELECT d.*, CASE WHEN COUNT(i.item_id) FILTER (WHERE i.item_id IS NOT NULL) > 0 THEN jsonb_agg(jsonb_build_object('itemId',i.item_id,'productName',i.product_name) ORDER BY i.item_id) FILTER (WHERE i.item_id IS NOT NULL) ELSE '[]'::jsonb END AS items
+      `SELECT d.*, CASE WHEN COUNT(i.item_id) FILTER (WHERE i.item_id IS NOT NULL) > 0 THEN jsonb_agg(
+         jsonb_build_object(
+           'itemId', i.item_id,
+           'itemSku', i.item_sku,
+           'productName', i.product_name,
+           'impressions', i.impressions,
+           'clicks', i.clicks,
+           'expense', i.expense,
+           'orders', i.orders,
+           'gmv', i.gmv,
+           'sourceRoas', i.source_roas,
+           'directGmv', i.direct_gmv,
+           'directRoas', i.direct_roas,
+           'ctr', i.ctr,
+           'cvr', i.cvr,
+           'addToCart', i.add_to_cart,
+           'weeklySales', i.weekly_sales,
+           'dataQualityStatus', i.data_quality_status,
+           'qualityFlags', i.quality_flags,
+           'remark', i.remark
+         ) ORDER BY i.item_id
+       ) FILTER (WHERE i.item_id IS NOT NULL) ELSE '[]'::jsonb END AS items
        FROM shopee_ad_promotion_daily d
        LEFT JOIN shopee_ad_promotion_item_daily i ON i.shop_id=d.shop_id AND i.promotion_key=d.promotion_key AND i.period_start=d.period_start AND i.period_end=d.period_end
        WHERE d.shop_id=$1 AND d.period_start >= $2 AND d.period_end <= $3 AND ($4::text IS NULL OR d.promotion_type=$4) AND ($5::text IS NULL OR d.data_source=$5) AND ($6::text IS NULL OR d.campaign_status=$6) AND ($7::bigint IS NULL OR i.item_id=$7)
