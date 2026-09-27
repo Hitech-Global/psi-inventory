@@ -1,6 +1,7 @@
 'use strict';
 
-const { normalizePerformance, safeDiv, sumPerformance } = require('./metrics');
+const { safeDiv } = require('./metrics');
+const { normalizeSourceAwarePerformance, sumSourceAwarePerformance } = require('./source-aware-metrics');
 
 function rowDate(row) {
   return String(row.date ?? row.event_date ?? row.eventDate ?? '').slice(0, 10);
@@ -23,7 +24,7 @@ function rollingPerformance(rows, days, endDate) {
   const end = new Date(`${endDate}T00:00:00Z`);
   const start = new Date(end);
   start.setUTCDate(start.getUTCDate() - days + 1);
-  return sumPerformance((rows || []).filter(row => {
+  return sumSourceAwarePerformance((rows || []).filter(row => {
     const d = new Date(`${rowDate(row)}T00:00:00Z`);
     return Number.isFinite(d.getTime()) && d >= start && d <= end;
   }));
@@ -34,7 +35,7 @@ function consecutiveOrderDays(rows, endDate) {
   for (const row of rows || []) {
     const d = rowDate(row);
     if (!d) continue;
-    const p = normalizePerformance(row);
+    const p = normalizeSourceAwarePerformance(row);
     byDate.set(d, (byDate.get(d) || 0) + p.directOrders);
   }
   let count = 0;
@@ -59,9 +60,9 @@ function buildDailyAllocation(itemDailyRows = []) {
 
   const output = [];
   for (const [date, rows] of [...grouped.entries()].sort(([a], [b]) => a.localeCompare(b))) {
-    const total = sumPerformance(rows);
+    const total = sumSourceAwarePerformance(rows);
     for (const row of rows) {
-      const p = normalizePerformance(row);
+      const p = normalizeSourceAwarePerformance(row);
       output.push({
         date,
         itemId: itemId(row),
@@ -120,7 +121,7 @@ function buildAnalysisPackage({
   }
 
   const items = [...grouped.entries()].map(([id, rows]) => {
-    const p = sumPerformance(rows);
+    const p = sumSourceAwarePerformance(rows);
     const itemAllocation = allocation.filter(row => row.itemId === id);
     return {
       itemId: id,
@@ -129,14 +130,14 @@ function buildAnalysisPackage({
       ...p,
       gmvPerDirectOrder: p.directGmv === null ? null : safeDiv(p.directGmv, p.directOrders),
       consecutiveOrderDays: consecutiveOrderDays(rows, endDate),
-      activeOrderDays: new Set(rows.filter(r => normalizePerformance(r).directOrders > 0).map(rowDate)).size,
+      activeOrderDays: new Set(rows.filter(r => normalizeSourceAwarePerformance(r).directOrders > 0).map(rowDate)).size,
       spendShareVolatility: coefficientVariation(itemAllocation.map(r => r.spendShare)),
     };
   });
 
   const p7 = rollingPerformance(campaignDaily, 7, endDate);
   const p14 = rollingPerformance(campaignDaily, 14, endDate);
-  const campaignDailyPerf = campaignDaily.map(normalizePerformance);
+  const campaignDailyPerf = campaignDaily.map(normalizeSourceAwarePerformance);
 
   return {
     schemaVersion: '1.0',
