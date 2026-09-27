@@ -1,6 +1,11 @@
 'use strict';
 
 const { parseCsv, parseWorkbook, parseDatePeriod, normalizeShopeeMetric } = require('./shopee-ad-group-import');
+const { normalizeGmsPerformance } = require('./sync-gms');
+
+const MONEY_TOLERANCE = 0.011;
+const TWO_DECIMAL_TOLERANCE = 0.0051;
+const PERCENT_DISPLAY_TOLERANCE = 0.000051;
 
 const METADATA_ALIASES = Object.freeze({
   '用户名称': 'User Name',
@@ -76,7 +81,10 @@ function metric(row, field, { percentage = false, required = true } = {}) {
   return value;
 }
 function safeDiv(numerator, denominator) {
-  return denominator ? numerator / denominator : 0;
+  const n = Number(numerator);
+  const d = Number(denominator);
+  if (!Number.isFinite(n) || !Number.isFinite(d) || d === 0) return 0;
+  return n / d;
 }
 function nearlyEqual(actual, expected, tolerance = 1e-9) {
   return Number.isFinite(Number(actual)) && Math.abs(Number(actual) - Number(expected)) <= tolerance;
@@ -150,15 +158,10 @@ function parseGmsSellerCentreReport(rows) {
 
   const summaryRow = dataRows[0];
   if (String(summaryRow['Product ID'] || '').trim() !== '-') throw new Error('GMS Seller Centre first metric row must be the store summary');
-  const itemRows = dataRows.slice(1);
-  const items = itemRows.map(row => {
+  const items = dataRows.slice(1).map(row => {
     const itemId = Number(String(row['Product ID'] || '').trim());
     if (!Number.isSafeInteger(itemId) || itemId <= 0) throw new Error('GMS Seller Centre Product ID must be a positive integer');
-    return {
-      itemId,
-      productName: String(row['Product Name'] || '').trim() || null,
-      metrics: rowMetrics(row),
-    };
+    return { itemId, productName: String(row['Product Name'] || '').trim() || null, metrics: rowMetrics(row) };
   });
 
   const summary = rowMetrics(summaryRow);
@@ -166,13 +169,7 @@ function parseGmsSellerCentreReport(rows) {
   for (const [key, , tolerance] of BASE_FIELDS) {
     const childSum = items.reduce((total, item) => total + item.metrics[key], 0);
     const expected = summary[key];
-    childSumChecks.push({
-      field: key,
-      expected,
-      childSum,
-      status: nearlyEqual(childSum, expected, tolerance) ? 'PASS' : 'FAIL',
-      tolerance,
-    });
+    childSumChecks.push({ field: key, expected, childSum, status: nearlyEqual(childSum, expected, tolerance) ? 'PASS' : 'FAIL', tolerance });
   }
   if (childSumChecks.some(row => row.status === 'FAIL')) {
     const failed = childSumChecks.filter(row => row.status === 'FAIL').map(row => row.field).join(', ');
@@ -198,28 +195,74 @@ function parseGmsSellerCentreFile({ buffer, filename = '' }) {
   return parseGmsSellerCentreReport(rows);
 }
 
+function rawReport(row) {
+  return row?.raw_json?.report || row?.rawJson?.report || row?.raw?.report || {};
+}
+
+function fallbackReport(row = {}) {
+  return {
+    impression: row.impressions,
+    clicks: row.clicks,
+    expense: row.expense,
+    broad_gmv: row.broad_gmv ?? row.broadGmv,
+    broad_order: row.broad_orders ?? row.broadOrders,
+    broad_order_amount: row.broad_units ?? row.broadUnits,
+    direct_gmv: row.direct_gmv ?? row.directGmv,
+    direct_order: row.direct_orders ?? row.directOrders,
+    direct_order_amount: row.direct_units ?? row.directUnits,
+    broad_roi: row.broad_roas ?? row.broadRoas,
+    direct_roi: row.direct_roas ?? row.directRoas,
+  };
+}
+
 function normalizeApiItem(row) {
+  const source = normalizeGmsPerformance({ ...fallbackReport(row), ...rawReport(row) });
+  const directGmv = row.direct_gmv == null && row.directGmv == null ? source.directGmv : Number(row.direct_gmv ?? row.directGmv);
   return {
     itemId: Number(row.item_id ?? row.itemId),
-    impressions: Number(row.impressions ?? 0),
-    clicks: Number(row.clicks ?? 0),
-    broadOrders: Number(row.broad_orders ?? row.broadOrders ?? 0),
-    directOrders: Number(row.direct_orders ?? row.directOrders ?? 0),
-    broadUnits: Number(row.broad_units ?? row.broadUnits ?? 0),
-    directUnits: Number(row.direct_units ?? row.directUnits ?? 0),
-    broadGmv: Number(row.broad_gmv ?? row.broadGmv ?? 0),
-    directGmv: row.direct_gmv == null && row.directGmv == null ? null : Number(row.direct_gmv ?? row.directGmv),
-    expense: Number(row.expense ?? 0),
-    directRoas: row.direct_roas == null && row.directRoas == null ? null : Number(row.direct_roas ?? row.directRoas),
+    impressions: Number(row.impressions ?? source.impressions),
+    clicks: Number(row.clicks ?? source.clicks),
+    broadOrders: Number(row.broad_orders ?? row.broadOrders ?? source.broadOrders),
+    directOrders: Number(row.direct_orders ?? row.directOrders ?? source.directOrders),
+    broadUnits: Number(row.broad_units ?? row.broadUnits ?? source.broadUnits),
+    directUnits: Number(row.direct_units ?? row.directUnits ?? source.directUnits),
+    broadGmv: Number(row.broad_gmv ?? row.broadGmv ?? source.broadGmv),
+    directGmv,
+    expense: Number(row.expense ?? source.expense),
+    costPerConversion: source.costPerConversion,
+    costPerDirectConversion: source.costPerDirectConversion,
+    broadRoas: source.broadRoas,
+    directRoas: row.direct_roas == null && row.directRoas == null ? source.directRoas : Number(row.direct_roas ?? row.directRoas),
+    broadAcos: source.broadAcos,
+    directAcos: source.directAcos,
+  };
+}
+
+function normalizeApiCampaign(row) {
+  const source = normalizeGmsPerformance({ ...fallbackReport(row), ...rawReport(row) });
+  return {
+    impressions: Number(row.impressions ?? source.impressions),
+    clicks: Number(row.clicks ?? source.clicks),
+    expense: Number(row.expense ?? source.expense),
+    broadGmv: Number(row.broad_gmv ?? row.broadGmv ?? source.broadGmv),
+    broadOrders: Number(row.broad_orders ?? row.broadOrders ?? source.broadOrders),
+    broadUnits: Number(row.broad_units ?? row.broadUnits ?? source.broadUnits),
+    directGmv: row.direct_gmv == null && row.directGmv == null ? source.directGmv : Number(row.direct_gmv ?? row.directGmv),
+    directOrders: Number(row.direct_orders ?? row.directOrders ?? source.directOrders),
+    directUnits: Number(row.direct_units ?? row.directUnits ?? source.directUnits),
+    costPerConversion: source.costPerConversion,
+    costPerDirectConversion: source.costPerDirectConversion,
+    broadRoas: source.broadRoas,
+    directRoas: row.direct_roas == null && row.directRoas == null ? source.directRoas : Number(row.direct_roas ?? row.directRoas),
+    broadAcos: source.broadAcos,
+    directAcos: source.directAcos,
   };
 }
 
 function aggregateCompleteItemDirectGmv(apiItems) {
   if (!Array.isArray(apiItems) || !apiItems.length) return { available: false, value: null, complete: false };
   const normalized = apiItems.map(normalizeApiItem);
-  if (normalized.some(row => row.directGmv === null || !Number.isFinite(row.directGmv))) {
-    return { available: false, value: null, complete: false };
-  }
+  if (normalized.some(row => row.directGmv === null || !Number.isFinite(row.directGmv))) return { available: false, value: null, complete: false };
   return { available: true, value: normalized.reduce((sum, row) => sum + row.directGmv, 0), complete: true };
 }
 
@@ -227,20 +270,12 @@ function check(field, actual, expected, { tolerance = 1e-9, provenance = 'API_SO
   if (actual === null || actual === undefined || !Number.isFinite(Number(actual))) {
     return { field, expected, actual: null, status: 'SOURCE_UNAVAILABLE', provenance };
   }
-  return {
-    field,
-    expected,
-    actual: Number(actual),
-    status: nearlyEqual(Number(actual), Number(expected), tolerance) ? 'PASS' : 'FAIL',
-    provenance,
-  };
+  return { field, expected, actual: Number(actual), status: nearlyEqual(Number(actual), Number(expected), tolerance) ? 'PASS' : 'FAIL', provenance };
 }
 
 function reconcileOneItem(sellerItem, apiItem) {
   const s = sellerItem.metrics;
-  if (!apiItem) {
-    return { itemId: sellerItem.itemId, productName: sellerItem.productName, status: 'FAIL', checks: [], reason: 'ITEM_MISSING_IN_API' };
-  }
+  if (!apiItem) return { itemId: sellerItem.itemId, productName: sellerItem.productName, status: 'FAIL', checks: [], reason: 'ITEM_MISSING_IN_API' };
   const a = normalizeApiItem(apiItem);
   const checks = [
     check('impressions', a.impressions, s.impressions),
@@ -249,18 +284,18 @@ function reconcileOneItem(sellerItem, apiItem) {
     check('directOrders', a.directOrders, s.directOrders),
     check('broadUnits', a.broadUnits, s.broadUnits),
     check('directUnits', a.directUnits, s.directUnits),
-    check('broadGmv', a.broadGmv, s.broadGmv, { tolerance: 0.01 }),
-    check('directGmv', a.directGmv, s.directGmv, { tolerance: 0.01 }),
-    check('expense', a.expense, s.expense, { tolerance: 0.01 }),
-    check('ctr', safeDiv(a.clicks, a.impressions), s.ctr, { provenance: 'DERIVED_FROM_API_BASE_METRICS' }),
-    check('broadCvr', safeDiv(a.broadOrders, a.clicks), s.broadCvr, { provenance: 'DERIVED_FROM_API_BASE_METRICS' }),
-    check('directCvr', safeDiv(a.directOrders, a.clicks), s.directCvr, { provenance: 'DERIVED_FROM_API_BASE_METRICS' }),
-    check('costPerConversion', safeDiv(a.expense, a.broadOrders), s.costPerConversion, { tolerance: 0.005, provenance: 'DERIVED_FROM_API_BASE_METRICS' }),
-    check('costPerDirectConversion', safeDiv(a.expense, a.directOrders), s.costPerDirectConversion, { tolerance: 0.005, provenance: 'DERIVED_FROM_API_BASE_METRICS' }),
-    check('broadRoas', safeDiv(a.broadGmv, a.expense), s.broadRoas, { tolerance: 1e-9, provenance: 'DERIVED_FROM_API_BASE_METRICS' }),
-    check('directRoas', a.directRoas ?? (a.directGmv === null ? null : safeDiv(a.directGmv, a.expense)), s.sourceDirectRoas, { tolerance: 0.005, provenance: a.directRoas === null ? 'DERIVED_FROM_API_BASE_METRICS' : 'API_SOURCE' }),
-    check('broadAcos', safeDiv(a.expense, a.broadGmv), s.broadAcos, { provenance: 'DERIVED_FROM_API_BASE_METRICS' }),
-    check('directAcos', a.directGmv === null ? null : safeDiv(a.expense, a.directGmv), s.directAcos, { provenance: a.directGmv === null ? 'SOURCE_UNAVAILABLE' : 'DERIVED_FROM_API_BASE_METRICS' }),
+    check('broadGmv', a.broadGmv, s.broadGmv, { tolerance: MONEY_TOLERANCE }),
+    check('directGmv', a.directGmv, s.directGmv, { tolerance: MONEY_TOLERANCE }),
+    check('expense', a.expense, s.expense, { tolerance: MONEY_TOLERANCE }),
+    check('ctr', safeDiv(a.clicks, a.impressions), s.sourceCtr, { tolerance: PERCENT_DISPLAY_TOLERANCE, provenance: 'DERIVED_FROM_API_BASE_METRICS' }),
+    check('broadCvr', safeDiv(a.broadOrders, a.clicks), s.sourceBroadCvr, { tolerance: PERCENT_DISPLAY_TOLERANCE, provenance: 'DERIVED_FROM_API_BASE_METRICS' }),
+    check('directCvr', safeDiv(a.directOrders, a.clicks), s.sourceDirectCvr, { tolerance: PERCENT_DISPLAY_TOLERANCE, provenance: 'DERIVED_FROM_API_BASE_METRICS' }),
+    check('costPerConversion', a.costPerConversion, s.sourceCostPerConversion, { tolerance: TWO_DECIMAL_TOLERANCE, provenance: 'GMS_FIXED_POINT_CPC' }),
+    check('costPerDirectConversion', a.costPerDirectConversion, s.sourceCostPerDirectConversion, { tolerance: TWO_DECIMAL_TOLERANCE, provenance: 'GMS_FIXED_POINT_CPDC' }),
+    check('broadRoas', a.broadRoas, s.sourceBroadRoas, { tolerance: TWO_DECIMAL_TOLERANCE }),
+    check('directRoas', a.directRoas, s.sourceDirectRoas, { tolerance: TWO_DECIMAL_TOLERANCE }),
+    check('broadAcos', a.broadAcos, s.sourceBroadAcos, { tolerance: PERCENT_DISPLAY_TOLERANCE, provenance: 'GMS_FIXED_POINT_COST_OVER_GMV' }),
+    check('directAcos', a.directAcos, s.sourceDirectAcos, { tolerance: PERCENT_DISPLAY_TOLERANCE }),
   ];
   return {
     itemId: sellerItem.itemId,
@@ -274,22 +309,7 @@ function reconcileGmsCampaign({ sellerReport, apiCampaign, apiItems = [] }) {
   if (!sellerReport || !sellerReport.summary) throw new Error('sellerReport is required');
   if (!apiCampaign) throw new Error('apiCampaign is required');
   const s = sellerReport.summary;
-  const c = {
-    impressions: Number(apiCampaign.impressions ?? 0),
-    clicks: Number(apiCampaign.clicks ?? 0),
-    expense: Number(apiCampaign.expense ?? 0),
-    broadGmv: Number(apiCampaign.broad_gmv ?? apiCampaign.broadGmv ?? 0),
-    broadOrders: Number(apiCampaign.broad_orders ?? apiCampaign.broadOrders ?? 0),
-    broadUnits: Number(apiCampaign.broad_units ?? apiCampaign.broadUnits ?? 0),
-    directGmv: apiCampaign.direct_gmv == null && apiCampaign.directGmv == null ? null : Number(apiCampaign.direct_gmv ?? apiCampaign.directGmv),
-    directRoas: apiCampaign.direct_roas == null && apiCampaign.directRoas == null ? null : Number(apiCampaign.direct_roas ?? apiCampaign.directRoas),
-    directOrders: Number(apiCampaign.direct_orders ?? apiCampaign.directOrders ?? 0),
-    directUnits: Number(apiCampaign.direct_units ?? apiCampaign.directUnits ?? 0),
-    broadRoas: apiCampaign.broad_roas == null && apiCampaign.broadRoas == null
-      ? safeDiv(Number(apiCampaign.broad_gmv ?? apiCampaign.broadGmv ?? 0), Number(apiCampaign.expense ?? 0))
-      : Number(apiCampaign.broad_roas ?? apiCampaign.broadRoas),
-  };
-
+  const c = normalizeApiCampaign(apiCampaign);
   const itemDirect = aggregateCompleteItemDirectGmv(apiItems);
   let resolvedDirectGmv = c.directGmv;
   let directGmvProvenance = 'API_SOURCE';
@@ -297,6 +317,8 @@ function reconcileGmsCampaign({ sellerReport, apiCampaign, apiItems = [] }) {
     resolvedDirectGmv = itemDirect.value;
     directGmvProvenance = 'GMS_ITEM_API_AGGREGATE';
   }
+  const preciseDirectExpense = c.directOrders > 0 ? c.costPerDirectConversion * c.directOrders : c.expense;
+  const resolvedDirectAcos = resolvedDirectGmv === null ? null : safeDiv(preciseDirectExpense, resolvedDirectGmv);
 
   const checks = [
     check('impressions', c.impressions, s.impressions),
@@ -305,44 +327,34 @@ function reconcileGmsCampaign({ sellerReport, apiCampaign, apiItems = [] }) {
     check('directOrders', c.directOrders, s.directOrders),
     check('broadUnits', c.broadUnits, s.broadUnits),
     check('directUnits', c.directUnits, s.directUnits),
-    check('broadGmv', c.broadGmv, s.broadGmv, { tolerance: 0.01 }),
-    check('directGmv', resolvedDirectGmv, s.directGmv, { tolerance: 0.01, provenance: directGmvProvenance }),
-    check('expense', c.expense, s.expense, { tolerance: 0.01 }),
-    check('ctr', safeDiv(c.clicks, c.impressions), s.ctr, { provenance: 'DERIVED_FROM_API_BASE_METRICS' }),
-    check('broadCvr', safeDiv(c.broadOrders, c.clicks), s.broadCvr, { provenance: 'DERIVED_FROM_API_BASE_METRICS' }),
-    check('directCvr', safeDiv(c.directOrders, c.clicks), s.directCvr, { provenance: 'DERIVED_FROM_API_BASE_METRICS' }),
-    check('costPerConversion', safeDiv(c.expense, c.broadOrders), s.costPerConversion, { tolerance: 0.005, provenance: 'DERIVED_FROM_API_BASE_METRICS' }),
-    check('costPerDirectConversion', safeDiv(c.expense, c.directOrders), s.costPerDirectConversion, { tolerance: 0.005, provenance: 'DERIVED_FROM_API_BASE_METRICS' }),
-    check('broadRoas', c.broadRoas, s.sourceBroadRoas, { tolerance: 0.005 }),
-    check('directRoas', c.directRoas, s.sourceDirectRoas, { tolerance: 0.005 }),
-    check('broadAcos', safeDiv(c.expense, c.broadGmv), s.broadAcos, { provenance: 'DERIVED_FROM_API_BASE_METRICS' }),
-    check('directAcos', resolvedDirectGmv === null ? null : safeDiv(c.expense, resolvedDirectGmv), s.directAcos, { provenance: resolvedDirectGmv === null ? 'SOURCE_UNAVAILABLE' : `DERIVED_FROM_${directGmvProvenance}` }),
-    check('voucherAmount', null, s.voucherAmount, { tolerance: 0.01, provenance: 'SOURCE_UNAVAILABLE' }),
-    check('voucheredSales', null, s.voucheredSales, { tolerance: 0.01, provenance: 'SOURCE_UNAVAILABLE' }),
+    check('broadGmv', c.broadGmv, s.broadGmv, { tolerance: MONEY_TOLERANCE }),
+    check('directGmv', resolvedDirectGmv, s.directGmv, { tolerance: MONEY_TOLERANCE, provenance: directGmvProvenance }),
+    check('expense', c.expense, s.expense, { tolerance: MONEY_TOLERANCE }),
+    check('ctr', safeDiv(c.clicks, c.impressions), s.sourceCtr, { tolerance: PERCENT_DISPLAY_TOLERANCE, provenance: 'DERIVED_FROM_API_BASE_METRICS' }),
+    check('broadCvr', safeDiv(c.broadOrders, c.clicks), s.sourceBroadCvr, { tolerance: PERCENT_DISPLAY_TOLERANCE, provenance: 'DERIVED_FROM_API_BASE_METRICS' }),
+    check('directCvr', safeDiv(c.directOrders, c.clicks), s.sourceDirectCvr, { tolerance: PERCENT_DISPLAY_TOLERANCE, provenance: 'DERIVED_FROM_API_BASE_METRICS' }),
+    check('costPerConversion', c.costPerConversion, s.sourceCostPerConversion, { tolerance: TWO_DECIMAL_TOLERANCE, provenance: 'GMS_FIXED_POINT_CPC' }),
+    check('costPerDirectConversion', c.costPerDirectConversion, s.sourceCostPerDirectConversion, { tolerance: TWO_DECIMAL_TOLERANCE, provenance: 'GMS_FIXED_POINT_CPDC' }),
+    check('broadRoas', c.broadRoas, s.sourceBroadRoas, { tolerance: TWO_DECIMAL_TOLERANCE }),
+    check('directRoas', c.directRoas, s.sourceDirectRoas, { tolerance: TWO_DECIMAL_TOLERANCE }),
+    check('broadAcos', c.broadAcos, s.sourceBroadAcos, { tolerance: PERCENT_DISPLAY_TOLERANCE, provenance: 'GMS_FIXED_POINT_COST_OVER_GMV' }),
+    check('directAcos', resolvedDirectAcos, s.sourceDirectAcos, { tolerance: PERCENT_DISPLAY_TOLERANCE, provenance: resolvedDirectGmv === null ? 'SOURCE_UNAVAILABLE' : `DERIVED_FROM_${directGmvProvenance}` }),
+    check('voucherAmount', null, s.voucherAmount, { tolerance: MONEY_TOLERANCE, provenance: 'SOURCE_UNAVAILABLE' }),
+    check('voucheredSales', null, s.voucheredSales, { tolerance: MONEY_TOLERANCE, provenance: 'SOURCE_UNAVAILABLE' }),
   ];
 
   const bySellerId = new Map(sellerReport.items.map(item => [String(item.itemId), item]));
-  const byApiId = new Map((apiItems || []).map(row => {
-    const normalized = normalizeApiItem(row);
-    return [String(normalized.itemId), row];
-  }));
+  const byApiId = new Map((apiItems || []).map(row => [String(normalizeApiItem(row).itemId), row]));
   const missingInApi = sellerReport.items.filter(item => !byApiId.has(String(item.itemId))).map(item => item.itemId);
   const extraInApi = Array.from(byApiId.keys()).filter(itemId => !bySellerId.has(itemId)).map(Number);
   const itemChecks = sellerReport.items.map(item => reconcileOneItem(item, byApiId.get(String(item.itemId))));
-
   const hasFailure = checks.some(row => row.status === 'FAIL') || missingInApi.length || extraInApi.length || itemChecks.some(row => row.status === 'FAIL');
   const hasUnavailable = checks.some(row => row.status === 'SOURCE_UNAVAILABLE') || itemChecks.some(row => row.status === 'INCOMPLETE');
 
   return {
     status: hasFailure ? 'FAIL' : hasUnavailable ? 'INCOMPLETE' : 'PASS',
     checks,
-    itemCoverage: {
-      sellerCount: sellerReport.items.length,
-      apiCount: apiItems.length,
-      missingInApi,
-      extraInApi,
-      status: missingInApi.length || extraInApi.length ? 'FAIL' : 'PASS',
-    },
+    itemCoverage: { sellerCount: sellerReport.items.length, apiCount: apiItems.length, missingInApi, extraInApi, status: missingInApi.length || extraInApi.length ? 'FAIL' : 'PASS' },
     itemChecks,
     itemDirectGmvAggregate: itemDirect,
   };
@@ -356,6 +368,7 @@ module.exports = {
   parseGmsSellerCentreReport,
   parseGmsSellerCentreFile,
   normalizeApiItem,
+  normalizeApiCampaign,
   aggregateCompleteItemDirectGmv,
   reconcileOneItem,
   reconcileGmsCampaign,
