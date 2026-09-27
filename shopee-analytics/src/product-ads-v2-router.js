@@ -16,6 +16,31 @@ function requireIsoDate(value, name) {
   return raw;
 }
 
+function dateOnlyIso(value) {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') {
+    const match = value.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (match) return match[1];
+  }
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, '0');
+    const day = String(value.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+  const raw = String(value);
+  const match = raw.match(/(\d{4}-\d{2}-\d{2})/);
+  if (match) return match[1];
+  const parsed = new Date(raw);
+  if (!Number.isNaN(parsed.getTime())) {
+    const year = parsed.getFullYear();
+    const month = String(parsed.getMonth() + 1).padStart(2, '0');
+    const day = String(parsed.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+  return raw.slice(0, 10);
+}
+
 function addIsoDays(value, amount) {
   const date = new Date(`${value}T00:00:00Z`);
   date.setUTCDate(date.getUTCDate() + amount);
@@ -23,7 +48,7 @@ function addIsoDays(value, amount) {
 }
 
 function dateCoverage(startDate, endDate, rows = []) {
-  const available = new Set(rows.map(row => String(row.eventDate || row.event_date).slice(0, 10)));
+  const available = new Set(rows.map(row => dateOnlyIso(row.eventDate ?? row.event_date)).filter(Boolean));
   const expectedDates = [];
   for (let date = startDate; date <= endDate; date = addIsoDays(date, 1)) expectedDates.push(date);
   const missingDates = expectedDates.filter(date => !available.has(date));
@@ -39,7 +64,7 @@ function dateCoverage(startDate, endDate, rows = []) {
 function serializeRow(row) {
   return {
     shopId: Number(row.shop_id),
-    eventDate: String(row.event_date).slice(0, 10),
+    eventDate: dateOnlyIso(row.event_date),
     impressions: Number(row.impressions || 0),
     clicks: Number(row.clicks || 0),
     ctr: row.ctr == null ? null : Number(row.ctr),
@@ -77,9 +102,12 @@ function equivalentNumber(left, right, tolerance = 1e-9) {
 
 function reconcileRows(rawRows, dbRows, startDate, endDate) {
   const rawMap = new Map(rawRows
+    .map(row => ({ ...row, eventDate: dateOnlyIso(row.eventDate) }))
     .filter(row => row.eventDate >= startDate && row.eventDate <= endDate)
     .map(row => [row.eventDate, row]));
-  const dbMap = new Map(dbRows.map(row => [row.eventDate, row]));
+  const dbMap = new Map(dbRows
+    .map(row => ({ ...row, eventDate: dateOnlyIso(row.eventDate) }))
+    .map(row => [row.eventDate, row]));
   const dates = Array.from(new Set([...rawMap.keys(), ...dbMap.keys()])).sort();
   const mismatches = [];
   for (const date of dates) {
@@ -143,7 +171,7 @@ function createProductAdsV2Router({ pool }) {
 
       const [snapshotResult, dbRows] = await Promise.all([
         pool.query(
-          `SELECT id,response_json,synced_at,event_date_from,event_date_to
+          `SELECT id,response_json,synced_at,event_date_from::text AS event_date_from,event_date_to::text AS event_date_to
            FROM shopee_raw_api_snapshots
            WHERE endpoint_key='adsAllCpcDailyPerformance'
              AND shop_id=$1
@@ -179,8 +207,8 @@ function createProductAdsV2Router({ pool }) {
         snapshot: {
           id: Number(snapshot.id),
           syncedAt: snapshot.synced_at,
-          eventDateFrom: String(snapshot.event_date_from).slice(0, 10),
-          eventDateTo: String(snapshot.event_date_to).slice(0, 10),
+          eventDateFrom: dateOnlyIso(snapshot.event_date_from),
+          eventDateTo: dateOnlyIso(snapshot.event_date_to),
         },
         reconciliation,
       });
@@ -194,6 +222,7 @@ function createProductAdsV2Router({ pool }) {
 
 module.exports = {
   createProductAdsV2Router,
+  dateOnlyIso,
   serializeRow,
   dateCoverage,
   reconcileRows,
