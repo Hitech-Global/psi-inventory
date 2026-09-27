@@ -44,10 +44,6 @@ function createApp({ pool, skillProvider = null, importJobPool = null }) {
   const shopScopeRepository = new ShopeeShopScopeRepository({ pool });
   const backupStatusProvider = createBackupStatusProvider();
 
-  // Production can move CPU-heavy CSV/XLSX parsing and Ad Group persistence to
-  // the dedicated import worker while preserving the existing HTTP contract.
-  // Mount this before the legacy router so the legacy synchronous route remains
-  // available for tests/dev only when the async gate is disabled.
   if (importJobPool) {
     app.use('/api/shopee-analytics', createAdGroupImportAsyncRouter({ pool: importJobPool }));
   }
@@ -69,12 +65,9 @@ function createApp({ pool, skillProvider = null, importJobPool = null }) {
   const indexPath = path.join(webDir, 'index.html');
   const indexHtml = fs.readFileSync(indexPath, 'utf8').replace(
     '</body>',
-    '  <script src="/product-card-ui-v2.js" defer></script>\n  <script src="/product-card-copy-v2.js" defer></script>\n</body>',
+    '  <script src="/product-card-ui-v2.js" defer></script>\n  <script src="/product-card-copy-v2.js" defer></script>\n  <script src="/ad-channel-ui-v3.js" defer></script>\n</body>',
   );
 
-  // Keep the stable V1 document intact while layering the corrected Product
-  // Card hierarchy after app.js/ad-group-import-async.js.  Serving the entry
-  // document explicitly also avoids a stale cached HTML shell during rollout.
   app.get(['/', '/index.html'], (req, res) => {
     res.set('Cache-Control', 'no-cache');
     res.type('html').send(indexHtml);
@@ -106,8 +99,6 @@ async function main() {
   const port = resolvePort();
   const pool = createAnalyticsPool();
   const asyncImports = process.env.SHOPEE_AD_GROUP_IMPORT_ASYNC === 'YES';
-  // Queue/status polling is deliberately isolated from the normal read pool so
-  // a long import cannot exhaust connections required by interactive pages.
   const importJobPool = asyncImports ? createAnalyticsPool({ max: 1 }) : null;
   const skillProvider = createConfiguredSkillProvider();
   const app = createApp({ pool, skillProvider, importJobPool });
