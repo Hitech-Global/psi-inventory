@@ -7,6 +7,7 @@ const assert = require('assert');
 const webDir = path.join(__dirname, '..', 'web');
 const html = fs.readFileSync(path.join(webDir, 'index.html'), 'utf8');
 const app = fs.readFileSync(path.join(webDir, 'app.js'), 'utf8');
+const server = fs.readFileSync(path.join(__dirname, '..', 'src', 'standalone-server.js'), 'utf8');
 
 const htmlIds = new Set(
   Array.from(html.matchAll(/\bid="([^"]+)"/g), match => match[1]),
@@ -99,6 +100,10 @@ assert(app.includes('可受控验证'), 'SKU race must render controlled-scale e
 assert(app.includes('STRUCTURAL ACTION GATES'), 'campaign analysis must render structural action gates');
 assert(app.includes('当前阻断'), 'structural action gate must explain blocked actions');
 assert(app.includes("$('#maturityBox').innerHTML"), 'campaign analysis must render maturity evidence');
+assert(server.includes('const assetVersion = Date.now().toString(36);'), 'frontend assets must receive a per-runtime cache-busting version');
+assert(server.includes("maxAge: 0"), 'static web assets must not retain a blind max-age cache');
+assert(server.includes("res.set('Cache-Control', 'no-cache')"), 'static web assets must revalidate with ETag after deploy');
+assert(server.includes('?v=${assetVersion}'), 'runtime HTML must reference versioned frontend assets');
 assert(app.includes('当前卡点'), 'maturity UI must explain blockers');
 assert(app.includes('主力连续率'), 'maturity UI must expose leader continuity');
 assert(app.includes('扩量 ROAS 保持'), 'maturity UI must expose scale resilience');

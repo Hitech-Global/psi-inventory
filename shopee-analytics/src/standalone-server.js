@@ -69,10 +69,16 @@ function createApp({ pool, skillProvider = null, importJobPool = null }) {
 
   const webDir = path.join(__dirname, '..', 'web');
   const indexPath = path.join(webDir, 'index.html');
-  const indexHtml = fs.readFileSync(indexPath, 'utf8').replace(
-    '</body>',
-    '  <script src="/product-card-ui-v2.js" defer></script>\n  <script src="/product-card-copy-v2.js" defer></script>\n  <script src="/ad-channel-ui-v3.js" defer></script>\n  <script src="/product-card-data-contract-v3.js" defer></script>\n  <script src="/product-card-coverage-v4.js" defer></script>\n</body>',
-  );
+  const assetVersion = Date.now().toString(36);
+  let indexHtml = fs.readFileSync(indexPath, 'utf8');
+  for (const asset of ['/styles.css', '/shopee-metric-labels.js', '/app.js', '/ad-group-import-async.js']) {
+    indexHtml = indexHtml.replace(asset, `${asset}?v=${assetVersion}`);
+  }
+  const injectedScripts = [
+    '/product-card-ui-v2.js', '/product-card-copy-v2.js', '/ad-channel-ui-v3.js',
+    '/product-card-data-contract-v3.js', '/product-card-coverage-v4.js',
+  ].map(src => `  <script src="${src}?v=${assetVersion}" defer></script>`).join('\n');
+  indexHtml = indexHtml.replace('</body>', `${injectedScripts}\n</body>`);
 
   app.get(['/', '/index.html'], (req, res) => {
     res.set('Cache-Control', 'no-cache');
@@ -81,8 +87,11 @@ function createApp({ pool, skillProvider = null, importJobPool = null }) {
 
   app.use(express.static(webDir, {
     etag: true,
-    maxAge: '5m',
+    maxAge: 0,
     index: 'index.html',
+    setHeaders(res) {
+      res.set('Cache-Control', 'no-cache');
+    },
   }));
 
   app.use((error, req, res, next) => {
