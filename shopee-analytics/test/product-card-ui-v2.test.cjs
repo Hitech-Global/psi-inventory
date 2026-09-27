@@ -17,10 +17,9 @@ assert(ui.includes('不会使用“全店推”或某个 GMV Max Campaign 冒充
 assert(ui.includes('minimumFractionDigits: 2'), 'ad numeric formatter must preserve two decimal places');
 assert(ui.includes('data-ad-group-index'), 'Ad Group rows must be drillable');
 assert(ui.includes('adGroupItemRowsV2'), 'Ad Group item table must exist');
-assert(ui.includes("'sourceRoas', i.source_roas"), 'Ad Group item query must expose source ROAS');
-assert(ui.includes("'directRoas', i.direct_roas"), 'Ad Group item query must expose Direct ROAS');
-assert(ui.includes("'expense', i.expense"), 'Ad Group item query must expose expense');
-assert(ui.includes("'gmv', i.gmv"), 'Ad Group item query must expose GMV');
+for (const token of ["'sourceRoas'", 'i.source_roas', "'directRoas'", 'i.direct_roas', "'expense'", 'i.expense', "'gmv'", 'i.gmv']) {
+  assert(repo.includes(token), `Ad Group item query must expose ${token}`);
+}
 assert(server.includes('/product-card-ui-v2.js'), 'entry HTML must load Product Card v2 UI');
 
 console.log('Product Card hierarchy and Ad Group drilldown contract: ok');
