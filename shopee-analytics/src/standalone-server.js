@@ -65,7 +65,7 @@ function createApp({ pool, skillProvider = null, importJobPool = null }) {
   const indexPath = path.join(webDir, 'index.html');
   const indexHtml = fs.readFileSync(indexPath, 'utf8').replace(
     '</body>',
-    '  <script src="/product-card-ui-v2.js" defer></script>\n  <script src="/product-card-copy-v2.js" defer></script>\n  <script src="/ad-channel-ui-v3.js" defer></script>\n  <script src="/product-card-data-contract-v3.js" defer></script>\n</body>',
+    '  <script src="/product-card-ui-v2.js" defer></script>\n  <script src="/product-card-copy-v2.js" defer></script>\n  <script src="/ad-channel-ui-v3.js" defer></script>\n  <script src="/product-card-data-contract-v3.js" defer></script>\n  <script src="/product-card-coverage-v4.js" defer></script>\n</body>',
   );
 
   app.get(['/', '/index.html'], (req, res) => {
