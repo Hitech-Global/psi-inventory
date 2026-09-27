@@ -34,6 +34,9 @@ assert(script.includes('reconcile-m612-readonly.cjs'), 'verifier must execute th
 assert(script.includes('merge-base --is-ancestor'), 'verifier must require the local HEAD to contain the fix commit');
 assert(script.includes('[long]$ShopId = 0'), 'shop id must be optional for normal M612 verification');
 assert(script.includes("exit 3"), 'INCOMPLETE must remain distinct from PASS');
+assert(!script.includes('function Run-Git([string[]]$Args)'), 'PowerShell automatic $Args must not be reused as a function parameter');
+assert(script.includes('function Run-Git([string[]]$GitArgs)'), 'verifier must use an explicit non-reserved GitArgs parameter');
+assert(script.includes("Run-Git -GitArgs @('branch', '--show-current')"), 'Git helper calls must bind GitArgs explicitly');
 
 assert(reconcile.includes("source: 'AUTO_DETECTED'"), 'reconciliation must report automatic shop detection provenance');
 assert(reconcile.includes('SELECT DISTINCT shop_id'), 'automatic shop detection must use stored database evidence');
