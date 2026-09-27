@@ -98,7 +98,7 @@ class ShopeeProductAdsShopRepository {
 
   async list({ shopId, startDate, endDate }) {
     const result = await this.pool.query(
-      `SELECT shop_id,event_date,impressions,clicks,ctr,direct_orders,broad_orders,direct_units,broad_units,direct_cvr,broad_cvr,direct_gmv,broad_gmv,expense,cpc,cost_per_conversion,cost_per_direct_conversion,direct_roas,broad_roas,direct_acos,broad_acos,synced_at
+      `SELECT shop_id,event_date::text AS event_date,impressions,clicks,ctr,direct_orders,broad_orders,direct_units,broad_units,direct_cvr,broad_cvr,direct_gmv,broad_gmv,expense,cpc,cost_per_conversion,cost_per_direct_conversion,direct_roas,broad_roas,direct_acos,broad_acos,synced_at
        FROM shopee_product_ads_shop_daily
        WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3
        ORDER BY event_date ASC`,
