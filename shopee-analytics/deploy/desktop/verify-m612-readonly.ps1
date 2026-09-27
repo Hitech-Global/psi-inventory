@@ -16,10 +16,10 @@ function Fail([string]$Message, [int]$Code = 1) {
   exit $Code
 }
 
-function Run-Git([string[]]$Args) {
-  $output = & git -C $RepoRoot @Args 2>&1
+function Run-Git([string[]]$GitArgs) {
+  $output = & git -C $RepoRoot @GitArgs 2>&1
   if ($LASTEXITCODE -ne 0) {
-    Fail ("git {0} failed:`n{1}" -f ($Args -join ' '), ($output -join "`n")) 10
+    Fail ("git {0} failed:`n{1}" -f ($GitArgs -join ' '), ($output -join "`n")) 10
   }
   return @($output)
 }
@@ -28,17 +28,17 @@ if (-not (Test-Path $RuntimeEnv)) {
   Fail "Missing runtime/.env. Refusing to guess credentials or database settings." 11
 }
 
-$branch = (Run-Git @('branch', '--show-current') | Select-Object -First 1).Trim()
+$branch = (Run-Git -GitArgs @('branch', '--show-current') | Select-Object -First 1).Trim()
 if ($branch -ne $ExpectedBranch) {
   Fail "Wrong branch: $branch. Expected $ExpectedBranch. No checkout/pull/merge will be performed automatically." 12
 }
 
-$status = Run-Git @('status', '--porcelain')
+$status = Run-Git -GitArgs @('status', '--porcelain')
 if ($status.Count -gt 0 -and ($status -join '').Trim().Length -gt 0) {
   Fail "Git worktree is not clean. Refusing to rebuild the runtime. No stash/reset/clean was performed." 13
 }
 
-$head = (Run-Git @('rev-parse', 'HEAD') | Select-Object -First 1).Trim()
+$head = (Run-Git -GitArgs @('rev-parse', 'HEAD') | Select-Object -First 1).Trim()
 & git -C $RepoRoot cat-file -e "$RequiredCommit^{commit}" 2>$null
 if ($LASTEXITCODE -ne 0) {
   Fail "Required commit $RequiredCommit is not present in this local clone. Refusing to fetch/pull automatically." 14
