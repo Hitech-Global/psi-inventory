@@ -35,6 +35,26 @@ function campaignFamilyForAdType(adType) {
     : 'AUTO_PRODUCT_AD';
 }
 
+function adsPercentToFraction(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  // Shopee Ads documents CTR / CR / CIR as percentage-number values.  In
+  // particular 0.50 means 0.50%, not 50%, so magnitude heuristics are unsafe.
+  return number / 100;
+}
+
+function normalizeCampaignMetric(metric = {}) {
+  const source = { ...metric };
+  const ctr = adsPercentToFraction(metric.ctr);
+  const broadCvr = adsPercentToFraction(metric.cr ?? metric.broad_cvr);
+  const directCvr = adsPercentToFraction(metric.direct_cr ?? metric.direct_cvr);
+  if (ctr !== null) source.ctr = ctr;
+  if (broadCvr !== null) source.broad_cvr = broadCvr;
+  if (directCvr !== null) source.direct_cvr = directCvr;
+  return normalizePerformance(source);
+}
+
 function unwrapResponseList(payload) {
   if (!payload) return [];
   if (Array.isArray(payload.response)) return payload.response;
@@ -57,7 +77,7 @@ function normalizeProductCampaignDailyPayload(payload) {
           adName: campaign.ad_name || null,
           campaignPlacement: campaign.campaign_placement || null,
           eventDate: toIsoDate(metric.date),
-          performance: normalizePerformance(metric),
+          performance: normalizeCampaignMetric(metric),
           raw: { campaign, metric },
         });
       }
@@ -109,6 +129,8 @@ module.exports = {
   toIsoDate,
   normalizeProductAdType,
   campaignFamilyForAdType,
+  adsPercentToFraction,
+  normalizeCampaignMetric,
   normalizeProductCampaignDailyPayload,
   fetchProductCampaignDailyPerformance,
 };
