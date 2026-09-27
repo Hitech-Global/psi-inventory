@@ -10,22 +10,25 @@ function hydrateCampaignDailySourceMetrics(row) {
     : null;
   if (!metric) return row;
 
+  // raw_json is the immutable Shopee audit source. Prefer its normalized source
+  // metrics over legacy persisted derived values, so pre-migration rows become
+  // accurate without another Shopee API request or a destructive backfill.
   const source = normalizeCampaignMetric(metric);
   return {
     ...row,
-    ctr: row.ctr == null ? source.ctr : Number(row.ctr),
-    broad_cvr: row.broad_cvr == null ? source.broadCvr : Number(row.broad_cvr),
-    direct_cvr: row.direct_cvr == null ? source.directCvr : Number(row.direct_cvr),
-    broad_roas: row.broad_roas == null ? source.broadRoas : Number(row.broad_roas),
-    direct_roas: row.direct_roas == null ? source.directRoas : Number(row.direct_roas),
-    add_to_cart: row.add_to_cart == null ? source.addToCart : Number(row.add_to_cart),
-    add_to_cart_rate: row.add_to_cart_rate == null ? source.addToCartRate : Number(row.add_to_cart_rate),
-    cost_per_conversion: row.cost_per_conversion == null ? source.costPerConversion : Number(row.cost_per_conversion),
-    cost_per_direct_conversion: row.cost_per_direct_conversion == null
-      ? source.costPerDirectConversion
-      : Number(row.cost_per_direct_conversion),
-    broad_acos: row.broad_acos == null ? source.broadAcos : Number(row.broad_acos),
-    direct_acos: row.direct_acos == null ? source.directAcos : Number(row.direct_acos),
+    ctr: source.ctr ?? (row.ctr == null ? null : Number(row.ctr)),
+    broad_cvr: source.broadCvr ?? (row.broad_cvr == null ? null : Number(row.broad_cvr)),
+    direct_cvr: source.directCvr ?? (row.direct_cvr == null ? null : Number(row.direct_cvr)),
+    broad_roas: source.broadRoas ?? (row.broad_roas == null ? null : Number(row.broad_roas)),
+    direct_roas: source.directRoas ?? (row.direct_roas == null ? null : Number(row.direct_roas)),
+    add_to_cart: source.addToCart ?? (row.add_to_cart == null ? null : Number(row.add_to_cart)),
+    add_to_cart_rate: source.addToCartRate ?? (row.add_to_cart_rate == null ? null : Number(row.add_to_cart_rate)),
+    cost_per_conversion: source.costPerConversion ?? (row.cost_per_conversion == null ? null : Number(row.cost_per_conversion)),
+    cost_per_direct_conversion: source.costPerDirectConversion ?? (row.cost_per_direct_conversion == null
+      ? null
+      : Number(row.cost_per_direct_conversion)),
+    broad_acos: source.broadAcos ?? (row.broad_acos == null ? null : Number(row.broad_acos)),
+    direct_acos: source.directAcos ?? (row.direct_acos == null ? null : Number(row.direct_acos)),
   };
 }
 
