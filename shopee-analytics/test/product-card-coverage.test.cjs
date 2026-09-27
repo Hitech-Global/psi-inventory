@@ -3,7 +3,13 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const { dateCoverage, reconcileRows } = require('../src/product-ads-v2-router');
+const { dateOnlyIso, serializeRow, dateCoverage, reconcileRows } = require('../src/product-ads-v2-router');
+
+assert.strictEqual(dateOnlyIso('2026-09-21'), '2026-09-21');
+assert.strictEqual(dateOnlyIso('2026-09-21T00:00:00.000Z'), '2026-09-21');
+const pgDateObject = new Date(2026, 8, 21, 0, 0, 0, 0);
+assert.strictEqual(dateOnlyIso(pgDateObject), '2026-09-21', 'PostgreSQL DATE objects must retain the calendar date');
+assert.strictEqual(serializeRow({ shop_id: 1, event_date: pgDateObject }).eventDate, '2026-09-21');
 
 assert.deepStrictEqual(
   dateCoverage('2026-09-22', '2026-09-25', [
@@ -25,6 +31,11 @@ assert.deepStrictEqual(
   { expectedDays: 1, availableDays: 1, missingDays: 0, missingDates: [], complete: true },
 );
 
+assert.deepStrictEqual(
+  dateCoverage('2026-09-21', '2026-09-21', [{ event_date: pgDateObject }]),
+  { expectedDays: 1, availableDays: 1, missingDays: 0, missingDates: [], complete: true },
+);
+
 const rawRows = [{
   eventDate: '2026-09-25', impressions: 100, clicks: 2, ctr: 0.02,
   directOrders: 1, broadOrders: 1, directUnits: 1, broadUnits: 1,
@@ -38,11 +49,21 @@ assert.deepStrictEqual(
   { rawDays: 1, dbDays: 1, mismatchCount: 0, match: true, mismatches: [] },
 );
 
+const dbDateObjectRows = [{ ...rawRows[0], eventDate: new Date(2026, 8, 25, 0, 0, 0, 0) }];
+assert.deepStrictEqual(
+  reconcileRows(rawRows, dbDateObjectRows, '2026-09-25', '2026-09-25'),
+  { rawDays: 1, dbDays: 1, mismatchCount: 0, match: true, mismatches: [] },
+  'raw ISO dates and PostgreSQL DATE objects must reconcile on the same key',
+);
+
 const badDbRows = [{ ...rawRows[0], expense: 2.2 }];
 const mismatch = reconcileRows(rawRows, badDbRows, '2026-09-25', '2026-09-25');
 assert.strictEqual(mismatch.match, false);
 assert.strictEqual(mismatch.mismatchCount, 1);
 assert.deepStrictEqual(mismatch.mismatches[0], { date: '2026-09-25', field: 'expense', raw: 2.1, db: 2.2 });
+
+const repositorySource = fs.readFileSync(path.join(__dirname, '..', 'src', 'product-ads-shop-repository.js'), 'utf8');
+assert(repositorySource.includes('event_date::text AS event_date'), 'Product Card repository must expose PostgreSQL DATE as ISO text');
 
 const ui = fs.readFileSync(path.join(__dirname, '..', 'web', 'product-card-coverage-v4.js'), 'utf8');
 assert(ui.includes('不能当作完整周期总盘'), 'partial Product Card coverage must warn the operator');
