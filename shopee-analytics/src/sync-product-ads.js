@@ -39,7 +39,10 @@ function adsPercentToFraction(value) {
   if (value === undefined || value === null || value === '') return null;
   const number = Number(value);
   if (!Number.isFinite(number)) return null;
-  return number / 100;
+  // Shopee campaign daily payloads observed in production already use fractions
+  // (e.g. 0.0516 = 5.16%). Older fixtures/export-shaped inputs may use percent
+  // points (5.16). Accept both without double-normalizing production raw_json.
+  return Math.abs(number) <= 1 ? number : number / 100;
 }
 
 function optionalNumber(value) {
@@ -68,7 +71,8 @@ function normalizeCampaignMetric(metric = {}) {
   const normalized = normalizePerformance(source);
   const broadRoas = firstNumber(metric, ['broad_roi', 'broad_roas', 'roi', 'roas']);
   const directRoas = firstNumber(metric, ['direct_roi', 'direct_roas']);
-  const addToCart = firstNumber(metric, ['add_to_cart', 'add_to_cart_num', 'add_to_cart_count']) ?? 0;
+  const addToCart = firstNumber(metric, ['add_to_cart', 'add_to_cart_num', 'add_to_cart_count']);
+  const sourceAddToCartRate = firstNumber(metric, ['add_to_cart_rate']);
   const costPerConversion = firstNumber(metric, ['cpc', 'cost_per_conversion']);
   const costPerDirectConversion = firstNumber(metric, ['cpdc', 'cost_per_direct_conversion']);
 
@@ -79,8 +83,10 @@ function normalizeCampaignMetric(metric = {}) {
     directCvr: directCvr ?? normalized.directCvr,
     broadRoas: broadRoas ?? normalized.broadRoas,
     directRoas: directRoas ?? normalized.directRoas,
+    // Missing ATC in Shopee raw is unknown, not zero. Preserve that distinction
+    // so historical rows never manufacture a false business fact.
     addToCart,
-    addToCartRate: safeDiv(addToCart, normalized.clicks),
+    addToCartRate: sourceAddToCartRate ?? (addToCart === null ? null : safeDiv(addToCart, normalized.clicks)),
     costPerConversion: costPerConversion ?? safeDiv(normalized.expense, normalized.broadOrders),
     costPerDirectConversion: costPerDirectConversion ?? safeDiv(normalized.expense, normalized.directOrders),
     // Seller Centre ACOS is expense / attributed GMV. The API CIR field can
