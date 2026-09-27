@@ -2,6 +2,7 @@
 
 const express = require('express');
 const { ShopeeProductAdsShopRepository, summarizeProductAdsRows } = require('./product-ads-shop-repository');
+const { normalizeShopProductAdsPayload } = require('./sync-product-ads-overview');
 
 function requirePositiveInt(value, name) {
   const n = Number(value);
@@ -62,6 +63,47 @@ function serializeRow(row) {
   };
 }
 
+const RECON_FIELDS = [
+  'impressions', 'clicks', 'ctr', 'directOrders', 'broadOrders', 'directUnits', 'broadUnits',
+  'directCvr', 'broadCvr', 'directGmv', 'broadGmv', 'expense', 'cpc', 'costPerConversion',
+  'costPerDirectConversion', 'directRoas', 'broadRoas', 'directAcos', 'broadAcos',
+];
+
+function equivalentNumber(left, right, tolerance = 1e-9) {
+  if (left == null && right == null) return true;
+  if (left == null || right == null) return false;
+  return Math.abs(Number(left) - Number(right)) <= tolerance;
+}
+
+function reconcileRows(rawRows, dbRows, startDate, endDate) {
+  const rawMap = new Map(rawRows
+    .filter(row => row.eventDate >= startDate && row.eventDate <= endDate)
+    .map(row => [row.eventDate, row]));
+  const dbMap = new Map(dbRows.map(row => [row.eventDate, row]));
+  const dates = Array.from(new Set([...rawMap.keys(), ...dbMap.keys()])).sort();
+  const mismatches = [];
+  for (const date of dates) {
+    const raw = rawMap.get(date);
+    const db = dbMap.get(date);
+    if (!raw || !db) {
+      mismatches.push({ date, field: 'ROW', raw: Boolean(raw), db: Boolean(db) });
+      continue;
+    }
+    for (const field of RECON_FIELDS) {
+      if (!equivalentNumber(raw[field], db[field])) {
+        mismatches.push({ date, field, raw: raw[field] ?? null, db: db[field] ?? null });
+      }
+    }
+  }
+  return {
+    rawDays: rawMap.size,
+    dbDays: dbMap.size,
+    mismatchCount: mismatches.length,
+    match: mismatches.length === 0,
+    mismatches,
+  };
+}
+
 function createProductAdsV2Router({ pool }) {
   const router = express.Router();
   const repository = new ShopeeProductAdsShopRepository({ pool });
@@ -92,7 +134,68 @@ function createProductAdsV2Router({ pool }) {
     }
   });
 
+  router.get('/product-ads/overview/reconciliation', async (req, res, next) => {
+    try {
+      const shopId = requirePositiveInt(req.query.shop_id, 'shop_id');
+      const startDate = requireIsoDate(req.query.start_date, 'start_date');
+      const endDate = requireIsoDate(req.query.end_date, 'end_date');
+      if (startDate > endDate) throw new Error('start_date must be <= end_date');
+
+      const [snapshotResult, dbRows] = await Promise.all([
+        pool.query(
+          `SELECT id,response_json,synced_at,event_date_from,event_date_to
+           FROM shopee_raw_api_snapshots
+           WHERE endpoint_key='adsAllCpcDailyPerformance'
+             AND shop_id=$1
+             AND event_date_from <= $2::date
+             AND event_date_to >= $3::date
+           ORDER BY synced_at DESC
+           LIMIT 1`,
+          [shopId, startDate, endDate],
+        ),
+        repository.list({ shopId, startDate, endDate }),
+      ]);
+
+      const snapshot = snapshotResult.rows[0] || null;
+      if (!snapshot) {
+        res.status(404).json({
+          error: 'PRODUCT_CARD_RAW_SNAPSHOT_NOT_FOUND',
+          shopId,
+          startDate,
+          endDate,
+          message: 'No raw Product Card API snapshot fully covers the requested period.',
+        });
+        return;
+      }
+
+      const rawRows = normalizeShopProductAdsPayload(snapshot.response_json);
+      const serializedDbRows = dbRows.map(serializeRow);
+      const reconciliation = reconcileRows(rawRows, serializedDbRows, startDate, endDate);
+      res.json({
+        shopId,
+        startDate,
+        endDate,
+        source: 'SHOPEE_API_ALL_CPC_DAILY',
+        snapshot: {
+          id: Number(snapshot.id),
+          syncedAt: snapshot.synced_at,
+          eventDateFrom: String(snapshot.event_date_from).slice(0, 10),
+          eventDateTo: String(snapshot.event_date_to).slice(0, 10),
+        },
+        reconciliation,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   return router;
 }
 
-module.exports = { createProductAdsV2Router, serializeRow, dateCoverage };
+module.exports = {
+  createProductAdsV2Router,
+  serializeRow,
+  dateCoverage,
+  reconcileRows,
+  equivalentNumber,
+};
