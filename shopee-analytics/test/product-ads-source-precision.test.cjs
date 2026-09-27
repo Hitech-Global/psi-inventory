@@ -80,7 +80,7 @@ assert.strictEqual(single.ctr, 0.0516);
 assert.strictEqual(single.broadCvr, 0.0278);
 assert.strictEqual(single.directCvr, 0.0278);
 assert.strictEqual(single.broadRoas, 4.48);
-assert.strictEqual(single.directRoas, 4.4769301051, 'persisted direct source remains authoritative when non-null');
+assert.strictEqual(single.directRoas, 4.48, 'raw Shopee source must override legacy derived direct ROAS');
 assert.strictEqual(single.addToCart, 2);
 assert.strictEqual(single.costPerConversion, 21.89);
 assert.strictEqual(single.costPerDirectConversion, 21.89);
