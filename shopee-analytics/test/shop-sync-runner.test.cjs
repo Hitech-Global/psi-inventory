@@ -107,6 +107,9 @@ assert.throws(
     assert(summary.steps.some(step => step.name === 'product-ads-7d' && step.ok));
     assert(calls.some(path => path.includes('get_product_level_campaign_id_list')));
     assert(calls.some(path => path.includes('get_product_campaign_daily_performance')));
+    const tokenStep = summary.steps.find(step => step.name === 'ads-token');
+    assert(tokenStep && tokenStep.result === 'AVAILABLE');
+    assert(!JSON.stringify(summary).includes('fixture-token'));
   } finally {
     for (const [key, value] of Object.entries(original)) {
       if (value === undefined) delete process.env[{ mode: 'SHOPEE_ANALYTICS_DEPLOYMENT_MODE', shop: 'SHOPEE_PILOT_GMV_MAX_SHOP_ID', brand: 'SHOPEE_PILOT_GMV_MAX_BRAND', gms: 'SHOPEE_PILOT_SHOP_GMV_MAX_CAMPAIGN_IDS' }[key]];

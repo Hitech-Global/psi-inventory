@@ -123,11 +123,14 @@ async function runBackfillShop({
     warnings: [],
   };
 
-  const run = async (name, fn, { required = true } = {}) => {
+  const run = async (name, fn, { required = true, redactResult = false } = {}) => {
     const startedAt = Date.now();
     try {
       const result = await fn();
-      summary.steps.push({ name, ok: true, required, ms: Date.now() - startedAt, result });
+      summary.steps.push({
+        name, ok: true, required, ms: Date.now() - startedAt,
+        result: redactResult ? 'AVAILABLE' : result,
+      });
       return result;
     } catch (error) {
       summary.steps.push({
@@ -172,7 +175,7 @@ async function runBackfillShop({
 
   if (sourceSet.has('product-ads')) {
     const ads = runtime.roleClients.ADS;
-    const accessToken = await run('ads-token-for-product-ads-history', () => ads.getAccessToken(shopId));
+    const accessToken = await run('ads-token-for-product-ads-history', () => ads.getAccessToken(shopId), { redactResult: true });
     if (accessToken) {
       await run('product-ads-overview-history', () => runChunked({
         runtime, shopId, appRole: 'ADS', endpointKey: 'BACKFILL_PRODUCT_ADS_OVERVIEW',
@@ -219,7 +222,7 @@ async function runBackfillShop({
       });
     } else {
       const ads = runtime.roleClients.ADS;
-      const accessToken = await run('ads-token-for-gms', () => ads.getAccessToken(shopId));
+      const accessToken = await run('ads-token-for-gms', () => ads.getAccessToken(shopId), { redactResult: true });
       if (accessToken) {
         for (const campaignId of gmsCampaignIds) {
           await run(`gms-history-${campaignId}`, () => runChunked({

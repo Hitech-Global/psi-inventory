@@ -71,11 +71,14 @@ async function runShopSyncCycle({
     steps: [],
   };
 
-  const run = async (name, fn, { required = true } = {}) => {
+  const run = async (name, fn, { required = true, redactResult = false } = {}) => {
     const startedAt = Date.now();
     try {
       const result = await fn();
-      summary.steps.push({ name, ok: true, required, ms: Date.now() - startedAt, result });
+      summary.steps.push({
+        name, ok: true, required, ms: Date.now() - startedAt,
+        result: redactResult ? 'AVAILABLE' : result,
+      });
       return result;
     } catch (error) {
       summary.steps.push({
@@ -112,7 +115,7 @@ async function runShopSyncCycle({
   let adsToken = null;
 
   if (gmsCampaignIds.length) {
-    adsToken = await run('ads-token', () => ads.getAccessToken(shopId));
+    adsToken = await run('ads-token', () => ads.getAccessToken(shopId), { redactResult: true });
   }
 
   if (adsToken) {
@@ -144,7 +147,7 @@ async function runShopSyncCycle({
   // authorized ADS token and therefore cannot claim full-shop Product Ads totals.
   if (apiCapable) {
     if (!adsToken) {
-      adsToken = await run('ads-token-product-ads-overview', () => ads.getAccessToken(shopId), { required: false });
+      adsToken = await run('ads-token-product-ads-overview', () => ads.getAccessToken(shopId), { required: false, redactResult: true });
     }
     if (adsToken) {
       if (pilot) assertPilotIdentityShopAllowed(shopId);
