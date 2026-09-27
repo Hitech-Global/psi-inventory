@@ -7,6 +7,7 @@ const { createAnalyticsPool } = require('./pg');
 const { createShopeeAnalyticsRouter } = require('./http-router');
 const { createAdGroupImportAsyncRouter } = require('./ad-group-import-async-router');
 const { createProductAdsV2Router } = require('./product-ads-v2-router');
+const { createProductAdSellerCentreRouter } = require('./product-ad-seller-centre-router');
 const { createProductAdsSourceRouter } = require('./product-ads-source-router');
 const { createBackupStatusProvider } = require('./backup-status');
 const { createConfiguredSkillProvider } = require('./openai-skill-provider');
@@ -50,6 +51,7 @@ function createApp({ pool, skillProvider = null, importJobPool = null }) {
   }
 
   app.use('/api/shopee-analytics', createProductAdsV2Router({ pool }));
+  app.use('/api/shopee-analytics', createProductAdSellerCentreRouter({ pool }));
   // Mounted before the legacy analytics router so Product Ads campaign lists
   // preserve Shopee's source daily precision while retaining the existing URL.
   app.use('/api/shopee-analytics', createProductAdsSourceRouter({ pool }));
