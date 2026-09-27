@@ -36,6 +36,21 @@ class ShopeeAnalyticsRepository {
   constructor({ pool }) {
     if (!pool || typeof pool.query !== 'function') throw new Error('pg pool/query adapter is required');
     this.pool = pool;
+    this._campaignSourceColumnsAvailable = null;
+  }
+
+  async campaignSourceColumnsAvailable(queryable = this.pool) {
+    if (this._campaignSourceColumnsAvailable !== null) return this._campaignSourceColumnsAvailable;
+    const result = await queryable.query(
+      `SELECT EXISTS (
+         SELECT 1 FROM information_schema.columns
+         WHERE table_schema='public'
+           AND table_name='shopee_ad_campaign_daily'
+           AND column_name='ctr'
+       ) AS available`,
+    );
+    this._campaignSourceColumnsAvailable = Boolean(result.rows[0] && result.rows[0].available);
+    return this._campaignSourceColumnsAvailable;
   }
 
   async withTransaction(fn) {
@@ -106,6 +121,38 @@ class ShopeeAnalyticsRepository {
 
   async upsertCampaignDaily({ shopId, campaignId, eventDate, performance, rawJson = {}, queryable = this.pool }) {
     const p = performance || {};
+    const hasSourceColumns = await this.campaignSourceColumnsAvailable(queryable);
+
+    if (!hasSourceColumns) {
+      await queryable.query(
+        `INSERT INTO shopee_ad_campaign_daily
+         (shop_id, campaign_id, event_date, impressions, clicks, expense,
+          broad_gmv, broad_orders, broad_units, direct_gmv, direct_roas, direct_orders, direct_units, raw_json, synced_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,now())
+         ON CONFLICT (shop_id, campaign_id, event_date) DO UPDATE SET
+          impressions=EXCLUDED.impressions,
+          clicks=EXCLUDED.clicks,
+          expense=EXCLUDED.expense,
+          broad_gmv=EXCLUDED.broad_gmv,
+          broad_orders=EXCLUDED.broad_orders,
+          broad_units=EXCLUDED.broad_units,
+          direct_gmv=EXCLUDED.direct_gmv,
+          direct_roas=EXCLUDED.direct_roas,
+          direct_orders=EXCLUDED.direct_orders,
+          direct_units=EXCLUDED.direct_units,
+          raw_json=EXCLUDED.raw_json,
+          synced_at=now()`,
+        [
+          shopId, campaignId, eventDate,
+          p.impressions || 0, p.clicks || 0, p.expense || 0,
+          p.broadGmv || 0, p.broadOrders || 0, p.broadUnits || 0,
+          p.directGmv ?? null, p.directRoas ?? null, p.directOrders || 0, p.directUnits || 0,
+          JSON.stringify(rawJson || {}),
+        ],
+      );
+      return;
+    }
+
     await queryable.query(
       `INSERT INTO shopee_ad_campaign_daily
        (shop_id, campaign_id, event_date, impressions, clicks, expense,
