@@ -1,6 +1,14 @@
 'use strict';
 
-const { Pool } = require('pg');
+const { Pool, types } = require('pg');
+
+const PG_DATE_OID = 1082;
+const analyticsPgTypes = {
+  getTypeParser(oid, format) {
+    if (Number(oid) === PG_DATE_OID && (!format || format === 'text')) return value => value;
+    return types.getTypeParser(oid, format);
+  },
+};
 
 function analyticsPgConfig(env = process.env) {
   if (env.SHOPEE_ANALYTICS_DATABASE_URL) {
@@ -47,7 +55,8 @@ function createAnalyticsPool({
     ...base,
     max,
     application_name: 'shopee-analytics-v1',
+    types: analyticsPgTypes,
   });
 }
 
-module.exports = { analyticsPgConfig, createAnalyticsPool };
+module.exports = { PG_DATE_OID, analyticsPgTypes, analyticsPgConfig, createAnalyticsPool };

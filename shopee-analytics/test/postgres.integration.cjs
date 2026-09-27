@@ -10,7 +10,7 @@ if (!url) {
   process.exit(0);
 }
 
-const { Pool } = require('pg');
+const { createAnalyticsPool } = require('../src/pg');
 const { ShopeeAnalyticsRepository } = require('../src/repository');
 const { ShopeeProductCardRepository } = require('../src/product-card-repository');
 const { ShopeeTokenRepository } = require('../src/token-repository');
@@ -26,7 +26,7 @@ const { ShopeeAdPromotionRepository } = require('../src/ad-promotion-repository'
 const { ShopeeShopScopeRepository } = require('../src/shop-scope-repository');
 
 (async () => {
-  const pool = new Pool({ connectionString: url, max: 3 });
+  const pool = createAnalyticsPool({ connectionString: url, max: 3 });
   try {
     const schema = fs.readFileSync(path.join(__dirname, '..', 'schema.sql'), 'utf8');
     await pool.query(schema);
@@ -58,8 +58,8 @@ const { ShopeeShopScopeRepository } = require('../src/shop-scope-repository');
     }, [{ itemId: 101, expense: 5, orders: 1, gmv: 20, dataQualityStatus: 'COMPLETE', qualityFlags: [], raw: {} }, { itemId: 102, expense: null, orders: null, gmv: null, dataQualityStatus: 'PARTIAL', qualityFlags: [], raw: {} }]);
     const unifiedRows = await unifiedPromotionRepository.list({ shopId: 1, startDate: '2026-09-01', endDate: '2026-09-30' });
     assert.strictEqual(unifiedRows.length, 1);
-    assert.strictEqual(unifiedRows[0].period_start.toISOString().slice(0, 10), '2026-09-11');
-    assert.strictEqual(unifiedRows[0].period_end.toISOString().slice(0, 10), '2026-09-17');
+    assert.strictEqual(unifiedRows[0].period_start, '2026-09-11');
+    assert.strictEqual(unifiedRows[0].period_end, '2026-09-17');
 
     // A complete manual Ad Group report persists parents/items in one outer
     // transaction. Repeating the identical report replaces deterministic rows.

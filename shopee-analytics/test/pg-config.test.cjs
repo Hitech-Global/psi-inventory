@@ -1,7 +1,7 @@
 'use strict';
 
 const assert = require('assert');
-const { analyticsPgConfig } = require('../src/pg');
+const { PG_DATE_OID, analyticsPgTypes, analyticsPgConfig } = require('../src/pg');
 
 assert.deepStrictEqual(
   analyticsPgConfig({ SHOPEE_ANALYTICS_DATABASE_URL: 'postgres://example' }),
@@ -29,5 +29,8 @@ assert.throws(
   () => analyticsPgConfig({ DATABASE_URL: 'postgres://must-not-be-used' }),
   /existing inventory DATABASE_URL is never used implicitly/,
 );
+
+assert.strictEqual(PG_DATE_OID, 1082);
+assert.strictEqual(analyticsPgTypes.getTypeParser(PG_DATE_OID, 'text')('2026-09-11'), '2026-09-11');
 
 console.log('shopee PostgreSQL config tests: ok');
