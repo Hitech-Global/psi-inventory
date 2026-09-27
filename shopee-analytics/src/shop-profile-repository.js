@@ -91,6 +91,21 @@ class ShopeeShopProfileRepository {
     return (await this.list({ activeOnly: false })).find(row => row.shopId === id) || null;
   }
 
+  async ensureAnalyticsStartDate({ shopId, startDate }) {
+    const id = Number(shopId);
+    if (!Number.isSafeInteger(id) || id <= 0) throw new Error('shopId must be a positive integer');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(startDate || ''))) throw new Error('startDate must be YYYY-MM-DD');
+    const result = await this.pool.query(
+      `UPDATE shopee_shop_profiles
+       SET analytics_start_date=COALESCE(analytics_start_date,$2::date),updated_at=now()
+       WHERE shop_id=$1
+       RETURNING to_char(analytics_start_date,'YYYY-MM-DD') AS analytics_start_date`,
+      [id, startDate],
+    );
+    if (!result.rows.length) throw new Error(`Shop profile ${id} not found`);
+    return result.rows[0].analytics_start_date;
+  }
+
   async upsertMany(profiles) {
     for (const profile of profiles || []) await this.upsert(profile);
     return { configured: (profiles || []).length };
@@ -103,7 +118,8 @@ class ShopeeShopProfileRepository {
          p.currency,p.timezone,p.brand_portal_timezone,p.marketplace_region,
          to_char(p.analytics_start_date,'YYYY-MM-DD') AS analytics_start_date,
          p.gms_campaign_seed_ids,p.active,p.sort_order,p.note,p.updated_at,p.operator_label,p.import_source_shop_name,p.data_source_capability,
-         s.shop_name AS api_shop_name,s.region AS api_region,s.status AS api_status,s.synced_at AS api_synced_at
+         s.shop_name AS api_shop_name,s.region AS api_region,s.status AS api_status,s.synced_at AS api_synced_at,
+         EXISTS (SELECT 1 FROM shopee_app_tokens t WHERE t.app_role='ADS' AND t.shop_id=p.shop_id) AS oauth_authorized
        FROM shopee_shop_profiles p
        LEFT JOIN shopee_shops s ON s.shop_id=p.shop_id
        WHERE ($1::boolean=false OR p.active=true)
@@ -134,6 +150,7 @@ class ShopeeShopProfileRepository {
       apiRegion: row.api_region,
       apiStatus: row.api_status,
       apiSyncedAt: row.api_synced_at,
+      oauthAuthorized: Boolean(row.oauth_authorized),
     }));
   }
 }

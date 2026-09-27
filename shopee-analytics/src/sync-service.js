@@ -125,6 +125,7 @@ class ShopeeSyncService {
     startDate,
     endDate,
     adTypes = ['manual', 'auto'],
+    includeSettings = true,
   } = {}) {
     if (!startDate || !endDate) throw new Error('startDate and endDate are required');
     const requestedTypes = Array.from(new Set((adTypes || []).map(value => String(value || '').toLowerCase())));
@@ -162,22 +163,25 @@ class ShopeeSyncService {
         }
       }
 
-      const settings = await fetchCampaignSettings({
-        client, shopId: this.shopId, accessToken, campaignIds,
-      });
-      await recordPages({
-        repository: this.rawRepository,
-        appRole: 'ADS',
-        endpointKey: `adsCampaignSettings:${adType}`,
-        shopId: this.shopId,
-        pages: settings.rawPages,
-      });
-      if (this.campaignRepository) {
-        await this.campaignRepository.saveCampaignSettingsSnapshot({
-          shopId: this.shopId,
-          eventDate: endDate,
-          settings: settings.rows,
+      let settings = { rows: [], rawPages: [] };
+      if (includeSettings) {
+        settings = await fetchCampaignSettings({
+          client, shopId: this.shopId, accessToken, campaignIds,
         });
+        await recordPages({
+          repository: this.rawRepository,
+          appRole: 'ADS',
+          endpointKey: `adsCampaignSettings:${adType}`,
+          shopId: this.shopId,
+          pages: settings.rawPages,
+        });
+        if (this.campaignRepository) {
+          await this.campaignRepository.saveCampaignSettingsSnapshot({
+            shopId: this.shopId,
+            eventDate: endDate,
+            settings: settings.rows,
+          });
+        }
       }
 
       const daily = await fetchProductCampaignDailyPerformance({

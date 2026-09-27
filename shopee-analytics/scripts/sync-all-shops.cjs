@@ -4,6 +4,7 @@ const { createAnalyticsPool } = require('../src/pg');
 const { createSyncRuntime } = require('../src/sync-runtime');
 const { ShopeeShopProfileRepository } = require('../src/shop-profile-repository');
 const { runShopSyncCycle } = require('../src/shop-sync-runner');
+const { ensureAutomaticHistory } = require('../src/history-repair');
 const { parseCampaignIds } = require('../src/sync-cycle-utils');
 const {
   assertOnlineOperationAllowed,
@@ -76,17 +77,35 @@ async function main() {
 
     const summaries = [];
     for (const shop of shops) {
+      const shopGmsSeeds = resolveSeededGmsCampaignIds({
+        shop,
+        pilot,
+        pilotConfig,
+        globalGmsSeeds: seededGmsCampaignIds,
+      });
       const summary = await runShopSyncCycle({
         runtime,
         shop,
         mode,
-        seededGmsCampaignIds: resolveSeededGmsCampaignIds({
-          shop,
-          pilot,
-          pilotConfig,
-          globalGmsSeeds: seededGmsCampaignIds,
-        }),
+        seededGmsCampaignIds: shopGmsSeeds,
       });
+      if (mode === 'daily' && !pilot) {
+        try {
+          summary.historyRepair = await ensureAutomaticHistory({
+            runtime,
+            profileRepository,
+            shop,
+            seededGmsCampaignIds: shopGmsSeeds,
+          });
+          if (!summary.historyRepair.ok) summary.ok = false;
+        } catch (error) {
+          summary.historyRepair = {
+            ok: false,
+            error: error && error.message ? error.message : String(error),
+          };
+          summary.ok = false;
+        }
+      }
       summaries.push(summary);
     }
 

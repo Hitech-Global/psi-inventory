@@ -28,7 +28,7 @@ assert.strictEqual(
 const th = localDateRangeEpoch('2026-09-18', '2026-09-18', 'Asia/Bangkok');
 assert.strictEqual(th.timeTo - th.timeFrom, 86399);
 
-assert.deepStrictEqual(parseSources('gms,orders,gms'), ['gms', 'orders']);
+assert.deepStrictEqual(parseSources('gms,product-ads,orders,gms'), ['gms', 'product-ads', 'orders']);
 assert(parseSources('').includes('shop-bi'));
 assert.throws(() => parseSources('bad-source'), /Unsupported/);
 
@@ -41,6 +41,16 @@ assert.strictEqual(
     },
   }, '2026-09-01', '2026-09-30'),
   '2026-09-14',
+);
+assert.strictEqual(
+  completedThrough({
+    cursor: {
+      requestedStartDate: '2026-09-01',
+      requestedEndDate: '2026-09-26',
+      completedThrough: '2026-09-26',
+    },
+  }, '2026-09-01', '2026-09-27'),
+  '2026-09-26',
 );
 assert.strictEqual(
   completedThrough({

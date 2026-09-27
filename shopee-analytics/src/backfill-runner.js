@@ -2,6 +2,7 @@
 
 const { ShopeeSyncService } = require('./sync-service');
 const { syncGmsWindow } = require('./sync-window');
+const { syncProductAdsOverviewWindow } = require('./sync-product-ads-overview');
 const { localIsoDate, addDays, mergeCampaignIds } = require('./sync-cycle-utils');
 const {
   daysInclusive,
@@ -169,6 +170,28 @@ async function runBackfillShop({
     });
   }
 
+  if (sourceSet.has('product-ads')) {
+    const ads = runtime.roleClients.ADS;
+    const accessToken = await run('ads-token-for-product-ads-history', () => ads.getAccessToken(shopId));
+    if (accessToken) {
+      await run('product-ads-overview-history', () => runChunked({
+        runtime, shopId, appRole: 'ADS', endpointKey: 'BACKFILL_PRODUCT_ADS_OVERVIEW',
+        requestedStartDate: startDate, requestedEndDate: endDate, chunkDays: 7,
+        runner: chunk => syncProductAdsOverviewWindow({
+          client: ads.client, repository: runtime.productAdsShopRepository, rawRepository: runtime.rawRepository,
+          shopId, accessToken, startDate: chunk.startDate, endDate: chunk.endDate,
+        }),
+      }));
+      await run('product-ads-campaign-history', () => runChunked({
+        runtime, shopId, appRole: 'ADS', endpointKey: 'BACKFILL_PRODUCT_ADS_CAMPAIGNS',
+        requestedStartDate: startDate, requestedEndDate: endDate, chunkDays: 7,
+        runner: chunk => service.syncProductAdsDaily({
+          startDate: chunk.startDate, endDate: chunk.endDate, adTypes: ['manual', 'auto'], includeSettings: false,
+        }),
+      }));
+    }
+  }
+
   let gmsCampaignIds = [];
   if (sourceSet.has('gms')) {
     const known = await run(
@@ -210,6 +233,7 @@ async function runBackfillShop({
             runner: chunk => syncGmsWindow({
               client: ads.client,
               repository: runtime.rawRepository,
+              adPromotionRepository: runtime.adPromotionRepository,
               shopId,
               accessToken,
               campaignId,

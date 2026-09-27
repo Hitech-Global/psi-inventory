@@ -134,6 +134,18 @@ const campaignService = new ShopeeSyncService({
   assert(productAdRequests.some(req => req.path.includes('get_product_campaign_daily_performance')));
   assert(productAdWrites.some(row => row.type === 'campaign' && row.input.campaignTypeNormalized === 'MANUAL_PRODUCT_AD'));
   assert(productAdWrites.some(row => row.type === 'daily'));
+
+  const settingsCallsBeforeHistory = productAdRequests
+    .filter(req => req.path.includes('get_product_level_campaign_setting_info')).length;
+  await productAdsService.syncProductAdsDaily({
+    startDate: '2026-09-01',
+    endDate: '2026-09-07',
+    adTypes: ['manual'],
+    includeSettings: false,
+  });
+  const settingsCallsAfterHistory = productAdRequests
+    .filter(req => req.path.includes('get_product_level_campaign_setting_info')).length;
+  assert.strictEqual(settingsCallsAfterHistory, settingsCallsBeforeHistory);
   console.log('shopee sync service tests: ok');
 })().catch(error => {
   console.error(error);

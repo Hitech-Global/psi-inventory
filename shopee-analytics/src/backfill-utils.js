@@ -96,6 +96,7 @@ function parseSources(value) {
     'shop-info',
     'campaigns',
     'gms',
+    'product-ads',
     'orders',
     'returns',
     'shop-bi',
@@ -120,11 +121,10 @@ function parseSources(value) {
 function completedThrough(state, requestedStartDate, requestedEndDate) {
   if (!state || !state.cursor) return null;
   const cursor = state.cursor;
-  if (
-    cursor.requestedStartDate !== requestedStartDate ||
-    cursor.requestedEndDate !== requestedEndDate
-  ) return null;
-  return cursor.completedThrough || null;
+  if (cursor.requestedStartDate !== requestedStartDate) return null;
+  const completed = cursor.completedThrough || null;
+  if (!completed || completed < requestedStartDate) return null;
+  return completed > requestedEndDate ? requestedEndDate : completed;
 }
 
 module.exports = {
