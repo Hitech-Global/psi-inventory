@@ -13,7 +13,10 @@ assert.strictEqual(toShopeeAdsDate('2026-09-22'), '22-09-2026');
 assert.strictEqual(campaignFamilyForAdType('manual'), 'MANUAL_PRODUCT_AD');
 assert.strictEqual(campaignFamilyForAdType('auto'), 'AUTO_PRODUCT_AD');
 assert.throws(() => campaignFamilyForAdType('all'), /manual or auto/);
-assert.strictEqual(adsPercentToFraction(0.5), 0.005, '0.50 from Shopee means 0.50%');
+// Product Ads API ratios observed in production are fractions when they are in
+// the 0..1 range (e.g. M612 raw ctr=0.0516 means 5.16%). Values above 1 are
+// accepted as legacy/export-style percentage points for compatibility.
+assert.strictEqual(adsPercentToFraction(0.5), 0.5, 'fractional Shopee source must remain a fraction');
 assert.strictEqual(adsPercentToFraction(12.34), 0.1234);
 
 const sample = {
