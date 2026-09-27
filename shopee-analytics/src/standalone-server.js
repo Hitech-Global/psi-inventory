@@ -1,5 +1,6 @@
 'use strict';
 
+const fs = require('fs');
 const path = require('path');
 const express = require('express');
 const { createAnalyticsPool } = require('./pg');
@@ -65,6 +66,20 @@ function createApp({ pool, skillProvider = null, importJobPool = null }) {
   }));
 
   const webDir = path.join(__dirname, '..', 'web');
+  const indexPath = path.join(webDir, 'index.html');
+  const indexHtml = fs.readFileSync(indexPath, 'utf8').replace(
+    '</body>',
+    '  <script src="/product-card-ui-v2.js" defer></script>\n</body>',
+  );
+
+  // Keep the stable V1 document intact while layering the corrected Product
+  // Card hierarchy after app.js/ad-group-import-async.js.  Serving the entry
+  // document explicitly also avoids a stale cached HTML shell during rollout.
+  app.get(['/', '/index.html'], (req, res) => {
+    res.set('Cache-Control', 'no-cache');
+    res.type('html').send(indexHtml);
+  });
+
   app.use(express.static(webDir, {
     etag: true,
     maxAge: '5m',
