@@ -1,6 +1,6 @@
 'use strict';
 
-const { sumPerformance } = require('./metrics');
+const { sumSourceAwarePerformance } = require('./source-aware-metrics');
 const { diagnoseCampaign, splitEventBaseline } = require('./diagnosis');
 
 function groupRowsByItem(rows) {
@@ -15,7 +15,7 @@ function groupRowsByItem(rows) {
 
 function aggregateItemRows(rows) {
   const itemId = rows[0] && (rows[0].item_id ?? rows[0].itemId);
-  return { item_id: itemId, ...sumPerformance(rows) };
+  return { item_id: itemId, ...sumSourceAwarePerformance(rows) };
 }
 
 async function enrichStrategy({ strategyRepository, shopId, items }) {
@@ -65,7 +65,7 @@ async function analyzeCampaignWindow({
       : Promise.resolve([]),
   ]);
 
-  const campaign = sumPerformance(campaignRows);
+  const campaign = sumSourceAwarePerformance(campaignRows);
   const itemGroups = groupRowsByItem(itemRows);
   const aggregatedItems = Array.from(itemGroups.values()).map(aggregateItemRows);
   const enriched = await enrichStrategy({ strategyRepository, shopId, items: aggregatedItems });
@@ -94,8 +94,8 @@ async function analyzeCampaignWindow({
     endDate,
     diagnosis,
     baseline: {
-      ordinary: sumPerformance(ordinaryRows),
-      event: sumPerformance(eventRows),
+      ordinary: sumSourceAwarePerformance(ordinaryRows),
+      event: sumSourceAwarePerformance(eventRows),
       ordinaryDays: ordinaryRows.length,
       eventDays: eventRows.length,
     },
