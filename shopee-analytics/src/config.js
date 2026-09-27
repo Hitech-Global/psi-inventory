@@ -43,13 +43,13 @@ function appSpec(role) {
   return spec;
 }
 
-function loadAppCredential(role, { requireToken = false } = {}) {
+function loadAppCredential(role, { requireToken = false, env = process.env } = {}) {
   const spec = appSpec(role);
   return {
     role,
-    partnerId: readEnv(spec.partnerId),
-    partnerKey: readEnv(spec.partnerKey),
-    accessToken: readEnv(spec.accessToken, { required: requireToken }),
+    partnerId: readEnv(spec.partnerId, { env }),
+    partnerKey: readEnv(spec.partnerKey, { env }),
+    accessToken: readEnv(spec.accessToken, { required: requireToken, env }),
   };
 }
 

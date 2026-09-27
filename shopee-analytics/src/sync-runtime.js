@@ -1,6 +1,6 @@
 'use strict';
 
-const { loadAppCredential } = require('./config');
+const { APP_ENV, loadAppCredential } = require('./config');
 const { loadMasterKey } = require('./token-crypto');
 const { ShopeeTokenRepository } = require('./token-repository');
 const { ShopeeTokenManager } = require('./token-manager');
@@ -18,10 +18,29 @@ const { ShopeeAdPromotionRepository } = require('./ad-promotion-repository');
 const { ShopeeProductAdsShopRepository } = require('./product-ads-shop-repository');
 const { rolesForDeploymentMode } = require('./deployment-mode');
 
+function selectConfiguredRuntimeRoles({ env = process.env, allowedRoles = rolesForDeploymentMode(env) } = {}) {
+  const selected = [];
+  for (const role of allowedRoles) {
+    const spec = APP_ENV[role];
+    const hasId = Boolean(String(env[spec.partnerId] || '').trim());
+    const hasKey = Boolean(String(env[spec.partnerKey] || '').trim());
+    if (hasId !== hasKey) {
+      throw new Error(`Incomplete Shopee app credential for ${role}: partner ID/key must be configured together`);
+    }
+    if (!hasId) {
+      if (role === 'ADS') throw new Error('ADS partner credential is required for online Shopee sync');
+      continue;
+    }
+    selected.push(role);
+  }
+  return selected;
+}
+
 function createSyncRuntime({
   pool,
   masterKey = loadMasterKey(),
-  credentialLoader = role => loadAppCredential(role, { requireToken: false }),
+  env = process.env,
+  credentialLoader = role => loadAppCredential(role, { requireToken: false, env }),
 } = {}) {
   if (!pool) throw new Error('pool is required');
 
@@ -30,15 +49,12 @@ function createSyncRuntime({
     tokenRepository,
     credentialLoader,
   });
-  const roleClients = createRoleClients(
-    rolesForDeploymentMode(),
-    {
-      ADS: { tokenManager },
-      STORE_OPS: { tokenManager },
-      ERP: { tokenManager },
-      BRAND_PORTAL: { tokenManager },
-    },
-  );
+  const configuredRoles = selectConfiguredRuntimeRoles({ env });
+  const optionsByRole = {};
+  for (const role of configuredRoles) {
+    optionsByRole[role] = { tokenManager, credential: credentialLoader(role) };
+  }
+  const roleClients = createRoleClients(configuredRoles, optionsByRole);
 
   return {
     pool,
@@ -59,4 +75,4 @@ function createSyncRuntime({
   };
 }
 
-module.exports = { createSyncRuntime };
+module.exports = { createSyncRuntime, selectConfiguredRuntimeRoles };

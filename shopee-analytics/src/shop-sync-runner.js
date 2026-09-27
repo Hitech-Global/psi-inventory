@@ -186,14 +186,22 @@ async function runShopSyncCycle({
       updateTimeTo: nowEpoch,
     }));
 
-    await run('promotions', () => service.syncPromotions(), { required: false });
+    if (runtime.roleClients.STORE_OPS) {
+      await run('promotions', () => service.syncPromotions(), { required: false });
+    } else {
+      summary.steps.push({ name: 'promotions', ok: true, required: false, skipped: 'NO_STORE_OPS_CLIENT' });
+    }
 
-    await run('returns', () => service.syncReturns({
-      updateTimeFrom: nowEpoch - 14 * 86400,
-      updateTimeTo: nowEpoch,
-    }), { required: false });
+    if (runtime.roleClients.ERP) {
+      await run('returns', () => service.syncReturns({
+        updateTimeFrom: nowEpoch - 14 * 86400,
+        updateTimeTo: nowEpoch,
+      }), { required: false });
+    } else {
+      summary.steps.push({ name: 'returns', ok: true, required: false, skipped: 'NO_ERP_CLIENT' });
+    }
 
-    if (profile.brandPortalTimezone) {
+    if (profile.brandPortalTimezone && runtime.roleClients.BRAND_PORTAL) {
       await run('shop-bi-yesterday', () => service.syncShopBiDay({
         date: yesterday,
         timezone: profile.brandPortalTimezone,
@@ -203,7 +211,7 @@ async function runShopSyncCycle({
         name: 'shop-bi-yesterday',
         ok: true,
         required: false,
-        skipped: 'NO_BRAND_PORTAL_TIMEZONE',
+        skipped: profile.brandPortalTimezone ? 'NO_BRAND_PORTAL_CLIENT' : 'NO_BRAND_PORTAL_TIMEZONE',
       });
     }
 
