@@ -28,6 +28,57 @@ function dateOnly(value) {
   return String(value).slice(0, 10);
 }
 
+function applyAtcEvidence(hydrated, row) {
+  const apiAtc = hydrated && hydrated.add_to_cart != null ? Number(hydrated.add_to_cart) : null;
+  if (apiAtc !== null && Number.isFinite(apiAtc)) {
+    return {
+      ...hydrated,
+      __atcSource: 'SHOPEE_API',
+      __atcEvidence: null,
+    };
+  }
+
+  const evidenceAtc = row && row.evidence_add_to_cart != null ? Number(row.evidence_add_to_cart) : null;
+  if (evidenceAtc !== null && Number.isFinite(evidenceAtc)) {
+    return {
+      ...hydrated,
+      add_to_cart: evidenceAtc,
+      add_to_cart_rate: null,
+      __atcSource: 'SELLER_CENTRE_EXPORT',
+      __atcEvidence: {
+        eventDate: dateOnly(row.event_date),
+        promotionKey: row.evidence_promotion_key,
+        syncedAt: row.evidence_synced_at,
+        sourceFormat: 'SHOPEE_PRODUCT_AD_EXPORT',
+      },
+    };
+  }
+
+  return {
+    ...hydrated,
+    __atcSource: 'UNAVAILABLE',
+    __atcEvidence: null,
+  };
+}
+
+function summarizeAtcProvenance(daily) {
+  if (!daily.length) {
+    return { addToCart: 'UNAVAILABLE', addToCartRate: 'UNAVAILABLE', evidence: [] };
+  }
+  const sources = daily.map(row => row.__atcSource || 'UNAVAILABLE');
+  const evidence = daily.map(row => row.__atcEvidence).filter(Boolean);
+  let addToCart;
+  if (sources.includes('UNAVAILABLE')) addToCart = 'INCOMPLETE';
+  else {
+    const unique = Array.from(new Set(sources));
+    addToCart = unique.length === 1 ? unique[0] : 'MIXED';
+  }
+  const addToCartRate = addToCart === 'SELLER_CENTRE_EXPORT'
+    ? 'DERIVED_FROM_SELLER_CENTRE_EXPORT'
+    : addToCart;
+  return { addToCart, addToCartRate, evidence };
+}
+
 async function listProductAdsSourceAccurate(pool, { shopId, startDate, endDate, adType }) {
   const family = adType === 'manual' ? 'MANUAL_PRODUCT_AD' : 'AUTO_PRODUCT_AD';
   const result = await pool.query(
@@ -66,7 +117,10 @@ async function listProductAdsSourceAccurate(pool, { shopId, startDate, endDate, 
        d.cost_per_direct_conversion,
        d.broad_acos,
        d.direct_acos,
-       d.raw_json
+       d.raw_json,
+       e.evidence_add_to_cart,
+       e.evidence_promotion_key,
+       e.evidence_synced_at
      FROM shopee_ad_campaigns c
      LEFT JOIN LATERAL (
        SELECT
@@ -86,6 +140,24 @@ async function listProductAdsSourceAccurate(pool, { shopId, startDate, endDate, 
        ON d.shop_id=c.shop_id
       AND d.campaign_id=c.campaign_id
       AND d.event_date BETWEEN $2::date AND $3::date
+     LEFT JOIN LATERAL (
+       SELECT
+         e0.add_to_cart AS evidence_add_to_cart,
+         e0.promotion_key AS evidence_promotion_key,
+         e0.synced_at AS evidence_synced_at
+       FROM shopee_ad_promotion_daily e0
+       WHERE d.event_date IS NOT NULL
+         AND e0.shop_id=c.shop_id
+         AND e0.campaign_id=c.campaign_id
+         AND e0.promotion_type='INDIVIDUAL_AD'
+         AND e0.data_source='MANUAL_IMPORT'
+         AND e0.period_start=d.event_date
+         AND e0.period_end=d.event_date
+         AND e0.add_to_cart IS NOT NULL
+         AND COALESCE(e0.raw_json->>'sourceFormat','')='SHOPEE_PRODUCT_AD_EXPORT'
+       ORDER BY e0.synced_at DESC
+       LIMIT 1
+     ) e ON true
      WHERE c.shop_id=$1
        AND c.campaign_type_normalized=$4
      ORDER BY c.campaign_id,d.event_date`,
@@ -140,15 +212,16 @@ async function listProductAdsSourceAccurate(pool, { shopId, startDate, endDate, 
         direct_acos: row.direct_acos,
         raw_json: row.raw_json,
       });
-      campaign.daily.push(hydrated);
+      campaign.daily.push(applyAtcEvidence(hydrated, row));
       campaign.latestPerformanceDate = dateOnly(row.event_date);
     }
   }
 
   return Array.from(campaigns.values()).map(campaign => {
     const performance = sumPerformance(campaign.daily);
+    const performanceProvenance = summarizeAtcProvenance(campaign.daily);
     const { daily, ...base } = campaign;
-    return { ...base, performance };
+    return { ...base, performance, performanceProvenance };
   }).sort((a, b) => {
     const spendDiff = Number(b.performance.expense || 0) - Number(a.performance.expense || 0);
     return spendDiff || a.campaignId - b.campaignId;
@@ -171,7 +244,7 @@ function createProductAdsSourceRouter({ pool }) {
         startDate,
         endDate,
         adType,
-        metricContract: 'SHOPEE_SOURCE_DAILY_WHEN_SINGLE_DAY_DERIVED_FROM_ADDITIVE_TOTALS_WHEN_MULTI_DAY',
+        metricContract: 'SHOPEE_SOURCE_DAILY_WITH_EXACT_DAY_SELLER_CENTRE_ATC_FALLBACK_WHEN_API_ATC_UNAVAILABLE',
         campaigns,
       });
     } catch (error) {
@@ -181,4 +254,10 @@ function createProductAdsSourceRouter({ pool }) {
   return router;
 }
 
-module.exports = { dateOnly, listProductAdsSourceAccurate, createProductAdsSourceRouter };
+module.exports = {
+  dateOnly,
+  applyAtcEvidence,
+  summarizeAtcProvenance,
+  listProductAdsSourceAccurate,
+  createProductAdsSourceRouter,
+};
