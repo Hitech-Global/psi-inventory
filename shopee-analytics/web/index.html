@@ -99,10 +99,10 @@
                 <th>销售变化</th>
                 <th>订单</th>
                 <th>估算非广告归因销售</th>
-                <th>广告花费</th>
+                <th data-shopee-metric="expense">花费</th>
                 <th>广告占比</th>
-                <th>Broad GMV占比</th>
-                <th>Broad ROAS</th>
+                <th>销售金额占比</th>
+                <th data-shopee-metric="roas">广告支出回报率</th>
                 <th>主要信号</th>
                 <th>退款金额</th>
               </tr>
@@ -132,12 +132,12 @@
                 <th>币种</th>
                 <th>销售额</th>
                 <th>订单</th>
-                <th>广告花费</th>
+                <th data-shopee-metric="expense">花费</th>
                 <th>广告占比</th>
-                <th>Broad GMV占比</th>
+                <th>销售金额占比</th>
                 <th>估算非广告归因销售</th>
-                <th>Broad ROAS</th>
-                <th>Direct订单</th>
+                <th data-shopee-metric="roas">广告支出回报率</th>
+                <th data-shopee-metric="directConversions">直接转化</th>
                 <th>退款金额</th>
                 <th>退货/退款</th>
               </tr>
@@ -188,8 +188,8 @@
                   <th>商品点击</th>
                   <th>点击→订单</th>
                   <th>客单价</th>
-                  <th>广告花费</th>
-                  <th>Broad ROAS</th>
+                  <th data-shopee-metric="expense">花费</th>
+                  <th data-shopee-metric="roas">广告支出回报率</th>
                   <th>估算非广告归因销售</th>
                 </tr>
               </thead>
@@ -215,16 +215,16 @@
                   <th>商品</th>
                   <th>总销售额</th>
                   <th>总订单</th>
-                  <th>总CVR</th>
-                  <th>加购率</th>
-                  <th>广告花费</th>
-                  <th>Broad GMV</th>
-                  <th>Direct GMV占比</th>
-                  <th>Broad ROAS</th>
-                  <th>Direct ROAS</th>
+                  <th>商品总转化率</th>
+                  <th data-shopee-metric="addToCartRate">加入购物车频率</th>
+                  <th data-shopee-metric="expense">花费</th>
+                  <th data-shopee-metric="gmv">销售金额</th>
+                  <th>直接销售金额占比</th>
+                  <th data-shopee-metric="roas">广告支出回报率</th>
+                  <th data-shopee-metric="directRoas">直接广告支出回报率</th>
                   <th>保本ROAS</th>
-                  <th>Direct订单</th>
-                  <th>估算非Direct销售</th>
+                  <th data-shopee-metric="directConversions">直接转化</th>
+                  <th>估算非直接归因销售</th>
                   <th>商品信号</th>
                 </tr>
               </thead>
@@ -267,8 +267,8 @@
               <thead>
                 <tr>
                   <th>Campaign</th>
-                  <th>订单</th>
-                  <th>ROAS</th>
+                  <th data-shopee-metric="conversions">转化</th>
+                  <th data-shopee-metric="roas">广告支出回报率</th>
                   <th>花费占比</th>
                   <th>Target</th>
                   <th>状态</th>
@@ -302,16 +302,16 @@
       <section id="adsManualPanel" class="panel hidden product-ads-panel">
         <div class="panel-head">
           <div>
-            <h2>单品广告</h2>
-            <p>Product Ads · manual。按 Campaign 看订单、ROAS、CTR/CVR 与花费，不套用广告组 SKU 赛马。</p>
+            <h2>Campaign 明细</h2>
+            <p>单品广告 · Shopee API</p>
           </div>
           <span id="manualAdCount" class="pill">0</span>
         </div>
         <div class="table-wrap product-ads-table-wrap">
           <table>
             <thead><tr>
-              <th>Campaign</th><th>状态</th><th>预算</th><th>订单</th><th>Direct订单</th>
-              <th>ROAS</th><th>Direct ROAS</th><th>CTR</th><th>CVR</th><th>花费</th><th>Target</th>
+              <th>Campaign</th><th>状态</th><th>预算</th><th data-shopee-metric="conversions">转化</th><th data-shopee-metric="directConversions">直接转化</th>
+              <th data-shopee-metric="roas">广告支出回报率</th><th data-shopee-metric="directRoas">直接广告支出回报率</th><th data-shopee-metric="ctr">点击率</th><th data-shopee-metric="conversionRate">转化率</th><th data-shopee-metric="expense">花费</th><th>Target ROAS</th>
             </tr></thead>
             <tbody id="manualAdRows"><tr><td colspan="11" class="empty">选择店铺后读取单品广告。</td></tr></tbody>
           </table>
@@ -322,16 +322,16 @@
       <section id="adsAutoPanel" class="panel hidden product-ads-panel">
         <div class="panel-head">
           <div>
-            <h2>全店广告 <small>（自动商品广告）</small></h2>
-            <p>Product Ads · auto。先看整体订单量与 ROAS，再看真实自动选品范围；不会把它解释成手工广告组。</p>
+            <h2>Campaign 明细</h2>
+            <p>全店推 · Shopee API</p>
           </div>
           <span id="autoAdCount" class="pill">0</span>
         </div>
         <div class="table-wrap product-ads-table-wrap">
           <table>
             <thead><tr>
-              <th>Campaign</th><th>状态</th><th>预算</th><th>订单</th><th>Direct订单</th>
-              <th>ROAS</th><th>Direct ROAS</th><th>CTR</th><th>CVR</th><th>花费</th><th>Target</th>
+              <th>Campaign</th><th>状态</th><th>预算</th><th data-shopee-metric="conversions">转化</th><th data-shopee-metric="directConversions">直接转化</th>
+              <th data-shopee-metric="roas">广告支出回报率</th><th data-shopee-metric="directRoas">直接广告支出回报率</th><th data-shopee-metric="ctr">点击率</th><th data-shopee-metric="conversionRate">转化率</th><th data-shopee-metric="expense">花费</th><th>Target ROAS</th>
             </tr></thead>
             <tbody id="autoAdRows"><tr><td colspan="11" class="empty">选择店铺后读取全店广告。</td></tr></tbody>
           </table>
@@ -341,8 +341,8 @@
       </section>
 
       <section id="adsGroupImportPanel" class="panel hidden product-ads-panel">
-        <div class="panel-head"><div><h2>广告组</h2><p>Seller Centre 广告组数据 · 手动导入</p></div><button id="openAdGroupImportBtn" class="primary" type="button">批量导入</button></div>
-        <div class="table-wrap"><table><thead><tr><th>日期</th><th>广告组</th><th>状态</th><th>商品数</th><th>展示</th><th>点击</th><th>CTR</th><th>订单</th><th>GMV</th><th>花费</th><th>ROAS</th><th>Direct GMV</th><th>Direct ROAS</th><th>数据质量</th></tr></thead><tbody id="adGroupRows"><tr><td colspan="14" class="empty">选择店铺后读取广告组数据。</td></tr></tbody></table></div>
+        <div class="panel-head"><div><h2>广告组明细</h2><p>Seller Centre 报表 · 手动导入</p></div><button id="openAdGroupImportBtn" class="primary" type="button">批量导入</button></div>
+        <div class="table-wrap"><table><thead><tr><th>日期</th><th>广告组</th><th>状态</th><th>商品数</th><th data-shopee-metric="impressions">展示次数</th><th data-shopee-metric="clicks">点击数</th><th data-shopee-metric="ctr">点击率</th><th data-shopee-metric="conversions">转化</th><th data-shopee-metric="gmv">销售金额</th><th data-shopee-metric="expense">花费</th><th data-shopee-metric="roas">广告支出回报率</th><th data-shopee-metric="directGmv">直接销售金额</th><th data-shopee-metric="directRoas">直接广告支出回报率</th><th>数据质量</th></tr></thead><tbody id="adGroupRows"><tr><td colspan="14" class="empty">选择店铺后读取广告组数据。</td></tr></tbody></table></div>
         <div id="adGroupEmptyState" class="product-ad-detail empty-inline hidden">当前周期暂无广告组数据。可以通过右上角【批量导入】上传 Shopee Seller Centre 报表。</div>
       </section>
       <div id="adGroupImportModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-label="批量导入广告组">
@@ -416,7 +416,7 @@
   <template id="diagnosisTemplate">
     <div class="diagnosis-content">
       <div class="stepbar">
-        <span>1 Direct订单</span><span>2 ROAS/盈亏</span><span>3 SKU分配</span><span>4 CTR/CVR</span><span>5 Signal×Confidence</span><span>6 Action</span>
+        <span>1 直接转化</span><span>2 ROAS/盈亏</span><span>3 SKU分配</span><span>4 CTR/CVR</span><span>5 Signal×Confidence</span><span>6 Action</span>
       </div>
 
       <div class="metric-grid" id="campaignMetrics"></div>
@@ -463,17 +463,17 @@
               <th>Confidence</th>
               <th>内部A/B/C</th>
               <th>放大资格</th>
-              <th>Direct订单</th>
-              <th>Direct ROAS</th>
+              <th data-shopee-metric="directConversions">直接转化</th>
+              <th data-shopee-metric="directRoas">直接广告支出回报率</th>
               <th>保本ROAS</th>
               <th>最低可接受ROAS</th>
-              <th>Broad ROAS</th>
-              <th>Spend Share</th>
-              <th>Direct GMV Share</th>
-              <th>广告CTR</th>
-              <th>Direct CVR</th>
-              <th>商品总CVR</th>
-              <th>加购率</th>
+              <th data-shopee-metric="roas">广告支出回报率</th>
+              <th>花费占比</th>
+              <th>直接销售金额占比</th>
+              <th data-shopee-metric="ctr">点击率</th>
+              <th data-shopee-metric="directConversionRate">直接转化率</th>
+              <th>商品总转化率</th>
+              <th data-shopee-metric="addToCartRate">加入购物车频率</th>
               <th>平台预估ROAS</th>
             </tr>
           </thead>
@@ -493,6 +493,7 @@
     </div>
   </template>
 
+  <script src="/shopee-metric-labels.js" defer></script>
   <script src="/app.js" defer></script>
   <script src="/ad-group-import-async.js" defer></script>
 </body>

@@ -6,6 +6,7 @@ const fmt = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
 const pct = value => Number.isFinite(Number(value)) ? `${(Number(value) * 100).toFixed(1)}%` : '—';
 const roas = value => Number.isFinite(Number(value)) ? Number(value).toFixed(2) : '—';
 const num = value => fmt.format(Number(value || 0));
+const sl = key => window.ShopeeMetricLabels?.label(key) || key;
 
 const STATE_LABELS = Object.freeze({
   TARGET_MET: '目标达成',
@@ -332,7 +333,7 @@ function renderPortfolio(data) {
     portfolioKpi('店铺数', num(totals.shopCount)),
     portfolioKpi('总订单', num(totals.orders), '来自 Shop BI'),
     portfolioKpi('总销量', num(totals.unitsSold)),
-    portfolioKpi('广告 Broad 订单', num(totals.broadOrders)),
+    portfolioKpi(sl('conversions'), num(totals.broadOrders), '广告归因'),
     portfolioKpi('退货/退款单', num(totals.returnCount)),
   ].join('');
   $('#portfolioSummary').classList.remove('hidden');
@@ -348,10 +349,10 @@ function renderPortfolio(data) {
         <div class="currency-money">${formatMoney(group.sales, group.currency)}</div>
         <div class="currency-label">销售额</div>
         <div class="currency-metrics">
-          <div><span>广告花费</span><strong>${formatMoney(group.adExpense, group.currency)}</strong></div>
+          <div><span>${sl('expense')}</span><strong>${formatMoney(group.adExpense, group.currency)}</strong></div>
           <div><span>广告占比</span><strong>${group.adSpendRatioToBiSales == null ? '—' : pct(group.adSpendRatioToBiSales)}</strong></div>
-          <div><span>Broad ROAS</span><strong>${roas(group.broadRoas)}</strong></div>
-          <div><span>Broad GMV占比</span><strong>${group.adGmvShareOfBiSales == null ? '—' : pct(group.adGmvShareOfBiSales)}</strong></div>
+          <div><span>${sl('roas')}</span><strong>${roas(group.broadRoas)}</strong></div>
+          <div><span>销售金额占比</span><strong>${group.adGmvShareOfBiSales == null ? '—' : pct(group.adGmvShareOfBiSales)}</strong></div>
           <div><span>估算非广告归因销售</span><strong>${formatMoney(group.estimatedNaturalSales, group.currency)}</strong></div>
           <div><span>退款</span><strong>${formatMoney(group.refundAmount, group.currency)}</strong></div>
         </div>
@@ -508,7 +509,7 @@ function renderStoreDetail(data) {
     portfolioKpi('点击→订单', current.orderPerProductClick == null ? '—' : pct(current.orderPerProductClick), `较上期 ${changePct(changes.clickToOrder)}`),
     portfolioKpi('客单价', current.orders ? formatMoney(current.sales / current.orders, shop.currency) : '—', `较上期 ${changePct(changes.aov)}`),
     portfolioKpi('广告花费占比', current.adSpendRatioToBiSales == null ? '—' : pct(current.adSpendRatioToBiSales), `经营约束 ≤ ${pct(current.adSpendRatioLimit)}`),
-    portfolioKpi('Broad ROAS', roas(current.broadRoas)),
+    portfolioKpi(sl('roas'), roas(current.broadRoas)),
     portfolioKpi('估算非广告归因销售', formatMoney(current.estimatedNaturalSales, shop.currency), `较上期 ${changePct(changes.estimatedNaturalSales)}`),
   ].join('');
 
@@ -608,11 +609,11 @@ function renderCampaignSummary(campaigns, shop) {
   const totalRoas = sum.expense ? sum.gmv / sum.expense : 0;
 
   $('#summary').innerHTML = [
-    ['广告花费', formatMoney(sum.expense, shop.currency), ''],
-    ['Broad GMV', formatMoney(sum.gmv, shop.currency), ''],
-    ['Broad订单', num(sum.orders), ''],
-    ['ROAS', roas(totalRoas), ''],
-    ['花费/Broad GMV', ratio == null ? '—' : pct(ratio), ratio > .15 ? 'negative' : 'positive'],
+    [sl('expense'), formatMoney(sum.expense, shop.currency), ''],
+    [sl('gmv'), formatMoney(sum.gmv, shop.currency), ''],
+    [sl('conversions'), num(sum.orders), ''],
+    [sl('roas'), roas(totalRoas), ''],
+    [sl('acos'), ratio == null ? '—' : pct(ratio), ratio > .15 ? 'negative' : 'positive'],
   ].map(([label, value, cls]) =>
     `<div class="kpi"><div class="label">${label}</div><div class="value ${cls}">${value}</div></div>`
   ).join('');
@@ -811,10 +812,10 @@ function renderProductAdDetail(data) {
     </div>
     <div class="product-ad-detail-metrics">
       ${metric('周等效订单', Number(d.weeklyEquivalentOrders || 0).toFixed(1), `门槛 ${num(d.weeklyOrderReference || 25)}`)}
-      ${metric('Broad ROAS', roas(p.broadRoas), d.targetRoas ? `Target ${roas(d.targetRoas)}` : '无Target')}
-      ${metric('CTR', pct(p.ctr), `${num(p.clicks)} clicks`)}
-      ${metric('Broad CVR', pct(p.broadCvr), `${num(p.broadOrders)} orders`)}
-      ${metric('广告花费', formatMoney(p.expense, selectedShop().currency), `${data.startDate} → ${data.endDate}`)}
+      ${metric(sl('roas'), roas(p.broadRoas), d.targetRoas ? `Target ${roas(d.targetRoas)}` : '无Target')}
+      ${metric(sl('ctr'), pct(p.ctr), `${num(p.clicks)} ${sl('clicks')}`)}
+      ${metric(sl('conversionRate'), pct(p.broadCvr), `${num(p.broadOrders)} ${sl('conversions')}`)}
+      ${metric(sl('expense'), formatMoney(p.expense, selectedShop().currency), `${data.startDate} → ${data.endDate}`)}
       ${metric(itemLabel, num(data.items.length), data.adType === 'auto' ? '仅真实Membership' : '不假设永远只有1个')}
     </div>
     <div class="product-ad-action"><strong>下一步</strong><span>${escapeHtml(d.action || '继续观察。')}</span></div>
@@ -852,9 +853,9 @@ function metric(label, value, sub = '', cls = '') {
 
 function miniMetrics(p, currency) {
   return [
-    `<div><strong>${num(p.broadOrders)}</strong><span>订单</span></div>`,
-    `<div><strong>${roas(p.broadRoas)}</strong><span>ROAS</span></div>`,
-    `<div><strong>${formatMoney(p.expense, currency)}</strong><span>花费</span></div>`,
+    `<div><strong>${num(p.broadOrders)}</strong><span>${sl('conversions')}</span></div>`,
+    `<div><strong>${roas(p.broadRoas)}</strong><span>${sl('roas')}</span></div>`,
+    `<div><strong>${formatMoney(p.expense, currency)}</strong><span>${sl('expense')}</span></div>`,
   ].join('');
 }
 
@@ -873,14 +874,14 @@ function renderAnalysis(data) {
   $('#diagnosisBody').replaceChildren(template);
 
   $('#campaignMetrics').innerHTML = [
-    metric('订单量', num(c.broadOrders), `周等效 ${Number(c.weeklyEquivalentOrders || 0).toFixed(1)} · ${stateLabel(c.volumeState)}`),
-    metric('Broad ROAS', roas(c.broadRoas), `Target ${roas(c.targetRoas)}`, c.broadRoas >= c.targetRoas && c.targetRoas ? 'positive' : ''),
-    metric('广告花费占比', pct(c.adCostRatio), `硬约束 ≤ ${pct(c.adSpendRatioLimit)} / 对应ROAS ≥ ${roas(c.spendLimitRoas)}`, c.spendLimitState === 'OVER_SPEND_LIMIT' ? 'negative' : 'positive'),
-    metric('CTR', pct(c.ctr), `${num(c.clicks)} clicks / ${num(c.impressions)} impressions`),
-    metric('Broad CVR', pct(c.broadCvr), '订单 / 点击'),
-    metric('Direct ROAS', roas(c.directRoas), '用于观察广告商品自身'),
-    metric('Direct订单', num(c.directOrders), `Broad订单 ${num(c.broadOrders)}`),
-    metric('CPC', formatMoney(c.cpc, shop.currency), c.targetVsRecommended || ''),
+    metric(sl('conversions'), num(c.broadOrders), `周等效 ${Number(c.weeklyEquivalentOrders || 0).toFixed(1)} · ${stateLabel(c.volumeState)}`),
+    metric(sl('roas'), roas(c.broadRoas), `Target ${roas(c.targetRoas)}`, c.broadRoas >= c.targetRoas && c.targetRoas ? 'positive' : ''),
+    metric(sl('acos'), pct(c.adCostRatio), `硬约束 ≤ ${pct(c.adSpendRatioLimit)} / 对应ROAS ≥ ${roas(c.spendLimitRoas)}`, c.spendLimitState === 'OVER_SPEND_LIMIT' ? 'negative' : 'positive'),
+    metric(sl('ctr'), pct(c.ctr), `${num(c.clicks)} ${sl('clicks')} / ${num(c.impressions)} ${sl('impressions')}`),
+    metric(sl('conversionRate'), pct(c.broadCvr), `${sl('conversions')} / ${sl('clicks')}`),
+    metric(sl('directRoas'), roas(c.directRoas), '用于观察广告商品自身'),
+    metric(sl('directConversions'), num(c.directOrders), `${sl('conversions')} ${num(c.broadOrders)}`),
+    metric('CPC（系统计算）', formatMoney(c.cpc, shop.currency), c.targetVsRecommended || ''),
     metric('预算利用率', c.budgetUtilization == null ? '—' : pct(c.budgetUtilization), c.dailyBudget ? `日预算 ${formatMoney(c.dailyBudget, shop.currency)} / 日均花费 ${formatMoney(c.avgDailySpend, shop.currency)}` : '未读取日预算'),
   ].join('');
 
@@ -902,7 +903,7 @@ function renderAnalysis(data) {
       <div><span>SKU花费日均变动</span><strong>${maturityDiagnostics.allocationMeanAbsDelta == null ? '—' : pct(maturityDiagnostics.allocationMeanAbsDelta)}</strong></div>
     </div>
     <div class="quality-summary maturity-evidence">
-      ${evidenceLabel('sample', 'Direct订单样本')}
+      ${evidenceLabel('sample', '直接转化样本')}
       ${evidenceLabel('allocation', 'SKU花费分配')}
       ${evidenceLabel('orderSource', '订单来源持续性')}
       ${evidenceLabel('cvr', 'CVR稳定性')}

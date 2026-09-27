@@ -3,6 +3,7 @@
 (() => {
   const $ = selector => document.querySelector(selector);
   const $$ = selector => Array.from(document.querySelectorAll(selector));
+  const sl = key => window.ShopeeMetricLabels?.label(key) || key;
   const esc = value => String(value ?? '')
     .replaceAll('&', '&amp;').replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;').replaceAll('"', '&quot;')
@@ -56,8 +57,9 @@
     const style = document.createElement('style');
     style.id = 'productCardUiV2Styles';
     style.textContent = `
-      .product-card-parent{margin:4px 0 10px;padding:14px 16px;background:#fff;border:1px solid #e6e6e8;border-radius:16px;display:flex;align-items:center;justify-content:space-between;gap:18px}
-      .product-card-parent h2{margin:2px 0 4px;font-size:18px}.product-card-parent p{margin:0;color:#6e6e73;font-size:12px}.product-card-parent .section-label{margin:0 0 3px}
+      .product-card-parent{display:none!important}
+      .product-card-parent h2{margin:1px 0 2px;font-size:16px}.product-card-parent p{margin:0;color:#6e6e73;font-size:11px}.product-card-parent .section-label{margin:0 0 2px;font-size:9px}
+      .product-card-context{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end}
       .product-card-legacy-hidden{display:none!important}
       .product-card-overview{display:grid;gap:14px}.product-card-overview .kpi-grid{margin-bottom:0}
       .product-card-daily-panel{background:#fff;border:1px solid #e6e6e8;border-radius:18px;overflow:hidden;box-shadow:0 8px 28px rgba(0,0,0,.035)}
@@ -67,7 +69,7 @@
       .ad-group-item-detail-v2{border-top:1px solid #ececef;background:#fbfbfc}
       .ad-group-item-detail-v2 .panel-head{padding:14px 20px}.ad-group-item-detail-v2 .table-wrap{max-height:420px}
       .ad-group-item-name{display:flex;flex-direction:column;gap:2px;min-width:190px;text-align:left}.ad-group-item-name strong{font-size:12px}.ad-group-item-name small{font-size:10px;color:#86868b;white-space:normal}
-      .product-card-source{font-size:10px;color:#86868b}.ads-type-tabs{margin-bottom:14px}
+      .product-card-source{font-size:10px;color:#86868b}.ads-type-tabs{margin-bottom:10px}
       @media(max-width:800px){.product-card-parent{align-items:flex-start;flex-direction:column}.product-card-overview .kpi-grid{grid-template-columns:repeat(2,1fr)}}
     `;
     document.head.appendChild(style);
@@ -90,9 +92,12 @@
         <div>
           <div class="section-label">PRODUCT CARD</div>
           <h2>Product Card</h2>
-          <p>Shopee 广告一级汇总；总览来自全店 CPC 广告汇总接口，单品广告、全店推、广告组均在此下钻。</p>
+          <p>商品广告总览与下钻</p>
         </div>
-        <span class="pill neutral">Shopee source aligned</span>`;
+        <div class="product-card-context">
+          <span id="productCardContextV2" class="pill neutral">总览</span>
+          <span id="productCardSourceV2" class="pill good">SHOPEE API</span>
+        </div>`;
       tabs.parentNode.insertBefore(parent, tabs);
     }
 
@@ -108,14 +113,14 @@
         <section id="productCardSummaryV2" class="kpi-grid"></section>
         <section class="product-card-daily-panel">
           <div class="panel-head">
-            <div><h2>Product Card 总览</h2><p>店铺级 Product Ads 汇总，不用某一个 Campaign 类型代替总盘。</p></div>
+            <div><h2>每日明细</h2><p>店铺级 Product Ads 汇总</p></div>
             <span id="productCardCoverageV2" class="pill neutral">等待数据</span>
           </div>
           <div class="table-wrap">
             <table>
               <thead><tr>
-                <th>日期</th><th>展示</th><th>点击</th><th>CTR</th><th>Broad订单</th><th>Direct订单</th>
-                <th>Broad GMV</th><th>Direct GMV</th><th>花费</th><th>Broad ROAS</th><th>Direct ROAS</th><th>CPC</th>
+                <th>日期</th><th>${sl('impressions')}</th><th>${sl('clicks')}</th><th>${sl('ctr')}</th><th>${sl('conversions')}</th><th>${sl('directConversions')}</th>
+                <th>${sl('gmv')}</th><th>${sl('directGmv')}</th><th>${sl('expense')}</th><th>${sl('roas')}</th><th>${sl('directRoas')}</th><th>${sl('costPerConversion')}</th>
               </tr></thead>
               <tbody id="productCardDailyRowsV2"><tr><td colspan="12" class="empty">选择店铺后读取 Product Card 总览。</td></tr></tbody>
             </table>
@@ -131,14 +136,14 @@
       detail.className = 'ad-group-item-detail-v2';
       detail.innerHTML = `
         <div class="panel-head">
-          <div><h3>广告组商品明细</h3><p>点击上方广告组，查看该日期该组内每个商品的真实表现。</p></div>
+          <div><h3>商品明细</h3><p>选择广告组后查看 Seller Centre 商品层数据。</p></div>
           <span id="adGroupItemCountV2" class="pill neutral">未选择</span>
         </div>
         <div class="table-wrap">
           <table>
             <thead><tr>
-              <th>商品</th><th>展示</th><th>点击</th><th>CTR</th><th>订单</th><th>GMV</th><th>花费</th><th>ROAS</th>
-              <th>Direct GMV</th><th>Direct ROAS</th><th>CVR</th><th>加购</th><th>数据质量</th>
+              <th>商品</th><th>${sl('impressions')}</th><th>${sl('clicks')}</th><th>${sl('ctr')}</th><th>${sl('conversions')}</th><th>${sl('gmv')}</th><th>${sl('expense')}</th><th>${sl('roas')}</th>
+              <th>${sl('directGmv')}</th><th>${sl('directRoas')}</th><th>${sl('conversionRate')}</th><th>${sl('addToCart')}</th><th>数据质量</th>
             </tr></thead>
             <tbody id="adGroupItemRowsV2"><tr><td colspan="13" class="empty">先点击一个广告组。</td></tr></tbody>
           </table>
@@ -186,23 +191,23 @@
 
     if (!data.dataAvailable) {
       summary.innerHTML = [
-        kpi('展示', '—'), kpi('点击', '—'), kpi('CTR', '—'), kpi('Broad订单', '—'), kpi('广告花费', '—'),
+        kpi(sl('impressions'), '—'), kpi(sl('clicks'), '—'), kpi(sl('ctr'), '—'), kpi(sl('conversions'), '—'), kpi(sl('expense'), '—'),
       ].join('');
       rowsEl.innerHTML = '<tr><td colspan="12" class="empty">当前周期暂无 Product Card 店铺级汇总。不会使用“全店推”或某个 GMV Max Campaign 冒充总览。</td></tr>';
       return;
     }
 
     summary.innerHTML = [
-      kpi('展示', int(s.impressions)),
-      kpi('点击', int(s.clicks)),
-      kpi('CTR', pct2(s.ctr)),
-      kpi('Broad订单', int(s.broadOrders), `Direct ${int(s.directOrders)}`),
-      kpi('Broad GMV', money2(s.broadGmv), `Direct ${money2(s.directGmv)}`),
-      kpi('广告花费', money2(s.expense)),
-      kpi('Broad ROAS', fixed2(s.broadRoas), `Direct ${fixed2(s.directRoas)}`),
-      kpi('CPC', money2(s.cpc)),
-      kpi('Broad CVR', pct2(s.broadCvr), `Direct ${pct2(s.directCvr)}`),
-      kpi('广告成本占比', pct2(s.broadAcos), `Direct ${pct2(s.directAcos)}`),
+      kpi(sl('impressions'), int(s.impressions)),
+      kpi(sl('clicks'), int(s.clicks)),
+      kpi(sl('ctr'), pct2(s.ctr)),
+      kpi(sl('conversions'), int(s.broadOrders), `${sl('directConversions')} ${int(s.directOrders)}`),
+      kpi(sl('gmv'), money2(s.broadGmv), `${sl('directGmv')} ${money2(s.directGmv)}`),
+      kpi(sl('expense'), money2(s.expense)),
+      kpi(sl('roas'), fixed2(s.broadRoas), `${sl('directRoas')} ${fixed2(s.directRoas)}`),
+      kpi(sl('costPerConversion'), money2(s.costPerConversion), `${sl('costPerDirectConversion')} ${money2(s.costPerDirectConversion)}`),
+      kpi(sl('conversionRate'), pct2(s.broadCvr), `${sl('directConversionRate')} ${pct2(s.directCvr)}`),
+      kpi(sl('acos'), pct2(s.broadAcos), `${sl('directAcos')} ${pct2(s.directAcos)}`),
     ].join('');
 
     rowsEl.innerHTML = daily.map(row => `<tr>
@@ -217,7 +222,7 @@
       <td>${money2(row.expense)}</td>
       <td>${fixed2(row.broadRoas)}</td>
       <td>${fixed2(row.directRoas)}</td>
-      <td>${money2(row.cpc)}</td>
+      <td>${money2(row.costPerConversion)}</td>
     </tr>`).join('');
   }
 
@@ -281,11 +286,11 @@
         </div><span class="pill neutral">${esc(d.primarySignal || '—')}</span>
       </div>
       <div class="product-ad-detail-metrics">
-        ${kpi('Broad订单', int(p.broadOrders), `Direct ${int(p.directOrders)}`)}
-        ${kpi('Broad ROAS', fixed2(p.broadRoas), `Direct ${fixed2(p.directRoas)}`)}
-        ${kpi('CTR', pct2(p.ctr), `${int(p.clicks)} clicks`)}
-        ${kpi('Broad CVR', pct2(p.broadCvr), `Direct ${pct2(p.directCvr)}`)}
-        ${kpi('广告花费', money2(p.expense), `${ctx.startDate} → ${ctx.endDate}`)}
+        ${kpi(sl('conversions'), int(p.broadOrders), `${sl('directConversions')} ${int(p.directOrders)}`)}
+        ${kpi(sl('roas'), fixed2(p.broadRoas), `${sl('directRoas')} ${fixed2(p.directRoas)}`)}
+        ${kpi(sl('ctr'), pct2(p.ctr), `${int(p.clicks)} ${sl('clicks')}`)}
+        ${kpi(sl('conversionRate'), pct2(p.broadCvr), `${sl('directConversionRate')} ${pct2(p.directCvr)}`)}
+        ${kpi(sl('expense'), money2(p.expense), `${ctx.startDate} → ${ctx.endDate}`)}
         ${kpi('Target ROAS', setting.targetRoas == null ? '—' : fixed2(setting.targetRoas))}
       </div>
       <div class="product-ad-action"><strong>下一步</strong><span>${esc(d.action || '继续观察。')}</span></div>`;
