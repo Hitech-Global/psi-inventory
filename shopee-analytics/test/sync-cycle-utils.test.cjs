@@ -21,6 +21,8 @@ assert.strictEqual(
 assert.strictEqual(addDays('2026-09-01', -1), '2026-08-31');
 assert.strictEqual(endOfUtcDayEpoch('2026-09-18') - startOfUtcDayEpoch('2026-09-18'), 86399);
 assert.deepStrictEqual(parseCampaignIds('7, 2,7,bad'), [7, 2]);
+assert.deepStrictEqual(parseCampaignIds(''), []);
+assert.deepStrictEqual(parseCampaignIds('164499732, ,0,-1,bad'), [164499732]);
 assert.deepStrictEqual(mergeCampaignIds([7, 2], [9, 2]), [2, 7, 9]);
 
 console.log('shopee sync cycle utility tests: ok');

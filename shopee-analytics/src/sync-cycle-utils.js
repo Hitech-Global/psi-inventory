@@ -32,8 +32,10 @@ function endOfUtcDayEpoch(isoDate) {
 function parseCampaignIds(value) {
   return Array.from(new Set(String(value || '')
     .split(',')
-    .map(x => Number(x.trim()))
-    .filter(Number.isSafeInteger)));
+    .map(x => x.trim())
+    .filter(Boolean)
+    .map(Number)
+    .filter(x => Number.isSafeInteger(x) && x > 0)));
 }
 
 function mergeCampaignIds(known, seeded) {
