@@ -15,6 +15,26 @@ function requireIsoDate(value, name) {
   return raw;
 }
 
+function addIsoDays(value, amount) {
+  const date = new Date(`${value}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + amount);
+  return date.toISOString().slice(0, 10);
+}
+
+function dateCoverage(startDate, endDate, rows = []) {
+  const available = new Set(rows.map(row => String(row.eventDate || row.event_date).slice(0, 10)));
+  const expectedDates = [];
+  for (let date = startDate; date <= endDate; date = addIsoDays(date, 1)) expectedDates.push(date);
+  const missingDates = expectedDates.filter(date => !available.has(date));
+  return {
+    expectedDays: expectedDates.length,
+    availableDays: expectedDates.length - missingDates.length,
+    missingDays: missingDates.length,
+    missingDates,
+    complete: missingDates.length === 0,
+  };
+}
+
 function serializeRow(row) {
   return {
     shopId: Number(row.shop_id),
@@ -54,12 +74,16 @@ function createProductAdsV2Router({ pool }) {
       if (startDate > endDate) throw new Error('start_date must be <= end_date');
       const dbRows = await repository.list({ shopId, startDate, endDate });
       const rows = dbRows.map(serializeRow);
+      const coverage = dateCoverage(startDate, endDate, rows);
       res.json({
         shopId,
         startDate,
         endDate,
         source: 'SHOPEE_API_ALL_CPC_DAILY',
+        sourceEndpoint: '/api/v2/ads/get_all_cpc_ads_daily_performance',
+        sourceScope: 'SHOP_LEVEL_CPC_ADS',
         dataAvailable: rows.length > 0,
+        coverage,
         daily: rows,
         summary: summarizeProductAdsRows(rows),
       });
@@ -71,4 +95,4 @@ function createProductAdsV2Router({ pool }) {
   return router;
 }
 
-module.exports = { createProductAdsV2Router, serializeRow };
+module.exports = { createProductAdsV2Router, serializeRow, dateCoverage };
