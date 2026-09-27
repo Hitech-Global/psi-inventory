@@ -42,7 +42,7 @@ function normalizePerformance(row = {}) {
   const directGmv = pickOptionalMetric(row, ['direct_gmv', 'directGmv']);
   const directOrders = pickMetric(row, ['direct_order', 'direct_orders', 'directOrders']);
   const directUnits = pickMetric(row, ['direct_order_amount', 'direct_item_sold', 'direct_units', 'directUnits']);
-  const addToCart = pickMetric(row, ['add_to_cart', 'addToCart']);
+  const addToCart = pickOptionalMetric(row, ['add_to_cart', 'addToCart']);
 
   const sourceCtr = pickOptionalMetric(row, ['ctr']);
   const sourceBroadCvr = pickOptionalMetric(row, ['broad_cvr', 'broadCvr']);
@@ -59,6 +59,7 @@ function normalizePerformance(row = {}) {
     ? sourceDirectRoas
     : (directGmv !== null && expense > 0 ? directGmv / expense : null);
   const sourceDirectGmvPresent = directGmv !== null;
+  const addToCartAvailable = addToCart !== null;
 
   return {
     impressions,
@@ -73,12 +74,15 @@ function normalizePerformance(row = {}) {
     directOrders,
     directUnits,
     addToCart,
+    addToCartAvailable,
     ctr: sourceCtr !== null ? sourceCtr : safeDiv(clicks, impressions),
     broadCvr: sourceBroadCvr !== null ? sourceBroadCvr : safeDiv(broadOrders, clicks),
     directCvr: sourceDirectCvr !== null ? sourceDirectCvr : safeDiv(directOrders, clicks),
     broadRoas: sourceBroadRoas !== null ? sourceBroadRoas : safeDiv(broadGmv, expense),
     directRoas,
-    addToCartRate: sourceAddToCartRate !== null ? sourceAddToCartRate : safeDiv(addToCart, clicks),
+    addToCartRate: sourceAddToCartRate !== null
+      ? sourceAddToCartRate
+      : (addToCartAvailable ? safeDiv(addToCart, clicks) : null),
     costPerConversion: sourceCostPerConversion !== null ? sourceCostPerConversion : safeDiv(expense, broadOrders),
     costPerDirectConversion: sourceCostPerDirectConversion !== null ? sourceCostPerDirectConversion : safeDiv(expense, directOrders),
     broadAcos: sourceBroadAcos !== null ? sourceBroadAcos : safeDiv(expense, broadGmv),
@@ -100,17 +104,21 @@ function sumPerformance(rows = []) {
     return {
       ...single,
       directMetricComplete: single.directGmv !== null,
+      addToCartMetricComplete: single.addToCart !== null,
     };
   }
 
   let directGmvAvailable = true;
+  let addToCartAvailable = rows.length > 0;
   const totals = rows.reduce((acc, row) => {
     const p = normalizePerformance(row);
-    for (const key of ['impressions','clicks','expense','broadGmv','broadOrders','broadUnits','directOrders','directUnits','addToCart']) {
+    for (const key of ['impressions','clicks','expense','broadGmv','broadOrders','broadUnits','directOrders','directUnits']) {
       acc[key] += p[key];
     }
     if (p.directGmv === null) directGmvAvailable = false;
     else acc.directGmv += p.directGmv;
+    if (p.addToCart === null) addToCartAvailable = false;
+    else acc.addToCart += p.addToCart;
     return acc;
   }, {
     impressions: 0,
@@ -126,18 +134,22 @@ function sumPerformance(rows = []) {
   });
 
   const completeDirectGmv = directGmvAvailable ? totals.directGmv : null;
+  const completeAddToCart = addToCartAvailable ? totals.addToCart : null;
   return {
     ...totals,
     directGmv: completeDirectGmv,
     sourceDirectGmvPresent: directGmvAvailable,
     directGmvAvailable,
     directMetricComplete: directGmvAvailable,
+    addToCart: completeAddToCart,
+    addToCartAvailable,
+    addToCartMetricComplete: addToCartAvailable,
     ctr: safeDiv(totals.clicks, totals.impressions),
     broadCvr: safeDiv(totals.broadOrders, totals.clicks),
     directCvr: safeDiv(totals.directOrders, totals.clicks),
     broadRoas: safeDiv(totals.broadGmv, totals.expense),
     directRoas: completeDirectGmv !== null && totals.expense > 0 ? completeDirectGmv / totals.expense : null,
-    addToCartRate: safeDiv(totals.addToCart, totals.clicks),
+    addToCartRate: completeAddToCart !== null ? safeDiv(completeAddToCart, totals.clicks) : null,
     costPerConversion: safeDiv(totals.expense, totals.broadOrders),
     costPerDirectConversion: safeDiv(totals.expense, totals.directOrders),
     broadAcos: safeDiv(totals.expense, totals.broadGmv),
