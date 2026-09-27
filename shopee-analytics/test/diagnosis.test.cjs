@@ -38,8 +38,8 @@ assert.strictEqual(result.items[0].action.code, 'PROTECT_CORE_SIGNAL');
 assert.strictEqual(result.items[1].state, 'EXPLORATION_KEEP');
 
 const split = splitEventBaseline([
-  { date: '2026-09-09', orders: 8 },
-  { date: '2026-09-10', orders: 1 },
+  { date: new Date('2026-09-09T00:00:00.000Z'), orders: 8 },
+  { date: new Date('2026-09-10T00:00:00.000Z'), orders: 1 },
 ], new Set(['2026-09-09']));
 assert.strictEqual(split.eventRows.length, 1);
 assert.strictEqual(split.ordinaryRows.length, 1);

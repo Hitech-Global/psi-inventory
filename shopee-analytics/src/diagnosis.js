@@ -248,7 +248,10 @@ function splitEventBaseline(rows = [], eventDateSet = new Set()) {
   const eventRows = [];
   const ordinaryRows = [];
   for (const row of rows) {
-    const key = String(row.date || row.event_date || '').slice(0, 10);
+    const value = row.date || row.event_date || '';
+    const key = value instanceof Date
+      ? (Number.isNaN(value.getTime()) ? '' : value.toISOString().slice(0, 10))
+      : String(value).slice(0, 10);
     (eventDateSet.has(key) ? eventRows : ordinaryRows).push(row);
   }
   return { eventRows, ordinaryRows };

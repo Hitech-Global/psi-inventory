@@ -4,7 +4,13 @@ const { safeDiv } = require('./metrics');
 const { normalizeSourceAwarePerformance, sumSourceAwarePerformance } = require('./source-aware-metrics');
 
 function rowDate(row) {
-  return String(row.date ?? row.event_date ?? row.eventDate ?? '').slice(0, 10);
+  const value = row.date ?? row.event_date ?? row.eventDate ?? '';
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? '' : value.toISOString().slice(0, 10);
+  const text = String(value).trim();
+  const iso = text.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (iso) return iso[1];
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? '' : parsed.toISOString().slice(0, 10);
 }
 
 function itemId(row) {

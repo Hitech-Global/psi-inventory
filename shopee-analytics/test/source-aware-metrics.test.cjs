@@ -10,7 +10,7 @@ const {
 const { buildAnalysisPackage } = require('../src/analysis-package');
 
 const day1 = {
-  event_date: '2026-09-21', impressions: '167', clicks: '6', expense: '0.800000',
+  event_date: new Date('2026-09-21T00:00:00.000Z'), impressions: '167', clicks: '6', expense: '0.800000',
   broad_gmv: '61.000000', broad_orders: '1', broad_units: '1', direct_gmv: null,
   direct_orders: '1', direct_units: '1', direct_roas: '76.570000',
   raw_json: { report: { impression: 167, clicks: 6, expense: 0.8, broad_gmv: 61,
@@ -26,7 +26,7 @@ assert.strictEqual(p1.directRoas, 76.57);
 assert.strictEqual(p1.directGmv, null);
 
 const day2 = {
-  event_date: '2026-09-22', impressions: '20', clicks: '1', expense: '0.200000',
+  event_date: new Date('2026-09-22T00:00:00.000Z'), impressions: '20', clicks: '1', expense: '0.200000',
   broad_gmv: '0', broad_orders: '0', broad_units: '0', direct_gmv: null,
   direct_orders: '0', direct_units: '0', direct_roas: '0',
   raw_json: { report: { impression: 20, clicks: 1, expense: 0.2, broad_gmv: 0,
