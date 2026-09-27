@@ -228,7 +228,7 @@
     return rows.map(row => {
       const p = row.performance || {};
       return `<tr data-product-card-campaign="${row.campaignId}" data-product-card-type="${type}">
-        <td><div class="campaign-name"><strong>#${row.campaignId}</strong><small>${esc(row.biddingMethod || row.adType || '')}</small></div></td>
+        <td><div class="campaign-name"><strong>#${row.campaignId}</strong><small>${esc(row.biddingMethod || (type === 'auto' ? 'GMV Max · GMS' : row.adType || ''))}</small></div></td>
         <td><span class="pill neutral">${esc(row.status || '—')}</span></td>
         <td>${row.campaignBudget == null ? '—' : money2(row.campaignBudget)}</td>
         <td>${int(p.broadOrders)}</td>
@@ -250,9 +250,12 @@
     const count = type === 'manual' ? $('#manualAdCount') : $('#autoAdCount');
     if (!target) return;
     const params = new URLSearchParams({
-      shop_id: String(ctx.shopId), start_date: ctx.startDate, end_date: ctx.endDate, ad_type: type,
+      shop_id: String(ctx.shopId), start_date: ctx.startDate, end_date: ctx.endDate,
     });
-    const data = await api(`/api/shopee-analytics/product-ads?${params}`);
+    if (type === 'manual') params.set('ad_type', 'manual');
+    const data = await api(type === 'manual'
+      ? `/api/shopee-analytics/product-ads?${params}`
+      : `/api/shopee-analytics/campaigns?${params}`);
     const rows = data.campaigns || [];
     if (count) count.textContent = `${int(rows.length)} 个`;
     target.innerHTML = rows.length
@@ -268,20 +271,24 @@
     const ctx = selectedContext();
     if (!ctx.shopId) return;
     const params = new URLSearchParams({
-      shop_id: String(ctx.shopId), start_date: ctx.startDate, end_date: ctx.endDate, ad_type: type,
+      shop_id: String(ctx.shopId), start_date: ctx.startDate, end_date: ctx.endDate,
     });
-    const data = await api(`/api/shopee-analytics/product-ads/${campaignId}/detail?${params}`);
+    if (type === 'manual') params.set('ad_type', 'manual');
+    const data = await api(type === 'manual'
+      ? `/api/shopee-analytics/product-ads/${campaignId}/detail?${params}`
+      : `/api/shopee-analytics/campaigns/${campaignId}/analysis?${params}`);
     const detail = type === 'manual' ? $('#manualAdDetail') : $('#autoAdDetail');
     if (!detail) return;
     const d = data.diagnosis || {};
-    const p = d.performance || {};
+    const p = type === 'manual' ? (d.performance || {}) : (d.campaign || {});
     const setting = data.latestSetting || {};
+    const primaryAction = Array.isArray(d.actions) ? d.actions[0] : null;
     detail.innerHTML = `
       <div class="product-ad-detail-head">
         <div><div class="section-label">${type === 'manual' ? 'SINGLE PRODUCT AD' : 'SHOP-WIDE PRODUCT AD'}</div>
-          <h3>${esc(setting.adName || data.campaign?.adName || ('Campaign #' + campaignId))}</h3>
-          <p>${esc(setting.campaignPlacement || data.campaign?.campaignPlacement || '—')} · ${esc(setting.biddingMethod || data.campaign?.biddingMethod || '—')}</p>
-        </div><span class="pill neutral">${esc(d.primarySignal || '—')}</span>
+          <h3>${esc(setting.adName || data.campaign?.adName || (type === 'auto' ? ('全店推 Campaign #' + campaignId) : ('Campaign #' + campaignId)))}</h3>
+          <p>${type === 'auto' ? 'GMV Max · GMS API' : (esc(setting.campaignPlacement || data.campaign?.campaignPlacement || '—') + ' · ' + esc(setting.biddingMethod || data.campaign?.biddingMethod || '—'))}</p>
+        </div><span class="pill neutral">${esc(d.primarySignal || primaryAction?.title || '—')}</span>
       </div>
       <div class="product-ad-detail-metrics">
         ${kpi(sl('conversions'), int(p.broadOrders), `${sl('directConversions')} ${int(p.directOrders)}`)}
@@ -289,15 +296,15 @@
         ${kpi(sl('ctr'), pct2(p.ctr), `${int(p.clicks)} ${sl('clicks')}`)}
         ${kpi(sl('conversionRate'), pct2(p.broadCvr), `${sl('directConversionRate')} ${pct2(p.directCvr)}`)}
         ${kpi(sl('expense'), money2(p.expense), `${ctx.startDate} → ${ctx.endDate}`)}
-        ${kpi('Target ROAS', setting.targetRoas == null ? '—' : fixed2(setting.targetRoas))}
+        ${kpi('Target ROAS', type === 'auto' ? (p.targetRoas == null ? '—' : fixed2(p.targetRoas)) : (setting.targetRoas == null ? '—' : fixed2(setting.targetRoas)))}
       </div>
-      <div class="product-ad-action"><strong>下一步</strong><span>${esc(d.action || '继续观察。')}</span></div>`;
+      <div class="product-ad-action"><strong>下一步</strong><span>${esc(type === 'auto' ? (primaryAction?.action || '继续观察。') : (d.action || '继续观察。'))}</span></div>`;
 
     if (type === 'auto' && $('#autoAdItems')) {
-      const items = data.items || [];
+      const items = d.items || [];
       $('#autoAdItems').innerHTML = items.length
-        ? `<strong>当前自动选品范围 · ${int(items.length)} 个商品</strong><div class="product-ad-item-list">${items.map(item => `<span>#${esc(item.itemId)}${item.itemSku ? ` · ${esc(item.itemSku)}` : ''}</span>`).join('')}</div>`
-        : '<div class="empty-inline">当前没有真实 Membership 商品。</div>';
+        ? `<strong>全店推商品表现 · ${int(items.length)} 个商品</strong><div class="product-ad-item-list">${items.map(item => `<span>#${esc(item.itemId)}${item.itemSku ? ` · ${esc(item.itemSku)}` : ''} · ${int(item.broadOrders)} 转化</span>`).join('')}</div>`
+        : '<div class="empty-inline">当前周期没有 GMS 商品层表现。</div>';
     }
   }
 

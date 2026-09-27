@@ -1373,7 +1373,7 @@ async function loadCurrentView() {
     else if (state.view === 'ads' && state.adsType === 'groups' && selectedShop()) await loadAdGroups();
     else if (state.view === 'ads' && selectedShop()) {
       await window.loadCampaigns?.();
-      await loadProductAds(state.adsType);
+      await (window.loadProductAds || loadProductAds)(state.adsType);
     }
     else if (state.view === 'status') {
       if (selectedShop()) await loadSystemStatus();
