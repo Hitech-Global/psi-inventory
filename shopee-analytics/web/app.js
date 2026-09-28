@@ -118,7 +118,7 @@ function formatDateTime(value) {
   if (!value) return '从未';
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return '未知';
-  return d.toLocaleString('zh-CN', {
+  return d.toLocaleString(window.ShopeeI18n?.isEnglish?.() ? 'en-US' : 'zh-CN', {
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',

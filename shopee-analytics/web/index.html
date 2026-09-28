@@ -14,7 +14,13 @@
         <h1>Shopee 运营分析</h1>
         <p class="subtitle">国家 × 品牌 × 店铺统一管理；先看经营，再下钻广告组与 SKU。</p>
       </div>
-      <div class="health" id="healthBadge">检查数据源…</div>
+      <div class="topbar-tools">
+        <div id="languageSwitch" class="language-switch" role="group" aria-label="Language">
+          <button type="button" data-locale="zh">中文</button>
+          <button type="button" data-locale="en">EN</button>
+        </div>
+        <div class="health" id="healthBadge">检查数据源…</div>
+      </div>
     </header>
 
     <nav class="view-tabs" aria-label="Shopee analytics views">
@@ -493,6 +499,7 @@
     </div>
   </template>
 
+  <script src="/i18n-v1.js" defer></script>
   <script src="/shopee-metric-labels.js" defer></script>
   <script src="/currency-format-v1.js" defer></script>
   <script src="/app.js" defer></script>

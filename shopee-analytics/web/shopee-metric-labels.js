@@ -30,8 +30,20 @@
     directRoas: { zh: '直接广告支出回报率', en: 'Direct ROAS' },
     acos: { zh: '广告销售成本', en: 'ACOS' },
     directAcos: { zh: '直接广告销售成本', en: 'Direct ACOS' },
-    voucherAmount: { zh: 'Voucher Amount', en: 'Voucher Amount' },
-    voucheredSales: { zh: 'Vouchered Sales', en: 'Vouchered Sales' },
+    voucherAmount: { zh: '优惠券金额', en: 'Voucher Amount' },
+    voucheredSales: { zh: '优惠券带来的销售额', en: 'Vouchered Sales' },
+    campaignApi: { zh: 'Campaign（API）', en: 'Campaign (API)' },
+    budgetApi: { zh: '预算（API）', en: 'Budget (API)' },
+    targetRoas: { zh: 'Target ROAS', en: 'Target ROAS' },
+    averageRank: { zh: '平均排名', en: 'Average Rank' },
+    keywordPlacement: { zh: '关键字/位置', en: 'Keyword / Placement' },
+    matchType: { zh: '匹配类型', en: 'Match Type' },
+    searchVolume: { zh: '搜寻次数', en: 'Search Volume' },
+    placement: { zh: '版位', en: 'Placement' },
+    productName: { zh: '商品名称', en: 'Product Name' },
+    dataDateSystem: { zh: '数据日期（系统）', en: 'Data Date (System)' },
+    productCountSystem: { zh: '商品数（系统）', en: 'Product Count (System)' },
+    dataQuality: { zh: '数据质量', en: 'Data Quality' },
   });
 
   function localeFromDocument() {

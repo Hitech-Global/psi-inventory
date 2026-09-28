@@ -46,9 +46,9 @@
     return `<td data-sort-value="${sort}"><div class="metric-cell"><span>${formatter(current)}</span>${changeHtml(current, previous)}</div></td>`;
   }
   const OVERVIEW_METRICS = [
-    ['展示次数','impressions',int],['点击数','clicks',int],['点击率','ctr',pct2],['订单量','broadOrders',int],
-    ['商品已出售','broadUnits',int],['销售额','broadGmv',money2],['花费','expense',money2],['广告支出回报率','broadRoas',fixed2],
-    ['优惠券金额','voucherAmount',money2],['优惠券带来的销售额','voucheredSales',money2],['加购次数','addToCart',int],['加购率','addToCartRate',pct2],
+    ['impressions','impressions',int],['clicks','clicks',int],['ctr','ctr',pct2],['conversions','broadOrders',int],
+    ['itemsSold','broadUnits',int],['gmv','broadGmv',money2],['expense','expense',money2],['roas','broadRoas',fixed2],
+    ['voucherAmount','voucherAmount',money2],['voucheredSales','voucheredSales',money2],['addToCart','addToCart',int],['addToCartRate','addToCartRate',pct2],
   ];
   const SUPPLEMENTAL_OVERVIEW_KEYS = new Set(['voucherAmount','voucheredSales','addToCart','addToCartRate']);
   function supplementalStatus(data, key) {
@@ -235,7 +235,7 @@
             <span id="productCardCoverageV2" class="pill neutral">等待数据</span>
           </div>
           <div class="table-wrap"><table>
-            <thead><tr><th>日期</th>${OVERVIEW_METRICS.map(([label]) => `<th>${label}</th>`).join('')}</tr></thead>
+            <thead><tr><th>日期</th>${OVERVIEW_METRICS.map(([labelKey]) => `<th>${esc(sl(labelKey))}</th>`).join('')}</tr></thead>
             <tbody id="productCardDailyRowsV2"><tr><td colspan="13" class="empty">选择店铺后读取 Product Card 总览。</td></tr></tbody>
           </table></div>
         </section>`;
@@ -248,22 +248,22 @@
 
   const metricCol = key => ({ key });
   const textCol = label => ({ label });
-  const MANUAL_COLUMNS = [textCol('Campaign'),textCol('状态'),textCol('竞价方式'),textCol('预算'),
+  const MANUAL_COLUMNS = [metricCol('campaignApi'),metricCol('status'),metricCol('biddingMethod'),metricCol('budgetApi'),
     metricCol('impressions'),metricCol('clicks'),metricCol('ctr'),metricCol('addToCart'),metricCol('addToCartRate'),
     metricCol('conversions'),metricCol('directConversions'),metricCol('conversionRate'),metricCol('directConversionRate'),
     metricCol('costPerConversion'),metricCol('costPerDirectConversion'),metricCol('itemsSold'),metricCol('directItemsSold'),
     metricCol('gmv'),metricCol('directGmv'),metricCol('expense'),metricCol('roas'),metricCol('directRoas'),metricCol('acos'),metricCol('directAcos'),
-    textCol('平均排名'),metricCol('voucherAmount'),metricCol('voucheredSales'),textCol('Target ROAS')];
-  const GMS_COLUMNS = [textCol('Campaign / 投放算法'),metricCol('impressions'),metricCol('clicks'),metricCol('ctr'),
+    metricCol('averageRank'),metricCol('voucherAmount'),metricCol('voucheredSales'),metricCol('targetRoas')];
+  const GMS_COLUMNS = [metricCol('campaignApi'),metricCol('impressions'),metricCol('clicks'),metricCol('ctr'),
     metricCol('conversions'),metricCol('directConversions'),metricCol('conversionRate'),metricCol('directConversionRate'),
     metricCol('costPerConversion'),metricCol('costPerDirectConversion'),metricCol('itemsSold'),metricCol('directItemsSold'),
     metricCol('gmv'),metricCol('directGmv'),metricCol('expense'),metricCol('roas'),metricCol('directRoas'),metricCol('acos'),metricCol('directAcos'),
     metricCol('voucherAmount'),metricCol('voucheredSales')];
-  const GROUP_COLUMNS = [metricCol('sequence'),textCol('数据日期（系统）'),metricCol('adProductName'),metricCol('status'),metricCol('adsType'),metricCol('biddingMethod'),
-    metricCol('startDate'),metricCol('endDate'),textCol('商品数（系统）'),metricCol('impressions'),metricCol('clicks'),metricCol('ctr'),
+  const GROUP_COLUMNS = [metricCol('sequence'),metricCol('dataDateSystem'),metricCol('adProductName'),metricCol('status'),metricCol('adsType'),metricCol('biddingMethod'),
+    metricCol('startDate'),metricCol('endDate'),metricCol('productCountSystem'),metricCol('impressions'),metricCol('clicks'),metricCol('ctr'),
     metricCol('conversions'),metricCol('directConversions'),metricCol('conversionRate'),metricCol('directConversionRate'),
     metricCol('costPerConversion'),metricCol('costPerDirectConversion'),metricCol('itemsSold'),metricCol('directItemsSold'),metricCol('gmv'),metricCol('directGmv'),
-    metricCol('expense'),metricCol('roas'),metricCol('directRoas'),metricCol('acos'),metricCol('directAcos'),metricCol('voucherAmount'),metricCol('voucheredSales'),textCol('数据质量')];
+    metricCol('expense'),metricCol('roas'),metricCol('directRoas'),metricCol('acos'),metricCol('directAcos'),metricCol('voucherAmount'),metricCol('voucheredSales'),metricCol('dataQuality')];
 
   function headerHtml(columns) {
     return columns.map(column => column.key
@@ -320,7 +320,7 @@
     const priorDaily = previousData.daily || [];
     coverage.textContent = data.dataAvailable ? `${int(daily.length)} 天` : '暂无API汇总';
     coverage.className = `pill ${data.dataAvailable ? 'good' : 'warn'}`;
-    summary.innerHTML = OVERVIEW_METRICS.map(([label, key, formatter]) => {
+    summary.innerHTML = OVERVIEW_METRICS.map(([labelKey, key, formatter]) => {
       let comparisonText;
       if (present(current[key]) && present(previous[key])) {
         comparisonText = `环比 ${changeHtml(current[key], previous[key]).replace(/<[^>]+>/g, '')}`;
@@ -329,7 +329,7 @@
       } else {
         comparisonText = present(current[key]) ? '' : '当前 Shopee API 未返回';
       }
-      return kpi(label, formatter(current[key]), comparisonText);
+      return kpi(sl(labelKey), formatter(current[key]), comparisonText);
     }).join('');
     if (!data.dataAvailable) {
       rowsEl.innerHTML = '<tr><td colspan="13" class="empty">当前周期暂无 Product Card 店铺级汇总。</td></tr>';
@@ -495,7 +495,7 @@
       $('#autoAdItems').innerHTML = items.length ? `
         <div class="panel-head"><div><h3>商品明细</h3><p>全店推 · GMS Item Performance · 环比上一周期 · ${int(items.length)} 商品</p></div></div>
         <div class="table-wrap"><table><thead><tr>
-          <th>商品</th><th>${sl('productId')}</th><th>${sl('impressions')}</th><th>${sl('clicks')}</th><th>${sl('ctr')}</th>
+          <th>${sl('productName')}</th><th>${sl('productId')}</th><th>${sl('impressions')}</th><th>${sl('clicks')}</th><th>${sl('ctr')}</th>
           <th>${sl('conversions')}</th><th>${sl('directConversions')}</th><th>${sl('conversionRate')}</th><th>${sl('directConversionRate')}</th>
           <th>${sl('costPerConversion')}</th><th>${sl('costPerDirectConversion')}</th><th>${sl('itemsSold')}</th><th>${sl('directItemsSold')}</th>
           <th>${sl('gmv')}</th><th>${sl('directGmv')}</th><th>${sl('expense')}</th><th>${sl('roas')}</th><th>${sl('directRoas')}</th><th>${sl('acos')}</th><th>${sl('directAcos')}</th>

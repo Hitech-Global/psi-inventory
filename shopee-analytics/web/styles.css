@@ -151,3 +151,9 @@
 table thead th,table tbody td{text-align:left!important}
 .metric-cell{align-items:flex-start!important;text-align:left}
 .view-section input,.view-section select,.view-section textarea{text-align:left}
+
+/* Language switch */
+.topbar-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end}
+.language-switch{display:inline-flex;align-items:center;padding:3px;background:#ececef;border-radius:10px}
+.language-switch button{height:30px;min-width:44px;border:0;background:transparent;border-radius:8px;padding:0 10px;font:inherit;font-size:11px;font-weight:700;color:#6e6e73;cursor:pointer}
+.language-switch button.active{background:#fff;color:#1d1d1f;box-shadow:0 1px 4px rgba(0,0,0,.12)}
