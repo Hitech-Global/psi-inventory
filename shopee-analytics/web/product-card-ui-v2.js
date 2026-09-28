@@ -259,8 +259,8 @@
     metricCol('costPerConversion'),metricCol('costPerDirectConversion'),metricCol('itemsSold'),metricCol('directItemsSold'),
     metricCol('gmv'),metricCol('directGmv'),metricCol('expense'),metricCol('roas'),metricCol('directRoas'),metricCol('acos'),metricCol('directAcos'),
     metricCol('voucherAmount'),metricCol('voucheredSales')];
-  const GROUP_COLUMNS = [textCol('报表日期'),metricCol('adProductName'),metricCol('status'),metricCol('adsType'),metricCol('biddingMethod'),
-    metricCol('startDate'),metricCol('endDate'),textCol('商品数'),metricCol('impressions'),metricCol('clicks'),metricCol('ctr'),
+  const GROUP_COLUMNS = [metricCol('sequence'),textCol('数据日期（系统）'),metricCol('adProductName'),metricCol('status'),metricCol('adsType'),metricCol('biddingMethod'),
+    metricCol('startDate'),metricCol('endDate'),textCol('商品数（系统）'),metricCol('impressions'),metricCol('clicks'),metricCol('ctr'),
     metricCol('conversions'),metricCol('directConversions'),metricCol('conversionRate'),metricCol('directConversionRate'),
     metricCol('costPerConversion'),metricCol('costPerDirectConversion'),metricCol('itemsSold'),metricCol('directItemsSold'),metricCol('gmv'),metricCol('directGmv'),
     metricCol('expense'),metricCol('roas'),metricCol('directRoas'),metricCol('acos'),metricCol('directAcos'),metricCol('voucherAmount'),metricCol('voucheredSales'),textCol('数据质量')];
@@ -519,13 +519,13 @@
     if (!items.length) return '<div class="empty-inline">这个广告组没有保存商品层明细。</div>';
     const previousMap = new Map((previousRow?.items || []).map(item => [Number(item.itemId), item]));
     return `<div class="ad-group-modal-content"><div class="table-wrap"><table><thead><tr>
-        <th>${sl('adProductName')}</th><th>${sl('productId')}</th><th>${sl('impressions')}</th><th>${sl('clicks')}</th><th>${sl('ctr')}</th>
+        <th>${sl('sequence')}</th><th>${sl('adProductName')}</th><th>${sl('productId')}</th><th>${sl('impressions')}</th><th>${sl('clicks')}</th><th>${sl('ctr')}</th>
         <th>${sl('conversions')}</th><th>${sl('directConversions')}</th><th>${sl('conversionRate')}</th><th>${sl('directConversionRate')}</th>
         <th>${sl('costPerConversion')}</th><th>${sl('costPerDirectConversion')}</th><th>${sl('itemsSold')}</th><th>${sl('directItemsSold')}</th>
         <th>${sl('gmv')}</th><th>${sl('directGmv')}</th><th>${sl('expense')}</th><th>${sl('roas')}</th><th>${sl('directRoas')}</th><th>${sl('acos')}</th><th>${sl('directAcos')}</th><th>${sl('voucherAmount')}</th><th>${sl('voucheredSales')}</th>
       </tr></thead><tbody>${items.map(item => {
         const q = previousMap.get(Number(item.itemId)) || {};
-        return `<tr><td><div class="ad-group-item-name"><strong>${esc(item.productName || ('#' + item.itemId))}</strong><small>${esc(item.itemSku || '')}</small></div></td><td>${esc(item.itemId)}</td>
+        return `<tr><td>${int(item.sequence)}</td><td><div class="ad-group-item-name"><strong>${esc(item.productName || ('#' + item.itemId))}</strong><small>${esc(item.itemSku || '')}</small></div></td><td>${esc(item.itemId)}</td>
           ${metricTd(item.impressions, int, q.impressions)}${metricTd(item.clicks, int, q.clicks)}${metricTd(item.ctr, pct2, q.ctr)}
           ${metricTd(item.orders, int, q.orders)}${metricTd(item.directConversions, int, q.directConversions)}${metricTd(item.cvr, pct2, q.cvr)}${metricTd(item.directCvr, pct2, q.directCvr)}
           ${metricTd(item.costPerConversion, money2, q.costPerConversion)}${metricTd(item.costPerDirectConversion, money2, q.costPerDirectConversion)}
@@ -577,7 +577,7 @@
       const previous = previousMap.get(compareKey(row, addIsoDays(date, -previousRange.days))) || {};
       lastGroupPreviousRows[index] = previous;
       return `<tr data-ad-group-index="${index}" data-sort-group="${groupKey}" title="点击查看商品明细">
-        <td>${esc(date)}</td><td>${esc(row.campaign_name || '—')}</td><td>${esc(row.campaign_status || '—')}</td><td>${esc(row.source_ad_type || '—')}</td>
+        <td>${int(row.sequence)}</td><td>${esc(date)}</td><td>${esc(row.campaign_name || '—')}</td><td>${esc(row.campaign_status || '—')}</td><td>${esc(row.source_ad_type || '—')}</td>
         <td>${esc(row.biddingMethod || '—')}</td><td>${esc(row.groupStartDate || '—')}</td><td>${esc(row.groupEndDate || '—')}</td><td>${int(row.item_count)}</td>
         ${metricTd(row.impressions, int, previous.impressions)}${metricTd(row.clicks, int, previous.clicks)}${metricTd(row.ctr, pct2, previous.ctr)}
         ${metricTd(row.orders, int, previous.orders)}${metricTd(row.directConversions, int, previous.directConversions)}${metricTd(row.cvr, pct2, previous.cvr)}${metricTd(row.directCvr, pct2, previous.directCvr)}

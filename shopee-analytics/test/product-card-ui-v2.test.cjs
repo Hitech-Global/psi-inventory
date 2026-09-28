@@ -31,7 +31,10 @@ assert(ui.includes("title: '单品广告明细'"), 'single-product ad detail mus
 assert(ui.includes("#manualAdDetail{display:none!important}"), 'legacy inline single-product detail must stay hidden');
 assert(ui.includes('data-sort-group'), 'Ad Group parent row sort metadata must remain');
 assert(!ui.includes('adGroupItemRowsV2'), 'separate Ad Group item panel must be removed');
-for (const token of ['directConversions','costPerDirectConversion','voucherAmount','voucheredSales']) assert(repo.includes(token), `read model missing ${token}`);
+assert(ui.includes("metricCol('sequence'),textCol('数据日期（系统）')"), 'Ad Group parent columns must follow Shopee export order with explicit system-added date');
+assert(ui.includes("<th>${sl('sequence')}</th><th>${sl('adProductName')}</th><th>${sl('productId')}</th>"), 'Ad Group item detail must begin with Shopee Sequence / Ad Product Name / Product ID');
+assert(index.includes('Shopee Ad Group 导出字段顺序'), 'Ad Group panel must explain export-aligned columns');
+for (const token of ['sequence: sourceMetric(parent, \'Sequence\')','sequence: sourceMetric(child, \'Sequence\')','directConversions','costPerDirectConversion','voucherAmount','voucheredSales']) assert(repo.includes(token), `read model missing ${token}`);
 assert(server.includes('/table-sort-v1.js'), 'global Shopee table sorter must be loaded');
 assert(syncRunner.includes("adTypes: ['manual']"));
 assert(syncRunner.includes("includeSettings: mode === 'daily'"));

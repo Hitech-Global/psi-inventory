@@ -193,6 +193,7 @@ class ShopeeAdPromotionRepository {
       const parent = row.raw_json && row.raw_json.parent || {};
       return {
         ...row,
+        sequence: sourceMetric(parent, 'Sequence'),
         biddingMethod: parent['Bidding Method'] || null,
         groupStartDate: parent['Start Date'] || null,
         groupEndDate: parent['End Date'] || null,
@@ -200,7 +201,7 @@ class ShopeeAdPromotionRepository {
         items: (row.items || []).map(item => {
           const child = item.rawJson && item.rawJson.child || {};
           const sourceMetrics = item.rawJson && item.rawJson.sourceMetrics || {};
-          const enriched = { ...item, ...sourceFields(child) };
+          const enriched = { ...item, sequence: sourceMetric(child, 'Sequence'), ...sourceFields(child) };
           if (enriched.voucherAmount == null && sourceMetrics.voucherAmount != null) enriched.voucherAmount = Number(sourceMetrics.voucherAmount);
           if (enriched.voucheredSales == null && sourceMetrics.voucheredSales != null) enriched.voucheredSales = Number(sourceMetrics.voucheredSales);
           delete enriched.rawJson;
