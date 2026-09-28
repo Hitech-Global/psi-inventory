@@ -288,7 +288,7 @@
     if (!tabs) return;
     tabs.setAttribute('aria-label', 'Product Card 广告类型');
     const labels = { manual: '单品广告', groups: '广告组', auto: '全店推' };
-    $$$('.ads-type-tab').forEach(button => {
+    $$('.ads-type-tab').forEach(button => {
       if (labels[button.dataset.adsType]) button.textContent = labels[button.dataset.adsType];
     });
 
@@ -734,7 +734,7 @@
     window.loadProductAds = loadProductAdsV2;
     window.loadAdGroups = loadAdGroupsV2;
 
-    $('.ads-type-tab').forEach(button => button.addEventListener('click', () => scheduleRefresh(40)));
+    $$('.ads-type-tab').forEach(button => button.addEventListener('click', () => scheduleRefresh(40)));
     $$('.ad-status-option').forEach(button => button.addEventListener('click', () => {
       const value = button.dataset.adStatus || 'all';
       if (!AD_STATUS_VALUES.has(value)) return;
