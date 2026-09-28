@@ -30,5 +30,6 @@ const exactShopeeHeaders = new Set([
   'Keyword / Placement', 'Match Type', 'Search Volume', 'Bidding Method', 'Placement', 'Average Rank',
 ]);
 for (const header of exactShopeeHeaders) assert(labels.includes(`en: '${header}'`) || labels.includes(`en: "${header}"`), `missing Shopee English label: ${header}`);
-for (const key of ['dataDateSystem','productCountSystem','dataQuality']) assert(ui.includes(`metricCol('${key}')`), `system-only field must be explicit: ${key}`);
+for (const key of ['dataDateSystem','productCountSystem']) assert(labels.includes(`${key}:`), `system-only label must remain explicit: ${key}`);
+assert(ui.includes("metricCol('dataQuality')"), 'Ad Group data-quality field must remain explicit');
 console.log('Shopee English UI and export-field mapping contract: ok');

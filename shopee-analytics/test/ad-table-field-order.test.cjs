@@ -16,12 +16,15 @@ function ordered(section, tokens, label) {
 }
 
 const manual = ui.slice(ui.indexOf('const MANUAL_COLUMNS'), ui.indexOf('const GMS_COLUMNS'));
-ordered(manual, ['campaignApi','status','budgetApi','targetRoas','biddingMethod','placement','impressions','clicks','ctr','addToCart','addToCartRate','conversions','directConversions','conversionRate','directConversionRate','costPerConversion','costPerDirectConversion','itemsSold','directItemsSold','gmv','directGmv','expense','averageRank','roas','directRoas','acos','directAcos','voucherAmount','voucheredSales'], 'single-product columns');
+ordered(manual, ['adInfo','dailyBudget','targetRoas','diagnosis','expense','gmv','roas','impressions','clicks','ctr','addToCart','addToCartRate','conversions','conversionRate','itemsSold','costPerConversion','acos','directConversions','directConversionRate','directItemsSold','directGmv','directRoas','costPerDirectConversion','directAcos','voucherAmount','voucheredSales','averageRank'], 'single-product Shopee columns');
 
 const gms = ui.slice(ui.indexOf('const GMS_COLUMNS'), ui.indexOf('const GROUP_COLUMNS'));
 ordered(gms, ['campaignApi','impressions','clicks','ctr','conversions','directConversions','conversionRate','directConversionRate','costPerConversion','costPerDirectConversion','itemsSold','directItemsSold','gmv','directGmv','expense','roas','directRoas','acos','directAcos','voucherAmount','voucheredSales'], 'Shop GMV Max columns');
 
-assert(ui.includes("row.campaignPlacement || '—'"), 'single-product table must include Shopee placement before performance metrics');
+const groups = ui.slice(ui.indexOf('const GROUP_COLUMNS'), ui.indexOf('function headerHtml'));
+ordered(groups, ['adInfo','dailyBudget','targetRoas','diagnosis','expense','gmv','roas','impressions','clicks','ctr','addToCart','addToCartRate','conversions','conversionRate','itemsSold','costPerConversion','acos','directConversions','directConversionRate','directItemsSold','directGmv','directRoas','costPerDirectConversion','directAcos','voucherAmount','voucheredSales','dataQuality'], 'ad-group Shopee columns');
+
+assert(ui.includes("row.campaignPlacement || '—'"), 'single-product table must keep placement inside advertising information');
 assert(ui.includes("localeFromDocument?.() === 'en' ? 'Sequence (System)' : '排序（系统）'"), 'GMS item sequence must be bilingual and system-labelled');
 assert(ui.includes('<th>${sl(\'productName\')}</th><th>${sl(\'productId\')}</th>'), 'GMS item identity fields must follow export order');
 console.log('single-product and Shop GMV Max field order tests: ok');
