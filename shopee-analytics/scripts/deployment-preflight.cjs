@@ -7,7 +7,7 @@ const { APP_ENV, loadAppCredential } = require('../src/config');
 const { loadMasterKey } = require('../src/token-crypto');
 const { ShopeeShopProfileRepository } = require('../src/shop-profile-repository');
 const { ShopeeTokenRepository } = require('../src/token-repository');
-const { createConfiguredSkillProvider } = require('../src/openai-skill-provider');
+const { createConfiguredSkillProvider } = require('../src/skill-provider');
 const {
   PRODUCTION,
   OFFLINE_BASELINE,

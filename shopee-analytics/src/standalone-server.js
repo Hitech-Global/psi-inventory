@@ -12,7 +12,7 @@ const { createProductAdsOverviewEvidenceRouter } = require('./product-ads-overvi
 const { createProductAdsSourceRouter } = require('./product-ads-source-router');
 const { createManualDataSyncRouter } = require('./manual-data-sync-router');
 const { createBackupStatusProvider } = require('./backup-status');
-const { createConfiguredSkillProvider } = require('./openai-skill-provider');
+const { createConfiguredSkillProvider } = require('./skill-provider');
 const { createSkillRuntime } = require('./skill-runtime');
 const { ShopeeShopScopeRepository } = require('./shop-scope-repository');
 

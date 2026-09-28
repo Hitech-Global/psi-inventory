@@ -1,7 +1,7 @@
 'use strict';
 
 const { createAnalyticsPool } = require('../src/pg');
-const { createConfiguredSkillProvider } = require('../src/openai-skill-provider');
+const { createConfiguredSkillProvider } = require('../src/skill-provider');
 const { createSkillRuntime } = require('../src/skill-runtime');
 const { runDailySkillReports } = require('../src/skill-scheduler');
 const { localIsoDate } = require('../src/sync-cycle-utils');

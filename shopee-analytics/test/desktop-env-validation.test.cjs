@@ -43,6 +43,25 @@ const missingSkillKey = validateDesktopEnv({
 assert.strictEqual(missingSkillKey.ok, false);
 assert(missingSkillKey.errors.some(row => row.includes('SHOPEE_SKILL_OPENAI_API_KEY')));
 
+const ollamaSkillEnv = validateDesktopEnv({
+  ...env,
+  SHOPEE_SKILL_RUNTIME_PROVIDER: 'OLLAMA',
+  SHOPEE_SKILL_DAILY_WINDOW_DAYS: '14',
+});
+assert.strictEqual(ollamaSkillEnv.ok, true);
+
+const qwenSkillEnv = validateDesktopEnv({
+  ...env,
+  SHOPEE_SKILL_RUNTIME_PROVIDER: 'QWEN',
+  SHOPEE_SKILL_QWEN_API_KEY: 'local-qwen-secret',
+  SHOPEE_SKILL_QWEN_BASE_URL: 'https://workspace.example.com/compatible-mode/v1',
+  SHOPEE_SKILL_DAILY_WINDOW_DAYS: '14',
+});
+assert.strictEqual(qwenSkillEnv.ok, true);
+const missingQwenConfig = validateDesktopEnv({ ...env, SHOPEE_SKILL_RUNTIME_PROVIDER: 'QWEN' });
+assert.strictEqual(missingQwenConfig.ok, false);
+assert(missingQwenConfig.errors.some(row => row.includes('SHOPEE_SKILL_QWEN_API_KEY')));
+assert(missingQwenConfig.errors.some(row => row.includes('SHOPEE_SKILL_QWEN_BASE_URL')));
 const invalidSkillWindow = validateDesktopEnv({
   ...env,
   SHOPEE_SKILL_DAILY_WINDOW_DAYS: '0',

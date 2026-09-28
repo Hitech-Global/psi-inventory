@@ -67,7 +67,7 @@ function validateDesktopEnv(env) {
   const skillProvider = String(env.SHOPEE_SKILL_RUNTIME_PROVIDER || '').trim().toUpperCase();
   if (deploymentMode === OFFLINE_BASELINE && skillProvider) {
     errors.push('SHOPEE_SKILL_RUNTIME_PROVIDER must be empty in OFFLINE_BASELINE');
-  } else if (skillProvider && skillProvider !== 'OPENAI') {
+  } else if (skillProvider && !['OPENAI', 'OLLAMA', 'QWEN'].includes(skillProvider)) {
     errors.push(`Unsupported SHOPEE_SKILL_RUNTIME_PROVIDER: ${skillProvider}`);
   }
   if (deploymentMode === OFFLINE_BASELINE &&
@@ -75,6 +75,12 @@ function validateDesktopEnv(env) {
     errors.push('OpenAI API key must be empty in OFFLINE_BASELINE');
   } else if (skillProvider === 'OPENAI' && !isRealSecret(env.SHOPEE_SKILL_OPENAI_API_KEY || env.OPENAI_API_KEY)) {
     errors.push('SHOPEE_SKILL_OPENAI_API_KEY is missing');
+  }
+  if (deploymentMode === OFFLINE_BASELINE && String(env.SHOPEE_SKILL_QWEN_API_KEY || env.DASHSCOPE_API_KEY || '').trim()) {
+    errors.push('Qwen API key must be empty in OFFLINE_BASELINE');
+  } else if (skillProvider === 'QWEN') {
+    if (!isRealSecret(env.SHOPEE_SKILL_QWEN_API_KEY || env.DASHSCOPE_API_KEY)) errors.push('SHOPEE_SKILL_QWEN_API_KEY is missing');
+    if (!String(env.SHOPEE_SKILL_QWEN_BASE_URL || '').trim()) errors.push('SHOPEE_SKILL_QWEN_BASE_URL is missing');
   }
 
   const dailyWindow = Number(env.SHOPEE_SKILL_DAILY_WINDOW_DAYS || 14);

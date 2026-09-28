@@ -17,6 +17,17 @@ services:
       retries: 10
     stop_grace_period: 60s
 
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    cpus: "8.0"
+    volumes:
+      - shopee_ollama:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
   app:
     build:
       context: ../../..
@@ -179,3 +190,4 @@ services:
 volumes:
   shopee_pgdata:
   shopee_import_tmp:
+  shopee_ollama:

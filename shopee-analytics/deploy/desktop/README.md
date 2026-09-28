@@ -36,7 +36,7 @@ Never commit Partner Keys, access/refresh tokens, token master key, PostgreSQL p
 From this directory:
 
 1. Prepare the gitignored runtime directory: `SHOPEE_ANALYTICS_PREPARE_DESKTOP_RUNTIME=YES node ../../scripts/prepare-desktop-runtime.cjs`. This generates the local PostgreSQL password and token master key without printing their values.
-2. Edit `runtime/.env`: fill the Shopee Partner credentials, desktop/NAS backup paths, and—when Skill reports are being enabled—the local OpenAI Skill Runtime settings described below. Keep the generated PostgreSQL password and token master key.
+2. Edit `runtime/.env`: fill the Shopee Partner credentials, desktop/NAS backup paths, and—when Skill reports are being enabled—the local Skill Runtime settings described below. Keep the generated PostgreSQL password and token master key.
 3. Run the offline env check before starting containers: `node ../../scripts/validate-desktop-env.cjs runtime/.env`.
 4. Start PostgreSQL only: `docker compose --env-file runtime/.env up -d postgres`.
 5. Apply schema explicitly: `docker compose --env-file runtime/.env --profile tools run --rm schema`.
@@ -65,19 +65,38 @@ The analytics app and worker use the same versioned runtime chain:
 
 `Analysis Package -> Skill Executor -> Skill Runner -> shopee_skill_reports`
 
-To enable real model-generated reports, configure these values only in the gitignored `runtime/.env`:
+To enable real model-generated reports, configure one provider only in the gitignored `runtime/.env`.
+
+Alibaba Cloud Model Studio Qwen example (recommended for fast production reports):
 
 ```dotenv
-SHOPEE_SKILL_RUNTIME_PROVIDER=OPENAI
-SHOPEE_SKILL_OPENAI_API_KEY=<local secret>
-SHOPEE_SKILL_OPENAI_MODEL=gpt-5.6-terra
-SHOPEE_SKILL_OPENAI_REASONING_EFFORT=medium
-SHOPEE_SKILL_OPENAI_MAX_OUTPUT_TOKENS=12000
-SHOPEE_SKILL_OPENAI_TIMEOUT_MS=180000
+SHOPEE_SKILL_RUNTIME_PROVIDER=QWEN
+SHOPEE_SKILL_QWEN_API_KEY=<local secret>
+SHOPEE_SKILL_QWEN_BASE_URL=https://<WorkspaceId>.<region>.maas.aliyuncs.com/compatible-mode/v1
+SHOPEE_SKILL_QWEN_MODEL=qwen3.7-plus
+SHOPEE_SKILL_QWEN_MAX_OUTPUT_TOKENS=6000
+SHOPEE_SKILL_QWEN_TIMEOUT_MS=120000
 SHOPEE_SKILL_DAILY_WINDOW_DAYS=14
 ```
 
-Do not commit or paste the API key into chat or logs. The runtime reads `skills/shopee-gmv-max/SKILL.md` and its output schema from the deployed image, then sends that versioned skill plus the normalized Analysis Package to the configured provider.
+The Qwen provider uses strict JSON Schema output and disables model thinking mode because the repository Skill already defines the reasoning workflow; this reduces latency and avoids paying for hidden reasoning tokens. API keys and API hosts are region/workspace-specific and must remain only in the gitignored runtime configuration.
+
+Local Ollama example (no external model API key):
+
+```dotenv
+SHOPEE_SKILL_RUNTIME_PROVIDER=OLLAMA
+SHOPEE_SKILL_OLLAMA_BASE_URL=http://ollama:11434
+SHOPEE_SKILL_OLLAMA_MODEL=qwen3:8b
+SHOPEE_SKILL_OLLAMA_NUM_CTX=16384
+SHOPEE_SKILL_OLLAMA_MAX_OUTPUT_TOKENS=4096
+SHOPEE_SKILL_OLLAMA_TIMEOUT_MS=900000
+SHOPEE_SKILL_OLLAMA_KEEP_ALIVE=2m
+SHOPEE_SKILL_DAILY_WINDOW_DAYS=14
+```
+
+OpenAI and local Ollama remain supported as optional providers by setting `SHOPEE_SKILL_RUNTIME_PROVIDER=OPENAI` and the existing `SHOPEE_SKILL_OPENAI_*` values. Never commit or paste a real API key into chat or logs.
+
+The runtime reads `skills/shopee-gmv-max/SKILL.md` and its output schema from the deployed image, then sends that versioned skill plus the normalized Analysis Package to the configured provider. The Ollama provider strips transport-only `raw_json`/sync metadata and adds evidence-availability counts before inference so empty item/allocation arrays cannot be treated as evidence.
 
 After each successful daily sync, the worker runs `DAILY_AUTO` reports for campaigns whose latest Shopee campaign status is `ONGOING`. Manual report generation uses the same runtime and reasoning contract with `trigger=MANUAL`.
 

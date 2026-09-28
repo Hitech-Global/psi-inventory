@@ -86,6 +86,7 @@ function buildDailyAllocation(itemDailyRows = []) {
 }
 
 function leaderSwitchCount(allocationRows = []) {
+  if (!allocationRows.length) return null;
   const byDate = new Map();
   for (const row of allocationRows) {
     if (!byDate.has(row.date)) byDate.set(row.date, []);

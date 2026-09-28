@@ -22,6 +22,7 @@ assert.strictEqual(allocation.find(r => r.date === '2026-09-20' && r.itemId === 
 assert.strictEqual(allocation.find(r => r.date === '2026-09-20' && r.itemId === '1').directOrderShare, 1);
 assert.strictEqual(consecutiveOrderDays(itemDaily.filter(r => r.item_id === 1), '2026-09-20'), 3);
 assert.strictEqual(leaderSwitchCount(allocation), 0);
+assert.strictEqual(leaderSwitchCount([]), null);
 
 const campaignDaily = [
   { date:'2026-09-18', clicks:20, expense:100, direct_order:3, direct_gmv:280 },
@@ -46,5 +47,18 @@ assert.strictEqual(pkg.deterministicMetrics.campaign.leaderSwitchCount, 0);
 assert.strictEqual(pkg.items.find(x => x.itemId === '1').consecutiveOrderDays, 3);
 assert.strictEqual(pkg.items.find(x => x.itemId === '1').gmvPerDirectOrder, 890 / 8);
 assert(pkg.deterministicMetrics.dailyAllocation.every(x => 'clickShare' in x && 'impressionShare' in x));
+const noItemPkg = buildAnalysisPackage({
+  shop:{ shopId:'s1', timezone:'Asia/Jakarta', country:'ID', brand:'Redragon', currency:'IDR' },
+  campaign:{ campaignId:'c2', targetRoas:7 },
+  campaignDaily,
+  itemDaily:[],
+  operations:[],
+  startDate:'2026-09-18',
+  endDate:'2026-09-20',
+  dataCutoff:'2026-09-20T23:59:59+07:00',
+  triggerType:'MANUAL',
+});
+assert.strictEqual(noItemPkg.deterministicMetrics.campaign.leaderSwitchCount, null);
+assert.deepStrictEqual(noItemPkg.deterministicMetrics.dailyAllocation, []);
 
 console.log('shopee analysis package tests: ok');
