@@ -134,3 +134,15 @@
 @media(max-width:760px){.ad-group-batch-row{grid-template-columns:1fr 1fr}.ad-group-dropzone{padding:12px;flex-direction:column;gap:8px}.ad-group-dropzone input{margin-left:0}}
 @media(max-width:900px){.product-ad-detail-metrics{grid-template-columns:1fr 1fr}}
 @media(max-width:560px){.product-ad-detail-metrics{grid-template-columns:1fr}}
+
+/* Product Card: keep name columns compact so performance metrics stay visible. */
+#adsManualPanel .product-ads-table-wrap th:first-child,
+#adsManualPanel .product-ads-table-wrap td:first-child{width:260px;min-width:260px;max-width:260px}
+#adsManualPanel .campaign-name{width:100%;min-width:0}
+#adsManualPanel .campaign-name small{display:-webkit-box;overflow:hidden;-webkit-box-orient:vertical;-webkit-line-clamp:2;white-space:normal;overflow-wrap:anywhere;line-height:1.35}
+.product-card-detail-modal[data-detail-variant="group"] .ad-group-modal-content th:first-child,
+.product-card-detail-modal[data-detail-variant="group"] .ad-group-modal-content td:first-child{width:260px;min-width:260px;max-width:260px}
+.product-card-detail-modal[data-detail-variant="group"] .ad-group-item-name{width:100%;min-width:0}
+.product-card-detail-modal[data-detail-variant="group"] .ad-group-item-name strong{display:-webkit-box;overflow:hidden;-webkit-box-orient:vertical;-webkit-line-clamp:2;white-space:normal;overflow-wrap:anywhere;line-height:1.35}
+.product-card-detail-modal[data-detail-variant="group"] .ad-group-item-name small{white-space:normal;overflow-wrap:anywhere;line-height:1.35}
+@media(max-width:800px){#adsManualPanel .product-ads-table-wrap th:first-child,#adsManualPanel .product-ads-table-wrap td:first-child,.product-card-detail-modal[data-detail-variant="group"] .ad-group-modal-content th:first-child,.product-card-detail-modal[data-detail-variant="group"] .ad-group-modal-content td:first-child{width:220px;min-width:220px;max-width:220px}}
