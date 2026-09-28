@@ -20,6 +20,7 @@ const {
   validatePilotProfileCampaignSeeds,
 } = require('../src/deployment-mode');
 const { loadLiveRedirectUrl, validateOAuthStateTtl } = require('../src/oauth-security');
+const { selectConfiguredRuntimeRoles } = require('../src/sync-runtime');
 
 function result(name, ok, detail, severity = 'error') {
   return { name, ok, severity: ok ? 'info' : severity, detail };
@@ -112,6 +113,7 @@ async function main() {
   }
   const offlineBaseline = deploymentMode === OFFLINE_BASELINE;
   const pilotGmvMax = deploymentMode === PILOT_GMV_MAX;
+  let productionConfiguredRoles = [];
   let pilotConfig = null;
   let pilotStage = null;
   if (pilotGmvMax) {
@@ -182,13 +184,18 @@ async function main() {
     }
     checks.push(result('pilot_role_scope', true, 'PILOT_GMV_MAX initializes ADS only'));
   } else {
-    for (const role of Object.keys(APP_ENV)) {
-      try {
+    try {
+      productionConfiguredRoles = selectConfiguredRuntimeRoles();
+      for (const role of Object.keys(APP_ENV)) {
+        if (!productionConfiguredRoles.includes(role)) {
+          checks.push(result(`partner_${role.toLowerCase()}`, true, 'Optional role not configured; disabled'));
+          continue;
+        }
         const credential = loadAppCredential(role, { requireToken: false });
         checks.push(result(`partner_${role.toLowerCase()}`, Boolean(credential.partnerId && credential.partnerKey), 'Partner ID/key configured'));
-      } catch (error) {
-        checks.push(result(`partner_${role.toLowerCase()}`, false, error.message));
       }
+    } catch (error) {
+      checks.push(result('partner_configuration', false, error.message));
     }
   }
 
@@ -285,10 +292,11 @@ async function main() {
       const shops = await profileRepo.list({ activeOnly: true });
       checks.push(result('active_shops', shops.length > 0, { count: shops.length }, 'warning'));
 
+      const tokenRoles = deploymentMode === PRODUCTION ? productionConfiguredRoles : Object.keys(APP_ENV);
       const tokenSummary = [];
       for (const shop of shops) {
         const roles = [];
-        for (const role of Object.keys(APP_ENV)) {
+        for (const role of tokenRoles) {
           try {
             const token = await tokenRepo.load({ appRole: role, shopId: shop.shopId });
             if (token) roles.push(role);
@@ -298,8 +306,14 @@ async function main() {
         }
         tokenSummary.push({ shopId: shop.shopId, displayName: shop.displayName, roles });
       }
-      const complete = shops.length > 0 && tokenSummary.every(row => row.roles.length === Object.keys(APP_ENV).length);
-      checks.push(result('encrypted_shop_tokens', complete, tokenSummary, 'warning'));
+      const complete = deploymentMode === PRODUCTION
+        ? tokenRoles.length > 0 && tokenSummary.some(row => tokenRoles.every(role => row.roles.includes(role)))
+        : shops.length > 0 && tokenSummary.every(row => row.roles.length === tokenRoles.length);
+      checks.push(result('encrypted_shop_tokens', complete, {
+        requiredRoles: tokenRoles,
+        authorizedShopCount: tokenSummary.filter(row => tokenRoles.every(role => row.roles.includes(role))).length,
+        shops: tokenSummary,
+      }, 'warning'));
     }
   } catch (error) {
     checks.push(result('postgres_connection', false, error.message));
@@ -340,7 +354,8 @@ async function main() {
   const report = {
     generatedAt: new Date().toISOString(),
     deploymentMode,
-    readyForPilot: !offlineBaseline && !oauthBootstrap && blocking.length === 0 && warnings.length === 0,
+    readyForProduction: deploymentMode === PRODUCTION && blocking.length === 0 && warnings.length === 0,
+    readyForPilot: pilotGmvMax && !oauthBootstrap && blocking.length === 0 && warnings.length === 0,
     readyForOAuthBootstrap: oauthBootstrap && blocking.length === 0 && warnings.length === 0,
     readyForBaseline: offlineBaseline && blocking.length === 0,
     readyForGmvMaxPilot: pilotGmvMax && !oauthBootstrap && blocking.length === 0 && warnings.length === 0,
@@ -357,7 +372,7 @@ async function main() {
         ? 'RUN_ONE_GMV_MAX_PILOT_SHOP_SYNC'
       : warnings.length
         ? 'CONFIGURE_SHOPS_AND_TOKENS'
-        : 'RUN_ONE_PILOT_SHOP_SYNC_AND_SELLER_CENTRE_RECONCILIATION',
+        : 'PRODUCTION_READY',
   };
 
   console.log(JSON.stringify(report, null, 2));
