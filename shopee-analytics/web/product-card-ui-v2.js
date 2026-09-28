@@ -248,12 +248,12 @@
 
   const metricCol = key => ({ key });
   const textCol = label => ({ label });
-  const MANUAL_COLUMNS = [metricCol('campaignApi'),metricCol('status'),metricCol('biddingMethod'),metricCol('budgetApi'),
-    metricCol('impressions'),metricCol('clicks'),metricCol('ctr'),metricCol('addToCart'),metricCol('addToCartRate'),
+  const MANUAL_COLUMNS = [metricCol('campaignApi'),metricCol('status'),metricCol('budgetApi'),metricCol('targetRoas'),
+    metricCol('biddingMethod'),metricCol('placement'),metricCol('impressions'),metricCol('clicks'),metricCol('ctr'),metricCol('addToCart'),metricCol('addToCartRate'),
     metricCol('conversions'),metricCol('directConversions'),metricCol('conversionRate'),metricCol('directConversionRate'),
     metricCol('costPerConversion'),metricCol('costPerDirectConversion'),metricCol('itemsSold'),metricCol('directItemsSold'),
-    metricCol('gmv'),metricCol('directGmv'),metricCol('expense'),metricCol('roas'),metricCol('directRoas'),metricCol('acos'),metricCol('directAcos'),
-    metricCol('averageRank'),metricCol('voucherAmount'),metricCol('voucheredSales'),metricCol('targetRoas')];
+    metricCol('gmv'),metricCol('directGmv'),metricCol('expense'),metricCol('averageRank'),metricCol('roas'),metricCol('directRoas'),metricCol('acos'),metricCol('directAcos'),
+    metricCol('voucherAmount'),metricCol('voucheredSales')];
   const GMS_COLUMNS = [metricCol('campaignApi'),metricCol('impressions'),metricCol('clicks'),metricCol('ctr'),
     metricCol('conversions'),metricCol('directConversions'),metricCol('conversionRate'),metricCol('directConversionRate'),
     metricCol('costPerConversion'),metricCol('costPerDirectConversion'),metricCol('itemsSold'),metricCol('directItemsSold'),
@@ -353,8 +353,9 @@
       const q = previous?.performance || {};
       if (type === 'manual') return `<tr data-product-card-campaign="${row.campaignId}" data-product-card-type="manual">
         <td><div class="campaign-name"><strong>#${row.campaignId}</strong><small>${esc(row.adName || '')}</small></div></td>
-        <td><span class="pill neutral">${esc(row.status || '—')}</span></td><td>${esc(row.biddingMethod || '—')}</td>
-        <td data-sort-value="${present(row.campaignBudget) ? Number(row.campaignBudget) : ''}">${money2(row.campaignBudget)}</td>
+        <td><span class="pill neutral">${esc(row.status || '—')}</span></td>
+        <td data-sort-value="${present(row.campaignBudget) ? Number(row.campaignBudget) : ''}">${money2(row.campaignBudget)}</td><td>${fixed2(row.targetRoas)}</td>
+        <td>${esc(row.biddingMethod || '—')}</td><td>${esc(row.campaignPlacement || '—')}</td>
         ${metricTd(p.impressions, int, q.impressions)}${metricTd(p.clicks, int, q.clicks)}${metricTd(p.ctr, pct2, q.ctr)}
         ${metricTd(p.addToCart, int, q.addToCart)}${metricTd(p.addToCartRate, pct2, q.addToCartRate)}
         ${metricTd(p.broadOrders, int, q.broadOrders)}${metricTd(p.directOrders, int, q.directOrders)}
@@ -362,9 +363,9 @@
         ${metricTd(p.costPerConversion, money2, q.costPerConversion)}${metricTd(p.costPerDirectConversion, money2, q.costPerDirectConversion)}
         ${metricTd(p.broadUnits, int, q.broadUnits)}${metricTd(p.directUnits, int, q.directUnits)}
         ${metricTd(p.broadGmv, money2, q.broadGmv)}${metricTd(p.directGmv, money2, q.directGmv)}${metricTd(p.expense, money2, q.expense)}
-        ${metricTd(p.broadRoas, fixed2, q.broadRoas)}${metricTd(p.directRoas, fixed2, q.directRoas)}
+        <td>${unavailable()}</td>${metricTd(p.broadRoas, fixed2, q.broadRoas)}${metricTd(p.directRoas, fixed2, q.directRoas)}
         ${metricTd(p.broadAcos, pct2, q.broadAcos)}${metricTd(p.directAcos, pct2, q.directAcos)}
-        <td>${unavailable()}</td>${metricTd(p.voucherAmount, money2, q.voucherAmount)}${metricTd(p.voucheredSales, money2, q.voucheredSales)}<td>${fixed2(row.targetRoas)}</td>
+        ${metricTd(p.voucherAmount, money2, q.voucherAmount)}${metricTd(p.voucheredSales, money2, q.voucheredSales)}
       </tr>`;
       return `<tr data-product-card-campaign="${row.campaignId}" data-product-card-type="auto">
         <td><div class="campaign-name"><strong>#${row.campaignId}</strong><small>GMV Max · GMS</small></div></td>
@@ -495,14 +496,14 @@
       $('#autoAdItems').innerHTML = items.length ? `
         <div class="panel-head"><div><h3>商品明细</h3><p>全店推 · GMS Item Performance · 环比上一周期 · ${int(items.length)} 商品</p></div></div>
         <div class="table-wrap"><table><thead><tr>
-          <th>${sl('productName')}</th><th>${sl('productId')}</th><th>${sl('impressions')}</th><th>${sl('clicks')}</th><th>${sl('ctr')}</th>
+          <th>${esc(window.ShopeeMetricLabels?.localeFromDocument?.() === 'en' ? 'Sequence (System)' : '排序（系统）')}</th><th>${sl('productName')}</th><th>${sl('productId')}</th><th>${sl('impressions')}</th><th>${sl('clicks')}</th><th>${sl('ctr')}</th>
           <th>${sl('conversions')}</th><th>${sl('directConversions')}</th><th>${sl('conversionRate')}</th><th>${sl('directConversionRate')}</th>
           <th>${sl('costPerConversion')}</th><th>${sl('costPerDirectConversion')}</th><th>${sl('itemsSold')}</th><th>${sl('directItemsSold')}</th>
           <th>${sl('gmv')}</th><th>${sl('directGmv')}</th><th>${sl('expense')}</th><th>${sl('roas')}</th><th>${sl('directRoas')}</th><th>${sl('acos')}</th><th>${sl('directAcos')}</th>
           <th>${sl('voucherAmount')}</th><th>${sl('voucheredSales')}</th>
-        </tr></thead><tbody>${items.map(item => {
+        </tr></thead><tbody>${items.map((item, itemIndex) => {
           const q = previousMap.get(Number(item.itemId)) || {};
-          return `<tr><td><div class="ad-group-item-name"><strong>${esc(item.itemName || ('#' + item.itemId))}</strong><small>${esc(item.itemSku || '')}</small></div></td><td>${esc(item.itemId)}</td>
+          return `<tr><td>${int(itemIndex + 1)}</td><td><div class="ad-group-item-name"><strong>${esc(item.itemName || ('#' + item.itemId))}</strong><small>${esc(item.itemSku || '')}</small></div></td><td>${esc(item.itemId)}</td>
             ${metricTd(item.impressions, int, q.impressions)}${metricTd(item.clicks, int, q.clicks)}${metricTd(item.ctr, pct2, q.ctr)}
             ${metricTd(item.broadOrders, int, q.broadOrders)}${metricTd(item.directOrders, int, q.directOrders)}${metricTd(item.broadCvr, pct2, q.broadCvr)}${metricTd(item.directCvr, pct2, q.directCvr)}
             ${metricTd(item.costPerConversion, money2, q.costPerConversion)}${metricTd(item.costPerDirectConversion, money2, q.costPerDirectConversion)}
