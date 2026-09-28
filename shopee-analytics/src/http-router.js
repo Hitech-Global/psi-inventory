@@ -24,6 +24,53 @@ function isoDate(value, name) {
   return String(value);
 }
 
+function sourceEvidenceMetric(row, key) {
+  const value = row?.raw_json?.sourceMetrics?.[key];
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function aggregateGmsSellerEvidence(rows = [], startDate, endDate) {
+  const expectedDays = daysInclusive(startDate, endDate);
+  const grouped = new Map();
+  for (const row of rows) {
+    if (row?.raw_json?.sourceFormat !== 'SHOPEE_GMS_SELLER_CENTRE_EXPORT' || !row.campaign_id) continue;
+    const key = Number(row.campaign_id);
+    if (!grouped.has(key)) grouped.set(key, { exact: null, days: new Map() });
+    const entry = grouped.get(key);
+    const periodStart = String(row.period_start).slice(0, 10);
+    const periodEnd = String(row.period_end).slice(0, 10);
+    if (periodStart === startDate && periodEnd === endDate) entry.exact = row;
+    if (periodStart === periodEnd && periodStart >= startDate && periodStart <= endDate && !entry.days.has(periodStart)) entry.days.set(periodStart, row);
+  }
+  const result = new Map();
+  for (const [campaignId, entry] of grouped.entries()) {
+    const sourceRows = entry.exact ? [entry.exact] : (entry.days.size === expectedDays ? Array.from(entry.days.values()) : []);
+    if (!sourceRows.length) continue;
+    const itemMap = new Map();
+    for (const row of sourceRows) {
+      for (const item of row.items || []) {
+        const itemId = Number(item.itemId);
+        if (!Number.isSafeInteger(itemId) || itemId <= 0) continue;
+        if (!itemMap.has(itemId)) itemMap.set(itemId, { voucherAmount: 0, voucheredSales: 0, evidenceDays: 0 });
+        const target = itemMap.get(itemId);
+        target.voucherAmount += Number(item.voucherAmount || 0);
+        target.voucheredSales += Number(item.voucheredSales || 0);
+        target.evidenceDays += 1;
+      }
+    }
+    result.set(campaignId, {
+      voucherAmount: sourceRows.reduce((sum, row) => sum + Number(sourceEvidenceMetric(row, 'voucherAmount') || 0), 0),
+      voucheredSales: sourceRows.reduce((sum, row) => sum + Number(sourceEvidenceMetric(row, 'voucheredSales') || 0), 0),
+      coverage: entry.exact ? 'EXACT_RANGE' : 'DAILY_COMPLETE',
+      evidenceRows: sourceRows.length,
+      items: Object.fromEntries(Array.from(itemMap.entries()).map(([itemId, metrics]) => [String(itemId), metrics])),
+    });
+  }
+  return result;
+}
+
 function optionalCode(value, name) {
   if (value === undefined || value === null || value === '') return null;
   const normalized = String(value).trim().toUpperCase();
@@ -403,8 +450,27 @@ function createShopeeAnalyticsRouter({
       const startDate = isoDate(req.query.start_date, 'start_date');
       const endDate = isoDate(req.query.end_date, 'end_date');
       if (startDate > endDate) throw new Error('start_date must be <= end_date');
-      const campaigns = await queryRepository.listCampaignOverview({ shopId, startDate, endDate, campaignTypeNormalized: 'GMS' });
-      res.json({ shopId, startDate, endDate, campaigns });
+      const [campaigns, sellerEvidenceRows] = await Promise.all([
+        queryRepository.listCampaignOverview({ shopId, startDate, endDate, campaignTypeNormalized: 'GMS' }),
+        adPromotionRepository
+          ? adPromotionRepository.list({ shopId, startDate, endDate, promotionType: 'SHOP_GMV_MAX', dataSource: 'MANUAL_IMPORT' })
+          : [],
+      ]);
+      const sellerEvidence = aggregateGmsSellerEvidence(sellerEvidenceRows, startDate, endDate);
+      const enrichedCampaigns = campaigns.map(campaign => {
+        const evidence = sellerEvidence.get(Number(campaign.campaignId));
+        if (!evidence) return campaign;
+        return {
+          ...campaign,
+          performance: {
+            ...campaign.performance,
+            voucherAmount: evidence.voucherAmount,
+            voucheredSales: evidence.voucheredSales,
+          },
+          sellerCentreEvidence: evidence,
+        };
+      });
+      res.json({ shopId, startDate, endDate, campaigns: enrichedCampaigns });
     } catch (error) {
       next(error);
     }
@@ -630,18 +696,33 @@ function createShopeeAnalyticsRouter({
       });
 
       const ids = analysis.diagnosis.items.map(item => item.itemId).filter(Boolean);
-      const [names, recommended, productCard, coverageContext] = await Promise.all([
+      const [names, recommended, productCard, coverageContext, sellerEvidenceRows] = await Promise.all([
         queryRepository.getCampaignItemNames({ shopId, itemIds: ids }),
         queryRepository.getLatestRecommendedRoiMap({ shopId, itemIds: ids }),
         queryRepository.getProductCardPeriodMap({ shopId, startDate, endDate, itemIds: ids }),
         queryRepository.getCampaignCoverageContext({ shopId, campaignId, startDate, endDate }),
+        adPromotionRepository
+          ? adPromotionRepository.list({ shopId, startDate, endDate, promotionType: 'SHOP_GMV_MAX', dataSource: 'MANUAL_IMPORT' })
+          : [],
       ]);
+      const campaignSellerEvidence = aggregateGmsSellerEvidence(sellerEvidenceRows, startDate, endDate).get(campaignId) || null;
+      const evidenceItems = campaignSellerEvidence?.items || {};
       analysis.diagnosis.items = analysis.diagnosis.items.map(item => ({
         ...item,
         ...(names.get(String(item.itemId)) || {}),
         recommendedRoi: recommended.get(String(item.itemId)) || null,
         productCard: productCard.get(String(item.itemId)) || null,
+        voucherAmount: evidenceItems[String(item.itemId)]?.voucherAmount ?? null,
+        voucheredSales: evidenceItems[String(item.itemId)]?.voucheredSales ?? null,
       }));
+      if (campaignSellerEvidence) {
+        analysis.diagnosis.campaign = {
+          ...analysis.diagnosis.campaign,
+          voucherAmount: campaignSellerEvidence.voucherAmount,
+          voucheredSales: campaignSellerEvidence.voucheredSales,
+        };
+        analysis.sellerCentreEvidence = campaignSellerEvidence;
+      }
       analysis.latestSetting = latest;
       analysis.dataQuality = evaluateItemCoverage({
         campaignExpense: analysis.diagnosis.campaign.expense,
@@ -717,6 +798,8 @@ module.exports = {
   positiveInt,
   isoDate,
   optionalCode,
+  sourceEvidenceMetric,
+  aggregateGmsSellerEvidence,
   parseShopIds,
   eventMixForRange,
   comparisonContext,

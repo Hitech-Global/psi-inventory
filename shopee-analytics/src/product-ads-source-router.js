@@ -79,6 +79,13 @@ function summarizeAtcProvenance(daily) {
   return { addToCart, addToCartRate, evidence };
 }
 
+function rangeEvidenceMetric(evidence, key) {
+  const value = evidence?.raw_json?.sourceMetrics?.[key];
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
 async function listProductAdsSourceAccurate(pool, { shopId, startDate, endDate, adType }) {
   const family = adType === 'manual' ? 'MANUAL_PRODUCT_AD' : 'AUTO_PRODUCT_AD';
   const result = await pool.query(
@@ -164,6 +171,24 @@ async function listProductAdsSourceAccurate(pool, { shopId, startDate, endDate, 
     [shopId, startDate, endDate, family],
   );
 
+  const rangeEvidenceResult = await pool.query(
+    `SELECT campaign_id,add_to_cart,raw_json,synced_at
+     FROM shopee_ad_promotion_daily
+     WHERE shop_id=$1
+       AND promotion_type='INDIVIDUAL_AD'
+       AND data_source='MANUAL_IMPORT'
+       AND period_start=$2::date
+       AND period_end=$3::date
+       AND COALESCE(raw_json->>'sourceFormat','')='SHOPEE_PRODUCT_AD_EXPORT'
+     ORDER BY synced_at DESC`,
+    [shopId, startDate, endDate],
+  );
+  const rangeEvidence = new Map();
+  for (const row of rangeEvidenceResult.rows) {
+    const key = String(row.campaign_id);
+    if (!rangeEvidence.has(key)) rangeEvidence.set(key, row);
+  }
+
   const campaigns = new Map();
   for (const row of result.rows) {
     const key = String(row.campaign_id);
@@ -220,8 +245,25 @@ async function listProductAdsSourceAccurate(pool, { shopId, startDate, endDate, 
   return Array.from(campaigns.values()).map(campaign => {
     const performance = sumPerformance(campaign.daily);
     const performanceProvenance = summarizeAtcProvenance(campaign.daily);
+    const exactEvidence = rangeEvidence.get(String(campaign.campaignId)) || null;
+    const evidenceAtc = rangeEvidenceMetric(exactEvidence, 'addToCart');
+    const evidenceAtcRate = rangeEvidenceMetric(exactEvidence, 'addToCartRate');
+    const voucherAmount = rangeEvidenceMetric(exactEvidence, 'voucherAmount');
+    const voucheredSales = rangeEvidenceMetric(exactEvidence, 'voucheredSales');
+    const enrichedPerformance = {
+      ...performance,
+      addToCart: performance.addToCart ?? evidenceAtc,
+      addToCartRate: performance.addToCartRate ?? evidenceAtcRate,
+      voucherAmount,
+      voucheredSales,
+    };
     const { daily, ...base } = campaign;
-    return { ...base, performance, performanceProvenance };
+    return {
+      ...base,
+      performance: enrichedPerformance,
+      performanceProvenance,
+      sellerCentreEvidence: exactEvidence ? { source: 'SHOPEE_PRODUCT_AD_EXPORT', syncedAt: exactEvidence.synced_at } : null,
+    };
   }).sort((a, b) => {
     const spendDiff = Number(b.performance.expense || 0) - Number(a.performance.expense || 0);
     return spendDiff || a.campaignId - b.campaignId;

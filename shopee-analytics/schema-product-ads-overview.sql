@@ -33,3 +33,31 @@ CREATE TABLE IF NOT EXISTS shopee_product_ads_shop_daily (
 
 CREATE INDEX IF NOT EXISTS idx_shopee_product_ads_shop_daily_date
   ON shopee_product_ads_shop_daily (event_date DESC, shop_id);
+
+-- Seller Centre evidence for fields not exposed by Shopee Open Ads overview API.
+-- Supports exact-day evidence and exact selected-range evidence without mutating
+-- the API-sourced shop daily table.
+CREATE TABLE IF NOT EXISTS shopee_product_ads_overview_evidence (
+  shop_id BIGINT NOT NULL,
+  period_start DATE NOT NULL,
+  period_end DATE NOT NULL,
+  granularity TEXT NOT NULL CHECK (granularity IN ('DAY','RANGE')),
+  source_format TEXT NOT NULL,
+  source_ref TEXT,
+  impressions BIGINT,
+  clicks BIGINT,
+  broad_orders BIGINT,
+  broad_units BIGINT,
+  broad_gmv NUMERIC(24,8),
+  expense NUMERIC(24,8),
+  broad_roas NUMERIC(20,10),
+  add_to_cart BIGINT,
+  add_to_cart_rate NUMERIC(20,10),
+  voucher_amount NUMERIC(24,8),
+  vouchered_sales NUMERIC(24,8),
+  raw_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  imported_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (shop_id,source_format,period_start,period_end)
+);
+CREATE INDEX IF NOT EXISTS idx_shopee_product_ads_overview_evidence_period
+  ON shopee_product_ads_overview_evidence(shop_id,period_start DESC,period_end DESC);

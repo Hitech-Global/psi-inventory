@@ -52,6 +52,8 @@ assert.strictEqual(parsed.preview.metrics.directOrders, 1);
 assert.strictEqual(parsed.preview.metrics.broadGmv, 98);
 assert.strictEqual(parsed.preview.metrics.directGmv, 98);
 assert.strictEqual(parsed.preview.metrics.expense, 21.89);
+assert.strictEqual(parsed.preview.metrics.voucherAmount, 0);
+assert.strictEqual(parsed.preview.metrics.voucheredSales, 0);
 assert(Math.abs(parsed.preview.metrics.ctr - (36 / 697)) < 1e-12);
 assert(Math.abs(parsed.preview.metrics.broadRoas - (98 / 21.89)) < 1e-12);
 

@@ -50,6 +50,14 @@
     ['商品已出售','broadUnits',int],['销售额','broadGmv',money2],['花费','expense',money2],['广告支出回报率','broadRoas',fixed2],
     ['优惠券金额','voucherAmount',money2],['优惠券带来的销售额','voucheredSales',money2],['加购次数','addToCart',int],['加购率','addToCartRate',pct2],
   ];
+  const SUPPLEMENTAL_OVERVIEW_KEYS = new Set(['voucherAmount','voucheredSales','addToCart','addToCartRate']);
+  function supplementalStatus(data, key) {
+    const info = data?.supplementalCoverage?.[key];
+    if (!info) return '等待 Seller Centre 总览数据';
+    if (info.complete) return info.exactRange ? 'Seller Centre evidence' : 'Seller Centre 每日 evidence 完整';
+    if (info.availableDays) return `Seller Centre 覆盖 ${info.availableDays}/${info.expectedDays} 天`;
+    return '等待 Seller Centre 总览数据';
+  }
 
   let shopDirectory = [];
   let lastGroupRows = [];
@@ -233,9 +241,14 @@
     coverage.textContent = data.dataAvailable ? `${int(daily.length)} 天` : '暂无API汇总';
     coverage.className = `pill ${data.dataAvailable ? 'good' : 'warn'}`;
     summary.innerHTML = OVERVIEW_METRICS.map(([label, key, formatter]) => {
-      const comparisonText = present(current[key]) && present(previous[key])
-        ? `环比 ${changeHtml(current[key], previous[key]).replace(/<[^>]+>/g, '')}`
-        : (present(current[key]) ? '' : '当前 Shopee API 未返回');
+      let comparisonText;
+      if (present(current[key]) && present(previous[key])) {
+        comparisonText = `环比 ${changeHtml(current[key], previous[key]).replace(/<[^>]+>/g, '')}`;
+      } else if (SUPPLEMENTAL_OVERVIEW_KEYS.has(key)) {
+        comparisonText = supplementalStatus(data, key);
+      } else {
+        comparisonText = present(current[key]) ? '' : '当前 Shopee API 未返回';
+      }
       return kpi(label, formatter(current[key]), comparisonText);
     }).join('');
     if (!data.dataAvailable) {
@@ -271,7 +284,7 @@
         ${metricTd(p.broadGmv, money2, q.broadGmv)}${metricTd(p.directGmv, money2, q.directGmv)}${metricTd(p.expense, money2, q.expense)}
         ${metricTd(p.broadRoas, fixed2, q.broadRoas)}${metricTd(p.directRoas, fixed2, q.directRoas)}
         ${metricTd(p.broadAcos, pct2, q.broadAcos)}${metricTd(p.directAcos, pct2, q.directAcos)}
-        <td>${unavailable()}</td><td>${unavailable()}</td><td>${unavailable()}</td><td>${fixed2(row.targetRoas)}</td>
+        <td>${unavailable()}</td>${metricTd(p.voucherAmount, money2, q.voucherAmount)}${metricTd(p.voucheredSales, money2, q.voucheredSales)}<td>${fixed2(row.targetRoas)}</td>
       </tr>`;
       return `<tr data-product-card-campaign="${row.campaignId}" data-product-card-type="auto">
         <td><div class="campaign-name"><strong>#${row.campaignId}</strong><small>GMV Max · GMS</small></div></td>
@@ -283,7 +296,7 @@
         ${metricTd(p.broadGmv, money2, q.broadGmv)}${metricTd(p.directGmv, money2, q.directGmv)}${metricTd(p.expense, money2, q.expense)}
         ${metricTd(p.broadRoas, fixed2, q.broadRoas)}${metricTd(p.directRoas, fixed2, q.directRoas)}
         ${metricTd(p.broadAcos, pct2, q.broadAcos)}${metricTd(p.directAcos, pct2, q.directAcos)}
-        <td>${unavailable('GMS API 未返回 Voucher Amount')}</td><td>${unavailable('GMS API 未返回 Vouchered Sales')}</td>
+        ${metricTd(p.voucherAmount, money2, q.voucherAmount)}${metricTd(p.voucheredSales, money2, q.voucheredSales)}
       </tr>`;
     }).join('');
   }
@@ -361,6 +374,7 @@
           <th>${sl('conversions')}</th><th>${sl('directConversions')}</th><th>${sl('conversionRate')}</th><th>${sl('directConversionRate')}</th>
           <th>${sl('costPerConversion')}</th><th>${sl('costPerDirectConversion')}</th><th>${sl('itemsSold')}</th><th>${sl('directItemsSold')}</th>
           <th>${sl('gmv')}</th><th>${sl('directGmv')}</th><th>${sl('expense')}</th><th>${sl('roas')}</th><th>${sl('directRoas')}</th><th>${sl('acos')}</th><th>${sl('directAcos')}</th>
+          <th>${sl('voucherAmount')}</th><th>${sl('voucheredSales')}</th>
         </tr></thead><tbody>${items.map(item => {
           const q = previousMap.get(Number(item.itemId)) || {};
           return `<tr><td><div class="ad-group-item-name"><strong>${esc(item.itemName || ('#' + item.itemId))}</strong><small>${esc(item.itemSku || '')}</small></div></td><td>${esc(item.itemId)}</td>
@@ -368,7 +382,8 @@
             ${metricTd(item.broadOrders, int, q.broadOrders)}${metricTd(item.directOrders, int, q.directOrders)}${metricTd(item.broadCvr, pct2, q.broadCvr)}${metricTd(item.directCvr, pct2, q.directCvr)}
             ${metricTd(item.costPerConversion, money2, q.costPerConversion)}${metricTd(item.costPerDirectConversion, money2, q.costPerDirectConversion)}
             ${metricTd(item.broadUnits, int, q.broadUnits)}${metricTd(item.directUnits, int, q.directUnits)}${metricTd(item.broadGmv, money2, q.broadGmv)}${metricTd(item.directGmv, money2, q.directGmv)}
-            ${metricTd(item.expense, money2, q.expense)}${metricTd(item.broadRoas, fixed2, q.broadRoas)}${metricTd(item.directRoas, fixed2, q.directRoas)}${metricTd(item.broadAcos, pct2, q.broadAcos)}${metricTd(item.directAcos, pct2, q.directAcos)}</tr>`;
+            ${metricTd(item.expense, money2, q.expense)}${metricTd(item.broadRoas, fixed2, q.broadRoas)}${metricTd(item.directRoas, fixed2, q.directRoas)}${metricTd(item.broadAcos, pct2, q.broadAcos)}${metricTd(item.directAcos, pct2, q.directAcos)}
+            ${metricTd(item.voucherAmount, money2, q.voucherAmount)}${metricTd(item.voucheredSales, money2, q.voucheredSales)}</tr>`;
         }).join('')}</tbody></table></div>`
         : '<div class="empty-inline">当前周期没有 GMS 商品层表现。</div>';
     }

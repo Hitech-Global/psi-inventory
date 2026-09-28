@@ -42,6 +42,8 @@ const HEADER_ALIASES = Object.freeze({
   '直接广告支出回报率': 'Direct ROAS',
   '广告销售成本': 'ACOS',
   '直接广告销售成本': 'Direct ACOS',
+  '优惠券金额': 'Voucher Amount',
+  '优惠券带来的销售额': 'Vouchered Sales',
 });
 
 const REQUIRED_HEADERS = Object.freeze([
@@ -49,6 +51,7 @@ const REQUIRED_HEADERS = Object.freeze([
   'Conversions', 'Direct Conversions', 'Conversion Rate', 'Direct Conversion Rate',
   'Cost per Conversion', 'Cost per Direct Conversion', 'Items Sold', 'Direct Items Sold',
   'GMV', 'Direct GMV', 'Expense', 'ROAS', 'Direct ROAS', 'ACOS', 'Direct ACOS',
+  'Voucher Amount', 'Vouchered Sales',
 ]);
 
 function normalizeLabel(value) {
@@ -137,6 +140,8 @@ function parseProductAdSellerCentreReport(rows, { filename = '' } = {}) {
   const broadGmv = sumRequired(dataRows, 'GMV');
   const directGmv = sumRequired(dataRows, 'Direct GMV');
   const expense = sumRequired(dataRows, 'Expense');
+  const voucherAmount = sumRequired(dataRows, 'Voucher Amount');
+  const voucheredSales = sumRequired(dataRows, 'Vouchered Sales');
 
   const derived = {
     ctr: safeDiv(clicks, impressions),
@@ -192,6 +197,8 @@ function parseProductAdSellerCentreReport(rows, { filename = '' } = {}) {
       broadGmv,
       directGmv,
       expense,
+      voucherAmount,
+      voucheredSales,
       ...derived,
     },
     rows: dataRows,

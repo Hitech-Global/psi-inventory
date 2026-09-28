@@ -199,7 +199,10 @@ class ShopeeAdPromotionRepository {
         ...sourceFields(parent),
         items: (row.items || []).map(item => {
           const child = item.rawJson && item.rawJson.child || {};
+          const sourceMetrics = item.rawJson && item.rawJson.sourceMetrics || {};
           const enriched = { ...item, ...sourceFields(child) };
+          if (enriched.voucherAmount == null && sourceMetrics.voucherAmount != null) enriched.voucherAmount = Number(sourceMetrics.voucherAmount);
+          if (enriched.voucheredSales == null && sourceMetrics.voucheredSales != null) enriched.voucheredSales = Number(sourceMetrics.voucheredSales);
           delete enriched.rawJson;
           return enriched;
         }),
