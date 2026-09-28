@@ -9,6 +9,7 @@ const index = read('web/index.html');
 const i18n = read('web/i18n-v1.js');
 const labels = read('web/shopee-metric-labels.js');
 const ui = read('web/product-card-ui-v2.js');
+const app = read('web/app.js');
 const adGroup = require('../src/shopee-ad-group-import');
 const productAd = require('../src/product-ad-seller-centre-import');
 const gms = require('../src/gms-seller-centre-reconciliation');
@@ -17,6 +18,9 @@ assert(index.includes('id="languageSwitch"'), 'top-right language switch is requ
 assert(index.includes('data-locale="zh"') && index.includes('data-locale="en"'));
 assert(index.includes('/i18n-v1.js'));
 for (const token of ['localStorage.setItem', 'MutationObserver', 'ShopeeI18n']) assert(i18n.includes(token));
+assert(i18n.includes('sessionStorage.setItem(UI_STATE_KEY'), 'locale switch must snapshot current UI state before reload');
+assert(app.includes('function restoreLocaleUiState()'), 'app must restore UI state after locale reload');
+for (const token of ['saved.view','saved.adsType','saved.shopId','saved.startDate','saved.endDate']) assert(app.includes(token), `locale restore missing ${token}`);
 
 const exactShopeeHeaders = new Set([
   ...adGroup.REQUIRED_HEADERS,

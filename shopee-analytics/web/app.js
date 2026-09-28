@@ -1397,11 +1397,44 @@ function onShopChanged() {
   if (state.view !== 'overview') loadCurrentView();
 }
 
+function restoreLocaleUiState() {
+  const key = 'shopee-analytics-locale-ui-state';
+  const raw = sessionStorage.getItem(key);
+  if (!raw) return false;
+  sessionStorage.removeItem(key);
+  let saved;
+  try { saved = JSON.parse(raw); } catch { return false; }
+
+  if (saved.country && state.countries.some(row => row.code === saved.country)) $('#countryFilter').value = saved.country;
+  if (saved.brand && state.brands.some(row => row.code === saved.brand)) $('#brandFilter').value = saved.brand;
+  renderShopOptions({ preserve: false });
+  if (saved.shopId && filteredShops().some(shop => String(shop.shopId) === String(saved.shopId))) $('#shopSelect').value = String(saved.shopId);
+  if (saved.startDate) $('#startDate').value = saved.startDate;
+  if (saved.endDate) $('#endDate').value = saved.endDate;
+
+  const view = ['overview', 'store', 'ads', 'status'].includes(saved.view) ? saved.view : 'overview';
+  const adsType = ['manual', 'auto', 'groups'].includes(saved.adsType) ? saved.adsType : 'manual';
+  state.view = view;
+  state.adsType = adsType;
+  $$('.view-tab').forEach(button => button.classList.toggle('active', button.dataset.view === view));
+  $$('.view-section').forEach(section => section.classList.toggle('hidden', section.id !== `view-${view}`));
+  $$('.ads-type-tab').forEach(button => button.classList.toggle('active', button.dataset.adsType === adsType));
+  $('#adsGmsPanel')?.classList.remove('hidden');
+  $('#adsGmvMaxPanel')?.classList.add('hidden');
+  $('#adsManualPanel')?.classList.toggle('hidden', adsType !== 'manual');
+  $('#adsAutoPanel')?.classList.toggle('hidden', adsType !== 'auto');
+  $('#adsGroupImportPanel')?.classList.toggle('hidden', adsType !== 'groups');
+  if (saved.adGroupImportOpen) $('#adGroupImportModal')?.classList.remove('hidden');
+  updateSingleShopPrompts();
+  return true;
+}
+
 async function init() {
   initDates();
   await checkHealth();
   try {
     await loadShopDirectory();
+    restoreLocaleUiState();
     await loadCurrentView();
   } catch (error) {
     $('#portfolioRows').innerHTML =

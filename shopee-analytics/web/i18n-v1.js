@@ -2,6 +2,7 @@
 
 (() => {
   const STORAGE_KEY = 'shopee-analytics-locale';
+  const UI_STATE_KEY = 'shopee-analytics-locale-ui-state';
   const SUPPORTED = new Set(['zh', 'en']);
   const requested = localStorage.getItem(STORAGE_KEY);
   const locale = SUPPORTED.has(requested) ? requested : 'zh';
@@ -225,8 +226,25 @@
     window.ShopeeMetricLabels?.apply?.(scope);
   }
 
+  function captureUiState() {
+    const value = id => document.getElementById(id)?.value ?? '';
+    const activeView = document.querySelector('.view-tab.active')?.dataset.view || 'overview';
+    const activeAdsType = document.querySelector('.ads-type-tab.active')?.dataset.adsType || 'manual';
+    return {
+      view: activeView,
+      adsType: activeAdsType,
+      country: value('countryFilter'),
+      brand: value('brandFilter'),
+      shopId: value('shopSelect'),
+      startDate: value('startDate'),
+      endDate: value('endDate'),
+      adGroupImportOpen: !document.getElementById('adGroupImportModal')?.classList.contains('hidden'),
+    };
+  }
+
   function setLocale(next) {
     if (!SUPPORTED.has(next)) return;
+    sessionStorage.setItem(UI_STATE_KEY, JSON.stringify(captureUiState()));
     localStorage.setItem(STORAGE_KEY, next);
     window.location.reload();
   }
