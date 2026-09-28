@@ -251,10 +251,19 @@
 
       <div id="adsGmsPanel"></div>
 
-      <div class="ads-type-tabs" aria-label="Product Card 广告类型">
-        <button class="ads-type-tab active" data-ads-type="manual" type="button">单品广告</button>
-        <button class="ads-type-tab" data-ads-type="groups" type="button">广告组</button>
-        <button class="ads-type-tab" data-ads-type="auto" type="button">全店推</button>
+      <div class="ads-filter-toolbar">
+        <div class="ads-type-tabs" aria-label="Product Card 广告类型">
+          <button class="ads-type-tab active" data-ads-type="manual" type="button">单品广告</button>
+          <button class="ads-type-tab" data-ads-type="groups" type="button">广告组</button>
+          <button class="ads-type-tab" data-ads-type="auto" type="button">全店推</button>
+        </div>
+        <div id="adStatusFilter" class="ad-status-filter" data-ad-status-value="all" role="group" aria-label="广告状态">
+          <button class="ad-status-option active" data-ad-status="all" type="button">全部</button>
+          <button class="ad-status-option" data-ad-status="ongoing" type="button"><i class="status-dot ongoing"></i>进行中</button>
+          <button class="ad-status-option" data-ad-status="paused" type="button"><i class="status-dot paused"></i>暂停中</button>
+          <button class="ad-status-option" data-ad-status="ended" type="button"><i class="status-dot ended"></i>已结束</button>
+          <button class="ad-status-option" data-ad-status="deleted" type="button"><i class="status-dot deleted"></i>已删除</button>
+        </div>
       </div>
       <div id="adsGmvMaxPanel" class="hidden">
       <section id="summary" class="kpi-grid hidden"></section>

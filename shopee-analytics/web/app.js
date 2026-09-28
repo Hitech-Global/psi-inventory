@@ -1414,8 +1414,12 @@ function restoreLocaleUiState() {
 
   const view = ['overview', 'store', 'ads', 'status'].includes(saved.view) ? saved.view : 'overview';
   const adsType = ['manual', 'auto', 'groups'].includes(saved.adsType) ? saved.adsType : 'manual';
+  const adStatus = ['all', 'ongoing', 'paused', 'ended', 'deleted'].includes(saved.adStatus) ? saved.adStatus : 'all';
   state.view = view;
   state.adsType = adsType;
+  const adStatusHost = $('#adStatusFilter');
+  if (adStatusHost) adStatusHost.dataset.adStatusValue = adStatus;
+  $$('.ad-status-option').forEach(button => button.classList.toggle('active', button.dataset.adStatus === adStatus));
   $$('.view-tab').forEach(button => button.classList.toggle('active', button.dataset.view === view));
   $$('.view-section').forEach(section => section.classList.toggle('hidden', section.id !== `view-${view}`));
   $$('.ads-type-tab').forEach(button => button.classList.toggle('active', button.dataset.adsType === adsType));
@@ -1424,6 +1428,7 @@ function restoreLocaleUiState() {
   $('#adsManualPanel')?.classList.toggle('hidden', adsType !== 'manual');
   $('#adsAutoPanel')?.classList.toggle('hidden', adsType !== 'auto');
   $('#adsGroupImportPanel')?.classList.toggle('hidden', adsType !== 'groups');
+  $('#adStatusFilter')?.classList.toggle('hidden', adsType === 'auto');
   if (saved.adGroupImportOpen) $('#adGroupImportModal')?.classList.remove('hidden');
   updateSingleShopPrompts();
   return true;

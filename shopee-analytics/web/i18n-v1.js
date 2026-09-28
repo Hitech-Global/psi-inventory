@@ -79,6 +79,9 @@
     ['总览', 'Overview'], ['商品明细', 'Product Details'], ['下一步', 'Next Step'],
     ['继续观察。', 'Continue observing.'], ['正在读取 Campaign 明细...', 'Loading Campaign details...'],
     ['单品广告明细', 'Single Product Ad Details'], ['广告明细', 'Ad Details'], ['关闭明细', 'Close details'],
+    ['广告状态', 'Ad Status'], ['全部', 'All'], ['进行中', 'Ongoing'], ['暂停中', 'Paused'], ['已结束', 'Ended'], ['已删除', 'Deleted'],
+    ['当前状态筛选没有单品广告。', 'No Single Product Ads match the selected status.'],
+    ['当前状态筛选没有广告组。', 'No Ad Groups match the selected status.'],
   ].forEach(([zh, en]) => EXACT.set(zh, en));
   [
     ['下一步动作', 'Next Actions'],
@@ -230,9 +233,11 @@
     const value = id => document.getElementById(id)?.value ?? '';
     const activeView = document.querySelector('.view-tab.active')?.dataset.view || 'overview';
     const activeAdsType = document.querySelector('.ads-type-tab.active')?.dataset.adsType || 'manual';
+    const adStatus = document.querySelector('.ad-status-option.active')?.dataset.adStatus || 'all';
     return {
       view: activeView,
       adsType: activeAdsType,
+      adStatus,
       country: value('countryFilter'),
       brand: value('brandFilter'),
       shopId: value('shopSelect'),

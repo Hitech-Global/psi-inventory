@@ -151,12 +151,28 @@
     return $('.ads-type-tab.active')?.dataset.adsType || 'manual';
   }
 
+  const AD_STATUS_VALUES = new Set(['all', 'ongoing', 'paused', 'ended', 'deleted']);
+  function normalizeAdStatus(value) {
+    const status = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+    if (['ongoing', 'active', 'running', 'live', 'enabled', 'in_progress', '正在进行', '进行中'].includes(status)) return 'ongoing';
+    if (['paused', 'pause', 'suspended', '暂停', '暂停中', '已暂停'].includes(status)) return 'paused';
+    if (['ended', 'end', 'completed', 'complete', 'finished', 'expired', '结束', '已结束'].includes(status)) return 'ended';
+    if (['deleted', 'delete', 'removed', 'remove', '删除', '已删除'].includes(status)) return 'deleted';
+    return status || 'unknown';
+  }
+  function currentAdStatusFilter() {
+    const host = $('#adStatusFilter');
+    const value = host?.dataset.adStatusValue || host?.querySelector('.ad-status-option.active')?.dataset.adStatus || 'all';
+    return AD_STATUS_VALUES.has(value) ? value : 'all';
+  }
+
   function setPanelVisibility(type) {
     $('#adsGmsPanel')?.classList.remove('hidden');
     $('#adsGmvMaxPanel')?.classList.add('hidden');
     $('#adsManualPanel')?.classList.toggle('hidden', type !== 'manual');
     $('#adsAutoPanel')?.classList.toggle('hidden', type !== 'auto');
     $('#adsGroupImportPanel')?.classList.toggle('hidden', type !== 'groups');
+    $('#adStatusFilter')?.classList.toggle('hidden', type === 'auto');
   }
 
   function injectStyles() {
@@ -272,7 +288,7 @@
     if (!tabs) return;
     tabs.setAttribute('aria-label', 'Product Card 广告类型');
     const labels = { manual: '单品广告', groups: '广告组', auto: '全店推' };
-    $$('.ads-type-tab').forEach(button => {
+    $$$('.ads-type-tab').forEach(button => {
       if (labels[button.dataset.adsType]) button.textContent = labels[button.dataset.adsType];
     });
 
@@ -417,12 +433,33 @@
     return `<span title="${esc(source)}">—</span>`;
   }
 
+  function applyAdStatusFilter(type = activeType()) {
+    if (!['manual', 'groups'].includes(type)) return;
+    const body = type === 'manual' ? $('#manualAdRows') : $('#adGroupRows');
+    if (!body) return;
+    body.querySelector('tr[data-ad-status-empty]')?.remove();
+    const filter = currentAdStatusFilter();
+    const rows = Array.from(body.querySelectorAll('tr[data-ad-status]'));
+    let visible = 0;
+    rows.forEach(row => {
+      const matches = filter === 'all' || row.dataset.adStatus === filter;
+      row.classList.toggle('ad-status-filter-hidden', !matches);
+      if (matches) visible += 1;
+    });
+    if (type === 'manual' && $('#manualAdCount')) $('#manualAdCount').textContent = `${int(visible)} 个`;
+    if (rows.length && visible === 0) {
+      const colspan = type === 'manual' ? MANUAL_COLUMNS.length : GROUP_COLUMNS.length;
+      const label = type === 'manual' ? '单品广告' : '广告组';
+      body.insertAdjacentHTML('beforeend', `<tr data-ad-status-empty><td colspan="${colspan}" class="empty">当前状态筛选没有${label}。</td></tr>`);
+    }
+  }
+
   function productAdRowsHtml(rows, type, previousMap = new Map()) {
     return rows.map(row => {
       const p = row.performance || {};
       const previous = previousMap.get(Number(row.campaignId));
       const q = previous?.performance || {};
-      if (type === 'manual') return `<tr data-product-card-campaign="${row.campaignId}" data-product-card-type="manual">
+      if (type === 'manual') return `<tr data-product-card-campaign="${row.campaignId}" data-product-card-type="manual" data-ad-status="${normalizeAdStatus(row.status)}">
         <td><div class="campaign-name"><strong>#${row.campaignId}</strong><small>${esc(row.adName || '')}</small></div></td>
         <td><span class="pill neutral">${esc(row.status || '—')}</span></td>
         <td data-sort-value="${present(row.campaignBudget) ? Number(row.campaignBudget) : ''}">${money2(row.campaignBudget)}</td><td>${fixed2(row.targetRoas)}</td>
@@ -475,6 +512,7 @@
     target.innerHTML = rows.length
       ? productAdRowsHtml(rows, type, previousMap)
       : `<tr><td colspan="${type === 'manual' ? MANUAL_COLUMNS.length : GMS_COLUMNS.length}" class="empty">当前周期没有${type === 'manual' ? '单品广告' : '全店推'}数据。</td></tr>`;
+    if (type === 'manual') applyAdStatusFilter('manual');
     $$('[data-product-card-campaign]').forEach(row => {
       if (row.dataset.productCardType !== type) return;
       if (type === 'manual') row.title = '点击查看单品广告明细';
@@ -648,7 +686,7 @@
       const date = String(row.event_date).slice(0, 10);
       const previous = previousMap.get(compareKey(row, addIsoDays(date, -previousRange.days))) || {};
       lastGroupPreviousRows[index] = previous;
-      return `<tr data-ad-group-index="${index}" data-sort-group="${groupKey}" title="点击查看商品明细">
+      return `<tr data-ad-group-index="${index}" data-sort-group="${groupKey}" data-ad-status="${normalizeAdStatus(row.campaign_status)}" title="点击查看商品明细">
         <td>${int(row.sequence)}</td><td>${esc(date)}</td><td>${esc(row.campaign_name || '—')}</td><td>${esc(row.campaign_status || '—')}</td><td>${esc(row.source_ad_type || '—')}</td>
         <td>${esc(row.biddingMethod || '—')}</td><td>${esc(row.groupStartDate || '—')}</td><td>${esc(row.groupEndDate || '—')}</td><td>${int(row.item_count)}</td>
         ${metricTd(row.impressions, int, previous.impressions)}${metricTd(row.clicks, int, previous.clicks)}${metricTd(row.ctr, pct2, previous.ctr)}
@@ -662,6 +700,7 @@
         <td><span class="pill neutral">${esc(row.data_quality_status || 'COMPLETE')}</span></td></tr>`;
     }).join('') : `<tr><td colspan="${GROUP_COLUMNS.length}" class="empty">当前周期暂无广告组数据。</td></tr>`;
     $('#adGroupEmptyState')?.classList.toggle('hidden', Boolean(lastGroupRows.length));
+    applyAdStatusFilter('groups');
     $$('#adGroupRows tr[data-ad-group-index]').forEach(rowEl => rowEl.addEventListener('click', () => openGroupItems(Number(rowEl.dataset.adGroupIndex), rowEl)));
   }
 
@@ -695,7 +734,15 @@
     window.loadProductAds = loadProductAdsV2;
     window.loadAdGroups = loadAdGroupsV2;
 
-    $$('.ads-type-tab').forEach(button => button.addEventListener('click', () => scheduleRefresh(40)));
+    $('.ads-type-tab').forEach(button => button.addEventListener('click', () => scheduleRefresh(40)));
+    $$('.ad-status-option').forEach(button => button.addEventListener('click', () => {
+      const value = button.dataset.adStatus || 'all';
+      if (!AD_STATUS_VALUES.has(value)) return;
+      const host = $('#adStatusFilter');
+      if (host) host.dataset.adStatusValue = value;
+      $$('.ad-status-option').forEach(option => option.classList.toggle('active', option === button));
+      applyAdStatusFilter();
+    }));
     $$('.view-tab[data-view="ads"]').forEach(button => button.addEventListener('click', () => scheduleRefresh(80)));
     $('#loadBtn')?.addEventListener('click', () => scheduleRefresh(80));
     $('#shopSelect')?.addEventListener('change', () => scheduleRefresh(80));
