@@ -12,6 +12,7 @@ const app = read('web/app.js');
 const productCard = read('web/product-card-ui-v2.js');
 const coverage = read('web/product-card-coverage-v4.js');
 const picker = read('web/date-range-picker-v2.js');
+const httpRouter = read('src/http-router.js');
 
 assert(server.includes("createManualDataSyncRouter({ pool })"));
 assert(router.includes("router.post('/data/sync-range'"));
@@ -37,6 +38,11 @@ assert(picker.includes('data-range-day="${iso}"'), 'calendar must render selecta
 assert(productCard.includes('data-generate-skill-analysis'));
 assert(productCard.includes('/skill-report?shop_id=${ctx.shopId}'));
 assert(productCard.includes("reason: 'MANUAL_UI'"));
+assert(productCard.includes('data-generate-ad-group-skill'));
+assert(productCard.includes('/ad-groups/skill-report?shop_id=${ctx.shopId}'));
+assert(httpRouter.includes("router.post('/ad-groups/skill-report'"));
+assert(picker.includes('draftStart = value;\n      draftEnd = value;\n      awaitingRangeEnd = true;'), 'first calendar click must form a valid single-day range');
+assert(picker.includes('已选单日；可直接应用'), 'single-day selection must be visible to the user');
 assert(!productCard.includes("$('#loadBtn')?.addEventListener('click'"), 'Product Card must not race the manual API sync button');
 assert(picker.includes("shopee-date-range-changed"), 'picker must emit committed date changes');
 assert(picker.includes("shopee-date-range-sync"), 'picker must resync after restored UI state');

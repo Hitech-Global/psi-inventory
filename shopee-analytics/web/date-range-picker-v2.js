@@ -110,6 +110,7 @@
   const selection = $('#dateRangeSelection');
   let draftStart = start.value;
   let draftEnd = end.value;
+  let awaitingRangeEnd = false;
   let anchorMonth = monthStart(parseIso(draftEnd) || new Date(), -1);
 
   function chooseAnchor() {
@@ -160,14 +161,17 @@
   function renderCalendars() {
     renderCalendar(left, anchorMonth, 'left');
     renderCalendar(right, monthStart(anchorMonth, 1), 'right');
-    selection.innerHTML = draftStart && draftEnd
-      ? `<strong>${formatDate(draftStart)} – ${formatDate(draftEnd)}</strong>`
-      : draftStart ? `<strong>${formatDate(draftStart)}</strong> · 请选择结束日期` : '请选择开始日期';
+    selection.innerHTML = awaitingRangeEnd && draftStart && draftEnd
+      ? `<strong>${formatDate(draftStart)}</strong> · 已选单日；可直接应用，或再点一个日期扩展范围`
+      : draftStart && draftEnd
+        ? `<strong>${formatDate(draftStart)} – ${formatDate(draftEnd)}</strong>`
+        : '请选择日期';
   }
 
   function openPopover() {
     draftStart = start.value;
     draftEnd = end.value;
+    awaitingRangeEnd = false;
     anchorMonth = chooseAnchor();
     renderCalendars();
     popover.classList.remove('hidden');
@@ -183,6 +187,7 @@
     end.value = nextEnd;
     draftStart = nextStart;
     draftEnd = nextEnd;
+    awaitingRangeEnd = false;
     refreshCommitted();
     window.dispatchEvent(new CustomEvent('shopee-date-range-changed', {
       detail: { startDate: nextStart, endDate: nextEnd },
@@ -193,6 +198,7 @@
   function syncFromInputs() {
     draftStart = start.value;
     draftEnd = end.value;
+    awaitingRangeEnd = false;
     anchorMonth = chooseAnchor();
     refreshCommitted();
     if (!popover.classList.contains('hidden')) renderCalendars();
@@ -224,9 +230,15 @@
     if (!day) return;
     event.preventDefault();
     const value = day.dataset.rangeDay;
-    if (!draftStart || draftEnd) { draftStart = value; draftEnd = ''; }
-    else if (value < draftStart) { draftEnd = draftStart; draftStart = value; }
-    else draftEnd = value;
+    if (!awaitingRangeEnd) {
+      draftStart = value;
+      draftEnd = value;
+      awaitingRangeEnd = true;
+    } else {
+      if (value < draftStart) { draftEnd = draftStart; draftStart = value; }
+      else draftEnd = value;
+      awaitingRangeEnd = false;
+    }
     renderCalendars();
   });
 

@@ -44,6 +44,7 @@ function createApp({ pool, skillProvider = null, importJobPool = null }) {
     adPromotionRepository,
     skillReportRepository,
     runSkillAnalysis,
+    runAdGroupSkillAnalysis,
   } = createSkillRuntime({ pool, skillProvider });
   const shopScopeRepository = new ShopeeShopScopeRepository({ pool });
   const backupStatusProvider = createBackupStatusProvider();
@@ -69,6 +70,7 @@ function createApp({ pool, skillProvider = null, importJobPool = null }) {
     backupStatusProvider,
     skillReportRepository,
     runSkillAnalysis,
+    runAdGroupSkillAnalysis,
   }));
 
   const webDir = path.join(__dirname, '..', 'web');

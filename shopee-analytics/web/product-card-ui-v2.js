@@ -390,6 +390,15 @@
     return rows.length ? `<ul>${rows.map(row => `<li>${esc(row)}</li>`).join('')}</ul>` : '<span class="muted">—</span>';
   }
 
+  function humanizeSkillError(error) {
+    const message = String(error?.message || error || '未知错误');
+    if (/provider is not configured|SHOPEE_SKILL_OPENAI_API_KEY is required/i.test(message)) {
+      return 'Skill 运行环境尚未配置 OpenAI Provider/API Key；数据已经保留，配置后可重新生成分析。';
+    }
+    if (/timeout|timed out/i.test(message)) return 'Skill 分析请求超时，请稍后重新生成。';
+    return message;
+  }
+
   function skillReportHtml(report) {
     if (!report) return '<div class="empty-inline">Skill 没有返回报告。</div>';
     return `<section class="skill-report-card">
@@ -419,7 +428,32 @@
       });
       host.innerHTML = skillReportHtml(result.report);
     } catch (error) {
-      host.innerHTML = `<div class="empty-inline">生成分析失败：${esc(error.message)}</div>`;
+      host.innerHTML = `<div class="empty-inline">生成分析失败：${esc(humanizeSkillError(error))}</div>`;
+    } finally {
+      button.disabled = false;
+      button.textContent = '生成分析';
+    }
+  }
+
+  async function runAdGroupSkillAnalysisV2(button) {
+    const ctx = selectedContext();
+    const encodedKey = String(button?.dataset?.generateAdGroupSkill || '');
+    const promotionKey = encodedKey ? decodeURIComponent(encodedKey) : '';
+    const host = button?.closest('.ad-group-modal-content')?.querySelector('.skill-report-host');
+    if (!ctx.shopId || !promotionKey || !ctx.startDate || !ctx.endDate || !host) return;
+    button.disabled = true;
+    button.textContent = '生成中…';
+    host.innerHTML = '<div class="empty-inline">正在运行 Shopee 广告组分析 Skill…</div>';
+    try {
+      const result = await postApi(`/api/shopee-analytics/ad-groups/skill-report?shop_id=${ctx.shopId}`, {
+        promotion_key: promotionKey,
+        start_date: ctx.startDate,
+        end_date: ctx.endDate,
+        reason: 'MANUAL_AD_GROUP_UI',
+      });
+      host.innerHTML = skillReportHtml(result.report);
+    } catch (error) {
+      host.innerHTML = `<div class="empty-inline">生成分析失败：${esc(humanizeSkillError(error))}</div>`;
     } finally {
       button.disabled = false;
       button.textContent = '生成分析';
@@ -681,9 +715,13 @@
 
   function adGroupItemTable(row, previousRow = null) {
     const items = Array.isArray(row.items) ? row.items : [];
-    if (!items.length) return '<div class="empty-inline">这个广告组没有保存商品层明细。</div>';
+    const promotionKey = encodeURIComponent(String(row.promotion_key || row.promotionKey || ''));
+    const analysisToolbar = promotionKey
+      ? `<div class="skill-analysis-toolbar"><button type="button" class="primary" data-generate-ad-group-skill="${esc(promotionKey)}">生成分析</button></div><div class="skill-report-host"></div>`
+      : '';
+    if (!items.length) return `<div class="ad-group-modal-content">${analysisToolbar}<div class="empty-inline">这个广告组没有保存商品层明细。</div></div>`;
     const previousMap = new Map((previousRow?.items || []).map(item => [Number(item.itemId), item]));
-    return `<div class="ad-group-modal-content"><div class="table-wrap"><table><thead><tr>
+    return `<div class="ad-group-modal-content">${analysisToolbar}<div class="table-wrap"><table><thead><tr>
         <th>${sl('sequence')}</th><th>${sl('adProductName')}</th><th>${sl('productId')}</th><th>${sl('impressions')}</th><th>${sl('clicks')}</th><th>${sl('ctr')}</th>
         <th>${sl('conversions')}</th><th>${sl('directConversions')}</th><th>${sl('conversionRate')}</th><th>${sl('directConversionRate')}</th>
         <th>${sl('costPerConversion')}</th><th>${sl('costPerDirectConversion')}</th><th>${sl('itemsSold')}</th><th>${sl('directItemsSold')}</th>
@@ -799,6 +837,13 @@
       applyAdStatusFilter();
     }));
     document.addEventListener('click', event => {
+      const groupButton = event.target.closest('[data-generate-ad-group-skill]');
+      if (groupButton) {
+        event.preventDefault();
+        event.stopPropagation();
+        runAdGroupSkillAnalysisV2(groupButton);
+        return;
+      }
       const button = event.target.closest('[data-generate-skill-analysis]');
       if (!button) return;
       event.preventDefault();

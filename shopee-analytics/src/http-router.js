@@ -137,6 +137,7 @@ function createShopeeAnalyticsRouter({
   backupStatusProvider = async () => null,
   skillReportRepository = null,
   runSkillAnalysis = null,
+  runAdGroupSkillAnalysis = null,
 }) {
   const router = express.Router();
 
@@ -732,6 +733,29 @@ function createShopeeAnalyticsRouter({
       });
       analysis.dataQuality.storedItemCount = coverageContext.storedItemCount;
       res.json(analysis);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post('/ad-groups/skill-report', express.json({ limit: '32kb' }), async (req, res, next) => {
+    try {
+      if (typeof runAdGroupSkillAnalysis !== 'function') throw new Error('Ad Group Skill execution is not configured');
+      const shopId = positiveInt(req.query.shop_id, 'shop_id');
+      const promotionKey = String(req.body && req.body.promotion_key || '').trim();
+      if (!promotionKey || promotionKey.length > 512) throw new Error('promotion_key is required');
+      const startDate = isoDate(req.body && req.body.start_date, 'start_date');
+      const endDate = isoDate(req.body && req.body.end_date, 'end_date');
+      if (startDate > endDate) throw new Error('start_date must be <= end_date');
+      const result = await runAdGroupSkillAnalysis({
+        shopId,
+        promotionKey,
+        startDate,
+        endDate,
+        triggerType: 'MANUAL',
+        triggerReason: req.body && req.body.reason ? String(req.body.reason).slice(0, 500) : null,
+      });
+      res.status(201).json(result);
     } catch (error) {
       next(error);
     }

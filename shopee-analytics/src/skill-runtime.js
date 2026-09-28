@@ -7,7 +7,7 @@ const { ShopeeAdPromotionRepository } = require('./ad-promotion-repository');
 const { SkillReportRepository } = require('./skill-report-repository');
 const { SkillRunner } = require('./skill-runner');
 const { createSkillExecutor, disabledSkillProvider } = require('./skill-executor');
-const { buildCampaignSkillPackage } = require('./skill-analysis-service');
+const { buildCampaignSkillPackage, buildAdGroupSkillPackage } = require('./skill-analysis-service');
 const { assertOnlineOperationAllowed } = require('./deployment-mode');
 
 function createSkillRuntime({
@@ -28,6 +28,10 @@ function createSkillRuntime({
   const skillRunner = new SkillRunner({
     executor: skillExecutor,
     reportRepository: skillReportRepository,
+  });
+  const adGroupSkillRunner = new SkillRunner({
+    executor: skillExecutor,
+    reportRepository: null,
   });
 
   const runSkillAnalysis = async ({
@@ -54,6 +58,30 @@ function createSkillRuntime({
     return skillRunner.run(analysisPackage);
   };
 
+  const runAdGroupSkillAnalysis = async ({
+    shopId,
+    promotionKey,
+    startDate,
+    endDate,
+    triggerType,
+    triggerReason,
+  }) => {
+    assertOnlineOperationAllowed('Ad Group Skill Runtime analysis');
+    const analysisPackage = await buildAdGroupSkillPackage({
+      adPromotionRepository,
+      queryRepository,
+      strategyRepository,
+      shopId,
+      promotionKey,
+      startDate,
+      endDate,
+      dataCutoff: now().toISOString(),
+      triggerType,
+      triggerReason,
+    });
+    return adGroupSkillRunner.run(analysisPackage);
+  };
+
   return {
     repository,
     strategyRepository,
@@ -62,6 +90,7 @@ function createSkillRuntime({
     skillReportRepository,
     skillRunner,
     runSkillAnalysis,
+    runAdGroupSkillAnalysis,
   };
 }
 
