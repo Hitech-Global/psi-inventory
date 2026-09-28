@@ -138,6 +138,7 @@ function createProductAdsOverviewEvidenceRouter({ pool }) {
         voucheredSales: optionalNumber(metrics.voucheredSales),
         raw: { note: req.body?.note || null, evidence: req.body?.evidence || null },
       };
+      await verifyOverviewCore(pool, shopId, [row]);
       const saved = await repository.upsertMany({
         shopId, sourceFormat, sourceRef: String(req.body?.sourceRef || '') || null, rows: [row],
       });
