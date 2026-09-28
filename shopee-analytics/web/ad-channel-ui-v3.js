@@ -38,7 +38,7 @@
   function productCardElements() {
     return [
       $('#productCardParent'),
-      $('.ads-type-tabs'),
+      $('.ads-filter-toolbar') || $('.ads-type-tabs'),
       $('#adsGmsPanel'),
       $('#adsManualPanel'),
       $('#adsAutoPanel'),
@@ -92,20 +92,24 @@
       tabs.innerHTML = CHANNELS.map(channel => `
         <button type="button" class="ad-channel-tab${channel.key === activeChannel ? ' active' : ''}" data-ad-channel="${channel.key}">${channel.label}</button>
       `).join('');
-      productCardParent.parentNode.insertBefore(tabs, productCardParent);
+      const anchor = $('#adsGmsPanel') || $('.ads-filter-toolbar') || productCardParent;
+      adsView.insertBefore(tabs, anchor);
     }
 
     const channelTabs = $('#adChannelTabsV3');
     const overviewPanel = $('#adsGmsPanel');
-    if (channelTabs && overviewPanel && channelTabs.nextElementSibling !== overviewPanel) {
-      channelTabs.insertAdjacentElement('afterend', overviewPanel);
+    if (channelTabs && overviewPanel && channelTabs.parentNode === adsView) {
+      if (overviewPanel.parentNode !== adsView || channelTabs.nextElementSibling !== overviewPanel) {
+        adsView.insertBefore(overviewPanel, channelTabs.nextSibling);
+      }
     }
 
     if (!$('#adChannelPlaceholderV3')) {
       const placeholder = document.createElement('section');
       placeholder.id = 'adChannelPlaceholderV3';
       placeholder.className = 'ad-channel-placeholder hidden';
-      productCardParent.parentNode.insertBefore(placeholder, productCardParent.nextSibling);
+      const anchor = overviewPanel?.nextSibling || channelTabs?.nextSibling || productCardParent;
+      adsView.insertBefore(placeholder, anchor);
     }
 
     $$('[data-ad-channel]').forEach(button => {
@@ -150,8 +154,8 @@
     productCardElements().forEach(el => {
       if (showProductCard) {
         // V2 owns which Product Card child panel is active; only release the
-        // top-level hide here and let its sub-tab logic decide the rest.
-        if (el.id === 'productCardParent' || el.classList.contains('ads-type-tabs')) el.classList.remove('hidden');
+        // top-level shell here and let its sub-tab logic decide the rest.
+        if (el.id === 'productCardParent' || el.classList.contains('ads-filter-toolbar') || el.classList.contains('ads-type-tabs')) el.classList.remove('hidden');
       } else {
         el.classList.add('hidden');
       }

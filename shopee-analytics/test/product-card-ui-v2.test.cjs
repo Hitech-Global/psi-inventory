@@ -31,7 +31,8 @@ for (const key of ['summaryCtr','summaryAddToCart','summaryCvr','summaryRoas','s
   assert(ui.includes(`'${key}'`), `efficiency summary metric missing ${key}`);
 }
 assert(!ui.includes('`环比 ${changeHtml(current[key]'), 'summary cards must not render 环比 label text');
-assert(channels.includes("channelTabs.insertAdjacentElement('afterend', overviewPanel)"), 'overview must sit below the top-level ad-channel row');
+assert(ui.includes("const toolbar = tabs.closest('.ads-filter-toolbar')"), 'Product Card parent anchor must escape the nested status toolbar');
+assert(channels.includes('adsView.insertBefore(overviewPanel, channelTabs.nextSibling)'), 'overview must remain a top-level block below the ad-channel row');
 assert(!ui.includes('data-ad-group-detail-index'), 'Ad Group items must no longer expand inline');
 assert(ui.includes('product-card-detail-modal-backdrop'), 'shared detail modal shell must exist');
 assert(ui.includes("variant: 'group'"), 'Ad Group detail must use the shared modal');

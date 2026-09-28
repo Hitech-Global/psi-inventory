@@ -306,7 +306,9 @@
           <span id="productCardContextV2" class="pill neutral">总览</span>
           <span id="productCardSourceV2" class="pill good">SHOPEE API</span>
         </div>`;
-      tabs.parentNode.insertBefore(parent, tabs);
+      const toolbar = tabs.closest('.ads-filter-toolbar');
+      const anchor = toolbar || tabs;
+      anchor.parentNode.insertBefore(parent, anchor);
     }
 
     const gmsPanel = $('#adsGmsPanel');
