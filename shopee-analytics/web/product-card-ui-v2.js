@@ -167,7 +167,7 @@
     const status = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
     if (['ongoing', 'active', 'running', 'live', 'enabled', 'in_progress', '正在进行', '进行中'].includes(status)) return 'ongoing';
     if (['paused', 'pause', 'suspended', '暂停', '暂停中', '已暂停'].includes(status)) return 'paused';
-    if (['ended', 'end', 'completed', 'complete', 'finished', 'expired', '结束', '已结束'].includes(status)) return 'ended';
+    if (['ended', 'end', 'closed', 'completed', 'complete', 'finished', 'expired', '结束', '已结束'].includes(status)) return 'ended';
     if (['deleted', 'delete', 'removed', 'remove', '删除', '已删除'].includes(status)) return 'deleted';
     return status || 'unknown';
   }

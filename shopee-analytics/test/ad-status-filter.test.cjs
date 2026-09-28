@@ -16,6 +16,7 @@ for (const status of ['all', 'ongoing', 'paused', 'ended', 'deleted']) {
   assert(index.includes(`data-ad-status="${status}"`), `missing filter ${status}`);
 }
 assert(ui.includes('function normalizeAdStatus(value)'));
+assert(ui.includes("'closed'"), 'Shopee closed status must normalize into ended');
 assert(ui.includes('function applyAdStatusFilter(type = activeType())'));
 assert(ui.includes('data-ad-status="${normalizeAdStatus(row.status)}"'), 'manual ads must expose normalized status');
 assert(ui.includes('data-ad-status="${normalizeAdStatus(row.campaign_status)}"'), 'ad groups must expose normalized status');
