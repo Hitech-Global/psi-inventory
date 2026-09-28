@@ -74,6 +74,7 @@ function diagnoseCampaign({
   asOfDate = null,
 }) {
   const cfg = { ...DEFAULTS, ...settings };
+  const normalizedTargetRoas = Number(targetRoas) > 0 ? Number(targetRoas) : null;
   const perf = normalizePerformance(campaign);
   const weeklyEquivalentOrders = days > 0 ? perf.broadOrders * 7 / days : 0;
   const avgDailySpend = days > 0 ? perf.expense / days : 0;
@@ -92,9 +93,9 @@ function diagnoseCampaign({
     ? 'BELOW_BREAK_EVEN'
     : spendLimitState === 'OVER_SPEND_LIMIT'
       ? 'ABOVE_BREAK_EVEN_BUT_OVER_SPEND_LIMIT'
-      : targetRoas > 0 && perf.broadRoas < targetRoas
+      : normalizedTargetRoas !== null && perf.broadRoas < normalizedTargetRoas
         ? 'PROFITABLE_BUT_BELOW_TARGET'
-        : targetRoas > 0
+        : normalizedTargetRoas !== null
           ? 'TARGET_MET'
           : 'TARGET_UNKNOWN';
 
@@ -112,7 +113,7 @@ function diagnoseCampaign({
   const itemResults = items.map(row => diagnoseItem({
     item: row,
     groupPerformance: perf,
-    targetRoas,
+    targetRoas: normalizedTargetRoas,
     config: cfg,
     days,
     maturityStatus: maturity.status,
@@ -131,9 +132,9 @@ function diagnoseCampaign({
     adSpendRatioLimit: cfg.adSpendRatioLimit,
     spendLimitRoas,
     spendLimitState,
-    targetRoas: Number(targetRoas || 0),
+    targetRoas: normalizedTargetRoas,
     breakEvenRoas: Number(breakEvenRoas || 0),
-    targetVsRecommended: recommendedRangeState(targetRoas, recommendedRoi),
+    targetVsRecommended: recommendedRangeState(normalizedTargetRoas, recommendedRoi),
     recommendedRoi: recommendedRoi || null,
     maturity,
     maturityStatus: maturity.status,

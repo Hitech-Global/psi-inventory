@@ -678,8 +678,8 @@ function createShopeeAnalyticsRouter({
 
       const latest = await queryRepository.getLatestCampaignSetting({ shopId, campaignId });
       const targetRoas = req.query.target_roas === undefined
-        ? Number(latest && latest.targetRoas || 0)
-        : Number(req.query.target_roas);
+        ? (latest && Number(latest.targetRoas) > 0 ? Number(latest.targetRoas) : null)
+        : (Number(req.query.target_roas) > 0 ? Number(req.query.target_roas) : null);
       const breakEvenRoas = Number(req.query.break_even_roas || 0);
 
       const analysis = await analyzeCampaignWindow({
