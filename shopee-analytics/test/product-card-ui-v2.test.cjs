@@ -24,11 +24,15 @@ for (const key of ['addToCartRate','costPerConversion','directItemsSold','direct
 for (const label of ['展示次数','点击数','点击率','订单量','商品已出售','销售额','花费','广告支出回报率','优惠券金额','优惠券带来的销售额','加购次数','加购率']) assert(ui.includes(label), `overview label missing ${label}`);
 for (const token of ['comparisonRange','metric-change','metricTd','previousData']) assert(ui.includes(token), `comparison contract missing ${token}`);
 assert(channels.includes("channelTabs.insertAdjacentElement('afterend', overviewPanel)"), 'overview must sit below the top-level ad-channel row');
-assert(ui.includes('data-ad-group-detail-index'), 'Ad Group items must expand inline');
-assert(ui.includes('data-sort-group'), 'Ad Group parent/detail rows must sort as one block');
+assert(!ui.includes('data-ad-group-detail-index'), 'Ad Group items must no longer expand inline');
+assert(ui.includes('product-card-detail-modal-backdrop'), 'shared detail modal shell must exist');
+assert(ui.includes("variant: 'group'"), 'Ad Group detail must use the shared modal');
+assert(ui.includes("title: '单品广告明细'"), 'single-product ad detail must use the shared modal');
+assert(ui.includes("#manualAdDetail{display:none!important}"), 'legacy inline single-product detail must stay hidden');
+assert(ui.includes('data-sort-group'), 'Ad Group parent row sort metadata must remain');
 assert(!ui.includes('adGroupItemRowsV2'), 'separate Ad Group item panel must be removed');
 for (const token of ['directConversions','costPerDirectConversion','voucherAmount','voucheredSales']) assert(repo.includes(token), `read model missing ${token}`);
 assert(server.includes('/table-sort-v1.js'), 'global Shopee table sorter must be loaded');
 assert(syncRunner.includes("adTypes: ['manual']"));
 assert(syncRunner.includes("includeSettings: mode === 'daily'"));
-console.log('Product Card metrics, inline Ad Group detail and source mapping contract: ok');
+console.log('Product Card metrics, modal detail UX and source mapping contract: ok');

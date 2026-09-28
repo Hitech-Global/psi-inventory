@@ -61,6 +61,9 @@
 
   let shopDirectory = [];
   let lastGroupRows = [];
+  let lastGroupPreviousRows = [];
+  let detailModalLastFocus = null;
+  let bodyOverflowBeforeDetailModal = '';
   let refreshSeq = 0;
 
   async function api(url) {
@@ -106,14 +109,91 @@
       .product-card-daily-panel .panel-head{border-bottom:1px solid #ececef}
       .metric-exact{font-variant-numeric:tabular-nums}
       .metric-cell{display:flex;flex-direction:column;gap:3px;align-items:flex-start;min-height:36px}.metric-cell>span{font-variant-numeric:tabular-nums}.metric-change{font-size:10px;line-height:1.15;font-weight:650}.metric-change.up{color:#2db55d}.metric-change.down{color:#ff4d36}.metric-change.neutral{color:#a1a1a6}
-      #adGroupRows tr[data-ad-group-index]{cursor:pointer}#adGroupRows tr[data-ad-group-index]:hover{background:#f8fbff}#adGroupRows tr.selected{background:#eef6ff}
-      .ad-group-inline-detail>td{padding:0!important;background:#fbfbfc;border-bottom:1px solid #ececef}.ad-group-inline-box{padding:0 0 12px}
-      .ad-group-inline-box .panel-head{padding:12px 18px}.ad-group-inline-box .table-wrap{max-height:420px;border-top:1px solid #ececef}
+      #manualAdDetail{display:none!important}
+      #manualAdRows tr[data-product-card-campaign],#adGroupRows tr[data-ad-group-index]{cursor:pointer}
+      #manualAdRows tr[data-product-card-campaign]:hover,#adGroupRows tr[data-ad-group-index]:hover{background:#f8fbff}
+      #adGroupRows tr.selected{background:#eef6ff}
+      .product-card-detail-modal-backdrop{position:fixed;inset:0;z-index:1500;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(15,15,18,.34);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+      .product-card-detail-modal-backdrop.hidden{display:none!important}
+      .product-card-detail-modal{width:min(820px,calc(100vw - 48px));max-height:min(78vh,760px);display:flex;flex-direction:column;overflow:hidden;background:rgba(255,255,255,.98);border:1px solid rgba(255,255,255,.9);border-radius:20px;box-shadow:0 24px 70px rgba(0,0,0,.22)}
+      .product-card-detail-modal[data-detail-variant="group"]{width:min(980px,calc(100vw - 48px))}
+      .product-card-detail-modal-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;padding:16px 18px 14px;border-bottom:1px solid #ececef;flex:0 0 auto}
+      .product-card-detail-modal-head h2{margin:2px 0 4px;font-size:18px}.product-card-detail-modal-head p{margin:0;color:#6e6e73;font-size:11px;line-height:1.5}
+      .product-card-detail-modal-close{width:32px;height:32px;display:grid;place-items:center;flex:0 0 auto;border:0;border-radius:50%;background:#f2f2f4;color:#1d1d1f;font-size:20px;line-height:1;cursor:pointer}
+      .product-card-detail-modal-close:hover{background:#e7e7ea}
+      .product-card-detail-modal-body{min-height:0;overflow:auto;padding:16px 18px 18px;overscroll-behavior:contain}
+      .product-card-detail-modal-body .product-ad-detail-head{margin-top:0}
+      .product-card-detail-modal-body .ad-group-modal-content .table-wrap{max-height:56vh;overflow:auto;border:1px solid #ececef;border-radius:12px}
       .ad-group-item-name{display:flex;flex-direction:column;gap:2px;min-width:190px;text-align:left}.ad-group-item-name strong{font-size:12px}.ad-group-item-name small{font-size:10px;color:#86868b;white-space:normal}
       .product-card-source{font-size:10px;color:#86868b}.ads-type-tabs{margin-bottom:10px}
-      @media(max-width:800px){.product-card-parent{align-items:flex-start;flex-direction:column}.product-card-overview .kpi-grid{grid-template-columns:repeat(2,1fr)}}
+      @media(max-width:800px){.product-card-parent{align-items:flex-start;flex-direction:column}.product-card-overview .kpi-grid{grid-template-columns:repeat(2,1fr)}.product-card-detail-modal-backdrop{padding:12px}.product-card-detail-modal,.product-card-detail-modal[data-detail-variant="group"]{width:100%;max-height:86vh;border-radius:16px}.product-card-detail-modal-body{padding:14px}}
     `;
     document.head.appendChild(style);
+  }
+
+  function ensureDetailModal() {
+    let backdrop = $('#productCardDetailModal');
+    if (backdrop) return backdrop;
+    backdrop = document.createElement('div');
+    backdrop.id = 'productCardDetailModal';
+    backdrop.className = 'product-card-detail-modal-backdrop hidden';
+    backdrop.innerHTML = `
+      <section class="product-card-detail-modal" role="dialog" aria-modal="true" aria-labelledby="productCardDetailModalTitle">
+        <div class="product-card-detail-modal-head">
+          <div>
+            <div class="section-label">DETAIL</div>
+            <h2 id="productCardDetailModalTitle">广告明细</h2>
+            <p id="productCardDetailModalSubtitle"></p>
+          </div>
+          <button id="productCardDetailModalClose" class="product-card-detail-modal-close" type="button" aria-label="关闭明细">×</button>
+        </div>
+        <div id="productCardDetailModalBody" class="product-card-detail-modal-body"></div>
+      </section>`;
+    document.body.appendChild(backdrop);
+    $('#productCardDetailModalClose')?.addEventListener('click', closeDetailModal);
+    backdrop.addEventListener('click', event => {
+      if (event.target === backdrop) closeDetailModal();
+    });
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && !backdrop.classList.contains('hidden')) closeDetailModal();
+    });
+    return backdrop;
+  }
+
+  function openDetailModal({ title, subtitle = '', html = '', variant = 'manual', opener = null }) {
+    const backdrop = ensureDetailModal();
+    const dialog = backdrop.querySelector('.product-card-detail-modal');
+    const titleEl = $('#productCardDetailModalTitle');
+    const subtitleEl = $('#productCardDetailModalSubtitle');
+    const body = $('#productCardDetailModalBody');
+    if (!dialog || !titleEl || !subtitleEl || !body) return;
+
+    if (backdrop.classList.contains('hidden')) {
+      detailModalLastFocus = opener || (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+      bodyOverflowBeforeDetailModal = document.body.style.overflow;
+    }
+    titleEl.textContent = title;
+    subtitleEl.textContent = subtitle;
+    body.innerHTML = html;
+    dialog.dataset.detailVariant = variant;
+    backdrop.classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+    window.requestAnimationFrame(() => $('#productCardDetailModalClose')?.focus());
+  }
+
+  function updateDetailModalBody(html) {
+    const body = $('#productCardDetailModalBody');
+    if (body) body.innerHTML = html;
+  }
+
+  function closeDetailModal() {
+    const backdrop = $('#productCardDetailModal');
+    if (!backdrop || backdrop.classList.contains('hidden')) return;
+    backdrop.classList.add('hidden');
+    document.body.style.overflow = bodyOverflowBeforeDetailModal;
+    $$('#adGroupRows tr[data-ad-group-index]').forEach(el => el.classList.remove('selected'));
+    if (detailModalLastFocus?.isConnected) detailModalLastFocus.focus();
+    detailModalLastFocus = null;
   }
 
   function buildHierarchy() {
@@ -325,13 +405,28 @@
       : `<tr><td colspan="${type === 'manual' ? MANUAL_COLUMNS.length : GMS_COLUMNS.length}" class="empty">当前周期没有${type === 'manual' ? '单品广告' : '全店推'}数据。</td></tr>`;
     $$('[data-product-card-campaign]').forEach(row => {
       if (row.dataset.productCardType !== type) return;
-      row.addEventListener('click', () => loadProductAdDetailV2(type, Number(row.dataset.productCardCampaign)));
+      if (type === 'manual') row.title = '点击查看单品广告明细';
+      row.addEventListener('click', () => {
+        loadProductAdDetailV2(type, Number(row.dataset.productCardCampaign), row).catch(error => {
+          const target = type === 'manual' ? $('#productCardDetailModalBody') : $('#autoAdDetail');
+          if (target) target.innerHTML = `<div class="empty-inline">${esc(error.message)}</div>`;
+        });
+      });
     });
   }
 
-  async function loadProductAdDetailV2(type, campaignId) {
+  async function loadProductAdDetailV2(type, campaignId, opener = null) {
     const ctx = selectedContext();
     if (!ctx.shopId) return;
+    if (type === 'manual') {
+      openDetailModal({
+        title: '单品广告明细',
+        subtitle: `Campaign #${campaignId} · 正在读取`,
+        html: '<div class="empty-inline">正在读取 Campaign 明细...</div>',
+        variant: 'manual',
+        opener,
+      });
+    }
     const previousRange = comparisonRange(ctx.startDate, ctx.endDate);
     const urlFor = (startDate, endDate) => {
       const params = new URLSearchParams({ shop_id: String(ctx.shopId), start_date: startDate, end_date: endDate });
@@ -342,13 +437,13 @@
     };
     const data = await api(urlFor(ctx.startDate, ctx.endDate));
     const previousData = type === 'auto' ? await api(urlFor(previousRange.startDate, previousRange.endDate)) : null;
-    const detail = type === 'manual' ? $('#manualAdDetail') : $('#autoAdDetail');
-    if (!detail) return;
+    const detail = type === 'manual' ? null : $('#autoAdDetail');
+    if (type === 'auto' && !detail) return;
     const d = data.diagnosis || {};
     const p = type === 'manual' ? (d.performance || {}) : (d.campaign || {});
     const setting = data.latestSetting || {};
     const primaryAction = Array.isArray(d.actions) ? d.actions[0] : null;
-    detail.innerHTML = `
+    const detailHtml = `
       <div class="product-ad-detail-head">
         <div><div class="section-label">${type === 'manual' ? 'SINGLE PRODUCT AD' : 'SHOP-WIDE PRODUCT AD'}</div>
           <h3>${esc(setting.adName || data.campaign?.adName || (type === 'auto' ? ('全店推 Campaign #' + campaignId) : ('Campaign #' + campaignId)))}</h3>
@@ -364,6 +459,17 @@
         ${kpi('Target ROAS', type === 'auto' ? (p.targetRoas == null ? '—' : fixed2(p.targetRoas)) : (setting.targetRoas == null ? '—' : fixed2(setting.targetRoas)))}
       </div>
       <div class="product-ad-action"><strong>下一步</strong><span>${esc(type === 'auto' ? (primaryAction?.action || '继续观察。') : (d.action || '继续观察。'))}</span></div>`;
+    if (type === 'manual') {
+      openDetailModal({
+        title: '单品广告明细',
+        subtitle: `Campaign #${campaignId} · ${ctx.startDate} → ${ctx.endDate}`,
+        html: detailHtml,
+        variant: 'manual',
+        opener,
+      });
+    } else {
+      detail.innerHTML = detailHtml;
+    }
     if (type === 'auto' && $('#autoAdItems')) {
       const items = d.items || [];
       const previousMap = new Map((previousData?.diagnosis?.items || []).map(item => [Number(item.itemId), item]));
@@ -393,8 +499,7 @@
     const items = Array.isArray(row.items) ? row.items : [];
     if (!items.length) return '<div class="empty-inline">这个广告组没有保存商品层明细。</div>';
     const previousMap = new Map((previousRow?.items || []).map(item => [Number(item.itemId), item]));
-    return `<div class="ad-group-inline-box"><div class="panel-head"><div><h3>商品明细</h3><p>${esc(row.campaign_name || '广告组')} · 环比上一周期 · ${int(items.length)} 商品</p></div></div>
-      <div class="table-wrap"><table><thead><tr>
+    return `<div class="ad-group-modal-content"><div class="table-wrap"><table><thead><tr>
         <th>${sl('adProductName')}</th><th>${sl('productId')}</th><th>${sl('impressions')}</th><th>${sl('clicks')}</th><th>${sl('ctr')}</th>
         <th>${sl('conversions')}</th><th>${sl('directConversions')}</th><th>${sl('conversionRate')}</th><th>${sl('directConversionRate')}</th>
         <th>${sl('costPerConversion')}</th><th>${sl('costPerDirectConversion')}</th><th>${sl('itemsSold')}</th><th>${sl('directItemsSold')}</th>
@@ -413,13 +518,21 @@
       }).join('')}</tbody></table></div></div>`;
   }
 
-  function toggleGroupItems(index, rowEl) {
-    const detail = $(`#adGroupRows tr[data-ad-group-detail-index="${index}"]`);
-    if (!detail) return;
-    const willOpen = detail.classList.contains('hidden');
-    $$('#adGroupRows tr[data-ad-group-detail-index]').forEach(el => el.classList.add('hidden'));
+  function openGroupItems(index, rowEl) {
+    const row = lastGroupRows[index];
+    if (!row) return;
+    const previous = lastGroupPreviousRows[index] || null;
+    const date = String(row.event_date || '').slice(0, 10);
+    const items = Array.isArray(row.items) ? row.items : [];
     $$('#adGroupRows tr[data-ad-group-index]').forEach(el => el.classList.remove('selected'));
-    if (willOpen) { detail.classList.remove('hidden'); rowEl.classList.add('selected'); }
+    rowEl.classList.add('selected');
+    openDetailModal({
+      title: row.campaign_name || '广告组明细',
+      subtitle: `${date || '—'} · ${int(items.length)} 商品 · 环比上一周期`,
+      html: adGroupItemTable(row, previous),
+      variant: 'group',
+      opener: rowEl,
+    });
   }
 
   async function loadAdGroupsV2() {
@@ -436,13 +549,15 @@
       api(urlFor(previousRange.startDate, previousRange.endDate)),
     ]);
     lastGroupRows = data.promotions || [];
+    lastGroupPreviousRows = [];
     const compareKey = (row, date) => [date, String(row.campaign_name || '').trim(), String(row.groupStartDate || '')].join('|');
     const previousMap = new Map((previousData.promotions || []).map(row => [compareKey(row, String(row.event_date).slice(0, 10)), row]));
     body.innerHTML = lastGroupRows.length ? lastGroupRows.map((row, index) => {
       const groupKey = `ad-group-${index}`;
       const date = String(row.event_date).slice(0, 10);
       const previous = previousMap.get(compareKey(row, addIsoDays(date, -previousRange.days))) || {};
-      return `<tr data-ad-group-index="${index}" data-sort-group="${groupKey}" title="点击展开/收起商品明细">
+      lastGroupPreviousRows[index] = previous;
+      return `<tr data-ad-group-index="${index}" data-sort-group="${groupKey}" title="点击查看商品明细">
         <td>${esc(date)}</td><td>${esc(row.campaign_name || '—')}</td><td>${esc(row.campaign_status || '—')}</td><td>${esc(row.source_ad_type || '—')}</td>
         <td>${esc(row.biddingMethod || '—')}</td><td>${esc(row.groupStartDate || '—')}</td><td>${esc(row.groupEndDate || '—')}</td><td>${int(row.item_count)}</td>
         ${metricTd(row.impressions, int, previous.impressions)}${metricTd(row.clicks, int, previous.clicks)}${metricTd(row.ctr, pct2, previous.ctr)}
@@ -453,11 +568,10 @@
         ${metricTd(row.source_roas, fixed2, previous.source_roas)}${metricTd(row.direct_roas, fixed2, previous.direct_roas)}
         ${metricTd(row.acos, pct2, previous.acos)}${metricTd(row.directAcos, pct2, previous.directAcos)}
         ${metricTd(row.voucherAmount, money2, previous.voucherAmount)}${metricTd(row.voucheredSales, money2, previous.voucheredSales)}
-        <td><span class="pill neutral">${esc(row.data_quality_status || 'COMPLETE')}</span></td></tr>
-        <tr class="ad-group-inline-detail hidden" data-ad-group-detail-index="${index}" data-sort-detail="1" data-sort-group="${groupKey}"><td colspan="${GROUP_COLUMNS.length}">${adGroupItemTable(row, previous)}</td></tr>`;
+        <td><span class="pill neutral">${esc(row.data_quality_status || 'COMPLETE')}</span></td></tr>`;
     }).join('') : `<tr><td colspan="${GROUP_COLUMNS.length}" class="empty">当前周期暂无广告组数据。</td></tr>`;
     $('#adGroupEmptyState')?.classList.toggle('hidden', Boolean(lastGroupRows.length));
-    $$('#adGroupRows tr[data-ad-group-index]').forEach(rowEl => rowEl.addEventListener('click', () => toggleGroupItems(Number(rowEl.dataset.adGroupIndex), rowEl)));
+    $$('#adGroupRows tr[data-ad-group-index]').forEach(rowEl => rowEl.addEventListener('click', () => openGroupItems(Number(rowEl.dataset.adGroupIndex), rowEl)));
   }
 
   async function refreshActivePanel() {
