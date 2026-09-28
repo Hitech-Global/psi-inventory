@@ -1369,6 +1369,69 @@ function showDataSyncNotice(message, tone = 'warn') {
   notice.className = `data-sync-notice ${tone}${message ? '' : ' hidden'}`;
 }
 
+function humanizeSyncError(raw) {
+  const text = String(raw || '').trim();
+  if (!text) return 'Shopee API 没有返回具体失败原因。';
+  if (/429|too many|rate.?limit|frequency/i.test(text)) return 'Shopee API 请求频率受限，请稍后再试。';
+  if (/timeout|timed out|ETIMEDOUT|AbortError/i.test(text)) return 'Shopee API 请求超时，请稍后重试。';
+  if (/401|403|unauthor|token|permission|access denied/i.test(text)) return 'Shopee 授权失效或接口权限不足，请检查店铺授权。';
+  if (/invalid.*date|date.*range|period/i.test(text)) return 'Shopee API 不接受当前日期范围，请缩短日期范围后重试。';
+  return text;
+}
+
+function syncFailureImpact(failure) {
+  const step = String(failure?.step || '');
+  if (/^gms-history-/.test(step)) return '影响：仅 Shop+ Ads / 全店推的这个周期可能不完整；Product Card 和单品广告已经保存。';
+  if (step === 'product-ads-overview-history') return '影响：Product Card 总览数据可能不完整。';
+  if (step === 'product-ads-campaign-history') return '影响：单品广告历史数据可能不完整。';
+  if (/token/.test(step)) return '影响：对应广告 API 数据无法继续抓取，需要先恢复授权。';
+  return '影响：该步骤对应的数据可能不完整，其他已成功步骤不会回滚。';
+}
+
+function showDataSyncProgress(progress = {}) {
+  const notice = $('#dataSyncNotice');
+  if (!notice) return;
+  const percent = Math.max(0, Math.min(100, Number(progress.percent || 0)));
+  notice.className = 'data-sync-notice warn';
+  notice.innerHTML = `<div class="data-sync-progress-head"><strong>正在读取数据 ${percent}%</strong><span>${escapeHtml(progress.label || 'Shopee API')}</span></div>
+    <div class="data-sync-progress-track"><span style="width:${percent}%"></span></div>
+    <div class="data-sync-progress-detail">${escapeHtml(progress.detail || '正在处理…')}</div>`;
+}
+
+function showDataSyncFailures(job, filters) {
+  const notice = $('#dataSyncNotice');
+  if (!notice) return;
+  const failures = job?.failures?.length
+    ? job.failures
+    : (job?.result?.summary?.steps || []).filter(step => step.ok === false).map(step => ({
+        step: step.name, label: step.name, error: step.error, chunk: step.chunk,
+      }));
+  if (!failures.length) {
+    showDataSyncNotice(`API 抓取完成：${filters.startDate} 至 ${filters.endDate}。页面已刷新。`, 'good');
+    return;
+  }
+  notice.className = 'data-sync-notice warn';
+  notice.innerHTML = `<div class="data-sync-result-title">API 抓取完成，但有 ${failures.length} 个数据步骤失败</div>
+    ${failures.map(failure => {
+      const range = failure.chunk?.startDate && failure.chunk?.endDate
+        ? `<div>失败日期：${escapeHtml(failure.chunk.startDate)} ～ ${escapeHtml(failure.chunk.endDate)}</div>` : '';
+      return `<div class="data-sync-failure-item"><strong>${escapeHtml(failure.label || failure.step || '数据步骤')}</strong>${range}<div>原因：${escapeHtml(humanizeSyncError(failure.error))}</div><div>${escapeHtml(syncFailureImpact(failure))}</div></div>`;
+    }).join('')}
+    <div class="data-sync-progress-detail">页面已按成功落库的数据刷新；失败步骤可以再次点【读取数据】重试。</div>`;
+}
+
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+async function waitForDataSyncJob(jobId, button) {
+  for (;;) {
+    const job = await json(`/api/shopee-analytics/data/sync-jobs/${encodeURIComponent(jobId)}`);
+    showDataSyncProgress(job.progress || {});
+    button.textContent = `读取中 ${Math.max(0, Math.min(100, Number(job.progress?.percent || 0)))}%`;
+    if (job.status === 'COMPLETED' || job.status === 'FAILED') return job;
+    await sleep(650);
+  }
+}
+
 async function loadCurrentView({ manageButton = true } = {}) {
   updateSingleShopPrompts();
   if (!$('#startDate').value || !$('#endDate').value) return;
@@ -1426,26 +1489,25 @@ async function readSelectedData() {
   }
 
   button.disabled = true;
-  button.textContent = '抓取中…';
-  showDataSyncNotice(`正在从 Shopee API 抓取 ${filters.startDate} 至 ${filters.endDate} 的数据…`, 'warn');
+  button.textContent = '读取中 0%';
+  showDataSyncProgress({ percent: 0, label: '准备读取数据', detail: `${filters.startDate} 至 ${filters.endDate}` });
   try {
-    const result = await postJson('/api/shopee-analytics/data/sync-range', {
+    const started = await postJson('/api/shopee-analytics/data/sync-jobs', {
       shop_id: shop.shopId,
       start_date: filters.startDate,
       end_date: filters.endDate,
       sources: ['product-ads', 'gms'],
     });
-    const failed = result?.summary?.failedRequiredSteps || [];
-    showDataSyncNotice(
-      failed.length
-        ? `API 抓取已完成，但仍有步骤失败：${failed.join('、')}。页面已按当前落库数据刷新。`
-        : `API 抓取完成：${filters.startDate} 至 ${filters.endDate}。页面已刷新。`,
-      failed.length ? 'warn' : 'good',
-    );
+    const job = await waitForDataSyncJob(started.jobId, button);
     await loadCurrentView({ manageButton: false });
     window.dispatchEvent(new CustomEvent('shopee-data-refreshed'));
+    if (job.status === 'FAILED') {
+      showDataSyncNotice(`API 抓取失败：${humanizeSyncError(job.error || job.progress?.detail)}`, 'bad');
+    } else {
+      showDataSyncFailures(job, filters);
+    }
   } catch (error) {
-    showDataSyncNotice(`API 抓取失败：${error.message}`, 'bad');
+    showDataSyncNotice(`API 抓取失败：${humanizeSyncError(error.message)}`, 'bad');
     await loadCurrentView({ manageButton: false });
   } finally {
     button.disabled = false;

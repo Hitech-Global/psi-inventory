@@ -38,6 +38,7 @@ async function runChunked({
   chunkDays,
   runner,
   resume = true,
+  onProgress = null,
 }) {
   const state = resume && typeof runtime.rawRepository.getSyncState === 'function'
     ? await runtime.rawRepository.getSyncState({ appRole, endpointKey, shopId })
@@ -57,6 +58,10 @@ async function runChunked({
 
   const chunks = chunkDateRange(effectiveStart, requestedEndDate, chunkDays);
   const results = [];
+  if (onProgress) onProgress({
+    type: 'chunk-start', endpointKey, totalChunks: chunks.length,
+    completedChunks: 0, requestedStartDate, requestedEndDate,
+  });
 
   for (const chunk of chunks) {
     try {
@@ -72,6 +77,10 @@ async function runChunked({
         },
       });
       results.push({ ...chunk, ok: true, result });
+      if (onProgress) onProgress({
+        type: 'chunk-complete', endpointKey, totalChunks: chunks.length,
+        completedChunks: results.length, chunk,
+      });
     } catch (error) {
       await runtime.rawRepository.markSyncFailure({
         appRole,
@@ -105,6 +114,7 @@ async function runBackfillShop({
   now = new Date(),
   refreshCurrentMetadata = true,
   forceRefresh = false,
+  onProgress = null,
 }) {
   if (!runtime) throw new Error('runtime is required');
   if (!shop || !shop.shopId) throw new Error('shop is required');
@@ -128,25 +138,30 @@ async function runBackfillShop({
     warnings: [],
   };
 
-  const runChunk = args => runChunked({ ...args, resume: !forceRefresh });
+  const emitProgress = event => { if (onProgress) onProgress(event); };
+  const runChunk = args => runChunked({ ...args, resume: !forceRefresh, onProgress: emitProgress });
   const run = async (name, fn, { required = true, redactResult = false } = {}) => {
     const startedAt = Date.now();
+    emitProgress({ type: 'step-start', name, required });
     try {
       const result = await fn();
       summary.steps.push({
         name, ok: true, required, ms: Date.now() - startedAt,
         result: redactResult ? 'AVAILABLE' : result,
       });
+      emitProgress({ type: 'step-complete', name, required, ok: true });
       return result;
     } catch (error) {
-      summary.steps.push({
+      const failedStep = {
         name,
         ok: false,
         required,
         ms: Date.now() - startedAt,
         error: error && error.message ? error.message : String(error),
         chunk: error && error.backfillChunk ? error.backfillChunk : undefined,
-      });
+      };
+      summary.steps.push(failedStep);
+      emitProgress({ type: 'step-complete', ...failedStep });
       if (required) summary.ok = false;
       return null;
     }

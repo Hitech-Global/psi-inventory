@@ -49,6 +49,7 @@ const { runChunked } = require('../src/backfill-runner');
   );
 
   const forcedCalls = [];
+  const progressEvents = [];
   await runChunked({
     runtime,
     shopId: 1,
@@ -56,11 +57,21 @@ const { runChunked } = require('../src/backfill-runner');
     endpointKey: 'BACKFILL_TEST',
     requestedStartDate: '2026-09-01',
     requestedEndDate: '2026-09-03',
-    chunkDays: 7,
+    chunkDays: 1,
     resume: false,
+    onProgress(event) { progressEvents.push(event); },
     async runner(chunk) { forcedCalls.push(chunk); return { count: 1 }; },
   });
-  assert.deepStrictEqual(forcedCalls, [{ startDate: '2026-09-01', endDate: '2026-09-03' }]);
+  assert.deepStrictEqual(forcedCalls, [
+    { startDate: '2026-09-01', endDate: '2026-09-01' },
+    { startDate: '2026-09-02', endDate: '2026-09-02' },
+    { startDate: '2026-09-03', endDate: '2026-09-03' },
+  ]);
+  assert.strictEqual(progressEvents[0].type, 'chunk-start');
+  assert.deepStrictEqual(
+    progressEvents.filter(event => event.type === 'chunk-complete').map(event => event.completedChunks),
+    [1, 2, 3],
+  );
 
   let failed = false;
   const failureRuntime = {

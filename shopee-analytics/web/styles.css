@@ -168,3 +168,14 @@ table thead th,table tbody td{text-align:left!important}
 .status-dot{width:6px;height:6px;border-radius:50%;display:inline-block;background:#a1a1a6}.status-dot.ongoing{background:#2db55d}.status-dot.paused{background:#d99a00}.status-dot.ended{background:#a1a1a6}.status-dot.deleted{background:#e5484d}
 tr.ad-status-filter-hidden{display:none!important}
 @media(max-width:900px){.ads-filter-toolbar{align-items:flex-start;flex-direction:column}.ad-status-filter{width:100%}}
+
+/* Manual Shopee API read progress */
+.data-sync-progress-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:7px}
+.data-sync-progress-head strong{font-size:12px;color:#1d1d1f}
+.data-sync-progress-head span{font-size:10px;color:#6e6e73}
+.data-sync-progress-track{height:7px;border-radius:999px;background:#eceff3;overflow:hidden}
+.data-sync-progress-track>span{display:block;height:100%;border-radius:999px;background:#1677ff;transition:width .25s ease}
+.data-sync-progress-detail{margin-top:7px;font-size:10px;color:#6e6e73}
+.data-sync-result-title{font-size:12px;font-weight:800;color:#7a4f00;margin-bottom:8px}
+.data-sync-failure-item{padding:9px 10px;margin:7px 0;border:1px solid #efd9a4;border-radius:10px;background:#fffdf7;line-height:1.55}
+.data-sync-failure-item strong{display:block;margin-bottom:3px;color:#7a4f00}
