@@ -137,6 +137,17 @@
     return payload;
   }
 
+  async function postApi(url, body) {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { accept: 'application/json', 'content-type': 'application/json' },
+      body: JSON.stringify(body || {}),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.message || payload.error || `HTTP ${response.status}`);
+    return payload;
+  }
+
   function selectedContext() {
     const shopId = Number($('#shopSelect')?.value || 0);
     return {
@@ -374,6 +385,47 @@
     return `<div class="kpi"><div class="label">${esc(label)}</div><div class="value metric-exact">${esc(value)}</div>${sub ? `<div class="kpi-sub">${esc(sub)}</div>` : ''}</div>`;
   }
 
+  function reportList(items, mapper) {
+    const rows = (items || []).slice(0, 6).map(mapper).filter(Boolean);
+    return rows.length ? `<ul>${rows.map(row => `<li>${esc(row)}</li>`).join('')}</ul>` : '<span class="muted">—</span>';
+  }
+
+  function skillReportHtml(report) {
+    if (!report) return '<div class="empty-inline">Skill 没有返回报告。</div>';
+    return `<section class="skill-report-card">
+      <div class="skill-report-head"><strong>Shopee GMV Max Skill</strong><span class="skill-report-stage">${esc(report.stage || '—')}</span></div>
+      <div class="skill-report-grid">
+        <div class="skill-report-block"><strong>事实</strong>${reportList(report.facts, item => item?.statement)}</div>
+        <div class="skill-report-block"><strong>推断</strong>${reportList(report.inferences, item => item?.statement)}</div>
+        <div class="skill-report-block"><strong>假设与验证</strong>${reportList(report.hypotheses, item => item ? `${item.statement || ''}${item.validation ? `；验证：${item.validation}` : ''}` : '')}</div>
+        <div class="skill-report-block"><strong>下一步验证</strong>${reportList(report.nextValidation, item => item)}</div>
+      </div>
+    </section>`;
+  }
+
+  async function runSkillAnalysisV2(button) {
+    const ctx = selectedContext();
+    const campaignId = Number(button?.dataset?.generateSkillAnalysis || 0);
+    const host = button?.closest('.product-ad-detail')?.querySelector('.skill-report-host') || button?.parentElement?.nextElementSibling;
+    if (!ctx.shopId || !campaignId || !ctx.startDate || !ctx.endDate || !host) return;
+    button.disabled = true;
+    button.textContent = '生成中…';
+    host.innerHTML = '<div class="empty-inline">正在运行 Shopee GMV Max Skill…</div>';
+    try {
+      const result = await postApi(`/api/shopee-analytics/campaigns/${campaignId}/skill-report?shop_id=${ctx.shopId}`, {
+        start_date: ctx.startDate,
+        end_date: ctx.endDate,
+        reason: 'MANUAL_UI',
+      });
+      host.innerHTML = skillReportHtml(result.report);
+    } catch (error) {
+      host.innerHTML = `<div class="empty-inline">生成分析失败：${esc(error.message)}</div>`;
+    } finally {
+      button.disabled = false;
+      button.textContent = '生成分析';
+    }
+  }
+
   async function loadShopDirectoryV2() {
     try {
       const payload = await api('/api/shopee-analytics/shops');
@@ -589,7 +641,8 @@
         ${kpi(sl('expense'), money2(p.expense), `${ctx.startDate} → ${ctx.endDate}`)}
         ${kpi('Target ROAS', type === 'auto' ? (p.targetRoas == null ? '—' : fixed2(p.targetRoas)) : (setting.targetRoas == null ? '—' : fixed2(setting.targetRoas)))}
       </div>
-      <div class="product-ad-action"><strong>下一步</strong><span>${esc(type === 'auto' ? (primaryAction?.action || '继续观察。') : (d.action || '继续观察。'))}</span></div>`;
+      <div class="product-ad-action"><strong>下一步</strong><span>${esc(type === 'auto' ? (primaryAction?.action || '继续观察。') : (d.action || '继续观察。'))}</span></div>
+      ${type === 'auto' ? `<div class="skill-analysis-toolbar"><button type="button" class="primary" data-generate-skill-analysis="${campaignId}">生成分析</button></div><div class="skill-report-host"></div>` : ''}`;
     if (type === 'manual') {
       openDetailModal({
         title: '单品广告明细',
@@ -745,8 +798,13 @@
       $$('.ad-status-option').forEach(option => option.classList.toggle('active', option === button));
       applyAdStatusFilter();
     }));
+    document.addEventListener('click', event => {
+      const button = event.target.closest('[data-generate-skill-analysis]');
+      if (!button) return;
+      event.preventDefault();
+      runSkillAnalysisV2(button);
+    });
     $$('.view-tab[data-view="ads"]').forEach(button => button.addEventListener('click', () => scheduleRefresh(80)));
-    $('#loadBtn')?.addEventListener('click', () => scheduleRefresh(80));
     $('#shopSelect')?.addEventListener('change', () => scheduleRefresh(80));
     $('#dateRangeApply')?.addEventListener('click', () => scheduleRefresh(80));
     $$('[data-date-preset]').forEach(button => button.addEventListener('click', () => scheduleRefresh(80)));

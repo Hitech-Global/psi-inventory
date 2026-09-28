@@ -23,7 +23,7 @@
     ['品牌', 'Brand'], ['全部品牌', 'All Brands'],
     ['店铺', 'Shop'], ['全部店铺', 'All Shops'],
     ['开始日期', 'Start Date'], ['结束日期', 'End Date'],
-    ['读取分析', 'Load Analysis'], ['刷新全部', 'Refresh All'], ['刷新单店', 'Refresh Shop'],
+    ['读取数据', 'Load Data'], ['读取分析', 'Load Analysis'], ['生成分析', 'Generate Analysis'], ['刷新全部', 'Refresh All'], ['刷新单店', 'Refresh Shop'],
     ['等待数据。', 'Waiting for data.'], ['等待数据', 'Waiting for data'], ['等待', 'Waiting'],
     ['正在读取店铺配置…', 'Loading shop configuration…'], ['读取店铺状态中…', 'Loading shop status…'],
     ['经营变化诊断', 'Business Change Diagnosis'],

@@ -10,6 +10,7 @@ const { createProductAdsV2Router } = require('./product-ads-v2-router');
 const { createProductAdSellerCentreRouter } = require('./product-ad-seller-centre-router');
 const { createProductAdsOverviewEvidenceRouter } = require('./product-ads-overview-evidence-router');
 const { createProductAdsSourceRouter } = require('./product-ads-source-router');
+const { createManualDataSyncRouter } = require('./manual-data-sync-router');
 const { createBackupStatusProvider } = require('./backup-status');
 const { createConfiguredSkillProvider } = require('./openai-skill-provider');
 const { createSkillRuntime } = require('./skill-runtime');
@@ -51,6 +52,7 @@ function createApp({ pool, skillProvider = null, importJobPool = null }) {
     app.use('/api/shopee-analytics', createAdGroupImportAsyncRouter({ pool: importJobPool }));
   }
 
+  app.use('/api/shopee-analytics', createManualDataSyncRouter({ pool }));
   app.use('/api/shopee-analytics', createProductAdsV2Router({ pool }));
   app.use('/api/shopee-analytics', createProductAdSellerCentreRouter({ pool }));
   app.use('/api/shopee-analytics', createProductAdsOverviewEvidenceRouter({ pool }));

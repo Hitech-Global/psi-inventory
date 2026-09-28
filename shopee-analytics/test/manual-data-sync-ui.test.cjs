@@ -1,0 +1,33 @@
+﻿'use strict';
+const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+const read = rel => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+
+const server = read('src/standalone-server.js');
+const router = read('src/manual-data-sync-router.js');
+const backfill = read('src/backfill-runner.js');
+const index = read('web/index.html');
+const app = read('web/app.js');
+const productCard = read('web/product-card-ui-v2.js');
+const coverage = read('web/product-card-coverage-v4.js');
+const picker = read('web/date-range-picker-v2.js');
+
+assert(server.includes("createManualDataSyncRouter({ pool })"));
+assert(router.includes("router.post('/data/sync-range'"));
+assert(router.includes('forceRefresh: true'));
+assert(backfill.includes('resume = true'));
+assert(backfill.includes('resume: !forceRefresh'));
+assert(index.includes('id="loadBtn" class="primary" type="button">读取数据</button>'));
+assert(app.includes("postJson('/api/shopee-analytics/data/sync-range'"));
+assert(app.includes("sources: ['product-ads', 'gms']"));
+assert(app.includes("$('#loadBtn').addEventListener('click', readSelectedData)"));
+assert(coverage.includes('缺失日期：'));
+assert(coverage.includes('【读取数据】'));
+assert(!picker.includes('disabled='), 'calendar must not disable days based on stored data');
+assert(picker.includes('data-range-day="${iso}"'), 'calendar must render selectable calendar days');
+assert(productCard.includes('data-generate-skill-analysis'));
+assert(productCard.includes('/skill-report?shop_id=${ctx.shopId}'));
+assert(productCard.includes("reason: 'MANUAL_UI'"));
+assert(!productCard.includes("$('#loadBtn')?.addEventListener('click'"), 'Product Card must not race the manual API sync button');
+console.log('manual date-range data sync and Skill UI contract: ok');

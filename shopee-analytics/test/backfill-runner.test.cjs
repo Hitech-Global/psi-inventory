@@ -48,6 +48,20 @@ const { runChunked } = require('../src/backfill-runner');
     '2026-09-20',
   );
 
+  const forcedCalls = [];
+  await runChunked({
+    runtime,
+    shopId: 1,
+    appRole: 'ADS',
+    endpointKey: 'BACKFILL_TEST',
+    requestedStartDate: '2026-09-01',
+    requestedEndDate: '2026-09-03',
+    chunkDays: 7,
+    resume: false,
+    async runner(chunk) { forcedCalls.push(chunk); return { count: 1 }; },
+  });
+  assert.deepStrictEqual(forcedCalls, [{ startDate: '2026-09-01', endDate: '2026-09-03' }]);
+
   let failed = false;
   const failureRuntime = {
     rawRepository: {

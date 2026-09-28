@@ -2,6 +2,7 @@
 
 const { ShopeeSyncService } = require('./sync-service');
 const { syncGmsWindow } = require('./sync-window');
+const { discoverGmsCampaign } = require('./sync-gms');
 const { syncProductAdsOverviewWindow } = require('./sync-product-ads-overview');
 const { localIsoDate, addDays, mergeCampaignIds } = require('./sync-cycle-utils');
 const {
@@ -10,6 +11,7 @@ const {
   localDateRangeEpoch,
   completedThrough,
 } = require('./backfill-utils');
+const { isPilotGmvMax } = require('./deployment-mode');
 
 function serviceFor(runtime, shopId) {
   return new ShopeeSyncService({
@@ -35,8 +37,9 @@ async function runChunked({
   requestedEndDate,
   chunkDays,
   runner,
+  resume = true,
 }) {
-  const state = typeof runtime.rawRepository.getSyncState === 'function'
+  const state = resume && typeof runtime.rawRepository.getSyncState === 'function'
     ? await runtime.rawRepository.getSyncState({ appRole, endpointKey, shopId })
     : null;
   const resumeThrough = completedThrough(state, requestedStartDate, requestedEndDate);
@@ -101,6 +104,7 @@ async function runBackfillShop({
   seededGmsCampaignIds = [],
   now = new Date(),
   refreshCurrentMetadata = true,
+  forceRefresh = false,
 }) {
   if (!runtime) throw new Error('runtime is required');
   if (!shop || !shop.shopId) throw new Error('shop is required');
@@ -124,6 +128,7 @@ async function runBackfillShop({
     warnings: [],
   };
 
+  const runChunk = args => runChunked({ ...args, resume: !forceRefresh });
   const run = async (name, fn, { required = true, redactResult = false } = {}) => {
     const startedAt = Date.now();
     try {
@@ -178,7 +183,7 @@ async function runBackfillShop({
     const ads = runtime.roleClients.ADS;
     const accessToken = await run('ads-token-for-product-ads-history', () => ads.getAccessToken(shopId), { redactResult: true });
     if (accessToken) {
-      await run('product-ads-overview-history', () => runChunked({
+      await run('product-ads-overview-history', () => runChunk({
         runtime, shopId, appRole: 'ADS', endpointKey: 'BACKFILL_PRODUCT_ADS_OVERVIEW',
         requestedStartDate: startDate, requestedEndDate: endDate, chunkDays: 7,
         runner: chunk => syncProductAdsOverviewWindow({
@@ -186,7 +191,7 @@ async function runBackfillShop({
           shopId, accessToken, startDate: chunk.startDate, endDate: chunk.endDate,
         }),
       }));
-      await run('product-ads-campaign-history', () => runChunked({
+      await run('product-ads-campaign-history', () => runChunk({
         runtime, shopId, appRole: 'ADS', endpointKey: 'BACKFILL_PRODUCT_ADS_CAMPAIGNS',
         requestedStartDate: startDate, requestedEndDate: endDate, chunkDays: 7,
         runner: chunk => service.syncProductAdsDaily({
@@ -210,10 +215,33 @@ async function runBackfillShop({
       ],
     );
 
+    const ads = runtime.roleClients.ADS;
+    const accessToken = await run('ads-token-for-gms', () => ads.getAccessToken(shopId), { redactResult: true });
+    if (accessToken && !gmsCampaignIds.length && !isPilotGmvMax()) {
+      const discoveryStart = addDays(endDate, -6) < startDate ? startDate : addDays(endDate, -6);
+      const discovered = await run('gms-discovery-history-window', async () => {
+        const result = await discoverGmsCampaign({
+          client: ads.client,
+          shopId,
+          accessToken,
+          startDate: discoveryStart,
+          endDate,
+        });
+        await runtime.rawRepository.upsertCampaign({
+          shopId,
+          campaignId: result.campaignId,
+          campaignTypeRaw: 'GMS',
+          campaignTypeNormalized: 'GMS',
+        });
+        return { campaignId: result.campaignId };
+      }, { required: false });
+      if (discovered?.campaignId) gmsCampaignIds = [Number(discovered.campaignId)];
+    }
+
     if (!gmsCampaignIds.length) {
       summary.warnings.push({
         code: 'NO_GMS_CAMPAIGN_IDS',
-        message: 'No known/seeded GMS campaign IDs are available. Configure gmsCampaignSeedIds for campaigns that must be historically backfilled.',
+        message: 'No known/seeded/discovered GMS campaign ID is available for the requested period.',
       });
       summary.steps.push({
         name: 'gms-history',
@@ -221,31 +249,27 @@ async function runBackfillShop({
         required: false,
         skipped: 'NO_GMS_CAMPAIGN_IDS',
       });
-    } else {
-      const ads = runtime.roleClients.ADS;
-      const accessToken = await run('ads-token-for-gms', () => ads.getAccessToken(shopId), { redactResult: true });
-      if (accessToken) {
-        for (const campaignId of gmsCampaignIds) {
-          await run(`gms-history-${campaignId}`, () => runChunked({
-            runtime,
+    } else if (accessToken) {
+      for (const campaignId of gmsCampaignIds) {
+        await run(`gms-history-${campaignId}`, () => runChunk({
+          runtime,
+          shopId,
+          appRole: 'ADS',
+          endpointKey: `BACKFILL_GMS_${campaignId}`,
+          requestedStartDate: startDate,
+          requestedEndDate: endDate,
+          chunkDays: 7,
+          runner: chunk => syncGmsWindow({
+            client: ads.client,
+            repository: runtime.rawRepository,
+            adPromotionRepository: runtime.adPromotionRepository,
             shopId,
-            appRole: 'ADS',
-            endpointKey: `BACKFILL_GMS_${campaignId}`,
-            requestedStartDate: startDate,
-            requestedEndDate: endDate,
-            chunkDays: 7,
-            runner: chunk => syncGmsWindow({
-              client: ads.client,
-              repository: runtime.rawRepository,
-              adPromotionRepository: runtime.adPromotionRepository,
-              shopId,
-              accessToken,
-              campaignId,
-              startDate: chunk.startDate,
-              endDate: chunk.endDate,
-            }),
-          }));
-        }
+            accessToken,
+            campaignId,
+            startDate: chunk.startDate,
+            endDate: chunk.endDate,
+          }),
+        }));
       }
     }
 
@@ -256,7 +280,7 @@ async function runBackfillShop({
   }
 
   if (sourceSet.has('orders')) {
-    await run('orders-history', () => runChunked({
+    await run('orders-history', () => runChunk({
       runtime,
       shopId,
       appRole: 'ADS',
@@ -276,7 +300,7 @@ async function runBackfillShop({
   }
 
   if (sourceSet.has('returns')) {
-    await run('returns-history', () => runChunked({
+    await run('returns-history', () => runChunk({
       runtime,
       shopId,
       appRole: 'ERP',
@@ -304,7 +328,7 @@ async function runBackfillShop({
       });
       summary.ok = false;
     } else {
-      await run('shop-bi-history', () => runChunked({
+      await run('shop-bi-history', () => runChunk({
         runtime,
         shopId,
         appRole: 'BRAND_PORTAL',

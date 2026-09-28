@@ -175,6 +175,17 @@ async function json(url) {
   return window.ShopeeCurrency?.hydrate(payload) || payload;
 }
 
+async function postJson(url, body) {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { accept: 'application/json', 'content-type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.message || payload.error || `HTTP ${response.status}`);
+  return window.ShopeeCurrency?.hydrate(payload) || payload;
+}
+
 async function checkHealth() {
   const badge = $('#healthBadge');
   try {
@@ -1351,13 +1362,22 @@ async function loadSystemStatus() {
   }
 }
 
-async function loadCurrentView() {
+function showDataSyncNotice(message, tone = 'warn') {
+  const notice = $('#dataSyncNotice');
+  if (!notice) return;
+  notice.textContent = message || '';
+  notice.className = `data-sync-notice ${tone}${message ? '' : ' hidden'}`;
+}
+
+async function loadCurrentView({ manageButton = true } = {}) {
   updateSingleShopPrompts();
   if (!$('#startDate').value || !$('#endDate').value) return;
 
   const button = $('#loadBtn');
-  button.disabled = true;
-  button.textContent = '读取中…';
+  if (manageButton) {
+    button.disabled = true;
+    button.textContent = '读取中…';
+  }
   try {
     if (state.view === 'overview') await loadPortfolio();
     else if (state.view === 'store' && selectedShop()) await loadStoreDetail();
@@ -1381,8 +1401,55 @@ async function loadCurrentView() {
       $('#statusSubtitle').textContent = error.message;
     }
   } finally {
+    if (manageButton) {
+      button.disabled = false;
+      button.textContent = '读取数据';
+    }
+  }
+}
+
+async function readSelectedData() {
+  const filters = currentFilters();
+  const shop = selectedShop();
+  const button = $('#loadBtn');
+  if (!filters.startDate || !filters.endDate) return;
+
+  if (!shop) {
+    showDataSyncNotice('API 抓取需要先选择一个具体店铺；当前只读取数据库中已有数据。', 'warn');
+    await loadCurrentView();
+    return;
+  }
+  if (!shop.oauthAuthorized || shop.dataSourceCapability === 'MANUAL_IMPORT_ONLY') {
+    showDataSyncNotice('这个店铺没有可用的 Shopee ADS API 授权；当前只读取数据库中已有数据。', 'warn');
+    await loadCurrentView();
+    return;
+  }
+
+  button.disabled = true;
+  button.textContent = '抓取中…';
+  showDataSyncNotice(`正在从 Shopee API 抓取 ${filters.startDate} 至 ${filters.endDate} 的数据…`, 'warn');
+  try {
+    const result = await postJson('/api/shopee-analytics/data/sync-range', {
+      shop_id: shop.shopId,
+      start_date: filters.startDate,
+      end_date: filters.endDate,
+      sources: ['product-ads', 'gms'],
+    });
+    const failed = result?.summary?.failedRequiredSteps || [];
+    showDataSyncNotice(
+      failed.length
+        ? `API 抓取已完成，但仍有步骤失败：${failed.join('、')}。页面已按当前落库数据刷新。`
+        : `API 抓取完成：${filters.startDate} 至 ${filters.endDate}。页面已刷新。`,
+      failed.length ? 'warn' : 'good',
+    );
+    await loadCurrentView({ manageButton: false });
+    window.dispatchEvent(new CustomEvent('shopee-data-refreshed'));
+  } catch (error) {
+    showDataSyncNotice(`API 抓取失败：${error.message}`, 'bad');
+    await loadCurrentView({ manageButton: false });
+  } finally {
     button.disabled = false;
-    button.textContent = '读取分析';
+    button.textContent = '读取数据';
   }
 }
 
@@ -1456,7 +1523,7 @@ $$('.ads-type-tab').forEach(button => {
 $('#countryFilter').addEventListener('change', onDimensionChanged);
 $('#brandFilter').addEventListener('change', onDimensionChanged);
 $('#shopSelect').addEventListener('change', onShopChanged);
-$('#loadBtn').addEventListener('click', loadCurrentView);
+$('#loadBtn').addEventListener('click', readSelectedData);
 $('#refreshStatusBtn').addEventListener('click', loadSystemStatus);
 $('#refreshStatusPortfolioBtn').addEventListener('click', loadStatusPortfolio);
 $('#openAdGroupImportBtn').addEventListener('click', () => $('#adGroupImportModal').classList.remove('hidden'));
