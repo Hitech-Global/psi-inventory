@@ -95,6 +95,12 @@
       productCardParent.parentNode.insertBefore(tabs, productCardParent);
     }
 
+    const channelTabs = $('#adChannelTabsV3');
+    const overviewPanel = $('#adsGmsPanel');
+    if (channelTabs && overviewPanel && channelTabs.nextElementSibling !== overviewPanel) {
+      channelTabs.insertAdjacentElement('afterend', overviewPanel);
+    }
+
     if (!$('#adChannelPlaceholderV3')) {
       const placeholder = document.createElement('section');
       placeholder.id = 'adChannelPlaceholderV3';

@@ -8,21 +8,21 @@ const {
 } = require('../src/sync-product-ads-overview');
 const { summarizeProductAdsRows } = require('../src/product-ads-shop-repository');
 
-// Shopee Ads rate fields are percentage-number values.  Sub-1% values are the
-// important regression case: 0.50 from Shopee means 0.50%, not 50%.
-assert.strictEqual(percentNumberToFraction({ ctr: 0.5 }, ['ctr']), 0.005);
-assert.strictEqual(percentNumberToFraction({ cr: 12.34 }, ['cr']), 0.1234);
-assert.strictEqual(percentNumberToFraction({ broad_cir: 4.25 }, ['broad_cir']), 0.0425);
+// Production Shopee Ads responses use fractional rate fields.
+// Example from 3PF: ctr=0.0462 means 4.62%, so preserve source scale.
+assert.strictEqual(percentNumberToFraction({ ctr: 0.0462 }, ['ctr']), 0.0462);
+assert.strictEqual(percentNumberToFraction({ cr: 0.0172 }, ['cr']), 0.0172);
+assert.strictEqual(percentNumberToFraction({ broad_cir: 0.0817 }, ['broad_cir']), 0.0817);
 
 const row = normalizeShopProductAdsRow({
   date: '25-09-2026',
   impression: 20000,
   clicks: 100,
-  ctr: 0.5,
+  ctr: 0.005,
   direct_order: 2,
   broad_order: 5,
-  direct_conversions: 2,
-  broad_conversions: 5,
+  direct_conversions: 0.02,
+  broad_conversions: 0.05,
   direct_item_sold: 3,
   broad_item_sold: 7,
   direct_gmv: 98.1,
@@ -32,8 +32,8 @@ const row = normalizeShopProductAdsRow({
   cpdc: 10.04,
   direct_roas: 4.8854581673,
   broad_roas: 12.234561753,
-  direct_cir: 20.47,
-  broad_cir: 8.17,
+  direct_cir: 0.2047,
+  broad_cir: 0.0817,
 });
 
 assert.strictEqual(row.eventDate, '2026-09-25');
@@ -49,11 +49,11 @@ assert.strictEqual(row.broadGmv, 245.67);
 assert.strictEqual(row.expense, 20.08);
 assert.strictEqual(row.directRoas, 4.8854581673);
 assert.strictEqual(row.broadRoas, 12.234561753);
-assert.strictEqual(row.raw.ctr, 0.5, 'raw Shopee source value must remain unchanged for reconciliation');
+assert.strictEqual(row.raw.ctr, 0.005, 'raw Shopee source value must remain unchanged for reconciliation');
 
 const payloadRows = normalizeShopProductAdsPayload({ response: [
-  { date: '24-09-2026', impression: 100, clicks: 1, ctr: 1, broad_order: 1, broad_gmv: 10, expense: 2, broad_roas: 5 },
-  { date: '25-09-2026', impression: 200, clicks: 1, ctr: 0.5, broad_order: 0, broad_gmv: 0, expense: 1, broad_roas: 0 },
+  { date: '24-09-2026', impression: 100, clicks: 1, ctr: 0.01, broad_order: 1, broad_gmv: 10, expense: 2, broad_roas: 5 },
+  { date: '25-09-2026', impression: 200, clicks: 1, ctr: 0.005, broad_order: 0, broad_gmv: 0, expense: 1, broad_roas: 0 },
 ] });
 assert.strictEqual(payloadRows.length, 2);
 assert.strictEqual(payloadRows[0].ctr, 0.01);

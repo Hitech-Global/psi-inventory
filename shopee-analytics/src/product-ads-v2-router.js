@@ -61,30 +61,42 @@ function dateCoverage(startDate, endDate, rows = []) {
   };
 }
 
+function rawOptional(raw, names) {
+  for (const name of names) {
+    const value = raw && raw[name];
+    if (value !== null && value !== undefined && value !== '') {
+      const n = Number(value);
+      if (Number.isFinite(n)) return n;
+    }
+  }
+  return null;
+}
+
 function serializeRow(row) {
+  const impressions = Number(row.impressions || 0);
+  const clicks = Number(row.clicks || 0);
+  const directOrders = Number(row.direct_orders || 0);
+  const broadOrders = Number(row.broad_orders || 0);
+  const directGmv = row.direct_gmv == null ? null : Number(row.direct_gmv);
+  const broadGmv = row.broad_gmv == null ? null : Number(row.broad_gmv);
+  const expense = row.expense == null ? null : Number(row.expense);
+  const raw = row.raw_json && typeof row.raw_json === 'object' ? row.raw_json : {};
+  const addToCart = rawOptional(raw, ['add_to_cart','add_to_cart_count']);
+  const voucherAmount = rawOptional(raw, ['voucher_amount']);
+  const voucheredSales = rawOptional(raw, ['vouchered_sales']);
   return {
-    shopId: Number(row.shop_id),
-    eventDate: dateOnlyIso(row.event_date),
-    impressions: Number(row.impressions || 0),
-    clicks: Number(row.clicks || 0),
-    ctr: row.ctr == null ? null : Number(row.ctr),
-    directOrders: Number(row.direct_orders || 0),
-    broadOrders: Number(row.broad_orders || 0),
-    directUnits: Number(row.direct_units || 0),
-    broadUnits: Number(row.broad_units || 0),
-    directCvr: row.direct_cvr == null ? null : Number(row.direct_cvr),
-    broadCvr: row.broad_cvr == null ? null : Number(row.broad_cvr),
-    directGmv: row.direct_gmv == null ? null : Number(row.direct_gmv),
-    broadGmv: row.broad_gmv == null ? null : Number(row.broad_gmv),
-    expense: row.expense == null ? null : Number(row.expense),
-    cpc: row.cpc == null ? null : Number(row.cpc),
-    costPerConversion: row.cost_per_conversion == null ? null : Number(row.cost_per_conversion),
-    costPerDirectConversion: row.cost_per_direct_conversion == null ? null : Number(row.cost_per_direct_conversion),
-    directRoas: row.direct_roas == null ? null : Number(row.direct_roas),
-    broadRoas: row.broad_roas == null ? null : Number(row.broad_roas),
-    directAcos: row.direct_acos == null ? null : Number(row.direct_acos),
-    broadAcos: row.broad_acos == null ? null : Number(row.broad_acos),
-    syncedAt: row.synced_at || null,
+    shopId:Number(row.shop_id), eventDate:dateOnlyIso(row.event_date), impressions, clicks,
+    ctr: impressions ? clicks / impressions : 0,
+    directOrders, broadOrders, directUnits:Number(row.direct_units || 0), broadUnits:Number(row.broad_units || 0),
+    directCvr: clicks ? directOrders / clicks : 0, broadCvr: clicks ? broadOrders / clicks : 0,
+    directGmv, broadGmv, expense, cpc: clicks && expense != null ? expense / clicks : null,
+    costPerConversion: row.cost_per_conversion == null ? (broadOrders && expense != null ? expense / broadOrders : null) : Number(row.cost_per_conversion),
+    costPerDirectConversion: row.cost_per_direct_conversion == null ? (directOrders && expense != null ? expense / directOrders : null) : Number(row.cost_per_direct_conversion),
+    directRoas: row.direct_roas == null ? (expense && directGmv != null ? directGmv / expense : null) : Number(row.direct_roas),
+    broadRoas: row.broad_roas == null ? (expense && broadGmv != null ? broadGmv / expense : null) : Number(row.broad_roas),
+    directAcos: expense != null && directGmv ? expense / directGmv : null, broadAcos: expense != null && broadGmv ? expense / broadGmv : null,
+    addToCart, addToCartRate: addToCart == null ? null : (clicks ? addToCart / clicks : 0),
+    voucherAmount, voucheredSales, syncedAt:row.synced_at || null,
   };
 }
 

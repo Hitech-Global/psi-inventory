@@ -98,7 +98,7 @@ class ShopeeProductAdsShopRepository {
 
   async list({ shopId, startDate, endDate }) {
     const result = await this.pool.query(
-      `SELECT shop_id,event_date::text AS event_date,impressions,clicks,ctr,direct_orders,broad_orders,direct_units,broad_units,direct_cvr,broad_cvr,direct_gmv,broad_gmv,expense,cpc,cost_per_conversion,cost_per_direct_conversion,direct_roas,broad_roas,direct_acos,broad_acos,synced_at
+      `SELECT shop_id,event_date::text AS event_date,impressions,clicks,ctr,direct_orders,broad_orders,direct_units,broad_units,direct_cvr,broad_cvr,direct_gmv,broad_gmv,expense,cpc,cost_per_conversion,cost_per_direct_conversion,direct_roas,broad_roas,direct_acos,broad_acos,raw_json,synced_at
        FROM shopee_product_ads_shop_daily
        WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3
        ORDER BY event_date ASC`,
@@ -125,6 +125,10 @@ function summarizeProductAdsRows(rows = []) {
     acc.directGmv += Number(row.direct_gmv ?? row.directGmv ?? 0);
     acc.broadGmv += Number(row.broad_gmv ?? row.broadGmv ?? 0);
     acc.expense += Number(row.expense || 0);
+    for (const key of ['addToCart','voucherAmount','voucheredSales']) {
+      if (row[key] === null || row[key] === undefined) acc[key + 'Complete'] = false;
+      else acc[key] += Number(row[key] || 0);
+    }
     return acc;
   }, {
     impressions: 0,
@@ -136,6 +140,8 @@ function summarizeProductAdsRows(rows = []) {
     directGmv: 0,
     broadGmv: 0,
     expense: 0,
+    addToCart: 0, voucherAmount: 0, voucheredSales: 0,
+    addToCartComplete: rows.length > 0, voucherAmountComplete: rows.length > 0, voucheredSalesComplete: rows.length > 0,
   });
   return {
     ...totals,
@@ -149,6 +155,10 @@ function summarizeProductAdsRows(rows = []) {
     costPerDirectConversion: ratio(totals.expense, totals.directOrders),
     broadAcos: ratio(totals.expense, totals.broadGmv),
     directAcos: ratio(totals.expense, totals.directGmv),
+    addToCart: totals.addToCartComplete ? totals.addToCart : null,
+    addToCartRate: totals.addToCartComplete ? ratio(totals.addToCart, totals.clicks) : null,
+    voucherAmount: totals.voucherAmountComplete ? totals.voucherAmount : null,
+    voucheredSales: totals.voucheredSalesComplete ? totals.voucheredSales : null,
   };
 }
 

@@ -21,11 +21,9 @@ function countNumber(row, names) {
 function percentNumberToFraction(row, names) {
   const value = optionalNumber(row, names);
   if (value === null) return null;
-  // Shopee Ads documents CTR / CR / CIR as percentage-number fields:
-  // e.g. 0.50 means 0.50%, not 50%.  Store all rates internally as
-  // fractions so the web layer can render them with a single percent formatter.
-  // Do not use magnitude heuristics here: they corrupt legitimate sub-1% rates.
-  return value / 100;
+  // Production Shopee Ads responses use fractional rates: 0.0462 means 4.62%.
+  // Preserve that source scale exactly; the web layer multiplies by 100 once.
+  return value;
 }
 
 function responseRows(payload) {
@@ -77,6 +75,10 @@ function normalizeShopProductAdsRow(row) {
     broadRoas: broadRoas ?? (expense && broadGmv !== null ? broadGmv / expense : null),
     directAcos: percentNumberToFraction(row, ['direct_acos', 'direct_cir']),
     broadAcos: percentNumberToFraction(row, ['broad_acos', 'broad_cir']),
+    addToCart: optionalNumber(row, ['add_to_cart', 'add_to_cart_count']),
+    addToCartRate: percentNumberToFraction(row, ['add_to_cart_rate']),
+    voucherAmount: optionalNumber(row, ['voucher_amount']),
+    voucheredSales: optionalNumber(row, ['vouchered_sales']),
     raw: row,
   };
 }
