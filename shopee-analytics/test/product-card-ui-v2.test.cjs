@@ -35,4 +35,6 @@ for (const token of ['directConversions','costPerDirectConversion','voucherAmoun
 assert(server.includes('/table-sort-v1.js'), 'global Shopee table sorter must be loaded');
 assert(syncRunner.includes("adTypes: ['manual']"));
 assert(syncRunner.includes("includeSettings: mode === 'daily'"));
+assert(ui.includes("await loadProductAdDetailV2('auto', firstCampaignId"), 'shop-wide GMS detail must auto-load the first campaign');
+assert(!ui.includes('点击一个全店推 Campaign 查看诊断'), 'shop-wide view must not require a manual detail click');
 console.log('Product Card metrics, modal detail UX and source mapping contract: ok');

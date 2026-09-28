@@ -108,7 +108,7 @@ async function main() {
         mode,
         seededGmsCampaignIds: shopGmsSeeds,
       });
-      if (mode === 'daily' && !pilot) {
+      if (!pilot) {
         try {
           summary.historyRepair = await ensureAutomaticHistory({
             runtime,

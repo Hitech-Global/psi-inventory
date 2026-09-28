@@ -2,8 +2,7 @@
 
 const { createAnalyticsPool } = require('../src/pg');
 const { createSyncRuntime } = require('../src/sync-runtime');
-const { ENDPOINTS } = require('../src/catalog');
-const { toShopeeDate, extractCampaignPerformance } = require('../src/sync-gms');
+const { discoverGmsCampaign } = require('../src/sync-gms');
 const { isPilotOAuthBootstrap, loadPilotIdentityConfig } = require('../src/deployment-mode');
 const { safeError, sanitizeForPersistence } = require('../src/oauth-security');
 
@@ -25,31 +24,6 @@ function assertPilotDiscoveryAllowed(env = process.env) {
     throw new Error('Refusing Pilot GMS discovery. Set SHOPEE_PILOT_DISCOVERY_ENABLE=YES only for the one-shot command.');
   }
   return loadPilotIdentityConfig(env);
-}
-
-async function discoverGmsCampaign({ client, shopId, accessToken, startDate, endDate }) {
-  if (!client || typeof client.shopRequest !== 'function') throw new Error('client.shopRequest is required');
-  if (!Number.isSafeInteger(Number(shopId)) || Number(shopId) <= 0) throw new Error('shopId must be a positive safe integer');
-  if (!accessToken) throw new Error('accessToken is required');
-  if (startDate > endDate) throw new Error('startDate must be <= endDate');
-
-  const requestBody = {
-    start_date: toShopeeDate(startDate),
-    end_date: toShopeeDate(endDate),
-  };
-  const payload = await client.shopRequest({
-    path: ENDPOINTS.adsGmsCampaignPerformance.path,
-    shopId: Number(shopId),
-    accessToken,
-    method: ENDPOINTS.adsGmsCampaignPerformance.method,
-    body: requestBody,
-  });
-  const performance = extractCampaignPerformance(payload);
-  const campaignId = Number(performance.campaignId);
-  if (!Number.isSafeInteger(campaignId) || campaignId <= 0) {
-    throw new Error('Shopee GMS discovery did not return a valid campaign_id');
-  }
-  return { campaignId, performance, requestBody };
 }
 
 async function runPilotGmsDiscovery({ env = process.env, pool, createRuntime = createSyncRuntime } = {}) {

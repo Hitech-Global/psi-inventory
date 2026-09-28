@@ -60,6 +60,7 @@ async function ensureAutomaticHistory({
     sources: ['product-ads', 'gms'],
     seededGmsCampaignIds,
     now,
+    refreshCurrentMetadata: false,
   });
 
   return {

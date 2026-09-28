@@ -2,6 +2,7 @@
 
 const { ShopeeSyncService } = require('./sync-service');
 const { syncGmsWindow } = require('./sync-window');
+const { discoverGmsCampaign } = require('./sync-gms');
 const { syncProductAdsOverviewWindow } = require('./sync-product-ads-overview');
 const {
   localIsoDate,
@@ -105,7 +106,7 @@ async function runShopSyncCycle({
   }
 
   const knownGms = await runtime.queryRepository.listKnownGmsCampaignIds({ shopId });
-  const gmsCampaignIds = pilot
+  let gmsCampaignIds = pilot
     ? Array.from(new Set(seededGmsCampaignIds.map(Number))).map(id => {
       assertPilotTypedCampaignAllowed('SHOP_GMV_MAX', id);
       return id;
@@ -116,9 +117,31 @@ async function runShopSyncCycle({
 
   if (gmsCampaignIds.length) {
     adsToken = await run('ads-token', () => ads.getAccessToken(shopId), { redactResult: true });
+  } else if (!pilot && apiCapable) {
+    adsToken = await run('ads-token-gms-discovery', () => ads.getAccessToken(shopId), { required: false, redactResult: true });
   }
 
-  if (adsToken) {
+  if (!pilot && apiCapable && adsToken && !gmsCampaignIds.length) {
+    const discovered = await run('gms-discovery', async () => {
+      const result = await discoverGmsCampaign({
+        client: ads.client,
+        shopId,
+        accessToken: adsToken,
+        startDate: addDays(today, -6),
+        endDate: today,
+      });
+      await runtime.rawRepository.upsertCampaign({
+        shopId,
+        campaignId: result.campaignId,
+        campaignTypeRaw: 'GMS',
+        campaignTypeNormalized: 'GMS',
+      });
+      return { campaignId: result.campaignId };
+    }, { required: false });
+    if (discovered && discovered.campaignId) gmsCampaignIds = [Number(discovered.campaignId)];
+  }
+
+  if (adsToken && gmsCampaignIds.length) {
     for (const campaignId of gmsCampaignIds) {
       await run(`gms-${campaignId}`, () => syncGmsWindow({
         client: ads.client,

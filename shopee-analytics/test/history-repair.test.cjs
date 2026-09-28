@@ -38,6 +38,7 @@ assert.strictEqual(defaultAnalyticsStartDate('2026-09-27'), '2026-09-01');
   assert.strictEqual(result.initializedStartDate, true);
   assert.deepStrictEqual(calls[0].sources, ['product-ads', 'gms']);
   assert.deepStrictEqual(calls[0].seededGmsCampaignIds, [164499732]);
+  assert.strictEqual(calls[0].refreshCurrentMetadata, false);
 
   const skipped = await ensureAutomaticHistory({
     runtime: {}, profileRepository: {},

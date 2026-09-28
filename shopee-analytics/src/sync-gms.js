@@ -67,6 +67,31 @@ function extractCampaignPerformance(payload) {
   };
 }
 
+async function discoverGmsCampaign({ client, shopId, accessToken, startDate, endDate }) {
+  if (!client || typeof client.shopRequest !== 'function') throw new Error('client.shopRequest is required');
+  if (!Number.isSafeInteger(Number(shopId)) || Number(shopId) <= 0) throw new Error('shopId must be a positive safe integer');
+  if (!accessToken) throw new Error('accessToken is required');
+  if (String(startDate) > String(endDate)) throw new Error('startDate must be <= endDate');
+
+  const requestBody = {
+    start_date: toShopeeDate(startDate),
+    end_date: toShopeeDate(endDate),
+  };
+  const payload = await client.shopRequest({
+    path: ENDPOINTS.adsGmsCampaignPerformance.path,
+    shopId: Number(shopId),
+    accessToken,
+    method: ENDPOINTS.adsGmsCampaignPerformance.method,
+    body: requestBody,
+  });
+  const performance = extractCampaignPerformance(payload);
+  const campaignId = Number(performance.campaignId);
+  if (!Number.isSafeInteger(campaignId) || campaignId <= 0) {
+    throw new Error('Shopee GMS discovery did not return a valid campaign_id');
+  }
+  return { campaignId, performance, requestBody, payload };
+}
+
 function extractItemRows(payload) {
   const response = unwrapResponse(payload);
   const rows = response.result_list || response.item_list || response.list || [];
@@ -246,6 +271,7 @@ module.exports = {
   decodeGmsFixedPointCost,
   normalizeGmsPerformance,
   extractCampaignPerformance,
+  discoverGmsCampaign,
   extractItemRows,
   normalizeItemRow,
   fingerprint,

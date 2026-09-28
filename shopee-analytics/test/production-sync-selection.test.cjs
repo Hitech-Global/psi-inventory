@@ -1,6 +1,8 @@
 'use strict';
 
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 const { parseIdFilter, selectProductionApiShops } = require('../scripts/sync-all-shops.cjs');
 
 assert.strictEqual(parseIdFilter('').size, 0);
@@ -17,4 +19,8 @@ assert.deepStrictEqual(selection.skippedShops, [
   { shopId: 2, reason: 'NO_ADS_TOKEN' },
   { shopId: 3, reason: 'NO_TIMEZONE' },
 ]);
+
+const syncAll = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'sync-all-shops.cjs'), 'utf8');
+assert(syncAll.includes('if (!pilot) {\n        try {\n          summary.historyRepair'), 'Production hourly and daily cycles must both run resumable history repair');
+assert(!syncAll.includes("if (mode === 'daily' && !pilot)"), 'history repair must not wait for daily mode');
 console.log('production Shopee sync shop selection tests: ok');

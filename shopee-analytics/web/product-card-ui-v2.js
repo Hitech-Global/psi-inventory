@@ -413,6 +413,25 @@
         });
       });
     });
+
+    if (type === 'auto') {
+      const detail = $('#autoAdDetail');
+      const items = $('#autoAdItems');
+      if (!rows.length) {
+        if (detail) detail.innerHTML = '<div class="empty-inline">当前周期没有全店推 Campaign 数据。</div>';
+        if (items) items.innerHTML = '<div class="empty-inline">当前周期没有可展示的全店推商品表现。</div>';
+        return;
+      }
+      const firstCampaignId = Number(rows[0].campaignId);
+      const firstRow = target.querySelector('[data-product-card-type="auto"]');
+      if (firstRow) firstRow.classList.add('selected');
+      try {
+        await loadProductAdDetailV2('auto', firstCampaignId, firstRow);
+      } catch (error) {
+        if (detail) detail.innerHTML = `<div class="empty-inline">${esc(error.message)}</div>`;
+        if (items) items.innerHTML = '<div class="empty-inline">全店推商品明细暂时读取失败。</div>';
+      }
+    }
   }
 
   async function loadProductAdDetailV2(type, campaignId, opener = null) {

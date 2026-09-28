@@ -100,6 +100,7 @@ async function runBackfillShop({
   sources,
   seededGmsCampaignIds = [],
   now = new Date(),
+  refreshCurrentMetadata = true,
 }) {
   if (!runtime) throw new Error('runtime is required');
   if (!shop || !shop.shopId) throw new Error('shop is required');
@@ -152,7 +153,7 @@ async function runBackfillShop({
 
   // Campaign settings are current-state metadata. Never backdate today's
   // membership snapshot into a historical date.
-  if (sourceSet.has('campaigns') || sourceSet.has('gms') || sourceSet.has('roi')) {
+  if (refreshCurrentMetadata && (sourceSet.has('campaigns') || sourceSet.has('gms') || sourceSet.has('roi'))) {
     await run('campaign-settings-current', () =>
       service.syncCampaignSettings({ eventDate: today }));
   }
