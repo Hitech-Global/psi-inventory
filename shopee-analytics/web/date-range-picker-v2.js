@@ -184,7 +184,18 @@
     draftStart = nextStart;
     draftEnd = nextEnd;
     refreshCommitted();
+    window.dispatchEvent(new CustomEvent('shopee-date-range-changed', {
+      detail: { startDate: nextStart, endDate: nextEnd },
+    }));
     return true;
+  }
+
+  function syncFromInputs() {
+    draftStart = start.value;
+    draftEnd = end.value;
+    anchorMonth = chooseAnchor();
+    refreshCommitted();
+    if (!popover.classList.contains('hidden')) renderCalendars();
   }
 
   button.addEventListener('click', event => {
@@ -230,6 +241,7 @@
   document.addEventListener('keydown', event => {
     if (event.key === 'Escape') closePopover();
   });
+  window.addEventListener('shopee-date-range-sync', syncFromInputs);
 
   refreshCommitted();
 })();

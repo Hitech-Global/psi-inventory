@@ -1478,6 +1478,7 @@ function restoreLocaleUiState() {
   if (saved.shopId && filteredShops().some(shop => String(shop.shopId) === String(saved.shopId))) $('#shopSelect').value = String(saved.shopId);
   if (saved.startDate) $('#startDate').value = saved.startDate;
   if (saved.endDate) $('#endDate').value = saved.endDate;
+  window.dispatchEvent(new CustomEvent('shopee-date-range-sync'));
 
   const view = ['overview', 'store', 'ads', 'status'].includes(saved.view) ? saved.view : 'overview';
   const adsType = ['manual', 'auto', 'groups'].includes(saved.adsType) ? saved.adsType : 'manual';
@@ -1524,6 +1525,9 @@ $('#countryFilter').addEventListener('change', onDimensionChanged);
 $('#brandFilter').addEventListener('change', onDimensionChanged);
 $('#shopSelect').addEventListener('change', onShopChanged);
 $('#loadBtn').addEventListener('click', readSelectedData);
+window.addEventListener('shopee-date-range-changed', () => {
+  if (state.view !== 'ads') loadCurrentView();
+});
 $('#refreshStatusBtn').addEventListener('click', loadSystemStatus);
 $('#refreshStatusPortfolioBtn').addEventListener('click', loadStatusPortfolio);
 $('#openAdGroupImportBtn').addEventListener('click', () => $('#adGroupImportModal').classList.remove('hidden'));

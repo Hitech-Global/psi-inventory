@@ -806,8 +806,7 @@
     });
     $$('.view-tab[data-view="ads"]').forEach(button => button.addEventListener('click', () => scheduleRefresh(80)));
     $('#shopSelect')?.addEventListener('change', () => scheduleRefresh(80));
-    $('#dateRangeApply')?.addEventListener('click', () => scheduleRefresh(80));
-    $$('[data-date-preset]').forEach(button => button.addEventListener('click', () => scheduleRefresh(80)));
+    window.addEventListener('shopee-date-range-changed', () => scheduleRefresh(20));
 
     scheduleRefresh(0);
   }

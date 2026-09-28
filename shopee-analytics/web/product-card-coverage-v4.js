@@ -72,9 +72,8 @@
   function init() {
     ensureNotice();
     window.addEventListener('shopee-data-refreshed', schedule);
+    window.addEventListener('shopee-date-range-changed', schedule);
     $('#shopSelect')?.addEventListener('change', schedule);
-    $('#dateRangeApply')?.addEventListener('click', schedule);
-    $$('[data-date-preset]').forEach(button => button.addEventListener('click', schedule));
     $$('.ads-type-tab[data-ads-type="gms"]').forEach(button => button.addEventListener('click', schedule));
     $$('.view-tab[data-view="ads"]').forEach(button => button.addEventListener('click', schedule));
     schedule();
