@@ -55,17 +55,8 @@ function moneyCompact(value) {
 }
 
 function formatMoney(value, currency) {
-  const n = Number(value || 0);
-  if (!currency) return moneyCompact(n);
-  try {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency,
-      maximumFractionDigits: currency === 'IDR' ? 0 : 2,
-    }).format(n);
-  } catch {
-    return `${currency} ${moneyCompact(n)}`;
-  }
+  if (window.ShopeeCurrency) return window.ShopeeCurrency.format(value, { currency });
+  return currency ? `${currency} ${moneyCompact(value)}` : moneyCompact(value);
 }
 
 function escapeHtml(value) {
@@ -181,7 +172,7 @@ async function json(url) {
   const response = await fetch(url, { headers: { accept: 'application/json' } });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.message || `HTTP ${response.status}`);
-  return payload;
+  return window.ShopeeCurrency?.hydrate(payload) || payload;
 }
 
 async function checkHealth() {

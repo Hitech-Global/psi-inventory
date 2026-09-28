@@ -17,7 +17,7 @@
     ? new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(value))
     : '—';
   const pct2 = value => present(value) ? `${(Number(value) * 100).toFixed(2)}%` : '—';
-  const money2 = value => present(value) ? fixed2(value) : '—';
+  const money2 = value => present(value) ? (window.ShopeeCurrency?.format(value, selectedContext().shop || {}) || fixed2(value)) : '—';
   const addIsoDays = (value, days) => {
     const d = new Date(`${value}T00:00:00Z`);
     d.setUTCDate(d.getUTCDate() + days);

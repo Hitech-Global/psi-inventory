@@ -146,3 +146,8 @@
 .product-card-detail-modal[data-detail-variant="group"] .ad-group-item-name strong{display:-webkit-box;overflow:hidden;-webkit-box-orient:vertical;-webkit-line-clamp:2;white-space:normal;overflow-wrap:anywhere;line-height:1.35}
 .product-card-detail-modal[data-detail-variant="group"] .ad-group-item-name small{white-space:normal;overflow-wrap:anywhere;line-height:1.35}
 @media(max-width:800px){#adsManualPanel .product-ads-table-wrap th:first-child,#adsManualPanel .product-ads-table-wrap td:first-child,.product-card-detail-modal[data-detail-variant="group"] .ad-group-modal-content th:first-child,.product-card-detail-modal[data-detail-variant="group"] .ad-group-modal-content td:first-child{width:220px;min-width:220px;max-width:220px}}
+
+/* Global analytics alignment: labels and values read from the same left edge. */
+table thead th,table tbody td{text-align:left!important}
+.metric-cell{align-items:flex-start!important;text-align:left}
+.view-section input,.view-section select,.view-section textarea{text-align:left}
