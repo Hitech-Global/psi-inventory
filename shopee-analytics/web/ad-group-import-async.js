@@ -607,6 +607,7 @@
     });
   }, true);
 
-  enhanceDateRangeFilter();
+  // Date range UI is owned exclusively by date-range-picker-v2.js.
+  // Keeping a second implementation here caused duplicate listeners/race conditions.
   restoreBatch();
 })();

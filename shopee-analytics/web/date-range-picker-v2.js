@@ -2,10 +2,23 @@
 
 (() => {
   const $ = selector => document.querySelector(selector);
-  const field = $('#dateRangeField');
   const start = $('#startDate');
   const end = $('#endDate');
-  if (!field || !start || !end || field.dataset.calendarV2 === '1') return;
+  if (!start || !end) return;
+
+  let field = $('#dateRangeField');
+  const startLabel = start.closest('label');
+  const endLabel = end.closest('label');
+  if (!field) {
+    if (!startLabel || !endLabel || !startLabel.parentNode) return;
+    field = document.createElement('div');
+    field.id = 'dateRangeField';
+    field.className = 'date-range-field';
+    startLabel.parentNode.insertBefore(field, startLabel);
+  }
+  startLabel?.classList.add('date-source-hidden');
+  endLabel?.classList.add('date-source-hidden');
+  if (field.dataset.calendarV2 === '1') return;
   field.dataset.calendarV2 = '1';
 
   const toIso = date => {
@@ -47,7 +60,17 @@
     const style = document.createElement('style');
     style.id = 'dateRangePickerV2Styles';
     style.textContent = `
+      .date-source-hidden{display:none!important}
       .multi-filter{grid-template-columns:minmax(130px,.75fr) minmax(130px,.75fr) minmax(220px,1.15fr) minmax(250px,1.35fr) auto!important}
+      .date-range-field{display:flex;flex-direction:column;gap:7px;min-width:0;position:relative}
+      .date-range-label{font-size:12px;font-weight:600;color:#6e6e73}
+      .date-range-tools{display:flex;align-items:center;gap:6px;min-width:0}
+      .date-range-button{height:40px;border:1px solid #d8d8dc;border-radius:10px;background:#fff;color:#1d1d1f;padding:0 12px;display:flex;align-items:center;justify-content:space-between;gap:12px;font:inherit;font-size:13px;font-weight:600;cursor:pointer}
+      .date-range-button:hover{background:#f8f8fa}.date-range-button:focus{outline:2px solid rgba(0,113,227,.22);outline-offset:1px;border-color:#0071e3}
+      .date-range-icon{font-size:15px;color:#6e6e73}
+      .date-range-popover{position:absolute;z-index:60;top:calc(100% + 8px);background:#fff;border:1px solid #dedee2;box-shadow:0 14px 40px rgba(0,0,0,.12)}
+      .date-range-popover.hidden{display:none!important}
+      .date-range-apply{height:34px;border:0;border-radius:9px;padding:0 14px;background:#0071e3;color:#fff;font-weight:700;cursor:pointer}
       #dateRangeField .date-range-tools{display:block!important;white-space:normal!important}
       #dateRangeField .date-range-button{width:100%;min-width:250px}
       #dateRangeField .date-range-popover{left:auto!important;right:0!important;width:740px!important;padding:0!important;border-radius:14px!important;overflow:hidden!important}
@@ -161,6 +184,9 @@
   function renderCalendars() {
     renderCalendar(left, anchorMonth, 'left');
     renderCalendar(right, monthStart(anchorMonth, 1), 'right');
+    if (draftStart && draftEnd) {
+      $('#dateRangeText').textContent = `${formatDate(draftStart)} – ${formatDate(draftEnd)}`;
+    }
     selection.innerHTML = awaitingRangeEnd && draftStart && draftEnd
       ? `<strong>${formatDate(draftStart)}</strong> · 已选单日；可直接应用，或再点一个日期扩展范围`
       : draftStart && draftEnd
@@ -180,6 +206,7 @@
   function closePopover() {
     popover.classList.add('hidden');
     button.setAttribute('aria-expanded', 'false');
+    refreshCommitted();
   }
   function commitRange(nextStart, nextEnd) {
     if (!nextStart || !nextEnd || nextStart > nextEnd) return false;
@@ -211,6 +238,10 @@
   });
 
   field.addEventListener('click', event => {
+    // Calendar clicks re-render their own DOM. Stop bubbling first so the
+    // document-level outside-click handler does not mistake the detached
+    // original click target for an outside click and immediately close/reset.
+    event.stopPropagation();
     const preset = event.target.closest('[data-date-preset]');
     if (preset) {
       event.preventDefault();
