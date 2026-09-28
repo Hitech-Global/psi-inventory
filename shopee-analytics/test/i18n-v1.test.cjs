@@ -18,9 +18,10 @@ assert(index.includes('id="languageSwitch"'), 'top-right language switch is requ
 assert(index.includes('data-locale="zh"') && index.includes('data-locale="en"'));
 assert(index.includes('/i18n-v1.js'));
 for (const token of ['localStorage.setItem', 'MutationObserver', 'ShopeeI18n']) assert(i18n.includes(token));
-assert(i18n.includes('sessionStorage.setItem(UI_STATE_KEY'), 'locale switch must snapshot current UI state before reload');
-assert(app.includes('function restoreLocaleUiState()'), 'app must restore UI state after locale reload');
-for (const token of ['saved.view','saved.adsType','saved.shopId','saved.startDate','saved.endDate']) assert(app.includes(token), `locale restore missing ${token}`);
+assert(!i18n.includes('window.location.reload()'), 'locale switch must not reload the page');
+assert(i18n.includes('const originalText = new WeakMap()'), 'in-place locale switch must retain original DOM text');
+assert(i18n.includes("new CustomEvent('shopee:localechange'"), 'locale switch must publish an in-place change event');
+assert(app.includes('function restoreLocaleUiState()'), 'legacy reload recovery remains available for normal page reloads');
 
 const exactShopeeHeaders = new Set([
   ...adGroup.REQUIRED_HEADERS,

@@ -5,7 +5,10 @@
   const UI_STATE_KEY = 'shopee-analytics-locale-ui-state';
   const SUPPORTED = new Set(['zh', 'en']);
   const requested = localStorage.getItem(STORAGE_KEY);
-  const locale = SUPPORTED.has(requested) ? requested : 'zh';
+  let locale = SUPPORTED.has(requested) ? requested : 'zh';
+  const originalText = new WeakMap();
+  const originalAttrs = new WeakMap();
+  const defaultTitle = document.title || 'Shopee 运营分析';
   document.documentElement.lang = locale === 'en' ? 'en' : 'zh-CN';
 
   const EXACT = new Map([
@@ -194,31 +197,72 @@
     return text;
   }
 
+  function translatedRaw(raw) {
+    const core = String(raw || '').trim();
+    if (!core) return raw;
+    const translated = translateCore(core);
+    if (translated === core) return raw;
+    const start = raw.slice(0, raw.indexOf(core));
+    const end = raw.slice(raw.indexOf(core) + core.length);
+    return `${start}${translated}${end}`;
+  }
+
   function translateTextNode(node) {
     if (!node || node.nodeType !== Node.TEXT_NODE) return;
     const parent = node.parentElement;
     if (!parent || parent.closest('script,style,[data-i18n-skip]')) return;
+    if (locale !== 'en') {
+      if (!originalText.has(node)) return;
+      const original = originalText.get(node);
+      originalText.delete(node);
+      if (node.nodeValue !== original) node.nodeValue = original;
+      return;
+    }
     const raw = node.nodeValue || '';
-    const core = raw.trim();
-    if (!core) return;
-    const translated = translateCore(core);
-    if (translated === core) return;
-    const start = raw.slice(0, raw.indexOf(core));
-    const end = raw.slice(raw.indexOf(core) + core.length);
-    node.nodeValue = `${start}${translated}${end}`;
+    if (originalText.has(node)) {
+      const previous = originalText.get(node);
+      if (raw === translatedRaw(previous)) return;
+      originalText.delete(node);
+    }
+    const translated = translatedRaw(raw);
+    if (translated === raw) return;
+    originalText.set(node, raw);
+    node.nodeValue = translated;
   }
 
   function translateElementAttributes(element) {
     if (!(element instanceof Element) || element.matches('[data-i18n-skip]')) return;
-    for (const attr of ['placeholder', 'title', 'aria-label']) {
+    const attrs = ['placeholder', 'title', 'aria-label'];
+    if (locale !== 'en') {
+      const saved = originalAttrs.get(element);
+      if (!saved) return;
+      for (const attr of attrs) {
+        if (!saved.has(attr)) continue;
+        const original = saved.get(attr);
+        if (element.getAttribute(attr) !== original) element.setAttribute(attr, original);
+      }
+      originalAttrs.delete(element);
+      return;
+    }
+    let saved = originalAttrs.get(element);
+    for (const attr of attrs) {
       const value = element.getAttribute(attr);
       if (!value) continue;
+      if (saved?.has(attr)) {
+        const previous = saved.get(attr);
+        if (value === translateCore(previous)) continue;
+        saved.delete(attr);
+      }
       const translated = translateCore(value.trim());
-      if (translated !== value.trim()) element.setAttribute(attr, translated);
+      if (translated === value.trim()) continue;
+      if (!saved) { saved = new Map(); originalAttrs.set(element, saved); }
+      saved.set(attr, value);
+      element.setAttribute(attr, translated);
     }
   }
+
   function translateTree(root = document) {
-    if (locale !== 'en' || !root) return;
+    if (!root) return;
     if (root.nodeType === Node.TEXT_NODE) translateTextNode(root);
     if (root.nodeType === Node.ELEMENT_NODE) translateElementAttributes(root);
     const scope = root.nodeType === Node.DOCUMENT_NODE ? root.documentElement : root;
@@ -226,6 +270,8 @@
     scope.querySelectorAll('*').forEach(translateElementAttributes);
     const walker = document.createTreeWalker(scope, NodeFilter.SHOW_TEXT);
     while (walker.nextNode()) translateTextNode(walker.currentNode);
+    document.documentElement.lang = locale === 'en' ? 'en' : 'zh-CN';
+    document.title = locale === 'en' ? 'Shopee Operations Analytics' : defaultTitle;
     window.ShopeeMetricLabels?.apply?.(scope);
   }
 
@@ -248,23 +294,32 @@
   }
 
   function setLocale(next) {
-    if (!SUPPORTED.has(next)) return;
-    sessionStorage.setItem(UI_STATE_KEY, JSON.stringify(captureUiState()));
+    if (!SUPPORTED.has(next) || next === locale) return;
+    locale = next;
     localStorage.setItem(STORAGE_KEY, next);
-    window.location.reload();
+    document.documentElement.lang = locale === 'en' ? 'en' : 'zh-CN';
+    updateToggle();
+    translateTree(document);
+    window.dispatchEvent(new CustomEvent('shopee:localechange', { detail: { locale } }));
   }
 
-  function mountToggle() {
+  function updateToggle() {
     const host = document.getElementById('languageSwitch');
     if (!host) return;
     host.querySelectorAll('[data-locale]').forEach(button => {
       const value = button.getAttribute('data-locale');
       button.classList.toggle('active', value === locale);
       button.setAttribute('aria-pressed', value === locale ? 'true' : 'false');
-      button.addEventListener('click', () => {
-        if (value !== locale) setLocale(value);
-      });
     });
+  }
+
+  function mountToggle() {
+    const host = document.getElementById('languageSwitch');
+    if (!host) return;
+    host.querySelectorAll('[data-locale]').forEach(button => {
+      button.addEventListener('click', () => setLocale(button.getAttribute('data-locale')));
+    });
+    updateToggle();
   }
 
   const api = Object.freeze({
@@ -277,18 +332,16 @@
   window.ShopeeI18n = api;
 
   function boot() {
-    if (locale === 'en') document.title = 'Shopee Operations Analytics';
     mountToggle();
     translateTree(document);
-    if (locale === 'en') {
-      const observer = new MutationObserver(records => {
-        records.forEach(record => {
-          if (record.type === 'characterData') translateTextNode(record.target);
-          record.addedNodes.forEach(translateTree);
-        });
+    const observer = new MutationObserver(records => {
+      records.forEach(record => {
+        if (record.type === 'characterData') translateTextNode(record.target);
+        if (record.type === 'attributes') translateElementAttributes(record.target);
+        record.addedNodes?.forEach?.(translateTree);
       });
-      observer.observe(document.body, { subtree: true, childList: true, characterData: true });
-    }
+    });
+    observer.observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['placeholder', 'title', 'aria-label'] });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
