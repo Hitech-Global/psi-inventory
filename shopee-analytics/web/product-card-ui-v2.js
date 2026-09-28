@@ -45,6 +45,70 @@
     const sort = present(current) ? Number(current) : '';
     return `<td data-sort-value="${sort}"><div class="metric-cell"><span>${formatter(current)}</span>${changeHtml(current, previous)}</div></td>`;
   }
+
+  const SUMMARY_PRIMARY_METRICS = [
+    ['summaryExpense','expense',money2,money2,'relative','neutral'],
+    ['impressions','impressions',int,int,'relative','higher'],
+    ['clicks','clicks',int,int,'relative','higher'],
+    ['summaryOrders','broadOrders',int,int,'relative','higher'],
+    ['summaryUnits','broadUnits',int,int,'relative','higher'],
+    ['summarySales','broadGmv',money2,money2,'relative','higher'],
+  ];
+  const SUMMARY_EFFICIENCY_METRICS = [
+    ['summaryCtr','ctr',pct2,null,'pp','higher'],
+    ['summaryAddToCart','addToCart',int,null,'relative','higher'],
+    ['summaryCvr','broadCvr',pct2,null,'pp','higher'],
+    ['summaryRoas','broadRoas',fixed2,null,'absolute','higher'],
+    ['summaryAdSpendRate','broadAcos',pct2,null,'pp','lower'],
+    ['summaryAov','aov',money2,null,'relative','higher'],
+  ];
+
+  function summaryModel(raw = {}) {
+    const orders = present(raw.broadOrders) ? Number(raw.broadOrders) : null;
+    const sales = present(raw.broadGmv) ? Number(raw.broadGmv) : null;
+    return { ...raw, aov: orders && sales !== null ? sales / orders : null };
+  }
+
+  function summaryChangeHtml(current, previous, mode = 'relative', preference = 'higher') {
+    if (!present(current) || !present(previous)) return '<small class="summary-change neutral">—</small>';
+    const c = Number(current), p = Number(previous), diff = c - p;
+    if (diff === 0) {
+      const zero = mode === 'pp' ? '0.00pp' : mode === 'absolute' ? '0.00' : '0.0%';
+      return `<small class="summary-change neutral">— ${zero}</small>`;
+    }
+    let value;
+    if (mode === 'pp') value = `${Math.abs(diff * 100).toFixed(2)}pp`;
+    else if (mode === 'absolute') value = Math.abs(diff).toFixed(2);
+    else {
+      if (p === 0) return '<small class="summary-change neutral">—</small>';
+      value = `${Math.abs(diff / Math.abs(p) * 100).toFixed(1)}%`;
+    }
+    const arrow = diff > 0 ? '↑' : '↓';
+    let cls = 'neutral';
+    if (preference === 'higher') cls = diff > 0 ? 'up' : 'down';
+    else if (preference === 'lower') cls = diff < 0 ? 'up' : 'down';
+    return `<small class="summary-change ${cls}">${arrow} ${value}</small>`;
+  }
+
+  function summaryCardHtml(config, current, previous, days, data) {
+    const [labelKey, key, formatter, averageFormatter, changeMode, preference] = config;
+    const value = current[key];
+    const previousValue = previous[key];
+    const average = averageFormatter
+      ? `${sl('dailyAverage')} ${present(value) && days > 0 ? averageFormatter(Number(value) / days) : '—'}`
+      : '';
+    let change = summaryChangeHtml(value, previousValue, changeMode, preference);
+    if (SUPPLEMENTAL_OVERVIEW_KEYS.has(key) && !present(value)) {
+      change = `<small class="summary-change neutral">${esc(supplementalStatus(data, key))}</small>`;
+    }
+    return `<div class="kpi product-card-summary-kpi">
+      <div class="label">${esc(sl(labelKey))}</div>
+      <div class="value metric-exact">${esc(formatter(value))}</div>
+      ${average ? `<div class="product-card-daily-average">${esc(average)}</div>` : ''}
+      <div class="product-card-summary-delta">${change}</div>
+    </div>`;
+  }
+
   const OVERVIEW_METRICS = [
     ['impressions','impressions',int],['clicks','clicks',int],['ctr','ctr',pct2],['conversions','broadOrders',int],
     ['itemsSold','broadUnits',int],['gmv','broadGmv',money2],['expense','expense',money2],['roas','broadRoas',fixed2],
@@ -105,6 +169,13 @@
       .product-card-context{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end}
       .product-card-legacy-hidden{display:none!important}
       .product-card-overview{display:grid;gap:14px}.product-card-overview .kpi-grid{margin-bottom:0}
+      .product-card-summary .kpi-grid{grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin:0}
+      .product-card-summary-divider{height:1px;background:#e9e9ec;margin:32px 0}
+      .product-card-summary-kpi{min-width:0;display:flex;flex-direction:column}
+      .product-card-summary-kpi .value{white-space:nowrap}
+      .product-card-daily-average{margin-top:5px;color:#6e6e73;font-size:11px;font-weight:550;font-variant-numeric:tabular-nums}
+      .product-card-summary-delta{min-height:14px;margin-top:8px}
+      .summary-change{font-size:10px;line-height:1.15;font-weight:650}.summary-change.up{color:#2db55d}.summary-change.down{color:#ff4d36}.summary-change.neutral{color:#a1a1a6}
       .product-card-daily-panel{background:#fff;border:1px solid #e6e6e8;border-radius:18px;overflow:hidden;box-shadow:0 8px 28px rgba(0,0,0,.035)}
       .product-card-daily-panel .panel-head{border-bottom:1px solid #ececef}
       .metric-exact{font-variant-numeric:tabular-nums}
@@ -126,7 +197,7 @@
       .product-card-detail-modal-body .ad-group-modal-content .table-wrap{max-height:56vh;overflow:auto;border:1px solid #ececef;border-radius:12px}
       .ad-group-item-name{display:flex;flex-direction:column;gap:2px;min-width:190px;text-align:left}.ad-group-item-name strong{font-size:12px}.ad-group-item-name small{font-size:10px;color:#86868b;white-space:normal}
       .product-card-source{font-size:10px;color:#86868b}.ads-type-tabs{margin-bottom:10px}
-      @media(max-width:800px){.product-card-parent{align-items:flex-start;flex-direction:column}.product-card-overview .kpi-grid{grid-template-columns:repeat(2,1fr)}.product-card-detail-modal-backdrop{padding:12px}.product-card-detail-modal,.product-card-detail-modal[data-detail-variant="group"]{width:100%;max-height:86vh;border-radius:16px}.product-card-detail-modal-body{padding:14px}}
+      @media(max-width:800px){.product-card-parent{align-items:flex-start;flex-direction:column}.product-card-summary .kpi-grid{grid-template-columns:repeat(auto-fit,minmax(160px,1fr))}.product-card-detail-modal-backdrop{padding:12px}.product-card-detail-modal,.product-card-detail-modal[data-detail-variant="group"]{width:100%;max-height:86vh;border-radius:16px}.product-card-detail-modal-body{padding:14px}}
     `;
     document.head.appendChild(style);
   }
@@ -228,7 +299,7 @@
       overview.id = 'productCardOverviewV2';
       overview.className = 'product-card-overview';
       overview.innerHTML = `
-        <section id="productCardSummaryV2" class="kpi-grid"></section>
+        <section id="productCardSummaryV2" class="product-card-summary"></section>
         <section class="product-card-daily-panel">
           <div class="panel-head">
             <div><h2>每日明细</h2><p>店铺级 Product Ads 汇总 · 环比上一日</p></div>
@@ -314,23 +385,23 @@
       api(`/api/shopee-analytics/product-ads/overview?${makeParams(ctx.startDate, ctx.endDate)}`),
       api(`/api/shopee-analytics/product-ads/overview?${makeParams(previousRange.startDate, previousRange.endDate)}`),
     ]);
-    const current = data.summary || {};
-    const previous = previousData.summary || {};
+    const current = summaryModel(data.summary || {});
+    const previous = summaryModel(previousData.summary || {});
     const daily = data.daily || [];
     const priorDaily = previousData.daily || [];
+    const days = rangeDays(ctx.startDate, ctx.endDate);
     coverage.textContent = data.dataAvailable ? `${int(daily.length)} 天` : '暂无API汇总';
     coverage.className = `pill ${data.dataAvailable ? 'good' : 'warn'}`;
-    summary.innerHTML = OVERVIEW_METRICS.map(([labelKey, key, formatter]) => {
-      let comparisonText;
-      if (present(current[key]) && present(previous[key])) {
-        comparisonText = `环比 ${changeHtml(current[key], previous[key]).replace(/<[^>]+>/g, '')}`;
-      } else if (SUPPLEMENTAL_OVERVIEW_KEYS.has(key)) {
-        comparisonText = supplementalStatus(data, key);
-      } else {
-        comparisonText = present(current[key]) ? '' : '当前 Shopee API 未返回';
-      }
-      return kpi(sl(labelKey), formatter(current[key]), comparisonText);
-    }).join('');
+    const primaryCards = SUMMARY_PRIMARY_METRICS
+      .map(config => summaryCardHtml(config, current, previous, days, data))
+      .join('');
+    const efficiencyCards = SUMMARY_EFFICIENCY_METRICS
+      .map(config => summaryCardHtml(config, current, previous, days, data))
+      .join('');
+    summary.innerHTML = `
+      <div class="kpi-grid product-card-primary-metrics">${primaryCards}</div>
+      <div class="product-card-summary-divider" aria-hidden="true"></div>
+      <div class="kpi-grid product-card-efficiency-metrics">${efficiencyCards}</div>`;
     if (!data.dataAvailable) {
       rowsEl.innerHTML = '<tr><td colspan="13" class="empty">当前周期暂无 Product Card 店铺级汇总。</td></tr>';
       return;

@@ -23,6 +23,14 @@ assert(ui.includes('/api/shopee-analytics/campaigns/${campaignId}/analysis?${par
 for (const key of ['addToCartRate','costPerConversion','directItemsSold','directAcos','voucherAmount','voucheredSales']) assert(ui.includes(key), `missing metric ${key}`);
 for (const key of ['impressions','clicks','ctr','conversions','itemsSold','gmv','expense','roas','voucherAmount','voucheredSales','addToCart','addToCartRate']) assert(ui.includes(`'${key}'`), `overview metric key missing ${key}`);
 for (const token of ['comparisonRange','metric-change','metricTd','previousData']) assert(ui.includes(token), `comparison contract missing ${token}`);
+for (const token of ['SUMMARY_PRIMARY_METRICS','SUMMARY_EFFICIENCY_METRICS','product-card-summary-divider','repeat(auto-fit,minmax(200px,1fr))','dailyAverage','summaryAov']) {
+  assert(ui.includes(token), `summary layout contract missing ${token}`);
+}
+assert(ui.indexOf("['summaryExpense','expense'") < ui.indexOf("['impressions','impressions'"), 'ad spend must be the first primary summary metric');
+for (const key of ['summaryCtr','summaryAddToCart','summaryCvr','summaryRoas','summaryAdSpendRate','summaryAov']) {
+  assert(ui.includes(`'${key}'`), `efficiency summary metric missing ${key}`);
+}
+assert(!ui.includes('`环比 ${changeHtml(current[key]'), 'summary cards must not render 环比 label text');
 assert(channels.includes("channelTabs.insertAdjacentElement('afterend', overviewPanel)"), 'overview must sit below the top-level ad-channel row');
 assert(!ui.includes('data-ad-group-detail-index'), 'Ad Group items must no longer expand inline');
 assert(ui.includes('product-card-detail-modal-backdrop'), 'shared detail modal shell must exist');
