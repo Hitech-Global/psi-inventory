@@ -15,6 +15,7 @@ const { createBackupStatusProvider } = require('./backup-status');
 const { createConfiguredSkillProvider } = require('./skill-provider');
 const { createSkillRuntime } = require('./skill-runtime');
 const { ShopeeShopScopeRepository } = require('./shop-scope-repository');
+const { createFeishuAuth } = require('./feishu-auth');
 
 function resolveBindAddress(env = process.env) {
   const requested = env.SHOPEE_ANALYTICS_HOST || '127.0.0.1';
@@ -48,6 +49,10 @@ function createApp({ pool, skillProvider = null, importJobPool = null }) {
   } = createSkillRuntime({ pool, skillProvider });
   const shopScopeRepository = new ShopeeShopScopeRepository({ pool });
   const backupStatusProvider = createBackupStatusProvider();
+  const feishuAuth = createFeishuAuth({ pool });
+
+  app.use('/api/shopee-auth', feishuAuth.router);
+  app.use('/api/shopee-analytics', feishuAuth.requireApiSession, feishuAuth.enforceShopAccess);
 
   if (importJobPool) {
     app.use('/api/shopee-analytics', createAdGroupImportAsyncRouter({ pool: importJobPool }));
@@ -75,8 +80,10 @@ function createApp({ pool, skillProvider = null, importJobPool = null }) {
 
   const webDir = path.join(__dirname, '..', 'web');
   const indexPath = path.join(webDir, 'index.html');
+  const loginPath = path.join(webDir, 'login.html');
   const assetVersion = Date.now().toString(36);
   let indexHtml = fs.readFileSync(indexPath, 'utf8');
+  const loginHtml = fs.readFileSync(loginPath, 'utf8');
   for (const asset of ['/styles.css', '/shopee-metric-labels.js', '/app.js', '/ad-group-import-async.js']) {
     indexHtml = indexHtml.replace(asset, `${asset}?v=${assetVersion}`);
   }
@@ -84,10 +91,18 @@ function createApp({ pool, skillProvider = null, importJobPool = null }) {
     '/date-range-picker-v2.js',
     '/product-card-ui-v2.js', '/product-card-copy-v2.js', '/ad-channel-ui-v3.js',
     '/product-card-data-contract-v3.js', '/product-card-coverage-v4.js', '/table-sort-v1.js',
+    '/auth-ui-v1.js',
   ].map(src => `  <script src="${src}?v=${assetVersion}" defer></script>`).join('\n');
   indexHtml = indexHtml.replace('</body>', `${injectedScripts}\n</body>`);
 
-  app.get(['/', '/index.html'], (req, res) => {
+  app.get('/login', (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    res.type('html').send(loginHtml);
+  });
+  app.get('/auth/feishu/login', feishuAuth.handleLogin);
+  app.get('/auth/feishu/callback', feishuAuth.handleCallback);
+
+  app.get(['/', '/index.html'], feishuAuth.requireWebSession, (req, res) => {
     res.set('Cache-Control', 'no-cache');
     res.type('html').send(indexHtml);
   });

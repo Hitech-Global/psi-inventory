@@ -171,6 +171,10 @@ function initDates() {
 async function json(url) {
   const response = await fetch(url, { headers: { accept: 'application/json' } });
   const payload = await response.json().catch(() => ({}));
+  if (response.status === 401 && payload.error === 'AUTH_REQUIRED') {
+    location.href = `/login?return=${encodeURIComponent(location.pathname + location.search + location.hash)}`;
+    throw new Error('AUTH_REQUIRED');
+  }
   if (!response.ok) throw new Error(payload.message || `HTTP ${response.status}`);
   return window.ShopeeCurrency?.hydrate(payload) || payload;
 }
@@ -182,6 +186,10 @@ async function postJson(url, body) {
     body: JSON.stringify(body || {}),
   });
   const payload = await response.json().catch(() => ({}));
+  if (response.status === 401 && payload.error === 'AUTH_REQUIRED') {
+    location.href = `/login?return=${encodeURIComponent(location.pathname + location.search + location.hash)}`;
+    throw new Error('AUTH_REQUIRED');
+  }
   if (!response.ok) throw new Error(payload.message || payload.error || `HTTP ${response.status}`);
   return window.ShopeeCurrency?.hydrate(payload) || payload;
 }

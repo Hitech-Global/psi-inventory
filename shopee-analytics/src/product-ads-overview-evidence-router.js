@@ -8,6 +8,7 @@ const {
 const { parseGmsSellerCentreFile } = require('./gms-seller-centre-reconciliation');
 const { ShopeeAdPromotionRepository } = require('./ad-promotion-repository');
 const { ShopeeShopScopeRepository } = require('./shop-scope-repository');
+const { assertShopAccess } = require('./feishu-auth');
 
 function positiveInt(value, name) {
   const number = Number(value);
@@ -120,6 +121,7 @@ function createProductAdsOverviewEvidenceRouter({ pool }) {
     try {
       if (req.query.confirm !== 'YES') throw scopedError('CONFIRM_REQUIRED', 'confirm=YES is required for explicit evidence writes');
       const shopId = positiveInt(req.body?.shopId, 'shopId');
+      assertShopAccess(req, shopId);
       const startDate = isoDate(req.body?.startDate, 'startDate');
       const endDate = isoDate(req.body?.endDate || req.body?.startDate, 'endDate');
       if (startDate > endDate) throw new Error('startDate must be <= endDate');

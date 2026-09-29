@@ -10,6 +10,7 @@ const {
   resolvePilotTypedCampaignAllowlist,
 } = require('./deployment-mode');
 const { loadLiveRedirectUrl, validateOAuthStateTtl } = require('./oauth-security');
+const { loadFeishuAuthConfig } = require('./feishu-auth');
 
 function isRealSecret(value) {
   const text = String(value || '').trim();
@@ -131,6 +132,13 @@ function validateDesktopEnv(env) {
   }
 
   try { validateOAuthStateTtl(env); } catch (error) { errors.push(error.message); }
+
+  const feishuEnabled = String(env.FEISHU_AUTH_ENABLE || 'NO').trim();
+  if (!['YES', 'NO'].includes(feishuEnabled)) {
+    errors.push('FEISHU_AUTH_ENABLE must be YES or NO');
+  } else if (feishuEnabled === 'YES') {
+    try { loadFeishuAuthConfig(env); } catch (error) { errors.push(error.message); }
+  }
 
   if (!env.SHOPEE_BACKUP_LOCAL_DIR) warnings.push('SHOPEE_BACKUP_LOCAL_DIR not configured');
   if (!env.SHOPEE_NAS_BACKUP_DIR) warnings.push('SHOPEE_NAS_BACKUP_DIR not configured');

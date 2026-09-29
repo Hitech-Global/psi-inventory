@@ -8,6 +8,7 @@ const { Transform } = require('stream');
 const { pipeline } = require('stream/promises');
 const express = require('express');
 const { ShopeeAdGroupImportJobRepository, TERMINAL } = require('./ad-group-import-job-repository');
+const { assertShopAccess } = require('./feishu-auth');
 
 const DEFAULT_MAX_FILE_BYTES = 10 * 1024 * 1024;
 const DEFAULT_MAX_TMP_BYTES = 200 * 1024 * 1024;
@@ -175,6 +176,7 @@ function createAdGroupImportAsyncRouter({
     try {
       const job = await jobs.get(req.params.id);
       if (!job) { res.status(404).json({ error: 'IMPORT_JOB_NOT_FOUND' }); return; }
+      assertShopAccess(req, job.targetShopId);
       res.json({ ok: true, job: publicJob(job) });
     } catch (error) { next(error); }
   });
@@ -182,6 +184,7 @@ function createAdGroupImportAsyncRouter({
   router.post('/ad-group-import-jobs/:id/confirm', async (req, res, next) => {
     try {
       const preview = await requireReusablePreview(jobs, req.params.id);
+      assertShopAccess(req, preview.targetShopId);
       const queued = await jobs.enqueue({
         operation: 'IMPORT',
         filename: preview.filename,

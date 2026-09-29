@@ -12,6 +12,7 @@ const { sumPerformance } = require('./metrics');
 const { productAdDiagnosis } = require('./product-ads-diagnosis');
 const { normalizeManualPromotion, normalizeManualItem } = require('./manual-ad-group');
 const { parseShopeeAdGroupFile } = require('./shopee-ad-group-import');
+const { ROLE_SUPER_ADMIN, authorizedShopIds, assertShopAccess } = require('./feishu-auth');
 
 function positiveInt(value, name) {
   const n = Number(value);
@@ -151,12 +152,20 @@ function createShopeeAnalyticsRouter({
   router.get('/shop-scopes', async (req, res, next) => {
     try {
       if (!shopScopeRepository) throw new Error('Shop scope registry is unavailable');
-      res.json({ shopScopes: await shopScopeRepository.list() });
+      let shopScopes = await shopScopeRepository.list();
+      if (req.auth?.enabled && req.auth.role !== ROLE_SUPER_ADMIN) {
+        const allowed = new Set(req.auth.shopIds || []);
+        shopScopes = shopScopes.filter(scope => allowed.has(scope.shopId));
+      }
+      res.json({ shopScopes });
     } catch (error) { next(error); }
   });
 
   router.post('/shop-scopes/import-only', express.json({ limit: '32kb' }), async (req, res, next) => {
     try {
+      if (req.auth?.enabled && req.auth.role !== ROLE_SUPER_ADMIN) {
+        throw scopeError('SUPER_ADMIN_REQUIRED', '只有超级管理员可以注册新店铺。', 403);
+      }
       if (!shopScopeRepository) throw new Error('Shop scope registry is unavailable');
       const shopId = positiveInt(req.body && req.body.shopId, 'shopId');
       const scope = await shopScopeRepository.registerImportOnly({
@@ -172,7 +181,11 @@ function createShopeeAnalyticsRouter({
 
   router.get('/shops', async (req, res, next) => {
     try {
-      const shops = await queryRepository.listShops({ activeOnly: req.query.include_inactive !== '1' });
+      let shops = await queryRepository.listShops({ activeOnly: req.query.include_inactive !== '1' });
+      if (req.auth?.enabled && req.auth.role !== ROLE_SUPER_ADMIN) {
+        const allowed = new Set(req.auth.shopIds || []);
+        shops = shops.filter(shop => allowed.has(shop.shopId));
+      }
       const countries = Array.from(new Map(shops.map(shop => [
         shop.countryCode,
         { code: shop.countryCode, name: shop.countryName || shop.countryCode },
@@ -279,7 +292,7 @@ function createShopeeAnalyticsRouter({
       if (startDate > endDate) throw new Error('start_date must be <= end_date');
       const countryCode = optionalCode(req.query.country, 'country');
       const brandCode = optionalCode(req.query.brand, 'brand');
-      const shopIds = parseShopIds(req.query.shop_ids);
+      const shopIds = authorizedShopIds(req, parseShopIds(req.query.shop_ids));
 
       const previous = previousPeriod(startDate, endDate);
       const [overview, previousOverview] = await Promise.all([
@@ -331,7 +344,7 @@ function createShopeeAnalyticsRouter({
     try {
       const countryCode = optionalCode(req.query.country, 'country');
       const brandCode = optionalCode(req.query.brand, 'brand');
-      const shopIds = new Set(parseShopIds(req.query.shop_ids));
+      const shopIds = new Set(authorizedShopIds(req, parseShopIds(req.query.shop_ids)));
 
       let shops = await queryRepository.listShops({ activeOnly: true });
       if (countryCode) shops = shops.filter(shop => shop.countryCode === countryCode);
@@ -495,6 +508,7 @@ function createShopeeAnalyticsRouter({
     try {
       if (!adPromotionRepository) throw new Error('Unified ad promotions are unavailable');
       const row = normalizeManualPromotion(req.body, { source: 'MANUAL' });
+      assertShopAccess(req, row.shopId);
       if (row.promotionType !== 'AD_GROUP') throw new Error('manual endpoint accepts AD_GROUP only');
       if (!shopScopeRepository) throw new Error('Shop scope registry is unavailable');
       if (!await shopScopeRepository.find(row.shopId)) {

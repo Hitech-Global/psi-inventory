@@ -600,3 +600,52 @@ ALTER TABLE shopee_ad_promotion_daily ADD COLUMN IF NOT EXISTS direct_gmv NUMERI
 ALTER TABLE shopee_ad_promotion_daily ADD COLUMN IF NOT EXISTS direct_roas NUMERIC(20,6);
 ALTER TABLE shopee_ad_promotion_item_daily ADD COLUMN IF NOT EXISTS direct_gmv NUMERIC(20,6);
 ALTER TABLE shopee_ad_promotion_item_daily ADD COLUMN IF NOT EXISTS direct_roas NUMERIC(20,6);
+
+-- Feishu login + store-scoped operator authorization.
+CREATE TABLE IF NOT EXISTS shopee_users (
+  id BIGSERIAL PRIMARY KEY,
+  feishu_open_id TEXT UNIQUE,
+  feishu_union_id TEXT UNIQUE,
+  feishu_user_id TEXT UNIQUE,
+  email TEXT,
+  name TEXT NOT NULL,
+  avatar_url TEXT,
+  role TEXT NOT NULL CHECK (role IN ('SUPER_ADMIN','OPERATOR')),
+  status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE','DISABLED')),
+  last_login_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_shopee_users_email_ci
+  ON shopee_users(lower(email)) WHERE email IS NOT NULL AND email <> '';
+
+CREATE TABLE IF NOT EXISTS shopee_user_shops (
+  user_id BIGINT NOT NULL REFERENCES shopee_users(id) ON DELETE CASCADE,
+  shop_id BIGINT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, shop_id)
+);
+CREATE INDEX IF NOT EXISTS idx_shopee_user_shops_shop
+  ON shopee_user_shops(shop_id, user_id);
+
+CREATE TABLE IF NOT EXISTS shopee_auth_sessions (
+  token_hash TEXT PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES shopee_users(id) ON DELETE CASCADE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  absolute_expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  revoked_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_shopee_auth_sessions_user
+  ON shopee_auth_sessions(user_id, expires_at DESC);
+
+CREATE TABLE IF NOT EXISTS shopee_auth_login_states (
+  state_hash TEXT PRIMARY KEY,
+  return_path TEXT NOT NULL DEFAULT '/',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at TIMESTAMPTZ NOT NULL,
+  consumed_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_shopee_auth_login_states_expiry
+  ON shopee_auth_login_states(expires_at) WHERE consumed_at IS NULL;

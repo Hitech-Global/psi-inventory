@@ -91,7 +91,28 @@ The importer can infer `start_date/end_date` from filenames containing `YYYYMMDD
 - Next-step validation actions
 - SKU event timeline (voucher, discount, return/refund, recommended ROAS and operation history)
 
-The standalone server binds to loopback by default. It is not yet integrated into the existing inventory navigation/auth stack.
+The standalone server binds to loopback by default.
+
+## Feishu team login and shop access
+
+Feishu login is opt-in and fail-closed. Keep `FEISHU_AUTH_ENABLE=NO` until a company Feishu app and a stable HTTPS domain are ready. Configure the Feishu app redirect URI as:
+
+```text
+https://<your-stable-domain>/auth/feishu/callback
+```
+
+Store `FEISHU_APP_ID` and `FEISHU_APP_SECRET` only in the desktop/server runtime environment. Do not commit the secret. The first super admin is allowlisted with `FEISHU_BOOTSTRAP_SUPER_ADMIN_EMAILS` and/or `FEISHU_BOOTSTRAP_SUPER_ADMIN_OPEN_IDS`.
+
+The application has two fixed roles:
+
+- `SUPER_ADMIN` — all shops plus user/role administration.
+- `OPERATOR` — only shops explicitly assigned in User Management.
+
+An unrecognized Feishu user may complete Feishu authorization once, but the local account is created disabled with no shop access. A super admin must activate the account and assign at least one shop before data access is granted.
+
+Application sessions use an opaque HttpOnly cookie. Only a SHA-256 token hash is stored in PostgreSQL. Sessions slide for 30 days and have a 90-day absolute maximum by default. Feishu access tokens are used only during login and are not retained as the application session.
+
+Every authenticated API request resolves the current user role/status and current shop assignments from PostgreSQL, so removing a shop or disabling a user takes effect without waiting for the browser session to expire.
 
 
 ## Multi-country / multi-brand / multi-shop

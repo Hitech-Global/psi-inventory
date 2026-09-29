@@ -7,6 +7,7 @@ const { ShopeeShopProfileRepository } = require('./shop-profile-repository');
 const { runBackfillShop } = require('./backfill-runner');
 const { daysInclusive } = require('./backfill-utils');
 const { assertOnlineOperationAllowed } = require('./deployment-mode');
+const { assertShopAccess } = require('./feishu-auth');
 
 const ALLOWED_SOURCES = new Set(['product-ads', 'gms']);
 const JOB_TTL_MS = 15 * 60 * 1000;
@@ -142,13 +143,16 @@ function createManualDataSyncRouter({ pool, runtimeFactory = () => createSyncRun
 
   router.post('/data/sync-range', express.json({ limit: '16kb' }), async (req, res, next) => {
     try {
-      res.json(await runSync(await resolveRequest(req.body)));
+      const input = await resolveRequest(req.body);
+      assertShopAccess(req, input.shopId);
+      res.json(await runSync(input));
     } catch (error) { next(error); }
   });
 
   router.post('/data/sync-jobs', express.json({ limit: '16kb' }), async (req, res, next) => {
     try {
       const input = await resolveRequest(req.body);
+      assertShopAccess(req, input.shopId);
       const jobId = randomUUID();
       const job = {
         id: jobId, status: 'RUNNING', input: { shopId: input.shopId, startDate: input.startDate, endDate: input.endDate },
@@ -173,13 +177,16 @@ function createManualDataSyncRouter({ pool, runtimeFactory = () => createSyncRun
     } catch (error) { next(error); }
   });
 
-  router.get('/data/sync-jobs/:jobId', (req, res) => {
-    const job = jobs.get(String(req.params.jobId || ''));
-    if (!job) {
-      res.status(404).json({ error: 'SYNC_JOB_NOT_FOUND', message: 'Data sync job was not found or has expired.' });
-      return;
-    }
-    res.json(job);
+  router.get('/data/sync-jobs/:jobId', (req, res, next) => {
+    try {
+      const job = jobs.get(String(req.params.jobId || ''));
+      if (!job) {
+        res.status(404).json({ error: 'SYNC_JOB_NOT_FOUND', message: 'Data sync job was not found or has expired.' });
+        return;
+      }
+      assertShopAccess(req, job.input.shopId);
+      res.json(job);
+    } catch (error) { next(error); }
   });
 
   return router;

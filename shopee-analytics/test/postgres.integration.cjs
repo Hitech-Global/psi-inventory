@@ -24,6 +24,7 @@ const { ShopeePromotionRepository } = require('../src/promotion-repository');
 const { ShopeeStrategyRepository } = require('../src/strategy-repository');
 const { ShopeeAdPromotionRepository } = require('../src/ad-promotion-repository');
 const { ShopeeShopScopeRepository } = require('../src/shop-scope-repository');
+const { FeishuAuthRepository, hashToken } = require('../src/feishu-auth');
 
 (async () => {
   const pool = createAnalyticsPool({ connectionString: url, max: 3 });
@@ -46,10 +47,32 @@ const { ShopeeShopScopeRepository } = require('../src/shop-scope-repository');
       'shopee_returns',
       'shopee_ad_promotion_daily',
       'shopee_ad_promotion_item_daily',
+      'shopee_users',
+      'shopee_user_shops',
+      'shopee_auth_sessions',
+      'shopee_auth_login_states',
     ]) {
       assert(names.has(expected), `missing table ${expected}`);
     }
-    assert.strictEqual(names.size, 35, 'schema must expose exactly 35 shopee_* tables');
+    assert.strictEqual(names.size, 39, 'schema must expose exactly 39 shopee_* tables');
+
+    const authRepository = new FeishuAuthRepository({ pool });
+    const operatorId = await authRepository.saveUser({
+      name: 'Feishu Operator', email: 'operator@example.com', role: 'OPERATOR', status: 'ACTIVE', shopIds: [101, 102],
+    });
+    const sessionHash = hashToken('integration-session-token');
+    await authRepository.createSession({ userId: operatorId, tokenHash: sessionHash, sessionDays: 30, absoluteDays: 90 });
+    let authSession = await authRepository.resolveSession(sessionHash);
+    assert.deepStrictEqual(authSession.user.shopIds.sort((a,b) => a-b), [101, 102]);
+    await authRepository.saveUser({
+      id: operatorId, name: 'Feishu Operator', email: 'operator@example.com', role: 'OPERATOR', status: 'ACTIVE', shopIds: [102],
+    });
+    authSession = await authRepository.resolveSession(sessionHash);
+    assert.deepStrictEqual(authSession.user.shopIds, [102], 'existing session must see shop assignment changes immediately');
+    await authRepository.saveUser({
+      id: operatorId, name: 'Feishu Operator', email: 'operator@example.com', role: 'OPERATOR', status: 'DISABLED', shopIds: [102],
+    });
+    assert.strictEqual(await authRepository.resolveSession(sessionHash), null, 'disabled user session must stop authorizing immediately');
 
     const repository = new ShopeeAnalyticsRepository({ pool });
     const unifiedPromotionRepository = new ShopeeAdPromotionRepository({ pool });
