@@ -2,6 +2,7 @@
 
 (() => {
   const ROLE_ADMIN = 'SUPER_ADMIN';
+  const ROLE_REVIEWER = 'REVIEWER';
   const state = { me: null, users: [], shops: [], editing: null };
   const dict = {
     zh: { settings:'设置', users:'用户管理', roles:'角色管理', logout:'退出登录', add:'添加用户', edit:'编辑', userTitle:'用户管理', userSub:'管理飞书用户、角色和可访问店铺', roleTitle:'角色管理', roleSub:'系统固定两个角色；运营的店铺范围在用户管理中设置。', name:'姓名', account:'飞书账号', role:'角色', shops:'店铺权限', status:'状态', active:'启用', disabled:'禁用', admin:'超级管理员', operator:'运营', allShops:'全部店铺', save:'保存', cancel:'取消', close:'关闭', selectShop:'运营角色必须至少分配一个店铺', accountHint:'邮箱或 Open ID', noUsers:'暂无用户', shopCount:'家店铺' },
@@ -147,6 +148,7 @@
     try {
       const me = await request('/api/shopee-auth/me');
       state.me = me;
+      if (me?.user?.role === ROLE_REVIEWER) document.documentElement.classList.add('reviewer-mode');
       if (me.enabled && me.authenticated) renderToolbar();
     } catch (error) { if (error.message !== 'AUTH_REQUIRED') console.warn('[Auth UI]', error.message); }
   }

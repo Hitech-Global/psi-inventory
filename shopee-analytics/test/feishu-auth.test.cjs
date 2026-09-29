@@ -39,7 +39,7 @@ for (const table of ['shopee_users','shopee_user_shops','shopee_auth_sessions','
   assert(schema.includes(`CREATE TABLE IF NOT EXISTS ${table}`), `${table} must exist in schema`);
 }
 const server = fs.readFileSync(path.join(root, 'src', 'standalone-server.js'), 'utf8');
-assert(server.includes("createFeishuAuth({ pool })"));
+assert(server.includes("createFeishuAuth({ pool, reviewerAuth })"));
 assert(server.includes("app.get('/auth/feishu/login', feishuAuth.handleLogin)"));
 assert(server.includes("app.get('/auth/feishu/callback', feishuAuth.handleCallback)"));
 assert(server.includes('feishuAuth.requireApiSession, feishuAuth.enforceShopAccess'));

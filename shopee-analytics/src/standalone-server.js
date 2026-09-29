@@ -17,6 +17,7 @@ const { createSkillRuntime } = require('./skill-runtime');
 const { ShopeeShopScopeRepository } = require('./shop-scope-repository');
 const { createFeishuAuth } = require('./feishu-auth');
 const { BrandPortalOAuthService } = require('./brand-portal-oauth-service');
+const { createReviewerAuth, ROLE_REVIEWER } = require('./reviewer-auth');
 
 function resolveBindAddress(env = process.env) {
   const requested = env.SHOPEE_ANALYTICS_HOST || '127.0.0.1';
@@ -50,7 +51,8 @@ function createApp({ pool, skillProvider = null, importJobPool = null }) {
   } = createSkillRuntime({ pool, skillProvider });
   const shopScopeRepository = new ShopeeShopScopeRepository({ pool });
   const backupStatusProvider = createBackupStatusProvider();
-  const feishuAuth = createFeishuAuth({ pool });
+  const reviewerAuth = createReviewerAuth();
+  const feishuAuth = createFeishuAuth({ pool, reviewerAuth });
   const brandPortalOAuthService = new BrandPortalOAuthService({ pool });
 
   // Docker/host health checks must remain available before auth middleware.
@@ -58,8 +60,16 @@ function createApp({ pool, skillProvider = null, importJobPool = null }) {
   app.get('/api/shopee-analytics/health', (req, res) => {
     res.json({ ok: true, module: 'shopee-analytics', mode: 'read-only' });
   });
+  app.get('/review', reviewerAuth.handleEntry);
+  app.use('/api/shopee-review', reviewerAuth.router);
   app.use('/api/shopee-auth', feishuAuth.router);
-  app.use('/api/shopee-analytics', feishuAuth.requireApiSession, feishuAuth.enforceShopAccess);
+  app.use('/api/shopee-analytics', feishuAuth.requireApiSession, feishuAuth.enforceShopAccess, (req, res, next) => {
+    if (req.auth?.role === ROLE_REVIEWER && !['GET','HEAD','OPTIONS'].includes(req.method)) {
+      res.status(403).json({ error:'REVIEW_READ_ONLY', message:'Shopee reviewer access is read-only.' });
+      return;
+    }
+    next();
+  });
 
   if (importJobPool) {
     app.use('/api/shopee-analytics', createAdGroupImportAsyncRouter({ pool: importJobPool }));

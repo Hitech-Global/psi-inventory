@@ -6,6 +6,7 @@ const { ShopeeShopScopeRepository } = require('./shop-scope-repository');
 
 const ROLE_SUPER_ADMIN = 'SUPER_ADMIN';
 const ROLE_OPERATOR = 'OPERATOR';
+const ROLE_REVIEWER = 'REVIEWER';
 const STATUS_ACTIVE = 'ACTIVE';
 const STATUS_DISABLED = 'DISABLED';
 const DEFAULT_COOKIE = 'shopee_ops_session';
@@ -397,22 +398,21 @@ function sessionTokenFromRequest(req, config) {
 }
 
 function createAuthContext(session, config) {
+  if (session) {
+    return { enabled: true, role: session.user.role, shopIds: session.user.shopIds, user: session.user };
+  }
   if (!config.enabled) return { enabled: false, role: ROLE_SUPER_ADMIN, shopIds: [], user: null };
-  if (!session) return null;
-  return {
-    enabled: true,
-    role: session.user.role,
-    shopIds: session.user.shopIds,
-    user: session.user,
-  };
+  return null;
 }
 
-function createFeishuAuth({ pool, env = process.env } = {}) {
+function createFeishuAuth({ pool, env = process.env, reviewerAuth = null } = {}) {
   const config = loadFeishuAuthConfig(env);
   const repository = new FeishuAuthRepository({ pool });
   const shopScopeRepository = new ShopeeShopScopeRepository({ pool });
 
   const resolveRequestSession = async req => {
+    const reviewSession = reviewerAuth && reviewerAuth.resolveSession ? reviewerAuth.resolveSession(req) : null;
+    if (reviewSession) return reviewSession;
     if (!config.enabled) return null;
     const token = sessionTokenFromRequest(req, config);
     if (!token) return null;
@@ -423,10 +423,10 @@ function createFeishuAuth({ pool, env = process.env } = {}) {
 
   const requireApiSession = async (req, res, next) => {
     try {
-      if (!config.enabled) { req.auth = createAuthContext(null, config); next(); return; }
       if (req.path === '/health') { next(); return; }
       const session = await resolveRequestSession(req);
-      if (!session) { res.status(401).json({ error: 'AUTH_REQUIRED', message: '请使用飞书登录后继续。' }); return; }
+      if (!config.enabled && !(reviewerAuth && reviewerAuth.config && reviewerAuth.config.enabled)) { req.auth = createAuthContext(null, config); next(); return; }
+      if (!session) { res.status(401).json({ error: 'AUTH_REQUIRED', message: '请登录后继续。' }); return; }
       req.auth = createAuthContext(session, config);
       next();
     } catch (error) { next(error); }
@@ -442,8 +442,8 @@ function createFeishuAuth({ pool, env = process.env } = {}) {
 
   const requireWebSession = async (req, res, next) => {
     try {
-      if (!config.enabled) { next(); return; }
       const session = await resolveRequestSession(req);
+      if (!config.enabled && !(reviewerAuth && reviewerAuth.config && reviewerAuth.config.enabled)) { next(); return; }
       if (!session) {
         const returnPath = normalizeReturnPath(req.originalUrl || '/');
         res.redirect(`/login?return=${encodeURIComponent(returnPath)}`);
@@ -467,8 +467,8 @@ function createFeishuAuth({ pool, env = process.env } = {}) {
 
   router.get('/me', async (req, res, next) => {
     try {
-      if (!config.enabled) { res.json({ enabled: false, authenticated: false }); return; }
       const session = await resolveRequestSession(req);
+      if (!config.enabled && !(reviewerAuth && reviewerAuth.config && reviewerAuth.config.enabled)) { res.json({ enabled: false, authenticated: false }); return; }
       if (!session) { res.status(401).json({ enabled: true, authenticated: false }); return; }
       req.auth = createAuthContext(session, config);
       res.json({ enabled: true, authenticated: true, user: session.user });
@@ -496,7 +496,9 @@ function createFeishuAuth({ pool, env = process.env } = {}) {
     try {
       const token = sessionTokenFromRequest(req, config);
       if (token && config.enabled) await repository.revokeSession(hashToken(token));
-      res.setHeader('Set-Cookie', cookieHeader(config.cookieName, '', { secure: config.cookieSecure, maxAgeSeconds: 0 }));
+      const cookies = [cookieHeader(config.cookieName, '', { secure: config.cookieSecure, maxAgeSeconds: 0 })];
+      if (reviewerAuth && reviewerAuth.clearCookie) cookies.push(reviewerAuth.clearCookie());
+      res.setHeader('Set-Cookie', cookies);
       res.json({ ok: true });
     } catch (error) { next(error); }
   });
@@ -616,6 +618,7 @@ function createFeishuAuth({ pool, env = process.env } = {}) {
 module.exports = {
   ROLE_SUPER_ADMIN,
   ROLE_OPERATOR,
+  ROLE_REVIEWER,
   STATUS_ACTIVE,
   STATUS_DISABLED,
   FeishuAuthRepository,
