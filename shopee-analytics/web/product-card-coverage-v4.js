@@ -43,7 +43,7 @@
         badge.textContent = '暂无API汇总';
         badge.className = 'pill warn';
         notice.classList.remove('hidden');
-        notice.textContent = `当前周期没有 Product Card 店铺级 CPC API 数据${missing ? `，缺失日期：${missing}` : ''}。可点击【读取数据】从 Shopee API 抓取；系统不会使用其他广告类型数据替代总览。`;
+        notice.textContent = `当前周期没有 Product Card 店铺级 CPC API 数据${missing ? `，缺失日期：${missing}` : ''}。可点击【读取数据】从 Shopee API 抓取；系统不会使用单品广告、全店推或广告组数据替代总览。`;
         return;
       }
       const expected = Number(coverage.expectedDays || 0);
@@ -56,7 +56,7 @@
       } else {
         notice.classList.remove('hidden');
         const missing = Array.isArray(coverage.missingDates) ? coverage.missingDates.join('、') : '';
-        notice.textContent = `Product Card 汇总数据不完整：当前 ${available}/${expected} 天，缺失 ${coverage.missingDays || 0} 天${missing ? `（${missing}）` : ''}。可点击【读取数据】从 Shopee API 补抓缺失周期；补齐前当前汇总只代表已落库日期。`;
+        notice.textContent = `Product Card 汇总数据不完整：当前 ${available}/${expected} 天，缺失 ${coverage.missingDays || 0} 天${missing ? `（${missing}）` : ''}。可点击【读取数据】从 Shopee API 补抓缺失周期；补齐前当前汇总只代表已落库日期，不能当作完整周期总盘。`;
       }
     } catch (error) {
       if (seq !== refreshSeq) return;
