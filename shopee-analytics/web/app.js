@@ -529,6 +529,43 @@ function contributionList(title, rows, currency, tone) {
   return `<article class="store-contribution-card ${tone}"><h3>${title}</h3><div class="store-contribution-list">${rows.slice(0,3).map(item => `<div><span><strong>${escapeHtml(item.itemSku || ('#' + item.itemId))}</strong><small>${escapeHtml(item.itemName || '')}</small></span><b class="${Number(item.salesDelta) >= 0 ? 'positive' : 'negative'}">${Number(item.salesDelta) >= 0 ? '+' : ''}${formatMoney(item.salesDelta, currency)}</b></div>`).join('')}</div></article>`;
 }
 
+async function renderBrandPortalAction(shopId, shopBiAvailable) {
+  const button = $('#storeBrandPortalAction');
+  if (!button) return;
+  button.classList.remove('connected');
+  button.classList.remove('hidden');
+  button.disabled = true;
+  button.onclick = null;
+  button.textContent = '检查 Brand Portal…';
+  try {
+    const status = await json(`/api/shopee-analytics/brand-portal/status?shop_id=${encodeURIComponent(shopId)}`);
+    if (status.tokenPresent && status.principalId) {
+      button.textContent = 'Brand Portal 已连接';
+      button.classList.add('connected');
+      button.title = `Principal ID ${status.principalId}`;
+      if (shopBiAvailable) button.classList.add('hidden');
+      return;
+    }
+    if (!status.credentialConfigured) {
+      button.textContent = '需配置 Brand Portal App';
+      button.title = '先在 Shopee Open Platform 创建 Brand Portal Service App 并配置 Partner ID / Key。';
+      return;
+    }
+    if (!status.redirectUrl) {
+      button.textContent = '需配置回调地址';
+      button.title = 'Brand Portal OAuth 回调地址尚未配置。';
+      return;
+    }
+    button.textContent = '连接 Brand Portal';
+    button.disabled = false;
+    button.title = '授权后系统会自动同步店铺 Business Insights。';
+    button.onclick = () => { location.href = `/api/shopee-analytics/brand-portal/oauth/start?shop_id=${encodeURIComponent(shopId)}`; };
+  } catch (error) {
+    button.textContent = 'Brand Portal 状态不可用';
+    button.title = error.message || String(error);
+  }
+}
+
 function renderStoreDetail(data) {
   const shop = data.shop;
   const current = data.current || {};
@@ -649,6 +686,7 @@ async function loadStoreDetail() {
   });
   const data = await json(`/api/shopee-analytics/shops/${shop.shopId}/detail?${params}`);
   renderStoreDetail(data);
+  await renderBrandPortalAction(shop.shopId, Boolean(data.dataAvailability && data.dataAvailability.shopBi));
 }
 
 function renderCampaignSummary(campaigns, shop) {

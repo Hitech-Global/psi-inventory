@@ -13,6 +13,7 @@ const { productAdDiagnosis } = require('./product-ads-diagnosis');
 const { normalizeManualPromotion, normalizeManualItem } = require('./manual-ad-group');
 const { parseShopeeAdGroupFile } = require('./shopee-ad-group-import');
 const { ROLE_SUPER_ADMIN, authorizedShopIds, assertShopAccess } = require('./feishu-auth');
+const { BRAND_PORTAL_COOKIE, stateCookie, clearStateCookie, parseCookie } = require('./brand-portal-oauth-service');
 const { SkillJobManager, normalizeReportLanguage } = require('./skill-job-manager');
 
 function positiveInt(value, name) {
@@ -204,6 +205,7 @@ function createShopeeAnalyticsRouter({
   skillReportRepository = null,
   runSkillAnalysis = null,
   runAdGroupSkillAnalysis = null,
+  brandPortalOAuthService = null,
 }) {
   const router = express.Router();
   const skillJobManager = new SkillJobManager();
@@ -264,6 +266,47 @@ function createShopeeAnalyticsRouter({
     } catch (error) {
       next(error);
     }
+  });
+
+  router.get('/brand-portal/status', async (req, res, next) => {
+    try {
+      if (!brandPortalOAuthService) throw Object.assign(new Error('Brand Portal OAuth service is unavailable'), { status: 503 });
+      const shopId = positiveInt(req.query.shop_id, 'shop_id');
+      assertShopAccess(req, shopId);
+      res.json(await brandPortalOAuthService.status({ shopId }));
+    } catch (error) { next(error); }
+  });
+
+  router.get('/brand-portal/oauth/start', async (req, res, next) => {
+    try {
+      if (!req.auth || req.auth.role !== ROLE_SUPER_ADMIN) {
+        res.status(403).json({ error: 'SUPER_ADMIN_REQUIRED', message: 'Only super admins can connect Brand Portal.' });
+        return;
+      }
+      if (!brandPortalOAuthService) throw Object.assign(new Error('Brand Portal OAuth service is unavailable'), { status: 503 });
+      const shopId = positiveInt(req.query.shop_id, 'shop_id');
+      const result = await brandPortalOAuthService.beginAuthorization({ shopId });
+      res.setHeader('Set-Cookie', stateCookie(result.state, result.ttlSeconds));
+      res.redirect(302, result.authorizationUrl);
+    } catch (error) { next(error); }
+  });
+
+  router.get('/brand-portal/oauth/callback', async (req, res, next) => {
+    try {
+      if (!req.auth || req.auth.role !== ROLE_SUPER_ADMIN) {
+        res.status(403).json({ error: 'SUPER_ADMIN_REQUIRED', message: 'Only super admins can connect Brand Portal.' });
+        return;
+      }
+      if (!brandPortalOAuthService) throw Object.assign(new Error('Brand Portal OAuth service is unavailable'), { status: 503 });
+      const state = parseCookie(req.headers.cookie, BRAND_PORTAL_COOKIE);
+      const result = await brandPortalOAuthService.completeAuthorization({
+        state,
+        code: typeof req.query.code === 'string' ? req.query.code : '',
+        providerError: req.query.error || null,
+      });
+      res.setHeader('Set-Cookie', clearStateCookie());
+      res.redirect(302, '/?brand_portal=connected&shop_id=' + encodeURIComponent(result.shopId));
+    } catch (error) { next(error); }
   });
 
   router.get('/shops/:shopId/detail', async (req, res, next) => {

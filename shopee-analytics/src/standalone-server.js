@@ -16,6 +16,7 @@ const { createConfiguredSkillProvider } = require('./skill-provider');
 const { createSkillRuntime } = require('./skill-runtime');
 const { ShopeeShopScopeRepository } = require('./shop-scope-repository');
 const { createFeishuAuth } = require('./feishu-auth');
+const { BrandPortalOAuthService } = require('./brand-portal-oauth-service');
 
 function resolveBindAddress(env = process.env) {
   const requested = env.SHOPEE_ANALYTICS_HOST || '127.0.0.1';
@@ -50,6 +51,7 @@ function createApp({ pool, skillProvider = null, importJobPool = null }) {
   const shopScopeRepository = new ShopeeShopScopeRepository({ pool });
   const backupStatusProvider = createBackupStatusProvider();
   const feishuAuth = createFeishuAuth({ pool });
+  const brandPortalOAuthService = new BrandPortalOAuthService({ pool });
 
   // Docker/host health checks must remain available before auth middleware.
   // This endpoint exposes no shop, user, or business data.
@@ -81,6 +83,7 @@ function createApp({ pool, skillProvider = null, importJobPool = null }) {
     skillReportRepository,
     runSkillAnalysis,
     runAdGroupSkillAnalysis,
+    brandPortalOAuthService,
   }));
 
   const webDir = path.join(__dirname, '..', 'web');
