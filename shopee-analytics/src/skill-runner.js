@@ -33,18 +33,22 @@ class SkillRunner {
     this.reportRepository = reportRepository;
   }
 
-  async run(analysisPackage) {
+  async run(analysisPackage, { onProgress = null } = {}) {
     const pending = this.reportRepository
       ? await this.reportRepository.createPending({ analysisPackage, skillName: SKILL_NAME, skillVersion: SKILL_VERSION })
       : null;
     try {
+      if (typeof onProgress === 'function') onProgress(35, 'MODEL_REQUEST', 'Submitting Skill to model');
       const raw = await this.executor({
         skillName: SKILL_NAME,
         skillVersion: SKILL_VERSION,
         analysisPackage,
+        onProgress,
       });
+      if (typeof onProgress === 'function') onProgress(92, 'VALIDATING_REPORT', 'Validating structured report');
       const report = validateReport(raw);
       if (this.reportRepository && pending) {
+        if (typeof onProgress === 'function') onProgress(97, 'SAVING_REPORT', 'Saving report');
         await this.reportRepository.complete({ reportId: pending.id, report });
       }
       return { reportId: pending && pending.id || null, report };

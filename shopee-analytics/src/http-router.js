@@ -13,6 +13,7 @@ const { productAdDiagnosis } = require('./product-ads-diagnosis');
 const { normalizeManualPromotion, normalizeManualItem } = require('./manual-ad-group');
 const { parseShopeeAdGroupFile } = require('./shopee-ad-group-import');
 const { ROLE_SUPER_ADMIN, authorizedShopIds, assertShopAccess } = require('./feishu-auth');
+const { SkillJobManager, normalizeReportLanguage } = require('./skill-job-manager');
 
 function positiveInt(value, name) {
   const n = Number(value);
@@ -141,6 +142,7 @@ function createShopeeAnalyticsRouter({
   runAdGroupSkillAnalysis = null,
 }) {
   const router = express.Router();
+  const skillJobManager = new SkillJobManager();
 
   function scopeError(code, message, status = 422) {
     const error = new Error(message);
@@ -750,6 +752,61 @@ function createShopeeAnalyticsRouter({
     } catch (error) {
       next(error);
     }
+  });
+
+  router.post('/skill-jobs/campaigns/:campaignId', express.json({ limit: '32kb' }), async (req, res, next) => {
+    try {
+      if (typeof runSkillAnalysis !== 'function') throw new Error('Skill execution is not configured');
+      const shopId = positiveInt(req.query.shop_id, 'shop_id');
+      assertShopAccess(req, shopId);
+      const campaignId = positiveInt(req.params.campaignId, 'campaignId');
+      const startDate = isoDate(req.body && req.body.start_date, 'start_date');
+      const endDate = isoDate(req.body && req.body.end_date, 'end_date');
+      if (startDate > endDate) throw new Error('start_date must be <= end_date');
+      const language = normalizeReportLanguage(req.body && req.body.language);
+      const job = skillJobManager.create({
+        shopId, language,
+        task: onProgress => runSkillAnalysis({
+          shopId, campaignId, startDate, endDate, triggerType: 'MANUAL',
+          triggerReason: req.body && req.body.reason ? String(req.body.reason).slice(0, 500) : null,
+          outputLanguage: language, onProgress,
+        }),
+      });
+      res.status(202).json({ job });
+    } catch (error) { next(error); }
+  });
+
+  router.post('/skill-jobs/ad-groups', express.json({ limit: '32kb' }), async (req, res, next) => {
+    try {
+      if (typeof runAdGroupSkillAnalysis !== 'function') throw new Error('Ad Group Skill execution is not configured');
+      const shopId = positiveInt(req.query.shop_id, 'shop_id');
+      assertShopAccess(req, shopId);
+      const promotionKey = String(req.body && req.body.promotion_key || '').trim();
+      if (!promotionKey || promotionKey.length > 512) throw new Error('promotion_key is required');
+      const startDate = isoDate(req.body && req.body.start_date, 'start_date');
+      const endDate = isoDate(req.body && req.body.end_date, 'end_date');
+      if (startDate > endDate) throw new Error('start_date must be <= end_date');
+      const language = normalizeReportLanguage(req.body && req.body.language);
+      const job = skillJobManager.create({
+        shopId, language,
+        task: onProgress => runAdGroupSkillAnalysis({
+          shopId, promotionKey, startDate, endDate, triggerType: 'MANUAL',
+          triggerReason: req.body && req.body.reason ? String(req.body.reason).slice(0, 500) : null,
+          outputLanguage: language, onProgress,
+        }),
+      });
+      res.status(202).json({ job });
+    } catch (error) { next(error); }
+  });
+
+  router.get('/skill-jobs/:jobId', (req, res, next) => {
+    try {
+      const shopId = positiveInt(req.query.shop_id, 'shop_id');
+      assertShopAccess(req, shopId);
+      const job = skillJobManager.get(req.params.jobId, { shopId });
+      if (!job) return res.status(404).json({ error: 'SKILL_JOB_NOT_FOUND' });
+      res.json({ job });
+    } catch (error) { next(error); }
   });
 
   router.post('/ad-groups/skill-report', express.json({ limit: '32kb' }), async (req, res, next) => {

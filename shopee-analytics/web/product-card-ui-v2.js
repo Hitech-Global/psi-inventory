@@ -391,26 +391,132 @@
     return rows.length ? `<ul>${rows.map(row => `<li>${esc(row)}</li>`).join('')}</ul>` : '<span class="muted">—</span>';
   }
 
+  const SKILL_REPORT_LANGUAGE_KEY = 'shopeeSkillReportLanguage';
+  const skillDelay = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+  function skillUiLanguage() {
+    return window.ShopeeMetricLabels?.localeFromDocument?.() === 'en' ? 'en-US' : 'zh-CN';
+  }
+
+  function skillCopy(language) {
+    const zh = language === 'zh-CN';
+    return zh ? {
+      facts:'事实', inferences:'推断', hypotheses:'假设与验证', nextValidation:'下一步验证', limitations:'数据限制',
+      generating:'正在生成分析报告', chooseTitle:'选择报告语言', chooseHint:'本次报告将按你选择的语言生成。',
+      cancel:'取消', chinese:'中文', english:'English', failed:'生成分析失败', complete:'报告生成完成',
+      stages:{ QUEUED:'排队中', PREPARING:'准备分析', LOADING_DATA:'读取数据', PACKAGE_READY:'整理分析数据', MODEL_REQUEST:'提交 Skill', MODEL_GENERATING:'千问正在生成报告', MODEL_RESPONSE:'已收到模型结果', MODEL_VALIDATED:'结构化结果已解析', VALIDATING_REPORT:'校验报告', SAVING_REPORT:'保存报告', COMPLETED:'完成' },
+    } : {
+      facts:'Facts', inferences:'Inferences', hypotheses:'Hypotheses & validation', nextValidation:'Next validation', limitations:'Limitations',
+      generating:'Generating analysis report', chooseTitle:'Choose report language', chooseHint:'This report will be generated in the language you select.',
+      cancel:'Cancel', chinese:'中文', english:'English', failed:'Analysis generation failed', complete:'Report completed',
+      stages:{ QUEUED:'Queued', PREPARING:'Preparing analysis', LOADING_DATA:'Loading data', PACKAGE_READY:'Preparing analysis package', MODEL_REQUEST:'Submitting Skill', MODEL_GENERATING:'Qwen is generating the report', MODEL_RESPONSE:'Model response received', MODEL_VALIDATED:'Structured output parsed', VALIDATING_REPORT:'Validating report', SAVING_REPORT:'Saving report', COMPLETED:'Completed' },
+    };
+  }
+
+  function stageDisplay(stage, language) {
+    const zh = language === 'zh-CN';
+    if (!zh) return stage || '—';
+    return ({ LEARNING:'学习期', CONVERGING:'收敛期', STABLE:'稳定期', UNSTABLE:'不稳定期' })[stage] || stage || '—';
+  }
+
+  function chooseSkillReportLanguage() {
+    const uiLanguage = skillUiLanguage();
+    const copy = skillCopy(uiLanguage);
+    const saved = localStorage.getItem(SKILL_REPORT_LANGUAGE_KEY) || uiLanguage;
+    return new Promise(resolve => {
+      const root = document.createElement('div');
+      root.className = 'admin-modal-backdrop skill-language-backdrop';
+      root.innerHTML = `<div class="admin-modal skill-language-modal" role="dialog" aria-modal="true">
+        <div class="admin-modal-head"><div><h2>${esc(copy.chooseTitle)}</h2><p>${esc(copy.chooseHint)}</p></div><button class="admin-close" type="button" data-skill-lang-cancel>×</button></div>
+        <div class="skill-language-options">
+          <button type="button" class="skill-language-option ${saved === 'zh-CN' ? 'selected' : ''}" data-skill-lang="zh-CN"><strong>中文</strong><span>简体中文报告</span></button>
+          <button type="button" class="skill-language-option ${saved === 'en-US' ? 'selected' : ''}" data-skill-lang="en-US"><strong>English</strong><span>English report</span></button>
+        </div>
+        <div class="admin-modal-actions"><button type="button" class="ghost" data-skill-lang-cancel>${esc(copy.cancel)}</button></div>
+      </div>`;
+      const finish = language => {
+        root.remove();
+        if (language) localStorage.setItem(SKILL_REPORT_LANGUAGE_KEY, language);
+        resolve(language || null);
+      };
+      root.querySelectorAll('[data-skill-lang]').forEach(button => button.addEventListener('click', () => finish(button.dataset.skillLang)));
+      root.querySelectorAll('[data-skill-lang-cancel]').forEach(button => button.addEventListener('click', () => finish(null)));
+      root.addEventListener('click', event => { if (event.target === root) finish(null); });
+      document.body.appendChild(root);
+    });
+  }
+
   function humanizeSkillError(error) {
-    const message = String(error?.message || error || '未知错误');
-    if (/provider is not configured|SHOPEE_SKILL_OPENAI_API_KEY is required/i.test(message)) {
-      return 'Skill 运行环境尚未配置 OpenAI Provider/API Key；数据已经保留，配置后可重新生成分析。';
+    const message = String(error?.message || error || 'Unknown error');
+    if (/provider is not configured|SHOPEE_SKILL_OPENAI_API_KEY is required|SHOPEE_SKILL_QWEN_API_KEY is required/i.test(message)) {
+      return 'Skill 运行环境尚未配置，请检查模型 Provider/API Key。';
     }
     if (/timeout|timed out/i.test(message)) return 'Skill 分析请求超时，请稍后重新生成。';
+    if (/SKILL_JOB_NOT_FOUND/i.test(message)) return '分析任务已失效，请重新点击生成分析。';
     return message;
   }
 
-  function skillReportHtml(report) {
-    if (!report) return '<div class="empty-inline">Skill 没有返回报告。</div>';
+  function skillReportHtml(report, language = 'zh-CN') {
+    const copy = skillCopy(language);
+    if (!report) return `<div class="empty-inline">${language === 'zh-CN' ? 'Skill 没有返回报告。' : 'Skill returned no report.'}</div>`;
+    const hypothesisText = item => item ? `${item.statement || ''}${item.validation ? (language === 'zh-CN' ? `；验证：${item.validation}` : `; Validation: ${item.validation}`) : ''}` : '';
+    const limitations = Array.isArray(report.limitations) && report.limitations.length
+      ? `<div class="skill-report-block"><strong>${esc(copy.limitations)}</strong>${reportList(report.limitations, item => item)}</div>` : '';
     return `<section class="skill-report-card">
-      <div class="skill-report-head"><strong>Shopee GMV Max Skill</strong><span class="skill-report-stage">${esc(report.stage || '—')}</span></div>
+      <div class="skill-report-head"><strong>Shopee GMV Max Skill</strong><span class="skill-report-stage">${esc(stageDisplay(report.stage, language))}</span></div>
       <div class="skill-report-grid">
-        <div class="skill-report-block"><strong>事实</strong>${reportList(report.facts, item => item?.statement)}</div>
-        <div class="skill-report-block"><strong>推断</strong>${reportList(report.inferences, item => item?.statement)}</div>
-        <div class="skill-report-block"><strong>假设与验证</strong>${reportList(report.hypotheses, item => item ? `${item.statement || ''}${item.validation ? `；验证：${item.validation}` : ''}` : '')}</div>
-        <div class="skill-report-block"><strong>下一步验证</strong>${reportList(report.nextValidation, item => item)}</div>
+        <div class="skill-report-block"><strong>${esc(copy.facts)}</strong>${reportList(report.facts, item => item?.statement)}</div>
+        <div class="skill-report-block"><strong>${esc(copy.inferences)}</strong>${reportList(report.inferences, item => item?.statement)}</div>
+        <div class="skill-report-block"><strong>${esc(copy.hypotheses)}</strong>${reportList(report.hypotheses, hypothesisText)}</div>
+        <div class="skill-report-block"><strong>${esc(copy.nextValidation)}</strong>${reportList(report.nextValidation, item => item)}</div>
+        ${limitations}
       </div>
     </section>`;
+  }
+
+  function skillProgressHtml(job, language, displayProgress = null) {
+    const copy = skillCopy(language);
+    const progress = Math.max(0, Math.min(100, Number(displayProgress ?? job?.progress ?? 0)));
+    const stageText = copy.stages[job?.stage] || job?.message || copy.generating;
+    return `<div class="skill-progress-card">
+      <div class="skill-progress-head"><strong>${esc(copy.generating)}</strong><span>${Math.round(progress)}%</span></div>
+      <div class="skill-progress-track"><span style="width:${progress}%"></span></div>
+      <div class="skill-progress-stage">${esc(stageText)}</div>
+    </div>`;
+  }
+
+  async function pollSkillJob({ jobId, shopId, host, language }) {
+    let displayProgress = 3;
+    while (true) {
+      const payload = await api(`/api/shopee-analytics/skill-jobs/${encodeURIComponent(jobId)}?shop_id=${shopId}`);
+      const job = payload.job || {};
+      const backendProgress = Number(job.progress || 0);
+      if (job.stage === 'MODEL_GENERATING') displayProgress = Math.min(79, Math.max(displayProgress + 1, backendProgress));
+      else displayProgress = Math.max(displayProgress, backendProgress);
+      host.innerHTML = skillProgressHtml(job, language, displayProgress);
+      if (job.status === 'SUCCEEDED') return job.result;
+      if (job.status === 'FAILED') throw new Error(job.errorMessage || 'Skill job failed');
+      await skillDelay(750);
+    }
+  }
+
+  async function startSkillJob({ url, body, host, button, shopId, language }) {
+    button.disabled = true;
+    button.textContent = language === 'zh-CN' ? '生成中…' : 'Generating…';
+    host.innerHTML = skillProgressHtml({ progress:3, stage:'QUEUED' }, language, 3);
+    try {
+      const created = await postApi(url, { ...body, language });
+      const jobId = created.job?.id;
+      if (!jobId) throw new Error('Skill job id is missing');
+      const result = await pollSkillJob({ jobId, shopId, host, language });
+      host.innerHTML = skillReportHtml(result?.report, language);
+    } catch (error) {
+      const copy = skillCopy(language);
+      host.innerHTML = `<div class="empty-inline">${esc(copy.failed)}：${esc(humanizeSkillError(error))}</div>`;
+    } finally {
+      button.disabled = false;
+      button.textContent = skillUiLanguage() === 'en-US' ? 'Generate analysis' : '生成分析';
+    }
   }
 
   async function runSkillAnalysisV2(button) {
@@ -418,22 +524,13 @@
     const campaignId = Number(button?.dataset?.generateSkillAnalysis || 0);
     const host = button?.closest('.product-ad-detail')?.querySelector('.skill-report-host') || button?.parentElement?.nextElementSibling;
     if (!ctx.shopId || !campaignId || !ctx.startDate || !ctx.endDate || !host) return;
-    button.disabled = true;
-    button.textContent = '生成中…';
-    host.innerHTML = '<div class="empty-inline">正在运行 Shopee GMV Max Skill…</div>';
-    try {
-      const result = await postApi(`/api/shopee-analytics/campaigns/${campaignId}/skill-report?shop_id=${ctx.shopId}`, {
-        start_date: ctx.startDate,
-        end_date: ctx.endDate,
-        reason: 'MANUAL_UI',
-      });
-      host.innerHTML = skillReportHtml(result.report);
-    } catch (error) {
-      host.innerHTML = `<div class="empty-inline">生成分析失败：${esc(humanizeSkillError(error))}</div>`;
-    } finally {
-      button.disabled = false;
-      button.textContent = '生成分析';
-    }
+    const language = await chooseSkillReportLanguage();
+    if (!language) return;
+    await startSkillJob({
+      url: `/api/shopee-analytics/skill-jobs/campaigns/${campaignId}?shop_id=${ctx.shopId}`,
+      body:{ start_date:ctx.startDate, end_date:ctx.endDate, reason:'MANUAL_UI' },
+      host, button, shopId:ctx.shopId, language,
+    });
   }
 
   async function runAdGroupSkillAnalysisV2(button) {
@@ -442,23 +539,13 @@
     const promotionKey = encodedKey ? decodeURIComponent(encodedKey) : '';
     const host = button?.closest('.ad-group-modal-content')?.querySelector('.skill-report-host');
     if (!ctx.shopId || !promotionKey || !ctx.startDate || !ctx.endDate || !host) return;
-    button.disabled = true;
-    button.textContent = '生成中…';
-    host.innerHTML = '<div class="empty-inline">正在运行 Shopee 广告组分析 Skill…</div>';
-    try {
-      const result = await postApi(`/api/shopee-analytics/ad-groups/skill-report?shop_id=${ctx.shopId}`, {
-        promotion_key: promotionKey,
-        start_date: ctx.startDate,
-        end_date: ctx.endDate,
-        reason: 'MANUAL_AD_GROUP_UI',
-      });
-      host.innerHTML = skillReportHtml(result.report);
-    } catch (error) {
-      host.innerHTML = `<div class="empty-inline">生成分析失败：${esc(humanizeSkillError(error))}</div>`;
-    } finally {
-      button.disabled = false;
-      button.textContent = '生成分析';
-    }
+    const language = await chooseSkillReportLanguage();
+    if (!language) return;
+    await startSkillJob({
+      url: `/api/shopee-analytics/skill-jobs/ad-groups?shop_id=${ctx.shopId}`,
+      body:{ promotion_key:promotionKey, start_date:ctx.startDate, end_date:ctx.endDate, reason:'MANUAL_AD_GROUP_UI' },
+      host, button, shopId:ctx.shopId, language,
+    });
   }
 
   async function loadShopDirectoryV2() {

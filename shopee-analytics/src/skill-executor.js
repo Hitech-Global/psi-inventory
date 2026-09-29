@@ -9,7 +9,7 @@ function createSkillExecutor({ provider }) {
     throw new Error('Skill executor provider must implement generateStructuredReport');
   }
 
-  return async ({ skillName, skillVersion, analysisPackage }) => {
+  return async ({ skillName, skillVersion, analysisPackage, onProgress = null }) => {
     if (skillName !== SKILL_NAME || skillVersion !== SKILL_VERSION) {
       throw new Error('Unsupported skill identity');
     }
@@ -23,6 +23,7 @@ function createSkillExecutor({ provider }) {
     return provider.generateStructuredReport({
       skill: { name: skillName, version: skillVersion },
       analysisPackage,
+      onProgress,
     });
   };
 }

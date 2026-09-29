@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
@@ -41,11 +41,16 @@ assert(!adGroupImport.includes('\n  enhanceDateRangeFilter();\n'), 'legacy date 
 assert(picker.includes("$('#dateRangeText').textContent = `${formatDate(draftStart)} – ${formatDate(draftEnd)}`"), 'calendar day clicks must give immediate visible draft feedback');
 assert(picker.includes('event.stopPropagation();'), 'calendar internal clicks must not bubble into the outside-click reset handler');
 assert(productCard.includes('data-generate-skill-analysis'));
-assert(productCard.includes('/skill-report?shop_id=${ctx.shopId}'));
-assert(productCard.includes("reason: 'MANUAL_UI'"));
+assert(productCard.includes('/skill-jobs/campaigns/${campaignId}?shop_id=${ctx.shopId}'));
+assert(productCard.includes('chooseSkillReportLanguage'));
+assert(productCard.includes('skill-progress-track'));
+assert(productCard.includes('/skill-jobs/${encodeURIComponent(jobId)}?shop_id=${shopId}'));
+assert(productCard.includes("reason:'MANUAL_UI'"));
 assert(productCard.includes('data-generate-ad-group-skill'));
-assert(productCard.includes('/ad-groups/skill-report?shop_id=${ctx.shopId}'));
-assert(httpRouter.includes("router.post('/ad-groups/skill-report'"));
+assert(productCard.includes('/skill-jobs/ad-groups?shop_id=${ctx.shopId}'));
+assert(httpRouter.includes("router.post('/skill-jobs/ad-groups'"));
+assert(httpRouter.includes("router.post('/skill-jobs/campaigns/:campaignId'"));
+assert(httpRouter.includes("router.get('/skill-jobs/:jobId'"));
 assert(picker.includes('draftStart = value;\n      draftEnd = value;\n      awaitingRangeEnd = true;'), 'first calendar click must form a valid single-day range');
 assert(picker.includes('已选单日；可直接应用'), 'single-day selection must be visible to the user');
 assert(!productCard.includes("$('#loadBtn')?.addEventListener('click'"), 'Product Card must not race the manual API sync button');

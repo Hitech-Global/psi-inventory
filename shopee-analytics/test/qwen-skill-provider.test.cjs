@@ -32,6 +32,7 @@ function readFileSync(file) {
   assert.throws(() => createQwenSkillProvider({ env:{ SHOPEE_SKILL_QWEN_API_KEY:'secret' }, readFileSync }), /QWEN_BASE_URL/);
 
   let captured = null;
+  const progress = [];
   const report = {
     skill:{ name:'shopee-gmv-max-analysis', version:'0.1.0' },
     stage:'CONVERGING', facts:[], inferences:[], hypotheses:[], skuAssessments:[], actionGates:[], nextValidation:[], limitations:[],
@@ -55,7 +56,8 @@ function readFileSync(file) {
   });
   const result = await provider.generateStructuredReport({
     skill:{ name:'shopee-gmv-max-analysis', version:'0.1.0' },
-    analysisPackage:{ schemaVersion:'1.0', campaignDaily:[], itemDaily:[], items:[], deterministicMetrics:{ campaign:{}, dailyAllocation:[] } },
+    analysisPackage:{ schemaVersion:'1.0', presentation:{language:'zh-CN'}, campaignDaily:[], itemDaily:[], items:[], deterministicMetrics:{ campaign:{}, dailyAllocation:[] } },
+    onProgress:(...args) => progress.push(args),
   });
   assert.strictEqual(result.stage, 'CONVERGING');
   assert.strictEqual(captured.url, 'https://workspace.example.com/compatible-mode/v1/chat/completions');
@@ -68,6 +70,8 @@ function readFileSync(file) {
   assert.strictEqual(body.response_format.json_schema.strict, true);
   assert.strictEqual(body.response_format.json_schema.schema.additionalProperties, false);
   assert(body.messages[0].content.includes('Use FACT before INFERENCE.'));
+  assert(body.messages[0].content.includes('Simplified Chinese'));
+  assert.deepStrictEqual(progress.map(row => row[0]), [40,82,90]);
 
   const routed = createConfiguredSkillProvider({
     env:{
@@ -84,5 +88,7 @@ function readFileSync(file) {
   const request = buildQwenRequest({ model:'qwen3.7-plus', maxOutputTokens:1000, skill:{name:'x',version:'1'}, skillMarkdown:'skill', strictOutputSchema:{type:'object'}, analysisPackage:{} });
   assert.strictEqual(request.enable_thinking, false);
   assert.strictEqual(request.response_format.json_schema.strict, true);
+  const englishRequest = buildQwenRequest({ model:'qwen3.7-plus', maxOutputTokens:1000, skill:{name:'x',version:'1'}, skillMarkdown:'skill', strictOutputSchema:{type:'object'}, analysisPackage:{presentation:{language:'en-US'}} });
+  assert(englishRequest.messages[0].content.includes('free-text field in English'));
   console.log('shopee Qwen skill provider tests: ok');
 })().catch(error => { console.error(error); process.exitCode = 1; });

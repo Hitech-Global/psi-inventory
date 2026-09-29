@@ -41,8 +41,11 @@ function createSkillRuntime({
     endDate,
     triggerType,
     triggerReason,
+    outputLanguage = null,
+    onProgress = null,
   }) => {
     assertOnlineOperationAllowed('Skill Runtime analysis');
+    if (typeof onProgress === 'function') onProgress(10, 'LOADING_DATA', 'Loading Shopee data');
     const analysisPackage = await buildCampaignSkillPackage({
       repository,
       queryRepository,
@@ -55,7 +58,9 @@ function createSkillRuntime({
       triggerType,
       triggerReason,
     });
-    return skillRunner.run(analysisPackage);
+    if (outputLanguage) analysisPackage.presentation = { language: outputLanguage };
+    if (typeof onProgress === 'function') onProgress(25, 'PACKAGE_READY', 'Analysis Package ready');
+    return skillRunner.run(analysisPackage, { onProgress });
   };
 
   const runAdGroupSkillAnalysis = async ({
@@ -65,8 +70,11 @@ function createSkillRuntime({
     endDate,
     triggerType,
     triggerReason,
+    outputLanguage = null,
+    onProgress = null,
   }) => {
     assertOnlineOperationAllowed('Ad Group Skill Runtime analysis');
+    if (typeof onProgress === 'function') onProgress(10, 'LOADING_DATA', 'Loading Shopee ad group data');
     const analysisPackage = await buildAdGroupSkillPackage({
       adPromotionRepository,
       queryRepository,
@@ -79,7 +87,9 @@ function createSkillRuntime({
       triggerType,
       triggerReason,
     });
-    return adGroupSkillRunner.run(analysisPackage);
+    if (outputLanguage) analysisPackage.presentation = { language: outputLanguage };
+    if (typeof onProgress === 'function') onProgress(25, 'PACKAGE_READY', 'Analysis Package ready');
+    return adGroupSkillRunner.run(analysisPackage, { onProgress });
   };
 
   return {
