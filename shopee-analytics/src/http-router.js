@@ -130,6 +130,70 @@ function eventSetForRange(startDate, endDate) {
   return toEventDateSet(rows.filter(row => row.eventDate >= startDate && row.eventDate <= endDate));
 }
 
+function storeDetailMetrics(row) {
+  if (!row) return null;
+  const shopBiAvailable = Boolean(row.shopBiAvailable);
+  const sales = shopBiAvailable ? Number(row.sales || 0) : null;
+  const orders = shopBiAvailable ? Number(row.orders || 0) : null;
+  const productClicks = shopBiAvailable ? Number(row.productClicks || 0) : null;
+  const productViews = shopBiAvailable ? Number(row.productViews || 0) : null;
+  const attributionMismatch = shopBiAvailable ? Number(row.broadGmv || 0) > sales : null;
+  const estimatedNaturalSales = shopBiAvailable && !attributionMismatch
+    ? sales - Number(row.broadGmv || 0)
+    : null;
+  return {
+    ...row,
+    sales,
+    orders,
+    unitsSold: shopBiAvailable ? Number(row.unitsSold || 0) : null,
+    productClicks,
+    productViews,
+    visitorDays: shopBiAvailable ? Number(row.visitorDays || 0) : null,
+    avgItemConversionRate: shopBiAvailable ? row.avgItemConversionRate : null,
+    avgOrderConversionRate: shopBiAvailable ? row.avgOrderConversionRate : null,
+    voucherSales: shopBiAvailable ? Number(row.voucherSales || 0) : null,
+    voucherBuyers: shopBiAvailable ? Number(row.voucherBuyers || 0) : null,
+    voucherCost: shopBiAvailable ? Number(row.voucherCost || 0) : null,
+    adSpendRatioToBiSales: shopBiAvailable && sales > 0 ? Number(row.adExpense || 0) / sales : null,
+    adGmvShareOfBiSales: shopBiAvailable && sales > 0 ? Number(row.broadGmv || 0) / sales : null,
+    estimatedNaturalSales,
+    adAttributionExceedsBiSales: attributionMismatch,
+    orderPerProductClick: shopBiAvailable && productClicks > 0 ? orders / productClicks : null,
+  };
+}
+
+function addSkuPeriodComparison(currentRows, previousRows) {
+  const previousMap = new Map((previousRows || []).map(row => [String(row.itemId), row]));
+  return (currentRows || []).map(row => {
+    const previous = previousMap.get(String(row.itemId)) || null;
+    const currentSales = row.totalSales;
+    const previousSales = previous ? previous.totalSales : null;
+    const comparable = currentSales !== null && currentSales !== undefined && previousSales !== null && previousSales !== undefined;
+    const salesDelta = comparable ? Number(currentSales) - Number(previousSales) : null;
+    const salesChange = comparable && Number(previousSales) !== 0
+      ? salesDelta / Math.abs(Number(previousSales))
+      : (comparable && Number(currentSales) === 0 ? 0 : null);
+    return {
+      ...row,
+      previousTotalSales: comparable ? Number(previousSales) : null,
+      salesDelta,
+      salesChange,
+    };
+  });
+}
+
+function skuContributionSummary(rows) {
+  const comparable = (rows || []).filter(row => row.salesDelta !== null && Number.isFinite(Number(row.salesDelta)));
+  const growth = comparable.filter(row => Number(row.salesDelta) > 0).sort((a,b) => Number(b.salesDelta) - Number(a.salesDelta)).slice(0,5);
+  const drag = comparable.filter(row => Number(row.salesDelta) < 0).sort((a,b) => Number(a.salesDelta) - Number(b.salesDelta)).slice(0,5);
+  return {
+    available: comparable.length > 0,
+    comparableCount: comparable.length,
+    growth,
+    drag,
+  };
+}
+
 function createShopeeAnalyticsRouter({
   repository,
   strategyRepository,
@@ -217,7 +281,7 @@ function createShopeeAnalyticsRouter({
       }
 
       const previous = previousPeriod(startDate, endDate);
-      const [currentOverview, previousOverview, daily, skus] = await Promise.all([
+      const [currentOverview, previousOverview, daily, skus, previousSkus] = await Promise.all([
         queryRepository.getPortfolioOverview({
           startDate,
           endDate,
@@ -230,12 +294,14 @@ function createShopeeAnalyticsRouter({
         }),
         queryRepository.getShopDailyTrend({ shopId, startDate, endDate }),
         queryRepository.getShopSkuOverview({ shopId, startDate, endDate, limit: 200 }),
+        queryRepository.getShopSkuOverview({ shopId, startDate: previous.startDate, endDate: previous.endDate, limit: 200 }),
       ]);
 
-      const current = currentOverview.shops[0] || null;
-      const prior = previousOverview.shops[0] || null;
+      const current = storeDetailMetrics(currentOverview.shops[0] || null);
+      const prior = storeDetailMetrics(previousOverview.shops[0] || null);
       const diagnosis = current ? diagnoseRow(current, prior) : null;
-      const skuDiagnosis = diagnoseStoreSkus(skus, {
+      const comparedSkus = addSkuPeriodComparison(skus, previousSkus);
+      const skuDiagnosis = diagnoseStoreSkus(comparedSkus, {
         adSpendRatioLimit: current && current.adSpendRatioLimit != null
           ? current.adSpendRatioLimit
           : 0.15,
@@ -276,11 +342,21 @@ function createShopeeAnalyticsRouter({
           event: eventMap.get(row.eventDate) || null,
         })),
         skus: skuDiagnosis.items,
+        skuContribution: skuContributionSummary(skuDiagnosis.items),
         skuDiagnosis: {
           cvrMedian: skuDiagnosis.cvrMedian,
           attentionCount: skuDiagnosis.attentionCount,
         },
         productCardExactPeriod: skus.some(row => row.hasProductCard),
+        previousProductCardExactPeriod: previousSkus.some(row => row.hasProductCard),
+        dataAvailability: {
+          shopBi: Boolean(current && current.shopBiAvailable),
+          shopBiDays: Number(current && current.shopBiDays || 0),
+          ads: Boolean(current && current.adDataAvailable),
+          adDays: Number(current && current.adDays || 0),
+          productCard: skus.some(row => row.hasProductCard),
+          previousProductCard: previousSkus.some(row => row.hasProductCard),
+        },
       });
     } catch (error) {
       next(error);
@@ -912,5 +988,8 @@ module.exports = {
   eventMixForRange,
   comparisonContext,
   eventSetForRange,
+  storeDetailMetrics,
+  addSkuPeriodComparison,
+  skuContributionSummary,
   createShopeeAnalyticsRouter,
 };

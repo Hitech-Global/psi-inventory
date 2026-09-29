@@ -5,10 +5,17 @@ function toNumber(value) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function nullableNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
 function safeRatio(numerator, denominator) {
-  const n = toNumber(numerator);
-  const d = toNumber(denominator);
-  return d === 0 ? null : n / d;
+  const n = nullableNumber(numerator);
+  const d = nullableNumber(denominator);
+  if (n === null || d === null || d === 0) return null;
+  return n / d;
 }
 
 function pctChange(current, previous) {
@@ -40,24 +47,25 @@ function previousPeriod(startDate, endDate) {
 }
 
 function metricSnapshot(row = {}) {
-  const sales = toNumber(row.sales);
-  const orders = toNumber(row.orders);
-  const productClicks = toNumber(row.productClicks);
-  const productViews = toNumber(row.productViews);
+  const sales = nullableNumber(row.sales);
+  const orders = nullableNumber(row.orders);
+  const productClicks = nullableNumber(row.productClicks);
+  const productViews = nullableNumber(row.productViews);
   const adExpense = toNumber(row.adExpense);
   const broadGmv = toNumber(row.broadGmv);
   const directGmv = row.directGmv === null || row.directGmv === undefined ? null : toNumber(row.directGmv);
   const estimatedNaturalSales = row.estimatedNaturalSales === undefined
-    ? sales - broadGmv
-    : toNumber(row.estimatedNaturalSales);
+    ? (sales === null ? null : sales - broadGmv)
+    : nullableNumber(row.estimatedNaturalSales);
   const adAttributionExceedsSales = row.adAttributionExceedsBiSales === undefined
-    ? broadGmv > sales
-    : Boolean(row.adAttributionExceedsBiSales);
+    ? (sales === null ? null : broadGmv > sales)
+    : (row.adAttributionExceedsBiSales === null ? null : Boolean(row.adAttributionExceedsBiSales));
 
   return {
+    shopBiAvailable: row.shopBiAvailable === undefined ? sales !== null : Boolean(row.shopBiAvailable),
     sales,
     orders,
-    unitsSold: toNumber(row.unitsSold),
+    unitsSold: nullableNumber(row.unitsSold),
     productClicks,
     productViews,
     aov: safeRatio(sales, orders),
@@ -105,7 +113,17 @@ function buildSignals(current, previous, changes, {
 } = {}) {
   const signals = [];
 
-  if (current.adAttributionExceedsSales) {
+  if (!current.shopBiAvailable) {
+    signals.push(signal(
+      'SHOP_BI_MISSING',
+      'neutral',
+      '\u5e97\u94fa\u7ecf\u8425\u6570\u636e\u672a\u540c\u6b65',
+      '\u5f53\u524d\u5468\u671f\u7f3a\u5c11 Business Insights \u6570\u636e\uff0c\u9500\u552e\u989d\u3001\u8ba2\u5355\u3001\u5546\u54c1\u70b9\u51fb\u3001\u8f6c\u5316\u7387\u548c\u5ba2\u5355\u4ef7\u4e0d\u80fd\u8fdb\u884c\u7ecf\u8425\u5224\u65ad\u3002',
+      '\u5148\u8865\u9f50\u5e97\u94fa BI \u6570\u636e\uff1b\u5f53\u524d\u4ec5\u4f7f\u7528\u5e7f\u544a\u6570\u636e\u505a\u5e7f\u544a\u4fa7\u5224\u65ad\uff0c\u4e0d\u628a\u7f3a\u5931\u503c\u89c6\u4e3a 0\u3002',
+    ));
+  }
+
+  if (current.adAttributionExceedsSales === true) {
     signals.push(signal(
       'AD_ATTRIBUTION_EXCEEDS_BI_SALES',
       'medium',
@@ -171,8 +189,8 @@ function buildSignals(current, previous, changes, {
   }
 
   if (
-    !current.adAttributionExceedsSales &&
-    !previous.adAttributionExceedsSales &&
+    current.adAttributionExceedsSales === false &&
+    previous.adAttributionExceedsSales === false &&
     changes.estimatedNaturalSales !== null &&
     changes.estimatedNaturalSales <= declineThreshold
   ) {

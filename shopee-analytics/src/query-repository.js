@@ -111,7 +111,8 @@ class ShopeeQueryRepository {
            AVG(b.order_conversion_rate) AS avg_order_conversion_rate,
            COALESCE(SUM(b.voucher_sales),0) AS voucher_sales,
            COALESCE(SUM(b.voucher_buyers),0) AS voucher_buyers,
-           COALESCE(SUM(b.voucher_cost),0) AS voucher_cost
+           COALESCE(SUM(b.voucher_cost),0) AS voucher_cost,
+           COUNT(*)::int AS bi_days
          FROM shopee_shop_bi_daily b
          JOIN selected s ON s.shop_id=b.shop_id
          WHERE b.event_date BETWEEN $1 AND $2
@@ -127,7 +128,8 @@ class ShopeeQueryRepository {
            COALESCE(SUM(d.broad_orders),0) AS broad_orders,
            CASE WHEN BOOL_AND(d.direct_gmv IS NOT NULL) THEN SUM(d.direct_gmv) ELSE NULL END AS direct_gmv,
            COALESCE(BOOL_AND(d.direct_gmv IS NOT NULL),false) AS direct_metric_complete,
-           COALESCE(SUM(d.direct_orders),0) AS direct_orders
+           COALESCE(SUM(d.direct_orders),0) AS direct_orders,
+           COUNT(DISTINCT d.event_date)::int AS ad_days
          FROM shopee_ad_campaign_daily d
          JOIN selected s ON s.shop_id=d.shop_id
          WHERE d.event_date BETWEEN $1 AND $2
@@ -158,6 +160,7 @@ class ShopeeQueryRepository {
          COALESCE(bi.voucher_sales,0) AS voucher_sales,
          COALESCE(bi.voucher_buyers,0) AS voucher_buyers,
          COALESCE(bi.voucher_cost,0) AS voucher_cost,
+         COALESCE(bi.bi_days,0) AS bi_days,
          COALESCE(ads.ad_impressions,0) AS ad_impressions,
          COALESCE(ads.ad_clicks,0) AS ad_clicks,
          COALESCE(ads.ad_expense,0) AS ad_expense,
@@ -166,6 +169,7 @@ class ShopeeQueryRepository {
          ads.direct_gmv AS direct_gmv,
          COALESCE(ads.direct_metric_complete,false) AS direct_metric_complete,
          COALESCE(ads.direct_orders,0) AS direct_orders,
+         COALESCE(ads.ad_days,0) AS ad_days,
          COALESCE(returns.return_count,0) AS return_count,
          COALESCE(returns.refund_amount,0) AS refund_amount
        FROM selected s
@@ -189,6 +193,8 @@ class ShopeeQueryRepository {
       const sales = Number(row.sales || 0);
       const productClicks = Number(row.product_clicks || 0);
       const orders = Number(row.orders || 0);
+      const shopBiDays = Number(row.bi_days || 0);
+      const adDays = Number(row.ad_days || 0);
       return {
         shopId: Number(row.shop_id),
         displayName: row.display_name,
@@ -200,6 +206,10 @@ class ShopeeQueryRepository {
         timezone: row.timezone,
         marketplaceRegion: row.marketplace_region,
         adSpendRatioLimit: Number(row.ad_spend_ratio_limit || 0.15),
+        shopBiAvailable: shopBiDays > 0,
+        shopBiDays,
+        adDataAvailable: adDays > 0,
+        adDays,
         sales,
         orders,
         unitsSold: Number(row.units_sold || 0),

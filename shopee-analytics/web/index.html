@@ -164,85 +164,75 @@
       </div>
 
       <div id="storeDetail" class="hidden">
-        <section id="storeSummary" class="kpi-grid"></section>
-
-        <section class="panel store-signal-panel">
+        <section class="panel store-context-panel">
           <div class="panel-head">
             <div>
-              <h2 id="storeTitle">店铺经营诊断</h2>
+              <h2 id="storeTitle">店铺诊断</h2>
               <p id="storeCompareSubtitle">与上一等长周期比较。</p>
             </div>
-            <span id="storePrimarySignal" class="pill neutral">等待</span>
+            <span id="storeBiStatus" class="pill neutral">数据检查中</span>
           </div>
-          <div id="storeSignalList" class="store-signal-list"></div>
         </section>
 
-        <section class="panel store-trend-panel">
+        <section class="store-stage-section">
+          <div class="store-stage-heading"><div><span class="store-stage-index">01</span><h2>经营结果</h2><p>先看店铺结果：销售、订单、流量、转化和客单价。</p></div></div>
+          <section id="storeSummary" class="kpi-grid store-outcome-grid"></section>
+        </section>
+
+        <section class="panel store-driver-panel">
           <div class="panel-head">
-            <div>
-              <h2>每日经营趋势</h2>
-              <p>双日和每月25日单独标记，避免把活动日直接当普通日基线。</p>
-            </div>
+            <div><span class="store-stage-index">02</span><h2>增长来源</h2><p>快速判断本期变化主要出现在流量、转化还是客单价。</p></div>
+            <span id="storeGrowthVerdict" class="pill neutral">等待数据</span>
           </div>
-          <div class="table-wrap store-trend-table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>日期</th>
-                  <th>事件</th>
-                  <th>销售额</th>
-                  <th>订单</th>
-                  <th>商品点击</th>
-                  <th>点击→订单</th>
-                  <th>客单价</th>
-                  <th data-shopee-metric="expense">花费</th>
-                  <th data-shopee-metric="roas">广告支出回报率</th>
-                  <th>估算非广告归因销售</th>
-                </tr>
-              </thead>
-              <tbody id="storeTrendRows">
-                <tr><td colspan="10" class="empty">等待店铺数据。</td></tr>
-              </tbody>
-            </table>
+          <div id="storeGrowthDrivers" class="store-driver-grid"></div>
+        </section>
+
+        <section class="panel store-mix-panel">
+          <div class="panel-head">
+            <div><span class="store-stage-index">03</span><h2>广告 vs 非广告</h2><p>判断增长是否依赖广告，以及广告成本是否在经营约束内。</p></div>
+            <span id="storeAdMixStatus" class="pill neutral">等待数据</span>
           </div>
+          <div id="storeAdMix" class="store-mix-grid"></div>
+          <div id="storeAdMixNote" class="store-data-note hidden"></div>
         </section>
 
         <section class="panel store-sku-panel">
           <div class="panel-head">
-            <div>
-              <h2>商品经营矩阵</h2>
-              <p id="storeSkuSubtitle">商品总表现 × 广告表现；有 Product Card 时会补充总 CVR / 加购率。</p>
-            </div>
+            <div><span class="store-stage-index">04</span><h2>SKU 贡献与异常</h2><p id="storeSkuSubtitle">优先看哪些 SKU 拉动增长、哪些 SKU 正在拖累，再下钻广告诊断。</p></div>
             <span id="storeSkuCount" class="pill">0 SKU</span>
           </div>
+          <div id="storeSkuContribution" class="store-contribution-grid"></div>
           <div class="table-wrap store-sku-table-wrap">
             <table>
-              <thead>
-                <tr>
-                  <th>商品</th>
-                  <th>总销售额</th>
-                  <th>总订单</th>
-                  <th>商品总转化率</th>
-                  <th data-shopee-metric="addToCartRate">加入购物车频率</th>
-                  <th data-shopee-metric="expense">花费</th>
-                  <th data-shopee-metric="gmv">销售金额</th>
-                  <th>直接销售金额占比</th>
-                  <th data-shopee-metric="roas">广告支出回报率</th>
-                  <th data-shopee-metric="directRoas">直接广告支出回报率</th>
-                  <th>保本ROAS</th>
-                  <th data-shopee-metric="directConversions">直接转化</th>
-                  <th>估算非直接归因销售</th>
-                  <th>商品信号</th>
-                </tr>
-              </thead>
-              <tbody id="storeSkuRows">
-                <tr><td colspan="14" class="empty">等待商品数据。</td></tr>
-              </tbody>
+              <thead><tr>
+                <th>商品</th><th>本期销售额</th><th>较上期贡献</th><th>CVR</th><th data-shopee-metric="expense">广告花费</th><th data-shopee-metric="gmv">广告GMV</th><th data-shopee-metric="roas">ROAS</th><th>优先信号</th>
+              </tr></thead>
+              <tbody id="storeSkuRows"><tr><td colspan="8" class="empty">等待商品数据。</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel store-signal-panel">
+          <div class="panel-head">
+            <div><span class="store-stage-index">05</span><h2>系统结论与下一步</h2><p>把异常按优先级排好，告诉你今天先验证什么。</p></div>
+            <span id="storePrimarySignal" class="pill neutral">等待诊断</span>
+          </div>
+          <div id="storeSignalList" class="store-signal-list"></div>
+        </section>
+
+        <section class="panel store-trend-panel store-validation-panel">
+          <div class="panel-head"><div><h2>验证明细 · 每日经营趋势</h2><p>用于验证上面的诊断；双日和每月25日会单独标记。</p></div></div>
+          <div class="table-wrap store-trend-table-wrap">
+            <table>
+              <thead><tr><th>日期</th><th>活动</th><th>销售额</th><th>订单</th><th>商品点击</th><th>点击→订单</th><th>客单价</th><th data-shopee-metric="expense">广告花费</th><th data-shopee-metric="gmv">广告GMV</th><th data-shopee-metric="roas">ROAS</th></tr></thead>
+              <tbody id="storeTrendRows"><tr><td colspan="10" class="empty">等待加载数据。</td></tr></tbody>
             </table>
           </div>
         </section>
       </div>
     </section>
+
+    <section id="view-ads"    </section>
 
     <section id="view-ads" class="view-section hidden">
       <div id="adsShopPrompt" class="selection-prompt hidden">

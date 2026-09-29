@@ -495,91 +495,137 @@ async function loadPortfolio() {
   renderPortfolio(data);
 }
 
+function hasMetric(value) {
+  return value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value));
+}
+
+function moneyOrDash(value, currency) {
+  return hasMetric(value) ? formatMoney(value, currency) : '—';
+}
+
+function numOrDash(value) {
+  return hasMetric(value) ? num(value) : '—';
+}
+
+function pctOrDash(value) {
+  return hasMetric(value) ? pct(value) : '—';
+}
+
+function driverState(change) {
+  if (!hasMetric(change)) return { label:'数据不足', cls:'neutral' };
+  const n = Number(change);
+  if (n >= 0.10) return { label:'增长', cls:'good' };
+  if (n <= -0.10) return { label:'拖累', cls:'bad' };
+  return { label:'稳定', cls:'neutral' };
+}
+
+function driverCard(label, value, change, explanation) {
+  const state = driverState(change);
+  return `<article class="store-driver-card"><div class="store-driver-card-head"><span>${escapeHtml(label)}</span><span class="pill ${state.cls}">${state.label}</span></div><strong>${value}</strong><div class="store-driver-change ${changeClass(change)}">较上期 ${changePct(change)}</div><p>${escapeHtml(explanation)}</p></article>`;
+}
+
+function contributionList(title, rows, currency, tone) {
+  if (!rows.length) return `<article class="store-contribution-card ${tone}"><h3>${title}</h3><div class="empty-inline">当前没有对应 SKU。</div></article>`;
+  return `<article class="store-contribution-card ${tone}"><h3>${title}</h3><div class="store-contribution-list">${rows.slice(0,3).map(item => `<div><span><strong>${escapeHtml(item.itemSku || ('#' + item.itemId))}</strong><small>${escapeHtml(item.itemName || '')}</small></span><b class="${Number(item.salesDelta) >= 0 ? 'positive' : 'negative'}">${Number(item.salesDelta) >= 0 ? '+' : ''}${formatMoney(item.salesDelta, currency)}</b></div>`).join('')}</div></article>`;
+}
+
 function renderStoreDetail(data) {
   const shop = data.shop;
   const current = data.current || {};
   const diagnosis = data.diagnosis || {};
+  const metrics = diagnosis.current || {};
   const changes = diagnosis.changes || {};
+  const availability = data.dataAvailability || {};
   const primarySignal = diagnosis.primarySignal || null;
 
-  $('#storeTitle').textContent =
-    `${shop.countryName || shop.countryCode} · ${shop.brandName || shop.brandCode} · ${shop.displayName}`;
+  $('#storeTitle').textContent = `${shop.countryName || shop.countryCode} · ${shop.brandName || shop.brandCode} · ${shop.displayName}`;
   const storeContext = data.comparisonContext || {};
   $('#storeCompareSubtitle').textContent =
     `当前 ${data.startDate} → ${data.endDate}，对比上一等长周期 ${data.previousStartDate} → ${data.previousEndDate}。` +
     (storeContext.warning ? ` ⚠ ${storeContext.warning}` : '');
 
-  $('#storePrimarySignal').textContent = primarySignal ? primarySignal.title : '等待数据';
+  const biStatus = $('#storeBiStatus');
+  if (biStatus) {
+    biStatus.textContent = availability.shopBi ? `BI 已覆盖 ${num(availability.shopBiDays)} 天` : '店铺 BI 未同步';
+    biStatus.className = `pill ${availability.shopBi ? 'good' : 'warn'}`;
+  }
+  $('#storePrimarySignal').textContent = primarySignal ? primarySignal.title : '等待诊断';
   $('#storePrimarySignal').className = `pill ${signalClass(primarySignal)}`;
 
   $('#storeSummary').innerHTML = [
-    portfolioKpi('销售额', formatMoney(current.sales, shop.currency), `较上期 ${changePct(changes.sales)}`),
-    portfolioKpi('订单', num(current.orders), `较上期 ${changePct(changes.orders)}`),
-    portfolioKpi('商品点击', num(current.productClicks), `较上期 ${changePct(changes.productClicks)}`),
-    portfolioKpi('点击→订单', current.orderPerProductClick == null ? '—' : pct(current.orderPerProductClick), `较上期 ${changePct(changes.clickToOrder)}`),
-    portfolioKpi('客单价', current.orders ? formatMoney(current.sales / current.orders, shop.currency) : '—', `较上期 ${changePct(changes.aov)}`),
-    portfolioKpi('广告花费占比', current.adSpendRatioToBiSales == null ? '—' : pct(current.adSpendRatioToBiSales), `经营约束 ≤ ${pct(current.adSpendRatioLimit)}`),
-    portfolioKpi(sl('roas'), roas(current.broadRoas)),
-    portfolioKpi('估算非广告归因销售', formatMoney(current.estimatedNaturalSales, shop.currency), `较上期 ${changePct(changes.estimatedNaturalSales)}`),
+    portfolioKpi('销售额', moneyOrDash(metrics.sales, shop.currency), `较上期 ${changePct(changes.sales)}`),
+    portfolioKpi('订单', numOrDash(metrics.orders), `较上期 ${changePct(changes.orders)}`),
+    portfolioKpi('流量 · 商品点击', numOrDash(metrics.productClicks), `较上期 ${changePct(changes.productClicks)}`),
+    portfolioKpi('点击→订单', pctOrDash(metrics.clickToOrder), `较上期 ${changePct(changes.clickToOrder)}`),
+    portfolioKpi('客单价', moneyOrDash(metrics.aov, shop.currency), `较上期 ${changePct(changes.aov)}`),
   ].join('');
 
-  const signals = diagnosis.signals || [];
-  $('#storeSignalList').innerHTML = signals.map(signal => `
-    <article class="store-signal ${signal.severity || 'neutral'}">
-      <span class="pill ${signalClass(signal)}">${escapeHtml(signal.title)}</span>
-      <p>${escapeHtml(signal.detail || '')}</p>
-      ${signal.action ? `<div class="signal-action">${escapeHtml(signal.action)}</div>` : ''}
-    </article>
-  `).join('') || '<div class="empty-inline">暂无经营变化信号。</div>';
+  const driverRows = [
+    { label:'流量 · 商品点击', value:numOrDash(metrics.productClicks), change:changes.productClicks, explanation:'判断是否先发生在进店/进商品流量端。' },
+    { label:'转化 · 点击→订单', value:pctOrDash(metrics.clickToOrder), change:changes.clickToOrder, explanation:'有流量后，判断商品是否能把点击转成订单。' },
+    { label:'价值 · 客单价', value:moneyOrDash(metrics.aov, shop.currency), change:changes.aov, explanation:'判断 GMV 变化是否来自产品结构、价格或优惠变化。' },
+  ];
+  $('#storeGrowthDrivers').innerHTML = driverRows.map(row => driverCard(row.label,row.value,row.change,row.explanation)).join('');
+  const finiteDrivers = driverRows.filter(row => hasMetric(row.change)).sort((a,b) => Math.abs(Number(b.change)) - Math.abs(Number(a.change)));
+  const growthVerdict = $('#storeGrowthVerdict');
+  if (growthVerdict) {
+    growthVerdict.textContent = finiteDrivers.length ? `同步变化最大：${finiteDrivers[0].label} ${changePct(finiteDrivers[0].change)}` : '缺少经营数据';
+    growthVerdict.className = `pill ${finiteDrivers.length ? driverState(finiteDrivers[0].change).cls : 'warn'}`;
+  }
 
-  $('#storeTrendRows').innerHTML = (data.daily || []).length
-    ? data.daily.map(row => {
-        const eventText = row.event
-          ? (row.event.eventType === 'DOUBLE_DAY' ? '双日' : row.event.eventType === 'PAYDAY_25' ? '25日' : row.event.eventType)
-          : '普通日';
-        return `<tr>
-          <td>${escapeHtml(row.eventDate)}</td>
-          <td><span class="event-tag ${row.event ? 'special' : ''}">${escapeHtml(eventText)}</span></td>
-          <td>${row.sales == null ? '—' : formatMoney(row.sales, shop.currency)}</td>
-          <td>${row.orders == null ? '—' : num(row.orders)}</td>
-          <td>${row.productClicks == null ? '—' : num(row.productClicks)}</td>
-          <td>${row.clickToOrder == null ? '—' : pct(row.clickToOrder)}</td>
-          <td>${row.aov == null ? '—' : formatMoney(row.aov, shop.currency)}</td>
-          <td>${formatMoney(row.adExpense, shop.currency)}</td>
-          <td>${roas(row.broadRoas)}</td>
-          <td>${row.estimatedNaturalSales == null ? '—' : formatMoney(row.estimatedNaturalSales, shop.currency)}</td>
-        </tr>`;
-      }).join('')
-    : '<tr><td colspan="10" class="empty">这个周期没有每日店铺数据。</td></tr>';
+  $('#storeAdMix').innerHTML = [
+    portfolioKpi('广告花费', moneyOrDash(metrics.adExpense, shop.currency), `较上期 ${changePct(changes.adExpense)}`),
+    portfolioKpi('广告 GMV', moneyOrDash(metrics.broadGmv, shop.currency), `较上期 ${changePct(changes.broadGmv)}`),
+    portfolioKpi('广告 ROAS', hasMetric(metrics.adExpense) && Number(metrics.adExpense) > 0 ? roas(Number(metrics.broadGmv || 0) / Number(metrics.adExpense)) : '—'),
+    portfolioKpi('广告花费占比', pctOrDash(metrics.adSpendRatio), hasMetric(current.adSpendRatioLimit) ? `经营约束 ≤ ${pct(current.adSpendRatioLimit)}` : ''),
+    portfolioKpi('广告归因销售占比', pctOrDash(metrics.adGmvShare)),
+    portfolioKpi('估算非广告归因销售', moneyOrDash(metrics.estimatedNaturalSales, shop.currency), `较上期 ${changePct(changes.estimatedNaturalSales)}`),
+  ].join('');
+  const mixStatus = $('#storeAdMixStatus');
+  const mixNote = $('#storeAdMixNote');
+  if (!availability.shopBi) {
+    mixStatus.textContent = '缺少 BI，暂停拆分';
+    mixStatus.className = 'pill warn';
+    mixNote.textContent = '广告花费、广告 GMV 和 ROAS 可用；但总销售额缺失，因此不计算广告占比和非广告销售。';
+    mixNote.classList.remove('hidden');
+  } else if (metrics.adAttributionExceedsSales === true) {
+    mixStatus.textContent = '口径不一致';
+    mixStatus.className = 'pill warn';
+    mixNote.textContent = '广告归因 GMV 高于 BI 销售额，暂不将差额解释为非广告销售。需先核对时区、日期和 Shopee 归因口径。';
+    mixNote.classList.remove('hidden');
+  } else {
+    mixStatus.textContent = '可比较';
+    mixStatus.className = 'pill good';
+    mixNote.classList.add('hidden');
+  }
+
+  const contribution = data.skuContribution || { available:false,growth:[],drag:[] };
+  const contributionHost = $('#storeSkuContribution');
+  if (contribution.available && data.productCardExactPeriod && data.previousProductCardExactPeriod) {
+    contributionHost.innerHTML = contributionList('增长贡献 TOP', contribution.growth || [], shop.currency, 'positive') + contributionList('拖累 TOP', contribution.drag || [], shop.currency, 'negative');
+  } else {
+    contributionHost.innerHTML = '<div class="store-contribution-unavailable">需要当前周期和上一等长周期的 Product Card 数据，才能计算 SKU 对店铺销售增长/下降的真实贡献。</div>';
+  }
 
   const skus = data.skus || [];
   $('#storeSkuCount').textContent = `${num(skus.length)} SKU`;
   const skuDiagnosis = data.skuDiagnosis || {};
   $('#storeSkuSubtitle').textContent = data.productCardExactPeriod
-    ? `已匹配当前周期 Product Card；店内总CVR中位数 ${skuDiagnosis.cvrMedian == null ? '—' : pct(skuDiagnosis.cvrMedian)}，${num(skuDiagnosis.attentionCount)} 个商品需优先关注。`
-    : `当前周期没有精确匹配的 Product Card；先显示 API 广告数据，${num(skuDiagnosis.attentionCount)} 个商品出现广告侧风险信号。`;
-
+    ? `本期 Product Card 已匹配；店铺 CVR 中位数 ${skuDiagnosis.cvrMedian == null ? '—' : pct(skuDiagnosis.cvrMedian)}，${num(skuDiagnosis.attentionCount)} 个商品需要优先关注。`
+    : `当前周期没有精确 Product Card；先使用广告信号定位异常，不做 SKU 销售贡献结论。`;
   $('#storeSkuRows').innerHTML = skus.length
-    ? skus.map(item => `<tr data-store-item="${item.itemId}">
-        <td><div class="item-name"><strong>${escapeHtml(item.itemSku || ('#' + item.itemId))}</strong><small>${escapeHtml(item.itemName || '')}</small></div></td>
-        <td>${item.totalSales == null ? '—' : formatMoney(item.totalSales, shop.currency)}</td>
-        <td>${item.totalOrders == null ? '—' : num(item.totalOrders)}</td>
-        <td>${item.totalConversionRate == null ? '—' : pct(item.totalConversionRate)}</td>
-        <td>${item.addToCartRate == null ? '—' : pct(item.addToCartRate)}</td>
-        <td>${formatMoney(item.adExpense, shop.currency)}</td>
-        <td>${formatMoney(item.broadGmv, shop.currency)}</td>
-        <td>${item.directGmvShareOfSales == null ? '—' : pct(item.directGmvShareOfSales)}</td>
-        <td>${roas(item.broadRoas)}</td>
-        <td>${roas(item.directRoas)}</td>
-        <td>${item.breakEvenRoas == null ? '未配置' : roas(item.breakEvenRoas)}</td>
-        <td>${num(item.directOrders)}</td>
-        <td>${item.estimatedNaturalSales == null ? '—' : formatMoney(item.estimatedNaturalSales, shop.currency)}</td>
-        <td title="${escapeHtml([
-          item.primarySignal && item.primarySignal.detail,
-          item.primarySignal && item.primarySignal.action,
-        ].filter(Boolean).join(' '))}"><span class="pill ${signalClass(item.primarySignal)}">${escapeHtml(item.primarySignal && item.primarySignal.title || '—')}</span></td>
-      </tr>`).join('')
-    : '<tr><td colspan="14" class="empty">当前周期没有商品层数据。</td></tr>';
+    ? skus.map(item => `<tr data-store-item="${item.itemId}"><td><div class="item-name"><strong>${escapeHtml(item.itemSku || ('#' + item.itemId))}</strong><small>${escapeHtml(item.itemName || '')}</small></div></td><td>${moneyOrDash(item.totalSales, shop.currency)}</td><td class="${hasMetric(item.salesDelta) ? (Number(item.salesDelta) >= 0 ? 'positive' : 'negative') : ''}">${hasMetric(item.salesDelta) ? ((Number(item.salesDelta) >= 0 ? '+' : '') + formatMoney(item.salesDelta, shop.currency)) : '—'}</td><td>${pctOrDash(item.totalConversionRate)}</td><td>${moneyOrDash(item.adExpense, shop.currency)}</td><td>${moneyOrDash(item.broadGmv, shop.currency)}</td><td>${hasMetric(item.broadRoas) ? roas(item.broadRoas) : '—'}</td><td title="${escapeHtml([item.primarySignal && item.primarySignal.detail,item.primarySignal && item.primarySignal.action].filter(Boolean).join(' '))}"><span class="pill ${signalClass(item.primarySignal)}">${escapeHtml(item.primarySignal && item.primarySignal.title || '—')}</span></td></tr>`).join('')
+    : '<tr><td colspan="8" class="empty">当前周期没有商品层数据。</td></tr>';
+
+  const signals = diagnosis.signals || [];
+  $('#storeSignalList').innerHTML = signals.map((signal,index) => `<article class="store-signal ${signal.severity || 'neutral'}"><div class="store-signal-rank">${String(index + 1).padStart(2,'0')}</div><div><span class="pill ${signalClass(signal)}">${escapeHtml(signal.title)}</span><p>${escapeHtml(signal.detail || '')}</p>${signal.action ? `<div class="signal-action"><strong>下一步</strong> ${escapeHtml(signal.action)}</div>` : ''}</div></article>`).join('') || '<div class="empty-inline">暂无可用诊断信号。</div>';
+
+  $('#storeTrendRows').innerHTML = (data.daily || []).length
+    ? data.daily.map(row => {
+        const eventText = row.event ? (row.event.eventType === 'DOUBLE_DAY' ? '双日' : row.event.eventType === 'PAYDAY_25' ? '25日' : row.event.eventType) : '普通日';
+        return `<tr><td>${escapeHtml(row.eventDate)}</td><td><span class="event-tag ${row.event ? 'special' : ''}">${escapeHtml(eventText)}</span></td><td>${moneyOrDash(row.sales, shop.currency)}</td><td>${numOrDash(row.orders)}</td><td>${numOrDash(row.productClicks)}</td><td>${pctOrDash(row.clickToOrder)}</td><td>${moneyOrDash(row.aov, shop.currency)}</td><td>${moneyOrDash(row.adExpense, shop.currency)}</td><td>${moneyOrDash(row.broadGmv, shop.currency)}</td><td>${hasMetric(row.broadRoas) && Number(row.adExpense) > 0 ? roas(row.broadRoas) : '—'}</td></tr>`;
+      }).join('')
+    : '<tr><td colspan="10" class="empty">当前周期没有每日数据。</td></tr>';
 
   $$('[data-store-item]').forEach(row => {
     row.addEventListener('click', () => {
