@@ -21,6 +21,9 @@ assert.throws(() => loadFeishuAuthConfig({ FEISHU_AUTH_ENABLE:'YES' }), /FEISHU_
 const enabled = loadFeishuAuthConfig({ FEISHU_AUTH_ENABLE:'YES', FEISHU_APP_ID:'cli_test', FEISHU_APP_SECRET:'secret', FEISHU_EXTERNAL_BASE_URL:'https://analytics.example.com' });
 assert.strictEqual(enabled.sessionDays, 30);
 assert.strictEqual(enabled.absoluteDays, 90);
+assert.strictEqual(enabled.bootstrapFirstUser, false);
+const firstUserBootstrap = loadFeishuAuthConfig({ FEISHU_AUTH_ENABLE:'YES', FEISHU_APP_ID:'cli_test', FEISHU_APP_SECRET:'secret', FEISHU_EXTERNAL_BASE_URL:'https://analytics.example.com', FEISHU_BOOTSTRAP_FIRST_USER:'YES' });
+assert.strictEqual(firstUserBootstrap.bootstrapFirstUser, true);
 
 const req = { path:'/shops/30/detail', query:{ shop_id:'10', shop_ids:'20,30' }, body:{ targetShopId:40 } };
 assert.deepStrictEqual(requestedShopIds(req).sort((a,b) => a-b), [10,20,30,40]);

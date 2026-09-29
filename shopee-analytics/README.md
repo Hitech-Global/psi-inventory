@@ -101,7 +101,7 @@ Feishu login is opt-in and fail-closed. Keep `FEISHU_AUTH_ENABLE=NO` until a com
 https://<your-stable-domain>/auth/feishu/callback
 ```
 
-Store `FEISHU_APP_ID` and `FEISHU_APP_SECRET` only in the desktop/server runtime environment. Do not commit the secret. The first super admin is allowlisted with `FEISHU_BOOTSTRAP_SUPER_ADMIN_EMAILS` and/or `FEISHU_BOOTSTRAP_SUPER_ADMIN_OPEN_IDS`.
+Store `FEISHU_APP_ID` and `FEISHU_APP_SECRET` only in the desktop/server runtime environment. Do not commit the secret. For initial rollout, `FEISHU_BOOTSTRAP_FIRST_USER=YES` may be enabled temporarily: it can create a super admin only while `shopee_users` is empty, with a PostgreSQL advisory lock preventing two concurrent first users. Explicit email/open-id bootstrap allowlists remain available for recovery.
 
 The application has two fixed roles:
 

@@ -43,6 +43,7 @@ function loadFeishuAuthConfig(env = process.env) {
     userInfoUrl: String(env.FEISHU_USER_INFO_URL || 'https://open.feishu.cn/open-apis/authen/v1/user_info').trim(),
     bootstrapEmails: csvSet(env.FEISHU_BOOTSTRAP_SUPER_ADMIN_EMAILS, { lower: true }),
     bootstrapOpenIds: csvSet(env.FEISHU_BOOTSTRAP_SUPER_ADMIN_OPEN_IDS),
+    bootstrapFirstUser: String(env.FEISHU_BOOTSTRAP_FIRST_USER || 'NO').trim().toUpperCase() === 'YES',
   };
   if (enabled) {
     if (!config.appId) throw new Error('FEISHU_APP_ID is required when FEISHU_AUTH_ENABLE=YES');
@@ -245,6 +246,32 @@ class FeishuAuthRepository {
         profile.email || null, profile.name || profile.email || 'Feishu Admin', profile.avatarUrl || null],
     );
     return result.rows[0];
+  }
+
+  async bootstrapFirstUserIfEmpty(profile) {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock($1)', [20260929]);
+      const existing = await client.query('SELECT count(*)::int AS count FROM shopee_users');
+      if (Number(existing.rows[0]?.count || 0) !== 0) {
+        await client.query('COMMIT');
+        return null;
+      }
+      const result = await client.query(
+        `INSERT INTO shopee_users(feishu_open_id,feishu_union_id,feishu_user_id,email,name,avatar_url,role,status,last_login_at)
+         VALUES ($1,$2,$3,$4,$5,$6,'SUPER_ADMIN','ACTIVE',now()) RETURNING *`,
+        [profile.openId || null, profile.unionId || null, profile.userId || null,
+          profile.email || null, profile.name || profile.email || 'Feishu Admin', profile.avatarUrl || null],
+      );
+      await client.query('COMMIT');
+      return result.rows[0] || null;
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async registerPendingUser(profile) {
@@ -556,10 +583,13 @@ function createFeishuAuth({ pool, env = process.env } = {}) {
       let user = await repository.findMatchingUser(profile);
       if (!user) {
         const email = String(profile.email || '').toLowerCase();
-        const bootstrapped = (email && config.bootstrapEmails.has(email)) || (profile.openId && config.bootstrapOpenIds.has(profile.openId));
-        user = bootstrapped
-          ? await repository.bootstrapSuperAdmin(profile)
-          : await repository.registerPendingUser(profile);
+        const explicitlyBootstrapped = (email && config.bootstrapEmails.has(email)) || (profile.openId && config.bootstrapOpenIds.has(profile.openId));
+        if (explicitlyBootstrapped) {
+          user = await repository.bootstrapSuperAdmin(profile);
+        } else if (config.bootstrapFirstUser) {
+          user = await repository.bootstrapFirstUserIfEmpty(profile);
+        }
+        if (!user) user = await repository.registerPendingUser(profile);
       }
       if (!user || user.status !== STATUS_ACTIVE) { res.redirect('/login?reason=unauthorized'); return; }
       user = await repository.bindFeishuIdentity(user.id, profile);

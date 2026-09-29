@@ -57,6 +57,12 @@ const { FeishuAuthRepository, hashToken } = require('../src/feishu-auth');
     assert.strictEqual(names.size, 39, 'schema must expose exactly 39 shopee_* tables');
 
     const authRepository = new FeishuAuthRepository({ pool });
+    const firstAdmin = await authRepository.bootstrapFirstUserIfEmpty({ openId:'ou_first_admin', name:'First Admin' });
+    assert(firstAdmin && firstAdmin.role === 'SUPER_ADMIN' && firstAdmin.status === 'ACTIVE', 'first Feishu user should bootstrap as active super admin when user table is empty');
+    const secondBootstrap = await authRepository.bootstrapFirstUserIfEmpty({ openId:'ou_second_admin', name:'Second Admin' });
+    assert.strictEqual(secondBootstrap, null, 'first-user bootstrap must permanently stop once any user exists');
+    assert.strictEqual(await authRepository.activeSuperAdminCount(), 1);
+
     const operatorId = await authRepository.saveUser({
       name: 'Feishu Operator', email: 'operator@example.com', role: 'OPERATOR', status: 'ACTIVE', shopIds: [101, 102],
     });
