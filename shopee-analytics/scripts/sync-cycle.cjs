@@ -51,6 +51,8 @@ async function main() {
         brandCode: process.env.SHOPEE_SHOP_BRAND || null,
         timezone,
         brandPortalTimezone: process.env.SHOPEE_BI_TIMEZONE || null,
+        brandPortalPrincipalId: process.env.SHOPEE_BRAND_PORTAL_PRINCIPAL_ID
+          ? Number(process.env.SHOPEE_BRAND_PORTAL_PRINCIPAL_ID) : null,
       };
     }
 

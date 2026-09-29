@@ -8,10 +8,12 @@ const normalized = normalizeShopProfile({
   displayName: 'Redragon ID',
   timezone: 'Asia/Jakarta',
   brandPortalTimezone: 'GMT+7',
+  brandPortalPrincipalId: 901,
 });
 assert.strictEqual(normalized.shopId, 123);
 assert.strictEqual(normalized.timezone, 'Asia/Jakarta');
 assert.strictEqual(normalized.brandPortalTimezone, 'GMT+7');
+assert.strictEqual(normalized.brandPortalPrincipalId, 901);
 
 assert.throws(
   () => normalizeShopProfile({ shopId: 123 }),

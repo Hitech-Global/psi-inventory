@@ -25,6 +25,7 @@ function normalizeShopProfile(shop) {
     shopId,
     timezone,
     brandPortalTimezone: shop.brandPortalTimezone ?? shop.brand_portal_timezone ?? null,
+    brandPortalPrincipalId: shop.brandPortalPrincipalId ?? shop.brand_portal_principal_id ?? null,
     syncScope: shop.syncScope ?? shop.sync_scope ?? 'API_AND_MANUAL',
   };
 }
@@ -228,17 +229,17 @@ async function runShopSyncCycle({
       summary.steps.push({ name: 'returns', ok: true, required: false, skipped: 'NO_ERP_CLIENT' });
     }
 
-    if (profile.brandPortalTimezone && runtime.roleClients.BRAND_PORTAL) {
+    if (profile.brandPortalTimezone && profile.brandPortalPrincipalId && runtime.roleClients.BRAND_PORTAL) {
       await run('shop-bi-yesterday', () => service.syncShopBiDay({
         date: yesterday,
         timezone: profile.brandPortalTimezone,
+        principalId: profile.brandPortalPrincipalId,
       }), { required: false });
     } else {
       summary.steps.push({
-        name: 'shop-bi-yesterday',
-        ok: true,
-        required: false,
-        skipped: profile.brandPortalTimezone ? 'NO_BRAND_PORTAL_CLIENT' : 'NO_BRAND_PORTAL_TIMEZONE',
+        name: 'shop-bi-yesterday', ok: true, required: false,
+        skipped: !profile.brandPortalTimezone ? 'NO_BRAND_PORTAL_TIMEZONE'
+          : !profile.brandPortalPrincipalId ? 'NO_BRAND_PORTAL_PRINCIPAL_ID' : 'NO_BRAND_PORTAL_CLIENT',
       });
     }
 

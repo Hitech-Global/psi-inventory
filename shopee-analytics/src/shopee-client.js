@@ -10,6 +10,14 @@ function signShopRequest({ partnerId, partnerKey, path, timestamp, accessToken, 
   return crypto.createHmac('sha256', partnerKey).update(baseString).digest('hex');
 }
 
+function signPrincipalRequest({ partnerId, partnerKey, path, timestamp, accessToken, principalId }) {
+  if (!partnerId || !partnerKey || !path || !timestamp || !accessToken || !principalId) {
+    throw new Error('Missing Shopee principal signing input');
+  }
+  const baseString = `${partnerId}${path}${timestamp}${accessToken}${principalId}`;
+  return crypto.createHmac('sha256', partnerKey).update(baseString).digest('hex');
+}
+
 function appendQueryParam(params, key, value) {
   if (value === undefined || value === null || value === '') return;
   if (Array.isArray(value)) {
@@ -74,6 +82,33 @@ class ShopeeClient {
     }
     return payload;
   }
+
+  async principalRequest({ path, principalId, accessToken, method = 'GET', query = {}, body }) {
+    const timestamp = Math.floor(Date.now() / 1000);
+    const sign = signPrincipalRequest({
+      partnerId: this.partnerId, partnerKey: this.partnerKey, path, timestamp, accessToken, principalId,
+    });
+    const params = new URLSearchParams({
+      partner_id: this.partnerId, timestamp: String(timestamp), sign,
+      principal_id: String(principalId), access_token: accessToken,
+    });
+    for (const [key, value] of Object.entries(query || {})) appendQueryParam(params, key, value);
+    const response = await this.fetch(`${this.baseUrl}${path}?${params.toString()}`, {
+      method, headers: body === undefined ? undefined : { 'content-type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const text = await response.text();
+    let payload;
+    try { payload = text ? JSON.parse(text) : {}; }
+    catch { throw new Error(`Shopee returned non-JSON (${response.status})`); }
+    if (!response.ok || payload.error) {
+      const err = new Error(payload.message || payload.error || `Shopee HTTP ${response.status}`);
+      err.status = response.status; err.code = payload.error || null; err.requestId = payload.request_id || null;
+      err.kind = 'SHOPEE_API_ERROR';
+      throw err;
+    }
+    return payload;
+  }
 }
 
-module.exports = { ShopeeClient, signShopRequest, appendQueryParam };
+module.exports = { ShopeeClient, signShopRequest, signPrincipalRequest, appendQueryParam };

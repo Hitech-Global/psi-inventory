@@ -58,10 +58,9 @@ class ShopeeTokenManager {
     });
 
     try {
-      const payload = await auth.refreshAccessToken({
-        shopId,
-        refreshToken: token.refreshToken,
-      });
+      const payload = appRole === 'BRAND_PORTAL'
+        ? await auth.refreshPrincipalAccessToken({ principalId: shopId, refreshToken: token.refreshToken })
+        : await auth.refreshAccessToken({ shopId, refreshToken: token.refreshToken });
       const expireIn = Number(payload.expire_in);
       if (!payload.access_token || !payload.refresh_token || !Number.isFinite(expireIn) || expireIn <= 0) {
         throw new Error('Shopee refresh response missing access_token/refresh_token/expire_in');

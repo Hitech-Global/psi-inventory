@@ -60,17 +60,15 @@ class ShopeeAuthClient {
 
   async refreshAccessToken({ shopId, refreshToken }) {
     const path = '/api/v2/auth/access_token/get';
-    return this.publicPost({
-      path,
-      body: {
-        refresh_token: refreshToken,
-        partner_id: Number(this.partnerId),
-        shop_id: Number(shopId),
-      },
-    });
+    return this.publicPost({ path, body: { refresh_token: refreshToken, partner_id: Number(this.partnerId), shop_id: Number(shopId) } });
   }
 
-  buildAuthorizationUrl({ redirectUri, timestamp = Math.floor(Date.now() / 1000) }) {
+  async refreshPrincipalAccessToken({ principalId, refreshToken }) {
+    const path = '/api/v2/auth/access_token/get';
+    return this.publicPost({ path, body: { refresh_token: refreshToken, partner_id: Number(this.partnerId), principal_id: Number(principalId) } });
+  }
+
+  buildAuthorizationUrl({ redirectUri, timestamp = Math.floor(Date.now() / 1000), authType = null }) {
     const path = '/api/v2/shop/auth_partner';
     if (!redirectUri) throw new Error('OAuth redirect URI is required');
     const sign = signPublicRequest({
@@ -79,12 +77,8 @@ class ShopeeAuthClient {
       path,
       timestamp,
     });
-    const params = new URLSearchParams({
-      partner_id: this.partnerId,
-      timestamp: String(timestamp),
-      redirect: redirectUri,
-      sign,
-    });
+    const params = new URLSearchParams({ partner_id: this.partnerId, timestamp: String(timestamp), redirect: redirectUri, sign });
+    if (authType) params.set('auth_type', String(authType));
     return `${this.baseUrl}${path}?${params.toString()}`;
   }
 

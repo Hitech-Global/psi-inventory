@@ -413,11 +413,18 @@ class ShopeeSyncService {
     return { orderCount: details.orders.length };
   }
 
-  async syncShopBiDay({ date, timezone, currency = 'LOCAL' }) {
-    const { client, accessToken } = await resolveRole(this.roleClients, 'BRAND_PORTAL', this.shopId);
+  async syncShopBiDay({ date, timezone, principalId, currency = 'LOCAL' }) {
+    const entry = requireRole(this.roleClients, 'BRAND_PORTAL');
+    const normalizedPrincipalId = Number(principalId);
+    if (!Number.isSafeInteger(normalizedPrincipalId) || normalizedPrincipalId <= 0) throw new Error('Brand Portal principalId is required');
+    const accessToken = typeof entry.getAccessToken === 'function'
+      ? await entry.getAccessToken(normalizedPrincipalId)
+      : entry.accessToken;
+    if (!accessToken) throw new Error('Missing access token for Shopee role: BRAND_PORTAL');
     const result = await fetchShopBiDay({
-      client,
+      client: entry.client,
       shopId: this.shopId,
+      principalId: normalizedPrincipalId,
       accessToken,
       date,
       timezone,

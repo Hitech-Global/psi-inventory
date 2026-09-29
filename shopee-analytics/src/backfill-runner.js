@@ -334,12 +334,12 @@ async function runBackfillShop({
   }
 
   if (sourceSet.has('shop-bi')) {
-    if (!shop.brandPortalTimezone) {
+    if (!shop.brandPortalTimezone || !shop.brandPortalPrincipalId) {
       summary.steps.push({
         name: 'shop-bi-history',
         ok: false,
         required: true,
-        error: 'brandPortalTimezone is not configured',
+        error: !shop.brandPortalTimezone ? 'brandPortalTimezone is not configured' : 'brandPortalPrincipalId is not configured',
       });
       summary.ok = false;
     } else {
@@ -354,6 +354,7 @@ async function runBackfillShop({
         runner: chunk => service.syncShopBiDay({
           date: chunk.startDate,
           timezone: shop.brandPortalTimezone,
+          principalId: shop.brandPortalPrincipalId,
         }),
       }));
     }

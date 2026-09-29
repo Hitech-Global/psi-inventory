@@ -27,7 +27,7 @@ assert.strictEqual(normalized.voucherCost, 9);
 
 let request;
 const client = {
-  async shopRequest(req) {
+  async principalRequest(req) {
     request = req;
     return { response: { details: [{ shop_id: 1, sales: 1000 }] } };
   },
@@ -37,11 +37,13 @@ const client = {
   const result = await fetchShopBiDay({
     client,
     shopId: 1,
+    principalId: 77,
     accessToken: 'token',
     date: '2026-09-17',
     timezone: 'GMT+7',
   });
   assert.strictEqual(request.method, 'POST');
+  assert.strictEqual(request.principalId, 77);
   assert.strictEqual(request.body.granularity, 'day');
   assert.deepStrictEqual(request.body.shop_list, [{ shop_id: 1, currency: 'LOCAL' }]);
   assert.strictEqual(result.details[0].sales, 1000);

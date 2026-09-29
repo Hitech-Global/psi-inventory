@@ -32,12 +32,14 @@ function normalizeShopBiDetail(row) {
 async function fetchShopBiDay({
   client,
   shopId,
+  principalId,
   accessToken,
   date,
   timezone,
   currency = 'LOCAL',
 }) {
   if (!timezone) throw new Error('Brand Portal timezone is required');
+  if (!Number.isSafeInteger(Number(principalId)) || Number(principalId) <= 0) throw new Error('Brand Portal principalId is required');
   const endpoint = ENDPOINTS.shopSalesPerformance;
   const body = {
     start_date: date,
@@ -46,9 +48,9 @@ async function fetchShopBiDay({
     timezone,
     shop_list: [{ shop_id: shopId, currency }],
   };
-  const payload = await client.shopRequest({
+  const payload = await client.principalRequest({
     path: endpoint.path,
-    shopId,
+    principalId,
     accessToken,
     method: endpoint.method,
     body,

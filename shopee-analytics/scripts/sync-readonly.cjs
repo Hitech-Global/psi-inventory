@@ -135,6 +135,7 @@ async function main() {
       result = await service.syncShopBiDay({
         date: required('SHOPEE_BI_DATE'),
         timezone: required('SHOPEE_BI_TIMEZONE'),
+        principalId: Number(required('SHOPEE_BRAND_PORTAL_PRINCIPAL_ID')),
       });
     } else if (command === 'roi') {
       const itemIds = required('SHOPEE_ROI_ITEM_IDS')
