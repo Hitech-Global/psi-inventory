@@ -177,6 +177,43 @@
     return AD_STATUS_VALUES.has(value) ? value : 'all';
   }
 
+  function adSearchCopy() {
+    const english = window.ShopeeMetricLabels?.localeFromDocument?.() === 'en';
+    return english
+      ? { placeholder:'Search link keyword / Item ID / SKU', ariaLabel:'Search ads by product link', clearLabel:'Clear search' }
+      : { placeholder:'搜索链接关键词 / Item ID / SKU', ariaLabel:'搜索广告商品链接', clearLabel:'清空搜索' };
+  }
+
+  function normalizeAdSearchText(value) {
+    return String(value ?? '').normalize('NFKC').toLowerCase();
+  }
+
+  function currentAdSearchQuery() {
+    return normalizeAdSearchText($('#adLinkSearchInput')?.value || '').trim();
+  }
+
+  function matchesAdSearch(text, query = currentAdSearchQuery()) {
+    if (!query) return true;
+    const haystack = normalizeAdSearchText(text);
+    return query.split(/\s+/).filter(Boolean).every(token => haystack.includes(token));
+  }
+
+  function productAdSearchText(row = {}) {
+    const items = Array.isArray(row.searchItems) ? row.searchItems : [];
+    return [
+      row.campaignId, row.adName, row.campaignPlacement, row.biddingMethod,
+      ...items.flatMap(item => [item?.itemId, item?.itemName, item?.itemSku]),
+    ].filter(value => value !== null && value !== undefined && value !== '').join(' ');
+  }
+
+  function groupAdSearchText(row = {}) {
+    const items = Array.isArray(row.items) ? row.items : [];
+    return [
+      row.campaign_name, row.promotion_key, row.promotionKey, row.source_ad_type, row.biddingMethod,
+      ...items.flatMap(item => [item?.itemId, item?.item_id, item?.productName, item?.itemName, item?.itemSku]),
+    ].filter(value => value !== null && value !== undefined && value !== '').join(' ');
+  }
+
   function setPanelVisibility(type) {
     $('#adsGmsPanel')?.classList.remove('hidden');
     $('#adsGmvMaxPanel')?.classList.add('hidden');
@@ -302,6 +339,19 @@
     $$('.ads-type-tab').forEach(button => {
       if (labels[button.dataset.adsType]) button.textContent = labels[button.dataset.adsType];
     });
+
+    const adsToolbar = tabs.closest('.ads-filter-toolbar');
+    if (adsToolbar && !$('#adLinkSearch')) {
+      const copy = adSearchCopy();
+      const search = document.createElement('label');
+      search.id = 'adLinkSearch';
+      search.className = 'ad-link-search';
+      search.setAttribute('aria-label', copy.ariaLabel);
+      search.innerHTML = `<span class="ad-link-search-icon" aria-hidden="true">&#128269;</span>
+        <input id="adLinkSearchInput" type="search" autocomplete="off" spellcheck="false" placeholder="${esc(copy.placeholder)}">
+        <button id="adLinkSearchClear" class="ad-link-search-clear hidden" type="button" aria-label="${esc(copy.clearLabel)}">&times;</button>`;
+      adsToolbar.insertBefore(search, $('#adStatusFilter') || null);
+    }
 
     if (!$('#productCardParent')) {
       const parent = document.createElement('div');
@@ -609,25 +659,41 @@
     return `<span title="${esc(source)}">—</span>`;
   }
 
-  function applyAdStatusFilter(type = activeType()) {
-    if (!['manual', 'groups'].includes(type)) return;
-    const body = type === 'manual' ? $('#manualAdRows') : $('#adGroupRows');
+  function applyAdListFilters(type = activeType()) {
+    const body = type === 'manual' ? $('#manualAdRows') : type === 'groups' ? $('#adGroupRows') : $('#autoAdRows');
     if (!body) return;
+    body.querySelector('tr[data-ad-filter-empty]')?.remove();
     body.querySelector('tr[data-ad-status-empty]')?.remove();
-    const filter = currentAdStatusFilter();
-    const rows = Array.from(body.querySelectorAll('tr[data-ad-status]'));
+    const statusFilter = currentAdStatusFilter();
+    const searchQuery = currentAdSearchQuery();
+    const rows = type === 'groups'
+      ? Array.from(body.querySelectorAll('tr[data-ad-group-index]'))
+      : Array.from(body.querySelectorAll(`tr[data-product-card-campaign][data-product-card-type="${type}"]`));
     let visible = 0;
     rows.forEach(row => {
-      const matches = filter === 'all' || row.dataset.adStatus === filter;
+      const statusMatches = type === 'auto' || statusFilter === 'all' || row.dataset.adStatus === statusFilter;
+      const searchMatches = matchesAdSearch(row.__adSearchText || row.textContent || '', searchQuery);
+      const matches = statusMatches && searchMatches;
       row.classList.toggle('ad-status-filter-hidden', !matches);
       if (matches) visible += 1;
     });
     if (type === 'manual' && $('#manualAdCount')) $('#manualAdCount').textContent = `${int(visible)} 个`;
+    if (type === 'auto' && $('#autoAdCount')) $('#autoAdCount').textContent = `${int(visible)} 个`;
+    const clearButton = $('#adLinkSearchClear');
+    if (clearButton) clearButton.classList.toggle('hidden', !searchQuery);
     if (rows.length && visible === 0) {
-      const colspan = type === 'manual' ? MANUAL_COLUMNS.length : GROUP_COLUMNS.length;
-      const label = type === 'manual' ? '单品广告' : '广告组';
-      body.insertAdjacentHTML('beforeend', `<tr data-ad-status-empty><td colspan="${colspan}" class="empty">当前状态筛选没有${label}。</td></tr>`);
+      const colspan = type === 'manual' ? MANUAL_COLUMNS.length : type === 'groups' ? GROUP_COLUMNS.length : GMS_COLUMNS.length;
+      const label = type === 'manual' ? '单品广告' : type === 'groups' ? '广告组' : '全店推';
+      const rawQuery = String($('#adLinkSearchInput')?.value || '').trim();
+      const message = searchQuery
+        ? `没有找到匹配“${esc(rawQuery)}”的${label}。`
+        : `当前状态筛选没有${label}。`;
+      body.insertAdjacentHTML('beforeend', `<tr data-ad-filter-empty><td colspan="${colspan}" class="empty">${message}</td></tr>`);
     }
+  }
+
+  function applyAdStatusFilter(type = activeType()) {
+    applyAdListFilters(type);
   }
 
   function productAdRowsHtml(rows, type, previousMap = new Map()) {
@@ -685,7 +751,10 @@
     target.innerHTML = rows.length
       ? productAdRowsHtml(rows, type, previousMap)
       : `<tr><td colspan="${type === 'manual' ? MANUAL_COLUMNS.length : GMS_COLUMNS.length}" class="empty">当前周期没有${type === 'manual' ? '单品广告' : '全店推'}数据。</td></tr>`;
-    if (type === 'manual') applyAdStatusFilter('manual');
+    Array.from(target.querySelectorAll(`tr[data-product-card-campaign][data-product-card-type="${type}"]`)).forEach((rowEl, index) => {
+      rowEl.__adSearchText = productAdSearchText(rows[index] || {});
+    });
+    applyAdListFilters(type);
     $$('[data-product-card-campaign]').forEach(row => {
       if (row.dataset.productCardType !== type) return;
       if (type === 'manual') row.title = '点击查看单品广告明细';
@@ -881,8 +950,12 @@
         <td><span class="pill neutral">${esc(row.data_quality_status || 'COMPLETE')}</span></td></tr>`;
     }).join('') : `<tr><td colspan="${GROUP_COLUMNS.length}" class="empty">当前周期暂无广告组数据。</td></tr>`;
     $('#adGroupEmptyState')?.classList.toggle('hidden', Boolean(lastGroupRows.length));
-    applyAdStatusFilter('groups');
-    $$('#adGroupRows tr[data-ad-group-index]').forEach(rowEl => rowEl.addEventListener('click', () => openGroupItems(Number(rowEl.dataset.adGroupIndex), rowEl)));
+    $$('#adGroupRows tr[data-ad-group-index]').forEach(rowEl => {
+      const index = Number(rowEl.dataset.adGroupIndex);
+      rowEl.__adSearchText = groupAdSearchText(lastGroupRows[index] || {});
+      rowEl.addEventListener('click', () => openGroupItems(index, rowEl));
+    });
+    applyAdListFilters('groups');
   }
 
   async function refreshActivePanel() {
@@ -922,8 +995,18 @@
       const host = $('#adStatusFilter');
       if (host) host.dataset.adStatusValue = value;
       $$('.ad-status-option').forEach(option => option.classList.toggle('active', option === button));
-      applyAdStatusFilter();
+      applyAdListFilters();
     }));
+    const searchInput = $('#adLinkSearchInput');
+    const searchClear = $('#adLinkSearchClear');
+    searchInput?.addEventListener('input', () => applyAdListFilters());
+    searchClear?.addEventListener('click', event => {
+      event.preventDefault();
+      if (!searchInput) return;
+      searchInput.value = '';
+      searchInput.focus();
+      applyAdListFilters();
+    });
     document.addEventListener('click', event => {
       const groupButton = event.target.closest('[data-generate-ad-group-skill]');
       if (groupButton) {

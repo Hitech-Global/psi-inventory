@@ -623,6 +623,37 @@ class ShopeeQueryRepository {
     });
   }
 
+  async listCampaignSearchItems({ shopId, endDate, campaignTypeNormalized = null }) {
+    const result = await this.pool.query(
+      `WITH latest AS (
+         SELECT m.campaign_id, MAX(m.event_date) AS event_date
+         FROM shopee_ad_campaign_membership_daily m
+         JOIN shopee_ad_campaigns c ON c.shop_id=m.shop_id AND c.campaign_id=m.campaign_id
+         WHERE m.shop_id=$1 AND m.event_date <= $2
+           AND ($3::text IS NULL OR c.campaign_type_normalized=$3)
+         GROUP BY m.campaign_id
+       )
+       SELECT m.campaign_id,m.item_id,p.item_name,p.item_sku
+       FROM shopee_ad_campaign_membership_daily m
+       JOIN latest l ON l.campaign_id=m.campaign_id AND l.event_date=m.event_date
+       LEFT JOIN shopee_products p ON p.shop_id=m.shop_id AND p.item_id=m.item_id
+       WHERE m.shop_id=$1
+       ORDER BY m.campaign_id,m.item_id`,
+      [shopId, endDate, campaignTypeNormalized],
+    );
+    const grouped = new Map();
+    for (const row of result.rows) {
+      const key = Number(row.campaign_id);
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key).push({
+        itemId: Number(row.item_id),
+        itemName: row.item_name || null,
+        itemSku: row.item_sku || null,
+      });
+    }
+    return grouped;
+  }
+
   async listProductAdItems({ shopId, campaignId, endDate }) {
     const result = await this.pool.query(
       `WITH latest AS (

@@ -466,8 +466,9 @@ function createShopeeAnalyticsRouter({
       const startDate = isoDate(req.query.start_date, 'start_date');
       const endDate = isoDate(req.query.end_date, 'end_date');
       if (startDate > endDate) throw new Error('start_date must be <= end_date');
-      const [campaigns, sellerEvidenceRows] = await Promise.all([
+      const [campaigns, searchItemsByCampaign, sellerEvidenceRows] = await Promise.all([
         queryRepository.listCampaignOverview({ shopId, startDate, endDate, campaignTypeNormalized: 'GMS' }),
+        queryRepository.listCampaignSearchItems({ shopId, endDate, campaignTypeNormalized: 'GMS' }),
         adPromotionRepository
           ? adPromotionRepository.list({ shopId, startDate, endDate, promotionType: 'SHOP_GMV_MAX', dataSource: 'MANUAL_IMPORT' })
           : [],
@@ -475,9 +476,11 @@ function createShopeeAnalyticsRouter({
       const sellerEvidence = aggregateGmsSellerEvidence(sellerEvidenceRows, startDate, endDate);
       const enrichedCampaigns = campaigns.map(campaign => {
         const evidence = sellerEvidence.get(Number(campaign.campaignId));
-        if (!evidence) return campaign;
+        const searchItems = searchItemsByCampaign.get(Number(campaign.campaignId)) || [];
+        if (!evidence) return { ...campaign, searchItems };
         return {
           ...campaign,
+          searchItems,
           performance: {
             ...campaign.performance,
             voucherAmount: evidence.voucherAmount,
@@ -569,8 +572,18 @@ function createShopeeAnalyticsRouter({
       if (startDate > endDate) throw new Error('start_date must be <= end_date');
       const adType = String(req.query.ad_type || '').toLowerCase();
       if (!['manual', 'auto'].includes(adType)) throw new Error('ad_type must be manual or auto');
-      const campaigns = await queryRepository.listProductAdsOverview({ shopId, startDate, endDate, adType });
-      res.json({ shopId, startDate, endDate, adType, campaigns });
+      const campaignTypeNormalized = adType === 'manual' ? 'MANUAL_PRODUCT_AD' : 'AUTO_PRODUCT_AD';
+      const [campaigns, searchItemsByCampaign] = await Promise.all([
+        queryRepository.listProductAdsOverview({ shopId, startDate, endDate, adType }),
+        queryRepository.listCampaignSearchItems({ shopId, endDate, campaignTypeNormalized }),
+      ]);
+      res.json({
+        shopId, startDate, endDate, adType,
+        campaigns: campaigns.map(campaign => ({
+          ...campaign,
+          searchItems: searchItemsByCampaign.get(Number(campaign.campaignId)) || [],
+        })),
+      });
     } catch (error) {
       next(error);
     }
