@@ -43,6 +43,7 @@ assert(server.includes("createFeishuAuth({ pool })"));
 assert(server.includes("app.get('/auth/feishu/login', feishuAuth.handleLogin)"));
 assert(server.includes("app.get('/auth/feishu/callback', feishuAuth.handleCallback)"));
 assert(server.includes('feishuAuth.requireApiSession, feishuAuth.enforceShopAccess'));
+assert(server.indexOf("app.get('/api/shopee-analytics/health'") < server.indexOf('feishuAuth.requireApiSession, feishuAuth.enforceShopAccess'), 'health endpoint must stay outside auth middleware for Docker healthchecks');
 const ui = fs.readFileSync(path.join(root, 'web', 'auth-ui-v1.js'), 'utf8');
 assert(ui.includes('settings-menu-wrap'));
 assert(ui.includes('/api/shopee-auth/admin/users'));

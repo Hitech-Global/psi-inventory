@@ -51,6 +51,11 @@ function createApp({ pool, skillProvider = null, importJobPool = null }) {
   const backupStatusProvider = createBackupStatusProvider();
   const feishuAuth = createFeishuAuth({ pool });
 
+  // Docker/host health checks must remain available before auth middleware.
+  // This endpoint exposes no shop, user, or business data.
+  app.get('/api/shopee-analytics/health', (req, res) => {
+    res.json({ ok: true, module: 'shopee-analytics', mode: 'read-only' });
+  });
   app.use('/api/shopee-auth', feishuAuth.router);
   app.use('/api/shopee-analytics', feishuAuth.requireApiSession, feishuAuth.enforceShopAccess);
 
