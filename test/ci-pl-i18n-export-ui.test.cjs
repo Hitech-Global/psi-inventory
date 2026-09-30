@@ -11,6 +11,7 @@ const app = read('app.js');
 const inline = read('ci-list-inline-logistics.js');
 const amount = read('ci-amount-permission.js');
 const i18n = read('i18n.js');
+const freight = read('assets/ci-list-freight.js');
 
 ['app.js', 'ci-list-inline-logistics.js', 'ci-amount-permission.js', 'i18n.js'].forEach(file => {
   execFileSync(process.execPath, ['--check', path.join(root, file)], { stdio: 'pipe' });
@@ -32,5 +33,13 @@ assert.doesNotMatch(inline, /data-ci-logi-export="/, 'legacy export-menu trigger
 assert.match(amount, /tr\('export\.pl\.qty_per_carton'/, 'PL-only workbook headers must be localized');
 assert.match(app, /t\('export\.ci\.field'/, 'CI workbook metadata labels must be localized');
 assert.match(app, /t\('export\.ci\.original_unit_price'/, 'CI workbook column headers must be localized');
+
+assert.match(i18n, /I18N\.dict\.en\["ci\.col\.total_freight"\]="Total Freight"/, 'CI total freight English label missing');
+assert.match(i18n, /I18N\.dict\.en\["ci\.col\.freight_ratio"\]="Freight\/Value"/, 'CI freight ratio English label missing');
+assert.match(i18n, /I18N\.dict\.en\["logistics\.col\.cargo_value"\]="Cargo Value"/, 'cargo value English label missing');
+assert.match(freight, /global\.t\('ci\.col\.total_freight'/, 'runtime freight header must use i18n');
+assert.match(freight, /global\.t\('ci\.col\.freight_ratio'/, 'runtime freight ratio header must use i18n');
+assert.match(app, /id="ci-country"[^;]+t\('common\.all','全部'\)/, 'CI filter All option must use i18n');
+assert.match(app, /sel\.innerHTML='<option value="">'\+t\('common\.all','全部'\)/, 'dynamic CI filter All option must use i18n');
 
 console.log('ci-pl-i18n-export-ui: PASS');

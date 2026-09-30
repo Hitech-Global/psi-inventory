@@ -5237,4 +5237,9 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.zh["ci.payrec.note"]="金额为该CI在本付款单内的分摊金额；行点击可查看付款详情。"; I18N.dict.en["ci.payrec.note"]="Amounts are allocated to this CI within the payment record; select a row to view payment details."; I18N.dict.id["ci.payrec.note"]="Nilai dialokasikan ke CI ini dalam catatan pembayaran; pilih baris untuk melihat detail pembayaran.";
   I18N.dict.zh["field.payable_date"]="应付日期"; I18N.dict.en["field.payable_date"]="Payable Date"; I18N.dict.id["field.payable_date"]="Tanggal Jatuh Tempo";
   I18N.dict.zh["common.upload"]="上传"; I18N.dict.en["common.upload"]="Upload"; I18N.dict.id["common.upload"]="Unggah";
+
+// CI/PL production i18n leakage fix
+I18N.dict.zh["ci.col.total_freight"]="总运费"; I18N.dict.en["ci.col.total_freight"]="Total Freight"; I18N.dict.id["ci.col.total_freight"]="Total Ongkos Kirim";
+I18N.dict.zh["ci.col.freight_ratio"]="运费占比"; I18N.dict.en["ci.col.freight_ratio"]="Freight/Value"; I18N.dict.id["ci.col.freight_ratio"]="Proporsi Ongkos Kirim";
+I18N.dict.zh["logistics.col.cargo_value"]="总货值"; I18N.dict.en["logistics.col.cargo_value"]="Cargo Value"; I18N.dict.id["logistics.col.cargo_value"]="Nilai Barang";
 })();

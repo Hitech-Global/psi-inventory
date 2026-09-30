@@ -121,10 +121,10 @@
       if (!headerRow.querySelector('[data-ci-freight-head="total"]')) {
         var thTotal = document.createElement('th');
         thTotal.setAttribute('data-ci-freight-head', 'total');
-        thTotal.textContent = '总运费';
+        thTotal.textContent = typeof global.t === 'function' ? global.t('ci.col.total_freight', '总运费') : '总运费';
         var thRatio = document.createElement('th');
         thRatio.setAttribute('data-ci-freight-head', 'ratio');
-        thRatio.textContent = '运费占比';
+        thRatio.textContent = typeof global.t === 'function' ? global.t('ci.col.freight_ratio', '运费占比') : '运费占比';
         var nextHead = heads[ciAmountIndex].nextSibling;
         headerRow.insertBefore(thTotal, nextHead);
         headerRow.insertBefore(thRatio, nextHead);

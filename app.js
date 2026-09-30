@@ -11323,7 +11323,7 @@ function ciPreviewAttachment(docType,id,field){
 // ==================== CI/PL管理 ====================
 function canImportHistoricalCI(){return hasPermission('ci_create')&&hasPermission('payment_create')&&hasPermission('payment_approve')}
 async function renderCI(){
-  const ciFilterControls = '<div class="filter-group"><label>'+t('field.country','国家')+'</label><select id="ci-country" onchange="onCIFilterChange()"><option value="">全部</option></select></div><div class="filter-group"><label>'+t('field.target_warehouse','仓库')+'</label><select id="ci-warehouse" onchange="onCIFilterChange()"><option value="">全部</option></select></div><div class="filter-group"><label>'+t('field.brand','品牌')+'</label><select id="ci-brand" onchange="onCIFilterChange()"><option value="">全部</option></select></div>';
+  const ciFilterControls = '<div class="filter-group"><label>'+t('field.country','国家')+'</label><select id="ci-country" onchange="onCIFilterChange()"><option value="">'+t('common.all','全部')+'</option></select></div><div class="filter-group"><label>'+t('field.target_warehouse','仓库')+'</label><select id="ci-warehouse" onchange="onCIFilterChange()"><option value="">'+t('common.all','全部')+'</option></select></div><div class="filter-group"><label>'+t('field.brand','品牌')+'</label><select id="ci-brand" onchange="onCIFilterChange()"><option value="">'+t('common.all','全部')+'</option></select></div>';
   document.getElementById('content-inner').innerHTML=t('html.renderCI', '<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>单据类型</label><select id="ci-source-mode" onchange="onCISourceModeChange()"><option value="operational">运营 CI</option><option value="historical">历史 CI</option><option value="all">全部</option></select></div><div class="filter-group"><label>入库状态</label><select id="ci-inbound-fs"><option value="">全部</option><option value="none">未入库</option><option value="partial">部分入库</option><option value="completed">已入库</option></select></div>{v3}<div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadCI()">搜索</button>{v1}{v2}</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🚚 CI/PL列表</div></div><div id="ci-purchase-summary"></div><div id="ci-table"></div></div>', {v1: hasPermission('ci_create')?t('gen.L5756.1','<button class="btn btn-primary btn-sm" onclick="createCI()">➕ 新建CI</button>'):'', v2: '', v3: ciFilterControls});
   refreshCIFilterOptions();
   loadCI();
@@ -11352,7 +11352,7 @@ async function refreshCIFilterOptions(){
 function fillCISelect(id, values, current){
   const sel=document.getElementById(id); if(!sel)return;
   const keep=values.indexOf(current)>=0?current:'';
-  sel.innerHTML='<option value="">全部</option>'+values.map(function(v){return '<option value="'+esc(String(v))+'"'+(v===keep?' selected':'')+'>'+esc(String(v))+'</option>';}).join('');
+  sel.innerHTML='<option value="">'+t('common.all','全部')+'</option>'+values.map(function(v){return '<option value="'+esc(String(v))+'"'+(v===keep?' selected':'')+'>'+esc(String(v))+'</option>';}).join('');
 }
 function onCIFilterChange(){ refreshCIFilterOptions(); loadCI(); }
 function renderOperationalCITable(data){
