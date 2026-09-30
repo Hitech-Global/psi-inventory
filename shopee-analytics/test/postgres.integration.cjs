@@ -30,7 +30,11 @@ const { FeishuAuthRepository, hashToken } = require('../src/feishu-auth');
 (async () => {
   const pool = createAnalyticsPool({ connectionString: url, max: 3 });
   try {
-    const schema = fs.readFileSync(path.join(__dirname, '..', 'schema.sql'), 'utf8');
+    const schemaFiles = [
+      'schema.sql', 'schema-import-jobs.sql', 'schema-shop-profile-corrections.sql',
+      'schema-product-ads-overview.sql', 'schema-product-ad-source-metrics.sql', 'schema-brand-portal-principal.sql',
+    ];
+    const schema = schemaFiles.map(name => fs.readFileSync(path.join(__dirname, '..', name), 'utf8')).join('\n\n');
     await pool.query(schema);
 
     const tables = await pool.query(
@@ -55,7 +59,7 @@ const { FeishuAuthRepository, hashToken } = require('../src/feishu-auth');
     ]) {
       assert(names.has(expected), `missing table ${expected}`);
     }
-    assert.strictEqual(names.size, 39, 'schema must expose exactly 39 shopee_* tables');
+    assert.strictEqual(names.size, 42, 'full schema bootstrap must expose exactly 42 shopee_* tables');
 
     const authRepository = new FeishuAuthRepository({ pool });
     const firstAdmin = await authRepository.bootstrapFirstUserIfEmpty({ openId:'ou_first_admin', name:'First Admin' });
