@@ -7,7 +7,7 @@ function fmtMoney(v,c){const n=Number(v||0);return(c?c+' ':'')+n.toLocaleString(
 // 数量类显示专用格式化：标准四舍五入取整，仅影响页面显示，不改原始数据/计算精度/导出
 // 覆盖：销量、库存、在途、PO/PI数量、建议采购、分摊库存等
 // 不覆盖：周转月数、占比、百分比、日期、金额、单价、汇率、CBM、KG
-function formatQuantityDisplay(value){var n=Number(value||0);return Math.round(n)}
+function formatQuantityDisplay(value){var n=Number(value||0);return Math.round(n).toLocaleString('en-US')}
 function fmtDate(d){return d?String(d).split('T')[0]:''}
 function todayStr(){return new Date().toISOString().split('T')[0]}
 function b64EncodeUnicode(s){return btoa(unescape(encodeURIComponent(String(s||''))))}
@@ -11986,7 +11986,7 @@ async function viewCI(id, backPay, backMode){
         else if(f==='country'){var cv=ci[f];if(typeof getLang==='function'&&getLang()==='en'){cv=({'印度尼西亚':'Indonesia','泰国':'Thailand','马来西亚':'Malaysia'})[cv]||cv;}v=esc(cv);}
         else if(moneyFields[f]){v=fmtMoney(ci[f]);}
         else if(f==='ci_status'){var sc=ciStatusClass(ci[f]);v='<span class="status-badge '+sc+'">'+statusLabel(ci[f])+'</span>';}
-        else if(f==='ci_total_qty'){v=(ci.items||[]).reduce(function(s,i){return s+(parseInt(i.shipped_qty,10)||0);},0);}else if(f==='balance_payment_status')v=statusLabel(ci[f]);
+        else if(f==='ci_total_qty'){v=formatQuantityDisplay((ci.items||[]).reduce(function(s,i){return s+(parseInt(i.shipped_qty,10)||0);},0));}else if(f==='balance_payment_status')v=statusLabel(ci[f]);
         else v=esc(ci[f]);
         buf+='<div class=\"detail-item\"><span class=\"detail-label\">'+(labels[f]||f)+'</span><span class=\"detail-value\">'+v+'</span></div>';
       });return buf;

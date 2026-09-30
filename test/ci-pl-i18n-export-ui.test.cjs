@@ -52,4 +52,7 @@ assert.match(app, /else if\(f==='country'\).*getLang\(\)==='en'.*'印度尼西�
 assert.match(app, /var moneyFields=\{goods_amount:1,pi_total_amount:1,amount_difference:1,actual_deducted_deposit:1,balance_unpaid_amount:1,balance_paid_amount:1,import_duty_total:1\}/, 'CI Details money field set missing');
 assert.match(app, /else if\(moneyFields\[f\]\)\{v=fmtMoney\(ci\[f\]\);\}/, 'CI Details monetary values must use thousands-separator formatter');
 
+assert.match(app, /function formatQuantityDisplay\(value\)\{var n=Number\(value\|\|0\);return Math\.round\(n\)\.toLocaleString\('en-US'\)\}/, 'quantity display formatter must add thousands separators');
+assert.match(app, /else if\(f==='ci_total_qty'\)\{v=formatQuantityDisplay\(/, 'CI total quantity must use quantity display formatter');
+
 console.log('ci-pl-i18n-export-ui: PASS');
