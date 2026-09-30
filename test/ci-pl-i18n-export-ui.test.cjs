@@ -13,7 +13,7 @@ const amount = read('ci-amount-permission.js');
 const i18n = read('i18n.js');
 const freight = read('assets/ci-list-freight.js');
 
-['app.js', 'ci-list-inline-logistics.js', 'ci-amount-permission.js', 'i18n.js'].forEach(file => {
+['app.js', 'ci-list-inline-logistics.js', 'ci-amount-permission.js', 'i18n.js', 'assets/ci-list-freight.js'].forEach(file => {
   execFileSync(process.execPath, ['--check', path.join(root, file)], { stdio: 'pipe' });
 });
 
@@ -41,5 +41,11 @@ assert.match(freight, /global\.t\('ci\.col\.total_freight'/, 'runtime freight he
 assert.match(freight, /global\.t\('ci\.col\.freight_ratio'/, 'runtime freight ratio header must use i18n');
 assert.match(app, /id="ci-country"[^;]+t\('common\.all','全部'\)/, 'CI filter All option must use i18n');
 assert.match(app, /sel\.innerHTML='<option value="">'\+t\('common\.all','全部'\)/, 'dynamic CI filter All option must use i18n');
+
+assert.match(freight, /'印度尼西亚': 'Indonesia'/, 'Indonesia display mapping missing');
+assert.match(freight, /'泰国': 'Thailand'/, 'Thailand display mapping missing');
+assert.match(freight, /'马来西亚': 'Malaysia'/, 'Malaysia display mapping missing');
+assert.match(freight, /typeText === '运营CI'\) cells\[1\]\.textContent = 'Operations CI'/, 'Operations CI display mapping missing');
+assert.match(freight, /global\.getLang\(\) !== 'en'/, 'country/type display mapping must only apply in English mode');
 
 console.log('ci-pl-i18n-export-ui: PASS');
