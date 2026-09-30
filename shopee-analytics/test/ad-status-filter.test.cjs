@@ -20,7 +20,7 @@ assert(ui.includes("'closed'"), 'Shopee closed status must normalize into ended'
 assert(ui.includes('function applyAdStatusFilter(type = activeType())'));
 assert(ui.includes('data-ad-status="${normalizeAdStatus(row.status)}"'), 'manual ads must expose normalized status');
 assert(ui.includes('data-ad-status="${normalizeAdStatus(row.campaign_status)}"'), 'ad groups must expose normalized status');
-assert(ui.includes("applyAdStatusFilter('manual')") && ui.includes("applyAdStatusFilter('groups')"));
+assert(ui.includes("applyAdListFilters(type)") && ui.includes("applyAdListFilters('groups')"), 'manual/groups must use the unified status + link-search filter');
 assert(ui.includes("$('#adStatusFilter')?.classList.toggle('hidden', type === 'auto')"));
 assert(!ui.includes("$$$('.ads-type-tab')"), 'Product Card hierarchy must not call an undefined selector helper');
 assert(ui.includes("$$('.ads-type-tab').forEach(button => button.addEventListener('click'"), 'ad tabs must bind with the multi-element selector helper');
