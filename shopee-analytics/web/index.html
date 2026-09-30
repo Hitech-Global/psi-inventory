@@ -352,8 +352,8 @@
         <div id="adGroupEmptyState" class="product-ad-detail empty-inline hidden">当前周期暂无广告组数据。可以通过右上角【批量导入】上传 Shopee Seller Centre 报表。</div>
       </section>
       <div id="adGroupImportModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-label="批量导入广告组">
-        <section class="ad-group-modal"><div class="panel-head"><div><h2>批量导入广告组</h2><p>先 preview 全部文件；只有全部通过正式范围校验后才可确认。</p></div><button id="closeAdGroupImportBtn" class="ghost" type="button">关闭</button></div>
-          <label id="adGroupDropzone" class="ad-group-dropzone">拖拽或选择 CSV / XLSX 文件<input id="adGroupFile" type="file" multiple accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"></label>
+        <section class="ad-group-modal"><div class="panel-head"><div><h2>批量导入广告组</h2><p>支持广告组 Performance 报表和 Operation Log 操作记录（中/英文），可混合选择；先 Preview，全部通过范围校验后再确认。</p></div><button id="closeAdGroupImportBtn" class="ghost" type="button">关闭</button></div>
+          <label id="adGroupDropzone" class="ad-group-dropzone">拖拽或选择 Performance / Operation Log CSV / XLSX 文件<input id="adGroupFile" type="file" multiple accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"></label>
           <div class="ad-group-import-controls"><button id="adGroupPreviewBtn" class="ghost" type="button">Preview 全部文件</button><button id="adGroupImportBtn" class="primary" type="button" disabled>确认批量导入</button><button id="adGroupResumeBtn" class="ghost hidden" type="button">继续导入未完成文件</button></div>
           <div id="adGroupBatchRows" class="ad-group-batch-list empty-inline">尚未选择文件。Preview 不会写入数据。</div>
           <div id="adGroupOnboarding" class="ad-group-scope-gate hidden"><strong>注册新店铺 · Manual Import Only</strong><p id="adGroupScopeNotice"></p><div class="ad-group-scope-controls"><input id="adGroupCountry" placeholder="国家 *（例如 MY）"><input id="adGroupBrand" placeholder="品牌 *"><input id="adGroupOperatorLabel" placeholder="内部显示名称（可选）"><button id="adGroupRegisterImportOnlyBtn" class="ghost" type="button">注册店铺并继续</button></div></div>

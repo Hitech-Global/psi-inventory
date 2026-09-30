@@ -8,6 +8,7 @@ const { createAnalyticsPool } = require('./pg');
 const { ShopeeAdPromotionRepository } = require('./ad-promotion-repository');
 const { ShopeeShopScopeRepository } = require('./shop-scope-repository');
 const { ShopeeAdGroupImportJobRepository } = require('./ad-group-import-job-repository');
+const { ShopeeOperationHistoryRepository } = require('./operation-history-repository');
 const { parseShopeeAdGroupFile } = require('./shopee-ad-group-import');
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -39,7 +40,7 @@ function safeJobPath(filePath, tmpDir) {
   return resolved;
 }
 
-async function processJob({ job, jobRepository, adPromotionRepository, shopScopeRepository, tmpDir }) {
+async function processJob({ job, jobRepository, adPromotionRepository, operationHistoryRepository, shopScopeRepository, tmpDir }) {
   const filePath = safeJobPath(job.filePath, tmpDir);
   const buffer = await fsp.readFile(filePath);
   const { report, preview } = parseShopeeAdGroupFile({ buffer, filename: job.filename });
@@ -87,13 +88,25 @@ async function processJob({ job, jobRepository, adPromotionRepository, shopScope
     throw scopeError('TARGET_SHOP_NOT_REGISTERED', `Shop ${targetShopId} must be explicitly registered before import`, 422);
   }
 
-  await adPromotionRepository.withTransaction(async queryable => {
-    for (const entry of report.groups) {
-      await adPromotionRepository.saveWithItems(entry.group, entry.items, { queryable });
-    }
-  });
+  let persistenceResult = null;
+  if (report.reportType === 'OPERATION_LOG') {
+    if (!operationHistoryRepository) throw new Error('Operation history repository is unavailable');
+    persistenceResult = await adPromotionRepository.withTransaction(async queryable =>
+      operationHistoryRepository.saveImportedOperations({
+        shopId: report.metadata.shopId,
+        campaignId: report.metadata.campaignId,
+        operations: report.operations,
+        queryable,
+      }));
+  } else {
+    await adPromotionRepository.withTransaction(async queryable => {
+      for (const entry of report.groups) {
+        await adPromotionRepository.saveWithItems(entry.group, entry.items, { queryable });
+      }
+    });
+  }
 
-  const result = { ok: true, persisted: true, ...scopedPreview };
+  const result = { ok: true, persisted: true, ...scopedPreview, ...(persistenceResult || {}) };
   await jobRepository.succeed(job.id, {
     result,
     sourceShopId: report.metadata.shopId,
@@ -135,6 +148,7 @@ async function runWorker({ env = process.env } = {}) {
   const pool = createAnalyticsPool({ max: 1, env });
   const jobRepository = new ShopeeAdGroupImportJobRepository({ pool });
   const adPromotionRepository = new ShopeeAdPromotionRepository({ pool });
+  const operationHistoryRepository = new ShopeeOperationHistoryRepository({ pool });
   const shopScopeRepository = new ShopeeShopScopeRepository({ pool });
   let stopping = false;
   let lastCleanup = 0;
@@ -167,7 +181,7 @@ async function runWorker({ env = process.env } = {}) {
       let completed = false;
       let completedResult = null;
       try {
-        completedResult = await processJob({ job, jobRepository, adPromotionRepository, shopScopeRepository, tmpDir });
+        completedResult = await processJob({ job, jobRepository, adPromotionRepository, operationHistoryRepository, shopScopeRepository, tmpDir });
         completed = true;
       } catch (error) {
         const info = errorInfo(error);

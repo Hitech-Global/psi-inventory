@@ -1,7 +1,7 @@
 'use strict';
 
 const SKILL_NAME = 'shopee-gmv-max-analysis';
-const SKILL_VERSION = '0.1.0';
+const SKILL_VERSION = '0.2.0';
 
 function validateReport(report) {
   if (!report || typeof report !== 'object') throw new Error('Skill report must be an object');

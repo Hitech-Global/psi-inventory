@@ -63,12 +63,16 @@ class ShopeeQueryRepository {
 
   async loadCampaignOperations({ shopId, campaignId, startDate, endDate }) {
     const result = await this.pool.query(
-      `SELECT operation_type,reason,before_json,after_json,effective_from,effective_to,item_id
-       FROM shopee_operation_history
-       WHERE shop_id=$1 AND campaign_id=$2
-         AND effective_from >= $3::date
-         AND effective_from < ($4::date + interval '1 day')
-       ORDER BY effective_from ASC`,
+      `SELECT o.operation_type,o.reason,o.before_json,o.after_json,o.effective_from,o.effective_to,o.item_id,
+              o.actor_type,o.operator_raw,o.platform_raw,o.event_type_raw,o.source_format,
+              to_char((o.effective_from AT TIME ZONE COALESCE(p.timezone,'UTC')),'YYYY-MM-DD') AS effective_date,
+              to_char((o.effective_from AT TIME ZONE COALESCE(p.timezone,'UTC')),'HH24:MI:SS') AS effective_time
+       FROM shopee_operation_history o
+       LEFT JOIN shopee_shop_profiles p ON p.shop_id=o.shop_id
+       WHERE o.shop_id=$1 AND o.campaign_id=$2
+         AND (o.effective_from AT TIME ZONE COALESCE(p.timezone,'UTC'))::date >= $3::date
+         AND (o.effective_from AT TIME ZONE COALESCE(p.timezone,'UTC'))::date <= $4::date
+       ORDER BY o.effective_from ASC`,
       [shopId, campaignId, startDate, endDate],
     );
     return result.rows.map(row => ({
@@ -77,9 +81,43 @@ class ShopeeQueryRepository {
       before: row.before_json,
       after: row.after_json,
       effectiveFrom: row.effective_from,
+      effectiveDate: row.effective_date || null,
+      effectiveTime: row.effective_time || null,
       effectiveTo: row.effective_to,
       itemId: row.item_id == null ? null : Number(row.item_id),
+      actorType: row.actor_type || null,
+      operatorRaw: row.operator_raw || null,
+      platformRaw: row.platform_raw || null,
+      eventTypeRaw: row.event_type_raw || null,
+      sourceFormat: row.source_format || null,
     }));
+  }
+
+  async resolveAdGroupOperationCampaign({ shopId, groupStartDate, itemCount = null }) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(groupStartDate || ''))) return { campaignId: null, match: 'NO_START_DATE', candidates: [] };
+    const result = await this.pool.query(
+      `SELECT DISTINCT campaign_id,
+              NULLIF(after_json->>'itemCount','') AS item_count
+       FROM shopee_operation_history
+       WHERE shop_id=$1
+         AND source_format='SHOPEE_AD_OPERATION_LOG_EXPORT'
+         AND operation_type='CAMPAIGN_CREATED'
+         AND campaign_id IS NOT NULL
+         AND LEFT(COALESCE(after_json->>'startTime',''),10)=$2
+       ORDER BY campaign_id`,
+      [shopId, groupStartDate],
+    );
+    const candidates = result.rows.map(row => ({
+      campaignId: Number(row.campaign_id),
+      itemCount: /^\d+$/.test(String(row.item_count || '')) ? Number(row.item_count) : null,
+    }));
+    if (candidates.length === 1) return { campaignId: candidates[0].campaignId, match: 'START_DATE_UNIQUE', candidates };
+    const expectedCount = Number(itemCount);
+    if (Number.isSafeInteger(expectedCount) && expectedCount >= 0) {
+      const exact = candidates.filter(row => row.itemCount === expectedCount);
+      if (exact.length === 1) return { campaignId: exact[0].campaignId, match: 'START_DATE_ITEM_COUNT', candidates };
+    }
+    return { campaignId: null, match: candidates.length ? 'AMBIGUOUS' : 'NOT_FOUND', candidates };
   }
 
   async getPortfolioOverview({

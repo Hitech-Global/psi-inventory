@@ -129,7 +129,7 @@
   }
 
   async function detectExisting(entry) {
-    if (!entry.registered || !entry.preview || entry.preview.granularity !== 'DAY') return false;
+    if (!entry.registered || !entry.preview || entry.preview.importType === 'OPERATION_LOG' || entry.preview.granularity !== 'DAY') return false;
     const params = new URLSearchParams({
       shop_id: String(entry.shopId),
       start_date: entry.preview.periodStart,
@@ -143,8 +143,8 @@
 
   function applyOverlapGuard() {
     for (const entry of batch.entries) entry.overlap = false;
-    const ranges = batch.entries.filter(entry => entry.preview && entry.preview.granularity === 'RANGE');
-    const days = batch.entries.filter(entry => entry.preview && entry.preview.granularity === 'DAY');
+    const ranges = batch.entries.filter(entry => entry.preview && entry.preview.importType !== 'OPERATION_LOG' && entry.preview.granularity === 'RANGE');
+    const days = batch.entries.filter(entry => entry.preview && entry.preview.importType !== 'OPERATION_LOG' && entry.preview.granularity === 'DAY');
     for (const range of ranges) {
       for (const day of days) {
         if (range.shopId !== day.shopId) continue;
@@ -174,12 +174,18 @@
       rows.innerHTML = batch.entries.length
         ? batch.entries.map(entry => {
             const p = entry.preview || {};
+            const summary = p.importType === 'OPERATION_LOG'
+              ? `${num(p.operationCount)} operations · ${num(p.sellerOperationCount)} seller · ${num(p.systemOperationCount)} system${p.unknownOperationCount ? ` · ${num(p.unknownOperationCount)} unknown` : ''}`
+              : `${num(p.adGroupCount)} groups · ${num(p.itemRowCount)} products`;
+            const period = p.importType === 'OPERATION_LOG'
+              ? `${p.periodStart || '—'} → ${p.periodEnd || '—'} · Campaign #${p.campaignId || '—'}`
+              : `${p.periodStart || '—'} · ${p.granularity || '—'}`;
             return `<div class="ad-group-batch-row">
               <strong>${esc(entry.fileName || (entry.file && entry.file.name) || '—')}</strong>
               <span>${esc(String(p.sourceShopId || entry.shopId || '—'))} · ${esc(p.sourceShopName || '—')}</span>
-              <span>${esc(p.periodStart || '—')} · ${esc(p.granularity || '—')}</span>
-              <span>${num(p.adGroupCount)} groups · ${num(p.itemRowCount)} products</span>
-              <span>${(p.warnings || []).length ? `⚠ ${(p.warnings || []).length} warnings` : '正常'}</span>
+              <span>${esc(period)}</span>
+              <span>${esc(summary)}</span>
+              <span>${(p.warnings || []).length ? `⚠ ${(p.warnings || []).length} warnings` : (p.importType === 'OPERATION_LOG' ? '操作记录' : '正常')}</span>
               <b>${esc(statusText(entry))}</b>
             </div>`;
           }).join('')

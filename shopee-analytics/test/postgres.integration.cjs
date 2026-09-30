@@ -23,6 +23,7 @@ const { ShopeeProductRepository } = require('../src/product-repository');
 const { ShopeePromotionRepository } = require('../src/promotion-repository');
 const { ShopeeStrategyRepository } = require('../src/strategy-repository');
 const { ShopeeAdPromotionRepository } = require('../src/ad-promotion-repository');
+const { ShopeeOperationHistoryRepository } = require('../src/operation-history-repository');
 const { ShopeeShopScopeRepository } = require('../src/shop-scope-repository');
 const { FeishuAuthRepository, hashToken } = require('../src/feishu-auth');
 
@@ -350,6 +351,33 @@ const { FeishuAuthRepository, hashToken } = require('../src/feishu-auth');
         marketplaceRegion: 'TH',
       },
     ]);
+
+    const operationHistoryRepository = new ShopeeOperationHistoryRepository({ pool });
+    const importedOps = [
+      {
+        operationType:'CAMPAIGN_CREATED', actorType:'SELLER', effectiveFromLocal:'2026-09-24 15:47:32',
+        operatorRaw:'operator', platformRaw:'PC', eventTypeRaw:'Create Campaign', reason:'Create Campaign',
+        before:null, after:{ startTime:'2026-09-24', campaignBudget:500000, targetRoas:8.3, itemCount:3 },
+        sourceFormat:'SHOPEE_AD_OPERATION_LOG_EXPORT', sourceFingerprint:'integration-op-create-987',
+      },
+      {
+        operationType:'CAMPAIGN_SURGE_OPTIMIZATION_STARTED', actorType:'SHOPEE_SYSTEM', effectiveFromLocal:'2026-09-25 00:00:00',
+        operatorRaw:'System: Campaign Surge Optimization', platformRaw:'Other', eventTypeRaw:'Campaign Surge Optimization Started', reason:'Campaign Surge Optimization Started',
+        before:null, after:null, sourceFormat:'SHOPEE_AD_OPERATION_LOG_EXPORT', sourceFingerprint:'integration-op-system-987',
+      },
+    ];
+    const firstOperationImport = await operationHistoryRepository.saveImportedOperations({ shopId:1, campaignId:987, operations:importedOps });
+    const repeatedOperationImport = await operationHistoryRepository.saveImportedOperations({ shopId:1, campaignId:987, operations:importedOps });
+    assert.deepStrictEqual(firstOperationImport, { inserted:2, skipped:0 });
+    assert.deepStrictEqual(repeatedOperationImport, { inserted:0, skipped:2 });
+    const queryForOperations = new ShopeeQueryRepository({ pool });
+    const loadedOps = await queryForOperations.loadCampaignOperations({ shopId:1, campaignId:987, startDate:'2026-09-24', endDate:'2026-09-25' });
+    assert.strictEqual(loadedOps.length, 2);
+    assert.strictEqual(loadedOps[0].actorType, 'SELLER');
+    assert.strictEqual(loadedOps[0].effectiveDate, '2026-09-24');
+    assert.strictEqual(loadedOps[1].actorType, 'SHOPEE_SYSTEM');
+    const linkedOperationCampaign = await queryForOperations.resolveAdGroupOperationCampaign({ shopId:1, groupStartDate:'2026-09-24', itemCount:3 });
+    assert.strictEqual(linkedOperationCampaign.campaignId, 987);
 
     const shopScopeRepository = new ShopeeShopScopeRepository({ pool });
     const importOnlyScope = await shopScopeRepository.registerImportOnly({

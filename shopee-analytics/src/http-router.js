@@ -12,6 +12,7 @@ const { sumPerformance } = require('./metrics');
 const { productAdDiagnosis } = require('./product-ads-diagnosis');
 const { normalizeManualPromotion, normalizeManualItem } = require('./manual-ad-group');
 const { parseShopeeAdGroupFile } = require('./shopee-ad-group-import');
+const { ShopeeOperationHistoryRepository } = require('./operation-history-repository');
 const { ROLE_SUPER_ADMIN, authorizedShopIds, assertShopAccess } = require('./feishu-auth');
 const { BRAND_PORTAL_COOKIE, stateCookie, clearStateCookie, parseCookie } = require('./brand-portal-oauth-service');
 const { SkillJobManager, normalizeReportLanguage } = require('./skill-job-manager');
@@ -200,6 +201,7 @@ function createShopeeAnalyticsRouter({
   strategyRepository,
   queryRepository,
   adPromotionRepository = null,
+  operationHistoryRepository = null,
   shopScopeRepository = null,
   backupStatusProvider = async () => null,
   skillReportRepository = null,
@@ -209,6 +211,8 @@ function createShopeeAnalyticsRouter({
 }) {
   const router = express.Router();
   const skillJobManager = new SkillJobManager();
+  const operationRepo = operationHistoryRepository ||
+    (adPromotionRepository && adPromotionRepository.pool ? new ShopeeOperationHistoryRepository({ pool: adPromotionRepository.pool }) : null);
 
   function scopeError(code, message, status = 422) {
     const error = new Error(message);
@@ -674,12 +678,24 @@ function createShopeeAnalyticsRouter({
       if (!targetScope) {
         throw scopeError('TARGET_SHOP_NOT_REGISTERED', `Shop ${targetShopId} must be explicitly registered before import`);
       }
-      await adPromotionRepository.withTransaction(async queryable => {
-        for (const entry of report.groups) {
-          await adPromotionRepository.saveWithItems(entry.group, entry.items, { queryable });
-        }
-      });
-      res.status(201).json({ ok: true, persisted: true, ...scopedPreview });
+      let persistenceResult = null;
+      if (report.reportType === 'OPERATION_LOG') {
+        if (!operationRepo) throw new Error('Operation history repository is unavailable');
+        persistenceResult = await adPromotionRepository.withTransaction(async queryable =>
+          operationRepo.saveImportedOperations({
+            shopId: report.metadata.shopId,
+            campaignId: report.metadata.campaignId,
+            operations: report.operations,
+            queryable,
+          }));
+      } else {
+        await adPromotionRepository.withTransaction(async queryable => {
+          for (const entry of report.groups) {
+            await adPromotionRepository.saveWithItems(entry.group, entry.items, { queryable });
+          }
+        });
+      }
+      res.status(201).json({ ok: true, persisted: true, ...scopedPreview, ...(persistenceResult || {}) });
     } catch (error) { next(error); }
   });
 

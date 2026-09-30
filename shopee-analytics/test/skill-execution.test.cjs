@@ -15,13 +15,13 @@ const { dailyAnalysisWindow, runDailySkillReports } = require('../src/skill-sche
     } },
   });
   const report = await executor({
-    skillName:'shopee-gmv-max-analysis', skillVersion:'0.1.0', analysisPackage:pkg,
+    skillName:'shopee-gmv-max-analysis', skillVersion:'0.2.0', analysisPackage:pkg,
   });
   assert.strictEqual(report.trigger, 'MANUAL');
 
   const disabled = createSkillExecutor({ provider:disabledSkillProvider() });
   await assert.rejects(
-    () => disabled({ skillName:'shopee-gmv-max-analysis', skillVersion:'0.1.0', analysisPackage:pkg }),
+    () => disabled({ skillName:'shopee-gmv-max-analysis', skillVersion:'0.2.0', analysisPackage:pkg }),
     /not configured/,
   );
 

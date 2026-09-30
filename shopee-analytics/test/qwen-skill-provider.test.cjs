@@ -70,6 +70,9 @@ function readFileSync(file) {
   assert.strictEqual(body.response_format.json_schema.strict, true);
   assert.strictEqual(body.response_format.json_schema.schema.additionalProperties, false);
   assert(body.messages[0].content.includes('Use FACT before INFERENCE.'));
+  assert(body.messages[0].content.includes('do not require multi-SKU success for STABLE'));
+  assert(body.messages[0].content.includes('Spend Share is observed allocation, not a target'));
+  assert(body.messages[0].content.includes('maturity -> campaign orders/economics -> funnel'));
   assert(body.messages[0].content.includes('Simplified Chinese'));
   assert.deepStrictEqual(progress.map(row => row[0]), [40,82,90]);
 

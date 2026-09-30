@@ -422,6 +422,12 @@ CREATE TABLE IF NOT EXISTS shopee_operation_history (
   after_json JSONB,
   effective_from TIMESTAMPTZ NOT NULL,
   effective_to TIMESTAMPTZ,
+  actor_type TEXT,
+  operator_raw TEXT,
+  platform_raw TEXT,
+  event_type_raw TEXT,
+  source_format TEXT,
+  source_fingerprint TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -508,6 +514,17 @@ CREATE INDEX IF NOT EXISTS idx_shopee_operation_item_time
   ON shopee_operation_history(shop_id, item_id, effective_from DESC);
 CREATE INDEX IF NOT EXISTS idx_shopee_operation_campaign_time
   ON shopee_operation_history(shop_id, campaign_id, effective_from DESC);
+
+ALTER TABLE shopee_operation_history
+  ADD COLUMN IF NOT EXISTS actor_type TEXT,
+  ADD COLUMN IF NOT EXISTS operator_raw TEXT,
+  ADD COLUMN IF NOT EXISTS platform_raw TEXT,
+  ADD COLUMN IF NOT EXISTS event_type_raw TEXT,
+  ADD COLUMN IF NOT EXISTS source_format TEXT,
+  ADD COLUMN IF NOT EXISTS source_fingerprint TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_shopee_operation_source_fingerprint
+  ON shopee_operation_history(source_fingerprint)
+  WHERE source_fingerprint IS NOT NULL;
 
 -- Direct GMV is nullable by contract: an absent source field is unknown, not 0.
 -- These ALTERs make the change safe for already-initialized desktop databases.

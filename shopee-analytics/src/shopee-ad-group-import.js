@@ -10,6 +10,8 @@ const REQUIRED_HEADERS = Object.freeze([
   'Impression', 'Clicks', 'CTR', 'Conversions', 'Direct Conversions', 'Conversion Rate', 'Direct Conversion Rate',
   'Cost per Conversion', 'Cost per Direct Conversion', 'Items Sold', 'Direct Items Sold', 'GMV', 'Direct GMV', 'Expense', 'ROAS', 'Direct ROAS', 'ACOS', 'Direct ACOS', 'Voucher Amount', 'Vouchered Sales',
 ]);
+const OPERATION_REQUIRED_HEADERS = Object.freeze(['Update Time', 'Operator', 'Platform', 'Event Type', 'Details']);
+const OPERATION_SOURCE_FORMAT = 'SHOPEE_AD_OPERATION_LOG_EXPORT';
 
 // Seller Centre localizes export labels. Normalize into the existing canonical
 // schema so all locale variants use one parser and one persistence path.
@@ -19,9 +21,11 @@ const HEADER_ALIASES = Object.freeze({
   '转化率': 'Conversion Rate', '直接转化率': 'Direct Conversion Rate', '每转化成本': 'Cost per Conversion', '每一直接转化的成本': 'Cost per Direct Conversion',
   '商品已出售': 'Items Sold', '直接已售商品': 'Direct Items Sold', '销售金额': 'GMV', '直接销售金额': 'Direct GMV', '花费': 'Expense',
   '广告支出回报率': 'ROAS', '直接广告支出回报率': 'Direct ROAS', '广告销售成本': 'ACOS', '直接广告销售成本': 'Direct ACOS',
+  '更新时间': 'Update Time', '操作员': 'Operator', '平台': 'Platform', '活动类型': 'Event Type', '详情': 'Details',
 });
 const METADATA_ALIASES = Object.freeze({
   '用户名称': 'User Name', '商店名称': 'Shop Name', '商店ID': 'Shop ID', '报告创建时间': 'Report Creation Time', '时间': 'Date Period',
+  '广告系列编号': 'Campaign ID',
 });
 function normalizeLabel(value) { return String(value ?? '').replace(/^\uFEFF/, '').trim(); }
 function canonicalHeader(value) { const label = normalizeLabel(value); return HEADER_ALIASES[label] || label; }
@@ -182,9 +186,149 @@ function previewShopeeAdGroupReport(report) {
   return { sourceShopId: report.metadata.shopId, sourceShopName: report.metadata.shopName, reportSource: 'SHOPEE_AD_GROUP_EXPORT', shopId: report.metadata.shopId, shopName: report.metadata.shopName, periodStart: report.metadata.periodStart, periodEnd: report.metadata.periodEnd, granularity: report.metadata.granularity, adGroupCount: report.groups.length, itemRowCount: report.groups.reduce((n, entry) => n + entry.items.length, 0), completeCount: states.filter(x => x === 'COMPLETE').length, partialCount: states.filter(x => x === 'PARTIAL').length, mismatchCount: states.filter(x => x === 'DATA_MISMATCH').length, roundingWarningCount: report.warnings.filter(w => w.code === 'ROUNDING_ACCEPTED').length, groups, warnings: report.warnings, errors: [] };
 }
 
-function parseShopeeAdGroupFile({ buffer, filename = '' }) {
-  const rows = /\.xlsx$/i.test(filename) ? parseWorkbook(buffer) : parseCsv(Buffer.isBuffer(buffer) ? buffer.toString('utf8') : String(buffer));
-  const report = parseShopeeAdGroupReport(rows); return { report, preview: previewShopeeAdGroupReport(report) };
+function operationActor(row) {
+  const platform = normalizeLabel(row.Platform).toLowerCase();
+  const operator = normalizeLabel(row.Operator).toLowerCase();
+  const eventType = normalizeLabel(row['Event Type']).toLowerCase();
+  if (['pc', '电脑'].includes(platform)) return 'SELLER';
+  if (['system', '系统'].includes(platform)) return 'SHOPEE_SYSTEM';
+  if (/^(system|系统)\s*[:：]/i.test(operator)) return 'SHOPEE_SYSTEM';
+  if (/campaign surge optimization|大促效果优化/i.test(eventType + ' ' + operator)) return 'SHOPEE_SYSTEM';
+  return 'UNKNOWN';
 }
 
-module.exports = { SHOPEE_AD_GROUP_MONEY_ROUNDING_TOLERANCE, SHOPEE_AD_GROUP_MINOR_MONEY_ROUNDING_TOLERANCE, REQUIRED_HEADERS, HEADER_ALIASES, METADATA_ALIASES, parseCsv, parseWorkbook, parseDatePeriod, normalizeShopeeMetric, parseShopeeAdGroupReport, previewShopeeAdGroupReport, parseShopeeAdGroupFile, validateParentChild };
+const DETAIL_KEY_ALIASES = Object.freeze({
+  'Ads Status': 'status', '广告状态': 'status',
+  'Total Budget': 'totalBudget', '总预算': 'totalBudget',
+  'Daily Budget': 'campaignBudget', '每日预算': 'campaignBudget',
+  'End Time': 'endTime', '结束时间': 'endTime',
+  'Start Time': 'startTime', '开始时间': 'startTime',
+  'GMV Max(Custom ROAS)': 'targetRoas', 'GMV Max (Custom ROAS)': 'targetRoas', '全站推广（目标ROAS）': 'targetRoas', '全站推广(目标ROAS)': 'targetRoas',
+  'Rapid Boost': 'rapidBoost', '极速起量': 'rapidBoost',
+  'Change Number of Products in Ad Group:': 'itemCount', '更改广告组中的商品数量：': 'itemCount',
+  'Placement': 'placement', '版位': 'placement',
+  'Product Creative': 'productCreative', '商品创意': 'productCreative',
+});
+
+function settingValue(key, raw) {
+  const text = normalizeLabel(raw);
+  if (key === 'targetRoas') {
+    const n = Number(text.replace(/,/g, '')); return Number.isFinite(n) ? n : text;
+  }
+  if (key === 'campaignBudget') {
+    if (/unlimited|无限制/i.test(text)) return null;
+    const n = Number(text.replace(/[^0-9.-]/g, '')); return Number.isFinite(n) ? n : text;
+  }
+  if (key === 'itemCount') {
+    const n = Number(text.replace(/[^0-9.-]/g, '')); return Number.isFinite(n) ? n : text;
+  }
+  return text;
+}
+
+function parseOperationDetails(details) {
+  const before = {}; const after = {}; const raw = {};
+  for (const line of String(details || '').split(/\r?\n/)) {
+    const match = line.match(/^\s*([^:：]+[:：]?)\s*[:：]\s*(.*?)\s*$/);
+    if (!match) continue;
+    const sourceKeyName = normalizeLabel(match[1]);
+    const canonical = DETAIL_KEY_ALIASES[sourceKeyName] || DETAIL_KEY_ALIASES[sourceKeyName.replace(/[:：]$/, '')] || sourceKeyName;
+    const value = match[2]; raw[sourceKeyName] = value;
+    const change = value.split(/\s*(?:->|→|⇒)\s*/);
+    if (change.length === 2) {
+      before[canonical] = settingValue(canonical, change[0]);
+      after[canonical] = settingValue(canonical, change[1]);
+    } else {
+      after[canonical] = settingValue(canonical, value);
+    }
+  }
+  return { before: Object.keys(before).length ? before : null, after: Object.keys(after).length ? after : null, raw };
+}
+
+function operationTypeFor(row) {
+  const text = `${normalizeLabel(row['Event Type'])} ${normalizeLabel(row.Details)}`.toLowerCase();
+  if (/create campaign|创建广告|创建.*campaign/i.test(text)) return 'CAMPAIGN_CREATED';
+  if (/campaign surge optimization finished|大促效果优化.*(?:结束|完成)|优化已结束/i.test(text)) return 'CAMPAIGN_SURGE_OPTIMIZATION_FINISHED';
+  if (/campaign surge optimization|大促效果优化/i.test(text)) return 'CAMPAIGN_SURGE_OPTIMIZATION_STARTED';
+  if (/pause|resume|暂停|恢复/i.test(text)) return 'CAMPAIGN_STATUS_CHANGE';
+  if (/edit|modify|change|update|修改|更改|调整/i.test(text)) return 'CAMPAIGN_SETTING_CHANGE';
+  return 'SHOPEE_OPERATION_EVENT';
+}
+
+function parseShopeeAdOperationReport(rows) {
+  if (!Array.isArray(rows) || !rows.length) throw new Error('operation log is empty');
+  const metadata = {}; let headerIndex = -1;
+  for (let i = 0; i < rows.length; i += 1) {
+    const label = canonicalMetadataLabel(rows[i][0]);
+    const canonical = rows[i].map(canonicalHeader);
+    if (OPERATION_REQUIRED_HEADERS.every(name => canonical.includes(name))) { headerIndex = i; break; }
+    if (['Shop Name','Shop ID','Date Period','Campaign ID'].includes(label)) metadata[label] = rows[i][1];
+  }
+  if (headerIndex < 0) throw new Error('operation log header row was not found');
+  const shopId = nullableInt(metadata['Shop ID']);
+  const campaignId = nullableInt(metadata['Campaign ID']);
+  if (!shopId) throw new Error('Shop ID is required');
+  if (!campaignId) throw new Error('Campaign ID is required');
+  if (!metadata['Date Period']) throw new Error('Date Period is required');
+  const period = parseDatePeriod(metadata['Date Period']);
+  const header = rows[headerIndex].map(canonicalHeader);
+  const operations = [];
+  for (const values of rows.slice(headerIndex + 1)) {
+    if (!values.some(value => normalizeLabel(value))) continue;
+    const row = objectFromHeader(header, values);
+    const effectiveFromLocal = normalizeLabel(row['Update Time']);
+    if (!/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}$/.test(effectiveFromLocal)) throw new Error(`invalid operation Update Time: ${effectiveFromLocal}`);
+    const parsedDetails = parseOperationDetails(row.Details);
+    const actorType = operationActor(row);
+    const fingerprintSource = [shopId, campaignId, effectiveFromLocal, row.Operator, row.Platform, row['Event Type'], row.Details].join('|');
+    operations.push({
+      operationType: operationTypeFor(row), actorType,
+      effectiveFromLocal, operatorRaw: normalizeLabel(row.Operator) || null,
+      platformRaw: normalizeLabel(row.Platform) || null, eventTypeRaw: normalizeLabel(row['Event Type']) || null,
+      reason: normalizeLabel(row['Event Type']) || 'Shopee operation log event',
+      before: parsedDetails.before, after: parsedDetails.after,
+      itemId: null, sourceFormat: OPERATION_SOURCE_FORMAT,
+      sourceFingerprint: crypto.createHash('sha256').update(fingerprintSource).digest('hex'),
+      raw: { details: row.Details || '', parsedDetails: parsedDetails.raw },
+    });
+  }
+  return {
+    reportType: 'OPERATION_LOG',
+    metadata: { shopName: normalizeLabel(metadata['Shop Name']) || null, shopId, campaignId, ...period },
+    operations,
+  };
+}
+
+function previewShopeeAdOperationReport(report) {
+  return {
+    sourceShopId: report.metadata.shopId, sourceShopName: report.metadata.shopName,
+    reportSource: OPERATION_SOURCE_FORMAT, importType: 'OPERATION_LOG', campaignId: report.metadata.campaignId,
+    periodStart: report.metadata.periodStart, periodEnd: report.metadata.periodEnd, granularity: report.metadata.granularity,
+    operationCount: report.operations.length,
+    sellerOperationCount: report.operations.filter(row => row.actorType === 'SELLER').length,
+    systemOperationCount: report.operations.filter(row => row.actorType === 'SHOPEE_SYSTEM').length,
+    unknownOperationCount: report.operations.filter(row => row.actorType === 'UNKNOWN').length,
+    adGroupCount: 0, itemRowCount: 0, warnings: [], errors: [],
+  };
+}
+
+function detectImportType(rows) {
+  for (const row of rows || []) {
+    const canonical = row.map(canonicalHeader);
+    if (OPERATION_REQUIRED_HEADERS.every(name => canonical.includes(name))) return 'OPERATION_LOG';
+    if (canonical.includes('Sequence') && canonical.includes('Product ID')) return 'PERFORMANCE';
+  }
+  throw new Error('unsupported Shopee Ad Group file: neither performance report nor operation log was detected');
+}
+
+function parseShopeeAdGroupFile({ buffer, filename = '' }) {
+  const rows = /\.xlsx$/i.test(filename) ? parseWorkbook(buffer) : parseCsv(Buffer.isBuffer(buffer) ? buffer.toString('utf8') : String(buffer));
+  const importType = detectImportType(rows);
+  if (importType === 'OPERATION_LOG') {
+    const report = parseShopeeAdOperationReport(rows); return { report, preview: previewShopeeAdOperationReport(report) };
+  }
+  const report = parseShopeeAdGroupReport(rows); report.reportType = 'PERFORMANCE';
+  const preview = previewShopeeAdGroupReport(report); preview.importType = 'PERFORMANCE';
+  return { report, preview };
+}
+
+module.exports = { SHOPEE_AD_GROUP_MONEY_ROUNDING_TOLERANCE, SHOPEE_AD_GROUP_MINOR_MONEY_ROUNDING_TOLERANCE, REQUIRED_HEADERS, OPERATION_REQUIRED_HEADERS, HEADER_ALIASES, METADATA_ALIASES, parseCsv, parseWorkbook, parseDatePeriod, normalizeShopeeMetric, parseShopeeAdGroupReport, previewShopeeAdGroupReport, parseShopeeAdOperationReport, previewShopeeAdOperationReport, detectImportType, parseShopeeAdGroupFile, validateParentChild, operationActor, parseOperationDetails };

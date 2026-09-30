@@ -5,7 +5,7 @@ const { SkillRunner, validateReport } = require('../src/skill-runner');
 
 function report() {
   return {
-    skill:{ name:'shopee-gmv-max-analysis', version:'0.1.0' },
+    skill:{ name:'shopee-gmv-max-analysis', version:'0.2.0' },
     period:{ dataCutoff:'2026-09-20T23:59:59+07:00' },
     trigger:'MANUAL',
     stage:'CONVERGING',
@@ -39,7 +39,7 @@ assert.throws(() => validateReport({ ...report(), inferences:[{ statement:'bad',
     trigger:{ type:'MANUAL' },
   }, { onProgress:(...args) => progress.push(args) });
   assert.strictEqual(result.reportId, 7);
-  assert.deepStrictEqual(calls, [['pending','0.1.0'],['complete',7]]);
+  assert.deepStrictEqual(calls, [['pending','0.2.0'],['complete',7]]);
   assert.deepStrictEqual(progress.map(row => row[0]), [35,92,97]);
   console.log('shopee skill runner tests: ok');
 })().catch(error => {
