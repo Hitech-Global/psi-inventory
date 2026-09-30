@@ -6,7 +6,8 @@ const {
   CSS_MARKER,
   patchAppSource,
   patchI18nSource,
-  patchIndexSource
+  patchIndexSource,
+  patchSources
 } = require('../scripts/ci-list-mac-payable-date-hotfix.cjs');
 
 const appFixture = `
@@ -36,6 +37,30 @@ assert.match(i18nOnce, /Payable Balance<\/th><th>Payable Date<\/th><th>Diff/);
 assert.match(i18nOnce, /Sisa yang Harus Dibayar<\/th><th>Tanggal Jatuh Tempo<\/th><th>Selisih/);
 
 const html = '<!doctype html><html><head><style>.base{color:#111}</style></head><body></body></html>';
+const legacyPatched = patchSources({ app: appFixture, i18n: i18nFixture, html });
+assert.equal(legacyPatched.noop, false, 'legacy pre-patch fixture must be patched');
+assert.match(legacyPatched.app, /CI-LIST-PAYABLE-DATE-V1/);
+assert.match(legacyPatched.i18n, /CI-LIST-PAYABLE-DATE-I18N-V1/);
+assert.match(legacyPatched.html, /CI-LIST-MAC-STYLE-V1/);
+
+const currentFinalI18nFixture = `
+  I18N.dict.en["gen.L5761.2"] = "<th>CI No.</th><th>CI Type</th><th>Related PI</th><th>Supplier</th><th>Brand</th><th>Country</th><th>Warehouse</th><th>Ship Date</th><th>Currency</th><th>CI Amount</th><th>Paid Deposit</th><th>Payable Balance</th><th>Paid Balance</th><th>Balance Payment Status</th><th>Related Logistics Batch</th><th>Logistics Status</th><th>Inbound Status</th><th>Status</th><th>Actions</th>";
+`;
+const finalStateSources = { app: appFixture, i18n: currentFinalI18nFixture, html };
+const finalStateResult = patchSources(finalStateSources);
+assert.equal(finalStateResult.noop, true, 'current CI/PL table final state must no-op');
+assert.deepEqual(finalStateResult, { ...finalStateSources, noop: true }, 'final-state no-op must not rewrite any source');
+
+const malformedI18nFixture = `
+  I18N.dict.en["gen.L5761.2"] = "<th>Unexpected Header</th>";
+  I18N.dict.id["gen.L5761.2"] = "<th>Header Tidak Dikenal</th>";
+`;
+assert.throws(
+  () => patchSources({ app: appFixture, i18n: malformedI18nFixture, html }),
+  /anchor mismatch/,
+  'unknown i18n table structure must remain fail-closed'
+);
+
 const htmlOnce = patchIndexSource(html);
 const htmlTwice = patchIndexSource(htmlOnce);
 assert.equal(htmlTwice, htmlOnce, 'CSS patch must be idempotent');

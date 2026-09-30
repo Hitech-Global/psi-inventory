@@ -9,9 +9,20 @@ const INDEX_HTML = path.join(__dirname, '..', 'index.html');
 const APP_MARKER = '// CI-LIST-PAYABLE-DATE-V1';
 const I18N_MARKER = '// CI-LIST-PAYABLE-DATE-I18N-V1';
 const CSS_MARKER = '/* CI-LIST-MAC-STYLE-V1 */';
+const LEGACY_FINAL_EN_ANCHOR = 'Payable Balance</th><th>Payable Date</th><th>Diff';
+const LEGACY_FINAL_ID_ANCHOR = 'Sisa yang Harus Dibayar</th><th>Tanggal Jatuh Tempo</th><th>Selisih';
+const CURRENT_FINAL_EN_ANCHOR = '<th>CI No.</th><th>CI Type</th><th>Related PI</th><th>Supplier</th><th>Brand</th><th>Country</th><th>Warehouse</th><th>Ship Date</th><th>Currency</th><th>CI Amount</th><th>Paid Deposit</th><th>Payable Balance</th><th>Paid Balance</th><th>Balance Payment Status</th><th>Related Logistics Batch</th><th>Logistics Status</th><th>Inbound Status</th><th>Status</th><th>Actions</th>';
 
 function countOf(src, needle) {
   return src.split(needle).length - 1;
+}
+
+function isKnownFinalI18nState(src) {
+  if (src.includes(I18N_MARKER)) return true;
+  const legacyFinal = countOf(src, LEGACY_FINAL_EN_ANCHOR) === 1
+    && countOf(src, LEGACY_FINAL_ID_ANCHOR) === 1;
+  const currentFinal = countOf(src, CURRENT_FINAL_EN_ANCHOR) === 1;
+  return legacyFinal || currentFinal;
 }
 
 function patchAppSource(src) {
@@ -35,7 +46,7 @@ function patchAppSource(src) {
 }
 
 function patchI18nSource(src) {
-  if (src.includes(I18N_MARKER)) return src;
+  if (isKnownFinalI18nState(src)) return src;
 
   const markerAnchor = '  I18N.dict.en["gen.L5761.2"]';
   const enAnchor = 'Payable Balance</th><th>Diff';
@@ -45,8 +56,8 @@ function patchI18nSource(src) {
   if (countOf(src, enAnchor) !== 1) throw new Error('[CI-LIST-MAC] English payable header anchor mismatch');
   if (countOf(src, idAnchor) !== 1) throw new Error('[CI-LIST-MAC] Indonesian payable header anchor mismatch');
 
-  let out = src.replace(enAnchor, 'Payable Balance</th><th>Payable Date</th><th>Diff');
-  out = out.replace(idAnchor, 'Sisa yang Harus Dibayar</th><th>Tanggal Jatuh Tempo</th><th>Selisih');
+  let out = src.replace(enAnchor, LEGACY_FINAL_EN_ANCHOR);
+  out = out.replace(idAnchor, LEGACY_FINAL_ID_ANCHOR);
   out = out.replace(markerAnchor, '  ' + I18N_MARKER + '\n' + markerAnchor);
   return out;
 }
@@ -103,21 +114,33 @@ function patchIndexSource(src) {
   return src.slice(0, pos) + cssPatch() + '\n' + src.slice(pos);
 }
 
+function patchSources(sources) {
+  if (isKnownFinalI18nState(sources.i18n)) {
+    return { app: sources.app, i18n: sources.i18n, html: sources.html, noop: true };
+  }
+  return {
+    app: patchAppSource(sources.app),
+    i18n: patchI18nSource(sources.i18n),
+    html: patchIndexSource(sources.html),
+    noop: false
+  };
+}
+
 function apply() {
   const appSrc = fs.readFileSync(APP_JS, 'utf8');
-  const appOut = patchAppSource(appSrc);
-  if (appOut !== appSrc) fs.writeFileSync(APP_JS, appOut, 'utf8');
-
   const i18nSrc = fs.readFileSync(I18N_JS, 'utf8');
-  const i18nOut = patchI18nSource(i18nSrc);
-  if (i18nOut !== i18nSrc) fs.writeFileSync(I18N_JS, i18nOut, 'utf8');
-
   const htmlSrc = fs.readFileSync(INDEX_HTML, 'utf8');
-  const htmlOut = patchIndexSource(htmlSrc);
-  if (htmlOut !== htmlSrc) fs.writeFileSync(INDEX_HTML, htmlOut, 'utf8');
+  const out = patchSources({ app: appSrc, i18n: i18nSrc, html: htmlSrc });
+  if (out.noop) {
+    console.log('[CI-LIST-MAC] payable date hotfix already materialized; no-op');
+    return;
+  }
+  if (out.app !== appSrc) fs.writeFileSync(APP_JS, out.app, 'utf8');
+  if (out.i18n !== i18nSrc) fs.writeFileSync(I18N_JS, out.i18n, 'utf8');
+  if (out.html !== htmlSrc) fs.writeFileSync(INDEX_HTML, out.html, 'utf8');
 
   console.log('[CI-LIST-MAC] payable date column + Mac list style applied');
 }
 
 if (require.main === module) apply();
-module.exports = { APP_MARKER, I18N_MARKER, CSS_MARKER, patchAppSource, patchI18nSource, patchIndexSource, cssPatch };
+module.exports = { APP_MARKER, I18N_MARKER, CSS_MARKER, patchAppSource, patchI18nSource, patchIndexSource, patchSources, isKnownFinalI18nState, cssPatch };
