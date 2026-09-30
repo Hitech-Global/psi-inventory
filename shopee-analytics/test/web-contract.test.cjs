@@ -9,9 +9,15 @@ const html = fs.readFileSync(path.join(webDir, 'index.html'), 'utf8');
 const app = fs.readFileSync(path.join(webDir, 'app.js'), 'utf8');
 const server = fs.readFileSync(path.join(__dirname, '..', 'src', 'standalone-server.js'), 'utf8');
 
-const htmlIds = new Set(
-  Array.from(html.matchAll(/\bid="([^"]+)"/g), match => match[1]),
+const htmlIdList = Array.from(html.matchAll(/\bid="([^"]+)"/g), match => match[1]);
+const htmlIds = new Set(htmlIdList);
+const duplicateIds = htmlIdList.filter((id, index) => htmlIdList.indexOf(id) !== index);
+assert.deepStrictEqual(
+  Array.from(new Set(duplicateIds)).sort(),
+  [],
+  `index.html contains duplicate DOM ids: ${Array.from(new Set(duplicateIds)).sort().join(', ')}`,
 );
+assert.strictEqual(htmlIdList.filter(id => id === 'view-ads').length, 1, 'Ads view must have exactly one #view-ads container');
 
 const staticIdSelectors = new Set(
   Array.from(app.matchAll(/\$\('#([A-Za-z0-9_-]+)'\)/g), match => match[1]),
