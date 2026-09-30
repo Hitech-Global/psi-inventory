@@ -30,6 +30,14 @@
   function canViewAmounts() {
     return hasPermission('ci_amount_view');
   }
+  function logisticsStatusLabel(value) {
+    if (typeof global.logisticsStatusLabelByKey === 'function') return global.logisticsStatusLabelByKey(value);
+    return value || '—';
+  }
+  function listingStatusLabel(value) {
+    var key = value || 'pending_plan';
+    return tr('logistics.listing_status.' + key, key);
+  }
   function isModalOpen() {
     if (typeof global.isModalOpen === 'function') return global.isModalOpen();
     var ov = document.getElementById('modal-overlay');
@@ -65,11 +73,11 @@
       '.content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-table .text-right{text-align:left!important}',
       '.content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-table tbody tr:hover td{background:#fafafa!important}',
       '.content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-owners{max-width:220px;overflow:hidden;text-overflow:ellipsis}',
-      '.content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-table .cell-actions{position:relative}',
+      '.content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-table .cell-actions{position:sticky;right:0;background:#fff!important;box-shadow:-6px 0 10px rgba(0,0,0,.04)}',
       '.content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-actions{padding-top:10px}',
       '.content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-create{min-height:32px;padding:5px 11px;border-radius:8px;background:#1d1d1f;border-color:#1d1d1f;color:#fff;font-size:12px;font-weight:650;box-shadow:none}',
       '.content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-create:hover{background:#000;border-color:#000}',
-      '.content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-export{position:absolute;z-index:8;margin-top:5px;padding:6px;background:#fff;border:1px solid #e5e5ea;border-radius:9px;box-shadow:0 8px 24px rgba(0,0,0,.12);white-space:nowrap}',
+      '.content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-export-actions{display:flex;gap:5px;align-items:center;white-space:nowrap}',
       '.content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-loading{display:flex;align-items:center;gap:11px;min-height:82px;padding:15px 16px;background:#fafafa;border:1px solid #ededf0;border-radius:10px;color:#1d1d1f}',
       '.content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-spinner{width:18px;height:18px;flex:0 0 18px;border:2px solid #d2d2d7;border-top-color:#1d1d1f;border-radius:50%;animation:ciListLogiSpin .75s linear infinite}',
       '@keyframes ciListLogiSpin{to{transform:rotate(360deg)}}',
@@ -179,7 +187,7 @@
         return '<tr>' +
           '<td class="cell-id">' + esc(b.batch_no || '') + '</td>' +
           '<td>' + esc(b.forwarder_name || '—') + '</td>' +
-          '<td>' + esc(b.transport_mode || '—') + '</td>' +
+          '<td>' + esc(tr('logistics.mode.' + (b.transport_mode || ''), b.transport_mode || '—')) + '</td>' +
           '<td class="cell-date">' + esc(fmtDate(b.eta_date) || '—') + '</td>' +
           '<td class="cell-date">' + esc(fmtDate(b.actual_arrival_date) || '—') + '</td>' +
           '<td>' + (b.actual_transit_days != null ? esc(b.actual_transit_days) : '—') + '</td>' +
@@ -190,14 +198,14 @@
               '<td>' + esc(fmtMoney(b.total_freight || 0, b.freight_currency)) + '</td>' +
               '<td>' + esc(ratio) + '</td>'
             : '') +
-          '<td>' + esc(b.logistics_display_status || b.logistics_status || '—') + '</td>' +
-          '<td>' + esc(b.listing_status || 'pending_plan') + '</td>' +
+          '<td>' + esc(logisticsStatusLabel(b.logistics_display_status || b.logistics_status)) + '</td>' +
+          '<td>' + esc(listingStatusLabel(b.listing_status)) + '</td>' +
           '<td class="ci-list-logi-owners">' + (b.listing_owner_names && b.listing_owner_names.length ? esc(b.listing_owner_names.join('、')) : '—') + '</td>' +
-          '<td class="cell-actions">' +
+          '<td class="cell-actions"><div class="ci-list-logi-export-actions">' +
             (hasPermission('logistics_edit') ? '<button class="action-btn" data-ci-logi-edit="' + esc(b.id) + '" data-ci-id="' + esc(ciId) + '" title="' + esc(tr('common.edit', '编辑')) + '">✏️</button> ' : '') +
-            '<button class="action-btn" data-ci-logi-export="' + esc(b.id) + '" title="' + esc(tr('common.export', '导出')) + '">⬇️</button>' +
-            '<div id="ci-list-logi-export-' + esc(b.id) + '" class="ci-list-logi-export" style="display:none"></div>' +
-          '</td>' +
+            '<button class="btn btn-secondary btn-sm" data-ci-logi-export-pl="' + esc(b.id) + '">' + esc(tr('export.pl_only', '导出PL')) + '</button>' +
+            (canViewAmounts() ? '<button class="btn btn-secondary btn-sm" data-ci-logi-export-ci-pl="' + esc(b.id) + '">' + esc(tr('export.ci_and_pl', '导出CI&PL')) + '</button>' : '') +
+          '</div></td>' +
         '</tr>';
       }).join('');
     }
@@ -280,22 +288,6 @@
     }
   }
 
-  function toggleExport(batchId) {
-    var el = document.getElementById('ci-list-logi-export-' + batchId);
-    if (!el) return;
-    if (el.style.display !== 'none') {
-      el.style.display = 'none';
-      el.innerHTML = '';
-      return;
-    }
-    el.style.display = 'block';
-    el.innerHTML =
-      '<button class="btn btn-secondary btn-sm" data-ci-logi-export-pl="' + esc(batchId) + '">' + esc(tr('export.pl_only', '导出PL')) + '</button>' +
-      (canViewAmounts()
-        ? ' <button class="btn btn-secondary btn-sm" data-ci-logi-export-ci-pl="' + esc(batchId) + '">' + esc(tr('export.ci_and_pl', '导出CI&PL')) + '</button>'
-        : '');
-  }
-
   async function openCreate(ciId) {
     if (typeof global.createLogFromCI !== 'function') return;
     await global.createLogFromCI(ciId);
@@ -374,7 +366,7 @@
   }
 
   document.addEventListener('click', function (event) {
-    var el = event.target.closest('[data-ci-logi-toggle],[data-ci-logi-collapse],[data-ci-logi-create],[data-ci-logi-edit],[data-ci-logi-export],[data-ci-logi-retry],[data-ci-logi-export-pl],[data-ci-logi-export-ci-pl]');
+    var el = event.target.closest('[data-ci-logi-toggle],[data-ci-logi-collapse],[data-ci-logi-create],[data-ci-logi-edit],[data-ci-logi-retry],[data-ci-logi-export-pl],[data-ci-logi-export-ci-pl]');
     if (!el) return;
 
     event.preventDefault();
@@ -385,7 +377,6 @@
     if (el.hasAttribute('data-ci-logi-retry')) return void togglePanel(el.getAttribute('data-ci-logi-retry'), true);
     if (el.hasAttribute('data-ci-logi-create')) return void openCreate(el.getAttribute('data-ci-logi-create'));
     if (el.hasAttribute('data-ci-logi-edit')) return void openEdit(el.getAttribute('data-ci-logi-edit'), el.getAttribute('data-ci-id'));
-    if (el.hasAttribute('data-ci-logi-export')) return void toggleExport(el.getAttribute('data-ci-logi-export'));
     if (el.hasAttribute('data-ci-logi-export-pl') && typeof global.exportBatchPL === 'function') return void global.exportBatchPL(el.getAttribute('data-ci-logi-export-pl'));
     if (el.hasAttribute('data-ci-logi-export-ci-pl') && typeof global.exportBatchCIAndPL === 'function') return void global.exportBatchCIAndPL(el.getAttribute('data-ci-logi-export-ci-pl'));
   });

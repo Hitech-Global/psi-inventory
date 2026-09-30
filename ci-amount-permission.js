@@ -169,18 +169,18 @@
       var rows = (pl.items || []).map(function (it) {
         return {
           'SKU': it.sku_code,
-          '每箱数量': it.qty_per_carton || 0,
-          '箱数': it.cartons || 0,
-          '总数量': it.total_qty || 0,
-          '总毛重': it.gross_weight || 0,
-          '总净重': it.net_weight || 0,
-          '总体积': it.cbm || 0,
-          '备注': it.remark || '',
-          'PL No.': pl.pl_no || ''
+          [tr('export.pl.qty_per_carton', '每箱数量')]: it.qty_per_carton || 0,
+          [tr('export.pl.cartons', '箱数')]: it.cartons || 0,
+          [tr('export.pl.total_qty', '总数量')]: it.total_qty || 0,
+          [tr('export.pl.gross_weight', '总毛重')]: it.gross_weight || 0,
+          [tr('export.pl.net_weight', '总净重')]: it.net_weight || 0,
+          [tr('export.pl.cbm', '总体积')]: it.cbm || 0,
+          [tr('export.pl.remark', '备注')]: it.remark || '',
+          [tr('export.pl.pl_no', 'PL No.')]: pl.pl_no || ''
         };
       });
       var ws = global.XLSX.utils.json_to_sheet(rows);
-      global.XLSX.utils.book_append_sheet(wb, ws, safeSheetName('PL_' + (pl.pl_no || pl.id), used));
+      global.XLSX.utils.book_append_sheet(wb, ws, safeSheetName(tr('export.sheet.pl', 'PL') + '_' + (pl.pl_no || pl.id), used));
     });
     return wb;
   }
