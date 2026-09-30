@@ -49,8 +49,11 @@ assert.match(freight, /typeText === '运营CI'\) cells\[1\]\.textContent = 'Oper
 assert.match(freight, /global\.getLang\(\) !== 'en'/, 'country/type display mapping must only apply in English mode');
 
 assert.match(app, /else if\(f==='country'\).*getLang\(\)==='en'.*'印度尼西亚':'Indonesia'.*'泰国':'Thailand'.*'马来西亚':'Malaysia'/, 'CI Details country must use English display mapping');
-assert.match(app, /var moneyFields=\{goods_amount:1,pi_total_amount:1,amount_difference:1,actual_deducted_deposit:1,balance_unpaid_amount:1,balance_paid_amount:1,import_duty_total:1\}/, 'CI Details money field set missing');
+assert.match(app, /var moneyFields=\{goods_amount:1,pi_total_amount:1,amount_difference:1,actual_deducted_deposit:1,balance_gross_amount:1,balance_paid_amount:1,balance_unpaid_amount:1,import_duty_total:1\}/, 'CI Details money field set missing');
 assert.match(app, /else if\(moneyFields\[f\]\)\{v=fmtMoney\(ci\[f\]\);\}/, 'CI Details monetary values must use thousands-separator formatter');
+assert.match(app, /balance_gross_amount:t\('ci\.detail\.payable_amount','应付金额'\)/, 'CI Details must show gross payable balance');
+assert.match(app, /balance_unpaid_amount:t\('ci\.detail\.bal_unpaid','剩余未付金额'\)/, 'CI Details must show remaining unpaid amount');
+assert.match(i18n, /I18N\.dict\.en\["ci\.detail\.bal_unpaid"\]="Remaining Unpaid Amount"/, 'remaining unpaid English i18n missing');
 
 assert.match(app, /function formatQuantityDisplay\(value\)\{var n=Number\(value\|\|0\);return Math\.round\(n\)\.toLocaleString\('en-US'\)\}/, 'quantity display formatter must add thousands separators');
 assert.match(app, /else if\(f==='ci_total_qty'\)\{v=formatQuantityDisplay\(/, 'CI total quantity must use quantity display formatter');
