@@ -202,6 +202,18 @@ function readFileSync(file) {
   assert(!/Good\s+CTR|healthy\s+CPC/i.test(skuGuarded.skuAssessments[0].confidence.summary));
   assert(/^UNKNOWN\b/.test(skuGuarded.skuAssessments[0].scaleStability.summary));
 
+  const chineseSignalGuarded = sanitizeOllamaReport({
+    skill:{ name:'shopee-gmv-max-analysis', version:'0.2.0' }, stage:'STABLE',
+    facts:[], inferences:[], hypotheses:[], actionGates:[], nextValidation:[], limitations:[],
+    skuAssessments:[{ itemId:'2', trafficStage:'A', candidateRole:'CONVERSION_ANCHOR', signal:{ summary:'强转化信号，连续7天出单，直接ROAS 9.79。' }, confidence:{ summary:'样本充足。' }, scaleStability:{ summary:'已验证。' } }],
+  }, {
+    presentation:{ language:'zh-CN' },
+    items:[{ itemId:'2', directOrders:134, directRoas:9.79, breakEvenRoas:null, recommendedRoas:null }],
+    evidenceAvailability:{ hasItemLevelEvidence:true, hasAllocationEvidence:false },
+  });
+  assert(chineseSignalGuarded.skuAssessments[0].signal.summary.startsWith('已验证转化信号'));
+  assert(!chineseSignalGuarded.skuAssessments[0].signal.summary.includes('强转化信号'));
+
   assert.strictEqual(createConfiguredSkillProvider({ env: {} }), null);
   assert.throws(
     () => createConfiguredSkillProvider({ env: { SHOPEE_SKILL_RUNTIME_PROVIDER: 'OTHER' } }),

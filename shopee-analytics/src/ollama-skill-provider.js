@@ -395,6 +395,9 @@ function neutralizeUnsupportedMetricAdjectives(value, item = {}, compactPackage 
     text = text.replace(/(?:强劲|较强|优秀|优异|良好|较好|较弱|薄弱|差|健康)的?((?:直接)?ROAS)/g, '$1');
     text = text.replace(/((?:直接)?ROAS)(?:表现)?(?:强劲|较强|优秀|优异|良好|较好|较弱|薄弱|差|健康)/g, '$1');
   }
+  const verifiedConversion = Number(item.directOrders) > 0;
+  text = text.replace(/\bstrong\s+conversion\s+signal\b/gi, verifiedConversion ? 'verified conversion signal' : 'conversion signal');
+  text = text.replace(/(?:强|强烈|强劲|较强)的?转化信号/g, verifiedConversion ? '已验证转化信号' : '转化信号');
   return text;
 }
 
