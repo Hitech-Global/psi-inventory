@@ -80,6 +80,28 @@
     return raw.indexOf('viewCI') !== -1 && raw.indexOf('viewHistoricalCI') === -1;
   }
 
+  function englishCountryLabel(value) {
+    var map = {
+      '印度尼西亚': 'Indonesia',
+      '泰国': 'Thailand',
+      '马来西亚': 'Malaysia'
+    };
+    return map[value] || value;
+  }
+
+  function localizeOperationalRow(row) {
+    if (!row || typeof global.getLang !== 'function' || global.getLang() !== 'en') return;
+    var cells = row.children;
+    if (cells[1]) {
+      var typeText = String(cells[1].textContent || '').trim().replace(/\s+/g, '');
+      if (typeText === '运营CI') cells[1].textContent = 'Operations CI';
+    }
+    if (cells[5]) {
+      var country = String(cells[5].textContent || '').trim();
+      cells[5].textContent = englishCountryLabel(country);
+    }
+  }
+
   function removeInboundColumn(table) {
     var heads = table.querySelectorAll('thead th');
     if (!heads.length) return;
@@ -130,6 +152,7 @@
         headerRow.insertBefore(thRatio, nextHead);
       }
       Array.prototype.forEach.call(table.querySelectorAll('tbody tr'), function (row) {
+        localizeOperationalRow(row);
         var id = parseCIId(row);
         var c = ciMap[id];
         if (!c) return;
