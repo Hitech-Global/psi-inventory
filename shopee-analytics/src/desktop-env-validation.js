@@ -59,9 +59,15 @@ function validateDesktopEnv(env) {
       } else if (String(env[idName] || '').trim() || String(env[keyName] || '').trim()) {
         errors.push(`${idName} and ${keyName} must be empty in PILOT_GMV_MAX`);
       }
-    } else {
+    } else if (role === 'ADS') {
       if (!isRealSecret(env[idName])) errors.push(`${idName} is missing`);
       if (!isRealSecret(env[keyName])) errors.push(`${keyName} is missing`);
+    } else {
+      const hasId = Boolean(String(env[idName] || '').trim());
+      const hasKey = Boolean(String(env[keyName] || '').trim());
+      if (hasId !== hasKey) errors.push(`${idName} and ${keyName} must be configured together`);
+      if (hasId && !isRealSecret(env[idName])) errors.push(`${idName} is missing or still a placeholder`);
+      if (hasKey && !isRealSecret(env[keyName])) errors.push(`${keyName} is missing or still a placeholder`);
     }
   }
 

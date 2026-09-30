@@ -55,7 +55,10 @@ assert(offlineWithPartner.errors.some(row => row.includes('SHOPEE_ADS_PARTNER_ID
 const productionMissingPartner = validateDesktopEnv({ ...baseEnv });
 assert.strictEqual(productionMissingPartner.ok, false);
 assert(productionMissingPartner.errors.includes('SHOPEE_ADS_PARTNER_ID is missing'));
-assert(productionMissingPartner.errors.includes('SHOPEE_BRAND_PORTAL_PARTNER_KEY is missing'));
+assert(productionMissingPartner.errors.includes('SHOPEE_ADS_PARTNER_KEY is missing'));
+assert(!productionMissingPartner.errors.some(row => row.includes('SHOPEE_STORE_OPS_PARTNER')));
+assert(!productionMissingPartner.errors.some(row => row.includes('SHOPEE_ERP_PARTNER')));
+assert(!productionMissingPartner.errors.some(row => row.includes('SHOPEE_BRAND_PORTAL_PARTNER')));
 
 assert.throws(
   () => assertOnlineOperationAllowed('test', { SHOPEE_ANALYTICS_DEPLOYMENT_MODE: OFFLINE_BASELINE }),

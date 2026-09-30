@@ -24,6 +24,16 @@ const env = {
 };
 assert.deepStrictEqual(validateDesktopEnv(env), { ok: true, errors: [], warnings: [] });
 
+const adsOnlyEnv = { ...env };
+for (const role of ['STORE_OPS', 'ERP', 'BRAND_PORTAL']) {
+  delete adsOnlyEnv[`SHOPEE_${role}_PARTNER_ID`];
+  delete adsOnlyEnv[`SHOPEE_${role}_PARTNER_KEY`];
+}
+assert.deepStrictEqual(validateDesktopEnv(adsOnlyEnv), { ok: true, errors: [], warnings: [] });
+const incompleteOptionalRole = validateDesktopEnv({ ...adsOnlyEnv, SHOPEE_ERP_PARTNER_ID: '3' });
+assert.strictEqual(incompleteOptionalRole.ok, false);
+assert(incompleteOptionalRole.errors.some(row => row.includes('SHOPEE_ERP_PARTNER_ID') && row.includes('configured together')));
+
 const bad = validateDesktopEnv({ ...env, POSTGRES_PASSWORD: 'CHANGE_TO_A_LONG_RANDOM_PASSWORD' });
 assert.strictEqual(bad.ok, false);
 assert(bad.errors.some(row => row.includes('POSTGRES_PASSWORD')));
