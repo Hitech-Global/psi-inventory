@@ -48,4 +48,8 @@ assert.match(freight, /'马来西亚': 'Malaysia'/, 'Malaysia display mapping mi
 assert.match(freight, /typeText === '运营CI'\) cells\[1\]\.textContent = 'Operations CI'/, 'Operations CI display mapping missing');
 assert.match(freight, /global\.getLang\(\) !== 'en'/, 'country/type display mapping must only apply in English mode');
 
+assert.match(app, /else if\(f==='country'\).*getLang\(\)==='en'.*'印度尼西亚':'Indonesia'.*'泰国':'Thailand'.*'马来西亚':'Malaysia'/, 'CI Details country must use English display mapping');
+assert.match(app, /var moneyFields=\{goods_amount:1,pi_total_amount:1,amount_difference:1,actual_deducted_deposit:1,balance_unpaid_amount:1,balance_paid_amount:1,import_duty_total:1\}/, 'CI Details money field set missing');
+assert.match(app, /else if\(moneyFields\[f\]\)\{v=fmtMoney\(ci\[f\]\);\}/, 'CI Details monetary values must use thousands-separator formatter');
+
 console.log('ci-pl-i18n-export-ui: PASS');
