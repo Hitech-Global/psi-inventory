@@ -294,6 +294,8 @@ const { FeishuAuthRepository, hashToken } = require('../src/feishu-auth');
     const decrypted = await tokenRepo.load({ appRole: 'ADS', shopId: 1 });
     assert.strictEqual(decrypted.accessToken, 'access-secret');
     assert.strictEqual(decrypted.refreshToken, 'refresh-secret');
+    assert.strictEqual(await tokenRepo.exists({ appRole: 'ADS', shopId: 1 }), true);
+    assert.strictEqual(await tokenRepo.exists({ appRole: 'ERP', shopId: 1 }), false);
 
     const oauthStateRepo = new ShopeeOAuthStateRepository({ pool });
     const rawState = `raw-state-must-not-be-stored-${require('crypto').randomBytes(12).toString('hex')}`;

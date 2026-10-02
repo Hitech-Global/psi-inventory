@@ -7,6 +7,7 @@ const server=fs.readFileSync(path.join(root,'src','standalone-server.js'),'utf8'
 const html=fs.readFileSync(path.join(root,'web','index.html'),'utf8');
 const app=fs.readFileSync(path.join(root,'web','app.js'),'utf8');
 const schema=fs.readFileSync(path.join(root,'schema-brand-portal-principal.sql'),'utf8');
+const runner=fs.readFileSync(path.join(root,'src','shop-sync-runner.js'),'utf8');
 const example=fs.readFileSync(path.join(root,'deploy','desktop','runtime.env.example'),'utf8');
 assert(router.includes("'/erp/status'"));
 assert(router.includes("'/erp/oauth/start'"));
@@ -18,5 +19,7 @@ assert(app.includes('renderErpAction'));
 assert(app.includes('需配置 ERP App'));
 assert(app.includes('/erp/oauth/start?shop_id='));
 assert(schema.includes("app_role IN ('ADS','ERP','BRAND_PORTAL')"));
+assert(runner.includes("skipped: 'NO_ERP_TOKEN'"));
+assert(runner.includes("tokenRepository.exists({ appRole: 'ERP', shopId })"));
 assert(example.includes('SHOPEE_ERP_REDIRECT_URL='));
 console.log('ERP UI/OAuth route contract: ok');

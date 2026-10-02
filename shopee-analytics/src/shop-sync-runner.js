@@ -221,10 +221,17 @@ async function runShopSyncCycle({
     }
 
     if (runtime.roleClients.ERP) {
-      await run('returns', () => service.syncReturns({
-        updateTimeFrom: nowEpoch - 14 * 86400,
-        updateTimeTo: nowEpoch,
-      }), { required: false });
+      const hasErpToken = runtime.tokenRepository && typeof runtime.tokenRepository.exists === 'function'
+        ? await runtime.tokenRepository.exists({ appRole: 'ERP', shopId })
+        : true;
+      if (hasErpToken) {
+        await run('returns', () => service.syncReturns({
+          updateTimeFrom: nowEpoch - 14 * 86400,
+          updateTimeTo: nowEpoch,
+        }), { required: false });
+      } else {
+        summary.steps.push({ name: 'returns', ok: true, required: false, skipped: 'NO_ERP_TOKEN' });
+      }
     } else {
       summary.steps.push({ name: 'returns', ok: true, required: false, skipped: 'NO_ERP_CLIENT' });
     }

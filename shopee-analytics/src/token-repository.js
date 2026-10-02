@@ -63,6 +63,14 @@ class ShopeeTokenRepository {
     };
   }
 
+  async exists({ appRole, shopId }) {
+    const result = await this.pool.query(
+      'SELECT 1 FROM shopee_app_tokens WHERE app_role=$1 AND shop_id=$2 LIMIT 1',
+      [appRole, shopId],
+    );
+    return result.rows.length > 0;
+  }
+
   async markRefreshError({ appRole, shopId, error }) {
     await this.pool.query(
       `UPDATE shopee_app_tokens
