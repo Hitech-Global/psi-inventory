@@ -1,0 +1,219 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Shopee GMV Max Analysis Report",
+  "type": "object",
+  "required": [
+    "skill",
+    "period",
+    "trigger",
+    "stage",
+    "facts",
+    "inferences",
+    "hypotheses",
+    "skuAssessments",
+    "actionGates",
+    "nextValidation"
+  ],
+  "properties": {
+    "skill": {
+      "type": "object",
+      "required": [
+        "name",
+        "version"
+      ],
+      "properties": {
+        "name": {
+          "const": "shopee-gmv-max-analysis"
+        },
+        "version": {
+          "type": "string"
+        }
+      }
+    },
+    "period": {
+      "type": "object",
+      "required": [
+        "dataCutoff"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "dataCutoff": {
+          "type": "string"
+        }
+      }
+    },
+    "trigger": {
+      "type": "string",
+      "enum": [
+        "DAILY_AUTO",
+        "MANUAL",
+        "EVENT_REVIEW"
+      ]
+    },
+    "stage": {
+      "type": "string",
+      "enum": [
+        "LEARNING",
+        "CONVERGING",
+        "STABLE",
+        "UNSTABLE"
+      ]
+    },
+    "facts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "statement"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "statement": {
+            "type": "string"
+          },
+          "metric": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "value": {},
+          "unit": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "inferences": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "statement",
+          "evidenceIds"
+        ],
+        "properties": {
+          "statement": {
+            "type": "string"
+          },
+          "evidenceIds": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "hypotheses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "statement",
+          "validation"
+        ],
+        "properties": {
+          "statement": {
+            "type": "string"
+          },
+          "validation": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "skuAssessments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "itemId",
+          "trafficStage",
+          "candidateRole"
+        ],
+        "properties": {
+          "itemId": {
+            "type": [
+              "string",
+              "number"
+            ]
+          },
+          "trafficStage": {
+            "enum": [
+              "A",
+              "B",
+              "C"
+            ]
+          },
+          "candidateRole": {
+            "enum": [
+              "TRAFFIC_CANDIDATE",
+              "CONVERSION_ANCHOR",
+              "HIGH_VALUE_CANDIDATE",
+              "STABLE_CORE",
+              "WEAK_EXPLORER",
+              "REJECT_CANDIDATE"
+            ]
+          },
+          "signal": {
+            "type": "object"
+          },
+          "confidence": {
+            "type": "object"
+          },
+          "scaleStability": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "actionGates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "code",
+          "allowed",
+          "reason"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "allowed": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "nextValidation": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": false
+}

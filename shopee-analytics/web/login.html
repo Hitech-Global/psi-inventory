@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Shopee 运营分析 · 飞书登录</title>
+  <style>
+    :root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;color:#172033;background:#f5f7fb}
+    *{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:radial-gradient(circle at 20% 10%,#fff 0,#f5f7fb 44%,#eef2f7 100%)}
+    .card{width:min(440px,100%);background:rgba(255,255,255,.94);border:1px solid rgba(15,23,42,.08);border-radius:24px;box-shadow:0 24px 60px rgba(15,23,42,.10);padding:36px}
+    .brand{font-size:12px;letter-spacing:.14em;color:#7c8799;font-weight:700}.title{font-size:28px;margin:10px 0 8px}.sub{color:#667085;line-height:1.6;margin:0 0 28px}
+    .login{width:100%;border:0;border-radius:14px;padding:13px 18px;font-size:15px;font-weight:700;background:#111827;color:#fff;cursor:pointer}.login:hover{background:#202938}
+    .note{font-size:12px;color:#8a94a6;line-height:1.6;margin:18px 0 0}.error{display:none;margin:0 0 18px;padding:11px 13px;border-radius:12px;background:#fff4f3;color:#b42318;font-size:13px}
+    .lang{display:flex;justify-content:flex-end;gap:6px;margin-bottom:18px}.lang button{border:0;background:transparent;color:#7c8799;cursor:pointer;padding:4px 6px}.lang button.active{color:#111827;font-weight:700}
+  </style>
+</head>
+<body>
+  <main class="card">
+    <div class="lang"><button data-lang="zh" class="active">中文</button><button data-lang="en">EN</button></div>
+    <div class="brand">SHOPEE · MULTI-STORE OPERATIONS</div>
+    <h1 class="title" data-zh="Shopee 运营分析" data-en="Shopee Operations Analytics">Shopee 运营分析</h1>
+    <p class="sub" data-zh="使用公司飞书账号登录。首次授权后，本浏览器会保持登录状态。" data-en="Sign in with your company Feishu account. After the first authorization, this browser stays signed in.">使用公司飞书账号登录。首次授权后，本浏览器会保持登录状态。</p>
+    <div id="error" class="error"></div>
+    <button id="login" class="login" data-zh="使用飞书登录" data-en="Sign in with Feishu">使用飞书登录</button>
+    <p class="note" data-zh="首次登录会登记飞书身份；超级管理员启用并分配店铺后即可进入。运营账号只能访问被分配的店铺。" data-en="Your first sign-in registers your Feishu identity. A super admin must enable the account and assign shops before access is granted.">首次登录会登记飞书身份；超级管理员启用并分配店铺后即可进入。运营账号只能访问被分配的店铺。</p>
+  </main>
+  <script>
+    const params=new URLSearchParams(location.search);const returnPath=params.get('return')||'/';
+    const reasons={unauthorized:'你的飞书账号已登记，但尚未启用或分配店铺。请联系超级管理员。',invalid_state:'登录状态已过期，请重新登录。',invalid_callback:'飞书登录回调无效，请重新登录。'};
+    const error=document.getElementById('error');if(reasons[params.get('reason')]){error.textContent=reasons[params.get('reason')];error.style.display='block'}
+    document.getElementById('login').addEventListener('click',()=>{location.href='/auth/feishu/login?return='+encodeURIComponent(returnPath)});
+    document.querySelectorAll('[data-lang]').forEach(btn=>btn.addEventListener('click',()=>{const lang=btn.dataset.lang;document.documentElement.lang=lang==='en'?'en':'zh-CN';document.querySelectorAll('[data-lang]').forEach(x=>x.classList.toggle('active',x===btn));document.querySelectorAll('[data-zh]').forEach(el=>{el.textContent=el.dataset[lang]||el.dataset.zh})}));
+  </script>
+</body>
+</html>

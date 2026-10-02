@@ -1,0 +1,280 @@
+'use strict';
+
+const { ShopeeSyncService } = require('./sync-service');
+const { syncGmsWindow } = require('./sync-window');
+const { discoverGmsCampaign } = require('./sync-gms');
+const { syncProductAdsOverviewWindow } = require('./sync-product-ads-overview');
+const {
+  localIsoDate,
+  addDays,
+  mergeCampaignIds,
+} = require('./sync-cycle-utils');
+const {
+  isPilotGmvMax,
+  assertPilotTypedCampaignAllowed,
+  assertPilotIdentityShopAllowed,
+} = require('./deployment-mode');
+
+function normalizeShopProfile(shop) {
+  const shopId = Number(shop.shopId ?? shop.shop_id);
+  if (!Number.isSafeInteger(shopId) || shopId <= 0) throw new Error('shop.shopId is required');
+  const timezone = String(shop.timezone || '').trim();
+  if (!timezone) throw new Error(`Shop ${shopId} timezone is required`);
+  return {
+    ...shop,
+    shopId,
+    timezone,
+    brandPortalTimezone: shop.brandPortalTimezone ?? shop.brand_portal_timezone ?? null,
+    brandPortalPrincipalId: shop.brandPortalPrincipalId ?? shop.brand_portal_principal_id ?? null,
+    syncScope: shop.syncScope ?? shop.sync_scope ?? 'API_AND_MANUAL',
+  };
+}
+
+async function runShopSyncCycle({
+  runtime,
+  shop,
+  mode = 'hourly',
+  now = new Date(),
+  seededGmsCampaignIds = [],
+}) {
+  if (!runtime) throw new Error('runtime is required');
+  if (!['hourly', 'daily'].includes(mode)) throw new Error('mode must be hourly or daily');
+
+  const profile = normalizeShopProfile(shop);
+  const pilot = isPilotGmvMax();
+  const shopId = profile.shopId;
+  const apiCapable = String(profile.syncScope || '').toUpperCase() !== 'MANUAL_IMPORT';
+  const nowEpoch = Math.floor(now.getTime() / 1000);
+  const today = localIsoDate(now, profile.timezone);
+  const yesterday = addDays(today, -1);
+
+  const service = new ShopeeSyncService({
+    shopId,
+    roleClients: runtime.roleClients,
+    rawRepository: runtime.rawRepository,
+    campaignRepository: runtime.campaignRepository,
+    productRepository: runtime.productRepository,
+    promotionRepository: runtime.promotionRepository,
+    orderRepository: runtime.orderRepository,
+    returnRepository: runtime.returnRepository,
+    shopBiRepository: runtime.shopBiRepository,
+    shopRepository: runtime.shopRepository,
+  });
+
+  const summary = {
+    mode,
+    shopId,
+    displayName: profile.displayName || null,
+    countryCode: profile.countryCode || null,
+    brandCode: profile.brandCode || null,
+    timezone: profile.timezone,
+    today,
+    ok: true,
+    steps: [],
+  };
+
+  const run = async (name, fn, { required = true, redactResult = false } = {}) => {
+    const startedAt = Date.now();
+    try {
+      const result = await fn();
+      summary.steps.push({
+        name, ok: true, required, ms: Date.now() - startedAt,
+        result: redactResult ? 'AVAILABLE' : result,
+      });
+      return result;
+    } catch (error) {
+      summary.steps.push({
+        name,
+        ok: false,
+        required,
+        ms: Date.now() - startedAt,
+        error: error && error.message ? error.message : String(error),
+      });
+      if (required) summary.ok = false;
+      return null;
+    }
+  };
+
+  if (mode === 'daily' && !pilot) {
+    await run('shop-info', () => service.syncShopInfo());
+  }
+
+  if (!pilot) {
+    await run('campaign-settings', () => service.syncCampaignSettings({
+      eventDate: today,
+      campaignIds: null,
+    }));
+  }
+
+  const knownGms = await runtime.queryRepository.listKnownGmsCampaignIds({ shopId });
+  let gmsCampaignIds = pilot
+    ? Array.from(new Set(seededGmsCampaignIds.map(Number))).map(id => {
+      assertPilotTypedCampaignAllowed('SHOP_GMV_MAX', id);
+      return id;
+    })
+    : mergeCampaignIds(knownGms, seededGmsCampaignIds);
+  const ads = runtime.roleClients.ADS;
+  let adsToken = null;
+
+  if (gmsCampaignIds.length) {
+    adsToken = await run('ads-token', () => ads.getAccessToken(shopId), { redactResult: true });
+  } else if (!pilot && apiCapable) {
+    adsToken = await run('ads-token-gms-discovery', () => ads.getAccessToken(shopId), { required: false, redactResult: true });
+  }
+
+  if (!pilot && apiCapable && adsToken && !gmsCampaignIds.length) {
+    const discovered = await run('gms-discovery', async () => {
+      const result = await discoverGmsCampaign({
+        client: ads.client,
+        shopId,
+        accessToken: adsToken,
+        startDate: addDays(today, -6),
+        endDate: today,
+      });
+      await runtime.rawRepository.upsertCampaign({
+        shopId,
+        campaignId: result.campaignId,
+        campaignTypeRaw: 'GMS',
+        campaignTypeNormalized: 'GMS',
+      });
+      return { campaignId: result.campaignId };
+    }, { required: false });
+    if (discovered && discovered.campaignId) gmsCampaignIds = [Number(discovered.campaignId)];
+  }
+
+  if (adsToken && gmsCampaignIds.length) {
+    for (const campaignId of gmsCampaignIds) {
+      await run(`gms-${campaignId}`, () => syncGmsWindow({
+        client: ads.client,
+        repository: runtime.rawRepository,
+        adPromotionRepository: runtime.adPromotionRepository,
+        shopId,
+        accessToken: adsToken,
+        campaignId,
+        startDate: addDays(today, -6),
+        endDate: today,
+      }));
+    }
+  } else if (!gmsCampaignIds.length) {
+    summary.steps.push({
+      name: 'gms',
+      ok: true,
+      required: false,
+      skipped: 'NO_KNOWN_GMS_CAMPAIGN',
+    });
+  }
+
+  // Product Card is the shop-level Product Ads total. Refresh the recent daily
+  // window on hourly as well as daily cycles so its total stays aligned with
+  // Seller Centre instead of lagging behind the campaign-level views.
+  // Manual-import-only shops intentionally skip this source because they have no
+  // authorized ADS token and therefore cannot claim full-shop Product Ads totals.
+  if (apiCapable) {
+    if (!adsToken) {
+      adsToken = await run('ads-token-product-ads-overview', () => ads.getAccessToken(shopId), { required: false, redactResult: true });
+    }
+    if (adsToken) {
+      if (pilot) assertPilotIdentityShopAllowed(shopId);
+      await run('product-ads-overview-7d', () => syncProductAdsOverviewWindow({
+        client: ads.client,
+        repository: runtime.productAdsShopRepository,
+        rawRepository: runtime.rawRepository,
+        shopId,
+        accessToken: adsToken,
+        startDate: addDays(today, -6),
+        endDate: today,
+      }), { required: false });
+    }
+  }
+
+  // Single-product ads are live Product Card data and must stay fresh during
+  // the day, not only after the daily cycle. Refresh the recent performance
+  // window hourly; campaign settings are slower-moving and remain daily-only.
+  // Shop-wide ads use the dedicated GMS sync above; Ad Group remains MANUAL_IMPORT.
+  if (apiCapable) {
+    if (pilot) assertPilotIdentityShopAllowed(shopId);
+    await run('product-ads-7d', () => service.syncProductAdsDaily({
+      startDate: addDays(today, -6),
+      endDate: today,
+      adTypes: ['manual'],
+      includeSettings: mode === 'daily',
+    }), { required: false });
+  }
+
+  if (!pilot) {
+    await run('orders-recent', () => service.syncOrders({
+      timeFrom: nowEpoch - 3 * 86400,
+      timeTo: nowEpoch,
+    }));
+  }
+
+  if (mode === 'daily' && !pilot) {
+    await run('products', () => service.syncProducts({
+      updateTimeFrom: nowEpoch - 3 * 86400,
+      updateTimeTo: nowEpoch,
+    }));
+
+    if (runtime.roleClients.STORE_OPS) {
+      await run('promotions', () => service.syncPromotions(), { required: false });
+    } else {
+      summary.steps.push({ name: 'promotions', ok: true, required: false, skipped: 'NO_STORE_OPS_CLIENT' });
+    }
+
+    if (runtime.roleClients.ERP) {
+      const hasErpToken = runtime.tokenRepository && typeof runtime.tokenRepository.exists === 'function'
+        ? await runtime.tokenRepository.exists({ appRole: 'ERP', shopId })
+        : true;
+      if (hasErpToken) {
+        await run('returns', () => service.syncReturns({
+          updateTimeFrom: nowEpoch - 14 * 86400,
+          updateTimeTo: nowEpoch,
+        }), { required: false });
+      } else {
+        summary.steps.push({ name: 'returns', ok: true, required: false, skipped: 'NO_ERP_TOKEN' });
+      }
+    } else {
+      summary.steps.push({ name: 'returns', ok: true, required: false, skipped: 'NO_ERP_CLIENT' });
+    }
+
+    if (profile.brandPortalTimezone && profile.brandPortalPrincipalId && runtime.roleClients.BRAND_PORTAL) {
+      await run('shop-bi-yesterday', () => service.syncShopBiDay({
+        date: yesterday,
+        timezone: profile.brandPortalTimezone,
+        principalId: profile.brandPortalPrincipalId,
+      }), { required: false });
+    } else {
+      summary.steps.push({
+        name: 'shop-bi-yesterday', ok: true, required: false,
+        skipped: !profile.brandPortalTimezone ? 'NO_BRAND_PORTAL_TIMEZONE'
+          : !profile.brandPortalPrincipalId ? 'NO_BRAND_PORTAL_PRINCIPAL_ID' : 'NO_BRAND_PORTAL_CLIENT',
+      });
+    }
+
+    const activeItemIds = await runtime.queryRepository.listLatestMembershipItemIds({ shopId });
+    if (activeItemIds.length) {
+      await run(
+        'recommended-roi',
+        () => service.syncRecommendedRoi({ itemIds: activeItemIds }),
+        { required: false },
+      );
+    } else {
+      summary.steps.push({
+        name: 'recommended-roi',
+        ok: true,
+        required: false,
+        skipped: 'NO_ACTIVE_MEMBERSHIP',
+      });
+    }
+  }
+
+  summary.failedRequiredSteps = summary.steps
+    .filter(step => step.required && step.ok === false)
+    .map(step => step.name);
+  summary.failedOptionalSteps = summary.steps
+    .filter(step => step.required === false && step.ok === false)
+    .map(step => step.name);
+
+  return summary;
+}
+
+module.exports = { normalizeShopProfile, runShopSyncCycle };
