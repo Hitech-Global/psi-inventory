@@ -41,6 +41,8 @@ for (const required of [
   'shopSelect',
   'portfolioDiagnosisRows',
   'storeSummary',
+  'storeErpAction',
+  'storeBrandPortalAction',
   'storeTrendRows',
   'storeSkuRows',
   'campaignRows',

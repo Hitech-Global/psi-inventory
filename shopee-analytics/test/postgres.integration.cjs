@@ -315,6 +315,17 @@ const { FeishuAuthRepository, hashToken } = require('../src/feishu-auth');
     ]);
     assert.strictEqual(consumes.filter(Boolean).length, 1, 'OAuth state must be atomically consumed once');
 
+    const erpStateHash = require('crypto').createHash('sha256').update('erp-production-state').digest('hex');
+    await oauthStateRepo.create({
+      stateHash: erpStateHash,
+      appRole: 'ERP',
+      expectedShopId: 1,
+      redirectUri: 'https://analytics.example.com/api/shopee-analytics/erp/oauth/callback',
+      expiresAt: stateExpiresAt,
+    });
+    const erpStateRow = await pool.query('SELECT app_role FROM shopee_oauth_states WHERE state_hash=$1', [erpStateHash]);
+    assert.strictEqual(erpStateRow.rows[0].app_role, 'ERP');
+
     const shopRepository = new ShopeeShopRepository({ pool });
     await shopRepository.upsert({
       requestedShopId: 1,

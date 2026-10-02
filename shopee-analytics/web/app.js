@@ -529,6 +529,41 @@ function contributionList(title, rows, currency, tone) {
   return `<article class="store-contribution-card ${tone}"><h3>${title}</h3><div class="store-contribution-list">${rows.slice(0,3).map(item => `<div><span><strong>${escapeHtml(item.itemSku || ('#' + item.itemId))}</strong><small>${escapeHtml(item.itemName || '')}</small></span><b class="${Number(item.salesDelta) >= 0 ? 'positive' : 'negative'}">${Number(item.salesDelta) >= 0 ? '+' : ''}${formatMoney(item.salesDelta, currency)}</b></div>`).join('')}</div></article>`;
 }
 
+async function renderErpAction(shopId) {
+  const button = $('#storeErpAction');
+  if (!button) return;
+  button.classList.remove('connected', 'hidden');
+  button.disabled = true;
+  button.onclick = null;
+  button.textContent = '检查 ERP…';
+  try {
+    const status = await json(`/api/shopee-analytics/erp/status?shop_id=${encodeURIComponent(shopId)}`);
+    if (status.tokenPresent) {
+      button.textContent = 'ERP 已连接';
+      button.classList.add('connected');
+      button.title = status.tokenRefreshError ? 'ERP Token 最近刷新失败，系统会继续重试。' : 'ERP 退货/退款数据授权已连接。';
+      return;
+    }
+    if (!status.credentialConfigured) {
+      button.textContent = '需配置 ERP App';
+      button.title = '先配置 Shopee ERP Live Partner ID / Key。';
+      return;
+    }
+    if (!status.redirectUrl) {
+      button.textContent = '需配置 ERP 回调';
+      button.title = 'ERP OAuth 回调地址尚未配置。';
+      return;
+    }
+    button.textContent = '连接 ERP';
+    button.disabled = false;
+    button.title = '授权后系统会自动同步退货/退款数据。';
+    button.onclick = () => { location.href = `/api/shopee-analytics/erp/oauth/start?shop_id=${encodeURIComponent(shopId)}`; };
+  } catch (error) {
+    button.textContent = 'ERP 状态不可用';
+    button.title = error.message || String(error);
+  }
+}
+
 async function renderBrandPortalAction(shopId, shopBiAvailable) {
   const button = $('#storeBrandPortalAction');
   if (!button) return;
@@ -686,7 +721,10 @@ async function loadStoreDetail() {
   });
   const data = await json(`/api/shopee-analytics/shops/${shop.shopId}/detail?${params}`);
   renderStoreDetail(data);
-  await renderBrandPortalAction(shop.shopId, Boolean(data.dataAvailability && data.dataAvailability.shopBi));
+  await Promise.all([
+    renderErpAction(shop.shopId),
+    renderBrandPortalAction(shop.shopId, Boolean(data.dataAvailability && data.dataAvailability.shopBi)),
+  ]);
 }
 
 function renderCampaignSummary(campaigns, shop) {

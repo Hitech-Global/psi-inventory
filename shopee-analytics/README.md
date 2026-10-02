@@ -67,6 +67,15 @@ The production connection is intentionally the last step:
 
 No secret should be pasted into chat or committed to Git.
 
+## ERP + Brand Portal Go Live
+
+Production supports separate Shopee app roles. Keep each Live Partner Key only in the local runtime environment.
+
+- ERP: set `SHOPEE_ERP_PARTNER_ID` / `SHOPEE_ERP_PARTNER_KEY`. The default callback is `https://<external-base>/api/shopee-analytics/erp/oauth/callback`; `SHOPEE_ERP_REDIRECT_URL` may override it. A super admin connects ERP per shop from Store Diagnosis. The encrypted shop token is stored under app role `ERP` and is used for returns/refunds sync.
+- Brand Portal: set `SHOPEE_BRAND_PORTAL_PARTNER_ID` / `SHOPEE_BRAND_PORTAL_PARTNER_KEY`. The default callback is `https://<external-base>/api/shopee-analytics/brand-portal/oauth/callback`. A super admin connects each shop to a Principal; the principal token is encrypted and the principal ID is mapped to the shop profile for Business Insights sync.
+- Both OAuth start routes are restricted to `SUPER_ADMIN`. Reviewer sessions remain read-only and cannot start either authorization.
+- Register the exact HTTPS callback URL in the corresponding Shopee Open Platform Live app before starting OAuth.
+
 ## Product Card bridge
 
 The item-level Product Card funnel export is supported as a period import while a complete official item-level BI API is not yet verified.

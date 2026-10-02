@@ -15,6 +15,7 @@ const { parseShopeeAdGroupFile } = require('./shopee-ad-group-import');
 const { ShopeeOperationHistoryRepository } = require('./operation-history-repository');
 const { ROLE_SUPER_ADMIN, authorizedShopIds, assertShopAccess } = require('./feishu-auth');
 const { BRAND_PORTAL_COOKIE, stateCookie, clearStateCookie, parseCookie } = require('./brand-portal-oauth-service');
+const { ERP_COOKIE, stateCookie: erpStateCookie, clearStateCookie: clearErpStateCookie, parseCookie: parseErpCookie } = require('./erp-oauth-service');
 const { SkillJobManager, normalizeReportLanguage } = require('./skill-job-manager');
 
 function positiveInt(value, name) {
@@ -208,6 +209,7 @@ function createShopeeAnalyticsRouter({
   runSkillAnalysis = null,
   runAdGroupSkillAnalysis = null,
   brandPortalOAuthService = null,
+  erpOAuthService = null,
 }) {
   const router = express.Router();
   const skillJobManager = new SkillJobManager();
@@ -272,6 +274,29 @@ function createShopeeAnalyticsRouter({
     }
   });
 
+  router.get('/erp/status', async (req, res, next) => {
+    try {
+      if (!erpOAuthService) throw Object.assign(new Error('ERP OAuth service is unavailable'), { status: 503 });
+      const shopId = positiveInt(req.query.shop_id, 'shop_id');
+      assertShopAccess(req, shopId);
+      res.json(await erpOAuthService.status({ shopId }));
+    } catch (error) { next(error); }
+  });
+
+  router.get('/erp/oauth/start', async (req, res, next) => {
+    try {
+      if (!req.auth || req.auth.role !== ROLE_SUPER_ADMIN) {
+        res.status(403).json({ error: 'SUPER_ADMIN_REQUIRED', message: 'Only super admins can connect ERP.' });
+        return;
+      }
+      if (!erpOAuthService) throw Object.assign(new Error('ERP OAuth service is unavailable'), { status: 503 });
+      const shopId = positiveInt(req.query.shop_id, 'shop_id');
+      const result = await erpOAuthService.beginAuthorization({ shopId });
+      res.setHeader('Set-Cookie', erpStateCookie(result.state, result.ttlSeconds));
+      res.redirect(302, result.authorizationUrl);
+    } catch (error) { next(error); }
+  });
+
   router.get('/brand-portal/status', async (req, res, next) => {
     try {
       if (!brandPortalOAuthService) throw Object.assign(new Error('Brand Portal OAuth service is unavailable'), { status: 503 });
@@ -292,6 +317,24 @@ function createShopeeAnalyticsRouter({
       const result = await brandPortalOAuthService.beginAuthorization({ shopId });
       res.setHeader('Set-Cookie', stateCookie(result.state, result.ttlSeconds));
       res.redirect(302, result.authorizationUrl);
+    } catch (error) { next(error); }
+  });
+
+  router.get('/erp/oauth/callback', async (req, res, next) => {
+    try {
+      if (!req.auth || req.auth.role !== ROLE_SUPER_ADMIN) {
+        res.status(403).json({ error: 'SUPER_ADMIN_REQUIRED', message: 'Only super admins can connect ERP.' });
+        return;
+      }
+      if (!erpOAuthService) throw Object.assign(new Error('ERP OAuth service is unavailable'), { status: 503 });
+      const state = parseErpCookie(req.headers.cookie, ERP_COOKIE);
+      const result = await erpOAuthService.completeAuthorization({
+        state,
+        code: typeof req.query.code === 'string' ? req.query.code : '',
+        providerError: req.query.error || null,
+      });
+      res.setHeader('Set-Cookie', clearErpStateCookie());
+      res.redirect(302, '/?erp=connected&shop_id=' + encodeURIComponent(result.shopId));
     } catch (error) { next(error); }
   });
 

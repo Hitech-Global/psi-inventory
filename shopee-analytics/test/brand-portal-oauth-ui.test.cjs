@@ -17,5 +17,5 @@ assert(html.includes('id="storeBrandPortalAction"'));
 assert(app.includes('renderBrandPortalAction'));
 assert(app.includes('需配置 Brand Portal App'));
 assert(app.includes('/brand-portal/oauth/start?shop_id='));
-assert(schema.includes("app_role IN ('ADS','BRAND_PORTAL')"));
+assert(schema.includes("app_role IN ('ADS','ERP','BRAND_PORTAL')"));
 console.log('Brand Portal UI/OAuth route contract: ok');

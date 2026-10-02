@@ -10,4 +10,4 @@ ALTER TABLE shopee_oauth_states
   DROP CONSTRAINT IF EXISTS shopee_oauth_states_app_role_check;
 ALTER TABLE shopee_oauth_states
   ADD CONSTRAINT shopee_oauth_states_app_role_check
-  CHECK (app_role IN ('ADS','BRAND_PORTAL'));
+  CHECK (app_role IN ('ADS','ERP','BRAND_PORTAL'));
