@@ -292,13 +292,19 @@ async function main() {
       const shops = await profileRepo.list({ activeOnly: true });
       checks.push(result('active_shops', shops.length > 0, { count: shops.length }, 'warning'));
 
-      const tokenRoles = deploymentMode === PRODUCTION ? productionConfiguredRoles : Object.keys(APP_ENV);
+      const configuredTokenRoles = deploymentMode === PRODUCTION ? productionConfiguredRoles : Object.keys(APP_ENV);
+      const requiredTokenRoles = deploymentMode === PRODUCTION ? ['ADS'] : configuredTokenRoles;
+      const optionalTokenRoles = deploymentMode === PRODUCTION
+        ? configuredTokenRoles.filter(role => !requiredTokenRoles.includes(role))
+        : [];
       const tokenSummary = [];
       for (const shop of shops) {
         const roles = [];
-        for (const role of tokenRoles) {
+        for (const role of configuredTokenRoles) {
+          const tokenSubjectId = role === 'BRAND_PORTAL' ? Number(shop.brandPortalPrincipalId || 0) : shop.shopId;
+          if (!tokenSubjectId) continue;
           try {
-            const token = await tokenRepo.load({ appRole: role, shopId: shop.shopId });
+            const token = await tokenRepo.load({ appRole: role, shopId: tokenSubjectId });
             if (token) roles.push(role);
           } catch (error) {
             roles.push(`${role}:ERROR`);
@@ -307,13 +313,22 @@ async function main() {
         tokenSummary.push({ shopId: shop.shopId, displayName: shop.displayName, roles });
       }
       const complete = deploymentMode === PRODUCTION
-        ? tokenRoles.length > 0 && tokenSummary.some(row => tokenRoles.every(role => row.roles.includes(role)))
-        : shops.length > 0 && tokenSummary.every(row => row.roles.length === tokenRoles.length);
+        ? tokenSummary.some(row => requiredTokenRoles.every(role => row.roles.includes(role)))
+        : shops.length > 0 && tokenSummary.every(row => requiredTokenRoles.every(role => row.roles.includes(role)));
       checks.push(result('encrypted_shop_tokens', complete, {
-        requiredRoles: tokenRoles,
-        authorizedShopCount: tokenSummary.filter(row => tokenRoles.every(role => row.roles.includes(role))).length,
+        requiredRoles: requiredTokenRoles,
+        authorizedShopCount: tokenSummary.filter(row => requiredTokenRoles.every(role => row.roles.includes(role))).length,
         shops: tokenSummary,
       }, 'warning'));
+      if (optionalTokenRoles.length) {
+        checks.push(result('optional_encrypted_shop_tokens', true, {
+          optionalRoles: optionalTokenRoles,
+          coverage: Object.fromEntries(optionalTokenRoles.map(role => [
+            role, tokenSummary.filter(row => row.roles.includes(role)).length,
+          ])),
+          shops: tokenSummary,
+        }, 'info'));
+      }
     }
   } catch (error) {
     checks.push(result('postgres_connection', false, error.message));

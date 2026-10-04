@@ -90,6 +90,9 @@ assert(preparePs1.includes('prepare-desktop-runtime.cjs'), 'Windows preparation 
 assert(installPs1.includes('--profile tools run --rm preflight'), 'Windows installer must run deployment preflight');
 assert(preflight.includes('selectConfiguredRuntimeRoles'), 'production preflight must share the runtime configured-role contract');
 assert(preflight.includes('readyForProduction'), 'production preflight must expose an explicit production readiness result');
+assert(preflight.includes("requiredTokenRoles = deploymentMode === PRODUCTION ? ['ADS']"), 'production readiness must require ADS tokens only');
+assert(preflight.includes("role === 'BRAND_PORTAL' ? Number(shop.brandPortalPrincipalId || 0)"), 'Brand Portal token checks must use principal mapping');
+assert(preflight.includes("'optional_encrypted_shop_tokens'"), 'optional ERP/Brand Portal token coverage must not block production readiness');
 assert(preflight.includes("'PRODUCTION_READY'"), 'production preflight must finish with a production-ready gate');
 assert(installPs1.includes('Historical backfill remains disabled'), 'Windows installer must keep backfill gated');
 assert(backupTasksPs1.includes('Shopee Analytics NAS Backup'), 'Windows task installer must schedule NAS backup');
