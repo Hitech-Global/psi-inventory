@@ -6159,6 +6159,10 @@ function historicalSalesPanelHtml(){
 function addHistoricalColsToActive(activeKeys,Cols,totals,data){
   var hist=window._rpHistoricalSales;
   if(!hist||!hist.success)return;
+  // Historic columns must follow the current forecast tab; total mode remains unchanged.
+  var histRows=(rpTab==='online'||rpTab==='offline')
+    ? ((hist.channel_data&&hist.channel_data[rpTab])||{})
+    : (hist.data||{});
   var columns=hist.mode==='monthly'?(hist.columns||[]):['total'];
   // 渠道预测已固定展示当前四个自然月；历史查看范围与其重叠时不再重复追加同月列。
   var builtInMonths={};
@@ -6184,13 +6188,13 @@ function addHistoricalColsToActive(activeKeys,Cols,totals,data){
     var label=hist.mode==='monthly'?column:t('forecast.hist.col_custom_period','自定义期间销量');
     totals._historical[key]=0;
     (data||[]).forEach(function(r){
-      var item=(hist.data&&hist.data[r.sku_code])||{};
+      var item=histRows[r.sku_code]||{};
       totals._historical[key]+=Number(item[column]||0);
     });
     Cols[key]={
       th:rpThCompact(esc(label),'','text-right','',true),
       td:function(r){
-        var item=(hist.data&&hist.data[r.sku_code])||{};
+        var item=histRows[r.sku_code]||{};
         return '<td class="text-right">'+formatQuantityDisplay(Number(item[column]||0))+'</td>';
       },
       sum:function(t){return '<td class="text-right">'+formatQuantityDisplay(t._historical[key]||0)+'</td>';}

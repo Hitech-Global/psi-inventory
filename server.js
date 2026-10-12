@@ -7057,7 +7057,7 @@ app.get('/api/replenishment-suggestions/historical-sales', requireApiPermission(
     const lastDay = new Date(ly, lm, 0).getDate();
     const fullEnd = `${lastMonth}-${String(lastDay).padStart(2, '0')}`;
 
-    let monthlySalesSql = `SELECT sku_code, substr(${salesDate}, 1, 7) as ym, SUM(quantity) as qty FROM sales_records WHERE sku_code IN (${placeholders}) AND ${salesDate} >= ? AND ${salesDate} <= ? AND is_valid_order = 1`;
+    let monthlySalesSql = `SELECT sku_code, substr(${salesDate}, 1, 7) as ym, SUM(quantity) as qty, COALESCE(SUM(CASE WHEN (shop_platform LIKE '%线上%' OR lower(shop_platform) = 'online') THEN quantity END), 0) as online_qty, COALESCE(SUM(CASE WHEN (shop_platform LIKE '%线下%' OR lower(shop_platform) = 'offline') THEN quantity END), 0) as offline_qty FROM sales_records WHERE sku_code IN (${placeholders}) AND ${salesDate} >= ? AND ${salesDate} <= ? AND is_valid_order = 1`;
     const monthlySalesParams = [...skuCodes, fullStart, fullEnd];
     if (country) { monthlySalesSql += ' AND country = ?'; monthlySalesParams.push(country); }
     // DATA-SCOPE: 销售记录数据权限过滤
@@ -7067,17 +7067,26 @@ app.get('/api/replenishment-suggestions/historical-sales', requireApiPermission(
     const salesRows = query(monthlySalesSql, monthlySalesParams).rows;
 
     const data = {};
+    const channelData = { online: {}, offline: {} };
     skuCodes.forEach(code => {
       data[code] = {};
-      monthCols.forEach(m => { data[code][m] = 0; });
+      channelData.online[code] = {};
+      channelData.offline[code] = {};
+      monthCols.forEach(m => {
+        data[code][m] = 0;
+        channelData.online[code][m] = 0;
+        channelData.offline[code][m] = 0;
+      });
     });
     salesRows.forEach(r => {
       if (data[r.sku_code] && data[r.sku_code][r.ym] !== undefined) {
         data[r.sku_code][r.ym] = r.qty;
+        channelData.online[r.sku_code][r.ym] = Number(r.online_qty) || 0;
+        channelData.offline[r.sku_code][r.ym] = Number(r.offline_qty) || 0;
       }
     });
 
-    return res.json({ success: true, mode: 'monthly', range: { start, end }, columns: monthCols, data });
+    return res.json({ success: true, mode: 'monthly', range: { start, end }, columns: monthCols, data, channel_data: channelData });
   }
 
   if (mode === 'daily') {
@@ -7093,7 +7102,7 @@ app.get('/api/replenishment-suggestions/historical-sales', requireApiPermission(
       actualEnd = `${end}-${String(ld).padStart(2, '0')}`;
     }
 
-    let dailySalesSql = `SELECT sku_code, SUM(quantity) as qty FROM sales_records WHERE sku_code IN (${placeholders}) AND ${salesDate} >= ? AND ${salesDate} <= ? AND is_valid_order = 1`;
+    let dailySalesSql = `SELECT sku_code, SUM(quantity) as qty, COALESCE(SUM(CASE WHEN (shop_platform LIKE '%线上%' OR lower(shop_platform) = 'online') THEN quantity END), 0) as online_qty, COALESCE(SUM(CASE WHEN (shop_platform LIKE '%线下%' OR lower(shop_platform) = 'offline') THEN quantity END), 0) as offline_qty FROM sales_records WHERE sku_code IN (${placeholders}) AND ${salesDate} >= ? AND ${salesDate} <= ? AND is_valid_order = 1`;
     const dailySalesParams = [...skuCodes, start, actualEnd];
     if (country) { dailySalesSql += ' AND country = ?'; dailySalesParams.push(country); }
     // DATA-SCOPE: 销售记录数据权限过滤
@@ -7103,15 +7112,25 @@ app.get('/api/replenishment-suggestions/historical-sales', requireApiPermission(
     const salesRows = query(dailySalesSql, dailySalesParams).rows;
 
     const data = {};
-    skuCodes.forEach(code => { data[code] = { total: 0 }; });
-    salesRows.forEach(r => { data[r.sku_code].total = r.qty; });
+    const channelData = { online: {}, offline: {} };
+    skuCodes.forEach(code => {
+      data[code] = { total: 0 };
+      channelData.online[code] = { total: 0 };
+      channelData.offline[code] = { total: 0 };
+    });
+    salesRows.forEach(r => {
+      data[r.sku_code].total = r.qty;
+      channelData.online[r.sku_code].total = Number(r.online_qty) || 0;
+      channelData.offline[r.sku_code].total = Number(r.offline_qty) || 0;
+    });
 
     return res.json({
       success: true,
       mode: 'daily',
       range: { start: start.length === 10 ? start : startDate, end: actualEnd },
       total: salesRows.reduce((sum, r) => sum + r.qty, 0),
-      data
+      data,
+      channel_data: channelData
     });
   }
 }));
