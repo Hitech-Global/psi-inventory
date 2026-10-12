@@ -129,6 +129,7 @@
 .skill-analysis-toolbar{display:flex;align-items:center;justify-content:flex-end;margin-top:12px}.skill-analysis-toolbar .primary{height:34px;padding:0 14px}
 .skill-report-host{margin-top:10px}.skill-report-card{border:1px solid #dfe8f2;border-radius:14px;background:#f8fbff;padding:13px 14px}.skill-report-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}.skill-report-head strong{font-size:13px}.skill-report-stage{font-size:9px;font-weight:800;padding:4px 7px;border-radius:999px;background:#eaf3ff;color:#0567c5}.skill-report-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.skill-report-block{border-top:1px solid #e4ebf2;padding-top:8px}.skill-report-block strong{display:block;font-size:10px;margin-bottom:5px}.skill-report-block ul{margin:0;padding-left:16px;color:#515154;font-size:10px;line-height:1.5}.skill-report-block li+li{margin-top:4px}@media(max-width:800px){.skill-report-grid{grid-template-columns:1fr}}
 
+.skill-language-backdrop{z-index:2000}
 .skill-language-modal{width:min(480px,94vw)}
 .skill-language-options{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .skill-language-option{border:1px solid #dfe3e8;border-radius:14px;background:#fff;padding:16px;text-align:left;cursor:pointer;display:flex;flex-direction:column;gap:5px;transition:.15s ease}

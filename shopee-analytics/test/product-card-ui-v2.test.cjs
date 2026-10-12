@@ -6,6 +6,7 @@ const path = require('path');
 const read = rel => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
 const ui = read('web/product-card-ui-v2.js');
+const styles = read('web/styles.css');
 const index = read('web/index.html');
 const repo = read('src/ad-promotion-repository.js');
 const server = read('src/standalone-server.js');
@@ -35,6 +36,8 @@ assert(ui.includes("const toolbar = tabs.closest('.ads-filter-toolbar')"), 'Prod
 assert(channels.includes('adsView.insertBefore(overviewPanel, channelTabs.nextSibling)'), 'overview must remain a top-level block below the ad-channel row');
 assert(!ui.includes('data-ad-group-detail-index'), 'Ad Group items must no longer expand inline');
 assert(ui.includes('product-card-detail-modal-backdrop'), 'shared detail modal shell must exist');
+const skillLanguageLayer = styles.match(/\.skill-language-backdrop\{z-index:(\d+)\}/);
+assert(skillLanguageLayer && Number(skillLanguageLayer[1]) > 1500, 'language chooser must stack above the product detail modal');
 assert(ui.includes("variant: 'group'"), 'Ad Group detail must use the shared modal');
 assert(ui.includes("title: '单品广告明细'"), 'single-product ad detail must use the shared modal');
 assert(ui.includes("#manualAdDetail{display:none!important}"), 'legacy inline single-product detail must stay hidden');
