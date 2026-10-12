@@ -135,6 +135,10 @@ function createQwenSkillProvider({ env = process.env, fetchImpl = global.fetch, 
       if (typeof onProgress === 'function') onProgress(82, 'MODEL_RESPONSE', 'Qwen response received');
       const payload = await response.json();
       const report = sanitizeSkillReport(extractQwenStructuredOutput(payload), compactPackage);
+      // Skill identity is deterministic repository metadata, not a model judgment.
+      // Normalize it after structured generation so compatible Qwen models cannot
+      // fail the final validator merely by restating the name/version differently.
+      report.skill = { name: skill.name, version: skill.version };
       if (typeof onProgress === 'function') onProgress(90, 'MODEL_VALIDATED', 'Structured output parsed');
       return report;
     },

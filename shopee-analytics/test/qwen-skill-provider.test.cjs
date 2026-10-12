@@ -34,7 +34,7 @@ function readFileSync(file) {
   let captured = null;
   const progress = [];
   const report = {
-    skill:{ name:'shopee-gmv-max-analysis', version:'0.1.0' },
+    skill:{ name:'model-restated-skill-name', version:'model-version' },
     stage:'CONVERGING', facts:[], inferences:[], hypotheses:[], skuAssessments:[], actionGates:[], nextValidation:[], limitations:[],
   };
   const provider = createQwenSkillProvider({
@@ -60,6 +60,7 @@ function readFileSync(file) {
     onProgress:(...args) => progress.push(args),
   });
   assert.strictEqual(result.stage, 'CONVERGING');
+  assert.deepStrictEqual(result.skill, { name:'shopee-gmv-max-analysis', version:'0.1.0' });
   assert.strictEqual(captured.url, 'https://workspace.example.com/compatible-mode/v1/chat/completions');
   assert.strictEqual(captured.options.headers.Authorization, 'Bearer qwen-secret');
   const body = JSON.parse(captured.options.body);

@@ -107,6 +107,7 @@ function readFileSync(file) {
     ],
     hypotheses: [
       { statement: 'Keeping Spend Share above 80% will maintain ROAS above 8.0.', validation: 'Keep Spend Share above 80% for 7 days.' },
+      { statement: 'A model-only hypothesis without a validation condition.' },
     ],
     skuAssessments: [{ itemId: 'none', trafficStage: 'C', candidateRole: 'WEAK_EXPLORER' }],
     actionGates: [{ code: 'LEARNING', allowed: true, reason: 'Learning stage.' }],

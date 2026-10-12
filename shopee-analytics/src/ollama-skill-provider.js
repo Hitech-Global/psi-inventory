@@ -586,6 +586,7 @@ function sanitizeOllamaReport(report, compactPackage = {}) {
   output.inferences = inferences;
   output.hypotheses = (Array.isArray(output.hypotheses) ? output.hypotheses : [])
     .filter(row => row && typeof row === 'object')
+    .filter(row => typeof row.validation === 'string' && row.validation.trim())
     .filter(row => !isInvalidMultiSkuStabilityClaim(row.statement))
     .filter(row => !isSpendShareCausalRoasClaim(`${row.statement || ''} ${row.validation || ''}`))
     .map(softenHypothesisCertainty);
