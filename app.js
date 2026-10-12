@@ -5565,12 +5565,15 @@ function rpTh(label, help, cls, extra){
 var _rpTableSort=new WeakMap();
 function rpSortCellValue(td){
   if(!td)return '';
-  var raw=(td.textContent||'').trim();
+  // Editable numeric cells (e.g. channel suggested purchase / target turnover) have no textContent.
+  // Read the live input value so pending manual edits and explicit zero sort correctly.
+  var numInput=td.querySelector&&td.querySelector('input[type="number"]');
+  var raw=numInput?String(numInput.value==null?'':numInput.value).trim():(td.textContent||'').trim();
   if(raw===''||raw==='-'||raw==='—'||raw==='未知')return null;
   var normalized=raw.replace(/,/g,'').replace(/%$/,'');
-  if(/^[-+]?\\d+(?:\\.\\d+)?$/.test(normalized))return Number(normalized);
+  if(/^[-+]?\d+(?:\.\d+)?$/.test(normalized))return Number(normalized);
   var date=Date.parse(raw);
-  if(/^\\d{4}[-/]\\d{1,2}[-/]\\d{1,2}/.test(raw)&&!isNaN(date))return date;
+  if(/^\d{4}[-/]\d{1,2}[-/]\d{1,2}/.test(raw)&&!isNaN(date))return date;
   return raw.toLocaleLowerCase();
 }
 function rpCompareSortValue(a,b,dir){
