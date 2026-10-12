@@ -406,20 +406,80 @@ function sanitizeSkuAssessment(assessment, compactPackage = {}) {
   const item = (Array.isArray(compactPackage.items) ? compactPackage.items : [])
     .find(row => String(row && row.itemId) === String(assessment.itemId)) || {};
   const out = cloneJson(assessment);
+  const zh = compactPackage.presentation?.language === 'zh-CN';
+  const weeklyOrderReference = positiveThreshold(compactPackage.deterministicMetrics?.maturity?.weeklyOrderReference, MIN_CONVERGING_DIRECT_ORDERS_7D);
+  const directOrders = Number(item.directOrders || 0);
+  const clicks = Number(item.clicks || 0);
+  const impressions = Number(item.impressions || 0);
+  const expense = Number(item.expense || 0);
+  const directRoas = Number(item.directRoas);
+  const spendShare = Number(item.shares?.spendShare);
+  const directOrderShare = Number(item.shares?.directOrderShare);
+  const pct = value => Number.isFinite(value) ? `${(value * 100).toFixed(1).replace(/\.0$/, '')}%` : '—';
+
+  const allowedRoles = new Set(['TRAFFIC_CANDIDATE','CONVERSION_ANCHOR','HIGH_VALUE_CANDIDATE','STABLE_CORE','WEAK_EXPLORER','REJECT_CANDIDATE']);
+  if (!allowedRoles.has(String(out.candidateRole || ''))) {
+    out.candidateRole = directOrders > 0 ? 'CONVERSION_ANCHOR' : ((clicks > 0 || expense > 0) ? 'WEAK_EXPLORER' : 'TRAFFIC_CANDIDATE');
+  }
+  if (!['A','B','C'].includes(String(out.trafficStage || ''))) {
+    if (String(out.candidateRole) === 'STABLE_CORE' || directOrders >= weeklyOrderReference) out.trafficStage = 'A';
+    else if (directOrders > 0 || ['CONVERSION_ANCHOR','HIGH_VALUE_CANDIDATE'].includes(String(out.candidateRole))) out.trafficStage = 'B';
+    else out.trafficStage = 'C';
+  }
+
   for (const key of ['signal', 'confidence']) {
     if (out[key] && typeof out[key] === 'object' && typeof out[key].summary === 'string') {
       out[key].summary = neutralizeUnsupportedMetricAdjectives(out[key].summary, item, compactPackage);
     }
   }
+
+  if (!out.signal || typeof out.signal !== 'object' || !String(out.signal.summary || '').trim()) {
+    let summary;
+    if (directOrders > 0) {
+      summary = zh
+        ? `直接订单 ${directOrders}，Direct ROAS ${Number.isFinite(directRoas) ? directRoas.toFixed(2) : '—'}，花费份额 ${pct(spendShare)}，直接订单份额 ${pct(directOrderShare)}。`
+        : `${directOrders} Direct Orders, Direct ROAS ${Number.isFinite(directRoas) ? directRoas.toFixed(2) : '—'}, Spend Share ${pct(spendShare)}, Direct Order Share ${pct(directOrderShare)}.`;
+    } else if (clicks > 0 || expense > 0) {
+      summary = zh
+        ? `${clicks} 次点击、0 个直接订单，花费份额 ${pct(spendShare)}，当前尚无直接转化证据。`
+        : `${clicks} clicks and 0 Direct Orders, with ${pct(spendShare)} Spend Share; no Direct conversion evidence is present yet.`;
+    } else if (impressions > 0) {
+      summary = zh ? `${impressions} 次展示，当前没有点击或直接订单证据。` : `${impressions} impressions with no click or Direct Order evidence.`;
+    } else {
+      summary = zh ? '当前窗口没有有效流量或转化样本。' : 'No effective traffic or conversion sample is available in the current window.';
+    }
+    out.signal = { summary };
+  }
+
+  if (!out.confidence || typeof out.confidence !== 'object' || !String(out.confidence.summary || '').trim()) {
+    let summary;
+    if (directOrders >= weeklyOrderReference) {
+      summary = zh
+        ? `直接订单样本已达到内部周订单参考（≥${weeklyOrderReference}），但仍需结合连续性和扩量稳定性。`
+        : `Direct Orders meet the internal weekly reference (≥${weeklyOrderReference}); continuity and scale stability still need separate evidence.`;
+    } else if (directOrders > 0) {
+      summary = zh
+        ? `已有直接转化信号，但订单样本尚未达到内部周订单参考（${weeklyOrderReference}）。`
+        : `Direct conversion evidence exists, but the order sample remains below the internal weekly reference (${weeklyOrderReference}).`;
+    } else if (clicks > 0) {
+      summary = zh
+        ? '已有点击样本但没有直接订单；负向信号存在，但是否淘汰仍需结合连续窗口验证。'
+        : 'There is click evidence but no Direct Order; this is a negative signal, but rejection still requires continuity across a comparable window.';
+    } else {
+      summary = zh ? '样本不足，当前判断置信度低。' : 'The sample is insufficient; confidence is low.';
+    }
+    out.confidence = { summary };
+  }
+
   const hasVerifiedExpansion = item.scaleExpansionEvidence === true;
   if (!hasVerifiedExpansion) {
     out.scaleStability = {
-      summary: compactPackage.presentation?.language === 'zh-CN'
+      summary: zh
         ? 'UNKNOWN - 未提供已验证的扩量事件，暂不能确认 Scale Stability。'
         : 'UNKNOWN - No verified expansion episode is supplied; scale stability cannot be confirmed.',
     };
     if (String(out.candidateRole || '') === 'STABLE_CORE') {
-      out.candidateRole = Number(item.directOrders) > 0 ? 'CONVERSION_ANCHOR' : 'TRAFFIC_CANDIDATE';
+      out.candidateRole = directOrders > 0 ? 'CONVERSION_ANCHOR' : 'TRAFFIC_CANDIDATE';
     }
   }
   return out;
@@ -446,21 +506,39 @@ function ensureGuardFact(facts, metric, value, unit, statement) {
 function hasEvidenceLimitation(report, pattern) {
   return Array.isArray(report.limitations) && report.limitations.some(row => pattern.test(String(row || '')));
 }
-function fallbackActionGate(stage) {
+function fallbackActionGate(stage, language = 'en-US') {
+  const zh = language === 'zh-CN';
   if (stage === 'LEARNING') {
-    return { code: 'OBSERVE', allowed: true, reason: 'Campaign evidence is still in LEARNING; protect the observation window and gather more evidence.' };
+    return { code: 'OBSERVE', allowed: true, reason: zh ? '当前仍处于学习期，优先保护观察窗口并继续积累有效样本。' : 'Campaign evidence is still in LEARNING; protect the observation window and gather more evidence.' };
   }
   if (stage === 'CONVERGING') {
-    return { code: 'STRUCTURAL_CHANGE', allowed: false, reason: 'Evidence is still converging; avoid premature structural changes.' };
+    return { code: 'STRUCTURAL_CHANGE', allowed: false, reason: zh ? '证据仍在收敛，暂不建议过早做结构性调整。' : 'Evidence is still converging; avoid premature structural changes.' };
   }
   if (stage === 'UNSTABLE') {
-    return { code: 'DIAGNOSE', allowed: true, reason: 'Campaign is UNSTABLE; diagnose efficiency and candidate-pool coherence before scaling.' };
+    return { code: 'DIAGNOSE', allowed: true, reason: zh ? '当前表现不稳定，扩量前先诊断效率和商品池结构一致性。' : 'Campaign is UNSTABLE; diagnose efficiency and candidate-pool coherence before scaling.' };
   }
-  return { code: 'CONTROLLED_TEST', allowed: false, reason: 'Verify profitability, SKU evidence, and cooldown gates before a controlled structural test.' };
+  return { code: 'CONTROLLED_TEST', allowed: false, reason: zh ? '先确认盈利、SKU 证据和冷却期，再进行受控结构测试。' : 'Verify profitability, SKU evidence, and cooldown gates before a controlled structural test.' };
+}
+
+function fallbackNextValidation(stage, language = 'en-US') {
+  const zh = language === 'zh-CN';
+  if (stage === 'LEARNING') return zh
+    ? '保持当前广告组结构不变并继续积累样本；下一次复核直接订单、Broad/Direct ROAS、CTR、Direct CVR，以及 SKU 花费与订单贡献是否形成连续趋势。'
+    : 'Keep the current structure unchanged while evidence accumulates; re-check Direct Orders, Broad/Direct ROAS, CTR, Direct CVR, and whether SKU spend versus order contribution forms a continuous pattern.';
+  if (stage === 'CONVERGING') return zh
+    ? '在下一等长可比窗口复核直接订单、ROAS、转化率和 SKU 花费/订单贡献；只有弱 SKU 持续消耗且仍无直接订单证据时，再考虑受控暂停/移除测试。'
+    : 'Re-check Direct Orders, ROAS, conversion rate, and SKU spend/order contribution in the next comparable window; only consider a controlled pause/remove test when a weak SKU keeps consuming spend without Direct Order evidence.';
+  if (stage === 'UNSTABLE') return zh
+    ? '下一观察窗口先复核订单产出、ROAS、漏斗和最近操作，确认异常发生在哪一层后再调整。'
+    : 'In the next observation window, re-check order output, ROAS, funnel, and recent operations; identify the broken layer before changing the campaign.';
+  return zh
+    ? '用下一等长可比窗口验证盈利、直接订单和 SKU 结构是否继续稳定；只有这些证据继续成立时，再考虑受控扩量或结构测试。'
+    : 'Use the next comparable window to verify that economics, Direct Orders, and SKU structure remain stable; only then consider a controlled scale or structural test.';
 }
 
 function sanitizeOllamaReport(report, compactPackage = {}) {
   const output = cloneJson(report) || {};
+  const zh = compactPackage.presentation?.language === 'zh-CN';
   const availability = compactPackage.evidenceAvailability || {};
   const hasItemEvidence = availability.hasItemLevelEvidence === true;
   const hasAllocationEvidence = availability.hasAllocationEvidence === true;
@@ -478,6 +556,7 @@ function sanitizeOllamaReport(report, compactPackage = {}) {
 
   for (const fact of rawFacts) {
     if (!fact || typeof fact !== 'object') continue;
+    if (typeof fact.statement !== 'string' || !fact.statement.trim()) continue;
     const id = fact.id == null ? '' : String(fact.id);
     const metric = fact.metric == null ? '' : String(fact.metric);
     if (!hasAllocationEvidence && (metric === 'leaderSwitchCount' || isAllocationClaim(fact.statement))) {
@@ -506,14 +585,17 @@ function sanitizeOllamaReport(report, compactPackage = {}) {
   const broadRoas = Number(current7d.broadRoas);
   const requiredBroadRoas = Number(economics.requiredBroadRoasForSpendLimit);
   const spendRatioLimit = Number(economics.adSpendRatioLimit);
+  let economicsGuardFactId = null;
   if (economics.broadRoasVsSpendLimit && economics.broadRoasVsSpendLimit !== 'UNKNOWN' &&
       Number.isFinite(broadRoas) && Number.isFinite(requiredBroadRoas) && Number.isFinite(spendRatioLimit)) {
-    ensureGuardFact(
+    economicsGuardFactId = ensureGuardFact(
       facts,
       'broadRoasVsSpendLimit',
       economics.broadRoasVsSpendLimit,
       'enum',
-      `Broad ROAS ${broadRoas.toFixed(2)} is ${String(economics.broadRoasVsSpendLimit).toLowerCase()} the required Broad ROAS ${requiredBroadRoas.toFixed(2)} derived from ad-spend-ratio limit ${spendRatioLimit}.`,
+      zh
+        ? `Broad ROAS ${broadRoas.toFixed(2)} ${({ ABOVE:'高于', BELOW:'低于', EQUAL:'等于', AT:'等于' })[String(economics.broadRoasVsSpendLimit).toUpperCase()] || '对比'}广告花费占比上限 ${(spendRatioLimit * 100).toFixed(1).replace(/\.0$/, '')}% 对应的最低 Broad ROAS ${requiredBroadRoas.toFixed(2)}。`
+        : `Broad ROAS ${broadRoas.toFixed(2)} is ${String(economics.broadRoasVsSpendLimit).toLowerCase()} the required Broad ROAS ${requiredBroadRoas.toFixed(2)} derived from ad-spend-ratio limit ${spendRatioLimit}.`,
     );
   }
 
@@ -529,24 +611,25 @@ function sanitizeOllamaReport(report, compactPackage = {}) {
 
   if (stabilityJudgmentBlocked) {
     if (output.stage === 'STABLE' || output.stage === 'UNSTABLE') output.stage = 'CONVERGING';
-    addLimitation(output, 'Operation source is unresolved for a reset candidate; a new stability judgment is blocked until the actor/source is disambiguated.');
+    addLimitation(output, zh ? '存在可能触发学习期重置的操作，但操作来源尚未确认；在明确操作者/来源前，不做新的稳定性判断。' : 'Operation source is unresolved for a reset candidate; a new stability judgment is blocked until the actor/source is disambiguated.');
   } else if (learningEpoch.available === true && !maturityFloorMet) {
     output.stage = 'LEARNING';
   } else if (output.stage === 'LEARNING' && maturityFloorMet) {
     const basis = maturity.basis === 'CURRENT_LEARNING_EPOCH' ? 'current learning epoch' : 'selected observation window';
+    const basisZh = maturity.basis === 'CURRENT_LEARNING_EPOCH' ? '当前学习周期' : '所选观察窗口';
     const daysFactId = ensureGuardFact(
       facts,
       'maturityObservedDays',
       observedDays,
       'days',
-      `Campaign has ${observedDays} calendar days in the ${basis}.`,
+      zh ? `${basisZh}已观察 ${observedDays} 个自然日。` : `Campaign has ${observedDays} calendar days in the ${basis}.`,
     );
     const ordersFactId = ensureGuardFact(
       facts,
       'maturityDirectOrders',
       directOrdersObserved,
       'orders',
-      `Campaign recorded ${directOrdersObserved} Direct Orders in the ${basis}.`,
+      zh ? `${basisZh}累计 ${directOrdersObserved} 个直接订单。` : `Campaign recorded ${directOrdersObserved} Direct Orders in the ${basis}.`,
     );
     output.stage = 'CONVERGING';
     maturityFloorEvidenceIds = [daysFactId, ordersFactId];
@@ -557,6 +640,7 @@ function sanitizeOllamaReport(report, compactPackage = {}) {
   const inferences = [];
   for (const inference of Array.isArray(output.inferences) ? output.inferences : []) {
     if (!inference || typeof inference !== 'object') continue;
+    if (typeof inference.statement !== 'string' || !inference.statement.trim()) continue;
     if (maturityFloorEvidenceIds && /\bLEARNING\b/i.test(String(inference.statement || ''))) continue;
     if (!hasAllocationEvidence && isAllocationClaim(inference.statement)) continue;
     if (isInvalidMultiSkuStabilityClaim(inference.statement)) continue;
@@ -576,38 +660,93 @@ function sanitizeOllamaReport(report, compactPackage = {}) {
     }
     inferences.push({ ...inference, evidenceIds });
   }
+  if (economicsGuardFactId && !inferences.some(row => Array.isArray(row.evidenceIds) && row.evidenceIds.includes(economicsGuardFactId))) {
+    const relation = String(economics.broadRoasVsSpendLimit || '').toUpperCase();
+    const meets = relation === 'ABOVE' || relation === 'EQUAL' || relation === 'AT';
+    inferences.unshift({
+      statement: zh
+        ? `当前 Broad ROAS ${broadRoas.toFixed(2)}${meets ? '满足' : '未满足'}广告花费占比上限 ${(spendRatioLimit * 100).toFixed(1).replace(/\.0$/, '')}% 对应的经营约束（最低 Broad ROAS ${requiredBroadRoas.toFixed(2)}）。`
+        : `Current Broad ROAS ${broadRoas.toFixed(2)} ${meets ? 'meets' : 'does not meet'} the operating constraint implied by the ${(spendRatioLimit * 100).toFixed(1).replace(/\.0$/, '')}% ad-spend-ratio limit (required Broad ROAS ${requiredBroadRoas.toFixed(2)}).`,
+      evidenceIds: [economicsGuardFactId],
+    });
+  }
   if (maturityFloorEvidenceIds) {
     const basisLabel = maturity.basis === 'CURRENT_LEARNING_EPOCH' ? 'current learning epoch' : 'selected observation window';
+    const basisLabelZh = maturity.basis === 'CURRENT_LEARNING_EPOCH' ? '当前学习周期' : '所选观察窗口';
     inferences.push({
-      statement: `Campaign is at least CONVERGING under the internal maturity guard because the ${basisLabel} meets the ${requiredObservationDays}-day and ${requiredDirectOrders}-Direct-Order reference.`,
+      statement: zh
+        ? `${basisLabelZh}已达到内部成熟度参考：至少 ${requiredObservationDays} 天且累计不少于 ${requiredDirectOrders} 个直接订单，因此阶段至少进入收敛期。`
+        : `Campaign is at least CONVERGING under the internal maturity guard because the ${basisLabel} meets the ${requiredObservationDays}-day and ${requiredDirectOrders}-Direct-Order reference.`,
       evidenceIds: maturityFloorEvidenceIds,
     });
   }
   output.inferences = inferences;
   output.hypotheses = (Array.isArray(output.hypotheses) ? output.hypotheses : [])
     .filter(row => row && typeof row === 'object')
+    .filter(row => typeof row.statement === 'string' && row.statement.trim())
     .filter(row => typeof row.validation === 'string' && row.validation.trim())
     .filter(row => !isInvalidMultiSkuStabilityClaim(row.statement))
     .filter(row => !isSpendShareCausalRoasClaim(`${row.statement || ''} ${row.validation || ''}`))
     .map(softenHypothesisCertainty);
   output.nextValidation = (Array.isArray(output.nextValidation) ? output.nextValidation : [])
-    .map(row => sanitizeAdGroupActionText(row, compactPackage));
+    .map(row => sanitizeAdGroupActionText(row, compactPackage))
+    .filter(row => String(row || '').trim());
+  if (!output.nextValidation.length) {
+    output.nextValidation = [fallbackNextValidation(output.stage, compactPackage.presentation?.language)];
+  }
 
   if (!hasItemEvidence) {
     output.skuAssessments = [];
-    if (!hasEvidenceLimitation(output, /item-level evidence/i)) addLimitation(output, 'No item-level evidence is available; SKU assessments are omitted.');
+    if (!hasEvidenceLimitation(output, /item-level evidence|SKU 层证据/i)) addLimitation(output, zh ? '缺少 SKU 层证据，因此不输出 SKU 判断。' : 'No item-level evidence is available; SKU assessments are omitted.');
   } else {
-    output.skuAssessments = (Array.isArray(output.skuAssessments) ? output.skuAssessments : [])
+    const sourceItems = Array.isArray(compactPackage.items) ? compactPackage.items : [];
+    const itemIds = new Set(sourceItems.map(item => String(item && item.itemId || '')).filter(Boolean));
+    const normalized = (Array.isArray(output.skuAssessments) ? output.skuAssessments : [])
+      .filter(row => row && typeof row === 'object' && itemIds.has(String(row.itemId || '')))
       .map(row => sanitizeSkuAssessment(row, compactPackage));
+    const presentIds = new Set(normalized.map(row => String(row.itemId || '')));
+    for (const item of sourceItems) {
+      const itemId = String(item && item.itemId || '');
+      const materiallyObserved = Number(item?.clicks || 0) > 0 || Number(item?.expense || 0) > 0 || Number(item?.directOrders || 0) > 0;
+      if (!itemId || !materiallyObserved || presentIds.has(itemId)) continue;
+      normalized.push(sanitizeSkuAssessment({ itemId }, compactPackage));
+      presentIds.add(itemId);
+    }
+    output.skuAssessments = normalized;
   }
   if (!hasAllocationEvidence) {
-    if (!hasEvidenceLimitation(output, /allocation evidence/i)) addLimitation(output, 'No allocation evidence is available; allocation and leader-switch conclusions are omitted.');
+    if (!hasEvidenceLimitation(output, /allocation evidence|分配证据/i)) addLimitation(output, zh ? '缺少流量/花费分配证据，因此不判断分配结构和主力切换。' : 'No allocation evidence is available; allocation and leader-switch conclusions are omitted.');
+  }
+
+  output.limitations = (Array.isArray(output.limitations) ? output.limitations : [])
+    .filter(row => typeof row === 'string' && row.trim())
+    .filter(row => {
+      const text = String(row);
+      if (/(观察天数|observation days?)/i.test(text)) {
+        if (observedDays >= requiredObservationDays) return false;
+        return text.includes(String(observedDays));
+      }
+      return true;
+    });
+  if (!availability.hasAddToCartEvidence) {
+    output.limitations = output.limitations.filter(row => !/Add[- ]?to[- ]?Cart|加购/i.test(String(row)));
+    addLimitation(output, zh ? '缺少 Add-to-Cart 数据，暂不能判断加购环节的流失情况。' : 'Add-to-Cart data is unavailable, so mid-funnel add-to-cart loss cannot be assessed.');
+  }
+  if (!availability.hasComparablePreviousWindow) {
+    output.limitations = output.limitations.filter(row => !/comparison|previous window|环比|同比|对比窗口/i.test(String(row)));
+    addLimitation(output, zh ? '缺少可比上一周期数据，暂不能判断环比变化趋势。' : 'No comparable previous-period data is available, so period-over-period trend cannot be assessed.');
+  }
+  if (!availability.hasTargetRoasEvidence && !availability.hasBreakEvenEvidence) {
+    output.limitations = output.limitations.filter(row => !/Target ROAS|Break[- ]?even|保本|盈亏平衡/i.test(String(row)));
+    addLimitation(output, zh ? '缺少 Target ROAS 和 Break-even ROAS，暂不能做目标 ROAS / 保本 ROAS 对比；仍可使用广告花费占比约束评估基础效率。' : 'Target ROAS and Break-even ROAS are unavailable, so those comparisons cannot be made; the ad-spend-ratio constraint can still be used for baseline efficiency.');
   }
 
   const actionGates = (Array.isArray(output.actionGates) ? output.actionGates : [])
     .filter(gate => gate && typeof gate === 'object')
-    .filter(gate => !CAMPAIGN_STAGE_CODES.has(String(gate.code || '').toUpperCase()));
-  output.actionGates = actionGates.length ? actionGates : [fallbackActionGate(output.stage)];
+    .filter(gate => !CAMPAIGN_STAGE_CODES.has(String(gate.code || '').toUpperCase()))
+    .filter(gate => typeof gate.allowed === 'boolean' && typeof gate.reason === 'string' && gate.reason.trim())
+    .map(gate => ({ ...gate, reason: sanitizeAdGroupActionText(gate.reason, compactPackage) }));
+  output.actionGates = actionGates.length ? actionGates : [fallbackActionGate(output.stage, compactPackage.presentation?.language)];
 
   return output;
 }

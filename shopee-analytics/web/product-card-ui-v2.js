@@ -451,12 +451,14 @@
   function skillCopy(language) {
     const zh = language === 'zh-CN';
     return zh ? {
-      facts:'事实', inferences:'推断', hypotheses:'假设与验证', nextValidation:'下一步验证', limitations:'数据限制',
+      facts:'关键证据', inferences:'核心结论', hypotheses:'风险与待验证项', nextValidation:'下一步动作', limitations:'数据限制',
+      skuStructure:'SKU 结构', actionGate:'动作判断', evidence:'关键证据', conclusion:'核心结论', risk:'风险与待验证项', noConclusion:'当前证据不足以形成进一步结论。', noSku:'当前没有可用的 SKU 层诊断。',
       generating:'正在生成分析报告', chooseTitle:'选择报告语言', chooseHint:'本次报告将按你选择的语言生成。',
       cancel:'取消', chinese:'中文', english:'English', failed:'生成分析失败', complete:'报告生成完成',
       stages:{ QUEUED:'排队中', PREPARING:'准备分析', LOADING_DATA:'读取数据', PACKAGE_READY:'整理分析数据', MODEL_REQUEST:'提交 Skill', MODEL_GENERATING:'千问正在生成报告', MODEL_RESPONSE:'已收到模型结果', MODEL_VALIDATED:'结构化结果已解析', VALIDATING_REPORT:'校验报告', SAVING_REPORT:'保存报告', COMPLETED:'完成' },
     } : {
-      facts:'Facts', inferences:'Inferences', hypotheses:'Hypotheses & validation', nextValidation:'Next validation', limitations:'Limitations',
+      facts:'Key evidence', inferences:'Core conclusion', hypotheses:'Risks & validation', nextValidation:'Next actions', limitations:'Data limitations',
+      skuStructure:'SKU structure', actionGate:'Action gate', evidence:'Key evidence', conclusion:'Core conclusion', risk:'Risks & validation', noConclusion:'There is not enough evidence for a stronger conclusion yet.', noSku:'No SKU-level assessment is available.',
       generating:'Generating analysis report', chooseTitle:'Choose report language', chooseHint:'This report will be generated in the language you select.',
       cancel:'Cancel', chinese:'中文', english:'English', failed:'Analysis generation failed', complete:'Report completed',
       stages:{ QUEUED:'Queued', PREPARING:'Preparing analysis', LOADING_DATA:'Loading data', PACKAGE_READY:'Preparing analysis package', MODEL_REQUEST:'Submitting Skill', MODEL_GENERATING:'Qwen is generating the report', MODEL_RESPONSE:'Model response received', MODEL_VALIDATED:'Structured output parsed', VALIDATING_REPORT:'Validating report', SAVING_REPORT:'Saving report', COMPLETED:'Completed' },
@@ -506,21 +508,89 @@
     return message;
   }
 
-  function skillReportHtml(report, language = 'zh-CN') {
+  function skillRoleDisplay(role, language) {
+    const zh = language === 'zh-CN';
+    const labels = zh ? {
+      TRAFFIC_CANDIDATE:'流量候选', CONVERSION_ANCHOR:'转化锚点', HIGH_VALUE_CANDIDATE:'高价值候选',
+      STABLE_CORE:'稳定核心', WEAK_EXPLORER:'弱探索', REJECT_CANDIDATE:'淘汰候选',
+    } : {
+      TRAFFIC_CANDIDATE:'Traffic candidate', CONVERSION_ANCHOR:'Conversion anchor', HIGH_VALUE_CANDIDATE:'High-value candidate',
+      STABLE_CORE:'Stable core', WEAK_EXPLORER:'Weak explorer', REJECT_CANDIDATE:'Reject candidate',
+    };
+    return labels[role] || role || '—';
+  }
+
+  function skillItemName(host, itemId) {
+    const target = String(itemId ?? '').trim();
+    if (!target) return '';
+    const scopes = [host?.closest('.ad-group-modal-content'), $('#autoAdItems')].filter(Boolean);
+    for (const scope of scopes) {
+      for (const row of Array.from(scope.querySelectorAll('tbody tr'))) {
+        const cells = row.querySelectorAll('td');
+        if (cells.length < 3 || String(cells[2].textContent || '').trim() !== target) continue;
+        return String(cells[1].querySelector('strong')?.textContent || cells[1].textContent || '').trim();
+      }
+    }
+    return '';
+  }
+
+  function skillReportHtml(report, language = 'zh-CN', host = null) {
     const copy = skillCopy(language);
-    if (!report) return `<div class="empty-inline">${language === 'zh-CN' ? 'Skill 没有返回报告。' : 'Skill returned no report.'}</div>`;
-    const hypothesisText = item => item ? `${item.statement || ''}${item.validation ? (language === 'zh-CN' ? `；验证：${item.validation}` : `; Validation: ${item.validation}`) : ''}` : '';
-    const limitations = Array.isArray(report.limitations) && report.limitations.length
-      ? `<div class="skill-report-block"><strong>${esc(copy.limitations)}</strong>${reportList(report.limitations, item => item)}</div>` : '';
+    const zh = language === 'zh-CN';
+    if (!report) return `<div class="empty-inline">${zh ? 'Skill 没有返回报告。' : 'Skill returned no report.'}</div>`;
+
+    const facts = Array.isArray(report.facts) ? report.facts : [];
+    const inferences = Array.isArray(report.inferences) ? report.inferences : [];
+    const hypotheses = Array.isArray(report.hypotheses) ? report.hypotheses : [];
+    const skuAssessments = Array.isArray(report.skuAssessments) ? report.skuAssessments : [];
+    const actionGates = Array.isArray(report.actionGates) ? report.actionGates : [];
+    const nextValidation = Array.isArray(report.nextValidation) ? report.nextValidation : [];
+    const limitations = Array.isArray(report.limitations) ? report.limitations : [];
+
+    const primaryInference = inferences.find(item => !/maturity|成熟度|学习周期/i.test(String(item?.statement || ''))) || inferences[0];
+    const conclusion = primaryInference?.statement || actionGates[0]?.reason || facts[0]?.statement || copy.noConclusion;
+    const supportingInferences = inferences.filter(item => item !== primaryInference).slice(0, 3);
+    const evidenceHtml = facts.length
+      ? `<div class="skill-evidence-list">${facts.slice(0, 6).map((item, index) => `<div class="skill-evidence-item"><span>${index + 1}</span><p>${esc(item?.statement || '')}</p></div>`).join('')}</div>`
+      : `<div class="skill-empty-note">${esc(copy.noConclusion)}</div>`;
+
+    const skuHtml = skuAssessments.length
+      ? `<div class="skill-sku-grid">${skuAssessments.slice(0, 8).map(item => {
+          const itemId = String(item?.itemId ?? '');
+          const name = skillItemName(host, itemId);
+          const summary = item?.signal?.summary || item?.confidence?.summary || item?.scaleStability?.summary || '';
+          return `<div class="skill-sku-card">
+            <div class="skill-sku-card-head"><div><strong>${esc(name || ('#' + itemId))}</strong><small>${name ? esc(itemId) : ''}</small></div><span class="skill-traffic-stage stage-${esc(String(item?.trafficStage || '').toLowerCase())}">${esc(item?.trafficStage || '—')}</span></div>
+            <div class="skill-sku-role">${esc(skillRoleDisplay(item?.candidateRole, language))}</div>
+            ${summary ? `<p>${esc(summary)}</p>` : ''}
+          </div>`;
+        }).join('')}</div>`
+      : `<div class="skill-empty-note">${esc(copy.noSku)}</div>`;
+
+    const riskHtml = hypotheses.length
+      ? `<div class="skill-risk-list">${hypotheses.slice(0, 5).map(item => `<div class="skill-risk-item"><strong>${esc(item?.statement || '')}</strong><p><span>${zh ? '验证' : 'Validate'}</span>${esc(item?.validation || '')}</p></div>`).join('')}</div>`
+      : `<div class="skill-empty-note">${esc(zh ? '当前没有需要单独验证的高优先级假设。' : 'No high-priority hypothesis requires separate validation right now.')}</div>`;
+
+    const gateHtml = actionGates.length
+      ? `<div class="skill-action-gates">${actionGates.slice(0, 4).map(gate => `<div class="skill-action-gate ${gate?.allowed ? 'allowed' : 'blocked'}"><span>${gate?.allowed ? (zh ? '可执行' : 'Allowed') : (zh ? '暂缓' : 'Hold')}</span><p>${esc(gate?.reason || gate?.code || '')}</p></div>`).join('')}</div>`
+      : '';
+
+    const nextHtml = nextValidation.length
+      ? `<ol class="skill-next-list">${nextValidation.slice(0, 6).map(item => `<li>${esc(item)}</li>`).join('')}</ol>`
+      : `<div class="skill-empty-note">${esc(zh ? '当前没有额外验证动作。' : 'No additional validation action is required.')}</div>`;
+
+    const limitationHtml = limitations.length
+      ? `<details class="skill-limitations"><summary>${esc(copy.limitations)} · ${limitations.length}</summary><ul>${limitations.map(item => `<li>${esc(item)}</li>`).join('')}</ul></details>`
+      : '';
+
     return `<section class="skill-report-card">
-      <div class="skill-report-head"><strong>Shopee GMV Max Skill</strong><span class="skill-report-stage">${esc(stageDisplay(report.stage, language))}</span></div>
-      <div class="skill-report-grid">
-        <div class="skill-report-block"><strong>${esc(copy.facts)}</strong>${reportList(report.facts, item => item?.statement)}</div>
-        <div class="skill-report-block"><strong>${esc(copy.inferences)}</strong>${reportList(report.inferences, item => item?.statement)}</div>
-        <div class="skill-report-block"><strong>${esc(copy.hypotheses)}</strong>${reportList(report.hypotheses, hypothesisText)}</div>
-        <div class="skill-report-block"><strong>${esc(copy.nextValidation)}</strong>${reportList(report.nextValidation, item => item)}</div>
-        ${limitations}
-      </div>
+      <div class="skill-report-head"><div><span class="skill-report-kicker">${zh ? 'AI 运营诊断' : 'AI OPERATIONS DIAGNOSIS'}</span><strong>Shopee GMV Max Skill</strong></div><span class="skill-report-stage">${esc(stageDisplay(report.stage, language))}</span></div>
+      <div class="skill-report-hero"><span>${esc(copy.conclusion)}</span><p>${esc(conclusion)}</p>${supportingInferences.length ? `<ul class="skill-conclusion-support">${supportingInferences.map(item => `<li>${esc(item?.statement || '')}</li>`).join('')}</ul>` : ''}</div>
+      <div class="skill-report-section"><div class="skill-report-section-head"><strong>${esc(copy.evidence)}</strong><span>${facts.length}</span></div>${evidenceHtml}</div>
+      <div class="skill-report-section"><div class="skill-report-section-head"><strong>${esc(copy.skuStructure)}</strong><span>${skuAssessments.length}</span></div>${skuHtml}</div>
+      <div class="skill-report-section"><div class="skill-report-section-head"><strong>${esc(copy.risk)}</strong><span>${hypotheses.length}</span></div>${riskHtml}</div>
+      <div class="skill-report-section skill-report-actions"><div class="skill-report-section-head"><strong>${esc(copy.nextValidation)}</strong><span>${actionGates.length + nextValidation.length}</span></div>${gateHtml}${nextHtml}</div>
+      ${limitationHtml}
     </section>`;
   }
 
@@ -559,7 +629,7 @@
       const jobId = created.job?.id;
       if (!jobId) throw new Error('Skill job id is missing');
       const result = await pollSkillJob({ jobId, shopId, host, language });
-      host.innerHTML = skillReportHtml(result?.report, language);
+      host.innerHTML = skillReportHtml(result?.report, language, host);
     } catch (error) {
       const copy = skillCopy(language);
       host.innerHTML = `<div class="empty-inline">${esc(copy.failed)}：${esc(humanizeSkillError(error))}</div>`;

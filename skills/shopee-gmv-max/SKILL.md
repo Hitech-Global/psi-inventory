@@ -280,4 +280,12 @@ Return the structure defined by `schemas/analysis-output.schema.json`.
 
 Reports must include skill identity/version, data cutoff, trigger, stage, FACTs, evidence-linked INFERENCEs, testable HYPOTHESIS items, SKU assessments, action gates, next validation and data-quality limitations.
 
+Minimum useful-report quality:
+- When campaign evidence exists, produce at least one campaign-level INFERENCE tied to FACT evidence instead of returning only raw FACTs.
+- When item-level evidence exists, populate `skuAssessments` for every materially observed SKU (at minimum SKUs with clicks, spend, Direct Orders, or material allocation evidence); do not omit SKU structure merely to keep the report short.
+- `actionGates` must contain at least one campaign-level decision gate.
+- `nextValidation` must contain at least one concrete next observation/test whenever the report contains uncertainty, a blocked action, an unresolved root cause, or a non-STABLE stage.
+- `hypotheses` may be empty when there is no defensible hypothesis; never invent one just to fill the array.
+- Keep data-quality limitations subordinate to the business diagnosis; limitations should explain what cannot be concluded, not replace the diagnosis itself.
+
 Do not add narrative outside the JSON structure. Do not expose chain-of-thought. Output only concise conclusions and evidence links required by the schema.

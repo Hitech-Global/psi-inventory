@@ -36,6 +36,8 @@ assert(ui.includes("const toolbar = tabs.closest('.ads-filter-toolbar')"), 'Prod
 assert(channels.includes('adsView.insertBefore(overviewPanel, channelTabs.nextSibling)'), 'overview must remain a top-level block below the ad-channel row');
 assert(!ui.includes('data-ad-group-detail-index'), 'Ad Group items must no longer expand inline');
 assert(ui.includes('product-card-detail-modal-backdrop'), 'shared detail modal shell must exist');
+for (const token of ['skill-report-hero','skill-sku-grid','skill-action-gates','skill-limitations','skuStructure']) assert(ui.includes(token), `decision-oriented Skill report UI missing ${token}`);
+for (const token of ['Segoe UI Variable','Microsoft YaHei UI','table{font-size:13px','skill-report-card{overflow:hidden']) assert(styles.includes(token), `Apple-like typography/report styling missing ${token}`);
 const skillLanguageLayer = styles.match(/\.admin-modal-backdrop\.skill-language-backdrop\{z-index:(\d+)\}/);
 assert(skillLanguageLayer && Number(skillLanguageLayer[1]) > 1500, 'language chooser must stack above the product detail modal');
 assert(ui.includes("variant: 'group'"), 'Ad Group detail must use the shared modal');

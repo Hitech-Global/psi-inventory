@@ -215,6 +215,19 @@ function readFileSync(file) {
   assert(chineseSignalGuarded.skuAssessments[0].signal.summary.startsWith('已验证转化信号'));
   assert(!chineseSignalGuarded.skuAssessments[0].signal.summary.includes('强转化信号'));
 
+  const zhEconomicsGuarded = sanitizeOllamaReport({
+    skill:{ name:'shopee-gmv-max-analysis', version:'0.2.0' }, stage:'CONVERGING',
+    facts:[], inferences:[], hypotheses:[], actionGates:[], nextValidation:[], limitations:[], skuAssessments:[],
+  }, {
+    presentation:{ language:'zh-CN' },
+    deterministicMetrics:{ campaign:{ current7d:{ broadRoas:8.27 }, economics:{ requiredBroadRoasForSpendLimit:6.67, adSpendRatioLimit:0.15, broadRoasVsSpendLimit:'ABOVE' } } },
+    evidenceAvailability:{ hasItemLevelEvidence:false, hasAllocationEvidence:false },
+  });
+  assert(zhEconomicsGuarded.facts.some(row => /广告花费占比上限 15%/.test(row.statement)));
+  assert(zhEconomicsGuarded.inferences.some(row => /满足广告花费占比上限 15%/.test(row.statement)));
+  assert(zhEconomicsGuarded.actionGates.some(row => /证据仍在收敛/.test(row.reason)));
+  assert(zhEconomicsGuarded.nextValidation.some(row => /下一等长可比窗口/.test(row)));
+
   assert.strictEqual(createConfiguredSkillProvider({ env: {} }), null);
   assert.throws(
     () => createConfiguredSkillProvider({ env: { SHOPEE_SKILL_RUNTIME_PROVIDER: 'OTHER' } }),
