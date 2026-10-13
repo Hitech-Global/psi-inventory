@@ -346,7 +346,7 @@ function computeWacCostFacts(logisticsBatchId) {
 
   // ── 9. Freight allocation by transport_basis ──
   let freightAllocations = null;
-  const transportBasis = ci.transport_basis ? String(ci.transport_basis).trim() : '';
+  const transportBasis = batch.transport_mode === 'sea' ? 'cbm' : batch.transport_mode === 'air' ? 'kg' : (ci.transport_basis ? String(ci.transport_basis).trim() : '');
   if (freightLocalAmount > 0) {
     if (!['cbm', 'kg'].includes(transportBasis)) {
       blockers.push({ code: 'TRANSPORT_BASIS_MISSING', message: 'CI未设置运输计费基础(CBM或KG)' });
@@ -372,6 +372,32 @@ function computeWacCostFacts(logisticsBatchId) {
         }
       }
     }
+  }
+
+  // Shared combined-batch delivery charge. One actual payment is apportioned to
+  // batches BEFORE SKU WAC. Never treat the full common bill as each batch's freight.
+  const sharedFreight = require('./shared-logistics-fee-server').sharedWacParts(batch.id, localCurrency);
+  sharedFreight.errors.forEach(e => blockers.push(e));
+  const sharedFreightBreakdown=[];
+  for(const part of sharedFreight.parts){
+    const basisField=part.basis==='cbm'?'cbm':part.basis==='kg'?'gross_weight':null;
+    if(!basisField){blockers.push({code:'SHARED_FREIGHT_BASIS_INVALID',message:part.bill_no+' 运输依据无效'});continue;}
+    if(part.basis!==transportBasis){blockers.push({code:'SHARED_FREIGHT_MODE_CHANGED',message:part.bill_no+' 物流批次运输方式已变化'});continue;}
+    const w=new Map();
+    for(const [sku,row] of batchSkuMap)w.set(sku,Number(row[basisField])||0);
+    const currentBasis=[...w.values()].reduce((s,n)=>s+n,0);
+    if(Math.abs(currentBasis-Number(part.basis_value))>Math.max(0.000001,Math.abs(Number(part.basis_value))*0.0000001)){
+      blockers.push({code:'SHARED_FREIGHT_PL_BASIS_CHANGED',message:part.bill_no+' PL运费分摊依据已变化，禁止按旧账单确认WAC'});
+      continue;
+    }
+    const distributed=allocateByWeight([...batchSkuMap.keys()],w,part.amount_minor/100);
+    if(!distributed){blockers.push({code:'SHARED_FREIGHT_BASIS_ZERO',message:part.bill_no+' 缺少对应PL计费数据'});continue;}
+    if(!freightAllocations)freightAllocations=new Map();
+    for(const [sku,amt] of distributed)freightAllocations.set(sku,(freightAllocations.get(sku)||0)+amt);
+    freightLocalAmount+=part.amount_minor/100;
+    if(part.last_paid_date>freightLastPaidDate)freightLastPaidDate=part.last_paid_date;
+    sharedFreightBreakdown.push({fee_id:part.fee_id,bill_no:part.bill_no,
+      freight_cost_local:part.amount_minor/100,basis:part.basis});
   }
 
   // ── 10. Duty ──
@@ -743,6 +769,7 @@ function computeWacCostFacts(logisticsBatchId) {
     freight_effective_rate: freightEffectiveRate !== null ? Math.round(freightEffectiveRate * 10000) / 10000 : null,
     freight_last_paid_date: freightLastPaidDate,
     freight_payment_breakdown: freightPaymentBreakdown,
+    shared_freight_breakdown: sharedFreightBreakdown,
     duty_business_amount: dutyBusinessAmount,
     duty_local_amount: Math.round(dutyLocalAmount * 10000) / 10000,
     inspection_local_total: Math.round(inspectionLocalTotal * 10000) / 10000,

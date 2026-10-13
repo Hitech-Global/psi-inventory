@@ -220,9 +220,34 @@
     if (mode !== 'operational' && mode !== 'all') return;
     var targets = ensureColumnsAndCells();
     if (!targets.length) return;
-    fetchFreightRows().then(function (rows) {
+    // Server owns cross-currency FX & single-count shared bills; never sum raw IDR and RMB in JS.
+    var ids=targets.map(function(x){return x.id;}).filter(Boolean);
+    // Bound each request to backend's 200-ID limit; hydrate asynchronously without blocking CI table.
+    var chunks=[];
+    for(var ci=0;ci<ids.length;ci+=100)chunks.push(ids.slice(ci,ci+100));
+    Promise.all(chunks.map(function(chunk){
+      return global.api('/api/ci-freight-summaries?ids='+encodeURIComponent(chunk.join(',')));
+    })).then(function (parts) {
+      var summary={};
+      parts.forEach(function(p){Object.assign(summary,p||{});});
       if (!document.getElementById('ci-table')) return;
-      fillFreightCells(targets, rows);
+      targets.forEach(function(x){
+        var totalCell=x.row.querySelector('[data-ci-freight-cell="total"]');
+        var ratioCell=x.row.querySelector('[data-ci-freight-cell="ratio"]');
+        if(!totalCell||!ratioCell)return;
+        var row=summary[x.id];
+        if(!row||!row.has_batch){totalCell.textContent='—';ratioCell.textContent='—';return;}
+        if(row.total_rmb==null){
+          totalCell.textContent='待折算';ratioCell.textContent='—';
+          totalCell.title=(row.errors||[]).join('\n');
+          ratioCell.title=totalCell.title;
+          return;
+        }
+        totalCell.textContent=global.fmtMoney(row.total_rmb,'RMB');
+        totalCell.title='综合运费（含合并费用，已换算RMB）';
+        ratioCell.textContent=row.freight_ratio==null?'—':Number(row.freight_ratio).toFixed(2)+'%';
+        if(row.freight_ratio==null)ratioCell.title='CI货值币种或汇率不支持与RMB直接比较';
+      });
     }).catch(function () {
       targets.forEach(function (x) {
         var a = x.row.querySelector('[data-ci-freight-cell="total"]');

@@ -10519,6 +10519,66 @@ app.post('/api/commercial-invoices/:id/reverse', requireApiPermission('ci_edit')
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
+
+// CI-EDIT-BEFORE-PL-V1
+// 基础信息编辑：仅在从未生成 PL 时允许；关联 PI / 金额明细不在此接口修改。
+app.put('/api/commercial-invoices/:id', requireApiPermission('ci_edit'), asyncHandler(async (req, res) => {
+  try {
+    const d = req.body || {};
+    const id = req.params.id;
+    const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [id]);
+    if (!ci) return res.status(404).json({ error: 'CI不存在' });
+    const generatedPl = queryOne('SELECT id, pl_no FROM packing_lists WHERE related_ci_id = ? LIMIT 1', [id]);
+    if (generatedPl) return res.status(409).json({ error: '该CI已生成PL，不能编辑', locked: true, lock_reason: 'pl_generated', pl_no: generatedPl.pl_no || '' });
+
+    const fields = [], values = [];
+    let newCiNo = ci.ci_no;
+    if (d.ci_no !== undefined) {
+      const v = String(d.ci_no || '').trim();
+      if (!v) return res.status(400).json({ error: 'CI号不能为空' });
+      if (v !== ci.ci_no) {
+        const dup = queryOne('SELECT id FROM commercial_invoices WHERE ci_no = ? AND id != ?', [v, id]);
+        if (dup) return res.status(409).json({ error: '该 CI 编号已存在，请检查后重试', dup: true, field: 'ci_no' });
+      }
+      newCiNo = v; fields.push('ci_no = ?'); values.push(v);
+    }
+    if (d.ci_date !== undefined) {
+      let v; try { v = historicalCIDate(d.ci_date, 'CI日期', true); } catch (e) { return res.status(e.status || 400).json({ error: e.message }); }
+      fields.push('ci_date = ?'); values.push(v);
+    }
+    if (d.actual_ship_date !== undefined) {
+      let v; try { v = historicalCIDate(d.actual_ship_date, '实际出货日期', true); } catch (e) { return res.status(e.status || 400).json({ error: e.message }); }
+      fields.push('actual_ship_date = ?'); values.push(v);
+    }
+    if (d.target_warehouse !== undefined) {
+      const v = String(d.target_warehouse || '').trim(); if (!v) return res.status(400).json({ error: '目标仓库不能为空' });
+      fields.push('target_warehouse = ?'); values.push(v);
+    }
+    if (d.shipment_batch !== undefined) {
+      const v = parseInt(d.shipment_batch, 10); if (!Number.isFinite(v) || v < 1) return res.status(400).json({ error: '发货批次必须大于等于1' });
+      fields.push('shipment_batch = ?'); values.push(v);
+    }
+    if (d.difference_reason !== undefined) { fields.push('difference_reason = ?'); values.push(String(d.difference_reason || '').trim()); }
+    if (d.remark !== undefined) { fields.push('remark = ?'); values.push(String(d.remark || '').trim()); }
+    if (!fields.length) return res.json({ success: true, id: ci.id, ci_no: ci.ci_no });
+
+    transaction(() => {
+      fields.push("updated_at = datetime('now')");
+      run('UPDATE commercial_invoices SET ' + fields.join(', ') + ' WHERE id = ?', values.concat(id));
+      if (newCiNo !== ci.ci_no) {
+        run('UPDATE commercial_invoice_items SET ci_no = ? WHERE ci_id = ?', [newCiNo, id]);
+        run('UPDATE logistics_batches SET related_ci_no = ? WHERE related_ci_id = ?', [newCiNo, id]);
+        run("UPDATE payable_items SET source_no = ? WHERE source_type = 'ci' AND source_id = ? AND lifecycle_status = 'active'", [newCiNo, id]);
+      }
+    });
+    const updated = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [id]);
+    res.json({ success: true, id: updated.id, ci_no: updated.ci_no });
+  } catch (e) {
+    console.error('CI edit failed:', e);
+    res.status(500).json({ error: e.message });
+  }
+}));
+
 // CI-SHIP-DATE-01：仅补充/更正运营 CI 的实际出货日期（不触发 payable_date、不动 due_date、不创建/修改 payment_request）
 app.put('/api/commercial-invoices/:id/actual-ship-date', requireApiPermission('ci_edit'), asyncHandler((req, res) => {
   try {
@@ -16955,6 +17015,10 @@ app.post('/api/logistics-batches/:id/generate-cost-items', requireApiPermission(
 }));
 
 // 生成付款申请（到仓费用）— 可关联CI
+// 合并物流费用：费用原币保留、跨批次分摊事实与单次真实付款。
+require('./shared-logistics-fee-server').installSharedLogisticsFeeRoutes(app, {
+  requireApiPermission,requireCIAmountView,asyncHandler,genId,createApprovalInstance,sourceExpenseCountry
+});
 app.post('/api/payment-requests/warehouse-arrival', requireApiPermission('payment_create'), asyncHandler(async (req, res) => {
   try {
     const { ci_id, subcategory, payee_name, payable_amount, currency, remark, has_deduction, deduction_amount, deduction_source_type, deduction_source_desc, deduction_ref_no, include_in_landing_cost, expense_country } = req.body;
@@ -17653,22 +17717,64 @@ function getCiPlBasisFacts(ciId, basis, skuFacts) {
   return { values, basisTotal };
 }
 
+// Per-batch actual PL transport weights: sea=CBM, air=gross KG, no global CI basis mixing.
+function batchSkuTransportBasis(ciId,batchId,skuFacts,expectedBasisValue){
+  const lb=queryOne('SELECT id,transport_mode,related_ci_id FROM logistics_batches WHERE id=?',[batchId]);
+  if(!lb||String(lb.related_ci_id)!==String(ciId))throw new CostAllocationError(400,'费用关联物流批次与CI不一致');
+  const basis=lb.transport_mode==='sea'?'cbm':lb.transport_mode==='air'?'kg':null;
+  if(!basis)throw new CostAllocationError(400,'物流批次运输方式不支持自动分摊');
+  const field=basis==='cbm'?'cbm':'gross_weight';
+  const rows=query('SELECT pli.sku_code,SUM(pli.'+field+') AS basis_value FROM packing_list_items pli JOIN packing_lists pl ON pl.id=pli.pl_id WHERE pl.logistics_batch_id=? AND pl.related_ci_id=? GROUP BY pli.sku_code',[batchId,ciId]).rows;
+  const known=new Set(skuFacts.map(x=>x.sku_code));
+  const values=new Map(skuFacts.map(x=>[x.sku_code,0]));
+  rows.forEach(r=>{
+    const n=Number(r.basis_value);
+    if(!known.has(r.sku_code)||!Number.isFinite(n)||n<0)throw new CostAllocationError(400,'PL运输计费数据异常: '+r.sku_code);
+    values.set(r.sku_code,n);
+  });
+  const total=[...values.values()].reduce((s,n)=>s+n,0);
+  if(total<=0)throw new CostAllocationError(400,'该批次PL缺少有效'+basis+'数据');
+  if(expectedBasisValue!=null&&Math.abs(total-Number(expectedBasisValue))>Math.max(0.000001,Math.abs(Number(expectedBasisValue))*0.0000001))
+    throw new CostAllocationError(409,'物流批次PL '+basis+' 已变化，合并费用原分摊快照不再有效，请先审核');
+  return {basis,values};
+}
+
 async function validateCiCostInputs(ci) {
   const facts = getCiSkuCostFacts(ci.id);
-  const costItems = (await query('SELECT * FROM ci_cost_items WHERE ci_id = ? AND include_in_landing_cost = 1 ORDER BY created_at, id', [ci.id])).rows;
+  // Existing cross-currency cost items must be converted from payment facts, never treated as CI currency 1:1.
+  const feeModule = require('./shared-logistics-fee-server');
+  const rawCostItems = (await query('SELECT * FROM ci_cost_items WHERE ci_id = ? AND include_in_landing_cost = 1 ORDER BY created_at, id', [ci.id])).rows;
+  const costItems = rawCostItems.map(item => {
+    const cur = String(item.currency||ci.currency||'').toUpperCase();
+    const target = String(ci.currency||'').toUpperCase();
+    if(cur===target || (cur==='CNY'&&target==='RMB')) return item;
+    const converted=feeModule.settledConversion(item.payment_request_id, Math.round(Number(item.payable_amount||0)*100),cur,target);
+    if(converted.error)throw new CostAllocationError(409,'成本费用 '+item.id+': '+converted.error);
+    return {...item, original_payable_amount:item.payable_amount,
+      payable_amount:converted.amount_minor/100, original_currency:cur, currency:target};
+  });
+  const sharedFees=feeModule.sharedFeesForCost(ci,ci.currency||'RMB',true);
+  sharedFees.forEach(f=>{
+    if(f.conversion.error)throw new CostAllocationError(409,'合并派送账单 '+f.bill_no+': '+f.conversion.error);
+  });
   const transportItems = costItems.filter(item => item.cost_category === 'warehouse_arrival' && TRANSPORT_COST_SUBCATEGORIES.has(item.cost_subcategory) && Number(item.payable_amount) > 0);
   const unsupportedTransport = costItems.filter(item => item.cost_category === 'warehouse_arrival' && !TRANSPORT_COST_SUBCATEGORIES.has(item.cost_subcategory) && Number(item.payable_amount) > 0);
   if (unsupportedTransport.length) {
     throw new CostAllocationError(400, `不支持的运输费用小类：${unsupportedTransport.map(item => item.cost_subcategory || '(空)').join('、')}`);
   }
 
+  // Only unscoped legacy CI transport fees retain an explicit CI basis. Batch-scoped
+  // costs and shared fees always derive sea/air basis from the batch's transport_mode.
   let plBasis = null;
-  if (transportItems.length) {
-    if (!['cbm', 'kg'].includes(ci.transport_basis)) {
-      throw new CostAllocationError(400, '该CI存在运输类费用，请先明确选择本票实际运输计费基础（CBM或KG）');
-    }
-    plBasis = getCiPlBasisFacts(ci.id, ci.transport_basis, facts.skuFacts);
+  if (transportItems.some(item=>!item.logistics_batch_id)) {
+    if (!['cbm', 'kg'].includes(ci.transport_basis))
+      throw new CostAllocationError(400,'未关联批次的到仓费用需选择CI运输计费基础');
+    plBasis=getCiPlBasisFacts(ci.id,ci.transport_basis,facts.skuFacts);
   }
+  transportItems.filter(item=>item.logistics_batch_id).forEach(item=>{
+    batchSkuTransportBasis(ci.id,item.logistics_batch_id,facts.skuFacts);
+  });
+  sharedFees.forEach(f=>f.allocations.forEach(a=>batchSkuTransportBasis(ci.id,a.batch_id,facts.skuFacts,a.basis_value)));
 
   const dutyTotal = costMoney(ci.import_duty_total || 0);
   if (!Number.isFinite(dutyTotal) || dutyTotal < 0) throw new CostAllocationError(400, 'CI Import Duty总金额必须为不小于0的数字');
@@ -17681,7 +17787,7 @@ async function validateCiCostInputs(ci) {
 
   const goodsTotal = facts.skuFacts.reduce((sum, fact) => sum + fact.product_cost, 0);
   if (!(goodsTotal > 0)) throw new CostAllocationError(400, 'CI实际商品金额合计为0，无法分摊成本');
-  return { ...facts, costItems, transportItems, plBasis, dutyTotal, goodsTotal };
+  return { ...facts, costItems, transportItems, sharedFees, plBasis, dutyTotal, goodsTotal };
 }
 
 function allocateFeeWithRemainder(fee, skuFacts, basisValues) {
@@ -17747,15 +17853,29 @@ app.get('/api/commercial-invoices/:id/cost-summary', requireApiPermission('ci_vi
       wac_confirmed_by: ci.wac_confirmed_by || ''
     };
 
+    const feeModule=require('./shared-logistics-fee-server');
+    const fxBlockers=[];
     costItems.forEach(item => {
       if (!item.include_in_landing_cost) return;
-      const amt = item.payable_amount || 0;
+      let amt=Number(item.payable_amount)||0;
+      if(String(item.currency||ci.currency||'').toUpperCase()!==String(ci.currency||'').toUpperCase()){
+        const converted=feeModule.settledConversion(item.payment_request_id,Math.round(amt*100),item.currency,ci.currency);
+        if(converted.error){fxBlockers.push('费用 '+item.id+': '+converted.error);return;}
+        amt=converted.amount_minor/100;
+      }
       if (item.cost_category === 'warehouse_arrival') summary.warehouse_arrival_total += amt;
       else if (item.cost_category === 'customs_duty') { /* Import Duty使用CI快照，避免与付款费用项双算 */ }
       else if (item.cost_category === 'inspection_fee') summary.inspection_fee_total += amt;
     });
-
-    summary.landing_cost_total = summary.goods_amount + summary.warehouse_arrival_total + summary.customs_duty_total + summary.inspection_fee_total;
+    const shared=feeModule.sharedFeesForCost(ci,ci.currency||'RMB');
+    shared.forEach(f=>{
+      if(f.conversion.error)fxBlockers.push('合并账单 '+f.bill_no+': '+f.conversion.error);
+      else summary.warehouse_arrival_total+=Number(f.conversion.amount_minor)/100;
+    });
+    summary.shared_fees=shared;
+    summary.fx_blockers=fxBlockers;
+    summary.landing_cost_total=fxBlockers.length?null:
+      summary.goods_amount + summary.warehouse_arrival_total + summary.customs_duty_total + summary.inspection_fee_total;
     summary.cost_items = costItems;
     summary.ci_items = query('SELECT id, sku_code, shipped_qty, unit_price, discount, net_unit_price, ci_amount, actual_customs_rate FROM commercial_invoice_items WHERE ci_id = ? ORDER BY created_at, id', [req.params.id]).rows;
 
@@ -17968,6 +18088,7 @@ app.post('/api/cost-allocation/allocate/:ci_id', requireApiPermission('ci_edit')
       const total = costMoney(item.payable_amount || 0);
       if (!(total > 0)) return;
       if (item.cost_category === 'warehouse_arrival') {
+        const scoped=item.logistics_batch_id?batchSkuTransportBasis(ci.id,item.logistics_batch_id,inputs.skuFacts):{basis:ci.transport_basis,values:inputs.plBasis.values};
         feeEvents.push({
           key: `cost:${item.id}`,
           source_cost_item_id: item.id,
@@ -17975,9 +18096,9 @@ app.post('/api/cost-allocation/allocate/:ci_id', requireApiPermission('ci_edit')
           subcategory: item.cost_subcategory,
           label: `运输费用 ${item.cost_subcategory}`,
           total,
-          currency: item.currency || ci.currency || 'USD',
-          basis: ci.transport_basis,
-          basisValues: inputs.plBasis.values
+          currency: ci.currency || 'RMB',
+          basis: scoped.basis,
+          basisValues: scoped.values
         });
       } else if (item.cost_category === 'inspection_fee') {
         feeEvents.push({
@@ -17994,6 +18115,28 @@ app.post('/api/cost-allocation/allocate/:ci_id', requireApiPermission('ci_edit')
       } else if (item.cost_category !== 'customs_duty') {
         throw new CostAllocationError(400, `费用 ${item.cost_category}/${item.cost_subcategory} 尚未配置分摊规则`);
       }
+    });
+    // One shared payable → per-batch fees in CI currency → per-SKU sea-CBM/air-KG.
+    // Allocate converted cents to batches first; this preserves both invoice and cost totals.
+    const {splitConvertedMinor}=require('./shared-logistics-fee-core');
+    inputs.sharedFees.forEach(fee=>{
+      const parts=splitConvertedMinor(Number(fee.conversion.amount_minor),fee.allocations);
+      parts.forEach(part=>{
+        if(!(part.amount_minor>0))return;
+        const scoped=batchSkuTransportBasis(ci.id,part.batch_id,inputs.skuFacts,part.basis_value);
+        if(scoped.basis!==part.basis)throw new CostAllocationError(409,'合并费用运输方式已变化，请先核对原批次分摊快照');
+        feeEvents.push({
+          key:'shared:'+fee.id+':'+part.batch_id,
+          source_cost_item_id:'',
+          category:'warehouse_arrival',
+          subcategory:'delivery',
+          label:'合并派送 '+fee.bill_no,
+          total:part.amount_minor/100,
+          currency:ci.currency||'RMB',
+          basis:scoped.basis,
+          basisValues:scoped.values
+        });
+      });
     });
     if (inputs.dutyTotal > 0) {
       feeEvents.push({

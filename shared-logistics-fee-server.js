@@ -1,0 +1,179 @@
+'use strict';
+// One combined logistics bill; one financial request; independently allocated batch shares.
+const {allocateSharedFee}=require('./shared-logistics-fee-core');
+const {query,queryOne,run,transaction}=require('./db');
+const minor=n=>Math.round(Number(n)*100);
+const normalize=c=>String(c||'').toUpperCase()==='CNY'?'RMB':String(c||'').toUpperCase();
+const validCurrency=c=>/^[A-Z]{3}$/.test(c);
+function exactRate(from,to,date) {
+  from=normalize(from);to=normalize(to);
+  if(from===to)return {rate:1,date,source:'identity'};
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(date||''))return null;
+  for(const args of [[from,to,false],[to,from,true]]) {
+    const r=queryOne("SELECT rate,rate_date,id FROM exchange_rates WHERE from_currency=? AND to_currency=? AND rate_date=? AND rate_type='realtime' AND id NOT LIKE 'fxauto_%' ORDER BY created_at DESC,id DESC LIMIT 1",[args[0],args[1],date]);
+    if(r&&Number(r.rate)>0) return {rate:args[2]?1/Number(r.rate):Number(r.rate),date,source:'realtime',rate_id:r.id};
+  }
+  return null;
+}
+function settledConversion(requestId,amountMinor,sourceCurrency,targetCurrency,requirePayment=false){
+  sourceCurrency=normalize(sourceCurrency);targetCurrency=normalize(targetCurrency);
+  if(!validCurrency(sourceCurrency)||!validCurrency(targetCurrency))return {error:'币种代码无效'};
+  if(sourceCurrency===targetCurrency&&!requirePayment)return {amount_minor:amountMinor,source:'face_currency'};
+  if(!requestId)return {error:'缺少付款关联'};
+  const rows=query("SELECT amount,local_amount,local_currency,local_rate,local_rate_date,paid_date FROM payment_settlement_logs WHERE payment_request_id=? AND event_type='payment' AND status='applied' ORDER BY paid_date",[requestId]).rows;
+  if(!rows.length)return {error:'跨币种费用尚未实际结算'};
+  if(Math.abs(rows.reduce((a,r)=>a+minor(r.amount||0),0)-amountMinor)>1)return {error:'实付金额尚未结清或存在超付'};
+  let total=0,fx=[];
+  for(const log of rows) {
+    const cur=normalize(log.local_currency),amt=Number(log.local_amount);
+    const date=String(log.local_rate_date||'').slice(0,10);
+    if(!validCurrency(cur)||!Number.isFinite(amt)||amt<=0||!(Number(log.local_rate)>0)||!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(date))return {error:'付款本币金额/汇率/汇率日期快照缺失'};
+    const snap=exactRate(cur,targetCurrency,date);
+    if(!snap)return {error:date+' 缺少 '+cur+'→'+targetCurrency+' 同日汇率'};
+    total+=amt*snap.rate;
+    fx.push({from:cur,to:targetCurrency,rate:snap.rate,rate_date:date,rate_id:snap.rate_id,local_amount:amt});
+  }
+  return {amount_minor:Math.round(total*100),source:'applied_settlements',fx};
+}
+function loadForCI(ciId){
+  const fees=query('SELECT sf.*,pr.approval_status,pr.payment_status FROM shared_logistics_fees sf LEFT JOIN payment_requests pr ON pr.id=sf.payment_request_id WHERE sf.ci_id=? ORDER BY sf.created_at,sf.id',[ciId]).rows;
+  for(const fee of fees)fee.allocations=query('SELECT sfb.*,lb.batch_no FROM shared_logistics_fee_batches sfb JOIN logistics_batches lb ON lb.id=sfb.batch_id WHERE sfb.fee_id=? ORDER BY lb.batch_no',[fee.id]).rows;
+  return fees;
+}
+function sharedFeesForCost(ci,targetCurrency,requirePayment=false){
+  return loadForCI(ci.id).map(f=>({...f,conversion:settledConversion(f.payment_request_id,Number(f.amount_minor),f.currency,targetCurrency,requirePayment)}));
+}
+function batchesForCI(ciId,ids){
+  const p=ids.map(()=>'?').join(',');
+  return query('SELECT lb.id,lb.batch_no,lb.related_ci_id,lb.transport_mode,COALESCE(SUM(pli.cbm),0) AS cbm,COALESCE(SUM(pli.gross_weight),0) AS gross_weight FROM logistics_batches lb LEFT JOIN packing_lists pl ON pl.logistics_batch_id=lb.id LEFT JOIN packing_list_items pli ON pli.pl_id=pl.id WHERE lb.id IN ('+p+') GROUP BY lb.id,lb.batch_no,lb.related_ci_id,lb.transport_mode',ids).rows.filter(x=>String(x.related_ci_id)===String(ciId));
+}
+function ownFreightInRmb(batch){
+  const amt=Number(batch.total_freight)||0;
+  if(!(amt>0))return {amount_minor:0};
+  const cur=normalize(batch.freight_currency||'USD');
+  if(cur==='RMB')return {amount_minor:minor(amt)};
+  const item=queryOne("SELECT payment_request_id,payable_item_id FROM ci_cost_items WHERE logistics_batch_id=? AND cost_category='warehouse_arrival' AND cost_subcategory='freight' AND include_in_landing_cost=1 ORDER BY created_at DESC LIMIT 1",[batch.id]);
+  let requestId=item&&item.payment_request_id||'';
+  if(!requestId&&item&&item.payable_item_id){
+    const linked=queryOne("SELECT pri.payment_request_id AS id FROM payment_request_items pri JOIN payment_requests p ON p.id=pri.payment_request_id WHERE pri.payable_item_id=? AND p.payment_status NOT IN ('cancelled','rejected') ORDER BY p.created_at DESC LIMIT 1",[item.payable_item_id]);
+    requestId=linked&&linked.id||'';
+  }
+  return settledConversion(requestId,minor(amt),cur,'RMB');
+}
+function installSharedLogisticsFeeRoutes(app,ctx) {
+  const {requireApiPermission,requireCIAmountView,asyncHandler,genId,createApprovalInstance,sourceExpenseCountry}=ctx;
+  app.get('/api/commercial-invoices/:id/shared-logistics-fees',requireApiPermission('ci_view'),requireCIAmountView,asyncHandler((req,res)=>{
+    const ci=queryOne('SELECT * FROM commercial_invoices WHERE id=?',[req.params.id]);
+    if(!ci)return res.status(404).json({error:'CI不存在'});
+    const fees=sharedFeesForCost(ci,'RMB');
+    const batches=query('SELECT id,total_freight,freight_currency FROM logistics_batches WHERE related_ci_id=?',[ci.id]).rows;
+    const batch_totals_rmb={};
+    batches.forEach(b=>{
+      const own=ownFreightInRmb(b);
+      batch_totals_rmb[b.id]={total_minor:own.error?null:Number(own.amount_minor),errors:own.error?[own.error]:[]};
+    });
+    const {splitConvertedMinor}=require('./shared-logistics-fee-core');
+    fees.forEach(f=>{
+      const converted=f.conversion;
+      if(converted.error){
+        f.allocations.forEach(a=>{const b=batch_totals_rmb[a.batch_id];if(b){b.errors.push(f.bill_no+': '+converted.error);b.total_minor=null;}});
+        return;
+      }
+      for(const part of splitConvertedMinor(Number(converted.amount_minor),f.allocations)){
+        const b=batch_totals_rmb[part.batch_id];
+        if(!b)continue;
+        if(b.total_minor!==null)b.total_minor+=part.amount_minor;
+      }
+    });
+    const availableCurrencies=query("SELECT code FROM currencies WHERE status='active' ORDER BY sort_order,code").rows
+      .map(c=>normalize(c.code)).filter(validCurrency);
+    res.json({ci_currency:ci.currency,fees,batch_totals_rmb,currency_options:[...new Set(availableCurrencies)]});
+  }));
+  // CI list RMB freight = sum of distinct batch freight plus actual shared bill ONCE.
+  // Unknown FX is shown as pending, never added as if it were RMB.
+  app.get('/api/ci-freight-summaries',requireApiPermission('ci_view'),requireCIAmountView,asyncHandler((req,res)=>{
+    const ids=String(req.query.ids||'').split(',').filter(Boolean);
+    if(!ids.length||ids.length>200||ids.some(x=>!/^[a-zA-Z0-9_-]{1,100}$/.test(x)))
+      return res.status(400).json({error:'请提供1至200个CI ID'});
+    const ciRows=query('SELECT id,ci_no,currency,goods_amount FROM commercial_invoices WHERE id IN ('+ids.map(()=>'?').join(',')+')',ids).rows;
+    const batchRows=query('SELECT id,related_ci_id,total_freight,freight_currency FROM logistics_batches WHERE related_ci_id IN ('+ids.map(()=>'?').join(',')+')',ids).rows;
+    const result={};
+    for(const ci of ciRows) {
+      let totalMinor=0,errors=[],hasBatch=false;
+      const own=batchRows.filter(b=>String(b.related_ci_id)===String(ci.id));
+      for(const b of own) {
+        hasBatch=true;
+        const cv=ownFreightInRmb(b);
+        if(cv.error)errors.push(b.id+': '+cv.error);else totalMinor+=cv.amount_minor;
+      }
+      for(const fee of sharedFeesForCost(ci,'RMB')) {
+        hasBatch=true;
+        if(fee.conversion.error)errors.push(fee.bill_no+': '+fee.conversion.error);
+        else totalMinor+=Number(fee.conversion.amount_minor);
+      }
+      const goods=Number(ci.goods_amount)||0;
+      result[ci.id]={currency:'RMB',has_batch:hasBatch,
+        total_rmb:errors.length?null:totalMinor/100,
+        freight_ratio:errors.length||normalize(ci.currency)!=='RMB'||goods<=0?null:Number((totalMinor/100/goods*100).toFixed(2)),
+        errors:errors};
+    }
+    res.json(result);
+  }));
+
+  app.post('/api/commercial-invoices/:id/shared-logistics-fees',requireApiPermission('ci_edit'),requireApiPermission('payment_create'),asyncHandler(async(req,res)=>{
+    try{
+      const ci=queryOne('SELECT * FROM commercial_invoices WHERE id=?',[req.params.id]);
+      if(!ci)return res.status(404).json({error:'CI不存在'});
+      if(ci.cost_confirmed||ci.cost_allocated||ci.wac_confirmed)return res.status(409).json({error:'CI成本已确认/分摊或WAC已确认，禁止新增费用'});
+      const d=req.body||{},ids=Array.isArray(d.batch_ids)?d.batch_ids.map(String):[];
+      if(ids.length<2||ids.length>50||new Set(ids).size!==ids.length)return res.status(400).json({error:'请选择2到50个不同批次'});
+      const billNo=String(d.bill_no||'').trim(),payee=String(d.payee_name||'').trim();
+      if(!billNo||billNo.length>120||!payee||payee.length>200)return res.status(400).json({error:'请填写账单号及收款方'});
+      const batches=batchesForCI(ci.id,ids);
+      if(batches.length!==ids.length)return res.status(400).json({error:'存在不属于该CI的物流批次'});
+      const confirmed=queryOne('SELECT logistics_batch_id FROM wac_history WHERE logistics_batch_id IN ('+ids.map(()=>'?').join(',')+') LIMIT 1',ids);
+      if(confirmed)return res.status(409).json({error:'参与的批次已有WAC确认记录，禁止追加入库成本；请使用正式成本调整流程'});
+      const calc=allocateSharedFee(d,batches),cur=normalize(calc.currency);
+      const activeCurrency=queryOne("SELECT code FROM currencies WHERE code=? AND status='active' LIMIT 1",[cur]);
+      if(!activeCurrency)return res.status(400).json({error:'费用币种 '+cur+' 未在系统中启用，请先到币种设置启用'});
+      const prior=queryOne('SELECT id FROM shared_logistics_fees WHERE ci_id=? AND bill_no=?',[ci.id,billNo]);
+      if(prior)return res.status(409).json({error:'货代账单号重复',shared_fee_id:prior.id});
+      const id=genId('shfee'),payId=genId('pay'),payNo='PAY-SHF-'+Date.now().toString(36)+'-'+payId.slice(-8);
+      const value=calc.amount_minor/100,country=sourceExpenseCountry(ci.country,'CI '+ci.ci_no);
+      transaction(()=>{
+        run('INSERT INTO shared_logistics_fees (id,ci_id,ci_no,bill_no,fee_type,payee_name,currency,amount_minor,payment_request_id,remark) VALUES (?,?,?,?,?,?,?,?,?,?)',[id,ci.id,ci.ci_no,billNo,'delivery',payee,cur,calc.amount_minor,payId,String(d.remark||'')]);
+        calc.allocations.forEach(a=>run('INSERT INTO shared_logistics_fee_batches (fee_id,batch_id,mode,basis,basis_value,amount_minor) VALUES (?,?,?,?,?,?)',[id,a.batch_id,a.mode,a.basis,a.weight,a.amount_minor]));
+        run('INSERT INTO payment_requests (id,request_no,payment_category,payment_subcategory,source_type,source_id,source_no,payee_type,payee_key,payee_name_snapshot,supplier_name,payable_amount,paid_amount,unpaid_amount,currency,payment_status,approval_status,remark,has_deduction,deduction_amount,actual_pay_amount,related_ci_id,related_ci_no,related_po_no,include_in_landing_cost,expense_country) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+          [payId,payNo,'warehouse_arrival','delivery','shared_logistics',id,billNo,'service_provider','service_provider:'+payee,payee,payee,value,0,value,cur,'pending_approval','pending','合并派送 '+billNo+' '+String(d.remark||''),0,0,value,ci.id,ci.ci_no,ci.related_po_no||'',1,country]);
+      });
+      let approval={auto_submitted:true};
+      try{
+        const pr=queryOne('SELECT * FROM payment_requests WHERE id=?',[payId]);
+        const result=await createApprovalInstance(payId,pr,req);
+        approval.approval_id=result.approvalId;
+      }catch(e){approval={auto_submitted:false,approval_error:e.message};}
+      res.json({id,payment_request_id:payId,payment_request_no:payNo,currency:cur,amount:value,allocations:calc.allocations,...approval});
+    }catch(e){
+      if(/UNIQUE|unique constraint/i.test(String(e.message||'')))return res.status(409).json({error:'重复的货代账单号或付款关联'});
+      return res.status(e.status||400).json({error:e.message||'创建合并费用失败'});
+    }
+  }));
+}
+function sharedWacParts(batchId,targetCurrency){
+  const {splitConvertedMinor}=require('./shared-logistics-fee-core');
+  const rows=query('SELECT sf.* FROM shared_logistics_fees sf JOIN shared_logistics_fee_batches sb ON sb.fee_id=sf.id WHERE sb.batch_id=?',[batchId]).rows;
+  const out=[],errors=[];
+  rows.forEach(fee=>{
+    const conversion=settledConversion(fee.payment_request_id,Number(fee.amount_minor),fee.currency,targetCurrency,true);
+    if(conversion.error){errors.push({code:'SHARED_FREIGHT_FX_OR_PAYMENT_MISSING',message:'合并账单 '+fee.bill_no+': '+conversion.error});return;}
+    const allocations=query('SELECT * FROM shared_logistics_fee_batches WHERE fee_id=?',[fee.id]).rows;
+    const batches=splitConvertedMinor(Number(conversion.amount_minor),allocations);
+    const part=batches.find(p=>String(p.batch_id)===String(batchId));
+    if(!part){errors.push({code:'SHARED_FREIGHT_BATCH_LINK_MISSING',message:'合并账单 '+fee.bill_no+' 缺少关联批次'});return;}
+    const lastPaidDate=(conversion.fx||[]).reduce((m,r)=>r.rate_date>m?r.rate_date:m,'');
+    out.push({fee_id:fee.id,bill_no:fee.bill_no,amount_minor:part.amount_minor,basis:part.basis,basis_value:part.basis_value,last_paid_date:lastPaidDate});
+  });
+  return {parts:out,errors};
+}
+
+module.exports={installSharedLogisticsFeeRoutes,sharedFeesForCost,settledConversion,exactRate,loadForCI,batchesForCI,sharedWacParts};

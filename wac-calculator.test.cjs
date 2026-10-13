@@ -164,6 +164,17 @@ function createTestSchema() {
       updated_at TEXT DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS shared_logistics_fees (
+      id TEXT PRIMARY KEY, ci_id TEXT, ci_no TEXT, bill_no TEXT,
+      payee_name TEXT, currency TEXT, amount_minor INTEGER,
+      payment_request_id TEXT, created_at TEXT DEFAULT ''
+    );
+    CREATE TABLE IF NOT EXISTS shared_logistics_fee_batches (
+      fee_id TEXT, batch_id TEXT, mode TEXT, basis TEXT,
+      basis_value REAL, amount_minor INTEGER,
+      PRIMARY KEY(fee_id,batch_id)
+    );
+
     CREATE TABLE IF NOT EXISTS ci_cost_items (
       id TEXT PRIMARY KEY,
       ci_id TEXT NOT NULL,
@@ -986,6 +997,7 @@ describe('computeWacCostFacts - CBM / KG allocation', () => {
     seedBatch('lb_kg', 'BATCH-KG', 'ci_kg', {
       arrivalDate: '2026-03-01', totalFreight: 1000, customsDuty: 0, freightCurrency: 'USD'
     });
+    run("UPDATE logistics_batches SET transport_mode='air' WHERE id=?",['lb_kg']);
     seedPL('pl_kg', 'PL-KG', 'ci_kg', 'lb_kg', { status: 'confirmed' });
     seedPLItem('pli_kg1', 'pl_kg', 'SKU-CBM1', 100, 0, 400);
     seedPLItem('pli_kg2', 'pl_kg', 'SKU-CBM2', 100, 0, 600);
@@ -1692,4 +1704,49 @@ describe('Preview/Confirm parity', () => {
     assert.deepStrictEqual(previewCodes, confirmCodes,
       'Preview and Confirm should have identical blocker codes');
   });
+});
+
+
+test('shared IDR delivery is counted once across two WAC batches; changed PL weights are blocked', () => {
+  const db=require('./db').getDB();
+  [
+    'shared_logistics_fee_batches','shared_logistics_fees','ci_cost_items',
+    'payment_settlement_logs','payment_requests','packing_list_items',
+    'packing_lists','logistics_batches','commercial_invoice_items',
+    'commercial_invoices','inventory','exchange_rates'
+  ].forEach(t => db.exec('DELETE FROM '+t));
+  seedSku('SKU-SHARED-A','Shared A','','');
+  seedSku('SKU-SHARED-B','Shared B','','');
+  seedCI('ci_shared_wac','CI-SHARED-WAC','USD',10000,'cbm');
+  seedCIItem('ci_sh_a','ci_shared_wac','SKU-SHARED-A',100,50,0,0);
+  seedCIItem('ci_sh_b','ci_shared_wac','SKU-SHARED-B',100,50,0,0);
+  seedBatch('lb_sh_a','LB-SH-A','ci_shared_wac',{totalFreight:0,freightCurrency:'IDR'});
+  seedBatch('lb_sh_b','LB-SH-B','ci_shared_wac',{totalFreight:0,freightCurrency:'IDR'});
+  seedPL('pl_sh_a','PL-SH-A','ci_shared_wac','lb_sh_a');
+  seedPL('pl_sh_b','PL-SH-B','ci_shared_wac','lb_sh_b');
+  seedPLItem('pli_sh_a','pl_sh_a','SKU-SHARED-A',100,3,500);
+  seedPLItem('pli_sh_b','pl_sh_b','SKU-SHARED-B',100,1,200);
+  seedExchangeRate('USD','IDR','2026-03-01',15000);
+  seedInventory('SKU-SHARED-A','Indonesia','WH-JKT',0,0);
+  seedInventory('SKU-SHARED-B','Indonesia','WH-JKT',0,0);
+  seedPaymentRequest('pr_shared_wac','PR-SHARED-WAC','IDR',100000,'ci_shared_wac','warehouse_arrival','delivery');
+  seedPaymentLog('psl_shared_wac','pr_shared_wac',100000,100000,1,'2026-02-15','IDR');
+  run('INSERT INTO shared_logistics_fees(id,ci_id,ci_no,bill_no,currency,amount_minor,payment_request_id) VALUES (?,?,?,?,?,?,?)',
+      ['sh_wac','ci_shared_wac','CI-SHARED-WAC','BILL-WAC','IDR',10000000,'pr_shared_wac']);
+  run('INSERT INTO shared_logistics_fee_batches(fee_id,batch_id,mode,basis,basis_value,amount_minor) VALUES (?,?,?,?,?,?)',
+      ['sh_wac','lb_sh_a','sea','cbm',3,7500000]);
+  run('INSERT INTO shared_logistics_fee_batches(fee_id,batch_id,mode,basis,basis_value,amount_minor) VALUES (?,?,?,?,?,?)',
+      ['sh_wac','lb_sh_b','sea','cbm',1,2500000]);
+  const a=computeWacCostFacts('lb_sh_a');
+  const b=computeWacCostFacts('lb_sh_b');
+  assert.deepEqual(a.blockers,[],'batch A WAC should succeed');
+  assert.deepEqual(b.blockers,[],'batch B WAC should succeed');
+  const all=[...a.items,...b.items].reduce((sum,i)=>sum+i.freight_cost_local,0);
+  assert.equal(Math.round(all),100000,'one IDR 100,000 bill, not two full bills');
+  assert.equal(Math.round(a.meta.freight_local_amount),75000);
+  assert.equal(Math.round(b.meta.freight_local_amount),25000);
+  run('UPDATE packing_list_items SET cbm=? WHERE id=?',[4,'pli_sh_a']);
+  const changed=computeWacCostFacts('lb_sh_a');
+  assert.ok(changed.blockers.some(x=>x.code==='SHARED_FREIGHT_PL_BASIS_CHANGED'),
+    'PL change must prevent WAC confirmation with stale allocation snapshot');
 });
