@@ -23,6 +23,14 @@
     d.setUTCDate(d.getUTCDate() + days);
     return d.toISOString().slice(0, 10);
   };
+  const sourceDateToIso = value => {
+    const text = String(value || '').trim();
+    const iso = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+    const dmy = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    if (dmy) return `${dmy[3]}-${String(dmy[2]).padStart(2,'0')}-${String(dmy[1]).padStart(2,'0')}`;
+    return '';
+  };
   const rangeDays = (start, end) => Math.round((new Date(`${end}T00:00:00Z`) - new Date(`${start}T00:00:00Z`)) / 86400000) + 1;
   const comparisonRange = (start, end) => {
     const days = rangeDays(start, end);
@@ -534,10 +542,40 @@
     return '';
   }
 
-  function skillReportHtml(report, language = 'zh-CN', host = null) {
+  function skillReportContextHtml(report, meta, language) {
+    const zh = language === 'zh-CN';
+    const period = meta?.period || report?.period || {};
+    const context = meta?.context || {};
+    const maturity = context.maturity || {};
+    const timeContext = context.timeContext || {};
+    const quality = context.dataQuality || {};
+    const endDate = String(period.endDate || period.end_date || '').slice(0, 10);
+    const startDate = String(period.startDate || period.start_date || '').slice(0, 10);
+    const epoch = timeContext.learningEpoch || {};
+    const epochStart = epoch.available === true ? String(epoch.startDate || '').slice(0, 10) : '';
+    const latest7Start = endDate ? addIsoDays(endDate, -6) : '';
+    const judgmentStart = epochStart && latest7Start && epochStart > latest7Start ? epochStart : latest7Start;
+    const observed = Number(maturity.observedCalendarDays ?? maturity.observedDays7d);
+    const minDays = Number(maturity.minimumObservationDays || 7);
+    const orders = Number(maturity.directOrdersSinceEpoch ?? maturity.directOrders7d);
+    const orderRef = Number(maturity.weeklyOrderReference || 25);
+    const operationRows = Number(quality.operationHistoryRows || 0);
+    const operationLinked = quality.operationHistoryLink && !['NOT_FOUND','NO_START_DATE','UNAVAILABLE','AMBIGUOUS'].includes(String(quality.operationHistoryLink));
+    const chips = [];
+    if (startDate && endDate) chips.push(`${zh ? '报告周期' : 'Report period'} ${esc(startDate)}–${esc(endDate)}`);
+    if (judgmentStart && endDate) chips.push(`${zh ? '当前判断窗口' : 'Current decision window'} ${esc(judgmentStart)}–${esc(endDate)}`);
+    if (Number.isFinite(observed) && Number.isFinite(orders)) chips.push(`${zh ? '成熟度' : 'Maturity'} ${int(observed)}/${int(minDays)} ${zh ? '天' : 'days'} · ${int(orders)}/${int(orderRef)} ${zh ? '直接订单' : 'Direct Orders'}`);
+    chips.push(operationLinked
+      ? `${zh ? '操作记录' : 'Operations'} ${operationRows} ${zh ? '条' : ''}`
+      : (zh ? '操作记录未关联' : 'Operation history not linked'));
+    return chips.length ? `<div class="skill-report-context">${chips.map((item, index) => `<span class="${!operationLinked && index === chips.length - 1 ? 'warn' : ''}">${item}</span>`).join('')}</div>` : '';
+  }
+
+  function skillReportHtml(report, language = 'zh-CN', host = null, meta = null) {
     const copy = skillCopy(language);
     const zh = language === 'zh-CN';
     if (!report) return `<div class="empty-inline">${zh ? 'Skill 没有返回报告。' : 'Skill returned no report.'}</div>`;
+    const contextHtml = skillReportContextHtml(report, meta, language);
 
     const facts = Array.isArray(report.facts) ? report.facts : [];
     const inferences = Array.isArray(report.inferences) ? report.inferences : [];
@@ -572,7 +610,10 @@
       : `<div class="skill-empty-note">${esc(zh ? '当前没有需要单独验证的高优先级假设。' : 'No high-priority hypothesis requires separate validation right now.')}</div>`;
 
     const gateHtml = actionGates.length
-      ? `<div class="skill-action-gates">${actionGates.slice(0, 4).map(gate => `<div class="skill-action-gate ${gate?.allowed ? 'allowed' : 'blocked'}"><span>${gate?.allowed ? (zh ? '可执行' : 'Allowed') : (zh ? '暂缓' : 'Hold')}</span><p>${esc(gate?.reason || gate?.code || '')}</p></div>`).join('')}</div>`
+      ? `<div class="skill-action-gates">${actionGates.slice(0, 4).map(gate => {
+          const label = gate?.allowed ? (zh ? '当前建议' : 'Current recommendation') : (zh ? '暂不调整' : 'Hold');
+          return `<div class="skill-action-gate ${gate?.allowed ? 'allowed' : 'blocked'}"><span>${label}</span><p>${esc(gate?.reason || gate?.code || '')}</p></div>`;
+        }).join('')}</div>`
       : '';
 
     const nextHtml = nextValidation.length
@@ -585,6 +626,7 @@
 
     return `<section class="skill-report-card">
       <div class="skill-report-head"><div><span class="skill-report-kicker">${zh ? 'AI 运营诊断' : 'AI OPERATIONS DIAGNOSIS'}</span><strong>Shopee GMV Max Skill</strong></div><span class="skill-report-stage">${esc(stageDisplay(report.stage, language))}</span></div>
+      ${contextHtml}
       <div class="skill-report-hero"><span>${esc(copy.conclusion)}</span><p>${esc(conclusion)}</p>${supportingInferences.length ? `<ul class="skill-conclusion-support">${supportingInferences.map(item => `<li>${esc(item?.statement || '')}</li>`).join('')}</ul>` : ''}</div>
       <div class="skill-report-section"><div class="skill-report-section-head"><strong>${esc(copy.evidence)}</strong><span>${facts.length}</span></div>${evidenceHtml}</div>
       <div class="skill-report-section"><div class="skill-report-section-head"><strong>${esc(copy.skuStructure)}</strong><span>${skuAssessments.length}</span></div>${skuHtml}</div>
@@ -630,9 +672,11 @@
       if (!jobId) throw new Error('Skill job id is missing');
       const result = await pollSkillJob({ jobId, shopId, host, language });
       host.innerHTML = skillReportHtml(result?.report, language, host);
+      return result;
     } catch (error) {
       const copy = skillCopy(language);
       host.innerHTML = `<div class="empty-inline">${esc(copy.failed)}：${esc(humanizeSkillError(error))}</div>`;
+      return null;
     } finally {
       button.disabled = false;
       button.textContent = skillUiLanguage() === 'en-US' ? 'Generate analysis' : '生成分析';
@@ -653,6 +697,27 @@
     });
   }
 
+  async function loadLatestAdGroupSkillReport({ promotionKey, host, quiet = false }) {
+    const ctx = selectedContext();
+    if (!ctx.shopId || !promotionKey || !host) return null;
+    if (!quiet && !host.innerHTML.trim()) host.innerHTML = '<div class="skill-report-loading">正在读取最近一次分析报告…</div>';
+    try {
+      const payload = await api(`/api/shopee-analytics/ad-groups/skill-report?${new URLSearchParams({
+        shop_id:String(ctx.shopId), promotion_key:promotionKey,
+        start_date:ctx.startDate, end_date:ctx.endDate,
+      })}`);
+      host.innerHTML = skillReportHtml(payload.report, skillUiLanguage(), host, payload);
+      return payload;
+    } catch (error) {
+      if (/SKILL_REPORT_NOT_FOUND/.test(String(error?.message || error))) {
+        if (!quiet) host.innerHTML = '';
+        return null;
+      }
+      if (!quiet) host.innerHTML = `<div class="empty-inline">读取最近分析报告失败：${esc(error?.message || error)}</div>`;
+      return null;
+    }
+  }
+
   async function runAdGroupSkillAnalysisV2(button) {
     const ctx = selectedContext();
     const encodedKey = String(button?.dataset?.generateAdGroupSkill || '');
@@ -661,11 +726,133 @@
     if (!ctx.shopId || !promotionKey || !ctx.startDate || !ctx.endDate || !host) return;
     const language = await chooseSkillReportLanguage();
     if (!language) return;
-    await startSkillJob({
+    const result = await startSkillJob({
       url: `/api/shopee-analytics/skill-jobs/ad-groups?shop_id=${ctx.shopId}`,
       body:{ promotion_key:promotionKey, start_date:ctx.startDate, end_date:ctx.endDate, reason:'MANUAL_AD_GROUP_UI' },
       host, button, shopId:ctx.shopId, language,
     });
+    if (result) await loadLatestAdGroupSkillReport({ promotionKey, host, quiet:true });
+  }
+
+  function operationTypeDisplay(type, language = skillUiLanguage()) {
+    const zh = language === 'zh-CN';
+    const labels = zh ? {
+      CAMPAIGN_SETTING_CHANGE:'广告设置变更', CAMPAIGN_CREATED:'创建广告',
+      BUDGET_CHANGE:'调整预算', TARGET_ROAS_CHANGE:'调整 Target ROAS',
+      STATUS_CHANGE:'状态变更', ITEM_ADDED:'新增商品', ITEM_REMOVED:'移除商品',
+      RAPID_BOOST_CHANGE:'快速起量变更',
+    } : {
+      CAMPAIGN_SETTING_CHANGE:'Campaign setting change', CAMPAIGN_CREATED:'Campaign created',
+      BUDGET_CHANGE:'Budget change', TARGET_ROAS_CHANGE:'Target ROAS change',
+      STATUS_CHANGE:'Status change', ITEM_ADDED:'Item added', ITEM_REMOVED:'Item removed',
+      RAPID_BOOST_CHANGE:'Rapid Boost change',
+    };
+    return labels[type] || type || (zh ? '操作' : 'Operation');
+  }
+
+  function operationValue(key, value) {
+    if (value === null || value === undefined || value === '') return '—';
+    if (/budget/i.test(key) && present(value)) return money2(value);
+    if (/roas/i.test(key) && present(value)) return fixed2(value);
+    if (typeof value === 'boolean') return value ? 'On' : 'Off';
+    if (typeof value === 'object') return JSON.stringify(value);
+    return String(value);
+  }
+
+  function operationDetails(row, language = skillUiLanguage()) {
+    const zh = language === 'zh-CN';
+    const before = row?.before && typeof row.before === 'object' ? row.before : {};
+    const after = row?.after && typeof row.after === 'object' ? row.after : {};
+    const labels = zh ? {
+      campaignBudget:'日预算', dailyBudget:'日预算', budget:'预算', targetRoas:'Target ROAS',
+      biddingMethod:'出价方式', status:'状态', rapidBoost:'快速起量', itemCount:'商品数',
+    } : {
+      campaignBudget:'Daily budget', dailyBudget:'Daily budget', budget:'Budget', targetRoas:'Target ROAS',
+      biddingMethod:'Bidding method', status:'Status', rapidBoost:'Rapid Boost', itemCount:'Items',
+    };
+    const keys = [...new Set([...Object.keys(before), ...Object.keys(after)])];
+    const changed = keys.filter(key => JSON.stringify(before[key]) !== JSON.stringify(after[key]));
+    const parts = changed.slice(0, 6).map(key =>
+      `${labels[key] || key}: ${operationValue(key, before[key])} → ${operationValue(key, after[key])}`);
+    if (parts.length) return parts.join(' · ');
+    return String(row?.reason || row?.eventTypeRaw || row?.operationType || '—');
+  }
+
+  async function openAdGroupOperationHistory(button) {
+    const ctx = selectedContext();
+    const groupStartDate = String(button?.dataset?.groupStartDate || '');
+    const itemCount = Number(button?.dataset?.itemCount || 0);
+    if (!ctx.shopId || !ctx.endDate || !groupStartDate) return;
+
+    const root = document.createElement('div');
+    root.className = 'admin-modal-backdrop operation-history-backdrop';
+    root.innerHTML = `<section class="admin-modal operation-history-modal" role="dialog" aria-modal="true">
+      <div class="admin-modal-head">
+        <div><h2>操作记录</h2><p>用于解释分析窗口、学习周期和广告组结构变化。</p></div>
+        <button class="admin-close" type="button" data-operation-close>×</button>
+      </div>
+      <div class="operation-history-filters">
+        <span>日期</span>
+        <button type="button" class="operation-range active" data-operation-range="period">当前分析周期</button>
+        <button type="button" class="operation-range" data-operation-range="7">最近7天</button>
+        <button type="button" class="operation-range" data-operation-range="30">最近30天</button>
+      </div>
+      <div class="operation-history-status"></div>
+      <div class="operation-history-body"><div class="skill-report-loading">正在读取操作记录…</div></div>
+    </section>`;
+    document.body.appendChild(root);
+
+    const close = () => root.remove();
+    root.querySelector('[data-operation-close]')?.addEventListener('click', close);
+    root.addEventListener('click', event => { if (event.target === root) close(); });
+
+    const load = async mode => {
+      const startDate = mode === '7' ? addIsoDays(ctx.endDate, -6)
+        : mode === '30' ? addIsoDays(ctx.endDate, -29)
+        : ctx.startDate;
+      const body = root.querySelector('.operation-history-body');
+      const status = root.querySelector('.operation-history-status');
+      if (body) body.innerHTML = '<div class="skill-report-loading">正在读取操作记录…</div>';
+      try {
+        const params = new URLSearchParams({
+          shop_id:String(ctx.shopId), group_start_date:groupStartDate,
+          item_count:String(itemCount), start_date:startDate, end_date:ctx.endDate,
+        });
+        const payload = await api(`/api/shopee-analytics/ad-groups/operations?${params}`);
+        const linked = Boolean(payload.operationCampaignId);
+        if (status) {
+          status.innerHTML = linked
+            ? `<span class="operation-link-status linked">已关联 Campaign #${esc(payload.operationCampaignId)}</span><span>${esc(startDate)} → ${esc(ctx.endDate)}</span>`
+            : `<span class="operation-link-status warn">尚未关联 Shopee Operation History</span><span>匹配状态：${esc(payload.match || 'NOT_FOUND')}</span>`;
+        }
+        const rows = Array.isArray(payload.operations) ? payload.operations : [];
+        if (!body) return;
+        if (!linked) {
+          body.innerHTML = `<div class="operation-history-empty"><strong>这个广告组目前没有可靠的操作记录关联。</strong><p>系统不会把其他 Campaign 的操作硬套进来。请导入这个广告组对应的 Shopee Operation History 报表后再分析 Epoch / 操作前后表现。</p></div>`;
+          return;
+        }
+        if (!rows.length) {
+          body.innerHTML = '<div class="operation-history-empty"><strong>该时间范围没有操作记录。</strong><p>可以切换到最近30天查看更早的记录。</p></div>';
+          return;
+        }
+        body.innerHTML = `<div class="operation-history-table-wrap"><table class="operation-history-table">
+          <thead><tr><th>更新时间</th><th>操作人</th><th>事件类型</th><th>详情</th></tr></thead>
+          <tbody>${[...rows].reverse().map(row => `<tr>
+            <td><strong>${esc(row.effectiveDate || '')}</strong><small>${esc(row.effectiveTime || '')}</small></td>
+            <td>${esc(row.operatorRaw || row.actorType || row.platformRaw || 'System')}</td>
+            <td><span class="operation-event-pill">${esc(operationTypeDisplay(row.operationType))}</span></td>
+            <td>${esc(operationDetails(row))}</td>
+          </tr>`).join('')}</tbody></table></div>`;
+      } catch (error) {
+        if (body) body.innerHTML = `<div class="operation-history-empty"><strong>操作记录读取失败</strong><p>${esc(error?.message || error)}</p></div>`;
+      }
+    };
+
+    root.querySelectorAll('[data-operation-range]').forEach(rangeButton => rangeButton.addEventListener('click', () => {
+      root.querySelectorAll('[data-operation-range]').forEach(node => node.classList.toggle('active', node === rangeButton));
+      load(rangeButton.dataset.operationRange || 'period');
+    }));
+    await load('period');
   }
 
   async function loadShopDirectoryV2() {
@@ -939,9 +1126,15 @@
 
   function adGroupItemTable(row, previousRow = null) {
     const items = Array.isArray(row.items) ? row.items : [];
-    const promotionKey = encodeURIComponent(String(row.promotion_key || row.promotionKey || ''));
+    const promotionKeyRaw = String(row.promotion_key || row.promotionKey || '');
+    const promotionKey = encodeURIComponent(promotionKeyRaw);
+    const groupStartDate = sourceDateToIso(row.groupStartDate || row.group_start_date || '');
+    const itemCount = Number(row.item_count ?? row.itemCount ?? items.length);
     const analysisToolbar = promotionKey
-      ? `<div class="skill-analysis-toolbar"><button type="button" class="primary" data-generate-ad-group-skill="${esc(promotionKey)}">生成分析</button></div><div class="skill-report-host"></div>`
+      ? `<div class="skill-analysis-toolbar">
+          <button type="button" class="ghost operation-history-trigger" data-view-ad-group-operations="${esc(promotionKey)}" data-group-start-date="${esc(groupStartDate)}" data-item-count="${esc(itemCount)}">操作记录</button>
+          <button type="button" class="primary" data-generate-ad-group-skill="${esc(promotionKey)}">生成分析</button>
+        </div><div class="skill-report-host" data-skill-promotion-key="${esc(promotionKeyRaw)}"></div>`
       : '';
     if (!items.length) return `<div class="ad-group-modal-content">${analysisToolbar}<div class="empty-inline">这个广告组没有保存商品层明细。</div></div>`;
     const previousMap = new Map((previousRow?.items || []).map(item => [Number(item.itemId), item]));
@@ -972,13 +1165,20 @@
     const items = Array.isArray(row.items) ? row.items : [];
     $$('#adGroupRows tr[data-ad-group-index]').forEach(el => el.classList.remove('selected'));
     rowEl.classList.add('selected');
+    const ctx = selectedContext();
+    const zh = skillUiLanguage() === 'zh-CN';
     openDetailModal({
-      title: row.campaign_name || '广告组明细',
-      subtitle: `${date || '—'} · ${int(items.length)} 商品 · 环比上一周期`,
+      title: row.campaign_name || (zh ? '广告组明细' : 'Ad Group Detail'),
+      subtitle: zh
+        ? `明细快照 ${date || '—'} · AI 分析周期 ${ctx.startDate || '—'} → ${ctx.endDate || '—'} · ${int(items.length)} 商品`
+        : `Detail snapshot ${date || '—'} · AI analysis period ${ctx.startDate || '—'} → ${ctx.endDate || '—'} · ${int(items.length)} items`,
       html: adGroupItemTable(row, previous),
       variant: 'group',
       opener: rowEl,
     });
+    const promotionKey = String(row.promotion_key || row.promotionKey || '');
+    const host = $('#productCardDetailModalBody')?.querySelector('.skill-report-host');
+    if (promotionKey && host) loadLatestAdGroupSkillReport({ promotionKey, host }).catch(() => {});
   }
 
   async function loadAdGroupsV2() {
@@ -1078,6 +1278,13 @@
       applyAdListFilters();
     });
     document.addEventListener('click', event => {
+      const operationButton = event.target.closest('[data-view-ad-group-operations]');
+      if (operationButton) {
+        event.preventDefault();
+        event.stopPropagation();
+        openAdGroupOperationHistory(operationButton);
+        return;
+      }
       const groupButton = event.target.closest('[data-generate-ad-group-skill]');
       if (groupButton) {
         event.preventDefault();

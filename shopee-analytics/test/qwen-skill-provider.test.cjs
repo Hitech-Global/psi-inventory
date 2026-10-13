@@ -56,7 +56,15 @@ function readFileSync(file) {
   });
   const result = await provider.generateStructuredReport({
     skill:{ name:'shopee-gmv-max-analysis', version:'0.1.0' },
-    analysisPackage:{ schemaVersion:'1.0', presentation:{language:'zh-CN'}, campaignDaily:[], itemDaily:[], items:[], deterministicMetrics:{ campaign:{}, dailyAllocation:[] } },
+    analysisPackage:{
+      schemaVersion:'1.0',
+      presentation:{language:'zh-CN'},
+      campaignDaily:[], itemDaily:[], items:[],
+      deterministicMetrics:{
+        maturity:{ minimumObservationDays:7, weeklyOrderReference:25, observedCalendarDays:7, directOrdersSinceEpoch:25, sampleMature:true },
+        campaign:{}, dailyAllocation:[],
+      },
+    },
     onProgress:(...args) => progress.push(args),
   });
   assert.strictEqual(result.stage, 'CONVERGING');

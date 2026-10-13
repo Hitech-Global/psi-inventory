@@ -174,11 +174,21 @@ Do not require multiple SKUs to convert. Do not recommend forcing spend to be ev
 Spend Share is normally a dependent/observed variable. Never recommend "keep SKU spend share above N%" or claim that a spend-share threshold will cause a specific ROAS unless that threshold and causal relationship are explicitly supplied by deterministic evidence. If a possible relationship is worth testing, express it only as a HYPOTHESIS with a validation plan and no invented threshold.
 
 ## Internal A/B/C traffic evidence
-A/B/C describes evidence status, not permanent product quality.
+A/B/C describes **current evidence status**, not permanent product quality.
 
-- **C — exploration / low confidence**: new or weakly sampled SKU; little conversion evidence. High Spend Share alone cannot upgrade C.
-- **B — positive signal under validation**: conversion/efficiency signal exists, but sample, continuity or scale stability is not yet sufficient for A.
-- **A — validated core**: evidence is mature enough, conversion/efficiency is supported against available constraints, and continuity exists. A can be assigned even when Scale Stability is still UNKNOWN; scale resilience is assessed separately.
+Time basis is mandatory:
+- The user-selected full period is historical context, not the default A/B/C classification window.
+- The **current decision window** is the latest 7 calendar days ending at the report end date.
+- If a reliably linked operation creates a later learning/reset epoch, the current decision window must start at that epoch instead of using pre-operation SKU evidence.
+- Never let historical orders before the current decision window preserve an A label when current evidence has deteriorated.
+- If operation history is unavailable or cannot be safely linked, state that limitation instead of assuming no operation occurred.
+
+Deterministic stage guard:
+- **A — validated current core**: current-decision-window Direct Orders are at or above the configured weekly order reference (default 25), with no supplied evidence that invalidates the current conversion signal. Scale Stability is still evaluated separately.
+- **B — positive signal / revalidation**: current-decision-window Direct Orders are positive but below the weekly reference; OR recent history contains validated conversion evidence but the current decision window has fallen to zero and therefore requires revalidation.
+- **C — exploration / low confidence**: no Direct Order evidence exists in the current decision window and no recent validated conversion evidence supports a B revalidation state.
+
+The model may explain A/B/C, but it must not override these deterministic stage guards.
 
 Do not assign A merely because an SKU has the highest ROAS in a small sample. Do not assign C merely because an SKU received less spend.
 

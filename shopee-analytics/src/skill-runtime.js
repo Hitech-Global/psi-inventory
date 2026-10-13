@@ -31,7 +31,7 @@ function createSkillRuntime({
   });
   const adGroupSkillRunner = new SkillRunner({
     executor: skillExecutor,
-    reportRepository: null,
+    reportRepository: skillReportRepository,
   });
 
   const runSkillAnalysis = async ({

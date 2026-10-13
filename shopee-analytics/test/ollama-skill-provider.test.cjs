@@ -65,10 +65,12 @@ function readFileSync(file) {
   const compact = compactAnalysisPackage({
     campaignDaily: [{ shop_id: 1, campaign_id: 2, event_date: '2026-09-28', impressions: 10, raw_json: { noisy: true }, synced_at: 'now' }],
     itemDaily: [{ item_id: 3, direct_orders: 2, raw_json: { noisy: true } }],
+    historyItemDaily: [{ item_id: 3, event_date: '2026-09-27', direct_orders: 1, raw_json: { noisy: true } }],
     campaign: { campaignId: 2, raw_json: { noisy: true } },
   });
   assert.deepStrictEqual(compact.campaignDaily, [{ event_date: '2026-09-28', impressions: 10 }]);
   assert.deepStrictEqual(compact.itemDaily, [{ item_id: 3, direct_orders: 2 }]);
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(compact, 'historyItemDaily'), false);
   assert.deepStrictEqual(compact.campaign, { campaignId: 2 });
   assert.deepStrictEqual(compact.evidenceAvailability, {
     campaignDailyRows: 1,
@@ -212,15 +214,65 @@ function readFileSync(file) {
     items:[{ itemId:'2', directOrders:134, directRoas:9.79, breakEvenRoas:null, recommendedRoas:null }],
     evidenceAvailability:{ hasItemLevelEvidence:true, hasAllocationEvidence:false },
   });
-  assert(chineseSignalGuarded.skuAssessments[0].signal.summary.startsWith('已验证转化信号'));
-  assert(!chineseSignalGuarded.skuAssessments[0].signal.summary.includes('强转化信号'));
+  assert.strictEqual(chineseSignalGuarded.skuAssessments[0].trafficStage, 'A');
+  assert(chineseSignalGuarded.skuAssessments[0].signal.summary.includes('直接订单 134'));
+  assert(chineseSignalGuarded.skuAssessments[0].confidence.summary.includes('≥25'));
+
+  const currentWindowGuarded = sanitizeOllamaReport({
+    skill:{ name:'shopee-gmv-max-analysis', version:'0.2.0' }, stage:'CONVERGING',
+    facts:[], inferences:[], hypotheses:[], actionGates:[], nextValidation:[], limitations:[],
+    skuAssessments:[{ itemId:'88', trafficStage:'A', candidateRole:'STABLE_CORE' }],
+  }, {
+    presentation:{ language:'zh-CN' },
+    period:{ startDate:'2026-09-15', endDate:'2026-09-28' },
+    items:[{ itemId:'88', directOrders:38, breakEvenRoas:null, recommendedRoas:null }],
+    historyItemDaily:[
+      { item_id:'88', event_date:'2026-09-20', direct_orders:30, direct_gmv:3000, expense:300, clicks:60, impressions:1000 },
+      { item_id:'88', event_date:'2026-09-25', direct_orders:8, direct_gmv:800, expense:100, clicks:20, impressions:400 },
+    ],
+    deterministicMetrics:{
+      maturity:{ weeklyOrderReference:25 },
+      timeContext:{ learningEpoch:{ available:false } },
+    },
+    evidenceAvailability:{ hasItemLevelEvidence:true, hasAllocationEvidence:true, hasAddToCartEvidence:true, hasComparablePreviousWindow:true, hasTargetRoasEvidence:true, hasBreakEvenEvidence:true },
+  });
+  assert.strictEqual(currentWindowGuarded.skuAssessments[0].trafficStage, 'B');
+  assert.strictEqual(currentWindowGuarded.skuAssessments[0].candidateRole, 'CONVERSION_ANCHOR');
+  assert(currentWindowGuarded.skuAssessments[0].signal.summary.includes('当前窗口 2026-09-22–2026-09-28'));
+  assert(currentWindowGuarded.skuAssessments[0].signal.summary.includes('直接订单 8'));
+  assert(currentWindowGuarded.skuAssessments[0].confidence.summary.includes('8<25'));
+
+  const epochWindowGuarded = sanitizeOllamaReport({
+    skill:{ name:'shopee-gmv-max-analysis', version:'0.2.0' }, stage:'LEARNING',
+    facts:[], inferences:[], hypotheses:[], actionGates:[], nextValidation:[], limitations:[],
+    skuAssessments:[{ itemId:'99', trafficStage:'A', candidateRole:'STABLE_CORE' }],
+  }, {
+    presentation:{ language:'zh-CN' },
+    period:{ startDate:'2026-09-15', endDate:'2026-09-28' },
+    items:[{ itemId:'99', directOrders:32, breakEvenRoas:null, recommendedRoas:null }],
+    historyItemDaily:[
+      { item_id:'99', event_date:'2026-09-25', direct_orders:30, direct_gmv:3000, expense:300, clicks:60, impressions:1000 },
+      { item_id:'99', event_date:'2026-09-27', direct_orders:2, direct_gmv:200, expense:50, clicks:10, impressions:200 },
+    ],
+    deterministicMetrics:{
+      maturity:{ weeklyOrderReference:25, minimumObservationDays:7, observedCalendarDays:2, directOrdersSinceEpoch:2, sampleMature:false, basis:'CURRENT_LEARNING_EPOCH' },
+      timeContext:{ learningEpoch:{ available:true, startDate:'2026-09-27' }, stabilityJudgmentBlocked:false },
+    },
+    evidenceAvailability:{ hasItemLevelEvidence:true, hasAllocationEvidence:true, hasAddToCartEvidence:true, hasComparablePreviousWindow:true, hasTargetRoasEvidence:true, hasBreakEvenEvidence:true },
+  });
+  assert.strictEqual(epochWindowGuarded.skuAssessments[0].trafficStage, 'B');
+  assert(epochWindowGuarded.skuAssessments[0].signal.summary.includes('当前窗口 2026-09-27–2026-09-28'));
+  assert(epochWindowGuarded.skuAssessments[0].signal.summary.includes('直接订单 2'));
 
   const zhEconomicsGuarded = sanitizeOllamaReport({
     skill:{ name:'shopee-gmv-max-analysis', version:'0.2.0' }, stage:'CONVERGING',
     facts:[], inferences:[], hypotheses:[], actionGates:[], nextValidation:[], limitations:[], skuAssessments:[],
   }, {
     presentation:{ language:'zh-CN' },
-    deterministicMetrics:{ campaign:{ current7d:{ broadRoas:8.27 }, economics:{ requiredBroadRoasForSpendLimit:6.67, adSpendRatioLimit:0.15, broadRoasVsSpendLimit:'ABOVE' } } },
+    deterministicMetrics:{
+      maturity:{ minimumObservationDays:7, weeklyOrderReference:25, observedCalendarDays:7, directOrdersSinceEpoch:25, sampleMature:true, basis:'LATEST_7_CALENDAR_DAYS' },
+      campaign:{ current7d:{ broadRoas:8.27 }, economics:{ requiredBroadRoasForSpendLimit:6.67, adSpendRatioLimit:0.15, broadRoasVsSpendLimit:'ABOVE' } },
+    },
     evidenceAvailability:{ hasItemLevelEvidence:false, hasAllocationEvidence:false },
   });
   assert(zhEconomicsGuarded.facts.some(row => /广告花费占比上限 15%/.test(row.statement)));
@@ -261,7 +313,13 @@ function readFileSync(file) {
 
   const result = await provider.generateStructuredReport({
     skill: { name: 'shopee-gmv-max-analysis', version: '0.1.0' },
-    analysisPackage: { schemaVersion: '1.0', campaign: { campaignId: 99 } },
+    analysisPackage: {
+      schemaVersion: '1.0',
+      campaign: { campaignId: 99 },
+      deterministicMetrics:{
+        maturity:{ minimumObservationDays:7, weeklyOrderReference:25, observedCalendarDays:7, directOrdersSinceEpoch:25, sampleMature:true },
+      },
+    },
   });
   assert.strictEqual(result.stage, 'CONVERGING');
   assert.strictEqual(captured.url, 'http://ollama:11434/api/chat');

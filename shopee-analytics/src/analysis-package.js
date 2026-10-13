@@ -277,6 +277,7 @@ function buildAnalysisPackage({
   comparisonPeriod = null,
   itemDaily = [],
   comparisonItemDaily = [],
+  historyItemDaily = [],
   itemMetadata = new Map(),
   itemBreakEvenMap = new Map(),
   recommendedRoiMap = new Map(),
@@ -399,6 +400,55 @@ function buildAnalysisPackage({
     ? epochMaturity.maturityFloorMet && !timeContext.stabilityJudgmentBlocked
     : observedDays7d >= 7 && p7.directOrders >= weeklyReference;
 
+  const currentDecisionStartDate = (() => {
+    const end = new Date(`${endDate}T00:00:00Z`);
+    end.setUTCDate(end.getUTCDate() - 6);
+    const latest7Start = end.toISOString().slice(0, 10);
+    const epochStart = epochMaturity && epochMaturity.startDate ? String(epochMaturity.startDate) : null;
+    return epochStart && epochStart > latest7Start ? epochStart : latest7Start;
+  })();
+  const currentItemRows = (historyItemDaily.length ? historyItemDaily : itemDaily)
+    .filter(row => {
+      const date = rowDate(row);
+      return date && date >= currentDecisionStartDate && date <= endDate;
+    });
+  const currentItemTotal = sumSourceAwarePerformance(currentItemRows);
+  const currentItemGroups = new Map();
+  for (const row of currentItemRows) {
+    const key = itemId(row);
+    if (!key) continue;
+    if (!currentItemGroups.has(key)) currentItemGroups.set(key, []);
+    currentItemGroups.get(key).push(row);
+  }
+  const historicalItemGroups = new Map();
+  for (const row of (historyItemDaily.length ? historyItemDaily : itemDaily)) {
+    const key = itemId(row);
+    if (!key) continue;
+    if (!historicalItemGroups.has(key)) historicalItemGroups.set(key, []);
+    historicalItemGroups.get(key).push(row);
+  }
+  const itemCurrentWindow = [...new Set([
+    ...currentItemGroups.keys(),
+    ...historicalItemGroups.keys(),
+  ])].map(id => {
+    const rows = currentItemGroups.get(id) || [];
+    const performance = sumSourceAwarePerformance(rows);
+    const historyPerformance = sumSourceAwarePerformance(historicalItemGroups.get(id) || []);
+    return {
+      itemId: id,
+      ...performanceSnapshot(performance),
+      historicalDirectOrders: Number(historyPerformance.directOrders || 0),
+      activeOrderDays: new Set(rows.filter(row => normalizeSourceAwarePerformance(row).directOrders > 0).map(rowDate)).size,
+      shares: {
+        spendShare: safeDiv(performance.expense, currentItemTotal.expense),
+        directOrderShare: safeDiv(performance.directOrders, currentItemTotal.directOrders),
+        directGmvShare: performance.directGmv === null || currentItemTotal.directGmv === null
+          ? null
+          : safeDiv(performance.directGmv, currentItemTotal.directGmv),
+      },
+    };
+  });
+
   return {
     schemaVersion: '1.0',
     shop,
@@ -424,6 +474,12 @@ function buildAnalysisPackage({
         directOrders7d: maturityDirectOrders,
         sampleMature: maturitySampleMature,
         basis: epochMaturity ? 'CURRENT_LEARNING_EPOCH' : 'LATEST_7_CALENDAR_DAYS',
+      },
+      itemCurrentWindow: {
+        startDate: currentDecisionStartDate,
+        endDate,
+        weeklyOrderReference: weeklyReference,
+        items: itemCurrentWindow,
       },
       campaign: {
         directOrders7d: p7.directOrders,

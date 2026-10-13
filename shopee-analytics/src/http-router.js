@@ -1023,6 +1023,73 @@ function createShopeeAnalyticsRouter({
     }
   });
 
+  router.get('/ad-groups/skill-report', async (req, res, next) => {
+    try {
+      if (!skillReportRepository) throw new Error('Skill report repository is not configured');
+      const shopId = positiveInt(req.query.shop_id, 'shop_id');
+      assertShopAccess(req, shopId);
+      const promotionKey = String(req.query.promotion_key || '').trim();
+      if (!promotionKey || promotionKey.length > 512) throw new Error('promotion_key is required');
+      const startDate = req.query.start_date ? isoDate(req.query.start_date, 'start_date') : null;
+      const endDate = req.query.end_date ? isoDate(req.query.end_date, 'end_date') : null;
+      if ((startDate && !endDate) || (!startDate && endDate)) throw new Error('start_date and end_date must be supplied together');
+      if (startDate && startDate > endDate) throw new Error('start_date must be <= end_date');
+      const row = await skillReportRepository.latest({
+        shopId,
+        promotionKey,
+        completedOnly: true,
+        periodStart: startDate,
+        periodEnd: endDate,
+      });
+      if (!row) return res.status(404).json({ error: 'SKILL_REPORT_NOT_FOUND' });
+      res.json({
+        id: row.id,
+        shopId: Number(row.shop_id),
+        campaignId: row.campaign_id,
+        period: { startDate: String(row.period_start).slice(0,10), endDate: String(row.period_end).slice(0,10) },
+        generatedAt: row.generated_at,
+        report: row.report_json,
+        context: {
+          maturity: row.maturity_json || null,
+          timeContext: row.time_context_json || null,
+          dataQuality: row.data_quality_json || null,
+          campaign: row.campaign_context_json || null,
+        },
+      });
+    } catch (error) { next(error); }
+  });
+
+  router.get('/ad-groups/operations', async (req, res, next) => {
+    try {
+      const shopId = positiveInt(req.query.shop_id, 'shop_id');
+      assertShopAccess(req, shopId);
+      const groupStartDate = isoDate(req.query.group_start_date, 'group_start_date');
+      const startDate = isoDate(req.query.start_date, 'start_date');
+      const endDate = isoDate(req.query.end_date, 'end_date');
+      if (startDate > endDate) throw new Error('start_date must be <= end_date');
+      const itemCountRaw = req.query.item_count;
+      const itemCount = itemCountRaw === undefined || itemCountRaw === '' ? null : Number(itemCountRaw);
+      if (itemCount !== null && (!Number.isSafeInteger(itemCount) || itemCount < 0)) throw new Error('item_count must be a non-negative integer');
+      if (!queryRepository || typeof queryRepository.resolveAdGroupOperationCampaign !== 'function') {
+        throw new Error('Ad Group operation history is unavailable');
+      }
+      const link = await queryRepository.resolveAdGroupOperationCampaign({ shopId, groupStartDate, itemCount });
+      const operations = link.campaignId && typeof queryRepository.loadCampaignOperations === 'function'
+        ? await queryRepository.loadCampaignOperations({ shopId, campaignId: link.campaignId, startDate, endDate })
+        : [];
+      res.json({
+        shopId,
+        groupStartDate,
+        startDate,
+        endDate,
+        operationCampaignId: link.campaignId || null,
+        match: link.match,
+        candidates: link.candidates || [],
+        operations,
+      });
+    } catch (error) { next(error); }
+  });
+
   router.get('/campaigns/:campaignId/skill-report', async (req, res, next) => {
     try {
       if (!skillReportRepository) throw new Error('Skill report repository is not configured');

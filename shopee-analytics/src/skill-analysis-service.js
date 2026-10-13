@@ -245,6 +245,18 @@ async function buildAdGroupSkillPackage({
       comparisonItemDaily.push({ item_id: id, ...adGroupPerformance(item, date) });
     }
   }
+  const historyItemDaily = [];
+  for (const row of historyDailyRows) {
+    const date = isoDay(row.event_date ?? row.period_start ?? row.periodStart);
+    for (const item of row.items || []) {
+      const id = String(item.itemId ?? item.item_id ?? '');
+      if (!id) continue;
+      if (!itemMetadata.has(id)) {
+        itemMetadata.set(id, { itemName: item.productName || null, itemSku: item.itemSku || null });
+      }
+      historyItemDaily.push({ item_id: id, ...adGroupPerformance(item, date) });
+    }
+  }
 
   const itemIds = Array.from(new Set(itemDaily.map(row => Number(row.item_id)).filter(Number.isSafeInteger)));
   const groupStartDate = sourceDateToIso(representative.groupStartDate || representative.raw_json?.parent?.['Start Date'] || representative.rawJson?.parent?.['Start Date']);
@@ -307,6 +319,7 @@ async function buildAdGroupSkillPackage({
     comparisonPeriod,
     itemDaily,
     comparisonItemDaily,
+    historyItemDaily,
     itemMetadata,
     itemBreakEvenMap,
     recommendedRoiMap,

@@ -50,6 +50,9 @@ function compactDailyRow(row) {
 function compactAnalysisPackage(analysisPackage) {
   const source = analysisPackage || {};
   const compact = stripTransportNoise(source);
+  // Historical SKU rows are only an input to deterministic current-window aggregation.
+  // Do not send long raw history to the model; itemCurrentWindow is the compact evidence.
+  delete compact.historyItemDaily;
   if (Array.isArray(source.campaignDaily)) {
     compact.campaignDaily = source.campaignDaily.map(compactDailyRow);
   }
@@ -401,14 +404,103 @@ function neutralizeUnsupportedMetricAdjectives(value, item = {}, compactPackage 
   return text;
 }
 
+function dateOnly(value) {
+  const match = String(value || '').match(/^(\d{4}-\d{2}-\d{2})/);
+  return match ? match[1] : '';
+}
+
+function shiftIsoDay(value, days) {
+  const day = dateOnly(value);
+  if (!day) return '';
+  const d = new Date(`${day}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + Number(days || 0));
+  return d.toISOString().slice(0, 10);
+}
+
+function currentItemWindowMetrics(compactPackage = {}, targetItemId) {
+  const deterministicWindow = compactPackage.deterministicMetrics?.itemCurrentWindow || {};
+  const deterministicItem = (Array.isArray(deterministicWindow.items) ? deterministicWindow.items : [])
+    .find(row => String(row?.itemId ?? '') === String(targetItemId ?? ''));
+  if (deterministicItem) {
+    return {
+      ...deterministicItem,
+      windowStart: dateOnly(deterministicWindow.startDate),
+      windowEnd: dateOnly(deterministicWindow.endDate),
+    };
+  }
+
+  const endDate = dateOnly(compactPackage.period?.endDate);
+  if (!endDate) return null;
+  const sevenDayStart = shiftIsoDay(endDate, -6);
+  const epoch = compactPackage.deterministicMetrics?.timeContext?.learningEpoch || {};
+  const epochStart = epoch.available === true ? dateOnly(epoch.startDate) : '';
+  const startDate = epochStart && epochStart > sevenDayStart ? epochStart : sevenDayStart;
+  const sourceRows = Array.isArray(compactPackage.historyItemDaily) && compactPackage.historyItemDaily.length
+    ? compactPackage.historyItemDaily
+    : (Array.isArray(compactPackage.itemDaily) ? compactPackage.itemDaily : []);
+  const itemIdText = String(targetItemId ?? '');
+  const historicalRows = sourceRows.filter(row => String(row?.item_id ?? row?.itemId ?? '') === itemIdText);
+  const currentRows = historicalRows.filter(row => {
+    const day = dateOnly(row?.date ?? row?.event_date ?? row?.eventDate);
+    return day && day >= startDate && day <= endDate;
+  });
+  const allCurrentRows = sourceRows.filter(row => {
+    const day = dateOnly(row?.date ?? row?.event_date ?? row?.eventDate);
+    return day && day >= startDate && day <= endDate;
+  });
+  if (!currentRows.length && !historicalRows.length) return null;
+
+  const sum = (rows, keys) => rows.reduce((total, row) => {
+    for (const key of keys) {
+      const value = Number(row?.[key]);
+      if (Number.isFinite(value)) return total + value;
+    }
+    return total;
+  }, 0);
+  const impressions = sum(currentRows, ['impressions']);
+  const clicks = sum(currentRows, ['clicks']);
+  const expense = sum(currentRows, ['expense','spend']);
+  const directOrders = sum(currentRows, ['direct_orders','directOrders']);
+  const directGmv = sum(currentRows, ['direct_gmv','directGmv']);
+  const totalExpense = sum(allCurrentRows, ['expense','spend']);
+  const totalDirectOrders = sum(allCurrentRows, ['direct_orders','directOrders']);
+  const totalDirectGmv = sum(allCurrentRows, ['direct_gmv','directGmv']);
+  const historicalDirectOrders = sum(historicalRows, ['direct_orders','directOrders']);
+  const activeOrderDays = new Set(currentRows.filter(row => Number(row?.direct_orders ?? row?.directOrders ?? 0) > 0)
+    .map(row => dateOnly(row?.date ?? row?.event_date ?? row?.eventDate)).filter(Boolean)).size;
+
+  return {
+    windowStart: startDate,
+    windowEnd: endDate,
+    impressions,
+    clicks,
+    expense,
+    directOrders,
+    directGmv,
+    directRoas: expense > 0 ? directGmv / expense : null,
+    historicalDirectOrders,
+    activeOrderDays,
+    shares: {
+      spendShare: totalExpense > 0 ? expense / totalExpense : 0,
+      directOrderShare: totalDirectOrders > 0 ? directOrders / totalDirectOrders : 0,
+      directGmvShare: totalDirectGmv > 0 ? directGmv / totalDirectGmv : 0,
+    },
+  };
+}
+
 function sanitizeSkuAssessment(assessment, compactPackage = {}) {
   if (!assessment || typeof assessment !== 'object') return assessment;
-  const item = (Array.isArray(compactPackage.items) ? compactPackage.items : [])
+  const aggregateItem = (Array.isArray(compactPackage.items) ? compactPackage.items : [])
     .find(row => String(row && row.itemId) === String(assessment.itemId)) || {};
+  const currentMetrics = currentItemWindowMetrics(compactPackage, assessment.itemId);
+  const item = currentMetrics
+    ? { ...aggregateItem, ...currentMetrics, shares: { ...(aggregateItem.shares || {}), ...(currentMetrics.shares || {}) } }
+    : aggregateItem;
   const out = cloneJson(assessment);
   const zh = compactPackage.presentation?.language === 'zh-CN';
   const weeklyOrderReference = positiveThreshold(compactPackage.deterministicMetrics?.maturity?.weeklyOrderReference, MIN_CONVERGING_DIRECT_ORDERS_7D);
   const directOrders = Number(item.directOrders || 0);
+  const historicalDirectOrders = Number(item.historicalDirectOrders ?? aggregateItem.directOrders ?? 0);
   const clicks = Number(item.clicks || 0);
   const impressions = Number(item.impressions || 0);
   const expense = Number(item.expense || 0);
@@ -416,60 +508,63 @@ function sanitizeSkuAssessment(assessment, compactPackage = {}) {
   const spendShare = Number(item.shares?.spendShare);
   const directOrderShare = Number(item.shares?.directOrderShare);
   const pct = value => Number.isFinite(value) ? `${(value * 100).toFixed(1).replace(/\.0$/, '')}%` : '—';
+  const windowLabel = currentMetrics ? `${currentMetrics.windowStart}–${currentMetrics.windowEnd}` : '';
 
   const allowedRoles = new Set(['TRAFFIC_CANDIDATE','CONVERSION_ANCHOR','HIGH_VALUE_CANDIDATE','STABLE_CORE','WEAK_EXPLORER','REJECT_CANDIDATE']);
   if (!allowedRoles.has(String(out.candidateRole || ''))) {
     out.candidateRole = directOrders > 0 ? 'CONVERSION_ANCHOR' : ((clicks > 0 || expense > 0) ? 'WEAK_EXPLORER' : 'TRAFFIC_CANDIDATE');
   }
-  if (!['A','B','C'].includes(String(out.trafficStage || ''))) {
-    if (String(out.candidateRole) === 'STABLE_CORE' || directOrders >= weeklyOrderReference) out.trafficStage = 'A';
-    else if (directOrders > 0 || ['CONVERSION_ANCHOR','HIGH_VALUE_CANDIDATE'].includes(String(out.candidateRole))) out.trafficStage = 'B';
-    else out.trafficStage = 'C';
+
+  // Traffic stage is deterministic and describes the current window, not lifetime history.
+  if (directOrders >= weeklyOrderReference) out.trafficStage = 'A';
+  else if (directOrders > 0 || historicalDirectOrders > 0) out.trafficStage = 'B';
+  else out.trafficStage = 'C';
+  if (out.trafficStage !== 'A' && String(out.candidateRole) === 'STABLE_CORE') out.candidateRole = 'CONVERSION_ANCHOR';
+  if (out.trafficStage === 'B' && directOrders > 0 && ['TRAFFIC_CANDIDATE','WEAK_EXPLORER','REJECT_CANDIDATE'].includes(String(out.candidateRole))) {
+    out.candidateRole = 'CONVERSION_ANCHOR';
   }
 
-  for (const key of ['signal', 'confidence']) {
-    if (out[key] && typeof out[key] === 'object' && typeof out[key].summary === 'string') {
-      out[key].summary = neutralizeUnsupportedMetricAdjectives(out[key].summary, item, compactPackage);
-    }
+  let signalSummary;
+  if (directOrders > 0) {
+    signalSummary = zh
+      ? `${windowLabel ? `当前窗口 ${windowLabel}：` : ''}直接订单 ${directOrders}，Direct ROAS ${Number.isFinite(directRoas) ? directRoas.toFixed(2) : '—'}，花费份额 ${pct(spendShare)}，直接订单份额 ${pct(directOrderShare)}。`
+      : `${windowLabel ? `Current window ${windowLabel}: ` : ''}${directOrders} Direct Orders, Direct ROAS ${Number.isFinite(directRoas) ? directRoas.toFixed(2) : '—'}, Spend Share ${pct(spendShare)}, Direct Order Share ${pct(directOrderShare)}.`;
+  } else if (clicks > 0 || expense > 0) {
+    signalSummary = zh
+      ? `${windowLabel ? `当前窗口 ${windowLabel}：` : ''}${clicks} 次点击、0 个直接订单，花费份额 ${pct(spendShare)}，当前尚无直接转化证据。`
+      : `${windowLabel ? `Current window ${windowLabel}: ` : ''}${clicks} clicks and 0 Direct Orders, with ${pct(spendShare)} Spend Share; no Direct conversion evidence is present yet.`;
+  } else if (impressions > 0) {
+    signalSummary = zh
+      ? `${windowLabel ? `当前窗口 ${windowLabel}：` : ''}${impressions} 次展示，当前没有点击或直接订单证据。`
+      : `${windowLabel ? `Current window ${windowLabel}: ` : ''}${impressions} impressions with no click or Direct Order evidence.`;
+  } else {
+    signalSummary = zh
+      ? `${windowLabel ? `当前窗口 ${windowLabel}：` : ''}没有有效流量或转化样本。`
+      : `${windowLabel ? `Current window ${windowLabel}: ` : ''}No effective traffic or conversion sample is available.`;
   }
+  out.signal = { summary: signalSummary };
 
-  if (!out.signal || typeof out.signal !== 'object' || !String(out.signal.summary || '').trim()) {
-    let summary;
-    if (directOrders > 0) {
-      summary = zh
-        ? `直接订单 ${directOrders}，Direct ROAS ${Number.isFinite(directRoas) ? directRoas.toFixed(2) : '—'}，花费份额 ${pct(spendShare)}，直接订单份额 ${pct(directOrderShare)}。`
-        : `${directOrders} Direct Orders, Direct ROAS ${Number.isFinite(directRoas) ? directRoas.toFixed(2) : '—'}, Spend Share ${pct(spendShare)}, Direct Order Share ${pct(directOrderShare)}.`;
-    } else if (clicks > 0 || expense > 0) {
-      summary = zh
-        ? `${clicks} 次点击、0 个直接订单，花费份额 ${pct(spendShare)}，当前尚无直接转化证据。`
-        : `${clicks} clicks and 0 Direct Orders, with ${pct(spendShare)} Spend Share; no Direct conversion evidence is present yet.`;
-    } else if (impressions > 0) {
-      summary = zh ? `${impressions} 次展示，当前没有点击或直接订单证据。` : `${impressions} impressions with no click or Direct Order evidence.`;
-    } else {
-      summary = zh ? '当前窗口没有有效流量或转化样本。' : 'No effective traffic or conversion sample is available in the current window.';
-    }
-    out.signal = { summary };
+  let confidenceSummary;
+  if (directOrders >= weeklyOrderReference) {
+    confidenceSummary = zh
+      ? `当前窗口直接订单已达到内部周订单参考（≥${weeklyOrderReference}）；A 仍需结合连续性和 Scale Stability 判断是否适合放大。`
+      : `Current-window Direct Orders meet the internal weekly reference (≥${weeklyOrderReference}); A status still requires continuity and Scale Stability before scaling.`;
+  } else if (directOrders > 0) {
+    confidenceSummary = zh
+      ? `当前窗口已有直接转化，但 ${directOrders}<${weeklyOrderReference}，因此只能处于 B 验证状态，不能升级为 A。`
+      : `The current window has Direct conversion evidence, but ${directOrders}<${weeklyOrderReference}; this remains B under validation and cannot be promoted to A.`;
+  } else if (historicalDirectOrders > 0) {
+    confidenceSummary = zh
+      ? `近 42 天历史存在 ${historicalDirectOrders} 个直接订单，但当前窗口为 0；历史 A/B 身份不能覆盖当前状态，按 B 重新验证。`
+      : `There are ${historicalDirectOrders} historical Direct Orders in the recent history window, but 0 in the current window; historical A/B status cannot override the current state, so this is B under revalidation.`;
+  } else if (clicks > 0) {
+    confidenceSummary = zh
+      ? '当前窗口已有点击但没有直接订单；属于 C 探索/弱证据状态，是否淘汰仍需连续窗口验证。'
+      : 'The current window has clicks but no Direct Orders; this remains C exploration/weak evidence, and rejection still requires continuity across comparable windows.';
+  } else {
+    confidenceSummary = zh ? '当前窗口样本不足，维持 C，当前判断置信度低。' : 'The current-window sample is insufficient; remain C with low confidence.';
   }
-
-  if (!out.confidence || typeof out.confidence !== 'object' || !String(out.confidence.summary || '').trim()) {
-    let summary;
-    if (directOrders >= weeklyOrderReference) {
-      summary = zh
-        ? `直接订单样本已达到内部周订单参考（≥${weeklyOrderReference}），但仍需结合连续性和扩量稳定性。`
-        : `Direct Orders meet the internal weekly reference (≥${weeklyOrderReference}); continuity and scale stability still need separate evidence.`;
-    } else if (directOrders > 0) {
-      summary = zh
-        ? `已有直接转化信号，但订单样本尚未达到内部周订单参考（${weeklyOrderReference}）。`
-        : `Direct conversion evidence exists, but the order sample remains below the internal weekly reference (${weeklyOrderReference}).`;
-    } else if (clicks > 0) {
-      summary = zh
-        ? '已有点击样本但没有直接订单；负向信号存在，但是否淘汰仍需结合连续窗口验证。'
-        : 'There is click evidence but no Direct Order; this is a negative signal, but rejection still requires continuity across a comparable window.';
-    } else {
-      summary = zh ? '样本不足，当前判断置信度低。' : 'The sample is insufficient; confidence is low.';
-    }
-    out.confidence = { summary };
-  }
+  out.confidence = { summary: confidenceSummary };
 
   const hasVerifiedExpansion = item.scaleExpansionEvidence === true;
   if (!hasVerifiedExpansion) {
@@ -607,14 +702,37 @@ function sanitizeOllamaReport(report, compactPackage = {}) {
   const computedMature = observedDays >= requiredObservationDays &&
     Number.isFinite(directOrdersObserved) && directOrdersObserved >= requiredDirectOrders;
   const maturityFloorMet = explicitMature === null ? computedMature : explicitMature;
+  const maturityEvidenceIds = [];
+  if (Number.isFinite(observedDays)) {
+    maturityEvidenceIds.push(ensureGuardFact(
+      facts,
+      'maturityObservedDays',
+      observedDays,
+      'days',
+      zh
+        ? `当前成熟度窗口有效观察 ${observedDays} 天；内部最低观察参考为 ${requiredObservationDays} 天。`
+        : `The current maturity window contains ${observedDays} observed days versus the internal minimum reference of ${requiredObservationDays} days.`,
+    ));
+  }
+  if (Number.isFinite(directOrdersObserved)) {
+    maturityEvidenceIds.push(ensureGuardFact(
+      facts,
+      'maturityDirectOrders',
+      directOrdersObserved,
+      'orders',
+      zh
+        ? `当前成熟度窗口累计 ${directOrdersObserved} 个直接订单；内部周订单参考为 ${requiredDirectOrders}。`
+        : `The current maturity window contains ${directOrdersObserved} Direct Orders versus the internal weekly reference of ${requiredDirectOrders}.`,
+    ));
+  }
   let maturityFloorEvidenceIds = null;
 
   if (stabilityJudgmentBlocked) {
     if (output.stage === 'STABLE' || output.stage === 'UNSTABLE') output.stage = 'CONVERGING';
     addLimitation(output, zh ? '存在可能触发学习期重置的操作，但操作来源尚未确认；在明确操作者/来源前，不做新的稳定性判断。' : 'Operation source is unresolved for a reset candidate; a new stability judgment is blocked until the actor/source is disambiguated.');
-  } else if (learningEpoch.available === true && !maturityFloorMet) {
+  } else if (!maturityFloorMet) {
     output.stage = 'LEARNING';
-  } else if (output.stage === 'LEARNING' && maturityFloorMet) {
+  } else if (output.stage === 'LEARNING') {
     const basis = maturity.basis === 'CURRENT_LEARNING_EPOCH' ? 'current learning epoch' : 'selected observation window';
     const basisZh = maturity.basis === 'CURRENT_LEARNING_EPOCH' ? '当前学习周期' : '所选观察窗口';
     const daysFactId = ensureGuardFact(
@@ -659,6 +777,14 @@ function sanitizeOllamaReport(report, compactPackage = {}) {
       if (!supportsStability) continue;
     }
     inferences.push({ ...inference, evidenceIds });
+  }
+  if (!maturityFloorMet && maturityEvidenceIds.length && !stabilityJudgmentBlocked) {
+    inferences.unshift({
+      statement: zh
+        ? `当前成熟度窗口尚未同时达到 ${requiredObservationDays} 天和 ${requiredDirectOrders} 个直接订单的内部参考，因此 Campaign 维持学习期。`
+        : `The current maturity window does not yet meet both internal references of ${requiredObservationDays} days and ${requiredDirectOrders} Direct Orders, so the campaign remains in LEARNING.`,
+      evidenceIds: maturityEvidenceIds,
+    });
   }
   if (economicsGuardFactId && !inferences.some(row => Array.isArray(row.evidenceIds) && row.evidenceIds.includes(economicsGuardFactId))) {
     const relation = String(economics.broadRoasVsSpendLimit || '').toUpperCase();

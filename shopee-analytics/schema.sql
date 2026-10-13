@@ -461,7 +461,8 @@ CREATE TABLE IF NOT EXISTS shopee_diagnosis_results (
 CREATE TABLE IF NOT EXISTS shopee_skill_reports (
   id BIGSERIAL PRIMARY KEY,
   shop_id BIGINT NOT NULL,
-  campaign_id BIGINT NOT NULL,
+  campaign_id BIGINT,
+  promotion_key TEXT,
   period_start DATE NOT NULL,
   period_end DATE NOT NULL,
   data_cutoff TIMESTAMPTZ NOT NULL,
@@ -479,6 +480,32 @@ CREATE TABLE IF NOT EXISTS shopee_skill_reports (
 
 CREATE INDEX IF NOT EXISTS idx_shopee_skill_reports_campaign_time
   ON shopee_skill_reports(shop_id, campaign_id, generated_at DESC);
+
+-- Skill reports support both numeric Shopee Campaign IDs and manual-import Ad Group promotion keys.
+-- Existing desktop databases originally required campaign_id; relax that constraint without rewriting rows.
+ALTER TABLE shopee_skill_reports
+  ALTER COLUMN campaign_id DROP NOT NULL,
+  ADD COLUMN IF NOT EXISTS promotion_key TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_shopee_skill_reports_promotion_time
+  ON shopee_skill_reports(shop_id, promotion_key, generated_at DESC)
+  WHERE promotion_key IS NOT NULL;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname='shopee_skill_reports_scope_key_check'
+      AND conrelid='shopee_skill_reports'::regclass
+  ) THEN
+    ALTER TABLE shopee_skill_reports
+      ADD CONSTRAINT shopee_skill_reports_scope_key_check
+      CHECK (
+        (campaign_id IS NOT NULL AND promotion_key IS NULL)
+        OR (campaign_id IS NULL AND promotion_key IS NOT NULL)
+      );
+  END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS shopee_sync_state (
   app_role TEXT NOT NULL,
