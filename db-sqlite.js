@@ -1253,6 +1253,36 @@ function initDatabase() {
     )
   `);
 
+  // 合并物流费用（幂等、独立业务事实，不回填旧单）。
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS shared_logistics_fees (
+      id TEXT PRIMARY KEY,
+      ci_id TEXT NOT NULL,
+      ci_no TEXT NOT NULL,
+      bill_no TEXT NOT NULL,
+      fee_type TEXT NOT NULL DEFAULT 'delivery',
+      payee_name TEXT NOT NULL,
+      currency TEXT NOT NULL,
+      amount_minor INTEGER NOT NULL CHECK (amount_minor > 0),
+      payment_request_id TEXT NOT NULL UNIQUE,
+      remark TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE (ci_id, bill_no)
+    )
+  `);
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS shared_logistics_fee_batches (
+      fee_id TEXT NOT NULL REFERENCES shared_logistics_fees(id),
+      batch_id TEXT NOT NULL REFERENCES logistics_batches(id),
+      mode TEXT NOT NULL,
+      basis TEXT NOT NULL,
+      basis_value REAL NOT NULL,
+      amount_minor INTEGER NOT NULL CHECK (amount_minor >= 0),
+      PRIMARY KEY (fee_id, batch_id)
+    )
+  `);
+  d.exec('CREATE INDEX IF NOT EXISTS idx_shared_logistics_ci ON shared_logistics_fees(ci_id)');
+
   // 入库单
   d.exec(`
     CREATE TABLE IF NOT EXISTS inbound_records (

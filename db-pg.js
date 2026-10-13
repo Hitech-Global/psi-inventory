@@ -1399,6 +1399,34 @@ async function initDatabase() {
     )
   `);
 
+  // 合并物流费用：一笔真实付款申请关联多批次，保存原币最小单位金额。
+  await exec(`
+    CREATE TABLE IF NOT EXISTS shared_logistics_fees (
+      id TEXT PRIMARY KEY,
+      ci_id TEXT NOT NULL,
+      ci_no TEXT NOT NULL,
+      bill_no TEXT NOT NULL,
+      fee_type TEXT NOT NULL DEFAULT 'delivery',
+      payee_name TEXT NOT NULL,
+      currency TEXT NOT NULL,
+      amount_minor BIGINT NOT NULL CHECK (amount_minor > 0),
+      payment_request_id TEXT NOT NULL UNIQUE,
+      remark TEXT DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (NOW()::TEXT),
+      UNIQUE (ci_id, bill_no)
+    )`);
+  await exec(`
+    CREATE TABLE IF NOT EXISTS shared_logistics_fee_batches (
+      fee_id TEXT NOT NULL REFERENCES shared_logistics_fees(id),
+      batch_id TEXT NOT NULL REFERENCES logistics_batches(id),
+      mode TEXT NOT NULL,
+      basis TEXT NOT NULL,
+      basis_value DOUBLE PRECISION NOT NULL,
+      amount_minor BIGINT NOT NULL CHECK (amount_minor >= 0),
+      PRIMARY KEY (fee_id, batch_id)
+    )`);
+  await exec("CREATE INDEX IF NOT EXISTS idx_shared_logistics_ci ON shared_logistics_fees(ci_id)");
+
   // LOGISTICS-LISTING-01：物流单 Listing 上架状态管理（幂等迁移，存量 PG 库同样生效）
   // 与 CI 的 PUR-OPS-COLLAB-01 完全独立并存，互不读写。四态见 db-sqlite.js 同名迁移块注释。
   await exec("ALTER TABLE logistics_batches ADD COLUMN IF NOT EXISTS listing_status TEXT NOT NULL DEFAULT 'pending_plan'");

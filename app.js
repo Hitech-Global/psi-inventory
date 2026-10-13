@@ -12091,11 +12091,89 @@ function renderPLItemsRows(plId){
 function renderCILogisticsShell(ciId){
   const canCreate=hasPermission('logistics_create');
   const createBtn = canCreate ? '<button class="btn btn-primary btn-sm" style="margin-left:8px" onclick="createLogFromCI(\''+esc(ciId)+'\')">+ '+t('logistics.new_batch','新建物流批次')+'</button>' : '';
+  const sharedBtn=(hasPermission('ci_edit')&&hasPermission('payment_create')&&hasPermission('ci_amount_view'))?
+    '<button class="btn btn-secondary btn-sm" style="margin-left:8px" onclick="openSharedLogisticsFeeModal(\''+esc(ciId)+'\')">+ 合并派送费</button>':'';
   return '<div class="detail-section ci-acc" id="ci-acc-logi">'
     + ciAccHead('logi', t('logistics.title','物流批次'), null)
     + '<div class="ci-acc-body" id="ci-acc-body-logi" data-rendered="0" hidden><div class="empty-state" style="padding:12px">'+t('common.loading','加载中…')+'</div></div>'
-    + createBtn
+    + createBtn + sharedBtn
     + '</div>';
+}
+// Combine multiple shipped batches into ONE payable expense, without duplicate batch charges.
+async function openSharedLogisticsFeeModal(ciId){
+  try{
+    const result=await Promise.all([
+      api('/api/commercial-invoices/'+ciId),
+      api('/api/commercial-invoices/'+ciId+'/logistics-batches'),
+      api('/api/commercial-invoices/'+ciId+'/shared-logistics-fees')]);
+    const ci=result[0],batches=result[1]||[];
+    const currencyOptions=Array.isArray(result[2]&&result[2].currency_options)?result[2].currency_options:[];
+    if(batches.length<2){showToast('合并费用至少需要两个物流批次','warning');return;}
+    window._sharedFeeBatchList=batches;
+    let html='<div class="form-card" style="box-shadow:none;padding:0;max-height:65vh;overflow:auto">'
+      +'<div style="color:#6e6e73;font-size:12px;margin:0 0 14px">仅生成一笔应付和一次付款审批；按运输方式自动分摊：海运 CBM，空运 KG。</div>'
+      +'<div class="form-grid">'
+      +'<div class="form-group"><label>货代账单号 *</label><input id="sfee-bill" placeholder="货代发票/账单编号"></div>'
+      +'<div class="form-group"><label>付款对象 *</label><input id="sfee-payee" placeholder="货代或服务商"></div>'
+      +'<div class="form-group"><label>费用币种 *</label><select id="sfee-cur">'
+      +currencyOptions.map(x=>'<option value="'+esc(x)+'"'+(x==='IDR'?' selected':'')+'>'+esc(x)+'</option>').join('')
+      +'</select></div>'
+      +'<div class="form-group"><label>合并派送费金额 *</label><input type="number" min="0.01" step="0.01" id="sfee-amt" placeholder="实际账单金额"></div>'
+      +'<div class="form-group form-group-full"><label>选择参与分摊的物流批次（至少两个）</label>'
+      +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px">';
+    batches.forEach(b=>{
+      const sea=b.transport_mode==='sea',air=b.transport_mode==='air';
+      if(!sea&&!air)return;
+      const cbm=(b.pls||[]).reduce((s,p)=>s+Number(p.total_cbm||0),0);
+      html+='<label style="display:flex;align-items:center;gap:6px;padding:10px;border:1px solid #d9d9e0;border-radius:10px;cursor:pointer;background:#f9fafb">'
+        +'<input type="checkbox" class="sfee-batch" value="'+esc(b.id)+'" data-mode="'+esc(b.transport_mode)+'" onchange="updateSharedFeeModeFields()">'
+        +'<span style="font-size:12px">'+esc(b.batch_no)+' · '+(sea?'海运':'空运')+(sea?' · '+cbm.toFixed(2)+' CBM':' · 按KG')+'</span></label>';
+    });
+    html+='</div></div><div class="form-group form-group-full" id="sfee-mixed" style="display:none">'
+      +'<div style="font-size:12px;color:#8b5e00;margin-bottom:7px">同时选择海运和空运时，必须根据货代账单明确划分两种运输方式的金额。</div>'
+      +'<div style="display:flex;gap:8px;flex-wrap:wrap">'
+      +'<label>海运金额 <input type="number" min="0.01" step="0.01" id="sfee-sea" style="width:125px"></label>'
+      +'<label>空运金额 <input type="number" min="0.01" step="0.01" id="sfee-air" style="width:125px"></label>'
+      +'</div></div>'
+      +'<div class="form-group form-group-full"><label>备注</label><input id="sfee-rem" placeholder="清关完成后合并派送"></div>'
+      +'</div></div>';
+    openModal('新增合并派送费用 — '+esc(ci.ci_no),html,
+      '<button class="btn btn-secondary" onclick="closeModal()">取消</button>'
+      +'<button class="btn btn-primary" id="sfee-submit" onclick="submitSharedLogisticsFee(\''+esc(ciId)+'\')">创建并提交付款审批</button>',
+      'modal-ci-create');
+  }catch(e){showToast(e.message,'danger')}
+}
+function updateSharedFeeModeFields(){
+  const selected=[...document.querySelectorAll('.sfee-batch:checked')];
+  const modes=new Set(selected.map(x=>x.dataset.mode));
+  const section=document.getElementById('sfee-mixed');
+  if(section)section.style.display=modes.has('sea')&&modes.has('air')?'block':'none';
+}
+async function submitSharedLogisticsFee(ciId){
+  const chosen=[...document.querySelectorAll('.sfee-batch:checked')];
+  if(chosen.length<2){showToast('请至少选择两个批次','warning');return;}
+  const modes=new Set(chosen.map(x=>x.dataset.mode));
+  const data={
+    batch_ids:chosen.map(x=>x.value),
+    bill_no:document.getElementById('sfee-bill').value.trim(),
+    payee_name:document.getElementById('sfee-payee').value.trim(),
+    currency:document.getElementById('sfee-cur').value,
+    amount:document.getElementById('sfee-amt').value,
+    remark:document.getElementById('sfee-rem').value
+  };
+  if(modes.has('sea')&&modes.has('air')){
+    data.mode_amounts={sea:document.getElementById('sfee-sea').value,
+      air:document.getElementById('sfee-air').value};
+  }
+  if(!data.bill_no||!data.payee_name||!(Number(data.amount)>0)){showToast('请填好账单号、付款对象和金额','warning');return;}
+  if(!window.confirm('这会创建一笔真实的应付费用并提交付款审批。确认继续？'))return;
+  const btn=document.getElementById('sfee-submit');
+  if(btn){btn.disabled=true;btn.textContent='提交中…';}
+  try{
+    const r=await api('/api/commercial-invoices/'+ciId+'/shared-logistics-fees','POST',data);
+    showToast(r.auto_submitted?'已创建合并派送费并提交审批':'费用已保存，但自动提交审批失败，请到付款列表核对',r.auto_submitted?'success':'warning');
+    closeModal();invalidateCILogistics(ciId);await viewCI(ciId);
+  }catch(e){showToast(e.message,'danger');if(btn){btn.disabled=false;btn.textContent='创建并提交付款审批';}}
 }
 async function loadCILogistics(ciId){
   const body=document.getElementById('ci-acc-body-logi');
@@ -12107,11 +12185,73 @@ async function loadCILogistics(ciId){
       data=await api('/api/commercial-invoices/'+ciId+'/logistics-batches');
       __ciLogiCache.set(ciId,{ts:Date.now(),data:data});
     }
-    body.innerHTML=renderCILogisticsTable(data||[], ciId);
+    body.innerHTML=renderCILogisticsTable(data||[], ciId)
+      +'<div class="detail-section" id="ci-shared-fees-list" style="margin-top:12px"></div>';
     body.setAttribute('data-rendered','1');
+    // Separate asynchronous request: logistics table renders immediately from LRU cache.
+    api('/api/commercial-invoices/'+ciId+'/shared-logistics-fees').then(function(resp){
+      if(!body.isConnected)return;
+      renderCISharedFeeDetails(ciId,(resp&&resp.fees)||[],data||[],resp&&resp.ci_currency||'RMB',(resp&&resp.batch_totals_rmb)||{});
+    }).catch(function(e){
+      const el=document.getElementById('ci-shared-fees-list');
+      if(el)el.textContent='合并费用读取失败：'+(e.message||e);
+    });
   }catch(e){
     body.innerHTML='<div class="empty-state" style="padding:12px;color:#fa8c16">'+esc(e.message||'加载失败')+' <button class="btn btn-secondary btn-sm" onclick="loadCILogistics(\''+esc(ciId)+'\')">'+t('common.retry','重试')+'</button></div>';
   }
+}
+function renderCISharedFeeDetails(ciId,fees,batches,ciCurrency,batchTotals){
+  const box=document.getElementById('ci-shared-fees-list');
+  if(!box)return;
+  if(!fees.length){box.innerHTML='';return;}
+  const sums={};
+  fees.forEach(fee=>{
+    const faceTotal=Number(fee.amount_minor)||0;
+    (fee.allocations||[]).forEach(a=>{
+      const id=String(a.batch_id);
+      if(!sums[id])sums[id]=[];
+      const original=Number(a.amount_minor||0)/100;
+      const conv=fee.conversion||{};
+      const convertedMinor=conv.amount_minor==null?null:Math.round(Number(conv.amount_minor)*Number(a.amount_minor)/faceTotal);
+      sums[id].push({original,currency:fee.currency,convertedMinor,bill:fee.bill_no});
+    });
+  });
+  batches.forEach(b=>{
+    const items=sums[String(b.id)]||[];
+    if(!items.length)return;
+    const cell=document.getElementById('ci-batch-freight-'+b.id);
+    const ratio=document.getElementById('ci-batch-ratio-'+b.id);
+    if(cell){
+      const adds=items.map(x=>'<div style="font-size:11px;color:#4263eb;margin-top:3px">+ 合并 '+fmtMoney(x.original,x.currency)+(x.convertedMinor==null?'（待折算）':(' ≈'+fmtMoney(x.convertedMinor/100,'RMB')))+'</div>').join('');
+      const calc=batchTotals[String(b.id)];
+      if(calc&&calc.total_minor!=null){
+        cell.innerHTML='<strong>'+fmtMoney(calc.total_minor/100,'RMB')+'</strong>'+adds;
+        cell.title='综合运费已含批次原运费与合并费用（RMB）';
+      }else{
+        cell.innerHTML=fmtMoney(b.total_freight,b.freight_currency)+adds;
+        cell.title=calc&&(calc.errors||[]).length?calc.errors.join('; '):'跨币种运费待折算';
+      }
+    }
+    if(ratio){
+      const calc=batchTotals[String(b.id)];
+      const cargo=Number(b.cargo_value)||0;
+      if(calc&&calc.total_minor!=null&&ciCurrency==='RMB'&&cargo>0){
+        ratio.textContent=((calc.total_minor/100)/cargo*100).toFixed(2)+'%';
+        ratio.title='分摊后综合运费 RMB / 本批次CI货值 RMB';
+      }else{ratio.textContent='—';ratio.title='缺少同币种的已折算运费或本批次货值';}
+    }
+  });
+  box.innerHTML='<h4 style="font-size:13px;margin:12px 0 8px">合并费用（单笔付款 / 多批次分摊）</h4>'
+    +'<div class="table-container"><table class="data-table" style="font-size:12px"><thead><tr>'
+    +'<th>账单号</th><th>收款方</th><th>原币费用</th><th>成本币种折算</th><th>关联批次</th><th>审批</th></tr></thead><tbody>'
+    +fees.map(f=>{
+      const conv=f.conversion||{};
+      const display=conv.error?'<span style="color:#b45309">待折算：'+esc(conv.error)+'</span>':fmtMoney(Number(conv.amount_minor)/100,'RMB');
+      return '<tr><td class="cell-id">'+esc(f.bill_no)+'</td><td>'+esc(f.payee_name)+'</td>'
+        +'<td>'+fmtMoney(Number(f.amount_minor)/100,f.currency)+'</td><td>'+display+'</td>'
+        +'<td>'+(f.allocations||[]).map(a=>esc(a.batch_no)+' ('+fmtMoney(Number(a.amount_minor)/100,f.currency)+')').join('<br>')+'</td>'
+        +'<td>'+esc(f.approval_status||f.payment_status||'pending')+'</td></tr>';
+    }).join('')+'</tbody></table></div>';
 }
 function renderCILogisticsTable(batches, ciId){
   if(!batches||!batches.length){
@@ -12130,8 +12270,8 @@ function renderCILogisticsTable(batches, ciId){
       +'<td class="text-right">'+(b.actual_transit_days!=null?b.actual_transit_days:'—')+'</td>'
       +'<td class="text-right">'+(b.total_cartons||0)+'</td>'
       +'<td class="text-right">'+cbm.toFixed(2)+'</td>'
-      +'<td class="text-right">'+fmtMoney(b.total_freight,b.freight_currency)+'</td>'
-      +'<td class="text-right">'+fv+'</td>'
+      +'<td class="text-right" id="ci-batch-freight-'+esc(b.id)+'">'+fmtMoney(b.total_freight,b.freight_currency)+'</td>'
+      +'<td class="text-right" id="ci-batch-ratio-'+esc(b.id)+'">'+fv+'</td>'
       +'<td>'+esc(logisticsStatusLabelByKey(b.logistics_display_status||b.logistics_status))+'</td>'
       +'<td>'+esc(t('logistics.listing_status.'+(b.listing_status||'pending_plan'),b.listing_status||'pending_plan'))+'</td>'
       +'<td>'+(b.listing_owner_names&&b.listing_owner_names.length?esc(b.listing_owner_names.join('、')):'—')+'</td>'
@@ -12778,7 +12918,7 @@ async function viewCICost(id){
     const summary=await api('/api/commercial-invoices/'+id+'/cost-summary');
     const ci=await api('/api/commercial-invoices/'+id);
     openModal(t('modal.title.viewCICost', 'CI费用管理 - {v1}', {v1: ci.ci_no}),
-      t('modal.body.viewCICost', '<div class="form-card" style="box-shadow:none;padding:0"><div class="detail-section"><h3>费用标记</h3><div class="detail-grid"><div class="detail-item"><span class="detail-label">有关税</span><span class="detail-value">{v1}</span></div><div class="detail-item"><span class="detail-label">有商检费用</span><span class="detail-value">{v2}</span></div></div>{v3}</div><div class="detail-section"><h3>分摊输入快照</h3><div class="form-grid"><div class="form-group"><label>本票实际运输计费基础</label><select id="ci-cost-basis" {v4}><option value="">无运输类费用 / 未选择</option><option value="cbm" {v5}>CBM</option><option value="kg" {v6}>KG（PL总毛重）</option></select></div><div class="form-group"><label>CI Import Duty总金额</label><input type="number" min="0" step="0.01" id="ci-duty-total" value="{v7}" {v8}></div></div><div style="font-size:12px;color:#777;margin:8px 0">运输依据和实际税率均为本票快照，不会从运输方式或SKU主数据动态重算；费用确认后锁定。</div><div class="table-container" style="box-shadow:none"><table class="data-table"><thead><tr><th>SKU</th><th>原单价</th><th>折扣</th><th>折后单价</th><th>CI实际金额</th><th>本票实际关税税率(%)</th></tr></thead><tbody>{v9}</tbody></table></div>{v10}</div><div class="detail-section"><h3>费用汇总</h3><div class="detail-grid"><div class="detail-item"><span class="detail-label">商品金额</span><span class="detail-value">{v11}</span></div><div class="detail-item"><span class="detail-label">到仓费用</span><span class="detail-value">{v12}</span></div><div class="detail-item"><span class="detail-label">关税</span><span class="detail-value">{v13}</span></div><div class="detail-item"><span class="detail-label">商检费用</span><span class="detail-value">{v14}</span></div><div class="detail-item"><span class="detail-label">落地成本总额</span><span class="detail-value font-bold">{v15}</span></div><div class="detail-item"><span class="detail-label">费用确认</span><span class="detail-value">{v16}</span></div><div class="detail-item"><span class="detail-label">费用分摊</span><span class="detail-value">{v17}</span></div><div class="detail-item"><span class="detail-label">原库存导入</span><span class="detail-value">{v18}</span></div></div></div>{v19}<div class="flex gap-8 mt-16">{v20}{v21}{v22}{v23}{v24}</div></div>', {v1: summary.has_customs_duty?t('gen.L5956.1','✅ 是'):t("ci.012", "\u274c \u5426"), v2: summary.has_inspection_fee?t('gen.L5956.2','✅ 是'):t("ci.012", "\u274c \u5426"), v3: hasPermission('ci_edit')?'<div class="flex gap-8 mt-16"><button class="btn btn-secondary btn-sm" onclick="toggleCiCostFlag(\''+id+'\','+(summary.has_customs_duty?0:1)+t('gen.L5956.3',',null)">切换关税标记</button><button class="btn btn-secondary btn-sm" onclick="toggleCiCostFlag(\'')+id+'\',null,'+(summary.has_inspection_fee?0:1)+t('gen.L5956.4',')">切换商检标记</button></div>'):'', v4: summary.cost_confirmed?'disabled':'', v5: summary.transport_basis==='cbm'?'selected':'', v6: summary.transport_basis==='kg'?'selected':'', v7: Number(summary.import_duty_total||0), v8: summary.cost_confirmed?'disabled':'', v9: (summary.ci_items||[]).map(i=>'<tr><td class="cell-id">'+esc(i.sku_code)+'</td><td class="text-right">'+fmtMoney(i.ci_amount)+'</td><td class="text-right"><input type="number" min="0" step="0.01" class="ci-duty-rate" data-id="'+esc(i.id)+'" value="'+(i.actual_customs_rate===null||i.actual_customs_rate===''?'':esc(i.actual_customs_rate))+'" style="width:120px;text-align:right" '+(summary.cost_confirmed?'disabled':'')+'></td></tr>').join(''), v10: hasPermission('ci_edit')&&!summary.cost_confirmed?'<button class="btn btn-secondary btn-sm mt-16" onclick="saveCiCostInputs(\''+id+t('gen.L5956.5','\')">保存分摊输入</button>'):'', v11: fmtMoney(summary.goods_amount), v12: fmtMoney(summary.warehouse_arrival_total), v13: fmtMoney(summary.customs_duty_total), v14: fmtMoney(summary.inspection_fee_total), v15: fmtMoney(summary.landing_cost_total), v16: summary.cost_confirmed?t('gen.L5956.6','✅ 已确认'):t("ci.021", "\u274c \u672a\u786e\u8ba4"), v17: summary.cost_allocated?t('gen.L5956.7','✅ 已分摊'):t("ci.023", "\u274c \u672a\u5206\u644a"), v18: summary.original_inventory_imported?t('gen.L5956.8','✅ 已完成'):t('gen.L5956.9','❌ 未完成'), v19: summary.cost_items&&summary.cost_items.length?t('gen.L5956.10','<div class="detail-section"><h3>费用明细</h3><div class="table-container"><table class="data-table"><thead><tr><th>类别</th><th>小类</th><th>付款申请号</th><th>应付金额</th><th>已付金额</th><th>计入落地成本</th><th>付款对象</th></tr></thead><tbody>')+summary.cost_items.map(c=>'<tr><td>'+esc(PAY_CATEGORIES[c.cost_category]||c.cost_category)+'</td><td>'+esc(c.cost_subcategory)+'</td><td class="cell-id">'+esc(c.request_no)+'</td><td class="text-right">'+fmtMoney(c.payable_amount)+'</td><td class="text-right">'+fmtMoney(c.paid_amount)+'</td><td>'+(c.include_in_landing_cost?'✅':'❌')+'</td><td>'+esc(c.payee_name)+'</td></tr>').join('')+'</tbody></table></div></div>':'', v20: hasPermission('ci_edit')&&!summary.cost_confirmed?'<button class="btn btn-secondary btn-sm" onclick="confirmCiCosts(\''+id+t('gen.L5956.11','\')">✅ 确认费用完整</button>'):'', v21: hasPermission('ci_edit')?'<button class="btn btn-secondary btn-sm" onclick="allocateCosts(\''+id+t('gen.L5956.12','\')">📊 费用分摊</button>'):'', v22: hasPermission('payment_create')&&summary.has_customs_duty&&!summary.cost_confirmed?'<button class="btn btn-secondary btn-sm" onclick="createCustomsDutyPay(\''+id+t('gen.L5956.13','\')">💰 关税付款</button>'):'', v23: hasPermission('payment_create')&&summary.has_inspection_fee&&!summary.cost_confirmed?'<button class="btn btn-secondary btn-sm" onclick="createInspectionFeePay(\''+id+t('gen.L5956.14','\')">💰 商检付款</button>'):'', v24: hasPermission('payment_create')&&!summary.cost_confirmed?'<button class="btn btn-secondary btn-sm" onclick="createWarehousePay(\''+id+t('gen.L5956.15','\')">🚚 到仓费用付款</button>'):''}),
+      t('modal.body.viewCICost', '<div class="form-card" style="box-shadow:none;padding:0"><div class="detail-section"><h3>费用标记</h3><div class="detail-grid"><div class="detail-item"><span class="detail-label">有关税</span><span class="detail-value">{v1}</span></div><div class="detail-item"><span class="detail-label">有商检费用</span><span class="detail-value">{v2}</span></div></div>{v3}</div><div class="detail-section"><h3>分摊输入快照</h3><div class="form-grid"><div class="form-group"><label>本票实际运输计费基础</label><select id="ci-cost-basis" {v4}><option value="">无运输类费用 / 未选择</option><option value="cbm" {v5}>CBM</option><option value="kg" {v6}>KG（PL总毛重）</option></select></div><div class="form-group"><label>CI Import Duty总金额</label><input type="number" min="0" step="0.01" id="ci-duty-total" value="{v7}" {v8}></div></div><div style="font-size:12px;color:#777;margin:8px 0">运输依据和实际税率均为本票快照，不会从运输方式或SKU主数据动态重算；费用确认后锁定。</div><div class="table-container" style="box-shadow:none"><table class="data-table"><thead><tr><th>SKU</th><th>原单价</th><th>折扣</th><th>折后单价</th><th>CI实际金额</th><th>本票实际关税税率(%)</th></tr></thead><tbody>{v9}</tbody></table></div>{v10}</div><div class="detail-section"><h3>费用汇总</h3><div class="detail-grid"><div class="detail-item"><span class="detail-label">商品金额</span><span class="detail-value">{v11}</span></div><div class="detail-item"><span class="detail-label">到仓费用</span><span class="detail-value">{v12}</span></div><div class="detail-item"><span class="detail-label">关税</span><span class="detail-value">{v13}</span></div><div class="detail-item"><span class="detail-label">商检费用</span><span class="detail-value">{v14}</span></div><div class="detail-item"><span class="detail-label">落地成本总额</span><span class="detail-value font-bold">{v15}</span></div><div class="detail-item"><span class="detail-label">费用确认</span><span class="detail-value">{v16}</span></div><div class="detail-item"><span class="detail-label">费用分摊</span><span class="detail-value">{v17}</span></div><div class="detail-item"><span class="detail-label">原库存导入</span><span class="detail-value">{v18}</span></div></div></div>{v19}<div class="flex gap-8 mt-16">{v20}{v21}{v22}{v23}{v24}</div></div>', {v1: summary.has_customs_duty?t('gen.L5956.1','✅ 是'):t("ci.012", "\u274c \u5426"), v2: summary.has_inspection_fee?t('gen.L5956.2','✅ 是'):t("ci.012", "\u274c \u5426"), v3: hasPermission('ci_edit')?'<div class="flex gap-8 mt-16"><button class="btn btn-secondary btn-sm" onclick="toggleCiCostFlag(\''+id+'\','+(summary.has_customs_duty?0:1)+t('gen.L5956.3',',null)">切换关税标记</button><button class="btn btn-secondary btn-sm" onclick="toggleCiCostFlag(\'')+id+'\',null,'+(summary.has_inspection_fee?0:1)+t('gen.L5956.4',')">切换商检标记</button></div>'):'', v4: summary.cost_confirmed?'disabled':'', v5: summary.transport_basis==='cbm'?'selected':'', v6: summary.transport_basis==='kg'?'selected':'', v7: Number(summary.import_duty_total||0), v8: summary.cost_confirmed?'disabled':'', v9: (summary.ci_items||[]).map(i=>'<tr><td class="cell-id">'+esc(i.sku_code)+'</td><td class="text-right">'+fmtMoney(i.ci_amount)+'</td><td class="text-right"><input type="number" min="0" step="0.01" class="ci-duty-rate" data-id="'+esc(i.id)+'" value="'+(i.actual_customs_rate===null||i.actual_customs_rate===''?'':esc(i.actual_customs_rate))+'" style="width:120px;text-align:right" '+(summary.cost_confirmed?'disabled':'')+'></td></tr>').join(''), v10: hasPermission('ci_edit')&&!summary.cost_confirmed?'<button class="btn btn-secondary btn-sm mt-16" onclick="saveCiCostInputs(\''+id+t('gen.L5956.5','\')">保存分摊输入</button>'):'', v11: fmtMoney(summary.goods_amount), v12: summary.fx_blockers&&summary.fx_blockers.length?'待折算（请先完成付款/汇率）':fmtMoney(summary.warehouse_arrival_total), v13: fmtMoney(summary.customs_duty_total), v14: fmtMoney(summary.inspection_fee_total), v15: summary.landing_cost_total==null?'待汇率/付款确认':fmtMoney(summary.landing_cost_total), v16: summary.cost_confirmed?t('gen.L5956.6','✅ 已确认'):t("ci.021", "\u274c \u672a\u786e\u8ba4"), v17: summary.cost_allocated?t('gen.L5956.7','✅ 已分摊'):t("ci.023", "\u274c \u672a\u5206\u644a"), v18: summary.original_inventory_imported?t('gen.L5956.8','✅ 已完成'):t('gen.L5956.9','❌ 未完成'), v19: summary.cost_items&&summary.cost_items.length?t('gen.L5956.10','<div class="detail-section"><h3>费用明细</h3><div class="table-container"><table class="data-table"><thead><tr><th>类别</th><th>小类</th><th>付款申请号</th><th>应付金额</th><th>已付金额</th><th>计入落地成本</th><th>付款对象</th></tr></thead><tbody>')+summary.cost_items.map(c=>'<tr><td>'+esc(PAY_CATEGORIES[c.cost_category]||c.cost_category)+'</td><td>'+esc(c.cost_subcategory)+'</td><td class="cell-id">'+esc(c.request_no)+'</td><td class="text-right">'+fmtMoney(c.payable_amount)+'</td><td class="text-right">'+fmtMoney(c.paid_amount)+'</td><td>'+(c.include_in_landing_cost?'✅':'❌')+'</td><td>'+esc(c.payee_name)+'</td></tr>').join('')+'</tbody></table></div></div>':'', v20: hasPermission('ci_edit')&&!summary.cost_confirmed?'<button class="btn btn-secondary btn-sm" onclick="confirmCiCosts(\''+id+t('gen.L5956.11','\')">✅ 确认费用完整</button>'):'', v21: hasPermission('ci_edit')?'<button class="btn btn-secondary btn-sm" onclick="allocateCosts(\''+id+t('gen.L5956.12','\')">📊 费用分摊</button>'):'', v22: hasPermission('payment_create')&&summary.has_customs_duty&&!summary.cost_confirmed?'<button class="btn btn-secondary btn-sm" onclick="createCustomsDutyPay(\''+id+t('gen.L5956.13','\')">💰 关税付款</button>'):'', v23: hasPermission('payment_create')&&summary.has_inspection_fee&&!summary.cost_confirmed?'<button class="btn btn-secondary btn-sm" onclick="createInspectionFeePay(\''+id+t('gen.L5956.14','\')">💰 商检付款</button>'):'', v24: hasPermission('payment_create')&&!summary.cost_confirmed?'<button class="btn btn-secondary btn-sm" onclick="createWarehousePay(\''+id+t('gen.L5956.15','\')">🚚 到仓费用付款</button>'):''}),
       '<button class="btn btn-secondary" onclick="closeModal()">'+t("common.close","关闭")+'<</button>');
   }catch(e){showToast(e.message,'danger')}
 }
