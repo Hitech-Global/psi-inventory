@@ -30,11 +30,14 @@
 - npm run postinstall
 以上在 Node 22 / SQLite 内存数据库已通过。另使用已有 Docker postgres:16 镜像、全新独立容器（127.0.0.1:55437，非 Shopee / 非 PSI 生产），完成：空白全量建表、db.js 生产生效迁移重复执行、真实 PG 事务与 HTTP 费用接口、台账唯一性、重复申请 409、跨币种汇率、撤销状态 fail-closed、CI RMB 运费及 WAC IDR 分摊守恒。运行：`node local-pg-gate.cjs`、`node local-pg-api-run.cjs`（本机脚本含环境保护，不提交凭据）。
 
+另完成真实财务审批链路（本地 PG）：`node local-pg-api-run.cjs test/shared-logistics-fee-pg-approval.test.cjs`。校验 CI POST → payment 审批流 → 指定审批人最终审批 → 同事务 settlement_logs + payment_allocations → 唯一 payable_items 标记 paid，已通过。严格拒绝非 `127.0.0.1:55437/psi_shared_fee_test` 连接。
+
 付款部分付款/抹零、来源追溯、付款汇率解析三个独立回归测试通过。另有 AST 结算契约测试因本机缺少可选依赖 `acorn` 未运行，不能标记通过。
 
 ## 上线前严守的 Gate
 - [x] PostgreSQL 空白迁移、生产同步迁移入口幂等、真实事务及费用 HTTP 接口（仅独立本地 PG；生产只读）
-- [ ] 付款全流程：配置审批流、提交、审批、部分/全部付款、核销、汇率快照与反向退款验证
+- [x] 本地真实 PG 的新费用创建 → 指定审批 → 最终审批自动全额付款 → 结算日志、分摊及应付台账状态（同事务）
+- [ ] 部分付款、退款/冲销及审批拒绝在完整财务业务流程中的真实 PG 验收（相关基础回归已通过）
 - [ ] 运营用户/财务权限界面测试（金额隐藏、海运/空运、多币种、切页）
 - [ ] CI 大列表性能与缓存失效测试；无合并费用的历史 CI 使用旧展示口径
 - [ ] 未付款/拒绝/取消的费用在真实系统中的处理流程验收
