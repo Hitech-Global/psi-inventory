@@ -1052,6 +1052,8 @@ function createShopeeAnalyticsRouter({
         context: {
           maturity: row.maturity_json || null,
           timeContext: row.time_context_json || null,
+          itemCurrentWindow: row.item_current_window_json || null,
+          campaignMetrics: row.campaign_metrics_json || null,
           dataQuality: row.data_quality_json || null,
           campaign: row.campaign_context_json || null,
         },

@@ -601,6 +601,16 @@ function ensureGuardFact(facts, metric, value, unit, statement) {
 function hasEvidenceLimitation(report, pattern) {
   return Array.isArray(report.limitations) && report.limitations.some(row => pattern.test(String(row || '')));
 }
+
+function operationHistoryState(compactPackage = {}) {
+  const isAdGroup = String(compactPackage.campaign?.promotionType || '') === 'AD_GROUP' ||
+    Boolean(compactPackage.campaign?.promotionKey);
+  if (!isAdGroup) return { required: false, linked: true, status: null };
+  const status = String(compactPackage.dataQuality?.operationHistoryLink || '').trim().toUpperCase();
+  const unresolved = new Set(['', 'NOT_FOUND', 'NO_START_DATE', 'UNAVAILABLE', 'AMBIGUOUS']);
+  return { required: true, linked: !unresolved.has(status), status: status || 'UNAVAILABLE' };
+}
+
 function fallbackActionGate(stage, language = 'en-US') {
   const zh = language === 'zh-CN';
   if (stage === 'LEARNING') {
@@ -643,6 +653,8 @@ function sanitizeOllamaReport(report, compactPackage = {}) {
   const timeContext = deterministic.timeContext || {};
   const learningEpoch = timeContext.learningEpoch || {};
   const stabilityJudgmentBlocked = timeContext.stabilityJudgmentBlocked === true;
+  const operationHistory = operationHistoryState(compactPackage);
+  const operationHistoryUnlinked = operationHistory.required && !operationHistory.linked;
   const rawFacts = Array.isArray(output.facts) ? output.facts : [];
   const seenFactKey = new Map();
   const factIdRemap = new Map();
@@ -727,6 +739,16 @@ function sanitizeOllamaReport(report, compactPackage = {}) {
   }
   let maturityFloorEvidenceIds = null;
 
+  if (operationHistoryUnlinked && output.stage === 'STABLE') {
+    output.stage = 'CONVERGING';
+    addLimitation(
+      output,
+      zh
+        ? '广告组操作记录尚未可靠关联；虽然当前样本已成熟，但无法确认观察窗口内是否发生预算、Target ROAS、SKU 结构等扰动，因此不能判定为稳定期。'
+        : 'Ad Group operation history is not reliably linked. The sample may be mature, but budget, Target ROAS, or SKU-structure changes inside the window cannot be ruled out, so STABLE cannot be confirmed.',
+    );
+  }
+
   if (stabilityJudgmentBlocked) {
     if (output.stage === 'STABLE' || output.stage === 'UNSTABLE') output.stage = 'CONVERGING';
     addLimitation(output, zh ? '存在可能触发学习期重置的操作，但操作来源尚未确认；在明确操作者/来源前，不做新的稳定性判断。' : 'Operation source is unresolved for a reset candidate; a new stability judgment is blocked until the actor/source is disambiguated.');
@@ -783,6 +805,14 @@ function sanitizeOllamaReport(report, compactPackage = {}) {
       statement: zh
         ? `当前成熟度窗口尚未同时达到 ${requiredObservationDays} 天和 ${requiredDirectOrders} 个直接订单的内部参考，因此 Campaign 维持学习期。`
         : `The current maturity window does not yet meet both internal references of ${requiredObservationDays} days and ${requiredDirectOrders} Direct Orders, so the campaign remains in LEARNING.`,
+      evidenceIds: maturityEvidenceIds,
+    });
+  }
+  if (operationHistoryUnlinked && maturityFloorMet && maturityEvidenceIds.length) {
+    inferences.unshift({
+      statement: zh
+        ? '当前样本量已达到成熟度参考，但广告组操作记录尚未可靠关联，无法确认观察窗口内没有预算、Target ROAS 或 SKU 结构变化，因此稳定性待确认。'
+        : 'The current sample meets the maturity reference, but Ad Group operation history is not reliably linked; budget, Target ROAS, or SKU-structure changes inside the window cannot be ruled out, so stability remains unconfirmed.',
       evidenceIds: maturityEvidenceIds,
     });
   }
@@ -872,7 +902,16 @@ function sanitizeOllamaReport(report, compactPackage = {}) {
     .filter(gate => !CAMPAIGN_STAGE_CODES.has(String(gate.code || '').toUpperCase()))
     .filter(gate => typeof gate.allowed === 'boolean' && typeof gate.reason === 'string' && gate.reason.trim())
     .map(gate => ({ ...gate, reason: sanitizeAdGroupActionText(gate.reason, compactPackage) }));
-  output.actionGates = actionGates.length ? actionGates : [fallbackActionGate(output.stage, compactPackage.presentation?.language)];
+
+  if (operationHistoryUnlinked && maturityFloorMet) {
+    output.actionGates = [fallbackActionGate('CONVERGING', compactPackage.presentation?.language)];
+    const operationValidation = zh
+      ? '先补齐并关联该广告组的 Shopee Operation History，确认当前判断窗口内是否存在预算、Target ROAS、SKU 增删或其他结构性调整，再判断是否进入稳定期和是否允许结构优化。'
+      : 'First link this Ad Group to Shopee Operation History and verify whether budget, Target ROAS, SKU membership, or other structural changes occurred inside the current decision window before confirming STABLE or allowing structural optimization.';
+    output.nextValidation = [operationValidation, ...output.nextValidation.filter(row => String(row) !== operationValidation)];
+  } else {
+    output.actionGates = actionGates.length ? actionGates : [fallbackActionGate(output.stage, compactPackage.presentation?.language)];
+  }
 
   return output;
 }

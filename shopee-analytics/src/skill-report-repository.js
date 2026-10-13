@@ -70,6 +70,8 @@ class SkillReportRepository {
               report_json,status,error_text,generated_at,
               input_snapshot_json->'deterministicMetrics'->'maturity' AS maturity_json,
               input_snapshot_json->'deterministicMetrics'->'timeContext' AS time_context_json,
+              input_snapshot_json->'deterministicMetrics'->'itemCurrentWindow' AS item_current_window_json,
+              input_snapshot_json->'deterministicMetrics'->'campaign' AS campaign_metrics_json,
               input_snapshot_json->'dataQuality' AS data_quality_json,
               input_snapshot_json->'campaign' AS campaign_context_json
        FROM shopee_skill_reports

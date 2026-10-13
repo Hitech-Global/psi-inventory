@@ -47,6 +47,8 @@ const { SkillReportRepository } = require('../src/skill-report-repository');
   assert.strictEqual(calls[1].params[3], true);
   assert.strictEqual(calls[1].params[4], '2026-09-22');
   assert.strictEqual(calls[1].params[5], '2026-09-28');
+  assert(calls[1].sql.includes("itemCurrentWindow"), 'latest report query must expose deterministic current-window SKU metrics');
+  assert(calls[1].sql.includes("campaign_metrics_json"), 'latest report query must expose deterministic campaign metrics');
 
   calls.length = 0;
   await repo.createPending({

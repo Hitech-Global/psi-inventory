@@ -546,6 +546,109 @@
     return '';
   }
 
+  function skillOperationHistoryLinked(meta) {
+    const status = String(meta?.context?.dataQuality?.operationHistoryLink || '').trim().toUpperCase();
+    return Boolean(status) && !['NOT_FOUND','NO_START_DATE','UNAVAILABLE','AMBIGUOUS'].includes(status);
+  }
+
+  function skillReportStageDisplay(report, meta, language) {
+    const zh = language === 'zh-CN';
+    const maturity = meta?.context?.maturity || {};
+    const observed = Number(maturity.observedCalendarDays ?? maturity.observedDays7d);
+    const minDays = Number(maturity.minimumObservationDays || 7);
+    const orders = Number(maturity.directOrdersSinceEpoch ?? maturity.directOrders7d);
+    const orderRef = Number(maturity.weeklyOrderReference || 25);
+    const mature = maturity.sampleMature === true ||
+      (Number.isFinite(observed) && observed >= minDays && Number.isFinite(orders) && orders >= orderRef);
+    if (['CONVERGING','STABLE'].includes(String(report?.stage || '')) && mature && !skillOperationHistoryLinked(meta)) {
+      return zh ? '样本成熟 · 稳定性待确认' : 'Mature sample · Stability pending';
+    }
+    return stageDisplay(report?.stage, language);
+  }
+
+  function skillOperationalConclusion(report, meta, host, language) {
+    const zh = language === 'zh-CN';
+    const context = meta?.context || {};
+    const maturity = context.maturity || {};
+    const itemWindow = context.itemCurrentWindow || {};
+    const campaignMetrics = context.campaignMetrics || {};
+    const current7d = campaignMetrics.current7d || {};
+    const economics = campaignMetrics.economics || {};
+    const items = Array.isArray(itemWindow.items) ? itemWindow.items : [];
+    if (!items.length && !Object.keys(campaignMetrics).length) return '';
+
+    const observed = Number(maturity.observedCalendarDays ?? maturity.observedDays7d);
+    const minDays = Number(maturity.minimumObservationDays || 7);
+    const orders = Number(maturity.directOrdersSinceEpoch ?? maturity.directOrders7d);
+    const orderRef = Number(maturity.weeklyOrderReference || 25);
+    const mature = maturity.sampleMature === true ||
+      (Number.isFinite(observed) && observed >= minDays && Number.isFinite(orders) && orders >= orderRef);
+    const operationLinked = skillOperationHistoryLinked(meta);
+
+    const parts = [];
+    if (report?.stage === 'LEARNING') {
+      parts.push(zh
+        ? `当前仍处学习期（${int(observed)}/${int(minDays)} 天，${int(orders)}/${int(orderRef)} 直接订单）。`
+        : `The campaign is still in Learning (${int(observed)}/${int(minDays)} days, ${int(orders)}/${int(orderRef)} Direct Orders).`);
+    } else if (mature && !operationLinked) {
+      parts.push(zh
+        ? '当前样本量已成熟，但操作记录尚未关联，无法确认观察窗口内没有结构性调整，因此稳定性待确认。'
+        : 'The sample is mature, but operation history is not linked, so structural changes inside the window cannot be ruled out and stability remains unconfirmed.');
+    } else {
+      parts.push(zh
+        ? `当前处于${stageDisplay(report?.stage, language)}。`
+        : `The campaign is currently ${stageDisplay(report?.stage, language)}.`);
+    }
+
+    const broadRoas = Number(current7d.broadRoas);
+    const requiredBroadRoas = Number(economics.requiredBroadRoasForSpendLimit);
+    const spendLimit = Number(economics.adSpendRatioLimit);
+    if (Number.isFinite(broadRoas) && Number.isFinite(requiredBroadRoas) && Number.isFinite(spendLimit)) {
+      const meets = broadRoas >= requiredBroadRoas;
+      parts.push(zh
+        ? `Broad ROAS ${broadRoas.toFixed(2)}${meets ? '满足' : '未满足'}广告花费占比上限 ${(spendLimit * 100).toFixed(1).replace(/\.0$/, '')}% 对应的最低 ROAS ${requiredBroadRoas.toFixed(2)} 经营约束。`
+        : `Broad ROAS ${broadRoas.toFixed(2)} ${meets ? 'meets' : 'does not meet'} the minimum ROAS ${requiredBroadRoas.toFixed(2)} implied by the ${(spendLimit * 100).toFixed(1).replace(/\.0$/, '')}% ad-spend-ratio limit.`);
+    }
+
+    const core = items
+      .filter(item => Number(item?.directOrders || 0) > 0)
+      .sort((a, b) => Number(b?.directOrders || 0) - Number(a?.directOrders || 0))[0];
+    if (core) {
+      const itemId = String(core.itemId ?? '');
+      const name = skillItemName(host, itemId) || `#${itemId}`;
+      const assessment = (Array.isArray(report?.skuAssessments) ? report.skuAssessments : [])
+        .find(row => String(row?.itemId ?? '') === itemId);
+      const stage = assessment?.trafficStage || '';
+      const spendShare = Number(core?.shares?.spendShare);
+      const orderShare = Number(core?.shares?.directOrderShare);
+      parts.push(zh
+        ? `${name} 是当前${stage ? ` ${stage} ` : ' '}核心转化 SKU（${int(core.directOrders)} 个直接订单${Number.isFinite(spendShare) ? `，花费份额 ${(spendShare * 100).toFixed(1)}%` : ''}${Number.isFinite(orderShare) ? `，直接订单份额 ${(orderShare * 100).toFixed(1)}%` : ''}）。`
+        : `${name} is the current ${stage ? `${stage} ` : ''}conversion core with ${int(core.directOrders)} Direct Orders${Number.isFinite(spendShare) ? `, ${(spendShare * 100).toFixed(1)}% Spend Share` : ''}${Number.isFinite(orderShare) ? `, and ${(orderShare * 100).toFixed(1)}% Direct Order Share` : ''}.`);
+    }
+
+    const zeroOrderSpendItems = items
+      .filter(item => Number(item?.directOrders || 0) === 0 && Number(item?.expense || 0) > 0)
+      .sort((a, b) => Number(b?.shares?.spendShare || 0) - Number(a?.shares?.spendShare || 0));
+    const zeroOrderSpendShare = zeroOrderSpendItems.reduce((sum, item) => sum + Number(item?.shares?.spendShare || 0), 0);
+    if (zeroOrderSpendItems.length && zeroOrderSpendShare > 0) {
+      const largest = zeroOrderSpendItems[0];
+      const largestId = String(largest.itemId ?? '');
+      const largestName = skillItemName(host, largestId) || `#${largestId}`;
+      const largestShare = Number(largest?.shares?.spendShare || 0);
+      parts.push(zh
+        ? `当前无直接订单 SKU 合计占 ${(zeroOrderSpendShare * 100).toFixed(1)}% 花费，其中 ${largestName} 占 ${(largestShare * 100).toFixed(1)}%，是当前最主要的无转化消耗点。`
+        : `SKUs with zero Direct Orders consume ${(zeroOrderSpendShare * 100).toFixed(1)}% of spend in total; ${largestName} is the largest zero-conversion spend point at ${(largestShare * 100).toFixed(1)}%.`);
+    }
+
+    const gate = Array.isArray(report?.actionGates) ? report.actionGates[0] : null;
+    if (!operationLinked && mature) {
+      parts.push(zh ? '在操作记录补齐前，暂不确认稳定期，也暂不做结构性调整。' : 'Until operation history is linked, do not confirm STABLE or make a structural change.');
+    } else if (gate?.reason) {
+      parts.push(String(gate.reason));
+    }
+    return parts.join('');
+  }
+
   function skillReportContextHtml(report, meta, language) {
     const zh = language === 'zh-CN';
     const period = meta?.period || report?.period || {};
@@ -564,7 +667,7 @@
     const orders = Number(maturity.directOrdersSinceEpoch ?? maturity.directOrders7d);
     const orderRef = Number(maturity.weeklyOrderReference || 25);
     const operationRows = Number(quality.operationHistoryRows || 0);
-    const operationLinked = quality.operationHistoryLink && !['NOT_FOUND','NO_START_DATE','UNAVAILABLE','AMBIGUOUS'].includes(String(quality.operationHistoryLink));
+    const operationLinked = skillOperationHistoryLinked(meta);
     const chips = [];
     if (startDate && endDate) chips.push(`${zh ? '报告周期' : 'Report period'} ${esc(startDate)}–${esc(endDate)}`);
     if (judgmentStart && endDate) chips.push(`${zh ? '当前判断窗口' : 'Current decision window'} ${esc(judgmentStart)}–${esc(endDate)}`);
@@ -590,8 +693,9 @@
     const limitations = Array.isArray(report.limitations) ? report.limitations : [];
 
     const primaryInference = inferences.find(item => !/maturity|成熟度|学习周期/i.test(String(item?.statement || ''))) || inferences[0];
-    const conclusion = primaryInference?.statement || actionGates[0]?.reason || facts[0]?.statement || copy.noConclusion;
-    const supportingInferences = inferences.filter(item => item !== primaryInference).slice(0, 3);
+    const operationalConclusion = skillOperationalConclusion(report, meta, host, language);
+    const conclusion = operationalConclusion || primaryInference?.statement || actionGates[0]?.reason || facts[0]?.statement || copy.noConclusion;
+    const supportingInferences = operationalConclusion ? [] : inferences.filter(item => item !== primaryInference).slice(0, 3);
     const evidenceHtml = facts.length
       ? `<div class="skill-evidence-list">${facts.slice(0, 6).map((item, index) => `<div class="skill-evidence-item"><span>${index + 1}</span><p>${esc(item?.statement || '')}</p></div>`).join('')}</div>`
       : `<div class="skill-empty-note">${esc(copy.noConclusion)}</div>`;
@@ -629,7 +733,7 @@
       : '';
 
     return `<section class="skill-report-card">
-      <div class="skill-report-head"><div><span class="skill-report-kicker">${zh ? 'AI 运营诊断' : 'AI OPERATIONS DIAGNOSIS'}</span><strong>Shopee GMV Max Skill</strong></div><span class="skill-report-stage">${esc(stageDisplay(report.stage, language))}</span></div>
+      <div class="skill-report-head"><div><span class="skill-report-kicker">${zh ? 'AI 运营诊断' : 'AI OPERATIONS DIAGNOSIS'}</span><strong>Shopee GMV Max Skill</strong></div><span class="skill-report-stage">${esc(skillReportStageDisplay(report, meta, language))}</span></div>
       ${contextHtml}
       <div class="skill-report-hero"><span>${esc(copy.conclusion)}</span><p>${esc(conclusion)}</p>${supportingInferences.length ? `<ul class="skill-conclusion-support">${supportingInferences.map(item => `<li>${esc(item?.statement || '')}</li>`).join('')}</ul>` : ''}</div>
       <div class="skill-report-section"><div class="skill-report-section-head"><strong>${esc(copy.evidence)}</strong><span>${facts.length}</span></div>${evidenceHtml}</div>

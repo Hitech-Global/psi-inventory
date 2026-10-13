@@ -187,6 +187,27 @@ function readFileSync(file) {
   assert.strictEqual(unresolvedSource.stage, 'CONVERGING');
   assert(unresolvedSource.limitations.some(row => /Operation source is unresolved/i.test(row)));
 
+  const unlinkedStable = sanitizeOllamaReport({
+    skill:{ name:'shopee-gmv-max-analysis', version:'0.2.0' }, stage:'STABLE',
+    facts:[], inferences:[], hypotheses:[],
+    actionGates:[{ code:'STRUCTURAL_CHANGE', allowed:true, reason:'Proceed with optimization.' }],
+    nextValidation:[], limitations:[], skuAssessments:[],
+  }, {
+    presentation:{ language:'zh-CN' },
+    campaign:{ promotionType:'AD_GROUP', promotionKey:'PK-1' },
+    dataQuality:{ operationHistoryLink:'NOT_FOUND', operationHistoryRows:0 },
+    deterministicMetrics:{
+      maturity:{ minimumObservationDays:7, weeklyOrderReference:25, observedCalendarDays:7, directOrdersSinceEpoch:134, sampleMature:true, basis:'LATEST_7_CALENDAR_DAYS' },
+      timeContext:{ learningEpoch:{ available:false }, stabilityJudgmentBlocked:false },
+    },
+    evidenceAvailability:{ hasItemLevelEvidence:false, hasAllocationEvidence:false, hasAddToCartEvidence:true, hasComparablePreviousWindow:true, hasTargetRoasEvidence:true, hasBreakEvenEvidence:true },
+  });
+  assert.strictEqual(unlinkedStable.stage, 'CONVERGING');
+  assert(unlinkedStable.limitations.some(row => /操作记录尚未可靠关联/.test(row)));
+  assert(unlinkedStable.inferences.some(row => /稳定性待确认/.test(row.statement)));
+  assert.strictEqual(unlinkedStable.actionGates[0].allowed, false);
+  assert(unlinkedStable.nextValidation[0].includes('Shopee Operation History'));
+
   const skuGuarded = sanitizeOllamaReport({
     skill:{ name:'shopee-gmv-max-analysis', version:'0.2.0' }, stage:'STABLE',
     facts:[], inferences:[], hypotheses:[], actionGates:[], nextValidation:[], limitations:[],

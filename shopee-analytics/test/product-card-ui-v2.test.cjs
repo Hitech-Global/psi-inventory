@@ -36,7 +36,9 @@ assert(ui.includes("const toolbar = tabs.closest('.ads-filter-toolbar')"), 'Prod
 assert(channels.includes('adsView.insertBefore(overviewPanel, channelTabs.nextSibling)'), 'overview must remain a top-level block below the ad-channel row');
 assert(!ui.includes('data-ad-group-detail-index'), 'Ad Group items must no longer expand inline');
 assert(ui.includes('product-card-detail-modal-backdrop'), 'shared detail modal shell must exist');
-for (const token of ['skill-report-hero','skill-sku-grid','skill-action-gates','skill-limitations','skuStructure','skill-report-context']) assert(ui.includes(token), `decision-oriented Skill report UI missing ${token}`);
+for (const token of ['skill-report-hero','skill-sku-grid','skill-action-gates','skill-limitations','skuStructure','skill-report-context','skillOperationalConclusion','skillReportStageDisplay']) assert(ui.includes(token), `decision-oriented Skill report UI missing ${token}`);
+assert(ui.includes('样本成熟 · 稳定性待确认'), 'unlinked mature Ad Groups must not be displayed as stable');
+assert(ui.includes('当前无直接订单 SKU 合计占'), 'core conclusion must surface zero-Direct-Order spend concentration');
 for (const token of ['data-view-ad-group-operations','/api/shopee-analytics/ad-groups/operations','/api/shopee-analytics/ad-groups/skill-report','loadLatestAdGroupSkillReport']) assert(ui.includes(token), `Ad Group operation/report persistence UI missing ${token}`);
 assert(ui.includes('阿里云百炼账号当前被标记为欠费/账户状态异常'), 'Qwen arrearage error must be humanized in the UI');
 for (const token of ['Segoe UI Variable','Microsoft YaHei UI','table{font-size:13px','skill-report-card{overflow:hidden','operation-history-backdrop{z-index:2100']) assert(styles.includes(token), `Apple-like typography/report styling missing ${token}`);

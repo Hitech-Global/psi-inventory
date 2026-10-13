@@ -60,7 +60,7 @@ This maturity floor means the campaign has enough feedback to move beyond pure L
 
 - **LEARNING**: observation/sample floor is not met, or critical campaign evidence is unavailable.
 - **CONVERGING**: maturity floor is met but efficiency, funnel, allocation or continuity evidence is still forming.
-- **STABLE**: maturity floor is met and multiple evidence dimensions are sufficiently consistent for controlled optimization.
+- **STABLE**: maturity floor is met and multiple evidence dimensions are sufficiently consistent for controlled optimization. For Ad Group analysis, reliable operation-history/time-context linkage is also required; if operation history is unlinked, do not call the campaign STABLE because structural changes inside the observation window cannot be ruled out.
 - **UNSTABLE**: a mature/long-running campaign shows persistent material deterioration or volatility in efficiency, funnel, allocation or order output.
 
 Important stage rules:
@@ -270,6 +270,15 @@ Prioritize FACTs in this sequence when available:
 2. funnel/root-cause interpretation;
 3. SKU-structure interpretation;
 4. only then individual SKU decisions.
+
+The visible campaign-level conclusion should answer, when evidence exists:
+- what stage the campaign is truly in now;
+- whether current economics meet the supplied operating/profitability constraint;
+- which SKU is the current conversion core;
+- where the largest zero-Direct-Order spend is concentrated;
+- whether a structural action is allowed now.
+
+Do not use a single ROAS-comparator sentence as the whole campaign conclusion when SKU and maturity evidence are available.
 
 The root cause should answer: **what layer currently constrains growth or efficiency, and which facts prove it?**
 
