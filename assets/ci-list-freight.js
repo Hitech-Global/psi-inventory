@@ -220,7 +220,17 @@
     if (mode !== 'operational' && mode !== 'all') return;
     var targets = ensureColumnsAndCells();
     if (!targets.length) return;
-    // Server owns cross-currency FX & single-count shared bills; never sum raw IDR and RMB in JS.
+    // Render existing historical freight first, then override ONLY CIs with a new shared bill.
+    var legacyReady=fetchFreightRows().then(function(rows){
+      if(document.getElementById('ci-table'))fillFreightCells(targets,rows);
+    }).catch(function(){
+      targets.forEach(function(x){
+        if(!x.row.isConnected)return;
+        var a=x.row.querySelector('[data-ci-freight-cell="total"]');
+        var b=x.row.querySelector('[data-ci-freight-cell="ratio"]');
+        if(a)a.textContent='—';if(b)b.textContent='—';
+      });
+    });
     var ids=targets.map(function(x){return x.id;}).filter(Boolean);
     // Bound each request to backend's 200-ID limit; hydrate asynchronously without blocking CI table.
     var chunks=[];
@@ -228,15 +238,17 @@
     Promise.all(chunks.map(function(chunk){
       return global.api('/api/ci-freight-summaries?ids='+encodeURIComponent(chunk.join(',')));
     })).then(function (parts) {
+      return legacyReady.then(function(){
       var summary={};
       parts.forEach(function(p){Object.assign(summary,p||{});});
       if (!document.getElementById('ci-table')) return;
       targets.forEach(function(x){
+        if(!x.row.isConnected)return;
         var totalCell=x.row.querySelector('[data-ci-freight-cell="total"]');
         var ratioCell=x.row.querySelector('[data-ci-freight-cell="ratio"]');
         if(!totalCell||!ratioCell)return;
         var row=summary[x.id];
-        if(!row||!row.has_batch){totalCell.textContent='—';ratioCell.textContent='—';return;}
+        if(!row||!row.has_shared)return; // Preserve legacy CI calculation untouched.
         if(row.total_rmb==null){
           totalCell.textContent='待折算';ratioCell.textContent='—';
           totalCell.title=(row.errors||[]).join('\n');
@@ -248,14 +260,8 @@
         ratioCell.textContent=row.freight_ratio==null?'—':Number(row.freight_ratio).toFixed(2)+'%';
         if(row.freight_ratio==null)ratioCell.title='CI货值币种或汇率不支持与RMB直接比较';
       });
-    }).catch(function () {
-      targets.forEach(function (x) {
-        var a = x.row.querySelector('[data-ci-freight-cell="total"]');
-        var b = x.row.querySelector('[data-ci-freight-cell="ratio"]');
-        if (a) a.textContent = '—';
-        if (b) b.textContent = '—';
       });
-    });
+    }).catch(function () { /* Legacy freight remains visible if new endpoint is unavailable. */ });
   }
 
   function install() {

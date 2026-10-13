@@ -354,6 +354,18 @@ if (driver === 'pg') {
           console.error('[DB] migration FAILED: ' + e.message);
         }
       }
+      // 合并派送费生产实际迁移（DB_DRIVER=pg 的 worker_threads 同步入口）。
+      // 单据表只有 FK 至既有的 logistics_batches，0 历史数据回填。
+      // Fail-closed: 任意 DDL 失败禁止继续启动可能使用新费用接口的版本。
+      var sharedFeeMigrations = [
+        "CREATE TABLE IF NOT EXISTS shared_logistics_fees (id TEXT PRIMARY KEY,ci_id TEXT NOT NULL,ci_no TEXT NOT NULL,bill_no TEXT NOT NULL,fee_type TEXT NOT NULL DEFAULT 'delivery',payee_name TEXT NOT NULL,currency TEXT NOT NULL,amount_minor BIGINT NOT NULL CHECK(amount_minor>0),payment_request_id TEXT NOT NULL UNIQUE,remark TEXT DEFAULT '',created_at TEXT NOT NULL DEFAULT (NOW()::TEXT),UNIQUE(ci_id,bill_no))",
+        "CREATE TABLE IF NOT EXISTS shared_logistics_fee_batches (fee_id TEXT NOT NULL REFERENCES shared_logistics_fees(id),batch_id TEXT NOT NULL REFERENCES logistics_batches(id),mode TEXT NOT NULL,basis TEXT NOT NULL,basis_value DOUBLE PRECISION NOT NULL,amount_minor BIGINT NOT NULL CHECK(amount_minor>=0),PRIMARY KEY(fee_id,batch_id))",
+        "CREATE INDEX IF NOT EXISTS idx_shared_logistics_ci ON shared_logistics_fees(ci_id)"
+      ];
+      for(var sfi=0;sfi<sharedFeeMigrations.length;sfi++){
+        syncRequest('query',sharedFeeMigrations[sfi]);
+      }
+      console.log('[DB] shared-logistics-fees schema migration verified.');
       // SCHEMA-CONSOLIDATION-01：生产带外 schema 对象收编（二）—— WAC trigger guard。
       // wac_history 双触发器与守卫函数当年带外创建（本列表/死代码均无源头），DB 重建时
       // WAC 锁保护会静默消失。启动时按现状收敛（与 Wave 1 ensureGuardInTx 同一 SQL 来源，

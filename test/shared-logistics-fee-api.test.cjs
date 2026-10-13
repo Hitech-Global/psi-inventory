@@ -40,11 +40,14 @@ test('shared IDR bill → single approval request → 3 sea batches → RMB/IDR 
     a.equal(made.body.allocations.reduce((s,x)=>s+x.amount_minor,0),10000000);
     a.equal(approvals,1);
     a.equal(db.queryOne('SELECT COUNT(*) AS n FROM payment_requests').n,1);
+    a.equal(db.queryOne('SELECT COUNT(*) AS n FROM payable_items WHERE source_type=?',[ 'shared_logistics' ]).n,1);
+    a.equal(db.queryOne('SELECT COUNT(*) AS n FROM payment_request_items WHERE payment_request_id=?',[made.body.payment_request_id]).n,1);
+    a.equal(db.queryOne('SELECT lifecycle_status FROM payable_items WHERE source_type=?',[ 'shared_logistics' ]).lifecycle_status,'reserved');
     a.equal(db.queryOne('SELECT COUNT(*) AS n FROM ci_cost_items').n,0);
     const dup=await post();a.equal(dup.status,409);
     a.equal(db.queryOne('SELECT COUNT(*) AS n FROM payment_requests').n,1);
     const unpaid=await (await fetch(url+'/api/commercial-invoices/ci_shared_1/shared-logistics-fees')).json();
-    a.match(unpaid.fees[0].conversion.error,/尚未实际结算|尚未付款/);
+    a.match(unpaid.fees[0].conversion.error,/尚未实际结算|尚未付款|未审批通过/);
     a.ok(unpaid.currency_options.includes('IDR'),'currency options must come from system currency master');
     const pre=await (await fetch(url+'/api/ci-freight-summaries?ids=ci_shared_1')).json();
     a.equal(pre.ci_shared_1.total_rmb,null,'unpaid IDR must not be counted as RMB');
@@ -52,6 +55,7 @@ test('shared IDR bill → single approval request → 3 sea batches → RMB/IDR 
       ['rate_shared_idr_rmb','IDR','RMB',0.00045,'2026-10-13','realtime']);
     db.run("INSERT INTO payment_settlement_logs (id,payment_request_id,event_type,status,amount,local_amount,local_currency,local_rate_date,paid_date,local_rate) VALUES (?,?,?,?,?,?,?,?,?,?)",
       ['paid1',made.body.payment_request_id,'payment','applied',100000,100000,'IDR','2026-10-13','2026-10-13',1]);
+    db.run("UPDATE payment_requests SET approval_status='approved',payment_status='paid' WHERE id=?",[made.body.payment_request_id]);
     const paid=await (await fetch(url+'/api/commercial-invoices/ci_shared_1/shared-logistics-fees')).json();
     a.equal(Number(paid.fees[0].conversion.amount_minor),4500);
     a.equal(Object.values(paid.batch_totals_rmb).reduce((sum,x)=>sum+Number(x.total_minor||0),0),14500,

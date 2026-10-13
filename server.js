@@ -17741,18 +17741,10 @@ function batchSkuTransportBasis(ciId,batchId,skuFacts,expectedBasisValue){
 
 async function validateCiCostInputs(ci) {
   const facts = getCiSkuCostFacts(ci.id);
-  // Existing cross-currency cost items must be converted from payment facts, never treated as CI currency 1:1.
+  // Preserve historical ci_cost_items accounting untouched. Currency conversion
+  // of new shared bills is isolated to the new fee source, preventing legacy rewrites.
   const feeModule = require('./shared-logistics-fee-server');
-  const rawCostItems = (await query('SELECT * FROM ci_cost_items WHERE ci_id = ? AND include_in_landing_cost = 1 ORDER BY created_at, id', [ci.id])).rows;
-  const costItems = rawCostItems.map(item => {
-    const cur = String(item.currency||ci.currency||'').toUpperCase();
-    const target = String(ci.currency||'').toUpperCase();
-    if(cur===target || (cur==='CNY'&&target==='RMB')) return item;
-    const converted=feeModule.settledConversion(item.payment_request_id, Math.round(Number(item.payable_amount||0)*100),cur,target);
-    if(converted.error)throw new CostAllocationError(409,'成本费用 '+item.id+': '+converted.error);
-    return {...item, original_payable_amount:item.payable_amount,
-      payable_amount:converted.amount_minor/100, original_currency:cur, currency:target};
-  });
+  const costItems = (await query('SELECT * FROM ci_cost_items WHERE ci_id = ? AND include_in_landing_cost = 1 ORDER BY created_at, id', [ci.id])).rows;
   const sharedFees=feeModule.sharedFeesForCost(ci,ci.currency||'RMB',true);
   sharedFees.forEach(f=>{
     if(f.conversion.error)throw new CostAllocationError(409,'合并派送账单 '+f.bill_no+': '+f.conversion.error);
@@ -17857,12 +17849,8 @@ app.get('/api/commercial-invoices/:id/cost-summary', requireApiPermission('ci_vi
     const fxBlockers=[];
     costItems.forEach(item => {
       if (!item.include_in_landing_cost) return;
-      let amt=Number(item.payable_amount)||0;
-      if(String(item.currency||ci.currency||'').toUpperCase()!==String(ci.currency||'').toUpperCase()){
-        const converted=feeModule.settledConversion(item.payment_request_id,Math.round(amt*100),item.currency,ci.currency);
-        if(converted.error){fxBlockers.push('费用 '+item.id+': '+converted.error);return;}
-        amt=converted.amount_minor/100;
-      }
+      // Existing CI cost facts retain their original historical accounting rules.
+      const amt=Number(item.payable_amount)||0;
       if (item.cost_category === 'warehouse_arrival') summary.warehouse_arrival_total += amt;
       else if (item.cost_category === 'customs_duty') { /* Import Duty使用CI快照，避免与付款费用项双算 */ }
       else if (item.cost_category === 'inspection_fee') summary.inspection_fee_total += amt;
@@ -18096,7 +18084,7 @@ app.post('/api/cost-allocation/allocate/:ci_id', requireApiPermission('ci_edit')
           subcategory: item.cost_subcategory,
           label: `运输费用 ${item.cost_subcategory}`,
           total,
-          currency: ci.currency || 'RMB',
+          currency: item.currency || ci.currency || 'USD',
           basis: scoped.basis,
           basisValues: scoped.values
         });
