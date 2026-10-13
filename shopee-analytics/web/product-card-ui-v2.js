@@ -511,7 +511,11 @@
     if (/provider is not configured|SHOPEE_SKILL_OPENAI_API_KEY is required|SHOPEE_SKILL_QWEN_API_KEY is required/i.test(message)) {
       return 'Skill 运行环境尚未配置，请检查模型 Provider/API Key。';
     }
+    if (/Arrearage|account is not in good standing|overdue payment|overdue-payment/i.test(message)) {
+      return '阿里云百炼账号当前被标记为欠费/账户状态异常。即使模型免费额度仍有剩余，API 也会被拒绝；请先恢复账号正常计费状态，再重新生成。';
+    }
     if (/timeout|timed out/i.test(message)) return 'Skill 分析请求超时，请稍后重新生成。';
+    if (/network error/i.test(message)) return '连接阿里云百炼接口失败，请检查网络/DNS/TLS；如果百炼账号存在欠费或账户状态异常，也可能导致调用失败。';
     if (/SKILL_JOB_NOT_FOUND/i.test(message)) return '分析任务已失效，请重新点击生成分析。';
     return message;
   }

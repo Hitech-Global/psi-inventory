@@ -1,7 +1,7 @@
 'use strict';
 
 const assert = require('assert');
-const { createQwenSkillProvider, buildQwenRequest, extractQwenStructuredOutput } = require('../src/qwen-skill-provider');
+const { createQwenSkillProvider, buildQwenRequest, extractQwenStructuredOutput, qwenHttpError } = require('../src/qwen-skill-provider');
 const { createConfiguredSkillProvider } = require('../src/skill-provider');
 
 const skillMarkdown = `---\nname: shopee-gmv-max-analysis\nversion: 0.1.0\n---\n# Test Skill\nUse FACT before INFERENCE.\n`;
@@ -96,6 +96,13 @@ function readFileSync(file) {
   });
   assert.strictEqual(typeof routed.generateStructuredReport, 'function');
   assert.deepStrictEqual(extractQwenStructuredOutput({ choices:[{ message:{ content:'{"stage":"STABLE"}' } }] }), { stage:'STABLE' });
+
+  const arrearage = qwenHttpError(400, JSON.stringify({
+    error:{ message:'Access denied, please make sure your account is in good standing.', type:'Arrearage', code:'Arrearage' },
+    request_id:'req-123',
+  }));
+  assert(/Qwen account unavailable: Arrearage/.test(arrearage.message));
+  assert(/req-123/.test(arrearage.message));
 
   const request = buildQwenRequest({ model:'qwen3.7-plus', maxOutputTokens:1000, skill:{name:'x',version:'1'}, skillMarkdown:'skill', strictOutputSchema:{type:'object'}, analysisPackage:{} });
   assert.strictEqual(request.enable_thinking, false);

@@ -90,6 +90,26 @@ function extractQwenStructuredOutput(payload) {
   }
 }
 
+function qwenHttpError(status, detail = '') {
+  const raw = String(detail || '').slice(0, 1000);
+  let code = '';
+  let type = '';
+  let message = '';
+  let requestId = '';
+  try {
+    const parsed = JSON.parse(raw);
+    const payload = parsed && parsed.error ? parsed.error : parsed;
+    code = String(payload && payload.code || '');
+    type = String(payload && payload.type || '');
+    message = String(payload && payload.message || '');
+    requestId = String(parsed && (parsed.request_id || parsed.id) || '');
+  } catch {}
+  if (/arrearage/i.test(code) || /arrearage/i.test(type) || /account is in good standing|overdue-payment/i.test(message)) {
+    return new Error(`Qwen account unavailable: Arrearage - account is not in good standing or has overdue payment${requestId ? ` (request_id=${requestId})` : ''}`);
+  }
+  return new Error(`Qwen skill runtime request failed with HTTP ${status}${raw ? `: ${raw.slice(0, 500)}` : ''}`);
+}
+
 function createQwenSkillProvider({ env = process.env, fetchImpl = global.fetch, repoRoot, readFileSync } = {}) {
   const apiKey = String(env.SHOPEE_SKILL_QWEN_API_KEY || env.DASHSCOPE_API_KEY || '').trim();
   const baseUrl = normalizeBaseUrl(env.SHOPEE_SKILL_QWEN_BASE_URL);
@@ -122,15 +142,20 @@ function createQwenSkillProvider({ env = process.env, fetchImpl = global.fetch, 
           signal: controller.signal,
         });
       } catch (error) {
-        const suffix = error && error.name === 'AbortError' ? 'timeout' : 'network error';
-        throw new Error(`Qwen skill runtime request failed: ${suffix}`);
+        if (error && error.name === 'AbortError') {
+          throw new Error(`Qwen skill runtime request failed: timeout after ${timeoutMs}ms`);
+        }
+        const causeCode = String(error && error.cause && error.cause.code || error && error.code || '').trim();
+        const causeMessage = String(error && error.cause && error.cause.message || error && error.message || '').trim();
+        const detail = [causeCode, causeMessage].filter(Boolean).join(' - ').slice(0, 300);
+        throw new Error(`Qwen skill runtime request failed: network error${detail ? ` (${detail})` : ''}`);
       } finally {
         clearTimeout(timer);
       }
       if (!response.ok) {
         let detail = '';
-        try { detail = String(await response.text()).slice(0, 500); } catch {}
-        throw new Error(`Qwen skill runtime request failed with HTTP ${response.status}${detail ? `: ${detail}` : ''}`);
+        try { detail = String(await response.text()).slice(0, 1000); } catch {}
+        throw qwenHttpError(response.status, detail);
       }
       if (typeof onProgress === 'function') onProgress(82, 'MODEL_RESPONSE', 'Qwen response received');
       const payload = await response.json();
@@ -153,5 +178,6 @@ module.exports = {
   outputLanguageInstruction,
   buildQwenRequest,
   extractQwenStructuredOutput,
+  qwenHttpError,
   createQwenSkillProvider,
 };
