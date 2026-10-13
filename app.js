@@ -6537,13 +6537,13 @@ function initRpTableDrag(tabKey, container){
       var colKey=activeKeys[idx];
       th.draggable=true;
       th.dataset.colKey=colKey;
-      th.style.cursor='grab';
-      th.title=t("app.779", "\u62d6\u62fd\u8c03\u6574\u987a\u5e8f");
+      // 保留原 TH：cloneNode 会丢失 initRpTableSort 已绑定的 click 排序事件。
+      // DOM 视图缓存复用或多次初始化时，只绑定一次拖拽事件。
+      if(th.dataset.rpDragBound==='1')return;
+      th.dataset.rpDragBound='1';
+      th.style.cursor=th.classList.contains('rp-sort-ready')?'pointer':'grab';
+      if(!th.title)th.title=t("app.779", "\u62d6\u62fd\u8c03\u6574\u987a\u5e8f");
       th.style.userSelect='none';
-      // 移除旧事件（通过克隆替换）
-      var newTh=th.cloneNode(true);
-      th.parentNode.replaceChild(newTh,th);
-      th=newTh;
       th.addEventListener('dragstart',function(e){
         dragSrcKey=this.dataset.colKey;
         this.style.opacity='0.4';
