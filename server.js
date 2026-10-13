@@ -17791,17 +17791,15 @@ async function validateCiCostInputs(ci) {
     throw new CostAllocationError(400, `不支持的运输费用小类：${unsupportedTransport.map(item => item.cost_subcategory || '(空)').join('、')}`);
   }
 
-  // Only unscoped legacy CI transport fees retain an explicit CI basis. Batch-scoped
-  // costs and shared fees always derive sea/air basis from the batch's transport_mode.
+  // Historical ci_cost_items retain the frozen CI transport_basis behavior.
+  // Only NEW shared logistics charges use each individual sea-CBM / air-KG basis.
   let plBasis = null;
-  if (transportItems.some(item=>!item.logistics_batch_id)) {
-    if (!['cbm', 'kg'].includes(ci.transport_basis))
-      throw new CostAllocationError(400,'未关联批次的到仓费用需选择CI运输计费基础');
-    plBasis=getCiPlBasisFacts(ci.id,ci.transport_basis,facts.skuFacts);
+  if (transportItems.length) {
+    if (!['cbm', 'kg'].includes(ci.transport_basis)) {
+      throw new CostAllocationError(400, '该CI存在运输类费用，请先明确选择本票实际运输计费基础（CBM或KG）');
+    }
+    plBasis = getCiPlBasisFacts(ci.id, ci.transport_basis, facts.skuFacts);
   }
-  transportItems.filter(item=>item.logistics_batch_id).forEach(item=>{
-    batchSkuTransportBasis(ci.id,item.logistics_batch_id,facts.skuFacts);
-  });
   sharedFees.forEach(f=>f.allocations.forEach(a=>batchSkuTransportBasis(ci.id,a.batch_id,facts.skuFacts,a.basis_value)));
 
   const dutyTotal = costMoney(ci.import_duty_total || 0);
@@ -18112,7 +18110,7 @@ app.post('/api/cost-allocation/allocate/:ci_id', requireApiPermission('ci_edit')
       const total = costMoney(item.payable_amount || 0);
       if (!(total > 0)) return;
       if (item.cost_category === 'warehouse_arrival') {
-        const scoped=item.logistics_batch_id?batchSkuTransportBasis(ci.id,item.logistics_batch_id,inputs.skuFacts):{basis:ci.transport_basis,values:inputs.plBasis.values};
+        const scoped={basis:ci.transport_basis,values:inputs.plBasis.values};
         feeEvents.push({
           key: `cost:${item.id}`,
           source_cost_item_id: item.id,

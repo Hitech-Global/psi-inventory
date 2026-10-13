@@ -346,7 +346,7 @@ function computeWacCostFacts(logisticsBatchId) {
 
   // ── 9. Freight allocation by transport_basis ──
   let freightAllocations = null;
-  const transportBasis = batch.transport_mode === 'sea' ? 'cbm' : batch.transport_mode === 'air' ? 'kg' : (ci.transport_basis ? String(ci.transport_basis).trim() : '');
+  const transportBasis = ci.transport_basis ? String(ci.transport_basis).trim() : '';
   if (freightLocalAmount > 0) {
     if (!['cbm', 'kg'].includes(transportBasis)) {
       blockers.push({ code: 'TRANSPORT_BASIS_MISSING', message: 'CI未设置运输计费基础(CBM或KG)' });
@@ -382,7 +382,8 @@ function computeWacCostFacts(logisticsBatchId) {
   for(const part of sharedFreight.parts){
     const basisField=part.basis==='cbm'?'cbm':part.basis==='kg'?'gross_weight':null;
     if(!basisField){blockers.push({code:'SHARED_FREIGHT_BASIS_INVALID',message:part.bill_no+' 运输依据无效'});continue;}
-    if(part.basis!==transportBasis){blockers.push({code:'SHARED_FREIGHT_MODE_CHANGED',message:part.bill_no+' 物流批次运输方式已变化'});continue;}
+    const expectedSharedBasis=batch.transport_mode==='sea'?'cbm':batch.transport_mode==='air'?'gross_weight':null;
+    if((part.basis==='kg'?'gross_weight':part.basis)!==expectedSharedBasis){blockers.push({code:'SHARED_FREIGHT_MODE_CHANGED',message:part.bill_no+' 物流批次运输方式已变化'});continue;}
     const w=new Map();
     for(const [sku,row] of batchSkuMap)w.set(sku,Number(row[basisField])||0);
     const currentBasis=[...w.values()].reduce((s,n)=>s+n,0);
