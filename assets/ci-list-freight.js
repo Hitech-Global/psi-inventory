@@ -279,7 +279,7 @@
       if (global.AppStore && typeof global.AppStore.onMutation === 'function' && !global.AppStore.onMutation.__ciFreightWrapped) {
         var originalOnMutation = global.AppStore.onMutation;
         var wrappedMutation = function (method, url, body) {
-          if (method && method !== 'GET' && String(url || '').indexOf('/api/logistics-batches') !== -1) clearFreightCache();
+          if (method && method !== 'GET' && (String(url || '').indexOf('/api/logistics-batches') !== -1 || String(url || '').indexOf('/shared-logistics-fees') !== -1)) clearFreightCache();
           return originalOnMutation.call(this, method, url, body);
         };
         wrappedMutation.__ciFreightWrapped = true;

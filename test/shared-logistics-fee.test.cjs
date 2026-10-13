@@ -62,3 +62,15 @@ test('static integration: no shared fee INSERT into ci_cost_items; one PR, no ex
  a(app.includes('openSharedLogisticsFeeModal'),'UI input entry exists');
  a(core.includes("MODES = Object.freeze({ sea:'cbm', air:'gross_weight' })"));
 });
+
+test('CI freight UI: amount permission and historical CI presentation remain protected',()=>{
+ const read=x=>fs.readFileSync(path.join(__dirname,'..',x),'utf8');
+ const app=read('app.js'),list=read('assets/ci-list-freight.js');
+ const api=read('shared-logistics-fee-server.js');
+ a(app.includes("hasPermission('payment_create')&&hasPermission('ci_amount_view')"),'no-amount user must not see shared fee button');
+ a(app.includes("fmtMoney(x.convertedMinor/100,'RMB')"),'converted batch amount always RMB');
+ a(app.includes("fmtMoney(Number(conv.amount_minor)/100,'RMB')"),'converted detail amount always RMB');
+ a(list.includes('if(!row||!row.has_shared)return;'),'legacy CIs retain original freight display');
+ a(list.includes("String(url || '').indexOf('/shared-logistics-fees') !== -1"),'shared POST invalidates CI freight cache');
+ a(api.includes("requireApiPermission('payment_create'),requireCIAmountView"),'POST must enforce amount permission server-side');
+});

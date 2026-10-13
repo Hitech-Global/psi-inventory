@@ -12091,7 +12091,7 @@ function renderPLItemsRows(plId){
 function renderCILogisticsShell(ciId){
   const canCreate=hasPermission('logistics_create');
   const createBtn = canCreate ? '<button class="btn btn-primary btn-sm" style="margin-left:8px" onclick="createLogFromCI(\''+esc(ciId)+'\')">+ '+t('logistics.new_batch','新建物流批次')+'</button>' : '';
-  const sharedBtn=(hasPermission('ci_edit')&&hasPermission('payment_create'))?
+  const sharedBtn=(hasPermission('ci_edit')&&hasPermission('payment_create')&&hasPermission('ci_amount_view'))?
     '<button class="btn btn-secondary btn-sm" style="margin-left:8px" onclick="openSharedLogisticsFeeModal(\''+esc(ciId)+'\')">+ 合并派送费</button>':'';
   return '<div class="detail-section ci-acc" id="ci-acc-logi">'
     + ciAccHead('logi', t('logistics.title','物流批次'), null)
@@ -12222,7 +12222,7 @@ function renderCISharedFeeDetails(ciId,fees,batches,ciCurrency,batchTotals){
     const cell=document.getElementById('ci-batch-freight-'+b.id);
     const ratio=document.getElementById('ci-batch-ratio-'+b.id);
     if(cell){
-      const adds=items.map(x=>'<div style="font-size:11px;color:#4263eb;margin-top:3px">+ 合并 '+fmtMoney(x.original,x.currency)+(x.convertedMinor==null?'（待折算）':(' ≈'+fmtMoney(x.convertedMinor/100,ciCurrency)))+'</div>').join('');
+      const adds=items.map(x=>'<div style="font-size:11px;color:#4263eb;margin-top:3px">+ 合并 '+fmtMoney(x.original,x.currency)+(x.convertedMinor==null?'（待折算）':(' ≈'+fmtMoney(x.convertedMinor/100,'RMB')))+'</div>').join('');
       const calc=batchTotals[String(b.id)];
       if(calc&&calc.total_minor!=null){
         cell.innerHTML='<strong>'+fmtMoney(calc.total_minor/100,'RMB')+'</strong>'+adds;
@@ -12246,7 +12246,7 @@ function renderCISharedFeeDetails(ciId,fees,batches,ciCurrency,batchTotals){
     +'<th>账单号</th><th>收款方</th><th>原币费用</th><th>成本币种折算</th><th>关联批次</th><th>审批</th></tr></thead><tbody>'
     +fees.map(f=>{
       const conv=f.conversion||{};
-      const display=conv.error?'<span style="color:#b45309">待折算：'+esc(conv.error)+'</span>':fmtMoney(Number(conv.amount_minor)/100,ciCurrency);
+      const display=conv.error?'<span style="color:#b45309">待折算：'+esc(conv.error)+'</span>':fmtMoney(Number(conv.amount_minor)/100,'RMB');
       return '<tr><td class="cell-id">'+esc(f.bill_no)+'</td><td>'+esc(f.payee_name)+'</td>'
         +'<td>'+fmtMoney(Number(f.amount_minor)/100,f.currency)+'</td><td>'+display+'</td>'
         +'<td>'+(f.allocations||[]).map(a=>esc(a.batch_no)+' ('+fmtMoney(Number(a.amount_minor)/100,f.currency)+')').join('<br>')+'</td>'

@@ -17301,6 +17301,42 @@ async function createApprovalInstance(prId, payment, req) {
   const approvalId = genId('appr');
 
   transaction(() => {
+    // Shared logistics invoice: rejection releases its canonical payable_item.
+    // On resubmit, atomically re-reserve that SAME fact before creating the new approval.
+    // No behavior changes for other payment categories.
+    if (payment.source_type === 'shared_logistics') {
+      const linked = query(`SELECT pi.id, pi.lifecycle_status, pi.source_id FROM payment_request_items pri
+        JOIN payable_items pi ON pi.id=pri.payable_item_id
+        WHERE pri.payment_request_id=?`, [prId]).rows;
+      if (linked.length !== 1 || linked[0].source_id !== payment.source_id) {
+        throw Object.assign(new Error('合并派送费应付台账关联不唯一或已失效，无法重复提交审批'), {status:409});
+      }
+      const item = linked[0];
+      if (item.lifecycle_status === 'active') {
+        const other = queryOne(`SELECT pr.id FROM payment_request_items pri
+          JOIN payment_requests pr ON pr.id=pri.payment_request_id
+          WHERE pri.payable_item_id=? AND pr.id<>?
+            AND pr.approval_status NOT IN ('rejected','cancelled','withdrawn')
+            AND pr.payment_status NOT IN ('paid','cancelled','rejected','reversed')
+          LIMIT 1`, [item.id, prId]);
+        if (other) throw Object.assign(new Error('该应付费用已被另一有效付款申请占用，不能重复锁定'), {status:409});
+        const changed = run("UPDATE payable_items SET lifecycle_status='reserved' WHERE id=? AND lifecycle_status='active'", [item.id]);
+        if (changed.changes !== 1) throw Object.assign(new Error('重新锁定合并派送费应付记录失败'), {status:409});
+      } else if (item.lifecycle_status !== 'reserved') {
+        throw Object.assign(new Error('合并派送费应付状态不允许重新提交：'+item.lifecycle_status), {status:409});
+      }
+      if (payment.payment_status === 'rejected') {
+        // A rejected bill may be reapproved only when there are no applied payment
+        // facts. Restore approval+payable state atomically; never fake a reversal.
+        if (payment.approval_status !== 'rejected') {
+          throw Object.assign(new Error('合并费用付款状态不一致，不能恢复已拒绝的付款申请'), {status:409});
+        }
+        const paid = queryOne("SELECT id FROM payment_settlement_logs WHERE payment_request_id=? AND event_type='payment' AND status='applied' LIMIT 1", [prId]);
+        if (paid) throw Object.assign(new Error('此合并费用已有付款记录，禁止重置审批付款状态'), {status:409});
+        const restored = run("UPDATE payment_requests SET payment_status='pending_approval' WHERE id=? AND payment_status='rejected'", [prId]);
+        if (restored.changes !== 1) throw Object.assign(new Error('合并费用审批付款状态恢复失败'), {status:409});
+      }
+    }
     run(`DELETE FROM approval_records WHERE business_id = ? AND business_type = ? AND status IN ('pending','rejected','withdrawn')`, [prId, businessType]);
     const approversSnapshot = JSON.stringify({ levels: approvers, completion_cc_user_ids: completionCcUserIds });
     run(`INSERT INTO approval_records (id, business_type, business_id, business_code, submitter_id, submitter_name, current_level, max_level, approvers, approval_history, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
