@@ -395,6 +395,9 @@ input[type="number"]{-moz-appearance:textfield;appearance:textfield}
 .modal-pi .pi-items-readonly{table-layout:fixed;width:1165px}
 .modal-pi .pi-items-readonly th,.modal-pi .pi-items-readonly td{text-align:center}
 .modal-pi .pi-items-readonly th:first-child,.modal-pi .pi-items-readonly td:first-child{text-align:left}
+/* PI detail: first row beneath the header summarizes visible SKU lines; native table layout only. */
+.modal-pi .pi-items-readonly tbody tr.pi-detail-summary-row td{font-weight:700;background:#edf2f7;border-bottom:2px solid #c8d4e0;color:var(--text,#24292f)}
+.modal-pi .pi-items-readonly tbody tr.pi-detail-summary-row:hover td{background:#edf2f7}
 /* 3. PI Details Variance 只读表 .pi-cmp-readonly（10列，末列=Status，总宽1510px） */
 .modal-pi .pi-cmp-readonly{table-layout:fixed;width:1510px}
 .modal-pi .pi-cmp-readonly th,.modal-pi .pi-cmp-readonly td{text-align:center}
