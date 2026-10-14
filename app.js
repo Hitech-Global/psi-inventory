@@ -10858,6 +10858,35 @@ function piFsOptChange(){ const any=document.querySelectorAll('.pi-fs-opt:checke
 function togglePIFs(){ const p=document.getElementById('pi-fs-panel'); if(!p) return; const open=p.style.display!=='block'; p.style.display=open?'block':'none'; if(open){ setTimeout(function(){document.addEventListener('click',piFsOutside);},0); } else { document.removeEventListener('click',piFsOutside); } }
 function piFsOutside(e){ const w=document.getElementById('pi-fs-wrap'); if(w&&!w.contains(e.target)){ const p=document.getElementById('pi-fs-panel'); if(p)p.style.display='none'; document.removeEventListener('click',piFsOutside); } }
 
+function calcPIDetailTotals(items){
+  const result={po_qty:0,pi_confirmed_qty:0,amount_cents:0,shipped_qty:0,unshipped_qty:0};
+  const n=value=>{const parsed=Number(value);return Number.isFinite(parsed)?parsed:0;};
+  (items||[]).forEach(item=>{
+    result.po_qty+=n(item.po_qty);
+    result.pi_confirmed_qty+=n(item.pi_confirmed_qty);
+    result.amount_cents+=Math.round(n(item.pi_amount)*100);
+    result.shipped_qty+=n(item.shipped_qty);
+    result.unshipped_qty+=n(item.unshipped_qty);
+  });
+  return result;
+}
+// Only the read-only PI detail's first tbody is touched; no editing or PO comparison changes.
+function insertPIDetailSummaryRow(table, items){
+  if(!table||!table.tBodies||!table.tBodies[0])return;
+  const tbody=table.tBodies[0];
+  if(tbody.querySelector('.pi-detail-summary-row'))return;
+  const totals=calcPIDetailTotals(items);
+  const cells=[t('common.total','汇总'),totals.po_qty,totals.pi_confirmed_qty,'—','—',
+    fmtMoney(totals.amount_cents/100),totals.shipped_qty,totals.unshipped_qty];
+  const row=document.createElement('tr');
+  row.className='pi-detail-summary-row';
+  cells.forEach(value=>{
+    const cell=document.createElement('td');
+    cell.textContent=String(value);
+    row.appendChild(cell);
+  });
+  tbody.insertBefore(row,tbody.firstChild);
+}
 async function viewPI(id, backPay, backMode){
   // 先开弹窗骨架 + Loading（立即响应，不等接口）
   openModal(t('modal.title.viewPI','PI详情'),'<div style="padding:40px;text-align:center"><div style="font-size:32px;color:#1890ff;margin-bottom:8px">⏳</div><div style="color:#666">'+t('common.loading','加载中…')+'</div></div>','','modal-pi');
@@ -10871,6 +10900,7 @@ async function viewPI(id, backPay, backMode){
     // PI-TABLE-ALIGN-01 R4: 给 i18n 渲染的 Items 表补 pi-items-readonly class + 像素 colgroup（8列总宽1165px）
     const _piItemsTbl=document.querySelector('.modal-pi .pi-table-scroll .data-table:not(.pi-cmp-table)');
     if(_piItemsTbl){if(!_piItemsTbl.classList.contains('pi-items-readonly'))_piItemsTbl.classList.add('pi-items-readonly');if(!_piItemsTbl.querySelector('colgroup')){_piItemsTbl.insertAdjacentHTML('afterbegin','<colgroup><col style="width:230px"><col style="width:125px"><col style="width:170px"><col style="width:130px"><col style="width:110px"><col style="width:140px"><col style="width:120px"><col style="width:140px"></colgroup>');}}
+    insertPIDetailSummaryRow(_piItemsTbl,pi.items||[]);
   }catch(e){showToast(e.message,'danger')}
 }
 async function editPI(id){
