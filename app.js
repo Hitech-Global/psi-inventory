@@ -1659,6 +1659,10 @@ async function loadFinanceApprovalList(){
           '</td>'+
         '</tr>';
       }).join('')});
+    // Finance approval only: align quantity, payable and action columns with other
+    // text cells. Applies after translated HTML so English/Indonesian keep the fix.
+    const financeTable=wrap.querySelector('.data-table');
+    if(financeTable)financeTable.classList.add('finance-approval-left');
   }catch(e){showFlash(e.message,'danger')}
 }
 function tabLabel(id){const m={mine:t("app.378", "\u5f85\u6211\u5ba1\u6279"),all:t("app.379", "\u5168\u90e8\u5f85\u5ba1\u6279"),purchase:t("app.380", "\u91c7\u8d2d\u5ba1\u6279"),finance:t("app.381", "\u4ed8\u6b3e\u5ba1\u6279"),check:t("app.1200", "\u5e93\u5b58\u5ba1\u6279"),confirm:t("app.382", "\u786e\u8ba4\u4efb\u52a1"),cc:t("app.383", "\u6284\u9001\u6211\u7684"),done:t("app.384", "\u5df2\u5904\u7406")};return m[id]||id;}
@@ -16353,10 +16357,20 @@ function renderPayFxDisplay(){
   var localAmt=Math.round(currentAmt*ctx.fxRate*100)/100;
   fxDiv.style.display='block';
   fxDiv.style.background='#e8f5e9';fxDiv.style.color='#2e7d32';
+  // Two distinct FX snapshots are already returned by payment-fx/resolve:
+  // local = warehouse settlement currency; RMB = cost/display reference.
+  // Preserve local FX for the actual settlement; do not replace it with RMB FX.
+  var rmbRate=Number(ctx.rmbRate);
+  var showRmb=ctx.fxOriginalCurrency!=='RMB';
   fxDiv.innerHTML='<div style="font-size:13px;font-weight:600">付款日汇率</div>'
-    +'<div style="margin-top:4px">1 '+esc(ctx.fxOriginalCurrency||'')+' = '+Number(ctx.fxRate).toLocaleString(undefined,{maximumFractionDigits:4})+' '+esc(ctx.fxLocalCurrency||'')+'</div>'
-    +'<div style="margin-top:2px;font-size:12px;color:#888">本币金额：'+fmtMoney(currentAmt,ctx.fxOriginalCurrency)+' → '+fmtMoney(localAmt,ctx.fxLocalCurrency)+'</div>'
-    +'<div style="margin-top:2px;font-size:11px;color:#aaa">来源：'+esc(ctx.fxSource||'')+(ctx.fxDirection?' / '+esc(ctx.fxDirection):'')+'</div>';
+    +'<div style="margin-top:5px">付款本币：1 '+esc(ctx.fxOriginalCurrency||'')+' = '+Number(ctx.fxRate).toLocaleString(undefined,{maximumFractionDigits:6})+' '+esc(ctx.fxLocalCurrency||'')+'</div>'
+    +'<div style="margin-top:2px;font-size:12px;color:#666">本币金额：'+fmtMoney(currentAmt,ctx.fxOriginalCurrency)+' → '+fmtMoney(localAmt,ctx.fxLocalCurrency)+'</div>'
+    +(showRmb?(rmbRate>0?
+      '<div style="border-top:1px solid #c8dccb;margin-top:9px;padding-top:8px"><strong>人民币折算（RMB 成本展示）</strong>'
+        +'<div style="margin-top:4px">1 '+esc(ctx.fxOriginalCurrency||'')+' = '+rmbRate.toLocaleString(undefined,{maximumFractionDigits:12})+' RMB</div>'
+        +'<div style="margin-top:2px;font-size:12px;color:#666">本次付款约 '+fmtMoney(currentAmt*rmbRate,'RMB')+'</div></div>'
+      :'<div style="margin-top:8px;color:#b42318">人民币汇率未解析，请重新选择付款日期</div>'):'')
+    +'<div style="margin-top:7px;font-size:11px;color:#888">汇率日期：'+esc(ctx.fxRateDate||'')+' · 来源：'+esc(ctx.fxSource||'')+' / '+esc(ctx.rmbSource||'')+'</div>';
 }
 async function onPayDateChanged(){
   var ctx=window._finalPayCtx||{};
@@ -16370,6 +16384,7 @@ async function onPayDateChanged(){
   fxDiv.style.background='#f5f5f5';fxDiv.style.color='#666';
   fxDiv.innerHTML='正在获取付款日汇率…';
   ctx.fxRate=null;
+  ctx.rmbRate=null;
   var requestedDate=paidDate;
   try{
     var r=await api('/api/payment-requests/'+ctx.prId+'/payment-fx/resolve','POST',{rate_date:paidDate});
@@ -16382,6 +16397,8 @@ async function onPayDateChanged(){
     ctx.fxOriginalCurrency=r.original_currency;
     ctx.fxSource=r.source;
     ctx.fxDirection=r.direction;
+    ctx.rmbRate=r.rmb_rate;
+    ctx.rmbSource=r.rmb_source;
     renderPayFxDisplay();
   }catch(e){
     var currentDate2=dateInput.value;
