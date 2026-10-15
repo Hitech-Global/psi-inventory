@@ -121,6 +121,45 @@ function normalizeSalesRows(items) {
   });
 }
 
+// SKU master is authoritative; case-only variants are standardized, other mismatches block the entire import.
+async function validateSalesBrandRows(adapter, rows) {
+  if (!adapter || typeof adapter.loadSkuBrands !== 'function')
+    throw new Error('销售导入 SKU 品牌主数据校验不可用，禁止写库');
+  const masters=await adapter.loadSkuBrands(rows);
+  const failures=[],warnings=[];
+  for (const row of rows) {
+    const code=String(row.sku_code||'').trim();
+    if (!code) continue;
+    const raw=String(row.brand==null?'':row.brand);
+    const master=masters.get(code);
+    let reason='';
+    if (!master) reason='SKU 主数据不存在：'+code;
+    else if (!String(master.brand||'').trim()) reason='SKU 主数据品牌为空：'+code;
+    else {
+      const canonical=String(master.brand);
+      if (!raw.trim() || raw.trim().toLowerCase()===canonical.toLowerCase()) {
+        if (raw!==canonical) {
+          row.brand=canonical;
+          row.brand_warning='品牌已规范：'+(raw||'（空）')+' → '+canonical;
+          warnings.push({row:row.source_row_no,sku_code:code,from:raw,to:canonical});
+        }
+      } else reason='品牌与 SKU 主数据不一致：SKU '+code+'，导入「'+raw+'」，主数据「'+canonical+'」';
+    }
+    if (reason) {
+      row.errors.push(reason);
+      failures.push({row:row.source_row_no,sku_code:code,brand:raw,master_brand:master?String(master.brand||''):'',reason});
+    }
+  }
+  return {failures,warnings};
+}
+class SalesBrandPrecheckError extends Error {
+  constructor(failures){
+    super('销售导入品牌/SKU 预检查未通过：'+failures.length+' 条，整批未写入。请修正后重试。');
+    this.name='SalesBrandPrecheckError';
+    this.status=422;
+    this.rowErrors=failures;
+  }
+}
 function detailIdentity(row) {
   return row && row.order_detail_id
     ? JSON.stringify([row.source_system, row.order_detail_id])
@@ -337,6 +376,7 @@ function buildSalesPreview(rows, classification) {
       is_valid_order: row.is_valid_order,
       original_order_status: row.original_order_status,
       country: row.country || '',
+      warnings: row.brand_warning ? [row.brand_warning] : [],
       action: item ? item.action : 'insert',
       errors: item ? item.errors.slice() : row.errors.slice()
     };
@@ -491,6 +531,16 @@ function createSqliteSalesImportAdapter(db, options = {}) {
     }
   }
 
+  async function loadSkuBrands(rows) {
+    const codes=Array.from(new Set(rows.map(r=>String(r.sku_code||'').trim()).filter(Boolean)));
+    const map=new Map();
+    for(const codesGroup of chunkRows(codes,450)){
+      const result=callQuery('SELECT sku_code, brand FROM skus WHERE sku_code IN ('+codesGroup.map(()=>'?').join(',')+')',codesGroup);
+      result.rows.forEach(row=>map.set(String(row.sku_code),row));
+    }
+    return map;
+  }
+
   async function loadCandidates(rows) {
     const valid = candidateRowsFromRows(rows);
     const ids = new Set();
@@ -565,7 +615,7 @@ function createSqliteSalesImportAdapter(db, options = {}) {
     callRun(`DROP TABLE IF EXISTS ${stageName}`);
   }
 
-  return { kind: 'sqlite', metrics, transaction, stageRows, loadCandidates, writePlan };
+  return { kind: 'sqlite', metrics, transaction, stageRows, loadSkuBrands, loadCandidates, writePlan };
 }
 
 function createPostgresSalesImportAdapter(db, options = {}) {
@@ -601,6 +651,16 @@ function createPostgresSalesImportAdapter(db, options = {}) {
         quantity INTEGER, is_valid_order INTEGER, original_order_status TEXT, remark TEXT, country TEXT, error_json JSONB
       )`, [json]);
     }
+  }
+
+  async function loadSkuBrands(rows) {
+    const codes=Array.from(new Set(rows.map(r=>String(r.sku_code||'').trim()).filter(Boolean)));
+    const map=new Map();
+    for(const codesGroup of chunkRows(codes,450)){
+      const result=await callQuery('SELECT sku_code, brand FROM skus WHERE sku_code IN ('+codesGroup.map(()=>'?').join(',')+')',codesGroup);
+      result.rows.forEach(row=>map.set(String(row.sku_code),row));
+    }
+    return map;
   }
 
   async function loadCandidates() {
@@ -644,7 +704,7 @@ function createPostgresSalesImportAdapter(db, options = {}) {
       FROM ${planName} WHERE action='insert'`, [classification.importBatchId || '']);
   }
 
-  return { kind: 'postgres', metrics, transaction, stageRows, loadCandidates, writePlan };
+  return { kind: 'postgres', metrics, transaction, stageRows, loadSkuBrands, loadCandidates, writePlan };
 }
 
 function parseRunJson(value, fallback) {
@@ -777,7 +837,9 @@ async function executeSalesImport(adapter, items, options = {}) {
   const timings = makeTimedResult();
   const validationStart = clockNow();
   const rows = normalizeSalesRows(items);
+  const brandPrecheck=await validateSalesBrandRows(adapter,rows);
   timings.validation_ms = clockNow() - validationStart;
+  if(brandPrecheck.failures.length)throw new SalesBrandPrecheckError(brandPrecheck.failures);
   await reportImportProgress(options, {
     status: 'validating', phase: 'validating', percent: 10,
     processed_count: 0, total_count: rows.length,
@@ -873,6 +935,7 @@ async function previewSalesImport(adapter, items, options = {}) {
   const timings = makeTimedResult();
   const validationStart = clockNow();
   const rows = normalizeSalesRows(items);
+  const brandPrecheck=await validateSalesBrandRows(adapter,rows);
   timings.validation_ms = clockNow() - validationStart;
   let classification;
   const transactionStart = clockNow();
@@ -892,6 +955,8 @@ async function previewSalesImport(adapter, items, options = {}) {
   timings.total_ms = clockNow() - started;
   return {
     preview: buildSalesPreview(rows, classification),
+    blocking: brandPrecheck.failures,
+    warnings: brandPrecheck.warnings,
     classification,
     timings,
     metrics: adapter.metrics
@@ -902,6 +967,8 @@ module.exports = {
   SALES_MUTABLE_FIELDS,
   normalizeOrderDate,
   normalizeSalesRows,
+  validateSalesBrandRows,
+  SalesBrandPrecheckError,
   detailIdentity,
   businessIdentity,
   hasSalesChanges,
