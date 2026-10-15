@@ -7814,9 +7814,11 @@ function showKpiTip(el,tip){
 
 // 新 loadRp —— 列配置感知 + 新增2字段 + 改名
 async function loadRp(){
-  if(rpMode==='daily'){return loadRpDaily();}
-  if(rpTab==='online'){return loadRpChannelMonthly('online');}
-  if(rpTab==='offline'){return loadRpChannelMonthly('offline');}
+  var modelOnly=arguments[0]===true;
+  // Export-only: hydrate existing snapshot row projections; never replace an active DOM view.
+  if(!modelOnly&&rpMode==='daily'){return loadRpDaily();}
+  if(!modelOnly&&rpTab==='online'){return loadRpChannelMonthly('online');}
+  if(!modelOnly&&rpTab==='offline'){return loadRpChannelMonthly('offline');}
   var myViewKey=rpCurrentViewKey();
   try{
     await getSalesStatsDays();
@@ -7829,7 +7831,7 @@ async function loadRp(){
     var turnColor=function(v){return v<2?'text-danger':v>=2&&v<4?'text-success':v>=4&&v<6?'text-primary':'text-secondary';};
     var ADJ=[t('gen.L4014.1','MOQ限制'),t("app.786", "\u6574\u7bb1\u53d6\u6574"),t("app.787", "\u5de5\u5382\u6392\u4ea7"),t("app.788", "\u4f9b\u5e94\u5546\u4ea7\u80fd"),t("app.789", "\u51d1\u67dc"),t("app.790", "\u9884\u7b97\u63a7\u5236"),t("app.791", "\u8001\u677f\u786e\u8ba4"),t("app.792", "\u6e20\u9053\u7b56\u7565"),t('gen.L4014.2','其他')];
     // 预计算 + 存储行数据（供 onFinalQtyChange 使用）
-    window._rpRowData=window._rpRowData||{};
+    if(!modelOnly)window._rpRowData=window._rpRowData||{};
     data.forEach(function(r){
       var c={};
       c.oa=r.online_avg_sales_4m||0;
@@ -7859,8 +7861,9 @@ async function loadRp(){
       // 月度销量按 sku_code|country 对齐行粒度（与 sales_m1..m4 的分组维度一致）
       c.monthly = monthlySales[r.sku_code+'|'+(r.country||'')] || {};
       r._totalC=c;
-      window._rpRowData[r.id]=c;
+      if(!modelOnly)window._rpRowData[r.id]=c;
     });
+    if(modelOnly)return; // export reuses _totalC without constructing tables or altering view cache
     // 列渲染器
     var Cols={
       check:{th:'<th style="width:36px"><input type="checkbox" class="rp-all" onchange="(function(el){el.closest(\'.rp-view-container\').querySelectorAll(\'.rp-ck\').forEach(function(c){c.checked=el.checked})})(this)"></th>',
@@ -8639,6 +8642,7 @@ function formatPIDepositStatus(status) {
 
 // 线上/线下预测 + 按月：设置目标周转
 async function loadRpChannelMonthly(channel){
+  var modelOnly=arguments[1]===true;
   var myViewKey=rpCurrentViewKey();
   var isOnline=channel==='online';
   var chLabel=isOnline?t('gen.L4185.1','线上'):t('gen.L4185.2','线下');
@@ -8823,6 +8827,7 @@ async function loadRpChannelMonthly(channel){
       c.transitTurnover = avgSalesPeriod>0 ? Math.round((availAllocatedPeriod+effectiveTransitAllocated)/avgSalesPeriod*10)/10 : null;
       c.afterOrderTurnover = rpComputeChannelAfterOrderTurnover(c, rpGetEffectiveSuggestedQty(channel, r));
     });
+    if(modelOnly)return; // no revision baselines, save flags, view cache or DOM writes
     // 缓存行数据（含 _c 计算字段）供复盘弹窗读取
     window._rpChannelData = window._rpChannelData || {};
     var channelCache = {};
@@ -10321,14 +10326,23 @@ async function rpDoExportExcel(){
 }
 // 构建单个 Tab 的 {name, headers, rows}；视图模型复用页面既有 loadRp / loadRpChannelMonthly 计算结果
 async function rpSheetModel(tab){
-  var data=await rpFetchCached(rpBaseUrl());   // 与页面完全同源同筛选、复用缓存
-  if(!data) data=[];
-  if(tab==='total'){
-    if(!data.length || !data[0]._totalC){ await loadRp(); }   // 复用页面既有「总预测」计算（含月度销量合并）
-    if(!data.length || !data[0]._totalC){ throw new Error(t('gen.L5408.1','总预测数据未就绪，请先在「按月」模式下打开总预测 Tab 后重试')); }
-  }else{
-    if(!data.length || !data[0]._channelC || !data[0]._channelC[tab]){ await loadRpChannelMonthly(tab); }  // 复用页面既有渠道计算
-    if(!data.length || !data[0]._channelC || !data[0]._channelC[tab]){ throw new Error(t('gen.L5409.1','渠道预测数据未就绪，请先打开对应渠道 Tab 后重试')); }
+  // RP-SNAPSHOT: the visible page owns the L0 row objects. The legacy
+  // rpFetchCached(rpBaseUrl()) returns a second, unenriched array and falsely
+  // reports missing _totalC/_channelC, even when the table is already rendered.
+  var ready=await rpEnsureSnapshotReady();
+  if(!ready) throw new Error(t('forecast.data_unavailable','订单预测数据未就绪，请重新加载后重试'));
+  var data=rpLocalSnapshotRows()||[];
+  // A valid empty filter result still produces a header-only Excel sheet.
+  // For an unvisited Tab, derive only its row projection from existing
+  // rendering logic; NEVER switch rpTab/rpMode or touch the active DOM view.
+  if(data.length&&tab==='total'){
+    if(data.some(function(r){return !r._totalC;})) await loadRp(true);
+    if(data.some(function(r){return !r._totalC;})) throw new Error(t('gen.L5408.1','总预测数据未就绪，请重试'));
+  }else if(data.length&&(tab==='online'||tab==='offline')){
+    if(data.some(function(r){return !r._channelC||!r._channelC[tab];})) await loadRpChannelMonthly(tab,true);
+    if(data.some(function(r){return !r._channelC||!r._channelC[tab];})) throw new Error(t('gen.L5409.1','渠道预测数据未就绪，请重试'));
+  }else if(tab!=='total'&&tab!=='online'&&tab!=='offline'){
+    throw new Error('无效的订单预测导出维度');
   }
   var cfg=getRpColConfig(tab);   // 与页面当前 Tab 完全一致的列顺序 + 显隐
   var headers=[], keys=[];
