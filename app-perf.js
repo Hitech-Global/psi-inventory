@@ -315,18 +315,15 @@ function onMutation(method, url, body) {
   global.addEventListener('DOMContentLoaded', function () {
     if (typeof global.renderCILogisticsShell !== 'function' || typeof global.renderCILogisticsTable !== 'function') return;
 
+    // Preserve the canonical app.js shell (including permission-gated shared fees).
+    // The fast path only changes the initial accordion state to expanded.
+    // Rebuilding the whole shell here previously deleted newly added action buttons.
+    var originalCILogisticsShell = global.renderCILogisticsShell;
     global.renderCILogisticsShell = function (ciId) {
-      var canCreate = typeof global.hasPermission === 'function' && global.hasPermission('logistics_create');
-      var escFn = typeof global.esc === 'function' ? global.esc : function (v) { return String(v == null ? '' : v); };
-      var tFn = typeof global.t === 'function' ? global.t : function (_key, fallback) { return fallback || _key; };
-      var createBtn = canCreate
-        ? '<button class="btn btn-primary btn-sm" style="margin-left:8px" onclick="createLogFromCI(\'' + escFn(ciId) + '\')">+ ' + tFn('logistics.new_batch', '新建物流批次') + '</button>'
-        : '';
-      return '<div class="detail-section ci-acc" id="ci-acc-logi">'
-        + '<h3 class="ci-acc-head" onclick="toggleCISection(\'logi\')"><span class="ci-acc-caret" id="ci-caret-logi">▼</span> ' + escFn(tFn('logistics.title', '物流批次')) + '</h3>'
-        + '<div class="ci-acc-body" id="ci-acc-body-logi" data-rendered="0"><div class="empty-state" style="padding:12px">' + tFn('common.loading', '加载中…') + '</div></div>'
-        + createBtn
-        + '</div>';
+      var shell = originalCILogisticsShell(ciId);
+      return shell
+        .replace('id="ci-caret-logi">▶</span>', 'id="ci-caret-logi">▼</span>')
+        .replace('id="ci-acc-body-logi" data-rendered="0" hidden', 'id="ci-acc-body-logi" data-rendered="0"');
     };
 
     global.renderCILogisticsTable = function (batches, ciId) {
