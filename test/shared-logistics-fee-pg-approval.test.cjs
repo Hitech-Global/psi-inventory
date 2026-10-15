@@ -35,8 +35,8 @@ async function main(){
     [ci,'CI-SH-APP-'+uniq,day,'RMB','印度尼西亚',10000,0,0,0]);
   for(let i=0;i<2;i++){
    const batch='sh_batch_'+i+'_'+uniq,pl='sh_pl_'+i+'_'+uniq;
-   db.run('INSERT INTO logistics_batches(id,batch_no,related_ci_id,transport_mode,freight_currency,total_freight) VALUES (?,?,?,?,?,?)',
-     [batch,'SHIP-TEST-'+i+'-'+uniq,ci,'sea','RMB',0]);
+   db.run('INSERT INTO logistics_batches(id,batch_no,related_ci_id,transport_mode,freight_currency,total_freight,forwarder_id,forwarder_name) VALUES (?,?,?,?,?,?,?,?)',
+     [batch,'SHIP-TEST-'+i+'-'+uniq,ci,'sea','RMB',0,'ff-test','Local PG Forwarder']);
    db.run('INSERT INTO packing_lists(id,pl_no,related_ci_id,logistics_batch_id,status) VALUES (?,?,?,?,?)',
      [pl,'PL-TEST-'+i+'-'+uniq,ci,batch,'confirmed']);
    db.run('INSERT INTO packing_list_items(id,pl_id,sku_code,total_qty,cbm,gross_weight) VALUES (?,?,?,?,?,?)',
@@ -89,8 +89,8 @@ async function main(){
         [secondCI,'CI-'+tag+'-'+uniq,day,'RMB','印度尼西亚',10000,0,0,0]);
       ids.forEach((batch,i)=>{
         const pl='sh_'+tag+'_pl_'+i+'_'+uniq;
-        db.run('INSERT INTO logistics_batches(id,batch_no,related_ci_id,transport_mode,freight_currency,total_freight) VALUES (?,?,?,?,?,?)',
-          [batch,'SHIP-'+tag+'-'+i+'-'+uniq,secondCI,'sea','RMB',0]);
+        db.run('INSERT INTO logistics_batches(id,batch_no,related_ci_id,transport_mode,freight_currency,total_freight,forwarder_id,forwarder_name) VALUES (?,?,?,?,?,?,?,?)',
+          [batch,'SHIP-'+tag+'-'+i+'-'+uniq,secondCI,'sea','RMB',0,'ff-test','Local PG Forwarder']);
         db.run('INSERT INTO packing_lists(id,pl_no,related_ci_id,logistics_batch_id,status) VALUES (?,?,?,?,?)',
           [pl,'PL-'+tag+'-'+i+'-'+uniq,secondCI,batch,'confirmed']);
         db.run('INSERT INTO packing_list_items(id,pl_id,sku_code,total_qty,cbm,gross_weight) VALUES (?,?,?,?,?,?)',

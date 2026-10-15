@@ -47,9 +47,22 @@ function loadForCI(ciId){
 function sharedFeesForCost(ci,targetCurrency,requirePayment=false){
   return loadForCI(ci.id).map(f=>({...f,conversion:settledConversion(f.payment_request_id,Number(f.amount_minor),f.currency,targetCurrency,requirePayment)}));
 }
+function resolveSharedFeeForwarder(batches){
+  if(!Array.isArray(batches)||batches.length<2)throw Object.assign(new Error('至少选择两个物流批次'),{status:400});
+  const entries=batches.map(b=>({
+    id:String(b.forwarder_id||'').trim(),
+    name:String(b.forwarder_name||'').trim()
+  }));
+  if(entries.some(x=>!x.name))throw Object.assign(new Error('所选物流批次缺少货代，请先在物流批次中维护货代'),{status:400});
+  const known=entries.every(x=>x.id),none=entries.every(x=>!x.id);
+  if(!known&&!none)throw Object.assign(new Error('物流批次货代ID不完整，请先统一货代资料'),{status:400});
+  const unique=new Set(entries.map(x=>known?x.id:x.name));
+  if(unique.size!==1)throw Object.assign(new Error('不同货代的物流批次不能合并派送费，请分开创建'),{status:409});
+  return entries[0].name;
+}
 function batchesForCI(ciId,ids){
   const p=ids.map(()=>'?').join(',');
-  return query('SELECT lb.id,lb.batch_no,lb.related_ci_id,lb.transport_mode,COALESCE(SUM(pli.cbm),0) AS cbm,COALESCE(SUM(pli.gross_weight),0) AS gross_weight FROM logistics_batches lb LEFT JOIN packing_lists pl ON pl.logistics_batch_id=lb.id LEFT JOIN packing_list_items pli ON pli.pl_id=pl.id WHERE lb.id IN ('+p+') GROUP BY lb.id,lb.batch_no,lb.related_ci_id,lb.transport_mode',ids).rows.filter(x=>String(x.related_ci_id)===String(ciId));
+  return query('SELECT lb.id,lb.batch_no,lb.related_ci_id,lb.transport_mode,lb.forwarder_id,lb.forwarder_name,COALESCE(SUM(pli.cbm),0) AS cbm,COALESCE(SUM(pli.gross_weight),0) AS gross_weight FROM logistics_batches lb LEFT JOIN packing_lists pl ON pl.logistics_batch_id=lb.id LEFT JOIN packing_list_items pli ON pli.pl_id=pl.id WHERE lb.id IN ('+p+') GROUP BY lb.id,lb.batch_no,lb.related_ci_id,lb.transport_mode,lb.forwarder_id,lb.forwarder_name',ids).rows.filter(x=>String(x.related_ci_id)===String(ciId));
 }
 function ownFreightInRmb(batch){
   const amt=Number(batch.total_freight)||0;
@@ -133,18 +146,25 @@ function installSharedLogisticsFeeRoutes(app,ctx) {
       if(ci.cost_confirmed||ci.cost_allocated||ci.wac_confirmed)return res.status(409).json({error:'CI成本已确认/分摊或WAC已确认，禁止新增费用'});
       const d=req.body||{},ids=Array.isArray(d.batch_ids)?d.batch_ids.map(String):[];
       if(ids.length<2||ids.length>50||new Set(ids).size!==ids.length)return res.status(400).json({error:'请选择2到50个不同批次'});
-      const billNo=String(d.bill_no||'').trim(),payee=String(d.payee_name||'').trim();
-      if(!billNo||billNo.length>120||!payee||payee.length>200)return res.status(400).json({error:'请填写账单号及收款方'});
       const batches=batchesForCI(ci.id,ids);
       if(batches.length!==ids.length)return res.status(400).json({error:'存在不属于该CI的物流批次'});
+      // Use only batch master data as the payment payee; ignore untrusted client payee.
+      const payee=resolveSharedFeeForwarder(batches);
+      const key=String(d.request_key||'').trim();
+      if(key&&!/^[a-zA-Z0-9-]{12,80}$/.test(key))return res.status(400).json({error:'请求标识无效'});
+      // bill_no remains internal for audit/UNIQUE( ci_id, bill_no ); no longer collected in UI.
+      // Legacy API clients may still supply a bill_no, but cannot set the payee.
+      const id=genId('shfee');
+      const billNo=key?'SHF-'+key:(String(d.bill_no||'').trim()||'SHF-'+id);
+      if(billNo.length>120)return res.status(400).json({error:'内部业务标识过长'});
       const confirmed=queryOne('SELECT logistics_batch_id FROM wac_history WHERE logistics_batch_id IN ('+ids.map(()=>'?').join(',')+') LIMIT 1',ids);
       if(confirmed)return res.status(409).json({error:'参与的批次已有WAC确认记录，禁止追加入库成本；请使用正式成本调整流程'});
       const calc=allocateSharedFee(d,batches),cur=normalize(calc.currency);
       const activeCurrency=queryOne("SELECT code FROM currencies WHERE code=? AND status='active' LIMIT 1",[cur]);
       if(!activeCurrency)return res.status(400).json({error:'费用币种 '+cur+' 未在系统中启用，请先到币种设置启用'});
       const prior=queryOne('SELECT id FROM shared_logistics_fees WHERE ci_id=? AND bill_no=?',[ci.id,billNo]);
-      if(prior)return res.status(409).json({error:'货代账单号重复',shared_fee_id:prior.id});
-      const id=genId('shfee'),payId=genId('pay'),payNo='PAY-SHF-'+Date.now().toString(36)+'-'+payId.slice(-8);
+      if(prior)return res.status(409).json({error:key?'这笔合并派送费已创建，请到付款申请列表核对':'货代账单号重复',shared_fee_id:prior.id});
+      const payId=genId('pay'),payNo='PAY-SHF-'+Date.now().toString(36)+'-'+payId.slice(-8);
       const value=calc.amount_minor/100,country=sourceExpenseCountry(ci.country,'CI '+ci.ci_no);
       transaction(()=>{
         run('INSERT INTO shared_logistics_fees (id,ci_id,ci_no,bill_no,fee_type,payee_name,currency,amount_minor,payment_request_id,remark) VALUES (?,?,?,?,?,?,?,?,?,?)',[id,ci.id,ci.ci_no,billNo,'delivery',payee,cur,calc.amount_minor,payId,String(d.remark||'')]);
@@ -168,7 +188,7 @@ function installSharedLogisticsFeeRoutes(app,ctx) {
       }catch(e){approval={auto_submitted:false,approval_error:e.message};}
       res.json({id,payment_request_id:payId,payment_request_no:payNo,currency:cur,amount:value,allocations:calc.allocations,...approval});
     }catch(e){
-      if(/UNIQUE|unique constraint/i.test(String(e.message||'')))return res.status(409).json({error:'重复的货代账单号或付款关联'});
+      if(/UNIQUE|unique constraint/i.test(String(e.message||'')))return res.status(409).json({error:'合并派送费申请已存在或付款关联重复，请核对付款申请'});
       return res.status(e.status||400).json({error:e.message||'创建合并费用失败'});
     }
   }));

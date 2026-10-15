@@ -11,8 +11,8 @@ test('shared IDR bill → single approval request → 3 sea batches → RMB/IDR 
     ['ci_shared_1','CI-SHARED-TEST','2026-10-13','RMB','印度尼西亚',10000,0,0]);
   const entries=[['b1','SZIS0013407',4.47],['b2','SZIS0013408',2.76],['b3','SZIS0013406',3.07]];
   entries.forEach(([id,no,cbm],i)=>{
-    db.run("INSERT INTO logistics_batches(id,batch_no,related_ci_id,transport_mode,freight_currency,total_freight) VALUES (?,?,?,?,?,?)",
-      [id,no,'ci_shared_1','sea','RMB',i===0?100:0]);
+    db.run("INSERT INTO logistics_batches(id,batch_no,related_ci_id,transport_mode,freight_currency,total_freight,forwarder_id,forwarder_name) VALUES (?,?,?,?,?,?,?,?)",
+      [id,no,'ci_shared_1','sea','RMB',i===0?100:0,'ff-test','丰年']);
     db.run('INSERT INTO packing_lists(id,pl_no,related_ci_id,logistics_batch_id,status) VALUES (?,?,?,?,?)',
       ['pl'+id,'PL-'+id,'ci_shared_1',id,'confirmed']);
     db.run('INSERT INTO packing_list_items(id,pl_id,sku_code,total_qty,cbm,gross_weight) VALUES (?,?,?,?,?,?)',
@@ -71,5 +71,30 @@ test('shared IDR bill → single approval request → 3 sea batches → RMB/IDR 
     a.equal(wac.reduce((s,x)=>s+x.parts[0].amount_minor,0),10000000);
     const wacCny=entries.map(([id])=>sharedWacParts(id,'RMB'));
     a.equal(wacCny.reduce((s,x)=>s+x.parts[0].amount_minor,0),4500);
+    // New UI sends no bill number / payee: backend derives the only canonical forwarder.
+    const automatic={request_key:'forwarder-auto-20261015',payee_name:'Forged client name',
+      currency:'IDR',amount:21000,batch_ids:entries.map(b=>b[0]),remark:'auto'};
+    const create=async data=>{const r=await fetch(url+'/api/commercial-invoices/ci_shared_1/shared-logistics-fees',{
+      method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(data)});
+      return {status:r.status,body:await r.json()};};
+    const automaticResult=await create(automatic);
+    a.equal(automaticResult.status,200,JSON.stringify(automaticResult.body));
+    const newPr=db.queryOne('SELECT source_no,payee_name_snapshot FROM payment_requests WHERE id=?',[automaticResult.body.payment_request_id]);
+    a.equal(newPr.payee_name_snapshot,'丰年','payment payee must be taken from authoritative selected batches');
+    a.equal(newPr.source_no,'SHF-forwarder-auto-20261015','internal bill reference is generated');
+    const repeat=await create(automatic);
+    a.equal(repeat.status,409,'retry with same request_key cannot create another payable');
+    a.equal(db.queryOne('SELECT COUNT(*) AS n FROM payment_requests').n,2);
+    db.run('UPDATE logistics_batches SET forwarder_id=?,forwarder_name=? WHERE id=?',['other-ff','另一家货代','b3']);
+    const mixed=await create({...automatic,request_key:'another-key-20261015'});
+    a.equal(mixed.status,409,'different forwarder may not share a payment');
+    a.match(mixed.body.error,/不同货代/);
+    a.equal(db.queryOne('SELECT COUNT(*) AS n FROM payment_requests').n,2);
+    db.run('UPDATE logistics_batches SET forwarder_id=?,forwarder_name=? WHERE id=?',['ff-test','丰年','b3']);
+    db.run('UPDATE logistics_batches SET forwarder_name=? WHERE id=?',['','b2']);
+    const missing=await create({...automatic,request_key:'missing-fwd-20261015'});
+    a.equal(missing.status,400);
+    a.match(missing.body.error,/缺少货代/);
+
   }finally{await new Promise(resolve=>server.close(resolve));}
 });
