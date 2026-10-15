@@ -19,8 +19,8 @@ async function main(){
     db.run('INSERT INTO commercial_invoices(id,ci_no,ci_date,currency,country,goods_amount,cost_confirmed,cost_allocated,wac_confirmed) VALUES (?,?,?,?,?,?,?,?,?)',
       [ciId,name,'2026-10-13','RMB','Indonesia',10000,0,0,0]);
     batchIds.forEach((id,i)=>{
-      db.run('INSERT INTO logistics_batches(id,batch_no,related_ci_id,transport_mode,freight_currency,total_freight) VALUES (?,?,?,?,?,?)',
-        [id,'TEST-SEA-'+i+'-'+suffix,ciId,'sea','RMB',i===0?100:0]);
+      db.run('INSERT INTO logistics_batches(id,batch_no,related_ci_id,transport_mode,freight_currency,total_freight,forwarder_id,forwarder_name) VALUES (?,?,?,?,?,?,?,?)',
+        [id,'TEST-SEA-'+i+'-'+suffix,ciId,'sea','RMB',i===0?100:0,'ff-test','PG Test Forwarder']);
       const pl='pl_'+id;
       db.run('INSERT INTO packing_lists(id,pl_no,related_ci_id,logistics_batch_id,status) VALUES (?,?,?,?,?)',
         [pl,'PL-'+id,ciId,id,'confirmed']);
@@ -77,6 +77,20 @@ async function main(){
     assert(reversed.errors.some(x=>/撤销|冲销/.test(x.message)),'reversal must fail closed');
     const reversedCi=await (await fetch(endpoint+'/api/ci-freight-summaries?ids='+ciId)).json();
     assert.equal(reversedCi[ciId].total_rmb,null,'reversed settlement invalidates CI freight');
+    // New no-bill-number UI contract also works on the actual PostgreSQL worker.
+    const fresh={request_key:'pg-auto-forwarder-'+suffix,currency:'IDR',amount:30000,batch_ids:batchIds,payee_name:'Forged Client Payee'};
+    const createFresh=async()=>{
+      const resp=await fetch(endpoint+'/api/commercial-invoices/'+ciId+'/shared-logistics-fees',{
+        method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(fresh)});
+      return {status:resp.status,data:await resp.json()};
+    };
+    const f=await createFresh();
+    assert.equal(f.status,200,'PG no-bill-number shared fee creation: '+JSON.stringify(f.data));
+    assert.equal(db.queryOne('SELECT payee_name_snapshot FROM payment_requests WHERE id=?',[f.data.payment_request_id]).payee_name_snapshot,
+      'PG Test Forwarder','server must derive forwarder, not client data');
+    assert.equal(db.queryOne('SELECT bill_no FROM shared_logistics_fees WHERE id=?',[f.data.id]).bill_no,
+      'SHF-'+fresh.request_key);
+    assert.equal((await createFresh()).status,409,'PG idempotent retry must be blocked');
     db.run('UPDATE packing_list_items SET cbm=? WHERE pl_id=?',[9,'pl_'+batchIds[0]]);
     // The SKU/WAC calculator checks snapshots; the allocation core itself remains immutable.
     console.log('[LOCAL-PG] PASS: actual postgres transaction, 1 request, 3 shares, duplicate 409, paid FX, CI RMB 145, WAC IDR 100000');

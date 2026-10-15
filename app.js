@@ -12148,50 +12148,109 @@ function refreshCISharedFeeAction(ciId){
 }
 // Combine multiple shipped batches into ONE payable expense, without duplicate batch charges.
 async function openSharedLogisticsFeeModal(ciId){
+  const loadKey='shf-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2);
+  window._sharedFeeLoadKey=loadKey;
+  window._sharedFeeRequestKey=loadKey;
+  window._sharedFeeBatchList=[];
+  openModal('新增合并派送费用',
+    '<div id="sfee-loading" aria-live="polite" style="padding:35px 18px;text-align:center;color:#667085">'
+    +'<div role="status" style="font-size:22px;margin-bottom:10px">⏳</div>'
+    +'<div>正在加载物流批次及币种，请稍候…</div></div>',
+    '<button class="btn btn-secondary" onclick="closeModal()">取消</button>',
+    'modal-ci-create');
   try{
     const result=await Promise.all([
       api('/api/commercial-invoices/'+ciId),
       api('/api/commercial-invoices/'+ciId+'/logistics-batches'),
       api('/api/commercial-invoices/'+ciId+'/shared-logistics-fees')]);
+    // If user closed the modal, switched CI or opened another modal, do not write stale DOM.
+    const loading=document.getElementById('sfee-loading');
+    if(window._sharedFeeLoadKey!==loadKey||!loading||
+      !document.getElementById('modal-overlay')?.classList.contains('show'))return;
     const ci=result[0],batches=result[1]||[];
-    const currencyOptions=Array.isArray(result[2]&&result[2].currency_options)?result[2].currency_options:[];
-    if(batches.length<2){showToast('合并费用至少需要两个物流批次','warning');return;}
+    const currencyOptions=Array.isArray(result[2]?.currency_options)?result[2].currency_options:[];
+    if(batches.length<2){
+      loading.innerHTML='这张 CI 目前不足两个物流批次，无法合并派送费。';
+      return;
+    }
     window._sharedFeeBatchList=batches;
     let html='<div class="form-card" style="box-shadow:none;padding:0;max-height:65vh;overflow:auto">'
-      +'<div style="color:#6e6e73;font-size:12px;margin:0 0 14px">仅生成一笔应付和一次付款审批；按运输方式自动分摊：海运 CBM，空运 KG。</div>'
+      +'<div style="color:#6e6e73;font-size:12px;margin:0 0 14px">只生成一笔应付与付款审批；费用按运输方式自动分摊：海运 CBM，空运 KG。</div>'
       +'<div class="form-grid">'
-      +'<div class="form-group"><label>货代账单号 *</label><input id="sfee-bill" placeholder="货代发票/账单编号"></div>'
-      +'<div class="form-group"><label>付款对象 *</label><input id="sfee-payee" placeholder="货代或服务商"></div>'
+      +'<div class="form-group"><label>付款对象（自动匹配货代）</label><input id="sfee-payee" readonly placeholder="请选择参与分摊的物流批次"></div>'
       +'<div class="form-group"><label>费用币种 *</label><select id="sfee-cur">'
       +currencyOptions.map(x=>'<option value="'+esc(x)+'"'+(x==='IDR'?' selected':'')+'>'+esc(x)+'</option>').join('')
       +'</select></div>'
-      +'<div class="form-group"><label>合并派送费金额 *</label><input type="number" min="0.01" step="0.01" id="sfee-amt" placeholder="实际账单金额"></div>'
+      +'<div class="form-group form-group-full"><label>合并派送费金额 *</label><input type="number" min="0.01" step="0.01" id="sfee-amt" placeholder="实际支付的派送费总金额"></div>'
       +'<div class="form-group form-group-full"><label>选择参与分摊的物流批次（至少两个）</label>'
       +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px">';
     batches.forEach(b=>{
       const sea=b.transport_mode==='sea',air=b.transport_mode==='air';
       if(!sea&&!air)return;
       const cbm=(b.pls||[]).reduce((s,p)=>s+Number(p.total_cbm||0),0);
-      html+='<label style="display:flex;align-items:center;gap:6px;padding:10px;border:1px solid #d9d9e0;border-radius:10px;cursor:pointer;background:#f9fafb">'
-        +'<input type="checkbox" class="sfee-batch" value="'+esc(b.id)+'" data-mode="'+esc(b.transport_mode)+'" onchange="updateSharedFeeModeFields()">'
-        +'<span style="font-size:12px">'+esc(b.batch_no)+' · '+(sea?'海运':'空运')+(sea?' · '+cbm.toFixed(2)+' CBM':' · 按KG')+'</span></label>';
+      html+='<label class="sfee-batch-choice" style="display:flex;align-items:center;gap:8px;padding:10px;border:1px solid #d9d9e0;border-radius:10px;cursor:pointer;background:#f9fafb">'
+        +'<input type="checkbox" class="sfee-batch" value="'+esc(b.id)+'" data-mode="'+esc(b.transport_mode)+'" onchange="updateSharedFeeModeFields(this)">'
+        +'<span style="font-size:12px">'+esc(b.batch_no)+' · '+(sea?'海运':'空运')
+        +(sea?' · '+cbm.toFixed(2)+' CBM':' · 按KG')
+        +'<div style="margin-top:3px;color:#667085">货代：'+esc(b.forwarder_name||'未设置')+'</div></span></label>';
     });
-    html+='</div></div><div class="form-group form-group-full" id="sfee-mixed" style="display:none">'
-      +'<div style="font-size:12px;color:#8b5e00;margin-bottom:7px">同时选择海运和空运时，必须根据货代账单明确划分两种运输方式的金额。</div>'
+    html+='</div><div id="sfee-payee-hint" style="color:#667085;font-size:12px;margin-top:7px">勾选批次后自动确定付款货代；不同货代不可合并。</div></div>'
+      +'<div class="form-group form-group-full" id="sfee-mixed" style="display:none">'
+      +'<div style="font-size:12px;color:#8b5e00;margin-bottom:7px">同时选择海运和空运时，请明确划分两种运输方式的费用金额。</div>'
       +'<div style="display:flex;gap:8px;flex-wrap:wrap">'
       +'<label>海运金额 <input type="number" min="0.01" step="0.01" id="sfee-sea" style="width:125px"></label>'
       +'<label>空运金额 <input type="number" min="0.01" step="0.01" id="sfee-air" style="width:125px"></label>'
       +'</div></div>'
       +'<div class="form-group form-group-full"><label>备注</label><input id="sfee-rem" placeholder="清关完成后合并派送"></div>'
       +'</div></div>';
-    openModal('新增合并派送费用 — '+esc(ci.ci_no),html,
+    const mc=document.getElementById('modal-content');
+    if(!mc||!loading.isConnected)return;
+    mc.querySelector('.modal-title').textContent='新增合并派送费用 — '+ci.ci_no;
+    mc.querySelector('.modal-body').innerHTML=html;
+    mc.querySelector('.modal-footer').innerHTML=
       '<button class="btn btn-secondary" onclick="closeModal()">取消</button>'
-      +'<button class="btn btn-primary" id="sfee-submit" onclick="submitSharedLogisticsFee(\''+esc(ciId)+'\')">创建并提交付款审批</button>',
-      'modal-ci-create');
-  }catch(e){showToast(e.message,'danger')}
+      +'<button class="btn btn-primary" id="sfee-submit" onclick="submitSharedLogisticsFee(\''+esc(ciId)+'\')">创建并提交付款审批</button>';
+  }catch(e){
+    const loading=document.getElementById('sfee-loading');
+    if(window._sharedFeeLoadKey!==loadKey||!loading)return;
+    loading.textContent='加载失败：'+(e.message||'网络错误')+'。请关闭后重试。';
+    showToast(e.message,'danger');
+  }
 }
-function updateSharedFeeModeFields(){
-  const selected=[...document.querySelectorAll('.sfee-batch:checked')];
+function getSharedFeeSelectedForwarder(selectedIds){
+  const batches=window._sharedFeeBatchList||[];
+  const chosen=selectedIds.map(id=>batches.find(b=>String(b.id)===String(id)));
+  if(chosen.some(b=>!b))return {error:'所选物流批次资料已失效'};
+  if(!chosen.length)return {name:''};
+  if(chosen.some(b=>!String(b.forwarder_name||'').trim()))return {error:'存在未设置货代的批次，请先完善物流信息'};
+  const withIds=chosen.every(b=>String(b.forwarder_id||'').trim());
+  const noIds=chosen.every(b=>!String(b.forwarder_id||'').trim());
+  if(!withIds&&!noIds)return {error:'所选批次的货代ID资料不一致，请先修正'};
+  const unique=new Set(chosen.map(b=>withIds?String(b.forwarder_id).trim():String(b.forwarder_name).trim()));
+  if(unique.size!==1)return {error:'不同货代的物流批次不能合并付款，请分别创建费用'};
+  return {name:String(chosen[0].forwarder_name).trim(),key:withIds?'id:'+chosen[0].forwarder_id:'name:'+chosen[0].forwarder_name.trim()};
+}
+function updateSharedFeeModeFields(changed){
+  let selected=[...document.querySelectorAll('.sfee-batch:checked')];
+  let matched=getSharedFeeSelectedForwarder(selected.map(x=>x.value));
+  if(changed&&matched.error){
+    changed.checked=false;
+    showToast(matched.error,'warning');
+    selected=[...document.querySelectorAll('.sfee-batch:checked')];
+    matched=getSharedFeeSelectedForwarder(selected.map(x=>x.value));
+  }
+  const payee=document.getElementById('sfee-payee');
+  if(payee)payee.value=matched.error?'':matched.name;
+  const hint=document.getElementById('sfee-payee-hint');
+  if(hint)hint.textContent=matched.error?matched.error:matched.name?'已匹配货代：'+matched.name+'（仅限同一货代）':'勾选批次后自动匹配货代；不同货代不能合并。';
+  const list=window._sharedFeeBatchList||[];
+  document.querySelectorAll('.sfee-batch').forEach(input=>{
+    const b=list.find(item=>String(item.id)===input.value);
+    const compatible=!selected.length||!b||getSharedFeeSelectedForwarder([...selected.map(x=>x.value),input.value]).error==null;
+    input.disabled=!compatible&&!input.checked;
+    const choice=input.closest('.sfee-batch-choice');
+    if(choice)choice.style.opacity=input.disabled?'0.45':'1';
+  });
   const modes=new Set(selected.map(x=>x.dataset.mode));
   const section=document.getElementById('sfee-mixed');
   if(section)section.style.display=modes.has('sea')&&modes.has('air')?'block':'none';
@@ -12200,10 +12259,11 @@ async function submitSharedLogisticsFee(ciId){
   const chosen=[...document.querySelectorAll('.sfee-batch:checked')];
   if(chosen.length<2){showToast('请至少选择两个批次','warning');return;}
   const modes=new Set(chosen.map(x=>x.dataset.mode));
+  const matched=getSharedFeeSelectedForwarder(chosen.map(x=>x.value));
+  if(matched.error||!matched.name){showToast(matched.error||'请先选择同一货代的批次','warning');return;}
   const data={
     batch_ids:chosen.map(x=>x.value),
-    bill_no:document.getElementById('sfee-bill').value.trim(),
-    payee_name:document.getElementById('sfee-payee').value.trim(),
+    request_key:window._sharedFeeRequestKey,
     currency:document.getElementById('sfee-cur').value,
     amount:document.getElementById('sfee-amt').value,
     remark:document.getElementById('sfee-rem').value
@@ -12212,7 +12272,7 @@ async function submitSharedLogisticsFee(ciId){
     data.mode_amounts={sea:document.getElementById('sfee-sea').value,
       air:document.getElementById('sfee-air').value};
   }
-  if(!data.bill_no||!data.payee_name||!(Number(data.amount)>0)){showToast('请填好账单号、付款对象和金额','warning');return;}
+  if(!(Number(data.amount)>0)){showToast('请填写有效的合并派送费金额','warning');return;}
   if(!window.confirm('这会创建一笔真实的应付费用并提交付款审批。确认继续？'))return;
   const btn=document.getElementById('sfee-submit');
   if(btn){btn.disabled=true;btn.textContent='提交中…';}
