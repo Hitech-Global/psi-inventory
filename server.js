@@ -35,7 +35,8 @@ const {
   createPostgresSalesImportAdapter,
   createSalesImportRunStore,
   previewSalesImport,
-  executeSalesImport
+  executeSalesImport,
+  SalesBrandPrecheckError
 } = require('./sales-import-service');
 const {
   LANGUAGE_COOKIE_NAME,
@@ -5759,7 +5760,8 @@ function buildSalesRecordsWhere(req) {
   if (source_system) { parts.push(' AND sr.source_system = ?'); params.push(source_system); }
   if (order_no) { parts.push(' AND sr.order_no LIKE ?'); params.push('%' + order_no + '%'); }
   if (shop_platform) { parts.push(' AND sr.shop_platform = ?'); params.push(shop_platform); }
-  if (brand) { parts.push(' AND sr.brand = ?'); params.push(brand); }
+  // Master SKU brand drives the user-facing filter; existing row-level data scope stays enforced.
+  if (brand) { parts.push(' AND sr.sku_code IN (SELECT sku_code FROM skus WHERE brand = ?)'); params.push(brand); }
   if (sku_code) { parts.push(' AND LOWER(sr.sku_code) LIKE ?'); params.push('%' + String(sku_code).toLowerCase() + '%'); }
   if (is_valid !== undefined && is_valid !== '') { parts.push(' AND sr.is_valid_order = ?'); params.push(parseInt(is_valid)); }
   if (start_date) { parts.push(' AND sr.order_date >= ?'); params.push(start_date); }
@@ -6145,10 +6147,13 @@ app.get('/api/sales-records/filter-options', requireApiPermission('outbound_view
   const scopeFilter = buildSalesDataScopeFilter(req, '');
   const scopeWhere = scopeFilter.sql || '';
   const scopeParams = scopeFilter.params;
+  const brandScope = buildSalesDataScopeFilter(req, 'sr');
 
   const source_systems = query(`SELECT DISTINCT source_system FROM sales_records WHERE source_system IS NOT NULL AND source_system != ''` + scopeWhere + ` ORDER BY source_system`, scopeParams).rows.map(r => r.source_system);
   const shop_platforms = query(`SELECT DISTINCT shop_platform FROM sales_records WHERE shop_platform IS NOT NULL AND shop_platform != ''` + scopeWhere + ` ORDER BY shop_platform`, scopeParams).rows.map(r => r.shop_platform);
-  const brands = query(`SELECT DISTINCT brand FROM sales_records WHERE brand IS NOT NULL AND brand != ''` + scopeWhere + ` ORDER BY brand`, scopeParams).rows.map(r => r.brand);
+  // Never populate the brand dropdown from unvalidated sales_records.brand text.
+  // Only SKU master brands with accessible sales data are eligible.
+  const brands = query(`SELECT DISTINCT s.brand FROM sales_records sr JOIN skus s ON s.sku_code = sr.sku_code WHERE s.brand IS NOT NULL AND s.brand != ''` + brandScope.sql + ` ORDER BY s.brand`, brandScope.params).rows.map(r => r.brand);
   const countries = query(`SELECT DISTINCT country FROM sales_records WHERE country IS NOT NULL AND country != ''` + scopeWhere + ` ORDER BY country`, scopeParams).rows.map(r => r.country);
   res.json({ source_systems, shop_platforms, brands, countries });
 }));
@@ -6163,7 +6168,7 @@ app.post('/api/sales-records/bulk-import-preview', requireApiPermission('outboun
       importBatchId: '',
       idFactory: salesImportIdFactory()
     });
-    res.json({ preview: preview.preview });
+    res.json({ preview: preview.preview, blocking: preview.blocking, warnings: preview.warnings });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
@@ -6272,18 +6277,21 @@ app.post('/api/sales-records/bulk-import', requireApiPermission('outbound_import
     const recalcStatus = salesCommitted ? 'failed' : 'not_started';
     const currentRun = await store.get(importId);
     const currentResult = currentRun && currentRun.result || {};
+    const brandRowErrors=e instanceof SalesBrandPrecheckError ? e.rowErrors.map(x=>({row:x.row,reason:x.reason,sku_code:x.sku_code,brand:x.brand,master_brand:x.master_brand})) : null;
+    const displayErrors=brandRowErrors||[{row:0,reason:e.message}];
     const failedRun = await store.update(importId, {
       status, phase: status, percent: salesCommitted ? 95 : null,
-      total_count: items.length, errors: [{ row: 0, reason: e.message }],
+      total_count: items.length, errors: displayErrors,
+      failed: brandRowErrors ? brandRowErrors.length : (currentRun ? currentRun.failed : (currentResult.failed || 0)),
       commit_state: commitState, recalc_status: recalcStatus,
       result: { total: items.length, inserted: currentRun ? currentRun.inserted : (currentResult.inserted || 0),
         updated: currentRun ? currentRun.updated : (currentResult.updated || 0),
         skipped: currentRun ? currentRun.skipped : (currentResult.skipped || 0),
-        failed: currentRun ? currentRun.failed : (currentResult.failed || 0), errors: [{ row: 0, reason: e.message }] }
+        failed: brandRowErrors ? brandRowErrors.length : (currentRun ? currentRun.failed : (currentResult.failed || 0)), errors: displayErrors }
     });
     const body = salesImportResultBody(failedRun || { import_id: importId, status, errors: [{ row: 0, reason: e.message }] });
     if (status === 'sales_committed_recalc_failed') return res.status(200).json(body);
-    res.status(500).json({ ...body, error: e.message });
+    res.status(e instanceof SalesBrandPrecheckError ? 422 : 500).json({ ...body, error: e.message });
   }
 }));
 

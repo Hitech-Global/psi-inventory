@@ -4380,6 +4380,8 @@ function resumeSalesImport(){var id=salesImportSessionId();if(id)startSalesImpor
 
 function handleSalesFile(file){
   if(!file)return;
+  window._salesImportPreviewReady=false;
+  window._salesImportBlocking=[];
   var ext=file.name.split('.').pop().toLowerCase();
   if(!['xlsx','xls','csv'].includes(ext)){showToast(t("toast.only_xlsx", "仅支持 .xlsx / .xls / .csv 格式"),'danger');return}
   var reader=new FileReader();
@@ -4429,7 +4431,7 @@ function handleSalesFile(file){
       }
       window._salesImportData=records;
       renderSalesPreview(records);
-      var _sib=document.getElementById('sales-import-btn'); if(_sib) _sib.disabled=records.filter(function(r){return r._errors.length===0}).length===0;
+      var _sib=document.getElementById('sales-import-btn'); if(_sib) _sib.disabled=true; // wait for server-side SKU/brand precheck
     }catch(err){showToast(t('toast.handleSalesFile', '文件解析失败：{v1}', {v1: err.message}),'danger')}
   };
   if(ext==='csv')reader.readAsText(file,'UTF-8');
@@ -4437,6 +4439,8 @@ function handleSalesFile(file){
 }
 
 async function requestSalesPreview(){
+  window._salesImportPreviewReady=false;
+  var submitting=document.getElementById('sales-import-btn');if(submitting)submitting.disabled=true;
   var records=window._salesImportData||[];
   var valid=records.filter(function(r){return r._errors.length===0});
   if(valid.length===0)return;
@@ -4447,7 +4451,12 @@ async function requestSalesPreview(){
   });
   try{
     var res=await api('/api/sales-records/bulk-import-preview','POST',{items:items});
-    var html='<div style="background:#f6ffed;border:1px solid #b7eb8f;border-radius:8px;padding:14px 16px;font-size:13px">'+
+    var blocking=res.blocking||[];
+    var warnings=res.warnings||[];
+    window._salesImportBlocking=blocking;
+    window._salesImportPreviewReady=blocking.length===0 && records.every(function(r){return r._errors.length===0;});
+    window._lastSalesImportErrors=blocking.map(function(e){return {row:e.row,reason:e.reason};});
+    var html='<div style="background:'+(blocking.length?'#fff1f0':'#f6ffed')+';border:1px solid '+(blocking.length?'#ffccc7':'#b7eb8f')+';border-radius:8px;padding:14px 16px;font-size:13px">'+
       '<div style="font-weight:600;margin-bottom:8px">'+t("html.sales.preview_stats", "导入预览统计")+'</div>'+
       '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">'+
         t("html.sales.preview_total_open", "<span>总记录数：")+(res.preview.length)+'</span>'+
@@ -4457,13 +4466,25 @@ async function requestSalesPreview(){
         t('gen.L2705.1','<span style="color:#ff3b30">异常失败：')+res.preview.filter(function(p){return p.errors.length>0}).length+'</span>'+
       '</div>';
     html+='</div>';
+    if(blocking.length){
+      html+='<div style="margin-top:10px;padding:12px;border:1px solid #ffccc7;border-radius:8px;background:#fff1f0;font-size:12px">'
+        +'<b style="color:#c62828">SKU/品牌预检查失败 '+blocking.length+' 行：整批禁止导入</b>'
+        +blocking.slice(0,20).map(function(e){return '<div style="margin-top:5px">第 '+esc(e.row)+' 行 · '+esc(e.sku_code||'')+'：'+esc(e.reason)+'</div>'}).join('')
+        +(blocking.length>20?'<div>还有 '+(blocking.length-20)+' 条…</div>':'')
+        +'<button type="button" class="btn btn-secondary btn-sm" style="margin-top:8px" onclick="downloadSalesImportErrors()">下载错误清单</button></div>';
+    }
+    if(warnings.length){html+='<div style="margin-top:8px;padding:10px;border-radius:8px;background:#fffbe6;font-size:12px">'
+      +'<b>已自动规范 '+warnings.length+' 条品牌大小写/空值</b>'
+      +warnings.slice(0,10).map(function(w){return '<div>第 '+esc(w.row)+' 行 '+esc(w.sku_code)+'：'+esc(w.from||'（空）')+' → '+esc(w.to)+'</div>'}).join('')+'</div>';}
     var el=document.getElementById('sales-preview-stats');
     if(el){
       var oldPreview=el.querySelector('div[style*="overflow:auto"]');
       el.innerHTML=html+(oldPreview?oldPreview.outerHTML:'');
     }
-    var _sib2=document.getElementById('sales-import-btn'); if(_sib2) _sib2.disabled=false;
+    var _sib2=document.getElementById('sales-import-btn'); if(_sib2) _sib2.disabled=!window._salesImportPreviewReady;
   }catch(e){
+    window._salesImportPreviewReady=false;
+    var _sib2=document.getElementById('sales-import-btn');if(_sib2)_sib2.disabled=true;
     showToast(t('toast.requestSalesPreview', '预览失败: {v1}', {v1: e.message||''}),'danger');
   }
 }
@@ -4556,6 +4577,7 @@ async function legacySubmitSalesBatchImport(){
 // Phase 1/Checkpoint 3 override: import_id/idempotent submission and real
 // server-side progress.  Kept local to the sales import page.
 async function submitSalesBatchImport(){
+  if(!window._salesImportPreviewReady){showToast('请先完成 SKU/品牌预检查并修正异常行','warning');return;}
   var records=window._salesImportData||[];
   var valid=records.filter(function(r){return r._errors.length===0});
   if(valid.length===0){showToast(t("toast.no_valid_data", "没有可导入的有效数据"),'danger');return}
