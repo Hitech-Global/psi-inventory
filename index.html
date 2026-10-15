@@ -841,6 +841,11 @@ input[type="number"]{-moz-appearance:textfield;appearance:textfield}
 .ci-acc-sub-head{font-size:14px;font-weight:600;margin:8px 0 4px;background:#fafafa;border-radius:6px;padding:6px 8px;cursor:pointer;user-select:none}
 .ci-acc-sub-meta{font-size:12px;color:var(--text-muted);font-weight:normal}
 .ci-acc-body{padding:4px 0 4px 16px}
+/* CI details: keep both logistics actions visible in one row, wrapping on small screens. */
+.ci-logistics-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:8px}
+.ci-logistics-actions #ci-shared-fee-action{display:contents}
+.ci-logistics-actions .ci-shared-fee-create{background:#eef4fb;border:1px solid #b9ccea;color:#26558b}
+.ci-logistics-actions .ci-shared-fee-create:hover{background:#e2edfa}
 #ci-acc-body-logi .action-btn{margin-right:4px}
 /* AUTH-BOOT-NO-FLASH-V1：首屏先鉴权；只有 session 结果明确后才显示登录/待授权/业务页 */
 .auth-boot{position:fixed;inset:0;z-index:100000;display:flex;align-items:center;justify-content:center;background:#f5f6f8}

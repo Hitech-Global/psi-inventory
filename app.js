@@ -12030,6 +12030,7 @@ async function viewCI(id, backPay, backMode){
     })(ci._v1fields||['ci_no','related_pi_no','supplier_name','brand','country','target_warehouse','ci_date','payable_date','currency','ci_total_qty','goods_amount','pi_total_amount','amount_difference','difference_reason','actual_deducted_deposit','balance_gross_amount','balance_paid_amount','balance_unpaid_amount','transport_basis','import_duty_total','ci_status','balance_payment_status']), v2: !ci.actual_ship_date?' text-warning':'', v3: ci.actual_ship_date?esc(fmtDate(ci.actual_ship_date)):t("app.998", "\u5f85\u8865\u5145"), v4: hasPermission('ci_edit')?'<div class="detail-item" style="grid-column:1/-1"><button class="btn btn-secondary btn-sm" onclick="editActualShipDate(\'commercial\',\''+ci.id+'\',\''+(ci.actual_ship_date||'')+t('gen.L5837.1','\')">补充/更正实际出货日期</button></div>'):'', v5: '<div class="detail-item" style="grid-column:1/-1"><span class="detail-label">'+t("ci.attachments", "CI / PL 附件")+'</span><span class="detail-value">'+ciUnifiedAttachmentHtml(ci)+'</span></div>', v6: '', v7: '', v8: plItems.length?t('gen.L5837.2','<div class="table-container"><table class="data-table"><thead><tr><th>SKU</th><th>每箱数量</th><th>箱数</th><th>总数量</th><th>总毛重</th><th>总净重</th><th>总体积</th></tr></thead><tbody>')+plItems.map(i=>'<tr><td class="cell-id">'+esc(i.sku_code)+'</td><td class="text-right">'+i.qty_per_carton+'</td><td class="text-right">'+i.cartons+'</td><td class="text-right">'+i.total_qty+'</td><td class="text-right">'+i.gross_weight+'</td><td class="text-right">'+i.net_weight+'</td><td class="text-right">'+i.cbm+'</td></tr>').join('')+'</tbody></table></div>':t('gen.L5837.3','<div class="empty-state"><div class="empty-icon">📦</div>暂无PL明细</div>')}),ciBackFooter,'modal-ci-create');
     const _ciShellMb=document.querySelector('#modal-content .modal-body');
     if(_ciShellMb)_ciShellMb.insertAdjacentHTML('beforeend', renderCIItemsShell(ci)+renderCIPLShell(ci)+renderCILogisticsShell(id));
+    refreshCISharedFeeAction(id); // fire-and-forget; authoritative /api/me permissions, no modal loading delay
     // CI DETAIL PAY RECORDS：付款记录分区（先注入，置于上架准备分区之前；只读，不改任何现有分区）
     const payMb=document.querySelector('#modal-content .modal-body');
     if(payMb) payMb.insertAdjacentHTML('beforeend', renderCIPaymentRecords(ci.payment_records||[], id, 'operating'));
@@ -12118,16 +12119,32 @@ function renderPLItemsRows(plId){
     + pl.items.map(function(i){ return '<tr><td class="cell-id">'+esc(i.sku_code)+'</td><td class="text-right">'+(i.qty_per_carton||0)+'</td><td class="text-right">'+(i.cartons||0)+'</td><td class="text-right">'+(i.total_qty||0)+'</td><td class="text-right">'+(i.gross_weight||0)+'</td><td class="text-right">'+(i.net_weight||0)+'</td><td class="text-right">'+(i.cbm||0)+'</td></tr>'; }).join('')
     + '</tbody></table></div>';
 }
+function renderCISharedFeeAction(ciId, perms){
+  const allowed=Array.isArray(perms)&&['ci_edit','payment_create','ci_amount_view'].every(p=>perms.includes('*')||perms.includes(p));
+  return allowed?'<button class="btn btn-secondary btn-sm ci-shared-fee-create" onclick="openSharedLogisticsFeeModal(\''+esc(ciId)+'\')">+ 合并派送费</button>':'';
+}
 function renderCILogisticsShell(ciId){
   const canCreate=hasPermission('logistics_create');
-  const createBtn = canCreate ? '<button class="btn btn-primary btn-sm" style="margin-left:8px" onclick="createLogFromCI(\''+esc(ciId)+'\')">+ '+t('logistics.new_batch','新建物流批次')+'</button>' : '';
-  const sharedBtn=(hasPermission('ci_edit')&&hasPermission('payment_create')&&hasPermission('ci_amount_view'))?
-    '<button class="btn btn-secondary btn-sm" style="margin-left:8px" onclick="openSharedLogisticsFeeModal(\''+esc(ciId)+'\')">+ 合并派送费</button>':'';
+  const createBtn=canCreate?'<button class="btn btn-primary btn-sm" onclick="createLogFromCI(\''+esc(ciId)+'\')">+ '+t('logistics.new_batch','新建物流批次')+'</button>':'';
+  const sharedBtn=renderCISharedFeeAction(ciId,currentUser&&currentUser.permissions);
   return '<div class="detail-section ci-acc" id="ci-acc-logi">'
-    + ciAccHead('logi', t('logistics.title','物流批次'), null)
-    + '<div class="ci-acc-body" id="ci-acc-body-logi" data-rendered="0" hidden><div class="empty-state" style="padding:12px">'+t('common.loading','加载中…')+'</div></div>'
-    + createBtn + sharedBtn
-    + '</div>';
+    +ciAccHead('logi',t('logistics.title','物流批次'),null)
+    +'<div class="ci-acc-body" id="ci-acc-body-logi" data-rendered="0" hidden><div class="empty-state" style="padding:12px">'+t('common.loading','加载中…')+'</div></div>'
+    +'<div class="ci-logistics-actions">'+createBtn+'<span id="ci-shared-fee-action">'+sharedBtn+'</span></div>'
+    +'</div>';
+}
+// The current session's authoritative permissions can be newer than currentUser
+// (e.g. a role change while the tab stays open). Refresh the button without
+// delaying CI detail / logistics table, or ever bypassing the POST permission gate.
+function refreshCISharedFeeAction(ciId){
+  const host=document.getElementById('ci-shared-fee-action');
+  if(!host)return;
+  const userId=currentUser&&currentUser.id;
+  api('/api/me','GET').then(me=>{
+    if(!host.isConnected || !currentUser || currentUser.id!==userId || !me || me.id!==userId ||
+       !window.__ciDetailCtx || String(window.__ciDetailCtx.ciId)!==String(ciId))return;
+    host.innerHTML=renderCISharedFeeAction(ciId,me.permissions);
+  }).catch(()=>{}); // Initial session permissions are kept if the probe is unavailable.
 }
 // Combine multiple shipped batches into ONE payable expense, without duplicate batch charges.
 async function openSharedLogisticsFeeModal(ciId){
