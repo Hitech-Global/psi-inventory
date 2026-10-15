@@ -16367,7 +16367,7 @@ function renderPayFxDisplay(){
     +'<div style="margin-top:2px;font-size:12px;color:#666">本币金额：'+fmtMoney(currentAmt,ctx.fxOriginalCurrency)+' → '+fmtMoney(localAmt,ctx.fxLocalCurrency)+'</div>'
     +(showRmb?(rmbRate>0?
       '<div style="border-top:1px solid #c8dccb;margin-top:9px;padding-top:8px"><strong>人民币折算（RMB 成本展示）</strong>'
-        +'<div style="margin-top:4px">1 '+esc(ctx.fxOriginalCurrency||'')+' = '+rmbRate.toLocaleString(undefined,{maximumFractionDigits:12})+' RMB</div>'
+        +'<div style="margin-top:4px">1 RMB = '+(1/rmbRate).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+' '+esc(ctx.fxOriginalCurrency||'')+'</div>'
         +'<div style="margin-top:2px;font-size:12px;color:#666">本次付款约 '+fmtMoney(currentAmt*rmbRate,'RMB')+'</div></div>'
       :'<div style="margin-top:8px;color:#b42318">人民币汇率未解析，请重新选择付款日期</div>'):'')
     +'<div style="margin-top:7px;font-size:11px;color:#888">汇率日期：'+esc(ctx.fxRateDate||'')+' · 来源：'+esc(ctx.fxSource||'')+' / '+esc(ctx.rmbSource||'')+'</div>';

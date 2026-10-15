@@ -20,7 +20,8 @@ test('IDR payout displays BOTH local IDR identity and precise RMB fx and amount'
  await h.impl.onPayDateChanged();
  assert.equal(h.log.length,1);
  assert.match(h.fx.innerHTML,/付款本币：1 IDR = 1 IDR/);
- assert.match(h.fx.innerHTML,/1 IDR = 0.000374500963 RMB/);
+ assert.match(h.fx.innerHTML,/1 RMB = 2,670.22 IDR/);
+ assert.doesNotMatch(h.fx.innerHTML,/1 IDR = 0.000374500963 RMB/);
  assert.match(h.fx.innerHTML,/RMB 355.78/);
  assert.match(h.fx.innerHTML,/汇率日期：2026-10-15/);
  h.pay.value='500000';
