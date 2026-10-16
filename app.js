@@ -10086,6 +10086,32 @@ async function openRpReviewReport(){
     showToast(t('rp.review.generating','正在生成复盘报告...'),'info');
     var data=await rpReviewEnsureViewModel(tab);
     var R=window.RpReviewReport;
+    // BM4049 pilot only. Fetch one country+warehouse evidence series per matching row,
+    // on explicit report click. Do not mutate/cache the L0 forecast snapshot.
+    var stockoutEvidence={};
+    var pilotKeys={};
+    data.forEach(function(r){
+      if(!/BM4049/i.test(String(r.sku_code||'')+' '+String(r.model||'')))return;
+      var key=[r.sku_code,r.country,r.target_warehouse||r.warehouse||''].join('|');
+      pilotKeys[key]={sku:r.sku_code,country:r.country,warehouse:r.target_warehouse||r.warehouse||''};
+    });
+    var pilotEntries=Object.keys(pilotKeys).slice(0,4);
+    await Promise.all(pilotEntries.map(async function(key){
+      var item=pilotKeys[key];
+      try {
+        var u='/api/replenishment-suggestions/stockout-evidence?sku_code='+encodeURIComponent(item.sku)
+          +'&country='+encodeURIComponent(item.country)
+          +'&warehouse='+encodeURIComponent(item.warehouse);
+        var response=await api(u);
+        stockoutEvidence[key]=response&&response.evidence ? response.evidence :
+          {status:'unavailable',error:'缺少库存历史核对结果'};
+      }catch(e){
+        stockoutEvidence[key]={status:'unavailable',error:'无法读取断货证据，请检查库存查看权限或数据来源'};
+      }
+    }));
+    Object.keys(pilotKeys).slice(4).forEach(function(key){
+      stockoutEvidence[key]={status:'unavailable',error:'本试点每次最多核验4个国家/仓库组合，请缩小筛选范围'};
+    });
     // 报告只读：手工 override 与 blocked 都复用页面既有权威口径，报告层不重算
     var report=R.rpReviewBuildReport({
       rows: data,
@@ -10093,7 +10119,8 @@ async function openRpReviewReport(){
       filters: rpReviewCurrentFilters(),
       t: (typeof window.t==='function')?window.t:undefined,
       effectiveQtyFn: function(ch,row){ return rpGetEffectiveSuggestedQty(ch,row); },
-      blockedFn: function(row){ return shouldBlockReplenish(row.sales_status||'', row.risk_tags||''); }
+      blockedFn: function(row){ return shouldBlockReplenish(row.sales_status||'', row.risk_tags||''); },
+      stockoutEvidence:stockoutEvidence
     });
     window.__rpReviewReport=report;
     rpReviewRenderModal(report);
@@ -10149,6 +10176,7 @@ function rpReviewRenderModal(rep){
         [t('rp.review.meta.target','目标周转'), esc(h.targetTurnoverText)],
         [t('rp.review.health.purchase','建议采购 SKU'), h.purchaseCount],
         [t('rp.review.health.overstock','高库存 SKU'), h.overstockCount],
+        ...(h.stockoutReviewCount>0?[[t('rp.review.stockout.pending','断货影响待复核'),h.stockoutReviewCount]]:[]),
         [t('rp.review.health.blocked','Blocked / 慢销'), h.blockedCount],
         [t('rp.review.health.no_sales','无销量 SKU'), h.noSalesCount]
       ].map(function(p){ return '<div class="rp-rv-kpi"><div class="k">'+p[0]+'</div><div class="v">'+p[1]+'</div></div>'; }).join('')
@@ -10230,6 +10258,25 @@ function rpReviewRenderModal(rep){
       esc(a.sku),esc(a.brand),esc(a.issue),esc(a.data),esc(a.action)];
   });
 
+  // The evidence section intentionally shows observed snapshots, never inferred stockout days.
+  var evRows=(rep.stockoutEvidenceRows||[]).map(function(d){
+    var e=d.stockoutEvidence||{};
+    var st=e.status==='qualified'?'可估算参考需求':e.status==='stockout_observed'?'已观察到断货后补货'
+      :e.status==='zero_observed'?'已观察到零库存':e.status==='unavailable'?'核验失败':'数据不足';
+    var decision=d.category==='stockoutReview'?'断货影响待复核'
+      :d.category==='overstock'?'原高库存判断保留':'原分类保留';
+    return [esc(d.sku),esc(d.country+' / '+d.warehouse),esc(st),
+      esc(String(e.observedDays||0)+'/120'),esc(String(e.observedZeroDays||0)),
+      esc(e.lastZeroDate||'-'),esc(e.firstRestockObservedDate||'-'),
+      e.referenceMonthlyDemand!=null?rpReviewQty(e.referenceMonthlyDemand):'-',
+      d.referenceTurnover!=null?esc(rpReviewTurn(d.referenceTurnover)):'-',
+      esc(decision)+(e.error?' · '+esc(e.error):'')];
+  });
+  var evidenceHtml=evRows.length
+    ?'<div class="rp-rv-sec">🔎 BM4049 历史断货核验（试点）</div>'
+      +rpReviewTbl(['SKU','国家 / 仓库','历史证据','快照覆盖','零库存观测天数','最近零库存','首次观察补货','参考月需求','参考周转','判断'],evRows)
+      +'<div class="rp-rv-empty">只统计实际有库存快照的日期；未记录的日期不推断库存为0。覆盖率不足时不计算参考需求。此处不调整订单预测公式、采购建议或系统拦截。</div>'
+    :'';
   var body='<div id="rp-review-root">'
     + metaHtml
     + '<div class="rp-rv-sec">📌 '+esc(t('rp.review.sec.summary','管理摘要'))+'</div>'+summaryHtml
@@ -10244,8 +10291,16 @@ function rpReviewRenderModal(rep){
                 : esc(b.brand)+' '+esc(String(b.target!=null?b.target:''))+esc(t('rp.review.unit_month',' 个月'));
             }).join('　')
         + '</div>' : '')
+    + evidenceHtml
     + '<div class="rp-rv-sec">🛒 '+esc(t('rp.review.sec.purchase','建议采购 SKU'))+'（'+rep.purchase.length+'）</div>'
       + rpReviewTbl(pHeaders,pRows)+pFoot
+    + (rep.stockoutReview&&rep.stockoutReview.length?'<div class="rp-rv-sec">⚠ '+esc(t('rp.review.stockout.pending','断货影响待复核'))+'（'+rep.stockoutReview.length+'）</div>'
+      +rpReviewTbl(['SKU','原月均销量','原始周转','参考月需求','参考周转','管理动作'],rep.stockoutReview.map(function(d){
+        return [esc(d.sku),rpReviewQty(d.avgSales),esc(rpReviewTurn(d.currentTurnover)),
+          d.referenceMonthlyDemand!==null?rpReviewQty(d.referenceMonthlyDemand):'-',
+          d.referenceTurnover!==null?esc(rpReviewTurn(d.referenceTurnover)):'-',
+          esc('核实断货及补货后销量，不作为确定性高库存；原采购建议不变')];
+      })):'' )
     + '<div class="rp-rv-sec">📦 '+esc(t('rp.review.sec.overstock','高库存 / 积压 SKU'))+'（'+rep.overstock.length+'）</div>'
       + rpReviewTbl(oHeaders,oRows)
     + '<div class="rp-rv-sec">🚫 '+esc(t('rp.review.sec.no_sales','无销量 SKU'))+'（'+rep.noSales.length+'）</div>'

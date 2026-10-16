@@ -7010,6 +7010,59 @@ app.get('/api/replenishment-suggestions/daily-sales', requireApiPermission('repl
   res.json({ dates, skus: result });
 }));
 
+// BM4049 stockout pilot: authenticated, scope-checked, read-only 120-day evidence.
+// This endpoint is called only by the report button, never by forecast page navigation.
+// Stock observations are discrete import snapshots; no between-snapshot days are invented.
+const { analyzeStockoutEvidence, dayBefore } = require('./assets/rp-stockout-evidence');
+app.get('/api/replenishment-suggestions/stockout-evidence',
+  requireApiPermission('replenishment_view'),
+  requireApiPermission('inventory_view'),
+  asyncHandler((req,res)=>{
+    const sku=String(req.query.sku_code||'').trim();
+    const country=String(req.query.country||'').trim();
+    const warehouse=String(req.query.warehouse||'').trim();
+    if(!sku || sku.length>100 || !country || !warehouse || country.length>120 || warehouse.length>150)
+      return res.status(400).json({error:'BM4049 pilot requires SKU, country and target warehouse'});
+    // Replenishment scope is the authority: no arbitrary SKU/country/warehouse reads.
+    const scope=buildReplenishmentDataScopeFilter(req);
+    const permitted=query(`SELECT rs.sku_code FROM replenishment_suggestions rs
+      LEFT JOIN skus s ON s.sku_code=rs.sku_code
+      WHERE rs.sku_code=? AND rs.country=? AND rs.target_warehouse=?
+        AND (UPPER(rs.sku_code) LIKE '%BM4049%' OR UPPER(COALESCE(s.model,'')) LIKE '%BM4049%')`+scope.sql+' LIMIT 1',
+      [sku,country,warehouse,...scope.params]).rows;
+    if(!permitted.length) return res.status(404).json({error:'Not found in accessible forecast scope'});
+    const end=new Date().toISOString().slice(0,10);
+    const start=dayBefore(end,119);
+    const snapshots=query(`SELECT import_date,available_qty,created_at
+      FROM inventory_imports WHERE sku_code=? AND country=? AND warehouse=?
+        AND import_date>=? AND import_date<=?
+      ORDER BY import_date DESC,created_at DESC LIMIT 500`,
+      [sku,country,warehouse,start,end]).rows;
+    const salesScope=buildSalesDataScopeFilter(req,'sr');
+    const orderDay=salesOrderDateExpr('sr.order_date');
+    const sales=query(`SELECT ${orderDay} AS day,COALESCE(SUM(sr.quantity),0) AS qty
+      FROM sales_records sr
+      WHERE sr.sku_code=? AND sr.country=? AND sr.is_valid_order=1
+        AND ${orderDay}>=? AND ${orderDay}<=?`+salesScope.sql+
+      ` GROUP BY ${orderDay} ORDER BY day`,
+      [sku,country,start,end,...salesScope.params]).rows;
+    // Country-wide sales are NOT comparable with a single warehouse if other
+    // warehouses hold this SKU. Such data can flag risk, never calculate demand.
+    const otherWh=query(`SELECT warehouse FROM inventory
+      WHERE sku_code=? AND country=? AND warehouse<>? LIMIT 1`,
+      [sku,country,warehouse]).rows;
+    const historyOtherWh=query(`SELECT warehouse FROM inventory_imports
+      WHERE sku_code=? AND country=? AND warehouse<>?
+        AND import_date>=? AND import_date<=? LIMIT 1`,
+      [sku,country,warehouse,start,end]).rows;
+    const evidence=analyzeStockoutEvidence({
+      endDate:end,snapshots,sales,multiWarehouse:!!(otherWh.length||historyOtherWh.length)
+    });
+    res.set('Cache-Control','private, no-store');
+    return res.json({sku_code:sku,country,warehouse,evidence});
+  })
+);
+
 // 历史销售查看 — 仅用于字段配置面板中查看指定时间段销量，不参与任何预测计算
 app.get('/api/replenishment-suggestions/historical-sales', requireApiPermission('replenishment_view'), asyncHandler((req, res) => {
   const { mode, start, end, country, warehouse, brand, keyword, sales_status, lifecycle_status } = req.query;

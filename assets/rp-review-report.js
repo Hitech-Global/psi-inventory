@@ -40,7 +40,8 @@
     PURCHASE: 'purchase',
     OVERSTOCK: 'overstock',
     BLOCKED: 'blocked',
-    NORMAL: 'normal'
+    NORMAL: 'normal',
+    STOCKOUT_REVIEW: 'stockoutReview'
   };
 
   var PRIORITY = { P0: 'P0', P1: 'P1', P2: 'P2' };
@@ -229,6 +230,8 @@
       afterOrderTurnover: afterTurn,
       m1: m1, m2: m2, m3: m3, m4: m4,
       salesStatus: (row.sales_status || '').trim(),
+      lifecycleStatus: (row.lifecycle_status || '').trim(),
+      stockoutEvidence: (opts.stockoutEvidence || {})[String(row.sku_code||'')+'|'+String(row.country||'')+'|'+String(row.target_warehouse||row.warehouse||'')] || null,
       riskTags: riskTags,
       // 权威 blocked：由调用方传入既有 shouldBlockReplenish 的结果（本模块不复制判断）
       blocked: typeof opts.blockedFn === 'function' ? !!opts.blockedFn(row) : false,
@@ -237,6 +240,9 @@
       systemSuggestion: row.suggestion || ''
     };
     dto.trend = rpReviewTrend(m1, m2, m3, m4);
+    var ev=dto.stockoutEvidence;
+    dto.referenceMonthlyDemand=ev&&ev.status==='qualified'?ev.referenceMonthlyDemand:null;
+    dto.referenceTurnover=dto.referenceMonthlyDemand>0?round1(dto.pool/dto.referenceMonthlyDemand):null;
     return dto;
   }
 
@@ -253,6 +259,16 @@
   function rpReviewClassify(dto) {
     if (dto.avgSales <= 0) return CATEGORY.NO_SALES;         // 无销量（含 avg_sales_period = 0）
     if (dto.suggestedQty > 0) return CATEGORY.PURCHASE;      // 建议采购
+    // Pilot: unverified restock effects must not be called definitive overstock.
+    // Do not override purchase, stop/clearance or an adjustment that still exceeds target.
+    var ev=dto.stockoutEvidence;
+    if (/BM4049/i.test(dto.sku+' '+dto.model) && rpReviewIsOverstock(dto) &&
+        ['clearance','stopped'].indexOf(dto.lifecycleStatus)<0 && ev &&
+        !ev.multiWarehouse && !ev.hasZeroDaySalesConflict &&
+        ev.salesRecoveryObserved === true &&
+        (ev.status==='stockout_observed' ||
+         (ev.status==='qualified' && dto.referenceTurnover!==null && dto.referenceTurnover<=dto.targetTurn)))
+      return CATEGORY.STOCKOUT_REVIEW;
     if (rpReviewIsOverstock(dto)) return CATEGORY.OVERSTOCK; // 高库存 / 积压
     if (dto.blocked) return CATEGORY.BLOCKED;                // 慢销/停采/blocked
     return CATEGORY.NORMAL;
@@ -292,6 +308,12 @@
   // P2：一般性高库存、无销量待检查、其他需观察异常
   function rpReviewActionFor(dto, t) {
     t = t || defaultT;
+    if(dto.category===CATEGORY.STOCKOUT_REVIEW) return {
+      priority:PRIORITY.P1,
+      issue:t('rp.review.stockout.pending','历史零库存后补货，原始周转可能失真，待复核'),
+      data:rpReviewActionData(dto,t),
+      action:t('rp.review.stockout.action','先核对断货证据及补货后销量，再决定是否清库存；系统原采购拦截不变')
+    };
     var isStockout = hasAny([dto.salesStatus], STOCKOUT_SALES_STATUS);
 
     if (dto.avgSales > 0 && (dto.suggestedQty > 0 || isStockout)) {
@@ -416,7 +438,8 @@
     for (var i = 0; i < rawRows.length; i++) {
       var dto = rpReviewRowContext(rawRows[i], tab, {
         effectiveQtyFn: src.effectiveQtyFn,
-        blockedFn: src.blockedFn
+        blockedFn: src.blockedFn,
+        stockoutEvidence: src.stockoutEvidence
       });
       if (!dto) continue;
       dto.category = rpReviewClassify(dto);
@@ -429,6 +452,7 @@
     buckets[CATEGORY.OVERSTOCK] = [];
     buckets[CATEGORY.BLOCKED] = [];
     buckets[CATEGORY.NORMAL] = [];
+    buckets[CATEGORY.STOCKOUT_REVIEW] = [];
     dtos.forEach(function (d) { buckets[d.category].push(d); });
 
     // ---- 目标周转（读取页面 view model 的线上/线下目标周转列，不另建任何品牌配置）----
@@ -512,6 +536,7 @@
       blockedOverlapCount: blockedOverlapCount,
       noSalesCount: buckets[CATEGORY.NO_SALES].length,
       normalCount: buckets[CATEGORY.NORMAL].length,
+      stockoutReviewCount: buckets[CATEGORY.STOCKOUT_REVIEW].length,
       purchaseQty: purchaseQty
     };
 
@@ -565,6 +590,8 @@
       noSales: buckets[CATEGORY.NO_SALES].slice(),
       blocked: buckets[CATEGORY.BLOCKED].slice(),
       normal: buckets[CATEGORY.NORMAL].slice(),
+      stockoutReview: buckets[CATEGORY.STOCKOUT_REVIEW].slice(),
+      stockoutEvidenceRows: dtos.filter(function(d){return !!d.stockoutEvidence;}),
       actions: actions,
       rows: dtos
     };
@@ -589,13 +616,14 @@
     // 「高库存」与「Blocked」是两个独立维度（被判高库存的 SKU 大多同时被系统拦截补货），
     // 因此摘要句不把它们写成互斥分区：前四项为分区计数（可加总），Blocked 单列为重叠维度。
     var headline = t('rp.review.summary.headline',
-      '当前共 {total} 个 SKU，其中 {purchase} 个需要补货，{overstock} 个库存偏高，{noSales} 个无销量，{normal} 个周转正常；另有 {blocked} 个被系统标记为拦截补货（慢销/呆滞/停采/高库存，与上述分类存在重叠）。',
+      '当前共 {total} 个 SKU，其中 {purchase} 个需要补货，{overstock} 个库存偏高，{noSales} 个无销量，{normal} 个周转正常，{review} 个历史断货待复核；另有 {blocked} 个被系统标记为拦截补货（慢销/呆滞/停采/高库存，与上述分类存在重叠）。',
       {
         total: health.skuTotal,
         purchase: health.purchaseCount,
         overstock: health.overstockCount,
         noSales: health.noSalesCount,
         normal: health.normalCount,
+        review: health.stockoutReviewCount,
         blocked: health.blockedCount
       });
 
@@ -612,6 +640,9 @@
         '建议采购 {n} 个 SKU，合计 {qty} 件，需优先安排下单。',
         { n: health.purchaseCount, qty: Math.round(health.purchaseQty) }));
     }
+    if (health.stockoutReviewCount > 0) highlights.push(t('rp.review.stockout.summary',
+      '{n} 个 SKU 有历史零库存后补货证据，暂从确定性高库存名单移至待复核；采购建议与系统拦截保持不变。',
+      {n:health.stockoutReviewCount}));
     if (health.overstockCount > 0) {
       var maxGap = null;
       buckets[CATEGORY.OVERSTOCK].forEach(function (d) {
@@ -681,9 +712,19 @@
       : h.targetTurnoverText));
     lines.push('建议采购：' + h.purchaseCount);
     lines.push('高库存：' + h.overstockCount);
+    if(h.stockoutReviewCount)lines.push('断货影响待复核：'+h.stockoutReviewCount);
     lines.push('慢销/Blocked：' + h.blockedCount);
     lines.push('无销量：' + h.noSalesCount);
     lines.push('');
+    if(report.stockoutEvidenceRows&&report.stockoutEvidenceRows.length){
+      report.stockoutEvidenceRows.forEach(function(d){
+        var e=d.stockoutEvidence;
+        lines.push('断货核验 '+d.sku+'：'+e.status+'；120天库存快照覆盖 '+e.observedDays+' 天；零库存观测 '+e.observedZeroDays+' 天；最近零库存 '+(e.lastZeroDate||'-')+'；首次观察补货 '+(e.firstRestockObservedDate||'-'));
+        if(d.referenceTurnover!==null)lines.push('仅供分析：调整参考月需求 '+d.referenceMonthlyDemand+' 件，参考周转 '+d.referenceTurnover+' 月（不改变原建议采购）');
+        if(e.error)lines.push('证据读取失败：'+e.error);
+      });
+      lines.push('');
+    }
     lines.push('重点问题：');
     var hl = report.summary.highlights || [];
     if (!hl.length) {
@@ -731,6 +772,7 @@
       [t('rp.review.health.purchase', '建议采购 SKU 数'), report.health.purchaseCount],
       [t('rp.review.health.purchase_qty', '建议采购数量合计'), Math.round(report.health.purchaseQty)],
       [t('rp.review.health.overstock', '高库存 SKU 数'), report.health.overstockCount],
+      [t('rp.review.stockout.pending', '历史断货待复核 SKU 数'), report.health.stockoutReviewCount],
       [t('rp.review.health.blocked', 'Blocked / 慢销 SKU 数'), report.health.blockedCount],
       [t('rp.review.health.no_sales', '无销量 SKU 数'), report.health.noSalesCount],
       [t('rp.review.health.normal', '正常 SKU 数'), report.health.normalCount],
@@ -860,6 +902,17 @@
       })
     });
 
+    if(report.stockoutEvidenceRows&&report.stockoutEvidenceRows.length){
+      sheets.push({name:'Stockout Review',headers:['SKU','国家','仓库','状态','库存快照覆盖天数','观测零库存天数','最后零库存日期','补货观察日期','原始周转(月)','调整参考月需求(件)','调整参考周转(月)','结论'],
+        rows:report.stockoutEvidenceRows.map(function(d){
+          var e=d.stockoutEvidence;
+          return [d.sku,d.country,d.warehouse,e.status,e.observedDays||0,e.observedZeroDays||0,
+            e.lastZeroDate||'',e.firstRestockObservedDate||'',rpReviewTurnText(d.currentTurnover,t),
+            d.referenceMonthlyDemand===null?'不可估算':d.referenceMonthlyDemand,
+            d.referenceTurnover===null?'不可估算':d.referenceTurnover,
+            d.category===CATEGORY.STOCKOUT_REVIEW?'疑似断货影响，待人工复核':'原始高库存结论保留'];
+        })});
+    }
     return sheets;
   }
 
