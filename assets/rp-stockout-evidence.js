@@ -15,9 +15,13 @@ function analyzeStockoutEvidence(input) {
   const snapMap=new Map(), saleMap=new Map();
   // Input sorted by date DESC, created_at DESC: first event per day wins.
   for(const r of (o.snapshots||[])) {
-    const d=validDay(r.import_date), q=Number(r.available_qty);
+    const imported=validDay(r.import_date), cutoff=validDay(r.snapshot_cutoff_date);
+    // Snapshot cutoff date is the actual stock-as-of day when trustworthy.
+    // File import date is only a fallback, and cutoff must not exceed import date.
+    const d=cutoff&&imported&&cutoff<=imported?cutoff:imported;
+    const q=Number(r.available_qty);
     if(!d||d<start||d>end||!Number.isSafeInteger(q)||q<0||snapMap.has(d))continue;
-    snapMap.set(d,q);
+    snapMap.set(d,{inventory:q,lastInboundDate:validDay(r.last_inbound_date)});
   }
   for(const r of (o.sales||[])){
     const d=validDay(r.day),q=Number(r.qty);
@@ -25,7 +29,8 @@ function analyzeStockoutEvidence(input) {
     saleMap.set(d,(saleMap.get(d)||0)+q);
   }
   const observations=[...snapMap].sort((a,b)=>a[0].localeCompare(b[0]))
-    .map(([date,inventory])=>({date,inventory,sales:saleMap.get(date)||0}));
+    .map(([date,entry])=>({date,inventory:entry.inventory,
+      lastInboundDate:entry.lastInboundDate,sales:saleMap.get(date)||0}));
   const zero=observations.filter(x=>x.inventory===0);
   const stocked=observations.filter(x=>x.inventory>0);
   const firstZero=zero.length?zero[0].date:null;
@@ -46,6 +51,22 @@ function analyzeStockoutEvidence(input) {
     && postQty>0 && postQty/postDays>=0.5 && postQty/postDays>2*(gapQty/gapDays);
   const coverage=observations.length/windowDays;
   const multiWarehouse=!!o.multiWarehouse;
+  // Recent material restock is an OBSERVED point-in-time stock jump, not the
+  // exact quantity received. Require a credible inbound date after prior low
+  // stock, actual preceding zero-stock observations and a fresh large balance.
+  const latest=observations.length?observations[observations.length-1]:null;
+  const inboundDate=latest&&validDay(latest.lastInboundDate);
+  const daysSinceInbound=inboundDate
+    ?Math.round((Date.parse(end+'T00:00:00Z')-Date.parse(inboundDate+'T00:00:00Z'))/DAY):null;
+  const prior=latest&&inboundDate
+    ?observations.filter(x=>x.date<inboundDate).slice(-1)[0]:null;
+  const increase=prior&&latest?latest.inventory-prior.inventory:null;
+  const recentMajorRestock=!!(inboundDate&&prior&&latest&&lastZero
+    && inboundDate>lastZero && inboundDate>prior.date
+    && latest.date>=inboundDate && daysSinceInbound>=0 && daysSinceInbound<=14
+    && latest.inventory>0 && increase>=100
+    && latest.inventory>=Math.max(1,prior.inventory)*5
+    && zero.length>=2 && !multiWarehouse && !contradiction);
   const observedSaleDays=stocked.length;
   const stockSales=stocked.reduce((s,x)=>s+x.sales,0);
   // Sample only well-covered, same-scope, non-contradictory observations.
@@ -63,13 +84,21 @@ function analyzeStockoutEvidence(input) {
     firstZeroDate:firstZero, lastZeroDate:lastZero,
     firstRestockObservedDate:restock?restock.date:null,
     hasZeroDaySalesConflict:contradiction, multiWarehouse,
+    recentMajorRestock,
+    recentRestockDate:recentMajorRestock?inboundDate:null,
+    observedAfterRestockDate:recentMajorRestock?latest.date:null,
+    observedBeforeRestockStock:recentMajorRestock?prior.inventory:null,
+    observedAfterRestockStock:recentMajorRestock?latest.inventory:null,
+    observedStockIncrease:recentMajorRestock?increase:null,
+    daysSinceRecentRestock:recentMajorRestock?daysSinceInbound:null,
+    remainingWatchDays:recentMajorRestock?14-daysSinceInbound:null,
     salesRecoveryObserved, beforeZeroSales14d:preQty, gapSales:gapQty, gapDays,
     afterRestockSales14d:postQty, afterRestockObservedDays:postDays,
     referenceMonthlyDemand:status==='qualified'?referenceDemand:null,
     sampledInStockSales:stockSales,
     saleDaysWithOrders:daysWithSales,
     // Evidence sample: each day is a snapshot, not a presumed time interval.
-    observations, evidenceSource:'inventory_imports.import_date + sales_records.order_date',
+    observations, evidenceSource:'inventory_imports.snapshot_cutoff_date (fallback import_date) + sales_records.order_date',
     limitation:'库存快照仅证明记录日库存，不证明两次快照之间逐日库存；销量为国家维度。'
   };
 }
