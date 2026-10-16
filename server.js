@@ -7033,7 +7033,7 @@ app.get('/api/replenishment-suggestions/stockout-evidence',
     if(!permitted.length) return res.status(404).json({error:'Not found in accessible forecast scope'});
     const end=new Date().toISOString().slice(0,10);
     const start=dayBefore(end,119);
-    const snapshots=query(`SELECT import_date,available_qty,created_at
+    const snapshots=query(`SELECT import_date,snapshot_cutoff_date,available_qty,last_inbound_date,created_at
       FROM inventory_imports WHERE sku_code=? AND country=? AND warehouse=?
         AND import_date>=? AND import_date<=?
       ORDER BY import_date DESC,created_at DESC LIMIT 500`,

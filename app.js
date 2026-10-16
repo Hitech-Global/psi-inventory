@@ -10261,10 +10261,16 @@ function rpReviewRenderModal(rep){
   // The evidence section intentionally shows observed snapshots, never inferred stockout days.
   var evRows=(rep.stockoutEvidenceRows||[]).map(function(d){
     var e=d.stockoutEvidence||{};
-    var st=e.status==='qualified'?'可估算参考需求':e.status==='stockout_observed'?'已观察到断货后补货'
+    var st=e.recentMajorRestock?'新货到仓·观察期'
+      :e.status==='qualified'?'可估算参考需求':e.status==='stockout_observed'?'已观察到断货后补货'
       :e.status==='zero_observed'?'已观察到零库存':e.status==='unavailable'?'核验失败':'数据不足';
     var decision=d.category==='stockoutReview'?'断货影响待复核'
       :d.category==='overstock'?'原高库存判断保留':'原分类保留';
+    if(e.recentMajorRestock){
+      decision+='；入库 '+e.recentRestockDate+'（距今 '+e.daysSinceRecentRestock+' 天），库存观察 '
+        +e.observedBeforeRestockStock+' → '+e.observedAfterRestockStock
+        +'，还需观察 '+e.remainingWatchDays+' 天';
+    }
     return [esc(d.sku),esc(d.country+' / '+d.warehouse),esc(st),
       esc(String(e.observedDays||0)+'/120'),esc(String(e.observedZeroDays||0)),
       esc(e.lastZeroDate||'-'),esc(e.firstRestockObservedDate||'-'),
@@ -10274,8 +10280,8 @@ function rpReviewRenderModal(rep){
   });
   var evidenceHtml=evRows.length
     ?'<div class="rp-rv-sec">🔎 BM4049 历史断货核验（试点）</div>'
-      +rpReviewTbl(['SKU','国家 / 仓库','历史证据','快照覆盖','零库存观测天数','最近零库存','首次观察补货','参考月需求','参考周转','判断'],evRows)
-      +'<div class="rp-rv-empty">只统计实际有库存快照的日期；未记录的日期不推断库存为0。覆盖率不足时不计算参考需求。此处不调整订单预测公式、采购建议或系统拦截。</div>'
+      +rpReviewTbl(['SKU','国家 / 仓库','历史证据','快照覆盖','零库存观测天数','最近零库存截止日','首次观察补货','参考月需求','参考周转','判断'],evRows)
+      +'<div class="rp-rv-empty">只统计实际有库存快照的日期；未记录的日期不推断库存为0。新增的库存差额仅指两次快照观察变化，不代表实际入库数量。新货到仓14天内单列观察，尚不能认定库存正常。此处不调整订单预测公式、采购建议或系统拦截。</div>'
     :'';
   var body='<div id="rp-review-root">'
     + metaHtml
@@ -10299,7 +10305,9 @@ function rpReviewRenderModal(rep){
         return [esc(d.sku),rpReviewQty(d.avgSales),esc(rpReviewTurn(d.currentTurnover)),
           d.referenceMonthlyDemand!==null?rpReviewQty(d.referenceMonthlyDemand):'-',
           d.referenceTurnover!==null?esc(rpReviewTurn(d.referenceTurnover)):'-',
-          esc('核实断货及补货后销量，不作为确定性高库存；原采购建议不变')];
+          esc(d.stockoutEvidence&&d.stockoutEvidence.recentMajorRestock
+            ?'新货刚到，观察补货后销量到第14天；原采购建议不变'
+            :'核实断货及补货后销量，不作为确定性高库存；原采购建议不变')];
       })):'' )
     + '<div class="rp-rv-sec">📦 '+esc(t('rp.review.sec.overstock','高库存 / 积压 SKU'))+'（'+rep.overstock.length+'）</div>'
       + rpReviewTbl(oHeaders,oRows)

@@ -66,3 +66,67 @@ test('invalid dates and future observations never enter the reference period',()
   assert.equal(out.observedDays,120);
   assert.equal(out.observedZeroDays,30);
 });
+
+// Regression: factual RDBM4049-like sparse snapshots; NOT a daily stock ledger.
+function bm4049Snapshots(){
+ const events=[
+  ['2026-07-05',344],['2026-07-31',60],['2026-08-12',0],
+  ['2026-08-15',0],['2026-08-23',0],['2026-08-27',49],
+  ['2026-08-31',41],['2026-09-03',18],['2026-09-09',0],
+  ['2026-09-10',0],['2026-09-13',0],['2026-09-20',0],
+  ['2026-10-08',4],['2026-10-15',1615]
+ ];
+ return events.reverse().map(([import_date,available_qty])=>({
+  import_date,available_qty,
+  last_inbound_date:import_date==='2026-10-15'?'2026-10-13':''
+ }));
+}
+test('BM4049: 14 snapshots, 7 observed zero days, recent major restock without invented demand',()=>{
+ const ev=analyzeStockoutEvidence({
+  endDate:'2026-10-16',snapshots:bm4049Snapshots(),
+  sales:[{day:'2026-08-01',qty:69},{day:'2026-09-01',qty:49},{day:'2026-10-15',qty:6}]
+ });
+ assert.equal(ev.status,'stockout_observed');
+ assert.equal(ev.observedDays,14);
+ assert.equal(ev.observedZeroDays,7);
+ assert.equal(ev.referenceMonthlyDemand,null);
+ assert.equal(ev.salesRecoveryObserved,false);
+ assert.equal(ev.recentMajorRestock,true);
+ assert.equal(ev.recentRestockDate,'2026-10-13');
+ assert.equal(ev.daysSinceRecentRestock,3);
+ assert.equal(ev.remainingWatchDays,11);
+ assert.equal(ev.observedBeforeRestockStock,4);
+ assert.equal(ev.observedAfterRestockStock,1615);
+ assert.equal(ev.observedStockIncrease,1611);
+});
+test('no recent inbound date: do not falsely mark restock window',()=>{
+ const rows=bm4049Snapshots();delete rows[0].last_inbound_date;
+ assert.equal(analyzeStockoutEvidence({endDate:'2026-10-16',snapshots:rows}).recentMajorRestock,false);
+});
+test('restock grace expires after 14 days',()=>{
+ const ev=analyzeStockoutEvidence({endDate:'2026-10-28',snapshots:bm4049Snapshots()});
+ assert.equal(ev.recentMajorRestock,false);
+ assert.equal(ev.referenceMonthlyDemand,null);
+});
+test('other warehouse stock prevents unilateral country-wide restock watch',()=>{
+ const ev=analyzeStockoutEvidence({endDate:'2026-10-16',snapshots:bm4049Snapshots(),multiWarehouse:true});
+ assert.equal(ev.recentMajorRestock,false);
+});
+test('same-day zero-stock sales contradiction prevents restock watch',()=>{
+ const ev=analyzeStockoutEvidence({endDate:'2026-10-16',snapshots:bm4049Snapshots(),sales:[{day:'2026-09-20',qty:1}]});
+ assert.equal(ev.recentMajorRestock,false);
+});
+test('material inbound must be observable, not merely a recent date',()=>{
+ const rows=bm4049Snapshots();rows[0].available_qty=15;
+ assert.equal(analyzeStockoutEvidence({endDate:'2026-10-16',snapshots:rows}).recentMajorRestock,false);
+});
+
+test('prefer snapshot_cutoff_date as actual stock-as-of day (import may be next day)',()=>{
+ const rows=bm4049Snapshots();
+ rows[0].snapshot_cutoff_date='2026-10-14';
+ rows[1].snapshot_cutoff_date='2026-10-07';
+ const ev=analyzeStockoutEvidence({endDate:'2026-10-16',snapshots:rows});
+ assert.equal(ev.recentMajorRestock,true);
+ assert.equal(ev.observedAfterRestockDate,'2026-10-14');
+ assert.equal(ev.observations.at(-1).date,'2026-10-14');
+});

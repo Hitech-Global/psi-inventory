@@ -76,3 +76,39 @@ test('manual clearance lifecycle must not be overridden by stockout evidence',()
    stockoutEvidence:{[key]:evidence('qualified',60)},blockedFn:()=>true});
  assert.equal(res.stockoutReview.length,0);
 });
+
+test('newly restocked BM4049, no sales rebound yet: defer high-stock judgement only in report',()=>{
+ const ev=evidence('stockout_observed');
+ ev.salesRecoveryObserved=false;
+ ev.recentMajorRestock=true;
+ ev.recentRestockDate='2026-10-13';
+ ev.daysSinceRecentRestock=3;
+ ev.remainingWatchDays=11;
+ ev.observedBeforeRestockStock=4;
+ ev.observedAfterRestockStock=1615;
+ const rep=report(ev);
+ assert.equal(rep.stockoutReview.length,1);
+ assert.equal(rep.overstock.length,0);
+ assert.equal(rep.health.blockedCount,1);
+ assert.equal(rep.rows[0].avgSales,45);
+ assert.equal(rep.rows[0].currentTurnover,5.3);
+ assert.equal(rep.rows[0].suggestedQty,0);
+ assert.equal(rep.rows[0].referenceMonthlyDemand,null);
+ assert.match(rep.actions[0].issue,/入库日 2026-10-13/);
+ assert.match(rep.actions[0].action,/原采购建议和拦截不变/);
+ const text=R.rpReviewText(rep);
+ assert.match(text,/观测库存 4 → 1615/);
+ const sheet=R.rpReviewSheets(rep).find(x=>x.name==='Stockout Review');
+ assert.ok(sheet.headers.includes('近期大批补货入库日'));
+ assert.equal(sheet.rows[0][8],'2026-10-13');
+});
+
+test('the actual code prefix RDBM4049 qualifies for new restock review, not BM4094',()=>{
+ const r=row();r.sku_code='RDBM4049';
+ const e=evidence('stockout_observed');e.salesRecoveryObserved=false;e.recentMajorRestock=true;
+ e.recentRestockDate='2026-10-13';e.daysSinceRecentRestock=3;
+ const rep=R.rpReviewBuildReport({rows:[r],tab:'total',filters:{},
+   stockoutEvidence:{'RDBM4049|印度尼西亚|Bekasi Warehouse':e},blockedFn:()=>true});
+ assert.equal(rep.stockoutReview.length,1);
+ assert.equal(rep.overstock.length,0);
+});

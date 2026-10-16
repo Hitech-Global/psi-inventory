@@ -265,7 +265,7 @@
     if (/BM4049/i.test(dto.sku+' '+dto.model) && rpReviewIsOverstock(dto) &&
         ['clearance','stopped'].indexOf(dto.lifecycleStatus)<0 && ev &&
         !ev.multiWarehouse && !ev.hasZeroDaySalesConflict &&
-        ev.salesRecoveryObserved === true &&
+        (ev.salesRecoveryObserved === true || ev.recentMajorRestock === true) &&
         (ev.status==='stockout_observed' ||
          (ev.status==='qualified' && dto.referenceTurnover!==null && dto.referenceTurnover<=dto.targetTurn)))
       return CATEGORY.STOCKOUT_REVIEW;
@@ -308,12 +308,21 @@
   // P2：一般性高库存、无销量待检查、其他需观察异常
   function rpReviewActionFor(dto, t) {
     t = t || defaultT;
-    if(dto.category===CATEGORY.STOCKOUT_REVIEW) return {
-      priority:PRIORITY.P1,
-      issue:t('rp.review.stockout.pending','历史零库存后补货，原始周转可能失真，待复核'),
-      data:rpReviewActionData(dto,t),
-      action:t('rp.review.stockout.action','先核对断货证据及补货后销量，再决定是否清库存；系统原采购拦截不变')
-    };
+    if(dto.category===CATEGORY.STOCKOUT_REVIEW) {
+      var ev=dto.stockoutEvidence||{};
+      var newArrival=ev.recentMajorRestock===true;
+      return {
+        priority:PRIORITY.P1,
+        issue:newArrival
+          ?t('rp.review.stockout.recent_issue','近期大批补货，原始高库存判断需观察（入库日 {date}，到货 {days} 天）',
+            {date:ev.recentRestockDate||'-',days:ev.daysSinceRecentRestock})
+          :t('rp.review.stockout.pending','历史零库存后补货，原始周转可能失真，待复核'),
+        data:rpReviewActionData(dto,t),
+        action:newArrival
+          ?t('rp.review.stockout.recent_action','暂缓清库存结论，观察补货后销量至第14天；原采购建议和拦截不变')
+          :t('rp.review.stockout.action','先核对断货证据及补货后销量，再决定是否清库存；系统原采购拦截不变')
+      };
+    }
     var isStockout = hasAny([dto.salesStatus], STOCKOUT_SALES_STATUS);
 
     if (dto.avgSales > 0 && (dto.suggestedQty > 0 || isStockout)) {
@@ -720,6 +729,7 @@
       report.stockoutEvidenceRows.forEach(function(d){
         var e=d.stockoutEvidence;
         lines.push('断货核验 '+d.sku+'：'+e.status+'；120天库存快照覆盖 '+e.observedDays+' 天；零库存观测 '+e.observedZeroDays+' 天；最近零库存 '+(e.lastZeroDate||'-')+'；首次观察补货 '+(e.firstRestockObservedDate||'-'));
+        if(e.recentMajorRestock)lines.push('近期大批补货观察：入库日期 '+e.recentRestockDate+'，观测库存 '+e.observedBeforeRestockStock+' → '+e.observedAfterRestockStock+'，入库至今 '+e.daysSinceRecentRestock+' 天，仍需观察 '+e.remainingWatchDays+' 天；差值不是入库数量。');
         if(d.referenceTurnover!==null)lines.push('仅供分析：调整参考月需求 '+d.referenceMonthlyDemand+' 件，参考周转 '+d.referenceTurnover+' 月（不改变原建议采购）');
         if(e.error)lines.push('证据读取失败：'+e.error);
       });
@@ -903,14 +913,20 @@
     });
 
     if(report.stockoutEvidenceRows&&report.stockoutEvidenceRows.length){
-      sheets.push({name:'Stockout Review',headers:['SKU','国家','仓库','状态','库存快照覆盖天数','观测零库存天数','最后零库存日期','补货观察日期','原始周转(月)','调整参考月需求(件)','调整参考周转(月)','结论'],
+      sheets.push({name:'Stockout Review',headers:['SKU','国家','仓库','状态','库存快照覆盖天数','观测零库存天数','最后零库存日期','补货观察日期','近期大批补货入库日','补货前观测库存','补货后观测库存','到货天数','原始周转(月)','调整参考月需求(件)','调整参考周转(月)','结论'],
         rows:report.stockoutEvidenceRows.map(function(d){
           var e=d.stockoutEvidence;
           return [d.sku,d.country,d.warehouse,e.status,e.observedDays||0,e.observedZeroDays||0,
-            e.lastZeroDate||'',e.firstRestockObservedDate||'',rpReviewTurnText(d.currentTurnover,t),
+            e.lastZeroDate||'',e.firstRestockObservedDate||'',
+            e.recentRestockDate||'',e.observedBeforeRestockStock==null?'':e.observedBeforeRestockStock,
+            e.observedAfterRestockStock==null?'':e.observedAfterRestockStock,
+            e.daysSinceRecentRestock==null?'':e.daysSinceRecentRestock,
+            rpReviewTurnText(d.currentTurnover,t),
             d.referenceMonthlyDemand===null?'不可估算':d.referenceMonthlyDemand,
             d.referenceTurnover===null?'不可估算':d.referenceTurnover,
-            d.category===CATEGORY.STOCKOUT_REVIEW?'疑似断货影响，待人工复核':'原始高库存结论保留'];
+            d.category===CATEGORY.STOCKOUT_REVIEW
+              ?(e.recentMajorRestock?'近期大批补货，等待销售恢复验证':'疑似断货影响，待人工复核')
+              :'原始高库存结论保留'];
         })});
     }
     return sheets;
