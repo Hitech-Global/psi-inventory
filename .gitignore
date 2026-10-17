@@ -24,3 +24,7 @@ logs/
 
 # P1 数据清理：完整生产数据备份仅本地受控留存，禁止入库（脱敏记录与脚本入库）
 release-backups/**/delete-export.json
+
+# Shopee Analytics desktop runtime/secrets
+shopee-analytics/deploy/desktop/runtime/
+shopee-analytics/deploy/desktop/*.dump

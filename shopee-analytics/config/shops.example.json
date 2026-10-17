@@ -1,0 +1,34 @@
+[
+  {
+    "shopId": 100000001,
+    "displayName": "Redragon Indonesia Official",
+    "countryCode": "ID",
+    "countryName": "Indonesia",
+    "brandCode": "REDRAGON",
+    "brandName": "Redragon",
+    "currency": "IDR",
+    "timezone": "Asia/Jakarta",
+    "brandPortalTimezone": "GMT+7",
+    "marketplaceRegion": "ID",
+    "analyticsStartDate": "2026-05-01",
+    "gmsCampaignSeedIds": [],
+    "active": true,
+    "sortOrder": 10
+  },
+  {
+    "shopId": 100000002,
+    "displayName": "Redragon Thailand Official",
+    "countryCode": "TH",
+    "countryName": "Thailand",
+    "brandCode": "REDRAGON",
+    "brandName": "Redragon",
+    "currency": "THB",
+    "timezone": "Asia/Bangkok",
+    "brandPortalTimezone": "GMT+7",
+    "marketplaceRegion": "TH",
+    "analyticsStartDate": "2026-05-01",
+    "gmsCampaignSeedIds": [],
+    "active": true,
+    "sortOrder": 20
+  }
+]
