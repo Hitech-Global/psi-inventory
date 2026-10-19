@@ -8501,7 +8501,11 @@ app.delete('/api/purchase-orders/:id', requireApiPermission('po_create'), asyncH
     // 守卫：仅允许 draft，或 transferred_pi/partial_pi 且无活跃(非cancelled/completed) PI
     let allow = po.po_status === 'draft';
     if (!allow) {
-      const hasActivePi = queryOne("SELECT 1 FROM proforma_invoices WHERE related_po_id = ? AND pi_status NOT IN ('cancelled', 'completed')", [po.id]);
+      const hasActivePi = queryOne(`SELECT 1 FROM proforma_invoices pi
+      WHERE pi.pi_status NOT IN ('cancelled', 'completed')
+        AND (pi.related_po_id = ? OR EXISTS
+          (SELECT 1 FROM pi_po_allocations a WHERE a.pi_id=pi.id AND a.po_id=?))
+      LIMIT 1`, [po.id,po.id]);
       allow = ['transferred_pi', 'partial_pi'].includes(po.po_status) && !hasActivePi;
     }
     if (!allow) {
@@ -8893,16 +8897,37 @@ app.get('/api/proforma-invoices/:id', requireApiPermission('pi_view'), asyncHand
   const depositPaid = depositProgress
     ? (depositProgress.paid_amount_minor + Math.round((depositProgress.payment_records.reduce((s, r) => s + (r.rounding_amount || 0), 0)) * 100)) >= depositProgress.payable_amount_minor
     : !pi.need_deposit;
-  res.json({ ...pi, items, locked: !!lr, lock_reason: lr || '', deposit_progress: depositProgress,
+  const multiPOAllocations = piMultiPO.getExistingAllocations(pi.id,query);
+  let relatedPoIds=[];
+  try {relatedPoIds=piMultiPO.parseRelatedIds(pi.related_po_ids,pi.related_po_id);}catch(e){relatedPoIds=pi.related_po_id?[pi.related_po_id]:[];}
+  res.json({ ...pi, items, related_po_ids:relatedPoIds, po_allocations:multiPOAllocations,
+    locked: !!lr, lock_reason: lr || '', deposit_progress: depositProgress,
     deposit_payment_status: depositProgress ? depositProgress.core_status : pi.deposit_payment_status,
     deposit_paid: depositPaid,
     pi_no_locked: !!getPINumberLockReason(pi), pi_no_lock_reason: getPINumberLockReason(pi) || '' });
 }));
 
+const piMultiPO = require('./assets/pi-multi-po-core');
 app.post('/api/proforma-invoices', requireApiPermission('pi_create'), asyncHandler(async (req, res) => {
   try {
     const d = req.body;
     if (!d.supplier_name) return res.status(400).json({ error: '供应商不能为空' });
+    let selectedPOs = [];
+    let relatedPoIds = [];
+    try {
+      relatedPoIds = piMultiPO.parseRelatedIds(d.related_po_ids, d.related_po_id);
+      if (relatedPoIds.length > 1) {
+        if(d.related_po_id&&d.related_po_id!==relatedPoIds[0])
+          throw new Error('关联PO主编号与多选PO列表不一致');
+        selectedPOs = piMultiPO.validatePOs(relatedPoIds, d, queryOne);
+        // Keep original first-PO fields for all legacy readers (CI, PL, RP).
+        d.related_po_id = selectedPOs[0].id;
+        d.related_po_no = selectedPOs[0].po_no;
+      } else if (relatedPoIds.length === 1 && d.related_po_id && relatedPoIds[0] !== d.related_po_id) {
+        throw new Error('关联PO字段不一致');
+      }
+    } catch (e) { return res.status(400).json({ error: e.message }); }
+    const isMultiPO = relatedPoIds.length > 1;
     let poCurrency = null;
     if (d.related_po_id) {
       const po = queryOne(
@@ -8932,7 +8957,7 @@ app.post('/api/proforma-invoices', requireApiPermission('pi_create'), asyncHandl
       poCurrency = po.currency || 'USD';
     }
     // 关联 PO 时锁定币种为 PO 币种，避免跨币种比较；独立 PI 用请求币种
-    const finalCurrency = d.related_po_id ? poCurrency : (d.currency || 'USD');
+    const finalCurrency = isMultiPO ? selectedPOs[0].currency : (d.related_po_id ? poCurrency : (d.currency || 'USD'));
     const piId = genId('pi');
     const piNo = d.pi_no || `PI-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
     let totalAmount = 0;
@@ -8942,10 +8967,14 @@ app.post('/api/proforma-invoices', requireApiPermission('pi_create'), asyncHandl
     transaction(() => {
       run(`INSERT INTO proforma_invoices (id, pi_no, related_po_id, related_po_no, supplier_id, supplier_name, brand, country, target_warehouse, pi_date, currency, total_amount, payment_terms, payment_term_id, need_deposit, deposit_ratio, balance_ratio, payable_deposit, pi_status, expected_delivery, attachment, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [piId, piNo, d.related_po_id || '', d.related_po_no || '', d.supplier_id || '', d.supplier_name, d.brand || '', d.country || '', d.target_warehouse || '', d.pi_date || new Date().toISOString().split('T')[0], finalCurrency, 0, d.payment_terms || '', d.payment_term_id || '', needDeposit, depositRatio, 100 - depositRatio, 0, d.pi_status || 'pending', d.expected_delivery || '', parseAttachment(d.attachment), d.remark || '']);
+      if (isMultiPO) {
+        run('UPDATE proforma_invoices SET related_po_ids = ?, related_po_nos = ? WHERE id = ?',
+          [JSON.stringify(relatedPoIds), JSON.stringify(selectedPOs.map(p=>p.po_no)), piId]);
+      }
 
       if (d.items && d.items.length > 0) {
         // P2-6 守卫：PI 累计数量不得超过 PO 数量（按 SKU 聚合本次 PI 数量，避免同 PI 内多行同 SKU 累加漏校验）
-        if (d.related_po_id) {
+        if (d.related_po_id && !isMultiPO) {
           const piQtyMap = new Map();
           d.items.forEach(item => {
             const sku = item.sku_code;
@@ -8977,8 +9006,13 @@ app.post('/api/proforma-invoices', requireApiPermission('pi_create'), asyncHandl
           run(`INSERT INTO proforma_invoice_items (id, pi_id, pi_no, po_no, sku_code, po_qty, pi_confirmed_qty, unit_price, discount, pi_amount, shipped_qty, unshipped_qty) VALUES ${placeholders}`, flat);
         }
 
-        // 更新PO明细的已转PI数量
-        if (d.related_po_id) {
+        // Multi-PO allocation is recorded separately so same-SKU from two POs
+        // remains one PI SKU item (CI update-by-SKU stays unambiguous).
+        if (isMultiPO) {
+          piMultiPO.assignMultiPO({piId,poRows:selectedPOs,items:d.items,query,run,genId});
+        }
+        // 更新PO明细的已转PI数量（legacy single-PO only）
+        if (d.related_po_id && !isMultiPO) {
           d.items.forEach(item => {
             const poItem = queryOne('SELECT id, po_qty, transferred_pi_qty FROM purchase_order_items WHERE po_id = ? AND sku_code = ?', [d.related_po_id, item.sku_code]);
             if (poItem) {
@@ -9010,8 +9044,8 @@ app.post('/api/proforma-invoices', requireApiPermission('pi_create'), asyncHandl
           });
         }
 
-        // 更新PO状态
-        if (d.related_po_id) {
+        // 更新PO状态（multi-PO statuses already updated by allocation helper）
+        if (d.related_po_id && !isMultiPO) {
           const poItems = query('SELECT po_qty, transferred_pi_qty FROM purchase_order_items WHERE po_id = ?', [d.related_po_id]).rows;
           const allTransferred = poItems.every(i => i.transferred_pi_qty >= i.po_qty);
           const anyTransferred = poItems.some(i => i.transferred_pi_qty > 0);
@@ -9065,6 +9099,10 @@ app.post('/api/proforma-invoices', requireApiPermission('pi_create'), asyncHandl
     if (msg === 'PI_CREATE_UNCONFIRMED_UNKNOWN') {
       return res.status(500).json({ error: 'PI 创建状态未确认，请勿重复提交，请按 PI 号检查' });
     }
+    // Business validation (including over-allocation) is a client correction,
+    // not an internal 500; transaction above already rolled back all writes.
+    if (/关联PO|多PO|PI确认数量|PO余量|PO没有商品|PO出现重复SKU|PI数量超过/.test(msg))
+      return res.status(400).json({error:msg});
     console.error('PI 创建失败:', e);
     res.status(500).json({ error: 'PI 创建失败: ' + (msg || e) });
   }
@@ -9076,6 +9114,21 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
     const { id } = req.params;
     const pi = queryOne('SELECT * FROM proforma_invoices WHERE id = ?', [id]);
     if (!pi) return res.status(404).json({ error: 'PI不存在' });
+    let multiPOsForEdit=[];
+    try {
+      const multiIds=piMultiPO.parseRelatedIds(pi.related_po_ids,pi.related_po_id);
+      if(multiIds.length>1) {
+        // PO sourcing dimensions never change after PI creation.
+        const effective={supplier_id:pi.supplier_id,supplier_name:pi.supplier_name,
+          country:d.country!==undefined?d.country:pi.country,
+          brand:d.brand!==undefined?d.brand:pi.brand,
+          currency:d.currency!==undefined?d.currency:pi.currency,
+          target_warehouse:d.target_warehouse!==undefined?d.target_warehouse:pi.target_warehouse};
+        if(['country','brand','currency','target_warehouse'].some(k=>d[k]!==undefined&&String(d[k]||'')!==String(pi[k]||'')))
+          throw new Error('多PO的国家、品牌、仓库和币种已锁定，不可通过PI编辑更改');
+        multiPOsForEdit=piMultiPO.validatePOs(multiIds,effective,queryOne);
+      }
+    } catch(e) {return res.status(400).json({error:e.message});}
 
     // 锁定守卫：CI/PL 已生成 / 已付定金 / 已作废 → 拒绝编辑
     const lockReason = getPILockReason(pi);
@@ -9176,6 +9229,11 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
 
     // P0-A：PI 主事实写入全部在同一同步事务内原子提交；回调内不再出现 async/await
     transaction(() => {
+      // On multi-PO PI edits roll back ORIGINAL per-PO allocations first, then
+      // atomically reallocate the latest combined SKU quantities in this tx.
+      if(multiPOsForEdit.length>1&&Array.isArray(d.items)) {
+        piMultiPO.restoreMultiAllocations(id,query,run);
+      }
       // 明细全量替换（批量 INSERT）
       if (d.items && Array.isArray(d.items)) {
         run('DELETE FROM proforma_invoice_items WHERE pi_id = ?', [id]);
@@ -9207,8 +9265,12 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
         syncPayableItemAmount('pi', id, 'deposit', payableDeposit);
       }
 
-      // PO transferred_pi_qty delta 同步（先回滚旧明细，再应用新明细）
-      if (pi.related_po_id) {
+      // Multi-PO allocation handled by exact per-PO source ledger instead.
+      if(multiPOsForEdit.length>1&&Array.isArray(d.items)) {
+        piMultiPO.assignMultiPO({piId:id,poRows:multiPOsForEdit,items:d.items,query,run,genId});
+      }
+      // PO transferred_pi_qty delta 同步（legacy single-PO only）
+      if (pi.related_po_id && multiPOsForEdit.length<=1) {
         oldItems.forEach(it => {
           const poItem = queryOne('SELECT id, po_qty, transferred_pi_qty FROM purchase_order_items WHERE po_id = ? AND sku_code = ?', [pi.related_po_id, it.sku_code]);
           if (poItem) {
@@ -9330,9 +9392,26 @@ app.post('/api/proforma-invoices/:id/void', requireApiPermission('pi_edit'), asy
     if (!pi) return res.status(404).json({ error: 'PI不存在' });
     if (pi.pi_status === 'cancelled') return res.status(400).json({ error: '该 PI 已作废，不能重复作废' });
     if (pi.pi_status === 'completed') return res.status(400).json({ error: '已完结的 PI 不允许作废' });
+    const multiRelated=piMultiPO.parseRelatedIds(pi.related_po_ids,pi.related_po_id);
+    if(multiRelated.length>1){
+      const hasCI=queryOne("SELECT 1 FROM commercial_invoice_items WHERE pi_id = ? LIMIT 1",[pi.id]);
+      const hasHistoricalCI=queryOne("SELECT 1 FROM historical_commercial_invoice_items WHERE pi_id = ? LIMIT 1",[pi.id]);
+      const hasPayment=queryOne("SELECT 1 FROM payable_items WHERE source_type='pi' AND source_id=? AND lifecycle_status IN ('reserved','partially_paid','paid') LIMIT 1",[pi.id]);
+      if(hasCI||hasHistoricalCI||hasPayment)return res.status(409).json({error:'多PO关联PI已进入CI或付款流程，禁止直接作废'});
+    }
     const ts = new Date().toISOString().slice(0, 19).replace('T', ' ');
     const newRemark = (pi.remark ? pi.remark + '\n' : '') + `[作废 ${ts} by ${req.currentUserName || ''}] 原因: ${void_reason}`;
-    run("UPDATE proforma_invoices SET pi_status = 'cancelled', remark = ?, updated_at = datetime('now') WHERE id = ?", [newRemark, pi.id]);
+    transaction(()=>{
+      if(multiRelated.length>1){
+        piMultiPO.restoreMultiAllocations(pi.id,query,run);
+        multiRelated.forEach(poId=>piMultiPO.updatePOStatus(poId,query,run));
+        // An unsubmitted/active deposit obligation must not survive a void PI.
+        // Any reserved/paid item was already blocked above; cancel only active.
+        query("SELECT id FROM payable_items WHERE source_type='pi' AND source_id=? AND lifecycle_status='active'",[pi.id]).rows
+          .forEach(it=>{if(!cancelPayableItem(it.id,req.currentUserId,'PI作废：'+void_reason))throw Error('PI定金应付取消失败');});
+      }
+      run("UPDATE proforma_invoices SET pi_status = 'cancelled', remark = ?, updated_at = datetime('now') WHERE id = ?", [newRemark, pi.id]);
+    });
     // Wave 0B: COMMIT 后原生 async 刷新（作废回落 pi_confirmed_unshipped_qty），不阻塞响应
     updateInventoryTransitDataAsync().catch((err) => {
       console.warn('[PI-VOID] updateInventoryTransitDataAsync failed (best-effort, ignored):', err && err.message);
