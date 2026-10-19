@@ -164,7 +164,7 @@ function preflight(po,d){
  assert.ok(start>0&&first>start&&end>first);
  const prefix=server.slice(first,end);
  assert.doesNotMatch(prefix,/\btransaction\(/);
- const ctx={queryOne(){return po;}};
+ const ctx={queryOne(){return po;},piMultiPO:require('../assets/pi-multi-po-core')};
  const fn=vm.runInNewContext('(async function(req,res){'+prefix+'return res.json({accepted:true});})',ctx);
  const res={code:200,status(c){this.code=c;return this;},json(x){return {code:this.code,...x};}};
  return fn({body:d},res);
@@ -213,5 +213,5 @@ test('create PI initializes PO filtering after country/supplier masters arrive',
  assert.match(src,/window\._piApprovedPOs=pos/);
  assert.match(src,/refreshAvailablePOForPI\(\); \/\/ no PO selectable/);
  assert.match(src,/createEpoch!==_piCreateEpoch/);
- assert.match(src,/api\('\/api\/purchase-orders\?status=approved'\)/);
+ assert.match(src,/api\('\/api\/purchase-orders'\)/);
 });

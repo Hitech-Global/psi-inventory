@@ -280,6 +280,12 @@ if (driver === 'pg') {
         // 全部幂等（ADD COLUMN IF NOT EXISTS），不影响已有 CI 数据。
         "ALTER TABLE commercial_invoice_items ADD COLUMN IF NOT EXISTS discount DOUBLE PRECISION DEFAULT 0",
         "ALTER TABLE commercial_invoice_items ADD COLUMN IF NOT EXISTS net_unit_price NUMERIC(18,4) DEFAULT 0",
+        // PI-MULTI-PO: 原子保存每个 PO 对 PI SKU 的占用数量；历史单 PO 保持旧关联列。
+        "ALTER TABLE proforma_invoices ADD COLUMN IF NOT EXISTS related_po_ids TEXT DEFAULT ''",
+        "ALTER TABLE proforma_invoices ADD COLUMN IF NOT EXISTS related_po_nos TEXT DEFAULT ''",
+        "CREATE TABLE IF NOT EXISTS pi_po_allocations (id TEXT PRIMARY KEY, pi_id TEXT NOT NULL, po_id TEXT NOT NULL, po_no TEXT NOT NULL, sku_code TEXT NOT NULL, allocated_qty INTEGER NOT NULL, created_at TEXT DEFAULT NOW())",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_pi_po_allocations ON pi_po_allocations(pi_id, po_id, sku_code)",
+        "CREATE INDEX IF NOT EXISTS idx_pi_po_allocations_po ON pi_po_allocations(po_id)",
         // DATA-SCOPE: 用户数据权限表（已废弃，迁移到 role_data_scope；保留用于兼容旧数据迁移）
         "CREATE TABLE IF NOT EXISTS user_data_scope (user_id TEXT PRIMARY KEY, countries TEXT DEFAULT '[]', brands TEXT DEFAULT '[]', warehouses TEXT DEFAULT '[]', updated_at TEXT DEFAULT NOW())",
         // DATA-SCOPE: 角色数据权限表（替代 user_data_scope，符合 RBAC 模型）

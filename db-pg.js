@@ -1139,6 +1139,16 @@ async function initDatabase() {
     )
   `);
 
+  await exec("ALTER TABLE proforma_invoices ADD COLUMN IF NOT EXISTS related_po_ids TEXT DEFAULT ''");
+  await exec("ALTER TABLE proforma_invoices ADD COLUMN IF NOT EXISTS related_po_nos TEXT DEFAULT ''");
+  await exec(`CREATE TABLE IF NOT EXISTS pi_po_allocations (
+    id TEXT PRIMARY KEY, pi_id TEXT NOT NULL, po_id TEXT NOT NULL,
+    po_no TEXT NOT NULL, sku_code TEXT NOT NULL, allocated_qty INTEGER NOT NULL,
+    created_at TEXT DEFAULT NOW()
+  )`);
+  await exec("CREATE UNIQUE INDEX IF NOT EXISTS uq_pi_po_allocations ON pi_po_allocations(pi_id, po_id, sku_code)");
+  await exec("CREATE INDEX IF NOT EXISTS idx_pi_po_allocations_po ON pi_po_allocations(po_id)");
+
   await exec(`
     CREATE TABLE IF NOT EXISTS proforma_invoice_items (
       id TEXT PRIMARY KEY,

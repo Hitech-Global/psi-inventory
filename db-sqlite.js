@@ -1015,6 +1015,20 @@ function initDatabase() {
     )
   `);
 
+  // PI-MULTI-PO: legacy PI rows keep their single PO reference unchanged.
+  for (const col of ["related_po_ids TEXT DEFAULT ''", "related_po_nos TEXT DEFAULT ''"]) {
+    try { d.exec('ALTER TABLE proforma_invoices ADD COLUMN ' + col); } catch (e) {
+      if (!/duplicate column/i.test(e.message)) throw e;
+    }
+  }
+  d.exec(`CREATE TABLE IF NOT EXISTS pi_po_allocations (
+    id TEXT PRIMARY KEY, pi_id TEXT NOT NULL, po_id TEXT NOT NULL,
+    po_no TEXT NOT NULL, sku_code TEXT NOT NULL, allocated_qty INTEGER NOT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`);
+  d.exec('CREATE UNIQUE INDEX IF NOT EXISTS uq_pi_po_allocations ON pi_po_allocations(pi_id, po_id, sku_code)');
+  d.exec('CREATE INDEX IF NOT EXISTS idx_pi_po_allocations_po ON pi_po_allocations(po_id)');
+
   // PI 明细
   d.exec(`
     CREATE TABLE IF NOT EXISTS proforma_invoice_items (
