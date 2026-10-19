@@ -8906,7 +8906,7 @@ app.post('/api/proforma-invoices', requireApiPermission('pi_create'), asyncHandl
     let poCurrency = null;
     if (d.related_po_id) {
       const po = queryOne(
-        'SELECT id, approval_status, currency FROM purchase_orders WHERE id = ?',
+        'SELECT id, approval_status, currency, supplier_id, supplier_name, country FROM purchase_orders WHERE id = ?',
         [d.related_po_id]
       );
       if (!po) {
@@ -8915,6 +8915,18 @@ app.post('/api/proforma-invoices', requireApiPermission('pi_create'), asyncHandl
       if (po.approval_status !== 'approved') {
         return res.status(400).json({
           error: 'PO 尚未审批通过，不能生成 PI'
+        });
+      }
+      // The PO→PI header relation is an accounting fact. Refuse cross-country
+      // and cross-supplier references even if a stale/bypassed UI sends them.
+      const normalizePoLink = v => String(v || '').trim().toLocaleLowerCase();
+      const supplierMatches = po.supplier_id
+        ? String(po.supplier_id) === String(d.supplier_id || '')
+        : !!d.supplier_name && normalizePoLink(po.supplier_name) === normalizePoLink(d.supplier_name);
+      if (!supplierMatches || !d.country ||
+          normalizePoLink(po.country) !== normalizePoLink(d.country)) {
+        return res.status(400).json({
+          error: '关联PO与PI所选国家或供应商不一致，请重新选择符合条件的PO'
         });
       }
       poCurrency = po.currency || 'USD';
