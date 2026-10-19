@@ -14684,15 +14684,15 @@ async function renderPayableCockpit(){
   el.innerHTML='<div id="flash-container"></div><div style="padding:20px;color:var(--text-secondary,#888)">'+t("cockpit.loading","加载中…")+'</div>';
   const seq=++_cockpitLoadSeq;
   try{
-    const data=await api('/api/finance/payable-cockpit');
+    const data=await api('/api/finance/payment-overview');
     // 竞态防护：页面已切走则静默结束，不向已销毁/替换的 DOM 写入（避免跨页面 null 错误）
     if(seq!==_cockpitLoadSeq||currentPage!=='payable-cockpit')return;
-    _cockpitData=data;
-    renderCockpitView();
+    _cockpitData=null;
+    renderFinanceOverviewPage(data);
   }catch(e){
     // 竞态防护：页面已切走后不再写 DOM（避免 "Cannot set properties of null"）
     if(seq!==_cockpitLoadSeq||currentPage!=='payable-cockpit')return;
-    el.innerHTML=t('html.renderPayableCockpit', '<div id="flash-container"></div><div class="flash flash-danger show">加载应付驾驶舱失败：{v1}</div>', {v1: esc(e.message)});
+    el.innerHTML=t('html.renderPayableCockpit', '<div id="flash-container"></div><div class="flash flash-danger show">加载财务付款总览失败：{v1}</div>', {v1: esc(e.message)});
   }
 }
 

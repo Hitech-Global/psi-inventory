@@ -15936,6 +15936,47 @@ const PAYABLE_SUBCAT_LABELS = { deposit: '定金', balance: '尾款', duty: '关
 const PAYABLE_PAYEE_LABELS = { factory: '工厂', customs: '海关', inspection_org: '检验机构', service_provider: '服务商' };
 const PAYABLE_STATUS_LABELS = { pending_approval: '待审批', approved: '已审批', paid: '已付款', rejected: '已驳回', partial_paid: '部分付款', partial_deduction: '部分抵扣', partial_rounding: '部分抹零', deduction_settled: '全额抵扣', partial_payment_partial_deduction: '部分付款+部分抵扣', reversed: '已冲销', cancelled: '已取消' };
 
+// FIN-OVERVIEW V1: complete historical payable-item ledger (paid and open).
+// Read-only, strictly separate from payment approvals, WAC and payable write paths.
+const {createFinancePaymentOverview} = require('./assets/finance-payment-overview');
+app.get('/api/finance/payment-overview',requireApiPermission('payment_view'),asyncHandler((req,res)=>{
+  const items=query(`SELECT id,fee_no,source_type,source_id,source_no,source_ci_id,
+    category_code,subcategory_code,payee_key,payee_type,payee_name_snapshot,
+    currency,lifecycle_status,payable_amount_minor,payable_date
+    FROM payable_items
+    WHERE lifecycle_status IN ('active','reserved','partially_paid','paid')`).rows;
+  const breakdownMap=new Map();
+  // Chunked O(N/250) ledger extraction, not a per-item query.
+  for(let i=0;i<items.length;i+=250){
+    const chunk=payableItemsSettlementBreakdown(items.slice(i,i+250).map(it=>it.id));
+    chunk.forEach((v,k)=>breakdownMap.set(k,v));
+  }
+  // Lookup tables for country filters only; no amounts taken from PI/CI here.
+  const sourceCountries={};
+  query('SELECT id,country FROM commercial_invoices').rows.forEach(x=>{
+    sourceCountries[x.id]=displayCountry(canonCountry(x.country||''))||'';
+  });
+  query('SELECT id,historical_ci_no,country FROM historical_commercial_invoices').rows.forEach(x=>{
+    const country=displayCountry(canonCountry(x.country||''))||'';
+    sourceCountries[x.id]=country;
+    if(x.historical_ci_no)sourceCountries['historical_ci:'+x.historical_ci_no]=country;
+  });
+  query('SELECT id,country FROM proforma_invoices').rows.forEach(x=>{
+    sourceCountries['pi:'+x.id]=displayCountry(canonCountry(x.country||''))||'';
+  });
+  // PI book value: informative separate axis, never added to payable amount.
+  // Historic CI / PO must not be blindly summed on top of PI.
+  const purchases=query(`SELECT id,pi_no,supplier_id,supplier_name,pi_status,currency,country,total_amount
+    FROM proforma_invoices`).rows;
+  purchases.forEach(p=>{p.country=displayCountry(canonCountry(p.country||''))||'';});
+  const overview=createFinancePaymentOverview({
+    rows:items,breakdownMap,purchases,
+    today:new Date().toISOString().slice(0,10),sourceCountries
+  });
+  res.set('Cache-Control','private, no-store');
+  res.json(overview);
+}));
+
 app.get('/api/finance/payable-cockpit', requireApiPermission('payment_view'), asyncHandler(async (req, res) => {
   try {
     const today = new Date().toISOString().split('T')[0];
