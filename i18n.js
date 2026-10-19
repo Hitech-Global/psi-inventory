@@ -5241,6 +5241,10 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.zh["field.payable_date"]="应付日期"; I18N.dict.en["field.payable_date"]="Payable Date"; I18N.dict.id["field.payable_date"]="Tanggal Jatuh Tempo";
   I18N.dict.zh["common.upload"]="上传"; I18N.dict.en["common.upload"]="Upload"; I18N.dict.id["common.upload"]="Unggah";
 
+// Finance overview: replace the existing cockpit navigation, not a parallel page.
+I18N.dict.zh["nav.payable_cockpit"]="财务付款总览";
+I18N.dict.en["nav.payable_cockpit"]="Finance Payment Overview";
+I18N.dict.id["nav.payable_cockpit"]="Ringkasan Pembayaran";
 // CI/PL production i18n leakage fix
 I18N.dict.zh["ci.col.total_freight"]="总运费"; I18N.dict.en["ci.col.total_freight"]="Total Freight"; I18N.dict.id["ci.col.total_freight"]="Total Ongkos Kirim";
 I18N.dict.zh["ci.col.freight_ratio"]="运费占比"; I18N.dict.en["ci.col.freight_ratio"]="Freight/Value"; I18N.dict.id["ci.col.freight_ratio"]="Proporsi Ongkos Kirim";
