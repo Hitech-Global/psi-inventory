@@ -11195,14 +11195,19 @@ function _setPIBrandEditable(editable){
   if(bSel) bSel.disabled=!editable;
 }
 
+let _piCreateEpoch=0;
 async function createPI(){
+  const createEpoch=++_piCreateEpoch;
+  ++_piPOSelectSeq; // old modal PO detail must not repaint a newer PI form
   // 先开弹窗骨架 + Loading（立即响应，不等接口）
   openModal(t('gen.L5520.1','新建PI'),'<div style="padding:40px;text-align:center"><div style="font-size:32px;color:#1890ff;margin-bottom:8px">⏳</div><div style="color:#666">'+t('common.loading','加载中…')+'</div></div>','','modal-pi');
   // 并行加载主数据（带会话级缓存）；PO 列表不缓存
+  window._piApprovedPOs=[]; // never retain an old modal's PO choices
   var _piData;
   try{ _piData=await Promise.all([_getMaster(['suppliers','countries','brands']),api('/api/purchase-orders?status=approved')]);   }catch(e){showToast(e.message,'danger');return;}
-  if(!document.getElementById('modal-overlay').classList.contains('show'))return; // 用户在 Loading 期间关闭了弹窗
+  if(createEpoch!==_piCreateEpoch||!document.getElementById('modal-overlay')?.classList.contains('show'))return; // 旧请求或已关闭弹窗不得覆盖新建表单
   const suppliers=_piData[0].suppliers,pos=_piData[1],countries=_piData[0].countries,brands=_piData[0].brands;
+  window._piApprovedPOs=pos;
   const countryOpts='<option value="">（请选择国家）</option>'+countries.filter(c=>c.status==='active').map(c=>'<option value="'+esc(c.name)+'"'+(c.default_currency?' data-cur="'+esc(c.default_currency)+'"':'')+'>'+esc(c.name)+(c.flag?(' '+c.flag):'')+'</option>').join('');
   const whOpts='<option value="">（请选择仓库）</option>';
   const brandOpts='<option value="">（请选择品牌）</option>'+(brands||[]).map(b=>'<option value="'+esc(b)+'">'+esc(b)+'</option>').join('');
@@ -11213,9 +11218,60 @@ async function createPI(){
   var _cSelPI=document.getElementById('npi-country');if(_cSelPI)_cSelPI.innerHTML=countryOpts;
   var _wSelPI=document.getElementById('npi-wh');if(_wSelPI)_wSelPI.innerHTML=whOpts;
   var _bSelPI=document.getElementById('npi-brand');if(_bSelPI)_bSelPI.innerHTML=brandOpts;
+  refreshAvailablePOForPI(); // no PO selectable until both supplier + country are chosen
   const sb=document.querySelector('.modal.show .btn-primary'); if(sb) sb.id='btn-save-new-pi';
 }
+// Only PO with the selected country AND supplier may be linked to a new PI.
+// Match supplier by stable ID (fall back to exact name only for legacy PO rows
+// where supplier_id is blank). Never select the first option implicitly.
+let _piPOSelectSeq=0;
+function piPOCountrySupplierMatch(po, country, supplierId, supplierName){
+  const norm=v=>String(v||'').trim().toLocaleLowerCase();
+  if(!country||!supplierId||norm(po.country)!==norm(country))return false;
+  return po.supplier_id ? String(po.supplier_id)===String(supplierId)
+    : !!supplierName&&norm(po.supplier_name)===norm(supplierName);
+}
+function piResetLinkedPO({keepCountry=true}={}){
+  ++_piPOSelectSeq; // cancel any old PO detail response
+  window._poRef=null;
+  const poSel=document.getElementById('npi-po');
+  if(poSel)poSel.value='';
+  const curSel=document.getElementById('npi-cur');
+  if(curSel)curSel.disabled=false;
+  setPICountryWarehouseEditable(true);
+  const bSel=document.getElementById('npi-brand');
+  if(bSel)bSel.value='';
+  const cSel=document.getElementById('npi-country');
+  const wSel=document.getElementById('npi-wh');
+  if(!keepCountry&&cSel)cSel.value='';
+  if(wSel)wSel.value='';
+  if(!keepCountry&&wSel)wSel.innerHTML='<option value="">（请选择仓库）</option>';
+  window._piRows=(window._piRows||[]).filter(row=>!row.fromPO);
+  renderCmpTable();
+}
+function refreshAvailablePOForPI(){
+  const poSel=document.getElementById('npi-po');
+  const supSel=document.getElementById('npi-sup');
+  const cSel=document.getElementById('npi-country');
+  if(!poSel||!supSel||!cSel)return;
+  const supName=supSel.options[supSel.selectedIndex]?.dataset.name||'';
+  const matched=(window._piApprovedPOs||[]).filter(po=>
+    piPOCountrySupplierMatch(po,cSel.value,supSel.value,supName));
+  const oldId=poSel.value;
+  const stillValid=matched.some(po=>po.id===oldId);
+  // If the supplier changes after a PO was chosen, immediately discard its
+  // quantities, locked fields and association, but keep the chosen country.
+  if(oldId&&!stillValid)piResetLinkedPO();
+  poSel.innerHTML='<option value="">'+esc(t('pi.no_po','无关联'))+'</option>'+
+    matched.map(po=>'<option value="'+esc(po.id)+'" data-no="'+esc(po.po_no)+'">'+
+      esc(po.po_no)+' - '+esc(po.supplier_name)+'</option>').join('');
+  poSel.value=stillValid?oldId:'';
+  poSel.disabled=!(cSel.value&&supSel.value&&matched.length);
+  // A disabled empty dropdown is informational, not a PO assignment.
+  poSel.title=poSel.disabled?t('pi.po_filter_hint','请先选择国家和供应商，或当前没有符合条件的已审批PO'):'';
+}
 async function onPISupplierChange(){
+  refreshAvailablePOForPI();
   const supSel=document.getElementById('npi-sup'),termSel=document.getElementById('npi-terms');
   if(!supSel||!termSel)return;
   const supId=supSel.value;
@@ -11244,6 +11300,7 @@ async function populatePIWarehouse(country){
 }
 // 国家变更 → 重新拉取仓库下拉（不改变用户已选国家/仓库之外的字段）
 function onPICountryChange(){
+  refreshAvailablePOForPI();
   const cSel=document.getElementById('npi-country');
   populatePIWarehouse(cSel?cSel.value:'');
 }
@@ -11265,9 +11322,35 @@ function updCmpRow(idx){const r=window._piRows[idx];if(!r)return;r.sku=document.
 function delCmpRow(idx){window._piRows.splice(idx,1);renderCmpTable();}
 function cmpDerived(r){const poQty=+r.poQty||0,poPrice=+r.poPrice||0,piQty=+r.piQty||0,piPrice=+r.piPrice||0,piDisc=+r.piDisc||0;const poAmt=poQty*poPrice;const piAmt=piQty*piPrice*(1-piDisc);const qtyDiff=piQty-poQty;const priceDiff=piPrice-poPrice;const amtDiff=piAmt-poAmt;const hasPO=poQty>0||poPrice>0,hasPI=piQty>0||piPrice>0;let status=t("app.926", "\u4e00\u81f4");if(!hasPO&&hasPI)status=t("app.927", "PI\u65b0\u589e");else if(hasPO&&!hasPI)status=t("app.928", "PO\u6709PI\u7f3a");else if(Math.abs(qtyDiff)>1e-9&&Math.abs(priceDiff)>1e-9)status=t("app.929", "\u91cf\u4ef7\u5747\u5dee");else if(Math.abs(qtyDiff)>1e-9)status=t("app.930", "\u4ec5\u6570\u91cf\u5dee");else if(Math.abs(priceDiff)>1e-9)status=t("app.931", "\u4ec5\u5355\u4ef7\u5dee");return {poAmt,piAmt,qtyDiff,priceDiff,amtDiff,status};}
 function recomputeCmpFooter(){const f=document.getElementById('pi-cmp-foot');if(!f)return;let poQty=0,piQty=0,piAmt=0,qtyD=0,amtD=0;(window._piRows||[]).forEach(r=>{const d=cmpDerived(r);poQty+=r.poQty;piQty+=r.piQty;piAmt+=d.piAmt;qtyD+=d.qtyDiff;amtD+=d.amtDiff;});f.innerHTML=t('html.recomputeCmpFooter', '<tr style="font-weight:700;background:#e8edf3"><td>汇总</td><td class="text-right">{v1}</td><td class="text-right">{v2}</td><td></td><td></td><td></td><td class="text-right">{v3}</td><td class="text-right">{v4}</td><td colspan="2" class="text-right">金额差异：{v5}</td></tr>', {v1: poQty, v2: piQty, v3: fmtMoney(piAmt), v4: qtyD, v5: fmtMoney(amtD)});}
-async function loadPOForPI(){const poId=document.getElementById('npi-po').value;window._poRef=null;const curSel=document.getElementById('npi-cur');const cSel=document.getElementById('npi-country'),wSel=document.getElementById('npi-wh');if(!poId){if(curSel)curSel.disabled=false;setPICountryWarehouseEditable(true);var _bSel0=document.getElementById('npi-brand');if(_bSel0)_bSel0.value='';if(cSel)cSel.value='';if(wSel)wSel.innerHTML='<option value="">（请选择仓库）</option>';renderCmpTable();return;}try{const po=await api('/api/purchase-orders/'+poId);const supSel=document.getElementById('npi-sup');let sid=po.supplier_id;if(sid&&![...supSel.options].some(o=>o.value===sid)){const byName=[...supSel.options].find(o=>o.dataset.name===po.supplier_name);if(byName)sid=byName.value;}supSel.value=sid||'';onPISupplierChange();if(curSel){curSel.value=po.currency;curSel.disabled=true;}// PO 关联：国家+仓库自动带出（只读，用户不可改）；切回无关联时恢复可编辑（见上分支）
+async function loadPOForPI(){
+  const poSel=document.getElementById('npi-po');
+  if(!poSel)return;
+  const poId=poSel.value;
+  const curSel=document.getElementById('npi-cur');
+  const cSel=document.getElementById('npi-country'),wSel=document.getElementById('npi-wh');
+  const supSel=document.getElementById('npi-sup');
+  if(!poId){piResetLinkedPO({keepCountry:false});refreshAvailablePOForPI();return;}
+  const supName=supSel?.options[supSel.selectedIndex]?.dataset.name||'';
+  const allowed=(window._piApprovedPOs||[]).find(p=>p.id===poId&&
+    piPOCountrySupplierMatch(p,cSel?.value,supSel?.value,supName));
+  if(!allowed){
+    piResetLinkedPO();refreshAvailablePOForPI();
+    showToast(t('pi.po_mismatch','该PO与已选国家或供应商不匹配，请重新选择'),'warning');
+    return;
+  }
+  const seq=++_piPOSelectSeq;
+  window._poRef=null;
+  try{
+    const po=await api('/api/purchase-orders/'+poId);
+    if(seq!==_piPOSelectSeq||document.getElementById('npi-po')?.value!==poId)return;
+    if(!piPOCountrySupplierMatch(po,cSel?.value,supSel?.value,supName)){
+      piResetLinkedPO();refreshAvailablePOForPI();
+      showToast(t('pi.po_mismatch','该PO与已选国家或供应商不匹配，请重新选择'),'warning');
+      return;
+    }
+    let sid=po.supplier_id;if(sid&&![...supSel.options].some(o=>o.value===sid)){const byName=[...supSel.options].find(o=>o.dataset.name===po.supplier_name);if(byName)sid=byName.value;}supSel.value=sid||'';onPISupplierChange();if(curSel){curSel.value=po.currency;curSel.disabled=true;}// PO 关联：国家+仓库自动带出（只读，用户不可改）；切回无关联时恢复可编辑（见上分支）
   if(cSel){cSel.value=po.country||'';cSel.disabled=true;}
-  if(wSel){await populatePIWarehouse(po.country||'');wSel.value=po.target_warehouse||'';wSel.disabled=true;}var _bSelPI=document.getElementById('npi-brand');if(_bSelPI){if(po.brand){if(![..._bSelPI.options].some(o=>o.value===po.brand)){_bSelPI.innerHTML='<option value="'+esc(po.brand)+'">'+esc(po.brand)+'</option>';}_bSelPI.value=po.brand;}_bSelPI.disabled=true;}
+  if(wSel){await populatePIWarehouse(po.country||'');if(seq!==_piPOSelectSeq||document.getElementById('npi-po')?.value!==poId)return;wSel.value=po.target_warehouse||'';wSel.disabled=true;}var _bSelPI=document.getElementById('npi-brand');if(_bSelPI){if(po.brand){if(![..._bSelPI.options].some(o=>o.value===po.brand)){_bSelPI.insertAdjacentHTML('beforeend','<option value="'+esc(po.brand)+'">'+esc(po.brand)+'</option>');}_bSelPI.value=po.brand;}_bSelPI.disabled=true;}
   window._poRef=po.items||[];const extra=(window._piRows||[]).filter(r=>!r.fromPO);window._piRows=(po.items||[]).map(it=>({sku:it.sku_code||'',poQty:it.po_qty||0,poPrice:it.unit_price||0,piQty:0,piPrice:0,piDisc:0,fromPO:true})).concat(extra);renderCmpTable();}catch(e){showToast(e.message,'danger')}}
 function computePODiff(poRef,piItems){const map={};const rows=[];const norm=s=>String(s||'').trim().toLowerCase();(poRef||[]).forEach(p=>{const sku=p.sku_code||'';const r={sku,poQty:p.po_qty||0,poPrice:p.unit_price||0,piQty:0,piPrice:0,piDisc:0,fromPO:true};rows.push(r);map[norm(sku)]=r;});(piItems||[]).forEach(p=>{const sku=p.sku_code||'';const ex=map[norm(sku)];if(ex){ex.piQty=p.pi_confirmed_qty||0;ex.piPrice=p.unit_price||0;ex.piDisc=p.discount||0;}else{const r={sku,poQty:0,poPrice:0,piQty:p.pi_confirmed_qty||0,piPrice:p.unit_price||0,piDisc:p.discount||0,fromPO:false};rows.push(r);map[norm(sku)]=r;}});return rows;}
 function renderCmpReadonly(rows){const body=rows.map(r=>{const d=cmpDerived(r);return '<tr><td class="cell-id">'+esc(r.sku)+'</td><td>'+r.poQty+'</td><td>'+r.piQty+'</td><td>'+fmtMoney(r.poPrice)+'</td><td>'+fmtMoney(r.piPrice)+'</td><td>'+((r.piDisc||0)*100).toFixed(0)+'%</td><td>'+fmtMoney(d.piAmt)+'</td><td>'+d.qtyDiff+'</td><td>'+d.priceDiff.toFixed(2)+'</td><td>'+d.status+'</td></tr>';}).join('');let poQty=0,piQty=0,piAmt=0,qtyD=0,amtD=0;rows.forEach(r=>{const d=cmpDerived(r);poQty+=r.poQty;piQty+=r.piQty;piAmt+=d.piAmt;qtyD+=d.qtyDiff;amtD+=d.amtDiff;});const foot=t('gen.L5551.1','<tr style="font-weight:700;background:#e8edf3"><td>汇总</td><td>')+poQty+'</td><td>'+piQty+'</td><td></td><td></td><td></td><td>'+fmtMoney(piAmt)+'</td><td>'+qtyD+t('gen.L5551.2','</td><td colspan="2">金额差异：')+fmtMoney(amtD)+'</td></tr>';return t('gen.L5551.3','<div class="table-container" style="max-height:50vh;overflow:auto;box-shadow:none"><table class="data-table pi-cmp-table pi-cmp-readonly"><colgroup><col style="width:220px"><col style="width:120px"><col style="width:145px"><col style="width:135px"><col style="width:180px"><col style="width:120px"><col style="width:125px"><col style="width:120px"><col style="width:135px"><col style="width:210px"></colgroup><thead><tr><th>SKU</th><th>PO数量</th><th>PI确认数量</th><th>PO单价</th><th>PI确认单价</th><th>PI折扣</th><th>PI金额</th><th>数量差异</th><th>单价差异</th><th>状态</th></tr></thead><tbody>')+body+'</tbody><tfoot>'+foot+'</tfoot></table></div>';}
@@ -11416,6 +11499,14 @@ async function saveNewPI(){
   const country=document.getElementById('npi-country')?.value||'';
   const target_warehouse=document.getElementById('npi-wh')?.value||'';
   const d={related_po_id:poSel.value||'',related_po_no:poSel.options[poSel.selectedIndex]?.dataset.no||'',supplier_id:supSel.value,supplier_name:supSel.options[supSel.selectedIndex].dataset.name,brand,country,target_warehouse,pi_no:(document.getElementById('npi-no')?.value||'').trim()||'',pi_date:document.getElementById('npi-date').value,currency:document.getElementById('npi-cur').value,need_deposit:document.getElementById('npi-need-dep').value==='1'?1:0,deposit_ratio:parseFloat(document.getElementById('npi-dep').value)||0,expected_delivery:document.getElementById('npi-del').value,payment_terms:paymentTermsText,payment_term_id:termId,items};
+  if(d.related_po_id){
+    const po=(window._piApprovedPOs||[]).find(p=>p.id===d.related_po_id);
+    if(!po||!piPOCountrySupplierMatch(po,d.country,d.supplier_id,d.supplier_name)){
+      showToast(t('pi.po_mismatch','该PO与已选国家或供应商不匹配，请重新选择'),'warning');
+      if(btn){btn.disabled=false;btn.textContent=btn._old||t('common.save','保存');}
+      return;
+    }
+  }
   try{
     await api('/api/proforma-invoices','POST',d);
     if(termId&&supSel.value){try{await api('/api/suppliers/'+encodeURIComponent(supSel.value)+'/last-payment-term','POST',{payment_term_id:termId});}catch(e){}}
