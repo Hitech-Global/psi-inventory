@@ -8269,13 +8269,15 @@ app.put('/api/replenishment-suggestions/:id', requireApiPermission('replenishmen
 
 // ==================== PO 管理 ====================
 app.get('/api/purchase-orders', requireApiPermission('po_view'), asyncHandler((req, res) => {
-  const { status, keyword, supplier_id } = req.query;
+  const { status, keyword, supplier_id, brand, country } = req.query;
   let sql = `SELECT po.*, (SELECT COUNT(*) FROM purchase_order_items WHERE po_id = po.id) as item_count,
     CASE WHEN EXISTS(SELECT 1 FROM purchase_order_items WHERE po_id = po.id AND (unit_price IS NULL OR unit_price = 0)) THEN 'pending_fob' ELSE 'confirmed' END as price_status
     FROM purchase_orders po WHERE 1=1`;
   const params = [];
   if (status) { sql += ' AND po.po_status = ?'; params.push(status); }
   if (supplier_id) { sql += ' AND po.supplier_id = ?'; params.push(supplier_id); }
+  if (brand) { sql += ' AND LOWER(TRIM(po.brand)) = LOWER(TRIM(?))'; params.push(String(brand).trim()); }
+  if (country) { sql += ' AND LOWER(TRIM(po.country)) = LOWER(TRIM(?))'; params.push(String(country).trim()); }
   if (keyword) { sql += ' AND (po.po_no LIKE ? OR po.supplier_name LIKE ? OR po.brand LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`); }
   sql += ' ORDER BY po.created_at DESC';
   res.json(query(sql, params).rows);
