@@ -86,3 +86,56 @@ test('async request switch discards old PO detail replies',async()=>{
  assert.deepEqual([...f.ids()],['p1','p2']);
  assert.equal(u.ctx.window._piRows.find(x=>x.sku==='N1').poQty,120);
 });
+
+test('production case: matching pending PO is visible and disabled beside approved PO',async()=>{
+ const u=ui(),f=u.ctx.window.PIMultiPO;
+ u.ctx.window._piApprovedPOs.push(
+   {...PO[0],id:'pending-plan',po_no:'PO-2026-889314',approval_status:'pending',po_status:'draft'},
+   {...PO[0],id:'approved-partial',po_no:'PO-2026-602276',approval_status:'approved',po_status:'partial_pi'}
+ );
+ f.install();
+ const html=u.elements['pi-multi-po-picker'].innerHTML;
+ assert.match(html,/PO-2026-889314/);
+ assert.match(html,/PO-2026-602276/);
+ assert.match(html,/待审批/);
+ assert.match(html,/可关联/);
+ assert.match(html,/<input[^>]*disabled[^>]*>\s*<span>PO-2026-889314/);
+ assert.match(u.elements['pi-multi-po-count'].textContent,/待处理 1 张/);
+ await f.toggle('pending-plan',true);
+ assert.deepEqual([...f.ids()],[]);
+ assert.match(u.toast[0][0],/待审批/);
+ await f.toggle('approved-partial',true);
+ assert.deepEqual([...f.ids()],['approved-partial']);
+});
+test('fully transferred, cancelled, and rejected POs remain visible but not selectable',async()=>{
+ const u=ui(),f=u.ctx.window.PIMultiPO;
+ u.ctx.window._piApprovedPOs.push(
+  {...PO[0],id:'finished',po_no:'PO-FULL',po_status:'transferred_pi'},
+  {...PO[0],id:'cancelled',po_no:'PO-VOID',po_status:'cancelled'},
+  {...PO[0],id:'rejected',po_no:'PO-REJECT',po_status:'rejected',approval_status:'rejected'}
+ );
+ f.install();
+ const html=u.elements['pi-multi-po-picker'].innerHTML;
+ assert.match(html,/PO-FULL/);
+ assert.match(html,/已全部转PI/);
+ assert.match(html,/PO-VOID/);
+ assert.match(html,/PO已作废/);
+ assert.match(html,/PO-REJECT/);
+ assert.match(html,/审批已驳回/);
+ await f.toggle('finished',true);
+ await f.toggle('cancelled',true);
+ await f.toggle('rejected',true);
+ assert.deepEqual([...f.ids()],[]);
+ assert.equal(u.toast.length,3);
+});
+test('pending PO does not invalidate an already selected approved PO',async()=>{
+ const u=ui(),f=u.ctx.window.PIMultiPO;
+ u.ctx.window._piApprovedPOs.push({...PO[0],id:'pending-plan',po_no:'PO-2026-889314',approval_status:'pending',po_status:'draft'});
+ f.install();
+ await f.toggle('p1',true);
+ f.refresh();
+ assert.deepEqual([...f.ids()],['p1']);
+ assert.equal(u.ctx.window._piRows.length,2);
+ assert.match(u.elements['pi-multi-po-picker'].innerHTML,/PO-2026-889314/);
+ assert.match(u.elements['pi-multi-po-picker'].innerHTML,/disabled/);
+});
