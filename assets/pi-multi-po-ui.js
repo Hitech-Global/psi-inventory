@@ -59,20 +59,21 @@
    window._piRows=[...grouped.values()].concat(extra);
    renderCmpTable();
  }
- // Showing a PO and allowing a PO to be linked are separate decisions.
- // Keep unapproved plans visible so users understand why a matching PO
- // cannot yet be linked; never bypass the existing server approval gate.
+ // PO approval and PI association are separate: draft/pending plans can be
+ // linked without silently approving the PO. Voided/rejected plans remain blocked.
  function candidates(){
    return (window._piApprovedPOs||[]).filter(match);
  }
  function ineligibility(po){
-   if(po.approval_status!=='approved'){
-     if(po.approval_status==='rejected'||po.po_status==='rejected')return '审批已驳回';
-     return '待审批 · 请先完成PO审批';
-   }
-   if(['cancelled','rejected'].includes(po.po_status))return 'PO已作废';
-   if(po.po_status==='transferred_pi')return '已全部转PI';
+   if(po.po_status==='cancelled')return 'PO已作废';
+   if(po.po_status==='rejected'||po.approval_status==='rejected')return '审批已驳回';
+   if(po.po_status==='transferred_pi'||
+      (po.remaining_pi_qty!==undefined&&po.remaining_pi_qty!==null&&
+       Number(po.remaining_pi_qty)<=0))return '已全部转PI';
    return '';
+ }
+ function approvalNote(po){
+   return po.approval_status==='approved'?'可关联':'待审批 · 可关联';
  }
  function available(){return candidates().filter(po=>!ineligibility(po));}
  function compatible(a,b){
@@ -103,7 +104,7 @@
        ' · '+esc(po.target_warehouse||'')+'</span>'+
        (reason?'<span class="pi-mpo-state" aria-label="'+esc(reason)+'">'+esc(reason)+'</span>':
          conflict?'<span class="pi-mpo-state">不能混选</span>':
-         '<span class="pi-mpo-state pi-mpo-state-ok">可关联</span>')+'</label>';
+         '<span class="pi-mpo-state pi-mpo-state-ok">'+esc(approvalNote(po))+'</span>')+'</label>';
    }).join('');
    box.innerHTML=matched.length?(html||'<div class="pi-mpo-muted">搜索没有匹配PO</div>'):
      '<div class="pi-mpo-muted">请先选择国家和供应商，或无符合条件的PO</div>';
@@ -153,7 +154,7 @@
      '<div id="pi-multi-po-count" style="font-size:12px;color:var(--text-secondary,#666);margin-bottom:5px">已选择 0 张 PO</div>'+
      '<input id="pi-multi-po-search" type="search" placeholder="搜索 PO 编号" oninput="piMultiPORefresh()" style="width:100%;max-width:450px;margin-bottom:6px;padding:7px;border:1px solid var(--border,#ddd);border-radius:8px">'+
      '<div id="pi-multi-po-picker" style="max-height:165px;overflow:auto;border:1px solid var(--border,#ddd);border-radius:10px;padding:7px;background:var(--bg-card,#fff)"></div>'+
-     '<div style="font-size:11px;color:var(--text-secondary,#888);margin-top:6px">只允许关联已审批且尚未全部转PI的PO；待审批PO仍显示，但不可勾选。多选同SKU自动合并，更换PO会重置已填写的商品数量/单价。</div></div>'+
+     '<div style="font-size:11px;color:var(--text-secondary,#888);margin-top:6px">草稿、待审批PO也可关联PI，但不会自动改变PO审批状态；已作废、已驳回及已全部转PI的PO不可选。多选同SKU自动合并，更换PO会重置已填写的商品数量/单价。</div></div>'+
      '<style>.pi-mpo-row{display:flex;gap:9px;align-items:center;padding:8px 10px;font-size:12px;cursor:pointer;border-radius:7px}.pi-mpo-row:hover{background:var(--bg-hover,#f4f6f9)}.pi-mpo-row:has(input:disabled){opacity:.65;cursor:not-allowed}.pi-mpo-state{font-size:11px;color:#94622d;margin-left:auto;white-space:nowrap}.pi-mpo-state-ok{color:#26794e}.pi-mpo-muted{font-size:12px;color:var(--text-secondary,#999);padding:12px}</style>';
    const group=select.closest&&select.closest('.form-group');
    if(group){group.insertAdjacentHTML('afterend',wrapper);group.style.display='none';}

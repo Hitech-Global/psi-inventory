@@ -177,7 +177,9 @@ test('backend refuses cross-country and cross-supplier PO links before writes',a
  assert.equal((await preflight(record,form({country:''}))).code,400);
  assert.equal((await preflight(record,form())).accepted,true);
  assert.equal((await preflight(null,form())).code,400);
- assert.equal((await preflight({...record,approval_status:'pending'},form())).code,400);
+ assert.equal((await preflight({...record,approval_status:'pending',po_status:'draft'},form())).accepted,true);
+ assert.equal((await preflight({...record,approval_status:'rejected',po_status:'draft'},form())).code,400);
+ assert.equal((await preflight({...record,approval_status:'approved',po_status:'cancelled'},form())).code,400);
 });
 test('backend supports legacy PO with no supplier_id, requires exact name',async()=>{
  assert.equal((await preflight({...record,supplier_id:''},form())).accepted,true);

@@ -87,7 +87,7 @@ test('async request switch discards old PO detail replies',async()=>{
  assert.equal(u.ctx.window._piRows.find(x=>x.sku==='N1').poQty,120);
 });
 
-test('production case: matching pending PO is visible and disabled beside approved PO',async()=>{
+test('production case: pending PO is selectable together with approved PO',async()=>{
  const u=ui(),f=u.ctx.window.PIMultiPO;
  u.ctx.window._piApprovedPOs.push(
    {...PO[0],id:'pending-plan',po_no:'PO-2026-889314',approval_status:'pending',po_status:'draft'},
@@ -99,13 +99,13 @@ test('production case: matching pending PO is visible and disabled beside approv
  assert.match(html,/PO-2026-602276/);
  assert.match(html,/待审批/);
  assert.match(html,/可关联/);
- assert.match(html,/<input[^>]*disabled[^>]*>\s*<span>PO-2026-889314/);
- assert.match(u.elements['pi-multi-po-count'].textContent,/待处理 1 张/);
+ assert.doesNotMatch(html,/<input[^>]*disabled[^>]*>\s*<span>PO-2026-889314/);
+ assert.match(u.elements['pi-multi-po-count'].textContent,/可关联/);
  await f.toggle('pending-plan',true);
- assert.deepEqual([...f.ids()],[]);
- assert.match(u.toast[0][0],/待审批/);
+ assert.deepEqual([...f.ids()],['pending-plan']);
  await f.toggle('approved-partial',true);
- assert.deepEqual([...f.ids()],['approved-partial']);
+ assert.deepEqual([...f.ids()],['pending-plan','approved-partial']);
+ assert.equal(u.toast.length,0);
 });
 test('fully transferred, cancelled, and rejected POs remain visible but not selectable',async()=>{
  const u=ui(),f=u.ctx.window.PIMultiPO;
@@ -137,5 +137,20 @@ test('pending PO does not invalidate an already selected approved PO',async()=>{
  assert.deepEqual([...f.ids()],['p1']);
  assert.equal(u.ctx.window._piRows.length,2);
  assert.match(u.elements['pi-multi-po-picker'].innerHTML,/PO-2026-889314/);
- assert.match(u.elements['pi-multi-po-picker'].innerHTML,/disabled/);
+ assert.match(u.elements['pi-multi-po-picker'].innerHTML,/待审批 · 可关联/);
+ await f.toggle('pending-plan',true);
+ assert.deepEqual([...f.ids()],['p1','pending-plan']);
+});
+
+test('draft PO already fully converted to PI cannot be selected despite unapproved status',async()=>{
+ const u=ui(),f=u.ctx.window.PIMultiPO;
+ u.ctx.window._piApprovedPOs.push({...PO[0],id:'pending-full',po_no:'PO-PENDING-FULL',
+   approval_status:'pending',po_status:'draft',remaining_pi_qty:0});
+ f.install();
+ const html=u.elements['pi-multi-po-picker'].innerHTML;
+ assert.match(html,/PO-PENDING-FULL/);
+ assert.match(html,/已全部转PI/);
+ await f.toggle('pending-full',true);
+ assert.deepEqual([...f.ids()],[]);
+ assert.match(u.toast[0][0],/已全部转PI/);
 });

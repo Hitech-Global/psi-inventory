@@ -8271,6 +8271,9 @@ app.put('/api/replenishment-suggestions/:id', requireApiPermission('replenishmen
 app.get('/api/purchase-orders', requireApiPermission('po_view'), asyncHandler((req, res) => {
   const { status, keyword, supplier_id, brand, country } = req.query;
   let sql = `SELECT po.*, (SELECT COUNT(*) FROM purchase_order_items WHERE po_id = po.id) as item_count,
+    (SELECT COALESCE(SUM(CASE WHEN COALESCE(po_qty,0)>COALESCE(transferred_pi_qty,0)
+      THEN COALESCE(po_qty,0)-COALESCE(transferred_pi_qty,0) ELSE 0 END),0)
+      FROM purchase_order_items WHERE po_id=po.id) AS remaining_pi_qty,
     CASE WHEN EXISTS(SELECT 1 FROM purchase_order_items WHERE po_id = po.id AND (unit_price IS NULL OR unit_price = 0)) THEN 'pending_fob' ELSE 'confirmed' END as price_status
     FROM purchase_orders po WHERE 1=1`;
   const params = [];
@@ -8407,14 +8410,39 @@ app.post('/api/purchase-orders', requireApiPermission('po_create'), asyncHandler
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
+function poHasNoncancelledPI(poId){
+  return !!queryOne(`SELECT 1 FROM proforma_invoices pi WHERE pi.pi_status <> 'cancelled'
+    AND (pi.related_po_id=? OR EXISTS
+      (SELECT 1 FROM pi_po_allocations a WHERE a.pi_id=pi.id AND a.po_id=?))
+    LIMIT 1`,[poId,poId]);
+}
 app.put('/api/purchase-orders/:id', requireApiPermission('po_create'), asyncHandler((req, res) => {
   try {
     const d = req.body;
     const { id } = req.params;
     // 读取已存在 PO 表头币种：币种属于价格快照，必须锁定；任何抓价均以数据库已锁定币种为准
-    const origPo = queryOne('SELECT id, currency FROM purchase_orders WHERE id = ?', [id]);
+    const origPo = queryOne('SELECT * FROM purchase_orders WHERE id = ?', [id]);
     if (!origPo) return res.status(404).json({ error: 'PO不存在' });
     const origCurrency = origPo.currency;
+    // A draft PO may already have a real PI. Preserve source facts that PI
+    // depends on, even before any approval has happened.
+    const hasLinkedPI=poHasNoncancelledPI(id);
+    if(hasLinkedPI){
+      const fixedFields=['supplier_id','supplier_name','brand','country','target_warehouse'];
+      if(fixedFields.some(f=>d[f]!==undefined&&String(d[f]||'')!==String(origPo[f]||'')))
+        return res.status(400).json({error:'PO已关联PI，供应商/国家/品牌/仓库不可修改'});
+    }
+    if(Array.isArray(d.items)){
+      const existingRows=query('SELECT id, sku_code, transferred_pi_qty FROM purchase_order_items WHERE po_id = ?',[id]).rows;
+      for(const row of existingRows){
+        if(Number(row.transferred_pi_qty||0)<=0)continue;
+        const proposed=d.items.find(it=>it.id===row.id);
+        if(!proposed||proposed.sku_code!==row.sku_code||
+            !Number.isSafeInteger(Number(proposed.po_qty))||
+            Number(proposed.po_qty)<Number(row.transferred_pi_qty))
+          return res.status(400).json({error:'该PO的SKU已转PI，不可删除、更换或把PO数量降至已转数量以下：'+row.sku_code});
+      }
+    }
     // 表头币种锁定：已创建 PO 的币种不可修改，写操作前拒绝（防止 RMB/USD 价格快照错配）
     if (d.currency !== undefined && d.currency !== origCurrency) {
       return res.status(400).json({ error: 'PO 创建后币种不可修改，如需更换币种请新建 PO' });
@@ -8498,6 +8526,9 @@ app.delete('/api/purchase-orders/:id', requireApiPermission('po_create'), asyncH
   try {
     const po = queryOne('SELECT * FROM purchase_orders WHERE id = ?', [req.params.id]);
     if (!po) return res.status(404).json({ error: 'PO不存在' });
+    // PO with an actual PI may not be deleted, including a draft PO.
+    if(poHasNoncancelledPI(po.id))
+      return res.status(409).json({error:'该PO已关联PI，请先处理关联的PI，不能删除PO'});
     // 守卫：仅允许 draft，或 transferred_pi/partial_pi 且无活跃(非cancelled/completed) PI
     let allow = po.po_status === 'draft';
     if (!allow) {
@@ -8531,6 +8562,8 @@ app.post('/api/purchase-orders/:id/void', requireApiPermission('po_create'), asy
     const po = queryOne('SELECT * FROM purchase_orders WHERE id = ?', [req.params.id]);
     if (!po) return res.status(404).json({ error: 'PO不存在' });
     if (po.po_status === 'cancelled') return res.status(400).json({ error: '该 PO 已作废，不能重复作废' });
+    if(poHasNoncancelledPI(po.id))
+      return res.status(409).json({error:'该PO已关联PI，不能直接作废；请先处理关联PI'});
     const ts = new Date().toISOString().slice(0, 19).replace('T', ' ');
     const newRemark = (po.remark ? po.remark + '\n' : '') + `[作废 ${ts} by ${req.currentUserName || ''}] 原因: ${void_reason}`;
     run("UPDATE purchase_orders SET po_status = 'cancelled', remark = ?, updated_at = datetime('now') WHERE id = ?", [newRemark, po.id]);
@@ -8664,7 +8697,13 @@ app.post('/api/purchase-orders/:id/approve', requireApiPermission('po_approve'),
         // 最终审批通过
         history.push({ level: approval.current_level, action: 'approve', user_id: req.currentUserId, user_name: userName, time: new Date().toISOString(), remark: remark || '' });
         run('UPDATE approval_records SET status = ?, approval_history = ?, updated_at = datetime(\'now\') WHERE id = ?', ['approved', JSON.stringify(history), approval.id]);
-        run('UPDATE purchase_orders SET po_status = ?, approval_status = ? WHERE id = ?', ['approved', 'approved', req.params.id]);
+        // Final PO approval happens separately from PI creation. Reconcile
+        // quantity status only at this explicit approval action.
+        const poItems = query('SELECT po_qty, transferred_pi_qty FROM purchase_order_items WHERE po_id = ?',[po.id]).rows;
+        const partially = poItems.some(i=>Number(i.transferred_pi_qty)>0);
+        const completed = partially&&poItems.every(i=>Number(i.transferred_pi_qty)>=Number(i.po_qty));
+        const newStatus=completed?'transferred_pi':(partially?'partial_pi':'approved');
+        run('UPDATE purchase_orders SET po_status = ?, approval_status = ? WHERE id = ?', [newStatus, 'approved', req.params.id]);
         // —— FEISHU-NOTIFY-01：事务外 best-effort 通知提交人 + CC ——
         notifyApprovalParticipants(approval.id, 'approved_final', { po_no: po.po_no }).catch(() => {});
       } else {
@@ -8931,16 +8970,16 @@ app.post('/api/proforma-invoices', requireApiPermission('pi_create'), asyncHandl
     let poCurrency = null;
     if (d.related_po_id) {
       const po = queryOne(
-        'SELECT id, approval_status, currency, supplier_id, supplier_name, country FROM purchase_orders WHERE id = ?',
+        'SELECT id, approval_status, po_status, currency, supplier_id, supplier_name, country FROM purchase_orders WHERE id = ?',
         [d.related_po_id]
       );
       if (!po) {
         return res.status(400).json({ error: '关联的PO不存在' });
       }
-      if (po.approval_status !== 'approved') {
-        return res.status(400).json({
-          error: 'PO 尚未审批通过，不能生成 PI'
-        });
+      // A PI may be raised before PO approval. This operation does NOT
+      // change PO approval_status or approve the underlying plan.
+      if (po.approval_status === 'rejected' || ['rejected','cancelled','transferred_pi'].includes(po.po_status)) {
+        return res.status(400).json({ error: 'PO已驳回、作废或全部转PI，不能关联新PI' });
       }
       // The PO→PI header relation is an accounting fact. Refuse cross-country
       // and cross-supplier references even if a stale/bypassed UI sends them.
@@ -9044,16 +9083,10 @@ app.post('/api/proforma-invoices', requireApiPermission('pi_create'), asyncHandl
           });
         }
 
-        // 更新PO状态（multi-PO statuses already updated by allocation helper）
+        // Recalculate only the quantity-based transfer status of APPROVED POs.
+        // Unapproved PO stays draft / pending_approval after linking a PI.
         if (d.related_po_id && !isMultiPO) {
-          const poItems = query('SELECT po_qty, transferred_pi_qty FROM purchase_order_items WHERE po_id = ?', [d.related_po_id]).rows;
-          const allTransferred = poItems.every(i => i.transferred_pi_qty >= i.po_qty);
-          const anyTransferred = poItems.some(i => i.transferred_pi_qty > 0);
-          if (allTransferred) {
-            run('UPDATE purchase_orders SET po_status = ? WHERE id = ?', ['transferred_pi', d.related_po_id]);
-          } else if (anyTransferred) {
-            run('UPDATE purchase_orders SET po_status = ? WHERE id = ?', ['partial_pi', d.related_po_id]);
-          }
+          piMultiPO.updatePOStatus(d.related_po_id,query,run);
         }
 
         // 更新库存的PI未发货数量（派生/在途汇总刷新，已移到事务外、COMMIT 后执行）
@@ -9126,7 +9159,7 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
           target_warehouse:d.target_warehouse!==undefined?d.target_warehouse:pi.target_warehouse};
         if(['country','brand','currency','target_warehouse'].some(k=>d[k]!==undefined&&String(d[k]||'')!==String(pi[k]||'')))
           throw new Error('多PO的国家、品牌、仓库和币种已锁定，不可通过PI编辑更改');
-        multiPOsForEdit=piMultiPO.validatePOs(multiIds,effective,queryOne);
+        multiPOsForEdit=piMultiPO.validatePOs(multiIds,effective,queryOne,{allowFullyTransferred:true});
       }
     } catch(e) {return res.status(400).json({error:e.message});}
 
@@ -9304,14 +9337,8 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
             }
           });
         }
-        // 刷新 PO 状态
-        const poItems = query('SELECT po_qty, transferred_pi_qty FROM purchase_order_items WHERE po_id = ?', [pi.related_po_id]).rows;
-        if (poItems.length) {
-          const allTransferred = poItems.every(i => i.transferred_pi_qty >= i.po_qty);
-          const anyTransferred = poItems.some(i => i.transferred_pi_qty > 0);
-          const newStatus = allTransferred ? 'transferred_pi' : (anyTransferred ? 'partial_pi' : 'approved');
-          run('UPDATE purchase_orders SET po_status = ? WHERE id = ?', [newStatus, pi.related_po_id]);
-        }
+        // Linking/editing a PI does not approve its PO.
+        piMultiPO.updatePOStatus(pi.related_po_id,query,run);
       }
 
       // 回写供应商 last_used_payment_term_id（仅当付款条件变更）
