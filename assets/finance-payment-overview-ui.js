@@ -2,6 +2,13 @@
 // FIN-OVERVIEW V1. Read-only view on the existing payable cockpit route.
 // Never derive settlement from payment_request.status or count PO+PI+CI together.
 let _finOverviewData=null,_finOverviewFiltered=[];
+// Per-table client-side sort state. Sorting must not change ledger facts or filtered totals.
+const _finSort={cats:null,pays:null,details:null};
+const FIN_SORT_COLUMNS={
+ cats:['category_label','currency','count','gross','cash_paid','deductions_total','outstanding','overdue'],
+ pays:['payee_name','payee_type_label','currency','pi_amount','gross','cash_paid','outstanding','overdue','due_7'],
+ details:['document','payee_name','category_label','currency','gross','cash_paid','deductions','rounding','outstanding','due_date','lifecycle_status']
+};
 // Empty Set means no restriction (all). Facets use OR inside a facet and AND across facets.
 let _finSelections={country:new Set(),category:new Set(),payee:new Set(),currency:new Set()};
 let _finOptions={country:[],category:[],payee:[],currency:[]};
@@ -61,9 +68,64 @@ function finGroup(rows,keyFn,fields){
  });
  return [...m.values()];
 }
-function finTable(headers,rows,empty){
- return '<div class="fin-scroll"><table class="fin-table"><thead><tr>'+
-   headers.map(x=>'<th>'+esc(x)+'</th>').join('')+'</tr></thead><tbody>'+
+function finSortValue(row,column){
+ switch(column){
+  case 'category_label':return finLabel(row.category);
+  case 'payee_type_label':return FIN_TYPE[row.payee_type]||row.payee_type;
+  case 'pi_amount':return row.payee_type==='factory'?finPIAmount(row.payee_key,row.currency):null;
+  case 'deductions_total':return Number(row.deductions||0)+Number(row.rounding||0);
+  case 'document':return row.fee_no||row.source_no||'';
+  default:return row[column];
+ }
+}
+function finSorted(rows,tableId){
+ const state=_finSort[tableId];
+ if(!state)return rows;
+ const sign=state.dir==='asc'?1:-1;
+ // A PI purchase total can span multiple records: calculate it once per payee per sort.
+ const cache=new Map();
+ const value=row=>{
+  if(!cache.has(row))cache.set(row,finSortValue(row,state.column));
+  return cache.get(row);
+ };
+ return rows.slice().sort((a,b)=>{
+  const av=value(a),bv=value(b);
+  const aEmpty=av===null||av===undefined||av===''||av==='—';
+  const bEmpty=bv===null||bv===undefined||bv===''||bv==='—';
+  if(aEmpty||bEmpty)return Number(aEmpty)-Number(bEmpty); // Missing values always last.
+  if(typeof av==='number'&&typeof bv==='number')return sign*(av-bv);
+  return sign*String(av).localeCompare(String(bv),undefined,{numeric:true,sensitivity:'base'});
+ });
+}
+function finToggleSort(tableId,column){
+ if(!FIN_SORT_COLUMNS[tableId]?.includes(column))return;
+ const previous=_finSort[tableId];
+ _finSort[tableId]={column,dir:previous?.column===column&&previous.dir==='asc'?'desc':'asc'};
+ const selector='#fin-layers .fin-scroll[data-fin-table="'+tableId+'"]';
+ const before=document.querySelector(selector);
+ const left=before?.scrollLeft||0,top=before?.scrollTop||0;
+ finRefresh();
+ const after=document.querySelector(selector);
+ if(after){
+  after.scrollLeft=left;after.scrollTop=top;
+  after.querySelector('.fin-sort-toggle[data-fin-column="'+column+'"]')?.focus({preventScroll:true});
+ }
+}
+function finTable(headers,rows,empty,tableId){
+ const columns=FIN_SORT_COLUMNS[tableId];
+ return '<div class="fin-scroll"'+(columns?' data-fin-table="'+tableId+'"':'')+'><table class="fin-table"><thead><tr>'+
+   headers.map((x,i)=>{
+    if(!columns)return '<th>'+esc(x)+'</th>';
+    const key=columns[i],active=_finSort[tableId];
+    const direction=active?.column===key?active.dir:null;
+    const next=direction==='asc'?'降序':'升序';
+    return '<th aria-sort="'+(direction==='asc'?'ascending':direction==='desc'?'descending':'none')+'">'+
+     '<button type="button" class="fin-sort-toggle" data-fin-column="'+key+
+     '" onclick="finToggleSort(\''+tableId+'\',\''+key+'\')" title="'+esc(x)+'：'+next+'" aria-label="'+esc(x)+'：'+next+'">'+
+     '<span>'+esc(x)+'</span><span class="fin-sort-pair" aria-hidden="true">'+
+     '<span class="fin-sort-up'+(direction==='asc'?' is-active':'')+'">▴</span>'+
+     '<span class="fin-sort-down'+(direction==='desc'?' is-active':'')+'">▾</span></span></button></th>';
+   }).join('')+'</tr></thead><tbody>'+
    (rows.join('')||'<tr><td colspan="'+headers.length+'" class="fin-empty">'+esc(empty||'无匹配记录')+'</td></tr>')+
    '</tbody></table></div>';
 }
@@ -108,28 +170,28 @@ function finRefresh(){
   ' 项结算事实需要人工对账（例如已付状态与实付不一致）。此处按实际流水计算，不按状态推算现金。</div>';
  html+='<h3 class="fin-heading">费用分类 <small>同一批应付事实按费用性质汇总</small></h3>';
  html+=finTable(['费用类型','币种','账单数','累计应付','现金已付','抵扣/抹零','全部未结','逾期未付'],
-   cats.map(r=>'<tr><td>'+esc(finLabel(r.category))+'</td><td>'+esc(r.currency)+'</td><td>'+r.count+
+   finSorted(cats,'cats').map(r=>'<tr><td>'+esc(finLabel(r.category))+'</td><td>'+esc(r.currency)+'</td><td>'+r.count+
     '</td><td class="fin-n">'+finNum(r.gross)+'</td><td class="fin-n">'+finNum(r.cash_paid)+
     '</td><td class="fin-n">'+finNum(r.deductions+r.rounding)+'</td><td class="fin-n">'+finNum(r.outstanding)+
-    '</td><td class="fin-n fin-risk">'+finNum(r.overdue)+'</td></tr>'),'没有应付费用');
- html+='<h3 class="fin-heading">付款对象汇总 <small>按逾期未付优先排序，点击查看账单</small></h3>';
+    '</td><td class="fin-n fin-risk">'+finNum(r.overdue)+'</td></tr>'),'没有应付费用','cats');
+ html+='<h3 class="fin-heading">付款对象汇总 <small>默认按逾期未付优先排序，点击表头排序或点击行查看账单</small></h3>';
  html+=finTable(['付款对象','类型','币种','PI录入货值','累计应付','现金已付','当前未结','逾期未付','未来7天'],
-   pays.map(r=>'<tr class="fin-clickable" onclick="'+finRowClick(r)+'"><td><strong>'+esc(r.payee_name)+'</strong></td>'+
+   finSorted(pays,'pays').map(r=>'<tr class="fin-clickable" onclick="'+finRowClick(r)+'"><td><strong>'+esc(r.payee_name)+'</strong></td>'+
     '<td>'+esc(FIN_TYPE[r.payee_type]||r.payee_type)+'</td><td>'+esc(r.currency)+'</td>'+
     '<td class="fin-n">'+(r.payee_type==='factory'?finNum(finPIAmount(r.payee_key,r.currency)):'—')+'</td>'+
     '<td class="fin-n">'+finNum(r.gross)+'</td><td class="fin-n">'+finNum(r.cash_paid)+'</td>'+
     '<td class="fin-n">'+finNum(r.outstanding)+'</td><td class="fin-n fin-risk">'+finNum(r.overdue)+'</td>'+
-    '<td class="fin-n">'+finNum(r.due_7)+'</td></tr>'),'没有符合筛选的付款对象');
+    '<td class="fin-n">'+finNum(r.due_7)+'</td></tr>'),'没有符合筛选的付款对象','pays');
  html+='<h3 class="fin-heading">应付与付款明细 <small>可追溯到每笔费用事实</small></h3>';
  const sorted=rows.slice().sort((a,b)=>b.overdue-a.overdue||b.outstanding-a.outstanding);
  html+=finTable(['单据','付款对象','费用','币种','应付原值','现金实付','抵扣','抹零','未结','到期日','状态'],
-   sorted.map(r=>'<tr class="fin-clickable" onclick="openPayableDetailModal(decodeURIComponent(\''+encodeURIComponent(r.id)+'\'))">'+
+   finSorted(sorted,'details').map(r=>'<tr class="fin-clickable" onclick="openPayableDetailModal(decodeURIComponent(\''+encodeURIComponent(r.id)+'\'))">'+
     '<td>'+esc(r.fee_no||r.source_no||'—')+'</td><td>'+esc(r.payee_name)+'</td>'+
     '<td>'+esc(finLabel(r.category))+'</td><td>'+esc(r.currency)+'</td>'+
     '<td class="fin-n">'+finNum(r.gross)+'</td><td class="fin-n">'+finNum(r.cash_paid)+'</td>'+
     '<td class="fin-n">'+finNum(r.deductions)+'</td><td class="fin-n">'+finNum(r.rounding)+'</td>'+
     '<td class="fin-n">'+finNum(r.outstanding)+'</td><td>'+esc(r.due_date||'—')+'</td>'+
-    '<td>'+esc(r.lifecycle_status)+'</td></tr>'),'无匹配单据');
+    '<td>'+esc(r.lifecycle_status)+'</td></tr>'),'无匹配单据','details');
  box.innerHTML=html;
  finTranslateDOM(box);
 }
@@ -376,7 +438,7 @@ function renderFinanceOverviewPage(data){
  '.fin-filters{display:flex;gap:9px;flex-wrap:wrap;align-items:start;margin:12px 0 16px;position:relative;z-index:3}.fin-ms{position:relative;min-width:145px;max-width:240px}.fin-ms-trigger{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;border:1px solid var(--border,#dfe0e4);border-radius:9px;background:var(--bg-card,#fff);color:var(--text-primary,#222);padding:9px 12px;font-size:12px;text-align:left;cursor:pointer}.fin-ms-trigger[aria-expanded=true]{border-color:#8fa9df}.fin-ms-panel{position:absolute;top:calc(100% + 5px);left:0;width:270px;max-width:min(340px,calc(100vw - 35px));background:var(--bg-card,#fff);border:1px solid var(--border,#ddd);border-radius:12px;box-shadow:0 10px 26px rgba(0,0,0,.13);padding:10px;z-index:10}.fin-ms[data-facet=currency] .fin-ms-panel{right:0;left:auto}.fin-ms-panel-top{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:3px 5px 10px;font-size:12px}.fin-ms-clear{background:none;border:0;color:#3276ce;cursor:pointer;font-size:12px}.fin-ms-search{width:100%;margin-bottom:7px;padding:8px;border:1px solid var(--border,#ddd);border-radius:8px;font-size:12px}.fin-ms-options{max-height:250px;overflow:auto}.fin-ms-option{display:flex;align-items:center;gap:9px;padding:8px 7px;border-radius:7px;font-size:12px;cursor:pointer}.fin-ms-option:hover{background:var(--bg-hover,#f1f4fa)}.fin-ms-option input{accent-color:#3578cf}.fin-ms-option[hidden]{display:none}.fin-ms-optlabel{overflow-wrap:anywhere;white-space:normal}.fin-ms-foot{padding:8px 5px 2px;color:var(--text-secondary,#888);font-size:11px}'+
  '.fin-card-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}.fin-card{border:1px solid var(--border,#e5e5e8);background:var(--bg-card,#fff);border-radius:13px;padding:16px;min-height:99px}'+
  '.fin-card-label{font-size:12px;color:var(--text-secondary,#666);margin-bottom:9px}.fin-card-value{font-size:18px;font-weight:650;line-height:1.5;font-variant-numeric:tabular-nums}.fin-money-cur{font-size:11px;color:var(--text-secondary,#777);font-weight:450}.fin-card-sub{font-size:11px;color:var(--text-secondary,#888);margin-top:7px}.fin-inline-note{font-size:11px;color:var(--text-secondary,#888);font-weight:450;margin-top:3px}.fin-inline-note>div{display:inline}'+
- '.fin-heading{font-size:15px;margin:22px 0 10px}.fin-heading small{font-size:11px;font-weight:400;color:var(--text-secondary,#777);margin-left:8px}.fin-scroll{border:1px solid var(--border,#e5e5e8);border-radius:12px;overflow:auto;max-height:440px;background:var(--bg-card,#fff)}.fin-table{border-collapse:separate;border-spacing:0;width:100%;font-size:12px;white-space:nowrap}.fin-table th{text-align:left!important;position:sticky;top:0;background:var(--bg-secondary,#f5f6f7);color:var(--text-secondary,#65656c);font-weight:600;padding:12px;border-bottom:1px solid var(--border,#e6e6e6);z-index:1}.fin-table td{padding:10px 12px;border-bottom:1px solid var(--border,#eee);text-align:left!important}.fin-table .fin-n{text-align:left!important;font-variant-numeric:tabular-nums}.fin-table .fin-risk{color:#c73333;font-weight:550}.fin-clickable{cursor:pointer}.fin-clickable:hover{background:var(--bg-hover,#f5f8ff)}.fin-empty{text-align:left;color:var(--text-secondary,#777);padding:22px!important}.fin-alert{margin-top:12px;padding:12px 14px;background:var(--bg-secondary,#faf6ee);border:1px solid var(--border,#e7d7c3);border-radius:11px;font-size:12px}'+
+ '.fin-heading{font-size:15px;margin:22px 0 10px}.fin-heading small{font-size:11px;font-weight:400;color:var(--text-secondary,#777);margin-left:8px}.fin-scroll{border:1px solid var(--border,#e5e5e8);border-radius:12px;overflow:auto;max-height:440px;background:var(--bg-card,#fff)}.fin-table{border-collapse:separate;border-spacing:0;width:100%;font-size:12px;white-space:nowrap}.fin-table th{text-align:left!important;position:sticky;top:0;background:var(--bg-secondary,#f5f6f7);color:var(--text-secondary,#65656c);font-weight:600;padding:12px;border-bottom:1px solid var(--border,#e6e6e6);z-index:1}.fin-table td{padding:10px 12px;border-bottom:1px solid var(--border,#eee);text-align:left!important}.fin-table .fin-n{text-align:left!important;font-variant-numeric:tabular-nums}.fin-table .fin-risk{color:#c73333;font-weight:550}.fin-sort-toggle{display:inline-flex;align-items:center;gap:6px;width:100%;border:0;background:none;padding:0;color:inherit;font:inherit;font-weight:inherit;text-align:left;cursor:pointer;white-space:nowrap}.fin-sort-toggle:hover{color:var(--text-primary,#222)}.fin-sort-toggle:focus-visible{outline:2px solid #4786ce;outline-offset:3px;border-radius:3px}.fin-sort-pair{display:inline-flex;flex-direction:column;line-height:6px;font-size:10px;color:#adb0b8;flex-shrink:0}.fin-sort-pair .is-active{color:var(--primary,#2e7d32)}.fin-clickable{cursor:pointer}.fin-clickable:hover{background:var(--bg-hover,#f5f8ff)}.fin-empty{text-align:left;color:var(--text-secondary,#777);padding:22px!important}.fin-alert{margin-top:12px;padding:12px 14px;background:var(--bg-secondary,#faf6ee);border:1px solid var(--border,#e7d7c3);border-radius:11px;font-size:12px}'+
  '</style>';
  let h='<div id="fin-overview">'+styles+
  '<div class="fin-head"><div><h2>财务付款总览</h2><div class="fin-note">覆盖已结清与未结清应付账单 · 截至 '+esc(data.today)+'</div></div>'+
