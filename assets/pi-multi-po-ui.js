@@ -40,23 +40,21 @@
    }
    if(country){country.value=first.country;country.disabled=true;}
    if(wh){wh.value=first.target_warehouse||'';wh.disabled=true;}
-   const grouped=new Map();
+   // Keep one editable PI line per PO+SKU, even when different POs share SKU.
+   const lines=[];
    for(const po of pos){
      for(const item of (po.items||[])){
        const sku=String(item.sku_code||'').trim();
        if(!sku)continue;
        const left=Math.max(0,Number(item.po_qty||0)-Number(item.transferred_pi_qty||0));
-       const prior=grouped.get(sku)||{sku,poQty:0,poPrice:0,piQty:0,piPrice:0,piDisc:0,fromPO:true,poNos:[]};
-       const nextQty=prior.poQty+left;
-       prior.poPrice=nextQty?(prior.poPrice*prior.poQty+Number(item.unit_price||0)*left)/nextQty:0;
-       prior.poQty=nextQty;
-       prior.poNos.push(po.po_no);
-       grouped.set(sku,prior);
+       if(left<=0)continue;
+       lines.push({poId:po.id,poNo:po.po_no,sku,poQty:left,
+         poPrice:Number(item.unit_price||0),piQty:0,piPrice:0,piDisc:0,fromPO:true});
      }
    }
    const extra=(window._piRows||[]).filter(r=>!r.fromPO);
-   window._poRef=[...grouped.values()].map(x=>({sku_code:x.sku,po_qty:x.poQty,unit_price:x.poPrice}));
-   window._piRows=[...grouped.values()].concat(extra);
+   window._poRef=lines.map(x=>({po_no:x.poNo,sku_code:x.sku,po_qty:x.poQty,unit_price:x.poPrice}));
+   window._piRows=lines.concat(extra);
    renderCmpTable();
  }
  // PO approval and PI association are separate: draft/pending plans can be
@@ -154,7 +152,7 @@
      '<div id="pi-multi-po-count" style="font-size:12px;color:var(--text-secondary,#666);margin-bottom:5px">已选择 0 张 PO</div>'+
      '<input id="pi-multi-po-search" type="search" placeholder="搜索 PO 编号" oninput="piMultiPORefresh()" style="width:100%;max-width:450px;margin-bottom:6px;padding:7px;border:1px solid var(--border,#ddd);border-radius:8px">'+
      '<div id="pi-multi-po-picker" style="max-height:165px;overflow:auto;border:1px solid var(--border,#ddd);border-radius:10px;padding:7px;background:var(--bg-card,#fff)"></div>'+
-     '<div style="font-size:11px;color:var(--text-secondary,#888);margin-top:6px">草稿、待审批PO也可关联PI，但不会自动改变PO审批状态；已作废、已驳回及已全部转PI的PO不可选。多选同SKU自动合并，更换PO会重置已填写的商品数量/单价。</div></div>'+
+     '<div style="font-size:11px;color:var(--text-secondary,#888);margin-top:6px">草稿、待审批PO也可关联PI，但不会自动改变PO审批状态；已作废、已驳回及已全部转PI的PO不可选。多选同SKU按不同PO分行显示，更换PO会重置已填写的商品数量/单价。</div></div>'+
      '<style>.pi-mpo-row{display:flex;gap:9px;align-items:center;padding:8px 10px;font-size:12px;cursor:pointer;border-radius:7px}.pi-mpo-row:hover{background:var(--bg-hover,#f4f6f9)}.pi-mpo-row:has(input:disabled){opacity:.65;cursor:not-allowed}.pi-mpo-state{font-size:11px;color:#94622d;margin-left:auto;white-space:nowrap}.pi-mpo-state-ok{color:#26794e}.pi-mpo-muted{font-size:12px;color:var(--text-secondary,#999);padding:12px}</style>';
    const group=select.closest&&select.closest('.form-group');
    if(group){group.insertAdjacentHTML('afterend',wrapper);group.style.display='none';}

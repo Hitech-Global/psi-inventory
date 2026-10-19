@@ -8967,6 +8967,12 @@ app.post('/api/proforma-invoices', requireApiPermission('pi_create'), asyncHandl
       }
     } catch (e) { return res.status(400).json({ error: e.message }); }
     const isMultiPO = relatedPoIds.length > 1;
+    // PO-by-PO editable lines are the source of truth. Keep one aggregated PI
+    // SKU row for all existing CI shipment / payable / forecasting readers.
+    if(isMultiPO&&Array.isArray(d.po_source_items)){
+      try{d.items=piMultiPO.aggregateSourceItems(d.po_source_items,selectedPOs);}
+      catch(e){return res.status(400).json({error:e.message});}
+    }
     let poCurrency = null;
     if (d.related_po_id) {
       const po = queryOne(
@@ -9048,7 +9054,7 @@ app.post('/api/proforma-invoices', requireApiPermission('pi_create'), asyncHandl
         // Multi-PO allocation is recorded separately so same-SKU from two POs
         // remains one PI SKU item (CI update-by-SKU stays unambiguous).
         if (isMultiPO) {
-          piMultiPO.assignMultiPO({piId,poRows:selectedPOs,items:d.items,query,run,genId});
+          piMultiPO.assignMultiPO({piId,poRows:selectedPOs,items:d.items,sourceItems:d.po_source_items,query,run,genId});
         }
         // 更新PO明细的已转PI数量（legacy single-PO only）
         if (d.related_po_id && !isMultiPO) {
@@ -9162,6 +9168,10 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
         multiPOsForEdit=piMultiPO.validatePOs(multiIds,effective,queryOne,{allowFullyTransferred:true});
       }
     } catch(e) {return res.status(400).json({error:e.message});}
+    if(multiPOsForEdit.length>1&&Array.isArray(d.po_source_items)){
+      try{d.items=piMultiPO.aggregateSourceItems(d.po_source_items,multiPOsForEdit);}
+      catch(e){return res.status(400).json({error:e.message});}
+    }
 
     // 锁定守卫：CI/PL 已生成 / 已付定金 / 已作废 → 拒绝编辑
     const lockReason = getPILockReason(pi);
@@ -9300,7 +9310,7 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
 
       // Multi-PO allocation handled by exact per-PO source ledger instead.
       if(multiPOsForEdit.length>1&&Array.isArray(d.items)) {
-        piMultiPO.assignMultiPO({piId:id,poRows:multiPOsForEdit,items:d.items,query,run,genId});
+        piMultiPO.assignMultiPO({piId:id,poRows:multiPOsForEdit,items:d.items,sourceItems:d.po_source_items,query,run,genId});
       }
       // PO transferred_pi_qty delta 同步（legacy single-PO only）
       if (pi.related_po_id && multiPOsForEdit.length<=1) {

@@ -10,7 +10,7 @@ function db(){
     brand TEXT,country TEXT,target_warehouse TEXT,currency TEXT,po_status TEXT,approval_status TEXT);
   CREATE TABLE purchase_order_items(id TEXT PRIMARY KEY,po_id TEXT,sku_code TEXT,po_qty INTEGER,
     transferred_pi_qty INTEGER,untransferred_pi_qty INTEGER);
-  CREATE TABLE pi_po_allocations(id TEXT PRIMARY KEY,pi_id TEXT,po_id TEXT,po_no TEXT,sku_code TEXT,allocated_qty INTEGER);
+  CREATE TABLE pi_po_allocations(id TEXT PRIMARY KEY,pi_id TEXT,po_id TEXT,po_no TEXT,sku_code TEXT,allocated_qty INTEGER,pi_unit_price REAL,pi_discount REAL);
   CREATE UNIQUE INDEX uq_pi_po_allocations ON pi_po_allocations(pi_id,po_id,sku_code);
  `);
  const pos=[
@@ -151,5 +151,51 @@ test('zero-quantity PO does not become transferred_pi without actual PI transfer
  x.run("UPDATE purchase_order_items SET po_qty=0,transferred_pi_qty=0 WHERE po_id='po1'");
  core.updatePOStatus('po1',x.query,x.run);
  assert.equal(x.queryOne("SELECT po_status FROM purchase_orders WHERE id='po1'").po_status,'approved');
+ x.sqlite.close();
+});
+
+test('PI grouped CI-facing SKU total keeps different PO prices/quantities in individual ledger',()=>{
+ const x=db(),pos=x.pos();
+ const sources=[
+  {po_id:'po1',po_no:'PO-1',sku_code:'SKU-A',po_qty:80,pi_confirmed_qty:30,unit_price:10,discount:0},
+  {po_id:'po2',po_no:'PO-2',sku_code:'SKU-A',po_qty:40,pi_confirmed_qty:20,unit_price:12,discount:0.1},
+  {po_id:'po2',po_no:'PO-2',sku_code:'SKU-C',po_qty:15,pi_confirmed_qty:8,unit_price:5,discount:0}
+ ];
+ const agg=core.aggregateSourceItems(sources,pos);
+ assert.equal(agg.length,2);
+ assert.equal(agg[0].pi_confirmed_qty,50);
+ assert.equal(agg[0].pi_amount,516);
+ assert.equal(agg[0].unit_price,10.8);
+ assert.ok(Math.abs(agg[0].discount-(1-516/540))<1e-9);
+ x.sqlite.exec('BEGIN');
+ core.assignMultiPO({piId:'split-pi',poRows:pos,items:agg,sourceItems:sources,...x});
+ x.sqlite.exec('COMMIT');
+ assert.deepEqual(x.query('SELECT po_no,sku_code,allocated_qty,pi_unit_price,pi_discount FROM pi_po_allocations ORDER BY po_no,sku_code').rows
+  .map(r=>[r.po_no,r.sku_code,r.allocated_qty,r.pi_unit_price,r.pi_discount]),
+  [['PO-1','SKU-A',30,10,0],['PO-2','SKU-A',20,12,.1],['PO-2','SKU-C',8,5,0]]);
+ assert.equal(x.queryOne('SELECT transferred_pi_qty FROM purchase_order_items WHERE id=?',['a1']).transferred_pi_qty,50);
+ assert.equal(x.queryOne('SELECT transferred_pi_qty FROM purchase_order_items WHERE id=?',['a2']).transferred_pi_qty,20);
+ x.sqlite.close();
+});
+test('PO source lines cannot impersonate other PO or double-book a PO+SKU',()=>{
+ const x=db(),pos=x.pos();
+ assert.throws(()=>core.aggregateSourceItems([{po_id:'po1',po_no:'PO-2',sku_code:'SKU-A',pi_confirmed_qty:2,unit_price:1}],pos),/来源PO/);
+ assert.throws(()=>core.aggregateSourceItems([
+  {po_id:'po1',po_no:'PO-1',sku_code:'SKU-A',pi_confirmed_qty:2,unit_price:1},
+  {po_id:'po1',po_no:'PO-1',sku_code:'SKU-A',pi_confirmed_qty:3,unit_price:1}],pos),/只能出现一行/);
+ assert.throws(()=>core.aggregateSourceItems([
+  {po_id:'po1',po_no:'PO-1',sku_code:'SKU-A',pi_confirmed_qty:2,unit_price:1},
+  {po_id:'',sku_code:'SKU-A',pi_confirmed_qty:3,unit_price:1}],pos),/手工行与PO来源SKU重复/);
+ x.sqlite.close();
+});
+test('per-PO confirmation cannot exceed just that PO residual, even when other PO has capacity',()=>{
+ const x=db(),pos=x.pos();
+ const sources=[{po_id:'po1',po_no:'PO-1',sku_code:'SKU-A',pi_confirmed_qty:81,unit_price:4,discount:0}];
+ const items=core.aggregateSourceItems(sources,pos);
+ x.sqlite.exec('BEGIN');
+ assert.throws(()=>core.assignMultiPO({piId:'excess',poRows:pos,items,sourceItems:sources,...x}),/超过对应PO剩余数量/);
+ x.sqlite.exec('ROLLBACK');
+ assert.equal(x.query('SELECT COUNT(*) AS n FROM pi_po_allocations').rows[0].n,0);
+ assert.equal(x.queryOne('SELECT transferred_pi_qty FROM purchase_order_items WHERE id=?',['a1']).transferred_pi_qty,20);
  x.sqlite.close();
 });
