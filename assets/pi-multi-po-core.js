@@ -13,13 +13,17 @@ function parseRelatedIds(value,legacy){
  return unique;
 }
 function norm(x){return String(x||'').trim().toLocaleLowerCase();}
-function validatePOs(ids,form,queryOne){
+function validatePOs(ids,form,queryOne,{allowFullyTransferred=false}={}){
  if(!ids.length)return [];
  const poRows=ids.map(id=>{
    const po=queryOne('SELECT * FROM purchase_orders WHERE id = ?',[id]);
    if(!po)throw Error('关联PO不存在：'+id);
-   if(po.approval_status!=='approved'||['cancelled','rejected'].includes(po.po_status))
-     throw Error('仅可关联已审批且未作废的PO：'+po.po_no);
+   // PI association is independent from PO approval. A rejected or voided
+   // plan is invalid, but draft / pending-approval plans are allowed.
+   if(['cancelled','rejected'].includes(po.po_status)||po.approval_status==='rejected')
+     throw Error('已作废或已驳回的PO不可关联PI：'+po.po_no);
+   if(po.po_status==='transferred_pi'&&!allowFullyTransferred)
+     throw Error('该PO已全部转PI：'+po.po_no);
    const supplierMatch=po.supplier_id
      ? String(po.supplier_id)===String(form.supplier_id||'')
      : !!form.supplier_name&&norm(po.supplier_name)===norm(form.supplier_name);
@@ -47,10 +51,16 @@ function getExistingAllocations(piId,query){
  return query('SELECT po_id, po_no, sku_code, allocated_qty FROM pi_po_allocations WHERE pi_id = ?',[piId]).rows;
 }
 function updatePOStatus(poId,query,run){
+ const po=query('SELECT po_status, approval_status FROM purchase_orders WHERE id = ?',[poId]).rows[0];
+ if(!po)throw Error('PO不存在：'+poId);
  const items=query('SELECT po_qty, transferred_pi_qty FROM purchase_order_items WHERE po_id = ?',[poId]).rows;
  if(!items.length)throw Error('PO没有商品明细：'+poId);
- const status=items.every(i=>Number(i.transferred_pi_qty)>=Number(i.po_qty))?'transferred_pi':
-   items.some(i=>Number(i.transferred_pi_qty)>0)?'partial_pi':'approved';
+ // A PI is a sourcing fact, NOT an approval action. Preserve draft/pending
+ // approval state; final PO approval will derive the transfer status afresh.
+ if(po.approval_status!=='approved')return;
+ const anyTransferred=items.some(i=>Number(i.transferred_pi_qty)>0);
+ const status=anyTransferred&&items.every(i=>Number(i.transferred_pi_qty)>=Number(i.po_qty))?'transferred_pi':
+   anyTransferred?'partial_pi':'approved';
  run('UPDATE purchase_orders SET po_status = ? WHERE id = ?',[status,poId]);
 }
 function restoreMultiAllocations(piId,query,run){

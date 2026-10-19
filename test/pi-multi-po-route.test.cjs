@@ -187,3 +187,36 @@ test('void forbidden after historical CI or reserved deposit, no PO allocations 
  assert.equal(x.queryOne('SELECT pi_status FROM proforma_invoices WHERE id=?',[pi.id]).pi_status,'pending');
  x.sqlite.close();
 });
+
+test('multi-PO creation can mix draft/pending PO with approved PO, without granting approval',async()=>{
+ const x=fixture();
+ x.sqlite.prepare("UPDATE purchase_orders SET approval_status='pending', po_status='draft' WHERE id='p1'").run();
+ const r=await x.submit();
+ assert.equal(r.status,200,JSON.stringify(r));
+ assert.equal(x.queryOne("SELECT approval_status FROM purchase_orders WHERE id='p1'").approval_status,'pending');
+ assert.equal(x.queryOne("SELECT po_status FROM purchase_orders WHERE id='p1'").po_status,'draft');
+ assert.equal(x.queryOne("SELECT po_status FROM purchase_orders WHERE id='p2'").po_status,'partial_pi');
+ assert.equal(x.query("SELECT * FROM pi_po_allocations").rows.length,3);
+ x.sqlite.close();
+});
+test('single draft PO may create PI and remains draft rather than falsely approved',async()=>{
+ const x=fixture();
+ x.sqlite.prepare("UPDATE purchase_orders SET approval_status='pending', po_status='draft' WHERE id='p1'").run();
+ const r=await x.submit({related_po_ids:['p1'],related_po_id:'p1',related_po_no:'PO-A',
+   items:[{sku_code:'SKU-1',po_qty:100,pi_confirmed_qty:60,unit_price:9}]});
+ assert.equal(r.status,200,JSON.stringify(r));
+ const po=x.queryOne("SELECT * FROM purchase_orders WHERE id='p1'");
+ assert.equal(po.approval_status,'pending');
+ assert.equal(po.po_status,'draft');
+ assert.equal(x.queryOne("SELECT transferred_pi_qty FROM purchase_order_items WHERE id='a1'").transferred_pi_qty,80);
+ x.sqlite.close();
+});
+test('rejected PO remains blocked; no partial PI or PO quantity writes',async()=>{
+ const x=fixture();
+ x.sqlite.prepare("UPDATE purchase_orders SET approval_status='rejected', po_status='draft' WHERE id='p1'").run();
+ const r=await x.submit();
+ assert.equal(r.status,400);
+ assert.equal(x.query("SELECT COUNT(*) AS n FROM proforma_invoices").rows[0].n,0);
+ assert.equal(x.queryOne("SELECT transferred_pi_qty FROM purchase_order_items WHERE id='a1'").transferred_pi_qty,20);
+ x.sqlite.close();
+});

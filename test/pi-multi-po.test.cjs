@@ -131,3 +131,25 @@ test('downstream CI still reads one PI SKU entry; no mutations to CI/WAC/forecas
  assert.match(s,/piMultiPO\.restoreMultiAllocations/);
  assert.match(s,/SELECT pi_confirmed_qty, shipped_qty FROM proforma_invoice_items/);
 });
+
+test('pending/draft plan can be linked while retaining its approval state; rejected plan cannot',()=>{
+ const x=db();x.run("UPDATE purchase_orders SET po_status='draft',approval_status='pending' WHERE id='po1'");
+ const pos=core.validatePOs(['po1','po2'],form(),x.queryOne);
+ x.sqlite.exec('BEGIN');
+ core.assignMultiPO({piId:'pi1',poRows:pos,items:[{sku_code:'SKU-A',pi_confirmed_qty:115}],...x});
+ x.sqlite.exec('COMMIT');
+ const pending=x.queryOne("SELECT po_status,approval_status FROM purchase_orders WHERE id='po1'");
+ assert.equal(pending.po_status,'draft');assert.equal(pending.approval_status,'pending');
+ assert.equal(x.queryOne("SELECT po_status FROM purchase_orders WHERE id='po2'").po_status,'partial_pi');
+ x.run("UPDATE purchase_orders SET approval_status='rejected' WHERE id='po1'");
+ assert.throws(()=>core.validatePOs(['po1','po2'],form(),x.queryOne),/驳回/);
+ x.sqlite.close();
+});
+
+test('zero-quantity PO does not become transferred_pi without actual PI transfers',()=>{
+ const x=db();
+ x.run("UPDATE purchase_order_items SET po_qty=0,transferred_pi_qty=0 WHERE po_id='po1'");
+ core.updatePOStatus('po1',x.query,x.run);
+ assert.equal(x.queryOne("SELECT po_status FROM purchase_orders WHERE id='po1'").po_status,'approved');
+ x.sqlite.close();
+});
