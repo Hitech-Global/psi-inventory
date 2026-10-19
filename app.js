@@ -10812,20 +10812,73 @@ function openPOExportConfirm(poId){
   openModal(t('gen.L5328.1','PO 创建成功'),t('gen.L5328.2','<div style="padding:4px 0;font-size:14px">PO 已创建成功，是否立即导出 Excel 格式 PO？</div>'),t('modal.footer.openPOExportConfirm', `<button class="btn btn-secondary" onclick="closeModal();showPage('po')">取消</button><button class="btn btn-primary" onclick="exportPO('{v1}');closeModal();showPage('po')">导出 Excel</button>`, {v1: poId}));
 }
 // ==================== PO管理 ====================
+// Brand/country options are derived from the initial unfiltered PO list: only
+// actual historical PO values are selectable. Keep the translated HTML template
+// untouched so EN/ID overrides get the same controls as ZH.
+let _poFilterFacetsReady=false;
+let _poListRequestSeq=0;
+let _poPageEpoch=0;
+function poInstallBrandCountryFilters(){
+  const form=document.querySelector('#content-inner .filter-bar .filter-form');
+  const actions=form&&form.querySelector('.filter-actions');
+  if(!actions||form.querySelector('#po-fb'))return;
+  const selectHtml=(id,label)=>'<div class="filter-group"><label>'+esc(label)+
+    '</label><select id="'+id+'" onchange="loadPO()"><option value="">'+
+    esc(t('filter.all','全部'))+'</option></select></div>';
+  actions.insertAdjacentHTML('beforebegin',
+    selectHtml('po-fb',t('app.112','品牌'))+
+    selectHtml('po-fc',t('app.113','国家')));
+}
+function poSetFacetValues(selectId,rows,key){
+  const el=document.getElementById(selectId);
+  if(!el)return;
+  const previous=el.value||'';
+  const unique=new Map();
+  (rows||[]).forEach(row=>{
+    const value=String(row[key]||'').trim();
+    if(value&&!unique.has(value.toLocaleLowerCase()))unique.set(value.toLocaleLowerCase(),value);
+  });
+  const values=[...unique.values()].sort((a,b)=>a.localeCompare(b,'zh'));
+  el.innerHTML='<option value="">'+esc(t('filter.all','全部'))+'</option>'+
+    values.map(value=>'<option value="'+esc(value)+'">'+esc(value)+'</option>').join('');
+  if(previous&&values.some(value=>value.toLocaleLowerCase()===previous.toLocaleLowerCase()))el.value=previous;
+}
+function poPopulateBrandCountryFilters(rows){
+  if(_poFilterFacetsReady)return;
+  if(!document.getElementById('po-table'))return;
+  poSetFacetValues('po-fb',rows,'brand');
+  poSetFacetValues('po-fc',rows,'country');
+  _poFilterFacetsReady=true;
+}
 async function renderPO(){
+  ++_poPageEpoch;
+  _poFilterFacetsReady=false;
+  ++_poListRequestSeq; // invalidate prior in-flight PO request across page reentry
   document.getElementById('content-inner').innerHTML=t('html.renderPO', `<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>状态</label><select id="po-fs"><option value="">全部</option><option value="draft">草稿</option><option value="pending_approval">待审批</option><option value="approved">已审批</option><option value="sent_factory">已发工厂</option><option value="partial_pi">部分转PI</option><option value="transferred_pi">已转PI</option></select></div><div class="filter-group"><label>关键词</label><input type="text" id="po-fk" onkeypress="if(event.key==='Enter')loadPO()"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadPO()">搜索</button>{v1}</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🛒 PO列表</div></div><div id="po-table"></div></div>`, {v1: hasPermission('po_create')?t('gen.L5332.1','<button class="btn btn-primary btn-sm" onclick="createPO()">➕ 新建PO</button>'):''});
+  poInstallBrandCountryFilters();
   loadPO();
 }
 async function loadPO(){
+  const requestId=++_poListRequestSeq;
+  const pageEpoch=_poPageEpoch;
   try{
     // 性能层：注册 PO 列表后台刷新重渲染器
     try{ if(window.AppStore) AppStore.page.onRefresh('po', function(){ try{ loadPO(); }catch(e){} }); }catch(e){}
     const s=document.getElementById('po-fs')?.value||'',k=document.getElementById('po-fk')?.value||'';
-    const _poUrl='/api/purchase-orders?status='+s+'&keyword='+encodeURIComponent(k);
+    const brand=document.getElementById('po-fb')?.value||'';
+    const country=document.getElementById('po-fc')?.value||'';
+    const _poUrl='/api/purchase-orders?status='+encodeURIComponent(s)+
+      '&keyword='+encodeURIComponent(k)+'&brand='+encodeURIComponent(brand)+
+      '&country='+encodeURIComponent(country);
     // 性能层：PO 列表走页面快照缓存（signature=筛选 URL）
     const data=await api(_poUrl,'GET',null,{cacheKey:'po',ttl:30000,signature:_poUrl});
+    if(pageEpoch!==_poPageEpoch)return;
+    // The default first request contains the full PO vocabulary. Do not rebuild
+    // options from filtered results, otherwise selected choices may disappear.
+    if(!s&&!k&&!brand&&!country)poPopulateBrandCountryFilters(data);
+    if(requestId!==_poListRequestSeq||!document.getElementById('po-table'))return;
     document.getElementById('po-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">🛒</div>'+t("empty.no_po","暂无PO")+'</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>'+t("col.po_no","PO号")+'</th><th>'+t("col.supplier","供应商")+'</th><th>'+t("app.112","品牌")+'</th><th>'+t("app.113","国家")+'</th><th>'+t("app.114","仓库")+'</th><th>'+t("col.po_date","PO日期")+'</th><th>'+t("html.pay.th.currency","币种")+'</th><th>'+t("col.detail","明细")+'</th><th>'+t("po.price_status","价格状态")+'</th><th>'+t("col.po_status","PO状态")+'</th><th>'+t("col.approval","审批")+'</th><th>'+t("common.actions","操作")+'</th></tr></thead><tbody>'+data.map(p=>'<tr class="clickable-detail-row" onclick="rowClickView(event,\'viewPO\',\''+p.id+'\')"><td class="cell-id"><span class="link-text" onclick="viewPO(\''+p.id+'\')">'+esc(p.po_no)+'</span></td><td>'+esc(p.supplier_name)+'</td><td>'+esc(p.brand)+'</td><td>'+esc(p.country)+'</td><td>'+esc(p.target_warehouse)+'</td><td class="cell-date">'+fmtDate(p.po_date)+'</td><td>'+esc(p.currency)+'</td><td class="text-center">'+(p.item_count||0)+'</td><td><span class="status-badge '+(p.price_status==='confirmed'?'status-completed':'status-pending')+'">'+(p.price_status==='confirmed'?t("po.price_confirmed","已确认价格"):t("po.price_pending","待补充FOB价格"))+'</span></td><td><span class="status-badge '+((p.po_status==='approved'||p.po_status==='transferred_pi')?'status-completed':p.po_status==='pending_approval'?'status-pending':'status-draft')+'">'+statusLabel(p.po_status)+'</span></td><td><span class="status-badge '+(p.approval_status==='approved'?'status-approved':p.approval_status==='rejected'?'status-rejected':'status-pending')+'">'+statusLabel(p.approval_status)+'</span></td><td class="cell-actions"><button class="action-btn" onclick="viewPO(\''+p.id+'\')">👁️</button>'+(p.po_status==='draft'&&hasPermission('po_create')?'<button class="action-btn" onclick="submitPO(\''+p.id+'\')" title="'+t("po.submit_approval","提交审批")+'">📤</button>':'')+(p.po_status==='approved'&&hasPermission('po_create')?'<button class="action-btn" onclick="sendFactory(\''+p.id+'\')" title="'+t("po.send_factory","发工厂")+'">📨</button>':'')+((hasPermission('po_export')||hasPermission('po_create'))?'<button class="action-btn" onclick="exportPO(\''+p.id+'\')" title="'+t("action.export_excel","导出Excel")+'">📊</button>':'')+(hasPermission('po_create')?'<button class="action-btn" onclick="voidPO(\''+p.id+'\')" title="'+t("action.void","作废")+'">'+t("action.void","作废")+'</button>':'')+(hasPermission('po_create')&&p.po_status==='draft'?'<button class="action-btn" style="color:#d4380d" onclick="deletePO(\''+p.id+'\')" title="'+t("action.delete","删除")+'">'+t("action.delete","删除")+'</button>':'')+'</td></tr>').join('')+'</tbody></table></div>';
-  }catch(e){showFlash(e.message,'danger')}
+  }catch(e){if(requestId===_poListRequestSeq&&document.getElementById('po-table'))showFlash(e.message,'danger')}
 }
 async function viewPO(id){
   try{const po=await api('/api/purchase-orders/'+id);
