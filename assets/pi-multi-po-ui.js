@@ -59,41 +59,64 @@
    window._piRows=[...grouped.values()].concat(extra);
    renderCmpTable();
  }
- function available(){
-   return (window._piApprovedPOs||[]).filter(po=>match(po)&&
-     po.approval_status==='approved'&&!['cancelled','rejected','transferred_pi'].includes(po.po_status));
+ // Showing a PO and allowing a PO to be linked are separate decisions.
+ // Keep unapproved plans visible so users understand why a matching PO
+ // cannot yet be linked; never bypass the existing server approval gate.
+ function candidates(){
+   return (window._piApprovedPOs||[]).filter(match);
  }
+ function ineligibility(po){
+   if(po.approval_status!=='approved'){
+     if(po.approval_status==='rejected'||po.po_status==='rejected')return '审批已驳回';
+     return '待审批 · 请先完成PO审批';
+   }
+   if(['cancelled','rejected'].includes(po.po_status))return 'PO已作废';
+   if(po.po_status==='transferred_pi')return '已全部转PI';
+   return '';
+ }
+ function available(){return candidates().filter(po=>!ineligibility(po));}
  function compatible(a,b){
    return ['supplier_id','country','brand','currency','target_warehouse']
      .every(k=>norm(a[k])===norm(b[k]));
  }
  function refresh(){
    if(!state.enabled)return;
-   const matched=available(),old=state.ids;
-   const keep=old.filter(id=>matched.some(po=>po.id===id));
+   const matched=candidates(),eligible=available(),old=state.ids;
+   const keep=old.filter(id=>eligible.some(po=>po.id===id));
    if(keep.length!==old.length){state.ids=keep;resetRows();}
    const first=(window._piApprovedPOs||[]).find(po=>po.id===state.ids[0]);
    const box=el('pi-multi-po-picker');
    if(!box)return;
    const search=(el('pi-multi-po-search')?.value||'').trim().toLocaleLowerCase();
-   const html=matched.filter(po=>!search||(po.po_no+' '+po.supplier_name).toLocaleLowerCase().includes(search))
-     .map(po=>{
-       const selected=state.ids.includes(po.id);
-       const forbidden=!!first&&!compatible(first,po);
-       return '<label class="pi-mpo-row" title="'+(forbidden?'不同品牌/仓库/币种不可合并':'')+'">'+
-         '<input type="checkbox" '+(selected?'checked ':'')+(forbidden?'disabled ':'')+
-         'onchange="piMultiPOToggle(decodeURIComponent(\''+encodeURIComponent(po.id).replace(/'/g,'%27')+'\'),this.checked)">'+
-         '<span>'+esc(po.po_no)+' · '+esc(po.currency)+' · '+esc(po.brand||'')+
-         ' · '+esc(po.target_warehouse||'')+'</span></label>';
-     }).join('');
-   box.innerHTML=matched.length?(html||'<div class="pi-mpo-muted">无匹配PO</div>'):
-     '<div class="pi-mpo-muted">请先选择国家和供应商，或无可用的已审批PO</div>';
-   const tag=el('pi-multi-po-count');if(tag)tag.textContent='已选择 '+state.ids.length+' 张 PO';
+   const shown=matched.filter(po=>!search||(po.po_no+' '+po.supplier_name).toLocaleLowerCase().includes(search))
+     .sort((a,b)=>Number(!!ineligibility(a))-Number(!!ineligibility(b)));
+   const html=shown.map(po=>{
+     const selected=state.ids.includes(po.id);
+     const reason=ineligibility(po);
+     const conflict=!!first&&!compatible(first,po);
+     const forbidden=!!reason||conflict;
+     const hint=reason||(conflict?'品牌/仓库/币种不同，不可合并':'');
+     return '<label class="pi-mpo-row" title="'+esc(hint)+'">'+
+       '<input type="checkbox" '+(selected?'checked ':'')+(forbidden?'disabled ':'')+
+       'onchange="piMultiPOToggle(decodeURIComponent(\''+encodeURIComponent(po.id).replace(/'/g,'%27')+'\'),this.checked)">'+
+       '<span>'+esc(po.po_no)+' · '+esc(po.currency)+' · '+esc(po.brand||'')+
+       ' · '+esc(po.target_warehouse||'')+'</span>'+
+       (reason?'<span class="pi-mpo-state" aria-label="'+esc(reason)+'">'+esc(reason)+'</span>':
+         conflict?'<span class="pi-mpo-state">不能混选</span>':
+         '<span class="pi-mpo-state pi-mpo-state-ok">可关联</span>')+'</label>';
+   }).join('');
+   box.innerHTML=matched.length?(html||'<div class="pi-mpo-muted">搜索没有匹配PO</div>'):
+     '<div class="pi-mpo-muted">请先选择国家和供应商，或无符合条件的PO</div>';
+   const tag=el('pi-multi-po-count');
+   if(tag)tag.textContent='已选择 '+state.ids.length+' 张 PO · 可关联 '+eligible.length+
+     ' 张 · 待处理 '+(matched.length-eligible.length)+' 张';
  }
  async function toggle(id,checked){
    if(!state.enabled)return;
    const po=(window._piApprovedPOs||[]).find(p=>p.id===id);
    if(!po||!match(po))return;
+   const reason=ineligibility(po);
+   if(checked&&reason){showToast(po.po_no+'：'+reason,'warning');refresh();return;}
    const old=state.ids.slice(),first=(window._piApprovedPOs||[]).find(p=>p.id===old[0]);
    if(checked&&!old.includes(id)){
      if(first&&!compatible(first,po)){showToast('只能合并同供应商、国家、品牌、币种、仓库的PO','warning');refresh();return;}
@@ -130,8 +153,8 @@
      '<div id="pi-multi-po-count" style="font-size:12px;color:var(--text-secondary,#666);margin-bottom:5px">已选择 0 张 PO</div>'+
      '<input id="pi-multi-po-search" type="search" placeholder="搜索 PO 编号" oninput="piMultiPORefresh()" style="width:100%;max-width:450px;margin-bottom:6px;padding:7px;border:1px solid var(--border,#ddd);border-radius:8px">'+
      '<div id="pi-multi-po-picker" style="max-height:165px;overflow:auto;border:1px solid var(--border,#ddd);border-radius:10px;padding:7px;background:var(--bg-card,#fff)"></div>'+
-     '<div style="font-size:11px;color:var(--text-secondary,#888);margin-top:6px">可勾选多张PO；同SKU自动合并，按勾选顺序占用剩余数量；更换关联PO会重置已填写的PI商品数量/单价。不同币种/仓库/品牌不可混选。</div></div>'+
-     '<style>.pi-mpo-row{display:flex;gap:9px;align-items:center;padding:8px 10px;font-size:12px;cursor:pointer;border-radius:7px}.pi-mpo-row:hover{background:var(--bg-hover,#f4f6f9)}.pi-mpo-row:has(input:disabled){opacity:.48;cursor:not-allowed}.pi-mpo-muted{font-size:12px;color:var(--text-secondary,#999);padding:12px}</style>';
+     '<div style="font-size:11px;color:var(--text-secondary,#888);margin-top:6px">只允许关联已审批且尚未全部转PI的PO；待审批PO仍显示，但不可勾选。多选同SKU自动合并，更换PO会重置已填写的商品数量/单价。</div></div>'+
+     '<style>.pi-mpo-row{display:flex;gap:9px;align-items:center;padding:8px 10px;font-size:12px;cursor:pointer;border-radius:7px}.pi-mpo-row:hover{background:var(--bg-hover,#f4f6f9)}.pi-mpo-row:has(input:disabled){opacity:.65;cursor:not-allowed}.pi-mpo-state{font-size:11px;color:#94622d;margin-left:auto;white-space:nowrap}.pi-mpo-state-ok{color:#26794e}.pi-mpo-muted{font-size:12px;color:var(--text-secondary,#999);padding:12px}</style>';
    const group=select.closest&&select.closest('.form-group');
    if(group){group.insertAdjacentHTML('afterend',wrapper);group.style.display='none';}
    else select.insertAdjacentHTML('afterend',wrapper);
