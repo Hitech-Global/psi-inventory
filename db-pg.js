@@ -1148,6 +1148,8 @@ async function initDatabase() {
   )`);
   await exec("CREATE UNIQUE INDEX IF NOT EXISTS uq_pi_po_allocations ON pi_po_allocations(pi_id, po_id, sku_code)");
   await exec("CREATE INDEX IF NOT EXISTS idx_pi_po_allocations_po ON pi_po_allocations(po_id)");
+  await exec("ALTER TABLE pi_po_allocations ADD COLUMN IF NOT EXISTS pi_unit_price NUMERIC(18,4)");
+  await exec("ALTER TABLE pi_po_allocations ADD COLUMN IF NOT EXISTS pi_discount NUMERIC(18,6)");
 
   await exec(`
     CREATE TABLE IF NOT EXISTS proforma_invoice_items (

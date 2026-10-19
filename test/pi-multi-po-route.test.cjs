@@ -12,7 +12,7 @@ function fixture(){
   CREATE TABLE purchase_order_items(id TEXT PRIMARY KEY,po_id TEXT,sku_code TEXT,po_qty INTEGER,transferred_pi_qty INTEGER,untransferred_pi_qty INTEGER);
   CREATE TABLE proforma_invoices(id TEXT PRIMARY KEY,pi_no TEXT,related_po_id TEXT,related_po_no TEXT,supplier_id TEXT,supplier_name TEXT,brand TEXT,country TEXT,target_warehouse TEXT,pi_date TEXT,currency TEXT,total_amount REAL,payment_terms TEXT,payment_term_id TEXT,need_deposit INTEGER,deposit_ratio REAL,balance_ratio REAL,payable_deposit REAL,pi_status TEXT,expected_delivery TEXT,attachment TEXT,remark TEXT,related_po_ids TEXT,related_po_nos TEXT,available_deduct_deposit REAL,deposit_payment_status TEXT,updated_at TEXT);
   CREATE TABLE proforma_invoice_items(id TEXT PRIMARY KEY,pi_id TEXT,pi_no TEXT,po_no TEXT,sku_code TEXT,po_qty INTEGER,pi_confirmed_qty INTEGER,unit_price REAL,discount REAL,pi_amount REAL,shipped_qty INTEGER,unshipped_qty INTEGER,created_at TEXT DEFAULT (datetime('now')));
-  CREATE TABLE pi_po_allocations(id TEXT PRIMARY KEY,pi_id TEXT,po_id TEXT,po_no TEXT,sku_code TEXT,allocated_qty INTEGER);
+  CREATE TABLE pi_po_allocations(id TEXT PRIMARY KEY,pi_id TEXT,po_id TEXT,po_no TEXT,sku_code TEXT,allocated_qty INTEGER,pi_unit_price REAL,pi_discount REAL);
   CREATE TABLE payable_items (id TEXT PRIMARY KEY,source_type TEXT,source_id TEXT,fee_type TEXT,lifecycle_status TEXT,payable_amount_minor INTEGER,created_at TEXT DEFAULT (datetime('now')));
   CREATE TABLE commercial_invoice_items (id TEXT PRIMARY KEY,pi_id TEXT);
   CREATE TABLE historical_commercial_invoice_items (id TEXT PRIMARY KEY,pi_id TEXT);
@@ -218,5 +218,43 @@ test('rejected PO remains blocked; no partial PI or PO quantity writes',async()=
  assert.equal(r.status,400);
  assert.equal(x.query("SELECT COUNT(*) AS n FROM proforma_invoices").rows[0].n,0);
  assert.equal(x.queryOne("SELECT transferred_pi_qty FROM purchase_order_items WHERE id='a1'").transferred_pi_qty,20);
+ x.sqlite.close();
+});
+
+test('PI create route retains two independent PO source prices while CI-facing PI SKU stays one',async()=>{
+ const x=fixture();
+ const sources=[
+ {po_id:'p1',po_no:'PO-A',sku_code:'SKU-1',po_qty:80,pi_confirmed_qty:70,unit_price:10,discount:0.1},
+ {po_id:'p2',po_no:'PO-B',sku_code:'SKU-1',po_qty:50,pi_confirmed_qty:30,unit_price:12,discount:0},
+ {po_id:'p2',po_no:'PO-B',sku_code:'SKU-2',po_qty:30,pi_confirmed_qty:10,unit_price:7,discount:0}
+ ];
+ const r=await x.submit({po_source_items:sources});
+ assert.equal(r.status,200,JSON.stringify(r));
+ const pi=x.queryOne("SELECT * FROM proforma_invoices WHERE pi_no='PI-TEST-1'");
+ assert.equal(pi.total_amount,1060);
+ const items=x.query('SELECT sku_code,pi_confirmed_qty,pi_amount FROM proforma_invoice_items WHERE pi_id=? ORDER BY sku_code',[pi.id]).rows;
+ assert.deepEqual(items.map(i=>[i.sku_code,i.pi_confirmed_qty,i.pi_amount]),
+  [['SKU-1',100,990],['SKU-2',10,70]]);
+ const a=x.query('SELECT po_no,sku_code,allocated_qty,pi_unit_price,pi_discount FROM pi_po_allocations ORDER BY po_no,sku_code').rows;
+ assert.deepEqual(a.map(i=>[i.po_no,i.sku_code,i.allocated_qty,i.pi_unit_price,i.pi_discount]),
+   [['PO-A','SKU-1',70,10,0.1],['PO-B','SKU-1',30,12,0],['PO-B','SKU-2',10,7,0]]);
+ x.sqlite.close();
+});
+test('PUT reassigns separately edited PO quantities without changing SKU aggregate count',async()=>{
+ const x=fixture();
+ const base=[
+ {po_id:'p1',po_no:'PO-A',sku_code:'SKU-1',po_qty:80,pi_confirmed_qty:70,unit_price:10,discount:0},
+ {po_id:'p2',po_no:'PO-B',sku_code:'SKU-1',po_qty:50,pi_confirmed_qty:30,unit_price:12,discount:0}
+ ];
+ const initial=await x.submit({po_source_items:base});
+ assert.equal(initial.status,200);
+ const pi=x.queryOne("SELECT * FROM proforma_invoices WHERE pi_no='PI-TEST-1'");
+ const changed=[{...base[0],pi_confirmed_qty:20},{...base[1],pi_confirmed_qty:40}];
+ const response=await x.update(pi.id,{po_source_items:changed,items:[],need_deposit:0,deposit_ratio:0});
+ assert.equal(response.status,200,JSON.stringify(response));
+ assert.equal(x.queryOne("SELECT transferred_pi_qty FROM purchase_order_items WHERE id='a1'").transferred_pi_qty,40);
+ assert.equal(x.queryOne("SELECT transferred_pi_qty FROM purchase_order_items WHERE id='a2'").transferred_pi_qty,40);
+ assert.equal(x.queryOne("SELECT pi_confirmed_qty FROM proforma_invoice_items WHERE sku_code='SKU-1'").pi_confirmed_qty,60);
+ assert.equal(x.query("SELECT * FROM pi_po_allocations").rows.length,2);
  x.sqlite.close();
 });

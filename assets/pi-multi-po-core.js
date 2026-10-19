@@ -48,7 +48,7 @@ function validatePOs(ids,form,queryOne,{allowFullyTransferred=false}={}){
  return poRows;
 }
 function getExistingAllocations(piId,query){
- return query('SELECT po_id, po_no, sku_code, allocated_qty FROM pi_po_allocations WHERE pi_id = ?',[piId]).rows;
+ return query('SELECT po_id, po_no, sku_code, allocated_qty, pi_unit_price, pi_discount FROM pi_po_allocations WHERE pi_id = ?',[piId]).rows;
 }
 function updatePOStatus(poId,query,run){
  const po=query('SELECT po_status, approval_status FROM purchase_orders WHERE id = ?',[poId]).rows[0];
@@ -76,7 +76,7 @@ function restoreMultiAllocations(piId,query,run){
  run('DELETE FROM pi_po_allocations WHERE pi_id = ?',[piId]);
  return [...new Set(old.map(x=>x.po_id))];
 }
-function assignMultiPO({piId,poRows,items,query,run,genId}){
+function assignMultiPO({piId,poRows,items,sourceItems,query,run,genId}){
  if(poRows.length<2)throw Error('多PO分配至少需要2张PO');
  const poItems=new Map();
  for(const po of poRows){
@@ -89,6 +89,28 @@ function assignMultiPO({piId,poRows,items,query,run,genId}){
    poItems.set(po.id,map);
  }
  const seen=new Set(),allocations=[];
+ if(Array.isArray(sourceItems)){
+   // Exact PO-level assignment: no FIFO redistributing one PO line to another.
+   const validated=aggregateSourceItems(sourceItems,poRows);
+   if(JSON.stringify(validated.map(i=>[i.sku_code,i.pi_confirmed_qty]).sort())!==
+     JSON.stringify(items.map(i=>[i.sku_code,Number(i.pi_confirmed_qty||0)]).sort()))
+       throw Error('PI汇总与PO分行数量不一致');
+   for(const line of sourceItems){
+     const poId=String(line.po_id||'').trim(),sku=String(line.sku_code||'').trim();
+     const qty=Number(line.pi_confirmed_qty||0);
+     if(!poId||qty===0)continue;
+     const po=poRows.find(p=>p.id===poId),item=poItems.get(poId)?.get(sku);
+     if(!po||!item)throw Error('关联PO未包含此SKU：'+sku);
+     const result=run('UPDATE purchase_order_items SET transferred_pi_qty=transferred_pi_qty+?, untransferred_pi_qty=po_qty-(transferred_pi_qty+?) WHERE id=? AND transferred_pi_qty + ? <= po_qty',
+       [qty,qty,item.id,qty]);
+     if(result.changes!==1)throw Error('PI数量超过对应PO剩余数量：'+po.po_no+' / '+sku);
+     run('INSERT INTO pi_po_allocations (id,pi_id,po_id,po_no,sku_code,allocated_qty,pi_unit_price,pi_discount) VALUES (?,?,?,?,?,?,?,?)',
+       [genId('ppa'),piId,po.id,po.po_no,sku,qty,Number(line.unit_price||0),Number(line.discount||0)]);
+     allocations.push({pi_id:piId,po_id:po.id,po_no:po.po_no,sku_code:sku,allocated_qty:qty});
+   }
+   for(const po of poRows)updatePOStatus(po.id,query,run);
+   return allocations;
+ }
  for(const item of items){
    const sku=String(item.sku_code||'').trim(),qty=Number(item.pi_confirmed_qty||0);
    if(!sku||seen.has(sku))throw Error('多PO的PI明细每个SKU只能有一行：'+sku);
@@ -118,4 +140,47 @@ function assignMultiPO({piId,poRows,items,query,run,genId}){
  for(const po of poRows)updatePOStatus(po.id,query,run);
  return allocations;
 }
-module.exports={parseRelatedIds,validatePOs,getExistingAllocations,updatePOStatus,restoreMultiAllocations,assignMultiPO};
+module.exports={parseRelatedIds,validatePOs,getExistingAllocations,updatePOStatus,restoreMultiAllocations,assignMultiPO,aggregateSourceItems};
+
+/**
+ * Input: separate PO+SKU lines, including manual rows with no po_id.
+ * Output: ONE CI-safe PI line per SKU, with exact extended-price totals.
+ * Source allocations remain independent and auditable by PO+SKU.
+ */
+function aggregateSourceItems(sourceRows,poRows){
+ if(!Array.isArray(sourceRows)||sourceRows.length>10000)throw Error('PI来源明细格式无效');
+ const poById=new Map(poRows.map(p=>[String(p.id),p]));
+ const keys=new Set(),sourceSkus=new Set(),groups=new Map();
+ for(const line of sourceRows){
+   const sku=String(line.sku_code||'').trim(),poId=String(line.po_id||'').trim();
+   const poNo=String(line.po_no||'').trim();
+   const qty=Number(line.pi_confirmed_qty||0),price=Number(line.unit_price||0),discount=Number(line.discount||0);
+   if(!sku||!Number.isSafeInteger(qty)||qty<0||!Number.isFinite(price)||price<0||
+      !Number.isFinite(discount)||discount<0||discount>1)
+     throw Error('PI来源行数量、单价或折扣无效：'+sku);
+   const key=poId+'|'+sku;
+   if(keys.has(key))throw Error('同一PO的SKU只能出现一行：'+sku);
+   keys.add(key);
+   if(poId){
+     const po=poById.get(poId);
+     if(!po||po.po_no!==poNo)throw Error('PI来源PO不属于本次关联范围：'+poNo);
+     sourceSkus.add(sku);
+   }else if(poNo)throw Error('手工PI行不能伪造关联PO号');
+   let g=groups.get(sku);
+   if(!g){g={sku_code:sku,po_qty:0,pi_confirmed_qty:0,gross:0,net:0};groups.set(sku,g);}
+   g.pi_confirmed_qty+=qty;
+   g.gross+=qty*price;
+   g.net+=qty*price*(1-discount);
+   g.po_qty+=Number(line.po_qty||0);
+ }
+ // Manual SKU identical to a sourced PO SKU is ambiguous to CI allocation.
+ for(const line of sourceRows){
+   if(!line.po_id&&sourceSkus.has(String(line.sku_code||'').trim()))
+     throw Error('手工行与PO来源SKU重复，请在对应PO行填写数量：'+line.sku_code);
+ }
+ return [...groups.values()].map(g=>({
+   sku_code:g.sku_code,po_qty:g.po_qty,pi_confirmed_qty:g.pi_confirmed_qty,
+   unit_price:g.pi_confirmed_qty?g.gross/g.pi_confirmed_qty:0,
+   discount:g.gross?(1-g.net/g.gross):0,pi_amount:g.net
+ }));
+}

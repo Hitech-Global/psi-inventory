@@ -46,16 +46,17 @@ test('checkbox picker only lists matching supplier/country and includes partiall
  assert.doesNotMatch(u.elements['pi-multi-po-picker'].innerHTML,/PO-4/);
  assert.equal(u.elements['npi-po'].style.display,'none');
 });
-test('two selected PO merge identical SKU and retain only remaining PO quantities',async()=>{
+test('two selected POs keep identical SKU on distinct PO rows',async()=>{
  const u=ui(),f=u.ctx.window.PIMultiPO;f.install();
  await f.toggle('p1',true);
  await f.toggle('p2',true);
  assert.deepEqual([...f.ids()],['p1','p2']);
  const rows=u.ctx.window._piRows;
- assert.equal(rows.filter(x=>x.sku==='N1').length,1);
- assert.equal(rows.find(x=>x.sku==='N1').poQty,120);
+ assert.equal(rows.filter(x=>x.sku==='N1').length,2);
+ assert.deepEqual(Array.from(rows.filter(x=>x.sku==='N1'),x=>[x.poNo,x.poQty,x.poPrice]),
+   [['PO-1',80,10],['PO-2',40,12]]);
  assert.equal(rows.find(x=>x.sku==='N2').poQty,5);
- assert.equal(rows.find(x=>x.sku==='N1').poNos.length,2);
+ assert.equal(rows.length,3);
  assert.equal(u.elements['npi-cur'].value,'RMB');
  assert.equal(u.elements['npi-country'].disabled,true);
  assert.equal(u.elements['npi-po'].value,'p1');
@@ -84,7 +85,8 @@ test('async request switch discards old PO detail replies',async()=>{
  await newer;
  u.deferredResolves[0].resolve(PO[0]);await old;
  assert.deepEqual([...f.ids()],['p1','p2']);
- assert.equal(u.ctx.window._piRows.find(x=>x.sku==='N1').poQty,120);
+ assert.deepEqual(Array.from(u.ctx.window._piRows.filter(x=>x.sku==='N1'),x=>x.poNo),
+   ['PO-1','PO-2']);
 });
 
 test('production case: pending PO is selectable together with approved PO',async()=>{

@@ -1028,6 +1028,11 @@ function initDatabase() {
   )`);
   d.exec('CREATE UNIQUE INDEX IF NOT EXISTS uq_pi_po_allocations ON pi_po_allocations(pi_id, po_id, sku_code)');
   d.exec('CREATE INDEX IF NOT EXISTS idx_pi_po_allocations_po ON pi_po_allocations(po_id)');
+  for(const col of ['pi_unit_price REAL','pi_discount REAL']){
+    try{d.exec('ALTER TABLE pi_po_allocations ADD COLUMN '+col);}catch(e){
+      if(!/duplicate column/i.test(e.message))throw e;
+    }
+  }
 
   // PI 明细
   d.exec(`

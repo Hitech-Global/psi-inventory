@@ -286,6 +286,8 @@ if (driver === 'pg') {
         "CREATE TABLE IF NOT EXISTS pi_po_allocations (id TEXT PRIMARY KEY, pi_id TEXT NOT NULL, po_id TEXT NOT NULL, po_no TEXT NOT NULL, sku_code TEXT NOT NULL, allocated_qty INTEGER NOT NULL, created_at TEXT DEFAULT NOW())",
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_pi_po_allocations ON pi_po_allocations(pi_id, po_id, sku_code)",
         "CREATE INDEX IF NOT EXISTS idx_pi_po_allocations_po ON pi_po_allocations(po_id)",
+        "ALTER TABLE pi_po_allocations ADD COLUMN IF NOT EXISTS pi_unit_price NUMERIC(18,4)",
+        "ALTER TABLE pi_po_allocations ADD COLUMN IF NOT EXISTS pi_discount NUMERIC(18,6)",
         // DATA-SCOPE: 用户数据权限表（已废弃，迁移到 role_data_scope；保留用于兼容旧数据迁移）
         "CREATE TABLE IF NOT EXISTS user_data_scope (user_id TEXT PRIMARY KEY, countries TEXT DEFAULT '[]', brands TEXT DEFAULT '[]', warehouses TEXT DEFAULT '[]', updated_at TEXT DEFAULT NOW())",
         // DATA-SCOPE: 角色数据权限表（替代 user_data_scope，符合 RBAC 模型）
