@@ -2,12 +2,22 @@
 // FIN-OVERVIEW V1. Read-only view on the existing payable cockpit route.
 // Never derive settlement from payment_request.status or count PO+PI+CI together.
 let _finOverviewData=null,_finOverviewFiltered=[];
+// Empty Set means no restriction (all). Facets use OR inside a facet and AND across facets.
+let _finSelections={country:new Set(),category:new Set(),payee:new Set(),currency:new Set()};
+let _finOptions={country:[],category:[],payee:[],currency:[]};
+let _finOpenFacet='';
 const FIN_CAT={goods:'采购货款',warehouse_arrival:'物流/到仓',customs_duty:'关税',inspection_fee:'商检/检测',other:'其他费用'};
 const FIN_TYPE={factory:'供应商',service_provider:'货代/服务商',customs:'海关',inspection_org:'检验机构'};
 function finLabel(v){return FIN_CAT[v]||v||'其他费用';}
 function finNum(n){return esc(fmtMoney(Number(n||0)));}
-function finOpts(values,placeholder){return '<option value="">'+esc(placeholder)+'</option>'+
- values.map(v=>'<option value="'+esc(v)+'">'+esc(v)+'</option>').join('');}
+function finAccept(facet,value){
+ const selected=_finSelections[facet];
+ return !selected||selected.size===0||selected.has(String(value||''));
+}
+function finAcceptPurchase(p){
+ return finAccept('country',p.country)&&finAccept('currency',p.currency)
+   &&finAccept('payee','supplier:'+p.supplier_id)&&finAccept('category','goods');
+}
 function finSum(rows,key){return Math.round(rows.reduce((a,r)=>a+Number(r[key]||0),0)*100)/100;}
 function finCard(label,currencyLines,sub){
  return '<div class="fin-card"><div class="fin-card-label">'+esc(label)+'</div>'+
@@ -23,29 +33,16 @@ function finCurrencyDisplay(rows,key){
  }).join('');
 }
 function finViewRows(){
- const v=id=>{const el=document.getElementById(id);return el?el.value:'';};
- const country=v('fin-country'),category=v('fin-category'),payee=v('fin-payee'),currency=v('fin-currency');
  const rows=(_finOverviewData&&_finOverviewData.details)||[];
- return rows.filter(r=>(!country||r.country===country)&&(!category||r.category===category)
-   &&(!payee||r.payee_key===payee)&&(!currency||r.currency===currency));
+ return rows.filter(r=>finAccept('country',r.country)&&finAccept('category',r.category)
+   &&finAccept('payee',r.payee_key)&&finAccept('currency',r.currency));
 }
 function finPurchaseFiltered(){
- const d=_finOverviewData||{},country=document.getElementById('fin-country')?.value||'',
-  currency=document.getElementById('fin-currency')?.value||'',
-  payee=document.getElementById('fin-payee')?.value||'',
-  category=document.getElementById('fin-category')?.value||'';
- if(category&&category!=='goods')return [];
- return (d.purchase_records||[]).filter(r=>(!country||r.country===country)
-   &&(!currency||r.currency===currency)&&(!payee||('supplier:'+r.supplier_id)===payee));
+ return ((_finOverviewData&&_finOverviewData.purchase_records)||[]).filter(finAcceptPurchase);
 }
 function finPIAmount(payeeKey,currency){
- const d=_finOverviewData;if(!d||!payeeKey.startsWith('supplier:'))return 0;
- const cat=document.getElementById('fin-category')?.value||'';
- if(cat&&cat!=='goods')return 0;
- const country=document.getElementById('fin-country')?.value||'';
- return (d.purchase_records||[]).filter(r=>
-   'supplier:'+r.supplier_id===payeeKey&&r.currency===currency
-   &&(!country||r.country===country))
+ if(!String(payeeKey).startsWith('supplier:'))return 0;
+ return finPurchaseFiltered().filter(r=>('supplier:'+r.supplier_id)===payeeKey&&r.currency===currency)
    .reduce((a,r)=>a+Number(r.total_amount||0),0);
 }
 function finGroup(rows,keyFn,fields){
@@ -81,21 +78,14 @@ function finRefresh(){
  const pays=finGroup(rows,r=>r.payee_key+'|'+r.currency,r=>({
    payee_key:r.payee_key,payee_name:r.payee_name,payee_type:r.payee_type,currency:r.currency
  }));
- // PI only suppliers: still show independently as booked purchase, not payable.
- if(!(document.getElementById('fin-category')?.value)||
-     document.getElementById('fin-category')?.value==='goods'){
-   (d.purchase_records||[]).forEach(p=>{
-     const country=document.getElementById('fin-country')?.value||'';
-     const cur=document.getElementById('fin-currency')?.value||'';
-     const payee=document.getElementById('fin-payee')?.value||'';
-     const key='supplier:'+p.supplier_id;
-     if((country&&p.country!==country)||(cur&&p.currency!==cur)||(payee&&key!==payee))return;
-     if(!pays.some(x=>x.payee_key===key&&x.currency===p.currency))
-       pays.push({payee_key:key,payee_name:p.supplier_name,payee_type:'factory',currency:p.currency,
-         gross:0,cash_paid:0,deductions:0,rounding:0,outstanding:0,overdue:0,
-         due_today:0,due_7:0,due_30:0,no_due:0,due_ever:0,count:0});
-   });
- }
+ // PI-only suppliers remain visible whenever their purchase records match the SAME filters.
+ finPurchaseFiltered().forEach(p=>{
+   const key='supplier:'+p.supplier_id;
+   if(!pays.some(x=>x.payee_key===key&&x.currency===p.currency))
+     pays.push({payee_key:key,payee_name:p.supplier_name,payee_type:'factory',currency:p.currency,
+       gross:0,cash_paid:0,deductions:0,rounding:0,outstanding:0,overdue:0,
+       due_today:0,due_7:0,due_30:0,no_due:0,due_ever:0,count:0});
+ });
  pays.sort((a,b)=>b.overdue-a.overdue||b.outstanding-a.outstanding||a.payee_name.localeCompare(b.payee_name));
  cats.sort((a,b)=>b.overdue-a.overdue||b.outstanding-a.outstanding);
  const small=key=>finCurrencyDisplay(rows,key);
@@ -236,7 +226,13 @@ const FIN_TRANSLATIONS={
  '累计至今':['All time','Sejak awal'],
  '无匹配单据':['No matching items','Tidak ada item yang cocok'],
  '没有应付费用':['No payable expenses','Tidak ada biaya terutang'],
- '没有符合筛选的付款对象':['No matching payees','Tidak ada penerima yang cocok']
+ '没有符合筛选的付款对象':['No matching payees','Tidak ada penerima yang cocok'],
+ '国家':['Country','Negara'],
+ '费用类型':['Expense type','Jenis biaya'],
+ '全部 / 清除':['All / clear','Semua / hapus'],
+ '搜索选项':['Search options','Cari pilihan'],
+ '可勾选多项 · 同类任一匹配':['Select multiple · match any within each filter','Pilih beberapa · cocokkan salah satu'],
+ '已选':['selected','dipilih']
 };
 function finTranslateDOM(root){
  const lang=document.getElementById('lang-switcher')?.value||'zh';
@@ -249,36 +245,147 @@ function finTranslateDOM(root){
    if(translated)node.nodeValue=original.replace(key,translated[index]);
  }
 }
+// Four lightweight searchable multi-selects. No new API requests, scroll listeners,
+// duplicated ledger state or per-row DOM event listeners.
+const FIN_FACETS={
+ country:{label:'国家',all:'全部国家'},
+ category:{label:'费用类型',all:'全部费用类型'},
+ payee:{label:'付款对象',all:'全部付款对象'},
+ currency:{label:'币种',all:'全部币种'}
+};
+function finBuildOptions(data){
+ const details=data.details||[],purchases=data.purchase_records||[];
+ const distinct=values=>[...new Set(values.filter(v=>v!==null&&v!==undefined&&v!==''))].sort()
+   .map(v=>({value:String(v),label:String(v)}));
+ const payees=new Map([...details.map(r=>[r.payee_key,r.payee_name]),
+   ...purchases.map(r=>['supplier:'+r.supplier_id,r.supplier_name])]);
+ return {
+  country:distinct([...details.map(r=>r.country),...purchases.map(r=>r.country)]),
+  category:distinct([...details.map(r=>r.category),...(purchases.length?['goods']:[])]).map(o=>({...o,label:finLabel(o.value)})),
+  payee:[...payees].sort((a,b)=>String(a[1]).localeCompare(String(b[1])))
+   .map(([value,label])=>({value:String(value),label:String(label||value)})),
+  currency:distinct([...details.map(r=>r.currency),...purchases.map(r=>r.currency)])
+ };
+}
+function finFacetLocaleText(phrase){
+ const lang=document.getElementById('lang-switcher')?.value||'zh';
+ const translations=FIN_TRANSLATIONS[phrase];
+ return lang==='en'&&translations?translations[0]:
+   lang==='id'&&translations?translations[1]:phrase;
+}
+function finFacetButtonText(facet){
+ const count=_finSelections[facet].size;
+ return count?finFacetLocaleText(FIN_FACETS[facet].label)+' · '+
+   finFacetLocaleText('已选')+' '+count:finFacetLocaleText(FIN_FACETS[facet].all);
+}
+function finEncoded(value){return encodeURIComponent(String(value)).replace(/'/g,'%27');}
+function finOptionHTML(facet,option){
+ const encoded=finEncoded(option.value);
+ return '<label class="fin-ms-option"><input type="checkbox" '+
+   (_finSelections[facet].has(option.value)?'checked ':'')+
+   'onchange="finPick(\''+facet+'\',decodeURIComponent(\''+encoded+'\'),this.checked)">'+
+   '<span class="fin-ms-optlabel">'+esc(option.label)+'</span></label>';
+}
+function finRenderFilters(){
+ const root=document.getElementById('fin-filters');if(!root)return;
+ root.innerHTML=Object.keys(FIN_FACETS).map(facet=>{
+   const meta=FIN_FACETS[facet],opened=_finOpenFacet===facet;
+   return '<div class="fin-ms" data-facet="'+facet+'">'+
+     '<button class="fin-ms-trigger" type="button" aria-expanded="'+opened+
+      '" aria-haspopup="true" onclick="finToggleFilter(\''+facet+'\')">'+
+      '<span id="fin-ms-label-'+facet+'">'+esc(finFacetButtonText(facet))+'</span><span aria-hidden="true">⌄</span></button>'+
+     (opened?'<div class="fin-ms-panel" role="group" aria-label="'+esc(meta.label)+'">'+
+       '<div class="fin-ms-panel-top"><strong>'+esc(meta.label)+'</strong>'+
+       '<button type="button" class="fin-ms-clear" onclick="finClearFacet(\''+facet+'\')">全部 / 清除</button></div>'+
+       (_finOptions[facet].length>6?
+         '<input class="fin-ms-search" type="search" placeholder="'+esc(finFacetLocaleText('搜索选项'))+'" '+
+         'oninput="finSearchOptions(\''+facet+'\',this.value)" aria-label="搜索选项">':'')+
+       '<div class="fin-ms-options">'+_finOptions[facet].map(o=>finOptionHTML(facet,o)).join('')+'</div>'+
+       '<div class="fin-ms-foot">可勾选多项 · 同类任一匹配</div></div>':'')+
+     '</div>';
+ }).join('')+
+ '<button class="btn btn-secondary btn-sm" type="button" onclick="finResetFilters()">重置筛选</button>';
+ finTranslateDOM(root);
+}
+function finUpdateFacetLabel(facet){
+ const el=document.getElementById('fin-ms-label-'+facet);
+ if(el){
+   el.textContent=finFacetButtonText(facet);
+   finTranslateDOM(el);
+ }
+}
+function finPick(facet,value,checked){
+ if(!FIN_FACETS[facet])return;
+ if(checked)_finSelections[facet].add(String(value));
+ else _finSelections[facet].delete(String(value));
+ finUpdateFacetLabel(facet);
+ finRefresh();
+}
+function finClearFacet(facet){
+ if(!FIN_FACETS[facet])return;
+ _finSelections[facet].clear();
+ finRenderFilters();finRefresh();
+}
+function finSearchOptions(facet,text){
+ const group=document.querySelector('.fin-ms[data-facet="'+facet+'"] .fin-ms-options');
+ if(!group)return;
+ const needle=String(text||'').trim().toLocaleLowerCase();
+ group.querySelectorAll('.fin-ms-option').forEach(el=>{
+   el.hidden=!!needle&&!el.textContent.toLocaleLowerCase().includes(needle);
+ });
+}
+function finFilterOutside(event){
+ if(!event.target.closest||!event.target.closest('.fin-ms'))finCloseFilter();
+}
+function finFilterKey(event){
+ if(event.key==='Escape')finCloseFilter();
+}
+function finCloseFilter(){
+ if(!_finOpenFacet)return;
+ _finOpenFacet='';
+ document.removeEventListener('click',finFilterOutside);
+ document.removeEventListener('keydown',finFilterKey);
+ finRenderFilters();
+}
+function finToggleFilter(facet){
+ if(!FIN_FACETS[facet])return;
+ if(_finOpenFacet===facet){finCloseFilter();return;}
+ const hadOpen=!!_finOpenFacet;
+ _finOpenFacet=facet;
+ if(!hadOpen){
+  document.addEventListener('click',finFilterOutside);
+  document.addEventListener('keydown',finFilterKey);
+ }
+ finRenderFilters();
+}
+function finResetFilters(){
+ finCloseFilter();
+ Object.values(_finSelections).forEach(s=>s.clear());
+ finRenderFilters();finRefresh();
+}
 function renderFinanceOverviewPage(data){
+ // Reentering the page intentionally starts from "all", without stale prior filters.
+ finCloseFilter();
  _finOverviewData=data;
- const all=data.details||[];
- const countries=[...new Set(all.map(r=>r.country).filter(Boolean))].sort();
- const names=[...new Map([...all.map(r=>[r.payee_key,r.payee_name]),...((data.purchase_records||[]).map(p=>['supplier:'+p.supplier_id,p.supplier_name]))]).entries()].sort((a,b)=>a[1].localeCompare(b[1]));
- const currencies=[...new Set(all.map(r=>r.currency))].sort();
- const categories=[...new Set(all.map(r=>r.category))].sort();
+ _finSelections={country:new Set(),category:new Set(),payee:new Set(),currency:new Set()};
+ _finOptions=finBuildOptions(data);
  const el=document.getElementById('content-inner');if(!el)return;
  const styles='<style>#fin-overview{max-width:100%;color:var(--text-primary,#1d1d1f)}'+
  '.fin-head{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:10px}'+
  '.fin-head h2{font-size:21px;letter-spacing:-.3px;margin:0}.fin-note{font-size:12px;color:var(--text-secondary,#777);line-height:1.65;margin:6px 0 15px}'+
- '.fin-filters{display:flex;gap:9px;flex-wrap:wrap;margin:12px 0 16px}.fin-filters select{min-width:126px;border:1px solid var(--border,#dfe0e4);border-radius:9px;background:var(--bg-card,#fff);padding:9px;font-size:12px;max-width:225px}'+
+ '.fin-filters{display:flex;gap:9px;flex-wrap:wrap;align-items:start;margin:12px 0 16px;position:relative;z-index:3}.fin-ms{position:relative;min-width:145px;max-width:240px}.fin-ms-trigger{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;border:1px solid var(--border,#dfe0e4);border-radius:9px;background:var(--bg-card,#fff);color:var(--text-primary,#222);padding:9px 12px;font-size:12px;text-align:left;cursor:pointer}.fin-ms-trigger[aria-expanded=true]{border-color:#8fa9df}.fin-ms-panel{position:absolute;top:calc(100% + 5px);left:0;width:270px;max-width:min(340px,calc(100vw - 35px));background:var(--bg-card,#fff);border:1px solid var(--border,#ddd);border-radius:12px;box-shadow:0 10px 26px rgba(0,0,0,.13);padding:10px;z-index:10}.fin-ms[data-facet=currency] .fin-ms-panel{right:0;left:auto}.fin-ms-panel-top{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:3px 5px 10px;font-size:12px}.fin-ms-clear{background:none;border:0;color:#3276ce;cursor:pointer;font-size:12px}.fin-ms-search{width:100%;margin-bottom:7px;padding:8px;border:1px solid var(--border,#ddd);border-radius:8px;font-size:12px}.fin-ms-options{max-height:250px;overflow:auto}.fin-ms-option{display:flex;align-items:center;gap:9px;padding:8px 7px;border-radius:7px;font-size:12px;cursor:pointer}.fin-ms-option:hover{background:var(--bg-hover,#f1f4fa)}.fin-ms-option input{accent-color:#3578cf}.fin-ms-option[hidden]{display:none}.fin-ms-optlabel{overflow-wrap:anywhere;white-space:normal}.fin-ms-foot{padding:8px 5px 2px;color:var(--text-secondary,#888);font-size:11px}'+
  '.fin-card-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}.fin-card{border:1px solid var(--border,#e5e5e8);background:var(--bg-card,#fff);border-radius:13px;padding:16px;min-height:99px}'+
  '.fin-card-label{font-size:12px;color:var(--text-secondary,#666);margin-bottom:9px}.fin-card-value{font-size:18px;font-weight:650;line-height:1.5;font-variant-numeric:tabular-nums}.fin-money-cur{font-size:11px;color:var(--text-secondary,#777);font-weight:450}.fin-card-sub{font-size:11px;color:var(--text-secondary,#888);margin-top:7px}.fin-inline-note{font-size:11px;color:var(--text-secondary,#888);font-weight:450;margin-top:3px}.fin-inline-note>div{display:inline}'+
- '.fin-heading{font-size:15px;margin:22px 0 10px}.fin-heading small{font-size:11px;font-weight:400;color:var(--text-secondary,#777);margin-left:8px}.fin-scroll{border:1px solid var(--border,#e5e5e8);border-radius:12px;overflow:auto;max-height:440px;background:var(--bg-card,#fff)}.fin-table{border-collapse:separate;border-spacing:0;width:100%;font-size:12px;white-space:nowrap}.fin-table th{text-align:left;position:sticky;top:0;background:var(--bg-secondary,#f5f6f7);color:var(--text-secondary,#65656c);font-weight:600;padding:12px;border-bottom:1px solid var(--border,#e6e6e6);z-index:1}.fin-table td{padding:10px 12px;border-bottom:1px solid var(--border,#eee)}.fin-table .fin-n{text-align:right;font-variant-numeric:tabular-nums}.fin-table .fin-risk{color:#c73333;font-weight:550}.fin-clickable{cursor:pointer}.fin-clickable:hover{background:var(--bg-hover,#f5f8ff)}.fin-empty{text-align:center;color:var(--text-secondary,#777);padding:22px!important}.fin-alert{margin-top:12px;padding:12px 14px;background:var(--bg-secondary,#faf6ee);border:1px solid var(--border,#e7d7c3);border-radius:11px;font-size:12px}'+
+ '.fin-heading{font-size:15px;margin:22px 0 10px}.fin-heading small{font-size:11px;font-weight:400;color:var(--text-secondary,#777);margin-left:8px}.fin-scroll{border:1px solid var(--border,#e5e5e8);border-radius:12px;overflow:auto;max-height:440px;background:var(--bg-card,#fff)}.fin-table{border-collapse:separate;border-spacing:0;width:100%;font-size:12px;white-space:nowrap}.fin-table th{text-align:left!important;position:sticky;top:0;background:var(--bg-secondary,#f5f6f7);color:var(--text-secondary,#65656c);font-weight:600;padding:12px;border-bottom:1px solid var(--border,#e6e6e6);z-index:1}.fin-table td{padding:10px 12px;border-bottom:1px solid var(--border,#eee);text-align:left!important}.fin-table .fin-n{text-align:left!important;font-variant-numeric:tabular-nums}.fin-table .fin-risk{color:#c73333;font-weight:550}.fin-clickable{cursor:pointer}.fin-clickable:hover{background:var(--bg-hover,#f5f8ff)}.fin-empty{text-align:left;color:var(--text-secondary,#777);padding:22px!important}.fin-alert{margin-top:12px;padding:12px 14px;background:var(--bg-secondary,#faf6ee);border:1px solid var(--border,#e7d7c3);border-radius:11px;font-size:12px}'+
  '</style>';
  let h='<div id="fin-overview">'+styles+
  '<div class="fin-head"><div><h2>财务付款总览</h2><div class="fin-note">覆盖已结清与未结清应付账单 · 截至 '+esc(data.today)+'</div></div>'+
  '<button class="btn btn-secondary btn-sm" onclick="finExportExcel()">⬇ 导出 Excel</button></div>'+
  '<div class="fin-note">应付 = 现金实付 + 抵扣 + 抹零 + 未结（按结算事实）。PI录入货值单独展示，不能与应付重复相加；不同币种独立显示。历史未入账项目不在此处臆造。</div>'+
- '<div class="fin-filters">'+
- '<select id="fin-country" onchange="finRefresh()">'+finOpts(countries,'全部国家')+'</select>'+
- '<select id="fin-category" onchange="finRefresh()"><option value="">全部费用类型</option>'+
- categories.map(x=>'<option value="'+esc(x)+'">'+esc(finLabel(x))+'</option>').join('')+'</select>'+
- '<select id="fin-payee" onchange="finRefresh()"><option value="">全部付款对象</option>'+
- names.map(([key,name])=>'<option value="'+esc(key)+'">'+esc(name)+'</option>').join('')+'</select>'+
- '<select id="fin-currency" onchange="finRefresh()">'+finOpts(currencies,'全部币种')+'</select>'+
- '<button class="btn btn-secondary btn-sm" onclick="renderFinanceOverviewPage(_finOverviewData)">重置筛选</button></div>'+
+ '<div id="fin-filters" class="fin-filters"></div>'+
  '<div id="fin-layers"></div></div>';
  el.innerHTML=h;
+ finRenderFilters();
  finRefresh();
  finTranslateDOM(el);
 }
