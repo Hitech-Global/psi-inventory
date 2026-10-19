@@ -16175,7 +16175,7 @@ async function viewPayment(id, mode, backCtx){
           +'<span style="color:#999;font-size:12px">'+t("payment.est_formula","= 当前未结 − 实际付款 − 抵扣 − 抹零")+'</span>'
         +'</div>'
         +'</div>'
-        +'<div style="font-size:12px;color:#999;margin-top:8px">'+t("payment.final_payment_hint","通过最终审批后将自动执行付款结算。整数实际付款 + 尾差抹零 = 应付金额时视为全额结清（允许抹零）；仅当实际付款 + 抹零 仍小于应付金额时才计为部分付款。")+'</div>'
+        +'<div style="font-size:12px;color:#999;margin-top:8px">'+t("payment.final_payment_hint","通过最终审批后将自动执行付款结算。已生效的历史付款、抵扣会先从申请金额中扣除；本次实际付款 + 小额尾差抹零 = 当前未结金额时视为全额结清，否则按部分付款记录。")+'</div>'
         +'</div>'
       : '';
     const opinionHtml=(mode==='finance'&&isPendingApproval&&canApprove)
