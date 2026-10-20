@@ -16991,7 +16991,7 @@ app.post('/api/payment-requests/multi-expense', requireApiPermission('payment_cr
 
 // PAY-CORE P0-3：批量撤回付款申请（仅 pending 审批 + 无 payment_transactions + 无有效 settlement_logs 可撤回）
 // 付款日汇率解析 — 前端选择 actual_paid_date 后调用，解析并缓存汇率
-// 货款付款跳过；非货款费用按 exact-date 规则解析，missing 时不 fallback
+// 货款也可查询仅展示的参考汇率；付款结算/成本快照规则保持不变。
 // 权限与 confirm-paid 一致：payment_approve / payment_execute 任一即可
 app.post('/api/payment-requests/:id/payment-fx/resolve', requireApiPermission('payment_approve', 'payment_execute'), asyncHandler(async (req, res) => {
   var rateDate = String((req.body || {}).rate_date || '').trim();
@@ -16999,9 +16999,6 @@ app.post('/api/payment-requests/:id/payment-fx/resolve', requireApiPermission('p
   if (!isValidRateDate(rateDate)) return res.status(400).json({ error: 'rate_date 格式无效，必须为 YYYY-MM-DD' });
   var payment = await queryOne('SELECT * FROM payment_requests WHERE id = ?', [req.params.id]);
   if (!payment) return res.status(404).json({ error: '付款申请不存在' });
-  if (payment.payment_category === 'goods') {
-    return res.json({ skip: true, reason: 'goods_payment' });
-  }
   try {
     var country = resolveSettlementCountry(payment);
     var originalCurrency = String(payment.currency || '').trim();
@@ -17014,6 +17011,7 @@ app.post('/api/payment-requests/:id/payment-fx/resolve', requireApiPermission('p
     var originalAmount = Number(payment.payable_amount) || 0;
     res.json({
       rate: localResult.rate,
+      reference_only: payment.payment_category === 'goods',
       rate_date: localResult.rate_date,
       source: localResult.source,
       direction: localResult.direction,
