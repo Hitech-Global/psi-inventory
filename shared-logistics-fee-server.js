@@ -15,7 +15,22 @@ function exactRate(from,to,date) {
   }
   return null;
 }
-function settledConversion(requestId,amountMinor,sourceCurrency,targetCurrency,requirePayment=false){
+// Automatic realtime quotes are admissible for *display-only* estimates, not
+// as evidence of formally confirmed freight / WAC costs.
+function referenceRate(from,to,date) {
+  const strict=exactRate(from,to,date);
+  if(strict)return strict;
+  from=normalize(from);to=normalize(to);
+  if(!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(date||''))return null;
+  for(const args of [[from,to,false],[to,from,true]]){
+    const r=queryOne("SELECT rate,id FROM exchange_rates WHERE from_currency=? AND to_currency=? AND rate_date=? AND rate_type='realtime' AND id LIKE 'fxauto_%' ORDER BY created_at DESC,id DESC LIMIT 1",
+      [args[0],args[1],date]);
+    if(r&&Number(r.rate)>0)return {rate:args[2]?1/Number(r.rate):Number(r.rate),
+      date,source:'auto_reference_only',rate_id:r.id};
+  }
+  return null;
+}
+function settledConversion(requestId,amountMinor,sourceCurrency,targetCurrency,requirePayment=false,referenceOnly=false){
   sourceCurrency=normalize(sourceCurrency);targetCurrency=normalize(targetCurrency);
   if(!validCurrency(sourceCurrency)||!validCurrency(targetCurrency))return {error:'币种代码无效'};
   if(sourceCurrency===targetCurrency&&!requirePayment)return {amount_minor:amountMinor,source:'face_currency'};
@@ -32,12 +47,16 @@ function settledConversion(requestId,amountMinor,sourceCurrency,targetCurrency,r
     const cur=normalize(log.local_currency),amt=Number(log.local_amount);
     const date=String(log.local_rate_date||'').slice(0,10);
     if(!validCurrency(cur)||!Number.isFinite(amt)||amt<=0||!(Number(log.local_rate)>0)||!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(date))return {error:'付款本币金额/汇率/汇率日期快照缺失'};
-    const snap=exactRate(cur,targetCurrency,date);
+    const snap=referenceOnly?referenceRate(cur,targetCurrency,date):exactRate(cur,targetCurrency,date);
     if(!snap)return {error:date+' 缺少 '+cur+'→'+targetCurrency+' 同日汇率'};
     total+=amt*snap.rate;
     fx.push({from:cur,to:targetCurrency,rate:snap.rate,rate_date:date,rate_id:snap.rate_id,local_amount:amt});
   }
-  return {amount_minor:Math.round(total*100),source:'applied_settlements',fx};
+  return {amount_minor:Math.round(total*100),source:referenceOnly?'reference_only':'applied_settlements',
+    reference_only:referenceOnly,fx};
+}
+function referenceConversion(requestId,amountMinor,sourceCurrency,targetCurrency){
+  return settledConversion(requestId,amountMinor,sourceCurrency,targetCurrency,true,true);
 }
 function loadForCI(ciId){
   const fees=query('SELECT sf.*,pr.approval_status,pr.payment_status FROM shared_logistics_fees sf LEFT JOIN payment_requests pr ON pr.id=sf.payment_request_id WHERE sf.ci_id=? ORDER BY sf.created_at,sf.id',[ciId]).rows;
@@ -45,7 +64,12 @@ function loadForCI(ciId){
   return fees;
 }
 function sharedFeesForCost(ci,targetCurrency,requirePayment=false){
-  return loadForCI(ci.id).map(f=>({...f,conversion:settledConversion(f.payment_request_id,Number(f.amount_minor),f.currency,targetCurrency,requirePayment)}));
+  return loadForCI(ci.id).map(f=>{
+    const conversion=settledConversion(f.payment_request_id,Number(f.amount_minor),f.currency,targetCurrency,requirePayment);
+    const reference_conversion=conversion.error?
+      referenceConversion(f.payment_request_id,Number(f.amount_minor),f.currency,targetCurrency):null;
+    return {...f,conversion,reference_conversion};
+  });
 }
 function resolveSharedFeeForwarder(batches){
   if(!Array.isArray(batches)||batches.length<2)throw Object.assign(new Error('至少选择两个物流批次'),{status:400});
@@ -118,22 +142,36 @@ function installSharedLogisticsFeeRoutes(app,ctx) {
     const result={};
     for(const ci of ciRows) {
       if(!sharedIds.has(String(ci.id))){result[ci.id]={has_shared:false};continue;}
-      let totalMinor=0,errors=[],hasBatch=false;
+      let totalMinor=0,referenceMinor=0,errors=[],referenceErrors=[],hasBatch=false;
       const own=batchRows.filter(b=>String(b.related_ci_id)===String(ci.id));
       for(const b of own) {
         hasBatch=true;
         const cv=ownFreightInRmb(b);
-        if(cv.error)errors.push(b.id+': '+cv.error);else totalMinor+=cv.amount_minor;
+        if(cv.error){errors.push(b.id+': '+cv.error);referenceErrors.push(b.id+': '+cv.error);}
+        else{totalMinor+=cv.amount_minor;referenceMinor+=cv.amount_minor;}
       }
       for(const fee of sharedFeesForCost(ci,'RMB')) {
         hasBatch=true;
-        if(fee.conversion.error)errors.push(fee.bill_no+': '+fee.conversion.error);
-        else totalMinor+=Number(fee.conversion.amount_minor);
+        if(fee.conversion.error){
+          errors.push(fee.bill_no+': '+fee.conversion.error);
+          if(fee.reference_conversion&&!fee.reference_conversion.error)
+            referenceMinor+=Number(fee.reference_conversion.amount_minor);
+          else referenceErrors.push(fee.bill_no+': '+(fee.reference_conversion?.error||'无可用参考汇率'));
+        }else{
+          const value=Number(fee.conversion.amount_minor);
+          totalMinor+=value;referenceMinor+=value;
+        }
       }
       const goods=Number(ci.goods_amount)||0;
       result[ci.id]={currency:'RMB',has_shared:true,has_batch:hasBatch,
         total_rmb:errors.length?null:totalMinor/100,
         freight_ratio:errors.length||normalize(ci.currency)!=='RMB'||goods<=0?null:Number((totalMinor/100/goods*100).toFixed(2)),
+        // Never represent reference as a confirmed cost. WAC and cost APIs
+        // continue to use strict `total_rmb` only.
+        reference_total_rmb:errors.length&&!referenceErrors.length?referenceMinor/100:null,
+        reference_freight_ratio:errors.length&&!referenceErrors.length&&normalize(ci.currency)==='RMB'&&goods>0?
+          Number((referenceMinor/100/goods*100).toFixed(2)):null,
+        reference_only:errors.length>0&&!referenceErrors.length,
         errors:errors};
     }
     res.json(result);

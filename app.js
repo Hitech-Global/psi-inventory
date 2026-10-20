@@ -12709,8 +12709,11 @@ function renderCISharedFeeDetails(ciId,fees,batches,ciCurrency,batchTotals){
       if(!sums[id])sums[id]=[];
       const original=Number(a.amount_minor||0)/100;
       const conv=fee.conversion||{};
-      const convertedMinor=conv.amount_minor==null?null:Math.round(Number(conv.amount_minor)*Number(a.amount_minor)/faceTotal);
-      sums[id].push({original,currency:fee.currency,convertedMinor,bill:fee.bill_no});
+      const ref=fee.reference_conversion||{};
+      const confirmed=conv.amount_minor!=null;
+      const quote=confirmed?conv.amount_minor:ref.amount_minor;
+      const convertedMinor=quote==null?null:Math.round(Number(quote)*Number(a.amount_minor)/faceTotal);
+      sums[id].push({original,currency:fee.currency,convertedMinor,reference:!confirmed&&convertedMinor!=null,bill:fee.bill_no});
     });
   });
   batches.forEach(b=>{
@@ -12719,7 +12722,8 @@ function renderCISharedFeeDetails(ciId,fees,batches,ciCurrency,batchTotals){
     const cell=document.getElementById('ci-batch-freight-'+b.id);
     const ratio=document.getElementById('ci-batch-ratio-'+b.id);
     if(cell){
-      const adds=items.map(x=>'<div style="font-size:11px;color:#4263eb;margin-top:3px">+ 合并 '+fmtMoney(x.original,x.currency)+(x.convertedMinor==null?'（待折算）':(' ≈'+fmtMoney(x.convertedMinor/100,'RMB')))+'</div>').join('');
+      const adds=items.map(x=>'<div style="font-size:11px;color:#4263eb;margin-top:3px">+ 合并 '+fmtMoney(x.original,x.currency)+(x.convertedMinor==null?'（待折算）':
+        (' ≈'+fmtMoney(x.convertedMinor/100,'RMB')+(x.reference?'（参考，待确认）':'')))+'</div>').join('');
       const calc=batchTotals[String(b.id)];
       if(calc&&calc.total_minor!=null){
         cell.innerHTML='<strong>'+fmtMoney(calc.total_minor/100,'RMB')+'</strong>'+adds;
@@ -12743,7 +12747,11 @@ function renderCISharedFeeDetails(ciId,fees,batches,ciCurrency,batchTotals){
     +'<th>账单号</th><th>收款方</th><th>原币费用</th><th>成本币种折算</th><th>关联批次</th><th>审批</th></tr></thead><tbody>'
     +fees.map(f=>{
       const conv=f.conversion||{};
-      const display=conv.error?'<span style="color:#b45309">待折算：'+esc(conv.error)+'</span>':fmtMoney(Number(conv.amount_minor)/100,'RMB');
+      const ref=f.reference_conversion||{};
+      const display=conv.error?(ref.amount_minor!=null?
+        '<span style="color:#b45309">≈'+fmtMoney(Number(ref.amount_minor)/100,'RMB')+'（参考，待财务确认）</span>':
+        '<span style="color:#b45309">待折算：'+esc(conv.error)+'</span>'):
+        fmtMoney(Number(conv.amount_minor)/100,'RMB');
       return '<tr><td class="cell-id">'+esc(f.bill_no)+'</td><td>'+esc(f.payee_name)+'</td>'
         +'<td>'+fmtMoney(Number(f.amount_minor)/100,f.currency)+'</td><td>'+display+'</td>'
         +'<td>'+(f.allocations||[]).map(a=>esc(a.batch_no)+' ('+fmtMoney(Number(a.amount_minor)/100,f.currency)+')').join('<br>')+'</td>'
@@ -16341,7 +16349,7 @@ async function viewPayment(id, mode, backCtx){
     if(backCtx && backCtx.id){ window._modalBack = function(){ if(backCtx.type==='historical'){ return viewHistoricalCI(backCtx.id); } return viewCI(backCtx.id); }; }
     // 渲染后校正"预估未结金额"初始值（实际付款默认=当前未结，故初始未结应为0）
     if(paymentFormHtml){ try{ recalcFinalPay(); }catch(_){} }
-    if(paymentFormHtml&&p.payment_category!=='goods'){ setTimeout(function(){ onPayDateChanged(); }, 0); }
+    if(paymentFormHtml){ setTimeout(function(){ onPayDateChanged(); }, 0); }
   }catch(e){showToast(e.message,'danger')}
 }
 // ===== 付款申请附件（Layer 4：多文件上传/展示/删除/粘贴图片自动上传）=====
@@ -16727,10 +16735,10 @@ async function confirmPaid(id){
     const now=new Date(),today=new Date(now.getTime()-now.getTimezoneOffset()*60000).toISOString().slice(0,10);
     const idempotencyKey='pay:'+(window.crypto&&window.crypto.randomUUID?window.crypto.randomUUID():(Date.now()+'-'+Math.random().toString(36).slice(2)));
     openModal(t('modal.title.confirmPaid', '确认付款 - {v1}', {v1: esc(p.request_no)}),
-      (function(){ var _b=t('modal.body.confirmPaid', '<div class="form-card" style="box-shadow:none;padding:0"><input type="hidden" id="pay-settle-idempotency" value="{v1}"><div class="detail-grid mb-16"><div class="detail-item"><span class="detail-label">当前未付</span><span class="detail-value">{v2}</span></div><div class="detail-item"><span class="detail-label">币种</span><span class="detail-value">{v3}</span></div></div><div class="form-grid"><div class="form-group"><label>本次实际付款金额 <span class="required">*</span></label><input type="number" min="0" step="0.01" id="pay-settle-amount" value="{v4}" oninput="onPayAmountChanged()"></div><div class="form-group"><label>实际付款日期 <span class="required">*</span></label><input type="date" id="pay-settle-date" value="{v5}" onchange="onPayDateChanged()"></div><div class="form-group form-group-full"><label>付款凭证号</label><input type="text" id="pay-settle-voucher"></div><div class="form-group"><label>抹零金额</label><input type="number" min="0" step="0.01" id="pay-settle-rounding" placeholder="选填，不抹零请留空" oninput="recalcFinalPay()"></div><div class="form-group form-group-full"><label>抹零原因</label><input type="text" id="pay-settle-rounding-reason" placeholder="建议填写，未填将记录为人工抹零"></div></div><div style="font-size:12px;color:#999">非货款费用将严格按实际付款日期读取系统 realtime 汇率并保存快照；缺少汇率时不会确认付款。</div><div id="pay-fx-display" style="margin-top:12px;padding:8px 12px;background:#f5f5f5;border-radius:6px;display:none"></div></div>', {v1: idempotencyKey, v2: fmtMoney(p.outstanding,p.currency), v3: esc(p.currency||''), v4: Number(p.outstanding||0).toFixed(2), v5: today}); if(p.payment_mode==='multi'&&p.items&&p.items.length){ _b+=buildMultiAllocationTable(p.items, p.currency); } return _b; })(),
+      (function(){ var _b=t('modal.body.confirmPaid', '<div class="form-card" style="box-shadow:none;padding:0"><input type="hidden" id="pay-settle-idempotency" value="{v1}"><div class="detail-grid mb-16"><div class="detail-item"><span class="detail-label">当前未付</span><span class="detail-value">{v2}</span></div><div class="detail-item"><span class="detail-label">币种</span><span class="detail-value">{v3}</span></div></div><div class="form-grid"><div class="form-group"><label>本次实际付款金额 <span class="required">*</span></label><input type="number" min="0" step="0.01" id="pay-settle-amount" value="{v4}" oninput="onPayAmountChanged()"></div><div class="form-group"><label>实际付款日期 <span class="required">*</span></label><input type="date" id="pay-settle-date" value="{v5}" onchange="onPayDateChanged()"></div><div class="form-group form-group-full"><label>付款凭证号</label><input type="text" id="pay-settle-voucher"></div><div class="form-group"><label>抹零金额</label><input type="number" min="0" step="0.01" id="pay-settle-rounding" placeholder="选填，不抹零请留空" oninput="recalcFinalPay()"></div><div class="form-group form-group-full"><label>抹零原因</label><input type="text" id="pay-settle-rounding-reason" placeholder="建议填写，未填将记录为人工抹零"></div></div><div style="font-size:12px;color:#999">非货款费用按付款日 realtime 汇率校验并保存快照；货款汇率仅供参考显示，不影响原有付款结算规则。</div><div id="pay-fx-display" style="margin-top:12px;padding:8px 12px;background:#f5f5f5;border-radius:6px;display:none"></div></div>', {v1: idempotencyKey, v2: fmtMoney(p.outstanding,p.currency), v3: esc(p.currency||''), v4: Number(p.outstanding||0).toFixed(2), v5: today}); if(p.payment_mode==='multi'&&p.items&&p.items.length){ _b+=buildMultiAllocationTable(p.items, p.currency); } return _b; })(),
       t('modal.footer.confirmPaid', `<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" id="pay-settle-save" onclick="saveConfirmedPayment('{v1}')">确认付款</button>`, {v1: id}));
     window._finalPayCtx={outstanding:Number(p.outstanding||0),prId:id,paymentCategory:p.payment_category||'',dateInputId:'pay-settle-date',amountInputId:'pay-settle-amount'};
-    if(p.payment_category!=='goods'){setTimeout(function(){onPayDateChanged();},0);}
+    setTimeout(function(){onPayDateChanged();},0);
   }catch(e){showToast(e.message,'danger')}
 }
 function renderPayFxDisplay(){
@@ -16748,7 +16756,7 @@ function renderPayFxDisplay(){
   // Preserve local FX for the actual settlement; do not replace it with RMB FX.
   var rmbRate=Number(ctx.rmbRate);
   var showRmb=ctx.fxOriginalCurrency!=='RMB';
-  fxDiv.innerHTML='<div style="font-size:13px;font-weight:600">付款日汇率</div>'
+  fxDiv.innerHTML='<div style="font-size:13px;font-weight:600">付款日汇率'+(ctx.paymentCategory==='goods'?'（仅供参考）':'')+'</div>'
     +'<div style="margin-top:5px">付款本币：1 '+esc(ctx.fxOriginalCurrency||'')+' = '+Number(ctx.fxRate).toLocaleString(undefined,{maximumFractionDigits:6})+' '+esc(ctx.fxLocalCurrency||'')+'</div>'
     +'<div style="margin-top:2px;font-size:12px;color:#666">本币金额：'+fmtMoney(currentAmt,ctx.fxOriginalCurrency)+' → '+fmtMoney(localAmt,ctx.fxLocalCurrency)+'</div>'
     +(showRmb?(rmbRate>0?
@@ -16756,11 +16764,11 @@ function renderPayFxDisplay(){
         +'<div style="margin-top:4px">1 RMB = '+(1/rmbRate).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+' '+esc(ctx.fxOriginalCurrency||'')+'</div>'
         +'<div style="margin-top:2px;font-size:12px;color:#666">本次付款约 '+fmtMoney(currentAmt*rmbRate,'RMB')+'</div></div>'
       :'<div style="margin-top:8px;color:#b42318">人民币汇率未解析，请重新选择付款日期</div>'):'')
-    +'<div style="margin-top:7px;font-size:11px;color:#888">汇率日期：'+esc(ctx.fxRateDate||'')+' · 来源：'+esc(ctx.fxSource||'')+' / '+esc(ctx.rmbSource||'')+'</div>';
+    +'<div style="margin-top:7px;font-size:11px;color:#888">汇率日期：'+esc(ctx.fxRateDate||'')+' · 来源：'+esc(ctx.fxSource||'')+' / '+esc(ctx.rmbSource||'')+'</div>'
+    +(ctx.paymentCategory==='goods'?'<div style="font-size:11px;color:#916a23;margin-top:5px">货款汇率仅作展示，不改变实际付款金额、货款结算或WAC。</div>':'');
 }
 async function onPayDateChanged(){
   var ctx=window._finalPayCtx||{};
-  if(ctx.paymentCategory==='goods'){return;}
   var dateInput=document.getElementById(ctx.dateInputId||'pay-settle-date');
   var fxDiv=document.getElementById('pay-fx-display');
   if(!dateInput||!fxDiv){return;}
@@ -16776,7 +16784,7 @@ async function onPayDateChanged(){
     var r=await api('/api/payment-requests/'+ctx.prId+'/payment-fx/resolve','POST',{rate_date:paidDate});
     if(r.skip){fxDiv.style.display='none';return;}
     var currentDate=dateInput.value;
-    if(currentDate!==requestedDate){return;}
+    if(currentDate!==requestedDate||window._finalPayCtx!==ctx){return;}
     ctx.fxRate=r.rate;
     ctx.fxRateDate=r.rate_date;
     ctx.fxLocalCurrency=r.local_currency;
@@ -16788,7 +16796,7 @@ async function onPayDateChanged(){
     renderPayFxDisplay();
   }catch(e){
     var currentDate2=dateInput.value;
-    if(currentDate2!==requestedDate){return;}
+    if(currentDate2!==requestedDate||window._finalPayCtx!==ctx){return;}
     fxDiv.style.background='#fef0f0';fxDiv.style.color='#c62828';
     fxDiv.innerHTML='<div style="font-size:13px;font-weight:600">汇率缺失</div>'
       +'<div style="margin-top:4px;font-size:12px">'+esc(e.message||'获取汇率失败')+'</div>'

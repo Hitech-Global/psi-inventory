@@ -250,9 +250,17 @@
         var row=summary[x.id];
         if(!row||!row.has_shared)return; // Preserve legacy CI calculation untouched.
         if(row.total_rmb==null){
-          totalCell.textContent='待折算';ratioCell.textContent='—';
-          totalCell.title=(row.errors||[]).join('\n');
-          ratioCell.title=totalCell.title;
+          if(row.reference_only&&Number.isFinite(Number(row.reference_total_rmb))){
+            totalCell.textContent='≈ '+global.fmtMoney(row.reference_total_rmb,'RMB')+'（参考）';
+            ratioCell.textContent=row.reference_freight_ratio==null?'—':
+              '≈ '+Number(row.reference_freight_ratio).toFixed(2)+'%';
+            totalCell.title='自动汇率参考折算，待财务确认；不参与CI正式成本、WAC或已确认运费。\n'+(row.errors||[]).join('\n');
+            ratioCell.title=totalCell.title;
+          }else{
+            totalCell.textContent='待折算';ratioCell.textContent='—';
+            totalCell.title=(row.errors||[]).join('\n');
+            ratioCell.title=totalCell.title;
+          }
           return;
         }
         totalCell.textContent=global.fmtMoney(row.total_rmb,'RMB');
