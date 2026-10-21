@@ -3,7 +3,7 @@ const test=require('node:test'),assert=require('node:assert/strict'),fs=require(
 process.env.DB_DRIVER='sqlite';process.env.DB_PATH=':memory:';
 const db=require('../db'),express=require('express');
 const {installSharedLogisticsFeeRoutes,sharedWacParts,settledConversion,exactRate}=require('../shared-logistics-fee-server');
-test('HIT20260901-1C shape: automatic same-day rate shows reference amount but cannot confirm cost/WAC',async()=>{
+test('HIT20260901-1C: fully paid RMB snapshot is formal CI/WAC cost without independent exchange rate',async()=>{
  db.initDatabase();
  const ci='ci-auto-fx-1',pr='pay-auto-fx-1';
  db.run('INSERT INTO commercial_invoices(id,ci_no,ci_date,currency,country,goods_amount,cost_confirmed,wac_confirmed) VALUES (?,?,?,?,?,?,?,?)',
@@ -19,12 +19,14 @@ test('HIT20260901-1C shape: automatic same-day rate shows reference amount but c
  const part=[40000000,30000000,25000000];
  fees.forEach(([id],i)=>db.run('INSERT INTO shared_logistics_fee_batches(fee_id,batch_id,mode,basis,basis_value,amount_minor) VALUES (?,?,?,?,?,?)',
     ['shared1',id,'sea','cbm',1,part[i]]));
- db.run('INSERT INTO payment_settlement_logs(id,payment_request_id,event_type,status,amount,local_amount,local_currency,local_rate_date,paid_date,local_rate) VALUES (?,?,?,?,?,?,?,?,?,?)',
-   ['settle1',pr,'payment','applied',950000,950000,'IDR','2026-10-13','2026-10-13',1]);
+ db.run('INSERT INTO payment_settlement_logs(id,payment_request_id,event_type,status,amount,original_currency,local_amount,local_currency,local_rate_date,paid_date,local_rate,rmb_rate,rmb_rate_date,rmb_rate_direction,rmb_amount) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+   ['settle1',pr,'payment','applied',950000,'IDR',950000,'IDR','2026-10-13','2026-10-13',1,0.00037,'2026-10-13','direct',351.50]);
  db.run('INSERT INTO exchange_rates(id,from_currency,to_currency,rate,rate_date,rate_type) VALUES (?,?,?,?,?,?)',
    ['fxauto_2026-10-13_IDR_RMB_realtime','IDR','RMB',0.000370,'2026-10-13','realtime']);
  assert.equal(exactRate('IDR','RMB','2026-10-13'),null,'formal cost conversion must NOT use automatic reference');
- assert.match(settledConversion(pr,95000000,'IDR','RMB').error,/同日汇率/);
+ const locked=settledConversion(pr,95000000,'IDR','RMB');
+ assert.equal(locked.amount_minor,35150);
+ assert.equal(locked.source,'locked_payment_rmb_snapshot');
  const app=express();
  const pass=()=>((req,res,next)=>next());
  installSharedLogisticsFeeRoutes(app,{requireApiPermission:pass,requireCIAmountView:pass(),
@@ -34,26 +36,27 @@ test('HIT20260901-1C shape: automatic same-day rate shows reference amount but c
   const url='http://127.0.0.1:'+server.address().port;
   const result=await (await fetch(url+'/api/ci-freight-summaries?ids='+ci)).json();
   const obj=result[ci];
-  assert.equal(obj.total_rmb,null,'confirmed cost must stay missing');
-  assert.equal(obj.reference_only,true);
-  assert.equal(obj.reference_total_rmb,21954.4);
-  assert.equal(obj.reference_freight_ratio,7.94);
+  assert.equal(obj.total_rmb,21954.4,'formal cost uses locked payment RMB snapshot');
+  assert.equal(obj.freight_ratio,7.94);
+  assert.equal(obj.reference_only,false);
+  assert.equal(obj.reference_total_rmb,null);
   const detail=await (await fetch(url+'/api/commercial-invoices/'+ci+'/shared-logistics-fees')).json();
-  assert.match(detail.fees[0].conversion.error,/同日汇率/);
-  assert.equal(detail.fees[0].reference_conversion.amount_minor,35150);
-  assert.equal(detail.fees[0].reference_conversion.reference_only,true);
+  assert.equal(detail.fees[0].conversion.amount_minor,35150);
+  assert.equal(detail.fees[0].conversion.source,'locked_payment_rmb_snapshot');
+  assert.equal(detail.fees[0].reference_conversion,null);
   const wac=sharedWacParts(fees[0][0],'RMB');
-  assert.equal(wac.parts.length,0);
-  assert.match(wac.errors[0].message,/同日汇率/);
+  assert.equal(wac.parts.length,1);
+  assert.equal(wac.parts[0].amount_minor,Math.round(35150*40000000/95000000));
+  assert.equal(wac.errors.length,0);
   db.run('INSERT INTO exchange_rates(id,from_currency,to_currency,rate,rate_date,rate_type) VALUES (?,?,?,?,?,?)',
    ['manual-confirmed-idr-rmb','IDR','RMB',0.000370,'2026-10-13','realtime']);
   const after=await (await fetch(url+'/api/ci-freight-summaries?ids='+ci)).json();
-  assert.equal(after[ci].total_rmb,21954.4,'confirmed same-date FX restores official amount');
+  assert.equal(after[ci].total_rmb,21954.4,'confirmed snapshot is stable after unrelated exchange rate change');
   assert.equal(after[ci].reference_only,false);
   assert.equal(after[ci].reference_total_rmb,null);
  }finally{await new Promise(resolve=>server.close(resolve));}
 });
-test('frontend labels estimation explicitly; no reference is passed to formal cost',()=>{
+test('frontend labels estimation only when payment RMB snapshot is absent',()=>{
  const ui=fs.readFileSync(path.join(__dirname,'..','assets/ci-list-freight.js'),'utf8');
  const app=fs.readFileSync(path.join(__dirname,'..','app.js'),'utf8');
  assert.match(ui,/reference_only&&Number\.isFinite/);
