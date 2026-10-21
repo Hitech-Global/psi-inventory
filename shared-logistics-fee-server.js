@@ -39,11 +39,35 @@ function settledConversion(requestId,amountMinor,sourceCurrency,targetCurrency,r
   if(!payment||payment.approval_status!=='approved'||
      ['cancelled','rejected','reversed','pending_approval'].includes(payment.payment_status))
     return {error:'付款申请未审批通过、已撤销或已冲销，禁止确认成本'};
-  const rows=query("SELECT amount,local_amount,local_currency,local_rate,local_rate_date,paid_date FROM payment_settlement_logs WHERE payment_request_id=? AND event_type='payment' AND status='applied' ORDER BY paid_date",[requestId]).rows;
+  if(payment.payment_status!=='paid')
+    return {error:'付款申请尚未全部付款，禁止确认成本'};
+  const rows=query("SELECT amount,original_currency,local_amount,local_currency,local_rate,local_rate_date,paid_date,rmb_rate,rmb_rate_date,rmb_rate_direction,rmb_amount FROM payment_settlement_logs WHERE payment_request_id=? AND event_type='payment' AND status='applied' AND COALESCE(reversed_at,'')='' ORDER BY paid_date,id",[requestId]).rows;
   if(!rows.length)return {error:'跨币种费用尚未实际结算'};
   if(Math.abs(rows.reduce((a,r)=>a+minor(r.amount||0),0)-amountMinor)>1)return {error:'实付金额尚未结清或存在超付'};
   let total=0,fx=[];
   for(const log of rows) {
+    // Confirmed RMB cost comes from the IMMUTABLE snapshot written together
+    // with the actual payment, not from exchange_rates (which can change).
+    // The referenceOnly path intentionally retains the legacy auto-quote preview.
+    if(targetCurrency==='RMB'&&!referenceOnly){
+      const paidDate=String(log.paid_date||'').slice(0,10);
+      const date=String(log.rmb_rate_date||'').slice(0,10);
+      const rate=Number(log.rmb_rate),rmb=Number(log.rmb_amount);
+      const amount=Number(log.amount),original=normalize(log.original_currency);
+      if(!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(paidDate)||
+        !/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(date)||date>paidDate||!Number.isFinite(rate)||rate<=0||
+        log.rmb_amount==null||!Number.isFinite(rmb)||rmb<0||
+        !Number.isFinite(amount)||amount<=0)
+          return {error:'已付款记录缺少有效的付款日锁定RMB汇率或金额快照'};
+      if(original&&original!==sourceCurrency)
+        return {error:'付款记录原币种与合并运费币种不一致'};
+      if(Math.abs(amount*rate-rmb)>0.02)
+        return {error:'付款RMB金额与锁定汇率快照不一致'};
+      total+=rmb;
+      fx.push({from:sourceCurrency,to:'RMB',rate,rate_date:date,
+        snapshot:'payment_settlement_logs',original_amount:amount,rmb_amount:rmb});
+      continue;
+    }
     const cur=normalize(log.local_currency),amt=Number(log.local_amount);
     const date=String(log.local_rate_date||'').slice(0,10);
     if(!validCurrency(cur)||!Number.isFinite(amt)||amt<=0||!(Number(log.local_rate)>0)||!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(date))return {error:'付款本币金额/汇率/汇率日期快照缺失'};
@@ -52,7 +76,9 @@ function settledConversion(requestId,amountMinor,sourceCurrency,targetCurrency,r
     total+=amt*snap.rate;
     fx.push({from:cur,to:targetCurrency,rate:snap.rate,rate_date:date,rate_id:snap.rate_id,local_amount:amt});
   }
-  return {amount_minor:Math.round(total*100),source:referenceOnly?'reference_only':'applied_settlements',
+  return {amount_minor:Math.round(total*100),
+    source:targetCurrency==='RMB'&&!referenceOnly?'locked_payment_rmb_snapshot':
+      referenceOnly?'reference_only':'applied_settlements',
     reference_only:referenceOnly,fx};
 }
 function referenceConversion(requestId,amountMinor,sourceCurrency,targetCurrency){

@@ -53,8 +53,8 @@ test('shared IDR bill → single approval request → 3 sea batches → RMB/IDR 
     a.equal(pre.ci_shared_1.total_rmb,null,'unpaid IDR must not be counted as RMB');
     db.run('INSERT INTO exchange_rates (id,from_currency,to_currency,rate,rate_date,rate_type) VALUES (?,?,?,?,?,?)',
       ['rate_shared_idr_rmb','IDR','RMB',0.00045,'2026-10-13','realtime']);
-    db.run("INSERT INTO payment_settlement_logs (id,payment_request_id,event_type,status,amount,local_amount,local_currency,local_rate_date,paid_date,local_rate) VALUES (?,?,?,?,?,?,?,?,?,?)",
-      ['paid1',made.body.payment_request_id,'payment','applied',100000,100000,'IDR','2026-10-13','2026-10-13',1]);
+    db.run("INSERT INTO payment_settlement_logs (id,payment_request_id,event_type,status,amount,original_currency,local_amount,local_currency,local_rate_date,paid_date,local_rate,rmb_rate,rmb_rate_date,rmb_rate_direction,rmb_amount) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      ['paid1',made.body.payment_request_id,'payment','applied',100000,'IDR',100000,'IDR','2026-10-13','2026-10-13',1,0.00045,'2026-10-13','direct',45]);
     db.run("UPDATE payment_requests SET approval_status='approved',payment_status='paid' WHERE id=?",[made.body.payment_request_id]);
     const paid=await (await fetch(url+'/api/commercial-invoices/ci_shared_1/shared-logistics-fees')).json();
     a.equal(Number(paid.fees[0].conversion.amount_minor),4500);
