@@ -8848,7 +8848,8 @@ app.get('/api/proforma-invoices', requireApiPermission('pi_view'), asyncHandler(
       `SELECT pai.source_id,
         COALESCE(SUM(pa.allocated_amount_minor), 0) AS paid_minor,
         MAX(pai.payable_amount_minor) AS payable_minor,
-        COALESCE(MAX(pr.rounding_amount), 0) AS rounding_amount
+        COALESCE(MAX(pr.rounding_amount), 0) AS rounding_amount,
+        MAX(CASE WHEN pai.lifecycle_status = 'paid' THEN 1 ELSE 0 END) AS payable_paid
       FROM payable_items pai
       LEFT JOIN payment_request_items pri ON pri.payable_item_id = pai.id
       LEFT JOIN payment_allocations pa ON pa.payment_request_item_id = pri.id
@@ -8859,7 +8860,10 @@ app.get('/api/proforma-invoices', requireApiPermission('pi_view'), asyncHandler(
       depositPiIds
     ).rows;
     depositRows.forEach(d => {
-      depositPaidMap[d.source_id] = (d.paid_minor + Math.round(d.rounding_amount * 100)) >= d.payable_minor;
+      // MDF/other valid deductions are reflected in paid payable_items, not
+      // payment_allocations (cash-only). Trust the canonical settled payable.
+      depositPaidMap[d.source_id] = Number(d.payable_paid) === 1 ||
+        (Number(d.paid_minor) + Math.round(Number(d.rounding_amount || 0) * 100)) >= Number(d.payable_minor);
     });
   }
   res.json(rows.map(r => {
@@ -8934,7 +8938,8 @@ app.get('/api/proforma-invoices/:id', requireApiPermission('pi_view'), asyncHand
   }
   // Calculate deposit_paid based on actual payment facts
   const depositPaid = depositProgress
-    ? (depositProgress.paid_amount_minor + Math.round((depositProgress.payment_records.reduce((s, r) => s + (r.rounding_amount || 0), 0)) * 100)) >= depositProgress.payable_amount_minor
+    ? depositProgress.core_status === 'paid' ||
+      (depositProgress.paid_amount_minor + Math.round((depositProgress.payment_records.reduce((s, r) => s + (r.rounding_amount || 0), 0)) * 100)) >= depositProgress.payable_amount_minor
     : !pi.need_deposit;
   const multiPOAllocations = piMultiPO.getExistingAllocations(pi.id,query);
   let relatedPoIds=[];
@@ -11015,7 +11020,19 @@ app.post('/api/commercial-invoices/batch-import', requireApiPermission('ci_creat
           // PAY-CREDIT-DUE-01：从 PI 已选付款条款快照 Credit 天数
           const ciCredit = resolveOperationalCiCreditSnapshot(pi ? pi.id : null);
           // P1-STATE-01B 守卫②：需定金且定金未付清，禁止生成 CI
-          if (pi.need_deposit && pi.deposit_payment_status !== 'paid') throw new Error('PI 定金尚未付清，不能生成 CI：' + (pi.pi_no || pi.id));
+          if (pi.need_deposit && pi.deposit_payment_status !== 'paid') {
+            // A previously settled multi-source payment may have marked its
+            // payable paid after the PI source row was last synchronized.
+            // Confirm from canonical paid payment-request + payable facts.
+            const paidDeposit = queryOne(`SELECT pai.id FROM payable_items pai
+              JOIN payment_request_items pri ON pri.payable_item_id = pai.id
+              JOIN payment_requests pr ON pr.id = pri.payment_request_id
+              WHERE pai.source_type = 'pi' AND pai.source_id = ?
+                AND pai.fee_type = 'deposit' AND pai.lifecycle_status = 'paid'
+                AND pr.payment_status = 'paid' AND pr.approval_status = 'approved'
+              LIMIT 1`, [pi.id]);
+            if (!paidDeposit) throw new Error('PI 定金尚未付清，不能生成 CI：' + (pi.pi_no || pi.id));
+          }
           if (!po && pi?.related_po_no) po = queryOne('SELECT * FROM purchase_orders WHERE po_no = ?', [pi.related_po_no]);
           if (!po) throw new Error('无法匹配PO：PO编号为空或PI未关联PO');
           const ciNo = s(pick(row, ['CI编号', 'ci_no'])) || `CI-${new Date().getFullYear()}-${String(Date.now() + idx).slice(-6)}`;
@@ -14297,10 +14314,9 @@ function applyPaymentSettlementInTx(paymentRequestId, rawAmount, rawPaidDate, vo
       );
     }
     // 4. payable_item lifecycle：在 recalculatePaymentSettlement 后判断（V2.1 第 7 节）
-    const result = recalculatePaymentSettlement(payment.id);
-    // 重新读取付款后状态，判断是否 outstanding=0 → paid
-    const afterPayment = queryOne('SELECT * FROM payment_requests WHERE id = ?', [payment.id]);
-    const afterFacts = paymentSettlementFacts(afterPayment);
+    // Establish settled amounts from immutable payment+deduction+rounding
+    // facts first; mark payable lifecycle before synchronizing the PI source.
+    const afterFacts = paymentSettlementFacts(payment);
     // PAY-CORE V3：纯抹零结清时 effectivePaid=0 但 effectiveRounding>0，也需标记 paid
     const payableItemIds = (priRows.rows || []).map(r => r.payable_item_id).filter(Boolean);
     if (afterFacts.outstanding <= 0 && (afterFacts.effectivePaid > 0 || afterFacts.effectiveRounding > 0)) {
@@ -14325,6 +14341,10 @@ function applyPaymentSettlementInTx(paymentRequestId, rawAmount, rawPaidDate, vo
         }
       }
     }
+    // The PI source aggregation reads payable_items.lifecycle_status. If
+    // recalculated before markPayableItemPaid, MDF deductions leave the PI
+    // stuck at partial_paid although the payment request is fully settled.
+    const result = recalculatePaymentSettlement(payment.id);
     return { idempotent: false, log_id: logId, transaction_id: txId, trans_no: transNo, rounding_amount: roundOffAmount, effectivePaid: actualPaidAmount, ...result };
 }
 
