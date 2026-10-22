@@ -45,7 +45,11 @@ module.exports=function installPOPlan(deps){
   }
 
   app.get('/api/po-plans',requireApiPermission('po_view'),asyncHandler((req,res)=>{
-    const status=String(req.query.status||''),keyword=String(req.query.keyword||'').trim().toLowerCase(),brand=String(req.query.brand||'').trim(),country=String(req.query.country||'').trim();
+    const status=String(req.query.status||''),keyword=String(req.query.keyword||'').trim().toLowerCase();
+    // Repeated query params support multi-select facets; one value remains
+    // backward compatible with existing single-value callers.
+    const facetValues=raw=>[...new Set((Array.isArray(raw)?raw:[raw]).map(v=>String(v||'').trim()).filter(v=>v&&v.length<=128))].slice(0,50);
+    const brands=facetValues(req.query.brand),countries=facetValues(req.query.country);
     let sql=`SELECT po.*,
       COUNT(poi.id) AS item_count,
       COALESCE(SUM(poi.po_qty),0) AS planned_qty,
@@ -53,8 +57,8 @@ module.exports=function installPOPlan(deps){
       COALESCE(SUM(poi.po_qty-poi.transferred_pi_qty),0) AS remaining_qty
       FROM purchase_orders po LEFT JOIN purchase_order_items poi ON poi.po_id=po.id WHERE 1=1`;
     const ps=[];
-    if(brand){sql+=' AND po.brand=?';ps.push(brand);}
-    if(country){sql+=' AND po.country=?';ps.push(country);}
+    if(brands.length){sql+=' AND LOWER(TRIM(po.brand)) IN ('+brands.map(()=>'?').join(',')+')';ps.push(...brands.map(v=>v.toLocaleLowerCase()));}
+    if(countries.length){sql+=' AND LOWER(TRIM(po.country)) IN ('+countries.map(()=>'?').join(',')+')';ps.push(...countries.map(v=>v.toLocaleLowerCase()));}
     if(keyword){sql+=' AND (LOWER(po.po_no) LIKE ? OR LOWER(po.supplier_name) LIKE ? OR LOWER(po.brand) LIKE ? OR LOWER(po.country) LIKE ?)';const q='%'+keyword+'%';ps.push(q,q,q,q);}
     sql+=' GROUP BY po.id ORDER BY po.po_date DESC,po.created_at DESC';
     let rows=query(sql,ps).rows.map(r=>({...r,item_count:num(r.item_count),planned_qty:num(r.planned_qty),transferred_qty:num(r.transferred_qty),remaining_qty:num(r.remaining_qty),plan_status:planStatus(r)}));

@@ -4,6 +4,8 @@
 const planCache=new Map();
 const CACHE_TTL=30000;
 let availablePlans=[];
+let _poPlanFacetRows=null;
+let _poPlanPageEpoch=0;
 let originalCreatePI=null,originalCmpRowHTML=null,originalCmpDerived=null,originalRecompute=null;
 const $=(s,r=document)=>r.querySelector(s);
 const E=v=>typeof global.esc==='function'?global.esc(v):String(v??'');
@@ -11,27 +13,74 @@ const qty=v=>Math.max(0,Math.trunc(Number(v)||0));
 const apiCall=(u,m='GET',b=null)=>global.api(u,m,b);
 const statusText=s=>({open:'待采购',partial:'部分转PI',completed:'已全部转PI',closed:'已关闭'}[s]||s||'—');
 const statusClass=s=>s==='completed'?'status-completed':s==='partial'?'status-pending':s==='closed'?'status-draft':'status-approved';
-function cacheKey(){return [$('#po-fs')?.value||'',$('#po-fb')?.value||'',$('#po-fc')?.value||'',$('#po-fk')?.value||''].join('|');}
+function selectedPOFacets(kind){
+  const root=$('#po-'+kind+'-options');
+  return root?[...root.querySelectorAll('input[type="checkbox"]:checked')].map(input=>input.value).sort((a,b)=>a.localeCompare(b,'zh-Hans')):[];
+}
+function poFacetHtml(kind,label){
+  return '<div class="filter-group pp-facet-group"><label>'+E(label)+'</label><details id="po-'+kind+'-filter" class="pp-facet"><summary id="po-'+kind+'-summary">全部'+E(label)+'</summary><div class="pp-facet-options" id="po-'+kind+'-options"><span>加载中…</span></div></details></div>';
+}
+function poPlanPopulateFacets(rows){
+  _poPlanFacetRows=rows;
+  for(const [kind,field,label] of [['brand','brand','品牌'],['country','country','国家']]){
+    const el=$('#po-'+kind+'-options');if(!el)return;
+    const selected=new Set(selectedPOFacets(kind));
+    const map=new Map();
+    rows.forEach(row=>{
+      const value=String(row[field]||'').trim();
+      if(value&&!map.has(value.toLocaleLowerCase()))map.set(value.toLocaleLowerCase(),value);
+    });
+    const options=[...map.values()].sort((a,b)=>a.localeCompare(b,'zh-Hans'));
+    el.innerHTML=options.length?options.map(value=>'<label class="pp-facet-option"><input type="checkbox" value="'+E(value)+'"'+(selected.has(value)?' checked':'')+'><span>'+E(value)+'</span></label>').join(''):'<span class="pp-facet-empty">无可用选项</span>';
+    poPlanFacetSummary(kind,label);
+  }
+}
+function poPlanFacetSummary(kind,label){
+  const el=$('#po-'+kind+'-summary');
+  if(!el)return;
+  const values=selectedPOFacets(kind);
+  el.textContent=values.length===0?'全部'+label:values.length===1?values[0]:'已选 '+values.length+' 项';
+}
+function cacheKey(){return [$('#po-fs')?.value||'',selectedPOFacets('brand').join('~'),selectedPOFacets('country').join('~'),$('#po-fk')?.value||''].join('|');}
 function clearCaches(){planCache.clear();availablePlans=[];try{if(global.AppStore)global.AppStore.onMutation('PUT','/api/purchase-orders/po-plan',{});}catch(_e){}}
-function ensureCss(){if($('#po-plan-css'))return;const s=document.createElement('style');s.id='po-plan-css';s.textContent=`.po-plan-summary{display:flex;gap:18px;align-items:center}.po-plan-num{font-variant-numeric:tabular-nums;font-weight:650}.po-plan-remain{color:#1677ff;font-weight:700}.po-plan-used{color:#6e6e73}.po-plan-editor{border:1px solid #e7e7ea;border-radius:14px;overflow:hidden}.po-plan-editor table{width:100%;border-collapse:collapse}.po-plan-editor th{font-size:12px;color:#6e6e73;background:#f7f8fa;padding:9px 8px;text-align:left}.po-plan-editor th:nth-child(-n+2){padding-left:18px}.po-plan-editor td{padding:8px;border-top:1px solid #eee;text-align:left}.po-plan-editor input{height:34px;border:1px solid #d8dadd;border-radius:8px;padding:0 9px;text-align:left}.po-plan-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:12px 0}.po-plan-card{background:#f7f8fa;border-radius:12px;padding:12px}.po-plan-card span{font-size:11px;color:#86868b}.po-plan-card b{display:block;font-size:21px;margin-top:4px}.po-plan-hint{font-size:12px;color:#6e6e73;background:#f5f7fb;border-radius:10px;padding:9px 11px;margin:10px 0}.po-plan-pi-note{font-size:11px;color:#6e6e73;margin-top:4px}`;document.head.appendChild(s);}
+function ensureCss(){if($('#po-plan-css'))return;const s=document.createElement('style');s.id='po-plan-css';s.textContent=`.po-plan-summary{display:flex;gap:18px;align-items:center}.po-plan-num{font-variant-numeric:tabular-nums;font-weight:650}.po-plan-remain{color:#1677ff;font-weight:700}.po-plan-used{color:#6e6e73}.po-plan-editor{border:1px solid #e7e7ea;border-radius:14px;overflow:hidden}.po-plan-editor table{width:100%;border-collapse:collapse}.po-plan-editor th{font-size:12px;color:#6e6e73;background:#f7f8fa;padding:9px 8px;text-align:left}.po-plan-editor th:nth-child(-n+2){padding-left:18px}.po-plan-editor td{padding:8px;border-top:1px solid #eee;text-align:left}.po-plan-editor input{height:34px;border:1px solid #d8dadd;border-radius:8px;padding:0 9px;text-align:left}.po-plan-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:12px 0}.po-plan-card{background:#f7f8fa;border-radius:12px;padding:12px}.po-plan-card span{font-size:11px;color:#86868b}.po-plan-card b{display:block;font-size:21px;margin-top:4px}.po-plan-hint{font-size:12px;color:#6e6e73;background:#f5f7fb;border-radius:10px;padding:9px 11px;margin:10px 0} .po-plan-pi-note{font-size:11px;color:#6e6e73;margin-top:4px}.pp-facet-group{position:relative;min-width:152px}.pp-facet{position:relative}.pp-facet>summary{list-style:none;height:30px;min-width:150px;padding:5px 10px;border:1px solid var(--border);border-radius:7px;background:var(--card-bg);font-size:12px;cursor:pointer;user-select:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.pp-facet>summary::-webkit-details-marker{display:none}.pp-facet>summary::after{content:'▾';float:right;margin-left:8px}.pp-facet-options{position:absolute;top:32px;left:0;z-index:80;background:var(--card-bg);border:1px solid var(--border);border-radius:9px;box-shadow:0 6px 20px #0002;min-width:210px;max-height:250px;overflow:auto;padding:6px}.pp-facet-option{display:flex;align-items:center;gap:8px;padding:7px 8px;font-size:12px;cursor:pointer;white-space:nowrap}.pp-facet-option:hover{background:var(--hover-bg,#f5f5f7)}.pp-facet-empty{display:block;padding:10px;font-size:12px;color:#888}`;document.head.appendChild(s);}
 
 function renderPOPlan(){
+  ++_poPlanPageEpoch;
+  _poPlanFacetRows=null;
   ensureCss();
   const c=$('#content-inner');if(!c)return;
-  c.innerHTML=`<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>状态</label><select id="po-fs"><option value="">全部</option><option value="open">待采购</option><option value="partial">部分转PI</option><option value="completed">已全部转PI</option><option value="closed">已关闭</option></select></div><div class="filter-group"><label>品牌</label><input id="po-fb" placeholder="全部品牌"></div><div class="filter-group"><label>国家</label><input id="po-fc" placeholder="全部国家"></div><div class="filter-group"><label>关键词</label><input id="po-fk" placeholder="PO号 / 供应商"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" id="po-plan-search">搜索</button>${global.hasPermission&&global.hasPermission('po_create')?'<button class="btn btn-primary btn-sm" id="po-plan-new">➕ 新建PO</button>':''}</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🛒 PO采购计划</div><div style="font-size:12px;color:#86868b">PO=动态采购计划 · PI=实际采购确认</div></div><div id="po-table"><div class="empty-state"><div class="empty-icon">⏳</div>加载中…</div></div></div>`;
+  c.innerHTML=`<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>状态</label><select id="po-fs"><option value="">全部</option><option value="open">待采购</option><option value="partial">部分转PI</option><option value="completed">已全部转PI</option><option value="closed">已关闭</option></select></div>${poFacetHtml('brand','品牌')}${poFacetHtml('country','国家')}<div class="filter-group"><label>关键词</label><input id="po-fk" placeholder="PO号 / 供应商"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" id="po-plan-search">搜索</button>${global.hasPermission&&global.hasPermission('po_create')?'<button class="btn btn-primary btn-sm" id="po-plan-new">➕ 新建PO</button>':''}</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🛒 PO采购计划</div><div style="font-size:12px;color:#86868b">PO=动态采购计划 · PI=实际采购确认</div></div><div id="po-table"><div class="empty-state"><div class="empty-icon">⏳</div>加载中…</div></div></div>`;
+  for(const [kind,label] of [['brand','品牌'],['country','国家']]){
+    const options=$('#po-'+kind+'-options');
+    options.addEventListener('change',event=>{
+      if(event.target.matches('input[type="checkbox"]')){
+        poPlanFacetSummary(kind,label);
+        loadPOPlan(false);
+      }
+    });
+  }
   $('#po-plan-search').onclick=()=>loadPOPlan(false);$('#po-fk').onkeypress=e=>{if(e.key==='Enter')loadPOPlan(false)};if($('#po-plan-new'))$('#po-plan-new').onclick=createPOPlan;
   loadPOPlan(true);
 }
 async function loadPOPlan(useCache){
   const key=cacheKey(),el=$('#po-table');if(!el)return;
-  const hit=planCache.get(key);if(useCache&&hit&&Date.now()-hit.at<CACHE_TTL){drawPOPlan(hit.data);fetchPOPlan(key,true);return;}
+  const hit=planCache.get(key);if(useCache&&hit&&Date.now()-hit.at<CACHE_TTL){if(_poPlanFacetRows===null)poPlanPopulateFacets(hit.data);drawPOPlan(hit.data);fetchPOPlan(key,true);return;}
   await fetchPOPlan(key,false);
 }
 async function fetchPOPlan(key,background){
+  const epoch=_poPlanPageEpoch;
   try{
-    const q=new URLSearchParams(),s=$('#po-fs')?.value||'',b=$('#po-fb')?.value.trim()||'',c=$('#po-fc')?.value.trim()||'',k=$('#po-fk')?.value.trim()||'';
-    if(s)q.set('status',s);if(b)q.set('brand',b);if(c)q.set('country',c);if(k)q.set('keyword',k);
-    const data=await apiCall('/api/po-plans?'+q.toString());planCache.set(key,{at:Date.now(),data});if(key===cacheKey())drawPOPlan(data);
+    const q=new URLSearchParams(),s=$('#po-fs')?.value||'',brands=selectedPOFacets('brand'),countries=selectedPOFacets('country'),k=$('#po-fk')?.value.trim()||'';
+    if(s)q.set('status',s);
+    brands.forEach(b=>q.append('brand',b));countries.forEach(c=>q.append('country',c));
+    if(k)q.set('keyword',k);
+    const data=await apiCall('/api/po-plans?'+q.toString());
+    if(epoch!==_poPlanPageEpoch)return;
+    planCache.set(key,{at:Date.now(),data});
+    if(key!==cacheKey()||!$('#po-table'))return;
+    if(!s&&!k&&!brands.length&&!countries.length)poPlanPopulateFacets(data);
+    drawPOPlan(data);
   }catch(e){if(!background&&$('#po-table'))$('#po-table').innerHTML='<div class="empty-state">'+E(e.message)+'</div>';}
 }
 function drawPOPlan(data){
