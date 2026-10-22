@@ -41,8 +41,13 @@ function patchAppSource(src) {
   );
 
   let asyncRenderCount = 0;
-  out = out.replace(/async function (render[A-Za-z0-9_$]+)\s*\(([^)]*)\)\s*\{/g, function (m) {
+  out = out.replace(/async function (render[A-Za-z0-9_$]+)\s*\(([^)]*)\)\s*\{/g, function (m, _name, _args, offset, source) {
     asyncRenderCount++;
+    // Other deploy-time patches may already have installed the render epoch
+    // in a single async renderer. Never redeclare the same const in its scope.
+    const tail = source.slice(offset + m.length);
+    if (/^\s*const __psiRenderEpoch\s*=\s*window\.__psiPageRenderEpoch\s*\|\|\s*0\s*;/.test(tail))
+      return m;
     return m + '\n  const __psiRenderEpoch=window.__psiPageRenderEpoch||0;';
   });
 

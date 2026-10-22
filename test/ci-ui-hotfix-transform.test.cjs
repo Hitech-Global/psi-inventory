@@ -25,6 +25,15 @@ assert.match(once, /const __psiRenderEpoch=window\.__psiPageRenderEpoch\|\|0;/);
 assert.doesNotMatch(once, /document\.getElementById\((['"])content-inner\1\)\.innerHTML\s*=/);
 new Function('window','document','api','R', once);
 
+// Production may already have an epoch declaration in a single renderer:
+// do not inject a second const with the same name (syntax error).
+const partiallyGuarded=src.replace('async function renderDashboard(){',
+  'async function renderDashboard(){\n  const __psiRenderEpoch=window.__psiPageRenderEpoch||0;');
+const patchedGuard=patchAppSource(partiallyGuarded);
+assert.match(patchedGuard,/async function renderDashboard\(\)\{\s*const __psiRenderEpoch/);
+assert.doesNotMatch(patchedGuard,/const __psiRenderEpoch[^;]*;\s*const __psiRenderEpoch/);
+new Function('window','document','api','R',patchedGuard);
+
 const html = '<!doctype html><html><head><style>.x{color:red}</style></head><body><div id="modal-content"></div></body></html>';
 const htmlOnce = patchIndexSource(html);
 const htmlTwice = patchIndexSource(htmlOnce);
