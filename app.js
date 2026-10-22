@@ -16141,8 +16141,135 @@ async function submitPaymentRequestApproval(prId){
 }
 
 async function renderPayment(){
-  document.getElementById('content-inner').innerHTML=t('html.renderPayment', `<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>状态</label><select id="pay-fs"><option value="">全部</option><option value="approved">已审批</option><option value="paid">已付款</option><option value="partial_paid">部分付款</option><option value="cancelled">已取消</option></select></div><div class="filter-group"><label>类别</label><select id="pay-fc"><option value="">全部</option><option value="goods">货款</option><option value="warehouse_arrival">到仓费用</option><option value="customs_duty">关税</option><option value="inspection_fee">商检费用</option></select></div><div class="filter-group"><label>关键词</label><input type="text" id="pay-fk" placeholder="申请号/供应商/来源单号" onkeypress="if(event.key==='Enter')loadPay()"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadPay()">搜索</button>{v1}</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">💳 付款申请</div></div><div id="pay-table"></div></div>`, {v1: hasPermission('payment_import')?t('gen.L6956.1','<button class="btn btn-secondary btn-sm" onclick="importPayResult()">📥 导入付款结果</button>'):''});
+  const __psiRenderEpoch=window.__psiPageRenderEpoch||0;
+  window.__psiPageContent((typeof __psiRenderEpoch==='undefined')?(window.__psiPageRenderEpoch||0):__psiRenderEpoch).innerHTML=t('html.renderPayment', `<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>状态</label><select id="pay-fs"><option value="">全部</option><option value="approved">已审批</option><option value="paid">已付款</option><option value="partial_paid">部分付款</option><option value="cancelled">已取消</option></select></div><div class="filter-group"><label>类别</label><select id="pay-fc"><option value="">全部</option><option value="goods">货款</option><option value="warehouse_arrival">到仓费用</option><option value="customs_duty">关税</option><option value="inspection_fee">商检费用</option></select></div><div class="filter-group"><label>关键词</label><input type="text" id="pay-fk" placeholder="申请号/供应商/来源单号" onkeypress="if(event.key==='Enter')loadPay()"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadPay()">搜索</button>{v1}</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">💳 付款申请</div></div><div id="pay-table"></div></div>`, {v1: hasPermission('payment_import')?t('gen.L6956.1','<button class="btn btn-secondary btn-sm" onclick="importPayResult()">📥 导入付款结果</button>'):''});
+  paymentManageInit();
   loadPay();
+}
+// PAYMENT-MANAGEMENT-FILTER-SORT-20261022: view-only; keeps existing API caching.
+const _paymentManageState={countries:new Set(),payees:new Set(),optionsCountry:[],optionsPayee:[],sortKey:'',sortDir:'asc'};
+let _paymentManageLoadSeq=0;
+function paymentManageCountry(r){
+  const value=String(r.expense_country||'').trim();
+  const code=value.toUpperCase();
+  if(['ID','IDN','INDONESIA','印尼','印度尼西亚'].includes(code))return '印度尼西亚';
+  if(['MY','MYS','MALAYSIA','马来西亚'].includes(code))return '马来西亚';
+  if(['TH','THA','THAILAND','泰国'].includes(code))return '泰国';
+  return value||'未设置';
+}
+function paymentManagePayee(r){return String(r.supplier_name||'').trim()||'未设置';}
+function paymentManageMultiFilter(kind,value,checked){
+  const state=_paymentManageState,selected=kind==='country'?state.countries:state.payees;
+  if(checked)selected.add(value);else selected.delete(value);
+  paymentManageFilterMenus();loadPay();
+}
+function paymentManageFilterReset(kind){
+  (kind==='country'?_paymentManageState.countries:_paymentManageState.payees).clear();
+  paymentManageFilterMenus();loadPay();
+}
+function paymentManageFilterMenus(){
+  const state=_paymentManageState;
+  for(const kind of ['country','payee']){
+    const selected=kind==='country'?state.countries:state.payees;
+    const options=kind==='country'?state.optionsCountry:state.optionsPayee;
+    const label=document.getElementById('pay-multi-'+kind+'-label');
+    if(label)label.textContent=selected.size?'已选 '+selected.size+' 项':(kind==='country'?'全部国家':'全部付款对象');
+    const menu=document.getElementById('pay-multi-'+kind+'-menu');
+    if(!menu)continue;
+    // Input values are percent-encoded so values with quotes or markup cannot
+    // escape the event attribute. Rendered labels are HTML escaped.
+    menu.innerHTML='<div class="pay-multi-toolbar"><button type="button" onclick="paymentManageFilterReset(\''+kind+'\')">全部 / 清除</button></div>'+
+      (options.length?options.map(value=>'<label class="pay-multi-option"><input type="checkbox" value="'+encodeURIComponent(value)+'"'+(selected.has(value)?' checked':'')+' onchange="paymentManageMultiFilter(\''+kind+'\',decodeURIComponent(this.value),this.checked)"><span>'+esc(value)+'</span></label>').join(''):
+        '<span class="pay-multi-empty">暂无选项</span>');
+  }
+}
+function paymentManageToggle(kind){
+  const target=document.getElementById('pay-multi-'+kind+'-menu');
+  if(!target)return;
+  const isOpen=target.hidden;
+  for(const which of ['country','payee']){
+    const menu=document.getElementById('pay-multi-'+which+'-menu');
+    if(menu)menu.hidden=true;
+  }
+  target.hidden=!isOpen;
+}
+function paymentManageInit(){
+  const table=document.getElementById('pay-table');
+  if(!table)return;
+  const form=table.closest('#content-inner')?.querySelector('.filter-form');
+  if(!form||document.getElementById('pay-multi-country'))return;
+  const actions=form.querySelector('.filter-actions');
+  for(const kind of ['country','payee']){
+    const grp=document.createElement('div');grp.className='filter-group pay-multi-filter';
+    grp.id='pay-multi-'+kind;
+    grp.innerHTML='<label>'+(kind==='country'?'国家':'付款对象')+'</label><button type="button" class="pay-multi-trigger" onclick="paymentManageToggle(\''+kind+'\')"><span id="pay-multi-'+kind+'-label">全部</span><span aria-hidden="true">▾</span></button><div id="pay-multi-'+kind+'-menu" class="pay-multi-menu" hidden></div>';
+    form.insertBefore(grp,actions||null);
+  }
+  if(!document.getElementById('pay-manage-style')){
+    const style=document.createElement('style');style.id='pay-manage-style';
+    style.textContent='#content-inner .pay-multi-filter{position:relative;min-width:140px}'+
+    '#content-inner .pay-multi-trigger{height:30px;width:172px;max-width:100%;border:1px solid var(--border);background:var(--card-bg);border-radius:7px;display:flex;justify-content:space-between;align-items:center;padding:0 9px;font-size:12px;cursor:pointer}'+
+    '#content-inner .pay-multi-menu{position:absolute;z-index:80;left:0;top:100%;background:var(--card-bg);border:1px solid var(--border);border-radius:9px;box-shadow:0 6px 22px #0002;width:250px;max-height:270px;overflow:auto;padding:6px}'+
+    '#content-inner .pay-multi-menu[hidden]{display:none}'+
+    '#content-inner .pay-multi-toolbar{padding:3px 6px 6px;border-bottom:1px solid var(--border)}'+
+    '#content-inner .pay-multi-toolbar button{background:none;border:0;color:var(--primary);cursor:pointer;font-size:12px}'+
+    '#content-inner .pay-multi-option{display:flex;align-items:center;gap:9px;padding:7px 9px;font-size:12px;cursor:pointer;white-space:normal}'+
+    '#content-inner .pay-multi-option:hover{background:var(--hover-bg,#f5f5f7)}'+
+    '#content-inner .pay-multi-empty{display:block;padding:12px;color:#888;font-size:12px}'+
+    '#pay-table .data-table th,#pay-table .data-table td{text-align:left!important}'+
+    '#pay-table .pay-sort-btn{border:0;background:transparent;font:inherit;font-weight:600;color:inherit;padding:0;cursor:pointer;display:inline-flex;align-items:center;gap:5px;text-align:left;white-space:nowrap}'+
+    '#pay-table .pay-sort-arrows{font-size:11px;color:var(--text-secondary,#999)}'+
+    '#pay-table .pay-sort-btn[aria-sort="ascending"] .pay-sort-arrows,#pay-table .pay-sort-btn[aria-sort="descending"] .pay-sort-arrows{color:var(--primary,#15803d)}';
+    document.head.appendChild(style);
+  }
+  if(!window._paymentManageOutsideListener){
+    window._paymentManageOutsideListener=true;
+    document.addEventListener('click',event=>{
+      if(event.target.closest('.pay-multi-filter'))return;
+      for(const kind of ['country','payee']){
+        const menu=document.getElementById('pay-multi-'+kind+'-menu');if(menu)menu.hidden=true;
+      }
+    });
+  }
+  paymentManageFilterMenus();
+}
+function paymentManageSortContent(label,key){
+  const state=_paymentManageState,active=state.sortKey===key;
+  const indicator=!active?'⇅':state.sortDir==='asc'?'▲':'▼';
+  return '<button type="button" class="pay-sort-btn" aria-label="'+esc(label)+' 升序或降序排序" aria-sort="'+(active?(state.sortDir==='asc'?'ascending':'descending'):'none')+'" onclick="paymentManageSort(\''+key+'\')">'+esc(label)+'<span class="pay-sort-arrows">'+indicator+'</span></button>';
+}
+function paymentManageSort(key){
+  const state=_paymentManageState;
+  if(state.sortKey===key)state.sortDir=state.sortDir==='asc'?'desc':'asc';
+  else{state.sortKey=key;state.sortDir='asc';}
+  loadPay();
+}
+function paymentManageSortValue(row,key){
+  const ps=row.source_summary||{};
+  const meta={category:PAY_CATEGORIES[row.payment_category]||row.payment_category,
+    subcategory:(PAY_SUBCATS[row.payment_category]||{})[row.payment_subcategory]||row.payment_subcategory,
+    source:ps.source_nos_display||row.source_no,ci:ps.related_ci_nos_display||row.related_ci_no,
+    terms:ps.payment_terms_display||row.payment_terms,actual:Number(row.actual_pay_amount||0)>0||Number(row.deduction_amount||0)>0||Number(row.rounding_amount||0)>0?
+      Number(row.actual_pay_amount||0):Number(row.payable_amount||0)};
+  return Object.prototype.hasOwnProperty.call(meta,key)?meta[key]:row[key];
+}
+function paymentManageView(rows){
+  const state=_paymentManageState;
+  let result=rows.filter(row=>(!state.countries.size||state.countries.has(paymentManageCountry(row)))&&
+    (!state.payees.size||state.payees.has(paymentManagePayee(row))));
+  if(state.sortKey){
+    const numeric=new Set(['payable_amount','deduction_amount','actual','paid_amount','unpaid_amount']);
+    const key=state.sortKey,dir=state.sortDir==='asc'?1:-1;
+    result=result.map((r,i)=>({r,i})).sort((a,b)=>{
+      const x=paymentManageSortValue(a.r,key),y=paymentManageSortValue(b.r,key);
+      const ax=x==null||String(x).trim()==='',ay=y==null||String(y).trim()==='';
+      if(ax||ay)return ax===ay?a.i-b.i:ax?1:-1;
+      const cmp=numeric.has(key)?Number(x)-Number(y):
+        String(x).localeCompare(String(y),'zh-Hans',{numeric:true,sensitivity:'base'});
+      return cmp===0?a.i-b.i:cmp*dir;
+    }).map(x=>x.r);
+  }
+  return result;
 }
 // 统一付款申请详情弹窗（付款管理与审批中心财务类审批共用同一弹窗）
 // mode：'view'=只读详情（付款管理，仅关闭）；'finance'=审批中心财务类审批（补审批意见 + 通过/驳回）
@@ -16701,14 +16828,22 @@ async function financeConfirmPay(id){
   }catch(e){showToast(e.message,'danger');if(btn){btn.disabled=false;btn.textContent=t("payment.confirm_pay_btn","确认付款")}}
 }
 async function loadPay(){
+  const seq=++_paymentManageLoadSeq;
   try{
     // 性能层：注册付款管理列表后台刷新重渲染器
     try{ if(window.AppStore) AppStore.page.onRefresh('payment', function(){ try{ loadPay(); }catch(e){} }); }catch(e){}
     const s=document.getElementById('pay-fs')?.value||'',c=document.getElementById('pay-fc')?.value||'',k=document.getElementById('pay-fk')?.value||'';
     const _payUrl='/api/payment-requests?status='+s+'&category='+c+'&keyword='+encodeURIComponent(k);
     // 性能层：付款管理列表走页面快照缓存（signature=筛选 URL）
-    const data=await api(_payUrl,'GET',null,{cacheKey:'payment',ttl:30000,signature:_payUrl});
-    document.getElementById('pay-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">💳</div>'+t('empty.noPaymentData','暂无付款数据')+'</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>'+t("html.pay.th.applyNo","申请号")+'</th><th>'+t("html.pay.th.category","大类")+'</th><th>'+t("html.pay.th.subcategory","小类")+'</th><th>'+t("html.pay.th.sourceNo","来源单号")+'</th><th>'+t("html.pay.th.relCI","关联CI")+'</th><th>'+t("html.pay.th.payee","付款对象")+'</th><th>'+t("html.pay.th.ciTerms","CI付款条件")+'</th><th>'+t("html.pay.th.payable","应付金额")+'</th><th>'+t("html.pay.th.deduct","抵扣金额")+'</th><th>'+t("html.pay.th.actualPayable","实际应付")+'</th><th>'+t("html.pay.th.paid","已付")+'</th><th>'+t("html.pay.th.unpaid","未付")+'</th><th>'+t("html.pay.th.currency","币种")+'</th><th>'+t("html.pay.th.status","状态")+'</th><th>'+t("html.pay.th.action","操作")+'</th></tr></thead><tbody>'+data.map(p=>{
+    let data=await api(_payUrl,'GET',null,{cacheKey:'payment',ttl:30000,signature:_payUrl});
+    // A previous filter/sort request must never overwrite a newer view or a destroyed page.
+    if(seq!==_paymentManageLoadSeq||!document.getElementById('pay-table'))return;
+    paymentManageInit();
+    _paymentManageState.optionsCountry=[...new Set(data.map(paymentManageCountry))].sort((a,b)=>a.localeCompare(b,'zh-Hans'));
+    _paymentManageState.optionsPayee=[...new Set(data.map(paymentManagePayee))].sort((a,b)=>a.localeCompare(b,'zh-Hans'));
+    paymentManageFilterMenus();
+    data=paymentManageView(data);
+    document.getElementById('pay-table').innerHTML=!data.length?'<div class="empty-state"><div class="empty-icon">💳</div>'+t('empty.noPaymentData','暂无付款数据')+'</div>':'<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>'+paymentManageSortContent(t("html.pay.th.applyNo","申请号"),"request_no")+'</th><th>'+paymentManageSortContent(t("html.pay.th.category","大类"),"category")+'</th><th>'+paymentManageSortContent(t("html.pay.th.subcategory","小类"),"subcategory")+'</th><th>'+paymentManageSortContent(t("html.pay.th.sourceNo","来源单号"),"source")+'</th><th>'+paymentManageSortContent(t("html.pay.th.relCI","关联CI"),"ci")+'</th><th>'+paymentManageSortContent(t("html.pay.th.payee","付款对象"),"supplier_name")+'</th><th>'+paymentManageSortContent(t("html.pay.th.ciTerms","CI付款条件"),"terms")+'</th><th>'+paymentManageSortContent(t("html.pay.th.payable","应付金额"),"payable_amount")+'</th><th>'+paymentManageSortContent(t("html.pay.th.deduct","抵扣金额"),"deduction_amount")+'</th><th>'+paymentManageSortContent(t("html.pay.th.actualPayable","实际应付"),"actual")+'</th><th>'+paymentManageSortContent(t("html.pay.th.paid","已付"),"paid_amount")+'</th><th>'+paymentManageSortContent(t('payment.paid_date','实际付款日期'),'paid_date')+'</th><th>'+paymentManageSortContent(t("html.pay.th.unpaid","未付"),"unpaid_amount")+'</th><th>'+paymentManageSortContent(t("html.pay.th.currency","币种"),"currency")+'</th><th>'+paymentManageSortContent(t("html.pay.th.status","状态"),"payment_status")+'</th><th>'+t("html.pay.th.action","操作")+'</th></tr></thead><tbody>'+data.map(p=>{
       const catLabel=PAY_CATEGORIES[p.payment_category]||p.payment_category;
       const subLabel=(PAY_SUBCATS[p.payment_category]&&PAY_SUBCATS[p.payment_category][p.payment_subcategory])||p.payment_subcategory||'';
       const stLabel=PAY_STATUS_MAP[p.payment_status]||p.payment_status;
@@ -16724,7 +16859,7 @@ async function loadPay(){
       const pCiNo=psum.related_ci_nos_display||String(p.related_ci_no||'');
       const pTerms=psum.payment_terms_display||String(p.payment_terms||'');
       const pCell=(v)=>'<td class="cell-id"'+(v?(' title="'+esc(v)+'"'):'')+'>'+(v?esc(v):'—')+'</td>';
-      return '<tr'+(hasPermission('payment_view')?(' class="clickable-detail-row" onclick="rowClickView(event,\'viewPayment\',\''+p.id+'\')"'):'')+'><td class="cell-id">'+esc(p.request_no)+'</td><td>'+esc(catLabel)+'</td><td>'+esc(subLabel)+'</td>'+pCell(pSrcNo)+pCell(pCiNo)+'<td>'+esc(p.supplier_name)+'</td><td>'+(pTerms?esc(pTerms):'—')+'</td><td class="text-right font-bold">'+fmtMoney(p.payable_amount)+'</td><td class="text-right '+(p.deduction_amount>0?'text-warning':'')+'">'+(p.deduction_amount>0?fmtMoney(p.deduction_amount):'-')+'</td><td class="text-right font-bold">'+fmtMoney(actualDisplay)+'</td><td class="text-right">'+fmtMoney(p.paid_amount)+'</td><td class="text-right '+(p.unpaid_amount>0?'text-danger':'')+'">'+fmtMoney(p.unpaid_amount)+'</td><td>'+esc(p.currency)+'</td><td><span class="status-badge '+stClass+'">'+esc(stLabel)+'</span></td><td class="cell-actions">'+(hasPermission('payment_view')?'<button class="action-btn" onclick="viewPayment(\''+p.id+'\')" title="'+t('title.viewDetail','查看详情')+'">👁️</button>':'')+(needsExpenseCountry&&hasPermission('payment_approve')?'<button class="action-btn" onclick="openPaymentExpenseCountry(\''+p.id+'\')" title="'+t('term.fin.supplement_expense_country','补录费用归属国家')+'">'+t("payment.fill_country","补国家")+'</button>':'')+(canRound&&hasPermission('payment_approve')?'<button class="action-btn" onclick="openPaymentRounding(\''+p.id+'\')" title="'+t("payment.manual_rounding","手动抹零")+'">'+t("payment.type_rounding","抹零")+'</button>':'')+(canDeduct&&hasPermission('payment_create')?'<button class="action-btn" onclick="editDeduction(\''+p.id+'\')" title="'+t('title.editDeduction','编辑抵扣')+'">✂️</button>':'')+'</td></tr>';
+      return '<tr'+(hasPermission('payment_view')?(' class="clickable-detail-row" onclick="rowClickView(event,\'viewPayment\',\''+p.id+'\')"'):'')+'><td class="cell-id">'+esc(p.request_no)+'</td><td>'+esc(catLabel)+'</td><td>'+esc(subLabel)+'</td>'+pCell(pSrcNo)+pCell(pCiNo)+'<td>'+esc(p.supplier_name)+'</td><td>'+(pTerms?esc(pTerms):'—')+'</td><td class="text-right font-bold">'+fmtMoney(p.payable_amount)+'</td><td class="text-right '+(p.deduction_amount>0?'text-warning':'')+'">'+(p.deduction_amount>0?fmtMoney(p.deduction_amount):'-')+'</td><td class="text-right font-bold">'+fmtMoney(actualDisplay)+'</td><td class="text-right">'+fmtMoney(p.paid_amount)+'</td><td class="cell-date">'+(p.paid_date?esc(fmtDate(p.paid_date)):'—')+'</td><td class="text-right '+(p.unpaid_amount>0?'text-danger':'')+'">'+fmtMoney(p.unpaid_amount)+'</td><td>'+esc(p.currency)+'</td><td><span class="status-badge '+stClass+'">'+esc(stLabel)+'</span></td><td class="cell-actions">'+(hasPermission('payment_view')?'<button class="action-btn" onclick="viewPayment(\''+p.id+'\')" title="'+t('title.viewDetail','查看详情')+'">👁️</button>':'')+(needsExpenseCountry&&hasPermission('payment_approve')?'<button class="action-btn" onclick="openPaymentExpenseCountry(\''+p.id+'\')" title="'+t('term.fin.supplement_expense_country','补录费用归属国家')+'">'+t("payment.fill_country","补国家")+'</button>':'')+(canRound&&hasPermission('payment_approve')?'<button class="action-btn" onclick="openPaymentRounding(\''+p.id+'\')" title="'+t("payment.manual_rounding","手动抹零")+'">'+t("payment.type_rounding","抹零")+'</button>':'')+(canDeduct&&hasPermission('payment_create')?'<button class="action-btn" onclick="editDeduction(\''+p.id+'\')" title="'+t('title.editDeduction','编辑抵扣')+'">✂️</button>':'')+'</td></tr>';
     }).join('')+'</tbody></table></div>';
   }catch(e){showFlash(e.message,'danger')}
 }
