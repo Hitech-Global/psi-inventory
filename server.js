@@ -9983,6 +9983,27 @@ app.get('/api/commercial-invoices/:id/pi-balances', requireApiPermission('ci_vie
   res.json(result);
 }));
 
+// Operational CI deposit guard; the batch importer retains its existing settled-payable check.
+// PI header may remain partial_paid after an older multi-payment transaction,
+// while the canonical deposit payable is already fully settled via payment,
+// MDF deduction, and rounding. Never equate cash allocations with settlement.
+function isPiDepositSettledForCI(pi) {
+  if (!pi.need_deposit) return true;
+  const payables = query(
+    `SELECT id,lifecycle_status FROM payable_items
+     WHERE source_type='pi' AND source_id=? AND fee_type='deposit'
+       AND lifecycle_status NOT IN ('cancelled','released')`, [pi.id]
+  ).rows;
+  // Legacy PI with no Payment Core deposit retains its historical guard.
+  if (!payables.length) return pi.deposit_payment_status === 'paid';
+  return payables.every(pai =>
+    pai.lifecycle_status === 'paid' && !!queryOne(
+      `SELECT pr.id FROM payment_request_items pri
+       JOIN payment_requests pr ON pr.id=pri.payment_request_id
+       WHERE pri.payable_item_id=? AND pr.approval_status='approved'
+         AND pr.payment_status='paid' LIMIT 1`, [pai.id])
+  );
+}
 app.post('/api/commercial-invoices', requireApiPermission('ci_create'), asyncHandler(async (req, res) => {
   try {
     const d = req.body;
@@ -10023,26 +10044,11 @@ app.post('/api/commercial-invoices', requireApiPermission('ci_create'), asyncHan
     const piCurrencies = new Set(pis.map(p => p.currency || ''));
     if (piCurrencies.size > 1) return res.status(400).json({ error: '多PI必须同币种' });
 
-    // P1-STATE-01B 守卫②：需定金且定金实际未付清（基于付款事实计算），禁止生成 CI
+    // Use canonical settled deposit payable including MDF/rounding, not cash
+    // allocations alone. Applies independently to EVERY source PI.
     for (const pi of pis) {
-      if (pi.need_deposit) {
-        const dpr = queryOne(
-          `SELECT
-            COALESCE(SUM(pa.allocated_amount_minor), 0) AS paid_minor,
-            MAX(pai.payable_amount_minor) AS payable_minor,
-            COALESCE(MAX(pr.rounding_amount), 0) AS rounding_amount
-          FROM payable_items pai
-          LEFT JOIN payment_request_items pri ON pri.payable_item_id = pai.id
-          LEFT JOIN payment_allocations pa ON pa.payment_request_item_id = pri.id
-          LEFT JOIN payment_requests pr ON pr.id = pri.payment_request_id
-          WHERE pai.source_id = ? AND pai.source_type = 'pi' AND pai.fee_type = 'deposit'`,
-          [pi.id]
-        );
-        const depositPaid = dpr && (dpr.paid_minor + Math.round(dpr.rounding_amount * 100)) >= dpr.payable_minor;
-        if (!depositPaid) {
-          return res.status(400).json({ error: `PI ${pi.pi_no} 定金尚未付清，不能生成 CI` });
-        }
-      }
+      if (!isPiDepositSettledForCI(pi))
+        return res.status(400).json({ error: `PI ${pi.pi_no} 定金尚未付清，不能生成 CI` });
     }
 
     const firstPi = pis[0];
