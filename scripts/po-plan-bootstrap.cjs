@@ -2,7 +2,7 @@
 const fs=require('node:fs');
 const path=require('node:path');
 const SERVER_MARKER='// PO-DYNAMIC-PLAN-V1';
-const ASSET_VERSION='20261022c';
+const ASSET_VERSION='20261022d';
 const UI_MARKER='<script src="po-plan-ui.js?v='+ASSET_VERSION+'"></script>';
 const DRAFT_SYNC_MARKER='<script src="po-plan-draft-sync.js?v='+ASSET_VERSION+'"></script>';
 const UI_BLOCK=UI_MARKER+'\n'+DRAFT_SYNC_MARKER;

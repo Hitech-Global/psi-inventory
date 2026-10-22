@@ -63,7 +63,7 @@ test('frontend sends selected brands and countries as repeated URL query paramet
  assert.equal(url.searchParams.get('keyword'),'P');
 });
 test('production bootstrap bumps asset URL so browsers load updated PO plan UI',()=>{
- assert.match(boot,/ASSET_VERSION='20261022c'/);
+ assert.match(boot,/ASSET_VERSION='20261022d'/);
  assert.match(boot,/patchIndex\(/);
 });
 test('backend supports parameterized AND of multi-brand and multi-country, status and keyword',()=>{
