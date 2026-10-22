@@ -11207,7 +11207,13 @@ async function editPI(id){
       +t('gen.L5481.1','<div class="table-container" style="max-height:52vh;overflow:auto;box-shadow:none;margin-bottom:8px"><table class="data-table pi-cmp-table" id="pi-items-table"><thead><tr><th>SKU</th><th>PO数量</th><th>PI确认数量</th><th>PO单价</th><th>PI确认单价</th><th>PI折扣</th><th>PI金额</th><th>数量差异</th><th>单价差异</th><th>操作</th></tr></thead><tbody id="pi-items"></tbody><tfoot id="pi-cmp-foot"></tfoot></table></div>')
       +'</div>';
     openModal(t('modal.title.editPI.2', '编辑PI - {v1}', {v1: esc(pi.pi_no)}),body,t('modal.footer.editPI', `<button class="btn btn-secondary" onclick="closeModal()">关闭</button><button class="btn btn-primary" onclick="saveEditPI('{v1}')">💾 保存</button>`, {v1: id}),'modal-pi');
-    const sb=document.querySelector('.modal.show .btn-primary'); if(sb) sb.id='btn-save-edit-pi';
+    // The "show" class is on #modal-overlay, not on .modal.
+    // Bind the actual PI edit-save button, including translated footers.
+    const sb=document.querySelector('#modal-overlay.show #modal-content .modal-footer button[onclick^="saveEditPI("]');
+    if(sb){
+      sb.id='btn-save-edit-pi';
+      sb.insertAdjacentHTML('beforebegin','<span id="pi-edit-save-status" role="status" aria-live="polite" style="display:none;align-items:center;gap:6px;margin-right:12px;font-size:12px;color:var(--text-muted,#6e6e73)">⏳ 正在保存，请勿重复提交…</span>');
+    }
     // 预填明细（复用 computePODiff + renderCmpTable）
     const relatedIdsForRows=(()=>{try{return Array.isArray(pi.related_po_ids)?pi.related_po_ids:JSON.parse(pi.related_po_ids||'[]')}catch(e){return []}})();
     window._editingPIIsMultiPO=relatedIdsForRows.length>1;
@@ -11254,8 +11260,15 @@ async function editPI(id){
   }catch(e){showToast(e.message,'danger')}
 }
 async function saveEditPI(id){
-  const btn=document.getElementById('btn-save-edit-pi');
-  if(btn){btn.disabled=true;btn._old=btn.textContent;btn.textContent=t('common.saving','保存中…');}
+  const btn=document.getElementById('btn-save-edit-pi')||
+    document.querySelector('#modal-content .modal-footer button[onclick^="saveEditPI("]');
+  if(!btn||btn.disabled)return; // no stale modal submission or double-click
+  const status=document.getElementById('pi-edit-save-status');
+  btn.disabled=true;
+  btn._old=btn.textContent;
+  btn.textContent='⏳ '+t('common.saving','保存中…');
+  btn.setAttribute('aria-busy','true');
+  if(status){status.textContent='⏳ 正在保存，请勿重复提交…';status.style.display='inline-flex';}
   try{
     const termSel=document.getElementById('npi-terms');
     // 明细：仅组装有效 SKU 行（与 saveNewPI 同源，PUT 端会按 pi_confirmed_qty 重算金额/PO 同步）
@@ -11288,8 +11301,15 @@ async function saveEditPI(id){
     showToast(t('toast.piSaved','PI 保存成功（总额 {amt}）',{amt:fmtMoney(res.total_amount)}),'success');
     closeModal();
     loadPI(); // 刷新 PI 列表
-  }catch(e){showToast(e.message,'danger')}
-  finally{ if(btn){btn.disabled=false;btn.textContent=btn._old||t('common.save','保存');} }
+  }catch(e){
+    if(status&&status.isConnected!==false)status.textContent='保存失败，请检查错误提示后重试';
+    showToast(e.message,'danger');
+  }
+  finally{
+    btn.disabled=false;
+    btn.removeAttribute('aria-busy');
+    btn.textContent=btn._old||t('common.save','保存');
+  }
 }
 // 会话级主数据缓存（suppliers/countries/brands；PO/PI/明细/附件不缓存）
 var _masterCache={suppliers:null,countries:null,brands:null,ts:0,TTL:5*60*1000};
