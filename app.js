@@ -13788,13 +13788,21 @@ function formatOwnerNames(arr){
   return esc(arr[0])+' <span style="color:#1890ff">+'+(arr.length-1)+'</span>';
 }
 function userChecklist(users, selectedIds, cbClass){
-  users=users||[];
-  const sel=(selectedIds||[]).map(String);
-  if(!users.length) return '<span class="empty-state" style="padding:8px">'+t('logistics.listing.no_users','暂无可选用户')+'</span>';
-  return users.map(u=>{
-    const checked=sel.includes(String(u.id))?' checked':'';
-    return '<label class="cc-check"><input type="checkbox" class="'+cbClass+'" value="'+esc(u.id)+'"'+checked+'> '+esc(u.name)+'</label>';
+  // Only users enabled for login are selectable as listing owners / CC.
+  // Inactive and pending accounts remain in stored history, not in this UI.
+  const active=(users||[]).filter(u=>u&&u.status==='active');
+  const sel=new Set((selectedIds||[]).map(String));
+  if(!active.length) return '<span class="empty-state" style="padding:8px">'+t('logistics.listing.no_users','暂无可选用户')+'</span>';
+  return active.map(u=>{
+    const checked=sel.has(String(u.id))?' checked':'';
+    return '<label class="cc-check"><input type="checkbox" class="'+cbClass+'" value="'+esc(u.id)+'"'+checked+'><span class="listing-person-name">'+esc(u.name)+'</span></label>';
   }).join('');
+}
+function listingEditSelectedIds(selector){
+  return Array.from(document.querySelectorAll(selector)).filter(cb=>cb.checked).map(cb=>String(cb.value)).sort();
+}
+function listingIdsEqual(a,b){
+  return a.length===b.length&&a.every((id,i)=>id===b[i]);
 }
 async function changeListingStatus(id, sel){
   const prev=sel.dataset.prev||'pending_plan';
@@ -14046,6 +14054,14 @@ async function editLog(id){
     const l=await api('/api/logistics-batches/'+id);
     let plData=null;if(l.pl_id){plData=await api('/api/packing-lists/'+l.pl_id);}
     const ffs=await api('/api/freight-forwarders');const users=await api('/api/users');const listingInfo=await api('/api/logistics-batches/'+id+'/listing').catch(()=>null);
+    // Compare only currently selectable accounts on save. If listing selections
+    // are untouched, do not POST them and never rewrite historical inactive IDs.
+    const activeIds=new Set((users||[]).filter(u=>u.status==='active').map(u=>String(u.id)));
+    window._listingEditSelection={
+      id:String(id),
+      owners:((listingInfo&&listingInfo.listing_owner_ids)||[]).map(String).filter(uid=>activeIds.has(uid)).sort(),
+      cc:((listingInfo&&listingInfo.cc)||[]).map(c=>String(c.user_id)).filter(uid=>activeIds.has(uid)).sort()
+    };
     const ffOpts=ffs.map(f=>'<option value="'+f.id+'" data-name="'+esc(f.name)+'"'+(f.id===l.forwarder_id?' selected':'')+'>'+esc(f.name)+'</option>').join('');
     const plItems=(plData&&plData.items)||[];
     openModal(t('logistics.edit.title','编辑物流批次')+' — '+esc(l.batch_no),
@@ -14074,9 +14090,13 @@ async function editLog(id){
   }catch(e){showToast(e.message,'danger')}
 }
 async function saveEditLog(logId,plId){
-  const ownerIds=Array.from(document.querySelectorAll('#el-owner-list .listing-owner-cb')).filter(cb=>cb.checked).map(cb=>cb.value);
-  if(ownerIds.length===0){ showToast(t('logistics.listing.owner_required','上架负责人至少选择 1 人'),'warning'); return; }
-  const ccIds=Array.from(document.querySelectorAll('#el-cc-list .listing-cc-cb')).filter(cb=>cb.checked).map(cb=>cb.value);
+  const ownerIds=listingEditSelectedIds('#el-owner-list .listing-owner-cb');
+  const ccIds=listingEditSelectedIds('#el-cc-list .listing-cc-cb');
+  const snapshot=window._listingEditSelection;
+  const matching=snapshot&&snapshot.id===String(logId);
+  const ownerChanged=!matching||!listingIdsEqual(ownerIds,snapshot.owners);
+  const ccChanged=!matching||!listingIdsEqual(ccIds,snapshot.cc);
+  if(ownerChanged&&ownerIds.length===0){ showToast(t('logistics.listing.owner_required','上架负责人至少选择 1 人'),'warning'); return; }
   const d={batch_no:document.getElementById('el-batchno').value,
     forwarder_id:document.getElementById('el-ff').value,
     forwarder_name:document.getElementById('el-ff').options[document.getElementById('el-ff').selectedIndex]?.dataset.name||'',
@@ -14091,7 +14111,14 @@ async function saveEditLog(logId,plId){
   try{
     await api('/api/logistics-batches/'+logId,'PUT',d);
     if(plId){await api('/api/packing-lists/'+plId,'PUT',{pl_no:document.getElementById('el-plno').value});}
-    await api('/api/logistics-batches/'+logId+'/listing','POST',{listing_owner_ids:ownerIds,listing_cc_user_ids:ccIds});
+    // A regular logistics edit must not re-submit stale disabled assignees.
+    // Send only fields explicitly changed by the operator; unchanged
+    // historical owner/CC memberships are kept intact by the backend.
+    const listingChange={};
+    if(ownerChanged)listingChange.listing_owner_ids=ownerIds;
+    if(ccChanged)listingChange.listing_cc_user_ids=ccIds;
+    if(Object.keys(listingChange).length)
+      await api('/api/logistics-batches/'+logId+'/listing','POST',listingChange);
     showToast(t('logistics.toast.save_success','保存成功'),'success');closeModal();
     if(window.__logiCtx && window.__logiCtx.source==='ci-detail'){
       const cid=window.__logiCtx.ciId; window.__logiCtx=null;

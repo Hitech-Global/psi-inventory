@@ -766,6 +766,26 @@ input[type="number"]{-moz-appearance:textfield;appearance:textfield}
 .badge-warning{background:#fff3cd;color:#f57f17}
 .cc-list{display:flex;flex-wrap:wrap;gap:8px;max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:8px;background:var(--bg-card,#fff)}
 .cc-check{display:inline-flex;align-items:center;gap:4px;font-size:13px;font-weight:400;margin:0;cursor:pointer}
+/* Only the two logistics listing person selectors: keep full names readable. */
+#npl-owner-list,#npl-cc-list,#el-owner-list,#el-cc-list{
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,180px),1fr));
+  gap:8px;max-height:220px;padding:10px;align-items:stretch
+}
+#npl-owner-list .cc-check,#npl-cc-list .cc-check,
+#el-owner-list .cc-check,#el-cc-list .cc-check{
+  display:flex;min-width:0;gap:9px;align-items:center;
+  border:1px solid var(--border);border-radius:8px;
+  padding:8px 10px;background:var(--bg-card,#fff);text-align:left
+}
+#npl-owner-list .cc-check input,#npl-cc-list .cc-check input,
+#el-owner-list .cc-check input,#el-cc-list .cc-check input{
+  flex:0 0 auto;width:15px;height:15px;margin:0
+}
+#npl-owner-list .listing-person-name,#npl-cc-list .listing-person-name,
+#el-owner-list .listing-person-name,#el-cc-list .listing-person-name{
+  min-width:0;line-height:1.45;white-space:normal;overflow-wrap:break-word;
+  word-break:normal;text-align:left
+}
 /* v1.0.2 通用附件组件 */
 .att-drop-zone{border:2px dashed #d9d9d9;border-radius:8px;padding:22px 16px;text-align:center;cursor:pointer;background:#fafafa;transition:border-color .15s,background .15s;margin-bottom:8px}
 .att-drop-zone:hover{border-color:#1890ff;background:#f0f7ff}
