@@ -15016,7 +15016,7 @@ const PAY_SUBCATS={
   customs_duty:{duty:t("app.224", "\u5173\u7a0e")},
   inspection_fee:{inspection:t("app.439", "\u5546\u68c0\u8d39")}
 };
-const PAY_STATUS_MAP={pending_approval:t("shell.072", "\u5f85\u5ba1\u6279"),approved:t("shell.073", "\u5df2\u5ba1\u6279"),paid:t("app.1094", "\u5df2\u4ed8\u6b3e"),rejected:t("app.1095", "\u5df2\u9a73\u56de"),partial_paid:t("app.1096", "\u90e8\u5206\u4ed8\u6b3e"),partial_deduction:t("app.1097", "\u90e8\u5206\u62b5\u6263"),partial_rounding:t("app.1098", "\u90e8\u5206\u62b9\u96f6"),deduction_settled:t("app.1099", "\u5168\u989d\u62b5\u6263"),partial_payment_partial_deduction:t("app.1100", "\u90e8\u5206\u4ed8\u6b3e+\u90e8\u5206\u62b5\u6263"),reversed:t("app.1101", "\u5df2\u51b2\u9500"),cancelled:t("shell.085", "\u5df2\u53d6\u6d88")};
+const PAY_STATUS_MAP={unpaid:t('status.unpaid','未付款'),pending_approval:t("shell.072", "\u5f85\u5ba1\u6279"),approved:t("shell.073", "\u5df2\u5ba1\u6279"),paid:t("app.1094", "\u5df2\u4ed8\u6b3e"),rejected:t("app.1095", "\u5df2\u9a73\u56de"),partial_paid:t("app.1096", "\u90e8\u5206\u4ed8\u6b3e"),partial_deduction:t("app.1097", "\u90e8\u5206\u62b5\u6263"),partial_rounding:t("app.1098", "\u90e8\u5206\u62b9\u96f6"),deduction_settled:t("app.1099", "\u5168\u989d\u62b5\u6263"),partial_payment_partial_deduction:t("app.1100", "\u90e8\u5206\u4ed8\u6b3e+\u90e8\u5206\u62b5\u6263"),reversed:t("app.1101", "\u5df2\u51b2\u9500"),cancelled:t("shell.085", "\u5df2\u53d6\u6d88")};
 
 // ==================== FIN-DASHBOARD-01：财务应付驾驶舱（只读）====================
 let _cockpitData=null;
