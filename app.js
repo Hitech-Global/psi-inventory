@@ -14124,6 +14124,8 @@ async function saveEditLog(logId,plId){
       const cid=window.__logiCtx.ciId; window.__logiCtx=null;
       invalidateCILogistics(cid);
       await viewCI(cid);
+      // 从 CI 详情编辑物流后，及时刷新底层 CI 列表（保留原筛选）。
+      if(currentPage==='ci') await loadCI();
     } else { loadLog(); }
   }catch(e){showToast(e.message,'danger')}
 }

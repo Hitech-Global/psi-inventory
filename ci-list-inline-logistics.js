@@ -310,7 +310,7 @@
 
   async function refreshAfterMutation(ciId) {
     invalidateCache(ciId);
-    if (global.currentPage === 'ci' && typeof global.loadCI === 'function') {
+    if (document.getElementById('ci-source-mode') && document.getElementById('ci-table') && typeof global.loadCI === 'function') {
       await global.loadCI();
       await togglePanel(ciId, true);
     }
