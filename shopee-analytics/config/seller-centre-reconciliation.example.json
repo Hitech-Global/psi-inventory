@@ -1,0 +1,20 @@
+{
+  "metrics": {
+    "sales": 0,
+    "orders": 0,
+    "adExpense": 0,
+    "broadOrders": 0,
+    "broadGmv": 0,
+    "directOrders": 0,
+    "directGmv": 0
+  },
+  "tolerances": {
+    "sales": 0.01,
+    "orders": 0.01,
+    "adExpense": 0.01,
+    "broadOrders": 0.01,
+    "broadGmv": 0.01,
+    "directOrders": 0.01,
+    "directGmv": 0.01
+  }
+}
