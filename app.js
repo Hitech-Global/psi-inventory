@@ -10102,6 +10102,11 @@ async function openRpReviewReport(){
     }
     showToast(t('rp.review.generating','正在生成复盘报告...'),'info');
     var data=await rpReviewEnsureViewModel(tab);
+    // 每次出报告均从最新 SKU 主数据确认生命周期；读取失败不得发出陈旧报告。
+    var liveSkuRows=await api('/api/replenishment-suggestions/review-lifecycle');
+    if(!Array.isArray(liveSkuRows)) throw new Error(t('rp.review.lifecycle_unavailable','最新SKU状态读取失败，请重试'));
+    var liveSkuStates=Object.create(null);
+    liveSkuRows.forEach(function(s){ if(s&&s.sku_code) liveSkuStates[s.sku_code]=s; });
     var R=window.RpReviewReport;
     // BM4049 pilot only. Fetch one country+warehouse evidence series per matching row,
     // on explicit report click. Do not mutate/cache the L0 forecast snapshot.
@@ -10137,6 +10142,7 @@ async function openRpReviewReport(){
       t: (typeof window.t==='function')?window.t:undefined,
       effectiveQtyFn: function(ch,row){ return rpGetEffectiveSuggestedQty(ch,row); },
       blockedFn: function(row){ return shouldBlockReplenish(row.sales_status||'', row.risk_tags||''); },
+      liveSkuStates:liveSkuStates,
       stockoutEvidence:stockoutEvidence
     });
     window.__rpReviewReport=report;
@@ -10192,6 +10198,8 @@ function rpReviewRenderModal(rep){
     + [ [t('rp.review.meta.sku_total','SKU 总数'), h.skuTotal],
         [t('rp.review.meta.target','目标周转'), esc(h.targetTurnoverText)],
         [t('rp.review.health.purchase','建议采购 SKU'), h.purchaseCount],
+        ...(h.clearanceCount>0?[[t('rp.review.health.clearance','清仓期 SKU'),h.clearanceCount]]:[]),
+        ...(h.lifecycleStaleCount>0?[[t('rp.review.health.lifecycle_stale','生命周期待重算'),h.lifecycleStaleCount]]:[]),
         [t('rp.review.health.overstock','高库存 SKU'), h.overstockCount],
         ...(h.stockoutReviewCount>0?[[t('rp.review.stockout.pending','断货影响待复核'),h.stockoutReviewCount]]:[]),
         [t('rp.review.health.blocked','Blocked / 慢销'), h.blockedCount],
@@ -10326,6 +10334,12 @@ function rpReviewRenderModal(rep){
             ?'新货刚到，观察补货后销量到第14天；原采购建议不变'
             :'核实断货及补货后销量，不作为确定性高库存；原采购建议不变')];
       })):'' )
+    + (rep.clearance && rep.clearance.length
+        ? '<div class="rp-rv-sec">🚫 '+esc(t('rp.review.sec.clearance','清仓期 / 停止采购'))+'（'+rep.clearance.length+'）</div>'
+          + rpReviewTbl(['SKU','品牌','当前库存池','生命周期','旧快照建议采购量（非有效建议）','处置动作'],
+            rep.clearance.map(function(d){return [esc(d.sku),esc(d.brand),rpReviewQty(d.pool),
+              esc(t('rp.review.clearance.policy','清仓期')),rpReviewQty(d.suggestedQty),
+              esc(t('rp.review.clearance.action','停止采购，优先消化库存；请按需重新计算订单预测'))];})) : '')
     + '<div class="rp-rv-sec">📦 '+esc(t('rp.review.sec.overstock','高库存 / 积压 SKU'))+'（'+rep.overstock.length+'）</div>'
       + rpReviewTbl(oHeaders,oRows)
     + '<div class="rp-rv-sec">🚫 '+esc(t('rp.review.sec.no_sales','无销量 SKU'))+'（'+rep.noSales.length+'）</div>'

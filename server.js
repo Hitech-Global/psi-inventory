@@ -6838,6 +6838,17 @@ function applyLiveForecastInventory(row) {
   return row;
 }
 
+// 复盘只读：按预测权限读取最新 SKU 主数据。绝不更改历史预测或建议采购数量。
+app.get('/api/replenishment-suggestions/review-lifecycle', requireApiPermission('replenishment_view'), asyncHandler((req, res) => {
+  const params = [];
+  let sql = `SELECT DISTINCT rs.sku_code, s.lifecycle_status, s.status
+    FROM replenishment_suggestions rs JOIN skus s ON rs.sku_code = s.sku_code WHERE 1=1`;
+  sql = appendConsignmentExclusion(sql, params, 'rs.target_warehouse');
+  const scope = buildReplenishmentDataScopeFilter(req);
+  if (scope.sql) { sql += scope.sql; params.push(...scope.params); }
+  res.json(query(sql, params).rows);
+}));
+
 // 补货建议汇总统计（用于SKU动销与订单预测页面顶部指标卡）
 app.get('/api/replenishment-suggestions/summary', requireApiPermission('replenishment_view'), asyncHandler((req, res) => {
   const { country, warehouse, brand, keyword, sales_status, lifecycle_status } = req.query;

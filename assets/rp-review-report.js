@@ -230,7 +230,11 @@
       afterOrderTurnover: afterTurn,
       m1: m1, m2: m2, m3: m3, m4: m4,
       salesStatus: (row.sales_status || '').trim(),
-      lifecycleStatus: (row.lifecycle_status || '').trim(),
+      lifecycleStatus: ((opts.liveSkuStates && Object.prototype.hasOwnProperty.call(opts.liveSkuStates,row.sku_code)
+        ? opts.liveSkuStates[row.sku_code].lifecycle_status : row.lifecycle_status) || '').trim(),
+      skuStatus: ((opts.liveSkuStates && opts.liveSkuStates[row.sku_code]
+        ? opts.liveSkuStates[row.sku_code].status : '') || '').trim(),
+      snapshotLifecycle: (row.lifecycle_status || '').trim(),
       stockoutEvidence: (opts.stockoutEvidence || {})[String(row.sku_code||'')+'|'+String(row.country||'')+'|'+String(row.target_warehouse||row.warehouse||'')] || null,
       riskTags: riskTags,
       // 权威 blocked：由调用方传入既有 shouldBlockReplenish 的结果（本模块不复制判断）
@@ -239,6 +243,11 @@
       systemAction: row.action || '',
       systemSuggestion: row.suggestion || ''
     };
+    dto.isClearance = dto.lifecycleStatus === 'clearance' || dto.skuStatus === 'clearance';
+    dto.isStopped = dto.lifecycleStatus === 'stopped' || dto.skuStatus === 'stopped' || dto.skuStatus === 'discontinued';
+    dto.lifecycleOutOfSync = dto.lifecycleStatus !== dto.snapshotLifecycle;
+    // 当前生命周期优先，旧快照的预测数值不在此处重算或回写。
+    if (dto.isClearance || dto.isStopped || dto.lifecycleOutOfSync) dto.blocked = true;
     dto.trend = rpReviewTrend(m1, m2, m3, m4);
     var ev=dto.stockoutEvidence;
     dto.referenceMonthlyDemand=ev&&ev.status==='qualified'?ev.referenceMonthlyDemand:null;
@@ -257,6 +266,7 @@
   }
 
   function rpReviewClassify(dto) {
+    if (dto.isClearance || dto.isStopped || dto.lifecycleOutOfSync) return CATEGORY.BLOCKED;
     if (dto.avgSales <= 0) return CATEGORY.NO_SALES;         // 无销量（含 avg_sales_period = 0）
     if (dto.suggestedQty > 0) return CATEGORY.PURCHASE;      // 建议采购
     // Pilot: unverified restock effects must not be called definitive overstock.
@@ -308,6 +318,21 @@
   // P2：一般性高库存、无销量待检查、其他需观察异常
   function rpReviewActionFor(dto, t) {
     t = t || defaultT;
+    if (dto.isClearance || dto.isStopped || dto.lifecycleOutOfSync) {
+      var policy = dto.isClearance ? t('rp.review.clearance.policy','清仓期')
+        : dto.isStopped ? t('rp.review.stopped.policy','停采/停产') : t('rp.review.lifecycle_changed.policy','生命周期已更新');
+      return {
+        priority: PRIORITY.P1,
+        issue: policy + (dto.lifecycleOutOfSync
+          ? t('rp.review.lifecycle_stale.issue','（预测快照仍为旧生命周期）') : ''),
+        data: (dto.lifecycleOutOfSync ? t('rp.review.lifecycle_stale.data','旧预测快照仅供核对：') : '') + rpReviewActionData(dto,t),
+        action: dto.isClearance
+          ? t('rp.review.clearance.action','停止采购，优先清仓；如旧快照仍有建议采购量，请重新计算订单预测')
+          : dto.isStopped
+            ? t('rp.review.stopped.action','停止采购，不参与补货；请重新计算订单预测')
+            : t('rp.review.lifecycle_changed.action','生命周期已变更，请重新计算订单预测后再复核采购建议')
+      };
+    }
     if(dto.category===CATEGORY.STOCKOUT_REVIEW) {
       var ev=dto.stockoutEvidence||{};
       var newArrival=ev.recentMajorRestock===true;
@@ -448,7 +473,8 @@
       var dto = rpReviewRowContext(rawRows[i], tab, {
         effectiveQtyFn: src.effectiveQtyFn,
         blockedFn: src.blockedFn,
-        stockoutEvidence: src.stockoutEvidence
+        stockoutEvidence: src.stockoutEvidence,
+        liveSkuStates: src.liveSkuStates
       });
       if (!dto) continue;
       dto.category = rpReviewClassify(dto);
@@ -539,6 +565,8 @@
       overstockCount: buckets[CATEGORY.OVERSTOCK].length,
       // 独立维度：系统拦截补货（慢销/呆滞/停采/清仓/高库存标签）的 SKU 总数
       blockedCount: blockedFlagCount,
+      clearanceCount: dtos.filter(function(d){return d.isClearance;}).length,
+      lifecycleStaleCount: dtos.filter(function(d){return d.lifecycleOutOfSync;}).length,
       // 分区残差：被拦截但未落入高库存/无销量/建议采购的 SKU 数
       blockedOnlyCount: buckets[CATEGORY.BLOCKED].length,
       // 高库存 ∩ 被拦截（用于说明两个维度的重叠程度）
@@ -598,6 +626,8 @@
       overstock: buckets[CATEGORY.OVERSTOCK].slice(),
       noSales: buckets[CATEGORY.NO_SALES].slice(),
       blocked: buckets[CATEGORY.BLOCKED].slice(),
+      clearance: dtos.filter(function(d){return d.isClearance;}),
+      lifecycleStale: dtos.filter(function(d){return d.lifecycleOutOfSync;}),
       normal: buckets[CATEGORY.NORMAL].slice(),
       stockoutReview: buckets[CATEGORY.STOCKOUT_REVIEW].slice(),
       stockoutEvidenceRows: dtos.filter(function(d){return !!d.stockoutEvidence;}),
@@ -637,6 +667,12 @@
       });
 
     var highlights = [];
+    if (health.clearanceCount > 0) highlights.push(t('rp.review.hl.clearance',
+      '{n} 个 SKU 已设清仓期：停止采购，优先消化库存；不进入建议采购。',
+      {n:health.clearanceCount}));
+    if (health.lifecycleStaleCount > 0) highlights.push(t('rp.review.hl.lifecycle_stale',
+      '{n} 个 SKU 主数据生命周期已变更，但预测数量还是旧快照，需重新计算。',
+      {n:health.lifecycleStaleCount}));
     if (health.skuTotal === 0) {
       return {
         headline: t('rp.review.summary.empty', '当前筛选条件下没有可复盘的 SKU 数据。'),
@@ -720,6 +756,8 @@
       ? t('rp.review.months', '{n} 个月', { n: h.targetTurnover })
       : h.targetTurnoverText));
     lines.push('建议采购：' + h.purchaseCount);
+    if(h.clearanceCount) lines.push('清仓期（停止采购）：' + h.clearanceCount);
+    if(h.lifecycleStaleCount) lines.push('生命周期变更，预测待重算：' + h.lifecycleStaleCount);
     lines.push('高库存：' + h.overstockCount);
     if(h.stockoutReviewCount)lines.push('断货影响待复核：'+h.stockoutReviewCount);
     lines.push('慢销/Blocked：' + h.blockedCount);
@@ -781,6 +819,8 @@
       [t('rp.review.meta.target', '目标周转'), report.health.targetTurnoverText],
       [t('rp.review.health.purchase', '建议采购 SKU 数'), report.health.purchaseCount],
       [t('rp.review.health.purchase_qty', '建议采购数量合计'), Math.round(report.health.purchaseQty)],
+      [t('rp.review.health.clearance', '清仓期 SKU 数'), report.health.clearanceCount],
+      [t('rp.review.health.lifecycle_stale', '生命周期待重算 SKU 数'), report.health.lifecycleStaleCount],
       [t('rp.review.health.overstock', '高库存 SKU 数'), report.health.overstockCount],
       [t('rp.review.stockout.pending', '历史断货待复核 SKU 数'), report.health.stockoutReviewCount],
       [t('rp.review.health.blocked', 'Blocked / 慢销 SKU 数'), report.health.blockedCount],
@@ -845,6 +885,15 @@
       })
     });
 
+    // 清仓 SKU 的旧预测量保留核对，但不进入 Purchase Suggestions Sheet。
+    if(report.clearance && report.clearance.length) sheets.push({
+      name: 'Clearance',
+      headers: ['SKU', 'Brand', '国家', '仓库', '当前库存池', '生命周期', '旧快照建议采购(非有效建议)', '处置动作'],
+      rows: report.clearance.map(function(d) {
+        return [d.sku, d.brand, d.country, d.warehouse, Math.round(d.pool), '清仓期',
+          Math.round(d.suggestedQty), '停止采购，优先消化库存；若旧数据未同步，请重新计算'];
+      })
+    });
     // 3) Overstock
     sheets.push({
       name: 'Overstock',
