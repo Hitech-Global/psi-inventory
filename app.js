@@ -153,10 +153,10 @@ async function apiRaw(url,method='GET',body=null){
   return d;
 }
 
-// 已知 reference 端点 → ref key（query 忽略，精确匹配；/api/warehouses 与 /api/warehouses/by-country 区分）
+// 已知 reference 端点 → ref key。只缓存不带 query 的完整主数据；带筛选参数的 GET 必须直达后端。
 function _refKeyForUrl(url){
-  if(!url) return null;
-  var base = url.split('?')[0];
+  if(!url || url.indexOf('?')!==-1) return null;
+  var base = url;
   var eps = (window.AppStore && window.AppStore._internal && window.AppStore._internal.REF_ENDPOINTS) || {};
   for(var k in eps){ if(eps[k]===base) return k; }
   return null;
@@ -2992,6 +2992,11 @@ async function renderSKUs(){
   document.getElementById('content-inner').innerHTML=t('html.renderSKUs', `<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>关键词</label><input type="text" id="sku-kw" placeholder="SKU/产品名/Model/EAN" onkeypress="if(event.key==='Enter')loadSKUs()"></div><div class="filter-group"><label>品牌</label><select id="sku-brand">{v1}</select></div><div class="filter-group"><label>状态</label><select id="sku-st">{v2}</select></div><div class="filter-group"><label>生命周期</label><select id="sku-lc">{v3}</select></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadSKUs()">搜索</button></div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🏷️ SKU列表</div><div class="table-section-actions"><div style="position:relative;display:inline-block">{v4}</div>{v5}</div></div><div id="sku-batch-bar" style="display:none"></div><div id="sku-table"></div></div>`, {v1: brandOpts, v2: stOpts, v3: lcOpts, v4: hasPermission('sku_import')?t('gen.L1919.1','<button class="btn btn-secondary btn-sm" id="sku-import-trigger" onclick="toggleSkuImportMenu(event)">📥 导入/更新SKU ▾</button>'):'', v5: hasPermission('sku_create')?t('gen.L1919.2','<button class="btn btn-primary btn-sm" onclick="editSKU()">➕ 新增SKU</button>'):''});
   // 将下拉菜单挂到 body，避免被父容器 overflow:hidden 截断
   ensureSkuImportMenu();
+  // SKU 筛选即时生效；不依赖各语言模板的内联事件。
+  ['sku-brand','sku-st','sku-lc'].forEach(function(id){
+    const el=document.getElementById(id);
+    if(el) el.addEventListener('change',loadSKUs);
+  });
   loadSKUs();
 }
 
@@ -3054,11 +3059,21 @@ function showSkuImportRecords(){
     document.getElementById('sku-import-records-list').innerHTML='<div style="color:#ff4d4f;text-align:center;padding:20px">'+e.message+'</div>';
   });
 }
+let _skuLoadSeq=0;
 async function loadSKUs(){
+  const requestSeq=++_skuLoadSeq;
   try{
     const kw=document.getElementById('sku-kw')?.value||'',st=document.getElementById('sku-st')?.value||'',
           br=document.getElementById('sku-brand')?.value||'',lc=document.getElementById('sku-lc')?.value||'';
-    const data=await api('/api/skus?keyword='+encodeURIComponent(kw)+'&status='+st+'&brand='+encodeURIComponent(br)+'&lifecycle_status='+lc);
+    const filters=new URLSearchParams();
+    if(kw.trim()) filters.set('keyword',kw.trim());
+    if(st) filters.set('status',st);
+    if(br) filters.set('brand',br);
+    if(lc) filters.set('lifecycle_status',lc);
+    const query=filters.toString();
+    const data=await api('/api/skus'+(query?'?'+query:''));
+    // 快速连续筛选时，旧请求不能回写新筛选的结果，也不能写入已退出的页面。
+    if(requestSeq!==_skuLoadSeq || !document.getElementById('sku-table')) return;
     window._skuData=data;
     window._skuSelected={};
     var lcLabels={'new_test':t('gen.L1991.1','新品导入'),'new_launch':t("app.548", "\u65b0\u54c1\u542f\u52a8"),'growth':t("app.549", "\u6210\u957f\u671f"),'stable':t("app.550", "\u6210\u719f\u671f"),'slow':t("app.551", "\u8870\u9000\u671f"),'stagnant':t("app.552", "\u6ede\u9500"),'clearance':t("app.553", "\u6e05\u4ed3\u671f"),'stopped':t("app.554", "\u505c\u91c7/\u505c\u4ea7"),'discontinued':t("app.554", "\u505c\u91c7/\u505c\u4ea7")};
@@ -3090,9 +3105,11 @@ async function loadSKUs(){
         '</tr>';
       }).join('');
     var emptyTip=t('gen.L2019.1','<tr><td colspan="13" style="text-align:center;color:#999;padding:40px">📭 暂无SKU数据，点击右上角"导入/更新SKU"或"\u65b0\u589eSKU"开始</td></tr>');
-    document.getElementById('sku-table').innerHTML='<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table">'+thead+'<tbody>'+(tbody||emptyTip)+'</tbody></table></div>';
+    const table=document.getElementById('sku-table');
+    if(!table || requestSeq!==_skuLoadSeq) return;
+    table.innerHTML='<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table">'+thead+'<tbody>'+(tbody||emptyTip)+'</tbody></table></div>';
     updateSkuBatchBar();
-  }catch(e){showFlash(e.message,'danger')}
+  }catch(e){if(requestSeq===_skuLoadSeq && document.getElementById('sku-table')) showFlash(e.message,'danger')}
 }
 function toggleAllSku(cb){
   document.querySelectorAll('.sku-checkbox').forEach(function(c){c.checked=cb.checked});
