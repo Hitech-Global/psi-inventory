@@ -79,8 +79,13 @@ const fetchImpl = async (_url, options) => {
 
   const start = await service.beginAuthorization({ shopId: 1326456001 });
   const authUrl = new URL(start.authorizationUrl);
+  assert.strictEqual(authUrl.origin, 'https://open.shopee.com');
+  assert.strictEqual(authUrl.pathname, '/auth');
+  assert.strictEqual(authUrl.searchParams.get('partner_id'), '123');
   assert.strictEqual(authUrl.searchParams.get('auth_type'), 'principal');
-  assert.strictEqual(authUrl.searchParams.get('redirect'), `https://analytics.example.com${BRAND_PORTAL_CALLBACK_PATH}`);
+  assert.strictEqual(authUrl.searchParams.get('redirect_uri'), `https://analytics.example.com${BRAND_PORTAL_CALLBACK_PATH}`);
+  assert.strictEqual(authUrl.searchParams.get('response_type'), 'code');
+  assert.strictEqual(authUrl.searchParams.get('state'), start.state);
 
   const result = await service.completeAuthorization({ state: start.state, code: 'one-time-code' });
   assert.deepStrictEqual(result, { shopId: 1326456001, principalId: 777 });

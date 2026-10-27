@@ -3,11 +3,16 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const { ShopeeTokenManager } = require('../src/token-manager');
-const { ShopeeAuthClient } = require('../src/auth-client');
+const { buildBrandPortalAuthorizationUrl } = require('../src/brand-portal-oauth-service');
 
-const url = new ShopeeAuthClient({ partnerId:'123', partnerKey:'secret', fetchImpl: async()=>{} })
-  .buildAuthorizationUrl({ redirectUri:'https://example.com/callback', timestamp:100, authType:'principal' });
-assert.strictEqual(new URL(url).searchParams.get('auth_type'), 'principal');
+const url = buildBrandPortalAuthorizationUrl({ partnerId:'123', redirectUri:'https://example.com/callback', state:'test-state' });
+const parsedUrl = new URL(url);
+assert.strictEqual(parsedUrl.origin, 'https://open.shopee.com');
+assert.strictEqual(parsedUrl.pathname, '/auth');
+assert.strictEqual(parsedUrl.searchParams.get('auth_type'), 'principal');
+assert.strictEqual(parsedUrl.searchParams.get('redirect_uri'), 'https://example.com/callback');
+assert.strictEqual(parsedUrl.searchParams.get('response_type'), 'code');
+assert.strictEqual(parsedUrl.searchParams.get('state'), 'test-state');
 
 let bodySeen = null;
 const tokenRepository = {

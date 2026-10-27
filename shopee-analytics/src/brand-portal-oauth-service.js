@@ -16,6 +16,18 @@ const {
 const BRAND_PORTAL_COOKIE = 'shopee_brand_portal_oauth_state';
 const BRAND_PORTAL_CALLBACK_PATH = '/api/shopee-analytics/brand-portal/oauth/callback';
 
+function buildBrandPortalAuthorizationUrl({ partnerId, redirectUri, state = '' }) {
+  const normalizedPartnerId = String(partnerId || '').trim();
+  if (!/^\d+$/.test(normalizedPartnerId)) throw new Error('Brand Portal partner_id is required');
+  const url = new URL('https://open.shopee.com/auth');
+  url.searchParams.set('partner_id', normalizedPartnerId);
+  url.searchParams.set('auth_type', 'principal');
+  url.searchParams.set('redirect_uri', redirectUri);
+  url.searchParams.set('response_type', 'code');
+  if (state) url.searchParams.set('state', state);
+  return url.toString();
+}
+
 function resolveBrandPortalRedirectUrl(env = process.env) {
   const explicit = String(env.SHOPEE_BRAND_PORTAL_REDIRECT_URL || '').trim();
   const base = String(env.FEISHU_EXTERNAL_BASE_URL || '').trim().replace(/\/$/, '');
@@ -113,7 +125,7 @@ class BrandPortalOAuthService {
     return {
       state,
       ttlSeconds,
-      authorizationUrl: authClient.buildAuthorizationUrl({ redirectUri, authType: 'principal' }),
+      authorizationUrl: buildBrandPortalAuthorizationUrl({ partnerId: authClient.partnerId, redirectUri, state }),
       shopId: id,
     };
   }
@@ -177,6 +189,7 @@ class BrandPortalOAuthService {
 module.exports = {
   BRAND_PORTAL_COOKIE,
   BRAND_PORTAL_CALLBACK_PATH,
+  buildBrandPortalAuthorizationUrl,
   resolveBrandPortalRedirectUrl,
   stateCookie,
   clearStateCookie,
