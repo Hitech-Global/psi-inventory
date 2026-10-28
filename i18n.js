@@ -5249,7 +5249,6 @@ I18N.dict.id["nav.payable_cockpit"]="Ringkasan Pembayaran";
 I18N.dict.zh["ci.col.total_freight"]="总运费"; I18N.dict.en["ci.col.total_freight"]="Total Freight"; I18N.dict.id["ci.col.total_freight"]="Total Ongkos Kirim";
 I18N.dict.zh["ci.col.freight_ratio"]="运费占比"; I18N.dict.en["ci.col.freight_ratio"]="Freight/Value"; I18N.dict.id["ci.col.freight_ratio"]="Proporsi Ongkos Kirim";
 I18N.dict.zh["logistics.col.cargo_value"]="总货值"; I18N.dict.en["logistics.col.cargo_value"]="Cargo Value"; I18N.dict.id["logistics.col.cargo_value"]="Nilai Barang";
-}
 // 手动用户管理：新增/删除界面文案（沿用 i18n.js 现有字典）
 I18N.dict.en["user.action.add"]="Add User"; I18N.dict.id["user.action.add"]="Tambah Pengguna";
 I18N.dict.en["user.action.remove"]="Delete"; I18N.dict.id["user.action.remove"]="Hapus";
