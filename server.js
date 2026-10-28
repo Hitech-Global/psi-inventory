@@ -2016,6 +2016,47 @@ app.post('/api/users/:id/revoke-sessions', requireApiPermission('user_manage'), 
   res.json({ success: true });
 }));
 
+// 仅供有 user_manage 权限的管理员检索飞书员工；复用通知模块的 tenant token。
+app.get('/api/users/feishu-directory', requireApiPermission('user_manage'), asyncHandler(async (req, res) => {
+  const keyword = typeof req.query?.q === 'string' ? req.query.q.trim() : '';
+  if (keyword.length < 2 || keyword.length > 128) {
+    return res.status(400).json({ error: '请输入至少 2 个字符的姓名或邮箱关键词' });
+  }
+  if (!FEISHU_APP_ID || !FEISHU_APP_SECRET) {
+    return res.status(503).json({ error: '未配置飞书应用，无法检索通讯录' });
+  }
+  try {
+    const token = await getFeishuTenantToken();
+    const response = await fetch('https://open.feishu.cn/open-apis/directory/v1/employees/search?employee_id_type=union_id', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: keyword, page_request: { page_size: 20 },
+        required_fields: ['base_info.employee_id', 'base_info.name.name', 'base_info.email'] }),
+      signal: AbortSignal.timeout(8000)
+    });
+    const payload = await response.json();
+    if (!response.ok || payload.code !== 0) {
+      const isScope = payload.code === 99991672 || payload.code === 99991671 || response.status === 403;
+      return res.status(isScope ? 403 : 502).json({ error: isScope
+        ? '飞书应用缺少员工搜索或姓名读取权限，请在飞书开放平台开通 directory:employee:search 及 directory:employee.base.name.name:read'
+        : '飞书员工搜索失败，请稍后重试', feishu_code: payload.code || null });
+    }
+    const employees = Array.isArray(payload.data?.employees) ? payload.data.employees : [];
+    const users = employees.map(item => {
+      const base = item.base_info || {};
+      const id = base.employee_id || '';
+      const name = base.name?.name?.default_value || '';
+      const email = base.email || '';
+      return { union_id: id, name, email };
+    }).filter(u => /^on_[A-Za-z0-9]+$/.test(u.union_id) && u.name).slice(0, 20)
+      .map(u => ({ ...u, exists: !!queryOne("SELECT id FROM users WHERE feishu_union_id=? AND feishu_union_id<>''", [u.union_id]) }));
+    res.json({ users });
+  } catch (e) {
+    console.error('[Feishu directory search]', e.name || 'Error');
+    res.status(502).json({ error: '连接飞书通讯录失败，请稍后重试' });
+  }
+}));
+
 // 管理员预建飞书用户：Union ID 为唯一登录绑定键，不接受邮箱自动匹配，杜绝错误绑定。
 app.post('/api/users', requireApiPermission('user_manage'), asyncHandler((req, res) => {
   try {

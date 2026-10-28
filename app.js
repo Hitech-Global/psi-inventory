@@ -1837,7 +1837,7 @@ async function renderUsers(){
     if(titleBar) titleBar.insertAdjacentHTML('beforeend',
       '<div class="table-section-actions"><button class="btn btn-primary btn-sm" onclick="openManagedUserCreate()">'+esc(t('user.action.add','＋ 新增用户'))+'</button></div>');
     const hint=document.querySelector('#content-inner .pc-hint');
-    if(hint) hint.textContent=t('user.manual.hint','可手动新增已知飞书 Union ID 的用户，初始为待授权；分配角色并启用后才可访问。删除会撤销登录并隐藏用户，历史审批和操作记录保留。');
+    if(hint) hint.textContent=t('user.manual.hint','新增用户时可通过姓名搜索飞书通讯录，选择对应员工后自动绑定账号。新用户需分配角色并启用；删除用户会撤销访问并保留历史记录。');
     // I18N-B1-PAGE-CONTEXT-STATE-01：限定 [data-uid] 排除顶部 lang-switcher（class同为 user-role-sel），
     // 否则 renderUsers 会给 lang-switcher 绑定 setUserRole，语言切换时 setUserRole(undefined) → renderUsers() 覆盖当前页
     document.querySelectorAll('.user-role-sel[data-uid]').forEach(sel=>{ sel.addEventListener('change',()=>setUserRole(sel.dataset.uid, sel.value)); });
@@ -1864,29 +1864,81 @@ async function setUserStatus(uid, status){
 
 
 // 管理员手动添加：仅预建飞书身份，不创建本地密码；联接依赖飞书 OAuth 可靠的 Union ID。
+let __managedUserSearchSeq=0;
+let __managedUserSearchTimer=null;
+let __managedUserMatches=[];
+let __managedUserSelected=null;
 function openManagedUserCreate(){
+  ++__managedUserSearchSeq;
+  clearTimeout(__managedUserSearchTimer);
+  __managedUserMatches=[];
+  __managedUserSelected=null;
   const body='<div class="form-card" style="box-shadow:none;padding:0">'
     +'<div class="form-grid">'
-    +'<div class="form-group"><label>'+esc(t('user.field.name','姓名'))+' <span class="required">*</span></label><input id="new-user-name" type="text" maxlength="128"></div>'
+    +'<div class="form-group" style="position:relative;z-index:2"><label>'+esc(t('user.field.name','姓名'))+' <span class="required">*</span></label><input id="new-user-name" type="text" maxlength="128" autocomplete="off" placeholder="'+esc(t('user.search.placeholder','输入姓名搜索飞书员工'))+'" oninput="onManagedUserNameInput(this.value)">'
+    +'<div id="new-user-matches" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:20;max-height:225px;overflow-y:auto;background:var(--surface,#fff);border:1px solid #d6dae0;border-radius:8px;box-shadow:0 8px 28px rgba(0,0,0,.12);padding:4px"></div></div>'
     +'<div class="form-group"><label>'+esc(t('user.field.username','用户名'))+' <span class="required">*</span></label><input id="new-user-username" type="text" maxlength="128"></div>'
     +'<div class="form-group"><label>'+esc(t('user.field.email','邮箱'))+'</label><input id="new-user-email" type="email" maxlength="254"></div>'
-    +'<div class="form-group"><label>'+esc(t('user.field.union_id','飞书 Union ID'))+' <span class="required">*</span></label><input id="new-user-union" type="text" maxlength="256" autocomplete="off"></div>'
-    +'</div><div class="pc-hint">'+esc(t('user.create.hint','请填写该员工真实的飞书 Union ID（不是邮箱或姓名），用于飞书登录后匹配身份；账号创建后默认为待授权，再分配角色并启用。'))+'</div></div>';
+    +'<div class="form-group"><label>'+esc(t('user.search.selected','已选择的飞书账号'))+' <span class="required">*</span></label><input id="new-user-selected" type="text" readonly placeholder="'+esc(t('user.search.select','请先从姓名搜索结果中选择'))+'"></div>'
+    +'</div><details style="margin-top:12px"><summary style="cursor:pointer;color:var(--text-secondary)">'+esc(t('user.search.manual','搜索不可用？手动输入 Union ID（备用）'))+'</summary><input id="new-user-union-manual" type="text" maxlength="256" autocomplete="off" placeholder="Union ID" style="width:100%;margin-top:8px"></details><div class="pc-hint">'+esc(t('user.search.hint','姓名输入至少 2 个字符，从飞书通讯录选择员工；系统自动匹配 Union ID，账号创建后为待授权，需分配角色并启用。'))+'</div></div>';
   const footer='<button class="btn btn-secondary" onclick="closeModal()">'+esc(t('common.cancel','取消'))+'</button>'
     +'<button id="new-user-submit" class="btn btn-primary" onclick="submitManagedUserCreate()">'+esc(t('user.action.add','新增用户'))+'</button>';
   openModal(t('user.action.add','新增用户'),body,footer);
+}
+function onManagedUserNameInput(value){
+  const list=document.getElementById('new-user-matches');
+  const selected=document.getElementById('new-user-selected');
+  if(!list||!selected)return;
+  selected.value='';
+  __managedUserSelected=null;
+  __managedUserMatches=[];
+  const seq=++__managedUserSearchSeq;
+  clearTimeout(__managedUserSearchTimer);
+  const keyword=value.trim();
+  if(keyword.length<2){list.style.display='none';list.innerHTML='';return;}
+  list.style.display='block';
+  list.textContent=t('user.search.loading','正在搜索飞书通讯录…');
+  __managedUserSearchTimer=setTimeout(async()=>{
+    try{
+      const result=await api('/api/users/feishu-directory?q='+encodeURIComponent(keyword));
+      if(seq!==__managedUserSearchSeq||!list.isConnected)return;
+      __managedUserMatches=Array.isArray(result.users)?result.users:[];
+      list.innerHTML=__managedUserMatches.length
+        ?__managedUserMatches.map((u,i)=>'<button type="button" '+(u.exists?'disabled':'onclick="chooseManagedUserMatch('+i+')"')+' style="display:block;width:100%;padding:9px 11px;text-align:left;border:0;background:transparent;cursor:'+(u.exists?'not-allowed':'pointer')+';opacity:'+(u.exists?'.55':'1')+'"><b>'+esc(u.name)+'</b>'+(u.email?' <small>'+esc(u.email)+'</small>':'')+(u.exists?' <small>'+esc(t('user.search.exists','已在系统中'))+'</small>':'')+'</button>').join('')
+        :'<div style="padding:9px">'+esc(t('user.search.empty','未找到匹配员工'))+'</div>';
+    }catch(e){
+      if(seq!==__managedUserSearchSeq||!list.isConnected)return;
+      list.innerHTML='<div style="padding:9px">'+esc(e.message||t('user.search.failed','查询失败'))+'</div>';
+    }
+  },300);
+}
+function chooseManagedUserMatch(index){
+  const u=__managedUserMatches[index];
+  if(!u||u.exists||!/^on_[A-Za-z0-9]+$/.test(u.union_id))return;
+  __managedUserSelected=u;
+  ++__managedUserSearchSeq;
+  clearTimeout(__managedUserSearchTimer);
+  document.getElementById('new-user-name').value=u.name;
+  document.getElementById('new-user-selected').value=u.name+(u.email?' · '+u.email:'');
+  const email=document.getElementById('new-user-email');
+  if(email)email.value=u.email||'';
+  const username=document.getElementById('new-user-username');
+  if(username&&!username.value.trim()) username.value=(u.email?u.email.split('@')[0]:u.name).slice(0,128);
+  document.getElementById('new-user-matches').style.display='none';
 }
 async function submitManagedUserCreate(){
   const name=(document.getElementById('new-user-name')?.value||'').trim();
   const username=(document.getElementById('new-user-username')?.value||'').trim();
   const email=(document.getElementById('new-user-email')?.value||'').trim();
-  const feishu_union_id=(document.getElementById('new-user-union')?.value||'').trim();
-  if(!name||!username||!feishu_union_id){showToast(t('user.error.required','请填写姓名、用户名及飞书 Union ID'),'warning');return;}
+  const feishu_union_id=__managedUserSelected?.union_id||(document.getElementById('new-user-union-manual')?.value||'').trim();
+  if(!name||!username||!feishu_union_id){showToast(t('user.search.required','请选择飞书账号并填写用户名'),'warning');return;}
   const btn=document.getElementById('new-user-submit');
   if(btn?.disabled)return;
   if(btn) btn.disabled=true;
   try{
     await api('/api/users','POST',{name,username,email,feishu_union_id});
+    __managedUserSelected=null;
+    ++__managedUserSearchSeq;
     closeModal();
     showToast(t('user.create.success','用户已创建（待授权），请分配角色并启用'),'success');
     await renderUsers();

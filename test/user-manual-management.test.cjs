@@ -7,14 +7,19 @@ const vm = require('node:vm');
 const server = fs.readFileSync(path.join(__dirname,'..','server.js'),'utf8');
 const appSource = fs.readFileSync(path.join(__dirname,'..','app.js'),'utf8');
 
-function setup() {
+function setup({searchPayload,searchHttpStatus=200}={}) {
   const routes={};
   const users=[{id:'admin',username:'root',name:'Root',role_id:'role_admin',auth_source:'feishu',
     status:'active',feishu_union_id:'on_admin',email:''},
     {id:'local',username:'breakglass',name:'Recovery',role_id:'role_admin',auth_source:'local',
     status:'active',feishu_union_id:'',email:''}];
-  const writes=[],logs=[];
+  const writes=[],logs=[],fetchCalls=[];
   const context={
+    FEISHU_APP_ID:'test-id', FEISHU_APP_SECRET:'test-secret',
+    AbortSignal,
+    getFeishuTenantToken:async()=> 'mock-tenant-token',
+    fetch:async(url,options)=>{fetchCalls.push({url,options});return {ok:searchHttpStatus===200,status:searchHttpStatus,json:async()=>searchPayload||{code:0,data:{employees:[]}}};},
+    console,
     app:{
       get:(url,guard,handler)=>routes['GET '+url]=handler,
       post:(url,guard,handler)=>routes['POST '+url]=handler,
@@ -55,8 +60,11 @@ function setup() {
       return {changes:1};
     },
   };
-  vm.runInNewContext(server,context,{filename:'server.js'});
-  async function call(method,pathName,{body={},uid='admin',params}={}) {
+  const start=server.indexOf("app.get('/api/users',");
+  const end=server.indexOf("app.get('/api/roles/:id/data-scope'",start);
+  assert.ok(start>=0&&end>start,'user management routes must exist');
+  vm.runInNewContext(server.slice(start,end),context,{filename:'user-routes.js'});
+  async function call(method,pathName,{body={},uid='admin',params,queryParams={}}={}) {
     const fn=routes[method+' '+pathName];
     assert.ok(fn,'route not loaded '+method+' '+pathName);
     const response={
@@ -64,10 +72,10 @@ function setup() {
       status(code){this.code=code;return this;},
       json(payload){this.result=payload;return this;}
     };
-    await fn({body,currentUserId:uid,currentUserName:'Root',params:params||{}},response);
+    await fn({body,query:queryParams,currentUserId:uid,currentUserName:'Root',params:params||{}},response);
     return response;
   }
-  return {routes,users,writes,logs,call};
+  return {routes,users,writes,logs,fetchCalls,call};
 }
 test('create user: requires Feishu union ID; pending without role, no password and audit',async()=>{
   const x=setup();
@@ -138,4 +146,40 @@ test('UI exposes add/remove actions and has required Union ID + confirmation',()
      assert.ok(appSource.includes(phrase),'missing UI '+phrase);
   }
   assert.ok(/role_id!==?['"]role_admin/.test(appSource));
+  for(const phrase of ['onManagedUserNameInput','chooseManagedUserMatch','__managedUserSelected',
+     'new-user-matches','/api/users/feishu-directory?q=']) {
+    assert.ok(appSource.includes(phrase),'missing user picker '+phrase);
+  }
+});
+test('directory lookup: passes selected Union ID and flags existing accounts',async()=>{
+  const x=setup({searchPayload:{code:0,data:{employees:[
+    {base_info:{employee_id:'on_alice123',name:{name:{default_value:'Alice'}},email:'alice@company.com'}},
+    {base_info:{employee_id:'on_admin',name:{name:{default_value:'Root'}}}},
+    {base_info:{employee_id:'ou_not_union',name:{name:{default_value:'Wrong ID'}}}}
+  ]}}});
+  const response=await x.call('GET','/api/users/feishu-directory',{queryParams:{q:'Al'}});
+  assert.equal(response.code,200);
+  assert.equal(response.result.users.length,2);
+  assert.equal(response.result.users[0].union_id,'on_alice123');
+  assert.equal(response.result.users[0].name,'Alice');
+  assert.equal(response.result.users[0].exists,false);
+  assert.equal(response.result.users[1].exists,true);
+  assert.equal(x.fetchCalls.length,1);
+  assert.match(x.fetchCalls[0].url,/employee_id_type=union_id/);
+  const sent=JSON.parse(x.fetchCalls[0].options.body);
+  assert.equal(sent.query,'Al');
+  assert.ok(sent.required_fields.includes('base_info.name.name'));
+});
+test('directory lookup: short search is rejected without contacting Feishu',async()=>{
+  const x=setup();
+  const response=await x.call('GET','/api/users/feishu-directory',{queryParams:{q:'A'}});
+  assert.equal(response.code,400);
+  assert.equal(x.fetchCalls.length,0);
+});
+test('directory lookup: absent Feishu scope is reported without returning identities',async()=>{
+  const x=setup({searchHttpStatus:403,searchPayload:{code:99991672,msg:'permission denied'}});
+  const response=await x.call('GET','/api/users/feishu-directory',{queryParams:{q:'Alice'}});
+  assert.equal(response.code,403);
+  assert.match(response.result.error,/directory:employee:search/);
+  assert.equal(response.result.users,undefined);
 });
