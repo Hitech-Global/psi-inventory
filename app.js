@@ -227,6 +227,30 @@ async function probeFeishuStatus(){
     }
   }catch(e){ /* 静默失败：保持按钮可用，避免误伤 */ }
 }
+function toggleExternalLogin(){
+  clearLoginError();
+  const f=document.getElementById('external-login-form');
+  if(f)f.style.display=(f.style.display==='none'||!f.style.display)?'block':'none';
+}
+async function doExternalLogin(){
+  const email=(document.getElementById('external-login-email')?.value||'').trim();
+  const password=document.getElementById('external-login-password')?.value||'';
+  if(!email||!password){showLoginError(t('user.external.login_missing','请输入邮箱和密码'));return;}
+  const btn=document.getElementById('external-login-submit');
+  if(btn)btn.disabled=true;
+  try{
+    // 登录表单不经过 apiRaw 的 401 自动登出分支，避免输错密码时页面被重置。
+    const response=await fetch('/api/auth/external/login',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password})});
+    const result=await response.json();
+    if(!response.ok)throw new Error(result.error||t('user.external.login_failed','外部登录失败'));
+    const me=await api('/api/me');
+    currentUser=me;
+    applyCurrentUserLanguagePreference(me);
+    if(result.status==='pending'||me.status==='pending')showPendingPage(me);
+    else showApp();
+  }catch(e){showLoginError(e.message||t('user.external.login_failed','外部登录失败'));}
+  finally{if(btn)btn.disabled=false;}
+}
 function toggleBreakGlass(){ clearLoginError(); const f=document.getElementById('bg-form'); if(f) f.style.display = (f.style.display==='none'||!f.style.display)?'block':'none'; }
 function showLoginError(msg){ const el=document.getElementById('login-error'); if(!el)return; el.textContent=msg; el.style.display='block'; }
 function clearLoginError(){ const el=document.getElementById('login-error'); if(el) el.style.display='none'; }
@@ -258,7 +282,7 @@ function showPendingPage(data){
   const lp=document.getElementById('login-page'); if(lp) lp.style.display='none';
   const app=document.getElementById('app'); if(app) app.style.display='none';
   const pp=document.getElementById('pending-page');
-  if(pp){ const nm=document.getElementById('pending-name'); if(nm) nm.textContent=(data&&(data.name||data.username))||''; pp.style.display='flex'; }
+  if(pp){ const nm=document.getElementById('pending-name'); if(nm) nm.textContent=(data&&(data.name||data.username))||''; const rec=document.getElementById('pending-recognized'); if(rec&&data?.auth_source==='external') rec.textContent=t('user.external.pending','您的外部账号已注册，等待管理员授权'); pp.style.display='flex'; }
 }
 function doLogout(){
   api('/api/logout','POST').catch(()=>{}).finally(()=>{
@@ -1819,10 +1843,10 @@ async function renderUsers(){
       }
       return '<tr>'
         +'<td>'+esc(u.name||'')+'</td>'
-        +'<td>'+esc(u.username||'')+'</td>'
+        +'<td>'+esc(u.auth_source==='external'?(u.email||u.username):(u.username||''))+'</td>'
         +'<td>'+esc(u.feishu_union_id||'')+'</td>'
         +'<td>'+esc(u.email||'')+'</td>'
-        +'<td>'+(isBG?t('gen.L959.1','本地应急'):t("app.415", "\u98de\u4e66"))+'</td>'
+        +'<td>'+(isBG?t('gen.L959.1','本地应急'):(u.auth_source==='external'?t('user.external.label','外部邀请'):t("app.415", "\u98de\u4e66")))+'</td>'
         +'<td>'+statusBadge+'</td>'
         +'<td>'+roleSel+'</td>'
         +'<td>'+langSel+'</td>'
@@ -1835,7 +1859,7 @@ async function renderUsers(){
     // 不改各语言页面模板：在标题栏补手动新增入口，并更新使用说明。
     const titleBar=document.querySelector('#content-inner .table-section-title');
     if(titleBar) titleBar.insertAdjacentHTML('beforeend',
-      '<div class="table-section-actions"><button class="btn btn-primary btn-sm" onclick="openManagedUserCreate()">'+esc(t('user.action.add','＋ 新增用户'))+'</button></div>');
+      '<div class="table-section-actions"><button class="btn btn-secondary btn-sm" onclick="openExternalInviteCreate()">'+esc(t('user.external.button','邀请外部用户'))+'</button> <button class="btn btn-primary btn-sm" onclick="openManagedUserCreate()">'+esc(t('user.action.add','＋ 新增用户'))+'</button></div>');
     const hint=document.querySelector('#content-inner .pc-hint');
     if(hint) hint.textContent=t('user.manual.hint','新增用户时可通过姓名搜索飞书通讯录，选择对应员工后自动绑定账号。新用户需分配角色并启用；删除用户会撤销访问并保留历史记录。');
     // I18N-B1-PAGE-CONTEXT-STATE-01：限定 [data-uid] 排除顶部 lang-switcher（class同为 user-role-sel），
@@ -1864,6 +1888,51 @@ async function setUserStatus(uid, status){
 
 
 // 管理员手动添加：仅预建飞书身份，不创建本地密码；联接依赖飞书 OAuth 可靠的 Union ID。
+// 外部邀请：先选对象，再生成一次性专属链接，管理员一键复制后自行私发。
+let __externalInviteLink='';
+function openExternalInviteCreate(){
+  __externalInviteLink='';
+  const body='<div class="form-grid">'
+    +'<div class="form-group"><label>'+esc(t('user.field.name','姓名'))+' *</label><input id="invite-external-name" type="text" maxlength="128" autocomplete="off"></div>'
+    +'<div class="form-group"><label>'+esc(t('user.field.email','邮箱'))+' *</label><input id="invite-external-email" type="email" maxlength="254" autocomplete="off"></div></div>'
+    +'<p class="pc-hint">'+esc(t('user.external.explain','生成专属邀请链接后，可一键复制并私发。链接有效期 7 天、只能使用一次；对方注册后仍需管理员分配角色并启用。'))+'</p>'
+    +'<div id="external-invite-result" style="display:none;margin-top:15px"><label>'+esc(t('user.external.link','邀请链接'))+'</label><input id="external-invite-url" type="text" readonly style="width:100%;padding:9px;margin:8px 0"><button class="btn btn-primary" onclick="copyExternalInviteLink()">'+esc(t('user.external.copy','复制链接'))+'</button></div>';
+  openModal(t('user.external.button','邀请外部用户'),body,
+    '<button class="btn btn-secondary" onclick="closeModal()">'+esc(t('common.cancel','取消'))+'</button> '
+    +'<button id="external-invite-submit" class="btn btn-primary" onclick="generateExternalInvite()">'+esc(t('user.external.generate','生成邀请链接'))+'</button>');
+}
+async function generateExternalInvite(){
+  const name=(document.getElementById('invite-external-name')?.value||'').trim();
+  const email=(document.getElementById('invite-external-email')?.value||'').trim();
+  if(!name||!email){showToast(t('user.external.missing','请填写姓名和邮箱'),'warning');return;}
+  const btn=document.getElementById('external-invite-submit');
+  if(btn?.disabled)return;
+  btn.disabled=true;
+  try{
+    const result=await api('/api/users/external-invitations','POST',{name,email});
+    __externalInviteLink=window.location.origin+'/external-invite.html#'+encodeURIComponent(result.token);
+    document.getElementById('external-invite-url').value=__externalInviteLink;
+    document.getElementById('external-invite-result').style.display='block';
+    btn.style.display='none';
+  }catch(e){btn.disabled=false;showToast(e.message,'danger');}
+}
+async function copyExternalInviteLink(){
+  if(!__externalInviteLink)return;
+  try{
+    if(navigator.clipboard?.writeText)await navigator.clipboard.writeText(__externalInviteLink);
+    else{
+      const input=document.getElementById('external-invite-url');
+      input.select();
+      if(!document.execCommand('copy'))throw new Error('copy failed');
+    }
+    showToast(t('user.external.copied','邀请链接已复制，可直接发给对方'),'success');
+  }catch(e){
+    const input=document.getElementById('external-invite-url');
+    if(input){input.focus();input.select();}
+    showToast(t('user.external.copy_failed','复制失败，请选中链接手动复制'),'warning');
+  }
+}
+
 let __managedUserSearchSeq=0;
 let __managedUserSearchTimer=null;
 let __managedUserMatches=[];

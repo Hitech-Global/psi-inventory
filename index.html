@@ -891,6 +891,12 @@ body:has(#pending-page[style*="display: flex"]) #auth-boot{display:none}
     <div class="login-error" id="login-error"></div>
     <button onclick="doFeishuLogin()" id="login-btn" class="btn-feishu" data-i18n="auth.feishu_login">🔵 使用飞书登录</button>
     <div class="login-hint"><strong data-i18n="auth.recommend_title">推荐使用飞书账号登录</strong><br><span data-i18n="auth.recommend_hint">首次登录将由管理员启用并分配权限。</span></div>
+    <div class="bg-toggle"><a href="javascript:void(0)" onclick="toggleExternalLogin()"><span data-i18n="user.external.login">外部用户登录</span></a></div>
+    <div id="external-login-form" style="display:none;margin-top:14px">
+      <input type="email" id="external-login-email" autocomplete="email" placeholder="受邀邮箱" data-i18n="user.external.login_email" data-i18n-attr="placeholder" onkeydown="if(event.key==='Enter')doExternalLogin()">
+      <input type="password" id="external-login-password" autocomplete="current-password" placeholder="登录密码" data-i18n="user.external.login_password" data-i18n-attr="placeholder" onkeydown="if(event.key==='Enter')doExternalLogin()">
+      <button onclick="doExternalLogin()" id="external-login-submit" class="btn-secondary"><span data-i18n="user.external.login">外部用户登录</span></button>
+    </div>
     <div class="bg-toggle"><a href="javascript:void(0)" onclick="toggleBreakGlass()" data-i18n="auth.breakglass_link">本地应急登录</a></div>
     <div id="bg-form" style="display:none">
       <input type="text" id="bg-username" placeholder="应急账号" data-i18n="auth.bg_username_ph" data-i18n-attr="placeholder" onkeydown="if(event.key==='Enter')doBreakGlassLogin()">
@@ -903,7 +909,7 @@ body:has(#pending-page[style*="display: flex"]) #auth-boot{display:none}
 <div id="pending-page" class="login-page" style="display:none">
   <div class="login-container"><div class="login-card">
     <h1 data-i18n="pending.title">⏳ 账号待授权</h1>
-    <p data-i18n="pending.recognized">您的飞书账号已成功识别</p>
+    <p id="pending-recognized" data-i18n="pending.recognized">您的飞书账号已成功识别</p>
     <p id="pending-name" style="font-weight:600;color:var(--text);margin-bottom:8px"></p>
     <div class="login-hint"><strong data-i18n="pending.wait_title">账号已识别，等待管理员授权</strong><br><span data-i18n="pending.wait_hint">管理员启用并分配角色后，您即可进入业务系统。如有疑问请联系系统管理员。</span></div>
     <button onclick="doLogout()" class="btn-secondary" data-i18n="pending.logout_btn">退出登录</button>

@@ -86,6 +86,9 @@ const PUBLIC_AUTH_PREFIXES = [
   '/api/auth/feishu/callback',
   '/api/auth/feishu/status',
   '/api/auth/local/login',
+  '/api/auth/external/invite-info',
+  '/api/auth/external/claim',
+  '/api/auth/external/login',
   '/api/logout',
   '/api/health',
   '/api/version'
@@ -1123,6 +1126,9 @@ console.log('========================================\n');
 // P0-FIX-1：仅在直接运行 server.js 时初始化数据库，避免 require 时连接/seed 真实库
 if (require.main === module) {
   initDatabase();
+  // 外部邀请凭证独立存储，首次部署幂等创建；失败时拒绝启动（不能假装邀请可用）。
+  try { require('./external-user-invitations').ensureSchema(run); }
+  catch(e) { console.error('[FATAL] external_user_invites schema:',e.message); process.exit(1); }
   // 库存安全删除 tombstone 表（PG 端由 migrations/ 建表；SQLite 端已由 db-sqlite.js 的 schema 初始化创建）。
   // 【启动顺序门禁】必须在下方库存日期 backfill/scoped refresh 之前完成：
   // latest import SQL 会引用 inventory_delete_tombstones，若建表未完成就执行 refresh，
@@ -1988,6 +1994,11 @@ app.post('/api/logout', asyncHandler((req, res) => {
   res.clearCookie(SESSION_COOKIE_NAME, { httpOnly: true, secure: COOKIE_SECURE, sameSite: 'Lax', path: '/' });
   res.json({ success: true });
 }));
+
+// 独立的外部用户邀请和登录：账号仍由管理员手动启用/分配权限。
+require('./external-user-invitations').register(app, {
+  queryOne,run,transaction,genId,hashPassword,verifyPassword,createSessionForUser,auditLogin,requireApiPermission
+});
 
 // ==================== 用户管理 ====================
 app.get('/api/users', requireApiPermission('user_manage'), asyncHandler((req, res) => {
