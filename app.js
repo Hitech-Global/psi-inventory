@@ -233,14 +233,14 @@ function toggleExternalLogin(){
   if(f)f.style.display=(f.style.display==='none'||!f.style.display)?'block':'none';
 }
 async function doExternalLogin(){
-  const email=(document.getElementById('external-login-email')?.value||'').trim();
+  const account=(document.getElementById('external-login-account')?.value||'').trim();
   const password=document.getElementById('external-login-password')?.value||'';
-  if(!email||!password){showLoginError(t('user.external.login_missing','请输入邮箱和密码'));return;}
+  if(!account||!password){showLoginError(t('user.external.login_missing','请输入登录用户名或邮箱，以及密码'));return;}
   const btn=document.getElementById('external-login-submit');
   if(btn)btn.disabled=true;
   try{
     // 登录表单不经过 apiRaw 的 401 自动登出分支，避免输错密码时页面被重置。
-    const response=await fetch('/api/auth/external/login',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password})});
+    const response=await fetch('/api/auth/external/login',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({account,password})});
     const result=await response.json();
     if(!response.ok)throw new Error(result.error||t('user.external.login_failed','外部登录失败'));
     const me=await api('/api/me');
@@ -1859,7 +1859,7 @@ async function renderUsers(){
     // 不改各语言页面模板：在标题栏补手动新增入口，并更新使用说明。
     const titleBar=document.querySelector('#content-inner .table-section-title');
     if(titleBar) titleBar.insertAdjacentHTML('beforeend',
-      '<div class="table-section-actions"><button class="btn btn-secondary btn-sm" onclick="openExternalInviteCreate()">'+esc(t('user.external.button','邀请外部用户'))+'</button> <button class="btn btn-primary btn-sm" onclick="openManagedUserCreate()">'+esc(t('user.action.add','＋ 新增用户'))+'</button></div>');
+      '<div class="table-section-actions"><button class="btn btn-primary btn-sm" onclick="openManagedUserCreate()">'+esc(t('user.action.add','＋ 新增用户'))+'</button></div>');
     const hint=document.querySelector('#content-inner .pc-hint');
     if(hint) hint.textContent=t('user.manual.hint','新增用户时可通过姓名搜索飞书通讯录，选择对应员工后自动绑定账号。新用户需分配角色并启用；删除用户会撤销访问并保留历史记录。');
     // I18N-B1-PAGE-CONTEXT-STATE-01：限定 [data-uid] 排除顶部 lang-switcher（class同为 user-role-sel），
@@ -1890,21 +1890,35 @@ async function setUserStatus(uid, status){
 // 管理员手动添加：仅预建飞书身份，不创建本地密码；联接依赖飞书 OAuth 可靠的 Union ID。
 // 外部邀请：先选对象，再生成一次性专属链接，管理员一键复制后自行私发。
 let __externalInviteLink='';
-function openExternalInviteCreate(){
-  __externalInviteLink='';
-  const body='<div class="form-grid">'
+function externalInviteFields(){
+  return '<div class="form-grid">'
     +'<div class="form-group"><label>'+esc(t('user.field.name','姓名'))+' *</label><input id="invite-external-name" type="text" maxlength="128" autocomplete="off"></div>'
-    +'<div class="form-group"><label>'+esc(t('user.field.email','邮箱'))+' *</label><input id="invite-external-email" type="email" maxlength="254" autocomplete="off"></div></div>'
-    +'<p class="pc-hint">'+esc(t('user.external.explain','生成专属邀请链接后，可一键复制并私发。链接有效期 7 天、只能使用一次；对方注册后仍需管理员分配角色并启用。'))+'</p>'
+    +'<div class="form-group"><label>'+esc(t('user.field.email','邮箱'))+' ('+esc(t('user.external.optional','选填'))+')</label><input id="invite-external-email" type="email" maxlength="254" autocomplete="off"></div></div>'
+    +'<p class="pc-hint">'+esc(t('user.external.explain','生成专属邀请链接后，可一键复制并私发。链接有效期 7 天、只能使用一次；对方注册后仍需管理员核实身份、分配角色并启用。'))+'</p>'
     +'<div id="external-invite-result" style="display:none;margin-top:15px"><label>'+esc(t('user.external.link','邀请链接'))+'</label><input id="external-invite-url" type="text" readonly style="width:100%;padding:9px;margin:8px 0"><button class="btn btn-primary" onclick="copyExternalInviteLink()">'+esc(t('user.external.copy','复制链接'))+'</button></div>';
-  openModal(t('user.external.button','邀请外部用户'),body,
-    '<button class="btn btn-secondary" onclick="closeModal()">'+esc(t('common.cancel','取消'))+'</button> '
-    +'<button id="external-invite-submit" class="btn btn-primary" onclick="generateExternalInvite()">'+esc(t('user.external.generate','生成邀请链接'))+'</button>');
+}
+function switchManagedUserKind(kind){
+  const external=kind==='external';
+  ++__managedUserSearchSeq;
+  clearTimeout(__managedUserSearchTimer);
+  const internalPanel=document.getElementById('new-user-internal');
+  const externalPanel=document.getElementById('new-user-external');
+  if(!internalPanel||!externalPanel)return;
+  internalPanel.style.display=external?'none':'block';
+  externalPanel.style.display=external?'block':'none';
+  for(const id of ['new-user-internal-submit','external-invite-submit']){
+    const button=document.getElementById(id);
+    if(button)button.style.display=(id==='external-invite-submit'&&__externalInviteLink)?'none':((id==='external-invite-submit')===external?'inline-flex':'none');
+  }
+  for(const [id,selected] of [['new-user-kind-internal',!external],['new-user-kind-external',external]]){
+    const button=document.getElementById(id);
+    if(button){button.classList.toggle('btn-primary',selected);button.classList.toggle('btn-secondary',!selected);}
+  }
 }
 async function generateExternalInvite(){
   const name=(document.getElementById('invite-external-name')?.value||'').trim();
   const email=(document.getElementById('invite-external-email')?.value||'').trim();
-  if(!name||!email){showToast(t('user.external.missing','请填写姓名和邮箱'),'warning');return;}
+  if(!name){showToast(t('user.external.missing','请填写姓名'),'warning');return;}
   const btn=document.getElementById('external-invite-submit');
   if(btn?.disabled)return;
   btn.disabled=true;
@@ -1942,16 +1956,20 @@ function openManagedUserCreate(){
   clearTimeout(__managedUserSearchTimer);
   __managedUserMatches=[];
   __managedUserSelected=null;
+  __externalInviteLink='';
   const body='<div class="form-card" style="box-shadow:none;padding:0">'
-    +'<div class="form-grid">'
+    +'<div style="display:flex;gap:8px;margin-bottom:18px"><button id="new-user-kind-internal" type="button" class="btn btn-primary btn-sm" onclick="switchManagedUserKind(\'internal\')">'+esc(t('user.internal.type','内部飞书用户'))+'</button><button id="new-user-kind-external" type="button" class="btn btn-secondary btn-sm" onclick="switchManagedUserKind(\'external\')">'+esc(t('user.external.type','外部用户'))+'</button></div>'
+    +'<div id="new-user-internal"><div class="form-grid">'
     +'<div class="form-group" style="position:relative;z-index:2"><label>'+esc(t('user.field.name','姓名'))+' <span class="required">*</span></label><input id="new-user-name" type="text" maxlength="128" autocomplete="off" placeholder="'+esc(t('user.search.placeholder','输入姓名搜索飞书员工'))+'" oninput="onManagedUserNameInput(this.value)">'
     +'<div id="new-user-matches" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:20;max-height:225px;overflow-y:auto;background:var(--surface,#fff);border:1px solid #d6dae0;border-radius:8px;box-shadow:0 8px 28px rgba(0,0,0,.12);padding:4px"></div></div>'
     +'<div class="form-group"><label>'+esc(t('user.field.username','用户名'))+' <span class="required">*</span></label><input id="new-user-username" type="text" maxlength="128"></div>'
     +'<div class="form-group"><label>'+esc(t('user.field.email','邮箱'))+'</label><input id="new-user-email" type="email" maxlength="254"></div>'
     +'<div class="form-group"><label>'+esc(t('user.search.selected','已选择的飞书账号'))+' <span class="required">*</span></label><input id="new-user-selected" type="text" readonly placeholder="'+esc(t('user.search.select','请先从姓名搜索结果中选择'))+'"></div>'
-    +'</div><details style="margin-top:12px"><summary style="cursor:pointer;color:var(--text-secondary)">'+esc(t('user.search.manual','搜索不可用？手动输入 Union ID（备用）'))+'</summary><input id="new-user-union-manual" type="text" maxlength="256" autocomplete="off" placeholder="Union ID" style="width:100%;margin-top:8px"></details><div class="pc-hint">'+esc(t('user.search.hint','姓名输入至少 2 个字符，从飞书通讯录选择员工；系统自动匹配 Union ID，账号创建后为待授权，需分配角色并启用。'))+'</div></div>';
+    +'</div><details style="margin-top:12px"><summary style="cursor:pointer;color:var(--text-secondary)">'+esc(t('user.search.manual','搜索不可用？手动输入 Union ID（备用）'))+'</summary><input id="new-user-union-manual" type="text" maxlength="256" autocomplete="off" placeholder="Union ID" style="width:100%;margin-top:8px"></details><div class="pc-hint">'+esc(t('user.search.hint','姓名输入至少 2 个字符，从飞书通讯录选择员工；系统自动匹配 Union ID，账号创建后为待授权，需分配角色并启用。'))+'</div></div>'
+    +'<div id="new-user-external" style="display:none">'+externalInviteFields()+'</div></div>';
   const footer='<button class="btn btn-secondary" onclick="closeModal()">'+esc(t('common.cancel','取消'))+'</button>'
-    +'<button id="new-user-submit" class="btn btn-primary" onclick="submitManagedUserCreate()">'+esc(t('user.action.add','新增用户'))+'</button>';
+    +'<button id="new-user-internal-submit" class="btn btn-primary" onclick="submitManagedUserCreate()">'+esc(t('user.action.add','新增用户'))+'</button>'
+    +'<button id="external-invite-submit" class="btn btn-primary" style="display:none" onclick="generateExternalInvite()">'+esc(t('user.external.generate','生成邀请链接'))+'</button>';
   openModal(t('user.action.add','新增用户'),body,footer);
 }
 function onManagedUserNameInput(value){
@@ -2001,7 +2019,7 @@ async function submitManagedUserCreate(){
   const email=(document.getElementById('new-user-email')?.value||'').trim();
   const feishu_union_id=__managedUserSelected?.union_id||(document.getElementById('new-user-union-manual')?.value||'').trim();
   if(!name||!username||!feishu_union_id){showToast(t('user.search.required','请选择飞书账号并填写用户名'),'warning');return;}
-  const btn=document.getElementById('new-user-submit');
+  const btn=document.getElementById('new-user-internal-submit');
   if(btn?.disabled)return;
   if(btn) btn.disabled=true;
   try{

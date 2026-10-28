@@ -893,7 +893,7 @@ body:has(#pending-page[style*="display: flex"]) #auth-boot{display:none}
     <div class="login-hint"><strong data-i18n="auth.recommend_title">推荐使用飞书账号登录</strong><br><span data-i18n="auth.recommend_hint">首次登录将由管理员启用并分配权限。</span></div>
     <div class="bg-toggle"><a href="javascript:void(0)" onclick="toggleExternalLogin()"><span data-i18n="user.external.login">外部用户登录</span></a></div>
     <div id="external-login-form" style="display:none;margin-top:14px">
-      <input type="email" id="external-login-email" autocomplete="email" placeholder="受邀邮箱" data-i18n="user.external.login_email" data-i18n-attr="placeholder" onkeydown="if(event.key==='Enter')doExternalLogin()">
+      <input type="text" id="external-login-account" autocomplete="username" placeholder="登录用户名或邮箱" data-i18n="user.external.login_account" data-i18n-attr="placeholder" onkeydown="if(event.key==='Enter')doExternalLogin()">
       <input type="password" id="external-login-password" autocomplete="current-password" placeholder="登录密码" data-i18n="user.external.login_password" data-i18n-attr="placeholder" onkeydown="if(event.key==='Enter')doExternalLogin()">
       <button onclick="doExternalLogin()" id="external-login-submit" class="btn-secondary"><span data-i18n="user.external.login">外部用户登录</span></button>
     </div>

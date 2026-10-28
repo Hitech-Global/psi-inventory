@@ -7,6 +7,7 @@ function fixture(){
  const db={
   queryOne(sql,params){
    if(sql.includes('FROM external_user_invites'))return invites.find(x=>x.token_hash===params[0])||null;
+   if(sql.includes('FROM users')&&sql.includes('LOWER(username)')) return users.find(u=>u.username.toLowerCase()===params[0])||null;
    if(sql.includes('FROM users')&&sql.includes('LOWER(email)')){
      const found=users.filter(u=>u.email===params[0]&&u.auth_source==='external'&&u.status!=='deleted');
      return (sql.includes('ORDER BY')?found.slice(-1)[0]:found[0])||null;
@@ -14,7 +15,7 @@ function fixture(){
    throw Error('Unexpected SQL '+sql);
   },
   run(sql,params){
-   if(sql.startsWith('CREATE '))return {changes:0};
+   if(sql.startsWith('CREATE ')||sql.startsWith('DROP INDEX'))return {changes:0};
    if(sql.startsWith('INSERT INTO external_user_invites')){
     invites.push({id:params[0],token_hash:params[1],recipient_name:params[2],recipient_email:params[3],issued_by:params[4],created_at:params[5],expires_at:params[6],used_at:'',user_id:'',revoked_at:''});
     return {changes:1};
@@ -90,6 +91,8 @@ test('schema enforces external email uniqueness in real SQLite syntax',()=>{
   assert.throws(()=>run("INSERT INTO users (id,email,auth_source,status) VALUES (?,?,?,?)",['b','test@example.com','external','pending']));
   // An internal Feishu user with the same address does not collide with the external identity.
   run("INSERT INTO users (id,email,auth_source,status) VALUES (?,?,?,?)",['c','test@example.com','feishu','active']);
+  run("INSERT INTO users (id,email,auth_source,status) VALUES (?,?,?,?)",['d','','external','pending']);
+  run("INSERT INTO users (id,email,auth_source,status) VALUES (?,?,?,?)",['e','','external','pending']);
  }finally{db.close();}
 });
 test('invite generation exposes only one-time token, never creates an active user',async()=>{
@@ -109,11 +112,11 @@ test('claim is single-use, identity remains pending with no role; login pending 
  const issued=await x.call('/api/users/external-invitations',{name:'王丹辰',email:'wang@example.com'});
  const token=issued.value.token;
  assert.equal((await x.call(BASE+'/invite-info',{token})).code,200);
- const weak=await x.call(BASE+'/claim',{token,email:'wang@example.com',password:'weak'});
+ const weak=await x.call(BASE+'/claim',{token,email:'wang@example.com',username:'wangchen',password:'weak'});
  assert.equal(weak.code,400);
- const wrong=await x.call(BASE+'/claim',{token,email:'other@example.com',password:'StrongPassword123'});
+ const wrong=await x.call(BASE+'/claim',{token,email:'other@example.com',username:'wangchen',password:'StrongPassword123'});
  assert.equal(wrong.code,400);
- const result=await x.call(BASE+'/claim',{token,email:'WANG@EXAMPLE.COM',password:'StrongPassword123'});
+ const result=await x.call(BASE+'/claim',{token,email:'WANG@EXAMPLE.COM',username:'wangchen',password:'StrongPassword123'});
  assert.equal(result.code,200);
  assert.equal(x.users.length,1);
  assert.equal(x.users[0].status,'pending');
@@ -129,6 +132,44 @@ test('claim is single-use, identity remains pending with no role; login pending 
  x.users[0].status='active';x.users[0].role_id='role_viewer';
  assert.equal((await x.call(BASE+'/login',{email:'wang@example.com',password:'StrongPassword123'})).value.status,'active');
 });
+test('email-less external invitations: two separate users can claim and sign in by username',async()=>{
+ const x=fixture();
+ const first=await x.call('/api/users/external-invitations',{name:'王丹辰'});
+ const second=await x.call('/api/users/external-invitations',{name:'External Contractor',email:''});
+ assert.equal(first.code,200);assert.equal(second.code,200);
+ assert.equal(first.value.email,'');
+ assert.equal((await x.call(BASE+'/invite-info',{token:first.value.token})).value.email,'');
+ const invalid=await x.call(BASE+'/claim',{token:first.value.token,username:'a',password:'StrongPassword123'});
+ assert.equal(invalid.code,400);
+ assert.equal(x.invites[0].used_at,'');
+ const a=await x.call(BASE+'/claim',{token:first.value.token,username:'wangchen',password:'StrongPassword123'});
+ assert.equal(a.code,200);
+ assert.equal(x.users[0].email,'');
+ assert.equal(x.users[0].username,'wangchen');
+ assert.equal(x.users[0].role_id,null);
+ const clash=await x.call(BASE+'/claim',{token:second.value.token,username:'WANGCHEN',password:'StrongPassword123'});
+ assert.equal(clash.code,409,'case-insensitive username must remain unique');
+ assert.equal(x.invites[1].used_at,'','transaction must roll back failed claim');
+ const b=await x.call(BASE+'/claim',{token:second.value.token,username:'otherguest',password:'StrongPassword123'});
+ assert.equal(b.code,200);
+ assert.equal(x.users[1].email,'');
+ assert.equal((await x.call(BASE+'/login',{account:'wangchen',password:'StrongPassword123'})).code,200);
+ assert.equal((await x.call(BASE+'/login',{account:'otherguest',password:'StrongPassword123'})).code,200);
+ assert.equal((await x.call(BASE+'/login',{account:'WANGCHEN',password:'StrongPassword123'})).code,200);
+});
+test('single new-user modal contains internal and external tabs and no standalone list action',()=>{
+ const fs=require('node:fs'),path=require('node:path');
+ const app=fs.readFileSync(path.join(__dirname,'..','app.js'),'utf8');
+ assert.ok(app.includes("switchManagedUserKind('")===false ? app.includes('switchManagedUserKind') : true);
+ assert.ok(app.includes('externalInviteFields()'));
+ assert.ok(app.includes("id=\"new-user-external\""));
+ assert.ok(!app.includes('onclick="openExternalInviteCreate()"'));
+ assert.ok(app.includes('user.external.type'),'external option must be part of the add-user modal');
+ const landing=fs.readFileSync(path.join(__dirname,'..','external-invite.html'),'utf8');
+ assert.ok(landing.includes('id="username"'),'claim requires login username');
+ const login=fs.readFileSync(path.join(__dirname,'..','index.html'),'utf8');
+ assert.ok(login.includes('external-login-account'),'login accepts username or email');
+});
 test('expired, revoked, invalid, duplicate and origin-mismatched claims fail safely',async()=>{
  const x=fixture();
  const issued=await x.call('/api/users/external-invitations',{name:'Guest',email:'guest@example.com'});
@@ -143,7 +184,7 @@ test('expired, revoked, invalid, duplicate and origin-mismatched claims fail saf
 test('wrong external credentials do not mint a session and deleted external user cannot log in',async()=>{
  const x=fixture();
  const t=(await x.call('/api/users/external-invitations',{name:'A',email:'a@example.com'})).value.token;
- await x.call(BASE+'/claim',{token:t,email:'a@example.com',password:'StrongPassword123'});
+ await x.call(BASE+'/claim',{token:t,email:'a@example.com',username:'alphauser',password:'StrongPassword123'});
  assert.equal((await x.call(BASE+'/login',{email:'a@example.com',password:'wrong'})).code,401);
  assert.equal(x.sessions.length,0);
  x.users[0].status='deleted';

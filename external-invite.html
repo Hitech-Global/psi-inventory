@@ -19,13 +19,13 @@ input:focus{outline:none;border-color:#25803b}button{width:100%;margin-top:22px;
 <p>这是 PSI 系统管理员发送的专属邀请链接。接受后需等待管理员开通权限。</p>
 <p id="recipient">正在验证邀请…</p>
 <form id="claim" style="display:none">
-<label for="email">请确认受邀邮箱</label><input id="email" type="email" autocomplete="email" required>
+<label for="username">设置登录用户名（3–40位英文字母、数字或 . _ -）</label><input id="username" type="text" autocomplete="username" minlength="3" maxlength="40" pattern="[A-Za-z0-9][A-Za-z0-9._-]{2,39}" required><div id="invited-email" style="display:none"><label for="email">请确认受邀邮箱</label><input id="email" type="email" autocomplete="email"></div>
 <label for="password">设置登录密码（至少12位，包含大小写字母和数字）</label><input id="password" type="password" autocomplete="new-password" required minlength="12" maxlength="128">
 <label for="confirm">再次确认密码</label><input id="confirm" type="password" autocomplete="new-password" required>
 <button id="submit" type="submit">接受邀请并创建账号</button>
 </form><div id="message" role="alert"></div>
 </div>
-<div id="success"><h1>已完成注册</h1><p>账号创建成功，当前为待授权状态。请联系管理员分配角色并启用账号。</p><a href="/">返回 PSI 登录页，使用“外部用户登录”进入</a></div>
+<div id="success"><h1>已完成注册</h1><p>账号创建成功。请记住刚刚设置的用户名和密码。管理员核实并启用账号后，即可登录系统。</p><a href="/">返回 PSI 登录页，使用“外部用户登录”进入</a></div>
 </main>
 <script>
 'use strict';
@@ -43,7 +43,10 @@ async function post(url,body){
  if(!token){error('邀请链接中缺少凭证。请联系管理员重新发送。');return;}
  try{
   const info=await post('/api/auth/external/invite-info',{token});
-  document.getElementById('recipient').textContent='受邀人：'+info.name+' · '+info.email;
+  document.getElementById('recipient').textContent='受邀人：'+info.name+(info.email?' · '+info.email:'');
+  const emailSection=document.getElementById('invited-email');
+  if(info.email){emailSection.style.display='block';document.getElementById('email').required=true;}
+  else{emailSection.style.display='none';document.getElementById('email').value='';}
   form.style.display='block';
  }catch(e){error(e.message);}
 })();
@@ -53,7 +56,7 @@ form.addEventListener('submit',async e=>{
  if(password!==confirm){error('两次输入的密码不一致');return;}
  const submit=document.getElementById('submit');submit.disabled=true;error('');
  try{
-  await post('/api/auth/external/claim',{token,email:document.getElementById('email').value,password});
+  await post('/api/auth/external/claim',{token,username:document.getElementById('username').value,email:document.getElementById('email').value,password});
   token=null;document.getElementById('form').style.display='none';document.getElementById('success').style.display='block';
  }catch(err){error(err.message);}
  finally{submit.disabled=false;}

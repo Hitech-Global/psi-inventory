@@ -142,7 +142,7 @@ test('protect self/admin/break-glass and forbid revival via PUT',async()=>{
 });
 test('UI exposes add/remove actions and has required Union ID + confirmation',()=>{
   for(const phrase of ['openManagedUserCreate','submitManagedUserCreate','removeManagedUser',
-     'feishu_union_id','new-user-submit','renderUsers()','user.remove.confirm']) {
+     'feishu_union_id','new-user-internal-submit','renderUsers()','user.remove.confirm']) {
      assert.ok(appSource.includes(phrase),'missing UI '+phrase);
   }
   assert.ok(/role_id!==?['"]role_admin/.test(appSource));

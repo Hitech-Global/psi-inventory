@@ -5299,6 +5299,15 @@ I18N.dict.en["user.external.login"]="External User Login"; I18N.dict.id["user.ex
 I18N.dict.en["user.external.login_email"]="Invited Email"; I18N.dict.id["user.external.login_email"]="Email Undangan";
 I18N.dict.en["user.external.login_password"]="Password"; I18N.dict.id["user.external.login_password"]="Kata Sandi";
 I18N.dict.en["user.external.login_missing"]="Enter email and password"; I18N.dict.id["user.external.login_missing"]="Masukkan email dan kata sandi";
+I18N.dict.zh["user.external.optional"]="选填"; I18N.dict.en["user.external.optional"]="Optional"; I18N.dict.id["user.external.optional"]="Opsional";
+I18N.dict.zh["user.internal.type"]="内部飞书用户"; I18N.dict.en["user.internal.type"]="Internal Feishu User"; I18N.dict.id["user.internal.type"]="Pengguna Feishu Internal";
+I18N.dict.zh["user.external.type"]="外部用户"; I18N.dict.en["user.external.type"]="External User"; I18N.dict.id["user.external.type"]="Pengguna Eksternal";
+I18N.dict.zh["user.external.login_account"]="登录用户名或邮箱"; I18N.dict.en["user.external.login_account"]="Username or email"; I18N.dict.id["user.external.login_account"]="Nama pengguna atau email";
+I18N.dict.zh["user.external.explain"]="生成邀请链接后，可一键复制并私发。链接有效期7天、只能领取一次；对方需设置登录用户名和密码，管理员核实后再启用。";
+I18N.dict.en["user.external.explain"]="Generate and privately send a one-time invitation link valid for 7 days. The recipient creates a username and password and must then be approved by an admin.";
+I18N.dict.id["user.external.explain"]="Buat tautan undangan satu kali yang berlaku 7 hari, lalu kirim secara pribadi. Penerima membuat nama pengguna dan kata sandi dan perlu persetujuan admin.";
+I18N.dict.zh["user.external.missing"]="请填写姓名"; I18N.dict.en["user.external.missing"]="Enter a name"; I18N.dict.id["user.external.missing"]="Masukkan nama";
+I18N.dict.zh["user.external.login_missing"]="请输入登录用户名或邮箱，以及密码"; I18N.dict.en["user.external.login_missing"]="Enter username or email and password"; I18N.dict.id["user.external.login_missing"]="Masukkan nama pengguna atau email serta kata sandi";
 I18N.dict.en["user.external.login_failed"]="External login failed"; I18N.dict.id["user.external.login_failed"]="Gagal masuk pengguna eksternal";
 I18N.dict.zh["user.external.pending"]="您的外部账号已注册，等待管理员授权"; I18N.dict.en["user.external.pending"]="Your external account has been registered and is awaiting administrator approval."; I18N.dict.id["user.external.pending"]="Akun eksternal Anda telah terdaftar dan menunggu persetujuan administrator.";
 })();

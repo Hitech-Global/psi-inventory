@@ -6,6 +6,7 @@ const INVITE_MS = 7 * 24 * 3600 * 1000;
 const TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
 const hashToken = value => crypto.createHash('sha256').update(value).digest('hex');
 const validEmail = value => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) && value.length <= 254;
+const validUsername = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{2,39}$/.test(value);
 const validPassword = value => typeof value === 'string' && value.length >= 12 && value.length <= 128
   && /[a-z]/.test(value) && /[A-Z]/.test(value) && /[0-9]/.test(value);
 
@@ -24,7 +25,9 @@ function ensureSchema(run) {
   )`);
   run('CREATE INDEX IF NOT EXISTS idx_external_invite_email ON external_user_invites(recipient_email)');
   // Prevent two distinct invitations from concurrently creating accounts for the same email.
-  run("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_external_email ON users(LOWER(email)) WHERE auth_source='external' AND status<>'deleted'");
+  // Old index included blank email, making the second email-less account impossible. Recreate narrowly.
+  run('DROP INDEX IF EXISTS idx_users_external_email');
+  run("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_external_email_nonempty ON users(LOWER(email)) WHERE auth_source='external' AND status<>'deleted' AND email<>''");
 }
 function register(app, deps) {
   const { queryOne, run, transaction, genId, hashPassword, verifyPassword,
@@ -47,9 +50,11 @@ function register(app, deps) {
   app.post('/api/users/external-invitations', requireApiPermission('user_manage'), (req, res) => {
     const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
     const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
-    if (!name || name.length > 128 || !validEmail(email)) return jsonError(res, 400, '请填写姓名和有效邮箱');
-    const exists = queryOne("SELECT id FROM users WHERE LOWER(email)=? AND auth_source='external' AND status<>'deleted'", [email]);
-    if (exists) return jsonError(res, 409, '此邮箱已存在外部用户，请在用户管理中处理');
+    if (!name || name.length > 128 || (email && !validEmail(email))) return jsonError(res, 400, '请填写姓名；如填写邮箱，须为有效邮箱');
+    if (email) {
+      const exists = queryOne("SELECT id FROM users WHERE LOWER(email)=? AND auth_source='external' AND status<>'deleted'", [email]);
+      if (exists) return jsonError(res, 409, '此邮箱已存在外部用户，请在用户管理中处理');
+    }
     const token = crypto.randomBytes(32).toString('base64url');
     const now = new Date().toISOString();
     const expiry = new Date(Date.now()+INVITE_MS).toISOString();
@@ -69,10 +74,13 @@ function register(app, deps) {
     if (!sameOrigin(req)) return jsonError(res,403,'请求来源不正确');
     const token = req.body?.token;
     const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    const username = typeof req.body?.username === 'string' ? req.body.username.trim() : '';
     const password = req.body?.password;
     const inv = readInvite(token);
     if (!inviteValid(inv)) return jsonError(res,404,'邀请已使用或过期，请联系管理员重新邀请');
-    if (email !== inv.recipient_email) return jsonError(res,400,'邮箱须与管理员邀请的邮箱一致');
+    if (inv.recipient_email && email !== inv.recipient_email) return jsonError(res,400,'邮箱须与管理员邀请的邮箱一致');
+    if (!inv.recipient_email && email) return jsonError(res,400,'未设置受邀邮箱的邀请无需填写邮箱');
+    if (!validUsername(username)) return jsonError(res,400,'请设置3-40位英文、数字、点、下划线或横线组成的登录用户名');
     if (!validPassword(password)) return jsonError(res,400,'密码至少12位，需包含大写、小写字母及数字');
     const userId = genId('external');
     try {
@@ -81,37 +89,48 @@ function register(app, deps) {
         const claimed = run("UPDATE external_user_invites SET used_at=?,user_id=? WHERE token_hash=? AND used_at='' AND revoked_at=''",
           [now,userId,hashToken(token)]);
         if (claimed.changes !== 1) throw new Error('INVITE_ALREADY_USED');
-        const duplicate = queryOne("SELECT id FROM users WHERE LOWER(email)=? AND auth_source='external' AND status<>'deleted'",[email]);
-        if (duplicate) throw new Error('DUPLICATE_EXTERNAL_USER');
+        const nameTaken = queryOne('SELECT id FROM users WHERE LOWER(username)=?', [username.toLowerCase()]);
+        if (nameTaken) throw new Error('DUPLICATE_USERNAME');
+        if (email) {
+          const duplicate = queryOne("SELECT id FROM users WHERE LOWER(email)=? AND auth_source='external' AND status<>'deleted'",[email]);
+          if (duplicate) throw new Error('DUPLICATE_EXTERNAL_USER');
+        }
         run("INSERT INTO users (id,username,name,role_id,status,email,auth_source,password_hash) VALUES (?,?,?,?,?,?,?,?)",
-          [userId,'external_'+crypto.randomBytes(10).toString('hex'),inv.recipient_name,null,'pending',email,'external',hashPassword(password)]);
+          [userId,username,inv.recipient_name,null,'pending',inv.recipient_email,'external',hashPassword(password)]);
       });
     } catch (e) {
       if (e.message === 'DUPLICATE_EXTERNAL_USER') return jsonError(res,409,'此邮箱已注册，请使用外部账号登录');
+      if (e.message === 'DUPLICATE_USERNAME' || /UNIQUE|duplicate key/i.test(e.message)) return jsonError(res,409,'用户名已存在，请换一个用户名');
       if (e.message === 'INVITE_ALREADY_USED') return jsonError(res,409,'邀请已被使用');
       console.error('[external invite claim]',e.name || 'Error');
       return jsonError(res,500,'邀请领取失败，请联系管理员');
     }
-    res.set('Cache-Control','no-store').json({success:true,status:'pending'});
+    res.set('Cache-Control','no-store').json({success:true,status:'pending',username});
   });
   app.post('/api/auth/external/login', (req,res) => {
     if (!sameOrigin(req)) return jsonError(res,403,'请求来源不正确');
-    const email = typeof req.body?.email==='string'?req.body.email.trim().toLowerCase():'';
+    // Account can be a username (email-less invites) or email (existing invite accounts).
+    const account = (typeof req.body?.account === 'string' ? req.body.account
+      : typeof req.body?.email === 'string' ? req.body.email : '').trim().toLowerCase();
     const password = req.body?.password;
-    if (!validEmail(email) || typeof password !== 'string' || password.length>128) return jsonError(res,400,'邮箱或密码错误');
+    const isEmail = account.includes('@');
+    if (!(isEmail ? validEmail(account) : validUsername(account)) ||
+        typeof password !== 'string' || password.length>128) return jsonError(res,400,'账号或密码错误');
     const ip = (req.headers['x-forwarded-for']||req.ip||'').toString().split(',')[0];
-    const key = ip+'|'+hashToken(email);
+    const key = ip+'|'+hashToken(account);
     // Small login-specific lockout, independent of break-glass emergency account.
     const failed = failures.get(key) || {count:0,until:0};
     if (failed.until>Date.now()) return jsonError(res,429,'尝试次数过多，请稍后重试');
-    const user = queryOne("SELECT * FROM users WHERE LOWER(email)=? AND auth_source='external' AND status<>'deleted' ORDER BY created_at DESC LIMIT 1",[email]);
+    const user = isEmail
+      ? queryOne("SELECT * FROM users WHERE LOWER(email)=? AND auth_source='external' AND status<>'deleted' ORDER BY created_at DESC LIMIT 1",[account])
+      : queryOne("SELECT * FROM users WHERE LOWER(username)=? AND auth_source='external' AND status<>'deleted' ORDER BY created_at DESC LIMIT 1",[account]);
     const ok = user && verifyPassword(password,user.password_hash);
     if (!ok) {
       failed.count+=1;
       if (failed.count>=5){ failed.count=0;failed.until=Date.now()+15*60*1000; }
       failures.set(key,failed);
-      auditLogin(user?.id||null,email,'external',false,'invalid_credentials');
-      return jsonError(res,401,'邮箱或密码错误');
+      auditLogin(user?.id||null,account,'external',false,'invalid_credentials');
+      return jsonError(res,401,'账号或密码错误');
     }
     failures.delete(key);
     if (user.status==='disabled') return jsonError(res,403,'账号已停用，请联系管理员');
