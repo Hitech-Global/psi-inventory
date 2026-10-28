@@ -5249,4 +5249,18 @@ I18N.dict.id["nav.payable_cockpit"]="Ringkasan Pembayaran";
 I18N.dict.zh["ci.col.total_freight"]="总运费"; I18N.dict.en["ci.col.total_freight"]="Total Freight"; I18N.dict.id["ci.col.total_freight"]="Total Ongkos Kirim";
 I18N.dict.zh["ci.col.freight_ratio"]="运费占比"; I18N.dict.en["ci.col.freight_ratio"]="Freight/Value"; I18N.dict.id["ci.col.freight_ratio"]="Proporsi Ongkos Kirim";
 I18N.dict.zh["logistics.col.cargo_value"]="总货值"; I18N.dict.en["logistics.col.cargo_value"]="Cargo Value"; I18N.dict.id["logistics.col.cargo_value"]="Nilai Barang";
+}
+// 手动用户管理：新增/删除界面文案（沿用 i18n.js 现有字典）
+I18N.dict.en["user.action.add"]="Add User"; I18N.dict.id["user.action.add"]="Tambah Pengguna";
+I18N.dict.en["user.action.remove"]="Delete"; I18N.dict.id["user.action.remove"]="Hapus";
+I18N.dict.en["user.field.name"]="Name"; I18N.dict.id["user.field.name"]="Nama";
+I18N.dict.en["user.field.username"]="Username"; I18N.dict.id["user.field.username"]="Nama Pengguna";
+I18N.dict.en["user.field.email"]="Email"; I18N.dict.id["user.field.email"]="Email";
+I18N.dict.en["user.field.union_id"]="Feishu Union ID"; I18N.dict.id["user.field.union_id"]="Feishu Union ID";
+I18N.dict.en["user.error.required"]="Name, username and Feishu Union ID are required"; I18N.dict.id["user.error.required"]="Nama, nama pengguna, dan Feishu Union ID wajib diisi";
+I18N.dict.en["user.create.success"]="User added (pending approval). Assign a role and activate the account."; I18N.dict.id["user.create.success"]="Pengguna ditambahkan (menunggu persetujuan). Tetapkan peran dan aktifkan akun.";
+I18N.dict.en["user.remove.success"]="User removed; historical records preserved."; I18N.dict.id["user.remove.success"]="Pengguna dihapus dari daftar; riwayat tetap disimpan.";
+I18N.dict.en["user.manual.hint"]="Manually add a user using their Feishu Union ID. The new account is pending until assigned a role and activated. Deleting a user revokes access and hides the account but preserves approval and audit history."; I18N.dict.id["user.manual.hint"]="Tambahkan pengguna secara manual dengan Feishu Union ID. Akun baru menunggu penetapan peran dan aktivasi. Menghapus pengguna akan mencabut akses dan menyembunyikan akun, tetapi riwayat persetujuan dan audit tetap disimpan.";
+I18N.dict.en["user.create.hint"]="Enter the employee's actual Feishu Union ID (not an email or name) to securely link their Feishu login. The account starts pending approval; assign a role and activate afterward."; I18N.dict.id["user.create.hint"]="Masukkan Feishu Union ID asli karyawan (bukan email atau nama) untuk menautkan login Feishu. Akun awalnya menunggu persetujuan; tetapkan peran dan aktifkan setelahnya.";
+I18N.dict.en["user.remove.confirm"]="Delete user \"{name}\"?\\nTheir access will be revoked immediately and the user will disappear from the list; approval and operation records will be retained."; I18N.dict.id["user.remove.confirm"]="Hapus pengguna \"{name}\"?\\nAkses akan segera dicabut dan pengguna disembunyikan dari daftar; catatan persetujuan serta aktivitas tetap disimpan.";
 })();

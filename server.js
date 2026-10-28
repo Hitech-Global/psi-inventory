@@ -1503,9 +1503,9 @@ function apiAuth(req, res, next) {
     run('DELETE FROM sessions WHERE id=?', [sess.id]);
     return res.status(401).json({ error: '账号不存在' });
   }
-  if (user.status === 'disabled') {
+  if (user.status !== 'active' && user.status !== 'pending') {
     run('DELETE FROM sessions WHERE id=?', [sess.id]);
-    return res.status(401).json({ error: '账号已停用' });
+    return res.status(401).json({ error: '账号已停用或移除' });
   }
   if (user.status === 'pending') {
     // 已认证但零权限：仅允许 /api/me 探活
@@ -1889,6 +1889,7 @@ app.get('/api/auth/feishu/callback', asyncHandler(async (req, res) => {
       run('UPDATE users SET feishu_open_id=?, feishu_union_id=?, feishu_user_id=?, name=?, email=? WHERE id=?',
         [info.open_id || '', info.union_id || '', info.user_id || '', info.name || user.name, info.email || user.email, user.id]);
     }
+    if (user.status === 'deleted') { auditLogin(user.id, user.username, 'feishu', false, 'removed_user'); return res.status(403).json({ error: '账号已移除，请联系管理员' }); }
     createSessionForUser(res, user, req.headers['user-agent'], req.headers['x-forwarded-for'] || req.ip);
     auditLogin(user.id, user.username, 'feishu', true, '');
     if (process.env.NODE_ENV === 'test') {
@@ -1991,7 +1992,7 @@ app.post('/api/logout', asyncHandler((req, res) => {
 // ==================== 用户管理 ====================
 app.get('/api/users', requireApiPermission('user_manage'), asyncHandler((req, res) => {
   try {
-    const rows = query('SELECT id, username, name, role_id, status, email, auth_source, feishu_open_id, feishu_union_id, last_login_at, created_at, language_preference FROM users ORDER BY created_at DESC').rows;
+    const rows = query("SELECT id, username, name, role_id, status, email, auth_source, feishu_open_id, feishu_union_id, last_login_at, created_at, language_preference FROM users WHERE status <> 'deleted' ORDER BY created_at DESC").rows;
     // USER-SCOPE: 获取有个人数据权限的用户ID集合（用于列表展示来源标识）
     const scopeUserIds = new Set(query('SELECT user_id FROM user_data_scope').rows.map(r => r.user_id));
     const masked = rows.map(u => ({
@@ -2015,22 +2016,36 @@ app.post('/api/users/:id/revoke-sessions', requireApiPermission('user_manage'), 
   res.json({ success: true });
 }));
 
+// 管理员预建飞书用户：Union ID 为唯一登录绑定键，不接受邮箱自动匹配，杜绝错误绑定。
 app.post('/api/users', requireApiPermission('user_manage'), asyncHandler((req, res) => {
   try {
-    const { id, username, name, role_id, status, email, auth_source, password, password_hash, language_preference } = req.body;
-    if (!username || !name) return res.status(400).json({ error: '用户名和姓名不能为空' });
-    if (password || password_hash || auth_source === 'local') {
-      return res.status(400).json({ error: '不允许创建本地密码账号' });
+    const d = req.body || {};
+    const username = typeof d.username === 'string' ? d.username.trim() : '';
+    const name = typeof d.name === 'string' ? d.name.trim() : '';
+    const email = typeof d.email === 'string' ? d.email.trim() : '';
+    const unionId = typeof d.feishu_union_id === 'string' ? d.feishu_union_id.trim() : '';
+    if (!username || !name || !unionId) return res.status(400).json({ error: '姓名、用户名及飞书 Union ID 必填' });
+    if (username.length > 128 || name.length > 128 || email.length > 254 ||
+        unionId.length > 256 || /\s/.test(unionId)) {
+      return res.status(400).json({ error: '用户字段长度或飞书 Union ID 格式不正确' });
     }
-    // I18N-100P-B1：语言偏好白名单校验（缺失默认 zh）
-    const lp = (language_preference === 'en' || language_preference === 'id') ? language_preference : 'zh';
-    const exist = queryOne('SELECT id FROM users WHERE username = ?', [username]);
-    if (exist) return res.status(400).json({ error: '用户名已存在' });
-    const userId = id || genId('user');
-    // 新建用户默认 pending + role_id=NULL（待管理员启用并分配角色）；仅飞书来源
-    run(`INSERT INTO users (id, username, name, role_id, status, email, auth_source, language_preference) VALUES (?, ?, ?, ?, ?, ?, 'feishu', ?)`,
-      [userId, username, name, null, status || 'pending', email || '', lp]);
-    res.json({ id: userId, username, name, role_id: null, status: status || 'pending', email: email || '', language_preference: lp });
+    if (d.password || d.password_hash || d.auth_source === 'local' ||
+        d.role_id || d.status && d.status !== 'pending' || d.id || d.feishu_open_id) {
+      return res.status(400).json({ error: '只能创建待授权飞书用户，角色和状态须在用户管理中设置' });
+    }
+    if (queryOne('SELECT id FROM users WHERE username=?', [username])) return res.status(409).json({ error: '用户名已存在' });
+    if (queryOne("SELECT id FROM users WHERE feishu_union_id=? AND feishu_union_id<>''", [unionId])) {
+      return res.status(409).json({ error: '飞书 Union ID 已关联其他用户（包括已移除用户）' });
+    }
+    const userId = genId('user');
+    const lp = ['zh','en','id'].includes(d.language_preference) ? d.language_preference : 'zh';
+    run(`INSERT INTO users (id, username, name, role_id, status, email, auth_source, feishu_union_id, language_preference)
+      VALUES (?,?,?,?,?,?,'feishu',?,?)`,
+      [userId, username, name, null, 'pending', email, unionId, lp]);
+    logOperation({ operator_id:req.currentUserId, operator_name:req.currentUserName, page:'users',
+      operation_type:'create_user', target_ids:[userId], affected_count:1,
+      new_values:{username,name,status:'pending'}, reason:'手动创建飞书用户', is_rollbackable:0 });
+    res.json({ id:userId, username, name, role_id:null, status:'pending', email, language_preference:lp });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
@@ -2041,6 +2056,8 @@ app.put('/api/users/:id', requireApiPermission('user_manage'), asyncHandler((req
     if (!username || !name) return res.status(400).json({ error: '用户名和姓名不能为空' });
     const user = queryOne('SELECT * FROM users WHERE id = ?', [id]);
     if (!user) return res.status(404).json({ error: '用户不存在' });
+    if (user.status === 'deleted') return res.status(409).json({ error: '该用户已移除，不能再次启用' });
+    if (status && !['active','disabled','pending'].includes(status)) return res.status(400).json({ error: '非法的用户状态' });
     if (auth_source === 'local') return res.status(400).json({ error: '不允许设置为本地账号' });
     if (password) return res.status(400).json({ error: '不允许修改密码' });
     // 保护唯一 break-glass：不可停用/删除
@@ -2059,17 +2076,26 @@ app.put('/api/users/:id', requireApiPermission('user_manage'), asyncHandler((req
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
+// 安全移除：保留用户 ID、审批/财务/操作历史，撤销全部登录凭证并从列表隐藏。
 app.delete('/api/users/:id', requireApiPermission('user_manage'), asyncHandler((req, res) => {
   try {
-    if (req.params.id === 'user_admin') return res.status(400).json({ error: '不能删除超级管理员' });
-    const user = queryOne('SELECT * FROM users WHERE id = ?', [req.params.id]);
-    if (!user) return res.status(404).json({ error: '用户不存在' });
-    if (user.auth_source === 'local') return res.status(400).json({ error: '不能删除 break-glass 应急账号' });
-    run('DELETE FROM users WHERE id = ?', [req.params.id]);
-    run('DELETE FROM sessions WHERE user_id = ?', [req.params.id]);
-    res.json({ success: true });
+    const id = req.params.id;
+    if (id === req.currentUserId) return res.status(400).json({ error: '不能删除当前登录账号' });
+    const user = queryOne('SELECT * FROM users WHERE id=?', [id]);
+    if (!user || user.status === 'deleted') return res.status(404).json({ error: '用户不存在或已移除' });
+    if (user.auth_source === 'local' || id === 'user_admin') return res.status(400).json({ error: '不能删除系统应急账号' });
+    if (user.role_id === 'role_admin') return res.status(400).json({ error: '请先移除该用户的超级管理员角色后再删除' });
+    run("UPDATE users SET status='deleted', role_id=NULL WHERE id=?", [id]);
+    run('DELETE FROM sessions WHERE user_id=?', [id]);
+    run('DELETE FROM persistent_logins WHERE user_id=?', [id]);
+    logOperation({ operator_id:req.currentUserId, operator_name:req.currentUserName, page:'users',
+      operation_type:'remove_user', target_ids:[id], affected_count:1,
+      old_values:{username:user.username, name:user.name, status:user.status, role_id:user.role_id},
+      new_values:{status:'deleted'}, reason:'管理员移除用户并撤销访问', is_rollbackable:0 });
+    res.json({ success:true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
+
 
 // ==================== 数据权限管理（角色级） ====================
 // 获取角色数据权限配置

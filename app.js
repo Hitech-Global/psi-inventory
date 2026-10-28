@@ -1776,7 +1776,7 @@ async function saveConfig(){
   document.querySelectorAll('[id^="cfg-"]').forEach(el=>{configs.push({key:el.dataset.key,value:el.value,description:el.dataset.desc})});
   try{await api('/api/system-config','POST',{configs});showToast(t('gen.L937.1','配置已保存'),'success')}catch(e){showToast(e.message,'danger')}
 }
-// 用户管理最小闭环：查看（脱敏飞书标识）、启用/停用、分配角色；不允许建本地密码账号、改密码、改飞书标识、停用/删应急账号
+// 用户管理：管理员手动预建飞书身份、启用/停用、分配角色、安全移除（保留审批历史）。
 // I18N-100P-B1：新增语言偏好 inline select（管理员可设置）
 async function renderUsers(){
   document.getElementById('content-inner').innerHTML=t('gen.L941.1','<div id="flash-container"></div><div id="user-mgr-loading" class="pc-loading">加载用户列表…</div>');
@@ -1803,6 +1803,11 @@ async function renderUsers(){
         : (u.status==='active'
             ? '<button class="btn btn-xs btn-warning" onclick="setUserStatus(\''+u.id+t('gen.L952.1','\',\'disabled\')">停用</button>')
             : '<button class="btn btn-xs btn-success" onclick="setUserStatus(\''+u.id+t('gen.L953.1','\',\'active\')">启用</button>'));
+      // 系统应急、管理员和当前登录账号不提供删除入口。
+      const canRemove=!isBG && u.role_id!=='role_admin' && (!currentUser || u.id!==currentUser.id);
+      const removeBtn=canRemove
+        ? ' <button class="btn btn-xs btn-danger" onclick="removeManagedUser(\''+u.id+'\')">'+esc(t('user.action.remove','删除'))+'</button>'
+        : '';
       // USER-SCOPE: 数据权限来源标识
       var dsCell;
       if(u.role_id==='role_admin'){
@@ -1822,11 +1827,17 @@ async function renderUsers(){
         +'<td>'+roleSel+'</td>'
         +'<td>'+langSel+'</td>'
         +'<td>'+dsCell+'</td>'
-        +'<td>'+actionBtn+'</td>'
+        +'<td>'+actionBtn+removeBtn+'</td>'
         +'</tr>';
     }).join('');
     document.getElementById('content-inner').innerHTML=
       t('html.renderUsers', '<div id="flash-container"></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">👤 用户管理</div></div><div class="table-container"><table class="data-table"><thead><tr><th>姓名</th><th>用户名</th><th>飞书标识(脱敏)</th><th>邮箱</th><th>来源</th><th>状态</th><th>角色</th><th>语言偏好</th><th>数据权限</th><th>操作</th></tr></thead><tbody>{v1}</tbody></table></div><div class="pc-hint">用户由飞书首次登录自动创建（默认 <b>'+statusLabel('pending')+'</b>，无角色、无权限）。管理员启用并分配角色后，用户方可进入业务。不允许创建本地密码账号、不允许修改密码、不允许编辑飞书标识、不允许停用/删除应急账号。</div></div>', {v1: rows});
+    // 不改各语言页面模板：在标题栏补手动新增入口，并更新使用说明。
+    const titleBar=document.querySelector('#content-inner .table-section-title');
+    if(titleBar) titleBar.insertAdjacentHTML('beforeend',
+      '<div class="table-section-actions"><button class="btn btn-primary btn-sm" onclick="openManagedUserCreate()">'+esc(t('user.action.add','＋ 新增用户'))+'</button></div>');
+    const hint=document.querySelector('#content-inner .pc-hint');
+    if(hint) hint.textContent=t('user.manual.hint','可手动新增已知飞书 Union ID 的用户，初始为待授权；分配角色并启用后才可访问。删除会撤销登录并隐藏用户，历史审批和操作记录保留。');
     // I18N-B1-PAGE-CONTEXT-STATE-01：限定 [data-uid] 排除顶部 lang-switcher（class同为 user-role-sel），
     // 否则 renderUsers 会给 lang-switcher 绑定 setUserRole，语言切换时 setUserRole(undefined) → renderUsers() 覆盖当前页
     document.querySelectorAll('.user-role-sel[data-uid]').forEach(sel=>{ sel.addEventListener('change',()=>setUserRole(sel.dataset.uid, sel.value)); });
@@ -1849,6 +1860,48 @@ async function setUserStatus(uid, status){
   const u=(window.__userCache||[]).find(x=>x.id===uid);
   if(!u){ renderUsers(); return; }
   try{ await api('/api/users/'+uid,'PUT',{username:u.username, name:u.name, status}); showToast(status==='active'?t('gen.L978.1','已启用'):t('gen.L978.2','已停用'),'success'); renderUsers(); }catch(e){ showToast(e.message,'danger'); }
+}
+
+
+// 管理员手动添加：仅预建飞书身份，不创建本地密码；联接依赖飞书 OAuth 可靠的 Union ID。
+function openManagedUserCreate(){
+  const body='<div class="form-card" style="box-shadow:none;padding:0">'
+    +'<div class="form-grid">'
+    +'<div class="form-group"><label>'+esc(t('user.field.name','姓名'))+' <span class="required">*</span></label><input id="new-user-name" type="text" maxlength="128"></div>'
+    +'<div class="form-group"><label>'+esc(t('user.field.username','用户名'))+' <span class="required">*</span></label><input id="new-user-username" type="text" maxlength="128"></div>'
+    +'<div class="form-group"><label>'+esc(t('user.field.email','邮箱'))+'</label><input id="new-user-email" type="email" maxlength="254"></div>'
+    +'<div class="form-group"><label>'+esc(t('user.field.union_id','飞书 Union ID'))+' <span class="required">*</span></label><input id="new-user-union" type="text" maxlength="256" autocomplete="off"></div>'
+    +'</div><div class="pc-hint">'+esc(t('user.create.hint','请填写该员工真实的飞书 Union ID（不是邮箱或姓名），用于飞书登录后匹配身份；账号创建后默认为待授权，再分配角色并启用。'))+'</div></div>';
+  const footer='<button class="btn btn-secondary" onclick="closeModal()">'+esc(t('common.cancel','取消'))+'</button>'
+    +'<button id="new-user-submit" class="btn btn-primary" onclick="submitManagedUserCreate()">'+esc(t('user.action.add','新增用户'))+'</button>';
+  openModal(t('user.action.add','新增用户'),body,footer);
+}
+async function submitManagedUserCreate(){
+  const name=(document.getElementById('new-user-name')?.value||'').trim();
+  const username=(document.getElementById('new-user-username')?.value||'').trim();
+  const email=(document.getElementById('new-user-email')?.value||'').trim();
+  const feishu_union_id=(document.getElementById('new-user-union')?.value||'').trim();
+  if(!name||!username||!feishu_union_id){showToast(t('user.error.required','请填写姓名、用户名及飞书 Union ID'),'warning');return;}
+  const btn=document.getElementById('new-user-submit');
+  if(btn?.disabled)return;
+  if(btn) btn.disabled=true;
+  try{
+    await api('/api/users','POST',{name,username,email,feishu_union_id});
+    closeModal();
+    showToast(t('user.create.success','用户已创建（待授权），请分配角色并启用'),'success');
+    await renderUsers();
+  }catch(e){showToast(e.message,'danger');}
+  finally{if(btn&&btn.isConnected)btn.disabled=false;}
+}
+async function removeManagedUser(uid){
+  const u=(window.__userCache||[]).find(x=>x.id===uid);
+  if(!u||u.auth_source==='local'||u.role_id==='role_admin'||(currentUser&&u.id===currentUser.id))return;
+  if(!confirm(t('user.remove.confirm','确定删除用户「{name}」吗？\n删除后立即撤销登录并从列表隐藏，但历史审批和操作记录会保留。',{name:u.name||u.username})))return;
+  try{
+    await api('/api/users/'+encodeURIComponent(uid),'DELETE');
+    showToast(t('user.remove.success','用户已删除，历史记录已保留'),'success');
+    await renderUsers();
+  }catch(e){showToast(e.message,'danger');}
 }
 
 // ==================== 用户数据权限覆盖（USER-SCOPE） ====================
