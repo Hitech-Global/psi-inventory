@@ -28,3 +28,6 @@ release-backups/**/delete-export.json
 # Shopee Analytics desktop runtime/secrets
 shopee-analytics/deploy/desktop/runtime/
 shopee-analytics/deploy/desktop/*.dump
+
+# 嵌入式 PostgreSQL 测试运行时（zonky pg16-binaries），约 1.3GB 可再生成的下载产物
+.pgtest/
