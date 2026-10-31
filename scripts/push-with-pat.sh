@@ -82,8 +82,10 @@ echo "✅ 写权限校验通过"
 
 # ---- 推送 -------------------------------------------------------------------------
 echo "→ 推送 $BRANCH ..."
+# refspec 只写一次：`git push <url> <branch> <branch>` 会让同一个远端 ref 收到两个 src，
+# git 直接拒绝（"receives from more than one src"）。
 GIT_TERMINAL_PROMPT=0 git push \
-  "https://${USERNAME}:${PASSWORD}@github.com/${REMOTE_REPO}.git" "$BRANCH" "$BRANCH"
+  "https://${USERNAME}:${PASSWORD}@github.com/${REMOTE_REPO}.git" "HEAD:refs/heads/${BRANCH}"
 
 echo "✅ 推送完成"
 echo
