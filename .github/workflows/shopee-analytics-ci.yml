@@ -6,6 +6,15 @@ on:
       - "shopee-analytics/**"
       - "skills/shopee-gmv-max/**"
       - ".github/workflows/shopee-analytics-ci.yml"
+  # 直推本分支也必须跑 CI：此前只有 pull_request 触发，
+  # 直接 push 到分支的提交会绕过校验（曾出现标签契约被破坏但 CI 未跑的情况）。
+  push:
+    branches:
+      - "feat/shopee-analytics-v1-foundation"
+    paths:
+      - "shopee-analytics/**"
+      - "skills/shopee-gmv-max/**"
+      - ".github/workflows/shopee-analytics-ci.yml"
   workflow_dispatch:
 
 permissions:
