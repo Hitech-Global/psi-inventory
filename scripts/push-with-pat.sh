@@ -48,7 +48,33 @@ if ! GIT_TERMINAL_PROMPT=0 git push --dry-run \
   echo "❌ 写权限校验失败，输出如下：" >&2
   sed 's/https:\/\/[^@]*@/https:\/\/<redacted>@/g' /tmp/pat-probe.log >&2
   echo >&2
-  echo "请确认该 PAT 勾选了 repo scope，且有效期未过期。" >&2
+  # git 的 "Permission denied" 不说明原因，用 API 补一层判定。
+  echo "→ 用 API 进一步定位原因..." >&2
+  REPO_JSON="$(curl -s -m 20 -H "Authorization: Bearer $PASSWORD" "https://api.github.com/repos/${REMOTE_REPO}")"
+  printf '%s' "$REPO_JSON" | python3 -c "
+import json,sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print('   （响应无法解析）'); raise SystemExit
+msg = d.get('message')
+if msg:
+    print('   GitHub API 返回：', msg)
+    if 'Not Found' in msg:
+        print('   → 令牌看不到该仓库：创建令牌时 Repository access 没有勾选它。')
+    elif 'SAML' in msg or 'protected' in msg.lower():
+        print('   → 仓库受组织 SAML 保护：需在令牌页面点 Authorize 授权该组织。')
+else:
+    p = d.get('permissions', {})
+    print('   仓库可读，但 permissions.push =', p.get('push'))
+    if not p.get('push'):
+        print('   → 令牌只有读权限：把 Contents 改为 Read and write、Workflows 改为 Read and write。')
+    else:
+        print('   → 令牌具备写权限，问题在 git 传输层而非令牌。')
+" >&2
+  echo >&2
+  echo "详细诊断可运行：bash scripts/diagnose-github-pat.sh" >&2
+  rm -f /tmp/pat-probe.log
   exit 1
 fi
 rm -f /tmp/pat-probe.log
