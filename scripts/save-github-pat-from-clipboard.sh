@@ -83,6 +83,30 @@ print(d.get('message') or '未知原因')
 fi
 echo "   ✅ 有效，身份: ${LOGIN}"
 
+# 令牌类型决定权限语义：classic 按 OAuth scope 授权，fine-grained 按 resource owner + 仓库权限授权。
+case "$PAT" in
+  github_pat_*) TOKEN_KIND="fine-grained" ;;
+  *)            TOKEN_KIND="classic" ;;
+esac
+echo "   令牌类型: ${TOKEN_KIND}"
+
+# classic 令牌会回显实际授予的 scope，这是最直接的凭据证据。
+if [ "$TOKEN_KIND" = "classic" ]; then
+  SCOPES="$(curl -s -m 20 -D - -o /dev/null -H "Authorization: Bearer $PAT" https://api.github.com/user \
+    | tr -d '\r' | sed -n 's/^[Xx]-[Oo][Aa][Uu][Tt][Hh]-[Ss][Cc][Oo][Pp][Ee][Ss]: *//p')"
+  if [ -n "${SCOPES}" ]; then
+    echo "   已授予 scope: ${SCOPES}"
+    case ",${SCOPES}," in
+      *,repo,*|*",repo,"*) ;;
+      *) echo "   ⚠️  scope 里没有 repo —— 大概率推不动该仓库" >&2 ;;
+    esac
+    case ",${SCOPES}," in
+      *,workflow,*|*",workflow,"*) ;;
+      *) echo "   ⚠️  scope 里没有 workflow —— 改 .github/workflows/ 会被 GitHub 拒推" >&2 ;;
+    esac
+  fi
+fi
+
 echo "→ 校验对 ${REPO_OWNER}/${REPO_NAME} 的写权限..."
 REPO_JSON="$(curl -s -m 20 -H "Authorization: Bearer $PAT" "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}")"
 MSG="$(printf '%s' "$REPO_JSON" | python3 -c "
@@ -98,8 +122,8 @@ if [ -n "${MSG}" ]; then
   case "$MSG" in
     *Not\ Found*)
       echo "   ❌ 404：令牌看不到该仓库。" >&2
-      echo "      → 创建令牌时 Repository access 必须包含 ${REPO_OWNER}/${REPO_NAME}" >&2
-      echo "        （只勾 'Public repositories' 或漏选该仓库都会这样）" >&2 ;;
+      echo "      → 若是 classic PAT：确认勾了 repo scope" >&2
+      echo "      → 若是 fine-grained PAT：Repository access 需包含 ${REPO_OWNER}/${REPO_NAME}" >&2 ;;
     *SAML*|*organization*|*protected*)
       echo "   ❌ ${MSG}" >&2
       echo "      → 需要在令牌页面点 'Authorize' 授权该主体" >&2 ;;
@@ -121,9 +145,16 @@ print('true' if (d.get('permissions') or {}).get('push') else 'false')
 
 if [ "$CAN_PUSH" != "true" ]; then
   echo "   ❌ 令牌对该仓库只有读权限。" >&2
-  echo "      → Resource owner 必须选 ${REPO_OWNER}（令牌的 owner 决定它能改谁的资源）" >&2
-  echo "      → Repository access 不能选 Public repositories（那只有读权限）" >&2
-  echo "      → Repository permissions 需勾 Contents / Workflows / Pull requests = Read and write" >&2
+  case "$PAT" in
+    github_pat_*)
+      echo "      → 这是 fine-grained 令牌：Resource owner 必须是 ${REPO_OWNER}" >&2
+      echo "        （令牌只能改自己 owner 名下的资源；${REPO_OWNER} 是个人账号时无法被选中）" >&2
+      echo "      → Repository access 不能选 Public repositories（那只有读权限）" >&2
+      echo "      → Repository permissions 需勾 Contents / Workflows / Pull requests = Read and write" >&2 ;;
+    *)
+      echo "      → 这是 classic 令牌：需勾选 repo scope" >&2
+      echo "      → 改 workflow 文件还需额外勾选 workflow scope" >&2 ;;
+  esac
   unset PAT USER_JSON REPO_JSON
   exit 1
 fi
