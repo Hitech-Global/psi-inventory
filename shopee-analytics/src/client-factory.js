@@ -1,7 +1,7 @@
 'use strict';
 
 const { ShopeeClient } = require('./shopee-client');
-const { loadAppCredential } = require('./config');
+const { loadAppCredential, loadRateLimitRetryOptions } = require('./config');
 const { assertRoleAllowed } = require('./deployment-mode');
 
 function createRoleClient(role, options = {}) {
@@ -12,6 +12,8 @@ function createRoleClient(role, options = {}) {
     partnerKey: credential.partnerKey,
     baseUrl: options.baseUrl,
     fetchImpl: options.fetchImpl,
+    // 限流退避参数：默认取环境变量，调用方显式传入时优先。
+    retryOptions: options.retryOptions || loadRateLimitRetryOptions(),
   });
   return {
     role,

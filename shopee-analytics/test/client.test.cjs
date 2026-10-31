@@ -53,6 +53,8 @@ const client = new ShopeeClient({
   assert.strictEqual(principalUrl.searchParams.get('shop_id'), null);
   const rateLimited = new ShopeeClient({
     partnerId: '123', partnerKey: 'secret',
+    // 注入空等待：本用例只验证限流错误分类，真实退避耗时由 test/rate-limit-retry.test.cjs 覆盖。
+    retryOptions: { sleep: async () => {} },
     fetchImpl: async () => ({
       ok: false, status: 429, text: async () => '{"error":"ads_rate_limit_shop_api"}',
       headers: { get: name => name === 'retry-after' ? '12' : null },

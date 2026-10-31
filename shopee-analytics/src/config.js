@@ -74,6 +74,33 @@ function loadShopId(env = process.env) {
   return shopId;
 }
 
+/**
+ * 读取 Shopee 限流退避参数。
+ *
+ * 全部可选，未设置时返回 undefined，由 rate-limit-retry 使用默认值。
+ * 提供环境变量是为了让高 QPS 多店铺场景可以在不重新构建镜像的情况下收紧或放宽退避。
+ */
+function loadRateLimitRetryOptions(env = process.env) {
+  const readOptionalNumber = (name) => {
+    const raw = String(env[name] || '').trim();
+    if (!raw) return undefined;
+    const value = Number(raw);
+    if (!Number.isFinite(value) || value < 0) {
+      throw new Error(`${name} must be a non-negative number`);
+    }
+    return value;
+  };
+
+  const options = {};
+  const maxAttempts = readOptionalNumber('SHOPEE_RATE_LIMIT_MAX_ATTEMPTS');
+  const baseDelayMs = readOptionalNumber('SHOPEE_RATE_LIMIT_BASE_DELAY_MS');
+  const maxDelayMs = readOptionalNumber('SHOPEE_RATE_LIMIT_MAX_DELAY_MS');
+  if (maxAttempts !== undefined) options.maxAttempts = maxAttempts;
+  if (baseDelayMs !== undefined) options.baseDelayMs = baseDelayMs;
+  if (maxDelayMs !== undefined) options.maxDelayMs = maxDelayMs;
+  return options;
+}
+
 module.exports = {
   APP_ENV,
   readEnv,
@@ -81,4 +108,5 @@ module.exports = {
   loadAppCredential,
   loadBootstrapToken,
   loadShopId,
+  loadRateLimitRetryOptions,
 };
