@@ -23,15 +23,21 @@ GIT_USER="martin0000118-dev"
 cd "$REPO_DIR"
 
 echo "请粘贴 GitHub PAT（输入不可见，回车确认）："
-# stty 关回显，read 从终端读；用 </dev/tty 保证读到的是终端而不是管道。
-if [ -t 0 ]; then
-  stty -echo
-  IFS= read -r PAT
-  stty echo
-  echo
+
+# 始终从 /dev/tty 读取终端输入：
+#   - 直接运行脚本时 stdin 就是终端，效果相同；
+#   - 从管道/重定向启动时 stdin 不是终端，但 /dev/tty 仍是用户终端，仍能交互输入。
+# stty -echo 关闭回显，避免 PAT 出现在屏幕上或被终端记录。
+if [ -r /dev/tty ] && [ -w /dev/tty ]; then
+  TTY=/dev/tty
 else
-  IFS= read -r PAT
+  TTY=/dev/stdin
 fi
+
+stty -echo 2>/dev/null || true
+IFS= read -r PAT < "$TTY" || true
+stty echo 2>/dev/null || true
+echo
 
 if [ -z "${PAT:-}" ]; then
   echo "❌ 没有读到任何内容，请重新运行。" >&2
