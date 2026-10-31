@@ -179,7 +179,29 @@ Use exactly one shop for the first real-data acceptance. Do not start historical
 4. In Seller Centre, record the same fixed-period Shop BI Sales/Orders and Ads Broad/Direct metrics into a local copy of `config/seller-centre-reconciliation.example.json`.
 5. Run `reconcile-seller-centre.cjs`. The default tolerance is 1% per supplied metric; any failure blocks backfill and must be explained by timezone, attribution, pagination, or source completeness before proceeding.
 6. Import the Product Card export for exactly the same period, then rerun the validation report to validate item-level CVR/funnel coverage.
-7. Only after fixed-period reconciliation passes should historical backfill be enabled.
+7. Record the pilot acceptance, which stores the four gate results as the artifact backfill is gated on:
+
+```bash
+SHOPEE_PILOT_SHOP_ID=<shopId> \
+SHOPEE_PILOT_START_DATE=2026-09-01 \
+SHOPEE_PILOT_END_DATE=2026-09-07 \
+SHOPEE_PILOT_SYNC_REPORT=/secure/local/sync-report.json \
+SHOPEE_PILOT_VALIDATION_REPORT=/secure/local/validation-report.json \
+SHOPEE_PILOT_RECONCILIATION_REPORT=/secure/local/reconciliation-report.json \
+node shopee-analytics/scripts/pilot-acceptance.cjs
+```
+
+The artifact is written per shop to `runtime/pilot-gate/shop-<shopId>.json` inside the gitignored
+runtime directory, with mode `0600`. It records the source file and SHA-256 of each input report,
+so a stored decision can be traced back to the exact reports it was computed from. The three
+evidence reports must all identify the same shop; mismatched evidence is refused.
+
+8. Only after the pilot acceptance passes should historical backfill be enabled.
+
+The backfill runner enforces this itself: it refuses to run for a shop whose artifact is missing,
+belongs to another shop, failed a gate, or is older than `SHOPEE_PILOT_GATE_MAX_AGE_DAYS`
+(default 180 days). Enabling backfill therefore requires no manual trust decision — the runner
+blocks until an acceptance exists.
 
 Example:
 

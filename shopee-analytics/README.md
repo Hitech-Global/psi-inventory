@@ -250,6 +250,26 @@ The report prints no Partner Key / access token / refresh token. It includes sho
 
 Use the resumable backfill runner before accepting the first live dashboard. It is designed for multi-country / multi-brand / multi-shop onboarding and keeps progress per shop/source in `shopee_sync_state`.
 
+Historical backfill is **gated by the real-shop pilot gate**: every shop must have an accepted
+pilot gate artifact before its history is backfilled. Produce the artifact once the fixed-period
+sync, validation report and Seller Centre reconciliation have run (see
+`deploy/desktop/README.md` → "First live-shop pilot gate"):
+
+```bash
+SHOPEE_PILOT_SHOP_ID=123456789 \
+SHOPEE_PILOT_START_DATE=2026-09-01 \
+SHOPEE_PILOT_END_DATE=2026-09-07 \
+SHOPEE_PILOT_SYNC_REPORT=/secure/path/sync-report.json \
+SHOPEE_PILOT_VALIDATION_REPORT=/secure/path/validation-report.json \
+SHOPEE_PILOT_RECONCILIATION_REPORT=/secure/path/reconciliation-report.json \
+node shopee-analytics/scripts/pilot-acceptance.cjs
+```
+
+The artifact is written per shop under the gitignored desktop runtime directory
+(`deploy/desktop/runtime/pilot-gate/shop-<shopId>.json`). Backfill refuses to run when the
+artifact is missing, belongs to another shop, failed a gate, or is older than
+`SHOPEE_PILOT_GATE_MAX_AGE_DAYS` (default 180 days).
+
 ```bash
 SHOPEE_ANALYTICS_ENABLE_BACKFILL=YES \
 SHOPEE_BACKFILL_START_DATE=2026-05-01 \
