@@ -605,9 +605,12 @@
     const spendLimit = Number(economics.adSpendRatioLimit);
     if (Number.isFinite(broadRoas) && Number.isFinite(requiredBroadRoas) && Number.isFinite(spendLimit)) {
       const meets = broadRoas >= requiredBroadRoas;
+      // 标签口径遵循 web/shopee-metric-labels.js：广告组总额口径用「广告组 ROAS / Ad Group ROAS」，
+      // 与表头的「ROAS（广告组总额）」一致，并与「Direct ROAS」明确区分；
+      // 不再使用已被 test/shopee-metric-labels.test.cjs 契约废止的旧前缀式标签。
       parts.push(zh
-        ? `Broad ROAS ${broadRoas.toFixed(2)}${meets ? '满足' : '未满足'}广告花费占比上限 ${(spendLimit * 100).toFixed(1).replace(/\.0$/, '')}% 对应的最低 ROAS ${requiredBroadRoas.toFixed(2)} 经营约束。`
-        : `Broad ROAS ${broadRoas.toFixed(2)} ${meets ? 'meets' : 'does not meet'} the minimum ROAS ${requiredBroadRoas.toFixed(2)} implied by the ${(spendLimit * 100).toFixed(1).replace(/\.0$/, '')}% ad-spend-ratio limit.`);
+        ? `广告组 ROAS ${broadRoas.toFixed(2)}${meets ? '满足' : '未满足'}广告花费占比上限 ${(spendLimit * 100).toFixed(1).replace(/\.0$/, '')}% 对应的最低 ROAS ${requiredBroadRoas.toFixed(2)} 经营约束。`
+        : `Ad Group ROAS ${broadRoas.toFixed(2)} ${meets ? 'meets' : 'does not meet'} the minimum ROAS ${requiredBroadRoas.toFixed(2)} implied by the ${(spendLimit * 100).toFixed(1).replace(/\.0$/, '')}% ad-spend-ratio limit.`);
     }
 
     const core = items
