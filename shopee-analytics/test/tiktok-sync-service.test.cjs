@@ -222,4 +222,82 @@ assert.throws(
   /must be ROW or US/,
 );
 
-console.log('tiktok adapter and sync service tests passed');
+// ---- 端到端增量 GMV ----
+
+(async () => {
+  const calls = [];
+  const fakeClient = {
+    async request({ path, query, accessToken }) {
+      calls.push({ path, query, accessToken });
+      if (path === '/open_api/v1.3/gmv_max/report/get/') {
+        return {
+          list: [
+            { dimensions: { stat_time_day: '2026-11-01', item_id: '100' }, metrics: { gross_revenue: '500', cost: '100' } },
+            { dimensions: { stat_time_day: '2026-11-01', item_id: '200' }, metrics: { gross_revenue: '200', cost: '50' } },
+            // 缺 item_id 的行：无法按商品归因，必须跳过而不是归到未知桶
+            { dimensions: { stat_time_day: '2026-11-01' }, metrics: { gross_revenue: '999', cost: '9' } },
+          ],
+        };
+      }
+      if (path === '/analytics/202509/shop_skus/performance') {
+        return { skus: [{ id: 1, product_id: '100', gmv: { amount: '200.00', currency: 'MYR' }, sku_orders: 2 }] };
+      }
+      if (path === '/analytics/202609/shop_lives/performance') {
+        return { live_stream_sessions: [] };
+      }
+      throw new Error(`unexpected path ${path}`);
+    },
+  };
+
+  const pool = {
+    async query() { return { rows: [] }; },
+    // 记录快照的插入需要真实返回
+  };
+  const service = new TikTokSyncService({ pool, client: fakeClient });
+
+  const result = await service.syncIncrementalGmv({
+    shopId: 'shop-1',
+    shopCipher: 'CIPHER-1',
+    shopAccessToken: 'SHOP-TOKEN',
+    advertiserAccessToken: 'ADS-TOKEN',
+    advertiserId: 'ADV-1',
+    storeId: 'STORE-1',
+    startDate: '2026-11-01',
+    endDate: '2026-11-01',
+    windowDays: 2,
+  });
+
+  // 商品 100：归因 500，基线 200 → 增量 300
+  const item100 = result.items.find(item => item.productId === '100');
+  assert.strictEqual(item100.attributedGmv, 500);
+  assert.strictEqual(item100.baselineNaturalGmv, 200);
+  assert.strictEqual(item100.incrementalGmv, 300);
+  assert.strictEqual(item100.spend, 100);
+
+  // 商品 200：归因 200，无基线 → 增量不可得（不得编造）
+  const item200 = result.items.find(item => item.productId === '200');
+  assert.strictEqual(item200.attributedGmv, 200);
+  assert.strictEqual(item200.baselineNaturalGmv, null);
+  assert.strictEqual(item200.incrementalGmv, null);
+
+  // 缺 item_id 的行被跳过
+  assert.strictEqual(result.items.length, 2);
+
+  // **两套凭据必须分别使用**：广告报表用 Marketing token，Analytics 用 Shop token
+  const gmvCall = calls.find(call => call.path.includes('gmv_max'));
+  assert.strictEqual(gmvCall.accessToken, 'ADS-TOKEN', '广告报表必须用 Marketing API 令牌');
+  const analyticsCall = calls.find(call => call.path.includes('shop_skus'));
+  assert.strictEqual(analyticsCall.accessToken, 'SHOP-TOKEN', 'Analytics 必须用 Shop API 令牌');
+
+  // Analytics 请求必须带 shop_cipher
+  assert.ok(analyticsCall.query.start_date_ge, 'Analytics 必须带日期参数');
+
+  // 基线窗口天数
+  assert.strictEqual(result.baselineDays, 2);
+  assert.strictEqual(result.liveDays, 0);
+
+  console.log('tiktok adapter and sync service tests passed');
+})().catch(error => {
+  console.error(error);
+  process.exit(1);
+});

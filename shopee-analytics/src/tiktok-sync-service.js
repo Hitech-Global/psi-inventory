@@ -20,12 +20,16 @@
 const { TikTokClient } = require('./tiktok-client');
 const { ENDPOINTS, resolveEndpoint } = require('./tiktok-catalog');
 const {
-  buildIncrementalFact,
   mapGmvMaxRow,
   mapIntegratedRow,
   mapOrder,
   mapStatementRow,
 } = require('./platforms/tiktok-adapter');
+const {
+  DEFAULT_BASELINE_WINDOW_DAYS,
+  TikTokBaselineCollector,
+  computeIncrementalByProduct,
+} = require('./tiktok-baseline-collector');
 const { fingerprintRequest } = require('./raw-snapshot');
 const { ATTRIBUTION_BASES, CHANNELS, PLATFORMS } = require('./platform-model');
 
@@ -349,6 +353,112 @@ class TikTokSyncService {
   }
 
   /**
+   * 端到端算增量 GMV：GMV Max 归因 GMV 减去自然基线。
+   *
+   * 这是 TikTok 侧唯一能表达「广告贡献」的量。归因 GMV 含自然流量，
+   * 直接拿它当广告成果会高估；基线来自 Analytics 的非直播 GMV 滚动窗口。
+   *
+   * @param {object} options
+   * @param {string} options.shopId
+   * @param {string} options.shopCipher 该店自己的 cipher
+   * @param {string} options.shopAccessToken Shop API 的令牌
+   * @param {string} options.advertiserAccessToken Marketing API 的令牌（与上面是两套凭据）
+   * @param {string} options.advertiserId
+   * @param {string} options.storeId
+   * @param {string} options.startDate
+   * @param {string} options.endDate
+   * @param {number} [options.windowDays] 基线窗口天数
+   * @returns {Promise<object>} 增量结果
+   */
+  async syncIncrementalGmv({
+    shopId,
+    shopCipher,
+    shopAccessToken,
+    advertiserAccessToken,
+    advertiserId,
+    storeId,
+    startDate,
+    endDate,
+    windowDays = DEFAULT_BASELINE_WINDOW_DAYS,
+  }) {
+    // 1) GMV Max 归因（按商品与日期）
+    const attributedByProduct = new Map();
+    const spendByProduct = new Map();
+    const windows = splitDateRange(startDate, endDate, 30);
+
+    for (const window of windows) {
+      const query = {
+        advertiser_id: advertiserId,
+        store_ids: JSON.stringify([storeId]),
+        start_date: window.startDate,
+        end_date: window.endDate,
+        metrics: JSON.stringify(['cost', 'gross_revenue']),
+        dimensions: JSON.stringify(['stat_time_day', 'item_id']),
+      };
+      const data = await this.client.request({
+        path: '/open_api/v1.3/gmv_max/report/get/',
+        accessToken: advertiserAccessToken,
+        query,
+      });
+      await this.recordSnapshot({
+        endpointKey: 'gmvMaxReport',
+        shopId,
+        shopCipher: null,
+        advertiserId,
+        requestJson: query,
+        responseJson: data,
+        eventDateFrom: window.startDate,
+        eventDateTo: window.endDate,
+      });
+
+      const list = Array.isArray(data.list) ? data.list : [];
+      for (const row of list) {
+        const metrics = row.metrics || {};
+        const dimensions = row.dimensions || {};
+        // item_id 是 GMV Max 的商品维度；缺失则无法按商品归因，跳过而不是归到未知桶。
+        const itemId = dimensions.item_id !== undefined && dimensions.item_id !== null
+          ? String(dimensions.item_id)
+          : null;
+        if (!itemId) continue;
+        const revenue = Number(metrics.gross_revenue);
+        const cost = Number(metrics.cost);
+        if (Number.isFinite(revenue)) {
+          attributedByProduct.set(itemId, (attributedByProduct.get(itemId) || 0) + revenue);
+        }
+        if (Number.isFinite(cost)) {
+          spendByProduct.set(itemId, (spendByProduct.get(itemId) || 0) + cost);
+        }
+      }
+    }
+
+    // 2) 自然基线（Analytics 非直播 GMV 滚动窗口）
+    const collector = new TikTokBaselineCollector({ client: this.client, env: this.env });
+    const baseline = await collector.collectBaseline({
+      accessToken: shopAccessToken,
+      shopCipher,
+      endDate,
+      windowDays,
+    });
+
+    // 3) 相减
+    const items = this.buildIncrementalFacts({
+      attributedGmvByProduct: attributedByProduct,
+      baselineSeries: baseline.series,
+      windowSize: windowDays,
+      spendByProduct,
+    });
+
+    return {
+      endpointKey: 'incrementalGmv',
+      shopId,
+      count: items.length,
+      items,
+      baselineDays: baseline.dailyRecords.length,
+      liveDays: baseline.dailyRecords.filter(record => record.hasLive).length,
+    };
+  }
+
+  /**
    * 同步整合报表（纯付费漏斗）。
    */
   async syncIntegratedReport({ shopId, advertiserId, accessToken, startDate, endDate }) {
@@ -399,17 +509,33 @@ class TikTokSyncService {
    * @param {Map<string, number[]>} options.baselineByItem 商品 → 自然 GMV 基线序列
    * @param {number} [options.windowSize] 基线窗口
    */
-  buildIncrementalFacts({ attributedFacts = [], baselineByItem = new Map(), windowSize = 14 }) {
-    return attributedFacts.map(fact => {
-      const itemKey = fact.itemKey || null;
-      const baseline = itemKey && baselineByItem.get(itemKey) ? baselineByItem.get(itemKey) : [];
-      const incremental = buildIncrementalFact({
-        attributedGmv: fact.gmvOrderTotal,
-        baselineSeries: baseline,
-        windowSize,
-      });
-      return { ...incremental, spend: fact.spend };
-    });
+  /**
+   * 计算增量 GMV（TikTok 侧唯一能表达"广告贡献"的量）。
+   *
+   * 数据来源是 Analytics 的两个端点：SKU 级 GMV 减去直播 GMV 得到非直播 GMV，
+   * 再与 GMV Max 归因的 GMV 相减。详见 src/tiktok-baseline-collector.js。
+   *
+   * @param {object} options
+   * @param {Map<string, number>} options.attributedGmvByProduct GMV Max 归因的 GMV（按商品）
+   * @param {Map<string, number[]>} options.baselineSeries 商品 → 自然 GMV 基线序列
+   * @param {number} [options.windowSize] 基线窗口天数
+   * @param {Map<string, number>} [options.spendByProduct] 商品 → 广告花费
+   * @returns {Array<object>} 每项含 productId / attributedGmv / baseline / incremental
+   */
+  buildIncrementalFacts({
+    attributedGmvByProduct = new Map(),
+    baselineSeries = new Map(),
+    windowSize = DEFAULT_BASELINE_WINDOW_DAYS,
+    spendByProduct = new Map(),
+  }) {
+    return computeIncrementalByProduct({
+      attributedGmvByProduct,
+      baselineSeries,
+      windowDays: windowSize,
+    }).map(item => ({
+      ...item,
+      spend: spendByProduct.has(item.productId) ? spendByProduct.get(item.productId) : null,
+    }));
   }
 
   regionGroup() {
@@ -426,8 +552,11 @@ class TikTokSyncService {
 module.exports = {
   ATTRIBUTION_BASES,
   CHANNELS,
+  DEFAULT_BASELINE_WINDOW_DAYS,
   PLATFORMS,
+  TikTokBaselineCollector,
   TikTokSyncService,
+  computeIncrementalByProduct,
   daysInclusive,
   splitDateRange,
 };
