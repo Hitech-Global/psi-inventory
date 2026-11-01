@@ -1,6 +1,81 @@
 -- Shopee Analytics V1 schema (PostgreSQL)
 -- Isolated foundation only. This file is NOT wired into inventory startup migrations.
 
+-- ============================================================================================
+-- TikTok Shop (区域：东南亚 ROW；自有店铺；纯 GMV Max 广告)
+-- ============================================================================================
+-- 与 Shopee 侧的差异决定了表结构：
+--   * 标识是 (shop_id, shop_cipher) 二元组。一个 access token 可覆盖卖家名下多个店铺，
+--     每店有自己的 cipher。只存 shop_id 会导致 cipher 串店 —— 请求打到 A 店却带着 B 店的
+--     cipher，读到别的品牌的数据。因此 cipher 与 shop_id 存在同一行，成对写入成对读取。
+--   * Marketing API 的凭据域完全独立（不同的 app 体系、24 小时 token、独立刷新调度）。
+
+-- Shop Open API 凭据：cipher 与 shop_id 成对存储
+CREATE TABLE IF NOT EXISTS tiktok_shop_tokens (
+  app_key TEXT NOT NULL,
+  region_group TEXT NOT NULL,
+  shop_id TEXT NOT NULL,
+  shop_cipher TEXT NOT NULL,
+  token_blob TEXT NOT NULL,
+  token_iv TEXT NOT NULL,
+  token_tag TEXT NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  last_refresh_at TIMESTAMPTZ,
+  refresh_error TEXT,
+  seller_type TEXT,
+  region TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (app_key, region_group, shop_id)
+);
+
+-- Marketing API 凭据：与 Shop API 完全分开的存储分区
+-- token 仅 24 小时有效，刷新调度按 expires_at 扫描
+CREATE TABLE IF NOT EXISTS tiktok_marketing_tokens (
+  app_id TEXT NOT NULL,
+  advertiser_id TEXT NOT NULL,
+  token_blob TEXT NOT NULL,
+  token_iv TEXT NOT NULL,
+  token_tag TEXT NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  last_refresh_at TIMESTAMPTZ,
+  refresh_error TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (app_id, advertiser_id)
+);
+
+-- 原始 API 快照：对齐 shopee_raw_api_snapshots 的结构，复用查询与回放工具
+-- 与 Shopee 版的差异：店铺标识是 (shop_id, shop_cipher) 二元组，
+-- 因此 shop_cipher 也进表，且区域组与广告账户 ID 分列存放。
+CREATE TABLE IF NOT EXISTS tiktok_raw_api_snapshots (
+  id BIGSERIAL PRIMARY KEY,
+  region_group TEXT NOT NULL,
+  endpoint_key TEXT NOT NULL,
+  shop_id TEXT,
+  shop_cipher TEXT,
+  advertiser_id TEXT,
+  event_date_from DATE,
+  event_date_to DATE,
+  request_fingerprint TEXT NOT NULL,
+  request_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  response_json JSONB NOT NULL,
+  synced_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_tiktok_raw_endpoint_shop_synced
+  ON tiktok_raw_api_snapshots(endpoint_key, shop_id, synced_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tiktok_raw_region_advertiser_synced
+  ON tiktok_raw_api_snapshots(region_group, advertiser_id, synced_at DESC);
+
+-- 授权 state：保存哈希而非明文，一次性消费（DELETE ... RETURNING 即为消费动作）
+CREATE TABLE IF NOT EXISTS tiktok_oauth_states (
+  state_hash TEXT PRIMARY KEY,
+  region_group TEXT NOT NULL,
+  redirect_uri TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_tiktok_oauth_states_expiry
+  ON tiktok_oauth_states(expires_at);
+
 CREATE TABLE IF NOT EXISTS shopee_app_tokens (
   app_role TEXT NOT NULL,
   shop_id BIGINT NOT NULL,

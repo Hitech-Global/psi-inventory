@@ -7,6 +7,7 @@ const { runBackfillShop } = require('../src/backfill-runner');
 const { parseSources, isoDate } = require('../src/backfill-utils');
 const { parseCampaignIds } = require('../src/sync-cycle-utils');
 const { assertOperationAllowed } = require('../src/deployment-mode');
+const { assertPilotGateAllowsBackfill } = require('../src/pilot-gate-store');
 
 function parseIdFilter(value) {
   return new Set(
@@ -47,6 +48,21 @@ async function main() {
     if (shopIdFilter.size) shops = shops.filter(shop => shopIdFilter.has(shop.shopId));
 
     if (!shops.length) throw new Error('No active shops matched the backfill filters');
+
+    // Real-shop pilot gate: every shop must have an accepted pilot gate artifact before
+    // its history is backfilled. This is the enforcement point for the documented promise
+    // that backfill stays blocked until sync, data health, Seller Centre reconciliation and
+    // exact-period Product Card all pass.
+    //
+    // All shops are checked BEFORE any write, so a multi-shop run cannot partially backfill
+    // the shops that happen to be accepted before failing on the first unaccepted one.
+    for (const shop of shops) {
+      const pilotGate = assertPilotGateAllowsBackfill({ shopId: shop.shopId });
+      console.error(
+        `[pilot-gate] shop ${shop.shopId} accepted on ${pilotGate.generatedAt} ` +
+        `for ${pilotGate.period.startDate}..${pilotGate.period.endDate}`,
+      );
+    }
 
     const summaries = [];
     for (const shop of shops) {

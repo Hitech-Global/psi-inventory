@@ -18,6 +18,7 @@ const { ShopeeShopScopeRepository } = require('./shop-scope-repository');
 const { createFeishuAuth } = require('./feishu-auth');
 const { BrandPortalOAuthService } = require('./brand-portal-oauth-service');
 const { ErpOAuthService } = require('./erp-oauth-service');
+const { TikTokOAuthService } = require('./tiktok-oauth-service');
 const { createReviewerAuth, ROLE_REVIEWER } = require('./reviewer-auth');
 
 function resolveBindAddress(env = process.env) {
@@ -56,6 +57,7 @@ function createApp({ pool, skillProvider = null, importJobPool = null }) {
   const feishuAuth = createFeishuAuth({ pool, reviewerAuth });
   const brandPortalOAuthService = new BrandPortalOAuthService({ pool });
   const erpOAuthService = new ErpOAuthService({ pool });
+  const tiktokOAuthService = new TikTokOAuthService({ pool });
 
   // Docker/host health checks must remain available before auth middleware.
   // This endpoint exposes no shop, user, or business data.
@@ -97,14 +99,17 @@ function createApp({ pool, skillProvider = null, importJobPool = null }) {
     runAdGroupSkillAnalysis,
     brandPortalOAuthService,
     erpOAuthService,
+    tiktokOAuthService,
   }));
 
   const webDir = path.join(__dirname, '..', 'web');
   const indexPath = path.join(webDir, 'index.html');
   const loginPath = path.join(webDir, 'login.html');
+  const connectionsPath = path.join(webDir, 'connections.html');
   const assetVersion = Date.now().toString(36);
   let indexHtml = fs.readFileSync(indexPath, 'utf8');
   const loginHtml = fs.readFileSync(loginPath, 'utf8');
+  const connectionsHtml = fs.readFileSync(connectionsPath, 'utf8');
   for (const asset of ['/styles.css', '/shopee-metric-labels.js', '/app.js', '/ad-group-import-async.js']) {
     indexHtml = indexHtml.replace(asset, `${asset}?v=${assetVersion}`);
   }
@@ -122,6 +127,13 @@ function createApp({ pool, skillProvider = null, importJobPool = null }) {
   });
   app.get('/auth/feishu/login', feishuAuth.handleLogin);
   app.get('/auth/feishu/callback', feishuAuth.handleCallback);
+
+  // 平台接入页：Shopee 与 TikTok 的开放平台授权入口。
+  // 与首页一样要求已登录，否则无法知道谁在操作授权。
+  app.get('/connections', feishuAuth.requireWebSession, (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    res.type('html').send(connectionsHtml);
+  });
 
   app.get(['/', '/index.html'], feishuAuth.requireWebSession, (req, res) => {
     res.set('Cache-Control', 'no-cache');
