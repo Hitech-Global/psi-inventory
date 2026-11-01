@@ -17,6 +17,8 @@ const {
   CHANNEL_VALUES,
   PLATFORMS,
   PLATFORM_VALUES,
+  SOURCES,
+  SOURCE_VALUES,
   assertSameBasis,
   averageOrderValue,
   canDivideAcrossBases,
@@ -113,6 +115,43 @@ assert.throws(
 // canDivideAcrossBases 与 assertSameBasis 判定一致
 assert.strictEqual(canDivideAcrossBases(ATTRIBUTION_BASES.PAID_ONLY, ATTRIBUTION_BASES.PAID_ONLY), true);
 assert.strictEqual(canDivideAcrossBases(ATTRIBUTION_BASES.DERIVED_NET, ATTRIBUTION_BASES.PLATFORM_ATTRIBUTED), false);
+
+// ---- 来源检查 ----
+// 同一张报表内：混合归因的分子配纯付费分母成立（平台面板上的 ROI）
+const gmvMaxMetric = createMetric({
+  platform: PLATFORMS.TIKTOK,
+  attributionBasis: ATTRIBUTION_BASES.PLATFORM_ATTRIBUTED,
+  value: 600,
+  source: SOURCES.GMV_MAX_REPORT,
+});
+const paidMetric = createMetric({
+  platform: PLATFORMS.TIKTOK,
+  attributionBasis: ATTRIBUTION_BASES.PAID_ONLY,
+  value: 100,
+  source: SOURCES.GMV_MAX_REPORT,
+});
+const paidMetricOtherSource = createMetric({
+  platform: PLATFORMS.TIKTOK,
+  attributionBasis: ATTRIBUTION_BASES.PAID_ONLY,
+  value: 100,
+  source: SOURCES.INTEGRATED_REPORT,
+});
+assert.doesNotThrow(() => assertSameBasis(gmvMaxMetric, paidMetric));
+// 跨来源：覆盖的不是同一批事实，相除无意义
+assert.throws(
+  () => assertSameBasis(gmvMaxMetric, paidMetricOtherSource),
+  /refusing to combine metrics from different sources/,
+);
+// 来源枚举校验
+assert.throws(
+  () => createMetric({
+    platform: PLATFORMS.TIKTOK,
+    attributionBasis: ATTRIBUTION_BASES.UNKNOWN,
+    source: 'not-a-source',
+  }),
+  /unknown source/,
+);
+assert.strictEqual(SOURCE_VALUES.length, 5);
 
 // 缺少度量或口径非法时报错
 assert.throws(() => assertSameBasis(null, paidCost), /numerator metric is required/);

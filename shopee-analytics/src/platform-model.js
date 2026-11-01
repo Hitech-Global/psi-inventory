@@ -72,14 +72,39 @@ const PLATFORMS = Object.freeze({
 const PLATFORM_VALUES = Object.freeze(Object.values(PLATFORMS));
 
 /**
+ * 数据来源。用于区分「同一张报表内的混合口径」与「跨报表混算」。
+ *
+ * 背景：TikTok 的 GMV Max 报表里 `gross_revenue`（混合归因）与 `cost`（纯花费）
+ * 出自同一张报表，相除得到的就是平台面板上的 ROI，语义成立。
+ * 但整合报表（integrated report）的 `spend` 覆盖的是另一批广告活动，
+ * 与 GMV Max 的花费不是同一个数 —— 两者相除没有意义。
+ * 光看 attributionBasis 分辨不出来，因为两处的花费都是 paid_only 语义。
+ * 因此额外记录来源，跨来源的比值一律拒绝。
+ */
+const SOURCES = Object.freeze({
+  /** GMV Max 报表：cost / gross_revenue / orders / roi 同源 */
+  GMV_MAX_REPORT: 'gmv_max_report',
+  /** 整合报表：spend / impressions / clicks / conversions 同源 */
+  INTEGRATED_REPORT: 'integrated_report',
+  /** 结算流水：收入 / 佣金 / 物流 / 退款 */
+  FINANCE_STATEMENT: 'finance_statement',
+  /** 店铺订单 */
+  SHOP_ORDER: 'shop_order',
+  /** 店铺分析（漏斗） */
+  SHOP_ANALYTICS: 'shop_analytics',
+});
+
+const SOURCE_VALUES = Object.freeze(Object.values(SOURCES));
+
+/**
  * 哪些口径之间允许相除得到比值。
  *
- * 规则很简单：比值的分子分母必须来自同一个口径，且该口径必须是"可比较"的。
+ * 规则：比值的分子分母必须来自同一个口径，且该口径必须是"可比较"的。
  * 举例：
  *   - paid_only 的 spend 除以 paid_only 的 orders → 允许（都是纯付费）
  *   - platform_attributed 的 grossRevenue 除以 platform_attributed 的 cost → 允许
- *   - platform_attributed 的 grossRevenue 除以 paid_only 的 spend → 允许
- *     （混合归因的分子配纯付费的分母，语义是"平台口径的回报"，有明确含义）
+ *   - platform_attributed 的 grossRevenue 除以 paid_only 的 spend → 允许，
+ *     **但仅限同一来源**（GMV Max 报表内的 ROI）；跨来源被 source 检查拦下
  *   - derived_incremental 的增量 GMV 除以 paid_only 的 spend → 允许
  *     （这正是 TikTok 增量 ROAS 的定义）
  *   - platform_attributed 除以 derived_net → **不允许**
@@ -91,7 +116,7 @@ const DIVISIBLE_BASIS_PAIRS = Object.freeze([
   [ATTRIBUTION_BASES.DERIVED_INCREMENTAL, ATTRIBUTION_BASES.DERIVED_INCREMENTAL],
   [ATTRIBUTION_BASES.DERIVED_NET, ATTRIBUTION_BASES.DERIVED_NET],
   [ATTRIBUTION_BASES.ORDER_LEVEL, ATTRIBUTION_BASES.ORDER_LEVEL],
-  // 平台归因的分子配纯付费的分母：语义明确，作为"平台口径回报"
+  // 平台归因的分子配纯付费的分母：同一张 GMV Max 报表内成立（平台口径 ROI）
   [ATTRIBUTION_BASES.PLATFORM_ATTRIBUTED, ATTRIBUTION_BASES.PAID_ONLY],
   // 增量分子配纯付费分母：TikTok 增量 ROAS 的定义
   [ATTRIBUTION_BASES.DERIVED_INCREMENTAL, ATTRIBUTION_BASES.PAID_ONLY],
@@ -113,6 +138,11 @@ function canDivideAcrossBases(numeratorBasis, denominatorBasis) {
 
 /**
  * 断言两个指标可以相除，否则抛错。这是防止口径混用的结构性保障。
+ *
+ * 两道检查：
+ *   1. 口径可配对 —— 由 DIVISIBLE_BASIS_PAIRS 决定；
+ *   2. 来源相同 —— 同一张报表内的混合口径相除成立，跨报表相除无意义。
+ *
  * @param {object} numerator
  * @param {object} denominator
  * @param {string} [reason] 出错时的上下文说明
@@ -138,6 +168,15 @@ function assertSameBasis(numerator, denominator, reason = '') {
       `refusing to combine attribution bases: ${numeratorBasis} / ${denominatorBasis}${suffix}`,
     );
   }
+  // 来源不同意味着数字覆盖的不是同一批事实，相除没有意义。
+  const numeratorSource = numerator.source || null;
+  const denominatorSource = denominator.source || null;
+  if (numeratorSource && denominatorSource && numeratorSource !== denominatorSource) {
+    const suffix = reason ? ` (${reason})` : '';
+    throw new Error(
+      `refusing to combine metrics from different sources: ${numeratorSource} / ${denominatorSource}${suffix}`,
+    );
+  }
 }
 
 /**
@@ -156,6 +195,7 @@ function createMetric({
   value = null,
   channel = CHANNELS.UNKNOWN,
   unit = null,
+  source = null,
 }) {
   if (!PLATFORM_VALUES.includes(platform)) {
     throw new Error(`unknown platform: ${platform}`);
@@ -166,11 +206,15 @@ function createMetric({
   if (!CHANNEL_VALUES.includes(channel)) {
     throw new Error(`unknown channel: ${channel}`);
   }
+  if (source !== null && !SOURCE_VALUES.includes(source)) {
+    throw new Error(`unknown source: ${source}`);
+  }
   return {
     platform,
     attributionBasis,
     channel,
     unit,
+    source,
     value: typeof value === 'number' && Number.isFinite(value) ? value : null,
   };
 }
@@ -204,9 +248,13 @@ function createFact({
   shipping = null,
   currency = null,
   attributionBasis = ATTRIBUTION_BASES.UNKNOWN,
+  source = null,
 }) {
   if (!PLATFORM_VALUES.includes(platform)) {
     throw new Error(`unknown platform: ${platform}`);
+  }
+  if (source !== null && !SOURCE_VALUES.includes(source)) {
+    throw new Error(`unknown source: ${source}`);
   }
   if (!CHANNEL_VALUES.includes(channel)) {
     throw new Error(`unknown channel: ${channel}`);
@@ -223,6 +271,7 @@ function createFact({
     attributionBasis,
     channel,
     contentType,
+    source,
 
     // 漏斗（付费侧，语义与 Shopee 的付费指标一致，可横向比较）
     impressions: count(impressions),
@@ -309,6 +358,8 @@ module.exports = {
   ATTRIBUTION_BASES,
   ATTRIBUTION_BASIS_VALUES,
   CHANNELS,
+  SOURCES,
+  SOURCE_VALUES,
   CHANNEL_VALUES,
   PLATFORMS,
   PLATFORM_VALUES,
