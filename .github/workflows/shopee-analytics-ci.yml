@@ -69,18 +69,25 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - name: Parse desktop PowerShell verifier
+      - name: Parse the PowerShell scripts
         shell: pwsh
         run: |
-          $tokens = $null
-          $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile(
-            (Resolve-Path 'shopee-analytics/deploy/desktop/verify-m612-readonly.ps1'),
-            [ref]$tokens,
-            [ref]$errors
-          ) | Out-Null
-          if ($errors.Count -gt 0) {
-            $errors | ForEach-Object { Write-Error $_.Message }
-            exit 1
+          $scripts = @(
+            'shopee-analytics/deploy/desktop/verify-m612-readonly.ps1',
+            'shopee-analytics/deploy/deploy-analytics-windows.ps1'
+          )
+          foreach ($script in $scripts) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $script),
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error "$script : $($_.Message)" }
+              exit 1
+            }
+            Write-Host "  parsed $script"
           }
           Write-Host 'verify-m612-readonly.ps1 syntax: ok'
