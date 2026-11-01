@@ -61,6 +61,65 @@ const { FeishuAuthRepository, hashToken } = require('../src/feishu-auth');
     }
     assert.strictEqual(names.size, 42, 'full schema bootstrap must expose exactly 42 shopee_* tables');
 
+    // TikTok 表是独立命名空间（tiktok_*），不计入 shopee_* 的数量。
+    const tiktokTables = await pool.query(
+      `SELECT tablename FROM pg_tables
+       WHERE schemaname='public' AND tablename LIKE 'tiktok_%'`,
+    );
+    const tiktokNames = new Set(tiktokTables.rows.map(row => row.tablename));
+    for (const expected of [
+      'tiktok_shop_tokens',
+      'tiktok_marketing_tokens',
+      'tiktok_raw_api_snapshots',
+    ]) {
+      assert(tiktokNames.has(expected), `missing table ${expected}`);
+    }
+    assert.strictEqual(tiktokNames.size, 3, 'TikTok schema must expose exactly 3 tiktok_* tables');
+
+    // TikTok 凭据表的列约束：cipher 与 shop_id 成对存在，且分区键完整
+    const tiktokTokenColumns = await pool.query(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_name='tiktok_shop_tokens'`,
+    );
+    const tokenColumns = new Set(tiktokTokenColumns.rows.map(row => row.column_name));
+    for (const expected of ['app_key', 'region_group', 'shop_id', 'shop_cipher', 'expires_at']) {
+      assert(tokenColumns.has(expected), `tiktok_shop_tokens missing column ${expected}`);
+    }
+
+    const tiktokMarketingColumns = await pool.query(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_name='tiktok_marketing_tokens'`,
+    );
+    const marketingColumns = new Set(tiktokMarketingColumns.rows.map(row => row.column_name));
+    for (const expected of ['app_id', 'advertiser_id', 'expires_at']) {
+      assert(marketingColumns.has(expected), `tiktok_marketing_tokens missing column ${expected}`);
+    }
+
+    // 串店防护：同一 app 下 (shop_id) 唯一，(shop_id, shop_cipher) 必须成对
+    await pool.query(
+      `INSERT INTO tiktok_shop_tokens
+       (app_key, region_group, shop_id, shop_cipher, token_blob, token_iv, token_tag, expires_at)
+       VALUES ('APP','ROW','shop-1','CIPHER-1','blob','iv','tag', now() + interval '1 day')`,
+    );
+    // 重复的 (app_key, region_group, shop_id) 应触发主键冲突而不是插入第二行
+    await assert.rejects(
+      () => pool.query(
+        `INSERT INTO tiktok_shop_tokens
+         (app_key, region_group, shop_id, shop_cipher, token_blob, token_iv, token_tag, expires_at)
+         VALUES ('APP','ROW','shop-1','CIPHER-OTHER','blob','iv','tag', now() + interval '1 day')`,
+      ),
+      /duplicate key|unique/i,
+    );
+    const tiktokTokenRows = await pool.query(
+      `SELECT shop_cipher FROM tiktok_shop_tokens
+       WHERE app_key='APP' AND region_group='ROW' AND shop_id='shop-1'`,
+    );
+    assert.strictEqual(tiktokTokenRows.rows.length, 1, '一个店铺只能有一行凭据');
+    assert.strictEqual(tiktokTokenRows.rows[0].shop_cipher, 'CIPHER-1', 'cipher 不得被覆盖');
+    await pool.query(
+      `DELETE FROM tiktok_shop_tokens WHERE app_key='APP' AND region_group='ROW' AND shop_id='shop-1'`,
+    );
+
     const authRepository = new FeishuAuthRepository({ pool });
     const firstAdmin = await authRepository.bootstrapFirstUserIfEmpty({ openId:'ou_first_admin', name:'First Admin' });
     assert(firstAdmin && firstAdmin.role === 'SUPER_ADMIN' && firstAdmin.status === 'ACTIVE', 'first Feishu user should bootstrap as active super admin when user table is empty');
