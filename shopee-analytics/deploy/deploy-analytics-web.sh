@@ -3,36 +3,50 @@
 # 用法：在生产服务器的部署目录里执行  bash /tmp/deploy-analytics.sh
 set -e
 
-# --- 守卫：必须在 git 仓库里 ---
-if ! git rev-parse --show-toplevel >/dev/null 2>&1; then
+# --- 定位部署目录 ---
+# 优先用当前目录；若当前目录不是 git 仓库，则自动搜索
+# 「同时含 .git 与 shopee-analytics/」的目录，这样不必先 cd。
+find_deploy_dir() {
+  if git rev-parse --show-toplevel >/dev/null 2>&1; then
+    local root
+    root="$(git rev-parse --show-toplevel)"
+    [ -d "$root/shopee-analytics" ] && { echo "$root"; return 0; }
+  fi
+  for base in "$HOME" /home /root /opt /srv /var/www /data /app; do
+    [ -d "$base" ] || continue
+    local hit
+    hit="$(find "$base" -maxdepth 4 -type d -name .git 2>/dev/null | head -8 | while read -r g; do
+      d="$(dirname "$g")"
+      [ -d "$d/shopee-analytics" ] && echo "$d"
+    done | head -1)"
+    [ -n "$hit" ] && { echo "$hit"; return 0; }
+  done
+  return 1
+}
+
+DEPLOY_DIR="$(find_deploy_dir || true)"
+if [ -z "$DEPLOY_DIR" ]; then
   cat <<'MSG'
-✗ 当前目录不是 git 仓库。
+✗ 找不到部署目录。
 
-请先 cd 到生产部署目录（那个包含 .git 和 shopee-analytics/ 的目录），再执行本脚本。
-
-不确定在哪？可以用这些命令找：
-  # 看有哪些进程在跑 analytics
-  pm2 list
-  # 或
+需要找到一个同时包含 .git 与 shopee-analytics/ 的目录。可用这些命令找：
   ps aux | grep -i standalone-server
-  # 找到它的路径后 cd 过去
+  pm2 list
+  docker ps --format '{{.Names}}	{{.Image}}'
+找到后 cd 进去，再执行本脚本。
 MSG
   exit 1
 fi
 
-cd "$(git rev-parse --show-toplevel)"
+cd "$DEPLOY_DIR"
+echo "部署目录：$DEPLOY_DIR"
 
-if [ ! -d shopee-analytics ]; then
-  echo "✗ 这个仓库里没有 shopee-analytics/ 目录 —— 可能不是部署 analytics 的那个仓库。"
-  exit 1
-fi
-
-echo "=== 1/5 当前版本 ==="
+echo "=== 1/6 当前版本 ==="
 git log --oneline -1
 git rev-parse --short HEAD
 
 echo ""
-echo "=== 2/5 备份数据库 ==="
+echo "=== 2/6 备份数据库 ==="
 if [ -f scripts/backup.js ]; then
   node scripts/backup.js || { echo "备份失败，中止"; exit 1; }
 else
@@ -40,16 +54,36 @@ else
 fi
 
 echo ""
-echo "=== 3/5 拉取代码 ==="
-git fetch origin
-git pull origin main
+echo "=== 3/6 拉取代码 ==="
+# 生产可能停在任意分支（feat 分支或 main）。统一切到 main 再拉，
+# 因为合并 PR#5 后 main 才是最新的那份。
+CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
+echo "当前分支：$CURRENT_BRANCH"
+
+# 工作区有本地改动时不能直接切分支 —— 先报告，不覆盖。
+DIRTY="$(git status --porcelain | grep -v '^??' | head -5)"
+if [ -n "$DIRTY" ]; then
+  echo ""
+  echo "⚠️  工作区有已跟踪文件的本地改动，为避免覆盖，中止："
+  git status --short | head -10
+  echo ""
+  echo "请先确认这些改动是否还需要（git stash / 提交 / 丢弃），再重新执行。"
+  exit 1
+fi
+
+git fetch origin --prune
+if [ "$CURRENT_BRANCH" != "main" ]; then
+  git checkout main 2>/dev/null || { echo "切换到 main 失败 —— 该分支可能有本地提交，改为直接拉取当前分支"; }
+fi
+git pull --ff-only origin main 2>/dev/null || git pull origin main
 
 echo ""
-echo "=== 4/5 拉取后版本（应为 c934572 或更新）==="
+echo "=== 4/6 拉取后版本 ==="
 git log --oneline -1
+echo "分支：$(git rev-parse --abbrev-ref HEAD)"
 
 echo ""
-echo "=== 5/5 前端是否已生效 ==="
+echo "=== 5/6 前端是否已生效 ==="
 # 静态文件由 Express 直接托管（express.static 指向 shopee-analytics/web/），
 # 所以 pull 完前端立即生效，无需重启。下面确认线上内容是否已是新版本。
 NEW_SHA=$(git show HEAD:shopee-analytics/web/app.js | shasum -a 256 | cut -d' ' -f1 | cut -c1-16)
