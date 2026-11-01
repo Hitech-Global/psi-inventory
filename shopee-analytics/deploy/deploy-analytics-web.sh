@@ -81,6 +81,7 @@ echo ""
 echo "=== 4/6 拉取后版本 ==="
 git log --oneline -1
 echo "分支：$(git rev-parse --abbrev-ref HEAD)"
+echo "分支：$(git rev-parse --abbrev-ref HEAD)"
 
 echo ""
 echo "=== 5/6 前端是否已生效 ==="
