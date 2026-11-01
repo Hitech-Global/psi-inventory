@@ -198,6 +198,23 @@ jobs:
               echo '::error::未检测到 PM2 或 Docker 栈 —— 需要手动重启 analytics 进程'; exit 1; \
             fi"
 
+      - name: Verify the frontend was picked up
+        env:
+          DIR: ${{ steps.locate.outputs.dir }}
+        run: |
+          # 静态文件由应用直接托管（express.static 指向 shopee-analytics/web/），
+          # 所以 pull 完前端立即生效。比对线上与仓库的 sha256 确认这一点。
+          EXPECTED=$(git -C "$DIR" show HEAD:shopee-analytics/web/app.js | sha256sum | cut -c1-16)
+          curl -s --max-time 20 https://analytics.hitechanalysis.top/app.js -o /tmp/live_app.js || true
+          ACTUAL=$(sha256sum /tmp/live_app.js 2>/dev/null | cut -c1-16)
+          echo "仓库 app.js sha: $EXPECTED"
+          echo "线上 app.js sha: $ACTUAL"
+          if [ -n "$ACTUAL" ] && [ "$EXPECTED" = "$ACTUAL" ]; then
+            echo "✅ 前端已同步"
+          else
+            echo "::warning::线上前端与仓库不一致 —— 若应用跑在容器里，镜像里是旧的，需要重建"
+          fi
+
       - name: Verify the deployment
         run: |
           echo '检查线上静态文件的更新时间：'
