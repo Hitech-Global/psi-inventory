@@ -257,8 +257,11 @@
             return `<li><span>${esc(shop.shopId)}</span><span>${esc(shop.region || '')} · ${esc(kind)}</span></li>`;
           }).join('');
 
-          document.getElementById('tiktokConnect').disabled = !configured;
-          if (!configured) document.getElementById('tiktokConnect').textContent = t('notConfigured');
+          const connectBtn = document.getElementById('tiktokConnect');
+          connectBtn.disabled = !configured;
+          // 不可用时用 title 说明原因，而不是把说明文字塞进按钮里 ——
+          // 那样按钮看起来像是坏了。
+          connectBtn.title = configured ? '' : t('notConfigured');
         } catch (error) {
           setState(state, 'error', t('error'));
           renderRows(document.getElementById('tiktokDetail'), [[t('token'), error.message]]);
