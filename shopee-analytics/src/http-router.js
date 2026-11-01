@@ -396,7 +396,8 @@ function createShopeeAnalyticsRouter({
         providerError: req.query.error || null,
       });
       res.setHeader('Set-Cookie', clearTikTokStateCookie());
-      res.redirect(302, '/?tiktok=connected&shops=' + encodeURIComponent(result.shopCount));
+      // 跳到平台接入页而不是首页：只有该页会读 tiktok 参数并展示连接结果。
+      res.redirect(302, '/connections?tiktok=connected&shops=' + encodeURIComponent(result.shopCount));
     } catch (error) { next(error); }
   });
 

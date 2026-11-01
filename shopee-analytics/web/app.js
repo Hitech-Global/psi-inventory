@@ -1694,8 +1694,56 @@ function restoreLocaleUiState() {
   return true;
 }
 
+/**
+ * 展示 OAuth 回调结果。
+ *
+ * 三个平台的授权回调都跳回首页并带上查询参数（erp / brand_portal / tiktok）。
+ * 在此之前这些参数从未被读取，回调后的成功或失败提示会直接丢失，
+ * 用户只能靠观察数据是否刷新来猜测授权有没有生效。
+ */
+function showOauthCallbackNotice() {
+  const params = new URLSearchParams(window.location.search);
+  if (![...params.keys()].length) return;
+
+  const notices = [];
+  if (params.get('erp') === 'connected') {
+    notices.push({ tone: 'good', text: 'ERP 已连接' });
+  }
+  if (params.get('brand_portal') === 'connected') {
+    notices.push({ tone: 'good', text: 'Brand Portal 已连接' });
+  }
+  if (params.get('tiktok') === 'connected') {
+    // 店铺数单独一行：i18n 的翻译表是整串精确匹配，
+    // 拼在同一个文本节点里的后缀不会被翻译。
+    notices.push({ tone: 'good', text: 'TikTok Shop 已连接' });
+    const shops = params.get('shops');
+    if (shops) notices.push({ tone: 'good', text: `已授权店铺数 ${shops}` });
+  }
+  const reason = params.get('reason');
+  if (reason) {
+    notices.push({ tone: 'bad', text: '授权未完成' });
+    notices.push({ tone: 'bad', text: reason });
+  }
+  if (!notices.length) return;
+
+  const notice = $('#dataSyncNotice');
+  if (!notice) return;
+  // 只用一个 tone：样式表里 good / warn / bad 会互相覆盖，
+  // 同时挂两个类时由 CSS 顺序决定，看起来像随机。
+  // 有失败就用 bad，否则用 good。
+  const hasFailure = notices.some(item => item.tone === 'bad');
+  notice.className = `data-sync-notice ${hasFailure ? 'bad' : 'good'}`;
+  notice.innerHTML = notices
+    .map(item => `<div>${escapeHtml(item.text)}</div>`)
+    .join('');
+
+  // 参数消费掉后从地址栏移除，避免刷新时重复提示。
+  window.history.replaceState({}, '', window.location.pathname + window.location.hash);
+}
+
 async function init() {
   initDates();
+  showOauthCallbackNotice();
   await checkHealth();
   try {
     await loadShopDirectory();
