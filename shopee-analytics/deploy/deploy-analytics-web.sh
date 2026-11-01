@@ -41,12 +41,12 @@ fi
 cd "$DEPLOY_DIR"
 echo "部署目录：$DEPLOY_DIR"
 
-echo "=== 1/5 当前版本 ==="
+echo "=== 1/6 当前版本 ==="
 git log --oneline -1
 git rev-parse --short HEAD
 
 echo ""
-echo "=== 2/5 备份数据库 ==="
+echo "=== 2/6 备份数据库 ==="
 if [ -f scripts/backup.js ]; then
   node scripts/backup.js || { echo "备份失败，中止"; exit 1; }
 else
@@ -54,16 +54,37 @@ else
 fi
 
 echo ""
-echo "=== 3/5 拉取代码 ==="
-git fetch origin
-git pull origin main
+echo "=== 3/6 拉取代码 ==="
+# 生产可能停在任意分支（feat 分支或 main）。统一切到 main 再拉，
+# 因为合并 PR#5 后 main 才是最新的那份。
+CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
+echo "当前分支：$CURRENT_BRANCH"
+
+# 工作区有本地改动时不能直接切分支 —— 先报告，不覆盖。
+DIRTY="$(git status --porcelain | grep -v '^??' | head -5)"
+if [ -n "$DIRTY" ]; then
+  echo ""
+  echo "⚠️  工作区有已跟踪文件的本地改动，为避免覆盖，中止："
+  git status --short | head -10
+  echo ""
+  echo "请先确认这些改动是否还需要（git stash / 提交 / 丢弃），再重新执行。"
+  exit 1
+fi
+
+git fetch origin --prune
+if [ "$CURRENT_BRANCH" != "main" ]; then
+  git checkout main 2>/dev/null || { echo "切换到 main 失败 —— 该分支可能有本地提交，改为直接拉取当前分支"; }
+fi
+git pull --ff-only origin main 2>/dev/null || git pull origin main
 
 echo ""
-echo "=== 4/5 拉取后版本（应为 c934572 或更新）==="
+echo "=== 4/6 拉取后版本 ==="
 git log --oneline -1
+echo "分支：$(git rev-parse --abbrev-ref HEAD)"
+echo "分支：$(git rev-parse --abbrev-ref HEAD)"
 
 echo ""
-echo "=== 5/5 前端是否已生效 ==="
+echo "=== 5/6 前端是否已生效 ==="
 # 静态文件由 Express 直接托管（express.static 指向 shopee-analytics/web/），
 # 所以 pull 完前端立即生效，无需重启。下面确认线上内容是否已是新版本。
 NEW_SHA=$(git show HEAD:shopee-analytics/web/app.js | shasum -a 256 | cut -d' ' -f1 | cut -c1-16)
