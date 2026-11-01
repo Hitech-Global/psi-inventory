@@ -23,10 +23,16 @@
 set -euo pipefail
 
 REPO_DIR="${REPO_DIR:-/Users/wwt46/WorkBuddy/2026-10-30-14-22-28}"
-BRANCH="${BRANCH:-feat/shopee-analytics-v1-foundation}"
 REMOTE_REPO="${REMOTE_REPO:-Hitech-Global/psi-inventory}"
 
 cd "$REPO_DIR"
+
+# 默认推送当前分支；用 BRANCH 变量可覆盖。
+BRANCH="${BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"
+if [ "$BRANCH" = "HEAD" ]; then
+  echo "❌ 处于 detached HEAD 状态，请用 BRANCH=xxx 指定分支。" >&2
+  exit 1
+fi
 
 # ---- 取凭证 ----------------------------------------------------------------------
 CRED="$(printf 'protocol=https\nhost=github.com\n\n' | git credential-osxkeychain get || true)"
