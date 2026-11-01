@@ -2,19 +2,63 @@
 
 > 适用：把 `feat/shopee-analytics-v1-foundation` 上已同步的 analytics 模块更新到生产
 > 目标站点：`https://analytics.hitechanalysis.top`
-> 同步提交：`a2183f7`（模块内容与 `main` 完全一致）
+> 同步提交：`a2183f7`（模块内容与 `main` 完全一致）、`b0ab72b`（本文档）
 
 ---
 
-## 一、现状说明
+## 〇、先确认现状（一条命令判断有没有部署过）
+
+```bash
+curl -sI https://analytics.hitechanalysis.top/app.js | grep -i last-modified
+```
+
+| 输出 | 含义 |
+|---|---|
+| `last-modified: Fri, 02 Oct 2026 11:17:33 GMT` | **还没部署**，服务器停留在 10-02 的版本 |
+| 日期是今天 | 已部署，跳到第 5 步验证即可 |
+
+对照基准（当前生产的版本）：
+
+```
+app.js    sha256 前16位 = 5799cd891eb274b0
+last-modified          = Fri, 02 Oct 2026 11:17:33 GMT
+```
+
+> 这两个值来自 `62631b2`（2026-10-02）。部署后应当变化。
+
+---
+
+## 一、生产架构（已实测确认）
+
+| 层 | 形态 | 证据 |
+|---|---|---|
+| 前端静态 | **nginx 直接托管** `<repo>/shopee-analytics/web/` | `ETag: W/"160ad-1a0fc5570c8"` 是 nginx 强 ETag（含 inode mtime）；`/app.js`、`/styles.css` 在站点根可达 |
+| 应用路由 | 独立进程提供 `/api/shopee-analytics/*` | `GET /api/shopee-analytics/health` → `{"ok":true,"module":"shopee-analytics","mode":"read-only"}` |
+| 与 PSI 的关系 | **同机但独立进程** | PSI 主 `server.js` 不引用 shopee-analytics；但 `/review`、`/auth/feishu/login` 也在同一域名 |
+| 外部入口 | Cloudflare（东京边缘 NRT） | `server: cloudflare`，`cf-ray: ...-NRT` |
+
+### 由此得出的两个关键结论
+
+**1. `git pull` 之后前端立即生效，无需重启。**
+nginx 直接读 `shopee-analytics/web/` 下的文件，pull 完就是新的。
+→ 「平台接入」入口在 `index.html`，pull 后刷新浏览器即可看到。
+
+**2. `/connections` 路由必须重启进程。**
+该路由由 `shopee-analytics/src/standalone-server.js` 提供（`app.get('/connections', ...)`），
+静态文件给不了这个路由。
+→ 不重启的话：`/connections.html` 能打开（静态文件），但 `/connections` 仍是 404。
+
+---
+
+## 二、现状说明
 
 生产站点当前跑的是 **2026-10-02 的版本**（`62631b2`），表现为：
 
 - 顶栏**没有**「平台接入」入口
-- `/connections` 返回 **404**
+- `/connections` 与 `/connections.html` 都返回 **404**
 - 授权回调后**没有任何提示**（回调参数从来没人读）
 
-代码已同步到生产部署的分支，只差服务器上的一次拉取 + 重启。
+代码已同步到生产部署的分支（`b0ab72b`），只差服务器上的一次拉取 + 重启。
 
 ---
 
@@ -50,8 +94,11 @@ nginx 直接托管 `shopee-analytics/web/`，所以：
 ls -l shopee-analytics/web/connections.html
 ```
 
-前端刷新浏览器即可看到「平台接入」入口（注意浏览器缓存；站点用 `Cache-Control: no-cache`，
-一般无需强制刷新）。
+前端刷新浏览器即可看到「平台接入」入口（站点用 `Cache-Control: no-cache`，一般无需强制刷新）。
+
+> 若这一步做完后浏览器仍看不到入口，先直接访问
+> `https://analytics.hitechanalysis.top/connections.html` —— 能打开说明静态文件已更新，
+> 只是入口按钮没渲染出来（此时检查 `index.html` 是否含 `href="/connections"`）。
 
 ### 4. 重启应用（让 /connections 路由生效）
 
@@ -78,11 +125,17 @@ docker compose --env-file runtime/.env up -d --build app oauth worker
 ### 5. 验证
 
 ```bash
-# 健康检查
-curl -s https://analytics.hitechanalysis.top/api/shopee-analytics/health
+# ① 前端是否更新（last-modified 应变成今天）
+curl -sI https://analytics.hitechanalysis.top/app.js | grep -i last-modified
 
-# 新路由（未登录会 302 到 /login，属正常）
+# ② 新静态文件是否可达（应为 200）
+curl -s -o /dev/null -w "%{http_code}\n" https://analytics.hitechanalysis.top/connections.html
+
+# ③ 新路由是否生效（未登录会 302 到 /login，属正常）
 curl -s -o /dev/null -w "%{http_code}\n" https://analytics.hitechanalysis.top/connections
+
+# ④ 健康检查
+curl -s https://analytics.hitechanalysis.top/api/shopee-analytics/health
 ```
 
 浏览器验证：
@@ -90,6 +143,8 @@ curl -s -o /dev/null -w "%{http_code}\n" https://analytics.hitechanalysis.top/co
 1. 登录后顶栏应出现「平台接入」胶囊按钮
 2. 点击进入 `/connections`，应看到 Shopee 与 TikTok Shop 两张卡片
 3. TikTok 卡片显示「未配置」（因为还没填 TIKTOK_* 环境变量）——这是预期状态
+
+> 若 ② 是 200 而 ③ 是 404，说明**只 pull 了没重启** —— 静态文件已更新但应用进程还是旧的。
 
 ---
 
