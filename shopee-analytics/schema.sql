@@ -65,6 +65,17 @@ CREATE INDEX IF NOT EXISTS idx_tiktok_raw_endpoint_shop_synced
 CREATE INDEX IF NOT EXISTS idx_tiktok_raw_region_advertiser_synced
   ON tiktok_raw_api_snapshots(region_group, advertiser_id, synced_at DESC);
 
+-- 授权 state：保存哈希而非明文，一次性消费（DELETE ... RETURNING 即为消费动作）
+CREATE TABLE IF NOT EXISTS tiktok_oauth_states (
+  state_hash TEXT PRIMARY KEY,
+  region_group TEXT NOT NULL,
+  redirect_uri TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_tiktok_oauth_states_expiry
+  ON tiktok_oauth_states(expires_at);
+
 CREATE TABLE IF NOT EXISTS shopee_app_tokens (
   app_role TEXT NOT NULL,
   shop_id BIGINT NOT NULL,

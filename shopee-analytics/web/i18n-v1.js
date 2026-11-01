@@ -19,6 +19,7 @@
     ['店铺诊断', 'Shop Diagnosis'],
     ['广告诊断', 'Ads Diagnosis'],
     ['数据状态', 'Data Health'],
+    ['平台接入', 'Platform Connections'],
     ['国家', 'Country'], ['全部国家', 'All Countries'],
     ['品牌', 'Brand'], ['全部品牌', 'All Brands'],
     ['店铺', 'Shop'], ['全部店铺', 'All Shops'],
