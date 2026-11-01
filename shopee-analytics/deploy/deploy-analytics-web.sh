@@ -3,43 +3,29 @@
 # 用法：在生产服务器的部署目录里执行  bash /tmp/deploy-analytics.sh
 set -e
 
-# --- 定位部署目录 ---
-# 优先用当前目录；若当前目录不是 git 仓库，则自动搜索
-# 「同时含 .git 与 shopee-analytics/」的目录，这样不必先 cd。
-find_deploy_dir() {
-  if git rev-parse --show-toplevel >/dev/null 2>&1; then
-    local root
-    root="$(git rev-parse --show-toplevel)"
-    [ -d "$root/shopee-analytics" ] && { echo "$root"; return 0; }
-  fi
-  for base in "$HOME" /home /root /opt /srv /var/www /data /app; do
-    [ -d "$base" ] || continue
-    local hit
-    hit="$(find "$base" -maxdepth 4 -type d -name .git 2>/dev/null | head -8 | while read -r g; do
-      d="$(dirname "$g")"
-      [ -d "$d/shopee-analytics" ] && echo "$d"
-    done | head -1)"
-    [ -n "$hit" ] && { echo "$hit"; return 0; }
-  done
-  return 1
-}
-
-DEPLOY_DIR="$(find_deploy_dir || true)"
-if [ -z "$DEPLOY_DIR" ]; then
+# --- 守卫：必须在 git 仓库里 ---
+if ! git rev-parse --show-toplevel >/dev/null 2>&1; then
   cat <<'MSG'
-✗ 找不到部署目录。
+✗ 当前目录不是 git 仓库。
 
-需要找到一个同时包含 .git 与 shopee-analytics/ 的目录。可用这些命令找：
-  ps aux | grep -i standalone-server
+请先 cd 到生产部署目录（那个包含 .git 和 shopee-analytics/ 的目录），再执行本脚本。
+
+不确定在哪？可以用这些命令找：
+  # 看有哪些进程在跑 analytics
   pm2 list
-  docker ps --format '{{.Names}}	{{.Image}}'
-找到后 cd 进去，再执行本脚本。
+  # 或
+  ps aux | grep -i standalone-server
+  # 找到它的路径后 cd 过去
 MSG
   exit 1
 fi
 
-cd "$DEPLOY_DIR"
-echo "部署目录：$DEPLOY_DIR"
+cd "$(git rev-parse --show-toplevel)"
+
+if [ ! -d shopee-analytics ]; then
+  echo "✗ 这个仓库里没有 shopee-analytics/ 目录 —— 可能不是部署 analytics 的那个仓库。"
+  exit 1
+fi
 
 echo "=== 1/5 当前版本 ==="
 git log --oneline -1
