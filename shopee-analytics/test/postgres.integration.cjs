@@ -95,6 +95,29 @@ const { FeishuAuthRepository, hashToken } = require('../src/feishu-auth');
       assert(marketingColumns.has(expected), `tiktok_marketing_tokens missing column ${expected}`);
     }
 
+    // TikTok 授权 state 表：state 哈希为主键，一次性消费
+    const tiktokStateColumns = await pool.query(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_name='tiktok_oauth_states'`,
+    );
+    const stateColumns = new Set(tiktokStateColumns.rows.map(row => row.column_name));
+    for (const expected of ['state_hash', 'region_group', 'redirect_uri', 'expires_at']) {
+      assert(stateColumns.has(expected), `tiktok_oauth_states missing column ${expected}`);
+    }
+    // state 必须唯一：重复插入应被主键拒绝
+    await pool.query(
+      `INSERT INTO tiktok_oauth_states (state_hash, region_group, redirect_uri, expires_at)
+       VALUES ('HASH-1','ROW','https://x.com/cb', now() + interval '10 minutes')`,
+    );
+    await assert.rejects(
+      () => pool.query(
+        `INSERT INTO tiktok_oauth_states (state_hash, region_group, redirect_uri, expires_at)
+         VALUES ('HASH-1','ROW','https://x.com/cb2', now() + interval '10 minutes')`,
+      ),
+      /duplicate key|unique/i,
+    );
+    await pool.query(`DELETE FROM tiktok_oauth_states WHERE state_hash='HASH-1'`);
+
     // 串店防护：同一 app 下 (shop_id) 唯一，(shop_id, shop_cipher) 必须成对
     await pool.query(
       `INSERT INTO tiktok_shop_tokens
