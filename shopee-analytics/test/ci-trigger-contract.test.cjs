@@ -28,11 +28,40 @@ assert.match(
   /push:\s*\n\s*branches:\s*\n(?:\s*-\s*"[^"]+"\s*\n)+/,
   'CI 必须配置 push 触发器（直推分支不得绕过校验）'
 );
-assert.match(
-  yml,
-  /push:[\s\S]*?branches:[\s\S]*?-\s*"feat\/shopee-analytics-v1-foundation"/,
-  'push 触发器必须覆盖 feat/shopee-analytics-v1-foundation'
-);
+
+/**
+ * 把 GitHub Actions 的分支 glob 模式与具体分支名做匹配。
+ * 只支持本仓库实际会用到的语法：`**` 匹配任意层，`*` 匹配单层。
+ */
+function branchPatternMatches(pattern, branch) {
+  const escaped = pattern
+    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+    .replace(/\*\*/g, '\u0000')
+    .replace(/\*/g, '[^/]*')
+    .replace(/\u0000/g, '.*');
+  return new RegExp(`^${escaped}$`).test(branch);
+}
+
+const pushBranchBlock = yml.slice(yml.indexOf('push:'), yml.indexOf('workflow_dispatch:'));
+const pushBranchPatterns = [];
+for (const line of pushBranchBlock.split('\n')) {
+  const match = line.match(/^\s*-\s*"([^"]+)"\s*$/);
+  if (match) pushBranchPatterns.push(match[1]);
+}
+assert.ok(pushBranchPatterns.length, 'push 触发器必须列出至少一个分支模式');
+
+// 语义覆盖检查：所有开发分支都必须被 push 触发器命中。
+// 这里刻意校验「覆盖」而不是「字面列出」，因为枚举式配置会在新增开发线时
+// 让新分支静默绕过校验 —— 那正是引入 push 触发器要解决的问题本身。
+for (const branch of [
+  'feat/shopee-analytics-v1-foundation',
+  'feat/tiktok-m0-foundation',
+]) {
+  assert.ok(
+    pushBranchPatterns.some(pattern => branchPatternMatches(pattern, branch)),
+    `push 触发器必须覆盖 ${branch}（当前模式：${pushBranchPatterns.join(', ')}）`
+  );
+}
 
 // ---- push 与 pull_request 的 paths 过滤必须一致 -------------------------------
 const pullRequestBlock = yml.slice(yml.indexOf('pull_request:'), yml.indexOf('push:'));

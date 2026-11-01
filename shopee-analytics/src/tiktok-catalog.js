@@ -285,5 +285,5 @@ module.exports = {
   resolveMarketingEndpoint,
 };
 
--- TikTok 接入进度：M0 底座已完成（签名器 / 中间模型 / client+catalog / 凭据存储 / 快照表）
--- M1 待办：店铺经营 + Marketing API 广告效果 + 增量 GMV 与结算净 ROAS
+// TikTok 接入进度：M0 底座已完成（签名器 / 中间模型 / client+catalog / 凭据存储 / 快照表）
+// M1 待办：店铺经营 + Marketing API 广告效果 + 增量 GMV 与结算净 ROAS
