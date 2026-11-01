@@ -7,16 +7,17 @@ name: Deploy Shopee Analytics to Production
 # `git pull` 换成 GitHub 侧的一次点击，之后不再需要登服务器。
 #
 # 一次性准备（在服务器上做）：
-#   1. 生成一对部署密钥（若已有可跳过）
+#   1. 生成一对部署密钥
 #        ssh-keygen -t ed25519 -C "github-actions-deploy" -f ~/.ssh/gh_deploy -N ""
 #   2. 把公钥加进服务器的 authorized_keys
 #        cat ~/.ssh/gh_deploy.pub >> ~/.ssh/authorized_keys
 #        chmod 600 ~/.ssh/authorized_keys
 #   3. 把私钥内容贴到仓库 Settings → Secrets and variables → Actions
 #      → New repository secret → 名字 DEPLOY_SSH_KEY
-#   4. 再加三个 secret：DEPLOY_HOST / DEPLOY_USER / DEPLOY_DIR
+#   4. 可选：DEPLOY_HOST / DEPLOY_USER / DEPLOY_DIR
+#      留空则由本 workflow 自动探测（见下面的探测步骤）。
 #
-# 之后：本 workflow 手动触发即可完成备份 → 拉取 → 重启 → 验证。
+# 之后：本 workflow 手动触发即可完成探测 → 备份 → 拉取 → 重启 → 验证。
 
 on:
   workflow_dispatch:
@@ -42,37 +43,105 @@ jobs:
   deploy:
     name: Pull and restart on the production host
     runs-on: ubuntu-latest
-    environment: production
-    timeout-minutes: 15
+    timeout-minutes: 25
 
     steps:
-      - name: Check the required secrets are present
+      - name: Set up the deploy key
         env:
-          HOST: ${{ secrets.DEPLOY_HOST }}
-          USER: ${{ secrets.DEPLOY_USER }}
-          DIR: ${{ secrets.DEPLOY_DIR }}
           KEY: ${{ secrets.DEPLOY_SSH_KEY }}
         run: |
-          missing=""
-          [ -z "$HOST" ] && missing="$missing DEPLOY_HOST"
-          [ -z "$USER" ] && missing="$missing DEPLOY_USER"
-          [ -z "$DIR" ] && missing="$missing DEPLOY_DIR"
-          [ -z "$KEY" ] && missing="$missing DEPLOY_SSH_KEY"
-          if [ -n "$missing" ]; then
-            echo "::error::缺少这些 repository secrets:$missing"
+          if [ -z "$KEY" ]; then
+            echo "::error::缺少 repository secret: DEPLOY_SSH_KEY"
+            echo "请按 shopee-analytics/docs/production-deploy-once.md 在服务器上生成密钥并添加该 secret"
             exit 1
           fi
-          echo "host=$HOST user=$USER dir=$DIR"
-
-      - name: Set up the deploy key
-        run: |
           install -m 700 -d ~/.ssh
-          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          printf '%s\n' "$KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          cat > ~/.ssh/config <<'EOF'
+
+      - name: Find the server and the deployment directory
+        id: locate
+        env:
+          FIXED_HOST: ${{ secrets.DEPLOY_HOST }}
+          FIXED_USER: ${{ secrets.DEPLOY_USER }}
+          FIXED_DIR: ${{ secrets.DEPLOY_DIR }}
+        run: |
+          set -u
+          # 候选地址：优先用 secret，其次试常见的生产域名。
+          # 注意：analytics.hitechanalysis.top 走 Cloudflare，而 Cloudflare 不代理
+          # 22 端口，所以它作为 SSH 目标连不上 —— 真正要填的是**源站地址**。
+          # 留空时的这些候选只是兜底，真正可靠的做法是填 DEPLOY_HOST。
+          if [ -n "$FIXED_HOST" ]; then
+            HOSTS="$FIXED_HOST"
+          else
+            HOSTS=""
+          fi
+          if [ -z "$HOSTS" ]; then
+            echo "::error::未提供 DEPLOY_HOST —— 无法知道源站地址。"
+            echo "analytics.hitechanalysis.top 经 Cloudflare 代理，Cloudflare 不代理 SSH(22) 端口，"
+            echo "所以必须填源站的真实 IP 或主机名。"
+            exit 1
+          fi
+          # 候选用户名
+          if [ -n "$FIXED_USER" ]; then
+            USERS="$FIXED_USER"
+          else
+            USERS="ubuntu root deploy app www-data ec2-user"
+          fi
+
+          ssh_opts="-i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=12 -o BatchMode=yes"
+
+          FOUND=""
+          for host in $HOSTS; do
+            for user in $USERS; do
+              echo "尝试 ${user}@${host} …"
+              if ssh $ssh_opts "${user}@${host}" 'echo OK' >/dev/null 2>&1; then
+                echo "✅ 连通：${user}@${host}"
+                FOUND="${user}@${host}"
+                break 2
+              fi
+            done
+          done
+
+          if [ -z "$FOUND" ]; then
+            echo "::error::所有候选地址与用户名都连不上。"
+            echo "请在 DEPLOY_HOST / DEPLOY_USER 里填上正确的值，或确认公钥已加入服务器的 authorized_keys。"
+            exit 1
+          fi
+
+          echo "target=$FOUND" >> "$GITHUB_OUTPUT"
+
+          # 找部署目录：含 .git 且含 shopee-analytics/ 的目录
+          if [ -n "$FIXED_DIR" ]; then
+            echo "dir=$FIXED_DIR" >> "$GITHUB_OUTPUT"
+          else
+            DIR=$(ssh $ssh_opts "$FOUND" '
+              for base in "$HOME" /home /root /opt /srv /var/www /data /app; do
+                [ -d "$base" ] || continue
+                found=$(find "$base" -maxdepth 4 -type d -name .git 2>/dev/null | head -5 | while read -r g; do
+                  d=$(dirname "$g")
+                  [ -d "$d/shopee-analytics" ] && echo "$d"
+                done | head -1)
+                [ -n "$found" ] && { echo "$found"; break; }
+              done
+            ')
+            if [ -z "$DIR" ]; then
+              echo "::error::连上了 ${FOUND}，但找不到部署目录（需同时含 .git 与 shopee-analytics/）。"
+              echo "请填写 DEPLOY_DIR secret。"
+              exit 1
+            fi
+            echo "自动找到部署目录：$DIR"
+            echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Prepare the ssh config
+        env:
+          TARGET: ${{ steps.locate.outputs.target }}
+        run: |
+          cat > ~/.ssh/config <<EOF
           Host production
-            HostName ${{ secrets.DEPLOY_HOST }}
-            User ${{ secrets.DEPLOY_USER }}
+            HostName ${TARGET#*@}
+            User ${TARGET%@*}
             IdentityFile ~/.ssh/deploy_key
             IdentitiesOnly yes
             StrictHostKeyChecking accept-new
@@ -80,26 +149,34 @@ jobs:
           EOF
 
       - name: Show the version currently running
+        env:
+          DIR: ${{ steps.locate.outputs.dir }}
         run: |
-          ssh production "cd '${{ secrets.DEPLOY_DIR }}' && git log --oneline -1 && git rev-parse --short HEAD"
+          ssh production "cd '$DIR' && git log --oneline -1 && git rev-parse --short HEAD"
 
       - name: Back up the database
+        env:
+          DIR: ${{ steps.locate.outputs.dir }}
         run: |
-          ssh production "cd '${{ secrets.DEPLOY_DIR }}' && \
+          ssh production "cd '$DIR' && \
             if [ -f scripts/backup.js ]; then node scripts/backup.js; \
             else echo '::warning::未找到 scripts/backup.js —— 若生产用 PostgreSQL，请改用 pg_dump'; fi"
 
       - name: Pull the code
+        env:
+          DIR: ${{ steps.locate.outputs.dir }}
         run: |
           # 拉取失败必须让整个步骤失败：若在此之后仍然重启，
           # 会把进程换成旧代码却以为部署成功。
-          ssh production "cd '${{ secrets.DEPLOY_DIR }}' && \
+          ssh production "cd '$DIR' && \
             git fetch origin && git pull origin '${{ inputs.branch }}' && \
             git log --oneline -1"
 
       - name: Confirm the working tree is the code we just pulled
+        env:
+          DIR: ${{ steps.locate.outputs.dir }}
         run: |
-          ssh production "cd '${{ secrets.DEPLOY_DIR }}' && \
+          ssh production "cd '$DIR' && \
             if [ -n \"\$(git status --porcelain)\" ]; then \
               echo '::error::工作区有本地改动 —— 可能是服务器上的手工修改，部署会覆盖它们'; \
               git status --short; exit 1; \
@@ -108,8 +185,10 @@ jobs:
 
       - name: Restart the application
         if: ${{ inputs.restart }}
+        env:
+          DIR: ${{ steps.locate.outputs.dir }}
         run: |
-          ssh production "cd '${{ secrets.DEPLOY_DIR }}' && \
+          ssh production "cd '$DIR' && \
             if command -v pm2 >/dev/null 2>&1; then \
               echo '使用 PM2 重启'; pm2 list; pm2 restart all; \
             elif command -v docker >/dev/null 2>&1 && [ -f shopee-analytics/deploy/desktop/docker-compose.yml ]; then \
