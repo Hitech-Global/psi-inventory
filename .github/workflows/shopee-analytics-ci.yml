@@ -9,12 +9,16 @@ on:
   # 直推分支也必须跑 CI：此前只有 pull_request 触发，
   # 直接 push 到分支的提交会绕过校验（曾出现标签契约被破坏但 CI 未跑的情况）。
   #
-  # 用 `feat/**` 而非枚举具体分支名：新增开发线（例如 TikTok 的
+  # 用通配而非枚举具体分支名：新增开发线（例如 TikTok 的
   # feat/tiktok-m0-foundation）时，枚举式配置会让该分支的提交静默绕过校验，
   # 与当初引入 push 触发器要解决的问题是同一个。
+  #
+  # `fix/**` 同样要覆盖：生产部署的是 fix/shopee-brand-portal-modern-oauth-20261027，
+  # 那条线上的提交也必须过校验，否则线上基线的改动可以绕过检查。
   push:
     branches:
       - "feat/**"
+      - "fix/**"
     paths:
       - "shopee-analytics/**"
       - "skills/shopee-gmv-max/**"
