@@ -42,10 +42,8 @@ jobs:
   deploy:
     name: Pull and restart on the production host
     runs-on: ubuntu-latest
+    environment: production
     timeout-minutes: 15
-    # 不声明 environment：仓库里现存的 environment 名为 "main - psi-inventory"，
-    # 是别的项目建的；引用一个不存在的环境会让运行在开始前就失败。
-    # 保护改由下面的两道守卫提供：pull 失败即中止、工作区有改动即中止。
 
     steps:
       - name: Check the required secrets are present
