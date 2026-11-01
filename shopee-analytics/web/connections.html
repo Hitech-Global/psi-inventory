@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>平台接入 · 运营分析</title>
+  <link rel="stylesheet" href="/styles.css">
+  <style>
+    .connect-shell{max-width:1080px;margin:0 auto;padding:32px 24px 64px}
+    .connect-head{margin-bottom:26px}
+    .connect-head h1{font-size:24px;margin:8px 0 6px}
+    .connect-head p{color:#6e6e73;font-size:13px;line-height:1.7;margin:0;max-width:760px}
+    .connect-grid{display:grid;gap:18px;grid-template-columns:repeat(auto-fit,minmax(380px,1fr))}
+    .platform-card{background:#fff;border:1px solid #e6e6e8;border-radius:18px;padding:22px;box-shadow:0 8px 28px rgba(0,0,0,.035);display:flex;flex-direction:column;gap:14px}
+    .platform-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+    .platform-name{font-size:17px;font-weight:700;margin:0}
+    .platform-scope{font-size:12px;color:#86868b;margin:4px 0 0;line-height:1.5}
+    .platform-state{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:5px 10px;border-radius:999px;white-space:nowrap}
+    .platform-state.ready{background:#e8f7ee;color:#0f7b3d}
+    .platform-state.pending{background:#fff4e5;color:#a35b00}
+    .platform-state.off{background:#f2f2f4;color:#6e6e73}
+    .platform-state.error{background:#ffeceb;color:#b42318}
+    .platform-state .dot{width:6px;height:6px;border-radius:50%;background:currentColor}
+    .platform-detail{font-size:12px;color:#6e6e73;line-height:1.7;margin:0}
+    .platform-detail p.platform-detail{margin-top:10px;padding:10px 12px;background:#fbfbfc;border:1px solid #ececef;border-radius:10px}
+    .platform-detail dl{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;margin:0}
+    .platform-detail dt{color:#86868b}
+    .platform-detail dd{margin:0;color:#172033;word-break:break-all}
+    .platform-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:auto}
+    .platform-actions button{border:1px solid #d8d8dc;border-radius:11px;padding:9px 16px;font-size:13px;font-weight:600;background:#fff;color:#172033;cursor:pointer}
+    .platform-actions button.primary{background:#111827;border-color:#111827;color:#fff}
+    .platform-actions button.primary:hover{background:#202938}
+    .platform-actions button.ghost:hover{background:#f7f7f9}
+    .platform-actions button:disabled{opacity:.5;cursor:not-allowed}
+    .connect-note{margin-top:26px;font-size:12px;color:#86868b;line-height:1.8}
+    .connect-error{display:none;margin:0 0 18px;padding:12px 14px;border-radius:12px;background:#fff4f3;color:#b42318;font-size:13px;line-height:1.6}
+    .connect-banner{display:none;margin:0 0 18px;padding:12px 14px;border-radius:12px;background:#e8f7ee;color:#0f7b3d;font-size:13px;line-height:1.6}
+    .shop-list{margin:0;padding:0;list-style:none;display:grid;gap:6px}
+    .shop-list li{font-size:12px;color:#172033;background:#fbfbfc;border:1px solid #ececef;border-radius:10px;padding:8px 11px;display:flex;justify-content:space-between;gap:10px}
+    .shop-list li span{color:#86868b}
+    .lang{display:flex;justify-content:flex-end;gap:6px;margin-bottom:14px}
+    .lang button{border:0;background:transparent;color:#7c8799;cursor:pointer;padding:4px 6px;font-size:13px}
+    .lang button.active{color:#111827;font-weight:700}
+    .back-link{display:inline-block;margin-bottom:14px;color:#6e6e73;font-size:13px;text-decoration:none}
+    .back-link:hover{color:#111827}
+  </style>
+</head>
+<body>
+  <div class="connect-shell">
+    <div class="lang">
+      <button type="button" data-lang="zh" class="active">中文</button>
+      <button type="button" data-lang="en">EN</button>
+    </div>
+
+    <a class="back-link" href="/" id="backLink">← 返回运营分析</a>
+
+    <div class="connect-head">
+      <div class="eyebrow">API CONNECTIONS</div>
+      <h1 id="pageTitle">平台接入</h1>
+      <p id="pageSub">分别授权 Shopee 与 TikTok Shop 的开放平台 API。授权后会记录店铺台账与令牌状态，便于排查同步失败。</p>
+    </div>
+
+    <div id="banner" class="connect-banner" role="status"></div>
+    <div id="error" class="connect-error" role="alert"></div>
+
+    <div class="connect-grid">
+      <!-- Shopee -->
+      <section class="platform-card" data-platform="shopee">
+        <div class="platform-card-head">
+          <div>
+            <h2 class="platform-name">Shopee Open Platform</h2>
+            <p class="platform-scope">四个 App 角色：ADS / STORE_OPS / ERP / BRAND_PORTAL</p>
+          </div>
+          <span class="platform-state off" id="shopeeState"><span class="dot"></span><span class="label">检查中…</span></span>
+        </div>
+        <div class="platform-detail">
+          <dl id="shopeeDetail"></dl>
+          <p class="platform-detail" id="shopeeNote"></p>
+        </div>
+        <div class="platform-actions">
+          <button type="button" class="ghost" id="shopeeRefresh">刷新状态</button>
+        </div>
+      </section>
+
+      <!-- TikTok -->
+      <section class="platform-card" data-platform="tiktok">
+        <div class="platform-card-head">
+          <div>
+            <h2 class="platform-name">TikTok Shop Open API</h2>
+            <p class="platform-scope" id="tiktokScope"></p>
+          </div>
+          <span class="platform-state off" id="tiktokState"><span class="dot"></span><span class="label">检查中…</span></span>
+        </div>
+        <div class="platform-detail">
+          <dl id="tiktokDetail"></dl>
+          <ul class="shop-list" id="tiktokShops"></ul>
+        </div>
+        <div class="platform-actions">
+          <button type="button" class="primary" id="tiktokConnect">连接店铺</button>
+          <button type="button" class="ghost" id="tiktokRefresh">刷新状态</button>
+        </div>
+      </section>
+    </div>
+
+    <p class="connect-note" id="pageNote">
+      授权链接会跳转到平台官方页面。TikTok 的 <code>auth_code</code> 30 分钟内有效且只能用一次，兑换后会自动建立「店铺 ID + cipher」台账 —— cipher 是调用店铺级接口的必要凭据。
+    </p>
+  </div>
+
+  <script>
+    'use strict';
+    (() => {
+      const STORAGE_KEY = 'shopee-analytics-locale';
+      const SUPPORTED = new Set(['zh', 'en']);
+      const requested = localStorage.getItem(STORAGE_KEY);
+      let locale = SUPPORTED.has(requested) ? requested : 'zh';
+
+      const dict = {
+        zh: {
+          title:'平台接入',
+          sub:'分别授权 Shopee 与 TikTok Shop 的开放平台 API。授权后会记录店铺台账与令牌状态，便于排查同步失败。',
+          note:'授权链接会跳转到平台官方页面。TikTok 的 auth_code 30 分钟内有效且只能用一次，兑换后会自动建立「店铺 ID + cipher」台账 —— cipher 是调用店铺级接口的必要凭据。',
+          back:'← 返回运营分析',
+          checking:'检查中…', ready:'已连接', pending:'待授权', off:'未配置', error:'异常',
+          connect:'连接店铺', refresh:'刷新状态',
+          credential:'应用凭据', shops:'已授权店铺', token:'令牌状态', expires:'令牌到期',
+          region:'区域组', sellerType:'卖家类型', cipher:'cipher 绑定', none:'（无）',
+          notConfigured:'尚未在服务端配置该平台的应用凭据。',
+          shopeeNote:'Shopee 侧按店铺逐个授权 ERP / Brand Portal，入口在店铺诊断页。',
+          tiktokNote:'TikTok 一次授权覆盖卖家名下全部店铺。',
+          tiktokScope:'东南亚（ROW）· Seller 授权 · GMV Max 广告',
+          connected:'连接成功',
+        },
+        en: {
+          title:'Platform Connections',
+          sub:'Authorize the Shopee and TikTok Shop open platform APIs separately. The page records the shop ledger and token state so sync failures can be traced.',
+          note:'The authorization link opens the official platform page. The TikTok auth_code is valid for thirty minutes and can be used once; redeeming it builds a shop id and cipher ledger, and the cipher is required by every shop-scoped call.',
+          back:'← Back to analytics',
+          checking:'Checking…', ready:'Connected', pending:'Not authorized', off:'Not configured', error:'Error',
+          connect:'Connect shops', refresh:'Refresh',
+          credential:'App credential', shops:'Authorized shops', token:'Token', expires:'Token expiry',
+          region:'Region group', sellerType:'Seller type', cipher:'Cipher binding', none:'(none)',
+          notConfigured:'The app credential for this platform is not configured on the server.',
+          shopeeNote:'On the Shopee side, ERP and Brand Portal are authorized per shop from the shop diagnosis view.',
+          tiktokNote:'A single TikTok authorization covers every shop under the seller.',
+          tiktokScope:'Southeast Asia (ROW) · Seller authorization · GMV Max ads',
+          connected:'Connected',
+        },
+      };
+
+      const t = key => (dict[locale] || dict.zh)[key] || key;
+      const esc = value => String(value ?? '').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#039;');
+
+      function applyLocale() {
+        document.documentElement.lang = locale === 'en' ? 'en' : 'zh-CN';
+        document.getElementById('pageTitle').textContent = t('title');
+        document.getElementById('pageSub').textContent = t('sub');
+        document.getElementById('pageNote').textContent = t('note');
+        document.getElementById('backLink').textContent = t('back');
+        document.getElementById('tiktokScope').textContent = t('tiktokScope');
+        document.getElementById('tiktokConnect').textContent = t('connect');
+        document.getElementById('shopeeRefresh').textContent = t('refresh');
+        document.getElementById('tiktokRefresh').textContent = t('refresh');
+        document.querySelectorAll('[data-lang]').forEach(btn => {
+          btn.classList.toggle('active', btn.dataset.lang === locale);
+        });
+      }
+
+      function setState(element, kind, label) {
+        element.className = `platform-state ${kind}`;
+        element.innerHTML = `<span class="dot"></span><span class="label">${esc(label)}</span>`;
+      }
+
+      function showError(message) {
+        const box = document.getElementById('error');
+        box.textContent = message || '';
+        box.style.display = message ? 'block' : 'none';
+      }
+
+      function showBanner(message) {
+        const box = document.getElementById('banner');
+        box.textContent = message || '';
+        box.style.display = message ? 'block' : 'none';
+      }
+
+      async function request(url, options = {}) {
+        const response = await fetch(url, {
+          headers: { accept: 'application/json', ...(options.body ? { 'content-type': 'application/json' } : {}) },
+          ...options,
+        });
+        if (response.status === 401) {
+          location.href = '/login?return=' + encodeURIComponent(location.pathname + location.search);
+          throw new Error('AUTH_REQUIRED');
+        }
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.message || payload.error || `HTTP ${response.status}`);
+        return payload;
+      }
+
+      function renderRows(target, rows) {
+        target.innerHTML = rows.map(([label, value]) =>
+          `<dt>${esc(label)}</dt><dd>${esc(value)}</dd>`).join('');
+      }
+
+      async function loadShopee() {
+        const state = document.getElementById('shopeeState');
+        setState(state, 'off', t('checking'));
+        try {
+          // Shopee 侧的 ERP / Brand Portal 按店铺授权，这里展示整体可用性。
+          const payload = await request('/api/shopee-analytics/shops').catch(() => null);
+          const shops = payload && Array.isArray(payload.shops) ? payload.shops : [];
+          const configured = shops.length > 0;
+          setState(state, configured ? 'ready' : 'pending', configured ? t('ready') : t('pending'));
+          renderRows(document.getElementById('shopeeDetail'), [
+            [t('shops'), configured ? `${shops.length}` : t('none')],
+            [t('credential'), configured ? 'ADS / STORE_OPS / ERP / BRAND_PORTAL' : t('notConfigured')],
+          ]);
+          // Shopee 侧是按店铺逐个授权 ERP / Brand Portal，入口在店铺诊断页，
+          // 所以这里只放说明文字，不放一个点了没用的按钮。
+          document.getElementById('shopeeNote').textContent = t('shopeeNote');
+        } catch (error) {
+          setState(state, 'error', t('error'));
+          renderRows(document.getElementById('shopeeDetail'), [[t('token'), error.message]]);
+        }
+      }
+
+      async function loadTiktok() {
+        const state = document.getElementById('tiktokState');
+        setState(state, 'off', t('checking'));
+        try {
+          const payload = await request('/api/shopee-analytics/tiktok/status');
+          const shops = payload.shops || [];
+          const configured = Boolean(payload.credentialsConfigured);
+          if (!configured) {
+            setState(state, 'off', t('off'));
+          } else if (shops.length > 0) {
+            setState(state, 'ready', t('ready'));
+          } else {
+            setState(state, 'pending', t('pending'));
+          }
+
+          const detail = [
+            [t('credential'), configured ? 'TIKTOK_APP_KEY / APP_SECRET / SERVICE_ID' : t('notConfigured')],
+            [t('region'), payload.regionGroup || 'ROW'],
+            [t('shops'), shops.length ? `${shops.length}` : t('none')],
+          ];
+          const withToken = shops.find(shop => shop.tokenExpiresAt);
+          if (withToken) {
+            detail.push([t('expires'), new Date(withToken.tokenExpiresAt).toLocaleString()]);
+            detail.push([t('cipher'), withToken.cipherBound ? t('ready') : t('error')]);
+          }
+          renderRows(document.getElementById('tiktokDetail'), detail);
+
+          const list = document.getElementById('tiktokShops');
+          list.innerHTML = shops.map(shop => {
+            const kind = shop.sellerType === 'CROSS_BORDER' ? '跨境' : '本地';
+            return `<li><span>${esc(shop.shopId)}</span><span>${esc(shop.region || '')} · ${esc(kind)}</span></li>`;
+          }).join('');
+
+          document.getElementById('tiktokConnect').disabled = !configured;
+          if (!configured) document.getElementById('tiktokConnect').textContent = t('notConfigured');
+        } catch (error) {
+          setState(state, 'error', t('error'));
+          renderRows(document.getElementById('tiktokDetail'), [[t('token'), error.message]]);
+        }
+      }
+
+      document.getElementById('tiktokConnect').addEventListener('click', () => {
+        location.href = '/api/shopee-analytics/tiktok/oauth/start';
+      });
+      document.getElementById('tiktokRefresh').addEventListener('click', loadTiktok);
+      document.getElementById('shopeeRefresh').addEventListener('click', loadShopee);
+      document.querySelectorAll('[data-lang]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          locale = btn.dataset.lang === 'en' ? 'en' : 'zh';
+          localStorage.setItem(STORAGE_KEY, locale);
+          applyLocale();
+          loadShopee();
+          loadTiktok();
+        });
+      });
+
+      const params = new URLSearchParams(location.search);
+      if (params.get('tiktok') === 'connected') {
+        showBanner(`${t('connected')} · ${params.get('shops') || 0} ${t('shops')}`);
+      }
+      if (params.get('reason')) showError(params.get('reason'));
+      // 参数消费掉后从地址栏移除，避免刷新时重复提示。
+      if ([...params.keys()].length) {
+        history.replaceState({}, '', location.pathname + location.hash);
+      }
+
+      applyLocale();
+      loadShopee();
+      loadTiktok();
+    })();
+  </script>
+</body>
+</html>

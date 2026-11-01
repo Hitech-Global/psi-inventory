@@ -16,6 +16,7 @@ const { ShopeeOperationHistoryRepository } = require('./operation-history-reposi
 const { ROLE_SUPER_ADMIN, authorizedShopIds, assertShopAccess } = require('./feishu-auth');
 const { BRAND_PORTAL_COOKIE, stateCookie, clearStateCookie, parseCookie } = require('./brand-portal-oauth-service');
 const { ERP_COOKIE, stateCookie: erpStateCookie, clearStateCookie: clearErpStateCookie, parseCookie: parseErpCookie } = require('./erp-oauth-service');
+const { TIKTOK_COOKIE, stateCookie: tiktokStateCookie, clearStateCookie: clearTikTokStateCookie, parseCookie: parseTikTokCookie } = require('./tiktok-oauth-service');
 const { SkillJobManager, normalizeReportLanguage } = require('./skill-job-manager');
 
 function positiveInt(value, name) {
@@ -210,6 +211,7 @@ function createShopeeAnalyticsRouter({
   runAdGroupSkillAnalysis = null,
   brandPortalOAuthService = null,
   erpOAuthService = null,
+  tiktokOAuthService = null,
 }) {
   const router = express.Router();
   const skillJobManager = new SkillJobManager();
@@ -353,6 +355,49 @@ function createShopeeAnalyticsRouter({
       });
       res.setHeader('Set-Cookie', clearStateCookie());
       res.redirect(302, '/?brand_portal=connected&shop_id=' + encodeURIComponent(result.shopId));
+    } catch (error) { next(error); }
+  });
+
+  // ---- TikTok Shop 授权 ----
+  // 登录页与「平台接入」页共用这两个端点：状态查询给界面展示，
+  // start 发起授权并跳转，callback 接收平台回跳。
+
+  router.get('/tiktok/status', async (req, res, next) => {
+    try {
+      if (!tiktokOAuthService) throw Object.assign(new Error('TikTok OAuth service is unavailable'), { status: 503 });
+      res.json(await tiktokOAuthService.status());
+    } catch (error) { next(error); }
+  });
+
+  router.get('/tiktok/oauth/start', async (req, res, next) => {
+    try {
+      if (!req.auth || req.auth.role !== ROLE_SUPER_ADMIN) {
+        res.status(403).json({ error: 'SUPER_ADMIN_REQUIRED', message: 'Only super admins can connect TikTok Shop.' });
+        return;
+      }
+      if (!tiktokOAuthService) throw Object.assign(new Error('TikTok OAuth service is unavailable'), { status: 503 });
+      const result = await tiktokOAuthService.beginAuthorization();
+      res.setHeader('Set-Cookie', tiktokStateCookie(result.state, result.ttlSeconds));
+      res.redirect(302, result.authorizationUrl);
+    } catch (error) { next(error); }
+  });
+
+  router.get('/tiktok/oauth/callback', async (req, res, next) => {
+    try {
+      if (!req.auth || req.auth.role !== ROLE_SUPER_ADMIN) {
+        res.status(403).json({ error: 'SUPER_ADMIN_REQUIRED', message: 'Only super admins can connect TikTok Shop.' });
+        return;
+      }
+      if (!tiktokOAuthService) throw Object.assign(new Error('TikTok OAuth service is unavailable'), { status: 503 });
+      const state = parseTikTokCookie(req.headers.cookie, TIKTOK_COOKIE);
+      const result = await tiktokOAuthService.completeAuthorization({
+        state,
+        code: typeof req.query.code === 'string' ? req.query.code : '',
+        providerError: req.query.error || null,
+      });
+      res.setHeader('Set-Cookie', clearTikTokStateCookie());
+      // 跳到平台接入页而不是首页：只有该页会读 tiktok 参数并展示连接结果。
+      res.redirect(302, '/connections?tiktok=connected&shops=' + encodeURIComponent(result.shopCount));
     } catch (error) { next(error); }
   });
 

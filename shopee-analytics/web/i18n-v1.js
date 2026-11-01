@@ -19,6 +19,11 @@
     ['店铺诊断', 'Shop Diagnosis'],
     ['广告诊断', 'Ads Diagnosis'],
     ['数据状态', 'Data Health'],
+    ['平台接入', 'Platform Connections'],
+    ['ERP 已连接', 'ERP connected'],
+    ['Brand Portal 已连接', 'Brand Portal connected'],
+    ['TikTok Shop 已连接', 'TikTok Shop connected'],
+    ['授权未完成', 'Authorization did not complete'],
     ['国家', 'Country'], ['全部国家', 'All Countries'],
     ['品牌', 'Brand'], ['全部品牌', 'All Brands'],
     ['店铺', 'Shop'], ['全部店铺', 'All Shops'],
@@ -166,6 +171,7 @@
   ].forEach(([zh, en]) => EXACT.set(zh, en));
 
   const PATTERNS = [
+    [/^已授权店铺数 (\d+)$/, 'Authorized $1 shops'],
     [/^(\d+) 需关注$/, '$1 need attention'],
     [/^(\d+) 组$/, '$1 groups'], [/^(\d+) 店$/, '$1 shops'], [/^(\d+) 商品$/, '$1 products'], [/^(\d+) 天$/, '$1 days'],
     [/^(\d+) 个$/, '$1'], [/^(\d+) SKU$/, '$1 SKU'],

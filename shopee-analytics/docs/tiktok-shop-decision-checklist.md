@@ -466,6 +466,48 @@ Shopee 侧现有 `order_amount` 对应 TikTok 的哪个？评估文档建议 `pa
 
 ---
 
+---
+
+## 实施进度（2026-11-01）
+
+| 阶段 | 状态 | 内容 |
+|---|---|---|
+| **M0 平台底座** | ✅ 完成并合入 main | 签名器 / 中间模型 / client+catalog / 凭据存储 / 快照表 + 授权链路 + 平台接入页 |
+| **M1-A 店铺经营** | 🟡 代码就绪，待真实凭据联调 | 订单 / 商品 / 结算同步 + 原始快照落库 + adapter 映射 |
+| **M1-B 广告效果** | 🟡 代码就绪，待 Marketing API 凭据 | GMV Max 报表 + 整合报表（纯付费漏斗） |
+| **M1-C 交叉分析** | ✅ **已完整实现** | 增量 GMV（GMV Max 归因 − Analytics 非直播 GMV 滚动基线）+ 结算净 ROAS；负增量如实保留；有直播日基线标为不可用 |
+
+**已合入 main 的提交**：`9fdaac3`（M0 底座）· `489eb5a`（授权链路 + 接入页）· `c9ddde9`（adapter + 同步）· `c57b6fe`（env 变量）· `792dbc0`（schema 集成验证）
+
+**代码规模**：src 新增 9 个模块（tiktok-signer / platform-model / tiktok-client / tiktok-catalog /
+tiktok-token-repository / tiktok-oauth-service / tiktok-sync-service / tiktok-baseline-collector /
+platforms/tiktok-adapter），test 新增 8 个文件，schema 新增 4 张 tiktok_* 表。
+套件：**272 syntax + 116 test files**，CI 含真实 PostgreSQL 16 集成验证，全绿。
+
+### 增量 GMV 的基线数据链（已实现）
+```
+非直播GMV(商品, 日) = SKU级GMV（Analytics SKU 端点） − 直播GMV（Analytics LIVE 端点）
+增量GMV(商品, 日)   = GMV Max 归因GMV − 滚动窗口均值(非直播GMV, 默认14天)
+```
+两个 Analytics 端点都用 **Analytics 口径**相减 —— 直播GMV 可能含平台货补而卖家中心不含，
+混用会算出无意义的差额。
+
+三个已处理的现实约束：
+1. **自然 GMV 本身会波动** → 基线用滚动窗口均值，不是当天值
+2. **广告挤占自然量时增量为负** → 如实保留负值，不抹平
+3. **直播 GMV 无法按商品拆分**（直播是场次维度）→ 有直播的日子该商品基线标为**不可用**，
+   而不是猜一个分配比例
+
+### 实施中发现的一个模型缺陷（已修）
+比值的合法性不只看口径（attributionBasis），还要看**来源**（source）：
+- GMV Max 报表内的 `gross_revenue ÷ cost` = 平台面板上的 ROI → **必须允许**（同源）
+- GMV Max 的 `gross_revenue ÷ 整合报表的 spend` → **必须拒绝**（跨源，覆盖不同广告活动）
+
+两处的花费都是「纯付费」语义，光看 basis 分辨不出来 → 因此在中间模型里加了 `source` 维度，
+跨来源的比值由 `assertSameBasis` 拦下。
+
+---
+
 ## 附：M0 立即可动的部分（不依赖任何决策）
 
 以下工作在上述 4 项决策之外，**现在就能开工**，且无论怎么决策都不会白做：
