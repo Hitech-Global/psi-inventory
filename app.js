@@ -6288,13 +6288,70 @@ function getRpColConfig(tabKey){
       localStorage.setItem(migKey8,'1');
     }
   }
+  // v9 migration (total forecast only): repair previously saved month-column order.
+  // Sort month items into their existing month slots so every non-month field keeps
+  // its exact position, relative order, visibility, and other saved settings.
+  if(tabKey==='total'){
+    var migKey9='rp_col_config_v9_total';
+    if(localStorage.getItem(migKey9)!=='1'){
+      if(Array.isArray(saved)&&saved.length){
+        var monthPositions9=[];
+        var monthItems9=[];
+        saved.forEach(function(item,index){
+          if(item&&isRpMonthColKey(item.key)){
+            monthPositions9.push(index);
+            monthItems9.push(item);
+          }
+        });
+        monthItems9.sort(function(a,b){
+          var ak=String(a.key),bk=String(b.key);
+          return ak<bk?-1:(ak>bk?1:0);
+        });
+        monthPositions9.forEach(function(position,index){
+          saved[position]=monthItems9[index];
+        });
+        localStorage.setItem(storageKey,JSON.stringify(saved));
+      }
+      localStorage.setItem(migKey9,'1');
+    }
+  }
   if(Array.isArray(saved)&&saved.length){
     var result=[]; var used={};
     saved.forEach(function(s){
       var d=defs.find(function(c){return c.key===s.key;});
       if(d){used[s.key]=true; result.push({key:d.key,label:d.label,fixed:!!d.fixed,visible:s.visible!==false});}
     });
-    defs.forEach(function(d){if(!used[d.key])result.push({key:d.key,label:d.label,fixed:!!d.fixed,visible:d.visibleByDefault!==false});});
+    defs.forEach(function(d){
+      if(used[d.key])return;
+      var item={key:d.key,label:d.label,fixed:!!d.fixed,visible:d.visibleByDefault!==false};
+      if(tabKey==='total'&&isRpMonthColKey(d.key)){
+        // 新增月份按 YYYY-MM 插入已有月份序列，不追加到其他字段末尾。
+        var insertAt=-1;
+        for(var mi=0;mi<result.length;mi++){
+          if(isRpMonthColKey(result[mi].key)&&String(result[mi].key)>String(d.key)){insertAt=mi;break;}
+        }
+        if(insertAt<0){
+          for(var mj=result.length-1;mj>=0;mj--){
+            if(isRpMonthColKey(result[mj].key)){insertAt=mj+1;break;}
+          }
+        }
+        if(insertAt<0){
+          var anchor=-1;
+          for(var mk=0;mk<result.length;mk++){
+            if(result[mk].key==='model'){anchor=mk;break;}
+          }
+          if(anchor<0){
+            for(var mn=0;mn<result.length;mn++){
+              if(result[mn].key==='sku'){anchor=mn;break;}
+            }
+          }
+          insertAt=anchor+1;
+        }
+        result.splice(insertAt,0,item);
+      }else{
+        result.push(item);
+      }
+    });
     return result;
   }
   return defs.map(function(d){return {key:d.key,label:d.label,fixed:!!d.fixed,visible:d.visibleByDefault!==false};});
