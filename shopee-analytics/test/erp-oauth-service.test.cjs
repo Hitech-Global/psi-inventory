@@ -99,3 +99,55 @@ const fetchImpl = async (_url, options) => {
   }
   console.log('ERP OAuth service tests: ok');
 })().catch(error => { console.error(error); process.exitCode = 1; });
+
+/**
+ * Shopee answers with a single shop when one was authorized, and with a
+ * list when a main account authorized several. Reading only the list made
+ * the single-shop case look like nothing had been authorized.
+ */
+(async () => {
+  const writes = [];
+  const pool = {
+    async query(sql, args) {
+      if (/SELECT 1 FROM shopee_shop_profiles/.test(sql)) return { rows: [{}] };
+      if (/SELECT shop_id FROM shopee_shop_profiles WHERE shop_id = ANY/.test(sql)) {
+        return { rows: [{ shop_id: 1520133690 }] };
+      }
+      if (/INSERT INTO shopee_oauth_states/.test(sql)) return { rows: [] };
+      if (/FROM shopee_oauth_states/.test(sql)) {
+        return { rows: [{ ...activeState, consumed_at: null, expires_at: new Date(Date.now()+600000) }] };
+      }
+      if (/UPDATE shopee_oauth_states/.test(sql)) {
+        return { rows: [{ ...activeState, consumed_at: new Date() }] };
+      }
+      if (/INSERT INTO shopee_app_tokens/.test(sql)) { writes.push({ sql, args }); return { rows: [] }; }
+      throw new Error(`Unexpected SQL: ${sql}`);
+    },
+  };
+  const fetchImpl = async () => ({
+    ok: true,
+    status: 200,
+    text: async () => JSON.stringify({
+      shop_id: 1520133690,
+      access_token: 'erp-access-token',
+      refresh_token: 'erp-refresh-token',
+      expire_in: 14400,
+    }),
+  });
+
+  const service = new ErpOAuthService({
+    pool,
+    env,
+    randomBytes: () => Buffer.alloc(32, 9),
+    fetchImpl,
+    now: () => new Date('2026-10-02T10:00:00Z'),
+  });
+  const start = await service.beginAuthorization({ shopId: 1520133690 });
+  const result = await service.completeAuthorization({ state: start.state, code: 'one-time-code' });
+  assert.deepStrictEqual(result.authorizedShopIds, [1520133690]);
+  assert.deepStrictEqual(result.connectedShopIds, [1520133690]);
+  const insert = writes.find(row => /INSERT INTO shopee_app_tokens/.test(row.sql));
+  assert(insert, 'a single-shop authorization must still store a token');
+  assert.strictEqual(Number(insert.args[1]), 1520133690);
+  console.log('ERP single-shop authorization tests: ok');
+})().catch(error => { console.error(error); process.exitCode = 1; });

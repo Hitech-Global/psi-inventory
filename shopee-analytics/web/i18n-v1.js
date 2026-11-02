@@ -176,6 +176,7 @@
 
   const PATTERNS = [
     [/^已授权店铺数 (\d+)$/, 'Authorized $1 shops'],
+    [/^已连接店铺数 (\d+)$/, 'Connected $1 shops'],
     [/^(\d+) 需关注$/, '$1 need attention'],
     [/^(\d+) 组$/, '$1 groups'], [/^(\d+) 店$/, '$1 shops'], [/^(\d+) 商品$/, '$1 products'], [/^(\d+) 天$/, '$1 days'],
     [/^(\d+) 个$/, '$1'], [/^(\d+) SKU$/, '$1 SKU'],

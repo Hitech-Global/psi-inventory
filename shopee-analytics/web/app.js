@@ -1665,6 +1665,10 @@ function showOauthCallbackNotice() {
   const notices = [];
   if (params.get('erp') === 'connected') {
     notices.push({ tone: 'good', text: 'ERP 已连接' });
+    // 店铺数单独一行：i18n 的翻译表是整串精确匹配，
+    // 拼在同一个文本节点里的后缀不会被翻译。
+    const erpShops = params.get('shops');
+    if (erpShops) notices.push({ tone: 'good', text: `已连接店铺数 ${erpShops}` });
   }
   if (params.get('brand_portal') === 'connected') {
     notices.push({ tone: 'good', text: 'Brand Portal 已连接' });

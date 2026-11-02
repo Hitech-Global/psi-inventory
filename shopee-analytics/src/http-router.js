@@ -199,6 +199,15 @@ function skuContributionSummary(rows) {
   };
 }
 
+function escapeHtmlText(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
 function createShopeeAnalyticsRouter({
   repository,
   strategyRepository,
@@ -397,6 +406,65 @@ function createShopeeAnalyticsRouter({
     } catch (error) { next(error); }
   });
 
+  /**
+   * Tell the reader what happened when an authorization did not finish.
+   *
+   * The reader arrives here from Shopee's own page, having just typed a
+   * password. Answering with a code and a stack means nothing to them, and
+   * they have no way back to the page they came from. So: a page that says
+   * what went wrong, what to do about it, and a way back.
+   */
+  function respondWithOAuthOutcome(res, error, label) {
+    const code = error && error.code ? String(error.code) : 'OAUTH_FAILED';
+    const detail = error && error.safe && error.message ? error.message : '';
+    const known = {
+      ERP_OAUTH_SHOP_NOT_ALLOWED: '授权的店铺与本系统已配置的店铺不一致',
+      ERP_OAUTH_INVALID_TOKEN_RESPONSE: 'Shopee 返回的授权结果无法识别',
+      ERP_OAUTH_MISSING_CODE: '授权回调缺少 code',
+      ERP_OAUTH_INVALID_OR_REPLAYED_STATE: '授权请求已过期或已被使用，请重新发起',
+      ERP_OAUTH_PROVIDER_ERROR: 'Shopee 拒绝了这次授权',
+      ERP_OAUTH_TOKEN_EXCHANGE_FAILED: '用 code 换取令牌时失败',
+      BRAND_PORTAL_OAUTH_MULTIPLE_PRINCIPALS: '这个账号关联了多个品牌主体，无法确定用哪一个',
+      BRAND_PORTAL_OAUTH_INVALID_PRINCIPAL_RESPONSE: 'Shopee 没有返回可用的品牌主体',
+      BRAND_PORTAL_OAUTH_INVALID_TOKEN_RESPONSE: 'Shopee 返回的授权结果无法识别',
+      BRAND_PORTAL_OAUTH_MISSING_CODE: '授权回调缺少 code',
+      BRAND_PORTAL_OAUTH_INVALID_OR_REPLAYED_STATE: '授权请求已过期或已被使用，请重新发起',
+      BRAND_PORTAL_OAUTH_PROVIDER_ERROR: 'Shopee 拒绝了这次授权',
+      BRAND_PORTAL_OAUTH_TOKEN_EXCHANGE_FAILED: '用 code 换取令牌时失败',
+    };
+    const title = known[code] || `${label} 授权未完成`;
+    const steps = {
+      ERP_OAUTH_SHOP_NOT_ALLOWED: '请回到「店铺接口」页面重新发起连接，在授权页勾选本系统已配置的店铺后确认。',
+      BRAND_PORTAL_OAUTH_MULTIPLE_PRINCIPALS: '请在开放平台确认该 App 只关联一个品牌主体后重试。',
+      BRAND_PORTAL_OAUTH_INVALID_PRINCIPAL_RESPONSE: 'Brand Portal 仅对官方店 / Mall 卖家开放；普通店铺请改用卖家中心导出的数据。',
+    };
+    const action = steps[code] || '请回到「店铺接口」页面重新发起连接。';
+    res.status(error && error.status ? error.status : 400).send(
+      `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${escapeHtmlText(title)}</title>
+<style>
+  body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;
+       background:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;color:#172033}
+  .card{width:min(520px,100%);background:#fff;border:1px solid rgba(15,23,42,.08);border-radius:18px;padding:28px;
+        box-shadow:0 12px 40px rgba(15,23,42,.08)}
+  h1{font-size:19px;margin:0 0 10px}
+  p{margin:0 0 12px;font-size:13px;line-height:1.7;color:#475467}
+  code{display:block;margin:0 0 14px;padding:9px 11px;border-radius:9px;background:#f5f5f7;
+       font-size:11px;color:#6b7280;word-break:break-word}
+  a{display:inline-block;margin-top:8px;background:#175cd3;color:#fff;text-decoration:none;
+    padding:9px 16px;border-radius:10px;font-size:13px;font-weight:600}
+</style></head><body>
+<div class="card">
+  <h1>${escapeHtmlText(title)}</h1>
+  ${detail ? `<p>${escapeHtmlText(detail)}</p>` : ''}
+  <code>${escapeHtmlText(code)}</code>
+  <p>${escapeHtmlText(action)}</p>
+  <a href="/">返回电商运营系统</a>
+</div></body></html>`,
+    );
+  }
+
   router.get('/erp/oauth/callback', async (req, res, next) => {
     try {
       if (!req.auth || req.auth.role !== ROLE_SUPER_ADMIN) {
@@ -411,8 +479,13 @@ function createShopeeAnalyticsRouter({
         providerError: req.query.error || null,
       });
       res.setHeader('Set-Cookie', clearErpStateCookie());
-      res.redirect(302, '/?erp=connected&shop_id=' + encodeURIComponent(result.shopId));
-    } catch (error) { next(error); }
+      const connected = (result.connectedShopIds || [result.shopId]).length;
+      res.redirect(302, '/?erp=connected&shop_id=' + encodeURIComponent(result.shopId)
+        + '&shops=' + encodeURIComponent(String(connected)));
+    } catch (error) {
+      res.setHeader('Set-Cookie', clearErpStateCookie());
+      respondWithOAuthOutcome(res, error, 'ERP');
+    }
   });
 
   router.get('/brand-portal/oauth/callback', async (req, res, next) => {
@@ -430,7 +503,10 @@ function createShopeeAnalyticsRouter({
       });
       res.setHeader('Set-Cookie', clearStateCookie());
       res.redirect(302, '/?brand_portal=connected&shop_id=' + encodeURIComponent(result.shopId));
-    } catch (error) { next(error); }
+    } catch (error) {
+      res.setHeader('Set-Cookie', clearStateCookie());
+      respondWithOAuthOutcome(res, error, 'Brand Portal');
+    }
   });
 
   // ---- TikTok Shop 授权 ----

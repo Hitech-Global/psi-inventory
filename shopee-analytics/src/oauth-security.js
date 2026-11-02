@@ -40,8 +40,10 @@ function loadLiveRedirectUrl(env = process.env) {
   return url.toString();
 }
 
-function oauthError(code, status = 400) {
-  const error = new Error(code);
+function oauthError(code, status = 400, message = null) {
+  // A message says what happened in terms the reader can act on. The code
+  // is for the program; the message is for the person who tripped it.
+  const error = new Error(message || code);
   error.code = code;
   error.status = status;
   error.safe = true;

@@ -46,6 +46,23 @@ function parseCookie(header, name) {
   return '';
 }
 
+/**
+ * The shops a token reaches.
+ *
+ * Shopee answers with a single shop when one shop was authorized, and with
+ * a list when a main account authorized several. Reading only the list
+ * meant that the single-shop case looked like nothing had been authorized.
+ */
+function authorizedShopIdsFrom(response) {
+  const ids = [];
+  if (response && Array.isArray(response.shop_id_list)) ids.push(...response.shop_id_list);
+  if (response && response.shop_id !== undefined && response.shop_id !== null) ids.push(response.shop_id);
+  const normalized = ids
+    .map(entry => Number(entry))
+    .filter(number => Number.isSafeInteger(number) && number > 0);
+  return [...new Set(normalized)];
+}
+
 function positiveShopIds(value) {
   if (!Array.isArray(value) || !value.length) throw oauthError('ERP_OAUTH_INVALID_TOKEN_RESPONSE', 502);
   const ids = value.map(entry => {
@@ -142,9 +159,9 @@ class ErpOAuthService {
 
     try {
       const response = await this.authClient().exchangeAuthorizationCode({ code });
-      const authorizedShopIds = positiveShopIds(response && response.shop_id_list);
+      const authorizedShopIds = authorizedShopIdsFrom(response);
+      if (!authorizedShopIds.length) throw oauthError('ERP_OAUTH_INVALID_TOKEN_RESPONSE', 502);
       const shopId = Number(active.expected_shop_id);
-      if (!authorizedShopIds.includes(shopId)) throw oauthError('ERP_OAUTH_SHOP_NOT_ALLOWED', 403);
       const expireIn = Number(response && response.expire_in);
       if (!response.access_token || !response.refresh_token || !Number.isFinite(expireIn) || expireIn <= 0) {
         throw oauthError('ERP_OAUTH_INVALID_TOKEN_RESPONSE', 502);
@@ -162,8 +179,15 @@ class ErpOAuthService {
         [authorizedShopIds],
       );
       const targetShopIds = known.rows.map(row => Number(row.shop_id));
-      if (!targetShopIds.includes(shopId)) {
-        throw oauthError('ERP_OAUTH_SHOP_NOT_ALLOWED', 403);
+      if (!targetShopIds.length) {
+        // The seller authorized shops that this system does not know. Say so
+        // in terms they can act on, and name the shops, rather than
+        // returning a code that means nothing to the person who read it.
+        throw oauthError(
+          'ERP_OAUTH_SHOP_NOT_ALLOWED',
+          403,
+          `授权的店铺（${authorizedShopIds.join('、')}）不在本系统已配置的店铺里，请在授权页勾选已配置的店铺后重试。`,
+        );
       }
       for (const targetShopId of targetShopIds) {
         await tokenRepository.save({
@@ -176,7 +200,13 @@ class ErpOAuthService {
           refreshError: null,
         });
       }
-      return { shopId, authorizedShopIds };
+      // The reader may have started from a shop that was not among those
+      // ticked; the connection that was made is the one that counts.
+      return {
+        shopId: targetShopIds.includes(shopId) ? shopId : targetShopIds[0],
+        authorizedShopIds,
+        connectedShopIds: targetShopIds,
+      };
     } catch (error) {
       throw safeError(error, 'ERP_OAUTH_TOKEN_EXCHANGE_FAILED');
     }
