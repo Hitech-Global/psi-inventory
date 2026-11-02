@@ -172,6 +172,10 @@ test('the panel says why the Brand Portal connection may be refused', () => {
   assert.ok(rendered.includes('Brand Portal'), 'the hint must name the connection');
   assert.ok(rendered.includes('官方店'), 'the hint must name who can use it');
   assert.ok(rendered.includes('Business Insights'), 'the hint must say where to read the figures instead');
+  // The sign-in page asks for credentials differently from every other
+  // Shopee sign-in, so the hint has to say which ones.
+  assert.ok(rendered.includes('Forgot Password'), 'the hint must say how to reset the password');
+  assert.ok(rendered.includes('Key Account Manager'), 'the hint must say how to get access at all');
 });
 
 test('a shop that already has its report does not need the hint', () => {

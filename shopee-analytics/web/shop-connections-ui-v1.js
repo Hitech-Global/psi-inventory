@@ -44,7 +44,20 @@
     { code: 'MX', label: '墨西哥' },
   ];
 
-  const BRAND_PORTAL_HINT = 'Brand Portal 仅对官方店 / Mall 卖家开放。若授权页提示「principals 不可用」，说明店铺尚未开通；访客与转化率可改从卖家中心 Business Insights 导出。';
+  /**
+   * How to get past Brand Portal's own sign-in page.
+   *
+   * The page asks for credentials in a way that differs from every other
+   * Shopee sign-in, and saying so here saves a reader from trying the
+   * credentials that work everywhere else. The three cases are the ones
+   * Shopee itself sets out: an account that used the older marketing
+   * portal, one that has never used it, and one whose password has been
+   * forgotten.
+   */
+  const BRAND_PORTAL_HINT = 'Brand Portal 仅对官方店 / Mall 卖家开放。'
+    + '登录请用品牌中心的账号邮箱（不加「:main」）；密码忘了点授权页的「Forgot Password」重置；'
+    + '若从未开通过 Brand Portal（提示 principals 不可用），需联系 Shopee 的 Key Account Manager 申请。'
+    + '访客与转化率也可改从卖家中心 Business Insights 导出。';
 
   /**
    * Why a returns connection may not reach the shop it was asked for.
