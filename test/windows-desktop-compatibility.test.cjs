@@ -21,6 +21,8 @@ assert.match(css,/@media\(max-width:980px\)/);
 assert.match(css,/@media\(max-width:720px\)/);
 assert.match(css, /\.form-grid\{grid-template-columns:minmax\(0,1fr\)\}/);
 assert.match(app,/var layoutViewport=document\.documentElement;/);
+assert.match(app,/var layoutViewport=document\.documentElement;\n  var vw=/,'tooltip viewport calculation must use a real source line break');
+assert.doesNotMatch(app,/document\.documentElement;\\n  var vw=/,'no escaped newline may be injected into JavaScript source');
 assert.match(app,/layoutViewport\.clientWidth/);
 const start=app.indexOf('function initFreezeLineDrag(');
 const end=app.indexOf('\nfunction openRpReview(',start);
