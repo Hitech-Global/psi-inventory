@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     把 shopee-analytics 模块更新到运行中的桌面栈。
 

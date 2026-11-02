@@ -80,6 +80,20 @@ jobs:
             'shopee-analytics/deploy/desktop/verify-m612-readonly.ps1',
             'shopee-analytics/deploy/deploy-analytics-windows.ps1'
           )
+          # 脚本文件必须带 UTF-8 BOM。PowerShell 5.1 读不带 BOM 的 UTF-8 时
+          # 按系统 ANSI 码页解码，中文注释会被拆成乱码，某些字节组合还会破坏
+          # 语句结构 —— 表现为 cmdlet 收到 null 参数，而不是语法报错。
+          $allScripts = Get-ChildItem -Path 'shopee-analytics' -Recurse -Filter '*.ps1'
+          foreach ($file in $allScripts) {
+            $bytes = [System.IO.File]::ReadAllBytes($file.FullName)
+            if ($bytes.Length -lt 3 -or $bytes[0] -ne 0xEF -or $bytes[1] -ne 0xBB -or $bytes[2] -ne 0xBF) {
+              Write-Error "$($file.FullName) : missing UTF-8 BOM"
+              $missingBom = $true
+            }
+          }
+          if ($missingBom) { exit 1 }
+          Write-Host "  all $($allScripts.Count) PowerShell scripts carry a UTF-8 BOM"
+
           foreach ($script in $scripts) {
             $tokens = $null
             $errors = $null
