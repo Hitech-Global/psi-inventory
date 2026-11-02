@@ -476,3 +476,8 @@ tbody td{font-weight:400}
   .side-item{width:auto;white-space:nowrap}
   .sidebar-foot{border-top:0;border-bottom:1px solid #f0f0f2;order:-1;padding:0 0 12px}
 }
+.connections-hint{
+  margin:10px 0 0;padding:9px 11px;border-radius:10px;
+  background:#fff8ec;border:1px solid #f5e2bd;color:#7a5c00;
+  font-size:11px;line-height:1.6;
+}

@@ -154,3 +154,36 @@ test('a connection whose renewal failed is marked as needing the authorization a
   assert.ok(rendered.includes('需重新授权'), 'the stale connection must be marked');
   assert.ok(rendered.includes('重新授权'), 'a way to fix it must be offered');
 });
+
+test('the panel says why the Brand Portal connection may be refused', () => {
+  const renderShop = loadPanelRenderer();
+  const rendered = renderShop({
+    shopId: 1,
+    displayName: 'Shop F',
+    shopBi: { days: 0 },
+    livestream: { days: 0 },
+    returns: { rows: 0 },
+    erp: { credentialConfigured: true, tokenPresent: false, redirectUrl: 'https://x/cb' },
+    brandPortal: { credentialConfigured: true, tokenPresent: false, redirectUrl: 'https://x/cb' },
+  });
+  // Shopee only opens Brand Portal to official and mall sellers. Saying so
+  // here saves the reader from meeting a page that says "all linked
+  // principals are inactive" and wondering what they did wrong.
+  assert.ok(rendered.includes('Brand Portal'), 'the hint must name the connection');
+  assert.ok(rendered.includes('官方店'), 'the hint must name who can use it');
+  assert.ok(rendered.includes('Business Insights'), 'the hint must say where to read the figures instead');
+});
+
+test('a shop that already has its report does not need the hint', () => {
+  const renderShop = loadPanelRenderer();
+  const rendered = renderShop({
+    shopId: 1,
+    displayName: 'Shop G',
+    shopBi: { days: 30, latestDate: '2026-11-01' },
+    livestream: { days: 30 },
+    returns: { rows: 5 },
+    erp: { credentialConfigured: true, tokenPresent: true },
+    brandPortal: { credentialConfigured: true, tokenPresent: true },
+  });
+  assert.ok(!rendered.includes('connections-hint'), 'a connected shop needs no hint');
+});
