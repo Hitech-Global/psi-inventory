@@ -66,7 +66,13 @@ function apply(){
   let brief=sections.find(s=>s.querySelector('h4')?.textContent.includes('品牌简报'))||sections.find(s=>s.classList.contains('qm-procurement-brief'));
   if(!brief)return;
   brief.classList.add('qm-procurement-brief');
-  brief.innerHTML=makeBrief(report);
+  const html=makeBrief(report);
+  // MutationObserver watches the report container; avoid rewriting identical markup,
+  // otherwise this write triggers the observer and can create an endless render loop.
+  if(brief.dataset.qmProcurementBriefHtml!==html){
+    brief.innerHTML=html;
+    brief.dataset.qmProcurementBriefHtml=html;
+  }
   const reportTitle=right.querySelector('.qm-report-title');
   if(reportTitle&&brief.previousElementSibling!==reportTitle)reportTitle.insertAdjacentElement('afterend',brief);
 }
@@ -83,7 +89,19 @@ function wrapApi(){
 }
 function boot(){
   wrapApi();ensureCss();
-  const obs=new MutationObserver(()=>{if(latestSummary&&latestUrl===currentSummaryUrl())apply();else if(latestSummary)apply();});
+  const obs=new MutationObserver(records=>{
+    if(!latestSummary||latestUrl!==currentSummaryUrl())return;
+    const right=document.getElementById('qm-right');
+    if(!right)return;
+    const touchesReport=records.some(m=>{
+      const target=m.target&&(m.target.nodeType===1?m.target:m.target.parentElement);
+      if(target&&(target===right||right.contains(target)))return true;
+      return Array.from(m.addedNodes||[]).some(n=>
+        n===right||(n.nodeType===1&&typeof n.querySelector==='function'&&n.querySelector('#qm-right'))
+      );
+    });
+    if(touchesReport)apply();
+  });
   obs.observe(document.body,{childList:true,subtree:true});
 }
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);else boot();
