@@ -10,16 +10,15 @@ const applyEnd=source.indexOf('\nfunction wrapApi()',applyStart);
 assert(applyStart>=0&&applyEnd>applyStart,'apply function boundaries must exist');
 const applySource=source.slice(applyStart,applyEnd);
 
-assert.match(source,/latestSummary&&latestUrl!==currentSummaryUrl\(\)/);
+assert.match(source,/!latestSummary\|\|latestUrl!==currentSummaryUrl\(\)/);
 assert.match(source,/target===right\|\|right\.contains\(target\)/);
 assert.doesNotMatch(source,/else\s+if\s*\(latestSummary\)\s*apply\(\)/);
 
 const reportTitle={};
 const badge={textContent:'品牌报告'};
 const brand={childNodes:[{textContent:'Netac'}]};
-const section={querySelector:()=>({textContent:'品牌简报'}),classList:{contains:()=>false}};
 let writes=0,htmlValue='';
-const brief={dataset:{},classList:{add(){}},previousElementSibling:reportTitle};
+const brief={dataset:{},classList:{add(){},contains:()=>false},previousElementSibling:reportTitle,querySelector:()=>({textContent:'品牌简报'})};
 Object.defineProperty(brief,'innerHTML',{
   get(){return htmlValue;},
   set(value){writes++;htmlValue=value;}
@@ -27,7 +26,7 @@ Object.defineProperty(brief,'innerHTML',{
 const right={
   querySelectorAll(selector){
     if(selector==='.qm-badge')return [badge];
-    if(selector==='.qm-section')return [section];
+    if(selector==='.qm-section')return [brief];
     return [];
   },
   querySelector(selector){
