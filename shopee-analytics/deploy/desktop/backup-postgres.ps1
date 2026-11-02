@@ -44,7 +44,25 @@ $nasDir = $cfg["SHOPEE_NAS_BACKUP_DIR"]
 
 if (!$db -or !$user) { throw "POSTGRES_DB / POSTGRES_USER missing in runtime\.env" }
 if (!$localDir) { throw "SHOPEE_BACKUP_LOCAL_DIR missing in runtime\.env" }
-if (!$nasDir) { throw "SHOPEE_NAS_BACKUP_DIR missing in runtime\.env" }
+
+# 本地目录按脚本所在目录解析成绝对路径。配置里常写相对路径，
+# 而计划任务的工作目录不一定是这里，相对路径会落到别处。
+if (![IO.Path]::IsPathRooted($localDir)) {
+  $localDir = Join-Path $ScriptDir $localDir
+}
+
+# 共享盘是可选的：没配、或者配了但当前不可达，都不应该让备份整个失败。
+# 备份先落在本地，共享盘只是多一份副本。
+$nasAvailable = $false
+if ($nasDir) {
+  $nasAvailable = Test-Path $nasDir
+  if (!$nasAvailable) {
+    Write-Host "NAS directory is not reachable, continuing with local backup only: $nasDir"
+  }
+}
+else {
+  Write-Host "SHOPEE_NAS_BACKUP_DIR is not set, continuing with local backup only"
+}
 
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $fileName = "shopee-analytics-$stamp.dump"
@@ -53,9 +71,11 @@ $localFile = Join-Path $localDir $fileName
 
 try {
   New-Item -ItemType Directory -Force -Path $localDir | Out-Null
-  New-Item -ItemType Directory -Force -Path (Join-Path $nasDir "daily") | Out-Null
-  New-Item -ItemType Directory -Force -Path (Join-Path $nasDir "weekly") | Out-Null
-  New-Item -ItemType Directory -Force -Path (Join-Path $nasDir "monthly") | Out-Null
+  if ($nasAvailable) {
+    New-Item -ItemType Directory -Force -Path (Join-Path $nasDir "daily") | Out-Null
+    New-Item -ItemType Directory -Force -Path (Join-Path $nasDir "weekly") | Out-Null
+    New-Item -ItemType Directory -Force -Path (Join-Path $nasDir "monthly") | Out-Null
+  }
 
   docker compose --env-file $EnvFile exec -T postgres `
     pg_dump -U $user -d $db -Fc -f $containerFile
@@ -75,32 +95,40 @@ try {
 
   $hash = (Get-FileHash -Algorithm SHA256 $localFile).Hash.ToLower()
   $size = (Get-Item $localFile).Length
-  $dailyFile = Join-Path (Join-Path $nasDir "daily") $fileName
-  Copy-Item $localFile $dailyFile -Force
 
-  $now = Get-Date
-  if ($now.DayOfWeek -eq [DayOfWeek]::Sunday) {
-    Copy-Item $localFile (Join-Path (Join-Path $nasDir "weekly") $fileName) -Force
-  }
-  if ($now.Day -eq 1) {
-    Copy-Item $localFile (Join-Path (Join-Path $nasDir "monthly") $fileName) -Force
+  $nasCopied = $null
+  if ($nasAvailable) {
+    $dailyFile = Join-Path (Join-Path $nasDir "daily") $fileName
+    Copy-Item $localFile $dailyFile -Force
+
+    $now = Get-Date
+    if ($now.DayOfWeek -eq [DayOfWeek]::Sunday) {
+      Copy-Item $localFile (Join-Path (Join-Path $nasDir "weekly") $fileName) -Force
+    }
+    if ($now.Day -eq 1) {
+      Copy-Item $localFile (Join-Path (Join-Path $nasDir "monthly") $fileName) -Force
+    }
+    $nasCopied = (Get-Date).ToUniversalTime().ToString("o")
   }
 
+  # 本地保留 30 天
   Get-ChildItem $localDir -Filter "shopee-analytics-*.dump" -File |
     Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-30) } |
     Remove-Item -Force
 
-  Get-ChildItem (Join-Path $nasDir "daily") -Filter "shopee-analytics-*.dump" -File |
-    Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-30) } |
-    Remove-Item -Force
+  if ($nasAvailable) {
+    Get-ChildItem (Join-Path $nasDir "daily") -Filter "shopee-analytics-*.dump" -File |
+      Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-30) } |
+      Remove-Item -Force
 
-  Get-ChildItem (Join-Path $nasDir "weekly") -Filter "shopee-analytics-*.dump" -File |
-    Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-90) } |
-    Remove-Item -Force
+    Get-ChildItem (Join-Path $nasDir "weekly") -Filter "shopee-analytics-*.dump" -File |
+      Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-90) } |
+      Remove-Item -Force
 
-  Get-ChildItem (Join-Path $nasDir "monthly") -Filter "shopee-analytics-*.dump" -File |
-    Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-730) } |
-    Remove-Item -Force
+    Get-ChildItem (Join-Path $nasDir "monthly") -Filter "shopee-analytics-*.dump" -File |
+      Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-730) } |
+      Remove-Item -Force
+  }
 
   $completed = (Get-Date).ToUniversalTime().ToString("o")
   Write-Status @{
@@ -110,11 +138,14 @@ try {
     fileName = $fileName
     sizeBytes = $size
     sha256 = $hash
-    nasCopiedAt = $completed
+    nasCopiedAt = $nasCopied
+    localPath = $localFile
     error = $null
   }
 
   Write-Host "Backup OK: $fileName ($([math]::Round($size / 1MB, 1)) MB)"
+  Write-Host "  local: $localFile"
+  if ($nasAvailable) { Write-Host "  nas:   $nasDir" } else { Write-Host "  nas:   skipped" }
 }
 catch {
   Write-Status @{

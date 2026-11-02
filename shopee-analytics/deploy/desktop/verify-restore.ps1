@@ -21,6 +21,12 @@ $dbUser = $cfg["POSTGRES_USER"]
 $localDir = $cfg["SHOPEE_BACKUP_LOCAL_DIR"]
 if (!$dbUser -or !$localDir) { throw "Backup settings missing" }
 
+# 与备份脚本一致：本地目录按脚本所在目录解析成绝对路径，
+# 否则计划任务的工作目录不同就会找不到备份。
+if (![IO.Path]::IsPathRooted($localDir)) {
+  $localDir = Join-Path $ScriptDir $localDir
+}
+
 $latest = Get-ChildItem $localDir -Filter "shopee-analytics-*.dump" -File |
   Sort-Object LastWriteTime -Descending |
   Select-Object -First 1
