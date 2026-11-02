@@ -9,6 +9,7 @@ const { fetchAllDiscountDetails } = require('./sync-discount');
 const { fetchOrderList, fetchOrderDetails } = require('./sync-orders');
 const { fetchAllReturnDetails } = require('./sync-returns');
 const { fetchShopBiDay } = require('./sync-shop-bi');
+const { fetchShopLivestreamDay } = require('./sync-shop-livestream');
 const { fetchShopInfo } = require('./sync-shop');
 const { recordPages, recordSnapshot } = require('./raw-snapshot');
 
@@ -38,6 +39,7 @@ class ShopeeSyncService {
     orderRepository,
     returnRepository,
     shopBiRepository,
+    shopLivestreamRepository,
     shopRepository,
   }) {
     this.shopId = shopId;
@@ -49,6 +51,7 @@ class ShopeeSyncService {
     this.orderRepository = orderRepository;
     this.returnRepository = returnRepository;
     this.shopBiRepository = shopBiRepository;
+    this.shopLivestreamRepository = shopLivestreamRepository;
     this.shopRepository = shopRepository;
   }
 
@@ -443,6 +446,43 @@ class ShopeeSyncService {
     if (this.shopBiRepository) {
       for (const detail of result.details) {
         await this.shopBiRepository.upsertDaily({ eventDate: date, detail });
+      }
+    }
+    return { detailCount: result.details.length };
+  }
+
+  async syncShopLivestreamDay({ date, timezone, principalId, currency = 'LOCAL' }) {
+    const entry = requireRole(this.roleClients, 'BRAND_PORTAL');
+    const normalizedPrincipalId = Number(principalId);
+    if (!Number.isSafeInteger(normalizedPrincipalId) || normalizedPrincipalId <= 0) {
+      throw new Error('Brand Portal principalId is required');
+    }
+    const accessToken = typeof entry.getAccessToken === 'function'
+      ? await entry.getAccessToken(normalizedPrincipalId)
+      : entry.accessToken;
+    if (!accessToken) throw new Error('Missing access token for Shopee role: BRAND_PORTAL');
+    const result = await fetchShopLivestreamDay({
+      client: entry.client,
+      shopId: this.shopId,
+      principalId: normalizedPrincipalId,
+      accessToken,
+      date,
+      timezone,
+      currency,
+    });
+    await recordSnapshot({
+      repository: this.rawRepository,
+      appRole: 'BRAND_PORTAL',
+      endpointKey: 'shopLivestreamPerformance',
+      shopId: this.shopId,
+      eventDateFrom: date,
+      eventDateTo: date,
+      requestJson: result.body,
+      responseJson: result.payload,
+    });
+    if (this.shopLivestreamRepository) {
+      for (const detail of result.details) {
+        await this.shopLivestreamRepository.upsertDaily({ eventDate: date, detail });
       }
     }
     return { detailCount: result.details.length };

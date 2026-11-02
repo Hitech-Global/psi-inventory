@@ -250,6 +250,22 @@ async function runShopSyncCycle({
       });
     }
 
+    // Livestream figures come from the same principal as the shop report.
+    // They are optional: a shop that does not livestream simply has none.
+    if (profile.brandPortalTimezone && profile.brandPortalPrincipalId && runtime.roleClients.BRAND_PORTAL) {
+      await run('shop-livestream-yesterday', () => service.syncShopLivestreamDay({
+        date: yesterday,
+        timezone: profile.brandPortalTimezone,
+        principalId: profile.brandPortalPrincipalId,
+      }), { required: false });
+    } else {
+      summary.steps.push({
+        name: 'shop-livestream-yesterday', ok: true, required: false,
+        skipped: !profile.brandPortalTimezone ? 'NO_BRAND_PORTAL_TIMEZONE'
+          : !profile.brandPortalPrincipalId ? 'NO_BRAND_PORTAL_PRINCIPAL_ID' : 'NO_BRAND_PORTAL_CLIENT',
+      });
+    }
+
     const activeItemIds = await runtime.queryRepository.listLatestMembershipItemIds({ shopId });
     if (activeItemIds.length) {
       await run(

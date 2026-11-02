@@ -466,6 +466,18 @@ class ShopeeQueryRepository {
            AND (to_timestamp(create_time) AT TIME ZONE $4)::date BETWEEN $2 AND $3
          GROUP BY 1
        ),
+       live AS (
+         SELECT event_date,
+                COALESCE(SUM(live_sessions),0) AS live_sessions,
+                COALESCE(SUM(live_hours),0) AS live_hours,
+                COALESCE(SUM(live_views),0) AS live_views,
+                COALESCE(SUM(live_viewers),0) AS live_viewers,
+                COALESCE(SUM(confirmed_orders),0) AS live_confirmed_orders,
+                COALESCE(SUM(confirmed_sales),0) AS live_confirmed_sales
+         FROM shopee_shop_livestream_daily
+         WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3
+         GROUP BY event_date
+       ),
        returns_agg AS (
          SELECT (to_timestamp(create_time) AT TIME ZONE $4)::date AS event_date,
                 COUNT(*)::int AS refund_orders,
@@ -485,6 +497,12 @@ class ShopeeQueryRepository {
               COALESCE(o.cancelled_sales,0) AS cancelled_sales,
               COALESCE(r.refund_orders,0) AS refund_orders,
               COALESCE(r.refund_amount,0) AS refund_amount,
+              COALESCE(l.live_sessions,0) AS live_sessions,
+              COALESCE(l.live_hours,0) AS live_hours,
+              COALESCE(l.live_views,0) AS live_views,
+              COALESCE(l.live_viewers,0) AS live_viewers,
+              COALESCE(l.live_confirmed_orders,0) AS live_confirmed_orders,
+              COALESCE(l.live_confirmed_sales,0) AS live_confirmed_sales,
               (SELECT COUNT(*) FROM shopee_shop_bi_daily
                 WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3) AS shop_report_rows,
               (SELECT COUNT(*) FROM shopee_returns
@@ -492,12 +510,15 @@ class ShopeeQueryRepository {
                   AND (to_timestamp(create_time) AT TIME ZONE $4)::date BETWEEN $2 AND $3) AS return_rows,
               (SELECT COUNT(total_amount) FROM shopee_orders
                 WHERE shop_id=$1
-                  AND (to_timestamp(create_time) AT TIME ZONE $4)::date BETWEEN $2 AND $3) AS order_amount_rows
+                  AND (to_timestamp(create_time) AT TIME ZONE $4)::date BETWEEN $2 AND $3) AS order_amount_rows,
+              (SELECT COUNT(*) FROM shopee_shop_livestream_daily
+                WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3) AS livestream_rows
        FROM dates d
        LEFT JOIN bi ON bi.event_date=d.event_date
        LEFT JOIN ads a ON a.event_date=d.event_date
        LEFT JOIN orders_agg o ON o.event_date=d.event_date
        LEFT JOIN returns_agg r ON r.event_date=d.event_date
+       LEFT JOIN live l ON l.event_date=d.event_date
        ORDER BY d.event_date`,
       [shopId, startDate, endDate, timezone || 'UTC'],
     );
@@ -510,6 +531,7 @@ class ShopeeQueryRepository {
       shopReport: Number(first.shop_report_rows || 0) > 0,
       returns: Number(first.return_rows || 0) > 0,
       orderAmounts: Number(first.order_amount_rows || 0) > 0,
+      livestream: Number(first.livestream_rows || 0) > 0,
     };
 
     const days = result.rows.map(row => ({
@@ -527,6 +549,12 @@ class ShopeeQueryRepository {
       cancelledSales: Number(row.cancelled_sales || 0),
       refundOrders: Number(row.refund_orders || 0),
       refundAmount: Number(row.refund_amount || 0),
+      liveSessions: Number(row.live_sessions || 0),
+      liveHours: Number(row.live_hours || 0),
+      liveViews: Number(row.live_views || 0),
+      liveViewers: Number(row.live_viewers || 0),
+      liveConfirmedOrders: Number(row.live_confirmed_orders || 0),
+      liveConfirmedSales: Number(row.live_confirmed_sales || 0),
     }));
 
     return { days, sources };

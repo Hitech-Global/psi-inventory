@@ -203,6 +203,39 @@ test('a source that has arrived is not reported as missing', () => {
   assert.ok(!missing.some(entry => entry.source.includes('Business Insights')));
 });
 
+test('livestream figures are present when the source has been filled in', () => {
+  const { rows } = buildFunnelRows([
+    row({
+      eventDate: '2026-11-01',
+      liveSessions: 3,
+      liveHours: 2.5,
+      liveViews: 1200,
+      liveViewers: 340,
+      liveConfirmedOrders: 21,
+      liveConfirmedSales: 56000,
+    }),
+  ], { shopReport: true, returns: true, orderAmounts: true, livestream: true });
+
+  const hours = rows.find(item => item.key === 'liveHours');
+  const viewers = rows.find(item => item.key === 'liveViewers');
+  const sales = rows.find(item => item.key === 'liveConfirmedSales');
+  assert.equal(hours.values[0], 2.5);
+  assert.equal(viewers.values[0], 340);
+  assert.equal(sales.values[0], 56000);
+});
+
+test('livestream figures are missing when the source has not been filled in', () => {
+  const { rows } = buildFunnelRows(
+    [row({ eventDate: '2026-11-01' })],
+    { shopReport: false, returns: false, orderAmounts: false, livestream: false },
+  );
+  assert.equal(rows.find(item => item.key === 'liveHours').values[0], null);
+  assert.equal(rows.find(item => item.key === 'liveViewers').values[0], null);
+
+  const missing = missingSources(rows).map(entry => entry.source);
+  assert.ok(missing.some(source => source.includes('直播')));
+});
+
 test('the page is wired into the shell', () => {
   const indexHtml = fs.readFileSync(path.join(webDir, 'index.html'), 'utf8');
   const appJs = fs.readFileSync(path.join(webDir, 'app.js'), 'utf8');

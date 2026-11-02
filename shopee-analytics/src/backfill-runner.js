@@ -357,6 +357,21 @@ async function runBackfillShop({
           principalId: shop.brandPortalPrincipalId,
         }),
       }));
+
+      await run('shop-livestream-history', () => runChunk({
+        runtime,
+        shopId,
+        appRole: 'BRAND_PORTAL',
+        endpointKey: 'BACKFILL_SHOP_LIVESTREAM',
+        requestedStartDate: startDate,
+        requestedEndDate: endDate,
+        chunkDays: 1,
+        runner: chunk => service.syncShopLivestreamDay({
+          date: chunk.startDate,
+          timezone: shop.brandPortalTimezone,
+          principalId: shop.brandPortalPrincipalId,
+        }),
+      }));
     }
   }
 

@@ -41,6 +41,20 @@ const METRIC_GROUPS = [
     ],
   },
   {
+    key: 'livestream',
+    label: '直播表现',
+    labelEn: 'Livestream',
+    kind: 'body',
+    rows: [
+      { key: 'liveSessions', label: 'Live Session', labelEn: 'Live Session', format: 'number' },
+      { key: 'liveHours', label: 'Live Hour', labelEn: 'Live Hour', format: 'number' },
+      { key: 'liveViewers', label: 'Live Viewer', labelEn: 'Live Viewer', format: 'number' },
+      { key: 'liveViews', label: 'Live Views', labelEn: 'Live Views', format: 'number' },
+      { key: 'liveConfirmedOrders', label: 'Live Order', labelEn: 'Live Order', format: 'number' },
+      { key: 'liveConfirmedSales', label: 'Live GMV', labelEn: 'Live GMV', format: 'money' },
+    ],
+  },
+  {
     key: 'afterSales',
     label: '售后与广告',
     labelEn: 'After-sales and advertising',
@@ -73,6 +87,12 @@ const SOURCE_LABELS = {
   refundGmv: '退货数据（ERP 退货接口）',
   gmv: '销售额（店铺营业额报表，来自 Brand Portal）',
   cancelledSales: '销售额（店铺营业额报表，来自 Brand Portal）',
+  liveSessions: '直播表现（Brand Portal 直播接口）',
+  liveHours: '直播表现（Brand Portal 直播接口）',
+  liveViews: '直播表现（Brand Portal 直播接口）',
+  liveViewers: '直播表现（Brand Portal 直播接口）',
+  liveConfirmedOrders: '直播表现（Brand Portal 直播接口）',
+  liveConfirmedSales: '直播表现（Brand Portal 直播接口）',
 };
 
 /**
@@ -86,6 +106,8 @@ const SOURCE_ACTIONS = {
     '在「店铺诊断」页点击「连接 Brand Portal」完成授权后，同步与回填会自动带出销售额。',
   '退货数据（ERP 退货接口）':
     '在「店铺诊断」页点击「连接 ERP」完成授权后，同步与回填会自动带出退货数据。',
+  '直播表现（Brand Portal 直播接口）':
+    '在「店铺诊断」页点击「连接 Brand Portal」完成授权后，同步与回填会自动带出直播时长、观看与直播成交额。',
 };
 
 function toNumber(value) {
@@ -116,6 +138,7 @@ function buildDayMetrics(row = {}, sources = {}) {
   // a different question from whether it has anything for a particular day.
   const shopReportFilled = sources.shopReport !== false;
   const returnsFilled = sources.returns !== false;
+  const livestreamFilled = sources.livestream !== false;
   // Orders may be recorded with a number and a state but no amount, in
   // which case there is no sales figure to report.
   const orderAmountsFilled = sources.orderAmounts !== false;
@@ -150,6 +173,12 @@ function buildDayMetrics(row = {}, sources = {}) {
     cancelledOrder: toNumber(row.cancelledOrders),
     cancelledSales: orderAmountsFilled ? toNumber(row.cancelledSales) : null,
     adsExpense: toNumber(row.adsExpense),
+    liveSessions: livestreamFilled ? toNumber(row.liveSessions) : null,
+    liveHours: livestreamFilled ? toNumber(row.liveHours) : null,
+    liveViews: livestreamFilled ? toNumber(row.liveViews) : null,
+    liveViewers: livestreamFilled ? toNumber(row.liveViewers) : null,
+    liveConfirmedOrders: livestreamFilled ? toNumber(row.liveConfirmedOrders) : null,
+    liveConfirmedSales: livestreamFilled ? toNumber(row.liveConfirmedSales) : null,
   };
 }
 

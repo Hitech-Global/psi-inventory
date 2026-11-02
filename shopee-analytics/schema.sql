@@ -2,6 +2,28 @@
 -- Isolated foundation only. This file is NOT wired into inventory startup migrations.
 
 -- ============================================================================================
+-- 店铺直播表现（Brand Portal 直播数据）
+-- ============================================================================================
+-- Brand Portal 的直播表现按店铺按天给出：直播场次、直播时长、观看次数、观看人数、
+-- 直播确认的订单与成交额。与销售表现分表存放，因为两者的口径不同：销售表现是
+-- 整个店铺的成交，直播表现只是直播带来的那一部分。
+--
+-- 时长统一存成小时。接口可能以小时或分钟给出，读进来时换算，页面读出来不用再判断。
+CREATE TABLE IF NOT EXISTS shopee_shop_livestream_daily (
+  shop_id BIGINT NOT NULL,
+  event_date DATE NOT NULL,
+  live_sessions BIGINT,
+  live_hours NUMERIC(20,6),
+  live_views BIGINT,
+  live_viewers BIGINT,
+  confirmed_orders BIGINT,
+  confirmed_sales NUMERIC(20,6),
+  raw_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (shop_id, event_date)
+);
+
+-- ============================================================================================
 -- TikTok Shop (区域：东南亚 ROW；自有店铺；纯 GMV Max 广告)
 -- ============================================================================================
 -- 与 Shopee 侧的差异决定了表结构：
