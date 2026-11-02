@@ -359,3 +359,4 @@ tbody td{font-weight:400}
   padding:7px 12px;font-size:12px;cursor:pointer;
 }
 .funnel-panel .panel-actions .ghost:hover{background:#f5f5f7}
+.funnel-source-action{display:block;margin-top:3px;color:#5b7085;font-weight:400}

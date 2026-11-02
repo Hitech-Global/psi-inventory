@@ -55,17 +55,37 @@ const METRIC_GROUPS = [
   },
 ];
 
-/** Metrics that need a source that has not been filled in to show anything. */
+/**
+ * Metrics that need a source that has not been filled in to show anything.
+ *
+ * The wording says where the figures come from and how to get them, because
+ * a reader looking at a blank row should not have to work out whether the
+ * data is missing because it was never fetched or because it was fetched
+ * and came back empty.
+ */
 const SOURCE_LABELS = {
-  visitor: '店铺访客数据（Business Insights）',
-  productViews: '店铺访客数据（Business Insights）',
-  productClicks: '店铺访客数据（Business Insights）',
-  ctr: '店铺访客数据（Business Insights）',
-  conversionRate: '店铺访客数据（Business Insights）',
-  refundOrder: '退货数据（Order API 的 return 记录）',
-  refundGmv: '退货数据（Order API 的 return 记录）',
-  gmv: '销售额（店铺营业额报表或订单金额）',
-  cancelledSales: '销售额（店铺营业额报表或订单金额）',
+  visitor: '店铺访客数据（Business Insights，来自 Brand Portal）',
+  productViews: '店铺访客数据（Business Insights，来自 Brand Portal）',
+  productClicks: '店铺访客数据（Business Insights，来自 Brand Portal）',
+  ctr: '店铺访客数据（Business Insights，来自 Brand Portal）',
+  conversionRate: '店铺访客数据（Business Insights，来自 Brand Portal）',
+  refundOrder: '退货数据（ERP 退货接口）',
+  refundGmv: '退货数据（ERP 退货接口）',
+  gmv: '销售额（店铺营业额报表，来自 Brand Portal）',
+  cancelledSales: '销售额（店铺营业额报表，来自 Brand Portal）',
+};
+
+/**
+ * What to do about a source that is not filled in. The two gaps have
+ * different remedies, and the page says which is which.
+ */
+const SOURCE_ACTIONS = {
+  '店铺访客数据（Business Insights，来自 Brand Portal）':
+    '在「店铺诊断」页点击「连接 Brand Portal」完成授权后，同步与回填会自动带出访客、点击与转化率。',
+  '销售额（店铺营业额报表，来自 Brand Portal）':
+    '在「店铺诊断」页点击「连接 Brand Portal」完成授权后，同步与回填会自动带出销售额。',
+  '退货数据（ERP 退货接口）':
+    '在「店铺诊断」页点击「连接 ERP」完成授权后，同步与回填会自动带出退货数据。',
 };
 
 function toNumber(value) {
@@ -210,12 +230,17 @@ function missingSources(rows = []) {
     if (row.values.some(value => value !== null)) continue;
     missing.set(row.source, (missing.get(row.source) || []).concat(row.label));
   }
-  return [...missing.entries()].map(([source, metrics]) => ({ source, metrics }));
+  return [...missing.entries()].map(([source, metrics]) => ({
+    source,
+    metrics,
+    action: SOURCE_ACTIONS[source] || null,
+  }));
 }
 
 module.exports = {
   METRIC_GROUPS,
   SOURCE_LABELS,
+  SOURCE_ACTIONS,
   buildDayMetrics,
   buildFunnelRows,
   computeChange,

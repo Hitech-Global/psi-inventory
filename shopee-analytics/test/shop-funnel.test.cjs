@@ -136,7 +136,23 @@ test('missing sources are reported so the blanks are explained', () => {
   const missing = missingSources(rows);
   const sources = missing.map(entry => entry.source);
   assert.ok(sources.some(source => source.includes('Business Insights')));
-  assert.ok(sources.some(source => source.includes('return')));
+  assert.ok(sources.some(source => source.includes('退货')));
+});
+
+test('a missing source says what to do about it', () => {
+  const { rows } = buildFunnelRows(
+    [row({ eventDate: '2026-11-01' })],
+    { shopReport: false, returns: false, orderAmounts: false },
+  );
+  const missing = missingSources(rows);
+  // Every gap must carry a remedy, otherwise the reader is left with a
+  // blank cell and no idea what to do about it.
+  for (const entry of missing) {
+    assert.ok(entry.action, `${entry.source} must say what to do`);
+    assert.ok(entry.action.length > 10, 'the remedy must actually say something');
+  }
+  const brandPortal = missing.find(entry => entry.source.includes('Brand Portal'));
+  assert.ok(brandPortal.action.includes('Brand Portal'), 'the remedy must name the connection to make');
 });
 
 test('a source that has never been filled in reads as missing, not as zero', () => {

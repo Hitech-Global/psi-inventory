@@ -147,7 +147,11 @@
       return;
     }
     const items = missing
-      .map(entry => `<li><strong>${escapeHtml(entry.source)}</strong>：${escapeHtml(entry.metrics.join('、'))}</li>`)
+      .map(entry => {
+        const head = `<strong>${escapeHtml(entry.source)}</strong>：${escapeHtml(entry.metrics.join('、'))}`;
+        if (!entry.action) return `<li>${head}</li>`;
+        return `<li>${head}<br /><span class="funnel-source-action">${escapeHtml(entry.action)}</span></li>`;
+      })
       .join('');
     host.innerHTML = `<strong>以下数据源尚未就绪，相关单元格显示为 ${DASH}：</strong><ul>${items}</ul>`;
     host.classList.remove('hidden');
