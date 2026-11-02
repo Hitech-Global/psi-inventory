@@ -5878,7 +5878,9 @@ function _rpShowTooltip(icon){
   var rect=icon.getBoundingClientRect();
   var tw=el.offsetWidth, th=el.offsetHeight;
   var gap=8;
-  var layoutViewport=document.documentElement;\n  var vw=(layoutViewport&&layoutViewport.clientWidth)||window.innerWidth;\n  var vh=(layoutViewport&&layoutViewport.clientHeight)||window.innerHeight;
+  var layoutViewport=document.documentElement;
+  var vw=(layoutViewport&&layoutViewport.clientWidth)||window.innerWidth;
+  var vh=(layoutViewport&&layoutViewport.clientHeight)||window.innerHeight;
   // 优先显示在上方，空间不够则下方
   var above=rect.top - th - gap;
   var below=rect.bottom + gap;
