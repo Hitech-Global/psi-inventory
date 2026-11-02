@@ -6498,10 +6498,25 @@ function addHistoricalColsToActive(activeKeys,Cols,totals,data){
     };
     if(activeKeys.indexOf(key)<0)histKeys.push(key);
   });
-  // 固定显示位置：历史销售月份字段统一放在 SKU 列之后（按时间升序），禁止动态追加到表格末尾
   if(histKeys.length){
-    var skuIdx=activeKeys.indexOf('sku');
-    var insertIdx = skuIdx>=0 ? skuIdx+1 : (activeKeys.indexOf('check')>=0 ? 1 : 0);
+    var insertIdx=-1;
+    // 渠道按月模式：历史月份属于同一个月份列组，插入到第一个当前自然月字段之前。
+    // 这样字段配置中的非月份字段顺序（例如 SKU → 动销判断 → Model）不会被历史月份挤开。
+    if(hist.mode==='monthly'&&(rpTab==='online'||rpTab==='offline')){
+      var channelMonthKeys={sales_m4:1,sales_m3:1,sales_m2:1,sales_m1:1};
+      for(var cm=0;cm<activeKeys.length;cm++){
+        if(channelMonthKeys[activeKeys[cm]]){
+          insertIdx=cm;
+          break;
+        }
+      }
+      // 当前四个月字段全部隐藏时，将历史月份放在末尾，不插入用户配置字段之间。
+      if(insertIdx<0)insertIdx=activeKeys.length;
+    }else{
+      // 总预测及按天/自定义期间保持原有位置：历史列放在 SKU 之后。
+      var skuIdx=activeKeys.indexOf('sku');
+      insertIdx=skuIdx>=0?skuIdx+1:(activeKeys.indexOf('check')>=0?1:0);
+    }
     for(var hi=0;hi<histKeys.length;hi++){
       activeKeys.splice(insertIdx+hi,0,histKeys[hi]);
     }
