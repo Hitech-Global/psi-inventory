@@ -367,6 +367,34 @@ function createShopeeAnalyticsRouter({
     }
   });
 
+  /**
+   * Add a shop that is not known here yet.
+   *
+   * The reader says where it trades, which brand it belongs to and what to
+   * call it; the shop's own number is not known until the code is
+   * exchanged, so it is learned on the way back. The answer is the address
+   * to send the reader to.
+   */
+  router.post('/shop-connections/register', express.json({ limit: '16kb' }), async (req, res, next) => {
+    try {
+      if (!req.auth || req.auth.role !== ROLE_SUPER_ADMIN) {
+        res.status(403).json({ error: 'SUPER_ADMIN_REQUIRED', message: 'Only super admins can add a shop.' });
+        return;
+      }
+      if (!erpOAuthService) throw Object.assign(new Error('ERP OAuth service is unavailable'), { status: 503 });
+      const result = await erpOAuthService.beginAuthorization({
+        shopId: 0,
+        register: {
+          countryCode: req.body && req.body.country_code,
+          brandCode: req.body && req.body.brand_code,
+          displayName: req.body && req.body.display_name,
+        },
+      });
+      res.setHeader('Set-Cookie', erpStateCookie(result.state, result.ttlSeconds));
+      res.json({ authorizationUrl: result.authorizationUrl });
+    } catch (error) { next(error); }
+  });
+
   router.get('/erp/status', async (req, res, next) => {
     try {
       if (!erpOAuthService) throw Object.assign(new Error('ERP OAuth service is unavailable'), { status: 503 });

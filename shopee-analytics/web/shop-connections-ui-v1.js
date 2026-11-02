@@ -25,6 +25,25 @@
    * it here, before they go and meet that page, saves them the round trip —
    * and points at where the same figures can be read instead.
    */
+  /**
+   * The markets a shop can trade in, and what to call them.
+   *
+   * The country decides the timezone the shop's days are counted in, so it
+   * is not a free-text field: a shop in the wrong one would have its
+   * figures counted against the wrong midnight.
+   */
+  const MARKETS = [
+    { code: 'ID', label: '印度尼西亚' },
+    { code: 'MY', label: '马来西亚' },
+    { code: 'TH', label: '泰国' },
+    { code: 'VN', label: '越南' },
+    { code: 'PH', label: '菲律宾' },
+    { code: 'SG', label: '新加坡' },
+    { code: 'TW', label: '中国台湾' },
+    { code: 'BR', label: '巴西' },
+    { code: 'MX', label: '墨西哥' },
+  ];
+
   const BRAND_PORTAL_HINT = 'Brand Portal 仅对官方店 / Mall 卖家开放。若授权页提示「principals 不可用」，说明店铺尚未开通；访客与转化率可改从卖家中心 Business Insights 导出。';
 
   /**
@@ -238,7 +257,27 @@
           </div>
         </div>
         <div class="connections-body" id="shopConnectionsBody"><div class="empty">读取中…</div></div>
+        <form class="connections-add" id="shopConnectionsAdd" hidden>
+          <div class="connections-add-head">
+            <strong>新增店铺</strong>
+            <span>授权后系统会自动登记该店铺并建立连接。</span>
+          </div>
+          <div class="connections-add-fields">
+            <label>国家
+              <select id="shopAddCountry"></select>
+            </label>
+            <label>品牌
+              <input type="text" id="shopAddBrand" placeholder="REDRAGON" autocomplete="off" />
+            </label>
+            <label>显示名
+              <input type="text" id="shopAddName" placeholder="Redragon Indonesia Official" autocomplete="off" />
+            </label>
+            <button type="submit" class="connections-action primary" id="shopAddSubmit">开始授权</button>
+          </div>
+          <p class="connections-add-note" id="shopAddError" hidden></p>
+        </form>
         <div class="connections-foot">
+          <button type="button" class="connections-add-trigger" id="shopAddTrigger">＋ 新增店铺</button>
           <span>访问令牌每 4 小时自动续期；授权有效期由 Shopee 授权页决定（最长 365 天），到期后才需重新授权。TikTok 等其它平台在「平台接入」页授权。</span>
           <a class="connections-link" href="/connections">前往平台接入 →</a>
         </div>
@@ -246,6 +285,7 @@
     document.body.appendChild(modal);
     modal.querySelector('#shopConnectionsClose').addEventListener('click', close);
     modal.querySelector('#shopConnectionsRefresh').addEventListener('click', () => open());
+    wireAddShop(modal);
     modal.addEventListener('click', event => {
       if (event.target === modal) close();
       const button = event.target.closest('[data-connect]');
@@ -261,6 +301,70 @@
       if (event.key === 'Escape' && !modal.classList.contains('hidden')) close();
     });
     return modal;
+  }
+
+  /**
+   * Adding a shop that is not known here yet.
+   *
+   * The reader says where it trades and what to call it, then goes to
+   * Shopee to authorize it. The shop's own number is only known on the
+   * way back, so the details travel with the request and the shop is
+   * registered then.
+   */
+  function wireAddShop(modal) {
+    const trigger = modal.querySelector('#shopAddTrigger');
+    const form = modal.querySelector('#shopConnectionsAdd');
+    const country = modal.querySelector('#shopAddCountry');
+    const brand = modal.querySelector('#shopAddBrand');
+    const name = modal.querySelector('#shopAddName');
+    const submit = modal.querySelector('#shopAddSubmit');
+    const error = modal.querySelector('#shopAddError');
+    if (!trigger || !form) return;
+
+    if (country && !country.options.length) {
+      country.innerHTML = MARKETS
+        .map(market => `<option value="${esc(market.code)}">${esc(market.label)}（${esc(market.code)}）</option>`)
+        .join('');
+    }
+
+    trigger.addEventListener('click', () => {
+      const showing = !form.hidden;
+      form.hidden = showing;
+      trigger.textContent = showing ? '＋ 新增店铺' : '收起';
+      if (!showing) name.focus();
+    });
+
+    form.addEventListener('submit', async event => {
+      event.preventDefault();
+      const payload = {
+        country_code: (country.value || '').trim(),
+        brand_code: (brand.value || '').trim(),
+        display_name: (name.value || '').trim(),
+      };
+      if (!payload.country_code || !payload.brand_code || !payload.display_name) {
+        error.hidden = false;
+        error.textContent = '国家、品牌与显示名都要填。';
+        return;
+      }
+      error.hidden = true;
+      submit.disabled = true;
+      submit.textContent = '正在跳转…';
+      try {
+        const response = await fetch('/api/shopee-analytics/shop-connections/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.message || body.error || `HTTP ${response.status}`);
+        location.href = body.authorizationUrl;
+      } catch (submitError) {
+        error.hidden = false;
+        error.textContent = submitError.message || String(submitError);
+        submit.disabled = false;
+        submit.textContent = '开始授权';
+      }
+    });
   }
 
   function close() {

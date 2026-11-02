@@ -2,6 +2,19 @@
 
 const { resolveShopTimezone } = require('./shop-timezone');
 
+/**
+ * A shop's number, as a number.
+ *
+ * The number comes from the platform, so it is checked rather than
+ * trusted: a value that is not a positive whole number would be stored
+ * as a shop and would then be asked for figures that cannot exist.
+ */
+function positiveShopId(value) {
+  const id = Number(value);
+  if (!Number.isSafeInteger(id) || id <= 0) throw new Error('shopId must be a positive integer');
+  return id;
+}
+
 class ShopeeShopProfileRepository {
   constructor({ pool }) {
     if (!pool || typeof pool.query !== 'function') throw new Error('pg pool/query adapter is required');
@@ -108,6 +121,42 @@ class ShopeeShopProfileRepository {
     );
     if (!result.rows.length) throw new Error(`Shop profile ${id} not found`);
     return result.rows[0].analytics_start_date;
+  }
+
+  /**
+   * Record a shop that has just been authorized.
+   *
+   * A shop can be authorized before it is known here — the reader adds it
+   * from the settings panel, and the shop's number only becomes known when
+   * the code is exchanged. The shop is then on the platform, reachable
+   * through the token, and it would be wrong to leave it unregistered: its
+   * figures would never arrive because there would be nowhere to put them.
+   */
+  async registerApiShop({ shopId, countryCode, brandCode, displayName, importSourceShopName = null }) {
+    const id = positiveShopId(shopId);
+    const country = String(countryCode || '').trim().toUpperCase();
+    const brand = String(brandCode || '').trim().toUpperCase();
+    const name = String(displayName || '').trim() || `Shop ${id}`;
+    if (!country) throw new Error('countryCode is required to register a shop');
+    if (!brand) throw new Error('brandCode is required to register a shop');
+    const sourceName = importSourceShopName == null ? null : String(importSourceShopName).trim() || null;
+    await this.pool.query(
+      `INSERT INTO shopee_shop_profiles
+       (shop_id,display_name,operator_label,import_source_shop_name,country_code,brand_code,
+        data_source_capability,active,updated_at)
+       VALUES ($1,$2,$2,$3,$4,$5,'API_AND_MANUAL',true,now())
+       ON CONFLICT (shop_id) DO UPDATE SET
+         display_name=EXCLUDED.display_name,
+         operator_label=EXCLUDED.operator_label,
+         import_source_shop_name=COALESCE(EXCLUDED.import_source_shop_name,shopee_shop_profiles.import_source_shop_name),
+         country_code=EXCLUDED.country_code,
+         brand_code=EXCLUDED.brand_code,
+         data_source_capability='API_AND_MANUAL',
+         active=true,
+         updated_at=now()`,
+      [id, name, sourceName, country, brand],
+    );
+    return { shopId: id, displayName: name, countryCode: country, brandCode: brand };
   }
 
   async upsertMany(profiles) {

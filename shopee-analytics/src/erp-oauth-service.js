@@ -1,6 +1,7 @@
 'use strict';
 
 const { ShopeeOAuthStateRepository } = require('./oauth-state-repository');
+const { ShopeeShopProfileRepository } = require('./shop-profile-repository');
 const { ShopeeTokenRepository } = require('./token-repository');
 const { ShopeeAuthClient } = require('./auth-client');
 const { loadAppCredential } = require('./config');
@@ -74,7 +75,14 @@ function positiveShopIds(value) {
 }
 
 class ErpOAuthService {
-  constructor({ pool, env = process.env, now = () => new Date(), randomBytes, fetchImpl = global.fetch } = {}) {
+  constructor({
+    pool,
+    env = process.env,
+    now = () => new Date(),
+    randomBytes,
+    fetchImpl = global.fetch,
+    profileRepository = null,
+  } = {}) {
     if (!pool || typeof pool.query !== 'function') throw new Error('pool is required');
     this.pool = pool;
     this.env = env;
@@ -82,6 +90,7 @@ class ErpOAuthService {
     this.randomBytes = randomBytes;
     this.fetchImpl = fetchImpl;
     this.stateRepository = new ShopeeOAuthStateRepository({ pool });
+    this.profileRepository = profileRepository || new ShopeeShopProfileRepository({ pool });
   }
 
   credentialsConfigured() {
@@ -120,14 +129,28 @@ class ErpOAuthService {
     };
   }
 
-  async beginAuthorization({ shopId }) {
+  /**
+   * Begin an authorization.
+   *
+   * Normally this connects an existing shop to the returns role. When the
+   * reader is adding a shop that is not known here yet, the shop's number
+   * is not known either — it only becomes known when the code is exchanged.
+   * So the details the reader gave travel with the request, and the shop
+   * is registered on the way back.
+   */
+  async beginAuthorization({ shopId, register = null }) {
     const id = Number(shopId);
-    if (!Number.isSafeInteger(id) || id <= 0) throw oauthError('INVALID_SHOP_ID', 400);
-    const exists = await this.pool.query(
-      'SELECT 1 FROM shopee_shop_profiles WHERE shop_id=$1 AND active=true',
-      [id],
-    );
-    if (!exists.rows.length) throw oauthError('SHOP_NOT_CONFIGURED', 404);
+    const registration = register ? this.normalizeRegistration(register) : null;
+    if (!registration && (!Number.isSafeInteger(id) || id <= 0)) {
+      throw oauthError('INVALID_SHOP_ID', 400);
+    }
+    if (!registration) {
+      const exists = await this.pool.query(
+        'SELECT 1 FROM shopee_shop_profiles WHERE shop_id=$1 AND active=true',
+        [id],
+      );
+      if (!exists.rows.length) throw oauthError('SHOP_NOT_CONFIGURED', 404);
+    }
     const redirectUri = resolveErpRedirectUrl(this.env);
     const ttlSeconds = validateOAuthStateTtl(this.env);
     const state = generateState(this.randomBytes);
@@ -135,16 +158,36 @@ class ErpOAuthService {
     await this.stateRepository.create({
       stateHash: hashState(state),
       appRole: 'ERP',
-      expectedShopId: id,
+      // The shop's own number is not known until the code is exchanged, so
+      // the request carries zero in its place.
+      expectedShopId: registration ? 0 : id,
       redirectUri,
       expiresAt: new Date(now.getTime() + ttlSeconds * 1000),
+      registerMode: registration ? 'REGISTER' : null,
+      registerCountryCode: registration ? registration.countryCode : null,
+      registerBrandCode: registration ? registration.brandCode : null,
+      registerDisplayName: registration ? registration.displayName : null,
     });
     return {
       state,
       ttlSeconds,
       authorizationUrl: this.authClient().buildAuthorizationUrl({ redirectUri }),
-      shopId: id,
+      shopId: registration ? null : id,
+      registering: Boolean(registration),
     };
+  }
+
+  /**
+   * The details a reader gave for a shop they are adding.
+   */
+  normalizeRegistration(register) {
+    const countryCode = String(register.countryCode || '').trim().toUpperCase();
+    const brandCode = String(register.brandCode || '').trim().toUpperCase();
+    const displayName = String(register.displayName || '').trim();
+    if (!countryCode) throw oauthError('INVALID_SHOP_ID', 400);
+    if (!brandCode) throw oauthError('INVALID_SHOP_ID', 400);
+    if (!displayName) throw oauthError('INVALID_SHOP_ID', 400);
+    return { countryCode, brandCode, displayName };
   }
 
   async completeAuthorization({ state, code, providerError = null }) {
@@ -161,7 +204,8 @@ class ErpOAuthService {
       const response = await this.authClient().exchangeAuthorizationCode({ code });
       const authorizedShopIds = authorizedShopIdsFrom(response);
       if (!authorizedShopIds.length) throw oauthError('ERP_OAUTH_INVALID_TOKEN_RESPONSE', 502);
-      const shopId = Number(active.expected_shop_id);
+      const registering = active.register_mode === 'REGISTER';
+      const shopId = registering ? authorizedShopIds[0] : Number(active.expected_shop_id);
       const expireIn = Number(response && response.expire_in);
       if (!response.access_token || !response.refresh_token || !Number.isFinite(expireIn) || expireIn <= 0) {
         throw oauthError('ERP_OAUTH_INVALID_TOKEN_RESPONSE', 502);
@@ -174,11 +218,24 @@ class ErpOAuthService {
       // returns reaches every shop the seller ticked. Storing it against
       // one shop would leave the others unable to fetch anything, so each
       // shop that is both authorized and known here gets a copy.
-      const known = await this.pool.query(
-        'SELECT shop_id FROM shopee_shop_profiles WHERE shop_id = ANY($1::bigint[])',
-        [authorizedShopIds],
-      );
-      const targetShopIds = known.rows.map(row => Number(row.shop_id));
+      let targetShopIds;
+      if (registering) {
+        // The shop is on the platform and the token reaches it; it is now
+        // known here too, so its figures have somewhere to arrive.
+        const registered = await this.profileRepository.registerApiShop({
+          shopId,
+          countryCode: active.register_country_code,
+          brandCode: active.register_brand_code,
+          displayName: active.register_display_name,
+        });
+        targetShopIds = [registered.shopId];
+      } else {
+        const known = await this.pool.query(
+          'SELECT shop_id FROM shopee_shop_profiles WHERE shop_id = ANY($1::bigint[])',
+          [authorizedShopIds],
+        );
+        targetShopIds = known.rows.map(row => Number(row.shop_id));
+      }
       if (!targetShopIds.length) {
         // The seller authorized shops that this system does not know. Say so
         // in terms they can act on, and name the shops, rather than
@@ -212,6 +269,7 @@ class ErpOAuthService {
         connectedShopIds: targetShopIds,
         expectedShopId: shopId,
         expectedShopConnected: connectedExpected,
+        registered: registering,
       };
     } catch (error) {
       throw safeError(error, 'ERP_OAUTH_TOKEN_EXCHANGE_FAILED');

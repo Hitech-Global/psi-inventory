@@ -496,3 +496,38 @@ tbody td{font-weight:400}
 .connections-hint.info{
   background:#eef4ff;border-color:#c7dbff;color:#1d4ed8;
 }
+/* ── 新增店铺 ──────────────────────────────────────────────────────────────
+   Adding a shop is a short form: where it trades, which brand it belongs
+   to, what to call it. The authorization itself happens on Shopee's own
+   page, so the form is deliberately small. */
+.connections-add-trigger{
+  border:1px dashed #d0d5dd;background:transparent;border-radius:9px;
+  padding:5px 11px;font-size:12px;color:#475467;cursor:pointer;white-space:nowrap;
+}
+.connections-add-trigger:hover{background:#f2f4f7;border-color:#98a2b3}
+.connections-add{
+  padding:14px 22px;border-top:1px solid #eceef1;background:#fafbfc;
+}
+.connections-add-head{display:flex;align-items:baseline;gap:10px;margin-bottom:10px;flex-wrap:wrap}
+.connections-add-head strong{font-size:13px;color:#101828}
+.connections-add-head span{font-size:11px;color:#6b7280}
+.connections-add-fields{
+  display:grid;grid-template-columns:160px 140px minmax(180px,1fr) auto;gap:10px;align-items:end;
+}
+.connections-add-fields label{
+  display:flex;flex-direction:column;gap:4px;font-size:11px;color:#6b7280;
+}
+.connections-add-fields input,.connections-add-fields select{
+  border:1px solid #d0d5dd;border-radius:9px;padding:7px 9px;font-size:12px;color:#101828;background:#fff;
+}
+.connections-add-fields input:focus,.connections-add-fields select:focus{
+  outline:none;border-color:#84adff;box-shadow:0 0 0 2px rgba(23,92,211,.12);
+}
+.connections-action.primary{
+  background:#175cd3;border-color:#175cd3;color:#fff;font-weight:600;
+}
+.connections-action.primary:hover{background:#144ce0}
+.connections-add-note{margin:8px 0 0;font-size:11px;color:#b42318}
+@media (max-width:720px){
+  .connections-add-fields{grid-template-columns:1fr 1fr}
+}
