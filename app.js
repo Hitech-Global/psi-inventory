@@ -3266,7 +3266,7 @@ async function loadSKUs(forceFresh){
     const url='/api/skus'+(query?'?'+query:'');
     // Saving an SKU must read through to the database, not a reference cache
     // or an in-flight GET that began before the write.
-    const data=await (forceFresh?apiRaw(url):api(url));
+    const data=await (forceFresh===true?apiRaw(url):api(url));
     // 快速连续筛选时，旧请求不能回写新筛选的结果，也不能写入已退出的页面。
     if(requestSeq!==_skuLoadSeq || !document.getElementById('sku-table')) return;
     window._skuData=data;
