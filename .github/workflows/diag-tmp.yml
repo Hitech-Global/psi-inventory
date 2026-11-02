@@ -1,10 +1,13 @@
 name: 临时诊断（用完即删）
 
-# 一次性只读诊断：通过 CI 的 SSH 通道查询生产库状态。
+# 一次性只读诊断：通过 CI 已有的部署通道查询生产库状态。
 # 设备远程通道不可用时的应急手段。只跑 SELECT，不改任何东西。
 
 on:
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   diagnose:
@@ -12,13 +15,13 @@ jobs:
     steps:
       - name: Prepare the ssh key
         env:
-          KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KEY: ${ secrets.DEPLOY_SSH_KEY }
         run: |
           install -m 700 -d ~/.ssh
           printf '%s\n' "$KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
 
-      - name: Locate the server
+      - name: Find the server and the deployment directory
         id: locate
         env:
           FIXED_HOST: ${{ secrets.DEPLOY_HOST }}
@@ -26,26 +29,72 @@ jobs:
           FIXED_DIR: ${{ secrets.DEPLOY_DIR }}
         run: |
           set -u
-          HOSTS="$FIXED_HOST"
-          USERS="$FIXED_USER"
-          [ -z "$HOSTS" ] && HOSTS="analytics.hitechanalysis.top"
-          [ -z "$USERS" ] && USERS="root hitec administrator"
+          # 候选地址：优先用 secret，其次试常见的生产域名。
+          # 注意：analytics.hitechanalysis.top 走 Cloudflare，而 Cloudflare 不代理
+          # 22 端口，所以它作为 SSH 目标连不上 —— 真正要填的是**源站地址**。
+          # 留空时的这些候选只是兜底，真正可靠的做法是填 DEPLOY_HOST。
+          if [ -n "$FIXED_HOST" ]; then
+            HOSTS="$FIXED_HOST"
+          else
+            HOSTS=""
+          fi
+          if [ -z "$HOSTS" ]; then
+            echo "::error::未提供 DEPLOY_HOST —— 无法知道源站地址。"
+            echo "analytics.hitechanalysis.top 经 Cloudflare 代理，Cloudflare 不代理 SSH(22) 端口，"
+            echo "所以必须填源站的真实 IP 或主机名。"
+            exit 1
+          fi
+          # 候选用户名
+          if [ -n "$FIXED_USER" ]; then
+            USERS="$FIXED_USER"
+          else
+            USERS="ubuntu root deploy app www-data ec2-user"
+          fi
+
           ssh_opts="-i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=12 -o BatchMode=yes"
+
           FOUND=""
           for host in $HOSTS; do
             for user in $USERS; do
+              echo "尝试 ${user}@${host} …"
               if ssh $ssh_opts "${user}@${host}" 'echo OK' >/dev/null 2>&1; then
+                echo "✅ 连通：${user}@${host}"
                 FOUND="${user}@${host}"
-                break
+                break 2
               fi
             done
-            [ -n "$FOUND" ] && break
           done
+
           if [ -z "$FOUND" ]; then
-            echo "::error::找不到生产机"
+            echo "::error::所有候选地址与用户名都连不上。"
+            echo "请在 DEPLOY_HOST / DEPLOY_USER 里填上正确的值，或确认公钥已加入服务器的 authorized_keys。"
             exit 1
           fi
+
           echo "target=$FOUND" >> "$GITHUB_OUTPUT"
+
+          # 找部署目录：含 .git 且含 shopee-analytics/ 的目录
+          if [ -n "$FIXED_DIR" ]; then
+            echo "dir=$FIXED_DIR" >> "$GITHUB_OUTPUT"
+          else
+            DIR=$(ssh $ssh_opts "$FOUND" '
+              for base in "$HOME" /home /root /opt /srv /var/www /data /app; do
+                [ -d "$base" ] || continue
+                found=$(find "$base" -maxdepth 4 -type d -name .git 2>/dev/null | head -5 | while read -r g; do
+                  d=$(dirname "$g")
+                  [ -d "$d/shopee-analytics" ] && echo "$d"
+                done | head -1)
+                [ -n "$found" ] && { echo "$found"; break; }
+              done
+            ')
+            if [ -z "$DIR" ]; then
+              echo "::error::连上了 ${FOUND}，但找不到部署目录（需同时含 .git 与 shopee-analytics/）。"
+              echo "请填写 DEPLOY_DIR secret。"
+              exit 1
+            fi
+            echo "自动找到部署目录：$DIR"
+            echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Prepare the ssh config
         env:
@@ -63,20 +112,17 @@ jobs:
 
       - name: Query the production database
         env:
-          DIR: ${{ secrets.DEPLOY_DIR }}
+          DIR: ${{ steps.locate.outputs.dir }}
         run: |
-          DIR="${DIR:-}"
-          if [ -z "$DIR" ]; then
-            DIR=$(ssh production "find / -maxdepth 4 -type d -name shopee-analytics 2>/dev/null | head -1" | tr -d '\r')
-            BASE=$(dirname "$DIR")
-          else
-            BASE="$DIR"
-          fi
-          echo "base=$BASE"
-          ssh production "cd '$BASE/shopee-analytics/deploy/desktop' && \
+          ssh production "cd '$DIR/shopee-analytics/deploy/desktop' && \
             docker compose --env-file runtime/.env exec -T postgres sh -lc \
-            'psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -c \"SELECT app_role, shop_id, to_char(expires_at,'\''YYYY-MM-DD HH24:MI'\'') AS expires, to_char(last_refresh_at,'\''YYYY-MM-DD HH24:MI'\'') AS refreshed, to_char(updated_at,'\''YYYY-MM-DD HH24:MI'\'') AS updated FROM shopee_app_tokens ORDER BY app_role, shop_id;\"'" || true
+            'psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -t -A -F \" | \" -c \"SELECT app_role, shop_id, to_char(expires_at,'''YYYY-MM-DD HH24:MI'''), to_char(updated_at,'''YYYY-MM-DD HH24:MI''') FROM shopee_app_tokens ORDER BY app_role, shop_id;\"'" || true
           echo "----- 店铺档案 -----"
-          ssh production "cd '$BASE/shopee-analytics/deploy/desktop' && \
+          ssh production "cd '$DIR/shopee-analytics/deploy/desktop' && \
             docker compose --env-file runtime/.env exec -T postgres sh -lc \
-            'psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -c \"SELECT shop_id, display_name, brand_name, country_code FROM shopee_shop_profiles ORDER BY shop_id;\"'" || true
+            'psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -t -A -F \" | \" -c \"SELECT shop_id, display_name, brand_name, country_code FROM shopee_shop_profiles ORDER BY shop_id;\"'" || true
+          echo "----- 退货数据行数 -----"
+          ssh production "cd '$DIR/shopee-analytics/deploy/desktop' && \
+            docker compose --env-file runtime/.env exec -T postgres sh -lc \
+            'psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -t -A -F \" | \" -c \"SELECT count(*) FROM shopee_returns;\"'" || true
+
