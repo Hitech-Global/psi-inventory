@@ -391,7 +391,13 @@ tbody td{font-weight:400}
 .connections-shop{border:1px solid #eceef1;border-radius:14px;padding:14px 16px;margin-bottom:12px}
 .connections-shop-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:10px}
 .connections-shop-head strong{font-size:13px;font-weight:650;color:#101828}
-.connections-shop-id{font-size:11px;color:#98a2b3;font-variant-numeric:tabular-nums}
+.connections-shop-id{
+  font-size:11px;color:#475467;font-variant-numeric:tabular-nums;
+  background:#f2f4f7;border-radius:7px;padding:2px 8px;white-space:nowrap;
+}
+.connections-shop-details{
+  font-size:11px;color:#98a2b3;line-height:1.55;margin:-4px 0 10px;
+}
 .connections-list{list-style:none;margin:0;padding:0}
 .connections-row{
   display:grid;grid-template-columns:150px 92px 1fr auto;align-items:center;gap:12px;

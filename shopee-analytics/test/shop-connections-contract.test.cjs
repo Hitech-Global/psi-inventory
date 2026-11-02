@@ -205,3 +205,25 @@ test('the panel says that a returns token belongs to one shop', () => {
   assert.ok(rendered.includes('ERP'), 'the hint must name the connection');
   assert.ok(rendered.includes('令牌只覆盖'), 'the hint must say what the token covers');
 });
+
+test('two shops with similar names are told apart by what they carry', () => {
+  const renderShop = loadPanelRenderer();
+  const rendered = renderShop({
+    shopId: 1101364305,
+    displayName: 'Redragon Indonesia Official',
+    countryName: 'Indonesia',
+    brandName: 'Redragon',
+    importSourceShopName: 'REDRAGON Indonesia Official Store',
+    dataSourceCapability: 'MANUAL_IMPORT',
+    shopBi: { days: 0 },
+    livestream: { days: 0 },
+    returns: { rows: 0 },
+    erp: { credentialConfigured: true, tokenPresent: false, redirectUrl: 'https://x/cb' },
+    brandPortal: { credentialConfigured: true, tokenPresent: false, redirectUrl: 'https://x/cb' },
+  });
+  // The number tells the two shops apart, and the name it was registered
+  // under says why there are two of them at all.
+  assert.ok(rendered.includes('1101364305'), 'the shop number must be shown');
+  assert.ok(rendered.includes('REDRAGON Indonesia Official Store'), 'the name it was registered under must be shown');
+  assert.ok(rendered.includes('仅手动导入'), 'how its data arrives must be shown');
+});

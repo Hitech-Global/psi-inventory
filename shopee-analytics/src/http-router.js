@@ -321,6 +321,13 @@ function createShopeeAnalyticsRouter({
           displayName: shop.displayName,
           countryName: shop.countryName,
           brandName: shop.brandName,
+          // Two shops can be registered from the same store under different
+          // names, and the name they were registered under is often the only
+          // thing that tells them apart.
+          importSourceShopName: shop.importSourceShopName || null,
+          dataSourceCapability: shop.dataSourceCapability || null,
+          marketplaceRegion: shop.marketplaceRegion || null,
+          currency: shop.currency || null,
           shopBi: {
             days: cover.biDays || 0,
             latestDate: cover.biLatest || null,

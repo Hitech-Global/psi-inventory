@@ -58,6 +58,24 @@
   }
 
   /**
+   * The details that tell two shops apart.
+   *
+   * Two shops can be registered from the same store under different names,
+   * and the names alone are often indistinguishable — "Redragon Indonesia
+   * Official" and "Redragon Indonesia OS" say nothing about why there are
+   * two of them. The name the shop was registered under, its number, and
+   * where it trades do.
+   */
+  function shopDetails(shop) {
+    const parts = [];
+    if (shop.importSourceShopName) parts.push(`来源店铺 ${shop.importSourceShopName}`);
+    if (shop.countryName) parts.push(shop.countryName);
+    if (shop.brandName) parts.push(shop.brandName);
+    if (shop.dataSourceCapability === 'MANUAL_IMPORT') parts.push('仅手动导入');
+    return parts.join(' · ');
+  }
+
+  /**
    * The shop report: traffic, the shop total, and the livestream figures.
    *
    * The report and the livestream figures both come from the Brand Portal,
@@ -180,12 +198,14 @@
         </li>`)
       .join('');
 
+    const details = shopDetails(shop);
     return `
       <section class="connections-shop">
         <div class="connections-shop-head">
           <strong>${esc(shopTitle(shop))}</strong>
           <span class="connections-shop-id">${esc(shop.shopId)}</span>
         </div>
+        ${details ? `<div class="connections-shop-details">${esc(details)}</div>` : ''}
         <ul class="connections-list">${rows}</ul>
         ${hints}
       </section>`;
