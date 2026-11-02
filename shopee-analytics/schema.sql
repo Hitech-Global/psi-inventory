@@ -624,6 +624,23 @@ CREATE TABLE IF NOT EXISTS shopee_oauth_states (
   consumed_at TIMESTAMPTZ
 );
 
+-- 新增店铺：授权时顺带登记一家系统还不认识的店铺。
+--
+-- 一次授权只带得下一个 code，而店铺编号要到换成令牌时才知道，所以
+-- 读者在授权前填的国家、品牌与显示名得先存下来，等回调时才知道
+-- 该登记到谁名下。
+--
+-- register_mode 为空表示这是"给已有店铺连接口"，不涉及登记。
+-- expected_shop_id 在登记模式下为 0：编号要等授权后才知道。
+ALTER TABLE shopee_oauth_states
+  ADD COLUMN IF NOT EXISTS register_mode TEXT;
+ALTER TABLE shopee_oauth_states
+  ADD COLUMN IF NOT EXISTS register_country_code TEXT;
+ALTER TABLE shopee_oauth_states
+  ADD COLUMN IF NOT EXISTS register_brand_code TEXT;
+ALTER TABLE shopee_oauth_states
+  ADD COLUMN IF NOT EXISTS register_display_name TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_shopee_oauth_states_expiry
   ON shopee_oauth_states(expires_at) WHERE consumed_at IS NULL;
 
