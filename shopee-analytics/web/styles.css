@@ -481,3 +481,9 @@ tbody td{font-weight:400}
   background:#fff8ec;border:1px solid #f5e2bd;color:#7a5c00;
   font-size:11px;line-height:1.6;
 }
+.connections-head-actions{display:flex;align-items:center;gap:8px;flex:none}
+.connections-refresh{
+  border:1px solid #e2e4e8;background:#fff;border-radius:9px;
+  padding:5px 12px;font-size:12px;color:#475467;cursor:pointer;
+}
+.connections-refresh:hover{background:#f5f6f8}

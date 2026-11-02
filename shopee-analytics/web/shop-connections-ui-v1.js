@@ -199,7 +199,10 @@
             <h2 id="shopConnectionsTitle">店铺接口</h2>
             <p>Shopee 的三个角色各管一段数据。授权后，同步与回填会自动把对应的数据带出来。</p>
           </div>
-          <button type="button" class="connections-close" id="shopConnectionsClose" aria-label="关闭">✕</button>
+          <div class="connections-head-actions">
+            <button type="button" class="connections-refresh" id="shopConnectionsRefresh">刷新</button>
+            <button type="button" class="connections-close" id="shopConnectionsClose" aria-label="关闭">✕</button>
+          </div>
         </div>
         <div class="connections-body" id="shopConnectionsBody"><div class="empty">读取中…</div></div>
         <div class="connections-foot">
@@ -209,6 +212,7 @@
       </div>`;
     document.body.appendChild(modal);
     modal.querySelector('#shopConnectionsClose').addEventListener('click', close);
+    modal.querySelector('#shopConnectionsRefresh').addEventListener('click', () => open());
     modal.addEventListener('click', event => {
       if (event.target === modal) close();
       const button = event.target.closest('[data-connect]');
@@ -235,7 +239,9 @@
     const modal = ensureModal();
     modal.classList.remove('hidden');
     const body = modal.querySelector('#shopConnectionsBody');
-    body.innerHTML = '<div class="empty">读取中…</div>';
+    // 刷新时保留原来的内容，只在第一次打开时显示读取中 ——
+    // 清空再填会让屏幕闪一下，反而看不出数据变了没有。
+    if (!body.childElementCount) body.innerHTML = '<div class="empty">读取中…</div>';
     try {
       const response = await fetch('/api/shopee-analytics/shop-connections', {
         headers: { accept: 'application/json' },

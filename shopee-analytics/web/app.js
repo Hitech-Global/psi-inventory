@@ -1702,10 +1702,22 @@ function showOauthCallbackNotice() {
   window.history.replaceState({}, '', window.location.pathname + window.location.hash);
 }
 
+function reopenConnectionsAfterAuthorization() {
+  const params = new URLSearchParams(window.location.search);
+  const connected = params.get('erp') === 'connected' || params.get('brand_portal') === 'connected';
+  if (!connected) return;
+  const opener = window.ShopeeShopConnections?.open;
+  if (opener) opener();
+}
+
 async function init() {
   initDates();
   showOauthCallbackNotice();
   await checkHealth();
+  // 授权是从 Shopee 的页面跳回来的，读者看到的是首页而不是他刚才离开的面板。
+  // 把面板重新打开并重新读取，读者才会看到刚建立的那条连接，而不是
+  // 授权之前就已经在屏幕上的那份旧数据。
+  reopenConnectionsAfterAuthorization();
   try {
     await loadShopDirectory();
     restoreLocaleUiState();
