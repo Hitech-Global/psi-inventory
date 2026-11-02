@@ -8,11 +8,11 @@
   let locale = SUPPORTED.has(requested) ? requested : 'zh';
   const originalText = new WeakMap();
   const originalAttrs = new WeakMap();
-  const defaultTitle = document.title || 'Shopee 运营分析';
+  const defaultTitle = document.title || '电商运营系统';
   document.documentElement.lang = locale === 'en' ? 'en' : 'zh-CN';
 
   const EXACT = new Map([
-    ['Shopee 运营分析', 'Shopee Operations Analytics'],
+    ['电商运营系统', 'E-Commerce Operations System'],
     ['国家 × 品牌 × 店铺统一管理；先看经营，再下钻广告组与 SKU。', 'Country × Brand × Shop management; start with business performance, then drill down to ads and SKUs.'],
     ['检查数据源…', 'Checking data sources…'],
     ['经营总览', 'Business Overview'],
