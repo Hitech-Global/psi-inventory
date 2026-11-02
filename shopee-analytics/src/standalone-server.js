@@ -110,7 +110,7 @@ function createApp({ pool, skillProvider = null, importJobPool = null }) {
   let indexHtml = fs.readFileSync(indexPath, 'utf8');
   const loginHtml = fs.readFileSync(loginPath, 'utf8');
   const connectionsHtml = fs.readFileSync(connectionsPath, 'utf8');
-  for (const asset of ['/styles.css', '/shopee-metric-labels.js', '/app.js', '/ad-group-import-async.js']) {
+  for (const asset of ['/styles.css', '/shopee-metric-labels.js', '/app.js', '/ad-group-import-async.js', '/funnel-ui-v1.js']) {
     indexHtml = indexHtml.replace(asset, `${asset}?v=${assetVersion}`);
   }
   const injectedScripts = [

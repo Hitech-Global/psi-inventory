@@ -309,6 +309,9 @@ function updateSingleShopPrompts() {
   $('#adsShopPrompt').classList.toggle('hidden', Boolean(shop));
   $('#adsGrid').classList.toggle('hidden', !shop);
 
+  $('#funnelShopPrompt').classList.toggle('hidden', Boolean(shop));
+  $('#funnelPanel').classList.toggle('hidden', !shop);
+
   if (shop) {
     $('#statusPortfolioPanel').classList.add('hidden');
     $('#statusPortfolioSummary').classList.add('hidden');
@@ -794,6 +797,19 @@ async function loadGmvMaxCampaigns() {
   });
   const data = await json(`/api/shopee-analytics/campaigns?${params}`);
   renderCampaigns(data, shop);
+}
+
+async function loadFunnel() {
+  const shop = selectedShop();
+  if (!shop) return;
+  const filters = currentFilters();
+  const params = new URLSearchParams({
+    shop_id: String(shop.shopId),
+    start_date: filters.startDate,
+    end_date: filters.endDate,
+  });
+  const data = await json(`/api/shopee-analytics/funnel?${params}`);
+  window.ShopeeFunnel?.render(data);
 }
 
 async function loadCampaigns() {
@@ -1579,6 +1595,9 @@ async function loadCurrentView({ manageButton = true } = {}) {
       await window.loadCampaigns?.();
       await (window.loadProductAds || loadProductAds)(state.adsType);
     }
+    else if (state.view === 'funnel' && selectedShop()) {
+      await loadFunnel();
+    }
     else if (state.view === 'status') {
       if (selectedShop()) await loadSystemStatus();
       else await loadStatusPortfolio();
@@ -1672,7 +1691,7 @@ function restoreLocaleUiState() {
   if (saved.endDate) $('#endDate').value = saved.endDate;
   window.dispatchEvent(new CustomEvent('shopee-date-range-sync'));
 
-  const view = ['overview', 'store', 'ads', 'status'].includes(saved.view) ? saved.view : 'overview';
+  const view = ['overview', 'store', 'ads', 'funnel', 'status'].includes(saved.view) ? saved.view : 'overview';
   const adsType = ['manual', 'auto', 'groups'].includes(saved.adsType) ? saved.adsType : 'manual';
   const adStatus = ['all', 'ongoing', 'paused', 'ended', 'deleted'].includes(saved.adStatus) ? saved.adStatus : 'all';
   state.view = view;
@@ -1765,6 +1784,7 @@ $('#countryFilter').addEventListener('change', onDimensionChanged);
 $('#brandFilter').addEventListener('change', onDimensionChanged);
 $('#shopSelect').addEventListener('change', onShopChanged);
 $('#loadBtn').addEventListener('click', readSelectedData);
+$('#funnelExportBtn')?.addEventListener('click', () => window.ShopeeFunnel?.exportCsv());
 window.addEventListener('shopee-date-range-changed', () => {
   if (state.view !== 'ads') loadCurrentView();
 });

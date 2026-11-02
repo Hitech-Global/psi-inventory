@@ -28,6 +28,7 @@
       <button class="view-tab active" data-view="overview" type="button">经营总览</button>
       <button class="view-tab" data-view="store" type="button">店铺诊断</button>
       <button class="view-tab" data-view="ads" type="button">广告诊断</button>
+      <button class="view-tab" data-view="funnel" type="button">流量漏斗</button>
       <button class="view-tab" data-view="status" type="button">数据状态</button>
     </nav>
 
@@ -361,6 +362,32 @@
       </div>
     </section>
 
+    <section id="view-funnel" class="view-section hidden">
+      <div id="funnelShopPrompt" class="selection-prompt hidden">
+        <strong>流量漏斗需要选择单个店铺</strong>
+        <span>国家/品牌可以先筛选，再从“店铺”选择具体店铺。</span>
+      </div>
+
+      <section id="funnelPanel" class="panel funnel-panel hidden">
+        <div class="panel-head">
+          <div>
+            <h2>每日流量漏斗</h2>
+            <p id="funnelSubtitle">按天记录店铺流量与成交的变化。</p>
+          </div>
+          <div class="panel-actions">
+            <button id="funnelExportBtn" class="ghost" type="button">导出 CSV</button>
+          </div>
+        </div>
+        <div id="funnelMissing" class="data-sync-notice hidden" role="status"></div>
+        <div class="table-wrap funnel-table-wrap">
+          <table class="funnel-table">
+            <thead id="funnelHead"></thead>
+            <tbody id="funnelBody"><tr><td class="empty">等待加载数据。</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
     <section id="view-status" class="view-section hidden">
       <section id="statusPortfolioSummary" class="kpi-grid hidden"></section>
 
@@ -502,6 +529,7 @@
   <script src="/shopee-metric-labels.js" defer></script>
   <script src="/currency-format-v1.js" defer></script>
   <script src="/app.js" defer></script>
+  <script src="/funnel-ui-v1.js" defer></script>
   <script src="/ad-group-import-async.js" defer></script>
 </body>
 </html>

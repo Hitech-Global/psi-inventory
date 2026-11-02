@@ -18,6 +18,7 @@ const { BRAND_PORTAL_COOKIE, stateCookie, clearStateCookie, parseCookie } = requ
 const { ERP_COOKIE, stateCookie: erpStateCookie, clearStateCookie: clearErpStateCookie, parseCookie: parseErpCookie } = require('./erp-oauth-service');
 const { TIKTOK_COOKIE, stateCookie: tiktokStateCookie, clearStateCookie: clearTikTokStateCookie, parseCookie: parseTikTokCookie } = require('./tiktok-oauth-service');
 const { SkillJobManager, normalizeReportLanguage } = require('./skill-job-manager');
+const { buildFunnelRows, missingSources } = require('./shop-funnel');
 
 function positiveInt(value, name) {
   const n = Number(value);
@@ -665,6 +666,49 @@ function createShopeeAnalyticsRouter({
         historyCoverage,
         backup: backupStatus,
         ...status,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get('/funnel', async (req, res, next) => {
+    try {
+      const shopId = positiveInt(req.query.shop_id, 'shop_id');
+      const startDate = isoDate(req.query.start_date, 'start_date');
+      const endDate = isoDate(req.query.end_date, 'end_date');
+      if (startDate > endDate) throw new Error('start_date must be <= end_date');
+      assertShopAccess(req, shopId);
+
+      const shops = await queryRepository.listShops({ activeOnly: false });
+      const shop = shops.find(row => row.shopId === shopId);
+      if (!shop) {
+        res.status(404).json({ error: 'SHOP_NOT_CONFIGURED', message: `Shop ${shopId} is not configured` });
+        return;
+      }
+
+      const { days, sources } = await queryRepository.getShopFunnelDaily({
+        shopId,
+        startDate,
+        endDate,
+        timezone: shop.timezone || 'UTC',
+      });
+      const { dates, rows } = buildFunnelRows(days, sources);
+
+      res.json({
+        shop: {
+          shopId: shop.shopId,
+          displayName: shop.displayName,
+          countryName: shop.countryName,
+          brandName: shop.brandName,
+          currency: shop.currency,
+          timezone: shop.timezone,
+        },
+        startDate,
+        endDate,
+        dates,
+        rows,
+        missingSources: missingSources(rows),
       });
     } catch (error) {
       next(error);

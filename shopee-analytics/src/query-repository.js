@@ -426,6 +426,112 @@ class ShopeeQueryRepository {
     };
   }
 
+  /**
+   * Daily traffic funnel for one shop.
+   *
+   * The shop's own reporting row carries the traffic half of the funnel and
+   * the order records carry the sales half. They are read side by side so
+   * that a day with only one of them still produces a row, with the half
+   * that is missing left empty.
+   *
+   * Refunds and cancellations are counted by the day they happened, in the
+   * shop's own timezone, because a report that mixes timezones moves a
+   * day's refunds onto the wrong side of midnight.
+   */
+  async getShopFunnelDaily({ shopId, startDate, endDate, timezone }) {
+    const result = await this.pool.query(
+      `WITH dates AS (
+         SELECT generate_series($2::date,$3::date,interval '1 day')::date AS event_date
+       ),
+       bi AS (
+         SELECT event_date, sales, orders, product_clicks, product_views,
+                unique_visitors, order_conversion_rate
+         FROM shopee_shop_bi_daily
+         WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3
+       ),
+       ads AS (
+         SELECT event_date, COALESCE(SUM(expense),0) AS expense
+         FROM shopee_ad_campaign_daily
+         WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3
+         GROUP BY event_date
+       ),
+       orders_agg AS (
+         SELECT (to_timestamp(create_time) AT TIME ZONE $4)::date AS event_date,
+                COUNT(*) FILTER (WHERE order_status <> 'CANCELLED')::int AS paid_orders,
+                COUNT(*) FILTER (WHERE order_status = 'CANCELLED')::int AS cancelled_orders,
+                COALESCE(SUM(total_amount) FILTER (WHERE order_status <> 'CANCELLED'),0) AS order_gmv,
+                COALESCE(SUM(total_amount) FILTER (WHERE order_status = 'CANCELLED'),0) AS cancelled_sales
+         FROM shopee_orders
+         WHERE shop_id=$1
+           AND (to_timestamp(create_time) AT TIME ZONE $4)::date BETWEEN $2 AND $3
+         GROUP BY 1
+       ),
+       returns_agg AS (
+         SELECT (to_timestamp(create_time) AT TIME ZONE $4)::date AS event_date,
+                COUNT(*)::int AS refund_orders,
+                COALESCE(SUM(refund_amount),0) AS refund_amount
+         FROM shopee_returns
+         WHERE shop_id=$1
+           AND (to_timestamp(create_time) AT TIME ZONE $4)::date BETWEEN $2 AND $3
+         GROUP BY 1
+       )
+       SELECT d.event_date,
+              bi.sales, bi.orders, bi.product_clicks, bi.product_views,
+              bi.unique_visitors, bi.order_conversion_rate,
+              COALESCE(a.expense,0) AS ads_expense,
+              COALESCE(o.paid_orders,0) AS paid_orders,
+              COALESCE(o.cancelled_orders,0) AS cancelled_orders,
+              COALESCE(o.order_gmv,0) AS order_gmv,
+              COALESCE(o.cancelled_sales,0) AS cancelled_sales,
+              COALESCE(r.refund_orders,0) AS refund_orders,
+              COALESCE(r.refund_amount,0) AS refund_amount,
+              (SELECT COUNT(*) FROM shopee_shop_bi_daily
+                WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3) AS shop_report_rows,
+              (SELECT COUNT(*) FROM shopee_returns
+                WHERE shop_id=$1
+                  AND (to_timestamp(create_time) AT TIME ZONE $4)::date BETWEEN $2 AND $3) AS return_rows,
+              (SELECT COUNT(total_amount) FROM shopee_orders
+                WHERE shop_id=$1
+                  AND (to_timestamp(create_time) AT TIME ZONE $4)::date BETWEEN $2 AND $3) AS order_amount_rows
+       FROM dates d
+       LEFT JOIN bi ON bi.event_date=d.event_date
+       LEFT JOIN ads a ON a.event_date=d.event_date
+       LEFT JOIN orders_agg o ON o.event_date=d.event_date
+       LEFT JOIN returns_agg r ON r.event_date=d.event_date
+       ORDER BY d.event_date`,
+      [shopId, startDate, endDate, timezone || 'UTC'],
+    );
+
+    // Whether a source has anything in it at all, as opposed to having
+    // nothing on a particular day. A source that has never been filled in
+    // must not be reported as a day of zero.
+    const first = result.rows[0] || {};
+    const sources = {
+      shopReport: Number(first.shop_report_rows || 0) > 0,
+      returns: Number(first.return_rows || 0) > 0,
+      orderAmounts: Number(first.order_amount_rows || 0) > 0,
+    };
+
+    const days = result.rows.map(row => ({
+      eventDate: String(row.event_date).slice(0, 10),
+      sales: row.sales === null ? null : Number(row.sales),
+      orders: row.orders === null ? null : Number(row.orders),
+      productClicks: row.product_clicks === null ? null : Number(row.product_clicks),
+      productViews: row.product_views === null ? null : Number(row.product_views),
+      uniqueVisitors: row.unique_visitors === null ? null : Number(row.unique_visitors),
+      orderConversionRate: row.order_conversion_rate === null ? null : Number(row.order_conversion_rate),
+      adsExpense: Number(row.ads_expense || 0),
+      paidOrders: Number(row.paid_orders || 0),
+      cancelledOrders: Number(row.cancelled_orders || 0),
+      orderGmv: Number(row.order_gmv || 0),
+      cancelledSales: Number(row.cancelled_sales || 0),
+      refundOrders: Number(row.refund_orders || 0),
+      refundAmount: Number(row.refund_amount || 0),
+    }));
+
+    return { days, sources };
+  }
+
   async getShopDailyTrend({ shopId, startDate, endDate }) {
     const result = await this.pool.query(
       `WITH dates AS (

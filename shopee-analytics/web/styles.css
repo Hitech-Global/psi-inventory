@@ -327,3 +327,35 @@ tbody td{font-weight:400}
 .operation-history-empty{margin:18px 0;padding:18px;border:1px solid #ececef;border-radius:14px;background:#fafafb}
 .operation-history-empty strong{display:block;font-size:13px;color:#1d1d1f}.operation-history-empty p{margin:7px 0 0;color:#6e6e73;font-size:11px;line-height:1.6}
 @media(max-width:760px){.operation-history-modal{width:96vw}.operation-history-body{padding:0 12px 12px}.operation-history-filters,.operation-history-status{padding-left:12px;padding-right:12px}}
+
+/* ── Traffic funnel ───────────────────────────────────────────────────────────
+   The layout follows the spreadsheet the team keeps by hand: metric names
+   down the left, days across the top. The change rows sit above the body in
+   a cooler tint and the body in a warmer one, so the two kinds of number
+   stay apart at a glance. Days scroll sideways rather than being squeezed,
+   because a day column that has to hold a currency amount should not have
+   to fight for width. */
+.funnel-table-wrap{max-height:620px;border:1px solid #eaecf0;border-radius:14px;overflow:auto}
+.funnel-table{width:max-content;min-width:100%;border-collapse:separate;border-spacing:0}
+.funnel-table th,.funnel-table td{min-width:110px}
+.funnel-table .funnel-metric-head{position:sticky;left:0;z-index:3;width:190px;min-width:190px;text-align:left;background:#f7f7f8}
+.funnel-table thead th.funnel-date-head{position:sticky;top:0;z-index:2;background:#fafafa;text-align:right}
+.funnel-table thead th.funnel-metric-head{z-index:4}
+.funnel-table tbody th{position:sticky;left:0;z-index:1;background:#ffffff;text-align:left;font-weight:500;color:#3a3a3c}
+.funnel-table tbody tr.funnel-change-row th{background:#eef4fd;color:#3a5c7a}
+.funnel-table tbody tr.funnel-change-row td{background:#eef4fd;color:#3a5c7a;font-weight:600}
+.funnel-table tbody tr.funnel-metric-row th{background:#fdf6ec}
+.funnel-table tbody tr.funnel-metric-row td{background:#fdf6ec}
+.funnel-table tbody tr.funnel-group-row th{
+  position:sticky;left:0;background:#f4f4f6;color:#6e6e73;font-weight:650;font-size:11px;
+  letter-spacing:.02em;text-transform:none;border-top:1px solid #e8e8eb;border-bottom:1px solid #e8e8eb;
+}
+.funnel-table tbody tr.funnel-group-row td{background:#f4f4f6}
+.funnel-table td.funnel-empty{color:#b0b0b6;font-weight:400}
+.funnel-table tbody tr:hover td.funnel-empty{color:#8e8e96}
+.funnel-panel .panel-actions{display:flex;gap:8px;align-items:center}
+.funnel-panel .panel-actions .ghost{
+  border:1px solid #d8d8dc;background:#fff;color:#3a3a3c;border-radius:10px;
+  padding:7px 12px;font-size:12px;cursor:pointer;
+}
+.funnel-panel .panel-actions .ghost:hover{background:#f5f5f7}
