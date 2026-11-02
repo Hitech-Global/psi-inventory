@@ -5878,7 +5878,7 @@ function _rpShowTooltip(icon){
   var rect=icon.getBoundingClientRect();
   var tw=el.offsetWidth, th=el.offsetHeight;
   var gap=8;
-  var vw=window.innerWidth, vh=window.innerHeight;
+  var layoutViewport=document.documentElement;\n  var vw=(layoutViewport&&layoutViewport.clientWidth)||window.innerWidth;\n  var vh=(layoutViewport&&layoutViewport.clientHeight)||window.innerHeight;
   // 优先显示在上方，空间不够则下方
   var above=rect.top - th - gap;
   var below=rect.bottom + gap;
@@ -9515,10 +9515,16 @@ function renderFreezeLine(container, tabKey, activeKeys, freezeIdx, widths, left
 // 冻结线拖拽逻辑：当前冻结线不动，新增落点提示线吸附到列边界
 // 拖拽状态清理：onUp + window.blur + document mouseout/pointerout + ESC 四出口兜底
 function initFreezeLineDrag(line, container, tabKey, activeKeys, widths, lefts){
-  line.addEventListener('mousedown',function(e){
+  // Pointer Events unify mouse, pen and touch input on Windows/Edge/Chrome and macOS.
+  line.addEventListener('pointerdown',function(e){
+    if(e.isPrimary===false || (e.pointerType==='mouse' && e.button!==0)) return;
+    if(typeof e.pointerId!=='number') return;
     e.preventDefault();
     e.stopPropagation();
+    var pointerId=e.pointerId;
+    try{if(line.setPointerCapture)line.setPointerCapture(pointerId);}catch(_){}
     line.classList.add('dragging');
+    var previousUserSelect=document.body.style.userSelect;
     document.body.style.userSelect='none';
     var containerRect=container.getBoundingClientRect();
     // 创建落点提示线
@@ -9526,85 +9532,75 @@ function initFreezeLineDrag(line, container, tabKey, activeKeys, widths, lefts){
     dropLine.className='rp-freeze-drop-line';
     container.appendChild(dropLine);
     // 计算所有列边界（累计宽度的右边界），用于吸附
-    var bounds=[]; // {idx, x} 每列右边界
+    var bounds=[];
     var acc=0;
     for(var i=0;i<widths.length;i++){
       acc+=widths[i];
-      bounds.push({idx:i, x:acc});
+      bounds.push({idx:i,x:acc});
     }
-    // 根据鼠标 x 找最近的列边界（吸附）
-    function findNearestBound(mouseX){
-      if(!bounds.length) return -1;
-      // 拖到最左边（x < 第一列宽度的一半）→ 取消冻结
-      if(mouseX < widths[0]/2) return -1;
-      var best=bounds[0]; var bestDist=Math.abs(bounds[0].x-mouseX);
+    function findNearestBound(pointerX){
+      if(!bounds.length)return -1;
+      if(pointerX<widths[0]/2)return -1;
+      var best=bounds[0],bestDist=Math.abs(bounds[0].x-pointerX);
       for(var b=1;b<bounds.length;b++){
-        var d=Math.abs(bounds[b].x-mouseX);
-        if(d<bestDist){ best=bounds[b]; bestDist=d; }
+        var dist=Math.abs(bounds[b].x-pointerX);
+        if(dist<bestDist){best=bounds[b];bestDist=dist;}
       }
       return best.idx;
     }
-    // mousemove：落点线吸附到最近列边界，当前冻结线不动
     function onMove(ev){
-      var mouseX=ev.clientX-containerRect.left+container.scrollLeft;
-      var nearestIdx=findNearestBound(mouseX);
+      if(ev.pointerId!==pointerId)return;
+      var pointerX=ev.clientX-containerRect.left+container.scrollLeft;
+      var nearestIdx=findNearestBound(pointerX);
       if(nearestIdx<0){
-        // 取消冻结：落点线放最左侧
         dropLine.style.left='0px';
         dropLine.classList.add('visible');
       }else{
         var dropX=lefts[nearestIdx]+widths[nearestIdx];
-        dropLine.style.left=(dropX - container.scrollLeft)+'px';
+        dropLine.style.left=(dropX-container.scrollLeft)+'px';
         dropLine.classList.add('visible');
       }
     }
-    // 统一清理函数：移除监听 + 清除 class + 移除节点 + 还原 body
-    // 在 onUp / window.blur / document mouseout / ESC 四个出口调用
     var _cleaned=false;
     function _cleanupDrag(){
-      if(_cleaned) return; _cleaned=true;
-      document.removeEventListener('mousemove',onMove);
-      document.removeEventListener('mouseup',onUp);
-      window.removeEventListener('blur',_cleanupDrag);
-      document.removeEventListener('mouseout',_onDocMouseOut);
-      document.removeEventListener('pointerout',_onDocMouseOut);
+      if(_cleaned)return;
+      _cleaned=true;
+      document.removeEventListener('pointermove',onMove);
+      document.removeEventListener('pointerup',onUp);
+      document.removeEventListener('pointercancel',_onCancel);
       document.removeEventListener('keydown',_onKey);
+      line.removeEventListener('lostpointercapture',_onLostCapture);
+      window.removeEventListener('blur',_cleanupDrag);
+      try{if(line.hasPointerCapture&&line.hasPointerCapture(pointerId))line.releasePointerCapture(pointerId);}catch(_){}
       line.classList.remove('dragging');
-      document.body.style.userSelect='';
+      document.body.style.userSelect=previousUserSelect;
       dropLine.classList.remove('visible');
-      if(dropLine.parentNode) dropLine.remove();
+      if(dropLine.parentNode)dropLine.remove();
     }
-    // ESC 键取消拖拽
     function _onKey(ev){
-      if(ev.key==='Escape'||ev.keyCode===27){ _cleanupDrag(); }
+      if(ev.key==='Escape'||ev.keyCode===27)_cleanupDrag();
     }
-    // 鼠标离开文档（mouseout/pointerout 兜底，relatedTarget 为 null 或不在 document 时触发）
-    function _onDocMouseOut(ev){
-      if(!ev.relatedTarget || ev.relatedTarget.nodeName==='HTML'){
-        _cleanupDrag();
-      }
+    function _onCancel(ev){
+      if(ev.pointerId===pointerId)_cleanupDrag();
     }
-    // mouseup：根据落点线位置确定冻结列
+    function _onLostCapture(ev){
+      if(ev.pointerId===pointerId)_cleanupDrag();
+    }
     function onUp(ev){
-      var mouseX=ev.clientX-containerRect.left+container.scrollLeft;
-      var newFreezeIdx=findNearestBound(mouseX);
+      if(ev.pointerId!==pointerId)return;
+      var pointerX=ev.clientX-containerRect.left+container.scrollLeft;
+      var newFreezeIdx=findNearestBound(pointerX);
       _cleanupDrag();
-      // 保存冻结字段 key
-      if(newFreezeIdx>=0){
-        setFreezeColKey(tabKey, activeKeys[newFreezeIdx]);
-      }else{
-        setFreezeColKey(tabKey,''); // 取消冻结
-      }
-      // 重新渲染冻结列
-      applyChannelFreezeColumns(tabKey, activeKeys, container);
+      if(newFreezeIdx>=0)setFreezeColKey(tabKey,activeKeys[newFreezeIdx]);
+      else setFreezeColKey(tabKey,'');
+      applyChannelFreezeColumns(tabKey,activeKeys,container);
     }
-    document.addEventListener('mousemove',onMove);
-    document.addEventListener('mouseup',onUp);
-    window.addEventListener('blur',_cleanupDrag);
-    document.addEventListener('mouseout',_onDocMouseOut);
-    document.addEventListener('pointerout',_onDocMouseOut);
+    document.addEventListener('pointermove',onMove);
+    document.addEventListener('pointerup',onUp);
+    document.addEventListener('pointercancel',_onCancel);
     document.addEventListener('keydown',_onKey);
-    // 立即触发一次，让落点线出现在鼠标位置
+    line.addEventListener('lostpointercapture',_onLostCapture);
+    window.addEventListener('blur',_cleanupDrag);
     onMove(e);
   });
 }
