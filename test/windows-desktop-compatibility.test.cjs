@@ -6,36 +6,36 @@ const path=require('node:path');
 const root=path.join(__dirname,'..');
 const html=fs.readFileSync(path.join(root,'index.html'),'utf8');
 const app=fs.readFileSync(path.join(root,'app.js'),'utf8');
-const css=(html.match(/<style>([\\s\\S]*?)<\\/style>/i)||[])[1]||'';
+const css=(html.match(/<style>([\s\S]*?)<\/style>/i)||[])[1]||'';
 assert.ok(css,'application stylesheet must be present');
-assert.match(css,/--sidebar-width:\\s*220px/);
-assert.match(css,/--sidebar-collapsed-width:\\s*54px/);
-assert.match(css,/\\.app-shell\\{height:100vh;height:100dvh;min-height:0\\}/);
-assert.match(css,/\\.topnav\\{min-width:0\\}/);
+assert.match(css,/--sidebar-width:\s*220px/);
+assert.match(css,/--sidebar-collapsed-width:\s*54px/);
+assert.match(css, /\.app-shell\{height:100vh;height:100dvh;min-height:0\}/);
+assert.match(css, /\.topbar,.topnav\{min-width:0\}/);
 assert.match(css,/scrollbar-gutter:stable/);
-assert.match(css,/\\.modal-pi\\.pi-sidebar-expanded\\{left:calc\\(var\\(--sidebar-width\\) \\+ 14px\\);right:14px;width:auto\\}/);
-assert.match(css,/\\.modal-pi\\.pi-sidebar-collapsed\\{left:calc\\(var\\(--sidebar-collapsed-width\\) \\+ 14px\\);right:14px;width:auto\\}/);
-assert.match(css,/\\.payment-category-columns\\{grid-template-columns:repeat\\(2,minmax\\(0,1fr\\)\\)\\}/);
-assert.match(css,/@media\\(max-width:1340px\\)/);
-assert.match(css,/@media\\(max-width:980px\\)/);
-assert.match(css,/@media\\(max-width:720px\\)/);
-assert.match(css,/\\.form-grid\\{grid-template-columns:minmax\\(0,1fr\\)\\}/);
-assert.match(app,/var layoutViewport=document\\.documentElement;/);
-assert.match(app,/layoutViewport\\.clientWidth/);
+assert.match(css, /\.modal-pi\.pi-sidebar-expanded\{left:calc\(var\(--sidebar-width\) \+ 14px\);right:14px;width:auto\}/);
+assert.match(css, /\.modal-pi\.pi-sidebar-collapsed\{left:calc\(var\(--sidebar-collapsed-width\) \+ 14px\);right:14px;width:auto\}/);
+assert.match(css, /\.payment-category-columns\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\)\}/);
+assert.match(css,/@media\(max-width:1340px\)/);
+assert.match(css,/@media\(max-width:980px\)/);
+assert.match(css,/@media\(max-width:720px\)/);
+assert.match(css, /\.form-grid\{grid-template-columns:minmax\(0,1fr\)\}/);
+assert.match(app,/var layoutViewport=document\.documentElement;/);
+assert.match(app,/layoutViewport\.clientWidth/);
 const start=app.indexOf('function initFreezeLineDrag(');
-const end=app.indexOf('\\nfunction openRpReview(',start);
+const end=app.indexOf('\nfunction openRpReview(',start);
 assert.ok(start>=0&&end>start,'freeze drag function boundaries exist');
-const fnSource=app.slice(start,end)+'\\nglobalThis.__testInitFreezeLineDrag=initFreezeLineDrag;';
-assert.match(fnSource,/addEventListener\\('pointerdown'/);
-assert.match(fnSource,/addEventListener\\('pointermove'/);
-assert.match(fnSource,/addEventListener\\('pointerup'/);
-assert.match(fnSource,/addEventListener\\('pointercancel'/);
-assert.doesNotMatch(fnSource,/addEventListener\\('mousedown'/);
+const fnSource=app.slice(start,end)+'\nglobalThis.__testInitFreezeLineDrag=initFreezeLineDrag;';
+assert.match(fnSource,/addEventListener\('pointerdown'/);
+assert.match(fnSource,/addEventListener\('pointermove'/);
+assert.match(fnSource,/addEventListener\('pointerup'/);
+assert.match(fnSource,/addEventListener\('pointercancel'/);
+assert.doesNotMatch(fnSource,/addEventListener\('mousedown'/);
 
 function fakeElement(){
   const listeners={};
   const classes=new Set();
-  const el={
+  return {
     listeners,style:{},parentNode:null,children:[],
     classList:{add:x=>classes.add(x),remove:x=>classes.delete(x),contains:x=>classes.has(x)},
     addEventListener(type,fn){(listeners[type]||(listeners[type]=[])).push(fn);},
@@ -48,7 +48,6 @@ function fakeElement(){
     hasPointerCapture(id){return this.captured===id;},
     releasePointerCapture(id){if(this.captured===id)this.captured=null;}
   };
-  return el;
 }
 function makeContext(){
   const docListeners={};
