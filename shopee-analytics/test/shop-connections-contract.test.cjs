@@ -120,3 +120,35 @@ test('a shop whose credential is missing is told that before being offered a but
   assert.ok(rendered.includes('未配置凭据'), 'the missing credential must be named');
   assert.ok(!rendered.includes('data-connect='), 'no button may be offered when it cannot work');
 });
+
+test('a connected shop is told it needs no attention, not when its token expires', () => {
+  const renderShop = loadPanelRenderer();
+  const rendered = renderShop({
+    shopId: 1,
+    displayName: 'Shop D',
+    shopBi: { days: 30, latestDate: '2026-11-01' },
+    livestream: { days: 30 },
+    returns: { rows: 5 },
+    erp: { credentialConfigured: true, tokenPresent: true, tokenExpiresAt: '2026-11-02T10:10:00Z' },
+    brandPortal: { credentialConfigured: true, tokenPresent: true },
+  });
+  // The access token is replaced every few hours; showing its expiry would
+  // read as a deadline the reader has to act on.
+  assert.ok(!rendered.includes('令牌到期'), 'the access token expiry must not be shown');
+  assert.ok(rendered.includes('自动续期'), 'the reader must be told nothing is needed');
+});
+
+test('a connection whose renewal failed is marked as needing the authorization again', () => {
+  const renderShop = loadPanelRenderer();
+  const rendered = renderShop({
+    shopId: 1,
+    displayName: 'Shop E',
+    shopBi: { days: 0 },
+    livestream: { days: 0 },
+    returns: { rows: 0 },
+    erp: { credentialConfigured: true, tokenPresent: true, tokenRefreshError: 'refresh rejected' },
+    brandPortal: { credentialConfigured: true, tokenPresent: true, tokenRefreshError: 'refresh rejected' },
+  });
+  assert.ok(rendered.includes('需重新授权'), 'the stale connection must be marked');
+  assert.ok(rendered.includes('重新授权'), 'a way to fix it must be offered');
+});

@@ -76,6 +76,13 @@
       };
     }
     if (portal.tokenPresent) {
+      if (portal.tokenRefreshError) {
+        return {
+          state: pill('需重新授权', 'warn'),
+          note: '最近一次自动续期失败，授权可能已过期',
+          action: '<button type="button" class="connections-action" data-connect="brand-portal" data-shop-id="' + esc(shop.shopId) + '">重新授权</button>',
+        };
+      }
       return {
         state: pill('已授权，待同步', 'warn'),
         note: '店铺营业额、访客与转化率都来自这里',
@@ -93,9 +100,19 @@
     const erp = shop.erp;
     if (!erp) return { state: pill('不可用', 'neutral'), note: '', action: '' };
     if (erp.tokenPresent) {
+      // A token that has gone stale shows as needing the authorization again.
+      // The access token's own expiry is not worth showing: it is replaced
+      // every few hours and the reader has nothing to do about it.
+      if (erp.tokenRefreshError) {
+        return {
+          state: pill('需重新授权', 'warn'),
+          note: '最近一次自动续期失败，授权可能已过期',
+          action: '<button type="button" class="connections-action" data-connect="erp" data-shop-id="' + esc(shop.shopId) + '">重新授权</button>',
+        };
+      }
       return {
         state: pill('已连接', 'good'),
-        note: erp.tokenExpiresAt ? `令牌到期 ${String(erp.tokenExpiresAt).slice(0, 10)}` : '',
+        note: '令牌每 4 小时自动续期，无需手动操作',
         action: '',
       };
     }
@@ -170,7 +187,7 @@
         </div>
         <div class="connections-body" id="shopConnectionsBody"><div class="empty">读取中…</div></div>
         <div class="connections-foot">
-          <span>TikTok 等其它平台在「平台接入」页授权。</span>
+          <span>访问令牌每 4 小时自动续期；授权有效期由 Shopee 授权页决定（最长 365 天），到期后才需重新授权。TikTok 等其它平台在「平台接入」页授权。</span>
           <a class="connections-link" href="/connections">前往平台接入 →</a>
         </div>
       </div>`;

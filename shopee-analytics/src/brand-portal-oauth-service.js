@@ -89,7 +89,9 @@ class BrandPortalOAuthService {
     const result = await this.pool.query(
       `SELECT p.brand_portal_principal_id,p.brand_portal_timezone,
               EXISTS(SELECT 1 FROM shopee_app_tokens t
-                     WHERE t.app_role='BRAND_PORTAL' AND t.shop_id=p.brand_portal_principal_id) AS token_present
+                     WHERE t.app_role='BRAND_PORTAL' AND t.shop_id=p.brand_portal_principal_id) AS token_present,
+              (SELECT t.refresh_error FROM shopee_app_tokens t
+                WHERE t.app_role='BRAND_PORTAL' AND t.shop_id=p.brand_portal_principal_id) AS token_refresh_error
        FROM shopee_shop_profiles p WHERE p.shop_id=$1`,
       [id],
     );
@@ -101,6 +103,7 @@ class BrandPortalOAuthService {
       principalId: row.brand_portal_principal_id == null ? null : Number(row.brand_portal_principal_id),
       timezoneConfigured: Boolean(row.brand_portal_timezone),
       tokenPresent: Boolean(row.token_present),
+      tokenRefreshError: row.token_refresh_error || null,
       redirectUrl: (() => { try { return resolveBrandPortalRedirectUrl(this.env); } catch { return null; } })(),
     };
   }

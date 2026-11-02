@@ -339,6 +339,7 @@ function createShopeeAnalyticsRouter({
               tokenPresent: Boolean(brandPortal.tokenPresent),
               principalId: brandPortal.principalId || null,
               timezoneConfigured: Boolean(brandPortal.timezoneConfigured),
+              tokenRefreshError: brandPortal.tokenRefreshError || null,
               redirectUrl: brandPortal.redirectUrl || null,
             }
             : null,
