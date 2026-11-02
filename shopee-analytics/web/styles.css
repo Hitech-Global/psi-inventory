@@ -535,3 +535,7 @@ tbody td{font-weight:400}
 @media (max-width:720px){
   .connections-add-fields{grid-template-columns:1fr 1fr}
 }
+.connections-apps{
+  margin:0;padding:9px 22px;border-top:1px solid #eceef1;background:#fafbfc;
+  font-size:11px;color:#6b7280;font-variant-numeric:tabular-nums;
+}

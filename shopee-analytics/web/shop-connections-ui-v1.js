@@ -291,6 +291,7 @@
           </div>
           <p class="connections-add-note" id="shopAddError" hidden></p>
         </form>
+        <p class="connections-apps" id="shopConnectionsApps" hidden></p>
         <div class="connections-foot">
           <button type="button" class="connections-add-trigger" id="shopAddTrigger">＋ 新增店铺</button>
           <span>访问令牌每 4 小时自动续期；授权有效期由 Shopee 授权页决定（最长 365 天），到期后才需重新授权。TikTok 等其它平台在「平台接入」页授权。</span>
@@ -405,9 +406,32 @@
       }
       if (!response.ok) throw new Error(payload.message || `HTTP ${response.status}`);
       body.innerHTML = renderBody(payload);
+      renderAppNote(modal, payload.apps);
     } catch (error) {
       body.innerHTML = `<div class="empty">读取失败：${esc(error.message)}</div>`;
     }
+  }
+
+  /**
+   * Which applications the reader should open in the console.
+   *
+   * When a connection is refused because the platform has not finished
+   * preparing it, the next step is in the console — and the reader needs
+   * to know which of the partner's applications to open to do that.
+   */
+  function renderAppNote(modal, apps) {
+    const note = modal.querySelector('#shopConnectionsApps');
+    if (!note || !apps) return;
+    const parts = [];
+    if (apps.brandPortal) parts.push(`Brand Portal ${apps.brandPortal}`);
+    if (apps.erp) parts.push(`ERP ${apps.erp}`);
+    if (apps.ads) parts.push(`ADS ${apps.ads}`);
+    if (!parts.length) {
+      note.hidden = true;
+      return;
+    }
+    note.hidden = false;
+    note.textContent = `开放平台应用 Partner ID：${parts.join(' · ')}`;
   }
 
   window.ShopeeShopConnections = { open, close, renderShop };

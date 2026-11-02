@@ -361,7 +361,16 @@ function createShopeeAnalyticsRouter({
             : null,
         });
       }
-      res.json({ shops: rows });
+      // Which App the reader should open in the console. Knowing the number
+      // saves searching for it among the partner's own applications.
+      res.json({
+        shops: rows,
+        apps: {
+          ads: String(process.env.SHOPEE_ADS_PARTNER_ID || '').trim() || null,
+          erp: String(process.env.SHOPEE_ERP_PARTNER_ID || '').trim() || null,
+          brandPortal: String(process.env.SHOPEE_BRAND_PORTAL_PARTNER_ID || '').trim() || null,
+        },
+      });
     } catch (error) {
       next(error);
     }
