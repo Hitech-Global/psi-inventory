@@ -14,10 +14,13 @@ assert(router.includes("'/erp/oauth/start'"));
 assert(router.includes("'/erp/oauth/callback'"));
 assert(router.includes('erpOAuthService'));
 assert(server.includes('new ErpOAuthService({ pool })'));
-assert(html.includes('id="storeErpAction"'));
-assert(app.includes('renderErpAction'));
-assert(app.includes('需配置 ERP App'));
-assert(app.includes('/erp/oauth/start?shop_id='));
+// 授权入口搬到了设置面板的「店铺接口」里
+const panel=fs.readFileSync(path.join(root,'web','shop-connections-ui-v1.js'),'utf8');
+assert(panel.includes('data-connect="erp"'));
+assert(panel.includes('/erp/oauth/start?shop_id='));
+assert(panel.includes('需先在服务端配置 ERP Partner ID / Key'));
+assert(html.includes('shop-connections-ui-v1.js'));
+assert(app.includes('ShopeeShopConnections'));
 assert(schema.includes("app_role IN ('ADS','ERP','BRAND_PORTAL')"));
 assert(runner.includes("skipped: 'NO_ERP_TOKEN'"));
 assert(runner.includes("tokenRepository.exists({ appRole: 'ERP', shopId })"));

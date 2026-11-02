@@ -103,7 +103,11 @@ assert.match(
 
 // ---- 首页入口指向接入页 ----
 
+// 接入页入口搬到了设置菜单里
 const indexHtml = fs.readFileSync(path.join(webDir, 'index.html'), 'utf8');
-assert.match(indexHtml, /href="\/connections"/, '首页必须有接入页入口');
+const authUi = fs.readFileSync(path.join(webDir, 'auth-ui-v1.js'), 'utf8');
+assert.match(authUi, /data-admin-action="platforms"/, '设置菜单必须有接入页入口');
+assert.match(authUi, /location\.href = '\/connections'/, '设置菜单的入口必须指向接入页');
+assert.doesNotMatch(indexHtml, /href="\/connections"/, '顶栏不再保留接入页链接');
 
 console.log('Shopee analytics platform connection links contract: ok');

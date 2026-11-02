@@ -360,3 +360,60 @@ tbody td{font-weight:400}
 }
 .funnel-panel .panel-actions .ghost:hover{background:#f5f5f7}
 .funnel-source-action{display:block;margin-top:3px;color:#5b7085;font-weight:400}
+
+/* ── 店铺接口设置面板 ─────────────────────────────────────────────────────────
+   The panel lists every shop and what each of them is still missing. It
+   opens from the settings menu, so it sits over the page rather than
+   replacing it — the reader often arrives here mid-task and wants to get
+   back to what they were doing. */
+.connections-backdrop{
+  position:fixed;inset:0;z-index:60;background:rgba(15,23,42,.34);
+  display:flex;align-items:center;justify-content:center;padding:24px;
+}
+.connections-backdrop.hidden{display:none}
+.connections-modal{
+  width:min(880px,100%);max-height:min(760px,90vh);display:flex;flex-direction:column;
+  background:#fff;border-radius:18px;border:1px solid rgba(15,23,42,.10);
+  box-shadow:0 24px 60px rgba(15,23,42,.22);overflow:hidden;
+}
+.connections-head{
+  display:flex;align-items:flex-start;justify-content:space-between;gap:16px;
+  padding:20px 22px 14px;border-bottom:1px solid #eceef1;
+}
+.connections-head h2{margin:0 0 4px;font-size:17px;font-weight:700;color:#101828}
+.connections-head p{margin:0;font-size:12px;line-height:1.6;color:#6b7280;max-width:640px}
+.connections-close{
+  border:1px solid #e2e4e8;background:#fff;border-radius:9px;width:30px;height:30px;
+  cursor:pointer;color:#6b7280;font-size:13px;line-height:1;flex:none;
+}
+.connections-close:hover{background:#f5f6f8}
+.connections-body{padding:16px 22px;overflow:auto;flex:1}
+.connections-shop{border:1px solid #eceef1;border-radius:14px;padding:14px 16px;margin-bottom:12px}
+.connections-shop-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:10px}
+.connections-shop-head strong{font-size:13px;font-weight:650;color:#101828}
+.connections-shop-id{font-size:11px;color:#98a2b3;font-variant-numeric:tabular-nums}
+.connections-list{list-style:none;margin:0;padding:0}
+.connections-row{
+  display:grid;grid-template-columns:150px 92px 1fr auto;align-items:center;gap:12px;
+  padding:7px 0;border-top:1px solid #f2f4f7;
+}
+.connections-row:first-child{border-top:0}
+.connections-role{font-size:12px;color:#475467}
+.connections-note{font-size:11px;color:#98a2b3}
+.connections-action-slot:empty{display:none}
+.connections-action{
+  border:1px solid #d0d5dd;background:#fff;border-radius:9px;padding:5px 11px;
+  font-size:11px;color:#344054;cursor:pointer;white-space:nowrap;
+}
+.connections-action:hover{background:#f9fafb;border-color:#98a2b3}
+.connections-foot{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:12px 22px;border-top:1px solid #eceef1;background:#fafbfc;
+  font-size:11px;color:#6b7280;
+}
+.connections-link{color:#175cd3;text-decoration:none;font-weight:600}
+.connections-link:hover{text-decoration:underline}
+
+/* 店铺页上那个说明数据不全的标签：点它就能去补上数据。 */
+.pill.is-actionable{cursor:pointer}
+.pill.is-actionable:hover{filter:brightness(.97);box-shadow:0 0 0 2px rgba(23,92,211,.14)}

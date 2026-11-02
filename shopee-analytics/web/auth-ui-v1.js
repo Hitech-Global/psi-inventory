@@ -5,8 +5,8 @@
   const ROLE_REVIEWER = 'REVIEWER';
   const state = { me: null, users: [], shops: [], editing: null };
   const dict = {
-    zh: { settings:'设置', users:'用户管理', roles:'角色管理', logout:'退出登录', add:'添加用户', edit:'编辑', userTitle:'用户管理', userSub:'管理飞书用户、角色和可访问店铺', roleTitle:'角色管理', roleSub:'系统固定两个角色；运营的店铺范围在用户管理中设置。', name:'姓名', account:'飞书账号', role:'角色', shops:'店铺权限', status:'状态', active:'启用', disabled:'禁用', admin:'超级管理员', operator:'运营', allShops:'全部店铺', save:'保存', cancel:'取消', close:'关闭', selectShop:'运营角色必须至少分配一个店铺', accountHint:'邮箱或 Open ID', noUsers:'暂无用户', shopCount:'家店铺' },
-    en: { settings:'Settings', users:'Users', roles:'Roles', logout:'Sign out', add:'Add user', edit:'Edit', userTitle:'User Management', userSub:'Manage Feishu users, roles and assigned shops', roleTitle:'Role Management', roleSub:'Two fixed roles. Operator shop scope is managed per user.', name:'Name', account:'Feishu account', role:'Role', shops:'Shop access', status:'Status', active:'Active', disabled:'Disabled', admin:'Super Admin', operator:'Operator', allShops:'All shops', save:'Save', cancel:'Cancel', close:'Close', selectShop:'Operators need at least one assigned shop', accountHint:'Email or Open ID', noUsers:'No users', shopCount:'shops' },
+    zh: { settings:'设置', shopConnections:'店铺接口', platformAccess:'平台接入', users:'用户管理', roles:'角色管理', logout:'退出登录', add:'添加用户', edit:'编辑', userTitle:'用户管理', userSub:'管理飞书用户、角色和可访问店铺', roleTitle:'角色管理', roleSub:'系统固定两个角色；运营的店铺范围在用户管理中设置。', name:'姓名', account:'飞书账号', role:'角色', shops:'店铺权限', status:'状态', active:'启用', disabled:'禁用', admin:'超级管理员', operator:'运营', allShops:'全部店铺', save:'保存', cancel:'取消', close:'关闭', selectShop:'运营角色必须至少分配一个店铺', accountHint:'邮箱或 Open ID', noUsers:'暂无用户', shopCount:'家店铺' },
+    en: { settings:'Settings', shopConnections:'Shop connections', platformAccess:'Platform access', users:'Users', roles:'Roles', logout:'Sign out', add:'Add user', edit:'Edit', userTitle:'User Management', userSub:'Manage Feishu users, roles and assigned shops', roleTitle:'Role Management', roleSub:'Two fixed roles. Operator shop scope is managed per user.', name:'Name', account:'Feishu account', role:'Role', shops:'Shop access', status:'Status', active:'Active', disabled:'Disabled', admin:'Super Admin', operator:'Operator', allShops:'All shops', save:'Save', cancel:'Cancel', close:'Close', selectShop:'Operators need at least one assigned shop', accountHint:'Email or Open ID', noUsers:'No users', shopCount:'shops' },
   };
   const lang = () => document.documentElement.lang === 'en' ? 'en' : 'zh';
   const t = key => dict[lang()][key] || dict.zh[key] || key;
@@ -53,8 +53,10 @@
       const settings = document.createElement('div');
       settings.className = 'settings-menu-wrap';
       settings.id = 'settingsMenuWrap';
-      settings.innerHTML = `<button class="settings-trigger" type="button">⚙ ${t('settings')}</button><div class="settings-popover"><button type="button" data-admin-action="users">👤 ${t('users')}</button><button type="button" data-admin-action="roles">🛡 ${t('roles')}</button></div>`;
+      settings.innerHTML = `<button class="settings-trigger" type="button">⚙ ${t('settings')}</button><div class="settings-popover"><button type="button" data-admin-action="connections">🔗 ${t('shopConnections')}</button><button type="button" data-admin-action="platforms">🌐 ${t('platformAccess')}</button><button type="button" data-admin-action="users">👤 ${t('users')}</button><button type="button" data-admin-action="roles">🛡 ${t('roles')}</button></div>`;
       tools.appendChild(settings);
+      settings.querySelector('[data-admin-action="connections"]').addEventListener('click', openShopConnections);
+      settings.querySelector('[data-admin-action="platforms"]').addEventListener('click', openPlatformAccess);
       settings.querySelector('[data-admin-action="users"]').addEventListener('click', openUsers);
       settings.querySelector('[data-admin-action="roles"]').addEventListener('click', openRoles);
     }
@@ -63,6 +65,24 @@
     chip.innerHTML = `<button type="button" class="auth-user-chip">${user.avatarUrl ? `<img src="${esc(user.avatarUrl)}" alt="">` : '<span class="auth-avatar-fallback">👤</span>'}<span>${esc(user.name || user.email || 'Feishu')}</span><span class="auth-chevron">⌄</span></button><div class="auth-user-popover"><div class="auth-user-meta">${esc(user.email || '')}</div><button type="button" id="logoutBtn">${t('logout')}</button></div>`;
     tools.appendChild(chip);
     chip.querySelector('#logoutBtn').addEventListener('click', logout);
+  }
+
+  /**
+   * The shop connections live in the settings panel rather than on the
+   * toolbar: they are a configuration thing, and the toolbar was getting
+   * crowded enough to need explaining.
+   */
+  function openShopConnections() {
+    const opener = window.ShopeeShopConnections?.open;
+    if (opener) {
+      opener();
+      return;
+    }
+    location.href = '/connections';
+  }
+
+  function openPlatformAccess() {
+    location.href = '/connections';
   }
 
   async function logout() {

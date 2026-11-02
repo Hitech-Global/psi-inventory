@@ -532,78 +532,6 @@ function contributionList(title, rows, currency, tone) {
   return `<article class="store-contribution-card ${tone}"><h3>${title}</h3><div class="store-contribution-list">${rows.slice(0,3).map(item => `<div><span><strong>${escapeHtml(item.itemSku || ('#' + item.itemId))}</strong><small>${escapeHtml(item.itemName || '')}</small></span><b class="${Number(item.salesDelta) >= 0 ? 'positive' : 'negative'}">${Number(item.salesDelta) >= 0 ? '+' : ''}${formatMoney(item.salesDelta, currency)}</b></div>`).join('')}</div></article>`;
 }
 
-async function renderErpAction(shopId) {
-  const button = $('#storeErpAction');
-  if (!button) return;
-  button.classList.remove('connected', 'hidden');
-  button.disabled = true;
-  button.onclick = null;
-  button.textContent = '检查 ERP…';
-  try {
-    const status = await json(`/api/shopee-analytics/erp/status?shop_id=${encodeURIComponent(shopId)}`);
-    if (status.tokenPresent) {
-      button.textContent = 'ERP 已连接';
-      button.classList.add('connected');
-      button.title = status.tokenRefreshError ? 'ERP Token 最近刷新失败，系统会继续重试。' : 'ERP 退货/退款数据授权已连接。';
-      return;
-    }
-    if (!status.credentialConfigured) {
-      button.textContent = '需配置 ERP App';
-      button.title = '先配置 Shopee ERP Live Partner ID / Key。';
-      return;
-    }
-    if (!status.redirectUrl) {
-      button.textContent = '需配置 ERP 回调';
-      button.title = 'ERP OAuth 回调地址尚未配置。';
-      return;
-    }
-    button.textContent = '连接 ERP';
-    button.disabled = false;
-    button.title = '授权后系统会自动同步退货/退款数据。';
-    button.onclick = () => { location.href = `/api/shopee-analytics/erp/oauth/start?shop_id=${encodeURIComponent(shopId)}`; };
-  } catch (error) {
-    button.textContent = 'ERP 状态不可用';
-    button.title = error.message || String(error);
-  }
-}
-
-async function renderBrandPortalAction(shopId, shopBiAvailable) {
-  const button = $('#storeBrandPortalAction');
-  if (!button) return;
-  button.classList.remove('connected');
-  button.classList.remove('hidden');
-  button.disabled = true;
-  button.onclick = null;
-  button.textContent = '检查 Brand Portal…';
-  try {
-    const status = await json(`/api/shopee-analytics/brand-portal/status?shop_id=${encodeURIComponent(shopId)}`);
-    if (status.tokenPresent && status.principalId) {
-      button.textContent = 'Brand Portal 已连接';
-      button.classList.add('connected');
-      button.title = `Principal ID ${status.principalId}`;
-      if (shopBiAvailable) button.classList.add('hidden');
-      return;
-    }
-    if (!status.credentialConfigured) {
-      button.textContent = '需配置 Brand Portal App';
-      button.title = '先在 Shopee Open Platform 创建 Brand Portal Service App 并配置 Partner ID / Key。';
-      return;
-    }
-    if (!status.redirectUrl) {
-      button.textContent = '需配置回调地址';
-      button.title = 'Brand Portal OAuth 回调地址尚未配置。';
-      return;
-    }
-    button.textContent = '连接 Brand Portal';
-    button.disabled = false;
-    button.title = '授权后系统会自动同步店铺 Business Insights。';
-    button.onclick = () => { location.href = `/api/shopee-analytics/brand-portal/oauth/start?shop_id=${encodeURIComponent(shopId)}`; };
-  } catch (error) {
-    button.textContent = 'Brand Portal 状态不可用';
-    button.title = error.message || String(error);
-  }
-}
-
 function renderStoreDetail(data) {
   const shop = data.shop;
   const current = data.current || {};
@@ -623,6 +551,20 @@ function renderStoreDetail(data) {
   if (biStatus) {
     biStatus.textContent = availability.shopBi ? `BI 已覆盖 ${num(availability.shopBiDays)} 天` : '店铺 BI 未同步';
     biStatus.className = `pill ${availability.shopBi ? 'good' : 'warn'}`;
+    // The label says the shop's figures are incomplete. Clicking it takes
+    // the reader to where that can be put right, rather than leaving them
+    // to look for it.
+    biStatus.classList.add('is-actionable');
+    biStatus.setAttribute('role', 'button');
+    biStatus.setAttribute('tabindex', '0');
+    biStatus.title = '打开店铺接口设置';
+    biStatus.onclick = () => window.ShopeeShopConnections?.open();
+    biStatus.onkeydown = event => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        window.ShopeeShopConnections?.open();
+      }
+    };
   }
   $('#storePrimarySignal').textContent = primarySignal ? primarySignal.title : '等待诊断';
   $('#storePrimarySignal').className = `pill ${signalClass(primarySignal)}`;
@@ -724,10 +666,6 @@ async function loadStoreDetail() {
   });
   const data = await json(`/api/shopee-analytics/shops/${shop.shopId}/detail?${params}`);
   renderStoreDetail(data);
-  await Promise.all([
-    renderErpAction(shop.shopId),
-    renderBrandPortalAction(shop.shopId, Boolean(data.dataAvailability && data.dataAvailability.shopBi)),
-  ]);
 }
 
 function renderCampaignSummary(campaigns, shop) {

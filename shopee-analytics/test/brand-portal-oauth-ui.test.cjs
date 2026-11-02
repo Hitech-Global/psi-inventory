@@ -13,9 +13,12 @@ assert(router.includes("'/brand-portal/oauth/start'"));
 assert(router.includes("'/brand-portal/oauth/callback'"));
 assert(router.includes('ROLE_SUPER_ADMIN'));
 assert(server.includes('new BrandPortalOAuthService({ pool })'));
-assert(html.includes('id="storeBrandPortalAction"'));
-assert(app.includes('renderBrandPortalAction'));
-assert(app.includes('需配置 Brand Portal App'));
-assert(app.includes('/brand-portal/oauth/start?shop_id='));
+// 授权入口搬到了设置面板的「店铺接口」里
+const panel=fs.readFileSync(path.join(root,'web','shop-connections-ui-v1.js'),'utf8');
+assert(panel.includes('data-connect="brand-portal"'));
+assert(panel.includes('/brand-portal/oauth/start?shop_id='));
+assert(panel.includes('需先在服务端配置 Brand Portal Partner ID / Key'));
+assert(html.includes('shop-connections-ui-v1.js'));
+assert(app.includes('ShopeeShopConnections'));
 assert(schema.includes("app_role IN ('ADS','ERP','BRAND_PORTAL')"));
 console.log('Brand Portal UI/OAuth route contract: ok');

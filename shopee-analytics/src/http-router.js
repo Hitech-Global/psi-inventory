@@ -277,6 +277,79 @@ function createShopeeAnalyticsRouter({
     }
   });
 
+  /**
+   * The state of every shop's connections, for the settings panel.
+   *
+   * A reader wants one place that says which shop is missing which
+   * connection, rather than having to open each shop's page to find out.
+   * The counts come from the repository in one pass; the credential and
+   * callback state comes from the two services, which hold the settings
+   * that live outside the database.
+   */
+  router.get('/shop-connections', async (req, res, next) => {
+    try {
+      let shops = await queryRepository.listShops({ activeOnly: false });
+      if (req.auth?.enabled && req.auth.role !== ROLE_SUPER_ADMIN) {
+        const allowed = new Set(req.auth.shopIds || []);
+        shops = shops.filter(shop => allowed.has(shop.shopId));
+      }
+      const coverage = await queryRepository.getShopConnectionCoverage();
+      const coverageByShop = new Map(coverage.map(row => [row.shopId, row]));
+
+      const rows = [];
+      for (const shop of shops) {
+        const [erp, brandPortal] = await Promise.all([
+          erpOAuthService
+            ? erpOAuthService.status({ shopId: shop.shopId }).catch(() => null)
+            : Promise.resolve(null),
+          brandPortalOAuthService
+            ? brandPortalOAuthService.status({ shopId: shop.shopId }).catch(() => null)
+            : Promise.resolve(null),
+        ]);
+        const cover = coverageByShop.get(shop.shopId) || {};
+        rows.push({
+          shopId: shop.shopId,
+          displayName: shop.displayName,
+          countryName: shop.countryName,
+          brandName: shop.brandName,
+          shopBi: {
+            days: cover.biDays || 0,
+            latestDate: cover.biLatest || null,
+          },
+          livestream: {
+            days: cover.livestreamDays || 0,
+            latestDate: cover.livestreamLatest || null,
+          },
+          returns: {
+            rows: cover.returnRows || 0,
+            latestDate: cover.returnLatest || null,
+          },
+          erp: erp
+            ? {
+              credentialConfigured: Boolean(erp.credentialConfigured),
+              tokenPresent: Boolean(erp.tokenPresent),
+              tokenExpiresAt: erp.tokenExpiresAt || null,
+              tokenRefreshError: erp.tokenRefreshError || null,
+              redirectUrl: erp.redirectUrl || null,
+            }
+            : null,
+          brandPortal: brandPortal
+            ? {
+              credentialConfigured: Boolean(brandPortal.credentialConfigured),
+              tokenPresent: Boolean(brandPortal.tokenPresent),
+              principalId: brandPortal.principalId || null,
+              timezoneConfigured: Boolean(brandPortal.timezoneConfigured),
+              redirectUrl: brandPortal.redirectUrl || null,
+            }
+            : null,
+        });
+      }
+      res.json({ shops: rows });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.get('/erp/status', async (req, res, next) => {
     try {
       if (!erpOAuthService) throw Object.assign(new Error('ERP OAuth service is unavailable'), { status: 503 });

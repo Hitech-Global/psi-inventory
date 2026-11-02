@@ -438,6 +438,37 @@ class ShopeeQueryRepository {
    * shop's own timezone, because a report that mixes timezones moves a
    * day's refunds onto the wrong side of midnight.
    */
+  /**
+   * How far each source has been filled in, for every shop at once.
+   *
+   * The connection page asks about several sources per shop, so the counts
+   * are gathered in one pass rather than a query each. Only the most recent
+   * day matters to a reader: it says whether the source is current, and how
+   * far back it reaches.
+   */
+  async getShopConnectionCoverage() {
+    const result = await this.pool.query(
+      `SELECT p.shop_id,
+              (SELECT COUNT(*) FROM shopee_shop_bi_daily b WHERE b.shop_id=p.shop_id)::int AS bi_days,
+              (SELECT MAX(b.event_date) FROM shopee_shop_bi_daily b WHERE b.shop_id=p.shop_id) AS bi_latest,
+              (SELECT COUNT(*) FROM shopee_shop_livestream_daily l WHERE l.shop_id=p.shop_id)::int AS livestream_days,
+              (SELECT MAX(l.event_date) FROM shopee_shop_livestream_daily l WHERE l.shop_id=p.shop_id) AS livestream_latest,
+              (SELECT COUNT(*) FROM shopee_returns r WHERE r.shop_id=p.shop_id)::int AS return_rows,
+              (SELECT MAX(r.create_time) FROM shopee_returns r WHERE r.shop_id=p.shop_id) AS return_latest
+       FROM shopee_shop_profiles p
+       ORDER BY p.country_code, p.brand_code, p.display_name`,
+    );
+    return result.rows.map(row => ({
+      shopId: Number(row.shop_id),
+      biDays: Number(row.bi_days || 0),
+      biLatest: row.bi_latest ? String(row.bi_latest).slice(0, 10) : null,
+      livestreamDays: Number(row.livestream_days || 0),
+      livestreamLatest: row.livestream_latest ? String(row.livestream_latest).slice(0, 10) : null,
+      returnRows: Number(row.return_rows || 0),
+      returnLatest: row.return_latest ? new Date(Number(row.return_latest) * 1000).toISOString().slice(0, 10) : null,
+    }));
+  }
+
   async getShopFunnelDaily({ shopId, startDate, endDate, timezone }) {
     const result = await this.pool.query(
       `WITH dates AS (
