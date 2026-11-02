@@ -8,6 +8,21 @@ const test = require('node:test');
 const srcDir = path.join(__dirname, '..', 'src');
 const webDir = path.join(__dirname, '..', 'web');
 
+/**
+ * Load the panel in a window of its own and hand back its shop renderer.
+ *
+ * The panel is written for the browser, so it is loaded the way the browser
+ * loads it — as a function with a window to put itself on — rather than
+ * being pulled apart and reassembled.
+ */
+function loadPanelRenderer() {
+  const source = fs.readFileSync(path.join(webDir, 'shop-connections-ui-v1.js'), 'utf8');
+  const fakeWindow = {};
+  new Function('window', source)(fakeWindow);
+  assert.ok(fakeWindow.ShopeeShopConnections, 'the panel must put itself on the window');
+  return fakeWindow.ShopeeShopConnections.renderShop;
+}
+
 test('the connections state is served for every shop in one request', () => {
   const router = fs.readFileSync(path.join(srcDir, 'http-router.js'), 'utf8');
   assert.ok(router.includes("router.get('/shop-connections'"), 'the endpoint must exist');
@@ -56,4 +71,52 @@ test('the panel escapes what it renders', () => {
   assert.ok(escaped.includes('&quot;x&quot;'), 'the double quotes must be escaped');
   assert.ok(escaped.includes('&#039;y&#039;'), 'the single quote must be escaped');
   assert.ok(!escaped.includes('<script>'), 'no raw tag may survive');
+});
+
+test('the panel says what is missing and what can be done about it', () => {
+  const renderShop = loadPanelRenderer();
+
+  const empty = renderShop({
+    shopId: 1326456001,
+    displayName: 'Shop A',
+    countryName: 'Indonesia',
+    brandName: 'Netac',
+    shopBi: { days: 0, latestDate: null },
+    livestream: { days: 0, latestDate: null },
+    returns: { rows: 0, latestDate: null },
+    erp: { credentialConfigured: true, tokenPresent: false, redirectUrl: 'https://x/cb' },
+    brandPortal: { credentialConfigured: true, tokenPresent: false, redirectUrl: 'https://x/cb' },
+  });
+  assert.ok(empty.includes('待授权'), 'a shop with nothing connected must be waiting for one');
+  assert.ok(empty.includes('data-connect="erp"'), 'the returns connection must be offered');
+  assert.ok(empty.includes('data-connect="brand-portal"'), 'the shop report connection must be offered');
+  assert.ok(empty.includes('Indonesia · Netac · Shop A'), 'the shop must be named');
+
+  const connected = renderShop({
+    shopId: 1,
+    displayName: 'Shop B',
+    shopBi: { days: 30, latestDate: '2026-11-01' },
+    livestream: { days: 30, latestDate: '2026-11-01' },
+    returns: { rows: 12, latestDate: '2026-11-01' },
+    erp: { credentialConfigured: true, tokenPresent: true, tokenExpiresAt: '2026-12-01T00:00:00Z' },
+    brandPortal: { credentialConfigured: true, tokenPresent: true },
+  });
+  assert.ok(connected.includes('已同步 30 天'), 'a connected shop must say so');
+  assert.ok(!connected.includes('data-connect='), 'a connected shop must not be offered a connection');
+});
+
+test('a shop whose credential is missing is told that before being offered a button', () => {
+  const renderShop = loadPanelRenderer();
+
+  const rendered = renderShop({
+    shopId: 1,
+    displayName: 'Shop C',
+    shopBi: { days: 0 },
+    livestream: { days: 0 },
+    returns: { rows: 0 },
+    erp: { credentialConfigured: false, tokenPresent: false },
+    brandPortal: { credentialConfigured: false, tokenPresent: false },
+  });
+  assert.ok(rendered.includes('未配置凭据'), 'the missing credential must be named');
+  assert.ok(!rendered.includes('data-connect='), 'no button may be offered when it cannot work');
 });
