@@ -28,7 +28,9 @@ ENDPOINT = "https://mcp.desktopcommander.app/mcp"
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
       "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36")
 DEVICE_NAME = "Hitech台式"
-OUT_FILE = r"C:\Users\hitec\dc-out.txt"
+# 临时输出放在生产项目的 runtime 目录：那里一定可写，
+# 而用户目录下建子目录会被 Windows 的受控文件夹访问挡掉。
+OUT_DIR = r"D:\电商数据分析系统\psi-inventory-feishu-auth\shopee-analytics\deploy\desktop\runtime"
 
 _ctx = ssl.create_default_context()
 _ctx.check_hostname = False
@@ -146,12 +148,17 @@ def run_command(command, device=None, shell="powershell", timeout_ms=120000):
     else:
         inner = f"cmd /c {command}"
 
+    # 每次用独立的输出文件：并发调用时共用一个文件会互相覆盖，
+    # 结果就串到别的命令上。
+    out_file = f"{OUT_DIR}\\dc-{os.getpid()}-{int(time.time()*1000)}.txt"
+
     # 采集输出与退出码。路径本身是 ASCII，不受编码影响。
     script = (
         "$ErrorActionPreference='Continue'\n"
+        "New-Item -ItemType Directory -Force -Path '" + OUT_DIR + "' | Out-Null\n"
         f"$out = & {{ {inner} }} 2>&1 | Out-String\n"
-        f"[IO.File]::WriteAllText('{OUT_FILE}', $out)\n"
-        f"[IO.File]::AppendAllText('{OUT_FILE}', \"`n__EXIT__$LASTEXITCODE`n\")\n"
+        f"[IO.File]::WriteAllText('{out_file}', $out)\n"
+        f"[IO.File]::AppendAllText('{out_file}', \"`n__EXIT__$LASTEXITCODE`n\")\n"
     )
     encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
     call("start_process", {
@@ -162,7 +169,7 @@ def run_command(command, device=None, shell="powershell", timeout_ms=120000):
 
     for _ in range(40):
         time.sleep(3)
-        text = call("read_file", {"path": OUT_FILE, "deviceId": device})
+        text = call("read_file", {"path": out_file, "deviceId": device})
         if "__EXIT__" in text:
             body, _, tail = text.partition("__EXIT__")
             code = next((x.strip() for x in tail.splitlines() if x.strip()), "?")
