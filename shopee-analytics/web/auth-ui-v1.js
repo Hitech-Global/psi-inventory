@@ -44,45 +44,34 @@
     root.classList.remove('hidden');
   }
 
+  /**
+   * Put the reader's own menu at the foot of the sidebar, and show the two
+   * administrative entries to the people who can use them.
+   *
+   * The entries live in the page rather than in a popover: the sidebar is
+   * where the reader now looks for what the system can do, and a menu
+   * behind a button is a thing to be hunted for.
+   */
   function renderToolbar() {
     if (!state.me?.enabled || !state.me?.authenticated) return;
-    const tools = document.querySelector('.topbar-tools');
-    if (!tools || document.getElementById('authUserChip')) return;
+    const foot = document.querySelector('.sidebar-foot');
+    if (!foot || document.getElementById('authUserChip')) return;
     const user = state.me.user;
     if (user.role === ROLE_ADMIN) {
-      const settings = document.createElement('div');
-      settings.className = 'settings-menu-wrap';
-      settings.id = 'settingsMenuWrap';
-      settings.innerHTML = `<button class="settings-trigger" type="button">⚙ ${t('settings')}</button><div class="settings-popover"><button type="button" data-admin-action="connections">🔗 ${t('shopConnections')}</button><button type="button" data-admin-action="platforms">🌐 ${t('platformAccess')}</button><button type="button" data-admin-action="users">👤 ${t('users')}</button><button type="button" data-admin-action="roles">🛡 ${t('roles')}</button></div>`;
-      tools.appendChild(settings);
-      settings.querySelector('[data-admin-action="connections"]').addEventListener('click', openShopConnections);
-      settings.querySelector('[data-admin-action="platforms"]').addEventListener('click', openPlatformAccess);
-      settings.querySelector('[data-admin-action="users"]').addEventListener('click', openUsers);
-      settings.querySelector('[data-admin-action="roles"]').addEventListener('click', openRoles);
+      document.querySelectorAll('.side-item[data-admin-action]').forEach(button => {
+        button.hidden = false;
+      });
     }
+    document.querySelector('.side-item[data-admin-action="users"]')
+      ?.addEventListener('click', openUsers);
+    document.querySelector('.side-item[data-admin-action="roles"]')
+      ?.addEventListener('click', openRoles);
+
     const chip = document.createElement('div');
     chip.className = 'auth-user-menu'; chip.id = 'authUserChip';
     chip.innerHTML = `<button type="button" class="auth-user-chip">${user.avatarUrl ? `<img src="${esc(user.avatarUrl)}" alt="">` : '<span class="auth-avatar-fallback">👤</span>'}<span>${esc(user.name || user.email || 'Feishu')}</span><span class="auth-chevron">⌄</span></button><div class="auth-user-popover"><div class="auth-user-meta">${esc(user.email || '')}</div><button type="button" id="logoutBtn">${t('logout')}</button></div>`;
-    tools.appendChild(chip);
+    foot.appendChild(chip);
     chip.querySelector('#logoutBtn').addEventListener('click', logout);
-  }
-
-  /**
-   * The shop connections live in the settings panel rather than on the
-   * toolbar: they are a configuration thing, and the toolbar was getting
-   * crowded enough to need explaining.
-   */
-  function openShopConnections() {
-    const opener = window.ShopeeShopConnections?.open;
-    if (opener) {
-      opener();
-      return;
-    }
-    location.href = '/connections';
-  }
-
-  function openPlatformAccess() {
-    location.href = '/connections';
   }
 
   async function logout() {

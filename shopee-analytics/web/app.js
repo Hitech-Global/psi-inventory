@@ -291,7 +291,7 @@ async function loadShopDirectory() {
 
 function switchView(view) {
   state.view = view;
-  $$('.view-tab').forEach(button =>
+  $$('.side-item[data-view]').forEach(button =>
     button.classList.toggle('active', button.dataset.view === view)
   );
   $$('.view-section').forEach(section => section.classList.add('hidden'));
@@ -1637,7 +1637,7 @@ function restoreLocaleUiState() {
   const adStatusHost = $('#adStatusFilter');
   if (adStatusHost) adStatusHost.dataset.adStatusValue = adStatus;
   $$('.ad-status-option').forEach(button => button.classList.toggle('active', button.dataset.adStatus === adStatus));
-  $$('.view-tab').forEach(button => button.classList.toggle('active', button.dataset.view === view));
+  $$('.side-item[data-view]').forEach(button => button.classList.toggle('active', button.dataset.view === view));
   $$('.view-section').forEach(section => section.classList.toggle('hidden', section.id !== `view-${view}`));
   $$('.ads-type-tab').forEach(button => button.classList.toggle('active', button.dataset.adsType === adsType));
   $('#adsGmsPanel')?.classList.remove('hidden');
@@ -1712,8 +1712,12 @@ async function init() {
   }
 }
 
-$$('.view-tab').forEach(button => {
+$$('.side-item[data-view]').forEach(button => {
   button.addEventListener('click', () => switchView(button.dataset.view));
+});
+// 「店铺接口」面板由设置面板的脚本负责打开，这里只负责把点击送过去。
+$$('.side-item[data-side-action="shop-connections"]').forEach(button => {
+  button.addEventListener('click', () => window.ShopeeShopConnections?.open());
 });
 $$('.ads-type-tab').forEach(button => {
   button.addEventListener('click', () => switchAdsType(button.dataset.adsType));

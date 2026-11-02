@@ -7,30 +7,48 @@
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <div class="shell">
-    <header class="topbar">
-      <div>
+  <div class="shell app-layout">
+    <aside class="sidebar" aria-label="主导航">
+      <div class="sidebar-brand">
         <div class="eyebrow">E-COMMERCE · MULTI-STORE OPERATIONS</div>
         <h1>电商运营系统</h1>
-        <p class="subtitle">国家 × 品牌 × 店铺统一管理；先看经营，再下钻广告组与 SKU。</p>
       </div>
-      <div class="topbar-tools">
+
+      <nav class="side-nav">
+        <div class="side-group">
+          <div class="side-group-title">Shopee</div>
+          <button class="side-item active" data-view="overview" type="button">经营总览</button>
+          <button class="side-item" data-view="store" type="button">店铺诊断</button>
+          <button class="side-item" data-view="ads" type="button">广告诊断</button>
+          <button class="side-item" data-view="funnel" type="button">流量漏斗</button>
+          <button class="side-item" data-view="status" type="button">数据状态</button>
+        </div>
+
+        <div class="side-group">
+          <div class="side-group-title">TikTok</div>
+          <a class="side-item" href="/connections" data-side-platform="tiktok">平台接入</a>
+        </div>
+
+        <div class="side-group">
+          <div class="side-group-title">设置</div>
+          <button class="side-item" data-side-action="shop-connections" type="button">店铺接口</button>
+          <a class="side-item" href="/connections" data-side-platform="shopee">平台接入</a>
+          <button class="side-item" data-admin-action="users" type="button" hidden>用户管理</button>
+          <button class="side-item" data-admin-action="roles" type="button" hidden>角色管理</button>
+        </div>
+      </nav>
+
+      <div class="sidebar-foot">
         <div id="languageSwitch" class="language-switch" role="group" aria-label="Language">
           <button type="button" data-locale="zh">中文</button>
           <button type="button" data-locale="en">EN</button>
         </div>
         <div class="health" id="healthBadge">检查数据源…</div>
       </div>
-    </header>
+    </aside>
 
-    <nav class="view-tabs" aria-label="Shopee analytics views">
-      <button class="view-tab active" data-view="overview" type="button">经营总览</button>
-      <button class="view-tab" data-view="store" type="button">店铺诊断</button>
-      <button class="view-tab" data-view="ads" type="button">广告诊断</button>
-      <button class="view-tab" data-view="funnel" type="button">流量漏斗</button>
-      <button class="view-tab" data-view="status" type="button">数据状态</button>
-    </nav>
-
+    <main class="app-main">
+      <p class="app-intro">国家 × 品牌 × 店铺统一管理；先看经营，再下钻广告组与 SKU。</p>
     <section class="filter-card multi-filter">
       <label>国家
         <select id="countryFilter">
@@ -442,6 +460,7 @@
         <div id="systemWarnings" class="system-warnings hidden"></div>
       </section>
     </section>
+    </main>
   </div>
 
   <template id="diagnosisTemplate">

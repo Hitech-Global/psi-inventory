@@ -32,9 +32,11 @@ test('the connections state is served for every shop in one request', () => {
 
 test('the settings menu carries both entries', () => {
   const auth = fs.readFileSync(path.join(webDir, 'auth-ui-v1.js'), 'utf8');
-  assert.ok(auth.includes('data-admin-action="connections"'), 'the shop connections entry must exist');
-  assert.ok(auth.includes('data-admin-action="platforms"'), 'the platform access entry must exist');
-  assert.ok(auth.includes('window.ShopeeShopConnections'), 'the menu must reach the panel');
+  const index = fs.readFileSync(path.join(webDir, 'index.html'), 'utf8');
+  assert.ok(index.includes('data-side-action="shop-connections"'), 'the shop connections entry must exist');
+  assert.ok(index.includes('data-side-platform="tiktok"'), 'the tiktok entry must exist');
+  assert.ok(auth.includes('side-item[data-admin-action]'), 'the administrative entries must be reachable');
+  assert.ok(auth.includes('.sidebar-foot'), 'the reader menu must sit in the sidebar');
 });
 
 test('the toolbar link to the connections page is gone', () => {
