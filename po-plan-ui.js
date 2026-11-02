@@ -6,6 +6,7 @@ const CACHE_TTL=30000;
 let availablePlans=[];
 let _poPlanFacetRows=null;
 let _poPlanPageEpoch=0;
+let _poFacetOutsideHandlerBound=false;
 let originalCreatePI=null,originalCmpRowHTML=null,originalCmpDerived=null,originalRecompute=null;
 const $=(s,r=document)=>r.querySelector(s);
 const E=v=>typeof global.esc==='function'?global.esc(v):String(v??'');
@@ -13,6 +14,16 @@ const qty=v=>Math.max(0,Math.trunc(Number(v)||0));
 const apiCall=(u,m='GET',b=null)=>global.api(u,m,b);
 const statusText=s=>({open:'待采购',partial:'部分转PI',completed:'已全部转PI',closed:'已关闭'}[s]||s||'—');
 const statusClass=s=>s==='completed'?'status-completed':s==='partial'?'status-pending':s==='closed'?'status-draft':'status-approved';
+function bindPOFacetOutsideClose(){
+  if(_poFacetOutsideHandlerBound)return;
+  _poFacetOutsideHandlerBound=true;
+  document.addEventListener('click',event=>{
+    const current=event.target?.closest?.('.pp-facet')||null;
+    document.querySelectorAll('.pp-facet[open]').forEach(facet=>{
+      if(facet!==current)facet.open=false;
+    });
+  });
+}
 function selectedPOFacets(kind){
   const root=$('#po-'+kind+'-options');
   return root?[...root.querySelectorAll('input[type="checkbox"]:checked')].map(input=>input.value).sort((a,b)=>a.localeCompare(b,'zh-Hans')):[];
@@ -49,6 +60,7 @@ function renderPOPlan(){
   ++_poPlanPageEpoch;
   _poPlanFacetRows=null;
   ensureCss();
+  bindPOFacetOutsideClose();
   const c=$('#content-inner');if(!c)return;
   c.innerHTML=`<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>状态</label><select id="po-fs"><option value="">全部</option><option value="open">待采购</option><option value="partial">部分转PI</option><option value="completed">已全部转PI</option><option value="closed">已关闭</option></select></div>${poFacetHtml('brand','品牌')}${poFacetHtml('country','国家')}<div class="filter-group"><label>关键词</label><input id="po-fk" placeholder="PO号 / 供应商"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" id="po-plan-search">搜索</button>${global.hasPermission&&global.hasPermission('po_create')?'<button class="btn btn-primary btn-sm" id="po-plan-new">➕ 新建PO</button>':''}</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🛒 PO采购计划</div><div style="font-size:12px;color:#86868b">PO=动态采购计划 · PI=实际采购确认</div></div><div id="po-table"><div class="empty-state"><div class="empty-icon">⏳</div>加载中…</div></div></div>`;
   for(const [kind,label] of [['brand','品牌'],['country','国家']]){
