@@ -46,12 +46,38 @@ Write-Step '2/6 备份数据库'
 $desktopDir = Join-Path $repoRoot 'shopee-analytics\deploy\desktop'
 Set-Location $desktopDir
 if (Test-Path 'runtime\.env') {
-    # 用 compose 里的 schema 容器做逻辑备份（pg_dump），不依赖宿主机装客户端。
-    docker compose --env-file runtime/.env --profile tools run --rm schema 2>&1 | Out-Host
-    if ($LASTEXITCODE -ne 0) {
-        Fail '数据库备份失败，中止部署'
+    # 备份不依赖 NAS：pg_dump 导出后用 pg_restore --list 校验，再取出到本地目录。
+    # 仓库自带的 backup-postgres.ps1 要求 NAS 路径已配置，未配置时会直接失败。
+    $cfg = @{}
+    Get-Content 'runtime\.env' | ForEach-Object {
+        $line = $_.Trim()
+        if ($line -and -not $line.StartsWith('#')) {
+            $parts = $line.Split('=', 2)
+            if ($parts.Count -eq 2) { $cfg[$parts[0]] = $parts[1] }
+        }
     }
-    Write-Host '  ✅ 备份完成'
+    $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $fileName = "shopee-analytics-$stamp.dump"
+    $backupDir = Join-Path $desktopDir 'runtime\backups'
+    New-Item -ItemType Directory -Force -Path $backupDir | Out-Null
+    $localFile = Join-Path $backupDir $fileName
+
+    docker compose --env-file runtime/.env exec -T postgres `
+        pg_dump -U $cfg['POSTGRES_USER'] -d $cfg['POSTGRES_DB'] -Fc -f "/tmp/$fileName"
+    if ($LASTEXITCODE -ne 0) { Fail 'pg_dump 失败，中止部署' }
+
+    docker compose --env-file runtime/.env exec -T postgres `
+        pg_restore --list "/tmp/$fileName" | Out-Null
+    if ($LASTEXITCODE -ne 0) { Fail '备份校验失败，中止部署' }
+
+    $containerId = (docker compose --env-file runtime/.env ps -q postgres).Trim()
+    docker cp "${containerId}:/tmp/$fileName" $localFile
+    if ($LASTEXITCODE -ne 0) { Fail '备份文件取出失败，中止部署' }
+    docker compose --env-file runtime/.env exec -T postgres rm -f "/tmp/$fileName" | Out-Null
+
+    $hash = (Get-FileHash -Algorithm SHA256 $localFile).Hash.ToLower()
+    Write-Host "  ✅ 备份完成: $fileName ($((Get-Item $localFile).Length) bytes)"
+    Write-Host "     sha256: $hash"
 }
 else {
     Write-Host '  （未找到 runtime\.env，跳过备份）'
@@ -81,11 +107,23 @@ if ($NoRestart) {
     exit 0
 }
 
-Write-Step '5/6 重建并启动应用'
+Write-Step '5/6 重建镜像、应用 schema、启动服务'
 Set-Location $desktopDir
-# 代码在镜像里，必须重建；只重建 app 与 oauth，数据库与 worker 不动。
-docker compose --env-file runtime/.env up -d --build app oauth
-if ($LASTEXITCODE -ne 0) { Fail '重建失败' }
+
+# ★ 必须带 --profile tools
+# schema 与 preflight 服务在 profiles: ["tools"] 里，而 `docker compose build`
+# 默认只构建当前 profile 下的服务 —— 不加 profile 时它们会被跳过，
+# 导致 schema 容器跑的是旧镜像里的旧 schema.sql（新增的表不会建出来）。
+docker compose --env-file runtime/.env --profile tools build
+if ($LASTEXITCODE -ne 0) { Fail '镜像构建失败' }
+
+# schema 要用刚构建的镜像，且要能跑通
+docker compose --env-file runtime/.env --profile tools run --rm schema 2>&1 | Out-Host
+if ($LASTEXITCODE -ne 0) { Fail 'schema 应用失败' }
+
+# 只重启 app 与 oauth，数据库与 worker 不动
+docker compose --env-file runtime/.env up -d app oauth
+if ($LASTEXITCODE -ne 0) { Fail '重启失败' }
 
 Write-Step '6/6 验证'
 Start-Sleep -Seconds 8
