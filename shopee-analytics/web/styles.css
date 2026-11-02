@@ -413,9 +413,13 @@ tbody td{font-weight:400}
 }
 .connections-action:hover{background:#f9fafb;border-color:#98a2b3}
 .connections-foot{
-  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:12px;
   padding:12px 22px;border-top:1px solid #eceef1;background:#fafbfc;
   font-size:11px;color:#6b7280;
+}
+@media (max-width:900px){
+  .connections-foot{grid-template-columns:1fr auto}
+  .connections-foot > span{grid-column:1 / -1;grid-row:2}
 }
 .connections-link{color:#175cd3;text-decoration:none;font-weight:600}
 .connections-link:hover{text-decoration:underline}
