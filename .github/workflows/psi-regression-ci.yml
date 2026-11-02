@@ -1,0 +1,26 @@
+name: PSI regression tests
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'app.js'
+      - 'test/rp-suggested-qty-wheel.test.cjs'
+      - '.github/workflows/psi-regression-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  replenishment-input-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check frontend syntax
+        run: node --check app.js
+      - name: Test suggested purchase quantity wheel behavior
+        run: node test/rp-suggested-qty-wheel.test.cjs
