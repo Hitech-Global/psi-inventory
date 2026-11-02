@@ -33,6 +33,9 @@ const writes = [];
 const pool = {
   async query(sql, args) {
     if (/SELECT 1 FROM shopee_shop_profiles/.test(sql)) return { rows: [{}] };
+    if (/SELECT shop_id FROM shopee_shop_profiles WHERE shop_id = ANY/.test(sql)) {
+      return { rows: [{ shop_id: 1326456001 }, { shop_id: 1770037299 }] };
+    }
     if (/LEFT JOIN shopee_app_tokens/.test(sql)) {
       return { rows: [{ shop_id: 1326456001, token_expires_at: null, token_refresh_error: null }] };
     }
@@ -82,11 +85,17 @@ const fetchImpl = async (_url, options) => {
   assert.strictEqual(result.shopId, 1326456001);
   assert.deepStrictEqual(result.authorizedShopIds, [1326456001, 1770037299]);
   assert.strictEqual(exchangeBody.code, 'one-time-code');
-  const tokenInsert = writes.find(row => /INSERT INTO shopee_app_tokens/.test(row.sql));
-  assert(tokenInsert, 'encrypted ERP token insert missing');
-  assert.strictEqual(tokenInsert.args[0], 'ERP');
-  assert.strictEqual(Number(tokenInsert.args[1]), 1326456001);
-  assert(!tokenInsert.args.includes('erp-access-token'), 'plaintext access token must not be stored as a SQL argument');
-  assert(!tokenInsert.args.includes('erp-refresh-token'), 'plaintext refresh token must not be stored as a SQL argument');
+  const tokenInserts = writes.filter(row => /INSERT INTO shopee_app_tokens/.test(row.sql));
+  assert(tokenInserts.length > 0, 'encrypted ERP token insert missing');
+  // One main account authorizes its shops together and the token it returns
+  // reaches every shop the seller ticked. Each shop that is known here has
+  // to be able to find it, or the second shop silently fetches nothing.
+  const storedShopIds = tokenInserts.map(row => Number(row.args[1])).sort((a, b) => a - b);
+  assert.deepStrictEqual(storedShopIds, [1326456001, 1770037299]);
+  for (const tokenInsert of tokenInserts) {
+    assert.strictEqual(tokenInsert.args[0], 'ERP');
+    assert(!tokenInsert.args.includes('erp-access-token'), 'plaintext access token must not be stored as a SQL argument');
+    assert(!tokenInsert.args.includes('erp-refresh-token'), 'plaintext refresh token must not be stored as a SQL argument');
+  }
   console.log('ERP OAuth service tests: ok');
 })().catch(error => { console.error(error); process.exitCode = 1; });

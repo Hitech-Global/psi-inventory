@@ -153,15 +153,29 @@ class ErpOAuthService {
         pool: this.pool,
         masterKey: loadMasterKey(this.env),
       });
-      await tokenRepository.save({
-        appRole: 'ERP',
-        shopId,
-        accessToken: response.access_token,
-        refreshToken: response.refresh_token,
-        expiresAt: new Date(now.getTime() + expireIn * 1000),
-        lastRefreshAt: now,
-        refreshError: null,
-      });
+      // A main account authorizes its shops in one go, and the token it
+      // returns reaches every shop the seller ticked. Storing it against
+      // one shop would leave the others unable to fetch anything, so each
+      // shop that is both authorized and known here gets a copy.
+      const known = await this.pool.query(
+        'SELECT shop_id FROM shopee_shop_profiles WHERE shop_id = ANY($1::bigint[])',
+        [authorizedShopIds],
+      );
+      const targetShopIds = known.rows.map(row => Number(row.shop_id));
+      if (!targetShopIds.includes(shopId)) {
+        throw oauthError('ERP_OAUTH_SHOP_NOT_ALLOWED', 403);
+      }
+      for (const targetShopId of targetShopIds) {
+        await tokenRepository.save({
+          appRole: 'ERP',
+          shopId: targetShopId,
+          accessToken: response.access_token,
+          refreshToken: response.refresh_token,
+          expiresAt: new Date(now.getTime() + expireIn * 1000),
+          lastRefreshAt: now,
+          refreshError: null,
+        });
+      }
       return { shopId, authorizedShopIds };
     } catch (error) {
       throw safeError(error, 'ERP_OAUTH_TOKEN_EXCHANGE_FAILED');
