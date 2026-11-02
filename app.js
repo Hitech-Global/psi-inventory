@@ -3252,7 +3252,7 @@ function showSkuImportRecords(){
   });
 }
 let _skuLoadSeq=0;
-async function loadSKUs(){
+async function loadSKUs(forceFresh){
   const requestSeq=++_skuLoadSeq;
   try{
     const kw=document.getElementById('sku-kw')?.value||'',st=document.getElementById('sku-st')?.value||'',
@@ -3263,7 +3263,10 @@ async function loadSKUs(){
     if(br) filters.set('brand',br);
     if(lc) filters.set('lifecycle_status',lc);
     const query=filters.toString();
-    const data=await api('/api/skus'+(query?'?'+query:''));
+    const url='/api/skus'+(query?'?'+query:'');
+    // Saving an SKU must read through to the database, not a reference cache
+    // or an in-flight GET that began before the write.
+    const data=await (forceFresh===true?apiRaw(url):api(url));
     // 快速连续筛选时，旧请求不能回写新筛选的结果，也不能写入已退出的页面。
     if(requestSeq!==_skuLoadSeq || !document.getElementById('sku-table')) return;
     window._skuData=data;
@@ -3301,7 +3304,11 @@ async function loadSKUs(){
     if(!table || requestSeq!==_skuLoadSeq) return;
     table.innerHTML='<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table">'+thead+'<tbody>'+(tbody||emptyTip)+'</tbody></table></div>';
     updateSkuBatchBar();
-  }catch(e){if(requestSeq===_skuLoadSeq && document.getElementById('sku-table')) showFlash(e.message,'danger')}
+    return true;
+  }catch(e){
+    if(requestSeq===_skuLoadSeq && document.getElementById('sku-table')) showFlash(e.message,'danger');
+    return false;
+  }
 }
 function toggleAllSku(cb){
   document.querySelectorAll('.sku-checkbox').forEach(function(c){c.checked=cb.checked});
@@ -3405,7 +3412,7 @@ function batchSkuDelete(){
 function editSKU(id){
   const F=[{n:'sku_code',l:t("app.583", "SKU\u7f16\u7801"),r:1},{n:'product_name',l:t("app.566", "\u4ea7\u54c1\u540d\u79f0")},{n:'brand',l:t("app.112", "\u54c1\u724c"),r:1},{n:'category',l:t('gen.L2124.1','类目')},{n:'model',l:t("app.584", "\u578b\u53f7")},{n:'color_spec',l:t("app.585", "\u989c\u8272/\u89c4\u683c")},{n:'barcode',l:t("app.586", "EAN/\u6761\u7801")},{n:'purchase_price_rmb',l:t("app.587", "RMB\u91c7\u8d2d\u5355\u4ef7"),t:'num'},{n:'purchase_price_usd',l:t("app.588", "USD\u91c7\u8d2d\u5355\u4ef7"),t:'num'},{n:'carton_spec',l:t("app.589", "\u7bb1\u89c4")},{n:'qty_per_carton',l:t("app.590", "\u5355\u7bb1\u6570\u91cf"),t:'num'},{n:'unit_weight',l:t("app.591", "\u5355\u4f4d\u91cd\u91cf(KG)"),t:'num'},{n:'unit_cbm',l:t("app.592", "\u5355\u4f4d\u4f53\u79ef(CBM)"),t:'num'},{n:'is_new_product',l:t("app.593", "\u662f\u5426\u65b0\u54c1"),t:'sel',o:[{v:0,l:t("action.no", "否")},{v:1,l:t("action.yes", "是")}]},{n:'launch_date',l:t("app.594", "\u4e0a\u5e02\u65e5\u671f"),t:'date'},{n:'new_product_protection_days',l:t("app.595", "\u65b0\u54c1\u4fdd\u62a4\u671f(\u5929)"),t:'num'},{n:'lifecycle_status',l:t("app.559", "\u751f\u547d\u5468\u671f"),t:'sel',o:[{v:'new_test',l:t("app.547", "\u65b0\u54c1\u5bfc\u5165")},{v:'new_launch',l:t("app.548", "\u65b0\u54c1\u542f\u52a8")},{v:'growth',l:t("app.549", "\u6210\u957f\u671f")},{v:'stable',l:t("app.550", "\u6210\u719f\u671f")},{v:'slow',l:t("app.551", "\u8870\u9000\u671f")},{v:'stagnant',l:t("app.552", "\u6ede\u9500")},{v:'clearance',l:t("app.553", "\u6e05\u4ed3\u671f")},{v:'stopped',l:t("app.554", "\u505c\u91c7/\u505c\u4ea7")}]},{n:'auto_replenish',l:t("app.596", "\u5141\u8bb8\u81ea\u52a8\u8865\u8d27"),t:'sel',o:[{v:1,l:t("action.yes", "是")},{v:0,l:t("action.no", "否")}]},{n:'status',l:t("status.label", "\u72b6\u6001"),t:'sel',o:[{v:'normal',l:t("common.enable", "\u542f\u7528")},{v:'stopped',l:t("common.disable", "\u505c\u7528")},{v:'clearance',l:t("app.555", "\u6e05\u4ed3")},{v:'discontinued',l:t("app.556", "\u505c\u4ea7")}]},{n:'remark',l:t("app.025", "\u5907\u6ce8"),t:'area',f:1}];
   let body='<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid">';
-  F.forEach(f=>{const inp=f.t==='area'?'<textarea name="'+f.n+'" rows="2"></textarea>':f.t==='sel'?'<select name="'+f.n+'">'+(f.o||[]).map(o=>{const v=typeof o==='object'?o.v:o;const l=typeof o==='object'?o.l:o;return '<option value="'+v+'">'+l+'</option>'}).join('')+'</select>':f.t==='date'?'<input type="date" name="'+f.n+'">':f.t==='num'?'<input type="number" step="0.0001" name="'+f.n+'">':'<input type="text" name="'+f.n+'">';body+='<div class="form-group '+(f.f?'form-group-full':'')+'"><label>'+f.l+(f.r?' <span class="required">*</span>':'')+'</label>'+inp+'</div>'});
+  F.forEach(f=>{const inp=f.t==='area'?'<textarea name="'+f.n+'" rows="2"></textarea>':f.t==='sel'?'<select name="'+f.n+'">'+(f.o||[]).map(o=>{const v=typeof o==='object'?o.v:o;const l=typeof o==='object'?o.l:o;return '<option value="'+v+'">'+l+'</option>'}).join('')+'</select>':f.t==='date'?'<input type="date" name="'+f.n+'">':f.t==='num'?'<input type="number" step="0.0001" name="'+f.n+'">':'<input type="text" name="'+f.n+'"'+(id&&f.n==='sku_code'?' readonly title="SKU编码不可直接修改，以免影响关联单据"':'')+'>';body+='<div class="form-group '+(f.f?'form-group-full':'')+'"><label>'+f.l+(f.r?' <span class="required">*</span>':'')+'</label>'+inp+'</div>'});
   body+='</div></div>';
   openModal(id?t('gen.L2128.1','编辑SKU'):t("app.598", "\u65b0\u589eSKU"),body,t('modal.footer.editSKU', `<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveSKU('{v1}')">保存</button>`, {v1: id||''}));
   if(id)api('/api/skus/'+id).then(s=>{F.forEach(f=>{const el=document.querySelector('[name="'+f.n+'"]');if(el)el.value=s[f.n]!==undefined?s[f.n]:''})}).catch(()=>{});
@@ -3417,7 +3424,14 @@ async function saveSKU(id){
   data.purchase_price_usd=parseFloat(data.purchase_price_usd)||0;
   data.qty_per_carton=parseInt(data.qty_per_carton)||0;data.unit_weight=parseFloat(data.unit_weight)||0;data.unit_cbm=parseFloat(data.unit_cbm)||0;
   data.is_new_product=parseInt(data.is_new_product)||0;data.new_product_protection_days=parseInt(data.new_product_protection_days)||90;data.auto_replenish=parseInt(data.auto_replenish)||0;
-  try{if(id){await api('/api/skus/'+id,'PUT',data);showToast(t('gen.L2138.1','保存成功'),'success')}else{await api('/api/skus','POST',data);showToast(t('gen.L2138.2','创建成功'),'success')}closeModal();loadSKUs()}catch(e){showToast(e.message,'danger')}
+  try{
+    if(id) await api('/api/skus/'+id,'PUT',data);
+    else await api('/api/skus','POST',data);
+    closeModal();
+    const refreshed=await loadSKUs(true);
+    if(refreshed) showToast(id?t('gen.L2138.1','保存成功'):t('gen.L2138.2','创建成功'),'success');
+    else showToast('SKU已保存，但列表刷新失败，请重新搜索或刷新页面','warning');
+  }catch(e){showToast(e.message,'danger')}
 }
 async function deleteSKU(id){
   if(!confirm(t('gen.L2141.1','⚠️ 删除SKU可能影响库存、出库、PO、PI、CI/PL等关联数据。\n如果SKU已有业务数据，将不允许删除，只能停用。\n\n确认删除吗？')))return;

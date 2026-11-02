@@ -64,6 +64,9 @@
   };
   var refCache = new Map();    // key -> data
   var refInflight = new Map(); // key -> Promise（inflight 去重）
+  // Ignore responses started before a mutation/logout, even when they finish afterward.
+  var refGenerations = new Map(); // key -> generation
+  var refEpoch = 0;               // global session generation
   var refBooted = false;
 
   function ref(key) {
@@ -72,6 +75,11 @@
     if (refCache.has(key)) { perf('ref', key, 'HIT'); return Promise.resolve(refCache.get(key)); }
     if (refInflight.has(key)) { perf('ref', key, 'INFLIGHT'); return refInflight.get(key); }
     perf('ref', key, 'MISS');
+    var requestGeneration = refGenerations.get(key) || 0;
+    var requestEpoch = refEpoch;
+    function stillCurrent() {
+      return refEpoch === requestEpoch && (refGenerations.get(key) || 0) === requestGeneration;
+    }
     // 健壮性：不使用 rawFetch（它吞掉 HTTP status）。与 api() 语义对齐：
     // 401→doLogout；非 2xx / {error:...}→抛错；任何失败都不写缓存（refCache/refInflight 清理），
     // 调用方（api() GET reference 路径 / bootstrapRefs）可安全重试。
@@ -86,27 +94,35 @@
       })
       .then(function (d) {
         if (d && typeof d === 'object' && d.error) throw new Error(String(d.error));
-        try { refCache.set(key, d); } catch (e) {}
+        if (stillCurrent()) { try { refCache.set(key, d); } catch (e) {} }
         return d;
       })
       .catch(function (e) {
-        try { refCache.delete(key); } catch (e2) {}
+        if (stillCurrent()) { try { refCache.delete(key); } catch (e2) {} }
         throw e;
       });
     // inflight 在整条链 settle（成功写缓存后 / 失败）后才清：
     // fetch 返回 → 缓存写入之间存在窗口，过早删除会让并发调用者重复发同一请求；
     // 失败路径同样 settle 后即清，不留下 rejected inflight（调用方可安全重试）。
     var wrapped = p.then(
-      function (d) { refInflight.delete(key); return d; },
-      function (e) { refInflight.delete(key); throw e; }
+      function (d) { if (refInflight.get(key) === wrapped) refInflight.delete(key); return d; },
+      function (e) { if (refInflight.get(key) === wrapped) refInflight.delete(key); throw e; }
     );
     refInflight.set(key, wrapped);
     return wrapped;
   }
   function invalidateRef(key) {
     try {
-      if (key) refCache.delete(key);
-      else { refCache.clear(); refInflight.clear(); }
+      if (key) {
+        refGenerations.set(key, (refGenerations.get(key) || 0) + 1);
+        refCache.delete(key);
+        refInflight.delete(key); // new GET must never reuse a pre-mutation request
+      } else {
+        refEpoch++;
+        refGenerations.clear();
+        refCache.clear();
+        refInflight.clear();
+      }
     } catch (e) {}
   }
   // 登录/startup 一次拉取跨页共享 reference data（fire-and-forget，不阻塞首屏）
@@ -265,7 +281,7 @@ function onMutation(method, url, body) {
   function clearSession() {
     try {
       pageCache.clear(); pageOrder = []; revalidators.clear();
-      refCache.clear(); refInflight.clear(); refBooted = false;
+      invalidateRef(); refBooted = false;
     } catch (e) {}
   }
 
