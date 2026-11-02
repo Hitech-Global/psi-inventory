@@ -86,9 +86,9 @@ function cacheHarness(){
     assert(begin>=0&&end>begin);
     const source=app.slice(begin,end);
     const events=[];
-    const form={querySelectorAll:(_selector,callback)=>{
-      [{name:'sku_code',value:'SKU-1'},{name:'product_name',value:'Updated'}].forEach(callback);
-    }};
+    const form={querySelectorAll:_selector=>[
+      {name:'sku_code',value:'SKU-1'},{name:'product_name',value:'Updated'}
+    ]};
     const document={querySelector:selector=>{
       assert.equal(selector,'.form-grid');
       return form;
