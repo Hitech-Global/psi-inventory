@@ -9265,7 +9265,7 @@ async function loadRpChannelMonthly(channel){
       td:function(r,c){
         var _manual=rpGetManualStock(channel,r.id);
         var _val=(_manual!==undefined?_manual:Math.round(c.suggestedQty||0));
-        return '<td class="text-right"><input type="number" class="rp-target-stock-input" data-rid="'+r.id+'" data-channel="'+channel+'" value="'+_val+'" min="0" style="width:75px;padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-weight:bold;text-align:center" oninput="onChannelTargetStockInput(this)" onchange="onChannelTargetStockChange(this)"></td>';
+        return '<td class="text-right"><input type="number" class="rp-target-stock-input" data-rid="'+r.id+'" data-channel="'+channel+'" value="'+_val+'" min="0" style="width:75px;padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-weight:bold;text-align:center" onwheel="this.blur()" oninput="onChannelTargetStockInput(this)" onchange="onChannelTargetStockChange(this)"></td>';
       },
       sum:function(t){return '<td class="text-right" data-summary="target_stock">'+formatQuantityDisplay(t.suggestedQty)+'</td>';}};
     Cols.last_inbound_date={th:rpThCompact(t('forecast.compact.last_inbound_date','最近\n入库日期'),t("app.806", "\u8be5 SKU \u6700\u8fd1\u4e00\u6b21\u5165\u5e93\u7684\u65e5\u671f\uff0c\u7528\u4e8e\u5224\u65ad\u5e93\u9f84\u548c\u662f\u5426\u957f\u671f\u672a\u8865\u8d27\u3002"),'text-center','',true),
