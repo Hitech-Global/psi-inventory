@@ -176,6 +176,11 @@ test('the panel says why the Brand Portal connection may be refused', () => {
   // Shopee sign-in, so the hint has to say which ones.
   assert.ok(rendered.includes('Forgot Password'), 'the hint must say how to reset the password');
   assert.ok(rendered.includes('Key Account Manager'), 'the hint must say how to get access at all');
+  // The authorization page takes the seller's own credentials; it only
+  // looks different because it is the open platform's page rather than the
+  // seller centre's. Saying which account works saves a wrong turn.
+  assert.ok(rendered.includes('卖家中心同一套账号'), 'the hint must say whose account the page wants');
+  assert.ok(rendered.includes(':main'), 'the hint must say how a main account is written');
 });
 
 test('a shop that already has its report does not need the hint', () => {

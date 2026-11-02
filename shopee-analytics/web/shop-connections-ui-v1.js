@@ -55,8 +55,10 @@
    * forgotten.
    */
   const BRAND_PORTAL_HINT = 'Brand Portal 仅对官方店 / Mall 卖家开放。'
-    + '登录请用品牌中心的账号邮箱（不加「:main」）；密码忘了点授权页的「Forgot Password」重置；'
-    + '若从未开通过 Brand Portal（提示 principals 不可用），需联系 Shopee 的 Key Account Manager 申请。'
+    + '授权页要填「能访问本店铺」的 Shopee 账号 —— 与卖家中心同一套账号密码，'
+    + '主账号格式为「账号名:main」（页面可切换）；密码忘了点「Forgot Password」重置。'
+    + '若用主账号登录后提示「principals 不可用」，说明品牌主体尚未在 Brand Portal 开通，'
+    + '需联系 Shopee 的 Key Account Manager 申请。'
     + '访客与转化率也可改从卖家中心 Business Insights 导出。';
 
   /**
