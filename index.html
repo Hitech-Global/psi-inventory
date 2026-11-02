@@ -879,6 +879,77 @@ input[type="number"]{-moz-appearance:textfield;appearance:textfield}
 body:has(#app[style*="display: flex"]) #auth-boot,
 body:has(#login-page[style*="display: flex"]) #auth-boot,
 body:has(#pending-page[style*="display: flex"]) #auth-boot{display:none}
+
+/* WINDOWS-DESKTOP-COMPAT-01
+   Cross-platform desktop layout guard: Windows classic scrollbars and 125%-150% display scaling
+   reduce the CSS layout viewport. Keep the existing Mac layout at normal desktop widths. */
+:root{
+  --sidebar-width:220px;
+  --sidebar-collapsed-width:54px;
+  color-scheme:light;
+}
+body{min-height:100vh;min-height:100dvh}
+.app-shell{height:100vh;height:100dvh;min-height:0}
+.sidebar{width:var(--sidebar-width)}
+.sidebar.collapsed{width:var(--sidebar-collapsed-width)}
+.main,.content,.content-inner{min-width:0;min-height:0}
+.topbar,.topnav{min-width:0}
+.content-inner{width:100%}
+/* Reserve classic Windows scrollbar space instead of allowing content to jump/reflow. */
+.content,.sidebar-nav,.modal,.modal-lg .modal-body,.drawer-body,.col-pc-body,.rp-cfg-list{
+  scrollbar-gutter:stable;
+}
+.modal{max-height:90vh;max-height:90dvh}
+.modal-lg{max-height:94vh;max-height:94dvh}
+.modal-overlay.ci-mode{left:var(--sidebar-width)}
+.modal-overlay.ci-mode.ci-sb-collapsed{left:var(--sidebar-collapsed-width)}
+.modal-overlay.ci-mode .modal-ci-create{max-height:calc(100vh - 72px);max-height:calc(100dvh - 72px)}
+.modal-overlay.wac-mode{left:var(--sidebar-width)}
+.modal-overlay.wac-mode.wac-sb-collapsed{left:var(--sidebar-collapsed-width)}
+.modal-wac{max-height:calc(100vh - 72px);max-height:calc(100dvh - 72px)}
+/* PI modal was offset using 140px although the expanded sidebar is 220px.
+   Anchor both edges to the actual sidebar width; avoid 100vw scrollbar overflow. */
+.modal-pi{max-height:calc(100vh - 72px);max-height:calc(100dvh - 72px)}
+.modal-pi.pi-sidebar-expanded{left:calc(var(--sidebar-width) + 14px);right:14px;width:auto}
+.modal-pi.pi-sidebar-collapsed{left:calc(var(--sidebar-collapsed-width) + 14px);right:14px;width:auto}
+.drawer-overlay{left:var(--sidebar-width)}
+body:has(.sidebar.collapsed) .drawer-overlay{left:var(--sidebar-collapsed-width)}
+.drawer{max-width:94%}
+.rp-review-modal{width:min(1100px,calc(100% - 48px));max-height:90vh;max-height:90dvh}
+.login-page{min-height:100vh;min-height:100dvh}
+.col-pc-body{max-height:calc(100vh - 230px);max-height:calc(100dvh - 230px)}
+.rp-freeze-line{touch-action:none;user-select:none;-webkit-user-select:none}
+:where(button,a,input,select,textarea,[tabindex]):focus-visible{
+  outline:2px solid rgba(46,125,50,.72);
+  outline-offset:2px;
+}
+@media(max-width:1340px){
+  /* The original three columns require at least 1,068px before the page gutters. */
+  .payment-category-columns{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .payment-category-columns>.col-pc-card:first-child{grid-column:1/-1}
+}
+@media(max-width:980px){
+  .payment-category-columns{grid-template-columns:minmax(0,1fr)}
+  .payment-category-columns>.col-pc-card:first-child{grid-column:auto}
+  .fro-structure-legend,.fro-pay-grid,.fro-inv-ctx{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .fro-bar-row{grid-template-columns:minmax(100px,140px) minmax(0,1fr) minmax(0,auto);gap:10px}
+  .fro-bar-val{white-space:normal;overflow-wrap:anywhere}
+  .form-grid{grid-template-columns:minmax(0,1fr)}
+  #ci-summary .summary-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .topbar{gap:10px;padding-left:16px;padding-right:16px}
+  .topbar-right{gap:8px;padding-right:0}
+}
+@media(max-width:720px){
+  .fro-structure-legend,.fro-pay-grid,.fro-inv-ctx,.fro-asset-grid{grid-template-columns:minmax(0,1fr)}
+  .fro-bar-row{grid-template-columns:minmax(0,1fr);gap:6px}
+  #ci-summary .summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .topbar{padding:0 10px}
+  .user-info{display:none}
+  .content{padding:10px}
+  .modal-header,.modal-body,.modal-footer{padding-left:14px;padding-right:14px}
+  .rp-boot-card{min-width:0;max-width:calc(100% - 24px)}
+}
+
 </style>
 </head>
 <body>
