@@ -13,6 +13,8 @@ const dockerIgnore = fs.readFileSync(path.join(deploy, 'Dockerfile.dockerignore'
 const preparePs1 = fs.readFileSync(path.join(deploy, 'prepare-desktop.ps1'), 'utf8');
 const installPs1 = fs.readFileSync(path.join(deploy, 'install-desktop.ps1'), 'utf8');
 const backupTasksPs1 = fs.readFileSync(path.join(deploy, 'install-backup-tasks.ps1'), 'utf8');
+const backupPs1 = fs.readFileSync(path.join(deploy, 'backup-postgres.ps1'), 'utf8');
+const verifyRestorePs1 = fs.readFileSync(path.join(deploy, 'verify-restore.ps1'), 'utf8');
 const preflight = fs.readFileSync(path.join(root, 'scripts', 'deployment-preflight.cjs'), 'utf8');
 const gitignore = fs.readFileSync(path.join(root, '..', '.gitignore'), 'utf8');
 
@@ -95,8 +97,17 @@ assert(preflight.includes("role === 'BRAND_PORTAL' ? Number(shop.brandPortalPrin
 assert(preflight.includes("'optional_encrypted_shop_tokens'"), 'optional ERP/Brand Portal token coverage must not block production readiness');
 assert(preflight.includes("'PRODUCTION_READY'"), 'production preflight must finish with a production-ready gate');
 assert(installPs1.includes('Historical backfill remains disabled'), 'Windows installer must keep backfill gated');
-assert(backupTasksPs1.includes('Shopee Analytics NAS Backup'), 'Windows task installer must schedule NAS backup');
+assert(backupTasksPs1.includes('Shopee Analytics PostgreSQL Backup'), 'Windows task installer must schedule the daily PostgreSQL backup');
 assert(backupTasksPs1.includes('Shopee Analytics Restore Verification'), 'Windows task installer must schedule restore verification');
 assert(backupTasksPs1.includes('-StartWhenAvailable'), 'Scheduled backups must recover from missed runs');
+// 共享盘是可选的：备份先落在本地，共享盘只是多一份副本。
+// 装完任务后应当立刻跑一次，确认备份真的能干活。
+assert(backupTasksPs1.includes('Running the backup once to confirm it works'), 'Installing the tasks must run one backup straight away');
+
+// 备份脚本：共享盘可选，本地目录按脚本位置解析成绝对路径
+assert(backupPs1.includes('$nasAvailable'), 'backup script must treat the shared folder as optional');
+assert(!backupPs1.includes('SHOPEE_NAS_BACKUP_DIR missing'), 'backup script must not fail when the shared folder is absent');
+assert(backupPs1.includes('[IO.Path]::IsPathRooted($localDir)'), 'backup script must resolve the local directory to an absolute path');
+assert(verifyRestorePs1.includes('[IO.Path]::IsPathRooted($localDir)'), 'restore check must resolve the local directory the same way the backup does');
 
 console.log('shopee desktop deployment contract tests: ok');
