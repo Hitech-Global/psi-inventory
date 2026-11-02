@@ -187,3 +187,21 @@ test('a shop that already has its report does not need the hint', () => {
   });
   assert.ok(!rendered.includes('connections-hint'), 'a connected shop needs no hint');
 });
+
+test('the panel says that a returns token belongs to one shop', () => {
+  const renderShop = loadPanelRenderer();
+  const rendered = renderShop({
+    shopId: 1101364305,
+    displayName: 'Shop H',
+    shopBi: { days: 0 },
+    livestream: { days: 0 },
+    returns: { rows: 0 },
+    erp: { credentialConfigured: true, tokenPresent: false, redirectUrl: 'https://x/cb' },
+    brandPortal: { credentialConfigured: true, tokenPresent: false, redirectUrl: 'https://x/cb' },
+  });
+  // The token covers only the shops ticked on Shopee's page, so a shop under
+  // another account never connects however often the authorization is
+  // repeated. Saying that saves the reader from trying again.
+  assert.ok(rendered.includes('ERP'), 'the hint must name the connection');
+  assert.ok(rendered.includes('令牌只覆盖'), 'the hint must say what the token covers');
+});

@@ -201,11 +201,17 @@ class ErpOAuthService {
         });
       }
       // The reader may have started from a shop that was not among those
-      // ticked; the connection that was made is the one that counts.
+      // ticked. The connection that was made is still worth having, but
+      // saying so plainly matters more than the connection: a reader who
+      // asked for one shop and was given another would otherwise think
+      // the shop they asked for is connected when it is not.
+      const connectedExpected = targetShopIds.includes(shopId);
       return {
-        shopId: targetShopIds.includes(shopId) ? shopId : targetShopIds[0],
+        shopId: connectedExpected ? shopId : targetShopIds[0],
         authorizedShopIds,
         connectedShopIds: targetShopIds,
+        expectedShopId: shopId,
+        expectedShopConnected: connectedExpected,
       };
     } catch (error) {
       throw safeError(error, 'ERP_OAUTH_TOKEN_EXCHANGE_FAILED');

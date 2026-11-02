@@ -27,6 +27,16 @@
    */
   const BRAND_PORTAL_HINT = 'Brand Portal 仅对官方店 / Mall 卖家开放。若授权页提示「principals 不可用」，说明店铺尚未开通；访客与转化率可改从卖家中心 Business Insights 导出。';
 
+  /**
+   * Why a returns connection may not reach the shop it was asked for.
+   *
+   * A returns token belongs to one shop. When the reader authorizes a main
+   * account, Shopee offers the shops under it, and the token covers only
+   * those — so a shop under a different account never appears and never
+   * connects, however many times the authorization is repeated.
+   */
+  const ERP_HINT = 'ERP 授权按店铺独立生效：令牌只覆盖授权页里勾选的店铺。若本店铺没出现在授权列表中，说明它不在该账号下，需要换用能访问它的账号授权。';
+
   function esc(value) {
     return String(value ?? '')
       .replaceAll('&', '&amp;')
@@ -138,6 +148,8 @@
       state: pill('待授权', 'warn'),
       note: '退货与退款数据来自这里',
       action: '<button type="button" class="connections-action" data-connect="erp" data-shop-id="' + esc(shop.shopId) + '">连接 ERP</button>',
+      hint: ERP_HINT,
+      hintClass: 'info',
     };
   }
 
@@ -145,9 +157,10 @@
     const report = renderShopReport(shop);
     const erp = renderErp(shop);
     const livestream = shop.livestream || {};
-    const hint = report.hint
-      ? `<p class="connections-hint">${esc(report.hint)}</p>`
-      : '';
+    const hints = [report, erp]
+      .filter(entry => entry && entry.hint)
+      .map(entry => `<p class="connections-hint${entry.hintClass ? ' ' + entry.hintClass : ''}">${esc(entry.hint)}</p>`)
+      .join('');
     const rows = [
       ['店铺营业额 / 访客', report.state, report.note, report.action],
       ['退货退款', erp.state, erp.note, erp.action],
@@ -174,7 +187,7 @@
           <span class="connections-shop-id">${esc(shop.shopId)}</span>
         </div>
         <ul class="connections-list">${rows}</ul>
-        ${hint}
+        ${hints}
       </section>`;
   }
 

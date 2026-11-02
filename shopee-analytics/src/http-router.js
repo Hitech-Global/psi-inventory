@@ -480,8 +480,19 @@ function createShopeeAnalyticsRouter({
       });
       res.setHeader('Set-Cookie', clearErpStateCookie());
       const connected = (result.connectedShopIds || [result.shopId]).length;
-      res.redirect(302, '/?erp=connected&shop_id=' + encodeURIComponent(result.shopId)
-        + '&shops=' + encodeURIComponent(String(connected)));
+      const params = new URLSearchParams({
+        erp: 'connected',
+        shop_id: String(result.shopId),
+        shops: String(connected),
+      });
+      // The reader asked for one shop and the authorization covered
+      // another. Say which, or they will read "connected" as "the shop I
+      // was looking at is connected".
+      if (result.expectedShopConnected === false) {
+        params.set('expected', String(result.expectedShopId));
+        params.set('reason', `授权的店铺里没有 ${result.expectedShopId}，需要用能访问该店铺的账号重新授权`);
+      }
+      res.redirect(302, '/?' + params.toString());
     } catch (error) {
       res.setHeader('Set-Cookie', clearErpStateCookie());
       respondWithOAuthOutcome(res, error, 'ERP');

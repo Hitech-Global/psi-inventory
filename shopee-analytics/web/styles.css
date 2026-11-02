@@ -487,3 +487,6 @@ tbody td{font-weight:400}
   padding:5px 12px;font-size:12px;color:#475467;cursor:pointer;
 }
 .connections-refresh:hover{background:#f5f6f8}
+.connections-hint.info{
+  background:#eef4ff;border-color:#c7dbff;color:#1d4ed8;
+}

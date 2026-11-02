@@ -33,7 +33,10 @@ function routeBlock(route) {
   const index = router.indexOf(`router.get('${route}'`);
   assert.ok(index > 0, `缺少路由 ${route}`);
   const start = router.lastIndexOf('router.get(', index);
-  return router.slice(start, index + 900);
+  // 到下一个路由为止：路由块的长度会随代码变化，固定长度会把后面才写的
+  // 断言漏在片段之外。
+  const next = router.indexOf('router.get(', index + 1);
+  return router.slice(start, next > index ? next : index + 900);
 }
 
 // ---- 每个回调都跳到会读它那个参数的页面 ----
@@ -55,8 +58,24 @@ assert.match(
 const erpCallback = routeBlock('/erp/oauth/callback');
 assert.match(
   erpCallback,
-  /res\.redirect\(302, '\/\?erp=connected/,
+  /erp: 'connected'/,
   'ERP 回调必须跳到首页',
+);
+assert.match(
+  erpCallback,
+  /res\.redirect\(302, '\/\?' \+ params\.toString\(\)\)/,
+  'ERP 回调必须跳到首页',
+);
+// 授权的店铺里没有读者要的那一家时，必须说出来，否则读者会以为那家也连上了
+assert.match(
+  erpCallback,
+  /expectedShopConnected === false/,
+  'ERP 回调必须说明期望店铺是否连上',
+);
+assert.match(
+  erpCallback,
+  /需要用能访问该店铺的账号重新授权/,
+  'ERP 回调必须给出补救办法',
 );
 const brandPortalCallback = routeBlock('/brand-portal/oauth/callback');
 assert.match(
