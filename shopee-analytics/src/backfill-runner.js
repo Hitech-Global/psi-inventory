@@ -1,5 +1,7 @@
 'use strict';
 
+const { resolveShopTimezone } = require('./shop-timezone');
+
 const { ShopeeSyncService } = require('./sync-service');
 const { syncGmsWindow } = require('./sync-window');
 const { discoverGmsCampaign } = require('./sync-gms');
@@ -118,18 +120,44 @@ async function runBackfillShop({
 }) {
   if (!runtime) throw new Error('runtime is required');
   if (!shop || !shop.shopId) throw new Error('shop is required');
-  if (!shop.timezone) throw new Error(`Shop ${shop.shopId} timezone is required`);
 
   const shopId = Number(shop.shopId);
+  // A shop whose timezone cannot be worked out has no days to count. That
+  // is this shop's problem, not the batch's: carrying on with the rest is
+  // better than fetching nothing because one shop is incomplete.
+  const timezone = resolveShopTimezone(shop);
+  if (!timezone) {
+    return {
+      shopId,
+      displayName: shop.displayName || null,
+      countryCode: shop.countryCode || null,
+      brandCode: shop.brandCode || null,
+      timezone: null,
+      startDate,
+      endDate,
+      days: daysInclusive(startDate, endDate),
+      ok: false,
+      steps: [{
+        name: 'timezone',
+        ok: false,
+        required: true,
+        error: `Shop ${shopId} has no timezone and its country does not fix one`,
+      }],
+      failedRequiredSteps: ['timezone'],
+      failedOptionalSteps: [],
+      shopBiDayCoverage: false,
+    };
+  }
+
   const sourceSet = new Set(sources || []);
   const service = serviceFor(runtime, shopId);
-  const today = localIsoDate(now, shop.timezone);
+  const today = localIsoDate(now, timezone);
   const summary = {
     shopId,
     displayName: shop.displayName || null,
     countryCode: shop.countryCode || null,
     brandCode: shop.brandCode || null,
-    timezone: shop.timezone,
+    timezone,
     startDate,
     endDate,
     days: daysInclusive(startDate, endDate),
@@ -304,7 +332,7 @@ async function runBackfillShop({
       requestedEndDate: endDate,
       chunkDays: 14,
       runner: async chunk => {
-        const epoch = localDateRangeEpoch(chunk.startDate, chunk.endDate, shop.timezone);
+        const epoch = localDateRangeEpoch(chunk.startDate, chunk.endDate, timezone);
         return service.syncOrders({
           timeFrom: epoch.timeFrom,
           timeTo: epoch.timeTo,
@@ -324,7 +352,7 @@ async function runBackfillShop({
       requestedEndDate: endDate,
       chunkDays: 7,
       runner: async chunk => {
-        const epoch = localDateRangeEpoch(chunk.startDate, chunk.endDate, shop.timezone);
+        const epoch = localDateRangeEpoch(chunk.startDate, chunk.endDate, timezone);
         return service.syncReturns({
           createTimeFrom: epoch.timeFrom,
           createTimeTo: epoch.timeTo,
@@ -412,7 +440,7 @@ async function runBackfillShop({
       shopId,
       startDate,
       endDate,
-      timezone: shop.timezone,
+      timezone,
     }),
     { required: false },
   );

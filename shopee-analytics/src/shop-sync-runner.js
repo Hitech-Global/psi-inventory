@@ -1,5 +1,7 @@
 'use strict';
 
+const { resolveShopTimezone } = require('./shop-timezone');
+
 const { ShopeeSyncService } = require('./sync-service');
 const { syncGmsWindow } = require('./sync-window');
 const { discoverGmsCampaign } = require('./sync-gms');
@@ -18,7 +20,10 @@ const {
 function normalizeShopProfile(shop) {
   const shopId = Number(shop.shopId ?? shop.shop_id);
   if (!Number.isSafeInteger(shopId) || shopId <= 0) throw new Error('shop.shopId is required');
-  const timezone = String(shop.timezone || '').trim();
+  // The country a shop trades in fixes its timezone in every market
+  // Shopee serves, so a shop that has not had one filled in can still be
+  // worked with.
+  const timezone = resolveShopTimezone(shop);
   if (!timezone) throw new Error(`Shop ${shopId} timezone is required`);
   return {
     ...shop,

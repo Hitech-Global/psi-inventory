@@ -1,5 +1,7 @@
 'use strict';
 
+const { resolveShopTimezone } = require('./shop-timezone');
+
 class ShopeeShopProfileRepository {
   constructor({ pool }) {
     if (!pool || typeof pool.query !== 'function') throw new Error('pg pool/query adapter is required');
@@ -130,6 +132,10 @@ class ShopeeShopProfileRepository {
     );
     return result.rows.map(row => ({
       shopId: Number(row.shop_id),
+      // A shop that has not had its timezone filled in still has one that
+      // its country fixes. Fill it in here rather than refusing to work
+      // with the shop at all.
+      timezone: resolveShopTimezone(row),
       displayName: row.operator_label || row.display_name,
       operatorLabel: row.operator_label,
       importSourceShopName: row.import_source_shop_name,
