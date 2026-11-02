@@ -129,7 +129,9 @@ function withoutHistorical(keys){
     activeKeys:['check','sku','model','ms_2026_08','total_avg']
   });
   assert.deepEqual(x.active,[
-    'check','sku',...historicalKeys(),'model','ms_2026_08','total_avg'
+    'check','sku',
+    'hs_2026_05','hs_2026_06','hs_2026_07','hs_2026_09','hs_2026_10','hs_2026_11',
+    'model','ms_2026_08','total_avg'
   ]);
 }
 
