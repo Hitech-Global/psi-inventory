@@ -987,6 +987,62 @@ function createShopeeAnalyticsRouter({
     }
   });
 
+  /**
+   * What the shop's products drew: the visits, the pages, what went into
+   * the basket and what was saved for later.
+   *
+   * The open platform gives none of this — it is the seller centre's
+   * export that carries it — so it is kept where the exports are read
+   * into, and asked for here.
+   */
+  router.get('/product-traffic', async (req, res, next) => {
+    try {
+      const shopId = req.query.shop_id ? positiveInt(req.query.shop_id, 'shop_id') : null;
+      const rowKind = req.query.row_kind ? String(req.query.row_kind) : 'PRODUCT';
+      const shops = await queryRepository.listShops({ activeOnly: false });
+      const visible = !req.auth || !req.auth.enabled || req.auth.role === ROLE_SUPER_ADMIN
+        ? new Set(shops.map(row => row.shopId))
+        : new Set(req.auth.shopIds || []);
+      const allowed = shops
+        .filter(row => visible.has(row.shopId) && (!shopId || row.shopId === shopId))
+        .map(row => row.shopId);
+      if (!allowed.length) {
+        res.json({ rows: [], totals: null });
+        return;
+      }
+      const rows = await shopHealthRepository.listProductTraffic({
+        shopIds: allowed, rowKind, limit: positiveInt(req.query.limit || 300, 'limit'),
+      });
+      // The totals are the shop's own figures for the period, which is
+      // what the figures below are parts of.
+      const totals = rows.reduce((sum, row) => ({
+        productImpression: sum.productImpression + (row.productImpression || 0),
+        productClicks: sum.productClicks + (row.productClicks || 0),
+        productVisitors: sum.productVisitors + (row.productVisitors || 0),
+        productPageViews: sum.productPageViews + (row.productPageViews || 0),
+        bounceVisitors: sum.bounceVisitors + (row.bounceVisitors || 0),
+        searchClicks: sum.searchClicks + (row.searchClicks || 0),
+        likes: sum.likes + (row.likes || 0),
+        addToCartVisitors: sum.addToCartVisitors + (row.addToCartVisitors || 0),
+        addToCartUnits: sum.addToCartUnits + (row.addToCartUnits || 0),
+      }), {
+        productImpression: 0, productClicks: 0, productVisitors: 0, productPageViews: 0,
+        bounceVisitors: 0, searchClicks: 0, likes: 0, addToCartVisitors: 0, addToCartUnits: 0,
+      });
+      const rate = (part, whole) => (whole ? part / whole : null);
+      res.json({
+        rows,
+        totals: {
+          ...totals,
+          bounceRate: rate(totals.bounceVisitors, totals.productVisitors),
+          addToCartRate: rate(totals.addToCartVisitors, totals.productVisitors),
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.get('/funnel', async (req, res, next) => {
     try {
       const shopId = positiveInt(req.query.shop_id, 'shop_id');

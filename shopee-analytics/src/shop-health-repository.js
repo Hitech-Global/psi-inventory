@@ -69,6 +69,61 @@ class ShopeeShopHealthRepository {
   }
 
   /**
+   * What the shop's products drew.
+   *
+   * The visits, the pages they looked at, what they put in the basket and
+   * what they saved for later — none of which the open platform gives.
+   *
+   * The product's own row is kept apart from its variations': the product
+   * row is the shop's view of it, and the variation rows are the detail.
+   */
+  async listProductTraffic({ shopIds = null, rowKind = 'PRODUCT', limit = 500 } = {}) {
+    const result = await this.pool.query(
+      `SELECT shop_id, event_date, item_id, parent_sku, sku, variation_id, row_kind,
+              item_name, item_status, sales, orders, units_sold, buyers,
+              product_impression, product_clicks, ctr, unique_product_impressions,
+              unique_product_clicks, product_visitors, product_page_views,
+              bounce_visitors, bounce_rate, search_clicks, likes,
+              add_to_cart_visitors, add_to_cart_units, add_to_cart_rate
+       FROM shopee_product_traffic_daily
+       WHERE ($1::bigint[] IS NULL OR shop_id = ANY($1::bigint[]))
+         AND ($2::text IS NULL OR row_kind = $2::text)
+       ORDER BY product_visitors DESC NULLS LAST, item_id
+       LIMIT $3`,
+      [shopIds, rowKind, limit],
+    );
+    return result.rows.map(row => ({
+      shopId: Number(row.shop_id),
+      eventDate: row.event_date,
+      itemId: Number(row.item_id),
+      parentSku: row.parent_sku,
+      sku: row.sku,
+      variationId: row.variation_id,
+      rowKind: row.row_kind,
+      itemName: row.item_name,
+      itemStatus: row.item_status,
+      sales: row.sales === null ? null : Number(row.sales),
+      orders: row.orders,
+      unitsSold: row.units_sold,
+      buyers: row.buyers,
+      productImpression: row.product_impression,
+      productClicks: row.product_clicks,
+      ctr: row.ctr === null ? null : Number(row.ctr),
+      uniqueProductImpressions: row.unique_product_impressions,
+      uniqueProductClicks: row.unique_product_clicks,
+      productVisitors: row.product_visitors,
+      productPageViews: row.product_page_views,
+      bounceVisitors: row.bounce_visitors,
+      bounceRate: row.bounce_rate === null ? null : Number(row.bounce_rate),
+      searchClicks: row.search_clicks,
+      likes: row.likes,
+      addToCartVisitors: row.add_to_cart_visitors,
+      addToCartUnits: row.add_to_cart_units,
+      addToCartRate: row.add_to_cart_rate === null ? null : Number(row.add_to_cart_rate),
+    }));
+  }
+
+  /**
    * The events behind the figures.
    */
   async upsertEvents({ eventDate, events }) {

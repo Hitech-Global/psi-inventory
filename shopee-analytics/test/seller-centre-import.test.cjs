@@ -184,3 +184,21 @@ test('the advertising report says which shop it is about', () => {
   assert.equal(parsed[0].gmv, 125823914);
   assert.equal(parsed[0].roas, 8.57);
 });
+
+test('the products\' attention is asked for by name, not by guessing', () => {
+  const router = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '..', 'src', 'http-router.js'), 'utf8',
+  );
+  const repository = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '..', 'src', 'shop-health-repository.js'), 'utf8',
+  );
+  // The visits, the basket and what was saved for later are the figures
+  // the open platform does not give; they are read out of the seller
+  // centre's export and asked for here.
+  assert.ok(router.includes("router.get('/product-traffic'"), 'the route must exist');
+  assert.ok(repository.includes('async listProductTraffic'), 'the repository must read them');
+  for (const column of ['product_visitors', 'product_page_views', 'add_to_cart_visitors',
+    'add_to_cart_units', 'likes', 'bounce_visitors', 'search_clicks']) {
+    assert.ok(repository.includes(column), `the repository must read ${column}`);
+  }
+});
