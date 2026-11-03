@@ -1567,6 +1567,12 @@ async function loadCurrentView({ manageButton = true } = {}) {
     } else if (state.view === 'ads' && state.adsType !== 'groups') {
       const target = state.adsType === 'manual' ? '#manualAdRows' : '#autoAdRows';
       $(target).innerHTML = `<tr><td colspan="11" class="empty">${escapeHtml(error.message)}</td></tr>`;
+    } else if (state.view === 'health') {
+      // The page must say what went wrong here: otherwise the table keeps
+      // saying it is waiting for data, and the reader is left with a blank
+      // panel and no idea why.
+      const body = $('#healthBody');
+      if (body) body.innerHTML = `<tr><td class="empty">读取失败：${escapeHtml(error.message)}</td></tr>`;
     } else {
       $('#statusSubtitle').textContent = error.message;
     }

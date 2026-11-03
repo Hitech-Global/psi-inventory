@@ -223,6 +223,7 @@ function createShopeeAnalyticsRouter({
   brandPortalOAuthService = null,
   erpOAuthService = null,
   tiktokOAuthService = null,
+  shopHealthRepository = null,
 }) {
   const router = express.Router();
   const skillJobManager = new SkillJobManager();
@@ -903,6 +904,7 @@ function createShopeeAnalyticsRouter({
       const allowed = filtered
         .filter(row => visible.has(row.shopId))
         .map(row => row.shopId);
+      if (!shopHealthRepository) throw scopeError('SHOP_HEALTH_UNAVAILABLE', 'Shop health registry is unavailable', 503);
       const readings = await shopHealthRepository.listWithShops({ shopIds: allowed });
 
       const rows = readings.map(reading => {

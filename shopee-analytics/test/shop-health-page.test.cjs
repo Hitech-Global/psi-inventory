@@ -29,6 +29,19 @@ test('the endpoint is registered and answers for every visible shop', () => {
   assert.ok(router.includes('req.auth.shopIds'), 'the route must narrow to the shops the reader may see');
 });
 
+test('the route is given the repository it uses', () => {
+  const router = fs.readFileSync(path.join(srcDir, 'http-router.js'), 'utf8');
+  const server = fs.readFileSync(path.join(srcDir, 'standalone-server.js'), 'utf8');
+  // A route that uses something the router was not given fails at runtime
+  // with a name nobody recognises, and the page it belongs to simply stays
+  // empty.
+  const factory = router.slice(router.indexOf('function createShopeeAnalyticsRouter'));
+  const parameters = factory.slice(0, factory.indexOf('}) {') + 2);
+  assert.ok(parameters.includes('shopHealthRepository'), 'the router must be given the health registry');
+  assert.ok(server.includes('shopHealthRepository,'), 'the server must pass the health registry on');
+  assert.ok(server.includes('new ShopeeShopHealthRepository({ pool })'), 'the server must build it');
+});
+
 test('the page tells the platform\'s standard from the figure', () => {
   const healthUi = fs.readFileSync(path.join(webDir, 'shop-health-ui-v1.js'), 'utf8');
   assert.ok(healthUi.includes('target'), 'the standard must be shown with the figure');

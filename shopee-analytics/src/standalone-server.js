@@ -15,6 +15,7 @@ const { createBackupStatusProvider } = require('./backup-status');
 const { createConfiguredSkillProvider } = require('./skill-provider');
 const { createSkillRuntime } = require('./skill-runtime');
 const { ShopeeShopScopeRepository } = require('./shop-scope-repository');
+const { ShopeeShopHealthRepository } = require('./shop-health-repository');
 const { createFeishuAuth } = require('./feishu-auth');
 const { BrandPortalOAuthService } = require('./brand-portal-oauth-service');
 const { ErpOAuthService } = require('./erp-oauth-service');
@@ -52,6 +53,7 @@ function createApp({ pool, skillProvider = null, importJobPool = null }) {
     runAdGroupSkillAnalysis,
   } = createSkillRuntime({ pool, skillProvider });
   const shopScopeRepository = new ShopeeShopScopeRepository({ pool });
+  const shopHealthRepository = new ShopeeShopHealthRepository({ pool });
   const backupStatusProvider = createBackupStatusProvider();
   const reviewerAuth = createReviewerAuth();
   const feishuAuth = createFeishuAuth({ pool, reviewerAuth });
@@ -100,6 +102,7 @@ function createApp({ pool, skillProvider = null, importJobPool = null }) {
     brandPortalOAuthService,
     erpOAuthService,
     tiktokOAuthService,
+    shopHealthRepository,
   }));
 
   const webDir = path.join(__dirname, '..', 'web');
