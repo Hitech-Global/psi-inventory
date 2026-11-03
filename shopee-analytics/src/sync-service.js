@@ -10,6 +10,7 @@ const { fetchOrderList, fetchOrderDetails } = require('./sync-orders');
 const { fetchAllReturnDetails } = require('./sync-returns');
 const { fetchShopBiDay } = require('./sync-shop-bi');
 const { fetchShopHealth } = require('./sync-account-health');
+const { fetchHealthEvents } = require('./sync-account-health-events');
 const { fetchShopLivestreamDay } = require('./sync-shop-livestream');
 const { fetchShopInfo } = require('./sync-shop');
 const { recordPages, recordSnapshot } = require('./raw-snapshot');
@@ -514,6 +515,22 @@ class ShopeeSyncService {
         eventDate,
         health: { ...result.health, shopId: this.shopId },
       });
+      // The figures say a shop's cancellation rate is this; the detail says
+      // which order was cancelled and why. Both are kept.
+      const metricIds = result.health.metricIds || {};
+      const wanted = Object.values(metricIds);
+      const events = await fetchHealthEvents({
+        client,
+        shopId: this.shopId,
+        accessToken,
+        metricKeys: wanted,
+      });
+      if (events.events.length) {
+        await this.shopHealthRepository.upsertEvents({
+          eventDate,
+          events: events.events.map(event => ({ ...event, shopId: this.shopId })),
+        });
+      }
     }
     return { shopRating: result.health.shopRating };
   }

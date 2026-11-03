@@ -69,6 +69,73 @@ class ShopeeShopHealthRepository {
   }
 
   /**
+   * The events behind the figures.
+   */
+  async upsertEvents({ eventDate, events }) {
+    if (!events.length) return;
+    for (const event of events) {
+      await this.pool.query(
+        `INSERT INTO shopee_shop_health_events
+         (shop_id, event_date, event_kind, event_id, metric_key, reason_code,
+          order_sn, item_id, title, detail, severity, raw_json, synced_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,now())
+         ON CONFLICT (shop_id, event_date, event_kind, event_id) DO UPDATE SET
+          metric_key=EXCLUDED.metric_key,
+          reason_code=EXCLUDED.reason_code,
+          order_sn=EXCLUDED.order_sn,
+          item_id=EXCLUDED.item_id,
+          title=EXCLUDED.title,
+          detail=EXCLUDED.detail,
+          severity=EXCLUDED.severity,
+          raw_json=EXCLUDED.raw_json,
+          synced_at=now()`,
+        [
+          event.shopId,
+          eventDate,
+          event.kind,
+          event.eventId,
+          event.metricKey || null,
+          event.reasonCode || null,
+          event.orderSn || null,
+          event.itemId === undefined || event.itemId === null ? null : Number(event.itemId),
+          event.title || null,
+          event.detail || null,
+          event.severity || null,
+          JSON.stringify(event.raw || {}),
+        ],
+      );
+    }
+  }
+
+  /**
+   * The events behind a shop's figures, most recent first.
+   */
+  async listEvents({ shopIds = null, limit = 200 } = {}) {
+    const result = await this.pool.query(
+      `SELECT e.shop_id, e.event_date, e.event_kind, e.event_id, e.metric_key,
+              e.reason_code, e.order_sn, e.item_id, e.title, e.detail, e.severity
+       FROM shopee_shop_health_events e
+       WHERE ($1::bigint[] IS NULL OR e.shop_id = ANY($1::bigint[]))
+       ORDER BY e.shop_id, e.event_date DESC, e.event_kind, e.event_id
+       LIMIT $2`,
+      [shopIds, limit],
+    );
+    return result.rows.map(row => ({
+      shopId: Number(row.shop_id),
+      eventDate: row.event_date,
+      kind: row.event_kind,
+      eventId: row.event_id,
+      metricKey: row.metric_key,
+      reasonCode: row.reason_code,
+      orderSn: row.order_sn,
+      itemId: row.item_id === null ? null : Number(row.item_id),
+      title: row.title,
+      detail: row.detail,
+      severity: row.severity,
+    }));
+  }
+
+  /**
    * The latest reading for each shop, with the shop's own details.
    *
    * A shop with no reading is left out rather than shown as a shop with

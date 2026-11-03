@@ -486,6 +486,31 @@ CREATE TABLE IF NOT EXISTS shopee_shop_health_daily (
 ALTER TABLE shopee_shop_health_daily
   ADD COLUMN IF NOT EXISTS targets_json JSONB NOT NULL DEFAULT '{}'::jsonb;
 
+-- 店铺健康的事件明细：罚分、有问题的商品、迟发订单，以及每个指标背后
+-- 具体是哪些订单、什么原因码。
+--
+-- 指标本身只说"取消率 0.16%"，明细说的是"哪一单被取消了、为什么" ——
+-- 诊断要的是后者。
+CREATE TABLE IF NOT EXISTS shopee_shop_health_events (
+  shop_id BIGINT NOT NULL,
+  event_date DATE NOT NULL,
+  event_kind TEXT NOT NULL,
+  event_id TEXT,
+  metric_key TEXT,
+  reason_code TEXT,
+  order_sn TEXT,
+  item_id BIGINT,
+  title TEXT,
+  detail TEXT,
+  severity TEXT,
+  raw_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (shop_id, event_date, event_kind, event_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_shopee_shop_health_events_kind
+  ON shopee_shop_health_events (shop_id, event_kind, event_date DESC);
+
 CREATE TABLE IF NOT EXISTS shopee_product_card_period (
   shop_id BIGINT NOT NULL,
   start_date DATE NOT NULL,

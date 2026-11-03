@@ -28,6 +28,13 @@ const ENDPOINTS = Object.freeze({
   marketingHotListing: { app: 'ERP', method: 'GET', path: '/api/v2/business_insights/get_marketing_hot_listing' },
   // 店铺评分与履约质量。ERP System 类应用才有这个权限 —— 广告类应用调它会被拒。
   accountHealth: { app: 'ERP', method: 'GET', path: '/api/v2/account_health/get_shop_performance' },
+  // 罚分、处罚、有问题的商品、迟发订单：绩效与违规这一块。
+  penaltyPointHistory: { app: 'ERP', method: 'GET', path: '/api/v2/account_health/get_penalty_point_history' },
+  punishmentHistory: { app: 'ERP', method: 'GET', path: '/api/v2/account_health/get_punishment_history' },
+  listingsWithIssues: { app: 'ERP', method: 'GET', path: '/api/v2/account_health/get_listings_with_issues' },
+  lateOrders: { app: 'ERP', method: 'GET', path: '/api/v2/account_health/get_late_orders' },
+  // 某个指标背后具体是哪些订单、什么原因码。指标本身只给比例，明细给原因。
+  metricSourceDetail: { app: 'ERP', method: 'GET', path: '/api/v2/account_health/get_metric_source_detail' },
 });
 
 const SYNC_POLICY = Object.freeze({
@@ -49,6 +56,9 @@ const SYNC_POLICY = Object.freeze({
   shopInfo: { minutes: 1440 },
   shopSalesPerformance: { minutes: 1440 },
   accountHealth: { minutes: 360 },
+  penaltyPointHistory: { minutes: 360 },
+  listingsWithIssues: { minutes: 360 },
+  lateOrders: { minutes: 360 },
 });
 
 module.exports = { ENDPOINTS, SYNC_POLICY };

@@ -139,6 +139,51 @@
       </section>`;
   }
 
+  /**
+   * What is behind the figures.
+   *
+   * A rate says a shop's cancellations are a fraction of its orders; the
+   * detail names the orders and the reason each was counted. A reader
+   * looking at a shop that is not doing well needs the second, and so does
+   * a diagnosis — it cannot be built on the first alone.
+   */
+  function renderEvents(events) {
+    if (!events.length) return '';
+    const kindLabels = {
+      penalty_point: '绩效罚分',
+      listing_issue: '有问题的商品',
+      late_order: '迟发订单',
+      metric_source: '指标明细',
+    };
+    const byShop = new Map();
+    for (const event of events) {
+      if (!byShop.has(event.shopId)) byShop.set(event.shopId, []);
+      byShop.get(event.shopId).push(event);
+    }
+    const sections = [...byShop.entries()].map(([shopId, list]) => {
+      const items = list.map(event => {
+        const kind = kindLabels[event.kind] || event.kind;
+        const metric = event.metricKey ? ` · ${event.metricKey}` : '';
+        const reason = event.reasonCode ? ` · 原因码 ${event.reasonCode}` : '';
+        const order = event.orderSn ? ` · ${event.orderSn}` : '';
+        const title = event.title ? ` · ${event.title}` : '';
+        const detail = event.detail ? ` · ${event.detail}` : '';
+        return `<li><span class="health-event-kind">${escapeHtml(kind)}${escapeHtml(metric)}</span>`
+          + `<span class="health-event-detail">${escapeHtml(reason)}${escapeHtml(order)}${escapeHtml(title)}${escapeHtml(detail)}</span></li>`;
+      }).join('');
+      const shopName = list[0].shopName || `店铺 ${shopId}`;
+      return `<div class="health-event-shop">
+        <h4>${escapeHtml(shopName)} <span>${escapeHtml(String(shopId))}</span></h4>
+        <ul>${items}</ul>
+      </div>`;
+    }).join('');
+    return `<section class="health-events">
+      <h3>指标背后的明细（${events.length}）</h3>
+      <p>每个指标背后具体是哪些订单、什么原因码 —— 诊断要看的是这一层。</p>
+      ${sections}
+    </section>`;
+  }
+
   function render(data) {
     current = data;
     const head = document.querySelector('#healthHead');
@@ -162,9 +207,13 @@
 
     const notice = document.querySelector('#healthNotice');
     if (notice) {
-      if (missing.length) {
+      const parts = [];
+      if (missing.length) parts.push(renderMissing(missing));
+      const events = data.events || [];
+      if (events.length) parts.push(renderEvents(events));
+      if (parts.length) {
         notice.classList.remove('hidden');
-        notice.innerHTML = renderMissing(missing);
+        notice.innerHTML = parts.join('');
       } else {
         notice.classList.add('hidden');
         notice.innerHTML = '';

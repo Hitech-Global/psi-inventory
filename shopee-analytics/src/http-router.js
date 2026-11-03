@@ -946,9 +946,12 @@ function createShopeeAnalyticsRouter({
           status: 'unconnected',
         }));
 
+      const events = await shopHealthRepository.listEvents({ shopIds: allowed, limit: 300 });
+
       res.json({
         rows,
         missing,
+        events,
         measures: MEASURES.map(spec => ({
           key: spec.key, label: spec.label, labelEn: spec.labelEn, kind: spec.kind, better: spec.better,
         })),

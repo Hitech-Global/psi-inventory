@@ -105,11 +105,17 @@ function normalizeAccountHealth(payload) {
   // Every metric starts as missing. One the platform did not report is
   // missing, not zero — a zero would read as a perfect week.
   const metrics = {};
+  const metricIds = {};
   for (const spec of Object.values(METRIC_COLUMNS)) metrics[spec.column] = null;
   for (const metric of Array.isArray(response.metric_list) ? response.metric_list : []) {
     const spec = METRIC_COLUMNS[metric.metric_name];
     if (!spec) continue;
     metrics[spec.column] = toMetricValue(metric.current_period, spec.kind);
+    // The detail behind a figure is asked for by the figure's own number,
+    // so it is kept here rather than looked up again later.
+    if (metric.metric_id !== undefined && metric.metric_id !== null) {
+      metricIds[spec.column] = Number(metric.metric_id);
+    }
   }
   // The score is reported twice: once to a decimal place among the metrics
   // and once rounded down in the summary. The metric is the better of the
@@ -117,6 +123,7 @@ function normalizeAccountHealth(payload) {
   if (metrics.shopRating === null) metrics.shopRating = numberOrNull(overall.rating);
   return {
     ...metrics,
+    metricIds,
     targets: normalizeTargets(response.metric_list),
     fulfillmentFailed: numberOrNull(overall.fulfillment_failed),
     listingFailed: numberOrNull(overall.listing_failed),
