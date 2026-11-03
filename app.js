@@ -14605,10 +14605,13 @@ async function loadWacHistoryMatrix(init){
     document.getElementById('wac-matrix-count').textContent=groups.length+' 个 SKU · '+dates.length+' 个确认日期';
     if(!groups.length){target.innerHTML='<div class="empty-state"><div class="empty-icon">📊</div>暂无符合条件的WAC历史记录</div>';return;}
     let html='<div class="table-container" style="overflow:auto;max-height:calc(100vh - 330px);border-radius:10px"><table class="data-table" style="min-width:max-content;border-collapse:separate;border-spacing:0"><thead><tr>'+
-      '<th style="position:sticky;left:0;z-index:5;background:var(--table-head-bg,#f5f6f8);min-width:150px">SKU</th>'+
-      '<th style="position:sticky;left:150px;z-index:5;background:var(--table-head-bg,#f5f6f8);min-width:130px;text-align:right">Latest WAC</th>'+
-      '<th style="position:sticky;left:280px;z-index:5;background:var(--table-head-bg,#f5f6f8);min-width:165px">较上次 WAC 变化</th>'+
-      '<th style="position:sticky;left:445px;z-index:5;background:var(--table-head-bg,#f5f6f8);min-width:120px">最后入库日期</th>'+
+      '<th style="position:sticky;left:0;z-index:8;background:var(--table-head-bg,#f5f6f8);min-width:150px">SKU</th>'+
+      '<th style="position:sticky;left:150px;z-index:8;background:var(--table-head-bg,#f5f6f8);min-width:110px">品牌</th>'+
+      '<th style="position:sticky;left:260px;z-index:8;background:var(--table-head-bg,#f5f6f8);min-width:110px">国家</th>'+
+      '<th style="position:sticky;left:370px;z-index:8;background:var(--table-head-bg,#f5f6f8);min-width:160px">仓库</th>'+
+      '<th style="position:sticky;left:530px;z-index:8;background:var(--table-head-bg,#f5f6f8);min-width:130px;text-align:right">Latest WAC</th>'+
+      '<th style="position:sticky;left:660px;z-index:8;background:var(--table-head-bg,#f5f6f8);min-width:165px">较上次 WAC 变化</th>'+
+      '<th style="position:sticky;left:825px;z-index:8;background:var(--table-head-bg,#f5f6f8);min-width:120px">最后入库日期</th>'+
       dates.map(d=>'<th style="min-width:125px;text-align:right">'+esc(d)+'</th>').join('')+
       '</tr></thead><tbody>';
     groups.forEach(g=>{
@@ -14621,10 +14624,13 @@ async function loadWacHistoryMatrix(init){
       const dateVals=new Map();
       g.records.forEach(r=>{const d=String(r.confirmed_at||'').slice(0,10);if(dates.includes(d)){const old=dateVals.get(d);if(!old||String(r.confirmed_at)>String(old.confirmed_at))dateVals.set(d,r);}});
       html+='<tr>'+
-        '<td style="position:sticky;left:0;z-index:2;background:var(--surface,#fff);font-weight:600">'+esc(g.sku||'')+'</td>'+
-        '<td style="position:sticky;left:150px;z-index:2;background:var(--surface,#fff);text-align:right;font-weight:600">'+money(latest?.new_avg_cost)+'</td>'+
-        '<td style="position:sticky;left:280px;z-index:2;background:var(--surface,#fff);white-space:nowrap"><span style="color:'+trendColor+';font-weight:600">'+trend+'</span>'+(delta===null?'':'<div style="font-size:11px;color:var(--text-secondary)">'+(delta>0?'+':'')+money(delta)+'</div>')+'</td>'+
-        '<td style="position:sticky;left:445px;z-index:2;background:var(--surface,#fff)">'+esc(latest?.last_inbound_date||'—')+'</td>'+
+        '<td style="position:sticky;left:0;z-index:4;background:var(--surface,#fff);font-weight:600">'+esc(g.sku||'')+'</td>'+
+        '<td style="position:sticky;left:150px;z-index:4;background:var(--surface,#fff)">'+esc(g.brand||'—')+'</td>'+
+        '<td style="position:sticky;left:260px;z-index:4;background:var(--surface,#fff)">'+esc(g.country||'—')+'</td>'+
+        '<td style="position:sticky;left:370px;z-index:4;background:var(--surface,#fff)">'+esc(g.warehouse||'—')+'</td>'+
+        '<td style="position:sticky;left:530px;z-index:4;background:var(--surface,#fff);text-align:right;font-weight:600">'+money(latest?.new_avg_cost)+'</td>'+
+        '<td style="position:sticky;left:660px;z-index:4;background:var(--surface,#fff);white-space:nowrap"><span style="color:'+trendColor+';font-weight:600">'+trend+'</span>'+(delta===null?'':'<div style="font-size:11px;color:var(--text-secondary)">'+(delta>0?'+':'')+money(delta)+'</div>')+'</td>'+
+        '<td style="position:sticky;left:825px;z-index:4;background:var(--surface,#fff)">'+esc(latest?.last_inbound_date||'—')+'</td>'+
         dates.map(d=>'<td style="text-align:right">'+(dateVals.has(d)?money(dateVals.get(d).new_avg_cost):'—')+'</td>').join('')+
       '</tr>';
     });
