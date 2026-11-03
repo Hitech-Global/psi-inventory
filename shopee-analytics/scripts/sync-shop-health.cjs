@@ -13,6 +13,7 @@ const { createAnalyticsPool } = require('../src/pg');
 const { createSyncRuntime } = require('../src/sync-runtime');
 const { ShopeeShopProfileRepository } = require('../src/shop-profile-repository');
 const { fetchShopHealth } = require('../src/sync-account-health');
+const { fetchHealthEvents } = require('../src/sync-account-health-events');
 const { localIsoDate } = require('../src/sync-cycle-utils');
 
 function parseShopId(argv) {
@@ -60,10 +61,23 @@ async function main() {
           eventDate: today,
           health: { ...result.health, shopId: shop.shopId },
         });
+        // The figures say a shop's cancellation rate is this; the detail
+        // says which order was cancelled and why. Both are kept.
+        const events = await fetchHealthEvents({
+          client, shopId: shop.shopId, accessToken,
+          metricKeys: Object.values(result.health.metricIds || {}),
+        });
+        if (events.events.length) {
+          await runtime.shopHealthRepository.upsertEvents({
+            eventDate: today,
+            events: events.events.map(event => ({ ...event, shopId: shop.shopId })),
+          });
+        }
         const rating = result.health.shopRating;
         const refundRate = result.health.returnRefundRate;
         console.log(`- ${shop.shopId} ${shop.displayName || ''}: `
           + `rating ${rating ?? '—'}`
+          + `${events.events.length ? `, 明细 ${events.events.length} 条` : ''}`
           + `${refundRate === null || refundRate === undefined ? '' : `, return rate ${(refundRate * 100).toFixed(2)}%`}`
           + `${result.health.csatRate === null || result.health.csatRate === undefined ? '' : `, csat ${(result.health.csatRate * 100).toFixed(1)}%`}`);
         fetched += 1;
