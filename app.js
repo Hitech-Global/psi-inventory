@@ -14857,9 +14857,9 @@ async function wacConfirm(batchId){
           '<td class="text-right">'+Number(it.total_landing_cost_local||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+'</td>' +
           oldQtyCell +
           '<td class="text-right">'+oldWac.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4})+'</td>' +
-          '<td class="text-right">'+(historical?(oldValue==null?'历史记录缺失':oldValue.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})):'待上传')+'</td>' +
-          '<td class="text-right font-bold" style="color:#1677ff">'+(historical?(newWac==null?'历史记录缺失':newWac.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4})):'待上传')+'</td>' +
-          '<td class="text-right">'+(historical?(changePct==null?'—':(changePct>0?'+':'')+changePct.toFixed(2)+'%'):'—')+'</td>' +
+          (historical?'<td class="text-right">'+(oldValue==null?'历史记录缺失':oldValue.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}))+'</td>':'<td class="text-right" id="wac-old-value-'+i+'">待上传</td>') +
+          (historical?'<td class="text-right font-bold" style="color:#1677ff">'+(newWac==null?'历史记录缺失':newWac.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4}))+'</td>':'<td class="text-right font-bold" id="wac-new-'+i+'" style="color:#1677ff">待上传</td>') +
+          (historical?'<td class="text-right">'+(changePct==null?'—':(changePct>0?'+':'')+changePct.toFixed(2)+'%')+'</td>':'<td class="text-right" id="wac-change-'+i+'">—</td>') +
         '</tr>';
       }).join('');
 
