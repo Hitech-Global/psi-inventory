@@ -157,7 +157,7 @@ async function importProductSheets(pool, { filePath, shopId, days, sheets: given
           likes, add_to_cart_visitors, add_to_cart_units, add_to_cart_rate,
           order_conversion_rate, raw_json, synced_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30::jsonb,now())
-         ON CONFLICT (shop_id, event_date, item_id, order_status, row_kind, COALESCE(sku, ''))
+         ON CONFLICT (shop_id, event_date, item_id, order_status, row_kind, sku)
          DO UPDATE SET
           parent_sku=EXCLUDED.parent_sku, variation_id=EXCLUDED.variation_id,
           item_name=EXCLUDED.item_name, item_status=EXCLUDED.item_status,
@@ -176,7 +176,7 @@ async function importProductSheets(pool, { filePath, shopId, days, sheets: given
           order_conversion_rate=EXCLUDED.order_conversion_rate,
           raw_json=EXCLUDED.raw_json, synced_at=now()`,
         [
-          shopId, eventDate, product.itemId, 'PAID', product.parentSku, product.sku,
+          shopId, eventDate, product.itemId, 'PAID', product.parentSku, product.sku || '',
           product.variationId, product.rowKind, product.itemName, product.itemStatus,
           product.salesConfirmed || product.salesPlaced, null, product.unitsConfirmed || product.unitsPlaced,
           product.buyersConfirmed || product.buyersPlaced, product.productImpression,

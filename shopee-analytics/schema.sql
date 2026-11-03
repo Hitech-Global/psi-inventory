@@ -480,7 +480,9 @@ CREATE TABLE IF NOT EXISTS shopee_product_traffic_daily (
   item_id BIGINT NOT NULL,
   order_status TEXT NOT NULL DEFAULT 'PAID',
   parent_sku TEXT,
-  sku TEXT,
+  -- A key may not be an expression, so the sku is a column of its own
+  -- and the empty one is the empty string rather than nothing.
+  sku TEXT NOT NULL DEFAULT '',
   variation_id TEXT,
   row_kind TEXT NOT NULL DEFAULT 'PRODUCT',
   item_name TEXT,
@@ -506,7 +508,7 @@ CREATE TABLE IF NOT EXISTS shopee_product_traffic_daily (
   order_conversion_rate NUMERIC(20,8),
   raw_json JSONB NOT NULL DEFAULT '{}'::jsonb,
   synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  PRIMARY KEY (shop_id, event_date, item_id, order_status, row_kind, COALESCE(sku, ''))
+  PRIMARY KEY (shop_id, event_date, item_id, order_status, row_kind, sku)
 );
 
 CREATE INDEX IF NOT EXISTS idx_shopee_product_traffic_parent_sku
