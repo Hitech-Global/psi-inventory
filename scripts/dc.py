@@ -37,19 +37,75 @@ _ctx.check_hostname = False
 _ctx.verify_mode = ssl.CERT_NONE
 
 
-def _token():
-    path = os.path.expanduser("~/.desktop-commander-device/device.json")
-    if not os.path.exists(path):
+_DEVICE_FILE = os.path.expanduser("~/.desktop-commander-device/device.json")
+
+
+def _device_file():
+    if not os.path.exists(_DEVICE_FILE):
         raise SystemExit(
             "找不到设备授权。请先在本机运行：\n"
             "  npx -y @wonderwhy-er/desktop-commander@latest remote"
         )
-    with open(path, encoding="utf-8") as fh:
-        return json.load(fh)["session"]["access_token"]
+    with open(_DEVICE_FILE, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def _token():
+    return _device_file()["session"]["access_token"]
+
+
+def _refresh_token():
+    """
+    Renew the access token.
+
+    It lasts an hour and the device renews it for itself, but the copy on
+    this machine is not always the one that gets renewed — the device
+    writes its own file, and this one is shared with it. So the token
+    here can lapse while the device is perfectly well online, and the only
+    sign of it is that requests start being refused.
+
+    The refresh token lasts far longer and is kept in the same place, so
+    the lapse is repaired here rather than by asking for the device to be
+    restarted.
+    """
+    device = _device_file()
+    refresh = device.get("session", {}).get("refresh_token")
+    if not refresh:
+        return None
+    try:
+        req = urllib.request.Request(
+            "https://mcp.desktopcommander.app/api/mcp-info",
+            headers={"User-Agent": UA},
+        )
+        info = json.loads(urllib.request.urlopen(req, timeout=25, context=_ctx).read())
+        body = json.dumps({"grant_type": "refresh_token", "refresh_token": refresh}).encode()
+        req2 = urllib.request.Request(
+            f"{info['supabaseUrl']}/auth/v1/token?grant_type=refresh_token",
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "apikey": info["supabasePublishableKey"],
+                "Authorization": f"Bearer {refresh}",
+                "User-Agent": UA,
+            },
+        )
+        data = json.loads(urllib.request.urlopen(req2, timeout=30, context=_ctx).read())
+        if not data.get("access_token"):
+            return None
+        device["session"]["access_token"] = data["access_token"]
+        if data.get("refresh_token"):
+            device["session"]["refresh_token"] = data["refresh_token"]
+        with open(_DEVICE_FILE, "w", encoding="utf-8") as fh:
+            json.dump(device, fh, indent=2)
+        os.chmod(_DEVICE_FILE, 0o600)
+        return data["access_token"]
+    except Exception:
+        return None
 
 
 def _post(payload, timeout=60, retries=3):
     last = None
+    renewed = False
     for attempt in range(retries):
         try:
             req = urllib.request.Request(
@@ -71,6 +127,15 @@ def _post(payload, timeout=60, retries=3):
                 if "data: " in body:
                     return json.loads(body.split("data: ", 1)[1].split("\n\n")[0])
                 raise
+        except urllib.error.HTTPError as exc:
+            # 401 means the token has lapsed, not that the device is gone:
+            # renewing it is worth one attempt before giving up.
+            if exc.code == 401 and not renewed:
+                renewed = True
+                if _refresh_token():
+                    continue
+            last = exc
+            time.sleep(3 * (attempt + 1))
         except (urllib.error.URLError, TimeoutError, ssl.SSLError) as exc:
             last = exc
             time.sleep(3 * (attempt + 1))
