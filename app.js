@@ -14543,112 +14543,512 @@ async function confirmGenerateCostItems(id){
 // WAC是否确认以 wac_history 记录为事实来源，不增加第二套状态
 
 /* ==================== WAC历史记录矩阵 ==================== */
-async function renderWacHistoryMatrix(){
-  const root=document.getElementById('content-inner');
-  root.innerHTML='<div id="flash-container"></div>'+
-    '<div class="filter-bar" style="display:block">'+
-      '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">'+
-        '<input id="wac-matrix-search" class="form-control" style="min-width:240px;flex:1" placeholder="搜索 SKU / 产品名称">'+
-        '<select id="wac-matrix-brand" class="form-control" multiple size="1" style="min-width:150px" aria-label="品牌（多选）"></select>'+
-        '<select id="wac-matrix-country" class="form-control" multiple size="1" style="min-width:150px" aria-label="国家（多选）"></select>'+
-        '<select id="wac-matrix-warehouse" class="form-control" multiple size="1" style="min-width:180px" aria-label="仓库（多选）"></select>'+
-      '</div>'+
-      '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">'+
-        '<label style="font-size:12px;color:var(--text-secondary)">确认日期</label>'+
-        '<input id="wac-matrix-from" type="date" class="form-control" style="width:160px">'+
-        '<span style="color:var(--text-secondary)">至</span>'+
-        '<input id="wac-matrix-to" type="date" class="form-control" style="width:160px">'+
-        '<button class="btn btn-primary btn-sm" onclick="loadWacHistoryMatrix()">查询</button>'+
-        '<button class="btn btn-secondary btn-sm" onclick="resetWacHistoryMatrix()">重置</button>'+
-        '<span id="wac-matrix-count" style="font-size:12px;color:var(--text-secondary);margin-left:auto"></span>'+
-      '</div>'+
-    '</div>'+
-    '<div class="table-section">'+
-      '<div class="table-section-title"><div class="table-section-title-left">📊 WAC历史成本矩阵</div></div>'+
-      '<div id="wac-matrix-table"><div class="loading-state">加载中...</div></div>'+
-    '</div>';
+function _wacMatrixMultiMarkup(key, label) {
+  return '<div class="wac-history-multi" data-wac-filter-wrap="' + key + '">' +
+    '<button type="button" class="wac-history-multi-trigger" id="wac-matrix-' + key + '-trigger" onclick="toggleWacHistoryFilter(\'' + key + '\');event.stopPropagation()">' +
+      '<span id="wac-matrix-' + key + '-label">' + label + '</span><span class="wac-history-chevron">⌄</span>' +
+    '</button>' +
+    '<div class="wac-history-multi-panel" id="wac-matrix-' + key + '-panel" style="display:none" onclick="event.stopPropagation()">' +
+      '<input type="search" class="wac-history-multi-search" id="wac-matrix-' + key + '-search" placeholder="搜索' + label + '" oninput="filterWacHistoryOptions(\'' + key + '\')" onclick="event.stopPropagation()">' +
+      '<div class="wac-history-multi-options" id="wac-matrix-' + key + '-options"></div>' +
+    '</div>' +
+  '</div>';
+}
+
+function _wacMatrixSelected(key) {
+  return Array.from(document.querySelectorAll('input[data-wac-filter="' + key + '"]:checked')).map(function(el){return el.value;});
+}
+
+function _wacMatrixFillMulti(key, values, label) {
+  const list = document.getElementById('wac-matrix-' + key + '-options');
+  if (!list) return;
+  const selected = new Set(_wacMatrixSelected(key));
+  list.innerHTML = (values || []).map(function(value) {
+    const v = String(value || '');
+    return '<label class="wac-history-option"><input type="checkbox" data-wac-filter="' + key + '" value="' + esc(v) + '" ' +
+      (selected.has(v) ? 'checked' : '') + ' onchange="updateWacHistoryFilterLabel(\'' + key + '\')"><span>' + esc(v) + '</span></label>';
+  }).join('');
+  updateWacHistoryFilterLabel(key, label);
+}
+
+function updateWacHistoryFilterLabel(key, label) {
+  const selected = _wacMatrixSelected(key);
+  const text = selected.length ? '已选 ' + selected.length + ' 项' : ('全部' + (label || ({brand:'品牌',country:'国家',warehouse:'仓库'}[key] || '')));
+  const el = document.getElementById('wac-matrix-' + key + '-label');
+  if (el) el.textContent = text;
+}
+
+function closeWacHistoryFilters() {
+  ['brand','country','warehouse'].forEach(function(key) {
+    const panel = document.getElementById('wac-matrix-' + key + '-panel');
+    if (panel) panel.style.display = 'none';
+  });
+}
+
+function toggleWacHistoryFilter(key) {
+  const panel = document.getElementById('wac-matrix-' + key + '-panel');
+  if (!panel) return;
+  const shouldOpen = panel.style.display !== 'block';
+  closeWacHistoryFilters();
+  panel.style.display = shouldOpen ? 'block' : 'none';
+  if (shouldOpen) {
+    const search = document.getElementById('wac-matrix-' + key + '-search');
+    if (search) search.focus();
+  }
+}
+
+function filterWacHistoryOptions(key) {
+  const search = (document.getElementById('wac-matrix-' + key + '-search')?.value || '').trim().toLowerCase();
+  document.querySelectorAll('#wac-matrix-' + key + '-options .wac-history-option').forEach(function(option) {
+    option.style.display = option.textContent.toLowerCase().includes(search) ? 'flex' : 'none';
+  });
+}
+
+async function renderWacHistoryMatrix() {
+  const root = document.getElementById('content-inner');
+  if (window._wacHistoryOutsideHandler) document.removeEventListener('click', window._wacHistoryOutsideHandler);
+  window._wacHistoryOutsideHandler = function(e) {
+    if (!e.target || !e.target.closest || !e.target.closest('.wac-history-multi')) closeWacHistoryFilters();
+  };
+  document.addEventListener('click', window._wacHistoryOutsideHandler);
+  window._wacHistoryMatrixData = null;
+
+  if (!document.getElementById('wac-history-matrix-style')) {
+    const style = document.createElement('style');
+    style.id = 'wac-history-matrix-style';
+    style.textContent =
+      '.wac-history-page .wac-history-filter-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px}' +
+      '.wac-history-page .wac-history-multi{position:relative;min-width:145px;flex:0 0 auto}' +
+      '.wac-history-page .wac-history-multi-trigger{height:34px;min-width:145px;padding:0 11px;border:1px solid #d2d2d7;border-radius:8px;background:#f5f5f7;color:#1d1d1f;font:inherit;font-size:13px;display:flex;align-items:center;justify-content:space-between;gap:12px;cursor:pointer;transition:background .15s,border-color .15s}' +
+      '.wac-history-page .wac-history-multi-trigger:hover{background:#ececf0;border-color:#b8b8bd}' +
+      '.wac-history-page .wac-history-multi-trigger:focus{outline:none;border-color:#007aff;box-shadow:0 0 0 3px rgba(0,122,255,.16)}' +
+      '.wac-history-page .wac-history-chevron{color:#8e8e93;font-size:14px}' +
+      '.wac-history-page .wac-history-multi-panel{position:absolute;top:calc(100% + 6px);left:0;z-index:90;min-width:240px;width:max(100%,260px);padding:9px;background:rgba(255,255,255,.98);border:1px solid #d2d2d7;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.14)}' +
+      '.wac-history-page .wac-history-multi-search{width:100%;height:32px;padding:5px 9px;border:1px solid #d2d2d7;border-radius:7px;background:#fff;font:inherit;font-size:12px;outline:none;margin-bottom:7px}' +
+      '.wac-history-page .wac-history-multi-search:focus{border-color:#007aff;box-shadow:0 0 0 2px rgba(0,122,255,.12)}' +
+      '.wac-history-page .wac-history-multi-options{max-height:220px;overflow:auto;display:flex;flex-direction:column;gap:1px}' +
+      '.wac-history-page .wac-history-option{display:flex;align-items:center;gap:8px;padding:6px 7px;border-radius:6px;font-size:12px;cursor:pointer;color:#1d1d1f}' +
+      '.wac-history-page .wac-history-option:hover{background:#f5f5f7}' +
+      '.wac-history-page .wac-history-option input{accent-color:#007aff;margin:0}' +
+      '.wac-history-page .wac-history-date-input{height:34px;padding:4px 9px;border:1px solid #d2d2d7;border-radius:8px;background:#f5f5f7;font:inherit;font-size:13px;color:#1d1d1f}' +
+      '.wac-history-page .wac-history-table-wrap{overflow:auto;max-height:calc(100vh - 330px);border-radius:10px}' +
+      '.wac-history-page .wac-history-table{min-width:max-content;border-collapse:separate;border-spacing:0}' +
+      '.wac-history-page .wac-history-table th,.wac-history-page .wac-history-table td{text-align:left!important;vertical-align:middle;white-space:nowrap}' +
+      '.wac-history-page .wac-history-table thead th{position:sticky;top:0;z-index:30;background:var(--table-head-bg,#f5f6f8);box-shadow:0 1px 0 var(--border,#e5e5ea)}' +
+      '.wac-history-page .wac-history-table tbody td{background:var(--surface,#fff)}' +
+      '.wac-history-page .wac-history-table .wac-sticky{position:sticky;z-index:5;background:var(--surface,#fff)}' +
+      '.wac-history-page .wac-history-table thead .wac-sticky{z-index:45;background:var(--table-head-bg,#f5f6f8)}' +
+      '.wac-history-page .wac-history-fx{font-size:10px;color:var(--text-secondary);margin-top:3px;white-space:nowrap}' +
+      '.wac-history-page .wac-history-source{font-size:10px;color:#8e8e93;margin-top:2px}' +
+      '.wac-history-page .wac-history-title-actions{display:flex;gap:8px;align-items:center}' +
+      '.wac-history-import-notice{padding:11px 13px;border:1px solid #d6e4ff;background:#f0f6ff;border-radius:10px;color:#344054;font-size:12px;line-height:1.65;margin-bottom:12px}' +
+      '.wac-history-import-drop{border:1.5px dashed #c7c7cc;border-radius:12px;padding:25px 14px;text-align:center;background:#fafafa;cursor:pointer;color:#4b5563}' +
+      '.wac-history-import-drop:hover{border-color:#007aff;background:#f5f9ff}' +
+      '.wac-history-import-preview{max-height:280px;overflow:auto;border:1px solid #e5e5ea;border-radius:8px;margin-top:10px}' +
+      '.wac-history-import-preview table{min-width:100%;border-collapse:collapse;font-size:12px}' +
+      '.wac-history-import-preview th,.wac-history-import-preview td{padding:7px 8px;border-bottom:1px solid #eee;text-align:left;white-space:nowrap}' +
+      '.wac-history-import-preview th{position:sticky;top:0;background:#f5f5f7;z-index:1}' +
+      '@media(max-width:760px){.wac-history-page .wac-history-table-wrap{max-height:calc(100vh - 390px)}.wac-history-page .wac-history-multi{flex:1;min-width:125px}.wac-history-page .wac-history-multi-trigger{width:100%;min-width:125px}}';
+    document.head.appendChild(style);
+  }
+
+  const canImport = typeof hasPermission === 'function' && hasPermission('ci_edit');
+  root.innerHTML = '<div id="flash-container"></div><div class="wac-history-page">' +
+    '<div class="filter-bar" style="display:block">' +
+      '<div class="wac-history-filter-row">' +
+        '<input id="wac-matrix-search" class="form-control" style="min-width:220px;flex:1;height:34px;border-radius:8px" placeholder="搜索 SKU / 产品名称" onkeydown="if(event.key===\'Enter\')loadWacHistoryMatrix(false)">' +
+        _wacMatrixMultiMarkup('brand','全部品牌') +
+        _wacMatrixMultiMarkup('country','全部国家') +
+        _wacMatrixMultiMarkup('warehouse','全部仓库') +
+      '</div>' +
+      '<div class="wac-history-filter-row" style="margin-bottom:0">' +
+        '<label style="font-size:12px;color:var(--text-secondary)">确认日期</label>' +
+        '<input id="wac-matrix-from" type="date" class="wac-history-date-input">' +
+        '<span style="color:var(--text-secondary)">至</span>' +
+        '<input id="wac-matrix-to" type="date" class="wac-history-date-input">' +
+        '<button class="btn btn-primary btn-sm" onclick="loadWacHistoryMatrix(false)">查询</button>' +
+        '<button class="btn btn-secondary btn-sm" onclick="resetWacHistoryMatrix()">重置</button>' +
+        '<span id="wac-matrix-count" style="font-size:12px;color:var(--text-secondary);margin-left:auto"></span>' +
+      '</div>' +
+    '</div>' +
+    '<div class="table-section">' +
+      '<div class="table-section-title"><div class="table-section-title-left">📊 WAC历史成本矩阵</div>' +
+      '<div class="wac-history-title-actions">' +
+        (canImport ? '<button class="btn btn-primary btn-sm" onclick="openWacHistoryImport()">📥 导入历史WAC</button>' : '') +
+      '</div></div>' +
+      '<div id="wac-matrix-table"><div class="loading-state">加载中...</div></div>' +
+    '</div></div>';
   await loadWacHistoryMatrix(true);
 }
-function _wacMatrixSelected(id){
-  const el=document.getElementById(id);
-  return el?Array.from(el.selectedOptions).map(o=>o.value).filter(Boolean):[];
+
+function resetWacHistoryMatrix() {
+  ['wac-matrix-search','wac-matrix-from','wac-matrix-to','wac-matrix-brand-search','wac-matrix-country-search','wac-matrix-warehouse-search'].forEach(function(id) {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  ['brand','country','warehouse'].forEach(function(key) {
+    document.querySelectorAll('input[data-wac-filter="' + key + '"]').forEach(function(el){el.checked=false;});
+    updateWacHistoryFilterLabel(key);
+  });
+  loadWacHistoryMatrix(false);
 }
-function _wacMatrixFillSelect(id,values,placeholder){
-  const el=document.getElementById(id);if(!el)return;
-  const selected=new Set(Array.from(el.selectedOptions||[]).map(o=>o.value));
-  el.innerHTML=values.map(v=>'<option value="'+esc(v)+'" '+(selected.has(v)?'selected':'')+'>'+esc(v)+'</option>').join('');
-  el.title=placeholder+'（可多选）';
-}
-function resetWacHistoryMatrix(){
-  ['wac-matrix-search','wac-matrix-from','wac-matrix-to'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
-  ['wac-matrix-brand','wac-matrix-country','wac-matrix-warehouse'].forEach(id=>{const e=document.getElementById(id);if(e)Array.from(e.options).forEach(o=>o.selected=false);});
-  loadWacHistoryMatrix();
-}
-async function loadWacHistoryMatrix(init){
-  const target=document.getElementById('wac-matrix-table');if(!target)return;
-  try{
-    const data=await api('/api/wac/history-matrix');
-    const rows=Array.isArray(data.rows)?data.rows:[];
-    if(init){
-      _wacMatrixFillSelect('wac-matrix-brand',data.filters.brands||[],'品牌');
-      _wacMatrixFillSelect('wac-matrix-country',data.filters.countries||[],'国家');
-      _wacMatrixFillSelect('wac-matrix-warehouse',data.filters.warehouses||[],'仓库');
+
+async function loadWacHistoryMatrix(refresh) {
+  const target = document.getElementById('wac-matrix-table');
+  if (!target) return;
+  try {
+    if (refresh || !window._wacHistoryMatrixData) {
+      const data = await api('/api/wac/history-matrix');
+      window._wacHistoryMatrixData = data;
+      _wacMatrixFillMulti('brand',data.filters.brands || [],'品牌');
+      _wacMatrixFillMulti('country',data.filters.countries || [],'国家');
+      _wacMatrixFillMulti('warehouse',data.filters.warehouses || [],'仓库');
     }
-    const brands=_wacMatrixSelected('wac-matrix-brand'),countries=_wacMatrixSelected('wac-matrix-country'),warehouses=_wacMatrixSelected('wac-matrix-warehouse');
-    const search=(document.getElementById('wac-matrix-search')?.value||'').trim().toLowerCase();
-    const from=document.getElementById('wac-matrix-from')?.value||'',to=document.getElementById('wac-matrix-to')?.value||'';
-    const selected=rows.filter(r=>
-      (!brands.length||brands.includes(r.brand||''))&&
-      (!countries.length||countries.includes(r.country||''))&&
-      (!warehouses.length||warehouses.includes(r.warehouse||''))&&
-      (!search||String(r.sku_code||'').toLowerCase().includes(search)||String(r.model||'').toLowerCase().includes(search))
-    );
-    const dates=[...new Set(selected.map(r=>String(r.confirmed_at||'').slice(0,10)).filter(d=>d&&(!from||d>=from)&&(!to||d<=to)))].sort().reverse();
-    const groupMap=new Map();
-    selected.forEach(r=>{
-      const key=[r.sku_code,r.brand,r.country,r.warehouse].join('¦');
-      if(!groupMap.has(key))groupMap.set(key,{sku:r.sku_code,brand:r.brand,country:r.country,warehouse:r.warehouse,records:[]});
+    const rows = Array.isArray(window._wacHistoryMatrixData.rows) ? window._wacHistoryMatrixData.rows : [];
+    const brands = _wacMatrixSelected('brand');
+    const countries = _wacMatrixSelected('country');
+    const warehouses = _wacMatrixSelected('warehouse');
+    const search = (document.getElementById('wac-matrix-search')?.value || '').trim().toLowerCase();
+    const from = document.getElementById('wac-matrix-from')?.value || '';
+    const to = document.getElementById('wac-matrix-to')?.value || '';
+    const selected = rows.filter(function(r) {
+      const date = String(r.confirmed_at || '').slice(0,10);
+      return (!brands.length || brands.includes(r.brand || '')) &&
+        (!countries.length || countries.includes(r.country || '')) &&
+        (!warehouses.length || warehouses.includes(r.warehouse || '')) &&
+        (!search || String(r.sku_code || '').toLowerCase().includes(search) || String(r.model || '').toLowerCase().includes(search)) &&
+        (!from || date >= from) && (!to || date <= to);
+    });
+    const dates = Array.from(new Set(selected.map(r => String(r.confirmed_at || '').slice(0,10)).filter(Boolean))).sort().reverse();
+    const groupMap = new Map();
+    selected.forEach(function(r) {
+      const key = [r.sku_code,r.brand,r.country,r.warehouse].join('¦');
+      if (!groupMap.has(key)) groupMap.set(key,{sku:r.sku_code,brand:r.brand,country:r.country,warehouse:r.warehouse,records:[]});
       groupMap.get(key).records.push(r);
     });
-    const groups=[...groupMap.values()].sort((a,b)=>String(a.sku).localeCompare(String(b.sku)));
-    const money=v=>v===null||v===undefined||v===''?'—':Number(v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4});
-    const latestOf=g=>g.records.slice().sort((a,b)=>String(b.confirmed_at).localeCompare(String(a.confirmed_at))||Number(b.version_no||0)-Number(a.version_no||0))[0];
-    const prevOf=g=>g.records.slice().sort((a,b)=>String(b.confirmed_at).localeCompare(String(a.confirmed_at))||Number(b.version_no||0)-Number(a.version_no||0))[1];
-    document.getElementById('wac-matrix-count').textContent=groups.length+' 个 SKU · '+dates.length+' 个确认日期';
-    if(!groups.length){target.innerHTML='<div class="empty-state"><div class="empty-icon">📊</div>暂无符合条件的WAC历史记录</div>';return;}
-    let html='<div class="table-container" style="overflow:auto;max-height:calc(100vh - 330px);border-radius:10px"><table class="data-table" style="min-width:max-content;border-collapse:separate;border-spacing:0"><thead><tr>'+
-      '<th style="position:sticky;left:0;z-index:8;background:var(--table-head-bg,#f5f6f8);min-width:150px">SKU</th>'+
-      '<th style="position:sticky;left:150px;z-index:8;background:var(--table-head-bg,#f5f6f8);min-width:110px">品牌</th>'+
-      '<th style="position:sticky;left:260px;z-index:8;background:var(--table-head-bg,#f5f6f8);min-width:110px">国家</th>'+
-      '<th style="position:sticky;left:370px;z-index:8;background:var(--table-head-bg,#f5f6f8);min-width:160px">仓库</th>'+
-      '<th style="position:sticky;left:530px;z-index:8;background:var(--table-head-bg,#f5f6f8);min-width:130px;text-align:right">Latest WAC</th>'+
-      '<th style="position:sticky;left:660px;z-index:8;background:var(--table-head-bg,#f5f6f8);min-width:165px">较上次 WAC 变化</th>'+
-      '<th style="position:sticky;left:825px;z-index:8;background:var(--table-head-bg,#f5f6f8);min-width:120px">最后入库日期</th>'+
-      dates.map(d=>'<th style="min-width:125px;text-align:right">'+esc(d)+'</th>').join('')+
+    const groups = Array.from(groupMap.values()).sort((a,b)=>String(a.sku).localeCompare(String(b.sku)));
+    const money = function(v) {
+      return v === null || v === undefined || v === '' || !Number.isFinite(Number(v)) ? '—' :
+        Number(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:4});
+    };
+    const ordered = function(g) {
+      return g.records.slice().sort((a,b)=>String(b.confirmed_at).localeCompare(String(a.confirmed_at)) || Number(b.version_no||0)-Number(a.version_no||0));
+    };
+    const latestOf = function(g){return ordered(g)[0];};
+    const prevOf = function(g){return ordered(g)[1];};
+    const fxLabel = function(r) {
+      if (!r) return '';
+      const rate = Number(r.rmb_to_local_rate);
+      if (Number.isFinite(rate) && rate > 0 && r.local_currency) {
+        return '1 RMB = ' + Number(rate).toLocaleString('en-US',{maximumFractionDigits:8}) + ' ' + esc(r.local_currency);
+      }
+      return r.local_currency ? '历史汇率缺失' : '未配置本币币种';
+    };
+    const countEl = document.getElementById('wac-matrix-count');
+    if (countEl) countEl.textContent = groups.length + ' 个 SKU/仓库组合 · ' + dates.length + ' 个历史日期';
+    if (!groups.length) {
+      target.innerHTML = '<div class="empty-state"><div class="empty-icon">📊</div>暂无符合条件的WAC历史记录</div>';
+      return;
+    }
+
+    let html = '<div class="wac-history-table-wrap"><table class="data-table wac-history-table"><thead><tr>' +
+      '<th class="wac-sticky" style="left:0;min-width:150px">SKU</th>' +
+      '<th class="wac-sticky" style="left:150px;min-width:110px">品牌</th>' +
+      '<th class="wac-sticky" style="left:260px;min-width:120px">国家</th>' +
+      '<th class="wac-sticky" style="left:380px;min-width:160px">仓库</th>' +
+      '<th class="wac-sticky" style="left:540px;min-width:140px">Latest WAC</th>' +
+      '<th class="wac-sticky" style="left:680px;min-width:160px">较上次 WAC 变化</th>' +
+      '<th class="wac-sticky" style="left:840px;min-width:125px">最后入库日期</th>' +
+      dates.map(d=>'<th style="min-width:150px">'+esc(d)+'</th>').join('') +
       '</tr></thead><tbody>';
-    groups.forEach(g=>{
-      const latest=latestOf(g),prev=prevOf(g);
-      const current=Number(latest?.new_avg_cost),previous=Number(prev?.new_avg_cost);
-      const validPrev=prev&&Number.isFinite(previous)&&previous!==0&&Number.isFinite(current);
-      const pct=validPrev?(current-previous)/previous*100:null,delta=validPrev?current-previous:null;
-      const trend=pct===null?'—':(pct>0?'↑ +':pct<0?'↓ ':'')+pct.toFixed(2)+'%';
-      const trendColor=pct===null?'var(--text-secondary)':pct>0?'#16a34a':pct<0?'#dc2626':'var(--text-secondary)';
-      const dateVals=new Map();
-      g.records.forEach(r=>{const d=String(r.confirmed_at||'').slice(0,10);if(dates.includes(d)){const old=dateVals.get(d);if(!old||String(r.confirmed_at)>String(old.confirmed_at))dateVals.set(d,r);}});
-      html+='<tr>'+
-        '<td style="position:sticky;left:0;z-index:4;background:var(--surface,#fff);font-weight:600">'+esc(g.sku||'')+'</td>'+
-        '<td style="position:sticky;left:150px;z-index:4;background:var(--surface,#fff)">'+esc(g.brand||'—')+'</td>'+
-        '<td style="position:sticky;left:260px;z-index:4;background:var(--surface,#fff)">'+esc(g.country||'—')+'</td>'+
-        '<td style="position:sticky;left:370px;z-index:4;background:var(--surface,#fff)">'+esc(g.warehouse||'—')+'</td>'+
-        '<td style="position:sticky;left:530px;z-index:4;background:var(--surface,#fff);text-align:right;font-weight:600">'+money(latest?.new_avg_cost)+'</td>'+
-        '<td style="position:sticky;left:660px;z-index:4;background:var(--surface,#fff);white-space:nowrap"><span style="color:'+trendColor+';font-weight:600">'+trend+'</span>'+(delta===null?'':'<div style="font-size:11px;color:var(--text-secondary)">'+(delta>0?'+':'')+money(delta)+'</div>')+'</td>'+
-        '<td style="position:sticky;left:825px;z-index:4;background:var(--surface,#fff)">'+esc(latest?.last_inbound_date||'—')+'</td>'+
-        dates.map(d=>'<td style="text-align:right">'+(dateVals.has(d)?money(dateVals.get(d).new_avg_cost):'—')+'</td>').join('')+
+
+    groups.forEach(function(g) {
+      const latest = latestOf(g), previous = prevOf(g);
+      const current = Number(latest && latest.new_avg_cost);
+      const prior = Number(previous && previous.new_avg_cost);
+      const validPrevious = !!previous && Number.isFinite(prior) && prior !== 0 && Number.isFinite(current);
+      const pct = validPrevious ? (current-prior)/prior*100 : null;
+      const delta = validPrevious ? current-prior : null;
+      const trend = pct === null ? '—' : ((pct > 0 ? '↑ +' : pct < 0 ? '↓ ' : '') + pct.toFixed(2) + '%');
+      const trendColor = pct === null ? 'var(--text-secondary)' : (pct > 0 ? '#16a34a' : pct < 0 ? '#dc2626' : 'var(--text-secondary)');
+      const dateVals = new Map();
+      g.records.forEach(function(r) {
+        const d = String(r.confirmed_at || '').slice(0,10);
+        const old = dateVals.get(d);
+        if (!old || String(r.confirmed_at) > String(old.confirmed_at) ||
+          (String(r.confirmed_at) === String(old.confirmed_at) && Number(r.version_no||0) > Number(old.version_no||0))) dateVals.set(d,r);
+      });
+      const latestCell = money(latest && latest.new_avg_cost) + (latest && latest.local_currency ? ' ' + esc(latest.local_currency) : '');
+      html += '<tr>' +
+        '<td class="wac-sticky" style="left:0;font-weight:600">' + esc(g.sku || '') + '</td>' +
+        '<td class="wac-sticky" style="left:150px">' + esc(g.brand || '—') + '</td>' +
+        '<td class="wac-sticky" style="left:260px">' + esc(g.country || '—') + '</td>' +
+        '<td class="wac-sticky" style="left:380px">' + esc(g.warehouse || '—') + '</td>' +
+        '<td class="wac-sticky" style="left:540px;font-weight:600">' + latestCell + '</td>' +
+        '<td class="wac-sticky" style="left:680px;white-space:nowrap"><span style="color:' + trendColor + ';font-weight:600">' + trend + '</span>' +
+          (delta === null ? '' : '<div class="wac-history-fx">' + (delta > 0 ? '+' : '') + money(delta) + (latest && latest.local_currency ? ' ' + esc(latest.local_currency) : '') + '</div>') +
+        '</td>' +
+        '<td class="wac-sticky" style="left:840px">' + esc(latest && latest.last_inbound_date || '—') + '</td>' +
+        dates.map(function(d) {
+          const record = dateVals.get(d);
+          if (!record) return '<td>—</td>';
+          return '<td><div>' + money(record.new_avg_cost) + (record.local_currency ? ' ' + esc(record.local_currency) : '') + '</div>' +
+            '<div class="wac-history-fx">' + fxLabel(record) + '</div>' +
+            (record.source_type === 'historical_import' ? '<div class="wac-history-source">历史导入</div>' : '') +
+            '</td>';
+        }).join('') +
       '</tr>';
     });
-    html+='</tbody></table></div><div style="padding:8px 2px;font-size:11px;color:var(--text-secondary)">Latest WAC及变化按该 SKU、品牌、国家、仓库最近两次成功确认记录计算；日期列显示该日最后一次确认值。横向滚动可查看全部历史日期。</div>';
-    target.innerHTML=html;
-  }catch(e){target.innerHTML='<div class="empty-state">'+esc(e.message||'加载失败')+'</div>';}
+    html += '</tbody></table></div>' +
+      '<div style="padding:8px 2px;font-size:11px;color:var(--text-secondary)">Latest WAC及变化按筛选范围内最近两次确认记录计算；每个日期列显示当日最后一次WAC。历史汇率只显示已保存快照或对应日期的精确汇率，缺失时不使用当前汇率替代。横向滚动可查看全部历史日期。</div>';
+    target.innerHTML = html;
+  } catch(e) {
+    target.innerHTML = '<div class="empty-state">' + esc(e.message || '加载失败') + '</div>';
+  }
+}
+
+// ==================== WAC历史记录导入（复用库存导入的Excel解析/模板/预检查交互） ====================
+const WAC_HISTORY_IMPORT_COLUMNS = [
+  {key:'sku_code',aliases:['SKU','sku_code']},
+  {key:'brand',aliases:['品牌','brand']},
+  {key:'country',aliases:['国家','country']},
+  {key:'warehouse',aliases:['仓库','warehouse']},
+  {key:'new_avg_cost',aliases:['历史WAC（本币）','历史WAC','WAC','Latest WAC','new_avg_cost','historical_wac']},
+  {key:'confirmed_at',aliases:['确认日期','WAC日期','历史日期','confirmed_at','confirmation_date']},
+  {key:'last_inbound_date',aliases:['最后入库日期','last_inbound_date']},
+  {key:'local_currency',aliases:['本币币种','local_currency','currency']},
+  {key:'rmb_to_local_rate',aliases:['1 RMB = 本币汇率','人民币汇率','rmb_to_local_rate','fx_rate']},
+  {key:'fx_rate_date',aliases:['汇率日期','fx_rate_date','exchange_rate_date']}
+];
+
+function openWacHistoryImport() {
+  const body = '<div class="wac-history-import-notice">' +
+    '<b>导入范围：</b>只新增锁定的历史WAC记录，用于历史矩阵展示。<b>不会修改</b>库存总表当前WAC、库存数量、库存货值，也不会覆盖已有历史记录。' +
+    '<br>必填：SKU、国家、仓库、历史WAC（本币）、确认日期。品牌可留空；填写时必须与SKU主数据一致。' +
+    '<br>人民币汇率为选填；留空时只匹配对应汇率日期的历史汇率，不会拿今天汇率代替。' +
+    '</div>' +
+    '<div id="wac-history-import-drop" class="wac-history-import-drop" onclick="document.getElementById(\'wac-history-import-file\').click()" ' +
+      'ondragover="event.preventDefault();this.style.borderColor=\'#007aff\';this.style.background=\'#f5f9ff\'" ' +
+      'ondragleave="this.style.borderColor=\'#c7c7cc\';this.style.background=\'#fafafa\'" ' +
+      'ondrop="event.preventDefault();this.style.borderColor=\'#c7c7cc\';this.style.background=\'#fafafa\';handleWacHistoryImportFile(event.dataTransfer.files[0])">' +
+      '<div style="font-size:34px;margin-bottom:7px">📥</div><div style="font-weight:600">点击上传或拖拽历史WAC文件</div>' +
+      '<div style="font-size:12px;color:#8e8e93;margin-top:5px">支持 .xlsx / .xls / .csv 格式</div></div>' +
+    '<input type="file" id="wac-history-import-file" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleWacHistoryImportFile(this.files[0])">' +
+    '<div id="wac-history-import-status" style="margin-top:12px"></div>' +
+    '<div id="wac-history-import-preview"></div>' +
+    '<div id="wac-history-import-result" style="margin-top:10px"></div>';
+  const footer = '<button class="btn btn-secondary" onclick="downloadWacHistoryImportTemplate()">下载模板</button>' +
+    '<button class="btn btn-secondary" onclick="closeModal()">关闭</button>' +
+    '<button class="btn btn-primary" id="wac-history-import-submit" onclick="submitWacHistoryImport()" disabled>导入历史WAC</button>';
+  openModal('导入历史WAC',body,footer);
+  window._wacHistoryImportData = [];
+  window._wacHistoryImportPrecheck = null;
+  window._wacHistoryImportPassedFingerprint = null;
+  window._wacHistoryImportPrecheckSeq = 0;
+  window._wacHistoryImportBusy = false;
+}
+
+function _wacHistoryImportDate(value) {
+  if (value === null || value === undefined || String(value).trim() === '') return '';
+  if (typeof parseDateStr === 'function') {
+    const parsed = parseDateStr(value);
+    if (parsed) return String(parsed).slice(0,10);
+  }
+  return String(value).trim().slice(0,10);
+}
+
+function _wacHistoryImportPayload() {
+  return (window._wacHistoryImportData || []).map(function(r) {
+    return {
+      row_no:r._rowNum,
+      sku_code:r.sku_code || '',
+      brand:r.brand || '',
+      country:r.country || '',
+      warehouse:r.warehouse || '',
+      new_avg_cost:r.new_avg_cost,
+      confirmed_at:r.confirmed_at || '',
+      last_inbound_date:r.last_inbound_date || '',
+      local_currency:r.local_currency || '',
+      rmb_to_local_rate:r.rmb_to_local_rate,
+      fx_rate_date:r.fx_rate_date || ''
+    };
+  });
+}
+
+function handleWacHistoryImportFile(file) {
+  if (!file) return;
+  const ext = String(file.name || '').split('.').pop().toLowerCase();
+  if (!['xlsx','xls','csv'].includes(ext)) {
+    showToast('仅支持 .xlsx / .xls / .csv 格式','danger');
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const wb = ext === 'csv' ? XLSX.read(e.target.result,{type:'string',codepage:65001}) :
+        XLSX.read(new Uint8Array(e.target.result),{type:'array',cellDates:true});
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws,{header:1,defval:'',raw:false,dateNF:'yyyy-mm-dd'});
+      if (rows.length < 2) { showToast('文件为空或仅包含表头','danger'); return; }
+      const headers = rows[0].map(h=>String(h || '').trim());
+      const records = [];
+      for (let i=1;i<rows.length;i++) {
+        const row=rows[i];
+        if (!row || row.every(c=>c===null || c===undefined || String(c).trim()==='')) continue;
+        const rec={_rowNum:i+1,_errors:[]};
+        WAC_HISTORY_IMPORT_COLUMNS.forEach(function(col) {
+          const idx=headers.findIndex(h=>col.aliases.includes(h));
+          if (idx < 0 || row[idx] === undefined || row[idx] === null || String(row[idx]).trim() === '') return;
+          let value = row[idx];
+          if (typeof value === 'string') value = value.trim();
+          if (['confirmed_at','last_inbound_date','fx_rate_date'].includes(col.key)) value = _wacHistoryImportDate(value);
+          if (col.key === 'new_avg_cost' || col.key === 'rmb_to_local_rate') value = Number(String(value).replace(/,/g,'').trim());
+          rec[col.key]=value;
+        });
+        if (!rec.sku_code) rec._errors.push('SKU不能为空');
+        if (!rec.country) rec._errors.push('国家不能为空');
+        if (!rec.warehouse) rec._errors.push('仓库不能为空');
+        if (!rec.confirmed_at) rec._errors.push('确认日期不能为空或格式无效');
+        if (!Number.isFinite(Number(rec.new_avg_cost)) || Number(rec.new_avg_cost) <= 0) rec._errors.push('历史WAC必须为大于0的数字');
+        records.push(rec);
+      }
+      if (!records.length) { showToast('未找到有效数据行','danger'); return; }
+      window._wacHistoryImportData=records;
+      window._wacHistoryImportPrecheck=null;
+      window._wacHistoryImportPassedFingerprint=null;
+      renderWacHistoryImportPreview();
+      runWacHistoryImportPrecheck();
+    } catch(err) {
+      showToast('文件解析失败：' + (err.message || ''),'danger');
+    }
+  };
+  if (ext === 'csv') reader.readAsText(file,'UTF-8');
+  else reader.readAsArrayBuffer(file);
+}
+
+function renderWacHistoryImportPreview() {
+  const box=document.getElementById('wac-history-import-preview');
+  if (!box) return;
+  const records=window._wacHistoryImportData||[];
+  const precheck=window._wacHistoryImportPrecheck;
+  const blockedRows=new Map();
+  (precheck && precheck.blocking || []).forEach(function(issue) {
+    const key=Number(issue.row_no || issue.row);
+    if (!blockedRows.has(key)) blockedRows.set(key,[]);
+    blockedRows.get(key).push(issue.reason || issue.issue_type || '校验失败');
+  });
+  let html='<div class="wac-history-import-preview"><table><thead><tr><th>行</th><th>SKU</th><th>品牌</th><th>国家</th><th>仓库</th><th>历史WAC</th><th>确认日期</th><th>最后入库</th><th>本币</th><th>人民币汇率</th><th>校验</th></tr></thead><tbody>';
+  records.slice(0,30).forEach(function(r) {
+    const issues=(r._errors||[]).concat(blockedRows.get(Number(r._rowNum))||[]);
+    html+='<tr style="'+(issues.length?'background:#fff1f0':'')+'">' +
+      '<td>'+r._rowNum+'</td><td>'+esc(r.sku_code||'—')+'</td><td>'+esc(r.brand||'—')+'</td>' +
+      '<td>'+esc(r.country||'—')+'</td><td>'+esc(r.warehouse||'—')+'</td>' +
+      '<td>'+esc(r.new_avg_cost===undefined?'—':String(r.new_avg_cost))+'</td>' +
+      '<td>'+esc(r.confirmed_at||'—')+'</td><td>'+esc(r.last_inbound_date||'—')+'</td>' +
+      '<td>'+esc(r.local_currency||'—')+'</td><td>'+esc(r.rmb_to_local_rate===undefined?'—':String(r.rmb_to_local_rate))+'</td>' +
+      '<td>'+(issues.length?'<span style="color:#d92d20" title="'+esc(issues.join('；'))+'">✕ '+issues.length+'</span>':'<span style="color:#16a34a">待校验</span>')+'</td></tr>';
+  });
+  if(records.length>30) html+='<tr><td colspan="11" style="text-align:center;color:#8e8e93">还有 '+(records.length-30)+' 行未展开</td></tr>';
+  html+='</tbody></table></div>';
+  box.innerHTML=html;
+}
+
+function renderWacHistoryImportStatus() {
+  const box=document.getElementById('wac-history-import-status');
+  if (!box) return;
+  const records=window._wacHistoryImportData||[];
+  const localErrors=records.reduce((n,r)=>n+((r._errors||[]).length),0);
+  const result=window._wacHistoryImportPrecheck;
+  let html='';
+  if (!records.length) html='';
+  else if (localErrors) html='<div style="padding:10px 12px;border-radius:8px;background:#fff1f0;color:#b42318;font-size:12px">共 '+records.length+' 行，存在 '+localErrors+' 个格式问题，请修正文件后重新上传。</div>';
+  else if (!result) html='<div style="padding:10px 12px;border-radius:8px;background:#f0f6ff;color:#344054;font-size:12px">共 '+records.length+' 行，正在进行SKU、品牌、仓库及重复记录预检查……</div>';
+  else if (result.ok) html='<div style="padding:10px 12px;border-radius:8px;background:#f0fdf4;border:1px solid #bbf7d0;color:#166534;font-size:12px">预检查通过：可新增 '+(result.valid_count||0)+' 条；重复记录将跳过 '+(result.duplicate_count||0)+' 条；提示 '+((result.warnings||[]).length)+' 条。</div>';
+  else html='<div style="padding:10px 12px;border-radius:8px;background:#fff1f0;border:1px solid #fecaca;color:#b42318;font-size:12px">预检查未通过：发现 '+((result.blocking||[]).length)+' 个阻断问题，本次不会写入任何数据。</div>';
+  if (result && result.warnings && result.warnings.length) {
+    html+='<div style="margin-top:7px;padding:8px 10px;background:#fffbeb;border-radius:7px;color:#92400e;font-size:11px">汇率提示：'+result.warnings.slice(0,8).map(w=>'第 '+w.row+' 行 '+esc(w.message)).join('；')+(result.warnings.length>8?'；另有 '+(result.warnings.length-8)+' 条':'')+'</div>';
+  }
+  if (result && result.blocking && result.blocking.length) {
+    html+='<div style="margin-top:7px;font-size:11px;color:#b42318">'+result.blocking.slice(0,10).map(b=>'第 '+(b.row_no||b.row)+' 行：'+esc(b.reason)).join('<br>')+(result.blocking.length>10?'<br>另有 '+(result.blocking.length-10)+' 条':'')+'</div>';
+  }
+  box.innerHTML=html;
+}
+
+function updateWacHistoryImportButton() {
+  const btn=document.getElementById('wac-history-import-submit');
+  if (!btn) return;
+  const records=window._wacHistoryImportData||[];
+  const hasLocalErrors=records.some(r=>(r._errors||[]).length>0);
+  const result=window._wacHistoryImportPrecheck;
+  const fingerprint=JSON.stringify(_wacHistoryImportPayload());
+  const matches=window._wacHistoryImportPassedFingerprint===fingerprint;
+  btn.disabled=!(records.length>0&&!hasLocalErrors&&result&&result.ok===true&&matches&&!window._wacHistoryImportBusy);
+}
+
+async function runWacHistoryImportPrecheck() {
+  const records=window._wacHistoryImportData||[];
+  window._wacHistoryImportPrecheck=null;
+  window._wacHistoryImportPassedFingerprint=null;
+  const seq=++window._wacHistoryImportPrecheckSeq;
+  renderWacHistoryImportStatus();
+  renderWacHistoryImportPreview();
+  updateWacHistoryImportButton();
+  if (!records.length || records.some(r=>(r._errors||[]).length>0)) return;
+  const payload=_wacHistoryImportPayload();
+  const fingerprint=JSON.stringify(payload);
+  try {
+    const result=await api('/api/wac/history-import/precheck','POST',{items:payload});
+    if (seq!==window._wacHistoryImportPrecheckSeq) return;
+    window._wacHistoryImportPrecheck=result;
+    if (result.ok===true) window._wacHistoryImportPassedFingerprint=fingerprint;
+    renderWacHistoryImportStatus();
+    renderWacHistoryImportPreview();
+    updateWacHistoryImportButton();
+  } catch(e) {
+    if (seq!==window._wacHistoryImportPrecheckSeq) return;
+    window._wacHistoryImportPrecheck={ok:false,blocking:[{row:0,reason:e.message||'预检查请求失败'}],warnings:[]};
+    renderWacHistoryImportStatus();
+    renderWacHistoryImportPreview();
+    updateWacHistoryImportButton();
+  }
+}
+
+async function downloadWacHistoryImportTemplate() {
+  try {
+    const tpl=await api('/api/wac/history-import/template');
+    const wb=XLSX.utils.book_new();
+    const ws=XLSX.utils.aoa_to_sheet([tpl.columns||[]]);
+    XLSX.utils.book_append_sheet(wb,ws,'WAC历史导入');
+    const guide=XLSX.utils.aoa_to_sheet(tpl.instructions||[]);
+    XLSX.utils.book_append_sheet(wb,guide,'填写说明');
+    XLSX.writeFile(wb,'WAC历史导入模板.xlsx');
+  } catch(e) {
+    showToast(e.message||'模板下载失败','danger');
+  }
+}
+
+async function submitWacHistoryImport() {
+  const records=window._wacHistoryImportData||[];
+  const result=window._wacHistoryImportPrecheck;
+  const fingerprint=JSON.stringify(_wacHistoryImportPayload());
+  if (!records.length || !result || result.ok!==true || fingerprint!==window._wacHistoryImportPassedFingerprint) {
+    showToast('请先完成并通过预检查','warning');
+    return;
+  }
+  window._wacHistoryImportBusy=true;
+  updateWacHistoryImportButton();
+  try {
+    const imported=await api('/api/wac/history-import','POST',{items:_wacHistoryImportPayload()});
+    const box=document.getElementById('wac-history-import-result');
+    if (box) box.innerHTML='<div style="padding:12px;border-radius:9px;background:#f0fdf4;border:1px solid #bbf7d0;color:#166534;font-size:13px">导入完成：新增 '+(imported.inserted||0)+' 条，重复跳过 '+(imported.skipped_duplicates||0)+' 条。当前库存WAC未修改。</div>';
+    showToast('历史WAC导入完成','success');
+    await loadWacHistoryMatrix(true);
+  } catch(e) {
+    showToast(e.message||'历史WAC导入失败','danger');
+  } finally {
+    window._wacHistoryImportBusy=false;
+    updateWacHistoryImportButton();
+  }
 }
 
 async function renderInbound(){

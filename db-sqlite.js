@@ -2196,6 +2196,12 @@ function initDatabase() {
       confirmed_by TEXT DEFAULT '',
       confirmed_at TEXT DEFAULT '',
       logistics_batch_id TEXT,
+      last_inbound_date TEXT DEFAULT '',
+      local_currency TEXT DEFAULT '',
+      rmb_to_local_rate REAL,
+      fx_rate_date TEXT DEFAULT '',
+      source_type TEXT DEFAULT 'system',
+      import_batch_id TEXT DEFAULT '',
       created_at TEXT DEFAULT (datetime('now'))
     )
   `);
@@ -2458,6 +2464,23 @@ function initDatabase() {
     if (!wacCols.includes('logistics_batch_id')) {
       d.exec(`ALTER TABLE wac_history ADD COLUMN logistics_batch_id TEXT`);
     }
+  })();
+  
+  // WAC-HISTORY-IMPORT-01：为历史导入及汇率快照增加可选元数据列（幂等迁移）。
+  (function wacHistoryImportMetadataMigration() {
+    const d = getDB();
+    const wacCols = d.prepare('PRAGMA table_info(wac_history)').all().map(c => c.name);
+    const additions = [
+      ['last_inbound_date', "TEXT DEFAULT ''"],
+      ['local_currency', "TEXT DEFAULT ''"],
+      ['rmb_to_local_rate', 'REAL'],
+      ['fx_rate_date', "TEXT DEFAULT ''"],
+      ['source_type', "TEXT DEFAULT 'system'"],
+      ['import_batch_id', "TEXT DEFAULT ''"]
+    ];
+    additions.forEach(([name, definition]) => {
+      if (!wacCols.includes(name)) d.exec('ALTER TABLE wac_history ADD COLUMN ' + name + ' ' + definition);
+    });
   })();
 
   // CI-AMOUNT-VIEW-DEFAULT-V1
