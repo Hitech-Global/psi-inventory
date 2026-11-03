@@ -138,14 +138,20 @@ async function importShopOrderSheets(pool, { filePath, shopId, orderStatus, days
   return { written, sheets: sheets.length };
 }
 
-async function importProductSheets(pool, { filePath, shopId, days, sheets: given }) {
+async function importProductSheets(pool, { filePath, shopId, days, sheets: given, eventDate: givenDate }) {
   const sheets = given || parseProductSheets(XLSX.readFile(filePath));
   let written = 0;
   // The product sheet holds a period's figures for each product, not a
   // day's. The figures are written against the first day of the period:
   // they belong to the period, and spreading them across days would say
   // something the export does not.
-  const eventDate = days[0];
+  const eventDate = givenDate || (days && days.length ? days[0] : null);
+  if (!eventDate) {
+    throw new Error(
+      'the products cover a period rather than a day, so the period has to be known:'
+      + " give --date, or import the shop's own figures first so the period can be taken from them",
+    );
+  }
   for (const sheet of sheets) {
     for (const product of sheet.products) {
       await pool.query(
@@ -279,17 +285,27 @@ async function main() {
     const productSheets = pack ? pack.products : null;
     const ads = pack ? pack.ads : null;
 
-    if (args.stats || orderSheets) {
+    // The products cover a period rather than a day, so the day they are
+    // written against comes from the period itself — from the shop's own
+    // figures, which cover the same days.
+    let periodStart = startDate;
+    if (orderSheets) {
       const result = await importShopOrderSheets(pool, {
         filePath: args.stats ? path.resolve(args.stats) : null,
         shopId, days, sheets: orderSheets,
       });
       console.log(`店铺经营数据：${result.written} 行（${result.sheets} 个口径）`);
+      const first = orderSheets
+        .flatMap(sheet => sheet.days)
+        .map(day => day.eventDate)
+        .sort()[0];
+      if (first) periodStart = first;
     }
     if (args.products || productSheets) {
       const result = await importProductSheets(pool, {
         filePath: args.products ? path.resolve(args.products) : null,
         shopId, days, sheets: productSheets,
+        eventDate: periodStart,
       });
       console.log(`商品访客数据：${result.written} 行（${result.sheets} 个表）`);
     }
