@@ -13,6 +13,12 @@
         源码直跑时的情形。
       - 分支是 fix/shopee-brand-portal-modern-oauth-20261027，不是 main。
 
+    执行顺序（7 步）：
+      1 当前版本 → 2 清理已退出的一次性容器 → 3 备份数据库（pg_dump）
+      → 4 拉取代码 → 5 拉取后版本 → 6 重建镜像/应用 schema/启动服务 → 7 验证
+      备份在第 3 步、改表结构在第 6 步 —— 顺序不能颠倒，
+      否则 DDL 出问题时没有可回退的备份点。
+
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File deploy-analytics-windows.ps1
     powershell -ExecutionPolicy Bypass -File deploy-analytics-windows.ps1 -NoRestart
@@ -38,11 +44,32 @@ function Fail([string]$message) {
     exit 1
 }
 
-Write-Step '1/6 当前版本'
+Write-Step '1/7 当前版本'
 git log --oneline -1
 Write-Host "分支：$(git rev-parse --abbrev-ref HEAD)"
 
-Write-Step '2/6 备份数据库'
+Write-Step '2/7 清理已退出的一次性容器'
+# 为什么需要这一步：像 shopee-oauth-bootstrap-1101364305 这类一次性 bootstrap 容器
+# 退出后仍留在容器列表里，每次 docker compose 都会为它输出一行 stderr warning。
+# 而本脚本设了 $ErrorActionPreference='Stop'，PowerShell 会把 native command 的
+# stderr 输出当成 terminating error —— 于是部署在第一步就假失败，实际什么都没做。
+# 只删除已退出的容器（Exited 状态），绝不碰正在运行的服务容器。
+$exitedContainers = docker ps -a --filter 'status=exited' --format '{{.ID}} {{.Names}}' 2>$null
+if ($exitedContainers) {
+    foreach ($line in $exitedContainers) {
+        $parts = $line -split '\s+', 2
+        if ($parts.Count -lt 2) { continue }
+        $cid = $parts[0].Trim()
+        $cname = $parts[1].Trim()
+        if (-not $cid) { continue }
+        Write-Host "  清理已退出容器: $cname ($cid)"
+        docker rm -f $cid 2>&1 | Out-Null
+    }
+}
+
+Write-Step '3/7 备份数据库'
+# 注意：这一步是**真正的备份**（pg_dump + pg_restore --list 校验）。
+# 第 5 步里那个 schema 容器执行的是 DDL（建表/改表），不是备份 —— 别把两者混为一谈。
 $desktopDir = Join-Path $repoRoot 'shopee-analytics\deploy\desktop'
 Set-Location $desktopDir
 if (Test-Path 'runtime\.env') {
@@ -83,7 +110,7 @@ else {
     Write-Host '  （未找到 runtime\.env，跳过备份）'
 }
 
-Write-Step '3/6 拉取代码'
+Write-Step '4/7 拉取代码'
 Set-Location $repoRoot
 git fetch origin --prune
 if ((git status --porcelain | Where-Object { $_ -notmatch '^\?\?' }).Count -gt 0) {
@@ -98,7 +125,7 @@ if ((git rev-parse --abbrev-ref HEAD) -ne $Branch) {
 git pull --ff-only origin $Branch
 if ($LASTEXITCODE -ne 0) { Fail '拉取失败' }
 
-Write-Step '4/6 拉取后版本'
+Write-Step '5/7 拉取后版本'
 git log --oneline -1
 Write-Host "分支：$(git rev-parse --abbrev-ref HEAD)"
 
@@ -107,7 +134,7 @@ if ($NoRestart) {
     exit 0
 }
 
-Write-Step '5/6 重建镜像、应用 schema、启动服务'
+Write-Step '6/7 重建镜像、应用 schema、启动服务'
 Set-Location $desktopDir
 
 # ★ 必须带 --profile tools
@@ -117,15 +144,22 @@ Set-Location $desktopDir
 docker compose --env-file runtime/.env --profile tools build
 if ($LASTEXITCODE -ne 0) { Fail '镜像构建失败' }
 
-# schema 要用刚构建的镜像，且要能跑通
+# ★ 这一步是**执行 schema（DDL）**，不是备份。
+# 它会用刚构建的镜像跑 schema.sql 等 DDL 文件（事务包裹 + ROLLBACK 保护，幂等），
+# 把新增的表建出来。真正的备份在第 3 步的 pg_dump —— 两者别混为一谈。
+# 顺序很重要：先备份（第 3 步）再改表结构（这里），万一 DDL 出问题还有回退点。
 docker compose --env-file runtime/.env --profile tools run --rm schema 2>&1 | Out-Host
 if ($LASTEXITCODE -ne 0) { Fail 'schema 应用失败' }
 
-# 只重启 app 与 oauth，数据库与 worker 不动
-docker compose --env-file runtime/.env up -d app oauth
+# ★ 必须重建 worker
+# 原来这里只 `up -d app oauth`，worker 与 oauth 的传递依赖会落后于代码改动 ——
+# 表现为「前端已更新但后台同步任务还是旧代码」。
+# 上面第 6 步的 build 已经把镜像建好了，所以这里的 --build 只会命中缓存，
+# 不会重复构建 —— 它只是确保 app/oauth/worker 三者用的是同一批新镜像。
+docker compose --env-file runtime/.env up -d --build app oauth worker
 if ($LASTEXITCODE -ne 0) { Fail '重启失败' }
 
-Write-Step '6/6 验证'
+Write-Step '7/7 验证'
 Start-Sleep -Seconds 8
 
 function Probe([string]$path, [int]$expect) {

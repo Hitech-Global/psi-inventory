@@ -1,33 +1,39 @@
 name: Deploy Shopee Analytics to Production
 
-# 手动触发的生产部署。
+# ⚠️ 本 workflow 已废弃，请勿触发。
 #
-# 为什么需要它：生产服务器只暴露 80/443，SSH 端口对公网关闭，
-# 只能从服务器本机执行部署。有了这个 workflow，服务器上跑一次
-# `git pull` 换成 GitHub 侧的一次点击，之后不再需要登服务器。
+# 废弃原因：它的四条核心假设与真实生产架构**全部冲突**。
 #
-# 一次性准备（在服务器上做）：
-#   1. 生成一对部署密钥
-#        ssh-keygen -t ed25519 -C "github-actions-deploy" -f ~/.ssh/gh_deploy -N ""
-#   2. 把公钥加进服务器的 authorized_keys
-#        cat ~/.ssh/gh_deploy.pub >> ~/.ssh/authorized_keys
-#        chmod 600 ~/.ssh/authorized_keys
-#   3. 把私钥内容贴到仓库 Settings → Secrets and variables → Actions
-#      → New repository secret → 名字 DEPLOY_SSH_KEY
-#   4. 可选：DEPLOY_HOST / DEPLOY_USER / DEPLOY_DIR
-#      留空则由本 workflow 自动探测（见下面的探测步骤）。
+#   | 本 workflow 的假设                    | 真实生产架构                                        |
+#   |---------------------------------------|-----------------------------------------------------|
+#   | SSH 到一台 Linux 主机                  | Windows 台式机，仅经 Cloudflare Tunnel 暴露 80/443   |
+#   | 目录探测 $HOME /home /root /opt /srv…  | 生产目录 D:\电商数据分析系统\psi-inventory-feishu-auth |
+#   | sha256sum / cut / find / pm2          | PowerShell 环境，这些命令不适用                      |
+#   | git pull 之后前端立即生效              | 代码打进 Docker 镜像，必须 --build 重建才生效        |
 #
-# 之后：本 workflow 手动触发即可完成探测 → 备份 → 拉取 → 重启 → 验证。
+# 补充事实：
+#   - 仓库 secrets 只有 DEPLOY_SSH_KEY，DEPLOY_HOST / DEPLOY_USER / DEPLOY_DIR 全空；
+#     本 workflow 历史只跑过 2 次，均在第 2 步「缺 secret」处秒败。
+#   - 项目自己的 shopee-analytics/docs/production-deploy.md 第九节已写明
+#     本 workflow「不适用于 Production」。
+#
+# 正确的部署路径：**在生产 Windows 台式机上执行**
+#   shopee-analytics/deploy/deploy-analytics-windows.ps1
+# （由 Desktop Commander 通道远程触发）。该脚本负责 pg_dump 备份 → git pull →
+#   重建镜像 → 应用 schema → 重建 app/oauth/worker → 验证。
+#
+# 保留本文件仅为留档。若有人补上 DEPLOY_HOST 后误触发，流水线会在第 2 步
+# 因「源站地址探测不到」而失败，不会真正改动生产 —— 但仍请不要触发。
 
 on:
   workflow_dispatch:
     inputs:
       branch:
-        description: '要部署的分支'
+        description: '【已废弃】要部署的分支'
         required: true
         default: 'main'
       restart:
-        description: '是否重启应用进程'
+        description: '【已废弃】是否重启应用进程'
         type: boolean
         required: false
         default: true
@@ -154,13 +160,27 @@ jobs:
         run: |
           ssh production "cd '$DIR' && git log --oneline -1 && git rev-parse --short HEAD"
 
-      - name: Back up the database
+      - name: Back up the database (PostgreSQL)
         env:
           DIR: ${{ steps.locate.outputs.dir }}
         run: |
-          ssh production "cd '$DIR' && \
-            if [ -f scripts/backup.js ]; then node scripts/backup.js; \
-            else echo '::warning::未找到 scripts/backup.js —— 若生产用 PostgreSQL，请改用 pg_dump'; fi"
+          # ★ 必须用 pg_dump 备 PostgreSQL。
+          # 原来这里跑的是 `node scripts/backup.js` —— 那是 PSI 主应用的 **SQLite**
+          # 备份（data/inventory.db），而生产 shopee-analytics 用的是 **PostgreSQL**。
+          # 脚本不存在时只打 ::warning:: 继续 —— 备份实际从未发生，流程却照走，
+          # 让人误以为"已备份"就放心改了表结构。
+          ssh production "cd '$DIR/shopee-analytics/deploy/desktop' && \
+            if [ ! -f runtime/.env ]; then \
+              echo '::error::未找到 runtime/.env —— 无法确定数据库连接参数，部署中止'; exit 1; \
+            fi; \
+            set -a; . ./runtime/.env; set +a; \
+            STAMP=\$(date +%Y%m%d-%H%M%S); \
+            OUT=\"/tmp/shopee-analytics-\$STAMP.dump\"; \
+            docker compose --env-file runtime/.env exec -T postgres \
+              pg_dump -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -Fc -f \"\$OUT\" && \
+            docker compose --env-file runtime/.env exec -T postgres \
+              pg_restore --list \"\$OUT\" > /dev/null && \
+            echo '✅ PostgreSQL 备份完成并通过 pg_restore --list 校验'"
 
       - name: Pull the code
         env:
@@ -168,8 +188,10 @@ jobs:
         run: |
           # 拉取失败必须让整个步骤失败：若在此之后仍然重启，
           # 会把进程换成旧代码却以为部署成功。
+          # ★ 用 --ff-only：生产分支不允许产生 merge commit，
+          # 否则本地 merge 与远端 diverge，后续 pull 会持续冲突。
           ssh production "cd '$DIR' && \
-            git fetch origin && git pull origin '${{ inputs.branch }}' && \
+            git fetch origin && git pull --ff-only origin '${{ inputs.branch }}' && \
             git log --oneline -1"
 
       - name: Confirm the working tree is the code we just pulled
@@ -202,17 +224,21 @@ jobs:
         env:
           DIR: ${{ steps.locate.outputs.dir }}
         run: |
-          # 静态文件由应用直接托管（express.static 指向 shopee-analytics/web/），
-          # 所以 pull 完前端立即生效。比对线上与仓库的 sha256 确认这一点。
+          # ★ 静态文件**不是**由应用直接托管 —— 代码打进 Docker 镜像，
+          # 所以 pull 完前端不会立即生效，必须重建镜像。
+          # （原注释写「express.static 指向 shopee-analytics/web/，pull 完立即生效」
+          #   是源码直跑时的情形，与生产的 Docker 架构不符。）
+          # ★ 这里在 **ubuntu runner 上**算 sha256，用 sha256sum 是对的
+          #   （生产机是 PowerShell，但这个步骤的 curl 是在 runner 上发的）。
           EXPECTED=$(git -C "$DIR" show HEAD:shopee-analytics/web/app.js | sha256sum | cut -c1-16)
           curl -s --max-time 20 https://analytics.hitechanalysis.top/app.js -o /tmp/live_app.js || true
           ACTUAL=$(sha256sum /tmp/live_app.js 2>/dev/null | cut -c1-16)
           echo "仓库 app.js sha: $EXPECTED"
           echo "线上 app.js sha: $ACTUAL"
           if [ -n "$ACTUAL" ] && [ "$EXPECTED" = "$ACTUAL" ]; then
-            echo "✅ 前端已同步"
+            echo '✅ 前端已同步'
           else
-            echo "::warning::线上前端与仓库不一致 —— 若应用跑在容器里，镜像里是旧的，需要重建"
+            echo '::warning::线上前端与仓库不一致 —— 代码打进镜像，需要重建镜像才会生效'
           fi
 
       - name: Verify the deployment
