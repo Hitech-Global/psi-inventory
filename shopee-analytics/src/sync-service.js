@@ -9,6 +9,7 @@ const { fetchAllDiscountDetails } = require('./sync-discount');
 const { fetchOrderList, fetchOrderDetails } = require('./sync-orders');
 const { fetchAllReturnDetails } = require('./sync-returns');
 const { fetchShopBiDay } = require('./sync-shop-bi');
+const { fetchShopHealth } = require('./sync-account-health');
 const { fetchShopLivestreamDay } = require('./sync-shop-livestream');
 const { fetchShopInfo } = require('./sync-shop');
 const { recordPages, recordSnapshot } = require('./raw-snapshot');
@@ -40,6 +41,7 @@ class ShopeeSyncService {
     returnRepository,
     shopBiRepository,
     shopLivestreamRepository,
+    shopHealthRepository,
     shopRepository,
   }) {
     this.shopId = shopId;
@@ -52,6 +54,7 @@ class ShopeeSyncService {
     this.returnRepository = returnRepository;
     this.shopBiRepository = shopBiRepository;
     this.shopLivestreamRepository = shopLivestreamRepository;
+    this.shopHealthRepository = shopHealthRepository;
     this.shopRepository = shopRepository;
   }
 
@@ -486,6 +489,33 @@ class ShopeeSyncService {
       }
     }
     return { detailCount: result.details.length };
+  }
+
+  /**
+   * The shop's score and how well it is being run.
+   *
+   * The endpoint answers with a current period and a previous one rather
+   * than a day by day series, so the reading is kept against the day it
+   * was taken. Over days that becomes a trend.
+   */
+  async syncShopHealth({ eventDate }) {
+    const { client, accessToken } = await resolveRole(this.roleClients, 'ERP', this.shopId);
+    const result = await fetchShopHealth({ client, shopId: this.shopId, accessToken });
+    await recordSnapshot({
+      repository: this.rawRepository,
+      appRole: 'ERP',
+      endpointKey: 'accountHealth',
+      shopId: this.shopId,
+      requestJson: {},
+      responseJson: result.payload,
+    });
+    if (this.shopHealthRepository) {
+      await this.shopHealthRepository.upsertDaily({
+        eventDate,
+        health: { ...result.health, shopId: this.shopId },
+      });
+    }
+    return { shopRating: result.health.shopRating };
   }
 
   async syncReturns({ createTimeFrom, createTimeTo, updateTimeFrom, updateTimeTo, status }) {

@@ -26,6 +26,8 @@ const ENDPOINTS = Object.freeze({
   shopSalesPerformance: { app: 'BRAND_PORTAL', method: 'POST', path: '/api/v2/principal/get_shop_sales_performance_detail' },
   shopLivestreamPerformance: { app: 'BRAND_PORTAL', method: 'POST', path: '/api/v2/principal/get_shop_livestream_performance' },
   marketingHotListing: { app: 'ERP', method: 'GET', path: '/api/v2/business_insights/get_marketing_hot_listing' },
+  // 店铺评分与履约质量。ERP System 类应用才有这个权限 —— 广告类应用调它会被拒。
+  accountHealth: { app: 'ERP', method: 'GET', path: '/api/v2/account_health/get_shop_performance' },
 });
 
 const SYNC_POLICY = Object.freeze({
@@ -46,6 +48,7 @@ const SYNC_POLICY = Object.freeze({
   returns: { minutes: 30 },
   shopInfo: { minutes: 1440 },
   shopSalesPerformance: { minutes: 1440 },
+  accountHealth: { minutes: 360 },
 });
 
 module.exports = { ENDPOINTS, SYNC_POLICY };

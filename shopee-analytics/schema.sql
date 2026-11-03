@@ -447,6 +447,37 @@ CREATE TABLE IF NOT EXISTS shopee_shop_bi_daily (
   PRIMARY KEY (shop_id, event_date)
 );
 
+-- 店铺健康与履约：店铺评分、发货时效、取消率、退货退款率等。
+--
+-- 这些指标来自 account_health 端点，是"本期/上期"两个值而不是逐日序列，
+-- 所以每天落一行快照 —— 记的是那天看到的数，天数多了自然成趋势。
+-- 违规类指标（严重/其它违规/禁售/假货/垃圾信息）按事件数存。
+CREATE TABLE IF NOT EXISTS shopee_shop_health_daily (
+  shop_id BIGINT NOT NULL,
+  event_date DATE NOT NULL,
+  shop_rating NUMERIC(6,2),
+  csat_rate NUMERIC(20,8),
+  response_rate NUMERIC(20,8),
+  late_shipment_rate NUMERIC(20,8),
+  non_fulfillment_rate NUMERIC(20,8),
+  preparation_time NUMERIC(20,8),
+  cancellation_rate NUMERIC(20,8),
+  return_refund_rate NUMERIC(20,8),
+  pre_order_listing_rate NUMERIC(20,8),
+  pre_order_listing_amount NUMERIC(20,8),
+  severe_listing_violations NUMERIC(20,8),
+  other_listing_violations NUMERIC(20,8),
+  prohibited_listings NUMERIC(20,8),
+  counterfeit_ip_infringement NUMERIC(20,8),
+  spam_listings NUMERIC(20,8),
+  fulfillment_failed BIGINT,
+  listing_failed BIGINT,
+  custom_service_failed BIGINT,
+  raw_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (shop_id, event_date)
+);
+
 CREATE TABLE IF NOT EXISTS shopee_product_card_period (
   shop_id BIGINT NOT NULL,
   start_date DATE NOT NULL,

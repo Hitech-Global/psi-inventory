@@ -361,6 +361,12 @@ async function runBackfillShop({
     }));
   }
 
+  if (sourceSet.has('shop-health')) {
+    // 店铺评分只有"当前"这一读数可取，不能回填历史 ——
+    // 端点不会告诉我们昨天是多少。记下今天这一笔，往后每天续。
+    await run('shop-health', () => service.syncShopHealth({ eventDate: endDate }), { required: false });
+  }
+
   if (sourceSet.has('shop-bi')) {
     if (!shop.brandPortalTimezone || !shop.brandPortalPrincipalId) {
       summary.steps.push({

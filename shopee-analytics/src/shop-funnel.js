@@ -55,6 +55,19 @@ const METRIC_GROUPS = [
     ],
   },
   {
+    key: 'shopHealth',
+    label: '店铺健康',
+    labelEn: 'Shop Health',
+    kind: 'body',
+    rows: [
+      { key: 'shopRating', label: '店铺评分', labelEn: 'Shop Rating', format: 'number' },
+      { key: 'returnRefundRate', label: '退货退款率', labelEn: 'Return & Refund Rate', format: 'percent' },
+      { key: 'cancellationRate', label: '取消率', labelEn: 'Cancellation Rate', format: 'percent' },
+      { key: 'lateShipmentRate', label: '迟发率', labelEn: 'Late Shipment Rate', format: 'percent' },
+      { key: 'csatRate', label: '客服满意率', labelEn: 'CSAT', format: 'percent' },
+    ],
+  },
+  {
     key: 'afterSales',
     label: '售后与广告',
     labelEn: 'After-sales and advertising',
@@ -85,6 +98,11 @@ const SOURCE_LABELS = {
   conversionRate: '店铺访客数据（Business Insights，来自 Brand Portal）',
   refundOrder: '退货数据（ERP 退货接口）',
   refundGmv: '退货数据（ERP 退货接口）',
+  shopRating: '店铺健康（ERP 店铺表现接口）',
+  returnRefundRate: '店铺健康（ERP 店铺表现接口）',
+  cancellationRate: '店铺健康（ERP 店铺表现接口）',
+  lateShipmentRate: '店铺健康（ERP 店铺表现接口）',
+  csatRate: '店铺健康（ERP 店铺表现接口）',
   gmv: '销售额（店铺营业额报表，来自 Brand Portal）',
   cancelledSales: '销售额（店铺营业额报表，来自 Brand Portal）',
   liveSessions: '直播表现（Brand Portal 直播接口）',
@@ -108,6 +126,8 @@ const SOURCE_ACTIONS = {
     '在「店铺诊断」页点击「连接 ERP」完成授权后，同步与回填会自动带出退货数据。',
   '直播表现（Brand Portal 直播接口）':
     '在「店铺诊断」页点击「连接 Brand Portal」完成授权后，同步与回填会自动带出直播时长、观看与直播成交额。',
+  '店铺健康（ERP 店铺表现接口）':
+    '在「店铺接口」页点击「连接 ERP」完成授权后，同步会带出店铺评分与履约质量（发货时效、取消率、退货退款率、客服满意率）。',
 };
 
 function toNumber(value) {
@@ -139,6 +159,7 @@ function buildDayMetrics(row = {}, sources = {}) {
   const shopReportFilled = sources.shopReport !== false;
   const returnsFilled = sources.returns !== false;
   const livestreamFilled = sources.livestream !== false;
+  const shopHealthFilled = sources.shopHealth !== false;
   // Orders may be recorded with a number and a state but no amount, in
   // which case there is no sales figure to report.
   const orderAmountsFilled = sources.orderAmounts !== false;
@@ -173,6 +194,13 @@ function buildDayMetrics(row = {}, sources = {}) {
     cancelledOrder: toNumber(row.cancelledOrders),
     cancelledSales: orderAmountsFilled ? toNumber(row.cancelledSales) : null,
     adsExpense: toNumber(row.adsExpense),
+    shopRating: shopHealthFilled ? toNumber(row.shopRating) : null,
+    returnRefundRate: shopHealthFilled ? toNumber(row.returnRefundRate) : null,
+    cancellationRate: shopHealthFilled ? toNumber(row.cancellationRate) : null,
+    lateShipmentRate: shopHealthFilled ? toNumber(row.lateShipmentRate) : null,
+    csatRate: shopHealthFilled ? toNumber(row.csatRate) : null,
+    responseRate: shopHealthFilled ? toNumber(row.responseRate) : null,
+    preparationTime: shopHealthFilled ? toNumber(row.preparationTime) : null,
     liveSessions: livestreamFilled ? toNumber(row.liveSessions) : null,
     liveHours: livestreamFilled ? toNumber(row.liveHours) : null,
     liveViews: livestreamFilled ? toNumber(row.liveViews) : null,

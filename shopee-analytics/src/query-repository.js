@@ -517,6 +517,12 @@ class ShopeeQueryRepository {
          WHERE shop_id=$1
            AND (to_timestamp(create_time) AT TIME ZONE $4)::date BETWEEN $2 AND $3
          GROUP BY 1
+       ),
+       health AS (
+         SELECT event_date, shop_rating, return_refund_rate, cancellation_rate,
+                late_shipment_rate, csat_rate, response_rate, preparation_time
+         FROM shopee_shop_health_daily
+         WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3
        )
        SELECT d.event_date,
               bi.sales, bi.orders, bi.product_clicks, bi.product_views,
@@ -543,12 +549,17 @@ class ShopeeQueryRepository {
                 WHERE shop_id=$1
                   AND (to_timestamp(create_time) AT TIME ZONE $4)::date BETWEEN $2 AND $3) AS order_amount_rows,
               (SELECT COUNT(*) FROM shopee_shop_livestream_daily
-                WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3) AS livestream_rows
+                WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3) AS livestream_rows,
+              h.shop_rating, h.return_refund_rate, h.cancellation_rate,
+              h.late_shipment_rate, h.csat_rate, h.response_rate, h.preparation_time,
+              (SELECT COUNT(*) FROM shopee_shop_health_daily
+                WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3) AS shop_health_rows
        FROM dates d
        LEFT JOIN bi ON bi.event_date=d.event_date
        LEFT JOIN ads a ON a.event_date=d.event_date
        LEFT JOIN orders_agg o ON o.event_date=d.event_date
        LEFT JOIN returns_agg r ON r.event_date=d.event_date
+       LEFT JOIN health h ON h.event_date=d.event_date
        LEFT JOIN live l ON l.event_date=d.event_date
        ORDER BY d.event_date`,
       [shopId, startDate, endDate, timezone || 'UTC'],
@@ -563,6 +574,7 @@ class ShopeeQueryRepository {
       returns: Number(first.return_rows || 0) > 0,
       orderAmounts: Number(first.order_amount_rows || 0) > 0,
       livestream: Number(first.livestream_rows || 0) > 0,
+      shopHealth: Number(first.shop_health_rows || 0) > 0,
     };
 
     const days = result.rows.map(row => ({
