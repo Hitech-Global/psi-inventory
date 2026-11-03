@@ -11,6 +11,7 @@ on:
       - 'wac-calculator.js'
       - 'wac-calculator.test.cjs'
       - 'db-pg.js'
+      - 'db.js'
       - 'db-sqlite.js'
       - 'test/wac-history-import.test.cjs'
       - 'test/rp-suggested-qty-wheel.test.cjs'
@@ -41,6 +42,7 @@ jobs:
           node --check po-number.js
           node --check wac-calculator.js
           node --check db-pg.js
+          node --check db.js
           node --check db-sqlite.js
           node --check test/wac-history-import.test.cjs
       - name: Test PO number date and country format
