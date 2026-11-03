@@ -1801,3 +1801,18 @@ test('WAC freight payment breakdown: all table body cells use default left align
   assert.ok(section.includes("'<td>'+Number(pd.local_amount).toFixed(2)"), 'local amount uses default left alignment');
   assert.ok(!section.includes('class="text-right"'), 'no right-aligned body cells remain in this table');
 });
+
+
+test('PL detail renders a totals row before SKU rows', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const source = fs.readFileSync(path.join(__dirname, 'app.js'), 'utf8');
+  const start = source.indexOf('function renderPLItemsRows(plId){');
+  const end = source.indexOf('function renderCISharedFeeAction', start);
+  assert.ok(start >= 0 && end > start);
+  const section = source.slice(start, end);
+  assert.ok(section.includes('const totals=pl.items.reduce('));
+  assert.ok(section.includes('sum[k]+=Number(i[k])||0;'));
+  assert.ok(section.includes("'<td>合计</td><td>—</td>'"));
+  assert.ok(section.indexOf('+summary') < section.indexOf('+pl.items.map('));
+});

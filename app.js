@@ -12832,10 +12832,22 @@ function renderPLItemsRows(plId){
   const ctx=__ciCtx(); const ci=ctx.ci; if(!ci) return '';
   const pl=(ci.packing_lists||[]).find(function(p){return p.id===plId;});
   if(!pl||!pl.items) return '';
+  const totals=pl.items.reduce(function(sum,i){
+    ['cartons','total_qty','gross_weight','net_weight','cbm'].forEach(function(k){sum[k]+=Number(i[k])||0;});
+    return sum;
+  },{cartons:0,total_qty:0,gross_weight:0,net_weight:0,cbm:0});
+  function plTotal(v){return String(Number(v.toFixed(3)));}
+  const summary='<tr class="pl-summary-row" style="font-weight:700;background:#f5f6f8"><td>合计</td><td>—</td>'
+    +'<td class="text-right">'+plTotal(totals.cartons)+'</td>'
+    +'<td class="text-right">'+plTotal(totals.total_qty)+'</td>'
+    +'<td class="text-right">'+plTotal(totals.gross_weight)+'</td>'
+    +'<td class="text-right">'+plTotal(totals.net_weight)+'</td>'
+    +'<td class="text-right">'+plTotal(totals.cbm)+'</td></tr>';
   return '<div class="table-container"><table class="data-table"><thead><tr>'
     +'<th>SKU</th><th>'+t('pl.item.qty_per_carton','每箱数量')+'</th><th>'+t('pl.item.cartons','箱数')+'</th><th>'+t('pl.item.total_qty','总数量')+'</th><th>'+t('pl.item.gross_weight','总毛重')+'</th><th>'+t('pl.item.net_weight','总净重')+'</th><th>'+t('pl.item.cbm','总体积')+'</th></tr></thead><tbody>'
-    + pl.items.map(function(i){ return '<tr><td class="cell-id">'+esc(i.sku_code)+'</td><td class="text-right">'+(i.qty_per_carton||0)+'</td><td class="text-right">'+(i.cartons||0)+'</td><td class="text-right">'+(i.total_qty||0)+'</td><td class="text-right">'+(i.gross_weight||0)+'</td><td class="text-right">'+(i.net_weight||0)+'</td><td class="text-right">'+(i.cbm||0)+'</td></tr>'; }).join('')
-    + '</tbody></table></div>';
+    +summary
+    +pl.items.map(function(i){return '<tr><td class="cell-id">'+esc(i.sku_code)+'</td><td class="text-right">'+(i.qty_per_carton||0)+'</td><td class="text-right">'+(i.cartons||0)+'</td><td class="text-right">'+(i.total_qty||0)+'</td><td class="text-right">'+(i.gross_weight||0)+'</td><td class="text-right">'+(i.net_weight||0)+'</td><td class="text-right">'+(i.cbm||0)+'</td></tr>';}).join('')
+    +'</tbody></table></div>';
 }
 function renderCISharedFeeAction(ciId, perms){
   const allowed=Array.isArray(perms)&&['ci_edit','payment_create','ci_amount_view'].every(p=>perms.includes('*')||perms.includes(p));
