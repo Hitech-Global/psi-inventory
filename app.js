@@ -14652,49 +14652,84 @@ async function loadWacHistoryMatrix(init){
 }
 
 async function renderInbound(){
-  document.getElementById('content-inner').innerHTML='<div id="flash-container"></div>'+
-    '<div class="filter-bar"><div class="filter-form"><div class="filter-actions">'+
-    '<button class="btn btn-primary btn-sm" onclick="loadWacPending()">'+t('wac.refresh','刷新')+'</button>'+
-    '<button class="btn btn-secondary btn-sm" onclick="loadWacHistory()" style="margin-left:8px">'+t('wac.history','确认历史')+'</button>'+
-    '</div></div></div>'+
-    '<div class="table-section"><div class="table-section-title"><div class="table-section-title-left">💰 '+t('wac.pending_title','待WAC确认的物流批次')+'</div></div><div id="wac-table"></div></div>';
-  loadWacPending();
+  document.getElementById('content-inner').innerHTML='<div id="flash-container"></div>'
+    +'<div class="filter-bar"><div class="filter-form wac-batch-filters">'
+    +'<div class="filter-group"><label>国家</label><select id="wac-filter-country" class="listing-status-select" onchange="filterWacBatches()"><option value="">全部国家</option></select></div>'
+    +'<div class="filter-group"><label>品牌</label><select id="wac-filter-brand" class="listing-status-select" onchange="filterWacBatches()"><option value="">全部品牌</option></select></div>'
+    +'<div class="filter-group"><label>仓库</label><select id="wac-filter-warehouse" class="listing-status-select" onchange="filterWacBatches()"><option value="">全部仓库</option></select></div>'
+    +'<div class="filter-group"><label>到货日期（开始）</label><input id="wac-filter-date-from" type="date" onchange="filterWacBatches()"></div>'
+    +'<div class="filter-group"><label>到货日期（结束）</label><input id="wac-filter-date-to" type="date" onchange="filterWacBatches()"></div>'
+    +'<div class="filter-actions"><button class="btn btn-secondary btn-sm" onclick="resetWacBatchFilters()">重置</button><button class="btn btn-primary btn-sm" onclick="loadWacBatches()">刷新</button></div>'
+    +'</div></div>'
+    +'<div class="table-section"><div class="table-section-title"><div class="table-section-title-left">💰 WAC物流批次</div><div id="wac-batch-count" style="font-size:12px;color:var(--text-secondary)"></div></div><div id="wac-table"></div></div>';
+  loadWacBatches();
 }
 
-// 加载待WAC确认的物流批次列表
-// 以 wac_history 中是否存在 logistics_batch_id 记录作为"已确认"判断
-async function loadWacPending(){
+// WAC批次统一列表：待确认与已确认记录均保留展示。
+window._wacBatchRows=[];
+async function loadWacBatches(){
+  const target=document.getElementById('wac-table');
+  if(target) target.innerHTML='<div class="empty-state">加载中…</div>';
   try{
-    const data=await api('/api/wac/pending-batches');
-    document.getElementById('wac-table').innerHTML=!data.length?
-      '<div class="empty-state"><div class="empty-icon">💰</div>'+t('wac.no_pending','暂无待确认的物流批次')+'</div>':
-      '<div class="table-container" style="box-shadow:none;border-radius:0">'+
-      '<table class="data-table"><thead><tr>'+
-      '<th>'+t('wac.col_batch_no','物流单号')+'</th>'+
-      '<th>'+t('wac.col_ci','关联CI')+'</th>'+
-      '<th>'+t('wac.col_forwarder','货代')+'</th>'+
-      '<th>'+t('wac.col_country','国家')+'</th>'+
-      '<th>'+t('wac.col_warehouse','仓库')+'</th>'+
-      '<th>'+t('wac.col_arrival','到货日期')+'</th>'+
-      '<th>'+t('wac.col_pl_qty','PL总数量')+'</th>'+
-      '<th>'+t('wac.col_goods','货值')+'</th>'+
-      '<th>'+t('wac.col_action','操作')+'</th>'+
-      '</tr></thead><tbody>'+
-      data.map(r=>'<tr>'+
-        '<td class="cell-id">'+esc(r.batch_no)+'</td>'+
-        '<td class="cell-id">'+esc(r.ci_no||r.related_ci_no||'-')+'</td>'+
-        '<td>'+esc(r.forwarder_name||'-')+'</td>'+
-        '<td>'+countryLabel(r.target_country)+'</td>'+
-        '<td>'+esc(r.target_warehouse||'-')+'</td>'+
-        '<td class="cell-date">'+fmtDate(r.actual_arrival_date)+'</td>'+
-        '<td>'+(r.pl_total_qty||0)+'</td>'+
-        '<td>'+(r.goods_amount||0)+' '+(r.ci_currency||'')+'</td>'+
-        '<td><button class="btn btn-primary btn-sm" onclick="wacConfirm(\''+r.id+'\')">'+t('wac.btn_confirm','WAC确认')+'</button></td>'+
-      '</tr>').join('')+
-      '</tbody></table></div>';
-  }catch(e){showFlash(e.message,'danger')}
+    const results=await Promise.all([api('/api/wac/pending-batches'),api('/api/wac/confirmed-batches')]);
+    const pending=(results[0]||[]).map(r=>Object.assign({},r,{wac_status:'pending'}));
+    const confirmed=(results[1]||[]).map(r=>Object.assign({},r,{wac_status:'confirmed'}));
+    window._wacBatchRows=pending.concat(confirmed).sort((a,b)=>String(b.actual_arrival_date||'').localeCompare(String(a.actual_arrival_date||'')));
+    populateWacBatchFilters(window._wacBatchRows);
+    filterWacBatches();
+  }catch(e){if(target)target.innerHTML='<div class="empty-state">'+esc(e.message||'加载失败')+'</div>';}
 }
 
+function populateWacBatchFilters(rows){
+  const defs=[['country','wac-filter-country','全部国家',r=>r.target_country],['brand','wac-filter-brand','全部品牌',r=>r.brand],['warehouse','wac-filter-warehouse','全部仓库',r=>r.target_warehouse]];
+  defs.forEach(def=>{
+    const el=document.getElementById(def[1]); if(!el)return;
+    const previous=el.value;
+    const values=Array.from(new Set(rows.map(def[3]).map(v=>String(v||'').trim()).filter(Boolean))).sort((a,b)=>a.localeCompare(b));
+    el.innerHTML='<option value="">'+def[2]+'</option>'+values.map(v=>'<option value="'+esc(v)+'">'+esc(v)+'</option>').join('');
+    if(values.includes(previous))el.value=previous;
+  });
+}
+
+function filterWacBatches(){
+  const value=id=>document.getElementById(id)?.value||'';
+  const country=value('wac-filter-country'),brand=value('wac-filter-brand'),warehouse=value('wac-filter-warehouse');
+  const from=value('wac-filter-date-from'),to=value('wac-filter-date-to');
+  const rows=(window._wacBatchRows||[]).filter(r=>{
+    const date=String(r.actual_arrival_date||'').slice(0,10);
+    return (!country||String(r.target_country||'')===country)&&(!brand||String(r.brand||'')===brand)&&(!warehouse||String(r.target_warehouse||'')===warehouse)&&(!from||date>=from)&&(!to||date<=to);
+  });
+  renderWacBatchRows(rows);
+}
+
+function resetWacBatchFilters(){
+  ['wac-filter-country','wac-filter-brand','wac-filter-warehouse','wac-filter-date-from','wac-filter-date-to'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+  filterWacBatches();
+}
+
+function renderWacBatchRows(data){
+  const target=document.getElementById('wac-table');if(!target)return;
+  const count=document.getElementById('wac-batch-count');if(count)count.textContent='共 '+data.length+' 个批次';
+  if(!data.length){target.innerHTML='<div class="empty-state"><div class="empty-icon">💰</div>没有符合条件的物流批次</div>';return;}
+  target.innerHTML='<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr>'
+    +'<th>物流单号</th><th>关联CI</th><th>货代</th><th>国家</th><th>品牌</th><th>仓库</th><th>到货日期</th><th>PL数量</th><th>货值</th><th>状态</th><th>操作</th>'
+    +'</tr></thead><tbody>'+data.map(r=>'<tr>'
+      +'<td class="cell-id">'+esc(r.batch_no||'—')+'</td>'
+      +'<td class="cell-id">'+esc(r.ci_no||r.related_ci_no||'—')+'</td>'
+      +'<td>'+esc(r.forwarder_name||'—')+'</td>'
+      +'<td>'+countryLabel(r.target_country)+'</td>'
+      +'<td>'+esc(r.brand||'—')+'</td>'
+      +'<td>'+esc(r.target_warehouse||'—')+'</td>'
+      +'<td class="cell-date">'+fmtDate(r.actual_arrival_date)+'</td>'
+      +'<td>'+(r.pl_total_qty||0)+'</td>'
+      +'<td>'+(r.goods_amount==null?'—':Number(r.goods_amount).toLocaleString())+' '+esc(r.ci_currency||'')+'</td>'
+      +'<td>'+(r.wac_status==='confirmed'?'<span class="status-badge status-normal">已确认</span>':'<span class="status-badge status-warning">待确认</span>')+'</td>'
+      +'<td>'+(r.wac_status==='confirmed'?'<button class="btn btn-secondary btn-sm" onclick="wacConfirm(\''+r.id+'\')">查看</button>':'<button class="btn btn-primary btn-sm" onclick="wacConfirm(\''+r.id+'\')">WAC确认</button>')+'</td>'
+    +'</tr>').join('')+'</tbody></table></div>';
+}
+
+// 兼容确认成功后的原调用入口；统一刷新全部批次。
+async function loadWacPending(){return loadWacBatches();}
 // WAC确认弹窗：展示PL明细 + 用户输入旧库存数量 + 自动计算新WAC
 // 结构：固定(标题/批次信息/公式/操作栏) + 滚动(SKU明细表) + 固定(底部按钮)
 async function wacConfirm(batchId){

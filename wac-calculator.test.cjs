@@ -1803,19 +1803,18 @@ test('WAC freight payment breakdown: all table body cells use default left align
 });
 
 
-test('WAC pending batch list: PL quantity and goods value cells use left alignment', () => {
+test('WAC batch list: PL quantity and goods value cells use default left alignment', () => {
   const fs = require('node:fs');
   const path = require('node:path');
   const source = fs.readFileSync(path.join(__dirname, 'app.js'), 'utf8');
-  const start = source.indexOf('async function loadWacPending(){');
-  const end = source.indexOf('// WAC确认弹窗', start);
-  assert.ok(start >= 0 && end > start, 'pending WAC list renderer must exist');
+  const start = source.indexOf('function renderWacBatchRows(data){');
+  const end = source.indexOf('// 兼容确认成功后的原调用入口', start);
+  assert.ok(start >= 0 && end > start, 'unified WAC batch renderer must exist');
   const section = source.slice(start, end);
-  assert.ok(section.includes("'<td>'+(r.pl_total_qty||0)+'</td>'"), 'PL quantity cell should use default left alignment');
-  assert.ok(section.includes("'<td>'+(r.goods_amount||0)+' '+(r.ci_currency||'')+'</td>'"), 'goods value cell should use default left alignment');
-  assert.ok(!section.includes('class=\"text-right\"'), 'pending WAC list should not right-align these numeric cells');
+  assert.ok(section.includes("+'<td>'+(r.pl_total_qty||0)+'</td>'"), 'PL quantity cell should use default left alignment');
+  assert.ok(section.includes("+'<td>'+(r.goods_amount==null?'—':Number(r.goods_amount).toLocaleString())+' '+esc(r.ci_currency||'')+'</td>'"), 'goods value cell should use default left alignment');
+  assert.ok(!section.includes('class="text-right"'), 'unified batch list numeric cells should not be right-aligned');
 });
-
 
 test('PL detail renders a totals row before SKU rows', () => {
   const fs = require('node:fs');
@@ -1829,4 +1828,26 @@ test('PL detail renders a totals row before SKU rows', () => {
   assert.ok(section.includes('sum[k]+=Number(i[k])||0;'));
   assert.ok(section.includes('合计</td><td>—</td>'));
   assert.ok(section.indexOf('+summary') < section.indexOf('+pl.items.map('));
+});
+
+
+test('WAC batch management keeps confirmed and pending batches together with country, brand, warehouse and date filters', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const app = fs.readFileSync(path.join(__dirname, 'app.js'), 'utf8');
+  const server = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
+  const start = app.indexOf('async function renderInbound(){');
+  const end = app.indexOf('// WAC确认弹窗', start);
+  assert.ok(start >= 0 && end > start, 'WAC batch page must exist');
+  const ui = app.slice(start, end);
+  for (const id of ['wac-filter-country','wac-filter-brand','wac-filter-warehouse','wac-filter-date-from','wac-filter-date-to']) assert.ok(ui.includes(id), id + ' filter must exist');
+  assert.ok(ui.includes("api('/api/wac/pending-batches')") && ui.includes("api('/api/wac/confirmed-batches')"), 'both pending and confirmed sources must be loaded');
+  assert.ok(ui.includes("wac_status:'confirmed'") && ui.includes("wac_status:'pending'"), 'both statuses must be represented');
+  assert.ok(ui.includes('function filterWacBatches()') && ui.includes('function resetWacBatchFilters()'), 'filter and reset actions must exist');
+  assert.ok(ui.includes("r.wac_status==='confirmed'"), 'confirmed batches must have read-only view action');
+  const confirmedStart=server.indexOf("app.get('/api/wac/confirmed-batches'");
+  const confirmedEnd=server.indexOf('/* WAC历史矩阵', confirmedStart);
+  const route=server.slice(confirmedStart, confirmedEnd);
+  assert.ok(route.includes('ci.brand') && route.includes('ci.goods_amount') && route.includes('ci.currency AS ci_currency'), 'confirmed batch API must return brand and goods value for the unified list');
+  assert.ok(!route.includes('WHERE lb.logistics_status'), 'confirmed history must remain visible regardless of current logistics status');
 });
