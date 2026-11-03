@@ -2035,6 +2035,12 @@ async function initDatabase() {
       confirmed_by TEXT DEFAULT '',
       confirmed_at TEXT DEFAULT '',
       logistics_batch_id TEXT,
+      last_inbound_date TEXT DEFAULT '',
+      local_currency TEXT DEFAULT '',
+      rmb_to_local_rate NUMERIC(24,8),
+      fx_rate_date TEXT DEFAULT '',
+      source_type TEXT DEFAULT 'system',
+      import_batch_id TEXT DEFAULT '',
       created_at TEXT DEFAULT NOW()
     )
   `);
@@ -2070,6 +2076,13 @@ async function initDatabase() {
   await exec(`CREATE INDEX IF NOT EXISTS idx_orig_inv_sku ON original_inventory_imports(sku_code)`);
   // WAC-CLOSED-LOOP: wac_history 新增 logistics_batch_id 列，追踪物流批次来源
   await exec("ALTER TABLE wac_history ADD COLUMN IF NOT EXISTS logistics_batch_id TEXT");
+  // WAC-HISTORY-IMPORT-01：为历史导入及汇率快照增加可选元数据列（幂等迁移）。
+  await exec("ALTER TABLE wac_history ADD COLUMN IF NOT EXISTS last_inbound_date TEXT DEFAULT ''");
+  await exec("ALTER TABLE wac_history ADD COLUMN IF NOT EXISTS local_currency TEXT DEFAULT ''");
+  await exec("ALTER TABLE wac_history ADD COLUMN IF NOT EXISTS rmb_to_local_rate NUMERIC(24,8)");
+  await exec("ALTER TABLE wac_history ADD COLUMN IF NOT EXISTS fx_rate_date TEXT DEFAULT ''");
+  await exec("ALTER TABLE wac_history ADD COLUMN IF NOT EXISTS source_type TEXT DEFAULT 'system'");
+  await exec("ALTER TABLE wac_history ADD COLUMN IF NOT EXISTS import_batch_id TEXT DEFAULT ''");
 
   await exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_wac_history_version ON wac_history(sku_code, country, warehouse, version_no)`);
   await exec(`CREATE INDEX IF NOT EXISTS idx_wac_history_latest ON wac_history(sku_code, country, warehouse, confirmation_status, is_locked)`);

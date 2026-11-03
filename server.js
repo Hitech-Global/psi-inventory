@@ -1364,6 +1364,8 @@ const HEAVY_IMPORT_BODY_PATHS = new Set([
   '/api/skus/bulk-import',
   '/api/consignment-inventory/import',
   '/api/original-inventory/import',
+  '/api/wac/history-import/precheck',
+  '/api/wac/history-import',
   '/api/inventory-checks/bulk-import',
   '/api/payment-requests/bulk-import-result'
 ]);
@@ -1391,6 +1393,7 @@ const BATCH_IMPORT_ROW_LIMITS = Object.freeze({
   'skus/bulk-import': 2000,                   // SKU 主数据导入：~2 calls/行
   'consignment-inventory/import': 2000,       // 寄售库存导入（仅 remaining qty）：~2 calls/行
   'original-inventory/import': 2000,          // 原库存数量导入：受单 CI 明细数天然约束
+  'wac/history-import': 2000,                 // 历史WAC导入：仅写锁定历史快照
   'inventory-checks/bulk-import': 5000,       // 盘点导入：~2 calls/行，代价低
   'payment-requests/bulk-import-result': 1000 // 付款结果回填：行数天然少
 });
@@ -4624,33 +4627,275 @@ function latestConfirmedWac(skuCode, country, warehouse) {
 
 // P1-03-B: 在事务内生成下一版本号并插入锁定的 WAC 历史
 // logistics_batch_id: 物流批次WAC确认时传入，CI手动确认时不传（默认''）
+// WAC-HISTORY-IMPORT-01：历史WAC导入只写 wac_history，不回写 inventory 当前成本/数量。
+const MAX_WAC_HISTORY_IMPORT_ROWS = 2000;
+
+function normalizeWacHistoryDate(value) {
+  const normalized = normalizeImportDate(value);
+  if (!normalized || !/^\d{4}-\d{2}-\d{2}$/.test(String(normalized))) return '';
+  const parts = String(normalized).split('-').map(Number);
+  const date = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
+  if (date.getUTCFullYear() !== parts[0] || date.getUTCMonth() !== parts[1] - 1 || date.getUTCDate() !== parts[2]) return '';
+  return String(normalized);
+}
+
+function resolveWacHistoryCurrency(country, preferredCurrency) {
+  const preferred = String(preferredCurrency || '').trim().toUpperCase();
+  if (preferred) return preferred === 'CNY' ? 'RMB' : preferred;
+  const rawCountry = String(country || '').trim();
+  if (!rawCountry) return '';
+  const canonical = (typeof COUNTRY_ALIAS_MAP !== 'undefined' && COUNTRY_ALIAS_MAP[rawCountry]) || rawCountry;
+  const row = queryOne('SELECT default_currency FROM countries WHERE name = ? ORDER BY sort_order, name LIMIT 1', [canonical])
+    || queryOne('SELECT default_currency FROM countries WHERE name = ? ORDER BY sort_order, name LIMIT 1', [rawCountry]);
+  const currency = String(row && row.default_currency || '').trim().toUpperCase();
+  return currency === 'CNY' ? 'RMB' : currency;
+}
+
+// 只读取汇率表中的精确日期快照；没有该日期记录就返回 null，绝不回退到今天/最近日期。
+function resolveExactRmbToLocalRate(localCurrency, date, cache) {
+  const currency = String(localCurrency || '').trim().toUpperCase();
+  const rateDate = normalizeWacHistoryDate(date);
+  if (!currency || !rateDate) return null;
+  if (currency === 'RMB' || currency === 'CNY') {
+    return { rate: 1, rate_date: rateDate, direction: 'identity', source: 'identity' };
+  }
+  const key = currency + '|' + rateDate;
+  if (cache && cache.has(key)) return cache.get(key);
+  const direct = queryOne(
+    'SELECT rate, rate_date FROM exchange_rates WHERE from_currency = ? AND to_currency = ? AND rate_date = ? AND rate_type = ? ORDER BY created_at DESC, id DESC LIMIT 1',
+    ['RMB', currency, rateDate, 'realtime']
+  );
+  if (direct && Number(direct.rate) > 0) {
+    const result = { rate: Number(direct.rate), rate_date: direct.rate_date, direction: 'direct', source: 'exchange_rates' };
+    if (cache) cache.set(key, result);
+    return result;
+  }
+  const reverse = queryOne(
+    'SELECT rate, rate_date FROM exchange_rates WHERE from_currency = ? AND to_currency = ? AND rate_date = ? AND rate_type = ? ORDER BY created_at DESC, id DESC LIMIT 1',
+    [currency, 'RMB', rateDate, 'realtime']
+  );
+  if (reverse && Number(reverse.rate) > 0) {
+    const result = { rate: 1 / Number(reverse.rate), rate_date: reverse.rate_date, direction: 'reverse', source: 'exchange_rates' };
+    if (cache) cache.set(key, result);
+    return result;
+  }
+  if (cache) cache.set(key, null);
+  return null;
+}
+
+function validateWacHistoryImportRows(items) {
+  const rows = Array.isArray(items) ? items : [];
+  const blocking = [];
+  const warnings = [];
+  const normalizedItems = [];
+  const seenKeys = new Set();
+  const fxCache = new Map();
+  const pushIssue = (row, skuCode, type, reason) => blocking.push({
+    row, row_no: row, sku_code: skuCode || '', issue_type: type, reason
+  });
+  if (!rows.length) {
+    pushIssue(0, '', 'EMPTY_IMPORT', '导入数据不能为空');
+    return { ok: false, total_count: 0, valid_count: 0, duplicate_count: 0, blocking_count: 1, blocking, warnings, normalized_items: [] };
+  }
+  if (rows.length > MAX_WAC_HISTORY_IMPORT_ROWS) {
+    pushIssue(0, '', 'ROW_LIMIT', '单次历史WAC导入最多支持 ' + MAX_WAC_HISTORY_IMPORT_ROWS + ' 行');
+    return { ok: false, total_count: rows.length, valid_count: 0, duplicate_count: 0, blocking_count: blocking.length, blocking, warnings, normalized_items: [] };
+  }
+
+  // 参照库存导入的预取模式：SKU 分块读取，仓库一次读取，避免逐行访问主数据表。
+  const skuCodes = Array.from(new Set(rows.map(item => String(item && item.sku_code || '').trim()).filter(Boolean)));
+  const masterMap = new Map();
+  const chunkSize = 500;
+  for (let i = 0; i < skuCodes.length; i += chunkSize) {
+    const chunk = skuCodes.slice(i, i + chunkSize);
+    const placeholders = chunk.map(() => '?').join(',');
+    query('SELECT sku_code, brand, model FROM skus WHERE sku_code IN (' + placeholders + ')', chunk).rows.forEach(r => {
+      masterMap.set(String(r.sku_code), r);
+    });
+  }
+
+  // 历史记录允许引用已停用但仍存在于主数据的仓库；名称与国家按 trim 后精确匹配，不做模糊/大小写转换。
+  const warehouseSet = new Set();
+  query('SELECT country_name, name FROM warehouses').rows.forEach(r => {
+    const countryName = String(r.country_name || '').trim();
+    const warehouseName = String(r.name || '').trim();
+    if (countryName && warehouseName) warehouseSet.add(countryName + '\0' + warehouseName);
+  });
+
+  // 一次预取这些 SKU 已有的锁定历史，供重复导入判定，避免每行重复查询历史表。
+  const existingMap = new Map();
+  for (let i = 0; i < skuCodes.length; i += chunkSize) {
+    const chunk = skuCodes.slice(i, i + chunkSize);
+    const placeholders = chunk.map(() => '?').join(',');
+    const existingRows = query(
+      "SELECT sku_code, country, warehouse, confirmed_at, new_avg_cost FROM wac_history " +
+      "WHERE sku_code IN (" + placeholders + ") AND COALESCE(is_locked, 0) = 1 " +
+      "AND COALESCE(confirmation_status, 'confirmed') NOT IN ('reversed', 'void', 'cancelled')",
+      chunk
+    ).rows;
+    existingRows.forEach(r => {
+      const date = String(r.confirmed_at || '').slice(0, 10);
+      const key = [r.sku_code, r.country, r.warehouse, date].join('|');
+      if (!existingMap.has(key)) existingMap.set(key, []);
+      existingMap.get(key).push(r);
+    });
+  }
+
+  rows.forEach((item, index) => {
+    const rowNo = Number(item && (item.row_no || item._row_num || item._rowNum)) || index + 2;
+    const skuCode = String(item && (item.sku_code || item.SKU) || '').trim();
+    // 与库存导入一致：品牌填写后逐字符比较，不 trim、不忽略大小写；留空才表示未提供。
+    const brandInput = item && item.brand !== undefined && item.brand !== null ? String(item.brand) : '';
+    const country = String(item && (item.country || item['国家']) || '').trim();
+    const warehouse = String(item && (item.warehouse || item['仓库']) || '').trim();
+    const costRaw = item && (item.new_avg_cost !== undefined ? item.new_avg_cost :
+      (item.historical_wac !== undefined ? item.historical_wac : item.wac));
+    const cost = Number(String(costRaw === undefined || costRaw === null ? '' : costRaw).replace(/,/g, '').trim());
+    const confirmedDate = normalizeWacHistoryDate(item && (item.confirmed_at || item.confirmation_date || item.wac_date));
+    const inboundRaw = item && (item.last_inbound_date || item['最后入库日期']);
+    const inboundDate = inboundRaw ? normalizeWacHistoryDate(inboundRaw) : '';
+    const currencyInput = String(item && (item.local_currency || item.currency || '') || '').trim().toUpperCase();
+    const rateRaw = item && (item.rmb_to_local_rate !== undefined ? item.rmb_to_local_rate : item.fx_rate);
+    const hasRate = rateRaw !== undefined && rateRaw !== null && String(rateRaw).trim() !== '';
+    const inputRate = hasRate ? Number(String(rateRaw).replace(/,/g, '').trim()) : null;
+    const fxDateRaw = item && (item.fx_rate_date || item.exchange_rate_date || '');
+    const fxDate = fxDateRaw ? normalizeWacHistoryDate(fxDateRaw) : inboundDate;
+    let rowHasRequiredError = false;
+
+    const requiredIssue = (type, reason) => { rowHasRequiredError = true; pushIssue(rowNo, skuCode, type, reason); };
+    if (!skuCode) requiredIssue('SKU_EMPTY', 'SKU不能为空');
+    if (!country) requiredIssue('COUNTRY_EMPTY', '国家不能为空');
+    if (!warehouse) requiredIssue('WAREHOUSE_EMPTY', '仓库不能为空');
+    if (!confirmedDate) requiredIssue('CONFIRM_DATE_INVALID', '确认日期不能为空或格式无效，需使用 YYYY-MM-DD');
+    if (costRaw === undefined || costRaw === null || String(costRaw).trim() === '' || !Number.isFinite(cost) || cost <= 0) {
+      requiredIssue('WAC_INVALID', '历史WAC必须为大于0的有效数字（本币成本）');
+    }
+    if (inboundRaw && !inboundDate) pushIssue(rowNo, skuCode, 'INBOUND_DATE_INVALID', '最后入库日期格式无效，需使用 YYYY-MM-DD');
+    if (inboundDate && confirmedDate && inboundDate > confirmedDate) pushIssue(rowNo, skuCode, 'INBOUND_DATE_AFTER_CONFIRM', '最后入库日期不能晚于WAC确认日期');
+    if (fxDateRaw && !normalizeWacHistoryDate(fxDateRaw)) pushIssue(rowNo, skuCode, 'FX_DATE_INVALID', '汇率日期格式无效，需使用 YYYY-MM-DD');
+    if (hasRate && (!Number.isFinite(inputRate) || inputRate <= 0)) pushIssue(rowNo, skuCode, 'FX_RATE_INVALID', '人民币汇率必须为大于0的有效数字');
+    if (currencyInput && !/^[A-Z]{3,5}$/.test(currencyInput)) pushIssue(rowNo, skuCode, 'CURRENCY_INVALID', '本币币种格式无效，例如 IDR、MYR、THB');
+    if (fxDate && confirmedDate && fxDate > confirmedDate) pushIssue(rowNo, skuCode, 'FX_DATE_AFTER_CONFIRM', '汇率日期不能晚于WAC确认日期');
+
+    const sku = skuCode ? masterMap.get(skuCode) : null;
+    if (skuCode && !sku) requiredIssue('SKU_MASTER_MISSING', 'SKU「' + skuCode + '」不存在于SKU主数据');
+    if (sku) {
+      const masterBrand = String(sku.brand === null || sku.brand === undefined ? '' : sku.brand);
+      if (masterBrand.trim() === '') requiredIssue('SKU_BRAND_EMPTY', 'SKU「' + skuCode + '」的主数据品牌为空，无法归入品牌维度');
+      else if (brandInput !== '' && brandInput !== masterBrand) {
+        pushIssue(rowNo, skuCode, 'BRAND_MISMATCH', 'Excel品牌与SKU主数据不一致；系统以SKU主数据品牌为准');
+      }
+    }
+    if (country && warehouse && !warehouseSet.has(country + '\0' + warehouse)) {
+      requiredIssue('WAREHOUSE_MISSING', '国家「' + country + '」下不存在仓库「' + warehouse + '」；请使用系统仓库主数据中的准确名称');
+    }
+
+    const localCurrency = resolveWacHistoryCurrency(country, currencyInput);
+    if (hasRate && !localCurrency) pushIssue(rowNo, skuCode, 'CURRENCY_REQUIRED_FOR_RATE', '填写人民币汇率时必须提供本币币种，或确保国家主数据已配置默认币种');
+    if (hasRate && localCurrency && localCurrency !== 'RMB' && !fxDate) pushIssue(rowNo, skuCode, 'FX_DATE_REQUIRED_FOR_RATE', '填写人民币汇率时，必须同时提供汇率日期或最后入库日期');
+    if (localCurrency === 'RMB' && hasRate && Math.abs(inputRate - 1) > 0.0000001) {
+      pushIssue(rowNo, skuCode, 'RMB_RATE_INVALID', '本币为RMB时，1 RMB = 1 RMB，汇率必须为1');
+    }
+
+    const key = [skuCode, country, warehouse, confirmedDate].join('|');
+    if (skuCode && country && warehouse && confirmedDate) {
+      if (seenKeys.has(key)) {
+        pushIssue(rowNo, skuCode, 'DUPLICATE_IN_FILE', '文件内存在相同SKU、国家、仓库和确认日期的重复记录');
+      } else {
+        seenKeys.add(key);
+      }
+    }
+
+    let duplicate = false;
+    if (!rowHasRequiredError && sku && country && warehouse && confirmedDate) {
+      const existing = existingMap.get(key) || [];
+      if (existing.length) {
+        const importedCost4 = Math.round(cost * 10000);
+        const allSame = existing.every(r => Math.round(Number(r.new_avg_cost) * 10000) === importedCost4);
+        if (allSame) duplicate = true;
+        else pushIssue(rowNo, skuCode, 'EXISTING_DATE_CONFLICT', '该SKU在相同国家、仓库和日期已有不同WAC，请先核对历史数据');
+      }
+    }
+
+    let rmbRate = hasRate && Number.isFinite(inputRate) && inputRate > 0 ? inputRate : null;
+    let fxRateDate = fxDate || '';
+    if (!rmbRate && localCurrency === 'RMB') rmbRate = 1;
+    if (!rmbRate && localCurrency && fxRateDate) {
+      const snapshot = resolveExactRmbToLocalRate(localCurrency, fxRateDate, fxCache);
+      if (snapshot) {
+        rmbRate = snapshot.rate;
+        fxRateDate = snapshot.rate_date || fxRateDate;
+      }
+    }
+    if (!localCurrency) {
+      warnings.push({ row: rowNo, sku_code: skuCode, message: '未能从国家主数据识别本币币种；WAC仍可导入，但历史人民币汇率将显示为空' });
+    } else if (!rmbRate && localCurrency !== 'RMB') {
+      warnings.push({ row: rowNo, sku_code: skuCode, message: '没有找到该汇率日期的精确人民币汇率；WAC仍可导入，历史汇率显示为空，不会使用今天汇率替代' });
+    }
+
+    if (sku && skuCode && country && warehouse && confirmedDate && Number.isFinite(cost) && cost > 0) {
+      normalizedItems.push({
+        row_no: rowNo,
+        sku_code: skuCode,
+        model: String(sku.model || ''),
+        brand: String(sku.brand || ''),
+        country,
+        warehouse,
+        new_avg_cost: Math.round(cost * 10000) / 10000,
+        confirmed_date: confirmedDate,
+        last_inbound_date: inboundDate || '',
+        local_currency: localCurrency || '',
+        rmb_to_local_rate: rmbRate,
+        fx_rate_date: fxRateDate,
+        duplicate
+      });
+    }
+  });
+
+  const duplicateCount = normalizedItems.filter(r => r.duplicate).length;
+  const validCount = normalizedItems.filter(r => !r.duplicate).length;
+  return {
+    ok: blocking.length === 0,
+    total_count: rows.length,
+    valid_count: validCount,
+    duplicate_count: duplicateCount,
+    blocking_count: blocking.length,
+    blocking,
+    warnings,
+    normalized_items: normalizedItems
+  };
+}
+
 function generateWacVersion(params) {
   const { ci_id, ci_no, po_id, po_no, pi_id, pi_no, sku_code, model, brand, country, warehouse,
           original_qty, original_avg_cost, original_inventory_value,
           inbound_qty, unit_landing_cost, inbound_total_cost, new_avg_cost,
           settlement_date, confirmed_by, logistics_batch_id } = params;
 
-  // 在事务内获取当前最大版本号
-  const maxVersion = queryOne(`
-    SELECT MAX(version_no) as max_ver FROM wac_history
-    WHERE sku_code = ? AND country = ? AND warehouse = ?
-  `, [sku_code, country, warehouse]);
-  const nextVersionNo = (maxVersion && maxVersion.max_ver != null) ? maxVersion.max_ver + 1 : 1;
+  // 在事务内获取当前最大版本号；历史导入与正常WAC确认共用同一版本序列。
+  const maxVersion = queryOne('SELECT MAX(version_no) as max_ver FROM wac_history WHERE sku_code = ? AND country = ? AND warehouse = ?',
+    [sku_code, country, warehouse]);
+  const nextVersionNo = (maxVersion && maxVersion.max_ver != null) ? Number(maxVersion.max_ver) + 1 : 1;
 
   const id = genId('wac');
   const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+  const confirmedAt = params.confirmed_at || now;
+  const localCurrency = String(params.local_currency || '').trim().toUpperCase();
+  const rmbRate = Number(params.rmb_to_local_rate) > 0 ? Number(params.rmb_to_local_rate) : null;
+  const placeholders = new Array(33).fill('?').join(', ');
 
-  run(`INSERT INTO wac_history (id, version_no, ci_id, ci_no, po_id, po_no, pi_id, pi_no,
-      sku_code, model, brand, country, warehouse,
-      original_qty, original_avg_cost, original_inventory_value,
-      inbound_qty, unit_landing_cost, inbound_total_cost, new_avg_cost,
-      settlement_date, confirmation_status, is_locked, confirmed_by, confirmed_at, logistics_batch_id, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  run('INSERT INTO wac_history (id, version_no, ci_id, ci_no, po_id, po_no, pi_id, pi_no, ' +
+      'sku_code, model, brand, country, warehouse, original_qty, original_avg_cost, original_inventory_value, ' +
+      'inbound_qty, unit_landing_cost, inbound_total_cost, new_avg_cost, settlement_date, confirmation_status, ' +
+      'is_locked, confirmed_by, confirmed_at, logistics_batch_id, last_inbound_date, local_currency, ' +
+      'rmb_to_local_rate, fx_rate_date, source_type, import_batch_id, created_at) VALUES (' + placeholders + ')',
     [id, nextVersionNo, ci_id || '', ci_no || '', po_id || '', po_no || '', pi_id || '', pi_no || '',
      sku_code, model || '', brand || '', country || '', warehouse || '',
      original_qty || 0, original_avg_cost || 0, original_inventory_value || 0,
      inbound_qty || 0, unit_landing_cost || 0, inbound_total_cost || 0, new_avg_cost || 0,
-     settlement_date || '', 'confirmed', 1, confirmed_by || '', now, logistics_batch_id || null, now]);
+     settlement_date || '', 'confirmed', 1, confirmed_by || '', confirmedAt, logistics_batch_id || null,
+     params.last_inbound_date || '', localCurrency, rmbRate, params.fx_rate_date || '',
+     params.source_type || 'system', params.import_batch_id || '', now]);
 
   return { id, version_no: nextVersionNo };
 }
@@ -18781,22 +19026,153 @@ app.get('/api/wac/confirmed-batches', requireApiPermission('ci_view'), asyncHand
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
-/* WAC历史矩阵：只读取已锁定且未冲销的历史记录；日期列由前端按筛选结果生成。 */
+// WAC-HISTORY-IMPORT-01：历史WAC模板、只读预检查与原子导入。
+app.get('/api/wac/history-import/template', requireApiPermission('ci_edit'), asyncHandler((req, res) => {
+  res.json({
+    columns: ['SKU', '品牌', '国家', '仓库', '历史WAC（本币）', '确认日期', '最后入库日期', '本币币种', '1 RMB = 本币汇率', '汇率日期'],
+    instructions: [
+      ['字段', '要求与说明'],
+      ['SKU', '必填；必须存在于SKU主数据'],
+      ['品牌', '选填；填写时必须与SKU主数据完全一致'],
+      ['国家、仓库', '必填；必须与系统仓库主数据中的国家和仓库名称一致'],
+      ['历史WAC（本币）', '必填；填写该SKU在对应国家/仓库的历史本币WAC，必须大于0'],
+      ['确认日期', '必填；历史WAC对应的日期，格式 YYYY-MM-DD'],
+      ['最后入库日期', '选填；用于展示最后入库日期及匹配当日汇率'],
+      ['本币币种', '选填；可填 IDR、MYR、THB 等；留空时按国家主数据识别'],
+      ['1 RMB = 本币汇率', '选填；填写历史精确汇率。留空时系统只查对应汇率日期的历史汇率，不会使用今天汇率'],
+      ['汇率日期', '选填；优先级高于最后入库日期。若手动填写人民币汇率，则汇率日期或最后入库日期至少填写一个'],
+      ['重要说明', '本导入只新增锁定的WAC历史记录，不修改库存总表当前WAC、库存数量或库存货值。']
+    ]
+  });
+}));
+
+app.post('/api/wac/history-import/precheck', requireApiPermission('ci_edit'), asyncHandler((req, res) => {
+  const items = Array.isArray(req.body.items) ? req.body.items : [];
+  const exceeded = batchImportRowLimitExceeded('wac/history-import', items);
+  if (exceeded) return rejectBatchImportRowLimit(req, res, exceeded);
+  const result = validateWacHistoryImportRows(items);
+  const { normalized_items, ...publicResult } = result;
+  res.json(publicResult);
+}));
+
+app.post('/api/wac/history-import', requireApiPermission('ci_edit'), asyncHandler((req, res) => {
+  try {
+    const items = Array.isArray(req.body.items) ? req.body.items : [];
+    const exceeded = batchImportRowLimitExceeded('wac/history-import', items);
+    if (exceeded) return rejectBatchImportRowLimit(req, res, exceeded);
+    const validation = validateWacHistoryImportRows(items);
+    if (!validation.ok) {
+      return res.status(422).json({
+        error: '历史WAC预检查未通过，本次导入已整批阻断，数据库零写入',
+        blocked: true,
+        total: validation.total_count,
+        failed: validation.blocking_count,
+        blocking: validation.blocking,
+        warnings: validation.warnings
+      });
+    }
+
+    const importBatchId = genId('wacimp');
+    const userId = req.currentUserId || '';
+    let inserted = 0;
+    let skippedDuplicates = 0;
+    transaction(() => {
+      validation.normalized_items.forEach(item => {
+        if (item.duplicate) {
+          skippedDuplicates++;
+          return;
+        }
+        generateWacVersion({
+          ci_id: '',
+          ci_no: '',
+          po_id: '',
+          po_no: '',
+          pi_id: '',
+          pi_no: '',
+          sku_code: item.sku_code,
+          model: item.model,
+          brand: item.brand,
+          country: item.country,
+          warehouse: item.warehouse,
+          original_qty: 0,
+          original_avg_cost: 0,
+          original_inventory_value: 0,
+          inbound_qty: 0,
+          unit_landing_cost: 0,
+          inbound_total_cost: 0,
+          new_avg_cost: item.new_avg_cost,
+          settlement_date: item.confirmed_date,
+          confirmed_at: item.confirmed_date + ' 12:00:00',
+          confirmed_by: userId,
+          logistics_batch_id: null,
+          last_inbound_date: item.last_inbound_date,
+          local_currency: item.local_currency,
+          rmb_to_local_rate: item.rmb_to_local_rate,
+          fx_rate_date: item.fx_rate_date,
+          source_type: 'historical_import',
+          import_batch_id: importBatchId
+        });
+        inserted++;
+      });
+    });
+
+    res.json({
+      success: true,
+      import_batch_id: importBatchId,
+      total: items.length,
+      inserted,
+      skipped_duplicates: skippedDuplicates,
+      failed: 0,
+      warnings: validation.warnings
+    });
+  } catch (e) {
+    res.status(500).json({ error: '历史WAC导入失败，整批事务已回滚：' + e.message });
+  }
+}));
+
+/* WAC历史矩阵：只读取已锁定且未冲销的历史记录；历史汇率只取保存快照或精确日期汇率。 */
 app.get('/api/wac/history-matrix', requireApiPermission('ci_view'), asyncHandler((req, res) => {
   try {
-    const rows = query(`
-      SELECT wh.sku_code, wh.model, wh.brand, wh.country, wh.warehouse,
-        wh.new_avg_cost, wh.original_avg_cost, wh.original_qty, wh.inbound_qty,
-        wh.confirmed_at, wh.version_no, wh.ci_no, wh.po_no, wh.pi_no,
-        lb.actual_arrival_date AS last_inbound_date
-      FROM wac_history wh
-      LEFT JOIN logistics_batches lb ON lb.id = wh.logistics_batch_id
-      WHERE COALESCE(wh.is_locked, 0) = 1
-        AND COALESCE(wh.confirmation_status, 'confirmed') NOT IN ('reversed', 'void', 'cancelled')
-        AND wh.confirmed_at IS NOT NULL
-      ORDER BY wh.confirmed_at DESC, wh.version_no DESC
-      LIMIT 20000
-    `).rows;
+    const rows = query(
+      "SELECT wh.sku_code, wh.model, wh.brand, wh.country, wh.warehouse, " +
+      "wh.new_avg_cost, wh.original_avg_cost, wh.original_qty, wh.inbound_qty, " +
+      "wh.confirmed_at, wh.version_no, wh.ci_no, wh.po_no, wh.pi_no, " +
+      "COALESCE(NULLIF(wh.last_inbound_date, ''), lb.actual_arrival_date) AS last_inbound_date, " +
+      "wh.local_currency, wh.rmb_to_local_rate, wh.fx_rate_date, COALESCE(wh.source_type, 'system') AS source_type " +
+      "FROM wac_history wh LEFT JOIN logistics_batches lb ON lb.id = wh.logistics_batch_id " +
+      "WHERE COALESCE(wh.is_locked, 0) = 1 " +
+      "AND COALESCE(wh.confirmation_status, 'confirmed') NOT IN ('reversed', 'void', 'cancelled') " +
+      "AND wh.confirmed_at IS NOT NULL " +
+      "ORDER BY wh.confirmed_at DESC, wh.version_no DESC LIMIT 20000"
+    ).rows;
+
+    const currencyRows = query('SELECT name, default_currency FROM countries').rows;
+    const currencyByCountry = new Map();
+    currencyRows.forEach(r => {
+      const code = String(r.default_currency || '').trim().toUpperCase();
+      if (r.name && code) currencyByCountry.set(String(r.name), code === 'CNY' ? 'RMB' : code);
+    });
+    const fxCache = new Map();
+    rows.forEach(r => {
+      const rawCountry = String(r.country || '').trim();
+      const canonicalCountry = (typeof COUNTRY_ALIAS_MAP !== 'undefined' && COUNTRY_ALIAS_MAP[rawCountry]) || rawCountry;
+      const localCurrency = String(r.local_currency || '').trim().toUpperCase() ||
+        currencyByCountry.get(canonicalCountry) || currencyByCountry.get(rawCountry) || '';
+      r.local_currency = localCurrency === 'CNY' ? 'RMB' : localCurrency;
+      r.last_inbound_date = String(r.last_inbound_date || '').slice(0, 10);
+      const fxDate = normalizeWacHistoryDate(r.fx_rate_date) || normalizeWacHistoryDate(r.last_inbound_date) || '';
+      r.fx_rate_date = fxDate;
+      const storedRate = Number(r.rmb_to_local_rate);
+      if (Number.isFinite(storedRate) && storedRate > 0) {
+        r.rmb_to_local_rate = storedRate;
+        r.fx_rate_source = 'snapshot';
+      } else {
+        const snapshot = resolveExactRmbToLocalRate(r.local_currency, fxDate, fxCache);
+        r.rmb_to_local_rate = snapshot ? snapshot.rate : null;
+        r.fx_rate_source = snapshot ? snapshot.source : 'missing';
+      }
+    });
+
     const distinct = (field) => [...new Set(rows.map(r => String(r[field] || '').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
     res.json({ rows, filters: { brands: distinct('brand'), countries: distinct('country'), warehouses: distinct('warehouse') } });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -18884,6 +19260,7 @@ app.post('/api/wac/confirm/:logistics_batch_id', requireApiPermission('ci_edit')
     // Load CI for wac_history fields
     const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [meta.ci_id]);
 
+    const wacFxCache = new Map();
     transaction(() => {
       for (const item of items) {
         const skuCode = item.sku_code;
@@ -18905,7 +19282,10 @@ app.post('/api/wac/confirm/:logistics_batch_id', requireApiPermission('ci_edit')
 
         const skuInfo = queryOne('SELECT model, brand FROM skus WHERE sku_code = ?', [skuCode]);
 
-        // Write wac_history
+        // Write wac_history；同时锁定实际入库日对应的人民币/本币汇率快照（仅展示元数据，不参与WAC计算）。
+        const inboundDate = normalizeWacHistoryDate(batch.actual_arrival_date) || '';
+        const localCurrency = resolveWacHistoryCurrency(item.country, '');
+        const fxSnapshot = resolveExactRmbToLocalRate(localCurrency, inboundDate, wacFxCache);
         const wacVer = generateWacVersion({
           ci_id: meta.ci_id,
           ci_no: meta.ci_no,
@@ -18927,7 +19307,11 @@ app.post('/api/wac/confirm/:logistics_batch_id', requireApiPermission('ci_edit')
           new_avg_cost: roundedAvgCost,
           settlement_date: today,
           confirmed_by: req.currentUserId,
-          logistics_batch_id: batch.id
+          logistics_batch_id: batch.id,
+          last_inbound_date: inboundDate,
+          local_currency: localCurrency,
+          rmb_to_local_rate: fxSnapshot ? fxSnapshot.rate : null,
+          fx_rate_date: fxSnapshot ? fxSnapshot.rate_date : inboundDate
         });
 
         // Only update inventory.weighted_avg_cost — NOT available_qty, NOT inventory_value
@@ -21689,6 +22073,7 @@ module.exports = {
   runOriginalInventoryTotalsLoop,
   // INV-IMPORT-PRECHECK-01：库存导入预检查（纯只读），导出供回归测试直接调用
   validateInventoryImportRows,
+  validateWacHistoryImportRows,
   // P0-C1：库存总表批量设置（导出供 call-count / parity 回归测试直接调用）
   MAX_BATCH_SET_ITEMS,
   MAX_INVENTORY_IMPORT_ROWS,

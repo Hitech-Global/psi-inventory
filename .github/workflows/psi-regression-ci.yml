@@ -10,6 +10,9 @@ on:
       - 'po-number.js'
       - 'wac-calculator.js'
       - 'wac-calculator.test.cjs'
+      - 'db-pg.js'
+      - 'db-sqlite.js'
+      - 'test/wac-history-import.test.cjs'
       - 'test/rp-suggested-qty-wheel.test.cjs'
       - 'test/po-number-date-country.test.cjs'
       - '.github/workflows/psi-regression-ci.yml'
@@ -37,9 +40,14 @@ jobs:
           node --check po-plan-server.js
           node --check po-number.js
           node --check wac-calculator.js
+          node --check db-pg.js
+          node --check db-sqlite.js
+          node --check test/wac-history-import.test.cjs
       - name: Test PO number date and country format
         run: node test/po-number-date-country.test.cjs
       - name: Test WAC calculation and transport-basis rules
         run: node --test wac-calculator.test.cjs
       - name: Test suggested purchase quantity wheel behavior
         run: node test/rp-suggested-qty-wheel.test.cjs
+      - name: Test WAC history matrix and historical import
+        run: node test/wac-history-import.test.cjs
