@@ -14811,7 +14811,7 @@ async function wacConfirm(batchId){
           '<td class="text-right">'+(it.customs_cost_local||0).toFixed(2)+'</td>'+
           '<td class="text-right">'+((it.inspection_cost_local||0)+(it.other_cost_local||0)).toFixed(2)+'</td>'+
           '<td class="text-right font-bold">'+(it.unit_landing_cost||0).toFixed(4)+' <span style="font-size:10px;color:#999">'+esc(m.local_currency||'')+'</span></td>'+
-          '<td class="text-right font-bold" id="wac-new-'+i+'" style="color:#1890ff">'+newWac.toFixed(4)+' <span style="font-size:10px;color:#999">'+esc(m.local_currency||'')+'</span></td>'+
+          '<td class="text-right font-bold" id="wac-new-'+i+'" style="color:#1890ff">'+(newWac===null?'待上传':newWac.toFixed(4))+' <span style="font-size:10px;color:#999">'+esc(m.local_currency||'')+'</span></td>'+
         '</tr>';
       }).join('');
 
