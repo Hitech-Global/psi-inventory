@@ -21,6 +21,7 @@
           <button class="side-item" data-view="store" type="button">店铺诊断</button>
           <button class="side-item" data-view="ads" type="button">广告诊断</button>
           <button class="side-item" data-view="funnel" type="button">流量漏斗</button>
+      <button class="side-item" data-view="health" type="button">店铺健康</button>
           <button class="side-item" data-view="status" type="button">数据状态</button>
         </div>
 
@@ -405,6 +406,30 @@
       </section>
     </section>
 
+    <section id="view-health" class="view-section hidden">
+      <section id="healthSummary" class="kpi-grid health-summary hidden"></section>
+
+      <section id="healthPanel" class="panel health-panel">
+        <div class="panel-head">
+          <div>
+            <h2>店铺健康状态</h2>
+            <p>按 Shopee 平台自定的达标线判定：店铺评分、退货退款率、取消率、迟发率、客服满意率等。</p>
+          </div>
+          <div class="panel-actions">
+            <button id="healthExportBtn" class="ghost" type="button">导出 CSV</button>
+            <button id="healthRefreshBtn" class="ghost" type="button">刷新</button>
+          </div>
+        </div>
+        <div id="healthNotice" class="health-notice hidden"></div>
+        <div class="table-wrap health-table-wrap">
+          <table class="health-table">
+            <thead id="healthHead"></thead>
+            <tbody id="healthBody"><tr><td class="empty">等待加载数据。</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
     <section id="view-status" class="view-section hidden">
       <section id="statusPortfolioSummary" class="kpi-grid hidden"></section>
 
@@ -548,6 +573,7 @@
   <script src="/currency-format-v1.js" defer></script>
   <script src="/app.js" defer></script>
   <script src="/funnel-ui-v1.js" defer></script>
+  <script src="/shop-health-ui-v1.js" defer></script>
   <script src="/shop-connections-ui-v1.js" defer></script>
   <script src="/ad-group-import-async.js" defer></script>
 </body>

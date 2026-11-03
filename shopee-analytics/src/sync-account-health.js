@@ -75,6 +75,30 @@ function toMetricValue(value, kind) {
   return number;
 }
 
+/**
+ * The standard the platform sets for each metric.
+ *
+ * A late shipment rate is meant to be under ten per cent; a score is meant
+ * to be at least four point four. Keeping those here means the page can
+ * say whether a shop met the standard rather than making one up.
+ */
+function normalizeTargets(metricList) {
+  const targets = {};
+  for (const metric of Array.isArray(metricList) ? metricList : []) {
+    const spec = METRIC_COLUMNS[metric.metric_name];
+    if (!spec || !metric.target) continue;
+    // The standard is given in the same unit as the figure was — a late
+    // shipment rate of under ten per cent is written as ten — so it has to
+    // be brought into the same unit as the figure it is compared with.
+    // Compared as they arrive, every standard would look met.
+    targets[spec.column] = {
+      value: toMetricValue(metric.target.value, spec.kind),
+      comparator: metric.target.comparator || null,
+    };
+  }
+  return targets;
+}
+
 function normalizeAccountHealth(payload) {
   const response = unwrap(payload);
   const overall = response.overall_performance || {};
@@ -93,6 +117,7 @@ function normalizeAccountHealth(payload) {
   if (metrics.shopRating === null) metrics.shopRating = numberOrNull(overall.rating);
   return {
     ...metrics,
+    targets: normalizeTargets(response.metric_list),
     fulfillmentFailed: numberOrNull(overall.fulfillment_failed),
     listingFailed: numberOrNull(overall.listing_failed),
     customServiceFailed: numberOrNull(overall.custom_service_failed),
@@ -112,4 +137,11 @@ async function fetchShopHealth({ client, shopId, accessToken }) {
   return { health: normalizeAccountHealth(payload), payload };
 }
 
-module.exports = { unwrap, normalizeAccountHealth, fetchShopHealth, toMetricValue, METRIC_COLUMNS };
+module.exports = {
+  unwrap,
+  normalizeAccountHealth,
+  normalizeTargets,
+  fetchShopHealth,
+  toMetricValue,
+  METRIC_COLUMNS,
+};

@@ -19,6 +19,7 @@ const { ERP_COOKIE, stateCookie: erpStateCookie, clearStateCookie: clearErpState
 const { TIKTOK_COOKIE, stateCookie: tiktokStateCookie, clearStateCookie: clearTikTokStateCookie, parseCookie: parseTikTokCookie } = require('./tiktok-oauth-service');
 const { SkillJobManager, normalizeReportLanguage } = require('./skill-job-manager');
 const { buildFunnelRows, missingSources } = require('./shop-funnel');
+const { evaluateMeasures, overallStatus, violationTotal, MEASURES } = require('./shop-health-evaluation');
 
 function positiveInt(value, name) {
   const n = Number(value);
@@ -871,6 +872,86 @@ function createShopeeAnalyticsRouter({
         historyCoverage,
         backup: backupStatus,
         ...status,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  /**
+   * How each shop is being run.
+   *
+   * The judgement is the platform's own: it sets a standard for each of
+   * these figures and reports the figure beside it, so a shop is said to
+   * have met a standard only where the platform's line says it did.
+   */
+  router.get('/shop-health', async (req, res, next) => {
+    try {
+      const shops = await queryRepository.listShops({ activeOnly: false });
+      const filtered = shops.filter(row => {
+        if (req.query.country && row.countryCode !== req.query.country) return false;
+        if (req.query.brand && row.brandCode !== req.query.brand) return false;
+        if (req.query.shop_id && Number(row.shopId) !== Number(req.query.shop_id)) return false;
+        return true;
+      });
+      // An operator only sees the shops assigned to them. The check that
+      // refuses a shop throws, so it cannot be used to narrow a list —
+      // the visible set is worked out instead.
+      const visible = !req.auth || !req.auth.enabled || req.auth.role === ROLE_SUPER_ADMIN
+        ? new Set(filtered.map(row => row.shopId))
+        : new Set(req.auth.shopIds);
+      const allowed = filtered
+        .filter(row => visible.has(row.shopId))
+        .map(row => row.shopId);
+      const readings = await shopHealthRepository.listWithShops({ shopIds: allowed });
+
+      const rows = readings.map(reading => {
+        const measures = evaluateMeasures(reading, reading.targets);
+        const standing = overallStatus(measures);
+        return {
+          shopId: reading.shopId,
+          displayName: reading.displayName,
+          countryCode: reading.countryCode,
+          brandCode: reading.brandCode,
+          brandName: reading.brandName,
+          currency: reading.currency,
+          eventDate: reading.eventDate,
+          status: standing.status,
+          breachCount: standing.breachCount,
+          measureCount: standing.measureCount,
+          violationTotal: violationTotal(reading),
+          fulfillmentFailed: reading.fulfillmentFailed,
+          listingFailed: reading.listingFailed,
+          customServiceFailed: reading.customServiceFailed,
+          measures,
+        };
+      });
+      rows.sort((a, b) => {
+        const order = { poor: 0, watch: 1, unknown: 2, good: 3 };
+        const byStatus = order[a.status] - order[b.status];
+        if (byStatus) return byStatus;
+        return (a.shopRating ?? 99) - (b.shopRating ?? 99);
+      });
+
+      // The shops that have no reading yet: they are not healthy, they are
+      // unconnected, and the page has to be able to say which is which.
+      const missing = filtered
+        .filter(row => visible.has(row.shopId))
+        .filter(row => !rows.some(reading => reading.shopId === row.shopId))
+        .map(row => ({
+          shopId: row.shopId,
+          displayName: row.displayName || row.operatorLabel || `Shop ${row.shopId}`,
+          countryCode: row.countryCode,
+          brandCode: row.brandCode,
+          status: 'unconnected',
+        }));
+
+      res.json({
+        rows,
+        missing,
+        measures: MEASURES.map(spec => ({
+          key: spec.key, label: spec.label, labelEn: spec.labelEn, kind: spec.kind, better: spec.better,
+        })),
       });
     } catch (error) {
       next(error);

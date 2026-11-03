@@ -750,7 +750,24 @@ async function loadFunnel() {
   window.ShopeeFunnel?.render(data);
 }
 
-async function loadCampaigns() {
+/**
+ * How each shop is being run.
+ *
+ * The page shows every shop the reader may see, not one shop at a time:
+ * the point of it is to see which shop needs attention, which only shows
+ * if they are all beside each other.
+ */
+async function loadShopHealth() {
+  const filters = currentFilters();
+  const params = new URLSearchParams();
+  if (filters.country) params.set('country', filters.country);
+  if (filters.brand) params.set('brand', filters.brand);
+  const query = params.toString();
+  const data = await json(`/api/shopee-analytics/shop-health${query ? `?${query}` : ''}`);
+  window.ShopeeShopHealth?.render(data);
+}
+
+function loadCampaigns() {
   return loadGmvMaxCampaigns();
 }
 
@@ -1536,6 +1553,9 @@ async function loadCurrentView({ manageButton = true } = {}) {
     else if (state.view === 'funnel' && selectedShop()) {
       await loadFunnel();
     }
+    else if (state.view === 'health') {
+      await loadShopHealth();
+    }
     else if (state.view === 'status') {
       if (selectedShop()) await loadSystemStatus();
       else await loadStatusPortfolio();
@@ -1629,7 +1649,7 @@ function restoreLocaleUiState() {
   if (saved.endDate) $('#endDate').value = saved.endDate;
   window.dispatchEvent(new CustomEvent('shopee-date-range-sync'));
 
-  const view = ['overview', 'store', 'ads', 'funnel', 'status'].includes(saved.view) ? saved.view : 'overview';
+  const view = ['overview', 'store', 'ads', 'funnel', 'health', 'status'].includes(saved.view) ? saved.view : 'overview';
   const adsType = ['manual', 'auto', 'groups'].includes(saved.adsType) ? saved.adsType : 'manual';
   const adStatus = ['all', 'ongoing', 'paused', 'ended', 'deleted'].includes(saved.adStatus) ? saved.adStatus : 'all';
   state.view = view;
@@ -1743,6 +1763,8 @@ $('#brandFilter').addEventListener('change', onDimensionChanged);
 $('#shopSelect').addEventListener('change', onShopChanged);
 $('#loadBtn').addEventListener('click', readSelectedData);
 $('#funnelExportBtn')?.addEventListener('click', () => window.ShopeeFunnel?.exportCsv());
+  $('#healthExportBtn')?.addEventListener('click', () => window.ShopeeShopHealth?.exportCsv());
+  $('#healthRefreshBtn')?.addEventListener('click', () => loadShopHealth());
 window.addEventListener('shopee-date-range-changed', () => {
   if (state.view !== 'ads') loadCurrentView();
 });

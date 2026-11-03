@@ -244,7 +244,10 @@ test('the page is wired into the shell', () => {
   assert.ok(indexHtml.includes('data-view="funnel"'), 'the tab must exist');
   assert.ok(indexHtml.includes('id="view-funnel"'), 'the view must exist');
   assert.ok(indexHtml.includes('/funnel-ui-v1.js'), 'the page script must be loaded');
-  assert.ok(appJs.includes("'funnel', 'status'"), 'the view must be one the shell knows');
+  // The views are checked one by one rather than as a run of text: adding
+  // a view between two of them would otherwise look like a broken shell.
+  assert.ok(appJs.includes("'funnel'"), 'the view must be one the shell knows');
+  assert.ok(appJs.includes("'status'"), 'the view must be one the shell knows');
   assert.ok(appJs.includes('loadFunnel()'), 'the view must load');
   assert.ok(appJs.includes('/api/shopee-analytics/funnel'), 'the view must call the endpoint');
   assert.ok(serverJs.includes('/funnel-ui-v1.js'), 'the script must be served');

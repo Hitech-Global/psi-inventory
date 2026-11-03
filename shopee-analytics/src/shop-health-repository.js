@@ -17,8 +17,8 @@ class ShopeeShopHealthRepository {
         pre_order_listing_rate, pre_order_listing_amount, severe_listing_violations,
         other_listing_violations, prohibited_listings, counterfeit_ip_infringement,
         spam_listings, fulfillment_failed, listing_failed, custom_service_failed,
-        raw_json, synced_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21::jsonb,now())
+        targets_json, raw_json, synced_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21::jsonb,$22::jsonb,now())
        ON CONFLICT (shop_id, event_date) DO UPDATE SET
         shop_rating=EXCLUDED.shop_rating,
         csat_rate=EXCLUDED.csat_rate,
@@ -38,6 +38,7 @@ class ShopeeShopHealthRepository {
         fulfillment_failed=EXCLUDED.fulfillment_failed,
         listing_failed=EXCLUDED.listing_failed,
         custom_service_failed=EXCLUDED.custom_service_failed,
+        targets_json=EXCLUDED.targets_json,
         raw_json=EXCLUDED.raw_json,
         synced_at=now()`,
       [
@@ -61,9 +62,67 @@ class ShopeeShopHealthRepository {
         health.fulfillmentFailed,
         health.listingFailed,
         health.customServiceFailed,
+        JSON.stringify(health.targets || {}),
         JSON.stringify(health.raw || {}),
       ],
     );
+  }
+
+  /**
+   * The latest reading for each shop, with the shop's own details.
+   *
+   * A shop with no reading is left out rather than shown as a shop with
+   * nothing wrong with it — it has not been looked at, which is different
+   * from having looked and found it well.
+   */
+  async listWithShops({ shopIds = null } = {}) {
+    const result = await this.pool.query(
+      `SELECT DISTINCT ON (h.shop_id)
+         h.shop_id, h.event_date, h.shop_rating, h.csat_rate, h.response_rate,
+         h.late_shipment_rate, h.non_fulfillment_rate, h.preparation_time,
+         h.cancellation_rate, h.return_refund_rate, h.pre_order_listing_rate,
+         h.severe_listing_violations, h.other_listing_violations,
+         h.prohibited_listings, h.counterfeit_ip_infringement, h.spam_listings,
+         h.fulfillment_failed, h.listing_failed, h.custom_service_failed,
+         h.targets_json, h.synced_at,
+         p.display_name, p.operator_label, p.country_code, p.brand_code,
+         p.brand_name, p.currency, p.timezone, p.import_source_shop_name
+       FROM shopee_shop_health_daily h
+       LEFT JOIN shopee_shop_profiles p ON p.shop_id = h.shop_id
+       WHERE ($1::bigint[] IS NULL OR h.shop_id = ANY($1::bigint[]))
+       ORDER BY h.shop_id, h.event_date DESC`,
+      [shopIds],
+    );
+    return result.rows.map(row => ({
+      shopId: Number(row.shop_id),
+      eventDate: row.event_date,
+      displayName: row.operator_label || row.display_name || `Shop ${row.shop_id}`,
+      countryCode: row.country_code,
+      brandCode: row.brand_code,
+      brandName: row.brand_name,
+      currency: row.currency,
+      timezone: row.timezone,
+      importSourceShopName: row.import_source_shop_name,
+      shopRating: row.shop_rating === null ? null : Number(row.shop_rating),
+      csatRate: row.csat_rate === null ? null : Number(row.csat_rate),
+      responseRate: row.response_rate === null ? null : Number(row.response_rate),
+      lateShipmentRate: row.late_shipment_rate === null ? null : Number(row.late_shipment_rate),
+      nonFulfillmentRate: row.non_fulfillment_rate === null ? null : Number(row.non_fulfillment_rate),
+      preparationTime: row.preparation_time === null ? null : Number(row.preparation_time),
+      cancellationRate: row.cancellation_rate === null ? null : Number(row.cancellation_rate),
+      returnRefundRate: row.return_refund_rate === null ? null : Number(row.return_refund_rate),
+      preOrderListingRate: row.pre_order_listing_rate === null ? null : Number(row.pre_order_listing_rate),
+      severeListingViolations: row.severe_listing_violations === null ? null : Number(row.severe_listing_violations),
+      otherListingViolations: row.other_listing_violations === null ? null : Number(row.other_listing_violations),
+      prohibitedListings: row.prohibited_listings === null ? null : Number(row.prohibited_listings),
+      counterfeitIpInfringement: row.counterfeit_ip_infringement === null ? null : Number(row.counterfeit_ip_infringement),
+      spamListings: row.spam_listings === null ? null : Number(row.spam_listings),
+      fulfillmentFailed: row.fulfillment_failed === null ? null : Number(row.fulfillment_failed),
+      listingFailed: row.listing_failed === null ? null : Number(row.listing_failed),
+      customServiceFailed: row.custom_service_failed === null ? null : Number(row.custom_service_failed),
+      targets: row.targets_json || {},
+      syncedAt: row.synced_at,
+    }));
   }
 
   /**

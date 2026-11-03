@@ -473,6 +473,9 @@ CREATE TABLE IF NOT EXISTS shopee_shop_health_daily (
   fulfillment_failed BIGINT,
   listing_failed BIGINT,
   custom_service_failed BIGINT,
+  -- 平台给每个指标定的达标线（如迟发率 < 10%）。存下来，页面按它判
+  -- 达标与否，而不是自己编一个标准。
+  targets_json JSONB NOT NULL DEFAULT '{}'::jsonb,
   raw_json JSONB NOT NULL DEFAULT '{}'::jsonb,
   synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (shop_id, event_date)

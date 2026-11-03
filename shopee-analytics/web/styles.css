@@ -539,3 +539,51 @@ tbody td{font-weight:400}
   margin:0;padding:9px 22px;border-top:1px solid #eceef1;background:#fafbfc;
   font-size:11px;color:#6b7280;font-variant-numeric:tabular-nums;
 }
+
+/* ── 店铺健康 ──────────────────────────────────────────────────────────────
+   The page says whether a shop met the standard the platform set, and
+   shows that standard beside the figure. A figure without its standard
+   would leave the reader to judge whether it is any good. */
+.health-summary{grid-template-columns:repeat(5,minmax(120px,1fr))}
+.health-kpi .kpi-hint{font-size:11px;color:#98a2b3}
+.health-table-wrap{max-height:620px;border:1px solid #eaecf0;border-radius:14px;overflow:auto}
+.health-table{width:100%;border-collapse:separate;border-spacing:0;font-size:12px}
+.health-table th,.health-table td{
+  padding:9px 12px;border-bottom:1px solid #f0f1f3;text-align:left;white-space:nowrap;
+}
+.health-table thead th{
+  position:sticky;top:0;background:#fafbfc;z-index:1;font-weight:600;color:#475467;
+  font-size:11px;border-bottom:1px solid #eaecf0;
+}
+.health-table tbody tr:hover{background:#fafbfc}
+.health-row.poor{background:#fff9f7}
+.health-row.watch{background:#fffdf7}
+.health-shop-name{display:block;font-weight:600;color:#101828}
+.health-shop-id{
+  display:block;font-size:11px;color:#98a2b3;font-variant-numeric:tabular-nums;margin-top:1px;
+}
+.health-pill{
+  display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:600;
+}
+.health-pill.good{background:#ecfdf3;color:#027a48}
+.health-pill.watch{background:#fffaeb;color:#b54708}
+.health-pill.poor{background:#fef3f2;color:#b42318}
+.health-pill.unknown{background:#f2f4f7;color:#475467}
+.health-pill.unconnected{background:#f9fafb;color:#98a2b3;border:1px solid #eaecf0}
+.health-breach-count{display:block;font-size:11px;color:#b54708;margin-top:3px}
+.health-value{font-variant-numeric:tabular-nums;font-weight:600;color:#101828}
+.health-target{font-size:11px;color:#98a2b3;margin-left:3px}
+.health-mark{margin-left:4px;font-weight:700}
+.health-mark.met{color:#17b26a}
+.health-mark.breached{color:#f04438}
+.health-empty{color:#c0c5cc}
+.health-date{font-variant-numeric:tabular-nums;color:#6b7280}
+.health-notice{margin:0 0 14px}
+.health-missing{
+  border:1px solid #e4e7ec;border-radius:12px;background:#fafbfc;padding:12px 14px;
+}
+.health-missing h3{margin:0 0 4px;font-size:12px;color:#344054}
+.health-missing p{margin:0 0 8px;font-size:11px;color:#6b7280}
+.health-missing ul{margin:0;padding:0;list-style:none;display:flex;flex-wrap:wrap;gap:8px 18px}
+.health-missing li{display:flex;align-items:baseline;gap:8px}
+.health-missing-note{font-size:11px;color:#98a2b3}
