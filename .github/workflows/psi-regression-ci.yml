@@ -5,14 +5,18 @@ on:
     branches: [main]
     paths:
       - 'app.js'
+      - 'server.js'
+      - 'po-plan-server.js'
+      - 'po-number.js'
       - 'test/rp-suggested-qty-wheel.test.cjs'
+      - 'test/po-number-date-country.test.cjs'
       - '.github/workflows/psi-regression-ci.yml'
 
 permissions:
   contents: read
 
 jobs:
-  replenishment-input-regression:
+  psi-regression:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -20,7 +24,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Check frontend syntax
-        run: node --check app.js
+      - name: Check changed backend syntax
+        run: |
+          node --check server.js
+          node --check po-plan-server.js
+          node --check po-number.js
+      - name: Test PO number date and country format
+        run: node test/po-number-date-country.test.cjs
       - name: Test suggested purchase quantity wheel behavior
         run: node test/rp-suggested-qty-wheel.test.cjs

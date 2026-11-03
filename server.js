@@ -29,6 +29,7 @@ const { query, queryOne, run, transaction, genId, initDatabase } = require('./db
 const { withGenerateClient, withAsyncPoolClient } = require('./pg-async'); // 专用异步 Pool：generate / 销售导入库存重算不阻塞主线程
 const { importCommercialInvoicesPg } = require('./wave2a-ci-batch-import-pg.js'); // Wave 2A: CI batch-import PG async path
 const { importProformaInvoicesPg } = require('./wave2b-pi-batch-import-pg.js'); // Wave 2B: PI batch-import PG async path
+const { generatePONumber } = require('./po-number');
 const { slimReplenishmentRow, projectDailySalesRow } = require('./rp-projection'); // RP-P0-R1 订单预测响应投影（仅序列化瘦身，不动计算逻辑）
 const {
   createSqliteSalesImportAdapter,
@@ -8449,7 +8450,8 @@ app.post('/api/purchase-orders', requireApiPermission('po_create'), asyncHandler
     }
     const priceCol = currency === 'RMB' ? 'purchase_price_rmb' : 'purchase_price_usd';
     const poId = genId('po');
-    const poNo = d.po_no || `PO-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
+    const poDate = d.po_date || new Date().toISOString().slice(0, 10);
+     const poNo = generatePONumber(d.country || '', poDate);
 
     // 价格校验：SKU 必须存在；价格缺失不阻断创建，记入 warnings
     const invalidItems = [];
@@ -8475,7 +8477,7 @@ app.post('/api/purchase-orders', requireApiPermission('po_create'), asyncHandler
     let totalAmount = 0;
     transaction(() => {
       run(`INSERT INTO purchase_orders (id, po_no, supplier_id, supplier_name, brand, country, target_warehouse, po_date, expected_delivery, currency, total_amount, created_by, created_by_name, po_status, approval_status, from_suggestion, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [poId, poNo, d.supplier_id || '', d.supplier_name, d.brand || '', d.country || '', d.target_warehouse || '', d.po_date || new Date().toISOString().split('T')[0], d.expected_delivery || '', currency, 0, d.created_by || '', d.created_by_name || '', 'draft', 'pending', d.from_suggestion || 0, d.remark || '']);
+        [poId, poNo, d.supplier_id || '', d.supplier_name, d.brand || '', d.country || '', d.target_warehouse || '', poDate, d.expected_delivery || '', currency, 0, d.created_by || '', d.created_by_name || '', 'draft', 'pending', d.from_suggestion || 0, d.remark || '']);
 
       if (itemRows.length > 0) {
         itemRows.forEach(it => {
