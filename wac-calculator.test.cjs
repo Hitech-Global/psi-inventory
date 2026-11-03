@@ -1630,10 +1630,10 @@ describe('Preview/Confirm parity', () => {
     const item = preview.items[0];
     assert.ok(item.sku_code, 'item.sku_code missing');
     assert.ok(item.batch_qty > 0, 'item.batch_qty should be > 0');
-    assert.ok(item.old_qty !== undefined, 'item.old_qty missing');
+    assert.strictEqual(item.old_qty, null, 'old_qty must wait for per-confirmation upload');
     assert.ok(item.current_wac !== undefined, 'item.current_wac missing');
     assert.ok(item.unit_landing_cost > 0, 'item.unit_landing_cost should be > 0');
-    assert.ok(item.new_wac > 0, 'item.new_wac should be > 0');
+    assert.strictEqual(item.new_wac, null, 'new_wac must wait for uploaded old_qty');
     assert.ok(item.product_cost_local > 0, 'item.product_cost_local should be > 0');
     assert.ok(item.freight_cost_local > 0, 'item.freight_cost_local should be > 0');
     assert.ok(item.customs_cost_local > 0, 'item.customs_cost_local should be > 0');
@@ -1661,10 +1661,11 @@ describe('Preview/Confirm parity', () => {
     assert.strictEqual(confirmCheck.blockers.length, 0,
       `Confirm re-read should also have 0 blockers, got: ${JSON.stringify(confirmCheck.blockers)}`);
 
-    // ── 5. Denominator check: old_qty + batch_qty > 0 ──
+    // ── 5. Preview must not invent an old quantity; confirmation supplies it from upload.
     for (const it of confirmCheck.items) {
-      const denom = (it.old_qty || 0) + it.batch_qty;
-      assert.ok(denom > 0, `Denominator for ${it.sku_code} should be > 0, got ${denom}`);
+      assert.strictEqual(it.old_qty, null);
+      assert.strictEqual(it.new_wac, null);
+      assert.ok(it.batch_qty > 0);
     }
 
     // ── 6. Verify item values are identical between Preview and Confirm ──

@@ -14791,20 +14791,20 @@ async function wacConfirm(batchId){
     let skuTableHtml='';
     if(blockers.length===0 && items.length>0){
       const rowsHtml=items.map((it,i)=>{
-        const oldQty=it.old_qty||it.available_qty||0;
+        const oldQty='';
         const oldWac=it.current_wac||0;
         const batchQty=it.batch_qty||0;
         const unitCost=it.unit_landing_cost||0;
         const newQty=oldQty+batchQty;
-        const newWac=it.new_wac||0;
+        const newWac=null;
         return '<tr>'+
           '<td class="cell-id">'+esc(it.sku_code)+'</td>'+
           '<td>'+esc(it.product_name||it.model||'-')+'</td>'+
           '<td class="text-right">'+batchQty+'</td>'+
           '<td class="text-right">'+(it.weighted_purchase_unit_price||0).toFixed(4)+'</td>'+
           '<td class="text-right">'+(it.customs_rate!==null&&it.customs_rate!==undefined?Number(it.customs_rate).toFixed(4):'-')+'</td>'+
-          '<td class="text-right" style="color:#999">'+(it.old_qty||it.available_qty||0)+'</td>'+
-          '<td><input type="number" id="wac-old-'+i+'" value="'+oldQty+'" placeholder="0" min="0" step="1" style="width:90px;padding:4px;text-align:right;background:#fffbe6" onchange="recalcWacRow('+i+');wacValidateInputs()"></td>'+
+
+          '<td><input type="number" id="wac-old-'+i+'" value="" placeholder="请上传" min="0" step="1" style="width:90px;padding:4px;text-align:right;background:#fffbe6" onchange="recalcWacRow('+i+');wacValidateInputs()"></td>'+
           '<td class="text-right">'+(it.current_wac||0).toFixed(4)+' <span style="font-size:10px;color:#999">'+esc(m.local_currency||'')+'</span></td>'+
           '<td class="text-right">'+(it.product_cost_local||0).toFixed(2)+'</td>'+
           '<td class="text-right">'+(it.freight_cost_local||0).toFixed(2)+'</td>'+
@@ -14834,7 +14834,7 @@ async function wacConfirm(batchId){
           '<th>'+t('wac.col_pl_qty','PL数量')+'</th>'+
           '<th>'+t('wac.col_weighted_price','加权采购单价')+'</th>'+
           '<th>'+t('wac.col_customs_rate','关税税率')+'</th>'+
-          '<th>'+t('wac.col_avail','当前库存')+'</th>'+
+
           '<th>'+t('wac.col_old_qty','旧库存数量')+'</th>'+
           '<th>'+t('wac.col_current_wac','当前WAC')+'</th>'+
           '<th>'+t('wac.col_product_cost_local','产品成本(本币)')+'</th>'+
@@ -14869,14 +14869,16 @@ function recalcWacRow(i){
   const p=window._wacPreview;
   if(!p||!p.items[i])return;
   const it=p.items[i];
-  const oldQty=parseFloat(document.getElementById('wac-old-'+i)?.value)||0;
+  const rawQty=document.getElementById('wac-old-'+i)?.value;
+  const oldQty=rawQty===''||rawQty==null?null:Number(rawQty);
   const oldWac=it.current_wac||0;
   const batchQty=it.batch_qty||0;
   const unitCost=it.unit_landing_cost||0;
-  const newQty=oldQty+batchQty;
-  const newWac=newQty>0?Math.round((oldQty*oldWac+batchQty*unitCost)/newQty*10000)/10000:unitCost;
+  const newQty=(oldQty===null?0:oldQty)+batchQty;
+  const valid=oldQty!==null&&Number.isFinite(oldQty)&&oldQty>=0&&newQty>0;
+  const newWac=valid?Math.round((oldQty*oldWac+batchQty*unitCost)/newQty*10000)/10000:null;
   const cell=document.getElementById('wac-new-'+i);
-  if(cell)cell.textContent=newWac.toFixed(4);
+  if(cell)cell.textContent=newWac===null?'待上传':newWac.toFixed(4);
 }
 
 // 读取某行 old_qty 输入，严格区分 0 与 空白/非法（不使用 if(!qty) 这类判断）
