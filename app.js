@@ -14692,7 +14692,7 @@ async function wacConfirm(batchId){
     const m=p.meta||{};
     const blockers=p.blockers||[];
     const items=p.items||[];
-    window._wacImport={batchId:batchId,matched:[],missing:[],unknown:[],duplicate:[],invalid:[]};
+    window._wacImport={batchId:batchId,uploaded:false,matched:[],missing:[],unknown:[],duplicate:[],invalid:[]};
     const skuIndex={};
     items.forEach((it,i)=>{const k=String(it.sku_code);if(!(k in skuIndex))skuIndex[k]=i;});
     window._wacSkuIndex=skuIndex;
@@ -14909,11 +14909,13 @@ function wacValidateInputs(){
   }
   const unknownN=st?st.unknown.length:0;
   const duplicateN=st?st.duplicate.length:0;
-  const blocked=liveInvalid.length>0||unknownN>0||duplicateN>0;
+  const uploadMissing=!!st&&!st.uploaded;
+  const blocked=uploadMissing||liveInvalid.length>0||unknownN>0||duplicateN>0;
   const statusEl=document.getElementById('wac-import-status');
   const btn=document.getElementById('wac-confirm-btn');
   if(statusEl){
     const parts=[];
+    if(uploadMissing) parts.push('<span class="bad">请先上传本次原库存数量文件</span>');
     const matchedN=st?st.matched.length:0;
     const missingN=st?st.missing.length:0;
     const unknownArr=st?st.unknown:[];
@@ -15029,6 +15031,7 @@ async function importWacOldInventory(){
         Object.keys(fileMap).forEach(sku=>{ if(!batchSet.has(sku)) unknown.push(sku); });
 
         // 覆盖式写入本次导入状态（每次导入都重置，不继承上次）
+        st.uploaded=true;
         st.matched=matched; st.missing=missing.slice(); st.unknown=unknown.slice(); st.duplicate=duplicate.slice(); st.invalid=invalid.slice();
 
         const msgs=[];
@@ -15056,6 +15059,9 @@ async function importWacOldInventory(){
 async function submitWacConfirm(batchId){
   const p=window._wacPreview;
   if(!p){closeModal();return}
+  // 每次确认都必须先上传本次原库存数量文件。
+  const st=window._wacImport;
+  if(!st||!st.uploaded){showToast('请先上传本次原库存数量文件','danger');return;}
   // 提交前再次校验：文件结构错误（未知/重复 SKU）直接拦截
   wacValidateInputs();
   const st=window._wacImport;
