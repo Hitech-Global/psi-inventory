@@ -18743,7 +18743,7 @@ app.get('/api/wac/pending-batches', requireApiPermission('ci_view'), asyncHandle
       lb.international_freight, lb.local_charges, lb.customs_service_fee,
       lb.delivery_fee, lb.customs_duty, lb.vat_gst, lb.other_fees, lb.freight_currency,
       lb.total_cartons, pl.pl_no, pl.id AS pl_id, pl.status AS pl_status, pl.total_qty AS pl_total_qty,
-      ci.goods_amount, ci.currency AS ci_currency, ci.ci_no
+      ci.goods_amount, ci.currency AS ci_currency, ci.ci_no, ci.brand
       FROM logistics_batches lb
       LEFT JOIN packing_lists pl ON pl.logistics_batch_id = lb.id
       LEFT JOIN commercial_invoices ci ON ci.id = lb.related_ci_id
@@ -18763,17 +18763,18 @@ app.get('/api/wac/confirmed-batches', requireApiPermission('ci_view'), asyncHand
       lb.target_country, lb.target_warehouse, lb.actual_arrival_date,
       wh.confirmed_at, wh.ci_no,
       pl.pl_no, pl.total_qty AS pl_total_qty,
+      ci.brand, ci.goods_amount, ci.currency AS ci_currency,
       (SELECT COUNT(DISTINCT wh2.sku_code) FROM wac_history wh2 WHERE wh2.logistics_batch_id = lb.id) AS sku_count
       FROM logistics_batches lb
       INNER JOIN wac_history wh ON wh.logistics_batch_id = lb.id
       LEFT JOIN packing_lists pl ON pl.logistics_batch_id = lb.id
+      LEFT JOIN commercial_invoices ci ON ci.id = lb.related_ci_id
       WHERE lb.logistics_status = ?
       GROUP BY lb.id
       ORDER BY wh.confirmed_at DESC`, [LOGISTICS_STATUS_ARRIVED]).rows;
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
-
 
 /* WAC历史矩阵：只读取已锁定且未冲销的历史记录；日期列由前端按筛选结果生成。 */
 app.get('/api/wac/history-matrix', requireApiPermission('ci_view'), asyncHandler((req, res) => {
