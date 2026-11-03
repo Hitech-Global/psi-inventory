@@ -7,9 +7,21 @@ const { ShopeeShopProfileRepository } = require('./shop-profile-repository');
 const { runBackfillShop } = require('./backfill-runner');
 const { daysInclusive } = require('./backfill-utils');
 const { assertOnlineOperationAllowed } = require('./deployment-mode');
-const { assertShopAccess } = require('./feishu-auth');
+const { assertShopAccess, ROLE_SUPER_ADMIN } = require('./feishu-auth');
+const { TikTokSyncRunner, DEFAULT_ENDPOINTS } = require('./tiktok-sync-runner');
 
 const ALLOWED_SOURCES = new Set(['product-ads', 'gms']);
+
+/**
+ * TikTok 手动同步允许的数据源。
+ *
+ * 刻意**不含**广告相关的数据源：广告线（GMV Max / 整合报表）走的是
+ * Marketing API —— 独立的 app 凭据、`Access-Token` 头、不签名，
+ * 与本项目的 Shop Open API 客户端完全不兼容（见 src/tiktok-client.js 的
+ * assertShopOpenApiPath）。在这里放行只会让请求必然失败并给出误导性的报错。
+ */
+const TIKTOK_ALLOWED_SOURCES = new Set(DEFAULT_ENDPOINTS);
+
 const JOB_TTL_MS = 15 * 60 * 1000;
 
 const STEP_LABELS = Object.freeze({
@@ -49,7 +61,31 @@ function requestSources(value) {
   return sources;
 }
 
-function createManualDataSyncRouter({ pool, runtimeFactory = () => createSyncRuntime({ pool }) } = {}) {
+/**
+ * TikTok 的店铺 ID 是**字符串**（Shop Open API 的 shop_id 不是数字），
+ * 所以不能复用 Shopee 那边的 positiveInt 校验。
+ */
+function tiktokShopId(value, name) {
+  const text = String(value ?? '').trim();
+  if (!text) throw new Error(`${name} is required`);
+  if (text.length > 64) throw new Error(`${name} is too long`);
+  return text;
+}
+
+function requestTikTokSources(value) {
+  const raw = Array.isArray(value) && value.length ? value : [...DEFAULT_ENDPOINTS];
+  const sources = Array.from(new Set(raw.map(item => String(item).trim().toLowerCase()).filter(Boolean)));
+  const invalid = sources.filter(source => !TIKTOK_ALLOWED_SOURCES.has(source));
+  if (invalid.length) throw new Error(`Unsupported TikTok sync source: ${invalid.join(', ')}`);
+  return sources;
+}
+
+function createManualDataSyncRouter({
+  pool,
+  runtimeFactory = () => createSyncRuntime({ pool }),
+  tiktokRunnerFactory = null,
+  env = process.env,
+} = {}) {
   if (!pool) throw new Error('pool is required');
   const router = express.Router();
   const profileRepository = new ShopeeShopProfileRepository({ pool });
@@ -189,7 +225,114 @@ function createManualDataSyncRouter({ pool, runtimeFactory = () => createSyncRun
     } catch (error) { next(error); }
   });
 
+  // ---- TikTok Shop ----
+  //
+  // TikTok 的店铺标识是 (shop_id, shop_cipher) 二元组，而 shop_id 是**字符串**。
+  // 它与 Shopee 的 BIGINT shop_id 是两套不同的编号空间，
+  // 因此这里走独立的一组路由，不复用上面的 /data/... 路径 ——
+  // 否则两套编号会混进同一个 jobs 表，一个店的作业可能被另一个店的人查到。
+  //
+  // 鉴权沿用平台接入页的规则：TikTok 侧的连接与数据读取只对超级管理员开放。
+  // 原因：TikTok 的一次授权覆盖卖家名下**全部**店铺，
+  // 目前没有"哪个操作员可以看哪个 TikTok 店铺"的映射，
+  // 贸然放开会让任意登录用户读到别人品牌的数据。
+
+  const tiktokJobs = new Map();
+
+  const resolveTikTokRequest = async body => {
+    assertOnlineOperationAllowed('Manual TikTok data sync');
+    const shopId = tiktokShopId(body?.shop_id ?? body?.shopId, 'shop_id');
+    const startDate = isoDate(body?.start_date ?? body?.startDate, 'start_date');
+    const endDate = isoDate(body?.end_date ?? body?.endDate, 'end_date');
+    if (startDate > endDate) throw new Error('start_date must be <= end_date');
+    const days = daysInclusive(startDate, endDate);
+    // 上限与 Shopee 侧一致（366 天）。runner 会按 30 天拆窗，
+    // 所以超长区间是安全的，只是会跑得久。
+    if (days > 366) throw new Error('Manual data sync range cannot exceed 366 days');
+    const sources = requestTikTokSources(body?.sources);
+    return { shopId, startDate, endDate, days, sources };
+  };
+
+  const createTikTokRunner = () => {
+    if (tiktokRunnerFactory) return tiktokRunnerFactory();
+    return new TikTokSyncRunner({ pool, env });
+  };
+
+  const runTikTokSync = async ({ shopId, startDate, endDate, sources }) => {
+    const runner = createTikTokRunner();
+    const summary = await runner.runShop({
+      shopId,
+      startDate,
+      endDate,
+      endpoints: sources,
+    });
+    return { ok: summary.ok, platform: 'tiktok', shopId, startDate, endDate, sources, summary };
+  };
+
+  router.post('/tiktok/data/sync-range', express.json({ limit: '16kb' }), async (req, res, next) => {
+    try {
+      if (!req.auth || req.auth.role !== ROLE_SUPER_ADMIN) {
+        res.status(403).json({ error: 'SUPER_ADMIN_REQUIRED', message: 'Only super admins can sync TikTok Shop data.' });
+        return;
+      }
+      const input = await resolveTikTokRequest(req.body);
+      res.json(await runTikTokSync(input));
+    } catch (error) { next(error); }
+  });
+
+  router.post('/tiktok/data/sync-jobs', express.json({ limit: '16kb' }), async (req, res, next) => {
+    try {
+      if (!req.auth || req.auth.role !== ROLE_SUPER_ADMIN) {
+        res.status(403).json({ error: 'SUPER_ADMIN_REQUIRED', message: 'Only super admins can sync TikTok Shop data.' });
+        return;
+      }
+      const input = await resolveTikTokRequest(req.body);
+      const jobId = randomUUID();
+      const job = {
+        id: jobId, status: 'RUNNING', input: { shopId: input.shopId, startDate: input.startDate, endDate: input.endDate },
+        progress: { percent: 2, label: '准备读取 TikTok 数据', detail: `${input.days} 天` }, failures: [],
+        result: null, error: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      };
+      tiktokJobs.set(jobId, job);
+      runTikTokSync(input).then(result => {
+        job.result = result;
+        job.status = 'COMPLETED';
+        job.progress = { percent: 100, label: '读取完成', detail: result.ok ? '全部数据步骤完成' : '部分数据步骤失败' };
+        job.updatedAt = new Date().toISOString();
+        setTimeout(() => tiktokJobs.delete(jobId), JOB_TTL_MS).unref?.();
+      }).catch(error => {
+        job.status = 'FAILED';
+        job.error = error && error.message ? error.message : String(error);
+        job.progress = { percent: job.progress.percent, label: '读取失败', detail: job.error };
+        job.updatedAt = new Date().toISOString();
+        setTimeout(() => tiktokJobs.delete(jobId), JOB_TTL_MS).unref?.();
+      });
+      res.status(202).json({ jobId, status: job.status, progress: job.progress });
+    } catch (error) { next(error); }
+  });
+
+  router.get('/tiktok/data/sync-jobs/:jobId', (req, res, next) => {
+    try {
+      if (!req.auth || req.auth.role !== ROLE_SUPER_ADMIN) {
+        res.status(403).json({ error: 'SUPER_ADMIN_REQUIRED', message: 'Only super admins can sync TikTok Shop data.' });
+        return;
+      }
+      const job = tiktokJobs.get(String(req.params.jobId || ''));
+      if (!job) {
+        res.status(404).json({ error: 'SYNC_JOB_NOT_FOUND', message: 'Data sync job was not found or has expired.' });
+        return;
+      }
+      res.json(job);
+    } catch (error) { next(error); }
+  });
+
   return router;
 }
 
-module.exports = { createManualDataSyncRouter, requestSources, stepLabel };
+module.exports = {
+  createManualDataSyncRouter,
+  requestSources,
+  requestTikTokSources,
+  stepLabel,
+  tiktokShopId,
+};

@@ -838,3 +838,175 @@ CREATE TABLE IF NOT EXISTS shopee_auth_login_states (
 );
 CREATE INDEX IF NOT EXISTS idx_shopee_auth_login_states_expiry
   ON shopee_auth_login_states(expires_at) WHERE consumed_at IS NULL;
+
+-- ============================================================================================
+-- TikTok Shop 业务数据（最小闭环的落地表）
+-- ============================================================================================
+-- 为什么单独建表而不复用 Shopee 的表：
+--   * 店铺标识是 (shop_id, shop_cipher) 二元组，TikTok 的 shop_id 是字符串，
+--     与 Shopee 的 BIGINT shop_id 不是一回事，硬塞进同一张表会串店；
+--   * 口径不同。TikTok 的订单侧**没有流量来源字段**（Open API 不返回），
+--     所以 channel 只能是 unknown；GMV Max 是 platform_attributed、整合报表是 paid_only。
+--     这些口径必须**逐行标注**，否则后续分析会把不同口径的数混算。
+--
+-- 三个 GMV 口径的落地规则（与 src/platforms/tiktok-adapter.js 的映射一致）：
+--   订单实付      → gmv_order_total   （订单里的实付总额）
+--   货款小计      → gmv_subtotal      （订单里的货款小计，不含运费）
+--   结算收入      → gmv_settled       （只来自 finance 端点，订单侧永远为 NULL）
+-- 三者**互不推导**：任何一个都不允许由另一个算出来，
+-- 落库层因此拒绝同时出现两个口径的派生值（见 CHECK 约束与落库层校验）。
+
+-- 订单主表：一次订单一行。主键含 shop_cipher 是为了成对绑定 ——
+-- 同一 shop_id 若换了 cipher，说明凭据被重新授权过，历史数据不能混为一谈。
+CREATE TABLE IF NOT EXISTS tiktok_orders (
+  region_group TEXT NOT NULL,
+  shop_id TEXT NOT NULL,
+  shop_cipher TEXT NOT NULL,
+  order_id TEXT NOT NULL,
+  order_status TEXT,
+  attribution_basis TEXT NOT NULL DEFAULT 'order_level',
+  channel TEXT NOT NULL DEFAULT 'unknown',
+  currency TEXT,
+  order_date DATE,
+  units NUMERIC(20,6),
+  gmv_order_total NUMERIC(20,6),
+  gmv_subtotal NUMERIC(20,6),
+  gmv_settled NUMERIC(20,6),
+  shipping_fee NUMERIC(20,6),
+  cancellations NUMERIC(20,6),
+  raw_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (region_group, shop_id, order_id),
+  -- 订单侧的流量来源在 TikTok Open API 里不存在，只允许 unknown。
+  CONSTRAINT tiktok_orders_channel_unknown CHECK (channel = 'unknown'),
+  -- 订单侧的归因口径固定是 order_level（订单级事实），不是平台归因。
+  CONSTRAINT tiktok_orders_basis_order_level CHECK (attribution_basis = 'order_level'),
+  -- 结算收入只来自 finance 端点；订单行里出现它说明有人用订单推算了结算口径。
+  CONSTRAINT tiktok_orders_settled_not_derived CHECK (gmv_settled IS NULL)
+);
+CREATE INDEX IF NOT EXISTS idx_tiktok_orders_shop_date
+  ON tiktok_orders(region_group, shop_id, order_date DESC);
+
+-- 订单行明细：订单里的一行商品。
+-- 分表而不是塞进订单主表的 JSON 里，是因为"按商品看销量/价格"是高频查询，
+-- 而 JSONB 里的字段无法建索引。
+CREATE TABLE IF NOT EXISTS tiktok_order_items (
+  region_group TEXT NOT NULL,
+  shop_id TEXT NOT NULL,
+  shop_cipher TEXT NOT NULL,
+  order_id TEXT NOT NULL,
+  line_item_id TEXT NOT NULL,
+  product_id TEXT,
+  sku_id TEXT,
+  product_name TEXT,
+  sku_name TEXT,
+  quantity NUMERIC(20,6),
+  unit_price NUMERIC(20,6),
+  discount_amount NUMERIC(20,6),
+  raw_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (region_group, shop_id, order_id, line_item_id)
+);
+CREATE INDEX IF NOT EXISTS idx_tiktok_order_items_product
+  ON tiktok_order_items(region_group, shop_id, product_id);
+
+-- 商品主表：店铺在售商品的当前状态。
+-- 注意这是**当前状态**，不是历史快照 —— Product API 不返回历史属性。
+CREATE TABLE IF NOT EXISTS tiktok_products (
+  region_group TEXT NOT NULL,
+  shop_id TEXT NOT NULL,
+  shop_cipher TEXT NOT NULL,
+  product_id TEXT NOT NULL,
+  product_name TEXT,
+  category_id TEXT,
+  status TEXT,
+  price NUMERIC(20,6),
+  currency TEXT,
+  sku_count NUMERIC(20,6),
+  raw_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (region_group, shop_id, product_id)
+);
+
+-- 店铺日汇总：每个口径一行，互不覆盖。
+-- 主键含 attribution_basis 与 source 是关键：同一天里
+-- "订单实付口径"与"平台归因口径"是两行而不是一行两列，
+-- 因为它们的含义不同，混在一行里迟早会被当成同一个数相加。
+CREATE TABLE IF NOT EXISTS tiktok_shop_daily (
+  region_group TEXT NOT NULL,
+  shop_id TEXT NOT NULL,
+  shop_cipher TEXT NOT NULL,
+  event_date DATE NOT NULL,
+  attribution_basis TEXT NOT NULL,
+  source TEXT NOT NULL,
+  channel TEXT NOT NULL DEFAULT 'unknown',
+  -- 币种进主键：跨境店铺同一天可能出现多种币种，
+  -- 不同币种的金额不能被后写的那一行覆盖掉。
+  -- 未知币种统一写 'UNKNOWN'，因为主键列不允许 NULL。
+  currency TEXT NOT NULL DEFAULT 'UNKNOWN',
+  orders NUMERIC(20,6),
+  units NUMERIC(20,6),
+  spend NUMERIC(20,6),
+  impressions NUMERIC(20,6),
+  clicks NUMERIC(20,6),
+  gmv_order_total NUMERIC(20,6),
+  gmv_subtotal NUMERIC(20,6),
+  gmv_settled NUMERIC(20,6),
+  -- 成本与损耗：净收益 = 结算收入 − 佣金 − 物流 − 退款。
+  -- 结算口径的行会带上这些；订单口径的行里它们是 NULL（订单里没有这些数）。
+  refunds NUMERIC(20,6),
+  commission NUMERIC(20,6),
+  shipping NUMERIC(20,6),
+  cancellations NUMERIC(20,6),
+  baseline_natural_gmv NUMERIC(20,6),
+  incremental_gmv NUMERIC(20,6),
+  raw_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (region_group, shop_id, event_date, attribution_basis, source, currency),
+  -- 订单级事实没有流量来源，channel 只能是 unknown。
+  CONSTRAINT tiktok_shop_daily_channel_unknown CHECK (channel = 'unknown'),
+  -- 归因口径与来源必须是平台无关模型里已定义的那几个值。
+  -- 写死在这里是为了让"口径"在库里就是受约束的，而不是只存在于代码注释里。
+  CONSTRAINT tiktok_shop_daily_basis_known CHECK (
+    attribution_basis IN (
+      'platform_attributed','paid_only','derived_incremental',
+      'derived_net','order_level','unknown'
+    )
+  ),
+  CONSTRAINT tiktok_shop_daily_source_known CHECK (
+    source IN (
+      'gmv_max_report','integrated_report','finance_statement','shop_order','shop_analytics'
+    )
+  ),
+  -- 三个 GMV 口径互不推导：同一行里不允许同时出现两个口径的金额。
+  -- 订单实付与货款小计可以同源并存（都来自订单的 payment 字段），
+  -- 但结算收入只能与它们分开存放。
+  CONSTRAINT tiktok_shop_daily_no_cross_basis_gmv CHECK (
+    gmv_settled IS NULL OR (gmv_order_total IS NULL AND gmv_subtotal IS NULL)
+  ),
+  -- 增量口径的基线与增量必须成对出现 —— 有增量必有基线，
+  -- 否则读者无从判断这个增量是怎么算出来的。
+  CONSTRAINT tiktok_shop_daily_incremental_needs_baseline CHECK (
+    incremental_gmv IS NULL OR baseline_natural_gmv IS NOT NULL
+  )
+);
+CREATE INDEX IF NOT EXISTS idx_tiktok_shop_daily_lookup
+  ON tiktok_shop_daily(region_group, shop_id, event_date DESC, attribution_basis);
+
+-- 同步游标：TikTok 是 page_token 游标分页，不是时间戳增量。
+-- 因此这里存的是"下一次要用的 page_token"以及它所属的窗口，
+-- 断点续传时按 (region_group, endpoint_key, shop_id) 取回游标继续翻页。
+-- 同一个键只保留一份游标：TikTok 的游标与查询窗口绑定，
+-- 换窗口就换游标，混着存会导致翻到别的窗口的数据。
+CREATE TABLE IF NOT EXISTS tiktok_sync_state (
+  region_group TEXT NOT NULL,
+  endpoint_key TEXT NOT NULL,
+  shop_id TEXT NOT NULL,
+  cursor_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  last_success_at TIMESTAMPTZ,
+  last_error TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (region_group, endpoint_key, shop_id)
+);
+CREATE INDEX IF NOT EXISTS idx_tiktok_sync_state_cursor
+  ON tiktok_sync_state(region_group, endpoint_key, updated_at DESC);
