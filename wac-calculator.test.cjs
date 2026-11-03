@@ -1851,3 +1851,18 @@ test('WAC batch management keeps confirmed and pending batches together with cou
   assert.ok(route.includes('ci.brand') && route.includes('ci.goods_amount') && route.includes('ci.currency AS ci_currency'), 'confirmed batch API must return brand and goods value for the unified list');
   assert.ok(!route.includes('WHERE lb.logistics_status'), 'confirmed history must remain visible regardless of current logistics status');
 });
+
+
+test('WAC confirmed batches aggregate multiple PLs before grouping by logistics batch', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const source = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
+  const start = source.indexOf("app.get('/api/wac/confirmed-batches'");
+  const end = source.indexOf('/* WAC历史矩阵', start);
+  assert.ok(start >= 0 && end > start, 'confirmed batches API must exist');
+  const route = source.slice(start, end);
+  assert.ok(route.includes("STRING_AGG(DISTINCT pl_no, ', ' ORDER BY pl_no) AS pl_no"), 'PL numbers must be aggregated per logistics batch');
+  assert.ok(route.includes('SUM(COALESCE(total_qty, 0)) AS pl_total_qty'), 'PL quantities must be summed per logistics batch');
+  assert.ok(route.includes('MAX(pl.pl_no) AS pl_no') && route.includes('MAX(pl.pl_total_qty) AS pl_total_qty'), 'outer query must select aggregated PL fields');
+  assert.ok(!route.includes('pl.pl_no, pl.total_qty AS pl_total_qty'), 'outer query must not select raw PL columns while grouping by batch');
+});
