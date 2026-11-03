@@ -26,6 +26,26 @@
 const { withRateLimitRetry } = require('./rate-limit-retry');
 const { buildSignedQuery } = require('./tiktok-signer');
 
+/**
+ * Marketing API 的路径前缀。
+ *
+ * 为什么要在客户端层拦下来
+ * ----------------------
+ * Shop Open API 与 Marketing API 的鉴权方式**完全不同**：
+ *   - Shop Open API：access token 放 `x-tts-access-token` 头，**请求要签名**
+ *     （app_key / timestamp / sign 三个参数都要进 query）；
+ *   - Marketing API：token 放 `Access-Token` 头，**不签名**。
+ *
+ * 本客户端（TikTokClient）只会做 Shop Open API 的事：固定写 x-tts-access-token 头，
+ * 并且固定给 query 加上 app_key/timestamp/sign。
+ * 因此把 Marketing API 的路径喂给它，签名与鉴权头一定是错的 —— 平台必然拒绝。
+ *
+ * 与其让它带着一个必然失败的请求去撞平台（错误信息还会指向"权限不足"这种误导方向），
+ * 不如在客户端层直接拦下并说清楚原因。广告线（#5 #6）不在本次范围内，
+ * 需要它的人必须另起一个走 Marketing API 鉴权的客户端，而不是复用这一个。
+ */
+const MARKETING_API_PATH_PREFIX = '/open_api/';
+
 /** 业务错误码。取自官方 Common errors。 */
 const ERROR_CODES = Object.freeze({
   /** 请求过于频繁，需退避。 */
@@ -37,6 +57,34 @@ const ERROR_CODES = Object.freeze({
   /** API 版本无效（新版网关用 36009014，旧网关可能仍是 36009004）。 */
   INVALID_API_VERSION: 36009014,
 });
+
+/**
+ * 判断一个路径是否属于 Marketing API。
+ *
+ * @param {string} path
+ * @returns {boolean}
+ */
+function isMarketingApiPath(path) {
+  return String(path || '').startsWith(MARKETING_API_PATH_PREFIX);
+}
+
+/**
+ * 断言路径是 Shop Open API 的路径。
+ *
+ * @param {string} path
+ * @throws {Error} 路径属于 Marketing API 时抛出，并说明原因与替代做法
+ */
+function assertShopOpenApiPath(path) {
+  if (!isMarketingApiPath(path)) return;
+  const error = new Error(
+    `Marketing API is not available through the Shop Open API client: ${path}. ` +
+    'Marketing API uses a different credential domain (Access-Token header, no request signature), ' +
+    'so it cannot be called from this client. Use a dedicated Marketing API client instead.',
+  );
+  error.kind = 'MARKETING_API_UNSUPPORTED';
+  error.code = 'TIKTOK_MARKETING_API_UNSUPPORTED';
+  throw error;
+}
 
 /** `36009004` 的 message 关键词索引（官方原文）。 */
 const IDENTIFIER_MESSAGE_KEYS = Object.freeze({
@@ -136,6 +184,9 @@ class TikTokClient {
   }) {
     if (!path) throw new Error('path is required');
     if (!accessToken) throw new Error('accessToken is required');
+    // 广告线的路径在这里被挡下：它们的鉴权方式与本客户端不兼容，
+    // 硬发只会得到一个误导性的"权限不足"。
+    assertShopOpenApiPath(path);
 
     return withRateLimitRetry(async () => {
       // 请求体先序列化一次，签名与发送都用同一份字节 —— 重新序列化会改变签名。
@@ -211,9 +262,17 @@ class TikTokClient {
    * @param {string} [options.itemsPath] 该页数据里数组所在的路径，例如 'orders'。
    *        TikTok 各端点的数组字段名不同（orders / products / returns ...），
    *        因此由调用方指定；未指定时若响应本身是数组则直接使用。
+   *        也可以给一个数组：取第一个**存在且是数组**的路径。
+   *        有些端点的字段名不唯一（结算流水可能是 statement_list 也可能是 statements），
+   *        这时用候选列表比在调用方手写 if/else 更不容易写错。
    * @param {string} [options.nextPageTokenPath] 从响应里取下一页 token 的路径
    * @param {number} [options.maxPages] 最大页数保护
    * @param {string} [options.cursorPath] 请求参数里放 token 的键名
+   * @param {string|null} [options.startPageToken] 从哪个 token 接着翻。
+   *        断点续传用：把上次存下的游标传进来，就从那一页继续。
+   * @param {(context: object) => Promise<void>} [options.onPage] 每页取到后调用。
+   *        调用方在这里把该页的数据落库并推进游标 ——
+   *        顺序很重要：**先落数据，再推进游标**，反过来会在崩溃时漏数据。
    * @returns {Promise<Array<object>>} 合并后的所有页
    */
   static async paginate({
@@ -222,38 +281,78 @@ class TikTokClient {
     nextPageTokenPath = 'next_page_token',
     maxPages = 1000,
     cursorPath = 'page_token',
+    startPageToken = null,
+    onPage = null,
   }) {
     const pages = [];
     const seenTokens = new Set();
-    let pageToken = null;
+    let pageToken = startPageToken || null;
+    // 续传起点本身也要参与"重复 token"检测：平台若原样退回同一个 token，
+    // 说明它没有推进，继续翻只会拿到同一页。
+    if (pageToken) seenTokens.add(pageToken);
 
     for (let page = 0; page < maxPages; page += 1) {
       const result = await fetchPage({ [cursorPath]: pageToken });
 
       let items;
-      if (itemsPath) {
+      if (Array.isArray(itemsPath)) {
+        // 候选路径：取第一个"存在且是数组"的。
+        // 不能用"非空"来判断 —— 空数组也是合法的一页（这一页确实没有数据）。
+        items = [];
+        for (const candidate of itemsPath) {
+          const value = readNested(result, candidate);
+          if (Array.isArray(value)) { items = value; break; }
+        }
+      } else if (itemsPath) {
         items = readNested(result, itemsPath) || [];
       } else if (Array.isArray(result)) {
         items = result;
       } else {
         items = (result && result.data) || [];
       }
-      pages.push(...items);
 
       const nextToken = readNested(result, nextPageTokenPath);
-      if (!nextToken) break;
 
       // 异常页检测：token 重复说明平台没有推进，继续请求只会拿到同一页。
-      if (seenTokens.has(nextToken)) {
+      // 这个检查必须在交出该页之前做 —— 交出去就会把一个坏游标存下来，
+      // 下一轮续传会带着它从头再来，永远走不出去。
+      if (nextToken && seenTokens.has(nextToken)) {
         const error = new Error('TikTok pagination did not advance (repeated token)');
         error.kind = 'PAGINATION_STALLED';
         throw error;
       }
+
+      pages.push(...items);
+
+      if (onPage) {
+        // 先落数据、再推进游标。顺序反了会在崩溃时漏掉这一页。
+        await onPage({
+          page,
+          pageToken,
+          nextPageToken: nextToken || null,
+          items,
+          result,
+        });
+      }
+
+      if (!nextToken) break;
+
       seenTokens.add(nextToken);
       pageToken = nextToken;
     }
 
     return pages;
+  }
+
+  /**
+   * 实例版的分页。行为与静态版一致，只是让调用方可以直接走 client 的能力，
+   * 而不必知道分页逻辑住在类的静态方法上。
+   *
+   * @param {object} options 见静态 paginate
+   * @returns {Promise<Array<object>>}
+   */
+  paginate(options) {
+    return TikTokClient.paginate(options);
   }
 }
 
@@ -273,9 +372,12 @@ function readNested(source, path) {
 module.exports = {
   ERROR_CODES,
   IDENTIFIER_MESSAGE_KEYS,
+  MARKETING_API_PATH_PREFIX,
   TikTokClient,
   appendQueryParam,
+  assertShopOpenApiPath,
   classifyError,
+  isMarketingApiPath,
   isSuccessPayload,
   readNested,
 };

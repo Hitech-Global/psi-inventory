@@ -163,6 +163,90 @@ function parseAuthorizedShops(payload) {
   });
 }
 
+/**
+ * 解析 token 端点的成功响应。
+ *
+ * 授权（token/get）与刷新（token/refresh）共用这段解析：
+ * 两者返回的结构一样，差别只在 grant_type。
+ *
+ * @param {object} payload 响应体
+ * @returns {{accessToken: string, refreshToken: string, expiresIn: number|null, refreshTokenExpiresIn: number|null}}
+ */
+function parseTokenPayload(payload) {
+  if (!payload || payload.code !== 0) {
+    throw oauthError('TIKTOK_TOKEN_ENDPOINT_FAILED', 502);
+  }
+  const data = payload.data || {};
+  if (!data.access_token || !data.refresh_token) {
+    throw oauthError('TIKTOK_INVALID_TOKEN_RESPONSE', 502);
+  }
+  const expiresIn = Number(data.expires_in ?? data.access_token_expire_in);
+  const refreshTokenExpiresIn = Number(data.refresh_token_expires_in);
+  return {
+    accessToken: data.access_token,
+    refreshToken: data.refresh_token,
+    expiresIn: Number.isFinite(expiresIn) && expiresIn > 0 ? expiresIn : null,
+    refreshTokenExpiresIn: Number.isFinite(refreshTokenExpiresIn) && refreshTokenExpiresIn > 0
+      ? refreshTokenExpiresIn
+      : null,
+  };
+}
+
+/**
+ * 用 refresh_token 换新的 token。
+ *
+ * 独立成函数（而不是只做成 OAuth 服务的方法）有两个原因：
+ *   1. 刷新是**定时任务**要做的事，不是一次性授权的附属动作 ——
+ *      定时任务不需要也不应该为此持有一个带 pool 的服务实例；
+ *   2. 换 token 的规则（grant_type、响应解析、错误分类）只有这一份实现，
+ *      授权流程与刷新流程共用，避免两边的错误处理漂移。
+ *
+ * **refresh_token 会轮换**：刷新成功后必须用响应里的新 refresh_token 覆盖旧值，
+ * 旧值立刻失效。这个函数只负责换，不负责存 ——
+ * 存的动作交给 src/tiktok-token-manager.js，因为只有它知道台账的写入约束。
+ *
+ * @param {object} options
+ * @param {string} options.appKey
+ * @param {string} options.appSecret
+ * @param {string} options.refreshToken
+ * @param {Function} [options.fetchImpl]
+ * @returns {Promise<{accessToken: string, refreshToken: string, expiresIn: number|null, refreshTokenExpiresIn: number|null}>}
+ */
+async function refreshAccessTokenWithEndpoint({
+  appKey,
+  appSecret,
+  refreshToken,
+  fetchImpl = global.fetch,
+}) {
+  if (!appKey) throw oauthError('TIKTOK_CREDENTIALS_NOT_CONFIGURED', 503);
+  if (!appSecret) throw oauthError('TIKTOK_CREDENTIALS_NOT_CONFIGURED', 503);
+  if (!refreshToken) throw oauthError('TIKTOK_REFRESH_TOKEN_MISSING', 400);
+
+  const url = new URL(REFRESH_ENDPOINT);
+  url.searchParams.set('app_key', appKey);
+  url.searchParams.set('app_secret', appSecret);
+  url.searchParams.set('refresh_token', refreshToken);
+  url.searchParams.set('grant_type', 'refresh_token');
+
+  const response = await fetchImpl(url.toString(), { method: 'GET' });
+  const text = await response.text();
+  let payload;
+  try { payload = text ? JSON.parse(text) : {}; }
+  catch { throw oauthError('TIKTOK_TOKEN_ENDPOINT_NON_JSON', 502); }
+
+  if (!response.ok) {
+    // 429 与 5xx 是瞬时故障，值得退避重试；4xx 是请求本身有问题，重试无意义。
+    const error = oauthError(
+      'TIKTOK_TOKEN_REFRESH_FAILED',
+      response.status >= 500 || response.status === 429 ? 502 : 400,
+    );
+    error.status = response.status;
+    error.kind = response.status === 429 ? 'RATE_LIMIT' : 'TIKTOK_API_ERROR';
+    throw error;
+  }
+  return parseTokenPayload(payload);
+}
+
 class TikTokOAuthService {
   constructor({ pool, env = process.env, now = () => new Date(), randomBytes, fetchImpl = global.fetch } = {}) {
     if (!pool || typeof pool.query !== 'function') throw new Error('pool is required');
@@ -373,6 +457,26 @@ class TikTokOAuthService {
   }
 
   /**
+   * 用 refresh_token 换新的 access_token。
+   *
+   * **refresh_token 会轮换**：刷新成功后必须用响应里的新 refresh_token 覆盖旧值，
+   * 旧值立刻失效。这个方法只负责换，不负责存 ——
+   * 存的动作交给 src/tiktok-token-manager.js，因为只有它知道台账的写入约束。
+   *
+   * @param {object} options
+   * @param {string} options.refreshToken
+   * @returns {Promise<{accessToken: string, refreshToken: string, expiresIn: number|null, refreshTokenExpiresIn: number|null}>}
+   */
+  async refreshAccessToken({ refreshToken }) {
+    return refreshAccessTokenWithEndpoint({
+      appKey: this.appKey(),
+      appSecret: this.appSecret(),
+      refreshToken,
+      fetchImpl: this.fetchImpl,
+    });
+  }
+
+  /**
    * 拉取已授权店铺台账（shop_id 与 cipher 的配对关系）。
    */
   async fetchAuthorizedShops(accessToken) {
@@ -403,6 +507,8 @@ module.exports = {
   clearStateCookie,
   parseAuthorizedShops,
   parseCookie,
+  parseTokenPayload,
+  refreshAccessTokenWithEndpoint,
   resolveTikTokRedirectUrl,
   stateCookie,
 };
