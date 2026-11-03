@@ -61,7 +61,9 @@ test('static integration: no shared fee INSERT into ci_cost_items; one PR, no ex
  a(wac.includes('shared_freight_breakdown'),'WAC computed shared fee');
  a(server.includes('if (transportItems.length)'),'legacy CI transport basis validation is preserved');
  a(server.includes('const scoped={basis:ci.transport_basis,values:inputs.plBasis.values}'),'legacy CI SKU allocation retains CI basis');
- a(wac.includes("const transportBasis = ci.transport_basis ?"),'legacy WAC freight basis is unchanged');
+ a(wac.includes('transportBasisForMode(batch.transport_mode)'),'WAC freight basis derives from logistics batch transport mode');
+ a(wac.includes("code: 'TRANSPORT_MODE_UNSUPPORTED'"),'unsupported transport modes fail closed');
+ a(wac.includes('missingBasisSkus'),'WAC identifies SKUs missing the selected transport basis');
  a(app.includes('openSharedLogisticsFeeModal'),'UI input entry exists');
  a(core.includes("MODES = Object.freeze({ sea:'cbm', air:'gross_weight' })"));
 });
