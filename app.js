@@ -14675,8 +14675,8 @@ async function loadWacPending(){
         '<td>'+countryLabel(r.target_country)+'</td>'+
         '<td>'+esc(r.target_warehouse||'-')+'</td>'+
         '<td class="cell-date">'+fmtDate(r.actual_arrival_date)+'</td>'+
-        '<td class="text-right">'+(r.pl_total_qty||0)+'</td>'+
-        '<td class="text-right">'+(r.goods_amount||0)+' '+(r.ci_currency||'')+'</td>'+
+        '<td>'+(r.pl_total_qty||0)+'</td>'+
+        '<td>'+(r.goods_amount||0)+' '+(r.ci_currency||'')+'</td>'+
         '<td><button class="btn btn-primary btn-sm" onclick="wacConfirm(\''+r.id+'\')">'+t('wac.btn_confirm','WAC确认')+'</button></td>'+
       '</tr>').join('')+
       '</tbody></table></div>';

@@ -1801,3 +1801,17 @@ test('WAC freight payment breakdown: all table body cells use default left align
   assert.ok(section.includes("'<td>'+Number(pd.local_amount).toFixed(2)"), 'local amount uses default left alignment');
   assert.ok(!section.includes('class="text-right"'), 'no right-aligned body cells remain in this table');
 });
+
+
+test('WAC pending batch list: PL quantity and goods value cells use left alignment', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const source = fs.readFileSync(path.join(__dirname, 'app.js'), 'utf8');
+  const start = source.indexOf('async function loadWacPending(){');
+  const end = source.indexOf('// WAC确认弹窗', start);
+  assert.ok(start >= 0 && end > start, 'pending WAC list renderer must exist');
+  const section = source.slice(start, end);
+  assert.ok(section.includes("'<td>'+(r.pl_total_qty||0)+'</td>'"), 'PL quantity cell should use default left alignment');
+  assert.ok(section.includes("'<td>'+(r.goods_amount||0)+' '+(r.ci_currency||'')+'</td>'"), 'goods value cell should use default left alignment');
+  assert.ok(!section.includes('class=\"text-right\"'), 'pending WAC list should not right-align these numeric cells');
+});
