@@ -22,6 +22,7 @@
   });
 
   let current = null;
+  let currentProducts = null;
 
   function isMissing(value) {
     return value === null || value === undefined || !Number.isFinite(Number(value));
@@ -138,6 +139,137 @@
     renderMissingSources(data.missingSources || []);
   }
 
+  /**
+   * What the products drew.
+   *
+   * These figures are the seller's own: the visits, the pages, what went
+   * into the basket and what was saved for later. The open platform gives
+   * none of them.
+   *
+   * They are the figures for the whole period rather than for each day,
+   * so the table says so — they are not a day's figures and must not be
+   * read against the days above them.
+   */
+  const PRODUCT_COLUMNS = [
+    { key: 'productVisitors', label: '访客', kind: 'count' },
+    { key: 'productPageViews', label: '浏览量', kind: 'count' },
+    { key: 'bounceRate', label: '跳出率', kind: 'percent' },
+    { key: 'searchClicks', label: '搜索点击', kind: 'count' },
+    { key: 'likes', label: '收藏', kind: 'count' },
+    { key: 'addToCartVisitors', label: '加购访客', kind: 'count' },
+    { key: 'addToCartUnits', label: '加购件数', kind: 'count' },
+    { key: 'addToCartRate', label: '加购率', kind: 'percent' },
+    { key: 'unitsSold', label: '销量', kind: 'count' },
+    { key: 'sales', label: '销售额', kind: 'money' },
+  ];
+
+  function formatProductValue(value, kind, currency) {
+    if (value === null || value === undefined || value === '') return '—';
+    if (kind === 'percent') return `${(Number(value) * 100).toFixed(2)}%`;
+    if (kind === 'money') return formatMoney(value, currency);
+    return Number(value).toLocaleString('en-US');
+  }
+
+  function renderProductHead() {
+    const cells = PRODUCT_COLUMNS
+      .map(column => `<th scope="col">${escapeHtml(column.label)}</th>`)
+      .join('');
+    return `<tr><th scope="col">商品</th><th scope="col">父 SKU</th>${cells}</tr>`;
+  }
+
+  function renderProductRow(row, currency) {
+    const cells = PRODUCT_COLUMNS
+      .map(column => {
+        const value = row[column.key];
+        const shown = formatProductValue(value, column.kind, currency);
+        const empty = value === null || value === undefined || value === '';
+        return `<td class="${empty ? 'funnel-empty' : ''}">${escapeHtml(shown)}</td>`;
+      })
+      .join('');
+    const name = row.itemName ? escapeHtml(String(row.itemName).slice(0, 70)) : '—';
+    return `<tr class="funnel-product-row">
+      <th scope="row">
+        <span class="funnel-product-name" title="${escapeHtml(String(row.itemName || ''))}">${name}</span>
+        <span class="funnel-product-id">${escapeHtml(String(row.itemId))}</span>
+      </th>
+      <td>${row.parentSku && row.parentSku !== '-' ? escapeHtml(String(row.parentSku)) : '<span class="funnel-empty">—</span>'}</td>
+      ${cells}
+    </tr>`;
+  }
+
+  function renderProductSummary(totals, currency) {
+    const host = document.querySelector('#funnelProductsSummary');
+    if (!host || !totals) return;
+    const cards = [
+      { label: '商品访客', value: formatProductValue(totals.productVisitors, 'count', currency) },
+      { label: '商品浏览量', value: formatProductValue(totals.productPageViews, 'count', currency) },
+      { label: '跳出率', value: formatProductValue(totals.bounceRate, 'percent', currency) },
+      { label: '收藏', value: formatProductValue(totals.likes, 'count', currency) },
+      { label: '加购访客', value: formatProductValue(totals.addToCartVisitors, 'count', currency) },
+      { label: '加购件数', value: formatProductValue(totals.addToCartUnits, 'count', currency) },
+      { label: '加购率', value: formatProductValue(totals.addToCartRate, 'percent', currency) },
+    ];
+    host.innerHTML = cards
+      .map(card => `<div class="kpi-card"><span class="kpi-label">${escapeHtml(card.label)}</span>`
+        + `<strong class="kpi-value">${escapeHtml(String(card.value))}</strong></div>`)
+      .join('');
+    host.classList.remove('hidden');
+  }
+
+  function renderProducts(payload) {
+    const panel = document.querySelector('#funnelProductsPanel');
+    const head = document.querySelector('#funnelProductsHead');
+    const body = document.querySelector('#funnelProductsBody');
+    if (!panel || !head || !body) return;
+    currentProducts = payload || null;
+    const rows = (payload && payload.rows) || [];
+    const totals = payload && payload.totals;
+    const currency = (payload && payload.currency) || null;
+
+    if (!rows.length) {
+      panel.classList.add('hidden');
+      const summary = document.querySelector('#funnelProductsSummary');
+      if (summary) summary.classList.add('hidden');
+      return;
+    }
+
+    panel.classList.remove('hidden');
+    head.innerHTML = renderProductHead();
+    body.innerHTML = rows.map(row => renderProductRow(row, currency)).join('');
+    renderProductSummary(totals, currency);
+
+    const subtitle = document.querySelector('#funnelProductsSubtitle');
+    if (subtitle) {
+      const period = totals && totals.eventDate ? String(totals.eventDate).slice(0, 10) : '';
+      subtitle.textContent = `访客、浏览、收藏与加购 —— 这些数只有卖家中心的导出里有。`
+        + (period ? ` 统计区间自 ${period} 起，为整段期间合计，不是逐日数据。` : ' 为整段期间合计，不是逐日数据。');
+    }
+  }
+
+  function exportProductsCsv() {
+    if (!currentProducts || !currentProducts.rows.length) return;
+    const rows = currentProducts.rows;
+    const head = ['商品', '商品ID', '父SKU', ...PRODUCT_COLUMNS.map(column => column.label)];
+    const lines = [head.join(',')];
+    for (const row of rows) {
+      const cells = [
+        String(row.itemName || ''), String(row.itemId), String(row.parentSku || ''),
+        ...PRODUCT_COLUMNS.map(column => {
+          const value = row[column.key];
+          if (value === null || value === undefined || value === '') return '';
+          return column.kind === 'percent' ? (Number(value) * 100).toFixed(2) + '%' : String(value);
+        }),
+      ];
+      lines.push(cells.map(cell => `"${String(cell).replaceAll('"', '""')}"`).join(','));
+    }
+    const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `商品表现-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  }
+
   function renderMissingSources(missing) {
     const host = document.querySelector('#funnelMissing');
     if (!host) return;
@@ -193,5 +325,8 @@
     render(data);
   }
 
-  window.ShopeeFunnel = { render, load, exportCsv, formatCount, formatMoney, formatPercent, formatChange };
+  window.ShopeeFunnel = {
+    render, load, exportCsv, renderProducts, exportProductsCsv,
+    formatCount, formatMoney, formatPercent, formatChange,
+  };
 })();

@@ -67,3 +67,19 @@ test('the page lists every shop, whether or not it has been read yet', () => {
   assert.ok(router.includes('rows: allShops'), 'the table must list the shops without readings too');
   assert.ok(router.includes("status: 'unconnected'"), 'a shop without a reading must say so');
 });
+
+test('what the products drew is shown on the funnel page', () => {
+  const indexHtml = fs.readFileSync(path.join(webDir, 'index.html'), 'utf8');
+  const funnelUi = fs.readFileSync(path.join(webDir, 'funnel-ui-v1.js'), 'utf8');
+  const appJs = fs.readFileSync(path.join(webDir, 'app.js'), 'utf8');
+  assert.ok(indexHtml.includes('id="funnelProductsPanel"'), 'the panel must exist');
+  assert.ok(indexHtml.includes('id="funnelProductsBody"'), 'the table must exist');
+  assert.ok(funnelUi.includes('renderProducts'), 'the panel must be filled');
+  assert.ok(funnelUi.includes('addToCartVisitors'), 'the basket must be shown');
+  assert.ok(funnelUi.includes('productPageViews'), 'the pages must be shown');
+  assert.ok(funnelUi.includes('likes'), 'what was saved must be shown');
+  assert.ok(appJs.includes('/api/shopee-analytics/product-traffic'), 'the panel must ask for them');
+  // These are the figures for the whole period, not for each day, and the
+  // page has to say so — otherwise they are read against the days above.
+  assert.ok(funnelUi.includes('不是逐日数据'), 'the page must say the figures are for the period');
+});

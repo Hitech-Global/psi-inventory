@@ -748,6 +748,18 @@ async function loadFunnel() {
   });
   const data = await json(`/api/shopee-analytics/funnel?${params}`);
   window.ShopeeFunnel?.render(data);
+
+  // What the products drew is asked for separately, and asked for
+  // afterwards: the shop's own figures are worth showing even when the
+  // products' are not, and the other way round.
+  try {
+    const products = await json(
+      `/api/shopee-analytics/product-traffic?shop_id=${encodeURIComponent(String(shop.shopId))}&limit=300`,
+    );
+    window.ShopeeFunnel?.renderProducts({ ...products, currency: shop.currency || null });
+  } catch (error) {
+    window.ShopeeFunnel?.renderProducts(null);
+  }
 }
 
 /**
@@ -1769,6 +1781,7 @@ $('#brandFilter').addEventListener('change', onDimensionChanged);
 $('#shopSelect').addEventListener('change', onShopChanged);
 $('#loadBtn').addEventListener('click', readSelectedData);
 $('#funnelExportBtn')?.addEventListener('click', () => window.ShopeeFunnel?.exportCsv());
+$('#funnelProductsExportBtn')?.addEventListener('click', () => window.ShopeeFunnel?.exportProductsCsv());
   $('#healthExportBtn')?.addEventListener('click', () => window.ShopeeShopHealth?.exportCsv());
   $('#healthRefreshBtn')?.addEventListener('click', () => loadShopHealth());
 window.addEventListener('shopee-date-range-changed', () => {

@@ -605,3 +605,28 @@ tbody td{font-weight:400}
   color:#344054;font-weight:600;white-space:nowrap;
 }
 .health-event-detail{color:#6b7280;min-width:0}
+
+/* ── 漏斗里的商品表现 ────────────────────────────────────────────────────
+   这些数是卖家中心导出的，期间合计，不是逐日。表头下面写明了这一点，
+   免得被拿去和上面的逐日数字对照。 */
+.funnel-products-panel{margin-top:16px}
+.funnel-products-summary{grid-template-columns:repeat(7,minmax(110px,1fr));padding:14px 16px 0}
+.funnel-products-summary .kpi-value{font-size:18px}
+.funnel-products-table-wrap{max-height:620px;border:1px solid #eaecf0;border-radius:14px;overflow:auto}
+.funnel-products-table{width:100%;border-collapse:separate;border-spacing:0;font-size:12px}
+.funnel-products-table th,.funnel-products-table td{
+  padding:8px 12px;border-bottom:1px solid #f0f1f3;text-align:right;white-space:nowrap;
+}
+.funnel-products-table thead th{
+  position:sticky;top:0;background:#fafbfc;z-index:1;font-weight:600;color:#475467;
+  font-size:11px;border-bottom:1px solid #eaecf0;text-align:right;
+}
+.funnel-products-table thead th:first-child,
+.funnel-products-table tbody th{text-align:left}
+.funnel-products-table tbody th{font-weight:400}
+.funnel-products-table tbody tr:hover{background:#fafbfc}
+.funnel-product-name{
+  display:block;max-width:320px;overflow:hidden;text-overflow:ellipsis;color:#101828;
+}
+.funnel-product-id{display:block;font-size:10px;color:#98a2b3;font-variant-numeric:tabular-nums}
+.funnel-products-table .funnel-empty{color:#c0c5cc}
