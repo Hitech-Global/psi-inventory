@@ -111,15 +111,23 @@
       const found = (row.measures || []).find(item => item.key === measure.key);
       return `<td>${found ? formatMeasure(found) : '<span class="health-empty">—</span>'}</td>`;
     }).join('');
+    // A shop that has not been read yet is shown in the table with its
+    // number, so the table is a list of the shops rather than a list of
+    // the shops that happened to have figures.
+    const note = row.status === 'unconnected'
+      ? '<span class="health-breach-count">尚未连接 ERP</span>'
+      : row.breachCount
+        ? `<span class="health-breach-count">${escapeHtml(String(row.breachCount))} 项未达标</span>`
+        : '';
     return `<tr class="health-row ${escapeHtml(row.status)}">
       <th scope="row">
         <span class="health-shop-name">${escapeHtml(row.displayName || `Shop ${row.shopId}`)}</span>
         <span class="health-shop-id">${escapeHtml(String(row.shopId))}</span>
       </th>
-      <td>${statusPill(row.status)}${row.breachCount ? `<span class="health-breach-count">${escapeHtml(String(row.breachCount))} 项未达标</span>` : ''}</td>
+      <td>${statusPill(row.status)}${note}</td>
       ${cells}
       <td>${isMissing(row.violationTotal) ? '<span class="health-empty">—</span>' : escapeHtml(String(row.violationTotal))}</td>
-      <td class="health-date">${escapeHtml(String(row.eventDate || '').slice(0, 10))}</td>
+      <td class="health-date">${row.eventDate ? escapeHtml(String(row.eventDate).slice(0, 10)) : '<span class="health-empty">—</span>'}</td>
     </tr>`;
   }
 
@@ -203,7 +211,7 @@
 
     if (!rows.length) {
       body.innerHTML = `<tr><td colspan="${measures.length + 4}" class="empty">
-        还没有店铺健康读数。先在「店铺接口」页为店铺连接 ERP，健康读数会自动开始收集。
+        当前筛选下没有店铺。先在「店铺接口」页为店铺连接 ERP，健康读数会自动开始收集。
       </td></tr>`;
     } else {
       body.innerHTML = rows.map(row => renderRow(row, measures)).join('');

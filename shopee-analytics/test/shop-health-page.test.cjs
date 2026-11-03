@@ -55,3 +55,12 @@ test('the page tells the platform\'s standard from the figure', () => {
   assert.ok(healthUi.includes('exportCsv'), 'the page must offer an export');
   assert.ok(healthUi.includes('text/csv'), 'the export must be a csv');
 });
+
+test('the page lists every shop, whether or not it has been read yet', () => {
+  const router = fs.readFileSync(path.join(srcDir, 'http-router.js'), 'utf8');
+  // The page is about the shops. A shop that has not been read yet is part
+  // of the answer, not an omission from it — and a table of gaps would read
+  // as a shop that was measured and found wanting.
+  assert.ok(router.includes('rows: allShops'), 'the table must list the shops without readings too');
+  assert.ok(router.includes("status: 'unconnected'"), 'a shop without a reading must say so');
+});

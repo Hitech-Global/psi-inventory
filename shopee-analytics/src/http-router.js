@@ -937,6 +937,10 @@ function createShopeeAnalyticsRouter({
 
       // The shops that have no reading yet: they are not healthy, they are
       // unconnected, and the page has to be able to say which is which.
+      //
+      // They are kept out of the table itself — a row of nothing but gaps
+      // reads as a shop that was measured and found wanting, which is the
+      // opposite of what happened.
       const missing = filtered
         .filter(row => visible.has(row.shopId))
         .filter(row => !rows.some(reading => reading.shopId === row.shopId))
@@ -948,10 +952,30 @@ function createShopeeAnalyticsRouter({
           status: 'unconnected',
         }));
 
+      // Every shop the reader may see, in one list, whether or not it has
+      // been read yet. The page is about the shops; a shop that has not been
+      // read yet is part of the answer, not an omission from it.
+      const allShops = [
+        ...rows.map(row => ({ ...row, connected: true })),
+        ...missing.map(row => ({
+          shopId: row.shopId,
+          displayName: row.displayName,
+          countryCode: row.countryCode,
+          brandCode: row.brandCode,
+          eventDate: null,
+          status: 'unconnected',
+          breachCount: 0,
+          measureCount: 0,
+          violationTotal: null,
+          measures: [],
+          connected: false,
+        })),
+      ];
+
       const events = await shopHealthRepository.listEvents({ shopIds: allowed, limit: 300 });
 
       res.json({
-        rows,
+        rows: allShops,
         missing,
         events,
         measures: MEASURES.map(spec => ({
