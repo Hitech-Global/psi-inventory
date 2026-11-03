@@ -14790,17 +14790,17 @@ async function wacConfirm(batchId){
       // Freight section
       const pb=m.freight_payment_breakdown||[];
       const pbHtml=pb.length?'<div style="margin-top:6px"><div style="font-size:12px;font-weight:bold;margin-bottom:4px">'+t('wac.payment_breakdown','付款明细')+'</div>'+
-        '<table class="data-table" style="font-size:11px;min-width:400px"><thead><tr>'+
-        '<th>PR ID</th><th>'+t('wac.original_amount','原始金额')+'</th><th>'+t('wac.local_currency','本币')+'</th><th>'+t('wac.effective_fx_rate','有效汇率')+'</th><th>'+t('wac.fx_rate_date','汇率日期')+'</th><th>'+t('wac.actual_payment_date','付款日期')+'</th><th>'+t('wac.local_amount','本币金额')+'</th>'+
+        '<table class="data-table wac-left-align" style="font-size:11px;min-width:400px;text-align:left"><th style="text-align:left!important;text-align:left!important"ead><tr>'+
+        '<th style="text-align:left!important;text-align:left!important">PR ID</th><th style="text-align:left!important;text-align:left!important">'+t('wac.original_amount','原始金额')+'</th><th style="text-align:left!important;text-align:left!important">'+t('wac.local_currency','本币')+'</th><th style="text-align:left!important;text-align:left!important">'+t('wac.effective_fx_rate','有效汇率')+'</th><th style="text-align:left!important;text-align:left!important">'+t('wac.fx_rate_date','汇率日期')+'</th><th style="text-align:left!important;text-align:left!important">'+t('wac.actual_payment_date','付款日期')+'</th><th style="text-align:left!important;text-align:left!important">'+t('wac.local_amount','本币金额')+'</th>'+
         '</tr></thead><tbody>'+
         pb.map(pd=>'<tr>'+
-          '<td class="cell-id">'+esc(pd.payment_request_id)+'</td>'+
-          '<td class="text-right">'+Number(pd.amount).toFixed(2)+'</td>'+
+          '<td class="cell-id" style="text-align:left!important">'+esc(pd.payment_request_id)+'</td>'+
+          '<td class="wac-left-cell" style="text-align:left!important">'+Number(pd.amount).toFixed(2)+'</td>'+
           '<td>'+esc(pd.local_currency)+'</td>'+
-          '<td class="text-right">'+Number(pd.local_rate).toFixed(4)+'</td>'+
-          '<td class="cell-date">'+fmtDate(pd.local_rate_date)+'</td>'+
+          '<td class="wac-left-cell" style="text-align:left!important">'+Number(pd.local_rate).toFixed(4)+'</td>'+
+          '<td class="cell-date" style="text-align:left!important">'+fmtDate(pd.local_rate_date)+'</td>'+
           '<td class="cell-date">'+fmtDate(pd.paid_date)+'</td>'+
-          '<td class="text-right">'+Number(pd.local_amount).toFixed(2)+'</td>'+
+          '<td class="wac-left-cell" style="text-align:left!important">'+Number(pd.local_amount).toFixed(2)+'</td>'+
         '</tr>').join('')+
         '</tbody></table></div>':'<div style="font-size:11px;color:#999;margin-top:4px">'+t('wac.no_payment_breakdown','暂无付款明细')+'</div>';
 
@@ -14845,21 +14845,21 @@ async function wacConfirm(batchId){
         const newWac=historical?(it.new_wac==null?null:Number(it.new_wac)):null;
         const changePct=(newWac!=null&&oldWac>0)?((newWac-oldWac)/oldWac*100):null;
         const oldQtyCell=historical
-          ? '<td class="text-right">'+(oldQty==null?'历史记录缺失':oldQty.toLocaleString())+'</td>'
+          ? '<td class="wac-left-cell" style="text-align:left!important">'+(oldQty==null?'历史记录缺失':oldQty.toLocaleString())+'</td>'
           : '<td><input type="number" id="wac-old-'+i+'" value="" placeholder="请上传" min="0" step="1" style="width:100px;padding:4px;text-align:right;background:#fffbe6" oninput="recalcWacRow('+i+');wacValidateInputs()"></td>';
         return '<tr>' +
-          '<td class="cell-id" style="position:sticky;left:0;background:var(--surface,#fff);z-index:1">'+esc(it.sku_code)+'</td>' +
-          '<td class="text-right">'+(it.batch_qty||0).toLocaleString()+'</td>' +
-          '<td class="text-right">'+Number(it.cbm||0).toFixed(3)+'</td>' +
-          '<td class="text-right">'+Number(it.weighted_purchase_unit_price||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4})+'</td>' +
-          '<td class="text-right">'+(it.batch_qty>0?Number((it.product_cost_local||0)/it.batch_qty).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4}):'—')+'</td>' +
-          '<td class="text-right">'+Number(it.unit_landing_cost||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4})+'</td>' +
-          '<td class="text-right">'+Number(it.total_landing_cost_local||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+'</td>' +
+          '<td class="cell-id" style="position:sticky;left:0;background:var(--surface,#fff);z-index:1;text-align:left!important">'+esc(it.sku_code)+'</td>' +
+          '<td class="wac-left-cell" style="text-align:left!important">'+(it.batch_qty||0).toLocaleString()+'</td>' +
+          '<td class="wac-left-cell" style="text-align:left!important">'+Number(m.transport_basis==='kg'?(it.gross_weight||0):(it.cbm||0)).toFixed(3)+'</td>' +
+          '<td class="wac-left-cell" style="text-align:left!important">'+Number(it.weighted_purchase_unit_price||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4})+'</td>' +
+          '<td class="wac-left-cell" style="text-align:left!important">'+(it.batch_qty>0?Number((it.product_cost_local||0)/it.batch_qty).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4}):'—')+'</td>' +
+          '<td class="wac-left-cell" style="text-align:left!important">'+Number(it.unit_landing_cost||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4})+'</td>' +
+          '<td class="wac-left-cell" style="text-align:left!important">'+Number(it.total_landing_cost_local||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+'</td>' +
           oldQtyCell +
-          '<td class="text-right">'+oldWac.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4})+'</td>' +
-          (historical?'<td class="text-right">'+(oldValue==null?'历史记录缺失':oldValue.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}))+'</td>':'<td class="text-right" id="wac-old-value-'+i+'">待上传</td>') +
-          (historical?'<td class="text-right font-bold" style="color:#1677ff">'+(newWac==null?'历史记录缺失':newWac.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4}))+'</td>':'<td class="text-right font-bold" id="wac-new-'+i+'" style="color:#1677ff">待上传</td>') +
-          (historical?'<td class="text-right">'+(changePct==null?'—':(changePct>0?'+':'')+changePct.toFixed(2)+'%')+'</td>':'<td class="text-right" id="wac-change-'+i+'">—</td>') +
+          '<td class="wac-left-cell" style="text-align:left!important">'+oldWac.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4})+'</td>' +
+          (historical?'<td class="wac-left-cell" style="text-align:left!important">'+(oldValue==null?'历史记录缺失':oldValue.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}))+'</td>':'<td class="wac-left-cell" style="text-align:left!important" id="wac-old-value-'+i+'">待上传</td>') +
+          (historical?'<td class="wac-left-cell" style="text-align:left!important" style="color:#1677ff">'+(newWac==null?'历史记录缺失':newWac.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4}))+'</td>':'<td class="wac-left-cell" style="text-align:left!important" id="wac-new-'+i+'" style="color:#1677ff">待上传</td>') +
+          (historical?'<td class="wac-left-cell" style="text-align:left!important">'+(changePct==null?'—':(changePct>0?'+':'')+changePct.toFixed(2)+'%')+'</td>':'<td class="wac-left-cell" style="text-align:left!important" id="wac-change-'+i+'">—</td>') +
         '</tr>';
       }).join('');
 
@@ -14879,18 +14879,18 @@ async function wacConfirm(batchId){
 
       skuTableHtml=formulaHint+opBar+
         '<div class="wac-table-scroll" style="overflow:auto;max-height:52vh">'+
-        '<table class="data-table" style="table-layout:auto;min-width:1450px"><thead><tr>'+
-          '<th style="position:sticky;left:0;z-index:3;background:var(--table-head-bg,#f5f6f8)">SKU</th>'+
-          '<th>到货数量</th><th>CBM</th>'+
-          '<th>FOB Price ('+esc(m.ci_currency||'')+')</th>'+
-          '<th>FOB Price ('+esc(m.local_currency||'')+')</th>'+
-          '<th>Unit Landed Cost ('+esc(m.local_currency||'')+')</th>'+
-          '<th>本批次总成本 ('+esc(m.local_currency||'')+')</th>'+
-          '<th>原库存数量</th>'+
-          '<th>原单位成本 / 当前WAC ('+esc(m.local_currency||'')+')</th>'+
-          '<th>原库存总成本 ('+esc(m.local_currency||'')+')</th>'+
-          '<th>新加权平均成本 ('+esc(m.local_currency||'')+')</th>'+
-          '<th>较上次WAC变化</th>'+
+        '<table class="data-table wac-left-align" style="table-layout:auto;min-width:1450px;text-align:left"><th style="text-align:left!important;text-align:left!important"ead><tr>'+
+          '<th style="position:sticky;left:0;z-index:3;background:var(--table-head-bg,#f5f6f8);text-align:left!important">SKU</th>'+
+          '<th style="text-align:left!important;text-align:left!important">到货数量</th><th style="text-align:left!important;text-align:left!important">CBM</th>'+
+          '<th style="text-align:left!important;text-align:left!important">FOB Price ('+esc(m.ci_currency||'')+')</th>'+
+          '<th style="text-align:left!important;text-align:left!important">FOB Price ('+esc(m.local_currency||'')+')</th>'+
+          '<th style="text-align:left!important;text-align:left!important">Unit Landed Cost ('+esc(m.local_currency||'')+')</th>'+
+          '<th style="text-align:left!important;text-align:left!important">本批次总成本 ('+esc(m.local_currency||'')+')</th>'+
+          '<th style="text-align:left!important;text-align:left!important">原库存数量</th>'+
+          '<th style="text-align:left!important;text-align:left!important">原单位成本 / 当前WAC ('+esc(m.local_currency||'')+')</th>'+
+          '<th style="text-align:left!important;text-align:left!important">原库存总成本 ('+esc(m.local_currency||'')+')</th>'+
+          '<th style="text-align:left!important;text-align:left!important">新加权平均成本 ('+esc(m.local_currency||'')+')</th>'+
+          '<th style="text-align:left!important;text-align:left!important">较上次WAC变化</th>'+
         '</tr></thead><tbody>'+rowsHtml+'</tbody></table></div>';    }
 
     const head='<div class="form-card" style="box-shadow:none;padding:0;display:flex;flex-direction:column;overflow:visible">'+
