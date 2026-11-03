@@ -80,7 +80,7 @@
     const missing = data.missing || [];
     const count = status => rows.filter(row => row.status === status).length;
     const cards = [
-      { label: '已连接店铺', value: rows.length, hint: '已取到健康读数' },
+      { label: '店铺总数', value: rows.length, hint: '当前筛选下的店铺' },
       { label: '良好', value: count('good'), hint: '全部指标达标' },
       { label: '需关注', value: count('watch'), hint: '有指标未达标' },
       { label: '需改进', value: count('poor'), hint: '店铺评分未达标' },
