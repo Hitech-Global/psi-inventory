@@ -473,13 +473,18 @@ CREATE TABLE IF NOT EXISTS shopee_shop_health_daily (
   fulfillment_failed BIGINT,
   listing_failed BIGINT,
   custom_service_failed BIGINT,
-  -- 平台给每个指标定的达标线（如迟发率 < 10%）。存下来，页面按它判
-  -- 达标与否，而不是自己编一个标准。
-  targets_json JSONB NOT NULL DEFAULT '{}'::jsonb,
   raw_json JSONB NOT NULL DEFAULT '{}'::jsonb,
   synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (shop_id, event_date)
 );
+
+-- 平台给每个指标定的达标线（如迟发率 < 10%）。存下来，页面按它判
+-- 达标与否，而不是自己编一个标准。
+--
+-- 必须单独 ALTER：表已经存在时，上面的 CREATE TABLE IF NOT EXISTS 会
+-- 整个跳过，写在它里面的列也就永远不会出现 —— 而且不会报错。
+ALTER TABLE shopee_shop_health_daily
+  ADD COLUMN IF NOT EXISTS targets_json JSONB NOT NULL DEFAULT '{}'::jsonb;
 
 CREATE TABLE IF NOT EXISTS shopee_product_card_period (
   shop_id BIGINT NOT NULL,
