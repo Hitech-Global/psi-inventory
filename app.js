@@ -14790,7 +14790,7 @@ async function wacConfirm(batchId){
       // Freight section
       const pb=m.freight_payment_breakdown||[];
       const pbHtml=pb.length?'<div style="margin-top:6px"><div style="font-size:12px;font-weight:bold;margin-bottom:4px">'+t('wac.payment_breakdown','付款明细')+'</div>'+
-        '<table class="data-table wac-left-align" style="font-size:11px;min-width:400px;text-align:left"><th style="text-align:left!important"ead><tr>'+
+        '<table class="data-table wac-left-align" style="font-size:11px;min-width:400px;text-align:left"><thead><tr>'+
         '<th style="text-align:left!important">PR ID</th><th style="text-align:left!important">'+t('wac.original_amount','原始金额')+'</th><th style="text-align:left!important">'+t('wac.local_currency','本币')+'</th><th style="text-align:left!important">'+t('wac.effective_fx_rate','有效汇率')+'</th><th style="text-align:left!important">'+t('wac.fx_rate_date','汇率日期')+'</th><th style="text-align:left!important">'+t('wac.actual_payment_date','付款日期')+'</th><th style="text-align:left!important">'+t('wac.local_amount','本币金额')+'</th>'+
         '</tr></thead><tbody>'+
         pb.map(pd=>'<tr>'+
@@ -14879,8 +14879,8 @@ async function wacConfirm(batchId){
 
       skuTableHtml=formulaHint+opBar+
         '<div class="wac-table-scroll" style="overflow:auto;max-height:52vh">'+
-        '<table class="data-table wac-left-align" style="table-layout:auto;min-width:1450px;text-align:left"><th style="text-align:left!important"ead><tr>'+
-          '<th style="position:sticky;left:0;z-index:3;background:var(--table-head-bg,#f5f6f8);text-align:left!important">SKU</th>'+
+        '<table class="data-table wac-left-align" style="table-layout:auto;min-width:1450px;text-align:left"><thead><tr>'+
+          '<th style="position:sticky;top:0;left:0;z-index:4;background:var(--table-head-bg,#f5f6f8);text-align:left!important">SKU</th>'+
           '<th style="text-align:left!important">到货数量</th><th style="text-align:left!important">'+(m.transport_basis==='kg'?'毛重(KG)':'CBM')+'</th>'+
           '<th style="text-align:left!important">FOB Price ('+esc(m.ci_currency||'')+')</th>'+
           '<th style="text-align:left!important">FOB Price ('+esc(m.local_currency||'')+')</th>'+
