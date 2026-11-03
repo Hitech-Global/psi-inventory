@@ -1918,3 +1918,20 @@ test('WAC confirmation displays and aligns the actual transport allocation basis
   assert.ok(ui.includes('class="data-table wac-left-align"') && ui.includes('text-align:left!important'), 'WAC and payment tables must force left alignment');
   assert.ok(!ui.includes('class="text-right"'), 'WAC confirmation tables must not retain right-aligned cells');
 });
+
+
+test('WAC confirmation displays air freight basis as gross weight and aligns WAC/payment tables left', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const app = fs.readFileSync(path.join(__dirname, 'app.js'), 'utf8');
+  const calculator = fs.readFileSync(path.join(__dirname, 'wac-calculator.js'), 'utf8');
+  const start = app.indexOf('async function wacConfirm(batchId){');
+  const end = app.indexOf('// 行内重算新WAC', start);
+  const ui = app.slice(start, end);
+  assert.ok(calculator.includes('gross_weight: batchEntry ? Math.round((Number(batchEntry.gross_weight)||0)*10000)/10000 : 0'));
+  assert.ok(ui.includes("m.transport_basis==='kg'?'毛重(KG)':'CBM'"), 'table header must follow transport basis');
+  assert.ok(ui.includes("m.transport_basis==='kg'?(it.gross_weight||0):(it.cbm||0)"), 'table value must follow transport basis');
+  assert.ok(ui.includes('wac-left-align') && ui.includes('text-align:left!important'), 'tables must force left alignment');
+  assert.ok(!ui.includes('class="text-right'), 'no WAC confirmation cells should remain right-aligned');
+  assert.ok(!ui.includes('>ead'), 'table header markup must remain valid');
+});
