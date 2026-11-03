@@ -23,11 +23,13 @@ test('each file is applied on its own', () => {
   assert.ok(!source.includes(".join('\\n\\n')"), 'the files must not be applied as one text');
 });
 
-test('the schema has no function called in the wrong way', () => {
+test('a timestamp column says what it defaults to', () => {
   const schema = fs.readFileSync(path.join(__dirname, '..', 'schema.sql'), 'utf8');
-  // `TIMESTAMPTZ NOW()` is not a thing: the function is now() and it takes
-  // brackets. The database refuses the whole schema over it, which is a
-  // long way round to learn that.
-  assert.ok(!/TIMESTAMPTZ\s+NOW\s*\(\s*\)/i.test(schema), 'a timestamp default must be now()');
-  assert.ok(!/\bDEFAULT\s+NOW\s*\(\s*\)/i.test(schema), 'a default must be now()');
+  // `TIMESTAMPTZ NOW()` is not a thing: a column does not call a
+  // function, it says what the column defaults to. The database refuses
+  // the whole schema over it, which is a long way round to learn that.
+  assert.ok(
+    !/(?<!DEFAULT\s)TIMESTAMPTZ\s+(NOW|now|CURRENT_TIMESTAMP)\s*\(/i.test(schema),
+    'a timestamp column must say what it defaults to',
+  );
 });
