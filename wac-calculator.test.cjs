@@ -1935,3 +1935,19 @@ test('WAC confirmation displays air freight basis as gross weight and aligns WAC
   assert.ok(!ui.includes('class="text-right'), 'no WAC confirmation cells should remain right-aligned');
   assert.ok(!ui.includes('>ead'), 'table header markup must remain valid');
 });
+
+
+test('WAC SKU table header remains sticky in its own scroll container', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const app = fs.readFileSync(path.join(__dirname, 'app.js'), 'utf8');
+  const html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
+  const start = app.indexOf('async function wacConfirm(batchId){');
+  const end = app.indexOf('// 提交WAC确认', start);
+  const ui = app.slice(start, end);
+  assert.ok(ui.includes('<thead><tr>'), 'WAC tables must use valid thead markup');
+  assert.ok(ui.includes('class="wac-table-scroll"'), 'SKU table must retain its dedicated scroll container');
+  assert.ok(ui.includes('position:sticky;top:0;left:0;z-index:4'), 'top-left SKU header cell must stick on both axes');
+  assert.ok(html.includes('.modal-wac .wac-table-scroll thead th{position:sticky;top:0;'), 'all SKU column headers must stick to the top of the table scrollport');
+  assert.ok(html.includes('.modal-wac .wac-table-scroll thead th:first-child{left:0;z-index:4}'), 'first SKU header cell must remain above the other sticky headers');
+});
