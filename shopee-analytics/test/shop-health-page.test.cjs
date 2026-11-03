@@ -45,9 +45,10 @@ test('the route is given the repository it uses', () => {
 test('the page tells the platform\'s standard from the figure', () => {
   const healthUi = fs.readFileSync(path.join(webDir, 'shop-health-ui-v1.js'), 'utf8');
   assert.ok(healthUi.includes('target'), 'the standard must be shown with the figure');
-  // The detail names the measure as the page names it, not by the key it is
-  // stored under.
-  assert.ok(healthUi.includes('measureLabels[event.metricKey]'), 'the detail must name the measure the way the page names it');
+  // The detail names the measure as the page names it, in the heading
+  // above it — not by the key it is stored under, and not again in every
+  // row of it.
+  assert.ok(healthUi.includes('metricLabel(metricKey)'), 'the detail must name the measure the way the page names it');
   // The summary counts the shops, the table lists them; the two must not
   // claim the same thing under different names.
   assert.ok(healthUi.includes("label: '店铺总数'"), 'the summary must count the shops');
@@ -154,4 +155,17 @@ test('the products can be read as families, and the diagnosis says what they say
   assert.ok(codes.includes('ADD_TO_CART_NOT_CONVERTED'), 'the basket that was not bought must be said');
   assert.ok(codes.includes('HIGH_BOUNCE_LOW_CONVERSION'), 'the pages that sent people away must be said');
   assert.ok(result.productDiagnosis, 'the products themselves must be named');
+});
+
+
+test('the detail is held against the figure it belongs to and shown on request', () => {
+  const healthUi = fs.readFileSync(path.join(webDir, 'shop-health-ui-v1.js'), 'utf8');
+  // The detail used to be listed below the table for every shop at once.
+  // It now belongs to the figure it explains.
+  assert.ok(healthUi.includes('function groupEvents'), 'the detail must be held against the figure');
+  assert.ok(healthUi.includes('data-metric='), 'a figure with detail must say which figure');
+  assert.ok(healthUi.includes('function toggleDetail'), 'clicking must open the detail');
+  assert.ok(healthUi.includes('health-detail-row'), 'the detail must open in a row beneath');
+  // And it is not laid out on the page before it is wanted.
+  assert.ok(!healthUi.includes('class=\"health-events\"'), 'the detail must not be a block of its own');
 });
