@@ -13971,12 +13971,12 @@ async function viewLogDetail(id){
           '</tr></thead><tbody>'+
           pb.map(function(pd){return '<tr>'+
             '<td class="cell-id">'+esc(pd.payment_request_id)+'</td>'+
-            '<td class="text-right">'+Number(pd.amount).toFixed(2)+'</td>'+
+            '<td>'+Number(pd.amount).toFixed(2)+'</td>'+
             '<td>'+esc(pd.local_currency)+'</td>'+
-            '<td class="text-right">'+Number(pd.local_rate).toFixed(4)+'</td>'+
+            '<td>'+Number(pd.local_rate).toFixed(4)+'</td>'+
             '<td class="cell-date">'+fmtDate(pd.local_rate_date)+'</td>'+
             '<td class="cell-date">'+fmtDate(pd.paid_date)+'</td>'+
-            '<td class="text-right">'+Number(pd.local_amount).toFixed(2)+'</td>'+
+            '<td>'+Number(pd.local_amount).toFixed(2)+'</td>'+
           '</tr>';}).join('')+
           '</tbody></table></div>':'';
         return '<div class="detail-section"><h3>'+t('logistics.detail.payment_facts','付款事实')+'</h3><div class="detail-grid">'+

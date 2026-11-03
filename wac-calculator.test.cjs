@@ -1784,3 +1784,20 @@ test('UI regression: WAC confirmation renders each row batch quantity from its i
   assert.ok(section.includes('importWacOldInventory()'),
     'old inventory upload action must remain available');
 });
+
+
+test('WAC freight payment breakdown: all table body cells use default left alignment', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const source = fs.readFileSync(path.join(__dirname, 'app.js'), 'utf8');
+  const start = source.indexOf('var pbHtml=pb.length?');
+  assert.ok(start >= 0, 'freight payment breakdown table must exist');
+  const end = source.indexOf("'</tbody></table></div>':'';", start);
+  assert.ok(end > start, 'payment breakdown table section must be bounded');
+  const section = source.slice(start, end);
+  assert.ok(section.includes('<td class="cell-id">'), 'PR ID remains left aligned');
+  assert.ok(section.includes("'<td>'+Number(pd.amount).toFixed(2)"), 'original amount uses default left alignment');
+  assert.ok(section.includes("'<td>'+Number(pd.local_rate).toFixed(4)"), 'FX rate uses default left alignment');
+  assert.ok(section.includes("'<td>'+Number(pd.local_amount).toFixed(2)"), 'local amount uses default left alignment');
+  assert.ok(!section.includes('class="text-right"'), 'no right-aligned body cells remain in this table');
+});
