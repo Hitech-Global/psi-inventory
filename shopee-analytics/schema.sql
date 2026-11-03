@@ -426,9 +426,18 @@ CREATE TABLE IF NOT EXISTS shopee_return_items (
   PRIMARY KEY (shop_id, return_sn, item_id, model_id)
 );
 
+-- 店铺的经营数据，按天。
+--
+-- 卖家中心的报表把同一批数字给了三种口径：已下单、已确认、已付款。三种
+-- 口径的访客与点击完全相同（那是店铺级的数），但订单数与销售额不同。
+-- 所以口径是一列，而不是三张表。
+--
+-- 访客与点击在三行里重复，是有意的：查询任何口径都能拿到完整的一行，
+-- 不用再回头拼另一张表。
 CREATE TABLE IF NOT EXISTS shopee_shop_bi_daily (
   shop_id BIGINT NOT NULL,
   event_date DATE NOT NULL,
+  order_status TEXT NOT NULL DEFAULT 'PAID',
   sales NUMERIC(20,6),
   orders BIGINT,
   units_sold BIGINT,
@@ -437,6 +446,16 @@ CREATE TABLE IF NOT EXISTS shopee_shop_bi_daily (
   unique_visitors BIGINT,
   item_conversion_rate NUMERIC(20,8),
   order_conversion_rate NUMERIC(20,8),
+  sales_per_order NUMERIC(20,6),
+  cancelled_orders BIGINT,
+  cancelled_sales NUMERIC(20,6),
+  returned_orders BIGINT,
+  returned_sales NUMERIC(20,6),
+  buyers BIGINT,
+  new_buyers BIGINT,
+  existing_buyers BIGINT,
+  potential_buyers BIGINT,
+  repeat_purchase_rate NUMERIC(20,8),
   voucher_sales NUMERIC(20,6),
   voucher_buyers BIGINT,
   voucher_usage_rate NUMERIC(20,8),
@@ -444,7 +463,92 @@ CREATE TABLE IF NOT EXISTS shopee_shop_bi_daily (
   voucher_cost NUMERIC(20,6),
   raw_json JSONB NOT NULL DEFAULT '{}'::jsonb,
   synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  PRIMARY KEY (shop_id, event_date)
+  PRIMARY KEY (shop_id, event_date, order_status)
+);
+
+-- 订单口径那一列是后加的，早先的行没有它。
+ALTER TABLE shopee_shop_bi_daily
+  ADD COLUMN IF NOT EXISTS order_status TEXT NOT NULL DEFAULT 'PAID';
+
+-- 商品级的访客与加购：访客数、浏览量、跳出率、搜索点击、收藏、加购访客与件数。
+--
+-- 卖家中心的商品明细里有这些数，而开放平台的接口不给 —— 这是唯一能拿到
+-- 加购与收藏的地方。
+CREATE TABLE IF NOT EXISTS shopee_product_traffic_daily (
+  shop_id BIGINT NOT NULL,
+  event_date DATE NOT NULL,
+  item_id BIGINT NOT NULL,
+  order_status TEXT NOT NULL DEFAULT 'PAID',
+  parent_sku TEXT,
+  sku TEXT,
+  variation_id TEXT,
+  row_kind TEXT NOT NULL DEFAULT 'PRODUCT',
+  item_name TEXT,
+  item_status TEXT,
+  sales NUMERIC(20,6),
+  orders BIGINT,
+  units_sold BIGINT,
+  buyers BIGINT,
+  product_impression BIGINT,
+  product_clicks BIGINT,
+  ctr NUMERIC(20,8),
+  unique_product_impressions BIGINT,
+  unique_product_clicks BIGINT,
+  product_visitors BIGINT,
+  product_page_views BIGINT,
+  bounce_visitors BIGINT,
+  bounce_rate NUMERIC(20,8),
+  search_clicks BIGINT,
+  likes BIGINT,
+  add_to_cart_visitors BIGINT,
+  add_to_cart_units BIGINT,
+  add_to_cart_rate NUMERIC(20,8),
+  order_conversion_rate NUMERIC(20,8),
+  raw_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  synced_at TIMESTAMPTZ NOW(),
+  PRIMARY KEY (shop_id, event_date, item_id, order_status, row_kind, COALESCE(sku, ''))
+);
+
+CREATE INDEX IF NOT EXISTS idx_shopee_product_traffic_parent_sku
+  ON shopee_product_traffic_daily (shop_id, parent_sku);
+
+-- 卖家中心导出的广告数据：整个区间的汇总，不是按天的。
+--
+-- 与按天同步的广告表分开存：粒度不同，放在一起会让"某天的花费"这种
+-- 问题有两个答案。
+CREATE TABLE IF NOT EXISTS shopee_seller_centre_ads_period (
+  shop_id BIGINT NOT NULL,
+  period_start DATE NOT NULL,
+  period_end DATE NOT NULL,
+  ad_sequence BIGINT NOT NULL,
+  ad_name TEXT,
+  status TEXT,
+  ads_type TEXT,
+  product_id TEXT,
+  bidding_method TEXT,
+  placement TEXT,
+  ad_start_date TIMESTAMPTZ,
+  ad_end_date TIMESTAMPTZ,
+  impression BIGINT,
+  clicks BIGINT,
+  ctr NUMERIC(20,8),
+  add_to_cart BIGINT,
+  add_to_cart_rate NUMERIC(20,8),
+  conversions BIGINT,
+  conversion_rate NUMERIC(20,8),
+  cost_per_conversion NUMERIC(20,6),
+  items_sold BIGINT,
+  gmv NUMERIC(20,6),
+  expense NUMERIC(20,6),
+  roas NUMERIC(20,8),
+  acos NUMERIC(20,8),
+  product_impressions BIGINT,
+  product_clicks BIGINT,
+  voucher_amount NUMERIC(20,6),
+  vouchered_sales NUMERIC(20,6),
+  raw_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (shop_id, period_start, period_end, ad_sequence)
 );
 
 -- 店铺健康与履约：店铺评分、发货时效、取消率、退货退款率等。

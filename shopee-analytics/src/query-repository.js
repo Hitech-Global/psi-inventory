@@ -541,7 +541,8 @@ class ShopeeQueryRepository {
               COALESCE(l.live_confirmed_orders,0) AS live_confirmed_orders,
               COALESCE(l.live_confirmed_sales,0) AS live_confirmed_sales,
               (SELECT COUNT(*) FROM shopee_shop_bi_daily
-                WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3) AS shop_report_rows,
+                WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3
+                  AND order_status=$5) AS shop_report_rows,
               (SELECT COUNT(*) FROM shopee_returns
                 WHERE shop_id=$1
                   AND (to_timestamp(create_time) AT TIME ZONE $4)::date BETWEEN $2 AND $3) AS return_rows,
@@ -562,7 +563,7 @@ class ShopeeQueryRepository {
        LEFT JOIN health h ON h.event_date=d.event_date
        LEFT JOIN live l ON l.event_date=d.event_date
        ORDER BY d.event_date`,
-      [shopId, startDate, endDate, timezone || 'UTC'],
+      [shopId, startDate, endDate, timezone || 'UTC', orderStatus],
     );
 
     // Whether a source has anything in it at all, as opposed to having
