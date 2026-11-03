@@ -763,6 +763,7 @@ function computeWacCostFacts(logisticsBatchId) {
       model: skuInfo ? (skuInfo.model || '') : '',
       batch_qty: batchQty,
       cbm: batchEntry ? Math.round((Number(batchEntry.cbm)||0)*10000)/10000 : 0,
+      gross_weight: batchEntry ? Math.round((Number(batchEntry.gross_weight)||0)*10000)/10000 : 0,
       weighted_purchase_unit_price: Math.round(weightedPrice * 10000) / 10000,
       customs_rate: ciEntry ? ciEntry.customs_rate : null,
       ci_shipped_qty: ciEntry ? ciEntry.shipped_qty : 0,
