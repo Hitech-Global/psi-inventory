@@ -209,7 +209,9 @@ function validRow(overrides) {
 }
 
 async function request(path, method, body) {
-  const http = app.listen(0);
+  const http = await new Promise(resolve => {
+    const listener = app.listen(0, () => resolve(listener));
+  });
   try {
     const port = http.address().port;
     const response = await fetch('http://127.0.0.1:' + port + path, {
