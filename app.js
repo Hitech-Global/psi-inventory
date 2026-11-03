@@ -403,6 +403,7 @@ const NAV_MODULES=[
     {id:'pi',key:'nav.pi',icon:'📄',label:t("nav.pi", "PI\u7ba1\u7406"),perm:'pi_view'},
     {id:'ci',key:'nav.ci',icon:'🚚',label:t("nav.ci", "CI/PL\u7ba1\u7406"),perm:'ci_view'},
     {id:'inbound',key:'nav.wac_confirm',icon:'💰',label:t("nav.wac_confirm", "WAC确认"),perm:'inbound_view'},
+    {id:'wac-history',key:'nav.wac_history',icon:'📊',label:t('nav.wac_history','WAC历史记录'),perm:'inbound_view'},
     {id:'logistics-decision',key:'nav.logistics_decision',icon:'🧭',label:t("nav.logistics_decision","物流决策"),perm:'logistics_view'},
   ]},
   {id:'approval',key:'nav.approval',label:t("nav.approval_center", "\u5ba1\u6279\u4e2d\u5fc3"),items:[
@@ -441,7 +442,7 @@ var NAV_ZH={
   'nav.inventory_total':'库存总表','nav.consignment':'寄售库存','nav.skus':'SKU主数据','nav.stock_check':'库存盘点',
   'nav.stagnant':'呆滞分析','nav.sales':'销售','nav.sales_data':'销售数据',
   'nav.forecast':'订单预测','nav.procurement':'采购链','nav.po':'PO管理',
-  'nav.pi':'PI管理','nav.ci':'CI/PL管理','nav.logistics':'物流管理','nav.inbound':'WAC确认','nav.logistics_decision':'物流决策',
+  'nav.pi':'PI管理','nav.ci':'CI/PL管理','nav.logistics':'物流管理','nav.inbound':'WAC确认','nav.wac_history':'WAC历史记录','nav.logistics_decision':'物流决策',
   'nav.approval':'审批中心','nav.approval_center':'审批中心','nav.finance':'财务',
   'nav.payable_cockpit':'应付驾驶舱','nav.payment':'付款管理','nav.cost':'成本管理','nav.payable_list':'应付费用列表',
   'nav.system':'系统管理','nav.users':'用户管理','nav.roles':'角色权限',
@@ -536,9 +537,9 @@ function showPage(page){
   }
   document.querySelectorAll('.sidebar-item').forEach(el=>el.classList.toggle('active',el.dataset.page===page));
   document.querySelectorAll('.topnav-item').forEach((el,i)=>{if(NAV_MODULES[i]&&NAV_MODULES[i].id===currentModule)el.classList.add('active');else el.classList.remove('active')});
-  const titles={dashboard:t("nav.dashboard", "\u9996\u9875\u770b\u677f"),skus:t("nav.skus", "SKU\u4e3b\u6570\u636e"),inventory:t("page.inventory_total","库存总表"),outbound:t("nav.outbound","销售数据"),replenishment:t("nav.replenishment","订单预测"),stagnant:t("nav.stagnant", "\u5446\u6ede\u5206\u6790"),check:t("nav.stock_check", "\u5e93\u5b58\u76d8\u70b9"),po:t("nav.po", "PO\u7ba1\u7406"),pi:t("nav.pi", "PI\u7ba1\u7406"),ci:t("nav.ci", "CI/PL\u7ba1\u7406"),inbound:t("nav.wac_confirm", "WAC确认"),'logistics-decision':t("nav.logistics_decision","物流决策"),cost:t("nav.cost", "\u6210\u672c\u7ba1\u7406"),payment:t("nav.payment", "\u4ed8\u6b3e\u7ba1\u7406"),'payable-cockpit':t("nav.payable_cockpit","应付驾驶舱"),'payable-list':t("nav.payable_list","应付费用列表"),forwarder:t("nav.forwarder_analysis", "\u8d27\u4ee3\u5206\u6790"),countries:t("nav.countries", "\u56fd\u5bb6\u7ba1\u7406"),warehouses:t("nav.warehouses", "\u4ed3\u5e93\u7ba1\u7406"),suppliers:t("nav.suppliers", "\u4f9b\u5e94\u5546\u7ba1\u7406"),'freight-forwarders':t("nav.freight_forwarders", "\u8d27\u4ee3\u7ba1\u7406"),currencies:t("nav.currencies", "\u5e01\u79cd\u8bbe\u7f6e"),config:t("nav.config", "\u7cfb\u7edf\u53c2\u6570"),'payment-terms':t("nav.payment_terms", "\u4ed8\u6b3e\u6761\u4ef6"),'approval-flows':t("nav.approval_flows", "\u5ba1\u6279\u6d41\u7ba1\u7406"),'approval-center':t("nav.approval_center", "\u5ba1\u6279\u4e2d\u5fc3"),'expense-types':t("nav.expense_types", "\u8d39\u7528\u7c7b\u578b"),'allocation-rules':t("nav.allocation_rules", "\u5206\u644a\u89c4\u5219"),users:t("nav.users", "\u7528\u6237\u7ba1\u7406"),roles:t("nav.roles","角色权限"),'batch-tasks':t("nav.batch_tasks", "\u6279\u91cf\u4efb\u52a1\u4e2d\u5fc3"),'brand-settings':t("nav.brand_settings", "\u54c1\u724c\u8bbe\u7f6e"),'operation-logs':t("nav.operation_logs", "\u64cd\u4f5c\u65e5\u5fd7"),'payment-categories':t("nav.payment_categories", "\u4ed8\u6b3e\u7c7b\u76ee\u7ba1\u7406"),'payer-entities':t("nav.payer_entities", "\u4ed8\u6b3e\u4e3b\u4f53")};
+  const titles={dashboard:t("nav.dashboard", "\u9996\u9875\u770b\u677f"),skus:t("nav.skus", "SKU\u4e3b\u6570\u636e"),inventory:t("page.inventory_total","库存总表"),outbound:t("nav.outbound","销售数据"),replenishment:t("nav.replenishment","订单预测"),stagnant:t("nav.stagnant", "\u5446\u6ede\u5206\u6790"),check:t("nav.stock_check", "\u5e93\u5b58\u76d8\u70b9"),po:t("nav.po", "PO\u7ba1\u7406"),pi:t("nav.pi", "PI\u7ba1\u7406"),ci:t("nav.ci", "CI/PL\u7ba1\u7406"),inbound:t("nav.wac_confirm", "WAC确认"),'wac-history':t('nav.wac_history','WAC历史记录'),'logistics-decision':t("nav.logistics_decision","物流决策"),cost:t("nav.cost", "\u6210\u672c\u7ba1\u7406"),payment:t("nav.payment", "\u4ed8\u6b3e\u7ba1\u7406"),'payable-cockpit':t("nav.payable_cockpit","应付驾驶舱"),'payable-list':t("nav.payable_list","应付费用列表"),forwarder:t("nav.forwarder_analysis", "\u8d27\u4ee3\u5206\u6790"),countries:t("nav.countries", "\u56fd\u5bb6\u7ba1\u7406"),warehouses:t("nav.warehouses", "\u4ed3\u5e93\u7ba1\u7406"),suppliers:t("nav.suppliers", "\u4f9b\u5e94\u5546\u7ba1\u7406"),'freight-forwarders':t("nav.freight_forwarders", "\u8d27\u4ee3\u7ba1\u7406"),currencies:t("nav.currencies", "\u5e01\u79cd\u8bbe\u7f6e"),config:t("nav.config", "\u7cfb\u7edf\u53c2\u6570"),'payment-terms':t("nav.payment_terms", "\u4ed8\u6b3e\u6761\u4ef6"),'approval-flows':t("nav.approval_flows", "\u5ba1\u6279\u6d41\u7ba1\u7406"),'approval-center':t("nav.approval_center", "\u5ba1\u6279\u4e2d\u5fc3"),'expense-types':t("nav.expense_types", "\u8d39\u7528\u7c7b\u578b"),'allocation-rules':t("nav.allocation_rules", "\u5206\u644a\u89c4\u5219"),users:t("nav.users", "\u7528\u6237\u7ba1\u7406"),roles:t("nav.roles","角色权限"),'batch-tasks':t("nav.batch_tasks", "\u6279\u91cf\u4efb\u52a1\u4e2d\u5fc3"),'brand-settings':t("nav.brand_settings", "\u54c1\u724c\u8bbe\u7f6e"),'operation-logs':t("nav.operation_logs", "\u64cd\u4f5c\u65e5\u5fd7"),'payment-categories':t("nav.payment_categories", "\u4ed8\u6b3e\u7c7b\u76ee\u7ba1\u7406"),'payer-entities':t("nav.payer_entities", "\u4ed8\u6b3e\u4e3b\u4f53")};
   document.getElementById('content-inner').innerHTML='<div id="flash-container"></div>';
-  const R={dashboard:renderDashboard,skus:renderSKUs,inventory:renderInventory,consignment:renderConsignment,outbound:renderOutbound,replenishment:renderReplenishment,stagnant:renderStagnant,check:renderCheck,po:renderPO,pi:renderPI,ci:renderCI,inbound:renderInbound,cost:renderCost,payment:renderPayment,'payable-cockpit':renderPayableCockpit,'payable-list':renderPayableList,forwarder:renderForwarderAnalysis,'logistics-decision':renderLogisticsDecision,countries:renderCountries,warehouses:renderWarehouses,suppliers:renderSuppliers,'freight-forwarders':renderFreightForwarders,currencies:renderCurrencies,config:renderConfig,'payment-terms':renderPaymentTerms,'approval-flows':renderApprovalFlows,'approval-center':renderApprovalCenter,'expense-types':renderExpenseTypes,'allocation-rules':renderAllocationRules,users:renderUsers,roles:renderRoles,'batch-tasks':renderBatchTasks,'brand-settings':renderBrandSettings,'operation-logs':renderOperationLogs,'payment-categories':renderPaymentCategories,'payer-entities':renderPayerEntities};
+  const R={dashboard:renderDashboard,skus:renderSKUs,inventory:renderInventory,consignment:renderConsignment,outbound:renderOutbound,replenishment:renderReplenishment,stagnant:renderStagnant,check:renderCheck,po:renderPO,pi:renderPI,ci:renderCI,inbound:renderInbound,'wac-history':renderWacHistoryMatrix,cost:renderCost,payment:renderPayment,'payable-cockpit':renderPayableCockpit,'payable-list':renderPayableList,forwarder:renderForwarderAnalysis,'logistics-decision':renderLogisticsDecision,countries:renderCountries,warehouses:renderWarehouses,suppliers:renderSuppliers,'freight-forwarders':renderFreightForwarders,currencies:renderCurrencies,config:renderConfig,'payment-terms':renderPaymentTerms,'approval-flows':renderApprovalFlows,'approval-center':renderApprovalCenter,'expense-types':renderExpenseTypes,'allocation-rules':renderAllocationRules,users:renderUsers,roles:renderRoles,'batch-tasks':renderBatchTasks,'brand-settings':renderBrandSettings,'operation-logs':renderOperationLogs,'payment-categories':renderPaymentCategories,'payer-entities':renderPayerEntities};
   if(R[page])R[page]();
 }
 
@@ -14528,6 +14529,116 @@ async function confirmGenerateCostItems(id){
 // 物流批次到货后 → WAC确认 → 更新库存成本
 // 不做传统ERP入库闭环，只打通「物流 → WAC → 库存成本」
 // WAC是否确认以 wac_history 记录为事实来源，不增加第二套状态
+
+/* ==================== WAC历史记录矩阵 ==================== */
+async function renderWacHistoryMatrix(){
+  const root=document.getElementById('content-inner');
+  root.innerHTML='<div id="flash-container"></div>'+
+    '<div class="filter-bar" style="display:block">'+
+      '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">'+
+        '<input id="wac-matrix-search" class="form-control" style="min-width:240px;flex:1" placeholder="搜索 SKU / 产品名称">'+
+        '<select id="wac-matrix-brand" class="form-control" multiple size="1" style="min-width:150px" aria-label="品牌（多选）"></select>'+
+        '<select id="wac-matrix-country" class="form-control" multiple size="1" style="min-width:150px" aria-label="国家（多选）"></select>'+
+        '<select id="wac-matrix-warehouse" class="form-control" multiple size="1" style="min-width:180px" aria-label="仓库（多选）"></select>'+
+      '</div>'+
+      '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">'+
+        '<label style="font-size:12px;color:var(--text-secondary)">确认日期</label>'+
+        '<input id="wac-matrix-from" type="date" class="form-control" style="width:160px">'+
+        '<span style="color:var(--text-secondary)">至</span>'+
+        '<input id="wac-matrix-to" type="date" class="form-control" style="width:160px">'+
+        '<button class="btn btn-primary btn-sm" onclick="loadWacHistoryMatrix()">查询</button>'+
+        '<button class="btn btn-secondary btn-sm" onclick="resetWacHistoryMatrix()">重置</button>'+
+        '<span id="wac-matrix-count" style="font-size:12px;color:var(--text-secondary);margin-left:auto"></span>'+
+      '</div>'+
+    '</div>'+
+    '<div class="table-section">'+
+      '<div class="table-section-title"><div class="table-section-title-left">📊 WAC历史成本矩阵</div></div>'+
+      '<div id="wac-matrix-table"><div class="loading-state">加载中...</div></div>'+
+    '</div>';
+  await loadWacHistoryMatrix(true);
+}
+function _wacMatrixSelected(id){
+  const el=document.getElementById(id);
+  return el?Array.from(el.selectedOptions).map(o=>o.value).filter(Boolean):[];
+}
+function _wacMatrixFillSelect(id,values,placeholder){
+  const el=document.getElementById(id);if(!el)return;
+  const selected=new Set(Array.from(el.selectedOptions||[]).map(o=>o.value));
+  el.innerHTML=values.map(v=>'<option value="'+esc(v)+'" '+(selected.has(v)?'selected':'')+'>'+esc(v)+'</option>').join('');
+  el.title=placeholder+'（可多选）';
+}
+function resetWacHistoryMatrix(){
+  ['wac-matrix-search','wac-matrix-from','wac-matrix-to'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
+  ['wac-matrix-brand','wac-matrix-country','wac-matrix-warehouse'].forEach(id=>{const e=document.getElementById(id);if(e)Array.from(e.options).forEach(o=>o.selected=false);});
+  loadWacHistoryMatrix();
+}
+async function loadWacHistoryMatrix(init){
+  const target=document.getElementById('wac-matrix-table');if(!target)return;
+  try{
+    const data=await api('/api/wac/history-matrix');
+    const rows=Array.isArray(data.rows)?data.rows:[];
+    if(init){
+      _wacMatrixFillSelect('wac-matrix-brand',data.filters.brands||[],'品牌');
+      _wacMatrixFillSelect('wac-matrix-country',data.filters.countries||[],'国家');
+      _wacMatrixFillSelect('wac-matrix-warehouse',data.filters.warehouses||[],'仓库');
+    }
+    const brands=_wacMatrixSelected('wac-matrix-brand'),countries=_wacMatrixSelected('wac-matrix-country'),warehouses=_wacMatrixSelected('wac-matrix-warehouse');
+    const search=(document.getElementById('wac-matrix-search')?.value||'').trim().toLowerCase();
+    const from=document.getElementById('wac-matrix-from')?.value||'',to=document.getElementById('wac-matrix-to')?.value||'';
+    const selected=rows.filter(r=>
+      (!brands.length||brands.includes(r.brand||''))&&
+      (!countries.length||countries.includes(r.country||''))&&
+      (!warehouses.length||warehouses.includes(r.warehouse||''))&&
+      (!search||String(r.sku_code||'').toLowerCase().includes(search)||String(r.model||'').toLowerCase().includes(search))
+    );
+    const dates=[...new Set(selected.map(r=>String(r.confirmed_at||'').slice(0,10)).filter(d=>d&&(!from||d>=from)&&(!to||d<=to)))].sort().reverse();
+    const groupMap=new Map();
+    selected.forEach(r=>{
+      const key=[r.sku_code,r.brand,r.country,r.warehouse].join('¦');
+      if(!groupMap.has(key))groupMap.set(key,{sku:r.sku_code,brand:r.brand,country:r.country,warehouse:r.warehouse,records:[]});
+      groupMap.get(key).records.push(r);
+    });
+    const groups=[...groupMap.values()].sort((a,b)=>String(a.sku).localeCompare(String(b.sku)));
+    const money=v=>v===null||v===undefined||v===''?'—':Number(v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4});
+    const latestOf=g=>g.records.slice().sort((a,b)=>String(b.confirmed_at).localeCompare(String(a.confirmed_at))||Number(b.version_no||0)-Number(a.version_no||0))[0];
+    const prevOf=g=>g.records.slice().sort((a,b)=>String(b.confirmed_at).localeCompare(String(a.confirmed_at))||Number(b.version_no||0)-Number(a.version_no||0))[1];
+    document.getElementById('wac-matrix-count').textContent=groups.length+' 个 SKU · '+dates.length+' 个确认日期';
+    if(!groups.length){target.innerHTML='<div class="empty-state"><div class="empty-icon">📊</div>暂无符合条件的WAC历史记录</div>';return;}
+    let html='<div class="table-container" style="overflow:auto;max-height:calc(100vh - 330px);border-radius:10px"><table class="data-table" style="min-width:max-content;border-collapse:separate;border-spacing:0"><thead><tr>'+
+      '<th style="position:sticky;left:0;z-index:8;background:var(--table-head-bg,#f5f6f8);min-width:150px">SKU</th>'+
+      '<th style="position:sticky;left:150px;z-index:8;background:var(--table-head-bg,#f5f6f8);min-width:110px">品牌</th>'+
+      '<th style="position:sticky;left:260px;z-index:8;background:var(--table-head-bg,#f5f6f8);min-width:110px">国家</th>'+
+      '<th style="position:sticky;left:370px;z-index:8;background:var(--table-head-bg,#f5f6f8);min-width:160px">仓库</th>'+
+      '<th style="position:sticky;left:530px;z-index:8;background:var(--table-head-bg,#f5f6f8);min-width:130px;text-align:right">Latest WAC</th>'+
+      '<th style="position:sticky;left:660px;z-index:8;background:var(--table-head-bg,#f5f6f8);min-width:165px">较上次 WAC 变化</th>'+
+      '<th style="position:sticky;left:825px;z-index:8;background:var(--table-head-bg,#f5f6f8);min-width:120px">最后入库日期</th>'+
+      dates.map(d=>'<th style="min-width:125px;text-align:right">'+esc(d)+'</th>').join('')+
+      '</tr></thead><tbody>';
+    groups.forEach(g=>{
+      const latest=latestOf(g),prev=prevOf(g);
+      const current=Number(latest?.new_avg_cost),previous=Number(prev?.new_avg_cost);
+      const validPrev=prev&&Number.isFinite(previous)&&previous!==0&&Number.isFinite(current);
+      const pct=validPrev?(current-previous)/previous*100:null,delta=validPrev?current-previous:null;
+      const trend=pct===null?'—':(pct>0?'↑ +':pct<0?'↓ ':'')+pct.toFixed(2)+'%';
+      const trendColor=pct===null?'var(--text-secondary)':pct>0?'#16a34a':pct<0?'#dc2626':'var(--text-secondary)';
+      const dateVals=new Map();
+      g.records.forEach(r=>{const d=String(r.confirmed_at||'').slice(0,10);if(dates.includes(d)){const old=dateVals.get(d);if(!old||String(r.confirmed_at)>String(old.confirmed_at))dateVals.set(d,r);}});
+      html+='<tr>'+
+        '<td style="position:sticky;left:0;z-index:4;background:var(--surface,#fff);font-weight:600">'+esc(g.sku||'')+'</td>'+
+        '<td style="position:sticky;left:150px;z-index:4;background:var(--surface,#fff)">'+esc(g.brand||'—')+'</td>'+
+        '<td style="position:sticky;left:260px;z-index:4;background:var(--surface,#fff)">'+esc(g.country||'—')+'</td>'+
+        '<td style="position:sticky;left:370px;z-index:4;background:var(--surface,#fff)">'+esc(g.warehouse||'—')+'</td>'+
+        '<td style="position:sticky;left:530px;z-index:4;background:var(--surface,#fff);text-align:right;font-weight:600">'+money(latest?.new_avg_cost)+'</td>'+
+        '<td style="position:sticky;left:660px;z-index:4;background:var(--surface,#fff);white-space:nowrap"><span style="color:'+trendColor+';font-weight:600">'+trend+'</span>'+(delta===null?'':'<div style="font-size:11px;color:var(--text-secondary)">'+(delta>0?'+':'')+money(delta)+'</div>')+'</td>'+
+        '<td style="position:sticky;left:825px;z-index:4;background:var(--surface,#fff)">'+esc(latest?.last_inbound_date||'—')+'</td>'+
+        dates.map(d=>'<td style="text-align:right">'+(dateVals.has(d)?money(dateVals.get(d).new_avg_cost):'—')+'</td>').join('')+
+      '</tr>';
+    });
+    html+='</tbody></table></div><div style="padding:8px 2px;font-size:11px;color:var(--text-secondary)">Latest WAC及变化按该 SKU、品牌、国家、仓库最近两次成功确认记录计算；日期列显示该日最后一次确认值。横向滚动可查看全部历史日期。</div>';
+    target.innerHTML=html;
+  }catch(e){target.innerHTML='<div class="empty-state">'+esc(e.message||'加载失败')+'</div>';}
+}
+
 async function renderInbound(){
   document.getElementById('content-inner').innerHTML='<div id="flash-container"></div>'+
     '<div class="filter-bar"><div class="filter-form"><div class="filter-actions">'+
