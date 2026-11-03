@@ -14790,13 +14790,13 @@ async function wacConfirm(batchId){
       // Freight section
       const pb=m.freight_payment_breakdown||[];
       const pbHtml=pb.length?'<div style="margin-top:6px"><div style="font-size:12px;font-weight:bold;margin-bottom:4px">'+t('wac.payment_breakdown','付款明细')+'</div>'+
-        '<table class="data-table wac-left-align" style="font-size:11px;min-width:400px;text-align:left"><th style="text-align:left!important;text-align:left!important"ead><tr>'+
-        '<th style="text-align:left!important;text-align:left!important">PR ID</th><th style="text-align:left!important;text-align:left!important">'+t('wac.original_amount','原始金额')+'</th><th style="text-align:left!important;text-align:left!important">'+t('wac.local_currency','本币')+'</th><th style="text-align:left!important;text-align:left!important">'+t('wac.effective_fx_rate','有效汇率')+'</th><th style="text-align:left!important;text-align:left!important">'+t('wac.fx_rate_date','汇率日期')+'</th><th style="text-align:left!important;text-align:left!important">'+t('wac.actual_payment_date','付款日期')+'</th><th style="text-align:left!important;text-align:left!important">'+t('wac.local_amount','本币金额')+'</th>'+
+        '<table class="data-table wac-left-align" style="font-size:11px;min-width:400px;text-align:left"><th style="text-align:left!important"ead><tr>'+
+        '<th style="text-align:left!important">PR ID</th><th style="text-align:left!important">'+t('wac.original_amount','原始金额')+'</th><th style="text-align:left!important">'+t('wac.local_currency','本币')+'</th><th style="text-align:left!important">'+t('wac.effective_fx_rate','有效汇率')+'</th><th style="text-align:left!important">'+t('wac.fx_rate_date','汇率日期')+'</th><th style="text-align:left!important">'+t('wac.actual_payment_date','付款日期')+'</th><th style="text-align:left!important">'+t('wac.local_amount','本币金额')+'</th>'+
         '</tr></thead><tbody>'+
         pb.map(pd=>'<tr>'+
           '<td class="cell-id" style="text-align:left!important">'+esc(pd.payment_request_id)+'</td>'+
           '<td class="wac-left-cell" style="text-align:left!important">'+Number(pd.amount).toFixed(2)+'</td>'+
-          '<td>'+esc(pd.local_currency)+'</td>'+
+          '<td style="text-align:left!important">'+esc(pd.local_currency)+'</td>'+
           '<td class="wac-left-cell" style="text-align:left!important">'+Number(pd.local_rate).toFixed(4)+'</td>'+
           '<td class="cell-date" style="text-align:left!important">'+fmtDate(pd.local_rate_date)+'</td>'+
           '<td class="cell-date">'+fmtDate(pd.paid_date)+'</td>'+
@@ -14879,18 +14879,18 @@ async function wacConfirm(batchId){
 
       skuTableHtml=formulaHint+opBar+
         '<div class="wac-table-scroll" style="overflow:auto;max-height:52vh">'+
-        '<table class="data-table wac-left-align" style="table-layout:auto;min-width:1450px;text-align:left"><th style="text-align:left!important;text-align:left!important"ead><tr>'+
+        '<table class="data-table wac-left-align" style="table-layout:auto;min-width:1450px;text-align:left"><th style="text-align:left!important"ead><tr>'+
           '<th style="position:sticky;left:0;z-index:3;background:var(--table-head-bg,#f5f6f8);text-align:left!important">SKU</th>'+
-          '<th style="text-align:left!important;text-align:left!important">到货数量</th><th style="text-align:left!important;text-align:left!important">CBM</th>'+
-          '<th style="text-align:left!important;text-align:left!important">FOB Price ('+esc(m.ci_currency||'')+')</th>'+
-          '<th style="text-align:left!important;text-align:left!important">FOB Price ('+esc(m.local_currency||'')+')</th>'+
-          '<th style="text-align:left!important;text-align:left!important">Unit Landed Cost ('+esc(m.local_currency||'')+')</th>'+
-          '<th style="text-align:left!important;text-align:left!important">本批次总成本 ('+esc(m.local_currency||'')+')</th>'+
-          '<th style="text-align:left!important;text-align:left!important">原库存数量</th>'+
-          '<th style="text-align:left!important;text-align:left!important">原单位成本 / 当前WAC ('+esc(m.local_currency||'')+')</th>'+
-          '<th style="text-align:left!important;text-align:left!important">原库存总成本 ('+esc(m.local_currency||'')+')</th>'+
-          '<th style="text-align:left!important;text-align:left!important">新加权平均成本 ('+esc(m.local_currency||'')+')</th>'+
-          '<th style="text-align:left!important;text-align:left!important">较上次WAC变化</th>'+
+          '<th style="text-align:left!important">到货数量</th><th style="text-align:left!important">'+(m.transport_basis==='kg'?'毛重(KG)':'CBM')+'</th>'+
+          '<th style="text-align:left!important">FOB Price ('+esc(m.ci_currency||'')+')</th>'+
+          '<th style="text-align:left!important">FOB Price ('+esc(m.local_currency||'')+')</th>'+
+          '<th style="text-align:left!important">Unit Landed Cost ('+esc(m.local_currency||'')+')</th>'+
+          '<th style="text-align:left!important">本批次总成本 ('+esc(m.local_currency||'')+')</th>'+
+          '<th style="text-align:left!important">原库存数量</th>'+
+          '<th style="text-align:left!important">原单位成本 / 当前WAC ('+esc(m.local_currency||'')+')</th>'+
+          '<th style="text-align:left!important">原库存总成本 ('+esc(m.local_currency||'')+')</th>'+
+          '<th style="text-align:left!important">新加权平均成本 ('+esc(m.local_currency||'')+')</th>'+
+          '<th style="text-align:left!important">较上次WAC变化</th>'+
         '</tr></thead><tbody>'+rowsHtml+'</tbody></table></div>';    }
 
     const head='<div class="form-card" style="box-shadow:none;padding:0;display:flex;flex-direction:column;overflow:visible">'+
