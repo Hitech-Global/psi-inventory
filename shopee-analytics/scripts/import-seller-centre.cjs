@@ -153,6 +153,10 @@ async function importProductSheets(pool, { filePath, shopId, days, sheets: given
     );
   }
   for (const sheet of sheets) {
+    // The other sheets hold the same products cut another way — by price
+    // competitiveness, by how the advertising is doing. Keeping them would
+    // put the same product in the table several times over.
+    if (!/top performing/i.test(sheet.sheetName)) continue;
     for (const product of sheet.products) {
       await pool.query(
         `INSERT INTO shopee_product_traffic_daily
