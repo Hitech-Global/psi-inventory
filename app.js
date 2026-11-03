@@ -14638,7 +14638,8 @@ async function renderWacHistoryMatrix() {
       '.wac-history-page .wac-history-table tbody td{background:var(--surface,#fff)}' +
       '.wac-history-page .wac-history-table .wac-sticky{position:sticky;z-index:5;background:var(--surface,#fff)}' +
       '.wac-history-page .wac-history-table thead .wac-sticky{z-index:45;background:var(--table-head-bg,#f5f6f8)}' +
-      '.wac-history-page .wac-history-fx{font-size:10px;color:var(--text-secondary);margin-top:3px;white-space:nowrap}' +
+      '.wac-history-page .wac-history-delta-value{font-size:10px;color:var(--text-secondary);margin-top:3px;white-space:nowrap}' +
+      '.wac-history-page .wac-history-date-fx{font-size:10px;font-weight:400;color:var(--text-secondary);line-height:1.35;white-space:nowrap;margin-bottom:2px}' +
       '.wac-history-page .wac-history-source{font-size:10px;color:#8e8e93;margin-top:2px}' +
       '.wac-history-page .wac-history-title-actions{display:flex;gap:8px;align-items:center}' +
       '.wac-history-import-notice{padding:11px 13px;border:1px solid #d6e4ff;background:#f0f6ff;border-radius:10px;color:#344054;font-size:12px;line-height:1.65;margin-bottom:12px}' +
@@ -14648,7 +14649,7 @@ async function renderWacHistoryMatrix() {
       '.wac-history-import-preview table{min-width:100%;border-collapse:collapse;font-size:12px}' +
       '.wac-history-import-preview th,.wac-history-import-preview td{padding:7px 8px;border-bottom:1px solid #eee;text-align:left;white-space:nowrap}' +
       '.wac-history-import-preview th{position:sticky;top:0;background:#f5f5f7;z-index:1}' +
-      '@media(max-width:760px){.wac-history-page .wac-history-table-wrap{max-height:calc(100vh - 390px)}.wac-history-page .wac-history-multi{flex:1;min-width:125px}.wac-history-page .wac-history-multi-trigger{width:100%;min-width:125px}}';
+      '@media(max-width:760px){.wac-history-page .wac-history-table-wrap{max-height:calc(100vh - 390px)}.wac-history-page .wac-history-search{width:100%;max-width:none;flex:1 1 100%}.wac-history-page .wac-history-multi{flex:1;min-width:125px}.wac-history-page .wac-history-multi-trigger{width:100%;min-width:125px}}';
     document.head.appendChild(style);
   }
 
@@ -14656,7 +14657,7 @@ async function renderWacHistoryMatrix() {
   root.innerHTML = '<div id="flash-container"></div><div class="wac-history-page">' +
     '<div class="filter-bar" style="display:block">' +
       '<div class="wac-history-filter-row">' +
-        '<input id="wac-matrix-search" class="form-control" style="min-width:220px;flex:1;height:34px;border-radius:8px" placeholder="搜索 SKU / 产品名称" onkeydown="if(event.key===\'Enter\')loadWacHistoryMatrix(false)">' +
+        '<input id="wac-matrix-search" class="form-control wac-history-search" style="width:280px;min-width:220px;max-width:320px;flex:0 1 280px;height:34px;border-radius:8px" placeholder="搜索 SKU / 产品名称" onkeydown="if(event.key===\'Enter\')loadWacHistoryMatrix(false)">' +
         _wacMatrixMultiMarkup('brand','全部品牌') +
         _wacMatrixMultiMarkup('country','全部国家') +
         _wacMatrixMultiMarkup('warehouse','全部仓库') +
@@ -14738,11 +14739,37 @@ async function loadWacHistoryMatrix(refresh) {
     const prevOf = function(g){return ordered(g)[1];};
     const fxLabel = function(r) {
       if (!r) return '';
+      const currency = String(r.local_currency || '').trim().toUpperCase();
       const rate = Number(r.rmb_to_local_rate);
-      if (Number.isFinite(rate) && rate > 0 && r.local_currency) {
-        return '1 RMB = ' + Number(rate).toLocaleString('en-US',{maximumFractionDigits:8}) + ' ' + esc(r.local_currency);
+      if (Number.isFinite(rate) && rate > 0 && currency) {
+        return '1 RMB = ' + Number(rate).toLocaleString('en-US',{maximumFractionDigits:8}) + ' ' + currency;
       }
-      return r.local_currency ? '历史汇率缺失' : '未配置本币币种';
+      return currency ? currency + ' 历史汇率缺失' : '未配置本币币种';
+    };
+    // 每个历史日期的汇率集中显示在表头；同日存在多个币种/快照时分别展示，避免按单一币种错误合并。
+    const dateFxLabels = new Map();
+    groups.forEach(function(g) {
+      const latestByDate = new Map();
+      g.records.forEach(function(r) {
+        const d = String(r.confirmed_at || '').slice(0,10);
+        if (!d) return;
+        const old = latestByDate.get(d);
+        if (!old || String(r.confirmed_at) > String(old.confirmed_at) ||
+          (String(r.confirmed_at) === String(old.confirmed_at) && Number(r.version_no||0) > Number(old.version_no||0))) {
+          latestByDate.set(d,r);
+        }
+      });
+      latestByDate.forEach(function(record,d) {
+        if (!dateFxLabels.has(d)) dateFxLabels.set(d,new Set());
+        dateFxLabels.get(d).add(fxLabel(record));
+      });
+    });
+    const dateHeader = function(d) {
+      const rates = Array.from(dateFxLabels.get(d) || []).filter(Boolean);
+      const fxHtml = rates.map(function(rate) {
+        return '<div class="wac-history-date-fx">' + esc(rate) + '</div>';
+      }).join('');
+      return '<th style="min-width:150px">' + fxHtml + '<div class="wac-history-date-label">' + esc(d) + '</div></th>';
     };
     const countEl = document.getElementById('wac-matrix-count');
     if (countEl) countEl.textContent = groups.length + ' 个 SKU/仓库组合 · ' + dates.length + ' 个历史日期';
@@ -14759,7 +14786,7 @@ async function loadWacHistoryMatrix(refresh) {
       '<th class="wac-sticky" style="left:540px;min-width:140px">Latest WAC</th>' +
       '<th class="wac-sticky" style="left:680px;min-width:160px">较上次 WAC 变化</th>' +
       '<th class="wac-sticky" style="left:840px;min-width:125px">最后入库日期</th>' +
-      dates.map(d=>'<th style="min-width:150px">'+esc(d)+'</th>').join('') +
+      dates.map(dateHeader).join('') +
       '</tr></thead><tbody>';
 
     groups.forEach(function(g) {
@@ -14786,14 +14813,13 @@ async function loadWacHistoryMatrix(refresh) {
         '<td class="wac-sticky" style="left:380px">' + esc(g.warehouse || '—') + '</td>' +
         '<td class="wac-sticky" style="left:540px;font-weight:600">' + latestCell + '</td>' +
         '<td class="wac-sticky" style="left:680px;white-space:nowrap"><span style="color:' + trendColor + ';font-weight:600">' + trend + '</span>' +
-          (delta === null ? '' : '<div class="wac-history-fx">' + (delta > 0 ? '+' : '') + money(delta) + (latest && latest.local_currency ? ' ' + esc(latest.local_currency) : '') + '</div>') +
+          (delta === null ? '' : '<div class="wac-history-delta-value">' + (delta > 0 ? '+' : '') + money(delta) + (latest && latest.local_currency ? ' ' + esc(latest.local_currency) : '') + '</div>') +
         '</td>' +
         '<td class="wac-sticky" style="left:840px">' + esc(latest && latest.last_inbound_date || '—') + '</td>' +
         dates.map(function(d) {
           const record = dateVals.get(d);
           if (!record) return '<td>—</td>';
           return '<td><div>' + money(record.new_avg_cost) + (record.local_currency ? ' ' + esc(record.local_currency) : '') + '</div>' +
-            '<div class="wac-history-fx">' + fxLabel(record) + '</div>' +
             (record.source_type === 'historical_import' ? '<div class="wac-history-source">历史导入</div>' : '') +
             '</td>';
         }).join('') +
