@@ -147,7 +147,7 @@
    * looking at a shop that is not doing well needs the second, and so does
    * a diagnosis — it cannot be built on the first alone.
    */
-  function renderEvents(events) {
+  function renderEvents(events, measures) {
     if (!events.length) return '';
     const kindLabels = {
       penalty_point: '绩效罚分',
@@ -155,6 +155,9 @@
       late_order: '迟发订单',
       metric_source: '指标明细',
     };
+    // The measure is named as the page names it, not by the key it is
+    // stored under — a reader is looking at a label, not at a field name.
+    const measureLabels = Object.fromEntries((measures || []).map(measure => [measure.key, measure.label]));
     const byShop = new Map();
     for (const event of events) {
       if (!byShop.has(event.shopId)) byShop.set(event.shopId, []);
@@ -163,7 +166,8 @@
     const sections = [...byShop.entries()].map(([shopId, list]) => {
       const items = list.map(event => {
         const kind = kindLabels[event.kind] || event.kind;
-        const metric = event.metricKey ? ` · ${event.metricKey}` : '';
+        const metric = event.metricKey
+          ? ` · ${measureLabels[event.metricKey] || event.metricKey}` : '';
         const reason = event.reasonCode ? ` · 原因码 ${event.reasonCode}` : '';
         const order = event.orderSn ? ` · ${event.orderSn}` : '';
         const title = event.title ? ` · ${event.title}` : '';
@@ -210,7 +214,7 @@
       const parts = [];
       if (missing.length) parts.push(renderMissing(missing));
       const events = data.events || [];
-      if (events.length) parts.push(renderEvents(events));
+      if (events.length) parts.push(renderEvents(events, data.measures));
       if (parts.length) {
         notice.classList.remove('hidden');
         notice.innerHTML = parts.join('');

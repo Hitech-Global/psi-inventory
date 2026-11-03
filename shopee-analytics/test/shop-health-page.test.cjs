@@ -32,6 +32,9 @@ test('the endpoint is registered and answers for every visible shop', () => {
 test('the page tells the platform\'s standard from the figure', () => {
   const healthUi = fs.readFileSync(path.join(webDir, 'shop-health-ui-v1.js'), 'utf8');
   assert.ok(healthUi.includes('target'), 'the standard must be shown with the figure');
+  // The detail names the measure as the page names it, not by the key it is
+  // stored under.
+  assert.ok(healthUi.includes('measureLabels[event.metricKey]'), 'the detail must name the measure the way the page names it');
   // The standard is written the same way as the figure: a standard of five
   // per cent must not be shown as a fifth of a per cent, or the two cannot
   // be read against each other.
