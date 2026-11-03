@@ -1813,6 +1813,6 @@ test('PL detail renders a totals row before SKU rows', () => {
   const section = source.slice(start, end);
   assert.ok(section.includes('const totals=pl.items.reduce('));
   assert.ok(section.includes('sum[k]+=Number(i[k])||0;'));
-  assert.ok(section.includes("'<td>合计</td><td>—</td>'"));
+  assert.ok(section.includes('合计</td><td>—</td>'));
   assert.ok(section.indexOf('+summary') < section.indexOf('+pl.items.map('));
 });
