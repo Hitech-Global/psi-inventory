@@ -1777,7 +1777,7 @@ test('UI regression: WAC confirmation renders each row batch quantity from its i
   const end = source.indexOf('// 提交WAC确认', start);
   assert.ok(end > start, 'wacConfirm section must be bounded');
   const section = source.slice(start, end);
-  assert.ok(section.includes("'<td class=\"text-right\">'+(it.batch_qty||0).toLocaleString()+'</td>'"),
+  assert.ok(section.includes("'<td class=\"wac-left-cell\" style=\"text-align:left!important\">'+(it.batch_qty||0).toLocaleString()+'</td>'"),
     'arrival quantity cell must read from the current item');
   assert.ok(section.includes("Number(it.cbm||0).toFixed(3)"), 'CBM must be shown from the PL item');
   assert.ok(section.includes("id=\"wac-old-value-"), 'original inventory value must be displayed after old quantity upload');
