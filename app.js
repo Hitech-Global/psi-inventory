@@ -14795,7 +14795,7 @@ async function wacConfirm(batchId){
         return '<tr>'+
           '<td class="cell-id">'+esc(it.sku_code)+'</td>'+
           '<td>'+esc(it.product_name||it.model||'-')+'</td>'+
-          '<td class="text-right">'+batchQty+'</td>'+
+          '<td class="text-right">'+(it.batch_qty||0)+'</td>'+
           '<td class="text-right">'+(it.weighted_purchase_unit_price||0).toFixed(4)+'</td>'+
           '<td class="text-right">'+(it.customs_rate!==null&&it.customs_rate!==undefined?Number(it.customs_rate).toFixed(4):'-')+'</td>'+
 

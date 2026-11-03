@@ -1766,3 +1766,21 @@ test('shared IDR delivery is counted once across two WAC batches; changed PL wei
   assert.ok(changed.blockers.some(x=>x.code==='SHARED_FREIGHT_PL_BASIS_CHANGED'),
     'PL change must prevent WAC confirmation with stale allocation snapshot');
 });
+
+
+test('UI regression: WAC confirmation renders each row batch quantity from its item (no free batchQty)', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const source = fs.readFileSync(path.join(__dirname, 'app.js'), 'utf8');
+  const start = source.indexOf('async function wacConfirm(batchId){');
+  assert.ok(start >= 0, 'wacConfirm must exist');
+  const end = source.indexOf('// 提交WAC确认', start);
+  assert.ok(end > start, 'wacConfirm section must be bounded');
+  const section = source.slice(start, end);
+  assert.ok(section.includes("'<td class=\"text-right\">'+(it.batch_qty||0)+'</td>'"),
+    'PL quantity cell must read from the current item');
+  assert.ok(!section.includes("'+batchQty+'"),
+    'must not reference batchQty outside the removed local scope');
+  assert.ok(section.includes('importWacOldInventory()'),
+    'old inventory upload action must remain available');
+});
