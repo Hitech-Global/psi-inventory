@@ -524,27 +524,22 @@ class ShopeeQueryRepository {
          FROM shopee_shop_health_daily
          WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3
        )
-       -- 别名用驼峰，与读这些列的代码一致。SQL 默认给的是下划线名，
-       -- 代码读驼峰，于是每一个字段都是空的 —— 访客、点击、退货、直播、
-       -- 广告全读不到，而且没有任何报错，只是数字不见了。
        SELECT d.event_date,
-              bi.sales AS sales, bi.orders AS orders,
-              bi.product_clicks AS productClicks, bi.product_views AS productViews,
-              bi.unique_visitors AS uniqueVisitors,
-              bi.order_conversion_rate AS orderConversionRate,
-              COALESCE(a.expense,0) AS adsExpense,
-              COALESCE(o.paid_orders,0) AS paidOrders,
-              COALESCE(o.cancelled_orders,0) AS cancelledOrders,
-              COALESCE(o.order_gmv,0) AS orderGmv,
-              COALESCE(o.cancelled_sales,0) AS cancelledSales,
-              COALESCE(r.refund_orders,0) AS refundOrders,
-              COALESCE(r.refund_amount,0) AS refundAmount,
-              COALESCE(l.live_sessions,0) AS liveSessions,
-              COALESCE(l.live_hours,0) AS liveHours,
-              COALESCE(l.live_views,0) AS liveViews,
-              COALESCE(l.live_viewers,0) AS liveViewers,
-              COALESCE(l.live_confirmed_orders,0) AS liveConfirmedOrders,
-              COALESCE(l.live_confirmed_sales,0) AS liveConfirmedSales,
+              bi.sales, bi.orders, bi.product_clicks, bi.product_views,
+              bi.unique_visitors, bi.order_conversion_rate,
+              COALESCE(a.expense,0) AS ads_expense,
+              COALESCE(o.paid_orders,0) AS paid_orders,
+              COALESCE(o.cancelled_orders,0) AS cancelled_orders,
+              COALESCE(o.order_gmv,0) AS order_gmv,
+              COALESCE(o.cancelled_sales,0) AS cancelled_sales,
+              COALESCE(r.refund_orders,0) AS refund_orders,
+              COALESCE(r.refund_amount,0) AS refund_amount,
+              COALESCE(l.live_sessions,0) AS live_sessions,
+              COALESCE(l.live_hours,0) AS live_hours,
+              COALESCE(l.live_views,0) AS live_views,
+              COALESCE(l.live_viewers,0) AS live_viewers,
+              COALESCE(l.live_confirmed_orders,0) AS live_confirmed_orders,
+              COALESCE(l.live_confirmed_sales,0) AS live_confirmed_sales,
               (SELECT COUNT(*) FROM shopee_shop_bi_daily
                 WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3) AS shop_report_rows,
               (SELECT COUNT(*) FROM shopee_returns
@@ -555,11 +550,8 @@ class ShopeeQueryRepository {
                   AND (to_timestamp(create_time) AT TIME ZONE $4)::date BETWEEN $2 AND $3) AS order_amount_rows,
               (SELECT COUNT(*) FROM shopee_shop_livestream_daily
                 WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3) AS livestream_rows,
-              h.shop_rating AS shopRating, h.return_refund_rate AS returnRefundRate,
-              h.cancellation_rate AS cancellationRate,
-              h.late_shipment_rate AS lateShipmentRate,
-              h.csat_rate AS csatRate, h.response_rate AS responseRate,
-              h.preparation_time AS preparationTime,
+              h.shop_rating, h.return_refund_rate, h.cancellation_rate,
+              h.late_shipment_rate, h.csat_rate, h.response_rate, h.preparation_time,
               (SELECT COUNT(*) FROM shopee_shop_health_daily
                 WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3) AS shop_health_rows
        FROM dates d
@@ -606,6 +598,13 @@ class ShopeeQueryRepository {
       liveViewers: Number(row.live_viewers || 0),
       liveConfirmedOrders: Number(row.live_confirmed_orders || 0),
       liveConfirmedSales: Number(row.live_confirmed_sales || 0),
+      shopRating: row.shop_rating === null ? null : Number(row.shop_rating),
+      returnRefundRate: row.return_refund_rate === null ? null : Number(row.return_refund_rate),
+      cancellationRate: row.cancellation_rate === null ? null : Number(row.cancellation_rate),
+      lateShipmentRate: row.late_shipment_rate === null ? null : Number(row.late_shipment_rate),
+      csatRate: row.csat_rate === null ? null : Number(row.csat_rate),
+      responseRate: row.response_rate === null ? null : Number(row.response_rate),
+      preparationTime: row.preparation_time === null ? null : Number(row.preparation_time),
     }));
 
     return { days, sources };

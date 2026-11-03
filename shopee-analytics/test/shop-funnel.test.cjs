@@ -262,24 +262,23 @@ test('the page can be exported as a sheet', () => {
   assert.ok(funnelUi.includes('text/csv'), 'the export must be a csv');
 });
 
-test('the query names its columns the way the code reads them', () => {
+test('every reading the funnel takes is carried over from the query', () => {
   const fs = require('node:fs');
   const path = require('node:path');
   const query = fs.readFileSync(path.join(__dirname, '..', 'src', 'query-repository.js'), 'utf8');
-  const start = query.indexOf('getShopFunnelDaily');
-  const segment = query.slice(start, query.indexOf('FROM dates d', start));
-  const select = segment.slice(segment.indexOf('SELECT d.event_date'));
+  const funnel = fs.readFileSync(path.join(__dirname, '..', 'src', 'shop-funnel.js'), 'utf8');
 
-  // SQL names a column with an underscore unless it is told otherwise, and
-  // the code that reads the result asks for the name in capitals. When the
-  // two disagree the reading is empty, silently: every figure in the
-  // funnel goes missing and nothing says why.
-  const aliased = new Set((select.match(/AS (\w+)/g) || []).map(part => part.slice(3)));
-  for (const column of ['productClicks', 'productViews', 'uniqueVisitors', 'orderConversionRate',
-    'adsExpense', 'paidOrders', 'cancelledOrders', 'orderGmv', 'cancelledSales',
-    'refundOrders', 'refundAmount', 'liveSessions', 'liveHours', 'liveViews', 'liveViewers',
-    'liveConfirmedOrders', 'liveConfirmedSales',
-    'shopRating', 'returnRefundRate', 'cancellationRate', 'lateShipmentRate', 'csatRate']) {
-    assert.ok(aliased.has(column), `the query must name ${column} the way the code reads it`);
+  const start = query.indexOf('getShopFunnelDaily');
+  const mapping = query.slice(query.indexOf('const days = result.rows.map', start), query.indexOf('return { days, sources }', start));
+  const carried = new Set((mapping.match(/^\s+(\w+):/gm) || []).map(part => part.trim().replace(':', '')));
+
+  const build = funnel.slice(funnel.indexOf('function buildDayMetrics'), funnel.indexOf('function buildFunnelRows'));
+  const wanted = new Set((build.match(/row\.(\w+)/g) || []).map(part => part.slice(4)));
+
+  // A reading that the query does not carry over arrives empty, and an
+  // empty reading is indistinguishable from a shop that had none — so the
+  // gap is silent. Every reading the table shows must be carried.
+  for (const name of wanted) {
+    assert.ok(carried.has(name), `the query must carry ${name} over to the table`);
   }
 });
