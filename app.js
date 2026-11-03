@@ -14791,11 +14791,6 @@ async function wacConfirm(batchId){
     let skuTableHtml='';
     if(blockers.length===0 && items.length>0){
       const rowsHtml=items.map((it,i)=>{
-        const oldQty='';
-        const oldWac=it.current_wac||0;
-        const batchQty=it.batch_qty||0;
-        const unitCost=it.unit_landing_cost||0;
-        const newQty=oldQty+batchQty;
         const newWac=null;
         return '<tr>'+
           '<td class="cell-id">'+esc(it.sku_code)+'</td>'+
@@ -15064,7 +15059,6 @@ async function submitWacConfirm(batchId){
   if(!st||!st.uploaded){showToast('请先上传本次原库存数量文件','danger');return;}
   // 提交前再次校验：文件结构错误（未知/重复 SKU）直接拦截
   wacValidateInputs();
-  const st=window._wacImport;
   if(st&&(st.unknown.length||st.duplicate.length)){
     showToast(t('wac.confirm_blocked','存在缺失/异常 SKU，禁止确认 WAC：')+st.unknown.concat(st.duplicate).join(', '),'danger');
     return;
