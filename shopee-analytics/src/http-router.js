@@ -19,7 +19,10 @@ const { ERP_COOKIE, stateCookie: erpStateCookie, clearStateCookie: clearErpState
 const { TIKTOK_COOKIE, stateCookie: tiktokStateCookie, clearStateCookie: clearTikTokStateCookie, parseCookie: parseTikTokCookie } = require('./tiktok-oauth-service');
 const { SkillJobManager, normalizeReportLanguage } = require('./skill-job-manager');
 const { buildFunnelRows, missingSources } = require('./shop-funnel');
-const { evaluateMeasures, overallStatus, violationTotal, MEASURES } = require('./shop-health-evaluation');
+const {
+  evaluateMeasures, overallStatus, violationTotal, MEASURES,
+  findAddToCartDropoffs, ADD_TO_CART_RULES,
+} = require('./shop-health-evaluation');
 
 function positiveInt(value, name) {
   const n = Number(value);
@@ -1030,6 +1033,14 @@ function createShopeeAnalyticsRouter({
         bounceVisitors: 0, searchClicks: 0, likes: 0, addToCartVisitors: 0, addToCartUnits: 0,
       });
       const rate = (part, whole) => (whole ? part / whole : null);
+      // The products that were put in baskets and not bought: a customer
+      // who did that was close to buying, and something stood in the way.
+      const dropoffs = findAddToCartDropoffs(rows, {
+        minAddToCartVisitors: req.query.min_add_to_cart_visitors
+          ? Number(req.query.min_add_to_cart_visitors) : undefined,
+        maxBuyerRate: req.query.max_buyer_rate
+          ? Number(req.query.max_buyer_rate) : undefined,
+      });
       res.json({
         rows,
         totals: {
@@ -1037,6 +1048,8 @@ function createShopeeAnalyticsRouter({
           bounceRate: rate(totals.bounceVisitors, totals.productVisitors),
           addToCartRate: rate(totals.addToCartVisitors, totals.productVisitors),
         },
+        dropoffs,
+        rules: ADD_TO_CART_RULES,
       });
     } catch (error) {
       next(error);

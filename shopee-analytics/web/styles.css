@@ -630,3 +630,33 @@ tbody td{font-weight:400}
 }
 .funnel-product-id{display:block;font-size:10px;color:#98a2b3;font-variant-numeric:tabular-nums}
 .funnel-products-table .funnel-empty{color:#c0c5cc}
+
+/* ── 加购了却没买 ────────────────────────────────────────────────────────
+   加购的人没有买，是差一步的事。差在哪一步这些数说不了，但差了多少
+   说得了 —— 清单按流失人数排，先看损失最大的。 */
+.funnel-dropoffs{
+  margin:14px 16px 0;padding:12px 14px;border:1px solid #f2dfaa;border-radius:12px;background:#fffdf7;
+}
+.funnel-dropoffs h3{margin:0 0 3px;font-size:12px;color:#93370d}
+.funnel-dropoffs > p{margin:0 0 8px;font-size:11px;color:#966300}
+.funnel-dropoffs ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}
+.funnel-dropoffs li{
+  display:flex;align-items:baseline;gap:10px;font-size:11px;color:#344054;
+  padding-bottom:6px;border-bottom:1px solid #f5ecd4;
+}
+.funnel-dropoffs li:last-child{border-bottom:none;padding-bottom:0}
+.funnel-dropoff-name{
+  font-weight:600;color:#101828;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.funnel-dropoff-id{color:#98a2b3;font-variant-numeric:tabular-nums;flex:none}
+.funnel-dropoff-facts{color:#475467;flex:1}
+.funnel-dropoff-facts strong{color:#101828}
+.funnel-dropoff-lost{color:#b42318!important}
+.funnel-dropoff-action{
+  flex:none;color:#966300;background:#fef0c7;border-radius:999px;padding:1px 8px;font-size:10px;
+}
+
+/* 可排序的表头 */
+.funnel-products-table th.funnel-sortable{cursor:pointer;user-select:none}
+.funnel-products-table th.funnel-sortable:hover{color:#101828;background:#f2f4f7}
+.funnel-products-table th.funnel-sortable.active{color:#175cd3}

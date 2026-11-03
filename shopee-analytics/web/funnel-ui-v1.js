@@ -23,6 +23,10 @@
 
   let current = null;
   let currentProducts = null;
+  // Which column the products are ordered by, and which way. The first
+  // order is the one that answers the question the page is asking — the
+  // visits — and it is the largest first.
+  let productSort = { key: 'productVisitors', dir: 'desc' };
 
   function isMissing(value) {
     return value === null || value === undefined || !Number.isFinite(Number(value));
@@ -172,9 +176,55 @@
 
   function renderProductHead() {
     const cells = PRODUCT_COLUMNS
-      .map(column => `<th scope="col">${escapeHtml(column.label)}</th>`)
+      .map(column => {
+        const active = productSort.key === column.key;
+        const arrow = active ? (productSort.dir === 'desc' ? ' ↓' : ' ↑') : '';
+        return `<th scope="col" class="funnel-sortable${active ? ' active' : ''}"
+          data-sort-key="${escapeHtml(column.key)}" title="点击按${escapeHtml(column.label)}排序">`
+          + `${escapeHtml(column.label)}${arrow}</th>`;
+      })
       .join('');
     return `<tr><th scope="col">商品</th><th scope="col">父 SKU</th>${cells}</tr>`;
+  }
+
+  /**
+   * Put the products in order.
+   *
+   * A figure the shop did not report is not a zero, so it goes to the
+   * end whichever way the order runs — a product with no visits yet is
+   * not the same as one with none.
+   */
+  function sortProducts(rows) {
+    const { key, dir } = productSort;
+    if (!key) return rows;
+    const sign = dir === 'desc' ? -1 : 1;
+    return [...rows].sort((a, b) => {
+      const left = a[key];
+      const right = b[key];
+      const leftMissing = left === null || left === undefined || left === '';
+      const rightMissing = right === null || right === undefined || right === '';
+      if (leftMissing && rightMissing) return 0;
+      if (leftMissing) return 1;
+      if (rightMissing) return -1;
+      if (typeof left === 'number' && typeof right === 'number') return (left - right) * sign;
+      return String(left).localeCompare(String(right)) * sign;
+    });
+  }
+
+  function toggleProductSort(key) {
+    if (productSort.key === key) {
+      productSort = { key, dir: productSort.dir === 'desc' ? 'asc' : 'desc' };
+    } else {
+      productSort = { key, dir: 'desc' };
+    }
+    const head = document.querySelector('#funnelProductsHead');
+    const body = document.querySelector('#funnelProductsBody');
+    if (head) head.innerHTML = renderProductHead();
+    if (body && currentProducts) {
+      body.innerHTML = sortProducts(currentProducts.rows || [])
+        .map(row => renderProductRow(row, (currentProducts.currency) || null))
+        .join('');
+    }
   }
 
   function renderProductRow(row, currency) {
@@ -235,8 +285,9 @@
 
     panel.classList.remove('hidden');
     head.innerHTML = renderProductHead();
-    body.innerHTML = rows.map(row => renderProductRow(row, currency)).join('');
+    body.innerHTML = sortProducts(rows).map(row => renderProductRow(row, currency)).join('');
     renderProductSummary(totals, currency);
+    renderDropoffs(payload.dropoffs || [], payload.rules || null);
 
     const subtitle = document.querySelector('#funnelProductsSubtitle');
     if (subtitle) {
@@ -246,9 +297,47 @@
     }
   }
 
+  /**
+   * The products where the basket did not turn into a sale.
+   *
+   * A customer who put something in the basket and did not buy it was
+   * close to buying, and something stood in the way. What it was cannot
+   * be said from the figures — the price, the shipping, the wait or the
+   * stock would each show the same way. What the figures do say is how
+   * many were let down, and that is the order of the list.
+   */
+  function renderDropoffs(dropoffs, rules) {
+    const host = document.querySelector('#funnelDropoffs');
+    if (!host) return;
+    if (!dropoffs.length) {
+      host.classList.add('hidden');
+      host.innerHTML = '';
+      return;
+    }
+    host.classList.remove('hidden');
+    const minVisitors = rules && rules.minAddToCartVisitors ? rules.minAddToCartVisitors : 100;
+    const maxRate = rules && rules.maxBuyerRate ? rules.maxBuyerRate : 0.4;
+    const items = dropoffs.map(row => `
+      <li>
+        <span class="funnel-dropoff-name">${escapeHtml(String(row.itemName || `商品 ${row.itemId}`).slice(0, 60))}</span>
+        <span class="funnel-dropoff-id">${escapeHtml(String(row.itemId))}</span>
+        <span class="funnel-dropoff-facts">
+          加购 <strong>${escapeHtml(String(row.addToCartVisitors))}</strong> 人
+          · 成交 <strong>${escapeHtml(String(row.buyers))}</strong> 人
+          · 流失 <strong class="funnel-dropoff-lost">${escapeHtml(String(row.lostVisitors))}</strong> 人
+          · 买家率 ${escapeHtml((row.buyerRate * 100).toFixed(1))}%
+        </span>
+        <span class="funnel-dropoff-action">查价格与运费</span>
+      </li>`).join('');
+    host.innerHTML = `
+      <h3>加购了却没买（${dropoffs.length}）</h3>
+      <p>加购访客 ≥ ${escapeHtml(String(minVisitors))} 且买家占比 &lt; ${escapeHtml((maxRate * 100).toFixed(0))}% 判为未转化，按流失人数排序。</p>
+      <ul>${items}</ul>`;
+  }
+
   function exportProductsCsv() {
     if (!currentProducts || !currentProducts.rows.length) return;
-    const rows = currentProducts.rows;
+    const rows = sortProducts(currentProducts.rows);
     const head = ['商品', '商品ID', '父SKU', ...PRODUCT_COLUMNS.map(column => column.label)];
     const lines = [head.join(',')];
     for (const row of rows) {
@@ -324,6 +413,11 @@
     const data = await window.ShopeeFunnelState?.json?.(`/api/shopee-analytics/funnel?${params}`);
     render(data);
   }
+
+  document.addEventListener('click', event => {
+    const head = event.target.closest('#funnelProductsHead [data-sort-key]');
+    if (head) toggleProductSort(head.dataset.sortKey);
+  });
 
   window.ShopeeFunnel = {
     render, load, exportCsv, renderProducts, exportProductsCsv,

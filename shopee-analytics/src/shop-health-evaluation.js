@@ -163,3 +163,73 @@ function violationTotal(reading = {}) {
 }
 
 module.exports = { MEASURES, evaluateMeasures, overallStatus, violationTotal };
+
+/**
+ * The products where the basket did not turn into a sale.
+ *
+ * A visitor who puts something in the basket has said they want it. When
+ * they do not buy, something stood between them and it — the price, the
+ * shipping, the wait, or the stock. Which of those it was cannot be said
+ * from the figures; that the customer was close to buying and did not is
+ * the fact, and the order of the list is how much of it there is.
+ *
+ * The thresholds are the ones a reader can change: how many people must
+ * have put it in the basket before it counts as a pattern rather than a
+ * handful, and how few of them have to have bought before it counts as
+ * having been lost.
+ */
+const ADD_TO_CART_RULES = Object.freeze({
+  minAddToCartVisitors: 100,
+  maxBuyerRate: 0.4,
+});
+
+/**
+ * The products that were put in baskets and not bought.
+ */
+function findAddToCartDropoffs(products = [], options = {}) {
+  const minVisitors = Number.isFinite(options.minAddToCartVisitors)
+    ? options.minAddToCartVisitors : ADD_TO_CART_RULES.minAddToCartVisitors;
+  const maxBuyerRate = Number.isFinite(options.maxBuyerRate)
+    ? options.maxBuyerRate : ADD_TO_CART_RULES.maxBuyerRate;
+
+  const found = [];
+  for (const product of products) {
+    const addToCartVisitors = numberOrNull(product.addToCartVisitors);
+    const buyers = numberOrNull(product.buyers);
+    if (addToCartVisitors === null || buyers === null) continue;
+    if (addToCartVisitors < minVisitors) continue;
+    const buyerRate = buyers / addToCartVisitors;
+    if (buyerRate >= maxBuyerRate) continue;
+    found.push({
+      itemId: product.itemId,
+      itemName: product.itemName,
+      parentSku: product.parentSku,
+      addToCartVisitors,
+      buyers,
+      lostVisitors: Math.max(0, addToCartVisitors - buyers),
+      buyerRate,
+      productVisitors: numberOrNull(product.productVisitors),
+      addToCartRate: numberOrNull(product.addToCartRate),
+      unitsSold: numberOrNull(product.unitsSold),
+      sales: numberOrNull(product.sales),
+    });
+  }
+  // The ones where the most people were let down come first.
+  found.sort((a, b) => b.lostVisitors - a.lostVisitors);
+  return found;
+}
+
+function numberOrNull(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+module.exports = {
+  MEASURES,
+  evaluateMeasures,
+  overallStatus,
+  violationTotal,
+  ADD_TO_CART_RULES,
+  findAddToCartDropoffs,
+};

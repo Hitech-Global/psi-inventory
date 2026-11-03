@@ -83,3 +83,31 @@ test('what the products drew is shown on the funnel page', () => {
   // page has to say so — otherwise they are read against the days above.
   assert.ok(funnelUi.includes('不是逐日数据'), 'the page must say the figures are for the period');
 });
+
+test('the products can be put in order, and the ones that were lost are named', () => {
+  const indexHtml = fs.readFileSync(path.join(webDir, 'index.html'), 'utf8');
+  const funnelUi = fs.readFileSync(path.join(webDir, 'funnel-ui-v1.js'), 'utf8');
+  const evaluation = require('../src/shop-health-evaluation');
+
+  assert.ok(indexHtml.includes('id="funnelDropoffs"'), 'the list must have somewhere to go');
+  assert.ok(funnelUi.includes('data-sort-key'), 'the headings must be clickable');
+  assert.ok(funnelUi.includes('toggleProductSort'), 'clicking must change the order');
+  assert.ok(funnelUi.includes('renderDropoffs'), 'the lost ones must be shown');
+
+  // A figure the shop did not report is not a zero, so it goes to the end
+  // whichever way the order runs.
+  assert.ok(funnelUi.includes('leftMissing'), 'a missing figure must go to the end');
+
+  // The rule: enough people put it in the basket for it to be a pattern,
+  // and too few of them bought it for it to count as having been lost.
+  const found = evaluation.findAddToCartDropoffs([
+    { itemId: 'A', addToCartVisitors: 2367, buyers: 710 },
+    { itemId: 'B', addToCartVisitors: 397, buyers: 75 },
+    { itemId: 'C', addToCartVisitors: 20, buyers: 1 },
+    { itemId: 'D', addToCartVisitors: 300, buyers: null },
+  ]);
+  const ids = found.map(row => row.itemId);
+  assert.deepEqual(ids, ['A', 'B'], 'only the ones with enough in the basket and too few buying');
+  assert.equal(found[0].lostVisitors, 1657);
+  assert.equal(found[1].buyerRate < 0.4, true);
+});
