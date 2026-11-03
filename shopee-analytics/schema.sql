@@ -505,7 +505,7 @@ CREATE TABLE IF NOT EXISTS shopee_product_traffic_daily (
   add_to_cart_rate NUMERIC(20,8),
   order_conversion_rate NUMERIC(20,8),
   raw_json JSONB NOT NULL DEFAULT '{}'::jsonb,
-  synced_at TIMESTAMPTZ NOW(),
+  synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (shop_id, event_date, item_id, order_status, row_kind, COALESCE(sku, ''))
 );
 
