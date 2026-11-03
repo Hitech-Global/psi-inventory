@@ -2,6 +2,7 @@
 
 module.exports=function installPOPlan(deps){
   const {app,query,queryOne,run,transaction,genId,asyncHandler,requireApiPermission,updateInventoryTransitDataAsync}=deps;
+  const { generatePONumber } = require('./po-number');
   const now=()=>new Date().toISOString();
   const num=v=>Number(v)||0;
   const planStatus=(po)=>{
@@ -93,10 +94,10 @@ module.exports=function installPOPlan(deps){
       const d=req.body||{},items=normalizeItems(d.items),supplier=String(d.supplier_name||'').trim(),brand=String(d.brand||'').trim(),country=String(d.country||'').trim(),warehouse=String(d.target_warehouse||'').trim(),currency=String(d.currency||'RMB').toUpperCase();
       if(!supplier||!brand||!country||!warehouse)return res.status(400).json({error:'供应商、品牌、国家、仓库不能为空'});
       if(!['RMB','USD'].includes(currency))return res.status(400).json({error:'PO币种仅支持RMB或USD'});
-      const prices=skuPriceMap(items,currency),id=genId('po'),poNo=d.po_no||`PO-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`,ts=now();
+      const poDate=String(d.po_date||now().slice(0,10)),prices=skuPriceMap(items,currency),id=genId('po'),poNo=generatePONumber(country,poDate),ts=now();
       transaction(()=>{
         run(`INSERT INTO purchase_orders(id,po_no,supplier_id,supplier_name,brand,country,target_warehouse,po_date,expected_delivery,currency,total_amount,created_by,created_by_name,po_status,approval_status,from_suggestion,remark,created_at,updated_at)
-          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,[id,poNo,d.supplier_id||'',supplier,brand,country,warehouse,d.po_date||ts.slice(0,10),d.expected_delivery||'',currency,0,d.created_by||'',d.created_by_name||'','approved','approved',d.from_suggestion||0,d.remark||'',ts,ts]);
+          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,[id,poNo,d.supplier_id||'',supplier,brand,country,warehouse,poDate,d.expected_delivery||'',currency,0,d.created_by||'',d.created_by_name||'','approved','approved',d.from_suggestion||0,d.remark||'',ts,ts]);
         let total=0;
         for(const it of items){const price=prices.get(it.sku_code)||0,amount=it.po_qty*price;total+=amount;run(`INSERT INTO purchase_order_items(id,po_id,po_no,sku_code,po_qty,unit_price,po_amount,transferred_pi_qty,untransferred_pi_qty,forecast_turnover_months,remark,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,[genId('poi'),id,poNo,it.sku_code,it.po_qty,price,amount,0,it.po_qty,0,it.remark,ts]);}
         run('UPDATE purchase_orders SET total_amount=? WHERE id=?',[total,id]);
