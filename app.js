@@ -14838,22 +14838,19 @@ async function wacConfirm(batchId){
     let skuTableHtml='';
     if(blockers.length===0 && items.length>0){
       const rowsHtml=items.map((it,i)=>{
-        const newWac=null;
-        return '<tr>'+
-          '<td class="cell-id">'+esc(it.sku_code)+'</td>'+
-          '<td>'+esc(it.product_name||it.model||'-')+'</td>'+
-          '<td class="text-right">'+(it.batch_qty||0)+'</td>'+
-          '<td class="text-right">'+(it.weighted_purchase_unit_price||0).toFixed(4)+'</td>'+
-          '<td class="text-right">'+(it.customs_rate!==null&&it.customs_rate!==undefined?Number(it.customs_rate).toFixed(4):'-')+'</td>'+
-
-          '<td><input type="number" id="wac-old-'+i+'" value="" placeholder="请上传" min="0" step="1" style="width:90px;padding:4px;text-align:right;background:#fffbe6" onchange="recalcWacRow('+i+');wacValidateInputs()"></td>'+
-          '<td class="text-right">'+(it.current_wac||0).toFixed(4)+' <span style="font-size:10px;color:#999">'+esc(m.local_currency||'')+'</span></td>'+
-          '<td class="text-right">'+(it.product_cost_local||0).toFixed(2)+'</td>'+
-          '<td class="text-right">'+(it.freight_cost_local||0).toFixed(2)+'</td>'+
-          '<td class="text-right">'+(it.customs_cost_local||0).toFixed(2)+'</td>'+
-          '<td class="text-right">'+((it.inspection_cost_local||0)+(it.other_cost_local||0)).toFixed(2)+'</td>'+
-          '<td class="text-right font-bold">'+(it.unit_landing_cost||0).toFixed(4)+' <span style="font-size:10px;color:#999">'+esc(m.local_currency||'')+'</span></td>'+
-          '<td class="text-right font-bold" id="wac-new-'+i+'" style="color:#1890ff">'+(newWac===null?'待上传':newWac.toFixed(4))+' <span style="font-size:10px;color:#999">'+esc(m.local_currency||'')+'</span></td>'+
+        return '<tr>' +
+          '<td class="cell-id" style="position:sticky;left:0;background:var(--surface,#fff);z-index:1">'+esc(it.sku_code)+'</td>' +
+          '<td class="text-right">'+(it.batch_qty||0).toLocaleString()+'</td>' +
+          '<td class="text-right">'+Number(it.cbm||0).toFixed(3)+'</td>' +
+          '<td class="text-right">'+Number(it.weighted_purchase_unit_price||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4})+'</td>' +
+          '<td class="text-right">'+(it.batch_qty>0?Number((it.product_cost_local||0)/it.batch_qty).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4}):'—')+'</td>' +
+          '<td class="text-right">'+Number(it.unit_landing_cost||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4})+'</td>' +
+          '<td class="text-right">'+Number(it.total_landing_cost_local||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+'</td>' +
+          '<td><input type="number" id="wac-old-'+i+'" value="" placeholder="请上传" min="0" step="1" style="width:100px;padding:4px;text-align:right;background:#fffbe6" oninput="recalcWacRow('+i+');wacValidateInputs()"></td>' +
+          '<td class="text-right">'+Number(it.current_wac||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4})+'</td>' +
+          '<td class="text-right" id="wac-old-value-'+i+'">待上传</td>' +
+          '<td class="text-right font-bold" id="wac-new-'+i+'" style="color:#1677ff">待上传</td>' +
+          '<td class="text-right" id="wac-change-'+i+'">—</td>' +
         '</tr>';
       }).join('');
 
@@ -14870,23 +14867,20 @@ async function wacConfirm(batchId){
       '</div>';
 
       skuTableHtml=formulaHint+opBar+
-        '<div class="wac-table-scroll">'+
-        '<table class="data-table" style="table-layout:auto;min-width:1100px"><thead><tr>'+
-          '<th>SKU</th><th>'+t('wac.col_product','产品')+'</th>'+
-          '<th>'+t('wac.col_pl_qty','PL数量')+'</th>'+
-          '<th>'+t('wac.col_weighted_price','加权采购单价')+'</th>'+
-          '<th>'+t('wac.col_customs_rate','关税税率')+'</th>'+
-
-          '<th>'+t('wac.col_old_qty','旧库存数量')+'</th>'+
-          '<th>'+t('wac.col_current_wac','当前WAC')+'</th>'+
-          '<th>'+t('wac.col_product_cost_local','产品成本(本币)')+'</th>'+
-          '<th>'+t('wac.col_freight_local','运费分摊(本币)')+'</th>'+
-          '<th>'+t('wac.col_duty_local','关税分摊(本币)')+'</th>'+
-          '<th>'+t('wac.col_inspection_local','检验分摊(本币)')+'</th>'+
-          '<th>'+t('wac.col_unit_landing','单位落地成本')+'</th>'+
-          '<th>'+t('wac.col_new_wac','新WAC')+'</th>'+
-        '</tr></thead><tbody>'+rowsHtml+'</tbody></table></div>';
-    }
+        '<div class="wac-table-scroll" style="overflow:auto;max-height:52vh">'+
+        '<table class="data-table" style="table-layout:auto;min-width:1450px"><thead><tr>'+
+          '<th style="position:sticky;left:0;z-index:3;background:var(--table-head-bg,#f5f6f8)">SKU</th>'+
+          '<th>到货数量</th><th>CBM</th>'+
+          '<th>FOB Price ('+esc(m.ci_currency||'')+')</th>'+
+          '<th>FOB Price ('+esc(m.local_currency||'')+')</th>'+
+          '<th>Unit Landed Cost ('+esc(m.local_currency||'')+')</th>'+
+          '<th>本批次总成本 ('+esc(m.local_currency||'')+')</th>'+
+          '<th>原库存数量</th>'+
+          '<th>原单位成本 / 当前WAC ('+esc(m.local_currency||'')+')</th>'+
+          '<th>原库存总成本 ('+esc(m.local_currency||'')+')</th>'+
+          '<th>新加权平均成本 ('+esc(m.local_currency||'')+')</th>'+
+          '<th>较上次WAC变化</th>'+
+        '</tr></thead><tbody>'+rowsHtml+'</tbody></table></div>';    }
 
     const head='<div class="form-card" style="box-shadow:none;padding:0;display:flex;flex-direction:column;overflow:hidden">'+
       batchInfo+blockerHtml+costFactsHtml+skuTableHtml+
@@ -14913,14 +14907,20 @@ function recalcWacRow(i){
   const it=p.items[i];
   const rawQty=document.getElementById('wac-old-'+i)?.value;
   const oldQty=rawQty===''||rawQty==null?null:Number(rawQty);
-  const oldWac=it.current_wac||0;
-  const batchQty=it.batch_qty||0;
-  const unitCost=it.unit_landing_cost||0;
-  const newQty=(oldQty===null?0:oldQty)+batchQty;
-  const valid=oldQty!==null&&Number.isFinite(oldQty)&&oldQty>=0&&newQty>0;
-  const newWac=valid?Math.round((oldQty*oldWac+batchQty*unitCost)/newQty*10000)/10000:null;
-  const cell=document.getElementById('wac-new-'+i);
-  if(cell)cell.textContent=newWac===null?'待上传':newWac.toFixed(4);
+  const oldWac=Number(it.current_wac)||0;
+  const batchQty=Number(it.batch_qty)||0;
+  const unitCost=Number(it.unit_landing_cost)||0;
+  const valid=oldQty!==null&&Number.isFinite(oldQty)&&oldQty>=0&&(oldQty+batchQty)>0;
+  const oldValueCell=document.getElementById('wac-old-value-'+i);
+  const newCell=document.getElementById('wac-new-'+i);
+  const changeCell=document.getElementById('wac-change-'+i);
+  if(oldValueCell)oldValueCell.textContent=oldQty===null||!Number.isFinite(oldQty)?'待上传':(oldQty*oldWac).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+  const newWac=valid?Math.round((oldQty*oldWac+batchQty*unitCost)/(oldQty+batchQty)*10000)/10000:null;
+  if(newCell)newCell.textContent=newWac===null?'待上传':newWac.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4});
+  if(changeCell){
+    if(newWac===null||oldWac<=0){changeCell.textContent='—';changeCell.style.color='';}
+    else{const pct=(newWac-oldWac)/oldWac*100;changeCell.textContent=(pct>0?'+':'')+pct.toFixed(2)+'%';changeCell.style.color=pct>0?'#cf4444':(pct<0?'#269653':'');}
+  }
 }
 
 // 读取某行 old_qty 输入，严格区分 0 与 空白/非法（不使用 if(!qty) 这类判断）

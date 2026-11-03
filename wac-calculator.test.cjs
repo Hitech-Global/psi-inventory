@@ -1777,8 +1777,12 @@ test('UI regression: WAC confirmation renders each row batch quantity from its i
   const end = source.indexOf('// 提交WAC确认', start);
   assert.ok(end > start, 'wacConfirm section must be bounded');
   const section = source.slice(start, end);
-  assert.ok(section.includes("'<td class=\"text-right\">'+(it.batch_qty||0)+'</td>'"),
-    'PL quantity cell must read from the current item');
+  assert.ok(section.includes("'<td class=\"text-right\">'+(it.batch_qty||0).toLocaleString()+'</td>'"),
+    'arrival quantity cell must read from the current item');
+  assert.ok(section.includes("Number(it.cbm||0).toFixed(3)"), 'CBM must be shown from the PL item');
+  assert.ok(section.includes("id=\"wac-old-value-"), 'original inventory value must be displayed after old quantity upload');
+  assert.ok(section.includes("id=\"wac-change-"), 'change versus previous WAC must be displayed');
+  assert.ok(section.includes('FOB Price (') && section.includes('Unit Landed Cost ('), 'single-row cost breakdown columns must be rendered');
   assert.ok(!section.includes("'+batchQty+'"),
     'must not reference batchQty outside the removed local scope');
   assert.ok(section.includes('importWacOldInventory()'),
@@ -1865,4 +1869,18 @@ test('WAC confirmed batches aggregate multiple PLs before grouping by logistics 
   assert.ok(route.includes('SUM(COALESCE(total_qty, 0)) AS pl_total_qty'), 'PL quantities must be summed per logistics batch');
   assert.ok(route.includes('MAX(pl.pl_no) AS pl_no') && route.includes('MAX(pl.pl_total_qty) AS pl_total_qty'), 'outer query must select aggregated PL fields');
   assert.ok(!route.includes('pl.pl_no, pl.total_qty AS pl_total_qty'), 'outer query must not select raw PL columns while grouping by batch');
+});
+
+
+test('WAC calculation detail uses one row per SKU and omits new inventory quantity', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const app = fs.readFileSync(path.join(__dirname, 'app.js'), 'utf8');
+  const start = app.indexOf('async function wacConfirm(batchId){');
+  const end = app.indexOf('// 提交WAC确认', start);
+  const ui = app.slice(start, end);
+  for (const field of ['到货数量','CBM','原库存数量','原单位成本 / 当前WAC','原库存总成本','新加权平均成本','较上次WAC变化']) assert.ok(ui.includes(field), field + ' column must exist');
+  assert.ok(!ui.includes('新库存数量'), 'new inventory quantity must not be displayed');
+  assert.ok(ui.includes("(oldQty*oldWac+batchQty*unitCost)/(oldQty+batchQty)"), 'new WAC must use the existing moving weighted average formula');
+  assert.ok(ui.includes('(newWac-oldWac)/oldWac*100'), 'WAC change must compare against current/previous WAC');
 });
