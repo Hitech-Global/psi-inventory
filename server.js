@@ -18762,12 +18762,18 @@ app.get('/api/wac/confirmed-batches', requireApiPermission('ci_view'), asyncHand
     const rows = query(`SELECT lb.id, lb.batch_no, lb.related_ci_no, lb.forwarder_name,
       lb.target_country, lb.target_warehouse, lb.actual_arrival_date,
       MAX(wh.confirmed_at) AS confirmed_at, MAX(wh.ci_no) AS ci_no,
-      pl.pl_no, pl.total_qty AS pl_total_qty,
-      ci.brand, ci.goods_amount, ci.currency AS ci_currency,
+      MAX(pl.pl_no) AS pl_no, MAX(pl.pl_total_qty) AS pl_total_qty,
+      MAX(ci.brand) AS brand, MAX(ci.goods_amount) AS goods_amount, MAX(ci.currency) AS ci_currency,
       (SELECT COUNT(DISTINCT wh2.sku_code) FROM wac_history wh2 WHERE wh2.logistics_batch_id = lb.id) AS sku_count
       FROM logistics_batches lb
       INNER JOIN wac_history wh ON wh.logistics_batch_id = lb.id
-      LEFT JOIN packing_lists pl ON pl.logistics_batch_id = lb.id
+      LEFT JOIN (
+        SELECT logistics_batch_id,
+          STRING_AGG(DISTINCT pl_no, ', ' ORDER BY pl_no) AS pl_no,
+          SUM(COALESCE(total_qty, 0)) AS pl_total_qty
+        FROM packing_lists
+        GROUP BY logistics_batch_id
+      ) pl ON pl.logistics_batch_id = lb.id
       LEFT JOIN commercial_invoices ci ON ci.id = lb.related_ci_id
       GROUP BY lb.id
       ORDER BY MAX(wh.confirmed_at) DESC`).rows;
