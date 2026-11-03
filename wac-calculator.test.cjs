@@ -1803,19 +1803,18 @@ test('WAC freight payment breakdown: all table body cells use default left align
 });
 
 
-test('WAC pending batch list: PL quantity and goods value cells use left alignment', () => {
+test('WAC batch list: PL quantity and goods value cells use default left alignment', () => {
   const fs = require('node:fs');
   const path = require('node:path');
   const source = fs.readFileSync(path.join(__dirname, 'app.js'), 'utf8');
-  const start = source.indexOf('async function loadWacPending(){');
-  const end = source.indexOf('// WAC确认弹窗', start);
-  assert.ok(start >= 0 && end > start, 'pending WAC list renderer must exist');
+  const start = source.indexOf('function renderWacBatchRows(data){');
+  const end = source.indexOf('// 兼容确认成功后的原调用入口', start);
+  assert.ok(start >= 0 && end > start, 'unified WAC batch renderer must exist');
   const section = source.slice(start, end);
-  assert.ok(section.includes("'<td>'+(r.pl_total_qty||0)+'</td>'"), 'PL quantity cell should use default left alignment');
-  assert.ok(section.includes("'<td>'+(r.goods_amount||0)+' '+(r.ci_currency||'')+'</td>'"), 'goods value cell should use default left alignment');
-  assert.ok(!section.includes('class=\"text-right\"'), 'pending WAC list should not right-align these numeric cells');
+  assert.ok(section.includes("+'<td>'+(r.pl_total_qty||0)+'</td>'"), 'PL quantity cell should use default left alignment');
+  assert.ok(section.includes("+'<td>'+(r.goods_amount==null?'—':Number(r.goods_amount).toLocaleString())+' '+esc(r.ci_currency||'')+'</td>'"), 'goods value cell should use default left alignment');
+  assert.ok(!section.includes('class="text-right"'), 'unified batch list numeric cells should not be right-aligned');
 });
-
 
 test('PL detail renders a totals row before SKU rows', () => {
   const fs = require('node:fs');
@@ -1850,4 +1849,5 @@ test('WAC batch management keeps confirmed and pending batches together with cou
   const confirmedEnd=server.indexOf('/* WAC历史矩阵', confirmedStart);
   const route=server.slice(confirmedStart, confirmedEnd);
   assert.ok(route.includes('ci.brand') && route.includes('ci.goods_amount') && route.includes('ci.currency AS ci_currency'), 'confirmed batch API must return brand and goods value for the unified list');
+  assert.ok(!route.includes('WHERE lb.logistics_status'), 'confirmed history must remain visible regardless of current logistics status');
 });
