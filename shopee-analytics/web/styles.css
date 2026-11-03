@@ -693,3 +693,29 @@ tbody td{font-weight:400}
 .tiktok-shop-picker select{
   font-size:12px;padding:4px 8px;border:1px solid #d0d5dd;border-radius:8px;background:#fff;color:#101828;
 }
+
+/* ── 指标背后的明细 ──────────────────────────────────────────────────────
+   明细跟着它所属的指标走：看表格的人先要看出哪个数字不对，再看是哪些
+   订单造成的。所以明细默认收着，点指标才展开。 */
+.health-cell-detail{cursor:pointer;position:relative;white-space:nowrap}
+.health-cell-detail:hover{background:#f9fafb}
+.health-cell-detail.open{background:#f4f9ff;box-shadow:inset 2px 0 0 #1570ef}
+.health-detail-mark{
+  display:inline-block;margin-left:6px;padding:0 6px;border-radius:999px;
+  background:#eef4ff;color:#3538cd;font-size:10px;font-weight:600;vertical-align:1px;
+}
+.health-detail-row>td{padding:0;background:#fcfcfd;border-bottom:1px solid #eaecf0}
+.health-detail-box{padding:10px 14px 12px}
+.health-detail-head{
+  font-size:11px;color:#475467;font-weight:600;margin-bottom:6px;
+}
+.health-detail-table{width:100%;border-collapse:separate;border-spacing:0;font-size:11px}
+.health-detail-table th{
+  text-align:left;padding:5px 10px;color:#98a2b3;font-weight:500;
+  border-bottom:1px solid #eaecf0;font-size:10px;
+}
+.health-detail-table td{
+  padding:5px 10px;border-bottom:1px solid #f2f4f7;color:#344054;
+}
+.health-detail-table tr:last-child td{border-bottom:none}
+.health-detail-order{font-variant-numeric:tabular-nums;color:#101828}

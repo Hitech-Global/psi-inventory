@@ -16,6 +16,18 @@
 
 (function () {
   let current = null;
+  // The detail held against each figure, and how many there are.
+  let detailGroups = new Map();
+  let detailCounts = new Map();
+
+  /**
+   * The name a measure is known by on the page.
+   */
+  function metricLabel(metricKey) {
+    const measures = (current && current.measures) || [];
+    const found = measures.find(measure => measure.key === metricKey);
+    return found ? found.label : metricKey || '其它';
+  }
 
   const STATUS_TEXT = {
     good: { label: '良好', className: 'health-pill good' },
@@ -106,10 +118,16 @@
     </tr>`;
   }
 
-  function renderRow(row, measures) {
+  function renderRow(row, measures, detailCounts) {
     const cells = measures.map(measure => {
       const found = (row.measures || []).find(item => item.key === measure.key);
-      return `<td>${found ? formatMeasure(found) : '<span class="health-empty">—</span>'}</td>`;
+      const shown = found ? formatMeasure(found) : '<span class="health-empty">—</span>';
+      const count = (detailCounts && detailCounts.get(`${row.shopId}|${measure.key}`)) || 0;
+      // A figure with detail behind it says so, and opens it when asked.
+      if (!count) return `<td>${shown}</td>`;
+      return `<td class="health-cell-detail" data-shop="${escapeHtml(String(row.shopId))}"
+        data-metric="${escapeHtml(measure.key)}" title="点击查看 ${count} 条明细">`
+        + `${shown}<span class="health-detail-mark">${escapeHtml(String(count))}</span></td>`;
     }).join('');
     // A shop that has not been read yet is shown in the table with its
     // number, so the table is a list of the shops rather than a list of
@@ -155,45 +173,60 @@
    * looking at a shop that is not doing well needs the second, and so does
    * a diagnosis — it cannot be built on the first alone.
    */
-  function renderEvents(events, measures) {
-    if (!events.length) return '';
+  /**
+   * The detail behind each measure, kept where it belongs.
+   *
+   * A reader looking at the table wants to know which figure is wrong and
+   * then which orders it was wrong about. Listing every order for every
+   * shop below the table answers the second question before it is asked,
+   * and buries the first.
+   *
+   * So the detail is held against the figure it belongs to and shown only
+   * when that figure is clicked.
+   */
+  function groupEvents(events, measures) {
+    const grouped = new Map();
+    if (!events || !events.length) return grouped;
+    for (const event of events) {
+      const key = `${event.shopId}|${event.metricKey || ''}`;
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key).push(event);
+    }
+    return grouped;
+  }
+
+  /**
+   * The detail for one figure, as a table.
+   */
+  function renderDetailRows(list, measures) {
     const kindLabels = {
       penalty_point: '绩效罚分',
       listing_issue: '有问题的商品',
       late_order: '迟发订单',
       metric_source: '指标明细',
     };
-    // The measure is named as the page names it, not by the key it is
-    // stored under — a reader is looking at a label, not at a field name.
-    const measureLabels = Object.fromEntries((measures || []).map(measure => [measure.key, measure.label]));
-    const byShop = new Map();
-    for (const event of events) {
-      if (!byShop.has(event.shopId)) byShop.set(event.shopId, []);
-      byShop.get(event.shopId).push(event);
-    }
-    const sections = [...byShop.entries()].map(([shopId, list]) => {
-      const items = list.map(event => {
-        const kind = kindLabels[event.kind] || event.kind;
-        const metric = event.metricKey
-          ? ` · ${measureLabels[event.metricKey] || event.metricKey}` : '';
-        const reason = event.reasonCode ? ` · 原因码 ${event.reasonCode}` : '';
-        const order = event.orderSn ? ` · ${event.orderSn}` : '';
-        const title = event.title ? ` · ${event.title}` : '';
-        const detail = event.detail ? ` · ${event.detail}` : '';
-        return `<li><span class="health-event-kind">${escapeHtml(kind)}${escapeHtml(metric)}</span>`
-          + `<span class="health-event-detail">${escapeHtml(reason)}${escapeHtml(order)}${escapeHtml(title)}${escapeHtml(detail)}</span></li>`;
-      }).join('');
-      const shopName = list[0].shopName || `店铺 ${shopId}`;
-      return `<div class="health-event-shop">
-        <h4>${escapeHtml(shopName)} <span>${escapeHtml(String(shopId))}</span></h4>
-        <ul>${items}</ul>
-      </div>`;
+    const head = `<tr>
+      <th scope="col">类型</th>
+      <th scope="col">订单号</th>
+      <th scope="col">原因码</th>
+      <th scope="col">详情</th>
+    </tr>`;
+    const rows = list.map(event => {
+      const kind = kindLabels[event.kind] || event.kind;
+      const reason = event.reasonCode ? `原因码 ${event.reasonCode}` : '—';
+      const order = event.orderSn || '—';
+      const parts = [event.title, event.detail].filter(Boolean).join(' · ');
+      // The measure is already named above the table; saying it again in
+      // every row says nothing.
+      const detail = parts || (event.metricKey ? '—' : '—');
+      return `<tr>
+        <td>${escapeHtml(kind)}</td>
+        <td class="health-detail-order">${escapeHtml(String(order))}</td>
+        <td>${escapeHtml(String(reason))}</td>
+        <td>${escapeHtml(detail)}</td>
+      </tr>`;
     }).join('');
-    return `<section class="health-events">
-      <h3>指标背后的明细（${events.length}）</h3>
-      <p>每个指标背后具体是哪些订单、什么原因码 —— 诊断要看的是这一层。</p>
-      ${sections}
-    </section>`;
+    return `<table class="health-detail-table"><thead>${head}</thead><tbody>${rows}</tbody></table>`;
   }
 
   function render(data) {
@@ -209,20 +242,23 @@
     renderSummary(data);
     head.innerHTML = renderHead(measures);
 
+    // The detail is held against the figure it belongs to, and shown only
+    // when that figure is clicked.
+    detailGroups = groupEvents(data.events || [], measures);
+    detailCounts = new Map([...detailGroups].map(([key, list]) => [key, list.length]));
+
     if (!rows.length) {
       body.innerHTML = `<tr><td colspan="${measures.length + 4}" class="empty">
         当前筛选下没有店铺。先在「店铺接口」页为店铺连接 ERP，健康读数会自动开始收集。
       </td></tr>`;
     } else {
-      body.innerHTML = rows.map(row => renderRow(row, measures)).join('');
+      body.innerHTML = rows.map(row => renderRow(row, measures, detailCounts)).join('');
     }
 
     const notice = document.querySelector('#healthNotice');
     if (notice) {
       const parts = [];
       if (missing.length) parts.push(renderMissing(missing));
-      const events = data.events || [];
-      if (events.length) parts.push(renderEvents(events, data.measures));
       if (parts.length) {
         notice.classList.remove('hidden');
         notice.innerHTML = parts.join('');
@@ -231,6 +267,38 @@
         notice.innerHTML = '';
       }
     }
+  }
+
+  /**
+   * Open the detail behind a figure, or close it again.
+   */
+  function toggleDetail(cell) {
+    const shopId = cell.dataset.shop;
+    const metricKey = cell.dataset.metric;
+    const key = `${shopId}|${metricKey}`;
+    const list = detailGroups.get(key);
+    if (!list || !list.length) return;
+    const body = document.querySelector('#healthBody');
+    if (!body) return;
+    const row = cell.closest('tr');
+    if (!row) return;
+    const existing = body.querySelector(`tr[data-detail-key="${CSS.escape(key)}"]`);
+    if (existing) {
+      existing.remove();
+      cell.classList.remove('open');
+      return;
+    }
+    const detailRow = document.createElement('tr');
+    detailRow.className = 'health-detail-row';
+    detailRow.dataset.detailKey = key;
+    const columns = document.querySelectorAll('#healthHead th').length || 1;
+    detailRow.innerHTML = `<td colspan="${columns}">`
+      + `<div class="health-detail-box">`
+      + `<div class="health-detail-head">${escapeHtml(metricLabel(metricKey))} 的明细（${list.length} 条）</div>`
+      + renderDetailRows(list, current ? current.measures : [])
+      + `</div></td>`;
+    row.after(detailRow);
+    cell.classList.add('open');
   }
 
   function exportCsv() {
@@ -260,6 +328,11 @@
     link.click();
     URL.revokeObjectURL(link.href);
   }
+
+  document.addEventListener('click', event => {
+    const cell = event.target.closest('.health-cell-detail');
+    if (cell) toggleDetail(cell);
+  });
 
   window.ShopeeShopHealth = { render, exportCsv };
 })();
