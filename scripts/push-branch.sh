@@ -16,6 +16,8 @@ set -euo pipefail
 
 BRANCH="${1:-fix/shopee-brand-portal-modern-oauth-20261027}"
 REMOTE="https://github.com/Hitech-Global/psi-inventory.git"
+# 去掉协议前缀，留下的就是主机与路径。
+REMOTE_HOST="${REMOTE#https://}"
 
 USERNAME="martin0000118-dev"
 PASSWORD="$(printf 'protocol=https\nhost=github.com\n\n' | git credential-osxkeychain get | sed -n 's/^password=//p')"
@@ -28,10 +30,10 @@ LOCAL="$(git rev-parse HEAD)"
 echo "本地 HEAD: ${LOCAL:0:10}"
 
 GIT_TERMINAL_PROMPT=0 git push \
-  "https://${USERNAME}:${PASSWORD}@${REMOTE#https://}" \
+  "https://${USERNAME}:${PASSWORD}@${REMOTE_HOST}" \
   "HEAD:refs/heads/${BRANCH}" 2>&1 | tail -2
 
-REMOTE_HEAD="$(git ls-remote "https://${USERNAME}:${PASSWORD}@${REMOTE}" "refs/heads/${BRANCH}" | cut -f1)"
+REMOTE_HEAD="$(git ls-remote "https://${USERNAME}:${PASSWORD}@${REMOTE_HOST}" "refs/heads/${BRANCH}" | cut -f1)"
 if [ -z "$REMOTE_HEAD" ]; then
   echo "❌ 远端没有分支 ${BRANCH}" >&2
   exit 1
