@@ -64,7 +64,8 @@ async function main() {
         const refundRate = result.health.returnRefundRate;
         console.log(`- ${shop.shopId} ${shop.displayName || ''}: `
           + `rating ${rating ?? '—'}`
-          + `${refundRate === null || refundRate === undefined ? '' : `, return rate ${(refundRate * 100).toFixed(2)}%`}`);
+          + `${refundRate === null || refundRate === undefined ? '' : `, return rate ${(refundRate * 100).toFixed(2)}%`}`
+          + `${result.health.csatRate === null || result.health.csatRate === undefined ? '' : `, csat ${(result.health.csatRate * 100).toFixed(1)}%`}`);
         fetched += 1;
       } catch (error) {
         console.log(`- ${shop.shopId} ${shop.displayName || ''}: failed — ${error.message}`);

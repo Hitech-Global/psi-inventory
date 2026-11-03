@@ -33,22 +33,47 @@ function numberOrNull(value) {
  * keys, and the ones a reader sees are given their own names where they
  * are shown.
  */
+/**
+ * What each metric is, and where it is kept.
+ *
+ * The platform reports a rate as a percentage — a return rate of 0.66
+ * means 0.66 per cent, not 66 — while this system's percentages are
+ * fractions, because that is how the other sources report them. So a
+ * percentage is divided by a hundred on the way in, which keeps the two
+ * comparable without either of them being changed.
+ *
+ * The kind is named rather than read from the platform's own unit field,
+ * because the unit field does not distinguish a rate from a score: the
+ * shop's rating is reported with the same unit as a rate, and a rating of
+ * 4.94 divided by a hundred would be nonsense.
+ */
 const METRIC_COLUMNS = Object.freeze({
-  csat_rate: 'csatRate',
-  response_rate: 'responseRate',
-  late_shipment_rate: 'lateShipmentRate',
-  non_fulfillment_rate: 'nonFulfillmentRate',
-  preparation_time: 'preparationTime',
-  cancellation_rate: 'cancellationRate',
-  return_refund_rate: 'returnRefundRate',
-  pre_order_listing_rate: 'preOrderListingRate',
-  the_amount_of_pre_order_listing: 'preOrderListingAmount',
-  severe_listing_violations: 'severeListingViolations',
-  other_listing_violations: 'otherListingViolations',
-  prohibited_listings: 'prohibitedListings',
-  counterfeit_ip_infringement: 'counterfeitIpInfringement',
-  spam_listings: 'spamListings',
+  csat_rate: { column: 'csatRate', kind: 'percent' },
+  response_rate: { column: 'responseRate', kind: 'percent' },
+  late_shipment_rate: { column: 'lateShipmentRate', kind: 'percent' },
+  non_fulfillment_rate: { column: 'nonFulfillmentRate', kind: 'percent' },
+  cancellation_rate: { column: 'cancellationRate', kind: 'percent' },
+  return_refund_rate: { column: 'returnRefundRate', kind: 'percent' },
+  pre_order_listing_rate: { column: 'preOrderListingRate', kind: 'percent' },
+  shop_rating: { column: 'shopRating', kind: 'score' },
+  preparation_time: { column: 'preparationTime', kind: 'days' },
+  the_amount_of_pre_order_listing: { column: 'preOrderListingAmount', kind: 'count' },
+  severe_listing_violations: { column: 'severeListingViolations', kind: 'count' },
+  other_listing_violations: { column: 'otherListingViolations', kind: 'count' },
+  prohibited_listings: { column: 'prohibitedListings', kind: 'count' },
+  counterfeit_ip_infringement: { column: 'counterfeitIpInfringement', kind: 'count' },
+  spam_listings: { column: 'spamListings', kind: 'count' },
 });
+
+/**
+ * A metric as this system keeps it.
+ */
+function toMetricValue(value, kind) {
+  const number = numberOrNull(value);
+  if (number === null) return null;
+  if (kind === 'percent') return number / 100;
+  return number;
+}
 
 function normalizeAccountHealth(payload) {
   const response = unwrap(payload);
@@ -56,18 +81,21 @@ function normalizeAccountHealth(payload) {
   // Every metric starts as missing. One the platform did not report is
   // missing, not zero — a zero would read as a perfect week.
   const metrics = {};
-  for (const column of Object.values(METRIC_COLUMNS)) metrics[column] = null;
+  for (const spec of Object.values(METRIC_COLUMNS)) metrics[spec.column] = null;
   for (const metric of Array.isArray(response.metric_list) ? response.metric_list : []) {
-    const column = METRIC_COLUMNS[metric.metric_name];
-    if (!column) continue;
-    metrics[column] = numberOrNull(metric.current_period);
+    const spec = METRIC_COLUMNS[metric.metric_name];
+    if (!spec) continue;
+    metrics[spec.column] = toMetricValue(metric.current_period, spec.kind);
   }
+  // The score is reported twice: once to a decimal place among the metrics
+  // and once rounded down in the summary. The metric is the better of the
+  // two, so it wins when it is there.
+  if (metrics.shopRating === null) metrics.shopRating = numberOrNull(overall.rating);
   return {
-    shopRating: numberOrNull(overall.rating),
+    ...metrics,
     fulfillmentFailed: numberOrNull(overall.fulfillment_failed),
     listingFailed: numberOrNull(overall.listing_failed),
     customServiceFailed: numberOrNull(overall.custom_service_failed),
-    ...metrics,
     raw: response,
   };
 }
@@ -84,4 +112,4 @@ async function fetchShopHealth({ client, shopId, accessToken }) {
   return { health: normalizeAccountHealth(payload), payload };
 }
 
-module.exports = { unwrap, normalizeAccountHealth, fetchShopHealth, METRIC_COLUMNS };
+module.exports = { unwrap, normalizeAccountHealth, fetchShopHealth, toMetricValue, METRIC_COLUMNS };

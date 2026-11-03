@@ -9,24 +9,31 @@ const { buildFunnelRows } = require('../src/shop-funnel');
 test('the shop\'s score and fulfilment are read from the platform\'s names', () => {
   const health = normalizeAccountHealth({
     response: {
-      overall_performance: { rating: 4.6, fulfillment_failed: 2, listing_failed: 0, custom_service_failed: 1 },
+      overall_performance: { rating: 4, fulfillment_failed: 2, listing_failed: 0, custom_service_failed: 1 },
       metric_list: [
-        { metric_name: 'shop_rating', current_period: 4.6, last_period: 4.5 },
-        { metric_name: 'return_refund_rate', current_period: 0.0231, last_period: 0.019 },
-        { metric_name: 'cancellation_rate', current_period: 0.041, last_period: 0.05 },
-        { metric_name: 'late_shipment_rate', current_period: 0.007, last_period: 0.011 },
-        { metric_name: 'csat_rate', current_period: 0.92, last_period: 0.9 },
+        { metric_name: 'shop_rating', current_period: 4.94, last_period: 4.8 },
+        { metric_name: 'return_refund_rate', current_period: 0.66, last_period: 0.76 },
+        { metric_name: 'cancellation_rate', current_period: 0.16, last_period: 0.94 },
+        { metric_name: 'late_shipment_rate', current_period: 0, last_period: 0 },
+        { metric_name: 'csat_rate', current_period: 78.79, last_period: 77 },
+        { metric_name: 'preparation_time', current_period: 0.69, last_period: 0.69 },
         { metric_name: 'severe_listing_violations', current_period: 1, last_period: 0 },
         { metric_name: 'a_metric_we_do_not_know', current_period: 99, last_period: 99 },
       ],
     },
   });
-  assert.equal(health.shopRating, 4.6);
+  // The score is reported twice; the metric carries the decimals, the
+  // summary only a rounded whole number.
+  assert.equal(health.shopRating, 4.94);
   assert.equal(health.fulfillmentFailed, 2);
-  assert.equal(health.returnRefundRate, 0.0231);
-  assert.equal(health.cancellationRate, 0.041);
-  assert.equal(health.lateShipmentRate, 0.007);
-  assert.equal(health.csatRate, 0.92);
+  // A rate is reported as a percentage and kept as a fraction, so that it
+  // can sit beside the other sources' percentages without being changed.
+  assert.equal(health.returnRefundRate, 0.0066);
+  assert.equal(health.cancellationRate, 0.0016);
+  assert.equal(health.lateShipmentRate, 0);
+  assert.equal(health.csatRate, 0.7879);
+  // A score is not a rate and must not be divided.
+  assert.equal(health.preparationTime, 0.69);
   assert.equal(health.severeListingViolations, 1);
   // A metric we have nowhere to put is not carried along.
   assert.equal(health.aMetricWeDoNotKnow, undefined);
