@@ -279,6 +279,13 @@ test('WAC history import validates master data, writes immutable history only, s
   assert.equal(conflict.body.blocked,true);
   assert.equal(query('SELECT id FROM wac_history WHERE sku_code = ?', ['NT-HISTORY-01']).rows.length,1);
 
+  const badBrand = validateWacHistoryImportRows([validRow({brand:'netac'})]);
+  assert.equal(badBrand.ok,false);
+  assert.ok(badBrand.blocking.some(x=>x.issue_type==='BRAND_MISMATCH'));
+  const badWarehouse = validateWacHistoryImportRows([validRow({warehouse:'bekasi warehouse'})]);
+  assert.equal(badWarehouse.ok,false);
+  assert.ok(badWarehouse.blocking.some(x=>x.issue_type==='WAREHOUSE_MISSING'));
+
   const badPrecheck = await request('/api/wac/history-import/precheck','POST',{
     items:[validRow({sku_code:'SKU-NOT-IN-MASTER'})]
   });

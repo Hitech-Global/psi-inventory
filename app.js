@@ -14900,7 +14900,7 @@ function handleWacHistoryImportFile(file) {
           const idx=headers.findIndex(h=>col.aliases.includes(h));
           if (idx < 0 || row[idx] === undefined || row[idx] === null || String(row[idx]).trim() === '') return;
           let value = row[idx];
-          if (typeof value === 'string') value = value.trim();
+          if (typeof value === 'string' && col.key !== 'brand') value = value.trim();
           if (['confirmed_at','last_inbound_date','fx_rate_date'].includes(col.key)) value = _wacHistoryImportDate(value);
           if (col.key === 'new_avg_cost' || col.key === 'rmb_to_local_rate') value = Number(String(value).replace(/,/g,'').trim());
           rec[col.key]=value;

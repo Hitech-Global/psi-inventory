@@ -4702,10 +4702,50 @@ function validateWacHistoryImportRows(items) {
     return { ok: false, total_count: rows.length, valid_count: 0, duplicate_count: 0, blocking_count: blocking.length, blocking, warnings, normalized_items: [] };
   }
 
+  // 参照库存导入的预取模式：SKU 分块读取，仓库一次读取，避免逐行访问主数据表。
+  const skuCodes = Array.from(new Set(rows.map(item => String(item && item.sku_code || '').trim()).filter(Boolean)));
+  const masterMap = new Map();
+  const chunkSize = 500;
+  for (let i = 0; i < skuCodes.length; i += chunkSize) {
+    const chunk = skuCodes.slice(i, i + chunkSize);
+    const placeholders = chunk.map(() => '?').join(',');
+    query('SELECT sku_code, brand, model FROM skus WHERE sku_code IN (' + placeholders + ')', chunk).rows.forEach(r => {
+      masterMap.set(String(r.sku_code), r);
+    });
+  }
+
+  // 历史记录允许引用已停用但仍存在于主数据的仓库；名称与国家按 trim 后精确匹配，不做模糊/大小写转换。
+  const warehouseSet = new Set();
+  query('SELECT country_name, name FROM warehouses').rows.forEach(r => {
+    const countryName = String(r.country_name || '').trim();
+    const warehouseName = String(r.name || '').trim();
+    if (countryName && warehouseName) warehouseSet.add(countryName + '\0' + warehouseName);
+  });
+
+  // 一次预取这些 SKU 已有的锁定历史，供重复导入判定，避免每行重复查询历史表。
+  const existingMap = new Map();
+  for (let i = 0; i < skuCodes.length; i += chunkSize) {
+    const chunk = skuCodes.slice(i, i + chunkSize);
+    const placeholders = chunk.map(() => '?').join(',');
+    const existingRows = query(
+      "SELECT sku_code, country, warehouse, confirmed_at, new_avg_cost FROM wac_history " +
+      "WHERE sku_code IN (" + placeholders + ") AND COALESCE(is_locked, 0) = 1 " +
+      "AND COALESCE(confirmation_status, 'confirmed') NOT IN ('reversed', 'void', 'cancelled')",
+      chunk
+    ).rows;
+    existingRows.forEach(r => {
+      const date = String(r.confirmed_at || '').slice(0, 10);
+      const key = [r.sku_code, r.country, r.warehouse, date].join('|');
+      if (!existingMap.has(key)) existingMap.set(key, []);
+      existingMap.get(key).push(r);
+    });
+  }
+
   rows.forEach((item, index) => {
-    const rowNo = Number(item && (item.row_no || item._rowNum)) || index + 2;
+    const rowNo = Number(item && (item.row_no || item._row_num || item._rowNum)) || index + 2;
     const skuCode = String(item && (item.sku_code || item.SKU) || '').trim();
-    const brandInput = String(item && (item.brand || item['品牌']) || '').trim();
+    // 与库存导入一致：品牌填写后逐字符比较，不 trim、不忽略大小写；留空才表示未提供。
+    const brandInput = item && item.brand !== undefined && item.brand !== null ? String(item.brand) : '';
     const country = String(item && (item.country || item['国家']) || '').trim();
     const warehouse = String(item && (item.warehouse || item['仓库']) || '').trim();
     const costRaw = item && (item.new_avg_cost !== undefined ? item.new_avg_cost :
@@ -4735,21 +4775,24 @@ function validateWacHistoryImportRows(items) {
     if (fxDateRaw && !normalizeWacHistoryDate(fxDateRaw)) pushIssue(rowNo, skuCode, 'FX_DATE_INVALID', '汇率日期格式无效，需使用 YYYY-MM-DD');
     if (hasRate && (!Number.isFinite(inputRate) || inputRate <= 0)) pushIssue(rowNo, skuCode, 'FX_RATE_INVALID', '人民币汇率必须为大于0的有效数字');
     if (currencyInput && !/^[A-Z]{3,5}$/.test(currencyInput)) pushIssue(rowNo, skuCode, 'CURRENCY_INVALID', '本币币种格式无效，例如 IDR、MYR、THB');
+    if (fxDate && confirmedDate && fxDate > confirmedDate) pushIssue(rowNo, skuCode, 'FX_DATE_AFTER_CONFIRM', '汇率日期不能晚于WAC确认日期');
 
-    const sku = skuCode ? queryOne('SELECT sku_code, brand, model FROM skus WHERE sku_code = ?', [skuCode]) : null;
+    const sku = skuCode ? masterMap.get(skuCode) : null;
     if (skuCode && !sku) requiredIssue('SKU_MASTER_MISSING', 'SKU「' + skuCode + '」不存在于SKU主数据');
-    if (sku && brandInput && brandInput !== String(sku.brand || '')) {
-      pushIssue(rowNo, skuCode, 'BRAND_MISMATCH', 'Excel品牌与SKU主数据不一致；系统以SKU主数据品牌为准');
+    if (sku) {
+      const masterBrand = String(sku.brand === null || sku.brand === undefined ? '' : sku.brand);
+      if (masterBrand.trim() === '') requiredIssue('SKU_BRAND_EMPTY', 'SKU「' + skuCode + '」的主数据品牌为空，无法归入品牌维度');
+      else if (brandInput !== '' && brandInput !== masterBrand) {
+        pushIssue(rowNo, skuCode, 'BRAND_MISMATCH', 'Excel品牌与SKU主数据不一致；系统以SKU主数据品牌为准');
+      }
     }
-    if (country && warehouse) {
-      const wh = queryOne('SELECT id FROM warehouses WHERE name = ? AND country_name = ? LIMIT 1', [warehouse, country]);
-      if (!wh) requiredIssue('WAREHOUSE_MISSING', '国家「' + country + '」下不存在仓库「' + warehouse + '」');
+    if (country && warehouse && !warehouseSet.has(country + '\0' + warehouse)) {
+      requiredIssue('WAREHOUSE_MISSING', '国家「' + country + '」下不存在仓库「' + warehouse + '」；请使用系统仓库主数据中的准确名称');
     }
 
     const localCurrency = resolveWacHistoryCurrency(country, currencyInput);
     if (hasRate && !localCurrency) pushIssue(rowNo, skuCode, 'CURRENCY_REQUIRED_FOR_RATE', '填写人民币汇率时必须提供本币币种，或确保国家主数据已配置默认币种');
     if (hasRate && localCurrency && localCurrency !== 'RMB' && !fxDate) pushIssue(rowNo, skuCode, 'FX_DATE_REQUIRED_FOR_RATE', '填写人民币汇率时，必须同时提供汇率日期或最后入库日期');
-    if (fxDate && confirmedDate && fxDate > confirmedDate) pushIssue(rowNo, skuCode, 'FX_DATE_AFTER_CONFIRM', '汇率日期不能晚于WAC确认日期');
     if (localCurrency === 'RMB' && hasRate && Math.abs(inputRate - 1) > 0.0000001) {
       pushIssue(rowNo, skuCode, 'RMB_RATE_INVALID', '本币为RMB时，1 RMB = 1 RMB，汇率必须为1');
     }
@@ -4765,10 +4808,7 @@ function validateWacHistoryImportRows(items) {
 
     let duplicate = false;
     if (!rowHasRequiredError && sku && country && warehouse && confirmedDate) {
-      const existing = query(
-        "SELECT new_avg_cost FROM wac_history WHERE sku_code = ? AND country = ? AND warehouse = ? AND confirmed_at LIKE ? AND COALESCE(is_locked, 0) = 1 AND COALESCE(confirmation_status, 'confirmed') NOT IN ('reversed', 'void', 'cancelled')",
-        [skuCode, country, warehouse, confirmedDate + '%']
-      ).rows;
+      const existing = existingMap.get(key) || [];
       if (existing.length) {
         const importedCost4 = Math.round(cost * 10000);
         const allSame = existing.every(r => Math.round(Number(r.new_avg_cost) * 10000) === importedCost4);
