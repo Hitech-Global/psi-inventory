@@ -1848,7 +1848,7 @@ test('WAC batch management keeps confirmed and pending batches together with cou
   const confirmedStart=server.indexOf("app.get('/api/wac/confirmed-batches'");
   const confirmedEnd=server.indexOf('/* WAC历史矩阵', confirmedStart);
   const route=server.slice(confirmedStart, confirmedEnd);
-  assert.ok(route.includes('ci.brand') && route.includes('ci.goods_amount') && route.includes('ci.currency AS ci_currency'), 'confirmed batch API must return brand and goods value for the unified list');
+  assert.ok(route.includes('MAX(ci.brand) AS brand') && route.includes('MAX(ci.goods_amount) AS goods_amount') && route.includes('MAX(ci.currency) AS ci_currency'), 'confirmed batch API must return aggregated brand and goods value for the unified list');
   assert.ok(!route.includes('WHERE lb.logistics_status'), 'confirmed history must remain visible regardless of current logistics status');
 });
 
