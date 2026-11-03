@@ -1779,7 +1779,7 @@ test('UI regression: WAC confirmation renders each row batch quantity from its i
   const section = source.slice(start, end);
   assert.ok(section.includes("'<td class=\"wac-left-cell\" style=\"text-align:left!important\">'+(it.batch_qty||0).toLocaleString()+'</td>'"),
     'arrival quantity cell must read from the current item');
-  assert.ok(section.includes("Number(it.cbm||0).toFixed(3)"), 'CBM must be shown from the PL item');
+  assert.ok(section.includes("m.transport_basis==='kg'?(it.gross_weight||0):(it.cbm||0)") && section.includes("m.transport_basis==='kg'?'毛重(KG)':'CBM'"), 'transport basis and its matching PL quantity must be shown');
   assert.ok(section.includes("id=\"wac-old-value-"), 'original inventory value must be displayed after old quantity upload');
   assert.ok(section.includes("id=\"wac-change-"), 'change versus previous WAC must be displayed');
   assert.ok(section.includes('FOB Price (') && section.includes('Unit Landed Cost ('), 'single-row cost breakdown columns must be rendered');
