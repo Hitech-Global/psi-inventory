@@ -124,6 +124,75 @@ class ShopeeShopHealthRepository {
   }
 
   /**
+   * The products, gathered under the parent they share.
+   *
+   * A parent is a family of products — a memory card sold in several
+   * capacities, say — and the shop's figures for each of them are kept
+   * apart. Read together they say how the family is doing; read one at a
+   * time they say how one capacity is doing.
+   *
+   * The figures are taken from the products' own rows and added up, never
+   * from the variations beneath them: the product's row already says what
+   * its variations said together, so adding both would count twice.
+   */
+  async listProductTrafficByParentSku({ shopIds = null, limit = 500 } = {}) {
+    const rows = await this.listProductTraffic({ shopIds, rowKind: 'PRODUCT', limit });
+    const groups = new Map();
+    for (const row of rows) {
+      const parent = row.parentSku && row.parentSku !== '-' ? row.parentSku : null;
+      const key = parent ? `parent:${parent}` : `item:${row.itemId}`;
+      if (!groups.has(key)) {
+        groups.set(key, {
+          groupKey: key,
+          parentSku: parent,
+          itemIds: [],
+          itemNames: [],
+          productVisitors: 0,
+          productPageViews: 0,
+          bounceVisitors: 0,
+          bounceRate: null,
+          searchClicks: 0,
+          likes: 0,
+          addToCartVisitors: 0,
+          addToCartUnits: 0,
+          addToCartRate: null,
+          unitsSold: 0,
+          buyers: 0,
+          sales: 0,
+          productCount: 0,
+          hasVisits: false,
+        });
+      }
+      const group = groups.get(key);
+      group.itemIds.push(row.itemId);
+      group.itemNames.push(row.itemName);
+      group.productCount += 1;
+      group.productVisitors += row.productVisitors || 0;
+      group.productPageViews += row.productPageViews || 0;
+      group.bounceVisitors += row.bounceVisitors || 0;
+      group.searchClicks += row.searchClicks || 0;
+      group.likes += row.likes || 0;
+      group.addToCartVisitors += row.addToCartVisitors || 0;
+      group.addToCartUnits += row.addToCartUnits || 0;
+      group.unitsSold += row.unitsSold || 0;
+      group.buyers += row.buyers || 0;
+      group.sales += row.sales || 0;
+      if (row.productVisitors) group.hasVisits = true;
+      if (row.bounceRate !== null) group.bounceRate = (group.bounceRate || 0) + row.bounceRate;
+    }
+    const out = [...groups.values()].map(group => ({
+      ...group,
+      itemName: group.itemNames.filter(Boolean).slice(0, 2).join(' / ')
+        + (group.itemNames.length > 2 ? ` 等 ${group.productCount} 个` : ''),
+      bounceRate: group.hasVisits && group.bounceRate !== null && group.productVisitors
+        ? group.bounceVisitors / group.productVisitors : null,
+      addToCartRate: group.productVisitors ? group.addToCartVisitors / group.productVisitors : null,
+    }));
+    out.sort((a, b) => b.productVisitors - a.productVisitors);
+    return out;
+  }
+
+  /**
    * The events behind the figures.
    */
   async upsertEvents({ eventDate, events }) {

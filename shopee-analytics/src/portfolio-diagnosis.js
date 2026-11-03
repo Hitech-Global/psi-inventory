@@ -1,5 +1,12 @@
 'use strict';
 
+const {
+  findAddToCartDropoffs,
+  findHighBounceLowConversion,
+  ADD_TO_CART_RULES,
+  BOUNCE_RULES,
+} = require('./shop-health-evaluation');
+
 function toNumber(value) {
   const n = Number(value);
   return Number.isFinite(n) ? n : 0;
@@ -104,6 +111,59 @@ function changeSet(current, previous) {
 
 function signal(code, severity, title, detail, action = null) {
   return { code, severity, title, detail, action };
+}
+
+/**
+ * What the products themselves say.
+ *
+ * These are the figures the open platform does not give — the visits, the
+ * basket, what was saved for later — so they come from the seller
+ * centre's export and are only there when it has been read.
+ *
+ * They are said here without guessing why: a customer who put something
+ * in the basket and did not buy it was close to buying, and something
+ * stood in the way, but whether it was the price, the shipping, the wait
+ * or the stock cannot be told from the figures. What can be told is how
+ * many, and that is what is said.
+ */
+function buildProductSignals(products = [], options = {}) {
+  const signals = [];
+  const dropoffs = findAddToCartDropoffs(products, {
+    minAddToCartVisitors: options.minAddToCartVisitors,
+    maxBuyerRate: options.maxBuyerRate,
+  });
+  if (dropoffs.length) {
+    const lost = dropoffs.reduce((sum, row) => sum + row.lostVisitors, 0);
+    const names = dropoffs.slice(0, 3)
+      .map(row => `「${row.itemName || row.itemId}」加购 ${row.addToCartVisitors} 人、成交 ${row.buyers} 人、流失 ${row.lostVisitors} 人`)
+      .join('；');
+    signals.push(signal(
+      'ADD_TO_CART_NOT_CONVERTED',
+      'high',
+      '加购后未成交',
+      `${dropoffs.length} 个商品出现加购后未成交，合计 ${lost} 位加购访客未购买。流失最多：${names}。`,
+      `逐个核对这 ${dropoffs.length} 个商品的价格、运费与库存：这些访客已经想买，卡在哪一步数据无法判断，需要人工确认。`,
+    ));
+  }
+
+  const bounced = findHighBounceLowConversion(products, {
+    minVisitors: options.minBounceMinVisitors,
+    minBounceRate: options.minBounceRate,
+    maxUnitsPerVisitor: options.maxUnitsPerVisitor,
+  });
+  if (bounced.length) {
+    const left = bounced.reduce((sum, row) => sum + (row.bounceVisitors || 0), 0);
+    const top = bounced[0];
+    signals.push(signal(
+      'HIGH_BOUNCE_LOW_CONVERSION',
+      'medium',
+      '商品页留不住人',
+      `${bounced.length} 个商品访客量足够但跳出率高且销量低，合计 ${left} 位访客离开未购买。`
+        + `最严重：「${top.itemName || top.itemId}」${top.productVisitors} 位访客、跳出率 ${(top.bounceRate * 100).toFixed(1)}%、仅售出 ${top.unitsSold} 件。`,
+      `检查这 ${bounced.length} 个商品的详情页：主图、规格、到手价与库存状态是否说清；跳出高但销量不低的不在此列。`,
+    ));
+  }
+  return signals;
 }
 
 function buildSignals(current, previous, changes, {
@@ -261,7 +321,7 @@ function diagnoseRow(currentRow, previousRow = null, options = {}) {
       ? currentRow.adSpendRatioLimit
       : (options.adSpendRatioLimit === undefined ? 0.15 : options.adSpendRatioLimit),
   };
-  const signals = hasPrevious
+  const periodSignals = hasPrevious
     ? buildSignals(current, previous, changes, effectiveOptions)
     : [signal(
         'NO_PREVIOUS_PERIOD',
@@ -271,12 +331,41 @@ function diagnoseRow(currentRow, previousRow = null, options = {}) {
         '先补齐上一周期数据，不在缺少基线时生成增长/下降结论。',
       )];
 
+  // What the products say is said whether or not there is a previous
+  // period to compare with: a basket that was not bought is a fact about
+  // this period, and it does not need a baseline to be a fact.
+  const products = effectiveOptions.products || [];
+  const signals = [...periodSignals, ...buildProductSignals(products, effectiveOptions)];
+
   return {
     current,
     previous: hasPrevious ? previous : null,
     changes: hasPrevious ? changes : null,
     primarySignal: signals[0],
     signals,
+    productDiagnosis: products.length ? {
+      dropoffs: findAddToCartDropoffs(products, {
+        minAddToCartVisitors: effectiveOptions.minAddToCartVisitors,
+        maxBuyerRate: effectiveOptions.maxBuyerRate,
+      }),
+      bounced: findHighBounceLowConversion(products, {
+        minVisitors: effectiveOptions.minBounceMinVisitors,
+        minBounceRate: effectiveOptions.minBounceRate,
+        maxUnitsPerVisitor: effectiveOptions.maxUnitsPerVisitor,
+      }),
+      rules: {
+        addToCart: {
+          minAddToCartVisitors: effectiveOptions.minAddToCartVisitors
+            ?? ADD_TO_CART_RULES.minAddToCartVisitors,
+          maxBuyerRate: effectiveOptions.maxBuyerRate ?? ADD_TO_CART_RULES.maxBuyerRate,
+        },
+        bounce: {
+          minVisitors: effectiveOptions.minBounceMinVisitors ?? BOUNCE_RULES.minVisitors,
+          minBounceRate: effectiveOptions.minBounceRate ?? BOUNCE_RULES.minBounceRate,
+          maxUnitsPerVisitor: effectiveOptions.maxUnitsPerVisitor ?? BOUNCE_RULES.maxUnitsPerVisitor,
+        },
+      },
+    } : null,
   };
 }
 
@@ -312,6 +401,7 @@ module.exports = {
   metricSnapshot,
   changeSet,
   buildSignals,
+  buildProductSignals,
   diagnoseRow,
   diagnosePortfolio,
 };

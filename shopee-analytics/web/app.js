@@ -740,6 +740,10 @@ async function loadGmvMaxCampaigns() {
   renderCampaigns(data, shop);
 }
 
+// Whether the products are read one at a time or gathered under the parent
+// they share.
+let productGroupMode = 'item';
+
 async function loadFunnel() {
   const shop = selectedShop();
   if (!shop) return;
@@ -757,9 +761,12 @@ async function loadFunnel() {
   // products' are not, and the other way round.
   try {
     const products = await json(
-      `/api/shopee-analytics/product-traffic?shop_id=${encodeURIComponent(String(shop.shopId))}&limit=300`,
+      `/api/shopee-analytics/product-traffic?shop_id=${encodeURIComponent(String(shop.shopId))}&limit=300`
+      + `${productGroupMode === 'parent' ? '&by_parent=1' : ''}`,
     );
-    window.ShopeeFunnel?.renderProducts({ ...products, currency: shop.currency || null });
+    window.ShopeeFunnel?.renderProducts({
+      ...products, currency: shop.currency || null, byParent: productGroupMode === 'parent',
+    });
   } catch (error) {
     window.ShopeeFunnel?.renderProducts(null);
   }
@@ -1866,6 +1873,10 @@ $('#shopSelect').addEventListener('change', onShopChanged);
 $('#loadBtn').addEventListener('click', readSelectedData);
 $('#funnelExportBtn')?.addEventListener('click', () => window.ShopeeFunnel?.exportCsv());
 $('#funnelProductsExportBtn')?.addEventListener('click', () => window.ShopeeFunnel?.exportProductsCsv());
+$('#funnelProductsGroupToggle')?.addEventListener('click', () => {
+  productGroupMode = productGroupMode === 'parent' ? 'item' : 'parent';
+  loadFunnel();
+});
   $('#healthExportBtn')?.addEventListener('click', () => window.ShopeeShopHealth?.exportCsv());
   $('#healthRefreshBtn')?.addEventListener('click', () => loadShopHealth());
   $('#tiktokExportBtn')?.addEventListener('click', () => window.TikTokUI?.exportCsv());

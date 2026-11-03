@@ -760,7 +760,19 @@ function createShopeeAnalyticsRouter({
 
       const current = storeDetailMetrics(currentOverview.shops[0] || null);
       const prior = storeDetailMetrics(previousOverview.shops[0] || null);
-      const diagnosis = current ? diagnoseRow(current, prior) : null;
+
+      // What the products say — the visits, the basket, what was saved for
+      // later. The open platform gives none of it, so it is only here when
+      // the seller centre's export has been read.
+      let products = [];
+      if (shopHealthRepository) {
+        try {
+          products = await shopHealthRepository.listProductTraffic({ shopIds: [shopId], limit: 300 });
+        } catch (error) {
+          products = [];
+        }
+      }
+      const diagnosis = current ? diagnoseRow(current, prior, { products }) : null;
       const comparedSkus = addSkuPeriodComparison(skus, previousSkus);
       const skuDiagnosis = diagnoseStoreSkus(comparedSkus, {
         adSpendRatioLimit: current && current.adSpendRatioLimit != null
@@ -1128,9 +1140,16 @@ function createShopeeAnalyticsRouter({
         res.json({ rows: [], totals: null });
         return;
       }
-      const rows = await shopHealthRepository.listProductTraffic({
-        shopIds: allowed, rowKind, limit: positiveInt(req.query.limit || 300, 'limit'),
-      });
+      // The products gathered under the parent they share, when asked for:
+      // the same figures, read as families rather than one at a time.
+      const byParent = String(req.query.by_parent || '') === '1';
+      const rows = byParent
+        ? await shopHealthRepository.listProductTrafficByParentSku({
+          shopIds: allowed, limit: positiveInt(req.query.limit || 300, 'limit'),
+        })
+        : await shopHealthRepository.listProductTraffic({
+          shopIds: allowed, rowKind, limit: positiveInt(req.query.limit || 300, 'limit'),
+        });
       // The totals are the shop's own figures for the period, which is
       // what the figures below are parts of.
       const totals = rows.reduce((sum, row) => ({

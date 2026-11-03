@@ -275,6 +275,7 @@
     const rows = (payload && payload.rows) || [];
     const totals = payload && payload.totals;
     const currency = (payload && payload.currency) || null;
+    const byParent = Boolean(payload && payload.byParent);
 
     if (!rows.length) {
       panel.classList.add('hidden');
@@ -288,6 +289,12 @@
     body.innerHTML = sortProducts(rows).map(row => renderProductRow(row, currency)).join('');
     renderProductSummary(totals, currency);
     renderDropoffs(payload.dropoffs || [], payload.rules || null);
+
+    const toggle = document.querySelector('#funnelProductsGroupToggle');
+    if (toggle) {
+      toggle.textContent = byParent ? '按商品看' : '按父 SKU 聚合';
+      toggle.dataset.mode = byParent ? 'item' : 'parent';
+    }
 
     const subtitle = document.querySelector('#funnelProductsSubtitle');
     if (subtitle) {

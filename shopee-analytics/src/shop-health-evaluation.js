@@ -219,6 +219,65 @@ function findAddToCartDropoffs(products = [], options = {}) {
   return found;
 }
 
+/**
+ * The products people looked at and left.
+ *
+ * A visitor who bounces looked at the product and did not buy it. When
+ * that happens to a lot of the people who came, the product page is not
+ * saying what they came to find — the picture, the size, the price, or
+ * whether it is in stock.
+ *
+ * A high bounce rate on its own is not a fault: a product with few
+ * visitors and a high rate is two people. So the list is of the products
+ * that both drew a crowd and sent it away again.
+ */
+const BOUNCE_RULES = Object.freeze({
+  minVisitors: 200,
+  minBounceRate: 0.25,
+  maxUnitsPerVisitor: 0.10,
+});
+
+/**
+ * The products people looked at and left without buying.
+ */
+function findHighBounceLowConversion(products = [], options = {}) {
+  const minVisitors = Number.isFinite(options.minVisitors)
+    ? options.minVisitors : BOUNCE_RULES.minVisitors;
+  const minBounceRate = Number.isFinite(options.minBounceRate)
+    ? options.minBounceRate : BOUNCE_RULES.minBounceRate;
+  const maxUnitsPerVisitor = Number.isFinite(options.maxUnitsPerVisitor)
+    ? options.maxUnitsPerVisitor : BOUNCE_RULES.maxUnitsPerVisitor;
+
+  const found = [];
+  for (const product of products) {
+    const visitors = numberOrNull(product.productVisitors);
+    const bounceRate = numberOrNull(product.bounceRate);
+    const unitsSold = numberOrNull(product.unitsSold);
+    if (visitors === null || bounceRate === null || unitsSold === null) continue;
+    if (visitors < minVisitors) continue;
+    if (bounceRate < minBounceRate) continue;
+    const unitsPerVisitor = unitsSold / visitors;
+    if (unitsPerVisitor >= maxUnitsPerVisitor) continue;
+    found.push({
+      itemId: product.itemId,
+      itemName: product.itemName,
+      parentSku: product.parentSku,
+      productVisitors: visitors,
+      bounceVisitors: numberOrNull(product.bounceVisitors),
+      bounceRate,
+      unitsSold,
+      unitsPerVisitor,
+      productPageViews: numberOrNull(product.productPageViews),
+      productClicks: numberOrNull(product.productClicks),
+      likes: numberOrNull(product.likes),
+      sales: numberOrNull(product.sales),
+    });
+  }
+  // The ones that sent away the most people come first.
+  found.sort((a, b) => (b.bounceVisitors || 0) - (a.bounceVisitors || 0));
+  return found;
+}
+
 function numberOrNull(value) {
   if (value === null || value === undefined || value === '') return null;
   const number = Number(value);
@@ -232,4 +291,6 @@ module.exports = {
   violationTotal,
   ADD_TO_CART_RULES,
   findAddToCartDropoffs,
+  BOUNCE_RULES,
+  findHighBounceLowConversion,
 };

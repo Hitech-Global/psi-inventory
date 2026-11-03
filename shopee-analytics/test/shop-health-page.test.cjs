@@ -111,3 +111,47 @@ test('the products can be put in order, and the ones that were lost are named', 
   assert.equal(found[0].lostVisitors, 1657);
   assert.equal(found[1].buyerRate < 0.4, true);
 });
+
+test('the products people looked at and left are named', () => {
+  const evaluation = require('../src/shop-health-evaluation');
+  const found = evaluation.findHighBounceLowConversion([
+    // Drawn a crowd and sent it away again: 520 came, 211 left, two sold.
+    { itemId: 'A', productVisitors: 520, bounceRate: 0.406, bounceVisitors: 211, unitsSold: 2 },
+    // High bounce, but it sells: the rate is not the fault here.
+    { itemId: 'B', productVisitors: 11619, bounceRate: 0.158, bounceVisitors: 1839, unitsSold: 1563 },
+    // Two people and a high rate is not a pattern.
+    { itemId: 'C', productVisitors: 50, bounceRate: 0.5, bounceVisitors: 25, unitsSold: 1 },
+    // Nothing reported is not a fault either.
+    { itemId: 'D', productVisitors: 800, bounceRate: null, unitsSold: null },
+  ]);
+  assert.deepEqual(found.map(row => row.itemId), ['A'],
+    'only the one that drew a crowd and sent it away again');
+  assert.equal(found[0].bounceVisitors, 211);
+});
+
+test('the products can be read as families, and the diagnosis says what they say', () => {
+  const router = fs.readFileSync(path.join(srcDir, 'http-router.js'), 'utf8');
+  const repository = fs.readFileSync(path.join(srcDir, 'shop-health-repository.js'), 'utf8');
+  const appJs = fs.readFileSync(path.join(webDir, 'app.js'), 'utf8');
+  const diagnosis = require('../src/portfolio-diagnosis');
+
+  assert.ok(repository.includes('async listProductTrafficByParentSku'), 'the families must be readable');
+  assert.ok(router.includes('by_parent'), 'the route must offer them');
+  assert.ok(appJs.includes('by_parent=1'), 'the page must ask for them');
+  // The figures come from the products' own rows: a product's row already
+  // says what its variations said together, so adding both counts twice.
+  assert.ok(repository.includes('rowKind: \'PRODUCT\''), 'the families must be built from the products\' rows');
+
+  // What the products say reaches the diagnosis, and it is said without
+  // guessing why.
+  const result = diagnosis.diagnoseRow({ sales: 100 }, { sales: 80 }, {
+    products: [
+      { itemId: 'A', itemName: 'A', addToCartVisitors: 2367, buyers: 710 },
+      { itemId: 'B', itemName: 'B', productVisitors: 520, bounceRate: 0.406, bounceVisitors: 211, unitsSold: 2 },
+    ],
+  });
+  const codes = result.signals.map(entry => entry.code);
+  assert.ok(codes.includes('ADD_TO_CART_NOT_CONVERTED'), 'the basket that was not bought must be said');
+  assert.ok(codes.includes('HIGH_BOUNCE_LOW_CONVERSION'), 'the pages that sent people away must be said');
+  assert.ok(result.productDiagnosis, 'the products themselves must be named');
+});
