@@ -17,6 +17,7 @@ const { ROLE_SUPER_ADMIN, authorizedShopIds, assertShopAccess } = require('./fei
 const { BRAND_PORTAL_COOKIE, stateCookie, clearStateCookie, parseCookie } = require('./brand-portal-oauth-service');
 const { ERP_COOKIE, stateCookie: erpStateCookie, clearStateCookie: clearErpStateCookie, parseCookie: parseErpCookie } = require('./erp-oauth-service');
 const { TIKTOK_COOKIE, stateCookie: tiktokStateCookie, clearStateCookie: clearTikTokStateCookie, parseCookie: parseTikTokCookie } = require('./tiktok-oauth-service');
+const { resolveDateRange, regionTimeZone } = require('./tiktok-query-repository');
 const { SkillJobManager, normalizeReportLanguage } = require('./skill-job-manager');
 const { buildFunnelRows, missingSources } = require('./shop-funnel');
 const {
@@ -227,6 +228,7 @@ function createShopeeAnalyticsRouter({
   erpOAuthService = null,
   tiktokOAuthService = null,
   shopHealthRepository = null,
+  tiktokQueryRepository = null,
 }) {
   const router = express.Router();
   const skillJobManager = new SkillJobManager();
@@ -238,6 +240,29 @@ function createShopeeAnalyticsRouter({
     error.code = code;
     error.status = status;
     return error;
+  }
+
+  /**
+   * 把查询参数里的日期区间规整成 [startDate, endDate]。
+   *
+   * TikTok 的报表端点有 30 天跨度上限，所以这里给的默认区间（30 天）
+   * 与那个限制对齐 —— 调度脚本与页面看到的口径一致。
+   *
+   * ★ 时区：TikTok 的店铺档案里没有独立的 timezone 字段（不像 Shopee 的
+   *   店铺档案），只有 region_group。所以按区域取时区。
+   *   区域缺省是 ROW（东南亚），UTC+8。
+   *
+   * @param {object} query Express 的 req.query
+   * @returns {{startDate: string, endDate: string}}
+   */
+  function resolveTikTokDateRange(query = {}) {
+    const regionGroup = String(query.region_group || 'ROW').trim().toUpperCase();
+    const today = localIsoDate(new Date(), regionTimeZone(regionGroup));
+    const end = isoDate(query.end_date || today, 'end_date');
+    const start = query.start_date ? isoDate(query.start_date, 'start_date') : null;
+    if (!start) return resolveDateRange({ startDate: null, endDate: end, today: new Date() });
+    if (start > end) throw scopeError('TIKTOK_DATE_RANGE_INVALID', 'start_date must be <= end_date', 400);
+    return { startDate: start, endDate: end };
   }
 
   router.get('/shop-scopes', async (req, res, next) => {
@@ -609,6 +634,96 @@ function createShopeeAnalyticsRouter({
       res.setHeader('Set-Cookie', clearTikTokStateCookie());
       // 跳到平台接入页而不是首页：只有该页会读 tiktok 参数并展示连接结果。
       res.redirect(302, '/connections?tiktok=connected&shops=' + encodeURIComponent(result.shopCount));
+    } catch (error) { next(error); }
+  });
+
+  // ---- TikTok Shop 数据查询 ----
+  //
+  // 授权只是拿到了凭据，能不能看到数据是另一回事 —— 这一组接口把已落库的
+  // TikTok 数据读出来，供「TikTok」页签展示。
+  //
+  // ★ 权限隔离：TikTok 的 shop_id 是**字符串**，与 Shopee 的数字 shop_id
+  //   不是一回事，所以不能用 assertShopAccess（它按数字比），
+  //   否则会把不相干的店铺 ID 悄悄当成同一家。这里改用字符串比较，
+  //   并且照旧只放行 operator 被分配到的店铺。
+
+  /**
+   * 判断当前请求者能否看这家 TikTok 店铺。
+   *
+   * @param {object} req Express 请求
+   * @param {string} shopId TikTok 店铺 ID（字符串）
+   * @returns {boolean}
+   */
+  function canSeeTikTokShop(req, shopId) {
+    if (!req.auth || !req.auth.enabled) return true;
+    if (req.auth.role === ROLE_SUPER_ADMIN) return true;
+    const allowed = Array.isArray(req.auth.shopIds) ? req.auth.shopIds : [];
+    // 两侧都转成字符串再比 —— Shopee 的授权名单里存的是数字，
+    // 直接 === 会永远不相等。
+    const target = String(shopId);
+    return allowed.some(id => String(id) === target);
+  }
+
+  router.get('/tiktok/shops', async (req, res, next) => {
+    try {
+      if (!tiktokQueryRepository) throw scopeError('TIKTOK_DATA_UNAVAILABLE', 'TikTok data registry is unavailable', 503);
+      const shops = await tiktokQueryRepository.listShops();
+      // 只列可见的店铺 —— 未授权的店铺不列，页面会单独说明"尚未接入"。
+      const visible = shops.filter(shop => canSeeTikTokShop(req, shop.shopId));
+      res.json({ shops: visible });
+    } catch (error) { next(error); }
+  });
+
+  router.get('/tiktok/shops/:shopId/overview', async (req, res, next) => {
+    try {
+      if (!tiktokQueryRepository) throw scopeError('TIKTOK_DATA_UNAVAILABLE', 'TikTok data registry is unavailable', 503);
+      const shopId = String(req.params.shopId || '').trim();
+      if (!shopId) throw scopeError('TIKTOK_SHOP_ID_REQUIRED', 'shopId is required', 400);
+      if (!canSeeTikTokShop(req, shopId)) {
+        throw scopeError('TIKTOK_SHOP_FORBIDDEN', 'This TikTok shop is not assigned to you', 403);
+      }
+      const regionGroup = String(req.query.region_group || 'ROW').trim().toUpperCase();
+      const { startDate, endDate } = resolveTikTokDateRange(req.query);
+      const [overview, daily, coverage] = await Promise.all([
+        tiktokQueryRepository.getShopOverview({ regionGroup, shopId, startDate, endDate }),
+        tiktokQueryRepository.listDailySummary({ regionGroup, shopId, startDate, endDate }),
+        tiktokQueryRepository.getDataCoverage({ regionGroup, shopId, startDate, endDate }),
+      ]);
+      res.json({ ...overview, daily, coverage });
+    } catch (error) { next(error); }
+  });
+
+  router.get('/tiktok/shops/:shopId/products', async (req, res, next) => {
+    try {
+      if (!tiktokQueryRepository) throw scopeError('TIKTOK_DATA_UNAVAILABLE', 'TikTok data registry is unavailable', 503);
+      const shopId = String(req.params.shopId || '').trim();
+      if (!shopId) throw scopeError('TIKTOK_SHOP_ID_REQUIRED', 'shopId is required', 400);
+      if (!canSeeTikTokShop(req, shopId)) {
+        throw scopeError('TIKTOK_SHOP_FORBIDDEN', 'This TikTok shop is not assigned to you', 403);
+      }
+      const regionGroup = String(req.query.region_group || 'ROW').trim().toUpperCase();
+      const { startDate, endDate } = resolveTikTokDateRange(req.query);
+      const products = await tiktokQueryRepository.listProductSummary({
+        regionGroup, shopId, startDate, endDate, limit: 100,
+      });
+      res.json({ products, startDate, endDate });
+    } catch (error) { next(error); }
+  });
+
+  router.get('/tiktok/shops/:shopId/orders', async (req, res, next) => {
+    try {
+      if (!tiktokQueryRepository) throw scopeError('TIKTOK_DATA_UNAVAILABLE', 'TikTok data registry is unavailable', 503);
+      const shopId = String(req.params.shopId || '').trim();
+      if (!shopId) throw scopeError('TIKTOK_SHOP_ID_REQUIRED', 'shopId is required', 400);
+      if (!canSeeTikTokShop(req, shopId)) {
+        throw scopeError('TIKTOK_SHOP_FORBIDDEN', 'This TikTok shop is not assigned to you', 403);
+      }
+      const regionGroup = String(req.query.region_group || 'ROW').trim().toUpperCase();
+      const { startDate, endDate } = resolveTikTokDateRange(req.query);
+      const orders = await tiktokQueryRepository.listRecentOrders({
+        regionGroup, shopId, startDate, endDate, limit: 50,
+      });
+      res.json({ orders, startDate, endDate });
     } catch (error) { next(error); }
   });
 

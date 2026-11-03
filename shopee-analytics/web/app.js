@@ -44,6 +44,9 @@ const state = {
   adGroupBatch: [],
   adGroupFiles: [],
   shopScopes: [],
+  // TikTok 页当前看的店铺。它的 ID 是字符串，与 Shopee 的数字 shopId 不是一回事，
+  // 所以单独记一份，不与 state.shops 混用。
+  tiktokShopId: null,
 };
 
 function moneyCompact(value) {
@@ -777,6 +780,71 @@ async function loadShopHealth() {
   const query = params.toString();
   const data = await json(`/api/shopee-analytics/shop-health${query ? `?${query}` : ''}`);
   window.ShopeeShopHealth?.render(data);
+}
+
+/**
+ * 加载 TikTok 经营数据。
+ *
+ * 与 Shopee 侧不同：TikTok 的店铺是**另一批店铺**，有自己的 ID 体系
+ * （字符串，不是数字），所以不能复用顶部的店铺下拉框。
+ * 这里先取 TikTok 已接入的店铺列表，再取选中店铺的数据。
+ */
+async function loadTikTokData() {
+  const shopsHost = document.querySelector('#tiktokSummary');
+  const list = await json('/api/shopee-analytics/tiktok/shops');
+  const shops = list.shops || [];
+
+  if (!shops.length) {
+    // 一家店都没接入 —— 页面要说清原因和下一步，而不是给一张空表。
+    const notice = document.querySelector('#tiktokNotice');
+    if (notice) {
+      notice.innerHTML = '<div class="tiktok-notice warn">'
+        + '<strong>还没有接入任何 TikTok 店铺。</strong>'
+        + '<span>请先在「平台接入」里完成 TikTok Shop 授权，再回到这里查看数据。</span></div>';
+      notice.classList.remove('hidden');
+    }
+    if (shopsHost) {
+      shopsHost.innerHTML = '';
+      shopsHost.classList.add('hidden');
+    }
+    ['tiktokDailyBody', 'tiktokProductBody', 'tiktokOrderBody'].forEach(id => {
+      const body = document.querySelector(`#${id}`);
+      if (body) body.innerHTML = '<tr><td class="empty">尚未接入 TikTok 店铺。</td></tr>';
+    });
+    return;
+  }
+
+  // 记住上次看的店铺；没有就取第一家。
+  const previous = state.tiktokShopId;
+  const selected = shops.find(shop => String(shop.shopId) === String(previous)) || shops[0];
+  state.tiktokShopId = selected.shopId;
+
+  // TikTok 有自己的店铺列表 —— 顶部的「店铺」下拉框是 Shopee 专用的，
+  // 拿它来筛 TikTok 会选到不相干的店铺。
+  const picker = document.querySelector('#tiktokShopSelect');
+  if (picker) {
+    picker.innerHTML = shops.map(shop => {
+      const label = shop.regionGroup ? `Shop ${shop.shopId}（${shop.regionGroup}）` : `Shop ${shop.shopId}`;
+      return `<option value="${escapeHtml(shop.shopId)}"${String(shop.shopId) === String(selected.shopId) ? ' selected' : ''}>${escapeHtml(label)}</option>`;
+    }).join('');
+  }
+
+  const filters = currentFilters();
+  const params = new URLSearchParams();
+  if (filters.startDate) params.set('start_date', filters.startDate);
+  if (filters.endDate) params.set('end_date', filters.endDate);
+
+  const [overview, products, orders] = await Promise.all([
+    json(`/api/shopee-analytics/tiktok/shops/${encodeURIComponent(selected.shopId)}/overview?${params}`),
+    json(`/api/shopee-analytics/tiktok/shops/${encodeURIComponent(selected.shopId)}/products?${params}`),
+    json(`/api/shopee-analytics/tiktok/shops/${encodeURIComponent(selected.shopId)}/orders?${params}`),
+  ]);
+
+  window.TikTokUI?.render({
+    ...overview,
+    products: products.products || [],
+    orders: orders.orders || [],
+  });
 }
 
 function loadCampaigns() {
@@ -1568,6 +1636,9 @@ async function loadCurrentView({ manageButton = true } = {}) {
     else if (state.view === 'health') {
       await loadShopHealth();
     }
+    else if (state.view === 'tiktok') {
+      await loadTikTokData();
+    }
     else if (state.view === 'status') {
       if (selectedShop()) await loadSystemStatus();
       else await loadStatusPortfolio();
@@ -1585,6 +1656,19 @@ async function loadCurrentView({ manageButton = true } = {}) {
       // panel and no idea why.
       const body = $('#healthBody');
       if (body) body.innerHTML = `<tr><td class="empty">读取失败：${escapeHtml(error.message)}</td></tr>`;
+    } else if (state.view === 'tiktok') {
+      // 同样地，页面必须说清哪里出了问题 —— 否则表格一直显示"等待加载数据"，
+      // 用户只看到一片空白，不知道是没数据还是出错了。
+      const notice = document.querySelector('#tiktokNotice');
+      if (notice) {
+        notice.innerHTML = '<div class="tiktok-notice warn">'
+          + `<strong>读取 TikTok 数据失败。</strong><span>${escapeHtml(error.message)}</span></div>`;
+        notice.classList.remove('hidden');
+      }
+      ['tiktokDailyBody', 'tiktokProductBody', 'tiktokOrderBody'].forEach(id => {
+        const cell = document.querySelector(`#${id}`);
+        if (cell) cell.innerHTML = `<tr><td class="empty">读取失败：${escapeHtml(error.message)}</td></tr>`;
+      });
     } else {
       $('#statusSubtitle').textContent = error.message;
     }
@@ -1667,7 +1751,7 @@ function restoreLocaleUiState() {
   if (saved.endDate) $('#endDate').value = saved.endDate;
   window.dispatchEvent(new CustomEvent('shopee-date-range-sync'));
 
-  const view = ['overview', 'store', 'ads', 'funnel', 'health', 'status'].includes(saved.view) ? saved.view : 'overview';
+  const view = ['overview', 'store', 'ads', 'funnel', 'health', 'status', 'tiktok'].includes(saved.view) ? saved.view : 'overview';
   const adsType = ['manual', 'auto', 'groups'].includes(saved.adsType) ? saved.adsType : 'manual';
   const adStatus = ['all', 'ongoing', 'paused', 'ended', 'deleted'].includes(saved.adStatus) ? saved.adStatus : 'all';
   state.view = view;
@@ -1784,6 +1868,20 @@ $('#funnelExportBtn')?.addEventListener('click', () => window.ShopeeFunnel?.expo
 $('#funnelProductsExportBtn')?.addEventListener('click', () => window.ShopeeFunnel?.exportProductsCsv());
   $('#healthExportBtn')?.addEventListener('click', () => window.ShopeeShopHealth?.exportCsv());
   $('#healthRefreshBtn')?.addEventListener('click', () => loadShopHealth());
+  $('#tiktokExportBtn')?.addEventListener('click', () => window.TikTokUI?.exportCsv());
+  $('#tiktokRefreshBtn')?.addEventListener('click', () => loadTikTokData());
+  // 切换 TikTok 店铺：记住选择并重新读数据。
+  $('#tiktokShopSelect')?.addEventListener('change', (event) => {
+    state.tiktokShopId = event.target.value;
+    loadTikTokData().catch((error) => {
+      const notice = document.querySelector('#tiktokNotice');
+      if (notice) {
+        notice.innerHTML = '<div class="tiktok-notice warn">'
+          + `<strong>读取 TikTok 数据失败。</strong><span>${escapeHtml(error.message)}</span></div>`;
+        notice.classList.remove('hidden');
+      }
+    });
+  });
 window.addEventListener('shopee-date-range-changed', () => {
   if (state.view !== 'ads') loadCurrentView();
 });
