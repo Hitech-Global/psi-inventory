@@ -41,15 +41,25 @@
   /**
    * A figure, the standard it is measured against, and whether it met it.
    */
+  /**
+   * A figure, written the way its kind is written.
+   */
+  function formatValue(value, kind) {
+    if (isMissing(value)) return '—';
+    if (kind === 'percent') return `${(Number(value) * 100).toFixed(2)}%`;
+    if (kind === 'days') return `${Number(value).toFixed(2)} 天`;
+    return Number(value).toFixed(2);
+  }
+
   function formatMeasure(measure) {
     if (isMissing(measure.value)) return '<span class="health-empty">—</span>';
-    let shown;
-    if (measure.kind === 'percent') shown = `${(Number(measure.value) * 100).toFixed(2)}%`;
-    else if (measure.kind === 'days') shown = `${Number(measure.value).toFixed(2)} 天`;
-    else shown = Number(measure.value).toFixed(2);
+    const shown = formatValue(measure.value, measure.kind);
+    // The standard is written the same way as the figure, so the two can be
+    // read against each other: a standard of five per cent is not shown as
+    // a fifth of a per cent.
     const target = isMissing(measure.target)
       ? ''
-      : ` <span class="health-target">${escapeHtml(measure.comparator || '')} ${escapeHtml(String(measure.target))}</span>`;
+      : ` <span class="health-target">${escapeHtml(measure.comparator || '')} ${escapeHtml(formatValue(measure.target, measure.kind))}</span>`;
     const mark = measure.status === 'met'
       ? '<span class="health-mark met" title="达标">✓</span>'
       : measure.status === 'breached'

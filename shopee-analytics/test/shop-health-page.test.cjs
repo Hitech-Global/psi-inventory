@@ -32,6 +32,10 @@ test('the endpoint is registered and answers for every visible shop', () => {
 test('the page tells the platform\'s standard from the figure', () => {
   const healthUi = fs.readFileSync(path.join(webDir, 'shop-health-ui-v1.js'), 'utf8');
   assert.ok(healthUi.includes('target'), 'the standard must be shown with the figure');
+  // The standard is written the same way as the figure: a standard of five
+  // per cent must not be shown as a fifth of a per cent, or the two cannot
+  // be read against each other.
+  assert.ok(healthUi.includes('formatValue(measure.target, measure.kind)'), 'the standard must be written the way the figure is');
   assert.ok(healthUi.includes('exportCsv'), 'the page must offer an export');
   assert.ok(healthUi.includes('text/csv'), 'the export must be a csv');
 });
