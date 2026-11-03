@@ -79,7 +79,7 @@ const { FeishuAuthRepository, hashToken } = require('../src/feishu-auth');
     ]) {
       assert(tiktokNames.has(expected), `missing table ${expected}`);
     }
-    assert.strictEqual(tiktokNames.size, 4, 'TikTok schema must expose exactly 4 tiktok_* tables');
+    assert.strictEqual(tiktokNames.size, 9, 'TikTok schema must expose exactly 9 tiktok_* tables');
 
     // TikTok 凭据表的列约束：cipher 与 shop_id 成对存在，且分区键完整
     const tiktokTokenColumns = await pool.query(
