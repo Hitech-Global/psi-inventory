@@ -215,6 +215,97 @@ class TikTokTokenRepository {
   }
 
   /**
+   * 刷新成功后覆盖写入新的 token。
+   *
+   * **refresh_token 会轮换**：刷新后必须用新值覆盖旧值，旧值立刻失效。
+   * 只更新 access_token 而留着旧 refresh_token，会导致下一次刷新直接失败，
+   * 之后整条数据线都拿不到凭据 —— 所以这里两个值一起写，且必须写进同一行。
+   *
+   * 与 save() 的区别：save() 是"建立或整体覆盖"（授权时用，会重写 seller_type 等），
+   * 这里是"只动 token 部分"。刷新不应该顺手把 seller_type、region 抹掉，
+   * 因为刷新时未必拿得到这些字段，抹掉就等于丢了店铺画像。
+   *
+   * @param {object} options
+   * @param {string} options.appKey
+   * @param {string} options.regionGroup
+   * @param {string} options.shopId
+   * @param {string} options.accessToken
+   * @param {string} options.refreshToken 新一轮的 refresh_token（必须是新值）
+   * @param {Date} options.expiresAt
+   * @param {Date} [options.lastRefreshAt]
+   */
+  async updateAfterRefresh({
+    appKey,
+    regionGroup,
+    shopId,
+    accessToken,
+    refreshToken,
+    expiresAt,
+    lastRefreshAt = null,
+  }) {
+    if (!appKey) throw new Error('appKey is required');
+    if (!regionGroup) throw new Error('regionGroup is required');
+    if (!shopId) throw new Error('shopId is required');
+    if (!accessToken) throw new Error('accessToken is required');
+    if (!refreshToken) throw new Error('refreshToken is required');
+
+    const encrypted = encryptTokenBundle({ accessToken, refreshToken }, this.masterKey);
+    const result = await this.pool.query(
+      `UPDATE tiktok_shop_tokens
+       SET token_blob=$4, token_iv=$5, token_tag=$6,
+           expires_at=$7, last_refresh_at=COALESCE($8,now()),
+           refresh_error=NULL, updated_at=now()
+       WHERE app_key=$1 AND region_group=$2 AND shop_id=$3
+       RETURNING shop_id`,
+      [
+        appKey, regionGroup, shopId,
+        encrypted.tokenBlob, encrypted.tokenIv, encrypted.tokenTag,
+        expiresAt, lastRefreshAt,
+      ],
+    );
+    if (!result.rows.length) {
+      const error = new Error(`No TikTok credential stored for shop ${shopId}`);
+      error.code = 'TIKTOK_CREDENTIAL_MISSING';
+      throw error;
+    }
+  }
+
+  /**
+   * 列出临近过期的店铺凭据。
+   *
+   * 这是刷新调度的入口：扫描 expires_at，落在提前量以内的就是要刷新的。
+   * 提前量留够（默认 300 秒），是为了避免请求发出时刚好过期 ——
+   * 一次同步要跑很久，临界点过期会让整轮同步在中途失败。
+   *
+   * @param {object} options
+   * @param {string} options.appKey
+   * @param {string} options.regionGroup
+   * @param {number} [options.marginSeconds] 提前量
+   * @param {number} [options.now] 当前时间戳（毫秒），便于测试注入
+   * @returns {Promise<Array<object>>}
+   */
+  async listExpiring({ appKey, regionGroup, marginSeconds = SHOP_TOKEN_REFRESH_MARGIN_SECONDS, now = Date.now() }) {
+    if (!appKey) throw new Error('appKey is required');
+    if (!regionGroup) throw new Error('regionGroup is required');
+    const result = await this.pool.query(
+      `SELECT shop_id, shop_cipher, expires_at, last_refresh_at, refresh_error
+       FROM tiktok_shop_tokens
+       WHERE app_key=$1 AND region_group=$2 AND expires_at IS NOT NULL
+       ORDER BY expires_at`,
+      [appKey, regionGroup],
+    );
+    return result.rows
+      .filter(row => isExpired(row.expires_at, marginSeconds, now))
+      .map(row => ({
+        shopId: String(row.shop_id),
+        shopCipher: row.shop_cipher,
+        expiresAt: row.expires_at ? new Date(row.expires_at) : null,
+        lastRefreshAt: row.last_refresh_at ? new Date(row.last_refresh_at) : null,
+        refreshError: row.refresh_error,
+      }));
+  }
+
+  /**
    * 标记刷新失败。
    */
   async markRefreshError({ appKey, regionGroup, shopId, error }) {
