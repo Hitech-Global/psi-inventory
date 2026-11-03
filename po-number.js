@@ -34,7 +34,8 @@ function countryCode(country) {
 
 function generatePONumber(country, poDate, now = Date.now()) {
   const date = String(poDate || '').slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date + 'T00:00:00Z'))) {
+  const parsed = new Date(date + 'T00:00:00Z');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) {
     const error = new Error('PO日期格式无效，必须为 YYYY-MM-DD');
     error.status = 400;
     throw error;
