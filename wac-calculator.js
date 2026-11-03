@@ -60,6 +60,13 @@ function resolveExactFxRate(fromCurrency, toCurrency, date, cache) {
 }
 
 // Helper: allocate a total amount across SKUs by a given weight map, with remainder to max-weight SKU.
+function transportBasisForMode(transportMode) {
+  const mode = String(transportMode || '').trim().toLowerCase();
+  if (mode === 'sea') return 'cbm';
+  if (mode === 'air') return 'kg';
+  return null;
+}
+
 function allocateByWeight(skuCodes, weightMap, totalAmount) {
   const totalWeight = skuCodes.reduce((s, sku) => s + (weightMap.get(sku) || 0), 0);
   if (!(totalWeight > 0)) return null;
@@ -344,31 +351,46 @@ function computeWacCostFacts(logisticsBatchId) {
     }
   }
 
-  // ── 9. Freight allocation by transport_basis ──
+  // ── 9. Freight allocation by logistics batch transport mode ──
+  // The logistics batch is the source of truth: sea → CBM, air → gross weight (KG).
+  // CI.transport_basis is legacy/manual data and must not block or override this rule.
   let freightAllocations = null;
-  const transportBasis = ci.transport_basis ? String(ci.transport_basis).trim() : '';
+  const transportBasis = transportBasisForMode(batch.transport_mode);
   if (freightLocalAmount > 0) {
-    if (!['cbm', 'kg'].includes(transportBasis)) {
-      blockers.push({ code: 'TRANSPORT_BASIS_MISSING', message: 'CI未设置运输计费基础(CBM或KG)' });
+    if (!transportBasis) {
+      blockers.push({
+        code: 'TRANSPORT_MODE_UNSUPPORTED',
+        message: `物流批次运输方式「${batch.transport_mode || '-'}」无法确定运费分摊基准，仅支持海运(CBM)或空运(KG)`,
+        detail: { transport_mode: batch.transport_mode || null }
+      });
     } else {
       const basisField = transportBasis === 'cbm' ? 'cbm' : 'gross_weight';
-      const basisLabel = transportBasis === 'cbm' ? 'CBM' : '毛重';
+      const basisLabel = transportBasis === 'cbm' ? 'CBM' : '毛重(KG)';
       const skuCodes = [...batchSkuMap.keys()];
       const weightMap = new Map();
-      let hasMissingBasis = false;
+      const missingBasisSkus = [];
       for (const sku of skuCodes) {
-        const val = batchSkuMap.get(sku)[basisField];
-        if (!Number.isFinite(val) || val < 0) {
-          hasMissingBasis = true;
+        const rawValue = batchSkuMap.get(sku)[basisField];
+        const value = Number(rawValue);
+        if (!Number.isFinite(value) || value <= 0) {
+          missingBasisSkus.push(sku);
         }
-        weightMap.set(sku, val);
+        weightMap.set(sku, value);
       }
-      if (hasMissingBasis) {
-        blockers.push({ code: 'TRANSPORT_BASIS_DATA_MISSING', message: `以下SKU缺少PL ${basisLabel}数据` });
+      if (missingBasisSkus.length > 0) {
+        blockers.push({
+          code: 'TRANSPORT_BASIS_DATA_MISSING',
+          message: `以下SKU缺少有效的PL ${basisLabel}数据：${missingBasisSkus.join(', ')}`,
+          detail: { transport_mode: batch.transport_mode, basis: transportBasis, sku_codes: missingBasisSkus }
+        });
       } else {
         freightAllocations = allocateByWeight(skuCodes, weightMap, freightLocalAmount);
         if (!freightAllocations) {
-          blockers.push({ code: 'TRANSPORT_BASIS_TOTAL_ZERO', message: `PL ${basisLabel}合计为0，无法分摊运费` });
+          blockers.push({
+            code: 'TRANSPORT_BASIS_TOTAL_ZERO',
+            message: `PL ${basisLabel}合计为0，无法分摊运费`,
+            detail: { transport_mode: batch.transport_mode, basis: transportBasis }
+          });
         }
       }
     }
@@ -782,4 +804,4 @@ function computeWacCostFacts(logisticsBatchId) {
   return { blockers, items, meta };
 }
 
-module.exports = { computeWacCostFacts, resolveExactFxRate, allocateByWeight, WAC_MONETARY_TOLERANCE, WAC_FX_POLICIES, WAC_ALLOCATION_POLICIES, _getQueryCount: () => _wacQueryCount, _resetQueryCount: () => { _wacQueryCount = 0; } };
+module.exports = { transportBasisForMode, computeWacCostFacts, resolveExactFxRate, allocateByWeight, WAC_MONETARY_TOLERANCE, WAC_FX_POLICIES, WAC_ALLOCATION_POLICIES, _getQueryCount: () => _wacQueryCount, _resetQueryCount: () => { _wacQueryCount = 0; } };

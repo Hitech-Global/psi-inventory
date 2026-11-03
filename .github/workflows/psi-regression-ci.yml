@@ -8,6 +8,8 @@ on:
       - 'server.js'
       - 'po-plan-server.js'
       - 'po-number.js'
+      - 'wac-calculator.js'
+      - 'wac-calculator.test.cjs'
       - 'test/rp-suggested-qty-wheel.test.cjs'
       - 'test/po-number-date-country.test.cjs'
       - '.github/workflows/psi-regression-ci.yml'
@@ -18,19 +20,26 @@ permissions:
 jobs:
   psi-regression:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Install test dependencies without running application postinstall
+        run: |
+          npm install --ignore-scripts --no-package-lock
+          npm rebuild better-sqlite3
       - name: Check frontend and backend syntax
         run: |
           node --check app.js
           node --check server.js
           node --check po-plan-server.js
           node --check po-number.js
+          node --check wac-calculator.js
       - name: Test PO number date and country format
         run: node test/po-number-date-country.test.cjs
+      - name: Test WAC calculation and transport-basis rules
+        run: node --test wac-calculator.test.cjs
       - name: Test suggested purchase quantity wheel behavior
         run: node test/rp-suggested-qty-wheel.test.cjs

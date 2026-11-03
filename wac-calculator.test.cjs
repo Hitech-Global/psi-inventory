@@ -30,7 +30,7 @@ process.env.DB_DRIVER = 'sqlite';
 process.env.DB_PATH = ':memory:';
 
 const { query, queryOne, run, transaction, initDatabase } = require('./db');
-const { computeWacCostFacts, allocateByWeight, resolveExactFxRate } = require('./wac-calculator');
+const { computeWacCostFacts, allocateByWeight, resolveExactFxRate, transportBasisForMode } = require('./wac-calculator');
 
 // ── Schema setup ──
 function createTestSchema() {
@@ -441,6 +441,19 @@ function seedPaymentLogRaw(id, prId, amount, opts) {
 }
 
 // ── Tests ──
+
+
+describe('transportBasisForMode', () => {
+  test('derives the mandatory basis from the logistics batch transport mode', () => {
+    assert.equal(transportBasisForMode('sea'), 'cbm');
+    assert.equal(transportBasisForMode('air'), 'kg');
+    assert.equal(transportBasisForMode('SEA'), 'cbm');
+    assert.equal(transportBasisForMode('AIR'), 'kg');
+    assert.equal(transportBasisForMode('road'), null);
+    assert.equal(transportBasisForMode(''), null);
+    assert.equal(transportBasisForMode(null), null);
+  });
+});
 
 describe('allocateByWeight', () => {
   test('allocates proportionally with remainder to max-weight SKU', () => {
@@ -947,7 +960,7 @@ describe('computeWacCostFacts - CBM / KG allocation', () => {
     seedSku('SKU-CBM1', 'Product CBM1', '', '');
     seedSku('SKU-CBM2', 'Product CBM2', '', '');
 
-    seedCI('ci_cbm', 'CI-CBM', 'USD', 10000, 'cbm');
+    seedCI('ci_cbm', 'CI-CBM', 'USD', 10000, null);
     seedCIItem('cii_cbm1', 'ci_cbm', 'SKU-CBM1', 100, 50, 0, 0.05);
     seedCIItem('cii_cbm2', 'ci_cbm', 'SKU-CBM2', 100, 50, 0, 0.10);
 
@@ -969,6 +982,7 @@ describe('computeWacCostFacts - CBM / KG allocation', () => {
 
     const result = computeWacCostFacts('lb_cbm');
     assert.equal(result.blockers.length, 0, `Expected 0 blockers, got: ${JSON.stringify(result.blockers)}`);
+    assert.equal(result.meta.transport_basis, 'cbm', 'sea batch must derive CBM even when CI basis is empty');
 
     const freightTotal = result.items.reduce((s, i) => s + i.freight_cost_local, 0);
     assert.ok(Math.abs(freightTotal - 15000000) < 1, `freight allocation sum=${freightTotal}, expected ~15000000`);
@@ -990,7 +1004,7 @@ describe('computeWacCostFacts - CBM / KG allocation', () => {
     db.exec('DELETE FROM payment_requests');
     db.exec('DELETE FROM payment_settlement_logs');
 
-    seedCI('ci_kg', 'CI-KG', 'USD', 10000, 'kg');
+    seedCI('ci_kg', 'CI-KG', 'USD', 10000, null);
     seedCIItem('cii_kg1', 'ci_kg', 'SKU-CBM1', 100, 50, 0, 0.05);
     seedCIItem('cii_kg2', 'ci_kg', 'SKU-CBM2', 100, 50, 0, 0.10);
 
@@ -1008,6 +1022,7 @@ describe('computeWacCostFacts - CBM / KG allocation', () => {
 
     const result = computeWacCostFacts('lb_kg');
     assert.equal(result.blockers.length, 0, `Expected 0 blockers, got: ${JSON.stringify(result.blockers)}`);
+    assert.equal(result.meta.transport_basis, 'kg', 'air batch must derive KG even when CI basis is empty');
 
     const freightTotal = result.items.reduce((s, i) => s + i.freight_cost_local, 0);
     assert.ok(Math.abs(freightTotal - 15000000) < 1, `freight allocation sum=${freightTotal}`);
