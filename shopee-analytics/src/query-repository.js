@@ -469,7 +469,7 @@ class ShopeeQueryRepository {
     }));
   }
 
-  async getShopFunnelDaily({ shopId, startDate, endDate, timezone }) {
+  async getShopFunnelDaily({ shopId, startDate, endDate, timezone, orderStatus = 'PAID' }) {
     const result = await this.pool.query(
       `WITH dates AS (
          SELECT generate_series($2::date,$3::date,interval '1 day')::date AS event_date
@@ -479,6 +479,7 @@ class ShopeeQueryRepository {
                 unique_visitors, order_conversion_rate
          FROM shopee_shop_bi_daily
          WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3
+           AND order_status=$5
        ),
        ads AS (
          SELECT event_date, COALESCE(SUM(expense),0) AS expense
