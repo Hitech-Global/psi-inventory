@@ -306,6 +306,13 @@ if (driver === 'pg') {
         "ALTER TABLE ci_cost_items ADD COLUMN IF NOT EXISTS payable_item_id TEXT",
         // WAC-V2: wac_history 新增 logistics_batch_id，标记 WAC 确认来自哪个物流批次
         "ALTER TABLE wac_history ADD COLUMN IF NOT EXISTS logistics_batch_id TEXT",
+        // WAC-HISTORY-IMPORT-01：生产 DB_DRIVER=pg 使用 worker_threads，同步迁移必须登记在此数组。
+        "ALTER TABLE wac_history ADD COLUMN IF NOT EXISTS last_inbound_date TEXT DEFAULT ''",
+        "ALTER TABLE wac_history ADD COLUMN IF NOT EXISTS local_currency TEXT DEFAULT ''",
+        "ALTER TABLE wac_history ADD COLUMN IF NOT EXISTS rmb_to_local_rate NUMERIC(24,8)",
+        "ALTER TABLE wac_history ADD COLUMN IF NOT EXISTS fx_rate_date TEXT DEFAULT ''",
+        "ALTER TABLE wac_history ADD COLUMN IF NOT EXISTS source_type TEXT DEFAULT 'system'",
+        "ALTER TABLE wac_history ADD COLUMN IF NOT EXISTS import_batch_id TEXT DEFAULT '',
         // SCHEMA-BOOTSTRAP-P0: packing_lists 基础表 + 状态/物流关联/更新时间列迁移。
         // 该 CREATE TABLE + ALTER 原本只写在 db-pg.js 的 initDatabase（worker_threads 模式下是死代码、生产从未执行），
         // 导致空白/重置 PG 库 bootstrap 后 packing_lists 表从未创建，updateInventoryTransitData 引用的

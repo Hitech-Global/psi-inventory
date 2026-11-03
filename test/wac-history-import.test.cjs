@@ -328,6 +328,7 @@ test('WAC history import validates master data, writes immutable history only, s
 test('WAC history matrix keeps the agreed dimensions, left alignment, sticky header, Mac filters, and import entry', () => {
   const appSource = fs.readFileSync(require.resolve('../app'), 'utf8');
   const serverSource = fs.readFileSync(require.resolve('../server'), 'utf8');
+  const dbAdapterSource = fs.readFileSync(require.resolve('../db'), 'utf8');
   const start = appSource.indexOf('async function renderWacHistoryMatrix');
   const end = appSource.indexOf('async function renderInbound()',start);
   assert.ok(start>=0 && end>start);
@@ -351,4 +352,9 @@ test('WAC history matrix keeps the agreed dimensions, left alignment, sticky hea
   assert.ok(routeStart>=0 && routeEnd>routeStart);
   const importRoute=serverSource.slice(routeStart,routeEnd);
   assert.doesNotMatch(importRoute,/UPDATE inventory|INSERT INTO inventory/);
+  // PostgreSQL production uses db.js worker_threads migrations, not db-pg.js initDatabase.
+  ['last_inbound_date','local_currency','rmb_to_local_rate','fx_rate_date','source_type','import_batch_id'].forEach(function(column) {
+    assert.ok(dbAdapterSource.includes('ALTER TABLE wac_history ADD COLUMN IF NOT EXISTS ' + column),
+      'worker_threads startup migration missing: ' + column);
+  });
 });
