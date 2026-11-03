@@ -4748,6 +4748,8 @@ function validateWacHistoryImportRows(items) {
 
     const localCurrency = resolveWacHistoryCurrency(country, currencyInput);
     if (hasRate && !localCurrency) pushIssue(rowNo, skuCode, 'CURRENCY_REQUIRED_FOR_RATE', '填写人民币汇率时必须提供本币币种，或确保国家主数据已配置默认币种');
+    if (hasRate && localCurrency && localCurrency !== 'RMB' && !fxDate) pushIssue(rowNo, skuCode, 'FX_DATE_REQUIRED_FOR_RATE', '填写人民币汇率时，必须同时提供汇率日期或最后入库日期');
+    if (fxDate && confirmedDate && fxDate > confirmedDate) pushIssue(rowNo, skuCode, 'FX_DATE_AFTER_CONFIRM', '汇率日期不能晚于WAC确认日期');
     if (localCurrency === 'RMB' && hasRate && Math.abs(inputRate - 1) > 0.0000001) {
       pushIssue(rowNo, skuCode, 'RMB_RATE_INVALID', '本币为RMB时，1 RMB = 1 RMB，汇率必须为1');
     }
@@ -18998,7 +19000,7 @@ app.get('/api/wac/history-import/template', requireApiPermission('ci_edit'), asy
       ['最后入库日期', '选填；用于展示最后入库日期及匹配当日汇率'],
       ['本币币种', '选填；可填 IDR、MYR、THB 等；留空时按国家主数据识别'],
       ['1 RMB = 本币汇率', '选填；填写历史精确汇率。留空时系统只查对应汇率日期的历史汇率，不会使用今天汇率'],
-      ['汇率日期', '选填；优先级高于最后入库日期，用于匹配历史汇率'],
+      ['汇率日期', '选填；优先级高于最后入库日期。若手动填写人民币汇率，则汇率日期或最后入库日期至少填写一个'],
       ['重要说明', '本导入只新增锁定的WAC历史记录，不修改库存总表当前WAC、库存数量或库存货值。']
     ]
   });

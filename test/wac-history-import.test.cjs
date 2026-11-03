@@ -286,6 +286,10 @@ test('WAC history import validates master data, writes immutable history only, s
   assert.equal(badPrecheck.body.ok,false);
   assert.ok(badPrecheck.body.blocking.some(x=>x.issue_type==='SKU_MASTER_MISSING'));
 
+  const rateWithoutDate = validateWacHistoryImportRows([validRow({last_inbound_date:'',fx_rate_date:''})]);
+  assert.equal(rateWithoutDate.ok,false);
+  assert.ok(rateWithoutDate.blocking.some(x=>x.issue_type==='FX_DATE_REQUIRED_FOR_RATE'));
+
   const noFx = validRow({
     sku_code:'NT-HISTORY-02',
     new_avg_cost:12345,

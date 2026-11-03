@@ -14825,7 +14825,7 @@ function openWacHistoryImport() {
   const body = '<div class="wac-history-import-notice">' +
     '<b>导入范围：</b>只新增锁定的历史WAC记录，用于历史矩阵展示。<b>不会修改</b>库存总表当前WAC、库存数量、库存货值，也不会覆盖已有历史记录。' +
     '<br>必填：SKU、国家、仓库、历史WAC（本币）、确认日期。品牌可留空；填写时必须与SKU主数据一致。' +
-    '<br>人民币汇率为选填；留空时只匹配对应汇率日期的历史汇率，不会拿今天汇率代替。' +
+    '<br>人民币汇率为选填；若填写汇率，必须同时提供汇率日期或最后入库日期。留空时只匹配对应日期的历史汇率，不会拿今天汇率代替。' +
     '</div>' +
     '<div id="wac-history-import-drop" class="wac-history-import-drop" onclick="document.getElementById(\'wac-history-import-file\').click()" ' +
       'ondragover="event.preventDefault();this.style.borderColor=\'#007aff\';this.style.background=\'#f5f9ff\'" ' +
