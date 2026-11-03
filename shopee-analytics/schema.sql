@@ -437,7 +437,6 @@ CREATE TABLE IF NOT EXISTS shopee_return_items (
 CREATE TABLE IF NOT EXISTS shopee_shop_bi_daily (
   shop_id BIGINT NOT NULL,
   event_date DATE NOT NULL,
-  order_status TEXT NOT NULL DEFAULT 'PAID',
   sales NUMERIC(20,6),
   orders BIGINT,
   units_sold BIGINT,
@@ -446,16 +445,6 @@ CREATE TABLE IF NOT EXISTS shopee_shop_bi_daily (
   unique_visitors BIGINT,
   item_conversion_rate NUMERIC(20,8),
   order_conversion_rate NUMERIC(20,8),
-  sales_per_order NUMERIC(20,6),
-  cancelled_orders BIGINT,
-  cancelled_sales NUMERIC(20,6),
-  returned_orders BIGINT,
-  returned_sales NUMERIC(20,6),
-  buyers BIGINT,
-  new_buyers BIGINT,
-  existing_buyers BIGINT,
-  potential_buyers BIGINT,
-  repeat_purchase_rate NUMERIC(20,8),
   voucher_sales NUMERIC(20,6),
   voucher_buyers BIGINT,
   voucher_usage_rate NUMERIC(20,8),
@@ -463,12 +452,31 @@ CREATE TABLE IF NOT EXISTS shopee_shop_bi_daily (
   voucher_cost NUMERIC(20,6),
   raw_json JSONB NOT NULL DEFAULT '{}'::jsonb,
   synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  PRIMARY KEY (shop_id, event_date, order_status)
+  PRIMARY KEY (shop_id, event_date)
 );
 
--- 订单口径那一列是后加的，早先的行没有它。
+-- 这张表早就有了，所以后来加的列必须自己声明。
+--
+-- 写在 CREATE 里的列不会出现：表已经存在时，那一句整个被跳过，写在
+-- 里面的列也就从来没有存在过，而且不会报错。所以每一列都单独声明。
 ALTER TABLE shopee_shop_bi_daily
-  ADD COLUMN IF NOT EXISTS order_status TEXT NOT NULL DEFAULT 'PAID';
+  ADD COLUMN IF NOT EXISTS order_status TEXT NOT NULL DEFAULT 'PAID',
+  ADD COLUMN IF NOT EXISTS sales_per_order NUMERIC(20,6),
+  ADD COLUMN IF NOT EXISTS cancelled_orders BIGINT,
+  ADD COLUMN IF NOT EXISTS cancelled_sales NUMERIC(20,6),
+  ADD COLUMN IF NOT EXISTS returned_orders BIGINT,
+  ADD COLUMN IF NOT EXISTS returned_sales NUMERIC(20,6),
+  ADD COLUMN IF NOT EXISTS buyers BIGINT,
+  ADD COLUMN IF NOT EXISTS new_buyers BIGINT,
+  ADD COLUMN IF NOT EXISTS existing_buyers BIGINT,
+  ADD COLUMN IF NOT EXISTS potential_buyers BIGINT,
+  ADD COLUMN IF NOT EXISTS repeat_purchase_rate NUMERIC(20,8);
+
+-- 口径进了键里，所以同一天的三个口径各占一行。
+ALTER TABLE shopee_shop_bi_daily
+  DROP CONSTRAINT IF EXISTS shopee_shop_bi_daily_pkey;
+ALTER TABLE shopee_shop_bi_daily
+  ADD PRIMARY KEY (shop_id, event_date, order_status);
 
 -- 商品级的访客与加购：访客数、浏览量、跳出率、搜索点击、收藏、加购访客与件数。
 --
