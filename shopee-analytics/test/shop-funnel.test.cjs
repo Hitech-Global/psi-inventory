@@ -261,3 +261,25 @@ test('the page can be exported as a sheet', () => {
   assert.ok(funnelUi.includes('exportCsv'), 'the page must offer an export');
   assert.ok(funnelUi.includes('text/csv'), 'the export must be a csv');
 });
+
+test('the query names its columns the way the code reads them', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const query = fs.readFileSync(path.join(__dirname, '..', 'src', 'query-repository.js'), 'utf8');
+  const start = query.indexOf('getShopFunnelDaily');
+  const segment = query.slice(start, query.indexOf('FROM dates d', start));
+  const select = segment.slice(segment.indexOf('SELECT d.event_date'));
+
+  // SQL names a column with an underscore unless it is told otherwise, and
+  // the code that reads the result asks for the name in capitals. When the
+  // two disagree the reading is empty, silently: every figure in the
+  // funnel goes missing and nothing says why.
+  const aliased = new Set((select.match(/AS (\w+)/g) || []).map(part => part.slice(3)));
+  for (const column of ['productClicks', 'productViews', 'uniqueVisitors', 'orderConversionRate',
+    'adsExpense', 'paidOrders', 'cancelledOrders', 'orderGmv', 'cancelledSales',
+    'refundOrders', 'refundAmount', 'liveSessions', 'liveHours', 'liveViews', 'liveViewers',
+    'liveConfirmedOrders', 'liveConfirmedSales',
+    'shopRating', 'returnRefundRate', 'cancellationRate', 'lateShipmentRate', 'csatRate']) {
+    assert.ok(aliased.has(column), `the query must name ${column} the way the code reads it`);
+  }
+});
