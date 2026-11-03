@@ -346,6 +346,13 @@ test('WAC history matrix keeps the agreed dimensions, left alignment, sticky hea
   assert.match(page,/downloadWacHistoryImportTemplate/);
   assert.match(page,/submitWacHistoryImport/);
   assert.doesNotMatch(page,/<select[^>]*multiple/);
+  assert.match(page,/wac-history-search/);
+  assert.match(page,/flex:0 1 280px/);
+  assert.doesNotMatch(page,/id="wac-matrix-search"[^']*flex:1/);
+  assert.match(page,/dateFxLabels/);
+  assert.match(page,/wac-history-date-fx/);
+  assert.match(page,/dates\.map\(dateHeader\)/);
+  assert.doesNotMatch(page,/wac-history-fx/);
 
   const routeStart=serverSource.indexOf("app.post('/api/wac/history-import'");
   const routeEnd=serverSource.indexOf("/* WAC历史矩阵",routeStart);
