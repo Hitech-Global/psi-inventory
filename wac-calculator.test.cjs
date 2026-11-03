@@ -1884,3 +1884,21 @@ test('WAC calculation detail uses one row per SKU and omits new inventory quanti
   assert.ok(ui.includes("(oldQty*oldWac+batchQty*unitCost)/(oldQty+batchQty)"), 'new WAC must use the existing moving weighted average formula');
   assert.ok(ui.includes('(newWac-oldWac)/oldWac*100'), 'WAC change must compare against current/previous WAC');
 });
+
+
+test('confirmed WAC preview restores the saved historical inventory snapshot instead of requesting a new upload', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const calculator = fs.readFileSync(path.join(__dirname, 'wac-calculator.js'), 'utf8');
+  const app = fs.readFileSync(path.join(__dirname, 'app.js'), 'utf8');
+  assert.ok(calculator.includes('FROM wac_history WHERE logistics_batch_id = ? ORDER BY version_no DESC, confirmed_at DESC'));
+  assert.ok(calculator.includes('old_qty: historicalWac ? Number(historicalWac.original_qty) : null'));
+  assert.ok(calculator.includes('new_wac: historicalWac ? Number(historicalWac.new_avg_cost) : null'));
+  const start = app.indexOf('async function wacConfirm(batchId){');
+  const end = app.indexOf('// 提交WAC确认', start);
+  const ui = app.slice(start, end);
+  assert.ok(ui.includes('m.already_confirmed?items.filter(it=>it.old_qty!=null).map(it=>it.sku_code):[]'));
+  assert.ok(ui.includes('已确认历史快照 · 只读展示'));
+  assert.ok(ui.includes('const oldQtyCell=historical'));
+  assert.ok(!ui.includes('placeholder="请上传"') || ui.indexOf('placeholder="请上传"') > ui.indexOf('const oldQtyCell=historical'));
+});

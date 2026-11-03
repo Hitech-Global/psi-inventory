@@ -673,6 +673,20 @@ function computeWacCostFacts(logisticsBatchId) {
     }
   }
 
+  // Load the immutable WAC snapshot for this batch when opening an already-confirmed batch.
+  // Historical original_qty/original_avg_cost must come from wac_history, not the now-updated inventory row.
+  const wacHistoryRows = _q(
+    `SELECT sku_code, original_qty, original_avg_cost, original_inventory_value, new_avg_cost,
+            confirmation_status, is_locked, version_no
+     FROM wac_history WHERE logistics_batch_id = ? ORDER BY version_no DESC, confirmed_at DESC`,
+    [batch.id]
+  ).rows;
+  const wacHistoryBySku = new Map();
+  for (const row of wacHistoryRows) {
+    if (String(row.confirmation_status || 'confirmed') !== 'confirmed' || Number(row.is_locked) !== 1) continue;
+    if (!wacHistoryBySku.has(row.sku_code)) wacHistoryBySku.set(row.sku_code, row);
+  }
+
   // Preload all SKU master data in one query
   const skuMasterByCode = new Map();
   if (skuCodes.length > 0) {
@@ -724,9 +738,13 @@ function computeWacCostFacts(logisticsBatchId) {
       blockers.push({ code: 'WAC_INVENTORY_CONTEXT_MISMATCH', message: `SKU ${skuCode} 库存记录不在目标国家/仓库(${country2}/${warehouse})下`, detail: { sku_code: skuCode, expected_country: country2, expected_warehouse: warehouse, actual_contexts: allInvRows.map(r => `${r.country}/${r.warehouse}`) } });
     }
 
-    // Old quantity must come from the per-confirmation upload, never inventory.available_qty.
-    // Old WAC continues to come from the matching inventory master row.
-    const currentWac = matchingInv ? (Number(matchingInv.weighted_avg_cost) || 0) : 0;
+    // For pending batches, old quantity comes only from the user's per-confirmation upload,
+    // never inventory.available_qty. For confirmed batches, restore the immutable snapshot
+    // that was saved in wac_history at confirmation time.
+    const historicalWac = wacHistoryBySku.get(skuCode) || null;
+    const currentWac = historicalWac
+      ? (Number(historicalWac.original_avg_cost) || 0)
+      : (matchingInv ? (Number(matchingInv.weighted_avg_cost) || 0) : 0);
 
     // CURRENT_WAC_INVALID: weighted_avg_cost not finite or < 0
     if (matchingInv) {
@@ -759,17 +777,20 @@ function computeWacCostFacts(logisticsBatchId) {
       other_cost_local: Math.round(otherAllocated * 10000) / 10000,
       total_landing_cost_local: Math.round(totalLandingCostLocal * 10000) / 10000,
       unit_landing_cost: Math.round(unitLandingCost * 10000) / 10000,
-      // No uploaded original quantity is available during server-side preview.
-      old_qty: null,
+      // Pending batches have no old_qty until the user uploads it. Confirmed batches
+      // expose the exact historical snapshot saved during confirmation.
+      old_qty: historicalWac ? Number(historicalWac.original_qty) : null,
       current_wac: currentWac,
-      new_wac: null,
+      original_avg_cost: historicalWac ? Number(historicalWac.original_avg_cost) : null,
+      original_inventory_value: historicalWac ? Number(historicalWac.original_inventory_value) : null,
+      new_wac: historicalWac ? Number(historicalWac.new_avg_cost) : null,
       country: country2,
       warehouse: warehouse,
     };
   });
 
   // ── 14. Build meta ──
-  const existingWac = _q1('SELECT 1 FROM wac_history WHERE logistics_batch_id = ? LIMIT 1', [batch.id]);
+  const existingWac = wacHistoryRows.length > 0;
   const meta = {
     batch_id: batch.id,
     batch_no: batch.batch_no,
@@ -783,7 +804,7 @@ function computeWacCostFacts(logisticsBatchId) {
     country: targetCountry,
     warehouse: warehouse,
     logistics_status: batch.logistics_status,
-    already_confirmed: !!existingWac,
+    already_confirmed: existingWac,
     pl_id: pl ? pl.id : '',
     pl_no: pl ? pl.pl_no : '',
     pl_count: linkedPLs.length,

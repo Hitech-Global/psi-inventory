@@ -14739,7 +14739,7 @@ async function wacConfirm(batchId){
     const m=p.meta||{};
     const blockers=p.blockers||[];
     const items=p.items||[];
-    window._wacImport={batchId:batchId,uploaded:false,matched:[],missing:[],unknown:[],duplicate:[],invalid:[]};
+    window._wacImport={batchId:batchId,uploaded:!!m.already_confirmed,matched:m.already_confirmed?items.filter(it=>it.old_qty!=null).map(it=>it.sku_code):[],missing:[],unknown:[],duplicate:[],invalid:[]};
     const skuIndex={};
     items.forEach((it,i)=>{const k=String(it.sku_code);if(!(k in skuIndex))skuIndex[k]=i;});
     window._wacSkuIndex=skuIndex;
@@ -14838,6 +14838,15 @@ async function wacConfirm(batchId){
     let skuTableHtml='';
     if(blockers.length===0 && items.length>0){
       const rowsHtml=items.map((it,i)=>{
+        const historical=!!m.already_confirmed;
+        const oldQty=it.old_qty==null?null:Number(it.old_qty);
+        const oldWac=historical?Number(it.original_avg_cost||0):Number(it.current_wac||0);
+        const oldValue=historical?(it.original_inventory_value==null?(oldQty==null?null:oldQty*oldWac):Number(it.original_inventory_value)):(oldQty==null?null:oldQty*oldWac);
+        const newWac=historical?(it.new_wac==null?null:Number(it.new_wac)):null;
+        const changePct=(newWac!=null&&oldWac>0)?((newWac-oldWac)/oldWac*100):null;
+        const oldQtyCell=historical
+          ? '<td class="text-right">'+(oldQty==null?'历史记录缺失':oldQty.toLocaleString())+'</td>'
+          : '<td><input type="number" id="wac-old-'+i+'" value="" placeholder="请上传" min="0" step="1" style="width:100px;padding:4px;text-align:right;background:#fffbe6" oninput="recalcWacRow('+i+');wacValidateInputs()"></td>';
         return '<tr>' +
           '<td class="cell-id" style="position:sticky;left:0;background:var(--surface,#fff);z-index:1">'+esc(it.sku_code)+'</td>' +
           '<td class="text-right">'+(it.batch_qty||0).toLocaleString()+'</td>' +
@@ -14846,19 +14855,21 @@ async function wacConfirm(batchId){
           '<td class="text-right">'+(it.batch_qty>0?Number((it.product_cost_local||0)/it.batch_qty).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4}):'—')+'</td>' +
           '<td class="text-right">'+Number(it.unit_landing_cost||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4})+'</td>' +
           '<td class="text-right">'+Number(it.total_landing_cost_local||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+'</td>' +
-          '<td><input type="number" id="wac-old-'+i+'" value="" placeholder="请上传" min="0" step="1" style="width:100px;padding:4px;text-align:right;background:#fffbe6" oninput="recalcWacRow('+i+');wacValidateInputs()"></td>' +
-          '<td class="text-right">'+Number(it.current_wac||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4})+'</td>' +
-          '<td class="text-right" id="wac-old-value-'+i+'">待上传</td>' +
-          '<td class="text-right font-bold" id="wac-new-'+i+'" style="color:#1677ff">待上传</td>' +
-          '<td class="text-right" id="wac-change-'+i+'">—</td>' +
+          oldQtyCell +
+          '<td class="text-right">'+oldWac.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4})+'</td>' +
+          (historical?'<td class="text-right">'+(oldValue==null?'历史记录缺失':oldValue.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}))+'</td>':'<td class="text-right" id="wac-old-value-'+i+'">待上传</td>') +
+          (historical?'<td class="text-right font-bold" style="color:#1677ff">'+(newWac==null?'历史记录缺失':newWac.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4}))+'</td>':'<td class="text-right font-bold" id="wac-new-'+i+'" style="color:#1677ff">待上传</td>') +
+          (historical?'<td class="text-right">'+(changePct==null?'—':(changePct>0?'+':'')+changePct.toFixed(2)+'%')+'</td>':'<td class="text-right" id="wac-change-'+i+'">—</td>') +
         '</tr>';
       }).join('');
 
-      const opBar='<div class="wac-opbar">'+
-        '<button class="btn btn-secondary btn-sm" onclick="exportWacOldInventoryTemplate()">📥 '+t('wac.btn_export_old','导出旧库存模板')+'</button>'+
-        '<button class="btn btn-secondary btn-sm" onclick="importWacOldInventory()">📤 '+t('wac.btn_import_old','导入旧库存')+'</button>'+
-        '<span class="wac-import-status" id="wac-import-status"><span class="warn">'+t('wac.import_not_imported','未导入')+'</span></span>'+
-      '</div>';
+      const opBar=m.already_confirmed
+        ? '<div class="wac-opbar"><span class="wac-import-status ok">✓ 已确认历史快照 · 只读展示</span></div>'
+        : '<div class="wac-opbar">'+
+          '<button class="btn btn-secondary btn-sm" onclick="exportWacOldInventoryTemplate()">📥 '+t('wac.btn_export_old','导出旧库存模板')+'</button>'+
+          '<button class="btn btn-secondary btn-sm" onclick="importWacOldInventory()">📤 '+t('wac.btn_import_old','导入旧库存')+'</button>'+
+          '<span class="wac-import-status" id="wac-import-status"><span class="warn">'+t('wac.import_not_imported','未导入')+'</span></span>'+
+        '</div>';
 
       const formulaHint='<div style="background:#fffbe6;padding:10px 14px;border-radius:6px;margin-bottom:12px;font-size:12px;color:#666">'+
         t('wac.formula_hint','移动加权公式：新WAC = (旧库存数量 × 当前WAC + 本批次数量 × 单位落地成本) ÷ (旧库存数量 + 本批次数量)')+'<br>'+
