@@ -14882,7 +14882,7 @@ async function wacConfirm(batchId){
           '<th>较上次WAC变化</th>'+
         '</tr></thead><tbody>'+rowsHtml+'</tbody></table></div>';    }
 
-    const head='<div class="form-card" style="box-shadow:none;padding:0;display:flex;flex-direction:column;overflow:hidden">'+
+    const head='<div class="form-card" style="box-shadow:none;padding:0;display:flex;flex-direction:column;overflow:visible">'+
       batchInfo+blockerHtml+costFactsHtml+skuTableHtml+
     '</div>';
 
