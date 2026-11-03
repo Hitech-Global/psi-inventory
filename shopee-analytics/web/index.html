@@ -28,6 +28,7 @@
         <div class="side-group">
           <div class="side-group-title">TikTok</div>
           <a class="side-item" href="/connections" data-side-platform="tiktok">平台接入</a>
+          <button class="side-item" data-view="tiktok" type="button">经营数据</button>
         </div>
 
         <div class="side-group">
@@ -450,6 +451,65 @@
       </section>
     </section>
 
+    <section id="view-tiktok" class="view-section hidden">
+      <section id="tiktokSummary" class="kpi-grid hidden"></section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>TikTok 经营数据</h2>
+            <p>按 TikTok 官方口径分别展示：订单实付、货款小计、结算收入三者互不推导，因此各占一行，不做合计。</p>
+          </div>
+          <div class="panel-actions">
+            <label class="tiktok-shop-picker">TikTok 店铺
+              <select id="tiktokShopSelect">
+                <option value="">尚未接入店铺</option>
+              </select>
+            </label>
+            <button id="tiktokExportBtn" class="ghost" type="button">导出 CSV</button>
+            <button id="tiktokRefreshBtn" class="ghost" type="button">刷新</button>
+          </div>
+        </div>
+        <div id="tiktokNotice" class="tiktok-notice-wrap hidden"></div>
+        <div class="table-wrap">
+          <table class="tiktok-table">
+            <thead id="tiktokDailyHead"></thead>
+            <tbody id="tiktokDailyBody"><tr><td class="empty">等待加载数据。</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>TikTok 商品</h2>
+            <p>商品级金额来自订单侧，因此没有结算口径一列 —— 结算只到订单与账单层。</p>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="tiktok-table">
+            <thead id="tiktokProductHead"></thead>
+            <tbody id="tiktokProductBody"><tr><td class="empty">等待加载数据。</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>TikTok 最近订单</h2>
+            <p>最近 50 笔订单。订单级没有流量来源字段，渠道一栏在 TikTok 侧不存在。</p>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="tiktok-table">
+            <thead id="tiktokOrderHead"></thead>
+            <tbody id="tiktokOrderBody"><tr><td class="empty">等待加载数据。</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
     <section id="view-status" class="view-section hidden">
       <section id="statusPortfolioSummary" class="kpi-grid hidden"></section>
 
@@ -595,6 +655,7 @@
   <script src="/funnel-ui-v1.js" defer></script>
   <script src="/shop-health-ui-v1.js" defer></script>
   <script src="/shop-connections-ui-v1.js" defer></script>
+  <script src="/tiktok-ui-v1.js" defer></script>
   <script src="/ad-group-import-async.js" defer></script>
 </body>
 </html>

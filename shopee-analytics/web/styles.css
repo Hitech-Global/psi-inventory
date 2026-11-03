@@ -660,3 +660,36 @@ tbody td{font-weight:400}
 .funnel-products-table th.funnel-sortable{cursor:pointer;user-select:none}
 .funnel-products-table th.funnel-sortable:hover{color:#101828;background:#f2f4f7}
 .funnel-products-table th.funnel-sortable.active{color:#175cd3}
+
+/* ===== TikTok 页签 =====
+   口径是这个页签最容易出错的地方，所以样式上刻意把「口径」做成一个显眼的标记：
+   同一张表里不同口径的数各占一行，读者一眼能看出自己看的是哪一列，
+   不会把两行当成同一个指标的两条记录。 */
+.tiktok-notice-wrap{margin:0 0 14px}
+.tiktok-notice{
+  border:1px solid #e4e7ec;border-radius:12px;background:#fafbfc;padding:12px 14px;margin-bottom:8px;
+}
+.tiktok-notice strong{display:block;font-size:12px;color:#344054;margin-bottom:3px}
+.tiktok-notice span{font-size:11px;color:#6b7280;line-height:1.6}
+.tiktok-notice.warn{background:#fffaeb;border-color:#fedf89}
+.tiktok-notice.warn strong{color:#b54708}
+.tiktok-notice.warn span{color:#93370d}
+
+/* 口径标记 —— 让口径在表格里一眼可辨 */
+.tiktok-basis{
+  display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;
+  background:#eef4ff;color:#3538cd;
+}
+.tiktok-table td,.tiktok-table th{white-space:nowrap}
+.tiktok-table td:nth-child(7),
+.tiktok-table td:nth-child(8),
+.tiktok-table td:nth-child(9),
+.tiktok-table td:nth-child(10){font-variant-numeric:tabular-nums}
+
+/* TikTok 自己的店铺选择器 —— 顶部那个是 Shopee 专用的，不能共用 */
+.tiktok-shop-picker{
+  display:inline-flex;align-items:center;gap:6px;font-size:11px;color:#6b7280;
+}
+.tiktok-shop-picker select{
+  font-size:12px;padding:4px 8px;border:1px solid #d0d5dd;border-radius:8px;background:#fff;color:#101828;
+}

@@ -16,6 +16,7 @@ const { createConfiguredSkillProvider } = require('./skill-provider');
 const { createSkillRuntime } = require('./skill-runtime');
 const { ShopeeShopScopeRepository } = require('./shop-scope-repository');
 const { ShopeeShopHealthRepository } = require('./shop-health-repository');
+const { TikTokQueryRepository } = require('./tiktok-query-repository');
 const { createFeishuAuth } = require('./feishu-auth');
 const { BrandPortalOAuthService } = require('./brand-portal-oauth-service');
 const { ErpOAuthService } = require('./erp-oauth-service');
@@ -54,6 +55,8 @@ function createApp({ pool, skillProvider = null, importJobPool = null }) {
   } = createSkillRuntime({ pool, skillProvider });
   const shopScopeRepository = new ShopeeShopScopeRepository({ pool });
   const shopHealthRepository = new ShopeeShopHealthRepository({ pool });
+  // TikTok 数据查询：落库层只管写，查询要单独一个 repository。
+  const tiktokQueryRepository = new TikTokQueryRepository({ pool });
   const backupStatusProvider = createBackupStatusProvider();
   const reviewerAuth = createReviewerAuth();
   const feishuAuth = createFeishuAuth({ pool, reviewerAuth });
@@ -103,6 +106,7 @@ function createApp({ pool, skillProvider = null, importJobPool = null }) {
     erpOAuthService,
     tiktokOAuthService,
     shopHealthRepository,
+    tiktokQueryRepository,
   }));
 
   const webDir = path.join(__dirname, '..', 'web');
@@ -113,7 +117,7 @@ function createApp({ pool, skillProvider = null, importJobPool = null }) {
   let indexHtml = fs.readFileSync(indexPath, 'utf8');
   const loginHtml = fs.readFileSync(loginPath, 'utf8');
   const connectionsHtml = fs.readFileSync(connectionsPath, 'utf8');
-  for (const asset of ['/styles.css', '/shopee-metric-labels.js', '/app.js', '/ad-group-import-async.js', '/funnel-ui-v1.js', '/shop-health-ui-v1.js', '/shop-connections-ui-v1.js']) {
+  for (const asset of ['/styles.css', '/shopee-metric-labels.js', '/app.js', '/ad-group-import-async.js', '/funnel-ui-v1.js', '/shop-health-ui-v1.js', '/shop-connections-ui-v1.js', '/tiktok-ui-v1.js']) {
     indexHtml = indexHtml.replace(asset, `${asset}?v=${assetVersion}`);
   }
   const injectedScripts = [
