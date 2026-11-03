@@ -724,8 +724,9 @@ function computeWacCostFacts(logisticsBatchId) {
       blockers.push({ code: 'WAC_INVENTORY_CONTEXT_MISMATCH', message: `SKU ${skuCode} 库存记录不在目标国家/仓库(${country2}/${warehouse})下`, detail: { sku_code: skuCode, expected_country: country2, expected_warehouse: warehouse, actual_contexts: allInvRows.map(r => `${r.country}/${r.warehouse}`) } });
     }
 
+    // Old quantity must come from the per-confirmation upload, never inventory.available_qty.
+    // Old WAC continues to come from the matching inventory master row.
     const currentWac = matchingInv ? (Number(matchingInv.weighted_avg_cost) || 0) : 0;
-    const availableQty = matchingInv ? (Number(matchingInv.available_qty) || 0) : 0;
 
     // CURRENT_WAC_INVALID: weighted_avg_cost not finite or < 0
     if (matchingInv) {
@@ -757,12 +758,10 @@ function computeWacCostFacts(logisticsBatchId) {
       other_cost_local: Math.round(otherAllocated * 10000) / 10000,
       total_landing_cost_local: Math.round(totalLandingCostLocal * 10000) / 10000,
       unit_landing_cost: Math.round(unitLandingCost * 10000) / 10000,
-      available_qty: availableQty,
-      old_qty: availableQty,
+      // No uploaded original quantity is available during server-side preview.
+      old_qty: null,
       current_wac: currentWac,
-      new_wac: (availableQty + batchQty) > 0
-        ? Math.round(((availableQty * currentWac + batchQty * unitLandingCost) / (availableQty + batchQty)) * 10000) / 10000
-        : Math.round(unitLandingCost * 10000) / 10000,
+      new_wac: null,
       country: country2,
       warehouse: warehouse,
     };
