@@ -18774,6 +18774,28 @@ app.get('/api/wac/confirmed-batches', requireApiPermission('ci_view'), asyncHand
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
+
+/* WAC历史矩阵：只读取已锁定且未冲销的历史记录；日期列由前端按筛选结果生成。 */
+app.get('/api/wac/history-matrix', requireApiPermission('ci_view'), asyncHandler((req, res) => {
+  try {
+    const rows = query(`
+      SELECT wh.sku_code, wh.model, wh.brand, wh.country, wh.warehouse,
+        wh.new_avg_cost, wh.original_avg_cost, wh.original_qty, wh.inbound_qty,
+        wh.confirmed_at, wh.version_no, wh.ci_no, wh.po_no, wh.pi_no,
+        lb.actual_arrival_date AS last_inbound_date
+      FROM wac_history wh
+      LEFT JOIN logistics_batches lb ON lb.id = wh.logistics_batch_id
+      WHERE COALESCE(wh.is_locked, 0) = 1
+        AND COALESCE(wh.confirmation_status, 'confirmed') NOT IN ('reversed', 'void', 'cancelled')
+        AND wh.confirmed_at IS NOT NULL
+      ORDER BY wh.confirmed_at DESC, wh.version_no DESC
+      LIMIT 20000
+    `).rows;
+    const distinct = (field) => [...new Set(rows.map(r => String(r[field] || '').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+    res.json({ rows, filters: { brands: distinct('brand'), countries: distinct('country'), warehouses: distinct('warehouse') } });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+}));
+
 // WAC 确认预览：调用共享计算器，返回成本事实 + blockers（允许展示 blockers，blockers > 0 时不可确认）
 app.get('/api/wac/preview/:logistics_batch_id', requireApiPermission('ci_view'), asyncHandler((req, res) => {
   try {
