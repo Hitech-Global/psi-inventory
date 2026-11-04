@@ -33,7 +33,7 @@ const writes = [];
 const tx = {
   async query(sql, args) {
     writes.push({ sql, args });
-    if (/UPDATE shopee_shop_profiles/.test(sql)) return { rows: [{ shop_id: 1326456001 }] };
+    if (/UPDATE shopee_shop_profiles/.test(sql)) return { rows: [{ shop_id: 1326456001, brand_code: 'NETAC' }] };
     return { rows: [] };
   },
   release() {},
@@ -88,11 +88,17 @@ const fetchImpl = async (_url, options) => {
   assert.strictEqual(authUrl.searchParams.get('state'), start.state);
 
   const result = await service.completeAuthorization({ state: start.state, code: 'one-time-code' });
-  assert.deepStrictEqual(result, { shopId: 1326456001, principalId: 777 });
+  assert.deepStrictEqual(result, { shopId: 1326456001, principalId: 777, alsoAuthorized: [1326456001] });
   assert.strictEqual(exchangeBody.code, 'one-time-code');
   const tokenInsert = writes.find(row => /INSERT INTO shopee_app_tokens/.test(row.sql));
   assert(tokenInsert, 'encrypted token insert missing');
   assert(!tokenInsert.args.includes('principal-access-token'), 'plaintext access token must not be stored as a SQL argument');
   assert(writes.some(row => /brand_portal_principal_id=\$2/.test(row.sql)), 'shop principal mapping missing');
+  // A brand is authorized once, not shop by shop: the other shops of the
+  // same brand are given the same principal by the same authorization.
+  assert(
+    writes.some(row => /WHERE brand_code=\$3/.test(row.sql)),
+    'the other shops of the same brand are not given the principal',
+  );
   console.log('Brand Portal OAuth service tests: ok');
 })().catch(error => { console.error(error); process.exitCode = 1; });
