@@ -383,7 +383,7 @@ function fcEventHTML(item) {
   const title = fcItemTitle(item);
   const partial = key === 'partial' ? '<span class="fcal-event-remaining">' + fcEsc(fcText('未付', 'Remaining', 'Sisa')) + ' ' + fcEsc(currency) + ' ' + fcEsc(fcMoney(remaining)) + '</span>' : '';
   return '<button type="button" class="fcal-event ' + fcStatusClass(key) + '" title="' + fcEsc(title + ' · ' + currency + ' ' + fcMoney(amount)) +
-    '" onclick="fcOpenDetail(\'' + fcJsArg(item.id) + '\')"><span class="fcal-event-title">' + fcEsc(title) +
+    '" onclick="event.stopPropagation();fcOpenDetail(\'' + fcJsArg(item.id) + '\')"><span class="fcal-event-title">' + fcEsc(title) +
     '</span><span class="fcal-event-amount">' + fcEsc(currency) + ' ' + fcEsc(fcMoney(amount)) + '</span>' +
     '<span class="fcal-event-status">' + fcEsc(fcStatusLabel(key)) + '</span>' + partial + '</button>';
 }
