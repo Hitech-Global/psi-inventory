@@ -5012,7 +5012,7 @@ async function loadInv(){
     invTable.innerHTML = buildInvTableHTML(data, cols, invAllFilteredIds.length, fmtLocalMoney, fmtCnyMoney);
     syncInvHeader();
     renderInvCards(data, countryCurrency, c);
-    loadInvFinancialValues(_invUrl, mySeq, data, countryCurrency, c);
+    window._invFinancialLoadPromise = loadInvFinancialValues(_invUrl, mySeq, data, countryCurrency, c);
   }catch(e){showFlash(e.message,'danger')}
 }
 
@@ -5320,7 +5320,7 @@ async function invBatchAction(action){
 
   if(action === 'export'){
     // 导出不需要确认弹窗，直接导出
-    invBatchExport(ids);
+    await invBatchExport(ids);
     return;
   }
 
@@ -5424,26 +5424,51 @@ async function invBatchExecute(action){
   }
 }
 
-function invBatchExport(ids){
+async function invBatchExport(ids){
+  // 等待与当前筛选结果对应的 CI/PI 金额异步加载完成，避免导出空值。
+  if(window._invFinancialLoadPromise){
+    try{ await window._invFinancialLoadPromise; }catch(e){}
+  }
   const data = invDataCache.filter(d => ids.includes(d.id));
-  const headers = ['SKU',t("app.232", "\u4ea7\u54c1\u540d"),t("app.112", "\u54c1\u724c"),t("app.113", "\u56fd\u5bb6"),t("app.114", "\u4ed3\u5e93"),t("html.inv_export.available", "可用库存"),t("app.655", "\u5b89\u5168\u5e93\u5b58"),t("col.in_transit", "在途"),t("app.656", "PI\u672a\u53d1"),t("app.657", "PO\u672a\u786e"),t("app.619", "\u52a0\u6743\u6210\u672c"),t("app.658", "\u5e93\u5b58\u91d1\u989d(\u672c\u5e01)"),t("shell.052", "\u5e93\u5b58\u91d1\u989d(\u4eba\u6c11\u5e01)"),t("shell.053", "\u76ee\u6807\u5468\u8f6c\u6708"),t("shell.054", "\u5b9e\u9645\u5468\u8f6c\u6708"),t("app.662", "\u6700\u540e\u5165\u5e93"),t("app.667", "\u6700\u540e\u51fa\u5e93"),t("col.inv_status", "库存状态"),t("app.668", "\u91cd\u70b9\u5173\u6ce8"),t("col.remark", "备注")];
+  if(data.some(d => d.inventory_amount_values_loaded !== true)){
+    showToast(t('inv.export.amount_loading','金额数据仍在加载，请稍后再导出'),'warning');
+    return;
+  }
+  const headers = [
+    'SKU',t("app.232", "产品名"),t("app.112", "品牌"),t("app.113", "国家"),t("app.114", "仓库"),
+    t('inv.col.in_stock_qty','在库库存'),
+    t('inv.col.in_transit_qty','在途库存'),
+    t('inv.col.in_transit_amount','在途库存金额（¥）'),
+    t('inv.col.pi_unshipped_qty','PI未发'),
+    t('inv.col.pi_unshipped_amount','PI未发货金额（¥）'),
+    t("app.619", "加权成本"),
+    t('inv.col.on_hand_amount_local','在库库存金额（本币）'),
+    t('inv.col.on_hand_amount_rmb','在库库存金额（¥）'),
+    t("app.660", "目标周转月"),t("app.661", "实际周转月"),
+    t("app.662", "最后入库"),t("app.667", "最后出库"),
+    t("col.inv_status", "库存状态"),t("app.668", "重点关注"),t("col.remark", "备注")
+  ];
+  const rateInfo = window._invRateInfo || {};
+  const countryCurrency = {};
+  (rateInfo.countries||[]).forEach(function(co){
+    var curr = co.default_currency || '';
+    var rateObj = (rateInfo.rates||{})[curr];
+    countryCurrency[co.country] = { code: curr, symbol: co.symbol || '', rate: rateObj ? rateObj.rate : null };
+  });
   const rows = data.map(d => {
-    var invVal = (d.available_qty||0)*(d.weighted_avg_cost||0);
-    // 从缓存获取汇率信息
-    var rateInfo = window._invRateInfo || {};
-    var countryCurrency = {};
-    (rateInfo.countries||[]).forEach(function(co){
-      var curr = co.default_currency || '';
-      var rateObj = (rateInfo.rates||{})[curr];
-      countryCurrency[co.country] = { code: curr, symbol: co.symbol || '', rate: rateObj ? rateObj.rate : null };
-    });
+    var invVal = Number(d.available_qty||0) * Number(d.weighted_avg_cost||0);
     var ci = countryCurrency[d.country] || {};
-    // rate 是 cnyToForeign (1 CNY = X 本国货币)，所以 CNY = 本币 / rate
+    // rate 是 cnyToForeign (1 CNY = X 本国货币)，所以 CNY = 本币 / rate。
     var cnyVal = ci.rate ? (invVal / ci.rate) : 0;
+    var amountAllowed = d.inventory_amount_view_allowed !== false;
+    var transitCnyVal = amountAllowed && !d.in_transit_amount_missing_rate && d.in_transit_amount_cny != null
+      ? Number(d.in_transit_amount_cny) : '';
+    var piUnshippedCnyVal = amountAllowed && !d.pi_unshipped_amount_missing_rate && d.pi_unshipped_amount_cny != null
+      ? Number(d.pi_unshipped_amount_cny) : '';
     return [
       d.sku_code, d.product_name||'', d.brand||'', d.country||'', d.warehouse||'',
-      d.available_qty||0, d.safety_stock||0, d.in_transit_qty||0,
-      d.pi_confirmed_unshipped_qty||0, d.po_unconfirmed_pi_qty||0,
+      d.available_qty||0, d.in_transit_qty||0, transitCnyVal,
+      d.pi_confirmed_unshipped_qty||0, piUnshippedCnyVal,
       d.weighted_avg_cost||0, invVal, cnyVal,
       d.target_turnover_months||0, d.turnover_months||0,
       d.last_inbound_date||'', d.last_outbound_date||'',
