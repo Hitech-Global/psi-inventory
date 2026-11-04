@@ -22,9 +22,12 @@
  */
 
 const crypto = require('node:crypto');
+const { Pool } = require('pg');
 const { ShopeeClient } = require('../src/shopee-client');
 const { appSpec } = require('../src/config');
 const { ENDPOINTS } = require('../src/catalog');
+const { ShopeeTokenRepository } = require('../src/token-repository');
+const { loadMasterKey } = require('../src/token-crypto');
 
 /**
  * The calls that need no shop's token.
@@ -176,6 +179,31 @@ async function probe({ role, partnerId, partnerKey, shopId, accessToken, princip
   return results;
 }
 
+/**
+ * The shop's token for an application.
+ *
+ * The tokens are kept encrypted in the database, not in the environment,
+ * so they are read the way the rest of the system reads them.
+ */
+async function tokenFor(role, shopId) {
+  const pool = new Pool({
+    host: process.env.PGHOST || 'postgres',
+    port: Number(process.env.PGPORT || 5432),
+    database: process.env.POSTGRES_DB,
+    user: process.env.POSTGRES_USER,
+    password: process.env.POSTGRES_PASSWORD,
+  });
+  try {
+    const repository = new ShopeeTokenRepository({ pool, masterKey: loadMasterKey() });
+    const token = await repository.load({ appRole: role, shopId: Number(shopId) });
+    return token ? token.accessToken : '';
+  } catch (error) {
+    return '';
+  } finally {
+    await pool.end().catch(() => {});
+  }
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (!args.apps.length) {
@@ -192,7 +220,11 @@ async function main() {
     }
     const env = process.env;
     const specEnv = appSpec(role);
-    const token = String(env[specEnv.accessToken] || '').trim();
+    const shopId = args.shopId || env.SHOPEE_SHOP_ID || '';
+    // The token may be in the environment (a bootstrap) or in the
+    // database (what the authorization actually produced).
+    let token = String(env[specEnv.accessToken] || '').trim();
+    if (!token) token = await tokenFor(role, shopId);
     // The partner's own details come first: they answer whether this
     // partner is worth calling at all, and they need no shop's token.
     const partnerRows = [];
@@ -208,7 +240,7 @@ async function main() {
       role,
       partnerId,
       partnerKey: partnerKey || '',
-      shopId: args.shopId || env.SHOPEE_SHOP_ID || '',
+      shopId,
       accessToken: token,
       principalId: args.principalId || env.SHOPEE_BRAND_PORTAL_PRINCIPAL_ID || '',
       envs: args.envs,
