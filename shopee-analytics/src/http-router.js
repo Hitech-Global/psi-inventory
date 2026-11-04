@@ -598,6 +598,29 @@ function createShopeeAnalyticsRouter({
     }
   });
 
+  router.get('/app/status-all', async (req, res, next) => {
+    try {
+      if (!appOAuthService) throw Object.assign(new Error('App OAuth service is unavailable'), { status: 503 });
+      const shopId = positiveInt(req.query.shop_id, 'shop_id');
+      // Every application at once, so the reader can see the whole of it
+      // in one place rather than opening each in turn.
+      const apps = [];
+      for (const role of SUPPORTED_ROLES) {
+        try {
+          apps.push(await appOAuthService.status({ role, shopId }));
+        } catch (error) {
+          apps.push({
+            role, shopId, credentialConfigured: false, tokenPresent: false,
+            error: String((error && error.message) || error).slice(0, 200),
+          });
+        }
+      }
+      res.json({ shopId, apps });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.get('/app/oauth/start', async (req, res, next) => {
     try {
       if (!req.auth || req.auth.role !== ROLE_SUPER_ADMIN) {

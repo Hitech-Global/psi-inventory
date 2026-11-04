@@ -840,3 +840,36 @@ tbody td{font-weight:400}
 .tiktok-unavailable-title{font-size:12px;color:#93370d;font-weight:500}
 .tiktok-unavailable-reason{font-size:11px;color:#b54708;line-height:1.55}
 .tiktok-unavailable-impact{font-size:11px;color:#93370d;line-height:1.55;opacity:.85}
+
+/* ── 平台接入：其它应用 ────────────────────────────────────────────────
+   每个应用是独立的合作伙伴，各占一行：叫什么、覆盖什么、状态如何、
+   要不要现在连。 */
+.apps{margin-top:16px;padding-top:14px;border-top:1px solid #ececef}
+.apps-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 14px;margin-bottom:10px}
+.apps-head h3{margin:0;font-size:13px;color:#101828}
+.apps-head p{margin:0;font-size:11px;color:#6e6e73}
+.apps-shop{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:11px;color:#6e6e73}
+.apps-shop select{
+  font:inherit;font-size:11px;padding:4px 8px;border:1px solid #d0d5dd;border-radius:8px;background:#fff;
+  max-width:240px;
+}
+.apps-list{list-style:none;margin:0;padding:0}
+.app-row{
+  display:flex;align-items:center;gap:12px;padding:9px 0;border-top:1px solid #f2f4f7;
+}
+.app-name{width:190px;font-size:12px;color:#101828;display:flex;flex-direction:column;gap:1px}
+.app-name small{font-size:10px;color:#98a2b3;letter-spacing:.04em}
+.app-note{flex:1;font-size:11px;color:#6e6e73}
+.app-state{width:110px}
+.app-action{width:88px;text-align:right}
+.app-action .primary{
+  border:0;background:#101828;color:#fff;border-radius:8px;padding:5px 12px;
+  font:inherit;font-size:11px;font-weight:600;cursor:pointer;
+}
+.app-action .primary:hover{opacity:.88}
+.apps-empty{margin:0;font-size:11px;color:#98a2b3}
+@media (max-width:720px){
+  .app-row{flex-wrap:wrap}
+  .app-name,.app-note,.app-state,.app-action{width:auto}
+  .apps-shop{margin-left:0}
+}

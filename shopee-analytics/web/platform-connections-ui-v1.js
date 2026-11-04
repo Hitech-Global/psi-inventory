@@ -15,7 +15,21 @@
 (() => {
   const API = '/api/shopee-analytics';
 
-  const TEXT = {
+  /**
+ * The applications the shop holds beyond the shop side and the ERP.
+ *
+ * Each is a partner of its own, so each has its own line: whether its
+ * credentials are set, and whether a shop has been authorized for it.
+ */
+const SHOPEE_APPS = [
+  { role: 'MARKETING', name: '联盟营销', nameEn: 'Affiliate Marketing', category: '联盟活动、绩效与对账' },
+  { role: 'VIDEO', name: '视频与直播', nameEn: 'Video & Livestream', category: '视频与直播表现' },
+  { role: 'ONLINE', name: '短视频', nameEn: 'Short Video', category: '短视频数据' },
+  { role: 'STORE_OPS_BRAIN', name: '运营大脑', nameEn: 'Store Operations Brain', category: '店铺运营与履约质量' },
+  { role: 'ORDER_ANALYSIS', name: '订单分析', nameEn: 'Order Analysis', category: '订单表现与分析' },
+];
+
+const TEXT = {
     zh: {
       title: '平台接入',
       sub: '分别授权 Shopee 与 TikTok Shop 的开放平台 API。授权后会记录店铺台账与令牌状态。',
@@ -39,6 +53,14 @@
       tiktokNote: 'TikTok 的 auth_code 30 分钟内有效且只能用一次，兑换后会自动建立「店铺 ID + cipher」台账 —— cipher 是调用店铺级接口的必要凭据。',
       empty: '暂无店铺',
       close: '关闭',
+      appsTitle: '其它应用',
+      appsSub: '每个应用是独立的合作伙伴，需要单独授权店铺。',
+      pickShop: '选择店铺',
+      connect: '连接',
+      notConfigured: '未配置凭据',
+      notAuthorized: '未授权',
+      authorized: '已授权',
+      needToken: '需先在开放平台上线该应用',
     },
     en: {
       title: 'Platform connections',
@@ -63,6 +85,14 @@
       tiktokNote: "TikTok's auth_code is good for thirty minutes and can be used once; redeeming it establishes the shop and cipher ledger — the cipher is what the shop-level calls need.",
       empty: 'No shops',
       close: 'Close',
+      appsTitle: 'Other applications',
+      appsSub: 'Each application is a partner of its own and needs the shop authorized for it.',
+      pickShop: 'Choose a shop',
+      connect: 'Connect',
+      notConfigured: 'Credentials not set',
+      notAuthorized: 'Not authorized',
+      authorized: 'Authorized',
+      needToken: 'The application must be live on the platform first',
     },
   };
 
@@ -155,6 +185,7 @@
               </div>
             </section>
           </div>
+          <div class="apps" id="platformShopeeApps"></div>
           <p class="connect-note" id="platformConnectionsNote"></p>
         </div>
       </div>`;
@@ -232,6 +263,104 @@
     }
   }
 
+  /**
+   * The applications beyond the shop side, one line each.
+   *
+   * The state says three things: whether the partner's credentials are
+   * set here at all, whether this shop has been authorized for it, and
+   * whether it is worth authorizing — an application that has not gone
+   * live on the platform cannot be, whatever is set here.
+   */
+  function renderShopeeApps(statuses, shopId) {
+    const host = document.querySelector('#platformShopeeApps');
+    if (!host) return;
+    const byRole = new Map((statuses || []).map(entry => [entry.role, entry]));
+    const rows = SHOPEE_APPS.map(app => {
+      const status = byRole.get(app.role) || {};
+      const configured = status.credentialConfigured !== false;
+      const authorized = Boolean(status.tokenPresent);
+      let state = pill(t('notAuthorized'), 'neutral');
+      let note = app.category;
+      if (!configured) {
+        state = pill(t('notConfigured'), 'warn');
+        note = `${app.category} · ${t('notConfigured')}`;
+      } else if (authorized) {
+        state = pill(t('authorized'), 'good');
+        note = `${app.category} · ${t('authorized')}`;
+      }
+      const action = configured && !authorized
+        ? `<button type="button" class="primary" data-connect-app="${esc(app.role)}" data-shop-id="${esc(shopId)}">${esc(t('connect'))}</button>`
+        : '';
+      return `<li class="app-row">
+        <span class="app-name">${esc(locale() === 'en' ? app.nameEn : app.name)}
+          <small>${esc(app.role)}</small></span>
+        <span class="app-note">${esc(note)}</span>
+        <span class="app-state">${state}</span>
+        <span class="app-action">${action}</span>
+      </li>`;
+    }).join('');
+    host.innerHTML = `
+      <div class="apps-head">
+        <h3>${esc(t('appsTitle'))}</h3>
+        <p>${esc(t('appsSub'))}</p>
+        <label class="apps-shop">${esc(t('pickShop'))}
+          <select id="platformAppsShop"></select>
+        </label>
+      </div>
+      <ul class="apps-list">${rows}</ul>`;
+  }
+
+  /**
+   * The shops the reader may connect an application for.
+   */
+  async function loadShopeeApps() {
+    const host = document.querySelector('#platformShopeeApps');
+    if (!host) return;
+    let shops = [];
+    try {
+      const payload = await request('/api/shopee-analytics/shops');
+      shops = Array.isArray(payload && payload.shops) ? payload.shops : [];
+    } catch (error) {
+      host.innerHTML = `<p class="apps-empty">${esc(String(error.message || error))}</p>`;
+      return;
+    }
+    if (!shops.length) {
+      host.innerHTML = `<p class="apps-empty">${esc(t('empty'))}</p>`;
+      return;
+    }
+    const select = document.createElement('select');
+    select.id = 'platformAppsShop';
+    select.innerHTML = shops.map(shop =>
+      `<option value="${esc(shop.shopId)}">${esc(shop.displayName || shop.shopId)}</option>`).join('');
+    host.innerHTML = '<div class="apps-head"><h3></h3><p></p><label class="apps-shop"></label></div>';
+    const head = host.querySelector('.apps-head');
+    head.querySelector('h3').textContent = t('appsTitle');
+    head.querySelector('p').textContent = t('appsSub');
+    const label = head.querySelector('.apps-shop');
+    label.insertBefore(document.createTextNode(`${t('pickShop')} `), select);
+    label.appendChild(select);
+    host.appendChild(head);
+
+    const load = async () => {
+      const shopId = select.value;
+      let statuses = [];
+      try {
+        const payload = await request(`/api/shopee-analytics/app/status-all?shop_id=${encodeURIComponent(shopId)}`);
+        statuses = (payload && payload.apps) || [];
+      } catch (error) {
+        statuses = [];
+      }
+      renderShopeeApps(statuses, shopId);
+      const again = host.querySelector('#platformAppsShop');
+      if (again) {
+        again.value = shopId;
+        again.addEventListener('change', load);
+      }
+    };
+    select.addEventListener('change', load);
+    await load();
+  }
+
   function label() {
     const modal = ensureModal();
     const title = modal.querySelector('#platformConnectionsTitle');
@@ -256,6 +385,7 @@
     modal.classList.remove('hidden');
     loadShopee();
     loadTiktok();
+    loadShopeeApps();
   }
 
   function close() {
@@ -280,6 +410,15 @@
       event.preventDefault();
       loadShopee();
       loadTiktok();
+      return;
+    }
+    const connectApp = event.target.closest('[data-connect-app]');
+    if (connectApp) {
+      event.preventDefault();
+      const role = connectApp.dataset.connectApp;
+      const shopId = connectApp.dataset.shopId;
+      location.href = `/api/shopee-analytics/app/oauth/start?app=${encodeURIComponent(role)}`
+        + `&shop_id=${encodeURIComponent(shopId)}`;
       return;
     }
     if (event.target.closest('#platformTiktokConnect')) {
