@@ -236,6 +236,19 @@ function escapeHtmlText(value) {
     .replaceAll("'", '&#039;');
 }
 
+/**
+ * The live partner number of an application.
+ *
+ * There may be more than one on record — a test one and a live one — and
+ * the live one is the larger of the two.
+ */
+function livePartnerId(value) {
+  const ids = String(value || '').split(',').map(part => part.trim()).filter(Boolean);
+  if (!ids.length) return null;
+  const live = ids.slice().sort((a, b) => Number(b) - Number(a))[0];
+  return Number.isFinite(Number(live)) ? live : ids[ids.length - 1];
+}
+
 function createShopeeAnalyticsRouter({
   repository,
   strategyRepository,
@@ -453,8 +466,10 @@ function createShopeeAnalyticsRouter({
           ads: String(process.env.SHOPEE_ADS_PARTNER_ID || '').trim() || null,
           erp: String(process.env.SHOPEE_ERP_PARTNER_ID || '').trim() || null,
           brandPortal: String(process.env.SHOPEE_BRAND_PORTAL_PARTNER_ID || '').trim() || null,
-          video: String(process.env.SHOPEE_VIDEO_PARTNER_ID || '').trim() || null,
-          online: String(process.env.SHOPEE_ONLINE_PARTNER_ID || '').trim() || null,
+          // Where more than one pair of credentials is on record, the live
+          // one is the one the reader acts on, so that is the one named.
+          video: livePartnerId(process.env.SHOPEE_VIDEO_PARTNER_ID),
+          online: livePartnerId(process.env.SHOPEE_ONLINE_PARTNER_ID),
         },
       });
     } catch (error) {
