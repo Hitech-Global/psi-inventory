@@ -20,8 +20,8 @@ const parsed=n.parseSheetRows([
   ]},
   {name:'Summary',rows:[['Total','Amount'],['Total','100']]},
   {name:'USB',rows:[
-    ['Part No.','Model','FOB Price','Currency','Brand'],
-    ['LEGACY-USB-01','U905',0,'USD','Netac'],
+    ['Supplier Part Number','Model','FOB Price','Currency','Brand'],
+    ['LEGACY-USB-01','U905',0,'USD','NETAC'],
     ['LEGACY-USB-02','U906','','USD','Netac']
   ]}
 ],{brand:'Netac',quote_date:'2026-11-04',supplier_id:'supplier-netac'});
@@ -49,10 +49,13 @@ const matched=n.matchRows(parsed.rows,metadata,{supplier_id:'supplier-netac',bra
 assert.equal(matched[0].match_status,'matched','exact PSI SKU should auto-match');
 assert.equal(matched[0].match_source,'exact');
 assert.equal(matched[2].match_status,'matched','saved supplier mapping should auto-match');
+assert.equal(matched[2].brand,'Netac','brand values should be canonicalized against the SKU master');
 assert.equal(matched[2].match_source,'saved');
 assert.equal(matched[3].match_status,'unlinked','unknown part number should remain unlinked');
 assert.equal(matched[3].sku_code,'LEGACY-USB-02','unlinked row must preserve supplier part number');
 assert.equal(n.validateRows(matched).length,0,'unlinked rows and zero-price rows must remain importable');
+const punctuationMismatch=n.matchRows([{supplier_part_no:'NTSSD001',brand:'Netac',quote_price:1,currency:'USD',quote_date:'2026-11-04'}],metadata,{supplier_id:'supplier-netac',brand:'Netac'});
+assert.equal(punctuationMismatch[0].match_status,'unlinked','SKU matching must not erase meaningful punctuation');
 
 const manual=n.matchRows([
   {...parsed.rows[3],psi_sku_code:'PSI-U905',match_source:'manual'}
