@@ -8,7 +8,7 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
 const start = source.indexOf('function renderInvCards(data, countryCurrency, countryFilter){');
-const end = source.indexOf('\\n}', start);
+const end = source.indexOf('\n}', start);
 assert.ok(start >= 0 && end > start, 'renderInvCards should exist');
 const renderSource = source.slice(start, end + 2);
 
@@ -27,7 +27,7 @@ function renderCards(data, currencies, countryFilter) {
     t: function(key, fallback) { return fallback; },
     esc: escapeHtml
   };
-  vm.runInNewContext(renderSource + '\\nthis.renderInvCards = renderInvCards;', sandbox);
+  vm.runInNewContext(renderSource + '\nthis.renderInvCards = renderInvCards;', sandbox);
   sandbox.renderInvCards(data, currencies, countryFilter || '');
   return target.innerHTML;
 }
