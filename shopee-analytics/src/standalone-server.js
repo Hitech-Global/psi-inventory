@@ -31,7 +31,7 @@ const { TikTokTokenRepository } = require('./tiktok-token-repository');
 const { TikTokCreatorRepository, TikTokCreatorSyncRunner } = require('./tiktok-creator-repository');
 const { TikTokHealthService } = require('./platforms/tiktok-health-service');
 const { loadMasterKey } = require('./token-crypto');
-const { loadTikTokRateLimitRetryOptions } = require('./rate-limit-retry');
+const { loadTikTokRateLimitRetryOptions } = require('./tiktok-token-manager');
 const { createReviewerAuth, ROLE_REVIEWER } = require('./reviewer-auth');
 
 function resolveBindAddress(env = process.env) {
