@@ -88,11 +88,11 @@ module.exports=function installQuotationImportFast(deps){
         matchSource='manual';
       }
       if(!match){
-        const mk=mappingKey(supplierId,brand,part),mapped=manualMap.get(mk)||mappingMap.get(mk);
+        const mk=mappingKey(supplierId,brand,part),manualMapped=manualMap.get(mk),savedMapped=mappingMap.get(mk),mapped=manualMapped||savedMapped;
         if(mapped){
           match=skuMap.get(brand.toLowerCase()+'|'+norm(mapped))||null;
-          if(!match){errors.push({row:Number(r.source_row)||i+2,reason:'已保存的料号映射指向无效 SKU：'+mapped});return;}
-          matchSource=manualMap.has(mk)?'manual':'saved';
+          if(!match&&manualMapped){errors.push({row:Number(r.source_row)||i+2,reason:'手动映射指向无效 SKU：'+mapped});return;}
+          if(match)matchSource=manualMapped?'manual':'saved';
         }
       }
       if(!match){
@@ -112,6 +112,8 @@ module.exports=function installQuotationImportFast(deps){
         supplier_id:supplierId,brand,supplier_part_no:part,supplier_part_no_key:norm(part),psi_sku_code:psiSku
       });
     });
+    const mappingTargets=new Map();
+    mappingUpdates.forEach(m=>{const k=mappingKey(m.supplier_id,m.brand,m.supplier_part_no_key),prior=mappingTargets.get(k);if(prior&&prior!==m.psi_sku_code)errors.push({row:0,reason:'同一供应商料号被手动关联到多个 PSI SKU：'+m.supplier_part_no});else mappingTargets.set(k,m.psi_sku_code);});
     if(errors.length)throw badRequest('导入校验失败（'+errors.length+' 行）',errors);
     const mappings=[...new Map(mappingUpdates.map(x=>[mappingKey(x.supplier_id,x.brand,x.supplier_part_no_key),x])).values()];
     return {rows,mode,mappings};
