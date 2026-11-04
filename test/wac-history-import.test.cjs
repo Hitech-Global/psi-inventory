@@ -431,3 +431,26 @@ test('WAC history matrix keeps the agreed dimensions, left alignment, sticky hea
   assert.doesNotMatch(templateRoute,/确认日期|汇率日期/);
 
 });
+
+
+test('WAC history matrix presentation hides redundant columns and fills available viewport', () => {
+  const html = fs.readFileSync(require('node:path').join(__dirname, '..', 'index.html'), 'utf8');
+  const appSource = fs.readFileSync(require.resolve('../app'), 'utf8');
+  const start = html.indexOf('/* WAC-HISTORY-PRESENTATION-20261104 */');
+  const end = html.indexOf('</style>', start);
+  assert.ok(start >= 0 && end > start, 'WAC history presentation overrides must be present in the page shell');
+  const css = html.slice(start, end);
+  assert.match(css, /thead th:nth-child\\(2\\)/);
+  assert.match(css, /thead th:nth-child\\(3\\)/);
+  assert.match(css, /thead th:nth-child\\(4\\)/);
+  assert.match(css, /tbody td:nth-child\\(4\\)[\\s\\S]*display: none !important/);
+  assert.match(css, /th:nth-child\\(5\\)[\\s\\S]*left: 150px !important/);
+  assert.match(css, /th:nth-child\\(6\\)[\\s\\S]*left: 290px !important/);
+  assert.match(css, /th:nth-child\\(7\\)[\\s\\S]*left: 450px !important/);
+  assert.match(css, /wac-history-source[\\s\\S]*display: none !important/);
+  assert.match(css, /#wac-matrix-table > div\\[style\\*="font-size:11px"\\][\\s\\S]*display: none !important/);
+  assert.match(css, /max-height: calc\\(100dvh - 210px\\) !important/);
+  assert.ok(appSource.includes("_wacMatrixMultiMarkup('brand'"), 'brand filter remains available');
+  assert.ok(appSource.includes("_wacMatrixMultiMarkup('country'"), 'country filter remains available');
+  assert.ok(appSource.includes("_wacMatrixMultiMarkup('warehouse'"), 'warehouse filter remains available');
+});
