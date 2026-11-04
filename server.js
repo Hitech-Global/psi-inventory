@@ -32,7 +32,7 @@ const { importProformaInvoicesPg } = require('./wave2b-pi-batch-import-pg.js'); 
 const { generatePONumber } = require('./po-number');
 const { slimReplenishmentRow, projectDailySalesRow } = require('./rp-projection'); // RP-P0-R1 订单预测响应投影（仅序列化瘦身，不动计算逻辑）
 const { inventoryValueKey, buildInventoryFinancialValueMap } = require('./inventory-asset-values');
-const { buildWacCostChangeRows, summarizeWacCostChangeRows, chunkWacCostChangeRows, buildWacCostChangeCard } = require('./wac-notification');
+const { buildWacCostChangeRows, summarizeWacCostChangeRows, chunkWacCostChangeRows, getNewWacCcRecipientIds, buildWacCostChangeCard } = require('./wac-notification');
 const {
   createSqliteSalesImportAdapter,
   createPostgresSalesImportAdapter,
@@ -19818,6 +19818,82 @@ app.post('/api/wac/notifications/:logistics_batch_id/retry',requireApiPermission
     await dispatchWacNotificationLogs(batch.id,['failed']);
     const logs=query('SELECT id,recipient_user_id,recipient_name,part_no,part_count,status,attempt_count,last_error,sent_at,created_at FROM wac_notification_logs WHERE logistics_batch_id=? ORDER BY recipient_name,part_no',[batch.id]).rows;
     res.json({success:true,retried_count:failed.length,logs});
+  }catch(e){res.status(500).json({error:e.message});}
+}));
+
+// 已确认批次补充 CC：完全从锁定的 WAC 历史重建报告，不重新计算、不修改 WAC。
+app.post('/api/wac/notifications/:logistics_batch_id/cc',requireApiPermission('ci_edit'),asyncHandler(async(req,res)=>{
+  try{
+    const batch=queryOne(
+      'SELECT lb.id,lb.batch_no,lb.related_ci_id,lb.related_ci_no,lb.target_country,lb.target_warehouse,ci.brand AS ci_brand,ci.ci_no AS joined_ci_no FROM logistics_batches lb LEFT JOIN commercial_invoices ci ON ci.id=lb.related_ci_id WHERE lb.id=?',
+      [req.params.logistics_batch_id]
+    );
+    if(!batch)return res.status(404).json({error:'物流批次不存在'});
+
+    const historyRows=query(
+      "SELECT sku_code,version_no,original_avg_cost AS old_avg_cost,new_avg_cost,brand,country,warehouse,local_currency,confirmed_at,ci_no FROM wac_history WHERE logistics_batch_id=? AND COALESCE(is_locked,0)=1 AND COALESCE(confirmation_status,'confirmed') NOT IN ('reversed','void','cancelled') ORDER BY sku_code",
+      [batch.id]
+    ).rows;
+    if(!historyRows.length)return res.status(409).json({error:'该批次没有可用于通知的已确认 WAC 历史记录'});
+
+    const selectedIds=Array.isArray(req.body&&req.body.cc_user_ids)?req.body.cc_user_ids:[];
+    if(!selectedIds.length)return res.status(400).json({error:'请至少选择一位抄送人员'});
+    const existingRows=query('SELECT DISTINCT recipient_user_id FROM wac_notification_logs WHERE logistics_batch_id=?',[batch.id]).rows;
+    const existingIds=existingRows.map(r=>r.recipient_user_id);
+    const existingSet=new Set(existingIds.map(v=>String(v||'')));
+    const requestedUnique=Array.from(new Set(selectedIds.map(v=>String(v||'').trim()).filter(Boolean)));
+    if(!requestedUnique.length)return res.status(400).json({error:'请至少选择一位有效的抄送人员'});
+    const skippedExistingCount=requestedUnique.filter(id=>existingSet.has(id)).length;
+    const newIds=getNewWacCcRecipientIds(selectedIds,existingIds);
+    if(!newIds.length){
+      return res.json({success:true,added_recipient_count:0,notification_count:0,skipped_existing_count:skippedExistingCount,message:'所选人员已有通知记录，未重复发送'});
+    }
+    if(newIds.length>100)return res.status(413).json({error:'单次最多新增100位抄送人员'});
+
+    const ccUsers=[];
+    for(const uid of newIds){
+      const ccUser=queryOne('SELECT id,name,status,feishu_open_id FROM users WHERE id=?',[uid]);
+      if(!ccUser)return res.status(400).json({error:'抄送人员不存在：'+uid});
+      if(ccUser.status!=='active')return res.status(400).json({error:'抄送人员已停用：'+(ccUser.name||uid)});
+      if(!ccUser.feishu_open_id)return res.status(400).json({error:'抄送人员尚未绑定飞书账号：'+(ccUser.name||uid)});
+      ccUsers.push({id:ccUser.id,name:ccUser.name||''});
+    }
+
+    const reportRows=buildWacCostChangeRows(historyRows);
+    const reportChunks=chunkWacCostChangeRows(reportRows);
+    if(!reportChunks.length)return res.status(409).json({error:'该批次没有可发送的 SKU 成本明细'});
+    const reportSummary=summarizeWacCostChangeRows(reportRows);
+    const country=batch.target_country||(historyRows[0]&&historyRows[0].country)||'';
+    const warehouse=batch.target_warehouse||(historyRows[0]&&historyRows[0].warehouse)||'';
+    const storedCurrency=historyRows.find(r=>String(r.local_currency||'').trim());
+    const localCurrency=resolveWacHistoryCurrency(country,storedCurrency?storedCurrency.local_currency:'');
+    const ciNo=batch.joined_ci_no||batch.related_ci_no||(historyRows[0]&&historyRows[0].ci_no)||'';
+    const brand=batch.ci_brand||(historyRows[0]&&historyRows[0].brand)||'';
+    const confirmedAt=historyRows.reduce((latest,r)=>{
+      const value=String(r.confirmed_at||'');
+      return value>latest?value:latest;
+    },'').slice(0,10);
+    let notificationCount=0;
+
+    transaction(()=>{
+      for(const ccUser of ccUsers){
+        const participant=queryOne('SELECT id FROM business_participants WHERE business_type=? AND business_id=? AND participant_type=? AND user_id=?',['wac',batch.id,'cc',ccUser.id]);
+        if(!participant){
+          run('INSERT INTO business_participants (id,business_type,business_id,participant_type,user_id,user_name) VALUES (?,?,?,?,?,?)',[genId('bp'),'wac',batch.id,'cc',ccUser.id,ccUser.name]);
+        }
+        reportChunks.forEach((chunk,index)=>{
+          const payload={batch_no:batch.batch_no||'',ci_no:ciNo,brand,country,warehouse,local_currency:localCurrency,confirmed_at:confirmedAt,rows:chunk,summary:reportSummary,part_no:index+1,part_count:reportChunks.length};
+          run('INSERT INTO wac_notification_logs (id,logistics_batch_id,recipient_user_id,recipient_name,part_no,part_count,status,attempt_count,report_payload,last_error,sent_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT (logistics_batch_id,recipient_user_id,part_no) DO NOTHING',
+            [genId('wacn'),batch.id,ccUser.id,ccUser.name,index+1,reportChunks.length,'pending',0,JSON.stringify(payload),'','']);
+        });
+      }
+    });
+    const recipientPlaceholders=ccUsers.map(()=>'?').join(',');
+    const createdCount=queryOne('SELECT COUNT(*) AS count FROM wac_notification_logs WHERE logistics_batch_id=? AND recipient_user_id IN ('+recipientPlaceholders+')',[batch.id,...ccUsers.map(u=>u.id)]);
+    notificationCount=Number(createdCount&&createdCount.count||0);
+
+    if(notificationCount>0)setImmediate(()=>dispatchWacNotificationLogs(batch.id,['pending']).catch(err=>console.error('[WAC-FEISHU] 补充CC异步通知失败 batchId='+batch.id+':',err&&err.message?err.message:err)));
+    res.json({success:true,added_recipient_count:ccUsers.length,notification_count:notificationCount,skipped_existing_count:skippedExistingCount,report_part_count:reportChunks.length});
   }catch(e){res.status(500).json({error:e.message});}
 }));
 

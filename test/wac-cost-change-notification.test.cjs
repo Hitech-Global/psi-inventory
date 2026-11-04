@@ -3,7 +3,7 @@ const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const path=require('node:path');
-const {buildWacCostChangeRows,summarizeWacCostChangeRows,chunkWacCostChangeRows,buildWacCostChangeCard}=require('../wac-notification');
+const {buildWacCostChangeRows,summarizeWacCostChangeRows,chunkWacCostChangeRows,getNewWacCcRecipientIds,buildWacCostChangeCard}=require('../wac-notification');
 
 test('sorts WAC changes by absolute percentage and places first-time SKUs last',()=>{
   const rows=buildWacCostChangeRows([
@@ -33,6 +33,10 @@ test('summary and chunking preserve every SKU',()=>{
   assert.equal(chunks.length,3);
   assert.deepEqual(chunks.flat().map(r=>r.sku_code),rows.map(r=>r.sku_code));
 });
+test('post-confirmation CC deduplicates selected IDs and never re-sends to existing recipients',()=>{
+  assert.deepEqual(getNewWacCcRecipientIds(['u1','u2','u2','u3','',null],['u2']),['u1','u3']);
+  assert.deepEqual(getNewWacCcRecipientIds(['u1','u1'],['u1']),[]);
+});
 test('Feishu Card 2.0 report has all five columns and every SKU row',()=>{
   const rows=buildWacCostChangeRows([
     {sku_code:'SKU-UP',version_no:2,old_avg_cost:100,new_avg_cost:110},
@@ -59,9 +63,14 @@ test('WAC UI, retry API and both database adapters are wired',()=>{
   const sqlite=fs.readFileSync(path.join(root,'db-sqlite.js'),'utf8');
   const db=fs.readFileSync(path.join(root,'db.js'),'utf8');
   assert.match(app,/wac-cc-cb/);
+  assert.match(app,/openWacCcModal/);
+  assert.match(app,/wac-cc-add-cb/);
   assert.match(app,/retryWacNotifications/);
   assert.match(server,/\/api\/wac\/cc-candidates/);
   assert.match(server,/\/api\/wac\/notifications\/:logistics_batch_id\/retry/);
+  assert.match(server,/\/api\/wac\/notifications\/:logistics_batch_id\/cc/);
+  assert.match(server,/FROM wac_history WHERE logistics_batch_id=\?/);
+  assert.match(server,/getNewWacCcRecipientIds/);
   assert.match(server,/business_type.*wac/);
   assert.match(pg,/CREATE TABLE IF NOT EXISTS wac_notification_logs/);
   assert.match(sqlite,/CREATE TABLE IF NOT EXISTS wac_notification_logs/);
