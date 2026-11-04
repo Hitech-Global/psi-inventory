@@ -79,19 +79,20 @@ async function runBackendImportTest(){
 const fastModule=require(path.join(__dirname,'..','quotation-import-fast.js'));
 const originalDriver=process.env.DB_DRIVER;
 process.env.DB_DRIVER='sqlite';
-const routes={},executedSql=[];
+const routes={},executedSql=[],operationOrder=[];
 const fakeApp={
   get:(url,...handlers)=>{routes['GET '+url]=handlers[handlers.length-1];},
   post:(url,...handlers)=>{routes['POST '+url]=handlers[handlers.length-1];}
 };
 const fakeQuery=(sql,params)=>{
+  operationOrder.push('query:'+sql.slice(0,40));
   if(sql.includes('FROM suppliers WHERE id='))return {rows:[{id:'supplier-netac',name:'Netac',associated_brands:'["Netac"]',default_currency:'RMB',status:'active'}]};
   if(sql.includes('FROM skus WHERE COALESCE'))return {rows:[{sku_code:'SKU-1',brand:'Netac',category:'SSD',model:'Model 1',color_spec:'256GB'},{sku_code:'SKU-2',brand:'Netac',category:'USB',model:'Model 2',color_spec:'128GB'}]};
   if(sql.includes('FROM quotation_sku_mappings WHERE supplier_id='))return {rows:[]};
-  if(sql.includes('WITH incoming'))return {rows:[]};
+  if(sql.includes('WITH incoming'))return {rows:[{supplier_id:'supplier-netac',sku_code:'SKU-2',brand:'Netac',quote_date:'2026-11-04'}]};
   return {rows:[]};
 };
-const fakeRun=(sql,params)=>{executedSql.push({sql,params});return {changes:3};};
+const fakeRun=(sql,params)=>{executedSql.push({sql,params});operationOrder.push('run:'+sql.slice(0,40));return {changes:3};};
 fastModule({
   app:fakeApp,
   query:fakeQuery,
@@ -116,9 +117,13 @@ await routes['POST /api/quotation-management/import']({
 if(originalDriver===undefined)delete process.env.DB_DRIVER;else process.env.DB_DRIVER=originalDriver;
 assert.equal(response.statusCode,200,'backend should accept matched and unlinked supplier quote rows');
 assert.equal(response.body.unlinked,1,'backend should report unlinked supplier quote rows');
-assert.equal(response.body.inserted,3,'backend should import all quote rows');
+assert.equal(response.body.inserted,2,'backend should skip the prior quote after applying its manual SKU mapping');
+assert.equal(response.body.skipped,1,'the mapped historical quote should be treated as an existing duplicate');
 assert(executedSql.some(x=>x.sql.includes('INSERT INTO quotation_sku_mappings')),'manual mappings should be persisted');
 assert(executedSql.some(x=>x.sql.includes('INSERT INTO quotation_prices')&&x.sql.includes('supplier_part_no')),'quote writes should retain the source supplier part number');
-assert(executedSql.some(x=>x.sql.includes("match_status='matched'")),'manual mapping should attempt to link prior unlinked history');
+assert(executedSql.some(x=>x.sql.includes("match_status='matched'")),'manual mapping should link prior unlinked history');
+const historyUpdateAt=operationOrder.findIndex(x=>x.startsWith('run:UPDATE quotation_prices'));
+const duplicateCheckAt=operationOrder.findIndex(x=>x.startsWith('query:WITH incoming'));
+assert(historyUpdateAt>=0&&duplicateCheckAt>historyUpdateAt,'historical rows must be linked before duplicate checks to avoid duplicate quote history');
 }
 runBackendImportTest().then(()=>console.log('quotation-smart-import: PASS')).catch(err=>{console.error(err);process.exitCode=1;});
