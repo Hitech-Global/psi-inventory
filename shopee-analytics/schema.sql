@@ -812,9 +812,15 @@ CREATE TABLE IF NOT EXISTS shopee_sync_state (
   PRIMARY KEY (app_role, endpoint_key, shop_id)
 );
 
+-- 授权状态：每一次授权开始时留一条，等回调时用来对回它自己。
+--
+-- app_role 是这次授权走的是哪个应用 —— 退货、视频、直播、品牌大盘、
+-- 联盟营销，各自是开放平台里的一个合作伙伴，各自有自己的凭据。
 CREATE TABLE IF NOT EXISTS shopee_oauth_states (
   state_hash TEXT PRIMARY KEY,
-  app_role TEXT NOT NULL CHECK (app_role IN ('ADS')),
+  app_role TEXT NOT NULL CHECK (app_role IN (
+    'ADS', 'ERP', 'BRAND_PORTAL', 'MARKETING', 'STORE_OPS_BRAIN',
+    'ORDER_ANALYSIS', 'VIDEO', 'ONLINE')),
   expected_shop_id BIGINT NOT NULL,
   redirect_uri TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -838,6 +844,16 @@ ALTER TABLE shopee_oauth_states
   ADD COLUMN IF NOT EXISTS register_brand_code TEXT;
 ALTER TABLE shopee_oauth_states
   ADD COLUMN IF NOT EXISTS register_display_name TEXT;
+
+-- 装的是旧库的，约束里只有最早的那几个应用 —— 放开它，让每个应用
+-- 都能记下自己的授权。写法是幂等的，反复执行没有影响。
+ALTER TABLE shopee_oauth_states
+  DROP CONSTRAINT IF EXISTS shopee_oauth_states_app_role_check;
+ALTER TABLE shopee_oauth_states
+  ADD CONSTRAINT shopee_oauth_states_app_role_check
+  CHECK (app_role IN (
+    'ADS', 'ERP', 'BRAND_PORTAL', 'MARKETING', 'STORE_OPS_BRAIN',
+    'ORDER_ANALYSIS', 'VIDEO', 'ONLINE'));
 
 CREATE INDEX IF NOT EXISTS idx_shopee_oauth_states_expiry
   ON shopee_oauth_states(expires_at) WHERE consumed_at IS NULL;
