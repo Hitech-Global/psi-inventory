@@ -397,6 +397,20 @@ function sessionTokenFromRequest(req, config) {
   return parseCookies(req.headers.cookie || '')[config.cookieName] || null;
 }
 
+/**
+ * The paths that answer without a session.
+ *
+ * The callbacks are among them: the seller is on Shopee's page when they
+ * come back, and whether this system has a session for them there is not
+ * something the callback should depend on.
+ */
+const PUBLIC_API_PATHS = new Set([
+  '/app/oauth/callback',
+  '/erp/oauth/callback',
+  '/brand-portal/oauth/callback',
+  '/oauth/shopee/callback',
+]);
+
 function createAuthContext(session, config) {
   if (session) {
     return { enabled: true, role: session.user.role, shopIds: session.user.shopIds, user: session.user };
@@ -424,6 +438,11 @@ function createFeishuAuth({ pool, env = process.env, reviewerAuth = null } = {})
   const requireApiSession = async (req, res, next) => {
     try {
       if (req.path === '/health') { next(); return; }
+      // The seller comes back from Shopee's own page, and may well be on
+      // a browser that has not been signed in to this system. What proves
+      // the callback is ours is the state, which is single-use and has a
+      // time on it — not a session that may or may not be there.
+      if (PUBLIC_API_PATHS.has(req.path)) { next(); return; }
       const session = await resolveRequestSession(req);
       if (!config.enabled && !(reviewerAuth && reviewerAuth.config && reviewerAuth.config.enabled)) { req.auth = createAuthContext(null, config); next(); return; }
       if (!session) { res.status(401).json({ error: 'AUTH_REQUIRED', message: '请登录后继续。' }); return; }
