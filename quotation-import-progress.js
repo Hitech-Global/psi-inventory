@@ -250,7 +250,7 @@ function populateImportOptions(m){
   if(!brands.includes(selectedBrand))selectedBrand=brands[0]||'';
   brand.value=selectedBrand;
   const suppliers=importOptions&&importOptions.suppliers||[];
-  const preferred=suppliers.find(x=>(x.brands||[]).includes(selectedBrand))||suppliers[0]||null;
+  const preferred=suppliers.find(x=>(x.brands||[]).includes(selectedBrand))||null;
   selectedSupplierId=preferred?preferred.id:'';
   supplier.innerHTML='<option value="">未指定供应商（不保存料号映射）</option>'+suppliers.map(x=>'<option value="'+esc(x.id)+'">'+esc(x.name)+'</option>').join('');
   supplier.value=selectedSupplierId;
@@ -306,7 +306,7 @@ function openModal(){
         selectedBrand=(importOptions.brands||[]).find(x=>x.toLowerCase()===fileBrands[0].toLowerCase())||fileBrands[0];
         $('#qip-brand',m).value=selectedBrand;
         const detectedSupplier=(importOptions.suppliers||[]).find(x=>(x.brands||[]).includes(selectedBrand));
-        if(detectedSupplier){selectedSupplierId=detectedSupplier.id;$('#qip-supplier',m).value=selectedSupplierId;}
+        selectedSupplierId=detectedSupplier?detectedSupplier.id:'';$('#qip-supplier',m).value=selectedSupplierId;
       }
       currentRows=n.matchRows(parsed.rows,importOptions,{supplier_id:selectedSupplierId,brand:selectedBrand});
       const errors=n.validateRows(currentRows);
