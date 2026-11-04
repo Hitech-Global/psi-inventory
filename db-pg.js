@@ -2045,6 +2045,24 @@ async function initDatabase() {
     )
   `);
 
+  // WAC-BATCH-EXCLUSION-01：可恢复的无需计算记录；仅影响待确认队列，不修改业务原始记录。
+  await exec(`CREATE TABLE IF NOT EXISTS wac_batch_exclusions (
+    id TEXT PRIMARY KEY,
+    logistics_batch_id TEXT NOT NULL UNIQUE,
+    batch_no TEXT DEFAULT '',
+    reason TEXT DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'excluded',
+    excluded_by TEXT DEFAULT '',
+    excluded_by_name TEXT DEFAULT '',
+    excluded_at TEXT DEFAULT '',
+    restored_by TEXT DEFAULT '',
+    restored_by_name TEXT DEFAULT '',
+    restored_at TEXT DEFAULT '',
+    created_at TEXT DEFAULT '',
+    updated_at TEXT DEFAULT ''
+  )`);
+  await exec(`CREATE INDEX IF NOT EXISTS idx_wac_batch_exclusions_status ON wac_batch_exclusions(status, excluded_at)`);
+
   // ---------- 索引 ----------
   await exec(`CREATE INDEX IF NOT EXISTS idx_inv_sku ON inventory(sku_code)`);
   await exec(`CREATE INDEX IF NOT EXISTS idx_inv_country_wh ON inventory(country, warehouse)`);

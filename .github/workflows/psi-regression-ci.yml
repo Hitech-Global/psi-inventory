@@ -14,6 +14,7 @@ on:
       - 'db.js'
       - 'db-sqlite.js'
       - 'test/wac-history-import.test.cjs'
+      - 'test/wac-batch-exclusion.test.cjs'
       - 'test/rp-suggested-qty-wheel.test.cjs'
       - 'test/po-number-date-country.test.cjs'
       - '.github/workflows/psi-regression-ci.yml'
@@ -45,6 +46,7 @@ jobs:
           node --check db.js
           node --check db-sqlite.js
           node --check test/wac-history-import.test.cjs
+          node --check test/wac-batch-exclusion.test.cjs
       - name: Test PO number date and country format
         run: node test/po-number-date-country.test.cjs
       - name: Test WAC calculation and transport-basis rules
@@ -53,3 +55,5 @@ jobs:
         run: node test/rp-suggested-qty-wheel.test.cjs
       - name: Test WAC history matrix and historical import
         run: node test/wac-history-import.test.cjs
+      - name: Test WAC batch exclusion and restore
+        run: node test/wac-batch-exclusion.test.cjs

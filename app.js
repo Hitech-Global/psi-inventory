@@ -15078,6 +15078,8 @@ async function submitWacHistoryImport() {
 }
 
 async function renderInbound(){
+  window._wacBatchView='active';
+  window._wacSelectedBatchIds=new Set();
   document.getElementById('content-inner').innerHTML='<div id="flash-container"></div>'
     +'<div class="filter-bar"><div class="filter-form wac-batch-filters">'
     +'<div class="filter-group"><label>国家</label><select id="wac-filter-country" class="listing-status-select" onchange="filterWacBatches()"><option value="">全部国家</option></select></div>'
@@ -15087,23 +15089,39 @@ async function renderInbound(){
     +'<div class="filter-group"><label>到货日期（结束）</label><input id="wac-filter-date-to" type="date" onchange="filterWacBatches()"></div>'
     +'<div class="filter-actions"><button class="btn btn-secondary btn-sm" onclick="resetWacBatchFilters()">重置</button><button class="btn btn-primary btn-sm" onclick="loadWacBatches()">刷新</button></div>'
     +'</div></div>'
-    +'<div class="table-section"><div class="table-section-title"><div class="table-section-title-left">💰 WAC物流批次</div><div id="wac-batch-count" style="font-size:12px;color:var(--text-secondary)"></div></div><div id="wac-table"></div></div>';
+    +'<div class="table-section"><div class="table-section-title"><div class="table-section-title-left">💰 WAC物流批次</div><div id="wac-batch-count" style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-secondary)"></div></div><div id="wac-table"></div></div>';
   loadWacBatches();
 }
 
-// WAC批次统一列表：待确认与已确认记录均保留展示。
+// WAC批次统一列表：待确认与已确认记录均保留；无需计算记录单独归档且可恢复。
 window._wacBatchRows=[];
+window._wacBatchExcludedRows=[];
+window._wacBatchView='active';
+window._wacSelectedBatchIds=new Set();
+window._wacExcludePendingIds=[];
+window._wacRestorePendingId='';
+
 async function loadWacBatches(){
   const target=document.getElementById('wac-table');
   if(target) target.innerHTML='<div class="empty-state">加载中…</div>';
   try{
-    const results=await Promise.all([api('/api/wac/pending-batches'),api('/api/wac/confirmed-batches')]);
+    const results=await Promise.all([
+      api('/api/wac/pending-batches'),
+      api('/api/wac/confirmed-batches'),
+      api('/api/wac/excluded-batches')
+    ]);
     const pending=(results[0]||[]).map(r=>Object.assign({},r,{wac_status:'pending'}));
     const confirmed=(results[1]||[]).map(r=>Object.assign({},r,{wac_status:'confirmed'}));
     window._wacBatchRows=pending.concat(confirmed).sort((a,b)=>String(b.actual_arrival_date||'').localeCompare(String(a.actual_arrival_date||'')));
-    populateWacBatchFilters(window._wacBatchRows);
+    window._wacBatchExcludedRows=(results[2]||[]).slice().sort((a,b)=>String(b.excluded_at||'').localeCompare(String(a.excluded_at||'')));
+    const pendingIds=new Set(pending.map(r=>String(r.id)));
+    window._wacSelectedBatchIds=new Set(Array.from(window._wacSelectedBatchIds||[]).filter(id=>pendingIds.has(String(id))));
+    const source=window._wacBatchView==='excluded'?window._wacBatchExcludedRows:window._wacBatchRows;
+    populateWacBatchFilters(source);
     filterWacBatches();
-  }catch(e){if(target)target.innerHTML='<div class="empty-state">'+esc(e.message||'加载失败')+'</div>';}
+  }catch(e){
+    if(target)target.innerHTML='<div class="empty-state">'+esc(e.message||'加载失败')+'</div>';
+  }
 }
 
 function populateWacBatchFilters(rows){
@@ -15117,15 +15135,19 @@ function populateWacBatchFilters(rows){
   });
 }
 
-function filterWacBatches(){
+function getFilteredWacBatchRows(){
   const value=id=>document.getElementById(id)?.value||'';
   const country=value('wac-filter-country'),brand=value('wac-filter-brand'),warehouse=value('wac-filter-warehouse');
   const from=value('wac-filter-date-from'),to=value('wac-filter-date-to');
-  const rows=(window._wacBatchRows||[]).filter(r=>{
+  const source=window._wacBatchView==='excluded'?(window._wacBatchExcludedRows||[]):(window._wacBatchRows||[]);
+  return source.filter(r=>{
     const date=String(r.actual_arrival_date||'').slice(0,10);
     return (!country||String(r.target_country||'')===country)&&(!brand||String(r.brand||'')===brand)&&(!warehouse||String(r.target_warehouse||'')===warehouse)&&(!from||date>=from)&&(!to||date<=to);
   });
-  renderWacBatchRows(rows);
+}
+
+function filterWacBatches(){
+  renderWacBatchRows(getFilteredWacBatchRows());
 }
 
 function resetWacBatchFilters(){
@@ -15133,31 +15155,166 @@ function resetWacBatchFilters(){
   filterWacBatches();
 }
 
+function showExcludedWacBatches(){
+  window._wacBatchView='excluded';
+  populateWacBatchFilters(window._wacBatchExcludedRows||[]);
+  filterWacBatches();
+}
+
+function showActiveWacBatches(){
+  window._wacBatchView='active';
+  populateWacBatchFilters(window._wacBatchRows||[]);
+  filterWacBatches();
+}
+
+function toggleWacBatchSelection(batchId,checked){
+  const id=String(batchId||'');
+  if(!id)return;
+  if(!(window._wacSelectedBatchIds instanceof Set))window._wacSelectedBatchIds=new Set();
+  if(checked)window._wacSelectedBatchIds.add(id);
+  else window._wacSelectedBatchIds.delete(id);
+  filterWacBatches();
+}
+
+function toggleWacBatchSelectAll(checked){
+  const visible=getFilteredWacBatchRows().filter(r=>r.wac_status==='pending');
+  if(!(window._wacSelectedBatchIds instanceof Set))window._wacSelectedBatchIds=new Set();
+  visible.forEach(r=>{
+    const id=String(r.id||'');
+    if(checked)window._wacSelectedBatchIds.add(id);
+    else window._wacSelectedBatchIds.delete(id);
+  });
+  filterWacBatches();
+}
+
 function renderWacBatchRows(data){
   const target=document.getElementById('wac-table');if(!target)return;
-  const count=document.getElementById('wac-batch-count');if(count)count.textContent='共 '+data.length+' 个批次';
-  if(!data.length){target.innerHTML='<div class="empty-state"><div class="empty-icon">💰</div>没有符合条件的物流批次</div>';return;}
+  const isExcluded=window._wacBatchView==='excluded';
+  const pendingRows=isExcluded?[]:data.filter(r=>r.wac_status==='pending');
+  const selected=Array.from(window._wacSelectedBatchIds||[]);
+  const selectedCount=selected.length;
+  const allVisibleSelected=pendingRows.length>0&&pendingRows.every(r=>(window._wacSelectedBatchIds||new Set()).has(String(r.id)));
+  const count=document.getElementById('wac-batch-count');
+  const title=document.querySelector('#content-inner .table-section-title-left');
+  if(title)title.textContent=isExcluded?'🗂️ WAC无需计算记录':'💰 WAC物流批次';
+  if(count){
+    if(isExcluded){
+      count.innerHTML='<span>共 '+data.length+' 个无需计算批次</span><button class="btn btn-secondary btn-sm" onclick="showActiveWacBatches()">返回WAC物流批次</button>';
+    }else{
+      count.innerHTML='<span>共 '+data.length+' 个批次</span>'
+        +'<button class="btn btn-secondary btn-sm" onclick="showExcludedWacBatches()">无需计算记录 ('+(window._wacBatchExcludedRows||[]).length+')</button>'
+        +'<button class="btn btn-primary btn-sm" '+(selectedCount?'':'disabled')+' onclick="openWacBatchExcludeConfirm(Array.from(window._wacSelectedBatchIds||[]))">标记无需计算 ('+selectedCount+')</button>';
+    }
+  }
+  if(!data.length){
+    target.innerHTML='<div class="empty-state"><div class="empty-icon">💰</div>'+(isExcluded?'暂无无需计算记录':'没有符合条件的物流批次')+'</div>';
+    return;
+  }
+  const firstHeader=isExcluded?'<th>状态</th>':'<th style="width:44px"><input type="checkbox" aria-label="全选当前筛选的待确认批次" '+(allVisibleSelected?'checked ':'')+(pendingRows.length?'':'disabled ')+'onchange="toggleWacBatchSelectAll(this.checked)" style="width:16px;height:16px;cursor:pointer"></th>';
+  const extraHeaders=isExcluded?'<th>处理原因</th><th>标记时间</th>':'';
   target.innerHTML='<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr>'
-    +'<th>物流单号</th><th>关联CI</th><th>货代</th><th>国家</th><th>品牌</th><th>仓库</th><th>到货日期</th><th>PL数量</th><th>货值</th><th>状态</th><th>操作</th>'
-    +'</tr></thead><tbody>'+data.map(r=>'<tr>'
-      +'<td class="cell-id">'+esc(r.batch_no||'—')+'</td>'
-      +'<td class="cell-id">'+esc(r.ci_no||r.related_ci_no||'—')+'</td>'
-      +'<td>'+esc(r.forwarder_name||'—')+'</td>'
-      +'<td>'+countryLabel(r.target_country)+'</td>'
-      +'<td>'+esc(r.brand||'—')+'</td>'
-      +'<td>'+esc(r.target_warehouse||'—')+'</td>'
-      +'<td class="cell-date">'+fmtDate(r.actual_arrival_date)+'</td>'
-      +'<td>'+(r.pl_total_qty||0)+'</td>'
-      +'<td>'+(r.goods_amount==null?'—':Number(r.goods_amount).toLocaleString())+' '+esc(r.ci_currency||'')+'</td>'
-      +'<td>'+(r.wac_status==='confirmed'?'<span class="status-badge status-normal">已确认</span>':'<span class="status-badge status-warning">待确认</span>')+'</td>'
-      +'<td>'+(r.wac_status==='confirmed'?'<button class="btn btn-secondary btn-sm" onclick="wacConfirm(\''+r.id+'\')">查看</button>':'<button class="btn btn-primary btn-sm" onclick="wacConfirm(\''+r.id+'\')">WAC确认</button>')+'</td>'
-    +'</tr>').join('')+'</tbody></table></div>';
+    +firstHeader+'<th>物流单号</th><th>关联CI</th><th>货代</th><th>国家</th><th>品牌</th><th>仓库</th><th>到货日期</th><th>PL数量</th><th>货值</th>'+(isExcluded?'':'<th>状态</th>')+extraHeaders+'<th>操作</th>'
+    +'</tr></thead><tbody>'+data.map(r=>{
+      const idArg=b64EncodeUnicode(String(r.id||''));
+      const common='<td class="cell-id">'+esc(r.batch_no||'—')+'</td>'
+        +'<td class="cell-id">'+esc(r.ci_no||r.related_ci_no||'—')+'</td>'
+        +'<td>'+esc(r.forwarder_name||'—')+'</td>'
+        +'<td>'+countryLabel(r.target_country)+'</td>'
+        +'<td>'+esc(r.brand||'—')+'</td>'
+        +'<td>'+esc(r.target_warehouse||'—')+'</td>'
+        +'<td class="cell-date">'+fmtDate(r.actual_arrival_date)+'</td>'
+        +'<td>'+(r.pl_total_qty||0)+'</td>'
+        +'<td>'+(r.goods_amount==null?'—':Number(r.goods_amount).toLocaleString())+' '+esc(r.ci_currency||'')+'</td>';
+      if(isExcluded){
+        const blocked=Number(r.has_wac_history||0)>0;
+        const restoreButton=blocked
+          ?'<button class="btn btn-secondary btn-sm" disabled title="该批次已有WAC历史记录，不能恢复">不可恢复</button>'
+          :'<button class="btn btn-secondary btn-sm" onclick="openWacBatchRestoreConfirm(b64DecodeUnicode(\''+idArg+'\'))">恢复</button>';
+        return '<tr><td><span class="status-badge" style="background:#f1f3f5;color:#59636e">无需计算</span></td>'+common
+          +'<td>'+esc(r.exclusion_reason||'')+'</td><td class="cell-date">'+esc(String(r.excluded_at||'').replace('T',' ').slice(0,19))+'</td>'
+          +'<td>'+restoreButton+'</td></tr>';
+      }
+      const isPending=r.wac_status==='pending';
+      const isConfirmed=r.wac_status==='confirmed';
+      const selectedCell=isPending
+        ?'<td><input type="checkbox" '+((window._wacSelectedBatchIds||new Set()).has(String(r.id))?'checked ':'')+'aria-label="选择批次" onchange="toggleWacBatchSelection(b64DecodeUnicode(\''+idArg+'\'),this.checked)" style="width:16px;height:16px;cursor:pointer"></td>'
+        :'<td style="color:var(--text-secondary)">—</td>';
+      const status=isConfirmed?'<span class="status-badge status-normal">已确认</span>':'<span class="status-badge status-warning">待确认</span>';
+      const actions=isConfirmed
+        ?'<button class="btn btn-secondary btn-sm" onclick="wacConfirm(b64DecodeUnicode(\''+idArg+'\'))">查看</button>'
+        :'<button class="btn btn-primary btn-sm" onclick="wacConfirm(b64DecodeUnicode(\''+idArg+'\'))">WAC确认</button> <button class="btn btn-secondary btn-sm" onclick="openWacBatchExcludeConfirm([b64DecodeUnicode(\''+idArg+'\')])">无需计算</button>';
+      return '<tr>'+selectedCell+common+'<td>'+status+'</td><td>'+actions+'</td></tr>';
+    }).join('')+'</tbody></table></div>';
+}
+
+function openWacBatchExcludeConfirm(batchIds){
+  const validIds=Array.from(new Set((Array.isArray(batchIds)?batchIds:[]).map(id=>String(id||''))))
+    .filter(id=>(window._wacBatchRows||[]).some(r=>String(r.id)===id&&r.wac_status==='pending'));
+  if(!validIds.length){showToast('请选择待确认的WAC物流批次','warning');return;}
+  window._wacExcludePendingIds=validIds;
+  const names=validIds.map(id=>{
+    const row=(window._wacBatchRows||[]).find(r=>String(r.id)===id);
+    return '<div style="padding:5px 0;border-bottom:1px solid var(--border-color)">'+esc(row?row.batch_no:id)+'</div>';
+  }).join('');
+  const body='<p style="margin:0 0 10px">以下批次将标记为<strong>无需计算</strong>，只从WAC待确认队列移除。</p>'
+    +'<div style="max-height:150px;overflow:auto;padding:8px 12px;border:1px solid var(--border-color);border-radius:8px;margin-bottom:12px">'+names+'</div>'
+    +'<div style="padding:10px 12px;border-radius:8px;background:var(--bg-secondary);font-size:12px;color:var(--text-secondary);margin-bottom:12px">不会删除物流批次、CI、PL、付款记录，也不会修改库存数量、当前WAC或已确认的WAC历史。</div>'
+    +'<label for="wac-exclusion-reason" style="display:block;margin-bottom:6px;font-size:12px;color:var(--text-secondary)">处理原因</label>'
+    +'<textarea id="wac-exclusion-reason" rows="3" style="width:100%;box-sizing:border-box;border:1px solid var(--border-color);border-radius:8px;padding:9px 10px;resize:vertical">历史批次已人工核算，无需再次计算</textarea>';
+  const footer='<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" id="wac-exclusion-submit" onclick="submitWacBatchExclusion()">确认标记无需计算</button>';
+  openModal('标记为无需计算',body,footer);
+}
+
+async function submitWacBatchExclusion(){
+  const ids=(window._wacExcludePendingIds||[]).slice();
+  if(!ids.length){closeModal();return;}
+  const reason=(document.getElementById('wac-exclusion-reason')?.value||'').trim()||'历史批次已人工核算，无需再次计算';
+  const button=document.getElementById('wac-exclusion-submit');
+  if(button){button.disabled=true;button.textContent='处理中…';}
+  try{
+    const result=await api('/api/wac/batches/exclude','POST',{batch_ids:ids,reason:reason});
+    closeModal();
+    window._wacSelectedBatchIds=new Set();
+    showToast('已标记 '+(result.excluded_count||ids.length)+' 个批次为无需计算','success');
+    await loadWacBatches();
+  }catch(e){
+    showToast(e.message||'标记失败，请刷新后重试','danger');
+    if(button){button.disabled=false;button.textContent='确认标记无需计算';}
+  }
+}
+
+function openWacBatchRestoreConfirm(batchId){
+  const id=String(batchId||'');
+  const row=(window._wacBatchExcludedRows||[]).find(r=>String(r.id)===id);
+  if(!row){showToast('没有找到该无需计算记录，请刷新列表','warning');return;}
+  if(Number(row.has_wac_history||0)>0){showToast('该批次已有WAC历史记录，不能恢复到待确认队列','warning');return;}
+  window._wacRestorePendingId=id;
+  const body='<p>确定恢复批次 <strong>'+esc(row.batch_no||id)+'</strong> 吗？</p>'
+    +'<p style="font-size:12px;color:var(--text-secondary)">恢复后会重新进入WAC待确认列表；不会自动计算WAC，仍需手动点击「WAC确认」。</p>';
+  const footer='<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" id="wac-restore-submit" onclick="submitWacBatchRestore()">确认恢复</button>';
+  openModal('恢复WAC待确认任务',body,footer);
+}
+
+async function submitWacBatchRestore(){
+  const id=window._wacRestorePendingId;
+  if(!id){closeModal();return;}
+  const button=document.getElementById('wac-restore-submit');
+  if(button){button.disabled=true;button.textContent='恢复中…';}
+  try{
+    await api('/api/wac/batches/'+encodeURIComponent(id)+'/restore-exclusion','POST',{});
+    closeModal();
+    showToast('批次已恢复到WAC待确认列表','success');
+    await loadWacBatches();
+  }catch(e){
+    showToast(e.message||'恢复失败，请刷新后重试','danger');
+    if(button){button.disabled=false;button.textContent='确认恢复';}
+  }
 }
 
 // 兼容确认成功后的原调用入口；统一刷新全部批次。
 async function loadWacPending(){return loadWacBatches();}
-// WAC确认弹窗：展示PL明细 + 用户输入旧库存数量 + 自动计算新WAC
-// 结构：固定(标题/批次信息/公式/操作栏) + 滚动(SKU明细表) + 固定(底部按钮)
+
+// WAC确认弹窗：展示PL明细与成本计算详情。
 async function wacConfirm(batchId){
   try{
     const p=await api('/api/wac/preview/'+batchId);
