@@ -42,6 +42,9 @@
       '.wac-mac-cc-history .data-table{font-size:11px}',
       '.wac-mac-cc-empty{padding:8px 2px;font-size:12px;color:var(--text-secondary,#858d98)}',
       '#wac-cc-section .wac-mac-cc-inline{margin-top:12px;padding:12px;border:1px solid var(--border,rgba(120,130,145,.22));border-radius:10px;background:var(--bg-card,var(--card-bg,#fff))}',
+      '#wac-cc-section .cc-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,190px),1fr));gap:6px;max-height:180px;overflow:auto;border:1px solid var(--border,rgba(120,130,145,.22));border-radius:10px;padding:8px;background:var(--bg-card,var(--card-bg,#fff))}',
+      '#wac-cc-section .cc-check{display:flex;align-items:center;gap:9px;margin:0;padding:8px 10px;border:1px solid var(--border,rgba(120,130,145,.18));border-radius:8px;background:var(--bg-secondary,rgba(120,130,145,.05));cursor:pointer}',
+      '#wac-cc-section .cc-check input{width:15px;height:15px;margin:0;accent-color:#0a84ff}',
       '#wac-cc-section .wac-mac-cc-inline .wac-mac-cc-options{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));max-height:180px}',
       '#wac-cc-section .wac-mac-cc-inline .wac-mac-cc-option{border:1px solid var(--border,rgba(120,130,145,.18));background:var(--bg-secondary,rgba(120,130,145,.05))}',
       '@media(max-width:640px){.wac-mac-cc-grid{grid-template-columns:1fr}.modal.wac-cc-macos{width:calc(100vw - 20px)}.modal.wac-cc-macos .modal-body{padding:12px}}'
