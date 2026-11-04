@@ -155,6 +155,7 @@ function normalizeRow(row){
 function matchRows(input,metadata,options){
   const opts=options||{},meta=metadata||{},skus=Array.isArray(meta.skus)?meta.skus:[];
   const skuMap=new Map(),mappingMap=new Map(),brandMap=new Map();
+  (Array.isArray(meta.brands)?meta.brands:[]).forEach(b=>{if(clean(b))brandMap.set(clean(b).toLowerCase(),clean(b));});
   skus.forEach(s=>{const b=clean(s.brand),code=clean(s.sku_code);if(b){brandMap.set(b.toLowerCase(),b);if(code)skuMap.set(b.toLowerCase()+'|'+partKey(code),s);}});
   (Array.isArray(meta.mappings)?meta.mappings:[]).forEach(m=>{
     mappingMap.set(mapKey(m.supplier_id,m.brand,m.supplier_part_no||m.supplier_part_no_key),m.psi_sku_code);
