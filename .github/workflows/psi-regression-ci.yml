@@ -24,6 +24,7 @@ on:
       - 'test/po-number-date-country.test.cjs'
       - 'inventory-asset-values.js'
       - 'test/inventory-asset-values.test.cjs'
+      - 'test/inventory-overview-export.test.cjs'
       - 'i18n.js'
       - '.github/workflows/psi-regression-ci.yml'
 
@@ -59,6 +60,7 @@ jobs:
           node --check i18n.js
           node --check inventory-asset-values.js
           node --check test/inventory-asset-values.test.cjs
+          node --check test/inventory-overview-export.test.cjs
           node --check test/wac-history-import.test.cjs
           node --check test/wac-batch-exclusion.test.cjs
       - name: Test finance payment calendar and manual payable creation
@@ -67,6 +69,8 @@ jobs:
         run: node test/po-number-date-country.test.cjs
       - name: Test inventory financial value aggregation
         run: node test/inventory-asset-values.test.cjs
+      - name: Test inventory overview export fields
+        run: node --test test/inventory-overview-export.test.cjs
       - name: Test WAC calculation and transport-basis rules
         run: node --test wac-calculator.test.cjs
       - name: Test suggested purchase quantity wheel behavior
