@@ -25,13 +25,19 @@ const ENDPOINTS = Object.freeze({
   returnDetail: { app: 'ERP', method: 'GET', path: '/api/v2/returns/get_return_detail' },
   shopSalesPerformance: { app: 'BRAND_PORTAL', method: 'POST', path: '/api/v2/principal/get_shop_sales_performance_detail' },
   shopLivestreamPerformance: { app: 'BRAND_PORTAL', method: 'POST', path: '/api/v2/principal/get_shop_livestream_performance' },
-  marketingHotListing: { app: 'ERP', method: 'GET', path: '/api/v2/business_insights/get_marketing_hot_listing' },
   // 店铺自然流量与转化：访客、浏览、点击、加购、订单、转化率。
-  // Business Insights 属于 ERP System 类应用的权限池（广告类应用调它会被拒），
-  // 但仍要在开放平台的 API Permission 里逐项勾选后才会开放。
-  shopTraffic: { app: 'ERP', method: 'GET', path: '/api/v2/business_insights/get_shop_traffic' },
-  shopPerformance: { app: 'ERP', method: 'GET', path: '/api/v2/business_insights/get_shop_performance' },
-  productTraffic: { app: 'ERP', method: 'GET', path: '/api/v2/business_insights/get_product_traffic' },
+  //
+  // These two are the Business Insights endpoints, and they are the only
+  // ones that carry a single shop's own traffic. They belong to the
+  // Business Insights permission pool of an ERP System application — an
+  // advertising application is refused, and a Brand Portal application
+  // reads the brand's dashboard rather than a shop's own figures.
+  //
+  // An application that has not had the permission pool turned on answers
+  // "error_not_found" for them, which is why they are kept apart from the
+  // endpoints that every application may call.
+  marketingOverview: { app: 'ERP', method: 'POST', path: '/api/v2/business_insights/get_marketing_overview' },
+  marketingHotListing: { app: 'ERP', method: 'POST', path: '/api/v2/business_insights/get_marketing_hot_listing' },
   // 店铺评分与履约质量。ERP System 类应用才有这个权限 —— 广告类应用调它会被拒。
   accountHealth: { app: 'ERP', method: 'GET', path: '/api/v2/account_health/get_shop_performance' },
   // 罚分、处罚、有问题的商品、迟发订单：绩效与违规这一块。

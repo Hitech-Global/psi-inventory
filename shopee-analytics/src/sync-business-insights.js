@@ -38,18 +38,18 @@ function numberOrNull(value) {
  * has used more than one for the same figure.
  */
 const SHOP_TRAFFIC_FIELDS = Object.freeze({
-  sales: ['sales', 'total_sales', 'gmv', 'revenue'],
-  orders: ['orders', 'total_order', 'total_orders'],
+  sales: ['sales', 'total_sales', 'gmv', 'revenue', 'total_amount'],
+  orders: ['orders', 'total_order', 'total_orders', 'total_paid_order'],
   unitsSold: ['units_sold', 'total_units_sold', 'units'],
   buyers: ['buyers', 'total_buyer', 'total_buyers'],
   newBuyers: ['new_buyers', 'new_buyer'],
-  productClicks: ['clicks', 'total_click', 'product_clicks', 'click'],
+  productClicks: ['clicks', 'total_click', 'product_clicks', 'click', 'total_product_click'],
   productViews: ['page_views', 'total_page_view', 'product_views', 'views', 'page_view'],
-  uniqueVisitors: ['visitors', 'total_visitor', 'unique_visitors', 'uv'],
-  carts: ['carts', 'total_cart', 'cart'],
+  uniqueVisitors: ['visitors', 'total_visitor', 'unique_visitors', 'uv', 'shop_visitors'],
+  carts: ['carts', 'total_cart', 'cart', 'add_to_cart', 'total_add_to_cart'],
   potentialBuyers: ['potential_buyers', 'potential_buyer'],
-  itemConversionRate: ['item_conversion_rate', 'cart_conversion_rate', 'add_to_cart_rate'],
-  orderConversionRate: ['order_conversion_rate', 'conversion_rate'],
+  itemConversionRate: ['item_conversion_rate', 'cart_conversion_rate', 'add_to_cart_rate', 'carts_conversion_rate'],
+  orderConversionRate: ['order_conversion_rate', 'conversion_rate', 'orders_conversion_rate'],
 });
 
 /**
@@ -188,15 +188,21 @@ function normalizeProductTraffic(payload, fallbackDate) {
 
 /**
  * The shop's traffic over a stretch of days.
+ *
+ * The endpoint takes the two dates in its body and answers with the
+ * shop's own figures for that stretch: the visitors, the clicks on the
+ * products, what was put in the cart, what was ordered and what it came
+ * to.
  */
 async function fetchShopTraffic({ client, shopId, accessToken, startDate, endDate }) {
-  const endpoint = ENDPOINTS.shopTraffic;
+  const endpoint = ENDPOINTS.marketingOverview;
   const payload = await client.shopRequest({
     path: endpoint.path,
     shopId,
     accessToken,
     method: endpoint.method,
-    query: { start_date: startDate, end_date: endDate },
+    query: {},
+    body: { date_start: startDate, date_end: endDate },
   });
   return { ...normalizeShopTraffic(payload, endDate), payload };
 }
@@ -204,14 +210,15 @@ async function fetchShopTraffic({ client, shopId, accessToken, startDate, endDat
 /**
  * The traffic each item brought in over a stretch of days.
  */
-async function fetchProductTraffic({ client, shopId, accessToken, startDate, endDate }) {
-  const endpoint = ENDPOINTS.productTraffic;
+async function fetchProductTraffic({ client, shopId, accessToken, startDate, endDate, pageNo = 1, pageSize = 50 }) {
+  const endpoint = ENDPOINTS.marketingHotListing;
   const payload = await client.shopRequest({
     path: endpoint.path,
     shopId,
     accessToken,
     method: endpoint.method,
-    query: { start_date: startDate, end_date: endDate },
+    query: {},
+    body: { date_start: startDate, date_end: endDate, page_no: pageNo, page_size: pageSize },
   });
   return { ...normalizeProductTraffic(payload, endDate), payload };
 }
