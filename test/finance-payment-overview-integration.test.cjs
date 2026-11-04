@@ -46,17 +46,22 @@ test('endpoint is permission-guarded, only SELECTs, includes fully paid historie
  assert.equal(h.result().body.by_payee[0].pi_purchase_amount,300);
  assert.equal(h.result().headers['Cache-Control'],'private, no-store');
 });
-test('app router remains in prior nav and loads one unified overview, not old open-only cockpit',()=>{
- const app=fs.readFileSync(path.join(root,'app.js'),'utf8');
- const idx=fs.readFileSync(path.join(root,'index.html'),'utf8');
- const start=app.indexOf('async function renderPayableCockpit(){');
- const stop=app.indexOf('function cockpitCard(',start);
- const fn=app.slice(start,stop);
- assert.match(fn,/api\/finance\/payment-overview/);
- assert.doesNotMatch(fn,/api\/finance\/payable-cockpit/);
- assert.match(fn,/_cockpitLoadSeq/);
- assert.ok(idx.includes('assets/finance-payment-overview-ui.js'));
- assert.ok(idx.indexOf('finance-payment-overview-ui.js')<idx.indexOf('src="app.js"'));
+test('finance payment overview route mounts the calendar on the existing payable ledger',()=>{
+  const app=fs.readFileSync(path.join(root,'app.js'),'utf8');
+  const idx=fs.readFileSync(path.join(root,'index.html'),'utf8');
+  const start=app.indexOf('async function renderPayableCockpit(){');
+  const stop=app.indexOf('function cockpitCard(',start);
+  const fn=app.slice(start,stop);
+  assert.match(fn,/api\/payable-items/);
+  assert.match(fn,/api\/payable-items\/facets/);
+  assert.match(fn,/api\/payment-categories\/active/);
+  assert.match(fn,/api\/payer-entities\?status=active/);
+  assert.match(fn,/renderFinancePaymentCalendarPage/);
+  assert.match(fn,/_cockpitLoadSeq/);
+  assert.doesNotMatch(fn,/renderFinanceOverviewPage/);
+  assert.ok(idx.includes('assets/finance-payment-calendar.js'));
+  assert.ok(!idx.includes('assets/finance-payment-overview-ui.js'));
+  assert.ok(idx.indexOf('finance-payment-calendar.js')<idx.indexOf('src="app.js"'));
 });
 test('UI all-currency page renders expenses, reconciled cash, and drilldown',()=>{
  const html=fs.readFileSync(path.join(root,'assets/finance-payment-overview-ui.js'),'utf8');

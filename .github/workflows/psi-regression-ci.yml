@@ -6,6 +6,11 @@ on:
     paths:
       - 'app.js'
       - 'server.js'
+      - 'index.html'
+      - 'assets/finance-payment-calendar.js'
+      - 'test/finance-payment-calendar.test.cjs'
+      - 'test/manual-payable-item.test.cjs'
+      - 'test/finance-payment-overview-integration.test.cjs'
       - 'po-plan-server.js'
       - 'po-number.js'
       - 'wac-calculator.js'
@@ -39,6 +44,9 @@ jobs:
         run: |
           node --check app.js
           node --check server.js
+          node --check assets/finance-payment-calendar.js
+          node --check test/finance-payment-calendar.test.cjs
+          node --check test/manual-payable-item.test.cjs
           node --check po-plan-server.js
           node --check po-number.js
           node --check wac-calculator.js
@@ -47,6 +55,8 @@ jobs:
           node --check db-sqlite.js
           node --check test/wac-history-import.test.cjs
           node --check test/wac-batch-exclusion.test.cjs
+      - name: Test finance payment calendar and manual payable creation
+        run: node --test test/finance-payment-calendar.test.cjs test/manual-payable-item.test.cjs test/finance-payment-overview-integration.test.cjs test/finance-payment-overview.test.cjs test/finance-payment-overview-sort.test.cjs
       - name: Test PO number date and country format
         run: node test/po-number-date-country.test.cjs
       - name: Test WAC calculation and transport-basis rules
