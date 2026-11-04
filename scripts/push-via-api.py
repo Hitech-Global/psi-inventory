@@ -19,6 +19,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -40,8 +41,14 @@ def credentials():
 
 TOKEN = credentials()
 
+# GitHub 的 API 与这个仓库的 git 协议都会间歇性失败（502 / 500）。
+# 那些是瞬时故障，重试通常就过去了 —— 所以这里自己扛住重试，
+# 而不是让人反复手动再跑一遍。
+MAX_ATTEMPTS = 5
+RETRY_BASE_SECONDS = 3
 
-def call(method, path, body=None):
+
+def call(method, path, body=None, attempt=1):
     data = json.dumps(body).encode() if body is not None else None
     request = urllib.request.Request(
         API + path, data=data, method=method,
@@ -57,7 +64,23 @@ def call(method, path, body=None):
             return json.loads(response.read().decode() or "{}")
     except urllib.error.HTTPError as error:
         detail = error.read().decode()[:400]
+        # 5xx 是 GitHub 侧的瞬时故障（502 Server Error / 500），
+        # 重试往往就过去了。这类错误不代表请求本身有问题 ——
+        # 真正的问题（401 认证失败、422 参数不对）不该重试，直接报出来。
+        if error.code >= 500 and attempt < MAX_ATTEMPTS:
+            wait = RETRY_BASE_SECONDS * attempt
+            print(f"  {method} {path} → HTTP {error.code}，{wait}s 后重试")
+            time.sleep(wait)
+            return call(method, path, body, attempt + 1)
         raise SystemExit(f"{method} {path} → HTTP {error.code}\n{detail}")
+    except urllib.error.URLError as error:
+        # 网络层的中断（代理隧道抖了一下）同样值得重试。
+        if attempt < MAX_ATTEMPTS:
+            wait = RETRY_BASE_SECONDS * attempt
+            print(f"  {method} {path} → 网络中断（{error.reason}），{wait}s 后重试")
+            time.sleep(wait)
+            return call(method, path, body, attempt + 1)
+        raise SystemExit(f"{method} {path} → 网络中断：{error.reason}")
 
 
 def git(*args):
