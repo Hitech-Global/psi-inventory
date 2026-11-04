@@ -74,4 +74,50 @@ assert.match(fast,/quotation_sku_mappings/,'server should persist supplier part-
 assert.match(fast,/match_status/,'server should store SKU match status');
 assert.match(server,/event\.match_status === 'unlinked'/,'unlinked rows must not use internal purchase baselines');
 
+
+const fastModule=require(path.join(__dirname,'..','quotation-import-fast.js'));
+const originalDriver=process.env.DB_DRIVER;
+process.env.DB_DRIVER='sqlite';
+const routes={},executedSql=[];
+const fakeApp={
+  get:(url,...handlers)=>{routes['GET '+url]=handlers[handlers.length-1];},
+  post:(url,...handlers)=>{routes['POST '+url]=handlers[handlers.length-1];}
+};
+const fakeQuery=(sql,params)=>{
+  if(sql.includes('FROM suppliers WHERE id='))return {rows:[{id:'supplier-netac',name:'Netac',associated_brands:'["Netac"]',default_currency:'RMB',status:'active'}]};
+  if(sql.includes('FROM skus WHERE COALESCE'))return {rows:[{sku_code:'SKU-1',brand:'Netac',category:'SSD',model:'Model 1',color_spec:'256GB'}]};
+  if(sql.includes('FROM quotation_sku_mappings WHERE supplier_id='))return {rows:[]};
+  if(sql.includes('WITH incoming'))return {rows:[]};
+  return {rows:[]};
+};
+const fakeRun=(sql,params)=>{executedSql.push({sql,params});return {changes:3};};
+fastModule({
+  app:fakeApp,
+  query:fakeQuery,
+  run:fakeRun,
+  transaction:fn=>fn(),
+  genId:prefix=>prefix+'_test_'+(executedSql.length+1),
+  asyncHandler:fn=>fn,
+  requireApiPermission:()=>()=>{}
+});
+const response={statusCode:200,status(code){this.statusCode=code;return this;},json(value){this.body=value;return this;}};
+await routes['POST /api/quotation-management/import']({
+  body:{
+    supplier_id:'supplier-netac',brand:'Netac',quote_date:'2026-11-04',duplicate_mode:'skip',import_id:'test-import',
+    rows:[
+      {supplier_part_no:'SKU-1',brand:'Netac',quote_price:12.5,currency:'USD',quote_date:'2026-11-04',product_type:'SSD',match_source:'exact'},
+      {supplier_part_no:'VENDOR-ONLY-1',brand:'Netac',quote_price:0,currency:'USD',quote_date:'2026-11-04',product_type:'SSD',match_status:'unlinked'},
+      {supplier_part_no:'LEGACY-01',brand:'Netac',psi_sku_code:'SKU-1',match_source:'manual',quote_price:13,currency:'USD',quote_date:'2026-11-04',product_type:'SSD'}
+    ],
+    mapping_updates:[{brand:'Netac',supplier_part_no:'LEGACY-01',psi_sku_code:'SKU-1'}]
+  }
+},response);
+if(originalDriver===undefined)delete process.env.DB_DRIVER;else process.env.DB_DRIVER=originalDriver;
+assert.equal(response.statusCode,200,'backend should accept matched and unlinked supplier quote rows');
+assert.equal(response.body.unlinked,1,'backend should report unlinked supplier quote rows');
+assert.equal(response.body.inserted,3,'backend should import all quote rows');
+assert(executedSql.some(x=>x.sql.includes('INSERT INTO quotation_sku_mappings')),'manual mappings should be persisted');
+assert(executedSql.some(x=>x.sql.includes('INSERT INTO quotation_prices')&&x.sql.includes('supplier_part_no')),'quote writes should retain the source supplier part number');
+assert(executedSql.some(x=>x.sql.includes("match_status='matched'")),'manual mapping should attempt to link prior unlinked history');
+
 console.log('quotation-smart-import: PASS');
