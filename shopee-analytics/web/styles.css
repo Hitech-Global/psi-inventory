@@ -731,3 +731,21 @@ tbody td{font-weight:400}
   .app-topbar{flex-direction:column;align-items:stretch}
   .app-topbar-tools{justify-content:flex-start}
 }
+
+/* ── 店铺接口页：来源说明 ────────────────────────────────────────────────
+   一个应用一段话，说一次，放在店铺上面。原来这段话在每家店下面各出现
+   一遍 —— 第三家店的时候，眼睛已经过去了。 */
+.connections-sources{display:flex;flex-direction:column;gap:10px;margin:0 0 14px}
+.connections-source{
+  border:1px solid #eaecf0;border-radius:12px;padding:11px 13px;background:#fcfcfd;
+}
+.connections-source-head{
+  display:flex;align-items:baseline;gap:8px;margin-bottom:5px;
+}
+.connections-source-head strong{font-size:12px;color:#101828}
+.connections-source-head span{font-size:10px;color:#98a2b3;font-variant-numeric:tabular-nums}
+.connections-source-scope{margin:0 0 6px;font-size:11px;color:#475467;line-height:1.6}
+.connections-source .connections-hint{margin:0}
+@media (max-width:720px){
+  .connections-sources{flex-direction:column}
+}

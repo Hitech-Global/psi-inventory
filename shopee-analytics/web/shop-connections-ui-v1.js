@@ -130,7 +130,7 @@
     if (!portal) {
       return {
         state: pill('不可用', 'neutral'),
-        note: '店铺营业额、访客与转化率都来自 Brand Portal',
+        note: '营业额、访客与转化率',
         action: '',
       };
     }
@@ -158,13 +158,13 @@
       }
       return {
         state: pill('已授权，待同步', 'warn'),
-        note: '店铺营业额、访客与转化率都来自这里',
+        note: '营业额、访客与转化率',
         action: '',
       };
     }
     return {
       state: pill('待授权', 'warn'),
-      note: '店铺营业额、访客与转化率都来自这里',
+      note: '营业额、访客与转化率',
       action: '<button type="button" class="connections-action" data-connect="brand-portal" data-shop-id="' + esc(shop.shopId) + '">连接 Brand Portal</button>',
       hint: BRAND_PORTAL_HINT,
     };
@@ -209,17 +209,15 @@
     const report = renderShopReport(shop);
     const erp = renderErp(shop);
     const livestream = shop.livestream || {};
-    const hints = [report, erp]
-      .filter(entry => entry && entry.hint)
-      .map(entry => `<p class="connections-hint${entry.hintClass ? ' ' + entry.hintClass : ''}">${esc(entry.hint)}</p>`)
-      .join('');
     const rows = [
-      ['店铺营业额 / 访客', report.state, report.note, report.action],
+      ['店铺营业额 · 访客 · 转化率', report.state, report.note, report.action],
       ['退货退款', erp.state, erp.note, erp.action],
       [
         '直播表现',
         livestream.days > 0 ? pill(`已同步 ${livestream.days} 天`, 'good') : pill('未同步', 'neutral'),
-        livestream.latestDate ? `数据到 ${livestream.latestDate}` : '随店铺营业额一并授权',
+        livestream.latestDate
+          ? `数据到 ${livestream.latestDate}`
+          : '与营业额同一套授权，独立接口同步',
         '',
       ],
     ]
@@ -241,8 +239,40 @@
         </div>
         ${details ? `<div class="connections-shop-details">${esc(details)}</div>` : ''}
         <ul class="connections-list">${rows}</ul>
-        ${hints}
       </section>`;
+  }
+
+  /**
+   * What each application covers, said once.
+   *
+   * The same paragraph under every shop is a paragraph nobody reads: by
+   * the third shop the eye has gone past it. And it is not the same
+   * paragraph each time — one is about an application, not about a shop,
+   * so it belongs above the shops rather than inside each of them.
+   */
+  function renderSources(payload) {
+    const apps = (payload && payload.apps) || {};
+    const partner = name => (apps[name] ? `Partner ID ${apps[name]}` : '');
+    return `<section class="connections-sources">
+      <div class="connections-source">
+        <div class="connections-source-head">
+          <strong>Brand Portal</strong>
+          <span>${esc(partner('brandPortal'))}</span>
+        </div>
+        <p class="connections-source-scope">
+          覆盖：店铺营业额 · 访客与转化率 · 销售明细 · 直播表现 · 联盟营销 · 商品级广告表现
+        </p>
+        <p class="connections-hint warn">${esc(BRAND_PORTAL_HINT)}</p>
+      </div>
+      <div class="connections-source">
+        <div class="connections-source-head">
+          <strong>ERP</strong>
+          <span>${esc(partner('erp'))}</span>
+        </div>
+        <p class="connections-source-scope">覆盖：退货与退款数据</p>
+        <p class="connections-hint info">${esc(ERP_HINT)}</p>
+      </div>
+    </section>`;
   }
 
   function renderBody(payload) {
@@ -250,7 +280,7 @@
     if (!shops.length) {
       return '<div class="empty">还没有配置店铺档案。</div>';
     }
-    return shops.map(renderShop).join('');
+    return renderSources(payload) + shops.map(renderShop).join('');
   }
 
   function ensureModal() {
@@ -434,5 +464,5 @@
     note.textContent = `开放平台应用 Partner ID：${parts.join(' · ')}`;
   }
 
-  window.ShopeeShopConnections = { open, close, renderShop };
+  window.ShopeeShopConnections = { open, close, renderShop, renderBody };
 })();

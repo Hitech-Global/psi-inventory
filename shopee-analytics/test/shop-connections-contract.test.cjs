@@ -23,6 +23,17 @@ function loadPanelRenderer() {
   return fakeWindow.ShopeeShopConnections.renderShop;
 }
 
+/**
+ * The panel as a reader sees it: the applications said first, then the
+ * shops under them.
+ */
+function loadPanelBody() {
+  const source = fs.readFileSync(path.join(webDir, 'shop-connections-ui-v1.js'), 'utf8');
+  const fakeWindow = {};
+  new Function('window', source)(fakeWindow);
+  return fakeWindow.ShopeeShopConnections.renderBody;
+}
+
 test('the connections state is served for every shop in one request', () => {
   const router = fs.readFileSync(path.join(srcDir, 'http-router.js'), 'utf8');
   assert.ok(router.includes("router.get('/shop-connections'"), 'the endpoint must exist');
@@ -158,15 +169,18 @@ test('a connection whose renewal failed is marked as needing the authorization a
 });
 
 test('the panel says why the Brand Portal connection may be refused', () => {
-  const renderShop = loadPanelRenderer();
-  const rendered = renderShop({
-    shopId: 1,
-    displayName: 'Shop F',
-    shopBi: { days: 0 },
-    livestream: { days: 0 },
-    returns: { rows: 0 },
-    erp: { credentialConfigured: true, tokenPresent: false, redirectUrl: 'https://x/cb' },
-    brandPortal: { credentialConfigured: true, tokenPresent: false, redirectUrl: 'https://x/cb' },
+  // The note about the application is said once, above the shops: the
+  // same paragraph under every shop is a paragraph nobody reads.
+  const rendered = loadPanelBody()({
+    shops: [{
+      shopId: 1,
+      displayName: 'Shop F',
+      shopBi: { days: 0 },
+      livestream: { days: 0 },
+      returns: { rows: 0 },
+      erp: { credentialConfigured: true, tokenPresent: false, redirectUrl: 'https://x/cb' },
+      brandPortal: { credentialConfigured: true, tokenPresent: false, redirectUrl: 'https://x/cb' },
+    }],
   });
   // Shopee only opens Brand Portal to official and mall sellers. Saying so
   // here saves the reader from meeting a page that says "all linked
@@ -200,15 +214,16 @@ test('a shop that already has its report does not need the hint', () => {
 });
 
 test('the panel says that a returns token belongs to one shop', () => {
-  const renderShop = loadPanelRenderer();
-  const rendered = renderShop({
-    shopId: 1101364305,
-    displayName: 'Shop H',
-    shopBi: { days: 0 },
-    livestream: { days: 0 },
-    returns: { rows: 0 },
-    erp: { credentialConfigured: true, tokenPresent: false, redirectUrl: 'https://x/cb' },
-    brandPortal: { credentialConfigured: true, tokenPresent: false, redirectUrl: 'https://x/cb' },
+  const rendered = loadPanelBody()({
+    shops: [{
+      shopId: 1101364305,
+      displayName: 'Shop H',
+      shopBi: { days: 0 },
+      livestream: { days: 0 },
+      returns: { rows: 0 },
+      erp: { credentialConfigured: true, tokenPresent: false, redirectUrl: 'https://x/cb' },
+      brandPortal: { credentialConfigured: true, tokenPresent: false, redirectUrl: 'https://x/cb' },
+    }],
   });
   // The token covers only the shops ticked on Shopee's page, so a shop under
   // another account never connects however often the authorization is
