@@ -14551,6 +14551,10 @@ function _wacMatrixMultiMarkup(key, label) {
     '<div class="wac-history-multi-panel" id="wac-matrix-' + key + '-panel" style="display:none" onclick="event.stopPropagation()">' +
       '<input type="search" class="wac-history-multi-search" id="wac-matrix-' + key + '-search" placeholder="搜索' + label + '" oninput="filterWacHistoryOptions(\'' + key + '\')" onclick="event.stopPropagation()">' +
       '<div class="wac-history-multi-options" id="wac-matrix-' + key + '-options"></div>' +
+      '<div class="wac-history-multi-footer">' +
+        '<button type="button" class="wac-history-multi-action" onclick="selectVisibleWacHistoryOptions(\'' + key + '\');event.stopPropagation()">全选当前结果</button>' +
+        '<button type="button" class="wac-history-multi-action" onclick="clearWacHistoryFilter(\'' + key + '\');event.stopPropagation()">清空</button>' +
+      '</div>' +
     '</div>' +
   '</div>';
 }
@@ -14578,11 +14582,29 @@ function updateWacHistoryFilterLabel(key, label) {
   if (el) el.textContent = text;
 }
 
+function selectVisibleWacHistoryOptions(key) {
+  document.querySelectorAll('#wac-matrix-' + key + '-options .wac-history-option').forEach(function(option) {
+    if (option.style.display === 'none') return;
+    const checkbox = option.querySelector('input[data-wac-filter="' + key + '"]');
+    if (checkbox) checkbox.checked = true;
+  });
+  updateWacHistoryFilterLabel(key);
+}
+
+function clearWacHistoryFilter(key) {
+  document.querySelectorAll('input[data-wac-filter="' + key + '"]').forEach(function(el) {
+    el.checked = false;
+  });
+  updateWacHistoryFilterLabel(key);
+}
+
 function closeWacHistoryFilters() {
   ['brand','country','warehouse'].forEach(function(key) {
     const panel = document.getElementById('wac-matrix-' + key + '-panel');
     if (panel) panel.style.display = 'none';
   });
+  const datePanel = document.getElementById('wac-matrix-date-range-panel');
+  if (datePanel) datePanel.style.display = 'none';
 }
 
 function toggleWacHistoryFilter(key) {
@@ -14604,11 +14626,54 @@ function filterWacHistoryOptions(key) {
   });
 }
 
+function updateWacHistoryDateRangeLabel() {
+  const from = document.getElementById('wac-matrix-from')?.value || '';
+  const to = document.getElementById('wac-matrix-to')?.value || '';
+  let label = '确认日期范围';
+  if (from && to) label = from + ' 至 ' + to;
+  else if (from) label = from + ' 起';
+  else if (to) label = '截至 ' + to;
+  const el = document.getElementById('wac-matrix-date-label');
+  if (el) el.textContent = label;
+}
+
+function syncWacHistoryDateRange(changed) {
+  const fromEl = document.getElementById('wac-matrix-from');
+  const toEl = document.getElementById('wac-matrix-to');
+  if (!fromEl || !toEl) return;
+  if (fromEl.value && toEl.value && fromEl.value > toEl.value) {
+    if (changed === 'from') toEl.value = fromEl.value;
+    else fromEl.value = toEl.value;
+  }
+  if (toEl.value) fromEl.max = toEl.value;
+  else fromEl.removeAttribute('max');
+  if (fromEl.value) toEl.min = fromEl.value;
+  else toEl.removeAttribute('min');
+  updateWacHistoryDateRangeLabel();
+}
+
+function clearWacHistoryDateRange() {
+  const fromEl = document.getElementById('wac-matrix-from');
+  const toEl = document.getElementById('wac-matrix-to');
+  if (fromEl) { fromEl.value = ''; fromEl.removeAttribute('max'); }
+  if (toEl) { toEl.value = ''; toEl.removeAttribute('min'); }
+  updateWacHistoryDateRangeLabel();
+}
+
+function toggleWacHistoryDateRange() {
+  const panel = document.getElementById('wac-matrix-date-range-panel');
+  if (!panel) return;
+  const shouldOpen = panel.style.display !== 'block';
+  closeWacHistoryFilters();
+  panel.style.display = shouldOpen ? 'block' : 'none';
+  updateWacHistoryDateRangeLabel();
+}
+
 async function renderWacHistoryMatrix() {
   const root = document.getElementById('content-inner');
   if (window._wacHistoryOutsideHandler) document.removeEventListener('click', window._wacHistoryOutsideHandler);
   window._wacHistoryOutsideHandler = function(e) {
-    if (!e.target || !e.target.closest || !e.target.closest('.wac-history-multi')) closeWacHistoryFilters();
+    if (!e.target || !e.target.closest || (!e.target.closest('.wac-history-multi') && !e.target.closest('.wac-history-date-range'))) closeWacHistoryFilters();
   };
   document.addEventListener('click', window._wacHistoryOutsideHandler);
   window._wacHistoryMatrixData = null;
@@ -14617,20 +14682,33 @@ async function renderWacHistoryMatrix() {
     const style = document.createElement('style');
     style.id = 'wac-history-matrix-style';
     style.textContent =
-      '.wac-history-page .wac-history-filter-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px}' +
-      '.wac-history-page .wac-history-multi{position:relative;min-width:145px;flex:0 0 auto}' +
-      '.wac-history-page .wac-history-multi-trigger{height:34px;min-width:145px;padding:0 11px;border:1px solid #d2d2d7;border-radius:8px;background:#f5f5f7;color:#1d1d1f;font:inherit;font-size:13px;display:flex;align-items:center;justify-content:space-between;gap:12px;cursor:pointer;transition:background .15s,border-color .15s}' +
+      '.wac-history-page .wac-history-filter-row{display:flex;gap:8px;align-items:center;flex-wrap:nowrap;width:100%;min-width:0;margin-bottom:0}' +
+      '.wac-history-page .wac-history-multi{position:relative;width:142px;min-width:132px;flex:0 0 142px}' +
+      '.wac-history-page .wac-history-multi-trigger{height:36px;width:100%;min-width:0;padding:0 11px;border:1px solid #d2d2d7;border-radius:8px;background:#f5f5f7;color:#1d1d1f;font:inherit;font-size:13px;display:flex;align-items:center;justify-content:space-between;gap:12px;cursor:pointer;transition:background .15s,border-color .15s}' +
       '.wac-history-page .wac-history-multi-trigger:hover{background:#ececf0;border-color:#b8b8bd}' +
       '.wac-history-page .wac-history-multi-trigger:focus{outline:none;border-color:#007aff;box-shadow:0 0 0 3px rgba(0,122,255,.16)}' +
       '.wac-history-page .wac-history-chevron{color:#8e8e93;font-size:14px}' +
-      '.wac-history-page .wac-history-multi-panel{position:absolute;top:calc(100% + 6px);left:0;z-index:90;min-width:240px;width:max(100%,260px);padding:9px;background:rgba(255,255,255,.98);border:1px solid #d2d2d7;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.14)}' +
+      '.wac-history-page .wac-history-multi-panel{position:absolute;top:calc(100% + 6px);left:0;z-index:90;min-width:250px;width:max(100%,270px);max-width:calc(100vw - 32px);padding:9px;background:rgba(255,255,255,.98);border:1px solid #d2d2d7;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.14)}' +
       '.wac-history-page .wac-history-multi-search{width:100%;height:32px;padding:5px 9px;border:1px solid #d2d2d7;border-radius:7px;background:#fff;font:inherit;font-size:12px;outline:none;margin-bottom:7px}' +
       '.wac-history-page .wac-history-multi-search:focus{border-color:#007aff;box-shadow:0 0 0 2px rgba(0,122,255,.12)}' +
       '.wac-history-page .wac-history-multi-options{max-height:220px;overflow:auto;display:flex;flex-direction:column;gap:1px}' +
+      '.wac-history-page .wac-history-multi-footer{display:flex;align-items:center;justify-content:space-between;gap:8px;border-top:1px solid #e5e5ea;margin-top:8px;padding-top:8px}' +
+      '.wac-history-page .wac-history-multi-action{border:0;background:transparent;color:#007aff;font:inherit;font-size:12px;padding:4px 6px;border-radius:6px;cursor:pointer}' +
+      '.wac-history-page .wac-history-multi-action:hover{background:#f2f7ff}' +
       '.wac-history-page .wac-history-option{display:flex;align-items:center;gap:8px;padding:6px 7px;border-radius:6px;font-size:12px;cursor:pointer;color:#1d1d1f}' +
       '.wac-history-page .wac-history-option:hover{background:#f5f5f7}' +
       '.wac-history-page .wac-history-option input{accent-color:#007aff;margin:0}' +
-      '.wac-history-page .wac-history-date-input{height:34px;padding:4px 9px;border:1px solid #d2d2d7;border-radius:8px;background:#f5f5f7;font:inherit;font-size:13px;color:#1d1d1f}' +
+      '.wac-history-page .wac-history-date-range{position:relative;flex:0 0 220px;min-width:190px}' +
+      '.wac-history-page .wac-history-date-trigger{height:36px;width:100%;padding:0 11px;border:1px solid #d2d2d7;border-radius:8px;background:#f5f5f7;color:#1d1d1f;font:inherit;font-size:13px;display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;white-space:nowrap}' +
+      '.wac-history-page .wac-history-date-trigger:hover{background:#ececf0;border-color:#b8b8bd}' +
+      '.wac-history-page .wac-history-date-range-panel{position:absolute;top:calc(100% + 6px);left:0;z-index:95;width:310px;max-width:calc(100vw - 32px);padding:12px;background:rgba(255,255,255,.98);border:1px solid #d2d2d7;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.14)}' +
+      '.wac-history-page .wac-history-date-fields{display:grid;grid-template-columns:1fr 1fr;gap:10px}' +
+      '.wac-history-page .wac-history-date-field label{display:block;font-size:11px;color:#6e6e73;margin-bottom:5px}' +
+      '.wac-history-page .wac-history-date-input{height:34px;width:100%;box-sizing:border-box;padding:4px 8px;border:1px solid #d2d2d7;border-radius:7px;background:#fff;font:inherit;font-size:12px;color:#1d1d1f}' +
+      '.wac-history-page .wac-history-date-footer{display:flex;align-items:center;justify-content:space-between;gap:8px;border-top:1px solid #e5e5ea;margin-top:11px;padding-top:9px}' +
+      '.wac-history-page .wac-history-date-footer button{height:28px;padding:0 9px;border-radius:6px;font-size:12px}' +
+      '.wac-history-page .wac-history-search{height:36px;width:250px;min-width:190px;max-width:280px;flex:0 1 250px;margin-left:auto;border-radius:8px}' +
+      '.wac-history-page .wac-history-filter-count{font-size:12px;color:var(--text-secondary);white-space:nowrap;margin-left:4px}' +
       '.wac-history-page .wac-history-table-wrap{overflow:auto;max-height:calc(100vh - 330px);border-radius:10px}' +
       '.wac-history-page .wac-history-table{min-width:max-content;border-collapse:separate;border-spacing:0}' +
       '.wac-history-page .wac-history-table th,.wac-history-page .wac-history-table td{text-align:left!important;vertical-align:middle;white-space:nowrap}' +
@@ -14649,27 +14727,37 @@ async function renderWacHistoryMatrix() {
       '.wac-history-import-preview table{min-width:100%;border-collapse:collapse;font-size:12px}' +
       '.wac-history-import-preview th,.wac-history-import-preview td{padding:7px 8px;border-bottom:1px solid #eee;text-align:left;white-space:nowrap}' +
       '.wac-history-import-preview th{position:sticky;top:0;background:#f5f5f7;z-index:1}' +
-      '@media(max-width:760px){.wac-history-page .wac-history-table-wrap{max-height:calc(100vh - 390px)}.wac-history-page .wac-history-search{width:100%;max-width:none;flex:1 1 100%}.wac-history-page .wac-history-multi{flex:1;min-width:125px}.wac-history-page .wac-history-multi-trigger{width:100%;min-width:125px}}';
+      '@media(max-width:1180px){.wac-history-page .wac-history-filter-row{flex-wrap:wrap}.wac-history-page .wac-history-search{margin-left:auto;flex:1 1 230px}.wac-history-page .wac-history-filter-count{margin-left:auto}}' +
+      '@media(max-width:760px){.wac-history-page .wac-history-table-wrap{max-height:calc(100vh - 390px)}.wac-history-page .wac-history-search{width:100%;max-width:none;flex:1 1 100%;margin-left:0}.wac-history-page .wac-history-multi{flex:1 1 125px;width:auto;min-width:125px}.wac-history-page .wac-history-multi-trigger{width:100%;min-width:125px}.wac-history-page .wac-history-date-range{flex:1 1 190px}}';
     document.head.appendChild(style);
   }
 
   const canImport = typeof hasPermission === 'function' && hasPermission('ci_edit');
   root.innerHTML = '<div id="flash-container"></div><div class="wac-history-page">' +
-    '<div class="filter-bar" style="display:block">' +
+    '<div class="filter-bar wac-history-filter-bar" style="display:block">' +
       '<div class="wac-history-filter-row">' +
-        '<input id="wac-matrix-search" class="form-control wac-history-search" style="width:280px;min-width:220px;max-width:320px;flex:0 1 280px;height:34px;border-radius:8px" placeholder="搜索 SKU / 产品名称" onkeydown="if(event.key===\'Enter\')loadWacHistoryMatrix(false)">' +
         _wacMatrixMultiMarkup('brand','全部品牌') +
         _wacMatrixMultiMarkup('country','全部国家') +
         _wacMatrixMultiMarkup('warehouse','全部仓库') +
-      '</div>' +
-      '<div class="wac-history-filter-row" style="margin-bottom:0">' +
-        '<label style="font-size:12px;color:var(--text-secondary)">确认日期</label>' +
-        '<input id="wac-matrix-from" type="date" class="wac-history-date-input">' +
-        '<span style="color:var(--text-secondary)">至</span>' +
-        '<input id="wac-matrix-to" type="date" class="wac-history-date-input">' +
-        '<button class="btn btn-primary btn-sm" onclick="loadWacHistoryMatrix(false)">查询</button>' +
-        '<button class="btn btn-secondary btn-sm" onclick="resetWacHistoryMatrix()">重置</button>' +
-        '<span id="wac-matrix-count" style="font-size:12px;color:var(--text-secondary);margin-left:auto"></span>' +
+        '<div class="wac-history-date-range">' +
+          '<button type="button" class="wac-history-date-trigger" id="wac-matrix-date-trigger" onclick="toggleWacHistoryDateRange();event.stopPropagation()">' +
+            '<span id="wac-matrix-date-label">确认日期范围</span><span class="wac-history-chevron">⌄</span>' +
+          '</button>' +
+          '<div class="wac-history-date-range-panel" id="wac-matrix-date-range-panel" style="display:none" onclick="event.stopPropagation()">' +
+            '<div class="wac-history-date-fields">' +
+              '<div class="wac-history-date-field"><label for="wac-matrix-from">开始日期</label><input id="wac-matrix-from" type="date" class="wac-history-date-input" onchange="syncWacHistoryDateRange(\'from\')"></div>' +
+              '<div class="wac-history-date-field"><label for="wac-matrix-to">结束日期</label><input id="wac-matrix-to" type="date" class="wac-history-date-input" onchange="syncWacHistoryDateRange(\'to\')"></div>' +
+            '</div>' +
+            '<div class="wac-history-date-footer">' +
+              '<button type="button" class="btn btn-secondary btn-sm" onclick="clearWacHistoryDateRange();event.stopPropagation()">清空日期</button>' +
+              '<button type="button" class="btn btn-primary btn-sm" onclick="closeWacHistoryFilters();event.stopPropagation()">完成</button>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+        '<input id="wac-matrix-search" class="form-control wac-history-search" placeholder="搜索 SKU / 产品名称" onkeydown="if(event.key===\'Enter\')loadWacHistoryMatrix(false)">' +
+        '<button class="btn btn-primary btn-sm wac-history-query-btn" onclick="loadWacHistoryMatrix(false)">查询</button>' +
+        '<button class="btn btn-secondary btn-sm wac-history-reset-btn" onclick="resetWacHistoryMatrix()">重置</button>' +
+        '<span id="wac-matrix-count" class="wac-history-filter-count"></span>' +
       '</div>' +
     '</div>' +
     '<div class="table-section">' +
@@ -14691,6 +14779,8 @@ function resetWacHistoryMatrix() {
     document.querySelectorAll('input[data-wac-filter="' + key + '"]').forEach(function(el){el.checked=false;});
     updateWacHistoryFilterLabel(key);
   });
+  syncWacHistoryDateRange('reset');
+  closeWacHistoryFilters();
   loadWacHistoryMatrix(false);
 }
 
