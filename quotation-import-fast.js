@@ -239,39 +239,36 @@ module.exports=function installQuotationImportFast(deps){
       source_sheet:r.source_sheet,source_row:r.source_row
     }));
   }
-  async function bulkWritePg(rows,mode,importId,now,mappings){
-    if(!rows.length&&!mappings.length)return 0;
+  async function saveMappingsPgAndApply(mappings,now){
+    if(!mappings.length)return;
+    await withGenerateClient(async(aq)=>{
+      const mapPayload=mappings.map(m=>({...m,id:genId('qmap'),created_at:now,updated_at:now}));
+      const mapSql='INSERT INTO quotation_sku_mappings(id,supplier_id,brand,supplier_part_no,supplier_part_no_key,psi_sku_code,created_at,updated_at) '+
+        'SELECT id,supplier_id,brand,supplier_part_no,supplier_part_no_key,psi_sku_code,created_at,updated_at '+
+        'FROM jsonb_to_recordset(?::jsonb) AS x(id TEXT,supplier_id TEXT,brand TEXT,supplier_part_no TEXT,supplier_part_no_key TEXT,psi_sku_code TEXT,created_at TEXT,updated_at TEXT) '+
+        'ON CONFLICT(supplier_id,brand,supplier_part_no_key) DO UPDATE SET supplier_part_no=EXCLUDED.supplier_part_no,psi_sku_code=EXCLUDED.psi_sku_code,updated_at=EXCLUDED.updated_at';
+      await aq(mapSql,[JSON.stringify(mapPayload)]);
+      const updateSql="UPDATE quotation_prices q SET sku_code=m.psi_sku_code,psi_sku_code=m.psi_sku_code,match_status='matched', "+
+        "product_type=CASE WHEN q.product_type='' OR q.product_type='未分类' THEN COALESCE(NULLIF(s.category,''),q.product_type) ELSE q.product_type END,updated_at=? "+
+        "FROM quotation_sku_mappings m LEFT JOIN skus s ON s.sku_code=m.psi_sku_code AND s.brand=m.brand "+
+        "WHERE q.supplier_id=m.supplier_id AND q.brand=m.brand AND q.supplier_part_no_key=m.supplier_part_no_key "+
+        "AND q.match_status='unlinked' AND m.supplier_id=? AND NOT EXISTS(SELECT 1 FROM quotation_prices q2 "+
+        "WHERE q2.supplier_id=q.supplier_id AND q2.brand=q.brand AND q2.quote_date=q.quote_date AND q2.sku_code=m.psi_sku_code AND q2.id<>q.id)";
+      await aq(updateSql,[now,mappings[0].supplier_id]);
+    });
+  }
+  async function bulkWritePg(rows,mode,importId,now){
+    if(!rows.length)return 0;
     const payload=preparedRows(rows,importId,now);
     return withGenerateClient(async(aq)=>{
-      if(mappings.length){
-        const mapPayload=mappings.map(m=>({...m,id:genId('qmap'),created_at:now,updated_at:now}));
-        const mapSql='INSERT INTO quotation_sku_mappings(id,supplier_id,brand,supplier_part_no,supplier_part_no_key,psi_sku_code,created_at,updated_at) '+
-          'SELECT id,supplier_id,brand,supplier_part_no,supplier_part_no_key,psi_sku_code,created_at,updated_at '+
-          'FROM jsonb_to_recordset(?::jsonb) AS x(id TEXT,supplier_id TEXT,brand TEXT,supplier_part_no TEXT,supplier_part_no_key TEXT,psi_sku_code TEXT,created_at TEXT,updated_at TEXT) '+
-          'ON CONFLICT(supplier_id,brand,supplier_part_no_key) DO UPDATE SET supplier_part_no=EXCLUDED.supplier_part_no,psi_sku_code=EXCLUDED.psi_sku_code,updated_at=EXCLUDED.updated_at';
-        await aq(mapSql,[JSON.stringify(mapPayload)]);
-      }
-      let written=0;
-      if(payload.length){
-        const cols='id,sku_code,brand,product_type,quote_price,currency,quote_date,remark,import_batch_id,created_at,updated_at,supplier_id,supplier_part_no,supplier_part_no_key,psi_sku_code,match_status,model,spec,source_sheet,source_row';
-        let sql='INSERT INTO quotation_prices('+cols+') SELECT '+cols+' FROM jsonb_to_recordset(?::jsonb) AS x('+
-          'id TEXT,sku_code TEXT,brand TEXT,product_type TEXT,quote_price NUMERIC,currency TEXT,quote_date TEXT,remark TEXT,import_batch_id TEXT,created_at TEXT,updated_at TEXT,'+
-          'supplier_id TEXT,supplier_part_no TEXT,supplier_part_no_key TEXT,psi_sku_code TEXT,match_status TEXT,model TEXT,spec TEXT,source_sheet TEXT,source_row INTEGER) ';
-        if(mode==='overwrite')sql+='ON CONFLICT(supplier_id,sku_code,brand,quote_date) DO UPDATE SET product_type=EXCLUDED.product_type,quote_price=EXCLUDED.quote_price,currency=EXCLUDED.currency,remark=EXCLUDED.remark,import_batch_id=EXCLUDED.import_batch_id,updated_at=EXCLUDED.updated_at,supplier_part_no=EXCLUDED.supplier_part_no,supplier_part_no_key=EXCLUDED.supplier_part_no_key,psi_sku_code=EXCLUDED.psi_sku_code,match_status=EXCLUDED.match_status,model=EXCLUDED.model,spec=EXCLUDED.spec,source_sheet=EXCLUDED.source_sheet,source_row=EXCLUDED.source_row ';
-        else sql+='ON CONFLICT(supplier_id,sku_code,brand,quote_date) DO NOTHING ';
-        sql+='RETURNING sku_code';
-        written=(await aq(sql,[JSON.stringify(payload)])).length;
-      }
-      if(mappings.length){
-        const updateSql="UPDATE quotation_prices q SET sku_code=m.psi_sku_code,psi_sku_code=m.psi_sku_code,match_status='matched', "+
-          "product_type=CASE WHEN q.product_type='' OR q.product_type='未分类' THEN COALESCE(NULLIF(s.category,''),q.product_type) ELSE q.product_type END,updated_at=? "+
-          "FROM quotation_sku_mappings m LEFT JOIN skus s ON s.sku_code=m.psi_sku_code AND s.brand=m.brand "+
-          "WHERE q.supplier_id=m.supplier_id AND q.brand=m.brand AND q.supplier_part_no_key=m.supplier_part_no_key "+
-          "AND q.match_status='unlinked' AND m.supplier_id=? AND NOT EXISTS(SELECT 1 FROM quotation_prices q2 "+
-          "WHERE q2.supplier_id=q.supplier_id AND q2.brand=q.brand AND q2.quote_date=q.quote_date AND q2.sku_code=m.psi_sku_code AND q2.id<>q.id)";
-        await aq(updateSql,[now,mappings[0].supplier_id]);
-      }
-      return written;
+      const cols='id,sku_code,brand,product_type,quote_price,currency,quote_date,remark,import_batch_id,created_at,updated_at,supplier_id,supplier_part_no,supplier_part_no_key,psi_sku_code,match_status,model,spec,source_sheet,source_row';
+      let sql='INSERT INTO quotation_prices('+cols+') SELECT '+cols+' FROM jsonb_to_recordset(?::jsonb) AS x('+
+        'id TEXT,sku_code TEXT,brand TEXT,product_type TEXT,quote_price NUMERIC,currency TEXT,quote_date TEXT,remark TEXT,import_batch_id TEXT,created_at TEXT,updated_at TEXT,'+
+        'supplier_id TEXT,supplier_part_no TEXT,supplier_part_no_key TEXT,psi_sku_code TEXT,match_status TEXT,model TEXT,spec TEXT,source_sheet TEXT,source_row INTEGER) ';
+      if(mode==='overwrite')sql+='ON CONFLICT(supplier_id,sku_code,brand,quote_date) DO UPDATE SET product_type=EXCLUDED.product_type,quote_price=EXCLUDED.quote_price,currency=EXCLUDED.currency,remark=EXCLUDED.remark,import_batch_id=EXCLUDED.import_batch_id,updated_at=EXCLUDED.updated_at,supplier_part_no=EXCLUDED.supplier_part_no,supplier_part_no_key=EXCLUDED.supplier_part_no_key,psi_sku_code=EXCLUDED.psi_sku_code,match_status=EXCLUDED.match_status,model=EXCLUDED.model,spec=EXCLUDED.spec,source_sheet=EXCLUDED.source_sheet,source_row=EXCLUDED.source_row ';
+      else sql+='ON CONFLICT(supplier_id,sku_code,brand,quote_date) DO NOTHING ';
+      sql+='RETURNING sku_code';
+      return (await aq(sql,[JSON.stringify(payload)])).length;
     });
   }
   function saveMappingsSqlite(mappings,now){
@@ -309,11 +306,12 @@ module.exports=function installQuotationImportFast(deps){
     try{
       await savePgRun(importId,{status:'running',phase:'validating',percent:15,processed_count:0,message:'报价数据校验完成'});
       await savePgRun(importId,{phase:'matching',percent:35,message:'正在匹配 SKU 主数据和历史料号映射'});
+      await saveMappingsPgAndApply(mappings,nowIso());
       const existing=await existingPg(collapsed),c=counts(rows,collapsed,existing,mode);
       const no_quote=rows.filter(r=>r.quote_price===0).length;
       const writeRows=mode==='overwrite'?collapsed:collapsed.filter(r=>!existing.has(keyOf(r)));
       await savePgRun(importId,{...c,no_quote,phase:'writing',percent:68,processed_count:0,message:'正在批量写入报价和料号映射'});
-      const written=await bulkWritePg(writeRows,mode,importId,nowIso(),mappings);
+      const written=await bulkWritePg(writeRows,mode,importId,nowIso());
       await savePgRun(importId,{...c,no_quote,phase:'finalizing',percent:92,processed_count:rows.length,message:'报价写入完成，正在确认结果'});
       const expected=mode==='overwrite'?c.inserted+c.updated:c.inserted;
       if(written!==expected)console.warn('[quotation-import] written count differs',{importId,written,expected,mode});
@@ -352,14 +350,16 @@ module.exports=function installQuotationImportFast(deps){
         setImmediate(()=>{executePgImport(importId,rows,mode,collapsed,mappings).catch(e=>console.error('[quotation-import] unhandled job error',e&&e.message?e.message:e));});
         return;
       }
-      const existing=existingSqlite(collapsed),c=counts(rows,collapsed,existing,mode);
-      const no_quote=rows.filter(r=>r.quote_price===0).length;
-      const writeRows=mode==='overwrite'?collapsed:collapsed.filter(r=>!existing.has(keyOf(r)));
       const now=nowIso();
+      let c,no_quote,writeRows;
       transaction(()=>{
         saveMappingsSqlite(mappings,now);
-        bulkWriteSqlite(writeRows,mode,importId,now);
         applyMappingsSqlite(mappings,now);
+        const existing=existingSqlite(collapsed);
+        c=counts(rows,collapsed,existing,mode);
+        no_quote=rows.filter(r=>r.quote_price===0).length;
+        writeRows=mode==='overwrite'?collapsed:collapsed.filter(r=>!existing.has(keyOf(r)));
+        bulkWriteSqlite(writeRows,mode,importId,now);
       });
       return res.json({success:true,import_id:importId,status:'completed',phase:'completed',percent:100,total_count:rows.length,processed_count:rows.length,...c,no_quote,message:'导入完成'});
     }catch(e){
