@@ -21,9 +21,52 @@
  * the key never has to be written into a file.
  */
 
+const crypto = require('node:crypto');
 const { ShopeeClient } = require('../src/shopee-client');
 const { appSpec } = require('../src/config');
 const { ENDPOINTS } = require('../src/catalog');
+
+/**
+ * The calls that need no shop's token.
+ *
+ * The partner's own details and the shops under it are told without one,
+ * so they answer the question straight: is this partner good for
+ * anything, and if so for what.
+ */
+const PARTNER_ENDPOINTS = [
+  ['partnerDetails', '/api/v2/auth/get_partner_by_partner_id'],
+  ['partnerShops', '/api/v2/auth/get_shop_list'],
+];
+
+/**
+ * A partner's own signature: no shop, no token.
+ */
+function signPartnerRequest({ partnerId, partnerKey, path, timestamp }) {
+  const baseString = `${partnerId}${path}${timestamp}`;
+  return crypto.createHmac('sha256', partnerKey).update(baseString).digest('hex');
+}
+
+async function probePartner({ partnerId, partnerKey, baseUrl }) {
+  const results = [];
+  for (const [label, path] of PARTNER_ENDPOINTS) {
+    const timestamp = Math.floor(Date.now() / 1000);
+    const query = new URLSearchParams({
+      partner_id: partnerId,
+      timestamp: String(timestamp),
+      sign: signPartnerRequest({ partnerId, partnerKey, path, timestamp }),
+    });
+    try {
+      const response = await fetch(`${baseUrl}${path}?${query.toString()}`, {
+        headers: { accept: 'application/json' },
+      });
+      const body = await response.json().catch(() => ({}));
+      results.push({ label, path, ok: !body.error, body, summary: describe(body) });
+    } catch (error) {
+      results.push({ label, path, ok: false, summary: String(error.message || error).slice(0, 200) });
+    }
+  }
+  return results;
+}
 
 /**
  * The calls worth asking about, by the application they belong to.
@@ -150,6 +193,17 @@ async function main() {
     const env = process.env;
     const specEnv = appSpec(role);
     const token = String(env[specEnv.accessToken] || '').trim();
+    // The partner's own details come first: they answer whether this
+    // partner is worth calling at all, and they need no shop's token.
+    const partnerRows = [];
+    for (const env of args.envs) {
+      const rows = await probePartner({
+        partnerId,
+        partnerKey: partnerKey || '',
+        baseUrl: ENDPOINTS_BY_ENV[env],
+      });
+      for (const row of rows) partnerRows.push({ ...row, env });
+    }
     const results = await probe({
       role,
       partnerId,
@@ -159,7 +213,7 @@ async function main() {
       principalId: args.principalId || env.SHOPEE_BRAND_PORTAL_PRINCIPAL_ID || '',
       envs: args.envs,
     });
-    report.push({ role, partnerId, results });
+    report.push({ role, partnerId, partnerRows, results });
   }
 
   if (args.json) {
@@ -169,6 +223,11 @@ async function main() {
 
   for (const app of report) {
     console.log(`\n【${app.role}】Partner ${app.partnerId}`);
+    for (const row of app.partnerRows || []) {
+      const mark = row.ok ? '✅' : '❌';
+      console.log(`  ${mark} [${row.env}] ${row.label.padEnd(28)} ${row.path}`);
+      console.log(`     ${row.summary}`);
+    }
     for (const row of app.results) {
       const mark = row.ok ? '✅' : '❌';
       console.log(`  ${mark} [${row.env}] ${row.key.padEnd(28)} ${row.path}`);
