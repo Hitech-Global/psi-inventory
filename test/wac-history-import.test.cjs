@@ -523,7 +523,7 @@ test('WAC history export mirrors the filtered matrix and keeps every historical 
   assert.equal(model.rows[0][4],'120,000.00 IDR');
   assert.match(model.rows[0][5], /9\.09%/);
   assert.match(model.rows[0][5],/\+10,000\.00 IDR/);
-  assert.match(model.rows[0][7],/120,000\\.00 IDR/);
+  assert.match(model.rows[0][7],/120,000\.00 IDR/);
   assert.match(model.rows[0][8],/历史导入 · 有效至 2026-10-29/);
 });
 
