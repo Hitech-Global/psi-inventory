@@ -295,7 +295,8 @@ function openModal(){
       const sheets=wb.SheetNames.map(name=>({name,rows:XLSX.utils.sheet_to_json(wb.Sheets[name],{header:1,defval:''})}));
       const n=normalizer();
       if(!n||typeof n.parseSheetRows!=='function')return fileError(m,'智能识别模块尚未加载，请刷新页面后重试。');
-      const parsed=n.parseSheetRows(sheets,{brand:selectedBrand,quote_date:selectedQuoteDate,supplier_id:selectedSupplierId});
+      const selectedSupplier=(importOptions&&importOptions.suppliers||[]).find(x=>x.id===selectedSupplierId);
+      const parsed=n.parseSheetRows(sheets,{brand:selectedBrand,quote_date:selectedQuoteDate,supplier_id:selectedSupplierId,currency:selectedSupplier&&selectedSupplier.default_currency||''});
       if(parsed.errors&&parsed.errors.length)return fileError(m,parsed.errors.map(x=>x.reason).join('\n'));
       if(!parsed.rows.length)return fileError(m,'没有识别到可导入数据。请确认工作表包含供应商料号（Part No. / SKU）和报价（FOB / Price）列。');
       if(parsed.rows.length>MAX_ROWS)return fileError(m,'所有工作表合计 '+parsed.rows.length+' 行，单次最多支持 '+MAX_ROWS+' 行，请拆分后重试。');
