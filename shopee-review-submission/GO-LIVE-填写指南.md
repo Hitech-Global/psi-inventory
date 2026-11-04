@@ -5,6 +5,22 @@
 
 ---
 
+## 速查：可以照抄的值
+
+| 表单字段 | 照抄这个 |
+|---|---|
+| **Test Redirect URL Domain** | `https://analytics.hitechanalysis.top/api/shopee-analytics/app/oauth/callback` |
+| **Live Redirect URL Domain** | `https://analytics.hitechanalysis.top/api/shopee-analytics/app/oauth/callback` |
+| **Does this App require buyer PII access?** | **关闭（OFF）** |
+| **Database Servers** | 保持 `IP address(es) available`，填 `172.18.0.0/22` |
+| **live version of your business product's URL** | `https://analytics.hitechanalysis.top/review` |
+| **Test Username of Business Product** | `shopee_review` |
+| **Test Password of Business Product** | `ShopeeReview942249!Aa` |
+| **Brief Introduction** | 见下方「三、各应用不同的简介」 |
+| **Your client user interface screenshot** | 3 张，见下方「四、截图」 |
+
+---
+
 ## 一、三个应用共用的字段
 
 ### 1. Test / Live Redirect URL Domain
@@ -43,16 +59,21 @@ https://analytics.hitechanalysis.top/api/shopee-analytics/app/oauth/callback
 
 ### 3. Other IT assets Declaration → Database Servers
 
-**选 `IP address(es) unavailable`**
+**保持默认的 `IP address(es) available`，文本框填一行：**
 
-**为什么**
-- 我们的 PostgreSQL 跑在 Docker 网络里（容器 IP `172.18.0.4`，网段 `172.18.0.0/16`）
-- **端口没有对外映射**（`5432/tcp` 无 `→`），外部无法访问
-- 应用服务也只绑 `127.0.0.1:3090`，对外只经 Cloudflare Tunnel
-- 表单提示要求的 CIDR 前缀是 22–32，而我们的 `172.18.0.0/16`（前缀 16）不符合；为迁就这个填一个不准确的网段反而失实
-- **数据库确实没有可供外部访问的 IP 地址**，所以选 unavailable 是如实声明
+```
+172.18.0.0/22
+```
 
-> 若 Shopee 审核要求必须填，改成在 `docker-compose.yml` 里把 PG 网络显式配成 `192.168.0.0/22`，然后填 `192.168.0.0/22`（与表单示例一致）。
+**为什么这样填**
+- 数据库的容器 IP 是 `172.18.0.4`，跑在 Docker 的 `172.18.0.0/16` 网络里
+- 这个 IP 是动态的（容器重建就变），所以填**网段**而不是单个 IP
+- 表单要求 **CIDR 前缀 /22 到 /32** —— `172.18.0.0/16`（前缀 16）超范围，
+  而 **`172.18.0.0/22` 正好落在范围内**，且完整覆盖数据库所在网段
+- 数据库**端口没有对外映射**（`5432/tcp` 无 `→`），应用也只绑 `127.0.0.1:3090`，
+  对外只经 Cloudflare Tunnel —— 填网段而不是精确 IP，是保守而如实的说法
+
+**★ 一行就够**（每行一个网段/地址，最多 3 个动态网段）
 
 ---
 
