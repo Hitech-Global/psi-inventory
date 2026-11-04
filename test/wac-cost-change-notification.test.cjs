@@ -57,6 +57,7 @@ test('WAC UI, retry API and both database adapters are wired',()=>{
   const server=fs.readFileSync(path.join(root,'server.js'),'utf8');
   const pg=fs.readFileSync(path.join(root,'db-pg.js'),'utf8');
   const sqlite=fs.readFileSync(path.join(root,'db-sqlite.js'),'utf8');
+  const db=fs.readFileSync(path.join(root,'db.js'),'utf8');
   assert.match(app,/wac-cc-cb/);
   assert.match(app,/retryWacNotifications/);
   assert.match(server,/\/api\/wac\/cc-candidates/);
@@ -64,4 +65,6 @@ test('WAC UI, retry API and both database adapters are wired',()=>{
   assert.match(server,/business_type.*wac/);
   assert.match(pg,/CREATE TABLE IF NOT EXISTS wac_notification_logs/);
   assert.match(sqlite,/CREATE TABLE IF NOT EXISTS wac_notification_logs/);
+  assert.match(db,/CREATE TABLE IF NOT EXISTS wac_notification_logs/);
+  assert.match(db,/CREATE INDEX IF NOT EXISTS idx_wac_notification_batch_status/);
 });
