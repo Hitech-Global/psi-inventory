@@ -330,10 +330,25 @@
    *
    * @param {object} diagnosis 后端 /tiktok/shops/:shopId/diagnosis 的返回
    */
-  function renderDiagnosis(diagnosis) {
-    const notice = document.querySelector('#tiktokDiagnosisNotice');
-    const signalsHost = document.querySelector('#tiktokSignals');
-    const unavailableHost = document.querySelector('#tiktokUnavailable');
+  /**
+   * 渲染诊断结论。
+   *
+   * ★ 这个页签最要紧的是不能把 AI 推测说得像数据事实。
+   * 所以每条结论都带上 kind 标签：data-fact 是数据事实，ai-suggestion 是 AI 推测建议。
+   * 两者在视觉上必须能一眼分开 —— 事实用中性色，推测用带标记的样式。
+   *
+   * @param {object} diagnosis 后端 /tiktok/shops/:shopId/diagnosis 的返回
+   * @param {object} [options] 目标容器的 id 前缀，默认用经营数据页的那一套
+   */
+  function renderDiagnosis(diagnosis, options = {}) {
+    const prefix = options.prefix || {
+      notice: 'tiktokDiagnosisNotice',
+      signals: 'tiktokSignals',
+      unavailable: 'tiktokUnavailable',
+    };
+    const notice = document.querySelector(`#${prefix.notice}`);
+    const signalsHost = document.querySelector(`#${prefix.signals}`);
+    const unavailableHost = document.querySelector(`#${prefix.unavailable}`);
     if (!signalsHost) return;
 
     const signals = (diagnosis && diagnosis.signals) || [];
@@ -518,5 +533,258 @@
     return (numerator / denominator).toFixed(2);
   }
 
-  window.TikTokUI = { render, renderDiagnosis, renderAds, exportCsv };
+
+  /**
+   * 渲染广告诊断。
+   *
+   * ★ 三个比值分属不同口径，页面必须把「怎么算出来的」一起显示 ——
+   *   否则读者会把「跨报表的花费占比」当成「平台 ROI」，
+   *   得出投放效率很高的错误结论。
+   *
+   * @param {object} diagnosis /tiktok/marketing/ads-diagnosis 的返回
+   */
+  function renderAdsDiagnosis(diagnosis) {
+    const notice = document.querySelector('#tiktokAdsDiagnosisNotice');
+    const signalsHost = document.querySelector('#tiktokAdsDiagnosisSignals');
+    const calibersHost = document.querySelector('#tiktokAdsCalibers');
+    const summaryHost = document.querySelector('#tiktokAdsDiagnosisSummary');
+    if (!signalsHost) return;
+
+    const metrics = (diagnosis && diagnosis.metrics) || {};
+    const signals = (diagnosis && diagnosis.signals) || [];
+    const calibers = (diagnosis && diagnosis.caliberNotes) || [];
+
+    // 口径说明：三个比值各是什么来路。
+    if (calibersHost) {
+      if (calibers.length) {
+        calibersHost.innerHTML = '<div class="tiktok-caliber-box">'
+          + '<strong>这三个数分别怎么算出来的</strong>'
+          + '<ul>' + calibers.map(note => `
+            <li>
+              <span class="tiktok-caliber-title">${escapeHtml(note.title)}</span>
+              <span class="tiktok-caliber-formula">${escapeHtml(note.formula)}</span>
+              <span class="tiktok-caliber-source">${escapeHtml(note.source)}</span>
+              <span class="tiktok-caliber-note">${escapeHtml(note.note || '')}</span>
+            </li>`).join('')
+          + '</ul></div>';
+        calibersHost.classList.remove('hidden');
+      } else {
+        calibersHost.innerHTML = '';
+        calibersHost.classList.add('hidden');
+      }
+    }
+
+    // 概览卡片：每个数都标出口径。
+    if (summaryHost) {
+      const cards = [
+        { label: '平台归因 ROI', value: formatRatio(metrics.platformRoas), hint: '同源 · 平台面板那个数' },
+        { label: '花费占 GMV', value: formatPercent(metrics.spendToAttributedGmv), hint: '跨报表 · 投放强度' },
+        { label: '结算净 ROAS', value: formatRatio(metrics.settledNetRoas), hint: '结算口径 · 最可靠' },
+        { label: '广告花费', value: formatMoney(metrics.attributedSpend), hint: 'GMV Max 口径' },
+      ];
+      summaryHost.innerHTML = cards.map(card => `
+        <div class="kpi-card">
+          <span class="kpi-label">${escapeHtml(card.label)}</span>
+          <strong class="kpi-value">${escapeHtml(card.value)}</strong>
+          <span class="kpi-hint">${escapeHtml(card.hint)}</span>
+        </div>`).join('');
+      summaryHost.classList.remove('hidden');
+    }
+
+    if (notice) {
+      if (!signals.length) {
+        notice.innerHTML = '<div class="tiktok-notice warn">'
+          + '<strong>暂时没有可诊断的结论。</strong>'
+          + '<span>这个区间内没有广告数据。先同步广告数据，再运行诊断。</span></div>';
+        notice.classList.remove('hidden');
+      } else {
+        notice.innerHTML = '';
+        notice.classList.add('hidden');
+      }
+    }
+
+    signalsHost.innerHTML = signals.map(item => {
+      const isFact = item.kind === 'data-fact';
+      return `<article class="tiktok-signal ${isFact ? 'fact' : 'suggestion'} ${escapeHtml(item.severity || 'info')}">
+        <header class="tiktok-signal-head">
+          <span class="tiktok-signal-kind">${isFact ? '数据事实' : 'AI 推测建议'}</span>
+          <h3>${escapeHtml(item.title || '')}</h3>
+        </header>
+        <p class="tiktok-signal-detail">${escapeHtml(item.detail || '')}</p>
+        ${item.action ? `<p class="tiktok-signal-action"><span>落地动作</span>${escapeHtml(item.action)}</p>` : ''}
+      </article>`;
+    }).join('');
+    signalsHost.classList.remove('hidden');
+  }
+
+  /**
+   * 渲染店铺健康（SPS）。
+   *
+   * ★ 平台没给数据的指标必须显示为「—」并标为未知 ——
+   *   不能用别的指标顶替，也不能自己算一个。
+   *
+   * @param {object} payload { overview, metrics, signals, status }
+   */
+  function renderHealth(payload) {
+    const notice = document.querySelector('#tiktokHealthNotice');
+    const signalsHost = document.querySelector('#tiktokHealthSignals');
+    const head = document.querySelector('#tiktokHealthHead');
+    const body = document.querySelector('#tiktokHealthBody');
+    const summaryHost = document.querySelector('#tiktokHealthSummary');
+    if (!head || !body) return;
+
+    const overview = (payload && payload.overview) || {};
+    const metrics = (payload && payload.metrics) || [];
+    const signals = (payload && payload.signals) || [];
+    const status = (payload && payload.status) || {};
+
+    if (summaryHost) {
+      const cards = [
+        { label: '健康总分', value: overview.spsScore ?? '—', hint: overview.spsTierText || 'SPS' },
+        { label: '同层级百分位', value: overview.peerPercentile || '—', hint: '同类店铺中的位置' },
+        { label: '不达标指标', value: status.breachCount ?? 0, hint: `共 ${status.total ?? metrics.length} 项` },
+        { label: '待改进问题', value: (overview.topIssues || []).length, hint: '平台指出、影响评分最大' },
+      ];
+      summaryHost.innerHTML = cards.map(card => `
+        <div class="kpi-card">
+          <span class="kpi-label">${escapeHtml(card.label)}</span>
+          <strong class="kpi-value">${escapeHtml(String(card.value))}</strong>
+          <span class="kpi-hint">${escapeHtml(card.hint)}</span>
+        </div>`).join('');
+      summaryHost.classList.remove('hidden');
+    }
+
+    head.innerHTML = `<tr>
+      <th scope="col">指标</th>
+      <th scope="col">当前值</th>
+      <th scope="col">状态</th>
+      <th scope="col">得分</th>
+      <th scope="col">优秀线</th>
+      <th scope="col">较差线</th>
+      <th scope="col">平台说明</th>
+    </tr>`;
+
+    if (!metrics.length) {
+      body.innerHTML = '<tr><td colspan="7" class="empty">还没有健康数据。点「读取健康」从 TikTok 拉取。</td></tr>';
+    } else {
+      body.innerHTML = metrics.map(metric => `<tr>
+        <td>${escapeHtml(metric.metricName || '')}</td>
+        <td>${escapeHtml(metric.displayValue || '—')}</td>
+        <td><span class="tiktok-health-status ${escapeHtml(metric.level || 'unknown')}">${escapeHtml(metric.statusLabel || '未知')}</span></td>
+        <td>${escapeHtml(metric.score ?? '—')}</td>
+        <td>${escapeHtml(metric.excellentThreshold ?? '—')}</td>
+        <td>${escapeHtml(metric.poorThreshold ?? '—')}</td>
+        <td>${escapeHtml(metric.topReason || '')}</td>
+      </tr>`).join('');
+    }
+
+    if (notice) {
+      if (!signals.length && !metrics.length) {
+        notice.innerHTML = '<div class="tiktok-notice warn">'
+          + '<strong>还没有健康数据。</strong>'
+          + '<span>需要该店铺已授权，且 TikTok 平台已算出 SPS。点「读取健康」获取。</span></div>';
+        notice.classList.remove('hidden');
+      } else {
+        notice.innerHTML = '';
+        notice.classList.add('hidden');
+      }
+    }
+
+    if (signalsHost) {
+      signalsHost.innerHTML = signals.map(item => {
+        const isFact = item.kind === 'data-fact';
+        return `<article class="tiktok-signal ${isFact ? 'fact' : 'suggestion'} ${escapeHtml(item.severity || 'info')}">
+          <header class="tiktok-signal-head">
+            <span class="tiktok-signal-kind">${isFact ? '数据事实' : 'AI 推测建议'}</span>
+            <h3>${escapeHtml(item.title || '')}</h3>
+          </header>
+          <p class="tiktok-signal-detail">${escapeHtml(item.detail || '')}</p>
+          ${item.action ? `<p class="tiktok-signal-action"><span>落地动作</span>${escapeHtml(item.action)}</p>` : ''}
+        </article>`;
+      }).join('');
+      signalsHost.classList.remove('hidden');
+    }
+  }
+
+  /**
+   * 渲染达人概览。
+   *
+   * @param {object} payload { rows, summary }
+   */
+  function renderCreators(payload) {
+    const head = document.querySelector('#tiktokCreatorsHead');
+    const body = document.querySelector('#tiktokCreatorsBody');
+    const summaryHost = document.querySelector('#tiktokCreatorsSummary');
+    const notice = document.querySelector('#tiktokCreatorsNotice');
+    if (!head || !body) return;
+
+    const rows = (payload && payload.rows) || [];
+    const summary = (payload && payload.summary) || {};
+
+    if (summaryHost) {
+      const cards = [
+        { label: '合作达人数', value: summary.creatorCount ?? 0, hint: '区间内有数据的达人' },
+        { label: '达人带来 GMV', value: formatNumber(summary.gmv), hint: '平台归因口径' },
+        { label: '达人带来销量', value: formatNumber(summary.unitsSold), hint: '平台归因口径' },
+        { label: '达人粉丝合计', value: formatNumber(summary.followerCount), hint: '仅供规模参考' },
+      ];
+      summaryHost.innerHTML = cards.map(card => `
+        <div class="kpi-card">
+          <span class="kpi-label">${escapeHtml(card.label)}</span>
+          <strong class="kpi-value">${escapeHtml(String(card.value))}</strong>
+          <span class="kpi-hint">${escapeHtml(card.hint)}</span>
+        </div>`).join('');
+      summaryHost.classList.remove('hidden');
+    }
+
+    head.innerHTML = `<tr>
+      <th scope="col">达人</th>
+      <th scope="col">粉丝数</th>
+      <th scope="col">GMV</th>
+      <th scope="col">销量</th>
+      <th scope="col">GPM</th>
+      <th scope="col">视频 GMV</th>
+      <th scope="col">直播 GMV</th>
+      <th scope="col">合作品牌数</th>
+      <th scope="col">主要类目</th>
+    </tr>`;
+
+    if (!rows.length) {
+      body.innerHTML = '<tr><td colspan="9" class="empty">还没有达人数据。点「同步达人」从 TikTok 拉取。</td></tr>';
+    } else {
+      body.innerHTML = rows.map(row => {
+        const categories = (row.categoryGmvDistribution || [])
+          .slice(0, 2)
+          .map(item => item.category_id)
+          .filter(Boolean)
+          .join('、');
+        return `<tr>
+          <td>${escapeHtml(row.nickname || row.username || row.creatorUserId || '')}</td>
+          <td>${escapeHtml(formatNumber(row.followerCount))}</td>
+          <td>${escapeHtml(formatMoney(row.gmv, row.currency))}</td>
+          <td>${escapeHtml(formatNumber(row.unitsSold))}</td>
+          <td>${escapeHtml(formatMoney(row.gpm, row.currency))}</td>
+          <td>${escapeHtml(formatMoney(row.videoGmv, row.currency))}</td>
+          <td>${escapeHtml(formatMoney(row.liveGmv, row.currency))}</td>
+          <td>${escapeHtml(formatNumber(row.brandCollaborationCount))}</td>
+          <td>${escapeHtml(categories || '—')}</td>
+        </tr>`;
+      }).join('');
+    }
+
+    if (notice) {
+      if (!rows.length) {
+        notice.innerHTML = '<div class="tiktok-notice">'
+          + '<strong>达人数据是单独同步的。</strong>'
+          + '<span>达人表现来自 TikTok 的达人联盟接口，与订单、广告是三套独立的数据源。'
+          + '点「同步达人」拉取当前合作中的达人及其表现。</span></div>';
+        notice.classList.remove('hidden');
+      } else {
+        notice.innerHTML = '';
+        notice.classList.add('hidden');
+      }
+    }
+  }
+
+  window.TikTokUI = { render, renderDiagnosis, renderAds, renderAdsDiagnosis, renderHealth, renderCreators, exportCsv };
 })();

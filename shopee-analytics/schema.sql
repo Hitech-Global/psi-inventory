@@ -1181,6 +1181,46 @@ CREATE INDEX IF NOT EXISTS idx_tiktok_shop_daily_lookup
 -- 断点续传时按 (region_group, endpoint_key, shop_id) 取回游标继续翻页。
 -- 同一个键只保留一份游标：TikTok 的游标与查询窗口绑定，
 -- 换窗口就换游标，混着存会导致翻到别的窗口的数据。
+-- 达人（创作者）概览：TikTok 的达人联盟数据。
+--
+-- ★ 与 Shopee 的 shopee_affiliate_daily 不是一回事：
+--   Shopee 那边只有店铺层面的达人汇总（GMV、佣金、样品数）；
+--   TikTok 这边能拿到**单个达人**的表现 —— 粉丝数、达人的 GMV 与 GPM、
+--   合作过的品牌、内容表现。这才是「达人概览」能做出东西来的原因。
+--
+-- 数据来源：/affiliate_seller/202608/marketplace_creators/{creator_user_id}
+--   （Shop Open API 端点，要签名、走 x-tts-access-token —— 不是 Marketing API）
+--
+-- 一个达人一个时间点。达人表现是平台持续计算的快照，
+-- 所以按天存，这样能看出达人的变化趋势。
+CREATE TABLE IF NOT EXISTS tiktok_creator_daily (
+  region_group TEXT NOT NULL,
+  shop_id TEXT NOT NULL,
+  shop_cipher TEXT NOT NULL,
+  creator_user_id TEXT NOT NULL,
+  event_date DATE NOT NULL,
+  username TEXT,
+  nickname TEXT,
+  avatar_url TEXT,
+  selection_region TEXT,
+  follower_count NUMERIC(20,6),
+  brand_collaboration_count NUMERIC(20,6),
+  units_sold NUMERIC(20,6),
+  -- 金额一律带币种。跨境达人合作会跨市场，混币种相加没有意义。
+  currency TEXT NOT NULL DEFAULT 'UNKNOWN',
+  gmv NUMERIC(20,6),
+  video_gmv NUMERIC(20,6),
+  live_gmv NUMERIC(20,6),
+  gpm NUMERIC(20,6),
+  live_gpm NUMERIC(20,6),
+  video_gpm NUMERIC(20,6),
+  ec_live_engagement_rate NUMERIC(20,6),
+  content_type TEXT,
+  raw_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (region_group, shop_id, creator_user_id, event_date, currency)
+);
+
 CREATE TABLE IF NOT EXISTS tiktok_sync_state (
   region_group TEXT NOT NULL,
   endpoint_key TEXT NOT NULL,

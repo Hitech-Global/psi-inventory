@@ -26,6 +26,12 @@ const { TikTokOAuthService } = require('./tiktok-oauth-service');
 const { TikTokMarketingTokenRepository } = require('./tiktok-marketing-token-repository');
 const { TikTokMarketingOAuthService } = require('./tiktok-marketing-oauth-service');
 const { TikTokMarketingSyncRunner } = require('./tiktok-marketing-sync-runner');
+const { TikTokClient } = require('./tiktok-client');
+const { TikTokTokenRepository } = require('./tiktok-token-repository');
+const { TikTokCreatorRepository, TikTokCreatorSyncRunner } = require('./tiktok-creator-repository');
+const { TikTokHealthService } = require('./platforms/tiktok-health-service');
+const { loadMasterKey } = require('./token-crypto');
+const { loadTikTokRateLimitRetryOptions } = require('./rate-limit-retry');
 const { createReviewerAuth, ROLE_REVIEWER } = require('./reviewer-auth');
 
 function resolveBindAddress(env = process.env) {
@@ -88,6 +94,27 @@ function createApp({ pool, skillProvider = null, importJobPool = null }) {
     tokenRepository: tiktokMarketingTokenRepository,
   });
 
+  // TikTok Shop Open API 侧的服务：健康（SPS）与达人（Affiliate）。
+  // ★ 与上面的 Marketing API 是两套凭据 —— 这里的客户端要签名、
+  //   头是 x-tts-access-token，走的是 app_key/app_secret。
+  const tiktokTokenRepository = new TikTokTokenRepository({ pool, masterKey: loadMasterKey(process.env) });
+  const tiktokShopClient = new TikTokClient({
+    appKey: String(process.env.TIKTOK_APP_KEY || ''),
+    appSecret: String(process.env.TIKTOK_APP_SECRET || ''),
+    retryOptions: loadTikTokRateLimitRetryOptions(process.env),
+  });
+  const tiktokHealthService = new TikTokHealthService({
+    client: tiktokShopClient,
+    tokenRepository: tiktokTokenRepository,
+  });
+  const tiktokCreatorRepository = new TikTokCreatorRepository({ pool });
+  const tiktokCreatorSyncRunner = new TikTokCreatorSyncRunner({
+    pool,
+    creatorRepository: tiktokCreatorRepository,
+    client: tiktokShopClient,
+    tokenRepository: tiktokTokenRepository,
+  });
+
   // Docker/host health checks must remain available before auth middleware.
   // This endpoint exposes no shop, user, or business data.
   app.get('/api/shopee-analytics/health', (req, res) => {
@@ -136,6 +163,10 @@ function createApp({ pool, skillProvider = null, importJobPool = null }) {
     tiktokMarketingOAuthService,
     tiktokMarketingTokenRepository,
     tiktokMarketingSyncRunner,
+    tiktokHealthService,
+    tiktokCreatorRepository,
+    tiktokTokenRepository,
+    tiktokCreatorSyncRunner,
   }));
 
   const webDir = path.join(__dirname, '..', 'web');

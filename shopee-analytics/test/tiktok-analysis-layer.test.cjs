@@ -278,11 +278,13 @@ function testIncrementalMissingIsExplainedNotGuessed() {
 // ---------------------------------------------------------------------------
 
 function testFrontendWiring() {
-  assert.match(html, /id="tiktokDiagnosisBtn"/, 'index.html 缺少诊断按钮');
-  assert.match(html, /id="tiktokSignals"/, 'index.html 缺少诊断结论容器');
-  assert.match(html, /id="tiktokUnavailable"/, 'index.html 缺少能力边界容器');
-  assert.match(app, /async function loadTikTokDiagnosis/, 'app.js 缺少 loadTikTokDiagnosis');
-  assert.match(app, /#tiktokDiagnosisBtn/, 'app.js 缺少诊断按钮绑定');
+  // 诊断已搬到独立页签（tiktok-store），按钮随之改名。
+  assert.match(html, /id="tiktokStoreDiagnosisBtn"/, '缺少店铺诊断按钮');
+  assert.match(html, /id="tiktokStoreSignals"/, 'index.html 缺少店铺诊断结论容器');
+  assert.match(html, /id="tiktokStoreUnavailable"/, 'index.html 缺少能力边界容器');
+  assert.match(app, /async function loadTikTokStoreDiagnosis/, 'app.js 缺少店铺诊断加载函数');
+  // 诊断已搬到独立页签（tiktok-store），按钮随之改名。
+  assert.match(html, /id="tiktokStoreDiagnosisBtn"/, '缺少店铺诊断按钮');
   assert.match(app, /tiktok\/shops\/.*diagnosis/, 'app.js 缺少诊断接口调用');
   assert.match(tiktokUi, /window\.TikTokUI\s*=\s*\{[^}]*renderDiagnosis/, 'tiktok-ui-v1.js 必须导出 renderDiagnosis');
 

@@ -841,12 +841,15 @@ async function loadTikTokData() {
 
   // TikTok 有自己的店铺列表 —— 顶部的「店铺」下拉框是 Shopee 专用的，
   // 拿它来筛 TikTok 会选到不相干的店铺。
-  const picker = document.querySelector('#tiktokShopSelect');
-  if (picker) {
-    picker.innerHTML = shops.map(shop => {
+  // 五个 TikTok 页签各有自己的店铺下拉框 —— 顶部那个是 Shopee 专用的。
+  const shopOptions = shops.map(shop => {
       const label = shop.regionGroup ? `Shop ${shop.shopId}（${shop.regionGroup}）` : `Shop ${shop.shopId}`;
-      return `<option value="${escapeHtml(shop.shopId)}"${String(shop.shopId) === String(selected.shopId) ? ' selected' : ''}>${escapeHtml(label)}</option>`;
+      const selectedAttr = String(shop.shopId) === String(selected.shopId) ? ' selected' : '';
+      return `<option value="${escapeHtml(shop.shopId)}"${selectedAttr}>${escapeHtml(label)}</option>`;
     }).join('');
+  for (const id of ['tiktokShopSelect', 'tiktokStoreSelect', 'tiktokAdsDiagnosisSelect', 'tiktokHealthSelect', 'tiktokCreatorsSelect']) {
+    const picker = document.querySelector('#' + id);
+    if (picker) picker.innerHTML = shopOptions;
   }
 
   const filters = currentFilters();
@@ -950,19 +953,20 @@ async function syncTikTokAds() {
   }
 }
 
+
 /**
- * 运行 TikTok 诊断。
+ * 加载 TikTok 店铺诊断（独立页签）。
  *
- * 诊断是**按需**触发的，不是每次进页签都跑 ——
- * 它要把整个区间的数据拉出来算一遍，比读表重。
+ * 与经营数据页签里的诊断是同一套结论，只是换了个位置显示 ——
+ * 经营数据页签看的是数，诊断页签看的是结论。
  */
-async function loadTikTokDiagnosis() {
-  const button = document.querySelector('#tiktokDiagnosisBtn');
-  const notice = document.querySelector('#tiktokDiagnosisNotice');
+async function loadTikTokStoreDiagnosis() {
+  const button = document.querySelector('#tiktokStoreDiagnosisBtn');
+  const notice = document.querySelector('#tiktokStoreNotice');
   if (!state.tiktokShopId) {
     if (notice) {
       notice.innerHTML = '<div class="tiktok-notice warn">'
-        + '<strong>还没有选中的 TikTok 店铺。</strong><span>先选一家已接入的店铺再运行诊断。</span></div>';
+        + '<strong>还没有选中的 TikTok 店铺。</strong><span>先选一家已接入的店铺。</span></div>';
       notice.classList.remove('hidden');
     }
     return;
@@ -979,7 +983,13 @@ async function loadTikTokDiagnosis() {
     const diagnosis = await json(
       `/api/shopee-analytics/tiktok/shops/${encodeURIComponent(state.tiktokShopId)}/diagnosis?${params}`,
     );
-    window.TikTokUI?.renderDiagnosis(diagnosis);
+    window.TikTokUI?.renderDiagnosis(diagnosis, {
+      prefix: {
+        notice: 'tiktokStoreNotice',
+        signals: 'tiktokStoreSignals',
+        unavailable: 'tiktokStoreUnavailable',
+      },
+    });
   } catch (error) {
     if (notice) {
       notice.innerHTML = '<div class="tiktok-notice warn">'
@@ -990,6 +1000,162 @@ async function loadTikTokDiagnosis() {
     if (button) {
       button.disabled = false;
       button.textContent = '运行诊断';
+    }
+  }
+}
+
+/**
+ * 加载 TikTok 广告诊断。
+ */
+async function loadTikTokAdsDiagnosis() {
+  const button = document.querySelector('#tiktokAdsDiagnosisBtn');
+  const notice = document.querySelector('#tiktokAdsDiagnosisNotice');
+  if (!state.tiktokShopId) {
+    if (notice) {
+      notice.innerHTML = '<div class="tiktok-notice warn">'
+        + '<strong>还没有选中的 TikTok 店铺。</strong><span>先选一家已接入的店铺。</span></div>';
+      notice.classList.remove('hidden');
+    }
+    return;
+  }
+  if (button) {
+    button.disabled = true;
+    button.textContent = '诊断中…';
+  }
+  try {
+    const filters = currentFilters();
+    const params = new URLSearchParams();
+    if (filters.startDate) params.set('start_date', filters.startDate);
+    if (filters.endDate) params.set('end_date', filters.endDate);
+    const diagnosis = await json(
+      `/api/shopee-analytics/tiktok/shops/${encodeURIComponent(state.tiktokShopId)}/ads-diagnosis?${params}`,
+    );
+    window.TikTokUI?.renderAdsDiagnosis(diagnosis);
+  } catch (error) {
+    if (notice) {
+      notice.innerHTML = '<div class="tiktok-notice warn">'
+        + `<strong>广告诊断失败。</strong><span>${escapeHtml(error.message)}</span></div>`;
+      notice.classList.remove('hidden');
+    }
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = '运行诊断';
+    }
+  }
+}
+
+/**
+ * 读取 TikTok 店铺健康（SPS）。
+ *
+ * 健康数据是平台的实时评估，所以进页签就拉一次，不做缓存。
+ */
+async function loadTikTokHealth() {
+  const notice = document.querySelector('#tiktokHealthNotice');
+  if (!state.tiktokShopId) {
+    if (notice) {
+      notice.innerHTML = '<div class="tiktok-notice warn">'
+        + '<strong>还没有选中的 TikTok 店铺。</strong><span>先选一家已接入的店铺。</span></div>';
+      notice.classList.remove('hidden');
+    }
+    return;
+  }
+  try {
+    const health = await json(
+      `/api/shopee-analytics/tiktok/shops/${encodeURIComponent(state.tiktokShopId)}/health`,
+    );
+    window.TikTokUI?.renderHealth(health);
+  } catch (error) {
+    if (notice) {
+      notice.innerHTML = '<div class="tiktok-notice warn">'
+        + `<strong>读取店铺健康失败。</strong><span>${escapeHtml(error.message)}</span></div>`;
+      notice.classList.remove('hidden');
+    }
+  }
+}
+
+/**
+ * 加载 TikTok 达人概览。
+ */
+async function loadTikTokCreators() {
+  const notice = document.querySelector('#tiktokCreatorsNotice');
+  if (!state.tiktokShopId) {
+    if (notice) {
+      notice.innerHTML = '<div class="tiktok-notice warn">'
+        + '<strong>还没有选中的 TikTok 店铺。</strong><span>先选一家已接入的店铺。</span></div>';
+      notice.classList.remove('hidden');
+    }
+    return;
+  }
+  try {
+    const filters = currentFilters();
+    const params = new URLSearchParams();
+    if (filters.startDate) params.set('start_date', filters.startDate);
+    if (filters.endDate) params.set('end_date', filters.endDate);
+    const data = await json(
+      `/api/shopee-analytics/tiktok/shops/${encodeURIComponent(state.tiktokShopId)}/creators?${params}`,
+    );
+    window.TikTokUI?.renderCreators(data);
+  } catch (error) {
+    if (notice) {
+      notice.innerHTML = '<div class="tiktok-notice warn">'
+        + `<strong>读取达人数据失败。</strong><span>${escapeHtml(error.message)}</span></div>`;
+      notice.classList.remove('hidden');
+    }
+  }
+}
+
+/**
+ * 同步 TikTok 达人数据。
+ */
+async function syncTikTokCreators() {
+  const button = document.querySelector('#tiktokCreatorsSyncBtn');
+  const notice = document.querySelector('#tiktokCreatorsNotice');
+  if (!state.tiktokShopId) {
+    if (notice) {
+      notice.innerHTML = '<div class="tiktok-notice warn">'
+        + '<strong>还没有选中的 TikTok 店铺。</strong><span>先选一家已接入的店铺。</span></div>';
+      notice.classList.remove('hidden');
+    }
+    return;
+  }
+  if (button) {
+    button.disabled = true;
+    button.textContent = '同步中…';
+  }
+  try {
+    const result = await fetch(
+      `/api/shopee-analytics/tiktok/shops/${encodeURIComponent(state.tiktokShopId)}/creators/sync`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      },
+    );
+    const payload = await result.json().catch(() => ({}));
+    if (!result.ok) {
+      throw new Error(payload.message || `同步失败（HTTP ${result.status}）`);
+    }
+    if (notice) {
+      const failed = (payload.errors || []).length;
+      notice.innerHTML = failed
+        ? `<div class="tiktok-notice warn"><strong>同步完成，但有 ${failed} 项失败。</strong>`
+          + `<span>写入 ${payload.written || 0} 行，搜到 ${payload.searched || 0} 个达人。</span></div>`
+        : `<div class="tiktok-notice"><strong>同步完成。</strong>`
+          + `<span>写入 ${payload.written || 0} 行，搜到 ${payload.searched || 0} 个达人。</span></div>`;
+      notice.classList.remove('hidden');
+    }
+    await loadTikTokCreators();
+  } catch (error) {
+    if (notice) {
+      notice.innerHTML = '<div class="tiktok-notice warn">'
+        + `<strong>达人同步失败。</strong><span>${escapeHtml(error.message)}</span></div>`;
+      notice.classList.remove('hidden');
+    }
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = '同步达人';
     }
   }
 }
@@ -1789,6 +1955,18 @@ async function loadCurrentView({ manageButton = true } = {}) {
       // 渲染时分开呈现，不合并。
       await loadTikTokAds();
     }
+    else if (state.view === 'tiktok-store') {
+      await loadTikTokStoreDiagnosis();
+    }
+    else if (state.view === 'tiktok-ads') {
+      await loadTikTokAdsDiagnosis();
+    }
+    else if (state.view === 'tiktok-health') {
+      await loadTikTokHealth();
+    }
+    else if (state.view === 'tiktok-creators') {
+      await loadTikTokCreators();
+    }
     else if (state.view === 'status') {
       if (selectedShop()) await loadSystemStatus();
       else await loadStatusPortfolio();
@@ -1901,7 +2079,7 @@ function restoreLocaleUiState() {
   if (saved.endDate) $('#endDate').value = saved.endDate;
   window.dispatchEvent(new CustomEvent('shopee-date-range-sync'));
 
-  const view = ['overview', 'store', 'ads', 'funnel', 'health', 'status', 'tiktok'].includes(saved.view) ? saved.view : 'overview';
+  const view = ['overview', 'store', 'ads', 'funnel', 'health', 'status', 'tiktok', 'tiktok-store', 'tiktok-ads', 'tiktok-health', 'tiktok-creators'].includes(saved.view) ? saved.view : 'overview';
   const adsType = ['manual', 'auto', 'groups'].includes(saved.adsType) ? saved.adsType : 'manual';
   const adStatus = ['all', 'ongoing', 'paused', 'ended', 'deleted'].includes(saved.adStatus) ? saved.adStatus : 'all';
   state.view = view;
@@ -2024,7 +2202,23 @@ $('#funnelProductsGroupToggle')?.addEventListener('click', () => {
   $('#healthRefreshBtn')?.addEventListener('click', () => loadShopHealth());
   $('#tiktokExportBtn')?.addEventListener('click', () => window.TikTokUI?.exportCsv());
   $('#tiktokRefreshBtn')?.addEventListener('click', () => loadTikTokData());
-  $('#tiktokDiagnosisBtn')?.addEventListener('click', () => loadTikTokDiagnosis());
+  $('#tiktokStoreDiagnosisBtn')?.addEventListener('click', () => loadTikTokStoreDiagnosis());
+  $('#tiktokAdsDiagnosisBtn')?.addEventListener('click', () => loadTikTokAdsDiagnosis());
+  $('#tiktokHealthRefreshBtn')?.addEventListener('click', () => loadTikTokHealth());
+  $('#tiktokCreatorsRefreshBtn')?.addEventListener('click', () => loadTikTokCreators());
+  $('#tiktokCreatorsSyncBtn')?.addEventListener('click', () => syncTikTokCreators());
+  // 四个新页签的店铺选择器：换了店就重新读该页签的数据。
+  for (const [id, loader] of [
+    ['tiktokStoreSelect', loadTikTokStoreDiagnosis],
+    ['tiktokAdsDiagnosisSelect', loadTikTokAdsDiagnosis],
+    ['tiktokHealthSelect', loadTikTokHealth],
+    ['tiktokCreatorsSelect', loadTikTokCreators],
+  ]) {
+    $('#' + id)?.addEventListener('change', (event) => {
+      state.tiktokShopId = event.target.value;
+      loader().catch(() => {});
+    });
+  }
   $('#tiktokAdsRefreshBtn')?.addEventListener('click', () => loadTikTokAds());
   $('#tiktokAdsSyncBtn')?.addEventListener('click', () => syncTikTokAds());
   // 切换 TikTok 店铺：记住选择并重新读数据。

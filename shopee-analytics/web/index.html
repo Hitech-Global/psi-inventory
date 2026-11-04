@@ -28,6 +28,10 @@
         <div class="side-group">
           <div class="side-group-title">TikTok</div>
           <button class="side-item" data-view="tiktok" type="button">经营数据</button>
+          <button class="side-item" data-view="tiktok-store" type="button">店铺诊断</button>
+          <button class="side-item" data-view="tiktok-ads" type="button">广告诊断</button>
+          <button class="side-item" data-view="tiktok-health" type="button">店铺健康</button>
+          <button class="side-item" data-view="tiktok-creators" type="button">达人概览</button>
         </div>
 
         <div class="side-group">
@@ -459,21 +463,6 @@
       <section class="panel">
         <div class="panel-head">
           <div>
-            <h2>TikTok 诊断</h2>
-            <p>每条结论都标明是数据事实还是 AI 推测建议。拿不到的结论会说明原因，不做补白。</p>
-          </div>
-          <div class="panel-actions">
-            <button id="tiktokDiagnosisBtn" class="ghost" type="button">运行诊断</button>
-          </div>
-        </div>
-        <div id="tiktokDiagnosisNotice" class="tiktok-notice-wrap hidden"></div>
-        <div id="tiktokUnavailable" class="tiktok-unavailable hidden"></div>
-        <div id="tiktokSignals" class="tiktok-signals hidden"></div>
-      </section>
-
-      <section class="panel">
-        <div class="panel-head">
-          <div>
             <h2>TikTok 广告数据</h2>
             <p>GMV Max（平台归因）与整合报表（纯付费）口径不同，各占一行。两者相加没有业务含义 —— 平台归因的 GMV 含自然流量。</p>
           </div>
@@ -543,6 +532,112 @@
           <table class="tiktok-table">
             <thead id="tiktokOrderHead"></thead>
             <tbody id="tiktokOrderBody"><tr><td class="empty">等待加载数据。</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+
+    <section id="view-tiktok-store" class="view-section hidden">
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>TikTok 店铺诊断</h2>
+            <p>按 TikTok 能算得出的口径给结论：结算净收益与净 ROAS、增量 ROAS、花费占比、订单事实。拿不到的结论会说明原因。</p>
+          </div>
+          <div class="panel-actions">
+            <label class="tiktok-shop-picker">TikTok 店铺
+              <select id="tiktokStoreSelect">
+                <option value="">尚未接入店铺</option>
+              </select>
+            </label>
+
+            <button id="tiktokStoreDiagnosisBtn" class="ghost" type="button">运行诊断</button>
+          </div>
+        </div>
+        <div id="tiktokStoreNotice" class="tiktok-notice-wrap hidden"></div>
+        <div id="tiktokStoreUnavailable" class="tiktok-unavailable hidden"></div>
+        <div id="tiktokStoreSignals" class="tiktok-signals hidden"></div>
+      </section>
+    </section>
+
+    <section id="view-tiktok-ads" class="view-section hidden">
+      <section id="tiktokAdsDiagnosisSummary" class="kpi-grid hidden"></section>
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>TikTok 广告诊断</h2>
+            <p>平台归因 ROI、花费占 GMV 比例、结算净 ROAS —— 三个数分属不同口径，页面会标明每个数怎么算出来的。</p>
+          </div>
+          <div class="panel-actions">
+            <label class="tiktok-shop-picker">TikTok 店铺
+              <select id="tiktokAdsDiagnosisSelect">
+                <option value="">尚未接入店铺</option>
+              </select>
+            </label>
+
+            <button id="tiktokAdsDiagnosisBtn" class="ghost" type="button">运行诊断</button>
+          </div>
+        </div>
+        <div id="tiktokAdsDiagnosisNotice" class="tiktok-notice-wrap hidden"></div>
+        <div id="tiktokAdsCalibers" class="tiktok-calibers hidden"></div>
+        <div id="tiktokAdsDiagnosisSignals" class="tiktok-signals hidden"></div>
+      </section>
+    </section>
+
+    <section id="view-tiktok-health" class="view-section hidden">
+      <section id="tiktokHealthSummary" class="kpi-grid hidden"></section>
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>TikTok 店铺健康</h2>
+            <p>用 TikTok 官方的 SPS 体系：总分、层级、同层级百分位，以及平台直接给出的达标线。平台没给数据的指标会标为未知。</p>
+          </div>
+          <div class="panel-actions">
+            <label class="tiktok-shop-picker">TikTok 店铺
+              <select id="tiktokHealthSelect">
+                <option value="">尚未接入店铺</option>
+              </select>
+            </label>
+
+            <button id="tiktokHealthRefreshBtn" class="ghost" type="button">读取健康</button>
+          </div>
+        </div>
+        <div id="tiktokHealthNotice" class="tiktok-notice-wrap hidden"></div>
+        <div id="tiktokHealthSignals" class="tiktok-signals hidden"></div>
+        <div class="table-wrap">
+          <table class="tiktok-table">
+            <thead id="tiktokHealthHead"></thead>
+            <tbody id="tiktokHealthBody"><tr><td class="empty">等待加载数据。</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <section id="view-tiktok-creators" class="view-section hidden">
+      <section id="tiktokCreatorsSummary" class="kpi-grid hidden"></section>
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>TikTok 达人概览</h2>
+            <p>达人的粉丝数、带来的 GMV 与 GPM。GPM 是效率指标 —— 达人体量差很多，只看绝对值会误判。</p>
+          </div>
+          <div class="panel-actions">
+            <label class="tiktok-shop-picker">TikTok 店铺
+              <select id="tiktokCreatorsSelect">
+                <option value="">尚未接入店铺</option>
+              </select>
+            </label>
+
+            <button id="tiktokCreatorsSyncBtn" class="ghost" type="button">同步达人</button>
+            <button id="tiktokCreatorsRefreshBtn" class="ghost" type="button">刷新</button>
+          </div>
+        </div>
+        <div id="tiktokCreatorsNotice" class="tiktok-notice-wrap hidden"></div>
+        <div class="table-wrap">
+          <table class="tiktok-table">
+            <thead id="tiktokCreatorsHead"></thead>
+            <tbody id="tiktokCreatorsBody"><tr><td class="empty">等待加载数据。</td></tr></tbody>
           </table>
         </div>
       </section>

@@ -92,6 +92,8 @@ const SOURCES = Object.freeze({
   SHOP_ORDER: 'shop_order',
   /** 店铺分析（漏斗） */
   SHOP_ANALYTICS: 'shop_analytics',
+  /** 达人联盟：单个达人的表现（GMV / GPM / 粉丝数 / 内容表现） */
+  AFFILIATE_CREATOR: 'affiliate_creator',
 });
 
 const SOURCE_VALUES = Object.freeze(Object.values(SOURCES));

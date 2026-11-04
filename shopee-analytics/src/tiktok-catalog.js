@@ -36,6 +36,21 @@ const REGION_GROUPS = Object.freeze({
  *     两种含义共用一个数字码，且该码还用于其他校验失败，
  *     所以**禁止靠错误反推**，必须在这里声明。
  */
+/**
+ * 达人表现的数据组。
+ *
+ * 不传 data_groups 会返回全部分组，其中 FOLLOWER_INFORMATION（粉丝位置/年龄/性别分布）
+ * 是很大的字段，而我们只用得上其中很小一部分。所以按需指定。
+ *
+ * ★ 必须定义在 ENDPOINTS 之前 —— ENDPOINTS 里会引用它。
+ */
+const CREATOR_DATA_GROUPS = Object.freeze([
+  'BASIC_CREATOR_INFORMATION',
+  'CONTENT_PERFORMANCE',
+  'COLLABORATION',
+  'SALES_AND_GMV',
+]);
+
 const ENDPOINTS = Object.freeze({
   /** 授权店铺台账：一个 access token 可覆盖卖家名下多个店铺，每店有自己的 cipher。 */
   authorizedShops: {
@@ -156,6 +171,12 @@ const ENDPOINTS = Object.freeze({
   },
 
   // ---- 达人（TikTok 版的渠道结构）----
+  //
+  // ★ 版本说明：marketplace_creators 原先是 202505 版，官方已改为 202608 版
+  //   —— 路径参数也从 {creator_id} 改成了 {creator_user_id}，
+  //   并新增了 data_groups 查询参数（用来只取需要的数据组）。
+  //   202608 的响应还多了达人表现（SALES_AND_GMV、CONTENT_PERFORMANCE 等），
+  //   那是达人概览页的主要数据来源。
   affiliateOrders: {
     method: 'POST',
     path: '/affiliate_seller/202410/orders/search',
@@ -164,12 +185,44 @@ const ENDPOINTS = Object.freeze({
     scope: 'Read Seller Affiliate Collaboration',
     cursor: true,
   },
-  affiliateCreator: {
-    method: 'GET',
-    path: '/affiliate_seller/202505/marketplace_creators/{creator_id}',
+  affiliateCreatorSearch: {
+    method: 'POST',
+    path: '/affiliate_seller/202608/marketplace_creators/search',
     requiresShopCipher: true,
     regionGroups: [REGION_GROUPS.ROW, REGION_GROUPS.US],
     scope: 'Read Seller Affiliate Collaboration',
+    cursor: true,
+  },
+  affiliateCreator: {
+    method: 'GET',
+    path: '/affiliate_seller/202608/marketplace_creators/{creator_user_id}',
+    requiresShopCipher: true,
+    regionGroups: [REGION_GROUPS.ROW, REGION_GROUPS.US],
+    scope: 'Read Seller Affiliate Collaboration',
+    // data_groups 可选值见 CREATOR_DATA_GROUPS。
+    // 不传则返回全部分组 —— 但那会让每次调用都拉回粉丝画像这类大字段。
+    dataGroups: CREATOR_DATA_GROUPS,
+  },
+
+  // ---- 店铺健康（TikTok 官方 SPS，Shop Performance Score）----
+  //
+  // ★ 这是 TikTok 官方给出的店铺健康体系，与 Shopee 的指标集完全不同：
+  //   SPS 有总分（sps_score）、层级（sps_tier）、同层位百分位（peer_percentile），
+  //   每个指标自带平台的达标线（benchmarks：excellent_threshold / poor_threshold）。
+  // 所以这里的健康判定**不需要我们自己猜阈值** —— 平台已经给了标准。
+  shopPerformanceOverview: {
+    method: 'GET',
+    path: '/analytics/202606/shop_performances/overview',
+    requiresShopCipher: true,
+    regionGroups: [REGION_GROUPS.ROW, REGION_GROUPS.US],
+    scope: 'TikTok Shop Analytics',
+  },
+  shopPerformanceMetrics: {
+    method: 'GET',
+    path: '/analytics/202606/shop_performances/metrics',
+    requiresShopCipher: true,
+    regionGroups: [REGION_GROUPS.ROW, REGION_GROUPS.US],
+    scope: 'TikTok Shop Analytics',
   },
 });
 
@@ -225,6 +278,7 @@ const SYNC_POLICY = Object.freeze({
   shopPerformance: { minutes: 60, refreshDays: 7 },
   shopSkuPerformance: { minutes: 60, refreshDays: 7 },
   affiliateOrders: { minutes: 60, refreshDays: 7 },
+  affiliateCreatorSearch: { minutes: 360 },
   affiliateCreator: { minutes: 1440 },
 });
 
@@ -276,6 +330,7 @@ function requiredScopes() {
 }
 
 module.exports = {
+  CREATOR_DATA_GROUPS,
   ENDPOINTS,
   MARKETING_ENDPOINTS,
   REGION_GROUPS,
