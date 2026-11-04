@@ -484,3 +484,97 @@ test('WAC country multi-select omits internal search and the matrix search uses 
   assert.ok(appSource.includes('background:#f5f5f7!important'));
   assert.ok(appSource.includes('.wac-history-page .wac-history-reset-btn:hover{'));
 });
+
+
+test('WAC history export mirrors the filtered matrix and keeps every historical date column', () => {
+  const appSource = fs.readFileSync(require.resolve('../app'), 'utf8');
+  const vm = require('node:vm');
+  const helperStart = appSource.indexOf('function _wacHistoryMatrixExportModel');
+  const helperEnd = appSource.indexOf('\nasync function exportWacHistoryMatrix', helperStart);
+  assert.ok(helperStart >= 0 && helperEnd > helperStart, 'WAC export model helper must exist');
+  const sandbox = {};
+  vm.runInNewContext(appSource.slice(helperStart, helperEnd) + '\nthis.buildExportModel = _wacHistoryMatrixExportModel;', sandbox);
+
+  const rows = [
+    {sku_code:'M724',model:'M724 Gaming Mouse',brand:'Redragon',country:'Indonesia',warehouse:'Bekasi',
+      confirmed_at:'2026-10-30T10:00:00',version_no:2,new_avg_cost:120000,last_inbound_date:'2026-10-29',
+      local_currency:'IDR',rmb_to_local_rate:2500,source_type:'system'},
+    {sku_code:'M724',model:'M724 Gaming Mouse',brand:'Redragon',country:'Indonesia',warehouse:'Bekasi',
+      confirmed_at:'2026-09-30T10:00:00',version_no:1,new_avg_cost:110000,last_inbound_date:'2026-09-28',
+      local_currency:'IDR',rmb_to_local_rate:2400,source_type:'historical_import',effective_end_date:'2026-10-29'},
+    {sku_code:'M816',model:'M816 Keyboard',brand:'Redragon',country:'Indonesia',warehouse:'Bekasi',
+      confirmed_at:'2026-10-20T10:00:00',version_no:1,new_avg_cost:200000,last_inbound_date:'2026-10-18',
+      local_currency:'IDR',rmb_to_local_rate:2500,source_type:'system'},
+    {sku_code:'M724',model:'M724 Gaming Mouse',brand:'Other',country:'Indonesia',warehouse:'Bekasi',
+      confirmed_at:'2026-10-29T10:00:00',version_no:1,new_avg_cost:100000,last_inbound_date:'2026-10-27',
+      local_currency:'IDR',rmb_to_local_rate:2500,source_type:'system'}
+  ];
+  const model = sandbox.buildExportModel(rows,{
+    brands:['Redragon'],countries:['Indonesia'],warehouses:['Bekasi'],
+    search:'m724',from:'2026-09-01',to:'2026-10-31'
+  });
+  assert.equal(model.groups.length,1);
+  assert.equal(model.selectedCount,2);
+  assert.deepEqual(JSON.parse(JSON.stringify(model.dates)),['2026-10-30','2026-09-30']);
+  assert.deepEqual(JSON.parse(JSON.stringify(model.headers.slice(0,7))),
+    ['SKU','品牌','国家','仓库','Latest WAC','较上次 WAC 变化','最后入库日期']);
+  assert.match(model.headers[7],/1 RMB = 2,500 IDR[\s\S]*2026-10-30/);
+  assert.equal(model.rows[0][0],'M724');
+  assert.equal(model.rows[0][4],'120,000.00 IDR');
+  assert.match(model.rows[0][5], /9\.09%/);
+  assert.match(model.rows[0][5],/\+10,000\.00 IDR/);
+  assert.match(model.rows[0][7],/120,000\.00 IDR/);
+  assert.match(model.rows[0][8],/历史导入 · 有效至 2026-10-29/);
+});
+
+test('WAC history export button sits beside import and exports the current filter result to Excel', async () => {
+  const appSource = fs.readFileSync(require.resolve('../app'), 'utf8');
+  const vm = require('node:vm');
+  const actionStart = appSource.indexOf("'<div class=\"wac-history-title-actions\">'");
+  const actionEnd = appSource.indexOf("'</div></div>'",actionStart);
+  assert.ok(actionStart >= 0 && actionEnd > actionStart, 'WAC title action group must exist');
+  const actions = appSource.slice(actionStart,actionEnd);
+  assert.ok(actions.indexOf('wac-matrix-export-btn') >= 0);
+  assert.ok(actions.indexOf('wac-matrix-export-btn') < actions.indexOf('openWacHistoryImport'),
+    'export button must be adjacent to and placed before the import button');
+  assert.match(actions,/btn btn-secondary btn-sm/);
+
+  const helperStart = appSource.indexOf('function _wacHistoryMatrixExportModel');
+  const exportStart = appSource.indexOf('async function exportWacHistoryMatrix',helperStart);
+  const exportEnd = appSource.indexOf('\nasync function loadWacHistoryMatrix',exportStart);
+  assert.ok(helperStart >= 0 && exportStart > helperStart && exportEnd > exportStart);
+  const source = appSource.slice(helperStart,exportEnd);
+  const writes = [], sheets = [], notices = [];
+  const button = {disabled:false,innerHTML:'📤 导出历史WAC',textContent:'📤 导出历史WAC'};
+  const row = {sku_code:'M724',model:'M724 Gaming Mouse',brand:'Redragon',country:'Indonesia',warehouse:'Bekasi',
+    confirmed_at:'2026-10-30T10:00:00',version_no:1,new_avg_cost:120000,last_inbound_date:'2026-10-29',
+    local_currency:'IDR',rmb_to_local_rate:2500,source_type:'system'};
+  const ctx = {
+    window:{_wacHistoryMatrixData:{rows:[row]}},
+    document:{getElementById:function(id) {
+      if(id==='wac-matrix-export-btn') return button;
+      if(id==='wac-matrix-search') return {value:'M724'};
+      if(id==='wac-matrix-from') return {value:''};
+      if(id==='wac-matrix-to') return {value:''};
+      return null;
+    }},
+    _wacMatrixSelected:function(){return [];},
+    XLSX:{utils:{
+      aoa_to_sheet:function(data){return {data:data};},
+      book_new:function(){return {sheets:[]};},
+      book_append_sheet:function(wb,ws,name){sheets.push({ws:ws,name:name});wb.sheets.push(ws);},
+      encode_range:function(range){return 'A1:'+String.fromCharCode(64+range.e.c+1)+(range.e.r+1);}
+    },writeFile:function(wb,name){writes.push({wb:wb,name:name});}},
+    showToast:function(message,type){notices.push({message:message,type:type});}
+  };
+  vm.runInNewContext(source + '\nthis.runExport = exportWacHistoryMatrix;',ctx);
+  await ctx.runExport();
+  assert.equal(writes.length,1);
+  assert.equal(sheets[0].name,'WAC历史矩阵');
+  assert.match(writes[0].name,/^WAC历史矩阵_\d{4}-\d{2}-\d{2}\.xlsx$/);
+  assert.equal(sheets[0].ws.data.length,2);
+  assert.equal(sheets[0].ws.data[1][0],'M724');
+  assert.equal(button.disabled,false);
+  assert.equal(button.innerHTML,'📤 导出历史WAC');
+  assert.equal(notices[0].type,'success');
+});

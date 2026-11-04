@@ -14994,6 +14994,7 @@ async function renderWacHistoryMatrix() {
     '<div class="table-section">' +
       '<div class="table-section-title"><div class="table-section-title-left">📊 WAC历史成本矩阵</div>' +
       '<div class="wac-history-title-actions">' +
+        '<button id="wac-matrix-export-btn" class="btn btn-secondary btn-sm" onclick="exportWacHistoryMatrix()">📤 导出历史WAC</button>' +
         (canImport ? '<button class="btn btn-primary btn-sm" onclick="openWacHistoryImport()">📥 导入历史WAC</button>' : '') +
       '</div></div>' +
       '<div id="wac-matrix-table"><div class="loading-state">加载中...</div></div>' +
@@ -15014,6 +15015,168 @@ function resetWacHistoryMatrix() {
   renderWacHistoryDateCalendar();
   closeWacHistoryFilters();
   loadWacHistoryMatrix(false);
+}
+
+function _wacHistoryMatrixExportModel(rows, filters) {
+  filters = filters || {};
+  const brands = Array.isArray(filters.brands) ? filters.brands : [];
+  const countries = Array.isArray(filters.countries) ? filters.countries : [];
+  const warehouses = Array.isArray(filters.warehouses) ? filters.warehouses : [];
+  const search = String(filters.search || '').trim().toLowerCase();
+  const from = String(filters.from || '');
+  const to = String(filters.to || '');
+
+  const selected = (Array.isArray(rows) ? rows : []).filter(function(r) {
+    const date = String(r.confirmed_at || '').slice(0,10);
+    return (!brands.length || brands.includes(r.brand || '')) &&
+      (!countries.length || countries.includes(r.country || '')) &&
+      (!warehouses.length || warehouses.includes(r.warehouse || '')) &&
+      (!search || String(r.sku_code || '').toLowerCase().includes(search) || String(r.model || '').toLowerCase().includes(search)) &&
+      (!from || date >= from) && (!to || date <= to);
+  });
+  const dates = Array.from(new Set(selected.map(r => String(r.confirmed_at || '').slice(0,10)).filter(Boolean))).sort().reverse();
+  const groupMap = new Map();
+  selected.forEach(function(r) {
+    const key = [r.sku_code,r.brand,r.country,r.warehouse].join('¦');
+    if (!groupMap.has(key)) groupMap.set(key,{sku:r.sku_code,brand:r.brand,country:r.country,warehouse:r.warehouse,records:[]});
+    groupMap.get(key).records.push(r);
+  });
+  const groups = Array.from(groupMap.values()).sort((a,b)=>String(a.sku).localeCompare(String(b.sku)));
+  const money = function(v) {
+    return v === null || v === undefined || v === '' || !Number.isFinite(Number(v)) ? '—' :
+      Number(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:4});
+  };
+  const ordered = function(g) {
+    return g.records.slice().sort((a,b)=>String(b.confirmed_at).localeCompare(String(a.confirmed_at)) || Number(b.version_no||0)-Number(a.version_no||0));
+  };
+  const fxLabel = function(r) {
+    if (!r) return '';
+    const currency = String(r.local_currency || '').trim().toUpperCase();
+    const rate = Number(r.rmb_to_local_rate);
+    if (Number.isFinite(rate) && rate > 0 && currency) {
+      return '1 RMB = ' + Number(rate).toLocaleString('en-US',{maximumFractionDigits:8}) + ' ' + currency;
+    }
+    return currency ? currency + ' 历史汇率缺失' : '未配置本币币种';
+  };
+  const dateFxLabels = new Map();
+  groups.forEach(function(g) {
+    const latestByDate = new Map();
+    g.records.forEach(function(r) {
+      const d = String(r.confirmed_at || '').slice(0,10);
+      if (!d) return;
+      const old = latestByDate.get(d);
+      if (!old || String(r.confirmed_at) > String(old.confirmed_at) ||
+        (String(r.confirmed_at) === String(old.confirmed_at) && Number(r.version_no||0) > Number(old.version_no||0))) {
+        latestByDate.set(d,r);
+      }
+    });
+    latestByDate.forEach(function(record,d) {
+      if (!dateFxLabels.has(d)) dateFxLabels.set(d,new Set());
+      dateFxLabels.get(d).add(fxLabel(record));
+    });
+  });
+
+  const headers = ['SKU','品牌','国家','仓库','Latest WAC','较上次 WAC 变化','最后入库日期'].concat(
+    dates.map(function(d) {
+      const rates = Array.from(dateFxLabels.get(d) || []).filter(Boolean);
+      return (rates.length ? rates.join(' / ') + '\n' : '') + d;
+    })
+  );
+  const matrixRows = groups.map(function(g) {
+    const sorted = ordered(g);
+    const latest = sorted[0], previous = sorted[1];
+    const current = Number(latest && latest.new_avg_cost);
+    const prior = Number(previous && previous.new_avg_cost);
+    const validPrevious = !!previous && Number.isFinite(prior) && prior !== 0 && Number.isFinite(current);
+    const pct = validPrevious ? (current-prior)/prior*100 : null;
+    const delta = validPrevious ? current-prior : null;
+    const currency = latest && latest.local_currency ? ' ' + String(latest.local_currency) : '';
+    const trend = pct === null ? '—' :
+      ((pct > 0 ? '↑ +' : pct < 0 ? '↓ ' : '') + pct.toFixed(2) + '%') +
+      (delta === null ? '' : '\n' + (delta > 0 ? '+' : '') + money(delta) + currency);
+    const dateValues = new Map();
+    g.records.forEach(function(r) {
+      const d = String(r.confirmed_at || '').slice(0,10);
+      const old = dateValues.get(d);
+      if (!old || String(r.confirmed_at) > String(old.confirmed_at) ||
+        (String(r.confirmed_at) === String(old.confirmed_at) && Number(r.version_no||0) > Number(old.version_no||0))) {
+        dateValues.set(d,r);
+      }
+    });
+    const dateCells = dates.map(function(d) {
+      const record = dateValues.get(d);
+      if (!record) return '—';
+      let value = money(record.new_avg_cost) + (record.local_currency ? ' ' + String(record.local_currency) : '');
+      if (record.source_type === 'historical_import') {
+        value += '\n历史导入' + (record.effective_end_date ? ' · 有效至 ' + String(record.effective_end_date) : ' · 结束日期未指定');
+      }
+      return value;
+    });
+    return [
+      g.sku || '',g.brand || '—',g.country || '—',g.warehouse || '—',
+      money(latest && latest.new_avg_cost) + currency,
+      trend,
+      latest && latest.last_inbound_date || '—'
+    ].concat(dateCells);
+  });
+  return {groups:groups,dates:dates,headers:headers,rows:matrixRows,selectedCount:selected.length};
+}
+
+async function exportWacHistoryMatrix() {
+  const button = document.getElementById('wac-matrix-export-btn');
+  if (button && button.disabled) return;
+  const originalLabel = button ? button.innerHTML : '';
+  if (button) {
+    button.disabled = true;
+    button.textContent = '导出中...';
+  }
+  try {
+    if (typeof XLSX === 'undefined') throw new Error('XLSX库未加载');
+    let data = window._wacHistoryMatrixData;
+    if (!data || !Array.isArray(data.rows)) {
+      data = await api('/api/wac/history-matrix');
+      window._wacHistoryMatrixData = data;
+      _wacMatrixFillMulti('brand',data.filters.brands || [],'品牌');
+      _wacMatrixFillMulti('country',data.filters.countries || [],'国家');
+      _wacMatrixFillMulti('warehouse',data.filters.warehouses || [],'仓库');
+    }
+    const model = _wacHistoryMatrixExportModel(data.rows || [],{
+      brands:_wacMatrixSelected('brand'),
+      countries:_wacMatrixSelected('country'),
+      warehouses:_wacMatrixSelected('warehouse'),
+      search:document.getElementById('wac-matrix-search')?.value || '',
+      from:document.getElementById('wac-matrix-from')?.value || '',
+      to:document.getElementById('wac-matrix-to')?.value || ''
+    });
+    if (!model.groups.length) {
+      showToast('当前筛选条件下没有可导出的WAC历史记录','info');
+      return;
+    }
+    const worksheet = XLSX.utils.aoa_to_sheet([model.headers].concat(model.rows));
+    worksheet['!cols'] = model.headers.map(function(header,index) {
+      return {wch:index < 7 ? [18,14,14,18,20,28,18][index] : 24};
+    });
+    if (typeof XLSX.utils.encode_range === 'function') {
+      worksheet['!autofilter'] = {ref:XLSX.utils.encode_range({
+        s:{r:0,c:0},
+        e:{r:model.rows.length,c:model.headers.length-1}
+      })};
+    }
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook,worksheet,'WAC历史矩阵');
+    const date = typeof _wacHistoryDateString === 'function'
+      ? _wacHistoryDateString(new Date())
+      : new Date().toISOString().slice(0,10);
+    XLSX.writeFile(workbook,'WAC历史矩阵_' + date + '.xlsx');
+    showToast('WAC历史矩阵导出成功，共 ' + model.groups.length + ' 个SKU/仓库组合','success');
+  } catch(e) {
+    showToast(e.message || 'WAC历史矩阵导出失败','danger');
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.innerHTML = originalLabel;
+    }
+  }
 }
 
 async function loadWacHistoryMatrix(refresh) {
