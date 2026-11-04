@@ -5237,6 +5237,7 @@ function renderInvCards(data, countryCurrency, countryFilter){
   let inTransitMissingRate=false, piUnshippedMissingRate=false;
   let amountValuesLoaded=(data||[]).length===0;
   let amountViewAllowed=true;
+  const byCur={};
   if((data||[]).length>0){
     amountValuesLoaded=(data||[]).every(function(i){return i.inventory_amount_values_loaded===true;});
     amountViewAllowed=(data||[]).every(function(i){return i.inventory_amount_view_allowed!==false;});
@@ -5246,19 +5247,30 @@ function renderInvCards(data, countryCurrency, countryFilter){
     inTransit += Number(i.in_transit_qty||0);
     piUnshipped += Number(i.pi_confirmed_unshipped_qty||0);
     const ci = countryCurrency[i.country] || {};
+    // 与表格保持同一口径：在库本币金额 = 在库数量 × 本币 WAC。
     const invVal = Number(i.available_qty||0)*Number(i.weighted_avg_cost||0);
+    const code = String(ci.code || t('inv.kpi.unknown_cur','未知')).trim().toUpperCase();
+    if(!byCur[code]) byCur[code]={symbol:ci.symbol||'',amount:0};
+    byCur[code].amount += invVal;
     if(ci.rate) rmbTotal += invVal / ci.rate;
     if(i.in_transit_amount_missing_rate) inTransitMissingRate=true;
     if(i.pi_unshipped_amount_missing_rate) piUnshippedMissingRate=true;
     if(i.in_transit_amount_cny!=null) inTransitAmount += Number(i.in_transit_amount_cny||0);
     if(i.pi_unshipped_amount_cny!=null) piUnshippedAmount += Number(i.pi_unshipped_amount_cny||0);
   });
+  const localValueHtml=Object.keys(byCur).sort().map(function(code){
+    const item=byCur[code];
+    const amount=(item.symbol?item.symbol+' ':'')+fmtN(item.amount);
+    return '<div style="font-size:14px;line-height:1.45;white-space:normal;overflow-wrap:anywhere">'
+      +'<span style="font-size:11px;color:var(--text-secondary);font-weight:600">'+esc(code)+'</span> '
+      +'<span>'+esc(amount)+'</span></div>';
+  }).join('') || '<div>—</div>';
   const inTransitAmountValue=!amountValuesLoaded?'…':(!amountViewAllowed||inTransitMissingRate?'—':'¥ '+fmtN(inTransitAmount));
   const piUnshippedAmountValue=!amountValuesLoaded?'…':(!amountViewAllowed||piUnshippedMissingRate?'—':'¥ '+fmtN(piUnshippedAmount));
   const rmbValue='¥ '+fmtN(rmbTotal);
   el.innerHTML =
     '<div class="stat-card"><div class="stat-label">'+t('inv.kpi.in_stock_qty','在库库存')+'</div><div class="stat-number">'+Number(totalQty).toLocaleString('en-US')+' '+t('inv.kpi.unit','件')+'</div></div>'
-    +'<div class="stat-card"><div class="stat-label">'+t('inv.kpi.on_hand_amount_rmb','在库库存金额（人民币）')+'</div><div class="stat-number">'+esc(rmbValue)+'</div></div>'
+    +'<div class="stat-card"><div class="stat-label">'+t('inv.col.on_hand_amount_local','在库库存金额（本币）')+'</div><div class="stat-number" style="font-size:15px;line-height:1.45;white-space:normal;overflow-wrap:anywhere">'+localValueHtml+'</div><div class="stat-label" style="margin-top:8px">'+t('inv.kpi.on_hand_amount_rmb','在库库存金额（人民币）')+' <span style="font-weight:700;color:var(--primary)">'+esc(rmbValue)+'</span></div></div>'
     +'<div class="stat-card"><div class="stat-label">'+t('inv.kpi.in_transit_qty','在途库存')+'</div><div class="stat-number">'+Number(inTransit).toLocaleString('en-US')+' '+t('inv.kpi.unit','件')+'</div></div>'
     +'<div class="stat-card"><div class="stat-label">'+t('inv.kpi.in_transit_amount','在途库存金额（人民币）')+'</div><div class="stat-number">'+esc(inTransitAmountValue)+'</div></div>'
     +'<div class="stat-card"><div class="stat-label">'+t('inv.kpi.pi_unshipped_qty','PI未发')+'</div><div class="stat-number">'+Number(piUnshipped).toLocaleString('en-US')+' '+t('inv.kpi.unit','件')+'</div></div>'
