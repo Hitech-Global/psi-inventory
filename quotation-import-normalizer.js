@@ -107,7 +107,7 @@ function parseSheetRows(sheets,options){
     for(let i=found.index+1;i<matrix.length;i++){
       const source=matrix[i]||[];
       const part=cell(source,found.columns,'supplier_part_no').value;
-      if(clean(part)==='')continue;
+      if(clean(part)===''||/^(total|subtotal|grand\s*total|合计|总计|小计)$/i.test(clean(part)))continue;
       const brandCell=cell(source,found.columns,'brand').value;
       const brand=clean(brandCell)||clean(opts.brand);
       const preferredCurrency=BRAND_CCY[brand]||clean(opts.currency).toUpperCase();
