@@ -51,6 +51,15 @@ function getNewWacCcRecipientIds(selectedIds, existingRecipientIds) {
   }
   return result;
 }
+function buildWacGroupRecipientId(language, chatId) {
+  const lang=String(language||'').trim().toLowerCase()==='en'?'en':'zh';
+  const id=String(chatId||'').trim();
+  return id?'group:'+lang+':'+id:'';
+}
+function parseWacGroupRecipientId(value) {
+  const match=String(value||'').trim().match(/^group:(zh|en):(.+)$/);
+  return match?{language:match[1],chat_id:match[2]}:null;
+}
 function formatWacMoney(value) {
   if(value===null||value===undefined||value===''||!Number.isFinite(Number(value))) return '—';
   return Number(value).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -70,7 +79,7 @@ function buildWacCostChangeCard(report, language) {
   const currency=safeCardText(report&&report.local_currency||'');
   const partNo=Number(report&&report.part_no||1), partCount=Number(report&&report.part_count||1);
   const batchNo=safeCardText(report&&report.batch_no), brand=safeCardText(report&&report.brand);
-  const country=safeCardText(report&&report.country), warehouse=safeCardText(report&&report.warehouse);
+  const country=safeCardText(zh?(report&&report.country):(report&&(report.country_en||report.country))), warehouse=safeCardText(report&&report.warehouse);
   const ciNo=safeCardText(report&&report.ci_no), date=safeCardText(report&&report.confirmed_at);
   const summaryText=zh?[
     '**品牌：** '+brand+'　**国家：** '+country+'　**仓库：** '+warehouse,
@@ -109,4 +118,4 @@ function buildWacCostChangeCard(report, language) {
     ]}
   };
 }
-module.exports={WAC_REPORT_CHUNK_SIZE,buildWacCostChangeRows,summarizeWacCostChangeRows,chunkWacCostChangeRows,getNewWacCcRecipientIds,formatWacMoney,formatWacSignedMoney,buildWacCostChangeCard};
+module.exports={WAC_REPORT_CHUNK_SIZE,buildWacCostChangeRows,summarizeWacCostChangeRows,chunkWacCostChangeRows,getNewWacCcRecipientIds,buildWacGroupRecipientId,parseWacGroupRecipientId,formatWacMoney,formatWacSignedMoney,buildWacCostChangeCard};
