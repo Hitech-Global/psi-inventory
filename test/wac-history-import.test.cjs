@@ -521,8 +521,8 @@ test('WAC history export mirrors the filtered matrix and keeps every historical 
   assert.match(model.headers[7],/1 RMB = 2,500 IDR[\s\S]*2026-10-30/);
   assert.equal(model.rows[0][0],'M724');
   assert.equal(model.rows[0][4],'120,000.00 IDR');
-  assert.match(model.rows[0][5],/9\\.09%/);
-  assert.match(model.rows[0][5],/\\+10,000\\.00 IDR/);
+  assert.match(model.rows[0][5], /9\.09%/);
+  assert.match(model.rows[0][5],/\+10,000\.00 IDR/);
   assert.match(model.rows[0][7],/120,000\\.00 IDR/);
   assert.match(model.rows[0][8],/历史导入 · 有效至 2026-10-29/);
 });
@@ -571,7 +571,7 @@ test('WAC history export button sits beside import and exports the current filte
   await ctx.runExport();
   assert.equal(writes.length,1);
   assert.equal(sheets[0].name,'WAC历史矩阵');
-  assert.match(writes[0].name,/^WAC历史矩阵_\\d{4}-\\d{2}-\\d{2}\\.xlsx$/);
+  assert.match(writes[0].name,/^WAC历史矩阵_\d{4}-\d{2}-\d{2}\.xlsx$/);
   assert.equal(sheets[0].ws.data.length,2);
   assert.equal(sheets[0].ws.data[1][0],'M724');
   assert.equal(button.disabled,false);
