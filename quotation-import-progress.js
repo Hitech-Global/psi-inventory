@@ -29,7 +29,7 @@ function getId(){try{return sessionStorage.getItem(SESSION_KEY)||''}catch(_e){re
 function setId(id){try{if(id)sessionStorage.setItem(SESSION_KEY,id);else sessionStorage.removeItem(SESSION_KEY)}catch(_e){}}
 function makeId(){try{return crypto&&crypto.randomUUID?crypto.randomUUID():'quote-import-'+Date.now()+'-'+Math.random().toString(36).slice(2)}catch(_e){return 'quote-import-'+Date.now()+'-'+Math.random().toString(36).slice(2)}}
 function terminal(r){return !!r&&['completed','failed','blocked','unknown_pending_reconcile'].includes(r.status)}
-function phaseLabel(p){return ({starting:'正在启动',queued:'文件已接收',validating:'正在校验',matching:'正在匹配已有报价',writing:'正在写入报价',finalizing:'正在确认结果',completed:'导入完成',blocked:'导入已阻断',failed:'导入失败',unknown_pending_reconcile:'导入结果待确认'})[p]||'正在导入';}
+function phaseLabel(p){return ({starting:'正在启动',queued:'文件已接收',validating:'正在校验',matching:'正在匹配 SKU 主数据和历史映射',writing:'正在写入报价',finalizing:'正在确认结果',completed:'导入完成',blocked:'导入已阻断',failed:'导入失败',unknown_pending_reconcile:'导入结果待确认'})[p]||'正在导入';}
 function phaseIndex(p){if(['starting','queued','validating'].includes(p))return 0;if(p==='matching')return 1;if(p==='writing')return 2;if(['finalizing','completed'].includes(p))return 3;return 0;}
 function nextPaint(){return new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));}
 
@@ -193,7 +193,7 @@ function renderPreview(m){
   const sheetText=recognizedSheets.map(x=>esc(x.name)+'（'+x.row_count+'行）').join('、')||'—';
   const ignoredText=ignoredSheets.length?'；跳过未识别工作表：'+ignoredSheets.map(x=>esc(x.name)).join('、'):'';
   let html='<div class="qip-file-ok">已读取 '+currentRows.length+' 行报价；识别工作表：'+sheetText+ignoredText+'</div>';
-  html+='<div class="qip-preview-summary"><span class="qip-summary-chip">自动/历史匹配 '+matched+'</span><span class="qip-summary-chip">未关联 '+unlinked+'</span><span class="qip-summary-chip">未报价 '+noQuote+'</span></div>';
+  html+='<div class="qip-preview-summary"><span class="qip-summary-chip">已匹配 '+matched+'</span><span class="qip-summary-chip">未关联 '+unlinked+'</span><span class="qip-summary-chip">未报价 '+noQuote+'</span></div>';
   if(unlinked)html+='<div class="qip-warn">未关联的报价仍可导入，会保留供应商料号并标记为“未关联”，不会参与内部 SKU 采购价对比。可在下方搜索 PSI SKU 手动关联；'+(selectedSupplierId?'确认后系统会记住映射。':'未指定供应商时仅本次关联，不保存映射。')+'</div>';
   if(visible.length){
     html+='<div class="qip-sub" style="margin:8px 0">以下显示未关联料号，每页最多 30 条。其他未关联记录也会正常导入。</div>';
@@ -273,7 +273,7 @@ function openModal(){
   $('#qm-cancel',m).onclick=()=>closeCurrentModal();
   $('#qip-date',m).onchange=e=>{
     selectedQuoteDate=e.target.value||new Date().toISOString().slice(0,10);
-    if(currentRows.length)rematchCurrentRows(m);
+    if(currentRows.length){previewOffset=0;rematchCurrentRows(m);}
   };
   $('#qip-supplier',m).onchange=e=>{
     selectedSupplierId=e.target.value||'';
