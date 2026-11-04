@@ -128,7 +128,7 @@
       return {
         state: pill(`已同步 ${bi.days} 天`, 'good'),
         note: bi.latestDate ? `数据到 ${bi.latestDate}` : '',
-        action: `<button type="button" class="connections-action" data-connect="brand-portal" data-shop-id="${esc(shop.shopId)}">重新授权</button>`,
+        action: '',
       };
     }
     if (!portal) {
