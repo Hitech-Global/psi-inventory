@@ -14640,7 +14640,7 @@ function _wacMatrixMultiMarkup(key, label) {
       '<span id="wac-matrix-' + key + '-label">' + label + '</span><span class="wac-history-chevron">⌄</span>' +
     '</button>' +
     '<div class="wac-history-multi-panel" id="wac-matrix-' + key + '-panel" style="display:none" onclick="event.stopPropagation()">' +
-      '<input type="search" class="wac-history-multi-search" id="wac-matrix-' + key + '-search" placeholder="搜索' + label + '" oninput="filterWacHistoryOptions(\'' + key + '\')" onclick="event.stopPropagation()">' +
+      (key === 'country' ? '' : '<input type="search" class="wac-history-multi-search" id="wac-matrix-' + key + '-search" placeholder="搜索' + label + '" oninput="filterWacHistoryOptions(\'' + key + '\')" onclick="event.stopPropagation()">') +
       '<div class="wac-history-multi-options" id="wac-matrix-' + key + '-options"></div>' +
       '<div class="wac-history-multi-footer">' +
         '<button type="button" class="wac-history-multi-action" onclick="selectVisibleWacHistoryOptions(\'' + key + '\');event.stopPropagation()">全选当前结果</button>' +
@@ -14936,7 +14936,11 @@ async function renderWacHistoryMatrix() {
       '.wac-history-page .wac-history-calendar-day.is-today:not(.is-selected){outline:1px solid #007aff;outline-offset:-1px}' +
       '.wac-history-page .wac-history-date-footer{display:flex;align-items:center;justify-content:space-between;gap:8px;border-top:1px solid #e5e5ea;margin-top:10px;padding-top:9px}' +
       '.wac-history-page .wac-history-date-footer button{height:28px;padding:0 9px;border-radius:6px;font-size:12px}' +
-      '.wac-history-page .wac-history-search{height:36px;width:250px;min-width:190px;max-width:280px;flex:0 1 250px;margin-left:auto;border-radius:8px}' +
+      '.wac-history-page .wac-history-search{box-sizing:border-box;height:36px;width:260px;min-width:190px;max-width:280px;flex:0 1 260px;margin-left:auto;padding:0 12px 0 36px!important;border:1px solid #e5e5ea!important;border-radius:10px!important;background-color:#f5f5f7!important;background-image:url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2218%22 height=%2218%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%238e8e93%22 stroke-width=%222%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22%3E%3Ccircle cx=%2211%22 cy=%2211%22 r=%227%22/%3E%3Cpath d=%22m20 20-4-4%22/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:12px center;background-size:16px 16px;color:#1d1d1f;font-size:13px;box-shadow:none!important;outline:none;transition:background-color .15s,border-color .15s,box-shadow .15s}' +
+      '.wac-history-page .wac-history-search::placeholder{color:#8e8e93}' +
+      '.wac-history-page .wac-history-search:focus{background-color:#fff!important;border-color:#b7b7bd!important;box-shadow:0 0 0 3px rgba(0,122,255,.08)!important}' +
+      '.wac-history-page .wac-history-reset-btn{height:34px;min-width:58px;padding:0 12px;border:1px solid #e5e5ea!important;border-radius:9px!important;background:#f5f5f7!important;color:#636366!important;font-size:13px;font-weight:500;box-shadow:none!important;transition:background .15s,border-color .15s,color .15s}' +
+      '.wac-history-page .wac-history-reset-btn:hover{background:#ececf0!important;border-color:#d2d2d7!important;color:#1d1d1f!important}' +
       '.wac-history-page .wac-history-filter-count{font-size:12px;color:var(--text-secondary);white-space:nowrap;margin-left:4px}' +
       '.wac-history-page .wac-history-table-wrap{overflow:auto;max-height:calc(100vh - 330px);border-radius:10px}' +
       '.wac-history-page .wac-history-table{min-width:max-content;border-collapse:separate;border-spacing:0}' +
