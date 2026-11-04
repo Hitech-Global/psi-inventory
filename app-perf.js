@@ -171,9 +171,18 @@
   function setPage(pageKey, signature, data, opts) {
     opts = opts || {};
     var ttl = opts.ttl || PAGE_TTL_DEFAULT;
-    pageCache.set(pageKey, { signature: signature, data: data, fetchedAt: nowMs(), dirty: false, ttl: ttl });
+    var previous = pageCache.get(pageKey);
+    var ownerPages = Array.isArray(opts.ownerPages)
+      ? opts.ownerPages.slice()
+      : (previous && previous.signature === signature && Array.isArray(previous.ownerPages) ? previous.ownerPages.slice() : []);
+    var ownerPage = opts.ownerPage || global.currentPage || '';
+    if (ownerPage && ownerPages.indexOf(ownerPage) < 0) ownerPages.push(ownerPage);
+    pageCache.set(pageKey, {
+      signature: signature, data: data, fetchedAt: nowMs(), dirty: false, ttl: ttl,
+      ownerPages: ownerPages
+    });
     touch(pageKey); // LRU 维护（含逐出）
-    perf('page', pageKey, 'SET', { ttl: ttl });
+    perf('page', pageKey, 'SET', { ttl: ttl, owners: ownerPages.length });
   }
   function markDirty(pageKey) {
     if (pageKey) {
