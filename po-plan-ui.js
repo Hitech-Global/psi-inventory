@@ -244,7 +244,7 @@ async function saveNewPOPlan(){
   const button=$('#pp-save-new');if(button)button.disabled=true;
   try{
     await apiCall('/api/po-plans','POST',body);clearCaches();global.closeModal();global.showToast('PO采购计划已创建，报价和汇率已锁定','success');loadPOPlan(false);
-  }catch(e){global.showToast(e.message,'danger');renderCreatePricePreview();}
+  }catch(e){global.showToast(e.message,'danger');if(/价格已更新|报价币种已发生变化|币种不一致/.test(e.message||''))loadCreatePricePreview();else renderCreatePricePreview();}
 }
 
 async function viewPOPlan(id){

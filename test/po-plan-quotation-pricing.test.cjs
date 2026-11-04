@@ -197,5 +197,6 @@ test('PO creation UI exposes original/final FOB columns and blocks mixed quote c
   assert.match(ui,/FOB \('\+E\(quoteCurrency\)\+'\)/);
   assert.match(ui,/同一张PO的最新报价币种不一致/);
   assert.match(ui,/button\.disabled=mismatch\|\|!rateValid\|\|!rowsValid/);
+  assert.match(ui,/价格已更新\|报价币种已发生变化\|币种不一致/);
   assert.match(boot,/ASSET_VERSION='20261105b'/);
 });
