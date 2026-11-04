@@ -15141,13 +15141,13 @@ async function loadWacHistoryMatrix(refresh) {
 
 // ==================== WAC历史记录导入（复用库存导入的Excel解析/模板/预检查交互） ====================
 const WAC_HISTORY_IMPORT_COLUMNS = [
-  {key:'sku_code',aliases:['SKU','sku_code']},
+  {key:'sku_code',aliases:['SKU','sku_code','*商品SKU']},
   {key:'brand',aliases:['品牌','brand']},
   {key:'country',aliases:['国家','country']},
-  {key:'warehouse',aliases:['仓库','warehouse']},
-  {key:'new_avg_cost',aliases:['历史WAC（本币）','历史WAC','WAC','Latest WAC','new_avg_cost','historical_wac']},
-  {key:'last_inbound_date',aliases:['最后入库日期','last_inbound_date','开始时间','开始日期','WAC生效日期']},
-  {key:'effective_end_date',aliases:['结束日期','结束时间','effective_end_date','valid_to']},
+  {key:'warehouse',aliases:['仓库','warehouse','*仓库']},
+  {key:'new_avg_cost',aliases:['历史WAC（本币）','历史WAC','WAC','Latest WAC','new_avg_cost','historical_wac','*采购单价']},
+  {key:'last_inbound_date',aliases:['最后入库日期','last_inbound_date','开始时间','开始日期','*开始时间','WAC生效日期']},
+  {key:'effective_end_date',aliases:['结束日期','结束时间','*结束时间','effective_end_date','valid_to']},
   {key:'local_currency',aliases:['本币币种','local_currency','currency']},
   {key:'rmb_to_local_rate',aliases:['1 RMB = 本币汇率','人民币汇率','rmb_to_local_rate','fx_rate']}
 ];
