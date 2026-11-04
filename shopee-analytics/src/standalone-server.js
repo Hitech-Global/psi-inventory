@@ -124,7 +124,13 @@ function createApp({ pool, skillProvider = null, importJobPool = null }) {
   let indexHtml = fs.readFileSync(indexPath, 'utf8');
   const loginHtml = fs.readFileSync(loginPath, 'utf8');
   const connectionsHtml = fs.readFileSync(connectionsPath, 'utf8');
-  for (const asset of ['/styles.css', '/shopee-metric-labels.js', '/app.js', '/ad-group-import-async.js', '/funnel-ui-v1.js', '/shop-health-ui-v1.js', '/shop-connections-ui-v1.js', '/tiktok-ui-v1.js']) {
+  // Every local script and stylesheet carries the version, so that a
+  // change to one of them is picked up rather than served from a
+  // browser's cache. The list is taken from the page itself: a file
+  // listed by hand is a file that gets left out one day, and the reader
+  // sees yesterday's page without knowing why.
+  for (const match of indexHtml.matchAll(/(?:src|href)="(\/[a-z0-9._\/-]+\.(?:js|css))"/gi)) {
+    const asset = match[1];
     indexHtml = indexHtml.replace(asset, `${asset}?v=${assetVersion}`);
   }
   const injectedScripts = [
