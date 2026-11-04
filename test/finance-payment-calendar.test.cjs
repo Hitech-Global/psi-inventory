@@ -60,6 +60,32 @@ test('event state distinguishes overdue, partial, reserved and settled items', (
   assert.equal(context.fcStatusKey({ payable_date: '2026-11-05', payable_amount: 10, remaining_amount: 10, lifecycle_status: 'reserved' }, '2026-11-04'), 'reserved');
 });
 
+test('clicking a payable event opens details without triggering the date cell create action', () => {
+  const { context } = calendarContext();
+  const item = {
+    id: 'pay-1', payable_date: '2026-11-10', currency: 'RMB',
+    payable_amount: 1200, remaining_amount: 1200, payee_name_snapshot: 'Redragon'
+  };
+  context.renderFinancePaymentCalendarPage({
+    today: '2026-11-04', items: [item], facets: {}, categories: [], payerEntities: [], currencies: []
+  });
+  const monthHtml = context.fcRenderMonthGrid([item]);
+  assert.match(monthHtml, /onclick="fcOpenCreate\('2026-11-10'\)"/);
+  assert.match(monthHtml, /class="fcal-day-add"[^>]*onclick="event\.stopPropagation\(\);fcOpenCreate\('2026-11-10'\)"/);
+
+  const eventHtml = context.fcEventHTML(item);
+  const handler = eventHtml.match(/onclick="([^"]+)"/);
+  assert.ok(handler, 'payable event should have a click handler');
+  let propagationStopped = false;
+  let openedId = '';
+  vm.runInNewContext(handler[1], {
+    event: { stopPropagation: () => { propagationStopped = true; } },
+    fcOpenDetail: id => { openedId = id; }
+  });
+  assert.equal(propagationStopped, true, 'event click must not bubble to the date cell');
+  assert.equal(openedId, 'pay-1', 'event click must open the selected payable detail');
+});
+
 test('finance payment overview opens in year view and keeps payable events available', () => {
   const { context, root } = calendarContext();
   context.renderFinancePaymentCalendarPage({
