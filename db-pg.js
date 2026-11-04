@@ -1090,6 +1090,8 @@ async function initDatabase() {
       po_date TEXT NOT NULL,
       expected_delivery TEXT DEFAULT '',
       currency TEXT DEFAULT 'USD',
+      po_quote_currency TEXT DEFAULT '',
+      po_exchange_rate NUMERIC(24,8) DEFAULT 1,
       total_amount NUMERIC(18,4) DEFAULT 0,
       created_by TEXT DEFAULT '',
       created_by_name TEXT DEFAULT '',
@@ -1114,6 +1116,10 @@ async function initDatabase() {
       po_qty INTEGER DEFAULT 0,
       unit_price NUMERIC(18,4) DEFAULT 0,
       po_amount NUMERIC(18,4) DEFAULT 0,
+      quote_unit_price NUMERIC(18,4),
+      quote_currency TEXT DEFAULT '',
+      quote_date TEXT DEFAULT '',
+      price_source TEXT DEFAULT 'sku_master',
       transferred_pi_qty INTEGER DEFAULT 0,
       untransferred_pi_qty INTEGER DEFAULT 0,
       forecast_turnover_months DOUBLE PRECISION DEFAULT 0,
@@ -1121,6 +1127,13 @@ async function initDatabase() {
       created_at TEXT DEFAULT NOW()
     )
   `);
+
+  await exec("ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS po_quote_currency TEXT DEFAULT ''");
+  await exec("ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS po_exchange_rate NUMERIC(24,8) DEFAULT 1");
+  await exec("ALTER TABLE purchase_order_items ADD COLUMN IF NOT EXISTS quote_unit_price NUMERIC(18,4)");
+  await exec("ALTER TABLE purchase_order_items ADD COLUMN IF NOT EXISTS quote_currency TEXT DEFAULT ''");
+  await exec("ALTER TABLE purchase_order_items ADD COLUMN IF NOT EXISTS quote_date TEXT DEFAULT ''");
+  await exec("ALTER TABLE purchase_order_items ADD COLUMN IF NOT EXISTS price_source TEXT DEFAULT 'sku_master'");
 
   await exec(`
     CREATE TABLE IF NOT EXISTS proforma_invoices (
