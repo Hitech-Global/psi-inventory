@@ -21,7 +21,16 @@ assert(panel.includes('/erp/oauth/start?shop_id='));
 assert(panel.includes('需先在服务端配置 ERP Partner ID / Key'));
 assert(html.includes('shop-connections-ui-v1.js'));
 assert(app.includes('ShopeeShopConnections'));
-assert(schema.includes("app_role IN ('ADS','ERP','BRAND_PORTAL')"));
+// ★ 约束必须允许全部应用角色，不只是最初的那三个。
+// 应用已经不止 ADS/ERP/BRAND_PORTAL 了（还有 MARKETING、STORE_OPS_BRAIN、
+// ORDER_ANALYSIS、VIDEO、ONLINE），而生产库里已有 VIDEO/ONLINE 的授权行。
+// 约束只列三个会让既存数据违反它 → ADD CONSTRAINT 失败 → 整个 schema 应用中断。
+// 完整清单与 schema.sql 一致；两个 schema 文件对同一约束的定义必须相同。
+assert(
+  schema.includes("'ADS', 'ERP', 'BRAND_PORTAL', 'MARKETING', 'STORE_OPS_BRAIN'")
+  && schema.includes("'ORDER_ANALYSIS', 'VIDEO', 'ONLINE'"),
+  'app_role 约束必须覆盖全部应用角色',
+);
 assert(runner.includes("skipped: 'NO_ERP_TOKEN'"));
 assert(runner.includes("tokenRepository.exists({ appRole: 'ERP', shopId })"));
 assert(example.includes('SHOPEE_ERP_REDIRECT_URL='));
