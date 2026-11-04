@@ -4665,6 +4665,20 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.zh["fro.sku_count"]="SKU 数量"; I18N.dict.en["fro.sku_count"]="SKU Count"; I18N.dict.id["fro.sku_count"]="Jumlah SKU";
   I18N.dict.zh["common.product_name"]="品名"; I18N.dict.en["common.product_name"]="Product Name"; I18N.dict.id["common.product_name"]="Nama Produk";
   I18N.dict.zh["common.available_qty"]="可用库存"; I18N.dict.en["common.available_qty"]="Available Qty"; I18N.dict.id["common.available_qty"]="Jumlah Tersedia";
+
+  I18N.dict.zh["inv.kpi.in_stock_qty"]="在库库存"; I18N.dict.en["inv.kpi.in_stock_qty"]="On-hand Inventory"; I18N.dict.id["inv.kpi.in_stock_qty"]="Stok di Gudang";
+  I18N.dict.zh["inv.kpi.on_hand_amount_rmb"]="在库库存金额（人民币）"; I18N.dict.en["inv.kpi.on_hand_amount_rmb"]="On-hand Inventory Value (CNY)"; I18N.dict.id["inv.kpi.on_hand_amount_rmb"]="Nilai Stok Tersedia (CNY)";
+  I18N.dict.zh["inv.kpi.in_transit_qty"]="在途库存"; I18N.dict.en["inv.kpi.in_transit_qty"]="In-transit Inventory"; I18N.dict.id["inv.kpi.in_transit_qty"]="Stok Dalam Perjalanan";
+  I18N.dict.zh["inv.kpi.in_transit_amount"]="在途库存金额（人民币）"; I18N.dict.en["inv.kpi.in_transit_amount"]="In-transit Inventory Value (CNY)"; I18N.dict.id["inv.kpi.in_transit_amount"]="Nilai Stok Dalam Perjalanan (CNY)";
+  I18N.dict.zh["inv.kpi.pi_unshipped_qty"]="PI未发"; I18N.dict.en["inv.kpi.pi_unshipped_qty"]="PI Unshipped Qty"; I18N.dict.id["inv.kpi.pi_unshipped_qty"]="Qty PI Belum Dikirim";
+  I18N.dict.zh["inv.kpi.pi_unshipped_amount"]="PI未发货金额（人民币）"; I18N.dict.en["inv.kpi.pi_unshipped_amount"]="Unshipped PI Value (CNY)"; I18N.dict.id["inv.kpi.pi_unshipped_amount"]="Nilai PI Belum Dikirim (CNY)";
+  I18N.dict.zh["inv.col.in_stock_qty"]="在库库存"; I18N.dict.en["inv.col.in_stock_qty"]="On-hand Qty"; I18N.dict.id["inv.col.in_stock_qty"]="Qty Stok di Gudang";
+  I18N.dict.zh["inv.col.in_transit_qty"]="在途库存"; I18N.dict.en["inv.col.in_transit_qty"]="In-transit Qty"; I18N.dict.id["inv.col.in_transit_qty"]="Qty Dalam Perjalanan";
+  I18N.dict.zh["inv.col.in_transit_amount"]="在途库存金额（¥）"; I18N.dict.en["inv.col.in_transit_amount"]="In-transit Value (CNY)"; I18N.dict.id["inv.col.in_transit_amount"]="Nilai Dalam Perjalanan (CNY)";
+  I18N.dict.zh["inv.col.pi_unshipped_qty"]="PI未发"; I18N.dict.en["inv.col.pi_unshipped_qty"]="PI Unshipped Qty"; I18N.dict.id["inv.col.pi_unshipped_qty"]="Qty PI Belum Dikirim";
+  I18N.dict.zh["inv.col.pi_unshipped_amount"]="PI未发货金额（¥）"; I18N.dict.en["inv.col.pi_unshipped_amount"]="Unshipped PI Value (CNY)"; I18N.dict.id["inv.col.pi_unshipped_amount"]="Nilai PI Belum Dikirim (CNY)";
+  I18N.dict.zh["inv.col.on_hand_amount_local"]="在库库存金额（本币）"; I18N.dict.en["inv.col.on_hand_amount_local"]="On-hand Value (Local)"; I18N.dict.id["inv.col.on_hand_amount_local"]="Nilai Stok Tersedia (Mata Uang Lokal)";
+  I18N.dict.zh["inv.col.on_hand_amount_rmb"]="在库库存金额（¥）"; I18N.dict.en["inv.col.on_hand_amount_rmb"]="On-hand Value (CNY)"; I18N.dict.id["inv.col.on_hand_amount_rmb"]="Nilai Stok Tersedia (CNY)";
   I18N.dict.zh["common.wac"]="WAC"; I18N.dict.en["common.wac"]="WAC"; I18N.dict.id["common.wac"]="WAC";
   I18N.dict.zh["common.percentage"]="占比"; I18N.dict.en["common.percentage"]="Percentage"; I18N.dict.id["common.percentage"]="Persentase";
   I18N.dict.zh["common.country"]="国家"; I18N.dict.en["common.country"]="Country"; I18N.dict.id["common.country"]="Negara";
