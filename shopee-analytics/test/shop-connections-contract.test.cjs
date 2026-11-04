@@ -36,7 +36,9 @@ test('the settings menu carries both entries', () => {
   assert.ok(index.includes('data-side-action="shop-connections"'), 'the shop connections entry must exist');
   assert.ok(index.includes('data-side-platform="tiktok"'), 'the tiktok entry must exist');
   assert.ok(auth.includes('side-item[data-admin-action]'), 'the administrative entries must be reachable');
-  assert.ok(auth.includes('.sidebar-foot'), 'the reader menu must sit in the sidebar');
+  // The reader's own menu went to the top right, beside the language and
+  // the state of the data sources.
+  assert.ok(auth.includes("querySelector('#appTopTools')"), 'the reader menu must sit at the top right');
 });
 
 test('the toolbar link to the connections page is gone', () => {

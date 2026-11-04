@@ -33,3 +33,16 @@ for (const header of exactShopeeHeaders) assert(labels.includes(`en: '${header}'
 for (const key of ['dataDateSystem','productCountSystem']) assert(labels.includes(`${key}:`), `system-only label must remain explicit: ${key}`);
 assert(ui.includes("metricCol('dataQuality')"), 'Ad Group data-quality field must remain explicit');
 console.log('Shopee English UI and export-field mapping contract: ok');
+
+// 语言、数据源状态和是谁在用，都在页面右上角 —— 原来在侧边栏左下角，
+// 那是没人看的地方。
+{
+  const authUi = read('web/auth-ui-v1.js');
+  assert.ok(!index.includes('class="sidebar-foot"'), 'the sidebar foot must be gone');
+  assert.ok(index.includes('id="appTopTools"'), 'there must be a place at the top right');
+  assert.ok(index.includes('id="languageSwitch"'), 'the language must be there');
+  assert.ok(index.includes('id="healthBadge"'), 'the state of the data sources must be there');
+  // The chip is made by the script and put in that place.
+  assert.ok(authUi.includes("querySelector('#appTopTools')"), 'the chip must go to the top right');
+  assert.ok(!authUi.includes("querySelector('.sidebar-foot')"), 'the chip must not go to the sidebar');
+}

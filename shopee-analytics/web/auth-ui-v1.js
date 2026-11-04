@@ -54,7 +54,11 @@
    */
   function renderToolbar() {
     if (!state.me?.enabled || !state.me?.authenticated) return;
-    const foot = document.querySelector('.sidebar-foot');
+    // The chip belongs at the top right, beside the language and the state
+    // of the data sources — the things a reader looks for before they look
+    // at anything else. It was in the bottom corner of the sidebar, where
+    // nobody looks.
+    const foot = document.querySelector('#appTopTools');
     if (!foot || document.getElementById('authUserChip')) return;
     const user = state.me.user;
     if (user.role === ROLE_ADMIN) {

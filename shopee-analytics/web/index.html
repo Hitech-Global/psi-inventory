@@ -40,17 +40,19 @@
         </div>
       </nav>
 
-      <div class="sidebar-foot">
-        <div id="languageSwitch" class="language-switch" role="group" aria-label="Language">
-          <button type="button" data-locale="zh">中文</button>
-          <button type="button" data-locale="en">EN</button>
-        </div>
-        <div class="health" id="healthBadge">检查数据源…</div>
-      </div>
     </aside>
 
     <main class="app-main">
-      <p class="app-intro">国家 × 品牌 × 店铺统一管理；先看经营，再下钻广告组与 SKU。</p>
+      <div class="app-topbar">
+        <p class="app-intro">国家 × 品牌 × 店铺统一管理；先看经营，再下钻广告组与 SKU。</p>
+        <div class="app-topbar-tools" id="appTopTools">
+          <div class="health" id="healthBadge">检查数据源…</div>
+          <div id="languageSwitch" class="language-switch" role="group" aria-label="Language">
+            <button type="button" data-locale="zh">中文</button>
+            <button type="button" data-locale="en">EN</button>
+          </div>
+        </div>
+      </div>
     <section class="filter-card multi-filter">
       <label>国家
         <select id="countryFilter">
