@@ -276,6 +276,14 @@ function onMutation(method, url, body) {
     var m = pagesForMutation(url, method);
     m.pages.forEach(function (p) { markDirty(p); });
     m.refs.forEach(function (r) { invalidateRef(r); });
+    // 自动 API 快照按页面归属精准失效：当前写入页面 + 依赖图识别出的受影响页面。
+    // 不清空其他页面缓存，避免一次局部编辑让整个系统缓存同时失效。
+    var affectedOwners = m.pages.slice();
+    if (global.currentPage && affectedOwners.indexOf(global.currentPage) < 0) affectedOwners.push(global.currentPage);
+    pageCache.forEach(function (entry, key) {
+      if (typeof key !== 'string' || key.indexOf('api:') !== 0 || !entry.ownerPages) return;
+      if (entry.ownerPages.some(function (owner) { return affectedOwners.indexOf(owner) >= 0; })) markDirty(key);
+    });
     // 物流决策 detail 缓存按 combo 分键（logistics-decision-detail|range|country|transport），
     // 无法预知具体 combo，故按前缀精准打脏所有已缓存的 detail 桶（不全局清 AppStore）。
     if (url && url.indexOf('/api/logistics-batches') !== -1 && url.indexOf('/notify') === -1) {
