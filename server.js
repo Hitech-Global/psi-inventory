@@ -18996,6 +18996,7 @@ app.get('/api/wac/pending-batches', requireApiPermission('ci_view'), asyncHandle
       AND pl.id IS NOT NULL
       AND EXISTS (SELECT 1 FROM packing_list_items pli WHERE pli.pl_id = pl.id AND COALESCE(pli.total_qty, 0) > 0)
       AND NOT EXISTS (SELECT 1 FROM wac_history wh WHERE wh.logistics_batch_id = lb.id)
+      AND NOT EXISTS (SELECT 1 FROM wac_batch_exclusions wbe WHERE wbe.logistics_batch_id = lb.id AND wbe.status = 'excluded')
       ORDER BY lb.actual_arrival_date DESC, lb.created_at DESC`, [LOGISTICS_STATUS_ARRIVED]).rows;
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -19024,6 +19025,72 @@ app.get('/api/wac/confirmed-batches', requireApiPermission('ci_view'), asyncHand
       ORDER BY MAX(wh.confirmed_at) DESC`).rows;
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
+}));
+
+
+// WAC-BATCH-EXCLUSION-01：仅从WAC待确认队列排除批次，不删除物流/CI/PL/付款或WAC历史事实。
+function inspectWacBatchForExclusion(batchId){
+  const batch=queryOne('SELECT id,batch_no,logistics_status FROM logistics_batches WHERE id = ?',[batchId]);
+  if(!batch)return {ok:false,code:'BATCH_NOT_FOUND',message:'物流批次不存在'};
+  const history=queryOne('SELECT id FROM wac_history WHERE logistics_batch_id = ? LIMIT 1',[batchId]);
+  if(history)return {ok:false,code:'WAC_ALREADY_CONFIRMED',message:'该批次已有WAC历史记录，不能标记为无需计算'};
+  const eligible=queryOne('SELECT lb.id FROM logistics_batches lb WHERE lb.id = ? AND lb.logistics_status = ? AND EXISTS (SELECT 1 FROM packing_lists pl WHERE pl.logistics_batch_id = lb.id AND EXISTS (SELECT 1 FROM packing_list_items pli WHERE pli.pl_id = pl.id AND COALESCE(pli.total_qty,0) > 0))',[batchId,LOGISTICS_STATUS_ARRIVED]);
+  if(!eligible)return {ok:false,code:'BATCH_NOT_PENDING',message:'该批次当前不在WAC待确认队列，无法标记'};
+  return {ok:true,batch:batch};
+}
+
+// 查看已标记为无需计算的批次；记录保留，支持恢复。
+app.get('/api/wac/excluded-batches', requireApiPermission('ci_view'), asyncHandler((req,res)=>{
+  try{
+    const rows=query('SELECT lb.id,lb.batch_no,lb.related_ci_id,lb.related_ci_no,lb.forwarder_name,lb.target_country,lb.target_warehouse,lb.logistics_status,lb.actual_arrival_date,(SELECT pl.pl_no FROM packing_lists pl WHERE pl.logistics_batch_id=lb.id ORDER BY pl.pl_no LIMIT 1) AS pl_no,(SELECT COALESCE(SUM(COALESCE(pl.total_qty,0)),0) FROM packing_lists pl WHERE pl.logistics_batch_id=lb.id) AS pl_total_qty,ci.goods_amount,ci.currency AS ci_currency,ci.ci_no,ci.brand,e.reason AS exclusion_reason,e.excluded_at,e.excluded_by_name,CASE WHEN EXISTS (SELECT 1 FROM wac_history wh WHERE wh.logistics_batch_id=lb.id) THEN 1 ELSE 0 END AS has_wac_history FROM wac_batch_exclusions e INNER JOIN logistics_batches lb ON lb.id=e.logistics_batch_id LEFT JOIN commercial_invoices ci ON ci.id=lb.related_ci_id WHERE e.status=\'excluded\' ORDER BY e.excluded_at DESC,lb.actual_arrival_date DESC').rows;
+    res.json(rows);
+  }catch(e){res.status(500).json({error:e.message});}
+}));
+
+// 单条或批量标记无需计算；整批事务，任何一条已确认/不符合条件的批次则全部不写入。
+app.post('/api/wac/batches/exclude', requireApiPermission('ci_edit'), asyncHandler((req,res)=>{
+  const rawIds=req.body&&Array.isArray(req.body.batch_ids)?req.body.batch_ids:[];
+  if(!rawIds.length)return res.status(400).json({error:'请选择至少一个WAC待确认批次'});
+  if(rawIds.length>100)return res.status(413).json({error:'单次最多标记100个批次'});
+  const batchIds=Array.from(new Set(rawIds.map(v=>String(v||'').trim()).filter(Boolean)));
+  if(!batchIds.length)return res.status(400).json({error:'批次编号无效'});
+  const reason=String(req.body.reason||'历史批次已人工核算，无需再次计算').trim().slice(0,500)||'历史批次已人工核算，无需再次计算';
+  const blockers=[];
+  try{
+    transaction(()=>{
+      for(const batchId of batchIds){
+        const check=inspectWacBatchForExclusion(batchId);
+        if(!check.ok){
+          blockers.push({batch_id:batchId,code:check.code,message:check.message});
+          throw new Error('WAC_BATCH_EXCLUSION_BLOCKED');
+        }
+        run('INSERT INTO wac_batch_exclusions (id,logistics_batch_id,batch_no,reason,status,excluded_by,excluded_by_name,excluded_at,restored_by,restored_by_name,restored_at,created_at,updated_at) VALUES (?,?,?,?, \'excluded\',?,?,datetime(\'now\'),\'\',\'\',\'\',datetime(\'now\'),datetime(\'now\')) ON CONFLICT (logistics_batch_id) DO UPDATE SET batch_no=excluded.batch_no,reason=excluded.reason,status=\'excluded\',excluded_by=excluded.excluded_by,excluded_by_name=excluded.excluded_by_name,excluded_at=datetime(\'now\'),restored_by=\'\',restored_by_name=\'\',restored_at=\'\',updated_at=datetime(\'now\')',
+          [genId('wacskip'),batchId,check.batch.batch_no||'',reason,req.currentUserId||'',req.currentUserName||'']);
+      }
+    });
+  }catch(e){
+    if(blockers.length)return res.status(409).json({error:'批量标记未执行：所选批次中存在已确认或不符合条件的批次，本次零写入',blockers});
+    throw e;
+  }
+  res.json({success:true,excluded_count:batchIds.length});
+}));
+
+// 恢复后重新进入待确认队列；不自动触发WAC计算。
+app.post('/api/wac/batches/:logistics_batch_id/restore-exclusion', requireApiPermission('ci_edit'), asyncHandler((req,res)=>{
+  const batchId=String(req.params.logistics_batch_id||'').trim();
+  let failure=null;
+  transaction(()=>{
+    const exclusion=queryOne("SELECT id FROM wac_batch_exclusions WHERE logistics_batch_id=? AND status='excluded'",[batchId]);
+    if(!exclusion){failure={status:404,message:'没有找到有效的无需计算记录'};return;}
+    const batch=queryOne('SELECT id FROM logistics_batches WHERE id=?',[batchId]);
+    if(!batch){failure={status:404,message:'原物流批次不存在，无法恢复'};return;}
+    const history=queryOne('SELECT id FROM wac_history WHERE logistics_batch_id=? LIMIT 1',[batchId]);
+    if(history){failure={status:409,message:'该批次已经存在WAC历史记录，不能恢复到待确认队列'};return;}
+    run("UPDATE wac_batch_exclusions SET status='restored',restored_by=?,restored_by_name=?,restored_at=datetime('now'),updated_at=datetime('now') WHERE logistics_batch_id=? AND status='excluded'",
+      [req.currentUserId||'',req.currentUserName||'',batchId]);
+  });
+  if(failure)return res.status(failure.status).json({error:failure.message});
+  res.json({success:true,restored:true,logistics_batch_id:batchId});
 }));
 
 // WAC-HISTORY-IMPORT-01：历史WAC模板、只读预检查与原子导入。
@@ -19181,6 +19248,8 @@ app.get('/api/wac/history-matrix', requireApiPermission('ci_view'), asyncHandler
 // WAC 确认预览：调用共享计算器，返回成本事实 + blockers（允许展示 blockers，blockers > 0 时不可确认）
 app.get('/api/wac/preview/:logistics_batch_id', requireApiPermission('ci_view'), asyncHandler((req, res) => {
   try {
+    const excluded=queryOne("SELECT id FROM wac_batch_exclusions WHERE logistics_batch_id=? AND status='excluded'",[req.params.logistics_batch_id]);
+    if(excluded)return res.status(409).json({error:'该批次已标记为无需计算，请先恢复到待确认队列'});
     const result = computeWacCostFacts(req.params.logistics_batch_id);
     res.json(result);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -19191,6 +19260,8 @@ app.get('/api/wac/preview/:logistics_batch_id', requireApiPermission('ci_view'),
 // 不修改 available_qty、inventory_value、不创建入库数量事实、不修改 SKU reference price、不写 cost_update_logs。
 app.post('/api/wac/confirm/:logistics_batch_id', requireApiPermission('ci_edit'), asyncHandler((req, res) => {
   try {
+    const excluded=queryOne("SELECT id FROM wac_batch_exclusions WHERE logistics_batch_id=? AND status='excluded'",[req.params.logistics_batch_id]);
+    if(excluded)return res.status(409).json({error:'该批次已标记为无需计算，请先恢复到待确认队列'});
     // ── 1. Re-read DB facts via shared calculator ──
     const { blockers, items, meta } = computeWacCostFacts(req.params.logistics_batch_id);
 
