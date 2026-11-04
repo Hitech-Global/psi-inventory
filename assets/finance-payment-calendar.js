@@ -473,7 +473,7 @@ function fcRenderYearGrid(items) {
       const overdueAmount = Number(month.overdue[currency] || 0);
       detail += '<div class="fcal-year-currency"><div class="fcal-year-currency-head"><strong>' + fcEsc(currency) +
         '</strong><span>' + values.count + ' ' + fcEsc(fcText('笔', 'items', 'item')) + '</span></div>' +
-        '<div class="fcal-year-currency-line"><span>' + fcEsc(fcText('计划', 'Planned', 'Rencana')) + '</span><strong>' + fcEsc(fcMoney(values.gross)) + '</strong></div>' +
+        '<div class="fcal-year-currency-line"><span>' + fcEsc(fcText('应付', 'Payable', 'Tagihan')) + '</span><strong>' + fcEsc(fcMoney(values.gross)) + '</strong></div>' +
         '<div class="fcal-year-currency-line"><span>' + fcEsc(fcText('已结清', 'Settled', 'Lunas')) + '</span><strong>' + fcEsc(fcMoney(values.settled)) + '</strong></div>' +
         '<div class="fcal-year-currency-line is-outstanding"><span>' + fcEsc(fcText('待付款', 'Outstanding', 'Belum dibayar')) + '</span><strong>' + fcEsc(fcMoney(values.outstanding)) + '</strong></div>' +
         '<div class="fcal-year-progress"><i style="width:' + pct + '%"></i></div>' +
@@ -521,16 +521,16 @@ function fcRenderStats(items) {
   if (state.view === 'year') {
     const annual = fcYearlySummary(items, state.currentDate, state.today);
     return '<div class="fcal-stats-grid">' +
-      fcSummaryCard(fcText('本年计划应付', 'Scheduled this year', 'Terjadwal tahun ini'), fcSummaryMap(annual, 'gross'), fcText('按所选年度的计划付款日期归属', 'Grouped by scheduled due date in the selected year', 'Dikelompokkan berdasarkan tanggal jatuh tempo pada tahun terpilih'), '') +
+      fcSummaryCard(fcText('本年应付', 'Payables this year', 'Tagihan tahun ini'), fcSummaryMap(annual, 'gross'), fcText('按所选年度的应付日期归属', 'Grouped by due date in the selected year', 'Dikelompokkan berdasarkan tanggal jatuh tempo pada tahun terpilih'), '') +
       fcSummaryCard(fcText('本年已结清', 'Settled this year', 'Lunas tahun ini'), fcSummaryMap(annual, 'settled'), fcText('所选年度应付项累计结清金额', 'Settled amount for payables due in the selected year', 'Jumlah lunas untuk tagihan pada tahun terpilih'), 'is-green') +
       fcSummaryCard(fcText('本年待付款', 'Outstanding this year', 'Belum dibayar tahun ini'), fcSummaryMap(annual, 'outstanding'), fcText('所选年度应付项剩余未结金额', 'Remaining balance for payables due in the selected year', 'Sisa tagihan pada tahun terpilih'), 'is-blue') +
       fcSummaryCard(fcText('逾期未付', 'Overdue outstanding', 'Tunggakan'), annual.overdue, fcText('所有已逾期且尚未结清的应付项，不限年度', 'All past-due items with an outstanding balance, across all years', 'Semua tagihan lewat jatuh tempo yang belum lunas, semua tahun'), 'is-red') +
-      '</div><div class="fcal-summary-note">' + fcEsc(fcText('金额按原币种分别汇总，不跨币种直接相加。年度计划、已结清和待付款按计划付款日期归属年度。', 'Amounts are grouped by original currency. Planned, settled and outstanding totals are grouped by scheduled payment year.', 'Jumlah dikelompokkan menurut mata uang asli. Total rencana, lunas, dan belum dibayar mengikuti tahun tanggal pembayaran terjadwal.')) + '</div>';
+      '</div><div class="fcal-summary-note">' + fcEsc(fcText('金额按原币种分别汇总，不跨币种直接相加。年度应付、已结清和待付款按应付日期归属年度。', 'Amounts are grouped by original currency. Payables, settled and outstanding totals are grouped by due year.', 'Jumlah dikelompokkan menurut mata uang asli. Total tagihan, lunas, dan belum dibayar mengikuti tahun tanggal jatuh tempo.')) + '</div>';
   }
   const summary = fcMonthlySummary(items, state.currentDate, state.today);
   const overdueMap = summary.overdue;
   return '<div class="fcal-stats-grid">' +
-    fcSummaryCard(fcText('本月计划应付', 'Scheduled this month', 'Terjadwal bulan ini'), fcSummaryMap(summary, 'gross'), fcText('按计划付款日期归属月份', 'Grouped by scheduled due date', 'Dikelompokkan berdasarkan tanggal jatuh tempo'), '') +
+    fcSummaryCard(fcText('本月应付', 'Payables this month', 'Tagihan bulan ini'), fcSummaryMap(summary, 'gross'), fcText('按应付日期归属月份', 'Grouped by due date', 'Dikelompokkan berdasarkan tanggal jatuh tempo'), '') +
     fcSummaryCard(fcText('本月已结清', 'Settled this month', 'Lunas bulan ini'), fcSummaryMap(summary, 'settled'), fcText('现金支付 + 抵扣 + 抹零', 'Cash paid + deductions + rounding', 'Pembayaran + potongan + pembulatan'), 'is-green') +
     fcSummaryCard(fcText('本月待付款', 'Outstanding this month', 'Belum dibayar bulan ini'), fcSummaryMap(summary, 'outstanding'), fcText('本月应付项剩余未结金额', 'Remaining balance for this month', 'Sisa tagihan bulan ini'), 'is-blue') +
     fcSummaryCard(fcText('逾期未付', 'Overdue outstanding', 'Tunggakan'), overdueMap, fcText('所有已逾期且尚未结清的应付项', 'All past-due items with an outstanding balance', 'Semua item lewat jatuh tempo yang belum lunas'), 'is-red') +
@@ -626,7 +626,7 @@ function fcOpenCreate(date) {
   html += '<div class="fcal-form-field"><label>' + fcEsc(fcText('币种', 'Currency', 'Mata uang')) + '</label><select id="fcal-new-currency">' + (currencyHtml || '<option value="">—</option>') + '</select></div>';
   html += '<div class="fcal-form-field"><label>' + fcEsc(fcText('付款主体', 'Payer entity', 'Entitas pembayar')) + '</label><select id="fcal-new-payer" ' + (noPayer ? 'disabled' : '') + '>' +
     (payerHtml || '<option value="">' + fcEsc(fcText('请先配置付款主体', 'Configure a payer entity first', 'Konfigurasikan entitas pembayar terlebih dahulu')) + '</option>') + '</select></div>';
-  html += '<div class="fcal-form-field"><label>' + fcEsc(fcText('计划付款日期', 'Scheduled payment date', 'Tanggal pembayaran')) + '</label><input id="fcal-new-date" type="date" value="' + fcEsc(selectedDate) + '"></div>';
+  html += '<div class="fcal-form-field"><label>' + fcEsc(fcText('应付日期', 'Due date', 'Tanggal jatuh tempo')) + '</label><input id="fcal-new-date" type="date" value="' + fcEsc(selectedDate) + '"></div>';
   html += '<div class="fcal-form-note">' + fcEsc(fcText('创建后会进入现有应付费用台账；后续付款申请和审批仍使用原有流程。费用类别仅显示已启用“手动录入”来源映射的项目。', 'The item will be added to the existing payable ledger. Payment requests and approvals continue through the current workflow. Only categories with an active manual-entry source mapping are shown.', 'Item akan masuk ke daftar hutang yang ada. Pengajuan dan persetujuan pembayaran tetap memakai alur saat ini. Hanya kategori dengan pemetaan input manual aktif yang ditampilkan.')) + '</div>';
   html += '<div class="fcal-form-actions"><button type="button" class="fcal-secondary-button" onclick="closeModal()">' + fcEsc(fcText('取消', 'Cancel', 'Batal')) + '</button>' +
     '<button type="button" class="fcal-primary-button" ' + (noCategory || noPayer || !currencies.length ? 'disabled' : '') + ' onclick="fcSubmitManualPayable()">' +
@@ -766,7 +766,7 @@ function fcRenderPage() {
     fcEsc(fcText('创建应付项', 'Create payable', 'Buat hutang')) + '</button>' : '';
   root.innerHTML = fcCalendarStyles() + '<div class="fcal-page">' +
     '<div class="fcal-page-head"><div><h2 class="fcal-page-title">' + fcEsc(title) + '</h2><div class="fcal-page-subtitle">' +
-    fcEsc(fcText('按计划付款日期查看应付安排 · 点击日期即可创建应付项', 'View payables by scheduled date · Select a date to create a payable', 'Lihat hutang berdasarkan tanggal · Pilih tanggal untuk membuat item')) +
+    fcEsc(fcText('按应付日期查看应付安排 · 点击日期即可创建应付项', 'View payables by due date · Select a date to create a payable', 'Lihat tagihan berdasarkan tanggal jatuh tempo · Pilih tanggal untuk membuat item')) +
     '</div></div>' + createButton + '</div>' +
     fcRenderStats(items) +
     '<div class="fcal-layout">' + fcRenderSidebar() + fcRenderMain(items) + '</div></div>';

@@ -77,7 +77,7 @@ test('finance payment overview renders the calendar, monthly totals and payable 
     currencies: [{ code: 'IDR', status: 'active' }, { code: 'RMB', status: 'active' }]
   });
   assert.match(root.innerHTML, /财务付款总览/);
-  assert.match(root.innerHTML, /本月计划应付/);
+  assert.match(root.innerHTML, /本月应付/);
   assert.match(root.innerHTML, /fcal-month-grid/);
   assert.match(root.innerHTML, /Redragon Forwarder/);
   assert.match(root.innerHTML, /RMB/);
@@ -120,16 +120,18 @@ test('year view renders twelve monthly cards and switches back into the selected
     facets: {}, categories: [], payerEntities: [], currencies: []
   });
   context.fcSetView('year');
-  assert.match(root.innerHTML, /本年计划应付/);
+  assert.match(root.innerHTML, /本年应付/);
+  assert.match(root.innerHTML, /应付日期/);
+  assert.doesNotMatch(root.innerHTML, /计划/);
   assert.match(root.innerHTML, /本年已结清/);
   assert.match(root.innerHTML, /本年待付款/);
   assert.match(root.innerHTML, /Redragon Forwarder|RMB/);
   assert.equal((root.innerHTML.match(/<button type="button" class="fcal-year-month-card/g) || []).length, 12);
-  assert.doesNotMatch(root.innerHTML, /本月计划应付/);
+  assert.doesNotMatch(root.innerHTML, /本月应付/);
   context.fcSetYearMonth(10);
   assert.equal(vm.runInNewContext('_financeCalendarState.view', context), 'month');
   assert.equal(vm.runInNewContext('_financeCalendarState.currentDate', context), '2026-11-01');
-  assert.match(root.innerHTML, /本月计划应付/);
+  assert.match(root.innerHTML, /本月应付/);
 });
 
 test('year navigation moves by twelve months while preserving the selected month and day', () => {
