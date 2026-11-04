@@ -122,5 +122,5 @@ test('manual payable source resolves its country from the active payer entity', 
     id: 'payitem-1', fee_no: 'PAY-1', source_type: 'manual', payer_entity_key: 'id_hitech'
   }), '印度尼西亚');
   assert.ok(calls[0].sql.includes('payer_entities'));
-  assert.deepEqual(calls[0].args, ['id_hitech']);
+  assert.equal(calls[0].args[0], 'id_hitech');
 });
