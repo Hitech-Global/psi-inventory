@@ -34,7 +34,9 @@ function normalizeDate(value){
 }
 function parsePrice(value){
   if(value==null||clean(value)==='')return 0;
-  const s=clean(value).replace(/[,\s]/g,'').replace(/[￥¥$€£]/g,'');
+  const raw=clean(value).toUpperCase();
+  if(['-','—','–','N/A','NA','TBD','未报价'].includes(raw))return 0;
+  const s=raw.replace(/[,\s]/g,'').replace(/[￥¥$€£]/g,'').replace(/USD|RMB|CNY|EUR|THB|IDR|MYR/g,'');
   if(!s)return 0;
   if(/^\(.*\)$/.test(s))return -Math.abs(Number(s.slice(1,-1)));
   return Number(s);
@@ -82,8 +84,12 @@ function findHeader(matrix){
   }
   return null;
 }
-function cell(row,columns,key){
+function cell(row,columns,key,preferredCurrency){
   const cols=columns[key]||[];
+  if(key==='quote_price'&&preferredCurrency){
+    const preferred=cols.find(c=>c.currency===preferredCurrency);
+    if(preferred)return {value:row&&row[preferred.index]!=null?row[preferred.index]:'',column:preferred};
+  }
   for(const c of cols){
     const v=row&&row[c.index];
     if(v!=null&&clean(v)!=='')return {value:v,column:c};
@@ -104,7 +110,8 @@ function parseSheetRows(sheets,options){
       if(clean(part)==='')continue;
       const brandCell=cell(source,found.columns,'brand').value;
       const brand=clean(brandCell)||clean(opts.brand);
-      const priceCell=cell(source,found.columns,'quote_price');
+      const preferredCurrency=BRAND_CCY[brand]||clean(opts.currency).toUpperCase();
+      const priceCell=cell(source,found.columns,'quote_price',preferredCurrency);
       const currencyCell=cell(source,found.columns,'currency').value;
       const dateCell=cell(source,found.columns,'quote_date').value;
       const model=cell(source,found.columns,'model').value;
