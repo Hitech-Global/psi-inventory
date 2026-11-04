@@ -194,7 +194,7 @@ function renderPreview(m){
   const ignoredText=ignoredSheets.length?'；跳过未识别工作表：'+ignoredSheets.map(x=>esc(x.name)).join('、'):'';
   let html='<div class="qip-file-ok">已读取 '+currentRows.length+' 行报价；识别工作表：'+sheetText+ignoredText+'</div>';
   html+='<div class="qip-preview-summary"><span class="qip-summary-chip">已匹配 '+matched+'</span><span class="qip-summary-chip">未关联 '+unlinked+'</span><span class="qip-summary-chip">未报价 '+noQuote+'</span></div>';
-  if(unlinked)html+='<div class="qip-warn">未关联的报价仍可导入，会保留供应商料号并标记为“未关联”，不会参与内部 SKU 采购价对比。可在下方搜索 PSI SKU 手动关联；'+(selectedSupplierId?'确认后系统会记住映射。':'未指定供应商时仅本次关联，不保存映射。')+'</div>';
+  if(unlinked)html+='<div class="qip-warn">未关联的报价仍可导入，会保留供应商料号并标记为“未关联”，不会参与内部 SKU 采购价对比。可在下方搜索 PSI SKU 手动关联；'+(selectedSupplierId?'确认后系统会记住映射。':'如果品牌能唯一识别供应商，提交时会自动关联；否则仅本次关联，不保存映射。')+'</div>';
   if(visible.length){
     html+='<div class="qip-sub" style="margin:8px 0">以下显示未关联料号，每页最多 30 条。其他未关联记录也会正常导入。</div>';
     html+='<div class="qip-preview-wrap"><table class="qip-preview-table"><thead><tr><th>供应商料号</th><th>型号 / 规格</th><th>品牌 / 类型</th><th>FOB</th><th>手动关联 PSI SKU</th></tr></thead><tbody>';
@@ -320,6 +320,17 @@ function openModal(){
     if(submit.dataset.close==='1'){closeCurrentModal();return;}
     if(getId())return;
     if(!currentRows.length)return fileError(m,'请先选择文件。');
+    if(!selectedSupplierId){
+      const rowBrands=[...new Set(currentRows.map(r=>r.brand).filter(Boolean))];
+      if(rowBrands.length===1){
+        const candidates=(importOptions&&importOptions.suppliers||[]).filter(x=>(x.brands||[]).includes(rowBrands[0]));
+        if(candidates.length>1)return fileError(m,'品牌 '+rowBrands[0]+' 对应多个供应商，请先选择正确供应商。');
+        if(candidates.length===1){
+          selectedSupplierId=candidates[0].id;$('#qip-supplier',m).value=selectedSupplierId;
+          currentRows=normalizer().matchRows(currentRows,importOptions,{supplier_id:selectedSupplierId,brand:selectedBrand});
+        }
+      }
+    }
     const mappings=currentRows.filter(r=>r.match_source==='manual'&&r.psi_sku_code).map(r=>({
       brand:r.brand,supplier_part_no:r.supplier_part_no,psi_sku_code:r.psi_sku_code
     }));
