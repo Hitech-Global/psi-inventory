@@ -35,6 +35,8 @@ const {
 } = require('./tiktok-marketing-oauth-service');
 const { resolveDateRange, regionTimeZone } = require('./tiktok-query-repository');
 const { diagnoseTikTokShop } = require('./platforms/tiktok-diagnosis');
+const { diagnoseAds: diagnoseTikTokAds } = require('./platforms/tiktok-ads-diagnosis');
+const { TikTokHealthService } = require('./platforms/tiktok-health-service');
 const { SkillJobManager, normalizeReportLanguage } = require('./skill-job-manager');
 const { buildFunnelRows, missingSources } = require('./shop-funnel');
 const {
@@ -250,6 +252,10 @@ function createShopeeAnalyticsRouter({
   tiktokMarketingOAuthService = null,
   tiktokMarketingTokenRepository = null,
   tiktokMarketingSyncRunner = null,
+  tiktokCreatorRepository = null,
+  tiktokTokenRepository = null,
+  tiktokCreatorSyncRunner = null,
+  tiktokHealthService = null,
 }) {
   const router = express.Router();
   const skillJobManager = new SkillJobManager();
@@ -768,6 +774,34 @@ function createShopeeAnalyticsRouter({
    * @param {number} fallback
    * @returns {number}
    */
+  /**
+   * 按 shop_id 查出该店的 shop_cipher。
+   *
+   * ★ cipher 是凭据的一部分，不该由前端传 ——
+   *   前端传的话，参数就可能被篡改成别店的 cipher，读到别的品牌的数据。
+   *   所以只认 shop_id，cipher 由后端自己查。
+   *
+   * @param {object} options
+   * @returns {Promise<string>}
+   */
+  async function resolveTikTokShopCipher({ regionGroup, shopId, tokenRepository }) {
+    if (!tokenRepository) {
+      throw scopeError('TIKTOK_DATA_UNAVAILABLE', 'TikTok token registry is unavailable', 503);
+    }
+    const credential = await tokenRepository.load({ appKey: readTikTokAppKey(), regionGroup, shopId });
+    if (!credential || !credential.shopCipher) {
+      throw scopeError('TIKTOK_SHOP_NOT_AUTHORIZED', 'This TikTok shop is not authorized', 404);
+    }
+    return credential.shopCipher;
+  }
+
+  /** TikTok Shop 应用的 app_key（不是 Marketing 的 app_id）。 */
+  function readTikTokAppKey() {
+    const value = String(process.env.TIKTOK_APP_KEY || '').trim();
+    if (!value) throw scopeError('TIKTOK_APP_KEY_MISSING', 'TIKTOK_APP_KEY is not configured', 500);
+    return value;
+  }
+
   function readThreshold(value, fallback) {
     if (value === undefined || value === null || value === '') return fallback;
     const parsed = Number(value);
@@ -971,6 +1005,117 @@ function createShopeeAnalyticsRouter({
       const advertising = rows.filter(row =>
         row.attributionBasis === 'platform_attributed' || row.attributionBasis === 'paid_only');
       res.json({ rows: advertising, startDate, endDate });
+    } catch (error) { next(error); }
+  });
+
+  /**
+   * TikTok 店铺健康（SPS）。
+   *
+   * ★ 数据来自平台官方的 SPS 端点，达标线也是平台给的 ——
+   *   所以这里不做任何自己的阈值判断，只做整理与展示。
+   *   平台没下发的指标一律标为未知。
+   */
+  router.get('/tiktok/shops/:shopId/health', async (req, res, next) => {
+    try {
+      if (!tiktokHealthService) throw scopeError('TIKTOK_HEALTH_UNAVAILABLE', 'TikTok health service is unavailable', 503);
+      const shopId = String(req.params.shopId || '').trim();
+      if (!shopId) throw scopeError('TIKTOK_SHOP_ID_REQUIRED', 'shopId is required', 400);
+      if (!canSeeTikTokShop(req, shopId)) {
+        throw scopeError('TIKTOK_SHOP_FORBIDDEN', 'This TikTok shop is not assigned to you', 403);
+      }
+      const regionGroup = String(req.query.region_group || 'ROW').trim().toUpperCase();
+      // 健康数据是平台的实时评估，不落库 —— 所以这里直接调平台。
+      // cipher 不从前端收 —— 它是凭据的一部分，由后端按 shop_id 查出来。
+      const shopCipher = await resolveTikTokShopCipher({
+        regionGroup, shopId, tiktokTokenRepository,
+      });
+      const health = await tiktokHealthService.getShopHealth({
+        regionGroup, shopId, shopCipher,
+      });
+      res.json(health);
+    } catch (error) { next(error); }
+  });
+
+  /**
+   * TikTok 广告诊断。
+   *
+   * ★ 走的是已落库的两种广告口径，不是实时调平台 ——
+   *   诊断要的是区间汇总，实时报表既慢又拿不到区间数据。
+   */
+  router.get('/tiktok/shops/:shopId/ads-diagnosis', async (req, res, next) => {
+    try {
+      if (!tiktokQueryRepository) throw scopeError('TIKTOK_DATA_UNAVAILABLE', 'TikTok data registry is unavailable', 503);
+      const shopId = String(req.params.shopId || '').trim();
+      if (!shopId) throw scopeError('TIKTOK_SHOP_ID_REQUIRED', 'shopId is required', 400);
+      if (!canSeeTikTokShop(req, shopId)) {
+        throw scopeError('TIKTOK_SHOP_FORBIDDEN', 'This TikTok shop is not assigned to you', 403);
+      }
+      const regionGroup = String(req.query.region_group || 'ROW').trim().toUpperCase();
+      const { startDate, endDate } = resolveTikTokDateRange(req.query);
+      const rows = await tiktokQueryRepository.listDailySummary({
+        regionGroup, shopId, startDate, endDate,
+      });
+      const thresholds = {
+        adSpendRatioLimit: readThreshold(req.query.ad_spend_ratio_limit, 0.15),
+        settledNetRoasLimit: readThreshold(req.query.settled_net_roas_limit, 1),
+      };
+      const diagnosis = diagnoseTikTokAds({ rows, thresholds });
+      res.json({ ...diagnosis, startDate, endDate });
+    } catch (error) { next(error); }
+  });
+
+  /**
+   * TikTok 达人概览。
+   */
+  router.get('/tiktok/shops/:shopId/creators', async (req, res, next) => {
+    try {
+      if (!tiktokCreatorRepository) {
+        throw scopeError('TIKTOK_CREATOR_UNAVAILABLE', 'TikTok creator registry is unavailable', 503);
+      }
+      const shopId = String(req.params.shopId || '').trim();
+      if (!shopId) throw scopeError('TIKTOK_SHOP_ID_REQUIRED', 'shopId is required', 400);
+      if (!canSeeTikTokShop(req, shopId)) {
+        throw scopeError('TIKTOK_SHOP_FORBIDDEN', 'This TikTok shop is not assigned to you', 403);
+      }
+      const regionGroup = String(req.query.region_group || 'ROW').trim().toUpperCase();
+      const { startDate, endDate } = resolveTikTokDateRange(req.query);
+      const limit = Math.min(Number(req.query.limit) || 100, 200);
+      const [rows, summary] = await Promise.all([
+        tiktokCreatorRepository.listCreators({ regionGroup, shopId, startDate, endDate, limit }),
+        tiktokCreatorRepository.getCreatorSummary({ regionGroup, shopId, startDate, endDate }),
+      ]);
+      res.json({ rows, summary, startDate, endDate });
+    } catch (error) { next(error); }
+  });
+
+  /**
+   * 手动同步达人数据。
+   */
+  router.post('/tiktok/shops/:shopId/creators/sync', async (req, res, next) => {
+    try {
+      if (!req.auth || req.auth.role !== ROLE_SUPER_ADMIN) {
+        res.status(403).json({ error: 'SUPER_ADMIN_REQUIRED', message: 'Only super admins can run a creator sync.' });
+        return;
+      }
+      if (!tiktokCreatorSyncRunner) {
+        throw scopeError('TIKTOK_CREATOR_UNAVAILABLE', 'TikTok creator sync is unavailable', 503);
+      }
+      const shopId = String(req.params.shopId || '').trim();
+      if (!shopId) throw scopeError('TIKTOK_SHOP_ID_REQUIRED', 'shopId is required', 400);
+      if (!canSeeTikTokShop(req, shopId)) {
+        throw scopeError('TIKTOK_SHOP_FORBIDDEN', 'This TikTok shop is not assigned to you', 403);
+      }
+      const regionGroup = String((req.body || {}).region_group || 'ROW').trim().toUpperCase();
+      const shopCipher = await resolveTikTokShopCipher({
+        regionGroup, shopId, tiktokTokenRepository,
+      });
+      const result = await tiktokCreatorSyncRunner.syncShop({
+        regionGroup, shopId, shopCipher,
+        startDate: (req.body || {}).start_date,
+        endDate: (req.body || {}).end_date,
+        creatorLimit: Math.min(Number((req.body || {}).creator_limit) || 50, 100),
+      });
+      res.json(result);
     } catch (error) { next(error); }
   });
 

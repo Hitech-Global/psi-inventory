@@ -151,7 +151,9 @@ assert.throws(
   }),
   /unknown source/,
 );
-assert.strictEqual(SOURCE_VALUES.length, 5);
+// 5 个来源 + 达人联盟（affiliate_creator）。
+assert.strictEqual(SOURCE_VALUES.length, 6);
+assert.ok(SOURCE_VALUES.includes('affiliate_creator'), '达人来源必须在已定义的来源里');
 
 // 缺少度量或口径非法时报错
 assert.throws(() => assertSameBasis(null, paidCost), /numerator metric is required/);

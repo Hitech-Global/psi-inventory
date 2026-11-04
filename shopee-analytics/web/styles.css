@@ -879,3 +879,32 @@ tbody td{font-weight:400}
    混看这两列会得出「广告创造了全部 GMV」的错误结论 —— 颜色上要分开。 */
 .tiktok-basis.attributed{background:#fff4e5;color:#b54708}
 .tiktok-basis.paid{background:#e0e7ff;color:#3538cd}
+
+/* ===== TikTok 广告诊断：口径说明 =====
+   三个比值分属不同口径，所以「怎么算出来的」必须和数字一起显示。
+   不然读者会把跨报表的花费占比当成平台 ROI。 */
+.tiktok-calibers{margin:0 0 14px}
+.tiktok-caliber-box{
+  border:1px solid #b5d4f4;background:#eff6ff;border-radius:12px;padding:12px 14px;
+}
+.tiktok-caliber-box strong{display:block;font-size:12px;color:#0c447c;margin-bottom:8px}
+.tiktok-caliber-box ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px}
+.tiktok-caliber-box li{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 10px}
+.tiktok-caliber-title{font-size:12px;font-weight:500;color:#0c447c}
+.tiktok-caliber-formula{
+  padding:1px 7px;border-radius:4px;background:#dbeafe;color:#185fa5;
+  font-family:var(--font-mono);font-size:11px;
+}
+.tiktok-caliber-source{font-size:11px;color:#185fa5}
+.tiktok-caliber-note{font-size:11px;color:#0c447c;opacity:.85;flex-basis:100%;line-height:1.55}
+
+/* ===== TikTok 店铺健康：指标状态 =====
+   平台的达标线（优秀线/较差线）与状态标签并排显示，
+   这样读者能自己核对「这个数算达标吗」。 */
+.tiktok-health-status{
+  display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;
+}
+.tiktok-health-status.good{background:#ecfdf3;color:#027a48}
+.tiktok-health-status.watch{background:#fffaeb;color:#b54708}
+.tiktok-health-status.poor{background:#fef3f2;color:#b42318}
+.tiktok-health-status.unknown{background:#f2f4f7;color:#667085}
