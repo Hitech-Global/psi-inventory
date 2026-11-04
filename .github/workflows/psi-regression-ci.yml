@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - 'app.js'
+      - 'app-perf.js'
+      - 'test/app-perf-diagnostics.test.cjs'
       - 'server.js'
       - 'index.html'
       - 'assets/finance-payment-calendar.js'
@@ -48,6 +50,8 @@ jobs:
       - name: Check frontend and backend syntax
         run: |
           node --check app.js
+          node --check app-perf.js
+          node --check test/app-perf-diagnostics.test.cjs
           node --check server.js
           node --check assets/finance-payment-calendar.js
           node --check test/finance-payment-calendar.test.cjs
@@ -65,6 +69,8 @@ jobs:
           node --check test/inventory-onhand-local-currency-kpi.test.cjs
           node --check test/wac-history-import.test.cjs
           node --check test/wac-batch-exclusion.test.cjs
+      - name: Test opt-in page and API performance diagnostics
+        run: node --test test/app-perf-diagnostics.test.cjs
       - name: Test finance payment calendar and manual payable creation
         run: node --test test/finance-payment-calendar.test.cjs test/manual-payable-item.test.cjs test/finance-payment-overview-integration.test.cjs test/finance-payment-overview.test.cjs test/finance-payment-overview-sort.test.cjs
       - name: Test PO number date and country format
