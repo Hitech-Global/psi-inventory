@@ -3,7 +3,7 @@ const fs=require('node:fs');
 const path=require('node:path');
 const SERVER_MARKER='// QUOTATION-MANAGEMENT-V1';
 const BODY_GUARD_MARKER='// QUOTATION-IMPORT-BODY-GUARD-V1';
-const ASSET_VERSION='20261102a';
+const ASSET_VERSION='20261104a';
 const INDEX_MARKER='<script src="quotation-management.js?v='+ASSET_VERSION+'"></script>';
 const IMPORT_NORMALIZER_MARKER='<script src="quotation-import-normalizer.js?v='+ASSET_VERSION+'"></script>';
 const IMPORT_PROGRESS_MARKER='<script src="quotation-import-progress.js?v='+ASSET_VERSION+'"></script>';
@@ -18,7 +18,7 @@ function patchServerSource(src){
     out=once(out,anchor,guard+anchor,'json parser anchor');
   }
   if(!out.includes(SERVER_MARKER)){
-    const code=SERVER_MARKER+"\nrequire('./quotation-import-fast.js')({ app, query, run, genId, asyncHandler, requireApiPermission });\nrequire('./quotation-server.js')({ app, query, queryOne, run, transaction, genId, asyncHandler, requireApiPermission });\n\n";
+    const code=SERVER_MARKER+"\nrequire('./quotation-import-fast.js')({ app, query, run, transaction, genId, asyncHandler, requireApiPermission });\nrequire('./quotation-server.js')({ app, query, queryOne, run, transaction, genId, asyncHandler, requireApiPermission });\n\n";
     out=once(out,'// ==================== 原库存数量导入 ====================',code+'// ==================== 原库存数量导入 ====================','server anchor');
   }
   return out;
