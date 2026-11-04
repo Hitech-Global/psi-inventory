@@ -101,6 +101,8 @@ function main() {
     console.error(`没有 ${prefix}_PARTNER_KEY —— 请用 --key 传，或先把密钥写进 runtime/.env`);
     process.exit(1);
   }
+  // The redirect must match the domain the application declared, and the
+  // path is counted too — a trailing slash is a different path.
   const redirectUri = args.redirect
     || env[`${prefix}_REDIRECT_URL`]
     || env.SHOPEE_OAUTH_LIVE_REDIRECT_URL

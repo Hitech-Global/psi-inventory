@@ -19,6 +19,7 @@ const { ShopeeShopHealthRepository } = require('./shop-health-repository');
 const { TikTokQueryRepository } = require('./tiktok-query-repository');
 const { createFeishuAuth } = require('./feishu-auth');
 const { BrandPortalOAuthService } = require('./brand-portal-oauth-service');
+const { AppOAuthService } = require('./app-oauth-service');
 const { ErpOAuthService } = require('./erp-oauth-service');
 const { TikTokOAuthService } = require('./tiktok-oauth-service');
 const { createReviewerAuth, ROLE_REVIEWER } = require('./reviewer-auth');
@@ -61,6 +62,11 @@ function createApp({ pool, skillProvider = null, importJobPool = null }) {
   const reviewerAuth = createReviewerAuth();
   const feishuAuth = createFeishuAuth({ pool, reviewerAuth });
   const brandPortalOAuthService = new BrandPortalOAuthService({ pool });
+  // The applications that came after the shop side and the ERP: the
+  // affiliate marketing, the videos, the online shops, the operations
+  // brain and the order analysis. They are authorized the same way, so
+  // one service does it for whichever one asked.
+  const appOAuthService = new AppOAuthService({ pool });
   const erpOAuthService = new ErpOAuthService({ pool });
   const tiktokOAuthService = new TikTokOAuthService({ pool });
 
@@ -103,6 +109,7 @@ function createApp({ pool, skillProvider = null, importJobPool = null }) {
     runSkillAnalysis,
     runAdGroupSkillAnalysis,
     brandPortalOAuthService,
+    appOAuthService,
     erpOAuthService,
     tiktokOAuthService,
     shopHealthRepository,

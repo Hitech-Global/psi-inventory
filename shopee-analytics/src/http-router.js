@@ -15,6 +15,16 @@ const { parseShopeeAdGroupFile } = require('./shopee-ad-group-import');
 const { ShopeeOperationHistoryRepository } = require('./operation-history-repository');
 const { ROLE_SUPER_ADMIN, authorizedShopIds, assertShopAccess } = require('./feishu-auth');
 const { BRAND_PORTAL_COOKIE, stateCookie, clearStateCookie, parseCookie } = require('./brand-portal-oauth-service');
+const {
+  APP_STATE_COOKIE,
+  APP_CALLBACK_PATH,
+  SUPPORTED_ROLES,
+  resolveAppRedirectUrl,
+  stateCookie: appStateCookie,
+  clearStateCookie: clearAppStateCookie,
+  parseCookie: parseAppCookie,
+  AppOAuthService,
+} = require('./app-oauth-service');
 const { ERP_COOKIE, stateCookie: erpStateCookie, clearStateCookie: clearErpStateCookie, parseCookie: parseErpCookie } = require('./erp-oauth-service');
 const { TIKTOK_COOKIE, stateCookie: tiktokStateCookie, clearStateCookie: clearTikTokStateCookie, parseCookie: parseTikTokCookie } = require('./tiktok-oauth-service');
 const { resolveDateRange, regionTimeZone } = require('./tiktok-query-repository');
@@ -227,6 +237,7 @@ function createShopeeAnalyticsRouter({
   runAdGroupSkillAnalysis = null,
   brandPortalOAuthService = null,
   erpOAuthService = null,
+  appOAuthService = null,
   tiktokOAuthService = null,
   shopHealthRepository = null,
   tiktokQueryRepository = null,
@@ -571,6 +582,56 @@ function createShopeeAnalyticsRouter({
     } catch (error) {
       res.setHeader('Set-Cookie', clearErpStateCookie());
       respondWithOAuthOutcome(res, error, 'ERP');
+    }
+  });
+
+  // ── 其它应用的店铺授权（联盟营销 / 视频 / 线上店铺 / 运营大脑 / 订单分析）──
+  router.get('/app/status', async (req, res, next) => {
+    try {
+      const role = String(req.query.app || '').trim().toUpperCase();
+      if (!SUPPORTED_ROLES.includes(role)) throw Object.assign(new Error('Unsupported app role'), { status: 400 });
+      if (!appOAuthService) throw Object.assign(new Error('App OAuth service is unavailable'), { status: 503 });
+      const shopId = positiveInt(req.query.shop_id, 'shop_id');
+      res.json(await appOAuthService.status({ role, shopId }));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get('/app/oauth/start', async (req, res, next) => {
+    try {
+      if (!req.auth || req.auth.role !== ROLE_SUPER_ADMIN) {
+        res.status(403).json({ error: 'SUPER_ADMIN_REQUIRED', message: 'Only super admins can connect an application.' });
+        return;
+      }
+      if (!appOAuthService) throw Object.assign(new Error('App OAuth service is unavailable'), { status: 503 });
+      const role = String(req.query.app || '').trim().toUpperCase();
+      const shopId = positiveInt(req.query.shop_id, 'shop_id');
+      const result = await appOAuthService.beginAuthorization({ role, shopId });
+      res.setHeader('Set-Cookie', appStateCookie(result.state, result.ttlSeconds));
+      res.redirect(302, result.authorizationUrl);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get('/app/oauth/callback', async (req, res, next) => {
+    try {
+      if (!appOAuthService) throw Object.assign(new Error('App OAuth service is unavailable'), { status: 503 });
+      const state = String(req.query.state || '');
+      const code = String(req.query.code || '');
+      const providerError = req.query.error ? String(req.query.error) : null;
+      const stateValue = parseAppCookie(req.headers.cookie, APP_STATE_COOKIE) || state;
+      if (!stateValue) {
+        res.status(400).send('Missing authorization state.');
+        return;
+      }
+      const result = await appOAuthService.completeAuthorization({ state: stateValue, code, providerError });
+      res.setHeader('Set-Cookie', clearAppStateCookie());
+      res.json({ ok: true, role: result.role, shopId: result.shopId, shopIds: result.shopIds });
+    } catch (error) {
+      res.setHeader('Set-Cookie', clearAppStateCookie());
+      next(error);
     }
   });
 
