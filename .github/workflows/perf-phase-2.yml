@@ -1,0 +1,38 @@
+name: Performance phase 2 validation
+
+on:
+  push:
+    branches:
+      - perf/phase-2-async-db-reads
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'server.js'
+      - 'pg-async.js'
+      - 'app.js'
+      - 'app-perf.js'
+      - 'package.json'
+      - 'test/**'
+      - '.github/workflows/perf-phase-2.yml'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install dependencies and run repository postinstall tests
+        run: npm ci
+      - name: Syntax-check touched JavaScript
+        run: |
+          node --check server.js
+          node --check pg-async.js
+          node --check app.js
+          node --check app-perf.js
