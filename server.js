@@ -19734,28 +19734,87 @@ app.post('/api/wac/history-import', requireApiPermission('ci_edit'), asyncHandle
 }));
 
 /* WAC历史矩阵：只读取已锁定且未冲销的历史记录；历史汇率只取保存快照或精确日期汇率。 */
-app.get('/api/wac/history-matrix', requireApiPermission('ci_view'), asyncHandler((req, res) => {
-  try {
-    const rows = query(
-      "SELECT wh.sku_code, wh.model, wh.brand, wh.country, wh.warehouse, " +
-      "wh.new_avg_cost, wh.original_avg_cost, wh.original_qty, wh.inbound_qty, " +
-      "wh.confirmed_at, wh.version_no, wh.ci_no, wh.po_no, wh.pi_no, wh.effective_end_date, " +
-      "COALESCE(NULLIF(wh.last_inbound_date, ''), lb.actual_arrival_date) AS last_inbound_date, " +
-      "wh.local_currency, wh.rmb_to_local_rate, wh.fx_rate_date, COALESCE(wh.source_type, 'system') AS source_type " +
-      "FROM wac_history wh LEFT JOIN logistics_batches lb ON lb.id = wh.logistics_batch_id " +
-      "WHERE COALESCE(wh.is_locked, 0) = 1 " +
-      "AND COALESCE(wh.confirmation_status, 'confirmed') NOT IN ('reversed', 'void', 'cancelled') " +
-      "AND wh.confirmed_at IS NOT NULL " +
-      "ORDER BY wh.confirmed_at DESC, wh.version_no DESC LIMIT 20000"
-    ).rows;
+async function resolveWacHistoryRateSnapshotsAsync(rows) {
+  const pairs = new Map();
+  (rows || []).forEach(r => {
+    const storedRate = Number(r.rmb_to_local_rate);
+    if (Number.isFinite(storedRate) && storedRate > 0) return;
+    const currency = String(r.local_currency || '').trim().toUpperCase();
+    const date = normalizeWacHistoryDate(r.fx_rate_date) || normalizeWacHistoryDate(r.last_inbound_date) || '';
+    if (!currency || !date || currency === 'RMB' || currency === 'CNY') return;
+    pairs.set(currency + '|' + date, { currency, date });
+  });
+  const keys = Array.from(pairs.keys());
+  if (!keys.length) return new Map();
 
-    const currencyRows = query('SELECT name, default_currency FROM countries').rows;
+  // 每个货币/日期组合只查一次；直接汇率优先，缺失时才使用反向汇率。
+  // 20,000 条历史上限下，单条查询最多 80,000 参数，因此分批控制在 4,000 组/查询。
+  const keyChunks = [];
+  for (let i = 0; i < keys.length; i += 4000) keyChunks.push(keys.slice(i, i + 4000));
+  const rateResults = await readRowsBatchAsync(keyChunks.map(chunk => {
+    const where = chunk.map(() => "((from_currency = 'RMB' AND to_currency = ? AND rate_date = ?) OR (from_currency = ? AND to_currency = 'RMB' AND rate_date = ?))").join(' OR ');
+    const params = [];
+    chunk.forEach(key => {
+      const pair = pairs.get(key);
+      params.push(pair.currency, pair.date, pair.currency, pair.date);
+    });
+    return {
+      sql: 'SELECT from_currency, to_currency, rate, rate_date FROM exchange_rates WHERE rate_type = ? AND (' + where + ') ORDER BY created_at DESC, id DESC',
+      params: ['realtime'].concat(params)
+    };
+  }));
+  const rateRows = [].concat(...rateResults);
+  const direct = new Map();
+  const reverse = new Map();
+  (rateRows || []).forEach(r => {
+    if (r.from_currency === 'RMB') {
+      const key = String(r.to_currency || '').toUpperCase() + '|' + String(r.rate_date || '');
+      if (!direct.has(key)) direct.set(key, r);
+    } else if (r.to_currency === 'RMB') {
+      const key = String(r.from_currency || '').toUpperCase() + '|' + String(r.rate_date || '');
+      if (!reverse.has(key)) reverse.set(key, r);
+    }
+  });
+  const snapshots = new Map();
+  keys.forEach(key => {
+    const d = direct.get(key);
+    if (d && Number(d.rate) > 0) {
+      snapshots.set(key, { rate: Number(d.rate), rate_date: d.rate_date, direction: 'direct', source: 'exchange_rates' });
+      return;
+    }
+    const r = reverse.get(key);
+    if (r && Number(r.rate) > 0) {
+      snapshots.set(key, { rate: 1 / Number(r.rate), rate_date: r.rate_date, direction: 'reverse', source: 'exchange_rates' });
+      return;
+    }
+    snapshots.set(key, null);
+  });
+  return snapshots;
+}
+
+app.get('/api/wac/history-matrix', requireApiPermission('ci_view'), asyncHandler(async (req, res) => {
+  try {
+    const [rows, currencyRows] = await readRowsBatchAsync([
+      {
+        sql: "SELECT wh.sku_code, wh.model, wh.brand, wh.country, wh.warehouse, " +
+          "wh.new_avg_cost, wh.original_avg_cost, wh.original_qty, wh.inbound_qty, " +
+          "wh.confirmed_at, wh.version_no, wh.ci_no, wh.po_no, wh.pi_no, wh.effective_end_date, " +
+          "COALESCE(NULLIF(wh.last_inbound_date, ''), lb.actual_arrival_date) AS last_inbound_date, " +
+          "wh.local_currency, wh.rmb_to_local_rate, wh.fx_rate_date, COALESCE(wh.source_type, 'system') AS source_type " +
+          "FROM wac_history wh LEFT JOIN logistics_batches lb ON lb.id = wh.logistics_batch_id " +
+          "WHERE COALESCE(wh.is_locked, 0) = 1 " +
+          "AND COALESCE(wh.confirmation_status, 'confirmed') NOT IN ('reversed', 'void', 'cancelled') " +
+          "AND wh.confirmed_at IS NOT NULL " +
+          "ORDER BY wh.confirmed_at DESC, wh.version_no DESC LIMIT 20000",
+        params: []
+      },
+      { sql: 'SELECT name, default_currency FROM countries', params: [] }
+    ]);
     const currencyByCountry = new Map();
     currencyRows.forEach(r => {
       const code = String(r.default_currency || '').trim().toUpperCase();
       if (r.name && code) currencyByCountry.set(String(r.name), code === 'CNY' ? 'RMB' : code);
     });
-    const fxCache = new Map();
     rows.forEach(r => {
       const rawCountry = String(r.country || '').trim();
       const canonicalCountry = (typeof COUNTRY_ALIAS_MAP !== 'undefined' && COUNTRY_ALIAS_MAP[rawCountry]) || rawCountry;
@@ -19770,10 +19829,24 @@ app.get('/api/wac/history-matrix', requireApiPermission('ci_view'), asyncHandler
         r.rmb_to_local_rate = storedRate;
         r.fx_rate_source = 'snapshot';
       } else {
-        const snapshot = resolveExactRmbToLocalRate(r.local_currency, fxDate, fxCache);
-        r.rmb_to_local_rate = snapshot ? snapshot.rate : null;
-        r.fx_rate_source = snapshot ? snapshot.source : 'missing';
+        r.rmb_to_local_rate = null;
+        r.fx_rate_source = 'missing';
       }
+    });
+
+    const fxSnapshots = await resolveWacHistoryRateSnapshotsAsync(rows);
+    rows.forEach(r => {
+      if (r.fx_rate_source === 'snapshot') return;
+      const currency = String(r.local_currency || '').trim().toUpperCase();
+      const fxDate = String(r.fx_rate_date || '').trim();
+      if ((currency === 'RMB' || currency === 'CNY') && fxDate) {
+        r.rmb_to_local_rate = 1;
+        r.fx_rate_source = 'identity';
+        return;
+      }
+      const snapshot = fxSnapshots.get(currency + '|' + fxDate) || null;
+      r.rmb_to_local_rate = snapshot ? snapshot.rate : null;
+      r.fx_rate_source = snapshot ? snapshot.source : 'missing';
     });
 
     const distinct = (field) => [...new Set(rows.map(r => String(r[field] || '').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
