@@ -436,7 +436,7 @@ test('WAC history matrix keeps the agreed dimensions, left alignment, sticky hea
 test('WAC history matrix presentation hides redundant columns and fills available viewport', () => {
   const html = fs.readFileSync(require('node:path').join(__dirname, '..', 'index.html'), 'utf8');
   const appSource = fs.readFileSync(require.resolve('../app'), 'utf8');
-  const start = html.indexOf('/* WAC-HISTORY-PRESENTATION-20261104 */');
+  const start = html.indexOf('/* WAC-HISTORY-PRESENTATION-20261104:');
   const end = html.indexOf('</style>', start);
   assert.ok(start >= 0 && end > start, 'WAC history presentation overrides must be present in the page shell');
   const css = html.slice(start, end);
