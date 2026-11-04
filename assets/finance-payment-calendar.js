@@ -175,6 +175,48 @@ function fcMonthlySummary(items, monthIso, today) {
   });
   return { monthRows, totals, overdue, overdueRows };
 }
+function fcYearlySummary(items, yearIso, today) {
+  const yearKey = String(yearIso || fcTodayISO()).slice(0, 4);
+  const totals = Object.create(null);
+  const overdue = Object.create(null);
+  const months = Array.from({ length: 12 }, () => ({
+    totals: Object.create(null), overdue: Object.create(null), count: 0
+  }));
+  const overdueRows = [];
+  (items || []).forEach(item => {
+    const date = String(item && item.payable_date || '').slice(0, 10);
+    const currency = String(item && item.currency || 'UNKNOWN').toUpperCase();
+    const remaining = fcRemainingAmount(item);
+    if (date && date.slice(0, 4) === yearKey) {
+      const monthIndex = Number(date.slice(5, 7)) - 1;
+      if (monthIndex >= 0 && monthIndex < 12) {
+        const month = months[monthIndex];
+        if (!month.totals[currency]) month.totals[currency] = { gross: 0, settled: 0, outstanding: 0, count: 0 };
+        if (!totals[currency]) totals[currency] = { gross: 0, settled: 0, outstanding: 0, count: 0 };
+        const amount = fcPayableAmount(item);
+        const settled = fcSettledAmount(item);
+        month.totals[currency].gross += amount;
+        month.totals[currency].settled += settled;
+        month.totals[currency].outstanding += remaining;
+        month.totals[currency].count++;
+        month.count++;
+        totals[currency].gross += amount;
+        totals[currency].settled += settled;
+        totals[currency].outstanding += remaining;
+        totals[currency].count++;
+        if (date < String(today || fcTodayISO()) && remaining > 0.000001) {
+          month.overdue[currency] = (month.overdue[currency] || 0) + remaining;
+        }
+      }
+    }
+    // Keep the existing overdue-card meaning: all past-due, unsettled items, regardless of selected year.
+    if (date && date < String(today || fcTodayISO()) && remaining > 0.000001) {
+      overdue[currency] = (overdue[currency] || 0) + remaining;
+      overdueRows.push(item);
+    }
+  });
+  return { yearKey, totals, overdue, overdueRows, months };
+}
 function fcGetFilterOptions() {
   const data = _financeCalendarState;
   const items = data.items || [];
@@ -298,8 +340,8 @@ function fcRenderMiniMonth() {
   const weekday = fcWeekdayLabels();
   const currentMonth = state.currentDate.slice(0, 7);
   let html = '<div class="fcal-mini-head"><strong>' + fcEsc(fcMonthLabel(state.currentDate)) + '</strong>' +
-    '<div><button type="button" aria-label="Previous month" onclick="fcNavigate(-1)">‹</button>' +
-    '<button type="button" aria-label="Next month" onclick="fcNavigate(1)">›</button></div></div>';
+    '<div><button type="button" aria-label="Previous month" onclick="fcNavigateMiniMonth(-1)">‹</button>' +
+    '<button type="button" aria-label="Next month" onclick="fcNavigateMiniMonth(1)">›</button></div></div>';
   html += '<div class="fcal-mini-grid">';
   weekday.forEach(day => { html += '<span class="fcal-mini-weekday">' + fcEsc(day) + '</span>'; });
   dates.forEach(date => {
@@ -409,15 +451,58 @@ function fcRenderDayView(items) {
   html += '</section>';
   return html;
 }
+function fcYearMonthLabel(year, monthIndex) {
+  const iso = String(year) + '-' + String(monthIndex + 1).padStart(2, '0') + '-01';
+  const locale = fcLang() === 'en' ? 'en-US' : (fcLang() === 'id' ? 'id-ID' : 'zh-CN');
+  return fcParseISO(iso).toLocaleDateString(locale, { month: 'long' });
+}
+function fcRenderYearGrid(items) {
+  const state = _financeCalendarState;
+  const summary = fcYearlySummary(items, state.currentDate, state.today);
+  const year = summary.yearKey;
+  const selectedMonth = Number(String(state.currentDate).slice(5, 7)) - 1;
+  let html = '<section class="fcal-year-view"><div class="fcal-year-view-note">' +
+    fcEsc(fcText('全年付款分布 · 点击月份进入月视图 · 各币种独立汇总，不跨币种相加', 'Annual payment overview · Select a month to open its calendar · Currencies are kept separate', 'Ringkasan pembayaran tahunan · Pilih bulan untuk membuka kalender · Mata uang ditampilkan terpisah')) +
+    '</div><div class="fcal-year-grid">';
+  summary.months.forEach((month, index) => {
+    const currencies = Object.keys(month.totals || {}).sort();
+    let detail = '';
+    currencies.forEach(currency => {
+      const values = month.totals[currency];
+      const pct = values.gross > 0 ? Math.max(0, Math.min(100, Math.round(values.settled / values.gross * 100))) : 0;
+      const overdueAmount = Number(month.overdue[currency] || 0);
+      detail += '<div class="fcal-year-currency"><div class="fcal-year-currency-head"><strong>' + fcEsc(currency) +
+        '</strong><span>' + values.count + ' ' + fcEsc(fcText('笔', 'items', 'item')) + '</span></div>' +
+        '<div class="fcal-year-currency-line"><span>' + fcEsc(fcText('计划', 'Planned', 'Rencana')) + '</span><strong>' + fcEsc(fcMoney(values.gross)) + '</strong></div>' +
+        '<div class="fcal-year-currency-line"><span>' + fcEsc(fcText('已结清', 'Settled', 'Lunas')) + '</span><strong>' + fcEsc(fcMoney(values.settled)) + '</strong></div>' +
+        '<div class="fcal-year-currency-line is-outstanding"><span>' + fcEsc(fcText('待付款', 'Outstanding', 'Belum dibayar')) + '</span><strong>' + fcEsc(fcMoney(values.outstanding)) + '</strong></div>' +
+        '<div class="fcal-year-progress"><i style="width:' + pct + '%"></i></div>' +
+        (overdueAmount > 0.000001 ? '<div class="fcal-year-overdue">' + fcEsc(fcText('逾期未付', 'Overdue', 'Terlambat')) + ' · ' + fcEsc(fcMoney(overdueAmount)) + '</div>' : '') +
+        '</div>';
+    });
+    if (!detail) detail = '<div class="fcal-year-empty">' + fcEsc(fcText('暂无应付安排', 'No scheduled payables', 'Tidak ada jadwal pembayaran')) + '</div>';
+    html += '<button type="button" class="fcal-year-month-card ' + (index === selectedMonth ? 'is-selected' : '') +
+      '" onclick="fcSetYearMonth(' + index + ')"><div class="fcal-year-month-head"><strong>' +
+      fcEsc(fcYearMonthLabel(year, index)) + '</strong><span>' + month.count + ' ' + fcEsc(fcText('笔', 'items', 'item')) +
+      '</span></div>' + detail + '<div class="fcal-year-open-hint">' +
+      fcEsc(fcText('查看本月日历', 'Open monthly calendar', 'Buka kalender bulanan')) + ' →</div></button>';
+  });
+  html += '</div></section>';
+  return html;
+}
 function fcRenderCalendar(items) {
   if (_financeCalendarState.view === 'day') return fcRenderDayView(items);
   if (_financeCalendarState.view === 'week') return fcRenderWeekGrid(items);
+  if (_financeCalendarState.view === 'year') return fcRenderYearGrid(items);
   return fcRenderMonthGrid(items);
 }
 function fcRenderToolbar() {
   const state = _financeCalendarState;
   let title = fcMonthLabel(state.currentDate);
-  if (state.view === 'week') {
+  if (state.view === 'year') {
+    const year = fcParseISO(state.currentDate).getFullYear();
+    title = fcText(String(year) + '年', String(year), String(year));
+  } else if (state.view === 'week') {
     const week = fcBuildWeekDates(state.currentDate);
     title = fcDateLabel(week[0], false) + ' – ' + fcDateLabel(week[6], true);
   } else if (state.view === 'day') title = fcDateLabel(state.selectedDate || state.currentDate, true);
@@ -428,10 +513,21 @@ function fcRenderToolbar() {
     '<button type="button" class="' + (state.view === 'day' ? 'is-active' : '') + '" onclick="fcSetView(\'day\')">' + fcEsc(fcText('日', 'Day', 'Hari')) + '</button>' +
     '<button type="button" class="' + (state.view === 'week' ? 'is-active' : '') + '" onclick="fcSetView(\'week\')">' + fcEsc(fcText('周', 'Week', 'Minggu')) + '</button>' +
     '<button type="button" class="' + (state.view === 'month' ? 'is-active' : '') + '" onclick="fcSetView(\'month\')">' + fcEsc(fcText('月', 'Month', 'Bulan')) + '</button>' +
+    '<button type="button" class="' + (state.view === 'year' ? 'is-active' : '') + '" onclick="fcSetView(\'year\')">' + fcEsc(fcText('年', 'Year', 'Tahun')) + '</button>' +
     '</div></div></div>';
 }
 function fcRenderStats(items) {
-  const summary = fcMonthlySummary(items, _financeCalendarState.currentDate, _financeCalendarState.today);
+  const state = _financeCalendarState;
+  if (state.view === 'year') {
+    const annual = fcYearlySummary(items, state.currentDate, state.today);
+    return '<div class="fcal-stats-grid">' +
+      fcSummaryCard(fcText('本年计划应付', 'Scheduled this year', 'Terjadwal tahun ini'), fcSummaryMap(annual, 'gross'), fcText('按所选年度的计划付款日期归属', 'Grouped by scheduled due date in the selected year', 'Dikelompokkan berdasarkan tanggal jatuh tempo pada tahun terpilih'), '') +
+      fcSummaryCard(fcText('本年已结清', 'Settled this year', 'Lunas tahun ini'), fcSummaryMap(annual, 'settled'), fcText('所选年度应付项累计结清金额', 'Settled amount for payables due in the selected year', 'Jumlah lunas untuk tagihan pada tahun terpilih'), 'is-green') +
+      fcSummaryCard(fcText('本年待付款', 'Outstanding this year', 'Belum dibayar tahun ini'), fcSummaryMap(annual, 'outstanding'), fcText('所选年度应付项剩余未结金额', 'Remaining balance for payables due in the selected year', 'Sisa tagihan pada tahun terpilih'), 'is-blue') +
+      fcSummaryCard(fcText('逾期未付', 'Overdue outstanding', 'Tunggakan'), annual.overdue, fcText('所有已逾期且尚未结清的应付项，不限年度', 'All past-due items with an outstanding balance, across all years', 'Semua tagihan lewat jatuh tempo yang belum lunas, semua tahun'), 'is-red') +
+      '</div><div class="fcal-summary-note">' + fcEsc(fcText('金额按原币种分别汇总，不跨币种直接相加。年度计划、已结清和待付款按计划付款日期归属年度。', 'Amounts are grouped by original currency. Planned, settled and outstanding totals are grouped by scheduled payment year.', 'Jumlah dikelompokkan menurut mata uang asli. Total rencana, lunas, dan belum dibayar mengikuti tahun tanggal pembayaran terjadwal.')) + '</div>';
+  }
+  const summary = fcMonthlySummary(items, state.currentDate, state.today);
   const overdueMap = summary.overdue;
   return '<div class="fcal-stats-grid">' +
     fcSummaryCard(fcText('本月计划应付', 'Scheduled this month', 'Terjadwal bulan ini'), fcSummaryMap(summary, 'gross'), fcText('按计划付款日期归属月份', 'Grouped by scheduled due date', 'Dikelompokkan berdasarkan tanggal jatuh tempo'), '') +
@@ -478,10 +574,12 @@ function fcCalendarStyles() {
     '.fcal-week-calendar .fcal-weekday-row>div{display:flex;flex-direction:column;gap:4px;align-items:center}.fcal-weekday-row>div strong{font-size:13px;color:var(--text-primary,#333)}.fcal-weekday-row>div strong.is-today-number{color:#3478d5}.fcal-week-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));min-height:330px}.fcal-week-cell{min-width:0;padding:7px 5px;border-right:1px solid var(--border,#ececef);cursor:pointer}.fcal-week-cell:last-child{border-right:0}.fcal-week-add{font-size:12px;color:#b3b7be;text-align:right;margin-bottom:5px;opacity:0}.fcal-week-cell:hover .fcal-week-add{opacity:1}.fcal-week-cell .fcal-event{margin-bottom:5px}' +
     '.fcal-day-view{padding:16px;min-height:260px}.fcal-day-view-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px}.fcal-day-view-date{font-size:17px;font-weight:650}.fcal-day-view-count{font-size:11px;color:var(--text-secondary,#888);margin-top:4px}.fcal-day-event-list{display:flex;flex-direction:column;gap:7px}.fcal-day-event-list .fcal-event{padding:10px 12px;border-left-width:4px}.fcal-day-event-list .fcal-event-title{font-size:12px}.fcal-day-event-list .fcal-event-amount{font-size:12px}.fcal-day-event-list .fcal-event-status,.fcal-day-event-list .fcal-event-remaining{font-size:10px}.fcal-empty-day{padding:35px 15px;text-align:center;color:var(--text-secondary,#888);font-size:12px;border:1px dashed var(--border,#ddd);border-radius:9px}' +
     '.fcal-legend{display:flex;align-items:center;flex-wrap:wrap;gap:13px;padding:10px 3px;color:var(--text-secondary,#777);font-size:10px}.fcal-legend span{display:inline-flex;align-items:center;gap:5px}.fcal-legend i{display:inline-block;width:8px;height:8px;border-radius:2px}.fcal-legend i.is-pending{background:#4c82d5}.fcal-legend i.is-partial{background:#d79a36}.fcal-legend i.is-reserved{background:#8c69c2}.fcal-legend i.is-settled{background:#48a36b}.fcal-legend i.is-overdue{background:#d9534f}.fcal-no-value{color:var(--text-secondary,#aaa);font-weight:400}' +
+    '.fcal-year-view{padding:12px}.fcal-year-view-note{font-size:11px;color:var(--text-secondary,#888);margin:0 0 12px}.fcal-year-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.fcal-year-month-card{display:block;min-width:0;width:100%;padding:12px;border:1px solid var(--border,#e5e5e8);border-radius:10px;background:var(--bg-card,#fff);color:var(--text-primary,#222);text-align:left;cursor:pointer;transition:border-color .12s,background .12s}.fcal-year-month-card:hover{border-color:#8baee0;background:var(--bg-hover,#f8faff)}.fcal-year-month-card.is-selected{border-color:#3478d5;background:rgba(52,120,213,.035);box-shadow:inset 0 0 0 1px rgba(52,120,213,.12)}.fcal-year-month-head{display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:8px}.fcal-year-month-head strong{font-size:14px;font-weight:650}.fcal-year-month-head span{font-size:10px;color:var(--text-secondary,#888)}.fcal-year-currency{padding:8px 0;border-top:1px solid var(--border,#ececef)}.fcal-year-currency-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:5px}.fcal-year-currency-head strong{font-size:11px}.fcal-year-currency-head span{font-size:10px;color:var(--text-secondary,#888)}.fcal-year-currency-line{display:flex;justify-content:space-between;gap:7px;font-size:10px;line-height:1.55;color:var(--text-secondary,#777)}.fcal-year-currency-line strong{color:var(--text-primary,#333);font-weight:600;font-variant-numeric:tabular-nums}.fcal-year-currency-line.is-outstanding strong{color:#3478d5}.fcal-year-progress{height:4px;border-radius:5px;background:var(--bg-secondary,#edf0f3);overflow:hidden;margin-top:5px}.fcal-year-progress i{display:block;height:100%;background:#42a16a;border-radius:5px}.fcal-year-overdue{margin-top:5px;font-size:10px;color:#c5443d}.fcal-year-empty{padding:15px 2px 10px;text-align:center;color:var(--text-secondary,#aaa);font-size:10px}.fcal-year-open-hint{font-size:10px;color:#3478d5;margin-top:8px}' +
     '.fcal-form{display:grid;grid-template-columns:1fr 1fr;gap:12px}.fcal-form-field{display:flex;flex-direction:column;gap:5px;min-width:0}.fcal-form-field.is-wide{grid-column:1/-1}.fcal-form-field label{font-size:11px;color:var(--text-secondary,#666);font-weight:600}.fcal-form-field input,.fcal-form-field select{width:100%;border:1px solid var(--border,#dfe0e4);border-radius:8px;padding:9px 10px;background:var(--bg-card,#fff);color:var(--text-primary,#222);font-size:12px}.fcal-form-note{grid-column:1/-1;font-size:11px;color:var(--text-secondary,#888);line-height:1.5;background:var(--bg-secondary,#f7f8f9);border-radius:8px;padding:9px 10px}.fcal-form-actions{grid-column:1/-1;display:flex;justify-content:flex-end;gap:8px;margin-top:3px}.fcal-secondary-button{border:1px solid var(--border,#ddd);background:var(--bg-card,#fff);color:var(--text-primary,#333);border-radius:8px;padding:8px 12px;font-size:12px}.fcal-undated-list{display:flex;flex-direction:column;gap:6px;max-height:55vh;overflow:auto}.fcal-undated-item{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;border:1px solid var(--border,#e5e5e8);background:var(--bg-card,#fff);border-radius:8px;padding:9px 10px;text-align:left}.fcal-undated-item span{font-size:11px}.fcal-undated-item strong{font-size:11px;font-variant-numeric:tabular-nums}' +
-    '@media(max-width:1150px){.fcal-layout{grid-template-columns:205px minmax(0,1fr)}.fcal-day-cell{min-height:98px}.fcal-stats-grid{gap:8px}.fcal-stat-card{padding:11px}}' +
+    '@media(max-width:1150px){.fcal-layout{grid-template-columns:205px minmax(0,1fr)}.fcal-day-cell{min-height:98px}.fcal-stats-grid{gap:8px}.fcal-stat-card{padding:11px}.fcal-year-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}' +
     '@media(max-width:900px){.fcal-layout{grid-template-columns:1fr}.fcal-sidebar{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}.fcal-mini-card{grid-row:span 2}.fcal-sidebar-card:last-child{grid-column:1/-1}.fcal-filter-section-head{margin-bottom:6px}.fcal-filter{display:inline-block;width:calc(33.333% - 5px);margin-right:4px;vertical-align:top}}' +
-    '@media(max-width:650px){.fcal-stats-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.fcal-sidebar{grid-template-columns:1fr}.fcal-mini-card,.fcal-sidebar-card:last-child{grid-row:auto;grid-column:auto}.fcal-filter{width:100%;margin-right:0}.fcal-day-cell{min-height:80px;padding:4px 3px}.fcal-event{padding:3px}.fcal-event-title,.fcal-event-amount{font-size:9px}.fcal-day-add{opacity:1}.fcal-toolbar-title{font-size:14px}.fcal-week-grid{min-height:260px}.fcal-week-cell{padding:4px 2px}.fcal-form{grid-template-columns:1fr}.fcal-form-field.is-wide,.fcal-form-note,.fcal-form-actions{grid-column:1}.fcal-view-switch button{padding:6px 8px}}' +
+    '@media(max-width:650px){.fcal-stats-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.fcal-sidebar{grid-template-columns:1fr}.fcal-mini-card,.fcal-sidebar-card:last-child{grid-row:auto;grid-column:auto}.fcal-filter{width:100%;margin-right:0}.fcal-day-cell{min-height:80px;padding:4px 3px}.fcal-event{padding:3px}.fcal-event-title,.fcal-event-amount{font-size:9px}.fcal-day-add{opacity:1}.fcal-toolbar-title{font-size:14px}.fcal-week-grid{min-height:260px}.fcal-week-cell{padding:4px 2px}.fcal-form{grid-template-columns:1fr}.fcal-form-field.is-wide,.fcal-form-note,.fcal-form-actions{grid-column:1}.fcal-view-switch button{padding:6px 8px}.fcal-year-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.fcal-year-view{padding:8px}.fcal-year-month-card{padding:9px}}' +
+    '@media(max-width:430px){.fcal-year-grid{grid-template-columns:1fr}}' +
     '</style>';
 }
 function fcCanCreate() {
@@ -606,7 +704,7 @@ function fcOpenUndated() {
   if (typeof openModal === 'function') openModal(fcText('未安排付款日期', 'No scheduled date', 'Belum ada tanggal'), html);
 }
 function fcToggleView(view) {
-  _financeCalendarState.view = ['day', 'week', 'month'].includes(view) ? view : 'month';
+  _financeCalendarState.view = ['day', 'week', 'month', 'year'].includes(view) ? view : 'month';
   fcRenderPage();
 }
 function fcSetView(view) { fcToggleView(view); }
@@ -618,9 +716,25 @@ function fcSetDate(date, view) {
 }
 function fcNavigate(direction) {
   const state = _financeCalendarState;
-  if (state.view === 'month') state.currentDate = fcAddMonths(state.currentDate, Number(direction || 0));
+  if (state.view === 'year') state.currentDate = fcAddMonths(state.currentDate, Number(direction || 0) * 12);
+  else if (state.view === 'month') state.currentDate = fcAddMonths(state.currentDate, Number(direction || 0));
   else state.currentDate = fcAddDays(state.currentDate, Number(direction || 0) * (state.view === 'week' ? 7 : 1));
   state.selectedDate = state.currentDate;
+  fcRenderPage();
+}
+function fcNavigateMiniMonth(direction) {
+  const state = _financeCalendarState;
+  state.currentDate = fcAddMonths(state.currentDate, Number(direction || 0));
+  state.selectedDate = state.currentDate;
+  fcRenderPage();
+}
+function fcSetYearMonth(monthIndex) {
+  const state = _financeCalendarState;
+  const index = Math.max(0, Math.min(11, Number(monthIndex) || 0));
+  const year = fcParseISO(state.currentDate).getFullYear();
+  state.currentDate = String(year) + '-' + String(index + 1).padStart(2, '0') + '-01';
+  state.selectedDate = state.currentDate;
+  state.view = 'month';
   fcRenderPage();
 }
 function fcGoToday() {
