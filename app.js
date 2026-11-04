@@ -167,8 +167,29 @@ function _refKeyForUrl(url){
 //  - GET 带 opts.cacheKey → 页面快照缓存（hit 同步返回 + 后台 stale-while-revalidate）
 //  - 非 GET 成功 → AppStore.onMutation 依赖失效
 // 任何缓存异常均降级为透传网络，绝不阻断业务。
+function _autoApiCacheOptions(url, method, opts) {
+  opts = opts || {};
+  if ((method || 'GET') !== 'GET' || opts.cacheKey || !window.AppStore || !window.currentPage) return opts;
+  var path = String(url || '').split('?')[0];
+  if (!/^\/api\//i.test(path)) return opts;
+  // 会话、健康检查、通知轮询、下载/附件等动态或非页面数据不进入通用页面快照。
+  if (/^\/api\/(auth|health|version|notifications)(\/|$)/i.test(path)) return opts;
+  if (/\/(download|export|attachment|preview|template|stream|poll)(\/|$)/i.test(path)) return opts;
+  var source = String(url || '');
+  var hash = 2166136261;
+  for (var i = 0; i < source.length; i++) hash = Math.imul(hash ^ source.charCodeAt(i), 16777619);
+  return Object.assign({}, opts, {
+    cacheKey: 'api:' + path + ':' + (hash >>> 0).toString(36),
+    signature: source,
+    ttl: 30000,
+    ownerPage: window.currentPage,
+    autoCache: true
+  });
+}
+
 async function api(url,method='GET',body=null,opts){
   opts = opts || {};
+  if((!method || method==='GET') && window.AppStore) opts = _autoApiCacheOptions(url, method, opts);
   if((!method || method==='GET') && window.AppStore){
     // 1) reference 端点全局去重 + session 缓存。
     //    必须独立于下方缓存 try/catch：ref() 自带 401→doLogout / 非2xx / {error} 语义，
@@ -198,7 +219,18 @@ async function api(url,method='GET',body=null,opts){
   try{
     if((!method || method==='GET')){
       if(opts.cacheKey && window.AppStore && d && !d.error){
-        window.AppStore.page.set(opts.cacheKey, (opts.signature!=null)?opts.signature:url, d, {ttl: (opts.ttl||30000)});
+        var _autoCacheAllowed = true;
+        if (opts.autoCache) {
+          try { _autoCacheAllowed = JSON.stringify(d).length <= 500000; } catch (e) { _autoCacheAllowed = false; }
+        }
+        if (_autoCacheAllowed) {
+          window.AppStore.page.set(opts.cacheKey, (opts.signature!=null)?opts.signature:url, d, {
+            ttl: (opts.ttl||30000),
+            ownerPage: opts.ownerPage || window.currentPage
+          });
+        } else if (opts.autoCache) {
+          window.AppStore.page.markDirty(opts.cacheKey);
+        }
       }
     } else if(window.AppStore){
       window.AppStore.onMutation(method, url, body);
