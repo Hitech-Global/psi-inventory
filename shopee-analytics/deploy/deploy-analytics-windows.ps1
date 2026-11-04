@@ -44,6 +44,34 @@ function Fail([string]$message) {
     exit 1
 }
 
+# ★★ 为什么所有 docker 调用都要走这个函数
+# 这台机器跑的是 Windows PowerShell 5.1。PS 5.1 有个老毛病：
+# 当 $ErrorActionPreference = 'Stop' 时，**native command 的 stderr 输出会被当成
+# terminating error**。而 docker compose 的正常输出走的就是 stderr ——
+# 比如 "Container shopee-analytics-postgres-1 Running" 这类状态行。
+# 结果是：schema 那一步明明成功了，却因为一行状态输出被当成失败，
+# ps1 直接退出，容器不重建，线上一直停在旧版本。
+#
+# 做法：用 cmd /c 包一层，stderr 不再被 PowerShell 特殊对待，
+# 退出码照常从 $LASTEXITCODE 取。输出照常显示，判断照常生效，两边都不失真。
+function Invoke-DockerCompose {
+    param(
+        [string[]]$Arguments,
+        [switch]$Quiet   # 只看退出码，不打印输出（用于输出很长的命令）
+    )
+
+    $cmd = 'docker compose ' + ($Arguments -join ' ')
+    $output = & cmd /c $cmd 2>&1 | ForEach-Object { $_ }
+    $code = $LASTEXITCODE
+    if (-not $Quiet) { $output | Out-Host }
+    if ($code -ne 0) {
+        # 失败时一定要看到输出 —— 那才是原因。
+        $output | Out-Host
+        Fail "docker compose $($Arguments -join ' ') 失败（退出码 $code）"
+    }
+    return $code
+}
+
 Write-Step '1/7 当前版本'
 git log --oneline -1
 Write-Host "分支：$(git rev-parse --abbrev-ref HEAD)"
@@ -89,13 +117,14 @@ if (Test-Path 'runtime\.env') {
     New-Item -ItemType Directory -Force -Path $backupDir | Out-Null
     $localFile = Join-Path $backupDir $fileName
 
-    docker compose --env-file runtime/.env exec -T postgres `
-        pg_dump -U $cfg['POSTGRES_USER'] -d $cfg['POSTGRES_DB'] -Fc -f "/tmp/$fileName"
-    if ($LASTEXITCODE -ne 0) { Fail 'pg_dump 失败，中止部署' }
+    # ★ 备份也走 Invoke-DockerCompose —— 理由同上：PS 5.1 会把 docker 的
+    #   stderr 状态输出当成 terminating error。这里失败更致命（备份中断整个部署）。
+    Invoke-DockerCompose -Arguments @('--env-file', 'runtime/.env', 'exec', '-T', 'postgres',
+        'pg_dump', '-U', $cfg['POSTGRES_USER'], '-d', $cfg['POSTGRES_DB'], '-Fc', '-f', "/tmp/$fileName") | Out-Null
 
-    docker compose --env-file runtime/.env exec -T postgres `
-        pg_restore --list "/tmp/$fileName" | Out-Null
-    if ($LASTEXITCODE -ne 0) { Fail '备份校验失败，中止部署' }
+    # 校验用的 pg_restore --list 会列出每个表，输出很长 —— 只看退出码，不刷屏。
+    Invoke-DockerCompose -Quiet -Arguments @('--env-file', 'runtime/.env', 'exec', '-T', 'postgres',
+        'pg_restore', '--list', "/tmp/$fileName") | Out-Null
 
     $containerId = (docker compose --env-file runtime/.env ps -q postgres).Trim()
     docker cp "${containerId}:/tmp/$fileName" $localFile
@@ -166,27 +195,28 @@ if ($NoRestart) {
 Write-Step '6/7 重建镜像、应用 schema、启动服务'
 Set-Location $desktopDir
 
+# （docker 调用统一走上面定义的 Invoke-DockerCompose —— 那里写了为什么：
+#  PS 5.1 会把 native command 的 stderr 当成 terminating error，
+#  docker 的正常状态输出走 stderr，会让这一步假失败。）
+
 # ★ 必须带 --profile tools
 # schema 与 preflight 服务在 profiles: ["tools"] 里，而 `docker compose build`
 # 默认只构建当前 profile 下的服务 —— 不加 profile 时它们会被跳过，
 # 导致 schema 容器跑的是旧镜像里的旧 schema.sql（新增的表不会建出来）。
-docker compose --env-file runtime/.env --profile tools build
-if ($LASTEXITCODE -ne 0) { Fail '镜像构建失败' }
+Invoke-DockerCompose -Arguments @('--env-file', 'runtime/.env', '--profile', 'tools', 'build') | Out-Null
 
 # ★ 这一步是**执行 schema（DDL）**，不是备份。
 # 它会用刚构建的镜像跑 schema.sql 等 DDL 文件（事务包裹 + ROLLBACK 保护，幂等），
 # 把新增的表建出来。真正的备份在第 3 步的 pg_dump —— 两者别混为一谈。
 # 顺序很重要：先备份（第 3 步）再改表结构（这里），万一 DDL 出问题还有回退点。
-docker compose --env-file runtime/.env --profile tools run --rm schema 2>&1 | Out-Host
-if ($LASTEXITCODE -ne 0) { Fail 'schema 应用失败' }
+Invoke-DockerCompose -Arguments @('--env-file', 'runtime/.env', '--profile', 'tools', 'run', '--rm', 'schema') | Out-Null
 
 # ★ 必须重建 worker
 # 原来这里只 `up -d app oauth`，worker 与 oauth 的传递依赖会落后于代码改动 ——
 # 表现为「前端已更新但后台同步任务还是旧代码」。
 # 上面第 6 步的 build 已经把镜像建好了，所以这里的 --build 只会命中缓存，
 # 不会重复构建 —— 它只是确保 app/oauth/worker 三者用的是同一批新镜像。
-docker compose --env-file runtime/.env up -d --build app oauth worker
-if ($LASTEXITCODE -ne 0) { Fail '重启失败' }
+Invoke-DockerCompose -Arguments @('--env-file', 'runtime/.env', 'up', '-d', '--build', 'app', 'oauth', 'worker') | Out-Null
 
 Write-Step '7/7 验证'
 Start-Sleep -Seconds 8
