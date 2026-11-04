@@ -200,11 +200,9 @@ function validRow(overrides) {
     country: '印度尼西亚',
     warehouse: 'Bekasi Warehouse',
     new_avg_cost: 88365.398,
-    confirmed_at: '2026-10-31',
     last_inbound_date: '2026-10-29',
     local_currency: 'IDR',
-    rmb_to_local_rate: 2724.7956,
-    fx_rate_date: '2026-10-29'
+    rmb_to_local_rate: 2724.7956
   }, overrides || {});
 }
 
@@ -235,6 +233,12 @@ function one(sql, params) {
 test('WAC history import validates master data, writes immutable history only, skips exact duplicates, and keeps FX date-exact', async () => {
   setupSchema();
 
+  const template = await request('/api/wac/history-import/template','GET');
+  assert.equal(template.status,200);
+  assert.deepEqual(template.body.columns,[
+    'SKU','品牌','国家','仓库','历史WAC（本币）','最后入库日期','本币币种','1 RMB = 本币汇率'
+  ]);
+
   const valid = validateWacHistoryImportRows([validRow()]);
   assert.equal(valid.ok, true);
   assert.equal(valid.valid_count, 1);
@@ -254,8 +258,9 @@ test('WAC history import validates master data, writes immutable history only, s
   const history = one('SELECT * FROM wac_history WHERE sku_code = ?', ['NT-HISTORY-01']);
   assert.ok(history);
   assert.equal(Number(history.new_avg_cost),88365.398);
-  assert.equal(history.confirmed_at,'2026-10-31 12:00:00');
+  assert.equal(history.confirmed_at,'2026-10-29 12:00:00');
   assert.equal(history.last_inbound_date,'2026-10-29');
+  assert.equal(history.fx_rate_date,'2026-10-29');
   assert.equal(history.local_currency,'IDR');
   assert.equal(Number(history.rmb_to_local_rate),2724.7956);
   assert.equal(history.source_type,'historical_import');
@@ -295,18 +300,16 @@ test('WAC history import validates master data, writes immutable history only, s
   assert.equal(badPrecheck.body.ok,false);
   assert.ok(badPrecheck.body.blocking.some(x=>x.issue_type==='SKU_MASTER_MISSING'));
 
-  const rateWithoutDate = validateWacHistoryImportRows([validRow({last_inbound_date:'',fx_rate_date:''})]);
+  const rateWithoutDate = validateWacHistoryImportRows([validRow({last_inbound_date:''})]);
   assert.equal(rateWithoutDate.ok,false);
-  assert.ok(rateWithoutDate.blocking.some(x=>x.issue_type==='FX_DATE_REQUIRED_FOR_RATE'));
+  assert.ok(rateWithoutDate.blocking.some(x=>x.issue_type==='HISTORY_DATE_INVALID'));
 
   const noFx = validRow({
     sku_code:'NT-HISTORY-02',
     new_avg_cost:12345,
-    confirmed_at:'2026-10-30',
-    last_inbound_date:'',
+    last_inbound_date:'2026-10-30',
     local_currency:'IDR',
-    rmb_to_local_rate:undefined,
-    fx_rate_date:''
+    rmb_to_local_rate:undefined
   });
   const noFxPrecheck = validateWacHistoryImportRows([noFx]);
   assert.equal(noFxPrecheck.ok,true);
@@ -376,4 +379,18 @@ test('WAC history matrix keeps the agreed dimensions, left alignment, sticky hea
     assert.ok(dbAdapterSource.includes('ALTER TABLE wac_history ADD COLUMN IF NOT EXISTS ' + column),
       'worker_threads startup migration missing: ' + column);
   });
+  const importColumnsStart = appSource.indexOf('const WAC_HISTORY_IMPORT_COLUMNS');
+  const importModalStart = appSource.indexOf('function openWacHistoryImport()', importColumnsStart);
+  const importPayloadStart = appSource.indexOf('function _wacHistoryImportPayload()', importModalStart);
+  assert.ok(importColumnsStart >= 0 && importModalStart > importColumnsStart && importPayloadStart > importModalStart);
+  const importConfig = appSource.slice(importColumnsStart, importPayloadStart);
+  assert.match(importConfig,/last_inbound_date/);
+  assert.doesNotMatch(importConfig,/确认日期|汇率日期|confirmed_at|fx_rate_date/);
+  const templateStart = serverSource.indexOf("app.get('/api/wac/history-import/template'");
+  const templateEnd = serverSource.indexOf("app.post('/api/wac/history-import/precheck'",templateStart);
+  assert.ok(templateStart >= 0 && templateEnd > templateStart);
+  const templateRoute = serverSource.slice(templateStart,templateEnd);
+  assert.match(templateRoute,/columns: \['SKU', '品牌', '国家', '仓库', '历史WAC（本币）', '最后入库日期', '本币币种', '1 RMB = 本币汇率'\]/);
+  assert.doesNotMatch(templateRoute,/确认日期|汇率日期/);
+
 });

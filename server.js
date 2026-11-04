@@ -4751,31 +4751,28 @@ function validateWacHistoryImportRows(items) {
     const costRaw = item && (item.new_avg_cost !== undefined ? item.new_avg_cost :
       (item.historical_wac !== undefined ? item.historical_wac : item.wac));
     const cost = Number(String(costRaw === undefined || costRaw === null ? '' : costRaw).replace(/,/g, '').trim());
-    const confirmedDate = normalizeWacHistoryDate(item && (item.confirmed_at || item.confirmation_date || item.wac_date));
     const inboundRaw = item && (item.last_inbound_date || item['最后入库日期']);
-    const inboundDate = inboundRaw ? normalizeWacHistoryDate(inboundRaw) : '';
+    const historyDate = inboundRaw ? normalizeWacHistoryDate(inboundRaw) : '';
+    const confirmedDate = historyDate;
+    const inboundDate = historyDate;
     const currencyInput = String(item && (item.local_currency || item.currency || '') || '').trim().toUpperCase();
     const rateRaw = item && (item.rmb_to_local_rate !== undefined ? item.rmb_to_local_rate : item.fx_rate);
     const hasRate = rateRaw !== undefined && rateRaw !== null && String(rateRaw).trim() !== '';
     const inputRate = hasRate ? Number(String(rateRaw).replace(/,/g, '').trim()) : null;
-    const fxDateRaw = item && (item.fx_rate_date || item.exchange_rate_date || '');
-    const fxDate = fxDateRaw ? normalizeWacHistoryDate(fxDateRaw) : inboundDate;
+    const fxDate = historyDate;
     let rowHasRequiredError = false;
 
     const requiredIssue = (type, reason) => { rowHasRequiredError = true; pushIssue(rowNo, skuCode, type, reason); };
     if (!skuCode) requiredIssue('SKU_EMPTY', 'SKU不能为空');
     if (!country) requiredIssue('COUNTRY_EMPTY', '国家不能为空');
     if (!warehouse) requiredIssue('WAREHOUSE_EMPTY', '仓库不能为空');
-    if (!confirmedDate) requiredIssue('CONFIRM_DATE_INVALID', '确认日期不能为空或格式无效，需使用 YYYY-MM-DD');
+    if (!historyDate) requiredIssue('HISTORY_DATE_INVALID', '最后入库日期不能为空或格式无效，需使用 YYYY-MM-DD');
     if (costRaw === undefined || costRaw === null || String(costRaw).trim() === '' || !Number.isFinite(cost) || cost <= 0) {
       requiredIssue('WAC_INVALID', '历史WAC必须为大于0的有效数字（本币成本）');
     }
-    if (inboundRaw && !inboundDate) pushIssue(rowNo, skuCode, 'INBOUND_DATE_INVALID', '最后入库日期格式无效，需使用 YYYY-MM-DD');
-    if (inboundDate && confirmedDate && inboundDate > confirmedDate) pushIssue(rowNo, skuCode, 'INBOUND_DATE_AFTER_CONFIRM', '最后入库日期不能晚于WAC确认日期');
-    if (fxDateRaw && !normalizeWacHistoryDate(fxDateRaw)) pushIssue(rowNo, skuCode, 'FX_DATE_INVALID', '汇率日期格式无效，需使用 YYYY-MM-DD');
+
     if (hasRate && (!Number.isFinite(inputRate) || inputRate <= 0)) pushIssue(rowNo, skuCode, 'FX_RATE_INVALID', '人民币汇率必须为大于0的有效数字');
     if (currencyInput && !/^[A-Z]{3,5}$/.test(currencyInput)) pushIssue(rowNo, skuCode, 'CURRENCY_INVALID', '本币币种格式无效，例如 IDR、MYR、THB');
-    if (fxDate && confirmedDate && fxDate > confirmedDate) pushIssue(rowNo, skuCode, 'FX_DATE_AFTER_CONFIRM', '汇率日期不能晚于WAC确认日期');
 
     const sku = skuCode ? masterMap.get(skuCode) : null;
     if (skuCode && !sku) requiredIssue('SKU_MASTER_MISSING', 'SKU「' + skuCode + '」不存在于SKU主数据');
@@ -4792,7 +4789,7 @@ function validateWacHistoryImportRows(items) {
 
     const localCurrency = resolveWacHistoryCurrency(country, currencyInput);
     if (hasRate && !localCurrency) pushIssue(rowNo, skuCode, 'CURRENCY_REQUIRED_FOR_RATE', '填写人民币汇率时必须提供本币币种，或确保国家主数据已配置默认币种');
-    if (hasRate && localCurrency && localCurrency !== 'RMB' && !fxDate) pushIssue(rowNo, skuCode, 'FX_DATE_REQUIRED_FOR_RATE', '填写人民币汇率时，必须同时提供汇率日期或最后入库日期');
+
     if (localCurrency === 'RMB' && hasRate && Math.abs(inputRate - 1) > 0.0000001) {
       pushIssue(rowNo, skuCode, 'RMB_RATE_INVALID', '本币为RMB时，1 RMB = 1 RMB，汇率必须为1');
     }
@@ -4800,7 +4797,7 @@ function validateWacHistoryImportRows(items) {
     const key = [skuCode, country, warehouse, confirmedDate].join('|');
     if (skuCode && country && warehouse && confirmedDate) {
       if (seenKeys.has(key)) {
-        pushIssue(rowNo, skuCode, 'DUPLICATE_IN_FILE', '文件内存在相同SKU、国家、仓库和确认日期的重复记录');
+        pushIssue(rowNo, skuCode, 'DUPLICATE_IN_FILE', '文件内存在相同SKU、国家、仓库和最后入库日期的重复记录');
       } else {
         seenKeys.add(key);
       }
@@ -19031,18 +19028,16 @@ app.get('/api/wac/confirmed-batches', requireApiPermission('ci_view'), asyncHand
 // WAC-HISTORY-IMPORT-01：历史WAC模板、只读预检查与原子导入。
 app.get('/api/wac/history-import/template', requireApiPermission('ci_edit'), asyncHandler((req, res) => {
   res.json({
-    columns: ['SKU', '品牌', '国家', '仓库', '历史WAC（本币）', '确认日期', '最后入库日期', '本币币种', '1 RMB = 本币汇率', '汇率日期'],
+    columns: ['SKU', '品牌', '国家', '仓库', '历史WAC（本币）', '最后入库日期', '本币币种', '1 RMB = 本币汇率'],
     instructions: [
       ['字段', '要求与说明'],
       ['SKU', '必填；必须存在于SKU主数据'],
       ['品牌', '选填；填写时必须与SKU主数据完全一致'],
       ['国家、仓库', '必填；必须与系统仓库主数据中的国家和仓库名称一致'],
       ['历史WAC（本币）', '必填；填写该SKU在对应国家/仓库的历史本币WAC，必须大于0'],
-      ['确认日期', '必填；历史WAC对应的日期，格式 YYYY-MM-DD'],
-      ['最后入库日期', '选填；用于展示最后入库日期及匹配当日汇率'],
+      ['最后入库日期', '必填；作为该条历史WAC的日期及历史汇率匹配日期，格式 YYYY-MM-DD'],
       ['本币币种', '选填；可填 IDR、MYR、THB 等；留空时按国家主数据识别'],
-      ['1 RMB = 本币汇率', '选填；填写历史精确汇率。留空时系统只查对应汇率日期的历史汇率，不会使用今天汇率'],
-      ['汇率日期', '选填；优先级高于最后入库日期。若手动填写人民币汇率，则汇率日期或最后入库日期至少填写一个'],
+      ['1 RMB = 本币汇率', '选填；填写历史精确汇率。留空时系统只查最后入库日期对应的历史汇率，不会使用今天汇率'],
       ['重要说明', '本导入只新增锁定的WAC历史记录，不修改库存总表当前WAC、库存数量或库存货值。']
     ]
   });
