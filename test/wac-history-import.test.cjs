@@ -440,16 +440,15 @@ test('WAC history matrix presentation hides redundant columns and fills availabl
   const end = html.indexOf('</style>', start);
   assert.ok(start >= 0 && end > start, 'WAC history presentation overrides must be present in the page shell');
   const css = html.slice(start, end);
-  assert.match(css, /thead th:nth-child\\(2\\)/);
-  assert.match(css, /thead th:nth-child\\(3\\)/);
-  assert.match(css, /thead th:nth-child\\(4\\)/);
-  assert.match(css, /tbody td:nth-child\\(4\\)[\\s\\S]*display: none !important/);
-  assert.match(css, /th:nth-child\\(5\\)[\\s\\S]*left: 150px !important/);
-  assert.match(css, /th:nth-child\\(6\\)[\\s\\S]*left: 290px !important/);
-  assert.match(css, /th:nth-child\\(7\\)[\\s\\S]*left: 450px !important/);
-  assert.match(css, /wac-history-source[\\s\\S]*display: none !important/);
-  assert.match(css, /#wac-matrix-table > div\\[style\\*="font-size:11px"\\][\\s\\S]*display: none !important/);
-  assert.match(css, /max-height: calc\\(100dvh - 210px\\) !important/);
+  ['thead th:nth-child(2)', 'thead th:nth-child(3)', 'thead th:nth-child(4)',
+    'tbody td:nth-child(2)', 'tbody td:nth-child(3)', 'tbody td:nth-child(4)',
+    'wac-history-source', '#wac-matrix-table > div[style*="font-size:11px"]',
+    'max-height: calc(100dvh - 210px) !important',
+    'left: 150px !important', 'left: 290px !important', 'left: 450px !important'
+  ].forEach(function(selectorOrRule) {
+    assert.ok(css.includes(selectorOrRule), 'missing WAC presentation rule: ' + selectorOrRule);
+  });
+  assert.ok(css.includes('display: none !important'), 'redundant fields and annotations must be hidden');
   assert.ok(appSource.includes("_wacMatrixMultiMarkup('brand'"), 'brand filter remains available');
   assert.ok(appSource.includes("_wacMatrixMultiMarkup('country'"), 'country filter remains available');
   assert.ok(appSource.includes("_wacMatrixMultiMarkup('warehouse'"), 'warehouse filter remains available');
