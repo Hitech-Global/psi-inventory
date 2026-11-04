@@ -118,6 +118,7 @@ function setupSchema() {
       confirmed_at TEXT DEFAULT '',
       logistics_batch_id TEXT,
       last_inbound_date TEXT DEFAULT '',
+      effective_end_date TEXT DEFAULT '',
       local_currency TEXT DEFAULT '',
       rmb_to_local_rate NUMERIC,
       fx_rate_date TEXT DEFAULT '',
@@ -201,6 +202,7 @@ function validRow(overrides) {
     warehouse: 'Bekasi Warehouse',
     new_avg_cost: 88365.398,
     last_inbound_date: '2026-10-29',
+    effective_end_date: '2026-11-01',
     local_currency: 'IDR',
     rmb_to_local_rate: 2724.7956
   }, overrides || {});
@@ -236,7 +238,7 @@ test('WAC history import validates master data, writes immutable history only, s
   const template = await request('/api/wac/history-import/template','GET');
   assert.equal(template.status,200);
   assert.deepEqual(template.body.columns,[
-    'SKU','品牌','国家','仓库','历史WAC（本币）','最后入库日期','本币币种','1 RMB = 本币汇率'
+    'SKU','品牌','国家','仓库','历史WAC（本币）','最后入库日期','结束日期','本币币种','1 RMB = 本币汇率'
   ]);
 
   const valid = validateWacHistoryImportRows([validRow()]);
@@ -260,6 +262,7 @@ test('WAC history import validates master data, writes immutable history only, s
   assert.equal(Number(history.new_avg_cost),88365.398);
   assert.equal(history.confirmed_at,'2026-10-29 12:00:00');
   assert.equal(history.last_inbound_date,'2026-10-29');
+  assert.equal(history.effective_end_date,'2026-11-01');
   assert.equal(history.fx_rate_date,'2026-10-29');
   assert.equal(history.local_currency,'IDR');
   assert.equal(Number(history.rmb_to_local_rate),2724.7956);
@@ -328,6 +331,22 @@ test('WAC history import validates master data, writes immutable history only, s
   assert.equal(importedWithoutFx.rmb_to_local_rate,null,'must not fall back to current-day FX');
 });
 
+test('WAC history import validates effective date ranges and blocks overlapping periods', () => {
+  setupSchema();
+  const overlap = validateWacHistoryImportRows([
+    validRow({row_no:2, last_inbound_date:'2026-10-29', effective_end_date:'2026-10-30'}),
+    validRow({row_no:3, last_inbound_date:'2026-10-30', effective_end_date:'2026-11-01'})
+  ]);
+  assert.equal(overlap.ok,false);
+  assert.ok(overlap.blocking.some(x=>x.issue_type==='IMPORT_PERIOD_OVERLAP'));
+
+  const invalidEnd = validateWacHistoryImportRows([
+    validRow({row_no:2, last_inbound_date:'2026-10-29', effective_end_date:'2026-10-28'})
+  ]);
+  assert.equal(invalidEnd.ok,false);
+  assert.ok(invalidEnd.blocking.some(x=>x.issue_type==='HISTORY_END_BEFORE_START'));
+});
+
 test('WAC history matrix keeps the agreed dimensions, left alignment, sticky header, Mac filters, and import entry', () => {
   const appSource = fs.readFileSync(require.resolve('../app'), 'utf8');
   const serverSource = fs.readFileSync(require.resolve('../server'), 'utf8');
@@ -340,6 +359,7 @@ test('WAC history matrix keeps the agreed dimensions, left alignment, sticky hea
   assert.match(page,/Latest WAC/);
   assert.match(page,/较上次 WAC 变化/);
   assert.match(page,/最后入库日期/);
+  assert.match(page,/effective_end_date/);
   assert.match(page,/品牌/);
   assert.match(page,/国家/);
   assert.match(page,/仓库/);
@@ -380,13 +400,18 @@ test('WAC history matrix keeps the agreed dimensions, left alignment, sticky hea
   assert.match(page,/dates\.map\(dateHeader\)/);
   assert.doesNotMatch(page,/wac-history-fx/);
 
+  const latestStart=serverSource.indexOf('function latestConfirmedWac');
+  const latestEnd=serverSource.indexOf('// P1-03-B',latestStart);
+  assert.ok(latestStart>=0 && latestEnd>latestStart);
+  assert.match(serverSource.slice(latestStart,latestEnd),/ORDER BY confirmed_at DESC, version_no DESC/);
+
   const routeStart=serverSource.indexOf("app.post('/api/wac/history-import'");
   const routeEnd=serverSource.indexOf("/* WAC历史矩阵",routeStart);
   assert.ok(routeStart>=0 && routeEnd>routeStart);
   const importRoute=serverSource.slice(routeStart,routeEnd);
   assert.doesNotMatch(importRoute,/UPDATE inventory|INSERT INTO inventory/);
   // PostgreSQL production uses db.js worker_threads migrations, not db-pg.js initDatabase.
-  ['last_inbound_date','local_currency','rmb_to_local_rate','fx_rate_date','source_type','import_batch_id'].forEach(function(column) {
+  ['last_inbound_date','effective_end_date','local_currency','rmb_to_local_rate','fx_rate_date','source_type','import_batch_id'].forEach(function(column) {
     assert.ok(dbAdapterSource.includes('ALTER TABLE wac_history ADD COLUMN IF NOT EXISTS ' + column),
       'worker_threads startup migration missing: ' + column);
   });
@@ -396,12 +421,13 @@ test('WAC history matrix keeps the agreed dimensions, left alignment, sticky hea
   assert.ok(importColumnsStart >= 0 && importModalStart > importColumnsStart && importPayloadStart > importModalStart);
   const importConfig = appSource.slice(importColumnsStart, importPayloadStart);
   assert.match(importConfig,/last_inbound_date/);
+  assert.match(importConfig,/effective_end_date/);
   assert.doesNotMatch(importConfig,/确认日期|汇率日期|confirmed_at|fx_rate_date/);
   const templateStart = serverSource.indexOf("app.get('/api/wac/history-import/template'");
   const templateEnd = serverSource.indexOf("app.post('/api/wac/history-import/precheck'",templateStart);
   assert.ok(templateStart >= 0 && templateEnd > templateStart);
   const templateRoute = serverSource.slice(templateStart,templateEnd);
-  assert.match(templateRoute,/columns: \['SKU', '品牌', '国家', '仓库', '历史WAC（本币）', '最后入库日期', '本币币种', '1 RMB = 本币汇率'\]/);
+  assert.match(templateRoute,/columns: \['SKU', '品牌', '国家', '仓库', '历史WAC（本币）', '最后入库日期', '结束日期', '本币币种', '1 RMB = 本币汇率'\]/);
   assert.doesNotMatch(templateRoute,/确认日期|汇率日期/);
 
 });

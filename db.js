@@ -308,6 +308,7 @@ if (driver === 'pg') {
         "ALTER TABLE wac_history ADD COLUMN IF NOT EXISTS logistics_batch_id TEXT",
         // WAC-HISTORY-IMPORT-01：生产 DB_DRIVER=pg 使用 worker_threads，同步迁移必须登记在此数组。
         "ALTER TABLE wac_history ADD COLUMN IF NOT EXISTS last_inbound_date TEXT DEFAULT ''",
+        "ALTER TABLE wac_history ADD COLUMN IF NOT EXISTS effective_end_date TEXT DEFAULT ''",
         "ALTER TABLE wac_history ADD COLUMN IF NOT EXISTS local_currency TEXT DEFAULT ''",
         "ALTER TABLE wac_history ADD COLUMN IF NOT EXISTS rmb_to_local_rate NUMERIC(24,8)",
         "ALTER TABLE wac_history ADD COLUMN IF NOT EXISTS fx_rate_date TEXT DEFAULT ''",

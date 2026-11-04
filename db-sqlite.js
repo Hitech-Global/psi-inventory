@@ -2197,6 +2197,7 @@ function initDatabase() {
       confirmed_at TEXT DEFAULT '',
       logistics_batch_id TEXT,
       last_inbound_date TEXT DEFAULT '',
+      effective_end_date TEXT DEFAULT '',
       local_currency TEXT DEFAULT '',
       rmb_to_local_rate REAL,
       fx_rate_date TEXT DEFAULT '',
@@ -2205,6 +2206,9 @@ function initDatabase() {
       created_at TEXT DEFAULT (datetime('now'))
     )
   `);
+
+  // 兼容旧SQLite数据库：为WAC历史增加有效期结束日期。
+  try { d.exec("ALTER TABLE wac_history ADD COLUMN effective_end_date TEXT DEFAULT ''"); } catch(e) {}
 
   // WAC-BATCH-EXCLUSION-01：可恢复的无需计算记录；不触碰物流批次、CI、PL、付款或WAC历史。
   d.exec(`CREATE TABLE IF NOT EXISTS wac_batch_exclusions (
