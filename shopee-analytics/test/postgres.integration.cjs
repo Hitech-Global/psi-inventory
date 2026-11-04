@@ -60,10 +60,11 @@ const { FeishuAuthRepository, hashToken } = require('../src/feishu-auth');
       'shopee_shop_health_events',
       'shopee_product_traffic_daily',
       'shopee_seller_centre_ads_period',
+      'shopee_affiliate_daily',
     ]) {
       assert(names.has(expected), `missing table ${expected}`);
     }
-    assert.strictEqual(names.size, 47, 'full schema bootstrap must expose exactly 47 shopee_* tables');
+    assert.strictEqual(names.size, 48, 'full schema bootstrap must expose exactly 48 shopee_* tables');
 
     // TikTok 表是独立命名空间（tiktok_*），不计入 shopee_* 的数量。
     const tiktokTables = await pool.query(

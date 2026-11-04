@@ -23,6 +23,8 @@ const {
   parseProductSheets,
   parseAdsReportHeadings,
   parseAdsRows,
+  parseAffiliateContribution,
+  sheetToRows,
 } = require('../src/import/seller-centre');
 
 function parseArgs(argv) {
@@ -41,7 +43,7 @@ function parseArgs(argv) {
 function main() {
   const args = parseArgs(process.argv.slice(2));
   if (!args.out) throw new Error('--out is required');
-  const pack = { meta: {}, orders: [], products: [], ads: [] };
+  const pack = { meta: {}, orders: [], products: [], ads: [], affiliate: [] };
 
   if (args.stats) {
     pack.orders = parseShopOrderSheets(XLSX.readFile(path.resolve(args.stats)));
@@ -55,6 +57,15 @@ function main() {
     pack.meta = meta;
     pack.ads = parseAdsRows(header, rows);
   }
+  if (args.stats) {
+    // The affiliate's figures live in the traffic breakdown, under the
+    // one sheet that counts what was paid for.
+    const workbook = XLSX.readFile(path.resolve(args.stats));
+    const name = workbook.SheetNames.find(sheet => sheet.includes('Source Contribution (paid'));
+    if (name) {
+      pack.affiliate = parseAffiliateContribution(sheetToRows(workbook.Sheets[name]));
+    }
+  }
 
   const json = JSON.stringify(pack);
   const packed = zlib.gzipSync(json).toString('base64');
@@ -62,7 +73,8 @@ function main() {
   console.log(`  ${path.resolve(args.out)}`);
   console.log(`  订单 ${pack.orders.reduce((sum, sheet) => sum + sheet.days.length, 0)} 行`
     + ` · 商品 ${pack.products.reduce((sum, sheet) => sum + sheet.products.length, 0)} 行`
-    + ` · 广告 ${pack.ads.length} 行`);
+    + ` · 广告 ${pack.ads.length} 行`
+    + ` · 联盟 ${pack.affiliate.length} 行`);
   console.log(`  ${(packed.length / 1024).toFixed(0)} KB（原本 ${(json.length / 1024).toFixed(0)} KB）`);
 }
 

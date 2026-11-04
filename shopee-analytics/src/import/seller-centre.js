@@ -422,6 +422,77 @@ function parseAdsRows(header, rows) {
   return out;
 }
 
+/**
+ * The affiliate's figures for each day.
+ *
+ * The export breaks the shop's traffic down by where it came from, and
+ * the affiliate is one of those places. Its rows come in groups: a line
+ * for a source over the whole period, then a line for each day under it.
+ *
+ * The groups hold the same days seen by different attributions — the
+ * figures under them are the same to within a rounding, not parts of a
+ * whole. So one line is taken for each day, the first one that appears:
+ * it is the one that says the day is a hundred per cent of the affiliate.
+ * Adding the groups together would count the same sales several times.
+ *
+ * The rates in the export are not used. One of them reads three hundred
+ * and twenty-five per cent, which is the export's own arithmetic rather
+ * than anything the shop did; the rates here are worked out from the
+ * figures instead.
+ */
+function parseAffiliateContribution(rows) {
+  const days = new Map();
+  // The block is found by its headings rather than by its banner: the
+  // banner and the source's own total both read "Shopee Affiliate", so
+  // the banner alone cannot tell where the block begins.
+  const headerNeedles = ['Traffic Source', 'Sales (IDR)', 'Content Views'];
+  let columns = null;
+  let headerIndex = -1;
+  for (let index = 0; index < rows.length; index += 1) {
+    const cells = (rows[index] || []).map(cell => String(cell ?? '').trim());
+    if (headerNeedles.every(needle => cells.includes(needle))) {
+      columns = cells;
+      headerIndex = index;
+      break;
+    }
+  }
+  if (!columns) return [];
+
+  for (let index = headerIndex + 1; index < rows.length; index += 1) {
+    const row = rows[index] || [];
+    const cells = row.map(cell => String(cell ?? '').trim());
+    // The next block's headings end this one. Every block starts with
+    // "Traffic Source"; only this one carries "Content Views".
+    if (cells.includes('Traffic Source') && !cells.includes('Content Views')) break;
+
+    const date = parseIndonesianDate(String(row[0] ?? '').trim());
+    if (!date) continue;
+    // One line per day: the groups are the same days seen differently.
+    if (days.has(date)) continue;
+
+    const at = name => {
+      const position = columns.indexOf(name);
+      return position < 0 ? null : row[position];
+    };
+    days.set(date, {
+      date,
+      gmv: parseIndonesianNumber(at('Sales (IDR)')),
+      orders: parseIndonesianNumber(at('Orders')),
+      units: parseIndonesianNumber(at('Units')),
+      contentViews: parseIndonesianNumber(at('Content Views')),
+      contentViewers: parseIndonesianNumber(at('Content Viewers')),
+      productClicks: parseIndonesianNumber(at('Product Clicks')),
+    });
+  }
+
+  return [...days.values()]
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map(entry => ({
+      ...entry,
+      ctr: entry.contentViews ? entry.productClicks / entry.contentViews : null,
+    }));
+}
+
 module.exports = {
   parseIndonesianNumber,
   parseIndonesianPercent,
@@ -440,5 +511,6 @@ module.exports = {
   shopFromFileName,
   parseAdsReportHeadings,
   parseAdsRows,
+  parseAffiliateContribution,
   sheetToRows,
 };

@@ -522,6 +522,26 @@ CREATE TABLE IF NOT EXISTS shopee_product_traffic_daily (
 CREATE INDEX IF NOT EXISTS idx_shopee_product_traffic_parent_sku
   ON shopee_product_traffic_daily (shop_id, parent_sku);
 
+-- 联盟营销（Shopee Affiliate）的按天数据。
+--
+-- 开放平台不给这些数：联盟内容带来多少曝光、多少人看、多少人点进商品、
+-- 卖出多少、佣金多少，都只在卖家中心的报表里。
+CREATE TABLE IF NOT EXISTS shopee_affiliate_daily (
+  shop_id BIGINT NOT NULL,
+  event_date DATE NOT NULL,
+  gmv NUMERIC(20,6),
+  orders BIGINT,
+  units BIGINT,
+  commission NUMERIC(20,6),
+  free_samples BIGINT,
+  content_views BIGINT,
+  content_viewers BIGINT,
+  product_clicks BIGINT,
+  raw_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (shop_id, event_date)
+);
+
 -- 卖家中心导出的广告数据：整个区间的汇总，不是按天的。
 --
 -- 与按天同步的广告表分开存：粒度不同，放在一起会让"某天的花费"这种

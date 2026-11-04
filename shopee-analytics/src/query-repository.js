@@ -482,8 +482,29 @@ class ShopeeQueryRepository {
            AND order_status=$5
        ),
        ads AS (
-         SELECT event_date, COALESCE(SUM(expense),0) AS expense
+         SELECT event_date,
+                COALESCE(SUM(expense),0) AS expense,
+                COALESCE(SUM(impressions),0) AS ad_impressions,
+                COALESCE(SUM(clicks),0) AS ad_clicks,
+                COALESCE(SUM(broad_gmv),0) AS ad_gmv,
+                COALESCE(SUM(broad_orders),0) AS ad_orders,
+                COALESCE(SUM(direct_gmv),0) AS ad_direct_gmv,
+                COALESCE(SUM(direct_orders),0) AS ad_direct_orders
          FROM shopee_ad_campaign_daily
+         WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3
+         GROUP BY event_date
+       ),
+       affiliate AS (
+         SELECT event_date,
+                COALESCE(SUM(gmv),0) AS affiliate_gmv,
+                COALESCE(SUM(orders),0) AS affiliate_orders,
+                COALESCE(SUM(units),0) AS affiliate_units,
+                COALESCE(SUM(content_views),0) AS affiliate_content_views,
+                COALESCE(SUM(content_viewers),0) AS affiliate_content_viewers,
+                COALESCE(SUM(product_clicks),0) AS affiliate_product_clicks,
+                COALESCE(SUM(commission),0) AS affiliate_commission,
+                COALESCE(SUM(free_samples),0) AS affiliate_free_samples
+         FROM shopee_affiliate_daily
          WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3
          GROUP BY event_date
        ),
@@ -555,10 +576,13 @@ class ShopeeQueryRepository {
               h.shop_rating, h.return_refund_rate, h.cancellation_rate,
               h.late_shipment_rate, h.csat_rate, h.response_rate, h.preparation_time,
               (SELECT COUNT(*) FROM shopee_shop_health_daily
-                WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3) AS shop_health_rows
+                WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3) AS shop_health_rows,
+              (SELECT COUNT(*) FROM shopee_affiliate_daily
+                WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3) AS affiliate_rows
        FROM dates d
        LEFT JOIN bi ON bi.event_date=d.event_date
        LEFT JOIN ads a ON a.event_date=d.event_date
+       LEFT JOIN affiliate af ON af.event_date=d.event_date
        LEFT JOIN orders_agg o ON o.event_date=d.event_date
        LEFT JOIN returns_agg r ON r.event_date=d.event_date
        LEFT JOIN health h ON h.event_date=d.event_date
@@ -577,6 +601,7 @@ class ShopeeQueryRepository {
       orderAmounts: Number(first.order_amount_rows || 0) > 0,
       livestream: Number(first.livestream_rows || 0) > 0,
       shopHealth: Number(first.shop_health_rows || 0) > 0,
+      affiliate: Number(first.affiliate_rows || 0) > 0,
     };
 
     const days = result.rows.map(row => ({
@@ -588,6 +613,20 @@ class ShopeeQueryRepository {
       uniqueVisitors: row.unique_visitors === null ? null : Number(row.unique_visitors),
       orderConversionRate: row.order_conversion_rate === null ? null : Number(row.order_conversion_rate),
       adsExpense: Number(row.ads_expense || 0),
+      adsImpressions: Number(row.ads_ad_impressions || 0),
+      adsClicks: Number(row.ads_ad_clicks || 0),
+      adsGmv: Number(row.ads_ad_gmv || 0),
+      adsOrders: Number(row.ads_ad_orders || 0),
+      adsDirectGmv: Number(row.ads_ad_direct_gmv || 0),
+      adsDirectOrders: Number(row.ads_ad_direct_orders || 0),
+      affiliateGmv: Number(row.affiliate_affiliate_gmv || 0),
+      affiliateOrders: Number(row.affiliate_affiliate_orders || 0),
+      affiliateUnits: Number(row.affiliate_affiliate_units || 0),
+      affiliateContentViews: Number(row.affiliate_affiliate_content_views || 0),
+      affiliateContentViewers: Number(row.affiliate_affiliate_content_viewers || 0),
+      affiliateProductClicks: Number(row.affiliate_affiliate_product_clicks || 0),
+      affiliateCommission: Number(row.affiliate_affiliate_commission || 0),
+      affiliateFreeSamples: Number(row.affiliate_affiliate_free_samples || 0),
       paidOrders: Number(row.paid_orders || 0),
       cancelledOrders: Number(row.cancelled_orders || 0),
       orderGmv: Number(row.order_gmv || 0),

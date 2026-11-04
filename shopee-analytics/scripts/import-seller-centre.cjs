@@ -203,6 +203,34 @@ async function importProductSheets(pool, { filePath, shopId, days, sheets: given
   return { written, sheets: sheets.length };
 }
 
+async function importAffiliate(pool, { shopId, days: given }) {
+  const list = given || [];
+  let written = 0;
+  for (const day of list) {
+    await pool.query(
+      `INSERT INTO shopee_affiliate_daily
+       (shop_id, event_date, gmv, orders, units, commission, free_samples,
+        content_views, content_viewers, product_clicks, raw_json, synced_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,now())
+       ON CONFLICT (shop_id, event_date) DO UPDATE SET
+        gmv=EXCLUDED.gmv, orders=EXCLUDED.orders, units=EXCLUDED.units,
+        commission=EXCLUDED.commission, free_samples=EXCLUDED.free_samples,
+        content_views=EXCLUDED.content_views,
+        content_viewers=EXCLUDED.content_viewers,
+        product_clicks=EXCLUDED.product_clicks,
+        raw_json=EXCLUDED.raw_json, synced_at=now()`,
+      [
+        shopId, day.date, day.gmv, day.orders, day.units,
+        day.commission || null, day.freeSamples || null,
+        day.contentViews, day.contentViewers, day.productClicks,
+        JSON.stringify(day),
+      ],
+    );
+    written += 1;
+  }
+  return { written };
+}
+
 async function importAdsCsv(pool, { filePath, shopId, startDate, endDate, ads: given, meta: givenMeta }) {
   let meta = givenMeta;
   let parsed = given;
@@ -313,6 +341,10 @@ async function main() {
       });
       console.log(`商品访客数据：${result.written} 行（${result.sheets} 个表）`);
     }
+    if (pack && pack.affiliate && pack.affiliate.length) {
+      const result = await importAffiliate(pool, { shopId, days: pack.affiliate });
+      console.log(`联盟营销数据：${result.written} 行`);
+    }
     if (args.ads || ads) {
       const result = await importAdsCsv(pool, {
         filePath: args.ads ? path.resolve(args.ads) : null,
@@ -343,4 +375,5 @@ module.exports = {
   importShopOrderSheets,
   importProductSheets,
   importAdsCsv,
+  importAffiliate,
 };

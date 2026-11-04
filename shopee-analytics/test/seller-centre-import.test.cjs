@@ -202,3 +202,32 @@ test('the products\' attention is asked for by name, not by guessing', () => {
     assert.ok(repository.includes(column), `the repository must read ${column}`);
   }
 });
+
+test('the affiliate is read for each day, and only once', () => {
+  const evaluation = require('../src/import/seller-centre');
+  // The affiliate's rows come in groups: a total for a source, then a line
+  // for each day under it. The groups hold the same days seen by different
+  // attributions, so adding them would count the same sales twice.
+  const rows = [
+    ['Shopee Affiliate', null, null],
+    ['Traffic Source', 'Sales Ratio', 'Sales (IDR)', 'Content Views', 'Product Clicks',
+      'Orders', 'Units', 'CTR', 'Order Conversion Rate', 'Sales per Order', 'Buyers',
+      'Content Viewers', 'Unique Product Clicks'],
+    ['Shopee Affiliate', '100,00%', '29.256.014', '88.647', '7.602', '186', '190', '8,58%', '0,21%', '157.289,32', '186', '15.000', '4.000'],
+    ['01-10-2026', '100,00%', '243.200', '3.712', '220', '3', '3', '5,93%', '0,08%', '81.066,67', '3', '1.058', '158'],
+    ['02-10-2026', '100,00%', '921.532', '2.740', '192', '6', '6', '7,01%', '0,22%', '153.588,67', '6', '643', '121'],
+    ['Shopee Affiliate', '100,00%', '29.256.014', '88.647', '7.602', '186', '190', '8,58%', '0,21%', '157.289,32', '186', '15.000', '4.000'],
+    ['01-10-2026', '100,00%', '243.200', '3.700', '218', '3', '3', '5,89%', '0,08%', '81.066,67', '3', '1.050', '155'],
+  ];
+  const days = evaluation.parseAffiliateContribution(rows);
+  assert.equal(days.length, 2, 'two days, not four');
+  assert.equal(days[0].date, '2026-10-01');
+  assert.equal(days[0].gmv, 243200);
+  assert.equal(days[0].orders, 3);
+  assert.equal(days[0].contentViews, 3712);
+  assert.equal(days[0].contentViewers, 1058);
+  assert.equal(days[0].productClicks, 220);
+  // The rate is worked out here: the export's own reads three hundred and
+  // twenty-five per cent in another block.
+  assert.ok(Math.abs(days[0].ctr - 220 / 3712) < 1e-9, 'the rate must be worked out from the figures');
+});

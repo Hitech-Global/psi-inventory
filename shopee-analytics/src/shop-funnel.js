@@ -69,15 +69,47 @@ const METRIC_GROUPS = [
   },
   {
     key: 'afterSales',
-    label: '售后与广告',
-    labelEn: 'After-sales and advertising',
+    label: '售后',
+    labelEn: 'After-sales',
     kind: 'body',
     rows: [
       { key: 'refundOrder', label: 'Refund Order', labelEn: 'Refund Order', format: 'number' },
       { key: 'refundGmv', label: 'Refund GMV', labelEn: 'Refund GMV', format: 'money' },
       { key: 'cancelledOrder', label: 'Cancelled Order', labelEn: 'Cancelled Order', format: 'number' },
       { key: 'cancelledSales', label: 'Cancelled Sales', labelEn: 'Cancelled Sales', format: 'money' },
+    ],
+  },
+  {
+    key: 'advertising',
+    label: '广告',
+    labelEn: 'Advertising',
+    kind: 'body',
+    rows: [
       { key: 'adsExpense', label: 'Ads Expense', labelEn: 'Ads Expense', format: 'money' },
+      { key: 'adsImpressions', label: 'Ads View', labelEn: 'Ads View', format: 'number' },
+      { key: 'adsClicks', label: 'Ads Click', labelEn: 'Ads Click', format: 'number' },
+      { key: 'adsCtr', label: 'Ads CTR', labelEn: 'Ads CTR', format: 'percent' },
+      { key: 'adsCpc', label: 'Ads CPC', labelEn: 'Ads CPC', format: 'money' },
+      { key: 'adsOrders', label: 'Ads Order', labelEn: 'Ads Order', format: 'number' },
+      { key: 'adsGmv', label: 'Ads GMV', labelEn: 'Ads GMV', format: 'money' },
+      { key: 'adsRoas', label: 'Ads ROI', labelEn: 'Ads ROI', format: 'number' },
+      { key: 'adsOrderShare', label: 'Ads Order/Total Order', labelEn: 'Ads Order Share', format: 'percent' },
+    ],
+  },
+  {
+    key: 'affiliate',
+    label: '联盟营销',
+    labelEn: 'Affiliate marketing',
+    kind: 'body',
+    rows: [
+      { key: 'affiliateGmv', label: 'AMS GMV', labelEn: 'AMS GMV', format: 'money' },
+      { key: 'affiliateOrders', label: 'AMS Order', labelEn: 'AMS Order', format: 'number' },
+      { key: 'affiliateCommission', label: 'AMS Commission', labelEn: 'AMS Commission', format: 'money' },
+      { key: 'affiliateRoas', label: 'AMS ROI', labelEn: 'AMS ROI', format: 'number' },
+      { key: 'affiliateFreeSamples', label: 'AMS Free Sample', labelEn: 'AMS Free Sample', format: 'number' },
+      { key: 'affiliateContentViews', label: 'AMS Content Views', labelEn: 'AMS Content Views', format: 'number' },
+      { key: 'affiliateContentViewers', label: 'AMS Content Viewers', labelEn: 'AMS Content Viewers', format: 'number' },
+      { key: 'affiliateProductClicks', label: 'AMS Product Clicks', labelEn: 'AMS Product Clicks', format: 'number' },
     ],
   },
 ];
@@ -96,6 +128,23 @@ const SOURCE_LABELS = {
   productClicks: '店铺访客数据（Business Insights，来自 Brand Portal）',
   ctr: '店铺访客数据（Business Insights，来自 Brand Portal）',
   conversionRate: '店铺访客数据（Business Insights，来自 Brand Portal）',
+  adsExpense: '广告数据（Shopee 广告接口，按天）',
+  adsImpressions: '广告数据（Shopee 广告接口，按天）',
+  adsClicks: '广告数据（Shopee 广告接口，按天）',
+  adsCtr: '广告数据（Shopee 广告接口，按天）',
+  adsCpc: '广告数据（Shopee 广告接口，按天）',
+  adsOrders: '广告数据（Shopee 广告接口，按天）',
+  adsGmv: '广告数据（Shopee 广告接口，按天）',
+  adsRoas: '广告数据（Shopee 广告接口，按天）',
+  adsOrderShare: '广告数据（Shopee 广告接口，按天）',
+  affiliateGmv: '联盟营销数据（卖家中心导出）',
+  affiliateOrders: '联盟营销数据（卖家中心导出）',
+  affiliateCommission: '联盟营销数据（卖家中心导出）',
+  affiliateRoas: '联盟营销数据（卖家中心导出）',
+  affiliateFreeSamples: '联盟营销数据（卖家中心导出）',
+  affiliateContentViews: '联盟营销数据（卖家中心导出）',
+  affiliateContentViewers: '联盟营销数据（卖家中心导出）',
+  affiliateProductClicks: '联盟营销数据（卖家中心导出）',
   refundOrder: '退货数据（ERP 退货接口）',
   refundGmv: '退货数据（ERP 退货接口）',
   shopRating: '店铺健康（ERP 店铺表现接口）',
@@ -128,6 +177,10 @@ const SOURCE_ACTIONS = {
     '在「店铺诊断」页点击「连接 Brand Portal」完成授权后，同步与回填会自动带出直播时长、观看与直播成交额。',
   '店铺健康（ERP 店铺表现接口）':
     '在「店铺接口」页点击「连接 ERP」完成授权后，同步会带出店铺评分与履约质量（发货时效、取消率、退货退款率、客服满意率）。',
+  '广告数据（Shopee 广告接口，按天）':
+    '在「广告诊断」页同步广告数据后，这里会带出曝光、点击、花费、成交与投产比。',
+  '联盟营销数据（卖家中心导出）':
+    '在卖家中心导出联盟营销（Ads & Affiliate）报表并导入，这里会带出联盟带来的曝光、成交、佣金与投产比。',
 };
 
 function toNumber(value) {
@@ -160,6 +213,10 @@ function buildDayMetrics(row = {}, sources = {}) {
   const returnsFilled = sources.returns !== false;
   const livestreamFilled = sources.livestream !== false;
   const shopHealthFilled = sources.shopHealth !== false;
+  // The affiliate figures come from a report read out of the seller centre,
+  // so until that has been read there is nothing to say — which is not the
+  // same as saying the affiliate brought nothing.
+  const affiliateFilled = sources.affiliate !== false;
   // Orders may be recorded with a number and a state but no amount, in
   // which case there is no sales figure to report.
   const orderAmountsFilled = sources.orderAmounts !== false;
@@ -194,6 +251,24 @@ function buildDayMetrics(row = {}, sources = {}) {
     cancelledOrder: toNumber(row.cancelledOrders),
     cancelledSales: orderAmountsFilled ? toNumber(row.cancelledSales) : null,
     adsExpense: toNumber(row.adsExpense),
+    adsImpressions: toNumber(row.adsImpressions),
+    adsClicks: toNumber(row.adsClicks),
+    adsGmv: toNumber(row.adsGmv),
+    adsOrders: toNumber(row.adsOrders),
+    adsCtr: divide(toNumber(row.adsClicks), toNumber(row.adsImpressions)),
+    adsCpc: divide(toNumber(row.adsExpense), toNumber(row.adsClicks)),
+    adsRoas: divide(toNumber(row.adsGmv), toNumber(row.adsExpense)),
+    adsOrderShare: divide(toNumber(row.adsOrders), order),
+    affiliateGmv: affiliateFilled ? toNumber(row.affiliateGmv) : null,
+    affiliateOrders: affiliateFilled ? toNumber(row.affiliateOrders) : null,
+    affiliateUnits: affiliateFilled ? toNumber(row.affiliateUnits) : null,
+    affiliateContentViews: affiliateFilled ? toNumber(row.affiliateContentViews) : null,
+    affiliateContentViewers: affiliateFilled ? toNumber(row.affiliateContentViewers) : null,
+    affiliateProductClicks: affiliateFilled ? toNumber(row.affiliateProductClicks) : null,
+    affiliateCommission: affiliateFilled ? toNumber(row.affiliateCommission) : null,
+    affiliateFreeSamples: affiliateFilled ? toNumber(row.affiliateFreeSamples) : null,
+    affiliateRoas: affiliateFilled
+      ? divide(toNumber(row.affiliateGmv), toNumber(row.affiliateCommission)) : null,
     shopRating: shopHealthFilled ? toNumber(row.shopRating) : null,
     returnRefundRate: shopHealthFilled ? toNumber(row.returnRefundRate) : null,
     cancellationRate: shopHealthFilled ? toNumber(row.cancellationRate) : null,
