@@ -66,6 +66,16 @@ def git(*args):
     ).stdout.strip()
 
 
+def file_mode(path):
+    """取 git 记录的文件模式。
+
+    直接问 git（而不是看磁盘权限）—— git 只跟踪"是否可执行"这一个位，
+    磁盘上的其它权限位它并不关心，所以 ls 的结果会误导。
+    """
+    mode = git("ls-files", "--stage", "--", path).split(" ", 1)[0]
+    return mode if mode in ("100644", "100755") else "100644"
+
+
 def main():
     branch = sys.argv[1] if len(sys.argv) > 1 else git("rev-parse", "--abbrev-ref", "HEAD")
     local = git("rev-parse", "HEAD")
@@ -99,7 +109,9 @@ def main():
         })
         entries.append({
             "path": path,
-            "mode": "100644",
+            # 取文件真实的权限位。之前这里写死 "100644"，结果每次推这个脚本
+            # 都会把它自己的执行位抹掉 —— 一个用来推送的脚本却不能直接运行。
+            "mode": file_mode(path),
             "type": "blob",
             "sha": blob["sha"],
         })
