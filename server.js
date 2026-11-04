@@ -14487,6 +14487,80 @@ function payableItemsSettlementBreakdown(itemIds, opts) {
   return result;
 }
 
+async function payableItemsSettlementBreakdownAsync(itemIds, opts) {
+  const excludeLegacy = !!(opts && opts.excludeLegacy);
+  const result = new Map();
+  const ids = [...new Set((itemIds || []).filter(Boolean))];
+  ids.forEach(id => result.set(id, { paidMinor: 0, deductionMinor: 0, roundingMinor: 0 }));
+  if (!ids.length) return result;
+
+  const priRows = await readRowsAsync(
+    'SELECT pri.id, pri.payable_item_id, pri.payment_request_id, pri.requested_amount_minor ' +
+    'FROM payment_request_items pri JOIN payment_requests pr ON pr.id = pri.payment_request_id ' +
+    'WHERE pri.payable_item_id IN (' + ids.map(() => '?').join(',') + ') ' +
+    'AND pr.payment_status NOT IN (\'cancelled\',\'rejected\') ' +
+    'AND pr.approval_status NOT IN (\'cancelled\',\'rejected\')',
+    ids
+  );
+  if (!priRows.length) return result;
+  const priIds = priRows.map(r => r.id);
+  const prIds = [...new Set(priRows.map(r => r.payment_request_id))];
+
+  const [paidRows, legacyRows, settlementRows, totalRows] = await Promise.all([
+    readRowsAsync(
+      'SELECT payment_request_item_id, SUM(allocated_amount_minor) AS paid_minor FROM payment_allocations ' +
+      'WHERE status = \'reconciled\' AND payment_request_item_id IN (' + priIds.map(() => '?').join(',') + ') ' +
+      'GROUP BY payment_request_item_id',
+      priIds
+    ),
+    excludeLegacy ? Promise.resolve([]) : readRowsAsync(
+      'SELECT payment_request_id, SUM(amount) AS amt FROM payment_settlement_logs ' +
+      'WHERE status = \'applied\' AND event_type = \'payment\' AND is_legacy = 1 ' +
+      'AND payment_request_id IN (' + prIds.map(() => '?').join(',') + ') GROUP BY payment_request_id',
+      prIds
+    ),
+    readRowsAsync(
+      'SELECT payment_request_id, event_type, SUM(amount) AS amt FROM payment_settlement_logs ' +
+      'WHERE status = \'applied\' AND event_type IN (\'deduction\',\'rounding\') ' +
+      'AND payment_request_id IN (' + prIds.map(() => '?').join(',') + ') GROUP BY payment_request_id, event_type',
+      prIds
+    ),
+    readRowsAsync(
+      'SELECT payment_request_id, SUM(requested_amount_minor) AS total_minor FROM payment_request_items ' +
+      'WHERE payment_request_id IN (' + prIds.map(() => '?').join(',') + ') GROUP BY payment_request_id',
+      prIds
+    )
+  ]);
+
+  const paidByPri = new Map();
+  (paidRows || []).forEach(r => paidByPri.set(r.payment_request_item_id, Number(r.paid_minor || 0)));
+  const legacyPaidByPr = new Map();
+  (legacyRows || []).forEach(r => legacyPaidByPr.set(r.payment_request_id, amountToMinor(r.amt)));
+  const dedByPr = new Map();
+  const rndByPr = new Map();
+  (settlementRows || []).forEach(r => {
+    const m = amountToMinor(r.amt);
+    if (r.event_type === 'deduction') dedByPr.set(r.payment_request_id, m);
+    else rndByPr.set(r.payment_request_id, m);
+  });
+  const totalByPr = new Map();
+  (totalRows || []).forEach(r => totalByPr.set(r.payment_request_id, Number(r.total_minor || 0)));
+
+  for (const r of priRows) {
+    const share = (totalByPr.get(r.payment_request_id) || 0) > 0
+      ? (Number(r.requested_amount_minor || 0) / totalByPr.get(r.payment_request_id)) : 0;
+    const legacyPaid = (legacyPaidByPr.get(r.payment_request_id) || 0) * share;
+    const paid = (paidByPri.get(r.id) || 0) + Math.round(legacyPaid);
+    const deduction = Math.round((dedByPr.get(r.payment_request_id) || 0) * share);
+    const rounding = Math.round((rndByPr.get(r.payment_request_id) || 0) * share);
+    const cur = result.get(r.payable_item_id);
+    cur.paidMinor += paid;
+    cur.deductionMinor += deduction;
+    cur.roundingMinor += rounding;
+  }
+  return result;
+}
+
 // 单项剩余可付金额（minor），不足 0 时归 0
 function payableItemRemainingMinor(item) {
   if (!item) return 0;
@@ -16269,6 +16343,69 @@ function derivePayableSourceRefs(rows) {
   return out;
 }
 
+async function derivePayableSourceRefsAsync(rows) {
+  const ciIds = [...new Set(rows.map(r => r.source_ci_id).filter(Boolean))];
+  const piIds = [...new Set(rows.map(r => r.source_id).filter(Boolean))];
+  const payerEntityKeys = [...new Set(rows
+    .filter(r => r.source_type === 'manual')
+    .map(r => String(r.payer_entity_key || '').trim())
+    .filter(Boolean))];
+
+  const [ciRows, historicalCiRows, historicalByNoRows, piRows, payerRows] = await Promise.all([
+    ciIds.length ? readRowsAsync(
+      'SELECT id, ci_no, related_pi_no, country, brand FROM commercial_invoices WHERE id IN (' + ciIds.map(() => '?').join(',') + ')', ciIds
+    ) : Promise.resolve([]),
+    ciIds.length ? readRowsAsync(
+      'SELECT id, historical_ci_no AS ci_no, country, brand_name AS brand FROM historical_commercial_invoices WHERE id IN (' + ciIds.map(() => '?').join(',') + ')', ciIds
+    ) : Promise.resolve([]),
+    readRowsAsync('SELECT historical_ci_no, historical_ci_no AS ci_no, country, brand_name AS brand FROM historical_commercial_invoices'),
+    piIds.length ? readRowsAsync(
+      'SELECT id, pi_no, country, brand FROM proforma_invoices WHERE id IN (' + piIds.map(() => '?').join(',') + ')', piIds
+    ) : Promise.resolve([]),
+    payerEntityKeys.length ? readRowsAsync(
+      'SELECT p.entity_key, c.name AS country FROM payer_entities p LEFT JOIN countries c ON c.id = p.country_id WHERE p.entity_key IN (' + payerEntityKeys.map(() => '?').join(',') + ')', payerEntityKeys
+    ) : Promise.resolve([])
+  ]);
+
+  const ciMap = {};
+  (ciRows || []).forEach(c => { ciMap[c.id] = c; });
+  (historicalCiRows || []).forEach(c => { ciMap[c.id] = c; });
+  const hciByNo = {};
+  (historicalByNoRows || []).forEach(c => { if (c.historical_ci_no) hciByNo[c.historical_ci_no] = c; });
+  const piMap = {};
+  (piRows || []).forEach(p => { piMap[p.id] = p; });
+  const payerEntityMap = {};
+  (payerRows || []).forEach(p => { payerEntityMap[p.entity_key] = p; });
+
+  const out = new Map();
+  for (const r of rows) {
+    const ciCtx = r.source_ci_id ? ciMap[r.source_ci_id]
+      : (r.source_type === 'historical_ci' && r.source_no ? (hciByNo[r.source_no] || null) : null);
+    const piCtx = r.source_type === 'pi' ? piMap[r.source_id] : null;
+    const manualCtx = r.source_type === 'manual' ? (payerEntityMap[String(r.payer_entity_key || '').trim()] || null) : null;
+    const relatedPiNo = r.source_type === 'pi'
+      ? (piCtx ? (piCtx.pi_no || '') : (r.source_no || ''))
+      : (ciCtx ? (ciCtx.related_pi_no || '') : '');
+    const relatedCiNo = ciCtx ? (ciCtx.ci_no || '') : '';
+    const sub = r.subcategory_code || '';
+    const rawCountry = sub === 'deposit'
+      ? (piCtx ? (piCtx.country || '') : '')
+      : (ciCtx ? (ciCtx.country || '') : (piCtx ? (piCtx.country || '') : (manualCtx ? (manualCtx.country || '') : '')));
+    const countryDisplay = displayCountry(canonCountry(rawCountry));
+    const brand = sub === 'deposit'
+      ? (piCtx ? (piCtx.brand || '') : '')
+      : (ciCtx ? (ciCtx.brand || '') : (piCtx ? (piCtx.brand || '') : ''));
+    out.set(r.id, {
+      related_pi_no: relatedPiNo,
+      related_ci_no: relatedCiNo,
+      country_display: countryDisplay,
+      country_code: canonCountry(rawCountry),
+      brand: brand
+    });
+  }
+  return out;
+}
+
 // 完整台账：批量取每笔费用的「最近付款日期」。
 // 口径（与用户拍板一致）：只认真实付款流水 payment_settlement_logs（event_type='payment'，status='applied'，
 // paid_date 非空），PR 排除 cancelled/rejected —— 与 payableItemsSettlementBreakdown 的 PR 过滤完全同口径。
@@ -16290,6 +16427,25 @@ function payableItemsLastPaymentDateMap(itemIds) {
      GROUP BY pri.payable_item_id`,
     ids
   ).rows || [];
+  rows.forEach(r => { if (r.last_paid) result.set(r.pid, String(r.last_paid)); });
+  return result;
+}
+
+async function payableItemsLastPaymentDateMapAsync(itemIds) {
+  const result = new Map();
+  const ids = [...new Set((itemIds || []).filter(Boolean))];
+  ids.forEach(id => result.set(id, ''));
+  if (!ids.length) return result;
+  const rows = await readRowsAsync(
+    'SELECT pri.payable_item_id AS pid, MAX(substr(psl.paid_date, 1, 10)) AS last_paid ' +
+    'FROM payment_request_items pri JOIN payment_requests pr ON pr.id = pri.payment_request_id ' +
+    'JOIN payment_settlement_logs psl ON psl.payment_request_id = pr.id ' +
+    'WHERE pri.payable_item_id IN (' + ids.map(() => '?').join(',') + ') ' +
+    'AND psl.event_type = \'payment\' AND psl.status = \'applied\' AND psl.paid_date != \'\' ' +
+    'AND pr.payment_status NOT IN (\'cancelled\',\'rejected\') ' +
+    'AND pr.approval_status NOT IN (\'cancelled\',\'rejected\') GROUP BY pri.payable_item_id',
+    ids
+  );
   rows.forEach(r => { if (r.last_paid) result.set(r.pid, String(r.last_paid)); });
   return result;
 }
