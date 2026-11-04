@@ -271,6 +271,14 @@ const TEXT = {
    * whether it is worth authorizing — an application that has not gone
    * live on the platform cannot be, whatever is set here.
    */
+  /**
+   * The little badge that says how an application stands.
+   */
+  function stateBadge(label, tone) {
+    return `<span class="platform-state ${esc(tone)}"><span class="dot"></span>`
+      + `<span class="label">${esc(label)}</span></span>`;
+  }
+
   function renderShopeeApps(statuses, shopId) {
     const list = document.querySelector('#platformAppsList');
     if (!list) return;
@@ -279,13 +287,13 @@ const TEXT = {
       const status = byRole.get(app.role) || {};
       const configured = status.credentialConfigured !== false;
       const authorized = Boolean(status.tokenPresent);
-      let state = pill(t('notAuthorized'), 'neutral');
+      let state = stateBadge(t('notAuthorized'), 'off');
       let note = app.category;
       if (!configured) {
-        state = pill(t('notConfigured'), 'warn');
+        state = stateBadge(t('notConfigured'), 'error');
         note = `${app.category} · ${t('notConfigured')}`;
       } else if (authorized) {
-        state = pill(t('authorized'), 'good');
+        state = stateBadge(t('authorized'), 'ready');
         note = `${app.category} · ${t('authorized')}`;
       }
       const action = configured && !authorized
