@@ -225,7 +225,7 @@ function renderPreview(m){
     const idx=Number(btn.dataset.qipSelectMatch),sku=String(btn.dataset.qipSku||''),target=(importOptions&&importOptions.skus||[]).find(x=>x.sku_code===sku);
     if(!target||!currentRows[idx])return;
     const row=currentRows[idx];row.psi_sku_code=sku;row.sku_code=sku;row.match_status='matched';row.match_source='manual';
-    if(!row.product_type)row.product_type=target.category||'未分类';
+    if(!row.product_type||row.product_type==='未分类')row.product_type=target.category||'未分类';
     if(!row.model)row.model=target.model||'';
     if(!row.spec)row.spec=target.color_spec||'';
     previewOffset=0;renderPreview(m);
