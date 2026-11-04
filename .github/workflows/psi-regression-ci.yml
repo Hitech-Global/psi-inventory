@@ -17,6 +17,8 @@ on:
       - 'po-number.js'
       - 'wac-calculator.js'
       - 'wac-calculator.test.cjs'
+      - 'wac-notification.js'
+      - 'test/wac-cost-change-notification.test.cjs'
       - 'db-pg.js'
       - 'db.js'
       - 'db-sqlite.js'
@@ -59,6 +61,8 @@ jobs:
           node --check po-plan-server.js
           node --check po-number.js
           node --check wac-calculator.js
+          node --check wac-notification.js
+          node --check test/wac-cost-change-notification.test.cjs
           node --check db-pg.js
           node --check db.js
           node --check db-sqlite.js
@@ -83,6 +87,8 @@ jobs:
         run: node --test test/inventory-onhand-local-currency-kpi.test.cjs
       - name: Test WAC calculation and transport-basis rules
         run: node --test wac-calculator.test.cjs
+      - name: Test WAC cost-change Feishu notification reports
+        run: node --test test/wac-cost-change-notification.test.cjs
       - name: Test suggested purchase quantity wheel behavior
         run: node test/rp-suggested-qty-wheel.test.cjs
       - name: Test WAC history matrix and historical import
