@@ -4995,14 +4995,24 @@ async function loadInv(){
       return '¥ ' + cnyVal.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
     }
 
-    // 列顺序：复选框 | SKU | 国家 | 仓库 | 品牌 | 可用 | 安全库存 | 在途 | PI未发 | PO未确 | 加权成本 | 库存金额(本币) | 库存金额(¥) | 目标周转 | 实际周转 | 最后入库 | 距最后入库天数 | 库龄风险 | 库存快照截止 | 最后出库 | 库存状态 | 重点关注 | 备注
+    // 列顺序：复选框 | SKU | 国家 | 仓库 | 品牌 | 在库库存 | 在途库存 | 在途库存金额(¥) | PI未发 | PI未发货金额(¥) | 加权成本 | 在库库存金额(本币) | 在库库存金额(¥) | 目标周转 | 实际周转 | 最后入库 | 距最后入库天数 | 库龄风险 | 库存快照截止 | 最后出库 | 库存状态 | 重点关注 | 备注
     // (产品名从列表移除——SKU已可识别，可悬停tooltip或在详情中看)
-    const cols = ['SKU',t("app.113", "\u56fd\u5bb6"),t("app.114", "\u4ed3\u5e93"),t("app.112", "\u54c1\u724c"),t("col.available", "可用"),t("app.655", "\u5b89\u5168\u5e93\u5b58"),t("col.in_transit", "在途"),t("app.656", "PI\u672a\u53d1"),t("app.657", "PO\u672a\u786e"),t("app.619", "\u52a0\u6743\u6210\u672c"),t("app.658", "\u5e93\u5b58\u91d1\u989d(\u672c\u5e01)"),t("app.659", "\u5e93\u5b58\u91d1\u989d(\u00a5)"),t("app.660", "\u76ee\u6807\u5468\u8f6c"),t("app.661", "\u5b9e\u9645\u5468\u8f6c"),t("app.662", "\u6700\u540e\u5165\u5e93"),t("app.663", "\u8ddd\u6700\u540e\u5165\u5e93\u5929\u6570"),t("app.664", "\u5e93\u9f84\u98ce\u9669"),t("app.665", "\u9996\u6b21\u5165\u5e93"),t("app.666", "\u5e93\u5b58\u5feb\u7167\u622a\u6b62"),t("app.667", "\u6700\u540e\u51fa\u5e93"),t("col.inv_status", "库存状态"),t("app.668", "\u91cd\u70b9\u5173\u6ce8"),t("col.remark", "备注")];
+    const cols = ['SKU',t("app.113", "\u56fd\u5bb6"),t("app.114", "\u4ed3\u5e93"),t("app.112", "\u54c1\u724c"),
+      t('inv.col.in_stock_qty','在库库存'),
+      t('inv.col.in_transit_qty','在途库存'),
+      t('inv.col.in_transit_amount','在途库存金额（¥）'),
+      t('inv.col.pi_unshipped_qty','PI未发'),
+      t('inv.col.pi_unshipped_amount','PI未发货金额（¥）'),
+      t("app.619", "\u52a0\u6743\u6210\u672c"),
+      t('inv.col.on_hand_amount_local','在库库存金额（本币）'),
+      t('inv.col.on_hand_amount_rmb','在库库存金额（¥）'),
+      t("app.660", "\u76ee\u6807\u5468\u8f6c"),t("app.661", "\u5b9e\u9645\u5468\u8f6c"),t("app.662", "\u6700\u540e\u5165\u5e93"),t("app.663", "\u8ddd\u6700\u540e\u5165\u5e93\u5929\u6570"),t("app.664", "\u5e93\u9f84\u98ce\u9669"),t("app.665", "\u9996\u6b21\u5165\u5e93"),t("app.666", "\u5e93\u5b58\u5feb\u7167\u622a\u6b62"),t("app.667", "\u6700\u540e\u51fa\u5e93"),t("col.inv_status", "库存状态"),t("app.668", "\u91cd\u70b9\u5173\u6ce8"),t("col.remark", "备注")];
     const invTable=document.getElementById('inv-table');
     if(!invTable) return; // 竞态/页面切换时容器可能已不存在，静默退出避免 null 报错
     invTable.innerHTML = buildInvTableHTML(data, cols, invAllFilteredIds.length, fmtLocalMoney, fmtCnyMoney);
     syncInvHeader();
     renderInvCards(data, countryCurrency, c);
+    loadInvFinancialValues(_invUrl, mySeq, data, countryCurrency, c);
   }catch(e){showFlash(e.message,'danger')}
 }
 
@@ -5013,6 +5023,60 @@ async function loadInv(){
 // 故 sticky top 用 -12px 抵消 .content 的 padding-top，使表头贴合 topbar 下沿；
 // 横向：表体容器 overflow-x:auto 自身横向滚动；表头与表体列宽+横向位移同步，保持对齐。
 // 仅前端 app.js，不改 server.js / DB / index.html 全局 / 其他页面 / 表格列与数据。
+function fmtInvCnyAmount(value, missingRate, viewAllowed, loaded){
+  if(viewAllowed === false) return '<span style="color:#ccc">-</span>';
+  if(!loaded && (value === null || value === undefined)) return '<span style="color:#999">…</span>';
+  if(missingRate || value === null || value === undefined) return '<span style="color:#ccc">-</span>';
+  return '¥ ' + Number(value||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+}
+
+async function loadInvFinancialValues(inventoryUrl, loadSeq, data, countryCurrency, countryFilter){
+  const valueUrl = inventoryUrl.replace('/api/inventory?', '/api/inventory/financial-values?');
+  try{
+    const payload = await api(valueUrl, 'GET', null, {cacheKey:'inventory-financial-values', ttl:30000, signature:valueUrl});
+    if(loadSeq !== _invLoadSeq) return;
+    const items = Array.isArray(payload.items) ? payload.items : [];
+    const byId = new Map(items.map(function(item){ return [String(item.id), item]; }));
+    (data||[]).forEach(function(row){
+      const value = byId.get(String(row.id));
+      if(value) Object.assign(row, value);
+      else Object.assign(row, {
+        in_transit_amount_cny: payload.amount_view_allowed === false ? null : 0,
+        pi_unshipped_amount_cny: payload.amount_view_allowed === false ? null : 0,
+        in_transit_amount_missing_rate: false,
+        pi_unshipped_amount_missing_rate: false,
+        inventory_amount_view_allowed: payload.amount_view_allowed !== false
+      });
+      row.inventory_amount_values_loaded = true;
+    });
+    invDataCache = data;
+    document.querySelectorAll('#inv-body-table [data-inv-financial]').forEach(function(cell){
+      const value = byId.get(String(cell.getAttribute('data-inv-id')));
+      const kind = cell.getAttribute('data-inv-financial');
+      const allowed = value ? value.inventory_amount_view_allowed : payload.amount_view_allowed !== false;
+      if(kind === 'transit'){
+        cell.innerHTML = fmtInvCnyAmount(value ? value.in_transit_amount_cny : null, value && value.in_transit_amount_missing_rate, allowed, true);
+      } else if(kind === 'pi'){
+        cell.innerHTML = fmtInvCnyAmount(value ? value.pi_unshipped_amount_cny : null, value && value.pi_unshipped_amount_missing_rate, allowed, true);
+      }
+    });
+    renderInvCards(data, countryCurrency, countryFilter);
+  }catch(e){
+    if(loadSeq !== _invLoadSeq) return;
+    console.warn('inventory financial values unavailable', e);
+    (data||[]).forEach(function(row){
+      row.inventory_amount_values_loaded = true;
+      row.inventory_amount_view_allowed = false;
+      row.in_transit_amount_cny = null;
+      row.pi_unshipped_amount_cny = null;
+    });
+    document.querySelectorAll('#inv-body-table [data-inv-financial]').forEach(function(cell){
+      cell.innerHTML = fmtInvCnyAmount(null, false, false, true);
+    });
+    renderInvCards(data, countryCurrency, countryFilter);
+  }
+}
+
 function buildInvTableHTML(data, cols, allCount, fmtLocalMoney, fmtCnyMoney){
   const thead='<tr><th class="col-sticky" style="width:32px;left:0;background:#fafbfc"><input type="checkbox" id="inv-check-all" onchange="toggleAllInv(this.checked)"></th><th class="col-sticky" style="white-space:nowrap;left:32px;background:#fafbfc">SKU<br><a href="javascript:void(0)" onclick="selectAllInvFiltered()" style="font-size:11px;color:var(--primary,#2e7d32)">全选全部('+allCount+')</a></th>'+cols.slice(1).map(h=>'<th>'+h+'</th>').join('');
   const tbody = !data.length
@@ -5044,10 +5108,10 @@ function buildInvTableHTML(data, cols, allCount, fmtLocalMoney, fmtCnyMoney){
         +'<td>'+esc(i.warehouse)+'</td>'
         +'<td>'+esc(i.brand)+'</td>'
         +'<td class="text-right font-bold">'+(i.available_qty||0)+'</td>'
-        +'<td class="text-right">'+(i.safety_stock||0)+'</td>'
         +'<td class="text-right">'+(i.in_transit_qty||0)+'</td>'
+        +'<td class="text-right" style="white-space:nowrap;color:#d48806" data-inv-financial="transit" data-inv-id="'+esc(i.id)+'">'+fmtInvCnyAmount(i.in_transit_amount_cny, i.in_transit_amount_missing_rate, i.inventory_amount_view_allowed, i.inventory_amount_values_loaded)+'</td>'
         +'<td class="text-right">'+(i.pi_confirmed_unshipped_qty||0)+'</td>'
-        +'<td class="text-right">'+(i.po_unconfirmed_pi_qty||0)+'</td>'
+        +'<td class="text-right" style="white-space:nowrap;color:#d48806" data-inv-financial="pi" data-inv-id="'+esc(i.id)+'">'+fmtInvCnyAmount(i.pi_unshipped_amount_cny, i.pi_unshipped_amount_missing_rate, i.inventory_amount_view_allowed, i.inventory_amount_values_loaded)+'</td>'
         +'<td class="text-right">'+fmtMoney(i.weighted_avg_cost)+'</td>'
         +'<td class="text-right" style="white-space:nowrap">'+fmtLocalMoney(invVal, i.country)+'</td>'
         +'<td class="text-right" style="white-space:nowrap;color:#d48806">'+fmtCnyMoney(invVal, i.country)+'</td>'
@@ -5168,47 +5232,37 @@ function renderInvCards(data, countryCurrency, countryFilter){
   const el=document.getElementById('inv-cards');
   if(!el) return;
   const fmtN=function(v){return Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});};
-  // 可用库存（=Σ available_qty）
-  let totalQty=0;
-  let safetyStock=0, inTransit=0, piUnshipped=0, poUnconfirmed=0;
-  const byCur={}; let rmbTotal=0;
-  (data||[]).forEach(function(i){
-    totalQty += (i.available_qty||0);
-    safetyStock += (i.safety_stock||0);
-    inTransit += (i.in_transit_qty||0);
-    piUnshipped += (i.pi_confirmed_unshipped_qty||0);
-    poUnconfirmed += (i.po_unconfirmed_pi_qty||0);
-    const ci = countryCurrency[i.country] || {};
-    const invVal = (i.available_qty||0)*(i.weighted_avg_cost||0);
-    const code = ci.code || t('inv.kpi.unknown_cur','未知');
-    if(!byCur[code]) byCur[code]={symbol:(ci.symbol||''), amount:0};
-    byCur[code].amount += invVal;
-    if(ci.rate) rmbTotal += invVal / ci.rate; // rate=cnyToForeign (1 CNY = X 本币)，CNY = 本币/rate
-  });
-  const curCodes=Object.keys(byCur);
-  let localTitle, localValue;
-  if(curCodes.length===1){
-    const code=curCodes[0];
-    localTitle=t('inv.kpi.amount_local_cur','库存金额（{v1}）',{v1:code});
-    localValue=(byCur[code].symbol?byCur[code].symbol+' ':'')+fmtN(byCur[code].amount);
-  } else if(curCodes.length>1){
-    localTitle=t('inv.kpi.amount_local','库存金额（本币）');
-    localValue=curCodes.map(function(code){
-      return code+': '+(byCur[code].symbol?byCur[code].symbol+' ':'')+fmtN(byCur[code].amount);
-    }).join('　/　');
-  } else {
-    localTitle=t('inv.kpi.amount_local','库存金额（本币）');
-    localValue='-';
+  let totalQty=0, inTransit=0, piUnshipped=0, rmbTotal=0;
+  let inTransitAmount=0, piUnshippedAmount=0;
+  let inTransitMissingRate=false, piUnshippedMissingRate=false;
+  let amountValuesLoaded=(data||[]).length===0;
+  let amountViewAllowed=true;
+  if((data||[]).length>0){
+    amountValuesLoaded=(data||[]).every(function(i){return i.inventory_amount_values_loaded===true;});
+    amountViewAllowed=(data||[]).every(function(i){return i.inventory_amount_view_allowed!==false;});
   }
+  (data||[]).forEach(function(i){
+    totalQty += Number(i.available_qty||0);
+    inTransit += Number(i.in_transit_qty||0);
+    piUnshipped += Number(i.pi_confirmed_unshipped_qty||0);
+    const ci = countryCurrency[i.country] || {};
+    const invVal = Number(i.available_qty||0)*Number(i.weighted_avg_cost||0);
+    if(ci.rate) rmbTotal += invVal / ci.rate;
+    if(i.in_transit_amount_missing_rate) inTransitMissingRate=true;
+    if(i.pi_unshipped_amount_missing_rate) piUnshippedMissingRate=true;
+    if(i.in_transit_amount_cny!=null) inTransitAmount += Number(i.in_transit_amount_cny||0);
+    if(i.pi_unshipped_amount_cny!=null) piUnshippedAmount += Number(i.pi_unshipped_amount_cny||0);
+  });
+  const inTransitAmountValue=!amountValuesLoaded?'…':(!amountViewAllowed||inTransitMissingRate?'—':'¥ '+fmtN(inTransitAmount));
+  const piUnshippedAmountValue=!amountValuesLoaded?'…':(!amountViewAllowed||piUnshippedMissingRate?'—':'¥ '+fmtN(piUnshippedAmount));
   const rmbValue='¥ '+fmtN(rmbTotal);
   el.innerHTML =
-    '<div class="stat-card"><div class="stat-label">'+t('inv.kpi.available_qty','可用库存')+'</div><div class="stat-number">'+Number(totalQty).toLocaleString('en-US')+' '+t('inv.kpi.unit','件')+'</div></div>'
-    +(countryFilter ? '<div class="stat-card"><div class="stat-label">'+esc(localTitle)+'</div><div class="stat-number">'+esc(localValue)+'</div></div>' : '')
-    +'<div class="stat-card"><div class="stat-label">'+t('inv.kpi.amount_rmb','库存金额（人民币）')+'</div><div class="stat-number">'+esc(rmbValue)+'</div></div>'
-    +'<div class="stat-card"><div class="stat-label">'+t('inv.kpi.safety_stock','安全库存')+'</div><div class="stat-number">'+Number(safetyStock).toLocaleString('en-US')+' '+t('inv.kpi.unit','件')+'</div></div>'
-    +'<div class="stat-card"><div class="stat-label">'+t('inv.kpi.in_transit','在途')+'</div><div class="stat-number">'+Number(inTransit).toLocaleString('en-US')+' '+t('inv.kpi.unit','件')+'</div></div>'
-    +'<div class="stat-card"><div class="stat-label">'+t('inv.kpi.pi_unshipped','PI未发')+'</div><div class="stat-number">'+Number(piUnshipped).toLocaleString('en-US')+' '+t('inv.kpi.unit','件')+'</div></div>'
-    +'<div class="stat-card"><div class="stat-label">'+t('inv.kpi.po_unconfirmed','PO未确认')+'</div><div class="stat-number">'+Number(poUnconfirmed).toLocaleString('en-US')+' '+t('inv.kpi.unit','件')+'</div></div>';
+    '<div class="stat-card"><div class="stat-label">'+t('inv.kpi.in_stock_qty','在库库存')+'</div><div class="stat-number">'+Number(totalQty).toLocaleString('en-US')+' '+t('inv.kpi.unit','件')+'</div></div>'
+    +'<div class="stat-card"><div class="stat-label">'+t('inv.kpi.on_hand_amount_rmb','在库库存金额（人民币）')+'</div><div class="stat-number">'+esc(rmbValue)+'</div></div>'
+    +'<div class="stat-card"><div class="stat-label">'+t('inv.kpi.in_transit_qty','在途库存')+'</div><div class="stat-number">'+Number(inTransit).toLocaleString('en-US')+' '+t('inv.kpi.unit','件')+'</div></div>'
+    +'<div class="stat-card"><div class="stat-label">'+t('inv.kpi.in_transit_amount','在途库存金额（人民币）')+'</div><div class="stat-number">'+esc(inTransitAmountValue)+'</div></div>'
+    +'<div class="stat-card"><div class="stat-label">'+t('inv.kpi.pi_unshipped_qty','PI未发')+'</div><div class="stat-number">'+Number(piUnshipped).toLocaleString('en-US')+' '+t('inv.kpi.unit','件')+'</div></div>'
+    +'<div class="stat-card"><div class="stat-label">'+t('inv.kpi.pi_unshipped_amount','PI未发货金额（人民币）')+'</div><div class="stat-number">'+esc(piUnshippedAmountValue)+'</div></div>';
 }
 
 // 重置库存总表筛选：清空条件 + 删除保存状态 + 恢复全部库存 + 重新计算指标卡

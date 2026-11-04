@@ -31,6 +31,7 @@ const { importCommercialInvoicesPg } = require('./wave2a-ci-batch-import-pg.js')
 const { importProformaInvoicesPg } = require('./wave2b-pi-batch-import-pg.js'); // Wave 2B: PI batch-import PG async path
 const { generatePONumber } = require('./po-number');
 const { slimReplenishmentRow, projectDailySalesRow } = require('./rp-projection'); // RP-P0-R1 订单预测响应投影（仅序列化瘦身，不动计算逻辑）
+const { inventoryValueKey, buildInventoryFinancialValueMap } = require('./inventory-asset-values');
 const {
   createSqliteSalesImportAdapter,
   createPostgresSalesImportAdapter,
@@ -4220,6 +4221,136 @@ app.get('/api/inventory', requireApiPermission('inventory_view'), asyncHandler((
   if (keyword) { sql += ' AND (i.sku_code LIKE ? OR s.product_name LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`); }
   sql += ' ORDER BY i.sku_code';
   res.json(query(sql, params).rows);
+}));
+
+// 库存总表金额扩展：独立异步接口，避免 CI/PI 资产计算阻塞库存主表首屏加载。
+app.get('/api/inventory/financial-values', requireApiPermission('inventory_view'), asyncHandler(async (req, res) => {
+  try {
+    const { country, warehouse, brand, keyword } = req.query;
+    let invSql = 'SELECT i.id, i.sku_code, i.country, i.warehouse, s.brand, s.product_name FROM inventory i LEFT JOIN skus s ON i.sku_code = s.sku_code WHERE 1=1';
+    const invParams = [];
+    if (country) { invSql += ' AND i.country = ?'; invParams.push(country); }
+    if (warehouse) { invSql += ' AND i.warehouse = ?'; invParams.push(warehouse); }
+    if (brand) { invSql += ' AND s.brand = ?'; invParams.push(brand); }
+    if (keyword) { invSql += ' AND (i.sku_code LIKE ? OR s.product_name LIKE ?)'; invParams.push('%' + keyword + '%', '%' + keyword + '%'); }
+    invSql += ' ORDER BY i.sku_code';
+    const inventoryRows = query(invSql, invParams).rows;
+    const canViewAmounts = ciCanViewAmounts(req);
+    if (!inventoryRows.length) return res.json({ amount_view_allowed: canViewAmounts, items: [] });
+
+    if (!canViewAmounts) {
+      return res.json({
+        amount_view_allowed: false,
+        items: inventoryRows.map(row => ({
+          id: row.id,
+          inventory_amount_view_allowed: false,
+          in_transit_amount_cny: null,
+          pi_unshipped_amount_cny: null,
+          in_transit_amount_missing_rate: false,
+          pi_unshipped_amount_missing_rate: false
+        }))
+      });
+    }
+
+    const inventoryKeys = new Set(inventoryRows.map(inventoryValueKey));
+    const dataScope = buildDashboardScopeFilters(req);
+
+    // CI：复用现有有效在途口径（按 CI/SKU 聚合，剔除已完成到仓 PL 数量）。
+    const ciScopeSql = (dataScope.ciAlias.sql || '').replace(/^\s*AND\s+/i, '');
+    const transitRows = getEffectiveTransitRows(ciScopeSql, dataScope.ciAlias.params)
+      .filter(row => inventoryKeys.has(inventoryValueKey({
+        sku_code: row.sku_code,
+        country: row.country,
+        warehouse: row.target_warehouse
+      })));
+
+    // PI：按 PI/SKU 汇总明细，扣除关联的有效当前 CI + 历史 CI 实际货值。
+    // 不依赖 paid_deposit，保持与库存表「PI 未发数量」相同的 PI 状态范围。
+    const piScopeSql = (dataScope.pi.sql || '')
+      .replace(/\bcountry\b/g, "COALESCE(NULLIF(pi.country, ''), po.country)")
+      .replace(/\bbrand\b/g, 'pi.brand');
+    const piSql = String.raw`
+      WITH pi_items AS (
+        SELECT pi_id, sku_code,
+               SUM(COALESCE(pi_confirmed_qty, 0)) AS pi_confirmed_qty,
+               SUM(COALESCE(shipped_qty, 0)) AS shipped_qty,
+               CASE WHEN SUM(COALESCE(pi_amount, 0)) > 0
+                    THEN SUM(COALESCE(pi_amount, 0)) ELSE NULL END AS pi_amount,
+               SUM(COALESCE(pi_confirmed_qty, 0) * COALESCE(unit_price, 0) * (1 - COALESCE(discount, 0))) AS fallback_pi_amount
+        FROM proforma_invoice_items
+        GROUP BY pi_id, sku_code
+      ),
+      shipped_ci_rows AS (
+        SELECT cii.pi_id, cii.sku_code, COALESCE(cii.ci_amount, 0) AS amount
+        FROM commercial_invoice_items cii
+        JOIN commercial_invoices ci ON ci.id = cii.ci_id
+        WHERE ci.ci_status NOT IN ('cancelled', 'reversed')
+          AND cii.pi_id IS NOT NULL AND cii.pi_id != ''
+        UNION ALL
+        SELECT hcii.pi_id, hcii.sku_code, COALESCE(hcii.ci_amount, 0) AS amount
+        FROM historical_commercial_invoice_items hcii
+        JOIN historical_commercial_invoices hci ON hci.id = hcii.hci_id
+        WHERE hcii.pi_id IS NOT NULL AND hcii.pi_id != ''
+      ),
+      shipped_ci AS (
+        SELECT pi_id, sku_code, SUM(amount) AS shipped_ci_amount
+        FROM shipped_ci_rows
+        GROUP BY pi_id, sku_code
+      )
+      SELECT pii.sku_code,
+             COALESCE(NULLIF(pi.country, ''), po.country) AS country,
+             COALESCE(NULLIF(pi.target_warehouse, ''), po.target_warehouse) AS warehouse,
+             UPPER(COALESCE(NULLIF(pi.currency, ''), '')) AS currency,
+             pii.pi_confirmed_qty, pii.shipped_qty, pii.pi_amount, pii.fallback_pi_amount,
+             COALESCE(sc.shipped_ci_amount, 0) AS shipped_ci_amount
+      FROM pi_items pii
+      JOIN proforma_invoices pi ON pi.id = pii.pi_id
+      LEFT JOIN purchase_orders po ON pi.related_po_id = po.id
+      LEFT JOIN shipped_ci sc ON sc.pi_id = pi.id AND sc.sku_code = pii.sku_code
+      WHERE pi.pi_status NOT IN ('cancelled', 'completed')
+        AND (pii.pi_confirmed_qty - pii.shipped_qty) > 0
+        ${piScopeSql}
+    `;
+    const piRows = query(piSql, dataScope.pi.params).rows
+      .filter(row => inventoryKeys.has(inventoryValueKey(row)));
+
+    const currencies = new Set(['RMB', 'CNY']);
+    transitRows.forEach(row => {
+      if (Number(row.transit_qty) > 0 && row.currency) currencies.add(String(row.currency).trim().toUpperCase());
+    });
+    piRows.forEach(row => {
+      if ((Number(row.pi_confirmed_qty) - Number(row.shipped_qty)) > 0 && row.currency) {
+        currencies.add(String(row.currency).trim().toUpperCase());
+      }
+    });
+
+    const today = new Date().toISOString().split('T')[0];
+    const foreignToRmbMap = await buildForeignToRmbMap(today, currencies);
+    const valueMap = buildInventoryFinancialValueMap({
+      inventoryRows,
+      transitRows,
+      piRows,
+      fxRates: foreignToRmbMap,
+      canViewAmounts: true
+    });
+
+    res.json({
+      amount_view_allowed: true,
+      items: inventoryRows.map(row => ({
+        id: row.id,
+        ...(valueMap.get(inventoryValueKey(row)) || {
+          inventory_amount_view_allowed: true,
+          in_transit_amount_cny: 0,
+          pi_unshipped_amount_cny: 0,
+          in_transit_amount_missing_rate: false,
+          pi_unshipped_amount_missing_rate: false
+        })
+      }))
+    });
+  } catch (e) {
+    console.error('[inventory financial-values] failed:', e && e.message);
+    res.status(500).json({ error: e.message || '库存金额计算失败' });
+  }
 }));
 
 // 库存总表筛选下拉选项（从实际数据动态聚合）

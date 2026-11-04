@@ -22,6 +22,9 @@ on:
       - 'test/wac-batch-exclusion.test.cjs'
       - 'test/rp-suggested-qty-wheel.test.cjs'
       - 'test/po-number-date-country.test.cjs'
+      - 'inventory-asset-values.js'
+      - 'test/inventory-asset-values.test.cjs'
+      - 'i18n.js'
       - '.github/workflows/psi-regression-ci.yml'
 
 permissions:
@@ -53,12 +56,17 @@ jobs:
           node --check db-pg.js
           node --check db.js
           node --check db-sqlite.js
+          node --check i18n.js
+          node --check inventory-asset-values.js
+          node --check test/inventory-asset-values.test.cjs
           node --check test/wac-history-import.test.cjs
           node --check test/wac-batch-exclusion.test.cjs
       - name: Test finance payment calendar and manual payable creation
         run: node --test test/finance-payment-calendar.test.cjs test/manual-payable-item.test.cjs test/finance-payment-overview-integration.test.cjs test/finance-payment-overview.test.cjs test/finance-payment-overview-sort.test.cjs
       - name: Test PO number date and country format
         run: node test/po-number-date-country.test.cjs
+      - name: Test inventory financial value aggregation
+        run: node test/inventory-asset-values.test.cjs
       - name: Test WAC calculation and transport-basis rules
         run: node --test wac-calculator.test.cjs
       - name: Test suggested purchase quantity wheel behavior
