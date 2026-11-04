@@ -14649,16 +14649,17 @@ function _wacMatrixFillMulti(key, values, label) {
   list.innerHTML = (values || []).map(function(value) {
     const v = String(value || '');
     return '<label class="wac-history-option"><input type="checkbox" data-wac-filter="' + key + '" value="' + esc(v) + '" ' +
-      (selected.has(v) ? 'checked' : '') + ' onchange="updateWacHistoryFilterLabel(\'' + key + '\')"><span>' + esc(v) + '</span></label>';
+      (selected.has(v) ? 'checked' : '') + ' onchange="updateWacHistoryFilterLabel(\'' + key + '\',null,true)"><span>' + esc(v) + '</span></label>';
   }).join('');
   updateWacHistoryFilterLabel(key, label);
 }
 
-function updateWacHistoryFilterLabel(key, label) {
+function updateWacHistoryFilterLabel(key, label, apply) {
   const selected = _wacMatrixSelected(key);
-  const text = selected.length ? '已选 ' + selected.length + ' 项' : ('全部' + (label || ({brand:'品牌',country:'国家',warehouse:'仓库'}[key] || '')));
+  const text = selected.length ? selected.join('、') : ('全部' + (label || ({brand:'品牌',country:'国家',warehouse:'仓库'}[key] || '')));
   const el = document.getElementById('wac-matrix-' + key + '-label');
-  if (el) el.textContent = text;
+  if (el) { el.textContent = text; el.title = text; }
+  if (apply) loadWacHistoryMatrix(false);
 }
 
 function selectVisibleWacHistoryOptions(key) {
@@ -14667,14 +14668,14 @@ function selectVisibleWacHistoryOptions(key) {
     const checkbox = option.querySelector('input[data-wac-filter="' + key + '"]');
     if (checkbox) checkbox.checked = true;
   });
-  updateWacHistoryFilterLabel(key);
+  updateWacHistoryFilterLabel(key, null, true);
 }
 
 function clearWacHistoryFilter(key) {
   document.querySelectorAll('input[data-wac-filter="' + key + '"]').forEach(function(el) {
     el.checked = false;
   });
-  updateWacHistoryFilterLabel(key);
+  updateWacHistoryFilterLabel(key, null, true);
 }
 
 function closeWacHistoryFilters() {
@@ -14705,38 +14706,148 @@ function filterWacHistoryOptions(key) {
   });
 }
 
+function _wacHistoryDateString(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return y + '-' + m + '-' + d;
+}
+
+function _wacHistoryMonthStart(date) {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
+function _wacHistoryMonthLabel(date) {
+  return date.getFullYear() + ' 年 ' + (date.getMonth() + 1) + ' 月';
+}
+
+function _wacHistoryCalendarMonthMarkup(monthDate, side, from, to) {
+  const first = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
+  const firstCell = new Date(first.getFullYear(), first.getMonth(), 1 - first.getDay());
+  const today = _wacHistoryDateString(new Date());
+  const nav = side === 'left'
+    ? '<div class="wac-history-calendar-nav">' +
+        '<button type="button" class="wac-history-calendar-nav-btn" title="上一年" onclick="moveWacHistoryCalendar(-12);event.stopPropagation()">«</button>' +
+        '<button type="button" class="wac-history-calendar-nav-btn" title="上个月" onclick="moveWacHistoryCalendar(-1);event.stopPropagation()">‹</button>' +
+      '</div>'
+    : '<div class="wac-history-calendar-nav">' +
+        '<button type="button" class="wac-history-calendar-nav-btn" title="下个月" onclick="moveWacHistoryCalendar(1);event.stopPropagation()">›</button>' +
+        '<button type="button" class="wac-history-calendar-nav-btn" title="下一年" onclick="moveWacHistoryCalendar(12);event.stopPropagation()">»</button>' +
+      '</div>';
+  const weekdays = ['日','一','二','三','四','五','六'].map(function(day) {
+    return '<div class="wac-history-calendar-weekday">' + day + '</div>';
+  }).join('');
+  let days = '';
+  for (let i = 0; i < 42; i++) {
+    const date = new Date(firstCell.getFullYear(), firstCell.getMonth(), firstCell.getDate() + i);
+    const value = _wacHistoryDateString(date);
+    const inMonth = date.getMonth() === monthDate.getMonth();
+    const isStart = !!from && value === from;
+    const isEnd = !!to && value === to;
+    const isRange = !!from && !!to && value > from && value < to;
+    const classes = [
+      'wac-history-calendar-day',
+      inMonth ? '' : 'is-outside',
+      isRange ? 'is-range' : '',
+      isStart || isEnd ? 'is-selected' : '',
+      value === today ? 'is-today' : ''
+    ].filter(Boolean).join(' ');
+    days += '<button type="button" class="' + classes + '" data-date="' + value + '" ' +
+      'aria-label="' + value + '" onclick="selectWacHistoryCalendarDate(\'' + value + '\');event.stopPropagation()">' +
+      date.getDate() + '</button>';
+  }
+  const header = side === 'left'
+    ? nav + '<strong>' + _wacHistoryMonthLabel(monthDate) + '</strong><span class="wac-history-calendar-nav-spacer"></span>'
+    : '<span class="wac-history-calendar-nav-spacer"></span><strong>' + _wacHistoryMonthLabel(monthDate) + '</strong>' + nav;
+  return '<section class="wac-history-calendar-month">' +
+    '<div class="wac-history-calendar-month-header">' + header + '</div>' +
+    '<div class="wac-history-calendar-weekdays">' + weekdays + '</div>' +
+    '<div class="wac-history-calendar-days">' + days + '</div>' +
+  '</section>';
+}
+
+function _wacHistoryParseDate(value) {
+  const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return _wacHistoryDateString(date) === value ? date : null;
+}
+
+function renderWacHistoryDateCalendar() {
+  const calendar = document.getElementById('wac-matrix-date-calendar');
+  if (!calendar) return;
+  const from = document.getElementById('wac-matrix-from')?.value || '';
+  const to = document.getElementById('wac-matrix-to')?.value || '';
+  if (!(window._wacHistoryCalendarMonth instanceof Date)) {
+    const initial = _wacHistoryParseDate(from) || new Date();
+    window._wacHistoryCalendarMonth = _wacHistoryMonthStart(initial);
+  }
+  const firstMonth = _wacHistoryMonthStart(window._wacHistoryCalendarMonth);
+  const secondMonth = new Date(firstMonth.getFullYear(), firstMonth.getMonth() + 1, 1);
+  const selectedFrom = from || '选择开始日期';
+  const selectedTo = to || (from ? '选择结束日期' : '未选择');
+  calendar.innerHTML =
+    '<div class="wac-history-calendar-selection">' +
+      '<div class="wac-history-calendar-selection-item"><span>开始日期</span><strong>' + esc(selectedFrom) + '</strong></div>' +
+      '<div class="wac-history-calendar-selection-item"><span>结束日期</span><strong>' + esc(selectedTo) + '</strong></div>' +
+    '</div>' +
+    '<div class="wac-history-calendar-months">' +
+      _wacHistoryCalendarMonthMarkup(firstMonth, 'left', from, to) +
+      _wacHistoryCalendarMonthMarkup(secondMonth, 'right', from, to) +
+    '</div>';
+}
+
+function moveWacHistoryCalendar(monthDelta) {
+  const current = window._wacHistoryCalendarMonth instanceof Date
+    ? window._wacHistoryCalendarMonth
+    : _wacHistoryMonthStart(new Date());
+  window._wacHistoryCalendarMonth = new Date(current.getFullYear(), current.getMonth() + Number(monthDelta || 0), 1);
+  renderWacHistoryDateCalendar();
+}
+
 function updateWacHistoryDateRangeLabel() {
   const from = document.getElementById('wac-matrix-from')?.value || '';
   const to = document.getElementById('wac-matrix-to')?.value || '';
   let label = '确认日期范围';
   if (from && to) label = from + ' 至 ' + to;
   else if (from) label = from + ' 起';
-  else if (to) label = '截至 ' + to;
   const el = document.getElementById('wac-matrix-date-label');
-  if (el) el.textContent = label;
+  if (el) { el.textContent = label; el.title = label; }
 }
 
-function syncWacHistoryDateRange(changed) {
+function selectWacHistoryCalendarDate(value) {
   const fromEl = document.getElementById('wac-matrix-from');
   const toEl = document.getElementById('wac-matrix-to');
-  if (!fromEl || !toEl) return;
-  if (fromEl.value && toEl.value && fromEl.value > toEl.value) {
-    if (changed === 'from') toEl.value = fromEl.value;
-    else fromEl.value = toEl.value;
+  if (!fromEl || !toEl || !_wacHistoryParseDate(value)) return;
+  if (!fromEl.value || toEl.value) {
+    fromEl.value = value;
+    toEl.value = '';
+  } else if (value < fromEl.value) {
+    toEl.value = fromEl.value;
+    fromEl.value = value;
+  } else {
+    toEl.value = value;
   }
-  if (toEl.value) fromEl.max = toEl.value;
-  else fromEl.removeAttribute('max');
-  if (fromEl.value) toEl.min = fromEl.value;
-  else toEl.removeAttribute('min');
+  const selectedMonth = _wacHistoryParseDate(value);
+  const currentMonth = _wacHistoryMonthStart(window._wacHistoryCalendarMonth || new Date());
+  const selectedIndex = selectedMonth.getFullYear() * 12 + selectedMonth.getMonth();
+  const firstIndex = currentMonth.getFullYear() * 12 + currentMonth.getMonth();
+  if (selectedIndex < firstIndex || selectedIndex > firstIndex + 1) {
+    window._wacHistoryCalendarMonth = _wacHistoryMonthStart(selectedMonth);
+  }
   updateWacHistoryDateRangeLabel();
+  renderWacHistoryDateCalendar();
+  loadWacHistoryMatrix(false);
 }
 
 function clearWacHistoryDateRange() {
   const fromEl = document.getElementById('wac-matrix-from');
   const toEl = document.getElementById('wac-matrix-to');
-  if (fromEl) { fromEl.value = ''; fromEl.removeAttribute('max'); }
-  if (toEl) { toEl.value = ''; toEl.removeAttribute('min'); }
+  if (fromEl) fromEl.value = '';
+  if (toEl) toEl.value = '';
   updateWacHistoryDateRangeLabel();
+  renderWacHistoryDateCalendar();
+  loadWacHistoryMatrix(false);
 }
 
 function toggleWacHistoryDateRange() {
@@ -14745,6 +14856,13 @@ function toggleWacHistoryDateRange() {
   const shouldOpen = panel.style.display !== 'block';
   closeWacHistoryFilters();
   panel.style.display = shouldOpen ? 'block' : 'none';
+  if (shouldOpen) {
+    const from = document.getElementById('wac-matrix-from')?.value || '';
+    if (!(window._wacHistoryCalendarMonth instanceof Date)) {
+      window._wacHistoryCalendarMonth = _wacHistoryMonthStart(_wacHistoryParseDate(from) || new Date());
+    }
+    renderWacHistoryDateCalendar();
+  }
   updateWacHistoryDateRangeLabel();
 }
 
@@ -14766,6 +14884,7 @@ async function renderWacHistoryMatrix() {
       '.wac-history-page .wac-history-multi-trigger{height:36px;width:100%;min-width:0;padding:0 11px;border:1px solid #d2d2d7;border-radius:8px;background:#f5f5f7;color:#1d1d1f;font:inherit;font-size:13px;display:flex;align-items:center;justify-content:space-between;gap:12px;cursor:pointer;transition:background .15s,border-color .15s}' +
       '.wac-history-page .wac-history-multi-trigger:hover{background:#ececf0;border-color:#b8b8bd}' +
       '.wac-history-page .wac-history-multi-trigger:focus{outline:none;border-color:#007aff;box-shadow:0 0 0 3px rgba(0,122,255,.16)}' +
+      '.wac-history-page .wac-history-multi-trigger>span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}' +
       '.wac-history-page .wac-history-chevron{color:#8e8e93;font-size:14px}' +
       '.wac-history-page .wac-history-multi-panel{position:absolute;top:calc(100% + 6px);left:0;z-index:90;min-width:250px;width:max(100%,270px);max-width:calc(100vw - 32px);padding:9px;background:rgba(255,255,255,.98);border:1px solid #d2d2d7;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.14)}' +
       '.wac-history-page .wac-history-multi-search{width:100%;height:32px;padding:5px 9px;border:1px solid #d2d2d7;border-radius:7px;background:#fff;font:inherit;font-size:12px;outline:none;margin-bottom:7px}' +
@@ -14780,11 +14899,30 @@ async function renderWacHistoryMatrix() {
       '.wac-history-page .wac-history-date-range{position:relative;flex:0 0 220px;min-width:190px}' +
       '.wac-history-page .wac-history-date-trigger{height:36px;width:100%;padding:0 11px;border:1px solid #d2d2d7;border-radius:8px;background:#f5f5f7;color:#1d1d1f;font:inherit;font-size:13px;display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;white-space:nowrap}' +
       '.wac-history-page .wac-history-date-trigger:hover{background:#ececf0;border-color:#b8b8bd}' +
-      '.wac-history-page .wac-history-date-range-panel{position:absolute;top:calc(100% + 6px);left:0;z-index:95;width:310px;max-width:calc(100vw - 32px);padding:12px;background:rgba(255,255,255,.98);border:1px solid #d2d2d7;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.14)}' +
-      '.wac-history-page .wac-history-date-fields{display:grid;grid-template-columns:1fr 1fr;gap:10px}' +
-      '.wac-history-page .wac-history-date-field label{display:block;font-size:11px;color:#6e6e73;margin-bottom:5px}' +
-      '.wac-history-page .wac-history-date-input{height:34px;width:100%;box-sizing:border-box;padding:4px 8px;border:1px solid #d2d2d7;border-radius:7px;background:#fff;font:inherit;font-size:12px;color:#1d1d1f}' +
-      '.wac-history-page .wac-history-date-footer{display:flex;align-items:center;justify-content:space-between;gap:8px;border-top:1px solid #e5e5ea;margin-top:11px;padding-top:9px}' +
+      '.wac-history-page .wac-history-date-range-panel{position:absolute;top:calc(100% + 6px);left:50%;transform:translateX(-50%);z-index:95;width:min(1020px,calc(100vw - 32px));max-width:calc(100vw - 32px);box-sizing:border-box;padding:14px;background:rgba(255,255,255,.99);border:1px solid #d2d2d7;border-radius:12px;box-shadow:0 12px 34px rgba(0,0,0,.16)}' +
+      '.wac-history-page .wac-history-calendar-selection{display:flex;align-items:center;gap:28px;padding:2px 8px 12px;border-bottom:1px solid #e5e5ea}' +
+      '.wac-history-page .wac-history-calendar-selection-item{display:flex;align-items:center;gap:9px;font-size:12px;color:#6e6e73}' +
+      '.wac-history-page .wac-history-calendar-selection-item strong{font-size:13px;font-weight:600;color:#1d1d1f}' +
+      '.wac-history-page .wac-history-calendar-months{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px;padding:12px 4px 6px}' +
+      '.wac-history-page .wac-history-calendar-month{min-width:0;padding:0 8px}' +
+      '.wac-history-page .wac-history-calendar-month+.wac-history-calendar-month{border-left:1px solid #e5e5ea;padding-left:24px}' +
+      '.wac-history-page .wac-history-calendar-month-header{height:40px;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;margin-bottom:5px}' +
+      '.wac-history-page .wac-history-calendar-month-header strong{font-size:18px;font-weight:500;color:#1d1d1f;white-space:nowrap;text-align:center}' +
+      '.wac-history-page .wac-history-calendar-nav{display:flex;align-items:center;gap:8px}' +
+      '.wac-history-page .wac-history-calendar-nav-btn{width:27px;height:27px;border:0;border-radius:6px;background:transparent;color:#4b5563;font-size:22px;line-height:1;cursor:pointer}' +
+      '.wac-history-page .wac-history-calendar-nav-btn:hover{background:#f0f2f5;color:#007aff}' +
+      '.wac-history-page .wac-history-calendar-nav-spacer{width:1px}' +
+      '.wac-history-page .wac-history-calendar-weekdays,.wac-history-page .wac-history-calendar-days{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));text-align:center}' +
+      '.wac-history-page .wac-history-calendar-weekdays{height:34px;align-items:center;border-bottom:1px solid #e5eaf1;margin-bottom:7px}' +
+      '.wac-history-page .wac-history-calendar-weekday{font-size:12px;color:#6e6e73}' +
+      '.wac-history-page .wac-history-calendar-days{grid-template-rows:repeat(6,39px);gap:4px 0}' +
+      '.wac-history-page .wac-history-calendar-day{align-self:center;justify-self:center;width:38px;height:36px;border:0;border-radius:7px;background:transparent;color:#1d1d1f;font:inherit;font-size:13px;cursor:pointer}' +
+      '.wac-history-page .wac-history-calendar-day:hover{background:#eaf2ff;color:#0066d6}' +
+      '.wac-history-page .wac-history-calendar-day.is-outside{color:#c1c7d0}' +
+      '.wac-history-page .wac-history-calendar-day.is-range{width:100%;border-radius:0;background:#f0f4fa}' +
+      '.wac-history-page .wac-history-calendar-day.is-selected{width:38px;background:#007aff;color:#fff;border-radius:8px;font-weight:600}' +
+      '.wac-history-page .wac-history-calendar-day.is-today:not(.is-selected){outline:1px solid #007aff;outline-offset:-1px}' +
+      '.wac-history-page .wac-history-date-footer{display:flex;align-items:center;justify-content:space-between;gap:8px;border-top:1px solid #e5e5ea;margin-top:10px;padding-top:9px}' +
       '.wac-history-page .wac-history-date-footer button{height:28px;padding:0 9px;border-radius:6px;font-size:12px}' +
       '.wac-history-page .wac-history-search{height:36px;width:250px;min-width:190px;max-width:280px;flex:0 1 250px;margin-left:auto;border-radius:8px}' +
       '.wac-history-page .wac-history-filter-count{font-size:12px;color:var(--text-secondary);white-space:nowrap;margin-left:4px}' +
@@ -14807,7 +14945,7 @@ async function renderWacHistoryMatrix() {
       '.wac-history-import-preview th,.wac-history-import-preview td{padding:7px 8px;border-bottom:1px solid #eee;text-align:left;white-space:nowrap}' +
       '.wac-history-import-preview th{position:sticky;top:0;background:#f5f5f7;z-index:1}' +
       '@media(max-width:1180px){.wac-history-page .wac-history-filter-row{flex-wrap:wrap}.wac-history-page .wac-history-search{margin-left:auto;flex:1 1 230px}.wac-history-page .wac-history-filter-count{margin-left:auto}}' +
-      '@media(max-width:760px){.wac-history-page .wac-history-table-wrap{max-height:calc(100vh - 390px)}.wac-history-page .wac-history-search{width:100%;max-width:none;flex:1 1 100%;margin-left:0}.wac-history-page .wac-history-multi{flex:1 1 125px;width:auto;min-width:125px}.wac-history-page .wac-history-multi-trigger{width:100%;min-width:125px}.wac-history-page .wac-history-date-range{flex:1 1 190px}}';
+      '@media(max-width:760px){.wac-history-page .wac-history-table-wrap{max-height:calc(100vh - 390px)}.wac-history-page .wac-history-search{width:100%;max-width:none;flex:1 1 100%;margin-left:0}.wac-history-page .wac-history-multi{flex:1 1 125px;width:auto;min-width:125px}.wac-history-page .wac-history-multi-trigger{width:100%;min-width:125px}.wac-history-page .wac-history-date-range{flex:1 1 190px}.wac-history-page .wac-history-date-range-panel{left:0;transform:none;width:calc(100vw - 24px);max-height:78vh;overflow:auto}.wac-history-page .wac-history-calendar-months{grid-template-columns:1fr;gap:12px}.wac-history-page .wac-history-calendar-month+.wac-history-calendar-month{border-left:0;border-top:1px solid #e5e5ea;padding:14px 8px 0}}';
     document.head.appendChild(style);
   }
 
@@ -14823,18 +14961,16 @@ async function renderWacHistoryMatrix() {
             '<span id="wac-matrix-date-label">确认日期范围</span><span class="wac-history-chevron">⌄</span>' +
           '</button>' +
           '<div class="wac-history-date-range-panel" id="wac-matrix-date-range-panel" style="display:none" onclick="event.stopPropagation()">' +
-            '<div class="wac-history-date-fields">' +
-              '<div class="wac-history-date-field"><label for="wac-matrix-from">开始日期</label><input id="wac-matrix-from" type="date" class="wac-history-date-input" onchange="syncWacHistoryDateRange(\'from\')"></div>' +
-              '<div class="wac-history-date-field"><label for="wac-matrix-to">结束日期</label><input id="wac-matrix-to" type="date" class="wac-history-date-input" onchange="syncWacHistoryDateRange(\'to\')"></div>' +
-            '</div>' +
+            '<input id="wac-matrix-from" type="hidden" value="">' +
+            '<input id="wac-matrix-to" type="hidden" value="">' +
+            '<div id="wac-matrix-date-calendar"></div>' +
             '<div class="wac-history-date-footer">' +
               '<button type="button" class="btn btn-secondary btn-sm" onclick="clearWacHistoryDateRange();event.stopPropagation()">清空日期</button>' +
               '<button type="button" class="btn btn-primary btn-sm" onclick="closeWacHistoryFilters();event.stopPropagation()">完成</button>' +
             '</div>' +
           '</div>' +
         '</div>' +
-        '<input id="wac-matrix-search" class="form-control wac-history-search" placeholder="搜索 SKU / 产品名称" onkeydown="if(event.key===\'Enter\')loadWacHistoryMatrix(false)">' +
-        '<button class="btn btn-primary btn-sm wac-history-query-btn" onclick="loadWacHistoryMatrix(false)">查询</button>' +
+        '<input id="wac-matrix-search" class="form-control wac-history-search" placeholder="搜索 SKU / 产品名称" oninput="loadWacHistoryMatrix(false)">' +
         '<button class="btn btn-secondary btn-sm wac-history-reset-btn" onclick="resetWacHistoryMatrix()">重置</button>' +
         '<span id="wac-matrix-count" class="wac-history-filter-count"></span>' +
       '</div>' +
@@ -14858,7 +14994,8 @@ function resetWacHistoryMatrix() {
     document.querySelectorAll('input[data-wac-filter="' + key + '"]').forEach(function(el){el.checked=false;});
     updateWacHistoryFilterLabel(key);
   });
-  syncWacHistoryDateRange('reset');
+  updateWacHistoryDateRangeLabel();
+  renderWacHistoryDateCalendar();
   closeWacHistoryFilters();
   loadWacHistoryMatrix(false);
 }
