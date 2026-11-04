@@ -13373,6 +13373,21 @@ function payableItemSourceExpenseCountry(item) {
     source = queryOne('SELECT ci_no AS source_no, country FROM commercial_invoices WHERE id = ?', [sourceId]);
   } else if (sourceType === 'historical_ci') {
     source = queryOne('SELECT historical_ci_no AS source_no, country FROM historical_commercial_invoices WHERE id = ?', [sourceId]);
+  } else if (sourceType === 'manual') {
+    const payerEntityKey = String(item && item.payer_entity_key || '').trim();
+    if (!payerEntityKey) {
+      throw new SettlementError(400, '应付费用 ' + (item.fee_no || item.id || '') + ' 缺少付款主体，不能创建付款申请');
+    }
+    source = queryOne(
+      `SELECT p.entity_key AS source_no, c.name AS country
+         FROM payer_entities p
+         LEFT JOIN countries c ON c.id = p.country_id
+        WHERE p.entity_key = ? AND p.status = 'active'`,
+      [payerEntityKey]
+    );
+    if (!source) {
+      throw new SettlementError(400, '应付费用 ' + (item.fee_no || item.id || '') + ' 的付款主体不存在或已停用，不能创建付款申请');
+    }
   } else if (sourceType === 'logistics') {
     // LOGISTICS-COST-LINK-V2: logistics 费用通过 source_ci_id 关联 CI，从 CI 获取国家
     const ciId = String(item && item.source_ci_id || '').trim();
@@ -13478,7 +13493,8 @@ function createPayableItemFromSource(params) {
     sourceType, sourceId, sourceNo, feeType,
     categoryCode, subcategoryCode,
     payeeType, payeeKey, payeeName,
-    currency, payableAmount, sourceCiId = '', payableDate = '', createdBy = ''
+    currency, payableAmount, sourceCiId = '', payableDate = '', createdBy = '',
+     payerEntityKey = 'self', payerName = ''
   } = params;
 
   // V5 规则：应付金额 <= 0 不创建
@@ -13522,7 +13538,7 @@ function createPayableItemFromSource(params) {
     [id, feeNo, sourceType, sourceId, sourceNo, sourceCiId, feeType,
      categoryCode || '', subcategoryCode || '',
      payeeType || '', payeeKey, payeeName || '',
-     'self', '', currency, amountMinor, payableDate || '', createdBy]
+     payerEntityKey || 'self', payerName || '', currency, amountMinor, payableDate || '', createdBy]
   );
 
   return { id, fee_no: feeNo, lifecycle_status: 'active', payable_amount_minor: amountMinor };
@@ -15891,11 +15907,24 @@ function derivePayableSourceRefs(rows) {
     query(`SELECT id, pi_no, country, brand FROM proforma_invoices WHERE id IN (${piIds.map(() => '?').join(',')})`, piIds)
       .rows.forEach(p => { piMap[p.id] = p; });
   }
+  const payerEntityKeys = [...new Set(rows
+    .filter(r => r.source_type === 'manual')
+    .map(r => String(r.payer_entity_key || '').trim())
+    .filter(Boolean))];
+  const payerEntityMap = {};
+  if (payerEntityKeys.length) {
+    query(`SELECT p.entity_key, c.name AS country
+             FROM payer_entities p
+             LEFT JOIN countries c ON c.id = p.country_id
+            WHERE p.entity_key IN (${payerEntityKeys.map(() => '?').join(',')})`, payerEntityKeys)
+      .rows.forEach(p => { payerEntityMap[p.entity_key] = p; });
+  }
   const out = new Map();
   for (const r of rows) {
     const ciCtx = r.source_ci_id ? ciMap[r.source_ci_id]
       : (r.source_type === 'historical_ci' && r.source_no ? (hciByNo[r.source_no] || null) : null);
     const piCtx = r.source_type === 'pi' ? piMap[r.source_id] : null;
+    const manualCtx = r.source_type === 'manual' ? (payerEntityMap[String(r.payer_entity_key || '').trim()] || null) : null;
     const relatedPiNo = r.source_type === 'pi'
       ? (piCtx ? (piCtx.pi_no || '') : (r.source_no || ''))
       : (ciCtx ? (ciCtx.related_pi_no || '') : '');
@@ -15904,7 +15933,7 @@ function derivePayableSourceRefs(rows) {
     const sub = r.subcategory_code || '';
     const rawCountry = sub === 'deposit'
       ? (piCtx ? (piCtx.country || '') : '')
-      : (ciCtx ? (ciCtx.country || '') : (piCtx ? (piCtx.country || '') : ''));
+      : (ciCtx ? (ciCtx.country || '') : (piCtx ? (piCtx.country || '') : (manualCtx ? (manualCtx.country || '') : '')));
     const countryDisplay = displayCountry(canonCountry(rawCountry));
     // 品牌：定金→PI.brand；CI 关联→CI.brand（历史 CI 为 brand_name）；无来源单据（如手动录入）→ ''，保留在「全部」中
     const brand = sub === 'deposit'
@@ -15966,7 +15995,7 @@ function derivePayableItemPaymentState(payableMinor, paidMinor, deductionMinor, 
 // 独立全量聚合：不随列表当前筛选变化，避免「选了 A 品牌后其他品牌选项消失」。
 app.get('/api/payable-items/facets', requireApiPermission('payment_view'), asyncHandler((req, res) => {
   const rows = query(
-    `SELECT id, source_type, source_id, source_no, source_ci_id, subcategory_code
+    `SELECT id, source_type, source_id, source_no, source_ci_id, subcategory_code, payer_entity_key
      FROM payable_items
      WHERE lifecycle_status IN ('active','reserved','partially_paid','paid')`
   ).rows;
@@ -16114,6 +16143,103 @@ app.get('/api/payable-items', requireApiPermission('payment_view'), asyncHandler
     });
   }
   res.json({ items, total: items.length });
+}));
+
+// 日历手动创建应付项：只允许已启用的付款主体、币种和 manual 来源映射；不绕过 payable_items / payment_request 结算链。
+app.post('/api/payable-items/manual', requireApiPermission('payment_create'), asyncHandler((req, res) => {
+  const d = req.body || {};
+  const payeeName = String(d.payee_name || '').trim();
+  const payerEntityKey = String(d.payer_entity_key || '').trim();
+  const subcategoryId = String(d.subcategory_id || '').trim();
+  const feeType = String(d.fee_type || '').trim();
+  const currency = String(d.currency || '').trim().toUpperCase();
+  const payableDate = String(d.payable_date || '').trim();
+  const amount = Number(d.amount);
+
+  if (!payeeName) return res.status(400).json({ error: '付款对象不能为空' });
+  if (payeeName.length > 160) return res.status(400).json({ error: '付款对象名称不能超过160个字符' });
+  if (!payerEntityKey) return res.status(400).json({ error: '请选择付款主体' });
+  if (!subcategoryId || !feeType) return res.status(400).json({ error: '请选择有效的费用类别' });
+  if (!currency) return res.status(400).json({ error: '请选择币种' });
+  if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: '应付金额必须大于0' });
+  const amountMinor = Math.round(amount * 100);
+  if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) return res.status(400).json({ error: '应付金额超出允许范围' });
+
+  const dateMatch = /^\d{4}-\d{2}-\d{2}$/.test(payableDate);
+  const parsedDate = dateMatch ? new Date(payableDate + 'T00:00:00Z') : null;
+  if (!dateMatch || !parsedDate || !Number.isFinite(parsedDate.getTime()) ||
+      parsedDate.toISOString().slice(0, 10) !== payableDate) {
+    return res.status(400).json({ error: '应付日期必须为有效的 YYYY-MM-DD 日期' });
+  }
+
+  const payer = queryOne(
+    `SELECT p.entity_key, p.entity_name, p.status, c.name AS country_name
+       FROM payer_entities p
+       LEFT JOIN countries c ON c.id = p.country_id
+      WHERE p.entity_key = ?`,
+    [payerEntityKey]
+  );
+  if (!payer || payer.status !== 'active' || !String(payer.country_name || '').trim()) {
+    return res.status(400).json({ error: '付款主体不存在、已停用或未配置所属国家' });
+  }
+
+  const currencyRow = queryOne('SELECT code, status FROM currencies WHERE code = ?', [currency]);
+  if (!currencyRow || currencyRow.status !== 'active') {
+    return res.status(400).json({ error: '币种不存在或已停用' });
+  }
+
+  const mapping = queryOne(
+    `SELECT c.code AS category_code, s.code AS subcategory_code, s.payee_type_default, m.fee_type
+       FROM payment_subcategory_sources m
+       JOIN payment_subcategories s ON s.id = m.subcategory_id
+       JOIN payment_categories c ON c.id = s.category_id
+      WHERE m.subcategory_id = ? AND m.source_type = 'manual' AND m.fee_type = ?
+        AND m.status = 'active' AND s.status = 'active' AND c.status = 'active'`,
+    [subcategoryId, feeType]
+  );
+  if (!mapping) return res.status(400).json({ error: '该费用类别未启用手动录入，或来源映射已停用' });
+
+  const sourceId = genId('manual');
+  const payeeType = String(mapping.payee_type_default || 'service_provider').trim();
+  const normalizedPayee = payeeName.toLocaleLowerCase().replace(/\s+/g, ' ').trim();
+  const payeeKey = payeeType + ':manual:' + payerEntityKey + ':' + normalizedPayee;
+  const created = createPayableItemFromSource({
+    sourceType: 'manual',
+    sourceId,
+    sourceNo: '',
+    feeType: mapping.fee_type,
+    categoryCode: mapping.category_code,
+    subcategoryCode: mapping.subcategory_code,
+    payeeType,
+    payeeKey,
+    payeeName,
+    currency,
+    payableAmount: amountMinor / 100,
+    payableDate,
+    createdBy: (req.currentUserId || req.user && req.user.id) || '',
+    payerEntityKey: payer.entity_key,
+    payerName: payer.entity_name
+  });
+  if (!created || !created.id) return res.status(409).json({ error: '创建应付项失败，请检查费用金额和来源信息' });
+  res.status(201).json({
+    success: true,
+    item: {
+      id: created.id,
+      fee_no: created.fee_no,
+      source_type: 'manual',
+      fee_type: mapping.fee_type,
+      category_code: mapping.category_code,
+      subcategory_code: mapping.subcategory_code,
+      payee_name_snapshot: payeeName,
+      payer_entity_key: payer.entity_key,
+      payer_name_snapshot: payer.entity_name,
+      currency,
+      payable_amount: amountMinor / 100,
+      payable_amount_minor: amountMinor,
+      payable_date: payableDate,
+      lifecycle_status: 'active'
+    }
+  });
 }));
 
 // 应付费用详情

@@ -410,7 +410,7 @@ const NAV_MODULES=[
     {id:'approval-center',key:'nav.approval_center',icon:'✅',label:t("nav.approval_center", "\u5ba1\u6279\u4e2d\u5fc3"),perm:'approval_view'},
   ]},
   {id:'finance',key:'nav.finance',label:t("nav.finance","财务"),items:[
-    {id:'payable-cockpit',key:'nav.payable_cockpit',icon:'🧭',label:t("nav.payable_cockpit","应付驾驶舱"),perm:'payment_view'},
+    {id:'payable-cockpit',key:'nav.payable_cockpit',icon:'🧭',label:t("nav.payable_cockpit","财务付款总览"),perm:'payment_view'},
     {id:'payment',key:'nav.payment',icon:'💳',label:t("nav.payment", "\u4ed8\u6b3e\u7ba1\u7406"),perm:'payment_view'},
     {id:'cost',key:'nav.cost',icon:'💰',label:t("nav.cost", "\u6210\u672c\u7ba1\u7406"),perm:'cost_view'},
     {id:'payable-list',key:'nav.payable_list',icon:'📋',label:t("nav.payable_list", "\u5e94\u4ed8\u8d39\u7528\u5217\u8868"),perm:'payment_view'},
@@ -444,7 +444,7 @@ var NAV_ZH={
   'nav.forecast':'订单预测','nav.procurement':'采购链','nav.po':'PO管理',
   'nav.pi':'PI管理','nav.ci':'CI/PL管理','nav.logistics':'物流管理','nav.inbound':'WAC确认','nav.wac_history':'WAC历史记录','nav.logistics_decision':'物流决策',
   'nav.approval':'审批中心','nav.approval_center':'审批中心','nav.finance':'财务',
-  'nav.payable_cockpit':'应付驾驶舱','nav.payment':'付款管理','nav.cost':'成本管理','nav.payable_list':'应付费用列表',
+  'nav.payable_cockpit':'财务付款总览','nav.payment':'付款管理','nav.cost':'成本管理','nav.payable_list':'应付费用列表',
   'nav.system':'系统管理','nav.users':'用户管理','nav.roles':'角色权限',
   'nav.countries':'国家管理','nav.warehouses':'仓库管理','nav.brand_settings':'品牌设置',
   'nav.currencies':'币种设置','nav.operation_logs':'操作日志','nav.config':'系统参数',
@@ -537,7 +537,7 @@ function showPage(page){
   }
   document.querySelectorAll('.sidebar-item').forEach(el=>el.classList.toggle('active',el.dataset.page===page));
   document.querySelectorAll('.topnav-item').forEach((el,i)=>{if(NAV_MODULES[i]&&NAV_MODULES[i].id===currentModule)el.classList.add('active');else el.classList.remove('active')});
-  const titles={dashboard:t("nav.dashboard", "\u9996\u9875\u770b\u677f"),skus:t("nav.skus", "SKU\u4e3b\u6570\u636e"),inventory:t("page.inventory_total","库存总表"),outbound:t("nav.outbound","销售数据"),replenishment:t("nav.replenishment","订单预测"),stagnant:t("nav.stagnant", "\u5446\u6ede\u5206\u6790"),check:t("nav.stock_check", "\u5e93\u5b58\u76d8\u70b9"),po:t("nav.po", "PO\u7ba1\u7406"),pi:t("nav.pi", "PI\u7ba1\u7406"),ci:t("nav.ci", "CI/PL\u7ba1\u7406"),inbound:t("nav.wac_confirm", "WAC确认"),'wac-history':t('nav.wac_history','WAC历史记录'),'logistics-decision':t("nav.logistics_decision","物流决策"),cost:t("nav.cost", "\u6210\u672c\u7ba1\u7406"),payment:t("nav.payment", "\u4ed8\u6b3e\u7ba1\u7406"),'payable-cockpit':t("nav.payable_cockpit","应付驾驶舱"),'payable-list':t("nav.payable_list","应付费用列表"),forwarder:t("nav.forwarder_analysis", "\u8d27\u4ee3\u5206\u6790"),countries:t("nav.countries", "\u56fd\u5bb6\u7ba1\u7406"),warehouses:t("nav.warehouses", "\u4ed3\u5e93\u7ba1\u7406"),suppliers:t("nav.suppliers", "\u4f9b\u5e94\u5546\u7ba1\u7406"),'freight-forwarders':t("nav.freight_forwarders", "\u8d27\u4ee3\u7ba1\u7406"),currencies:t("nav.currencies", "\u5e01\u79cd\u8bbe\u7f6e"),config:t("nav.config", "\u7cfb\u7edf\u53c2\u6570"),'payment-terms':t("nav.payment_terms", "\u4ed8\u6b3e\u6761\u4ef6"),'approval-flows':t("nav.approval_flows", "\u5ba1\u6279\u6d41\u7ba1\u7406"),'approval-center':t("nav.approval_center", "\u5ba1\u6279\u4e2d\u5fc3"),'expense-types':t("nav.expense_types", "\u8d39\u7528\u7c7b\u578b"),'allocation-rules':t("nav.allocation_rules", "\u5206\u644a\u89c4\u5219"),users:t("nav.users", "\u7528\u6237\u7ba1\u7406"),roles:t("nav.roles","角色权限"),'batch-tasks':t("nav.batch_tasks", "\u6279\u91cf\u4efb\u52a1\u4e2d\u5fc3"),'brand-settings':t("nav.brand_settings", "\u54c1\u724c\u8bbe\u7f6e"),'operation-logs':t("nav.operation_logs", "\u64cd\u4f5c\u65e5\u5fd7"),'payment-categories':t("nav.payment_categories", "\u4ed8\u6b3e\u7c7b\u76ee\u7ba1\u7406"),'payer-entities':t("nav.payer_entities", "\u4ed8\u6b3e\u4e3b\u4f53")};
+  const titles={dashboard:t("nav.dashboard", "\u9996\u9875\u770b\u677f"),skus:t("nav.skus", "SKU\u4e3b\u6570\u636e"),inventory:t("page.inventory_total","库存总表"),outbound:t("nav.outbound","销售数据"),replenishment:t("nav.replenishment","订单预测"),stagnant:t("nav.stagnant", "\u5446\u6ede\u5206\u6790"),check:t("nav.stock_check", "\u5e93\u5b58\u76d8\u70b9"),po:t("nav.po", "PO\u7ba1\u7406"),pi:t("nav.pi", "PI\u7ba1\u7406"),ci:t("nav.ci", "CI/PL\u7ba1\u7406"),inbound:t("nav.wac_confirm", "WAC确认"),'wac-history':t('nav.wac_history','WAC历史记录'),'logistics-decision':t("nav.logistics_decision","物流决策"),cost:t("nav.cost", "\u6210\u672c\u7ba1\u7406"),payment:t("nav.payment", "\u4ed8\u6b3e\u7ba1\u7406"),'payable-cockpit':t("nav.payable_cockpit","财务付款总览"),'payable-list':t("nav.payable_list","应付费用列表"),forwarder:t("nav.forwarder_analysis", "\u8d27\u4ee3\u5206\u6790"),countries:t("nav.countries", "\u56fd\u5bb6\u7ba1\u7406"),warehouses:t("nav.warehouses", "\u4ed3\u5e93\u7ba1\u7406"),suppliers:t("nav.suppliers", "\u4f9b\u5e94\u5546\u7ba1\u7406"),'freight-forwarders':t("nav.freight_forwarders", "\u8d27\u4ee3\u7ba1\u7406"),currencies:t("nav.currencies", "\u5e01\u79cd\u8bbe\u7f6e"),config:t("nav.config", "\u7cfb\u7edf\u53c2\u6570"),'payment-terms':t("nav.payment_terms", "\u4ed8\u6b3e\u6761\u4ef6"),'approval-flows':t("nav.approval_flows", "\u5ba1\u6279\u6d41\u7ba1\u7406"),'approval-center':t("nav.approval_center", "\u5ba1\u6279\u4e2d\u5fc3"),'expense-types':t("nav.expense_types", "\u8d39\u7528\u7c7b\u578b"),'allocation-rules':t("nav.allocation_rules", "\u5206\u644a\u89c4\u5219"),users:t("nav.users", "\u7528\u6237\u7ba1\u7406"),roles:t("nav.roles","角色权限"),'batch-tasks':t("nav.batch_tasks", "\u6279\u91cf\u4efb\u52a1\u4e2d\u5fc3"),'brand-settings':t("nav.brand_settings", "\u54c1\u724c\u8bbe\u7f6e"),'operation-logs':t("nav.operation_logs", "\u64cd\u4f5c\u65e5\u5fd7"),'payment-categories':t("nav.payment_categories", "\u4ed8\u6b3e\u7c7b\u76ee\u7ba1\u7406"),'payer-entities':t("nav.payer_entities", "\u4ed8\u6b3e\u4e3b\u4f53")};
   document.getElementById('content-inner').innerHTML='<div id="flash-container"></div>';
   const R={dashboard:renderDashboard,skus:renderSKUs,inventory:renderInventory,consignment:renderConsignment,outbound:renderOutbound,replenishment:renderReplenishment,stagnant:renderStagnant,check:renderCheck,po:renderPO,pi:renderPI,ci:renderCI,inbound:renderInbound,'wac-history':renderWacHistoryMatrix,cost:renderCost,payment:renderPayment,'payable-cockpit':renderPayableCockpit,'payable-list':renderPayableList,forwarder:renderForwarderAnalysis,'logistics-decision':renderLogisticsDecision,countries:renderCountries,warehouses:renderWarehouses,suppliers:renderSuppliers,'freight-forwarders':renderFreightForwarders,currencies:renderCurrencies,config:renderConfig,'payment-terms':renderPaymentTerms,'approval-flows':renderApprovalFlows,'approval-center':renderApprovalCenter,'expense-types':renderExpenseTypes,'allocation-rules':renderAllocationRules,users:renderUsers,roles:renderRoles,'batch-tasks':renderBatchTasks,'brand-settings':renderBrandSettings,'operation-logs':renderOperationLogs,'payment-categories':renderPaymentCategories,'payer-entities':renderPayerEntities};
   if(R[page])R[page]();
@@ -16171,26 +16171,37 @@ const PAY_SUBCATS={
 };
 const PAY_STATUS_MAP={unpaid:t('status.unpaid','未付款'),pending_approval:t("shell.072", "\u5f85\u5ba1\u6279"),approved:t("shell.073", "\u5df2\u5ba1\u6279"),paid:t("app.1094", "\u5df2\u4ed8\u6b3e"),rejected:t("app.1095", "\u5df2\u9a73\u56de"),partial_paid:t("app.1096", "\u90e8\u5206\u4ed8\u6b3e"),partial_deduction:t("app.1097", "\u90e8\u5206\u62b5\u6263"),partial_rounding:t("app.1098", "\u90e8\u5206\u62b9\u96f6"),deduction_settled:t("app.1099", "\u5168\u989d\u62b5\u6263"),partial_payment_partial_deduction:t("app.1100", "\u90e8\u5206\u4ed8\u6b3e+\u90e8\u5206\u62b5\u6263"),reversed:t("app.1101", "\u5df2\u51b2\u9500"),cancelled:t("shell.085", "\u5df2\u53d6\u6d88")};
 
-// ==================== FIN-DASHBOARD-01：财务应付驾驶舱（只读）====================
+// ==================== FIN-DASHBOARD-01：财务财务付款总览（只读）====================
 let _cockpitData=null;
 let _cockpitLoadSeq=0;
 async function renderPayableCockpit(){
-  const el=document.getElementById('content-inner');
-  el.innerHTML='<div id="flash-container"></div><div style="padding:20px;color:var(--text-secondary,#888)">'+t("cockpit.loading","加载中…")+'</div>';
-  const seq=++_cockpitLoadSeq;
-  try{
-    const data=await api('/api/finance/payment-overview');
-    // 竞态防护：页面已切走则静默结束，不向已销毁/替换的 DOM 写入（避免跨页面 null 错误）
-    if(seq!==_cockpitLoadSeq||currentPage!=='payable-cockpit')return;
-    _cockpitData=null;
-    renderFinanceOverviewPage(data);
-  }catch(e){
-    // 竞态防护：页面已切走后不再写 DOM（避免 "Cannot set properties of null"）
-    if(seq!==_cockpitLoadSeq||currentPage!=='payable-cockpit')return;
-    el.innerHTML=t('html.renderPayableCockpit', '<div id="flash-container"></div><div class="flash flash-danger show">加载财务付款总览失败：{v1}</div>', {v1: esc(e.message)});
+  const el = document.getElementById('content-inner');
+  if (!el) return;
+  const seq = ++_cockpitLoadSeq;
+  el.innerHTML = '<div id="flash-container"></div><div style="padding:28px;color:var(--text-secondary,#777);font-size:13px">正在加载付款日历...</div>';
+  try {
+    const results = await Promise.all([
+      api('/api/payable-items'),
+      api('/api/payable-items/facets'),
+      api('/api/payment-categories/active'),
+      api('/api/payer-entities?status=active'),
+      api('/api/currencies')
+    ]);
+    if (seq !== _cockpitLoadSeq || currentPage !== 'payable-cockpit') return;
+    renderFinancePaymentCalendarPage({
+      items: results[0] && Array.isArray(results[0].items) ? results[0].items : [],
+      facets: results[1] || {},
+      categories: Array.isArray(results[2]) ? results[2] : [],
+      payerEntities: Array.isArray(results[3]) ? results[3] : [],
+      currencies: Array.isArray(results[4]) ? results[4].filter(x => x && x.status !== 'inactive') : []
+    });
+  } catch (error) {
+    if (seq !== _cockpitLoadSeq || currentPage !== 'payable-cockpit') return;
+    el.innerHTML = '<div id="flash-container"></div><div style="padding:24px;border:1px solid var(--border,#ddd);border-radius:12px;color:var(--text-primary,#333)">' +
+      '<strong>付款日历加载失败</strong><div style="margin-top:8px;color:var(--text-secondary,#777);font-size:12px">' +
+      esc(error && error.message ? error.message : '请稍后重试') + '</div><button class="btn btn-secondary btn-sm" style="margin-top:12px" onclick="renderPayableCockpit()">重新加载</button></div>';
   }
 }
-
 function cockpitCard(label,valueHtml,tone,sub){
   // 苹果风格：圆角大留白 + 弱边框 + 数字突出 + 标签弱化 + 配色纪律（红=风险/橙=即将/绿=完成/蓝=未结清/灰=普通）
   const accent={danger:'#ff3b30',warn:'#ff9500',settled:'#34c759',outstanding:'#007aff',info:'#ff9500',total:'#8e8e93',normal:'#1d1d1f'}[tone]||'#8e8e93';
@@ -16382,7 +16393,7 @@ function renderCockpitView(){
   const categoryOpts=Object.keys(catSet).sort().map(c=>'<option value="'+esc(c)+'">'+esc(cockpitCatAlias(c))+'</option>').join('');
 
   let html='<div id="flash-container"></div>';
-  html+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><div style="font-size:15px;font-weight:700">🧭 '+t("cockpit.title","财务应付驾驶舱")+'</div>'
+  html+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><div style="font-size:15px;font-weight:700">🧭 '+t("cockpit.title","财务财务付款总览")+'</div>'
     +'<div style="font-size:12px;color:var(--text-secondary,#999)">'+t("cockpit.lbl_data_time","数据时间")+' '+esc(fmtDate(d.generated_at))+' '+t("cockpit.lbl_today","｜ 今天")+' '+esc(d.today)+'</div></div>';
   html+='<details style="font-size:12px;color:var(--text-secondary,#999);margin-bottom:14px"><summary style="cursor:pointer">'+t("cockpit.caliber_note","口径说明")+'</summary><div style="line-height:1.7;padding:6px 0 0 14px">'
     +esc(d.notes.outstanding)+'<br>'+esc(d.notes.currency)+'<br>'+esc(d.notes.due_date)+'</div></details>';
