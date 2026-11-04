@@ -201,14 +201,14 @@ module.exports = function installQuotationManagement(deps) {
 
     const history = query(sql, ps).rows, by = new Map();
     for (const r of history) { const k = pairKey(r.brand, r.sku_code); if (!by.has(k)) by.set(k, []); by.get(k).push(r); }
-    const pmap = purchaseBaselines([...by.values()].map(a => ({ brand: a[0].brand, sku: a[0].sku_code, currency: a[0].currency || BRAND_CCY[a[0].brand] })));
+    const pmap = purchaseBaselines([...by.values()].filter(a => a[0].match_status !== 'unlinked' && (a[0].psi_sku_code || a[0].sku_code)).map(a => ({ brand: a[0].brand, sku: a[0].psi_sku_code || a[0].sku_code, currency: a[0].currency || BRAND_CCY[a[0].brand] })));
     const rows = [];
 
     for (const [k, a] of by) {
-      const event = a[0], latest = isQuoted(event) ? event : null, prev = latest ? a.slice(1).find(isQuoted) || null : null, p = pmap.get(k) || null;
+      const event = a[0], latest = isQuoted(event) ? event : null, prev = latest ? a.slice(1).find(isQuoted) || null : null, p = event.match_status === 'unlinked' ? null : (pmap.get(pairKey(event.brand, event.psi_sku_code || event.sku_code)) || null);
       const sameCurrency = !!latest && !!p && p.status === 'exact' && p.unit_price != null && String(p.currency || '').toUpperCase() === String(latest.currency || '').toUpperCase();
       rows.push({
-        sku_code: event.sku_code, brand: event.brand, product_type: event.product_type,
+        sku_code: event.sku_code, supplier_part_no: event.supplier_part_no || event.sku_code, psi_sku_code: event.psi_sku_code || '', match_status: event.match_status || 'matched', supplier_id: event.supplier_id || '', model: event.model || '', spec: event.spec || '', brand: event.brand, product_type: event.product_type,
         latest_price: latest ? Number(latest.quote_price) : null, currency: event.currency, latest_date: event.quote_date,
         quote_status: latest ? 'quoted' : 'no_quote', previous_price: prev ? Number(prev.quote_price) : null,
         vs_previous_pct: latest && prev ? pct(latest.quote_price, prev.quote_price) : null,
@@ -269,9 +269,10 @@ module.exports = function installQuotationManagement(deps) {
       if (!sku || !brand) return res.status(400).json({ error: '缺少 SKU 或品牌' });
       const h = query('SELECT * FROM quotation_prices WHERE sku_code=? AND brand=? ORDER BY quote_date DESC,created_at DESC', [sku, brand]).rows;
       const targetCurrency = (h[0] && h[0].currency) || BRAND_CCY[brand] || '';
-      const p = purchaseBaselines([{ sku, brand, currency: targetCurrency }]).get(pairKey(brand, sku)) || null;
+      const isUnlinked = !!(h[0] && h[0].match_status === 'unlinked');
+      const p = isUnlinked ? null : (purchaseBaselines([{ sku: (h[0] && h[0].psi_sku_code) || sku, brand, currency: targetCurrency }]).get(pairKey(brand, (h[0] && h[0].psi_sku_code) || sku)) || null);
       res.json({
-        sku_code: sku, brand, purchase: p,
+        sku_code: sku, brand, purchase: p, match_status: isUnlinked ? 'unlinked' : 'matched', supplier_part_no: (h[0] && h[0].supplier_part_no) || sku, psi_sku_code: (h[0] && h[0].psi_sku_code) || '',
         history: h.map((r, i) => {
           const quoted = isQuoted(r), prev = quoted ? h.slice(i + 1).find(isQuoted) || null : null;
           const sameCurrency = quoted && p && p.status === 'exact' && p.unit_price != null && String(p.currency || '').toUpperCase() === String(r.currency || '').toUpperCase();
