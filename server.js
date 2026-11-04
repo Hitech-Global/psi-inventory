@@ -3340,10 +3340,12 @@ app.post('/api/payment-subcategories', requireApiPermission('system_config'), as
 //   小类须同时满足 payment_subcategories.status='active' 且至少存在一条 status='active' 来源映射
 //   大类须同时满足 payment_categories.status='active' 且过滤后至少还剩一个有效小类
 // 每个小类只返回其 active 来源映射(source_mappings)；不返回 inactive 映射；不返回旧标量字段
-app.get('/api/payment-categories/active', requireLogin, asyncHandler((req, res) => {
-  const cats = query(`SELECT id, code, name, sort_order FROM payment_categories WHERE status='active' ORDER BY sort_order, created_at`).rows;
-  const subs = query(`SELECT id, category_id, code, name, payee_type_default, sort_order FROM payment_subcategories WHERE status='active' ORDER BY sort_order, created_at`).rows;
-  const srcs = query(`SELECT subcategory_id, source_type, fee_type FROM payment_subcategory_sources WHERE status='active' ORDER BY source_type, fee_type`).rows;
+app.get('/api/payment-categories/active', requireLogin, asyncHandler(async (req, res) => {
+  const [cats, subs, srcs] = await readRowsBatchAsync([
+    { sql: 'SELECT id, code, name, sort_order FROM payment_categories WHERE status=\'active\' ORDER BY sort_order, created_at', params: [] },
+    { sql: 'SELECT id, category_id, code, name, payee_type_default, sort_order FROM payment_subcategories WHERE status=\'active\' ORDER BY sort_order, created_at', params: [] },
+    { sql: 'SELECT subcategory_id, source_type, fee_type FROM payment_subcategory_sources WHERE status=\'active\' ORDER BY source_type, fee_type', params: [] }
+  ]);
   const bySub = {};
   srcs.forEach(s => { (bySub[s.subcategory_id] = bySub[s.subcategory_id] || []).push({ source_type: s.source_type, fee_type: s.fee_type }); });
   // 仅保留“有至少一条 active 来源映射”的小类
@@ -3380,7 +3382,7 @@ function payerEntityRefCount(id) {
 }
 
 // 列表：可按 status / country_id 过滤；返回 country_name 与引用数量；按 sort_order、entity_name 排序
-app.get('/api/payer-entities', requireLogin, asyncHandler((req, res) => {
+app.get('/api/payer-entities', requireLogin, asyncHandler(async (req, res) => {
   const { status, country_id } = req.query;
   let sql = `SELECT p.*, c.name AS country_name
              FROM payer_entities p
@@ -3390,7 +3392,7 @@ app.get('/api/payer-entities', requireLogin, asyncHandler((req, res) => {
   if (status) { sql += ' AND p.status = ?'; args.push(status); }
   if (country_id) { sql += ' AND p.country_id = ?'; args.push(country_id); }
   sql += ' ORDER BY p.sort_order, p.entity_name';
-  const rows = query(sql, args).rows;
+  const rows = await readRowsAsync(sql, args);
   res.json(rows.map(r => ({ ...r, ref_count: payerEntityRefCount(r.id) })));
 }));
 
@@ -4306,7 +4308,7 @@ app.post('/api/inventory-imports/bulk-import', requireApiPermission('inventory_i
 }));
 
 // ==================== 库存总表 ====================
-app.get('/api/inventory', requireApiPermission('inventory_view'), asyncHandler((req, res) => {
+app.get('/api/inventory', requireApiPermission('inventory_view'), asyncHandler(async (req, res) => {
   const { country, warehouse, brand, keyword } = req.query;
   let sql = `SELECT i.*, s.product_name, s.brand, s.category, s.model, s.lifecycle_status, s.is_new_product FROM inventory i LEFT JOIN skus s ON i.sku_code = s.sku_code WHERE 1=1`;
   const params = [];
@@ -4315,7 +4317,7 @@ app.get('/api/inventory', requireApiPermission('inventory_view'), asyncHandler((
   if (brand) { sql += ' AND s.brand = ?'; params.push(brand); }
   if (keyword) { sql += ' AND (i.sku_code LIKE ? OR s.product_name LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`); }
   sql += ' ORDER BY i.sku_code';
-  res.json(query(sql, params).rows);
+  res.json(await readRowsAsync(sql, params));
 }));
 
 // 库存总表金额扩展：独立异步接口，避免 CI/PI 资产计算阻塞库存主表首屏加载。
@@ -7922,14 +7924,14 @@ app.get('/api/replenishment-suggestions', requireApiPermission('replenishment_vi
   if (sales_status) { sql += ' AND rs.sales_status = ?'; params.push(sales_status); }
   if (lifecycle_status) { sql += ' AND rs.lifecycle_status = ?'; params.push(lifecycle_status); }
   // 订单预测排除寄售仓：寄售库存不计入库存池/周转/建议采购（页面上线后立即隐藏历史寄售行）
-  sql = appendConsignmentExclusion(sql, params, 'rs.target_warehouse');
+  sql = await appendConsignmentExclusionAsync(sql, params, 'rs.target_warehouse');
   // DATA-SCOPE: 应用数据权限过滤（国家/品牌/仓库）
-  const rsScopeFilter2 = buildReplenishmentDataScopeFilter(req);
+  const rsScopeFilter2 = await buildReplenishmentDataScopeFilterAsync(req);
   if (rsScopeFilter2.sql) { sql += rsScopeFilter2.sql; params.push(...rsScopeFilter2.params); }
   sql += ' ORDER BY CASE WHEN rs.lifecycle_status IN (\'stopped\',\'discontinued\') THEN 1 ELSE 0 END, rs.sku_code';
   const today = new Date();
   const todayStr = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
-  const rows = query(sql, params).rows.map(applyLiveForecastInventory).map(r => {
+  const rows = (await readRowsAsync(sql, params)).map(applyLiveForecastInventory).map(r => {
     let daysSince = null;
     if (r.last_inbound_date) {
       const d = new Date(r.last_inbound_date);
@@ -9442,7 +9444,7 @@ function piItemsEqual(a, b) {
 }
 
 // ==================== PI 管理 ====================
-app.get('/api/proforma-invoices', requireApiPermission('pi_view'), asyncHandler((req, res) => {
+app.get('/api/proforma-invoices', requireApiPermission('pi_view'), asyncHandler(async (req, res) => {
   const { status, ship_status, keyword, related_po } = req.query;
   let sql = `SELECT pi.*,
       COALESCE((SELECT SUM(pii.pi_confirmed_qty) FROM proforma_invoice_items pii WHERE pii.pi_id = pi.id), 0) AS confirmed_qty_sum,
@@ -9454,7 +9456,7 @@ app.get('/api/proforma-invoices', requireApiPermission('pi_view'), asyncHandler(
   if (related_po) { sql += ' AND pi.related_po_no = ?'; params.push(related_po); }
   if (keyword) { sql += ' AND (pi.pi_no LIKE ? OR pi.supplier_name LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`); }
   sql += ' ORDER BY pi.created_at DESC';
-  let rows = query(sql, params).rows;
+  let rows = await readRowsAsync(sql, params);
   if (ship_status) {
     rows = rows.filter(r => resolvePIShipStatus(r) === ship_status);
   }
@@ -9463,7 +9465,7 @@ app.get('/api/proforma-invoices', requireApiPermission('pi_view'), asyncHandler(
   const depositPaidMap = {};
   if (depositPiIds.length > 0) {
     const placeholders = depositPiIds.map(() => '?').join(',');
-    const depositRows = query(
+    const depositRows = await readRowsAsync(
       `SELECT pai.source_id,
         COALESCE(SUM(pa.allocated_amount_minor), 0) AS paid_minor,
         MAX(pai.payable_amount_minor) AS payable_minor,
@@ -9477,7 +9479,7 @@ app.get('/api/proforma-invoices', requireApiPermission('pi_view'), asyncHandler(
         AND pai.source_type = 'pi' AND pai.fee_type = 'deposit'
       GROUP BY pai.source_id`,
       depositPiIds
-    ).rows;
+    );
     depositRows.forEach(d => {
       // MDF/other valid deductions are reflected in paid payable_items, not
       // payment_allocations (cash-only). Trust the canonical settled payable.
@@ -16432,13 +16434,13 @@ function derivePayableItemPaymentState(payableMinor, paidMinor, deductionMinor, 
 // 范围与费用台账一致：lifecycle IN (active, reserved, partially_paid, paid)，排除 cancelled。
 // 国家统一 canonCountry 归一（历史 CI 的 ID 与中文「印度尼西亚」归到同一筛选值），显示用 displayCountry。
 // 独立全量聚合：不随列表当前筛选变化，避免「选了 A 品牌后其他品牌选项消失」。
-app.get('/api/payable-items/facets', requireApiPermission('payment_view'), asyncHandler((req, res) => {
-  const rows = query(
+app.get('/api/payable-items/facets', requireApiPermission('payment_view'), asyncHandler(async (req, res) => {
+  const rows = await readRowsAsync(
     `SELECT id, source_type, source_id, source_no, source_ci_id, subcategory_code, payer_entity_key
      FROM payable_items
      WHERE lifecycle_status IN ('active','reserved','partially_paid','paid')`
-  ).rows;
-  const refMap = derivePayableSourceRefs(rows);
+  );
+  const refMap = await derivePayableSourceRefsAsync(rows);
   const brandSet = {};
   const countrySet = {};
   for (const r of rows) {
@@ -16471,7 +16473,7 @@ function parseMultiParam(v) {
   return [...new Set(out)];
 }
 
-app.get('/api/payable-items', requireApiPermission('payment_view'), asyncHandler((req, res) => {
+app.get('/api/payable-items', requireApiPermission('payment_view'), asyncHandler(async (req, res) => {
   const { lifecycle_status, fee_type, source_type, source_id, payee_key, keyword } = req.query;
   // 完整台账新筛参：付款状态（unpaid/partial/paid，金额事实口径）/ 品牌 / 国家 / 付款日期区间
   const { payment_status, brand, country, pay_date_from, pay_date_to } = req.query;
@@ -16527,13 +16529,13 @@ app.get('/api/payable-items', requireApiPermission('payment_view'), asyncHandler
   // 关键词：费用号 / 来源单号 / 收款方快照 / 供应商（JOIN 派生列，PG WHERE 不支持别名，写完整 COALESCE 表达式）
   if (keyword) { sql += ' AND (fee_no LIKE ? OR source_no LIKE ? OR payee_name_snapshot LIKE ? OR COALESCE(ci.supplier_name, hci.supplier_name, pii.supplier_name) LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`, `%${keyword}%`); }
   sql += ' ORDER BY created_at DESC';
-  const rows = query(sql, params).rows;
+  const rows = await readRowsAsync(sql, params);
   // PAY-CORE 多次付款：附加「已付款 / 抵扣 / 抹零 / 剩余未付」拆分（应付事实不变，金额动态推导）
-  const breakdownMap = payableItemsSettlementBreakdown(rows.map(r => r.id));
-  // 来源编号派生（仅展示用，与驾驶舱同口径：定金→PI号，尾款→CI号）+ 品牌 / 国家归一码
-  const refMap = derivePayableSourceRefs(rows);
-  // 最近付款日期（真实 payment 流水 MAX(paid_date)，仅展示）
-  const lastPayMap = payableItemsLastPaymentDateMap(rows.map(r => r.id));
+  const [breakdownMap, refMap, lastPayMap] = await Promise.all([
+    payableItemsSettlementBreakdownAsync(rows.map(r => r.id)),
+    derivePayableSourceRefsAsync(rows),
+    payableItemsLastPaymentDateMapAsync(rows.map(r => r.id))
+  ]);
   // 金额转换为元（便于前端展示）
   let items = rows.map(r => {
     const b = breakdownMap.get(r.id) || { paidMinor: 0, deductionMinor: 0, roundingMinor: 0 };
