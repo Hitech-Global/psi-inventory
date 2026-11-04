@@ -27,7 +27,7 @@ function fcEsc(value) {
   return String(value == null ? '' : value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 function fcJsArg(value) {
-  return String(value == null ? '' : value).replace(/\\/g, '\\\').replace(/'/g, "\'").replace(/[\r\n]/g, '');
+  return String(value == null ? '' : value).replace(/[^A-Za-z0-9_-]/g, '');
 }
 function fcMoney(value) {
   const number = Number(value || 0);
