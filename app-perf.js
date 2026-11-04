@@ -599,11 +599,19 @@ function onMutation(method, url, body) {
       markDirty: markDirty,
       onRefresh: onRefresh,
       background: background,
-      // 供 api() 使用：命中且新鲜则返回 data；否则返回 undefined（调用方走网络）
+      // 供 api() 使用：新鲜快照直接返回；短暂过期但未 dirty 的快照也可先返回，再后台刷新。
+      // 用户本会话的 mutation 会精准 dirty 受影响页面，因此不能用旧数据覆盖刚完成的编辑。
       hit: function (pageKey, signature, ttl) {
         var e = peek(pageKey, signature);
-        if (isFresh(e, ttl)) { touch(pageKey); perf('page', pageKey, 'HIT'); return e.data; }
-        return undefined;
+        if (!e || e.dirty) return undefined;
+        var t = ttl || e.ttl || PAGE_TTL_DEFAULT;
+        var age = Math.max(0, nowMs() - e.fetchedAt);
+        if (age >= t + PAGE_STALE_GRACE_MS) return undefined;
+        var ownerPage = global.currentPage || '';
+        if (ownerPage && Array.isArray(e.ownerPages) && e.ownerPages.indexOf(ownerPage) < 0) e.ownerPages.push(ownerPage);
+        touch(pageKey);
+        perf('page', pageKey, age < t ? 'HIT' : 'STALE-HIT', { age_ms: Math.round(age) });
+        return e.data;
       },
       // 供 api() 使用：命中但接近过期 → 后台刷新（不阻塞）
       maybeBackground: function (pageKey, signature, ttl, fetcher) {
