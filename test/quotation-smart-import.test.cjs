@@ -22,11 +22,12 @@ const parsed=n.parseSheetRows([
   {name:'USB',rows:[
     ['Supplier Part Number','Model','FOB Price','Currency','Brand'],
     ['LEGACY-USB-01','U905',0,'USD','NETAC'],
-    ['LEGACY-USB-02','U906','','USD','Netac']
+    ['LEGACY-USB-02','U906','','USD','Netac'],
+    ['LEGACY-USB-03','U907','USD 1.25','USD','Netac']
   ]}
 ],{brand:'Netac',quote_date:'2026-11-04',supplier_id:'supplier-netac'});
 
-assert.equal(parsed.rows.length,4,'all recognized sheets should be read');
+assert.equal(parsed.rows.length,5,'all recognized sheets should be read');
 assert.equal(parsed.recognized_sheets.length,2,'both quote sheets should be recognized');
 assert.equal(parsed.ignored_sheets.length,1,'non-quote sheets should be skipped');
 assert.equal(parsed.rows[0].supplier_part_no,'NT-SSD-001');
@@ -35,6 +36,7 @@ assert.equal(parsed.rows[0].quote_price,12.5);
 assert.equal(parsed.rows[2].quote_price,0,'explicit zero should be retained as no quote');
 assert.equal(parsed.rows[3].quote_price,0,'blank price should become no quote');
 assert.equal(parsed.rows[3].quote_date_source,'default','default date source should be tracked');
+assert.equal(parsed.rows[4].quote_price,1.25,'currency-prefixed text prices should be parsed');
 
 const metadata={
   skus:[
