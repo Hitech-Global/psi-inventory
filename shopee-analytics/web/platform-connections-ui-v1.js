@@ -272,10 +272,10 @@ const TEXT = {
    * live on the platform cannot be, whatever is set here.
    */
   function renderShopeeApps(statuses, shopId) {
-    const host = document.querySelector('#platformShopeeApps');
-    if (!host) return;
+    const list = document.querySelector('#platformAppsList');
+    if (!list) return;
     const byRole = new Map((statuses || []).map(entry => [entry.role, entry]));
-    const rows = SHOPEE_APPS.map(app => {
+    list.innerHTML = SHOPEE_APPS.map(app => {
       const status = byRole.get(app.role) || {};
       const configured = status.credentialConfigured !== false;
       const authorized = Boolean(status.tokenPresent);
@@ -299,19 +299,11 @@ const TEXT = {
         <span class="app-action">${action}</span>
       </li>`;
     }).join('');
-    host.innerHTML = `
-      <div class="apps-head">
-        <h3>${esc(t('appsTitle'))}</h3>
-        <p>${esc(t('appsSub'))}</p>
-        <label class="apps-shop">${esc(t('pickShop'))}
-          <select id="platformAppsShop"></select>
-        </label>
-      </div>
-      <ul class="apps-list">${rows}</ul>`;
   }
 
   /**
-   * The shops the reader may connect an application for.
+   * The shops the reader may connect an application for, and the state of
+   * each application for the shop chosen.
    */
   async function loadShopeeApps() {
     const host = document.querySelector('#platformShopeeApps');
@@ -328,19 +320,17 @@ const TEXT = {
       host.innerHTML = `<p class="apps-empty">${esc(t('empty'))}</p>`;
       return;
     }
-    const select = document.createElement('select');
-    select.id = 'platformAppsShop';
-    select.innerHTML = shops.map(shop =>
-      `<option value="${esc(shop.shopId)}">${esc(shop.displayName || shop.shopId)}</option>`).join('');
-    host.innerHTML = '<div class="apps-head"><h3></h3><p></p><label class="apps-shop"></label></div>';
-    const head = host.querySelector('.apps-head');
-    head.querySelector('h3').textContent = t('appsTitle');
-    head.querySelector('p').textContent = t('appsSub');
-    const label = head.querySelector('.apps-shop');
-    label.insertBefore(document.createTextNode(`${t('pickShop')} `), select);
-    label.appendChild(select);
-    host.appendChild(head);
-
+    host.innerHTML = `
+      <div class="apps-head">
+        <h3>${esc(t('appsTitle'))}</h3>
+        <p>${esc(t('appsSub'))}</p>
+        <label class="apps-shop">${esc(t('pickShop'))}
+          <select id="platformAppsShop">${shops.map(shop =>
+            `<option value="${esc(shop.shopId)}">${esc(shop.displayName || shop.shopId)}</option>`).join('')}</select>
+        </label>
+      </div>
+      <ul class="apps-list" id="platformAppsList"></ul>`;
+    const select = host.querySelector('#platformAppsShop');
     const load = async () => {
       const shopId = select.value;
       let statuses = [];
@@ -351,11 +341,6 @@ const TEXT = {
         statuses = [];
       }
       renderShopeeApps(statuses, shopId);
-      const again = host.querySelector('#platformAppsShop');
-      if (again) {
-        again.value = shopId;
-        again.addEventListener('change', load);
-      }
     };
     select.addEventListener('change', load);
     await load();
