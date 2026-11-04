@@ -119,7 +119,7 @@ function parseSheetRows(sheets,options){
         brand,brand_source:clean(brandCell)?'file':'default',
         product_type:clean(type),model:clean(model),spec:clean(spec),
         quote_price:price,currency:clean(currencyCell||headerCurrency||BRAND_CCY[brand]||opts.currency).toUpperCase(),
-        quote_date:normalizeDate(dateCell||opts.quote_date),remark:clean(remark),
+        quote_date:normalizeDate(dateCell||opts.quote_date),quote_date_source:clean(dateCell)?'file':'default',remark:clean(remark),
         source_sheet:clean(sheet.name),source_row:i+1,supplier_id:clean(opts.supplier_id)
       });
     }
