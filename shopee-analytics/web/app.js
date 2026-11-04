@@ -868,6 +868,89 @@ async function loadTikTokData() {
 }
 
 /**
+ * 加载 TikTok 广告数据。
+ *
+ * 广告数据与经营数据分开取 —— 它们的口径不同，混在一个请求里
+ * 容易让人把平台归因的 GMV 与纯付费的花费当成一组数看。
+ */
+async function loadTikTokAds() {
+  const notice = document.querySelector('#tiktokAdsNotice');
+  if (!state.tiktokShopId) {
+    if (notice) {
+      notice.innerHTML = '<div class="tiktok-notice warn">'
+        + '<strong>还没有选中的 TikTok 店铺。</strong><span>先选一家已接入的店铺。</span></div>';
+      notice.classList.remove('hidden');
+    }
+    return;
+  }
+  try {
+    const filters = currentFilters();
+    const params = new URLSearchParams();
+    params.set('shop_id', String(state.tiktokShopId));
+    if (filters.startDate) params.set('start_date', filters.startDate);
+    if (filters.endDate) params.set('end_date', filters.endDate);
+    const data = await json(`/api/shopee-analytics/tiktok/marketing/daily?${params}`);
+    window.TikTokUI?.renderAds(data);
+  } catch (error) {
+    if (notice) {
+      notice.innerHTML = '<div class="tiktok-notice warn">'
+        + `<strong>读取广告数据失败。</strong><span>${escapeHtml(error.message)}</span></div>`;
+      notice.classList.remove('hidden');
+    }
+  }
+}
+
+/**
+ * 手动触发广告数据同步。
+ *
+ * 只有 super admin 能跑 —— 它会用应用的广告账户凭据去拉平台数据。
+ */
+async function syncTikTokAds() {
+  const button = document.querySelector('#tiktokAdsSyncBtn');
+  const notice = document.querySelector('#tiktokAdsNotice');
+  if (button) {
+    button.disabled = true;
+    button.textContent = '同步中…';
+  }
+  try {
+    const filters = currentFilters();
+    const body = {};
+    if (filters.startDate) body.start_date = filters.startDate;
+    if (filters.endDate) body.end_date = filters.endDate;
+    const result = await fetch('/api/shopee-analytics/tiktok/marketing/sync', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const payload = await result.json().catch(() => ({}));
+    if (!result.ok) {
+      throw new Error(payload.message || `同步失败（HTTP ${result.status}）`);
+    }
+    if (notice) {
+      const failed = payload.failedCount || 0;
+      notice.innerHTML = failed
+        ? `<div class="tiktok-notice warn"><strong>同步完成，但有 ${failed} 个广告主失败。</strong>`
+          + `<span>成功写入 ${payload.written || 0} 行。失败原因见同步结果。</span></div>`
+        : `<div class="tiktok-notice"><strong>同步完成。</strong>`
+          + `<span>成功写入 ${payload.written || 0} 行，广告主 ${payload.advertiserCount || 0} 个。</span></div>`;
+      notice.classList.remove('hidden');
+    }
+    await loadTikTokAds();
+  } catch (error) {
+    if (notice) {
+      notice.innerHTML = '<div class="tiktok-notice warn">'
+        + `<strong>广告同步失败。</strong><span>${escapeHtml(error.message)}</span></div>`;
+      notice.classList.remove('hidden');
+    }
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = '同步广告数据';
+    }
+  }
+}
+
+/**
  * 运行 TikTok 诊断。
  *
  * 诊断是**按需**触发的，不是每次进页签都跑 ——
@@ -1702,6 +1785,9 @@ async function loadCurrentView({ manageButton = true } = {}) {
     }
     else if (state.view === 'tiktok') {
       await loadTikTokData();
+      // 广告数据与经营数据一起读 —— 但它们是两个独立口径，
+      // 渲染时分开呈现，不合并。
+      await loadTikTokAds();
     }
     else if (state.view === 'status') {
       if (selectedShop()) await loadSystemStatus();
@@ -1939,6 +2025,8 @@ $('#funnelProductsGroupToggle')?.addEventListener('click', () => {
   $('#tiktokExportBtn')?.addEventListener('click', () => window.TikTokUI?.exportCsv());
   $('#tiktokRefreshBtn')?.addEventListener('click', () => loadTikTokData());
   $('#tiktokDiagnosisBtn')?.addEventListener('click', () => loadTikTokDiagnosis());
+  $('#tiktokAdsRefreshBtn')?.addEventListener('click', () => loadTikTokAds());
+  $('#tiktokAdsSyncBtn')?.addEventListener('click', () => syncTikTokAds());
   // 切换 TikTok 店铺：记住选择并重新读数据。
   $('#tiktokShopSelect')?.addEventListener('change', (event) => {
     state.tiktokShopId = event.target.value;

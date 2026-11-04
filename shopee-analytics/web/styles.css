@@ -873,3 +873,9 @@ tbody td{font-weight:400}
   .app-name,.app-note,.app-state,.app-action{width:auto}
   .apps-shop{margin-left:0}
 }
+
+/* ===== TikTok 广告 =====
+   两种口径必须一眼可辨：平台归因（含自然流量）与纯付费（真实花费）。
+   混看这两列会得出「广告创造了全部 GMV」的错误结论 —— 颜色上要分开。 */
+.tiktok-basis.attributed{background:#fff4e5;color:#b54708}
+.tiktok-basis.paid{background:#e0e7ff;color:#3538cd}

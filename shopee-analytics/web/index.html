@@ -474,6 +474,27 @@
       <section class="panel">
         <div class="panel-head">
           <div>
+            <h2>TikTok 广告数据</h2>
+            <p>GMV Max（平台归因）与整合报表（纯付费）口径不同，各占一行。两者相加没有业务含义 —— 平台归因的 GMV 含自然流量。</p>
+          </div>
+          <div class="panel-actions">
+            <button id="tiktokAdsSyncBtn" class="ghost" type="button">同步广告数据</button>
+            <button id="tiktokAdsRefreshBtn" class="ghost" type="button">刷新</button>
+          </div>
+        </div>
+        <div id="tiktokAdsNotice" class="tiktok-notice-wrap hidden"></div>
+        <div id="tiktokAdsSummary" class="kpi-grid hidden"></div>
+        <div class="table-wrap">
+          <table class="tiktok-table">
+            <thead id="tiktokAdsHead"></thead>
+            <tbody id="tiktokAdsBody"><tr><td class="empty">等待加载数据。</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
             <h2>TikTok 经营数据</h2>
             <p>按 TikTok 官方口径分别展示：订单实付、货款小计、结算收入三者互不推导，因此各占一行，不做合计。</p>
           </div>

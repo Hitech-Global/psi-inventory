@@ -22,6 +22,9 @@ const { BrandPortalOAuthService } = require('./brand-portal-oauth-service');
 const { AppOAuthService } = require('./app-oauth-service');
 const { ErpOAuthService } = require('./erp-oauth-service');
 const { TikTokOAuthService } = require('./tiktok-oauth-service');
+const { TikTokMarketingTokenRepository } = require('./tiktok-marketing-token-repository');
+const { TikTokMarketingOAuthService } = require('./tiktok-marketing-oauth-service');
+const { TikTokMarketingSyncRunner } = require('./tiktok-marketing-sync-runner');
 const { createReviewerAuth, ROLE_REVIEWER } = require('./reviewer-auth');
 
 function resolveBindAddress(env = process.env) {
@@ -70,6 +73,17 @@ function createApp({ pool, skillProvider = null, importJobPool = null }) {
   const erpOAuthService = new ErpOAuthService({ pool });
   const tiktokOAuthService = new TikTokOAuthService({ pool });
 
+  // TikTok Marketing API（广告线）：与 Shop 侧完全独立的凭据域。
+  // 独立的应用 ID/密钥、独立的授权流程、独立的 24 小时 token 与刷新调度。
+  const tiktokMarketingTokenRepository = new TikTokMarketingTokenRepository({ pool });
+  const tiktokMarketingOAuthService = new TikTokMarketingOAuthService({
+    tokenRepository: tiktokMarketingTokenRepository,
+  });
+  const tiktokMarketingSyncRunner = new TikTokMarketingSyncRunner({
+    pool,
+    tokenRepository: tiktokMarketingTokenRepository,
+  });
+
   // Docker/host health checks must remain available before auth middleware.
   // This endpoint exposes no shop, user, or business data.
   app.get('/api/shopee-analytics/health', (req, res) => {
@@ -114,6 +128,9 @@ function createApp({ pool, skillProvider = null, importJobPool = null }) {
     tiktokOAuthService,
     shopHealthRepository,
     tiktokQueryRepository,
+    tiktokMarketingOAuthService,
+    tiktokMarketingTokenRepository,
+    tiktokMarketingSyncRunner,
   }));
 
   const webDir = path.join(__dirname, '..', 'web');

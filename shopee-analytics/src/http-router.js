@@ -27,6 +27,12 @@ const {
 } = require('./app-oauth-service');
 const { ERP_COOKIE, stateCookie: erpStateCookie, clearStateCookie: clearErpStateCookie, parseCookie: parseErpCookie } = require('./erp-oauth-service');
 const { TIKTOK_COOKIE, stateCookie: tiktokStateCookie, clearStateCookie: clearTikTokStateCookie, parseCookie: parseTikTokCookie } = require('./tiktok-oauth-service');
+const {
+  TIKTOK_MARKETING_COOKIE,
+  clearStateCookie: clearMarketingStateCookie,
+  parseCookie: parseMarketingCookie,
+  stateCookie: marketingStateCookie,
+} = require('./tiktok-marketing-oauth-service');
 const { resolveDateRange, regionTimeZone } = require('./tiktok-query-repository');
 const { diagnoseTikTokShop } = require('./platforms/tiktok-diagnosis');
 const { SkillJobManager, normalizeReportLanguage } = require('./skill-job-manager');
@@ -241,6 +247,9 @@ function createShopeeAnalyticsRouter({
   tiktokOAuthService = null,
   shopHealthRepository = null,
   tiktokQueryRepository = null,
+  tiktokMarketingOAuthService = null,
+  tiktokMarketingTokenRepository = null,
+  tiktokMarketingSyncRunner = null,
 }) {
   const router = express.Router();
   const skillJobManager = new SkillJobManager();
@@ -855,6 +864,113 @@ function createShopeeAnalyticsRouter({
         shopName: req.query.shop_name ? String(req.query.shop_name) : null,
       });
       res.json({ ...diagnosis, startDate, endDate, thresholds });
+    } catch (error) { next(error); }
+  });
+
+  // ---- TikTok Marketing API（广告线）----
+  //
+  // ★ 这是与 Shop 侧完全独立的一套授权：广告主授权（advertiser），
+  //   凭据是 TikTok for Business 应用的 app_id/secret，
+  //   头是 Access-Token 且不签名。详见 src/tiktok-marketing-oauth-service.js 的开头说明。
+  //
+  // 授权只有 super admin 能做 —— 它给整个应用授予广告账户的访问权。
+
+  router.get('/tiktok/marketing/status', async (req, res, next) => {
+    try {
+      if (!tiktokMarketingOAuthService) {
+        throw scopeError('TIKTOK_MARKETING_UNAVAILABLE', 'TikTok Marketing service is unavailable', 503);
+      }
+      res.json(await tiktokMarketingOAuthService.status());
+    } catch (error) { next(error); }
+  });
+
+  router.get('/tiktok/marketing/oauth/start', async (req, res, next) => {
+    try {
+      if (!req.auth || req.auth.role !== ROLE_SUPER_ADMIN) {
+        res.status(403).json({ error: 'SUPER_ADMIN_REQUIRED', message: 'Only super admins can connect a TikTok ad account.' });
+        return;
+      }
+      if (!tiktokMarketingOAuthService) {
+        throw scopeError('TIKTOK_MARKETING_UNAVAILABLE', 'TikTok Marketing service is unavailable', 503);
+      }
+      const result = await tiktokMarketingOAuthService.beginAuthorization();
+      res.setHeader('Set-Cookie', marketingStateCookie(result.state, result.ttlSeconds));
+      res.redirect(302, result.authorizationUrl);
+    } catch (error) { next(error); }
+  });
+
+  router.get('/tiktok/marketing/oauth/callback', async (req, res, next) => {
+    try {
+      if (!req.auth || req.auth.role !== ROLE_SUPER_ADMIN) {
+        res.status(403).json({ error: 'SUPER_ADMIN_REQUIRED', message: 'Only super admins can connect a TikTok ad account.' });
+        return;
+      }
+      if (!tiktokMarketingOAuthService) {
+        throw scopeError('TIKTOK_MARKETING_UNAVAILABLE', 'TikTok Marketing service is unavailable', 503);
+      }
+      const state = parseMarketingCookie(req.headers.cookie, TIKTOK_MARKETING_COOKIE);
+      const result = await tiktokMarketingOAuthService.completeAuthorization({
+        state: typeof req.query.state === 'string' ? req.query.state : '',
+        authCode: typeof req.query.auth_code === 'string' ? req.query.auth_code : '',
+        expectedState: state,
+      });
+      res.setHeader('Set-Cookie', clearMarketingStateCookie());
+      res.redirect(302, '/connections?tiktok_marketing=connected&advertisers=' + encodeURIComponent(result.advertiserCount));
+    } catch (error) {
+      res.setHeader('Set-Cookie', clearMarketingStateCookie());
+      next(error);
+    }
+  });
+
+  /**
+   * 手动触发广告数据同步。
+   *
+   * 单个广告主失败不中断整批 —— 一个撤了授权不该让其他广告主也拉不到。
+   */
+  router.post('/tiktok/marketing/sync', async (req, res, next) => {
+    try {
+      if (!req.auth || req.auth.role !== ROLE_SUPER_ADMIN) {
+        res.status(403).json({ error: 'SUPER_ADMIN_REQUIRED', message: 'Only super admins can run a marketing sync.' });
+        return;
+      }
+      if (!tiktokMarketingSyncRunner) {
+        throw scopeError('TIKTOK_MARKETING_UNAVAILABLE', 'TikTok Marketing sync is unavailable', 503);
+      }
+      const body = req.body || {};
+      const { startDate, endDate } = resolveTikTokDateRange(body);
+      const result = await tiktokMarketingSyncRunner.syncAll({
+        storeIdsByAdvertiser: body.storeIdsByAdvertiser || {},
+        startDate,
+        endDate,
+        regionGroup: String(body.region_group || 'ROW').trim().toUpperCase(),
+      });
+      res.json({ ...result, startDate, endDate });
+    } catch (error) { next(error); }
+  });
+
+  /**
+   * 广告数据查询 —— 与经营数据分开，因为口径不同。
+   *
+   * 返回的每行都带 attribution_basis 与 source，调用方按口径分开呈现，
+   * 不要把 platform_attributed 的 GMV 与 paid_only 的花费混算。
+   */
+  router.get('/tiktok/marketing/daily', async (req, res, next) => {
+    try {
+      if (!tiktokQueryRepository) throw scopeError('TIKTOK_DATA_UNAVAILABLE', 'TikTok data registry is unavailable', 503);
+      const shopId = String(req.query.shop_id || '').trim();
+      if (!shopId) throw scopeError('TIKTOK_SHOP_ID_REQUIRED', 'shop_id is required', 400);
+      if (!canSeeTikTokShop(req, shopId)) {
+        throw scopeError('TIKTOK_SHOP_FORBIDDEN', 'This TikTok shop is not assigned to you', 403);
+      }
+      const regionGroup = String(req.query.region_group || 'ROW').trim().toUpperCase();
+      const { startDate, endDate } = resolveTikTokDateRange(req.query);
+      const rows = await tiktokQueryRepository.listDailySummary({
+        regionGroup, shopId, startDate, endDate,
+      });
+      // ★ 只给广告相关的两种口径 —— 订单口径属于经营数据，不在这里混进来。
+      const advertising = rows.filter(row =>
+        row.attributionBasis === 'platform_attributed' || row.attributionBasis === 'paid_only');
+      res.json({ rows: advertising, startDate, endDate });
     } catch (error) { next(error); }
   });
 

@@ -169,6 +169,29 @@ curl.exe https://auth.hitechanalysis.top/health
 | `SHOPEE_TOKEN_MASTER_KEY` | token 加密主密钥（base64，32 字节） |
 | `SHOPEE_ANALYTICS_PG*` | 专用 PostgreSQL 连接 |
 
+### TikTok 两套独立凭据
+
+TikTok 有**两套完全独立的应用凭据**，不要混：
+
+| 变量 | 用途 | 凭据域 |
+|---|---|---|
+| `TIKTOK_APP_KEY` / `TIKTOK_APP_SECRET` | TikTok Shop 开放平台（卖家授权） | `open-api.tiktokglobalshop.com`，头 `x-tts-access-token`，**要签名** |
+| `TIKTOK_MARKETING_APP_ID` / `TIKTOK_MARKETING_APP_SECRET` | TikTok for Business（广告主授权） | `business-api.tiktok.com`，头 `Access-Token`，**不签名** |
+| `TIKTOK_MARKETING_REDIRECT_URL` | 广告授权的回调地址 | 必须与应用后台登记的完全一致 |
+
+**广告线的前置条件**（缺一不可，否则广告相关接口返回 503）：
+
+1. 在 [TikTok API for Business 开发者门户](https://business-api.tiktok.com/portal) 创建应用，
+   勾选 **Marketing API** 产品，申请报表读取相关权限；
+2. 提交审核通过（基础权限通常几个工作日，伙伴级更久）；
+3. 把 `TIKTOK_MARKETING_REDIRECT_URL` 登记为应用的回调地址；
+4. 在应用后台确认 App ID 与 Secret，填入 `runtime/.env`。
+
+**Marketing token 只有 24 小时**，所以它需要独立的刷新调度
+（`TikTokMarketingOAuthService.refreshExpiring`，提前 30 分钟刷新）。
+刷新用的是 `refresh_token`（有效期长得多），不是重新授权 ——
+但若 refresh_token 也失效了，就必须重新走授权流程。
+
 **Shopee Partner Key、access/refresh token、数据库口令、主密钥一律不进 Git、不进聊天记录。**
 
 ---

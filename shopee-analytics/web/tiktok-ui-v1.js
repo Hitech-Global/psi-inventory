@@ -390,5 +390,133 @@
     signalsHost.classList.remove('hidden');
   }
 
-  window.TikTokUI = { render, renderDiagnosis, exportCsv };
+  /**
+   * 渲染广告数据。
+   *
+   * ★ 这个区块最要紧的是**不把两种口径混在一起**：
+   *   - 平台归因（GMV Max）：cost 与 gross_revenue 同源，相除就是平台 ROI，
+   *     但 gross_revenue 含自然流量；
+   *   - 纯付费（整合报表）：spend/impressions/clicks 是真正的付费侧数据。
+   *
+   * 表格按口径分行呈现，每行标出口径名与来源。
+   * 概览卡片也分开 —— 平台归因的花费占比与纯付费的花费是同一个数，
+   * 但它们与各自口径的 GMV 相除才是有意义的比值。
+   *
+   * @param {object} payload { rows: Array<object> }
+   */
+  function renderAds(payload) {
+    const head = document.querySelector('#tiktokAdsHead');
+    const body = document.querySelector('#tiktokAdsBody');
+    const summary = document.querySelector('#tiktokAdsSummary');
+    const notice = document.querySelector('#tiktokAdsNotice');
+    if (!head || !body) return;
+
+    const rows = (payload && payload.rows) || [];
+    const platformAttributed = rows.filter(row => row.attributionBasis === 'platform_attributed');
+    const paidOnly = rows.filter(row => row.attributionBasis === 'paid_only');
+
+    if (notice) {
+      if (!rows.length) {
+        notice.innerHTML = '<div class="tiktok-notice warn">'
+          + '<strong>还没有广告数据。</strong>'
+          + '<span>需要先授权 TikTok 广告账户，再同步一次广告数据。'
+          + '注意广告线用的是 Marketing API，与店铺授权是两套独立的凭据。</span></div>';
+        notice.classList.remove('hidden');
+      } else {
+        notice.innerHTML = '';
+        notice.classList.add('hidden');
+      }
+    }
+
+    // 概览：两个口径各自给卡片，绝不合并。
+    if (summary) {
+      const attrTotal = sumField(platformAttributed, 'gmvOrderTotal');
+      const paidTotal = sumField(paidOnly, 'spend');
+      const cards = [
+        {
+          label: '平台归因 GMV',
+          value: formatMoney(attrTotal, firstCurrency(platformAttributed)),
+          hint: 'GMV Max · 含自然流量',
+        },
+        {
+          label: '纯付费花费',
+          value: formatMoney(paidTotal, firstCurrency(paidOnly)),
+          hint: '整合报表 · 真实广告花费',
+        },
+        {
+          label: '平台归因 ROI',
+          value: formatRatio(attrTotal, paidTotal),
+          hint: '归因 GMV ÷ 纯付费花费',
+        },
+        {
+          label: '纯付费曝光',
+          value: formatNumber(sumField(paidOnly, 'impressions')),
+          hint: '整合报表 · 点击 ' + formatNumber(sumField(paidOnly, 'clicks')),
+        },
+      ];
+      summary.innerHTML = cards.map(card => `
+        <div class="kpi-card">
+          <span class="kpi-label">${escapeHtml(card.label)}</span>
+          <strong class="kpi-value">${escapeHtml(card.value)}</strong>
+          <span class="kpi-hint">${escapeHtml(card.hint)}</span>
+        </div>`).join('');
+      summary.classList.remove('hidden');
+    }
+
+    head.innerHTML = `<tr>
+      <th scope="col">日期</th>
+      <th scope="col">口径</th>
+      <th scope="col">来源</th>
+      <th scope="col">币种</th>
+      <th scope="col">花费</th>
+      <th scope="col">曝光</th>
+      <th scope="col">点击</th>
+      <th scope="col">归因 GMV</th>
+      <th scope="col">订单</th>
+    </tr>`;
+
+    if (!rows.length) {
+      body.innerHTML = '<tr><td colspan="9" class="empty">还没有广告数据。</td></tr>';
+      return;
+    }
+
+    body.innerHTML = rows.map(row => `<tr>
+      <td>${escapeHtml(formatDate(row.eventDate))}</td>
+      <td><span class="tiktok-basis ${row.attributionBasis === 'paid_only' ? 'paid' : 'attributed'}">${escapeHtml(row.attributionLabel || row.attributionBasis || '')}</span></td>
+      <td>${escapeHtml(row.sourceLabel || row.source || '')}</td>
+      <td>${escapeHtml(row.currency || '')}</td>
+      <td>${escapeHtml(formatMoney(row.spend, row.currency))}</td>
+      <td>${escapeHtml(formatNumber(row.impressions))}</td>
+      <td>${escapeHtml(formatNumber(row.clicks))}</td>
+      <td>${escapeHtml(formatMoney(row.gmvOrderTotal, row.currency))}</td>
+      <td>${escapeHtml(formatNumber(row.orders))}</td>
+    </tr>`).join('');
+  }
+
+  /** 把一组行里某个字段求和；全缺失时返回 null（不是 0）。 */
+  function sumField(rows, field) {
+    let total = null;
+    for (const row of rows) {
+      const value = row[field];
+      if (value === null || value === undefined || value === '') continue;
+      total = (total || 0) + Number(value);
+    }
+    return total;
+  }
+
+  /** 取一组行里第一个非空币种。 */
+  function firstCurrency(rows) {
+    for (const row of rows) {
+      if (row.currency && row.currency !== 'UNKNOWN') return row.currency;
+    }
+    return null;
+  }
+
+  /** 比率展示。任一端缺失就是「—」，不给一个假的 0。 */
+  function formatRatio(numerator, denominator) {
+    if (numerator === null || denominator === null || denominator === 0) return MISSING;
+    return (numerator / denominator).toFixed(2);
+  }
+
+  window.TikTokUI = { render, renderDiagnosis, renderAds, exportCsv };
 })();
