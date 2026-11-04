@@ -2,10 +2,38 @@
 
 module.exports = function installQuotationManagement(deps) {
   const { app, query, queryOne, run, transaction, genId, asyncHandler, requireApiPermission } = deps;
-  const BRAND_CCY = Object.freeze({ Netac: 'RMB', Redragon: 'RMB', BOYA: 'RMB', Joypeer: 'RMB' });
+  const BRAND_CCY = Object.freeze({ Netac: 'USD', Redragon: 'RMB', BOYA: 'RMB', Joypeer: 'RMB' });
 
-  run("CREATE TABLE IF NOT EXISTS quotation_prices (id TEXT PRIMARY KEY, sku_code TEXT NOT NULL, brand TEXT NOT NULL, product_type TEXT NOT NULL, quote_price NUMERIC NOT NULL, currency TEXT NOT NULL, quote_date TEXT NOT NULL, remark TEXT DEFAULT '', import_batch_id TEXT, created_at TEXT, updated_at TEXT)");
-  run('CREATE UNIQUE INDEX IF NOT EXISTS uq_quotation_prices_sku_brand_date ON quotation_prices (sku_code,brand,quote_date)');
+  run("CREATE TABLE IF NOT EXISTS quotation_prices (id TEXT PRIMARY KEY, sku_code TEXT NOT NULL, brand TEXT NOT NULL, product_type TEXT NOT NULL, quote_price NUMERIC NOT NULL, currency TEXT NOT NULL, quote_date TEXT NOT NULL, remark TEXT DEFAULT '', import_batch_id TEXT, created_at TEXT, updated_at TEXT, supplier_id TEXT NOT NULL DEFAULT '', supplier_part_no TEXT NOT NULL DEFAULT '', supplier_part_no_key TEXT NOT NULL DEFAULT '', psi_sku_code TEXT NOT NULL DEFAULT '', match_status TEXT NOT NULL DEFAULT 'matched', model TEXT NOT NULL DEFAULT '', spec TEXT NOT NULL DEFAULT '', source_sheet TEXT NOT NULL DEFAULT '', source_row INTEGER NOT NULL DEFAULT 0)");
+  const quotationIsPg = String(process.env.DB_DRIVER || 'sqlite').toLowerCase() === 'pg';
+  const quotationColumnRows = quotationIsPg
+    ? query("SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='quotation_prices'").rows
+    : query('PRAGMA table_info(quotation_prices)').rows;
+  const quotationColumns = new Set(quotationColumnRows.map(r => String(r.column_name || r.name || '')));
+  const quotationAddColumns = [
+    ['supplier_id', "TEXT NOT NULL DEFAULT ''"],
+    ['supplier_part_no', "TEXT NOT NULL DEFAULT ''"],
+    ['supplier_part_no_key', "TEXT NOT NULL DEFAULT ''"],
+    ['psi_sku_code', "TEXT NOT NULL DEFAULT ''"],
+    ['match_status', "TEXT NOT NULL DEFAULT 'matched'"],
+    ['model', "TEXT NOT NULL DEFAULT ''"],
+    ['spec', "TEXT NOT NULL DEFAULT ''"],
+    ['source_sheet', "TEXT NOT NULL DEFAULT ''"],
+    ['source_row', 'INTEGER NOT NULL DEFAULT 0']
+  ];
+  for (const [name, definition] of quotationAddColumns) {
+    if (!quotationColumns.has(name)) run('ALTER TABLE quotation_prices ADD COLUMN ' + name + ' ' + definition);
+  }
+  run("UPDATE quotation_prices SET supplier_part_no=sku_code WHERE supplier_part_no=''");
+  run("UPDATE quotation_prices SET supplier_part_no_key=UPPER(TRIM(supplier_part_no)) WHERE supplier_part_no_key=''");
+  run("UPDATE quotation_prices SET supplier_id=COALESCE((SELECT id FROM suppliers WHERE name=quotation_prices.brand LIMIT 1),'') WHERE supplier_id=''");
+  run("UPDATE quotation_prices SET psi_sku_code=sku_code,match_status='matched' WHERE psi_sku_code='' AND EXISTS (SELECT 1 FROM skus WHERE UPPER(TRIM(skus.sku_code))=UPPER(TRIM(quotation_prices.sku_code)) AND skus.brand=quotation_prices.brand)");
+  run("UPDATE quotation_prices SET match_status='unlinked' WHERE psi_sku_code='' AND match_status='matched'");
+  run("CREATE TABLE IF NOT EXISTS quotation_sku_mappings (id TEXT PRIMARY KEY, supplier_id TEXT NOT NULL DEFAULT '', brand TEXT NOT NULL DEFAULT '', supplier_part_no TEXT NOT NULL, supplier_part_no_key TEXT NOT NULL, psi_sku_code TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT '', UNIQUE(supplier_id,brand,supplier_part_no_key))");
+  run('CREATE INDEX IF NOT EXISTS idx_quotation_sku_mappings_lookup ON quotation_sku_mappings (supplier_id,brand,supplier_part_no_key)');
+  if (quotationIsPg) run('ALTER TABLE quotation_sku_mappings ENABLE ROW LEVEL SECURITY');
+  run('DROP INDEX IF EXISTS uq_quotation_prices_sku_brand_date');
+  run('CREATE UNIQUE INDEX IF NOT EXISTS uq_quotation_prices_supplier_sku_brand_date ON quotation_prices (supplier_id,sku_code,brand,quote_date)');
   run('CREATE INDEX IF NOT EXISTS idx_quotation_prices_brand_sku_date ON quotation_prices (brand,sku_code,quote_date)');
   run('CREATE INDEX IF NOT EXISTS idx_quotation_prices_brand_date ON quotation_prices (brand,quote_date)');
 
