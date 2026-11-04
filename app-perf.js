@@ -139,8 +139,9 @@
   // ==========================================================================
   // B. Page Data Cache（stale-while-revalidate）
   // ==========================================================================
-  var PAGE_TTL_DEFAULT = 30000; // 30s
-  var PAGE_MAX = 6;            // LRU 上限（无界 cache 禁止）
+  var PAGE_TTL_DEFAULT = 30000; // 30s：缓存新鲜期
+  var PAGE_STALE_GRACE_MS = 60000; // 新鲜期后最多再用 60s 旧快照，后台刷新；dirty 数据绝不返回
+  var PAGE_MAX = 64;           // 64 个有界快照，覆盖主要页面与其列表 API；仍使用 LRU 淘汰
   var pageCache = new Map();   // pageKey -> { signature, data, fetchedAt, dirty, ttl }
   var pageOrder = [];          // LRU 顺序（最近使用在前）
   var revalidators = new Map();// pageKey -> fn() 后台刷新成功后重渲染当前页
