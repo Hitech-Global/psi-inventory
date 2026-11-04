@@ -60,9 +60,19 @@ function Invoke-DockerCompose {
         [switch]$Quiet   # 只看退出码，不打印输出（用于输出很长的命令）
     )
 
-    $cmd = 'docker compose ' + ($Arguments -join ' ')
-    $output = & cmd /c $cmd 2>&1 | ForEach-Object { $_ }
-    $code = $LASTEXITCODE
+    # ★ 重定向必须发生在 cmd 内部。若写成 PowerShell 层的 2>&1，
+    #   docker 的 stderr 会被 PowerShell 当成 error record（PS 5.1 下会终止脚本）。
+    #   放进 cmd 的命令行里，重定向由 cmd 完成，docker 的 stderr 变成 cmd 的 stdout。
+    $cmd = 'docker compose ' + ($Arguments -join ' ') + ' 2>&1'
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $output = & cmd /c $cmd
+        $code = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previous
+    }
     if (-not $Quiet) { $output | Out-Host }
     if ($code -ne 0) {
         # 失败时一定要看到输出 —— 那才是原因。
@@ -73,7 +83,10 @@ function Invoke-DockerCompose {
 }
 
 Write-Step '1/7 当前版本'
-git log --oneline -1
+$prevLog = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    git log --oneline -1
+    $ErrorActionPreference = $prevLog
 Write-Host "分支：$(git rev-parse --abbrev-ref HEAD)"
 
 Write-Step '2/7 清理已退出的一次性容器'
@@ -91,7 +104,11 @@ if ($exitedContainers) {
         $cname = $parts[1].Trim()
         if (-not $cid) { continue }
         Write-Host "  清理已退出容器: $cname ($cid)"
-        docker rm -f $cid 2>&1 | Out-Null
+        # 同样避开 2>&1 —— docker rm 的正常输出走 stderr。
+        $previousRm = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        docker rm -f $cid | Out-Null
+        $ErrorActionPreference = $previousRm
     }
 }
 
@@ -153,8 +170,22 @@ function Invoke-GitWithRetry {
         [int]$BaseDelaySeconds = 3
     )
     for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
-        $output = & git @Arguments 2>&1
-        if ($LASTEXITCODE -eq 0) { return $output }
+        # ★ 绝不能用 2>&1 —— PS 5.1 会把 native command 的 stderr 当成
+        #   terminating error，而 git fetch 的正常输出（"From https://github.com/..."）
+        #   就走 stderr。于是明明拉取成功，却被判成失败直接退出。
+        #   改成局部把 ErrorActionPreference 降到 Continue：stderr 不再终止脚本，
+        #   真实失败仍由退出码判断。
+        $previous = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            $output = & git @Arguments
+            $code = $LASTEXITCODE
+        }
+        finally {
+            $ErrorActionPreference = $previous
+        }
+        # 用 $code 而不是 $LASTEXITCODE —— 后者在 try/finally 之后可能已被重置。
+        if ($code -eq 0) { return $output }
         if ($attempt -lt $MaxAttempts) {
             $delay = $BaseDelaySeconds * $attempt
             Write-Host ("  git {0} 失败（第 {1}/{2} 次），{3}s 后重试" -f ($Arguments -join ' '), $attempt, $MaxAttempts, $delay)
@@ -184,7 +215,10 @@ Invoke-GitWithRetry -Arguments @('pull', '--ff-only', 'origin', $Branch) | Out-N
 if ($LASTEXITCODE -ne 0) { Fail '拉取失败（网络不通，重试后仍失败）' }
 
 Write-Step '5/7 拉取后版本'
-git log --oneline -1
+$prevLog = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    git log --oneline -1
+    $ErrorActionPreference = $prevLog
 Write-Host "分支：$(git rev-parse --abbrev-ref HEAD)"
 
 if ($NoRestart) {
