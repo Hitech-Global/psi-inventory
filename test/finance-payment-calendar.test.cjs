@@ -62,12 +62,13 @@ test('event state distinguishes overdue, partial, reserved and settled items', (
 
 test('clicking a payable event opens details without triggering the date cell create action', () => {
   const { context } = calendarContext();
-  context._financeCalendarState.today = '2026-11-04';
-  context._financeCalendarState.currentDate = '2026-11-04';
   const item = {
     id: 'pay-1', payable_date: '2026-11-10', currency: 'RMB',
     payable_amount: 1200, remaining_amount: 1200, payee_name_snapshot: 'Redragon'
   };
+  context.renderFinancePaymentCalendarPage({
+    today: '2026-11-04', items: [item], facets: {}, categories: [], payerEntities: [], currencies: []
+  });
   const monthHtml = context.fcRenderMonthGrid([item]);
   assert.match(monthHtml, /onclick="fcOpenCreate\('2026-11-10'\)"/);
   assert.match(monthHtml, /class="fcal-day-add"[^>]*onclick="event\.stopPropagation\(\);fcOpenCreate\('2026-11-10'\)"/);
