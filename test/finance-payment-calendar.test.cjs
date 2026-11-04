@@ -80,10 +80,12 @@ test('finance payment overview opens in year view and keeps payable events avail
   assert.match(root.innerHTML, /本年应付/);
   assert.match(root.innerHTML, /fcal-year-view/);
   assert.equal((root.innerHTML.match(/<button type="button" class="fcal-year-month-card/g) || []).length, 12);
-  assert.doesNotMatch(root.innerHTML, /fcal-month-grid/);
-  assert.match(root.innerHTML, /Redragon Forwarder/);
+  assert.match(root.innerHTML, /<section class="fcal-year-view">/);
+  assert.match(root.innerHTML, /1200\.00/);
   assert.match(root.innerHTML, /RMB/);
   assert.doesNotMatch(root.innerHTML, /现金流预测/);
+  context.fcSetYearMonth(10);
+  assert.match(root.innerHTML, /Redragon Forwarder/);
 });
 
 
