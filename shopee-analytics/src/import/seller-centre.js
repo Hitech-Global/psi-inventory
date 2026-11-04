@@ -440,6 +440,20 @@ function parseAdsRows(header, rows) {
  * than anything the shop did; the rates here are worked out from the
  * figures instead.
  */
+/**
+ * A count, as a whole number.
+ *
+ * The seller centre writes some of its counts with decimals — six and a
+ * half orders — which is its own arithmetic rather than anything that
+ * happened. A count is rounded to the nearest whole number, and the
+ * original is kept in the record beside it.
+ */
+function parseCount(text) {
+  const value = parseIndonesianNumber(text);
+  if (value === null) return null;
+  return Math.round(value);
+}
+
 function parseAffiliateContribution(rows) {
   const days = new Map();
   // The block is found by its headings rather than by its banner: the
@@ -477,11 +491,11 @@ function parseAffiliateContribution(rows) {
     days.set(date, {
       date,
       gmv: parseIndonesianNumber(at('Sales (IDR)')),
-      orders: parseIndonesianNumber(at('Orders')),
-      units: parseIndonesianNumber(at('Units')),
-      contentViews: parseIndonesianNumber(at('Content Views')),
-      contentViewers: parseIndonesianNumber(at('Content Viewers')),
-      productClicks: parseIndonesianNumber(at('Product Clicks')),
+      orders: parseCount(at('Orders')),
+      units: parseCount(at('Units')),
+      contentViews: parseCount(at('Content Views')),
+      contentViewers: parseCount(at('Content Viewers')),
+      productClicks: parseCount(at('Product Clicks')),
     });
   }
 
