@@ -45,7 +45,9 @@ test('the settings menu carries both entries', () => {
   const auth = fs.readFileSync(path.join(webDir, 'auth-ui-v1.js'), 'utf8');
   const index = fs.readFileSync(path.join(webDir, 'index.html'), 'utf8');
   assert.ok(index.includes('data-side-action="shop-connections"'), 'the shop connections entry must exist');
-  assert.ok(index.includes('data-side-platform="tiktok"'), 'the tiktok entry must exist');
+  // The platform connections are one entry now: the window it opens
+  // shows both platforms, so a second entry would open the same window.
+  assert.ok(index.includes('data-open-platform-connections'), 'the platform connections entry must exist');
   assert.ok(auth.includes('side-item[data-admin-action]'), 'the administrative entries must be reachable');
   // The reader's own menu went to the top right, beside the language and
   // the state of the data sources.

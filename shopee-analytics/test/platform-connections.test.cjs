@@ -15,10 +15,14 @@ test('the platform connections open over the page, not away from it', () => {
   // coming back afterwards, is a long way round for a glance.
   assert.ok(!index.includes('href="/connections" data-side-platform'),
     'the sidebar must not leave for another page');
-  assert.ok(index.includes('type="button" data-side-platform="shopee"'),
-    'the Shopee entry must open a window');
-  assert.ok(index.includes('type="button" data-side-platform="tiktok"'),
-    'the TikTok entry must open a window');
+  // One entry, in the settings: the window shows both platforms, so two
+  // entries would have opened the same window twice.
+  assert.ok(index.includes('type="button" data-open-platform-connections'),
+    'the entry must open a window');
+  assert.equal((index.match(/data-open-platform-connections/g) || []).length, 1,
+    'there must be one entry, not one per platform');
+  assert.ok(!index.includes('data-side-platform'),
+    'the entry is no longer one per platform');
   assert.ok(index.includes('/platform-connections-ui-v1.js'), 'the panel must be loaded');
 });
 

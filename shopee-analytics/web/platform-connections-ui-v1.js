@@ -264,7 +264,9 @@
   }
 
   document.addEventListener('click', event => {
-    const trigger = event.target.closest('[data-side-platform]');
+    // One entry opens both platforms: the window shows each of them, so
+    // two entries would have opened the same window twice.
+    const trigger = event.target.closest('[data-open-platform-connections]');
     if (trigger) {
       event.preventDefault();
       open();
