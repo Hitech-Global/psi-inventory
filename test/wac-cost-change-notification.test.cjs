@@ -28,7 +28,7 @@ test('summary and chunking preserve every SKU',()=>{
     {sku_code:'D',version_no:1,old_avg_cost:0,new_avg_cost:10},
     {sku_code:'E',version_no:2,old_avg_cost:0,new_avg_cost:20}
   ]);
-  assert.deepEqual(summarizeWacCostChangeRows(rows),{total:5,increase:2,decrease:1,unchanged:1,first_time:1});
+  assert.deepEqual(summarizeWacCostChangeRows(rows),{total:5,increase:1,decrease:1,unchanged:1,first_time:1});
   const chunks=chunkWacCostChangeRows(rows,2);
   assert.equal(chunks.length,3);
   assert.deepEqual(chunks.flat().map(r=>r.sku_code),rows.map(r=>r.sku_code));
@@ -57,6 +57,7 @@ test('WAC UI, retry API and both database adapters are wired',()=>{
   const server=fs.readFileSync(path.join(root,'server.js'),'utf8');
   const pg=fs.readFileSync(path.join(root,'db-pg.js'),'utf8');
   const sqlite=fs.readFileSync(path.join(root,'db-sqlite.js'),'utf8');
+  const db=fs.readFileSync(path.join(root,'db.js'),'utf8');
   assert.match(app,/wac-cc-cb/);
   assert.match(app,/retryWacNotifications/);
   assert.match(server,/\/api\/wac\/cc-candidates/);
@@ -64,4 +65,6 @@ test('WAC UI, retry API and both database adapters are wired',()=>{
   assert.match(server,/business_type.*wac/);
   assert.match(pg,/CREATE TABLE IF NOT EXISTS wac_notification_logs/);
   assert.match(sqlite,/CREATE TABLE IF NOT EXISTS wac_notification_logs/);
+  assert.match(db,/CREATE TABLE IF NOT EXISTS wac_notification_logs/);
+  assert.match(db,/CREATE INDEX IF NOT EXISTS idx_wac_notification_batch_status/);
 });

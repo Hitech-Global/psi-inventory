@@ -317,6 +317,11 @@ if (driver === 'pg') {
         // WAC-BATCH-EXCLUSION-01：可恢复的无需计算记录，只影响WAC待确认队列，不修改物流/库存事实。
         "CREATE TABLE IF NOT EXISTS wac_batch_exclusions (id TEXT PRIMARY KEY, logistics_batch_id TEXT NOT NULL UNIQUE, batch_no TEXT DEFAULT '', reason TEXT DEFAULT '', status TEXT NOT NULL DEFAULT 'excluded', excluded_by TEXT DEFAULT '', excluded_by_name TEXT DEFAULT '', excluded_at TEXT DEFAULT '', restored_by TEXT DEFAULT '', restored_by_name TEXT DEFAULT '', restored_at TEXT DEFAULT '', created_at TEXT DEFAULT '', updated_at TEXT DEFAULT '')",
         "CREATE INDEX IF NOT EXISTS idx_wac_batch_exclusions_status ON wac_batch_exclusions(status, excluded_at)",
+        // WAC-COST-NOTIFICATION-01：生产 DB_DRIVER=pg 使用 worker_threads，必须在本同步迁移入口建通知记录表。
+        // db-pg.js 的 async initDatabase 在该模式下不会执行；仅在那里声明表会导致生产确认 WAC 时查表失败。
+        // 幂等建表 + 索引，不触碰任何既有 WAC/库存记录。
+        "CREATE TABLE IF NOT EXISTS wac_notification_logs (id TEXT PRIMARY KEY, logistics_batch_id TEXT NOT NULL, recipient_user_id TEXT NOT NULL, recipient_name TEXT DEFAULT '', part_no INTEGER NOT NULL DEFAULT 1, part_count INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL DEFAULT 'pending', attempt_count INTEGER NOT NULL DEFAULT 0, report_payload TEXT NOT NULL DEFAULT '{}', last_error TEXT DEFAULT '', sent_at TEXT DEFAULT '', created_at TEXT DEFAULT NOW(), updated_at TEXT DEFAULT NOW(), UNIQUE(logistics_batch_id, recipient_user_id, part_no))",
+        "CREATE INDEX IF NOT EXISTS idx_wac_notification_batch_status ON wac_notification_logs(logistics_batch_id, status)",
         // SCHEMA-BOOTSTRAP-P0: packing_lists 基础表 + 状态/物流关联/更新时间列迁移。
         // 该 CREATE TABLE + ALTER 原本只写在 db-pg.js 的 initDatabase（worker_threads 模式下是死代码、生产从未执行），
         // 导致空白/重置 PG 库 bootstrap 后 packing_lists 表从未创建，updateInventoryTransitData 引用的
