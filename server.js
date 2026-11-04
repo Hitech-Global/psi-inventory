@@ -4756,9 +4756,104 @@ function latestConfirmedWac(skuCode, country, warehouse) {
   `, [skuCode, country, warehouse]);
 }
 
+// WAC-HISTORY-SOURCE-01：库存WAC镜像统一读取最新有效历史版本；匹配键严格为 SKU + 国家 + 仓库。
+function latestWacInboundDateExpr(skuExpr, countryExpr, warehouseExpr, fallbackExpr) {
+  return `COALESCE((
+    SELECT COALESCE(NULLIF(wh.last_inbound_date, ''), NULLIF(lb.actual_arrival_date, ''))
+    FROM wac_history wh
+    LEFT JOIN logistics_batches lb ON lb.id = wh.logistics_batch_id
+    WHERE wh.sku_code = ${skuExpr}
+      AND wh.country = ${countryExpr}
+      AND wh.warehouse = ${warehouseExpr}
+      AND wh.confirmation_status = 'confirmed'
+      AND wh.is_locked = 1
+      AND wh.confirmed_at IS NOT NULL
+    ORDER BY wh.confirmed_at DESC, wh.version_no DESC
+    LIMIT 1
+  ), ${fallbackExpr})`;
+}
+
+function normalizeWacInventorySyncKeys(keys) {
+  const seen = new Set();
+  const result = [];
+  (Array.isArray(keys) ? keys : []).forEach(key => {
+    const sku_code = String(key && key.sku_code || '').trim();
+    const country = String(key && key.country || '').trim();
+    const warehouse = String(key && key.warehouse || '').trim();
+    if (!sku_code || !country || !warehouse) return;
+    const token = JSON.stringify([sku_code, country, warehouse]);
+    if (seen.has(token)) return;
+    seen.add(token);
+    result.push({ sku_code, country, warehouse });
+  });
+  return result;
+}
+
+function buildWacInventorySyncStatements(keys, mode) {
+  const normalized = normalizeWacInventorySyncKeys(keys);
+  const statements = [];
+  const chunkSize = 200;
+  for (let offset = 0; offset < normalized.length; offset += chunkSize) {
+    const chunk = normalized.slice(offset, offset + chunkSize);
+    const keyWhere = chunk.map(() => '(sku_code = ? AND country = ? AND warehouse = ?)').join(' OR ');
+    const params = chunk.flatMap(key => [key.sku_code, key.country, key.warehouse]);
+    const contextMatch = 'wh.sku_code = inventory.sku_code AND wh.country = inventory.country AND wh.warehouse = inventory.warehouse';
+    const validMatch = contextMatch + " AND wh.confirmation_status = 'confirmed' AND wh.is_locked = 1 AND wh.confirmed_at IS NOT NULL";
+    let sql;
+    if (mode === 'restore') {
+      const originalCost = `SELECT wh.original_avg_cost FROM wac_history wh
+        WHERE ${contextMatch} AND wh.confirmation_status = 'reversed'
+        ORDER BY wh.version_no ASC, wh.confirmed_at ASC LIMIT 1`;
+      const noValidHistory = `NOT EXISTS (SELECT 1 FROM wac_history wh WHERE ${validMatch})`;
+      const hasReversedHistory = `EXISTS (SELECT 1 FROM wac_history wh
+        WHERE ${contextMatch} AND wh.confirmation_status = 'reversed')`;
+      sql = `UPDATE inventory
+        SET weighted_avg_cost = (${originalCost}), updated_at = datetime('now')
+        WHERE (${keyWhere}) AND ${noValidHistory} AND ${hasReversedHistory}`;
+    } else {
+      const latestCost = `SELECT wh.new_avg_cost FROM wac_history wh
+        WHERE ${validMatch}
+        ORDER BY wh.confirmed_at DESC, wh.version_no DESC LIMIT 1`;
+      const hasValidHistory = `EXISTS (SELECT 1 FROM wac_history wh WHERE ${validMatch})`;
+      // 没有有效历史记录时不更新该库存行，保留原有 WAC。
+      sql = `UPDATE inventory
+        SET weighted_avg_cost = (${latestCost}), updated_at = datetime('now')
+        WHERE (${keyWhere}) AND ${hasValidHistory}`;
+    }
+    statements.push({ sql, params });
+  }
+  return statements;
+}
+
+function syncLatestWacCostToInventoryForKeys(keys) {
+  buildWacInventorySyncStatements(keys, 'sync').forEach(statement => {
+    run(statement.sql, statement.params);
+  });
+}
+
+async function syncLatestWacCostToInventoryForKeysAsync(keys, runAsync) {
+  if (typeof runAsync !== 'function') throw new Error('WAC_SYNC_RUNNER_REQUIRED');
+  for (const statement of buildWacInventorySyncStatements(keys, 'sync')) {
+    await runAsync(statement.sql, statement.params);
+  }
+}
+
+function restoreOriginalWacCostForKeys(keys) {
+  buildWacInventorySyncStatements(keys, 'restore').forEach(statement => {
+    run(statement.sql, statement.params);
+  });
+}
+
+async function restoreOriginalWacCostForKeysAsync(keys, runAsync) {
+  if (typeof runAsync !== 'function') throw new Error('WAC_SYNC_RUNNER_REQUIRED');
+  for (const statement of buildWacInventorySyncStatements(keys, 'restore')) {
+    await runAsync(statement.sql, statement.params);
+  }
+}
+
 // P1-03-B: 在事务内生成下一版本号并插入锁定的 WAC 历史
 // logistics_batch_id: 物流批次WAC确认时传入，CI手动确认时不传（默认''）
-// WAC-HISTORY-IMPORT-01：历史WAC导入只写 wac_history，不回写 inventory 当前成本/数量。
+// WAC-HISTORY-IMPORT-01：历史WAC导入完成后，最新有效版本同步回 inventory.weighted_avg_cost。
 const MAX_WAC_HISTORY_IMPORT_ROWS = 2000;
 
 function normalizeWacHistoryDate(value) {
@@ -7812,7 +7907,8 @@ app.get('/api/replenishment-suggestions', requireApiPermission('replenishment_vi
   // create 钩子）；另有 POST /api/admin/refresh-transit 管理员兜底端点。
   // 本端点自此保持纯 SELECT。
   const { country, warehouse, brand, keyword, sales_status, lifecycle_status } = req.query;
-  let sql = `SELECT rs.*, s.product_name, s.brand, s.category, s.model, s.standard_purchase_price, s.qty_per_carton, s.purchase_currency, i.last_inbound_date,
+  let sql = `SELECT rs.*, s.product_name, s.brand, s.category, s.model, s.standard_purchase_price, s.qty_per_carton, s.purchase_currency,
+      ${latestWacInboundDateExpr('rs.sku_code', 'rs.country', 'rs.target_warehouse', 'i.last_inbound_date')} AS last_inbound_date,
       i.id AS inv_row_id,
       i.available_qty AS inv_available_qty,
       i.in_transit_qty AS inv_in_transit_qty,
@@ -8220,7 +8316,9 @@ async function resolveAndValidateRefreshTargets(exec, affectedKeys) {
   const skuCodes = Array.from(new Set(affectedKeys.map(k => k.sku_code)));
   const inPh = skuCodes.map(() => '?').join(',');
   const invParams = skuCodes.slice();
-  let invSql = 'SELECT DISTINCT i.sku_code, i.country, i.warehouse, i.available_qty, i.in_transit_qty, i.pi_confirmed_unshipped_qty, i.po_unconfirmed_pi_qty, i.last_inbound_date, i.first_inbound_date, i.last_outbound_date, i.target_turnover_months FROM inventory i LEFT JOIN skus s ON i.sku_code = s.sku_code WHERE i.sku_code IN (' + inPh + ')';
+  let invSql = 'SELECT DISTINCT i.sku_code, i.country, i.warehouse, i.available_qty, i.in_transit_qty, i.pi_confirmed_unshipped_qty, i.po_unconfirmed_pi_qty, ' +
+    latestWacInboundDateExpr('i.sku_code', 'i.country', 'i.warehouse', 'i.last_inbound_date') +
+    ' AS last_inbound_date, i.first_inbound_date, i.last_outbound_date, i.target_turnover_months FROM inventory i LEFT JOIN skus s ON i.sku_code = s.sku_code WHERE i.sku_code IN (' + inPh + ')';
   invSql = await appendConsignmentExclusionWithExec(invSql, invParams, 'i.warehouse', exec);
   const inventoryItems = await exec.all(invSql, invParams);
   const invMap = {};
@@ -8375,7 +8473,7 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
     const dimCfg = (dimRow && dimRow.value) ? JSON.parse(dimRow.value) : null; // A-Step1：多维目标周转配置（优先命中，未命中回退旧逻辑）
 
     // 获取所有有库存记录的SKU
-    let invSql = `SELECT DISTINCT i.sku_code, i.country, i.warehouse, i.available_qty, i.in_transit_qty, i.pi_confirmed_unshipped_qty, i.po_unconfirmed_pi_qty, i.last_inbound_date, i.first_inbound_date, i.last_outbound_date, i.target_turnover_months FROM inventory i LEFT JOIN skus s ON i.sku_code = s.sku_code WHERE 1=1`;
+    let invSql = `SELECT DISTINCT i.sku_code, i.country, i.warehouse, i.available_qty, i.in_transit_qty, i.pi_confirmed_unshipped_qty, i.po_unconfirmed_pi_qty, ${latestWacInboundDateExpr('i.sku_code', 'i.country', 'i.warehouse', 'i.last_inbound_date')} AS last_inbound_date, i.first_inbound_date, i.last_outbound_date, i.target_turnover_months FROM inventory i LEFT JOIN skus s ON i.sku_code = s.sku_code WHERE 1=1`;
     const invParams = [];
     if (country) { invSql += ' AND i.country = ?'; invParams.push(country); }
     if (warehouse) { invSql += ' AND i.warehouse = ?'; invParams.push(warehouse); }
@@ -10899,6 +10997,7 @@ async function reverseCiCorePg(req, res) {
       // W1-4. 关联事实读取（事务内快照）
       const ciItems = await aq(`SELECT * FROM commercial_invoice_items WHERE ci_id = ?`, [ci.id]);
       const inbounds = await aq(`SELECT * FROM inbound_records WHERE source_ci_id = ?`, [ci.id]);
+      const wacRows = await aq(`SELECT sku_code, country, warehouse FROM wac_history WHERE ci_id = ?`, [ci.id]);
       const pls = await aq(`SELECT * FROM packing_lists WHERE related_ci_id = ?`, [ci.id]);
       const piIds = [...new Set(ciItems.map((i) => i.pi_id).filter(Boolean))];
       const ph = (n) => Array(n).fill('?').join(',');
@@ -10989,6 +11088,9 @@ async function reverseCiCorePg(req, res) {
 
       // W1-10. WAC 解锁（守卫触发器放行本事务；legacy 的 DISABLE/ENABLE DDL 已类别性消除）
       await run(`UPDATE wac_history SET is_locked = 0, confirmation_status = 'reversed' WHERE ci_id = ?`, [ci.id]);
+      const wacKeys = wacRows.map(row => ({ sku_code: row.sku_code, country: row.country, warehouse: row.warehouse }));
+      await syncLatestWacCostToInventoryForKeysAsync(wacKeys, run);
+      await restoreOriginalWacCostForKeysAsync(wacKeys, run);
 
       // W1-11. 回退成本分摊（与 legacy 同一 SQL）
       await run(`UPDATE cost_allocations SET allocation_basis = COALESCE(allocation_basis, '') || ' [reversed ' || ? || ']', ci_id = '' WHERE ci_id = ?`, [ts, ci.id]);
@@ -11125,6 +11227,7 @@ app.post('/api/commercial-invoices/:id/reverse', requireApiPermission('ci_edit')
       // 1. 查询关联数据
       const ciItems = query('SELECT * FROM commercial_invoice_items WHERE ci_id = ?', [ci.id]).rows;
       const inbounds = query('SELECT * FROM inbound_records WHERE source_ci_id = ?', [ci.id]).rows;
+      const wacRows = query('SELECT sku_code, country, warehouse FROM wac_history WHERE ci_id = ?', [ci.id]).rows;
       // LOGISTICS-CLOSED-LOOP-PHASE1: 适配多 PL，冲销所有关联 PL
       const pls = query('SELECT * FROM packing_lists WHERE related_ci_id = ?', [ci.id]).rows;
       const piIds = [...new Set(ciItems.map(i => i.pi_id).filter(Boolean))];
@@ -11170,6 +11273,8 @@ app.post('/api/commercial-invoices/:id/reverse', requireApiPermission('ci_edit')
         run('CREATE TRIGGER IF NOT EXISTS trg_wac_history_block_update BEFORE UPDATE ON wac_history WHEN OLD.is_locked = 1 BEGIN SELECT RAISE(ABORT, \'LOCKED_WAC_HISTORY_UPDATE_FORBIDDEN\'); END');
         run('CREATE TRIGGER IF NOT EXISTS trg_wac_history_block_delete BEFORE DELETE ON wac_history WHEN OLD.is_locked = 1 BEGIN SELECT RAISE(ABORT, \'LOCKED_WAC_HISTORY_DELETE_FORBIDDEN\'); END');
       }
+      syncLatestWacCostToInventoryForKeys(wacRows);
+      restoreOriginalWacCostForKeys(wacRows);
 
       // 6. 回退成本分摊 — 标记 reversed 并清除 ci_id 关联
       // PG 兼容：NULL || 'text' = NULL，需 COALESCE 防止丢失原值
@@ -19356,7 +19461,7 @@ app.get('/api/wac/history-import/template', requireApiPermission('ci_edit'), asy
       ['结束日期', '选填；填写该条历史WAC的有效期结束日期，格式 YYYY-MM-DD，不能早于开始日期；留空表示未指定结束日期'],
       ['本币币种', '选填；可填 IDR、MYR、THB 等；留空时按国家主数据识别'],
       ['1 RMB = 本币汇率', '选填；填写历史精确汇率。留空时系统只查最后入库日期对应的历史汇率，不会使用今天汇率'],
-      ['重要说明', '本导入只新增锁定的WAC历史记录，不修改库存总表当前WAC、库存数量或库存货值。']
+      ['重要说明', '本导入只新增锁定的WAC历史记录；导入后按SKU、国家、仓库同步最新有效WAC到库存总表当前成本，不修改库存数量或库存货值。']
     ]
   });
 }));
@@ -19430,6 +19535,7 @@ app.post('/api/wac/history-import', requireApiPermission('ci_edit'), asyncHandle
         });
         inserted++;
       });
+      syncLatestWacCostToInventoryForKeys(validation.normalized_items.filter(item => !item.duplicate));
     });
 
     res.json({
@@ -19698,13 +19804,7 @@ app.post('/api/wac/confirm/:logistics_batch_id', requireApiPermission('ci_edit')
           fx_rate_date: fxSnapshot ? fxSnapshot.rate_date : inboundDate
         });
 
-        // Only update inventory.weighted_avg_cost — NOT available_qty, NOT inventory_value
-        const invRecord = queryOne('SELECT id FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
-          [skuCode, item.country, item.warehouse]);
-        if (invRecord) {
-          run('UPDATE inventory SET weighted_avg_cost = ?, updated_at = datetime(\'now\') WHERE id = ?',
-            [roundedAvgCost, invRecord.id]);
-        }
+        // inventory.weighted_avg_cost 在本事务末尾按最新有效 WAC 历史统一同步；不修改数量和库存货值。
 
         logs.push({
           sku_code: skuCode,
@@ -19717,6 +19817,7 @@ app.post('/api/wac/confirm/:logistics_batch_id', requireApiPermission('ci_edit')
           new_avg_cost: roundedAvgCost
         });
       }
+      syncLatestWacCostToInventoryForKeys(items.filter(item => item.batch_qty > 0));
     });
 
     res.json({ success: true, confirmed_count: logs.length, logs });
@@ -22458,6 +22559,9 @@ module.exports = {
   // INV-IMPORT-PRECHECK-01：库存导入预检查（纯只读），导出供回归测试直接调用
   validateInventoryImportRows,
   validateWacHistoryImportRows,
+  latestWacInboundDateExpr,
+  syncLatestWacCostToInventoryForKeys,
+  restoreOriginalWacCostForKeys,
   // P0-C1：库存总表批量设置（导出供 call-count / parity 回归测试直接调用）
   MAX_BATCH_SET_ITEMS,
   MAX_INVENTORY_IMPORT_ROWS,
