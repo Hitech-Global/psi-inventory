@@ -75,6 +75,7 @@ assert.match(fast,/match_status/,'server should store SKU match status');
 assert.match(server,/event\.match_status === 'unlinked'/,'unlinked rows must not use internal purchase baselines');
 
 
+async function runBackendImportTest(){
 const fastModule=require(path.join(__dirname,'..','quotation-import-fast.js'));
 const originalDriver=process.env.DB_DRIVER;
 process.env.DB_DRIVER='sqlite';
@@ -119,5 +120,5 @@ assert.equal(response.body.inserted,3,'backend should import all quote rows');
 assert(executedSql.some(x=>x.sql.includes('INSERT INTO quotation_sku_mappings')),'manual mappings should be persisted');
 assert(executedSql.some(x=>x.sql.includes('INSERT INTO quotation_prices')&&x.sql.includes('supplier_part_no')),'quote writes should retain the source supplier part number');
 assert(executedSql.some(x=>x.sql.includes("match_status='matched'")),'manual mapping should attempt to link prior unlinked history');
-
-console.log('quotation-smart-import: PASS');
+}
+runBackendImportTest().then(()=>console.log('quotation-smart-import: PASS')).catch(err=>{console.error(err);process.exitCode=1;});
