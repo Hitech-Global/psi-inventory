@@ -60,7 +60,7 @@ test('diagnostics are disabled by default and do not wrap application functions'
   assert.equal(browser.sandbox.showPage, originalShowPage);
   assert.equal(browser.sandbox.api, originalApi);
   assert.equal(browser.sandbox.PSIPerfDiagnostics.snapshot().pageCoverage.installed, 0);
-  assert.deepEqual(browser.sandbox.PSIPerfDiagnostics.snapshot().pageRender, []);
+  assert.equal(browser.sandbox.PSIPerfDiagnostics.snapshot().pageRender.length, 0);
 });
 
 test('query opt-in records page render, navigation, and API timings without query data', async () => {
