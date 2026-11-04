@@ -51,8 +51,8 @@ module.exports=function installQuotationImportFast(deps){
     }
     const supplierBrands=supplier?parseIdList(supplier.associated_brands):[];
     const skuRows=query("SELECT sku_code,brand,category,model,product_name,color_spec,barcode FROM skus WHERE COALESCE(status,'normal')<>'deleted'").rows;
-    const skuMap=new Map();
-    skuRows.forEach(x=>skuMap.set(String(x.brand||'').toLowerCase()+'|'+norm(x.sku_code),x));
+    const skuMap=new Map(),brandMap=new Map();
+    skuRows.forEach(x=>{const b=clean(x.brand);if(b){brandMap.set(b.toLowerCase(),b);skuMap.set(b.toLowerCase()+'|'+norm(x.sku_code),x);}});
     const savedMappings=supplierId?query('SELECT supplier_id,brand,supplier_part_no_key,psi_sku_code FROM quotation_sku_mappings WHERE supplier_id=?',[supplierId]).rows:[];
     const mappingMap=new Map(savedMappings.map(x=>[mappingKey(x.supplier_id,x.brand,x.supplier_part_no_key),x.psi_sku_code]));
     const manualMap=new Map(),mappingUpdates=[];
@@ -64,7 +64,8 @@ module.exports=function installQuotationImportFast(deps){
     input.forEach((raw,i)=>{
       const r=raw||{};
       const part=clean(r.supplier_part_no||r['供应商料号']||r['Part No.']||r.part_no||r.sku_code||r.SKU||r['SKU']);
-      const brand=clean((r.brand_source==='default'?body.brand:r.brand)||r['品牌']||body.brand||(supplierBrands.length===1?supplierBrands[0]:''));
+      const rawBrand=clean((r.brand_source==='default'?body.brand:r.brand)||r['品牌']||body.brand||(supplierBrands.length===1?supplierBrands[0]:''));
+      const brand=supplierBrands.find(x=>x.toLowerCase()===rawBrand.toLowerCase())||brandMap.get(rawBrand.toLowerCase())||rawBrand;
       const priceRaw=r.quote_price??r['FOB价格']??r['报价价格']??r['报价'];
       const priceText=clean(priceRaw);
       const quote_price=priceText===''?0:Number(priceText.replace(/[,\s]/g,'').replace(/[￥¥$€£]/g,''));
@@ -100,7 +101,7 @@ module.exports=function installQuotationImportFast(deps){
       }
       const psiSku=match?clean(match.sku_code):'';
       rows.push({
-        sku:psiSku||part,brand,product_type:clean(r.product_type||r['产品类型']||(match&&match.category)||'未分类')||'未分类',
+        sku:psiSku||part,brand,product_type:(clean(r.product_type||r['产品类型'])&&clean(r.product_type||r['产品类型'])!=='未分类'?clean(r.product_type||r['产品类型']):clean(match&&match.category))||'未分类',
         quote_price,currency,quote_date,remark:clean(r.remark||r['备注']),supplier_id:supplierId,
         supplier_part_no:part,supplier_part_no_key:norm(part),psi_sku_code:psiSku,
         match_status:match?'matched':'unlinked',model:clean(r.model||r['型号']||(match&&match.model)||''),
