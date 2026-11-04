@@ -14,6 +14,10 @@ on:
       - 'test/manual-payable-item.test.cjs'
       - 'test/finance-payment-overview-integration.test.cjs'
       - 'po-plan-server.js'
+      - 'po-plan-ui.js'
+      - 'scripts/po-plan-bootstrap.cjs'
+      - 'test/po-plan-quotation-pricing.test.cjs'
+      - 'package.json'
       - 'po-number.js'
       - 'wac-calculator.js'
       - 'wac-calculator.test.cjs'
@@ -60,6 +64,9 @@ jobs:
           node --check test/finance-payment-calendar.test.cjs
           node --check test/manual-payable-item.test.cjs
           node --check po-plan-server.js
+          node --check po-plan-ui.js
+          node --check scripts/po-plan-bootstrap.cjs
+          node --check test/po-plan-quotation-pricing.test.cjs
           node --check po-number.js
           node --check wac-calculator.js
           node --check wac-notification.js
@@ -81,6 +88,8 @@ jobs:
         run: node --test test/finance-payment-calendar.test.cjs test/manual-payable-item.test.cjs test/finance-payment-overview-integration.test.cjs test/finance-payment-overview.test.cjs test/finance-payment-overview-sort.test.cjs
       - name: Test PO number date and country format
         run: node test/po-number-date-country.test.cjs
+      - name: Test PO latest FOB quotation and FX pricing
+        run: node --test test/po-plan-quotation-pricing.test.cjs
       - name: Test inventory financial value aggregation
         run: node test/inventory-asset-values.test.cjs
       - name: Test inventory overview export fields
