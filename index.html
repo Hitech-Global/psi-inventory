@@ -959,6 +959,45 @@ body:has(.sidebar.collapsed) .drawer-overlay{left:var(--sidebar-collapsed-width)
   .rp-boot-card{min-width:0;max-width:calc(100% - 24px)}
 }
 
+
+/* WAC-HISTORY-PRESENTATION-20261104: keep filters, simplify matrix columns and use viewport height */
+.wac-history-page .wac-history-table thead th:nth-child(2),
+.wac-history-page .wac-history-table thead th:nth-child(3),
+.wac-history-page .wac-history-table thead th:nth-child(4),
+.wac-history-page .wac-history-table tbody td:nth-child(2),
+.wac-history-page .wac-history-table tbody td:nth-child(3),
+.wac-history-page .wac-history-table tbody td:nth-child(4) {
+  display: none !important;
+}
+.wac-history-page .wac-history-table thead th:nth-child(5),
+.wac-history-page .wac-history-table tbody td:nth-child(5) {
+  left: 150px !important;
+}
+.wac-history-page .wac-history-table thead th:nth-child(6),
+.wac-history-page .wac-history-table tbody td:nth-child(6) {
+  left: 290px !important;
+}
+.wac-history-page .wac-history-table thead th:nth-child(7),
+.wac-history-page .wac-history-table tbody td:nth-child(7) {
+  left: 450px !important;
+}
+.wac-history-page .wac-history-source {
+  display: none !important;
+}
+.wac-history-page #wac-matrix-table > div[style*="font-size:11px"] {
+  display: none !important;
+}
+.wac-history-page .wac-history-table-wrap {
+  max-height: calc(100vh - 210px) !important;
+  max-height: calc(100dvh - 210px) !important;
+}
+@media (max-width: 760px) {
+  .wac-history-page .wac-history-table-wrap {
+    max-height: calc(100vh - 300px) !important;
+    max-height: calc(100dvh - 300px) !important;
+  }
+}
+
 </style>
 </head>
 <body>
