@@ -18,6 +18,7 @@ on:
       - 'wac-calculator.js'
       - 'wac-calculator.test.cjs'
       - 'wac-notification.js'
+      - 'wac-notification-ui.js'
       - 'test/wac-cost-change-notification.test.cjs'
       - 'db-pg.js'
       - 'db.js'
@@ -77,6 +78,7 @@ jobs:
           node --check quotation-management.js
           node --check scripts/quotation-management-bootstrap.cjs
           node --check test/quotation-smart-import.test.cjs
+          node --check wac-notification-ui.js
           node --check test/wac-cost-change-notification.test.cjs
           node --check db-pg.js
           node --check db.js
