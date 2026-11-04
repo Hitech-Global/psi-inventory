@@ -83,3 +83,61 @@ test('finance payment overview renders the calendar, monthly totals and payable 
   assert.match(root.innerHTML, /RMB/);
   assert.doesNotMatch(root.innerHTML, /现金流预测/);
 });
+
+
+test('yearly summary groups scheduled payables by year, month and original currency', () => {
+  const { context } = calendarContext();
+  const rows = [
+    { id: 'rmb-nov', payable_date: '2026-11-05', currency: 'RMB', payable_amount: 100, settled_amount: 40, remaining_amount: 60 },
+    { id: 'idr-jul', payable_date: '2026-07-03', currency: 'IDR', payable_amount: 700000, settled_amount: 0, remaining_amount: 700000 },
+    { id: 'idr-dec', payable_date: '2026-12-01', currency: 'IDR', payable_amount: 500000, settled_amount: 500000, remaining_amount: 0 },
+    { id: 'rmb-prior', payable_date: '2025-10-01', currency: 'RMB', payable_amount: 30, settled_amount: 20, remaining_amount: 10 },
+    { id: 'undated', payable_date: '', currency: 'RMB', payable_amount: 900, settled_amount: 0, remaining_amount: 900 }
+  ];
+  const summary = context.fcYearlySummary(rows, '2026-11-04', '2026-11-04');
+  assert.equal(summary.yearKey, '2026');
+  assert.equal(summary.totals.RMB.gross, 100);
+  assert.equal(summary.totals.RMB.settled, 40);
+  assert.equal(summary.totals.RMB.outstanding, 60);
+  assert.equal(summary.totals.IDR.gross, 1200000);
+  assert.equal(summary.totals.IDR.settled, 500000);
+  assert.equal(summary.totals.IDR.outstanding, 700000);
+  assert.equal(summary.months[10].totals.RMB.count, 1);
+  assert.equal(summary.months[6].overdue.IDR, 700000);
+  assert.equal(summary.overdue.RMB, 10);
+  assert.equal(summary.overdue.IDR, 700000);
+  assert.equal(summary.months[11].overdue.IDR, undefined);
+});
+
+test('year view renders twelve monthly cards and switches back into the selected month', () => {
+  const { context, root } = calendarContext();
+  context.renderFinancePaymentCalendarPage({
+    today: '2026-11-04',
+    items: [
+      { id: 'pay-nov', fee_no: 'PAY-NOV', payee_name_snapshot: 'Redragon Forwarder', currency: 'RMB', payable_amount: 1200, settled_amount: 200, remaining_amount: 1000, payable_date: '2026-11-10' },
+      { id: 'pay-dec', fee_no: 'PAY-DEC', payee_name_snapshot: 'Netac', currency: 'IDR', payable_amount: 500000, settled_amount: 500000, remaining_amount: 0, payable_date: '2026-12-10' }
+    ],
+    facets: {}, categories: [], payerEntities: [], currencies: []
+  });
+  context.fcSetView('year');
+  assert.match(root.innerHTML, /本年计划应付/);
+  assert.match(root.innerHTML, /本年已结清/);
+  assert.match(root.innerHTML, /本年待付款/);
+  assert.match(root.innerHTML, /Redragon Forwarder|RMB/);
+  assert.equal((root.innerHTML.match(/<button type="button" class="fcal-year-month-card/g) || []).length, 12);
+  assert.doesNotMatch(root.innerHTML, /本月计划应付/);
+  context.fcSetYearMonth(10);
+  assert.equal(vm.runInNewContext('_financeCalendarState.view', context), 'month');
+  assert.equal(vm.runInNewContext('_financeCalendarState.currentDate', context), '2026-11-01');
+  assert.match(root.innerHTML, /本月计划应付/);
+});
+
+test('year navigation moves by twelve months while preserving the selected month and day', () => {
+  const { context } = calendarContext();
+  context.renderFinancePaymentCalendarPage({ today: '2026-11-04', items: [], facets: {}, categories: [], payerEntities: [], currencies: [] });
+  context.fcSetView('year');
+  context.fcNavigate(1);
+  assert.equal(vm.runInNewContext('_financeCalendarState.currentDate', context), '2027-11-04');
+  context.fcNavigate(-1);
+  assert.equal(vm.runInNewContext('_financeCalendarState.currentDate', context), '2026-11-04');
+});
