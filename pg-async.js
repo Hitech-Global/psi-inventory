@@ -1,4 +1,4 @@
-// 专用异步 PostgreSQL 连接池（仅用于 /api/replenishment-suggestions/generate 路径）。
+// 专用异步 PostgreSQL 连接池：供 generate、销售导入和已迁移的只读 API 复用。
 //
 // 目标：让 generate 在等待 PG 时释放 Node 主线程（同步桥 db.js/db-sync-worker.js 用
 // Atomics.wait 会整段阻塞主线程，导致 daily-sales/Inventory/PI/CI/Payment 等并发请求
@@ -112,6 +112,52 @@ async function withAsyncPoolClient(fn) {
   }
 }
 
+// 非阻塞只读查询：复用同一个 async Pool，不经过 db.js 的 Atomics.wait 同步桥。
+// 仅接受 SELECT，避免把异步只读通道误用于业务写入或事务。
+function assertSelectSql(sql) {
+  const s = String(sql || '').trim();
+  if (!/^SELECT\\b/i.test(s)) {
+    const e = new Error('pg-async queryAsync 仅允许 SELECT 查询');
+    e.code = 'DB_ASYNC_READ_ONLY';
+    throw e;
+  }
+  return s;
+}
+
+async function queryAsync(sql, params = []) {
+  const p = getGeneratePool();
+  if (!p) {
+    const e = new Error('DATABASE_URL 未配置，无法连接数据库');
+    e.code = 'NO_DATABASE_URL';
+    throw e;
+  }
+  const normalizedSql = _normalizeSql(assertSelectSql(sql));
+  const startedAt = Date.now();
+  try {
+    const result = await p.query(normalizedSql, params || []);
+    const durationMs = Date.now() - startedAt;
+    if (process.env.DB_TRACE === '1' || durationMs > 500) {
+      console.error('[DB-ASYNC-TRACE] op=SELECT totalMs=' + durationMs);
+    }
+    return { rows: result.rows || [], rowCount: result.rowCount == null ? 0 : result.rowCount };
+  } catch (e) {
+    const durationMs = Date.now() - startedAt;
+    console.error('[DB-ASYNC-TRACE] op=SELECT totalMs=' + durationMs + ' ERR=' + (e && e.message ? e.message : e));
+    throw e;
+  }
+}
+
+// 多条互相独立的只读查询并发执行；连接数仍受共享 Pool 的 max=2 限制。
+// 不创建额外连接池，不改变 generate / 销售导入既有事务边界。
+async function queryBatchAsync(queries) {
+  if (!Array.isArray(queries) || queries.length > 25) {
+    const e = new Error('queryBatchAsync 需要 0–25 条查询');
+    e.code = 'DB_ASYNC_BATCH_INVALID';
+    throw e;
+  }
+  return Promise.all(queries.map(q => queryAsync(q && q.sql, q && q.params || [])));
+}
+
 // 进程退出时有序关闭（不影响正常请求；仅释放空闲连接）
 let shutdownHooked = false;
 function hookShutdown() {
@@ -123,4 +169,4 @@ function hookShutdown() {
 }
 hookShutdown();
 
-module.exports = { getGeneratePool, withGenerateClient, withAsyncPoolClient, hookShutdown };
+module.exports = { getGeneratePool, withGenerateClient, withAsyncPoolClient, queryAsync, queryBatchAsync, hookShutdown };
