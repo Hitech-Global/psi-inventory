@@ -15996,6 +15996,7 @@ async function wacConfirm(batchId){
 
 // 已确认 WAC 的飞书通知记录；失败分段可单独重试，不重新计算/确认 WAC。
 function renderWacNotificationHistory(data,batchId){
+  window._wacNotificationRetryBatchId=String(batchId||'');
   const logs=data&&Array.isArray(data.logs)?data.logs:[];
   if(data&&data.error)return '<div style="color:#cf1322;font-size:12px">'+esc(data.error)+'</div>';
   if(!logs.length)return '<div style="font-size:12px;color:var(--text-secondary)">本次未选择抄送人员，因此没有发送飞书通知。</div>';
@@ -16004,8 +16005,12 @@ function renderWacNotificationHistory(data,batchId){
   const table='<div style="overflow:auto;max-height:240px"><table class="data-table" style="font-size:12px;min-width:560px"><thead><tr><th>抄送人员</th><th>报告分段</th><th>发送状态</th><th>重试次数</th><th>发送时间</th></tr></thead><tbody>'+
     logs.map(r=>'<tr><td>'+esc(r.recipient_name||r.recipient_user_id||'—')+'</td><td>'+Number(r.part_no||1)+'/'+Number(r.part_count||1)+'</td><td style="color:'+(r.status==='sent'?'#269653':r.status==='failed'?'#cf4444':'#8c8c8c')+'">'+esc(labels[r.status]||r.status||'—')+(r.last_error?'<div style="font-size:11px;color:#cf4444;max-width:260px;white-space:normal">'+esc(r.last_error)+'</div>':'')+'</td><td>'+Number(r.attempt_count||0)+'</td><td>'+esc(r.sent_at?fmtDate(r.sent_at):'—')+'</td></tr>').join('')+
     '</tbody></table></div>';
-  const retry=failedCount>0?'<div style="margin-top:10px"><button class="btn btn-secondary btn-sm" id="wac-notify-retry-btn" onclick="retryWacNotifications(\\''+String(batchId).replace(/\\\\/g,'\\\\\\\\').replace(/'/g,"\\\\'")+'\\')">重试失败通知 ('+failedCount+')</button></div>':'';
+  const retry=failedCount>0?'<div style="margin-top:10px"><button class="btn btn-secondary btn-sm" id="wac-notify-retry-btn" onclick="retryWacNotificationsFromModal()">重试失败通知 ('+failedCount+')</button></div>':'';
   return table+retry;
+}
+async function retryWacNotificationsFromModal(){
+  const batchId=window._wacNotificationRetryBatchId;
+  if(batchId)return retryWacNotifications(batchId);
 }
 async function loadWacNotificationHistory(batchId){
   const data=await api('/api/wac/notifications/'+encodeURIComponent(batchId));

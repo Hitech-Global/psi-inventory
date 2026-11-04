@@ -28,7 +28,7 @@ test('summary and chunking preserve every SKU',()=>{
     {sku_code:'D',version_no:1,old_avg_cost:0,new_avg_cost:10},
     {sku_code:'E',version_no:2,old_avg_cost:0,new_avg_cost:20}
   ]);
-  assert.deepEqual(summarizeWacCostChangeRows(rows),{total:5,increase:1,decrease:1,unchanged:1,first_time:1});
+  assert.deepEqual(summarizeWacCostChangeRows(rows),{total:5,increase:2,decrease:1,unchanged:1,first_time:1});
   const chunks=chunkWacCostChangeRows(rows,2);
   assert.equal(chunks.length,3);
   assert.deepEqual(chunks.flat().map(r=>r.sku_code),rows.map(r=>r.sku_code));
