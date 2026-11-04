@@ -234,6 +234,14 @@ if (driver === 'pg') {
       // 因此在此处通过 syncRequest 同步执行迁移。
       var migrations = [
         "CREATE TABLE IF NOT EXISTS sku_channel_configs (id TEXT PRIMARY KEY, sku_code TEXT NOT NULL, country_id TEXT NOT NULL, online_pct DOUBLE PRECISION NOT NULL, offline_pct DOUBLE PRECISION NOT NULL, status TEXT DEFAULT 'active', remark TEXT DEFAULT '', created_at TEXT DEFAULT NOW(), updated_at TEXT DEFAULT NOW(), UNIQUE (sku_code, country_id))",
+
+        // PO-FOB-FX-01：生产PG同步迁移，历史PO默认汇率1、报价快照留空，不回写历史价格。
+        "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS po_quote_currency TEXT DEFAULT ''",
+        "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS po_exchange_rate NUMERIC(24,8) DEFAULT 1",
+        "ALTER TABLE purchase_order_items ADD COLUMN IF NOT EXISTS quote_unit_price NUMERIC(18,4)",
+        "ALTER TABLE purchase_order_items ADD COLUMN IF NOT EXISTS quote_currency TEXT DEFAULT ''",
+        "ALTER TABLE purchase_order_items ADD COLUMN IF NOT EXISTS quote_date TEXT DEFAULT ''",
+        "ALTER TABLE purchase_order_items ADD COLUMN IF NOT EXISTS price_source TEXT DEFAULT 'sku_master'",
         "ALTER TABLE replenishment_suggestions ADD COLUMN IF NOT EXISTS channel_ratio_source TEXT DEFAULT ''",
         "ALTER TABLE replenishment_suggestions ADD COLUMN IF NOT EXISTS channel_allocation_status TEXT DEFAULT ''",
         "ALTER TABLE replenishment_suggestions ADD COLUMN IF NOT EXISTS resolved_online_pct DOUBLE PRECISION",

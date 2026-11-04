@@ -965,6 +965,8 @@ function initDatabase() {
       po_date TEXT NOT NULL,
       expected_delivery TEXT DEFAULT '',
       currency TEXT DEFAULT 'USD',
+      po_quote_currency TEXT DEFAULT '',
+      po_exchange_rate REAL DEFAULT 1,
       total_amount REAL DEFAULT 0,
       created_by TEXT DEFAULT '',
       created_by_name TEXT DEFAULT '',
@@ -990,6 +992,10 @@ function initDatabase() {
       po_qty INTEGER DEFAULT 0,
       unit_price REAL DEFAULT 0,
       po_amount REAL DEFAULT 0,
+      quote_unit_price REAL,
+      quote_currency TEXT DEFAULT '',
+      quote_date TEXT DEFAULT '',
+      price_source TEXT DEFAULT 'sku_master',
       transferred_pi_qty INTEGER DEFAULT 0,
       untransferred_pi_qty INTEGER DEFAULT 0,
       forecast_turnover_months REAL DEFAULT 0,
@@ -2523,6 +2529,18 @@ function initDatabase() {
     additions.forEach(([name, definition]) => {
       if (!wacCols.includes(name)) d.exec('ALTER TABLE wac_history ADD COLUMN ' + name + ' ' + definition);
     });
+  })();
+
+
+  // PO-FOB-FX-01：为新建PO保存报价原币种、原始FOB、报价日期与换算汇率快照。
+  (function poQuotationFxSnapshotMigration() {
+    const d=getDB();
+    const poCols=d.prepare('PRAGMA table_info(purchase_orders)').all().map(c=>c.name);
+    const poAdds=[['po_quote_currency',"TEXT DEFAULT ''"],['po_exchange_rate','REAL DEFAULT 1']];
+    poAdds.forEach(([name,definition])=>{if(!poCols.includes(name))d.exec('ALTER TABLE purchase_orders ADD COLUMN '+name+' '+definition);});
+    const itemCols=d.prepare('PRAGMA table_info(purchase_order_items)').all().map(c=>c.name);
+    const itemAdds=[['quote_unit_price','REAL'],['quote_currency',"TEXT DEFAULT ''"],['quote_date',"TEXT DEFAULT ''"],['price_source',"TEXT DEFAULT 'sku_master'"]];
+    itemAdds.forEach(([name,definition])=>{if(!itemCols.includes(name))d.exec('ALTER TABLE purchase_order_items ADD COLUMN '+name+' '+definition);});
   })();
 
   // CI-AMOUNT-VIEW-DEFAULT-V1

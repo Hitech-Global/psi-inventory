@@ -37,6 +37,70 @@ module.exports=function installPOPlan(deps){
     if(missing.length){const e=new Error('SKU不存在：'+missing.join('、'));e.status=400;throw e;}
     return map;
   }
+
+  function latestQuotationMap(brand,items){
+    const skus=[...new Set((items||[]).map(x=>String(x.sku_code||'').trim().toUpperCase()).filter(Boolean))];
+    if(!skus.length)return new Map();
+    const rows=query(
+      'SELECT sku_code,quote_price,currency,quote_date,created_at,id FROM quotation_prices WHERE LOWER(TRIM(brand))=LOWER(?) AND UPPER(TRIM(sku_code)) IN ('+skus.map(()=>'?').join(',')+') ORDER BY quote_date DESC,created_at DESC,id DESC',
+      [String(brand||'').trim(),...skus]
+    ).rows;
+    const out=new Map();
+    for(const row of rows){
+      const key=String(row.sku_code||'').trim().toUpperCase();
+      if(key&&!out.has(key))out.set(key,row);
+    }
+    return out;
+  }
+  const round4=value=>Math.round((Number(value)+Number.EPSILON)*10000)/10000;
+  function resolvePOPricing(brand,items,currency,rawRate){
+    const target=String(currency||'RMB').trim().toUpperCase();
+    const master=skuPriceMap(items,target),latest=latestQuotationMap(brand,items),quoted=[];
+    for(const it of items){
+      const q=latest.get(String(it.sku_code||'').trim().toUpperCase());
+      if(q&&num(q.quote_price)>0){
+        const source=String(q.currency||'').trim().toUpperCase();
+        if(!source){const e=new Error('SKU '+it.sku_code+' 的最新FOB报价缺少币种，请先补齐报价管理');e.status=409;throw e;}
+        quoted.push({sku_code:it.sku_code,currency:source});
+      }
+    }
+    const currencies=[...new Set(quoted.map(x=>x.currency))].sort();
+    const currencyMismatch=currencies.length>1;
+    const quoteCurrency=currencies.length===1?currencies[0]:'';
+    const rateRequired=!!quoteCurrency&&quoteCurrency!==target;
+    const parsedRate=Number(rawRate);
+    const rateValid=!rateRequired||(Number.isFinite(parsedRate)&&parsedRate>0);
+    const exchangeRate=rateRequired?(rateValid?parsedRate:null):1;
+    const mismatchItems=currencyMismatch?quoted.map(x=>({sku_code:x.sku_code,currency:x.currency})):[];
+    const rows=items.map(it=>{
+      const key=String(it.sku_code||'').trim().toUpperCase(),q=latest.get(key);
+      if(q&&num(q.quote_price)>0){
+        const finalPrice=!currencyMismatch&&rateValid?round4(num(q.quote_price)*exchangeRate):null;
+        return {
+          sku_code:it.sku_code,po_qty:it.po_qty,price_source:'quotation',
+          quote_unit_price:num(q.quote_price),quote_currency:String(q.currency||'').trim().toUpperCase(),
+          quote_date:String(q.quote_date||'').slice(0,10),master_unit_price:null,
+          unit_price:finalPrice,amount:finalPrice==null?null:round4(finalPrice*it.po_qty)
+        };
+      }
+      const finalPrice=round4(master.get(it.sku_code)||0);
+      return {
+        sku_code:it.sku_code,po_qty:it.po_qty,price_source:'sku_master',
+        quote_unit_price:null,quote_currency:'',quote_date:'',master_unit_price:finalPrice,
+        unit_price:finalPrice,amount:round4(finalPrice*it.po_qty)
+      };
+    });
+    const snapshotKey=JSON.stringify(rows.map(row=>[row.sku_code,row.price_source,row.quote_unit_price,row.quote_currency,row.quote_date,row.master_unit_price]));
+    const canCreate=!currencyMismatch&&rateValid;
+    const totalAmount=canCreate?round4(rows.reduce((sum,row)=>sum+num(row.amount),0)):null;
+    return {
+      currency:target,quote_currency:quoteCurrency,quote_currencies:currencies,
+      exchange_rate:exchangeRate,rate_required:rateRequired,rate_valid:rateValid,
+      currency_mismatch:currencyMismatch,currency_mismatch_items:mismatchItems,
+      rows,total_amount:totalAmount,can_create:canCreate,snapshot_key:snapshotKey
+    };
+  }
+
   function recalcPO(id){
     const a=queryOne('SELECT COALESCE(SUM(po_qty),0) AS planned,COALESCE(SUM(transferred_pi_qty),0) AS transferred,COALESCE(SUM(po_amount),0) AS amount FROM purchase_order_items WHERE po_id=?',[id])||{};
     let status='approved';
@@ -89,20 +153,49 @@ module.exports=function installPOPlan(deps){
     res.json({...po,items,planned_qty:planned,transferred_qty:transferred,remaining_qty:Math.max(0,planned-transferred),plan_status:planStatus({...po,planned_qty:planned,transferred_qty:transferred})});
   }));
 
+  app.post('/api/po-plans/price-preview',requireApiPermission('po_create'),asyncHandler((req,res)=>{
+    try{
+      const d=req.body||{},brand=String(d.brand||'').trim(),currency=String(d.currency||'RMB').trim().toUpperCase();
+      if(!brand)return res.status(400).json({error:'请选择品牌'});
+      if(!['RMB','USD'].includes(currency))return res.status(400).json({error:'PO最终币种仅支持RMB或USD'});
+      const items=normalizeItems(d.items);
+      res.json(resolvePOPricing(brand,items,currency,d.exchange_rate));
+    }catch(e){res.status(e.status||500).json({error:e.message});}
+  }));
+
   app.post('/api/po-plans',requireApiPermission('po_create'),asyncHandler((req,res)=>{
     try{
       const d=req.body||{},items=normalizeItems(d.items),supplier=String(d.supplier_name||'').trim(),brand=String(d.brand||'').trim(),country=String(d.country||'').trim(),warehouse=String(d.target_warehouse||'').trim(),currency=String(d.currency||'RMB').toUpperCase();
       if(!supplier||!brand||!country||!warehouse)return res.status(400).json({error:'供应商、品牌、国家、仓库不能为空'});
-      if(!['RMB','USD'].includes(currency))return res.status(400).json({error:'PO币种仅支持RMB或USD'});
-      const poDate=String(d.po_date||now().slice(0,10)),prices=skuPriceMap(items,currency),id=genId('po'),poNo=generatePONumber(country,poDate),ts=now();
+      if(!['RMB','USD'].includes(currency))return res.status(400).json({error:'PO最终币种仅支持RMB或USD'});
+      const pricing=resolvePOPricing(brand,items,currency,d.exchange_rate);
+      if(pricing.currency_mismatch){
+        const detail=pricing.currency_mismatch_items.map(x=>x.sku_code+'（'+x.currency+'）').join('、');
+        const e=new Error('本张PO的最新FOB报价币种不一致：'+detail+'。请先统一报价币种后再创建。');e.status=409;throw e;
+      }
+      if(d.quote_currency!==undefined&&String(d.quote_currency||'').trim().toUpperCase()!==pricing.quote_currency){
+        const e=new Error('报价币种已发生变化，请刷新最新报价预览后再创建PO');e.status=409;throw e;
+      }
+      if(d.price_snapshot_key!==undefined&&String(d.price_snapshot_key||'')!==pricing.snapshot_key){
+        const e=new Error('报价或SKU主数据价格已更新，请刷新价格预览后再创建PO');e.status=409;throw e;
+      }
+      if(!pricing.can_create){
+        const e=new Error('请填写有效汇率：1 '+pricing.quote_currency+' = X '+currency);e.status=400;throw e;
+      }
+      const poDate=String(d.po_date||now().slice(0,10)),id=genId('po'),poNo=generatePONumber(country,poDate),ts=now();
       transaction(()=>{
-        run(`INSERT INTO purchase_orders(id,po_no,supplier_id,supplier_name,brand,country,target_warehouse,po_date,expected_delivery,currency,total_amount,created_by,created_by_name,po_status,approval_status,from_suggestion,remark,created_at,updated_at)
-          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,[id,poNo,d.supplier_id||'',supplier,brand,country,warehouse,poDate,d.expected_delivery||'',currency,0,d.created_by||'',d.created_by_name||'','approved','approved',d.from_suggestion||0,d.remark||'',ts,ts]);
+        run('INSERT INTO purchase_orders(id,po_no,supplier_id,supplier_name,brand,country,target_warehouse,po_date,expected_delivery,currency,total_amount,created_by,created_by_name,po_status,approval_status,from_suggestion,remark,po_quote_currency,po_exchange_rate,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+          [id,poNo,d.supplier_id||'',supplier,brand,country,warehouse,poDate,d.expected_delivery||'',currency,0,d.created_by||'',d.created_by_name||'','approved','approved',d.from_suggestion||0,d.remark||'',pricing.quote_currency||'',pricing.exchange_rate||1,ts,ts]);
         let total=0;
-        for(const it of items){const price=prices.get(it.sku_code)||0,amount=it.po_qty*price;total+=amount;run(`INSERT INTO purchase_order_items(id,po_id,po_no,sku_code,po_qty,unit_price,po_amount,transferred_pi_qty,untransferred_pi_qty,forecast_turnover_months,remark,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,[genId('poi'),id,poNo,it.sku_code,it.po_qty,price,amount,0,it.po_qty,0,it.remark,ts]);}
-        run('UPDATE purchase_orders SET total_amount=? WHERE id=?',[total,id]);
+        for(const price of pricing.rows){
+          const it=items.find(x=>String(x.sku_code).toUpperCase()===String(price.sku_code).toUpperCase());
+          const amount=num(price.amount);total+=amount;
+          run('INSERT INTO purchase_order_items(id,po_id,po_no,sku_code,po_qty,unit_price,po_amount,quote_unit_price,quote_currency,quote_date,price_source,transferred_pi_qty,untransferred_pi_qty,forecast_turnover_months,remark,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            [genId('poi'),id,poNo,it.sku_code,it.po_qty,num(price.unit_price),amount,price.quote_unit_price,price.quote_currency||'',price.quote_date||'',price.price_source,0,it.po_qty,0,it.remark,ts]);
+        }
+        run('UPDATE purchase_orders SET total_amount=? WHERE id=?',[round4(total),id]);
       });
-      refreshTransit();res.json({success:true,id,po_no:poNo,po_status:'approved',approval_status:'approved'});
+      refreshTransit();res.json({success:true,id,po_no:poNo,po_status:'approved',approval_status:'approved',currency,quote_currency:pricing.quote_currency,exchange_rate:pricing.exchange_rate,total_amount:pricing.total_amount});
     }catch(e){res.status(e.status||500).json({error:e.message});}
   }));
 
