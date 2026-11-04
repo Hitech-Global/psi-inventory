@@ -73,6 +73,7 @@ test('WAC UI, retry API and both database adapters are wired',()=>{
   const root=path.resolve(__dirname,'..');
   const app=fs.readFileSync(path.join(root,'app.js'),'utf8');
   const ui=fs.readFileSync(path.join(root,'wac-notification-ui.js'),'utf8');
+  const index=fs.readFileSync(path.join(root,'index.html'),'utf8');
   const server=fs.readFileSync(path.join(root,'server.js'),'utf8');
   const pg=fs.readFileSync(path.join(root,'db-pg.js'),'utf8');
   const sqlite=fs.readFileSync(path.join(root,'db-sqlite.js'),'utf8');
@@ -82,7 +83,8 @@ test('WAC UI, retry API and both database adapters are wired',()=>{
   assert.match(app,/wac-cc-add-cb/);
   assert.match(app,/retryWacNotifications/);
   assert.match(ui,/wac-cc-add-group-cb/);
-  assert.match(ui,/wac-mac-cc-macos/);
+  assert.match(ui,/wac-cc-macos/);
+  assert.match(index,/<script src="wac-notification-ui\.js"><\/script>/);
   assert.match(server,/\/api\/wac\/cc-candidates/);
   assert.match(server,/\/api\/wac\/cc-groups/);
   assert.match(server,/parseWacGroupRecipientId/);
