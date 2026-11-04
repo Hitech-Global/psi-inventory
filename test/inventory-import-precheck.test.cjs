@@ -433,6 +433,8 @@ test('3f) 后端闸门：Excel 品牌为空 + 主数据有品牌 → 200 允许�
   const { status, body } = await postBulkImport(items, VALID_DATE);
   assert.ok(!(status === 422 && body.blocked === true), '空品牌不应被阻断');
   assert.equal(count('inventory_imports'), beforeImp + 1, '空品牌应正常写入 1 行');
+  const stored = query("SELECT brand FROM inventory_imports WHERE sku_code='SKU-A'").rows[0];
+  assert.equal(stored.brand, 'Redragon', '库存导入记录品牌应从 SKU 主数据回填，而不是保留空值');
 });
 
 // ===== 以下场景全部通过真实 bulk-import 路由驱动（绕过 /precheck 直连写入闸门）=====

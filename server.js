@@ -4050,7 +4050,12 @@ function validateInventoryImportRows(items) {
     total_rows: rows.length,
     blocking_count: blocking.length,
     blocking,
-    summary: Array.from(summaryMap.values())
+    summary: Array.from(summaryMap.values()),
+    // 返回已匹配的 SKU 主数据品牌，供 BigSeller 导入预览回填；品牌权威来源仍是 skus 表。
+    resolved_skus: Array.from(masterMap.values()).map(r => ({
+      sku_code: String(r.sku_code || ''),
+      brand: r.brand == null ? '' : String(r.brand)
+    }))
   };
 }
 
@@ -4139,6 +4144,16 @@ app.post('/api/inventory-imports/bulk-import', requireApiPermission('inventory_i
         precheck, blocking: precheck.blocking, summary: precheck.summary
       });
     }
+    // 品牌以 SKU 主数据为唯一权威来源：导入前将已通过校验的主数据品牌写入库存导入记录，
+    // 不依赖 BigSeller / Excel 分类字段，也不回写 skus 主数据。
+    const masterBrandBySku = new Map((precheck.resolved_skus || []).map(r => [
+      String(r.sku_code || '').trim(),
+      r.brand == null ? '' : String(r.brand)
+    ]));
+    items.forEach(item => {
+      const masterBrand = masterBrandBySku.get(String(item && item.sku_code || '').trim());
+      if (masterBrand !== undefined) item.brand = masterBrand;
+    });
     setInventoryImportProgress(importId, { phase: 'preparing', percent: 12, processed_count: 0, message: '预检查通过，正在准备写入' });
     await yieldInventoryImportProgress();
 
