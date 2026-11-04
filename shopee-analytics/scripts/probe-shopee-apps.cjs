@@ -53,14 +53,27 @@ const ENDPOINTS_BY_APP = {
   ORDER_ANALYSIS: ['orderAnalysis'],
 };
 
+/**
+ * The two places the platform answers.
+ *
+ * A partner that has not gone live yet is only known to the testing one,
+ * and a partner that has is only known to the live one. Which is which is
+ * not written down anywhere, so both are asked.
+ */
+const ENDPOINTS_BY_ENV = {
+  live: 'https://partner.shopeemobile.com',
+  test: 'https://partner.test.shopeemobile.com',
+};
+
 function parseArgs(argv) {
-  const args = { apps: [], shopId: null, json: false, principalId: null };
+  const args = { apps: [], shopId: null, json: false, principalId: null, envs: ['live', 'test'] };
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
     if (value === '--app') args.apps.push(argv[++index]);
     else if (value === '--shop') args.shopId = argv[++index];
     else if (value === '--principal') args.principalId = argv[++index];
     else if (value === '--json') args.json = true;
+    else if (value === '--env') args.envs = String(argv[++index]).split(',');
   }
   return args;
 }
@@ -80,10 +93,11 @@ function describe(body) {
   return `${head}${count}`;
 }
 
-async function probe({ role, partnerId, partnerKey, shopId, accessToken, principalId }) {
-  const client = new ShopeeClient({ partnerId, partnerKey });
+async function probe({ role, partnerId, partnerKey, shopId, accessToken, principalId, envs }) {
   const results = [];
   for (const key of ENDPOINTS_BY_APP[role] || []) {
+    for (const env of envs) {
+      const client = new ShopeeClient({ partnerId, partnerKey, baseUrl: ENDPOINTS_BY_ENV[env] });
     const endpoint = ENDPOINTS[key];
     if (!endpoint) continue;
     try {
@@ -103,16 +117,17 @@ async function probe({ role, partnerId, partnerKey, shopId, accessToken, princip
           query: { start_date: '', end_date: '' },
         });
       const body = response && response.body ? response.body : response;
-      results.push({ key, label: key, path: endpoint.path, ok: true, summary: describe(body), body });
+      results.push({ key, env, path: endpoint.path, ok: true, summary: describe(body), body });
     } catch (error) {
       results.push({
         key,
-        label: key,
+        env,
         path: endpoint.path,
         ok: false,
         summary: String(error.message || error).slice(0, 220),
         body: error.body || null,
       });
+    }
     }
   }
   return results;
@@ -142,6 +157,7 @@ async function main() {
       shopId: args.shopId || env.SHOPEE_SHOP_ID || '',
       accessToken: token,
       principalId: args.principalId || env.SHOPEE_BRAND_PORTAL_PRINCIPAL_ID || '',
+      envs: args.envs,
     });
     report.push({ role, partnerId, results });
   }
@@ -155,7 +171,7 @@ async function main() {
     console.log(`\n【${app.role}】Partner ${app.partnerId}`);
     for (const row of app.results) {
       const mark = row.ok ? '✅' : '❌';
-      console.log(`  ${mark} ${row.label.padEnd(28)} ${row.path}`);
+      console.log(`  ${mark} [${row.env}] ${row.key.padEnd(28)} ${row.path}`);
       console.log(`     ${row.summary}`);
     }
   }
