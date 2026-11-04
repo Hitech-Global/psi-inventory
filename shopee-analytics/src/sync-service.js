@@ -10,6 +10,7 @@ const { fetchOrderList, fetchOrderDetails } = require('./sync-orders');
 const { fetchAllReturnDetails } = require('./sync-returns');
 const { fetchShopBiDay } = require('./sync-shop-bi');
 const { fetchShopHealth } = require('./sync-account-health');
+const { fetchShopTraffic, fetchProductTraffic } = require('./sync-business-insights');
 const { fetchHealthEvents } = require('./sync-account-health-events');
 const { fetchShopLivestreamDay } = require('./sync-shop-livestream');
 const { fetchShopInfo } = require('./sync-shop');
@@ -418,6 +419,45 @@ class ShopeeSyncService {
       }
     }
     return { orderCount: details.orders.length };
+  }
+
+  /**
+   * The traffic the shop brought in on its own, day by day.
+   *
+   * This is the natural side of the shop's figures: the visitors who came,
+   * what they looked at, what they clicked, what they bought. It comes
+   * from the business insights endpoints, which belong to the permission
+   * pool of an ERP System application — the advertising application
+   * cannot see it, and its figures are a different thing altogether.
+   *
+   * Each day is kept as it was reported, so that a series of days becomes
+   * a trend rather than a single number.
+   */
+  async syncShopTraffic({ startDate, endDate }) {
+    const { client, accessToken } = await resolveRole(this.roleClients, 'ERP', this.shopId);
+    const result = await fetchShopTraffic({
+      client,
+      shopId: this.shopId,
+      accessToken,
+      startDate,
+      endDate,
+    });
+    await recordSnapshot({
+      repository: this.rawRepository,
+      appRole: 'ERP',
+      endpointKey: 'shopTraffic',
+      shopId: this.shopId,
+      eventDateFrom: startDate,
+      eventDateTo: endDate,
+      requestJson: { start_date: startDate, end_date: endDate },
+      responseJson: result.payload,
+    });
+    if (this.shopBiRepository) {
+      for (const row of result.rows) {
+        await this.shopBiRepository.upsertDaily({ eventDate: row.eventDate, detail: row.detail });
+      }
+    }
+    return { dayCount: result.rows.length };
   }
 
   async syncShopBiDay({ date, timezone, principalId, currency = 'LOCAL' }) {

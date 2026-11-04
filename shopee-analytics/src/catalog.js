@@ -26,6 +26,12 @@ const ENDPOINTS = Object.freeze({
   shopSalesPerformance: { app: 'BRAND_PORTAL', method: 'POST', path: '/api/v2/principal/get_shop_sales_performance_detail' },
   shopLivestreamPerformance: { app: 'BRAND_PORTAL', method: 'POST', path: '/api/v2/principal/get_shop_livestream_performance' },
   marketingHotListing: { app: 'ERP', method: 'GET', path: '/api/v2/business_insights/get_marketing_hot_listing' },
+  // 店铺自然流量与转化：访客、浏览、点击、加购、订单、转化率。
+  // Business Insights 属于 ERP System 类应用的权限池（广告类应用调它会被拒），
+  // 但仍要在开放平台的 API Permission 里逐项勾选后才会开放。
+  shopTraffic: { app: 'ERP', method: 'GET', path: '/api/v2/business_insights/get_shop_traffic' },
+  shopPerformance: { app: 'ERP', method: 'GET', path: '/api/v2/business_insights/get_shop_performance' },
+  productTraffic: { app: 'ERP', method: 'GET', path: '/api/v2/business_insights/get_product_traffic' },
   // 店铺评分与履约质量。ERP System 类应用才有这个权限 —— 广告类应用调它会被拒。
   accountHealth: { app: 'ERP', method: 'GET', path: '/api/v2/account_health/get_shop_performance' },
   // 罚分、处罚、有问题的商品、迟发订单：绩效与违规这一块。

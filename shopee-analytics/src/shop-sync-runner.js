@@ -237,6 +237,12 @@ async function runShopSyncCycle({
         // 店铺评分与履约质量：端点给的是"本期/上期"两个值，
         // 所以每天记一行快照，天数多了就是趋势。
         await run('shop-health', () => service.syncShopHealth({ eventDate: today }), { required: false });
+        // 店铺自然流量：访客、浏览、点击、加购、订单与转化率。
+        // 昨天到今天 —— 平台的流量数据比订单晚一天落库。
+        await run('shop-traffic', () => service.syncShopTraffic({
+          startDate: yesterday,
+          endDate: today,
+        }), { required: false });
       } else {
         summary.steps.push({ name: 'returns', ok: true, required: false, skipped: 'NO_ERP_TOKEN' });
       }
