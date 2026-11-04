@@ -147,8 +147,8 @@ function normalizeRow(row){
 }
 function matchRows(input,metadata,options){
   const opts=options||{},meta=metadata||{},skus=Array.isArray(meta.skus)?meta.skus:[];
-  const skuMap=new Map(),mappingMap=new Map();
-  skus.forEach(s=>{const b=clean(s.brand),code=clean(s.sku_code);if(b&&code)skuMap.set(b.toLowerCase()+'|'+partKey(code),s);});
+  const skuMap=new Map(),mappingMap=new Map(),brandMap=new Map();
+  skus.forEach(s=>{const b=clean(s.brand),code=clean(s.sku_code);if(b){brandMap.set(b.toLowerCase(),b);if(code)skuMap.set(b.toLowerCase()+'|'+partKey(code),s);}});
   (Array.isArray(meta.mappings)?meta.mappings:[]).forEach(m=>{
     mappingMap.set(mapKey(m.supplier_id,m.brand,m.supplier_part_no),m.psi_sku_code);
   });
@@ -157,7 +157,8 @@ function matchRows(input,metadata,options){
     if(r.brand_source==='default'&&!clean(r.brand))r.brand=clean(opts.brand);
     if(r.brand_source==='default'&&clean(opts.brand))r.brand=clean(opts.brand);
     r.supplier_id=clean(opts.supplier_id||r.supplier_id);
-    const part=clean(r.supplier_part_no||r.sku_code),brand=clean(r.brand);
+    const part=clean(r.supplier_part_no||r.sku_code),rawBrand=clean(r.brand),brand=brandMap.get(rawBrand.toLowerCase())||rawBrand;
+    if(brand)r.brand=brand;
     const manual=clean(r.match_source)==='manual'&&clean(r.psi_sku_code);
     let found=null,source='';
     if(manual){found=skuMap.get(brand.toLowerCase()+'|'+partKey(r.psi_sku_code));source='manual';}
