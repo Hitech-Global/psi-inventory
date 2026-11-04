@@ -777,6 +777,25 @@ async function initDatabase() {
     )
   `);
 
+  await exec(`
+    CREATE TABLE IF NOT EXISTS wac_notification_logs (
+      id TEXT PRIMARY KEY,
+      logistics_batch_id TEXT NOT NULL,
+      recipient_user_id TEXT NOT NULL,
+      recipient_name TEXT DEFAULT '',
+      part_no INTEGER NOT NULL DEFAULT 1,
+      part_count INTEGER NOT NULL DEFAULT 1,
+      status TEXT NOT NULL DEFAULT 'pending',
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      report_payload TEXT NOT NULL DEFAULT '{}',
+      last_error TEXT DEFAULT '',
+      sent_at TEXT DEFAULT '',
+      created_at TEXT DEFAULT NOW(),
+      updated_at TEXT DEFAULT NOW(),
+      UNIQUE(logistics_batch_id, recipient_user_id, part_no)
+    )
+  `);
+
   // ---------- 业务表 ----------
 
   await exec(`
@@ -2107,6 +2126,7 @@ async function initDatabase() {
   await exec(`CREATE INDEX IF NOT EXISTS idx_wac_history_ci ON wac_history(ci_id)`);
   await exec(`CREATE INDEX IF NOT EXISTS idx_approval_business ON approval_records(business_type, business_id)`);
   await exec(`CREATE INDEX IF NOT EXISTS idx_business_participants ON business_participants(business_type, business_id, participant_type)`);
+  await exec(`CREATE INDEX IF NOT EXISTS idx_wac_notification_batch_status ON wac_notification_logs(logistics_batch_id, status)`);
   await exec(`CREATE INDEX IF NOT EXISTS idx_oplog_page ON operation_logs(page)`);
   await exec(`CREATE INDEX IF NOT EXISTS idx_batchtask_status ON batch_tasks(status)`);
 

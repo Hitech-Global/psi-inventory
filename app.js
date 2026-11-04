@@ -15813,6 +15813,10 @@ async function wacConfirm(batchId){
     items.forEach((it,i)=>{const k=String(it.sku_code);if(!(k in skuIndex))skuIndex[k]=i;});
     window._wacSkuIndex=skuIndex;
 
+    let wacCcCandidates=[];let wacCcLoadError='';let wacNotificationRecords={logs:[]};
+    if(blockers.length===0&&!m.already_confirmed){try{wacCcCandidates=await api('/api/wac/cc-candidates');}catch(e){wacCcLoadError=e.message||'抄送人员列表加载失败';}}
+    else if(m.already_confirmed){try{wacNotificationRecords=await api('/api/wac/notifications/'+encodeURIComponent(batchId));}catch(e){wacNotificationRecords={logs:[],error:e.message||'通知记录加载失败'};}}
+
     // ── Blocker panel (if any) ──
     let blockerHtml='';
     if(blockers.length>0){
@@ -15962,8 +15966,17 @@ async function wacConfirm(batchId){
           '<th style="text-align:left!important">较上次WAC变化</th>'+
         '</tr></thead><tbody>'+rowsHtml+'</tbody></table></div>';    }
 
+    let notificationSectionHtml='';
+    if(blockers.length===0&&!m.already_confirmed){
+      notificationSectionHtml='<div class="detail-section" id="wac-cc-section"><h3>成本变动通知</h3>'+
+        '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">选择需要接收本次 WAC 成本变动报告的飞书人员，可多选；不选择则只确认 WAC、不发送通知。</div>'+
+        (wacCcLoadError?'<div style="font-size:12px;color:#cf1322;margin-bottom:8px">抄送人员加载失败：'+esc(wacCcLoadError)+'。不影响 WAC 确认。</div>':'')+
+        '<div class="cc-list" id="wac-cc-list">'+userChecklist(wacCcCandidates,[],'wac-cc-cb')+'</div></div>';
+    }else if(m.already_confirmed){
+      notificationSectionHtml='<div class="detail-section"><h3>成本变动通知记录</h3><div id="wac-notification-history">'+renderWacNotificationHistory(wacNotificationRecords,batchId)+'</div></div>';
+    }
     const head='<div class="form-card" style="box-shadow:none;padding:0;display:flex;flex-direction:column;overflow:visible">'+
-      batchInfo+blockerHtml+costFactsHtml+skuTableHtml+
+      batchInfo+blockerHtml+costFactsHtml+skuTableHtml+notificationSectionHtml+
     '</div>';
 
     const footerBtns='<button class="btn btn-secondary" onclick="closeModal()">'+t('common.cancel','取消')+'</button>'+
@@ -15978,6 +15991,38 @@ async function wacConfirm(batchId){
     'modal-wac');
     if(blockers.length===0&&!m.already_confirmed) wacValidateInputs();
   }catch(e){showToast(e.message,'danger')}
+}
+
+
+// 已确认 WAC 的飞书通知记录；失败分段可单独重试，不重新计算/确认 WAC。
+function renderWacNotificationHistory(data,batchId){
+  const logs=data&&Array.isArray(data.logs)?data.logs:[];
+  if(data&&data.error)return '<div style="color:#cf1322;font-size:12px">'+esc(data.error)+'</div>';
+  if(!logs.length)return '<div style="font-size:12px;color:var(--text-secondary)">本次未选择抄送人员，因此没有发送飞书通知。</div>';
+  const labels={pending:'待发送',sending:'发送中',sent:'已发送',failed:'发送失败'};
+  const failedCount=logs.filter(r=>r.status==='failed').length;
+  const table='<div style="overflow:auto;max-height:240px"><table class="data-table" style="font-size:12px;min-width:560px"><thead><tr><th>抄送人员</th><th>报告分段</th><th>发送状态</th><th>重试次数</th><th>发送时间</th></tr></thead><tbody>'+
+    logs.map(r=>'<tr><td>'+esc(r.recipient_name||r.recipient_user_id||'—')+'</td><td>'+Number(r.part_no||1)+'/'+Number(r.part_count||1)+'</td><td style="color:'+(r.status==='sent'?'#269653':r.status==='failed'?'#cf4444':'#8c8c8c')+'">'+esc(labels[r.status]||r.status||'—')+(r.last_error?'<div style="font-size:11px;color:#cf4444;max-width:260px;white-space:normal">'+esc(r.last_error)+'</div>':'')+'</td><td>'+Number(r.attempt_count||0)+'</td><td>'+esc(r.sent_at?fmtDate(r.sent_at):'—')+'</td></tr>').join('')+
+    '</tbody></table></div>';
+  const retry=failedCount>0?'<div style="margin-top:10px"><button class="btn btn-secondary btn-sm" id="wac-notify-retry-btn" onclick="retryWacNotifications(\\''+String(batchId).replace(/\\\\/g,'\\\\\\\\').replace(/'/g,"\\\\'")+'\\')">重试失败通知 ('+failedCount+')</button></div>':'';
+  return table+retry;
+}
+async function loadWacNotificationHistory(batchId){
+  const data=await api('/api/wac/notifications/'+encodeURIComponent(batchId));
+  const target=document.getElementById('wac-notification-history');
+  if(target)target.innerHTML=renderWacNotificationHistory(data,batchId);
+}
+async function retryWacNotifications(batchId){
+  const btn=document.getElementById('wac-notify-retry-btn');
+  if(btn){btn.disabled=true;btn.textContent='重试中...';}
+  try{
+    const result=await api('/api/wac/notifications/'+encodeURIComponent(batchId)+'/retry','POST',{});
+    showToast('已重新发送失败通知 '+Number(result.retried_count||0)+' 条','success');
+    await loadWacNotificationHistory(batchId);
+  }catch(e){
+    showToast(e.message||'通知重试失败','danger');
+    if(btn){btn.disabled=false;btn.textContent='重试失败通知';}
+  }
 }
 
 // 行内重算新WAC（用户修改旧库存数量时实时更新预览）
@@ -16203,9 +16248,11 @@ async function submitWacConfirm(batchId){
   }
   if(items.length===0){showToast(t('wac.no_items','无PL明细数据'),'warning');return}
   if(!confirm(t('wac.confirm_msg','确认提交WAC计算？写入后不可修改。')))return;
+  const ccIds=Array.from(document.querySelectorAll('#wac-cc-list .wac-cc-cb')).filter(cb=>cb.checked).map(cb=>cb.value);
   try{
-    const r=await api('/api/wac/confirm/'+batchId,'POST',{items});
-    showToast(t('wac.success','WAC确认成功，共{v1}个SKU更新','',{v1:r.confirmed_count}),'success');
+    const r=await api('/api/wac/confirm/'+batchId,'POST',{items,cc_user_ids:ccIds});
+    const notifyHint=Number(r.notification_count||0)>0?'，已创建 '+Number(r.notification_count)+' 条飞书通知任务':'';
+    showToast(t('wac.success','WAC确认成功，共{v1}个SKU更新','',{v1:r.confirmed_count})+notifyHint,'success');
     closeModal();loadWacPending();
   }catch(e){showToast(e.message,'danger')}
 }

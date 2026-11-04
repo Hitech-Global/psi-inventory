@@ -32,6 +32,7 @@ const { importProformaInvoicesPg } = require('./wave2b-pi-batch-import-pg.js'); 
 const { generatePONumber } = require('./po-number');
 const { slimReplenishmentRow, projectDailySalesRow } = require('./rp-projection'); // RP-P0-R1 订单预测响应投影（仅序列化瘦身，不动计算逻辑）
 const { inventoryValueKey, buildInventoryFinancialValueMap } = require('./inventory-asset-values');
+const { buildWacCostChangeRows, summarizeWacCostChangeRows, chunkWacCostChangeRows, buildWacCostChangeCard } = require('./wac-notification');
 const {
   createSqliteSalesImportAdapter,
   createPostgresSalesImportAdapter,
@@ -810,6 +811,41 @@ async function notifyBusinessParticipants(businessType, businessId, eventType, c
   } catch (e) {
     console.error('[FEISHU-NOTIFY] 业务通知异常 event=' + eventType + ' businessType=' + businessType + ' businessId=' + businessId + ':', e.message);
   }
+}
+
+
+// WAC 成本变动飞书通知：business_participants 保存 CC，通知表记录每位收件人/每段卡片状态。
+const _wacNotificationDispatching=new Set();
+async function dispatchWacNotificationLog(logId){
+  const id=String(logId||'');
+  if(!id||_wacNotificationDispatching.has(id))return;
+  _wacNotificationDispatching.add(id);
+  try{
+    const log=queryOne('SELECT * FROM wac_notification_logs WHERE id=?',[id]);
+    if(!log||log.status==='sent'||!['pending','failed'].includes(log.status))return;
+    const now=new Date().toISOString();
+    run("UPDATE wac_notification_logs SET status='sending',attempt_count=attempt_count+1,updated_at=? WHERE id=?",[now,id]);
+    const recipient=queryOne('SELECT id,name,status,feishu_open_id,language_preference FROM users WHERE id=?',[log.recipient_user_id]);
+    if(!recipient||recipient.status!=='active'||!recipient.feishu_open_id)throw new Error('抄送人员未启用或未绑定飞书账号');
+    let report;
+    try{report=JSON.parse(log.report_payload||'{}');}catch(_){throw new Error('成本报告数据格式无效');}
+    const card=buildWacCostChangeCard(report,normalizeLanguage(recipient.language_preference));
+    await sendFeishuInteractive(recipient.feishu_open_id,'open_id',card);
+    const sentAt=new Date().toISOString();
+    run("UPDATE wac_notification_logs SET status='sent',sent_at=?,last_error='',updated_at=? WHERE id=?",[sentAt,sentAt,id]);
+  }catch(error){
+    const failedAt=new Date().toISOString();
+    run("UPDATE wac_notification_logs SET status='failed',last_error=?,updated_at=? WHERE id=?",[String(error&&error.message||error||'飞书发送失败').slice(0,1000),failedAt,id]);
+    console.error('[WAC-FEISHU] 成本通知发送失败 logId='+id+':',error&&error.message?error.message:error);
+  }finally{_wacNotificationDispatching.delete(id);}
+}
+async function dispatchWacNotificationLogs(batchId,statuses){
+  const allowed=(Array.isArray(statuses)?statuses:['pending','failed']).filter(s=>s==='pending'||s==='failed');
+  if(!allowed.length)return 0;
+  const placeholders=allowed.map(()=>'?').join(',');
+  const rows=query('SELECT id FROM wac_notification_logs WHERE logistics_batch_id=? AND status IN ('+placeholders+') ORDER BY recipient_name,part_no',[batchId,...allowed]).rows;
+  for(const row of rows)await dispatchWacNotificationLog(row.id);
+  return rows.length;
 }
 
 // Listing 编辑增量通知：仅通知「新增」的上架负责人与抄送人，避免每次普通编辑都打扰。
@@ -19571,6 +19607,14 @@ app.get('/api/wac/preview/:logistics_batch_id', requireApiPermission('ci_view'),
 // WAC 确认：重新读取 DB facts + 重新调用计算器。前端只传 items[{sku_code, old_qty}]。
 // blockers > 0 时不可确认（0 DB writes）。成功后只写 wac_history + 更新 inventory.weighted_avg_cost。
 // 不修改 available_qty、inventory_value、不创建入库数量事实、不修改 SKU reference price、不写 cost_update_logs。
+// WAC 成本通知 CC 候选：只返回已启用且已绑定飞书 open_id 的用户。
+app.get('/api/wac/cc-candidates',requireApiPermission('ci_edit'),asyncHandler((req,res)=>{
+  try{
+    const users=query("SELECT u.id,u.name,u.role_id,r.name AS role_name,u.status FROM users u LEFT JOIN roles r ON r.id=u.role_id WHERE u.status='active' AND COALESCE(u.feishu_open_id,'') <> '' ORDER BY u.name").rows;
+    res.json(users);
+  }catch(e){res.status(500).json({error:e.message});}
+}));
+
 app.post('/api/wac/confirm/:logistics_batch_id', requireApiPermission('ci_edit'), asyncHandler((req, res) => {
   try {
     const excluded=queryOne("SELECT id FROM wac_batch_exclusions WHERE logistics_batch_id=? AND status='excluded'",[req.params.logistics_batch_id]);
@@ -19644,6 +19688,18 @@ app.post('/api/wac/confirm/:logistics_batch_id', requireApiPermission('ci_edit')
     // Load CI for wac_history fields
     const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [meta.ci_id]);
 
+    // CC 必须是 active 且已绑定飞书的用户；空数组表示不发送通知。
+    const ccUserIds=Array.isArray(req.body.cc_user_ids)?req.body.cc_user_ids:[];
+    const ccUsers=[];const seenCcIds=new Set();
+    for(const raw of ccUserIds){
+      const uid=String(raw||'').trim();if(!uid||seenCcIds.has(uid))continue;
+      const ccUser=queryOne('SELECT id,name,status,feishu_open_id FROM users WHERE id=?',[uid]);
+      if(!ccUser)return res.status(400).json({error:'抄送人员不存在：'+uid});
+      if(ccUser.status!=='active')return res.status(400).json({error:'抄送人员已停用：'+(ccUser.name||uid)});
+      if(!ccUser.feishu_open_id)return res.status(400).json({error:'抄送人员尚未绑定飞书账号：'+(ccUser.name||uid)});
+      seenCcIds.add(uid);ccUsers.push({id:ccUser.id,name:ccUser.name||''});
+    }
+    let reportRows=[];let reportChunks=[];let reportSummary=null;let notificationCount=0;
     const wacFxCache = new Map();
     transaction(() => {
       for (const item of items) {
@@ -19717,10 +19773,52 @@ app.post('/api/wac/confirm/:logistics_batch_id', requireApiPermission('ci_edit')
           new_avg_cost: roundedAvgCost
         });
       }
+      // 从正式保存的 WAC 版本生成通知快照，完整列出 SKU 并按环比绝对值排序。
+      reportRows=buildWacCostChangeRows(logs);
+      reportChunks=chunkWacCostChangeRows(reportRows);
+      reportSummary=summarizeWacCostChangeRows(reportRows);
+      if(ccUsers.length&&reportChunks.length){
+        run('DELETE FROM business_participants WHERE business_type=? AND business_id=? AND participant_type=?',['wac',batch.id,'cc']);
+        for(const ccUser of ccUsers){
+          run('INSERT INTO business_participants (id,business_type,business_id,participant_type,user_id,user_name) VALUES (?,?,?,?,?,?)',[genId('bp'),'wac',batch.id,'cc',ccUser.id,ccUser.name]);
+          reportChunks.forEach((chunk,index)=>{
+            const payload={batch_no:batch.batch_no||meta.batch_no||'',ci_no:ci?(ci.ci_no||''):(meta.ci_no||''),brand:ci?(ci.brand||''):'',country:meta.country||(items[0]&&items[0].country)||'',warehouse:meta.warehouse||(items[0]&&items[0].warehouse)||'',local_currency:meta.local_currency||'',confirmed_at:today,rows:chunk,summary:reportSummary,part_no:index+1,part_count:reportChunks.length};
+            run('INSERT INTO wac_notification_logs (id,logistics_batch_id,recipient_user_id,recipient_name,part_no,part_count,status,attempt_count,report_payload,last_error,sent_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',[genId('wacn'),batch.id,ccUser.id,ccUser.name,index+1,reportChunks.length,'pending',0,JSON.stringify(payload),'','']);
+          });
+        }
+        notificationCount=ccUsers.length*reportChunks.length;
+      }
     });
 
-    res.json({ success: true, confirmed_count: logs.length, logs });
+    // 事务提交后异步推送；通知失败不会回滚 WAC 或拖慢确认响应。
+    if(notificationCount>0)setImmediate(()=>dispatchWacNotificationLogs(batch.id,['pending']).catch(err=>console.error('[WAC-FEISHU] 异步通知队列处理失败 batchId='+batch.id+':',err&&err.message?err.message:err)));
+    res.json({success:true,confirmed_count:logs.length,logs,notification_count:notificationCount});
   } catch (e) { res.status(500).json({ error: e.message }); }
+}));
+
+
+// 查询 WAC 飞书通知记录（按收件人和报告分段展示）。
+app.get('/api/wac/notifications/:logistics_batch_id',requireApiPermission('ci_view'),asyncHandler((req,res)=>{
+  try{
+    const batch=queryOne('SELECT id FROM logistics_batches WHERE id=?',[req.params.logistics_batch_id]);
+    if(!batch)return res.status(404).json({error:'物流批次不存在'});
+    const logs=query('SELECT id,recipient_user_id,recipient_name,part_no,part_count,status,attempt_count,last_error,sent_at,created_at FROM wac_notification_logs WHERE logistics_batch_id=? ORDER BY recipient_name,part_no',[batch.id]).rows;
+    res.json({logs});
+  }catch(e){res.status(500).json({error:e.message});}
+}));
+
+// 只重试失败的通知分段；已发送分段不会重复发送，也不会重新计算 WAC。
+app.post('/api/wac/notifications/:logistics_batch_id/retry',requireApiPermission('ci_edit'),asyncHandler(async(req,res)=>{
+  try{
+    const batch=queryOne('SELECT id FROM logistics_batches WHERE id=?',[req.params.logistics_batch_id]);
+    if(!batch)return res.status(404).json({error:'物流批次不存在'});
+    const confirmed=queryOne('SELECT id FROM wac_history WHERE logistics_batch_id=? LIMIT 1',[batch.id]);
+    if(!confirmed)return res.status(409).json({error:'该批次尚未完成 WAC 确认'});
+    const failed=query('SELECT id FROM wac_notification_logs WHERE logistics_batch_id=? AND status=?',[batch.id,'failed']).rows;
+    await dispatchWacNotificationLogs(batch.id,['failed']);
+    const logs=query('SELECT id,recipient_user_id,recipient_name,part_no,part_count,status,attempt_count,last_error,sent_at,created_at FROM wac_notification_logs WHERE logistics_batch_id=? ORDER BY recipient_name,part_no',[batch.id]).rows;
+    res.json({success:true,retried_count:failed.length,logs});
+  }catch(e){res.status(500).json({error:e.message});}
 }));
 
 // ==================== PUR-OPS-COLLAB-01：电商运营上架准备（V1） ====================
