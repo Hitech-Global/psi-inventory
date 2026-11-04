@@ -17326,7 +17326,7 @@ app.post('/api/payment-requests/multi-expense', requireApiPermission('payment_cr
     const placeholders = payable_item_ids.map(() => '?').join(',');
     const items = await query(
       `SELECT id, fee_no, source_type, source_id, source_no, source_ci_id, fee_type, category_code, subcategory_code,
-              payee_type, payee_key, payee_name_snapshot, currency, payable_amount_minor, lifecycle_status
+              payee_type, payee_key, payee_name_snapshot, payer_entity_key, currency, payable_amount_minor, lifecycle_status
        FROM payable_items WHERE id IN (${placeholders})`,
       payable_item_ids
     );

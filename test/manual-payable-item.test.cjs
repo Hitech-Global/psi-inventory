@@ -124,3 +124,11 @@ test('manual payable source resolves its country from the active payer entity', 
   assert.ok(calls[0].sql.includes('payer_entities'));
   assert.equal(calls[0].args[0], 'id_hitech');
 });
+
+test('multi-expense payment request loads payer_entity_key for manual payable country validation', () => {
+  const routeStart = server.indexOf("app.post('/api/payment-requests/multi-expense'");
+  const queryStart = server.indexOf('SELECT id, fee_no, source_type, source_id, source_no, source_ci_id', routeStart);
+  const queryEnd = server.indexOf('FROM payable_items', queryStart);
+  assert.ok(routeStart >= 0 && queryStart > routeStart && queryEnd > queryStart);
+  assert.match(server.slice(queryStart, queryEnd), /payer_entity_key/);
+});
