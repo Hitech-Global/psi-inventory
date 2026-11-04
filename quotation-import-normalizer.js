@@ -148,7 +148,7 @@ function normalizeRow(row){
 function matchRows(input,metadata,options){
   const opts=options||{},meta=metadata||{},skus=Array.isArray(meta.skus)?meta.skus:[];
   const skuMap=new Map(),mappingMap=new Map();
-  skus.forEach(s=>{const b=clean(s.brand),code=clean(s.sku_code);if(b&&code)skuMap.set(b.toLowerCase()+'|'+norm(code),s);});
+  skus.forEach(s=>{const b=clean(s.brand),code=clean(s.sku_code);if(b&&code)skuMap.set(b.toLowerCase()+'|'+partKey(code),s);});
   (Array.isArray(meta.mappings)?meta.mappings:[]).forEach(m=>{
     mappingMap.set(mapKey(m.supplier_id,m.brand,m.supplier_part_no),m.psi_sku_code);
   });
@@ -160,13 +160,13 @@ function matchRows(input,metadata,options){
     const part=clean(r.supplier_part_no||r.sku_code),brand=clean(r.brand);
     const manual=clean(r.match_source)==='manual'&&clean(r.psi_sku_code);
     let found=null,source='';
-    if(manual){found=skuMap.get(brand.toLowerCase()+'|'+norm(r.psi_sku_code));source='manual';}
+    if(manual){found=skuMap.get(brand.toLowerCase()+'|'+partKey(r.psi_sku_code));source='manual';}
     if(!found){
       const mapped=mappingMap.get(mapKey(r.supplier_id,brand,part));
-      if(mapped){found=skuMap.get(brand.toLowerCase()+'|'+norm(mapped));if(found)source='saved';}
+      if(mapped){found=skuMap.get(brand.toLowerCase()+'|'+partKey(mapped));if(found)source='saved';}
     }
     if(!found){
-      found=skuMap.get(brand.toLowerCase()+'|'+norm(part));
+      found=skuMap.get(brand.toLowerCase()+'|'+partKey(part));
       if(found)source='exact';
     }
     if(found){
