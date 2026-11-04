@@ -38,6 +38,19 @@ const ENDPOINTS = Object.freeze({
   // endpoints that every application may call.
   marketingOverview: { app: 'ERP', method: 'POST', path: '/api/v2/business_insights/get_marketing_overview' },
   marketingHotListing: { app: 'ERP', method: 'POST', path: '/api/v2/business_insights/get_marketing_hot_listing' },
+  // The videos a shop published, and how they performed.
+  //
+  // These belong to the person behind the shop rather than to the shop
+  // itself, so they are signed with the user's number and carry it.
+  // The spelling of one of them is the platform's own.
+  videoList: { app: 'VIDEO', method: 'GET', path: '/api/v2/video/get_video_list', identity: 'user' },
+  videoOverviewPerformance: { app: 'VIDEO', method: 'GET', path: '/api/v2/video/get_overview_performance', identity: 'user' },
+  videoMetricTrend: { app: 'VIDEO', method: 'GET', path: '/api/v2/video/get_metric_trend', identity: 'user' },
+  videoPerformanceList: { app: 'VIDEO', method: 'GET', path: '/api/v2/video/get_video_performance_list', identity: 'user' },
+  videoProdcutPerformanceList: { app: 'VIDEO', method: 'GET', path: '/api/v2/video/get_prodcut_performance_list', identity: 'user' },
+  // The livestreams: the sessions themselves, and what came of them.
+  liveSessionList: { app: 'ONLINE', method: 'GET', path: '/api/v2/livestream/get_session_list', identity: 'user' },
+  liveSessionMetric: { app: 'ONLINE', method: 'GET', path: '/api/v2/livestream/get_session_metric', identity: 'user' },
   // 店铺评分与履约质量。ERP System 类应用才有这个权限 —— 广告类应用调它会被拒。
   accountHealth: { app: 'ERP', method: 'GET', path: '/api/v2/account_health/get_shop_performance' },
   // 罚分、处罚、有问题的商品、迟发订单：绩效与违规这一块。

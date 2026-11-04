@@ -246,6 +246,14 @@ async function runShopSyncCycle({
       } else {
         summary.steps.push({ name: 'returns', ok: true, required: false, skipped: 'NO_ERP_TOKEN' });
       }
+      // 视频表现：视频属于主播（user），所以要用主播的编号去调。
+      if (profile.videoUserId && runtime.roleClients.VIDEO) {
+        await run('videos', () => service.syncVideos({
+          userId: profile.videoUserId,
+          startDate: yesterday,
+          endDate: today,
+        }), { required: false });
+      }
     } else {
       summary.steps.push({ name: 'returns', ok: true, required: false, skipped: 'NO_ERP_CLIENT' });
     }

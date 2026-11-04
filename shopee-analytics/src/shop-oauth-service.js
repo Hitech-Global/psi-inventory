@@ -33,6 +33,11 @@ const SHOP_ROLES = Object.freeze({
     labelEn: 'Video',
     scope: '店铺视频与视频表现',
     scopeEn: 'shop videos and their performance',
+    // The videos belong to the person behind the shop rather than to the
+    // shop itself, so the token is kept against that person and the
+    // calls are made in their name.
+    identity: 'user',
+    userColumn: 'video_user_id',
   },
   ONLINE: {
     role: 'ONLINE',
@@ -40,6 +45,12 @@ const SHOP_ROLES = Object.freeze({
     labelEn: 'Livestream',
     scope: '店铺直播与直播表现',
     scopeEn: 'shop livestreams and their performance',
+    identity: 'user',
+    userColumn: 'livestream_user_id',
+    // The livestream endpoints are signed with the person's number, and
+    // the authorization says which kind of person is being authorized:
+    // a seller streamer keeps the shop, an affiliate streamer does not.
+    authType: 'seller',
   },
 });
 
@@ -93,6 +104,23 @@ function authorizedShopIdsFrom(response) {
   const ids = [];
   if (response && Array.isArray(response.shop_id_list)) ids.push(...response.shop_id_list);
   if (response && response.shop_id !== undefined && response.shop_id !== null) ids.push(response.shop_id);
+  const normalized = ids
+    .map(entry => Number(entry))
+    .filter(number => Number.isSafeInteger(number) && number > 0);
+  return [...new Set(normalized)];
+}
+
+/**
+ * The people a token speaks for.
+ *
+ * The videos and the livestreams belong to the person behind the shop,
+ * so the token that comes back carries their number rather than the
+ * shop's.
+ */
+function authorizedUserIdsFrom(response) {
+  const ids = [];
+  if (response && Array.isArray(response.user_id_list)) ids.push(...response.user_id_list);
+  if (response && response.user_id !== undefined && response.user_id !== null) ids.push(response.user_id);
   const normalized = ids
     .map(entry => Number(entry))
     .filter(number => Number.isSafeInteger(number) && number > 0);
@@ -224,7 +252,10 @@ class ShopOAuthService {
       state,
       ttlSeconds,
       appRole: spec.role,
-      authorizationUrl: this.authClient(spec.role).buildAuthorizationUrl({ redirectUri }),
+      authorizationUrl: this.authClient(spec.role).buildAuthorizationUrl({
+        redirectUri,
+        authType: spec.authType || null,
+      }),
       shopId: id,
     };
   }
@@ -243,6 +274,7 @@ class ShopOAuthService {
     try {
       const response = await this.authClient(spec.role).exchangeAuthorizationCode({ code });
       const authorizedShopIds = authorizedShopIdsFrom(response);
+      const authorizedUserIds = authorizedUserIdsFrom(response);
       if (!authorizedShopIds.length) throw oauthError('SHOP_OAUTH_INVALID_TOKEN_RESPONSE', 502);
       const shopId = Number(active.expected_shop_id);
       const expireIn = Number(response && response.expire_in);
@@ -269,22 +301,49 @@ class ShopOAuthService {
           `授权的店铺（${authorizedShopIds.join('、')}）不在本系统已配置的店铺里，请在授权页勾选已配置的店铺后重试。`,
         );
       }
-      for (const targetShopId of targetShopIds) {
+      // Where the application speaks for a person rather than for a shop,
+      // the token belongs to that person: it is kept against their
+      // number, and each shop that was authorized records who it was
+      // that spoke for it.
+      if (spec.identity === 'user') {
+        const userId = authorizedUserIds[0];
+        if (!userId) throw oauthError('SHOP_OAUTH_INVALID_TOKEN_RESPONSE', 502);
         await tokenRepository.save({
           appRole: spec.role,
-          shopId: targetShopId,
+          shopId: userId,
           accessToken: response.access_token,
           refreshToken: response.refresh_token,
           expiresAt: new Date(now.getTime() + expireIn * 1000),
           lastRefreshAt: now,
           refreshError: null,
         });
+        if (spec.userColumn) {
+          await this.pool.query(
+            `UPDATE shopee_shop_profiles
+             SET ${spec.userColumn}=$2,updated_at=now()
+             WHERE shop_id = ANY($1::bigint[])`,
+            [targetShopIds, userId],
+          );
+        }
+      } else {
+        for (const targetShopId of targetShopIds) {
+          await tokenRepository.save({
+            appRole: spec.role,
+            shopId: targetShopId,
+            accessToken: response.access_token,
+            refreshToken: response.refresh_token,
+            expiresAt: new Date(now.getTime() + expireIn * 1000),
+            lastRefreshAt: now,
+            refreshError: null,
+          });
+        }
       }
       const connectedExpected = targetShopIds.includes(shopId);
       return {
         appRole: spec.role,
         shopId: connectedExpected ? shopId : targetShopIds[0],
         authorizedShopIds,
+        authorizedUserIds,
         connectedShopIds: targetShopIds,
         expectedShopId: shopId,
         expectedShopConnected: connectedExpected,
@@ -304,6 +363,7 @@ module.exports = {
   clearStateCookie,
   parseCookie,
   authorizedShopIdsFrom,
+  authorizedUserIdsFrom,
   shopRoleSpec,
   ShopOAuthService,
 };

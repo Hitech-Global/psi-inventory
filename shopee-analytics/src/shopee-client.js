@@ -11,6 +11,22 @@ function signShopRequest({ partnerId, partnerKey, path, timestamp, accessToken, 
   return crypto.createHmac('sha256', partnerKey).update(baseString).digest('hex');
 }
 
+/**
+ * The signature of a request made on behalf of a user.
+ *
+ * It is the same shape as the shop one, with the user's number in place
+ * of the shop's — the videos and the livestreams are signed this way,
+ * because they belong to the person behind the shop rather than to the
+ * shop itself.
+ */
+function signUserRequest({ partnerId, partnerKey, path, timestamp, accessToken, userId }) {
+  if (!partnerId || !partnerKey || !path || !timestamp || !accessToken || !userId) {
+    throw new Error('Missing Shopee user signing input');
+  }
+  const baseString = `${partnerId}${path}${timestamp}${accessToken}${userId}`;
+  return crypto.createHmac('sha256', partnerKey).update(baseString).digest('hex');
+}
+
 function signPrincipalRequest({ partnerId, partnerKey, path, timestamp, accessToken, principalId }) {
   if (!partnerId || !partnerKey || !path || !timestamp || !accessToken || !principalId) {
     throw new Error('Missing Shopee principal signing input');
@@ -80,6 +96,39 @@ class ShopeeClient {
     }, { ...this.retryOptions, onRetry });
   }
 
+  /**
+   * A request made on behalf of a user.
+   *
+   * The videos and the livestreams are the user's own: they are signed
+   * with the user's number and carry it, rather than the shop's.
+   */
+  async userRequest({ path, userId, accessToken, method = 'GET', query = {}, body, onRetry }) {
+    return this.request({
+      onRetry,
+      buildParams: () => {
+        const timestamp = Math.floor(Date.now() / 1000);
+        const sign = signUserRequest({
+          partnerId: this.partnerId,
+          partnerKey: this.partnerKey,
+          path,
+          timestamp,
+          accessToken,
+          userId,
+        });
+
+        const params = new URLSearchParams({
+          partner_id: this.partnerId,
+          timestamp: String(timestamp),
+          sign,
+          user_id: String(userId),
+          access_token: accessToken,
+        });
+        for (const [key, value] of Object.entries(query || {})) appendQueryParam(params, key, value);
+        return { method, path, params, body };
+      },
+    });
+  }
+
   async shopRequest({ path, shopId, accessToken, method = 'GET', query = {}, body, onRetry }) {
     return this.request({
       onRetry,
@@ -126,4 +175,4 @@ class ShopeeClient {
   }
 }
 
-module.exports = { ShopeeClient, signShopRequest, signPrincipalRequest, appendQueryParam };
+module.exports = { ShopeeClient, signShopRequest, signUserRequest, signPrincipalRequest, appendQueryParam };

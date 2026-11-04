@@ -22,6 +22,7 @@ class ShopeeQueryRepository {
       `SELECT
          p.shop_id,p.display_name,p.country_code,p.country_name,p.brand_code,p.brand_name,
          p.currency,p.timezone,p.brand_portal_timezone,p.brand_portal_principal_id,p.marketplace_region,
+         p.video_user_id,p.livestream_user_id,
          to_char(p.analytics_start_date,'YYYY-MM-DD') AS analytics_start_date,
          p.active,p.sort_order,p.note,p.updated_at,p.operator_label,p.import_source_shop_name,p.data_source_capability,
          s.shop_name AS api_shop_name,s.region AS api_region,s.status AS api_status,s.synced_at AS api_synced_at,
@@ -46,6 +47,10 @@ class ShopeeQueryRepository {
       timezone: row.timezone,
       brandPortalTimezone: row.brand_portal_timezone,
       brandPortalPrincipalId: row.brand_portal_principal_id == null ? null : Number(row.brand_portal_principal_id),
+      // The videos and the livestreams belong to the person behind the
+      // shop, and that person's number is what the calls are made in.
+      videoUserId: row.video_user_id == null ? null : Number(row.video_user_id),
+      livestreamUserId: row.livestream_user_id == null ? null : Number(row.livestream_user_id),
       marketplaceRegion: row.marketplace_region,
       analyticsStartDate: row.analytics_start_date ? String(row.analytics_start_date).slice(0, 10) : null,
       active: row.active,

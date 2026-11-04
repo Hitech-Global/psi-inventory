@@ -11,6 +11,7 @@ const { fetchAllReturnDetails } = require('./sync-returns');
 const { fetchShopBiDay } = require('./sync-shop-bi');
 const { fetchShopHealth } = require('./sync-account-health');
 const { fetchShopTraffic, fetchProductTraffic } = require('./sync-business-insights');
+const { fetchVideoOverview, fetchVideoList } = require('./sync-video');
 const { fetchHealthEvents } = require('./sync-account-health-events');
 const { fetchShopLivestreamDay } = require('./sync-shop-livestream');
 const { fetchShopInfo } = require('./sync-shop');
@@ -44,6 +45,7 @@ class ShopeeSyncService {
     shopBiRepository,
     shopLivestreamRepository,
     shopHealthRepository,
+    videoRepository,
     shopRepository,
   }) {
     this.shopId = shopId;
@@ -57,6 +59,7 @@ class ShopeeSyncService {
     this.shopBiRepository = shopBiRepository;
     this.shopLivestreamRepository = shopLivestreamRepository;
     this.shopHealthRepository = shopHealthRepository;
+    this.videoRepository = videoRepository;
     this.shopRepository = shopRepository;
   }
 
@@ -458,6 +461,70 @@ class ShopeeSyncService {
       }
     }
     return { dayCount: result.rows.length };
+  }
+
+  /**
+   * The videos of the shop, and what came of them.
+   *
+   * The videos belong to the person behind the shop rather than to the
+   * shop itself, so the request is made in that person's name: the token
+   * is theirs and the request is signed with their number.
+   */
+  async syncVideos({ userId, startDate, endDate, pageNo = 1, pageSize = 50 }) {
+    const person = Number(userId);
+    if (!Number.isSafeInteger(person) || person <= 0) {
+      throw new Error('A user number is required to read the videos');
+    }
+    const { client, accessToken } = await resolveRole(this.roleClients, 'VIDEO', person);
+    const overview = await fetchVideoOverview({ client, userId: person, accessToken, startDate, endDate });
+    await recordSnapshot({
+      repository: this.rawRepository,
+      appRole: 'VIDEO',
+      endpointKey: 'videoOverviewPerformance',
+      shopId: this.shopId,
+      eventDateFrom: startDate,
+      eventDateTo: endDate,
+      requestJson: { start_date: startDate, end_date: endDate },
+      responseJson: overview.payload,
+    });
+    if (this.videoRepository) {
+      for (const row of overview.rows) {
+        await this.videoRepository.upsertDaily({
+          shopId: this.shopId,
+          eventDate: row.eventDate,
+          detail: { ...row.detail, raw: overview.raw },
+        });
+      }
+    }
+    // The videos themselves, so that a reader can see which one is worth
+    // making more of.
+    const list = await fetchVideoList({
+      client, userId: person, accessToken, startDate, endDate, pageNo, pageSize,
+    });
+    await recordSnapshot({
+      repository: this.rawRepository,
+      appRole: 'VIDEO',
+      endpointKey: 'videoPerformanceList',
+      shopId: this.shopId,
+      eventDateFrom: startDate,
+      eventDateTo: endDate,
+      requestJson: { start_date: startDate, end_date: endDate, page_no: pageNo, page_size: pageSize },
+      responseJson: list.payload,
+    });
+    if (this.videoRepository) {
+      for (const item of list.items) {
+        await this.videoRepository.upsertItem({
+          shopId: this.shopId,
+          videoId: item.videoId,
+          eventDate: item.eventDate,
+          title: item.title,
+          status: item.status,
+          publishedAt: item.publishedAt,
+          detail: { ...item.detail, raw: list.raw },
+        });
+      }
+    }
+    return { dayCount: overview.rows.length, videoCount: list.items.length };
   }
 
   async syncShopBiDay({ date, timezone, principalId, currency = 'LOCAL' }) {

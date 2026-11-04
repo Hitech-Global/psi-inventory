@@ -9,6 +9,63 @@
 -- 整个店铺的成交，直播表现只是直播带来的那一部分。
 --
 -- 时长统一存成小时。接口可能以小时或分钟给出，读进来时换算，页面读出来不用再判断。
+-- 店铺每天的视频表现。
+--
+-- 视频是主播（user）的东西而不是店铺的东西，所以它按 user_id 授权、
+-- 按 user_id 调用；这里仍然按店铺记，因为看视频表现的人看的是店铺。
+CREATE TABLE IF NOT EXISTS shopee_video_daily (
+  shop_id BIGINT NOT NULL,
+  event_date DATE NOT NULL,
+  videos BIGINT,
+  views BIGINT,
+  effective_views BIGINT,
+  viewers BIGINT,
+  watch_duration_seconds NUMERIC(20,3),
+  likes BIGINT,
+  shares BIGINT,
+  comments BIGINT,
+  new_followers BIGINT,
+  buyers BIGINT,
+  add_to_cart BIGINT,
+  orders BIGINT,
+  units_sold BIGINT,
+  sales NUMERIC(20,6),
+  raw_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (shop_id, event_date)
+);
+
+-- 每个视频一条：它有多好看，以及它带来了多少生意。
+CREATE TABLE IF NOT EXISTS shopee_video_item (
+  shop_id BIGINT NOT NULL,
+  video_id BIGINT NOT NULL,
+  event_date DATE NOT NULL,
+  title TEXT,
+  status TEXT,
+  published_at TIMESTAMPTZ,
+  views BIGINT,
+  effective_views BIGINT,
+  viewers BIGINT,
+  watch_duration_seconds NUMERIC(20,3),
+  likes BIGINT,
+  shares BIGINT,
+  comments BIGINT,
+  buyers BIGINT,
+  add_to_cart BIGINT,
+  orders BIGINT,
+  sales NUMERIC(20,6),
+  raw_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (shop_id, video_id, event_date)
+);
+
+-- 主播与店铺的对应：视频与直播的令牌是按主播（user_id）管的，
+-- 而我们要看的是店铺，所以要记住谁是谁。
+ALTER TABLE shopee_shop_profiles
+  ADD COLUMN IF NOT EXISTS video_user_id BIGINT;
+ALTER TABLE shopee_shop_profiles
+  ADD COLUMN IF NOT EXISTS livestream_user_id BIGINT;
+
 CREATE TABLE IF NOT EXISTS shopee_shop_livestream_daily (
   shop_id BIGINT NOT NULL,
   event_date DATE NOT NULL,
