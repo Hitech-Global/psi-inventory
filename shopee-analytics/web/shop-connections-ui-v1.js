@@ -211,15 +211,51 @@
     };
   }
 
+  /**
+   * One of the applications a shop may be connected to, said in one line.
+   *
+   * A shop that has no token for it is offered the door to get one; a shop
+   * that has one is left alone, because a connection that is already made
+   * does not need another button beside it.
+   */
+  function renderShopApp(app, appKey, label, scope) {
+    if (!app) {
+      return { state: pill('不可用', 'neutral'), note: scope, action: '' };
+    }
+    if (!app.credentialConfigured) {
+      return {
+        state: pill('未配置凭据', 'warn'),
+        note: `需先在服务端配置 ${label} 的 Partner ID / Key`,
+        action: '',
+      };
+    }
+    if (app.tokenPresent) {
+      return {
+        state: pill('已连接', 'good'),
+        note: '令牌每 4 小时自动续期，无需手动操作',
+        action: '',
+      };
+    }
+    return {
+      state: pill('待授权', 'warn'),
+      note: scope,
+      action: `<button type="button" class="connections-action" data-connect-app="${esc(appKey)}" data-shop-id="${esc(app.shopId || '')}">连接${esc(label)}</button>`,
+    };
+  }
+
   function renderShop(shop) {
     const report = renderShopReport(shop);
     const erp = renderErp(shop);
     const livestream = shop.livestream || {};
+    const video = renderShopApp(shop.video, 'video', '视频', '视频与视频表现');
+    const online = renderShopApp(shop.online, 'online', '直播', '直播与直播表现');
     const rows = [
       ['店铺营业额 · 访客 · 转化率', report.state, report.note, report.action],
       ['退货退款', erp.state, erp.note, erp.action],
+      ['视频表现', video.state, video.note, video.action],
+      ['直播表现', online.state, online.note, online.action],
       [
-        '直播表现',
+        '直播表现（品牌大盘）',
         livestream.days > 0 ? pill(`已同步 ${livestream.days} 天`, 'good') : pill('未同步', 'neutral'),
         livestream.latestDate
           ? `数据到 ${livestream.latestDate}`
@@ -277,6 +313,22 @@
         </div>
         <p class="connections-source-scope">覆盖：退货与退款数据</p>
         <p class="connections-hint info">${esc(ERP_HINT)}</p>
+      </div>
+      <div class="connections-source">
+        <div class="connections-source-head">
+          <strong>Video</strong>
+          <span>${esc(partner('video'))}</span>
+        </div>
+        <p class="connections-source-scope">覆盖：店铺视频与视频表现</p>
+        <p class="connections-hint info">按店铺独立授权：卖家在授权页勾选店铺后，令牌只覆盖勾选的那些。</p>
+      </div>
+      <div class="connections-source">
+        <div class="connections-source-head">
+          <strong>Online</strong>
+          <span>${esc(partner('online'))}</span>
+        </div>
+        <p class="connections-source-scope">覆盖：店铺直播与直播表现</p>
+        <p class="connections-hint info">按店铺独立授权：卖家在授权页勾选店铺后，令牌只覆盖勾选的那些。</p>
       </div>
     </section>`;
   }
@@ -340,11 +392,14 @@
     wireAddShop(modal);
     modal.addEventListener('click', event => {
       if (event.target === modal) close();
-      const button = event.target.closest('[data-connect]');
+      const button = event.target.closest('[data-connect], [data-connect-app]');
       if (!button) return;
       const shopId = button.dataset.shopId;
       if (button.dataset.connect === 'erp') {
         location.href = `/api/shopee-analytics/erp/oauth/start?shop_id=${encodeURIComponent(shopId)}`;
+      } else if (button.dataset.connectApp) {
+        location.href = `/api/shopee-analytics/shop/oauth/start?app=${encodeURIComponent(button.dataset.connectApp)}`
+          + `&shop_id=${encodeURIComponent(shopId)}`;
       } else {
         location.href = `/api/shopee-analytics/brand-portal/oauth/start?shop_id=${encodeURIComponent(shopId)}`;
       }

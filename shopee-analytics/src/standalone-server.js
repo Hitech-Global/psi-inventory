@@ -21,6 +21,7 @@ const { createFeishuAuth } = require('./feishu-auth');
 const { BrandPortalOAuthService } = require('./brand-portal-oauth-service');
 const { AppOAuthService } = require('./app-oauth-service');
 const { ErpOAuthService } = require('./erp-oauth-service');
+const { ShopOAuthService } = require('./shop-oauth-service');
 const { TikTokOAuthService } = require('./tiktok-oauth-service');
 const { TikTokMarketingTokenRepository } = require('./tiktok-marketing-token-repository');
 const { TikTokMarketingOAuthService } = require('./tiktok-marketing-oauth-service');
@@ -71,6 +72,9 @@ function createApp({ pool, skillProvider = null, importJobPool = null }) {
   // one service does it for whichever one asked.
   const appOAuthService = new AppOAuthService({ pool });
   const erpOAuthService = new ErpOAuthService({ pool });
+  // The videos and the livestreams: each its own partner, each connected
+  // the way a shop is connected to the returns role.
+  const shopOAuthService = new ShopOAuthService({ pool });
   const tiktokOAuthService = new TikTokOAuthService({ pool });
 
   // TikTok Marketing API（广告线）：与 Shop 侧完全独立的凭据域。
@@ -125,6 +129,7 @@ function createApp({ pool, skillProvider = null, importJobPool = null }) {
     brandPortalOAuthService,
     appOAuthService,
     erpOAuthService,
+    shopOAuthService,
     tiktokOAuthService,
     shopHealthRepository,
     tiktokQueryRepository,

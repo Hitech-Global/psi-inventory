@@ -26,6 +26,12 @@ const {
   AppOAuthService,
 } = require('./app-oauth-service');
 const { ERP_COOKIE, stateCookie: erpStateCookie, clearStateCookie: clearErpStateCookie, parseCookie: parseErpCookie } = require('./erp-oauth-service');
+const {
+  SHOP_OAUTH_COOKIE,
+  stateCookie: shopStateCookie,
+  clearStateCookie: clearShopStateCookie,
+  parseCookie: parseShopCookie,
+} = require('./shop-oauth-service');
 const { TIKTOK_COOKIE, stateCookie: tiktokStateCookie, clearStateCookie: clearTikTokStateCookie, parseCookie: parseTikTokCookie } = require('./tiktok-oauth-service');
 const {
   TIKTOK_MARKETING_COOKIE,
@@ -244,6 +250,7 @@ function createShopeeAnalyticsRouter({
   brandPortalOAuthService = null,
   erpOAuthService = null,
   appOAuthService = null,
+  shopOAuthService = null,
   tiktokOAuthService = null,
   shopHealthRepository = null,
   tiktokQueryRepository = null,
@@ -358,12 +365,18 @@ function createShopeeAnalyticsRouter({
 
       const rows = [];
       for (const shop of shops) {
-        const [erp, brandPortal] = await Promise.all([
+        const [erp, brandPortal, video, online] = await Promise.all([
           erpOAuthService
             ? erpOAuthService.status({ shopId: shop.shopId }).catch(() => null)
             : Promise.resolve(null),
           brandPortalOAuthService
             ? brandPortalOAuthService.status({ shopId: shop.shopId }).catch(() => null)
+            : Promise.resolve(null),
+          shopOAuthService
+            ? shopOAuthService.status({ role: 'VIDEO', shopId: shop.shopId }).catch(() => null)
+            : Promise.resolve(null),
+          shopOAuthService
+            ? shopOAuthService.status({ role: 'ONLINE', shopId: shop.shopId }).catch(() => null)
             : Promise.resolve(null),
         ]);
         const cover = coverageByShop.get(shop.shopId) || {};
@@ -400,6 +413,26 @@ function createShopeeAnalyticsRouter({
               redirectUrl: erp.redirectUrl || null,
             }
             : null,
+          video: video
+            ? {
+              shopId: shop.shopId,
+              credentialConfigured: Boolean(video.credentialConfigured),
+              tokenPresent: Boolean(video.tokenPresent),
+              tokenExpiresAt: video.tokenExpiresAt || null,
+              tokenRefreshError: video.tokenRefreshError || null,
+              redirectUrl: video.redirectUrl || null,
+            }
+            : null,
+          online: online
+            ? {
+              shopId: shop.shopId,
+              credentialConfigured: Boolean(online.credentialConfigured),
+              tokenPresent: Boolean(online.tokenPresent),
+              tokenExpiresAt: online.tokenExpiresAt || null,
+              tokenRefreshError: online.tokenRefreshError || null,
+              redirectUrl: online.redirectUrl || null,
+            }
+            : null,
           brandPortal: brandPortal
             ? {
               credentialConfigured: Boolean(brandPortal.credentialConfigured),
@@ -420,6 +453,8 @@ function createShopeeAnalyticsRouter({
           ads: String(process.env.SHOPEE_ADS_PARTNER_ID || '').trim() || null,
           erp: String(process.env.SHOPEE_ERP_PARTNER_ID || '').trim() || null,
           brandPortal: String(process.env.SHOPEE_BRAND_PORTAL_PARTNER_ID || '').trim() || null,
+          video: String(process.env.SHOPEE_VIDEO_PARTNER_ID || '').trim() || null,
+          online: String(process.env.SHOPEE_ONLINE_PARTNER_ID || '').trim() || null,
         },
       });
     } catch (error) {
@@ -475,6 +510,62 @@ function createShopeeAnalyticsRouter({
       const result = await erpOAuthService.beginAuthorization({ shopId });
       res.setHeader('Set-Cookie', erpStateCookie(result.state, result.ttlSeconds));
       res.redirect(302, result.authorizationUrl);
+    } catch (error) { next(error); }
+  });
+
+  // The videos and the livestreams: each is a partner of its own, so each
+  // is connected the way the shop connects the returns role — the seller
+  // signs in at the platform and ticks the shops.
+  router.get('/shop/status', async (req, res, next) => {
+    try {
+      if (!shopOAuthService) throw Object.assign(new Error('Shop OAuth service is unavailable'), { status: 503 });
+      const app = String(req.query.app || '').trim();
+      const shopId = positiveInt(req.query.shop_id, 'shop_id');
+      assertShopAccess(req, shopId);
+      res.json(await shopOAuthService.status({ role: app, shopId }));
+    } catch (error) { next(error); }
+  });
+
+  router.get('/shop/oauth/start', async (req, res, next) => {
+    try {
+      if (!req.auth || req.auth.role !== ROLE_SUPER_ADMIN) {
+        res.status(403).json({ error: 'SUPER_ADMIN_REQUIRED', message: 'Only super admins can connect a shop.' });
+        return;
+      }
+      if (!shopOAuthService) throw Object.assign(new Error('Shop OAuth service is unavailable'), { status: 503 });
+      const app = String(req.query.app || '').trim();
+      const shopId = positiveInt(req.query.shop_id, 'shop_id');
+      const result = await shopOAuthService.beginAuthorization({ role: app, shopId });
+      res.setHeader('Set-Cookie', shopStateCookie(result.state, result.ttlSeconds));
+      res.redirect(302, result.authorizationUrl);
+    } catch (error) { next(error); }
+  });
+
+  router.get('/shop/oauth/callback', async (req, res, next) => {
+    try {
+      if (!req.auth || req.auth.role !== ROLE_SUPER_ADMIN) {
+        res.status(403).json({ error: 'SUPER_ADMIN_REQUIRED', message: 'Only super admins can connect a shop.' });
+        return;
+      }
+      if (!shopOAuthService) throw Object.assign(new Error('Shop OAuth service is unavailable'), { status: 503 });
+      const state = parseShopCookie(req.headers.cookie, SHOP_OAUTH_COOKIE);
+      const result = await shopOAuthService.completeAuthorization({
+        state,
+        code: typeof req.query.code === 'string' ? req.query.code : '',
+        providerError: req.query.error || null,
+      });
+      res.setHeader('Set-Cookie', clearShopStateCookie());
+      const connected = (result.connectedShopIds || [result.shopId]).length;
+      const params = new URLSearchParams({
+        app: String(result.appRole || '').toLowerCase(),
+        shop: 'connected',
+        shop_id: String(result.shopId),
+        shops: String(connected),
+      });
+      if (result.expectedShopConnected === false) {
+        params.set('expected', 'not_connected');
+      }
+      res.redirect(302, `/?${params.toString()}`);
     } catch (error) { next(error); }
   });
 
