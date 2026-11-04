@@ -245,7 +245,7 @@ module.exports = function installQuotationManagement(deps) {
       brands, product_types: productTypes, rows,
       report: {
         brand: brand || null, currency: brand ? (BRAND_CCY[brand] || (rows[0] && rows[0].currency) || '') : '',
-        sku_count: distinctSkuCount, history_count: history.length, quoted_history_count: quotedHistoryCount, no_quote_count: noQuoteCount,
+        sku_count: distinctSkuCount, unlinked_count: rows.filter(r => r.match_status === 'unlinked').length, history_count: history.length, quoted_history_count: quotedHistoryCount, no_quote_count: noQuoteCount,
         updated_this_month: rows.filter(r => String(r.latest_date || '').slice(0, 7) === month).length,
         up_count: changes.filter(v => v > 0).length, down_count: changes.filter(v => v < 0).length,
         avg_change_pct: changes.length ? Math.round(changes.reduce((s, v) => s + v, 0) / changes.length * 100) / 100 : null,
