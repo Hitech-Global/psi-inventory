@@ -4751,7 +4751,7 @@ function latestConfirmedWac(skuCode, country, warehouse) {
     SELECT * FROM wac_history
     WHERE sku_code = ? AND country = ? AND warehouse = ?
       AND confirmation_status = 'confirmed' AND is_locked = 1
-    ORDER BY version_no DESC
+    ORDER BY confirmed_at DESC, version_no DESC
     LIMIT 1
   `, [skuCode, country, warehouse]);
 }
@@ -4855,11 +4855,12 @@ function validateWacHistoryImportRows(items) {
 
   // 一次预取这些 SKU 已有的锁定历史，供重复导入判定，避免每行重复查询历史表。
   const existingMap = new Map();
+  const existingPeriodRows = [];
   for (let i = 0; i < skuCodes.length; i += chunkSize) {
     const chunk = skuCodes.slice(i, i + chunkSize);
     const placeholders = chunk.map(() => '?').join(',');
     const existingRows = query(
-      "SELECT sku_code, country, warehouse, confirmed_at, new_avg_cost FROM wac_history " +
+      "SELECT sku_code, country, warehouse, confirmed_at, effective_end_date, new_avg_cost FROM wac_history " +
       "WHERE sku_code IN (" + placeholders + ") AND COALESCE(is_locked, 0) = 1 " +
       "AND COALESCE(confirmation_status, 'confirmed') NOT IN ('reversed', 'void', 'cancelled')",
       chunk
@@ -4869,9 +4870,42 @@ function validateWacHistoryImportRows(items) {
       const key = [r.sku_code, r.country, r.warehouse, date].join('|');
       if (!existingMap.has(key)) existingMap.set(key, []);
       existingMap.get(key).push(r);
+      existingPeriodRows.push(r);
     });
   }
 
+  // 旧历史记录没有结束日期时，按下一条历史记录开始日前一天推导；
+  // 最后一条记录视为持续有效，避免历史区间导入覆盖当前有效成本。
+  const existingPeriodMap = new Map();
+  const existingGroups = new Map();
+  existingPeriodRows.forEach(r => {
+    const key = [r.sku_code, r.country, r.warehouse].join('|');
+    if (!existingGroups.has(key)) existingGroups.set(key, []);
+    existingGroups.get(key).push(r);
+  });
+  existingGroups.forEach((group, key) => {
+    const starts = Array.from(new Set(group.map(r => String(r.confirmed_at || '').slice(0, 10)).filter(Boolean))).sort();
+    const periods = [];
+    group.forEach(r => {
+      const start = String(r.confirmed_at || '').slice(0, 10);
+      if (!start) return;
+      let end = normalizeWacHistoryDate(r.effective_end_date) || '';
+      if (!end) {
+        const nextStart = starts.find(d => d > start);
+        if (nextStart) {
+          const prev = new Date(nextStart + 'T00:00:00.000Z');
+          prev.setUTCDate(prev.getUTCDate() - 1);
+          end = prev.toISOString().slice(0, 10);
+        } else {
+          end = '9999-12-31';
+        }
+      }
+      if (end >= start) periods.push({ start, end });
+    });
+    existingPeriodMap.set(key, periods);
+  });
+
+  const incomingPeriodMap = new Map();
   rows.forEach((item, index) => {
     const rowNo = Number(item && (item.row_no || item._row_num || item._rowNum)) || index + 2;
     const skuCode = String(item && (item.sku_code || item.SKU) || '').trim();
@@ -4882,8 +4916,12 @@ function validateWacHistoryImportRows(items) {
     const costRaw = item && (item.new_avg_cost !== undefined ? item.new_avg_cost :
       (item.historical_wac !== undefined ? item.historical_wac : item.wac));
     const cost = Number(String(costRaw === undefined || costRaw === null ? '' : costRaw).replace(/,/g, '').trim());
-    const inboundRaw = item && (item.last_inbound_date || item['最后入库日期']);
+    const inboundRaw = item && (item.last_inbound_date || item['最后入库日期'] || item['开始时间'] || item['开始日期']);
     const historyDate = inboundRaw ? normalizeWacHistoryDate(inboundRaw) : '';
+    const endRaw = item && (item.effective_end_date !== undefined ? item.effective_end_date :
+      (item['结束日期'] !== undefined ? item['结束日期'] : item['结束时间']));
+    const hasEndDate = endRaw !== undefined && endRaw !== null && String(endRaw).trim() !== '';
+    const effectiveEndDate = hasEndDate ? normalizeWacHistoryDate(endRaw) : '';
     const confirmedDate = historyDate;
     const inboundDate = historyDate;
     const currencyInput = String(item && (item.local_currency || item.currency || '') || '').trim().toUpperCase();
@@ -4898,6 +4936,8 @@ function validateWacHistoryImportRows(items) {
     if (!country) requiredIssue('COUNTRY_EMPTY', '国家不能为空');
     if (!warehouse) requiredIssue('WAREHOUSE_EMPTY', '仓库不能为空');
     if (!historyDate) requiredIssue('HISTORY_DATE_INVALID', '最后入库日期不能为空或格式无效，需使用 YYYY-MM-DD');
+    if (hasEndDate && !effectiveEndDate) requiredIssue('HISTORY_END_DATE_INVALID', '结束日期格式无效，需使用 YYYY-MM-DD');
+    if (effectiveEndDate && historyDate && effectiveEndDate < historyDate) requiredIssue('HISTORY_END_BEFORE_START', '结束日期不能早于开始日期');
     if (costRaw === undefined || costRaw === null || String(costRaw).trim() === '' || !Number.isFinite(cost) || cost <= 0) {
       requiredIssue('WAC_INVALID', '历史WAC必须为大于0的有效数字（本币成本）');
     }
@@ -4939,9 +4979,28 @@ function validateWacHistoryImportRows(items) {
       const existing = existingMap.get(key) || [];
       if (existing.length) {
         const importedCost4 = Math.round(cost * 10000);
-        const allSame = existing.every(r => Math.round(Number(r.new_avg_cost) * 10000) === importedCost4);
+        const allSame = existing.every(r =>
+          Math.round(Number(r.new_avg_cost) * 10000) === importedCost4 &&
+          String(r.effective_end_date || '') === effectiveEndDate
+        );
         if (allSame) duplicate = true;
-        else pushIssue(rowNo, skuCode, 'EXISTING_DATE_CONFLICT', '该SKU在相同国家、仓库和日期已有不同WAC，请先核对历史数据');
+        else pushIssue(rowNo, skuCode, 'EXISTING_DATE_CONFLICT', '该SKU在相同国家、仓库和开始日期已有不同WAC或有效期，请先核对历史数据');
+      }
+    }
+
+    // 只对明确填写了结束日期的区间做重叠校验；结束日期留空的旧模板记录保持兼容。
+    if (!rowHasRequiredError && effectiveEndDate && historyDate) {
+      const periodKey = [skuCode, country, warehouse].join('|');
+      const incoming = incomingPeriodMap.get(periodKey) || [];
+      if (incoming.some(p => historyDate <= p.end && p.start <= effectiveEndDate)) {
+        requiredIssue('IMPORT_PERIOD_OVERLAP', '文件内同一SKU的历史WAC有效期存在重叠');
+      } else {
+        incoming.push({ start: historyDate, end: effectiveEndDate });
+        incomingPeriodMap.set(periodKey, incoming);
+      }
+      const existingPeriods = existingPeriodMap.get(periodKey) || [];
+      if (!duplicate && existingPeriods.some(p => historyDate <= p.end && p.start <= effectiveEndDate)) {
+        requiredIssue('EXISTING_PERIOD_OVERLAP', '该SKU的历史WAC有效期与系统已有WAC记录重叠，请先核对日期区间');
       }
     }
 
@@ -4972,6 +5031,7 @@ function validateWacHistoryImportRows(items) {
         new_avg_cost: Math.round(cost * 10000) / 10000,
         confirmed_date: confirmedDate,
         last_inbound_date: inboundDate || '',
+        effective_end_date: effectiveEndDate || '',
         local_currency: localCurrency || '',
         rmb_to_local_rate: rmbRate,
         fx_rate_date: fxRateDate,
@@ -5010,19 +5070,19 @@ function generateWacVersion(params) {
   const confirmedAt = params.confirmed_at || now;
   const localCurrency = String(params.local_currency || '').trim().toUpperCase();
   const rmbRate = Number(params.rmb_to_local_rate) > 0 ? Number(params.rmb_to_local_rate) : null;
-  const placeholders = new Array(33).fill('?').join(', ');
+  const placeholders = new Array(34).fill('?').join(', ');
 
   run('INSERT INTO wac_history (id, version_no, ci_id, ci_no, po_id, po_no, pi_id, pi_no, ' +
       'sku_code, model, brand, country, warehouse, original_qty, original_avg_cost, original_inventory_value, ' +
       'inbound_qty, unit_landing_cost, inbound_total_cost, new_avg_cost, settlement_date, confirmation_status, ' +
-      'is_locked, confirmed_by, confirmed_at, logistics_batch_id, last_inbound_date, local_currency, ' +
+      'is_locked, confirmed_by, confirmed_at, logistics_batch_id, last_inbound_date, effective_end_date, local_currency, ' +
       'rmb_to_local_rate, fx_rate_date, source_type, import_batch_id, created_at) VALUES (' + placeholders + ')',
     [id, nextVersionNo, ci_id || '', ci_no || '', po_id || '', po_no || '', pi_id || '', pi_no || '',
      sku_code, model || '', brand || '', country || '', warehouse || '',
      original_qty || 0, original_avg_cost || 0, original_inventory_value || 0,
      inbound_qty || 0, unit_landing_cost || 0, inbound_total_cost || 0, new_avg_cost || 0,
      settlement_date || '', 'confirmed', 1, confirmed_by || '', confirmedAt, logistics_batch_id || null,
-     params.last_inbound_date || '', localCurrency, rmbRate, params.fx_rate_date || '',
+     params.last_inbound_date || '', params.effective_end_date || '', localCurrency, rmbRate, params.fx_rate_date || '',
      params.source_type || 'system', params.import_batch_id || '', now]);
 
   return { id, version_no: nextVersionNo };
@@ -19285,14 +19345,15 @@ app.get('/api/wac/confirmed-batches', requireApiPermission('ci_view'), asyncHand
 // WAC-HISTORY-IMPORT-01：历史WAC模板、只读预检查与原子导入。
 app.get('/api/wac/history-import/template', requireApiPermission('ci_edit'), asyncHandler((req, res) => {
   res.json({
-    columns: ['SKU', '品牌', '国家', '仓库', '历史WAC（本币）', '最后入库日期', '本币币种', '1 RMB = 本币汇率'],
+    columns: ['SKU', '品牌', '国家', '仓库', '历史WAC（本币）', '最后入库日期', '结束日期', '本币币种', '1 RMB = 本币汇率'],
     instructions: [
       ['字段', '要求与说明'],
       ['SKU', '必填；必须存在于SKU主数据'],
-      ['品牌', '选填；填写时必须与SKU主数据完全一致'],
+      ['品牌', '选填；填写时必须与SKU主数据完全一致；留空时自动匹配SKU主数据品牌'],
       ['国家、仓库', '必填；必须与系统仓库主数据中的国家和仓库名称一致'],
       ['历史WAC（本币）', '必填；填写该SKU在对应国家/仓库的历史本币WAC，必须大于0'],
-      ['最后入库日期', '必填；作为该条历史WAC的日期及历史汇率匹配日期，格式 YYYY-MM-DD'],
+      ['最后入库日期', '必填；作为该条历史WAC的生效开始日期及历史汇率匹配日期，格式 YYYY-MM-DD'],
+      ['结束日期', '选填；填写该条历史WAC的有效期结束日期，格式 YYYY-MM-DD，不能早于开始日期；留空表示未指定结束日期'],
       ['本币币种', '选填；可填 IDR、MYR、THB 等；留空时按国家主数据识别'],
       ['1 RMB = 本币汇率', '选填；填写历史精确汇率。留空时系统只查最后入库日期对应的历史汇率，不会使用今天汇率'],
       ['重要说明', '本导入只新增锁定的WAC历史记录，不修改库存总表当前WAC、库存数量或库存货值。']
@@ -19360,6 +19421,7 @@ app.post('/api/wac/history-import', requireApiPermission('ci_edit'), asyncHandle
           confirmed_by: userId,
           logistics_batch_id: null,
           last_inbound_date: item.last_inbound_date,
+          effective_end_date: item.effective_end_date,
           local_currency: item.local_currency,
           rmb_to_local_rate: item.rmb_to_local_rate,
           fx_rate_date: item.fx_rate_date,
@@ -19390,7 +19452,7 @@ app.get('/api/wac/history-matrix', requireApiPermission('ci_view'), asyncHandler
     const rows = query(
       "SELECT wh.sku_code, wh.model, wh.brand, wh.country, wh.warehouse, " +
       "wh.new_avg_cost, wh.original_avg_cost, wh.original_qty, wh.inbound_qty, " +
-      "wh.confirmed_at, wh.version_no, wh.ci_no, wh.po_no, wh.pi_no, " +
+      "wh.confirmed_at, wh.version_no, wh.ci_no, wh.po_no, wh.pi_no, wh.effective_end_date, " +
       "COALESCE(NULLIF(wh.last_inbound_date, ''), lb.actual_arrival_date) AS last_inbound_date, " +
       "wh.local_currency, wh.rmb_to_local_rate, wh.fx_rate_date, COALESCE(wh.source_type, 'system') AS source_type " +
       "FROM wac_history wh LEFT JOIN logistics_batches lb ON lb.id = wh.logistics_batch_id " +

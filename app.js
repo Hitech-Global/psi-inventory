@@ -15126,13 +15126,13 @@ async function loadWacHistoryMatrix(refresh) {
           const record = dateVals.get(d);
           if (!record) return '<td>—</td>';
           return '<td><div>' + money(record.new_avg_cost) + (record.local_currency ? ' ' + esc(record.local_currency) : '') + '</div>' +
-            (record.source_type === 'historical_import' ? '<div class="wac-history-source">历史导入</div>' : '') +
+            (record.source_type === 'historical_import' ? '<div class="wac-history-source">历史导入' + (record.effective_end_date ? ' · 有效至 ' + esc(record.effective_end_date) : ' · 结束日期未指定') + '</div>' : '') +
             '</td>';
         }).join('') +
       '</tr>';
     });
     html += '</tbody></table></div>' +
-      '<div style="padding:8px 2px;font-size:11px;color:var(--text-secondary)">Latest WAC及变化按筛选范围内最近两次确认记录计算；每个日期列显示当日最后一次WAC。历史汇率只显示已保存快照或对应日期的精确汇率，缺失时不使用当前汇率替代。横向滚动可查看全部历史日期。</div>';
+      '<div style="padding:8px 2px;font-size:11px;color:var(--text-secondary)">Latest WAC及变化按筛选范围内最近两次确认记录计算；每个日期列显示当日最后一次WAC。历史导入记录如有有效期，会在成本下方显示结束日期。历史汇率只显示已保存快照或对应日期的精确汇率，缺失时不使用当前汇率替代。横向滚动可查看全部历史日期。</div>';
     target.innerHTML = html;
   } catch(e) {
     target.innerHTML = '<div class="empty-state">' + esc(e.message || '加载失败') + '</div>';
@@ -15146,7 +15146,8 @@ const WAC_HISTORY_IMPORT_COLUMNS = [
   {key:'country',aliases:['国家','country']},
   {key:'warehouse',aliases:['仓库','warehouse']},
   {key:'new_avg_cost',aliases:['历史WAC（本币）','历史WAC','WAC','Latest WAC','new_avg_cost','historical_wac']},
-  {key:'last_inbound_date',aliases:['最后入库日期','last_inbound_date']},
+  {key:'last_inbound_date',aliases:['最后入库日期','last_inbound_date','开始时间','开始日期','WAC生效日期']},
+  {key:'effective_end_date',aliases:['结束日期','结束时间','effective_end_date','valid_to']},
   {key:'local_currency',aliases:['本币币种','local_currency','currency']},
   {key:'rmb_to_local_rate',aliases:['1 RMB = 本币汇率','人民币汇率','rmb_to_local_rate','fx_rate']}
 ];
@@ -15154,7 +15155,8 @@ const WAC_HISTORY_IMPORT_COLUMNS = [
 function openWacHistoryImport() {
   const body = '<div class="wac-history-import-notice">' +
     '<b>导入范围：</b>只新增锁定的历史WAC记录，用于历史矩阵展示。<b>不会修改</b>库存总表当前WAC、库存数量、库存货值，也不会覆盖已有历史记录。' +
-    '<br>必填：SKU、国家、仓库、历史WAC（本币）、最后入库日期。品牌可留空；填写时必须与SKU主数据一致。' +
+    '<br>必填：SKU、国家、仓库、历史WAC（本币）、最后入库日期。品牌可留空；系统自动按SKU主数据匹配品牌。' +
+    '<br>结束日期选填；如果源数据有成本有效期，请填写，系统会校验区间是否重叠。' +
     '<br>人民币汇率为选填；系统按最后入库日期匹配历史汇率。留空时不会拿今天汇率代替。' +
     '</div>' +
     '<div id="wac-history-import-drop" class="wac-history-import-drop" onclick="document.getElementById(\'wac-history-import-file\').click()" ' +
@@ -15197,6 +15199,7 @@ function _wacHistoryImportPayload() {
       warehouse:r.warehouse || '',
       new_avg_cost:r.new_avg_cost,
       last_inbound_date:r.last_inbound_date || '',
+      effective_end_date:r.effective_end_date || '',
       local_currency:r.local_currency || '',
       rmb_to_local_rate:r.rmb_to_local_rate
     };
@@ -15229,7 +15232,7 @@ function handleWacHistoryImportFile(file) {
           if (idx < 0 || row[idx] === undefined || row[idx] === null || String(row[idx]).trim() === '') return;
           let value = row[idx];
           if (typeof value === 'string' && col.key !== 'brand') value = value.trim();
-          if (col.key === 'last_inbound_date') value = _wacHistoryImportDate(value);
+          if (col.key === 'last_inbound_date' || col.key === 'effective_end_date') value = _wacHistoryImportDate(value);
           if (col.key === 'new_avg_cost' || col.key === 'rmb_to_local_rate') value = Number(String(value).replace(/,/g,'').trim());
           rec[col.key]=value;
         });
@@ -15237,6 +15240,7 @@ function handleWacHistoryImportFile(file) {
         if (!rec.country) rec._errors.push('国家不能为空');
         if (!rec.warehouse) rec._errors.push('仓库不能为空');
         if (!rec.last_inbound_date) rec._errors.push('最后入库日期不能为空或格式无效');
+        if (rec.effective_end_date && rec.last_inbound_date && rec.effective_end_date < rec.last_inbound_date) rec._errors.push('结束日期不能早于开始日期');
         if (!Number.isFinite(Number(rec.new_avg_cost)) || Number(rec.new_avg_cost) <= 0) rec._errors.push('历史WAC必须为大于0的数字');
         records.push(rec);
       }
@@ -15265,7 +15269,7 @@ function renderWacHistoryImportPreview() {
     if (!blockedRows.has(key)) blockedRows.set(key,[]);
     blockedRows.get(key).push(issue.reason || issue.issue_type || '校验失败');
   });
-  let html='<div class="wac-history-import-preview"><table><thead><tr><th>行</th><th>SKU</th><th>品牌</th><th>国家</th><th>仓库</th><th>历史WAC</th><th>最后入库日期</th><th>本币</th><th>人民币汇率</th><th>校验</th></tr></thead><tbody>';
+  let html='<div class="wac-history-import-preview"><table><thead><tr><th>行</th><th>SKU</th><th>品牌</th><th>国家</th><th>仓库</th><th>历史WAC</th><th>最后入库日期</th><th>结束日期</th><th>本币</th><th>人民币汇率</th><th>校验</th></tr></thead><tbody>';
   records.slice(0,30).forEach(function(r) {
     const issues=(r._errors||[]).concat(blockedRows.get(Number(r._rowNum))||[]);
     html+='<tr style="'+(issues.length?'background:#fff1f0':'')+'">' +
@@ -15273,10 +15277,11 @@ function renderWacHistoryImportPreview() {
       '<td>'+esc(r.country||'—')+'</td><td>'+esc(r.warehouse||'—')+'</td>' +
       '<td>'+esc(r.new_avg_cost===undefined?'—':String(r.new_avg_cost))+'</td>' +
       '<td>'+esc(r.last_inbound_date||'—')+'</td>' +
+      '<td>'+esc(r.effective_end_date||'未指定')+'</td>' +
       '<td>'+esc(r.local_currency||'—')+'</td><td>'+esc(r.rmb_to_local_rate===undefined?'—':String(r.rmb_to_local_rate))+'</td>' +
       '<td>'+(issues.length?'<span style="color:#d92d20" title="'+esc(issues.join('；'))+'">✕ '+issues.length+'</span>':'<span style="color:#16a34a">待校验</span>')+'</td></tr>';
   });
-  if(records.length>30) html+='<tr><td colspan="10" style="text-align:center;color:#8e8e93">还有 '+(records.length-30)+' 行未展开</td></tr>';
+  if(records.length>30) html+='<tr><td colspan="11" style="text-align:center;color:#8e8e93">还有 '+(records.length-30)+' 行未展开</td></tr>';
   html+='</tbody></table></div>';
   box.innerHTML=html;
 }
