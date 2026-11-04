@@ -4,7 +4,7 @@
 const BRAND_CCY=Object.freeze({Netac:'USD',Redragon:'RMB',BOYA:'RMB',Joypeer:'RMB'});
 const pad=n=>String(n).padStart(2,'0');
 const clean=v=>String(v??'').trim();
-const norm=v=>clean(v).toLowerCase().replace(/[\s_\-./\\()[\]{}:：;；,，]+/g,'');
+const norm=v=>clean(v).toUpperCase();
 const mapKey=(supplier,brand,part)=>[supplier,brand,norm(part)].join('\u0001');
 
 function excelSerialToISO(value){
