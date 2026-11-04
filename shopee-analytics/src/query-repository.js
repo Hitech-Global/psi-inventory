@@ -562,8 +562,11 @@ class ShopeeQueryRepository {
               COALESCE(af.affiliate_content_views,0) AS affiliate_content_views,
               COALESCE(af.affiliate_content_viewers,0) AS affiliate_content_viewers,
               COALESCE(af.affiliate_product_clicks,0) AS affiliate_product_clicks,
-              COALESCE(af.affiliate_commission,0) AS affiliate_commission,
-              COALESCE(af.affiliate_free_samples,0) AS affiliate_free_samples,
+              -- The commission and the samples are left as they are: a
+              -- report that does not carry them is not saying they were
+              -- zero.
+              af.affiliate_commission AS affiliate_commission,
+              af.affiliate_free_samples AS affiliate_free_samples,
               COALESCE(o.paid_orders,0) AS paid_orders,
               COALESCE(o.cancelled_orders,0) AS cancelled_orders,
               COALESCE(o.order_gmv,0) AS order_gmv,
@@ -642,8 +645,8 @@ class ShopeeQueryRepository {
       affiliateContentViews: Number(row.affiliate_content_views || 0),
       affiliateContentViewers: Number(row.affiliate_content_viewers || 0),
       affiliateProductClicks: Number(row.affiliate_product_clicks || 0),
-      affiliateCommission: Number(row.affiliate_commission || 0),
-      affiliateFreeSamples: Number(row.affiliate_free_samples || 0),
+      affiliateCommission: row.affiliate_commission === null ? null : Number(row.affiliate_commission),
+      affiliateFreeSamples: row.affiliate_free_samples === null ? null : Number(row.affiliate_free_samples),
       paidOrders: Number(row.paid_orders || 0),
       cancelledOrders: Number(row.cancelled_orders || 0),
       orderGmv: Number(row.order_gmv || 0),
