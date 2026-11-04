@@ -321,5 +321,74 @@
     URL.revokeObjectURL(url);
   }
 
-  window.TikTokUI = { render, exportCsv };
+  /**
+   * 渲染诊断结论。
+   *
+   * ★ 这个页签最容易骗人的地方是「把推测说成事实」。
+   * 所以每条结论都带上 kind 标签：data-fact 是数据事实，ai-suggestion 是 AI 推测建议。
+   * 两者在视觉上必须能一眼分开 —— 事实用中性色，推测用带标记的样式。
+   *
+   * @param {object} diagnosis 后端 /tiktok/shops/:shopId/diagnosis 的返回
+   */
+  function renderDiagnosis(diagnosis) {
+    const notice = document.querySelector('#tiktokDiagnosisNotice');
+    const signalsHost = document.querySelector('#tiktokSignals');
+    const unavailableHost = document.querySelector('#tiktokUnavailable');
+    if (!signalsHost) return;
+
+    const signals = (diagnosis && diagnosis.signals) || [];
+    const unavailable = (diagnosis && diagnosis.unavailable) || [];
+
+    // 能力边界：拿不到的结论要说清楚。这是平台数据的客观边界，不是系统故障。
+    if (unavailableHost) {
+      if (unavailable.length) {
+        unavailableHost.innerHTML = '<div class="tiktok-unavailable-box">'
+          + '<strong>这几项在 TikTok 侧拿不到</strong>'
+          + '<ul>' + unavailable.map(item => `
+            <li>
+              <span class="tiktok-unavailable-title">${escapeHtml(item.title)}</span>
+              <span class="tiktok-unavailable-reason">${escapeHtml(item.reason || '')}</span>
+              ${item.impact ? `<span class="tiktok-unavailable-impact">${escapeHtml(item.impact)}</span>` : ''}
+            </li>`).join('')
+          + '</ul></div>';
+        unavailableHost.classList.remove('hidden');
+      } else {
+        unavailableHost.innerHTML = '';
+        unavailableHost.classList.add('hidden');
+      }
+    }
+
+    if (notice) {
+      if (!signals.length) {
+        notice.innerHTML = '<div class="tiktok-notice warn">'
+          + '<strong>暂时没有可诊断的结论。</strong>'
+          + '<span>这个区间内没有可用于诊断的数据。先完成授权并同步数据，再运行诊断。</span></div>';
+        notice.classList.remove('hidden');
+      } else {
+        notice.innerHTML = '';
+        notice.classList.add('hidden');
+      }
+    }
+
+    if (!signals.length) {
+      signalsHost.innerHTML = '';
+      signalsHost.classList.add('hidden');
+      return;
+    }
+
+    signalsHost.innerHTML = signals.map(item => {
+      const isFact = item.kind === 'data-fact';
+      return `<article class="tiktok-signal ${isFact ? 'fact' : 'suggestion'} ${escapeHtml(item.severity || 'info')}">
+        <header class="tiktok-signal-head">
+          <span class="tiktok-signal-kind">${isFact ? '数据事实' : 'AI 推测建议'}</span>
+          <h3>${escapeHtml(item.title || '')}</h3>
+        </header>
+        <p class="tiktok-signal-detail">${escapeHtml(item.detail || '')}</p>
+        ${item.action ? `<p class="tiktok-signal-action"><span>落地动作</span>${escapeHtml(item.action)}</p>` : ''}
+      </article>`;
+    }).join('');
+    signalsHost.classList.remove('hidden');
+  }
+
+  window.TikTokUI = { render, renderDiagnosis, exportCsv };
 })();

@@ -867,6 +867,50 @@ async function loadTikTokData() {
   });
 }
 
+/**
+ * 运行 TikTok 诊断。
+ *
+ * 诊断是**按需**触发的，不是每次进页签都跑 ——
+ * 它要把整个区间的数据拉出来算一遍，比读表重。
+ */
+async function loadTikTokDiagnosis() {
+  const button = document.querySelector('#tiktokDiagnosisBtn');
+  const notice = document.querySelector('#tiktokDiagnosisNotice');
+  if (!state.tiktokShopId) {
+    if (notice) {
+      notice.innerHTML = '<div class="tiktok-notice warn">'
+        + '<strong>还没有选中的 TikTok 店铺。</strong><span>先选一家已接入的店铺再运行诊断。</span></div>';
+      notice.classList.remove('hidden');
+    }
+    return;
+  }
+  if (button) {
+    button.disabled = true;
+    button.textContent = '诊断中…';
+  }
+  try {
+    const filters = currentFilters();
+    const params = new URLSearchParams();
+    if (filters.startDate) params.set('start_date', filters.startDate);
+    if (filters.endDate) params.set('end_date', filters.endDate);
+    const diagnosis = await json(
+      `/api/shopee-analytics/tiktok/shops/${encodeURIComponent(state.tiktokShopId)}/diagnosis?${params}`,
+    );
+    window.TikTokUI?.renderDiagnosis(diagnosis);
+  } catch (error) {
+    if (notice) {
+      notice.innerHTML = '<div class="tiktok-notice warn">'
+        + `<strong>诊断失败。</strong><span>${escapeHtml(error.message)}</span></div>`;
+      notice.classList.remove('hidden');
+    }
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = '运行诊断';
+    }
+  }
+}
+
 function loadCampaigns() {
   return loadGmvMaxCampaigns();
 }
@@ -1894,6 +1938,7 @@ $('#funnelProductsGroupToggle')?.addEventListener('click', () => {
   $('#healthRefreshBtn')?.addEventListener('click', () => loadShopHealth());
   $('#tiktokExportBtn')?.addEventListener('click', () => window.TikTokUI?.exportCsv());
   $('#tiktokRefreshBtn')?.addEventListener('click', () => loadTikTokData());
+  $('#tiktokDiagnosisBtn')?.addEventListener('click', () => loadTikTokDiagnosis());
   // 切换 TikTok 店铺：记住选择并重新读数据。
   $('#tiktokShopSelect')?.addEventListener('change', (event) => {
     state.tiktokShopId = event.target.value;

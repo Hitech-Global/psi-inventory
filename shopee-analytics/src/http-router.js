@@ -18,6 +18,7 @@ const { BRAND_PORTAL_COOKIE, stateCookie, clearStateCookie, parseCookie } = requ
 const { ERP_COOKIE, stateCookie: erpStateCookie, clearStateCookie: clearErpStateCookie, parseCookie: parseErpCookie } = require('./erp-oauth-service');
 const { TIKTOK_COOKIE, stateCookie: tiktokStateCookie, clearStateCookie: clearTikTokStateCookie, parseCookie: parseTikTokCookie } = require('./tiktok-oauth-service');
 const { resolveDateRange, regionTimeZone } = require('./tiktok-query-repository');
+const { diagnoseTikTokShop } = require('./platforms/tiktok-diagnosis');
 const { SkillJobManager, normalizeReportLanguage } = require('./skill-job-manager');
 const { buildFunnelRows, missingSources } = require('./shop-funnel');
 const {
@@ -664,6 +665,23 @@ function createShopeeAnalyticsRouter({
     return allowed.some(id => String(id) === target);
   }
 
+  /**
+   * 读一个阈值参数。
+   *
+   * 阈值是给运营调的数字，传进来的可能是 "0.2"，也可能是空或乱写。
+   * 解析不出来就用默认值 —— 一个填错的阈值不该让整个诊断失败。
+   *
+   * @param {*} value
+   * @param {number} fallback
+   * @returns {number}
+   */
+  function readThreshold(value, fallback) {
+    if (value === undefined || value === null || value === '') return fallback;
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+    return parsed;
+  }
+
   router.get('/tiktok/shops', async (req, res, next) => {
     try {
       if (!tiktokQueryRepository) throw scopeError('TIKTOK_DATA_UNAVAILABLE', 'TikTok data registry is unavailable', 503);
@@ -724,6 +742,35 @@ function createShopeeAnalyticsRouter({
         regionGroup, shopId, startDate, endDate, limit: 50,
       });
       res.json({ orders, startDate, endDate });
+    } catch (error) { next(error); }
+  });
+
+  router.get('/tiktok/shops/:shopId/diagnosis', async (req, res, next) => {
+    try {
+      if (!tiktokQueryRepository) throw scopeError('TIKTOK_DATA_UNAVAILABLE', 'TikTok data registry is unavailable', 503);
+      const shopId = String(req.params.shopId || '').trim();
+      if (!shopId) throw scopeError('TIKTOK_SHOP_ID_REQUIRED', 'shopId is required', 400);
+      if (!canSeeTikTokShop(req, shopId)) {
+        throw scopeError('TIKTOK_SHOP_FORBIDDEN', 'This TikTok shop is not assigned to you', 403);
+      }
+      const regionGroup = String(req.query.region_group || 'ROW').trim().toUpperCase();
+      const { startDate, endDate } = resolveTikTokDateRange(req.query);
+
+      // 阈值允许调用方覆盖 —— 项目要求阈值可配置。
+      // 解析失败就用默认值，不能因为一个非法阈值让整个诊断挂掉。
+      const thresholds = {
+        adSpendRatioLimit: readThreshold(req.query.ad_spend_ratio_limit, 0.15),
+        settledNetRoasLimit: readThreshold(req.query.settled_net_roas_limit, 1),
+      };
+
+      const rows = await tiktokQueryRepository.listDailySummary({
+        regionGroup, shopId, startDate, endDate,
+      });
+      const diagnosis = diagnoseTikTokShop({
+        rows, thresholds, shopId,
+        shopName: req.query.shop_name ? String(req.query.shop_name) : null,
+      });
+      res.json({ ...diagnosis, startDate, endDate, thresholds });
     } catch (error) { next(error); }
   });
 
