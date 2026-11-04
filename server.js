@@ -19082,10 +19082,8 @@ app.post('/api/wac/batches/:logistics_batch_id/restore-exclusion', requireApiPer
   transaction(()=>{
     const exclusion=queryOne("SELECT id FROM wac_batch_exclusions WHERE logistics_batch_id=? AND status='excluded'",[batchId]);
     if(!exclusion){failure={status:404,message:'没有找到有效的无需计算记录'};return;}
-    const batch=queryOne('SELECT id FROM logistics_batches WHERE id=?',[batchId]);
-    if(!batch){failure={status:404,message:'原物流批次不存在，无法恢复'};return;}
-    const history=queryOne('SELECT id FROM wac_history WHERE logistics_batch_id=? LIMIT 1',[batchId]);
-    if(history){failure={status:409,message:'该批次已经存在WAC历史记录，不能恢复到待确认队列'};return;}
+    const eligibility=inspectWacBatchForExclusion(batchId);
+    if(!eligibility.ok){failure={status:eligibility.code==='BATCH_NOT_FOUND'?404:409,message:eligibility.message};return;}
     run("UPDATE wac_batch_exclusions SET status='restored',restored_by=?,restored_by_name=?,restored_at=datetime('now'),updated_at=datetime('now') WHERE logistics_batch_id=? AND status='excluded'",
       [req.currentUserId||'',req.currentUserName||'',batchId]);
   });

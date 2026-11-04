@@ -211,7 +211,7 @@ test('WAC batch exclusion UI and all database drivers include the reversible exc
   assert.match(appSource,/submitWacBatchExclusion/);
   assert.match(appSource,/openWacBatchRestoreConfirm/);
   assert.match(appSource,/submitWacBatchRestore/);
-  assert.match(appSource,/wac\\/excluded-batches/);
+  assert.match(appSource,/wac\/excluded-batches/);
   assert.match(serverSource,/wac_batch_exclusions/);
   assert.match(serverSource,/restore-exclusion/);
   assert.match(dbSource,/CREATE TABLE IF NOT EXISTS wac_batch_exclusions/);

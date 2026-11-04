@@ -15213,7 +15213,7 @@ function renderWacBatchRows(data){
   const firstHeader=isExcluded?'<th>状态</th>':'<th style="width:44px"><input type="checkbox" aria-label="全选当前筛选的待确认批次" '+(allVisibleSelected?'checked ':'')+(pendingRows.length?'':'disabled ')+'onchange="toggleWacBatchSelectAll(this.checked)" style="width:16px;height:16px;cursor:pointer"></th>';
   const extraHeaders=isExcluded?'<th>处理原因</th><th>标记时间</th>':'';
   target.innerHTML='<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr>'
-    +firstHeader+'<th>物流单号</th><th>关联CI</th><th>货代</th><th>国家</th><th>品牌</th><th>仓库</th><th>到货日期</th><th>PL数量</th><th>货值</th><th>状态</th>'+extraHeaders+'<th>操作</th>'
+    +firstHeader+'<th>物流单号</th><th>关联CI</th><th>货代</th><th>国家</th><th>品牌</th><th>仓库</th><th>到货日期</th><th>PL数量</th><th>货值</th>'+(isExcluded?'':'<th>状态</th>')+extraHeaders+'<th>操作</th>'
     +'</tr></thead><tbody>'+data.map(r=>{
       const idArg=b64EncodeUnicode(String(r.id||''));
       const common='<td class="cell-id">'+esc(r.batch_no||'—')+'</td>'
@@ -15231,7 +15231,7 @@ function renderWacBatchRows(data){
           ?'<button class="btn btn-secondary btn-sm" disabled title="该批次已有WAC历史记录，不能恢复">不可恢复</button>'
           :'<button class="btn btn-secondary btn-sm" onclick="openWacBatchRestoreConfirm(b64DecodeUnicode(\''+idArg+'\'))">恢复</button>';
         return '<tr><td><span class="status-badge" style="background:#f1f3f5;color:#59636e">无需计算</span></td>'+common
-          +'<td>'+esc(r.exclusion_reason||'')+'</td><td class="cell-date">'+fmtDate(r.excluded_at)+'</td>'
+          +'<td>'+esc(r.exclusion_reason||'')+'</td><td class="cell-date">'+esc(String(r.excluded_at||'').replace('T',' ').slice(0,19))+'</td>'
           +'<td>'+restoreButton+'</td></tr>';
       }
       const isPending=r.wac_status==='pending';
