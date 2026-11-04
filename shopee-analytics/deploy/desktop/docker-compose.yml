@@ -191,3 +191,16 @@ volumes:
   shopee_pgdata:
   shopee_import_tmp:
   shopee_ollama:
+
+# The address range the containers live in.
+#
+# It is named here rather than left to Docker's default so that the range
+# is a known one — it is asked for when the platform is told where the
+# data lives, and an address that changes with every rebuild is no answer
+# to that. It is a private range, and it does not touch the range the
+# office network uses.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 192.168.100.0/22
