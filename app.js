@@ -15235,13 +15235,14 @@ function renderWacBatchRows(data){
           +'<td>'+restoreButton+'</td></tr>';
       }
       const isPending=r.wac_status==='pending';
+      const isConfirmed=r.wac_status==='confirmed';
       const selectedCell=isPending
         ?'<td><input type="checkbox" '+((window._wacSelectedBatchIds||new Set()).has(String(r.id))?'checked ':'')+'aria-label="选择批次" onchange="toggleWacBatchSelection(b64DecodeUnicode(\''+idArg+'\'),this.checked)" style="width:16px;height:16px;cursor:pointer"></td>'
         :'<td style="color:var(--text-secondary)">—</td>';
-      const status=isPending?'<span class="status-badge status-warning">待确认</span>':'<span class="status-badge status-normal">已确认</span>';
-      const actions=isPending
-        ?'<button class="btn btn-primary btn-sm" onclick="wacConfirm(b64DecodeUnicode(\''+idArg+'\'))">WAC确认</button> <button class="btn btn-secondary btn-sm" onclick="openWacBatchExcludeConfirm([b64DecodeUnicode(\''+idArg+'\')])">无需计算</button>'
-        :'<button class="btn btn-secondary btn-sm" onclick="wacConfirm(b64DecodeUnicode(\''+idArg+'\'))">查看</button>';
+      const status=isConfirmed?'<span class="status-badge status-normal">已确认</span>':'<span class="status-badge status-warning">待确认</span>';
+      const actions=isConfirmed
+        ?'<button class="btn btn-secondary btn-sm" onclick="wacConfirm(b64DecodeUnicode(\''+idArg+'\'))">查看</button>'
+        :'<button class="btn btn-primary btn-sm" onclick="wacConfirm(b64DecodeUnicode(\''+idArg+'\'))">WAC确认</button> <button class="btn btn-secondary btn-sm" onclick="openWacBatchExcludeConfirm([b64DecodeUnicode(\''+idArg+'\')])">无需计算</button>';
       return '<tr>'+selectedCell+common+'<td>'+status+'</td><td>'+actions+'</td></tr>';
     }).join('')+'</tbody></table></div>';
 }
@@ -15313,6 +15314,7 @@ async function submitWacBatchRestore(){
 // 兼容确认成功后的原调用入口；统一刷新全部批次。
 async function loadWacPending(){return loadWacBatches();}
 
+// WAC确认弹窗：展示PL明细与成本计算详情。
 async function wacConfirm(batchId){
   try{
     const p=await api('/api/wac/preview/'+batchId);
