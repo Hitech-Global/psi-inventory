@@ -324,16 +324,7 @@ module.exports=function installQuotationImportFast(deps){
     }
   }
   app.get('/api/quotation-management/import-options',requireApiPermission('quotation_view'),asyncHandler((req,res)=>{
-    try{
-      const suppliers=query("SELECT id,name,associated_brands,default_currency FROM suppliers WHERE status='active' ORDER BY name").rows.map(x=>({
-        id:x.id,name:x.name,brands:(()=>{try{const a=JSON.parse(x.associated_brands||'[]');return Array.isArray(a)?a:[];}catch(_e){return [];}})(),
-        default_currency:x.default_currency||''
-      }));
-      const skus=query("SELECT sku_code,brand,category,model,product_name,color_spec,barcode FROM skus WHERE COALESCE(status,'normal')<>'deleted' ORDER BY brand,sku_code").rows;
-      const mappings=query('SELECT supplier_id,brand,supplier_part_no,supplier_part_no_key,psi_sku_code FROM quotation_sku_mappings').rows;
-      const brands=[...new Set(skus.map(x=>String(x.brand||'').trim()).filter(Boolean))].sort();
-      res.json({suppliers,skus,mappings,brands});
-    }catch(e){res.status(500).json({error:e.message});}
+    try{res.json(importOptions());}catch(e){res.status(500).json({error:e.message});}
   }));
   app.get('/api/quotation-management/import/:importId/status',requireApiPermission('quotation_view'),asyncHandler(async(req,res)=>{
     const id=String(req.params.importId||'').trim();
