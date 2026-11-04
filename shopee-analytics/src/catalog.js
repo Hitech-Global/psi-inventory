@@ -35,6 +35,33 @@ const ENDPOINTS = Object.freeze({
   lateOrders: { app: 'ERP', method: 'GET', path: '/api/v2/account_health/get_late_orders' },
   // 某个指标背后具体是哪些订单、什么原因码。指标本身只给比例，明细给原因。
   metricSourceDetail: { app: 'ERP', method: 'GET', path: '/api/v2/account_health/get_metric_source_detail' },
+
+  // ── 联盟营销（AMS）──────────────────────────────────────────────────
+  // 只有 Affiliate Marketing Solution 类应用能调这组接口。绩效、转换
+  // 报告和对账账单都在这里 —— 佣金和投产比不必再从卖家中心导出了。
+  amsPerformanceUpdateTime: { app: 'MARKETING', method: 'GET', path: '/api/v2/ams/get_performance_data_update_time' },
+  amsShopPerformance: { app: 'MARKETING', method: 'GET', path: '/api/v2/ams/get_shop_performance' },
+  amsProductPerformance: { app: 'MARKETING', method: 'GET', path: '/api/v2/ams/get_product_performance' },
+  amsAffiliatePerformance: { app: 'MARKETING', method: 'GET', path: '/api/v2/ams/get_affiliate_performance' },
+  amsContentPerformance: { app: 'MARKETING', method: 'GET', path: '/api/v2/ams/get_content_performance' },
+  amsCampaignKeyMetrics: { app: 'MARKETING', method: 'GET', path: '/api/v2/ams/get_campaign_key_metrics_performance' },
+  amsOpenCampaignPerformance: { app: 'MARKETING', method: 'GET', path: '/api/v2/ams/get_open_campaign_performance' },
+  amsTargetedCampaignPerformance: { app: 'MARKETING', method: 'GET', path: '/api/v2/ams/get_targeted_campaign_performance' },
+  amsConversionReport: { app: 'MARKETING', method: 'GET', path: '/api/v2/ams/get_conversion_report' },
+  amsValidationList: { app: 'MARKETING', method: 'GET', path: '/api/v2/ams/get_validation_list' },
+  amsValidationReport: { app: 'MARKETING', method: 'GET', path: '/api/v2/ams/get_validation_report' },
+  amsOpenCampaignAddedProduct: { app: 'MARKETING', method: 'GET', path: '/api/v2/ams/get_open_campaign_added_product' },
+
+  // ── 视频与直播──────────────────────────────────────────────────────
+  videoList: { app: 'VIDEO', method: 'GET', path: '/api/v2/video/get_video_list' },
+  liveSessionList: { app: 'VIDEO', method: 'GET', path: '/api/v2/live/get_live_session_list' },
+
+  // ── 线上店铺────────────────────────────────────────────────────────
+  onlineShopList: { app: 'ONLINE', method: 'GET', path: '/api/v2/online/get_online_shop_list' },
+
+  // ── 运营大脑与订单分析──────────────────────────────────────────────
+  storeOpsBrainOverview: { app: 'STORE_OPS_BRAIN', method: 'GET', path: '/api/v2/store_ops_brain/get_overview' },
+  orderAnalysis: { app: 'ORDER_ANALYSIS', method: 'GET', path: '/api/v2/order_analysis/get_order_analysis' },
 });
 
 const SYNC_POLICY = Object.freeze({
@@ -59,6 +86,23 @@ const SYNC_POLICY = Object.freeze({
   penaltyPointHistory: { minutes: 360 },
   listingsWithIssues: { minutes: 360 },
   lateOrders: { minutes: 360 },
+  // 联盟绩效每天更新一次，账单也是。
+  amsPerformanceUpdateTime: { minutes: 1440 },
+  amsShopPerformance: { minutes: 360 },
+  amsProductPerformance: { minutes: 360 },
+  amsAffiliatePerformance: { minutes: 360 },
+  amsContentPerformance: { minutes: 360 },
+  amsCampaignKeyMetrics: { minutes: 360 },
+  amsOpenCampaignPerformance: { minutes: 360 },
+  amsConversionReport: { minutes: 360 },
+  amsValidationList: { minutes: 1440 },
+  amsValidationReport: { minutes: 1440 },
+  amsOpenCampaignAddedProduct: { minutes: 1440 },
+  videoList: { minutes: 360 },
+  liveSessionList: { minutes: 360 },
+  onlineShopList: { minutes: 1440 },
+  storeOpsBrainOverview: { minutes: 360 },
+  orderAnalysis: { minutes: 360 },
 });
 
 module.exports = { ENDPOINTS, SYNC_POLICY };

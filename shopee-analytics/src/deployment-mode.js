@@ -3,7 +3,23 @@
 const PRODUCTION = 'PRODUCTION';
 const OFFLINE_BASELINE = 'OFFLINE_BASELINE';
 const PILOT_GMV_MAX = 'PILOT_GMV_MAX';
-const PRODUCTION_ROLES = Object.freeze(['ADS', 'STORE_OPS', 'ERP', 'BRAND_PORTAL']);
+// The applications the system may call in production.
+//
+// The affiliate marketing, the videos, the online shops, the operations
+// brain and the order analysis are applications of their own, each with a
+// partner of its own; the advertising and the shop side are the ones that
+// were there first.
+const PRODUCTION_ROLES = Object.freeze([
+  'ADS',
+  'STORE_OPS',
+  'ERP',
+  'BRAND_PORTAL',
+  'MARKETING',
+  'VIDEO',
+  'ONLINE',
+  'STORE_OPS_BRAIN',
+  'ORDER_ANALYSIS',
+]);
 
 function resolveDeploymentMode(env = process.env) {
   const value = env.SHOPEE_ANALYTICS_DEPLOYMENT_MODE;
@@ -191,6 +207,7 @@ module.exports = {
   PRODUCTION,
   OFFLINE_BASELINE,
   PILOT_GMV_MAX,
+  PRODUCTION_ROLES,
   resolveDeploymentMode,
   isOfflineBaseline,
   isPilotGmvMax,

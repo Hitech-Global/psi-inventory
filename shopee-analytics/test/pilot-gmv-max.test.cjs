@@ -35,7 +35,12 @@ const pilotEnv = {
 };
 
 assert.strictEqual(validateDesktopEnv(pilotEnv).ok, true);
-assert.deepStrictEqual(rolesForDeploymentMode({}), ['ADS', 'STORE_OPS', 'ERP', 'BRAND_PORTAL']);
+// The applications the system may call in production. Each of them has a
+// partner of its own, and the advertising may be held under more than one.
+assert.deepStrictEqual(rolesForDeploymentMode({}), [
+  'ADS', 'STORE_OPS', 'ERP', 'BRAND_PORTAL',
+  'MARKETING', 'VIDEO', 'ONLINE', 'STORE_OPS_BRAIN', 'ORDER_ANALYSIS',
+]);
 assert.doesNotThrow(() => assertRoleAllowed('BRAND_PORTAL', { SHOPEE_ANALYTICS_DEPLOYMENT_MODE: PRODUCTION }));
 assert.deepStrictEqual(rolesForDeploymentMode(pilotEnv), ['ADS']);
 assert.throws(() => assertRoleAllowed('ERP', pilotEnv), /Shopee role ERP is disabled/);
