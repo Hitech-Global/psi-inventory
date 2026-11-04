@@ -1,13 +1,16 @@
 'use strict';
 
 module.exports=function installQuotationImportFast(deps){
-  const {app,query,run,genId,asyncHandler,requireApiPermission}=deps;
+  const {app,query,run,transaction,genId,asyncHandler,requireApiPermission}=deps;
   const crypto=require('node:crypto');
   const {withAsyncPoolClient,withGenerateClient}=require('./pg-async');
-  const BRAND_CCY=Object.freeze({Netac:'RMB',Redragon:'RMB',BOYA:'RMB',Joypeer:'RMB'});
+  const BRAND_CCY=Object.freeze({Netac:'USD',Redragon:'RMB',BOYA:'RMB',Joypeer:'RMB'});
   const MAX_ROWS=5000;
   const STALE_MS=90*1000;
-  const keyOf=r=>r.sku+'\u0001'+r.brand+'\u0001'+r.quote_date;
+  const clean=v=>String(v??'').trim();
+  const norm=v=>clean(v).toUpperCase();
+  const keyOf=r=>[r.supplier_id,r.sku,r.brand,r.quote_date].join('\u0001');
+  const mappingKey=(supplier,brand,part)=>[supplier,brand,norm(part)].join('\u0001');
   const nowIso=()=>new Date().toISOString();
   const isPg=()=>String(process.env.DB_DRIVER||'sqlite').toLowerCase()==='pg';
   let ensurePgPromise=null;
@@ -28,45 +31,97 @@ module.exports=function installQuotationImportFast(deps){
     return s.slice(0,10);
   }
 
+  function parseIdList(value){
+    if(Array.isArray(value))return value.map(v=>String(v||'').trim()).filter(Boolean);
+    try{const a=JSON.parse(String(value||'[]'));return Array.isArray(a)?a.map(v=>String(v||'').trim()).filter(Boolean):[];}catch(_e){return [];}
+  }
+  function badRequest(message,errors){
+    const e=new Error(message);e.status=400;if(errors)e.errors=errors;return e;
+  }
   function parseRows(req){
-    const input=Array.isArray((req.body||{}).rows)?req.body.rows:[];
-    const mode=(req.body||{}).duplicate_mode==='overwrite'?'overwrite':'skip';
-    if(!input.length){const e=new Error('导入数据不能为空');e.status=400;throw e;}
-    if(input.length>MAX_ROWS){const e=new Error('本次导入共 '+input.length+' 行，单次最多支持 '+MAX_ROWS+' 行，请拆分后重试。');e.status=422;e.code='IMPORT_ROW_LIMIT_EXCEEDED';throw e;}
+    const body=req.body||{},input=Array.isArray(body.rows)?body.rows:[];
+    const mode=body.duplicate_mode==='overwrite'?'overwrite':'skip';
+    if(!input.length)throw badRequest('导入数据不能为空');
+    if(input.length>MAX_ROWS)throw badRequest('本次导入共 '+input.length+' 行，单次最多支持 '+MAX_ROWS+' 行，请拆分后重试。');
+    const supplierId=clean(body.supplier_id);
+    let supplier=null;
+    if(supplierId){
+      supplier=query("SELECT id,name,associated_brands,default_currency,status FROM suppliers WHERE id=? AND status='active'",[supplierId]).rows[0]||null;
+      if(!supplier)throw badRequest('所选供应商不存在或已停用，请重新选择。');
+    }
+    const supplierBrands=supplier?parseIdList(supplier.associated_brands):[];
+    const skuRows=query("SELECT sku_code,brand,category,model,product_name,color_spec,barcode FROM skus WHERE COALESCE(status,'normal')<>'deleted'").rows;
+    const skuMap=new Map();
+    skuRows.forEach(x=>skuMap.set(String(x.brand||'').toLowerCase()+'|'+norm(x.sku_code),x));
+    const savedMappings=supplierId?query('SELECT supplier_id,brand,supplier_part_no_key,psi_sku_code FROM quotation_sku_mappings WHERE supplier_id=?',[supplierId]).rows:[];
+    const mappingMap=new Map(savedMappings.map(x=>[mappingKey(x.supplier_id,x.brand,x.supplier_part_no_key),x.psi_sku_code]));
+    const manualMap=new Map(),mappingUpdates=[];
+    (Array.isArray(body.mapping_updates)?body.mapping_updates:[]).forEach(x=>{
+      const brand=clean(x.brand),part=clean(x.supplier_part_no),psi=clean(x.psi_sku_code);
+      if(supplierId&&brand&&part&&psi)manualMap.set(mappingKey(supplierId,brand,part),psi);
+    });
     const rows=[],errors=[];
-    input.forEach((r,i)=>{
-      const sku=String(r.sku_code||r.SKU||r['SKU']||'').trim();
-      const brand=String(r.brand||r['品牌']||'').trim();
-      const product_type=String(r.product_type||r['产品类型']||'').trim();
+    input.forEach((raw,i)=>{
+      const r=raw||{};
+      const part=clean(r.supplier_part_no||r['供应商料号']||r['Part No.']||r.part_no||r.sku_code||r.SKU||r['SKU']);
+      const brand=clean((r.brand_source==='default'?body.brand:r.brand)||r['品牌']||body.brand||(supplierBrands.length===1?supplierBrands[0]:''));
       const priceRaw=r.quote_price??r['FOB价格']??r['报价价格']??r['报价'];
-      const priceText=String(priceRaw??'').trim();
-      const quote_price=Number(priceText);
-      const currency=String(r.currency||r['币种']||BRAND_CCY[brand]||'').trim().toUpperCase();
-      const quote_date=normalizeDate(r.quote_date||r['报价日期']||'');
-      const remark=String(r.remark||r['备注']||'').trim();
+      const priceText=clean(priceRaw);
+      const quote_price=priceText===''?0:Number(priceText.replace(/[,\s]/g,'').replace(/[￥¥$€£]/g,''));
+      const currency=clean(r.currency||r['币种']||BRAND_CCY[brand]||(supplier&&supplier.default_currency)||'').toUpperCase();
+      const quote_date=normalizeDate(r.quote_date||r['报价日期']||body.quote_date||'');
       const expected=BRAND_CCY[brand];
       let reason='';
-      if(!sku)reason='SKU 为空';
-      else if(!brand)reason='品牌为空';
-      else if(!product_type)reason='产品类型为空';
-      else if(priceText===''||!Number.isFinite(quote_price)||quote_price<0)reason='FOB 价格格式错误（0 允许，表示未报价）';
+      if(!part)reason='供应商料号为空';
+      else if(!brand)reason='品牌为空，请选择品牌或在表格中提供品牌';
+      else if(supplierBrands.length&&!supplierBrands.includes(brand))reason='供应商 '+supplier.name+' 未关联品牌 '+brand;
+      else if(!Number.isFinite(quote_price)||quote_price<0)reason='FOB 价格格式错误（空白或 0 表示未报价）';
       else if(!/^\d{4}-\d{2}-\d{2}$/.test(quote_date))reason='报价日期格式无法识别';
       else if(!currency)reason='币种为空';
       else if(expected&&currency!==expected)reason=brand+' 默认币种应为 '+expected;
-      if(reason)errors.push({row:i+2,reason});
-      else rows.push({sku,brand,product_type,quote_price,currency,quote_date,remark});
+      if(reason){errors.push({row:Number(r.source_row)||i+2,reason});return;}
+      let match=null,matchSource='unlinked';
+      if(clean(r.match_source)==='manual'&&clean(r.psi_sku_code)){
+        match=skuMap.get(brand.toLowerCase()+'|'+norm(r.psi_sku_code))||null;
+        if(!match){errors.push({row:Number(r.source_row)||i+2,reason:'手动选择的 PSI SKU 不存在或品牌不一致：'+clean(r.psi_sku_code)});return;}
+        matchSource='manual';
+      }
+      if(!match){
+        const mk=mappingKey(supplierId,brand,part),mapped=manualMap.get(mk)||mappingMap.get(mk);
+        if(mapped){
+          match=skuMap.get(brand.toLowerCase()+'|'+norm(mapped))||null;
+          if(!match){errors.push({row:Number(r.source_row)||i+2,reason:'已保存的料号映射指向无效 SKU：'+mapped});return;}
+          matchSource=manualMap.has(mk)?'manual':'saved';
+        }
+      }
+      if(!match){
+        match=skuMap.get(brand.toLowerCase()+'|'+norm(part))||null;
+        if(match)matchSource='exact';
+      }
+      const psiSku=match?clean(match.sku_code):'';
+      rows.push({
+        sku:psiSku||part,brand,product_type:clean(r.product_type||r['产品类型']||(match&&match.category)||'未分类')||'未分类',
+        quote_price,currency,quote_date,remark:clean(r.remark||r['备注']),supplier_id:supplierId,
+        supplier_part_no:part,supplier_part_no_key:norm(part),psi_sku_code:psiSku,
+        match_status:match?'matched':'unlinked',model:clean(r.model||r['型号']||(match&&match.model)||''),
+        spec:clean(r.spec||r['规格']||(match&&match.color_spec)||''),source_sheet:clean(r.source_sheet),
+        source_row:Number(r.source_row)||i+2,match_source:matchSource
+      });
+      if(matchSource==='manual'&&supplierId)mappingUpdates.push({
+        supplier_id:supplierId,brand,supplier_part_no:part,supplier_part_no_key:norm(part),psi_sku_code:psiSku
+      });
     });
-    if(errors.length){const e=new Error('导入校验失败（'+errors.length+' 行）');e.status=400;e.errors=errors;throw e;}
-    return {rows,mode};
+    if(errors.length)throw badRequest('导入校验失败（'+errors.length+' 行）',errors);
+    const mappings=[...new Map(mappingUpdates.map(x=>[mappingKey(x.supplier_id,x.brand,x.supplier_part_no_key),x])).values()];
+    return {rows,mode,mappings};
   }
-
   function collapseRows(rows,mode){
     const map=new Map();
     if(mode==='overwrite')for(const r of rows)map.set(keyOf(r),r);
     else for(const r of rows)if(!map.has(keyOf(r)))map.set(keyOf(r),r);
     return [...map.values()];
   }
-  function hashRows(rows,mode){return crypto.createHash('sha256').update(JSON.stringify({mode,rows})).digest('hex');}
+  function hashRows(rows,mode,mappings){return crypto.createHash('sha256').update(JSON.stringify({mode,rows,mappings})).digest('hex');}
   function counts(rows,collapsed,existing,mode){
     let inserted=0,updated=0;
     for(const r of collapsed){
@@ -75,7 +130,7 @@ module.exports=function installQuotationImportFast(deps){
     }
     const inFileDuplicates=rows.length-collapsed.length;
     const skipped=(mode==='skip'?collapsed.filter(r=>existing.has(keyOf(r))).length:0)+inFileDuplicates;
-    return {inserted,updated,skipped};
+    return {inserted,updated,skipped,unlinked:rows.filter(r=>r.match_status==='unlinked').length};
   }
 
   async function ensurePgTable(){
