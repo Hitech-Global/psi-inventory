@@ -749,3 +749,54 @@ tbody td{font-weight:400}
 @media (max-width:720px){
   .connections-sources{flex-direction:column}
 }
+
+
+/* ── 平台接入（独立页与弹窗共用） ───────────────────────────── */
+>
+    .connect-shell{max-width:1080px;margin:0 auto;padding:32px 24px 64px}
+    .connect-head{margin-bottom:26px}
+    .connect-head h1{font-size:24px;margin:8px 0 6px}
+    .connect-head p{color:#6e6e73;font-size:13px;line-height:1.7;margin:0;max-width:760px}
+    .connect-grid{display:grid;gap:18px;grid-template-columns:repeat(auto-fit,minmax(380px,1fr))}
+    .platform-card{background:#fff;border:1px solid #e6e6e8;border-radius:18px;padding:22px;box-shadow:0 8px 28px rgba(0,0,0,.035);display:flex;flex-direction:column;gap:14px}
+    .platform-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+    .platform-name{font-size:17px;font-weight:700;margin:0}
+    .platform-scope{font-size:12px;color:#86868b;margin:4px 0 0;line-height:1.5}
+    .platform-state{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:5px 10px;border-radius:999px;white-space:nowrap}
+    .platform-state.ready{background:#e8f7ee;color:#0f7b3d}
+    .platform-state.pending{background:#fff4e5;color:#a35b00}
+    .platform-state.off{background:#f2f2f4;color:#6e6e73}
+    .platform-state.error{background:#ffeceb;color:#b42318}
+    .platform-state .dot{width:6px;height:6px;border-radius:50%;background:currentColor}
+    .platform-detail{font-size:12px;color:#6e6e73;line-height:1.7;margin:0}
+    .platform-detail p.platform-detail{margin-top:10px;padding:10px 12px;background:#fbfbfc;border:1px solid #ececef;border-radius:10px}
+    .platform-detail dl{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;margin:0}
+    .platform-detail dt{color:#86868b}
+    .platform-detail dd{margin:0;color:#172033;word-break:break-all}
+    .platform-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:auto}
+    .platform-actions button{border:1px solid #d8d8dc;border-radius:11px;padding:9px 16px;font-size:13px;font-weight:600;background:#fff;color:#172033;cursor:pointer}
+    .platform-actions button.primary{background:#111827;border-color:#111827;color:#fff}
+    .platform-actions button.primary:hover{background:#202938}
+    .platform-actions button.ghost:hover{background:#f7f7f9}
+    .platform-actions button:disabled{opacity:.5;cursor:not-allowed}
+    .connect-note{margin-top:26px;font-size:12px;color:#86868b;line-height:1.8}
+    .connect-error{display:none;margin:0 0 18px;padding:12px 14px;border-radius:12px;background:#fff4f3;color:#b42318;font-size:13px;line-height:1.6}
+    .connect-banner{display:none;margin:0 0 18px;padding:12px 14px;border-radius:12px;background:#e8f7ee;color:#0f7b3d;font-size:13px;line-height:1.6}
+    .shop-list{margin:0;padding:0;list-style:none;display:grid;gap:6px}
+    .shop-list li{font-size:12px;color:#172033;background:#fbfbfc;border:1px solid #ececef;border-radius:10px;padding:8px 11px;display:flex;justify-content:space-between;gap:10px}
+    .shop-list li span{color:#86868b}
+    .lang{display:flex;justify-content:flex-end;gap:6px;margin-bottom:14px}
+    .lang button{border:0;background:transparent;color:#7c8799;cursor:pointer;padding:4px 6px;font-size:13px}
+    .lang button.active{color:#111827;font-weight:700}
+    .back-link{display:inline-block;margin-bottom:14px;color:#6e6e73;font-size:13px;text-decoration:none}
+    .back-link:hover{color:#111827}
+
+/* 平台接入的明细：一栏一栏读下去，而不是挤在格子里。
+   dl 里的每一项是一行，下面的说明与店铺清单各占整行。 */
+.platform-detail{display:flex;flex-direction:column;gap:6px;margin:0 0 10px}
+.platform-detail dl{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;margin:0}
+.platform-detail dt{font-size:12px;color:#6e6e73}
+.platform-detail dd{margin:0;font-size:12px;color:#101828}
+.platform-detail p{margin:0;font-size:11px;color:#6e6e73;line-height:1.6}
+.platform-detail .shop-list{display:flex;flex-direction:column;gap:3px;margin:0;padding:0}
+.platform-detail .shop-list li{display:flex;justify-content:space-between;gap:10px;font-size:11px}

@@ -283,6 +283,20 @@
         });
       });
 
+      // The reader came from inside the system — the window that sent them
+      // here to authorize. The way back is the way they came, not a
+      // journey through the front door.
+      let returnTo = '/';
+      try {
+        const remembered = sessionStorage.getItem('platformConnectionsReturn');
+        if (remembered && remembered.startsWith('/') && !remembered.startsWith('//')) {
+          returnTo = remembered;
+          sessionStorage.removeItem('platformConnectionsReturn');
+        }
+      } catch (error) { /* a browser that will not remember still gets a way back */ }
+      const backLink = document.getElementById('backLink');
+      if (backLink) backLink.href = returnTo;
+
       const params = new URLSearchParams(location.search);
       if (params.get('tiktok') === 'connected') {
         showBanner(`${t('connected')} · ${params.get('shops') || 0} ${t('shops')}`);

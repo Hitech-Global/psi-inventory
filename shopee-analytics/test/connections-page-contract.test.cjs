@@ -45,10 +45,11 @@ assert.match(html, /cipherBound/, '页面应只展示 cipher 是否已绑定');
 const indexHtml = fs.readFileSync(path.join(webDir, 'index.html'), 'utf8');
 const authUi = fs.readFileSync(path.join(webDir, 'auth-ui-v1.js'), 'utf8');
 assert.match(indexHtml, /data-side-platform="shopee"/, '侧边栏必须提供平台接入入口');
-assert.match(indexHtml, /href="\/connections"/, '侧边栏的入口必须指向平台接入页');
-// 链接要留在侧边栏里，不能散落到别处
+// 入口是一扇窗，不是一次离开：看一眼哪个平台接上了，不该为此离开这个系统。
+assert.doesNotMatch(indexHtml, /href="\/connections"/, '侧边栏的入口不应把读者带离这个系统');
+// 入口要留在侧边栏里，不能散落到别处
 const sideNav = indexHtml.slice(indexHtml.indexOf('<nav class="side-nav"'), indexHtml.indexOf('</nav>'));
-assert.match(sideNav, /href="\/connections"/, '平台接入链接必须在侧边栏内');
+assert.match(sideNav, /data-side-platform="shopee"/, '平台接入入口必须在侧边栏内');
 assert.doesNotMatch(indexHtml.slice(0, indexHtml.indexOf('<aside')), /href="\/connections"/, '侧边栏之外不应再有平台接入链接');
 
 // ---- 服务端托管与路由 ----
