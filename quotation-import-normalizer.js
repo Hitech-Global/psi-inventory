@@ -157,7 +157,7 @@ function matchRows(input,metadata,options){
   const skuMap=new Map(),mappingMap=new Map(),brandMap=new Map();
   skus.forEach(s=>{const b=clean(s.brand),code=clean(s.sku_code);if(b){brandMap.set(b.toLowerCase(),b);if(code)skuMap.set(b.toLowerCase()+'|'+partKey(code),s);}});
   (Array.isArray(meta.mappings)?meta.mappings:[]).forEach(m=>{
-    mappingMap.set(mapKey(m.supplier_id,m.brand,m.supplier_part_no),m.psi_sku_code);
+    mappingMap.set(mapKey(m.supplier_id,m.brand,m.supplier_part_no||m.supplier_part_no_key),m.psi_sku_code);
   });
   return (input||[]).map(raw=>{
     const r=normalizeRow(raw);
