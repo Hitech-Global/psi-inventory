@@ -12,7 +12,8 @@
 | **Test Redirect URL Domain** | `https://analytics.hitechanalysis.top/` |
 | **Live Redirect URL Domain** | `https://analytics.hitechanalysis.top/` |
 | **Does this App require buyer PII access?** | **关闭（OFF）** |
-| **Database Servers** | 保持 `IP address(es) available`，填 `172.18.0.0/22` |
+| **Database Servers** | 保持 `IP address(es) available`，填 `192.168.100.0/22` |
+| **Other Servers** | 同样填 `192.168.100.0/22` |
 | **live version of your business product's URL** | `https://analytics.hitechanalysis.top/review` |
 | **Test Username of Business Product** | `shopee_review` |
 | **Test Password of Business Product** | `ShopeeReview942249!Aa` |
@@ -63,23 +64,29 @@ https://analytics.hitechanalysis.top/
 
 ---
 
-### 3. Other IT assets Declaration → Database Servers
+### 3. Other IT assets Declaration → Database Servers / Other Servers
 
-**保持默认的 `IP address(es) available`，文本框填一行：**
+**两个框都保持默认的 `IP address(es) available`，各填同一行：**
 
 ```
-172.18.0.0/22
+192.168.100.0/22
 ```
 
 **为什么这样填**
-- 数据库的容器 IP 是 `172.18.0.4`，跑在 Docker 的 `172.18.0.0/16` 网络里
+- 数据库和应用容器都跑在 Docker 网络里，容器 IP 是 `192.168.100.2`
 - 这个 IP 是动态的（容器重建就变），所以填**网段**而不是单个 IP
-- 表单要求 **CIDR 前缀 /22 到 /32** —— `172.18.0.0/16`（前缀 16）超范围，
-  而 **`172.18.0.0/22` 正好落在范围内**，且完整覆盖数据库所在网段
+- 表单要求 **CIDR 前缀 /22 到 /32** —— `192.168.100.0/22` 前缀正好是 22 ✅
+- **★ 为什么不是 `172.18.0.0/22`**：原来 Docker 用默认的 `172.18.0.0/16`，
+  但那个网段**填进去会被判 Invalid**（前缀 16 超出范围，且不是表单示例的段）。
+  所以我们**把容器网络真的改成了 `192.168.100.0/22`** —— 这样填的既准确又能通过校验。
+  （避开了 `192.168.0.0/22` 那段，因为办公室路由器常用 192.168.0.x，会撞车）
 - 数据库**端口没有对外映射**（`5432/tcp` 无 `→`），应用也只绑 `127.0.0.1:3090`，
   对外只经 Cloudflare Tunnel —— 填网段而不是精确 IP，是保守而如实的说法
 
 **★ 一行就够**（每行一个网段/地址，最多 3 个动态网段）
+
+**★ 如果这一行还是被判 Invalid**：换 `192.168.0.0/22`（表单示例值）试一次 —— 那说明它只认示例那个段，
+我们就再把容器网络改成 `192.168.0.0/22`（需先确认办公室路由器不是那个段）。
 
 ---
 
