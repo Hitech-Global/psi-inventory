@@ -50,7 +50,7 @@ function classifyHeader(value){
   if(/^(model|modelno|modelnumber|型号|产品型号)$/.test(h))return 'model';
   if(/^(spec|specification|capacity|memory|color|colour|size|规格|容量|颜色|容量规格)$/.test(h))return 'spec';
   if(/^(remark|remarks|note|notes|comment|comments|备注|说明)$/.test(h))return 'remark';
-  if(/^(partno|partnumber|pn|itemno|itemnumber|productcode|productno|suppliersku|supplierpartno|vendorpartno|货号|料号|供应商料号|供应商sku|产品编码|物料编码|sku|stockkeepingunit)$/.test(h))return 'supplier_part_no';
+  if(/^(partno|partnumber|pn|itemno|itemnumber|itemcode|productcode|productno|productsku|suppliersku|supplierpartno|supplierpartnumber|vendorpartno|vendorpartnumber|货号|料号|供应商料号|供应商货号|供应商sku|产品编码|物料编码|sku|stockkeepingunit)$/.test(h))return 'supplier_part_no';
   if(/(fob|price|quote|quotation|unitprice|报价|单价|价格)/.test(h))return 'quote_price';
   return '';
 }
