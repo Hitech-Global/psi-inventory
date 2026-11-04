@@ -301,6 +301,13 @@ function openModal(){
       if(!parsed.rows.length)return fileError(m,'没有识别到可导入数据。请确认工作表包含供应商料号（Part No. / SKU）和报价（FOB / Price）列。');
       if(parsed.rows.length>MAX_ROWS)return fileError(m,'所有工作表合计 '+parsed.rows.length+' 行，单次最多支持 '+MAX_ROWS+' 行，请拆分后重试。');
       recognizedSheets=parsed.recognized_sheets||[];ignoredSheets=parsed.ignored_sheets||[];
+      const fileBrands=[...new Set(parsed.rows.map(r=>String(r.brand||'').trim()).filter(Boolean))];
+      if(fileBrands.length===1){
+        selectedBrand=(importOptions.brands||[]).find(x=>x.toLowerCase()===fileBrands[0].toLowerCase())||fileBrands[0];
+        $('#qip-brand',m).value=selectedBrand;
+        const detectedSupplier=(importOptions.suppliers||[]).find(x=>(x.brands||[]).includes(selectedBrand));
+        if(detectedSupplier){selectedSupplierId=detectedSupplier.id;$('#qip-supplier',m).value=selectedSupplierId;}
+      }
       currentRows=n.matchRows(parsed.rows,importOptions,{supplier_id:selectedSupplierId,brand:selectedBrand});
       const errors=n.validateRows(currentRows);
       if(errors.length)return fileError(m,'导入校验失败（'+errors.length+' 行）\n'+errors.slice(0,8).map(x=>'第 '+x.row+' 行：'+x.reason).join('\n'));
