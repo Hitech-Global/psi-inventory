@@ -12,6 +12,7 @@ const INDEX_BLOCK=INDEX_MARKER+'\n'+IMPORT_NORMALIZER_MARKER+'\n'+IMPORT_PROGRES
 function once(src,needle,repl,label){const a=src.indexOf(needle);if(a<0)throw new Error('[QUOTATION] missing '+label);if(src.indexOf(needle,a+needle.length)>=0)throw new Error('[QUOTATION] duplicate '+label);return src.slice(0,a)+repl+src.slice(a+needle.length);}
 function patchServerSource(src){
   let out=src;
+  out=out.replace("require('./quotation-import-fast.js')({ app, query, run, genId, asyncHandler, requireApiPermission });","require('./quotation-import-fast.js')({ app, query, run, transaction, genId, asyncHandler, requireApiPermission });");
   if(!out.includes(BODY_GUARD_MARKER)){
     const anchor="app.use(express.json({ limit: '50mb' }));";
     const guard=BODY_GUARD_MARKER+"\nconst quotationImportJsonParser = express.json({ limit: '10mb' });\napp.use((req, res, next) => {\n  if (req.method !== 'POST' || req.path !== '/api/quotation-management/import') return next();\n  quotationImportJsonParser(req, res, (err) => {\n    if (!err) return next();\n    const status = err.status || err.statusCode || 413;\n    return res.status(status).json({ error: '报价导入请求体过大（上限 10MB），请拆分后重试。', code: 'IMPORT_BODY_TOO_LARGE', limit: '10mb' });\n  });\n});\n";
