@@ -285,6 +285,286 @@ function onMutation(method, url, body) {
     } catch (e) {}
   }
 
+  // ==========================================================================
+  // D. Opt-in page/API diagnostics (default OFF; reuse ?perf=1 / psi_perf=1)
+  // --------------------------------------------------------------------------
+  // Read-only instrumentation: no request payloads, query strings, or business data
+  // are retained. It wraps existing global functions only when diagnostics is enabled.
+  var DIAG_PAGE_RENDERERS = {
+    dashboard: 'renderDashboard',
+    skus: 'renderSKUs',
+    inventory: 'renderInventory',
+    consignment: 'renderConsignment',
+    outbound: 'renderOutbound',
+    replenishment: 'renderReplenishment',
+    stagnant: 'renderStagnant',
+    check: 'renderCheck',
+    po: 'renderPO',
+    pi: 'renderPI',
+    ci: 'renderCI',
+    inbound: 'renderInbound',
+    'wac-history': 'renderWacHistoryMatrix',
+    cost: 'renderCost',
+    payment: 'renderPayment',
+    'payable-cockpit': 'renderPayableCockpit',
+    'payable-list': 'renderPayableList',
+    forwarder: 'renderForwarderAnalysis',
+    'logistics-decision': 'renderLogisticsDecision',
+    countries: 'renderCountries',
+    warehouses: 'renderWarehouses',
+    suppliers: 'renderSuppliers',
+    'freight-forwarders': 'renderFreightForwarders',
+    currencies: 'renderCurrencies',
+    config: 'renderConfig',
+    'payment-terms': 'renderPaymentTerms',
+    'approval-flows': 'renderApprovalFlows',
+    'approval-center': 'renderApprovalCenter',
+    'expense-types': 'renderExpenseTypes',
+    'allocation-rules': 'renderAllocationRules',
+    users: 'renderUsers',
+    roles: 'renderRoles',
+    'batch-tasks': 'renderBatchTasks',
+    'brand-settings': 'renderBrandSettings',
+    'operation-logs': 'renderOperationLogs',
+    'payment-categories': 'renderPaymentCategories',
+    'payer-entities': 'renderPayerEntities'
+  };
+  var diagData = {
+    currentPage: null,
+    pageRender: [],
+    navigation: [],
+    api: [],
+    installedPages: [],
+    missingPages: []
+  };
+  var DIAG_SAMPLE_LIMIT = 2000;
+
+  function diagNow() {
+    try {
+      if (global.performance && typeof global.performance.now === 'function') return global.performance.now();
+    } catch (e) {}
+    return Date.now();
+  }
+  function diagPush(list, item) {
+    list.push(item);
+    if (list.length > DIAG_SAMPLE_LIMIT) list.shift();
+  }
+  function diagApiPath(url) {
+    var path = String(url || '').split(/[?#]/)[0];
+    var match = path.match(/^(?:https?:\/\/[^/]+)?(\/api\/[^/]+)/i);
+    return match ? match[1] : path;
+  }
+  function diagRecordPage(page, started, syncMs, failed) {
+    var durationMs = Math.max(0, diagNow() - started);
+    var item = {
+      page: page,
+      durationMs: Math.round(durationMs * 10) / 10,
+      syncMs: Math.round(Math.max(0, syncMs || 0) * 10) / 10,
+      failed: !!failed
+    };
+    diagPush(diagData.pageRender, item);
+    perf('page-render', page, failed ? 'ERROR' : 'DONE', {
+      duration_ms: item.durationMs,
+      sync_ms: item.syncMs
+    });
+  }
+  function diagRecordNavigation(page, started, failed) {
+    var durationMs = Math.max(0, diagNow() - started);
+    var item = {
+      page: page || 'unknown',
+      durationMs: Math.round(durationMs * 10) / 10,
+      failed: !!failed
+    };
+    diagPush(diagData.navigation, item);
+    perf('navigation', item.page, failed ? 'ERROR' : 'DONE', { duration_ms: item.durationMs });
+  }
+  function diagApiStart(url, method) {
+    return {
+      page: diagData.currentPage || global.currentPage || 'unknown',
+      path: diagApiPath(url),
+      method: String(method || 'GET').toUpperCase(),
+      started: diagNow()
+    };
+  }
+  function diagApiEnd(token, failed) {
+    if (!token) return;
+    var durationMs = Math.max(0, diagNow() - token.started);
+    var item = {
+      page: token.page,
+      path: token.path,
+      method: token.method,
+      durationMs: Math.round(durationMs * 10) / 10,
+      failed: !!failed
+    };
+    diagPush(diagData.api, item);
+    perf('api-timing', token.method + ' ' + token.path, failed ? 'ERROR' : 'DONE', {
+      page: token.page,
+      duration_ms: item.durationMs
+    });
+  }
+  function diagStats(rows) {
+    var values = rows.map(function (row) { return Number(row.durationMs) || 0; }).sort(function (a, b) { return a - b; });
+    var total = values.reduce(function (sum, value) { return sum + value; }, 0);
+    function percentile(p) {
+      if (!values.length) return 0;
+      return Math.round(values[Math.floor((values.length - 1) * p)] * 10) / 10;
+    }
+    return {
+      count: rows.length,
+      avgMs: values.length ? Math.round((total / values.length) * 10) / 10 : 0,
+      p50Ms: percentile(0.5),
+      p95Ms: percentile(0.95),
+      maxMs: values.length ? Math.round(values[values.length - 1] * 10) / 10 : 0,
+      errors: rows.filter(function (row) { return row.failed; }).length
+    };
+  }
+  function diagGroup(rows, keyFn) {
+    var groups = Object.create(null);
+    rows.forEach(function (row) {
+      var key = keyFn(row);
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(row);
+    });
+    return Object.keys(groups).map(function (key) {
+      var stats = diagStats(groups[key]);
+      stats.key = key;
+      return stats;
+    }).sort(function (a, b) { return b.p95Ms - a.p95Ms; });
+  }
+  function diagReport(print) {
+    var report = {
+      enabled: PERF,
+      generatedAt: new Date().toISOString(),
+      pageCoverage: {
+        configured: Object.keys(DIAG_PAGE_RENDERERS).length,
+        installed: diagData.installedPages.length,
+        missing: diagData.missingPages.slice()
+      },
+      pageRender: diagGroup(diagData.pageRender, function (row) { return row.page; }),
+      navigation: diagGroup(diagData.navigation, function (row) { return row.page; }),
+      apiByRoute: diagGroup(diagData.api, function (row) { return row.method + ' ' + row.path; }),
+      apiByPage: diagGroup(diagData.api, function (row) { return row.page; }),
+      recentPageRender: diagData.pageRender.slice(-30),
+      recentApi: diagData.api.slice(-50)
+    };
+    if (print && global.console) {
+      try {
+        if (typeof global.console.groupCollapsed === 'function') global.console.groupCollapsed('[PSI PERF] Diagnostic report');
+        if (typeof global.console.log === 'function') global.console.log('Page coverage:', report.pageCoverage);
+        if (typeof global.console.table === 'function') {
+          global.console.table(report.pageRender);
+          global.console.table(report.navigation);
+          global.console.table(report.apiByRoute);
+          global.console.table(report.apiByPage);
+        }
+        if (typeof global.console.groupEnd === 'function') global.console.groupEnd();
+      } catch (e) {}
+    }
+    return report;
+  }
+  function diagReset() {
+    diagData.pageRender.length = 0;
+    diagData.navigation.length = 0;
+    diagData.api.length = 0;
+    return true;
+  }
+  function diagWrapRenderer(page, functionName) {
+    var original = global[functionName];
+    if (typeof original !== 'function' || original.__psiPerfWrapped) {
+      if (typeof original !== 'function') diagData.missingPages.push(page);
+      return;
+    }
+    var wrapped = function () {
+      var started = diagNow();
+      var result;
+      try {
+        result = original.apply(this, arguments);
+      } catch (error) {
+        diagRecordPage(page, started, diagNow() - started, true);
+        throw error;
+      }
+      var syncMs = diagNow() - started;
+      if (result && typeof result.then === 'function') {
+        return result.then(function (value) {
+          diagRecordPage(page, started, syncMs, false);
+          return value;
+        }, function (error) {
+          diagRecordPage(page, started, syncMs, true);
+          throw error;
+        });
+      }
+      diagRecordPage(page, started, syncMs, false);
+      return result;
+    };
+    wrapped.__psiPerfWrapped = true;
+    wrapped.__psiPerfOriginal = original;
+    global[functionName] = wrapped;
+    diagData.installedPages.push(page);
+  }
+  function diagInstall() {
+    if (!PERF) return;
+    Object.keys(DIAG_PAGE_RENDERERS).forEach(function (page) {
+      diagWrapRenderer(page, DIAG_PAGE_RENDERERS[page]);
+    });
+
+    var originalShowPage = global.showPage;
+    if (typeof originalShowPage === 'function' && !originalShowPage.__psiPerfWrapped) {
+      var wrappedShowPage = function (page) {
+        diagData.currentPage = page || 'unknown';
+        var started = diagNow();
+        try {
+          var result = originalShowPage.apply(this, arguments);
+          diagRecordNavigation(diagData.currentPage, started, false);
+          return result;
+        } catch (error) {
+          diagRecordNavigation(diagData.currentPage, started, true);
+          throw error;
+        }
+      };
+      wrappedShowPage.__psiPerfWrapped = true;
+      wrappedShowPage.__psiPerfOriginal = originalShowPage;
+      global.showPage = wrappedShowPage;
+    }
+
+    var originalApi = global.api;
+    if (typeof originalApi === 'function' && !originalApi.__psiPerfWrapped) {
+      var wrappedApi = function (url, method, body, opts) {
+        var token = diagApiStart(url, method);
+        var result;
+        try {
+          result = originalApi.apply(this, arguments);
+        } catch (error) {
+          diagApiEnd(token, true);
+          throw error;
+        }
+        if (result && typeof result.then === 'function') {
+          return result.then(function (value) {
+            diagApiEnd(token, false);
+            return value;
+          }, function (error) {
+            diagApiEnd(token, true);
+            throw error;
+          });
+        }
+        diagApiEnd(token, false);
+        return result;
+      };
+      wrappedApi.__psiPerfWrapped = true;
+      wrappedApi.__psiPerfOriginal = originalApi;
+      global.api = wrappedApi;
+    }
+  }
+
+  global.PSIPerfDiagnostics = {
+    enabled: PERF,
+    report: function () { return diagReport(true); },
+    snapshot: function () { return diagReport(false); },
+    reset: diagReset
+  };
+  if (PERF && typeof global.addEventListener === 'function') {
+    global.addEventListener('DOMContentLoaded', diagInstall, { once: true });
+  }
+
   // 暴露 API（挂到全局，供 app.js 的 api() 与页面调用）
   global.AppStore = {
     ref: ref,
