@@ -15727,7 +15727,7 @@ function renderWacBatchRows(data){
         :'<td style="color:var(--text-secondary)">—</td>';
       const status=isConfirmed?'<span class="status-badge status-normal">已确认</span>':'<span class="status-badge status-warning">待确认</span>';
       const actions=isConfirmed
-        ?'<button class="btn btn-secondary btn-sm" onclick="wacConfirm(b64DecodeUnicode(\''+idArg+'\'))">查看</button>'
+        ?'<button class="btn btn-secondary btn-sm" onclick="wacConfirm(b64DecodeUnicode(\''+idArg+'\'))">查看</button> <button class="btn btn-secondary btn-sm" onclick="openWacCcModal(b64DecodeUnicode(\''+idArg+'\'))">CC</button>'
         :'<button class="btn btn-primary btn-sm" onclick="wacConfirm(b64DecodeUnicode(\''+idArg+'\'))">WAC确认</button> <button class="btn btn-secondary btn-sm" onclick="openWacBatchExcludeConfirm([b64DecodeUnicode(\''+idArg+'\')])">无需计算</button>';
       return '<tr>'+selectedCell+common+'<td>'+status+'</td><td>'+actions+'</td></tr>';
     }).join('')+'</tbody></table></div>';
@@ -15999,7 +15999,7 @@ function renderWacNotificationHistory(data,batchId){
   window._wacNotificationRetryBatchId=String(batchId||'');
   const logs=data&&Array.isArray(data.logs)?data.logs:[];
   if(data&&data.error)return '<div style="color:#cf1322;font-size:12px">'+esc(data.error)+'</div>';
-  if(!logs.length)return '<div style="font-size:12px;color:var(--text-secondary)">本次未选择抄送人员，因此没有发送飞书通知。</div>';
+  if(!logs.length)return '<div style="font-size:12px;color:var(--text-secondary)">目前没有抄送记录，可以在WAC物流批次列表点击 CC 补充发送。</div>';
   const labels={pending:'待发送',sending:'发送中',sent:'已发送',failed:'发送失败'};
   const failedCount=logs.filter(r=>r.status==='failed').length;
   const table='<div style="overflow:auto;max-height:240px"><table class="data-table" style="font-size:12px;min-width:560px"><thead><tr><th>抄送人员</th><th>报告分段</th><th>发送状态</th><th>重试次数</th><th>发送时间</th></tr></thead><tbody>'+
@@ -16027,6 +16027,55 @@ async function retryWacNotifications(batchId){
   }catch(e){
     showToast(e.message||'通知重试失败','danger');
     if(btn){btn.disabled=false;btn.textContent='重试失败通知';}
+  }
+}
+
+// 从已确认批次列表补充 CC。已存在通知记录的人员不再出现在可选列表中。
+async function openWacCcModal(batchId){
+  const id=String(batchId||'');
+  if(!id)return;
+  const row=(window._wacBatchRows||[]).find(r=>String(r.id)===id);
+  try{
+    const [candidates,history]=await Promise.all([
+      api('/api/wac/cc-candidates'),
+      api('/api/wac/notifications/'+encodeURIComponent(id))
+    ]);
+    const logs=history&&Array.isArray(history.logs)?history.logs:[];
+    const existingIds=new Set(logs.map(r=>String(r.recipient_user_id||'')));
+    const available=(candidates||[]).filter(u=>u&&!existingIds.has(String(u.id)));
+    const historyHtml=logs.length?renderWacNotificationHistory(history,id):'<div style="font-size:12px;color:var(--text-secondary)">目前没有抄送记录。</div>';
+    const selectorHtml=available.length
+      ?userChecklist(available,[],'wac-cc-add-cb')
+      :'<div style="font-size:12px;color:var(--text-secondary);padding:8px 0">所有已绑定飞书的可用人员均已有通知记录，无需重复发送。</div>';
+    const body='<div class="form-card" style="box-shadow:none;padding:0">'+
+      '<div style="background:var(--bg-secondary);padding:10px 12px;border-radius:8px;margin-bottom:12px;font-size:13px"><b>物流批次：</b>'+esc(row?row.batch_no:id)+'<br><span style="font-size:12px;color:var(--text-secondary)">该批次已完成WAC确认。补充CC只读取已保存的WAC历史，不会重新计算或修改成本。</span></div>'+
+      '<div class="detail-section"><h3>已有抄送记录</h3><div id="wac-notification-history">'+historyHtml+'</div></div>'+
+      '<div class="detail-section" style="margin-top:14px"><h3>新增抄送人员</h3><div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">选择尚未收到该批次报告的飞书人员，可多选。</div><div class="cc-list" id="wac-cc-add-list">'+selectorHtml+'</div></div>'+
+    '</div>';
+    const idArg=b64EncodeUnicode(id);
+    const footer='<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" id="wac-cc-add-submit" '+(available.length?'':'disabled ')+'onclick="submitWacCc(b64DecodeUnicode(\''+idArg+'\'))">发送 CC</button>';
+    openModal('补充 CC - '+(row?row.batch_no:id),body,footer,'modal-wac');
+  }catch(e){
+    showToast(e.message||'抄送人员加载失败','danger');
+  }
+}
+async function submitWacCc(batchId){
+  const ids=Array.from(document.querySelectorAll('#wac-cc-add-list .wac-cc-add-cb')).filter(cb=>cb.checked).map(cb=>cb.value);
+  if(!ids.length){showToast('请至少选择一位新增抄送人员','warning');return;}
+  const btn=document.getElementById('wac-cc-add-submit');
+  if(btn){btn.disabled=true;btn.textContent='发送中...';}
+  try{
+    const result=await api('/api/wac/notifications/'+encodeURIComponent(batchId)+'/cc','POST',{cc_user_ids:ids});
+    closeModal();
+    if(Number(result.added_recipient_count||0)>0){
+      showToast('已新增 '+Number(result.added_recipient_count)+' 位抄送人员，创建 '+Number(result.notification_count||0)+' 条飞书通知任务','success');
+      await wacConfirm(batchId);
+    }else{
+      showToast('所选人员已有通知记录，未重复发送','warning');
+    }
+  }catch(e){
+    showToast(e.message||'补充 CC 失败','danger');
+    if(btn){btn.disabled=false;btn.textContent='发送 CC';}
   }
 }
 

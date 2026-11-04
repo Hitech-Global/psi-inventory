@@ -39,6 +39,18 @@ function chunkWacCostChangeRows(rows, chunkSize) {
   for(let i=0;i<list.length;i+=size) chunks.push(list.slice(i,i+size));
   return chunks;
 }
+function getNewWacCcRecipientIds(selectedIds, existingRecipientIds) {
+  const existing=new Set((Array.isArray(existingRecipientIds)?existingRecipientIds:[]).map(v=>String(v||'').trim()).filter(Boolean));
+  const seen=new Set();
+  const result=[];
+  for(const raw of (Array.isArray(selectedIds)?selectedIds:[])){
+    const id=String(raw||'').trim();
+    if(!id||seen.has(id)||existing.has(id))continue;
+    seen.add(id);
+    result.push(id);
+  }
+  return result;
+}
 function formatWacMoney(value) {
   if(value===null||value===undefined||value===''||!Number.isFinite(Number(value))) return '—';
   return Number(value).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -97,4 +109,4 @@ function buildWacCostChangeCard(report, language) {
     ]}
   };
 }
-module.exports={WAC_REPORT_CHUNK_SIZE,buildWacCostChangeRows,summarizeWacCostChangeRows,chunkWacCostChangeRows,formatWacMoney,formatWacSignedMoney,buildWacCostChangeCard};
+module.exports={WAC_REPORT_CHUNK_SIZE,buildWacCostChangeRows,summarizeWacCostChangeRows,chunkWacCostChangeRows,getNewWacCcRecipientIds,formatWacMoney,formatWacSignedMoney,buildWacCostChangeCard};
