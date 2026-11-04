@@ -26,7 +26,26 @@ const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
 const { query, queryOne, run, transaction, genId, initDatabase } = require('./db');
-const { withGenerateClient, withAsyncPoolClient } = require('./pg-async'); // 专用异步 Pool：generate / 销售导入库存重算不阻塞主线程
+const { withGenerateClient, withAsyncPoolClient, queryAsync: pgQueryAsync, queryBatchAsync: pgQueryBatchAsync } = require('./pg-async'); // 专用异步 Pool：generate / 销售导入 / 页面只读查询共用
+const USE_PG_ASYNC_READS = (process.env.DB_DRIVER || 'sqlite').toLowerCase() === 'pg';
+
+// 只读 API 逐步迁移到 async Pool：PG 生产环境不再通过 db.js 的 Atomics.wait 阻塞 Express 主线程；
+// SQLite 本地开发保持原同步驱动，业务 SQL 与返回结构不变。
+async function readRowsAsync(sql, params = []) {
+  if (USE_PG_ASYNC_READS) {
+    const result = await pgQueryAsync(sql, params || []);
+    return result.rows || [];
+  }
+  return query(sql, params || []).rows || [];
+}
+async function readRowsBatchAsync(specs) {
+  if (!Array.isArray(specs) || !specs.length) return [];
+  if (USE_PG_ASYNC_READS) {
+    const results = await pgQueryBatchAsync(specs);
+    return results.map(r => r.rows || []);
+  }
+  return specs.map(q => query(q.sql, q.params || []).rows || []);
+}
 const { importCommercialInvoicesPg } = require('./wave2a-ci-batch-import-pg.js'); // Wave 2A: CI batch-import PG async path
 const { importProformaInvoicesPg } = require('./wave2b-pi-batch-import-pg.js'); // Wave 2B: PI batch-import PG async path
 const { generatePONumber } = require('./po-number');
@@ -1800,6 +1819,68 @@ function buildReplenishmentDataScopeFilter(req) {
   return { sql: ' AND ' + conditions.join(' AND '), params };
 }
 
+async function buildReplenishmentDataScopeFilterAsync(req) {
+  if (!needsDataScopeFilter(req)) return { sql: '', params: [] };
+  const scope = req.currentUserDataScope;
+  const params = [];
+  const conditions = [];
+  const reads = [];
+  let countryIndex = -1;
+  let warehouseIndex = -1;
+
+  if (scope.countries && scope.countries.length > 0) {
+    countryIndex = reads.length;
+    reads.push({
+      sql: 'SELECT name, code FROM countries WHERE id IN (' + scope.countries.map(() => '?').join(',') + ')',
+      params: scope.countries
+    });
+  }
+  if (scope.warehouses && scope.warehouses.length > 0) {
+    warehouseIndex = reads.length;
+    reads.push({
+      sql: 'SELECT id, name FROM warehouses WHERE id IN (' + scope.warehouses.map(() => '?').join(',') + ')',
+      params: scope.warehouses
+    });
+  }
+  const readResults = await readRowsBatchAsync(reads);
+
+  if (countryIndex >= 0) {
+    const countryRows = readResults[countryIndex] || [];
+    const countryValues = [];
+    countryRows.forEach(r => {
+      if (r.name && countryValues.indexOf(r.name) < 0) countryValues.push(r.name);
+      if (r.code && countryValues.indexOf(r.code) < 0) countryValues.push(r.code);
+    });
+    scope.countries.forEach(cid => { if (countryValues.indexOf(cid) < 0) countryValues.push(cid); });
+    if (countryValues.length > 0) {
+      conditions.push('rs.country IN (' + countryValues.map(() => '?').join(',') + ')');
+      params.push(...countryValues);
+    }
+  }
+
+  if (scope.brands && scope.brands.length > 0) {
+    conditions.push('s.brand IN (' + scope.brands.map(() => '?').join(',') + ')');
+    params.push(...scope.brands);
+  }
+
+  if (warehouseIndex >= 0) {
+    const whRows = readResults[warehouseIndex] || [];
+    const whValues = [];
+    whRows.forEach(r => {
+      if (r.id && whValues.indexOf(r.id) < 0) whValues.push(r.id);
+      if (r.name && whValues.indexOf(r.name) < 0) whValues.push(r.name);
+    });
+    scope.warehouses.forEach(wid => { if (whValues.indexOf(wid) < 0) whValues.push(wid); });
+    if (whValues.length > 0) {
+      conditions.push('rs.target_warehouse IN (' + whValues.map(() => '?').join(',') + ')');
+      params.push(...whValues);
+    }
+  }
+
+  if (conditions.length === 0) return { sql: '', params: [] };
+  return { sql: ' AND ' + conditions.join(' AND '), params };
+}
+
 // 构建首页看板数据权限过滤片段（用于 inventory / CI / PO / PI 表查询）
 // 返回 { inventory: {sql, params}, ci: {sql, params}, po: {sql, params}, pi: {sql, params}, ciAlias: {sql, params} }
 // ciAlias 用于 CI 表带别名的查询（如 ci.country）
@@ -2488,6 +2569,20 @@ async function appendConsignmentExclusionWithExec(sql, params, columnExpr, exec)
   return buildConsignmentExclusion(names, sql, params, columnExpr);
 }
 
+async function getConsignmentWarehouseNamesAsync() {
+  const [lotRows, warehouseRows] = await readRowsBatchAsync([
+    { sql: "SELECT DISTINCT warehouse_name FROM consignment_inventory_lots WHERE warehouse_name IS NOT NULL AND warehouse_name != ''", params: [] },
+    { sql: "SELECT DISTINCT name FROM warehouses WHERE LOWER(name) LIKE '%consign%' AND status = 'active'", params: [] }
+  ]);
+  const names = new Set();
+  (lotRows || []).forEach(r => { if (r.warehouse_name) names.add(r.warehouse_name); });
+  (warehouseRows || []).forEach(r => { if (r.name) names.add(r.name); });
+  return Array.from(names);
+}
+async function appendConsignmentExclusionAsync(sql, params, columnExpr) {
+  const names = await getConsignmentWarehouseNamesAsync();
+  return buildConsignmentExclusion(names, sql, params, columnExpr);
+}
 // 按国家筛选仓库（用于订单预测等页面的下拉联动）
 // DATA-SCOPE: 根据角色数据权限过滤可见仓库
 app.get('/api/warehouses/by-country', requireLogin, asyncHandler((req, res) => {
