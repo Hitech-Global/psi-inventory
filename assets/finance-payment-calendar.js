@@ -4,7 +4,7 @@
 // It reads the existing payable ledger and creates manual items through the existing payable_items lifecycle.
 let _financeCalendarState = {
   items: [], facets: {}, categories: [], payerEntities: [], currencies: [],
-  currentDate: '', selectedDate: '', today: '', view: 'month',
+  currentDate: '', selectedDate: '', today: '', view: 'year',
   keyword: '', openFilter: '',
   filters: { payer: new Set(), country: new Set(), brand: new Set(), category: new Set(), status: new Set(), source: new Set(), currency: new Set() },
   loadingSeq: 0
@@ -782,7 +782,7 @@ function renderFinancePaymentCalendarPage(data) {
   state.today = data && data.today ? String(data.today).slice(0, 10) : fcTodayISO();
   state.currentDate = state.today;
   state.selectedDate = state.today;
-  state.view = 'month';
+  state.view = 'year';
   state.keyword = '';
   state.openFilter = '';
   Object.keys(state.filters).forEach(key => state.filters[key].clear());

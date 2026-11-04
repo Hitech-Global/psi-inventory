@@ -60,7 +60,7 @@ test('event state distinguishes overdue, partial, reserved and settled items', (
   assert.equal(context.fcStatusKey({ payable_date: '2026-11-05', payable_amount: 10, remaining_amount: 10, lifecycle_status: 'reserved' }, '2026-11-04'), 'reserved');
 });
 
-test('finance payment overview renders the calendar, monthly totals and payable events', () => {
+test('finance payment overview opens in year view and keeps payable events available', () => {
   const { context, root } = calendarContext();
   context.renderFinancePaymentCalendarPage({
     today: '2026-11-04',
@@ -77,11 +77,15 @@ test('finance payment overview renders the calendar, monthly totals and payable 
     currencies: [{ code: 'IDR', status: 'active' }, { code: 'RMB', status: 'active' }]
   });
   assert.match(root.innerHTML, /财务付款总览/);
-  assert.match(root.innerHTML, /本月应付/);
-  assert.match(root.innerHTML, /fcal-month-grid/);
-  assert.match(root.innerHTML, /Redragon Forwarder/);
+  assert.match(root.innerHTML, /本年应付/);
+  assert.match(root.innerHTML, /fcal-year-view/);
+  assert.equal((root.innerHTML.match(/<button type="button" class="fcal-year-month-card/g) || []).length, 12);
+  assert.match(root.innerHTML, /<section class="fcal-year-view">/);
+  assert.match(root.innerHTML, /1200\.00/);
   assert.match(root.innerHTML, /RMB/);
   assert.doesNotMatch(root.innerHTML, /现金流预测/);
+  context.fcSetYearMonth(10);
+  assert.match(root.innerHTML, /Redragon Forwarder/);
 });
 
 
