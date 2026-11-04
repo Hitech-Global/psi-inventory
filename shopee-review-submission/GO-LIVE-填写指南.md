@@ -9,8 +9,8 @@
 
 | 表单字段 | 照抄这个 |
 |---|---|
-| **Test Redirect URL Domain** | `https://analytics.hitechanalysis.top/api/shopee-analytics/app/oauth/callback` |
-| **Live Redirect URL Domain** | `https://analytics.hitechanalysis.top/api/shopee-analytics/app/oauth/callback` |
+| **Test Redirect URL Domain** | `https://analytics.hitechanalysis.top/` |
+| **Live Redirect URL Domain** | `https://analytics.hitechanalysis.top/` |
 | **Does this App require buyer PII access?** | **关闭（OFF）** |
 | **Database Servers** | 保持 `IP address(es) available`，填 `172.18.0.0/22` |
 | **live version of your business product's URL** | `https://analytics.hitechanalysis.top/review` |
@@ -25,19 +25,25 @@
 
 ### 1. Test / Live Redirect URL Domain
 
-**两个框都填同一个值：**
+**两个框都填同一个值 —— 只填「域名」，不带回调路径：**
 
 ```
-https://analytics.hitechanalysis.top/api/shopee-analytics/app/oauth/callback
+https://analytics.hitechanalysis.top/
 ```
 
-**为什么这样填**
-- 提示要求「生成授权链接时的 redirect_url 域名要和这里一致」
-- 实测：`analytics.hitechanalysis.top` 这个域名已被 Video / Online / Brand Portal 接受 ✅
-- **末尾不要加斜杠** —— 加了会被判为「域名不一致」（实测踩过）
-- Test 和 Live 填同一个，因为我们的授权服务不区分环境，回调路径只有一个
+**★ 关键：这个框要的是域名，不是完整的回调地址**
+- 提示写的是「The **domain** of the redirect_url … should be consistent with this domain」
+- 校验的报错也是「please fill in a **valid domain** starting with https://」
+- **填完整回调路径会被判为无效**（实测：`https://analytics.hitechanalysis.top/api/shopee-analytics/app/oauth/callback` → 报 Invalid）
 
-**若这行填了仍报「域名不一致」**：说明该应用在控制台里已声明了别的域名（Order Analysis 现在声明的是 `ai-shop-analyzer-frontend.onrender.com`），**先在 Edit 里改成上面这个**。
+**★ Live 那个框不要填 `/review`**
+- `/review` 是给 Shopee 审核团队登录看界面的入口，用 Basic Auth
+- **OAuth 回调走的是** `https://analytics.hitechanalysis.top/api/shopee-analytics/app/oauth/callback`
+- 两者域名相同，所以声明只写域名就够 —— 路径由我们自己的系统决定
+
+**★ 末尾要带斜杠**：Shopee 自己已上线应用的声明就是这个写法（如 `https://www.hitechasia.top/`）
+
+**★ Order Analysis 现在的声明是 `ai-shop-analyzer-frontend.onrender.com`** → **必须改成上面这个**，否则回调会打到别人的服务上
 
 ---
 
