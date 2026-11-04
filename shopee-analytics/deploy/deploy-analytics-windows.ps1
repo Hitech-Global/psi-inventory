@@ -112,18 +112,47 @@ else {
 
 Write-Step '4/7 拉取代码'
 Set-Location $repoRoot
-git fetch origin --prune
+
+# ★ 网络重试
+# 这台机器走代理访问 github.com，git 协议会间歇性失败（CONNECT tunnel 502）。
+# 那属于瞬时故障，重试通常就过去了 —— 不重试的话，一次抖动就会让整次部署失败，
+# 而仓库里的改动还静静躺在远端。fetch 与 pull 都重试。
+function Invoke-GitWithRetry {
+    param(
+        [string[]]$Arguments,
+        [int]$MaxAttempts = 5,
+        [int]$BaseDelaySeconds = 3
+    )
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        $output = & git @Arguments 2>&1
+        if ($LASTEXITCODE -eq 0) { return $output }
+        if ($attempt -lt $MaxAttempts) {
+            $delay = $BaseDelaySeconds * $attempt
+            Write-Host ("  git {0} 失败（第 {1}/{2} 次），{3}s 后重试" -f ($Arguments -join ' '), $attempt, $MaxAttempts, $delay)
+            Start-Sleep -Seconds $delay
+        }
+        else {
+            Write-Host $output | Out-Host
+        }
+    }
+    return $output
+}
+
+Invoke-GitWithRetry -Arguments @('fetch', 'origin', '--prune') | Out-Null
+if ($LASTEXITCODE -ne 0) { Fail 'git fetch 失败（网络不通，重试后仍失败）' }
+
 if ((git status --porcelain | Where-Object { $_ -notmatch '^\?\?' }).Count -gt 0) {
     Write-Host '⚠️  工作区有已跟踪文件的本地改动，为避免覆盖，中止：' -ForegroundColor Yellow
     git status --short | Select-Object -First 10 | Out-Host
     Fail '请先确认这些改动是否还需要（stash / 提交 / 丢弃），再重新执行'
 }
 if ((git rev-parse --abbrev-ref HEAD) -ne $Branch) {
-    git checkout $Branch
+    Invoke-GitWithRetry -Arguments @('checkout', $Branch) | Out-Null
     if ($LASTEXITCODE -ne 0) { Fail "切换到 $Branch 失败" }
 }
-git pull --ff-only origin $Branch
-if ($LASTEXITCODE -ne 0) { Fail '拉取失败' }
+# pull 同样走重试 —— 网络抖动时不该让整次部署失败。
+Invoke-GitWithRetry -Arguments @('pull', '--ff-only', 'origin', $Branch) | Out-Null
+if ($LASTEXITCODE -ne 0) { Fail '拉取失败（网络不通，重试后仍失败）' }
 
 Write-Step '5/7 拉取后版本'
 git log --oneline -1
