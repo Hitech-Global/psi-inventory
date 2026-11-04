@@ -370,7 +370,7 @@ test('WAC history matrix keeps the agreed dimensions, left alignment, sticky hea
   assert.match(page,/submitWacHistoryImport/);
   assert.doesNotMatch(page,/<select[^>]*multiple/);
   assert.match(page,/wac-history-search/);
-  assert.match(page,/wac-history-search\{height:36px;width:250px[^}]*margin-left:auto/);
+  assert.match(page,/wac-history-search\{box-sizing:border-box;height:36px;width:260px[^}]*margin-left:auto/);
   assert.match(page,/wac-history-filter-row\{display:flex;gap:8px;align-items:center;flex-wrap:nowrap/);
   assert.match(page,/wac-history-date-range-panel/);
   assert.match(page,/id="wac-matrix-date-trigger"/);
