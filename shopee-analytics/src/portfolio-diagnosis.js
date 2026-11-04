@@ -126,6 +126,19 @@ function signal(code, severity, title, detail, action = null) {
  * or the stock cannot be told from the figures. What can be told is how
  * many, and that is what is said.
  */
+/**
+ * The name of a product, short enough to read in a sentence.
+ *
+ * The seller centre writes the whole title, which is a paragraph; a
+ * diagnosis that quotes it in full says nothing that the table beside it
+ * does not already say better.
+ */
+function shortProductName(name, fallback) {
+  const text = String(name || '').trim();
+  if (!text) return String(fallback || '');
+  return text.length > 28 ? `${text.slice(0, 28)}…` : text;
+}
+
 function buildProductSignals(products = [], options = {}) {
   const signals = [];
   const dropoffs = findAddToCartDropoffs(products, {
@@ -135,7 +148,7 @@ function buildProductSignals(products = [], options = {}) {
   if (dropoffs.length) {
     const lost = dropoffs.reduce((sum, row) => sum + row.lostVisitors, 0);
     const names = dropoffs.slice(0, 3)
-      .map(row => `「${row.itemName || row.itemId}」加购 ${row.addToCartVisitors} 人、成交 ${row.buyers} 人、流失 ${row.lostVisitors} 人`)
+      .map(row => `「${shortProductName(row.itemName, row.itemId)}」加购 ${row.addToCartVisitors} 人、成交 ${row.buyers} 人、流失 ${row.lostVisitors} 人`)
       .join('；');
     signals.push(signal(
       'ADD_TO_CART_NOT_CONVERTED',
@@ -159,7 +172,7 @@ function buildProductSignals(products = [], options = {}) {
       'medium',
       '商品页留不住人',
       `${bounced.length} 个商品访客量足够但跳出率高且销量低，合计 ${left} 位访客离开未购买。`
-        + `最严重：「${top.itemName || top.itemId}」${top.productVisitors} 位访客、跳出率 ${(top.bounceRate * 100).toFixed(1)}%、仅售出 ${top.unitsSold} 件。`,
+        + `最严重：「${shortProductName(top.itemName, top.itemId)}」${top.productVisitors} 位访客、跳出率 ${(top.bounceRate * 100).toFixed(1)}%、仅售出 ${top.unitsSold} 件。`,
       `检查这 ${bounced.length} 个商品的详情页：主图、规格、到手价与库存状态是否说清；跳出高但销量不低的不在此列。`,
     ));
   }
