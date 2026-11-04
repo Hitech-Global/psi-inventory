@@ -76,6 +76,39 @@ def file_mode(path):
     return mode if mode in ("100644", "100755") else "100644"
 
 
+def local_tree():
+    """本地提交里的每个文件：路径 → blob 名。
+
+    blob 的名字就是内容的哈希，所以同一个文件在两边名字相同 —— 这让两边
+    可以直接比对，不必去取对方的提交历史。
+
+    用 -z 读：git 默认会把中文路径转义成八进制，路径里带空格或换行也会
+    被拆开。
+    """
+    entries = {}
+    raw = subprocess.run(
+        ["git", "ls-tree", "-r", "-z", "HEAD"], capture_output=True, check=True,
+    ).stdout.decode("utf-8", "surrogateescape")
+    for record in raw.split("\0"):
+        if not record.strip():
+            continue
+        meta, path = record.split("\t", 1)
+        parts = meta.split()
+        entries[path] = {"sha": parts[2], "mode": parts[0]}
+    return entries
+
+
+def remote_tree(commit_sha):
+    """远端提交里的每个文件：路径 → blob 名。"""
+    tree = call("GET", f"/repos/{REPO}/git/trees/{commit_sha}?recursive=1")
+    entries = {}
+    for item in tree.get("tree", []):
+        if item.get("type") != "blob":
+            continue
+        entries[item["path"]] = {"sha": item["sha"], "mode": item.get("mode", "100644")}
+    return entries
+
+
 def main():
     branch = sys.argv[1] if len(sys.argv) > 1 else git("rev-parse", "--abbrev-ref", "HEAD")
     local = git("rev-parse", "HEAD")
@@ -90,19 +123,29 @@ def main():
         print(f"分支 {branch} 已是 {local[:10]}")
         return
 
-    # Only the files that differ are sent; the rest of the tree is the
-    # server's own.
+    # 两边按 blob 名字比对，不用 diff —— 远端可能有本地从未见过的提交
+    # （本脚本自己推上去的那些就是），对着一个本地没有的对象做 diff 做不出来。
+    # 而 blob 的名字就是内容的哈希，同一个文件两边名字相同。
+    mine = local_tree()
+    theirs = remote_tree(remote)
+
     changed = [
-        line for line in git("diff", "--name-only", remote, local).splitlines() if line.strip()
+        path for path, entry in mine.items()
+        if path not in theirs or theirs[path]["sha"] != entry["sha"]
     ]
-    if not changed:
+    removed = [path for path in theirs if path not in mine]
+
+    if not changed and not removed:
         print("没有文件差异。")
         return
 
     entries = []
     for path in changed:
-        with open(path, "rb") as handle:
-            content = handle.read()
+        # 从提交里读，不从磁盘读：工作区里删掉了的文件（还没提交的删除）
+        # 在提交里还在，要推的是提交里的那一份。
+        content = subprocess.run(
+            ["git", "show", f"HEAD:{path}"], capture_output=True, check=True,
+        ).stdout
         blob = call("POST", f"/repos/{REPO}/git/blobs", {
             "content": base64.b64encode(content).decode(),
             "encoding": "base64",
@@ -115,6 +158,8 @@ def main():
             "type": "blob",
             "sha": blob["sha"],
         })
+    for path in removed:
+        entries.append({"path": path, "mode": "100644", "type": "blob", "sha": None})
 
     tree = call("POST", f"/repos/{REPO}/git/trees", {
         "base_tree": base_tree,
