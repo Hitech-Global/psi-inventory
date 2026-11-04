@@ -453,3 +453,34 @@ test('WAC history matrix presentation hides redundant columns and fills availabl
   assert.ok(appSource.includes("_wacMatrixMultiMarkup('country'"), 'country filter remains available');
   assert.ok(appSource.includes("_wacMatrixMultiMarkup('warehouse'"), 'warehouse filter remains available');
 });
+
+
+test('WAC country multi-select omits internal search and the matrix search uses Mac-style controls', () => {
+  const appSource = fs.readFileSync(require.resolve('../app'), 'utf8');
+  const start = appSource.indexOf('function _wacMatrixMultiMarkup');
+  const end = appSource.indexOf('\nfunction _wacMatrixSelected', start);
+  assert.ok(start >= 0 && end > start, 'WAC multi-select renderer must exist');
+
+  const vm = require('node:vm');
+  const sandbox = {};
+  vm.runInNewContext(appSource.slice(start, end), sandbox);
+  const countryMarkup = sandbox._wacMatrixMultiMarkup('country', '全部国家');
+  const brandMarkup = sandbox._wacMatrixMultiMarkup('brand', '全部品牌');
+
+  assert.doesNotMatch(countryMarkup, /type="search"|wac-history-multi-search/,
+    'country selector must show the country list directly without an internal search field');
+  assert.match(countryMarkup, /wac-history-multi-options/,
+    'country selector must retain its multi-select options');
+  assert.match(countryMarkup, /data-wac-filter-wrap="country"/);
+  assert.match(brandMarkup, /wac-history-multi-search/,
+    'brand selector keeps its existing search capability');
+
+  assert.ok(appSource.includes('background-image:url("data:image/svg+xml,'),
+    'matrix search field must include a subtle search icon');
+  assert.ok(appSource.includes('background-position:12px center'));
+  assert.ok(appSource.includes('border-radius:10px!important'));
+  assert.ok(appSource.includes('.wac-history-page .wac-history-reset-btn{'),
+    'reset must use secondary macOS-style treatment');
+  assert.ok(appSource.includes('background:#f5f5f7!important'));
+  assert.ok(appSource.includes('.wac-history-page .wac-history-reset-btn:hover{'));
+});
