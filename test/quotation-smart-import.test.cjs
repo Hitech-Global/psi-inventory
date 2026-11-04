@@ -1,0 +1,72 @@
+'use strict';
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const path=require('node:path');
+const vm=require('node:vm');
+
+const source=fs.readFileSync(path.join(__dirname,'..','quotation-import-normalizer.js'),'utf8');
+const window={api:()=>Promise.resolve({}),XLSX:null};
+const document={readyState:'complete',addEventListener(){}};
+vm.runInNewContext(source,{window,document,setTimeout(){},console},{timeout:1000});
+const n=window.QuotationImportNormalizer;
+assert(n,'quotation import normalizer must be exposed');
+
+const parsed=n.parseSheetRows([
+  {name:'Price List',rows:[
+    ['NETAC SUPPLIER PRICE LIST'],
+    ['Item No','Model','Product Type','FOB USD','Date'],
+    ['NT-SSD-001','N535S','SSD',12.5,'2026-11-04'],
+    ['NT-SSD-002','N600S','SSD',13.25,'2026-11-04']
+  ]},
+  {name:'Summary',rows:[['Total','Amount'],['Total','100']]},
+  {name:'USB',rows:[
+    ['Part No.','Model','FOB Price','Currency','Brand'],
+    ['LEGACY-USB-01','U905',0,'USD','Netac'],
+    ['LEGACY-USB-02','U906','','USD','Netac']
+  ]}
+],{brand:'Netac',quote_date:'2026-11-04',supplier_id:'supplier-netac'});
+
+assert.equal(parsed.rows.length,4,'all recognized sheets should be read');
+assert.equal(parsed.recognized_sheets.length,2,'both quote sheets should be recognized');
+assert.equal(parsed.ignored_sheets.length,1,'non-quote sheets should be skipped');
+assert.equal(parsed.rows[0].supplier_part_no,'NT-SSD-001');
+assert.equal(parsed.rows[0].currency,'USD','currency should be inferred from price header');
+assert.equal(parsed.rows[0].quote_price,12.5);
+assert.equal(parsed.rows[2].quote_price,0,'explicit zero should be retained as no quote');
+assert.equal(parsed.rows[3].quote_price,0,'blank price should become no quote');
+assert.equal(parsed.rows[3].quote_date_source,'default','default date source should be tracked');
+
+const metadata={
+  skus:[
+    {sku_code:'NT-SSD-001',brand:'Netac',category:'SSD',model:'N535S'},
+    {sku_code:'PSI-U905',brand:'Netac',category:'USB',model:'U905'}
+  ],
+  mappings:[
+    {supplier_id:'supplier-netac',brand:'Netac',supplier_part_no_key:'LEGACY-USB-01',psi_sku_code:'PSI-U905'}
+  ]
+};
+const matched=n.matchRows(parsed.rows,metadata,{supplier_id:'supplier-netac',brand:'Netac'});
+assert.equal(matched[0].match_status,'matched','exact PSI SKU should auto-match');
+assert.equal(matched[0].match_source,'exact');
+assert.equal(matched[2].match_status,'matched','saved supplier mapping should auto-match');
+assert.equal(matched[2].match_source,'saved');
+assert.equal(matched[3].match_status,'unlinked','unknown part number should remain unlinked');
+assert.equal(matched[3].sku_code,'LEGACY-USB-02','unlinked row must preserve supplier part number');
+assert.equal(n.validateRows(matched).length,0,'unlinked rows and zero-price rows must remain importable');
+
+const manual=n.matchRows([
+  {...parsed.rows[3],psi_sku_code:'PSI-U905',match_source:'manual'}
+],metadata,{supplier_id:'supplier-netac',brand:'Netac'});
+assert.equal(manual[0].match_status,'matched','manual selection should be retained');
+assert.equal(manual[0].match_source,'manual');
+
+const progress=fs.readFileSync(path.join(__dirname,'..','quotation-import-progress.js'),'utf8');
+const fast=fs.readFileSync(path.join(__dirname,'..','quotation-import-fast.js'),'utf8');
+const server=fs.readFileSync(path.join(__dirname,'..','quotation-server.js'),'utf8');
+assert.match(progress,/parseSheetRows/,'browser import should parse every worksheet');
+assert.match(progress,/未关联的报价仍可导入/,'unlinked rows should be explicitly allowed in preview');
+assert.match(fast,/quotation_sku_mappings/,'server should persist supplier part-number mappings');
+assert.match(fast,/match_status/,'server should store SKU match status');
+assert.match(server,/event\.match_status === 'unlinked'/,'unlinked rows must not use internal purchase baselines');
+
+console.log('quotation-smart-import: PASS');
