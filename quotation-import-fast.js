@@ -260,12 +260,12 @@ module.exports=function installQuotationImportFast(deps){
         written=(await aq(sql,[JSON.stringify(payload)])).length;
       }
       if(mappings.length){
-        const updateSql='UPDATE quotation_prices q SET sku_code=m.psi_sku_code,psi_sku_code=m.psi_sku_code,match_status=\\'matched\\', '+
-          'product_type=CASE WHEN q.product_type=\\'\\' OR q.product_type=\\'未分类\\' THEN COALESCE(NULLIF(s.category,\\'\\'),q.product_type) ELSE q.product_type END,updated_at=? '+
-          'FROM quotation_sku_mappings m LEFT JOIN skus s ON s.sku_code=m.psi_sku_code AND s.brand=m.brand '+
-          'WHERE q.supplier_id=m.supplier_id AND q.brand=m.brand AND q.supplier_part_no_key=m.supplier_part_no_key '+
-          'AND q.match_status=\\'unlinked\\' AND m.supplier_id=? AND NOT EXISTS(SELECT 1 FROM quotation_prices q2 '+
-          'WHERE q2.supplier_id=q.supplier_id AND q2.brand=q.brand AND q2.quote_date=q.quote_date AND q2.sku_code=m.psi_sku_code AND q2.id<>q.id)';
+        const updateSql="UPDATE quotation_prices q SET sku_code=m.psi_sku_code,psi_sku_code=m.psi_sku_code,match_status='matched', "+
+          "product_type=CASE WHEN q.product_type='' OR q.product_type='未分类' THEN COALESCE(NULLIF(s.category,''),q.product_type) ELSE q.product_type END,updated_at=? "+
+          "FROM quotation_sku_mappings m LEFT JOIN skus s ON s.sku_code=m.psi_sku_code AND s.brand=m.brand "+
+          "WHERE q.supplier_id=m.supplier_id AND q.brand=m.brand AND q.supplier_part_no_key=m.supplier_part_no_key "+
+          "AND q.match_status='unlinked' AND m.supplier_id=? AND NOT EXISTS(SELECT 1 FROM quotation_prices q2 "+
+          "WHERE q2.supplier_id=q.supplier_id AND q2.brand=q.brand AND q2.quote_date=q.quote_date AND q2.sku_code=m.psi_sku_code AND q2.id<>q.id)";
         await aq(updateSql,[now,mappings[0].supplier_id]);
       }
       return written;
@@ -280,11 +280,11 @@ module.exports=function installQuotationImportFast(deps){
   }
   function applyMappingsSqlite(mappings,now){
     for(const m of mappings){
-      run('UPDATE quotation_prices SET sku_code=?,psi_sku_code=?,match_status=\\'matched\\', '+
-        'product_type=CASE WHEN product_type=\\'\\' OR product_type=\\'未分类\\' THEN COALESCE((SELECT NULLIF(category,\\'\\') FROM skus WHERE sku_code=? AND brand=?),\\'未分类\\') ELSE product_type END,updated_at=? '+
-        'WHERE supplier_id=? AND brand=? AND supplier_part_no_key=? AND match_status=\\'unlinked\\' '+
-        'AND NOT EXISTS(SELECT 1 FROM quotation_prices q2 WHERE q2.supplier_id=quotation_prices.supplier_id AND q2.brand=quotation_prices.brand '+
-        'AND q2.quote_date=quotation_prices.quote_date AND q2.sku_code=? AND q2.id<>quotation_prices.id)',
+      run("UPDATE quotation_prices SET sku_code=?,psi_sku_code=?,match_status='matched', "+
+        "product_type=CASE WHEN product_type='' OR product_type='未分类' THEN COALESCE((SELECT NULLIF(category,'') FROM skus WHERE sku_code=? AND brand=?),'未分类') ELSE product_type END,updated_at=? "+
+        "WHERE supplier_id=? AND brand=? AND supplier_part_no_key=? AND match_status='unlinked' "+
+        "AND NOT EXISTS(SELECT 1 FROM quotation_prices q2 WHERE q2.supplier_id=quotation_prices.supplier_id AND q2.brand=quotation_prices.brand "+
+        "AND q2.quote_date=quotation_prices.quote_date AND q2.sku_code=? AND q2.id<>quotation_prices.id)",
         [m.psi_sku_code,m.psi_sku_code,m.psi_sku_code,m.brand,now,m.supplier_id,m.brand,m.supplier_part_no_key,m.psi_sku_code]);
     }
   }
