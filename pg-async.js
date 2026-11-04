@@ -116,7 +116,7 @@ async function withAsyncPoolClient(fn) {
 // 仅接受 SELECT，避免把异步只读通道误用于业务写入或事务。
 function assertSelectSql(sql) {
   const s = String(sql || '').trim();
-  if (!/^SELECT\\b/i.test(s)) {
+  if (!/^SELECT\b/i.test(s)) {
     const e = new Error('pg-async queryAsync 仅允许 SELECT 查询');
     e.code = 'DB_ASYNC_READ_ONLY';
     throw e;
