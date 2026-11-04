@@ -119,14 +119,18 @@
    */
   function renderShopReport(shop) {
     const bi = shop.shopBi || {};
-    if (bi.days > 0) {
+    const portal = shop.brandPortal;
+    // Whether the shop is authorized comes first. The figures that are
+    // already here may be from an authorization that has since lapsed —
+    // they are old numbers, and showing them as "synced" without saying
+    // so leaves the reader thinking the shop is still connected.
+    if (portal && portal.tokenPresent && bi.days > 0) {
       return {
         state: pill(`已同步 ${bi.days} 天`, 'good'),
         note: bi.latestDate ? `数据到 ${bi.latestDate}` : '',
-        action: '',
+        action: `<button type="button" class="connections-action" data-connect="brand-portal" data-shop-id="${esc(shop.shopId)}">重新授权</button>`,
       };
     }
-    const portal = shop.brandPortal;
     if (!portal) {
       return {
         state: pill('不可用', 'neutral'),
@@ -163,8 +167,10 @@
       };
     }
     return {
-      state: pill('待授权', 'warn'),
-      note: '营业额、访客与转化率',
+      state: pill(bi.days > 0 ? '需重新授权' : '待授权', 'warn'),
+      note: bi.days > 0
+        ? `旧数据 ${bi.days} 天，授权已失效`
+        : '营业额、访客与转化率',
       action: '<button type="button" class="connections-action" data-connect="brand-portal" data-shop-id="' + esc(shop.shopId) + '">连接 Brand Portal</button>',
       hint: BRAND_PORTAL_HINT,
     };

@@ -157,6 +157,11 @@ class BrandPortalOAuthService {
       }
       const principalId = principalIds[0];
       const shopId = Number(active.expected_shop_id);
+      const shopRow = await client.query(
+        'SELECT brand_code FROM shopee_shop_profiles WHERE shop_id=$1',
+        [shopId],
+      );
+      const brandCode = shopRow.rows.length ? shopRow.rows[0].brand_code : null;
       const client = await this.pool.connect();
       try {
         await client.query('BEGIN');
@@ -177,12 +182,23 @@ class BrandPortalOAuthService {
           [shopId, principalId],
         );
         if (!mapped.rows.length) throw oauthError('SHOP_NOT_CONFIGURED', 404);
+        // A brand is authorized once, not shop by shop: the seller ticks
+        // the brand, and every shop under it is covered. The shops of that
+        // brand are given the same principal, so the reader does not have
+        // to authorize the same thing six times to see six shops.
+        const sameBrand = await client.query(
+          `UPDATE shopee_shop_profiles
+           SET brand_portal_principal_id=$2,updated_at=now()
+           WHERE brand_code=$3 AND active=true AND brand_portal_principal_id IS DISTINCT FROM $2
+           RETURNING shop_id`,
+          [shopId, principalId, brandCode],
+        );
         await client.query('COMMIT');
       } catch (error) {
         await client.query('ROLLBACK');
         throw error;
       } finally { client.release(); }
-      return { shopId, principalId };
+      return { shopId, principalId, alsoAuthorized: sameBrand.rows.map(row => Number(row.shop_id)) };
     } catch (error) {
       throw safeError(error, 'BRAND_PORTAL_OAUTH_TOKEN_EXCHANGE_FAILED');
     }
