@@ -746,13 +746,19 @@ let productGroupMode = 'item';
 
 async function loadFunnel() {
   const shop = selectedShop();
-  if (!shop) return;
   const filters = currentFilters();
+  // With no shop chosen the funnel reads every shop the filters pick out,
+  // which is what the reader is asking for by leaving the shop alone. One
+  // shop is read exactly as it was before.
   const params = new URLSearchParams({
-    shop_id: String(shop.shopId),
     start_date: filters.startDate,
     end_date: filters.endDate,
   });
+  if (shop) params.set('shop_id', String(shop.shopId));
+  else {
+    if (filters.country) params.set('country', filters.country);
+    if (filters.brand) params.set('brand', filters.brand);
+  }
   const data = await json(`/api/shopee-analytics/funnel?${params}`);
   window.ShopeeFunnel?.render(data);
 
@@ -760,12 +766,19 @@ async function loadFunnel() {
   // afterwards: the shop's own figures are worth showing even when the
   // products' are not, and the other way round.
   try {
+    const shopIds = shop
+      ? String(shop.shopId)
+      : (data.shops || []).map(row => String(row.shopId)).join(',');
+    if (!shopIds) {
+      window.ShopeeFunnel?.renderProducts(null);
+      return;
+    }
     const products = await json(
-      `/api/shopee-analytics/product-traffic?shop_id=${encodeURIComponent(String(shop.shopId))}&limit=300`
+      `/api/shopee-analytics/product-traffic?shop_ids=${encodeURIComponent(shopIds)}&limit=300`
       + `${productGroupMode === 'parent' ? '&by_parent=1' : ''}`,
     );
     window.ShopeeFunnel?.renderProducts({
-      ...products, currency: shop.currency || null, byParent: productGroupMode === 'parent',
+      ...products, currency: shop ? shop.currency : null, byParent: productGroupMode === 'parent',
     });
   } catch (error) {
     window.ShopeeFunnel?.renderProducts(null);

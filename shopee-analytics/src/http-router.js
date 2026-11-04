@@ -1128,13 +1128,21 @@ function createShopeeAnalyticsRouter({
   router.get('/product-traffic', async (req, res, next) => {
     try {
       const shopId = req.query.shop_id ? positiveInt(req.query.shop_id, 'shop_id') : null;
+      // Several shops may be asked for at once: the funnel reads them
+      // together when no shop has been chosen.
+      const wanted = String(req.query.shop_ids || '').trim();
+      const wantedIds = wanted
+        ? wanted.split(',').map(value => Number(value.trim())).filter(Boolean)
+        : null;
       const rowKind = req.query.row_kind ? String(req.query.row_kind) : 'PRODUCT';
       const shops = await queryRepository.listShops({ activeOnly: false });
       const visible = !req.auth || !req.auth.enabled || req.auth.role === ROLE_SUPER_ADMIN
         ? new Set(shops.map(row => row.shopId))
         : new Set(req.auth.shopIds || []);
       const allowed = shops
-        .filter(row => visible.has(row.shopId) && (!shopId || row.shopId === shopId))
+        .filter(row => visible.has(row.shopId)
+          && (!shopId || row.shopId === shopId)
+          && (!wantedIds || wantedIds.includes(row.shopId)))
         .map(row => row.shopId);
       if (!allowed.length) {
         res.json({ rows: [], totals: null });
@@ -1192,36 +1200,88 @@ function createShopeeAnalyticsRouter({
 
   router.get('/funnel', async (req, res, next) => {
     try {
-      const shopId = positiveInt(req.query.shop_id, 'shop_id');
       const startDate = isoDate(req.query.start_date, 'start_date');
       const endDate = isoDate(req.query.end_date, 'end_date');
       if (startDate > endDate) throw new Error('start_date must be <= end_date');
-      assertShopAccess(req, shopId);
 
       const shops = await queryRepository.listShops({ activeOnly: false });
-      const shop = shops.find(row => row.shopId === shopId);
-      if (!shop) {
-        res.status(404).json({ error: 'SHOP_NOT_CONFIGURED', message: `Shop ${shopId} is not configured` });
+      // One shop, or the shops a filter picks out. The funnel reads a
+      // single shop the same way it reads several, so the figures for all
+      // of them are the ones already gathered.
+      const wanted = String(req.query.shop_ids || '').trim();
+      let targets;
+      if (wanted) {
+        const ids = wanted.split(',').map(value => Number(value.trim())).filter(Boolean);
+        targets = shops.filter(row => ids.includes(row.shopId));
+        if (targets.length !== ids.length) {
+          res.status(404).json({ error: 'SHOP_NOT_CONFIGURED', message: '有店铺未配置' });
+          return;
+        }
+      } else if (req.query.shop_id) {
+        const shopId = positiveInt(req.query.shop_id, 'shop_id');
+        targets = shops.filter(row => row.shopId === shopId);
+        if (!targets.length) {
+          res.status(404).json({ error: 'SHOP_NOT_CONFIGURED', message: `Shop ${shopId} is not configured` });
+          return;
+        }
+      } else {
+        const country = String(req.query.country || '');
+        const brand = String(req.query.brand || '');
+        targets = shops.filter(row =>
+          (!country || row.countryCode === country)
+          && (!brand || row.brandCode === brand));
+      }
+      if (!targets.length) {
+        res.status(404).json({ error: 'NO_SHOP_MATCHES', message: '没有符合筛选条件的店铺' });
         return;
       }
+      for (const target of targets) assertShopAccess(req, target.shopId);
 
       const { days, sources } = await queryRepository.getShopFunnelDaily({
-        shopId,
+        shopIds: targets.map(row => row.shopId),
         startDate,
         endDate,
-        timezone: shop.timezone || 'UTC',
+        // The shops may sit in different time zones; the days are drawn
+        // with the first shop's, and the reader is told which.
+        timezone: targets[0].timezone || 'UTC',
       });
       const { dates, rows } = buildFunnelRows(days, sources);
 
+      // Money cannot be added across currencies: rupiah and ringgit are
+      // not the same number twice over. When the shops do not share one
+      // currency the money is left out rather than totalled wrongly, and
+      // the reader is told why.
+      const currencies = [...new Set(targets.map(row => row.currency).filter(Boolean))];
+      const mixedCurrency = currencies.length > 1;
+      if (mixedCurrency) {
+        for (const row of rows) {
+          if (row.format !== 'money') continue;
+          row.values = row.values.map(() => null);
+          row.currencyNote = '多币种未合计';
+        }
+      }
+
+      const one = targets.length === 1;
       res.json({
-        shop: {
-          shopId: shop.shopId,
-          displayName: shop.displayName,
-          countryName: shop.countryName,
-          brandName: shop.brandName,
-          currency: shop.currency,
-          timezone: shop.timezone,
-        },
+        shop: one ? {
+          shopId: targets[0].shopId,
+          displayName: targets[0].displayName,
+          countryName: targets[0].countryName,
+          brandName: targets[0].brandName,
+          currency: targets[0].currency,
+          timezone: targets[0].timezone,
+        } : null,
+        shops: targets.map(row => ({
+          shopId: row.shopId,
+          displayName: row.displayName,
+          countryName: row.countryName,
+          brandName: row.brandName,
+          currency: row.currency,
+        })),
+        shopCount: targets.length,
+        currency: one ? targets[0].currency : null,
+        currencies,
+        mixedCurrency,
         startDate,
         endDate,
         dates,

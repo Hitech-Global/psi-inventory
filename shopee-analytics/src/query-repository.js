@@ -469,17 +469,37 @@ class ShopeeQueryRepository {
     }));
   }
 
-  async getShopFunnelDaily({ shopId, startDate, endDate, timezone, orderStatus = 'PAID' }) {
+  /**
+   * The funnel for one shop, or for all of them.
+   *
+   * The shops are given as a list even when there is only one of them, so
+   * that the figures for several shops are worked out the same way as the
+   * figures for one: what can be added is added, and what is a rate is
+   * worked out from the totals rather than added.
+   */
+  async getShopFunnelDaily({ shopIds, startDate, endDate, timezone, orderStatus = 'PAID' }) {
+    const shops = (Array.isArray(shopIds) ? shopIds : [shopIds]).filter(Boolean).map(Number);
+    if (!shops.length) throw new Error('至少要有一个店铺');
+    const oneShop = shops.length === 1;
     const result = await this.pool.query(
       `WITH dates AS (
          SELECT generate_series($2::date,$3::date,interval '1 day')::date AS event_date
        ),
        bi AS (
-         SELECT event_date, sales, orders, product_clicks, product_views,
-                unique_visitors, order_conversion_rate
+         SELECT event_date,
+                SUM(sales) AS sales, SUM(orders) AS orders,
+                SUM(product_clicks) AS product_clicks,
+                SUM(product_views) AS product_views,
+                SUM(unique_visitors) AS unique_visitors,
+                -- A rate is not added: the conversion of several shops
+                -- together is their orders over their visitors, and the
+                -- funnel works that out from the totals.
+                CASE WHEN $6::int = 1 THEN MAX(order_conversion_rate) ELSE NULL END
+                  AS order_conversion_rate
          FROM shopee_shop_bi_daily
-         WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3
+         WHERE shop_id = ANY($1::bigint[]) AND event_date BETWEEN $2 AND $3
            AND order_status=$5
+         GROUP BY event_date
        ),
        ads AS (
          SELECT event_date,
@@ -491,7 +511,7 @@ class ShopeeQueryRepository {
                 COALESCE(SUM(direct_gmv),0) AS ad_direct_gmv,
                 COALESCE(SUM(direct_orders),0) AS ad_direct_orders
          FROM shopee_ad_campaign_daily
-         WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3
+         WHERE shop_id = ANY($1::bigint[]) AND event_date BETWEEN $2 AND $3
          GROUP BY event_date
        ),
        affiliate AS (
@@ -505,7 +525,7 @@ class ShopeeQueryRepository {
                 COALESCE(SUM(commission),0) AS affiliate_commission,
                 COALESCE(SUM(free_samples),0) AS affiliate_free_samples
          FROM shopee_affiliate_daily
-         WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3
+         WHERE shop_id = ANY($1::bigint[]) AND event_date BETWEEN $2 AND $3
          GROUP BY event_date
        ),
        orders_agg AS (
@@ -515,7 +535,7 @@ class ShopeeQueryRepository {
                 COALESCE(SUM(total_amount) FILTER (WHERE order_status <> 'CANCELLED'),0) AS order_gmv,
                 COALESCE(SUM(total_amount) FILTER (WHERE order_status = 'CANCELLED'),0) AS cancelled_sales
          FROM shopee_orders
-         WHERE shop_id=$1
+         WHERE shop_id = ANY($1::bigint[])
            AND (to_timestamp(create_time) AT TIME ZONE $4)::date BETWEEN $2 AND $3
          GROUP BY 1
        ),
@@ -528,7 +548,7 @@ class ShopeeQueryRepository {
                 COALESCE(SUM(confirmed_orders),0) AS live_confirmed_orders,
                 COALESCE(SUM(confirmed_sales),0) AS live_confirmed_sales
          FROM shopee_shop_livestream_daily
-         WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3
+         WHERE shop_id = ANY($1::bigint[]) AND event_date BETWEEN $2 AND $3
          GROUP BY event_date
        ),
        returns_agg AS (
@@ -536,15 +556,31 @@ class ShopeeQueryRepository {
                 COUNT(*)::int AS refund_orders,
                 COALESCE(SUM(refund_amount),0) AS refund_amount
          FROM shopee_returns
-         WHERE shop_id=$1
+         WHERE shop_id = ANY($1::bigint[])
            AND (to_timestamp(create_time) AT TIME ZONE $4)::date BETWEEN $2 AND $3
          GROUP BY 1
        ),
        health AS (
-         SELECT event_date, shop_rating, return_refund_rate, cancellation_rate,
-                late_shipment_rate, csat_rate, response_rate, preparation_time
+         SELECT event_date,
+                -- The score is one number for a shop, so several shops are
+                -- averaged. The rates below are each a shop's own rate,
+                -- and there is no sound way to add them up, so with more
+                -- than one shop they are left out rather than guessed at.
+                CASE WHEN $6::int = 1 THEN MAX(shop_rating)
+                     ELSE AVG(shop_rating) END AS shop_rating,
+                CASE WHEN $6::int = 1 THEN MAX(return_refund_rate) ELSE NULL END
+                  AS return_refund_rate,
+                CASE WHEN $6::int = 1 THEN MAX(cancellation_rate) ELSE NULL END
+                  AS cancellation_rate,
+                CASE WHEN $6::int = 1 THEN MAX(late_shipment_rate) ELSE NULL END
+                  AS late_shipment_rate,
+                CASE WHEN $6::int = 1 THEN MAX(csat_rate) ELSE NULL END AS csat_rate,
+                CASE WHEN $6::int = 1 THEN MAX(response_rate) ELSE NULL END AS response_rate,
+                CASE WHEN $6::int = 1 THEN MAX(preparation_time) ELSE NULL END
+                  AS preparation_time
          FROM shopee_shop_health_daily
-         WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3
+         WHERE shop_id = ANY($1::bigint[]) AND event_date BETWEEN $2 AND $3
+         GROUP BY event_date
        )
        SELECT d.event_date,
               bi.sales, bi.orders, bi.product_clicks, bi.product_views,
@@ -580,22 +616,22 @@ class ShopeeQueryRepository {
               COALESCE(l.live_confirmed_orders,0) AS live_confirmed_orders,
               COALESCE(l.live_confirmed_sales,0) AS live_confirmed_sales,
               (SELECT COUNT(*) FROM shopee_shop_bi_daily
-                WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3
+                WHERE shop_id = ANY($1::bigint[]) AND event_date BETWEEN $2 AND $3
                   AND order_status=$5) AS shop_report_rows,
               (SELECT COUNT(*) FROM shopee_returns
-                WHERE shop_id=$1
+                WHERE shop_id = ANY($1::bigint[])
                   AND (to_timestamp(create_time) AT TIME ZONE $4)::date BETWEEN $2 AND $3) AS return_rows,
               (SELECT COUNT(total_amount) FROM shopee_orders
-                WHERE shop_id=$1
+                WHERE shop_id = ANY($1::bigint[])
                   AND (to_timestamp(create_time) AT TIME ZONE $4)::date BETWEEN $2 AND $3) AS order_amount_rows,
               (SELECT COUNT(*) FROM shopee_shop_livestream_daily
-                WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3) AS livestream_rows,
+                WHERE shop_id = ANY($1::bigint[]) AND event_date BETWEEN $2 AND $3) AS livestream_rows,
               h.shop_rating, h.return_refund_rate, h.cancellation_rate,
               h.late_shipment_rate, h.csat_rate, h.response_rate, h.preparation_time,
               (SELECT COUNT(*) FROM shopee_shop_health_daily
-                WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3) AS shop_health_rows,
+                WHERE shop_id = ANY($1::bigint[]) AND event_date BETWEEN $2 AND $3) AS shop_health_rows,
               (SELECT COUNT(*) FROM shopee_affiliate_daily
-                WHERE shop_id=$1 AND event_date BETWEEN $2 AND $3) AS affiliate_rows
+                WHERE shop_id = ANY($1::bigint[]) AND event_date BETWEEN $2 AND $3) AS affiliate_rows
        FROM dates d
        LEFT JOIN bi ON bi.event_date=d.event_date
        LEFT JOIN ads a ON a.event_date=d.event_date
@@ -605,7 +641,7 @@ class ShopeeQueryRepository {
        LEFT JOIN health h ON h.event_date=d.event_date
        LEFT JOIN live l ON l.event_date=d.event_date
        ORDER BY d.event_date`,
-      [shopId, startDate, endDate, timezone || 'UTC', orderStatus],
+      [shops, startDate, endDate, timezone || 'UTC', orderStatus, oneShop ? 1 : 0],
     );
 
     // Whether a source has anything in it at all, as opposed to having
