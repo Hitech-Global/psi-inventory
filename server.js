@@ -32,7 +32,7 @@ const { importProformaInvoicesPg } = require('./wave2b-pi-batch-import-pg.js'); 
 const { generatePONumber } = require('./po-number');
 const { slimReplenishmentRow, projectDailySalesRow } = require('./rp-projection'); // RP-P0-R1 订单预测响应投影（仅序列化瘦身，不动计算逻辑）
 const { inventoryValueKey, buildInventoryFinancialValueMap } = require('./inventory-asset-values');
-const { buildWacCostChangeRows, summarizeWacCostChangeRows, chunkWacCostChangeRows, getNewWacCcRecipientIds, buildWacGroupRecipientId, parseWacGroupRecipientId, buildWacCostChangeCard } = require('./wac-notification');
+const { buildWacCostChangeRows, summarizeWacCostChangeRows, chunkWacCostChangeRows, getNewWacCcRecipientIds, buildWacGroupRecipientId, parseWacGroupRecipientId, buildWacCostChangeCard, cardToFallbackText } = require('./wac-notification');
 const {
   createSqliteSalesImportAdapter,
   createPostgresSalesImportAdapter,
@@ -282,23 +282,7 @@ async function getFeishuTenantToken() {
 // 发送文本消息到指定 open_id。best-effort：测试/演练模式只记录不真实发送；真实模式带 5s 超时。
 // 从卡片反推纯文本（用于飞书 extErrCode=200621 临时降级）。仅取 header.title 与 div fields；跳过 button/action 段。
 // 飞书 2026 偶发隐性卡片 schema 校验收紧导致所有 interactive 卡片 230099-200621，text 链路不受影响，自动降级可恢复业务可达性。
-function cardToFallbackText(card) {
-  if (!card || typeof card !== 'object') return '';
-  const lines = [];
-  if (card.header && card.header.title && card.header.title.content) lines.push(String(card.header.title.content));
-  const elements = Array.isArray(card.elements) ? card.elements : [];
-  for (const el of elements) {
-    if (!el || el.tag !== 'div') continue;
-    const fields = Array.isArray(el.fields) ? el.fields : [];
-    for (const f of fields) {
-      const c = f && f.text && f.text.content;
-      if (!c) continue;
-      const m = c.match(/^\*\*(.+?)\*\*\n([\s\S]+)$/);
-      lines.push(m ? (m[1] + ': ' + m[2]) : c);
-    }
-  }
-  return lines.join('\n');
-}
+// Card 2.0 与旧版卡片的纯文本降级统一由 wac-notification.js 处理。
 
 // 通用飞书消息发送：支持 open_id（个人）与 chat_id（群）。best-effort：测试/演练模式只记录不真实发送。
 // 抽象为统一出口 sendFeishuRaw（msgType + contentObj），text / interactive 共用同一 token、超时与 dry-run 逻辑。
