@@ -261,26 +261,56 @@ class TikTokOAuthService {
    * 凭据是否已配置。
    */
   credentialsConfigured() {
-    return Boolean(String(this.env.TIKTOK_APP_KEY || '').trim()) &&
-      Boolean(String(this.env.TIKTOK_APP_SECRET || '').trim()) &&
-      Boolean(String(this.env.TIKTOK_SERVICE_ID || '').trim());
+    return this.missingCredentials().length === 0;
+  }
+
+  /**
+   * 哪些凭据还没有配。
+   *
+   * 说出来比只说「未配置」有用得多：读者看到的是这三个名字，
+   * 他就知道要去 Partner Center 的哪一个地方取，而不是再去猜。
+   */
+  missingCredentials() {
+    const missing = [];
+    if (!String(this.env.TIKTOK_APP_KEY || '').trim()) missing.push('TIKTOK_APP_KEY');
+    if (!String(this.env.TIKTOK_APP_SECRET || '').trim()) missing.push('TIKTOK_APP_SECRET');
+    if (!String(this.env.TIKTOK_SERVICE_ID || '').trim()) missing.push('TIKTOK_SERVICE_ID');
+    return missing;
   }
 
   appKey() {
     const value = String(this.env.TIKTOK_APP_KEY || '').trim();
-    if (!value) throw oauthError('TIKTOK_CREDENTIALS_NOT_CONFIGURED', 503);
+    if (!value) {
+      throw oauthError(
+        'TIKTOK_APP_KEY_MISSING',
+        503,
+        '未配置 TIKTOK_APP_KEY：TikTok Shop 应用的应用密钥，在 TikTok Shop Partner Center 的应用后台取得。',
+      );
+    }
     return value;
   }
 
   appSecret() {
     const value = String(this.env.TIKTOK_APP_SECRET || '').trim();
-    if (!value) throw oauthError('TIKTOK_CREDENTIALS_NOT_CONFIGURED', 503);
+    if (!value) {
+      throw oauthError(
+        'TIKTOK_CREDENTIAL_MISSING',
+        503,
+        '未配置 TIKTOK_APP_SECRET：TikTok Shop 应用的应用密钥，在 TikTok Shop Partner Center 的应用后台取得。',
+      );
+    }
     return value;
   }
 
   serviceId() {
     const value = String(this.env.TIKTOK_SERVICE_ID || '').trim();
-    if (!value) throw oauthError('TIKTOK_CREDENTIALS_NOT_CONFIGURED', 503);
+    if (!value) {
+      throw oauthError(
+        'TIKTOK_CREDENTIAL_MISSING',
+        503,
+        '未配置 TIKTOK_SERVICE_ID：TikTok Shop 应用的 Service ID，在 TikTok Shop Partner Center 的应用后台取得。',
+      );
+    }
     return value;
   }
 
@@ -297,6 +327,7 @@ class TikTokOAuthService {
    */
   async status() {
     const regionGroup = this.regionGroup();
+    const missing = this.missingCredentials();
     const result = await this.pool.query(
       `SELECT shop_id, shop_cipher, seller_type, region, expires_at, refresh_error, updated_at
        FROM tiktok_shop_tokens
@@ -306,7 +337,11 @@ class TikTokOAuthService {
     );
     return {
       platform: 'tiktok',
-      credentialsConfigured: this.credentialsConfigured(),
+      credentialsConfigured: missing.length === 0,
+      // Which credentials are not yet in place, named. A reader who is
+      // told only that they are not configured has nothing to act on; a
+      // reader who is told the three names knows where to go.
+      missingCredentials: missing,
       regionGroup,
       redirectUrl: (() => { try { return resolveTikTokRedirectUrl(this.env); } catch { return null; } })(),
       shops: result.rows.map(row => ({

@@ -118,6 +118,7 @@
         </div>
         <div class="platform-detail">
           <dl id="tiktokDetail"></dl>
+          <p class="platform-detail hidden" id="tiktokSetupNote"></p>
           <ul class="shop-list" id="tiktokShops"></ul>
         </div>
         <div class="platform-actions">
@@ -308,8 +309,14 @@
             setState(state, 'pending', t('pending'));
           }
 
+          // Which credentials are missing is said by name. A reader who
+          // is told only "not configured" has nothing to act on; a
+          // reader who is told the three names knows where to go.
+          const missing = payload.missingCredentials || [];
           const detail = [
-            [t('credential'), configured ? 'TIKTOK_APP_KEY / APP_SECRET / SERVICE_ID' : t('notConfigured')],
+            [t('credential'), configured
+              ? 'TIKTOK_APP_KEY / APP_SECRET / SERVICE_ID'
+              : `未配置：${missing.join('、') || t('notConfigured')}`],
             [t('region'), payload.regionGroup || 'ROW'],
             [t('shops'), shops.length ? `${shops.length}` : t('none')],
           ];
@@ -330,7 +337,18 @@
           connectBtn.disabled = !configured;
           // 不可用时用 title 说明原因，而不是把说明文字塞进按钮里 ——
           // 那样按钮看起来像是坏了。
-          connectBtn.title = configured ? '' : t('notConfigured');
+          connectBtn.title = configured
+            ? ''
+            : `未配置 ${missing.join('、') || '凭据'}，先在 TikTok Shop Partner Center 申请应用并填入服务端环境变量。`;
+          // 说清楚要做什么，而不是只说「没配」。
+          const setup = document.getElementById('tiktokSetupNote');
+          if (setup) {
+            setup.textContent = configured
+              ? ''
+              : `需要先在 TikTok Shop Partner Center 申请一个应用，然后在服务端配置 ${missing.join('、')}。`
+                + ' 配置好之后回到这里点「连接」，在 TikTok 的授权页勾选店铺即可。';
+            setup.classList.toggle('hidden', configured);
+          }
         } catch (error) {
           setState(state, 'error', t('error'));
           renderRows(document.getElementById('tiktokDetail'), [[t('token'), error.message]]);
