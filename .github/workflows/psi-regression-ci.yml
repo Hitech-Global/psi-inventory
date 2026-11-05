@@ -18,6 +18,8 @@ on:
       - 'test/inventory-import-precheck.test.cjs'
       - 'assets/finance-payment-calendar.js'
       - 'test/finance-payment-calendar.test.cjs'
+      - 'assets/pi-multi-po-ui.js'
+      - 'test/pi-multi-po-ui.test.cjs'
       - 'test/manual-payable-item.test.cjs'
       - 'test/finance-payment-overview-integration.test.cjs'
       - 'po-plan-server.js'
@@ -84,6 +86,8 @@ jobs:
           node --check test/inventory-import-precheck.test.cjs
           node --check assets/finance-payment-calendar.js
           node --check test/finance-payment-calendar.test.cjs
+          node --check assets/pi-multi-po-ui.js
+          node --check test/pi-multi-po-ui.test.cjs
           node --check test/manual-payable-item.test.cjs
           node --check po-plan-server.js
           node --check po-plan-ui.js
@@ -118,6 +122,8 @@ jobs:
         run: node --test test/ci-logistics-status-filter.test.cjs
       - name: Test opt-in page and API performance diagnostics
         run: node --test test/app-perf-diagnostics.test.cjs
+      - name: Test PI multi-PO picker
+        run: node --test test/pi-multi-po-ui.test.cjs
       - name: Test finance payment calendar and manual payable creation
         run: node --test test/finance-payment-calendar.test.cjs test/manual-payable-item.test.cjs test/finance-payment-overview-integration.test.cjs test/finance-payment-overview.test.cjs test/finance-payment-overview-sort.test.cjs
       - name: Test PI deposit payable date follows PI date

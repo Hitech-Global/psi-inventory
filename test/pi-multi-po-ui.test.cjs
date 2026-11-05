@@ -2,11 +2,11 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
 const source=fs.readFileSync(path.join(__dirname,'..','assets/pi-multi-po-ui.js'),'utf8');
 const PO=[
- {id:'p1',po_no:'PO-1',supplier_id:'s1',supplier_name:'Netac',country:'泰国',brand:'Netac',currency:'RMB',target_warehouse:'Bangkok',approval_status:'approved',po_status:'approved',
+ {id:'p1',po_no:'PO-1',po_date:'2026-11-04',remaining_pi_qty:85,supplier_id:'s1',supplier_name:'Netac',country:'泰国',brand:'Netac',currency:'RMB',target_warehouse:'Bangkok',approval_status:'approved',po_status:'approved',
   items:[{sku_code:'N1',po_qty:100,transferred_pi_qty:20,unit_price:10},{sku_code:'N2',po_qty:5,transferred_pi_qty:0,unit_price:4}]},
- {id:'p2',po_no:'PO-2',supplier_id:'s1',supplier_name:'Netac',country:'泰国',brand:'Netac',currency:'RMB',target_warehouse:'Bangkok',approval_status:'approved',po_status:'partial_pi',
+ {id:'p2',po_no:'PO-2',po_date:'2026-10-28',remaining_pi_qty:40,supplier_id:'s1',supplier_name:'Netac',country:'泰国',brand:'Netac',currency:'RMB',target_warehouse:'Bangkok',approval_status:'approved',po_status:'partial_pi',
   items:[{sku_code:'N1',po_qty:50,transferred_pi_qty:10,unit_price:12}]},
- {id:'p3',po_no:'PO-3',supplier_id:'s1',supplier_name:'Netac',country:'泰国',brand:'Netac',currency:'USD',target_warehouse:'Bangkok',approval_status:'approved',po_status:'approved',items:[]},
+ {id:'p3',po_no:'PO-3',po_date:'2026-11-01',remaining_pi_qty:0,supplier_id:'s1',supplier_name:'Netac',country:'泰国',brand:'Netac',currency:'USD',target_warehouse:'Bangkok',approval_status:'approved',po_status:'approved',items:[]},
  {id:'p4',po_no:'PO-4',supplier_id:'s2',supplier_name:'Redragon',country:'印度尼西亚',brand:'Redragon',currency:'RMB',target_warehouse:'Bekasi',approval_status:'approved',po_status:'approved',items:[]}
 ];
 function ui({deferred=false}={}){
@@ -38,6 +38,14 @@ function ui({deferred=false}={}){
  vm.createContext(ctx);vm.runInContext(source,ctx);
  return {ctx,elements,toast,deferredResolves,rendered:()=>rendered};
 }
+test('PO picker shows PO date and total quantity not yet converted into PI',()=>{
+ const u=ui();u.ctx.window.PIMultiPO.install();
+ const html=u.elements['pi-multi-po-picker'].innerHTML;
+ assert.match(html,/PO日期：2026\/11\/04/);
+ assert.match(html,/未转PI总数量：85/);
+ assert.match(html,/PO日期：2026\/10\/28/);
+ assert.match(html,/未转PI总数量：40/);
+});
 test('checkbox picker only lists matching supplier/country and includes partially transferred POs',()=>{
  const u=ui();u.ctx.window.PIMultiPO.install();
  assert.match(u.elements['pi-multi-po-picker'].innerHTML,/PO-1/);

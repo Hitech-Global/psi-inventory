@@ -95,11 +95,17 @@
      const conflict=!!first&&!compatible(first,po);
      const forbidden=!!reason||conflict;
      const hint=reason||(conflict?'品牌/仓库/币种不同，不可合并':'');
+     const poDate=String(po.po_date||'').slice(0,10).replace(/-/g,'/')||'—';
+     const remainingQty=Number(po.remaining_pi_qty);
+     const remainingText=Number.isFinite(remainingQty)?remainingQty.toLocaleString('en-US'):'—';
      return '<label class="pi-mpo-row" title="'+esc(hint)+'">'+
        '<input type="checkbox" '+(selected?'checked ':'')+(forbidden?'disabled ':'')+
        'onchange="piMultiPOToggle(decodeURIComponent(\''+encodeURIComponent(po.id).replace(/'/g,'%27')+'\'),this.checked)">'+
-       '<span>'+esc(po.po_no)+' · '+esc(po.currency)+' · '+esc(po.brand||'')+
-       ' · '+esc(po.target_warehouse||'')+'</span>'+
+       '<span class="pi-mpo-info">'+
+         '<span class="pi-mpo-main">'+esc(po.po_no)+' · '+esc(po.currency)+' · '+esc(po.brand||'')+
+         ' · '+esc(po.target_warehouse||'')+'</span>'+
+         '<span class="pi-mpo-meta">PO日期：'+esc(poDate)+' · 未转PI总数量：'+esc(remainingText)+'</span>'+
+       '</span>'+
        (reason?'<span class="pi-mpo-state" aria-label="'+esc(reason)+'">'+esc(reason)+'</span>':
          conflict?'<span class="pi-mpo-state">不能混选</span>':
          '<span class="pi-mpo-state pi-mpo-state-ok">'+esc(approvalNote(po))+'</span>')+'</label>';
@@ -153,7 +159,7 @@
      '<input id="pi-multi-po-search" type="search" placeholder="搜索 PO 编号" oninput="piMultiPORefresh()" style="width:100%;max-width:450px;margin-bottom:6px;padding:7px;border:1px solid var(--border,#ddd);border-radius:8px">'+
      '<div id="pi-multi-po-picker" style="max-height:165px;overflow:auto;border:1px solid var(--border,#ddd);border-radius:10px;padding:7px;background:var(--bg-card,#fff)"></div>'+
      '<div style="font-size:11px;color:var(--text-secondary,#888);margin-top:6px">草稿、待审批PO也可关联PI，但不会自动改变PO审批状态；已作废、已驳回及已全部转PI的PO不可选。多选同SKU按不同PO分行显示，更换PO会重置已填写的商品数量/单价。</div></div>'+
-     '<style>.pi-mpo-row{display:flex;gap:9px;align-items:center;padding:8px 10px;font-size:12px;cursor:pointer;border-radius:7px}.pi-mpo-row:hover{background:var(--bg-hover,#f4f6f9)}.pi-mpo-row:has(input:disabled){opacity:.65;cursor:not-allowed}.pi-mpo-state{font-size:11px;color:#94622d;margin-left:auto;white-space:nowrap}.pi-mpo-state-ok{color:#26794e}.pi-mpo-muted{font-size:12px;color:var(--text-secondary,#999);padding:12px}</style>';
+     '<style>.pi-mpo-row{display:flex;gap:9px;align-items:center;padding:8px 10px;font-size:12px;cursor:pointer;border-radius:7px}.pi-mpo-row:hover{background:var(--bg-hover,#f4f6f9)}.pi-mpo-row:has(input:disabled){opacity:.65;cursor:not-allowed}.pi-mpo-info{display:flex;flex:1;flex-direction:column;gap:3px;min-width:0}.pi-mpo-main{overflow-wrap:anywhere}.pi-mpo-meta{font-size:11px;color:var(--text-secondary,#888)}.pi-mpo-state{font-size:11px;color:#94622d;margin-left:auto;white-space:nowrap}.pi-mpo-state-ok{color:#26794e}.pi-mpo-muted{font-size:12px;color:var(--text-secondary,#999);padding:12px}</style>';
    const group=select.closest&&select.closest('.form-group');
    if(group){group.insertAdjacentHTML('afterend',wrapper);group.style.display='none';}
    else select.insertAdjacentHTML('afterend',wrapper);
