@@ -12169,8 +12169,8 @@ function ciPreviewAttachment(docType,id,field){
 // ==================== CI/PL管理 ====================
 function canImportHistoricalCI(){return hasPermission('ci_create')&&hasPermission('payment_create')&&hasPermission('payment_approve')}
 async function renderCI(){
-  const ciFilterControls = '<div class="filter-group"><label>'+t('field.country','国家')+'</label><select id="ci-country" onchange="onCIFilterChange()"><option value="">'+t('common.all','全部')+'</option></select></div><div class="filter-group"><label>'+t('field.target_warehouse','仓库')+'</label><select id="ci-warehouse" onchange="onCIFilterChange()"><option value="">'+t('common.all','全部')+'</option></select></div><div class="filter-group"><label>'+t('field.brand','品牌')+'</label><select id="ci-brand" onchange="onCIFilterChange()"><option value="">'+t('common.all','全部')+'</option></select></div>';
-  document.getElementById('content-inner').innerHTML=t('html.renderCI', '<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>单据类型</label><select id="ci-source-mode" onchange="onCISourceModeChange()"><option value="operational">运营 CI</option><option value="historical">历史 CI</option><option value="all">全部</option></select></div><div class="filter-group"><label>入库状态</label><select id="ci-inbound-fs"><option value="">全部</option><option value="none">未入库</option><option value="partial">部分入库</option><option value="completed">已入库</option></select></div>{v3}<div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadCI()">搜索</button>{v1}{v2}</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🚚 CI/PL列表</div></div><div id="ci-purchase-summary"></div><div id="ci-table"></div></div>', {v1: hasPermission('ci_create')?t('gen.L5756.1','<button class="btn btn-primary btn-sm" onclick="createCI()">➕ 新建CI</button>'):'', v2: '', v3: ciFilterControls});
+  const ciFilterControls = '<div class="filter-group"><label>'+t('logistics.detail.logistics_status','物流状态')+'</label><select id="ci-logistics-fs"><option value="">'+t('common.all','全部')+'</option>'+logisticsFilterOptions('')+'</select></div><div class="filter-group"><label>'+t('field.country','国家')+'</label><select id="ci-country" onchange="onCIFilterChange()"><option value="">'+t('common.all','全部')+'</option></select></div><div class="filter-group"><label>'+t('field.target_warehouse','仓库')+'</label><select id="ci-warehouse" onchange="onCIFilterChange()"><option value="">'+t('common.all','全部')+'</option></select></div><div class="filter-group"><label>'+t('field.brand','品牌')+'</label><select id="ci-brand" onchange="onCIFilterChange()"><option value="">'+t('common.all','全部')+'</option></select></div>';
+  document.getElementById('content-inner').innerHTML=t('html.renderCI', '<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>单据类型</label><select id="ci-source-mode" onchange="onCISourceModeChange()"><option value="operational">运营 CI</option><option value="historical">历史 CI</option><option value="all">全部</option></select></div>{v3}<div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadCI()">搜索</button>{v1}{v2}</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🚚 CI/PL列表</div></div><div id="ci-purchase-summary"></div><div id="ci-table"></div></div>', {v1: hasPermission('ci_create')?t('gen.L5756.1','<button class="btn btn-primary btn-sm" onclick="createCI()">➕ 新建CI</button>'):'', v2: '', v3: ciFilterControls});
   refreshCIFilterOptions();
   loadCI();
   // CI/PL PERF-01：purchase-amount-summary 为全局口径（不随筛选/单据类型变化），页面渲染时拉取一次；
@@ -12180,7 +12180,7 @@ async function renderCI(){
     if(el&&s) el.innerHTML=renderPurchaseAmountSummary(s);
   }).catch(function(){ /* 汇总拉取失败不影响列表 */ });
 }
-function onCISourceModeChange(){const mode=document.getElementById('ci-source-mode')?.value||'operational',fs=document.getElementById('ci-inbound-fs');if(fs)fs.disabled=mode==='historical';refreshCIFilterOptions();loadCI()}
+function onCISourceModeChange(){const mode=document.getElementById('ci-source-mode')?.value||'operational',fs=document.getElementById('ci-logistics-fs');if(fs)fs.disabled=mode==='historical';refreshCIFilterOptions();loadCI()}
 async function refreshCIFilterOptions(){
   try{
     const mode=document.getElementById('ci-source-mode')?.value||'operational';
@@ -12241,11 +12241,11 @@ async function loadCI(){
   try{
     // 性能层：注册 CI 列表后台刷新重渲染器
     try{ if(window.AppStore) AppStore.page.onRefresh('ci', function(){ try{ loadCI(); }catch(e){} }); }catch(e){}
-    const mode=document.getElementById('ci-source-mode')?.value||'operational',s=document.getElementById('ci-inbound-fs')?.value||'';
+    const mode=document.getElementById('ci-source-mode')?.value||'operational',logisticsStatus=document.getElementById('ci-logistics-fs')?.value||'';
     const country=document.getElementById('ci-country')?.value||'';
     const warehouse=document.getElementById('ci-warehouse')?.value||'';
     const brand=document.getElementById('ci-brand')?.value||'';
-    const opQ='inbound_status='+encodeURIComponent(s)+(country?'&country='+encodeURIComponent(country):'')+(warehouse?'&warehouse='+encodeURIComponent(warehouse):'')+(brand?'&brand='+encodeURIComponent(brand):'');
+    const opQ='logistics_display_status='+encodeURIComponent(logisticsStatus)+(country?'&country='+encodeURIComponent(country):'')+(warehouse?'&warehouse='+encodeURIComponent(warehouse):'')+(brand?'&brand='+encodeURIComponent(brand):'');
     const histQ=(country?'country='+encodeURIComponent(country):'')+(brand?'&brand='+encodeURIComponent(brand):'');
     // 性能层：CI/PL 列表走页面快照缓存（signature=mode+筛选；命中立即渲染，后台 stale-while-revalidate）
     const _ciSig=JSON.stringify([mode,opQ,histQ]);
