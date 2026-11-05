@@ -791,11 +791,11 @@ async function initDatabase() {
       last_error TEXT DEFAULT '',
       sent_at TEXT DEFAULT '',
       created_at TEXT DEFAULT NOW(),
-      updated_at TEXT DEFAULT NOW(),
+      updated_at TEXT DEFAULT NOW()
     )
   `);
 
-  await exec(\`DO $$
+  await exec(`DO $$
     DECLARE constraint_name TEXT;
     BEGIN
       FOR constraint_name IN
@@ -811,7 +811,7 @@ async function initDatabase() {
       LOOP
         EXECUTE format('ALTER TABLE wac_notification_logs DROP CONSTRAINT %I', constraint_name);
       END LOOP;
-    END $$;\`);
+    END $$;`);
 
   // ---------- 业务表 ----------
 
