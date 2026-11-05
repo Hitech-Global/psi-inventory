@@ -1,9 +1,17 @@
 (function(){
 'use strict';
 
-const BRAND_CCY=Object.freeze({Netac:'USD',Redragon:'RMB',BOYA:'RMB',Joypeer:'RMB',GoPro:'IDR'});
+const BRAND_CCY=Object.create(null);
 const pad=n=>String(n).padStart(2,'0');
 const clean=v=>String(v??'').trim();
+function setBrandCurrencies(mapping){
+  Object.keys(BRAND_CCY).forEach(k=>delete BRAND_CCY[k]);
+  Object.entries(mapping||{}).forEach(([brand,currency])=>{
+    const b=clean(brand),c=clean(currency).toUpperCase();
+    if(b&&c)BRAND_CCY[b]=c;
+  });
+  return {...BRAND_CCY};
+}
 const norm=v=>clean(v).toLowerCase().replace(/[\s_\-./\\()[\]{}:：;；,，]+/g,'');
 const partKey=v=>clean(v).toUpperCase();
 const mapKey=(supplier,brand,part)=>[supplier,brand,partKey(part)].join('\u0001');
@@ -250,7 +258,7 @@ function validateRows(rows){
 }
 
 window.QuotationImportNormalizer=Object.freeze({
-  normalizeDate,inferQuoteDate,normalizeRow,parseSheetRows,matchRows,validateRows,BRAND_CCY
+  normalizeDate,inferQuoteDate,normalizeRow,parseSheetRows,matchRows,validateRows,BRAND_CCY,setBrandCurrencies
 });
 
 function install(){
