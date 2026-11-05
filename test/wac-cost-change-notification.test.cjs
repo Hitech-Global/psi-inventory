@@ -136,7 +136,7 @@ test('WAC UI, retry API and both database adapters are wired',()=>{
   assert.equal(server.includes('ON CONFLICT (logistics_batch_id,recipient_user_id,part_no) DO NOTHING'),false);
   assert.match(server,/already_sent:alreadySent/);
   assert.match(ui,/已有抄送记录，可再次 CC/);
-  assert.match(ui,/已抄送过的人员也可再次选择/);
+  assert.match(ui,/已有抄送记录的人员也可再次选择/);
   assert.match(ui,/已抄送过的群也可再次选择/);
   assert.equal(ui.includes('!existing.has(String(u.id))'),false);
   assert.match(pg,/DROP CONSTRAINT/);
