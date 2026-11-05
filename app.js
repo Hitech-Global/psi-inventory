@@ -2300,39 +2300,55 @@ async function saveRolePermissions(roleId){
 let brandSettingsLoadSeq=0;
 async function renderBrandSettings(){
   const mySeq=++brandSettingsLoadSeq;
-  document.getElementById('content-inner').innerHTML=t('html.renderBrandSettings', '<div id="flash-container"></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🏷️ 品牌设置</div><div class="table-section-actions">{v1}</div></div><div id="brand-settings-table"></div></div>', {v1: hasPermission('system_config')?t('gen.L1045.1','<button class="btn btn-primary btn-sm" onclick="saveBrandSettings()">💾 保存采购状态</button>'):''});
+  document.getElementById('content-inner').innerHTML=t('html.renderBrandSettings', '<div id="flash-container"></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🏷️ 品牌设置</div><div class="table-section-actions">{v1}</div></div><div id="brand-settings-table"></div></div>', {v1: hasPermission('system_config')?t('gen.L1045.1','<button class="btn btn-primary btn-sm" onclick="saveBrandSettings()">💾 保存品牌设置</button>'):''});
   try{
-    const brands=await api('/api/brands/all');
+    const [brands,settings,skus,currencies]=await Promise.all([
+      api('/api/brands/all'),
+      api('/api/brand-settings').catch(()=>[]),
+      api('/api/skus'),
+      api('/api/currencies').catch(()=>[])
+    ]);
     if(mySeq!==brandSettingsLoadSeq||currentPage!=='brand-settings')return;
-    let settings=[];
-    try{ settings=await api('/api/brand-settings'); }catch(e){ settings=[]; }
-    if(mySeq!==brandSettingsLoadSeq||currentPage!=='brand-settings')return;
-    const statusMap={};
-    settings.forEach(s=>{ statusMap[s.brand]=s.procurement_status; });
-    const skus=await api('/api/skus');
-    if(mySeq!==brandSettingsLoadSeq||currentPage!=='brand-settings')return;
+    const statusMap={},currencyMap={};
+    settings.forEach(s=>{
+      statusMap[s.brand]=s.procurement_status;
+      currencyMap[s.brand]=String(s.default_quote_currency||'').toUpperCase();
+    });
     const brandCount={};
     skus.forEach(s=>{if(s.brand){brandCount[s.brand]=(brandCount[s.brand]||0)+1}});
+    const activeCurrencies=currencies.filter(c=>String(c.status||'active')==='active');
+    const currencyOptions='<option value="">未设置</option>'+activeCurrencies.map(c=>{
+      const code=String(c.code||'').toUpperCase();
+      const label=[code,c.name,c.symbol].filter(Boolean).join(' · ');
+      return '<option value="'+esc(code)+'">'+esc(label)+'</option>';
+    }).join('');
     if(!brands.length){
       const bsTbl0=document.getElementById('brand-settings-table');
       if(bsTbl0)bsTbl0.innerHTML='<div class="empty-state"><div class="empty-icon">🏷️</div>'+t('html.brand.emptyState','暂无品牌数据')+'<br><span style="font-size:12px;color:#999">'+t('html.brand.emptyStateHint','品牌来源于 SKU 主数据中的品牌字段')+'</span></div>';
       return;
     }
-    const html='<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>'+t('html.brand.colName','品牌名称')+'</th><th>'+t('html.brand.colSkuCount','关联SKU数')+'</th><th>'+t('html.brand.colStatus','采购状态')+'</th></tr></thead><tbody>'+brands.map(b=>{
-      const st=statusMap[b]||'active';
-      return '<tr><td class="cell-name">'+esc(b)+'</td><td>'+(brandCount[b]||0)+'</td>'+
-        '<td><select class="form-control input-sm" data-brand="'+esc(b)+'" style="width:140px">'+
-          '<option value="active"'+((st==='active')?' selected':'')+'>'+t('html.brand.statusActive','可采购')+'</option>'+
-          '<option value="stopped"'+((st==='stopped')?' selected':'')+'>'+t('html.brand.statusStopped','停采')+'</option>'+
-        '</select></td></tr>';
-    }).join('')+'</tbody></table></div>'+
-    '<div style="padding:12px 20px;color:#999;font-size:12px">💡 '+t('html.brand.statusHint','采购状态设为「停采」的品牌：不参与补货建议（建议采购固定为 0）、不进入 PO 候选、不要求命中目标周转规则、不阻止整页重新计算，但在订单预测页仍可见（便于清库存）。')+'</div>';
+    const html='<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr>'+
+      '<th>'+t('html.brand.colName','品牌名称')+'</th>'+
+      '<th>'+t('html.brand.colSkuCount','关联SKU数')+'</th>'+
+      '<th>'+t('html.brand.colStatus','采购状态')+'</th>'+
+      '<th>默认报价币种</th></tr></thead><tbody>'+brands.map(b=>{
+        const st=statusMap[b]||'active',currency=currencyMap[b]||'';
+        return '<tr><td class="cell-name">'+esc(b)+'</td><td>'+(brandCount[b]||0)+'</td>'+
+          '<td><select class="form-control input-sm" data-brand-status="'+esc(b)+'" style="width:120px">'+
+            '<option value="active"'+((st==='active')?' selected':'')+'>'+t('html.brand.statusActive','可采购')+'</option>'+
+            '<option value="stopped"'+((st==='stopped')?' selected':'')+'>'+t('html.brand.statusStopped','停采')+'</option>'+
+          '</select></td>'+
+          '<td><select class="form-control input-sm" data-brand-currency="'+esc(b)+'" style="width:190px">'+
+            currencyOptions.replace('value="'+esc(currency)+'"','value="'+esc(currency)+'" selected')+
+          '</select></td></tr>';
+      }).join('')+'</tbody></table></div>'+
+      '<div style="padding:12px 20px;color:#999;font-size:12px">💡 '+t('html.brand.statusHint','采购状态设为「停采」的品牌：不参与补货建议（建议采购固定为 0）、不进入 PO 候选、不要求命中目标周转规则、不阻止整页重新计算，但在订单预测页仍可见（便于清库存）。')+
+      '<br>默认报价币种用于报价管理的新报价导入和默认校验；币种选项来自「币种设置」。修改默认币种不会改写历史报价记录。</div>';
     const bsTbl=document.getElementById('brand-settings-table');
     if(!bsTbl)return;
     bsTbl.innerHTML=html;
-    // 语言切换刷新守卫：任一品牌采购状态下拉变更即标记未保存，阻止切换语言时整页刷新丢值
-    document.querySelectorAll('#brand-settings-table select[data-brand]').forEach(sel=>{
-      sel.addEventListener('change',()=>{ window.__brandUnsaved=true; });
+    document.querySelectorAll('#brand-settings-table select[data-brand-status],#brand-settings-table select[data-brand-currency]').forEach(sel=>{
+      sel.addEventListener('change',()=>{window.__brandUnsaved=true;});
     });
   }catch(e){
     if(mySeq===brandSettingsLoadSeq&&currentPage==='brand-settings')showFlash(e.message,'danger');
@@ -2340,15 +2356,21 @@ async function renderBrandSettings(){
 }
 async function saveBrandSettings(){
   try{
-    const selects=document.querySelectorAll('#brand-settings-table select[data-brand]');
+    const statusSelects=document.querySelectorAll('#brand-settings-table select[data-brand-status]');
+    const currencySelects=document.querySelectorAll('#brand-settings-table select[data-brand-currency]');
+    const currencyByBrand={};
+    currencySelects.forEach(s=>{currencyByBrand[s.getAttribute('data-brand-currency')]=s.value;});
     const items=[];
-    selects.forEach(s=>{ items.push({brand:s.getAttribute('data-brand'), procurement_status:s.value}); });
+    statusSelects.forEach(s=>{
+      const brand=s.getAttribute('data-brand-status');
+      items.push({brand,procurement_status:s.value,default_quote_currency:currencyByBrand[brand]||''});
+    });
     if(!items.length){showToast(t('toast.brand.noneToSave','没有可保存的品牌'),'warning');return;}
     await api('/api/brand-settings','POST',{items:items});
     window.__brandUnsaved=false;
-    showToast(t('toast.brand.savedStatus','已保存品牌采购状态'),'success');
+    showToast(t('toast.brand.savedStatus','品牌设置已保存'),'success');
     renderBrandSettings();
-  }catch(e){showToast(e.message||t("app.429", "\u4fdd\u5b58\u5931\u8d25"),'danger')}
+  }catch(e){showToast(e.message||t("app.429", "保存失败"),'danger')}
 }
 
 // ==================== 付款类目管理（L1B-2-2B 并行全量加载 + 请求版本防竞态 + 内存关联） ====================

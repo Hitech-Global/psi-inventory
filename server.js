@@ -2657,10 +2657,13 @@ app.get('/api/warehouses/by-country-brand', requireLogin, asyncHandler((req, res
 app.get('/api/brands/all', requireLogin, asyncHandler((req, res) => {
   let rows = query(`
     SELECT DISTINCT brand FROM (
-      SELECT brand FROM skus WHERE brand IS NOT NULL AND brand != ''
+      SELECT brand FROM brand_settings WHERE brand IS NOT NULL AND brand != ''
+      UNION SELECT brand FROM skus WHERE brand IS NOT NULL AND brand != ''
       UNION SELECT brand FROM purchase_orders WHERE brand IS NOT NULL AND brand != ''
       UNION SELECT brand FROM proforma_invoices WHERE brand IS NOT NULL AND brand != ''
       UNION SELECT brand FROM commercial_invoices WHERE brand IS NOT NULL AND brand != ''
+      UNION SELECT brand FROM quotation_prices WHERE brand IS NOT NULL AND brand != ''
+      UNION SELECT brand FROM supplier_brand_configs WHERE brand IS NOT NULL AND brand != ''
     ) ORDER BY brand
   `).rows.map(r => r.brand);
   // DATA-SCOPE: 根据角色数据权限过滤可见品牌
@@ -2672,28 +2675,47 @@ app.get('/api/brands/all', requireLogin, asyncHandler((req, res) => {
   }
   res.json(rows);
 }));
-// 品牌采购状态（停采品牌系统级规则）：读取/保存品牌级 可采购/停采
+// 品牌设置主数据：采购状态 + 默认报价币种。币种必须来自已启用的币种目录。
 app.get('/api/brand-settings', requireApiPermission('system_config'), asyncHandler((req, res) => {
   try {
-    const rows = query('SELECT brand, procurement_status, note FROM brand_settings ORDER BY brand').rows;
+    const rows = query('SELECT brand, procurement_status, note, default_quote_currency FROM brand_settings ORDER BY brand').rows;
     res.json(rows);
   } catch (e) { res.json([]); }
 }));
 app.post('/api/brand-settings', requireApiPermission('system_config'), asyncHandler((req, res) => {
   try {
     const items = Array.isArray(req.body && req.body.items) ? req.body.items : [];
-    const valid = items.filter(it => it && it.brand && (it.procurement_status === 'active' || it.procurement_status === 'stopped'));
-    if (!valid.length) return res.json({ success: false, message: '没有有效的品牌状态记录' });
+    const valid = items.filter(it => it && String(it.brand || '').trim() &&
+      (it.procurement_status === 'active' || it.procurement_status === 'stopped'));
+    if (!valid.length) return res.json({ success: false, message: '没有有效的品牌设置记录' });
+
+    const activeCurrencies = new Set(query("SELECT code FROM currencies WHERE status = 'active'").rows
+      .map(r => String(r.code || '').trim().toUpperCase()).filter(Boolean));
+    for (const it of valid) {
+      if (!Object.prototype.hasOwnProperty.call(it, 'default_quote_currency')) continue;
+      const currency = String(it.default_quote_currency || '').trim().toUpperCase();
+      if (currency && !activeCurrencies.has(currency)) {
+        return res.status(400).json({ error: '默认报价币种 ' + currency + ' 未在币种设置中启用' });
+      }
+    }
+
     transaction(() => {
       const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
       for (const it of valid) {
-        run(`INSERT INTO brand_settings (brand, procurement_status, note, updated_at) VALUES (?, ?, ?, ?)
-             ON CONFLICT(brand) DO UPDATE SET procurement_status=excluded.procurement_status, note=excluded.note, updated_at=excluded.updated_at`,
-          [String(it.brand).trim(), it.procurement_status, (it.note || '').toString(), now]);
+        const hasCurrency = Object.prototype.hasOwnProperty.call(it, 'default_quote_currency');
+        const currency = hasCurrency ? String(it.default_quote_currency || '').trim().toUpperCase() : '';
+        run(`INSERT INTO brand_settings (brand, procurement_status, note, default_quote_currency, updated_at)
+             VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT(brand) DO UPDATE SET
+               procurement_status=excluded.procurement_status,
+               note=excluded.note,
+               default_quote_currency=CASE WHEN ? = 1 THEN excluded.default_quote_currency ELSE brand_settings.default_quote_currency END,
+               updated_at=excluded.updated_at`,
+          [String(it.brand).trim(), it.procurement_status, (it.note || '').toString(), currency, now, hasCurrency ? 1 : 0]);
       }
     });
     res.json({ success: true, count: valid.length });
-  } catch (e) { res.json({ success: false, message: e.message }); }
+  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
 }));
 app.delete('/api/warehouses/:id', requireApiPermission('system_config'), asyncHandler((req, res) => {
   run('DELETE FROM warehouses WHERE id = ?', [req.params.id]);
