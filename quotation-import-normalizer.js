@@ -75,7 +75,8 @@ function classifyHeader(value){
   if(/^(currency|curr|币种|货币)$/.test(h))return 'currency';
   if(/^(quotedate|quotationdate|date|报价日期|日期)$/.test(h))return 'quote_date';
   if(/^(model|modelno|modelnumber|modelpn|modelpartnumber|型号|产品型号)$/.test(h))return 'model';
-  if(/^(spec|specification|capacity|memory|color|colour|size|规格|容量|颜色|容量规格)$/.test(h))return 'spec';
+  if(/^(capacity|capacitygb|capacitymb|capacitytb|容量)$/.test(h))return 'capacity';
+  if(/^(spec|specification|memory|color|colour|size|规格|颜色|容量规格)$/.test(h))return 'spec';
   if(/^(remark|remarks|note|notes|comment|comments|备注|说明)$/.test(h))return 'remark';
   if(/^(partno|partnumber|pn|itemno|itemnumber|itemcode|productcode|productno|productsku|suppliersku|supplierpartno|supplierpartnumber|vendorpartno|vendorpartnumber|货号|料号|供应商料号|供应商货号|供应商sku|产品编码|物料编码|sku|stockkeepingunit)$/.test(h))return 'supplier_part_no';
   if(/(fob|price|quote|quotation|unitprice|报价|单价|价格)/.test(h))return 'quote_price';
@@ -147,7 +148,7 @@ function parseSheetRows(sheets,options){
       const isNetac=brand.toLowerCase()==='netac';
       const productType=clean(product)||(isNetac?clean(sheet.name):clean(type));
       const capacity=cell(source,found.columns,'capacity').value;
-      const spec=isNetac?[type,capacity,rawSpec].map(clean).filter(Boolean).join(' / '):clean(rawSpec);
+      const spec=(isNetac?[type,capacity,rawSpec]:[capacity,rawSpec]).map(clean).filter(Boolean).join(' / ');
       const psiSku=cell(source,found.columns,'psi_sku_code').value;
       const remark=cell(source,found.columns,'remark').value;
       const price=parsePrice(priceCell.value);
