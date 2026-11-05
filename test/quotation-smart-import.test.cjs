@@ -242,12 +242,12 @@ const quotationServerSource=fs.readFileSync(path.join(__dirname,'..','quotation-
 const quotationUiSource=fs.readFileSync(path.join(__dirname,'..','quotation-management.js'),'utf8');
 const appSource=fs.readFileSync(path.join(__dirname,'..','app.js'),'utf8');
 const apiSource=fs.readFileSync(path.join(__dirname,'..','server.js'),'utf8');
-assert.doesNotMatch(fastImportSource,/const BRAND_CCY\\s*=/,'server importer must not contain a hardcoded brand currency map');
+assert.doesNotMatch(fastImportSource,/const BRAND_CCY\s*=/,'server importer must not contain a hardcoded brand currency map');
 assert.match(fastImportSource,/default_quote_currency/,'server importer must read default currency from brand settings');
 assert.match(fastImportSource,/FROM currencies WHERE status='active'/,'server importer must validate against active currency settings');
 assert.doesNotMatch(quotationServerSource,/BRAND_CCY/,'quotation analytics must not contain a hardcoded brand currency map');
 assert.match(quotationServerSource,/default_quote_currency/,'quotation analytics must read brand currency settings');
-assert.doesNotMatch(quotationUiSource,/const CCY\\s*=|Object\\.keys\\(CCY\\)/,'quotation UI must not maintain a hardcoded brand list');
-assert.match(quotationUiSource,/\\/api\\/brands\\/all/,'quotation UI must load brand choices from the brand master endpoint');
+assert.doesNotMatch(quotationUiSource,/const CCY\s*=|Object\.keys\(CCY\)/,'quotation UI must not maintain a hardcoded brand list');
+assert(quotationUiSource.includes('/api/brands/all'),'quotation UI must load brand choices from the brand master endpoint');
 assert.match(appSource,/data-brand-currency/,'brand settings UI must expose default quote currency');
 assert.match(apiSource,/default_quote_currency/,'brand settings API must persist and return default quote currency');
