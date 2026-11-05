@@ -60,6 +60,65 @@ test('ignores non-single rows even if they appear in 单个SKU sheet', () => {
   assert.equal(parsed.records[0].sku_code, 'SKU-A');
 });
 
+
+test('automatically maps every BigSeller source warehouse to the unique active Indonesia Bekasi Warehouse', () => {
+  const warehouses = [
+    { id: 'bekasi-actual-id', name: 'Bekasi Warehouse', country_name: '印度尼西亚', status: 'active' },
+    { id: 'jakarta-id', name: 'Jakarta Warehouse', country_name: '印度尼西亚', status: 'active' },
+    { id: 'kl-id', name: 'Bekasi Warehouse', country_name: '马来西亚', status: 'active' },
+    { id: 'old-bekasi-id', name: 'Bekasi Warehouse', country_name: '印度尼西亚', status: 'inactive' }
+  ];
+  const result = BigSeller.buildBekasiSourceMap(
+    ['Redragon Warehouse', 'Netac Warehouse', 'BOYA Warehouse', 'Joypeer Warehouse'],
+    warehouses
+  );
+  assert.equal(result.warehouse.id, 'bekasi-actual-id');
+  assert.equal(result.matchCount, 1);
+  assert.equal(result.error, '');
+  assert.equal(result.map['Redragon Warehouse'], 'bekasi-actual-id');
+  assert.equal(result.map['Netac Warehouse'], 'bekasi-actual-id');
+  assert.equal(result.map['BOYA Warehouse'], 'bekasi-actual-id');
+  assert.equal(result.map['Joypeer Warehouse'], 'bekasi-actual-id');
+});
+
+test('Bekasi auto-mapping fails closed when no unique active Indonesia warehouse exists', () => {
+  const noMatch = BigSeller.buildBekasiSourceMap(
+    ['Netac Warehouse'],
+    [{ id: 'inactive', name: 'Bekasi Warehouse', country_name: '印度尼西亚', status: 'inactive' }]
+  );
+  assert.equal(noMatch.warehouse, null);
+  assert.equal(noMatch.matchCount, 0);
+  assert.equal(noMatch.map['Netac Warehouse'], undefined);
+  assert.ok(noMatch.error.includes('未找到'));
+
+  const ambiguous = BigSeller.buildBekasiSourceMap(
+    ['Netac Warehouse'],
+    [
+      { id: 'bekasi-1', name: 'Bekasi Warehouse', country_name: '印度尼西亚', status: 'active' },
+      { id: 'bekasi-2', name: ' Bekasi   Warehouse ', country_name: '印度尼西亚', status: 'active' }
+    ]
+  );
+  assert.equal(ambiguous.warehouse, null);
+  assert.equal(ambiguous.matchCount, 2);
+  assert.equal(ambiguous.map['Netac Warehouse'], undefined);
+  assert.ok(ambiguous.error.includes('多个'));
+});
+
+test('BigSeller source labels stay traceable while all mapped stock lands in Bekasi', () => {
+  const raw = [
+    { sku_code: 'SKU-A', available_qty: 5, _sourceWarehouse: 'Netac Warehouse', _rowNum: 2, _baseErrors: [], _sourceRows: [2] },
+    { sku_code: 'SKU-B', available_qty: 7, _sourceWarehouse: 'Redragon Warehouse', _rowNum: 3, _baseErrors: [], _sourceRows: [3] }
+  ];
+  const warehouses = [{ id: 'bekasi-id', name: 'Bekasi Warehouse', country_name: '印度尼西亚', status: 'active' }];
+  const mapping = BigSeller.buildBekasiSourceMap(['Netac Warehouse', 'Redragon Warehouse'], warehouses);
+  const built = BigSeller.buildMappedRecords(raw, mapping.map, warehouses, false);
+  assert.equal(built.mappingReady, true);
+  assert.equal(built.records[0].warehouse, 'Bekasi Warehouse');
+  assert.equal(built.records[1].warehouse, 'Bekasi Warehouse');
+  assert.match(built.records[0].remark, /Netac Warehouse/);
+  assert.match(built.records[1].remark, /Redragon Warehouse/);
+});
+
 test('duplicate SKU rows are blocked by default for the same PSI destination', () => {
   const raw = [
     { sku_code: 'SKU-A', available_qty: 5, _sourceWarehouse: 'Netac Warehouse', _rowNum: 2, _baseErrors: [], _sourceRows: [2] },
