@@ -34,21 +34,21 @@ function patchIndexSource(src){
 }
 function patchQuotationServerSource(src){
   let out=src;
-  out=out.replace("const BRAND_CCY = Object.freeze({ Netac: 'USD', Redragon: 'RMB', BOYA: 'RMB', Joypeer: 'RMB', GoPro: 'IDR' });","const BRAND_CCY = Object.freeze({ Netac: 'USD', Redragon: 'RMB', BOYA: 'RMB', Joypeer: 'RMB' });");
+  // Preserve GoPro's IDR currency configuration when the production bootstrap runs.
   const old='sku_count:rows.length,history_count:history.length';
   const next="sku_count:new Set(rows.map(r=>String(r.sku_code||'').trim().toUpperCase())).size,history_count:history.length";
   if(out.includes(old))out=out.replace(old,next);
   return out;
 }
 function patchQuotationImportFastSource(src){
-  return src.replace("const BRAND_CCY=Object.freeze({Netac:'USD',Redragon:'RMB',BOYA:'RMB',Joypeer:'RMB',GoPro:'IDR'});","const BRAND_CCY=Object.freeze({Netac:'USD',Redragon:'RMB',BOYA:'RMB',Joypeer:'RMB'});");
+  return src;
 }
 function patchQuotationImportNormalizerSource(src){
-  return src.replace("const BRAND_CCY={Netac:'USD',Redragon:'RMB',BOYA:'RMB',Joypeer:'RMB',GoPro:'IDR'};","const BRAND_CCY={Netac:'USD',Redragon:'RMB',BOYA:'RMB',Joypeer:'RMB'};");
+  return src;
 }
 function patchQuotationManagementSource(src){
   let out=src;
-  out=out.replace("const CCY={Netac:'USD',Redragon:'RMB',BOYA:'RMB',Joypeer:'RMB',GoPro:'IDR'};","const CCY={Netac:'USD',Redragon:'RMB',BOYA:'RMB',Joypeer:'RMB'};");
+  // Keep all configured brand currencies intact during the production bootstrap.
   out=out.replace('当前品牌报价均按原采购币种比较；Netac / Redragon / BOYA / Joypeer 默认 RMB。','Netac 默认 USD；Redragon / BOYA / Joypeer 默认 RMB。报价与上次采购价只有同币种时才比较，不做汇率换算。');
   out=out.replace("品牌:'Netac',产品类型:'U盘',FOB价格:75,币种:'RMB'","品牌:'Netac',产品类型:'U盘',FOB价格:10.5,币种:'USD'");
   out=out.replace("$('#qm-count').textContent='共 '+r.length+' 个 SKU';","$('#qm-count').textContent='共 '+new Set(r.map(x=>String(x.sku_code||\'\').trim().toUpperCase())).size+' 个去重 SKU';");
