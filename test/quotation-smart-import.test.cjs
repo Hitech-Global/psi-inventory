@@ -195,6 +195,8 @@ const fakeApp={
 const fakeQuery=(sql,params)=>{
   operationOrder.push('query:'+sql.slice(0,40));
   if(sql.includes('FROM suppliers WHERE id='))return {rows:[{id:'supplier-netac',name:'Netac',associated_brands:'["Netac"]',default_currency:'RMB',status:'active'}]};
+  if(sql.includes('FROM brand_settings'))return {rows:[{brand:'Netac',procurement_status:'active',default_quote_currency:'USD'}]};
+  if(sql.includes('FROM currencies WHERE status='))return {rows:[{code:'USD'}]};
   if(sql.includes('FROM skus WHERE COALESCE'))return {rows:[{sku_code:'SKU-1',brand:'Netac',category:'SSD',model:'Model 1',color_spec:'256GB'},{sku_code:'SKU-2',brand:'Netac',category:'USB',model:'Model 2',color_spec:'128GB'}]};
   if(sql.includes('FROM quotation_sku_mappings WHERE supplier_id='))return {rows:[]};
   if(sql.includes('WITH incoming'))return {rows:[{supplier_id:'supplier-netac',sku_code:'SKU-2',brand:'Netac',quote_date:'2026-11-04'}]};
