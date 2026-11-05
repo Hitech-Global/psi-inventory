@@ -10,10 +10,17 @@ const document={readyState:'complete',addEventListener(){}};
 vm.runInNewContext(source,{window,document,setTimeout(){},console},{timeout:1000});
 const n=window.QuotationImportNormalizer;
 assert(n,'quotation import normalizer must be exposed');
-assert.equal(n.BRAND_CCY.GoPro,'IDR','GoPro quote currency must default to IDR');
+assert.equal(n.BRAND_CCY.GoPro,undefined,'brand currency defaults must not be hardcoded in the browser');
+n.setBrandCurrencies({Netac:'USD',Redragon:'RMB',BOYA:'RMB',Joypeer:'RMB',GoPro:'IDR'});
+assert.equal(n.BRAND_CCY.GoPro,'IDR','GoPro currency should come from brand settings');
 const goproNormalized=n.normalizeRow({SKU:'CHDHW-010-RW',brand:'GoPro',quote_price:12300000,quote_date:'2026-11-01'});
 assert.equal(goproNormalized.currency,'IDR','GoPro rows should inherit IDR when currency is omitted');
 assert.equal(n.validateRows([goproNormalized]).length,0,'GoPro IDR quote rows should pass validation');
+n.setBrandCurrencies({GoPro:'THB'});
+const changedDefault=n.normalizeRow({SKU:'CHDHW-010-RW',brand:'GoPro',quote_price:12300000,quote_date:'2026-11-01'});
+assert.equal(changedDefault.currency,'THB','changing brand settings should update importer defaults');
+assert.equal(n.validateRows([changedDefault]).length,0,'validation should use the current master-data currency');
+n.setBrandCurrencies({Netac:'USD',Redragon:'RMB',BOYA:'RMB',Joypeer:'RMB',GoPro:'IDR'});
 
 const parsed=n.parseSheetRows([
   {name:'Price List',rows:[
@@ -224,3 +231,18 @@ const duplicateCheckAt=operationOrder.findIndex(x=>x.startsWith('query:WITH inco
 assert(historyUpdateAt>=0&&duplicateCheckAt>historyUpdateAt,'historical rows must be linked before duplicate checks to avoid duplicate quote history');
 }
 runBackendImportTest().then(()=>console.log('quotation-smart-import: PASS')).catch(err=>{console.error(err);process.exitCode=1;});
+
+const fastImportSource=fs.readFileSync(path.join(__dirname,'..','quotation-import-fast.js'),'utf8');
+const quotationServerSource=fs.readFileSync(path.join(__dirname,'..','quotation-server.js'),'utf8');
+const quotationUiSource=fs.readFileSync(path.join(__dirname,'..','quotation-management.js'),'utf8');
+const appSource=fs.readFileSync(path.join(__dirname,'..','app.js'),'utf8');
+const apiSource=fs.readFileSync(path.join(__dirname,'..','server.js'),'utf8');
+assert.doesNotMatch(fastImportSource,/const BRAND_CCY\\s*=/,'server importer must not contain a hardcoded brand currency map');
+assert.match(fastImportSource,/default_quote_currency/,'server importer must read default currency from brand settings');
+assert.match(fastImportSource,/FROM currencies WHERE status='active'/,'server importer must validate against active currency settings');
+assert.doesNotMatch(quotationServerSource,/BRAND_CCY/,'quotation analytics must not contain a hardcoded brand currency map');
+assert.match(quotationServerSource,/default_quote_currency/,'quotation analytics must read brand currency settings');
+assert.doesNotMatch(quotationUiSource,/const CCY\\s*=|Object\\.keys\\(CCY\\)/,'quotation UI must not maintain a hardcoded brand list');
+assert.match(quotationUiSource,/\\/api\\/brands\\/all/,'quotation UI must load brand choices from the brand master endpoint');
+assert.match(appSource,/data-brand-currency/,'brand settings UI must expose default quote currency');
+assert.match(apiSource,/default_quote_currency/,'brand settings API must persist and return default quote currency');
