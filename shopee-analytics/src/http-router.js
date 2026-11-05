@@ -804,6 +804,88 @@ function createShopeeAnalyticsRouter({
   // 登录页与「平台接入」页共用这两个端点：状态查询给界面展示，
   // start 发起授权并跳转，callback 接收平台回跳。
 
+  /**
+   * TikTok 配置自检。
+   *
+   * ★ 为什么需要这个
+   *   之前点「授权」只会得到一个 TIKTOK_APP_KEY_MISSING 错误码，
+   *   读的人不知道还缺哪些、去哪拿。
+   *   这里逐项列出：配没配、缺的话去哪里取、填进去会怎样。
+   *
+   * ★ 只回「配没配」，不回值 —— 密钥绝不能出现在响应里。
+   */
+  router.get('/tiktok/config', async (req, res, next) => {
+    try {
+      const shop = [
+        {
+          key: 'TIKTOK_APP_KEY',
+          label: 'TikTok Shop 应用 ID',
+          where: 'Partner Center → My Apps → App Detail → Basic Information',
+          note: '应用的后台标识，与 secret 成对。',
+        },
+        {
+          key: 'TIKTOK_APP_SECRET',
+          label: 'TikTok Shop 应用密钥',
+          where: '同上（App Detail 页）',
+          note: '与 app_key 成对；密钥不完整时平台会报权限不足。',
+        },
+        {
+          key: 'TIKTOK_SERVICE_ID',
+          label: '服务标识',
+          where: 'Partner Center → My Apps → App Detail → 授权的 API 服务',
+          note: '申请了哪些服务就有哪些 service_id；填了没申请的服务会被平台拒。',
+        },
+        {
+          key: 'TIKTOK_REDIRECT_URL',
+          label: '授权回调地址',
+          where: 'Partner Center → My Apps → App Detail → 授权回调地址',
+          note: '必须与应用后台登记的完全一致，否则平台不会跳回来。',
+        },
+      ];
+      const marketing = [
+        {
+          key: 'TIKTOK_MARKETING_APP_ID',
+          label: 'Marketing 应用 ID',
+          where: 'TikTok API for Business 开发者门户 → My Apps',
+          note: '广告线用，与上面的 Shop 应用是两套独立的凭据。',
+        },
+        {
+          key: 'TIKTOK_MARKETING_APP_SECRET',
+          label: 'Marketing 应用密钥',
+          where: '同上',
+          note: '与 app_id 成对。',
+        },
+        {
+          key: 'TIKTOK_MARKETING_REDIRECT_URL',
+          label: '广告授权回调地址',
+          where: '开发者门户 → My Apps → 授权回调地址',
+          note: '与 Shop 侧的回调地址不同，别填错。',
+        },
+      ];
+      const describe = (items) => items.map(item => ({
+        key: item.key,
+        label: item.label,
+        where: item.where,
+        note: item.note,
+        configured: Boolean(String(process.env[item.key] || '').trim()),
+      }));
+      const shopItems = describe(shop);
+      const marketingItems = describe(marketing);
+      res.json({
+        shop: {
+          items: shopItems,
+          ready: shopItems.every(item => item.configured),
+          missing: shopItems.filter(item => !item.configured).map(item => item.key),
+        },
+        marketing: {
+          items: marketingItems,
+          ready: marketingItems.every(item => item.configured),
+          missing: marketingItems.filter(item => !item.configured).map(item => item.key),
+        },
+      });
+    } catch (error) { next(error); }
+  });
+
   router.get('/tiktok/status', async (req, res, next) => {
     try {
       if (!tiktokOAuthService) throw Object.assign(new Error('TikTok OAuth service is unavailable'), { status: 503 });
@@ -818,6 +900,19 @@ function createShopeeAnalyticsRouter({
         return;
       }
       if (!tiktokOAuthService) throw Object.assign(new Error('TikTok OAuth service is unavailable'), { status: 503 });
+      // 授权前先看配置齐不齐 —— 缺配置时给出清单，
+      // 而不是让用户撞到一个 TIKTOK_APP_KEY_MISSING 错误码。
+      const missing = ['TIKTOK_APP_KEY', 'TIKTOK_APP_SECRET', 'TIKTOK_SERVICE_ID', 'TIKTOK_REDIRECT_URL']
+        .filter(key => !String(process.env[key] || '').trim());
+      if (missing.length) {
+        res.status(503).json({
+          error: 'TIKTOK_CONFIG_INCOMPLETE',
+          message: 'TikTok 店铺授权的应用凭据还没配齐。',
+          missing,
+          hint: '这些值在 TikTok Shop Partner Center 的应用后台取得，填进生产机 runtime/.env 后重启 app 容器。',
+        });
+        return;
+      }
       const result = await tiktokOAuthService.beginAuthorization();
       res.setHeader('Set-Cookie', tiktokStateCookie(result.state, result.ttlSeconds));
       res.redirect(302, result.authorizationUrl);

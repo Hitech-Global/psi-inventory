@@ -908,3 +908,26 @@ tbody td{font-weight:400}
 .tiktok-health-status.watch{background:#fffaeb;color:#b54708}
 .tiktok-health-status.poor{background:#fef3f2;color:#b42318}
 .tiktok-health-status.unknown{background:#f2f4f7;color:#667085}
+
+/* ===== TikTok 开放平台配置清单 =====
+   授权前先说清缺哪几项、去哪拿 —— 别让人跳到平台授权页才撞上错误码。 */
+.platform-config{margin:10px 0 0}
+.platform-config-box{
+  border:1px solid #f5c26b;background:#fffaeb;border-radius:10px;padding:11px 13px;
+}
+.platform-config-box strong{display:block;font-size:12px;color:#854f0b}
+.platform-config-lead{margin:6px 0 9px;font-size:11px;color:#b54708;line-height:1.55}
+.platform-config-list{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:7px}
+.platform-config-list li{
+  display:grid;grid-template-columns:auto 1fr;gap:2px 9px;align-items:baseline;
+  padding-bottom:7px;border-bottom:1px solid rgba(180,120,20,.16);
+}
+.platform-config-list li:last-child{border-bottom:0;padding-bottom:0}
+.platform-config-key{
+  font-family:var(--font-mono);font-size:11px;color:#854f0b;
+  background:#fef0c7;padding:1px 6px;border-radius:4px;white-space:nowrap;
+}
+.platform-config-list li.ok .platform-config-key{background:#ecfdf3;color:#027a48}
+.platform-config-label{font-size:12px;color:#633806}
+.platform-config-where{grid-column:2;font-size:11px;color:#b54708}
+.platform-config-note{grid-column:2;font-size:11px;color:#854f0b;opacity:.8;line-height:1.5}

@@ -177,6 +177,7 @@ const TEXT = {
               </div>
               <div class="platform-detail">
                 <dl id="platformTiktokDetail"></dl>
+                <div id="platformTiktokConfig" class="platform-config hidden"></div>
                 <ul class="shop-list" id="platformTiktokShops"></ul>
               </div>
               <div class="platform-actions">
@@ -191,6 +192,59 @@ const TEXT = {
       </div>`;
     document.body.appendChild(modal);
     return modal;
+  }
+
+  /**
+   * 显示 TikTok 的配置清单。
+   *
+   * ★ 只显示「配没配」，不显示值 —— 密钥不能出现在页面上。
+   *
+   * @param {object} config /tiktok/config 的返回
+   */
+  function renderTiktokConfig(config) {
+    const host = document.getElementById('platformTiktokConfig');
+    if (!host) return;
+    const shop = (config && config.shop) || {};
+    const items = shop.items || [];
+    const missing = shop.missing || [];
+    if (!items.length || !missing.length) {
+      host.innerHTML = '';
+      host.classList.add('hidden');
+      return;
+    }
+    const lines = items.map(item => `
+      <li class="${item.configured ? 'ok' : 'missing'}">
+        <span class="platform-config-key">${escapeHtml(item.key)}</span>
+        <span class="platform-config-label">${escapeHtml(item.label)}</span>
+        <span class="platform-config-where">${escapeHtml(item.where)}</span>
+        <span class="platform-config-note">${escapeHtml(item.note || '')}</span>
+      </li>`).join('');
+    host.innerHTML = '<div class="platform-config-box">'
+      + '<strong>店铺授权还差 ' + missing.length + ' 项配置</strong>'
+      + '<p class="platform-config-lead">这些值要填进生产机 runtime/.env，然后重启 app 容器。填齐之前点「授权」只会报错。</p>'
+      + '<ul class="platform-config-list">' + lines + '</ul>'
+      + '</div>';
+    host.classList.remove('hidden');
+  }
+
+  /**
+   * 转义 HTML。
+   *
+   * ★ 本文件自带，不依赖别处的全局版本 ——
+   *   app.js 里的 escapeHtml 是模块内的局部函数，没挂到 window，
+   *   跨文件用它是未定义引用（会在渲染时才炸）。
+   *
+   * @param {*} value
+   * @returns {string}
+   */
+  function escapeHtml(value) {
+    if (value === null || value === undefined) return '';
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
   function setState(element, kind, label) {
@@ -244,7 +298,12 @@ const TEXT = {
     const state = document.getElementById('platformTiktokState');
     setState(state, 'off', t('checking'));
     try {
-      const payload = await request(`${API}/tiktok/status`);
+      // 配置清单与状态一起取 —— 状态说「有没有授权过」，
+      // 配置清单说「还缺什么才能授权」，两件事都要看得见。
+      const [payload, config] = await Promise.all([
+        request(`${API}/tiktok/status`),
+        request(`${API}/tiktok/config`).catch(() => null),
+      ]);
       const shops = payload.shops || [];
       const configured = Boolean(payload.credentialsConfigured);
       setState(state, configured ? 'ready' : 'off', configured ? t('ready') : t('off'));
@@ -257,6 +316,7 @@ const TEXT = {
         [t('cipher'), payload.cipherBound ? (payload.cipherLabel || '') : t('none')],
       ]);
       renderShopList(document.getElementById('platformTiktokShops'), shops);
+      if (config) renderTiktokConfig(config);
     } catch (error) {
       setState(state, 'error', t('error'));
       renderRows(document.getElementById('platformTiktokDetail'), [[t('token'), error.message]]);
@@ -416,12 +476,27 @@ const TEXT = {
     }
     if (event.target.closest('#platformTiktokConnect')) {
       event.preventDefault();
-      // The platform's own authorization page is somewhere else entirely,
-      // so where to come back to is kept before leaving.
-      try {
-        sessionStorage.setItem('platformConnectionsReturn', location.pathname + location.hash);
-      } catch (error) { /* a browser that will not remember is not a reason to stop */ }
-      location.href = `${API}/tiktok/oauth/start`;
+      // ★ 先看配置齐不齐。
+      //   缺配置时留在这里、把缺哪几项和去哪拿说清楚 ——
+      //   跳到平台的授权页只会得到一个读不懂的错误码。
+      request(`${API}/tiktok/config`)
+        .then(config => {
+          const shop = (config && config.shop) || {};
+          if (shop.ready) {
+            // The platform's own authorization page is somewhere else entirely,
+            // so where to come back to is kept before leaving.
+            try {
+              sessionStorage.setItem('platformConnectionsReturn', location.pathname + location.hash);
+            } catch (error) { /* a browser that will not remember is not a reason to stop */ }
+            location.href = `${API}/tiktok/oauth/start`;
+            return;
+          }
+          renderTiktokConfig(config);
+        })
+        .catch(() => {
+          // 连配置都取不到时不拦着 —— 让平台自己回错误，比这里猜要准。
+          location.href = `${API}/tiktok/oauth/start`;
+        });
     }
   });
 
