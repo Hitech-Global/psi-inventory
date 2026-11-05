@@ -271,7 +271,7 @@
     if (has('/api/suppliers')) { refs.push('suppliers'); }
     if (has('/api/warehouses')) { pages.push('inv-filter-options'); refs.push('warehouses', 'warehouseCountries'); }
     if (has('/api/countries')) { refs.push('countries'); }
-    if (has('/api/brands')) { refs.push('brands'); }
+    if (has('/api/brands') || has('/api/brand-settings')) { refs.push('brands'); }
     if (has('/api/currencies')) { refs.push('currencies'); }
     if (has('/api/sales')) { pages.push('outbound', 'replenishment'); }
     return { pages: Array.from(new Set(pages)), refs: Array.from(new Set(refs)) };
@@ -287,6 +287,10 @@ function onMutation(method, url, body) {
       // Keep the two cache layers coherent without clearing unrelated master data.
       try { if (window._masterCache && Object.prototype.hasOwnProperty.call(window._masterCache, r)) window._masterCache[r] = null; } catch (e2) {}
     });
+    // 品牌默认报价币种或币种目录变化时，清理报价管理模块自己的摘要/明细缓存。
+    if (url && (url.indexOf('/api/brand-settings') !== -1 || url.indexOf('/api/currencies') !== -1)) {
+      try { if (typeof window.refreshQuotationManagement === 'function') window.refreshQuotationManagement(); } catch (e2) {}
+    }
     // 物流决策 detail 缓存按 combo 分键（logistics-decision-detail|range|country|transport），
     // 无法预知具体 combo，故按前缀精准打脏所有已缓存的 detail 桶（不全局清 AppStore）。
     if (url && url.indexOf('/api/logistics-batches') !== -1 && url.indexOf('/notify') === -1) {
