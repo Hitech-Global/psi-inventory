@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'app.js'
+      - 'test/ci-logistics-status-filter.test.cjs'
       - 'test/supplier-pi-preview-alignment.test.cjs'
       - 'app-perf.js'
       - 'test/app-perf-diagnostics.test.cjs'
@@ -61,6 +62,7 @@ jobs:
       - name: Check frontend and backend syntax
         run: |
           node --check app.js
+          node --check test/ci-logistics-status-filter.test.cjs
           node --check test/supplier-pi-preview-alignment.test.cjs
           node --check app-perf.js
           node --check test/app-perf-diagnostics.test.cjs
@@ -92,6 +94,8 @@ jobs:
           node --check test/wac-batch-exclusion.test.cjs
       - name: Test supplier PI import preview table alignment
         run: node --test test/supplier-pi-preview-alignment.test.cjs
+      - name: Test CI logistics-status filter
+        run: node --test test/ci-logistics-status-filter.test.cjs
       - name: Test opt-in page and API performance diagnostics
         run: node --test test/app-perf-diagnostics.test.cjs
       - name: Test finance payment calendar and manual payable creation

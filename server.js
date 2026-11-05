@@ -10358,7 +10358,7 @@ function getPiTransitAssets(foreignToRmbMap, piScopeSql, piScopeParams, opts) {
 }
 
 app.get('/api/commercial-invoices', requireApiPermission('ci_view'), asyncHandler((req, res) => {
-  const { inbound_status, keyword, related_pi, country, warehouse, brand } = req.query;
+  const { inbound_status, logistics_display_status, keyword, related_pi, country, warehouse, brand } = req.query;
   // 差异 = CI金额 - 已付定金 - 应付尾款（付款闭环校验）
   let sql = 'SELECT *, (goods_amount - COALESCE(actual_deducted_deposit, 0) - COALESCE(payable_balance, 0)) AS amount_difference FROM commercial_invoices WHERE 1=1';
   const params = [];
@@ -10438,7 +10438,9 @@ app.get('/api/commercial-invoices', requireApiPermission('ci_view'), asyncHandle
       r.ci_logistics_display_status = '';
     }
 
-    // 按 inbound_status 筛选（派生字段，post-query 过滤）
+    // 与 CI 列表展示一致：按关联物流批次的最高物流阶段筛选。
+    if (logistics_display_status && r.ci_logistics_display_status !== logistics_display_status) return false;
+    // 保留旧 inbound_status 参数兼容已有外部调用方；CI 页面已改用物流状态筛选。
     if (inbound_status && inboundDerived !== inbound_status) return false;
     return true;
   });
