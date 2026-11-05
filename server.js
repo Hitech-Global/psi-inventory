@@ -9855,6 +9855,16 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
     const lockReason = getPILockReason(pi);
     if (lockReason) return res.status(409).json({ error: '该 PI 当前不可编辑（' + lockReason + '）', locked: true, lock_reason: lockReason });
 
+    const nextPiDate = d.pi_date !== undefined ? String(d.pi_date || '').trim() : String(pi.pi_date || '').trim();
+    if (d.pi_date !== undefined) {
+      const dateMatch = /^\\d{4}-\\d{2}-\\d{2}$/.test(nextPiDate);
+      const parsedDate = dateMatch ? new Date(nextPiDate + 'T00:00:00Z') : null;
+      if (!dateMatch || !parsedDate || !Number.isFinite(parsedDate.getTime()) ||
+          parsedDate.toISOString().slice(0, 10) !== nextPiDate) {
+        return res.status(400).json({ error: 'PI日期必须为有效的 YYYY-MM-DD 日期' });
+      }
+    }
+
     // 定金/比例口径（优先取请求值，否则保持原值）
     const needDeposit = d.need_deposit !== undefined
       ? (d.need_deposit === false || d.need_deposit === 0 || d.need_deposit === '0' ? 0 : 1)
@@ -10037,6 +10047,8 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
       fields.push(`updated_at = datetime('now')`);
       values.push(id);
       run(`UPDATE proforma_invoices SET ${fields.join(', ')} WHERE id = ?`, values);
+      // PI 日期是定金应付日期的来源；日期修改后同步未结定金及待处理付款申请。
+      if (d.pi_date !== undefined) syncPiDepositPayableDate(id, nextPiDate);
       // 库存派生刷新（updateInventoryTransitData）已移出本事务，待 COMMIT 成功后执行（见下方 P0-B）
     });
 
@@ -13836,6 +13848,14 @@ function createPayableItemFromSource(params) {
      payerEntityKey = 'self', payerName = ''
   } = params;
 
+  // PI 定金应付日期以 PI 主表 pi_date 为唯一来源，不使用创建时间或手工传入日期。
+  let effectivePayableDate = String(payableDate || '').trim();
+  if (sourceType === 'pi' && feeType === 'deposit') {
+    const piDateRow = queryOne('SELECT pi_date FROM proforma_invoices WHERE id = ?', [sourceId]);
+    const piDate = String(piDateRow && piDateRow.pi_date || '').trim();
+    if (piDate) effectivePayableDate = piDate;
+  }
+
   // V5 规则：应付金额 <= 0 不创建
   const amountMinor = Math.round((Number(payableAmount) || 0) * 100);
   if (amountMinor <= 0) {
@@ -13845,6 +13865,12 @@ function createPayableItemFromSource(params) {
   // 幂等：已存在 active 记录则返回已有记录，不重复创建
   const existing = findActivePayableItem(sourceType, sourceId, feeType, sourceCiId);
   if (existing) {
+    if (sourceType === 'pi' && feeType === 'deposit' && effectivePayableDate) {
+      run('UPDATE payable_items SET payable_date = ? WHERE id = ? AND lifecycle_status = ?', [
+        effectivePayableDate, existing.id, 'active'
+      ]);
+      existing.payable_date = effectivePayableDate;
+    }
     return existing;
   }
 
@@ -13877,10 +13903,84 @@ function createPayableItemFromSource(params) {
     [id, feeNo, sourceType, sourceId, sourceNo, sourceCiId, feeType,
      categoryCode || '', subcategoryCode || '',
      payeeType || '', payeeKey, payeeName || '',
-     payerEntityKey || 'self', payerName || '', currency, amountMinor, payableDate || '', createdBy]
+     payerEntityKey || 'self', payerName || '', currency, amountMinor, effectivePayableDate || '', createdBy]
   );
 
   return { id, fee_no: feeNo, lifecycle_status: 'active', payable_amount_minor: amountMinor };
+}
+
+/**
+ * PI 定金应付日期同步：
+ * - PI 日期修改时，同步未结清的 payable_item；
+ * - 同步仍在审批/待付款阶段的付款申请日期；
+ * - 不改动已付款、已取消等终态记录。
+ */
+function syncPiDepositPayableDate(piId, piDate) {
+  const date = String(piDate || '').trim();
+  if (!piId || !date) return { payableItems: 0, paymentRequests: 0 };
+
+  const payableResult = run(
+    `UPDATE payable_items
+       SET payable_date = ?
+     WHERE source_type = 'pi' AND source_id = ? AND fee_type = 'deposit'
+       AND lifecycle_status IN ('active', 'reserved', 'partially_paid')`,
+    [date, piId]
+  );
+  const requestResult = run(
+    `UPDATE payment_requests
+       SET payable_date = ?, updated_at = datetime('now')
+     WHERE source_type = 'pi' AND source_id = ? AND payment_subcategory = 'deposit'
+       AND COALESCE(approval_status, '') NOT IN ('cancelled', 'rejected')
+       AND COALESCE(payment_status, '') NOT IN ('paid', 'partial_paid', 'deduction_settled', 'cancelled', 'rejected')`,
+    [date, piId]
+  );
+  return {
+    payableItems: Number(payableResult && (payableResult.changes ?? payableResult.rowCount) || 0),
+    paymentRequests: Number(requestResult && (requestResult.changes ?? requestResult.rowCount) || 0)
+  };
+}
+
+/**
+ * 启动时幂等回填历史 PI 定金日期：
+ * PI 定金 payable_date = proforma_invoices.pi_date。
+ * 只更新非取消记录的日期字段，不改金额、付款流水、审批状态或实际付款日期。
+ */
+function backfillPiDepositPayableDates() {
+  const payableResult = run(
+    `UPDATE payable_items
+       SET payable_date = (
+         SELECT pi.pi_date FROM proforma_invoices pi WHERE pi.id = payable_items.source_id
+       )
+     WHERE source_type = 'pi' AND fee_type = 'deposit'
+       AND lifecycle_status IN ('active', 'reserved', 'partially_paid', 'paid')
+       AND EXISTS (
+         SELECT 1 FROM proforma_invoices pi
+          WHERE pi.id = payable_items.source_id AND COALESCE(pi.pi_date, '') <> ''
+       )
+       AND COALESCE(payable_date, '') <> (
+         SELECT pi.pi_date FROM proforma_invoices pi WHERE pi.id = payable_items.source_id
+       )`
+  );
+  const requestResult = run(
+    `UPDATE payment_requests
+       SET payable_date = (
+         SELECT pi.pi_date FROM proforma_invoices pi WHERE pi.id = payment_requests.source_id
+       ), updated_at = datetime('now')
+     WHERE source_type = 'pi' AND payment_subcategory = 'deposit'
+       AND COALESCE(approval_status, '') NOT IN ('cancelled', 'rejected')
+       AND COALESCE(payment_status, '') NOT IN ('cancelled', 'rejected')
+       AND EXISTS (
+         SELECT 1 FROM proforma_invoices pi
+          WHERE pi.id = payment_requests.source_id AND COALESCE(pi.pi_date, '') <> ''
+       )
+       AND COALESCE(payable_date, '') <> (
+         SELECT pi.pi_date FROM proforma_invoices pi WHERE pi.id = payment_requests.source_id
+       )`
+  );
+  return {
+    payableItems: Number(payableResult && (payableResult.changes ?? payableResult.rowCount) || 0),
+    paymentRequests: Number(requestResult && (requestResult.changes ?? requestResult.rowCount) || 0)
+  };
 }
 
 /**
@@ -16889,7 +16989,7 @@ app.get('/api/payment-requests', requireApiPermission('payment_view'), asyncHand
 // 口径全部复用已冻结实现：
 //  - 未结清 = paymentSettlementFacts().outstanding（payable - 有效付款 - 有效抵扣 - 有效抹零，仅 status='applied'）
 //  - 状态   = derivePaymentStatus()
-//  - 到期日 = 持久化 payable_date（由 computePayableDate 在建单时写入；空则归入"无到期日"桶，不臆造）
+//  - 到期日 = 持久化 payable_date（PI 定金取 PI 日期；CI Credit 尾款按实际出货日期 + 账期；无明确来源日期的费用保持为空）
 //  - 币种   = 严格按币种分组，绝不跨币种裸加/臆造 RMB 折算
 //  - 供应商 = supplier_name（冗余快照，全行可用；无 supplier_id 外键，不臆造）
 //  - 费用类型 = payment_category；付款主体 = payee_type
@@ -17028,7 +17128,7 @@ app.get('/api/finance/payable-cockpit', requireApiPermission('payment_view'), as
         : 0;
 
       // 信用条款上下文：仅「Credit 条款 + 已录入出货日 + 有 credit_days」却仍无应付日期，才属真实数据异常。
-      // 非 Credit（如定金/预付）本就无需应付日期，不补、不报异常；绝不臆造日期。
+      // PI 定金应付日期取 PI 日期；其他非 Credit 费用若无明确来源日期仍保持为空，不臆造日期。
       let creditMissingDue = false;
       // 统一来源解析：
       //  - source_ci_id 有效 → 运营CI / 历史CI（ciMap 已含两类）
@@ -17215,7 +17315,7 @@ app.get('/api/finance/payable-cockpit', requireApiPermission('payment_view'), as
       details,
       notes: {
         currency: '各币种独立汇总，未提供 USD→RMB 等锁定汇率证据时不做跨币种折算或裸加',
-        due_date: '应付日期来自 payable_items.payable_date（与应付费用列表同字段）；非 Credit（如定金/预付）无需应付日期，保持为空且不计入异常。',
+        due_date: '应付日期来自 payable_items.payable_date（与应付费用列表同字段）；PI 定金取 PI 日期，CI Credit 尾款按实际出货日期 + 账期；其他无明确来源日期的非 Credit 费用保持为空。',
         outstanding: '未结清=应付费用列表同口径：payable_items 应付金额 − 已付款 − 抵扣 − 抹零（复用 payableItemsSettlementBreakdown）。payment_requests 仅作付款执行状态辅助展示，不参与金额汇总。',
         source: '驾驶舱直接基于 payable_items 聚合（真实应付事实）；进入应付费用列表的数据无论是否提交付款申请均计入。',
         scope: '仅口径调整，未修改任何付款/审批/抵扣/冲销/汇率/WAC 业务规则与数据'
@@ -17508,8 +17608,8 @@ app.post('/api/payment-requests/from-pi-deposit', requireApiPermission('payment_
     const payeeKey = `supplier:${pi.supplier_id || pi.supplier_name}`;
     const payeeNameSnapshot = pi.supplier_name || '';
     transaction(() => {
-      run(`INSERT INTO payment_requests (id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no, payee_type, payee_key, payee_name_snapshot, supplier_name, payable_amount, paid_amount, unpaid_amount, currency, payment_terms, payment_status, approval_status, remark, has_deduction, deduction_amount, deduction_source_type, deduction_source_desc, deduction_ref_no, actual_pay_amount, related_po_no, expense_country) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [prId, prNo, 'goods', 'deposit', 'pi', pi_id, pi.pi_no, 'factory', payeeKey, payeeNameSnapshot, pi.supplier_name, payableAmount, 0, actualPay, pi.currency || 'USD', pi.payment_terms || '', 'pending_approval', 'pending', `PI定金 ${pi.pi_no}`, deductionEnabled ? 1 : 0, dedAmount, deduction_source_type || '', deduction_source_desc || '', deduction_ref_no || '', actualPay, pi.related_po_no || '', String(pi.country || '').trim()]);
+      run(`INSERT INTO payment_requests (id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no, payee_type, payee_key, payee_name_snapshot, supplier_name, payable_amount, paid_amount, unpaid_amount, currency, payment_terms, payable_date, payment_status, approval_status, remark, has_deduction, deduction_amount, deduction_source_type, deduction_source_desc, deduction_ref_no, actual_pay_amount, related_po_no, expense_country) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [prId, prNo, 'goods', 'deposit', 'pi', pi_id, pi.pi_no, 'factory', payeeKey, payeeNameSnapshot, pi.supplier_name, payableAmount, 0, actualPay, pi.currency || 'USD', pi.payment_terms || '', String(pi.pi_date || '').trim(), 'pending_approval', 'pending', `PI定金 ${pi.pi_no}`, deductionEnabled ? 1 : 0, dedAmount, deduction_source_type || '', deduction_source_desc || '', deduction_ref_no || '', actualPay, pi.related_po_no || '', String(pi.country || '').trim()]);
       if (deductionEnabled && dedAmount > 0) recordInitialDeduction(prId, dedAmount, deduction_source_desc, settlementOperator(req));
       run('UPDATE proforma_invoices SET deposit_payment_status = ? WHERE id = ?', ['pending_approval', pi_id]);
       // PAY-CORE Phase 2：关联 payable_item 并 reserve（V2.1 第 8 节）
@@ -22721,6 +22821,16 @@ if (require.main === module) {
     process.exit(1);
   }
 
+  try {
+    const synced = backfillPiDepositPayableDates();
+    console.log('[STARTUP] PI 定金应付日期已按 PI 日期同步 ✓', JSON.stringify(synced));
+  } catch (e) {
+    console.error('\\n[FATAL] PI 定金应付日期同步失败:', e.message);
+    console.error(e.stack);
+    console.error('\\n[FATAL] 服务无法启动。请修正数据后重试。');
+    process.exit(1);
+  }
+
   console.log('[STARTUP] 正在启动 HTTP 服务 (端口 ' + PORT + ')...');
   const server = app.listen(PORT, () => {
     console.log(`\n[Server] 进销存管理系统已启动: http://localhost:${PORT}`);
@@ -22744,6 +22854,8 @@ if (require.main === module) {
 module.exports = {
   syncLogisticsCostFactsCore,
   createPayableItemFromSource,
+  syncPiDepositPayableDate,
+  backfillPiDepositPayableDates,
   findActivePayableItem,
   syncPayableItemAmount,
   reservePayableItem,
