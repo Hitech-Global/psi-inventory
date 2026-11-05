@@ -56,8 +56,13 @@ test('the settings menu carries both entries', () => {
 
 test('the toolbar link to the connections page is gone', () => {
   const index = fs.readFileSync(path.join(webDir, 'index.html'), 'utf8');
+  const platformPage = fs.readFileSync(path.join(webDir, 'connections.html'), 'utf8');
   assert.ok(!index.includes('id="connectionsLink"'), 'the toolbar link must be removed');
-  assert.ok(index.includes('shop-connections-ui-v1.js'), 'the panel script must be loaded');
+  // The panel's script no longer sits in the application: the shop
+  // connections live on the platform page now, and the script goes with
+  // them.
+  assert.ok(!index.includes('shop-connections-ui-v1.js'), 'the application must not load the panel script');
+  assert.ok(platformPage.includes('shop-connections-ui-v1.js'), 'the platform page must load the panel script');
 });
 
 test('the shop page no longer carries its own authorization buttons', () => {
@@ -73,7 +78,8 @@ test('the shop page still says when its figures are incomplete, and that label l
   const index = fs.readFileSync(path.join(webDir, 'index.html'), 'utf8');
   const app = fs.readFileSync(path.join(webDir, 'app.js'), 'utf8');
   assert.ok(index.includes('id="storeBiStatus"'), 'the label must stay on the shop page');
-  assert.ok(app.includes('window.ShopeeShopConnections?.open()'), 'the label must lead to the panel');
+  assert.ok(app.includes('goToPlatformConnections'), 'the label must lead to where the platforms are connected');
+  assert.ok(app.includes('/connections.html'), 'that place must be the page where the platforms are connected');
 });
 
 test('the panel escapes what it renders', () => {

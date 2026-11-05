@@ -6,6 +6,8 @@ const router=fs.readFileSync(path.join(root,'src','http-router.js'),'utf8');
 const server=fs.readFileSync(path.join(root,'src','standalone-server.js'),'utf8');
 const html=fs.readFileSync(path.join(root,'web','index.html'),'utf8');
 const app=fs.readFileSync(path.join(root,'web','app.js'),'utf8');
+// 店铺连接现在在平台接入页上，共享的渲染脚本也跟到那里去了。
+const platformPage=fs.readFileSync(path.join(root,'web','connections.html'),'utf8');
 const schema=fs.readFileSync(path.join(root,'schema-brand-portal-principal.sql'),'utf8');
 const runner=fs.readFileSync(path.join(root,'src','shop-sync-runner.js'),'utf8');
 const example=fs.readFileSync(path.join(root,'deploy','desktop','runtime.env.example'),'utf8');
@@ -19,8 +21,8 @@ const panel=fs.readFileSync(path.join(root,'web','shop-connections-ui-v1.js'),'u
 assert(panel.includes('data-connect="erp"'));
 assert(panel.includes('/erp/oauth/start?shop_id='));
 assert(panel.includes('需先在服务端配置 ERP Partner ID / Key'));
-assert(html.includes('shop-connections-ui-v1.js'));
-assert(app.includes('ShopeeShopConnections'));
+assert(platformPage.includes('shop-connections-ui-v1.js'));
+assert(app.includes('goToPlatformConnections'));
 // ★ 约束必须允许全部应用角色，不只是最初的那三个。
 // 应用已经不止 ADS/ERP/BRAND_PORTAL 了（还有 MARKETING、STORE_OPS_BRAIN、
 // ORDER_ANALYSIS、VIDEO、ONLINE），而生产库里已有 VIDEO/ONLINE 的授权行。
