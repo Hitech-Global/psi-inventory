@@ -1,7 +1,7 @@
 (function(){
 'use strict';
 
-const BRAND_CCY=Object.freeze({Netac:'USD',Redragon:'RMB',BOYA:'RMB',Joypeer:'RMB'});
+const BRAND_CCY=Object.freeze({Netac:'USD',Redragon:'RMB',BOYA:'RMB',Joypeer:'RMB',GoPro:'IDR'});
 const pad=n=>String(n).padStart(2,'0');
 const clean=v=>String(v??'').trim();
 const norm=v=>clean(v).toLowerCase().replace(/[\s_\-./\\()[\]{}:：;；,，]+/g,'');

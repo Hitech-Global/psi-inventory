@@ -1,7 +1,7 @@
 (function(){
 'use strict';
 
-const CCY={Netac:'USD',Redragon:'RMB',BOYA:'RMB',Joypeer:'RMB'};
+const CCY={Netac:'USD',Redragon:'RMB',BOYA:'RMB',Joypeer:'RMB',GoPro:'IDR'};
 const SUMMARY_CACHE_MAX=12;
 const DETAIL_CACHE_MAX=24;
 const summaryCache=new Map();
@@ -12,7 +12,7 @@ let S={brand:'Netac',type:'',keyword:'',from:'',to:'',data:null,detail:null,deta
 
 const $=(s,r=document)=>r.querySelector(s);
 const E=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-const money=(v,c)=>v==null?'—':(c==='RMB'?'¥ ':'$ ')+Number(v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+const money=(v,c)=>{if(v==null)return '—';const code=String(c||'').toUpperCase();if(code==='IDR')return 'Rp '+Number(v).toLocaleString(undefined,{maximumFractionDigits:0});return (code==='RMB'?'¥ ':'$ ')+Number(v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});};
 const quoteMoney=(v,c,status)=>status==='no_quote'||v==null?'<span class="qm-noquote">未报价</span>':money(v,c);
 const change=v=>v==null?'—':`<span class="qm-change ${v>0?'up':v<0?'down':''}">${v>0?'↑ +':v<0?'↓ ':''}${Number(v).toFixed(2)}%</span>`;
 const call=(u,m='GET',b)=>window.api(u,m,b);
@@ -53,7 +53,7 @@ function show(){
 
 function renderBase(){
   const brands=Object.keys(CCY).map(b=>`<option value="${E(b)}" ${b===S.brand?'selected':''}>${E(b)}</option>`).join('');
-  $('#qm').innerHTML=`<div class="qm-head"><div><div class="qm-title">🏷️ 报价管理</div><div class="qm-sub">FOB 报价、价格趋势、最近采购价对比与品牌报告</div></div><div class="qm-actions"><button class="qm-btn" id="qm-template">⇩ 下载模板</button><button class="qm-btn primary" id="qm-import">⇧ 导入报价</button></div></div><div class="qm-filter"><div class="qm-field"><label>品牌</label><select id="qm-brand">${brands}</select></div><div class="qm-field"><label>产品类型</label><select id="qm-type"><option value="">全部</option></select></div><div class="qm-field"><label>SKU / 关键词</label><input id="qm-key" value="${E(S.keyword)}" placeholder="搜索 SKU、产品类型或品牌"></div><div class="qm-field"><label>开始日期</label><input type="date" id="qm-from" value="${E(S.from)}"></div><div class="qm-field"><label>结束日期</label><input type="date" id="qm-to" value="${E(S.to)}"></div></div><div class="qm-note">Netac 默认 USD；Redragon / BOYA / Joypeer 默认 RMB。FOB=0 表示当日未报价，会保留历史记录，但不参与价格趋势、报价环比或采购价环比。</div><div class="qm-grid"><section class="qm-card"><div class="qm-card-h"><b>SKU 列表</b><span id="qm-count"></span></div><div class="qm-table-wrap"><table class="qm-table"><thead><tr><th>SKU</th><th>品牌</th><th>产品类型</th><th>最新FOB</th><th>币种</th><th>报价日期</th><th>较上次报价</th><th>较上次采购价</th><th>历史次数</th><th></th></tr></thead><tbody id="qm-body"></tbody></table></div></section><section class="qm-card" id="qm-right"></section></div>`;
+  $('#qm').innerHTML=`<div class="qm-head"><div><div class="qm-title">🏷️ 报价管理</div><div class="qm-sub">FOB 报价、价格趋势、最近采购价对比与品牌报告</div></div><div class="qm-actions"><button class="qm-btn" id="qm-template">⇩ 下载模板</button><button class="qm-btn primary" id="qm-import">⇧ 导入报价</button></div></div><div class="qm-filter"><div class="qm-field"><label>品牌</label><select id="qm-brand">${brands}</select></div><div class="qm-field"><label>产品类型</label><select id="qm-type"><option value="">全部</option></select></div><div class="qm-field"><label>SKU / 关键词</label><input id="qm-key" value="${E(S.keyword)}" placeholder="搜索 SKU、产品类型或品牌"></div><div class="qm-field"><label>开始日期</label><input type="date" id="qm-from" value="${E(S.from)}"></div><div class="qm-field"><label>结束日期</label><input type="date" id="qm-to" value="${E(S.to)}"></div></div><div class="qm-note">Netac 默认 USD；Redragon / BOYA / Joypeer 默认 RMB；GoPro 默认 IDR。FOB=0 表示当日未报价，会保留历史记录，但不参与价格趋势、报价环比或采购价环比。</div><div class="qm-grid"><section class="qm-card"><div class="qm-card-h"><b>SKU 列表</b><span id="qm-count"></span></div><div class="qm-table-wrap"><table class="qm-table"><thead><tr><th>SKU</th><th>品牌</th><th>产品类型</th><th>最新FOB</th><th>币种</th><th>报价日期</th><th>较上次报价</th><th>较上次采购价</th><th>历史次数</th><th></th></tr></thead><tbody id="qm-body"></tbody></table></div></section><section class="qm-card" id="qm-right"></section></div>`;
   bind();
 }
 

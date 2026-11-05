@@ -2,7 +2,7 @@
 
 module.exports = function installQuotationManagement(deps) {
   const { app, query, queryOne, run, transaction, genId, asyncHandler, requireApiPermission } = deps;
-  const BRAND_CCY = Object.freeze({ Netac: 'USD', Redragon: 'RMB', BOYA: 'RMB', Joypeer: 'RMB' });
+  const BRAND_CCY = Object.freeze({ Netac: 'USD', Redragon: 'RMB', BOYA: 'RMB', Joypeer: 'RMB', GoPro: 'IDR' });
 
   run("CREATE TABLE IF NOT EXISTS quotation_prices (id TEXT PRIMARY KEY, sku_code TEXT NOT NULL, brand TEXT NOT NULL, product_type TEXT NOT NULL, quote_price NUMERIC NOT NULL, currency TEXT NOT NULL, quote_date TEXT NOT NULL, remark TEXT DEFAULT '', import_batch_id TEXT, created_at TEXT, updated_at TEXT, supplier_id TEXT NOT NULL DEFAULT '', supplier_part_no TEXT NOT NULL DEFAULT '', supplier_part_no_key TEXT NOT NULL DEFAULT '', psi_sku_code TEXT NOT NULL DEFAULT '', match_status TEXT NOT NULL DEFAULT 'matched', model TEXT NOT NULL DEFAULT '', spec TEXT NOT NULL DEFAULT '', source_sheet TEXT NOT NULL DEFAULT '', source_row INTEGER NOT NULL DEFAULT 0)");
   const quotationIsPg = String(process.env.DB_DRIVER || 'sqlite').toLowerCase() === 'pg';

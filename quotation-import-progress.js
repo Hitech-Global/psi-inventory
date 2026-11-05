@@ -203,7 +203,7 @@ function renderPreview(m){
       const r=x.row,i=x.index;
       html+='<tr><td><b>'+esc(r.supplier_part_no)+'</b><div class="qip-sub">'+esc(r.source_sheet||'')+' · 第 '+esc(r.source_row||'—')+' 行</div></td>';
       html+='<td>'+esc([r.model,r.spec].filter(Boolean).join(' / ')||'—')+'</td><td>'+esc(r.brand)+'<div class="qip-sub">'+esc(r.product_type||'未分类')+'</div></td>';
-      html+='<td>'+esc(r.quote_price===0?'未报价':Number(r.quote_price).toFixed(2)+' '+r.currency)+'</td>';
+      html+='<td>'+esc(r.quote_price===0?'未报价':(r.currency==='IDR'?'Rp '+Number(r.quote_price).toLocaleString(undefined,{maximumFractionDigits:0}):Number(r.quote_price).toFixed(2)+' '+r.currency))+'</td>';
       html+='<td><div class="qip-suggest-wrap"><input type="text" data-qip-match-search="'+i+'" placeholder="搜索 PSI SKU / 型号"><div class="qip-suggestions" data-qip-suggestions="'+i+'"></div></div></td></tr>';
     });
     html+='</tbody></table></div>';

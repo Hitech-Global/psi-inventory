@@ -4,7 +4,7 @@ module.exports=function installQuotationImportFast(deps){
   const {app,query,run,transaction,genId,asyncHandler,requireApiPermission}=deps;
   const crypto=require('node:crypto');
   const {withAsyncPoolClient,withGenerateClient}=require('./pg-async');
-  const BRAND_CCY=Object.freeze({Netac:'USD',Redragon:'RMB',BOYA:'RMB',Joypeer:'RMB'});
+  const BRAND_CCY=Object.freeze({Netac:'USD',Redragon:'RMB',BOYA:'RMB',Joypeer:'RMB',GoPro:'IDR'});
   const MAX_ROWS=5000;
   const STALE_MS=90*1000;
   const clean=v=>String(v??'').trim();
