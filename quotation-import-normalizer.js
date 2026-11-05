@@ -1,7 +1,20 @@
 (function(){
 'use strict';
 
-const BRAND_CCY=Object.freeze({Netac:'USD',Redragon:'RMB',BOYA:'RMB',Joypeer:'RMB',GoPro:'IDR'});
+const BRAND_CCY={};
+function setBrandCurrencies(input){
+  Object.keys(BRAND_CCY).forEach(k=>delete BRAND_CCY[k]);
+  Object.entries(input||{}).forEach(([brand,currency])=>{
+    const b=clean(brand),c=clean(currency).toUpperCase();
+    if(b&&c)BRAND_CCY[b]=c;
+  });
+  return {...BRAND_CCY};
+}
+function getDefaultCurrency(brand,overrides){
+  const b=clean(brand),map=overrides||BRAND_CCY;
+  const key=Object.keys(map).find(k=>String(k).toLowerCase()===b.toLowerCase());
+  return clean(map[b]||map[key||'']).toUpperCase();
+}
 const pad=n=>String(n).padStart(2,'0');
 const clean=v=>String(v??'').trim();
 const norm=v=>clean(v).toLowerCase().replace(/[\s_\-./\\()[\]{}:：;；,，]+/g,'');
@@ -138,7 +151,7 @@ function parseSheetRows(sheets,options){
       if(clean(part)===''||/^(total|subtotal|grand\s*total|合计|总计|小计)$/i.test(clean(part)))continue;
       const brandCell=cell(source,found.columns,'brand').value;
       const brand=clean(brandCell)||clean(opts.brand);
-      const preferredCurrency=BRAND_CCY[brand]||clean(opts.currency).toUpperCase();
+      const preferredCurrency=getDefaultCurrency(brand,opts.brand_currencies)||clean(opts.currency).toUpperCase();
       const priceCell=cell(source,found.columns,'quote_price',preferredCurrency);
       const currencyCell=cell(source,found.columns,'currency').value;
       const dateCell=cell(source,found.columns,'quote_date').value;
@@ -158,7 +171,7 @@ function parseSheetRows(sheets,options){
         match_status:'unlinked',match_source:clean(psiSku)?'manual':'unlinked',
         brand,brand_source:clean(brandCell)?'file':'default',
         product_type:productType,model:clean(model),spec,
-        quote_price:price,currency:clean(currencyCell||headerCurrency||BRAND_CCY[brand]||opts.currency).toUpperCase(),
+        quote_price:price,currency:clean(currencyCell||headerCurrency||getDefaultCurrency(brand,opts.brand_currencies)||opts.currency).toUpperCase(),
         quote_date:normalizeDate(dateCell||opts.quote_date),quote_date_source:clean(dateCell)?'file':'default',remark:clean(remark),
         source_sheet:clean(sheet.name),source_row:i+1,supplier_id:clean(opts.supplier_id)
       });
@@ -168,7 +181,7 @@ function parseSheetRows(sheets,options){
   if(rows.length>5000)errors.push({row:0,reason:'所有工作表合计 '+rows.length+' 行，单次最多支持 5000 行'});
   return {rows,recognized_sheets:recognized,ignored_sheets:ignored,errors};
 }
-function normalizeRow(row){
+function normalizeRow(row,options){
   const r={...(row||{})};
   const model=clean(r.model||r['型号']||r['Model']);
   if(model)r.model=model;
@@ -177,7 +190,8 @@ function normalizeRow(row){
   const brand=clean(r.brand||r['品牌']);
   if(part){r.supplier_part_no=part;if(!r.sku_code)r.sku_code=part;}
   if(date)r.quote_date=date;
-  if(!r.currency&&BRAND_CCY[brand])r.currency=BRAND_CCY[brand];
+  const defaultCurrency=getDefaultCurrency(brand,options&&options.brand_currencies);
+  if(!r.currency&&defaultCurrency)r.currency=defaultCurrency;
   if(r.quote_price==null){
     const raw=r['FOB价格']??r['报价价格']??r['报价']??r['FOB Price']??r['Price'];
     if(raw!=null)r.quote_price=parsePrice(raw);
@@ -226,16 +240,17 @@ function matchRows(input,metadata,options){
     return r;
   });
 }
-function validateRows(rows){
+function validateRows(rows,options){
   const errors=[];
   (rows||[]).forEach((raw,i)=>{
-    const r=normalizeRow(raw);
+    const r=normalizeRow(raw,options);
     const part=clean(r.supplier_part_no||r.sku_code||r.SKU||r['SKU']||r.model||r['Model']);
     const brand=clean(r.brand||r['品牌']);
     const priceRaw=r.quote_price??r['FOB价格']??r['报价价格']??r['报价'];
     const priceText=clean(priceRaw);
     const price=priceText===''?0:parsePrice(priceRaw);
-    const currency=clean(r.currency||r['币种']||BRAND_CCY[brand]).toUpperCase();
+    const defaultCurrency=getDefaultCurrency(brand,options&&options.brand_currencies);
+    const currency=clean(r.currency||r['币种']||defaultCurrency).toUpperCase();
     const date=normalizeDate(r.quote_date||r['报价日期']);
     let reason='';
     if(!part)reason='供应商料号为空';
@@ -243,14 +258,14 @@ function validateRows(rows){
     else if(!Number.isFinite(price)||price<0)reason='FOB 价格格式错误（空白或 0 表示未报价）';
     else if(!/^\d{4}-\d{2}-\d{2}$/.test(date))reason='报价日期格式无法识别';
     else if(!currency)reason='币种为空';
-    else if(BRAND_CCY[brand]&&currency!==BRAND_CCY[brand])reason=brand+' 默认币种应为 '+BRAND_CCY[brand];
+    else if(defaultCurrency&&currency!==defaultCurrency)reason=brand+' 默认币种应为 '+defaultCurrency;
     if(reason)errors.push({row:Number(r.source_row)||i+2,reason});
   });
   return errors;
 }
 
 window.QuotationImportNormalizer=Object.freeze({
-  normalizeDate,inferQuoteDate,normalizeRow,parseSheetRows,matchRows,validateRows,BRAND_CCY
+  normalizeDate,inferQuoteDate,normalizeRow,parseSheetRows,matchRows,validateRows,setBrandCurrencies,getDefaultCurrency,BRAND_CCY
 });
 
 function install(){
