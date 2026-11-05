@@ -1,7 +1,8 @@
 /*
  * BigSeller inventory import adapter.
  * Reads only the "单个SKU" sheet, maps SKU / available quantity, resolves brands
- * from PSI SKU master data, and requires explicit BigSeller-to-PSI warehouse mapping.
+ * from PSI SKU master data, and automatically routes every source warehouse to the
+ * single active Indonesia / Bekasi Warehouse in the PSI warehouse master.
  * Existing PSI template import remains unchanged.
  */
 (function (root, factory) {
@@ -152,6 +153,48 @@
     };
   }
 
+
+  function normalizeWarehouseName(value) {
+    return String(value == null ? '' : value).replace(/\s+/g, ' ').trim().toLowerCase();
+  }
+
+  // The BigSeller export is always the Bekasi stock snapshot for this workflow.
+  // Resolve by exact business identity, never by a hard-coded database ID or fuzzy name.
+  function resolveBekasiWarehouse(warehouseMaster) {
+    var matches = (warehouseMaster || []).filter(function (w) {
+      var country = String(w && w.country_name || '').trim();
+      return !!w &&
+        w.status === 'active' &&
+        normalizeWarehouseName(w.name) === 'bekasi warehouse' &&
+        (country === '印度尼西亚' || country.toLowerCase() === 'indonesia');
+    });
+    return {
+      warehouse: matches.length === 1 ? matches[0] : null,
+      matchCount: matches.length,
+      error: matches.length === 1 ? '' : (matches.length
+        ? 'PSI 仓库主数据中存在多个启用的印度尼西亚 / Bekasi Warehouse，无法安全导入。'
+        : '未找到启用的印度尼西亚 / Bekasi Warehouse，无法安全导入。')
+    };
+  }
+
+  function buildBekasiSourceMap(sourceWarehouses, warehouseMaster) {
+    var resolved = resolveBekasiWarehouse(warehouseMaster);
+    var map = Object.create(null);
+    if (resolved.warehouse) {
+      (sourceWarehouses || []).forEach(function (source) {
+        if (String(source == null ? '' : source).trim()) {
+          map[String(source)] = String(resolved.warehouse.id);
+        }
+      });
+    }
+    return {
+      map: map,
+      warehouse: resolved.warehouse,
+      matchCount: resolved.matchCount,
+      error: resolved.error
+    };
+  }
+
   function duplicateGroups(records) {
     var groups = new Map();
     (records || []).forEach(function (record) {
@@ -247,9 +290,11 @@
       'inv.bigseller.choose_target': 'Select a PSI destination warehouse',
       'inv.bigseller.apply_all': 'Apply to all',
       'inv.bigseller.apply_all_placeholder': 'Select one destination for all source warehouses',
-      'inv.bigseller.mapping_hint': 'BigSeller warehouse labels are not PSI warehouse master data. Map each source warehouse to its PSI destination; source labels are kept for traceability.',
-      'inv.bigseller.mapping_missing': 'Complete all source-warehouse mappings before running the SKU check.',
-      'inv.bigseller.mapping_loaded': 'All source warehouses are mapped.',
+      'inv.bigseller.mapping_hint': 'All BigSeller source warehouse labels are automatically routed to the existing Indonesia / Bekasi Warehouse. Source labels are retained for traceability.',
+      'inv.bigseller.mapping_missing': 'The fixed Bekasi destination could not be resolved. Import is blocked until exactly one active warehouse is found.',
+      'inv.bigseller.mapping_loaded': 'All source warehouses are automatically routed to Indonesia / Bekasi Warehouse.',
+      'inv.bigseller.bekasi_target_error': 'PSI warehouse master must contain exactly one active Indonesia / Bekasi Warehouse; found {n}. Import is blocked for safety.',
+      'inv.bigseller.fixed_destination': 'Fixed PSI destination',
       'inv.bigseller.duplicate_title': 'Duplicate SKU rows map to the same PSI destination',
       'inv.bigseller.duplicate_hint': 'Import is blocked by default. If these source warehouses represent stock in the same PSI warehouse, explicitly confirm that their “整仓可用” quantities should be added together.',
       'inv.bigseller.merge_duplicates': 'I confirm: sum available quantities for duplicate SKUs in the same PSI warehouse',
@@ -266,9 +311,11 @@
       'inv.bigseller.choose_target': 'Pilih gudang tujuan PSI',
       'inv.bigseller.apply_all': 'Terapkan ke semua',
       'inv.bigseller.apply_all_placeholder': 'Pilih satu tujuan untuk semua gudang sumber',
-      'inv.bigseller.mapping_hint': 'Nama gudang BigSeller berbeda dari data master gudang PSI. Petakan setiap gudang sumber ke gudang tujuan PSI; nama sumber tetap disimpan untuk pelacakan.',
-      'inv.bigseller.mapping_missing': 'Selesaikan semua pemetaan gudang sumber sebelum pemeriksaan SKU.',
-      'inv.bigseller.mapping_loaded': 'Semua gudang sumber telah dipetakan.',
+      'inv.bigseller.mapping_hint': 'Semua nama gudang sumber BigSeller otomatis diarahkan ke Bekasi Warehouse Indonesia yang sudah ada. Nama sumber tetap disimpan untuk pelacakan.',
+      'inv.bigseller.mapping_missing': 'Tujuan Bekasi tetap tidak dapat ditentukan. Impor diblokir sampai tepat satu gudang aktif ditemukan.',
+      'inv.bigseller.mapping_loaded': 'Semua gudang sumber otomatis diarahkan ke Indonesia / Bekasi Warehouse.',
+      'inv.bigseller.bekasi_target_error': 'Data master gudang PSI harus memiliki tepat satu Indonesia / Bekasi Warehouse aktif; ditemukan {n}. Impor diblokir demi keamanan.',
+      'inv.bigseller.fixed_destination': 'Gudang tujuan PSI tetap',
       'inv.bigseller.duplicate_title': 'Baris SKU duplikat dipetakan ke tujuan PSI yang sama',
       'inv.bigseller.duplicate_hint': 'Impor diblokir secara default. Jika gudang sumber tersebut memang merupakan stok di gudang PSI yang sama, Anda dapat mengonfirmasi penjumlahan kuantitas “整仓可用”.',
       'inv.bigseller.merge_duplicates': 'Saya konfirmasi: jumlahkan kuantitas tersedia untuk SKU duplikat di gudang PSI yang sama',
@@ -297,6 +344,9 @@
       win._invBigSellerSourceWarehouses = [];
       win._invBigSellerSourceWarehouseCounts = {};
       win._invBigSellerWarehouseMaster = [];
+      win._invBigSellerWarehouseTarget = null;
+      win._invBigSellerWarehouseTargetError = '';
+      win._invBigSellerWarehouseTargetMatchCount = 0;
       win._invBigSellerWarehouseMap = Object.create(null);
       win._invBigSellerMergeDuplicates = false;
       win._invBigSellerMappingReady = false;
@@ -326,65 +376,54 @@
       var box = ensureMappingBox();
       if (!box) return;
       var sources = win._invBigSellerSourceWarehouses || [];
-      var warehouses = win._invBigSellerWarehouseMaster || [];
-      var mapping = win._invBigSellerWarehouseMap || {};
-      var options = '<option value="">' + escapeHtml(tr(win, 'inv.bigseller.choose_target', '请选择 PSI 目标仓库')) + '</option>' +
-        warehouses.map(function (w) {
-          return '<option value="' + escapeHtml(w.id) + '">' + escapeHtml(String(w.country_name || '') + ' / ' + String(w.name || '')) + '</option>';
-        }).join('');
+      var target = win._invBigSellerWarehouseTarget || null;
+      var targetError = win._invBigSellerWarehouseTargetError || '';
+      var matchCount = Number(win._invBigSellerWarehouseTargetMatchCount || 0);
+      var targetLabel = target
+        ? String(target.country_name || '') + ' / ' + String(target.name || '')
+        : '';
+
       var html = '<div style="padding:12px 14px;border:1px solid #d6e4ff;background:#f5f8ff;border-radius:10px;font-size:12px;color:#333">' +
         '<div style="font-weight:650;font-size:13px;margin-bottom:5px">' + escapeHtml(tr(win, 'inv.bigseller.detected', '已识别 BigSeller 库存导出：只读取「单个SKU」工作表，自动忽略「组合SKU」工作表。')) + '</div>' +
         '<div style="color:#666;margin-bottom:8px">' + escapeHtml(tr(win, 'inv.bigseller.summary', '已识别 {n} 条单个 SKU；忽略 {c} 条组合 SKU。', { n: (win._invBigSellerRawRecords || []).length, c: win._invBigSellerSkippedCombinationRows || 0 })) + '</div>' +
         '<div style="color:#666;margin-bottom:10px">' + escapeHtml(tr(win, 'inv.bigseller.import_source_note', '品牌从 SKU 主数据匹配；不读取 BigSeller 一级分类。成本字段不导入，继续使用 PSI 的 WAC 规则。')) + '</div>' +
-        '<div style="color:#666;margin-bottom:10px">' + escapeHtml(tr(win, 'inv.bigseller.mapping_hint', 'BigSeller 的仓库名称与 PSI 仓库主数据不是同一维度，请为每个源仓库指定 PSI 目标仓库。')) + '</div>';
-      if (!warehouses.length) {
-        html += '<div style="padding:8px 10px;background:#fff1f0;color:#a8071a;border-radius:6px">' + escapeHtml(tr(win, 'inv.bigseller.no_warehouse_options', '没有可用的 PSI 有效仓库。')) + '</div>';
+        '<div style="color:#666;margin-bottom:10px">' + escapeHtml(tr(win, 'inv.bigseller.mapping_hint', '所有 BigSeller 源仓库统一归入现有的印度尼西亚 / Bekasi Warehouse；保留源仓库名称用于追溯。')) + '</div>';
+
+      if (!target) {
+        html += '<div style="padding:8px 10px;background:#fff1f0;color:#a8071a;border-radius:6px">' +
+          escapeHtml(tr(win, 'inv.bigseller.bekasi_target_error', '必须且只能找到一个启用的「印度尼西亚 / Bekasi Warehouse」，当前找到 {n} 个。为避免导错仓，已阻止导入。', { n: matchCount })) +
+          '</div>';
       } else {
         html += '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">' +
-          '<select id="inv-bigseller-apply-all" style="min-width:260px;max-width:100%;padding:7px 10px;border:1px solid #d2d6dc;border-radius:8px;background:#fff">' +
-          '<option value="">' + escapeHtml(tr(win, 'inv.bigseller.apply_all_placeholder', '选择一个目标仓库统一应用到所有源仓库')) + '</option>' + warehouses.map(function (w) {
-            return '<option value="' + escapeHtml(w.id) + '">' + escapeHtml(String(w.country_name || '') + ' / ' + String(w.name || '')) + '</option>';
-          }).join('') + '</select>' +
-          '<button type="button" id="inv-bigseller-apply-all-btn" class="btn btn-secondary btn-sm">' + escapeHtml(tr(win, 'inv.bigseller.apply_all', '统一应用到全部')) + '</button>' +
+          '<span style="color:#666">' + escapeHtml(tr(win, 'inv.bigseller.fixed_destination', '固定 PSI 目标仓库')) + '：</span>' +
+          '<strong style="padding:5px 9px;border:1px solid #b7eb8f;background:#f6ffed;border-radius:7px;color:#237804">' + escapeHtml(targetLabel) + '</strong>' +
           '</div>';
-        html += '<div class="table-container" style="max-height:220px;overflow:auto;box-shadow:none;border:1px solid #e5e7eb;background:#fff"><table class="data-table"><thead><tr>' +
-          '<th>' + escapeHtml(tr(win, 'inv.bigseller.source_warehouse', 'BigSeller 源仓库')) + '</th><th>SKU 数量</th><th>' + escapeHtml(tr(win, 'inv.bigseller.target_warehouse', 'PSI 目标国家 / 仓库')) + '</th></tr></thead><tbody>';
-        sources.forEach(function (source, idx) {
-          html += '<tr><td>' + escapeHtml(source) + '</td><td>' + Number((win._invBigSellerSourceWarehouseCounts || {})[source] || 0) + '</td><td><select data-inv-source-index="' + idx + '" style="min-width:250px;max-width:100%;padding:6px 8px;border:1px solid #d2d6dc;border-radius:7px;background:#fff">' + options + '</select></td></tr>';
+        html += '<div class="table-container" style="max-height:180px;overflow:auto;box-shadow:none;border:1px solid #e5e7eb;background:#fff"><table class="data-table"><thead><tr>' +
+          '<th>' + escapeHtml(tr(win, 'inv.bigseller.source_warehouse', 'BigSeller 源仓库')) + '</th><th>SKU 数量</th><th>' + escapeHtml(tr(win, 'inv.bigseller.fixed_destination', '固定 PSI 目标仓库')) + '</th></tr></thead><tbody>';
+        sources.forEach(function (source) {
+          html += '<tr><td>' + escapeHtml(source) + '</td><td>' + Number((win._invBigSellerSourceWarehouseCounts || {})[source] || 0) + '</td><td>' + escapeHtml(targetLabel) + '</td></tr>';
         });
         html += '</tbody></table></div>';
       }
 
-      var built = parsedResult || buildMappedRecords(win._invBigSellerRawRecords || [], mapping, warehouses, !!win._invBigSellerMergeDuplicates);
+      var built = parsedResult || buildMappedRecords(win._invBigSellerRawRecords || [], win._invBigSellerWarehouseMap || {}, win._invBigSellerWarehouseMaster || [], !!win._invBigSellerMergeDuplicates);
       if (built.duplicateGroups && built.duplicateGroups.length) {
         html += '<div style="margin-top:10px;padding:10px 12px;background:#fff7e6;border:1px solid #ffd591;border-radius:8px">' +
-          '<div style="font-weight:650;color:#ad6800;margin-bottom:4px">' + escapeHtml(tr(win, 'inv.bigseller.duplicate_title', '发现同一 SKU 被映射到同一 PSI 仓库的重复记录')) + '（' + built.duplicateGroups.length + '）</div>' +
-          '<div style="color:#805b16;margin-bottom:8px">' + escapeHtml(tr(win, 'inv.bigseller.duplicate_hint', '默认阻止导入。如果这些源仓库确实属于同一 PSI 仓库，可以明确确认将「整仓可用」数量相加。')) + '</div>';
+          '<div style="font-weight:650;color:#ad6800;margin-bottom:4px">' + escapeHtml(tr(win, 'inv.bigseller.duplicate_title', '发现同一 SKU 在 Bekasi 目标仓库存在重复记录')) + '（' + built.duplicateGroups.length + '）</div>' +
+          '<div style="color:#805b16;margin-bottom:8px">' + escapeHtml(tr(win, 'inv.bigseller.duplicate_hint', '默认阻止导入。请先核对源仓库明细；确认这些数量分别代表 Bekasi 的库存组成后，再勾选合并。')) + '</div>';
         built.duplicateGroups.slice(0, 30).forEach(function (g) {
           var detail = g.items.map(function (r) { return r._sourceWarehouse + ': ' + r.available_qty; }).join('；');
           html += '<div style="padding:5px 0;border-top:1px solid rgba(173,104,0,.12)"><b>' + escapeHtml(g.sku_code) + '</b> · ' + escapeHtml(g.country + ' / ' + g.warehouse) + '<div style="color:#805b16">' + escapeHtml(detail) + '</div></div>';
         });
-        html += '<label style="display:flex;gap:8px;align-items:flex-start;margin-top:8px;color:#805b16"><input type="checkbox" id="inv-bigseller-merge-duplicates" ' + (win._invBigSellerMergeDuplicates ? 'checked' : '') + ' style="margin-top:2px">' + escapeHtml(tr(win, 'inv.bigseller.merge_duplicates', '确认将同一 PSI 仓库下重复 SKU 的可用库存数量相加')) + '</label></div>';
+        html += '<label style="display:flex;gap:8px;align-items:flex-start;margin-top:8px;color:#805b16"><input type="checkbox" id="inv-bigseller-merge-duplicates" ' + (win._invBigSellerMergeDuplicates ? 'checked' : '') + ' style="margin-top:2px">' + escapeHtml(tr(win, 'inv.bigseller.merge_duplicates', '确认将同一 Bekasi 仓库下重复 SKU 的整仓可用数量相加')) + '</label></div>';
       }
       html += '<div style="margin-top:8px;color:' + (win._invBigSellerMappingReady ? '#237804' : '#ad6800') + '">' +
-        escapeHtml(win._invBigSellerMappingReady ? tr(win, 'inv.bigseller.mapping_loaded', '所有源仓库映射已完成。') : tr(win, 'inv.bigseller.mapping_missing', '请先完成所有源仓库映射，再进行 SKU 校验。')) + '</div></div>';
+        escapeHtml(win._invBigSellerMappingReady
+          ? tr(win, 'inv.bigseller.mapping_loaded', '所有 BigSeller 源仓库已自动归入印度尼西亚 / Bekasi Warehouse。')
+          : tr(win, 'inv.bigseller.mapping_missing', '无法唯一确认 Bekasi 目标仓库，导入已阻止。')) +
+        '</div></div>';
       box.innerHTML = html;
 
-      Array.prototype.forEach.call(box.querySelectorAll('select[data-inv-source-index]'), function (select) {
-        var source = sources[Number(select.getAttribute('data-inv-source-index'))];
-        select.value = mapping[source] || '';
-        select.addEventListener('change', function () {
-          win._invBigSellerWarehouseMap[source] = select.value;
-          applyMappings();
-        });
-      });
-      var applyAllBtn = box.querySelector('#inv-bigseller-apply-all-btn');
-      if (applyAllBtn) applyAllBtn.addEventListener('click', function () {
-        var targetId = (box.querySelector('#inv-bigseller-apply-all') || {}).value || '';
-        if (!targetId) return;
-        sources.forEach(function (source) { win._invBigSellerWarehouseMap[source] = targetId; });
-        applyMappings();
-      });
       var mergeBox = box.querySelector('#inv-bigseller-merge-duplicates');
       if (mergeBox) mergeBox.addEventListener('change', function () {
         win._invBigSellerMergeDuplicates = !!mergeBox.checked;
@@ -457,6 +496,9 @@
             win._invBigSellerSourceWarehouses = parsed.sourceWarehouses;
             win._invBigSellerSourceWarehouseCounts = parsed.sourceWarehouseCounts;
             win._invBigSellerWarehouseMap = Object.create(null);
+            win._invBigSellerWarehouseTarget = null;
+            win._invBigSellerWarehouseTargetError = '';
+            win._invBigSellerWarehouseTargetMatchCount = 0;
             win._invBigSellerMergeDuplicates = false;
             win._invBigSellerSkippedCombinationRows = parsed.skippedCombinationRows;
             win._invBigSellerMappingReady = false;
@@ -474,12 +516,16 @@
             try {
               var warehouseRows = await win.api('/api/warehouses');
               win._invBigSellerWarehouseMaster = (warehouseRows || []).filter(function (w) { return w && w.status === 'active'; });
-              parsed.sourceWarehouses.forEach(function (source) {
-                var exact = win._invBigSellerWarehouseMaster.filter(function (w) { return String(w.name || '') === source; });
-                if (exact.length === 1) win._invBigSellerWarehouseMap[source] = String(exact[0].id);
-              });
+              var bekasiMapping = buildBekasiSourceMap(parsed.sourceWarehouses, win._invBigSellerWarehouseMaster);
+              win._invBigSellerWarehouseTarget = bekasiMapping.warehouse;
+              win._invBigSellerWarehouseTargetError = bekasiMapping.error;
+              win._invBigSellerWarehouseTargetMatchCount = bekasiMapping.matchCount;
+              win._invBigSellerWarehouseMap = bekasiMapping.map;
             } catch (warehouseError) {
               win._invBigSellerWarehouseMaster = [];
+              win._invBigSellerWarehouseTarget = null;
+              win._invBigSellerWarehouseTargetError = '无法读取 PSI 仓库主数据。';
+              win._invBigSellerWarehouseTargetMatchCount = 0;
               if (typeof win.showToast === 'function') win.showToast(tr(win, 'inv.bigseller.warehouse_load_failed', '无法读取 PSI 仓库主数据，无法安全导入。'), 'danger');
             }
             ensureMappingBox();
@@ -515,6 +561,8 @@
     parseQuantity: parseQuantity,
     parseBigSellerWorkbook: parseBigSellerWorkbook,
     duplicateGroups: duplicateGroups,
+    resolveBekasiWarehouse: resolveBekasiWarehouse,
+    buildBekasiSourceMap: buildBekasiSourceMap,
     buildMappedRecords: buildMappedRecords,
     install: install
   };
