@@ -37,6 +37,13 @@ on:
       - 'db-sqlite.js'
       - 'test/wac-history-import.test.cjs'
       - 'test/wac-batch-exclusion.test.cjs'
+      - 'quotation-server.js'
+      - 'quotation-import-fast.js'
+      - 'quotation-import-normalizer.js'
+      - 'quotation-import-progress.js'
+      - 'quotation-management.js'
+      - 'scripts/quotation-management-bootstrap.cjs'
+      - 'test/quotation-smart-import.test.cjs'
       - 'test/rp-suggested-qty-wheel.test.cjs'
       - 'test/po-number-date-country.test.cjs'
       - 'inventory-asset-values.js'
@@ -85,6 +92,13 @@ jobs:
           node --check po-number.js
           node --check wac-calculator.js
           node --check wac-notification.js
+          node --check quotation-server.js
+          node --check quotation-import-fast.js
+          node --check quotation-import-normalizer.js
+          node --check quotation-import-progress.js
+          node --check quotation-management.js
+          node --check scripts/quotation-management-bootstrap.cjs
+          node --check test/quotation-smart-import.test.cjs
           node --check wac-notification-ui.js
           node --check test/wac-cost-change-notification.test.cjs
           node --check test/listing-notification-card.test.cjs
@@ -132,3 +146,5 @@ jobs:
         run: node test/wac-history-import.test.cjs
       - name: Test WAC batch exclusion and restore
         run: node test/wac-batch-exclusion.test.cjs
+      - name: Test smart quotation import and supplier SKU mapping
+        run: node test/quotation-smart-import.test.cjs
