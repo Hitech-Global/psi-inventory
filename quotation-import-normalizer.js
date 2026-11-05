@@ -146,7 +146,7 @@ function parseSheetRows(sheets,options){
       const product=cell(source,found.columns,'product_type').value;
       const isNetac=brand.toLowerCase()==='netac';
       const productType=clean(product)||(isNetac?clean(sheet.name):clean(type));
-      const spec=clean(rawSpec)||(isNetac?clean(type):'');
+      const spec=isNetac?[type,rawSpec].map(clean).filter(Boolean).join(' / '):clean(rawSpec);
       const psiSku=cell(source,found.columns,'psi_sku_code').value;
       const remark=cell(source,found.columns,'remark').value;
       const price=parsePrice(priceCell.value);

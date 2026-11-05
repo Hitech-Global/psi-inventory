@@ -86,12 +86,12 @@ assert.equal(netacRealParsed.recognized_sheets.length,3,'real Netac SSD, DRAM an
 assert.equal(netacRealParsed.ignored_sheets.length,1,'Weight & size should be ignored because it has no quote price');
 assert.equal(netacRealParsed.rows.length,3);
 assert.equal(netacRealParsed.rows[0].product_type,'SSD','Product should be preferred as product type');
-assert.equal(netacRealParsed.rows[0].spec,'2.5 SATAIII','Type should be retained as specification when Product exists');
+assert.equal(netacRealParsed.rows[0].spec,'2.5 SATAIII / 240GB','Type and Capacity should both be retained as specification when Product exists');
 assert.equal(netacRealParsed.rows[0].model,'N535S','Model should remain as descriptive model');
 assert.equal(netacRealParsed.rows[0].supplier_part_no,'NT01N535S-240G-S3X','Part No. must be used as the unique SKU key when present');
 assert.equal(netacRealParsed.rows[0].quote_date,'2026-10-27');
 assert.equal(netacRealParsed.rows[1].product_type,'DRAM','Sheet name should provide the Netac product type when Product is absent');
-assert.equal(netacRealParsed.rows[1].spec,'U-DIMM 288-Pin DDR5 / PC');
+assert.equal(netacRealParsed.rows[1].spec,'U-DIMM 288-Pin DDR5 / PC / 32GB','DRAM Type and Capacity should both be retained');
 assert.equal(netacRealParsed.rows[1].supplier_part_no,'NTZED5P76DP-32S','Model / PN should be recognized as the unique part key');
 assert.equal(netacRealParsed.rows[1].currency,'USD','US$ price header should infer USD');
 assert.equal(netacRealParsed.rows[2].product_type,'TWS','Sheet name should provide product type when no Product column exists');
