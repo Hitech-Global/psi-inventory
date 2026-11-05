@@ -157,11 +157,11 @@ function buildWacCostChangeCard(report, language) {
     '**Report part:** '+partNo+'/'+partCount+' ('+rows.length+' SKUs in this part)'
   ].join('\n');
   const columns=[
-    {name:'sku',display_name:'SKU',data_type:'text',width:'auto'},
-    {name:'old_wac',display_name:(zh?'原 WAC (':'Previous WAC (')+currency+')',data_type:'text',width:'auto'},
-    {name:'new_wac',display_name:(zh?'新 WAC (':'New WAC (')+currency+')',data_type:'text',width:'auto'},
-    {name:'change_amount',display_name:(zh?'变化金额 (':'Change (')+currency+')',data_type:'text',width:'auto'},
-    {name:'change_pct',display_name:zh?'环比变化':'Change %',data_type:'lark_md',width:'auto'}
+    {name:'sku',display_name:'SKU',data_type:'text',width:'36%'},
+    {name:'old_wac',display_name:(zh?'原 WAC (':'Previous WAC (')+currency+')',data_type:'text',width:'15%'},
+    {name:'new_wac',display_name:(zh?'新 WAC (':'New WAC (')+currency+')',data_type:'text',width:'15%'},
+    {name:'change_amount',display_name:(zh?'变化金额 (':'Change (')+currency+')',data_type:'text',width:'19%'},
+    {name:'change_pct',display_name:zh?'环比变化':'Change %',data_type:'lark_md',width:'15%'}
   ];
   const tableRows=rows.map(row=>{
     let pct;

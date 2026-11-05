@@ -117,6 +117,19 @@ test('Feishu Card 2.0 report has all five columns and every SKU row',()=>{
   assert.match(table.rows[2].change_pct,/首次建立/);
 });
 
+test('WAC card gives SKU column enough width and preserves the complete SKU value',()=>{
+  const longSku='NT02P500ECO-256GB-INDONESIA-RETAIL';
+  const rows=buildWacCostChangeRows([{sku_code:longSku,version_no:2,old_avg_cost:100,new_avg_cost:110}]);
+  const card=buildWacCostChangeCard({
+    batch_no:'LOG-SKU-WIDTH',brand:'Netac',country:'Indonesia',
+    warehouse:'Bekasi',local_currency:'IDR',rows,
+    summary:summarizeWacCostChangeRows(rows),part_no:1,part_count:1
+  },'zh');
+  const table=card.body.elements.find(e=>e.tag==='table');
+  assert.deepEqual(table.columns.map(column=>column.width),['36%','15%','15%','19%','15%']);
+  assert.equal(table.rows[0].sku,longSku);
+});
+
 test('Card 2.0 text fallback preserves report summary and every SKU table row',()=>{
   const rows=buildWacCostChangeRows([
     {sku_code:'SKU-UP',version_no:2,old_avg_cost:100,new_avg_cost:110},
