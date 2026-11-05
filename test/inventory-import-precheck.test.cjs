@@ -140,7 +140,9 @@ function createSchema() {
       new_avg_cost NUMERIC DEFAULT 0,
       confirmation_status TEXT DEFAULT '',
       is_locked INTEGER DEFAULT 0,
-      version_no INTEGER DEFAULT 0
+      version_no INTEGER DEFAULT 0,
+      confirmed_at TEXT DEFAULT '',
+      effective_end_date TEXT DEFAULT ''
     );
     CREATE TABLE role_data_scope (
       role_id TEXT PRIMARY KEY,
