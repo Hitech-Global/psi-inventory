@@ -561,11 +561,11 @@ function renderStoreDetail(data) {
     biStatus.setAttribute('role', 'button');
     biStatus.setAttribute('tabindex', '0');
     biStatus.title = '打开店铺接口设置';
-    biStatus.onclick = () => window.ShopeeShopConnections?.open();
+    biStatus.onclick = () => goToPlatformConnections();
     biStatus.onkeydown = event => {
       if (event.key === 'Enter' || event.key === ' ') {
         event.preventDefault();
-        window.ShopeeShopConnections?.open();
+        goToPlatformConnections();
       }
     };
   }
@@ -2176,12 +2176,31 @@ function showOauthCallbackNotice() {
   window.history.replaceState({}, '', window.location.pathname + window.location.hash);
 }
 
+/**
+ * Where every platform is connected.
+ *
+ * The shop connections used to open in a panel over the application.
+ * They now live on the page where the platforms are connected, so that
+ * there is one place to go rather than two that each hold half of it.
+ * The way back is remembered, so the reader returns to where they came
+ * from rather than to the front door.
+ */
+function goToPlatformConnections() {
+  try {
+    sessionStorage.setItem('platformConnectionsReturn', window.location.pathname + window.location.search);
+  } catch (error) { /* a browser that will not remember still gets there */ }
+  location.href = '/connections.html';
+}
+
 function reopenConnectionsAfterAuthorization() {
   const params = new URLSearchParams(window.location.search);
-  const connected = params.get('erp') === 'connected' || params.get('brand_portal') === 'connected';
+  const connected = params.get('erp') === 'connected'
+    || params.get('brand_portal') === 'connected'
+    || params.get('app') === 'connected';
   if (!connected) return;
-  const opener = window.ShopeeShopConnections?.open;
-  if (opener) opener();
+  // 授权是从 Shopee 的页面跳回来的，读者看到的是首页而不是他刚才离开的
+  // 那个地方。带他回平台接入页，他刚建立的那条连接就在那里等着他。
+  goToPlatformConnections();
 }
 
 async function init() {
@@ -2207,7 +2226,7 @@ $$('.side-item[data-view]').forEach(button => {
 });
 // 「店铺接口」面板由设置面板的脚本负责打开，这里只负责把点击送过去。
 $$('.side-item[data-side-action="shop-connections"]').forEach(button => {
-  button.addEventListener('click', () => window.ShopeeShopConnections?.open());
+  button.addEventListener('click', () => goToPlatformConnections());
 });
 $$('.ads-type-tab').forEach(button => {
   button.addEventListener('click', () => switchAdsType(button.dataset.adsType));

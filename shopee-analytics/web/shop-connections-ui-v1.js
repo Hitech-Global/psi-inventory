@@ -525,5 +525,20 @@
     note.textContent = `开放平台应用 Partner ID：${parts.join(' · ')}`;
   }
 
-  window.ShopeeShopConnections = { open, close, renderShop, renderBody };
+  // The same reading is shown in two places: in the panel that opens over
+  // the application, and on the page where every platform is connected.
+  // Both are wanted — the reader arrives at one from inside the
+  // application and at the other from the platform list — so the reading
+  // is rendered here and used by both.
+  window.ShopeeShopConnections = {
+    open,
+    close,
+    renderShop,
+    renderBody,
+    renderSources,
+    renderShopReport,
+    renderErp,
+    renderShopApp,
+    shopTitle,
+  };
 })();

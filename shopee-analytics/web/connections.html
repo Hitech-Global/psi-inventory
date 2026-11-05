@@ -28,6 +28,23 @@
     .platform-detail dd{margin:0;color:#172033;word-break:break-all}
     .platform-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:auto}
     .platform-actions button{border:1px solid #d8d8dc;border-radius:11px;padding:9px 16px;font-size:13px;font-weight:600;background:#fff;color:#172033;cursor:pointer}
+    .platform-subsection{margin-top:6px;padding-top:16px;border-top:1px solid #ececef}
+    .platform-subtitle{font-size:14px;font-weight:700;margin:0 0 12px}
+    .connections-list-wrap .connections-shop{border:1px solid #ececef;border-radius:12px;padding:14px 16px;margin-bottom:12px;background:#fcfcfd}
+    .connections-list-wrap .connections-shop-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:8px}
+    .connections-list-wrap .connections-shop-id{font-size:12px;color:#86868b}
+    .connections-list-wrap .connections-sources{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));margin-bottom:12px}
+    .connections-list-wrap .connections-source{border:1px solid #ececef;border-radius:12px;padding:12px 14px;background:#fff}
+    .connections-list-wrap .connections-source-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+    .connections-list-wrap .connections-source-head span{font-size:11px;color:#86868b}
+    .connections-list-wrap .connections-source-scope{font-size:12px;color:#6e6e73;line-height:1.6;margin:6px 0 0}
+    .connections-list-wrap .connections-hint{font-size:11px;line-height:1.6;margin:8px 0 0;color:#6e6e73}
+    .connections-list-wrap .connections-list{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+    .connections-list-wrap .connections-row{display:grid;grid-template-columns:150px 110px 1fr auto;gap:10px;align-items:center;font-size:12px}
+    .connections-list-wrap .connections-role{color:#172033;font-weight:600}
+    .connections-list-wrap .connections-note{color:#86868b}
+    .connections-list-wrap .connections-action{border:1px solid #d8d8dc;border-radius:9px;padding:5px 12px;font-size:12px;font-weight:600;background:#fff;cursor:pointer}
+    .connections-list-wrap .connections-action:hover{border-color:#0280f9;color:#0280f9}
     .platform-actions button.primary{background:#111827;border-color:#111827;color:#fff}
     .platform-actions button.primary:hover{background:#202938}
     .platform-actions button.ghost:hover{background:#f7f7f9}
@@ -80,6 +97,14 @@
         <div class="platform-actions">
           <button type="button" class="ghost" id="shopeeRefresh">刷新状态</button>
         </div>
+        <!-- 店铺连接：Shopee 侧的 ERP / Brand Portal / Video / Online
+             都是按店铺逐个授权的，所以这里按店铺列出，而不是一个总开关。 -->
+        <div class="platform-subsection" id="shopeeShopConnections">
+          <h3 class="platform-subtitle">店铺连接</h3>
+          <div id="shopeeShopConnectionsBody" class="connections-list-wrap">
+            <p class="muted">读取中…</p>
+          </div>
+        </div>
       </section>
 
       <!-- TikTok -->
@@ -107,6 +132,11 @@
     </p>
   </div>
 
+  <!-- The shop connections of the Shopee side are read with the same
+       rendering the panel over the application uses, so that the two
+       cannot drift apart. It is loaded first because the script below
+       uses it. -->
+  <script src="/shop-connections-ui-v1.js"></script>
   <script>
     'use strict';
     (() => {
@@ -218,11 +248,50 @@
           // Shopee 侧是按店铺逐个授权 ERP / Brand Portal，入口在店铺诊断页，
           // 所以这里只放说明文字，不放一个点了没用的按钮。
           document.getElementById('shopeeNote').textContent = t('shopeeNote');
+          // Shopee 侧的按店铺授权列在下面，与这张卡片是同一件事。
+          loadShopConnections();
         } catch (error) {
           setState(state, 'error', t('error'));
           renderRows(document.getElementById('shopeeDetail'), [[t('token'), error.message]]);
         }
       }
+
+      /**
+       * The shop connections of the Shopee side.
+       *
+       * ERP / Brand Portal / Video / Online are each authorized shop by
+       * shop, so they are shown shop by shop rather than as one switch.
+       * The reading itself comes from the same place the panel over the
+       * application uses, so the two cannot drift apart.
+       */
+      async function loadShopConnections() {
+        const host = document.getElementById('shopeeShopConnectionsBody');
+        if (!host) return;
+        try {
+          const payload = await request('/api/shopee-analytics/shop-connections');
+          const render = window.ShopeeShopConnections?.renderBody;
+          host.innerHTML = render ? render(payload) : '<p class="muted">读取中…</p>';
+        } catch (error) {
+          host.innerHTML = `<p class="muted">读取失败：${esc(error.message)}</p>`;
+        }
+      }
+
+      // The reader clicks a connection to make it. The same three doors
+      // are offered as in the panel over the application.
+      document.addEventListener('click', event => {
+        const button = event.target.closest('[data-connect], [data-connect-app]');
+        if (!button) return;
+        const shopId = button.dataset.shopId;
+        if (!shopId) return;
+        if (button.dataset.connectApp) {
+          location.href = `/api/shopee-analytics/shop/oauth/start?app=${encodeURIComponent(button.dataset.connectApp)}`
+            + `&shop_id=${encodeURIComponent(shopId)}`;
+        } else if (button.dataset.connect === 'erp') {
+          location.href = `/api/shopee-analytics/erp/oauth/start?shop_id=${encodeURIComponent(shopId)}`;
+        } else {
+          location.href = `/api/shopee-analytics/brand-portal/oauth/start?shop_id=${encodeURIComponent(shopId)}`;
+        }
+      });
 
       async function loadTiktok() {
         const state = document.getElementById('tiktokState');
