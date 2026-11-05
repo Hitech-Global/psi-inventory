@@ -10,6 +10,8 @@ on:
       - 'app-perf.js'
       - 'test/app-perf-diagnostics.test.cjs'
       - 'server.js'
+      - 'wave2b-pi-batch-import-pg.js'
+      - 'test/pi-deposit-payable-date.test.cjs'
       - 'index.html'
       - 'assets/bigseller-inventory-import.js'
       - 'test/bigseller-inventory-import.test.cjs'
@@ -68,6 +70,8 @@ jobs:
           node --check app-perf.js
           node --check test/app-perf-diagnostics.test.cjs
           node --check server.js
+          node --check wave2b-pi-batch-import-pg.js
+          node --check test/pi-deposit-payable-date.test.cjs
           node --check assets/bigseller-inventory-import.js
           node --check test/bigseller-inventory-import.test.cjs
           node --check test/inventory-import-precheck.test.cjs
@@ -102,6 +106,8 @@ jobs:
         run: node --test test/app-perf-diagnostics.test.cjs
       - name: Test finance payment calendar and manual payable creation
         run: node --test test/finance-payment-calendar.test.cjs test/manual-payable-item.test.cjs test/finance-payment-overview-integration.test.cjs test/finance-payment-overview.test.cjs test/finance-payment-overview-sort.test.cjs
+      - name: Test PI deposit payable date follows PI date
+        run: node --test test/pi-deposit-payable-date.test.cjs
       - name: Test PO number date and country format
         run: node test/po-number-date-country.test.cjs
       - name: Test PO latest FOB quotation and FX pricing

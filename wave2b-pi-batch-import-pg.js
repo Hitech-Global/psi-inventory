@@ -496,7 +496,7 @@ async function importProformaInvoicesPg(rows, req) {
     var payPiList = [];
     if (piIds.length) {
       var finalPis = await aq(
-        'SELECT id, total_amount, deposit_ratio, need_deposit, currency FROM proforma_invoices WHERE id IN (' + ph(piIds.length) + ')',
+        'SELECT id, total_amount, deposit_ratio, need_deposit, currency, pi_date FROM proforma_invoices WHERE id IN (' + ph(piIds.length) + ')',
         piIds
       );
       sqlCalls++;
@@ -506,7 +506,7 @@ async function importProformaInvoicesPg(rows, req) {
         var dr = Number(fpRow.deposit_ratio) || 0;
         if (nd && dr > 0) {
           var pd = Number(fpRow.total_amount) * dr / 100;
-          if (pd > 0) payPiList.push({ pi_id: fpRow.id, payableDeposit: pd, currency: fpRow.currency || 'USD' });
+          if (pd > 0) payPiList.push({ pi_id: fpRow.id, payableDeposit: pd, currency: fpRow.currency || 'USD', piDate: String(fpRow.pi_date || '') });
         }
       }
     }
@@ -541,7 +541,7 @@ async function importProformaInvoicesPg(rows, req) {
       var exRow = existingByPi[pg.pi_id];
       if (exRow) {
         if (exRow.lifecycle_status === 'active') {
-          toUpdate.push({ id: exRow.id, amount_minor: amountMinor });
+          toUpdate.push({ id: exRow.id, amount_minor: amountMinor, pi_date: pg.piDate });
         }
         // 非 active（含 cancelled）：跳过（不创建、不更新），与 legacy createPayableItemFromSource 返回历史行一致
         continue;
@@ -559,17 +559,18 @@ async function importProformaInvoicesPg(rows, req) {
         payee_name: pg.supplier_name || '',
         currency: pg.currency,
         amount_minor: amountMinor,
+        pi_date: pg.piDate,
         created_by: userCtx.userId
       });
     }
 
     if (toUpdate.length) {
       var updateJson = JSON.stringify(toUpdate.map(function (r) {
-        return { id: r.id, amount_minor: r.amount_minor };
+        return { id: r.id, amount_minor: r.amount_minor, pi_date: r.pi_date };
       }));
       await run(
-        'UPDATE payable_items SET payable_amount_minor = v.amount_minor ' +
-        'FROM jsonb_to_recordset($1::jsonb) AS v(id text, amount_minor int) ' +
+        'UPDATE payable_items SET payable_amount_minor = v.amount_minor, payable_date = v.pi_date ' +
+        'FROM jsonb_to_recordset($1::jsonb) AS v(id text, amount_minor int, pi_date text) ' +
         'WHERE payable_items.id = v.id AND payable_items.is_active = 1',
         [updateJson]
       );
@@ -581,6 +582,7 @@ async function importProformaInvoicesPg(rows, req) {
         return {
           id: r.id, fee_no: r.fee_no, source_id: r.source_id, source_no: r.source_no,
           payee_key: r.payee_key, payee_name: r.payee_name, currency: r.currency, amount_minor: r.amount_minor,
+          pi_date: r.pi_date,
           created_by: r.created_by
         };
       }));
@@ -594,10 +596,10 @@ async function importProformaInvoicesPg(rows, req) {
         '  j.id, j.fee_no, \'pi\', j.source_id, j.source_no, \'\', \'deposit\',' +
         '  \'goods\', \'deposit\', \'factory\', j.payee_key, j.payee_name,' +
         '  \'self\', \'\', j.currency, j.amount_minor,' +
-        '  1, \'active\', \'\', j.created_by ' +
+        '  1, \'active\', j.pi_date, j.created_by ' +
         'FROM jsonb_to_recordset($1::jsonb) AS j(' +
         '  id text, fee_no text, source_id text, source_no text,' +
-        '  payee_key text, payee_name text, currency text, amount_minor int,' +
+        '  payee_key text, payee_name text, currency text, amount_minor int, pi_date text,' +
         '  created_by text' +
         ')',
         [insertJson]

@@ -556,8 +556,8 @@ describe('Wave 2B: PI batch-import async rewrite (真 PG)', { timeout: 900000 },
     const f = await seedMultiSkuPo('T8', 2, { poQty: 100, unitPrice: 10 });
     const r = await fetchJSON('POST', '/api/proforma-invoices/batch-import', {
       items: [
-        { 'PI编号': 'PI-T8', SKU: f.skus[0], '关联PO编号': f.poNo, '数量': 10, '单价': 10, '是否需要定金': '是', '定金比例': 30 },
-        { 'PI编号': 'PI-T8', SKU: f.skus[1], '关联PO编号': f.poNo, '数量': 20, '单价': 10, '是否需要定金': '是', '定金比例': 30 }
+        { 'PI编号': 'PI-T8', SKU: f.skus[0], '关联PO编号': f.poNo, '数量': 10, '单价': 10, '是否需要定金': '是', '定金比例': 30, 'PI日期': '2026-11-03' },
+        { 'PI编号': 'PI-T8', SKU: f.skus[1], '关联PO编号': f.poNo, '数量': 20, '单价': 10, '是否需要定金': '是', '定金比例': 30, 'PI日期': '2026-11-03' }
       ]
     });
     assert.strictEqual(r.status, 200, JSON.stringify(r.json));
@@ -567,6 +567,7 @@ describe('Wave 2B: PI batch-import async rewrite (真 PG)', { timeout: 900000 },
     const pi = await q1('SELECT * FROM proforma_invoices WHERE pi_no=$1', ['PI-T8']);
     assert.ok(pi, 'PI 应创建');
     assert.equal(pi.pi_status, 'uploaded');
+    assert.equal(pi.pi_date, '2026-11-03', 'PI 日期应从导入数据写入');
     assert.equal(Number(pi.total_amount), 300, '10*10 + 20*10 = 300');
     assert.equal(Number(pi.payable_deposit), 90, '300*0.3 = 90');
     assert.equal(Number(pi.available_deduct_deposit), 90);
@@ -578,6 +579,7 @@ describe('Wave 2B: PI batch-import async rewrite (真 PG)', { timeout: 900000 },
     assert.equal(pays.length, 1, '一条 deposit payable');
     assert.equal(pays[0].lifecycle_status, 'active');
     assert.equal(Number(pays[0].payable_amount_minor), 9000, 'deposit=9000 (90.00)');
+    assert.equal(pays[0].payable_date, '2026-11-03', '新建 deposit payable 应使用 PI 日期');
 
     // 追加：在 SKU[0] 上追加（dup 会拒），故验证「追加既有 PI 新金额」改用不同 SKU 不适用。
     // 直接核验追加路径：用同一 PI 追加 SKU[0] 会被 dup 拒；改为追加「已存在 PI」场景在 T9 并发覆盖。
@@ -724,6 +726,7 @@ describe('Wave 2B: PI batch-import async rewrite (真 PG)', { timeout: 900000 },
     assert.equal(pays[0].lifecycle_status, 'active');
     // newTotal = 100 + 100 = 200 → deposit = 60 → 6000
     assert.equal(Number(pays[0].payable_amount_minor), 6000, 'authoritative update 3000→6000');
+    assert.equal(pays[0].payable_date, '2026-08-01', 'active deposit payable 日期应同步 PI 日期');
   });
 
   // =========================================================================
