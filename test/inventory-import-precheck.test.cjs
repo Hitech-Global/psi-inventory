@@ -555,8 +555,8 @@ test('15) 库存导入不写入/不修改 skus 主数据（即使 Excel 提供�
   const beforeBrand = query("SELECT brand FROM skus WHERE sku_code='SKU-A'").rows[0].brand;
   // Excel 提供完全相同的品牌（合法），验证导入路径不会回写/新增 skus
   const items = [{ sku_code: 'SKU-A', import_date: VALID_DATE, brand: 'Redragon', available_qty: VALID_QTY, weighted_avg_cost: VALID_WAC, _row_num: 2 }];
-  const { status } = await postBulkImport(items, VALID_DATE);
-  assert.ok(status === 200, '合法导入应成功');
+  const { status, body } = await postBulkImport(items, VALID_DATE);
+  assert.ok(status === 200, '合法导入应成功；实际 HTTP ' + status + '，响应：' + JSON.stringify(body));
   // 不变式：skus 行数不变、主数据品牌不变（库存导入不补 SKU 主数据）
   assert.equal(count('skus'), beforeSkus, 'skus 行数不应因库存导入而增加');
   const afterBrand = query("SELECT brand FROM skus WHERE sku_code='SKU-A'").rows[0].brand;
