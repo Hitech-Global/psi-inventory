@@ -4,7 +4,6 @@ module.exports=function installQuotationImportFast(deps){
   const {app,query,run,transaction,genId,asyncHandler,requireApiPermission}=deps;
   const crypto=require('node:crypto');
   const {withAsyncPoolClient,withGenerateClient}=require('./pg-async');
-  const BRAND_CCY=Object.freeze({Netac:'USD',Redragon:'RMB',BOYA:'RMB',Joypeer:'RMB',GoPro:'IDR'});
   const MAX_ROWS=5000;
   const STALE_MS=90*1000;
   const clean=v=>String(v??'').trim();
@@ -35,6 +34,40 @@ module.exports=function installQuotationImportFast(deps){
     if(Array.isArray(value))return value.map(v=>String(v||'').trim()).filter(Boolean);
     try{const a=JSON.parse(String(value||'[]'));return Array.isArray(a)?a.map(v=>String(v||'').trim()).filter(Boolean):[];}catch(_e){return [];}
   }
+  function getBrandCurrencyMap(){
+    const rows=query("SELECT brand,default_quote_currency FROM brand_settings WHERE COALESCE(default_quote_currency,'')<>''").rows;
+    const map={};
+    rows.forEach(r=>{const brand=clean(r.brand),currency=norm(r.default_quote_currency);if(brand&&currency)map[brand]=currency;});
+    return map;
+  }
+  function importOptions(req){
+    const skus=query("SELECT sku_code,brand,category,model,product_name,color_spec,barcode FROM skus WHERE COALESCE(status,'normal')<>'deleted' ORDER BY sku_code").rows;
+    const supplierRows=query("SELECT id,name,associated_brands,default_currency FROM suppliers WHERE status='active' ORDER BY name").rows;
+    const supplierBrandRows=query("SELECT supplier_id,brand FROM supplier_brand_configs WHERE status='active' AND brand<>'' ORDER BY brand").rows;
+    const supplierBrandMap=new Map();
+    supplierBrandRows.forEach(r=>{if(!supplierBrandMap.has(r.supplier_id))supplierBrandMap.set(r.supplier_id,[]);supplierBrandMap.get(r.supplier_id).push(clean(r.brand));});
+    const suppliers=supplierRows.map(s=>{
+      const configured=supplierBrandMap.get(s.id)||[];
+      const brands=[...new Set((configured.length?configured:parseIdList(s.associated_brands)).filter(Boolean))];
+      return {id:s.id,name:s.name,default_currency:s.default_currency||'',brands};
+    });
+    const mappings=query("SELECT supplier_id,brand,supplier_part_no,supplier_part_no_key,psi_sku_code FROM quotation_sku_mappings").rows;
+    let brands=query(`
+      SELECT DISTINCT brand FROM (
+        SELECT brand FROM brand_settings WHERE brand IS NOT NULL AND brand<>''
+        UNION SELECT brand FROM skus WHERE brand IS NOT NULL AND brand<>''
+        UNION SELECT brand FROM purchase_orders WHERE brand IS NOT NULL AND brand<>''
+        UNION SELECT brand FROM proforma_invoices WHERE brand IS NOT NULL AND brand<>''
+        UNION SELECT brand FROM commercial_invoices WHERE brand IS NOT NULL AND brand<>''
+        UNION SELECT brand FROM quotation_prices WHERE brand IS NOT NULL AND brand<>''
+        UNION SELECT brand FROM supplier_brand_configs WHERE brand IS NOT NULL AND brand<>''
+      ) ORDER BY brand
+    `).rows.map(r=>r.brand);
+    const scope=req&&req.currentUserDataScope;
+    if(scope&&Array.isArray(scope.brands)&&scope.brands.length)brands=brands.filter(b=>scope.brands.includes(b));
+    const currencies=query("SELECT code,name,symbol FROM currencies WHERE status='active' ORDER BY sort_order,code").rows;
+    return {brands,suppliers,skus,mappings,brand_currencies:getBrandCurrencyMap(),currencies};
+  }
   function badRequest(message,errors){
     const e=new Error(message);e.status=400;if(errors)e.errors=errors;return e;
   }
@@ -49,7 +82,10 @@ module.exports=function installQuotationImportFast(deps){
       supplier=query("SELECT id,name,associated_brands,default_currency,status FROM suppliers WHERE id=? AND status='active'",[supplierId]).rows[0]||null;
       if(!supplier)throw badRequest('所选供应商不存在或已停用，请重新选择。');
     }
-    const supplierBrands=supplier?parseIdList(supplier.associated_brands):[];
+    const supplierBrandRows=supplierId?query("SELECT brand FROM supplier_brand_configs WHERE supplier_id=? AND status='active' AND brand<>'' ORDER BY brand",[supplierId]).rows:[];
+    const configuredSupplierBrands=supplierBrandRows.map(x=>clean(x.brand)).filter(Boolean);
+    const supplierBrands=supplier?(configuredSupplierBrands.length?configuredSupplierBrands:parseIdList(supplier.associated_brands)):[];
+    const brandCurrencies=getBrandCurrencyMap();
     const skuRows=query("SELECT sku_code,brand,category,model,product_name,color_spec,barcode FROM skus WHERE COALESCE(status,'normal')<>'deleted'").rows;
     const skuMap=new Map(),brandMap=new Map();
     skuRows.forEach(x=>{const b=clean(x.brand);if(b){brandMap.set(b.toLowerCase(),b);skuMap.set(b.toLowerCase()+'|'+norm(x.sku_code),x);}});
@@ -69,9 +105,9 @@ module.exports=function installQuotationImportFast(deps){
       const priceRaw=r.quote_price??r['FOB价格']??r['报价价格']??r['报价'];
       const priceText=clean(priceRaw);
       const quote_price=priceText===''?0:Number(priceText.replace(/[,\s]/g,'').replace(/[￥¥$€£]/g,''));
-      const currency=clean(r.currency||r['币种']||BRAND_CCY[brand]||(supplier&&supplier.default_currency)||'').toUpperCase();
+      const expected=brandCurrencies[brand]||'';
+      const currency=clean(r.currency||r['币种']||expected||(supplier&&supplier.default_currency)||'').toUpperCase();
       const quote_date=normalizeDate(r.quote_date||r['报价日期']||body.quote_date||'');
-      const expected=BRAND_CCY[brand];
       let reason='';
       if(!part)reason='供应商料号为空';
       else if(!brand)reason='品牌为空，请选择品牌或在表格中提供品牌';
@@ -322,7 +358,7 @@ module.exports=function installQuotationImportFast(deps){
     }
   }
   app.get('/api/quotation-management/import-options',requireApiPermission('quotation_view'),asyncHandler((req,res)=>{
-    try{res.json(importOptions());}catch(e){res.status(500).json({error:e.message});}
+    try{res.json(importOptions(req));}catch(e){res.status(500).json({error:e.message});}
   }));
   app.get('/api/quotation-management/import/:importId/status',requireApiPermission('quotation_view'),asyncHandler(async(req,res)=>{
     const id=String(req.params.importId||'').trim();
