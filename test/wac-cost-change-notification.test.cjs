@@ -3,7 +3,7 @@ const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const path=require('node:path');
-const {buildWacCostChangeRows,summarizeWacCostChangeRows,chunkWacCostChangeRows,getUniqueWacCcRecipientIds,buildWacGroupRecipientId,parseWacGroupRecipientId,buildWacCostChangeCard,cardToFallbackText}=require('../wac-notification');
+const {buildWacCostChangeRows,resolveWacCostChangeHistory,summarizeWacCostChangeRows,chunkWacCostChangeRows,getUniqueWacCcRecipientIds,buildWacGroupRecipientId,parseWacGroupRecipientId,buildWacCostChangeCard,cardToFallbackText}=require('../wac-notification');
 
 test('sorts WAC changes by absolute percentage and places first-time SKUs last',()=>{
   const rows=buildWacCostChangeRows([
@@ -20,6 +20,53 @@ test('sorts WAC changes by absolute percentage and places first-time SKUs last',
   assert.equal(rows[3].change_amount,null);
   assert.equal(rows[3].change_pct,null);
 });
+test('first-time status is based on a previous cost value, not the write-order version number',()=>{
+  const rows=buildWacCostChangeRows([
+    {sku_code:'SKU-V1-WITH-BASELINE',version_no:1,old_avg_cost:100,new_avg_cost:110},
+    {sku_code:'SKU-V2-WITHOUT-BASELINE',version_no:2,old_avg_cost:0,new_avg_cost:120}
+  ]);
+  const bySku=new Map(rows.map(row=>[row.sku_code,row]));
+  assert.equal(bySku.get('SKU-V1-WITH-BASELINE').is_first_time,false);
+  assert.equal(bySku.get('SKU-V1-WITH-BASELINE').change_pct,10);
+  assert.equal(bySku.get('SKU-V2-WITHOUT-BASELINE').is_first_time,true);
+});
+
+test('previous WAC follows effective confirmed date even when history was imported later',()=>{
+  const currentRows=[{
+    sku_code:'SKU-HISTORY-ORDER',wac_id:'wac-current',version_no:1,
+    old_avg_cost:0,new_avg_cost:120
+  }];
+  const historyRows=[
+    {
+      id:'wac-current',sku_code:'SKU-HISTORY-ORDER',country:'Indonesia',warehouse:'Bekasi',
+      version_no:1,original_avg_cost:0,new_avg_cost:120,
+      confirmed_at:'2026-11-03 02:49:00',created_at:'2026-11-03 02:49:00',
+      logistics_batch_id:'batch-current'
+    },
+    {
+      id:'wac-history-imported-later',sku_code:'SKU-HISTORY-ORDER',country:'Indonesia',warehouse:'Bekasi',
+      version_no:2,original_avg_cost:0,new_avg_cost:100,
+      confirmed_at:'2026-10-27 12:00:00',created_at:'2026-11-04 03:00:00',
+      logistics_batch_id:null
+    },
+    {
+      id:'wac-other-country',sku_code:'SKU-HISTORY-ORDER',country:'Malaysia',warehouse:'Bekasi',
+      version_no:1,original_avg_cost:0,new_avg_cost:999,
+      confirmed_at:'2026-10-01 12:00:00',created_at:'2026-10-01 12:00:00',
+      logistics_batch_id:null
+    }
+  ];
+  const resolved=resolveWacCostChangeHistory(currentRows,historyRows);
+  assert.equal(resolved[0].old_avg_cost,100);
+  assert.equal(resolved[0].previous_wac_id,'wac-history-imported-later');
+  const report=buildWacCostChangeRows(resolved)[0];
+  assert.equal(report.is_first_time,false);
+  assert.equal(report.old_wac,100);
+  assert.equal(report.new_wac,120);
+  assert.equal(report.change_amount,20);
+  assert.equal(report.change_pct,20);
+});
+
 test('summary and chunking preserve every SKU',()=>{
   const rows=buildWacCostChangeRows([
     {sku_code:'A',version_no:2,old_avg_cost:100,new_avg_cost:101},
@@ -127,6 +174,18 @@ test('WAC UI, retry API and both database adapters are wired',()=>{
   assert.match(server,/\/api\/wac\/cc-groups/);
   assert.match(server,/parseWacGroupRecipientId/);
   assert.match(server,/cardToFallbackText/);
+  const sendRawStart=server.indexOf('async function sendFeishuRaw');
+  const sendRawEnd=server.indexOf('async function sendFeishuMessage',sendRawStart);
+  assert.ok(sendRawStart>=0&&sendRawEnd>sendRawStart);
+  const sendRawSource=server.slice(sendRawStart,sendRawEnd);
+  assert.match(sendRawSource,/content: JSON.stringify\(contentObj\)/);
+  assert.match(sendRawSource,/const card = msgType === 'interactive' \? contentObj : null/);
+  const sendInteractiveStart=server.indexOf('async function sendFeishuInteractive');
+  const sendInteractiveEnd=server.indexOf('async function sendFeishuTextMessage',sendInteractiveStart);
+  assert.match(server.slice(sendInteractiveStart,sendInteractiveEnd),/sendFeishuRaw\(receiveId, receiveIdType, 'interactive', card\)/);
+  assert.match(server,/buildWacCostChangeReportRows\(logs\)/);
+  assert.match(server,/buildWacCostChangeReportRows\(historyRows\)/);
+  assert.match(server,/resolveWacCostChangeHistory/);
   assert.match(server,/sendFeishuInteractive\(groupRecipient\.chat_id,'chat_id',card\)/);
   assert.match(server,/\/api\/wac\/notifications\/:logistics_batch_id\/retry/);
   assert.match(server,/\/api\/wac\/notifications\/:logistics_batch_id\/cc/);
