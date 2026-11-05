@@ -878,6 +878,25 @@ tbody td{font-weight:400}
 }
 .app-action .primary:hover{opacity:.88}
 .apps-empty{margin:0;font-size:11px;color:#98a2b3}
+/* 其它应用：一张表，一行一个「店铺 × 应用」。
+   说明那一列必须能折行 —— 压成竖排的话，每个字占一行，没人读得下去。 */
+.apps-table-wrap{overflow:auto;max-height:440px;border:1px solid #ececef;border-radius:12px;background:#fff}
+.apps-table{width:100%;border-collapse:separate;border-spacing:0;font-size:12px}
+.apps-table thead th{
+  position:sticky;top:0;z-index:2;background:#fafafa;border-bottom:1px solid #e8e8eb;
+  color:#6e6e73;font-weight:600;text-align:left;padding:9px 12px;white-space:nowrap;
+}
+.apps-table tbody td{border-bottom:1px solid #f2f4f7;padding:9px 12px;vertical-align:middle}
+.apps-table tbody tr:last-child td{border-bottom:0}
+.apps-table tbody tr:hover{background:#fafbfc}
+.apps-country{width:110px;color:#6e6e73;white-space:nowrap}
+.apps-shop{width:220px;color:#101828}
+.apps-app{width:200px;color:#101828}
+.apps-app small{display:block;font-size:10px;color:#98a2b3;letter-spacing:.04em;margin-top:1px}
+.apps-note{color:#6e6e73;white-space:normal;word-break:break-word;min-width:240px;line-height:1.55}
+.apps-state{width:130px}
+.apps-action{width:100px;text-align:right}
+.apps-table .empty{text-align:center!important;color:#98a2b3;padding:28px!important}
 @media (max-width:720px){
   .app-row{flex-wrap:wrap}
   .app-name,.app-note,.app-state,.app-action{width:auto}

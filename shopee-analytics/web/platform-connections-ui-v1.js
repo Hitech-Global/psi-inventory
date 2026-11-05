@@ -54,7 +54,13 @@ const TEXT = {
       empty: '暂无店铺',
       close: '关闭',
       appsTitle: '其它应用',
-      appsSub: '每个应用是独立的合作伙伴，需要单独授权店铺。',
+      appsSub: '每个应用是独立的合作伙伴，需要按店铺单独授权。',
+      colCountry: '国家',
+      colShop: '店铺',
+      colApp: '应用名称',
+      colScope: '说明',
+      colState: '授权状态',
+      colAction: '连接',
       pickShop: '选择店铺',
       connect: '连接',
       notConfigured: '未配置凭据',
@@ -86,6 +92,12 @@ const TEXT = {
       empty: 'No shops',
       close: 'Close',
       appsTitle: 'Other applications',
+      colCountry: 'Country',
+      colShop: 'Shop',
+      colApp: 'Application',
+      colScope: 'What it covers',
+      colState: 'Authorized',
+      colAction: 'Connect',
       appsSub: 'Each application is a partner of its own and needs the shop authorized for it.',
       pickShop: 'Choose a shop',
       connect: 'Connect',
@@ -353,34 +365,58 @@ const TEXT = {
       + `<span class="label">${esc(label)}</span></span>`;
   }
 
-  function renderShopeeApps(statuses, shopId) {
-    const list = document.querySelector('#platformAppsList');
-    if (!list) return;
-    const byRole = new Map((statuses || []).map(entry => [entry.role, entry]));
-    list.innerHTML = SHOPEE_APPS.map(app => {
-      const status = byRole.get(app.role) || {};
-      const configured = status.credentialConfigured !== false;
-      const authorized = Boolean(status.tokenPresent);
-      let state = stateBadge(t('notAuthorized'), 'off');
-      let note = app.category;
-      if (!configured) {
-        state = stateBadge(t('notConfigured'), 'error');
-        note = `${app.category} · ${t('notConfigured')}`;
-      } else if (authorized) {
-        state = stateBadge(t('authorized'), 'ready');
-        note = `${app.category} · ${t('authorized')}`;
+  /**
+   * Every application, for every shop, in one table.
+   *
+   * The rows are shop by shop and application by application, so that a
+   * reader can see at a glance which shop is missing which connection
+   * without having to pick a shop first and read one application at a
+   * time.
+   *
+   * The columns are the country, the shop, the application, what it
+   * covers, whether it is authorized, and the door to make it so.
+   */
+  function renderShopeeApps(statuses, shops) {
+    const host = document.querySelector('#platformAppsTable');
+    if (!host) return;
+    const shopList = shops || [];
+    const byShopRole = new Map((statuses || []).map(entry => [`${entry.shopId}:${entry.role}`, entry]));
+    const rows = [];
+    for (const shop of shopList) {
+      for (const app of SHOPEE_APPS) {
+        const status = byShopRole.get(`${shop.shopId}:${app.role}`) || {};
+        const configured = status.credentialConfigured !== false;
+        const authorized = Boolean(status.tokenPresent);
+        let state = stateBadge(t('notAuthorized'), 'off');
+        if (!configured) state = stateBadge(t('notConfigured'), 'error');
+        else if (authorized) state = stateBadge(t('authorized'), 'ready');
+        const action = configured && !authorized
+          ? `<button type="button" class="primary" data-connect-app="${esc(app.role)}" data-shop-id="${esc(shop.shopId)}">${esc(t('connect'))}</button>`
+          : '';
+        rows.push(`<tr>
+          <td class="apps-country">${esc(shop.countryName || shop.countryCode || '')}</td>
+          <td class="apps-shop">${esc(shop.displayName || shop.shopId)}</td>
+          <td class="apps-app">${esc(locale() === 'en' ? app.nameEn : app.name)}
+            <small>${esc(app.role)}</small></td>
+          <td class="apps-note">${esc(app.category)}</td>
+          <td class="apps-state">${state}</td>
+          <td class="apps-action">${action}</td>
+        </tr>`);
       }
-      const action = configured && !authorized
-        ? `<button type="button" class="primary" data-connect-app="${esc(app.role)}" data-shop-id="${esc(shopId)}">${esc(t('connect'))}</button>`
-        : '';
-      return `<li class="app-row">
-        <span class="app-name">${esc(locale() === 'en' ? app.nameEn : app.name)}
-          <small>${esc(app.role)}</small></span>
-        <span class="app-note">${esc(note)}</span>
-        <span class="app-state">${state}</span>
-        <span class="app-action">${action}</span>
-      </li>`;
-    }).join('');
+    }
+    const head = document.querySelector('#platformAppsHead');
+    if (head) {
+      head.innerHTML = `<tr>
+        <th scope="col">${esc(t('colCountry'))}</th>
+        <th scope="col">${esc(t('colShop'))}</th>
+        <th scope="col">${esc(t('colApp'))}</th>
+        <th scope="col">${esc(t('colScope'))}</th>
+        <th scope="col">${esc(t('colState'))}</th>
+        <th scope="col">${esc(t('colAction'))}</th>
+      </tr>`;
+    }
+    host.innerHTML = rows.join('')
+      || `<tr><td class="empty" colspan="6">${esc(t('empty'))}</td></tr>`;
   }
 
   /**
@@ -406,26 +442,22 @@ const TEXT = {
       <div class="apps-head">
         <h3>${esc(t('appsTitle'))}</h3>
         <p>${esc(t('appsSub'))}</p>
-        <label class="apps-shop">${esc(t('pickShop'))}
-          <select id="platformAppsShop">${shops.map(shop =>
-            `<option value="${esc(shop.shopId)}">${esc(shop.displayName || shop.shopId)}</option>`).join('')}</select>
-        </label>
       </div>
-      <ul class="apps-list" id="platformAppsList"></ul>`;
-    const select = host.querySelector('#platformAppsShop');
-    const load = async () => {
-      const shopId = select.value;
-      let statuses = [];
-      try {
-        const payload = await request(`/api/shopee-analytics/app/status-all?shop_id=${encodeURIComponent(shopId)}`);
-        statuses = (payload && payload.apps) || [];
-      } catch (error) {
-        statuses = [];
-      }
-      renderShopeeApps(statuses, shopId);
-    };
-    select.addEventListener('change', load);
-    await load();
+      <div class="apps-table-wrap">
+        <table class="apps-table">
+          <thead id="platformAppsHead"></thead>
+          <tbody id="platformAppsTable"></tbody>
+        </table>
+      </div>`;
+    let statuses = [];
+    try {
+      // 一次读全部店铺 —— 表格要的就是这个，而不是一个店一个店地读。
+      const payload = await request('/api/shopee-analytics/app/status-all');
+      statuses = (payload && payload.apps) || [];
+    } catch (error) {
+      statuses = [];
+    }
+    renderShopeeApps(statuses, shops);
   }
 
   function label() {
