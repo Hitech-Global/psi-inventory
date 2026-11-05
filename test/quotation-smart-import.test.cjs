@@ -11,16 +11,21 @@ vm.runInNewContext(source,{window,document,setTimeout(){},console},{timeout:1000
 const n=window.QuotationImportNormalizer;
 assert(n,'quotation import normalizer must be exposed');
 assert.equal(n.BRAND_CCY.GoPro,undefined,'brand currency defaults must not be hardcoded in the browser');
-n.setBrandCurrencies({Netac:'USD',Redragon:'RMB',BOYA:'RMB',Joypeer:'RMB',GoPro:'IDR'});
+n.setBrandCurrencies({Netac:'USD',Redragon:'RMB',BOYA:'RMB',Joypeer:'RMB',GoPro:'IDR'},['USD','RMB','IDR','MYR','THB']);
 assert.equal(n.BRAND_CCY.GoPro,'IDR','GoPro currency should come from brand settings');
 const goproNormalized=n.normalizeRow({SKU:'CHDHW-010-RW',brand:'GoPro',quote_price:12300000,quote_date:'2026-11-01'});
 assert.equal(goproNormalized.currency,'IDR','GoPro rows should inherit IDR when currency is omitted');
 assert.equal(n.validateRows([goproNormalized]).length,0,'GoPro IDR quote rows should pass validation');
-n.setBrandCurrencies({GoPro:'THB'});
+n.setBrandCurrencies({GoPro:'THB'},['USD','RMB','IDR','MYR','THB']);
 const changedDefault=n.normalizeRow({SKU:'CHDHW-010-RW',brand:'GoPro',quote_price:12300000,quote_date:'2026-11-01'});
 assert.equal(changedDefault.currency,'THB','changing brand settings should update importer defaults');
 assert.equal(n.validateRows([changedDefault]).length,0,'validation should use the current master-data currency');
-n.setBrandCurrencies({Netac:'USD',Redragon:'RMB',BOYA:'RMB',Joypeer:'RMB',GoPro:'IDR'});
+n.setBrandCurrencies({GoPro:'SGD'},['USD','RMB','IDR','MYR','THB','SGD']);
+const sgdParsed=n.parseSheetRows([{name:'SGD price',rows:[['Part No','FOB SGD'],['GOPRO-NEW-01','SGD 1.25']]}],{brand:'GoPro',quote_date:'2026-11-01'});
+assert.equal(sgdParsed.rows[0].currency,'SGD','new currency codes from currency settings should be detected from headers');
+assert.equal(sgdParsed.rows[0].quote_price,1.25,'new active currency prefixes should be removed when parsing prices');
+assert.equal(n.validateRows(sgdParsed.rows).length,0,'new active currencies should pass client validation');
+n.setBrandCurrencies({Netac:'USD',Redragon:'RMB',BOYA:'RMB',Joypeer:'RMB',GoPro:'IDR'},['USD','RMB','IDR','MYR','THB']);
 
 const parsed=n.parseSheetRows([
   {name:'Price List',rows:[
