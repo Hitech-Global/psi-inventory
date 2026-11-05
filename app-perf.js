@@ -212,7 +212,7 @@
     var u = url || '';
     function has(p) { return u.indexOf(p) !== -1; }
     function isMasterRecordMutation(prefix) {
-      var path = u.split('?')[0].replace(/\\/+$/, '');
+      var path = u.split('?')[0].replace(/\/+$/, '');
       if (method === 'POST' && path === prefix) return true;
       if (method !== 'PUT' || path.indexOf(prefix + '/') !== 0) return false;
       var recordId = path.slice(prefix.length + 1);
