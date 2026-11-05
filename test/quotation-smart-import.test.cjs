@@ -10,6 +10,10 @@ const document={readyState:'complete',addEventListener(){}};
 vm.runInNewContext(source,{window,document,setTimeout(){},console},{timeout:1000});
 const n=window.QuotationImportNormalizer;
 assert(n,'quotation import normalizer must be exposed');
+assert.equal(n.BRAND_CCY.GoPro,'IDR','GoPro quote currency must default to IDR');
+const goproNormalized=n.normalizeRow({SKU:'CHDHW-010-RW',brand:'GoPro',quote_price:12300000,quote_date:'2026-11-01'});
+assert.equal(goproNormalized.currency,'IDR','GoPro rows should inherit IDR when currency is omitted');
+assert.equal(n.validateRows([goproNormalized]).length,0,'GoPro IDR quote rows should pass validation');
 
 const parsed=n.parseSheetRows([
   {name:'Price List',rows:[
@@ -138,6 +142,12 @@ assert.equal(manual[0].match_source,'manual');
 const progress=fs.readFileSync(path.join(__dirname,'..','quotation-import-progress.js'),'utf8');
 const fast=fs.readFileSync(path.join(__dirname,'..','quotation-import-fast.js'),'utf8');
 const server=fs.readFileSync(path.join(__dirname,'..','quotation-server.js'),'utf8');
+const management=fs.readFileSync(path.join(__dirname,'..','quotation-management.js'),'utf8');
+assert.match(management,/GoPro:'IDR'/,'quotation management should expose GoPro');
+assert.match(management,/code==='IDR'/,'IDR quotations should render with Rp and no decimals');
+assert.match(fast,/GoPro:'IDR'/,'fast import should validate GoPro as IDR');
+assert.match(server,/GoPro: 'IDR'/,'quotation server should compare GoPro in IDR');
+assert.match(progress,/r.currency==='IDR'/,'smart-import preview should render IDR values as Rp');
 assert.match(progress,/parseSheetRows/,'browser import should parse every worksheet');
 assert.match(progress,/inferQuoteDate\(sheets,f\.name\)/,'browser import should infer quote date from workbook title or filename');
 assert.match(progress,/quoteDateTouched/,'a manually selected quote date must not be overwritten by inference');
@@ -153,7 +163,7 @@ assert.match(patchedServer,/quotation-import-fast\.js'\)\(\{ app, query, run, tr
 assert.equal(bootstrap.patchServerSource(patchedServer),patchedServer,'server bootstrap patch should be idempotent');
 const indexEntry=fs.readFileSync(path.join(__dirname,'..','index.html'),'utf8');
 const patchedIndex=bootstrap.patchIndexSource(indexEntry);
-assert.match(patchedIndex,/quotation-import-normalizer\.js\?v=20261105a/,'bootstrap should load smart-import normalizer');
+assert.match(patchedIndex,/quotation-import-normalizer\.js\?v=20261105b/,'bootstrap should load smart-import normalizer');
 assert.equal(bootstrap.patchIndexSource(patchedIndex),patchedIndex,'index bootstrap patch should be idempotent');
 
 
