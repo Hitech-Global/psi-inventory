@@ -9,6 +9,9 @@ on:
       - 'test/app-perf-diagnostics.test.cjs'
       - 'server.js'
       - 'index.html'
+      - 'assets/bigseller-inventory-import.js'
+      - 'test/bigseller-inventory-import.test.cjs'
+      - 'test/inventory-import-precheck.test.cjs'
       - 'assets/finance-payment-calendar.js'
       - 'test/finance-payment-calendar.test.cjs'
       - 'test/manual-payable-item.test.cjs'
@@ -60,6 +63,9 @@ jobs:
           node --check app-perf.js
           node --check test/app-perf-diagnostics.test.cjs
           node --check server.js
+          node --check assets/bigseller-inventory-import.js
+          node --check test/bigseller-inventory-import.test.cjs
+          node --check test/inventory-import-precheck.test.cjs
           node --check assets/finance-payment-calendar.js
           node --check test/finance-payment-calendar.test.cjs
           node --check test/manual-payable-item.test.cjs
@@ -90,6 +96,8 @@ jobs:
         run: node test/po-number-date-country.test.cjs
       - name: Test PO latest FOB quotation and FX pricing
         run: node --test test/po-plan-quotation-pricing.test.cjs
+      - name: Test BigSeller inventory import adapter and SKU master-data blocking
+        run: node --test test/bigseller-inventory-import.test.cjs test/inventory-import-precheck.test.cjs
       - name: Test inventory financial value aggregation
         run: node test/inventory-asset-values.test.cjs
       - name: Test inventory overview export fields

@@ -365,6 +365,8 @@ test('6) 真实路由：含阻断行的批次整批拒绝（422），数据库�
   assert.equal(status, 422, '应返回 422 整批阻断');
   assert.equal(body.blocked, true);
   assert.ok(body.failed >= 1, '应报告至少 1 个阻断项');
+  assert.ok(body.blocking.some(x => x.issue_type === 'SKU_MASTER_MISSING' && x.sku_code === 'SKU-UNKNOWN' && x.row === 3),
+    '不匹配 SKU 必须在真实 bulk-import 后端闸门中按 SKU 和 Excel 行号明确阻断');
   // 关键不变量：即便批次中存在合法行，也不应产生任何写入（整批语义，禁止部分写入）
   const afterImp = count('inventory_imports');
   const afterInv = count('inventory');
@@ -433,6 +435,8 @@ test('3f) 后端闸门：Excel 品牌为空 + 主数据有品牌 → 200 允许�
   const { status, body } = await postBulkImport(items, VALID_DATE);
   assert.ok(!(status === 422 && body.blocked === true), '空品牌不应被阻断');
   assert.equal(count('inventory_imports'), beforeImp + 1, '空品牌应正常写入 1 行');
+  const stored = query("SELECT brand FROM inventory_imports WHERE sku_code='SKU-A'").rows[0];
+  assert.equal(stored.brand, 'Redragon', 'Excel 品牌为空时，库存导入记录品牌必须从 SKU 主数据回填');
 });
 
 // ===== 以下场景全部通过真实 bulk-import 路由驱动（绕过 /precheck 直连写入闸门）=====
@@ -553,8 +557,8 @@ test('15) 库存导入不写入/不修改 skus 主数据（即使 Excel 提供�
   const beforeBrand = query("SELECT brand FROM skus WHERE sku_code='SKU-A'").rows[0].brand;
   // Excel 提供完全相同的品牌（合法），验证导入路径不会回写/新增 skus
   const items = [{ sku_code: 'SKU-A', import_date: VALID_DATE, brand: 'Redragon', available_qty: VALID_QTY, weighted_avg_cost: VALID_WAC, _row_num: 2 }];
-  const { status } = await postBulkImport(items, VALID_DATE);
-  assert.ok(status === 200, '合法导入应成功');
+  const { status, body } = await postBulkImport(items, VALID_DATE);
+  assert.ok(status === 200, '合法导入应成功；实际 HTTP ' + status + '，响应：' + JSON.stringify(body));
   // 不变式：skus 行数不变、主数据品牌不变（库存导入不补 SKU 主数据）
   assert.equal(count('skus'), beforeSkus, 'skus 行数不应因库存导入而增加');
   const afterBrand = query("SELECT brand FROM skus WHERE sku_code='SKU-A'").rows[0].brand;
