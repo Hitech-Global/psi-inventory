@@ -3,7 +3,7 @@ const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const path=require('node:path');
-const {buildWacCostChangeRows,summarizeWacCostChangeRows,chunkWacCostChangeRows,getNewWacCcRecipientIds,buildWacGroupRecipientId,parseWacGroupRecipientId,buildWacCostChangeCard,cardToFallbackText}=require('../wac-notification');
+const {buildWacCostChangeRows,summarizeWacCostChangeRows,chunkWacCostChangeRows,getUniqueWacCcRecipientIds,buildWacGroupRecipientId,parseWacGroupRecipientId,buildWacCostChangeCard,cardToFallbackText}=require('../wac-notification');
 
 test('sorts WAC changes by absolute percentage and places first-time SKUs last',()=>{
   const rows=buildWacCostChangeRows([
@@ -33,9 +33,9 @@ test('summary and chunking preserve every SKU',()=>{
   assert.equal(chunks.length,3);
   assert.deepEqual(chunks.flat().map(r=>r.sku_code),rows.map(r=>r.sku_code));
 });
-test('post-confirmation CC deduplicates selected IDs and never re-sends to existing recipients',()=>{
-  assert.deepEqual(getNewWacCcRecipientIds(['u1','u2','u2','u3','',null],['u2']),['u1','u3']);
-  assert.deepEqual(getNewWacCcRecipientIds(['u1','u1'],['u1']),[]);
+test('post-confirmation CC keeps previously notified recipients eligible and deduplicates only within the current selection',()=>{
+  assert.deepEqual(getUniqueWacCcRecipientIds(['u1','u2','u2','u3','',null]),['u1','u2','u3']);
+  assert.deepEqual(getUniqueWacCcRecipientIds(['u1','u1']),['u1']);
 });
 test('WAC group recipient keys preserve language and chat ID without colliding with user IDs',()=>{
   assert.equal(buildWacGroupRecipientId('zh','oc_chat_1'),'group:zh:oc_chat_1');
@@ -131,7 +131,20 @@ test('WAC UI, retry API and both database adapters are wired',()=>{
   assert.match(server,/\/api\/wac\/notifications\/:logistics_batch_id\/retry/);
   assert.match(server,/\/api\/wac\/notifications\/:logistics_batch_id\/cc/);
   assert.match(server,/FROM wac_history WHERE logistics_batch_id=\?/);
-  assert.match(server,/getNewWacCcRecipientIds/);
+  assert.match(server,/getUniqueWacCcRecipientIds/);
+  assert.doesNotMatch(server,/getNewWacCcRecipientIds/);
+  assert.doesNotMatch(server,/ON CONFLICT \\(logistics_batch_id,recipient_user_id,part_no\\) DO NOTHING/);
+  assert.match(server,/already_sent:alreadySent/);
+  assert.match(ui,/已有抄送记录，可再次 CC/);
+  assert.match(ui,/已抄送过的人员也可再次选择/);
+  assert.match(ui,/已抄送过的群也可再次选择/);
+  assert.doesNotMatch(ui,/!existing\\.has\\(String\\(u\\.id\\)\\)/);
+  assert.match(pg,/DROP CONSTRAINT/);
+  assert.match(db,/DROP CONSTRAINT/);
+  assert.match(sqlite,/wac_notification_logs_repeatable_tmp/);
+  assert.doesNotMatch(pg,/UNIQUE\\s*\\(\\s*logistics_batch_id,\\s*recipient_user_id,\\s*part_no\\s*\\)/i);
+  assert.doesNotMatch(db,/UNIQUE\\(logistics_batch_id, recipient_user_id, part_no\\)/i);
+  assert.doesNotMatch(sqlite,/UNIQUE\\s*\\(\\s*logistics_batch_id\\s*,\\s*recipient_user_id\\s*,\\s*part_no\\s*\\)/i);
   assert.match(server,/business_type.*wac/);
   assert.match(pg,/CREATE TABLE IF NOT EXISTS wac_notification_logs/);
   assert.match(sqlite,/CREATE TABLE IF NOT EXISTS wac_notification_logs/);
