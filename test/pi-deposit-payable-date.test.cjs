@@ -115,6 +115,7 @@ test('PI edit route and PI deposit payment request route both use PI date', () =
   assert.ok(editStart >= 0 && editEnd > editStart);
   const editRoute = serverSource.slice(editStart, editEnd);
   assert.match(editRoute, /syncPiDepositPayableDate\(id, nextPiDate\)/);
+  assert.ok(editRoute.includes(String.raw`const dateMatch = /^\d{4}-\d{2}-\d{2}$/.test(nextPiDate);`));
   assert.match(editRoute, /PI日期必须为有效的 YYYY-MM-DD 日期/);
 
   const requestStart = serverSource.indexOf("app.post('/api/payment-requests/from-pi-deposit'");

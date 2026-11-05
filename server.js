@@ -9857,7 +9857,7 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
 
     const nextPiDate = d.pi_date !== undefined ? String(d.pi_date || '').trim() : String(pi.pi_date || '').trim();
     if (d.pi_date !== undefined) {
-      const dateMatch = /^\\d{4}-\\d{2}-\\d{2}$/.test(nextPiDate);
+      const dateMatch = /^\d{4}-\d{2}-\d{2}$/.test(nextPiDate);
       const parsedDate = dateMatch ? new Date(nextPiDate + 'T00:00:00Z') : null;
       if (!dateMatch || !parsedDate || !Number.isFinite(parsedDate.getTime()) ||
           parsedDate.toISOString().slice(0, 10) !== nextPiDate) {
@@ -22825,9 +22825,9 @@ if (require.main === module) {
     const synced = backfillPiDepositPayableDates();
     console.log('[STARTUP] PI 定金应付日期已按 PI 日期同步 ✓', JSON.stringify(synced));
   } catch (e) {
-    console.error('\\n[FATAL] PI 定金应付日期同步失败:', e.message);
+    console.error('\n[FATAL] PI 定金应付日期同步失败:', e.message);
     console.error(e.stack);
-    console.error('\\n[FATAL] 服务无法启动。请修正数据后重试。');
+    console.error('\n[FATAL] 服务无法启动。请修正数据后重试。');
     process.exit(1);
   }
 
