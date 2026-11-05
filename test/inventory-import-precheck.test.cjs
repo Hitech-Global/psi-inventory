@@ -66,6 +66,7 @@ function createSchema() {
     DROP TABLE IF EXISTS users;
     DROP TABLE IF EXISTS sessions;
     DROP TABLE IF EXISTS wac_history;
+    DROP TABLE IF EXISTS logistics_batches;
     DROP TABLE IF EXISTS role_data_scope;
     DROP TABLE IF EXISTS user_data_scope;
     DROP TABLE IF EXISTS warehouses;
@@ -142,7 +143,13 @@ function createSchema() {
       is_locked INTEGER DEFAULT 0,
       version_no INTEGER DEFAULT 0,
       confirmed_at TEXT DEFAULT '',
+      last_inbound_date TEXT DEFAULT '',
+      logistics_batch_id TEXT,
       effective_end_date TEXT DEFAULT ''
+    );
+    CREATE TABLE logistics_batches (
+      id TEXT PRIMARY KEY,
+      actual_arrival_date TEXT DEFAULT ''
     );
     CREATE TABLE role_data_scope (
       role_id TEXT PRIMARY KEY,
