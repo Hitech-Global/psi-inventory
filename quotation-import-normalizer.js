@@ -32,6 +32,30 @@ function normalizeDate(value){
   if(/^\d{4}-\d{2}-\d{2}T/.test(s))return s.slice(0,10);
   return s;
 }
+const MONTHS=Object.freeze({jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12});
+function parseMonthDate(value){
+  const s=clean(value);
+  const m=s.match(/\b(January|Jan|February|Feb|March|Mar|April|Apr|May|June|Jun|July|Jul|August|Aug|September|Sept|Sep|October|Oct|November|Nov|December|Dec)\.?\s+(\d{1,2}),?\s+(\d{4})\b/i);
+  if(!m)return '';
+  const month=MONTHS[m[1].slice(0,3).toLowerCase()],day=Number(m[2]),year=Number(m[3]);
+  if(!month||!day||!year)return '';
+  const d=new Date(Date.UTC(year,month-1,day));
+  if(d.getUTCFullYear()!==year||d.getUTCMonth()!==month-1||d.getUTCDate()!==day)return '';
+  return year+'-'+pad(month)+'-'+pad(day);
+}
+function inferQuoteDate(sheets,fileName){
+  for(const sheet of (sheets||[])){
+    const matrix=Array.isArray(sheet.rows)?sheet.rows:[];
+    for(let i=0;i<Math.min(matrix.length,5);i++){
+      for(const value of (matrix[i]||[])){
+        const raw=clean(value);
+        const tagged=raw.match(/\bDate\s*[:：]\s*([A-Za-z]{3,9}\.?\s+\d{1,2},?\s+\d{4})/i);
+        if(tagged){const date=parseMonthDate(tagged[1]);if(date)return date;}
+      }
+    }
+  }
+  return parseMonthDate(fileName||'');
+}
 function parsePrice(value){
   if(value==null||clean(value)==='')return 0;
   const raw=clean(value).toUpperCase();
@@ -46,11 +70,13 @@ function classifyHeader(value){
   if(!h)return '';
   if(/^(psisku|internal(sku|item)|hitechsku|systemsku|内部sku|系统sku|内部编码|系统编码)$/.test(h))return 'psi_sku_code';
   if(/^(brand|品牌)$/.test(h))return 'brand';
-  if(/^(product|producttype|type|category|productcategory|品类|产品类型|类别|产品类别)$/.test(h))return 'product_type';
+  if(/^(product|producttype|category|productcategory|品类|产品类型|类别|产品类别)$/.test(h))return 'product_type';
+  if(/^(type|subtype|类型)$/.test(h))return 'product_subtype';
   if(/^(currency|curr|币种|货币)$/.test(h))return 'currency';
   if(/^(quotedate|quotationdate|date|报价日期|日期)$/.test(h))return 'quote_date';
-  if(/^(model|modelno|modelnumber|型号|产品型号)$/.test(h))return 'model';
-  if(/^(spec|specification|capacity|memory|color|colour|size|规格|容量|颜色|容量规格)$/.test(h))return 'spec';
+  if(/^(model|modelno|modelnumber|modelpn|modelpartnumber|型号|产品型号)$/.test(h))return 'model';
+  if(/^(capacity|capacitygb|capacitymb|capacitytb|容量)$/.test(h))return 'capacity';
+  if(/^(spec|specification|memory|color|colour|size|规格|颜色|容量规格)$/.test(h))return 'spec';
   if(/^(remark|remarks|note|notes|comment|comments|备注|说明)$/.test(h))return 'remark';
   if(/^(partno|partnumber|pn|itemno|itemnumber|itemcode|productcode|productno|productsku|suppliersku|supplierpartno|supplierpartnumber|vendorpartno|vendorpartnumber|货号|料号|供应商料号|供应商货号|供应商sku|产品编码|物料编码|sku|stockkeepingunit)$/.test(h))return 'supplier_part_no';
   if(/(fob|price|quote|quotation|unitprice|报价|单价|价格)/.test(h))return 'quote_price';
@@ -58,7 +84,7 @@ function classifyHeader(value){
 }
 function currencyFromHeader(value){
   const h=clean(value).toUpperCase();
-  if(/\bUSD\b/.test(h)||h.includes('美元'))return 'USD';
+  if(/\bUSD\b/.test(h)||h.includes('US$')||h.includes('美元'))return 'USD';
   if(/\b(RMB|CNY)\b/.test(h)||h.includes('人民币'))return 'RMB';
   if(/\b(EUR)\b/.test(h))return 'EUR';
   if(/\b(THB)\b/.test(h))return 'THB';
@@ -116,8 +142,13 @@ function parseSheetRows(sheets,options){
       const priceCell=cell(source,found.columns,'quote_price',preferredCurrency);
       const currencyCell=cell(source,found.columns,'currency').value;
       const dateCell=cell(source,found.columns,'quote_date').value;
-      const spec=cell(source,found.columns,'spec').value;
-      const type=cell(source,found.columns,'product_type').value;
+      const rawSpec=cell(source,found.columns,'spec').value;
+      const type=cell(source,found.columns,'product_subtype').value;
+      const product=cell(source,found.columns,'product_type').value;
+      const isNetac=brand.toLowerCase()==='netac';
+      const productType=clean(product)||(isNetac?clean(sheet.name):clean(type));
+      const capacity=cell(source,found.columns,'capacity').value;
+      const spec=(isNetac?[type,capacity,rawSpec]:[capacity,rawSpec]).map(clean).filter(Boolean).join(' / ');
       const psiSku=cell(source,found.columns,'psi_sku_code').value;
       const remark=cell(source,found.columns,'remark').value;
       const price=parsePrice(priceCell.value);
@@ -126,7 +157,7 @@ function parseSheetRows(sheets,options){
         supplier_part_no:clean(part),sku_code:clean(part),psi_sku_code:clean(psiSku),
         match_status:'unlinked',match_source:clean(psiSku)?'manual':'unlinked',
         brand,brand_source:clean(brandCell)?'file':'default',
-        product_type:clean(type),model:clean(model),spec:clean(spec),
+        product_type:productType,model:clean(model),spec,
         quote_price:price,currency:clean(currencyCell||headerCurrency||BRAND_CCY[brand]||opts.currency).toUpperCase(),
         quote_date:normalizeDate(dateCell||opts.quote_date),quote_date_source:clean(dateCell)?'file':'default',remark:clean(remark),
         source_sheet:clean(sheet.name),source_row:i+1,supplier_id:clean(opts.supplier_id)
@@ -219,7 +250,7 @@ function validateRows(rows){
 }
 
 window.QuotationImportNormalizer=Object.freeze({
-  normalizeDate,normalizeRow,parseSheetRows,matchRows,validateRows,BRAND_CCY
+  normalizeDate,inferQuoteDate,normalizeRow,parseSheetRows,matchRows,validateRows,BRAND_CCY
 });
 
 function install(){
