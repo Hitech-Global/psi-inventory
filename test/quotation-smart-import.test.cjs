@@ -253,3 +253,4 @@ assert.doesNotMatch(quotationUiSource,/const CCY\s*=|Object\.keys\(CCY\)/,'quota
 assert(quotationUiSource.includes('/api/brands/all'),'quotation UI must load brand choices from the brand master endpoint');
 assert.match(appSource,/data-brand-currency/,'brand settings UI must expose default quote currency');
 assert.match(apiSource,/default_quote_currency/,'brand settings API must persist and return default quote currency');
+assert.doesNotMatch(apiSource,/it\.procurement_status === 'active' && !currency/,'brands without quote currency must not block saving unrelated brand settings');
