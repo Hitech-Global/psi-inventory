@@ -573,7 +573,7 @@ function initDatabase() {
       last_error TEXT DEFAULT '',
       sent_at TEXT DEFAULT '',
       created_at TEXT DEFAULT (datetime('now')),
-      updated_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
     )
   `);
 
@@ -584,7 +584,7 @@ function initDatabase() {
   if (wacNotificationTable && /UNIQUE\s*\(\s*logistics_batch_id\s*,\s*recipient_user_id\s*,\s*part_no\s*\)/i.test(wacNotificationTable.sql || '')) {
     const migrateRepeatableWacNotifications = d.transaction(() => {
       d.exec("DROP TABLE IF EXISTS wac_notification_logs_repeatable_tmp");
-      d.exec(\`
+      d.exec(`
         CREATE TABLE wac_notification_logs_repeatable_tmp (
           id TEXT PRIMARY KEY,
           logistics_batch_id TEXT NOT NULL,
@@ -600,13 +600,13 @@ function initDatabase() {
           created_at TEXT DEFAULT (datetime('now')),
           updated_at TEXT DEFAULT (datetime('now'))
         )
-      \`);
-      d.exec(\`
+      `);
+      d.exec(`
         INSERT INTO wac_notification_logs_repeatable_tmp
           (id,logistics_batch_id,recipient_user_id,recipient_name,part_no,part_count,status,attempt_count,report_payload,last_error,sent_at,created_at,updated_at)
         SELECT id,logistics_batch_id,recipient_user_id,recipient_name,part_no,part_count,status,attempt_count,report_payload,last_error,sent_at,created_at,updated_at
         FROM wac_notification_logs
-      \`);
+      `);
       d.exec("DROP TABLE wac_notification_logs");
       d.exec("ALTER TABLE wac_notification_logs_repeatable_tmp RENAME TO wac_notification_logs");
     });
