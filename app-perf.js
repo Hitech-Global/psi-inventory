@@ -211,10 +211,23 @@
     var refs = [];
     var u = url || '';
     function has(p) { return u.indexOf(p) !== -1; }
+    function isMasterRecordMutation(prefix) {
+      var path = u.split('?')[0].replace(/\/+$/, '');
+      if (method === 'POST' && path === prefix) return true;
+      if (method !== 'PUT' || path.indexOf(prefix + '/') !== 0) return false;
+      var recordId = path.slice(prefix.length + 1);
+      return recordId.length > 0 && recordId.indexOf('/') === -1;
+    }
     if (has('/api/inventory-imports')) { pages.push('inventory', 'inv-filter-options', 'replenishment', 'consignment', 'dashboard'); }
     if (has('/api/inventory') && method !== 'GET') { pages.push('inventory', 'inv-filter-options', 'replenishment'); }
-    if (has('/api/proforma-invoices')) { pages.push('pi', 'po', 'payable-list', 'payable-cockpit', 'replenishment'); }
-    if (has('/api/commercial-invoices')) { pages.push('ci', 'pi', 'payable-list', 'payable-cockpit', 'replenishment'); }
+    if (has('/api/proforma-invoices')) {
+      pages.push('pi', 'po', 'payable-list', 'payable-cockpit', 'replenishment');
+      if (isMasterRecordMutation('/api/proforma-invoices')) refs.push('brands');
+    }
+    if (has('/api/commercial-invoices')) {
+      pages.push('ci', 'pi', 'payable-list', 'payable-cockpit', 'replenishment');
+      if (isMasterRecordMutation('/api/commercial-invoices')) refs.push('brands');
+    }
     // historical CI：与 CI 同链路（createHistoricalCI 写 historical_commercial_invoices/items + payment_requests +
     // payment_request_items + payment_settlement_logs + proforma_invoice_items.shipped_qty + payable_items）。
     // 注意：URL 不含子串 /api/commercial-invoices，必须单列，否则 payable-list 最多陈旧 30s。
@@ -249,7 +262,10 @@
     if (has('/api/packing-lists')) { pages.push('ci', 'replenishment'); }
     if (has('/api/payment-requests')) { pages.push('payment', 'payable-list', 'payable-cockpit', 'ci', 'pi'); }
     if (has('/api/payable-items')) { pages.push('payable-list', 'payable-cockpit', 'payment'); }
-    if (has('/api/purchase-orders')) { pages.push('po', 'pi'); }
+    if (has('/api/purchase-orders')) {
+      pages.push('po', 'pi');
+      if (isMasterRecordMutation('/api/purchase-orders')) refs.push('brands');
+    }
     if (has('/api/consignment')) { pages.push('consignment', 'inventory', 'inv-filter-options'); }
     if (has('/api/skus')) { pages.push('skus', 'inventory', 'inv-filter-options', 'pi', 'ci'); refs.push('skus', 'brands'); }
     if (has('/api/suppliers')) { refs.push('suppliers'); }
@@ -265,7 +281,12 @@ function onMutation(method, url, body) {
   try {
     var m = pagesForMutation(url, method);
     m.pages.forEach(function (p) { markDirty(p); });
-    m.refs.forEach(function (r) { invalidateRef(r); });
+    m.refs.forEach(function (r) {
+      invalidateRef(r);
+      // PI create/edit has its own 5-minute session master cache outside AppStore.
+      // Keep the two cache layers coherent without clearing unrelated master data.
+      try { if (window._masterCache && Object.prototype.hasOwnProperty.call(window._masterCache, r)) window._masterCache[r] = null; } catch (e2) {}
+    });
     // 物流决策 detail 缓存按 combo 分键（logistics-decision-detail|range|country|transport），
     // 无法预知具体 combo，故按前缀精准打脏所有已缓存的 detail 桶（不全局清 AppStore）。
     if (url && url.indexOf('/api/logistics-batches') !== -1 && url.indexOf('/notify') === -1) {
