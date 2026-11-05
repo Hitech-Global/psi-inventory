@@ -2523,6 +2523,15 @@ function initDatabase() {
     }
   })();
 
+  // LOGISTICS-CUSTOMS-MODE-01：清关方式。旧物流批次保留空值，页面统一显示“未标记”，不推断历史属性。
+  (function logisticsCustomsModeMigration() {
+    const d = getDB();
+    const cols = d.prepare(`PRAGMA table_info(logistics_batches)`).all().map(c => c.name);
+    if (!cols.includes('customs_mode')) {
+      d.exec(`ALTER TABLE logistics_batches ADD COLUMN customs_mode TEXT NOT NULL DEFAULT ''`);
+    }
+  })();
+
   // LOGISTICS-LISTING-01（2026-08-07 调整）：上架负责人 owner 单选 → 多选。
   // listing_owner_id（单列）→ listing_owner_ids（逗号分隔多 ID）；回填后删除旧单列。
   // 负责人事实仍存于 business_participants(participant_type='owner')，可一行多人。

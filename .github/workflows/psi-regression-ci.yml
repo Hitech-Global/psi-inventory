@@ -10,6 +10,7 @@ on:
       - 'app-perf.js'
       - 'test/app-perf-diagnostics.test.cjs'
       - 'server.js'
+      - 'logistics-decision.test.cjs'
       - 'wave2b-pi-batch-import-pg.js'
       - 'test/pi-deposit-payable-date.test.cjs'
       - 'index.html'
@@ -77,6 +78,10 @@ jobs:
           node --check app-perf.js
           node --check test/app-perf-diagnostics.test.cjs
           node --check server.js
+          node --check db-pg.js
+          node --check db-sqlite.js
+          node --check i18n.js
+          node --check logistics-decision.test.cjs
           node --check wave2b-pi-batch-import-pg.js
           node --check test/pi-deposit-payable-date.test.cjs
           node --check assets/bigseller-inventory-import.js
@@ -144,6 +149,8 @@ jobs:
         run: node test/rp-suggested-qty-wheel.test.cjs
       - name: Test WAC history matrix and historical import
         run: node test/wac-history-import.test.cjs
+      - name: Test logistics decision customs grouping and trends
+        run: node --test logistics-decision.test.cjs
       - name: Test WAC batch exclusion and restore
         run: node test/wac-batch-exclusion.test.cjs
       - name: Test smart quotation import and supplier SKU mapping

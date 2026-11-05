@@ -12162,6 +12162,9 @@ app.post('/api/logistics-batches', requireApiPermission('logistics_create'), asy
     const bId = genId('log');
     const bNo = d.batch_no || `LOG-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
     const totalFreight = (d.international_freight || 0) + (d.local_charges || 0) + (d.customs_service_fee || 0) + (d.delivery_fee || 0);
+    if (d.customs_mode !== undefined && !['', 'normal', 'gray'].includes(String(d.customs_mode || '').trim())) {
+      return res.status(400).json({ error: '清关方式无效' });
+    }
 
     // LOGISTICS-LISTING-01（2026-08-07 owner 多选）：遗留裸接口保持可选——传了 listing_owner_ids 才校验/写参与人/通知
     const bareOwnerIds = Array.isArray(d.listing_owner_ids) ? d.listing_owner_ids.map(s => String(s).trim()).filter(Boolean) : [];
@@ -12172,8 +12175,8 @@ app.post('/api/logistics-batches', requireApiPermission('logistics_create'), asy
       if (u.status !== 'active') return res.status(400).json({ error: '上架负责人已停用' });
       bareOwners.push(u);
     }
-    run(`INSERT INTO logistics_batches (id, batch_no, related_ci_id, related_ci_no, forwarder_id, forwarder_name, transport_mode, origin_port, dest_port, target_country, target_warehouse, pickup_date, depart_date, eta_date, actual_arrival_date, customs_start_date, customs_end_date, delivery_date, inbound_complete_date, logistics_status, total_cartons, total_weight, total_cbm, freight_currency, international_freight, local_charges, customs_service_fee, delivery_fee, total_freight, customs_duty, vat_gst, other_fees, fee_status, remark, listing_status, listing_owner_ids, listing_status_updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [bId, bNo, d.related_ci_id || '', d.related_ci_no || '', d.forwarder_id || '', d.forwarder_name || '', d.transport_mode || 'sea', d.origin_port || '', d.dest_port || '', d.target_country || '', d.target_warehouse || '', d.pickup_date || '', d.depart_date || '', d.eta_date || '', d.actual_arrival_date || '', d.customs_start_date || '', d.customs_end_date || '', d.delivery_date || '', d.inbound_complete_date || '', d.logistics_status || 'pending', d.total_cartons || 0, d.total_weight || 0, d.total_cbm || 0, d.freight_currency || 'USD', d.international_freight || 0, d.local_charges || 0, d.customs_service_fee || 0, d.delivery_fee || 0, totalFreight, d.customs_duty || 0, d.vat_gst || 0, d.other_fees || 0, d.fee_status || 'unpaid', d.remark || '', 'pending_plan', bareOwnerIds.join(','), new Date().toISOString().slice(0, 19).replace('T', ' ')]);
+    run(`INSERT INTO logistics_batches (id, batch_no, related_ci_id, related_ci_no, forwarder_id, forwarder_name, transport_mode, customs_mode, origin_port, dest_port, target_country, target_warehouse, pickup_date, depart_date, eta_date, actual_arrival_date, customs_start_date, customs_end_date, delivery_date, inbound_complete_date, logistics_status, total_cartons, total_weight, total_cbm, freight_currency, international_freight, local_charges, customs_service_fee, delivery_fee, total_freight, customs_duty, vat_gst, other_fees, fee_status, remark, listing_status, listing_owner_ids, listing_status_updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [bId, bNo, d.related_ci_id || '', d.related_ci_no || '', d.forwarder_id || '', d.forwarder_name || '', d.transport_mode || 'sea', d.customs_mode || '', d.origin_port || '', d.dest_port || '', d.target_country || '', d.target_warehouse || '', d.pickup_date || '', d.depart_date || '', d.eta_date || '', d.actual_arrival_date || '', d.customs_start_date || '', d.customs_end_date || '', d.delivery_date || '', d.inbound_complete_date || '', d.logistics_status || 'pending', d.total_cartons || 0, d.total_weight || 0, d.total_cbm || 0, d.freight_currency || 'USD', d.international_freight || 0, d.local_charges || 0, d.customs_service_fee || 0, d.delivery_fee || 0, totalFreight, d.customs_duty || 0, d.vat_gst || 0, d.other_fees || 0, d.fee_status || 'unpaid', d.remark || '', 'pending_plan', bareOwnerIds.join(','), new Date().toISOString().slice(0, 19).replace('T', ' ')]);
 
     if (bareOwners.length > 0) {
       for (const ow of bareOwners) {
@@ -12211,6 +12214,14 @@ app.post('/api/logistics-batches/create-with-pl', requireApiPermission('logistic
     const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [d.related_ci_id]);
     if (!ci) return res.status(400).json({ error: '关联的 CI 不存在' });
     if (ci.ci_status === 'cancelled') return res.status(400).json({ error: '该 CI 已作废，不能创建 PL' });
+    const customsMode = String(d.customs_mode || '').trim();
+    const transportMode = String(d.transport_mode || 'sea').trim();
+    if (!['', 'normal', 'gray'].includes(customsMode)) {
+      return res.status(400).json({ error: '清关方式无效' });
+    }
+    if (['sea', 'air'].includes(transportMode) && !['normal', 'gray'].includes(customsMode)) {
+      return res.status(400).json({ error: '海运/空运请选择清关方式（正清/灰清）' });
+    }
 
     // PL 单号唯一性校验（如用户手动指定）
     const plNo = d.pl_no || `PL-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
@@ -12320,8 +12331,8 @@ app.post('/api/logistics-batches/create-with-pl', requireApiPermission('logistic
       // ====== 步骤 5: 创建物流批次 ======
       // LOGISTICS-LISTING-01：listing_status 恒以 'pending_plan'（待提交上架计划）初始化，不接受前端指定；
       // listing_status_updated_at 以创建时刻为停滞提醒的首个计算基准。
-      run(`INSERT INTO logistics_batches (id, batch_no, related_ci_id, related_ci_no, forwarder_id, forwarder_name, transport_mode, origin_port, dest_port, target_country, target_warehouse, pickup_date, depart_date, eta_date, actual_arrival_date, customs_start_date, customs_end_date, delivery_date, inbound_complete_date, logistics_status, total_cartons, total_weight, total_cbm, freight_currency, international_freight, local_charges, customs_service_fee, delivery_fee, total_freight, customs_duty, vat_gst, other_fees, fee_status, remark, listing_status, listing_owner_ids, listing_status_updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [bId, bNo, d.related_ci_id, d.related_ci_no || ci.ci_no || '', d.forwarder_id || '', d.forwarder_name || '', d.transport_mode || 'sea', d.origin_port || '', d.dest_port || '', d.target_country || ci.country || '', d.target_warehouse || ci.target_warehouse || '', d.pickup_date || '', d.depart_date || '', d.eta_date || '', d.actual_arrival_date || '', d.customs_start_date || '', d.customs_end_date || '', d.delivery_date || '', d.inbound_complete_date || '', d.logistics_status || 'pending', totalCartons, totalGross, totalCbm, d.freight_currency || 'USD', d.international_freight || 0, d.local_charges || 0, d.customs_service_fee || 0, d.delivery_fee || 0, totalFreight, d.customs_duty || 0, d.vat_gst || 0, d.other_fees || 0, d.fee_status || 'unpaid', d.remark || '', 'pending_plan', ownerIds.join(','), new Date().toISOString().slice(0, 19).replace('T', ' ')]);
+      run(`INSERT INTO logistics_batches (id, batch_no, related_ci_id, related_ci_no, forwarder_id, forwarder_name, transport_mode, customs_mode, origin_port, dest_port, target_country, target_warehouse, pickup_date, depart_date, eta_date, actual_arrival_date, customs_start_date, customs_end_date, delivery_date, inbound_complete_date, logistics_status, total_cartons, total_weight, total_cbm, freight_currency, international_freight, local_charges, customs_service_fee, delivery_fee, total_freight, customs_duty, vat_gst, other_fees, fee_status, remark, listing_status, listing_owner_ids, listing_status_updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [bId, bNo, d.related_ci_id, d.related_ci_no || ci.ci_no || '', d.forwarder_id || '', d.forwarder_name || '', d.transport_mode || 'sea', customsMode, d.origin_port || '', d.dest_port || '', d.target_country || ci.country || '', d.target_warehouse || ci.target_warehouse || '', d.pickup_date || '', d.depart_date || '', d.eta_date || '', d.actual_arrival_date || '', d.customs_start_date || '', d.customs_end_date || '', d.delivery_date || '', d.inbound_complete_date || '', d.logistics_status || 'pending', totalCartons, totalGross, totalCbm, d.freight_currency || 'USD', d.international_freight || 0, d.local_charges || 0, d.customs_service_fee || 0, d.delivery_fee || 0, totalFreight, d.customs_duty || 0, d.vat_gst || 0, d.other_fees || 0, d.fee_status || 'unpaid', d.remark || '', 'pending_plan', ownerIds.join(','), new Date().toISOString().slice(0, 19).replace('T', ' ')]);
 
       // LOGISTICS-LISTING-01（2026-08-07 owner 多选）：写入上架参与人（多个 owner + cc），复用通用 business_participants 表
       for (const ow of listingOwners) {
@@ -12397,11 +12408,15 @@ app.put('/api/logistics-batches/:id', requireApiPermission('logistics_edit'), as
       if (dup) return res.status(409).json({ error: `物流单号 ${d.batch_no} 已存在` });
     }
 
+    if (d.customs_mode !== undefined && !['', 'normal', 'gray'].includes(String(d.customs_mode || '').trim())) {
+      return res.status(400).json({ error: '清关方式无效' });
+    }
+
     // 物流保存 + 费用事实同步 — 同一事务，原子保证
     const syncResult = await transaction(() => {
       const fields = [];
       const values = [];
-      const allowed = ['batch_no', 'forwarder_id', 'forwarder_name', 'transport_mode', 'origin_port', 'dest_port', 'target_country', 'target_warehouse', 'pickup_date', 'depart_date', 'eta_date', 'actual_arrival_date', 'customs_start_date', 'customs_end_date', 'delivery_date', 'inbound_complete_date', 'logistics_status', 'total_cartons', 'total_weight', 'total_cbm', 'freight_currency', 'international_freight', 'local_charges', 'customs_service_fee', 'delivery_fee', 'customs_duty', 'vat_gst', 'other_fees', 'fee_status', 'remark'];
+      const allowed = ['batch_no', 'forwarder_id', 'forwarder_name', 'transport_mode', 'customs_mode', 'origin_port', 'dest_port', 'target_country', 'target_warehouse', 'pickup_date', 'depart_date', 'eta_date', 'actual_arrival_date', 'customs_start_date', 'customs_end_date', 'delivery_date', 'inbound_complete_date', 'logistics_status', 'total_cartons', 'total_weight', 'total_cbm', 'freight_currency', 'international_freight', 'local_charges', 'customs_service_fee', 'delivery_fee', 'customs_duty', 'vat_gst', 'other_fees', 'fee_status', 'remark'];
       allowed.forEach(f => {
         if (d[f] !== undefined) { fields.push(`${f} = ?`); values.push(d[f]); }
       });
@@ -20521,8 +20536,14 @@ function ldResolveRangeStart(timeRange) {
   d.setMonth(d.getMonth() - m);
   return d.toISOString().split('T')[0];
 }
+function ldNormalizeCustomsMode(value) {
+  const mode = String(value || '').trim().toLowerCase();
+  if (!mode || mode === 'all') return null;
+  if (['normal', 'gray', 'unmarked'].includes(mode)) return mode;
+  throw new Error('清关方式无效');
+}
 // 有效数据 WHERE（summary/detail/count 共用，保证口径一致）
-function ldValidWhere(timeRange, country, transport) {
+function ldValidWhere(timeRange, country, transport, customsMode) {
   const start = ldResolveRangeStart(timeRange);
   const conds = [
     "logistics_status = 'completed'",
@@ -20538,6 +20559,10 @@ function ldValidWhere(timeRange, country, transport) {
   if (start) { conds.push('depart_date >= ?'); params.push(start); }
   if (country) { conds.push('target_country = ?'); params.push(country); }
   if (transport) { conds.push('transport_mode = ?'); params.push(transport); }
+  if (customsMode) {
+    conds.push("CASE WHEN customs_mode IS NULL OR customs_mode = '' THEN 'unmarked' ELSE customs_mode END = ?");
+    params.push(customsMode);
+  }
   return { where: conds.join(' AND '), params };
 }
 function ldRound2(v) { return Math.round((Number(v) || 0) * 100) / 100; }
@@ -20545,14 +20570,15 @@ function ldRound3(v) { return Math.round((Number(v) || 0) * 1000) / 1000; }
 
 // 单一 set-based 聚合：按 (country, transport, forwarder) 分组，加权单位运费 + 窗口函数百分位（P50/P90）。
 // 返回结果极小（每组一行），历史批次增长不会线性恶化（百分位在 DB 内完成，不拉全量到 Node）。
-function ldAggregateGroups(timeRange, country, transport) {
-  const { where, params } = ldValidWhere(timeRange, country, transport);
+function ldAggregateGroups(timeRange, country, transport, customsMode) {
+  const { where, params } = ldValidWhere(timeRange, country, transport, customsMode);
   const sql = `
     WITH valid AS (
       -- forwarder_id / forwarder_name 均为 nullable TEXT：先 COALESCE 归一，
       -- 否则下游 grp JOIN pct 的等值匹配会因 NULL=NULL 为假而静默丢整组货代
       -- （valid_count 仍会计入该批次 → 表格行数与有效批次数对不上）。
       SELECT target_country AS country, transport_mode AS transport,
+        CASE WHEN customs_mode IS NULL OR customs_mode = '' THEN 'unmarked' ELSE customs_mode END AS customs_mode,
         COALESCE(forwarder_id, '') AS forwarder_id,
         COALESCE(forwarder_name, '') AS forwarder_name,
         total_freight, total_cbm, total_weight,
@@ -20561,15 +20587,15 @@ function ldAggregateGroups(timeRange, country, transport) {
       WHERE ${where}
     ),
     grp AS (
-      SELECT country, transport, forwarder_id, forwarder_name,
+      SELECT country, transport, customs_mode, forwarder_id, forwarder_name,
         COUNT(*) AS n, SUM(total_freight) AS sum_freight,
         SUM(total_cbm) AS sum_cbm, SUM(total_weight) AS sum_weight
-      FROM valid GROUP BY country, transport, forwarder_id, forwarder_name
+      FROM valid GROUP BY country, transport, customs_mode, forwarder_id, forwarder_name
     ),
     ranked AS (
-      SELECT country, transport, forwarder_id, forwarder_name, days,
-        ROW_NUMBER() OVER (PARTITION BY country, transport, forwarder_id, forwarder_name ORDER BY days) AS rn,
-        COUNT(*) OVER (PARTITION BY country, transport, forwarder_id, forwarder_name) AS cnt
+      SELECT country, transport, customs_mode, forwarder_id, forwarder_name, days,
+        ROW_NUMBER() OVER (PARTITION BY country, transport, customs_mode, forwarder_id, forwarder_name ORDER BY days) AS rn,
+        COUNT(*) OVER (PARTITION BY country, transport, customs_mode, forwarder_id, forwarder_name) AS cnt
       FROM valid
     ),
     pos AS (
@@ -20578,31 +20604,140 @@ function ldAggregateGroups(timeRange, country, transport) {
       --   P90 位置 = ceil(n*0.9)   = (9n+9)/10
       -- 两者恒落在 [1, n]，无需 MAX/MIN/CEIL（注意：MAX(a,b) 是 SQLite 专有标量，PG 下会报错）。
       -- 不做插值：天数是整数事实值，插值会产出未真实发生过的天数。
-      SELECT country, transport, forwarder_id, forwarder_name, days, rn,
+      SELECT country, transport, customs_mode, forwarder_id, forwarder_name, days, rn,
         (cnt+1)/2 AS p50_pos,
         (9*cnt+9)/10 AS p90_pos
       FROM ranked
     ),
     pct AS (
-      SELECT country, transport, forwarder_id, forwarder_name,
+      SELECT country, transport, customs_mode, forwarder_id, forwarder_name,
         MAX(CASE WHEN rn = p50_pos THEN days END) AS p50_days,
         MAX(CASE WHEN rn = p90_pos THEN days END) AS p90_days
-      FROM pos GROUP BY country, transport, forwarder_id, forwarder_name
+      FROM pos GROUP BY country, transport, customs_mode, forwarder_id, forwarder_name
     )
-    SELECT g.country, g.transport, g.forwarder_id, g.forwarder_name, g.n,
+    SELECT g.country, g.transport, g.customs_mode, g.forwarder_id, g.forwarder_name, g.n,
       g.sum_freight, g.sum_cbm, g.sum_weight, p.p50_days, p.p90_days
     FROM grp g
-    JOIN pct p ON p.country=g.country AND p.transport=g.transport AND p.forwarder_id=g.forwarder_id AND p.forwarder_name=g.forwarder_name
-    ORDER BY g.country, g.transport, g.forwarder_name
+    JOIN pct p ON p.country=g.country AND p.transport=g.transport AND p.customs_mode=g.customs_mode AND p.forwarder_id=g.forwarder_id AND p.forwarder_name=g.forwarder_name
+    ORDER BY g.country, g.transport, g.customs_mode, g.forwarder_name
   `;
   return query(sql, params).rows;
 }
 
-// 纯计算核心：返回 { meta, rows }。rows 为按 (country, transport) 聚合的决策建议。
-// country/transport 同时给定 → 仅返回该组合（detail）；否则返回全部（summary）。
-function computeLogisticsDecision(timeRange, country, transport) {
+
+// 趋势对比：当前窗口 vs 前一个等长窗口。全部历史时固定比较最近 3 个月与此前 3 个月。
+function ldDateMonthsAgo(months) {
+  const d = new Date();
+  d.setMonth(d.getMonth() - months);
+  return d.toISOString().split('T')[0];
+}
+function ldAggregateTrendStats(timeRange, country, transport, customsMode) {
+  const months = timeRange === 'all' ? 3 : (LD_TIME_RANGE_MONTHS[timeRange] || 3);
+  const currentStart = ldDateMonthsAgo(months);
+  const previousStart = ldDateMonthsAgo(months * 2);
+  const endDate = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+  const conds = [
+    "logistics_status = 'completed'",
+    "depart_date IS NOT NULL AND depart_date != ''",
+    "actual_arrival_date IS NOT NULL AND actual_arrival_date != ''",
+    "actual_arrival_date >= depart_date",
+    "total_freight > 0",
+    "(freight_currency = 'RMB' OR freight_currency IS NULL OR freight_currency = '')",
+    "transport_mode IN ('sea','air')",
+    "((transport_mode = 'sea' AND total_cbm > 0) OR (transport_mode = 'air' AND total_weight > 0))",
+    "depart_date >= ?",
+    "depart_date < ?"
+  ];
+  const params = [previousStart, endDate];
+  if (country) { conds.push('target_country = ?'); params.push(country); }
+  if (transport) { conds.push('transport_mode = ?'); params.push(transport); }
+  if (customsMode) {
+    conds.push("CASE WHEN customs_mode IS NULL OR customs_mode = '' THEN 'unmarked' ELSE customs_mode END = ?");
+    params.push(customsMode);
+  }
+  const sql = `
+    WITH valid AS (
+      SELECT target_country AS country, transport_mode AS transport,
+        CASE WHEN customs_mode IS NULL OR customs_mode = '' THEN 'unmarked' ELSE customs_mode END AS customs_mode,
+        CASE WHEN depart_date >= ? THEN 'current' ELSE 'previous' END AS period,
+        total_freight,
+        CASE WHEN transport_mode = 'sea' THEN total_cbm ELSE total_weight END AS basis,
+        CAST(julianday(actual_arrival_date) - julianday(depart_date) AS INTEGER) AS days
+      FROM logistics_batches
+      WHERE ${conds.join(' AND ')}
+    )
+    SELECT country, transport, customs_mode,
+      SUM(CASE WHEN period = 'current' THEN total_freight ELSE 0 END) AS current_freight,
+      SUM(CASE WHEN period = 'current' THEN basis ELSE 0 END) AS current_basis,
+      AVG(CASE WHEN period = 'current' THEN days END) AS current_avg_days,
+      SUM(CASE WHEN period = 'current' THEN 1 ELSE 0 END) AS current_count,
+      SUM(CASE WHEN period = 'previous' THEN total_freight ELSE 0 END) AS previous_freight,
+      SUM(CASE WHEN period = 'previous' THEN basis ELSE 0 END) AS previous_basis,
+      AVG(CASE WHEN period = 'previous' THEN days END) AS previous_avg_days,
+      SUM(CASE WHEN period = 'previous' THEN 1 ELSE 0 END) AS previous_count
+    FROM valid
+    GROUP BY country, transport, customs_mode
+  `;
+  return query(sql, [currentStart].concat(params)).rows.map(r => {
+    const currentBasis = Number(r.current_basis) || 0;
+    const previousBasis = Number(r.previous_basis) || 0;
+    const currentUnitCost = currentBasis > 0 ? ldRound2((Number(r.current_freight) || 0) / currentBasis) : null;
+    const previousUnitCost = previousBasis > 0 ? ldRound2((Number(r.previous_freight) || 0) / previousBasis) : null;
+    const currentDays = r.current_avg_days == null ? null : ldRound2(r.current_avg_days);
+    const previousDays = r.previous_avg_days == null ? null : ldRound2(r.previous_avg_days);
+    return {
+      country: r.country, transport: r.transport, customs_mode: r.customs_mode,
+      window_months: months,
+      current_count: Number(r.current_count) || 0,
+      previous_count: Number(r.previous_count) || 0,
+      current_unit_cost: currentUnitCost,
+      previous_unit_cost: previousUnitCost,
+      cost_change_pct: currentUnitCost != null && previousUnitCost > 0
+        ? ldRound2((currentUnitCost - previousUnitCost) / previousUnitCost * 100) : null,
+      current_avg_days: currentDays,
+      previous_avg_days: previousDays,
+      days_change: currentDays != null && previousDays != null ? ldRound2(currentDays - previousDays) : null
+    };
+  });
+}
+
+// 二级详情月度趋势：按月聚合，不在首页加载；全部历史最多展示近 24 个月。
+function ldAggregateMonthlyTrend(timeRange, country, transport, customsMode) {
+  const { where, params } = ldValidWhere(timeRange, country, transport, customsMode);
+  const conds = [where];
+  const values = params.slice();
+  if (timeRange === 'all') {
+    conds.push('depart_date >= ?');
+    values.push(ldDateMonthsAgo(24));
+  }
+  const rows = query(`
+    SELECT SUBSTR(depart_date, 1, 7) AS month,
+      COUNT(*) AS sample_count,
+      SUM(total_freight) AS sum_freight,
+      SUM(CASE WHEN transport_mode = 'sea' THEN total_cbm ELSE total_weight END) AS sum_basis,
+      AVG(CAST(julianday(actual_arrival_date) - julianday(depart_date) AS INTEGER)) AS avg_days
+    FROM logistics_batches
+    WHERE ${conds.join(' AND ')}
+    GROUP BY SUBSTR(depart_date, 1, 7)
+    ORDER BY month
+  `, values).rows;
+  return rows.map(r => {
+    const basis = Number(r.sum_basis) || 0;
+    return {
+      month: r.month,
+      sample_count: Number(r.sample_count) || 0,
+      unit_cost: basis > 0 ? ldRound2((Number(r.sum_freight) || 0) / basis) : null,
+      avg_days: r.avg_days == null ? null : ldRound2(r.avg_days)
+    };
+  });
+}
+
+// 纯计算核心：返回 { meta, rows }。rows 为按 (country, transport, customs_mode) 聚合的决策建议。
+// country/transport/customs_mode 可组合过滤；customs_mode 为空时返回全部清关方式。
+function computeLogisticsDecision(timeRange, country, transport, customsMode) {
   const tr = LD_TIME_RANGE_MONTHS[timeRange] != null ? timeRange : '12m';
-  const { where: vWhere, params: vParams } = ldValidWhere(tr, country, transport);
+  const cm = ldNormalizeCustomsMode(customsMode);
+  const { where: vWhere, params: vParams } = ldValidWhere(tr, country, transport, cm);
   const start = ldResolveRangeStart(tr);
 
   // 数据质量计数（set-based COUNT，均返回单值）
@@ -20616,7 +20751,10 @@ function computeLogisticsDecision(timeRange, country, transport) {
   if (start) { curConds.push('depart_date >= ?'); curParams.push(start); }
   const excludedCurrency = queryOne(`SELECT COUNT(*) AS c FROM logistics_batches WHERE ${curConds.join(' AND ')}`, curParams)?.c || 0;
 
-  const raw = ldAggregateGroups(tr, country, transport);
+  const raw = ldAggregateGroups(tr, country, transport, cm);
+  const trendRows = ldAggregateTrendStats(tr, country, transport, cm);
+  const trendMap = new Map(trendRows.map(r => [r.country + '|' + r.transport + '|' + r.customs_mode, r]));
+  const trendWindowMonths = tr === 'all' ? 3 : (LD_TIME_RANGE_MONTHS[tr] || 3);
   // 原始行 → 货代事实
   const groups = raw.map(r => {
     const isSea = r.transport === 'sea';
@@ -20626,7 +20764,7 @@ function computeLogisticsDecision(timeRange, country, transport) {
     const p50 = r.p50_days == null ? null : Number(r.p50_days);
     const p90 = r.p90_days == null ? null : Number(r.p90_days);
     return {
-      country: r.country, transport: r.transport,
+      country: r.country, transport: r.transport, customs_mode: r.customs_mode,
       forwarder_id: r.forwarder_id, name: r.forwarder_name,
       n, unit_cost: unitCost,
       unit: isSea ? 'RMB/CBM' : 'RMB/KG',
@@ -20641,14 +20779,14 @@ function computeLogisticsDecision(timeRange, country, transport) {
     };
   });
 
-  // 按 (country, transport) 聚合为决策行
+  // 按 (country, transport, customs_mode) 聚合为独立决策行
   const byKey = {};
   groups.forEach(g => {
-    const key = g.country + '|' + g.transport;
+    const key = g.country + '|' + g.transport + '|' + g.customs_mode;
     (byKey[key] = byKey[key] || []).push(g);
   });
   const rows = Object.keys(byKey).map(key => {
-    const [c, t] = key.split('|');
+    const [c, t, cmKey] = key.split('|');
     const fs = byKey[key].slice().sort((a, b) => (a.unit_cost == null ? Infinity : a.unit_cost) - (b.unit_cost == null ? Infinity : b.unit_cost));
     // 被支配判定：存在其它货代「不更贵 且 不更慢 且 至少一项严格更优」→ 不建议
     fs.forEach(f => {
@@ -20687,11 +20825,12 @@ function computeLogisticsDecision(timeRange, country, transport) {
       return o;
     };
     return {
-      country: c, transport: t, unit, forwarders: fs.map(slim),
+      country: c, transport: t, customs_mode: cmKey, unit, forwarders: fs.map(slim),
       verdict_code, no_compare, sample_adequate,
       primary: primary ? slim(primary) : null,
       normal_replenish: normal_replenish ? slim(normal_replenish) : null,
-      urgent_replenish: urgent_replenish ? slim(urgent_replenish) : null
+      urgent_replenish: urgent_replenish ? slim(urgent_replenish) : null,
+      trend: trendMap.get(key) || null
     };
   });
 
@@ -20700,6 +20839,7 @@ function computeLogisticsDecision(timeRange, country, transport) {
     valid_count: validCount,
     excluded_count: Math.max(0, (completedInRange || 0) - (validCount || 0)),
     excluded_currency_count: excludedCurrency || 0,
+    trend_window_months: trendWindowMonths,
     rows
   };
 }
@@ -20716,9 +20856,25 @@ app.get('/api/logistics-decision-detail', requireApiPermission('logistics_view')
     const timeRange = ['3m', '6m', '12m', 'all'].includes(req.query.time_range) ? req.query.time_range : '12m';
     const country = req.query.country || null;
     const transport = req.query.transport_type || null;
+    const customsMode = ldNormalizeCustomsMode(req.query.customs_mode);
     if (!country || !transport) return res.status(400).json({ error: 'country and transport_type required' });
-    res.json(computeLogisticsDecision(timeRange, country, transport));
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    res.json(computeLogisticsDecision(timeRange, country, transport, customsMode));
+  } catch (e) { res.status(400).json({ error: e.message }); }
+}));
+
+app.get('/api/logistics-decision-trends', requireApiPermission('logistics_view'), asyncHandler((req, res) => {
+  try {
+    const timeRange = ['3m', '6m', '12m', 'all'].includes(req.query.time_range) ? req.query.time_range : '12m';
+    const country = req.query.country || null;
+    const transport = req.query.transport_type || null;
+    const customsMode = ldNormalizeCustomsMode(req.query.customs_mode);
+    if (!country || !transport) return res.status(400).json({ error: 'country and transport_type required' });
+    res.json({
+      time_range: timeRange,
+      customs_mode: customsMode || 'all',
+      rows: ldAggregateMonthlyTrend(timeRange, country, transport, customsMode)
+    });
+  } catch (e) { res.status(400).json({ error: e.message }); }
 }));
 
 // ③ 应付到期/逾期提醒手动/外部 cron 触发端点（不增加定时任务/进程内 cron；best-effort）
@@ -22916,6 +23072,9 @@ module.exports = {
   formatPaymentTermsDisplay,
   app,
   computeLogisticsDecision,
+  ldAggregateMonthlyTrend,
+  ldAggregateTrendStats,
+  ldNormalizeCustomsMode,
   updateInventoryTransitData,
   updateInventoryTransitDataAsync,
   TRANSIT_PG_REFRESH_SQLS,

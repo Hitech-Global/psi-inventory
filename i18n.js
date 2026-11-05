@@ -4770,6 +4770,7 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.zh["logistics.gen_cost.items"]="笔"; I18N.dict.en["logistics.gen_cost.items"]=" items"; I18N.dict.id["logistics.gen_cost.items"]=" item";
   I18N.dict.zh["logistics.gen_cost.payable_hint"]="请在应付费用列表提交付款申请"; I18N.dict.en["logistics.gen_cost.payable_hint"]="Please submit payment requests in the payable list"; I18N.dict.id["logistics.gen_cost.payable_hint"]="Silakan ajukan permintaan pembayaran di daftar hutang";
   I18N.dict.zh["common.cancel"]="取消";
+  I18N.dict.zh["common.close"]="关闭"; I18N.dict.en["common.close"]="Close"; I18N.dict.id["common.close"]="Tutup";
 
   // 物流详情
   I18N.dict.zh["logistics.detail.title"]="物流详情"; I18N.dict.en["logistics.detail.title"]="Logistics Details"; I18N.dict.id["logistics.detail.title"]="Detail Logistik";
@@ -5117,7 +5118,7 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   // ===================== 物流决策（老板快速决策工具）=====================
   I18N.dict.zh["nav.logistics_decision"]="物流决策"; I18N.dict.en["nav.logistics_decision"]="Logistics Decision"; I18N.dict.id["nav.logistics_decision"]="Keputusan Logistik";
   I18N.dict.zh["ld.title"]="物流决策"; I18N.dict.en["ld.title"]="Logistics Decision"; I18N.dict.id["ld.title"]="Keputusan Logistik";
-  I18N.dict.zh["ld.subtitle"]="准备发哪个国家 → 走海运还是空运 → 现在选哪个货代性价比最高"; I18N.dict.en["ld.subtitle"]="Which country to ship → sea or air → which forwarder is best now"; I18N.dict.id["ld.subtitle"]="Negara tujuan → laut atau udara → forwarder mana paling hemat";
+  I18N.dict.zh["ld.subtitle"]="按国家、清关方式和运输方式，快速比较物流成本、时效与货代"; I18N.dict.en["ld.subtitle"]="Compare logistics cost, transit time and forwarders by country, customs and transport"; I18N.dict.id["ld.subtitle"]="Bandingkan biaya, waktu transit, dan forwarder menurut negara, bea cukai, dan transportasi";
   I18N.dict.zh["ld.filter.timeRange"]="时间范围"; I18N.dict.en["ld.filter.timeRange"]="Time Range"; I18N.dict.id["ld.filter.timeRange"]="Rentang Waktu";
   I18N.dict.zh["ld.range.3m"]="近3个月"; I18N.dict.en["ld.range.3m"]="Last 3 months"; I18N.dict.id["ld.range.3m"]="3 bulan terakhir";
   I18N.dict.zh["ld.range.6m"]="近6个月"; I18N.dict.en["ld.range.6m"]="Last 6 months"; I18N.dict.id["ld.range.6m"]="6 bulan terakhir";
@@ -5125,11 +5126,21 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.zh["ld.range.all"]="全部历史"; I18N.dict.en["ld.range.all"]="All history"; I18N.dict.id["ld.range.all"]="Semua riwayat";
   I18N.dict.zh["ld.filter.country"]="国家"; I18N.dict.en["ld.filter.country"]="Country"; I18N.dict.id["ld.filter.country"]="Negara";
   I18N.dict.zh["ld.filter.transport"]="运输方式"; I18N.dict.en["ld.filter.transport"]="Transport"; I18N.dict.id["ld.filter.transport"]="Transportasi";
+  I18N.dict.zh["ld.filter.customsMode"]="清关方式"; I18N.dict.en["ld.filter.customsMode"]="Customs Mode"; I18N.dict.id["ld.filter.customsMode"]="Metode Bea Cukai";
+  I18N.dict.zh["ld.customs.all"]="全部"; I18N.dict.en["ld.customs.all"]="All"; I18N.dict.id["ld.customs.all"]="Semua";
+  I18N.dict.zh["ld.customs.normal"]="正清"; I18N.dict.en["ld.customs.normal"]="Standard"; I18N.dict.id["ld.customs.normal"]="Resmi";
+  I18N.dict.zh["ld.customs.gray"]="灰清"; I18N.dict.en["ld.customs.gray"]="Informal"; I18N.dict.id["ld.customs.gray"]="Nonformal";
+  I18N.dict.zh["ld.customs.unmarked"]="未标记"; I18N.dict.en["ld.customs.unmarked"]="Unmarked"; I18N.dict.id["ld.customs.unmarked"]="Belum Ditandai";
   I18N.dict.zh["ld.transport.all"]="全部"; I18N.dict.en["ld.transport.all"]="All"; I18N.dict.id["ld.transport.all"]="Semua";
   I18N.dict.zh["ld.transport.sea"]="海运"; I18N.dict.en["ld.transport.sea"]="Sea"; I18N.dict.id["ld.transport.sea"]="Laut";
   I18N.dict.zh["ld.transport.air"]="空运"; I18N.dict.en["ld.transport.air"]="Air"; I18N.dict.id["ld.transport.air"]="Udara";
-  I18N.dict.zh["ld.section.decision"]="各国家物流决策建议"; I18N.dict.en["ld.section.decision"]="Logistics suggestions by country"; I18N.dict.id["ld.section.decision"]="Saran logistik per negara";
+  I18N.dict.zh["ld.section.decision"]="物流组合决策总览"; I18N.dict.en["ld.section.decision"]="Logistics Decision Overview"; I18N.dict.id["ld.section.decision"]="Ringkasan Keputusan Logistik";
   I18N.dict.zh["ld.col.country"]="国家"; I18N.dict.en["ld.col.country"]="Country"; I18N.dict.id["ld.col.country"]="Negara";
+  I18N.dict.zh["ld.col.customsMode"]="清关方式"; I18N.dict.en["ld.col.customsMode"]="Customs"; I18N.dict.id["ld.col.customsMode"]="Bea Cukai";
+  I18N.dict.zh["ld.col.advice"]="货代建议"; I18N.dict.en["ld.col.advice"]="Forwarder Advice"; I18N.dict.id["ld.col.advice"]="Saran Forwarder";
+  I18N.dict.zh["ld.col.costTrend"]="运费变化"; I18N.dict.en["ld.col.costTrend"]="Cost Trend"; I18N.dict.id["ld.col.costTrend"]="Tren Biaya";
+  I18N.dict.zh["ld.col.daysTrend"]="时效变化"; I18N.dict.en["ld.col.daysTrend"]="Transit Trend"; I18N.dict.id["ld.col.daysTrend"]="Tren Transit";
+  I18N.dict.zh["ld.col.action"]="查看详情"; I18N.dict.en["ld.col.action"]="Details"; I18N.dict.id["ld.col.action"]="Detail";
   I18N.dict.zh["ld.col.transport"]="运输方式"; I18N.dict.en["ld.col.transport"]="Transport"; I18N.dict.id["ld.col.transport"]="Transportasi";
   I18N.dict.zh["ld.col.primary"]="当前首选货代"; I18N.dict.en["ld.col.primary"]="Recommended"; I18N.dict.id["ld.col.primary"]="Rekomendasi";
   I18N.dict.zh["ld.col.secondary"]="备选货代"; I18N.dict.en["ld.col.secondary"]="Alternative"; I18N.dict.id["ld.col.secondary"]="Alternatif";
@@ -5163,9 +5174,37 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.zh["ld.quadrant.expensiveSlow"]="又贵又慢"; I18N.dict.en["ld.quadrant.expensiveSlow"]="Expensive & slow"; I18N.dict.id["ld.quadrant.expensiveSlow"]="Mahal & lambat";
   I18N.dict.zh["ld.excludedCurrency"]="有 {n} 个非 RMB 批次未参与成本比较"; I18N.dict.en["ld.excludedCurrency"]="({n} non-RMB batches excluded)"; I18N.dict.id["ld.excludedCurrency"]="({n} batch non-RMB dikecualikan)";
   I18N.dict.zh["ld.validCount"]="有效样本 {n}"; I18N.dict.en["ld.validCount"]="Valid {n}"; I18N.dict.id["ld.validCount"]="Valid {n}";
+  I18N.dict.zh["ld.trend.period"]="趋势比较：近 {current} 个月 vs 前 {previous} 个月"; I18N.dict.en["ld.trend.period"]="Trend: latest {current} months vs previous {previous} months"; I18N.dict.id["ld.trend.period"]="Tren: {current} bulan terbaru vs {previous} bulan sebelumnya";
+  I18N.dict.zh["ld.trend.noRecent"]="近期无数据"; I18N.dict.en["ld.trend.noRecent"]="No recent data"; I18N.dict.id["ld.trend.noRecent"]="Tidak ada data terbaru";
+  I18N.dict.zh["ld.trend.noPrevious"]="缺少上期数据"; I18N.dict.en["ld.trend.noPrevious"]="No previous-period data"; I18N.dict.id["ld.trend.noPrevious"]="Tidak ada data periode sebelumnya";
+  I18N.dict.zh["ld.trend.insufficient"]="当前周期或上一周期样本不足，暂不判断趋势"; I18N.dict.en["ld.trend.insufficient"]="Insufficient samples in the current or previous period to assess the trend"; I18N.dict.id["ld.trend.insufficient"]="Sampel periode sekarang atau sebelumnya tidak cukup untuk menilai tren";
+  I18N.dict.zh["ld.note.scope"]="仅统计已完成且运费币种为 RMB 的有效批次；海运按 RMB/CBM，空运按 RMB/KG。点击详情查看月度趋势与货代对比。"; I18N.dict.en["ld.note.scope"]="Only completed valid RMB-freight batches are included; sea uses RMB/CBM and air uses RMB/KG. Open details for monthly trends and forwarder comparisons."; I18N.dict.id["ld.note.scope"]="Hanya batch selesai yang valid dengan biaya RMB; laut menggunakan RMB/CBM dan udara RMB/KG. Buka detail untuk tren bulanan dan perbandingan forwarder.";
+  I18N.dict.zh["ld.noRecommendation"]="暂无足够数据形成推荐"; I18N.dict.en["ld.noRecommendation"]="Not enough data for a recommendation"; I18N.dict.id["ld.noRecommendation"]="Data belum cukup untuk rekomendasi";
+  I18N.dict.zh["ld.insight.costUp"]="单位运费较上期上涨 {n}%"; I18N.dict.en["ld.insight.costUp"]="Unit freight cost increased {n}% vs the previous period"; I18N.dict.id["ld.insight.costUp"]="Biaya angkut per unit naik {n}% dibanding periode sebelumnya";
+  I18N.dict.zh["ld.insight.costDown"]="单位运费较上期下降 {n}%"; I18N.dict.en["ld.insight.costDown"]="Unit freight cost decreased {n}% vs the previous period"; I18N.dict.id["ld.insight.costDown"]="Biaya angkut per unit turun {n}% dibanding periode sebelumnya";
+  I18N.dict.zh["ld.insight.costFlat"]="单位运费与上期基本持平"; I18N.dict.en["ld.insight.costFlat"]="Unit freight cost is broadly unchanged"; I18N.dict.id["ld.insight.costFlat"]="Biaya angkut per unit relatif stabil";
+  I18N.dict.zh["ld.insight.daysUp"]="平均运输时效较上期延长 {n} 天"; I18N.dict.en["ld.insight.daysUp"]="Average transit time increased by {n} days"; I18N.dict.id["ld.insight.daysUp"]="Waktu transit rata-rata bertambah {n} hari";
+  I18N.dict.zh["ld.insight.daysDown"]="平均运输时效较上期缩短 {n} 天"; I18N.dict.en["ld.insight.daysDown"]="Average transit time decreased by {n} days"; I18N.dict.id["ld.insight.daysDown"]="Waktu transit rata-rata berkurang {n} hari";
+  I18N.dict.zh["ld.insight.daysFlat"]="平均运输时效与上期基本持平"; I18N.dict.en["ld.insight.daysFlat"]="Average transit time is broadly unchanged"; I18N.dict.id["ld.insight.daysFlat"]="Waktu transit rata-rata relatif stabil";
   I18N.dict.zh["ld.excludedCount"]="已排除 {n}"; I18N.dict.en["ld.excludedCount"]="Excluded {n}"; I18N.dict.id["ld.excludedCount"]="Dikecualikan {n}";
   I18N.dict.zh["ld.chartHintAll"]="运输方式选「全部」时对比图默认显示海运，切换上方运输方式可查看空运"; I18N.dict.en["ld.chartHintAll"]="With Transport=All, chart shows sea by default; switch above to view air"; I18N.dict.id["ld.chartHintAll"]="Transport=Semua, grafik tampil laut; ubah di atas untuk udara";
   I18N.dict.zh["ld.loading"]="加载中…"; I18N.dict.en["ld.loading"]="Loading…"; I18N.dict.id["ld.loading"]="Memuat…";
+  I18N.dict.zh["ld.detail.loading"]="正在加载详情…"; I18N.dict.en["ld.detail.loading"]="Loading details…"; I18N.dict.id["ld.detail.loading"]="Memuat detail…";
+  I18N.dict.zh["ld.detail.insight"]="数据分析摘要"; I18N.dict.en["ld.detail.insight"]="Data Insights"; I18N.dict.id["ld.detail.insight"]="Ringkasan Data";
+  I18N.dict.zh["ld.detail.costTrend"]="单位运费趋势"; I18N.dict.en["ld.detail.costTrend"]="Unit Freight Cost Trend"; I18N.dict.id["ld.detail.costTrend"]="Tren Biaya Angkut per Unit";
+  I18N.dict.zh["ld.detail.daysTrend"]="平均运输时效趋势"; I18N.dict.en["ld.detail.daysTrend"]="Average Transit Time Trend"; I18N.dict.id["ld.detail.daysTrend"]="Tren Rata-rata Waktu Transit";
+  I18N.dict.zh["ld.detail.forwarders"]="货代竞争力对比"; I18N.dict.en["ld.detail.forwarders"]="Forwarder Comparison"; I18N.dict.id["ld.detail.forwarders"]="Perbandingan Forwarder";
+  I18N.dict.zh["ld.detail.forwarder"]="货代"; I18N.dict.en["ld.detail.forwarder"]="Forwarder"; I18N.dict.id["ld.detail.forwarder"]="Forwarder";
+  I18N.dict.zh["ld.detail.unitCost"]="单位运费"; I18N.dict.en["ld.detail.unitCost"]="Unit Cost"; I18N.dict.id["ld.detail.unitCost"]="Biaya Unit";
+  I18N.dict.zh["ld.detail.normalDays"]="正常时效"; I18N.dict.en["ld.detail.normalDays"]="Typical Transit"; I18N.dict.id["ld.detail.normalDays"]="Transit Normal";
+  I18N.dict.zh["ld.detail.conservativeDays"]="保守时效"; I18N.dict.en["ld.detail.conservativeDays"]="Conservative Transit"; I18N.dict.id["ld.detail.conservativeDays"]="Transit Konservatif";
+  I18N.dict.zh["ld.detail.samples"]="样本数"; I18N.dict.en["ld.detail.samples"]="Samples"; I18N.dict.id["ld.detail.samples"]="Sampel";
+  I18N.dict.zh["ld.detail.status"]="建议"; I18N.dict.en["ld.detail.status"]="Assessment"; I18N.dict.id["ld.detail.status"]="Penilaian";
+  I18N.dict.zh["ld.detail.daysSuffix"]="天"; I18N.dict.en["ld.detail.daysSuffix"]=" days"; I18N.dict.id["ld.detail.daysSuffix"]=" hari";
+  I18N.dict.zh["ld.detail.noTrend"]="暂无足够的月度历史数据"; I18N.dict.en["ld.detail.noTrend"]="Not enough monthly history"; I18N.dict.id["ld.detail.noTrend"]="Riwayat bulanan belum cukup";
+  I18N.dict.zh["ld.detail.recommended"]="推荐候选"; I18N.dict.en["ld.detail.recommended"]="Recommended Candidate"; I18N.dict.id["ld.detail.recommended"]="Kandidat Rekomendasi";
+  I18N.dict.zh["ld.detail.unknownForwarder"]="未填写货代"; I18N.dict.en["ld.detail.unknownForwarder"]="Forwarder not specified"; I18N.dict.id["ld.detail.unknownForwarder"]="Forwarder belum diisi";
+  I18N.dict.zh["ld.detail.scope"]="海运单位为 RMB/CBM，空运单位为 RMB/KG；正常时效为历史中位数，保守时效仅在样本充足时显示。"; I18N.dict.en["ld.detail.scope"]="Sea freight is RMB/CBM and air freight is RMB/KG. Typical transit is the historical median; conservative transit appears only with sufficient samples."; I18N.dict.id["ld.detail.scope"]="Laut menggunakan RMB/CBM dan udara RMB/KG. Transit normal adalah median historis; transit konservatif hanya tampil jika sampel cukup.";
   // ===== CI/PL × 物流合并 PHASE A（前端 i18n）=====
   I18N.dict.zh["ci.items.empty"]="暂无CI明细"; I18N.dict.en["ci.items.empty"]="No CI items"; I18N.dict.id["ci.items.empty"]="Tidak ada item CI";
   I18N.dict.zh["pl.meta.qty"]="数量"; I18N.dict.en["pl.meta.qty"]="Qty"; I18N.dict.id["pl.meta.qty"]="Jml";
@@ -5178,6 +5217,8 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.zh["logistics.col.batch_no"]="物流单号"; I18N.dict.en["logistics.col.batch_no"]="Batch No."; I18N.dict.id["logistics.col.batch_no"]="No. Batch";
   I18N.dict.zh["logistics.col.pl_no"]="PL号"; I18N.dict.en["logistics.col.pl_no"]="PL No."; I18N.dict.id["logistics.col.pl_no"]="No. PL";
   I18N.dict.zh["logistics.col.transport"]="运输方式"; I18N.dict.en["logistics.col.transport"]="Transport"; I18N.dict.id["logistics.col.transport"]="Transportasi";
+  I18N.dict.zh["logistics.col.customs_mode"]="清关方式"; I18N.dict.en["logistics.col.customs_mode"]="Customs Mode"; I18N.dict.id["logistics.col.customs_mode"]="Metode Bea Cukai";
+  I18N.dict.zh["logistics.detail.customs_mode"]="清关方式"; I18N.dict.en["logistics.detail.customs_mode"]="Customs Mode"; I18N.dict.id["logistics.detail.customs_mode"]="Metode Bea Cukai";
   I18N.dict.zh["logistics.col.eta"]="预计到港"; I18N.dict.en["logistics.col.eta"]="ETA"; I18N.dict.id["logistics.col.eta"]="ETA";
   I18N.dict.zh["logistics.col.arrival"]="到货日期"; I18N.dict.en["logistics.col.arrival"]="Arrival"; I18N.dict.id["logistics.col.arrival"]="Tiba";
   I18N.dict.zh["logistics.col.transit_days"]="运输时效"; I18N.dict.en["logistics.col.transit_days"]="Transit"; I18N.dict.id["logistics.col.transit_days"]="Transit";

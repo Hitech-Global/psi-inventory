@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * 物流决策页面 —— 后端口径与缓存单测（TEST A–H）
+ * 物流决策页面 —— 后端口径、清关方式隔离与趋势单测（TEST A–L）
  * 覆盖需求第十二条 24 项关键 case 中的后端可验证子集：
  *   A. sea=RMB/CBM、air=RMB/KG、永不通算
  *   B. cbm=0/weight=0/freight=0/非RMB/缺日期/到货<发运/cancelled/land/express 排除
@@ -20,7 +20,7 @@ process.env.DB_PATH = ':memory:';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { query, queryOne, run, getDB } = require('./db');
-const { computeLogisticsDecision } = require('./server');
+const { computeLogisticsDecision, ldAggregateMonthlyTrend } = require('./server');
 
 function resetDB() {
   const d = getDB();
@@ -30,7 +30,7 @@ function createSchema() {
   getDB().exec(`
     CREATE TABLE IF NOT EXISTS logistics_batches (
       id TEXT PRIMARY KEY, batch_no TEXT NOT NULL UNIQUE, logistics_status TEXT DEFAULT 'completed',
-      target_country TEXT DEFAULT '', transport_mode TEXT DEFAULT '',
+      target_country TEXT DEFAULT '', transport_mode TEXT DEFAULT '', customs_mode TEXT NOT NULL DEFAULT '',
       forwarder_id TEXT DEFAULT '', forwarder_name TEXT DEFAULT '',
       total_freight NUMERIC DEFAULT 0, total_cbm NUMERIC DEFAULT 0, total_weight NUMERIC DEFAULT 0,
       freight_currency TEXT DEFAULT 'RMB', depart_date TEXT DEFAULT '', actual_arrival_date TEXT DEFAULT ''
@@ -41,9 +41,9 @@ let _seq = 0;
 function insertBatch(o) {
   _seq++;
   run(
-    'INSERT INTO logistics_batches (id, batch_no, logistics_status, target_country, transport_mode, forwarder_id, forwarder_name, total_freight, total_cbm, total_weight, freight_currency, depart_date, actual_arrival_date) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+    'INSERT INTO logistics_batches (id, batch_no, logistics_status, target_country, transport_mode, customs_mode, forwarder_id, forwarder_name, total_freight, total_cbm, total_weight, freight_currency, depart_date, actual_arrival_date) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
     [
-      'b' + _seq, 'BN' + _seq, o.status || 'completed', o.country, o.transport, o.fid || o.fname, o.fname,
+      'b' + _seq, 'BN' + _seq, o.status || 'completed', o.country, o.transport, o.customs_mode || '', o.fid || o.fname, o.fname,
       o.freight, o.cbm || 0, o.weight || 0, o.currency || 'RMB', o.depart, o.arrival
     ]
   );
@@ -292,4 +292,54 @@ test('J. split 分流结论携带 delta_cost/delta_days', () => {
   // 双方都不应被判"不建议"（各有优势，互不支配）
   assert.equal(sea.forwarders.find(f => f.name === 'A').not_recommended, false);
   assert.equal(sea.forwarders.find(f => f.name === 'B').not_recommended, false);
+});
+
+
+// ===== K. 正清/灰清/未标记独立分组，筛选不会交叉污染 =====
+test('K. customs_mode 分组隔离并支持正清、灰清、未标记筛选', () => {
+  createSchema(); resetDB();
+  insertBatch({ country: 'ID', transport: 'sea', customs_mode: 'normal', fname: '正清货代', freight: 1000, cbm: 1, depart: '2026-01-01', arrival: arr('2026-01-01', 20) });
+  insertBatch({ country: 'ID', transport: 'sea', customs_mode: 'gray', fname: '灰清货代', freight: 1300, cbm: 1, depart: '2026-01-01', arrival: arr('2026-01-01', 24) });
+  insertBatch({ country: 'ID', transport: 'sea', fname: '历史未标记货代', freight: 1500, cbm: 1, depart: '2026-01-01', arrival: arr('2026-01-01', 28) });
+
+  const all = computeLogisticsDecision('12m', null, null);
+  const seaRows = all.rows.filter(r => r.country === 'ID' && r.transport === 'sea');
+  assert.equal(seaRows.length, 3, '同一国家/运输方式下，三种清关方式必须拆成三行');
+  assert.deepEqual(new Set(seaRows.map(r => r.customs_mode)), new Set(['normal', 'gray', 'unmarked']));
+
+  const normal = computeLogisticsDecision('12m', 'ID', 'sea', 'normal');
+  const gray = computeLogisticsDecision('12m', 'ID', 'sea', 'gray');
+  const unmarked = computeLogisticsDecision('12m', 'ID', 'sea', 'unmarked');
+  assert.equal(normal.rows.length, 1);
+  assert.equal(normal.rows[0].forwarders[0].unit_cost, 1000);
+  assert.equal(gray.rows.length, 1);
+  assert.equal(gray.rows[0].forwarders[0].unit_cost, 1300);
+  assert.equal(unmarked.rows.length, 1);
+  assert.equal(unmarked.rows[0].customs_mode, 'unmarked');
+
+  const monthly = ldAggregateMonthlyTrend('12m', 'ID', 'sea', 'normal');
+  assert.equal(monthly.length, 1);
+  assert.equal(monthly[0].month, '2026-01');
+  assert.equal(monthly[0].unit_cost, 1000);
+});
+
+// ===== L. 当前周期与前一等长周期比较成本/时效变化 =====
+test('L. 趋势指标比较最近 3 个月与此前 3 个月', () => {
+  createSchema(); resetDB();
+  const current = new Date(); current.setMonth(current.getMonth() - 1);
+  const previous = new Date(); previous.setMonth(previous.getMonth() - 4);
+  const currentDate = current.toISOString().slice(0, 10);
+  const previousDate = previous.toISOString().slice(0, 10);
+  insertBatch({ country: 'ID', transport: 'sea', customs_mode: 'normal', fname: '货代A', freight: 1200, cbm: 1, depart: currentDate, arrival: arr(currentDate, 22) });
+  insertBatch({ country: 'ID', transport: 'sea', customs_mode: 'normal', fname: '货代A', freight: 1000, cbm: 1, depart: previousDate, arrival: arr(previousDate, 20) });
+
+  const result = computeLogisticsDecision('3m', 'ID', 'sea', 'normal');
+  assert.equal(result.valid_count, 1, '当前 3 个月的决策样本只应包含当前批次');
+  assert.equal(result.rows.length, 1);
+  const trend = result.rows[0].trend;
+  assert.equal(trend.current_count, 1);
+  assert.equal(trend.previous_count, 1);
+  assert.equal(trend.cost_change_pct, 20);
+  assert.equal(trend.days_change, 2);
+  assert.equal(trend.window_months, 3);
 });

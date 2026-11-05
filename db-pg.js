@@ -1488,6 +1488,9 @@ async function initDatabase() {
     )`);
   await exec("CREATE INDEX IF NOT EXISTS idx_shared_logistics_ci ON shared_logistics_fees(ci_id)");
 
+  // LOGISTICS-CUSTOMS-MODE-01：正清/灰清区分；历史记录默认空值，前端展示为“未标记”。
+  await exec("ALTER TABLE logistics_batches ADD COLUMN IF NOT EXISTS customs_mode TEXT NOT NULL DEFAULT ''");
+
   // LOGISTICS-LISTING-01：物流单 Listing 上架状态管理（幂等迁移，存量 PG 库同样生效）
   // 与 CI 的 PUR-OPS-COLLAB-01 完全独立并存，互不读写。四态见 db-sqlite.js 同名迁移块注释。
   await exec("ALTER TABLE logistics_batches ADD COLUMN IF NOT EXISTS listing_status TEXT NOT NULL DEFAULT 'pending_plan'");
