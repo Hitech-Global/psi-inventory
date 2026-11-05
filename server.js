@@ -2675,25 +2675,37 @@ app.get('/api/brands/all', requireLogin, asyncHandler((req, res) => {
 // 品牌采购状态（停采品牌系统级规则）：读取/保存品牌级 可采购/停采
 app.get('/api/brand-settings', requireApiPermission('system_config'), asyncHandler((req, res) => {
   try {
-    const rows = query('SELECT brand, procurement_status, note FROM brand_settings ORDER BY brand').rows;
+    const rows = query('SELECT brand, procurement_status, default_quote_currency, note FROM brand_settings ORDER BY brand').rows;
     res.json(rows);
   } catch (e) { res.json([]); }
 }));
 app.post('/api/brand-settings', requireApiPermission('system_config'), asyncHandler((req, res) => {
   try {
     const items = Array.isArray(req.body && req.body.items) ? req.body.items : [];
-    const valid = items.filter(it => it && it.brand && (it.procurement_status === 'active' || it.procurement_status === 'stopped'));
-    if (!valid.length) return res.json({ success: false, message: '没有有效的品牌状态记录' });
+    const valid = items.filter(it => it && String(it.brand || '').trim() && (it.procurement_status === 'active' || it.procurement_status === 'stopped'));
+    if (!valid.length) return res.status(400).json({ success: false, message: '没有有效的品牌设置记录' });
+    const existing = new Map(query('SELECT brand, default_quote_currency FROM brand_settings').rows.map(r => [String(r.brand || '').trim(), String(r.default_quote_currency || '').trim().toUpperCase()]));
+    const currencyStatus = new Map(query('SELECT code, status FROM currencies').rows.map(r => [String(r.code || '').trim().toUpperCase(), String(r.status || 'active')]));
+    const prepared = valid.map(it => {
+      const brand = String(it.brand).trim();
+      const hasCurrency = Object.prototype.hasOwnProperty.call(it, 'default_quote_currency');
+      const previousCurrency = existing.get(brand) || '';
+      const currency = hasCurrency ? String(it.default_quote_currency || '').trim().toUpperCase() : previousCurrency;
+      // Allow brands without a quote currency to keep their procurement settings editable; quotation import itself blocks active brands without a default currency.
+      if (currency && !currencyStatus.has(currency)) throw new Error('品牌 ' + brand + ' 的默认报价币种 ' + currency + ' 不存在于币种设置中。');
+      if (hasCurrency && currency && currencyStatus.get(currency) !== 'active' && currency !== previousCurrency) throw new Error('币种 ' + currency + ' 已停用，不能设为新的默认报价币种。');
+      return { brand, procurement_status: it.procurement_status, default_quote_currency: currency, note: (it.note || '').toString() };
+    });
     transaction(() => {
       const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
-      for (const it of valid) {
-        run(`INSERT INTO brand_settings (brand, procurement_status, note, updated_at) VALUES (?, ?, ?, ?)
-             ON CONFLICT(brand) DO UPDATE SET procurement_status=excluded.procurement_status, note=excluded.note, updated_at=excluded.updated_at`,
-          [String(it.brand).trim(), it.procurement_status, (it.note || '').toString(), now]);
+      for (const it of prepared) {
+        run(`INSERT INTO brand_settings (brand, procurement_status, default_quote_currency, note, updated_at) VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT(brand) DO UPDATE SET procurement_status=excluded.procurement_status, default_quote_currency=excluded.default_quote_currency, note=excluded.note, updated_at=excluded.updated_at`,
+          [it.brand, it.procurement_status, it.default_quote_currency, it.note, now]);
       }
     });
-    res.json({ success: true, count: valid.length });
-  } catch (e) { res.json({ success: false, message: e.message }); }
+    res.json({ success: true, count: prepared.length });
+  } catch (e) { res.status(400).json({ success: false, message: e.message }); }
 }));
 app.delete('/api/warehouses/:id', requireApiPermission('system_config'), asyncHandler((req, res) => {
   run('DELETE FROM warehouses WHERE id = ?', [req.params.id]);

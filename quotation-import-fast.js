@@ -4,7 +4,6 @@ module.exports=function installQuotationImportFast(deps){
   const {app,query,run,transaction,genId,asyncHandler,requireApiPermission}=deps;
   const crypto=require('node:crypto');
   const {withAsyncPoolClient,withGenerateClient}=require('./pg-async');
-  const BRAND_CCY=Object.freeze({Netac:'USD',Redragon:'RMB',BOYA:'RMB',Joypeer:'RMB',GoPro:'IDR'});
   const MAX_ROWS=5000;
   const STALE_MS=90*1000;
   const clean=v=>String(v??'').trim();
@@ -50,6 +49,8 @@ module.exports=function installQuotationImportFast(deps){
       if(!supplier)throw badRequest('所选供应商不存在或已停用，请重新选择。');
     }
     const supplierBrands=supplier?parseIdList(supplier.associated_brands):[];
+    const brandSettings=new Map(query('SELECT brand, procurement_status, default_quote_currency FROM brand_settings').rows.map(x=>[clean(x.brand),{status:clean(x.procurement_status||'active'),currency:clean(x.default_quote_currency).toUpperCase()}]));
+    const activeCurrencies=new Set(query("SELECT code FROM currencies WHERE status='active'").rows.map(x=>clean(x.code).toUpperCase()).filter(Boolean));
     const skuRows=query("SELECT sku_code,brand,category,model,product_name,color_spec,barcode FROM skus WHERE COALESCE(status,'normal')<>'deleted'").rows;
     const skuMap=new Map(),brandMap=new Map();
     skuRows.forEach(x=>{const b=clean(x.brand);if(b){brandMap.set(b.toLowerCase(),b);skuMap.set(b.toLowerCase()+'|'+norm(x.sku_code),x);}});
@@ -69,17 +70,20 @@ module.exports=function installQuotationImportFast(deps){
       const priceRaw=r.quote_price??r['FOB价格']??r['报价价格']??r['报价'];
       const priceText=clean(priceRaw);
       const quote_price=priceText===''?0:Number(priceText.replace(/[,\s]/g,'').replace(/[￥¥$€£]/g,''));
-      const currency=clean(r.currency||r['币种']||BRAND_CCY[brand]||(supplier&&supplier.default_currency)||'').toUpperCase();
+      const setting=brandSettings.get(brand)||{status:'active',currency:''};
+      const expected=setting.currency;
+      const currency=clean(r.currency||r['币种']||expected||(supplier&&supplier.default_currency)||'').toUpperCase();
       const quote_date=normalizeDate(r.quote_date||r['报价日期']||body.quote_date||'');
-      const expected=BRAND_CCY[brand];
       let reason='';
       if(!part)reason='供应商料号为空';
       else if(!brand)reason='品牌为空，请选择品牌或在表格中提供品牌';
       else if(supplierBrands.length&&!supplierBrands.includes(brand))reason='供应商 '+supplier.name+' 未关联品牌 '+brand;
       else if(!Number.isFinite(quote_price)||quote_price<0)reason='FOB 价格格式错误（空白或 0 表示未报价）';
       else if(!/^\d{4}-\d{2}-\d{2}$/.test(quote_date))reason='报价日期格式无法识别';
+      else if(setting.status==='active'&&!expected)reason='品牌 '+brand+' 尚未设置默认报价币种，请先到系统管理→品牌设置配置';
       else if(!currency)reason='币种为空';
-      else if(expected&&currency!==expected)reason=brand+' 默认币种应为 '+expected;
+      else if(expected&&currency!==expected)reason=brand+' 默认报价币种应为 '+expected;
+      else if(!activeCurrencies.has(currency))reason='币种 '+currency+' 未在系统管理→币种设置中启用';
       if(reason){errors.push({row:Number(r.source_row)||i+2,reason});return;}
       let match=null,matchSource='unlinked';
       if(clean(r.match_source)==='manual'&&clean(r.psi_sku_code)){
@@ -322,7 +326,13 @@ module.exports=function installQuotationImportFast(deps){
     }
   }
   app.get('/api/quotation-management/import-options',requireApiPermission('quotation_view'),asyncHandler((req,res)=>{
-    try{res.json(importOptions());}catch(e){res.status(500).json({error:e.message});}
+    try{
+      const base=importOptions()||{};
+      const brandCurrencies={};
+      query("SELECT brand, default_quote_currency FROM brand_settings WHERE default_quote_currency IS NOT NULL AND default_quote_currency<>''").rows.forEach(x=>{brandCurrencies[clean(x.brand)]=clean(x.default_quote_currency).toUpperCase();});
+      const currencies=query("SELECT code,name,symbol FROM currencies WHERE status='active' ORDER BY sort_order").rows;
+      res.json({...base,brand_currencies:brandCurrencies,currencies});
+    }catch(e){res.status(500).json({error:e.message});}
   }));
   app.get('/api/quotation-management/import/:importId/status',requireApiPermission('quotation_view'),asyncHandler(async(req,res)=>{
     const id=String(req.params.importId||'').trim();

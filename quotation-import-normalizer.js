@@ -1,9 +1,20 @@
 (function(){
 'use strict';
 
-const BRAND_CCY=Object.freeze({Netac:'USD',Redragon:'RMB',BOYA:'RMB',Joypeer:'RMB',GoPro:'IDR'});
+const BRAND_CCY=Object.create(null);
+let ACTIVE_CURRENCIES=new Set();
 const pad=n=>String(n).padStart(2,'0');
 const clean=v=>String(v??'').trim();
+const escapeRegExp=v=>String(v).replace(/[^A-Z0-9]/g,'');
+function setBrandCurrencies(mapping,currencies){
+  Object.keys(BRAND_CCY).forEach(k=>delete BRAND_CCY[k]);
+  Object.entries(mapping||{}).forEach(([brand,currency])=>{
+    const b=clean(brand),c=clean(currency).toUpperCase();
+    if(b&&c)BRAND_CCY[b]=c;
+  });
+  ACTIVE_CURRENCIES=new Set((currencies||[]).map(x=>clean(typeof x==='string'?x:(x&&x.code)||'').toUpperCase()).filter(Boolean));
+  return {...BRAND_CCY};
+}
 const norm=v=>clean(v).toLowerCase().replace(/[\s_\-./\\()[\]{}:：;；,，]+/g,'');
 const partKey=v=>clean(v).toUpperCase();
 const mapKey=(supplier,brand,part)=>[supplier,brand,partKey(part)].join('\u0001');
@@ -60,7 +71,9 @@ function parsePrice(value){
   if(value==null||clean(value)==='')return 0;
   const raw=clean(value).toUpperCase();
   if(['-','—','–','N/A','NA','TBD','未报价'].includes(raw))return 0;
-  const s=raw.replace(/[,\s]/g,'').replace(/[￥¥$€£]/g,'').replace(/USD|RMB|CNY|EUR|THB|IDR|MYR/g,'');
+  let s=raw.replace(/[ ,\s]/g,'').replace(/[￥¥$€£]/g,'');
+  const currencyTokens=[...ACTIVE_CURRENCIES,'CNY'].sort((a,b)=>b.length-a.length).map(escapeRegExp);
+  if(currencyTokens.length)s=s.replace(new RegExp(currencyTokens.join('|'),'g'),'');
   if(!s)return 0;
   if(/^\(.*\)$/.test(s))return -Math.abs(Number(s.slice(1,-1)));
   return Number(s);
@@ -84,12 +97,13 @@ function classifyHeader(value){
 }
 function currencyFromHeader(value){
   const h=clean(value).toUpperCase();
-  if(/\bUSD\b/.test(h)||h.includes('US$')||h.includes('美元'))return 'USD';
-  if(/\b(RMB|CNY)\b/.test(h)||h.includes('人民币'))return 'RMB';
-  if(/\b(EUR)\b/.test(h))return 'EUR';
-  if(/\b(THB)\b/.test(h))return 'THB';
-  if(/\b(IDR)\b/.test(h))return 'IDR';
-  if(/\b(MYR)\b/.test(h))return 'MYR';
+  if(ACTIVE_CURRENCIES.has('USD')&&(h.includes('US$')||/\bUSD\b/.test(h)||h.includes('美元')))return 'USD';
+  if(ACTIVE_CURRENCIES.has('RMB')&&(/\b(RMB|CNY)\b/.test(h)||h.includes('人民币')))return 'RMB';
+  const codes=[...ACTIVE_CURRENCIES].sort((a,b)=>b.length-a.length);
+  for(const code of codes){
+    const pattern=new RegExp('(^|[^A-Z])'+escapeRegExp(code)+'([^A-Z]|$)');
+    if(pattern.test(h))return code;
+  }
   return '';
 }
 function headerInfo(row){
@@ -243,14 +257,15 @@ function validateRows(rows){
     else if(!Number.isFinite(price)||price<0)reason='FOB 价格格式错误（空白或 0 表示未报价）';
     else if(!/^\d{4}-\d{2}-\d{2}$/.test(date))reason='报价日期格式无法识别';
     else if(!currency)reason='币种为空';
-    else if(BRAND_CCY[brand]&&currency!==BRAND_CCY[brand])reason=brand+' 默认币种应为 '+BRAND_CCY[brand];
+    else if(ACTIVE_CURRENCIES.size&&!ACTIVE_CURRENCIES.has(currency))reason='币种 '+currency+' 未在币种设置中启用';
+    else if(BRAND_CCY[brand]&&currency!==BRAND_CCY[brand])reason=brand+' 默认报价币种应为 '+BRAND_CCY[brand];
     if(reason)errors.push({row:Number(r.source_row)||i+2,reason});
   });
   return errors;
 }
 
 window.QuotationImportNormalizer=Object.freeze({
-  normalizeDate,inferQuoteDate,normalizeRow,parseSheetRows,matchRows,validateRows,BRAND_CCY
+  normalizeDate,inferQuoteDate,normalizeRow,parseSheetRows,matchRows,validateRows,BRAND_CCY,setBrandCurrencies
 });
 
 function install(){

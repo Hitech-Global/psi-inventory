@@ -364,6 +364,8 @@ function openModal(){
   };
   statusApi('/api/quotation-management/import-options').then(data=>{
     importOptions=data||{suppliers:[],skus:[],mappings:[],brands:[]};
+    const n=normalizer();
+    if(n&&typeof n.setBrandCurrencies==='function')n.setBrandCurrencies(importOptions.brand_currencies||{},importOptions.currencies||[]);
     populateImportOptions(m);
   }).catch(err=>fileError(m,'无法加载供应商和 SKU 主数据：'+(err&&err.message?err.message:err)));
 }
