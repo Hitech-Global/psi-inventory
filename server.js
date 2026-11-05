@@ -32,7 +32,7 @@ const { importProformaInvoicesPg } = require('./wave2b-pi-batch-import-pg.js'); 
 const { generatePONumber } = require('./po-number');
 const { slimReplenishmentRow, projectDailySalesRow } = require('./rp-projection'); // RP-P0-R1 订单预测响应投影（仅序列化瘦身，不动计算逻辑）
 const { inventoryValueKey, buildInventoryFinancialValueMap } = require('./inventory-asset-values');
-const { buildWacCostChangeRows, resolveWacCostChangeHistory, summarizeWacCostChangeRows, chunkWacCostChangeRows, getUniqueWacCcRecipientIds, buildWacGroupRecipientId, parseWacGroupRecipientId, buildWacCostChangeCard, cardToFallbackText } = require('./wac-notification');
+const { buildWacCostChangeRows, summarizeWacCostChangeRows, chunkWacCostChangeRows, getUniqueWacCcRecipientIds, buildWacGroupRecipientId, parseWacGroupRecipientId, buildWacCostChangeCard, cardToFallbackText } = require('./wac-notification');
 const {
   createSqliteSalesImportAdapter,
   createPostgresSalesImportAdapter,
@@ -304,7 +304,7 @@ async function sendFeishuRaw(receiveId, receiveIdType, msgType, contentObj) {
   let data = await resp.json();
   // 卡片隐性故障 fallback：仅当 msgType=interactive 且飞书返回 parse card json err/200621 时降级为文本（text 链路不受影响）。
   if (data.code !== 0 && msgType === 'interactive' && /200621|parse card json/.test(String(data.msg || ''))) {
-    const card = msgType === 'interactive' ? contentObj : null;
+    const card = contentObj && contentObj.card;
     const fallbackText = card ? cardToFallbackText(card) : '';
     if (fallbackText) {
       try {
@@ -337,7 +337,7 @@ async function sendFeishuMessage(receiveId, receiveIdType, text) {
 
 // 飞书 interactive card 发送（Listing 通知升级卡片展示）。与文本共用同一出口，权限无需新增。
 async function sendFeishuInteractive(receiveId, receiveIdType, card) {
-  return sendFeishuRaw(receiveId, receiveIdType, 'interactive', card);
+  return sendFeishuRaw(receiveId, receiveIdType, 'interactive', { card });
 }
 
 async function sendFeishuTextMessage(openId, text) {
@@ -4903,31 +4903,6 @@ function latestConfirmedWac(skuCode, country, warehouse) {
     ORDER BY confirmed_at DESC, version_no DESC
     LIMIT 1
   `, [skuCode, country, warehouse]);
-}
-
-// 构建 WAC 通知比较数据：从同 SKU/国家/仓库的锁定历史中，按 confirmed_at 找上一条业务成本。
-// 该查询只读 wac_history，不回写库存或任何 WAC 记录；500 个 SKU 分块以兼容 SQLite 参数上限。
-function buildWacCostChangeReportRows(currentRows) {
-  const rows = Array.isArray(currentRows) ? currentRows : [];
-  const skuCodes = Array.from(new Set(rows.map(row => String(row && row.sku_code || '').trim()).filter(Boolean)));
-  if (!skuCodes.length) return [];
-  const historyRows = [];
-  const chunkSize = 500;
-  for (let i = 0; i < skuCodes.length; i += chunkSize) {
-    const chunk = skuCodes.slice(i, i + chunkSize);
-    const placeholders = chunk.map(() => '?').join(',');
-    const result = query(
-      "SELECT id, sku_code, country, warehouse, version_no, original_avg_cost, new_avg_cost, confirmed_at, created_at, logistics_batch_id " +
-      "FROM wac_history WHERE sku_code IN (" + placeholders + ") " +
-      "AND COALESCE(is_locked, 0) = 1 " +
-      "AND COALESCE(confirmation_status, 'confirmed') NOT IN ('reversed', 'void', 'cancelled') " +
-      "AND confirmed_at IS NOT NULL AND confirmed_at != '' " +
-      "ORDER BY confirmed_at ASC, created_at ASC, version_no ASC",
-      chunk
-    );
-    historyRows.push(...(result.rows || []));
-  }
-  return buildWacCostChangeRows(resolveWacCostChangeHistory(rows, historyRows));
 }
 
 // P1-03-B: 在事务内生成下一版本号并插入锁定的 WAC 历史
@@ -20027,7 +20002,7 @@ app.post('/api/wac/confirm/:logistics_batch_id', requireApiPermission('ci_edit')
         });
       }
       // 从正式保存的 WAC 版本生成通知快照，完整列出 SKU 并按环比绝对值排序。
-      reportRows=buildWacCostChangeReportRows(logs);
+      reportRows=buildWacCostChangeRows(logs);
       reportChunks=chunkWacCostChangeRows(reportRows);
       reportSummary=summarizeWacCostChangeRows(reportRows);
       if((ccUsers.length||ccGroups.length)&&reportChunks.length){
@@ -20096,7 +20071,7 @@ app.post('/api/wac/notifications/:logistics_batch_id/cc',requireApiPermission('c
     if(!batch)return res.status(404).json({error:'物流批次不存在'});
 
     const historyRows=query(
-      "SELECT id,sku_code,version_no,original_avg_cost AS old_avg_cost,new_avg_cost,brand,country,warehouse,local_currency,confirmed_at,ci_no FROM wac_history WHERE logistics_batch_id=? AND COALESCE(is_locked,0)=1 AND COALESCE(confirmation_status,'confirmed') NOT IN ('reversed','void','cancelled') ORDER BY sku_code",
+      "SELECT sku_code,version_no,original_avg_cost AS old_avg_cost,new_avg_cost,brand,country,warehouse,local_currency,confirmed_at,ci_no FROM wac_history WHERE logistics_batch_id=? AND COALESCE(is_locked,0)=1 AND COALESCE(confirmation_status,'confirmed') NOT IN ('reversed','void','cancelled') ORDER BY sku_code",
       [batch.id]
     ).rows;
     if(!historyRows.length)return res.status(409).json({error:'该批次没有可用于通知的已确认 WAC 历史记录'});
@@ -20121,7 +20096,7 @@ app.post('/api/wac/notifications/:logistics_batch_id/cc',requireApiPermission('c
     if(ccUsers.length+ccGroups.length>100)return res.status(413).json({error:'单次最多选择100个收件对象'});
     if(!ccUsers.length&&!ccGroups.length)return res.status(400).json({error:'请至少选择一位人员或一个已配置的群组'});
 
-    const reportRows=buildWacCostChangeReportRows(historyRows);
+    const reportRows=buildWacCostChangeRows(historyRows);
     const reportChunks=chunkWacCostChangeRows(reportRows);
     if(!reportChunks.length)return res.status(409).json({error:'该批次没有可发送的 SKU 成本明细'});
     const reportSummary=summarizeWacCostChangeRows(reportRows);

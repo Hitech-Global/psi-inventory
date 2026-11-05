@@ -1,83 +1,18 @@
 'use strict';
 const WAC_REPORT_CHUNK_SIZE = 50;
 
-function compareWacHistoryChronology(a, b) {
-  const confirmedCompare = String(a && a.confirmed_at || '').localeCompare(String(b && b.confirmed_at || ''));
-  if (confirmedCompare) return confirmedCompare;
-  const createdCompare = String(a && a.created_at || '').localeCompare(String(b && b.created_at || ''));
-  if (createdCompare) return createdCompare;
-  const versionCompare = Number(a && a.version_no || 0) - Number(b && b.version_no || 0);
-  if (versionCompare) return versionCompare;
-  return String(a && a.id || '').localeCompare(String(b && b.id || ''));
-}
-
-// 按业务生效时间寻找上一条 WAC。历史补录即使 created_at 较晚，只要 confirmed_at 更早，也必须作为上一条成本。
-function resolveWacCostChangeHistory(currentRows, historyRows) {
-  const rows = Array.isArray(currentRows) ? currentRows : [];
-  const history = Array.isArray(historyRows) ? historyRows : [];
-  const byId = new Map();
-  const groups = new Map();
-  const keyOf = row => JSON.stringify([
-    String(row && row.sku_code || ''),
-    String(row && row.country || ''),
-    String(row && row.warehouse || '')
-  ]);
-  history.forEach(row => {
-    if (!row || !row.sku_code) return;
-    if (row.id) byId.set(String(row.id), row);
-    const key = keyOf(row);
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(row);
-  });
-  groups.forEach(group => group.sort(compareWacHistoryChronology));
-
-  return rows.map(row => {
-    const currentId = String(row && (row.wac_id || row.id) || '');
-    const current = (currentId && byId.get(currentId)) || row || {};
-    const key = keyOf(current);
-    const currentConfirmedAt = String(current.confirmed_at || row && row.confirmed_at || '');
-    const currentCreatedAt = String(current.created_at || row && row.created_at || '');
-    const currentVersion = Number(current.version_no || row && row.version_no || 0);
-    const currentBatchId = String(current.logistics_batch_id || row && row.logistics_batch_id || '');
-    const candidates = (groups.get(key) || []).filter(candidate => {
-      if (currentId && String(candidate.id || '') === currentId) return false;
-      if (currentBatchId && candidate.logistics_batch_id && String(candidate.logistics_batch_id) === currentBatchId) return false;
-      const candidateConfirmedAt = String(candidate.confirmed_at || '');
-      if (!candidateConfirmedAt || !currentConfirmedAt) return false;
-      if (candidateConfirmedAt !== currentConfirmedAt) return candidateConfirmedAt < currentConfirmedAt;
-      const candidateCreatedAt = String(candidate.created_at || '');
-      if (candidateCreatedAt && currentCreatedAt && candidateCreatedAt !== currentCreatedAt) return candidateCreatedAt < currentCreatedAt;
-      return Number(candidate.version_no || 0) < currentVersion;
-    }).sort(compareWacHistoryChronology);
-    const previous = candidates.length ? candidates[candidates.length - 1] : null;
-    const fallbackOld = current.original_avg_cost !== undefined && current.original_avg_cost !== null
-      ? current.original_avg_cost
-      : (row && row.old_avg_cost);
-    const oldRaw = previous ? previous.new_avg_cost : fallbackOld;
-    const oldValue = Number(oldRaw);
-    const hasOld = oldRaw !== null && oldRaw !== undefined && oldRaw !== '' && Number.isFinite(oldValue) && oldValue > 0;
-    return {
-      ...row,
-      old_avg_cost: hasOld ? oldValue : null,
-      previous_wac_id: previous ? previous.id : null
-    };
-  });
-}
-
 function buildWacCostChangeRows(logs) {
   return (Array.isArray(logs) ? logs : []).map(log => {
     const versionNo = Number(log && log.version_no || 0);
+    const isFirstTime = versionNo === 1;
     const oldValue = Number(log && log.old_avg_cost);
     const newValue = Number(log && log.new_avg_cost);
-    const hasOld = log && log.old_avg_cost !== null && log.old_avg_cost !== undefined &&
-      log.old_avg_cost !== '' && Number.isFinite(oldValue) && oldValue > 0;
-    const hasNew = log && log.new_avg_cost !== null && log.new_avg_cost !== undefined &&
-      log.new_avg_cost !== '' && Number.isFinite(newValue);
-    const isFirstTime = !hasOld;
-    const oldWac = hasOld ? oldValue : null;
+    const hasOld = Number.isFinite(oldValue);
+    const hasNew = Number.isFinite(newValue);
+    const oldWac = isFirstTime ? null : (hasOld ? oldValue : null);
     const newWac = hasNew ? newValue : null;
-    const changeAmount = !hasOld || !hasNew ? null : newValue - oldValue;
-    const changePct = !hasOld || !hasNew || oldValue === 0 ? null : (changeAmount / oldValue) * 100;
+    const changeAmount = isFirstTime || !hasOld || !hasNew ? null : newValue - oldValue;
+    const changePct = isFirstTime || !hasOld || !hasNew || oldValue === 0 ? null : (changeAmount / oldValue) * 100;
     return { sku_code:String(log && log.sku_code || ''), version_no:versionNo, is_first_time:isFirstTime, old_wac:oldWac, new_wac:newWac, change_amount:changeAmount, change_pct:changePct };
   }).sort((a,b) => {
     if (a.is_first_time !== b.is_first_time) return a.is_first_time ? 1 : -1;
@@ -265,4 +200,4 @@ function cardToFallbackText(card) {
   return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
-module.exports={WAC_REPORT_CHUNK_SIZE,compareWacHistoryChronology,resolveWacCostChangeHistory,buildWacCostChangeRows,summarizeWacCostChangeRows,chunkWacCostChangeRows,getUniqueWacCcRecipientIds,buildWacGroupRecipientId,parseWacGroupRecipientId,formatWacMoney,formatWacSignedMoney,buildWacCostChangeCard,cardToFallbackText};
+module.exports={WAC_REPORT_CHUNK_SIZE,buildWacCostChangeRows,summarizeWacCostChangeRows,chunkWacCostChangeRows,getUniqueWacCcRecipientIds,buildWacGroupRecipientId,parseWacGroupRecipientId,formatWacMoney,formatWacSignedMoney,buildWacCostChangeCard,cardToFallbackText};
