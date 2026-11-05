@@ -211,8 +211,8 @@
     var refs = [];
     var u = url || '';
     function has(p) { return u.indexOf(p) !== -1; }
-    if (has('/api/inventory-imports')) { pages.push('inventory', 'replenishment', 'consignment', 'dashboard'); }
-    if (has('/api/inventory') && method !== 'GET') { pages.push('inventory', 'replenishment'); }
+    if (has('/api/inventory-imports')) { pages.push('inventory', 'inv-filter-options', 'replenishment', 'consignment', 'dashboard'); }
+    if (has('/api/inventory') && method !== 'GET') { pages.push('inventory', 'inv-filter-options', 'replenishment'); }
     if (has('/api/proforma-invoices')) { pages.push('pi', 'po', 'payable-list', 'payable-cockpit', 'replenishment'); }
     if (has('/api/commercial-invoices')) { pages.push('ci', 'pi', 'payable-list', 'payable-cockpit', 'replenishment'); }
     // historical CI：与 CI 同链路（createHistoricalCI 写 historical_commercial_invoices/items + payment_requests +
@@ -250,10 +250,10 @@
     if (has('/api/payment-requests')) { pages.push('payment', 'payable-list', 'payable-cockpit', 'ci', 'pi'); }
     if (has('/api/payable-items')) { pages.push('payable-list', 'payable-cockpit', 'payment'); }
     if (has('/api/purchase-orders')) { pages.push('po', 'pi'); }
-    if (has('/api/consignment')) { pages.push('consignment', 'inventory'); }
-    if (has('/api/skus')) { pages.push('skus', 'inventory', 'pi', 'ci'); refs.push('skus'); }
+    if (has('/api/consignment')) { pages.push('consignment', 'inventory', 'inv-filter-options'); }
+    if (has('/api/skus')) { pages.push('skus', 'inventory', 'inv-filter-options', 'pi', 'ci'); refs.push('skus', 'brands'); }
     if (has('/api/suppliers')) { refs.push('suppliers'); }
-    if (has('/api/warehouses')) { refs.push('warehouses', 'warehouseCountries'); }
+    if (has('/api/warehouses')) { pages.push('inv-filter-options'); refs.push('warehouses', 'warehouseCountries'); }
     if (has('/api/countries')) { refs.push('countries'); }
     if (has('/api/brands')) { refs.push('brands'); }
     if (has('/api/currencies')) { refs.push('currencies'); }
