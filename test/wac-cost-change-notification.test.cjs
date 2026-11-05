@@ -3,7 +3,7 @@ const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const path=require('node:path');
-const {buildWacCostChangeRows,summarizeWacCostChangeRows,chunkWacCostChangeRows,getNewWacCcRecipientIds,buildWacGroupRecipientId,parseWacGroupRecipientId,buildWacCostChangeCard}=require('../wac-notification');
+const {buildWacCostChangeRows,summarizeWacCostChangeRows,chunkWacCostChangeRows,getNewWacCcRecipientIds,buildWacGroupRecipientId,parseWacGroupRecipientId,buildWacCostChangeCard,cardToFallbackText}=require('../wac-notification');
 
 test('sorts WAC changes by absolute percentage and places first-time SKUs last',()=>{
   const rows=buildWacCostChangeRows([
@@ -69,6 +69,44 @@ test('Feishu Card 2.0 report has all five columns and every SKU row',()=>{
   assert.match(table.rows[1].change_pct,/green/);
   assert.match(table.rows[2].change_pct,/首次建立/);
 });
+
+test('Card 2.0 text fallback preserves report summary and every SKU table row',()=>{
+  const rows=buildWacCostChangeRows([
+    {sku_code:'SKU-UP',version_no:2,old_avg_cost:100,new_avg_cost:110},
+    {sku_code:'SKU-DOWN',version_no:2,old_avg_cost:200,new_avg_cost:190},
+    {sku_code:'SKU-FIRST',version_no:1,old_avg_cost:0,new_avg_cost:80}
+  ]);
+  const card=buildWacCostChangeCard({
+    batch_no:'LOG-FALLBACK-TEST',ci_no:'CI-FALLBACK-TEST',brand:'Netac',
+    country:'印度尼西亚',country_en:'Indonesia',warehouse:'Bekasi',
+    local_currency:'IDR',confirmed_at:'2026-11-05',
+    rows,summary:summarizeWacCostChangeRows(rows),part_no:1,part_count:1
+  },'zh');
+  const fallback=cardToFallbackText(card);
+  assert.match(fallback,/WAC 成本变动报告/);
+  assert.match(fallback,/Netac/);
+  assert.match(fallback,/LOG-FALLBACK-TEST/);
+  assert.match(fallback,/SKU 明细/);
+  assert.match(fallback,/SKU-UP/);
+  assert.match(fallback,/SKU-DOWN/);
+  assert.match(fallback,/SKU-FIRST/);
+  assert.match(fallback,/原 WAC \(IDR\)/);
+  assert.match(fallback,/\+10\.00%/);
+  assert.match(fallback,/-5\.00%/);
+  assert.match(fallback,/首次建立/);
+  assert.doesNotMatch(fallback,/<font\b|<\/font>|\*\*/);
+  assert.ok(fallback.length>200);
+});
+test('legacy Feishu card text fallback remains supported',()=>{
+  const fallback=cardToFallbackText({
+    header:{title:{content:'Legacy WAC Report'}},
+    elements:[{tag:'div',fields:[{text:{content:'**Brand**\nRedragon'}}]}]
+  });
+  assert.match(fallback,/Legacy WAC Report/);
+  assert.match(fallback,/Brand/);
+  assert.match(fallback,/Redragon/);
+});
+
 test('WAC UI, retry API and both database adapters are wired',()=>{
   const root=path.resolve(__dirname,'..');
   const app=fs.readFileSync(path.join(root,'app.js'),'utf8');
@@ -88,6 +126,7 @@ test('WAC UI, retry API and both database adapters are wired',()=>{
   assert.match(server,/\/api\/wac\/cc-candidates/);
   assert.match(server,/\/api\/wac\/cc-groups/);
   assert.match(server,/parseWacGroupRecipientId/);
+  assert.match(server,/cardToFallbackText/);
   assert.match(server,/sendFeishuInteractive\(groupRecipient\.chat_id,'chat_id',card\)/);
   assert.match(server,/\/api\/wac\/notifications\/:logistics_batch_id\/retry/);
   assert.match(server,/\/api\/wac\/notifications\/:logistics_batch_id\/cc/);
