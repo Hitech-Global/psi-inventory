@@ -13,7 +13,7 @@ let S={brand:'Netac',type:'',keyword:'',from:'',to:'',data:null,detail:null,deta
 
 const $=(s,r=document)=>r.querySelector(s);
 const E=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-const money=(v,c)=>{if(v==null)return '—';const code=String(c||'').toUpperCase();if(code==='IDR')return 'Rp '+Number(v).toLocaleString(undefined,{maximumFractionDigits:0});return (code==='RMB'?'¥ ':'$ ')+Number(v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});};
+const money=(v,c)=>{if(v==null)return '—';const code=String(c||'').toUpperCase();const symbols=(S.data&&S.data.currency_symbols)||{};const symbol=symbols[code]||code;const digits=code==='IDR'?0:2;return (symbol?symbol+' ':'')+Number(v).toLocaleString(undefined,{minimumFractionDigits:digits,maximumFractionDigits:digits});};
 const quoteMoney=(v,c,status)=>status==='no_quote'||v==null?'<span class="qm-noquote">未报价</span>':money(v,c);
 const change=v=>v==null?'—':`<span class="qm-change ${v>0?'up':v<0?'down':''}">${v>0?'↑ +':v<0?'↓ ':''}${Number(v).toFixed(2)}%</span>`;
 const call=(u,m='GET',b)=>window.api(u,m,b);

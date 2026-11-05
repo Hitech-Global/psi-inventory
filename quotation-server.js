@@ -250,9 +250,10 @@ module.exports = function installQuotationManagement(deps) {
     const trend = [...trendMap].sort((a, b) => String(a[0]).localeCompare(String(b[0]))).slice(-24).map(([date, v]) => ({ date, avg_price: v.reduce((s, n) => s + n, 0) / v.length, count: v.length }));
     const month = new Date().toISOString().slice(0, 7), quotedHistoryCount = history.filter(isQuoted).length, noQuoteCount = rows.filter(r => r.quote_status === 'no_quote').length;
     const distinctSkuCount = new Set(rows.map(r => String(r.sku_code || '').trim().toUpperCase())).size;
+    const currencySymbols = Object.fromEntries(query("SELECT code,symbol FROM currencies WHERE status='active'").rows.map(r => [String(r.code || '').trim().toUpperCase(), String(r.symbol || '').trim()]));
 
     return {
-      brands, brand_currencies: Object.fromEntries(brandCurrencies), product_types: productTypes, rows,
+      brands, brand_currencies: Object.fromEntries(brandCurrencies), currency_symbols: currencySymbols, product_types: productTypes, rows,
       report: {
         brand: brand || null, currency: brand ? (brandCurrencies.get(brand) || (rows[0] && rows[0].currency) || '') : '',
         sku_count: distinctSkuCount, unlinked_count: rows.filter(r => r.match_status === 'unlinked').length, history_count: history.length, quoted_history_count: quotedHistoryCount, no_quote_count: noQuoteCount,
