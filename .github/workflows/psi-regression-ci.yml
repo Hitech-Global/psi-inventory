@@ -9,6 +9,7 @@ on:
       - 'test/supplier-pi-preview-alignment.test.cjs'
       - 'app-perf.js'
       - 'test/app-perf-diagnostics.test.cjs'
+      - 'test/app-perf-brand-invalidation.test.cjs'
       - 'server.js'
       - 'wave2b-pi-batch-import-pg.js'
       - 'test/pi-deposit-payable-date.test.cjs'
@@ -78,6 +79,7 @@ jobs:
           node --check test/supplier-pi-preview-alignment.test.cjs
           node --check app-perf.js
           node --check test/app-perf-diagnostics.test.cjs
+          node --check test/app-perf-brand-invalidation.test.cjs
           node --check server.js
           node --check wave2b-pi-batch-import-pg.js
           node --check test/pi-deposit-payable-date.test.cjs
@@ -122,6 +124,8 @@ jobs:
         run: node --test test/ci-logistics-status-filter.test.cjs
       - name: Test opt-in page and API performance diagnostics
         run: node --test test/app-perf-diagnostics.test.cjs
+      - name: Test brand and inventory filter cache invalidation
+        run: node --test test/app-perf-brand-invalidation.test.cjs
       - name: Test finance payment calendar and manual payable creation
         run: node --test test/finance-payment-calendar.test.cjs test/manual-payable-item.test.cjs test/finance-payment-overview-integration.test.cjs test/finance-payment-overview.test.cjs test/finance-payment-overview-sort.test.cjs
       - name: Test PI deposit payable date follows PI date
