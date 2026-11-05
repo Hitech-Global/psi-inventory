@@ -1,7 +1,8 @@
 (function(){
 'use strict';
 
-const CCY={Netac:'USD',Redragon:'RMB',BOYA:'RMB',Joypeer:'RMB',GoPro:'IDR'};
+let BRAND_OPTIONS=[];
+let brandOptionsLoadSeq=0;
 const SUMMARY_CACHE_MAX=12;
 const DETAIL_CACHE_MAX=24;
 const summaryCache=new Map();
@@ -46,14 +47,30 @@ function show(){
   c.innerHTML='<div id="qm"></div>';
   S.detail=null;S.detailKey='';
   renderBase();
+  loadBrandOptions();
   const cached=summaryCache.get(summaryKey());
   if(cached){S.data=cached;renderSummary();load({useCache:false,background:true});}
   else{S.data=null;renderSkeleton();load({useCache:false,background:false});}
 }
 
+function loadBrandOptions(){
+  const seq=++brandOptionsLoadSeq;
+  call('/api/brands/all').then(rows=>{
+    if(seq!==brandOptionsLoadSeq)return;
+    BRAND_OPTIONS=Array.isArray(rows)?rows.filter(Boolean):[];
+    const select=$('#qm-brand');if(!select)return;
+    const prior=S.brand;
+    if(!BRAND_OPTIONS.includes(S.brand))S.brand=BRAND_OPTIONS[0]||'';
+    select.innerHTML=BRAND_OPTIONS.map(b=>`<option value="${E(b)}">${E(b)}</option>`).join('');
+    select.value=S.brand;
+    if(S.brand&&S.brand!==prior)switchView();
+  }).catch(()=>{});
+}
+
 function renderBase(){
-  const brands=Object.keys(CCY).map(b=>`<option value="${E(b)}" ${b===S.brand?'selected':''}>${E(b)}</option>`).join('');
-  $('#qm').innerHTML=`<div class="qm-head"><div><div class="qm-title">🏷️ 报价管理</div><div class="qm-sub">FOB 报价、价格趋势、最近采购价对比与品牌报告</div></div><div class="qm-actions"><button class="qm-btn" id="qm-template">⇩ 下载模板</button><button class="qm-btn primary" id="qm-import">⇧ 导入报价</button></div></div><div class="qm-filter"><div class="qm-field"><label>品牌</label><select id="qm-brand">${brands}</select></div><div class="qm-field"><label>产品类型</label><select id="qm-type"><option value="">全部</option></select></div><div class="qm-field"><label>SKU / 关键词</label><input id="qm-key" value="${E(S.keyword)}" placeholder="搜索 SKU、产品类型或品牌"></div><div class="qm-field"><label>开始日期</label><input type="date" id="qm-from" value="${E(S.from)}"></div><div class="qm-field"><label>结束日期</label><input type="date" id="qm-to" value="${E(S.to)}"></div></div><div class="qm-note">Netac 默认 USD；Redragon / BOYA / Joypeer 默认 RMB；GoPro 默认 IDR。FOB=0 表示当日未报价，会保留历史记录，但不参与价格趋势、报价环比或采购价环比。</div><div class="qm-grid"><section class="qm-card"><div class="qm-card-h"><b>SKU 列表</b><span id="qm-count"></span></div><div class="qm-table-wrap"><table class="qm-table"><thead><tr><th>SKU</th><th>品牌</th><th>产品类型</th><th>最新FOB</th><th>币种</th><th>报价日期</th><th>较上次报价</th><th>较上次采购价</th><th>历史次数</th><th></th></tr></thead><tbody id="qm-body"></tbody></table></div></section><section class="qm-card" id="qm-right"></section></div>`;
+  const initialBrands=BRAND_OPTIONS.length?BRAND_OPTIONS:(S.brand?[S.brand]:[]);
+  const brands=initialBrands.map(b=>`<option value="${E(b)}" ${b===S.brand?'selected':''}>${E(b)}</option>`).join('');
+  $('#qm').innerHTML=`<div class="qm-head"><div><div class="qm-title">🏷️ 报价管理</div><div class="qm-sub">FOB 报价、价格趋势、最近采购价对比与品牌报告</div></div><div class="qm-actions"><button class="qm-btn" id="qm-template">⇩ 下载模板</button><button class="qm-btn primary" id="qm-import">⇧ 导入报价</button></div></div><div class="qm-filter"><div class="qm-field"><label>品牌</label><select id="qm-brand">${brands}</select></div><div class="qm-field"><label>产品类型</label><select id="qm-type"><option value="">全部</option></select></div><div class="qm-field"><label>SKU / 关键词</label><input id="qm-key" value="${E(S.keyword)}" placeholder="搜索 SKU、产品类型或品牌"></div><div class="qm-field"><label>开始日期</label><input type="date" id="qm-from" value="${E(S.from)}"></div><div class="qm-field"><label>结束日期</label><input type="date" id="qm-to" value="${E(S.to)}"></div></div><div class="qm-note">品牌默认报价币种以「系统管理 → 品牌设置」为准；可选币种以「系统管理 → 币种设置」中启用的币种为准。FOB=0 表示当日未报价，会保留历史记录，但不参与价格趋势、报价环比或采购价环比。</div><div class="qm-grid"><section class="qm-card"><div class="qm-card-h"><b>SKU 列表</b><span id="qm-count"></span></div><div class="qm-table-wrap"><table class="qm-table"><thead><tr><th>SKU</th><th>品牌</th><th>产品类型</th><th>最新FOB</th><th>币种</th><th>报价日期</th><th>较上次报价</th><th>较上次采购价</th><th>历史次数</th><th></th></tr></thead><tbody id="qm-body"></tbody></table></div></section><section class="qm-card" id="qm-right"></section></div>`;
   bind();
 }
 
@@ -94,7 +111,9 @@ async function load({useCache=false,background=false}={}){
 function renderSummary(){filters();list();report();}
 function filters(){
   const d=S.data||{};
-  $('#qm-brand').innerHTML=(d.brands||Object.keys(CCY)).map(b=>`<option value="${E(b)}" ${b===S.brand?'selected':''}>${E(b)}</option>`).join('');
+  const brands=BRAND_OPTIONS.length?BRAND_OPTIONS:(d.brands||[]);
+  const currencyMap=d.brand_currencies||{};
+  $('#qm-brand').innerHTML=brands.map(b=>`<option value="${E(b)}" ${b===S.brand?'selected':''}>${E(b)}${currencyMap[b]?' · '+E(currencyMap[b]):''}</option>`).join('');
   $('#qm-type').innerHTML='<option value="">全部</option>'+(d.product_types||[]).map(t=>`<option value="${E(t)}" ${t===S.type?'selected':''}>${E(t)}</option>`).join('');
 }
 function list(){
