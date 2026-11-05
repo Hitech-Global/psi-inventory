@@ -170,7 +170,7 @@ assert.match(server,/event\.match_status === 'unlinked'/,'unlinked rows must not
 const bootstrap=require(path.join(__dirname,'..','scripts','quotation-management-bootstrap.cjs'));
 assert.doesNotMatch(bootstrap.patchQuotationManagementSource(management),/const CCY\s*=|Object\.keys\(CCY\)/,'quotation bootstrap must preserve dynamic brand list');
 assert.doesNotMatch(bootstrap.patchQuotationImportFastSource(fast),/const BRAND_CCY\s*=/,'fast-import bootstrap must not restore a hardcoded brand map');
-assert.doesNotMatch(bootstrap.patchQuotationImportNormalizerSource(source),/Object\.freeze\(\{/,'normalizer bootstrap must preserve dynamic currency mapping');
+assert.match(bootstrap.patchQuotationImportNormalizerSource(source),/setBrandCurrencies/,'normalizer bootstrap must preserve dynamic currency settings');
 assert.doesNotMatch(bootstrap.patchQuotationServerSource(server),/BRAND_CCY/,'server bootstrap must not restore a hardcoded currency map');
 const serverEntry=fs.readFileSync(path.join(__dirname,'..','server.js'),'utf8');
 const patchedServer=bootstrap.patchServerSource(serverEntry);
