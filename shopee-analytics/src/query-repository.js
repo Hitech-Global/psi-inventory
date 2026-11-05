@@ -451,6 +451,132 @@ class ShopeeQueryRepository {
    * day matters to a reader: it says whether the source is current, and how
    * far back it reaches.
    */
+  /**
+   * The videos of each shop, most recent first.
+   *
+   * A reader wants to see the videos that were published and how they
+   * did, so the ones with no readings at all are left out rather than
+   * shown as a row of nothing.
+   */
+  async listVideoPerformance({ shopIds = null, limit = 100 } = {}) {
+    const result = await this.pool.query(
+      `SELECT v.shop_id,
+              v.video_id,
+              v.event_date,
+              v.title,
+              v.status,
+              v.published_at,
+              v.views,
+              v.effective_views,
+              v.viewers,
+              v.watch_duration_seconds,
+              v.likes,
+              v.shares,
+              v.comments,
+              v.buyers,
+              v.add_to_cart,
+              v.orders,
+              v.sales,
+              v.synced_at
+       FROM shopee_video_item v
+       WHERE ($1::bigint[] IS NULL OR v.shop_id = ANY($1::bigint[]))
+       ORDER BY v.shop_id, v.event_date DESC, v.views DESC NULLS LAST
+       LIMIT $2`,
+      [shopIds, limit],
+    );
+    return result.rows.map(row => ({
+      shopId: Number(row.shop_id),
+      videoId: Number(row.video_id),
+      eventDate: row.event_date ? String(row.event_date).slice(0, 10) : null,
+      title: row.title || null,
+      status: row.status || null,
+      publishedAt: row.published_at || null,
+      views: row.views == null ? null : Number(row.views),
+      effectiveViews: row.effective_views == null ? null : Number(row.effective_views),
+      viewers: row.viewers == null ? null : Number(row.viewers),
+      watchDurationSeconds: row.watch_duration_seconds == null ? null : Number(row.watch_duration_seconds),
+      likes: row.likes == null ? null : Number(row.likes),
+      shares: row.shares == null ? null : Number(row.shares),
+      comments: row.comments == null ? null : Number(row.comments),
+      buyers: row.buyers == null ? null : Number(row.buyers),
+      addToCart: row.add_to_cart == null ? null : Number(row.add_to_cart),
+      orders: row.orders == null ? null : Number(row.orders),
+      sales: row.sales == null ? null : Number(row.sales),
+    }));
+  }
+
+  /**
+   * The shop's videos day by day, so that a reader can see the trend.
+   */
+  async listVideoDaily({ shopIds = null, limit = 200 } = {}) {
+    const result = await this.pool.query(
+      `SELECT shop_id,
+              event_date,
+              videos, views, effective_views, viewers,
+              watch_duration_seconds, likes, shares, comments, new_followers,
+              buyers, add_to_cart, orders, units_sold, sales
+       FROM shopee_video_daily
+       WHERE ($1::bigint[] IS NULL OR shop_id = ANY($1::bigint[]))
+       ORDER BY shop_id, event_date DESC
+       LIMIT $2`,
+      [shopIds, limit],
+    );
+    return result.rows.map(row => ({
+      shopId: Number(row.shop_id),
+      eventDate: row.event_date ? String(row.event_date).slice(0, 10) : null,
+      videos: row.videos == null ? null : Number(row.videos),
+      views: row.views == null ? null : Number(row.views),
+      effectiveViews: row.effective_views == null ? null : Number(row.effective_views),
+      viewers: row.viewers == null ? null : Number(row.viewers),
+      watchDurationSeconds: row.watch_duration_seconds == null ? null : Number(row.watch_duration_seconds),
+      likes: row.likes == null ? null : Number(row.likes),
+      shares: row.shares == null ? null : Number(row.shares),
+      comments: row.comments == null ? null : Number(row.comments),
+      newFollowers: row.new_followers == null ? null : Number(row.new_followers),
+      buyers: row.buyers == null ? null : Number(row.buyers),
+      addToCart: row.add_to_cart == null ? null : Number(row.add_to_cart),
+      orders: row.orders == null ? null : Number(row.orders),
+      unitsSold: row.units_sold == null ? null : Number(row.units_sold),
+      sales: row.sales == null ? null : Number(row.sales),
+    }));
+  }
+
+  /**
+   * The livestreams of each shop, most recent first.
+   */
+  async listLivestreamSessions({ shopIds = null, limit = 100 } = {}) {
+    const result = await this.pool.query(
+      `SELECT shop_id, session_id, event_date, title, started_at, ended_at,
+              views, viewers, peak_viewers, watch_duration_seconds, clicks,
+              add_to_cart, orders, units_sold, buyers, sales, comments, shares
+       FROM shopee_livestream_session
+       WHERE ($1::bigint[] IS NULL OR shop_id = ANY($1::bigint[]))
+       ORDER BY shop_id, event_date DESC, started_at DESC NULLS LAST
+       LIMIT $2`,
+      [shopIds, limit],
+    );
+    return result.rows.map(row => ({
+      shopId: Number(row.shop_id),
+      sessionId: Number(row.session_id),
+      eventDate: row.event_date ? String(row.event_date).slice(0, 10) : null,
+      title: row.title || null,
+      startedAt: row.started_at || null,
+      endedAt: row.ended_at || null,
+      views: row.views == null ? null : Number(row.views),
+      viewers: row.viewers == null ? null : Number(row.viewers),
+      peakViewers: row.peak_viewers == null ? null : Number(row.peak_viewers),
+      watchDurationSeconds: row.watch_duration_seconds == null ? null : Number(row.watch_duration_seconds),
+      clicks: row.clicks == null ? null : Number(row.clicks),
+      addToCart: row.add_to_cart == null ? null : Number(row.add_to_cart),
+      orders: row.orders == null ? null : Number(row.orders),
+      unitsSold: row.units_sold == null ? null : Number(row.units_sold),
+      buyers: row.buyers == null ? null : Number(row.buyers),
+      sales: row.sales == null ? null : Number(row.sales),
+      comments: row.comments == null ? null : Number(row.comments),
+      shares: row.shares == null ? null : Number(row.shares),
+    }));
+  }
+
   async getShopConnectionCoverage() {
     const result = await this.pool.query(
       `SELECT p.shop_id,

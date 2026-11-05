@@ -792,6 +792,19 @@ async function loadFunnel() {
  * the point of it is to see which shop needs attention, which only shows
  * if they are all beside each other.
  */
+/**
+ * The videos and the livestreams of the shops.
+ */
+async function loadShopContent() {
+  const filters = currentFilters();
+  const params = new URLSearchParams();
+  if (filters.country) params.set('country', filters.country);
+  if (filters.brand) params.set('brand', filters.brand);
+  const query = params.toString();
+  const data = await json(`/api/shopee-analytics/shop-content${query ? `?${query}` : ''}`);
+  window.ShopeeShopContent?.render(data);
+}
+
 async function loadShopHealth() {
   const filters = currentFilters();
   const params = new URLSearchParams();
@@ -1949,6 +1962,9 @@ async function loadCurrentView({ manageButton = true } = {}) {
     else if (state.view === 'health') {
       await loadShopHealth();
     }
+    else if (state.view === 'content') {
+      await loadShopContent();
+    }
     else if (state.view === 'tiktok') {
       await loadTikTokData();
       // 广告数据与经营数据一起读 —— 但它们是两个独立口径，
@@ -1984,6 +2000,14 @@ async function loadCurrentView({ manageButton = true } = {}) {
       // panel and no idea why.
       const body = $('#healthBody');
       if (body) body.innerHTML = `<tr><td class="empty">读取失败：${escapeHtml(error.message)}</td></tr>`;
+    } else if (state.view === 'content') {
+      // 同样地：失败要说出来，否则两张表一直停在「等待加载数据」，
+      // 用户只看到一片空白，不知道是没数据还是出错了。
+      const videoBody = $('#contentVideoBody');
+      const sessionBody = $('#contentSessionBody');
+      const message = `<tr><td class="empty">读取失败：${escapeHtml(error.message)}</td></tr>`;
+      if (videoBody) videoBody.innerHTML = message;
+      if (sessionBody) sessionBody.innerHTML = message;
     } else if (state.view === 'tiktok') {
       // 同样地，页面必须说清哪里出了问题 —— 否则表格一直显示"等待加载数据"，
       // 用户只看到一片空白，不知道是没数据还是出错了。
@@ -2200,6 +2224,8 @@ $('#funnelProductsGroupToggle')?.addEventListener('click', () => {
 });
   $('#healthExportBtn')?.addEventListener('click', () => window.ShopeeShopHealth?.exportCsv());
   $('#healthRefreshBtn')?.addEventListener('click', () => loadShopHealth());
+  $('#contentRefreshBtn')?.addEventListener('click', () => loadShopContent());
+  $('#contentExportBtn')?.addEventListener('click', () => window.ShopeeShopContent?.exportCsv());
   $('#tiktokExportBtn')?.addEventListener('click', () => window.TikTokUI?.exportCsv());
   $('#tiktokRefreshBtn')?.addEventListener('click', () => loadTikTokData());
   $('#tiktokStoreDiagnosisBtn')?.addEventListener('click', () => loadTikTokStoreDiagnosis());

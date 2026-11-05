@@ -66,6 +66,37 @@ ALTER TABLE shopee_shop_profiles
 ALTER TABLE shopee_shop_profiles
   ADD COLUMN IF NOT EXISTS livestream_user_id BIGINT;
 
+-- 每一场直播一行。
+--
+-- 一场直播不是一天，所以按它开始的那天记。当天的合计是从这些场次
+-- 算出来的 —— 一天两场就是两场，不会被算成一行。
+CREATE TABLE IF NOT EXISTS shopee_livestream_session (
+  shop_id BIGINT NOT NULL,
+  session_id BIGINT NOT NULL,
+  event_date DATE NOT NULL,
+  title TEXT,
+  started_at TEXT,
+  ended_at TEXT,
+  views BIGINT,
+  viewers BIGINT,
+  peak_viewers BIGINT,
+  watch_duration_seconds NUMERIC(20,3),
+  clicks BIGINT,
+  add_to_cart BIGINT,
+  orders BIGINT,
+  units_sold BIGINT,
+  buyers BIGINT,
+  sales NUMERIC(20,6),
+  comments BIGINT,
+  shares BIGINT,
+  raw_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (shop_id, session_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_shopee_livestream_session_date
+  ON shopee_livestream_session (shop_id, event_date);
+
 CREATE TABLE IF NOT EXISTS shopee_shop_livestream_daily (
   shop_id BIGINT NOT NULL,
   event_date DATE NOT NULL,

@@ -254,6 +254,14 @@ async function runShopSyncCycle({
           endDate: today,
         }), { required: false });
       }
+      // 直播表现：直播同样属于主播（user）。
+      if (profile.livestreamUserId && runtime.roleClients.ONLINE) {
+        await run('livestreams', () => service.syncLivestreams({
+          userId: profile.livestreamUserId,
+          startDate: yesterday,
+          endDate: today,
+        }), { required: false });
+      }
     } else {
       summary.steps.push({ name: 'returns', ok: true, required: false, skipped: 'NO_ERP_CLIENT' });
     }

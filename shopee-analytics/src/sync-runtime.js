@@ -15,6 +15,7 @@ const { ShopeeShopBiRepository } = require('./shop-bi-repository');
 const { ShopeeShopLivestreamRepository } = require('./shop-livestream-repository');
 const { ShopeeShopHealthRepository } = require('./shop-health-repository');
 const { ShopeeVideoRepository } = require('./video-repository');
+const { ShopeeLivestreamRepository } = require('./livestream-repository');
 const { ShopeeShopRepository } = require('./shop-repository');
 const { ShopeeQueryRepository } = require('./query-repository');
 const { ShopeeAdPromotionRepository } = require('./ad-promotion-repository');
@@ -74,6 +75,7 @@ function createSyncRuntime({
   shopLivestreamRepository: new ShopeeShopLivestreamRepository({ pool }),
     shopHealthRepository: new ShopeeShopHealthRepository({ pool }),
     videoRepository: new ShopeeVideoRepository({ pool }),
+    livestreamRepository: new ShopeeLivestreamRepository({ pool }),
     shopRepository: new ShopeeShopRepository({ pool }),
     queryRepository: new ShopeeQueryRepository({ pool }),
     adPromotionRepository: new ShopeeAdPromotionRepository({ pool }),

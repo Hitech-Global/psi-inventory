@@ -12,6 +12,7 @@ const { fetchShopBiDay } = require('./sync-shop-bi');
 const { fetchShopHealth } = require('./sync-account-health');
 const { fetchShopTraffic, fetchProductTraffic } = require('./sync-business-insights');
 const { fetchVideoOverview, fetchVideoList } = require('./sync-video');
+const { fetchLiveSessions } = require('./sync-livestream');
 const { fetchHealthEvents } = require('./sync-account-health-events');
 const { fetchShopLivestreamDay } = require('./sync-shop-livestream');
 const { fetchShopInfo } = require('./sync-shop');
@@ -46,6 +47,7 @@ class ShopeeSyncService {
     shopLivestreamRepository,
     shopHealthRepository,
     videoRepository,
+    livestreamRepository,
     shopRepository,
   }) {
     this.shopId = shopId;
@@ -60,6 +62,7 @@ class ShopeeSyncService {
     this.shopLivestreamRepository = shopLivestreamRepository;
     this.shopHealthRepository = shopHealthRepository;
     this.videoRepository = videoRepository;
+    this.livestreamRepository = livestreamRepository;
     this.shopRepository = shopRepository;
   }
 
@@ -525,6 +528,77 @@ class ShopeeSyncService {
       }
     }
     return { dayCount: overview.rows.length, videoCount: list.items.length };
+  }
+
+  /**
+   * The livestreams of the shop, one session at a time.
+   *
+   * A livestream belongs to the person behind the shop, so the request
+   * is made in that person's name. The day's total is worked out from
+   * the sessions that make it up, so that the shop's live hours add up
+   * without being counted twice.
+   */
+  async syncLivestreams({ userId, startDate, endDate, pageNo = 1, pageSize = 50 }) {
+    const person = Number(userId);
+    if (!Number.isSafeInteger(person) || person <= 0) {
+      throw new Error('A user number is required to read the livestreams');
+    }
+    const { client, accessToken } = await resolveRole(this.roleClients, 'ONLINE', person);
+    const result = await fetchLiveSessions({
+      client, userId: person, accessToken, startDate, endDate, pageNo, pageSize,
+    });
+    await recordSnapshot({
+      repository: this.rawRepository,
+      appRole: 'ONLINE',
+      endpointKey: 'liveSessionList',
+      shopId: this.shopId,
+      eventDateFrom: startDate,
+      eventDateTo: endDate,
+      requestJson: { start_date: startDate, end_date: endDate, page_no: pageNo, page_size: pageSize },
+      responseJson: result.payload,
+    });
+    if (!this.livestreamRepository) return { sessionCount: result.sessions.length };
+
+    // The day's total is written from the sessions, so that a day with
+    // two sessions is counted as two and not as one row per session.
+    const byDay = new Map();
+    for (const session of result.sessions) {
+      await this.livestreamRepository.upsertSession({
+        shopId: this.shopId,
+        sessionId: session.sessionId,
+        eventDate: session.eventDate,
+        title: session.title,
+        startedAt: session.startedAt,
+        endedAt: session.endedAt,
+        detail: { ...session.detail, raw: result.raw },
+      });
+      const day = byDay.get(session.eventDate) || {
+        sessions: 0, seconds: 0, views: 0, viewers: 0, orders: 0, sales: 0,
+      };
+      day.sessions += 1;
+      day.seconds += Number(session.detail.watchDurationSeconds || 0);
+      day.views += Number(session.detail.views || 0);
+      day.viewers += Number(session.detail.viewers || 0);
+      day.orders += Number(session.detail.orders || 0);
+      day.sales += Number(session.detail.sales || 0);
+      byDay.set(session.eventDate, day);
+    }
+    for (const [eventDate, day] of byDay) {
+      await this.livestreamRepository.upsertDaily({
+        shopId: this.shopId,
+        eventDate,
+        detail: {
+          liveSessions: day.sessions,
+          liveHours: Math.round((day.seconds / 3600) * 1e4) / 1e4,
+          liveViews: day.views,
+          liveViewers: day.viewers,
+          confirmedOrders: day.orders,
+          confirmedSales: Math.round(day.sales * 1e6) / 1e6,
+          raw: result.raw,
+        },
+      });
+    }
+    return { sessionCount: result.sessions.length, dayCount: byDay.size };
   }
 
   async syncShopBiDay({ date, timezone, principalId, currency = 'LOCAL' }) {

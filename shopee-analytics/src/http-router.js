@@ -1514,6 +1514,55 @@ function createShopeeAnalyticsRouter({
    * these figures and reports the figure beside it, so a shop is said to
    * have met a standard only where the platform's line says it did.
    */
+  /**
+   * The videos and the livestreams of each shop.
+   *
+   * Both belong to the person behind the shop rather than to the shop
+   * itself, so what is shown here is what those two applications
+   * reported for the shops this reader may see.
+   */
+  router.get('/shop-content', async (req, res, next) => {
+    try {
+      const shops = await queryRepository.listShops({ activeOnly: false });
+      const filtered = shops.filter(row => {
+        if (req.query.country && row.countryCode !== req.query.country) return false;
+        if (req.query.brand && row.brandCode !== req.query.brand) return false;
+        if (req.query.shop_id && Number(row.shopId) !== Number(req.query.shop_id)) return false;
+        return true;
+      });
+      const visible = !req.auth || !req.auth.enabled || req.auth.role === ROLE_SUPER_ADMIN
+        ? new Set(filtered.map(row => row.shopId))
+        : new Set(req.auth.shopIds);
+      const allowed = filtered.filter(row => visible.has(row.shopId)).map(row => row.shopId);
+      const limit = Math.min(Number(req.query.limit) || 100, 500);
+      const [videos, videoDaily, sessions] = await Promise.all([
+        queryRepository.listVideoPerformance({ shopIds: allowed, limit }),
+        queryRepository.listVideoDaily({ shopIds: allowed, limit: 200 }),
+        queryRepository.listLivestreamSessions({ shopIds: allowed, limit }),
+      ]);
+      const byId = new Map(shops.map(row => [Number(row.shopId), row]));
+      const withShop = rows => rows.map(row => ({
+        ...row,
+        displayName: (byId.get(row.shopId) || {}).displayName || null,
+        countryCode: (byId.get(row.shopId) || {}).countryCode || null,
+        brandCode: (byId.get(row.shopId) || {}).brandCode || null,
+      }));
+      res.json({
+        shops: filtered.map(row => ({
+          shopId: row.shopId,
+          displayName: row.displayName,
+          countryCode: row.countryCode,
+          brandCode: row.brandCode,
+          videoConnected: Boolean(row.videoUserId),
+          livestreamConnected: Boolean(row.livestreamUserId),
+        })),
+        videos: withShop(videos),
+        videoDaily: withShop(videoDaily),
+        sessions: withShop(sessions),
+      });
+    } catch (error) { next(error); }
+  });
+
   router.get('/shop-health', async (req, res, next) => {
     try {
       const shops = await queryRepository.listShops({ activeOnly: false });
