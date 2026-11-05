@@ -118,4 +118,75 @@ function buildWacCostChangeCard(report, language) {
     ]}
   };
 }
-module.exports={WAC_REPORT_CHUNK_SIZE,buildWacCostChangeRows,summarizeWacCostChangeRows,chunkWacCostChangeRows,getNewWacCcRecipientIds,buildWacGroupRecipientId,parseWacGroupRecipientId,formatWacMoney,formatWacSignedMoney,buildWacCostChangeCard};
+
+function cleanFeishuFallbackText(value) {
+  if (value === null || value === undefined) return '';
+  return String(value)
+    .replace(/<font\b[^>]*>/gi, '')
+    .replace(/<\/font>/gi, '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/__([^_]+)__/g, '$1')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/[ \t]*\n[ \t]*/g, '\n')
+    .trim();
+}
+
+function cardToFallbackText(card) {
+  if (!card || typeof card !== 'object') return '';
+  const lines = [];
+  const add = value => {
+    const normalized = cleanFeishuFallbackText(value);
+    if (normalized) lines.push(normalized);
+  };
+  const title = card.header && card.header.title && card.header.title.content;
+  const subtitle = card.header && card.header.subtitle && card.header.subtitle.content;
+  add(title);
+  add(subtitle);
+
+  // Card 2.0 stores content in body.elements; legacy cards use top-level elements.
+  const bodyElements = card.body && Array.isArray(card.body.elements) ? card.body.elements : [];
+  const elements = bodyElements.length ? bodyElements : (Array.isArray(card.elements) ? card.elements : []);
+  for (const element of elements) {
+    if (!element || typeof element !== 'object') continue;
+    if (element.tag === 'markdown' && typeof element.content === 'string') {
+      add(element.content);
+      continue;
+    }
+    if (element.tag === 'table') {
+      const columns = Array.isArray(element.columns) ? element.columns : [];
+      const rows = Array.isArray(element.rows) ? element.rows : [];
+      if (columns.length) {
+        add('');
+        add('SKU 明细 / SKU Details');
+        add(columns.map(column => cleanFeishuFallbackText(column && (column.display_name || column.name) || '')).join(' | '));
+        for (const row of rows) {
+          add(columns.map(column => {
+            const key = column && column.name;
+            const value = key && row && Object.prototype.hasOwnProperty.call(row, key) ? row[key] : '';
+            if (value && typeof value === 'object') {
+              if (typeof value.content === 'string') return cleanFeishuFallbackText(value.content);
+              if (value.text && typeof value.text.content === 'string') return cleanFeishuFallbackText(value.text.content);
+              return '';
+            }
+            return cleanFeishuFallbackText(value);
+          }).join(' | '));
+        }
+      }
+      continue;
+    }
+    // Keep compatibility with the legacy card schema used by older notifications.
+    if (element.tag === 'div') {
+      const fields = Array.isArray(element.fields) ? element.fields : [];
+      for (const field of fields) {
+        const content = field && field.text && field.text.content;
+        if (content) add(content);
+      }
+    } else if (element.tag === 'plain_text' && typeof element.content === 'string') {
+      add(element.content);
+    }
+  }
+  return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+module.exports={WAC_REPORT_CHUNK_SIZE,buildWacCostChangeRows,summarizeWacCostChangeRows,chunkWacCostChangeRows,getNewWacCcRecipientIds,buildWacGroupRecipientId,parseWacGroupRecipientId,formatWacMoney,formatWacSignedMoney,buildWacCostChangeCard,cardToFallbackText};
