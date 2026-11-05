@@ -156,6 +156,10 @@ assert.match(fast,/quotation_sku_mappings/,'server should persist supplier part-
 assert.match(fast,/match_status/,'server should store SKU match status');
 assert.match(server,/event\.match_status === 'unlinked'/,'unlinked rows must not use internal purchase baselines');
 const bootstrap=require(path.join(__dirname,'..','scripts','quotation-management-bootstrap.cjs'));
+assert.match(bootstrap.patchQuotationManagementSource(management),/GoPro:'IDR'/,'quotation bootstrap must preserve GoPro IDR configuration');
+assert.match(bootstrap.patchQuotationImportFastSource(fast),/GoPro:'IDR'/,'fast-import bootstrap must preserve GoPro IDR configuration');
+assert.match(bootstrap.patchQuotationImportNormalizerSource(source),/GoPro:'IDR'/,'normalizer bootstrap must preserve GoPro IDR configuration');
+assert.match(bootstrap.patchQuotationServerSource(server),/GoPro: 'IDR'/,'server bootstrap must preserve GoPro IDR configuration');
 const serverEntry=fs.readFileSync(path.join(__dirname,'..','server.js'),'utf8');
 const patchedServer=bootstrap.patchServerSource(serverEntry);
 assert.match(patchedServer,/QUOTATION-IMPORT-BODY-GUARD-V1/,'bootstrap should add the import body-size guard');
