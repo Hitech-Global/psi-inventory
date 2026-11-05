@@ -2,7 +2,10 @@
 
 module.exports = function installQuotationManagement(deps) {
   const { app, query, queryOne, run, transaction, genId, asyncHandler, requireApiPermission } = deps;
-  const BRAND_CCY = Object.freeze({ Netac: 'USD', Redragon: 'RMB', BOYA: 'RMB', Joypeer: 'RMB', GoPro: 'IDR' });
+  function getBrandCurrencyMap() {
+    const rows = query('SELECT brand, default_quote_currency FROM brand_settings').rows;
+    return new Map(rows.map(r => [String(r.brand || '').trim(), String(r.default_quote_currency || '').trim().toUpperCase()]));
+  }
 
   run("CREATE TABLE IF NOT EXISTS quotation_prices (id TEXT PRIMARY KEY, sku_code TEXT NOT NULL, brand TEXT NOT NULL, product_type TEXT NOT NULL, quote_price NUMERIC NOT NULL, currency TEXT NOT NULL, quote_date TEXT NOT NULL, remark TEXT DEFAULT '', import_batch_id TEXT, created_at TEXT, updated_at TEXT, supplier_id TEXT NOT NULL DEFAULT '', supplier_part_no TEXT NOT NULL DEFAULT '', supplier_part_no_key TEXT NOT NULL DEFAULT '', psi_sku_code TEXT NOT NULL DEFAULT '', match_status TEXT NOT NULL DEFAULT 'matched', model TEXT NOT NULL DEFAULT '', spec TEXT NOT NULL DEFAULT '', source_sheet TEXT NOT NULL DEFAULT '', source_row INTEGER NOT NULL DEFAULT 0)");
   const quotationIsPg = String(process.env.DB_DRIVER || 'sqlite').toLowerCase() === 'pg';
@@ -46,6 +49,11 @@ module.exports = function installQuotationManagement(deps) {
   const isQuoted = r => !!r && Number(r.quote_price) > 0;
   const pairKey = (brand, sku) => String(brand || '') + '|' + String(sku || '');
 
+  function getBrandCurrencyMap() {
+    const rows = query('SELECT brand, default_quote_currency FROM brand_settings').rows;
+    return new Map(rows.map(r => [String(r.brand || '').trim(), String(r.default_quote_currency || '').trim().toUpperCase()]));
+  }
+
   function parseIdList(value) {
     if (!value) return [];
     if (Array.isArray(value)) return value.map(String).filter(Boolean);
@@ -63,9 +71,10 @@ module.exports = function installQuotationManagement(deps) {
   // 2) only for a latest CI where the same SKU has different CI prices, inspect the
   //    PIs linked to that CI and use that SKU's FOB from the latest-dated linked PI.
   // Currency is never converted here. A mismatch is surfaced as currency_mismatch.
-  function purchaseBaselines(pairs) {
+  function purchaseBaselines(pairs, brandCurrencies) {
+    const currencyMap = brandCurrencies || getBrandCurrencyMap();
     const uniq = [...new Map((pairs || []).filter(p => p && p.sku && p.brand).map(p => [pairKey(p.brand, p.sku), {
-      brand: String(p.brand), sku: String(p.sku), target_currency: String(p.currency || BRAND_CCY[p.brand] || '').toUpperCase()
+      brand: String(p.brand), sku: String(p.sku), target_currency: String(p.currency || currencyMap.get(p.brand) || '').toUpperCase()
     }])).values()];
     const out = new Map();
     if (!uniq.length) return out;
@@ -201,7 +210,8 @@ module.exports = function installQuotationManagement(deps) {
 
     const history = query(sql, ps).rows, by = new Map();
     for (const r of history) { const k = pairKey(r.brand, r.sku_code); if (!by.has(k)) by.set(k, []); by.get(k).push(r); }
-    const pmap = purchaseBaselines([...by.values()].filter(a => a[0].match_status !== 'unlinked' && (a[0].psi_sku_code || a[0].sku_code)).map(a => ({ brand: a[0].brand, sku: a[0].psi_sku_code || a[0].sku_code, currency: a[0].currency || BRAND_CCY[a[0].brand] })));
+    const brandCurrencies = getBrandCurrencyMap();
+    const pmap = purchaseBaselines([...by.values()].filter(a => a[0].match_status !== 'unlinked' && (a[0].psi_sku_code || a[0].sku_code)).map(a => ({ brand: a[0].brand, sku: a[0].psi_sku_code || a[0].sku_code, currency: a[0].currency })), brandCurrencies);
     const rows = [];
 
     for (const [k, a] of by) {
@@ -227,7 +237,7 @@ module.exports = function installQuotationManagement(deps) {
     }
     rows.sort((a, b) => String(a.sku_code).localeCompare(String(b.sku_code)));
 
-    const actual = query("SELECT DISTINCT brand FROM quotation_prices WHERE brand IS NOT NULL AND brand<>'' ORDER BY brand").rows.map(r => r.brand), brands = [...new Set(['Netac', 'Redragon', 'BOYA', 'Joypeer', ...actual])];
+    const actual = query("SELECT brand FROM skus WHERE brand IS NOT NULL AND brand<>'' UNION SELECT brand FROM quotation_prices WHERE brand IS NOT NULL AND brand<>'' ORDER BY brand").rows.map(r => r.brand), brands = actual;
     let tsql = "SELECT DISTINCT product_type FROM quotation_prices WHERE product_type IS NOT NULL AND product_type<>''", tps = [];
     if (brand) { tsql += ' AND brand=?'; tps.push(brand); }
     tsql += ' ORDER BY product_type';
@@ -242,9 +252,9 @@ module.exports = function installQuotationManagement(deps) {
     const distinctSkuCount = new Set(rows.map(r => String(r.sku_code || '').trim().toUpperCase())).size;
 
     return {
-      brands, product_types: productTypes, rows,
+      brands, brand_currencies: Object.fromEntries(brandCurrencies), product_types: productTypes, rows,
       report: {
-        brand: brand || null, currency: brand ? (BRAND_CCY[brand] || (rows[0] && rows[0].currency) || '') : '',
+        brand: brand || null, currency: brand ? (brandCurrencies.get(brand) || (rows[0] && rows[0].currency) || '') : '',
         sku_count: distinctSkuCount, unlinked_count: rows.filter(r => r.match_status === 'unlinked').length, history_count: history.length, quoted_history_count: quotedHistoryCount, no_quote_count: noQuoteCount,
         updated_this_month: rows.filter(r => String(r.latest_date || '').slice(0, 7) === month).length,
         up_count: changes.filter(v => v > 0).length, down_count: changes.filter(v => v < 0).length,
@@ -268,9 +278,10 @@ module.exports = function installQuotationManagement(deps) {
       const sku = String(req.params.sku || '').trim(), brand = String(req.query.brand || '').trim();
       if (!sku || !brand) return res.status(400).json({ error: '缺少 SKU 或品牌' });
       const h = query('SELECT * FROM quotation_prices WHERE sku_code=? AND brand=? ORDER BY quote_date DESC,created_at DESC', [sku, brand]).rows;
-      const targetCurrency = (h[0] && h[0].currency) || BRAND_CCY[brand] || '';
+      const brandCurrencies = getBrandCurrencyMap();
+      const targetCurrency = (h[0] && h[0].currency) || brandCurrencies.get(brand) || '';
       const isUnlinked = !!(h[0] && h[0].match_status === 'unlinked');
-      const p = isUnlinked ? null : (purchaseBaselines([{ sku: (h[0] && h[0].psi_sku_code) || sku, brand, currency: targetCurrency }]).get(pairKey(brand, (h[0] && h[0].psi_sku_code) || sku)) || null);
+      const p = isUnlinked ? null : (purchaseBaselines([{ sku: (h[0] && h[0].psi_sku_code) || sku, brand, currency: targetCurrency }], brandCurrencies).get(pairKey(brand, (h[0] && h[0].psi_sku_code) || sku)) || null);
       res.json({
         sku_code: sku, brand, purchase: p, match_status: isUnlinked ? 'unlinked' : 'matched', supplier_part_no: (h[0] && h[0].supplier_part_no) || sku, psi_sku_code: (h[0] && h[0].psi_sku_code) || '',
         history: h.map((r, i) => {
@@ -288,11 +299,14 @@ module.exports = function installQuotationManagement(deps) {
       const input = Array.isArray((req.body || {}).rows) ? req.body.rows : [], mode = (req.body || {}).duplicate_mode === 'overwrite' ? 'overwrite' : 'skip';
       if (!input.length) return res.status(400).json({ error: '导入数据不能为空' });
       if (input.length > 5000) return res.status(400).json({ error: '单次最多导入5000行' });
+      const brandCurrencies = getBrandCurrencyMap();
+      const activeCurrencies = new Set(query("SELECT code FROM currencies WHERE status='active'").rows.map(r => String(r.code || '').trim().toUpperCase()));
       const rows = [], errors = [];
       input.forEach((r, i) => {
-        const sku = String(r.sku_code || r.SKU || r['SKU'] || '').trim(), brand = String(r.brand || r['品牌'] || '').trim(), product_type = String(r.product_type || r['产品类型'] || '').trim(), priceRaw = r.quote_price ?? r['FOB价格'] ?? r['报价价格'] ?? r['报价'], priceText = String(priceRaw ?? '').trim(), quote_price = Number(priceText), currency = String(r.currency || r['币种'] || BRAND_CCY[brand] || '').trim().toUpperCase(), quote_date = String(r.quote_date || r['报价日期'] || '').trim().slice(0, 10), remark = String(r.remark || r['备注'] || '').trim(), expected = BRAND_CCY[brand];
+        const sku = String(r.sku_code || r.SKU || r['SKU'] || '').trim(), brand = String(r.brand || r['品牌'] || '').trim(), product_type = String(r.product_type || r['产品类型'] || '').trim(), priceRaw = r.quote_price ?? r['FOB价格'] ?? r['报价价格'] ?? r['报价'], priceText = String(priceRaw ?? '').trim(), quote_price = Number(priceText), expected = brandCurrencies.get(brand) || '', currency = String(r.currency || r['币种'] || expected || '').trim().toUpperCase(), quote_date = String(r.quote_date || r['报价日期'] || '').trim().slice(0, 10), remark = String(r.remark || r['备注'] || '').trim();
         if (!sku || !brand || !product_type || priceText === '' || !Number.isFinite(quote_price) || quote_price < 0 || !/^\d{4}-\d{2}-\d{2}$/.test(quote_date) || !currency) errors.push({ row: i + 2, reason: '必填字段缺失或格式错误' });
-        else if (expected && currency !== expected) errors.push({ row: i + 2, reason: brand + ' 默认币种应为 ' + expected });
+        else if (expected && currency !== expected) errors.push({ row: i + 2, reason: brand + ' 默认报价币种应为 ' + expected });
+        else if (!activeCurrencies.has(currency)) errors.push({ row: i + 2, reason: '币种 ' + currency + ' 未在系统管理→币种设置中启用' });
         else rows.push({ sku, brand, product_type, quote_price, currency, quote_date, remark });
       });
       if (errors.length) return res.status(400).json({ error: '导入校验失败', errors });
