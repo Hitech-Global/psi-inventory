@@ -56,11 +56,55 @@ assert.equal(modelOnlyNormalized.supplier_part_no,'NT03U278N-032G-20PN','Model-o
 assert.equal(modelOnlyNormalized.product_type,'USB Flash Drive','Product should normalize to product type');
 assert.equal(n.validateRows([modelOnlyNormalized]).length,0,'Model-only Netac rows should pass validation');
 
+const netacRealSheets=[
+  {name:'SSD',rows:[
+    ['Netac Price List-SSD Drive Date: Oct 27, 2026'],
+    ['Product Pic.','Product','Type','Model','Capacity','Part No.','Product Description','Warranty Period','Inner CT QTY','Master CT QTY','Unit Price (USD/pc)','EAN Code'],
+    [null,'SSD','2.5 SATAIII','N535S','240GB','NT01N535S-240G-S3X','Netac N535S 240GB SSD','5 years',50,100,25.56,6926337223551]
+  ]},
+  {name:'DRAM',rows:[
+    ['Netac Price List-Memory Modules Date: Oct 27, 2026'],
+    ['Series','Product pictures','Model / PN','Product name','Heatsink color','Type','Speed (MHz)','Bandwidth (MB/s)','Capacity (GB)','Timing','Voltage','support XMP','Kit','EAN Code','Inner CT QTY','Master CT QTY','Unit Price (US$)','Remark'],
+    ['Z RGB DDR5',null,'NTZED5P76DP-32S','Z RGB DDR5-7600 32GB','Silver','U-DIMM 288-Pin DDR5 / PC','DDR5-7600','PC5-57600','32GB','36-46-46-122','1.4V','XMP','Dual Channel','6926337237053','N/A',100,12.5,'']
+  ]},
+  {name:'TWS',rows:[
+    ['Netac Price List-Smart Wearing Products Date: Oct 27, 2026'],
+    ['Product Pic.','Color','Feature','Model','Part NO.','Product Description','Inner CT QTY','Master CT QTY','Unit Price (USD/pc)','EAN','Order Quantity','Sum'],
+    [null,'Black','Bluetooth earbuds','OS01','OS01BEN','Netac OS01 earbuds','N/A',100,9.58,6926337239002,null,null]
+  ]},
+  {name:'Weight & size',rows:[
+    ['Netac Products Packing Data'],
+    ['Product Type','Model','N.W Product'],
+    ['DRAM','Shadow DDR4&DDR5','34.7g']
+  ]}
+];
+const inferredNetacDate=n.inferQuoteDate(netacRealSheets,'Netac Weekly Distribution Price list Oct 27, 2026(1).xlsx');
+assert.equal(inferredNetacDate,'2026-10-27','Netac title/filename date should be inferred');
+assert.equal(n.inferQuoteDate([],'Netac Weekly Distribution Price list Sep 15, 2026.xlsx'),'2026-09-15','filename date fallback should be supported');
+const netacRealParsed=n.parseSheetRows(netacRealSheets,{brand:'Netac',quote_date:inferredNetacDate,supplier_id:'supplier-netac'});
+assert.equal(netacRealParsed.recognized_sheets.length,3,'real Netac SSD, DRAM and TWS quote sheets should be recognized');
+assert.equal(netacRealParsed.ignored_sheets.length,1,'Weight & size should be ignored because it has no quote price');
+assert.equal(netacRealParsed.rows.length,3);
+assert.equal(netacRealParsed.rows[0].product_type,'SSD','Product should be preferred as product type');
+assert.equal(netacRealParsed.rows[0].spec,'2.5 SATAIII','Type should be retained as specification when Product exists');
+assert.equal(netacRealParsed.rows[0].model,'N535S','Model should remain as descriptive model');
+assert.equal(netacRealParsed.rows[0].supplier_part_no,'NT01N535S-240G-S3X','Part No. must be used as the unique SKU key when present');
+assert.equal(netacRealParsed.rows[0].quote_date,'2026-10-27');
+assert.equal(netacRealParsed.rows[1].product_type,'DRAM','Sheet name should provide the Netac product type when Product is absent');
+assert.equal(netacRealParsed.rows[1].spec,'U-DIMM 288-Pin DDR5 / PC');
+assert.equal(netacRealParsed.rows[1].supplier_part_no,'NTZED5P76DP-32S','Model / PN should be recognized as the unique part key');
+assert.equal(netacRealParsed.rows[1].currency,'USD','US$ price header should infer USD');
+assert.equal(netacRealParsed.rows[2].product_type,'TWS','Sheet name should provide product type when no Product column exists');
+assert.equal(netacRealParsed.rows[2].supplier_part_no,'OS01BEN','Part No. should be preferred over Model for TWS variants');
+
 const metadata={
   skus:[
     {sku_code:'NT-SSD-001',brand:'Netac',category:'SSD',model:'N535S'},
     {sku_code:'PSI-U905',brand:'Netac',category:'USB',model:'U905'},
-    {sku_code:'NT03U278N-032G-20PN',brand:'Netac',category:'USB',model:'NT03U278N-032G-20PN'}
+    {sku_code:'NT03U278N-032G-20PN',brand:'Netac',category:'USB',model:'NT03U278N-032G-20PN'},
+    {sku_code:'NT01N535S-240G-S3X',brand:'Netac',category:'SSD',model:'N535S'},
+    {sku_code:'NTZED5P76DP-32S',brand:'Netac',category:'DRAM',model:'NTZED5P76DP-32S'},
+    {sku_code:'OS01BEN',brand:'Netac',category:'TWS',model:'OS01'}
   ],
   mappings:[
     {supplier_id:'supplier-netac',brand:'Netac',supplier_part_no_key:'LEGACY-USB-01',psi_sku_code:'PSI-U905'}
@@ -77,6 +121,10 @@ assert.equal(matched[3].sku_code,'LEGACY-USB-02','unlinked row must preserve sup
 const netacModelMatched=n.matchRows(netacModelSheet.rows,metadata,{supplier_id:'supplier-netac',brand:'Netac'});
 assert.equal(netacModelMatched[0].match_status,'matched','Netac Model value should exact-match PSI SKU master');
 assert.equal(netacModelMatched[0].sku_code,'NT03U278N-032G-20PN');
+const netacRealMatched=n.matchRows(netacRealParsed.rows,metadata,{supplier_id:'supplier-netac',brand:'Netac'});
+assert.equal(netacRealMatched[0].sku_code,'NT01N535S-240G-S3X','SSD should match by Part No., not generic Model');
+assert.equal(netacRealMatched[1].sku_code,'NTZED5P76DP-32S','DRAM Model / PN should match the SKU master');
+assert.equal(netacRealMatched[2].sku_code,'OS01BEN','TWS should match by Part No., not generic Model');
 assert.equal(n.validateRows(matched).length,0,'unlinked rows and zero-price rows must remain importable');
 const punctuationMismatch=n.matchRows([{supplier_part_no:'NTSSD001',brand:'Netac',quote_price:1,currency:'USD',quote_date:'2026-11-04'}],metadata,{supplier_id:'supplier-netac',brand:'Netac'});
 assert.equal(punctuationMismatch[0].match_status,'unlinked','SKU matching must not erase meaningful punctuation');
@@ -91,6 +139,8 @@ const progress=fs.readFileSync(path.join(__dirname,'..','quotation-import-progre
 const fast=fs.readFileSync(path.join(__dirname,'..','quotation-import-fast.js'),'utf8');
 const server=fs.readFileSync(path.join(__dirname,'..','quotation-server.js'),'utf8');
 assert.match(progress,/parseSheetRows/,'browser import should parse every worksheet');
+assert.match(progress,/inferQuoteDate\(sheets,f\.name\)/,'browser import should infer quote date from workbook title or filename');
+assert.match(progress,/quoteDateTouched/,'a manually selected quote date must not be overwritten by inference');
 assert.match(progress,/未关联的报价仍可导入/,'unlinked rows should be explicitly allowed in preview');
 assert.match(fast,/quotation_sku_mappings/,'server should persist supplier part-number mappings');
 assert.match(fast,/match_status/,'server should store SKU match status');
@@ -103,7 +153,7 @@ assert.match(patchedServer,/quotation-import-fast\.js'\)\(\{ app, query, run, tr
 assert.equal(bootstrap.patchServerSource(patchedServer),patchedServer,'server bootstrap patch should be idempotent');
 const indexEntry=fs.readFileSync(path.join(__dirname,'..','index.html'),'utf8');
 const patchedIndex=bootstrap.patchIndexSource(indexEntry);
-assert.match(patchedIndex,/quotation-import-normalizer\.js\?v=20261104a/,'bootstrap should load smart-import normalizer');
+assert.match(patchedIndex,/quotation-import-normalizer\.js\?v=20261105a/,'bootstrap should load smart-import normalizer');
 assert.equal(bootstrap.patchIndexSource(patchedIndex),patchedIndex,'index bootstrap patch should be idempotent');
 
 

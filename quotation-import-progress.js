@@ -17,6 +17,7 @@ let importOptions=null;
 let selectedSupplierId='';
 let selectedBrand='Netac';
 let selectedQuoteDate='';
+let quoteDateTouched=false;
 let previewOffset=0;
 let recognizedSheets=[];
 let ignoredSheets=[];
@@ -262,6 +263,7 @@ function openModal(){
   const m=document.createElement('div');currentModal=m;m.className='qm-modal';
   selectedBrand=typeof window.getQuotationManagementBrand==='function'?window.getQuotationManagementBrand():'Netac';
   selectedQuoteDate=new Date().toISOString().slice(0,10);
+  quoteDateTouched=false;
   m.innerHTML='<div class="qm-dialog qip-dialog"><div class="qip-titlebar"><div class="qip-dots"><span class="qip-dot r"></span><span class="qip-dot y"></span><span class="qip-dot g"></span></div><div class="qip-title">智能导入报价</div></div><div class="qip-body"><div class="qip-setup"><div class="qip-fields"><div class="qip-field"><label>供应商</label><select id="qip-supplier" disabled><option>正在加载…</option></select></div><div class="qip-field"><label>品牌（工作表未提供品牌时使用）</label><select id="qip-brand" disabled><option>正在加载…</option></select></div><div class="qip-field"><label>默认报价日期</label><input type="date" id="qip-date" value="'+selectedQuoteDate+'"></div></div><div class="qip-drop"><input type="file" id="qm-file" accept=".xlsx,.xls,.csv" disabled><div class="qip-sub" style="margin-top:10px">自动识别 Excel 所有工作表、表头位置和常见供应商字段，不需要先改成 PSI 模板。</div><div class="qip-sub" style="margin-top:5px">未匹配 PSI SKU 的供应商料号也可以导入；FOB 空白或 0 表示未报价。</div></div><div class="qip-options"><div>重复供应商 + SKU/料号 + 品牌 + 报价日期</div><select id="qm-mode"><option value="skip">跳过已有记录</option><option value="overwrite">覆盖已有记录</option></select></div><div id="qm-preview"></div></div><div id="qm-import-live"></div></div><div class="qip-footer"><button class="qip-btn" id="qm-cancel">取消</button><button class="qip-btn primary" id="qm-submit" disabled>开始导入</button></div></div>';
   document.body.appendChild(m);currentRows=[];currentRun=null;needsRefresh=false;previewOffset=0;recognizedSheets=[];ignoredSheets=[];
   const active=getId();
@@ -272,6 +274,7 @@ function openModal(){
   }
   $('#qm-cancel',m).onclick=()=>closeCurrentModal();
   $('#qip-date',m).onchange=e=>{
+    quoteDateTouched=true;
     selectedQuoteDate=e.target.value||new Date().toISOString().slice(0,10);
     if(currentRows.length){previewOffset=0;rematchCurrentRows(m);}
   };
@@ -296,6 +299,8 @@ function openModal(){
       const n=normalizer();
       if(!n||typeof n.parseSheetRows!=='function')return fileError(m,'智能识别模块尚未加载，请刷新页面后重试。');
       const selectedSupplier=(importOptions&&importOptions.suppliers||[]).find(x=>x.id===selectedSupplierId);
+      const inferredDate=!quoteDateTouched&&typeof n.inferQuoteDate==='function'?n.inferQuoteDate(sheets,f.name):'';
+      if(inferredDate){selectedQuoteDate=inferredDate;$('#qip-date',m).value=inferredDate;}
       const parsed=n.parseSheetRows(sheets,{brand:selectedBrand,quote_date:selectedQuoteDate,supplier_id:selectedSupplierId,currency:selectedSupplier&&selectedSupplier.default_currency||''});
       if(parsed.errors&&parsed.errors.length)return fileError(m,parsed.errors.map(x=>x.reason).join('\n'));
       if(!parsed.rows.length)return fileError(m,'没有识别到可导入数据。请确认工作表包含供应商料号（Part No. / SKU）和报价（FOB / Price）列。');
