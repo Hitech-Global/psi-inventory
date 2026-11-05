@@ -56,9 +56,9 @@
     if (!list.length) return '<div class="wac-mac-cc-empty">暂无群组配置</div>';
     return list.map(function (g) {
       var configured = !!g.configured;
-      var remaining = Number(g.remaining_count == null ? g.chat_count : g.remaining_count) || 0;
-      var disabled = !configured || remaining <= 0;
-      var status = !configured ? '尚未配置群聊 ID' : (remaining <= 0 ? '本批次已发送' : ('已配置 ' + remaining + ' 个群'));
+      var chatCount = Number(g.chat_count) || 0;
+      var disabled = !configured || chatCount <= 0;
+      var status = !configured ? '尚未配置群聊 ID' : (g.already_sent ? '已有抄送记录，可再次 CC' : ('已配置 ' + chatCount + ' 个群'));
       var lang = g.language === 'en';
       return '<label class="wac-mac-cc-option' + (disabled ? ' is-disabled' : '') + '">' +
         '<input type="checkbox" class="' + checkboxClass + '" value="' + html(g.key) + '"' + (disabled ? ' disabled' : '') + '>' +
@@ -70,13 +70,16 @@
   function userOptionsHtml(users, existingIds, checkboxClass) {
     var existing = existingIds || new Set();
     var available = (Array.isArray(users) ? users : []).filter(function (u) {
-      return u && u.status === 'active' && !existing.has(String(u.id));
+      return u && u.status === 'active';
     });
-    if (!available.length) return '<div class="wac-mac-cc-empty">没有新的可抄送人员</div>';
+    if (!available.length) return '<div class="wac-mac-cc-empty">暂无可抄送人员</div>';
     return available.map(function (u) {
+      var sentBefore = existing.has(String(u.id));
       return '<label class="wac-mac-cc-option">' +
         '<input type="checkbox" class="' + checkboxClass + '" value="' + html(u.id) + '">' +
-        '<span class="wac-mac-cc-option-name">' + html(u.name || u.id) + '</span>' +
+        '<span class="wac-mac-cc-option-name">' + html(u.name || u.id) +
+          (sentBefore ? '<small class="wac-mac-cc-state">已有抄送记录，可再次 CC</small>' : '') +
+        '</span>' +
       '</label>';
     }).join('');
   }
@@ -86,7 +89,7 @@
   function renderGroupSection(groups, id, checkboxClass) {
     return '<div class="wac-mac-cc-inline" id="' + id + '">' +
       '<h3 style="margin:0 0 4px;font-size:13px">飞书群</h3>' +
-      '<p class="wac-mac-cc-hint">深圳群接收中文报告，BIC 群接收英文报告。未配置或本批次已发送的群不可重复选择。</p>' +
+      '<p class="wac-mac-cc-hint">深圳群接收中文报告，BIC 群接收英文报告；已抄送过的群也可再次选择。</p>' +
       '<div class="wac-mac-cc-options">' + groupOptionsHtml(groups, checkboxClass) + '</div>' +
     '</div>';
   }
@@ -142,11 +145,11 @@
       var historyHtml = logs.length ? window.renderWacNotificationHistory(history, id) : '<div class="wac-mac-cc-empty">目前没有抄送记录。</div>';
       var body = '<div class="wac-mac-cc-meta"><span><strong>物流批次：</strong>' + html(row ? row.batch_no : id) + '</span><span style="color:var(--text-secondary)">补充 CC 只读取已保存的 WAC 历史，不会重新计算或修改成本。</span></div>' +
         '<div class="wac-mac-cc-grid">' +
-          '<section class="wac-mac-cc-panel"><h3>人员</h3><p class="wac-mac-cc-hint">选择尚未收到本批次报告的飞书人员，可多选。</p><div class="wac-mac-cc-options" id="wac-cc-add-list">' + userHtml + '</div></section>' +
-          '<section class="wac-mac-cc-panel"><h3>飞书群</h3><p class="wac-mac-cc-hint">按群语言发送报告；已配置的群才可选择。</p><div class="wac-mac-cc-options" id="wac-cc-add-group-list">' + groupHtml + '</div></section>' +
+          '<section class="wac-mac-cc-panel"><h3>人员</h3><p class="wac-mac-cc-hint">选择需要接收本批次报告的飞书人员，可多选；已有抄送记录的人员也可再次选择。</p><div class="wac-mac-cc-options" id="wac-cc-add-list">' + userHtml + '</div></section>' +
+          '<section class="wac-mac-cc-panel"><h3>飞书群</h3><p class="wac-mac-cc-hint">按群语言发送报告；已配置的群可重复选择。</p><div class="wac-mac-cc-options" id="wac-cc-add-group-list">' + groupHtml + '</div></section>' +
         '</div>' +
         '<section class="wac-mac-cc-history"><h3>已有抄送记录</h3><div id="wac-notification-history">' + historyHtml + '</div></section>';
-      var footer = '<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" id="wac-cc-add-submit" ' + ((candidates.some(function (u) { return u && u.status === 'active' && !existingUsers.has(String(u.id)); }) || (groupData.groups || []).some(function (g) { return g.configured && Number(g.remaining_count) > 0; })) ? '' : 'disabled ') + 'onclick="submitWacCc(\'' + html(id).replace(/'/g, '&#39;') + '\')">发送 CC</button>';
+      var footer = '<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" id="wac-cc-add-submit" ' + ((candidates.some(function (u) { return u && u.status === 'active'; }) || (groupData.groups || []).some(function (g) { return g.configured && Number(g.chat_count) > 0; })) ? '' : 'disabled ') + 'onclick="submitWacCc(\'' + html(id).replace(/'/g, '&#39;') + '\')">发送 CC</button>';
       window.openModal('选择抄送对象', body, footer);
       var modal = document.getElementById('modal-content');
       if (modal) modal.classList.add('wac-cc-macos');
@@ -173,10 +176,10 @@
       var users = Number(result.added_user_count == null ? userIds.length : result.added_user_count);
       var groups = Number(result.added_group_count || 0);
       if (Number(result.added_recipient_count || 0) > 0) {
-        window.showToast('已新增 ' + users + ' 位人员、' + groups + ' 个群组，创建 ' + Number(result.notification_count || 0) + ' 条通知任务', 'success');
+        window.showToast('已创建 ' + users + ' 位人员、' + groups + ' 个群组的 CC 任务，共 ' + Number(result.notification_count || 0) + ' 条通知', 'success');
         await window.wacConfirm(batchId);
       } else {
-        window.showToast('所选收件对象已有通知记录，未重复发送', 'warning');
+        window.showToast('没有创建新的 CC 通知任务，请检查所选对象', 'warning');
       }
     } catch (error) {
       window.showToast(error && error.message || '补充 CC 失败', 'danger');

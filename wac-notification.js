@@ -39,13 +39,12 @@ function chunkWacCostChangeRows(rows, chunkSize) {
   for(let i=0;i<list.length;i+=size) chunks.push(list.slice(i,i+size));
   return chunks;
 }
-function getNewWacCcRecipientIds(selectedIds, existingRecipientIds) {
-  const existing=new Set((Array.isArray(existingRecipientIds)?existingRecipientIds:[]).map(v=>String(v||'').trim()).filter(Boolean));
+function getUniqueWacCcRecipientIds(selectedIds) {
   const seen=new Set();
   const result=[];
   for(const raw of (Array.isArray(selectedIds)?selectedIds:[])){
     const id=String(raw||'').trim();
-    if(!id||seen.has(id)||existing.has(id))continue;
+    if(!id||seen.has(id))continue;
     seen.add(id);
     result.push(id);
   }
@@ -189,4 +188,4 @@ function cardToFallbackText(card) {
   return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
-module.exports={WAC_REPORT_CHUNK_SIZE,buildWacCostChangeRows,summarizeWacCostChangeRows,chunkWacCostChangeRows,getNewWacCcRecipientIds,buildWacGroupRecipientId,parseWacGroupRecipientId,formatWacMoney,formatWacSignedMoney,buildWacCostChangeCard,cardToFallbackText};
+module.exports={WAC_REPORT_CHUNK_SIZE,buildWacCostChangeRows,summarizeWacCostChangeRows,chunkWacCostChangeRows,getUniqueWacCcRecipientIds,buildWacGroupRecipientId,parseWacGroupRecipientId,formatWacMoney,formatWacSignedMoney,buildWacCostChangeCard,cardToFallbackText};

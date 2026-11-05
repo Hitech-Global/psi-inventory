@@ -573,10 +573,45 @@ function initDatabase() {
       last_error TEXT DEFAULT '',
       sent_at TEXT DEFAULT '',
       created_at TEXT DEFAULT (datetime('now')),
-      updated_at TEXT DEFAULT (datetime('now')),
-      UNIQUE(logistics_batch_id, recipient_user_id, part_no)
+      updated_at TEXT DEFAULT (datetime('now'))
     )
   `);
+
+
+  // WAC-CC-REPEAT-01：历史通知表原先限制同一批次/收件人/分段只能有一条记录。
+  // 重复 CC 需要保留每次发送记录，因此仅重建通知日志表；完整复制历史行，不触碰 WAC 成本数据。
+  const wacNotificationTable = d.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='wac_notification_logs'").get();
+  if (wacNotificationTable && /UNIQUE\s*\(\s*logistics_batch_id\s*,\s*recipient_user_id\s*,\s*part_no\s*\)/i.test(wacNotificationTable.sql || '')) {
+    const migrateRepeatableWacNotifications = d.transaction(() => {
+      d.exec("DROP TABLE IF EXISTS wac_notification_logs_repeatable_tmp");
+      d.exec(`
+        CREATE TABLE wac_notification_logs_repeatable_tmp (
+          id TEXT PRIMARY KEY,
+          logistics_batch_id TEXT NOT NULL,
+          recipient_user_id TEXT NOT NULL,
+          recipient_name TEXT DEFAULT '',
+          part_no INTEGER NOT NULL DEFAULT 1,
+          part_count INTEGER NOT NULL DEFAULT 1,
+          status TEXT NOT NULL DEFAULT 'pending',
+          attempt_count INTEGER NOT NULL DEFAULT 0,
+          report_payload TEXT NOT NULL DEFAULT '{}',
+          last_error TEXT DEFAULT '',
+          sent_at TEXT DEFAULT '',
+          created_at TEXT DEFAULT (datetime('now')),
+          updated_at TEXT DEFAULT (datetime('now'))
+        )
+      `);
+      d.exec(`
+        INSERT INTO wac_notification_logs_repeatable_tmp
+          (id,logistics_batch_id,recipient_user_id,recipient_name,part_no,part_count,status,attempt_count,report_payload,last_error,sent_at,created_at,updated_at)
+        SELECT id,logistics_batch_id,recipient_user_id,recipient_name,part_no,part_count,status,attempt_count,report_payload,last_error,sent_at,created_at,updated_at
+        FROM wac_notification_logs
+      `);
+      d.exec("DROP TABLE wac_notification_logs");
+      d.exec("ALTER TABLE wac_notification_logs_repeatable_tmp RENAME TO wac_notification_logs");
+    });
+    migrateRepeatableWacNotifications();
+  }
 
   // ==================== 业务表 ====================
 

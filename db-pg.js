@@ -791,10 +791,27 @@ async function initDatabase() {
       last_error TEXT DEFAULT '',
       sent_at TEXT DEFAULT '',
       created_at TEXT DEFAULT NOW(),
-      updated_at TEXT DEFAULT NOW(),
-      UNIQUE(logistics_batch_id, recipient_user_id, part_no)
+      updated_at TEXT DEFAULT NOW()
     )
   `);
+
+  await exec(`DO $$
+    DECLARE constraint_name TEXT;
+    BEGIN
+      FOR constraint_name IN
+        SELECT c.conname
+        FROM pg_constraint c
+        WHERE c.conrelid = 'wac_notification_logs'::regclass
+          AND c.contype = 'u'
+          AND (
+            SELECT array_agg(a.attname::text ORDER BY key_column.ordinality)
+            FROM unnest(c.conkey) WITH ORDINALITY AS key_column(attnum, ordinality)
+            JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attnum=key_column.attnum
+          ) = ARRAY['logistics_batch_id','recipient_user_id','part_no']::text[]
+      LOOP
+        EXECUTE format('ALTER TABLE wac_notification_logs DROP CONSTRAINT %I', constraint_name);
+      END LOOP;
+    END $$;`);
 
   // ---------- 业务表 ----------
 

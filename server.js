@@ -32,7 +32,7 @@ const { importProformaInvoicesPg } = require('./wave2b-pi-batch-import-pg.js'); 
 const { generatePONumber } = require('./po-number');
 const { slimReplenishmentRow, projectDailySalesRow } = require('./rp-projection'); // RP-P0-R1 订单预测响应投影（仅序列化瘦身，不动计算逻辑）
 const { inventoryValueKey, buildInventoryFinancialValueMap } = require('./inventory-asset-values');
-const { buildWacCostChangeRows, summarizeWacCostChangeRows, chunkWacCostChangeRows, getNewWacCcRecipientIds, buildWacGroupRecipientId, parseWacGroupRecipientId, buildWacCostChangeCard, cardToFallbackText } = require('./wac-notification');
+const { buildWacCostChangeRows, summarizeWacCostChangeRows, chunkWacCostChangeRows, getUniqueWacCcRecipientIds, buildWacGroupRecipientId, parseWacGroupRecipientId, buildWacCostChangeCard, cardToFallbackText } = require('./wac-notification');
 const {
   createSqliteSalesImportAdapter,
   createPostgresSalesImportAdapter,
@@ -817,47 +817,41 @@ function getWacCcGroupOptions(batchId){
   const existing=new Set(existingRows.map(row=>String(row.recipient_user_id||'')));
   return WAC_CC_GROUP_DEFINITIONS.map(definition=>{
     const chatIds=getWacCcGroupChatIds(definition.key);
-    const remaining=chatIds.filter(chatId=>!existing.has(buildWacGroupRecipientId(definition.language,chatId)));
+    const alreadySent=chatIds.some(chatId=>existing.has(buildWacGroupRecipientId(definition.language,chatId)));
     return {
       key:definition.key,
       label:definition.label,
       language:definition.language,
       configured:chatIds.length>0,
       chat_count:chatIds.length,
-      remaining_count:remaining.length
+      remaining_count:chatIds.length,
+      already_sent:alreadySent
     };
   });
 }
-function resolveWacCcGroupRecipients(selectedKeys,batchId){
+function resolveWacCcGroupRecipients(selectedKeys){
   const keys=Array.from(new Set((Array.isArray(selectedKeys)?selectedKeys:[]).map(value=>String(value||'').trim()).filter(Boolean)));
   const invalid=keys.filter(key=>!getWacCcGroupDefinition(key));
   if(invalid.length)return {error:'无效的群组收件对象：'+invalid.join(', ')};
-  const existingRows=batchId?query('SELECT recipient_user_id FROM wac_notification_logs WHERE logistics_batch_id=?',[batchId]).rows:[];
-  const existing=new Set(existingRows.map(row=>String(row.recipient_user_id||'')));
   const recipients=[];
-  let skippedExistingCount=0;
   const addedKeys=[];
   for(const key of keys){
     const definition=getWacCcGroupDefinition(key);
     const chatIds=getWacCcGroupChatIds(key);
     if(!chatIds.length)return {error:definition.label+'尚未配置群聊 ID，请先检查 '+definition.env+'。'};
-    let addedForKey=0;
     chatIds.forEach((chatId,index)=>{
-      const recipientId=buildWacGroupRecipientId(definition.language,chatId);
-      if(existing.has(recipientId)){skippedExistingCount++;return;}
       recipients.push({
         key:definition.key,
         label:definition.label,
         language:definition.language,
         chat_id:chatId,
-        recipient_id:recipientId,
+        recipient_id:buildWacGroupRecipientId(definition.language,chatId),
         display_name:chatIds.length>1?definition.label+' ('+(index+1)+')':definition.label
       });
-      addedForKey++;
     });
-    if(addedForKey>0)addedKeys.push(key);
+    addedKeys.push(key);
   }
-  return {recipients,skipped_existing_count:skippedExistingCount,added_group_count:addedKeys.length};
+  return {recipients,skipped_existing_count:0,added_group_count:addedKeys.length};
 }
 const _wacNotificationDispatching=new Set();
 async function dispatchWacNotificationLog(logId){
@@ -895,7 +889,7 @@ async function dispatchWacNotificationLogs(batchId,statuses){
   const allowed=(Array.isArray(statuses)?statuses:['pending','failed']).filter(s=>s==='pending'||s==='failed');
   if(!allowed.length)return 0;
   const placeholders=allowed.map(()=>'?').join(',');
-  const rows=query('SELECT id FROM wac_notification_logs WHERE logistics_batch_id=? AND status IN ('+placeholders+') ORDER BY recipient_name,part_no',[batchId,...allowed]).rows;
+  const rows=query('SELECT id FROM wac_notification_logs WHERE logistics_batch_id=? AND status IN ('+placeholders+') ORDER BY created_at DESC,recipient_name,part_no',[batchId,...allowed]).rows;
   for(const row of rows)await dispatchWacNotificationLog(row.id);
   return rows.length;
 }
@@ -19779,7 +19773,7 @@ app.post('/api/wac/confirm/:logistics_batch_id', requireApiPermission('ci_edit')
       seenCcIds.add(uid);ccUsers.push({id:ccUser.id,name:ccUser.name||''});
     }
     const ccGroupKeys=Array.isArray(req.body.cc_group_keys)?req.body.cc_group_keys:[];
-    const groupResolution=resolveWacCcGroupRecipients(ccGroupKeys,batch.id);
+    const groupResolution=resolveWacCcGroupRecipients(ccGroupKeys);
     if(groupResolution.error)return res.status(400).json({error:groupResolution.error});
     const ccGroups=groupResolution.recipients;
     let reportRows=[];let reportChunks=[];let reportSummary=null;let notificationCount=0;
@@ -19897,7 +19891,7 @@ app.get('/api/wac/notifications/:logistics_batch_id',requireApiPermission('ci_vi
   try{
     const batch=queryOne('SELECT id FROM logistics_batches WHERE id=?',[req.params.logistics_batch_id]);
     if(!batch)return res.status(404).json({error:'物流批次不存在'});
-    const logs=query('SELECT id,recipient_user_id,recipient_name,part_no,part_count,status,attempt_count,last_error,sent_at,created_at FROM wac_notification_logs WHERE logistics_batch_id=? ORDER BY recipient_name,part_no',[batch.id]).rows;
+    const logs=query('SELECT id,recipient_user_id,recipient_name,part_no,part_count,status,attempt_count,last_error,sent_at,created_at FROM wac_notification_logs WHERE logistics_batch_id=? ORDER BY created_at DESC,recipient_name,part_no',[batch.id]).rows;
     res.json({logs});
   }catch(e){res.status(500).json({error:e.message});}
 }));
@@ -19911,7 +19905,7 @@ app.post('/api/wac/notifications/:logistics_batch_id/retry',requireApiPermission
     if(!confirmed)return res.status(409).json({error:'该批次尚未完成 WAC 确认'});
     const failed=query('SELECT id FROM wac_notification_logs WHERE logistics_batch_id=? AND status=?',[batch.id,'failed']).rows;
     await dispatchWacNotificationLogs(batch.id,['failed']);
-    const logs=query('SELECT id,recipient_user_id,recipient_name,part_no,part_count,status,attempt_count,last_error,sent_at,created_at FROM wac_notification_logs WHERE logistics_batch_id=? ORDER BY recipient_name,part_no',[batch.id]).rows;
+    const logs=query('SELECT id,recipient_user_id,recipient_name,part_no,part_count,status,attempt_count,last_error,sent_at,created_at FROM wac_notification_logs WHERE logistics_batch_id=? ORDER BY created_at DESC,recipient_name,part_no',[batch.id]).rows;
     res.json({success:true,retried_count:failed.length,logs});
   }catch(e){res.status(500).json({error:e.message});}
 }));
@@ -19932,41 +19926,24 @@ app.post('/api/wac/notifications/:logistics_batch_id/cc',requireApiPermission('c
     if(!historyRows.length)return res.status(409).json({error:'该批次没有可用于通知的已确认 WAC 历史记录'});
 
     const selectedIds=Array.isArray(req.body&&req.body.cc_user_ids)?req.body.cc_user_ids:[];
-    const requestedUnique=Array.from(new Set(selectedIds.map(value=>String(value||'').trim()).filter(Boolean)));
+    const requestedUnique=getUniqueWacCcRecipientIds(selectedIds);
     const selectedGroupKeys=Array.isArray(req.body&&req.body.cc_group_keys)?req.body.cc_group_keys:[];
-    if(!requestedUnique.length&&!selectedGroupKeys.length)return res.status(400).json({error:'请至少选择一位人员或一个群组'});
-
-    const existingRows=query('SELECT DISTINCT recipient_user_id FROM wac_notification_logs WHERE logistics_batch_id=?',[batch.id]).rows;
-    const existingIds=existingRows.map(row=>row.recipient_user_id);
-    const existingSet=new Set(existingIds.map(value=>String(value||'')));
-    const skippedExistingUserCount=requestedUnique.filter(id=>existingSet.has(id)).length;
-    const newIds=getNewWacCcRecipientIds(requestedUnique,existingIds);
-    if(newIds.length>100)return res.status(413).json({error:'单次最多新增100个收件对象'});
+    if(!requestedUnique.length&&!selectedGroupKeys.some(key=>String(key||'').trim()))return res.status(400).json({error:'请至少选择一位人员或一个群组'});
+    if(requestedUnique.length>100)return res.status(413).json({error:'单次最多选择100个收件对象'});
 
     const ccUsers=[];
-    for(const uid of newIds){
+    for(const uid of requestedUnique){
       const ccUser=queryOne('SELECT id,name,status,feishu_open_id FROM users WHERE id=?',[uid]);
       if(!ccUser)return res.status(400).json({error:'抄送人员不存在：'+uid});
       if(ccUser.status!=='active')return res.status(400).json({error:'抄送人员已停用：'+(ccUser.name||uid)});
       if(!ccUser.feishu_open_id)return res.status(400).json({error:'抄送人员尚未绑定飞书账号：'+(ccUser.name||uid)});
       ccUsers.push({id:ccUser.id,name:ccUser.name||''});
     }
-    const groupResolution=resolveWacCcGroupRecipients(selectedGroupKeys,batch.id);
+    const groupResolution=resolveWacCcGroupRecipients(selectedGroupKeys);
     if(groupResolution.error)return res.status(400).json({error:groupResolution.error});
     const ccGroups=groupResolution.recipients;
-    if(ccUsers.length+ccGroups.length>100)return res.status(413).json({error:'单次最多新增100个收件对象'});
-    const skippedExistingCount=skippedExistingUserCount+groupResolution.skipped_existing_count;
-    if(!ccUsers.length&&!ccGroups.length){
-      return res.json({
-        success:true,
-        added_recipient_count:0,
-        added_user_count:0,
-        added_group_count:0,
-        notification_count:0,
-        skipped_existing_count:skippedExistingCount,
-        message:'所选收件对象已有通知记录，未重复发送'
-      });
-    }
+    if(ccUsers.length+ccGroups.length>100)return res.status(413).json({error:'单次最多选择100个收件对象'});
+    if(!ccUsers.length&&!ccGroups.length)return res.status(400).json({error:'请至少选择一位人员或一个已配置的群组'});
 
     const reportRows=buildWacCostChangeRows(historyRows);
     const reportChunks=chunkWacCostChangeRows(reportRows);
@@ -19983,7 +19960,7 @@ app.post('/api/wac/notifications/:logistics_batch_id/cc',requireApiPermission('c
       const value=String(row.confirmed_at||'');
       return value>latest?value:latest;
     },'').slice(0,10);
-    let notificationCount=0;
+    const notificationLogIds=[];
 
     transaction(()=>{
       for(const ccUser of ccUsers){
@@ -19993,23 +19970,24 @@ app.post('/api/wac/notifications/:logistics_batch_id/cc',requireApiPermission('c
         }
         reportChunks.forEach((chunk,index)=>{
           const payload={batch_no:batch.batch_no||'',ci_no:ciNo,brand,country,country_en:countryEn,warehouse,local_currency:localCurrency,confirmed_at:confirmedAt,rows:chunk,summary:reportSummary,part_no:index+1,part_count:reportChunks.length};
-          run('INSERT INTO wac_notification_logs (id,logistics_batch_id,recipient_user_id,recipient_name,part_no,part_count,status,attempt_count,report_payload,last_error,sent_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT (logistics_batch_id,recipient_user_id,part_no) DO NOTHING',
-            [genId('wacn'),batch.id,ccUser.id,ccUser.name,index+1,reportChunks.length,'pending',0,JSON.stringify(payload),'','']);
+          const logId=genId('wacn');
+          run('INSERT INTO wac_notification_logs (id,logistics_batch_id,recipient_user_id,recipient_name,part_no,part_count,status,attempt_count,report_payload,last_error,sent_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+            [logId,batch.id,ccUser.id,ccUser.name,index+1,reportChunks.length,'pending',0,JSON.stringify(payload),'','']);
+          notificationLogIds.push(logId);
         });
       }
       for(const ccGroup of ccGroups){
         reportChunks.forEach((chunk,index)=>{
           const payload={batch_no:batch.batch_no||'',ci_no:ciNo,brand,country,country_en:countryEn,warehouse,local_currency:localCurrency,confirmed_at:confirmedAt,rows:chunk,summary:reportSummary,part_no:index+1,part_count:reportChunks.length};
-          run('INSERT INTO wac_notification_logs (id,logistics_batch_id,recipient_user_id,recipient_name,part_no,part_count,status,attempt_count,report_payload,last_error,sent_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT (logistics_batch_id,recipient_user_id,part_no) DO NOTHING',
-            [genId('wacn'),batch.id,ccGroup.recipient_id,ccGroup.display_name,index+1,reportChunks.length,'pending',0,JSON.stringify(payload),'','']);
+          const logId=genId('wacn');
+          run('INSERT INTO wac_notification_logs (id,logistics_batch_id,recipient_user_id,recipient_name,part_no,part_count,status,attempt_count,report_payload,last_error,sent_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+            [logId,batch.id,ccGroup.recipient_id,ccGroup.display_name,index+1,reportChunks.length,'pending',0,JSON.stringify(payload),'','']);
+          notificationLogIds.push(logId);
         });
       }
     });
-    const recipientKeys=ccUsers.map(user=>user.id).concat(ccGroups.map(group=>group.recipient_id));
-    const recipientPlaceholders=recipientKeys.map(()=>'?').join(',');
-    const createdCount=queryOne('SELECT COUNT(*) AS count FROM wac_notification_logs WHERE logistics_batch_id=? AND recipient_user_id IN ('+recipientPlaceholders+')',[batch.id,...recipientKeys]);
-    notificationCount=Number(createdCount&&createdCount.count||0);
 
+    const notificationCount=notificationLogIds.length;
     if(notificationCount>0)setImmediate(()=>dispatchWacNotificationLogs(batch.id,['pending']).catch(err=>console.error('[WAC-FEISHU] 补充CC异步通知失败 batchId='+batch.id+':',err&&err.message?err.message:err)));
     res.json({
       success:true,
@@ -20017,7 +19995,7 @@ app.post('/api/wac/notifications/:logistics_batch_id/cc',requireApiPermission('c
       added_user_count:ccUsers.length,
       added_group_count:groupResolution.added_group_count,
       notification_count:notificationCount,
-      skipped_existing_count:skippedExistingCount,
+      skipped_existing_count:0,
       report_part_count:reportChunks.length
     });
   }catch(e){res.status(500).json({error:e.message});}
