@@ -1,7 +1,7 @@
 (function(){
 'use strict';
 
-const CCY={Netac:'USD',Redragon:'RMB',BOYA:'RMB',Joypeer:'RMB',GoPro:'IDR'};
+let CURRENCY_META={},BRAND_CURRENCIES={};
 const SUMMARY_CACHE_MAX=12;
 const DETAIL_CACHE_MAX=24;
 const summaryCache=new Map();
@@ -12,7 +12,7 @@ let S={brand:'Netac',type:'',keyword:'',from:'',to:'',data:null,detail:null,deta
 
 const $=(s,r=document)=>r.querySelector(s);
 const E=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-const money=(v,c)=>{if(v==null)return '—';const code=String(c||'').toUpperCase();if(code==='IDR')return 'Rp '+Number(v).toLocaleString(undefined,{maximumFractionDigits:0});return (code==='RMB'?'¥ ':'$ ')+Number(v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});};
+const money=(v,c)=>{if(v==null)return '—';const code=String(c||'').toUpperCase(),meta=CURRENCY_META[code]||{},symbol=meta.symbol||((code?code+' ':'')||''),digits=code==='IDR'?0:2;return symbol+Number(v).toLocaleString(undefined,{minimumFractionDigits:digits,maximumFractionDigits:digits});};
 const quoteMoney=(v,c,status)=>status==='no_quote'||v==null?'<span class="qm-noquote">未报价</span>':money(v,c);
 const change=v=>v==null?'—':`<span class="qm-change ${v>0?'up':v<0?'down':''}">${v>0?'↑ +':v<0?'↓ ':''}${Number(v).toFixed(2)}%</span>`;
 const call=(u,m='GET',b)=>window.api(u,m,b);
@@ -52,8 +52,8 @@ function show(){
 }
 
 function renderBase(){
-  const brands=Object.keys(CCY).map(b=>`<option value="${E(b)}" ${b===S.brand?'selected':''}>${E(b)}</option>`).join('');
-  $('#qm').innerHTML=`<div class="qm-head"><div><div class="qm-title">🏷️ 报价管理</div><div class="qm-sub">FOB 报价、价格趋势、最近采购价对比与品牌报告</div></div><div class="qm-actions"><button class="qm-btn" id="qm-template">⇩ 下载模板</button><button class="qm-btn primary" id="qm-import">⇧ 导入报价</button></div></div><div class="qm-filter"><div class="qm-field"><label>品牌</label><select id="qm-brand">${brands}</select></div><div class="qm-field"><label>产品类型</label><select id="qm-type"><option value="">全部</option></select></div><div class="qm-field"><label>SKU / 关键词</label><input id="qm-key" value="${E(S.keyword)}" placeholder="搜索 SKU、产品类型或品牌"></div><div class="qm-field"><label>开始日期</label><input type="date" id="qm-from" value="${E(S.from)}"></div><div class="qm-field"><label>结束日期</label><input type="date" id="qm-to" value="${E(S.to)}"></div></div><div class="qm-note">Netac 默认 USD；Redragon / BOYA / Joypeer 默认 RMB；GoPro 默认 IDR。FOB=0 表示当日未报价，会保留历史记录，但不参与价格趋势、报价环比或采购价环比。</div><div class="qm-grid"><section class="qm-card"><div class="qm-card-h"><b>SKU 列表</b><span id="qm-count"></span></div><div class="qm-table-wrap"><table class="qm-table"><thead><tr><th>SKU</th><th>品牌</th><th>产品类型</th><th>最新FOB</th><th>币种</th><th>报价日期</th><th>较上次报价</th><th>较上次采购价</th><th>历史次数</th><th></th></tr></thead><tbody id="qm-body"></tbody></table></div></section><section class="qm-card" id="qm-right"></section></div>`;
+  const brands=S.brand?`<option value="${E(S.brand)}" selected>${E(S.brand)}</option>`:'';
+  $('#qm').innerHTML=`<div class="qm-head"><div><div class="qm-title">🏷️ 报价管理</div><div class="qm-sub">FOB 报价、价格趋势、最近采购价对比与品牌报告</div></div><div class="qm-actions"><button class="qm-btn" id="qm-template">⇩ 下载模板</button><button class="qm-btn primary" id="qm-import">⇧ 导入报价</button></div></div><div class="qm-filter"><div class="qm-field"><label>品牌</label><select id="qm-brand">${brands}</select></div><div class="qm-field"><label>产品类型</label><select id="qm-type"><option value="">全部</option></select></div><div class="qm-field"><label>SKU / 关键词</label><input id="qm-key" value="${E(S.keyword)}" placeholder="搜索 SKU、产品类型或品牌"></div><div class="qm-field"><label>开始日期</label><input type="date" id="qm-from" value="${E(S.from)}"></div><div class="qm-field"><label>结束日期</label><input type="date" id="qm-to" value="${E(S.to)}"></div></div><div class="qm-note">品牌和默认报价币种读取系统管理中的品牌设置；可用币种读取币种设置。修改默认币种只影响新报价，不会改写历史报价。FOB=0 表示当日未报价，会保留记录，但不参与价格趋势和环比。</div><div class="qm-grid"><section class="qm-card"><div class="qm-card-h"><b>SKU 列表</b><span id="qm-count"></span></div><div class="qm-table-wrap"><table class="qm-table"><thead><tr><th>SKU</th><th>品牌</th><th>产品类型</th><th>最新FOB</th><th>币种</th><th>报价日期</th><th>较上次报价</th><th>较上次采购价</th><th>历史次数</th><th></th></tr></thead><tbody id="qm-body"></tbody></table></div></section><section class="qm-card" id="qm-right"></section></div>`;
   bind();
 }
 
@@ -93,8 +93,12 @@ async function load({useCache=false,background=false}={}){
 
 function renderSummary(){filters();list();report();}
 function filters(){
-  const d=S.data||{};
-  $('#qm-brand').innerHTML=(d.brands||Object.keys(CCY)).map(b=>`<option value="${E(b)}" ${b===S.brand?'selected':''}>${E(b)}</option>`).join('');
+  const d=S.data||{},brands=Array.isArray(d.brands)?d.brands:[];
+  BRAND_CURRENCIES=d.brand_currencies||{};
+  CURRENCY_META={};
+  (d.currencies||[]).forEach(c=>{if(c&&c.code)CURRENCY_META[String(c.code).toUpperCase()]=c;});
+  if(brands.length&&!brands.includes(S.brand))S.brand=brands[0];
+  $('#qm-brand').innerHTML=brands.length?brands.map(b=>`<option value="${E(b)}" ${b===S.brand?'selected':''}>${E(b)}</option>`).join(''):'<option value="">暂无品牌</option>';
   $('#qm-type').innerHTML='<option value="">全部</option>'+(d.product_types||[]).map(t=>`<option value="${E(t)}" ${t===S.type?'selected':''}>${E(t)}</option>`).join('');
 }
 function list(){
@@ -136,7 +140,11 @@ function renderSku(){
 }
 
 function template(){
-  const rows=[{SKU:'M724',品牌:'Redragon',产品类型:'鼠标',FOB价格:58,币种:'RMB',报价日期:new Date().toISOString().slice(0,10),备注:''},{SKU:'U905-128G',品牌:'Netac',产品类型:'U盘',FOB价格:10.5,币种:'USD',报价日期:new Date().toISOString().slice(0,10),备注:''}],ws=XLSX.utils.json_to_sheet(rows),wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'报价导入模板');XLSX.writeFile(wb,'报价管理_导入模板.xlsx');
+  const date=new Date().toISOString().slice(0,10);
+  const brands=(S.data&&S.data.brands)||[];
+  const rows=brands.map(brand=>({SKU:'',品牌:brand,产品类型:'',FOB价格:'',币种:BRAND_CURRENCIES[brand]||'',报价日期:date,备注:''}));
+  const ws=XLSX.utils.json_to_sheet(rows.length?rows:[{SKU:'',品牌:S.brand||'',产品类型:'',FOB价格:'',币种:BRAND_CURRENCIES[S.brand]||'',报价日期:date,备注:''}]),wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,'报价导入模板');XLSX.writeFile(wb,'报价管理_导入模板.xlsx');
 }
 function importModal(){
   const m=document.createElement('div');m.className='qm-modal';m.innerHTML=`<div class="qm-dialog"><h3>导入报价</h3><div class="qm-drop"><input type="file" id="qm-file" accept=".xlsx,.xls,.csv"><div class="qm-sub" style="margin-top:8px">字段：SKU、品牌、产品类型、FOB价格、币种、报价日期、备注（可选）</div><div class="qm-sub" style="margin-top:5px">FOB 填 0 = 当日未报价；会保留记录，但不会作为价格参与趋势或环比。</div></div><div style="margin-top:12px;font-size:13px">重复 SKU + 品牌 + 报价日期： <select id="qm-mode"><option value="skip">跳过已有记录</option><option value="overwrite">覆盖已有记录</option></select></div><div id="qm-preview" class="qm-sub" style="margin-top:8px"></div><div class="qm-dialog-actions"><button class="qm-btn" id="qm-cancel">取消</button><button class="qm-btn primary" id="qm-submit">开始导入</button></div></div>`;document.body.appendChild(m);let rows=[];
@@ -154,7 +162,8 @@ async function prefetchDefault(){
   try{const d=await call('/api/quotation-management/summary?brand=Netac');lruSet(summaryCache,key,d,SUMMARY_CACHE_MAX);}catch(_e){}
 }
 
-window.getQuotationManagementBrand=()=>S.brand||'Netac';
+window.refreshQuotationManagement=async function(){summaryCache.clear();detailCache.clear();if(!$('#qm'))return;S.data=null;return load({useCache:false,background:true});};
+window.getQuotationManagementBrand=()=>S.brand||((S.data&&S.data.brands&&S.data.brands[0])||'');
 window.showQuotationManagement=show;
 function boot(){
   css();nav();
