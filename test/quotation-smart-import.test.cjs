@@ -1,0 +1,162 @@
+'use strict';
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const path=require('node:path');
+const vm=require('node:vm');
+
+const source=fs.readFileSync(path.join(__dirname,'..','quotation-import-normalizer.js'),'utf8');
+const window={api:()=>Promise.resolve({}),XLSX:null};
+const document={readyState:'complete',addEventListener(){}};
+vm.runInNewContext(source,{window,document,setTimeout(){},console},{timeout:1000});
+const n=window.QuotationImportNormalizer;
+assert(n,'quotation import normalizer must be exposed');
+
+const parsed=n.parseSheetRows([
+  {name:'Price List',rows:[
+    ['NETAC SUPPLIER PRICE LIST'],
+    ['Item No','Model','Product Type','FOB USD','Date'],
+    ['NT-SSD-001','N535S','SSD',12.5,'2026-11-04'],
+    ['NT-SSD-002','N600S','SSD',13.25,'2026-11-04']
+  ]},
+  {name:'Summary',rows:[['Total','Amount'],['Total','100']]},
+  {name:'USB',rows:[
+    ['Supplier Part Number','Model','FOB Price','Currency','Brand'],
+    ['LEGACY-USB-01','U905',0,'USD','NETAC'],
+    ['LEGACY-USB-02','U906','','USD','Netac'],
+    ['LEGACY-USB-03','U907','USD 1.25','USD','Netac']
+  ]}
+],{brand:'Netac',quote_date:'2026-11-04',supplier_id:'supplier-netac'});
+
+assert.equal(parsed.rows.length,5,'all recognized sheets should be read');
+assert.equal(parsed.recognized_sheets.length,2,'both quote sheets should be recognized');
+assert.equal(parsed.ignored_sheets.length,1,'non-quote sheets should be skipped');
+assert.equal(parsed.rows[0].supplier_part_no,'NT-SSD-001');
+assert.equal(parsed.rows[0].currency,'USD','currency should be inferred from price header');
+assert.equal(parsed.rows[0].quote_price,12.5);
+assert.equal(parsed.rows[2].quote_price,0,'explicit zero should be retained as no quote');
+assert.equal(parsed.rows[3].quote_price,0,'blank price should become no quote');
+assert.equal(parsed.rows[3].quote_date_source,'default','default date source should be tracked');
+assert.equal(parsed.rows[4].quote_price,1.25,'currency-prefixed text prices should be parsed');
+
+const netacModelSheet=n.parseSheetRows([{
+  name:'Netac Weekly Price',
+  rows:[
+    ['Netac Weekly Distribution Price List'],
+    ['Product','Model','FOB USD'],
+    ['USB Flash Drive','NT03U278N-032G-20PN',12.5]
+  ]
+}],{brand:'Netac',quote_date:'2026-11-04',supplier_id:'supplier-netac'});
+assert.equal(netacModelSheet.recognized_sheets.length,1,'Netac Product/Model/FOB headers should be recognized');
+assert.equal(netacModelSheet.rows[0].product_type,'USB Flash Drive','Product should map to product type');
+assert.equal(netacModelSheet.rows[0].supplier_part_no,'NT03U278N-032G-20PN','Model should be used as the SKU/part key when no explicit part number exists');
+assert.equal(netacModelSheet.rows[0].model,'NT03U278N-032G-20PN','Model should remain visible in preview');
+assert.equal(netacModelSheet.rows[0].currency,'USD','FOB USD header should infer USD');
+const modelOnlyNormalized=n.normalizeRow({Model:'NT03U278N-032G-20PN',Product:'USB Flash Drive',brand:'Netac',quote_price:12.5,quote_date:'2026-11-04'});
+assert.equal(modelOnlyNormalized.supplier_part_no,'NT03U278N-032G-20PN','Model-only rows should normalize to a SKU/part key');
+assert.equal(modelOnlyNormalized.product_type,'USB Flash Drive','Product should normalize to product type');
+assert.equal(n.validateRows([modelOnlyNormalized]).length,0,'Model-only Netac rows should pass validation');
+
+const metadata={
+  skus:[
+    {sku_code:'NT-SSD-001',brand:'Netac',category:'SSD',model:'N535S'},
+    {sku_code:'PSI-U905',brand:'Netac',category:'USB',model:'U905'},
+    {sku_code:'NT03U278N-032G-20PN',brand:'Netac',category:'USB',model:'NT03U278N-032G-20PN'}
+  ],
+  mappings:[
+    {supplier_id:'supplier-netac',brand:'Netac',supplier_part_no_key:'LEGACY-USB-01',psi_sku_code:'PSI-U905'}
+  ]
+};
+const matched=n.matchRows(parsed.rows,metadata,{supplier_id:'supplier-netac',brand:'Netac'});
+assert.equal(matched[0].match_status,'matched','exact PSI SKU should auto-match');
+assert.equal(matched[0].match_source,'exact');
+assert.equal(matched[2].match_status,'matched','saved supplier mapping should auto-match');
+assert.equal(matched[2].brand,'Netac','brand values should be canonicalized against the SKU master');
+assert.equal(matched[2].match_source,'saved');
+assert.equal(matched[3].match_status,'unlinked','unknown part number should remain unlinked');
+assert.equal(matched[3].sku_code,'LEGACY-USB-02','unlinked row must preserve supplier part number');
+const netacModelMatched=n.matchRows(netacModelSheet.rows,metadata,{supplier_id:'supplier-netac',brand:'Netac'});
+assert.equal(netacModelMatched[0].match_status,'matched','Netac Model value should exact-match PSI SKU master');
+assert.equal(netacModelMatched[0].sku_code,'NT03U278N-032G-20PN');
+assert.equal(n.validateRows(matched).length,0,'unlinked rows and zero-price rows must remain importable');
+const punctuationMismatch=n.matchRows([{supplier_part_no:'NTSSD001',brand:'Netac',quote_price:1,currency:'USD',quote_date:'2026-11-04'}],metadata,{supplier_id:'supplier-netac',brand:'Netac'});
+assert.equal(punctuationMismatch[0].match_status,'unlinked','SKU matching must not erase meaningful punctuation');
+
+const manual=n.matchRows([
+  {...parsed.rows[3],psi_sku_code:'PSI-U905',match_source:'manual'}
+],metadata,{supplier_id:'supplier-netac',brand:'Netac'});
+assert.equal(manual[0].match_status,'matched','manual selection should be retained');
+assert.equal(manual[0].match_source,'manual');
+
+const progress=fs.readFileSync(path.join(__dirname,'..','quotation-import-progress.js'),'utf8');
+const fast=fs.readFileSync(path.join(__dirname,'..','quotation-import-fast.js'),'utf8');
+const server=fs.readFileSync(path.join(__dirname,'..','quotation-server.js'),'utf8');
+assert.match(progress,/parseSheetRows/,'browser import should parse every worksheet');
+assert.match(progress,/未关联的报价仍可导入/,'unlinked rows should be explicitly allowed in preview');
+assert.match(fast,/quotation_sku_mappings/,'server should persist supplier part-number mappings');
+assert.match(fast,/match_status/,'server should store SKU match status');
+assert.match(server,/event\.match_status === 'unlinked'/,'unlinked rows must not use internal purchase baselines');
+const bootstrap=require(path.join(__dirname,'..','scripts','quotation-management-bootstrap.cjs'));
+const serverEntry=fs.readFileSync(path.join(__dirname,'..','server.js'),'utf8');
+const patchedServer=bootstrap.patchServerSource(serverEntry);
+assert.match(patchedServer,/QUOTATION-IMPORT-BODY-GUARD-V1/,'bootstrap should add the import body-size guard');
+assert.match(patchedServer,/quotation-import-fast\.js'\)\(\{ app, query, run, transaction, genId/,'bootstrap should register smart import with transaction support');
+assert.equal(bootstrap.patchServerSource(patchedServer),patchedServer,'server bootstrap patch should be idempotent');
+const indexEntry=fs.readFileSync(path.join(__dirname,'..','index.html'),'utf8');
+const patchedIndex=bootstrap.patchIndexSource(indexEntry);
+assert.match(patchedIndex,/quotation-import-normalizer\.js\?v=20261104a/,'bootstrap should load smart-import normalizer');
+assert.equal(bootstrap.patchIndexSource(patchedIndex),patchedIndex,'index bootstrap patch should be idempotent');
+
+
+async function runBackendImportTest(){
+const fastModule=require(path.join(__dirname,'..','quotation-import-fast.js'));
+const originalDriver=process.env.DB_DRIVER;
+process.env.DB_DRIVER='sqlite';
+const routes={},executedSql=[],operationOrder=[];
+const fakeApp={
+  get:(url,...handlers)=>{routes['GET '+url]=handlers[handlers.length-1];},
+  post:(url,...handlers)=>{routes['POST '+url]=handlers[handlers.length-1];}
+};
+const fakeQuery=(sql,params)=>{
+  operationOrder.push('query:'+sql.slice(0,40));
+  if(sql.includes('FROM suppliers WHERE id='))return {rows:[{id:'supplier-netac',name:'Netac',associated_brands:'["Netac"]',default_currency:'RMB',status:'active'}]};
+  if(sql.includes('FROM skus WHERE COALESCE'))return {rows:[{sku_code:'SKU-1',brand:'Netac',category:'SSD',model:'Model 1',color_spec:'256GB'},{sku_code:'SKU-2',brand:'Netac',category:'USB',model:'Model 2',color_spec:'128GB'}]};
+  if(sql.includes('FROM quotation_sku_mappings WHERE supplier_id='))return {rows:[]};
+  if(sql.includes('WITH incoming'))return {rows:[{supplier_id:'supplier-netac',sku_code:'SKU-2',brand:'Netac',quote_date:'2026-11-04'}]};
+  return {rows:[]};
+};
+const fakeRun=(sql,params)=>{executedSql.push({sql,params});operationOrder.push('run:'+sql.slice(0,40));return {changes:3};};
+fastModule({
+  app:fakeApp,
+  query:fakeQuery,
+  run:fakeRun,
+  transaction:fn=>fn(),
+  genId:prefix=>prefix+'_test_'+(executedSql.length+1),
+  asyncHandler:fn=>fn,
+  requireApiPermission:()=>()=>{}
+});
+const response={statusCode:200,status(code){this.statusCode=code;return this;},json(value){this.body=value;return this;}};
+await routes['POST /api/quotation-management/import']({
+  body:{
+    supplier_id:'supplier-netac',brand:'Netac',quote_date:'2026-11-04',duplicate_mode:'skip',import_id:'test-import',
+    rows:[
+      {supplier_part_no:'SKU-1',brand:'Netac',quote_price:12.5,currency:'USD',quote_date:'2026-11-04',product_type:'SSD',match_source:'exact'},
+      {supplier_part_no:'VENDOR-ONLY-1',brand:'Netac',quote_price:0,currency:'USD',quote_date:'2026-11-04',product_type:'SSD',match_status:'unlinked'},
+      {model:'SKU-2',brand:'Netac',quote_price:11,currency:'USD',quote_date:'2026-11-05',product_type:'USB'},
+      {supplier_part_no:'LEGACY-01',brand:'Netac',psi_sku_code:'SKU-2',match_source:'manual',quote_price:13,currency:'USD',quote_date:'2026-11-04',product_type:'SSD'}
+    ],
+    mapping_updates:[{brand:'Netac',supplier_part_no:'LEGACY-01',psi_sku_code:'SKU-2'}]
+  }
+},response);
+if(originalDriver===undefined)delete process.env.DB_DRIVER;else process.env.DB_DRIVER=originalDriver;
+assert.equal(response.statusCode,200,'backend should accept matched and unlinked supplier quote rows');
+assert.equal(response.body.unlinked,1,'backend should report unlinked supplier quote rows');
+assert.equal(response.body.inserted,3,'backend should accept Model-only SKU rows and skip the prior quote after applying its manual SKU mapping');
+assert.equal(response.body.skipped,1,'the mapped historical quote should be treated as an existing duplicate');
+assert(executedSql.some(x=>x.sql.includes('INSERT INTO quotation_sku_mappings')),'manual mappings should be persisted');
+assert(executedSql.some(x=>x.sql.includes('INSERT INTO quotation_prices')&&x.sql.includes('supplier_part_no')),'quote writes should retain the source supplier part number');
+assert(executedSql.some(x=>x.sql.includes("match_status='matched'")),'manual mapping should link prior unlinked history');
+const historyUpdateAt=operationOrder.findIndex(x=>x.startsWith('run:UPDATE quotation_prices'));
+const duplicateCheckAt=operationOrder.findIndex(x=>x.startsWith('query:WITH incoming'));
+assert(historyUpdateAt>=0&&duplicateCheckAt>historyUpdateAt,'historical rows must be linked before duplicate checks to avoid duplicate quote history');
+}
+runBackendImportTest().then(()=>console.log('quotation-smart-import: PASS')).catch(err=>{console.error(err);process.exitCode=1;});
