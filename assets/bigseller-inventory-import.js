@@ -155,7 +155,7 @@
 
 
   function normalizeWarehouseName(value) {
-    return String(value == null ? '' : value).replace(/\\s+/g, ' ').trim().toLowerCase();
+    return String(value == null ? '' : value).replace(/\s+/g, ' ').trim().toLowerCase();
   }
 
   // The BigSeller export is always the Bekasi stock snapshot for this workflow.
@@ -392,7 +392,6 @@
       if (!target) {
         html += '<div style="padding:8px 10px;background:#fff1f0;color:#a8071a;border-radius:6px">' +
           escapeHtml(tr(win, 'inv.bigseller.bekasi_target_error', '必须且只能找到一个启用的「印度尼西亚 / Bekasi Warehouse」，当前找到 {n} 个。为避免导错仓，已阻止导入。', { n: matchCount })) +
-          (targetError ? '<div style="margin-top:4px">' + escapeHtml(targetError) + '</div>' : '') +
           '</div>';
       } else {
         html += '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">' +
