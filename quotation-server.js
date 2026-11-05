@@ -2,11 +2,6 @@
 
 module.exports = function installQuotationManagement(deps) {
   const { app, query, queryOne, run, transaction, genId, asyncHandler, requireApiPermission } = deps;
-  function getBrandCurrencyMap() {
-    const rows = query('SELECT brand, default_quote_currency FROM brand_settings').rows;
-    return new Map(rows.map(r => [String(r.brand || '').trim(), String(r.default_quote_currency || '').trim().toUpperCase()]));
-  }
-
   run("CREATE TABLE IF NOT EXISTS quotation_prices (id TEXT PRIMARY KEY, sku_code TEXT NOT NULL, brand TEXT NOT NULL, product_type TEXT NOT NULL, quote_price NUMERIC NOT NULL, currency TEXT NOT NULL, quote_date TEXT NOT NULL, remark TEXT DEFAULT '', import_batch_id TEXT, created_at TEXT, updated_at TEXT, supplier_id TEXT NOT NULL DEFAULT '', supplier_part_no TEXT NOT NULL DEFAULT '', supplier_part_no_key TEXT NOT NULL DEFAULT '', psi_sku_code TEXT NOT NULL DEFAULT '', match_status TEXT NOT NULL DEFAULT 'matched', model TEXT NOT NULL DEFAULT '', spec TEXT NOT NULL DEFAULT '', source_sheet TEXT NOT NULL DEFAULT '', source_row INTEGER NOT NULL DEFAULT 0)");
   const quotationIsPg = String(process.env.DB_DRIVER || 'sqlite').toLowerCase() === 'pg';
   const quotationColumnRows = quotationIsPg
@@ -306,7 +301,8 @@ module.exports = function installQuotationManagement(deps) {
       input.forEach((r, i) => {
         const sku = String(r.sku_code || r.SKU || r['SKU'] || '').trim(), brand = String(r.brand || r['品牌'] || '').trim(), product_type = String(r.product_type || r['产品类型'] || '').trim(), priceRaw = r.quote_price ?? r['FOB价格'] ?? r['报价价格'] ?? r['报价'], priceText = String(priceRaw ?? '').trim(), quote_price = Number(priceText), expected = brandCurrencies.get(brand) || '', currency = String(r.currency || r['币种'] || expected || '').trim().toUpperCase(), quote_date = String(r.quote_date || r['报价日期'] || '').trim().slice(0, 10), remark = String(r.remark || r['备注'] || '').trim();
         if (!sku || !brand || !product_type || priceText === '' || !Number.isFinite(quote_price) || quote_price < 0 || !/^\d{4}-\d{2}-\d{2}$/.test(quote_date) || !currency) errors.push({ row: i + 2, reason: '必填字段缺失或格式错误' });
-        else if (expected && currency !== expected) errors.push({ row: i + 2, reason: brand + ' 默认报价币种应为 ' + expected });
+        else if (!expected) errors.push({ row: i + 2, reason: '品牌 ' + brand + ' 尚未设置默认报价币种，请先到系统管理→品牌设置配置' });
+        else if (currency !== expected) errors.push({ row: i + 2, reason: brand + ' 默认报价币种应为 ' + expected });
         else if (!activeCurrencies.has(currency)) errors.push({ row: i + 2, reason: '币种 ' + currency + ' 未在系统管理→币种设置中启用' });
         else rows.push({ sku, brand, product_type, quote_price, currency, quote_date, remark });
       });
