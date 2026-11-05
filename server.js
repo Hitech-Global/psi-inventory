@@ -2691,7 +2691,7 @@ app.post('/api/brand-settings', requireApiPermission('system_config'), asyncHand
       const hasCurrency = Object.prototype.hasOwnProperty.call(it, 'default_quote_currency');
       const previousCurrency = existing.get(brand) || '';
       const currency = hasCurrency ? String(it.default_quote_currency || '').trim().toUpperCase() : previousCurrency;
-      if (hasCurrency && it.procurement_status === 'active' && !currency) throw new Error('品牌 ' + brand + ' 尚未设置默认报价币种，请先选择币种。');
+      // Allow brands without a quote currency to keep their procurement settings editable; quotation import itself blocks active brands without a default currency.
       if (currency && !currencyStatus.has(currency)) throw new Error('品牌 ' + brand + ' 的默认报价币种 ' + currency + ' 不存在于币种设置中。');
       if (hasCurrency && currency && currencyStatus.get(currency) !== 'active' && currency !== previousCurrency) throw new Error('币种 ' + currency + ' 已停用，不能设为新的默认报价币种。');
       return { brand, procurement_status: it.procurement_status, default_quote_currency: currency, note: (it.note || '').toString() };
