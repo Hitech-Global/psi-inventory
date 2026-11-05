@@ -43,6 +43,12 @@ async function rawPost(url,body){
 }
 
 function normalizer(){return window.QuotationImportNormalizer||null;}
+function formatImportMoney(value,currency){
+  const code=String(currency||'').toUpperCase(),meta=(importOptions&&importOptions.currencies||[]).find(x=>String(x.code||'').toUpperCase()===code);
+  const symbol=meta&&meta.symbol?String(meta.symbol):code;
+  const digits=code==='IDR'?0:2;
+  return (symbol?symbol+' ':'')+Number(value).toLocaleString(undefined,{minimumFractionDigits:digits,maximumFractionDigits:digits});
+}
 
 function ensureCss(){
   if($('#qm-import-progress-css'))return;
@@ -203,7 +209,7 @@ function renderPreview(m){
       const r=x.row,i=x.index;
       html+='<tr><td><b>'+esc(r.supplier_part_no)+'</b><div class="qip-sub">'+esc(r.source_sheet||'')+' · 第 '+esc(r.source_row||'—')+' 行</div></td>';
       html+='<td>'+esc([r.model,r.spec].filter(Boolean).join(' / ')||'—')+'</td><td>'+esc(r.brand)+'<div class="qip-sub">'+esc(r.product_type||'未分类')+'</div></td>';
-      html+='<td>'+esc(r.quote_price===0?'未报价':(r.currency==='IDR'?'Rp '+Number(r.quote_price).toLocaleString(undefined,{maximumFractionDigits:0}):Number(r.quote_price).toFixed(2)+' '+r.currency))+'</td>';
+      html+='<td>'+esc(r.quote_price===0?'未报价':formatImportMoney(r.quote_price,r.currency))+'</td>';
       html+='<td><div class="qip-suggest-wrap"><input type="text" data-qip-match-search="'+i+'" placeholder="搜索 PSI SKU / 型号"><div class="qip-suggestions" data-qip-suggestions="'+i+'"></div></div></td></tr>';
     });
     html+='</tbody></table></div>';
@@ -234,12 +240,14 @@ function renderPreview(m){
 }
 function rematchCurrentRows(m){
   const n=normalizer();if(!n||!importOptions||!currentRows.length)return;
+  const n=normalizer();
   currentRows.forEach(r=>{
     if(r.brand_source==='default')r.brand=selectedBrand;
     if(r.quote_date_source==='default')r.quote_date=selectedQuoteDate;
+    if(r.currency_source==='brand_default')r.currency=n&&n.getDefaultCurrency?n.getDefaultCurrency(r.brand,importOptions.brand_currencies):'';
   });
   currentRows=n.matchRows(currentRows,importOptions,{supplier_id:selectedSupplierId,brand:selectedBrand});
-  const errors=n.validateRows(currentRows);
+  const errors=n.validateRows(currentRows,{brand_currencies:importOptions.brand_currencies||{}});
   if(errors.length){fileError(m,errors.slice(0,8).map(x=>'第 '+x.row+' 行：'+x.reason).join('\n'));return;}
   renderPreview(m);
 }
@@ -301,7 +309,7 @@ function openModal(){
       const selectedSupplier=(importOptions&&importOptions.suppliers||[]).find(x=>x.id===selectedSupplierId);
       const inferredDate=!quoteDateTouched&&typeof n.inferQuoteDate==='function'?n.inferQuoteDate(sheets,f.name):'';
       if(inferredDate){selectedQuoteDate=inferredDate;$('#qip-date',m).value=inferredDate;}
-      const parsed=n.parseSheetRows(sheets,{brand:selectedBrand,quote_date:selectedQuoteDate,supplier_id:selectedSupplierId,currency:selectedSupplier&&selectedSupplier.default_currency||''});
+      const parsed=n.parseSheetRows(sheets,{brand:selectedBrand,quote_date:selectedQuoteDate,supplier_id:selectedSupplierId,currency:selectedSupplier&&selectedSupplier.default_currency||'',brand_currencies:importOptions.brand_currencies||{}});
       if(parsed.errors&&parsed.errors.length)return fileError(m,parsed.errors.map(x=>x.reason).join('\n'));
       if(!parsed.rows.length)return fileError(m,'没有识别到可导入数据。请确认工作表包含供应商料号（Part No. / SKU）和报价（FOB / Price）列。');
       if(parsed.rows.length>MAX_ROWS)return fileError(m,'所有工作表合计 '+parsed.rows.length+' 行，单次最多支持 '+MAX_ROWS+' 行，请拆分后重试。');
@@ -314,7 +322,7 @@ function openModal(){
         selectedSupplierId=detectedSupplier?detectedSupplier.id:'';$('#qip-supplier',m).value=selectedSupplierId;
       }
       currentRows=n.matchRows(parsed.rows,importOptions,{supplier_id:selectedSupplierId,brand:selectedBrand});
-      const errors=n.validateRows(currentRows);
+      const errors=n.validateRows(currentRows,{brand_currencies:importOptions.brand_currencies||{}});
       if(errors.length)return fileError(m,'导入校验失败（'+errors.length+' 行）\n'+errors.slice(0,8).map(x=>'第 '+x.row+' 行：'+x.reason).join('\n'));
       previewOffset=0;renderPreview(m);
       $('#qm-submit',m).disabled=false;
@@ -363,7 +371,8 @@ function openModal(){
     }
   };
   statusApi('/api/quotation-management/import-options').then(data=>{
-    importOptions=data||{suppliers:[],skus:[],mappings:[],brands:[]};
+    importOptions=data||{suppliers:[],skus:[],mappings:[],brands:[],brand_currencies:{},currencies:[]};
+    const n=normalizer();if(n&&typeof n.setBrandCurrencies==='function')n.setBrandCurrencies(importOptions.brand_currencies||{});
     populateImportOptions(m);
   }).catch(err=>fileError(m,'无法加载供应商和 SKU 主数据：'+(err&&err.message?err.message:err)));
 }
