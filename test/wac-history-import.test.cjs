@@ -88,7 +88,9 @@ function setupSchema() {
       warehouse TEXT,
       available_qty NUMERIC DEFAULT 0,
       weighted_avg_cost NUMERIC DEFAULT 0,
-      inventory_value NUMERIC DEFAULT 0
+      inventory_value NUMERIC DEFAULT 0,
+      last_inbound_date TEXT DEFAULT '',
+      updated_at TEXT DEFAULT ''
     );
     CREATE TABLE wac_history (
       id TEXT PRIMARY KEY,
@@ -180,8 +182,10 @@ function setupSchema() {
   // 有今天汇率但没有 2026-10-30 的汇率：历史记录不得错误回退到今天。
   run('INSERT INTO exchange_rates (id,from_currency,to_currency,rate,rate_date,rate_type,created_at) VALUES (?,?,?,?,?,?,?)',
     ['fx-today','RMB','IDR',2800,'2026-11-03','realtime','2026-11-03 00:00:00']);
-  run('INSERT INTO inventory (id,sku_code,country,warehouse,available_qty,weighted_avg_cost,inventory_value) VALUES (?,?,?,?,?,?,?)',
-    ['inv1','NT-HISTORY-01','印度尼西亚','Bekasi Warehouse',20,777,15540]);
+  run('INSERT INTO inventory (id,sku_code,country,warehouse,available_qty,weighted_avg_cost,inventory_value,last_inbound_date) VALUES (?,?,?,?,?,?,?,?)',
+    ['inv1','NT-HISTORY-01','印度尼西亚','Bekasi Warehouse',20,777,15540,'2026-10-20']);
+  run('INSERT INTO inventory (id,sku_code,country,warehouse,available_qty,weighted_avg_cost,inventory_value,last_inbound_date) VALUES (?,?,?,?,?,?,?,?)',
+    ['inv-other','NT-HISTORY-01','马来西亚','至速仓',7,333,2331,'2026-10-01']);
 
   run('INSERT INTO roles (id,name,permissions) VALUES (?,?,?)',
     ['role1','WAC Importer',JSON.stringify(['ci_edit','ci_view'])]);
@@ -232,7 +236,7 @@ function one(sql, params) {
   return query(sql, params).rows[0] || null;
 }
 
-test('WAC history import validates master data, writes immutable history only, skips exact duplicates, and keeps FX date-exact', async () => {
+test('WAC history import validates master data, syncs current WAC, skips exact duplicates, and keeps FX date-exact', async () => {
   setupSchema();
 
   const template = await request('/api/wac/history-import/template','GET');
@@ -270,11 +274,15 @@ test('WAC history import validates master data, writes immutable history only, s
   assert.equal(history.is_locked,1);
   assert.equal(history.confirmation_status,'confirmed');
 
-  // 导入历史WAC绝不能改动库存总表当前WAC/数量/货值。
-  const inventory = one('SELECT available_qty,weighted_avg_cost,inventory_value FROM inventory WHERE sku_code = ?', ['NT-HISTORY-01']);
+  // 导入历史WAC后，库存总表同步最新WAC和最后入库日期；库存数量、库存货值不变。
+  const inventory = one('SELECT available_qty,weighted_avg_cost,inventory_value,last_inbound_date FROM inventory WHERE id = ?', ['inv1']);
   assert.equal(Number(inventory.available_qty),20);
-  assert.equal(Number(inventory.weighted_avg_cost),777);
+  assert.equal(Number(inventory.weighted_avg_cost),88365.398);
   assert.equal(Number(inventory.inventory_value),15540);
+  assert.equal(inventory.last_inbound_date,'2026-10-29');
+  const otherWarehouse = one('SELECT weighted_avg_cost,last_inbound_date FROM inventory WHERE id = ?', ['inv-other']);
+  assert.equal(Number(otherWarehouse.weighted_avg_cost),333,'same SKU in another country/warehouse must not be touched');
+  assert.equal(otherWarehouse.last_inbound_date,'2026-10-01');
 
   const duplicate = await request('/api/wac/history-import','POST',{items:[validRow()]});
   assert.equal(duplicate.status,200);
@@ -325,10 +333,42 @@ test('WAC history import validates master data, writes immutable history only, s
   assert.equal(matrix.status,200);
   const importedWithFx = matrix.body.rows.find(x=>x.sku_code==='NT-HISTORY-01');
   const importedWithoutFx = matrix.body.rows.find(x=>x.sku_code==='NT-HISTORY-02');
+  assert.equal(query('SELECT id FROM inventory WHERE sku_code = ?', ['NT-HISTORY-02']).rows.length,0,
+    'historical WAC sync must not create a missing inventory row');
   assert.equal(Number(importedWithFx.rmb_to_local_rate),2724.7956);
   assert.equal(importedWithFx.local_currency,'IDR');
   assert.equal(importedWithFx.source_type,'historical_import');
   assert.equal(importedWithoutFx.rmb_to_local_rate,null,'must not fall back to current-day FX');
+});
+
+
+test('historical WAC sync selects the latest effective date, not the latest inserted version', async () => {
+  setupSchema();
+  run(
+    'INSERT INTO wac_history (id,version_no,sku_code,model,brand,country,warehouse,new_avg_cost,confirmation_status,is_locked,confirmed_at,last_inbound_date,effective_end_date,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+    ['wac-later-current',1,'NT-HISTORY-01','SSD A','Netac','印度尼西亚','Bekasi Warehouse',99000,'confirmed',1,
+      '2026-10-31 12:00:00','2026-10-31','','2026-10-31 12:00:00']
+  );
+
+  const imported = await request('/api/wac/history-import','POST',{
+    items:[validRow({
+      new_avg_cost:88000,
+      last_inbound_date:'2026-10-29',
+      effective_end_date:'2026-10-30'
+    })]
+  });
+  assert.equal(imported.status,200);
+  assert.equal(imported.body.inserted,1);
+  const older = one('SELECT version_no,confirmed_at FROM wac_history WHERE sku_code=? AND confirmed_at=?',
+    ['NT-HISTORY-01','2026-10-29 12:00:00']);
+  assert.equal(Number(older.version_no),2,'late historical import receives a higher insertion version');
+
+  const inventory = one('SELECT available_qty,weighted_avg_cost,last_inbound_date,inventory_value FROM inventory WHERE id=?',['inv1']);
+  assert.equal(Number(inventory.available_qty),20);
+  assert.equal(Number(inventory.weighted_avg_cost),99000,
+    'later effective WAC must win even when its insertion version is lower');
+  assert.equal(inventory.last_inbound_date,'2026-10-31');
+  assert.equal(Number(inventory.inventory_value),15540);
 });
 
 test('WAC history import validates effective date ranges and blocks overlapping periods', () => {
@@ -403,13 +443,31 @@ test('WAC history matrix keeps the agreed dimensions, left alignment, sticky hea
   const latestStart=serverSource.indexOf('function latestConfirmedWac');
   const latestEnd=serverSource.indexOf('// P1-03-B',latestStart);
   assert.ok(latestStart>=0 && latestEnd>latestStart);
-  assert.match(serverSource.slice(latestStart,latestEnd),/ORDER BY confirmed_at DESC, version_no DESC/);
+  const latestSource=serverSource.slice(latestStart,latestEnd);
+  assert.match(latestSource,/ORDER BY wh\.confirmed_at DESC, wh\.version_no DESC/);
+  assert.match(latestSource,/resolved_last_inbound_date/);
+
+  const syncStart=serverSource.indexOf('function syncInventoryWacFromHistory');
+  const syncEnd=serverSource.indexOf('// 构建 WAC 通知比较数据',syncStart);
+  assert.ok(syncStart>=0 && syncEnd>syncStart);
+  const syncSource=serverSource.slice(syncStart,syncEnd);
+  assert.match(syncSource,/PARTITION BY wh\.sku_code, wh\.country, wh\.warehouse/);
+  assert.match(syncSource,/ORDER BY wh\.confirmed_at DESC, wh\.version_no DESC/);
+  assert.match(syncSource,/UPDATE inventory SET weighted_avg_cost = \?, last_inbound_date = \?/);
+  assert.doesNotMatch(syncSource,/inventory_value|available_qty|INSERT INTO inventory/);
+  assert.equal((serverSource.match(/syncInventoryWacFromHistory\(wacSyncKeys\)/g)||[]).length,2,
+    'both normal WAC confirmation paths must synchronize from saved history');
 
   const routeStart=serverSource.indexOf("app.post('/api/wac/history-import'");
   const routeEnd=serverSource.indexOf("/* WAC历史矩阵",routeStart);
   assert.ok(routeStart>=0 && routeEnd>routeStart);
   const importRoute=serverSource.slice(routeStart,routeEnd);
-  assert.doesNotMatch(importRoute,/UPDATE inventory|INSERT INTO inventory/);
+  assert.match(importRoute,/syncInventoryWacFromHistory\(syncKeys\)/);
+  assert.doesNotMatch(importRoute,/INSERT INTO inventory/);
+  assert.equal((serverSource.match(/ORDER BY w\.confirmed_at DESC, w\.version_no DESC/g)||[]).length,2,
+    'both PostgreSQL refresh paths must use effective confirmation date');
+  assert.equal((serverSource.match(/wc\.last_inbound_date AS wc_li/g)||[]).length,2,
+    'both PostgreSQL refresh paths must carry WAC history inbound dates');
   // PostgreSQL production uses db.js worker_threads migrations, not db-pg.js initDatabase.
   ['last_inbound_date','effective_end_date','local_currency','rmb_to_local_rate','fx_rate_date','source_type','import_batch_id'].forEach(function(column) {
     assert.ok(dbAdapterSource.includes('ALTER TABLE wac_history ADD COLUMN IF NOT EXISTS ' + column),

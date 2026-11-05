@@ -1528,7 +1528,7 @@ const BATCH_IMPORT_ROW_LIMITS = Object.freeze({
   'skus/bulk-import': 2000,                   // SKU 主数据导入：~2 calls/行
   'consignment-inventory/import': 2000,       // 寄售库存导入（仅 remaining qty）：~2 calls/行
   'original-inventory/import': 2000,          // 原库存数量导入：受单 CI 明细数天然约束
-  'wac/history-import': 2000,                 // 历史WAC导入：仅写锁定历史快照
+  'wac/history-import': 2000,                 // 历史WAC导入：写锁定历史并同步最新库存WAC
   'inventory-checks/bulk-import': 5000,       // 盘点导入：~2 calls/行，代价低
   'payment-requests/bulk-import-result': 1000 // 付款结果回填：行数天然少
 });
@@ -4897,12 +4897,95 @@ function getSnapshotCutoffMap() {
 // P1-03-B: 查询最新已确认且锁定的 WAC 版本（唯一读取规则）
 function latestConfirmedWac(skuCode, country, warehouse) {
   return queryOne(`
-    SELECT * FROM wac_history
-    WHERE sku_code = ? AND country = ? AND warehouse = ?
-      AND confirmation_status = 'confirmed' AND is_locked = 1
-    ORDER BY confirmed_at DESC, version_no DESC
+    SELECT wh.*,
+      COALESCE(NULLIF(wh.last_inbound_date, ''), NULLIF(lb.actual_arrival_date, ''), '') AS resolved_last_inbound_date
+    FROM wac_history wh
+    LEFT JOIN logistics_batches lb ON lb.id = wh.logistics_batch_id
+    WHERE wh.sku_code = ? AND wh.country = ? AND wh.warehouse = ?
+      AND wh.confirmation_status = 'confirmed' AND wh.is_locked = 1
+    ORDER BY wh.confirmed_at DESC, wh.version_no DESC
     LIMIT 1
   `, [skuCode, country, warehouse]);
+}
+
+// 将已锁定 WAC 历史中的最新有效版本同步到现有库存行。
+// 业务键严格为 SKU + 国家 + 仓库；按 confirmed_at（业务生效时间）排序，不能按写入版本号排序。
+// 只更新 weighted_avg_cost 和历史入库日期，不创建库存行、不改库存数量或 inventory_value。
+function syncInventoryWacFromHistory(keys) {
+  const normalizedKeys = [];
+  const seenKeys = new Set();
+  (Array.isArray(keys) ? keys : []).forEach(key => {
+    const item = {
+      sku_code: String(key && key.sku_code || '').trim(),
+      country: String(key && key.country || '').trim(),
+      warehouse: String(key && key.warehouse || '').trim()
+    };
+    if (!item.sku_code || !item.country || !item.warehouse) return;
+    const identity = JSON.stringify([item.sku_code, item.country, item.warehouse]);
+    if (seenKeys.has(identity)) return;
+    seenKeys.add(identity);
+    normalizedKeys.push(item);
+  });
+  if (!normalizedKeys.length) return { requested_count: 0, updated_count: 0 };
+
+  const skuCodes = Array.from(new Set(normalizedKeys.map(item => item.sku_code)));
+  const chunkSize = 500;
+  let updatedCount = 0;
+
+  for (let i = 0; i < skuCodes.length; i += chunkSize) {
+    const chunk = skuCodes.slice(i, i + chunkSize);
+    const placeholders = chunk.map(() => '?').join(',');
+    const historyRows = query(
+      `SELECT sku_code, country, warehouse, new_avg_cost, last_inbound_date
+       FROM (
+         SELECT wh.sku_code, wh.country, wh.warehouse, wh.new_avg_cost,
+           COALESCE(NULLIF(wh.last_inbound_date, ''), NULLIF(lb.actual_arrival_date, ''), '') AS last_inbound_date,
+           ROW_NUMBER() OVER (
+             PARTITION BY wh.sku_code, wh.country, wh.warehouse
+             ORDER BY wh.confirmed_at DESC, wh.version_no DESC
+           ) AS row_rank
+         FROM wac_history wh
+         LEFT JOIN logistics_batches lb ON lb.id = wh.logistics_batch_id
+         WHERE wh.sku_code IN (${placeholders})
+           AND wh.confirmation_status = 'confirmed'
+           AND wh.is_locked = 1
+           AND wh.confirmed_at IS NOT NULL AND wh.confirmed_at != ''
+       ) latest
+       WHERE row_rank = 1`,
+      chunk
+    ).rows || [];
+
+    const latestByKey = new Map();
+    historyRows.forEach(row => {
+      const identity = JSON.stringify([String(row.sku_code || ''), String(row.country || ''), String(row.warehouse || '')]);
+      latestByKey.set(identity, row);
+    });
+
+    normalizedKeys.forEach(item => {
+      if (chunk.indexOf(item.sku_code) < 0) return;
+      const identity = JSON.stringify([item.sku_code, item.country, item.warehouse]);
+      const latest = latestByKey.get(identity);
+      if (!latest) return;
+      const wac = Number(latest.new_avg_cost);
+      if (!Number.isFinite(wac) || wac <= 0) return;
+
+      const inboundDate = String(latest.last_inbound_date || '').trim();
+      if (inboundDate) {
+        run(
+          "UPDATE inventory SET weighted_avg_cost = ?, last_inbound_date = ?, updated_at = datetime('now') WHERE sku_code = ? AND country = ? AND warehouse = ?",
+          [wac, inboundDate, item.sku_code, item.country, item.warehouse]
+        );
+      } else {
+        run(
+          "UPDATE inventory SET weighted_avg_cost = ?, updated_at = datetime('now') WHERE sku_code = ? AND country = ? AND warehouse = ?",
+          [wac, item.sku_code, item.country, item.warehouse]
+        );
+      }
+      updatedCount++;
+    });
+  }
+
+  return { requested_count: normalizedKeys.length, updated_count: updatedCount };
 }
 
 // 构建 WAC 通知比较数据：从同 SKU/国家/仓库的锁定历史中，按 confirmed_at 找上一条业务成本。
@@ -4932,7 +5015,7 @@ function buildWacCostChangeReportRows(currentRows) {
 
 // P1-03-B: 在事务内生成下一版本号并插入锁定的 WAC 历史
 // logistics_batch_id: 物流批次WAC确认时传入，CI手动确认时不传（默认''）
-// WAC-HISTORY-IMPORT-01：历史WAC导入只写 wac_history，不回写 inventory 当前成本/数量。
+// WAC-HISTORY-IMPORT-01：历史WAC导入写入锁定历史，并同步现有库存行的最新WAC/最后入库日期；不改数量/货值。
 const MAX_WAC_HISTORY_IMPORT_ROWS = 2000;
 
 function normalizeWacHistoryDate(value) {
@@ -5526,7 +5609,10 @@ function runOriginalInventoryTotalsLoop(latestImports, snapshotCutoffDate, warni
     const invValue = (parseInt(imp.available_qty) || 0) * wac;
 
     // last_inbound_date 更新规则：导入文件有值则更新，否则保留原值
-    const newLastInbound = (imp.last_inbound_date && String(imp.last_inbound_date).trim()) ? imp.last_inbound_date : (existing ? existing.last_inbound_date : '');
+    const historyLastInbound = wacRecord && wacRecord.resolved_last_inbound_date;
+    const newLastInbound = (historyLastInbound && String(historyLastInbound).trim())
+      ? historyLastInbound
+      : ((imp.last_inbound_date && String(imp.last_inbound_date).trim()) ? imp.last_inbound_date : (existing ? existing.last_inbound_date : ''));
     // first_inbound_date 更新规则：导入文件填写新日期才更新；为空则保留旧值
     const newFirstInbound = (imp.first_inbound_date && String(imp.first_inbound_date).trim()) ? imp.first_inbound_date : (existing ? existing.first_inbound_date : '');
     if (existing) {
@@ -5583,7 +5669,8 @@ async function refreshInventoryTotals(snapshotCutoffDate) {
              ex.li            AS ex_li,
              ex.fi            AS ex_fi,
              wc.id            AS wc_id,
-             wc.cost          AS wc_cost
+             wc.cost          AS wc_cost,
+             wc.last_inbound_date AS wc_li
       FROM inp
       LEFT JOIN LATERAL (
         SELECT
@@ -5599,14 +5686,17 @@ async function refreshInventoryTotals(snapshotCutoffDate) {
         LIMIT 1
       ) ex ON TRUE
       LEFT JOIN LATERAL (
-        SELECT w.id, w.new_avg_cost AS cost
+        SELECT w.id, w.new_avg_cost AS cost,
+          COALESCE(NULLIF(w.last_inbound_date, ''), NULLIF(lb.actual_arrival_date, ''), '') AS last_inbound_date
         FROM wac_history w
+        LEFT JOIN logistics_batches lb ON lb.id = w.logistics_batch_id
         WHERE w.sku_code = inp.sku_code
           AND w.country  = inp.country
           AND w.warehouse = inp.warehouse
           AND w.confirmation_status = 'confirmed'
           AND w.is_locked = 1
-        ORDER BY w.version_no DESC
+          AND w.confirmed_at IS NOT NULL AND w.confirmed_at != ''
+        ORDER BY w.confirmed_at DESC, w.version_no DESC
         LIMIT 1
       ) wc ON TRUE
       ORDER BY inp.ord`;
@@ -5714,10 +5804,12 @@ async function refreshInventoryTotals(snapshotCutoffDate) {
           });
         }
         const invValue = (parseInt(imp.available_qty) || 0) * wac;
-        const newLastInbound =
-          (imp.last_inbound_date && String(imp.last_inbound_date).trim())
-            ? imp.last_inbound_date
-            : (r.ex_id != null ? r.ex_li : '');
+        const historyLastInbound = r.wc_li;
+        const newLastInbound = (historyLastInbound && String(historyLastInbound).trim())
+          ? historyLastInbound
+          : ((imp.last_inbound_date && String(imp.last_inbound_date).trim())
+              ? imp.last_inbound_date
+              : (r.ex_id != null ? r.ex_li : ''));
         const newFirstInbound =
           (imp.first_inbound_date && String(imp.first_inbound_date).trim())
             ? imp.first_inbound_date
@@ -5866,10 +5958,12 @@ async function refreshInventoryTotalsForKeys(keys, snapshotCutoffDate) {
           });
         }
         const invValue = (parseInt(imp.available_qty) || 0) * wac;
-        const newLastInbound =
-          (imp.last_inbound_date && String(imp.last_inbound_date).trim())
-            ? imp.last_inbound_date
-            : (r.ex_id != null ? r.ex_li : '');
+        const historyLastInbound = r.wc_li;
+        const newLastInbound = (historyLastInbound && String(historyLastInbound).trim())
+          ? historyLastInbound
+          : ((imp.last_inbound_date && String(imp.last_inbound_date).trim())
+              ? imp.last_inbound_date
+              : (r.ex_id != null ? r.ex_li : ''));
         const newFirstInbound =
           (imp.first_inbound_date && String(imp.first_inbound_date).trim())
             ? imp.first_inbound_date
@@ -19475,6 +19569,7 @@ app.post('/api/cost-allocation/update-weighted-avg/:ci_id', requireApiPermission
     const user = queryOne('SELECT name FROM users WHERE id = ?', [req.currentUserId]);
     const userName = user ? user.name : '';
     const logs = [];
+    const wacSyncKeys = [];
     const today = new Date().toISOString().split('T')[0];
 
     transaction(() => {
@@ -19533,6 +19628,11 @@ app.post('/api/cost-allocation/update-weighted-avg/:ci_id', requireApiPermission
           settlement_date: today,
           confirmed_by: req.currentUserId
         });
+        wacSyncKeys.push({
+          sku_code: alloc.sku_code,
+          country: origInv.country || '',
+          warehouse: origInv.warehouse || ''
+        });
 
         // 更新分摊记录的原库存信息（不改 inventory）
         run('UPDATE cost_allocations SET original_qty = ?, original_avg_cost = ? WHERE id = ?', [originalQty, oldAvgCost, alloc.id]);
@@ -19549,6 +19649,7 @@ app.post('/api/cost-allocation/update-weighted-avg/:ci_id', requireApiPermission
       if (logs.length !== allocations.length) {
         throw new Error('WAC 确认 SKU 数量不一致，已整体回滚');
       }
+      syncInventoryWacFromHistory(wacSyncKeys);
       // 注意：不再写入 wac_version_id（P1-03-C 已废弃一对一版本关联）
       run('UPDATE commercial_invoices SET wac_confirmed = 1, wac_confirmed_at = datetime(\'now\'), wac_confirmed_by = ? WHERE id = ?', [req.currentUserId || userName, ci.id]);
     });
@@ -19632,7 +19733,7 @@ app.get('/api/wac/history-import/template', requireApiPermission('ci_edit'), asy
       ['结束日期', '选填；填写该条历史WAC的有效期结束日期，格式 YYYY-MM-DD，不能早于开始日期；留空表示未指定结束日期'],
       ['本币币种', '选填；可填 IDR、MYR、THB 等；留空时按国家主数据识别'],
       ['1 RMB = 本币汇率', '选填；填写历史精确汇率。留空时系统只查最后入库日期对应的历史汇率，不会使用今天汇率'],
-      ['重要说明', '本导入只新增锁定的WAC历史记录，不修改库存总表当前WAC、库存数量或库存货值。']
+      ['重要说明', '本导入新增锁定的WAC历史记录，并自动同步库存总表的最新有效WAC和最后入库日期；不会修改库存数量或库存货值。']
     ]
   });
 }));
@@ -19667,6 +19768,7 @@ app.post('/api/wac/history-import', requireApiPermission('ci_edit'), asyncHandle
     const userId = req.currentUserId || '';
     let inserted = 0;
     let skippedDuplicates = 0;
+    const syncKeys = [];
     transaction(() => {
       validation.normalized_items.forEach(item => {
         if (item.duplicate) {
@@ -19704,8 +19806,14 @@ app.post('/api/wac/history-import', requireApiPermission('ci_edit'), asyncHandle
           source_type: 'historical_import',
           import_batch_id: importBatchId
         });
+        syncKeys.push({
+          sku_code: item.sku_code,
+          country: item.country,
+          warehouse: item.warehouse
+        });
         inserted++;
       });
+      syncInventoryWacFromHistory(syncKeys);
     });
 
     res.json({
@@ -19933,6 +20041,7 @@ app.post('/api/wac/confirm/:logistics_batch_id', requireApiPermission('ci_edit')
     const userName = user ? user.name : '';
     const today = new Date().toISOString().split('T')[0];
     const logs = [];
+    const wacSyncKeys = [];
 
     // Load CI for wac_history fields
     const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [meta.ci_id]);
@@ -20007,13 +20116,11 @@ app.post('/api/wac/confirm/:logistics_batch_id', requireApiPermission('ci_edit')
           fx_rate_date: fxSnapshot ? fxSnapshot.rate_date : inboundDate
         });
 
-        // Only update inventory.weighted_avg_cost — NOT available_qty, NOT inventory_value
-        const invRecord = queryOne('SELECT id FROM inventory WHERE sku_code = ? AND country = ? AND warehouse = ?',
-          [skuCode, item.country, item.warehouse]);
-        if (invRecord) {
-          run('UPDATE inventory SET weighted_avg_cost = ?, updated_at = datetime(\'now\') WHERE id = ?',
-            [roundedAvgCost, invRecord.id]);
-        }
+        wacSyncKeys.push({
+          sku_code: skuCode,
+          country: item.country,
+          warehouse: item.warehouse
+        });
 
         logs.push({
           sku_code: skuCode,
@@ -20026,6 +20133,7 @@ app.post('/api/wac/confirm/:logistics_batch_id', requireApiPermission('ci_edit')
           new_avg_cost: roundedAvgCost
         });
       }
+      syncInventoryWacFromHistory(wacSyncKeys);
       // 从正式保存的 WAC 版本生成通知快照，完整列出 SKU 并按环比绝对值排序。
       reportRows=buildWacCostChangeReportRows(logs);
       reportChunks=chunkWacCostChangeRows(reportRows);
@@ -21916,7 +22024,8 @@ const PG_REFRESH_SNAPSHOT_SQL = `      WITH inp AS (
              ex.li            AS ex_li,
              ex.fi            AS ex_fi,
              wc.id            AS wc_id,
-             wc.cost          AS wc_cost
+             wc.cost          AS wc_cost,
+             wc.last_inbound_date AS wc_li
       FROM inp
       LEFT JOIN LATERAL (
         SELECT
@@ -21932,14 +22041,17 @@ const PG_REFRESH_SNAPSHOT_SQL = `      WITH inp AS (
         LIMIT 1
       ) ex ON TRUE
       LEFT JOIN LATERAL (
-        SELECT w.id, w.new_avg_cost AS cost
+        SELECT w.id, w.new_avg_cost AS cost,
+          COALESCE(NULLIF(w.last_inbound_date, ''), NULLIF(lb.actual_arrival_date, ''), '') AS last_inbound_date
         FROM wac_history w
+        LEFT JOIN logistics_batches lb ON lb.id = w.logistics_batch_id
         WHERE w.sku_code = inp.sku_code
           AND w.country  = inp.country
           AND w.warehouse = inp.warehouse
           AND w.confirmation_status = 'confirmed'
           AND w.is_locked = 1
-        ORDER BY w.version_no DESC
+          AND w.confirmed_at IS NOT NULL AND w.confirmed_at != ''
+        ORDER BY w.confirmed_at DESC, w.version_no DESC
         LIMIT 1
       ) wc ON TRUE
       ORDER BY inp.ord`;
