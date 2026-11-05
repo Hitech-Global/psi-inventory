@@ -752,6 +752,16 @@ tbody td{font-weight:400}
 
 
 /* ── 平台接入（独立页与弹窗共用） ───────────────────────────── */
+/* 两个平台各占一页。
+   它们各有各的应用、各有各的凭据，并排放在一起时每一边都被压得很窄，
+   而读者一次只会接一个 —— 所以用页签分开，而不是并排。 */
+.platform-tabs{display:inline-flex;gap:4px;padding:4px;background:#f2f2f4;border-radius:12px;margin:0 0 18px}
+.platform-tab{border:0;background:transparent;padding:9px 20px;border-radius:9px;font:inherit;font-size:13px;font-weight:600;color:#6e6e73;cursor:pointer;white-space:nowrap}
+.platform-tab:hover{color:#172033}
+.platform-tab.is-active{background:#fff;color:#172033;box-shadow:0 1px 3px rgba(0,0,0,.1)}
+.platform-tab:focus-visible{outline:2px solid rgba(0,113,227,.35);outline-offset:1px}
+.platform-panel{display:block}
+.platform-panel.hidden{display:none}
 >
     .connect-shell{max-width:1080px;margin:0 auto;padding:32px 24px 64px}
     .connect-head{margin-bottom:26px}

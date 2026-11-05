@@ -145,6 +145,15 @@ const TEXT = {
           </div>
         </div>
         <div class="connections-body" id="platformConnectionsBody">
+          <!-- 两个平台各占一页：它们各有各的应用、各有各的凭据，
+               并排放在一起时每一边都被压得很窄，而读者一次只会接一个。 -->
+          <div class="platform-tabs" role="tablist" aria-label="选择平台">
+            <button type="button" class="platform-tab is-active" role="tab" id="platformTabShopee"
+                    data-platform-tab="shopee" aria-selected="true" aria-controls="platformPanelShopee">Shopee</button>
+            <button type="button" class="platform-tab" role="tab" id="platformTabTiktok"
+                    data-platform-tab="tiktok" aria-selected="false" aria-controls="platformPanelTiktok">TikTok Shop</button>
+          </div>
+          <div class="platform-panel" role="tabpanel" id="platformPanelShopee" data-platform-panel="shopee">
           <div class="connect-grid">
             <section class="platform-card" data-platform="shopee">
               <div class="platform-card-head">
@@ -165,6 +174,11 @@ const TEXT = {
               </div>
             </section>
 
+          <div class="apps" id="platformShopeeApps"></div>
+          </div>
+
+          <div class="platform-panel hidden" role="tabpanel" id="platformPanelTiktok" data-platform-panel="tiktok">
+            <div class="connect-grid">
             <section class="platform-card" data-platform="tiktok">
               <div class="platform-card-head">
                 <div>
@@ -185,8 +199,8 @@ const TEXT = {
                 <button type="button" class="ghost" id="platformTiktokRefresh"></button>
               </div>
             </section>
+            </div>
           </div>
-          <div class="apps" id="platformShopeeApps"></div>
           <p class="connect-note" id="platformConnectionsNote"></p>
         </div>
       </div>`;
@@ -432,13 +446,58 @@ const TEXT = {
     if (note) note.textContent = t('tiktokNote');
   }
 
+  /**
+   * Which platform's page is being read.
+   *
+   * The last one read is remembered, so a reader who came to connect
+   * TikTok yesterday finds TikTok there today rather than being put
+   * back on the other platform.
+   */
+  function currentTab() {
+    const active = document.querySelector('.platform-tab.is-active');
+    return active ? active.dataset.platformTab : 'shopee';
+  }
+
+  /**
+   * Show one platform's page.
+   */
+  function showTab(name) {
+    const tab = name === 'tiktok' ? 'tiktok' : 'shopee';
+    document.querySelectorAll('.platform-tab').forEach(button => {
+      const on = button.dataset.platformTab === tab;
+      button.classList.toggle('is-active', on);
+      button.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    document.querySelectorAll('.platform-panel').forEach(panel => {
+      panel.classList.toggle('hidden', panel.dataset.platformPanel !== tab);
+    });
+    try { sessionStorage.setItem('platformConnectionsTab', tab); } catch (error) { /* a browser that will not remember still gets a page */ }
+  }
+
+  /**
+   * Read what the page being looked at holds.
+   *
+   * Only the page in front is read: the other one is not needed yet, and
+   * asking for it would make the reader wait for something they are not
+   * looking at.
+   */
+  function loadCurrentTab() {
+    if (currentTab() === 'tiktok') loadTiktok();
+    else {
+      loadShopee();
+      loadShopeeApps();
+    }
+  }
+
   function open() {
     const modal = ensureModal();
     label();
     modal.classList.remove('hidden');
-    loadShopee();
-    loadTiktok();
-    loadShopeeApps();
+    // 回到上次看的那一页。
+    let remembered = '';
+    try { remembered = sessionStorage.getItem('platformConnectionsTab') || ''; } catch (error) { remembered = ''; }
+    showTab(remembered === 'tiktok' ? 'tiktok' : 'shopee');
+    loadCurrentTab();
   }
 
   function close() {
@@ -459,10 +518,15 @@ const TEXT = {
       close();
       return;
     }
+    if (event.target.closest('[data-platform-tab]')) {
+      event.preventDefault();
+      showTab(event.target.closest('[data-platform-tab]').dataset.platformTab);
+      loadCurrentTab();
+      return;
+    }
     if (event.target.closest('#platformConnectionsRefresh, #platformShopeeRefresh, #platformTiktokRefresh')) {
       event.preventDefault();
-      loadShopee();
-      loadTiktok();
+      loadCurrentTab();
       return;
     }
     const connectApp = event.target.closest('[data-connect-app]');
@@ -507,5 +571,5 @@ const TEXT = {
     }
   });
 
-  window.ShopeePlatformConnections = { open, close, loadShopee, loadTiktok };
+  window.ShopeePlatformConnections = { open, close, showTab, currentTab, loadShopee, loadTiktok };
 })();
