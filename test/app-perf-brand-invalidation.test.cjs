@@ -74,11 +74,6 @@ test('unrelated finance mutations do not invalidate inventory filter options', (
   assert.equal(store.page.get('inv-filter-options').dirty, false);
 });
 
-function sandboxMasterCache(store) {
-  // AppStore is created in the same VM global as window._masterCache.
-  return store._testMasterCache;
-}
-
 test('PO, PI and CI record create/edit invalidate brand references, but approval actions do not', async () => {
   const cases = [
     ['POST', '/api/purchase-orders'],
@@ -92,7 +87,7 @@ test('PO, PI and CI record create/edit invalidate brand references, but approval
   for (const [method, url] of cases) {
     const { store, calls, masterCache } = createStoreWithMasterCache();
     await store.ref('brands');
-    assert.equal(masterCache.brands, ['BOYA']);
+    assert.deepEqual(masterCache.brands, ['BOYA']);
     store.onMutation(method, url, {});
     await store.ref('brands');
     assert.equal(calls.filter(x => x === '/api/brands/all').length, 2, url + ' should refresh the brand reference');
