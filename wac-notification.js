@@ -175,6 +175,18 @@ function cardToFallbackText(card) {
       }
       continue;
     }
+    if (element.tag === 'column_set') {
+      const columns = Array.isArray(element.columns) ? element.columns : [];
+      const cells = columns.map(column => (Array.isArray(column && column.elements) ? column.elements : []).map(child => {
+        if (!child || typeof child !== 'object') return '';
+        if (child.tag === 'markdown' && typeof child.content === 'string') return cleanFeishuFallbackText(child.content);
+        if (child.tag === 'plain_text' && typeof child.content === 'string') return cleanFeishuFallbackText(child.content);
+        if (child.tag === 'div' && child.text && typeof child.text.content === 'string') return cleanFeishuFallbackText(child.text.content);
+        return '';
+      }).filter(Boolean).join(' '));
+      if (cells.some(Boolean)) add(cells.join(' | '));
+      continue;
+    }
     // Keep compatibility with the legacy card schema used by older notifications.
     if (element.tag === 'div') {
       const fields = Array.isArray(element.fields) ? element.fields : [];
