@@ -151,7 +151,8 @@ function parseSheetRows(sheets,options){
       if(clean(part)===''||/^(total|subtotal|grand\s*total|合计|总计|小计)$/i.test(clean(part)))continue;
       const brandCell=cell(source,found.columns,'brand').value;
       const brand=clean(brandCell)||clean(opts.brand);
-      const preferredCurrency=getDefaultCurrency(brand,opts.brand_currencies)||clean(opts.currency).toUpperCase();
+      const brandDefaultCurrency=getDefaultCurrency(brand,opts.brand_currencies);
+      const preferredCurrency=brandDefaultCurrency||clean(opts.currency).toUpperCase();
       const priceCell=cell(source,found.columns,'quote_price',preferredCurrency);
       const currencyCell=cell(source,found.columns,'currency').value;
       const dateCell=cell(source,found.columns,'quote_date').value;
@@ -171,7 +172,8 @@ function parseSheetRows(sheets,options){
         match_status:'unlinked',match_source:clean(psiSku)?'manual':'unlinked',
         brand,brand_source:clean(brandCell)?'file':'default',
         product_type:productType,model:clean(model),spec,
-        quote_price:price,currency:clean(currencyCell||headerCurrency||getDefaultCurrency(brand,opts.brand_currencies)||opts.currency).toUpperCase(),
+        quote_price:price,currency:clean(currencyCell||headerCurrency||brandDefaultCurrency||opts.currency).toUpperCase(),
+        currency_source:currencyCell?'file':headerCurrency?'header':brandDefaultCurrency?'brand_default':clean(opts.currency)?'supplier_default':'',
         quote_date:normalizeDate(dateCell||opts.quote_date),quote_date_source:clean(dateCell)?'file':'default',remark:clean(remark),
         source_sheet:clean(sheet.name),source_row:i+1,supplier_id:clean(opts.supplier_id)
       });

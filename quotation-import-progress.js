@@ -240,7 +240,6 @@ function renderPreview(m){
 }
 function rematchCurrentRows(m){
   const n=normalizer();if(!n||!importOptions||!currentRows.length)return;
-  const n=normalizer();
   currentRows.forEach(r=>{
     if(r.brand_source==='default')r.brand=selectedBrand;
     if(r.quote_date_source==='default')r.quote_date=selectedQuoteDate;
