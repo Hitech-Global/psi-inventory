@@ -457,21 +457,54 @@ function buildListingNotifyCard(batchNo, ctx, lang, mode, statusChange) {
   } else {
     statusValue = (ctx && typeof ctx.listing_status !== 'undefined') ? listingStatusLabel(lang, ctx.listing_status) : '-';
   }
-  const fields = [
-    { is_short: false, text: { tag: 'lark_md', content: '**' + F.batch + '**\n' + (batchNo || '-') } },
-    { is_short: true, text: { tag: 'lark_md', content: '**' + F.brand + '**\n' + brand } },
-    { is_short: true, text: { tag: 'lark_md', content: '**' + F.batchQty + '**\n' + batchQty } },
-    { is_short: true, text: { tag: 'lark_md', content: '**' + F.ci + '**\n' + ci } },
-    { is_short: true, text: { tag: 'lark_md', content: '**' + F.ciQty + '**\n' + ciQty } },
-    { is_short: true, text: { tag: 'lark_md', content: '**' + F.country + '**\n' + country } },
-    { is_short: true, text: { tag: 'lark_md', content: '**' + F.warehouse + '**\n' + warehouse } },
-    { is_short: true, text: { tag: 'lark_md', content: '**' + F.cartons + '**\n' + cartons + ' ' + F.cartonUnit } },
-    { is_short: true, text: { tag: 'lark_md', content: '**' + F.weight + '**\n' + weight + ' ' + F.weightUnit } },
-    { is_short: true, text: { tag: 'lark_md', content: '**' + F.cbm + '**\n' + cbm + ' ' + F.cbmUnit } },
-    { is_short: false, text: { tag: 'lark_md', content: '**' + F.owners + '**\n' + owners } },
-    { is_short: true, text: { tag: 'lark_md', content: '**' + statusField + '**\n' + statusValue } }
+
+  // 动态业务值统一转成单行安全文本，避免负责人/仓库名称中的换行或 Markdown 符号破坏卡片布局。
+  const safeText = value => String(value === null || value === undefined || value === '' ? '—' : value)
+    .replace(/[\r\n]+/g, ' / ')
+    .replace(/\*/g, '\\*')
+    .replace(/_/g, '\\_');
+
+  // 一行一个双列布局：左侧字段名、右侧字段值。使用 Card JSON 2.0，避免旧版 fields 网格在群聊窄卡片中纵向堆叠。
+  const makeRow = (label, value, emphasize) => ({
+    tag: 'column_set',
+    flex_mode: 'none',
+    background_style: 'grey',
+    horizontal_spacing: '8px',
+    margin: '0px 0px 4px 0px',
+    columns: [
+      {
+        tag: 'column',
+        width: 'weighted',
+        weight: 1,
+        vertical_align: 'center',
+        elements: [{ tag: 'markdown', content: '**' + safeText(label) + '**', text_size: 'normal_v2', margin: '0px' }]
+      },
+      {
+        tag: 'column',
+        width: 'weighted',
+        weight: 3,
+        vertical_align: 'center',
+        elements: [{ tag: 'markdown', content: emphasize ? '**' + safeText(value) + '**' : safeText(value), text_size: 'normal_v2', margin: '0px' }]
+      }
+    ]
+  });
+
+  const rows = [
+    [F.batch, batchNo || '-', true],
+    [F.brand, brand, false],
+    [F.batchQty, batchQty, false],
+    [F.ci, ci, false],
+    [F.ciQty, ciQty, false],
+    [F.country, country, false],
+    [F.warehouse, warehouse, false],
+    [F.cartons, cartons + ' ' + F.cartonUnit, false],
+    [F.weight, weight + ' ' + F.weightUnit, false],
+    [F.cbm, cbm + ' ' + F.cbmUnit, false],
+    [F.owners, owners, false],
+    [statusField, statusValue, false]
   ];
-  const elements = [{ tag: 'div', fields: fields }];
+  const elements = rows.map(row => makeRow(row[0], row[1], row[2]));
+
   if (statusChange) {
     const prevLabel = (lang === 'zh') ? '原状态' : 'Previous Status';
     const currLabel = (lang === 'zh') ? '新状态' : 'Current Status';
@@ -483,31 +516,49 @@ function buildListingNotifyCard(batchNo, ctx, lang, mode, statusChange) {
       ? logisticsDisplayStatusLabel(lang, statusChange.newStatus)
       : listingStatusLabel(lang, statusChange.newStatus);
     elements.push({
-      tag: 'div',
-      fields: [
-        { is_short: false, text: { tag: 'lark_md', content: '**' + sectionTitle + '**' } },
-        { is_short: true, text: { tag: 'lark_md', content: '**' + prevLabel + '**\n' + prevVal } },
-        { is_short: true, text: { tag: 'lark_md', content: '**' + currLabel + '**\n' + currVal } }
-      ]
+      tag: 'markdown',
+      content: '**' + sectionTitle + '**',
+      text_size: 'normal_v2',
+      margin: '8px 0px 4px 0px'
     });
+    elements.push(makeRow(prevLabel, prevVal, false));
+    elements.push(makeRow(currLabel, currVal, true));
   }
+
+  elements.push({
+    tag: 'markdown',
+    content: "<font color='grey'>" + safeText(L.footer) + "</font>",
+    text_size: 'normal_v2',
+    margin: '8px 0px 0px 0px'
+  });
+
   const baseUrl = process.env.APP_BASE_URL;
   if (baseUrl) {
     const url = baseUrl.replace(/\/+$/, '') + '/?page=logistics&batch=' + encodeURIComponent(ctx && ctx.id ? ctx.id : (batchNo || ''));
     elements.push({
-      tag: 'action',
-      actions: [{
-        tag: 'button',
-        text: { tag: 'plain_text', content: (lang === 'zh' ? '查看物流详情' : 'View Logistics Detail') },
-        type: 'primary',
-        url: url
-      }]
+      tag: 'button',
+      text: { tag: 'plain_text', content: (lang === 'zh' ? '查看物流详情' : 'View Logistics Detail') },
+      type: 'primary_filled',
+      width: 'fill',
+      size: 'medium',
+      behaviors: [{ type: 'open_url', default_url: url }]
     });
   }
+
   return {
-    config: { wide_screen_mode: true },
-    header: { template: 'blue', title: { tag: 'plain_text', content: L.title } },
-    elements: elements
+    schema: '2.0',
+    config: { update_multi: true },
+    header: {
+      title: { tag: 'plain_text', content: L.title },
+      template: 'blue',
+      padding: '12px 12px 12px 12px'
+    },
+    body: {
+      direction: 'vertical',
+      padding: '12px 12px 12px 12px',
+      vertical_spacing: '4px',
+      elements: elements
+    }
   };
 }
 

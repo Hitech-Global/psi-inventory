@@ -29,6 +29,7 @@ on:
       - 'wac-notification.js'
       - 'wac-notification-ui.js'
       - 'test/wac-cost-change-notification.test.cjs'
+      - 'test/listing-notification-card.test.cjs'
       - 'db-pg.js'
       - 'db.js'
       - 'db-sqlite.js'
@@ -82,6 +83,7 @@ jobs:
           node --check wac-notification.js
           node --check wac-notification-ui.js
           node --check test/wac-cost-change-notification.test.cjs
+          node --check test/listing-notification-card.test.cjs
           node --check db-pg.js
           node --check db.js
           node --check db-sqlite.js
@@ -116,6 +118,8 @@ jobs:
         run: node --test wac-calculator.test.cjs
       - name: Test WAC cost-change Feishu notification reports
         run: node --test test/wac-cost-change-notification.test.cjs
+      - name: Test Listing Feishu notification table cards
+        run: node --test test/listing-notification-card.test.cjs
       - name: Test suggested purchase quantity wheel behavior
         run: node test/rp-suggested-qty-wheel.test.cjs
       - name: Test WAC history matrix and historical import
