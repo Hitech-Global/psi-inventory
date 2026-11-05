@@ -15,6 +15,8 @@ on:
       - 'index.html'
       - 'assets/bigseller-inventory-import.js'
       - 'test/bigseller-inventory-import.test.cjs'
+      - 'assets/zhisu-inventory-import.js'
+      - 'test/zhisu-inventory-import.test.cjs'
       - 'test/inventory-import-precheck.test.cjs'
       - 'assets/finance-payment-calendar.js'
       - 'test/finance-payment-calendar.test.cjs'
@@ -81,6 +83,8 @@ jobs:
           node --check test/pi-deposit-payable-date.test.cjs
           node --check assets/bigseller-inventory-import.js
           node --check test/bigseller-inventory-import.test.cjs
+          node --check assets/zhisu-inventory-import.js
+          node --check test/zhisu-inventory-import.test.cjs
           node --check test/inventory-import-precheck.test.cjs
           node --check assets/finance-payment-calendar.js
           node --check test/finance-payment-calendar.test.cjs
@@ -128,6 +132,8 @@ jobs:
         run: node --test test/po-plan-quotation-pricing.test.cjs
       - name: Test BigSeller inventory import adapter and SKU master-data blocking
         run: node --test test/bigseller-inventory-import.test.cjs test/inventory-import-precheck.test.cjs
+      - name: Test Zhisu inventory import adapter and warehouse / duplicate safeguards
+        run: node --test test/zhisu-inventory-import.test.cjs
       - name: Test inventory financial value aggregation
         run: node test/inventory-asset-values.test.cjs
       - name: Test inventory overview export fields
