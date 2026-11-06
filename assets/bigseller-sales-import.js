@@ -79,12 +79,23 @@
     return text(value).replace(/[\s\u3000]+/g, '').toLowerCase();
   }
 
+  function isMarketplacePlatform(value) {
+    var platformName = normalizeMarker(value);
+    // Be deliberately allow-listed: an absent or unfamiliar platform must
+    // never turn a blank order marker into an online sales record.
+    return [
+      'shopee', 'shopeemall',
+      'tiktok', 'tiktokshop',
+      'tokopedia'
+    ].indexOf(platformName) >= 0;
+  }
+
   function classifyOrderMarker(value, platform) {
     var marker = normalizeMarker(value);
     var platformName = normalizeMarker(platform);
-    // Blank markers are online only for marketplace channels. Manual + blank
-    // is not a sales channel and must be excluded.
-    if (!marker) return platformName === 'manual' ? '' : '线上渠道';
+    // Blank markers are online only when the source explicitly identifies a
+    // supported marketplace. Manual, missing, and unknown platforms are out.
+    if (!marker) return isMarketplacePlatform(platformName) ? '线上渠道' : '';
     // These are the only two allowed offline order markers.
     if (marker === 'resellerorder-payinadvance') return '线下渠道';
     if (marker === 'resellerorder-credit') return '线下渠道';
@@ -145,7 +156,7 @@
         sku: findColumn(headers, ['商品SKU', '商品 SKU', 'sku', 'sku code']),
         quantity: findColumn(headers, ['数量', '商品数量', 'quantity', 'qty']),
         packageNo: findColumn(headers, ['包裹号', '包裹编号', 'package no', 'package number']),
-        platform: findColumn(headers, ['平台', 'platform']),
+        platform: findColumn(headers, ['平台', '销售平台', '平台名称', '平台类型', '店铺平台', '渠道', 'platform', 'sales platform', 'marketplace']),
         store: findColumn(headers, ['平台店铺', '店铺', 'platform shop', 'shop name']),
         warehouse: findColumn(headers, ['发货仓库', '仓库', 'warehouse'])
       };
