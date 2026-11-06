@@ -7,6 +7,8 @@ on:
       - 'app.js'
       - 'test/ci-logistics-status-filter.test.cjs'
       - 'scripts/ci-edit-before-pl-hotfix.cjs'
+      - 'scripts/ci-inline-clearance-hotfix.cjs'
+      - 'test/ci-inline-clearance-hotfix.test.cjs'
       - 'test/ci-edit-before-pl-hotfix.test.cjs'
       - 'test/ci-clearance-type.test.cjs'
       - 'test/ci-edit-entry-supplier-column.test.cjs'
@@ -80,6 +82,8 @@ jobs:
         run: |
           node --check app.js
           node --check scripts/ci-edit-before-pl-hotfix.cjs
+          node --check scripts/ci-inline-clearance-hotfix.cjs
+          node --check test/ci-inline-clearance-hotfix.test.cjs
           node --check test/ci-edit-before-pl-hotfix.test.cjs
           node --check test/ci-clearance-type.test.cjs
           node --check test/ci-edit-entry-supplier-column.test.cjs
@@ -131,7 +135,7 @@ jobs:
       - name: Test CI logistics-status filter
         run: node --test test/ci-logistics-status-filter.test.cjs
       - name: Test CI clearance type create, filter, detail and edit
-        run: node test/ci-edit-before-pl-hotfix.test.cjs && node test/ci-clearance-type.test.cjs
+        run: node test/ci-edit-before-pl-hotfix.test.cjs && node test/ci-clearance-type.test.cjs && node test/ci-inline-clearance-hotfix.test.cjs
       - name: Test CI edit entry and supplier column removal
         run: node test/ci-edit-entry-supplier-column.test.cjs
       - name: Test opt-in page and API performance diagnostics
