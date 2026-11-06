@@ -12305,7 +12305,7 @@ function renderUnifiedCITable(operationalData,historicalData){
     var noCell=cell(srcTable,sourceRow,['历史CI号','CI号','CI No']);
     var toggle=document.createElement('button');toggle.type='button';toggle.className='ci-history-expand';
     toggle.id='ci-historical-caret-'+h.id;toggle.textContent='▶';
-    toggle.title='展开历史付款明细';toggle.setAttribute('onclick',"toggleHistoricalCIDetail(event,'"+String(h.id).replace(/'/g,'')+"')");
+    toggle.title='展开历史付款明细';toggle.style.cssText='border:0;background:transparent;color:#8e8e93;padding:0 7px 0 0;font-size:12px;cursor:pointer;line-height:1';toggle.setAttribute('onclick',"toggleHistoricalCIDetail(event,'"+String(h.id).replace(/'/g,'')+"')");
     noCell.insertBefore(toggle,noCell.firstChild);tr.appendChild(noCell);
     tr.appendChild(cell(srcTable,sourceRow,['CI类型','CI Type']));
     tr.appendChild(cell(srcTable,sourceRow,['品牌','Brand']));
@@ -12332,8 +12332,8 @@ function renderUnifiedCITable(operationalData,historicalData){
       ['导入历史已付',h.historical_paid_amount],['后续已付',h.subsequent_paid_amount],
       ['抵扣',h.deduction_amount],['抹零',h.rounding_amount]
     ];
-    td.innerHTML='<div class="ci-historical-payment-grid">'+items.map(function(item){
-      return '<div><span>'+esc(item[0])+'</span><strong>'+esc(fmtMoney(Number(item[1]||0)))+'</strong></div>';
+    td.innerHTML='<div class="ci-historical-payment-grid" style="display:grid;grid-template-columns:repeat(4,minmax(130px,1fr));gap:10px;padding:12px 14px;background:#f5f5f7;border:1px solid #e5e5ea;border-radius:10px">'+items.map(function(item){
+      return '<div style="display:flex;flex-direction:column;gap:5px"><span style="font-size:12px;color:#86868b">'+esc(item[0])+'</span><strong style="font-size:13px;color:#1d1d1f;font-weight:600">'+esc(fmtMoney(Number(item[1]||0)))+'</strong></div>';
     }).join('')+'</div>';
     detail.appendChild(td);tbody.appendChild(detail);
   }
