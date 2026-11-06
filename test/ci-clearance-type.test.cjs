@@ -9,8 +9,8 @@ const editPatch = require('../scripts/ci-edit-before-pl-hotfix.cjs');
 const editUi = editPatch.patchAppPerfSource('/* perf */');
 
 assert.match(app, /ci-clearance-filter/);
-assert.ok(app.includes('formal\\">正清'), 'create form must offer 正清');
-assert.ok(app.includes('non_formal\\">非正清'), 'create form must offer 非正清');
+assert.ok(app.includes('formal">正清'), 'create form must offer 正清');
+assert.ok(app.includes('non_formal">非正清'), 'create form must offer 非正清');
 assert.match(app, /clearance_type:clearanceType/);
 assert.match(app, /ciClearanceLabel\(c\.clearance_type\)/);
 assert.ok(app.includes('nci-clearance-type'), 'create form must include clearance selector');
