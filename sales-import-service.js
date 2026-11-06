@@ -83,20 +83,22 @@ function parseIsValidOrder(value) {
 /** Preserve the server's current validation semantics: no new quantity rule. */
 function normalizeSalesRows(items) {
   return (Array.isArray(items) ? items : []).map((item, index) => {
-    const sourceRowNo = index + 2;
+    const sourceRowNo = Number(item && item._rowNum) > 0 ? Number(item._rowNum) : index + 2;
     const rawDate = item && item.order_date;
     const normalizedDate = rawDate || rawDate === 0 ? normalizeOrderDate(rawDate) : null;
-    // Match the old formal route's first-error/early-return order exactly:
-    // SKU -> source_system -> order_no -> normalized date.  The old preview
-    // had a different multi-error behavior; the new preview intentionally
-    // predicts this formal apply behavior instead.
+    // Match the old formal route's first-error/early-return order exactly,
+    // while preserving row-level validation errors emitted by native adapters.
     let firstError = '';
     if (!item || !item.sku_code) firstError = 'SKU不能为空';
     else if (!item.source_system) firstError = '来源系统不能为空';
     else if (!item.order_no) firstError = '订单号不能为空';
     else if (!item.country || !String(item.country).trim()) firstError = '国家不能为空';
     else if (!normalizedDate) firstError = '下单日期格式无法识别：' + rawDate;
-    const errors = firstError ? [firstError] : [];
+    const sourceErrors = Array.isArray(item && item._errors)
+      ? item._errors.map(reason => String(reason || '').trim()).filter(Boolean)
+      : [];
+    const errors = sourceErrors.slice();
+    if (firstError && !errors.includes(firstError)) errors.unshift(firstError);
 
     const row = {
       source_row_no: sourceRowNo,

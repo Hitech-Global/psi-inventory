@@ -79,11 +79,15 @@
     return text(value).replace(/[\s\u3000]+/g, '').toLowerCase();
   }
 
-  function classifyOrderMarker(value) {
+  function classifyOrderMarker(value, platform) {
     var marker = normalizeMarker(value);
-    if (!marker) return '线上';
-    if (marker === 'resellerorder-payinadvance') return '线下';
-    if (marker === 'resellerorder-credit') return '线下';
+    var platformName = normalizeMarker(platform);
+    // Blank markers are online only for marketplace channels. Manual + blank
+    // is not a sales channel and must be excluded.
+    if (!marker) return platformName === 'manual' ? '' : '线上渠道';
+    // These are the only two allowed offline order markers.
+    if (marker === 'resellerorder-payinadvance') return '线下渠道';
+    if (marker === 'resellerorder-credit') return '线下渠道';
     return '';
   }
 
@@ -98,7 +102,8 @@
   function countryFromText(value) {
     var raw = text(value).toLowerCase();
     if (!raw) return '';
-    if (raw.indexOf('indonesia') >= 0 || raw.indexOf('印尼') >= 0 || raw.indexOf('印度尼西亚') >= 0) return '印尼';
+    // Match the country master labels used by PSI sales_records.
+    if (raw.indexOf('indonesia') >= 0 || raw.indexOf('印尼') >= 0 || raw.indexOf('印度尼西亚') >= 0) return '印度尼西亚';
     if (raw.indexOf('malaysia') >= 0 || raw.indexOf('马来西亚') >= 0) return '马来西亚';
     if (raw.indexOf('thailand') >= 0 || raw.indexOf('泰国') >= 0) return '泰国';
     return '';
@@ -152,6 +157,24 @@
     return null;
   }
 
+  function orderTimestampValue(value) {
+    if (value instanceof Date) return isNaN(value.getTime()) ? null : value.getTime();
+    var raw = text(value);
+    if (!raw) return null;
+    var match = raw.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:[ T](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
+    if (match) {
+      return Date.UTC(
+        Number(match[1]), Number(match[2]) - 1, Number(match[3]),
+        Number(match[4] || 0), Number(match[5] || 0), Number(match[6] || 0)
+      );
+    }
+    if (/^\d+(?:\.\d+)?$/.test(raw)) {
+      var serial = Number(raw);
+      if (serial >= 20000 && serial <= 80000) return Math.floor((serial - 25569) * 86400000);
+    }
+    return null;
+  }
+
   function parseBigSellerWorkbook(workbook, filename, XLSX) {
     var sheet = findBigSellerSheet(workbook, XLSX);
     if (!sheet) return null;
@@ -160,16 +183,22 @@
     var c = sheet.columns;
     var rawRows = countDataRows(rows);
     var fileCountry = inferFileCountry(rows, c.store);
-    var records = [];
+    var parsedRows = [];
+    var exactSeen = Object.create(null);
     var stats = {
       sourceRows: rawRows,
       includedRows: 0,
       excludedMarkerRows: 0,
       excludedUnpaidRows: 0,
+      exactDuplicateRows: 0,
+      snapshotDuplicateRows: 0,
+      conflictGroups: 0,
+      excludedConflictRows: 0,
       trueRows: 0,
       falseRows: 0,
       excludedMarkers: Object.create(null),
-      unresolvedCountryRows: 0
+      unresolvedCountryRows: 0,
+      conflictDetails: []
     };
 
     for (var i = 1; i < rows.length; i++) {
@@ -177,10 +206,12 @@
       if (!row.some(function (cell) { return text(cell) !== ''; })) continue;
 
       var rawMarker = text(row[c.marker]);
-      var channel = classifyOrderMarker(rawMarker);
+      var platform = c.platform >= 0 ? text(row[c.platform]) : '';
+      var channel = classifyOrderMarker(rawMarker, platform);
       if (!channel) {
         stats.excludedMarkerRows++;
-        var markerLabel = rawMarker || '（空白）';
+        var markerLabel = rawMarker || (normalizeMarker(platform) === 'manual'
+          ? '（Manual + 空白订单标记）' : '（空白）');
         stats.excludedMarkers[markerLabel] = (stats.excludedMarkers[markerLabel] || 0) + 1;
         continue;
       }
@@ -191,12 +222,21 @@
         continue;
       }
 
-      var orderDate = normalizeOrderDate(row[c.orderDate]);
+      // Only exact source-row duplicates are removed automatically. Rows that
+      // share an order item key but disagree on quantity/package are quarantined.
+      var rawSignature = JSON.stringify(row.map(text));
+      if (exactSeen[rawSignature]) {
+        stats.exactDuplicateRows++;
+        continue;
+      }
+      exactSeen[rawSignature] = true;
+
+      var orderDateRaw = row[c.orderDate];
+      var orderDate = normalizeOrderDate(orderDateRaw);
       var orderNo = text(row[c.orderNo]);
       var skuCode = text(row[c.sku]);
       var quantity = parseQuantity(row[c.quantity]);
       var store = c.store >= 0 ? text(row[c.store]) : '';
-      var platform = c.platform >= 0 ? text(row[c.platform]) : '';
       var packageNo = c.packageNo >= 0 ? text(row[c.packageNo]) : '';
       var warehouse = c.warehouse >= 0 ? text(row[c.warehouse]) : '';
       var country = countryFromText(store) || fileCountry;
@@ -211,7 +251,7 @@
 
       var errors = [];
       if (!orderNo) errors.push('订单号不能为空');
-      if (!orderDate) errors.push('下单时间格式无法识别：' + text(row[c.orderDate]));
+      if (!orderDate) errors.push('下单时间格式无法识别：' + text(orderDateRaw));
       if (!skuCode) errors.push('商品SKU不能为空');
       if (!quantity.valid) errors.push('数量必须为正整数');
       if (!country) {
@@ -219,9 +259,12 @@
         errors.push('无法从 BigSeller 店铺名称识别国家');
       }
 
-      records.push({
+      parsedRows.push({
         _rowNum: i + 1,
         _errors: errors,
+        _sourceTimestamp: orderTimestampValue(orderDateRaw),
+        _packageNo: packageNo,
+        _rawOrderDate: text(orderDateRaw),
         source_system: 'BigSeller',
         order_no: orderNo,
         order_detail_id: '',
@@ -235,11 +278,115 @@
         original_order_status: status,
         remark: remarkParts.join('；')
       });
-
-      stats.includedRows++;
-      if (validOrder) stats.trueRows++;
-      else stats.falseRows++;
     }
+
+    // PSI's business identity includes SKU and channel. Therefore multiple
+    // SKUs under one order remain separate sales lines.
+    var grouped = Object.create(null);
+    var groupOrder = [];
+    parsedRows.forEach(function (record) {
+      if (!record.order_no || !record.sku_code) {
+        groupOrder.push({ key: null, records: [record] });
+        return;
+      }
+      var key = JSON.stringify([record.order_no, record.sku_code, record.shop_platform]);
+      if (!grouped[key]) {
+        grouped[key] = [];
+        groupOrder.push({ key: key, records: grouped[key] });
+      }
+      grouped[key].push(record);
+    });
+
+    var records = [];
+    groupOrder.forEach(function (entry) {
+      var group = entry.records;
+      if (group.length === 1) {
+        records.push(group[0]);
+        return;
+      }
+
+      var quantities = Object.create(null);
+      var packages = Object.create(null);
+      group.forEach(function (record) {
+        quantities[String(record.quantity)] = true;
+        packages[String(record._packageNo)] = true;
+      });
+      var quantityConflict = Object.keys(quantities).length > 1;
+      var packageConflict = Object.keys(packages).length > 1;
+      if (quantityConflict || packageConflict) {
+        var reason = quantityConflict && packageConflict ? '数量和包裹号不同'
+          : (quantityConflict ? '数量不同' : '包裹号不同');
+        stats.conflictGroups++;
+        stats.excludedConflictRows += group.length;
+        stats.conflictDetails.push({
+          order_no: group[0].order_no,
+          sku_code: group[0].sku_code,
+          channel: group[0].shop_platform,
+          reason: reason,
+          records: group.map(function (record) {
+            return {
+              source_row: record._rowNum,
+              order_date: record._rawOrderDate,
+              quantity: record.quantity,
+              package_no: record._packageNo,
+              status: record.original_order_status
+            };
+          })
+        });
+        return;
+      }
+
+      // Same order item, same quantity and package: keep one sales line.
+      // Preserve the earliest source date, but use the latest unambiguous
+      // status snapshot so an in-file status change is not lost.
+      var timedRows = group.filter(function (record) { return record._sourceTimestamp != null; });
+      var latestTimestamp = null;
+      var latestRows = group;
+      if (timedRows.length) {
+        latestTimestamp = timedRows.reduce(function (latest, record) {
+          return latest == null || record._sourceTimestamp > latest ? record._sourceTimestamp : latest;
+        }, null);
+        latestRows = timedRows.filter(function (record) { return record._sourceTimestamp === latestTimestamp; });
+      }
+      var latestStatuses = Object.create(null);
+      latestRows.forEach(function (record) { latestStatuses[record.original_order_status] = true; });
+      if (Object.keys(latestStatuses).length > 1) {
+        stats.conflictGroups++;
+        stats.excludedConflictRows += group.length;
+        stats.conflictDetails.push({
+          order_no: group[0].order_no,
+          sku_code: group[0].sku_code,
+          channel: group[0].shop_platform,
+          reason: '相同时间存在不同订单状态',
+          records: group.map(function (record) {
+            return {
+              source_row: record._rowNum,
+              order_date: record._rawOrderDate,
+              quantity: record.quantity,
+              package_no: record._packageNo,
+              status: record.original_order_status
+            };
+          })
+        });
+        return;
+      }
+
+      var kept = group[0];
+      var latest = latestRows[latestRows.length - 1];
+      kept.original_order_status = latest.original_order_status;
+      kept.is_valid_order = latest.is_valid_order;
+      stats.snapshotDuplicateRows += group.length - 1;
+      records.push(kept);
+    });
+
+    records.forEach(function (record) {
+      delete record._sourceTimestamp;
+      delete record._packageNo;
+      delete record._rawOrderDate;
+      stats.includedRows++;
+      if (record.is_valid_order) stats.trueRows++;
+      else stats.falseRows++;
+    });
 
     return {
       filename: text(filename),
@@ -256,10 +403,31 @@
     });
   }
 
+  function downloadConflictReport(win, stats) {
+    if (!win || !win.XLSX || !stats || !Array.isArray(stats.conflictDetails) || !stats.conflictDetails.length) return;
+    var rows = [[
+      '订单号', 'SKU', '渠道', '冲突原因', '原始行号', '下单时间', '数量', '包裹号', '订单状态'
+    ]];
+    stats.conflictDetails.forEach(function (group) {
+      (group.records || []).forEach(function (record) {
+        rows.push([
+          group.order_no, group.sku_code, group.channel, group.reason,
+          record.source_row, record.order_date, record.quantity,
+          record.package_no, record.status
+        ]);
+      });
+    });
+    var sheet = win.XLSX.utils.aoa_to_sheet(rows);
+    var book = win.XLSX.utils.book_new();
+    win.XLSX.utils.book_append_sheet(book, sheet, '冲突订单明细');
+    win.XLSX.writeFile(book, 'BigSeller销售导入异常明细.xlsx');
+  }
+
   function renderSummary(win, stats, country) {
     var el = win.document && win.document.getElementById('sales-preview-stats');
     if (!el) return;
     var countryLabel = country || '国家未识别';
+    var conflictGroups = Number(stats.conflictGroups || 0);
     var html = '<div style="margin-bottom:10px;padding:12px 14px;border:1px solid #d6e4ff;background:#f5f8ff;border-radius:10px;font-size:12px;color:#333">' +
       '<div style="font-weight:650;font-size:13px;margin-bottom:6px">已识别 BigSeller 销售数据</div>' +
       '<div style="display:flex;flex-wrap:wrap;gap:8px 16px;color:#555;margin-bottom:6px">' +
@@ -269,11 +437,18 @@
       '<span>True：' + Number(stats.trueRows || 0).toLocaleString('en-US') + '</span>' +
       '<span>False：' + Number(stats.falseRows || 0).toLocaleString('en-US') + '</span>' +
       '</div>' +
-      '<div style="color:#666">其他订单标记排除：' + Number(stats.excludedMarkerRows || 0).toLocaleString('en-US') +
-      ' 条；未付款排除：' + Number(stats.excludedUnpaidRows || 0).toLocaleString('en-US') + ' 条。</div>' +
-      '<div style="color:#888;margin-top:4px">仅导入订单标记为空白、Pay in Advance、Credit 的订单；其他标记不会进入系统。</div>' +
+      '<div style="color:#666">订单标记排除：' + Number(stats.excludedMarkerRows || 0).toLocaleString('en-US') +
+      ' 条；未付款排除：' + Number(stats.excludedUnpaidRows || 0).toLocaleString('en-US') +
+      ' 条；完全重复去重：' + Number(stats.exactDuplicateRows || 0).toLocaleString('en-US') +
+      ' 条；同订单商品快照合并：' + Number(stats.snapshotDuplicateRows || 0).toLocaleString('en-US') + ' 条。</div>' +
+      (conflictGroups ? '<div style="color:#b45309;margin-top:5px">冲突订单：' + conflictGroups +
+        ' 组，共 ' + Number(stats.excludedConflictRows || 0) + ' 条已暂不导入。请下载异常明细人工核对。</div>' +
+        '<button type="button" id="bigseller-sales-conflict-download" style="margin-top:7px;padding:5px 10px;border:1px solid #d1d5db;border-radius:7px;background:#fff;color:#333;cursor:pointer">下载冲突明细</button>' : '') +
+      '<div style="color:#888;margin-top:4px">仅导入：非 Manual 平台的空白订单标记，以及 Pay in Advance、Credit；其他标记和 Manual 空白订单均排除。</div>' +
       '</div>';
     el.insertAdjacentHTML('afterbegin', html);
+    var button = win.document.getElementById('bigseller-sales-conflict-download');
+    if (button) button.addEventListener('click', function () { downloadConflictReport(win, stats); });
   }
 
   function install(win) {
