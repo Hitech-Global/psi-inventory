@@ -8,6 +8,8 @@ assert.match(perf,/CI-EDIT-BEFORE-PL-UI-V1/);
 assert.match(perf,/\(ci\.packing_lists\|\|\[\]\)\.length>0/);
 assert.match(perf,/api\('\/api\/commercial-invoices\/'\+id,'PUT',payload\)/);
 assert.match(perf,/var ci=\(ctx && String\(ctx\.ciId\)===String\(id\) && ctx\.ci\)/,'cached CI must be preferred for instant editor');
+assert.match(perf,/id="eci-clearance-type"/,'CI editor must expose clearance type');
+assert.match(perf,/clearance_type:clearanceType/,'CI editor must save clearance type');
 new Function(perf);
 
 const html='<html><head><style>.x{}</style></head><body></body></html>';
