@@ -280,12 +280,12 @@
     if (!win || win.__bigSellerSalesImportInstalled) return;
     if (typeof win.handleSalesFile !== 'function' ||
         typeof win.openSalesBatchImport !== 'function' ||
-        typeof win.renderSalesPreview !== 'function') return;
+        typeof win.requestSalesPreview !== 'function') return;
 
     win.__bigSellerSalesImportInstalled = true;
     var originalHandleSalesFile = win.handleSalesFile;
     var originalOpenSalesBatchImport = win.openSalesBatchImport;
-    var originalRenderSalesPreview = win.renderSalesPreview;
+    var originalRequestSalesPreview = win.requestSalesPreview;
 
     function resetState() {
       win._salesImportSourceMode = 'template';
@@ -298,8 +298,8 @@
       return originalOpenSalesBatchImport.apply(this, arguments);
     };
 
-    win.renderSalesPreview = function (records) {
-      var result = originalRenderSalesPreview.apply(this, arguments);
+    win.requestSalesPreview = async function () {
+      var result = await originalRequestSalesPreview.apply(this, arguments);
       if (win._salesImportSourceMode === 'bigseller' && win._salesImportSkippedStats) {
         renderSummary(win, win._salesImportSkippedStats, win._salesImportCountry);
       }
