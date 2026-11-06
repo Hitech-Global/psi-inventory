@@ -93,7 +93,7 @@ const startupPatch=`  initDatabase();
     process.exit(1);
   }`;
 let out=src.replace(startup,startupPatch);
-const anchor="  // CI-SHIP-DATE-01：仅补充/更正历史 CI 的实际出货日期（不触发 payable_date、不动 due_date、不创建/修改 payment_request)";
+const anchor="CI-SHIP-DATE-01：仅补充/更正历史 CI 的实际出货日期";
 if(!out.includes(anchor))throw new Error('[HCI-CLEARANCE] historical route anchor missing');
 const route=`  // HCI-CLEARANCE-SETTING-V1：只更新历史 CI 清关方式；不修改应付、付款、库存、WAC 或预测数据。
   app.put('/api/historical-commercial-invoices/:id', requireApiPermission('ci_edit'), asyncHandler((req, res) => {
