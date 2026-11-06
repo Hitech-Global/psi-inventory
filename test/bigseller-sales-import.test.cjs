@@ -331,3 +331,52 @@ test('non-BigSeller sales imports keep their existing quantity-update behavior',
     raw.close();
   }
 });
+
+
+test('BigSeller re-import matches legacy source-system capitalization', async () => {
+  const original = {
+    id: 'sale-legacy-case',
+    source_system: 'Bigseller',
+    order_no: 'ORDER-LEGACY',
+    order_detail_id: '',
+    order_date: '2026-10-30',
+    shop_platform: '线上',
+    brand: 'Redragon',
+    sku_code: 'M724',
+    quantity: 2,
+    is_valid_order: 1,
+    original_order_status: '待发货',
+    remark: 'legacy remark',
+    import_batch_id: 'legacy-import',
+    country: '印尼'
+  };
+  const { raw, adapter, executeSalesImport } = createSalesImportDatabase([original]);
+  try {
+    const result = await executeSalesImport(adapter, [{
+      source_system: 'BigSeller',
+      order_no: 'ORDER-LEGACY',
+      order_detail_id: '',
+      order_date: '2026-11-06',
+      country: '印尼',
+      shop_platform: '线上',
+      brand: 'Redragon',
+      sku_code: 'M724',
+      quantity: 7,
+      is_valid_order: 1,
+      original_order_status: '已完成',
+      remark: 'new export remark'
+    }], { importBatchId: 'new-import', idFactory: () => 'must-not-insert' });
+    assert.equal(result.result.inserted, 0);
+    assert.equal(result.result.updated, 1);
+    assert.equal(result.result.skipped, 0);
+    const stored = raw.prepare('SELECT * FROM sales_records WHERE id = ?').get('sale-legacy-case');
+    assert.equal(stored.source_system, 'Bigseller');
+    assert.equal(stored.original_order_status, '已完成');
+    assert.equal(stored.quantity, 2);
+    assert.equal(stored.order_date, '2026-10-30');
+    assert.equal(stored.remark, 'legacy remark');
+    assert.equal(raw.prepare('SELECT COUNT(*) AS count FROM sales_records').get().count, 1);
+  } finally {
+    raw.close();
+  }
+});

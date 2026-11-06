@@ -160,15 +160,22 @@ class SalesBrandPrecheckError extends Error {
     this.rowErrors=failures;
   }
 }
+function sourceSystemIdentity(value) {
+  const source = String(value || '').trim();
+  // Historical BigSeller imports used both "Bigseller" and "BigSeller".
+  // Treat those spellings as the same source so a re-import updates the old row.
+  return source.toLowerCase() === 'bigseller' ? 'bigseller' : source;
+}
+
 function detailIdentity(row) {
   return row && row.order_detail_id
-    ? JSON.stringify([row.source_system, row.order_detail_id])
+    ? JSON.stringify([sourceSystemIdentity(row.source_system), row.order_detail_id])
     : null;
 }
 
 function businessIdentity(row) {
   return JSON.stringify([
-    row && row.source_system || '',
+    sourceSystemIdentity(row && row.source_system),
     row && row.order_no || '',
     row && row.sku_code || '',
     row && row.shop_platform || ''
@@ -572,11 +579,14 @@ function createSqliteSalesImportAdapter(db, options = {}) {
       const clauses = [];
       const params = [];
       for (const entry of group) {
+        const sourceMatch = isBigSellerSource(entry.row)
+          ? 'lower(source_system) = lower(?)'
+          : 'source_system = ?';
         if (entry.kind === 'detail') {
-          clauses.push('(source_system = ? AND order_detail_id = ?)');
+          clauses.push('(' + sourceMatch + ' AND order_detail_id = ?)');
           params.push(entry.row.source_system, entry.row.order_detail_id);
         } else {
-          clauses.push('(source_system = ? AND order_no = ? AND sku_code = ? AND COALESCE(shop_platform,\'\') = ?)');
+          clauses.push('( ' + sourceMatch + ' AND order_no = ? AND sku_code = ? AND COALESCE(shop_platform, \'\') = ?)');
           params.push(entry.row.source_system, entry.row.order_no, entry.row.sku_code, entry.row.shop_platform);
         }
       }
@@ -684,9 +694,13 @@ function createPostgresSalesImportAdapter(db, options = {}) {
 
   async function loadCandidates() {
     const result = await callQuery(`SELECT ${getCandidateFieldsSql()} FROM sales_records sr
-      WHERE EXISTS (SELECT 1 FROM ${stageName} s WHERE s.source_system=sr.source_system
+      WHERE EXISTS (SELECT 1 FROM ${stageName} s WHERE
+        (s.source_system=sr.source_system OR
+          (lower(s.source_system)='bigseller' AND lower(sr.source_system)='bigseller'))
         AND s.order_detail_id <> '' AND s.order_detail_id=sr.order_detail_id)
-      OR EXISTS (SELECT 1 FROM ${stageName} s WHERE s.source_system=sr.source_system
+      OR EXISTS (SELECT 1 FROM ${stageName} s WHERE
+        (s.source_system=sr.source_system OR
+          (lower(s.source_system)='bigseller' AND lower(sr.source_system)='bigseller'))
         AND s.order_no=sr.order_no AND s.sku_code=sr.sku_code
         AND COALESCE(s.shop_platform,'')=COALESCE(sr.shop_platform,''))`);
     return result.rows || [];
