@@ -2410,7 +2410,8 @@ function initDatabase() {
     ]);
     addColumns('commercial_invoices', [
       { name: 'transport_basis', sql: 'TEXT DEFAULT NULL' },
-      { name: 'import_duty_total', sql: 'REAL DEFAULT 0' }
+      { name: 'import_duty_total', sql: 'REAL DEFAULT 0' },
+      { name: 'clearance_type', sql: "TEXT NOT NULL DEFAULT ''" }
     ]);
     addColumns('commercial_invoice_items', [
       { name: 'actual_customs_rate', sql: 'REAL DEFAULT NULL' }

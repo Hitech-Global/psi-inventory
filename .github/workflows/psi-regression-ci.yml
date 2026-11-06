@@ -6,6 +6,9 @@ on:
     paths:
       - 'app.js'
       - 'test/ci-logistics-status-filter.test.cjs'
+      - 'scripts/ci-edit-before-pl-hotfix.cjs'
+      - 'test/ci-edit-before-pl-hotfix.test.cjs'
+      - 'test/ci-clearance-type.test.cjs'
       - 'test/supplier-pi-preview-alignment.test.cjs'
       - 'app-perf.js'
       - 'test/app-perf-diagnostics.test.cjs'
@@ -75,6 +78,9 @@ jobs:
       - name: Check frontend and backend syntax
         run: |
           node --check app.js
+          node --check scripts/ci-edit-before-pl-hotfix.cjs
+          node --check test/ci-edit-before-pl-hotfix.test.cjs
+          node --check test/ci-clearance-type.test.cjs
           node --check test/ci-logistics-status-filter.test.cjs
           node --check test/supplier-pi-preview-alignment.test.cjs
           node --check app-perf.js
@@ -122,6 +128,8 @@ jobs:
         run: node --test test/supplier-pi-preview-alignment.test.cjs
       - name: Test CI logistics-status filter
         run: node --test test/ci-logistics-status-filter.test.cjs
+      - name: Test CI clearance type create, filter, detail and edit
+        run: node test/ci-edit-before-pl-hotfix.test.cjs && node test/ci-clearance-type.test.cjs
       - name: Test opt-in page and API performance diagnostics
         run: node --test test/app-perf-diagnostics.test.cjs
       - name: Test brand and inventory filter cache invalidation

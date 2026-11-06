@@ -1352,6 +1352,8 @@ async function initDatabase() {
   await exec("ALTER TABLE commercial_invoices ADD COLUMN IF NOT EXISTS related_pi_ids TEXT DEFAULT ''");
   await exec("ALTER TABLE commercial_invoices ADD COLUMN IF NOT EXISTS related_pi_nos TEXT DEFAULT ''");
   await exec("ALTER TABLE commercial_invoices ADD COLUMN IF NOT EXISTS shipping_attachments TEXT NOT NULL DEFAULT '[]'");
+  await exec("ALTER TABLE commercial_invoices ADD COLUMN IF NOT EXISTS clearance_type TEXT NOT NULL DEFAULT ''");
+  await exec("CREATE INDEX IF NOT EXISTS idx_ci_clearance_type ON commercial_invoices(clearance_type)");
   // CI 多 PI：commercial_invoice_items 新增来源 PI 字段
   await exec("ALTER TABLE commercial_invoice_items ADD COLUMN IF NOT EXISTS pi_id TEXT DEFAULT ''");
   // CI 明细增加折扣字段：discount（PI折扣快照）、net_unit_price（折后单价）
