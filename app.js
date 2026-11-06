@@ -12249,7 +12249,7 @@ function renderUnifiedCITable(operationalData,historicalData){
   var table=document.createElement('table');
   table.className='data-table ci-unified-table';
   var thead=document.createElement('thead'),headRow=document.createElement('tr');
-  columns.forEach(function(col){var th=document.createElement('th');th.textContent=t(col[1],col[0]);headRow.appendChild(th);});
+  columns.forEach(function(col,index){var th=document.createElement('th');th.textContent=t(col[1],col[0]);if(index===9)th.setAttribute('data-ci-freight-head','total');if(index===10)th.setAttribute('data-ci-freight-head','ratio');headRow.appendChild(th);});
   thead.appendChild(headRow);table.appendChild(thead);
   var tbody=document.createElement('tbody');table.appendChild(tbody);
 
@@ -12288,8 +12288,8 @@ function renderUnifiedCITable(operationalData,historicalData){
     tr.appendChild(cell(srcTable,sourceRow,['出货日期','CI日期','Ship Date','Shipment Date']));
     tr.appendChild(cell(srcTable,sourceRow,['币种','Currency']));
     tr.appendChild(cell(srcTable,sourceRow,['CI金额','CI Amount','Goods Amount']));
-    tr.appendChild(cell(srcTable,sourceRow,['总运费','Total Freight']));
-    tr.appendChild(cell(srcTable,sourceRow,['运费占比','Freight Ratio']));
+    var freightTotal=cell(srcTable,sourceRow,['总运费','Total Freight']);freightTotal.setAttribute('data-ci-freight-cell','total');freightTotal.setAttribute('data-ci-id',String(c.id));tr.appendChild(freightTotal);
+    var freightRatio=cell(srcTable,sourceRow,['运费占比','Freight Ratio']);freightRatio.setAttribute('data-ci-freight-cell','ratio');freightRatio.setAttribute('data-ci-id',String(c.id));tr.appendChild(freightRatio);
     tr.appendChild(moneyCell(Number(c.actual_deducted_deposit||0)+Number(c.balance_paid_amount||0)));
     tr.appendChild(moneyCell(c.balance_unpaid_amount));
     tr.appendChild(cell(srcTable,sourceRow,['尾款状态','付款状态','Balance Payment Status','Payment Status']));
