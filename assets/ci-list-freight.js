@@ -96,8 +96,8 @@
       var typeText = String(cells[1].textContent || '').trim().replace(/\s+/g, '');
       if (typeText === '运营CI') cells[1].textContent = 'Operations CI';
     }
-    if (cells[5]) {
-      var country = String(cells[5].textContent || '').trim();
+    if (cells[3]) {
+      var country = String(cells[3].textContent || '').trim();
       cells[5].textContent = englishCountryLabel(country);
     }
   }
@@ -156,6 +156,9 @@
         headerRow.insertBefore(thRatio, nextHead);
       }
       Array.prototype.forEach.call(table.querySelectorAll('tbody tr.clickable-detail-row'), function (row) {
+        var rawClick = row.getAttribute('onclick') || '';
+        if (rawClick.indexOf('viewHistoricalCI') !== -1) return;
+        localizeOperationalRow(row);
         var id = parseCIId(row);
         var c = ciMap[id];
         if (!c) return;
