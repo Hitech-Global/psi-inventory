@@ -1,0 +1,46 @@
+name: Temporary security dependency lock refresh
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'package.json'
+      - '.github/workflows/security-dependency-refresh.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  refresh-lock:
+    if: github.event.pull_request.head.ref == 'chore/security-dependency-fixes-2026-11-06' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          persist-credentials: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Regenerate lockfile using the package manager
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Validate clean lockfile installation
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Commit lockfile and remove this temporary workflow
+        env:
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(security): refresh dependency lockfile"
+          fi
+          git rm .github/workflows/security-dependency-refresh.yml
+          git commit -m "chore: remove temporary lock refresh workflow"
+          git push origin "HEAD:${BRANCH}"
+      - name: Audit production dependencies
+        run: |
+          npm audit --omit=dev --audit-level=moderate
+          npm ls express body-parser qs proxy-addr xlsx
