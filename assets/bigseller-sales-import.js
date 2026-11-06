@@ -82,8 +82,8 @@
   function classifyOrderMarker(value) {
     var marker = normalizeMarker(value);
     if (!marker) return '线上';
-    if (marker === 'resellerorder-payinadvance' || marker === 'payinadvance') return '线下';
-    if (marker === 'resellerorder-credit' || marker === 'credit') return '线下';
+    if (marker === 'resellerorder-payinadvance') return '线下';
+    if (marker === 'resellerorder-credit') return '线下';
     return '';
   }
 
