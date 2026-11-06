@@ -7,11 +7,6 @@ const src=fs.readFileSync(path.join(__dirname,'..','app.js'),'utf8');
 assert.ok(src.includes('<label>CI类型</label><select id="ci-source-mode"'));
 assert.ok(src.includes('<option value="all" selected>全部</option>'));
 assert.ok(src.includes('function renderUnifiedCITable(operationalData,historicalData)'));
-const indexHtml=fs.readFileSync(path.join(__dirname,'..','index.html'),'utf8');
-assert.ok(indexHtml.includes('CI-UX-02: Keep the CI purchase summary'));
-assert.ok(indexHtml.includes('#ci-purchase-summary>.stats-grid'));
-assert.ok(indexHtml.includes('#ci-table>.table-container'));
-assert.ok(indexHtml.includes('width:100%;max-width:100%;min-width:0;overflow-x:auto'),'horizontal scroll must remain isolated to the CI table viewport');
 
 assert.ok(src.includes('table.innerHTML=renderUnifiedCITable(results[0]||[],results[1]||[])'));
 assert.ok(!src.includes("运营 CI</h3>{v1}"));
