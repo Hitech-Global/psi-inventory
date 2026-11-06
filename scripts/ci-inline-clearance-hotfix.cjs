@@ -8,7 +8,7 @@ const UI_MARKER='// CI-INLINE-CLEARANCE-UI-V1';
 const SERVER_MARKER='// CI-INLINE-CLEARANCE-SERVER-V1';
 
 function uiPatch(){
-return "\n\n"+UI_MARKER+"\n"+String.raw\`
+return "\n\n"+UI_MARKER+"\n"+String.raw`
 (function(global){
 'use strict';
 if(!global||typeof global.addEventListener!=='function')return;
@@ -67,7 +67,7 @@ return host.innerHTML;
 wrapped.__ciInlineClearanceWrapped=true;wrapped.__original=original;global.renderOperationalCITable=wrapped;
 },{once:true});
 })(typeof window!=='undefined'?window:(typeof globalThis!=='undefined'?globalThis:this));
-\`+"\n";
+`+"\n";
 }
 function patchAppPerfSource(src){return src.includes(UI_MARKER)?src:src.replace(/\s*$/,'')+uiPatch();}
 function patchServerSource(src){
