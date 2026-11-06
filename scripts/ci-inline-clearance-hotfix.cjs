@@ -15,7 +15,7 @@ if(!global||typeof global.addEventListener!=='function')return;
 function esc(v){return typeof global.esc==='function'?global.esc(v):String(v==null?'':v).replace(/[&<>"']/g,function(c){return({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]);});}
 function selectHtml(ci){
 var v=ci.clearance_type||'',disabled=!(typeof global.hasPermission==='function'&&global.hasPermission('ci_edit'));
-return '<select class="ci-clearance-inline" aria-label="编辑清关方式" title="点击修改清关方式"'+(disabled?' disabled':'')+' onclick="event.stopPropagation()" onchange="updateCIClearanceInline(this,\\''+esc(ci.id)+'\\')">'
+return '<select class="ci-clearance-inline" aria-label="编辑清关方式" title="点击修改清关方式"'+(disabled?' disabled':'')+' onclick="event.stopPropagation()" onchange="updateCIClearanceInline(this,\''+esc(ci.id)+'\')">'
 +'<option value=""'+(!v?' selected':'')+'>未设置</option>'
 +'<option value="formal"'+(v==='formal'?' selected':'')+'>正清</option>'
 +'<option value="non_formal"'+(v==='non_formal'?' selected':'')+'>灰清</option></select>';
