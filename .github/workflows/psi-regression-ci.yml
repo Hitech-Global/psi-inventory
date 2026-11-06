@@ -25,6 +25,7 @@ on:
       - 'wave2b-pi-batch-import-pg.js'
       - 'test/pi-deposit-payable-date.test.cjs'
       - 'index.html'
+      - 'assets/ci-list-freight.js'
       - 'assets/bigseller-inventory-import.js'
       - 'test/bigseller-inventory-import.test.cjs'
       - 'assets/zhisu-inventory-import.js'
@@ -86,6 +87,7 @@ jobs:
       - name: Check frontend and backend syntax
         run: |
           node --check app.js
+          node --check assets/ci-list-freight.js
           node --check scripts/ci-edit-before-pl-hotfix.cjs
           node --check scripts/ci-inline-clearance-hotfix.cjs
           node --check scripts/ci-historical-clearance-hotfix.cjs
