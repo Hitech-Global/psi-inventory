@@ -296,15 +296,15 @@ function fcFilterGroup(key, label, options) {
   const optionsHtml = (options || []).map(option => {
     const checked = selected.has(String(option.value));
     return '<label class="fcal-filter-option"><input type="checkbox" value="' + fcEsc(option.value) + '" ' + (checked ? 'checked' : '') +
-      ' onchange="fcToggleFilterValue(\\'' + fcJsArg(key) + '\\',this.value,this.checked)">' +
+      ' onchange="fcToggleFilterValue(\'' + fcJsArg(key) + '\',this.value,this.checked)">' +
       '<span>' + fcEsc(option.label) + '</span></label>';
   }).join('');
   return '<div class="fcal-filter" data-filter="' + fcEsc(key) + '">' +
-    '<button type="button" class="fcal-filter-trigger" aria-expanded="' + (open ? 'true' : 'false') + '" onclick="fcToggleFilter(\\'' + fcJsArg(key) + '\\')">' +
+    '<button type="button" class="fcal-filter-trigger" aria-expanded="' + (open ? 'true' : 'false') + '" onclick="fcToggleFilter(\'' + fcJsArg(key) + '\')">' +
     '<span class="fcal-filter-label"><span class="fcal-filter-icon">' + (icons[key] || '◦') + '</span>' + fcEsc(label) + '</span>' +
     '<span class="fcal-filter-value">' + fcEsc(current) + '</span><span class="fcal-filter-caret">⌄</span></button>' +
     (open ? '<div class="fcal-filter-panel"><div class="fcal-filter-panel-head"><strong>' + fcEsc(label) + '</strong>' +
-      '<button type="button" onclick="fcClearOneFilter(\\'' + fcJsArg(key) + '\\')">' + fcEsc(fcText('清空', 'Clear', 'Hapus')) + '</button></div>' +
+      '<button type="button" onclick="fcClearOneFilter(\'' + fcJsArg(key) + '\')">' + fcEsc(fcText('清空', 'Clear', 'Hapus')) + '</button></div>' +
       '<div class="fcal-filter-options">' + (optionsHtml || '<div class="fcal-filter-empty">' + fcEsc(fcText('暂无选项', 'No options', 'Tidak ada opsi')) + '</div>') + '</div></div>' : '') +
     '</div>';
 }
@@ -481,10 +481,10 @@ function fcRenderToolbar() {
     '<strong class="fcal-toolbar-title">' + fcEsc(title) + '</strong>' +
     '<button type="button" class="fcal-nav-button" aria-label="Next" onclick="fcNavigate(1)">›</button></div>' +
     '<div class="fcal-toolbar-right"><div class="fcal-view-switch">' +
-    '<button type="button" class="' + (state.view === 'day' ? 'is-active' : '') + '" onclick="fcSetView(\\'day\\')">' + fcEsc(fcText('日', 'Day', 'Hari')) + '</button>' +
-    '<button type="button" class="' + (state.view === 'week' ? 'is-active' : '') + '" onclick="fcSetView(\\'week\\')">' + fcEsc(fcText('周', 'Week', 'Minggu')) + '</button>' +
-    '<button type="button" class="' + (state.view === 'month' ? 'is-active' : '') + '" onclick="fcSetView(\\'month\\')">' + fcEsc(fcText('月', 'Month', 'Bulan')) + '</button>' +
-    '<button type="button" class="' + (state.view === 'year' ? 'is-active' : '') + '" onclick="fcSetView(\\'year\\')">' + fcEsc(fcText('年', 'Year', 'Tahun')) + '</button>' +
+    '<button type="button" class="' + (state.view === 'day' ? 'is-active' : '') + '" onclick="fcSetView(\'day\')">' + fcEsc(fcText('日', 'Day', 'Hari')) + '</button>' +
+    '<button type="button" class="' + (state.view === 'week' ? 'is-active' : '') + '" onclick="fcSetView(\'week\')">' + fcEsc(fcText('周', 'Week', 'Minggu')) + '</button>' +
+    '<button type="button" class="' + (state.view === 'month' ? 'is-active' : '') + '" onclick="fcSetView(\'month\')">' + fcEsc(fcText('月', 'Month', 'Bulan')) + '</button>' +
+    '<button type="button" class="' + (state.view === 'year' ? 'is-active' : '') + '" onclick="fcSetView(\'year\')">' + fcEsc(fcText('年', 'Year', 'Tahun')) + '</button>' +
     '</div></div></div>';
 }
 function fcRenderStats(items) {
