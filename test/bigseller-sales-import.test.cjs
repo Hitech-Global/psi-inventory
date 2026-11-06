@@ -34,7 +34,7 @@ test('BigSeller parser imports only blank / Pay in Advance / Credit markers', ()
   ]), 'Order-Goods-all.xlsx', fakeXlsx());
 
   assert.ok(parsed);
-  assert.equal(parsed.country, '印尼');
+  assert.equal(parsed.country, '印度尼西亚');
   assert.equal(parsed.stats.sourceRows, 9);
   assert.equal(parsed.stats.includedRows, 5);
   assert.equal(parsed.stats.excludedMarkerRows, 3);
@@ -45,16 +45,16 @@ test('BigSeller parser imports only blank / Pay in Advance / Credit markers', ()
 
   assert.equal(parsed.records[0].source_system, 'BigSeller');
   assert.equal(parsed.records[0].order_date, '2026-11-06');
-  assert.equal(parsed.records[0].country, '印尼');
-  assert.equal(parsed.records[0].shop_platform, '线上');
+  assert.equal(parsed.records[0].country, '印度尼西亚');
+  assert.equal(parsed.records[0].shop_platform, '线上渠道');
   assert.equal(parsed.records[0].is_valid_order, 1);
   assert.equal(parsed.records[0].order_detail_id, '');
   assert.match(parsed.records[0].remark, /平台=Shopee/);
   assert.match(parsed.records[0].remark, /包裹号=PKG-1/);
 
-  assert.equal(parsed.records[1].shop_platform, '线下');
+  assert.equal(parsed.records[1].shop_platform, '线下渠道');
   assert.equal(parsed.records[1].is_valid_order, 1);
-  assert.equal(parsed.records[2].shop_platform, '线下');
+  assert.equal(parsed.records[2].shop_platform, '线下渠道');
   assert.equal(parsed.records[2].is_valid_order, 0);
   assert.equal(parsed.records[3].is_valid_order, 0);
   assert.equal(parsed.records[4].is_valid_order, 0);
@@ -64,17 +64,17 @@ test('BigSeller parser imports only blank / Pay in Advance / Credit markers', ()
   assert.equal(parsed.stats.excludedMarkers['Free Sample-Tiktok'], 1);
 });
 
-test('marker matching is strict after whitespace and case normalization', () => {
-  assert.equal(BigSeller.classifyOrderMarker('   '), '线上');
-  assert.equal(BigSeller.classifyOrderMarker('Reseller Order-Pay in Advance'), '线下');
-  assert.equal(BigSeller.classifyOrderMarker(' reseller order- credit '), '线下');
-  assert.equal(BigSeller.classifyOrderMarker('pay in advance'), '');
-  assert.equal(BigSeller.classifyOrderMarker('credit'), '');
-  assert.equal(BigSeller.classifyOrderMarker('Reseller Order-Pay in Advance'), '线下');
-  assert.equal(BigSeller.classifyOrderMarker('Reseller Order- Credit'), '线下');
-  assert.equal(BigSeller.classifyOrderMarker('Offline Order-Consignment'), '');
-  assert.equal(BigSeller.classifyOrderMarker('测评订单'), '');
-  assert.equal(BigSeller.classifyOrderMarker('Free Sample-Tiktok'), '');
+test('marker matching follows the final channel rule, including Manual exclusion', () => {
+  assert.equal(BigSeller.classifyOrderMarker('   ', 'Shopee'), '线上渠道');
+  assert.equal(BigSeller.classifyOrderMarker('', 'TikTok'), '线上渠道');
+  assert.equal(BigSeller.classifyOrderMarker('', 'Manual'), '');
+  assert.equal(BigSeller.classifyOrderMarker('Reseller Order-Pay in Advance', 'Manual'), '线下渠道');
+  assert.equal(BigSeller.classifyOrderMarker(' reseller order- credit ', 'Manual'), '线下渠道');
+  assert.equal(BigSeller.classifyOrderMarker('pay in advance', 'Manual'), '');
+  assert.equal(BigSeller.classifyOrderMarker('credit', 'Manual'), '');
+  assert.equal(BigSeller.classifyOrderMarker('Offline Order-Consignment', 'Manual'), '');
+  assert.equal(BigSeller.classifyOrderMarker('测评订单', 'Shopee'), '');
+  assert.equal(BigSeller.classifyOrderMarker('Free Sample-Tiktok', 'TikTok'), '');
 });
 
 test('only the three specified statuses are false; unpaid is excluded separately', () => {
@@ -93,8 +93,8 @@ test('generic store labels inherit the unique country inferred from other stores
     ['2026-11-06 18:08', 'ORDER-2', '', '已完成', 'Netac Warehouse', 'NT-SSD-1', '1', 'PKG-2', 'Shopee', 'Netac Official Store']
   ]), 'orders.xlsx', fakeXlsx());
 
-  assert.equal(parsed.records[0].country, '印尼');
-  assert.equal(parsed.records[1].country, '印尼');
+  assert.equal(parsed.records[0].country, '印度尼西亚');
+  assert.equal(parsed.records[1].country, '印度尼西亚');
   assert.equal(parsed.stats.unresolvedCountryRows, 0);
 });
 
@@ -419,4 +419,82 @@ test('BigSeller brand is resolved from the PSI SKU master; missing SKU or empty 
   }, emptyBrandRows);
   assert.equal(emptyBrand.failures.length, 1);
   assert.match(emptyBrand.failures[0].reason, /SKU 主数据品牌为空/);
+});
+
+
+test('same order with multiple SKUs stays as separate sales lines', () => {
+  const parsed = BigSeller.parseBigSellerWorkbook(workbook([
+    ['2026-11-06 10:00', 'ORDER-MULTI', '', '已完成', 'Redragon Warehouse', 'M724', '1', 'PKG-1', 'Shopee', 'Redragon Indonesia OS'],
+    ['2026-11-06 10:00', 'ORDER-MULTI', '', '已完成', 'Redragon Warehouse', 'K617', '2', 'PKG-1', 'Shopee', 'Redragon Indonesia OS']
+  ]), 'orders.xlsx', fakeXlsx());
+  assert.equal(parsed.records.length, 2);
+  assert.deepEqual(parsed.records.map(record => record.sku_code), ['M724', 'K617']);
+  assert.equal(parsed.stats.conflictGroups, 0);
+});
+
+test('exact duplicate order-item rows are deduplicated without adding quantity', () => {
+  const row = ['2026-11-06 10:00', 'ORDER-DUP', '', '已完成', 'Redragon Warehouse', 'M724', '2', 'PKG-1', 'Shopee', 'Redragon Indonesia OS'];
+  const parsed = BigSeller.parseBigSellerWorkbook(workbook([row, row]), 'orders.xlsx', fakeXlsx());
+  assert.equal(parsed.records.length, 1);
+  assert.equal(parsed.records[0].quantity, 2);
+  assert.equal(parsed.stats.exactDuplicateRows, 1);
+  assert.equal(parsed.stats.includedRows, 1);
+});
+
+test('quantity or package conflicts quarantine the entire same order-item group', () => {
+  const parsed = BigSeller.parseBigSellerWorkbook(workbook([
+    ['2026-11-06 10:00', 'ORDER-CONFLICT', '', '已完成', 'Redragon Warehouse', 'M724', '2', 'PKG-1', 'Shopee', 'Redragon Indonesia OS'],
+    ['2026-11-06 10:01', 'ORDER-CONFLICT', '', '已完成', 'Redragon Warehouse', 'M724', '3', 'PKG-1', 'Shopee', 'Redragon Indonesia OS'],
+    ['2026-11-06 10:02', 'ORDER-CONFLICT', '', '已完成', 'Redragon Warehouse', 'K617', '1', 'PKG-2', 'Shopee', 'Redragon Indonesia OS']
+  ]), 'orders.xlsx', fakeXlsx());
+  assert.equal(parsed.records.length, 1);
+  assert.equal(parsed.records[0].sku_code, 'K617');
+  assert.equal(parsed.stats.conflictGroups, 1);
+  assert.equal(parsed.stats.excludedConflictRows, 2);
+  assert.equal(parsed.stats.conflictDetails[0].reason, '数量不同');
+});
+
+test('same order item status snapshots keep one quantity and use latest status', () => {
+  const parsed = BigSeller.parseBigSellerWorkbook(workbook([
+    ['2026-11-06 10:00', 'ORDER-STATUS', '', '平台处理中', 'Redragon Warehouse', 'M724', '2', 'PKG-1', 'Shopee', 'Redragon Indonesia OS'],
+    ['2026-11-06 10:05', 'ORDER-STATUS', '', '退货退款', 'Redragon Warehouse', 'M724', '2', 'PKG-1', 'Shopee', 'Redragon Indonesia OS']
+  ]), 'orders.xlsx', fakeXlsx());
+  assert.equal(parsed.records.length, 1);
+  assert.equal(parsed.records[0].quantity, 2);
+  assert.equal(parsed.records[0].original_order_status, '退货退款');
+  assert.equal(parsed.records[0].is_valid_order, 0);
+  assert.equal(parsed.stats.snapshotDuplicateRows, 1);
+});
+
+test('same timestamp with different statuses is quarantined for manual review', () => {
+  const parsed = BigSeller.parseBigSellerWorkbook(workbook([
+    ['2026-11-06 10:00', 'ORDER-STATUS-CONFLICT', '', '平台处理中', 'Redragon Warehouse', 'M724', '2', 'PKG-1', 'Shopee', 'Redragon Indonesia OS'],
+    ['2026-11-06 10:00', 'ORDER-STATUS-CONFLICT', '', '已完成', 'Redragon Warehouse', 'M724', '2', 'PKG-1', 'Shopee', 'Redragon Indonesia OS']
+  ]), 'orders.xlsx', fakeXlsx());
+  assert.equal(parsed.records.length, 0);
+  assert.equal(parsed.stats.conflictGroups, 1);
+  assert.equal(parsed.stats.conflictDetails[0].reason, '相同时间存在不同订单状态');
+});
+
+test('Manual blank-marker rows are excluded while Pay in Advance and Credit remain offline', () => {
+  const parsed = BigSeller.parseBigSellerWorkbook(workbook([
+    ['2026-11-06 10:00', 'ORDER-MANUAL-BLANK', '', '已完成', 'Warehouse', 'M724', '1', 'PKG-1', 'Manual', 'Netac Official Store'],
+    ['2026-11-06 10:01', 'ORDER-PA', 'Reseller Order-Pay in Advance', '已完成', 'Warehouse', 'M995', '1', 'PKG-2', 'Manual', 'Netac Official Store'],
+    ['2026-11-06 10:02', 'ORDER-CREDIT', 'Reseller Order- Credit', '已完成', 'Warehouse', 'K617', '1', 'PKG-3', 'Manual', 'Netac Official Store']
+  ]), 'orders.xlsx', fakeXlsx());
+  assert.equal(parsed.records.length, 2);
+  assert.deepEqual(parsed.records.map(record => record.shop_platform), ['线下渠道', '线下渠道']);
+  assert.equal(parsed.stats.excludedMarkerRows, 1);
+  assert.equal(parsed.stats.excludedMarkers['（Manual + 空白订单标记）'], 1);
+});
+
+
+test('BigSeller parser validation errors and original Excel row numbers reach the sales import classifier', () => {
+  const SalesImport = require('../sales-import-service');
+  const parsed = BigSeller.parseBigSellerWorkbook(workbook([
+    ['2026-11-06 10:00', 'ORDER-VALIDATION', '', '已完成', 'Redragon Warehouse', 'M724', '0', 'PKG-1', 'Shopee', 'Redragon Indonesia OS']
+  ]), 'orders.xlsx', fakeXlsx());
+  const rows = SalesImport.normalizeSalesRows(parsed.records);
+  assert.equal(rows[0].source_row_no, 2);
+  assert.ok(rows[0].errors.some(reason => reason.includes('数量必须为正整数')));
 });
