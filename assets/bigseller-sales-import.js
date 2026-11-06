@@ -442,7 +442,8 @@
       '<div style="color:#666">订单标记排除：' + Number(stats.excludedMarkerRows || 0).toLocaleString('en-US') +
       ' 条；未付款排除：' + Number(stats.excludedUnpaidRows || 0).toLocaleString('en-US') +
       ' 条；完全重复去重：' + Number(stats.exactDuplicateRows || 0).toLocaleString('en-US') +
-      ' 条；同订单商品快照合并：' + Number(stats.snapshotDuplicateRows || 0).toLocaleString('en-US') + ' 条。</div>' +
+      ' 条；同订单商品快照合并：' + Number(stats.snapshotDuplicateRows || 0).toLocaleString('en-US') +
+      ' 条；校验失败：' + Number(stats.validationErrorRows || 0).toLocaleString('en-US') + ' 条。</div>' +
       (conflictGroups ? '<div style="color:#b45309;margin-top:5px">冲突订单：' + conflictGroups +
         ' 组，共 ' + Number(stats.excludedConflictRows || 0) + ' 条已暂不导入。请下载异常明细人工核对。</div>' +
         '<button type="button" id="bigseller-sales-conflict-download" style="margin-top:7px;padding:5px 10px;border:1px solid #d1d5db;border-radius:7px;background:#fff;color:#333;cursor:pointer">下载冲突明细</button>' : '') +
