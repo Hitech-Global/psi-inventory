@@ -4,7 +4,7 @@ const {patchAppPerfSource,patchServerSource}=require('../scripts/ci-inline-clear
 const ui=patchAppPerfSource('function renderOperationalCITable(data){return data;}');
 assert.equal(patchAppPerfSource(ui),ui);
 assert.match(ui,/CI-INLINE-CLEARANCE-UI-V2/);
-assert.match(ui,/querySelectorAll\('tr\\.clickable-detail-row'\)/);
+assert.ok(ui.includes("querySelectorAll('tr.clickable-detail-row')"));
 assert.match(ui,/ciRows\.length!==data\.length/);
 assert.match(ui,/var row=ciRows\[i\]/);
 assert.match(ui,/ci-clearance-inline/);
@@ -28,6 +28,6 @@ const legacy='prefix\\n// CI-INLINE-CLEARANCE-UI-V1\\nold-index-based-wrapper();
 const migrated=patchAppPerfSource(legacy);
 assert.ok(!migrated.includes('CI-INLINE-CLEARANCE-UI-V1'),'legacy index wrapper must be replaced');
 assert.match(migrated,/CI-INLINE-CLEARANCE-UI-V2/);
-assert.match(migrated,/tr\\.clickable-detail-row/);
+assert.ok(migrated.includes('tr.clickable-detail-row'));
 assert.equal(patchAppPerfSource(migrated),migrated,'V2 patch must be idempotent');
 console.log('CI inline clearance edit regression: PASS');
