@@ -109,7 +109,7 @@ const route=`  // HCI-CLEARANCE-SETTING-V1：只更新历史 CI 清关方式；�
 
 `;
 out=out.replace(anchor,route+anchor);
-return out.replace(/\\s*$/,'')+'\\n'+SERVER_MARKER+'\\n';
+return out.replace(/\\s*$/,'')+'\n'+SERVER_MARKER+'\n';
 }
 function apply(){
 const p=fs.readFileSync(PERF,'utf8'),p2=patchPerf(p);if(p!==p2)fs.writeFileSync(PERF,p2,'utf8');
