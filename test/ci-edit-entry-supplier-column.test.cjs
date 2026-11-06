@@ -11,7 +11,7 @@ const operational = app.slice(opStart, histStart);
 const historical = app.slice(histStart, summaryStart);
 
 assert.match(operational, /title="编辑CI"/, 'operational CI list must show an explicit edit action');
-assert.match(operational, /title="编辑CI">编辑<\\/button>/, 'edit action must have a visible text label, not only an icon');
+assert.ok(operational.includes('title="编辑CI">编辑</button>'), 'edit action must have a visible text label, not only an icon');
 assert.match(operational, /hasPermission\('ci_edit'\)/, 'edit action must respect CI edit permission');
 assert.match(operational, /editCI\(/, 'edit action must call the existing CI editor');
 assert.doesNotMatch(operational, /<th>供应商<\/th>/, 'operational CI table must not show supplier column');
