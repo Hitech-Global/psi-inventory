@@ -198,6 +198,7 @@
       falseRows: 0,
       excludedMarkers: Object.create(null),
       unresolvedCountryRows: 0,
+      validationErrorRows: 0,
       conflictDetails: []
     };
 
@@ -383,7 +384,8 @@
       delete record._sourceTimestamp;
       delete record._packageNo;
       delete record._rawOrderDate;
-      stats.includedRows++;
+      if (Array.isArray(record._errors) && record._errors.length) stats.validationErrorRows++;
+      else stats.includedRows++;
       if (record.is_valid_order) stats.trueRows++;
       else stats.falseRows++;
     });
@@ -446,7 +448,9 @@
         '<button type="button" id="bigseller-sales-conflict-download" style="margin-top:7px;padding:5px 10px;border:1px solid #d1d5db;border-radius:7px;background:#fff;color:#333;cursor:pointer">下载冲突明细</button>' : '') +
       '<div style="color:#888;margin-top:4px">仅导入：非 Manual 平台的空白订单标记，以及 Pay in Advance、Credit；其他标记和 Manual 空白订单均排除。</div>' +
       '</div>';
-    el.insertAdjacentHTML('afterbegin', html);
+    // Replace the previous summary instead of stacking another copy after each preview.
+    el.innerHTML = '';
+    el.insertAdjacentHTML('beforeend', html);
     var button = win.document.getElementById('bigseller-sales-conflict-download');
     if (button) button.addEventListener('click', function () { downloadConflictReport(win, stats); });
   }
@@ -466,6 +470,14 @@
       win._salesImportSourceMode = 'template';
       win._salesImportSkippedStats = null;
       win._salesImportCountry = '';
+      win._salesImportData = [];
+      win._salesImportPreviewReady = false;
+      win._lastSalesImportErrors = [];
+      var stats = win.document && win.document.getElementById('sales-preview-stats');
+      if (stats) stats.innerHTML = '';
+      var button = win.document && win.document.getElementById('sales-import-btn');
+      if (button) button.disabled = true;
+      if (typeof win.renderSalesPreview === 'function') win.renderSalesPreview([]);
     }
 
     win.openSalesBatchImport = function () {
@@ -483,6 +495,9 @@
 
     win.handleSalesFile = function (file) {
       if (!file) return;
+      // Clear the previous file immediately, before the asynchronous FileReader starts.
+      // Otherwise the old preview can remain importable while the new file is loading.
+      resetState();
       var ext = String(file.name || '').split('.').pop().toLowerCase();
       if (!['xlsx', 'xls', 'csv'].includes(ext) || !win.FileReader || !win.XLSX) {
         resetState();
