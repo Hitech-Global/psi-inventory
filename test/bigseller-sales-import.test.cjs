@@ -68,8 +68,10 @@ test('marker matching is strict after whitespace and case normalization', () => 
   assert.equal(BigSeller.classifyOrderMarker('   '), '线上');
   assert.equal(BigSeller.classifyOrderMarker('Reseller Order-Pay in Advance'), '线下');
   assert.equal(BigSeller.classifyOrderMarker(' reseller order- credit '), '线下');
-  assert.equal(BigSeller.classifyOrderMarker('pay in advance'), '线下');
-  assert.equal(BigSeller.classifyOrderMarker('credit'), '线下');
+  assert.equal(BigSeller.classifyOrderMarker('pay in advance'), '');
+  assert.equal(BigSeller.classifyOrderMarker('credit'), '');
+  assert.equal(BigSeller.classifyOrderMarker('Reseller Order-Pay in Advance'), '线下');
+  assert.equal(BigSeller.classifyOrderMarker('Reseller Order- Credit'), '线下');
   assert.equal(BigSeller.classifyOrderMarker('Offline Order-Consignment'), '');
   assert.equal(BigSeller.classifyOrderMarker('测评订单'), '');
   assert.equal(BigSeller.classifyOrderMarker('Free Sample-Tiktok'), '');
