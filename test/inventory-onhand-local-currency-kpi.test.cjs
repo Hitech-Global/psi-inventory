@@ -71,3 +71,8 @@ test('inventory table continues to expose both local and CNY on-hand amount colu
   assert.match(source, /t\('inv\.col\.on_hand_amount_local'/);
   assert.match(source, /t\('inv\.col\.on_hand_amount_rmb'/);
 });
+
+test('inventory overview table aligns all data columns and headers left while keeping checkbox centered', () => {
+  assert.match(source, /#inv-table \.inv-head-table thead th:not\(:first-child\),#inv-table \.inv-body-table tbody td:not\(:first-child\)\{text-align:left!important\}/);
+  assert.match(source, /#inv-table \.inv-head-table thead th:first-child,#inv-table \.inv-body-table tbody td:first-child\{text-align:center!important\}/);
+});
