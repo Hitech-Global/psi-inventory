@@ -998,6 +998,25 @@ body:has(.sidebar.collapsed) .drawer-overlay{left:var(--sidebar-collapsed-width)
   }
 }
 
+
+/* CI-UX-02: Keep the CI purchase summary aligned to the full page width.
+   Horizontal overflow belongs to the table viewport only, never to the summary panel. */
+.content-inner:has(#ci-source-mode) .table-section{
+  width:100%;min-width:0;overflow:visible;
+}
+.content-inner:has(#ci-source-mode) #ci-purchase-summary{
+  display:block;width:100%;min-width:0;box-sizing:border-box;
+  background:var(--card-bg);
+}
+.content-inner:has(#ci-source-mode) #ci-purchase-summary>.stats-grid{
+  width:100%;min-width:0;grid-template-columns:repeat(3,minmax(0,1fr));
+}
+.content-inner:has(#ci-source-mode) #ci-table{
+  display:block;width:100%;min-width:0;
+}
+.content-inner:has(#ci-source-mode) #ci-table>.table-container{
+  display:block;width:100%;max-width:100%;min-width:0;overflow-x:auto;
+}
 </style>
 </head>
 <body>
