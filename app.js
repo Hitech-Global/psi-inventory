@@ -12197,7 +12197,7 @@ async function renderCI(){
     if(el&&s) el.innerHTML=renderPurchaseAmountSummary(s);
   }).catch(function(){ /* 汇总拉取失败不影响列表 */ });
 }
-function onCISourceModeChange(){const mode=document.getElementById('ci-source-mode')?.value||'operational',fs=document.getElementById('ci-logistics-fs');if(fs)fs.disabled=mode==='historical';refreshCIFilterOptions();loadCI()}
+function onCISourceModeChange(){const mode=document.getElementById('ci-source-mode')?.value||'operational',fs=document.getElementById('ci-logistics-fs'),cf=document.getElementById('ci-clearance-filter');if(fs)fs.disabled=mode==='historical';if(cf)cf.disabled=mode==='historical';refreshCIFilterOptions();loadCI()}
 async function refreshCIFilterOptions(){
   try{
     const mode=document.getElementById('ci-source-mode')?.value||'operational';
