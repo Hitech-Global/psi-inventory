@@ -4,8 +4,8 @@
 // It reads the existing payable ledger and creates manual items through the existing payable_items lifecycle.
 let _financeCalendarState = {
   items: [], facets: {}, categories: [], payerEntities: [], currencies: [],
-  currentDate: '', selectedDate: '', today: '', view: 'year',
-  keyword: '', openFilter: '',
+  currentDate: '', selectedDate: '', today: '', view: 'month',
+  openFilter: '',
   filters: { payer: new Set(), country: new Set(), brand: new Set(), category: new Set(), status: new Set(), source: new Set(), currency: new Set() },
   loadingSeq: 0
 };
@@ -258,16 +258,10 @@ function fcFilterValue(item, key) {
 }
 function fcFilteredItems() {
   const state = _financeCalendarState;
-  const keyword = String(state.keyword || '').trim().toLowerCase();
   return (state.items || []).filter(item => {
     for (const key of Object.keys(state.filters)) {
       const selected = state.filters[key];
       if (selected && selected.size && !selected.has(fcFilterValue(item, key))) return false;
-    }
-    if (keyword) {
-      const text = [item.fee_no, item.source_no, item.payee_name_snapshot, item.supplier_name, item.brand, item.country_display, item.payer_name_snapshot]
-        .map(x => String(x || '').toLowerCase()).join(' ');
-      if (!text.includes(keyword)) return false;
     }
     return true;
   });
@@ -292,19 +286,41 @@ function fcFilterGroup(key, label, options) {
   const state = _financeCalendarState;
   const selected = state.filters[key] || new Set();
   const open = state.openFilter === key;
-  const summary = selected.size ? label + ' (' + selected.size + ')' : fcText('全部', 'All', 'Semua') + label;
+  const selectedOptions = (options || []).filter(option => selected.has(String(option.value)));
+  const current = !selected.size
+    ? fcText('全部', 'All', 'Semua')
+    : (selected.size === 1
+      ? (selectedOptions[0] ? selectedOptions[0].label : String([...selected][0]))
+      : fcText('已选 ' + selected.size + ' 项', selected.size + ' selected', selected.size + ' dipilih'));
+  const icons = { country: '◎', currency: '▤', status: '◉', category: '◆' };
   const optionsHtml = (options || []).map(option => {
     const checked = selected.has(String(option.value));
     return '<label class="fcal-filter-option"><input type="checkbox" value="' + fcEsc(option.value) + '" ' + (checked ? 'checked' : '') +
-      ' onchange="fcToggleFilterValue(\'' + fcJsArg(key) + '\',this.value,this.checked)">' +
+      ' onchange="fcToggleFilterValue(\\'' + fcJsArg(key) + '\\',this.value,this.checked)">' +
       '<span>' + fcEsc(option.label) + '</span></label>';
   }).join('');
   return '<div class="fcal-filter" data-filter="' + fcEsc(key) + '">' +
-    '<button type="button" class="fcal-filter-trigger" aria-expanded="' + (open ? 'true' : 'false') + '" onclick="fcToggleFilter(\'' + fcJsArg(key) + '\')">' +
-    '<span>' + fcEsc(summary) + '</span><span class="fcal-filter-caret">⌄</span></button>' +
+    '<button type="button" class="fcal-filter-trigger" aria-expanded="' + (open ? 'true' : 'false') + '" onclick="fcToggleFilter(\\'' + fcJsArg(key) + '\\')">' +
+    '<span class="fcal-filter-label"><span class="fcal-filter-icon">' + (icons[key] || '◦') + '</span>' + fcEsc(label) + '</span>' +
+    '<span class="fcal-filter-value">' + fcEsc(current) + '</span><span class="fcal-filter-caret">⌄</span></button>' +
     (open ? '<div class="fcal-filter-panel"><div class="fcal-filter-panel-head"><strong>' + fcEsc(label) + '</strong>' +
-      '<button type="button" onclick="fcClearOneFilter(\'' + fcJsArg(key) + '\')">' + fcEsc(fcText('清空', 'Clear', 'Hapus')) + '</button></div>' +
+      '<button type="button" onclick="fcClearOneFilter(\\'' + fcJsArg(key) + '\\')">' + fcEsc(fcText('清空', 'Clear', 'Hapus')) + '</button></div>' +
       '<div class="fcal-filter-options">' + (optionsHtml || '<div class="fcal-filter-empty">' + fcEsc(fcText('暂无选项', 'No options', 'Tidak ada opsi')) + '</div>') + '</div></div>' : '') +
+    '</div>';
+}
+function fcRenderFilterBar() {
+  const state = _financeCalendarState;
+  const options = fcGetFilterOptions();
+  const monthValue = String(state.currentDate || fcTodayISO()).slice(0, 7);
+  return '<div class="fcal-filter-bar">' +
+    fcFilterGroup('country', fcText('国家', 'Country', 'Negara'), options.country) +
+    fcFilterGroup('currency', fcText('币种', 'Currency', 'Mata uang'), options.currency) +
+    fcFilterGroup('status', fcText('付款状态', 'Payment status', 'Status pembayaran'), options.status) +
+    fcFilterGroup('category', fcText('费用类型', 'Expense type', 'Jenis biaya'), options.category) +
+    '<label class="fcal-month-filter"><span class="fcal-month-icon">▦</span><span class="fcal-month-label">' + fcEsc(fcMonthLabel(state.currentDate)) +
+    '</span><span class="fcal-month-chevron">›</span><input id="fcal-month-picker" type="month" value="' + fcEsc(monthValue) +
+    '" aria-label="' + fcEsc(fcText('选择月份', 'Select month', 'Pilih bulan')) + '" onchange="fcSetMonth(this.value)"></label>' +
+    '<button type="button" class="fcal-reset-button" onclick="fcClearAllFilters()">' + fcEsc(fcText('重置', 'Reset', 'Atur ulang')) + '</button>' +
     '</div>';
 }
 function fcToggleFilter(key) {
@@ -328,52 +344,6 @@ function fcClearAllFilters() {
   _financeCalendarState.keyword = '';
   _financeCalendarState.openFilter = '';
   fcRenderPage();
-}
-function fcApplyKeyword() {
-  const input = document.getElementById('fcal-keyword');
-  _financeCalendarState.keyword = input ? String(input.value || '').trim() : '';
-  fcRenderPage();
-}
-function fcRenderMiniMonth() {
-  const state = _financeCalendarState;
-  const dates = fcBuildMonthDates(state.currentDate);
-  const weekday = fcWeekdayLabels();
-  const currentMonth = state.currentDate.slice(0, 7);
-  let html = '<div class="fcal-mini-head"><strong>' + fcEsc(fcMonthLabel(state.currentDate)) + '</strong>' +
-    '<div><button type="button" aria-label="Previous month" onclick="fcNavigateMiniMonth(-1)">‹</button>' +
-    '<button type="button" aria-label="Next month" onclick="fcNavigateMiniMonth(1)">›</button></div></div>';
-  html += '<div class="fcal-mini-grid">';
-  weekday.forEach(day => { html += '<span class="fcal-mini-weekday">' + fcEsc(day) + '</span>'; });
-  dates.forEach(date => {
-    const inMonth = date.slice(0, 7) === currentMonth;
-    const isToday = date === state.today;
-    const isSelected = date === state.selectedDate;
-    html += '<button type="button" class="fcal-mini-day ' + (!inMonth ? 'is-muted ' : '') + (isToday ? 'is-today ' : '') +
-      (isSelected ? 'is-selected' : '') + '" onclick="fcSetDate(\'' + date + '\')">' + Number(date.slice(8, 10)) + '</button>';
-  });
-  html += '</div>';
-  return html;
-}
-function fcRenderSidebar() {
-  const options = fcGetFilterOptions();
-  const undated = fcFilteredItems().filter(item => !String(item.payable_date || '').trim());
-  let html = '<aside class="fcal-sidebar"><section class="fcal-sidebar-card fcal-mini-card">' + fcRenderMiniMonth() + '</section>';
-  html += '<section class="fcal-sidebar-card"><div class="fcal-search-row"><input id="fcal-keyword" value="' + fcEsc(_financeCalendarState.keyword) +
-    '" placeholder="' + fcEsc(fcText('搜索付款对象 / 供应商 / 单号', 'Search payee / supplier / reference', 'Cari penerima / pemasok / nomor')) +
-    '" onkeydown="if(event.key===\'Enter\'){event.preventDefault();fcApplyKeyword();}"><button type="button" onclick="fcApplyKeyword()" aria-label="Search">⌕</button></div>';
-  html += '<button type="button" class="fcal-undated-button" onclick="fcOpenUndated()"><span>' +
-    fcEsc(fcText('未安排付款日期', 'No scheduled date', 'Belum ada tanggal')) + '</span><strong>' + undated.length + ' ' + fcEsc(fcText('笔', 'items', 'item')) + '</strong></button></section>';
-  html += '<section class="fcal-sidebar-card"><div class="fcal-filter-section-head"><strong>' + fcEsc(fcText('筛选', 'Filters', 'Filter')) +
-    '</strong><button type="button" onclick="fcClearAllFilters()">' + fcEsc(fcText('重置', 'Reset', 'Atur ulang')) + '</button></div>';
-  html += fcFilterGroup('payer', fcText('付款主体', 'Payer entity', 'Entitas pembayar'), options.payer);
-  html += fcFilterGroup('country', fcText('国家', 'Country', 'Negara'), options.country);
-  html += fcFilterGroup('brand', fcText('品牌', 'Brand', 'Merek'), options.brand);
-  html += fcFilterGroup('category', fcText('费用类型', 'Expense category', 'Kategori biaya'), options.category);
-  html += fcFilterGroup('status', fcText('付款状态', 'Payment status', 'Status pembayaran'), options.status);
-  html += fcFilterGroup('source', fcText('来源', 'Source', 'Sumber'), options.source);
-  html += fcFilterGroup('currency', fcText('币种', 'Currency', 'Mata uang'), options.currency);
-  html += '</section></aside>';
-  return html;
 }
 function fcEventHTML(item) {
   const key = fcStatusKey(item, _financeCalendarState.today);
@@ -506,14 +476,15 @@ function fcRenderToolbar() {
     const week = fcBuildWeekDates(state.currentDate);
     title = fcDateLabel(week[0], false) + ' – ' + fcDateLabel(week[6], true);
   } else if (state.view === 'day') title = fcDateLabel(state.selectedDate || state.currentDate, true);
-  return '<div class="fcal-toolbar"><div class="fcal-toolbar-left"><button type="button" class="fcal-today-button" onclick="fcGoToday()">' +
-    fcEsc(fcText('今天', 'Today', 'Hari ini')) + '</button><button type="button" class="fcal-nav-button" aria-label="Previous" onclick="fcNavigate(-1)">‹</button>' +
-    '<button type="button" class="fcal-nav-button" aria-label="Next" onclick="fcNavigate(1)">›</button><strong class="fcal-toolbar-title">' +
-    fcEsc(title) + '</strong></div><div class="fcal-toolbar-right"><div class="fcal-view-switch">' +
-    '<button type="button" class="' + (state.view === 'day' ? 'is-active' : '') + '" onclick="fcSetView(\'day\')">' + fcEsc(fcText('日', 'Day', 'Hari')) + '</button>' +
-    '<button type="button" class="' + (state.view === 'week' ? 'is-active' : '') + '" onclick="fcSetView(\'week\')">' + fcEsc(fcText('周', 'Week', 'Minggu')) + '</button>' +
-    '<button type="button" class="' + (state.view === 'month' ? 'is-active' : '') + '" onclick="fcSetView(\'month\')">' + fcEsc(fcText('月', 'Month', 'Bulan')) + '</button>' +
-    '<button type="button" class="' + (state.view === 'year' ? 'is-active' : '') + '" onclick="fcSetView(\'year\')">' + fcEsc(fcText('年', 'Year', 'Tahun')) + '</button>' +
+  return '<div class="fcal-toolbar"><div class="fcal-toolbar-left">' +
+    '<button type="button" class="fcal-nav-button" aria-label="Previous" onclick="fcNavigate(-1)">‹</button>' +
+    '<strong class="fcal-toolbar-title">' + fcEsc(title) + '</strong>' +
+    '<button type="button" class="fcal-nav-button" aria-label="Next" onclick="fcNavigate(1)">›</button></div>' +
+    '<div class="fcal-toolbar-right"><div class="fcal-view-switch">' +
+    '<button type="button" class="' + (state.view === 'day' ? 'is-active' : '') + '" onclick="fcSetView(\\'day\\')">' + fcEsc(fcText('日', 'Day', 'Hari')) + '</button>' +
+    '<button type="button" class="' + (state.view === 'week' ? 'is-active' : '') + '" onclick="fcSetView(\\'week\\')">' + fcEsc(fcText('周', 'Week', 'Minggu')) + '</button>' +
+    '<button type="button" class="' + (state.view === 'month' ? 'is-active' : '') + '" onclick="fcSetView(\\'month\\')">' + fcEsc(fcText('月', 'Month', 'Bulan')) + '</button>' +
+    '<button type="button" class="' + (state.view === 'year' ? 'is-active' : '') + '" onclick="fcSetView(\\'year\\')">' + fcEsc(fcText('年', 'Year', 'Tahun')) + '</button>' +
     '</div></div></div>';
 }
 function fcRenderStats(items) {
@@ -580,6 +551,25 @@ function fcCalendarStyles() {
     '@media(max-width:900px){.fcal-layout{grid-template-columns:1fr}.fcal-sidebar{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}.fcal-mini-card{grid-row:span 2}.fcal-sidebar-card:last-child{grid-column:1/-1}.fcal-filter-section-head{margin-bottom:6px}.fcal-filter{display:inline-block;width:calc(33.333% - 5px);margin-right:4px;vertical-align:top}}' +
     '@media(max-width:650px){.fcal-stats-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.fcal-sidebar{grid-template-columns:1fr}.fcal-mini-card,.fcal-sidebar-card:last-child{grid-row:auto;grid-column:auto}.fcal-filter{width:100%;margin-right:0}.fcal-day-cell{min-height:80px;padding:4px 3px}.fcal-event{padding:3px}.fcal-event-title,.fcal-event-amount{font-size:9px}.fcal-day-add{opacity:1}.fcal-toolbar-title{font-size:14px}.fcal-week-grid{min-height:260px}.fcal-week-cell{padding:4px 2px}.fcal-form{grid-template-columns:1fr}.fcal-form-field.is-wide,.fcal-form-note,.fcal-form-actions{grid-column:1}.fcal-view-switch button{padding:6px 8px}.fcal-year-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.fcal-year-view{padding:8px}.fcal-year-month-card{padding:9px}}' +
     '@media(max-width:430px){.fcal-year-grid{grid-template-columns:1fr}}' +
+
+    '.fcal-filter-bar{display:grid;grid-template-columns:repeat(4,minmax(145px,1fr)) minmax(190px,1.15fr) auto;gap:12px;align-items:center;margin:0 0 22px}' +
+    '.fcal-page .fcal-filter{margin-top:0;min-width:0}' +
+    '.fcal-page .fcal-filter-trigger{height:44px;padding:0 12px;border-radius:10px;gap:8px}' +
+    '.fcal-filter-label{display:flex;align-items:center;gap:7px;min-width:0;color:var(--text-secondary,#68707b);font-size:11px;white-space:nowrap}' +
+    '.fcal-filter-icon{color:var(--text-primary,#333);font-size:13px;line-height:1}' +
+    '.fcal-filter-value{margin-left:auto;min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--text-primary,#333);font-size:12px;font-weight:600;white-space:nowrap}' +
+    '.fcal-month-filter{position:relative;display:flex;align-items:center;gap:9px;min-width:0;height:44px;padding:0 13px;border:1px solid var(--border,#e1e2e5);border-radius:10px;background:var(--bg-card,#fff);color:var(--text-primary,#333);cursor:pointer}' +
+    '.fcal-month-icon{font-size:14px;color:var(--text-secondary,#666)}.fcal-month-label{font-size:12px;font-weight:600;white-space:nowrap}.fcal-month-chevron{margin-left:auto;color:var(--text-secondary,#888);font-size:18px}' +
+    '.fcal-month-filter input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;border:0}' +
+    '.fcal-reset-button{height:44px;padding:0 13px;border:1px solid var(--border,#e1e2e5);border-radius:10px;background:var(--bg-card,#fff);color:#3478d5;font-size:12px;white-space:nowrap}' +
+    '.fcal-reset-button:hover{background:var(--bg-hover,#f8faff)}' +
+    '.fcal-stats-grid{margin-bottom:18px}.fcal-summary-note{display:none}' +
+    '.fcal-main{min-width:0;border:1px solid var(--border,#e3e4e7);border-radius:12px;background:var(--bg-card,#fff);overflow:hidden}' +
+    '.fcal-main-toolbar{padding:11px 15px;margin-bottom:0}.fcal-calendar-wrap{border:0;border-top:1px solid var(--border,#e3e4e7);border-radius:0}' +
+    '.fcal-toolbar{flex-wrap:nowrap}.fcal-toolbar-left{gap:7px}.fcal-toolbar-title{font-size:16px}' +
+    '@media(max-width:1150px){.fcal-filter-bar{grid-template-columns:repeat(3,minmax(0,1fr))}}' +
+    '@media(max-width:900px){.fcal-filter-bar{grid-template-columns:repeat(2,minmax(0,1fr))}.fcal-month-filter{grid-column:1/-1}}' +
+    '@media(max-width:650px){.fcal-filter-bar{gap:8px}.fcal-reset-button{justify-self:end}.fcal-main-toolbar{padding:9px}.fcal-toolbar{flex-wrap:wrap}.fcal-calendar-wrap{overflow-x:auto}.fcal-calendar{min-width:650px}}' +
     '</style>';
 }
 function fcCanCreate() {
@@ -714,17 +704,21 @@ function fcSetDate(date, view) {
   if (view) _financeCalendarState.view = view;
   fcRenderPage();
 }
+function fcSetMonth(value) {
+  const match = String(value || '').match(/^(\d{4})-(0[1-9]|1[0-2])$/);
+  if (!match) return;
+  const state = _financeCalendarState;
+  state.currentDate = match[1] + '-' + match[2] + '-01';
+  state.selectedDate = state.currentDate;
+  state.view = 'month';
+  state.openFilter = '';
+  fcRenderPage();
+}
 function fcNavigate(direction) {
   const state = _financeCalendarState;
   if (state.view === 'year') state.currentDate = fcAddMonths(state.currentDate, Number(direction || 0) * 12);
   else if (state.view === 'month') state.currentDate = fcAddMonths(state.currentDate, Number(direction || 0));
   else state.currentDate = fcAddDays(state.currentDate, Number(direction || 0) * (state.view === 'week' ? 7 : 1));
-  state.selectedDate = state.currentDate;
-  fcRenderPage();
-}
-function fcNavigateMiniMonth(direction) {
-  const state = _financeCalendarState;
-  state.currentDate = fcAddMonths(state.currentDate, Number(direction || 0));
   state.selectedDate = state.currentDate;
   fcRenderPage();
 }
@@ -768,8 +762,9 @@ function fcRenderPage() {
     '<div class="fcal-page-head"><div><h2 class="fcal-page-title">' + fcEsc(title) + '</h2><div class="fcal-page-subtitle">' +
     fcEsc(fcText('按应付日期查看应付安排 · 点击日期即可创建应付项', 'View payables by due date · Select a date to create a payable', 'Lihat tagihan berdasarkan tanggal jatuh tempo · Pilih tanggal untuk membuat item')) +
     '</div></div>' + createButton + '</div>' +
+    fcRenderFilterBar() +
     fcRenderStats(items) +
-    '<div class="fcal-layout">' + fcRenderSidebar() + fcRenderMain(items) + '</div></div>';
+    fcRenderMain(items) + '</div>';
   fcBindOutside();
 }
 function renderFinancePaymentCalendarPage(data) {
@@ -782,8 +777,7 @@ function renderFinancePaymentCalendarPage(data) {
   state.today = data && data.today ? String(data.today).slice(0, 10) : fcTodayISO();
   state.currentDate = state.today;
   state.selectedDate = state.today;
-  state.view = 'year';
-  state.keyword = '';
+  state.view = 'month';
   state.openFilter = '';
   Object.keys(state.filters).forEach(key => state.filters[key].clear());
   fcRenderPage();
