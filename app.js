@@ -12276,13 +12276,27 @@ function renderUnifiedCITable(operationalData,historicalData){
   function moneyCell(value){
     var td=document.createElement('td');td.className='text-right';td.textContent=fmtMoney(Number(value||0));return td;
   }
+  function unifiedCICountryLabel(raw){
+    var value=String(raw||'').trim();
+    if(!value)return '—';
+    var aliases={
+      ID:'印度尼西亚',IND:'印度尼西亚',INDONESIA:'印度尼西亚',
+      TH:'泰国',THA:'泰国',THAILAND:'泰国',
+      MY:'马来西亚',MYS:'马来西亚',MALAYSIA:'马来西亚',
+      CN:'中国',CHN:'中国',CHINA:'中国',
+      VN:'越南',VNM:'越南',VIETNAM:'越南',
+      PH:'菲律宾',PHL:'菲律宾',PHILIPPINES:'菲律宾'
+    };
+    var canonical=aliases[value.toUpperCase()]||value;
+    return typeof countryLabel==='function'?countryLabel(canonical):canonical;
+  }
   function addOpRow(srcTable,sourceRow,c){
     var tr=document.createElement('tr');tr.className=sourceRow.className||'clickable-detail-row';
     var click=sourceRow.getAttribute('onclick');if(click)tr.setAttribute('onclick',click);
     tr.appendChild(cell(srcTable,sourceRow,['CI号','CI编号','CI No','CI Number']));
     tr.appendChild(cell(srcTable,sourceRow,['CI类型','CI Type']));
     tr.appendChild(cell(srcTable,sourceRow,['品牌','Brand']));
-    tr.appendChild(cell(srcTable,sourceRow,['国家','Country']));
+    var opCountry=cell(srcTable,sourceRow,['国家','Country']);opCountry.textContent=unifiedCICountryLabel(c.country);tr.appendChild(opCountry);
     tr.appendChild(cell(srcTable,sourceRow,['仓库','目标仓库','Warehouse']));
     tr.appendChild(cell(srcTable,sourceRow,['清关方式','Clearance Type','Clearance']));
     tr.appendChild(cell(srcTable,sourceRow,['出货日期','CI日期','Ship Date','Shipment Date']));
@@ -12303,13 +12317,13 @@ function renderUnifiedCITable(operationalData,historicalData){
     var tr=document.createElement('tr');tr.className=sourceRow.className||'clickable-detail-row';
     var click=sourceRow.getAttribute('onclick');if(click)tr.setAttribute('onclick',click);
     var noCell=cell(srcTable,sourceRow,['历史CI号','CI号','CI No']);
-    var toggle=document.createElement('button');toggle.type='button';toggle.className='ci-history-expand';
+    var toggle=document.createElement('button');toggle.type='button';toggle.className='ci-history-expand ci-list-logi-toggle';
     toggle.id='ci-historical-caret-'+h.id;toggle.textContent='▶';
-    toggle.title='展开历史付款明细';toggle.style.cssText='border:0;background:transparent;color:#8e8e93;padding:0 7px 0 0;font-size:12px;cursor:pointer;line-height:1';toggle.setAttribute('onclick',"toggleHistoricalCIDetail(event,'"+String(h.id).replace(/'/g,'')+"')");
+    toggle.title='展开历史付款明细';toggle.setAttribute('onclick',"toggleHistoricalCIDetail(event,'"+String(h.id).replace(/'/g,'')+"')");
     noCell.insertBefore(toggle,noCell.firstChild);tr.appendChild(noCell);
     tr.appendChild(cell(srcTable,sourceRow,['CI类型','CI Type']));
     tr.appendChild(cell(srcTable,sourceRow,['品牌','Brand']));
-    tr.appendChild(cell(srcTable,sourceRow,['国家','Country']));
+    var histCountry=cell(srcTable,sourceRow,['国家','Country']);histCountry.textContent=unifiedCICountryLabel(h.country);tr.appendChild(histCountry);
     tr.appendChild(textCell('—'));
     tr.appendChild(cell(srcTable,sourceRow,['清关方式','Clearance Type','Clearance']));
     tr.appendChild(cell(srcTable,sourceRow,['日期','CI日期','CI Date']));
