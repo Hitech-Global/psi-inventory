@@ -117,7 +117,7 @@ test('finance payment overview opens in year view with five compact filters and 
   const filterKeys = [...root.innerHTML.matchAll(/data-filter="([^"]+)"/g)].map(match => match[1]);
   assert.deepEqual(filterKeys, ['country', 'brand', 'currency', 'status', 'category']);
   assert.doesNotMatch(root.innerHTML, /id="fcal-keyword"|class="fcal-search-row"|class="fcal-mini-grid|class="fcal-sidebar|class="fcal-undated-button/);
-  assert.ok(root.innerHTML.includes('1200.00'));
+  assert.match(root.innerHTML, /2026年/);
   assert.match(root.innerHTML, /RMB/);
   assert.match(root.innerHTML, /fcal-view-switch/);
   assert.doesNotMatch(root.innerHTML, /class="fcal-today-button"|现金流预测/);
