@@ -4970,7 +4970,7 @@ async function loadInv(){
     // 否则 overflow-x:auto 会使其成为滚动容器，导致 thead sticky 相对容器而非视口，表头随页面滚走。
     if(!document.getElementById('inv-freeze-style')){
       var __st=document.createElement('style'); __st.id='inv-freeze-style';
-      __st.textContent='#inv-table .inv-thead-wrap{position:sticky;top:-12px;z-index:40;overflow:hidden;background:#fafbfc;box-shadow:0 2px 4px rgba(0,0,0,.08)}#inv-table .inv-thead-wrap .data-table{margin:0}#inv-table .inv-body-wrap{overflow-x:auto}#inv-table .data-table thead .col-sticky{z-index:4}';
+      __st.textContent='#inv-table .inv-thead-wrap{position:sticky;top:-12px;z-index:40;overflow:hidden;background:#fafbfc;box-shadow:0 2px 4px rgba(0,0,0,.08)}#inv-table .inv-thead-wrap .data-table{margin:0}#inv-table .inv-body-wrap{overflow-x:auto}#inv-table .data-table thead .col-sticky{z-index:4}#inv-table .inv-head-table thead th:not(:first-child),#inv-table .inv-body-table tbody td:not(:first-child){text-align:left!important}#inv-table .inv-head-table thead th:first-child,#inv-table .inv-body-table tbody td:first-child{text-align:center!important}';
       document.head.appendChild(__st);
     }
     // 2) 库存数据截止日期（独立信息区域，复用现有 snapshot_cutoff_date；汇率之后、指标卡之前）
