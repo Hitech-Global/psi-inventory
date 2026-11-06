@@ -10530,7 +10530,7 @@ function getPiTransitAssets(foreignToRmbMap, piScopeSql, piScopeParams, opts) {
 }
 
 app.get('/api/commercial-invoices', requireApiPermission('ci_view'), asyncHandler((req, res) => {
-  const { inbound_status, logistics_display_status, keyword, related_pi, country, warehouse, brand } = req.query;
+  const { inbound_status, logistics_display_status, keyword, related_pi, country, warehouse, brand, clearance_type } = req.query;
   // 差异 = CI金额 - 已付定金 - 应付尾款（付款闭环校验）
   let sql = 'SELECT *, (goods_amount - COALESCE(actual_deducted_deposit, 0) - COALESCE(payable_balance, 0)) AS amount_difference FROM commercial_invoices WHERE 1=1';
   const params = [];
@@ -10539,6 +10539,8 @@ app.get('/api/commercial-invoices', requireApiPermission('ci_view'), asyncHandle
   if (country) { const al = countryAliases(country); sql += ' AND country IN (' + al.map(() => '?').join(',') + ')'; al.forEach(a => params.push(a)); }
   if (warehouse) { sql += ' AND target_warehouse = ?'; params.push(warehouse); }
   if (brand) { sql += ' AND brand = ?'; params.push(brand); }
+  if (clearance_type === 'formal' || clearance_type === 'non_formal') { sql += ' AND clearance_type = ?'; params.push(clearance_type); }
+  else if (clearance_type === 'unset') { sql += " AND COALESCE(clearance_type, '') = ''"; }
   sql += ' ORDER BY created_at DESC';
   let rows = query(sql, params).rows;
 
@@ -10826,6 +10828,8 @@ app.post('/api/commercial-invoices', requireApiPermission('ci_create'), asyncHan
   try {
     const d = req.body;
     if (!d.supplier_name) return res.status(400).json({ error: '供应商不能为空' });
+    const clearanceType = String(d.clearance_type || '').trim();
+    if (!['formal', 'non_formal'].includes(clearanceType)) return res.status(400).json({ error: '请选择清关方式：正清或非正清' });
     // CI-SHIP-DATE-01：实际出货日期必填（不允许默认填充今天）
     let actualShipDate;
     try { actualShipDate = historicalCIDate(d.actual_ship_date, '实际出货日期', true); }
@@ -10896,8 +10900,8 @@ app.post('/api/commercial-invoices', requireApiPermission('ci_create'), asyncHan
       // CI Header INSERT — related_pi_ids/related_pi_nos JSON 数组 + 旧字段首 PI 兼容
       const relatedPiIdsJson = JSON.stringify(relatedPiIds);
       const relatedPiNosJson = JSON.stringify(relatedPiNos);
-      run(`INSERT INTO commercial_invoices (id, ci_no, related_po_id, related_po_no, related_pi_id, related_pi_no, related_pi_ids, related_pi_nos, supplier_id, supplier_name, brand, country, target_warehouse, ci_date, actual_ship_date, payment_term_id, credit_days, payment_terms, due_date, shipment_batch, currency, goods_amount, pi_total_amount, amount_difference, difference_reason, ci_status, attachment, pl_attachment, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [ciId, ciNo, relatedPoId || '', relatedPoNo || '', firstPi.id, firstPi.pi_no, relatedPiIdsJson, relatedPiNosJson, d.supplier_id || firstPi.supplier_id || '', d.supplier_name, d.brand || firstPi.brand || '', d.country || firstPi.country || '', d.target_warehouse || firstPi.target_warehouse || '', d.ci_date || new Date().toISOString().split('T')[0], actualShipDate, effectivePaymentTermId, effectiveCreditDays, ciPaymentTerms, ciDueDate || payDueDate, d.shipment_batch || 1, ciCurrency, 0, piTotalAmount, 0, d.difference_reason || '', d.ci_status || 'uploaded', parseAttachment(d.attachment), parseAttachment(d.pl_attachment), d.remark || '']);
+      run(`INSERT INTO commercial_invoices (id, ci_no, related_po_id, related_po_no, related_pi_id, related_pi_no, related_pi_ids, related_pi_nos, supplier_id, supplier_name, brand, country, target_warehouse, ci_date, actual_ship_date, payment_term_id, credit_days, payment_terms, due_date, shipment_batch, currency, clearance_type, goods_amount, pi_total_amount, amount_difference, difference_reason, ci_status, attachment, pl_attachment, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [ciId, ciNo, relatedPoId || '', relatedPoNo || '', firstPi.id, firstPi.pi_no, relatedPiIdsJson, relatedPiNosJson, d.supplier_id || firstPi.supplier_id || '', d.supplier_name, d.brand || firstPi.brand || '', d.country || firstPi.country || '', d.target_warehouse || firstPi.target_warehouse || '', d.ci_date || new Date().toISOString().split('T')[0], actualShipDate, effectivePaymentTermId, effectiveCreditDays, ciPaymentTerms, ciDueDate || payDueDate, d.shipment_batch || 1, ciCurrency, clearanceType, 0, piTotalAmount, 0, d.difference_reason || '', d.ci_status || 'uploaded', parseAttachment(d.attachment), parseAttachment(d.pl_attachment), d.remark || '']);
 
       if (d.items && d.items.length > 0) {
         // P2-6 守卫：按 PI+SKU 聚合校验出货数量
@@ -11580,6 +11584,11 @@ app.put('/api/commercial-invoices/:id', requireApiPermission('ci_edit'), asyncHa
     }
     if (d.difference_reason !== undefined) { fields.push('difference_reason = ?'); values.push(String(d.difference_reason || '').trim()); }
     if (d.remark !== undefined) { fields.push('remark = ?'); values.push(String(d.remark || '').trim()); }
+    if (d.clearance_type !== undefined) {
+      const v = String(d.clearance_type || '').trim();
+      if (!['formal', 'non_formal'].includes(v)) return res.status(400).json({ error: '请选择清关方式：正清或非正清' });
+      fields.push('clearance_type = ?'); values.push(v);
+    }
     if (!fields.length) return res.json({ success: true, id: ci.id, ci_no: ci.ci_no });
 
     transaction(() => {
