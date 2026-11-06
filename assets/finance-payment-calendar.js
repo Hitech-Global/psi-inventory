@@ -292,7 +292,7 @@ function fcFilterGroup(key, label, options) {
     : (selected.size === 1
       ? (selectedOptions[0] ? selectedOptions[0].label : String([...selected][0]))
       : fcText('已选 ' + selected.size + ' 项', selected.size + ' selected', selected.size + ' dipilih'));
-  const icons = { country: '◎', currency: '▤', status: '◉', category: '◆' };
+  const icons = { country: '◎', brand: '◇', currency: '▤', status: '◉', category: '◆' };
   const optionsHtml = (options || []).map(option => {
     const checked = selected.has(String(option.value));
     return '<label class="fcal-filter-option"><input type="checkbox" value="' + fcEsc(option.value) + '" ' + (checked ? 'checked' : '') +
@@ -314,6 +314,7 @@ function fcRenderFilterBar() {
   const monthValue = String(state.currentDate || fcTodayISO()).slice(0, 7);
   return '<div class="fcal-filter-bar">' +
     fcFilterGroup('country', fcText('国家', 'Country', 'Negara'), options.country) +
+    fcFilterGroup('brand', fcText('品牌', 'Brand', 'Merek'), options.brand) +
     fcFilterGroup('currency', fcText('币种', 'Currency', 'Mata uang'), options.currency) +
     fcFilterGroup('status', fcText('付款状态', 'Payment status', 'Status pembayaran'), options.status) +
     fcFilterGroup('category', fcText('费用类型', 'Expense type', 'Jenis biaya'), options.category) +
@@ -552,16 +553,16 @@ function fcCalendarStyles() {
     '@media(max-width:650px){.fcal-stats-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.fcal-sidebar{grid-template-columns:1fr}.fcal-mini-card,.fcal-sidebar-card:last-child{grid-row:auto;grid-column:auto}.fcal-filter{width:100%;margin-right:0}.fcal-day-cell{min-height:80px;padding:4px 3px}.fcal-event{padding:3px}.fcal-event-title,.fcal-event-amount{font-size:9px}.fcal-day-add{opacity:1}.fcal-toolbar-title{font-size:14px}.fcal-week-grid{min-height:260px}.fcal-week-cell{padding:4px 2px}.fcal-form{grid-template-columns:1fr}.fcal-form-field.is-wide,.fcal-form-note,.fcal-form-actions{grid-column:1}.fcal-view-switch button{padding:6px 8px}.fcal-year-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.fcal-year-view{padding:8px}.fcal-year-month-card{padding:9px}}' +
     '@media(max-width:430px){.fcal-year-grid{grid-template-columns:1fr}}' +
 
-    '.fcal-filter-bar{display:grid;grid-template-columns:repeat(4,minmax(145px,1fr)) minmax(190px,1.15fr) auto;gap:12px;align-items:center;margin:0 0 22px}' +
+    '.fcal-filter-bar{display:grid;grid-template-columns:repeat(5,minmax(0,1fr)) minmax(200px,1.1fr) auto;gap:10px;align-items:center;margin:0 0 22px}' +
     '.fcal-page .fcal-filter{margin-top:0;min-width:0}' +
-    '.fcal-page .fcal-filter-trigger{height:44px;padding:0 12px;border-radius:10px;gap:8px}' +
-    '.fcal-filter-label{display:flex;align-items:center;gap:7px;min-width:0;color:var(--text-secondary,#68707b);font-size:11px;white-space:nowrap}' +
-    '.fcal-filter-icon{color:var(--text-primary,#333);font-size:13px;line-height:1}' +
-    '.fcal-filter-value{margin-left:auto;min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--text-primary,#333);font-size:12px;font-weight:600;white-space:nowrap}' +
-    '.fcal-month-filter{position:relative;display:flex;align-items:center;gap:9px;min-width:0;height:44px;padding:0 13px;border:1px solid var(--border,#e1e2e5);border-radius:10px;background:var(--bg-card,#fff);color:var(--text-primary,#333);cursor:pointer}' +
-    '.fcal-month-icon{font-size:14px;color:var(--text-secondary,#666)}.fcal-month-label{font-size:12px;font-weight:600;white-space:nowrap}.fcal-month-chevron{margin-left:auto;color:var(--text-secondary,#888);font-size:18px}' +
+    '.fcal-page .fcal-filter-trigger{height:42px;padding:0 9px;border-radius:9px;gap:6px}' +
+    '.fcal-filter-label{display:flex;align-items:center;gap:5px;min-width:0;color:var(--text-secondary,#68707b);font-size:11px;white-space:nowrap}' +
+    '.fcal-filter-icon{color:var(--text-primary,#333);font-size:12px;line-height:1}' +
+    '.fcal-filter-value{margin-left:auto;min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--text-primary,#333);font-size:11px;font-weight:600;white-space:nowrap}' +
+    '.fcal-month-filter{position:relative;display:flex;align-items:center;gap:7px;min-width:0;height:42px;padding:0 10px;border:1px solid var(--border,#e1e2e5);border-radius:9px;background:var(--bg-card,#fff);color:var(--text-primary,#333);cursor:pointer}' +
+    '.fcal-month-icon{font-size:13px;color:var(--text-secondary,#666)}.fcal-month-label{font-size:11px;font-weight:600;white-space:nowrap}.fcal-month-chevron{margin-left:auto;color:var(--text-secondary,#888);font-size:17px}' +
     '.fcal-month-filter input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;border:0}' +
-    '.fcal-reset-button{height:44px;padding:0 13px;border:1px solid var(--border,#e1e2e5);border-radius:10px;background:var(--bg-card,#fff);color:#3478d5;font-size:12px;white-space:nowrap}' +
+    '.fcal-reset-button{height:42px;padding:0 12px;border:1px solid var(--border,#e1e2e5);border-radius:9px;background:var(--bg-card,#fff);color:#3478d5;font-size:11px;white-space:nowrap}' +
     '.fcal-reset-button:hover{background:var(--bg-hover,#f8faff)}' +
     '.fcal-stats-grid{margin-bottom:18px}.fcal-summary-note{display:none}' +
     '.fcal-main{min-width:0;border:1px solid var(--border,#e3e4e7);border-radius:12px;background:var(--bg-card,#fff);overflow:hidden}' +
@@ -569,7 +570,7 @@ function fcCalendarStyles() {
     '.fcal-toolbar{flex-wrap:nowrap}.fcal-toolbar-left{gap:7px}.fcal-toolbar-title{font-size:16px}' +
     '@media(max-width:1150px){.fcal-filter-bar{grid-template-columns:repeat(3,minmax(0,1fr))}}' +
     '@media(max-width:900px){.fcal-filter-bar{grid-template-columns:repeat(2,minmax(0,1fr))}.fcal-month-filter{grid-column:1/-1}}' +
-    '@media(max-width:650px){.fcal-filter-bar{gap:8px}.fcal-reset-button{justify-self:end}.fcal-main-toolbar{padding:9px}.fcal-toolbar{flex-wrap:wrap}.fcal-calendar-wrap{overflow-x:auto}.fcal-calendar{min-width:650px}}' +
+    '@media(max-width:650px){.fcal-filter-bar{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.fcal-month-filter{grid-column:1/-1}.fcal-reset-button{grid-column:2;justify-self:end}.fcal-main-toolbar{padding:9px}.fcal-toolbar{flex-wrap:wrap}.fcal-calendar-wrap{overflow-x:auto}.fcal-calendar{min-width:650px}}' +
     '</style>';
 }
 function fcCanCreate() {
