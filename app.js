@@ -12267,14 +12267,14 @@ function renderUnifiedCITable(operationalData,historicalData){
   }
   function cell(srcTable,row,aliases,fallback){
     var ix=indexFor(srcTable,aliases);
-    if(ix>=0&&row&&row.cells[ix])return row.cells[ix].cloneNode(true);
+    if(ix>=0&&row&&row.cells[ix]){var cloned=row.cells[ix].cloneNode(true);cloned.classList.remove('text-right','font-bold');return cloned;}
     var td=document.createElement('td');td.textContent=fallback==null?'—':fallback;return td;
   }
   function textCell(value,cls){
-    var td=document.createElement('td');if(cls)td.className=cls;td.textContent=value==null||value===''?'—':String(value);return td;
+    var td=document.createElement('td');td.textContent=value==null||value===''?'—':String(value);return td;
   }
   function moneyCell(value){
-    var td=document.createElement('td');td.className='text-right';td.textContent=fmtMoney(Number(value||0));return td;
+    var td=document.createElement('td');td.textContent=fmtMoney(Number(value||0));return td;
   }
   function unifiedCICountryLabel(raw){
     var value=String(raw||'').trim();
@@ -12331,8 +12331,8 @@ function renderUnifiedCITable(operationalData,historicalData){
     var histAmountCell=cell(srcTable,sourceRow,['总货款','CI金额','Gross Amount','Total Amount']);
     histAmountCell.textContent=fmtMoney(h.gross_goods_amount,h.currency);
     tr.appendChild(histAmountCell);
-    tr.appendChild(textCell('—','text-right'));
-    tr.appendChild(textCell('—','text-right'));
+    tr.appendChild(textCell('—'));
+    tr.appendChild(textCell('—'));
     tr.appendChild(moneyCell(Number(h.historical_paid_amount||0)+Number(h.subsequent_paid_amount||0)));
     tr.appendChild(moneyCell(h.unpaid_amount));
     tr.appendChild(cell(srcTable,sourceRow,['付款状态','Payment Status']));
@@ -12377,9 +12377,9 @@ function renderUnifiedCITable(operationalData,historicalData){
       histRows.forEach(function(sourceRow,index){if(historicalData[index])addHistoricalRow(histTable,sourceRow,historicalData[index]);});
     }
   }
-  var wrap=document.createElement('div');wrap.className='table-container';wrap.style.boxShadow='none';wrap.style.borderRadius='0';
+  var wrap=document.createElement('div');wrap.className='table-container ci-unified-scroll-container';wrap.style.boxShadow='none';wrap.style.borderRadius='0';
   wrap.appendChild(table);
-  return wrap.innerHTML;
+  return wrap.outerHTML;
 }
 
 function renderPurchaseAmountSummary(summary){

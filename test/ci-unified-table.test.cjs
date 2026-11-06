@@ -39,4 +39,12 @@ assert.ok(fn.includes('fmtMoney(c.goods_amount,c.currency)'),'operational CI amo
 assert.ok(fn.includes('fmtMoney(h.gross_goods_amount,h.currency)'),'historical CI amount must include its currency code');
 assert.ok(fn.includes("['物流状态','ci.col.logistics_status']"));
 assert.ok(fn.includes("['入库状态','ci.col.inbound_status']"));
+assert.ok(fn.includes("wrap.className='table-container ci-unified-scroll-container'"),'CI table must use its own two-axis scroll container');
+assert.ok(fn.includes('return wrap.outerHTML;'),'CI table wrapper must be rendered so horizontal scrolling stays within the table');
+assert.ok(!fn.includes('col-sticky'),'CI table must not freeze any data columns');
+assert.ok(index.includes('.ci-unified-scroll-container{')&&index.includes('overflow:auto'),'CI table must scroll inside its own viewport');
+assert.ok(index.includes('.ci-unified-table thead th{position:sticky;top:0;'),'CI table header must stay visible while its rows scroll');
+assert.ok(index.includes('.ci-unified-table th,.ci-unified-table td{text-align:left!important}'),'all unified CI table cells must be left aligned');
+assert.ok(index.includes('.ci-unified-table tbody tr:not(.ci-historical-detail-row)>td{font-weight:400!important}'),'CI data cells must use consistent normal font weight');
+assert.ok(fn.includes("cloned.classList.remove('text-right','font-bold')"),'source cell alignment and bold overrides must not leak into the unified table');
 console.log('Unified CI management table static regression: PASS');
