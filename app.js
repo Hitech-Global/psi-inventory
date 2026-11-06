@@ -12187,7 +12187,7 @@ function canImportHistoricalCI(){return hasPermission('ci_create')&&hasPermissio
 function ciClearanceLabel(v){return v==='formal'?'正清':v==='non_formal'?'非正清':'未设置';}
 async function renderCI(){
   const ciFilterControls = '<div class="filter-group"><label>'+t('logistics.detail.logistics_status','物流状态')+'</label><select id="ci-logistics-fs"><option value="">'+t('common.all','全部')+'</option>'+logisticsFilterOptions('')+'</select></div><div class="filter-group"><label>清关方式</label><select id="ci-clearance-filter" onchange="onCIFilterChange()"><option value="">全部</option><option value="formal">正清</option><option value="non_formal">非正清</option><option value="unset">未设置</option></select></div><div class="filter-group"><label>'+t('field.country','国家')+'</label><select id="ci-country" onchange="onCIFilterChange()"><option value="">'+t('common.all','全部')+'</option></select></div><div class="filter-group"><label>'+t('field.target_warehouse','仓库')+'</label><select id="ci-warehouse" onchange="onCIFilterChange()"><option value="">'+t('common.all','全部')+'</option></select></div><div class="filter-group"><label>'+t('field.brand','品牌')+'</label><select id="ci-brand" onchange="onCIFilterChange()"><option value="">'+t('common.all','全部')+'</option></select></div>';
-  document.getElementById('content-inner').innerHTML=t('html.renderCI', '<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>单据类型</label><select id="ci-source-mode" onchange="onCISourceModeChange()"><option value="operational">运营 CI</option><option value="historical">历史 CI</option><option value="all">全部</option></select></div>{v3}<div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadCI()">搜索</button>{v1}{v2}</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🚚 CI/PL列表</div></div><div id="ci-purchase-summary"></div><div id="ci-table"></div></div>', {v1: hasPermission('ci_create')?t('gen.L5756.1','<button class="btn btn-primary btn-sm" onclick="createCI()">➕ 新建CI</button>'):'', v2: '', v3: ciFilterControls});
+  document.getElementById('content-inner').innerHTML=t('html.renderCI', '<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>CI类型</label><select id="ci-source-mode" onchange="onCISourceModeChange()"><option value="all" selected>全部</option><option value="operational">运营 CI</option><option value="historical">历史 CI</option></select></div>{v3}<div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadCI()">搜索</button>{v1}{v2}</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🚚 CI/PL列表</div></div><div id="ci-purchase-summary"></div><div id="ci-table"></div></div>', {v1: hasPermission('ci_create')?t('gen.L5756.1','<button class="btn btn-primary btn-sm" onclick="createCI()">➕ 新建CI</button>'):'', v2: '', v3: ciFilterControls});
   refreshCIFilterOptions();
   loadCI();
   // CI/PL PERF-01：purchase-amount-summary 为全局口径（不随筛选/单据类型变化），页面渲染时拉取一次；
@@ -12224,6 +12224,148 @@ function renderOperationalCITable(data){
 function renderHistoricalCITable(data){
   return !data.length?t('gen.L5764.1','<div class="empty-state"><div class="empty-icon">📚</div>暂无历史CI</div>'):t('gen.L5764.2','<div style="font-size:12px;color:#666;padding:10px 0">仅用于历史采购金额和应付管理，不影响库存、WAC及订单预测。</div><div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>历史CI号</th><th>'+t('ci.col.type','CI类型')+'</th><th>品牌</th><th>国家</th><th>日期</th><th>币种</th><th>总货款</th><th>导入历史已付</th><th>后续已付</th><th>抵扣</th><th>抹零</th><th>未结金额</th><th>付款状态</th><th>到期日</th><th>操作</th></tr></thead><tbody>')+data.map(h=>{const st=h.payment_status==='paid'?'status-paid':String(h.payment_status||'').includes('partial')?'status-pending':'status-unpaid';return '<tr class="clickable-detail-row" onclick="rowClickView(event,\'viewHistoricalCI\',\''+h.id+'\')"><td class="cell-id"><span class="link-text" onclick="viewHistoricalCI(\''+h.id+'\')">'+esc(h.historical_ci_no)+'</span></td><td>'+ciTypeBadge('historical')+'</td><td>'+esc(h.brand_name)+'</td><td>'+esc(h.country)+'</td><td class="cell-date">'+fmtDate(h.ci_date)+'</td><td>'+esc(h.currency)+'</td><td class="text-right font-bold">'+fmtMoney(h.gross_goods_amount)+'</td><td class="text-right">'+fmtMoney(h.historical_paid_amount)+'</td><td class="text-right">'+fmtMoney(h.subsequent_paid_amount)+'</td><td class="text-right">'+fmtMoney(h.deduction_amount)+'</td><td class="text-right">'+fmtMoney(h.rounding_amount)+'</td><td class="text-right '+(Number(h.unpaid_amount||0)>0?'text-danger':'')+'">'+fmtMoney(h.unpaid_amount)+'</td><td><span class="status-badge '+st+'">'+esc(PAY_STATUS_MAP[h.payment_status]||h.payment_status)+'</span></td><td class="cell-date">'+fmtDate(h.due_date)+'</td><td class="cell-actions"><button class="action-btn" onclick="viewHistoricalCI(\''+h.id+t('gen.L5764.3','\')" title="\u67e5\u770b\u5386\u53f2CI">👁️</button>')+(hasPermission('payment_view')?'<button class="action-btn" onclick="viewPayment(\''+h.payment_request_id+t('gen.L5764.4','\')" title="\u4ed8\u6b3e\u4e0e\u7ed3\u7b97">💳</button>'):'')+'</td></tr>'}).join('')+'</tbody></table></div>';
 }
+
+function toggleHistoricalCIDetail(event,id){
+  if(event){event.preventDefault();event.stopPropagation();}
+  var row=document.getElementById('ci-historical-detail-'+id);
+  var caret=document.getElementById('ci-historical-caret-'+id);
+  if(!row)return;
+  row.hidden=!row.hidden;
+  if(caret)caret.textContent=row.hidden?'▶':'▼';
+}
+function renderUnifiedCITable(operationalData,historicalData){
+  operationalData=Array.isArray(operationalData)?operationalData:[];
+  historicalData=Array.isArray(historicalData)?historicalData:[];
+  if(!operationalData.length&&!historicalData.length)return '<div class="empty-state"><div class="empty-icon">🚚</div>暂无 CI 记录</div>';
+
+  var columns=[
+    ['CI号','ci.no'],['CI类型','ci.col.type'],['品牌','field.brand'],['国家','field.country'],
+    ['仓库','field.target_warehouse'],['清关方式','ci.clearance_type'],['CI日期','field.ci_date'],
+    ['币种','field.currency'],['CI金额','ci.amount'],['总运费','ci.col.total_freight'],
+    ['运费占比','ci.col.freight_ratio'],['已付金额','ci.paid_amount'],['未结金额','ci.unpaid_amount'],
+    ['付款状态','ci.payment_status'],['物流状态','ci.col.logistics_status'],
+    ['入库状态','ci.col.inbound_status'],['到期日','field.due_date'],['操作','common.actions']
+  ];
+  var table=document.createElement('table');
+  table.className='data-table ci-unified-table';
+  var thead=document.createElement('thead'),headRow=document.createElement('tr');
+  columns.forEach(function(col,index){var th=document.createElement('th');th.textContent=t(col[1],col[0]);if(index===9)th.setAttribute('data-ci-freight-head','total');if(index===10)th.setAttribute('data-ci-freight-head','ratio');headRow.appendChild(th);});
+  thead.appendChild(headRow);table.appendChild(thead);
+  var tbody=document.createElement('tbody');table.appendChild(tbody);
+
+  function norm(v){return String(v||'').replace(/\s+/g,'').toLowerCase();}
+  function sourceTable(html){
+    if(!html||typeof html!=='string')return null;
+    var box=document.createElement('div');box.innerHTML=html;
+    return box.querySelector('table.data-table');
+  }
+  function indexFor(srcTable,aliases){
+    if(!srcTable||!srcTable.tHead||!srcTable.tHead.rows.length)return -1;
+    var headers=Array.prototype.slice.call(srcTable.tHead.rows[0].cells).map(function(c){return norm(c.textContent);});
+    var wanted=aliases.map(norm);
+    return headers.findIndex(function(h){return wanted.indexOf(h)>=0;});
+  }
+  function cell(srcTable,row,aliases,fallback){
+    var ix=indexFor(srcTable,aliases);
+    if(ix>=0&&row&&row.cells[ix])return row.cells[ix].cloneNode(true);
+    var td=document.createElement('td');td.textContent=fallback==null?'—':fallback;return td;
+  }
+  function textCell(value,cls){
+    var td=document.createElement('td');if(cls)td.className=cls;td.textContent=value==null||value===''?'—':String(value);return td;
+  }
+  function moneyCell(value){
+    var td=document.createElement('td');td.className='text-right';td.textContent=fmtMoney(Number(value||0));return td;
+  }
+  function addOpRow(srcTable,sourceRow,c){
+    var tr=document.createElement('tr');tr.className=sourceRow.className||'clickable-detail-row';
+    var click=sourceRow.getAttribute('onclick');if(click)tr.setAttribute('onclick',click);
+    tr.appendChild(cell(srcTable,sourceRow,['CI号','CI编号','CI No','CI Number']));
+    tr.appendChild(cell(srcTable,sourceRow,['CI类型','CI Type']));
+    tr.appendChild(cell(srcTable,sourceRow,['品牌','Brand']));
+    tr.appendChild(cell(srcTable,sourceRow,['国家','Country']));
+    tr.appendChild(cell(srcTable,sourceRow,['仓库','目标仓库','Warehouse']));
+    tr.appendChild(cell(srcTable,sourceRow,['清关方式','Clearance Type','Clearance']));
+    tr.appendChild(cell(srcTable,sourceRow,['出货日期','CI日期','Ship Date','Shipment Date']));
+    tr.appendChild(cell(srcTable,sourceRow,['币种','Currency']));
+    tr.appendChild(cell(srcTable,sourceRow,['CI金额','CI Amount','Goods Amount']));
+    var freightTotal=cell(srcTable,sourceRow,['总运费','Total Freight']);freightTotal.setAttribute('data-ci-freight-cell','total');freightTotal.setAttribute('data-ci-id',String(c.id));tr.appendChild(freightTotal);
+    var freightRatio=cell(srcTable,sourceRow,['运费占比','Freight Ratio']);freightRatio.setAttribute('data-ci-freight-cell','ratio');freightRatio.setAttribute('data-ci-id',String(c.id));tr.appendChild(freightRatio);
+    tr.appendChild(moneyCell(Number(c.actual_deducted_deposit||0)+Number(c.balance_paid_amount||0)));
+    tr.appendChild(moneyCell(c.balance_unpaid_amount));
+    tr.appendChild(cell(srcTable,sourceRow,['尾款状态','付款状态','Balance Payment Status','Payment Status']));
+    tr.appendChild(cell(srcTable,sourceRow,['物流状态','Logistics Status']));
+    tr.appendChild(cell(srcTable,sourceRow,['入库状态','Inbound Status']));
+    tr.appendChild(cell(srcTable,sourceRow,['到期日','Due Date'],fmtDate(c.due_date)));
+    tr.appendChild(cell(srcTable,sourceRow,['操作','Actions']));
+    tbody.appendChild(tr);
+  }
+  function addHistoricalRow(srcTable,sourceRow,h){
+    var tr=document.createElement('tr');tr.className=sourceRow.className||'clickable-detail-row';
+    var click=sourceRow.getAttribute('onclick');if(click)tr.setAttribute('onclick',click);
+    var noCell=cell(srcTable,sourceRow,['历史CI号','CI号','CI No']);
+    var toggle=document.createElement('button');toggle.type='button';toggle.className='ci-history-expand';
+    toggle.id='ci-historical-caret-'+h.id;toggle.textContent='▶';
+    toggle.title='展开历史付款明细';toggle.style.cssText='border:0;background:transparent;color:#8e8e93;padding:0 7px 0 0;font-size:12px;cursor:pointer;line-height:1';toggle.setAttribute('onclick',"toggleHistoricalCIDetail(event,'"+String(h.id).replace(/'/g,'')+"')");
+    noCell.insertBefore(toggle,noCell.firstChild);tr.appendChild(noCell);
+    tr.appendChild(cell(srcTable,sourceRow,['CI类型','CI Type']));
+    tr.appendChild(cell(srcTable,sourceRow,['品牌','Brand']));
+    tr.appendChild(cell(srcTable,sourceRow,['国家','Country']));
+    tr.appendChild(textCell('—'));
+    tr.appendChild(cell(srcTable,sourceRow,['清关方式','Clearance Type','Clearance']));
+    tr.appendChild(cell(srcTable,sourceRow,['日期','CI日期','CI Date']));
+    tr.appendChild(cell(srcTable,sourceRow,['币种','Currency']));
+    tr.appendChild(cell(srcTable,sourceRow,['总货款','CI金额','Gross Amount','Total Amount']));
+    tr.appendChild(textCell('—','text-right'));
+    tr.appendChild(textCell('—','text-right'));
+    tr.appendChild(moneyCell(Number(h.historical_paid_amount||0)+Number(h.subsequent_paid_amount||0)));
+    tr.appendChild(moneyCell(h.unpaid_amount));
+    tr.appendChild(cell(srcTable,sourceRow,['付款状态','Payment Status']));
+    tr.appendChild(textCell('—'));
+    tr.appendChild(textCell('—'));
+    tr.appendChild(cell(srcTable,sourceRow,['到期日','Due Date']));
+    tr.appendChild(cell(srcTable,sourceRow,['操作','Actions']));
+    tbody.appendChild(tr);
+
+    var detail=document.createElement('tr');detail.className='ci-historical-detail-row';detail.id='ci-historical-detail-'+h.id;detail.hidden=true;
+    var td=document.createElement('td');td.colSpan=columns.length;
+    var items=[
+      ['导入历史已付',h.historical_paid_amount],['后续已付',h.subsequent_paid_amount],
+      ['抵扣',h.deduction_amount],['抹零',h.rounding_amount]
+    ];
+    td.innerHTML='<div class="ci-historical-payment-grid" style="display:grid;grid-template-columns:repeat(4,minmax(130px,1fr));gap:10px;padding:12px 14px;background:#f5f5f7;border:1px solid #e5e5ea;border-radius:10px">'+items.map(function(item){
+      return '<div style="display:flex;flex-direction:column;gap:5px"><span style="font-size:12px;color:#86868b">'+esc(item[0])+'</span><strong style="font-size:13px;color:#1d1d1f;font-weight:600">'+esc(fmtMoney(Number(item[1]||0)))+'</strong></div>';
+    }).join('')+'</div>';
+    detail.appendChild(td);tbody.appendChild(detail);
+  }
+
+  if(operationalData.length){
+    var opTable=sourceTable(renderOperationalCITable(operationalData));
+    if(opTable&&opTable.tBodies.length){
+      var opRows=Array.prototype.slice.call(opTable.tBodies[0].rows);
+      var dataIndex=0;
+      opRows.forEach(function(sourceRow){
+        if(sourceRow.classList.contains('ci-list-logi-row')){
+          var detail=sourceRow.cloneNode(true);
+          var detailCell=detail.cells&&detail.cells[0];if(detailCell)detailCell.colSpan=columns.length;
+          tbody.appendChild(detail);return;
+        }
+        if(!sourceRow.classList.contains('clickable-detail-row'))return;
+        var c=operationalData[dataIndex++];if(c)addOpRow(opTable,sourceRow,c);
+      });
+    }
+  }
+  if(historicalData.length){
+    var histTable=sourceTable(renderHistoricalCITable(historicalData));
+    if(histTable&&histTable.tBodies.length){
+      var histRows=Array.prototype.slice.call(histTable.tBodies[0].querySelectorAll('tr.clickable-detail-row'));
+      histRows.forEach(function(sourceRow,index){if(historicalData[index])addHistoricalRow(histTable,sourceRow,historicalData[index]);});
+    }
+  }
+  var wrap=document.createElement('div');wrap.className='table-container';wrap.style.boxShadow='none';wrap.style.borderRadius='0';
+  wrap.appendChild(table);
+  return wrap.innerHTML;
+}
+
 function renderPurchaseAmountSummary(summary){
   const scope=(label,data)=>'<div class="stat-card"><div class="stat-label">'+label+'</div><div class="stat-number" style="font-size:17px">'+((data.by_currency||[]).map(x=>esc(x.currency)+' '+Number(x.amount||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})).join(' · ')||'0.00')+'</div><div style="font-size:12px;color:#999;margin-top:4px">'+data.count+t('gen.L5767.1',' 张；人民币待补 ')+data.rmb_pending_count+t('gen.L5767.2',' 张</div></div>');
   return '<div class="stats-grid mb-16" style="grid-template-columns:repeat(3,minmax(0,1fr))">'+scope(t("app.978", "\u8fd0\u8425\u91c7\u8d2d\u91d1\u989d"),summary.operational)+scope(t('gen.L5768.1','历史采购金额'),summary.historical)+scope(t("app.979", "\u91c7\u8d2d\u91d1\u989d\u5408\u8ba1\uff08\u6309\u5e01\u79cd\uff09"),summary.total)+'</div><div style="font-size:12px;color:#999;margin:-8px 0 12px">'+esc(summary.rmb_note||'')+'</div>';
@@ -12282,9 +12424,7 @@ async function loadCI(){
       if(window.AppStore) AppStore.page.set('ci',_ciSig,results,{ttl:30000});
     }
     const table=document.getElementById('ci-table');if(!table)return;
-    if(mode==='operational')table.innerHTML=renderOperationalCITable(results[0]);
-    else if(mode==='historical')table.innerHTML=renderHistoricalCITable(results[1]);
-    else table.innerHTML=t('html.loadCI', '<h3 style="margin:8px 0 10px;font-size:15px">运营 CI</h3>{v1}<h3 style="margin:20px 0 10px;font-size:15px">历史 CI</h3>{v2}', {v1: renderOperationalCITable(results[0]), v2: renderHistoricalCITable(results[1])});
+    table.innerHTML=renderUnifiedCITable(results[0]||[],results[1]||[]);
   }catch(e){showFlash(e.message,'danger')}
 }
 async function createHistoricalCI(){

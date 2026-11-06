@@ -96,8 +96,8 @@
       var typeText = String(cells[1].textContent || '').trim().replace(/\s+/g, '');
       if (typeText === '运营CI') cells[1].textContent = 'Operations CI';
     }
-    if (cells[5]) {
-      var country = String(cells[5].textContent || '').trim();
+    if (cells[3]) {
+      var country = String(cells[3].textContent || '').trim();
       cells[5].textContent = englishCountryLabel(country);
     }
   }
@@ -134,11 +134,15 @@
     var targets = [];
     Array.prototype.forEach.call(root.querySelectorAll('table'), function (table) {
       if (!isOperationalTable(table)) return;
-      removeInboundColumn(table);
       var heads = table.querySelectorAll('thead th');
       if (heads.length < 10) return;
-      // Operational CI schema is stable: [CI号, CI类型, 关联PI, 供应商, 品牌, 国家, 仓库, 出货日期, 币种, CI金额, ...]
-      var ciAmountIndex = 9;
+      // Unified CI table: locate CI amount by header label, not the legacy fixed index.
+      var ciAmountIndex = -1;
+      Array.prototype.forEach.call(heads, function (th, index) {
+        var label = String(th.textContent || '').replace(/\s+/g, '').toLowerCase();
+        if (label === 'ci金额' || label === 'ciamount' || label === '总货款' || label === 'grossamount') ciAmountIndex = index;
+      });
+      if (ciAmountIndex < 0) return;
       var headerRow = heads[ciAmountIndex].parentNode;
       if (!headerRow.querySelector('[data-ci-freight-head="total"]')) {
         var thTotal = document.createElement('th');
@@ -151,7 +155,9 @@
         headerRow.insertBefore(thTotal, nextHead);
         headerRow.insertBefore(thRatio, nextHead);
       }
-      Array.prototype.forEach.call(table.querySelectorAll('tbody tr'), function (row) {
+      Array.prototype.forEach.call(table.querySelectorAll('tbody tr.clickable-detail-row'), function (row) {
+        var rawClick = row.getAttribute('onclick') || '';
+        if (rawClick.indexOf('viewHistoricalCI') !== -1) return;
         localizeOperationalRow(row);
         var id = parseCIId(row);
         var c = ciMap[id];

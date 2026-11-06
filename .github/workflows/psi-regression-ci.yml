@@ -11,6 +11,8 @@ on:
       - 'scripts/ci-historical-clearance-hotfix.cjs'
       - 'migrations/historical-ci-clearance.js'
       - 'test/ci-historical-clearance-hotfix.test.cjs'
+      - 'test/ci-unified-table.test.cjs'
+      - 'app.js'
       - 'test/ci-inline-clearance-hotfix.test.cjs'
       - 'test/ci-edit-before-pl-hotfix.test.cjs'
       - 'test/ci-clearance-type.test.cjs'
@@ -23,6 +25,7 @@ on:
       - 'wave2b-pi-batch-import-pg.js'
       - 'test/pi-deposit-payable-date.test.cjs'
       - 'index.html'
+      - 'assets/ci-list-freight.js'
       - 'assets/bigseller-inventory-import.js'
       - 'test/bigseller-inventory-import.test.cjs'
       - 'assets/zhisu-inventory-import.js'
@@ -84,6 +87,7 @@ jobs:
       - name: Check frontend and backend syntax
         run: |
           node --check app.js
+          node --check assets/ci-list-freight.js
           node --check scripts/ci-edit-before-pl-hotfix.cjs
           node --check scripts/ci-inline-clearance-hotfix.cjs
           node --check scripts/ci-historical-clearance-hotfix.cjs
@@ -144,6 +148,8 @@ jobs:
         run: node test/ci-edit-before-pl-hotfix.test.cjs && node test/ci-clearance-type.test.cjs && node test/ci-inline-clearance-hotfix.test.cjs
       - name: Test historical CI clearance setting
         run: node test/ci-historical-clearance-hotfix.test.cjs
+      - name: Test unified CI management table
+        run: node test/ci-unified-table.test.cjs
       - name: Test CI edit entry and supplier column removal
         run: node test/ci-edit-entry-supplier-column.test.cjs
       - name: Test opt-in page and API performance diagnostics
