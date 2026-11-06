@@ -288,6 +288,9 @@ if (driver === 'pg') {
         // 全部幂等（ADD COLUMN IF NOT EXISTS），不影响已有 CI 数据。
         "ALTER TABLE commercial_invoice_items ADD COLUMN IF NOT EXISTS discount DOUBLE PRECISION DEFAULT 0",
         "ALTER TABLE commercial_invoice_items ADD COLUMN IF NOT EXISTS net_unit_price NUMERIC(18,4) DEFAULT 0",
+        // CI-CLEARANCE-TYPE-01：正清 / 非正清；空串保留旧CI未分类状态，不回填历史。
+        "ALTER TABLE commercial_invoices ADD COLUMN IF NOT EXISTS clearance_type TEXT NOT NULL DEFAULT ''",
+        "CREATE INDEX IF NOT EXISTS idx_ci_clearance_type ON commercial_invoices(clearance_type)",
         // PI-MULTI-PO: 原子保存每个 PO 对 PI SKU 的占用数量；历史单 PO 保持旧关联列。
         "ALTER TABLE proforma_invoices ADD COLUMN IF NOT EXISTS related_po_ids TEXT DEFAULT ''",
         "ALTER TABLE proforma_invoices ADD COLUMN IF NOT EXISTS related_po_nos TEXT DEFAULT ''",
