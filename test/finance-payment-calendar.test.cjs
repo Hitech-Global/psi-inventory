@@ -96,8 +96,14 @@ test('finance payment overview opens in month view with compact top filters and 
       settled_amount: 200, remaining_amount: 1000, paid_amount: 200, payable_date: '2026-11-10',
       lifecycle_status: 'partially_paid', payment_state: 'partial', payer_entity_key: 'id_hitech',
       payer_name_snapshot: 'Hitech Indonesia', country_code: 'ID', country_display: '印度尼西亚', brand: 'Redragon'
+    }, {
+      id: 'pay-2', fee_no: 'PAY-2', source_type: 'manual', category_code: 'warehouse_arrival',
+      payee_name_snapshot: 'Netac Forwarder', currency: 'RMB', payable_amount: 300,
+      settled_amount: 0, remaining_amount: 300, paid_amount: 0, payable_date: '2026-11-12',
+      lifecycle_status: 'pending', payment_state: 'pending', payer_entity_key: 'id_hitech',
+      payer_name_snapshot: 'Hitech Indonesia', country_code: 'ID', country_display: '印度尼西亚', brand: 'Netac'
     }],
-    facets: { countries: [{ code: 'ID', name: '印度尼西亚' }], brands: ['Redragon'] },
+    facets: { countries: [{ code: 'ID', name: '印度尼西亚' }], brands: ['Redragon', 'Netac'] },
     categories: [{ code: 'warehouse_arrival', name: '物流 / 到仓', subcategories: [] }],
     payerEntities: [{ entity_key: 'id_hitech', entity_name: 'Hitech Indonesia', status: 'active', default_currency: 'IDR' }],
     currencies: [{ code: 'IDR', status: 'active' }, { code: 'RMB', status: 'active' }]
@@ -109,12 +115,22 @@ test('finance payment overview opens in month view with compact top filters and 
   assert.match(root.innerHTML, /fcal-filter-bar/);
   assert.match(root.innerHTML, /fcal-month-picker/);
   const filterKeys = [...root.innerHTML.matchAll(/data-filter="([^"]+)"/g)].map(match => match[1]);
-  assert.deepEqual(filterKeys, ['country', 'currency', 'status', 'category']);
+  assert.deepEqual(filterKeys, ['country', 'brand', 'currency', 'status', 'category']);
   assert.doesNotMatch(root.innerHTML, /id="fcal-keyword"|class="fcal-search-row"|class="fcal-mini-grid|class="fcal-sidebar|class="fcal-undated-button/);
   assert.ok(root.innerHTML.includes('1200.00'));
   assert.match(root.innerHTML, /RMB/);
   assert.match(root.innerHTML, /fcal-view-switch/);
   assert.doesNotMatch(root.innerHTML, /class="fcal-today-button"|现金流预测/);
+
+  context.fcToggleFilter('brand');
+  assert.match(root.innerHTML, /data-filter="brand"/);
+  assert.match(root.innerHTML, /value="Redragon"/);
+  assert.match(root.innerHTML, /value="Netac"/);
+  context.fcToggleFilterValue('brand', 'Redragon', true);
+  assert.match(root.innerHTML, /value="Redragon" checked/);
+  assert.equal(vm.runInNewContext('fcFilteredItems().length', context), 1, 'brand filter should only show matching payable items');
+  context.fcClearAllFilters();
+  assert.equal(vm.runInNewContext('fcFilteredItems().length', context), 2, 'reset should restore all payable items');
 
   context.fcToggleFilterValue('country', 'ID', true);
   assert.match(root.innerHTML, /value="ID" checked/);
