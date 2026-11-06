@@ -69,13 +69,13 @@ wrapped.__ciInlineClearanceWrapped=true;wrapped.__original=original;global.rende
 })(typeof window!=='undefined'?window:(typeof globalThis!=='undefined'?globalThis:this));
 \`+"\n";
 }
-function patchAppPerfSource(src){return src.includes(UI_MARKER)?src:src.replace(/\\s*$/,'')+uiPatch();}
+function patchAppPerfSource(src){return src.includes(UI_MARKER)?src:src.replace(/\s*$/,'')+uiPatch();}
 function patchServerSource(src){
 if(src.includes(SERVER_MARKER))return src;
 const anchor="    if (generatedPl) return res.status(409).json({ error: '该CI已生成PL，不能编辑', locked: true, lock_reason: 'pl_generated', pl_no: generatedPl.pl_no || '' });";
 if(!src.includes(anchor))throw new Error('[CI-INLINE-CLEARANCE] generated PL guard anchor missing');
-const replacement="    // 已生成 PL 的 CI 只允许修改清关方式；其余字段继续锁定，避免影响 PL / 付款 / 物流链路。\\n    const clearanceOnlyEdit = d.clearance_type !== undefined && Object.keys(d).every(k => k === 'clearance_type');\\n    if (generatedPl && !clearanceOnlyEdit) return res.status(409).json({ error: '该CI已生成PL，仅允许修改清关方式', locked: true, lock_reason: 'pl_generated', pl_no: generatedPl.pl_no || '' });";
-return src.replace(anchor,replacement+'\\n    '+SERVER_MARKER);
+const replacement="    // 已生成 PL 的 CI 只允许修改清关方式；其余字段继续锁定，避免影响 PL / 付款 / 物流链路。\n    const clearanceOnlyEdit = d.clearance_type !== undefined && Object.keys(d).every(k => k === 'clearance_type');\n    if (generatedPl && !clearanceOnlyEdit) return res.status(409).json({ error: '该CI已生成PL，仅允许修改清关方式', locked: true, lock_reason: 'pl_generated', pl_no: generatedPl.pl_no || '' });";
+return src.replace(anchor,replacement+'\n    '+SERVER_MARKER);
 }
 function apply(){
 const a=fs.readFileSync(APP_PERF,'utf8'),b=patchAppPerfSource(a);if(a!==b)fs.writeFileSync(APP_PERF,b,'utf8');
