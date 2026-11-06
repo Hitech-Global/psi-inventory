@@ -27,11 +27,16 @@ assert.ok(logisticsUi.includes('data-ci-logi-toggle'),'existing logistics batch 
 assert.ok(index.includes('assets/ci-list-freight.js'),'existing CI freight summary must remain loaded');
 assert.ok(src.includes("setAttribute('data-ci-freight-cell','total')"));
 assert.ok(freightUi.includes("label === 'ci金额'"));
+assert.ok(freightUi.includes('fmtMoneyFn(a.total, freightCurrency)'),'freight amount must continue to display its currency code');
 assert.ok(freightUi.includes("rawClick.indexOf('viewHistoricalCI') !== -1"));
 assert.ok(!freightUi.includes('removeInboundColumn(table);'),'unified table must retain inbound status');
 for(const field of ['导入历史已付','后续已付','抵扣','抹零'])assert.ok(src.includes(field));
 const fn=src.slice(src.indexOf('function renderUnifiedCITable'),src.indexOf('function renderPurchaseAmountSummary'));
 for(const field of ['关联PI','关联物流单'])assert.ok(!fn.includes(field),'removed column leaked into unified table');
+assert.ok(!fn.includes("['币种','field.currency']"),'currency must not remain as a standalone unified-table column');
+assert.ok(!fn.includes("cell(srcTable,sourceRow,['币种','Currency'])"),'source currency column must not be copied into unified rows');
+assert.ok(fn.includes('fmtMoney(c.goods_amount,c.currency)'),'operational CI amount must include its currency code');
+assert.ok(fn.includes('fmtMoney(h.gross_goods_amount,h.currency)'),'historical CI amount must include its currency code');
 assert.ok(fn.includes("['物流状态','ci.col.logistics_status']"));
 assert.ok(fn.includes("['入库状态','ci.col.inbound_status']"));
 console.log('Unified CI management table static regression: PASS');
