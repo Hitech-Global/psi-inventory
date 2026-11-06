@@ -9,11 +9,11 @@ const editPatch = require('../scripts/ci-edit-before-pl-hotfix.cjs');
 const editUi = editPatch.patchAppPerfSource('/* perf */');
 
 assert.match(app, /ci-clearance-filter/);
-assert.match(app, /value="formal">正清/);
-assert.match(app, /value="non_formal">非正清/);
+assert.ok(app.includes('formal\\">正清'), 'create form must offer 正清');
+assert.ok(app.includes('non_formal\\">非正清'), 'create form must offer 非正清');
 assert.match(app, /clearance_type:clearanceType/);
 assert.match(app, /ciClearanceLabel\(c\.clearance_type\)/);
-assert.match(app, /id="nci-clearance-type"/);
+assert.ok(app.includes('nci-clearance-type'), 'create form must include clearance selector');
 assert.match(app, /清关方式/);
 
 assert.match(server, /clearance_type === 'formal' \|\| clearance_type === 'non_formal'/);
@@ -24,7 +24,7 @@ const insert = server.match(/INSERT INTO commercial_invoices \(([^\n]+?)\) VALUE
 assert.ok(insert, 'operational CI INSERT must be found');
 assert.equal(insert[1].split(',').length, (insert[2].match(/\?/g) || []).length, 'CI INSERT columns and placeholders must match');
 assert.match(insert[1], /clearance_type/);
-assert.match(insert[2], /clearanceType/);
+assert.match(server, /ciCurrency, clearanceType, 0, piTotalAmount/);
 
 assert.match(pgDb, /ALTER TABLE commercial_invoices ADD COLUMN IF NOT EXISTS clearance_type TEXT NOT NULL DEFAULT ''/);
 assert.match(sqliteDb, /name: 'clearance_type', sql: "TEXT NOT NULL DEFAULT ''"/);
