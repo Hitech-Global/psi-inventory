@@ -40,6 +40,7 @@ on:
       - 'scripts/po-plan-bootstrap.cjs'
       - 'test/po-plan-quotation-pricing.test.cjs'
       - 'package.json'
+      - 'package-lock.json'
       - 'po-number.js'
       - 'wac-calculator.js'
       - 'wac-calculator.test.cjs'
@@ -80,10 +81,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Install test dependencies without running application postinstall
+      - name: Install locked dependencies without running application postinstall
         run: |
-          npm install --ignore-scripts --no-package-lock
+          npm ci --ignore-scripts --no-audit --no-fund
           npm rebuild better-sqlite3
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=moderate
       - name: Check frontend and backend syntax
         run: |
           node --check app.js
