@@ -4,7 +4,8 @@ const path=require('node:path');
 const {execFileSync}=require('node:child_process');
 const APP_PERF=path.join(__dirname,'..','app-perf.js');
 const SERVER_JS=path.join(__dirname,'..','server.js');
-const UI_MARKER='// CI-INLINE-CLEARANCE-UI-V1';
+const UI_MARKER='// CI-INLINE-CLEARANCE-UI-V2';
+const LEGACY_UI_MARKER='// CI-INLINE-CLEARANCE-UI-V1';
 const SERVER_MARKER='// CI-INLINE-CLEARANCE-SERVER-V1';
 
 function uiPatch(){
@@ -55,8 +56,11 @@ if(!table||!table.tHead||!table.tBodies.length)return html;
 var headers=Array.prototype.slice.call(table.tHead.rows[0].cells);
 var col=headers.findIndex(function(c){return(c.textContent||'').trim()==='清关方式';});
 if(col<0)return html;
+// 物流展开功能会在每条 CI 后插入独立明细行；只选择真实 CI 行，绝不按 tbody.rows 的混合索引定位。
+var ciRows=Array.prototype.slice.call(table.tBodies[0].querySelectorAll('tr.clickable-detail-row'));
+if(ciRows.length!==data.length)return html;
 data.forEach(function(ci,i){
-var row=table.tBodies[0].rows[i],cell=row&&row.cells[col];if(!cell)return;
+var row=ciRows[i],cell=row&&row.cells[col];if(!cell)return;
 cell.innerHTML=selectHtml(ci);
 var sel=cell.querySelector('select');
 if(sel){sel.setAttribute('data-saved-value',ci.clearance_type||'');sel.setAttribute('data-original-value',ci.clearance_type||'');}
@@ -69,7 +73,12 @@ wrapped.__ciInlineClearanceWrapped=true;wrapped.__original=original;global.rende
 })(typeof window!=='undefined'?window:(typeof globalThis!=='undefined'?globalThis:this));
 `+"\n";
 }
-function patchAppPerfSource(src){return src.includes(UI_MARKER)?src:src.replace(/\s*$/,'')+uiPatch();}
+function patchAppPerfSource(src){
+if(src.includes(UI_MARKER))return src;
+const legacyAt=src.lastIndexOf(LEGACY_UI_MARKER);
+if(legacyAt>=0)return src.slice(0,legacyAt)+uiPatch();
+return src.replace(/\s*$/,'')+uiPatch();
+}
 function patchServerSource(src){
 if(src.includes(SERVER_MARKER))return src;
 const anchor="    if (generatedPl) return res.status(409).json({ error: '该CI已生成PL，不能编辑', locked: true, lock_reason: 'pl_generated', pl_no: generatedPl.pl_no || '' });";
