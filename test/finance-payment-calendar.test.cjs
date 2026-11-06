@@ -86,7 +86,7 @@ test('clicking a payable event opens details without triggering the date cell cr
   assert.equal(openedId, 'pay-1', 'event click must open the selected payable detail');
 });
 
-test('finance payment overview opens in year view and keeps payable events available', () => {
+test('finance payment overview opens in month view with compact top filters and no sidebar/search', () => {
   const { context, root } = calendarContext();
   context.renderFinancePaymentCalendarPage({
     today: '2026-11-04',
@@ -102,19 +102,34 @@ test('finance payment overview opens in year view and keeps payable events avail
     payerEntities: [{ entity_key: 'id_hitech', entity_name: 'Hitech Indonesia', status: 'active', default_currency: 'IDR' }],
     currencies: [{ code: 'IDR', status: 'active' }, { code: 'RMB', status: 'active' }]
   });
+  assert.equal(vm.runInNewContext('_financeCalendarState.view', context), 'month');
   assert.match(root.innerHTML, /财务付款总览/);
-  assert.match(root.innerHTML, /本年应付/);
-  assert.match(root.innerHTML, /fcal-year-view/);
-  assert.equal((root.innerHTML.match(/<button type="button" class="fcal-year-month-card/g) || []).length, 12);
-  assert.match(root.innerHTML, /<section class="fcal-year-view">/);
-  assert.match(root.innerHTML, /1200\.00/);
+  assert.match(root.innerHTML, /本月应付/);
+  assert.match(root.innerHTML, /fcal-month-grid/);
+  assert.match(root.innerHTML, /fcal-filter-bar/);
+  assert.match(root.innerHTML, /fcal-month-picker/);
+  const filterKeys = [...root.innerHTML.matchAll(/data-filter="([^"]+)"/g)].map(match => match[1]);
+  assert.deepEqual(filterKeys, ['country', 'currency', 'status', 'category']);
+  assert.doesNotMatch(root.innerHTML, /id="fcal-keyword"|class="fcal-search-row"|class="fcal-mini-grid|class="fcal-sidebar|class="fcal-undated-button/);
+  assert.ok(root.innerHTML.includes('1200.00'));
   assert.match(root.innerHTML, /RMB/);
-  assert.doesNotMatch(root.innerHTML, /现金流预测/);
-  context.fcSetYearMonth(10);
-  assert.match(root.innerHTML, /Redragon Forwarder/);
+  assert.match(root.innerHTML, /fcal-view-switch/);
+  assert.doesNotMatch(root.innerHTML, /class="fcal-today-button"|现金流预测/);
+
+  context.fcToggleFilterValue('country', 'ID', true);
+  assert.match(root.innerHTML, /value="ID" checked/);
+  context.fcClearAllFilters();
+  assert.doesNotMatch(root.innerHTML, /value="ID" checked/);
 });
 
-
+test('month selector changes the selected calendar month and keeps month view active', () => {
+  const { context, root } = calendarContext();
+  context.renderFinancePaymentCalendarPage({ today: '2026-11-04', items: [], facets: {}, categories: [], payerEntities: [], currencies: [] });
+  context.fcSetMonth('2026-12');
+  assert.equal(vm.runInNewContext('_financeCalendarState.currentDate', context), '2026-12-01');
+  assert.equal(vm.runInNewContext('_financeCalendarState.view', context), 'month');
+  assert.match(root.innerHTML, /2026年12月/);
+});
 test('yearly summary groups scheduled payables by year, month and original currency', () => {
   const { context } = calendarContext();
   const rows = [
