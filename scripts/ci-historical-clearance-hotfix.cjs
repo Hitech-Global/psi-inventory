@@ -108,7 +108,7 @@ const route=`  // HCI-CLEARANCE-SETTING-V1：只更新历史 CI 清关方式；�
   }));
 
 `;
-out=out.replace(anchor,route+anchor);
+out=out.replace(anchor,route+'  // '+anchor);
 return out.replace(/\\s*$/,'')+'\n'+SERVER_MARKER+'\n';
 }
 function apply(){
