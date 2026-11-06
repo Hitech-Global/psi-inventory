@@ -12241,7 +12241,7 @@ function renderUnifiedCITable(operationalData,historicalData){
   var columns=[
     ['CI号','ci.no'],['CI类型','ci.col.type'],['品牌','field.brand'],['国家','field.country'],
     ['仓库','field.target_warehouse'],['清关方式','ci.clearance_type'],['CI日期','field.ci_date'],
-    ['币种','field.currency'],['CI金额','ci.amount'],['总运费','ci.col.total_freight'],
+    ['CI金额','ci.amount'],['总运费','ci.col.total_freight'],
     ['运费占比','ci.col.freight_ratio'],['已付金额','ci.paid_amount'],['未结金额','ci.unpaid_amount'],
     ['付款状态','ci.payment_status'],['物流状态','ci.col.logistics_status'],
     ['入库状态','ci.col.inbound_status'],['到期日','field.due_date'],['操作','common.actions']
@@ -12249,7 +12249,7 @@ function renderUnifiedCITable(operationalData,historicalData){
   var table=document.createElement('table');
   table.className='data-table ci-unified-table';
   var thead=document.createElement('thead'),headRow=document.createElement('tr');
-  columns.forEach(function(col,index){var th=document.createElement('th');th.textContent=t(col[1],col[0]);if(index===9)th.setAttribute('data-ci-freight-head','total');if(index===10)th.setAttribute('data-ci-freight-head','ratio');headRow.appendChild(th);});
+  columns.forEach(function(col,index){var th=document.createElement('th');th.textContent=t(col[1],col[0]);if(index===8)th.setAttribute('data-ci-freight-head','total');if(index===9)th.setAttribute('data-ci-freight-head','ratio');headRow.appendChild(th);});
   thead.appendChild(headRow);table.appendChild(thead);
   var tbody=document.createElement('tbody');table.appendChild(tbody);
 
@@ -12300,8 +12300,9 @@ function renderUnifiedCITable(operationalData,historicalData){
     tr.appendChild(cell(srcTable,sourceRow,['仓库','目标仓库','Warehouse']));
     tr.appendChild(cell(srcTable,sourceRow,['清关方式','Clearance Type','Clearance']));
     tr.appendChild(cell(srcTable,sourceRow,['出货日期','CI日期','Ship Date','Shipment Date']));
-    tr.appendChild(cell(srcTable,sourceRow,['币种','Currency']));
-    tr.appendChild(cell(srcTable,sourceRow,['CI金额','CI Amount','Goods Amount']));
+    var amountCell=cell(srcTable,sourceRow,['CI金额','CI Amount','Goods Amount']);
+    amountCell.textContent=fmtMoney(c.goods_amount,c.currency);
+    tr.appendChild(amountCell);
     var freightTotal=cell(srcTable,sourceRow,['总运费','Total Freight']);freightTotal.setAttribute('data-ci-freight-cell','total');freightTotal.setAttribute('data-ci-id',String(c.id));tr.appendChild(freightTotal);
     var freightRatio=cell(srcTable,sourceRow,['运费占比','Freight Ratio']);freightRatio.setAttribute('data-ci-freight-cell','ratio');freightRatio.setAttribute('data-ci-id',String(c.id));tr.appendChild(freightRatio);
     tr.appendChild(moneyCell(Number(c.actual_deducted_deposit||0)+Number(c.balance_paid_amount||0)));
@@ -12327,8 +12328,9 @@ function renderUnifiedCITable(operationalData,historicalData){
     tr.appendChild(textCell('—'));
     tr.appendChild(cell(srcTable,sourceRow,['清关方式','Clearance Type','Clearance']));
     tr.appendChild(cell(srcTable,sourceRow,['日期','CI日期','CI Date']));
-    tr.appendChild(cell(srcTable,sourceRow,['币种','Currency']));
-    tr.appendChild(cell(srcTable,sourceRow,['总货款','CI金额','Gross Amount','Total Amount']));
+    var histAmountCell=cell(srcTable,sourceRow,['总货款','CI金额','Gross Amount','Total Amount']);
+    histAmountCell.textContent=fmtMoney(h.gross_goods_amount,h.currency);
+    tr.appendChild(histAmountCell);
     tr.appendChild(textCell('—','text-right'));
     tr.appendChild(textCell('—','text-right'));
     tr.appendChild(moneyCell(Number(h.historical_paid_amount||0)+Number(h.subsequent_paid_amount||0)));
