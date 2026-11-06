@@ -380,3 +380,43 @@ test('BigSeller re-import matches legacy source-system capitalization', async ()
     raw.close();
   }
 });
+
+
+test('BigSeller brand is resolved from the PSI SKU master; missing SKU or empty master brand blocks import', async () => {
+  const SalesImport = require('../sales-import-service');
+  const parsed = BigSeller.parseBigSellerWorkbook(workbook([
+    ['2026-11-06 18:18', 'ORDER-BRAND-1', '', '已完成', 'Redragon Warehouse', 'M724', '1', 'PKG-1', 'Shopee', 'Redragon Indonesia OS'],
+    ['2026-11-06 18:08', 'ORDER-BRAND-2', '', '已完成', 'Redragon Warehouse', 'M995', '2', 'PKG-2', 'Shopee', 'Redragon Indonesia OS']
+  ]), 'orders.xlsx', fakeXlsx());
+  assert.ok(parsed);
+  assert.deepEqual(parsed.records.map(record => record.brand), ['', '']);
+
+  const rows = SalesImport.normalizeSalesRows(parsed.records);
+  const masterAdapter = {
+    loadSkuBrands: async () => new Map([
+      ['M724', { sku_code: 'M724', brand: 'Redragon' }],
+      ['M995', { sku_code: 'M995', brand: 'Redragon' }]
+    ])
+  };
+  const valid = await SalesImport.validateSalesBrandRows(masterAdapter, rows);
+  assert.equal(valid.failures.length, 0);
+  assert.deepEqual(rows.map(record => record.brand), ['Redragon', 'Redragon']);
+
+  const unknownRows = SalesImport.normalizeSalesRows([
+    { ...parsed.records[0], sku_code: 'UNKNOWN-SKU' }
+  ]);
+  const unknown = await SalesImport.validateSalesBrandRows({
+    loadSkuBrands: async () => new Map()
+  }, unknownRows);
+  assert.equal(unknown.failures.length, 1);
+  assert.match(unknown.failures[0].reason, /SKU 主数据不存在/);
+
+  const emptyBrandRows = SalesImport.normalizeSalesRows([
+    { ...parsed.records[0], sku_code: 'M724' }
+  ]);
+  const emptyBrand = await SalesImport.validateSalesBrandRows({
+    loadSkuBrands: async () => new Map([['M724', { sku_code: 'M724', brand: '' }]])
+  }, emptyBrandRows);
+  assert.equal(emptyBrand.failures.length, 1);
+  assert.match(emptyBrand.failures[0].reason, /SKU 主数据品牌为空/);
+});
