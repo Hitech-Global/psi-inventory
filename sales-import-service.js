@@ -197,8 +197,19 @@ function normalizedExisting(existing) {
  * intentionally not part of the predicate; it only changes when another
  * mutable field also causes an UPDATE.
  */
+function isBigSellerSource(record) {
+  return String(record && record.source_system || '').trim().toLowerCase() === 'bigseller';
+}
+
 function hasSalesChanges(existing, row) {
   const old = normalizedExisting(existing);
+  // BigSeller exports are repeated snapshots of the same order, not new sales.
+  // For an existing BigSeller order item, only status fields are authoritative
+  // on re-import; never rewrite its original date, SKU, quantity, brand or notes.
+  if (isBigSellerSource(old) && isBigSellerSource(row)) {
+    return old.is_valid_order !== row.is_valid_order ||
+      old.original_order_status !== row.original_order_status;
+  }
   return old.is_valid_order !== row.is_valid_order ||
     old.quantity !== row.quantity ||
     old.shop_platform !== row.shop_platform ||
@@ -223,6 +234,11 @@ function mutableValues(row, importBatchId) {
 }
 
 function applyMutableValues(existing, row, importBatchId) {
+  if (isBigSellerSource(existing) && isBigSellerSource(row)) {
+    existing.is_valid_order = row.is_valid_order;
+    existing.original_order_status = row.original_order_status;
+    return existing;
+  }
   Object.assign(existing, mutableValues(row, importBatchId));
   return existing;
 }
@@ -284,6 +300,9 @@ function findExisting(records, row, indexes = null) {
 }
 
 function hasBusinessConflict(records, existing, row, indexes = null) {
+  // BigSeller re-imports only change status; the existing business identity is
+  // deliberately retained, so a status sync cannot create a new key conflict.
+  if (isBigSellerSource(existing) && isBigSellerSource(row)) return false;
   const next = { ...normalizedExisting(existing), ...mutableValues(row, existing.import_batch_id) };
   if (indexes) {
     const businessRows = indexes.business.get(businessIdentity(next)) || [];

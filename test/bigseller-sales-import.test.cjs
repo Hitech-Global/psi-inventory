@@ -122,3 +122,212 @@ test('BigSeller date-time and Excel serial dates normalize to YYYY-MM-DD', () =>
   assert.equal(BigSeller.normalizeOrderDate('2026/11/06 18:18'), '2026-11-06');
   assert.equal(BigSeller.normalizeOrderDate('not-a-date'), '');
 });
+
+
+function createSalesImportDatabase(seedRecords) {
+  const Database = require('better-sqlite3');
+  const raw = new Database(':memory:');
+  raw.exec(`
+    CREATE TABLE skus (sku_code TEXT PRIMARY KEY, brand TEXT);
+    INSERT INTO skus (sku_code, brand) VALUES ('M724', 'Redragon');
+    CREATE TABLE sales_records (
+      id TEXT PRIMARY KEY,
+      source_system TEXT DEFAULT '',
+      order_no TEXT DEFAULT '',
+      order_detail_id TEXT DEFAULT '',
+      order_date TEXT,
+      shop_platform TEXT DEFAULT '',
+      brand TEXT DEFAULT '',
+      sku_code TEXT,
+      quantity INTEGER DEFAULT 0,
+      is_valid_order INTEGER DEFAULT 1,
+      original_order_status TEXT DEFAULT '',
+      remark TEXT DEFAULT '',
+      import_batch_id TEXT DEFAULT '',
+      country TEXT DEFAULT '',
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE UNIQUE INDEX idx_sales_records_unique
+      ON sales_records(source_system, order_no, sku_code, COALESCE(shop_platform, ''));
+  `);
+  const columns = [
+    'id', 'source_system', 'order_no', 'order_detail_id', 'order_date',
+    'shop_platform', 'brand', 'sku_code', 'quantity', 'is_valid_order',
+    'original_order_status', 'remark', 'import_batch_id', 'country'
+  ];
+  const insert = raw.prepare(
+    'INSERT INTO sales_records (' + columns.join(', ') + ') VALUES (' +
+    columns.map(() => '?').join(', ') + ')'
+  );
+  for (const record of seedRecords || []) {
+    insert.run(...columns.map(column => record[column] === undefined ? '' : record[column]));
+  }
+  const db = {
+    getDB: () => raw,
+    query: (sql, params = []) => ({ rows: raw.prepare(sql).all(...params) }),
+    run: (sql, params = []) => raw.prepare(sql).run(...params)
+  };
+  const SalesImport = require('../sales-import-service');
+  return {
+    raw,
+    adapter: SalesImport.createSqliteSalesImportAdapter(db, { batchSize: 80 }),
+    executeSalesImport: SalesImport.executeSalesImport
+  };
+}
+
+test('BigSeller re-import updates only status and True/False while preserving original sales fields', async () => {
+  const original = {
+    id: 'sale-existing',
+    source_system: 'BigSeller',
+    order_no: 'ORDER-1',
+    order_detail_id: '',
+    order_date: '2026-11-01',
+    shop_platform: '线上',
+    brand: 'Redragon',
+    sku_code: 'M724',
+    quantity: 2,
+    is_valid_order: 1,
+    original_order_status: '待发货',
+    remark: 'original remark',
+    import_batch_id: 'first-import',
+    country: '印尼'
+  };
+  const { raw, adapter, executeSalesImport } = createSalesImportDatabase([original]);
+  try {
+    const changedStatus = {
+      source_system: 'BigSeller',
+      order_no: 'ORDER-1',
+      order_detail_id: '',
+      order_date: '2026-11-06',
+      country: '马来西亚',
+      shop_platform: '线上',
+      brand: 'Redragon',
+      sku_code: 'M724',
+      quantity: 4,
+      is_valid_order: 1,
+      original_order_status: '已完成',
+      remark: 'new export remark'
+    };
+    const first = await executeSalesImport(adapter, [changedStatus], {
+      importBatchId: 'second-import',
+      idFactory: () => 'unexpected-new-row'
+    });
+    assert.equal(first.result.inserted, 0);
+    assert.equal(first.result.updated, 1);
+    assert.equal(first.result.skipped, 0);
+
+    let stored = raw.prepare('SELECT * FROM sales_records WHERE id = ?').get('sale-existing');
+    assert.equal(stored.original_order_status, '已完成');
+    assert.equal(stored.is_valid_order, 1);
+    assert.equal(stored.order_date, original.order_date);
+    assert.equal(stored.sku_code, original.sku_code);
+    assert.equal(stored.quantity, original.quantity);
+    assert.equal(stored.brand, original.brand);
+    assert.equal(stored.shop_platform, original.shop_platform);
+    assert.equal(stored.country, original.country);
+    assert.equal(stored.remark, original.remark);
+
+    const returned = {
+      ...changedStatus,
+      order_date: '2026-11-07',
+      quantity: 9,
+      original_order_status: '退货退款',
+      is_valid_order: 0
+    };
+    const second = await executeSalesImport(adapter, [returned], {
+      importBatchId: 'third-import',
+      idFactory: () => 'unexpected-new-row-2'
+    });
+    assert.equal(second.result.inserted, 0);
+    assert.equal(second.result.updated, 1);
+    stored = raw.prepare('SELECT * FROM sales_records WHERE id = ?').get('sale-existing');
+    assert.equal(stored.original_order_status, '退货退款');
+    assert.equal(stored.is_valid_order, 0);
+    assert.equal(stored.order_date, original.order_date);
+    assert.equal(stored.quantity, original.quantity);
+    assert.equal(stored.remark, original.remark);
+
+    const sameStatusButChangedQuantity = {
+      ...returned,
+      order_date: '2026-11-08',
+      quantity: 12,
+      remark: 'yet another remark'
+    };
+    const third = await executeSalesImport(adapter, [sameStatusButChangedQuantity], {
+      importBatchId: 'fourth-import',
+      idFactory: () => 'unexpected-new-row-3'
+    });
+    assert.equal(third.result.inserted, 0);
+    assert.equal(third.result.updated, 0);
+    assert.equal(third.result.skipped, 1);
+    stored = raw.prepare('SELECT * FROM sales_records WHERE id = ?').get('sale-existing');
+    assert.equal(stored.quantity, original.quantity);
+    assert.equal(stored.order_date, original.order_date);
+    assert.equal(stored.original_order_status, '退货退款');
+    assert.equal(stored.is_valid_order, 0);
+
+    const newOrder = {
+      ...changedStatus,
+      order_no: 'ORDER-NEW',
+      order_date: '2026-11-06',
+      quantity: 3,
+      original_order_status: '待发货',
+      is_valid_order: 1
+    };
+    const fourth = await executeSalesImport(adapter, [newOrder], {
+      importBatchId: 'fifth-import',
+      idFactory: () => 'sale-new-order'
+    });
+    assert.equal(fourth.result.inserted, 1);
+    const inserted = raw.prepare('SELECT * FROM sales_records WHERE id = ?').get('sale-new-order');
+    assert.equal(inserted.quantity, 3);
+    assert.equal(inserted.original_order_status, '待发货');
+    assert.equal(raw.prepare('SELECT COUNT(*) AS count FROM sales_records').get().count, 2);
+  } finally {
+    raw.close();
+  }
+});
+
+test('non-BigSeller sales imports keep their existing quantity-update behavior', async () => {
+  const original = {
+    id: 'manual-existing',
+    source_system: 'Manual',
+    order_no: 'MANUAL-1',
+    order_detail_id: '',
+    order_date: '2026-11-01',
+    shop_platform: '线下',
+    brand: 'Redragon',
+    sku_code: 'M724',
+    quantity: 2,
+    is_valid_order: 1,
+    original_order_status: '待处理',
+    remark: 'manual original',
+    import_batch_id: 'first-import',
+    country: '印尼'
+  };
+  const { raw, adapter, executeSalesImport } = createSalesImportDatabase([original]);
+  try {
+    const result = await executeSalesImport(adapter, [{
+      source_system: 'Manual',
+      order_no: 'MANUAL-1',
+      order_detail_id: '',
+      order_date: '2026-11-06',
+      country: '印尼',
+      shop_platform: '线下',
+      brand: 'Redragon',
+      sku_code: 'M724',
+      quantity: 4,
+      is_valid_order: 1,
+      original_order_status: '已完成',
+      remark: 'manual updated'
+    }], { importBatchId: 'second-import' });
+    assert.equal(result.result.updated, 1);
+    const stored = raw.prepare('SELECT * FROM sales_records WHERE id = ?').get('manual-existing');
+    assert.equal(stored.quantity, 4);
+    assert.equal(stored.order_date, '2026-11-06');
+    assert.equal(stored.original_order_status, '已完成');
+  } finally {
+    raw.close();
+  }
+});
