@@ -139,7 +139,7 @@
       // Unified CI table: locate CI amount by header label, not the legacy fixed index.
       var ciAmountIndex = -1;
       Array.prototype.forEach.call(heads, function (th, index) {
-        var label = String(th.textContent || '').replace(/\\s+/g, '').toLowerCase();
+        var label = String(th.textContent || '').replace(/\s+/g, '').toLowerCase();
         if (label === 'ci金额' || label === 'ciamount' || label === '总货款' || label === 'grossamount') ciAmountIndex = index;
       });
       if (ciAmountIndex < 0) return;
