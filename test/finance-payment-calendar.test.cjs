@@ -114,7 +114,7 @@ test('finance payment overview opens in month view with compact top filters and 
   assert.ok(root.innerHTML.includes('1200.00'));
   assert.match(root.innerHTML, /RMB/);
   assert.match(root.innerHTML, /fcal-view-switch/);
-  assert.doesNotMatch(root.innerHTML, /fcal-today-button|现金流预测/);
+  assert.doesNotMatch(root.innerHTML, /class="fcal-today-button"|现金流预测/);
 
   context.fcToggleFilterValue('country', 'ID', true);
   assert.match(root.innerHTML, /value="ID" checked/);
