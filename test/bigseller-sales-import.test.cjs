@@ -34,7 +34,7 @@ test('BigSeller parser imports only blank / Pay in Advance / Credit markers', ()
   ]), 'Order-Goods-all.xlsx', fakeXlsx());
 
   assert.ok(parsed);
-  assert.equal(parsed.country, '印尼');
+  assert.equal(parsed.country, '印度尼西亚');
   assert.equal(parsed.stats.sourceRows, 9);
   assert.equal(parsed.stats.includedRows, 5);
   assert.equal(parsed.stats.excludedMarkerRows, 3);
