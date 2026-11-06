@@ -67,7 +67,11 @@ test('BigSeller parser imports only blank / Pay in Advance / Credit markers', ()
 test('marker matching follows the final channel rule, including Manual exclusion', () => {
   assert.equal(BigSeller.classifyOrderMarker('   ', 'Shopee'), '线上渠道');
   assert.equal(BigSeller.classifyOrderMarker('', 'TikTok'), '线上渠道');
+  assert.equal(BigSeller.classifyOrderMarker('', 'TikTok Shop'), '线上渠道');
+  assert.equal(BigSeller.classifyOrderMarker('', 'Tokopedia'), '线上渠道');
   assert.equal(BigSeller.classifyOrderMarker('', 'Manual'), '');
+  assert.equal(BigSeller.classifyOrderMarker('', ''), '');
+  assert.equal(BigSeller.classifyOrderMarker('', 'Unknown Marketplace'), '');
   assert.equal(BigSeller.classifyOrderMarker('Reseller Order-Pay in Advance', 'Manual'), '线下渠道');
   assert.equal(BigSeller.classifyOrderMarker(' reseller order- credit ', 'Manual'), '线下渠道');
   assert.equal(BigSeller.classifyOrderMarker('pay in advance', 'Manual'), '');
@@ -497,4 +501,76 @@ test('BigSeller parser validation errors and original Excel row numbers reach th
   const rows = SalesImport.normalizeSalesRows(parsed.records);
   assert.equal(rows[0].source_row_no, 2);
   assert.ok(rows[0].errors.some(reason => reason.includes('数量必须为正整数')));
+});
+
+
+test('invalid source rows are not counted as pending import rows', () => {
+  const parsed = BigSeller.parseBigSellerWorkbook(workbook([
+    ['2026-11-06 10:00', 'ORDER-INVALID', '', '已完成', 'Redragon Warehouse', 'M724', '0', 'PKG-1', 'Shopee', 'Redragon Indonesia OS']
+  ]), 'orders.xlsx', fakeXlsx());
+  assert.equal(parsed.records.length, 1, 'keep invalid row visible for row-level correction');
+  assert.equal(parsed.stats.includedRows, 0, 'invalid row must not inflate pending import count');
+  assert.equal(parsed.stats.validationErrorRows, 1);
+});
+
+test('opening a new import clears stale file data and preview state', () => {
+  const stats = { innerHTML: 'old summary', insertAdjacentHTML(position, html) { this.innerHTML += html; } };
+  const button = { disabled: false };
+  const win = {
+    document: { getElementById(id) { return id === 'sales-preview-stats' ? stats : id === 'sales-import-btn' ? button : null; } },
+    handleSalesFile() {}, openSalesBatchImport() {}, requestSalesPreview: async () => ({}),
+    renderSalesPreview(rows) { this.lastRenderedRows = rows; }
+  };
+  BigSeller.install(win);
+  win._salesImportData = [{ order_no: 'OLD' }];
+  win._salesImportPreviewReady = true;
+  win._lastSalesImportErrors = [{ row: 2, reason: 'old error' }];
+  win.openSalesBatchImport();
+  assert.deepEqual(win._salesImportData, []);
+  assert.equal(win._salesImportPreviewReady, false);
+  assert.deepEqual(win._lastSalesImportErrors, []);
+  assert.equal(stats.innerHTML, '');
+  assert.equal(button.disabled, true);
+  assert.deepEqual(win.lastRenderedRows, []);
+});
+
+test('repeated BigSeller preview replaces its summary instead of stacking duplicates', async () => {
+  const stats = { innerHTML: '', insertAdjacentHTML(position, html) { this.innerHTML += html; } };
+  const button = { disabled: false };
+  const win = {
+    document: { getElementById(id) { return id === 'sales-preview-stats' ? stats : id === 'sales-import-btn' ? button : null; } },
+    handleSalesFile() {}, openSalesBatchImport() {}, requestSalesPreview: async () => ({}), renderSalesPreview() {}
+  };
+  BigSeller.install(win);
+  win._salesImportSourceMode = 'bigseller';
+  win._salesImportSkippedStats = { sourceRows: 1, includedRows: 1, trueRows: 1, falseRows: 0 };
+  win._salesImportCountry = '印度尼西亚';
+  await win.requestSalesPreview();
+  await win.requestSalesPreview();
+  assert.equal((stats.innerHTML.match(/已识别 BigSeller 销售数据/g) || []).length, 1);
+});
+
+
+test('platform aliases are detected and missing or unknown platform blocks blank-marker rows', () => {
+  const aliasWorkbook = {
+    SheetNames: ['orders'],
+    Sheets: { orders: { __rows: [
+      ['下单时间', '订单号', '订单标记', '订单状态', '发货仓库', '商品SKU', '数量', '包裹号', '销售平台', '平台店铺'],
+      ['2026-11-06 10:00', 'ORDER-SHOPEE', '', '已完成', 'Redragon Warehouse', 'M724', '1', 'PKG-1', 'Shopee', 'Redragon Indonesia OS']
+    ] } }
+  };
+  const parsed = BigSeller.parseBigSellerWorkbook(aliasWorkbook, 'orders.xlsx', fakeXlsx());
+  assert.equal(parsed.records.length, 1);
+  assert.equal(parsed.records[0].shop_platform, '线上渠道');
+
+  const noPlatform = {
+    SheetNames: ['orders'],
+    Sheets: { orders: { __rows: [
+      ['下单时间', '订单号', '订单标记', '订单状态', '发货仓库', '商品SKU', '数量', '包裹号', '平台店铺'],
+      ['2026-11-06 10:00', 'ORDER-NO-PLATFORM', '', '已完成', 'Redragon Warehouse', 'M724', '1', 'PKG-1', 'Redragon Indonesia OS']
+    ] } }
+  };
+  const blocked = BigSeller.parseBigSellerWorkbook(noPlatform, 'orders.xlsx', fakeXlsx());
+  assert.equal(blocked.records.length, 0, 'missing platform must not be silently classified as online');
+  assert.equal(blocked.stats.excludedMarkerRows, 1);
 });

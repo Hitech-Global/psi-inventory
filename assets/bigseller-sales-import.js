@@ -79,12 +79,23 @@
     return text(value).replace(/[\s\u3000]+/g, '').toLowerCase();
   }
 
+  function isMarketplacePlatform(value) {
+    var platformName = normalizeMarker(value);
+    // Be deliberately allow-listed: an absent or unfamiliar platform must
+    // never turn a blank order marker into an online sales record.
+    return [
+      'shopee', 'shopeemall',
+      'tiktok', 'tiktokshop',
+      'tokopedia'
+    ].indexOf(platformName) >= 0;
+  }
+
   function classifyOrderMarker(value, platform) {
     var marker = normalizeMarker(value);
     var platformName = normalizeMarker(platform);
-    // Blank markers are online only for marketplace channels. Manual + blank
-    // is not a sales channel and must be excluded.
-    if (!marker) return platformName === 'manual' ? '' : '线上渠道';
+    // Blank markers are online only when the source explicitly identifies a
+    // supported marketplace. Manual, missing, and unknown platforms are out.
+    if (!marker) return isMarketplacePlatform(platformName) ? '线上渠道' : '';
     // These are the only two allowed offline order markers.
     if (marker === 'resellerorder-payinadvance') return '线下渠道';
     if (marker === 'resellerorder-credit') return '线下渠道';
@@ -145,7 +156,7 @@
         sku: findColumn(headers, ['商品SKU', '商品 SKU', 'sku', 'sku code']),
         quantity: findColumn(headers, ['数量', '商品数量', 'quantity', 'qty']),
         packageNo: findColumn(headers, ['包裹号', '包裹编号', 'package no', 'package number']),
-        platform: findColumn(headers, ['平台', 'platform']),
+        platform: findColumn(headers, ['平台', '销售平台', '平台名称', '平台类型', '店铺平台', '渠道', 'platform', 'sales platform', 'marketplace']),
         store: findColumn(headers, ['平台店铺', '店铺', 'platform shop', 'shop name']),
         warehouse: findColumn(headers, ['发货仓库', '仓库', 'warehouse'])
       };
@@ -198,6 +209,7 @@
       falseRows: 0,
       excludedMarkers: Object.create(null),
       unresolvedCountryRows: 0,
+      validationErrorRows: 0,
       conflictDetails: []
     };
 
@@ -383,7 +395,8 @@
       delete record._sourceTimestamp;
       delete record._packageNo;
       delete record._rawOrderDate;
-      stats.includedRows++;
+      if (Array.isArray(record._errors) && record._errors.length) stats.validationErrorRows++;
+      else stats.includedRows++;
       if (record.is_valid_order) stats.trueRows++;
       else stats.falseRows++;
     });
@@ -440,13 +453,16 @@
       '<div style="color:#666">订单标记排除：' + Number(stats.excludedMarkerRows || 0).toLocaleString('en-US') +
       ' 条；未付款排除：' + Number(stats.excludedUnpaidRows || 0).toLocaleString('en-US') +
       ' 条；完全重复去重：' + Number(stats.exactDuplicateRows || 0).toLocaleString('en-US') +
-      ' 条；同订单商品快照合并：' + Number(stats.snapshotDuplicateRows || 0).toLocaleString('en-US') + ' 条。</div>' +
+      ' 条；同订单商品快照合并：' + Number(stats.snapshotDuplicateRows || 0).toLocaleString('en-US') +
+      ' 条；校验失败：' + Number(stats.validationErrorRows || 0).toLocaleString('en-US') + ' 条。</div>' +
       (conflictGroups ? '<div style="color:#b45309;margin-top:5px">冲突订单：' + conflictGroups +
         ' 组，共 ' + Number(stats.excludedConflictRows || 0) + ' 条已暂不导入。请下载异常明细人工核对。</div>' +
         '<button type="button" id="bigseller-sales-conflict-download" style="margin-top:7px;padding:5px 10px;border:1px solid #d1d5db;border-radius:7px;background:#fff;color:#333;cursor:pointer">下载冲突明细</button>' : '') +
       '<div style="color:#888;margin-top:4px">仅导入：非 Manual 平台的空白订单标记，以及 Pay in Advance、Credit；其他标记和 Manual 空白订单均排除。</div>' +
       '</div>';
-    el.insertAdjacentHTML('afterbegin', html);
+    // Replace the previous summary instead of stacking another copy after each preview.
+    el.innerHTML = '';
+    el.insertAdjacentHTML('beforeend', html);
     var button = win.document.getElementById('bigseller-sales-conflict-download');
     if (button) button.addEventListener('click', function () { downloadConflictReport(win, stats); });
   }
@@ -466,6 +482,14 @@
       win._salesImportSourceMode = 'template';
       win._salesImportSkippedStats = null;
       win._salesImportCountry = '';
+      win._salesImportData = [];
+      win._salesImportPreviewReady = false;
+      win._lastSalesImportErrors = [];
+      var stats = win.document && win.document.getElementById('sales-preview-stats');
+      if (stats) stats.innerHTML = '';
+      var button = win.document && win.document.getElementById('sales-import-btn');
+      if (button) button.disabled = true;
+      if (typeof win.renderSalesPreview === 'function') win.renderSalesPreview([]);
     }
 
     win.openSalesBatchImport = function () {
@@ -483,6 +507,9 @@
 
     win.handleSalesFile = function (file) {
       if (!file) return;
+      // Clear the previous file immediately, before the asynchronous FileReader starts.
+      // Otherwise the old preview can remain importable while the new file is loading.
+      resetState();
       var ext = String(file.name || '').split('.').pop().toLowerCase();
       if (!['xlsx', 'xls', 'csv'].includes(ext) || !win.FileReader || !win.XLSX) {
         resetState();
