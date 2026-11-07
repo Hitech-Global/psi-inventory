@@ -31,6 +31,8 @@ on:
       - 'assets/ci-list-freight.js'
       - 'scripts/ci-list-i18n-hotfix.cjs'
       - 'test/ci-list-i18n-hotfix.test.cjs'
+      - 'scripts/ci-unified-data-binding-hotfix.cjs'
+      - 'test/ci-unified-data-binding-hotfix.test.cjs'
       - 'assets/bigseller-inventory-import.js'
       - 'test/bigseller-inventory-import.test.cjs'
       - 'assets/bigseller-sales-import.js'
