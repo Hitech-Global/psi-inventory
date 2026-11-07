@@ -16,7 +16,10 @@ function once(src, from, to, label) {
 }
 
 function patchAppSource(src) {
-  if (src.includes(APP_MARKER)) return src;
+  // Repair malformed marker placement from the previous build-time hotfix.
+  if (src.includes(APP_MARKER)) {
+    return src.replace(/async\s+(\/\/ CI-PL-COMPLETE-I18N-V1)\s*\nfunction renderCI\(\)\s*\{/, APP_MARKER + '\nasync function renderCI(){');
+  }
 
   src = once(
     src,
@@ -70,7 +73,7 @@ function patchAppSource(src) {
     'historical payment detail labels'
   );
 
-  return src.replace('function renderCI(){', APP_MARKER + '\nfunction renderCI(){');
+  return src.replace('async function renderCI(){', APP_MARKER + '\nasync function renderCI(){');
 }
 
 function patchI18nSource(src) {
