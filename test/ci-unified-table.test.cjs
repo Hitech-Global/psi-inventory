@@ -29,7 +29,7 @@ assert.ok(src.includes("setAttribute('data-ci-freight-cell','total')"));
 assert.ok(freightUi.includes("label === 'ci金额'"));
 assert.ok(freightUi.includes('fmtMoneyFn(a.total, freightCurrency)'),'freight amount must continue to display its currency code');
 assert.ok(freightUi.includes("rawClick.indexOf('viewHistoricalCI') !== -1"));
-assert.ok(!freightUi.includes('removeInboundColumn(table);'),'unified table must retain inbound status');
+assert.ok(freightUi.includes('function normalizeCIListColumns(table)'),'CI list must normalize the requested column order');\nassert.ok(freightUi.includes('removeInboundColumn(table);'),'redundant inbound status must be removed from the rendered table');\nassert.ok(freightUi.includes("'尾款到期日'"),'due-date header must be renamed to final balance due date');\nassert.ok(freightUi.includes("balanceLabels = ['未结金额'"),'due date must be positioned relative to outstanding amount');\nassert.ok(freightUi.includes('headerRow.insertBefore(dueHead, balanceHead.nextSibling)'),'due-date header must follow outstanding amount');\nassert.ok(freightUi.includes('row.insertBefore(dueCell, balanceCell.nextSibling)'),'due-date cells must follow outstanding amount cells');
 for(const field of ['导入历史已付','后续已付','抵扣','抹零'])assert.ok(src.includes(field));
 const fn=src.slice(src.indexOf('function renderUnifiedCITable'),src.indexOf('function renderPurchaseAmountSummary'));
 for(const field of ['关联PI','关联物流单'])assert.ok(!fn.includes(field),'removed column leaked into unified table');
