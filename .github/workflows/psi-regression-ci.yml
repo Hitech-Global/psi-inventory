@@ -12,6 +12,7 @@ on:
       - 'migrations/historical-ci-clearance.js'
       - 'test/ci-historical-clearance-hotfix.test.cjs'
       - 'test/ci-unified-table.test.cjs'
+      - 'test/ci-attachment-online-preview.test.cjs'
       - 'app.js'
       - 'test/ci-inline-clearance-hotfix.test.cjs'
       - 'test/ci-edit-before-pl-hotfix.test.cjs'
@@ -101,6 +102,7 @@ jobs:
           node --check test/ci-inline-clearance-hotfix.test.cjs
           node --check test/ci-edit-before-pl-hotfix.test.cjs
           node --check test/ci-clearance-type.test.cjs
+          node --check test/ci-attachment-online-preview.test.cjs
           node --check test/ci-edit-entry-supplier-column.test.cjs
           node --check test/ci-logistics-status-filter.test.cjs
           node --check test/supplier-pi-preview-alignment.test.cjs
@@ -155,6 +157,8 @@ jobs:
         run: node test/ci-edit-before-pl-hotfix.test.cjs && node test/ci-clearance-type.test.cjs && node test/ci-inline-clearance-hotfix.test.cjs
       - name: Test historical CI clearance setting
         run: node test/ci-historical-clearance-hotfix.test.cjs
+      - name: Test CI attachment online Excel preview
+        run: node test/ci-attachment-online-preview.test.cjs
       - name: Test unified CI management table
         run: node test/ci-unified-table.test.cjs
       - name: Test CI edit entry and supplier column removal
