@@ -65,6 +65,13 @@ function patchI18nSource(src) {
   const anchor = '})();';
   const additions = `
   ${I18N_MARKER}
+  // The legacy English/Indonesian hidden source-table templates had fewer columns than the current renderer.
+  // Keep their header order identical to renderOperationalCITable so unified-row extraction never shifts data.
+  var ciSourceHeader = "<div class=\\"table-container\\" style=\\"box-shadow:none;border-radius:0\\"><table class=\\"data-table\\"><thead><tr><th>CI No</th><th>CI Type</th><th>Related PI</th><th>Brand</th><th>Country</th><th>Warehouse</th><th>Clearance Type</th><th>Ship Date</th><th>Currency</th><th>CI Amount</th><th>Paid Deposit</th><th>Payable Balance</th><th>Paid Balance</th><th>Balance Payment Status</th><th>Related Logistics Batch</th><th>Logistics Status</th><th>Inbound Status</th><th>Status</th><th>Actions</th></tr></thead><tbody>";
+  I18N.dict.en["gen.L5761.2"] = ciSourceHeader;
+  I18N.dict.id["gen.L5761.2"] = ciSourceHeader;
+  I18N.dict.zh["ci.type.operational"]="运营CI"; I18N.dict.en["ci.type.operational"]="Operations CI"; I18N.dict.id["ci.type.operational"]="CI Operasional";
+  I18N.dict.zh["ci.type.historical"]="历史CI"; I18N.dict.en["ci.type.historical"]="Historical CI"; I18N.dict.id["ci.type.historical"]="CI Historis";
   I18N.dict.zh["ci.clearance.filter"]="清关方式"; I18N.dict.en["ci.clearance.filter"]="Clearance Method"; I18N.dict.id["ci.clearance.filter"]="Metode Kepabeanan";
   I18N.dict.zh["ci.clearance.formal"]="正清"; I18N.dict.en["ci.clearance.formal"]="Formal Customs Clearance"; I18N.dict.id["ci.clearance.formal"]="Jalur Bea Cukai Resmi";
   I18N.dict.zh["ci.clearance.non_formal"]="非正清"; I18N.dict.en["ci.clearance.non_formal"]="Informal Customs Clearance"; I18N.dict.id["ci.clearance.non_formal"]="Jalur Bea Cukai Nonresmi";
