@@ -38,8 +38,8 @@ function patchSource(src){
     "    }",
     "  },{once:true});",
     "})(typeof window!=='undefined'?window:(typeof globalThis!=='undefined'?globalThis:this));",''
-  ].join('\\n');
-  return src.replace(/\\s*$/,'')+'\\n'+patch;
+  ].join('\n');
+  return src.replace(/\s*$/,'')+'\n'+patch;
 }
 function apply(){
   const fs=require('node:fs'),path=require('node:path');
