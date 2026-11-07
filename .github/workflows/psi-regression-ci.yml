@@ -9,6 +9,8 @@ on:
       - 'scripts/ci-edit-before-pl-hotfix.cjs'
       - 'scripts/ci-inline-clearance-hotfix.cjs'
       - 'scripts/ci-historical-clearance-hotfix.cjs'
+      - 'scripts/ci-clearance-filter-hotfix.cjs'
+      - 'test/ci-clearance-filter-hotfix.test.cjs'
       - 'migrations/historical-ci-clearance.js'
       - 'test/ci-historical-clearance-hotfix.test.cjs'
       - 'test/ci-unified-table.test.cjs'
@@ -96,6 +98,8 @@ jobs:
           node --check scripts/ci-edit-before-pl-hotfix.cjs
           node --check scripts/ci-inline-clearance-hotfix.cjs
           node --check scripts/ci-historical-clearance-hotfix.cjs
+          node --check scripts/ci-clearance-filter-hotfix.cjs
+          node --check test/ci-clearance-filter-hotfix.test.cjs
           node --check migrations/historical-ci-clearance.js
           node --check test/ci-historical-clearance-hotfix.test.cjs
           node --check test/ci-inline-clearance-hotfix.test.cjs
@@ -155,6 +159,8 @@ jobs:
         run: node test/ci-edit-before-pl-hotfix.test.cjs && node test/ci-clearance-type.test.cjs && node test/ci-inline-clearance-hotfix.test.cjs
       - name: Test historical CI clearance setting
         run: node test/ci-historical-clearance-hotfix.test.cjs
+      - name: Test CI clearance filter across operational and historical modes
+        run: node test/ci-clearance-filter-hotfix.test.cjs
       - name: Test unified CI management table
         run: node test/ci-unified-table.test.cjs
       - name: Test CI edit entry and supplier column removal
