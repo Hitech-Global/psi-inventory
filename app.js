@@ -14534,7 +14534,7 @@ async function selectCIForPL(ciId){
       '<div class="form-group"><label>发货日期</label><input type="date" id="npl-pickup" value="'+shipDate+'" readonly style="background:#f5f5f7;color:#666"></div>'+
       '<div class="form-group"><label>预计到港</label><input type="date" id="npl-eta"></div>'+
       '</div></div>'+
-      '<div class="detail-section"><h3>PL装箱明细 <label style="font-size:13px;font-weight:normal;color:#666;margin-left:12px">总CTN数量: <input type="number" id="npl-total-ctn" value="0" style="width:70px;padding:2px" placeholder="0"></label></h3>'+
+      '<div class="detail-section"><h3>PL装箱明细 <label style="font-size:13px;font-weight:normal;color:#666;margin-left:12px">总CTN数量: <input type="number" id="npl-total-ctn" value="0" style="width:70px;padding:2px" placeholder="0" onchange="renderPLDraftTable()"></label></h3>'+
       '<div style="display:flex;gap:8px;margin-bottom:8px"><button class="btn btn-secondary btn-sm" onclick="downloadPLTemplate()">下载导入模板</button></div>'+
       '<div id="pl-drop-zone" style="border:2px dashed #d9d9d9;border-radius:8px;padding:20px;text-align:center;cursor:pointer;background:#fafafa;transition:all .2s;margin-bottom:8px" '+
         'onclick="document.getElementById(\'pl-file-input\').click()" '+
@@ -14563,6 +14563,8 @@ function renderPLDraftTable(){
   if(!items.length){document.getElementById('pl-draft-table').innerHTML='<div style="padding:24px 12px;text-align:center;color:#999"><div style="font-size:32px;margin-bottom:8px">📋</div><div style="font-size:14px;margin-bottom:4px">暂无PL明细</div><div style="font-size:12px;color:#bbb">点击上方上传区域导入Excel，或手动编辑下方明细</div></div>';return;}
   let tc=0,tq=0,tg=0,tn=0,tb=0;
   items.forEach(it=>{tc+=it.cartons||0;tq+=it.total_qty||0;tg+=it.gross_weight||0;tn+=it.net_weight||0;tb+=it.cbm||0;});
+  // 混装箱会同时归属多个 SKU；供应商原始 PL 的整票 CTN 必须以总计行为准，不能把 SKU 箱数重复相加。
+  const shipmentCartons=window._plImportSourceSheet&&Number(window._plImportTotalCartons)>0?Number(window._plImportTotalCartons):tc;
   document.getElementById('pl-draft-table').innerHTML='<style>.pl-draft-wrap{overflow:auto;max-height:420px}.pl-draft-wrap thead th{position:sticky;top:0;z-index:2;background:#eef0f3;white-space:nowrap}</style><div class="table-container pl-draft-wrap"><table class="data-table" style="font-size:12px"><thead><tr><th>SKU</th><th>CI发货</th><th>已生成PL</th><th>剩余</th><th>CTN数量</th><th>总数量</th><th>总毛重</th><th>总净重</th><th>总体积</th><th></th></tr></thead><tbody>'+
     items.map((it,i)=>'<tr><td class="cell-id">'+esc(it.sku_code)+'</td><td class="text-right">'+(it.ci_shipped_qty||0)+'</td><td class="text-right">'+(it.pl_qty||0)+'</td><td class="text-right">'+(it.remaining||0)+'</td>'+
       '<td><input type="number" value="'+(it.cartons||0)+'" style="width:60px;padding:2px" onchange="updatePLRow('+i+',\'cartons\',this.value)"></td>'+
@@ -14571,7 +14573,7 @@ function renderPLDraftTable(){
       '<td><input type="number" step="0.01" value="'+(it.net_weight||0)+'" style="width:70px;padding:2px" onchange="updatePLRow('+i+',\'net_weight\',this.value)"></td>'+
       '<td><input type="number" step="0.0001" value="'+(it.cbm||0)+'" style="width:70px;padding:2px" onchange="updatePLRow('+i+',\'cbm\',this.value)"></td>'+
       '<td><button class="action-btn" onclick="removePLRow('+i+')" title="删除">🗑️</button></td></tr>').join('')+
-    '<tr style="font-weight:bold;background:#f5f5f7"><td>合计</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td class="text-right">'+tc+'</td><td class="text-right">'+tq+'</td><td class="text-right">'+tg.toFixed(2)+'</td><td class="text-right">'+tn.toFixed(2)+'</td><td class="text-right">'+tb.toFixed(4)+'</td><td>&nbsp;</td></tr>'+
+    '<tr style="font-weight:bold;background:#f5f5f7"><td>合计</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td class="text-right">'+shipmentCartons+'</td><td class="text-right">'+tq+'</td><td class="text-right">'+tg.toFixed(2)+'</td><td class="text-right">'+tn.toFixed(2)+'</td><td class="text-right">'+tb.toFixed(4)+'</td><td>&nbsp;</td></tr>'+
     '</tbody></table></div>';
 }
 function updatePLRow(idx,field,val){
