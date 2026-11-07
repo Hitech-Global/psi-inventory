@@ -54,7 +54,7 @@ function patchAppSource(src){
 "    var detail=document.createElement('tr');detail.className='ci-historical-detail-row';detail.id='ci-historical-detail-'+h.id;detail.hidden=true;",
 "    var td=document.createElement('td');td.colSpan=columns.length;",
 "    var items=[[t('ci.historical_paid','导入历史已付'),h.historical_paid_amount],[t('ci.subsequent_paid','后续已付'),h.subsequent_paid_amount],[t('ci.deduction','抵扣'),h.deduction_amount],[t('ci.rounding','抹零'),h.rounding_amount]];",
-"    td.innerHTML='<div class=\"ci-historical-payment-grid\" style=\"display:grid;grid-template-columns:repeat(4,minmax(130px,1fr));gap:10px;padding:12px 14px;background:#f5f5f7;border:1pxpx solid #e5e5ea;border-radius:10px\">'+items.map(function(item){return '<div style=\"display:flex;flex-direction:column;gap:5px\"><span style=\"font-size:12px;color:#86868b\">'+esc(item[0])+'</span><strong style=\"font-size:13px;color:#1d1d1f;font-weight:600\">'+esc(fmtMoney(Number(item[1]||0),h.currency))+'</strong></div>';}).join('')+'</div>';",
+"    td.innerHTML='<div class=\"ci-historical-payment-grid\" style=\"display:grid;grid-template-columns:repeat(4,minmax(130px,1fr));gap:10px;padding:12px 14px;background:#f5f5f7;border:1px solid #e5e5ea;border-radius:10px\">'+items.map(function(item){return '<div style=\"display:flex;flex-direction:column;gap:5px\"><span style=\"font-size:12px;color:#86868b\">'+esc(item[0])+'</span><strong style=\"font-size:13px;color:#1d1d1f;font-weight:600\">'+esc(fmtMoney(Number(item[1]||0),h.currency))+'</strong></div>';}).join('')+'</div>';",
 "    detail.appendChild(td);tbody.appendChild(detail);",
 "  }"
   ].join('\n');
