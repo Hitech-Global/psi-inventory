@@ -139,8 +139,8 @@
     // Keep the amount and the compact document/pending count metadata visible.
     var descendants = totalCard.querySelectorAll('*');
     function isCurrencyExplanation(value) {
-      var text = String(value || '').replace(/\\s+/g, ' ').trim();
-      return /仅原币为\\s*RMB的单据计入已知人民币总额/.test(text) ||
+      var text = String(value || '').replace(/\s+/g, ' ').trim();
+      return /仅原币为\s*RMB\s*的单据计入已知人民币总额/.test(text) ||
         /其他币种未提供明确汇率证据时标记为待补/.test(text) ||
         /跨币种裸加/.test(text) ||
         /only RMB[- ]denominated documents are included in the known RMB total/i.test(text) ||
