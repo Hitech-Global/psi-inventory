@@ -174,6 +174,8 @@
     var targets = [];
     Array.prototype.forEach.call(root.querySelectorAll('table'), function (table) {
       if (!isOperationalTable(table)) return;
+      // Apply the shared final-balance column order and remove inbound status on the unified table.
+      normalizeCIListColumns(table);
       var heads = table.querySelectorAll('thead th');
       if (heads.length < 10) return;
       // Unified CI table: locate CI amount by header label, not the legacy fixed index.
