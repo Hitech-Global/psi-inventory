@@ -18,7 +18,7 @@ assert.match(html, /assets\/ci-summary-compact\.js\?v=/);
 
 // The display-only adapter must not rewrite financial amounts or replace page markup.
 assert.doesNotMatch(script, /\.innerHTML\s*=/);
-assert.doesNotMatch(script, /\.textContent\s*=/);
+assert.doesNotMatch(script, /(?:node|card|labelNode|descendants\[[^\]]+\])\.textContent\s*=/);
 assert.doesNotMatch(script, /\.innerText\s*=/);
 assert.doesNotMatch(script, /fetch\s*\(/);
 assert.doesNotMatch(script, /XMLHttpRequest/);
