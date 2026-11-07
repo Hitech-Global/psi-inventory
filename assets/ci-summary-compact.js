@@ -77,16 +77,21 @@
   }
 
   function findContentWrapper(card, labelNode) {
-    var labelText = normalize(labelNode.innerText || labelNode.textContent);
     var node = labelNode.parentElement;
-    var best = card;
     while (node && node !== card.parentElement) {
       var text = normalize(node.innerText || node.textContent);
-      if (text.length > labelText.length && card.contains(node)) best = node;
+      var meaningfulChildren = 0;
+      for (var i = 0; i < node.children.length; i++) {
+        var childText = String(node.children[i].innerText || node.children[i].textContent || '').trim();
+        if (childText) meaningfulChildren++;
+      }
+      if (node !== labelNode && text.length > normalize(labelNode.innerText || labelNode.textContent).length && meaningfulChildren >= 2) {
+        return node;
+      }
       if (node === card) break;
       node = node.parentElement;
     }
-    return best;
+    return card;
   }
 
   function applyCompactSummary() {
