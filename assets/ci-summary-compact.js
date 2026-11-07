@@ -81,6 +81,7 @@
     style.textContent = [
       '.psi-ci-summary-grid{display:grid!important;grid-template-columns:minmax(0,1fr)!important;gap:0!important;width:100%!important;}',
       '.psi-ci-summary-hidden{display:none!important;}',
+      '.psi-ci-summary-note-hidden{display:none!important;}',
       '.psi-ci-summary-total{display:flex!important;align-items:center!important;gap:18px!important;flex-wrap:wrap!important;box-sizing:border-box!important;width:100%!important;min-height:64px!important;padding:12px 20px!important;border:1px solid rgba(46,125,50,.12)!important;border-radius:14px!important;background:linear-gradient(100deg,#fff 0%,#f7fcf7 65%,#eef8ef 100%)!important;box-shadow:0 2px 8px rgba(0,0,0,.04)!important;}',
       '.psi-ci-summary-total .psi-ci-summary-content{display:flex!important;align-items:center!important;gap:18px!important;flex-wrap:wrap!important;width:100%!important;}',
       '.psi-ci-summary-total .psi-ci-summary-content>*{margin-top:0!important;margin-bottom:0!important;}',
@@ -134,8 +135,32 @@
 
     totalLabel.classList.add('psi-ci-summary-label');
 
-    // Identify the existing amount and supporting count text without changing their values.
+    // Remove the explanatory currency caveat: it consumes vertical space and repeats the rule.
+    // Keep the amount and the compact document/pending count metadata visible.
     var descendants = totalCard.querySelectorAll('*');
+    function isCurrencyExplanation(value) {
+      var text = String(value || '').replace(/\s+/g, ' ').trim();
+      return /仅原币为\s*RMB\s*的单据计入已知人民币总额/.test(text) ||
+        /其他币种未提供明确汇率证据时标记为待补/.test(text) ||
+        /跨币种裸加/.test(text) ||
+        /only RMB[- ]denominated documents are included in the known RMB total/i.test(text) ||
+        /other currencies without explicit exchange[- ]rate evidence are marked pending/i.test(text);
+    }
+    for (var n = 0; n < descendants.length; n++) {
+      var candidate = descendants[n];
+      var candidateText = String(candidate.innerText || candidate.textContent || '').trim();
+      if (!isCurrencyExplanation(candidateText)) continue;
+      var childContainsSameNote = false;
+      for (var c = 0; c < candidate.children.length; c++) {
+        if (isCurrencyExplanation(candidate.children[c].innerText || candidate.children[c].textContent)) {
+          childContainsSameNote = true;
+          break;
+        }
+      }
+      if (!childContainsSameNote) candidate.classList.add('psi-ci-summary-note-hidden');
+    }
+
+    // Identify the existing amount and supporting count text without changing their values.
     for (var i = 0; i < descendants.length; i++) {
       var text = String(descendants[i].innerText || descendants[i].textContent || '').trim();
       if (/^[A-Z]{3}\s*[\d,]+(?:\.\d{1,2})?$/.test(text)) {
