@@ -16,6 +16,7 @@ function patchAppSource(src){
 "    var tr=document.createElement('tr');tr.className=sourceRow.className||'clickable-detail-row';",
 "    var click=sourceRow.getAttribute('onclick');if(click)tr.setAttribute('onclick',click);",
 "    var noCell=document.createElement('td');noCell.className='cell-id';",
+"    var logiToggle=document.createElement('button');logiToggle.type='button';logiToggle.className='ci-list-logi-toggle';logiToggle.setAttribute('data-ci-logi-toggle',String(c.id));logiToggle.title=t('logistics.title','物流批次');logiToggle.innerHTML='<span id=\"ci-list-logi-caret-'+esc(String(c.id))+'\">▶</span>';noCell.appendChild(logiToggle);",
 "    var noLink=document.createElement('span');noLink.className='link-text';noLink.textContent=c.ci_no||'—';noLink.onclick=function(event){event.stopPropagation();viewCI(c.id);};noCell.appendChild(noLink);tr.appendChild(noCell);",
 "    var typeCell=document.createElement('td');typeCell.innerHTML=ciTypeBadge('operational');tr.appendChild(typeCell);",
 "    tr.appendChild(textCell(c.brand));",
