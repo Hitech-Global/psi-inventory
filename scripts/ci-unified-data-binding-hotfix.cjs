@@ -16,7 +16,7 @@ function patchAppSource(src){
 "    var tr=document.createElement('tr');tr.className=sourceRow.className||'clickable-detail-row';",
 "    var click=sourceRow.getAttribute('onclick');if(click)tr.setAttribute('onclick',click);",
 "    var noCell=document.createElement('td');noCell.className='cell-id';",
-"    noCell.innerHTML='<span class=\"link-text\" onclick=\"event.stopPropagation();viewCI(\\\\''+esc(String(c.id))+'\\\\')\">'+esc(c.ci_no||'—')+'</span>';tr.appendChild(noCell);",
+"    var noLink=document.createElement('span');noLink.className='link-text';noLink.textContent=c.ci_no||'—';noLink.onclick=function(event){event.stopPropagation();viewCI(c.id);};noCell.appendChild(noLink);tr.appendChild(noCell);",
 "    var typeCell=document.createElement('td');typeCell.innerHTML=ciTypeBadge('operational');tr.appendChild(typeCell);",
 "    tr.appendChild(textCell(c.brand));",
 "    tr.appendChild(textCell(unifiedCICountryLabel(c.country)));",
