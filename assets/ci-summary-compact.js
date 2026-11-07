@@ -143,8 +143,10 @@
       return /仅原币为\s*RMB\s*的单据计入已知人民币总额/.test(text) ||
         /其他币种未提供明确汇率证据时标记为待补/.test(text) ||
         /跨币种裸加/.test(text) ||
+        /only documents originally denominated in RMB are counted toward the known RMB total/i.test(text) ||
         /only RMB[- ]denominated documents are included in the known RMB total/i.test(text) ||
-        /other currencies without explicit exchange[- ]rate evidence are marked pending/i.test(text);
+        /other currencies without (?:clear|explicit) exchange[- ]rate evidence are marked (?:as )?(?:to[- ]be[- ]supplemented|pending)/i.test(text) ||
+        /Hanya dokumen dalam RMB yang dihitung ke total RMB yang diketahui/i.test(text);
     }
     for (var n = 0; n < descendants.length; n++) {
       var candidate = descendants[n];
