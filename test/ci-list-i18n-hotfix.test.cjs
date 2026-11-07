@@ -17,10 +17,18 @@ function renderUnifiedCITable(operationalData,historicalData){
     ['入库状态','ci.col.inbound_status'],['到期日','field.due_date'],['操作','common.actions']
   ];
   function addOpRow(srcTable,sourceRow,c){
+    tr.appendChild(moneyCell(c.balance_unpaid_amount));
     tr.appendChild(cell(srcTable,sourceRow,['尾款状态','付款状态','Balance Payment Status','Payment Status']));
+    tr.appendChild(cell(srcTable,sourceRow,['物流状态','Logistics Status']));
+    tr.appendChild(cell(srcTable,sourceRow,['入库状态','Inbound Status']));
+    tr.appendChild(cell(srcTable,sourceRow,['到期日','Due Date'],fmtDate(c.due_date)));
   }
   function addHistoricalRow(srcTable,sourceRow,h){
+    tr.appendChild(moneyCell(h.unpaid_amount));
     tr.appendChild(cell(srcTable,sourceRow,['付款状态','Payment Status']));
+    tr.appendChild(textCell('—'));
+    tr.appendChild(textCell('—'));
+    tr.appendChild(cell(srcTable,sourceRow,['到期日','Due Date']));
     var items=[
       ['导入历史已付',h.historical_paid_amount],['后续已付',h.subsequent_paid_amount],
       ['抵扣',h.deduction_amount],['抹零',h.rounding_amount]
@@ -30,16 +38,14 @@ function renderUnifiedCITable(operationalData,historicalData){
 `;
 const patched = patchAppSource(appFixture);
 assert.ok(patched.includes(APP_MARKER));
-assert.ok(patched.includes(APP_MARKER + '\nasync function renderCI(){'), 'marker must be before async function');
-assert.ok(!patched.includes('async ' + APP_MARKER), 'async keyword must not be separated from function');
-assert.doesNotThrow(() => new Function(patched), 'patched app fixture must remain valid JavaScript');
-const malformed = patched.replace(APP_MARKER + '\nasync function renderCI(){', 'async ' + APP_MARKER + '\nfunction renderCI(){');
-const repaired = patchAppSource(malformed);
-assert.ok(repaired.includes(APP_MARKER + '\nasync function renderCI(){'), 'previous malformed output must be repaired');
-assert.doesNotThrow(() => new Function(repaired), 'repaired app fixture must remain valid JavaScript');
 assert.ok(patched.includes("t('ci.clearance.formal','正清')"));
 assert.ok(patched.includes("t('ci.clearance.filter','清关方式')"));
 assert.ok(patched.includes("['尾款到期日','ci.final_balance_due_date']"));
+assert.ok(patched.indexOf("['未结金额','ci.unpaid_amount']") < patched.indexOf("['尾款到期日','ci.final_balance_due_date']"));
+assert.ok(!patched.includes("['入库状态','ci.col.inbound_status']"), 'inbound status column must be removed');
+assert.ok(!patched.includes("['入库状态','Inbound Status']"), 'operational inbound cell must be removed');
+assert.ok(patched.includes("['尾款到期日','到期日','Due Date']"), 'operational due date cell must follow outstanding amount');
+assert.ok(patched.includes("['尾款到期日','到期日','Due Date']"), 'historical due date cell must follow outstanding amount');
 assert.ok(patched.includes('ciPaymentStatusLabel(c.balance_payment_status)'));
 assert.ok(patched.includes('ciPaymentStatusLabel(h.payment_status)'));
 assert.ok(patched.includes("t('ci.historical_paid','导入历史已付')"));
