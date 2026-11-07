@@ -112,7 +112,7 @@
     var idx = -1;
     for (var i = 0; i < heads.length; i++) {
       var label = String(heads[i].textContent || '').trim();
-      if (label === inboundLabel || label === '入库状态') {
+      if (label === inboundLabel || label === '入库状态' || label.toLowerCase() === 'inbound status' || label.toLowerCase() === 'status barang masuk') {
         idx = i;
         break;
       }
@@ -125,6 +125,46 @@
       var cell = row.children[idx];
       if (cell && cell.parentNode) cell.parentNode.removeChild(cell);
     });
+  }
+
+
+  function normalizeCIListColumns(table) {
+    if (!table) return;
+    // Remove the redundant inbound-state column; logistics status remains the list-level status.
+    removeInboundColumn(table);
+
+    var heads = table.querySelectorAll('thead th');
+    if (!heads.length) return;
+    var dueIndex = -1;
+    var balanceIndex = -1;
+    var dueLabels = ['到期日', '尾款到期日', 'duedate', 'payabledate', 'finalbalanceduedate', 'tanggaljatuhtempo', 'tanggaljatuhtempopelunasan'];
+    var balanceLabels = ['未结金额', '应付尾款', 'payablebalance', 'outstandingamount', 'sisayangharusdibayar'];
+
+    for (var i = 0; i < heads.length; i++) {
+      var label = String(heads[i].textContent || '').replace(/\s+/g, '').toLowerCase();
+      if (dueIndex < 0 && dueLabels.indexOf(label) !== -1) dueIndex = i;
+      if (balanceIndex < 0 && balanceLabels.indexOf(label) !== -1) balanceIndex = i;
+    }
+    if (dueIndex < 0 || balanceIndex < 0 || dueIndex === balanceIndex) return;
+
+    var headerRow = heads[0].parentNode;
+    var dueHead = heads[dueIndex];
+    var balanceHead = heads[balanceIndex];
+    headerRow.insertBefore(dueHead, balanceHead.nextSibling);
+
+    Array.prototype.forEach.call(table.querySelectorAll('tbody tr'), function (row) {
+      var cells = row.children;
+      if (!cells || cells.length <= Math.max(dueIndex, balanceIndex)) return;
+      var dueCell = cells[dueIndex];
+      var balanceCell = cells[balanceIndex];
+      if (!dueCell || !balanceCell || dueCell === balanceCell) return;
+      row.insertBefore(dueCell, balanceCell.nextSibling);
+    });
+
+    var lang = typeof global.getLang === 'function' ? global.getLang() : 'zh';
+    dueHead.textContent = lang === 'en'
+      ? 'Final Balance Due Date'
+      : (lang === 'id' ? 'Tanggal Jatuh Tempo Pelunasan' : '尾款到期日');
   }
 
   function ensureColumnsAndCells() {
