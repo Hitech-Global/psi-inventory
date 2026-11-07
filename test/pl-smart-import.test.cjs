@@ -95,6 +95,6 @@ test('handles duplicate carton IDs across SKUs without inflating the shipment ca
 
 test('shows the shipment CTN total for mixed-carton supplier PL files instead of summing overlapping SKU carton counts',()=>{
   assert.match(appSource,/const shipmentCartons=window\._plImportSourceSheet&&Number\(window\._plImportTotalCartons\)>0\?Number\(window\._plImportTotalCartons\):tc/);
-  assert.match(appSource,/\+shipmentCartons\+<\/td>/);
+  assert.match(appSource,/\+shipmentCartons\+'<\/td>/);
   assert.match(appSource,/id="npl-total-ctn"[^>]*onchange="renderPLDraftTable\(\)"/);
 });
