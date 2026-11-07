@@ -141,7 +141,7 @@
     var balanceLabels = ['未结金额', '应付尾款', 'payablebalance', 'outstandingamount', 'sisayangharusdibayar'];
 
     for (var i = 0; i < heads.length; i++) {
-      var label = String(heads[i].textContent || '').replace(/\\s+/g, '').toLowerCase();
+      var label = String(heads[i].textContent || '').replace(/\s+/g, '').toLowerCase();
       if (dueIndex < 0 && dueLabels.indexOf(label) !== -1) dueIndex = i;
       if (balanceIndex < 0 && balanceLabels.indexOf(label) !== -1) balanceIndex = i;
     }
