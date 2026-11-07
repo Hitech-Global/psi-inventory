@@ -51,7 +51,7 @@ function patchAppSource(src) {
   );
   src = once(
     src,
-    "    tr.appendChild(moneyCell(h.unpaid_amount));\n    var historicalPaymentStatusCell=cell(srcTable,sourceRow,['付款状态','Payment Status']);historicalPaymentStatusCell.textContent=ciPaymentStatusLabel(h.payment_status);tr.appendChild(historicalPaymentStatusCell);\n    tr.appendChild(textCell('—'));\n    tr.appendChild(textCell('—'));\n    tr.appendChild(cell(srcTable,sourceRow,['到期日','Due Date']));",
+    "    tr.appendChild(moneyCell(h.unpaid_amount));\n    tr.appendChild(cell(srcTable,sourceRow,['付款状态','Payment Status']));\n    tr.appendChild(textCell('—'));\n    tr.appendChild(textCell('—'));\n    tr.appendChild(cell(srcTable,sourceRow,['到期日','Due Date']));",
     "    tr.appendChild(moneyCell(h.unpaid_amount));\n    tr.appendChild(cell(srcTable,sourceRow,['尾款到期日','到期日','Due Date'],fmtDate(h.due_date)));\n    var historicalPaymentStatusCell=cell(srcTable,sourceRow,['付款状态','Payment Status']);historicalPaymentStatusCell.textContent=ciPaymentStatusLabel(h.payment_status);tr.appendChild(historicalPaymentStatusCell);\n    tr.appendChild(textCell('—'));",
     'historical row due-date position and inbound-status removal'
   );
