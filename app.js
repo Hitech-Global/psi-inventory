@@ -14543,7 +14543,7 @@ async function selectCIForPL(ciId){
         'ondrop="event.preventDefault();this.style.borderColor=\'#d9d9d9\';this.style.background=\'#fafafa\';handlePLFile(event.dataTransfer.files[0])">'+
         '<div style="font-size:28px;color:#1890ff;margin-bottom:4px">📤</div>'+
         '<div style="font-size:13px;color:#333;margin-bottom:2px">点击上传或拖拽文件到此处</div>'+
-        '<div style="font-size:11px;color:#999">支持 .xlsx / .xls / .csv 格式，字段：SKU、数量、CTN数量、总毛重、总净重、总体积</div>'+
+        '<div style="font-size:11px;color:#999">支持供应商原始PL文件（自动识别PL工作表）及标准模板，格式：.xlsx / .xls / .csv</div>'+
       '</div>'+
       '<input type="file" id="pl-file-input" accept=".xlsx,.xls,.csv" style="display:none" onchange="handlePLFile(this.files[0])">'+
       '<div id="pl-draft-table"></div></div>'+
@@ -14592,7 +14592,30 @@ function downloadPLTemplate(){
 function handlePLFile(file){
   if(!file)return;
   const r=new FileReader();r.onload=ev=>{try{
-    const wb=XLSX.read(ev.target.result,{type:'array'});const ws=wb.Sheets[wb.SheetNames[0]];const rows=XLSX.utils.sheet_to_json(ws);
+    const wb=XLSX.read(ev.target.result,{type:'array'});
+    let rows=null;
+    window._plImportTotalCartons=null;
+    window._plImportSourceSheet='';
+    // 优先识别供应商原始装箱单：遍历所有 Sheet，不再默认读取第一个 Sheet。
+    const plSheet=window.PLImportParser&&window.PLImportParser.findPackingListSheet(wb,XLSX);
+    if(plSheet){
+      const parsed=window.PLImportParser.parsePackingListRows(plSheet.rows,plSheet.headerIndex);
+      if(!parsed.items.length)throw new Error('已找到PL工作表，但没有识别到有效SKU明细');
+      rows=parsed.items.map(item=>({
+        'SKU':item.sku_code,
+        '数量':item.total_qty,
+        'CTN数量':item.cartons,
+        '总毛重':item.gross_weight,
+        '总净重':item.net_weight,
+        '总体积':item.cbm
+      }));
+      window._plImportTotalCartons=parsed.total_cartons;
+      window._plImportSourceSheet=plSheet.sheetName;
+    }else{
+      // 兼容原有标准模板：保持读取第一个 Sheet 的既有行为。
+      const ws=wb.Sheets[wb.SheetNames[0]];
+      rows=XLSX.utils.sheet_to_json(ws);
+    }
     const aliasMap={'sku_code':['SKU','SKU编码','料号','sku_code'],'total_qty':['数量','总数量','Total QTY','total_qty'],'cartons':['CTN数量','箱数','CTN','Total CTN','cartons'],'gross_weight':['总毛重','GW','gross_weight'],'net_weight':['总净重','NW','net_weight'],'cbm':['总体积','CBM','cbm']};
     const mapped=rows.map(row=>{const item={};for(const [key,aliases] of Object.entries(aliasMap)){for(const alias of aliases){if(row[alias]!==undefined){item[key]=isNaN(row[alias])?row[alias]:parseFloat(row[alias]);break;}}}return item;});
 
@@ -14650,7 +14673,13 @@ function handlePLFile(file){
         }
       }
     });
-    renderPLDraftTable();showToast('导入完成：匹配'+matched+'行，未匹配'+unmatched+'行',matched>0?'success':'warning');
+    renderPLDraftTable();
+    if(window._plImportTotalCartons!==null){
+      const totalCtnInput=document.getElementById('npl-total-ctn');
+      if(totalCtnInput)totalCtnInput.value=window._plImportTotalCartons;
+    }
+    const sourceHint=window._plImportSourceSheet?'已识别「'+window._plImportSourceSheet+'」工作表；':'';
+    showToast(sourceHint+'导入完成：匹配'+matched+'行，未匹配'+unmatched+'行',matched>0?'success':'warning');
   }catch(err){showToast(err.message,'danger')}};r.readAsArrayBuffer(file);
 }
 function renderOtherFees(){

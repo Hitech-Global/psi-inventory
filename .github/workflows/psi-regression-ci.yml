@@ -9,8 +9,6 @@ on:
       - 'scripts/ci-edit-before-pl-hotfix.cjs'
       - 'scripts/ci-inline-clearance-hotfix.cjs'
       - 'scripts/ci-historical-clearance-hotfix.cjs'
-      - 'scripts/ci-clearance-filter-hotfix.cjs'
-      - 'test/ci-clearance-filter-hotfix.test.cjs'
       - 'migrations/historical-ci-clearance.js'
       - 'test/ci-historical-clearance-hotfix.test.cjs'
       - 'test/ci-unified-table.test.cjs'
@@ -33,6 +31,8 @@ on:
       - 'test/bigseller-inventory-import.test.cjs'
       - 'assets/bigseller-sales-import.js'
       - 'test/bigseller-sales-import.test.cjs'
+      - 'assets/pl-import-parser.js'
+      - 'test/pl-smart-import.test.cjs'
       - 'assets/zhisu-inventory-import.js'
       - 'test/zhisu-inventory-import.test.cjs'
       - 'test/inventory-import-precheck.test.cjs'
@@ -99,8 +99,6 @@ jobs:
           node --check scripts/ci-edit-before-pl-hotfix.cjs
           node --check scripts/ci-inline-clearance-hotfix.cjs
           node --check scripts/ci-historical-clearance-hotfix.cjs
-          node --check scripts/ci-clearance-filter-hotfix.cjs
-          node --check test/ci-clearance-filter-hotfix.test.cjs
           node --check migrations/historical-ci-clearance.js
           node --check test/ci-historical-clearance-hotfix.test.cjs
           node --check test/ci-inline-clearance-hotfix.test.cjs
@@ -120,6 +118,8 @@ jobs:
           node --check test/bigseller-inventory-import.test.cjs
           node --check assets/bigseller-sales-import.js
           node --check test/bigseller-sales-import.test.cjs
+          node --check assets/pl-import-parser.js
+          node --check test/pl-smart-import.test.cjs
           node --check assets/zhisu-inventory-import.js
           node --check test/zhisu-inventory-import.test.cjs
           node --check test/inventory-import-precheck.test.cjs
@@ -163,8 +163,6 @@ jobs:
         run: node test/ci-historical-clearance-hotfix.test.cjs
       - name: Test CI attachment online Excel preview
         run: node test/ci-attachment-online-preview.test.cjs
-      - name: Test CI clearance filter across operational and historical modes
-        run: node test/ci-clearance-filter-hotfix.test.cjs
       - name: Test unified CI management table
         run: node test/ci-unified-table.test.cjs
       - name: Test CI edit entry and supplier column removal
@@ -185,6 +183,8 @@ jobs:
         run: node --test test/bigseller-inventory-import.test.cjs test/inventory-import-precheck.test.cjs
       - name: Test BigSeller sales import marker / status rules
         run: node --test test/bigseller-sales-import.test.cjs
+      - name: Test supplier original PL workbook import and CBM allocation
+        run: node --test test/pl-smart-import.test.cjs
       - name: Test Zhisu inventory import adapter and warehouse / duplicate safeguards
         run: node --test test/zhisu-inventory-import.test.cjs
       - name: Test inventory financial value aggregation
