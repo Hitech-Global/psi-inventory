@@ -16,7 +16,10 @@ function once(src, from, to, label) {
 }
 
 function patchAppSource(src) {
-  if (src.includes(APP_MARKER)) return src;
+  // Repair the malformed marker placement emitted by the previous hotfix.
+  if (src.includes(APP_MARKER)) {
+    return src.replace('async ' + APP_MARKER + '\\nfunction renderCI(){', APP_MARKER + '\\nasync function renderCI(){');
+  }
 
   src = once(
     src,
