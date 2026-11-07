@@ -43,6 +43,9 @@ const i18nPatched = patchI18nSource(i18nFixture);
 assert.ok(i18nPatched.includes(I18N_MARKER));
 assert.ok(i18nPatched.includes('Final Balance Due Date'));
 assert.ok(i18nPatched.includes('Clearance Method'));
+assert.ok(i18nPatched.includes('Related Logistics Batch'));
+assert.ok(i18nPatched.includes('I18N.dict.en["gen.L5761.2"] = ciSourceHeader'));
+assert.ok(i18nPatched.includes('CI Operasional'));
 assert.ok(i18nPatched.includes('Outstanding Amount'));
 assert.equal(patchI18nSource(i18nPatched), i18nPatched, 'i18n patch must be idempotent');
 
