@@ -38,6 +38,13 @@ function renderUnifiedCITable(operationalData,historicalData){
 `;
 const patched = patchAppSource(appFixture);
 assert.ok(patched.includes(APP_MARKER));
+assert.ok(patched.includes(APP_MARKER + '\\nasync function renderCI(){'), 'marker must be placed before async function declaration');
+assert.ok(!patched.includes('async ' + APP_MARKER), 'async keyword must remain attached to function');
+assert.doesNotThrow(() => new Function(patched), 'patched app fixture must remain valid JavaScript');
+const malformed = patched.replace(APP_MARKER + '\\nasync function renderCI(){', 'async ' + APP_MARKER + '\\nfunction renderCI(){');
+const repaired = patchAppSource(malformed);
+assert.ok(repaired.includes(APP_MARKER + '\\nasync function renderCI(){'), 'previous malformed output must be repaired');
+assert.doesNotThrow(() => new Function(repaired), 'repaired app fixture must remain valid JavaScript');
 assert.ok(patched.includes("t('ci.clearance.formal','正清')"));
 assert.ok(patched.includes("t('ci.clearance.filter','清关方式')"));
 assert.ok(patched.includes("['尾款到期日','ci.final_balance_due_date']"));
