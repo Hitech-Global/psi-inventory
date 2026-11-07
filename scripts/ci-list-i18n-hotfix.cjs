@@ -76,6 +76,10 @@ function patchI18nSource(src) {
   I18N.dict.zh["ci.clearance.formal"]="正清"; I18N.dict.en["ci.clearance.formal"]="Formal Customs Clearance"; I18N.dict.id["ci.clearance.formal"]="Jalur Bea Cukai Resmi";
   I18N.dict.zh["ci.clearance.non_formal"]="非正清"; I18N.dict.en["ci.clearance.non_formal"]="Informal Customs Clearance"; I18N.dict.id["ci.clearance.non_formal"]="Jalur Bea Cukai Nonresmi";
   I18N.dict.zh["ci.clearance.unset"]="未设置"; I18N.dict.en["ci.clearance.unset"]="Not Set"; I18N.dict.id["ci.clearance.unset"]="Belum Diatur";
+  I18N.dict.zh["ci.no"]="CI号"; I18N.dict.en["ci.no"]="CI No."; I18N.dict.id["ci.no"]="No. CI";
+  I18N.dict.zh["ci.col.type"]="CI类型"; I18N.dict.en["ci.col.type"]="CI Type"; I18N.dict.id["ci.col.type"]="Tipe CI";
+  I18N.dict.zh["ci.clearance_type"]="清关方式"; I18N.dict.en["ci.clearance_type"]="Clearance Method"; I18N.dict.id["ci.clearance_type"]="Metode Kepabeanan";
+  I18N.dict.zh["ci.col.logistics_status"]="物流状态"; I18N.dict.en["ci.col.logistics_status"]="Logistics Status"; I18N.dict.id["ci.col.logistics_status"]="Status Logistik";
   I18N.dict.zh["ci.amount"]="CI金额"; I18N.dict.en["ci.amount"]="CI Amount"; I18N.dict.id["ci.amount"]="Jumlah CI";
   I18N.dict.zh["ci.paid_amount"]="已付金额"; I18N.dict.en["ci.paid_amount"]="Paid Amount"; I18N.dict.id["ci.paid_amount"]="Jumlah Dibayar";
   I18N.dict.zh["ci.unpaid_amount"]="未结金额"; I18N.dict.en["ci.unpaid_amount"]="Outstanding Amount"; I18N.dict.id["ci.unpaid_amount"]="Jumlah Belum Dibayar";
