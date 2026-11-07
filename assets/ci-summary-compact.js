@@ -3,28 +3,43 @@
 
   var STYLE_ID = 'psi-ci-summary-compact-style';
   var LABELS = {
-    operational: ['运营采购金额', 'Operational Procurement Amount'],
-    historical: ['历史采购金额', 'Historical Procurement Amount'],
-    total: ['采购金额合计（按币种）', '采购金额合计 (按币种)', 'Total Procurement Amount']
+    operational: ['运营采购金额', 'Operational Procurement Amount', 'Operational Purchase Amount', 'Operational Procurement'],
+    historical: ['历史采购金额', 'Historical Procurement Amount', 'Historical Purchase Amount', 'Historical Procurement'],
+    total: ['采购金额合计（按币种）', '采购金额合计 (按币种)', 'Total Procurement Amount', 'Total Procurement Amount by Currency', 'Total Purchase Amount', 'Total Purchase Amount by Currency']
   };
+
+  function matchesLabelText(value, labels, kind) {
+    var text = normalize(value);
+    if (labels.some(function (label) { return text.indexOf(normalize(label)) !== -1; })) return true;
+    if (kind === 'operational') {
+      return /(?:operational|operation|current)(?:procurement|purchase|buying)(?:amount)?/.test(text);
+    }
+    if (kind === 'historical') {
+      return /historical(?:procurement|purchase|buying)(?:amount)?/.test(text);
+    }
+    if (kind === 'total') {
+      return /total(?:procurement|purchase|buying)(?:amount|bycurrency)?/.test(text) ||
+        /(?:procurement|purchase|buying)totalamount/.test(text);
+    }
+    return false;
+  }
 
   function normalize(value) {
     return String(value || '').replace(/\s+/g, '').replace(/[()（）]/g, '').toLowerCase();
   }
 
-  function hasLabel(element, labels) {
-    var text = normalize(element && (element.innerText || element.textContent));
-    return labels.some(function (label) { return text.indexOf(normalize(label)) !== -1; });
+  function hasLabel(element, labels, kind) {
+    return matchesLabelText(element && (element.innerText || element.textContent), labels, kind);
   }
 
-  function findLabelNode(labels) {
+  function findLabelNode(labels, kind) {
     var nodes = document.querySelectorAll('body *');
     for (var i = 0; i < nodes.length; i++) {
       var node = nodes[i];
-      if (!hasLabel(node, labels)) continue;
+      if (!hasLabel(node, labels, kind)) continue;
       var childHasLabel = false;
       for (var j = 0; j < node.children.length; j++) {
-        if (hasLabel(node.children[j], labels)) {
+        if (hasLabel(node.children[j], labels, kind)) {
           childHasLabel = true;
           break;
         }
@@ -95,9 +110,9 @@
   }
 
   function applyCompactSummary() {
-    var operationalLabel = findLabelNode(LABELS.operational);
-    var historicalLabel = findLabelNode(LABELS.historical);
-    var totalLabel = findLabelNode(LABELS.total);
+    var operationalLabel = findLabelNode(LABELS.operational, 'operational');
+    var historicalLabel = findLabelNode(LABELS.historical, 'historical');
+    var totalLabel = findLabelNode(LABELS.total, 'total');
     if (!operationalLabel || !historicalLabel || !totalLabel) return false;
 
     var operationalCard = findCard(operationalLabel);
@@ -144,15 +159,11 @@
       });
     }
     schedule();
-    var observer = new MutationObserver(function (records) {
-      for (var i = 0; i < records.length; i++) {
-        if (records[i].addedNodes && records[i].addedNodes.length) {
-          schedule();
-          break;
-        }
-      }
+    var observer = new MutationObserver(function () {
+      schedule();
     });
-    observer.observe(document.body, { childList: true, subtree: true });
+    // Language switches can update existing text nodes without adding new DOM elements.
+    observer.observe(document.body, { childList: true, characterData: true, subtree: true });
   }
 
   if (document.readyState === 'loading') {
