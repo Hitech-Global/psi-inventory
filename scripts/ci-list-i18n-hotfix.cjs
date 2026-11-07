@@ -73,7 +73,7 @@ function patchAppSource(src) {
     'historical payment detail labels'
   );
 
-  return src.replace('function renderCI(){', APP_MARKER + '\nfunction renderCI(){');
+  return src.replace('async function renderCI(){', APP_MARKER + '\nasync function renderCI(){');
 }
 
 function patchI18nSource(src) {
