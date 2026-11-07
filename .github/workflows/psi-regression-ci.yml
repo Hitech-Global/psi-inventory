@@ -177,6 +177,8 @@ jobs:
         run: node test/ci-unified-table.test.cjs
       - name: Test complete CI/PL translations
         run: node test/ci-list-i18n-hotfix.test.cjs
+      - name: Test unified CI data binding and logistics expand control
+        run: node test/ci-unified-data-binding-hotfix.test.cjs
       - name: Test CI edit entry and supplier column removal
         run: node test/ci-edit-entry-supplier-column.test.cjs
       - name: Test opt-in page and API performance diagnostics
