@@ -8692,6 +8692,71 @@ function _attRenderPreview(){
   openModal(title, body, footer, 'modal-lg');
 }
 
+
+var _attExcelPreviewState=null; // {dataUrl, workbook, sheetIndex}
+
+function _attBuildExcelPreviewContent(att){
+  var name=att.name||'';
+  var dataUrl=String(att.dataUrl||'');
+  try{
+    if(typeof XLSX==='undefined') throw new Error('Excel预览组件未加载');
+    if(!_attExcelPreviewState||_attExcelPreviewState.dataUrl!==dataUrl){
+      var base64=dataUrl.replace(/^data:[^,]*,/, '');
+      var wb=XLSX.read(base64,{type:'base64',cellDates:true});
+      _attExcelPreviewState={dataUrl:dataUrl,workbook:wb,sheetIndex:0};
+    }
+    var state=_attExcelPreviewState;
+    var names=state.workbook.SheetNames||[];
+    if(!names.length) throw new Error('文件中没有可预览的工作表');
+    if(state.sheetIndex>=names.length)state.sheetIndex=0;
+    var tabs='<div class="att-excel-tabs">';
+    names.forEach(function(sheetName,index){
+      tabs+='<button type="button" class="att-excel-tab'+(index===state.sheetIndex?' active':'')+'" onclick="_attExcelSwitch('+index+')" title="'+esc(sheetName)+'">'+esc(sheetName)+'</button>';
+    });
+    tabs+='</div>';
+    var ws=state.workbook.Sheets[names[state.sheetIndex]];
+    var rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:'',raw:false,dateNF:'yyyy-mm-dd'});
+    var maxRows=2000;
+    var visibleRows=rows.slice(0,maxRows);
+    var html='<div class="att-excel-preview"><style>'
+      +'.att-excel-tabs{display:flex;gap:6px;overflow-x:auto;padding:0 0 9px;border-bottom:1px solid #e5e5ea;margin-bottom:10px}'
+      +'.att-excel-tab{flex:0 0 auto;border:1px solid #d2d2d7;border-radius:7px;background:#f5f5f7;color:#3a3a3c;padding:6px 11px;font-size:12px;cursor:pointer}'
+      +'.att-excel-tab.active{background:#e8f1ff;border-color:#8bb8ff;color:#075fc5;font-weight:600}'
+      +'.att-excel-grid-wrap{max-height:min(66vh,560px);overflow:auto;border:1px solid #e1e1e6;border-radius:9px;background:#fff}'
+      +'.att-excel-grid{border-collapse:separate;border-spacing:0;min-width:100%;width:max-content;font-size:12px;color:#303036}'
+      +'.att-excel-grid th{position:sticky;top:0;z-index:2;background:#f2f2f4;font-weight:600;color:#626269}'
+      +'.att-excel-grid th,.att-excel-grid td{padding:7px 10px;border-right:1px solid #ededf0;border-bottom:1px solid #ededf0;text-align:left;white-space:pre-wrap;min-width:90px;max-width:320px;overflow-wrap:anywhere}'
+      +'.att-excel-grid tr:last-child td{border-bottom:0}.att-excel-grid th:last-child,.att-excel-grid td:last-child{border-right:0}'
+      +'.att-excel-note{padding:7px 2px;color:#86868b;font-size:11px}'
+      +'</style>'+tabs+'<div class="att-excel-grid-wrap"><table class="att-excel-grid"><tbody>';
+    visibleRows.forEach(function(row,rowIndex){
+      html+='<tr>';
+      row.forEach(function(cell){
+        var value=cell==null?'':String(cell);
+        html+=rowIndex===0?'<th>'+esc(value)+'</th>':'<td>'+esc(value)+'</td>';
+      });
+      html+='</tr>';
+    });
+    html+='</tbody></table></div>';
+    if(rows.length>maxRows)html+='<div class="att-excel-note">当前工作表共 '+rows.length+' 行，预览前 '+maxRows+' 行；下载文件可查看完整内容。</div>';
+    else html+='<div class="att-excel-note">'+names.length+' 个工作表 · '+rows.length+' 行</div>';
+    return html+'</div>';
+  }catch(error){
+    return '<div style="padding:36px 20px;text-align:center;color:#8a3b32">'
+      +'<div style="font-size:28px;margin-bottom:10px">⚠</div>'
+      +'<div style="font-weight:600;margin-bottom:6px">无法预览此 Excel 文件</div>'
+      +'<div style="font-size:12px;color:#777">'+esc(error&&error.message||'文件解析失败')+'</div></div>';
+  }
+}
+
+function _attExcelSwitch(index){
+  if(!_attExcelPreviewState)return;
+  var count=(_attExcelPreviewState.workbook.SheetNames||[]).length;
+  if(index<0||index>=count)return;
+  _attExcelPreviewState.sheetIndex=index;
+  _attRenderPreview();
+}
+
 function _attBuildPreviewContent(att){
   var type=(att.type||'').toLowerCase();
   var dataUrl=att.dataUrl||'';
@@ -8700,6 +8765,10 @@ function _attBuildPreviewContent(att){
   if(type==='application/pdf'||name.toLowerCase().endsWith('.pdf')){
     var pdfUrl=_attDataUrlToBlobUrl(dataUrl);
     return '<div style="width:100%;height:min(70vh,600px);"><iframe src="'+pdfUrl+'" style="width:100%;height:100%;border:0;" allowfullscreen></iframe></div>';
+  }
+  // Excel / CSV：在当前预览弹窗内解析并展示工作表，原始附件不做修改
+  if(/\.(xlsx|xls|xlsm|csv)$/i.test(name)||/spreadsheet|excel|csv/.test(type)){
+    return _attBuildExcelPreviewContent(att);
   }
   // 图片：保持比例，不拉伸
   if(type.indexOf('image/')===0||/\.(png|jpg|jpeg|webp|gif|bmp|svg)$/i.test(name)){
@@ -8742,6 +8811,7 @@ function _attPreviewCleanup(){
   if(_attPreviewState._escBound) document.removeEventListener('keydown', _attPreviewState._escBound);
   if(_attPreviewState._mo) _attPreviewState._mo.disconnect();
   _attPreviewState=null;
+  _attExcelPreviewState=null;
 }
 
 // ---- 通用附件上传组件 ----
@@ -12151,6 +12221,7 @@ function ciUnifiedAttachmentHtml(ci){
     var a=parseAttachmentValue(val);var has=a&&a.dataUrl;
     var body=has
       ? '<span class="link-text" onclick="ciPreviewAttachment(\'ci\',\''+ci.id+'\',\''+field+'\')">'+esc(a.name||label)+'</span>'
+        +' <button class="btn btn-secondary btn-sm" onclick="ciPreviewAttachment(\'ci\',\''+ci.id+'\',\''+field+'\')">'+t('att.preview','预览')+'</button>'
         +' <button class="btn btn-secondary btn-sm" onclick="downloadAttachment(\'ci\',\''+ci.id+'\',\''+field+'\')">'+t('common.download','下载')+'</button>'
         +' <button class="btn btn-secondary btn-sm" onclick="uploadDocAttachment(\'ci\',\''+ci.id+'\',\''+field+'\')">'+t('common.reupload','重传')+'</button>'
         +' <button class="btn btn-danger btn-sm" onclick="deleteDocAttachment(\'ci\',\''+ci.id+'\',\''+field+'\')">'+t('common.delete','删除')+'</button>'
@@ -12179,7 +12250,7 @@ async function ciDropUpload(docType,id,field,event){
 function ciPreviewAttachment(docType,id,field){
   api((docType==='pi'?'/api/proforma-invoices/':'/api/commercial-invoices/')+id).then(function(d){
     var a=parseAttachmentValue(d[field]);if(!a||!a.dataUrl){showToast(t('gen.L5751.1','暂无附件'),'warning');return;}
-    window.open(a.dataUrl,'_blank');
+    openAttachmentPreview([a], {title:t('att.modal_title_preview','查看附件'), businessLabel:t('ci.attachments','CI附件')});
   }).catch(function(e){showToast(e.message,'danger');});
 }
 // ==================== CI/PL管理 ====================
