@@ -12221,7 +12221,7 @@ function ciUnifiedAttachmentHtml(ci){
     var a=parseAttachmentValue(val);var has=a&&a.dataUrl;
     var body=has
       ? '<span class="link-text" onclick="ciPreviewAttachment(\'ci\',\''+ci.id+'\',\''+field+'\')">'+esc(a.name||label)+'</span>'
-        +' <button class=\"btn btn-secondary btn-sm\" onclick=\"ciPreviewAttachment(\\'ci\\',\\''+ci.id+'\\',\\''+field+'\\')\">'+t('att.preview','预览')+'</button>'
+        +' <button class="btn btn-secondary btn-sm" onclick="ciPreviewAttachment(\'ci\',\''+ci.id+'\',\''+field+'\')">'+t('att.preview','预览')+'</button>'
         +' <button class="btn btn-secondary btn-sm" onclick="downloadAttachment(\'ci\',\''+ci.id+'\',\''+field+'\')">'+t('common.download','下载')+'</button>'
         +' <button class="btn btn-secondary btn-sm" onclick="uploadDocAttachment(\'ci\',\''+ci.id+'\',\''+field+'\')">'+t('common.reupload','重传')+'</button>'
         +' <button class="btn btn-danger btn-sm" onclick="deleteDocAttachment(\'ci\',\''+ci.id+'\',\''+field+'\')">'+t('common.delete','删除')+'</button>'
