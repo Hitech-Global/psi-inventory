@@ -26,6 +26,8 @@ on:
       - 'wave2b-pi-batch-import-pg.js'
       - 'test/pi-deposit-payable-date.test.cjs'
       - 'index.html'
+      - 'assets/ci-summary-compact.js'
+      - 'test/ci-summary-compact.test.cjs'
       - 'assets/ci-list-freight.js'
       - 'assets/bigseller-inventory-import.js'
       - 'test/bigseller-inventory-import.test.cjs'
@@ -96,6 +98,8 @@ jobs:
         run: |
           node --check app.js
           node --check assets/ci-list-freight.js
+          node --check assets/ci-summary-compact.js
+          node --check test/ci-summary-compact.test.cjs
           node --check scripts/ci-edit-before-pl-hotfix.cjs
           node --check scripts/ci-inline-clearance-hotfix.cjs
           node --check scripts/ci-historical-clearance-hotfix.cjs
@@ -155,6 +159,8 @@ jobs:
           node --check test/wac-batch-exclusion.test.cjs
       - name: Test supplier PI import preview table alignment
         run: node --test test/supplier-pi-preview-alignment.test.cjs
+      - name: Test compact CI procurement summary layout
+        run: node test/ci-summary-compact.test.cjs
       - name: Test CI logistics-status filter
         run: node --test test/ci-logistics-status-filter.test.cjs
       - name: Test CI clearance type create, filter, detail and edit
