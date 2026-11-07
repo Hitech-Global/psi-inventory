@@ -2,6 +2,9 @@
 const test=require('node:test');
 const assert=require('node:assert/strict');
 const parser=require('../assets/pl-import-parser.js');
+const fs=require('node:fs');
+const path=require('node:path');
+const appSource=fs.readFileSync(path.join(__dirname,'..','app.js'),'utf8');
 
 function fakeXlsx(){
   return {utils:{sheet_to_json(sheet,options){
@@ -88,4 +91,10 @@ test('handles duplicate carton IDs across SKUs without inflating the shipment ca
   assert.equal(parsed.items[0].cartons,2);
   assert.equal(parsed.items[1].cartons,2);
   assert.equal(parsed.total_cartons,3);
+});
+
+test('shows the shipment CTN total for mixed-carton supplier PL files instead of summing overlapping SKU carton counts',()=>{
+  assert.match(appSource,/const shipmentCartons=window\._plImportSourceSheet&&Number\(window\._plImportTotalCartons\)>0\?Number\(window\._plImportTotalCartons\):tc/);
+  assert.match(appSource,/\+shipmentCartons\+'<\/td>/);
+  assert.match(appSource,/id="npl-total-ctn"[^>]*onchange="renderPLDraftTable\(\)"/);
 });
