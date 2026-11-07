@@ -16,7 +16,10 @@ function once(src, from, to, label) {
 }
 
 function patchAppSource(src) {
-  if (src.includes(APP_MARKER)) return src;
+  // Repair malformed output from the previous version of this build-time patch.
+  if (src.includes(APP_MARKER)) {
+    return src.replace('async ' + APP_MARKER + '\nfunction renderCI(){', APP_MARKER + '\nasync function renderCI(){');
+  }
 
   src = once(
     src,
@@ -57,7 +60,7 @@ function patchAppSource(src) {
     'historical payment detail labels'
   );
 
-  return src.replace('function renderCI(){', APP_MARKER + '\nfunction renderCI(){');
+  return src.replace('async function renderCI(){', APP_MARKER + '\nasync function renderCI(){');
 }
 
 function patchI18nSource(src) {
