@@ -16,9 +16,9 @@ function once(src, from, to, label) {
 }
 
 function patchAppSource(src) {
-  // Repair the malformed marker placement emitted by the previous hotfix.
+  // Repair malformed marker placement from the previous build-time hotfix.
   if (src.includes(APP_MARKER)) {
-    return src.replace('async ' + APP_MARKER + '\\nfunction renderCI(){', APP_MARKER + '\\nasync function renderCI(){');
+    return src.replace(/async\s+(\/\/ CI-PL-COMPLETE-I18N-V1)\s*\nfunction renderCI\(\)\s*\{/, APP_MARKER + '\nasync function renderCI(){');
   }
 
   src = once(
