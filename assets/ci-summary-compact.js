@@ -3,7 +3,7 @@
 
   var STYLE_ID = 'psi-ci-summary-compact-style';
   var LABELS = {
-    operational: ['运营采购金额', 'Operational Procurement Amount', 'Operational Purchase Amount', 'Operational Procurement'],
+    operational: ['运营采购金额', 'Operating Procurement Amount', 'Operating Purchase Amount', 'Operational Procurement Amount', 'Operational Purchase Amount', 'Operational Procurement'],
     historical: ['历史采购金额', 'Historical Procurement Amount', 'Historical Purchase Amount', 'Historical Procurement'],
     total: ['采购金额合计（按币种）', '采购金额合计 (按币种)', 'Total Procurement Amount', 'Total Procurement Amount by Currency', 'Total Purchase Amount', 'Total Purchase Amount by Currency']
   };
@@ -12,7 +12,7 @@
     var text = normalize(value);
     if (labels.some(function (label) { return text.indexOf(normalize(label)) !== -1; })) return true;
     if (kind === 'operational') {
-      return /(?:operational|operation|current)(?:procurement|purchase|buying)(?:amount)?/.test(text);
+      return /(?:operating|operational|operation|current)(?:procurement|purchase|buying)(?:amount)?/.test(text);
     }
     if (kind === 'historical') {
       return /historical(?:procurement|purchase|buying)(?:amount)?/.test(text);
