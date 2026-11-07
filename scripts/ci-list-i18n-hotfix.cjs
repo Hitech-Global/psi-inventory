@@ -34,7 +34,7 @@ function patchAppSource(src) {
   );
 
   const oldColumns = "  var columns=[\n    ['CI号','ci.no'],['CI类型','ci.col.type'],['品牌','field.brand'],['国家','field.country'],\n    ['仓库','field.target_warehouse'],['清关方式','ci.clearance_type'],['CI日期','field.ci_date'],\n    ['CI金额','ci.amount'],['总运费','ci.col.total_freight'],\n    ['运费占比','ci.col.freight_ratio'],['已付金额','ci.paid_amount'],['未结金额','ci.unpaid_amount'],\n    ['付款状态','ci.payment_status'],['物流状态','ci.col.logistics_status'],\n    ['入库状态','ci.col.inbound_status'],['到期日','field.due_date'],['操作','common.actions']\n  ];";
-  const newColumns = "  var columns=[\n    ['CI号','ci.no'],['CI类型','ci.col.type'],['品牌','field.brand'],['国家','field.country'],\n    ['仓库','field.target_warehouse'],['清关方式','ci.clearance_type'],['CI日期','field.ci_date'],\n    ['CI金额','ci.amount'],['总运费','ci.col.total_freight'],\n    ['运费占比','ci.col.freight_ratio'],['已付金额','ci.paid_amount'],['未结金额','ci.unpaid_amount'],\n    ['付款状态','ci.payment_status'],['物流状态','ci.col.logistics_status'],\n    ['入库状态','ci.col.inbound_status'],['尾款到期日','ci.final_balance_due_date'],['操作','common.actions']\n  ];";
+  const newColumns = "  var columns=[\n    ['CI号','ci.no'],['CI类型','ci.col.type'],['品牌','field.brand'],['国家','field.country'],\n    ['仓库','field.target_warehouse'],['清关方式','ci.clearance_type'],['CI日期','field.ci_date'],\n    ['CI金额','ci.amount'],['总运费','ci.col.total_freight'],\n    ['运费占比','ci.col.freight_ratio'],['已付金额','ci.paid_amount'],['未结金额','ci.unpaid_amount'],\n    ['尾款到期日','ci.final_balance_due_date'],['付款状态','ci.payment_status'],['物流状态','ci.col.logistics_status'],['操作','common.actions']\n  ];";
   src = once(src, oldColumns, newColumns, 'unified CI table column labels');
 
   src = once(
@@ -43,6 +43,19 @@ function patchAppSource(src) {
     "    var paymentStatusCell=cell(srcTable,sourceRow,['尾款状态','付款状态','Balance Payment Status','Payment Status']);paymentStatusCell.textContent=ciPaymentStatusLabel(c.balance_payment_status);tr.appendChild(paymentStatusCell);",
     'operational payment status cell'
   );
+  src = once(
+    src,
+    "    tr.appendChild(moneyCell(c.balance_unpaid_amount));\n    var paymentStatusCell=cell(srcTable,sourceRow,['尾款状态','付款状态','Balance Payment Status','Payment Status']);paymentStatusCell.textContent=ciPaymentStatusLabel(c.balance_payment_status);tr.appendChild(paymentStatusCell);\n    tr.appendChild(cell(srcTable,sourceRow,['物流状态','Logistics Status']));\n    tr.appendChild(cell(srcTable,sourceRow,['入库状态','Inbound Status']));\n    tr.appendChild(cell(srcTable,sourceRow,['到期日','Due Date'],fmtDate(c.due_date)));",
+    "    tr.appendChild(moneyCell(c.balance_unpaid_amount));\n    tr.appendChild(cell(srcTable,sourceRow,['尾款到期日','到期日','Due Date'],fmtDate(c.due_date)));\n    var paymentStatusCell=cell(srcTable,sourceRow,['尾款状态','付款状态','Balance Payment Status','Payment Status']);paymentStatusCell.textContent=ciPaymentStatusLabel(c.balance_payment_status);tr.appendChild(paymentStatusCell);\n    tr.appendChild(cell(srcTable,sourceRow,['物流状态','Logistics Status']));",
+    'operational row due-date position and inbound-status removal'
+  );
+  src = once(
+    src,
+    "    tr.appendChild(moneyCell(h.unpaid_amount));\n    var historicalPaymentStatusCell=cell(srcTable,sourceRow,['付款状态','Payment Status']);historicalPaymentStatusCell.textContent=ciPaymentStatusLabel(h.payment_status);tr.appendChild(historicalPaymentStatusCell);\n    tr.appendChild(textCell('—'));\n    tr.appendChild(textCell('—'));\n    tr.appendChild(cell(srcTable,sourceRow,['到期日','Due Date']));",
+    "    tr.appendChild(moneyCell(h.unpaid_amount));\n    tr.appendChild(cell(srcTable,sourceRow,['尾款到期日','到期日','Due Date'],fmtDate(h.due_date)));\n    var historicalPaymentStatusCell=cell(srcTable,sourceRow,['付款状态','Payment Status']);historicalPaymentStatusCell.textContent=ciPaymentStatusLabel(h.payment_status);tr.appendChild(historicalPaymentStatusCell);\n    tr.appendChild(textCell('—'));",
+    'historical row due-date position and inbound-status removal'
+  );
+
   src = once(
     src,
     "    tr.appendChild(cell(srcTable,sourceRow,['付款状态','Payment Status']));",
