@@ -1287,8 +1287,11 @@ describe('Confirm endpoint - DB write boundary', () => {
     seedCIItem('cii_cfm', 'ci_cfm', 'SKU-CFM', 100, 50, 0, 0.05);
 
     seedBatch('lb_cfm', 'BATCH-CFM', 'ci_cfm', {
-      arrivalDate: '2026-03-01', totalFreight: 0, customsDuty: 0, freightCurrency: 'USD'
+      arrivalDate: '2026-03-01', totalFreight: 1000, customsDuty: 0, freightCurrency: 'USD', transportMode: 'sea'
     });
+    seedPaymentRequest('pr_cfm', 'PR-CFM', 'USD', 1000, 'ci_cfm', 'warehouse_arrival', 'freight');
+    seedCiCostItem('cci_cfm', 'ci_cfm', 'pr_cfm', 'warehouse_arrival', 'freight', 1000, 'USD', 'lb_cfm');
+    seedPaymentLog('psl_cfm', 'pr_cfm', 1000, 15000000, 15000, '2026-03-02', 'IDR');
     seedPL('pl_cfm', 'PL-CFM', 'ci_cfm', 'lb_cfm', { status: 'confirmed' });
     seedPLItem('pli_cfm', 'pl_cfm', 'SKU-CFM', 100, 1, 100);
 
