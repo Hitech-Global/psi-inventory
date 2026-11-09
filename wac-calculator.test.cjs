@@ -766,7 +766,7 @@ describe('computeWacCostFacts - freight payment date + goods FX', () => {
     });
     seedPaymentRequest('pr_paid_anchor', 'PR-PAID-ANCHOR', 'RMB', 1000, 'ci_paid_anchor', 'warehouse_arrival', 'freight');
     seedCiCostItem('cci_paid_anchor', 'ci_paid_anchor', 'pr_paid_anchor', 'warehouse_arrival', 'freight', 1000, 'RMB', 'lb_paid_anchor');
-    seedPaymentLog('psl_paid_anchor', 'pr_paid_anchor', 1000, 5010, 5.01, '2026-11-02', 'THB');
+    seedPaymentLog('psl_paid_anchor', 'pr_paid_anchor', 1000, 5010, 5.01000001, '2026-11-02', 'THB');
     seedPL('pl_paid_anchor', 'PL-PAID-ANCHOR', 'ci_paid_anchor', 'lb_paid_anchor', { status: 'confirmed', country: 'Thailand', warehouse: 'WH-TH' });
     seedPLItem('pli_paid_anchor', 'pl_paid_anchor', 'SKU-PAID-ANCHOR', 10, 1, 10);
     seedInventory('SKU-PAID-ANCHOR', 'Thailand', 'WH-TH', 0, 0);
@@ -775,11 +775,11 @@ describe('computeWacCostFacts - freight payment date + goods FX', () => {
     seedExchangeRate('THB', 'RMB', '2026-10-23', 0.2, 'realtime');
     const result = computeWacCostFacts('lb_paid_anchor');
     assert.equal(result.blockers.length, 0, JSON.stringify(result.blockers));
-    assert.equal(result.items[0].product_fx_rate, 5.01);
+    assert.equal(result.items[0].product_fx_rate, 5.01000001);
     assert.equal(result.items[0].product_fx_rate_date, '2026-11-02');
     assert.equal(result.items[0].product_fx_rate_type, 'payment_settlement');
     assert.equal(result.items[0].product_fx_direction, 'payment_settlement');
-    assert.equal(result.items[0].product_cost_local, 5010);
+    assert.ok(Math.abs(result.items[0].product_cost_local - 5010.00001) < 0.000001);
   });
 
   test('Same-currency → rate=1, no FX needed', () => {
