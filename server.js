@@ -19646,7 +19646,7 @@ app.post('/api/cost-allocation/update-weighted-avg/:ci_id', requireApiPermission
           unit_landing_cost: unitLandingCost,
           inbound_total_cost: inboundTotalCost,
           new_avg_cost: roundedAvgCost,
-          settlement_date: today,
+          settlement_date: inboundDate || today,
           confirmed_by: req.currentUserId
         });
         wacSyncKeys.push({
@@ -20155,6 +20155,9 @@ app.post('/api/wac/confirm/:logistics_batch_id', requireApiPermission('ci_edit')
         });
       }
       syncInventoryWacFromHistory(wacSyncKeys);
+      // WAC history remains the source of truth; keep the CI summary flag synchronized as a projection.
+      run("UPDATE commercial_invoices SET wac_confirmed=1, wac_confirmed_at=datetime('now'), wac_confirmed_by=? WHERE id=?",
+        [req.currentUserId || userName, ci.id]);
       // 从正式保存的 WAC 版本生成通知快照，完整列出 SKU 并按环比绝对值排序。
       reportRows=buildWacCostChangeReportRows(logs);
       reportChunks=chunkWacCostChangeRows(reportRows);
