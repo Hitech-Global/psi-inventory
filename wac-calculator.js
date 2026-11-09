@@ -512,8 +512,10 @@ function computeWacCostFacts(logisticsBatchId) {
 
   if (dutyBusinessAmount > 0) {
     if (dutyCurrency !== localCurrency) {
-      if (productFxRate) {
-        dutyLocalAmount = dutyBusinessAmount * productFxRate.rate;
+      // Batch-level customs duty is a separate cost component; never reuse the CI goods FX.
+      const dutyFxRate = resolveExactFxRate(dutyCurrency, localCurrency, arrivalDate, fxCache);
+      if (dutyFxRate) {
+        dutyLocalAmount = dutyBusinessAmount * dutyFxRate.rate;
       } else {
         if (!blockers.some(b => b.code === 'DUTY_FX_MISSING')) {
           blockers.push({ code: 'DUTY_FX_MISSING', message: `关税${dutyBusinessAmount}缺少 ${arrivalDate} ${dutyCurrency}→${localCurrency} 的汇率` });
