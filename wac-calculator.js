@@ -768,7 +768,9 @@ function computeWacCostFacts(logisticsBatchId) {
     // Lookup from preloaded inventory Map
     const allInvRows = inventoryRowsBySku.get(skuCode) || [];
     const matchingInv = allInvRows.find(r =>
-      String(r.country || '') === String(country2 || '') && String(r.warehouse || '') === String(warehouse || '')
+      countryAliasKey(r.country) === countryAliasKey(country2) &&
+      String(r.warehouse || '').trim().replace(/\\s+/g, ' ').toLowerCase() ===
+        String(warehouse || '').trim().replace(/\\s+/g, ' ').toLowerCase()
     );
 
     // C. WAC_INVENTORY_ROW_MISSING: SKU has no inventory rows at all — Confirm cannot create rows
