@@ -376,13 +376,13 @@ function seedBatch(id, batchNo, ciId, opts = {}) {
   const arrivalDate = opts.arrivalDate ?? '2026-03-01';
   run(`INSERT INTO logistics_batches (id, batch_no, related_ci_id, related_ci_no, target_country, target_warehouse,
     actual_arrival_date, logistics_status, freight_currency, total_freight, customs_duty, vat_gst, other_fees,
-    international_freight, local_charges, customs_service_fee, delivery_fee)
-    VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    international_freight, local_charges, customs_service_fee, delivery_fee, transport_mode)
+    VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [id, batchNo, ciId, opts.country || 'Indonesia', opts.warehouse || 'WH-JKT',
      arrivalDate, opts.status || 'completed',
      opts.freightCurrency || 'USD', opts.totalFreight || 0, opts.customsDuty || 0, opts.vatGst || 0, opts.otherFees || 0,
-     0, 0, 0, 0]);
-  // Default fixture anchor follows shipment date; tests can override to prove it differs from arrival.
+     0, 0, 0, 0, opts.transportMode || null]);
+  // Fixture ship date is retained only to prove that goods FX no longer uses it.
   run('UPDATE commercial_invoices SET actual_ship_date = ? WHERE id = ?', [opts.shipmentDate || arrivalDate, ciId]);
 }
 
@@ -428,7 +428,7 @@ function seedPaymentLog(id, prId, amount, localAmount, localRate, paidDate, loca
     local_currency, local_rate, local_rate_date, local_amount, original_currency, is_legacy)
     VALUES (?, ?, 'payment', ?, ?, ?, ?, ?, ?, ?, '', 0)`,
     [id, prId, amount, 'applied', paidDate || '2026-02-15', localCurrency || 'IDR', localRate || 15000,
-     '2026-02-15', localAmount]);
+     paidDate || '2026-02-15', localAmount]);
 }
 
 // Raw payment log seeder — allows null/zero/empty for FX fields (for FREIGHT_FX_RATE_MISSING tests)
@@ -439,7 +439,7 @@ function seedPaymentLogRaw(id, prId, amount, opts) {
     [id, prId, amount, 'applied', opts.paidDate || '2026-02-15',
      opts.localCurrency !== undefined ? opts.localCurrency : 'IDR',
      opts.localRate !== undefined ? opts.localRate : 15000,
-     opts.localRateDate !== undefined ? opts.localRateDate : '2026-02-15',
+     opts.localRateDate !== undefined ? opts.localRateDate : (opts.paidDate || '2026-02-15'),
      opts.localAmount !== undefined ? opts.localAmount : amount * 15000]);
 }
 
@@ -493,9 +493,15 @@ describe('computeWacCostFacts - basic happy path', () => {
     batchId = 'lb_1';
     seedBatch(batchId, 'BATCH-001', 'ci_1', {
       arrivalDate: '2026-03-01',
-      totalFreight: 0,
+      shipmentDate: '2026-02-20',
+      totalFreight: 100,
+      freightCurrency: 'USD',
+      transportMode: 'sea',
       customsDuty: 0,
     });
+    seedPaymentRequest('pr_1', 'PR-001', 'USD', 100, 'ci_1', 'warehouse_arrival', 'freight');
+    seedCiCostItem('cci_1', 'ci_1', 'pr_1', 'warehouse_arrival', 'freight', 100, 'USD', batchId);
+    seedPaymentLog('psl_1', 'pr_1', 100, 1500000, 15000, '2026-03-02', 'IDR');
 
     seedPL('pl_1', 'PL-001', 'ci_1', batchId, { totalQty: 200, status: 'confirmed' });
     seedPLItem('pli_1', 'pl_1', 'SKU-A', 100, 2.0, 500);
@@ -524,13 +530,15 @@ describe('computeWacCostFacts - basic happy path', () => {
     assert.equal(skuB.weighted_purchase_unit_price, 50);
   });
 
-  test('product_cost_local uses exact arrival-date FX', () => {
+  test('product_cost_local uses freight actual paid-date settlement FX', () => {
     const result = computeWacCostFacts(batchId);
     const skuA = result.items.find(i => i.sku_code === 'SKU-A');
     assert.equal(skuA.product_cost_original, 5000);
     assert.ok(Math.abs(skuA.product_cost_local - 75000000) < 1, `got ${skuA.product_cost_local}`);
     assert.equal(skuA.product_fx_rate, 15000);
-    assert.equal(skuA.product_fx_direction, 'direct');
+    assert.equal(skuA.product_fx_rate_date, '2026-03-02');
+    assert.equal(skuA.product_fx_rate_type, 'payment_settlement');
+    assert.equal(skuA.product_fx_direction, 'payment_settlement');
   });
 });
 
@@ -711,8 +719,8 @@ describe('computeWacCostFacts - partial shipment', () => {
   });
 });
 
-describe('computeWacCostFacts - arrival date + FX', () => {
-  test('PRODUCT_FX_DATE_MISSING when no actual_arrival_date', () => {
+describe('computeWacCostFacts - freight payment date + goods FX', () => {
+  test('PRODUCT_FX_FREIGHT_PAYMENT_MISSING when foreign-currency goods have no freight payment date', () => {
     const db = require('./db').getDB();
     db.exec('DELETE FROM logistics_batches');
     db.exec('DELETE FROM packing_lists');
@@ -720,34 +728,20 @@ describe('computeWacCostFacts - arrival date + FX', () => {
     db.exec('DELETE FROM commercial_invoices');
     db.exec('DELETE FROM commercial_invoice_items');
     db.exec('DELETE FROM inventory');
-
-    seedCI('ci_nodate', 'CI-NODATE', 'USD', 5000, 'cbm');
-    seedCIItem('cii_nodate', 'ci_nodate', 'SKU-ND', 100, 50, 0, null);
-
-    seedBatch('lb_nodate', 'BATCH-NODATE', 'ci_nodate', { arrivalDate: '' });
-    seedPL('pl_nodate', 'PL-NODATE', 'ci_nodate', 'lb_nodate', { status: 'confirmed' });
-    seedPLItem('pli_nodate', 'pl_nodate', 'SKU-ND', 100, 1, 100);
-    seedInventory('SKU-ND', 'Indonesia', 'WH-JKT', 0, 0);
-
-    const result = computeWacCostFacts('lb_nodate');
-    const codes = result.blockers.map(b => b.code);
-    assert.ok(codes.includes('PRODUCT_FX_DATE_MISSING'), `Expected PRODUCT_FX_DATE_MISSING, got: ${codes}`);
-  });
-
-  test('PRODUCT_FX_RATE_MISSING when no exact-date rate', () => {
-    const db = require('./db').getDB();
     db.exec('DELETE FROM exchange_rates');
 
-    seedBatch('lb_nofx', 'BATCH-NOFX', 'ci_nodate', { arrivalDate: '2026-05-01' });
-    seedPL('pl_nofx', 'PL-NOFX', 'ci_nodate', 'lb_nofx', { status: 'confirmed' });
-    seedPLItem('pli_nofx', 'pl_nofx', 'SKU-ND', 100, 1, 100);
+    seedCI('ci_nopaydate', 'CI-NOPAYDATE', 'USD', 5000, 'cbm');
+    seedCIItem('cii_nopaydate', 'ci_nopaydate', 'SKU-NPD', 100, 50, 0, null);
+    seedBatch('lb_nopaydate', 'BATCH-NOPAYDATE', 'ci_nopaydate', { arrivalDate: '2026-05-01' });
+    seedPL('pl_nopaydate', 'PL-NOPAYDATE', 'ci_nopaydate', 'lb_nopaydate', { status: 'confirmed' });
+    seedPLItem('pli_nopaydate', 'pl_nopaydate', 'SKU-NPD', 100, 1, 100);
+    seedInventory('SKU-NPD', 'Indonesia', 'WH-JKT', 0, 0);
 
-    const result = computeWacCostFacts('lb_nofx');
-    const codes = result.blockers.map(b => b.code);
-    assert.ok(codes.includes('PRODUCT_FX_RATE_MISSING'), `Expected PRODUCT_FX_RATE_MISSING, got: ${codes}`);
+    const result = computeWacCostFacts('lb_nopaydate');
+    assert.ok(result.blockers.some(b => b.code === 'PRODUCT_FX_FREIGHT_PAYMENT_MISSING'));
   });
 
-  test('Goods FX uses CI actual shipment date and cost_settlement, never arrival-date realtime', () => {
+  test('Goods FX uses freight actual paid date and applied settlement rate, not CI ship or arrival date', () => {
     const db = require('./db').getDB();
     db.exec('DELETE FROM exchange_rates');
     db.exec('DELETE FROM commercial_invoices');
@@ -755,34 +749,37 @@ describe('computeWacCostFacts - arrival date + FX', () => {
     db.exec('DELETE FROM logistics_batches');
     db.exec('DELETE FROM packing_lists');
     db.exec('DELETE FROM packing_list_items');
+    db.exec('DELETE FROM ci_cost_items');
+    db.exec('DELETE FROM payment_requests');
+    db.exec('DELETE FROM payment_settlement_logs');
     db.exec('DELETE FROM inventory');
     run('INSERT OR REPLACE INTO countries (id, name, code, default_currency, sort_order) VALUES (?, ?, ?, ?, ?)',
       ['ctry_Thailand', 'Thailand', 'TH', 'THB', 0]);
     run('INSERT OR REPLACE INTO warehouses (id, name, country_id, country_name) VALUES (?, ?, ?, ?)',
       ['wh_ship_anchor', 'WH-TH', 'ctry_Thailand', 'Thailand']);
 
-    seedCI('ci_ship_anchor', 'CI-SHIP-ANCHOR', 'RMB', 1000, 'cbm');
-    seedCIItem('cii_ship_anchor', 'ci_ship_anchor', 'SKU-SHIP-ANCHOR', 10, 100, 0, null);
-    seedBatch('lb_ship_anchor', 'BATCH-SHIP-ANCHOR', 'ci_ship_anchor', {
-      arrivalDate: '2026-11-07', shipmentDate: '2026-10-23', country: 'Thailand', warehouse: 'WH-TH'
+    seedCI('ci_paid_anchor', 'CI-PAID-ANCHOR', 'RMB', 1000, 'cbm');
+    seedCIItem('cii_paid_anchor', 'ci_paid_anchor', 'SKU-PAID-ANCHOR', 10, 100, 0, null);
+    seedBatch('lb_paid_anchor', 'BATCH-PAID-ANCHOR', 'ci_paid_anchor', {
+      arrivalDate: '2026-11-07', shipmentDate: '2026-10-23', country: 'Thailand', warehouse: 'WH-TH',
+      totalFreight: 1000, freightCurrency: 'RMB', transportMode: 'sea'
     });
-    seedPL('pl_ship_anchor', 'PL-SHIP-ANCHOR', 'ci_ship_anchor', 'lb_ship_anchor', { status: 'confirmed', country: 'Thailand', warehouse: 'WH-TH' });
-    seedPLItem('pli_ship_anchor', 'pl_ship_anchor', 'SKU-SHIP-ANCHOR', 10, 1, 10);
-    seedInventory('SKU-SHIP-ANCHOR', 'Thailand', 'WH-TH', 0, 0);
+    seedPaymentRequest('pr_paid_anchor', 'PR-PAID-ANCHOR', 'RMB', 1000, 'ci_paid_anchor', 'warehouse_arrival', 'freight');
+    seedCiCostItem('cci_paid_anchor', 'ci_paid_anchor', 'pr_paid_anchor', 'warehouse_arrival', 'freight', 1000, 'RMB', 'lb_paid_anchor');
+    seedPaymentLog('psl_paid_anchor', 'pr_paid_anchor', 1000, 5010, 5.01, '2026-11-02', 'THB');
+    seedPL('pl_paid_anchor', 'PL-PAID-ANCHOR', 'ci_paid_anchor', 'lb_paid_anchor', { status: 'confirmed', country: 'Thailand', warehouse: 'WH-TH' });
+    seedPLItem('pli_paid_anchor', 'pl_paid_anchor', 'SKU-PAID-ANCHOR', 10, 1, 10);
+    seedInventory('SKU-PAID-ANCHOR', 'Thailand', 'WH-TH', 0, 0);
 
-    // A realtime quote on the shipment date must not be used for WAC.
+    // An unrelated realtime quote on CI ship date must not be used.
     seedExchangeRate('THB', 'RMB', '2026-10-23', 0.2, 'realtime');
-    const blocked = computeWacCostFacts('lb_ship_anchor');
-    assert.ok(blocked.blockers.some(b => b.code === 'PRODUCT_FX_RATE_MISSING'));
-    assert.equal(blocked.items[0].product_fx_rate, null);
-
-    // The exact-date cost_settlement rate is accepted.
-    seedExchangeRate('THB', 'RMB', '2026-10-23', 0.198, 'cost_settlement');
-    const passed = computeWacCostFacts('lb_ship_anchor');
-    assert.ok(!passed.blockers.some(b => b.code === 'PRODUCT_FX_RATE_MISSING'));
-    assert.equal(passed.items[0].product_fx_rate_date, '2026-10-23');
-    assert.equal(passed.items[0].product_fx_rate_type, 'cost_settlement');
-    assert.equal(passed.items[0].product_fx_direction, 'reverse');
+    const result = computeWacCostFacts('lb_paid_anchor');
+    assert.equal(result.blockers.length, 0, JSON.stringify(result.blockers));
+    assert.equal(result.items[0].product_fx_rate, 5.01);
+    assert.equal(result.items[0].product_fx_rate_date, '2026-11-02');
+    assert.equal(result.items[0].product_fx_rate_type, 'payment_settlement');
+    assert.equal(result.items[0].product_fx_direction, 'payment_settlement');
+    assert.equal(result.items[0].product_cost_local, 5010);
   });
 
   test('Same-currency → rate=1, no FX needed', () => {
@@ -805,7 +802,7 @@ describe('computeWacCostFacts - arrival date + FX', () => {
 
     const result = computeWacCostFacts('lb_idr');
     const codes = result.blockers.map(b => b.code);
-    assert.ok(!codes.includes('PRODUCT_FX_RATE_MISSING'), `Should not have FX blocker for same currency: ${codes}`);
+    assert.ok(!codes.includes('PRODUCT_FX_FREIGHT_PAYMENT_MISSING'), `Should not have FX blocker for same currency: ${codes}`);
     const item = result.items[0];
     assert.equal(item.product_fx_rate, 1);
     assert.equal(item.product_fx_direction, 'identity');
