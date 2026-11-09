@@ -827,7 +827,7 @@ describe('computeWacCostFacts - freight', () => {
     seedCIItem('cii_fr1', 'ci_fr1', 'SKU-FR', 100, 100, 0, 0.05);
 
     seedBatch('lb_fr1', 'BATCH-FR1', 'ci_fr1', {
-      arrivalDate: '2026-03-01', totalFreight: 5000, customsDuty: 0, freightCurrency: 'USD'
+      arrivalDate: '2026-03-01', totalFreight: 5000, customsDuty: 0, freightCurrency: 'USD', transportMode: 'sea'
     });
     seedPL('pl_fr1', 'PL-FR1', 'ci_fr1', 'lb_fr1', { status: 'confirmed' });
     seedPLItem('pli_fr1', 'pl_fr1', 'SKU-FR', 100, 2.0, 500);
@@ -1378,14 +1378,14 @@ describe('computeWacCostFacts - cross-batch freight scoping', () => {
 
     // Batch-A
     seedBatch('lb_xba', 'BATCH-XBA', 'ci_xb', {
-      arrivalDate: '2026-03-01', totalFreight: 5000, customsDuty: 0, freightCurrency: 'USD'
+      arrivalDate: '2026-03-01', totalFreight: 5000, customsDuty: 0, freightCurrency: 'USD', transportMode: 'sea'
     });
     seedPL('pl_xba', 'PL-XBA', 'ci_xb', 'lb_xba', { totalQty: 100, status: 'confirmed' });
     seedPLItem('pli_xba', 'pl_xba', 'SKU-XB', 100, 2.0, 500);
 
     // Batch-B
     seedBatch('lb_xbb', 'BATCH-XBB', 'ci_xb', {
-      arrivalDate: '2026-03-02', totalFreight: 3000, customsDuty: 0, freightCurrency: 'USD'
+      arrivalDate: '2026-03-02', totalFreight: 3000, customsDuty: 0, freightCurrency: 'USD', transportMode: 'sea'
     });
     seedPL('pl_xbb', 'PL-XBB', 'ci_xb', 'lb_xbb', { totalQty: 100, status: 'confirmed' });
     seedPLItem('pli_xbb', 'pl_xbb', 'SKU-XB', 100, 2.0, 500);
@@ -1714,7 +1714,7 @@ describe('Preview/Confirm parity', () => {
     seedCIItem('cii_par', 'ci_par', 'SKU-PARITY', 100, 100, 90, 0.05);
 
     seedBatch('lb_par', 'BATCH-PARITY', 'ci_par', {
-      arrivalDate: '2026-03-01', totalFreight: 2000, customsDuty: 500, vatGst: 0, otherFees: 0
+      arrivalDate: '2026-03-01', totalFreight: 2000, customsDuty: 500, vatGst: 0, otherFees: 0, transportMode: 'sea'
     });
     seedPL('pl_par', 'PL-PARITY', 'ci_par', 'lb_par', { status: 'confirmed', totalQty: 100 });
     seedPLItem('pli_par', 'pl_par', 'SKU-PARITY', 100, 2, 200);
@@ -1845,7 +1845,7 @@ test('shared IDR delivery is counted once across two WAC batches; changed PL wei
   ].forEach(t => db.exec('DELETE FROM '+t));
   seedSku('SKU-SHARED-A','Shared A','','');
   seedSku('SKU-SHARED-B','Shared B','','');
-  seedCI('ci_shared_wac','CI-SHARED-WAC','USD',10000,'cbm');
+  seedCI('ci_shared_wac','CI-SHARED-WAC','IDR',10000,'cbm');
   seedCIItem('ci_sh_a','ci_shared_wac','SKU-SHARED-A',100,50,0,0);
   seedCIItem('ci_sh_b','ci_shared_wac','SKU-SHARED-B',100,50,0,0);
   seedBatch('lb_sh_a','LB-SH-A','ci_shared_wac',{totalFreight:0,freightCurrency:'IDR'});
