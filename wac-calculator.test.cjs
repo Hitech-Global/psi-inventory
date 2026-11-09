@@ -362,7 +362,7 @@ function seedCI(id, ciNo, currency, goodsAmount, transportBasis, opts = {}) {
     has_customs_duty, has_inspection_fee, wac_confirmed, actual_ship_date, payment_term_id, credit_days, ci_status)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [id, ciNo, opts.ciDate || '2026-01-01', currency, goodsAmount, transportBasis || null,
-     opts.hasCustomsDuty ? 1 : 0, opts.hasInspectionFee ? 1 : 0, 0, '2026-01-01', '', 0, 'shipped']);
+     opts.hasCustomsDuty ? 1 : 0, opts.hasInspectionFee ? 1 : 0, 0, opts.actualShipDate || '2026-01-01', '', 0, 'shipped']);
 }
 
 function seedCIItem(id, ciId, skuCode, shippedQty, unitPrice, netUnitPrice, customsRate) {
@@ -373,14 +373,17 @@ function seedCIItem(id, ciId, skuCode, shippedQty, unitPrice, netUnitPrice, cust
 }
 
 function seedBatch(id, batchNo, ciId, opts = {}) {
+  const arrivalDate = opts.arrivalDate ?? '2026-03-01';
   run(`INSERT INTO logistics_batches (id, batch_no, related_ci_id, related_ci_no, target_country, target_warehouse,
     actual_arrival_date, logistics_status, freight_currency, total_freight, customs_duty, vat_gst, other_fees,
     international_freight, local_charges, customs_service_fee, delivery_fee)
     VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [id, batchNo, ciId, opts.country || 'Indonesia', opts.warehouse || 'WH-JKT',
-     opts.arrivalDate ?? '2026-03-01', opts.status || 'completed',
+     arrivalDate, opts.status || 'completed',
      opts.freightCurrency || 'USD', opts.totalFreight || 0, opts.customsDuty || 0, opts.vatGst || 0, opts.otherFees || 0,
      0, 0, 0, 0]);
+  // Default fixture anchor follows shipment date; tests can override to prove it differs from arrival.
+  run('UPDATE commercial_invoices SET actual_ship_date = ? WHERE id = ?', [opts.shipmentDate || arrivalDate, ciId]);
 }
 
 function seedPL(id, plNo, ciId, batchId, opts = {}) {
@@ -396,9 +399,9 @@ function seedPLItem(id, plId, skuCode, totalQty, cbm, grossWeight) {
     [id, plId, skuCode, totalQty, cbm || 0, grossWeight || 0]);
 }
 
-function seedExchangeRate(from, to, date, rate) {
+function seedExchangeRate(from, to, date, rate, rateType = 'cost_settlement') {
   run('INSERT INTO exchange_rates (id, from_currency, to_currency, rate, rate_date, rate_type) VALUES (?, ?, ?, ?, ?, ?)',
-    [`er_${from}_${to}_${date}`, from, to, rate, date, 'realtime']);
+    [`er_${from}_${to}_${date}_${rateType}`, from, to, rate, date, rateType]);
 }
 
 function seedInventory(skuCode, country, warehouse, availableQty, wac) {
@@ -742,6 +745,40 @@ describe('computeWacCostFacts - arrival date + FX', () => {
     const result = computeWacCostFacts('lb_nofx');
     const codes = result.blockers.map(b => b.code);
     assert.ok(codes.includes('PRODUCT_FX_RATE_MISSING'), `Expected PRODUCT_FX_RATE_MISSING, got: ${codes}`);
+  });
+
+  test('Goods FX uses CI actual shipment date and cost_settlement, never arrival-date realtime', () => {
+    const db = require('./db').getDB();
+    db.exec('DELETE FROM exchange_rates');
+    db.exec('DELETE FROM commercial_invoices');
+    db.exec('DELETE FROM commercial_invoice_items');
+    db.exec('DELETE FROM logistics_batches');
+    db.exec('DELETE FROM packing_lists');
+    db.exec('DELETE FROM packing_list_items');
+    db.exec('DELETE FROM inventory');
+
+    seedCI('ci_ship_anchor', 'CI-SHIP-ANCHOR', 'RMB', 1000, 'cbm');
+    seedCIItem('cii_ship_anchor', 'ci_ship_anchor', 'SKU-SHIP-ANCHOR', 10, 100, 0, null);
+    seedBatch('lb_ship_anchor', 'BATCH-SHIP-ANCHOR', 'ci_ship_anchor', {
+      arrivalDate: '2026-11-07', shipmentDate: '2026-10-23', country: 'Thailand', warehouse: 'WH-TH'
+    });
+    seedPL('pl_ship_anchor', 'PL-SHIP-ANCHOR', 'ci_ship_anchor', 'lb_ship_anchor', { status: 'confirmed', country: 'Thailand', warehouse: 'WH-TH' });
+    seedPLItem('pli_ship_anchor', 'pl_ship_anchor', 'SKU-SHIP-ANCHOR', 10, 1, 10);
+    seedInventory('SKU-SHIP-ANCHOR', 'Thailand', 'WH-TH', 0, 0);
+
+    // A realtime quote on the shipment date must not be used for WAC.
+    seedExchangeRate('THB', 'RMB', '2026-10-23', 0.2, 'realtime');
+    const blocked = computeWacCostFacts('lb_ship_anchor');
+    assert.ok(blocked.blockers.some(b => b.code === 'PRODUCT_FX_RATE_MISSING'));
+    assert.equal(blocked.items[0].product_fx_rate, null);
+
+    // The exact-date cost_settlement rate is accepted.
+    seedExchangeRate('THB', 'RMB', '2026-10-23', 0.198, 'cost_settlement');
+    const passed = computeWacCostFacts('lb_ship_anchor');
+    assert.ok(!passed.blockers.some(b => b.code === 'PRODUCT_FX_RATE_MISSING'));
+    assert.equal(passed.items[0].product_fx_rate_date, '2026-10-23');
+    assert.equal(passed.items[0].product_fx_rate_type, 'cost_settlement');
+    assert.equal(passed.items[0].product_fx_direction, 'reverse');
   });
 
   test('Same-currency → rate=1, no FX needed', () => {
