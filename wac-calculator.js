@@ -379,9 +379,11 @@ function computeWacCostFacts(logisticsBatchId) {
                 local_currency: log.local_currency || '',
                 paid_date: log.paid_date || ''
               }));
-              // Effective rate for display only — NOT first payment's rate
-              if (freightCurrency !== localCurrency && freightBusinessAmount > 0) {
-                freightEffectiveRate = freightLocalTotal / freightBusinessAmount;
+              // Amount-weight the actual applied settlement rates; do not derive the rate
+              // from rounded local_amount values, and do not arbitrarily take the first payment.
+              if (freightCurrency !== localCurrency && freightPaidTotal > 0) {
+                freightEffectiveRate = freightLogs.reduce((sum, log) =>
+                  sum + (Number(log.amount) || 0) * (Number(log.local_rate) || 0), 0) / freightPaidTotal;
               }
             }
           }
