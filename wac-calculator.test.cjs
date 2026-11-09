@@ -661,7 +661,7 @@ describe('computeWacCostFacts - partial shipment', () => {
     db.exec('DELETE FROM payment_requests');
     db.exec('DELETE FROM payment_settlement_logs');
 
-    seedCI('ci_ps', 'CI-PS', 'USD', 100000, 'cbm');
+    seedCI('ci_ps', 'CI-PS', 'IDR', 100000, 'cbm');
     seedCIItem('cii_ps1', 'ci_ps', 'SKU-PS', 1000, 100, 0, 0.05);
 
     batchAId = 'lb_psa';
@@ -779,7 +779,7 @@ describe('computeWacCostFacts - freight payment date + goods FX', () => {
     assert.equal(result.items[0].product_fx_rate_date, '2026-11-02');
     assert.equal(result.items[0].product_fx_rate_type, 'payment_settlement');
     assert.equal(result.items[0].product_fx_direction, 'payment_settlement');
-    assert.ok(Math.abs(result.items[0].product_cost_local - 5010.00001) < 0.000001);
+    assert.equal(result.items[0].product_cost_local, 5010);
   });
 
   test('Same-currency → rate=1, no FX needed', () => {
@@ -1003,7 +1003,7 @@ describe('computeWacCostFacts - CBM / KG allocation', () => {
     seedCIItem('cii_cbm2', 'ci_cbm', 'SKU-CBM2', 100, 50, 0, 0.10);
 
     seedBatch('lb_cbm', 'BATCH-CBM', 'ci_cbm', {
-      arrivalDate: '2026-03-01', totalFreight: 1000, customsDuty: 0, freightCurrency: 'USD'
+      arrivalDate: '2026-03-01', totalFreight: 1000, customsDuty: 0, freightCurrency: 'USD', transportMode: 'sea'
     });
     seedPL('pl_cbm', 'PL-CBM', 'ci_cbm', 'lb_cbm', { status: 'confirmed' });
     seedPLItem('pli_cbm1', 'pl_cbm', 'SKU-CBM1', 100, 3.0, 500);
@@ -1086,7 +1086,7 @@ describe('computeWacCostFacts - duty', () => {
     db.exec('DELETE FROM exchange_rates');
     db.exec('DELETE FROM inventory');
 
-    seedCI('ci_duty', 'CI-DUTY', 'USD', 10000, 'cbm');
+    seedCI('ci_duty', 'CI-DUTY', 'IDR', 10000, 'cbm');
     seedCIItem('cii_d1', 'ci_duty', 'SKU-D1', 100, 50, 0, 0.05);
     seedCIItem('cii_d2', 'ci_duty', 'SKU-D2', 100, 50, 0, 0.10);
 
@@ -1475,7 +1475,7 @@ describe('computeWacCostFacts - multi-payment freight', () => {
     seedCIItem('cii_mp', 'ci_mp', 'SKU-MP', 100, 50, 0, 0.05);
 
     seedBatch('lb_mp', 'BATCH-MP', 'ci_mp', {
-      arrivalDate: '2026-03-01', totalFreight: 5000, customsDuty: 0, freightCurrency: 'USD'
+      arrivalDate: '2026-03-01', totalFreight: 5000, customsDuty: 0, freightCurrency: 'USD', transportMode: 'sea'
     });
     seedPL('pl_mp', 'PL-MP', 'ci_mp', 'lb_mp', { totalQty: 100, status: 'confirmed' });
     seedPLItem('pli_mp', 'pl_mp', 'SKU-MP', 100, 2.0, 500);
@@ -1507,6 +1507,9 @@ describe('computeWacCostFacts - multi-payment freight', () => {
 
     // last_paid_date = '2026-02-20'
     assert.equal(result.meta.freight_last_paid_date, '2026-02-20');
+    assert.equal(result.items[0].product_fx_rate, 14800);
+    assert.equal(result.items[0].product_fx_rate_date, '2026-02-20');
+    assert.equal(result.items[0].product_fx_rate_type, 'payment_settlement');
 
     // payment_breakdown has 2 entries
     assert.equal(result.meta.freight_payment_breakdown.length, 2);
@@ -1851,8 +1854,8 @@ test('shared IDR delivery is counted once across two WAC batches; changed PL wei
   seedCI('ci_shared_wac','CI-SHARED-WAC','IDR',10000,'cbm');
   seedCIItem('ci_sh_a','ci_shared_wac','SKU-SHARED-A',100,50,0,0);
   seedCIItem('ci_sh_b','ci_shared_wac','SKU-SHARED-B',100,50,0,0);
-  seedBatch('lb_sh_a','LB-SH-A','ci_shared_wac',{totalFreight:0,freightCurrency:'IDR'});
-  seedBatch('lb_sh_b','LB-SH-B','ci_shared_wac',{totalFreight:0,freightCurrency:'IDR'});
+  seedBatch('lb_sh_a','LB-SH-A','ci_shared_wac',{totalFreight:0,freightCurrency:'IDR',transportMode:'sea'});
+  seedBatch('lb_sh_b','LB-SH-B','ci_shared_wac',{totalFreight:0,freightCurrency:'IDR',transportMode:'sea'});
   seedPL('pl_sh_a','PL-SH-A','ci_shared_wac','lb_sh_a');
   seedPL('pl_sh_b','PL-SH-B','ci_shared_wac','lb_sh_b');
   seedPLItem('pli_sh_a','pl_sh_a','SKU-SHARED-A',100,3,500);
