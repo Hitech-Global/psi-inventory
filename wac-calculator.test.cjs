@@ -1433,7 +1433,7 @@ describe('computeWacCostFacts - cross-batch freight scoping', () => {
     seedCIItem('cii_uns', 'ci_uns', 'SKU-UNSCOPED', 100, 50, 0, 0.05);
 
     seedBatch('lb_uns', 'BATCH-UNS', 'ci_uns', {
-      arrivalDate: '2026-03-01', totalFreight: 5000, customsDuty: 0, freightCurrency: 'USD'
+      arrivalDate: '2026-03-01', totalFreight: 5000, customsDuty: 0, freightCurrency: 'USD', transportMode: 'sea'
     });
     seedPL('pl_uns', 'PL-UNS', 'ci_uns', 'lb_uns', { totalQty: 100, status: 'confirmed' });
     seedPLItem('pli_uns', 'pl_uns', 'SKU-UNSCOPED', 100, 2.0, 500);
