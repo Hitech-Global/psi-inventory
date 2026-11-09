@@ -20128,7 +20128,7 @@ app.post('/api/wac/confirm/:logistics_batch_id', requireApiPermission('ci_edit')
           unit_landing_cost: unitLandingCost,
           inbound_total_cost: totalLandingCost,
           new_avg_cost: roundedAvgCost,
-          settlement_date: today,
+          settlement_date: inboundDate || today,
           confirmed_by: req.currentUserId,
           logistics_batch_id: batch.id,
           last_inbound_date: inboundDate,
