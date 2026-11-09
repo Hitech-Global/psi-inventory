@@ -61,7 +61,7 @@ test('finance payment overview route mounts the calendar on the existing payable
   assert.doesNotMatch(fn,/renderFinanceOverviewPage/);
   assert.ok(idx.includes('assets/finance-payment-calendar.js'));
   assert.ok(!idx.includes('assets/finance-payment-overview-ui.js'));
-  assert.ok(idx.indexOf('finance-payment-calendar.js')<idx.indexOf('src="app.js"'));
+  assert.ok(idx.indexOf('finance-payment-calendar.js')<idx.indexOf('src="app.js'), 'calendar bundle must load before the cache-busted app.js bundle');
 });
 test('UI all-currency page renders expenses, reconciled cash, and drilldown',()=>{
  const html=fs.readFileSync(path.join(root,'assets/finance-payment-overview-ui.js'),'utf8');
