@@ -15306,14 +15306,14 @@ function _wacHistoryMatrixExportModel(rows, filters) {
   const to = String(filters.to || '');
 
   const selected = (Array.isArray(rows) ? rows : []).filter(function(r) {
-    const date = String(r.confirmed_at || '').slice(0,10);
+    const date = String(r.last_inbound_date || '').slice(0,10);
     return (!brands.length || brands.includes(r.brand || '')) &&
       (!countries.length || countries.includes(r.country || '')) &&
       (!warehouses.length || warehouses.includes(r.warehouse || '')) &&
       (!search || String(r.sku_code || '').toLowerCase().includes(search) || String(r.model || '').toLowerCase().includes(search)) &&
       (!from || date >= from) && (!to || date <= to);
   });
-  const dates = Array.from(new Set(selected.map(r => String(r.confirmed_at || '').slice(0,10)).filter(Boolean))).sort().reverse();
+  const dates = Array.from(new Set(selected.map(r => String(r.last_inbound_date || '').slice(0,10)).filter(Boolean))).sort().reverse();
   const groupMap = new Map();
   selected.forEach(function(r) {
     const key = [r.sku_code,r.brand,r.country,r.warehouse].join('¦');
@@ -15326,7 +15326,7 @@ function _wacHistoryMatrixExportModel(rows, filters) {
       Number(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:4});
   };
   const ordered = function(g) {
-    return g.records.slice().sort((a,b)=>String(b.confirmed_at).localeCompare(String(a.confirmed_at)) || Number(b.version_no||0)-Number(a.version_no||0));
+    return g.records.slice().sort((a,b)=>Number(b.version_no||0)-Number(a.version_no||0) || String(b.confirmed_at).localeCompare(String(a.confirmed_at)));
   };
   const fxLabel = function(r) {
     if (!r) return '';
@@ -15341,7 +15341,7 @@ function _wacHistoryMatrixExportModel(rows, filters) {
   groups.forEach(function(g) {
     const latestByDate = new Map();
     g.records.forEach(function(r) {
-      const d = String(r.confirmed_at || '').slice(0,10);
+      const d = String(r.last_inbound_date || '').slice(0,10);
       if (!d) return;
       const old = latestByDate.get(d);
       if (!old || String(r.confirmed_at) > String(old.confirmed_at) ||
@@ -15375,7 +15375,7 @@ function _wacHistoryMatrixExportModel(rows, filters) {
       (delta === null ? '' : '\n' + (delta > 0 ? '+' : '') + money(delta) + currency);
     const dateValues = new Map();
     g.records.forEach(function(r) {
-      const d = String(r.confirmed_at || '').slice(0,10);
+      const d = String(r.last_inbound_date || '').slice(0,10);
       const old = dateValues.get(d);
       if (!old || String(r.confirmed_at) > String(old.confirmed_at) ||
         (String(r.confirmed_at) === String(old.confirmed_at) && Number(r.version_no||0) > Number(old.version_no||0))) {
@@ -15477,14 +15477,14 @@ async function loadWacHistoryMatrix(refresh) {
     const from = document.getElementById('wac-matrix-from')?.value || '';
     const to = document.getElementById('wac-matrix-to')?.value || '';
     const selected = rows.filter(function(r) {
-      const date = String(r.confirmed_at || '').slice(0,10);
+      const date = String(r.last_inbound_date || '').slice(0,10);
       return (!brands.length || brands.includes(r.brand || '')) &&
         (!countries.length || countries.includes(r.country || '')) &&
         (!warehouses.length || warehouses.includes(r.warehouse || '')) &&
         (!search || String(r.sku_code || '').toLowerCase().includes(search) || String(r.model || '').toLowerCase().includes(search)) &&
         (!from || date >= from) && (!to || date <= to);
     });
-    const dates = Array.from(new Set(selected.map(r => String(r.confirmed_at || '').slice(0,10)).filter(Boolean))).sort().reverse();
+    const dates = Array.from(new Set(selected.map(r => String(r.last_inbound_date || '').slice(0,10)).filter(Boolean))).sort().reverse();
     const groupMap = new Map();
     selected.forEach(function(r) {
       const key = [r.sku_code,r.brand,r.country,r.warehouse].join('¦');
@@ -15497,7 +15497,7 @@ async function loadWacHistoryMatrix(refresh) {
         Number(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:4});
     };
     const ordered = function(g) {
-      return g.records.slice().sort((a,b)=>String(b.confirmed_at).localeCompare(String(a.confirmed_at)) || Number(b.version_no||0)-Number(a.version_no||0));
+      return g.records.slice().sort((a,b)=>Number(b.version_no||0)-Number(a.version_no||0) || String(b.confirmed_at).localeCompare(String(a.confirmed_at)));
     };
     const latestOf = function(g){return ordered(g)[0];};
     const prevOf = function(g){return ordered(g)[1];};
@@ -15515,11 +15515,11 @@ async function loadWacHistoryMatrix(refresh) {
     groups.forEach(function(g) {
       const latestByDate = new Map();
       g.records.forEach(function(r) {
-        const d = String(r.confirmed_at || '').slice(0,10);
+        const d = String(r.last_inbound_date || '').slice(0,10);
         if (!d) return;
         const old = latestByDate.get(d);
-        if (!old || String(r.confirmed_at) > String(old.confirmed_at) ||
-          (String(r.confirmed_at) === String(old.confirmed_at) && Number(r.version_no||0) > Number(old.version_no||0))) {
+        if (!old || Number(r.version_no||0) > Number(old.version_no||0) ||
+          (Number(r.version_no||0) === Number(old.version_no||0) && String(r.confirmed_at) > String(old.confirmed_at))) {
           latestByDate.set(d,r);
         }
       });
@@ -15564,7 +15564,7 @@ async function loadWacHistoryMatrix(refresh) {
       const trendColor = pct === null ? 'var(--text-secondary)' : (pct > 0 ? '#16a34a' : pct < 0 ? '#dc2626' : 'var(--text-secondary)');
       const dateVals = new Map();
       g.records.forEach(function(r) {
-        const d = String(r.confirmed_at || '').slice(0,10);
+        const d = String(r.last_inbound_date || '').slice(0,10);
         const old = dateVals.get(d);
         if (!old || String(r.confirmed_at) > String(old.confirmed_at) ||
           (String(r.confirmed_at) === String(old.confirmed_at) && Number(r.version_no||0) > Number(old.version_no||0))) dateVals.set(d,r);
@@ -15590,7 +15590,7 @@ async function loadWacHistoryMatrix(refresh) {
       '</tr>';
     });
     html += '</tbody></table></div>' +
-      '<div style="padding:8px 2px;font-size:11px;color:var(--text-secondary)">Latest WAC及变化按筛选范围内最近两次确认记录计算；每个日期列显示当日最后一次WAC。历史导入记录如有有效期，会在成本下方显示结束日期。历史汇率只显示已保存快照或对应日期的精确汇率，缺失时不使用当前汇率替代。横向滚动可查看全部历史日期。</div>';
+      '<div style="padding:8px 2px;font-size:11px;color:var(--text-secondary)">Latest WAC及变化按版本号最新的记录计算；日期列按最后入库日期显示，同一入库日显示该日最新版本。历史导入记录如有有效期，会在成本下方显示结束日期。历史汇率只显示已保存快照或对应日期的精确汇率，缺失时不使用当前汇率替代。横向滚动可查看全部历史日期。</div>';
     target.innerHTML = html;
   } catch(e) {
     target.innerHTML = '<div class="empty-state">' + esc(e.message || '加载失败') + '</div>';
@@ -16134,9 +16134,9 @@ async function wacConfirm(batchId){
         '<div style="display:flex;gap:20px;font-size:12px;flex-wrap:wrap">'+
           '<span>'+t('wac.original_currency','原始货币')+': <b>'+esc(m.ci_currency||'')+'</b></span>'+
           '<span>'+t('wac.original_amount','原始金额')+': <b>'+fmtMoney(m.ci_goods_amount_total,m.ci_currency)+'</b></span>'+
-          '<span>'+t('wac.actual_payment_date','到货日期')+': <b>'+fmtDate(m.actual_arrival_date)+'</b></span>'+
+          '<span>'+t('wac.actual_payment_date','运费付款日')+': <b>'+fmtDate(m.freight_last_paid_date)+'</b></span>'+
           '<span>'+t('wac.product_fx','产品汇率')+': <b>'+(it0.product_fx_rate!=null?Number(it0.product_fx_rate).toFixed(4)+' ('+esc(it0.product_fx_direction||'')+')':'-')+'</b></span>'+
-          '<span>'+t('wac.fx_rate_date','汇率日期')+': <b>'+fmtDate(m.actual_arrival_date)+'</b></span>'+
+          '<span>'+t('wac.fx_rate_date','汇率日期')+': <b>'+fmtDate(it0.product_fx_rate_date||m.freight_last_paid_date)+'</b></span>'+
         '</div></div>';
 
       // Freight section
