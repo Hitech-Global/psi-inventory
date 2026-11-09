@@ -60,6 +60,7 @@ on:
       - 'test/wac-cost-change-notification.test.cjs'
       - 'scripts/wac-settlement-date-audit-hotfix.cjs'
       - 'test/wac-settlement-date-semantics.test.cjs'
+      - 'test/wac-history-matrix-latest-order.test.cjs'
       - 'test/listing-notification-card.test.cjs'
       - 'db-pg.js'
       - 'db.js'
@@ -154,6 +155,7 @@ jobs:
           node --check test/wac-cost-change-notification.test.cjs
           node --check scripts/wac-settlement-date-audit-hotfix.cjs
           node --check test/wac-settlement-date-semantics.test.cjs
+          node --check test/wac-history-matrix-latest-order.test.cjs
           node --check test/listing-notification-card.test.cjs
           node --check db-pg.js
           node --check db.js
@@ -217,6 +219,8 @@ jobs:
         run: node --test test/wac-cost-change-notification.test.cjs
       - name: Test WAC settlement date remains separate from actual inbound date
         run: node --test test/wac-settlement-date-semantics.test.cjs
+      - name: Test WAC history matrix selects latest confirmation chronologically
+        run: node --test test/wac-history-matrix-latest-order.test.cjs
       - name: Test Listing Feishu notification table cards
         run: node --test test/listing-notification-card.test.cjs
       - name: Test suggested purchase quantity wheel behavior
