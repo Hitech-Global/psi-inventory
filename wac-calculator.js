@@ -8,7 +8,7 @@
 
 const { query, queryOne } = require('./db');
 
-const WAC_FX_RATE_TYPE = 'realtime';
+const WAC_FX_RATE_TYPE = 'cost_settlement';
 const WAC_MONETARY_TOLERANCE = 0.01;
 
 // Query-count instrumentation for performance testing
@@ -259,18 +259,24 @@ function computeWacCostFacts(logisticsBatchId) {
     });
   }
 
-  // ── 7. Arrival date + Product FX ──
-  const arrivalDate = String(batch.actual_arrival_date || '').trim();
-  if (!arrivalDate) {
-    blockers.push({ code: 'PRODUCT_FX_DATE_MISSING', message: '物流批次缺少实际到货日期' });
+  // ── 7. CI actual shipment date + Product FX ──
+  // Frozen WAC policy: goods cost uses the CI's actual shipment date and
+  // cost_settlement rates only. Never substitute logistics arrival date or realtime quotes.
+  const productFxDate = String(ci.actual_ship_date || '').trim();
+  if (!productFxDate) {
+    blockers.push({ code: 'PRODUCT_FX_DATE_MISSING', message: 'CI 缺少实际出货日期，无法确定货物成本汇率锚点' });
   }
 
   const ciCurrency = String(ci.currency || 'USD').trim();
   let productFxRate = null;
-  if (arrivalDate && localCurrency) {
-    productFxRate = resolveExactFxRate(ciCurrency, localCurrency, arrivalDate, fxCache);
+  if (productFxDate && localCurrency) {
+    productFxRate = resolveExactFxRate(ciCurrency, localCurrency, productFxDate, fxCache);
     if (!productFxRate && ciCurrency !== localCurrency) {
-      blockers.push({ code: 'PRODUCT_FX_RATE_MISSING', message: `缺少 ${arrivalDate} ${ciCurrency}→${localCurrency} 的 realtime 汇率` });
+      blockers.push({
+        code: 'PRODUCT_FX_RATE_MISSING',
+        message: `缺少 CI 出货日 ${productFxDate} ${ciCurrency}→${localCurrency} 的 cost_settlement 汇率（不允许使用 realtime 行情替代）`,
+        detail: { source_currency: ciCurrency, target_currency: localCurrency, rate_date: productFxDate, rate_type: WAC_FX_RATE_TYPE }
+      });
     }
   }
 
