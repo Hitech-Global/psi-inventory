@@ -822,6 +822,8 @@ function computeWacCostFacts(logisticsBatchId) {
       product_cost_original: Math.round(productCostOriginal * 10000) / 10000,
       product_cost_local: Math.round(productCostLocal * 10000) / 10000,
       product_fx_rate: productFxRate ? productFxRate.rate : (ciCurrency === localCurrency ? 1 : null),
+      product_fx_rate_date: productFxRate ? productFxRate.rate_date : (ciCurrency === localCurrency ? productFxDate : null),
+      product_fx_rate_type: productFxRate ? productFxRate.rate_type : (ciCurrency === localCurrency ? 'identity' : null),
       product_fx_direction: productFxRate ? productFxRate.direction : (ciCurrency === localCurrency ? 'identity' : null),
       freight_cost_local: Math.round(freightAllocated * 10000) / 10000,
       customs_cost_local: Math.round(dutyAllocated * 10000) / 10000,
