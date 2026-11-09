@@ -23,7 +23,7 @@ assert.ok(featureSrc.includes("data-ci-logi-edit"), 'inline edit action missing'
 assert.ok(featureSrc.includes("wrapSave('saveLogWithPL')"), 'create save refresh wrapper missing');
 assert.ok(featureSrc.includes("wrapSave('saveEditLog')"), 'edit save refresh wrapper missing');
 
-const appPos = indexSrc.indexOf('<script src="app.js"></script>');
+const appMatch = indexSrc.match(/<script src="app\.js(?:\?[^\"]*)?"><\/script>/);\nconst appPos = appMatch ? indexSrc.indexOf(appMatch[0]) : -1;
 const featurePos = indexSrc.indexOf('<script src="ci-list-inline-logistics.js"></script>');
 assert.ok(appPos >= 0 && featurePos > appPos, 'inline logistics script must load after app.js');
 
