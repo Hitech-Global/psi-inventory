@@ -15,10 +15,7 @@ function patchWacSettlementDateSource(input) {
   if (matches !== 2) {
     throw new Error('[WAC-SETTLEMENT-DATE-AUDIT] expected exactly 2 settlement-date assignments, found ' + matches);
   }
-  return input.replace(
-    /settlement_date: inboundDate \\|\\| today,/g,
-    'settlement_date: today, // ' + MARKER
-  );
+  return input.split(needle).join('settlement_date: today, // ' + MARKER);
 }
 
 function applyHotfix() {
