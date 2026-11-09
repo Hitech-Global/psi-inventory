@@ -398,22 +398,32 @@ function computeWacCostFacts(logisticsBatchId) {
   if (ciCurrency === localCurrency) {
     productFxDate = freightLastPaidDate || '';
     productFxRate = { rate: 1, rate_date: productFxDate, rate_type: 'identity', direction: 'identity' };
-  } else if (freightBusinessAmount > 0 && freightCurrency === ciCurrency &&
-             freightLocalAmount > 0 && freightLastPaidDate && freightEffectiveRate > 0) {
+  } else if (freightBusinessAmount > 0 && freightLocalAmount > 0 && freightLastPaidDate) {
     productFxDate = freightLastPaidDate;
-    productFxRate = {
-      rate: freightEffectiveRate,
-      rate_date: productFxDate,
-      rate_type: 'payment_settlement',
-      direction: 'payment_settlement'
-    };
+    if (freightCurrency === ciCurrency && freightEffectiveRate > 0) {
+      // Same source currency: use the amount-weighted applied rate from freight payment logs.
+      productFxRate = {
+        rate: freightEffectiveRate,
+        rate_date: productFxDate,
+        rate_type: 'payment_settlement',
+        direction: 'payment_settlement'
+      };
+    } else {
+      // Different source currencies: keep the same final freight-paid date as the FX anchor,
+      // but resolve the CI currency's own cost-settlement rate for that exact date.
+      productFxRate = resolveExactFxRate(ciCurrency, localCurrency, productFxDate, fxCache);
+      if (!productFxRate) {
+        blockers.push({
+          code: 'PRODUCT_FX_RATE_MISSING',
+          message: `缺少运费最后付款日 ${productFxDate} ${ciCurrency}→${localCurrency} 的 cost_settlement 汇率`,
+          detail: { source_currency: ciCurrency, freight_currency: freightCurrency, target_currency: localCurrency, rate_date: productFxDate, rate_type: WAC_FX_RATE_TYPE }
+        });
+      }
+    }
   } else if (ciCurrency !== localCurrency) {
-    const mismatch = freightBusinessAmount > 0 && freightCurrency !== ciCurrency;
     blockers.push({
-      code: mismatch ? 'PRODUCT_FX_FREIGHT_CURRENCY_MISMATCH' : 'PRODUCT_FX_FREIGHT_PAYMENT_MISSING',
-      message: mismatch
-        ? `CI 商品币种 ${ciCurrency} 与运费付款币种 ${freightCurrency} 不一致，不能直接套用运费结算汇率`
-        : '缺少已完成的运费付款及其本币结算汇率，无法确定 CI 商品成本汇率',
+      code: 'PRODUCT_FX_FREIGHT_PAYMENT_MISSING',
+      message: '缺少已完成的运费付款及其本币结算汇率，无法确定 CI 商品成本汇率',
       detail: {
         source_currency: ciCurrency,
         freight_currency: freightCurrency,
