@@ -756,6 +756,10 @@ describe('computeWacCostFacts - arrival date + FX', () => {
     db.exec('DELETE FROM packing_lists');
     db.exec('DELETE FROM packing_list_items');
     db.exec('DELETE FROM inventory');
+    db.exec('DELETE FROM warehouses');
+    db.exec('DELETE FROM countries');
+    seedCountry('Thailand', 'TH', 'THB');
+    seedWarehouse('wh_ship_anchor', 'WH-TH', 'ctry_Thailand', 'Thailand');
 
     seedCI('ci_ship_anchor', 'CI-SHIP-ANCHOR', 'RMB', 1000, 'cbm');
     seedCIItem('cii_ship_anchor', 'ci_ship_anchor', 'SKU-SHIP-ANCHOR', 10, 100, 0, null);
