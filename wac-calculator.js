@@ -260,6 +260,8 @@ function computeWacCostFacts(logisticsBatchId) {
   }
 
   // ── 7. CI actual shipment date + Product FX ──
+  // Keep the logistics arrival date available for existing non-product fee checks.
+  const arrivalDate = String(batch.actual_arrival_date || '').trim();
   // Frozen WAC policy: goods cost uses the CI's actual shipment date and
   // cost_settlement rates only. Never substitute logistics arrival date or realtime quotes.
   const productFxDate = String(ci.actual_ship_date || '').trim();
