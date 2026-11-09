@@ -193,27 +193,70 @@ function computeWacCostFacts(logisticsBatchId) {
   // Chain: batch.target_warehouse → warehouses → countries → default_currency
   // No fallback to PL/CI/batch.country fields.
   const warehouseName = String(batch.target_warehouse || '').trim();
+  const requestedCountry = String(batch.target_country || '').trim();
   let targetCountry = '';
   let localCurrency = '';
-  const wh = warehouseName ? _q1('SELECT * FROM warehouses WHERE name = ? OR id = ?', [warehouseName, warehouseName]) : null;
+
+  // Warehouse names are not globally sufficient to identify a destination:
+  // 至速仓 may exist in both Malaysia and Thailand. Resolve by BOTH the batch's
+  // target country and warehouse, never by whichever same-name row queryOne returns.
+  const countryRows = _q('SELECT id, name, code, default_currency FROM countries').rows;
+  const countryAliasKey = value => {
+    const raw = String(value || '').trim().toLowerCase().replace(/\\s+/g, ' ');
+    const aliases = {
+      '印度尼西亚': '印尼', '印度尼西亚共和国': '印尼', 'indonesia': '印尼',
+      'republic of indonesia': '印尼', '马来西亚': '马来', 'malaysia': '马来',
+      '泰王国': '泰国', 'thailand': '泰国', 'kingdom of thailand': '泰国'
+    };
+    return aliases[raw] || raw;
+  };
+  const warehouseCountry = wh => {
+    const byId = wh.country_id
+      ? countryRows.find(country => String(country.id || '') === String(wh.country_id))
+      : null;
+    const byName = !byId && wh.country_name
+      ? countryRows.find(country => countryAliasKey(country.name) === countryAliasKey(wh.country_name))
+      : null;
+    const country = byId || byName || null;
+    return {
+      row: country,
+      name: String(country ? country.name : (wh.country_name || '')).trim(),
+      code: String(country && country.code || '').trim()
+    };
+  };
+  const warehouseCandidates = warehouseName
+    ? _q('SELECT * FROM warehouses WHERE name = ? OR id = ?', [warehouseName, warehouseName]).rows
+    : [];
+  const matchingWarehouses = warehouseCandidates.filter(candidate => {
+    if (!requestedCountry) return true;
+    const resolved = warehouseCountry(candidate);
+    return countryAliasKey(resolved.name) === countryAliasKey(requestedCountry) ||
+      (!!resolved.code && resolved.code.toLowerCase() === requestedCountry.toLowerCase());
+  });
+  const wh = matchingWarehouses.length === 1 ? matchingWarehouses[0] : null;
+
   if (wh) {
-    if (wh.country_id) {
-      const c = _q1('SELECT * FROM countries WHERE id = ?', [wh.country_id]);
-      if (c) {
-        targetCountry = c.name || '';
-        localCurrency = String(c.default_currency || '').trim();
-      }
-    }
-    if (!localCurrency && wh.country_name) {
-      const c = _q1('SELECT * FROM countries WHERE name = ?', [wh.country_name]);
-      if (c) {
-        targetCountry = c.name || '';
-        localCurrency = String(c.default_currency || '').trim();
-      }
-    }
+    const resolved = warehouseCountry(wh);
+    targetCountry = resolved.name || requestedCountry;
+    localCurrency = String(resolved.row && resolved.row.default_currency || '').trim();
   }
   if (!localCurrency) {
-    blockers.push({ code: 'WAC_TARGET_CURRENCY_UNRESOLVED', message: `仓库「${warehouseName}」未关联国家或国家未配置本国货币` });
+    const reason = warehouseCandidates.length === 0
+      ? '仓库主数据中不存在该仓库'
+      : matchingWarehouses.length === 0
+        ? `仓库名称存在，但与目标国家「${requestedCountry || '-'}」不匹配`
+        : matchingWarehouses.length > 1
+          ? '目标国家和仓库名称仍匹配到多条主数据'
+          : '仓库未关联国家或国家未配置本国货币';
+    blockers.push({
+      code: 'WAC_TARGET_CURRENCY_UNRESOLVED',
+      message: `无法唯一确定目标仓库「${warehouseName}」的本币：${reason}`,
+      detail: {
+        target_country: requestedCountry,
+        target_warehouse: warehouseName,
+        candidate_countries: warehouseCandidates.map(candidate => warehouseCountry(candidate).name)
+      }
+    });
   }
 
   // ── 7. Arrival date + Product FX ──
@@ -725,7 +768,9 @@ function computeWacCostFacts(logisticsBatchId) {
     // Lookup from preloaded inventory Map
     const allInvRows = inventoryRowsBySku.get(skuCode) || [];
     const matchingInv = allInvRows.find(r =>
-      String(r.country || '') === String(country2 || '') && String(r.warehouse || '') === String(warehouse || '')
+      countryAliasKey(r.country) === countryAliasKey(country2) &&
+      String(r.warehouse || '').trim().replace(/\\s+/g, ' ').toLowerCase() ===
+        String(warehouse || '').trim().replace(/\\s+/g, ' ').toLowerCase()
     );
 
     // C. WAC_INVENTORY_ROW_MISSING: SKU has no inventory rows at all — Confirm cannot create rows

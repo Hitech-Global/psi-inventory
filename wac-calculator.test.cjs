@@ -1568,6 +1568,80 @@ describe('computeWacCostFacts - target currency from warehouse', () => {
     const codes = result.blockers.map(b => b.code);
     assert.ok(codes.includes('WAC_TARGET_CURRENCY_UNRESOLVED'), `Expected WAC_TARGET_CURRENCY_UNRESOLVED, got: ${codes}`);
   });
+
+  test('Thailand target resolves the Thailand warehouse and matches localized inventory country', () => {
+    const db = require('./db').getDB();
+    db.exec('DELETE FROM logistics_batches');
+    db.exec('DELETE FROM packing_lists');
+    db.exec('DELETE FROM packing_list_items');
+    db.exec('DELETE FROM commercial_invoices');
+    db.exec('DELETE FROM commercial_invoice_items');
+    db.exec('DELETE FROM exchange_rates');
+    db.exec('DELETE FROM inventory');
+    db.exec('DELETE FROM warehouses');
+    db.exec('DELETE FROM countries');
+
+    seedCountry('Thailand', 'TH', 'THB');
+    seedCountry('Malaysia', 'MY', 'MYR');
+    seedWarehouse('wh_th', 'TH-Zhisu', 'ctry_Thailand', '泰国');
+    seedWarehouse('wh_my', 'MY-Zhisu', 'ctry_Malaysia', '马来西亚');
+
+    seedCI('ci_wh_th', 'CI-WH-TH', 'USD', 5000, 'cbm');
+    seedCIItem('cii_wh_th', 'ci_wh_th', 'SKU-WH-TH', 100, 50, 0, 0.05);
+    seedBatch('lb_wh_th', 'BATCH-WH-TH', 'ci_wh_th', {
+      arrivalDate: '2026-03-01', totalFreight: 0, customsDuty: 0,
+      country: '泰国', warehouse: 'TH-Zhisu'
+    });
+    seedPL('pl_wh_th', 'PL-WH-TH', 'ci_wh_th', 'lb_wh_th', {
+      status: 'confirmed', warehouse: 'TH-Zhisu', country: '泰国'
+    });
+    seedPLItem('pli_wh_th', 'pl_wh_th', 'SKU-WH-TH', 100, 1, 100);
+
+    seedExchangeRate('USD', 'THB', '2026-03-01', 35);
+    // The inventory country is Chinese while the country master is English.
+    seedInventory('SKU-WH-TH', '泰国', 'TH-Zhisu', 0, 123.45);
+    // A same-SKU row in Malaysia must never be selected for a Thailand batch.
+    seedInventory('SKU-WH-TH', '马来西亚', 'MY-Zhisu', 0, 999.99);
+
+    const result = computeWacCostFacts('lb_wh_th');
+    const codes = result.blockers.map(b => b.code);
+    assert.ok(!codes.includes('WAC_TARGET_CURRENCY_UNRESOLVED'), `Thailand warehouse should resolve: ${JSON.stringify(result.blockers)}`);
+    assert.ok(!codes.includes('WAC_INVENTORY_CONTEXT_MISMATCH'), `Thai inventory row should match: ${JSON.stringify(result.blockers)}`);
+    assert.equal(result.meta.local_currency, 'THB');
+    assert.equal(result.meta.country, 'Thailand');
+    assert.equal(result.items[0].current_wac, 123.45);
+  });
+
+  test('Target country mismatch blocks a same-name warehouse from another country', () => {
+    const db = require('./db').getDB();
+    db.exec('DELETE FROM logistics_batches');
+    db.exec('DELETE FROM packing_lists');
+    db.exec('DELETE FROM packing_list_items');
+    db.exec('DELETE FROM commercial_invoices');
+    db.exec('DELETE FROM commercial_invoice_items');
+    db.exec('DELETE FROM exchange_rates');
+    db.exec('DELETE FROM inventory');
+    db.exec('DELETE FROM warehouses');
+    db.exec('DELETE FROM countries');
+
+    seedCountry('Malaysia', 'MY', 'MYR');
+    seedWarehouse('wh_my_only', '至速仓', 'ctry_Malaysia', '马来西亚');
+    seedCI('ci_wh_mismatch', 'CI-WH-MISMATCH', 'USD', 5000, 'cbm');
+    seedCIItem('cii_wh_mismatch', 'ci_wh_mismatch', 'SKU-WH-MISMATCH', 100, 50, 0, 0.05);
+    seedBatch('lb_wh_mismatch', 'BATCH-WH-MISMATCH', 'ci_wh_mismatch', {
+      arrivalDate: '2026-03-01', totalFreight: 0, customsDuty: 0,
+      country: '泰国', warehouse: '至速仓'
+    });
+    seedPL('pl_wh_mismatch', 'PL-WH-MISMATCH', 'ci_wh_mismatch', 'lb_wh_mismatch', {
+      status: 'confirmed', warehouse: '至速仓', country: '泰国'
+    });
+    seedPLItem('pli_wh_mismatch', 'pl_wh_mismatch', 'SKU-WH-MISMATCH', 100, 1, 100);
+
+    const result = computeWacCostFacts('lb_wh_mismatch');
+    const blocker = result.blockers.find(b => b.code === 'WAC_TARGET_CURRENCY_UNRESOLVED');
+    assert.ok(blocker, `Expected target-country mismatch blocker, got: ${JSON.stringify(result.blockers)}`);
+    assert.match(blocker.message, /目标国家/);
+  });
 });
 
 // ── Preview/Confirm Parity Test ──
