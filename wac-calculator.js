@@ -337,8 +337,9 @@ function computeWacCostFacts(logisticsBatchId) {
           const fxInvalid = [];
           for (const log of freightLogs) {
             if (!log.local_currency ||
+                String(log.local_currency).trim().toUpperCase() !== String(localCurrency || '').trim().toUpperCase() ||
                 !Number.isFinite(Number(log.local_rate)) || Number(log.local_rate) <= 0 ||
-                !log.local_rate_date ||
+                !log.local_rate_date || !log.paid_date || String(log.local_rate_date).slice(0,10) !== String(log.paid_date).slice(0,10) ||
                 !Number.isFinite(Number(log.local_amount)) || Number(log.local_amount) <= 0) {
               fxInvalid.push(log);
             }
