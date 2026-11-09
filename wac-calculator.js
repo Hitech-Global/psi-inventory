@@ -259,28 +259,13 @@ function computeWacCostFacts(logisticsBatchId) {
     });
   }
 
-  // ── 7. CI actual shipment date + Product FX ──
-  // Keep the logistics arrival date available for existing non-product fee checks.
+  // ── 7. Product FX policy ──
+  // CI goods use the batch freight's actual applied payment settlement FX.
+  // The payment record is the authoritative source for both the rate and paid date.
   const arrivalDate = String(batch.actual_arrival_date || '').trim();
-  // Frozen WAC policy: goods cost uses the CI's actual shipment date and
-  // cost_settlement rates only. Never substitute logistics arrival date or realtime quotes.
-  const productFxDate = String(ci.actual_ship_date || '').trim();
-  if (!productFxDate) {
-    blockers.push({ code: 'PRODUCT_FX_DATE_MISSING', message: 'CI 缺少实际出货日期，无法确定货物成本汇率锚点' });
-  }
-
-  const ciCurrency = String(ci.currency || 'USD').trim();
+  const ciCurrency = String(ci.currency || 'USD').trim().toUpperCase();
+  let productFxDate = '';
   let productFxRate = null;
-  if (productFxDate && localCurrency) {
-    productFxRate = resolveExactFxRate(ciCurrency, localCurrency, productFxDate, fxCache);
-    if (!productFxRate && ciCurrency !== localCurrency) {
-      blockers.push({
-        code: 'PRODUCT_FX_RATE_MISSING',
-        message: `缺少 CI 出货日 ${productFxDate} ${ciCurrency}→${localCurrency} 的 cost_settlement 汇率（不允许使用 realtime 行情替代）`,
-        detail: { source_currency: ciCurrency, target_currency: localCurrency, rate_date: productFxDate, rate_type: WAC_FX_RATE_TYPE }
-      });
-    }
-  }
 
   // ── 8. Freight ──
   const freightBusinessAmount = Number(batch.total_freight) || 0;
@@ -336,7 +321,7 @@ function computeWacCostFacts(logisticsBatchId) {
 
         // Query ALL raw applied payment logs — no grouping, no deduplication
         const freightLogs = _q(
-          `SELECT payment_request_id, amount, local_amount, local_rate, local_rate_date, local_currency, paid_date
+          `SELECT payment_request_id, amount, local_amount, local_rate, local_rate_date, local_currency, local_rate_type, local_rate_direction, paid_date
            FROM payment_settlement_logs
            WHERE payment_request_id IN (${ph})
              AND event_type = 'payment' AND status = 'applied'
@@ -388,6 +373,8 @@ function computeWacCostFacts(logisticsBatchId) {
                 local_amount: Number(log.local_amount) || 0,
                 local_rate: Number(log.local_rate) || 0,
                 local_rate_date: log.local_rate_date || '',
+                local_rate_type: log.local_rate_type || 'payment_settlement',
+                local_rate_direction: log.local_rate_direction || '',
                 local_currency: log.local_currency || '',
                 paid_date: log.paid_date || ''
               }));
@@ -400,6 +387,37 @@ function computeWacCostFacts(logisticsBatchId) {
         }
       }
     }
+  }
+
+  // CI goods FX follows the actual freight payment settlement date/rate.
+  // When freight is paid in the same currency as the CI, the effective rate is
+  // the amount-weighted applied settlement rate (Σ local_amount / Σ paid_amount).
+  if (ciCurrency === localCurrency) {
+    productFxDate = freightLastPaidDate || '';
+    productFxRate = { rate: 1, rate_date: productFxDate, rate_type: 'identity', direction: 'identity' };
+  } else if (freightBusinessAmount > 0 && freightCurrency === ciCurrency &&
+             freightLocalAmount > 0 && freightLastPaidDate && freightEffectiveRate > 0) {
+    productFxDate = freightLastPaidDate;
+    productFxRate = {
+      rate: freightEffectiveRate,
+      rate_date: productFxDate,
+      rate_type: 'payment_settlement',
+      direction: 'payment_settlement'
+    };
+  } else if (ciCurrency !== localCurrency) {
+    const mismatch = freightBusinessAmount > 0 && freightCurrency !== ciCurrency;
+    blockers.push({
+      code: mismatch ? 'PRODUCT_FX_FREIGHT_CURRENCY_MISMATCH' : 'PRODUCT_FX_FREIGHT_PAYMENT_MISSING',
+      message: mismatch
+        ? `CI 商品币种 ${ciCurrency} 与运费付款币种 ${freightCurrency} 不一致，不能直接套用运费结算汇率`
+        : '缺少已完成的运费付款及其本币结算汇率，无法确定 CI 商品成本汇率',
+      detail: {
+        source_currency: ciCurrency,
+        freight_currency: freightCurrency,
+        target_currency: localCurrency,
+        rate_date: freightLastPaidDate || null
+      }
+    });
   }
 
   // ── 9. Freight allocation by logistics batch transport mode ──
@@ -825,8 +843,9 @@ function computeWacCostFacts(logisticsBatchId) {
       product_cost_local: Math.round(productCostLocal * 10000) / 10000,
       product_fx_rate: productFxRate ? productFxRate.rate : (ciCurrency === localCurrency ? 1 : null),
       product_fx_rate_date: productFxRate ? productFxRate.rate_date : (ciCurrency === localCurrency ? productFxDate : null),
-      product_fx_rate_type: productFxRate ? productFxRate.rate_type : (ciCurrency === localCurrency ? 'identity' : null),
-      product_fx_direction: productFxRate ? productFxRate.direction : (ciCurrency === localCurrency ? 'identity' : null),
+      product_fx_rate_type: productFxRate ? productFxRate.rate_type : null,
+      product_fx_rate_source: productFxRate ? (productFxRate.rate_type === 'identity' ? 'same_currency' : 'freight_payment_settlement') : null,
+      product_fx_direction: productFxRate ? productFxRate.direction : null,
       freight_cost_local: Math.round(freightAllocated * 10000) / 10000,
       customs_cost_local: Math.round(dutyAllocated * 10000) / 10000,
       inspection_cost_local: Math.round(inspectionAllocated * 10000) / 10000,
@@ -868,6 +887,9 @@ function computeWacCostFacts(logisticsBatchId) {
     freight_local_amount: Math.round(freightLocalAmount * 10000) / 10000,
     freight_effective_rate: freightEffectiveRate !== null ? Math.round(freightEffectiveRate * 10000) / 10000 : null,
     freight_last_paid_date: freightLastPaidDate,
+    product_fx_rate_date: productFxDate,
+    product_fx_rate: productFxRate ? productFxRate.rate : null,
+    product_fx_rate_type: productFxRate ? productFxRate.rate_type : null,
     freight_payment_breakdown: freightPaymentBreakdown,
     shared_freight_breakdown: sharedFreightBreakdown,
     duty_business_amount: dutyBusinessAmount,
