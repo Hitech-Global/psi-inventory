@@ -650,12 +650,35 @@
     var originalOpenInvBatchImport = win.openInvBatchImport;
     var originalRunInvPrecheck = win.runInvPrecheck;
 
+    function setInventoryFileProgress(message, percent, state) {
+      var target = win.document && win.document.getElementById("inv-status");
+      if (!target) return;
+      var box = win.document.getElementById("inv-file-progress");
+      if (!box) {
+        box = win.document.createElement("div");
+        box.id = "inv-file-progress";
+        box.style.cssText = "margin:0 0 10px;padding:10px 13px;border:1px solid #dbeafe;background:#f8fbff;border-radius:9px";
+        target.parentNode.insertBefore(box, target);
+      }
+      var color = state === "error" ? "#dc2626" : state === "blocked" ? "#d97706" : state === "done" ? "#15803d" : "#2563eb";
+      var p = Math.max(0, Math.min(100, Number(percent) || 0));
+      box.innerHTML = '<div style="display:flex;justify-content:space-between;gap:10px;margin-bottom:7px;font-size:12px">' +
+        '<span style="font-weight:600;color:' + color + '">' + escapeHtml(message) + '</span>' +
+        '<strong style="font-variant-numeric:tabular-nums">' + p + '%</strong></div>' +
+        '<div role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + p + '" style="height:6px;overflow:hidden;background:#e5e7eb;border-radius:99px">' +
+        '<div style="height:100%;width:' + p + '%;background:' + color + ';border-radius:99px;transition:width .25s ease"></div></div>';
+    }
+
     win.openInvBatchImport = function () {
       resetAdapterState(win);
+      var progress = win.document && win.document.getElementById("inv-file-progress");
+      if (progress) progress.remove();
       return originalOpenInvBatchImport.apply(this, arguments);
     };
 
     win.runInvPrecheck = async function () {
+      var isZhisu = win._invImportSourceMode === "zhisu";
+      if (isZhisu) setInventoryFileProgress("正在校验 SKU 与品牌主数据…", 82);
       var result = await originalRunInvPrecheck.apply(this, arguments);
       if (win._invImportSourceMode === "zhisu") {
         var records = win._invImportData || [];
@@ -675,6 +698,8 @@
         if (typeof win.renderInvPreview === "function") win.renderInvPreview(records);
         if (typeof win.renderInvStatus === "function") win.renderInvStatus();
         if (typeof win.updateInvImportBtnState === "function") win.updateInvImportBtnState();
+        var passed = precheck.ok === true && (!precheck.blocking || precheck.blocking.length === 0);
+        setInventoryFileProgress(passed ? "SKU / 品牌校验完成，可以开始导入。" : "SKU / 品牌校验未通过，请先处理异常。", 100, passed ? "done" : "blocked");
       }
       return result;
     };
@@ -684,8 +709,15 @@
       if (ext !== "xls" && ext !== "xlsx") return Promise.resolve(false);
       return new Promise(function (resolve) {
         var reader = new win.FileReader();
+        setInventoryFileProgress("正在读取至速仓库存文件…", 3);
+        reader.onprogress = function (event) {
+          var p = event && event.lengthComputable && event.total > 0 ? 5 + Math.round(event.loaded / event.total * 28) : 18;
+          setInventoryFileProgress("正在读取至速仓库存文件…", p);
+        };
         reader.onload = async function (event) {
           try {
+            setInventoryFileProgress("文件读取完成，正在解析 Excel 与识别 SKU…", 40);
+            await new Promise(function (resolvePaint) { setTimeout(resolvePaint, 0); });
             var workbook = win.XLSX.read(new Uint8Array(event.target.result), { type: "array", cellDates: true });
             var parsed = parseZhisuWorkbook(workbook, file.name, localDate(), win.XLSX);
             if (!parsed) {
@@ -694,6 +726,7 @@
               return;
             }
 
+            setInventoryFileProgress("SKU 识别完成，正在匹配国家与目标仓库…", 62);
             win._invImportSourceMode = "zhisu";
             win._invZhisuMergeDuplicates = false;
             win._invZhisuRawRecords = parsed.records;
@@ -735,8 +768,11 @@
               }
             }
             applyZhisuRecords(win);
+            if (!win._invZhisuMappingReady) setInventoryFileProgress("仓库映射未完成，请先处理映射问题。", 100, "blocked");
+            else setInventoryFileProgress("数据识别完成，正在进行后台校验…", 78);
             resolve(true);
           } catch (error) {
+            setInventoryFileProgress("至速仓库存文件解析失败。", 100, "error");
             resetAdapterState(win);
             if (typeof win.showToast === "function") {
               win.showToast(tr(win, "inv.zhisu.file_parse_failed", "至速库存文件解析失败：{message}", { message: error.message || "unknown error" }), "danger");
@@ -745,6 +781,7 @@
           }
         };
         reader.onerror = function () {
+          setInventoryFileProgress("至速仓库存文件读取失败，请重新上传。", 100, "error");
           resetAdapterState(win);
           if (typeof win.showToast === "function") {
             win.showToast(tr(win, "inv.zhisu.file_parse_failed", "至速库存文件读取失败：{message}", { message: "FileReader error" }), "danger");

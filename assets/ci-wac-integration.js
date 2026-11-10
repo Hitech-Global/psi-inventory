@@ -109,6 +109,19 @@
       'modal-wac');
   }
 
+  function openNotReadyDetail(log, plData) {
+    var body = '<div class="form-card" style="box-shadow:none;padding:0">' +
+      renderLogisticsDetail(log, plData) +
+      '<div class="detail-section"><h3>WAC处理状态</h3>' +
+      '<div style="padding:12px 14px;border:1px solid #f5d6d3;border-radius:9px;background:#fff8f7">' +
+      '<strong>暂不可计算</strong><div style="margin-top:6px;font-size:12px;color:var(--text-secondary)">' +
+      '该物流批次尚未进入 WAC 待确认阶段。请检查物流状态是否已到仓，以及 PL 是否存在有效商品数量；满足条件后系统会将状态更新为待确认 WAC。' +
+      '</div></div></div></div>';
+    global.openModal('物流批次详情 / WAC - ' + (log.batch_no || ''), body,
+      '<button class="btn btn-secondary" onclick="closeModal()">' + esc(tr('common.close', '关闭')) + '</button>',
+      'modal-wac');
+  }
+
   async function viewLogWacDetail(batchId, ciId, wacStatus, exclusionReason) {
     var id = String(batchId || '');
     if (!id) return;
@@ -124,6 +137,10 @@
       global.__ciWacActiveCiId = ciId || log.related_ci_id || '';
       if (wacStatus === 'excluded') {
         openExcludedDetail(log, plData, exclusionReason);
+        return;
+      }
+      if (wacStatus === 'not_ready' || !wacStatus) {
+        openNotReadyDetail(log, plData);
         return;
       }
 

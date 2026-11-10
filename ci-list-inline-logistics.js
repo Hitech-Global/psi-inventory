@@ -42,40 +42,56 @@
   function wacUiText(key) {
     var lang = typeof global.getLang === 'function' ? String(global.getLang() || 'zh').toLowerCase().slice(0, 2) : 'zh';
     var labels = {
-      pending: { zh: '待确认 WAC', en: 'WAC pending', id: 'WAC menunggu konfirmasi' },
+      pending: { zh: '待确认', en: 'Pending', id: 'Menunggu' },
+      not_ready: { zh: '暂不可计算', en: 'Not ready', id: 'Belum siap' },
       confirm: { zh: '确认 WAC', en: 'Confirm WAC', id: 'Konfirmasi WAC' },
       skip: { zh: '无需计算', en: 'Skip WAC', id: 'Lewati WAC' },
-      confirmed: { zh: 'WAC 已确认', en: 'WAC confirmed', id: 'WAC dikonfirmasi' },
-      excluded: { zh: '无需计算', en: 'WAC skipped', id: 'WAC dilewati' },
-      restore: { zh: '恢复', en: 'Restore', id: 'Pulihkan' },
-      cc: { zh: 'CC', en: 'CC', id: 'CC' }
+      confirmed: { zh: '已确认', en: 'Confirmed', id: 'Dikonfirmasi' },
+      excluded: { zh: '无需计算', en: 'Skipped', id: 'Dilewati' },
+      restore: { zh: '恢复待确认', en: 'Restore', id: 'Pulihkan' },
+      cc: { zh: 'CC', en: 'CC', id: 'CC' },
+      view: { zh: '查看原因', en: 'View reason', id: 'Lihat alasan' }
     };
     return (labels[key] && (labels[key][lang] || labels[key].zh)) || key;
+  }
+
+  function wacStatusCellHtml(batch) {
+    var status = String(batch && batch.wac_status || 'not_ready');
+    var labels = {
+      pending: ['pending', 'pending'],
+      confirmed: ['confirmed', 'confirmed'],
+      excluded: ['excluded', 'excluded'],
+      not_ready: ['not_ready', 'not-ready']
+    };
+    var item = labels[status] || labels.not_ready;
+    var title = status === 'not_ready'
+      ? '该批次尚未进入 WAC 待确认阶段；请查看物流批次详情及 PL 数量。'
+      : '';
+    return '<td class="ci-list-wac-status-cell" title="' + esc(title) + '">' +
+      '<span class="ci-list-wac-badge ci-list-wac-badge-' + item[1] + '">' +
+      esc(wacUiText(item[0])) + '</span></td>';
   }
 
   function wacActionsHtml(batch, ciId) {
     var status = String(batch && batch.wac_status || 'not_ready');
     var id = esc(batch && batch.id || '');
     var batchNo = esc(batch && batch.batch_no || '');
-    var statusBadge = function (label, tone) {
-      return '<span class="ci-list-wac-badge ci-list-wac-badge-' + tone + '">' + esc(label) + '</span>';
-    };
     if (status === 'pending') {
-      var badge = statusBadge(wacUiText('pending'), 'pending');
-      if (!hasPermission('ci_edit')) return badge;
-      return badge +
-        '<button type="button" class="btn btn-primary btn-sm ci-list-wac-action" data-ci-logi-wac-confirm="' + id + '" data-ci-id="' + esc(ciId) + '" data-batch-no="' + batchNo + '">' + esc(wacUiText('confirm')) + '</button>' +
+      if (!hasPermission('ci_edit')) return '<span class="ci-list-wac-no-action">—</span>';
+      return '<button type="button" class="btn btn-primary btn-sm ci-list-wac-action" data-ci-logi-wac-confirm="' + id + '" data-ci-id="' + esc(ciId) + '" data-batch-no="' + batchNo + '">' + esc(wacUiText('confirm')) + '</button>' +
         '<button type="button" class="btn btn-secondary btn-sm ci-list-wac-action" data-ci-logi-wac-exclude="' + id + '" data-ci-id="' + esc(ciId) + '" data-batch-no="' + batchNo + '">' + esc(wacUiText('skip')) + '</button>';
     }
     if (status === 'confirmed') {
-      return statusBadge(wacUiText('confirmed'), 'confirmed') +
-        (hasPermission('ci_edit') ? '<button type="button" class="btn btn-secondary btn-sm ci-list-wac-action" data-ci-logi-wac-cc="' + id + '" data-ci-id="' + esc(ciId) + '" data-batch-no="' + batchNo + '">' + esc(wacUiText('cc')) + '</button>' : '');
+      return hasPermission('ci_edit')
+        ? '<button type="button" class="btn btn-secondary btn-sm ci-list-wac-action" data-ci-logi-wac-cc="' + id + '" data-ci-id="' + esc(ciId) + '" data-batch-no="' + batchNo + '">' + esc(wacUiText('cc')) + '</button>'
+        : '<span class="ci-list-wac-no-action">—</span>';
     }
     if (status === 'excluded') {
-      return statusBadge(wacUiText('excluded'), 'excluded') +
-        (hasPermission('ci_edit') ? '<button type="button" class="btn btn-secondary btn-sm ci-list-wac-action" data-ci-logi-wac-restore="' + id + '" data-ci-id="' + esc(ciId) + '" data-batch-no="' + batchNo + '">' + esc(wacUiText('restore')) + '</button>' : '');
+      return hasPermission('ci_edit')
+        ? '<button type="button" class="btn btn-secondary btn-sm ci-list-wac-action" data-ci-logi-wac-restore="' + id + '" data-ci-id="' + esc(ciId) + '" data-batch-no="' + batchNo + '">' + esc(wacUiText('restore')) + '</button>'
+        : '<span class="ci-list-wac-no-action">—</span>';
     }
-    return '';
+    return '<button type="button" class="btn btn-secondary btn-sm ci-list-wac-action" data-ci-logi-wac-view="' + id + '" data-ci-id="' + esc(ciId) + '" data-batch-no="' + batchNo + '">' + esc(wacUiText('view')) + '</button>';
   }
 
   var LOGISTICS_INLINE_STATUS_OPTIONS = [
@@ -253,6 +269,9 @@
       '.content-inner:has(#ci-source-mode) #ci-table .ci-list-wac-badge-pending{background:#fff4e5;color:#9a5b00}',
       '.content-inner:has(#ci-source-mode) #ci-table .ci-list-wac-badge-confirmed{background:#eaf7ef;color:#217a43}',
       '.content-inner:has(#ci-source-mode) #ci-table .ci-list-wac-badge-excluded{background:#f1f1f4;color:#62626a}',
+      '.content-inner:has(#ci-source-mode) #ci-table .ci-list-wac-badge-not-ready{background:#fff1f0;color:#a33b32}',
+      '.content-inner:has(#ci-source-mode) #ci-table .ci-list-wac-no-action{color:#a1a1a6;font-size:12px}',
+      '.content-inner:has(#ci-source-mode) #ci-table .ci-list-wac-status-cell{min-width:104px}',
       '.content-inner:has(#ci-source-mode) #ci-table .ci-list-wac-action{min-height:25px;padding:3px 8px;border-radius:7px;font-size:10px;white-space:nowrap}',
       '.content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-owners{max-width:220px;overflow:hidden;text-overflow:ellipsis}',
       '.content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-table .cell-actions{position:sticky;right:0;background:#fff!important;box-shadow:-6px 0 10px rgba(0,0,0,.04)}',
@@ -383,6 +402,7 @@
           statusCellHtml(b, 'logistics_status', ciId) +
           statusCellHtml(b, 'listing_status', ciId) +
           '<td class="ci-list-logi-owners">' + (b.listing_owner_names && b.listing_owner_names.length ? esc(b.listing_owner_names.join('、')) : '—') + '</td>' +
+          wacStatusCellHtml(b) +
           '<td class="cell-actions"><div class="ci-list-logi-export-actions">' +
             (hasPermission('logistics_edit') ? '<button class="action-btn" data-ci-logi-edit="' + esc(b.id) + '" data-ci-id="' + esc(ciId) + '" title="' + esc(tr('common.edit', '编辑')) + '">✏️</button> ' : '') +
             wacActionsHtml(b, ciId) +
@@ -411,6 +431,7 @@
           '<th>' + esc(tr('logistics.col.status', '状态')) + '</th>' +
           '<th>' + esc(tr('logistics.col.listing_status', 'Listing状态')) + '</th>' +
           '<th>' + esc(tr('logistics.col.owners', '负责人')) + '</th>' +
+          '<th>WAC 状态</th>' +
           '<th>' + esc(tr('common.actions', '操作')) + '</th>' +
         '</tr></thead><tbody>' + rowsHtml + '</tbody></table></div>'
       : '<div class="ci-list-logi-empty">' + esc(tr('logistics.no_batch', '该CI暂无关联物流批次')) + '</div>';
@@ -694,6 +715,7 @@
     if (el.hasAttribute('data-ci-logi-create')) return void openCreate(el.getAttribute('data-ci-logi-create'));
     if (el.hasAttribute('data-ci-logi-edit')) return void openEdit(el.getAttribute('data-ci-logi-edit'), el.getAttribute('data-ci-id'));
     if (el.hasAttribute('data-ci-logi-wac-confirm') && typeof global.viewLogWacDetail === 'function') return void global.viewLogWacDetail(el.getAttribute('data-ci-logi-wac-confirm'), el.getAttribute('data-ci-id'), 'pending');
+    if (el.hasAttribute('data-ci-logi-wac-view') && typeof global.viewLogWacDetail === 'function') return void global.viewLogWacDetail(el.getAttribute('data-ci-logi-wac-view'), el.getAttribute('data-ci-id'), 'not_ready');
     if (el.hasAttribute('data-ci-logi-wac-exclude') && typeof global.openCIWacExclude === 'function') return void global.openCIWacExclude(el.getAttribute('data-ci-logi-wac-exclude'), el.getAttribute('data-ci-id'), el.getAttribute('data-batch-no'));
     if (el.hasAttribute('data-ci-logi-wac-restore') && typeof global.openCIWacRestore === 'function') return void global.openCIWacRestore(el.getAttribute('data-ci-logi-wac-restore'), el.getAttribute('data-ci-id'), el.getAttribute('data-batch-no'));
     if (el.hasAttribute('data-ci-logi-wac-cc') && typeof global.openWacCcFromCI === 'function') return void global.openWacCcFromCI(el.getAttribute('data-ci-logi-wac-cc'), el.getAttribute('data-ci-id'), el.getAttribute('data-batch-no'));

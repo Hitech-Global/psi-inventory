@@ -436,6 +436,28 @@
     win.XLSX.writeFile(book, 'BigSeller销售导入异常明细.xlsx');
   }
 
+  function setImportProgress(win, message, percent, state) {
+    if (!win) return;
+    var progress = {
+      message: String(message || ''),
+      percent: Math.max(0, Math.min(100, Number(percent) || 0)),
+      state: state || 'loading'
+    };
+    win._salesImportBigSellerProgress = progress;
+    var el = win.document && win.document.getElementById('sales-preview-stats');
+    if (!el) return;
+    var old = el.querySelector && el.querySelector('#bigseller-sales-progress');
+    if (old && typeof old.remove === 'function') old.remove();
+    var color = progress.state === 'error' ? '#dc2626' : progress.state === 'blocked' ? '#d97706' : progress.state === 'done' ? '#15803d' : '#2563eb';
+    var html = '<div id="bigseller-sales-progress" role="status" aria-live="polite" style="margin:0 0 10px;padding:10px 13px;border:1px solid #dbeafe;background:#f8fbff;border-radius:9px">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:7px">' +
+      '<span style="font-size:12px;font-weight:600;color:' + color + '">' + escapeHtml(progress.message) + '</span>' +
+      '<span style="font-size:12px;font-weight:650;color:#475569;white-space:nowrap;font-variant-numeric:tabular-nums">' + progress.percent + '%</span></div>' +
+      '<div role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + progress.percent + '" style="height:6px;overflow:hidden;background:#e5e7eb;border-radius:99px">' +
+      '<div style="height:100%;width:' + progress.percent + '%;border-radius:99px;background:' + color + ';transition:width .25s ease"></div></div></div>';
+    el.insertAdjacentHTML('afterbegin', html);
+  }
+
   function renderSummary(win, stats, country) {
     var el = win.document && win.document.getElementById('sales-preview-stats');
     if (!el) return;
@@ -484,6 +506,7 @@
       win._salesImportCountry = '';
       win._salesImportData = [];
       win._salesImportPreviewReady = false;
+      win._salesImportBigSellerProgress = null;
       win._lastSalesImportErrors = [];
       var stats = win.document && win.document.getElementById('sales-preview-stats');
       if (stats) stats.innerHTML = '';
@@ -498,11 +521,23 @@
     };
 
     win.requestSalesPreview = async function () {
-      var result = await originalRequestSalesPreview.apply(this, arguments);
-      if (win._salesImportSourceMode === 'bigseller' && win._salesImportSkippedStats) {
-        renderSummary(win, win._salesImportSkippedStats, win._salesImportCountry);
+      var isBigSeller = win._salesImportSourceMode === 'bigseller' && !!win._salesImportSkippedStats;
+      if (isBigSeller) setImportProgress(win, '正在校验 SKU 与品牌主数据…', 78);
+      try {
+        var result = await originalRequestSalesPreview.apply(this, arguments);
+        if (isBigSeller) {
+          var blocked = Array.isArray(win._salesImportBlocking) && win._salesImportBlocking.length > 0;
+          var ready = win._salesImportPreviewReady === true;
+          renderSummary(win, win._salesImportSkippedStats, win._salesImportCountry);
+          setImportProgress(win,
+            ready ? 'SKU / 品牌校验完成，可以开始导入。' : blocked ? 'SKU / 品牌校验未通过，请先处理异常。' : '后台校验尚未完成，暂不能导入。',
+            100, ready ? 'done' : 'blocked');
+        }
+        return result;
+      } catch (error) {
+        if (isBigSeller) setImportProgress(win, '后台校验失败，暂不能导入。', 100, 'error');
+        throw error;
       }
-      return result;
     };
 
     win.handleSalesFile = function (file) {
@@ -517,8 +552,16 @@
       }
 
       var reader = new win.FileReader();
-      reader.onload = function (event) {
+      setImportProgress(win, '正在读取 BigSeller 销售文件…', 3);
+      reader.onprogress = function (event) {
+        var percent = event && event.lengthComputable && event.total > 0
+          ? 5 + Math.round(event.loaded / event.total * 30) : 18;
+        setImportProgress(win, '正在读取 BigSeller 销售文件…', percent);
+      };
+      reader.onload = async function (event) {
         try {
+          setImportProgress(win, '文件读取完成，正在解析 Excel 与识别订单…', 40);
+          await new Promise(function (resolvePaint) { setTimeout(resolvePaint, 0); });
           var workbook = win.XLSX.read(new Uint8Array(event.target.result), {
             type: 'array', cellDates: true
           });
@@ -533,6 +576,7 @@
           win._salesImportSkippedStats = parsed.stats;
           win._salesImportCountry = parsed.country || '';
           win._salesImportData = parsed.records;
+          setImportProgress(win, '订单识别完成，正在生成导入预览…', 68);
           win.renderSalesPreview(parsed.records);
           var button = win.document.getElementById('sales-import-btn');
           if (button) button.disabled = true;
@@ -542,13 +586,16 @@
           if (parsed.records.length === 0 && typeof win.showToast === 'function') {
             win.showToast('没有符合指定订单标记和订单状态规则的销售记录。', 'warning');
           }
+          setImportProgress(win, parsed.records.length ? '文件识别完成，等待 SKU / 品牌后台校验。' : '识别完成，没有可导入记录。', 72, parsed.records.length ? 'loading' : 'blocked');
         } catch (error) {
+          setImportProgress(win, 'BigSeller 销售文件解析失败。', 100, 'error');
           if (typeof win.showToast === 'function') {
             win.showToast('BigSeller 销售文件解析失败：' + (error && error.message ? error.message : ''), 'danger');
           }
         }
       };
       reader.onerror = function () {
+        setImportProgress(win, 'BigSeller 销售文件读取失败，请重新上传。', 100, 'error');
         if (typeof win.showToast === 'function') win.showToast('BigSeller 销售文件读取失败，请重新上传。', 'danger');
       };
       reader.readAsArrayBuffer(file);
