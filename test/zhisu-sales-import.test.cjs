@@ -432,12 +432,15 @@ test('Zhisu file upload automatically runs SKU/brand precheck and unlocks import
   assert.equal(harness.importButton.disabled, true);
   assert.ok(harness.statsElement.innerHTML.includes('正在校验 SKU 与品牌主数据'));
   assert.ok(harness.statsElement.innerHTML.includes('role="progressbar"'));
+  assert.ok(harness.statsElement.innerHTML.includes('76%'));
+  assert.ok(!harness.statsElement.innerHTML.includes('处理中'));
 
   releasePrecheck();
   await upload;
 
   assert.equal(harness.importButton.disabled, false);
   assert.ok(harness.statsElement.innerHTML.includes('SKU / 品牌校验完成，可以开始导入。'));
+  assert.ok(harness.statsElement.innerHTML.includes('100%'));
   assert.ok(harness.statsElement.innerHTML.includes('SKU / 品牌后台预检查通过'));
 });
 
