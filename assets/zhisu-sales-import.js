@@ -95,9 +95,9 @@
 
   function countryFromStore(value) {
     var store = text(value);
-    if (/(?:\\(\\s*sg\\s*\\)|\\bsg\\b|singapore|新加坡)/i.test(store)) return '新加坡';
-    if (/(?:\\(\\s*my\\s*\\)|\\bmy\\b|malaysia|马来西亚)/i.test(store)) return '马来西亚';
-    if (/(?:\\(\\s*th\\s*\\)|\\bth\\b|thailand|泰国)/i.test(store)) return '泰国';
+    if (/(?:\(\s*sg\s*\)|\bsg\b|singapore|新加坡)/i.test(store)) return '新加坡';
+    if (/(?:\(\s*my\s*\)|\bmy\b|malaysia|马来西亚)/i.test(store)) return '马来西亚';
+    if (/(?:\(\s*th\s*\)|\bth\b|thailand|泰国)/i.test(store)) return '泰国';
     return '';
   }
 
