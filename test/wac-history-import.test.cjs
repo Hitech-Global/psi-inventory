@@ -173,6 +173,7 @@ function setupSchema() {
 
   run('INSERT INTO skus (sku_code,brand,model) VALUES (?,?,?)', ['NT-HISTORY-01','Netac','SSD A']);
   run('INSERT INTO skus (sku_code,brand,model) VALUES (?,?,?)', ['NT-HISTORY-02','Netac','SSD B']);
+  run('INSERT INTO skus (sku_code,brand,model) VALUES (?,?,?)', ['NT-HISTORY-03','Netac','SSD C']);
   run('INSERT INTO countries (id,name,code,default_currency,status,sort_order) VALUES (?,?,?,?,?,?)',
     ['c1','印尼','ID','IDR','active',1]);
   run('INSERT INTO warehouses (id,name,country_name,status) VALUES (?,?,?,?)',
@@ -242,7 +243,7 @@ test('WAC history import validates master data, syncs current WAC, skips exact d
   const template = await request('/api/wac/history-import/template','GET');
   assert.equal(template.status,200);
   assert.deepEqual(template.body.columns,[
-    'SKU','品牌','国家','仓库','历史WAC（本币）','最后入库日期','结束日期','本币币种','1 RMB = 本币汇率'
+    'SKU','品牌','国家','仓库','历史WAC（本币）','最后入库日期','结束日期','本币币种','历史汇率日期','1 RMB = 本币汇率'
   ]);
 
   const valid = validateWacHistoryImportRows([validRow()]);
@@ -310,6 +311,30 @@ test('WAC history import validates master data, syncs current WAC, skips exact d
   assert.equal(badPrecheck.status,200);
   assert.equal(badPrecheck.body.ok,false);
   assert.ok(badPrecheck.body.blocking.some(x=>x.issue_type==='SKU_MASTER_MISSING'));
+
+  const explicitFxDateRow = validRow({
+    sku_code:'NT-HISTORY-03',
+    new_avg_cost:1234.56,
+    last_inbound_date:'2026-11-07',
+    effective_end_date:'',
+    fx_rate_date:'2026-11-09',
+    rmb_to_local_rate:5.009638
+  });
+  const explicitFxDatePrecheck = validateWacHistoryImportRows([explicitFxDateRow]);
+  assert.equal(explicitFxDatePrecheck.ok,true);
+  assert.equal(explicitFxDatePrecheck.normalized_items[0].fx_rate_date,'2026-11-09',
+    'explicit FX date must remain separate from last inbound date');
+
+  const explicitFxDateImport = await request('/api/wac/history-import','POST',{items:[explicitFxDateRow]});
+  assert.equal(explicitFxDateImport.status,200);
+  const explicitFxHistory = one('SELECT last_inbound_date,fx_rate_date,rmb_to_local_rate FROM wac_history WHERE sku_code = ?', ['NT-HISTORY-03']);
+  assert.equal(explicitFxHistory.last_inbound_date,'2026-11-07');
+  assert.equal(explicitFxHistory.fx_rate_date,'2026-11-09');
+  assert.equal(Number(explicitFxHistory.rmb_to_local_rate),5.009638);
+
+  const invalidFxDate = validateWacHistoryImportRows([validRow({fx_rate_date:'not-a-date'})]);
+  assert.equal(invalidFxDate.ok,false);
+  assert.ok(invalidFxDate.blocking.some(x=>x.issue_type==='FX_DATE_INVALID'));
 
   const rateWithoutDate = validateWacHistoryImportRows([validRow({last_inbound_date:''})]);
   assert.equal(rateWithoutDate.ok,false);
@@ -480,13 +505,16 @@ test('WAC history matrix keeps the agreed dimensions, left alignment, sticky hea
   const importConfig = appSource.slice(importColumnsStart, importPayloadStart);
   assert.match(importConfig,/last_inbound_date/);
   assert.match(importConfig,/effective_end_date/);
-  assert.doesNotMatch(importConfig,/确认日期|汇率日期|confirmed_at|fx_rate_date/);
+  assert.match(importConfig,/fx_rate_date/);
+  assert.match(importConfig,/历史汇率日期/);
+  assert.doesNotMatch(importConfig,/确认日期|confirmed_at/);
   const templateStart = serverSource.indexOf("app.get('/api/wac/history-import/template'");
   const templateEnd = serverSource.indexOf("app.post('/api/wac/history-import/precheck'",templateStart);
   assert.ok(templateStart >= 0 && templateEnd > templateStart);
   const templateRoute = serverSource.slice(templateStart,templateEnd);
-  assert.match(templateRoute,/columns: \['SKU', '品牌', '国家', '仓库', '历史WAC（本币）', '最后入库日期', '结束日期', '本币币种', '1 RMB = 本币汇率'\]/);
-  assert.doesNotMatch(templateRoute,/确认日期|汇率日期/);
+  assert.match(templateRoute,/columns: \['SKU', '品牌', '国家', '仓库', '历史WAC（本币）', '最后入库日期', '结束日期', '本币币种', '历史汇率日期', '1 RMB = 本币汇率'\]/);
+  assert.match(templateRoute,/历史汇率日期/);
+  assert.doesNotMatch(templateRoute,/确认日期/);
 
 });
 

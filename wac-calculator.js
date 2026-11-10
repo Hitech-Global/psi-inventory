@@ -274,6 +274,8 @@ function computeWacCostFacts(logisticsBatchId) {
   let freightEffectiveRate = null;
   let freightLastPaidDate = '';
   let freightPaymentBreakdown = [];
+  let rmbToLocalEffectiveRate = null;
+  let rmbToLocalRateDate = '';
 
   if (freightBusinessAmount > 0) {
     // Batch-scoped query: ONLY this batch's freight cost items
@@ -321,7 +323,8 @@ function computeWacCostFacts(logisticsBatchId) {
 
         // Query ALL raw applied payment logs — no grouping, no deduplication
         const freightLogs = _q(
-          `SELECT payment_request_id, amount, local_amount, local_rate, local_rate_date, local_currency, local_rate_type, local_rate_direction, paid_date
+          `SELECT payment_request_id, amount, local_amount, local_rate, local_rate_date, local_currency, local_rate_type, local_rate_direction, paid_date,
+                  rmb_rate, rmb_rate_date, rmb_rate_type, rmb_rate_direction, rmb_amount
            FROM payment_settlement_logs
            WHERE payment_request_id IN (${ph})
              AND event_type = 'payment' AND status = 'applied'
@@ -377,8 +380,30 @@ function computeWacCostFacts(logisticsBatchId) {
                 local_rate_type: log.local_rate_type || 'payment_settlement',
                 local_rate_direction: log.local_rate_direction || '',
                 local_currency: log.local_currency || '',
-                paid_date: log.paid_date || ''
+                paid_date: log.paid_date || '',
+                rmb_rate: Number(log.rmb_rate) || 0,
+                rmb_rate_date: log.rmb_rate_date || '',
+                rmb_rate_type: log.rmb_rate_type || '',
+                rmb_rate_direction: log.rmb_rate_direction || '',
+                rmb_amount: Number(log.rmb_amount) || 0
               }));
+              // Build the effective RMB→local snapshot from the same applied payment events.
+              // Ratio of original-currency→local to original-currency→RMB rates avoids
+              // using rounded settlement amounts and remains valid across source currencies.
+              const completeRmbFx = freightLogs.every(log =>
+                Number(log.amount) > 0 && Number(log.local_rate) > 0 && Number(log.rmb_rate) > 0 &&
+                String(log.rmb_rate_date || '').slice(0, 10) === String(log.paid_date || '').slice(0, 10)
+              );
+              if (completeRmbFx) {
+                const rmbEquivalentTotal = freightLogs.reduce((sum, log) =>
+                  sum + (Number(log.amount) || 0) * (Number(log.rmb_rate) || 0), 0);
+                const localEquivalentTotal = freightLogs.reduce((sum, log) =>
+                  sum + (Number(log.amount) || 0) * (Number(log.local_rate) || 0), 0);
+                if (rmbEquivalentTotal > 0 && localEquivalentTotal > 0) {
+                  rmbToLocalEffectiveRate = localEquivalentTotal / rmbEquivalentTotal;
+                  rmbToLocalRateDate = lastPaidDate;
+                }
+              }
               // Amount-weight the actual applied settlement rates; do not derive the rate
               // from rounded local_amount values, and do not arbitrarily take the first payment.
               if (freightCurrency !== localCurrency && freightPaidTotal > 0) {
@@ -902,6 +927,8 @@ function computeWacCostFacts(logisticsBatchId) {
     freight_local_amount: Math.round(freightLocalAmount * 10000) / 10000,
     freight_effective_rate: freightEffectiveRate !== null ? Math.round(freightEffectiveRate * 10000) / 10000 : null,
     freight_last_paid_date: freightLastPaidDate,
+    rmb_to_local_rate: rmbToLocalEffectiveRate !== null ? Math.round(rmbToLocalEffectiveRate * 100000000) / 100000000 : null,
+    rmb_to_local_rate_date: rmbToLocalRateDate,
     product_fx_rate_date: productFxDate,
     product_fx_rate: productFxRate ? productFxRate.rate : null,
     product_fx_rate_type: productFxRate ? productFxRate.rate_type : null,

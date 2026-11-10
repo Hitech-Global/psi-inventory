@@ -767,6 +767,8 @@ describe('computeWacCostFacts - freight payment date + goods FX', () => {
     seedPaymentRequest('pr_paid_anchor', 'PR-PAID-ANCHOR', 'RMB', 1000, 'ci_paid_anchor', 'warehouse_arrival', 'freight');
     seedCiCostItem('cci_paid_anchor', 'ci_paid_anchor', 'pr_paid_anchor', 'warehouse_arrival', 'freight', 1000, 'RMB', 'lb_paid_anchor');
     seedPaymentLog('psl_paid_anchor', 'pr_paid_anchor', 1000, 5010, 5.01000001, '2026-11-02', 'THB');
+    run('UPDATE payment_settlement_logs SET rmb_rate=?, rmb_rate_date=?, rmb_amount=? WHERE id=?',
+      [1, '2026-11-02', 1000, 'psl_paid_anchor']);
     seedPL('pl_paid_anchor', 'PL-PAID-ANCHOR', 'ci_paid_anchor', 'lb_paid_anchor', { status: 'confirmed', country: 'Thailand', warehouse: 'WH-TH' });
     seedPLItem('pli_paid_anchor', 'pl_paid_anchor', 'SKU-PAID-ANCHOR', 10, 1, 10);
     seedInventory('SKU-PAID-ANCHOR', 'Thailand', 'WH-TH', 0, 0);
@@ -780,6 +782,8 @@ describe('computeWacCostFacts - freight payment date + goods FX', () => {
     assert.equal(result.items[0].product_fx_rate_type, 'payment_settlement');
     assert.equal(result.items[0].product_fx_direction, 'payment_settlement');
     assert.equal(result.items[0].product_cost_local, 5010);
+    assert.equal(result.meta.rmb_to_local_rate, 5.01000001);
+    assert.equal(result.meta.rmb_to_local_rate_date, '2026-11-02');
   });
 
   test('Same-currency → rate=1, no FX needed', () => {
@@ -2068,4 +2072,41 @@ test('WAC SKU table header remains sticky in its own scroll container', () => {
   assert.ok(ui.includes('position:sticky;top:0;left:0;z-index:4'), 'top-left SKU header cell must stick on both axes');
   assert.ok(html.includes('.modal-wac .wac-table-scroll thead th{position:sticky;top:0;'), 'all SKU column headers must stick to the top of the table scrollport');
   assert.ok(html.includes('.modal-wac .wac-table-scroll thead th:first-child{left:0;z-index:4}'), 'first SKU header cell must remain above the other sticky headers');
+});
+
+
+test('WAC confirmation persists the actual freight-payment FX date and matrix shows it separately from inbound date', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const server = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
+  const app = fs.readFileSync(path.join(__dirname, 'app.js'), 'utf8');
+  const calculator = fs.readFileSync(path.join(__dirname, 'wac-calculator.js'), 'utf8');
+
+  const confirmStart = server.indexOf("app.post('/api/wac/confirm/:logistics_batch_id'");
+  const confirmEnd = server.indexOf("app.post('/api/wac/notifications/", confirmStart);
+  assert.ok(confirmStart >= 0 && confirmEnd > confirmStart, 'WAC confirmation route must exist');
+  const confirmRoute = server.slice(confirmStart, confirmEnd);
+  assert.ok(confirmRoute.includes('meta.rmb_to_local_rate_date || meta.freight_last_paid_date || inboundDate'),
+    'FX snapshot date must follow actual payment settlement date');
+  assert.ok(confirmRoute.includes('fx_rate_date: fxSnapshot ? fxSnapshot.rate_date : paymentFxDate'),
+    'WAC history must save the payment FX date even when the exact rate is missing');
+  assert.ok(!confirmRoute.includes('resolveExactRmbToLocalRate(localCurrency, inboundDate'),
+    'WAC confirmation must not resolve FX by inbound date');
+
+  assert.ok(calculator.includes('rmb_to_local_rate: rmbToLocalEffectiveRate'),
+    'calculator must expose the applied payment-derived RMB→local rate');
+
+  const modelStart = app.indexOf('function _wacHistoryMatrixExportModel(');
+  const modelEnd = app.indexOf('async function exportWacHistoryMatrix()', modelStart);
+  assert.ok(modelStart >= 0 && modelEnd > modelStart, 'WAC history export model must exist');
+  const model = app.slice(modelStart, modelEnd);
+  assert.ok(model.includes('maximumFractionDigits:2'), 'export model WAC values must use two decimals');
+  assert.ok(model.includes('r.fx_rate_date'), 'export model must label the actual FX snapshot date');
+
+  const renderStart = app.indexOf('async function loadWacHistoryMatrix(');
+  const renderEnd = app.indexOf('// ==================== WAC历史记录导入', renderStart);
+  assert.ok(renderStart >= 0 && renderEnd > renderStart, 'WAC history matrix renderer must exist');
+  const render = app.slice(renderStart, renderEnd);
+  assert.ok(render.includes('maximumFractionDigits:2'), 'rendered WAC values must use two decimals');
+  assert.ok(render.includes('r.fx_rate_date'), 'rendered matrix must display the actual FX snapshot date');
 });

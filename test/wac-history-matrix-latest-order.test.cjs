@@ -22,13 +22,17 @@ test('WAC history matrix Latest WAC follows newest confirmation timestamp, not l
     {
       sku_code: 'NT02P500ECO-016G-S', brand: 'Netac', country: '印度尼西亚',
       warehouse: 'Bekasi Warehouse', version_no: 1, confirmed_at: '2026-11-03 07:13:02',
-      last_inbound_date: '2026-11-02', new_avg_cost: 79816.8094, local_currency: 'IDR'
+      last_inbound_date: '2026-11-02', new_avg_cost: 79816.8094, local_currency: 'IDR',
+      fx_rate_date: '2026-11-09', rmb_to_local_rate: 5.009638
     }
   ];
   const model = vm.runInNewContext(fnSource + '\n_wacHistoryMatrixExportModel(' + JSON.stringify(rows) + ', {});');
   assert.equal(model.rows.length, 1);
-  assert.match(model.rows[0][4], /^79,816\.8094 IDR$/);
+  assert.match(model.rows[0][4], /^79,816\.81 IDR$/);
   assert.equal(model.rows[0][6], '2026-11-02');
+  const latestDateHeader = model.headers.find(header => String(header).includes('2026-11-02'));
+  assert.ok(latestDateHeader.includes('1 RMB = 5.009638 IDR'));
+  assert.ok(latestDateHeader.includes('汇率日 2026-11-09'));
 });
 
 test('both screen and export sort latest records by confirmed_at before version_no', () => {
