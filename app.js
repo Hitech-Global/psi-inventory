@@ -15323,7 +15323,7 @@ function _wacHistoryMatrixExportModel(rows, filters) {
   const groups = Array.from(groupMap.values()).sort((a,b)=>String(a.sku).localeCompare(String(b.sku)));
   const money = function(v) {
     return v === null || v === undefined || v === '' || !Number.isFinite(Number(v)) ? '—' :
-      Number(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:4});
+      Number(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
   };
   const ordered = function(g) {
     return g.records.slice().sort((a,b)=>String(b.confirmed_at||'').localeCompare(String(a.confirmed_at||'')) || Number(b.version_no||0)-Number(a.version_no||0));
@@ -15332,10 +15332,12 @@ function _wacHistoryMatrixExportModel(rows, filters) {
     if (!r) return '';
     const currency = String(r.local_currency || '').trim().toUpperCase();
     const rate = Number(r.rmb_to_local_rate);
+    const rateDate = String(r.fx_rate_date || '').slice(0,10);
+    const dateLabel = rateDate ? ' · 汇率日 ' + rateDate : '';
     if (Number.isFinite(rate) && rate > 0 && currency) {
-      return '1 RMB = ' + Number(rate).toLocaleString('en-US',{maximumFractionDigits:8}) + ' ' + currency;
+      return '1 RMB = ' + Number(rate).toLocaleString('en-US',{maximumFractionDigits:8}) + ' ' + currency + dateLabel;
     }
-    return currency ? currency + ' 历史汇率缺失' : '未配置本币币种';
+    return (currency ? currency + ' 历史汇率缺失' : '未配置本币币种') + dateLabel;
   };
   const dateFxLabels = new Map();
   groups.forEach(function(g) {
@@ -15494,7 +15496,7 @@ async function loadWacHistoryMatrix(refresh) {
     const groups = Array.from(groupMap.values()).sort((a,b)=>String(a.sku).localeCompare(String(b.sku)));
     const money = function(v) {
       return v === null || v === undefined || v === '' || !Number.isFinite(Number(v)) ? '—' :
-        Number(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:4});
+        Number(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
     };
     const ordered = function(g) {
       return g.records.slice().sort((a,b)=>String(b.confirmed_at||'').localeCompare(String(a.confirmed_at||'')) || Number(b.version_no||0)-Number(a.version_no||0));
@@ -15505,10 +15507,12 @@ async function loadWacHistoryMatrix(refresh) {
       if (!r) return '';
       const currency = String(r.local_currency || '').trim().toUpperCase();
       const rate = Number(r.rmb_to_local_rate);
+      const rateDate = String(r.fx_rate_date || '').slice(0,10);
+      const dateLabel = rateDate ? ' · 汇率日 ' + rateDate : '';
       if (Number.isFinite(rate) && rate > 0 && currency) {
-        return '1 RMB = ' + Number(rate).toLocaleString('en-US',{maximumFractionDigits:8}) + ' ' + currency;
+        return '1 RMB = ' + Number(rate).toLocaleString('en-US',{maximumFractionDigits:8}) + ' ' + currency + dateLabel;
       }
-      return currency ? currency + ' 历史汇率缺失' : '未配置本币币种';
+      return (currency ? currency + ' 历史汇率缺失' : '未配置本币币种') + dateLabel;
     };
     // 每个历史日期的汇率集中显示在表头；同日存在多个币种/快照时分别展示，避免按单一币种错误合并。
     const dateFxLabels = new Map();
@@ -15590,7 +15594,7 @@ async function loadWacHistoryMatrix(refresh) {
       '</tr>';
     });
     html += '</tbody></table></div>' +
-      '<div style="padding:8px 2px;font-size:11px;color:var(--text-secondary)">Latest WAC及变化按WAC实际确认时间最新的记录计算；同一确认时间再按版本号排序。日期列按最后入库日期显示，同一入库日显示该日最新确认记录。历史导入记录如有有效期，会在成本下方显示结束日期。历史汇率只显示已保存快照或对应日期的精确汇率，缺失时不使用当前汇率替代。横向滚动可查看全部历史日期。</div>';
+      '<div style="padding:8px 2px;font-size:11px;color:var(--text-secondary)">Latest WAC及变化按WAC实际确认时间最新的记录计算；同一确认时间再按版本号排序。日期列按最后入库日期显示，同一入库日显示该日最新确认记录。历史导入记录如有有效期，会在成本下方显示结束日期。汇率日期按实际运费付款结算日显示；日期列仍按最后入库日期显示。历史汇率缺失时不使用当前汇率替代。横向滚动可查看全部历史日期。</div>';
     target.innerHTML = html;
   } catch(e) {
     target.innerHTML = '<div class="empty-state">' + esc(e.message || '加载失败') + '</div>';
