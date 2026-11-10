@@ -80,13 +80,15 @@ test('maps cancelled and buyer-return statuses to False; every other status is T
   assert.equal(parsed.stats.trueRows, 3);
 });
 
-test('warehouse name determines Malaysia, Thailand and Singapore without guessing', () => {
+test('warehouse country identifies Zhisu only for Malaysia and Thailand', () => {
   const parsed = Zhisu.parseZhisuWorkbook(workbook([
     row({ 2: 'MY-1', 6: '吉隆坡一号仓' }),
     row({ 2: 'TH-1', 6: '泰国一号仓', 0: 'EC-TH-1' }),
     row({ 2: 'SG-1', 6: '新加坡仓', 0: 'EC-SG-1' })
   ]), 'orders.xlsx', fakeXlsx());
-  assert.deepEqual(parsed.records.map(record => record.country), ['马来西亚', '泰国', '新加坡']);
+  assert.deepEqual(parsed.records.map(record => record.country), ['马来西亚', '泰国', '']);
+  assert.ok(parsed.records[2]._errors.some(error => error.includes('无法根据仓库名称识别国家')));
+  assert.equal(parsed.stats.unknownWarehouseRows, 1);
 });
 
 test('multiple SKUs under one order remain separate sales lines', () => {
