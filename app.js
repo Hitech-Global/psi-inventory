@@ -4883,7 +4883,7 @@ function invStatusBadge(v){
 async function renderInventory(){
   invDataCache = []; invAllFilteredIds = []; invSelectAllMode = false;
   document.getElementById('content-inner').innerHTML=
-    t('html.renderInventory', `<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>国家</label><select id="inv-c" onchange="onInvFilterChange('country')"><option value="">全部</option></select></div><div class="filter-group"><label>仓库</label><select id="inv-w" onchange="onInvFilterChange('warehouse')"><option value="">全部</option></select></div><div class="filter-group"><label>品牌</label><select id="inv-b" onchange="onInvFilterChange('brand')"><option value="">全部</option></select></div><div class="filter-group"><label>关键词</label><input type="text" id="inv-k" placeholder="SKU/产品名" oninput="debouncedInvKeyword()"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadInv()">搜索</button><button class="btn btn-secondary btn-sm" onclick="resetInvFilters()">重置</button>{v1}</div></div></div><div id="inv-batch-bar" style="display:none;background:var(--bg-card,#fff);border:1px solid var(--border,#e0e0e0);border-radius:8px;padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span id="inv-batch-count" style="font-weight:600;margin-right:8px"></span><button class="btn btn-sm btn-secondary" onclick="invBatchAction('export')">📊 导出</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_status')">🏷️ 库存状态</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_focused')">⭐ 重点关注</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_safety_stock')">🛡️ 安全库存</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_turnover')">🎯 目标周转</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_replenish_rule')">📋 补货规则</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_remark')">📝 库存备注</button><button class="btn btn-sm btn-warning" onclick="invBatchAction('inventory_adjust')">🔧 发起调整单</button><button class="btn btn-sm btn-danger" onclick="invBatchAction('delete')" style="background:#ff4d4f;color:#fff;border:none">🗑️ 删除</button><button class="btn btn-sm btn-secondary" onclick="invClearSelection()" style="margin-left:auto">取消选择</button></div><div id="inv-cards" class="stats-grid"></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">📦 库存总表</div><div class="table-section-title-right" id="inv-rate-display" style="font-size:12px;color:#666;display:flex;gap:12px;align-items:center"></div></div><div id="inv-table"></div></div>`, {v1: hasPermission('inventory_import')?(t('gen.L2829.1','<button class="btn btn-secondary btn-sm" onclick="openInvBatchImport()">📥 导入库存</button>')):''});
+    t('html.renderInventory', `<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>国家</label><select id="inv-c" onchange="onInvFilterChange('country')"><option value="">全部</option></select></div><div class="filter-group"><label>仓库</label><select id="inv-w" onchange="onInvFilterChange('warehouse')"><option value="">全部</option></select></div><div class="filter-group"><label>品牌</label><select id="inv-b" onchange="onInvFilterChange('brand')"><option value="">全部</option></select></div><div class="filter-group"><label>关键词</label><input type="text" id="inv-k" placeholder="SKU/产品名" oninput="debouncedInvKeyword()"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadInv()">搜索</button><button class="btn btn-secondary btn-sm" onclick="resetInvFilters()">重置</button>{v1}</div></div></div><div id="inv-batch-bar" style="display:none;background:var(--bg-card,#fff);border:1px solid var(--border,#e0e0e0);border-radius:8px;padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span id="inv-batch-count" style="font-weight:600;margin-right:8px"></span><button class="btn btn-sm btn-secondary" onclick="invBatchAction('export')">📊 导出</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_status')">🏷️ 库存状态</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_focused')">⭐ 重点关注</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_safety_stock')">🛡️ 安全库存</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_turnover')">🎯 目标周转</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_replenish_rule')">📋 补货规则</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_remark')">📝 库存备注</button><button class="btn btn-sm btn-warning" onclick="invBatchAction('inventory_adjust')">🔧 发起调整单</button><button class="btn btn-sm btn-danger" onclick="invBatchAction('delete')" style="background:#ff4d4f;color:#fff;border:none">🗑️ 删除</button><button class="btn btn-sm btn-secondary" onclick="invClearSelection()" style="margin-left:auto">取消选择</button></div><div id="inv-cards" class="stats-grid"><div class="empty-state" style="padding:24px;color:var(--text-secondary)">正在加载库存指标…</div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">📦 库存总表</div><div class="table-section-title-right" id="inv-rate-display" style="font-size:12px;color:#666;display:flex;gap:12px;align-items:center"></div></div><div id="inv-table"><div class="empty-state" style="padding:28px;color:var(--text-secondary)">正在加载库存数据…</div></div></div>`, {v1: hasPermission('inventory_import')?(t('gen.L2829.1','<button class="btn btn-secondary btn-sm" onclick="openInvBatchImport()">📥 导入库存</button>')):''});
   // 筛选级联：根据当前已选条件动态刷新下拉可选项（仅库存总表页面）
   try{ await refreshInvFilterOptions(); }catch(e){console.warn('filter-options load failed',e)}
   // 恢复库存总表保存的筛选状态（仅本页面 localStorage，不影响其他页面）
@@ -4909,15 +4909,14 @@ async function loadInv(){
     try{ localStorage.setItem('psi_inv_filters_v1', JSON.stringify({c,w,b,k})); }catch(e){}
     const mySeq = ++_invLoadSeq;
     const _invUrl = '/api/inventory?country='+encodeURIComponent(c)+'&warehouse='+encodeURIComponent(w)+'&brand='+encodeURIComponent(b)+'&keyword='+encodeURIComponent(k);
-    const [data, rateInfo] = await Promise.all([
-      // 性能层：库存总表主数据走页面快照缓存（signature=完整筛选 URL；命中立即渲染，后台 stale-while-revalidate）
-      api(_invUrl, 'GET', null, {cacheKey:'inventory', ttl:30000, signature:_invUrl}),
-      // 汇率获取容错：即使汇率接口/外部服务异常，库存表仍正常打开（缺失汇率仅显示为 -，不阻断整页）
-      // 性能层：currency-rates 为 session 级稳定数据，加 page 缓存（warm return 不再重拉，消除 secondary blocking GET）
-      api('/api/inventory/currency-rates', 'GET', null, {cacheKey:'inv-currency-rates', ttl:300000}).catch(function(){ return {countries:[],rates:{},rate_date:'',used_fallback:false}; })
-    ]);
+    const cachedRateInfo = window._invRateInfo || null;
+    const ratePromise = api('/api/inventory/currency-rates', 'GET', null, {cacheKey:'inv-currency-rates', ttl:300000})
+      .catch(function(){ return {countries:[],rates:{},rate_date:'',used_fallback:false}; });
+    // 先等待库存主数据；汇率只是展示增强项，不得阻塞首屏表格和指标卡。
+    const data = await api(_invUrl, 'GET', null, {cacheKey:'inventory', ttl:30000, signature:_invUrl});
+    const rateInfo = cachedRateInfo || {countries:[],rates:{},rate_date:'',used_fallback:false};
     if(mySeq !== _invLoadSeq) return; // 丢弃过期响应：避免快速切换筛选时旧请求覆盖新结果
-    window._invRateInfo = rateInfo; // 缓存供导出使用
+    if (cachedRateInfo) window._invRateInfo = cachedRateInfo; // 仅复用已就绪汇率，不能缓存占位空值
     invDataCache = data;
     invAllFilteredIds = data.map(d=>d.id);
     invSelectAllMode = false;
@@ -5029,6 +5028,16 @@ async function loadInv(){
     syncInvHeader();
     renderInvCards(data, countryCurrency, c);
     window._invFinancialLoadPromise = loadInvFinancialValues(_invUrl, mySeq, data, countryCurrency, c);
+    if (!cachedRateInfo) {
+      // 汇率到达后只重绘当前筛选页；主库存数据由页面缓存即时复用。
+      window._invRatePromise = ratePromise.then(function(freshRateInfo) {
+        if (mySeq !== _invLoadSeq) return;
+        if (freshRateInfo && Array.isArray(freshRateInfo.countries) && freshRateInfo.countries.length) {
+          window._invRateInfo = freshRateInfo;
+          loadInv();
+        }
+      });
+    }
   }catch(e){showFlash(e.message,'danger')}
 }
 
@@ -15313,7 +15322,7 @@ function _wacHistoryMatrixExportModel(rows, filters) {
       (!search || String(r.sku_code || '').toLowerCase().includes(search) || String(r.model || '').toLowerCase().includes(search)) &&
       (!from || date >= from) && (!to || date <= to);
   });
-  const dates = Array.from(new Set(selected.map(r => String(r.last_inbound_date || '').slice(0,10)).filter(Boolean))).sort().reverse();
+  const dates = Array.from(new Set(selected.map(r => String(r.fx_rate_date || r.last_inbound_date || '').slice(0,10)).filter(Boolean))).sort().reverse();
   const groupMap = new Map();
   selected.forEach(function(r) {
     const key = [r.sku_code,r.brand,r.country,r.warehouse].join('¦');
@@ -15333,17 +15342,16 @@ function _wacHistoryMatrixExportModel(rows, filters) {
     const currency = String(r.local_currency || '').trim().toUpperCase();
     const rate = Number(r.rmb_to_local_rate);
     const rateDate = String(r.fx_rate_date || '').slice(0,10);
-    const dateLabel = rateDate ? ' · 汇率日 ' + rateDate : '';
     if (Number.isFinite(rate) && rate > 0 && currency) {
-      return '1 RMB = ' + Number(rate).toLocaleString('en-US',{maximumFractionDigits:8}) + ' ' + currency + dateLabel;
+      return '1 RMB = ' + Number(rate).toLocaleString('en-US',{maximumFractionDigits:8}) + ' ' + currency;
     }
-    return (currency ? currency + ' 历史汇率缺失' : '未配置本币币种') + dateLabel;
+    return currency ? currency + ' 历史汇率缺失' : '未配置本币币种';
   };
   const dateFxLabels = new Map();
   groups.forEach(function(g) {
     const latestByDate = new Map();
     g.records.forEach(function(r) {
-      const d = String(r.last_inbound_date || '').slice(0,10);
+      const d = String(r.fx_rate_date || r.last_inbound_date || '').slice(0,10);
       if (!d) return;
       const old = latestByDate.get(d);
       if (!old || String(r.confirmed_at) > String(old.confirmed_at) ||
@@ -15377,7 +15385,7 @@ function _wacHistoryMatrixExportModel(rows, filters) {
       (delta === null ? '' : '\n' + (delta > 0 ? '+' : '') + money(delta) + currency);
     const dateValues = new Map();
     g.records.forEach(function(r) {
-      const d = String(r.last_inbound_date || '').slice(0,10);
+      const d = String(r.fx_rate_date || r.last_inbound_date || '').slice(0,10);
       const old = dateValues.get(d);
       if (!old || String(r.confirmed_at) > String(old.confirmed_at) ||
         (String(r.confirmed_at) === String(old.confirmed_at) && Number(r.version_no||0) > Number(old.version_no||0))) {
@@ -15486,7 +15494,7 @@ async function loadWacHistoryMatrix(refresh) {
         (!search || String(r.sku_code || '').toLowerCase().includes(search) || String(r.model || '').toLowerCase().includes(search)) &&
         (!from || date >= from) && (!to || date <= to);
     });
-    const dates = Array.from(new Set(selected.map(r => String(r.last_inbound_date || '').slice(0,10)).filter(Boolean))).sort().reverse();
+    const dates = Array.from(new Set(selected.map(r => String(r.fx_rate_date || r.last_inbound_date || '').slice(0,10)).filter(Boolean))).sort().reverse();
     const groupMap = new Map();
     selected.forEach(function(r) {
       const key = [r.sku_code,r.brand,r.country,r.warehouse].join('¦');
@@ -15508,18 +15516,17 @@ async function loadWacHistoryMatrix(refresh) {
       const currency = String(r.local_currency || '').trim().toUpperCase();
       const rate = Number(r.rmb_to_local_rate);
       const rateDate = String(r.fx_rate_date || '').slice(0,10);
-      const dateLabel = rateDate ? ' · 汇率日 ' + rateDate : '';
       if (Number.isFinite(rate) && rate > 0 && currency) {
-        return '1 RMB = ' + Number(rate).toLocaleString('en-US',{maximumFractionDigits:8}) + ' ' + currency + dateLabel;
+        return '1 RMB = ' + Number(rate).toLocaleString('en-US',{maximumFractionDigits:8}) + ' ' + currency;
       }
-      return (currency ? currency + ' 历史汇率缺失' : '未配置本币币种') + dateLabel;
+      return currency ? currency + ' 历史汇率缺失' : '未配置本币币种';
     };
     // 每个历史日期的汇率集中显示在表头；同日存在多个币种/快照时分别展示，避免按单一币种错误合并。
     const dateFxLabels = new Map();
     groups.forEach(function(g) {
       const latestByDate = new Map();
       g.records.forEach(function(r) {
-        const d = String(r.last_inbound_date || '').slice(0,10);
+        const d = String(r.fx_rate_date || r.last_inbound_date || '').slice(0,10);
         if (!d) return;
         const old = latestByDate.get(d);
         if (!old || Number(r.version_no||0) > Number(old.version_no||0) ||
@@ -15568,7 +15575,7 @@ async function loadWacHistoryMatrix(refresh) {
       const trendColor = pct === null ? 'var(--text-secondary)' : (pct > 0 ? '#16a34a' : pct < 0 ? '#dc2626' : 'var(--text-secondary)');
       const dateVals = new Map();
       g.records.forEach(function(r) {
-        const d = String(r.last_inbound_date || '').slice(0,10);
+        const d = String(r.fx_rate_date || r.last_inbound_date || '').slice(0,10);
         const old = dateVals.get(d);
         if (!old || String(r.confirmed_at) > String(old.confirmed_at) ||
           (String(r.confirmed_at) === String(old.confirmed_at) && Number(r.version_no||0) > Number(old.version_no||0))) dateVals.set(d,r);
