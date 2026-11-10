@@ -16605,8 +16605,10 @@ function renderWacZhisuDerivedPanel(){
     html+='<div style="color:#b42318;margin-top:6px">'+esc(t('wac.zhisu.country_unsupported','至速仓原库存倒推仅支持马来西亚和泰国。'))+'</div>';
   }else if(result.countryMismatch){
     html+='<div style="color:#b42318;margin-top:6px">'+esc(t('wac.zhisu.country_mismatch','CI 国家与文件中的至速仓不一致。'))+'</div>';
+    html+='<div style="color:var(--text-secondary,#666);margin-top:4px">文件仓库：'+esc((result.sourceWarehouses||[]).join(' / ')||'-')+'；CI 需要：'+esc(result.expectedSourceWarehouse||'-')+'</div>';
   }else if(result.sourceWarehouseUnresolved){
     html+='<div style="color:#b42318;margin-top:6px">'+esc(t('wac.zhisu.source_unresolved','无法识别文件中的至速源仓。'))+'</div>';
+    html+='<div style="color:var(--text-secondary,#666);margin-top:4px">文件仓库：'+esc((result.sourceWarehouses||[]).join(' / ')||'-')+'</div>';
   }
   if(clamped.length){
     html+='<div style="color:#ad6800;margin-top:6px">'+esc(t('wac.zhisu.clamped','有 {count} 个 SKU 的当前库存低于本批 CI 数量，原库存按 0 处理：{skus}',{
