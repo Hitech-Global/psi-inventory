@@ -23,7 +23,7 @@ function patchAppSource(src){
 "    tr.appendChild(textCell(unifiedCICountryLabel(c.country)));",
 "    tr.appendChild(textCell(c.target_warehouse));",
 "    tr.appendChild(textCell(ciClearanceLabel(c.clearance_type)));",
-"    tr.appendChild(textCell(fmtDate(c.actual_ship_date||c.ci_date)));",
+"    tr.appendChild(textCell(fmtDate(c.ci_date)));",
 "    tr.appendChild(textCell(fmtMoney(c.goods_amount,c.currency)));",
 "    var freightTotal=textCell('—');freightTotal.setAttribute('data-ci-freight-cell','total');freightTotal.setAttribute('data-ci-id',String(c.id));tr.appendChild(freightTotal);",
 "    var freightRatio=textCell('—');freightRatio.setAttribute('data-ci-freight-cell','ratio');freightRatio.setAttribute('data-ci-id',String(c.id));tr.appendChild(freightRatio);",
