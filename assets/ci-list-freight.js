@@ -172,7 +172,7 @@
     var lang = typeof global.getLang === 'function' ? String(global.getLang() || 'zh').toLowerCase().slice(0, 2) : 'zh';
     var aliases = ['已付金额', 'ci已付金额', 'paid amount', 'ci paid amount', 'jumlah dibayar', 'ci telah dibayar'];
     for (var i = 0; i < heads.length; i++) {
-      var label = String(heads[i].textContent || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+      var label = String(heads[i].textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
       if (aliases.indexOf(label) === -1) continue;
       heads[i].textContent = lang === 'en'
         ? 'CI Paid Amount'
