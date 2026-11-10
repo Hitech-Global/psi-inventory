@@ -31,7 +31,28 @@ function makeInput(field, savedValue, nextValue) {
   };
 }
 
-function setup({ canEdit = true, failPut = false, failRefresh = false } = {}) {
+function makeStatusSelect(field, savedValue, nextValue) {
+  const attrs = {
+    'data-ci-logi-status-field': field,
+    'data-ci-logi-status-batch': 'batch-1',
+    'data-ci-logi-status-ci': 'ci-1',
+    'data-saved-value': savedValue
+  };
+  const classes = new Set();
+  return {
+    value: nextValue,
+    disabled: false,
+    getAttribute(name) { return attrs[name] == null ? null : attrs[name]; },
+    setAttribute(name, value) { attrs[name] = String(value); },
+    classList: {
+      add(name) { classes.add(name); },
+      remove(name) { classes.delete(name); },
+      contains(name) { return classes.has(name); }
+    }
+  };
+}
+
+function setup({ canEdit = true, failPut = false, failRefresh = false, failStatusPut = false, failListingPost = false } = {}) {
   const calls = [];
   const toasts = [];
   let batch = {
@@ -46,6 +67,7 @@ function setup({ canEdit = true, failPut = false, failRefresh = false } = {}) {
     total_cbm: 1,
     pls: [],
     logistics_status: 'pending',
+    logistics_display_status: 'pending_shipment',
     listing_status: 'pending_plan'
   };
   const row = { hidden: true };
@@ -77,8 +99,24 @@ function setup({ canEdit = true, failPut = false, failRefresh = false } = {}) {
       calls.push({ url, method, payload });
       if (method === 'PUT') {
         if (failPut) throw new Error('date update rejected');
+        if (payload.logistics_status !== undefined && failStatusPut) throw new Error('logistics status rejected');
         Object.assign(batch, payload);
+        if (payload.logistics_status !== undefined) {
+          const display = {
+            pending: 'pending_shipment',
+            in_transit: 'in_transit',
+            customs: 'customs_clearing',
+            delivering: 'awaiting_delivery',
+            completed: 'warehouse_arrived'
+          };
+          batch.logistics_display_status = display[payload.logistics_status] || 'pending_shipment';
+        }
         if (payload.actual_arrival_date !== undefined) batch.actual_transit_days = 10;
+        return { success: true };
+      }
+      if (method === 'POST' && url === '/api/logistics-batches/batch-1/listing') {
+        if (failListingPost) throw new Error('listing status rejected');
+        Object.assign(batch, payload);
         return { success: true };
       }
       if (url === '/api/commercial-invoices/ci-1/logistics-batches') {
@@ -171,4 +209,97 @@ test('existing logistics batch PUT endpoint allows both date fields and enforces
   assert.ok(allowed, 'logistics update allowlist must exist');
   assert.match(allowed[1], /'eta_date'/);
   assert.match(allowed[1], /'actual_arrival_date'/);
+});
+
+
+
+test('CI list renders both logistics statuses as permission-gated inline selects', async () => {
+  const x = setup();
+  await x.window.toggleCIListLogistics('ci-1', true);
+  assert.match(x.body.innerHTML, /data-ci-logi-status-field="logistics_status"/);
+  assert.match(x.body.innerHTML, /data-ci-logi-status-field="listing_status"/);
+  assert.match(x.body.innerHTML, /onchange="updateCILogisticsStatusInline\(this\)"/);
+  assert.match(x.body.innerHTML, /value="pending_shipment" selected/);
+  assert.match(x.body.innerHTML, /value="pending_plan" selected/);
+});
+
+test('logistics status saves canonical raw status through the existing PUT endpoint', async () => {
+  const x = setup();
+  await x.window.toggleCIListLogistics('ci-1', true);
+  const select = makeStatusSelect('logistics_status', 'pending_shipment', 'in_transit');
+  await x.window.updateCILogisticsStatusInline(select);
+
+  const put = x.calls.find(call => call.method === 'PUT');
+  assert.equal(put.url, '/api/logistics-batches/batch-1');
+  assert.equal(JSON.stringify(put.payload), JSON.stringify({ logistics_status: 'in_transit' }));
+  assert.equal(select.getAttribute('data-saved-value'), 'in_transit');
+  assert.equal(select.disabled, false);
+  assert.match(x.body.innerHTML, /value="in_transit" selected/);
+  assert.ok(x.toasts.some(item => item.type === 'success' && item.message === 'Logistics status updated'));
+});
+
+test('listing status saves through the dedicated audited listing endpoint', async () => {
+  const x = setup();
+  await x.window.toggleCIListLogistics('ci-1', true);
+  const select = makeStatusSelect('listing_status', 'pending_plan', 'ready');
+  await x.window.updateCILogisticsStatusInline(select);
+
+  const post = x.calls.find(call => call.method === 'POST');
+  assert.equal(post.url, '/api/logistics-batches/batch-1/listing');
+  assert.equal(JSON.stringify(post.payload), JSON.stringify({ listing_status: 'ready' }));
+  assert.equal(select.getAttribute('data-saved-value'), 'ready');
+  assert.equal(select.disabled, false);
+  assert.match(x.body.innerHTML, /value="ready" selected/);
+  assert.ok(x.toasts.some(item => item.type === 'success' && item.message === 'Listing status updated'));
+});
+
+test('failed logistics status save restores the previous selection', async () => {
+  const x = setup({ failStatusPut: true });
+  const select = makeStatusSelect('logistics_status', 'pending_shipment', 'warehouse_arrived');
+  await x.window.updateCILogisticsStatusInline(select);
+  assert.equal(select.value, 'pending_shipment');
+  assert.equal(select.getAttribute('data-saved-value'), 'pending_shipment');
+  assert.equal(select.disabled, false);
+  assert.ok(x.toasts.some(item => item.type === 'danger' && item.message === 'logistics status rejected'));
+  assert.equal(x.calls.filter(call => call.method === 'GET').length, 0);
+});
+
+test('failed listing status save restores the previous selection', async () => {
+  const x = setup({ failListingPost: true });
+  const select = makeStatusSelect('listing_status', 'pending_plan', 'listed');
+  await x.window.updateCILogisticsStatusInline(select);
+  assert.equal(select.value, 'pending_plan');
+  assert.equal(select.getAttribute('data-saved-value'), 'pending_plan');
+  assert.equal(select.disabled, false);
+  assert.ok(x.toasts.some(item => item.type === 'danger' && item.message === 'listing status rejected'));
+});
+
+test('users without logistics_edit permission cannot update either logistics status', async () => {
+  const x = setup({ canEdit: false });
+  const logistics = makeStatusSelect('logistics_status', 'pending_shipment', 'in_transit');
+  const listing = makeStatusSelect('listing_status', 'pending_plan', 'ready');
+  await x.window.updateCILogisticsStatusInline(logistics);
+  await x.window.updateCILogisticsStatusInline(listing);
+  assert.equal(logistics.value, 'pending_shipment');
+  assert.equal(listing.value, 'pending_plan');
+  assert.equal(x.calls.length, 0);
+});
+
+test('logistics status change keeps transit recalculation and notification behavior in the existing API', () => {
+  const start = server.indexOf("app.put('/api/logistics-batches/:id'");
+  assert.ok(start >= 0);
+  const route = server.slice(start, start + 10000);
+  assert.match(route, /'logistics_status'/);
+  assert.match(route, /updateInventoryTransitDataAsync\(\)/);
+  assert.match(route, /notifyListingStatusChanged\(id, existing\.logistics_status, d\.logistics_status, 'logistics'\)/);
+});
+
+test('listing status change uses the dedicated endpoint with validation, audit log and notification', () => {
+  const start = server.indexOf("app.post('/api/logistics-batches/:id/listing'");
+  assert.ok(start >= 0);
+  const route = server.slice(start, start + 8000);
+  assert.match(route, /requireApiPermission\('logistics_edit'\)/);
+  assert.match(route, /LISTING_STATUSES\.includes\(newStatus\)/);
+  assert.match(route, /operation_type: 'listing_status_change'/);
+  assert.match(route, /notifyListingStatusChanged\(lb\.id, oldStatus, newStatus, 'listing'\)/);
 });
