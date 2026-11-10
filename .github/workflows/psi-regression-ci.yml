@@ -6,6 +6,7 @@ on:
     paths:
       - 'app.js'
       - 'test/ci-logistics-status-filter.test.cjs'
+      - 'test/ci-date-column-and-logistics-field-regression.test.cjs'
       - 'scripts/ci-edit-before-pl-hotfix.cjs'
       - 'scripts/ci-inline-clearance-hotfix.cjs'
       - 'scripts/ci-historical-clearance-hotfix.cjs'
@@ -118,6 +119,7 @@ jobs:
           node --check test/ci-attachment-online-preview.test.cjs
           node --check test/ci-edit-entry-supplier-column.test.cjs
           node --check test/ci-logistics-status-filter.test.cjs
+          node --check test/ci-date-column-and-logistics-field-regression.test.cjs
           node --check test/supplier-pi-preview-alignment.test.cjs
           node --check app-perf.js
           node --check test/app-perf-diagnostics.test.cjs
@@ -173,6 +175,8 @@ jobs:
         run: node test/ci-summary-compact.test.cjs
       - name: Test CI logistics-status filter
         run: node --test test/ci-logistics-status-filter.test.cjs
+      - name: Test CI date and logistics carrier / mode field separation
+        run: node --test test/ci-date-column-and-logistics-field-regression.test.cjs
       - name: Test CI clearance type create, filter, detail and edit
         run: node test/ci-edit-before-pl-hotfix.test.cjs && node test/ci-clearance-type.test.cjs && node test/ci-inline-clearance-hotfix.test.cjs
       - name: Test historical CI clearance setting
