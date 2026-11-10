@@ -20105,10 +20105,26 @@ app.post('/api/wac/confirm/:logistics_batch_id', requireApiPermission('ci_edit')
 
         const skuInfo = queryOne('SELECT model, brand FROM skus WHERE sku_code = ?', [skuCode]);
 
-        // Write wac_history；同时锁定实际入库日对应的人民币/本币汇率快照（仅展示元数据，不参与WAC计算）。
+        // WAC calculation uses the actual freight-payment settlement date/rate.
+        // Persist the matching RMB→local snapshot for history display; inbound date remains separate.
         const inboundDate = normalizeWacHistoryDate(batch.actual_arrival_date) || '';
         const localCurrency = resolveWacHistoryCurrency(item.country, '');
-        const fxSnapshot = resolveExactRmbToLocalRate(localCurrency, inboundDate, wacFxCache);
+        const paymentFxDate = normalizeWacHistoryDate(meta.rmb_to_local_rate_date || meta.freight_last_paid_date || inboundDate) || inboundDate;
+        const savedRmbToLocalRate = Number(meta.rmb_to_local_rate);
+        const ciCurrency = String(ci && ci.currency || '').trim().toUpperCase();
+        const itemProductFxRate = Number(item.product_fx_rate);
+        const itemProductFxDate = normalizeWacHistoryDate(item.product_fx_rate_date || paymentFxDate) || paymentFxDate;
+        let fxSnapshot = null;
+        if (Number.isFinite(savedRmbToLocalRate) && savedRmbToLocalRate > 0) {
+          fxSnapshot = { rate: savedRmbToLocalRate, rate_date: paymentFxDate, source: 'payment_settlement' };
+        } else if ((ciCurrency === 'RMB' || ciCurrency === 'CNY') && Number.isFinite(itemProductFxRate) && itemProductFxRate > 0) {
+          // For RMB-denominated goods, this is the exact applied product-cost settlement rate.
+          fxSnapshot = { rate: itemProductFxRate, rate_date: itemProductFxDate, source: 'payment_settlement' };
+        } else {
+          // Legacy payment logs may not contain RMB rate fields; use only an exact-date quote
+          // for the actual freight-payment date, never the arrival date or today's rate.
+          fxSnapshot = resolveExactRmbToLocalRate(localCurrency, paymentFxDate, wacFxCache);
+        }
         const wacVer = generateWacVersion({
           ci_id: meta.ci_id,
           ci_no: meta.ci_no,
@@ -20134,7 +20150,7 @@ app.post('/api/wac/confirm/:logistics_batch_id', requireApiPermission('ci_edit')
           last_inbound_date: inboundDate,
           local_currency: localCurrency,
           rmb_to_local_rate: fxSnapshot ? fxSnapshot.rate : null,
-          fx_rate_date: fxSnapshot ? fxSnapshot.rate_date : inboundDate
+          fx_rate_date: fxSnapshot ? fxSnapshot.rate_date : paymentFxDate
         });
 
         wacSyncKeys.push({
