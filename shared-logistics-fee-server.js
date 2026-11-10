@@ -133,11 +133,16 @@ function installSharedLogisticsFeeRoutes(app,ctx) {
     const ci=queryOne('SELECT * FROM commercial_invoices WHERE id=?',[req.params.id]);
     if(!ci)return res.status(404).json({error:'CI不存在'});
     const fees=sharedFeesForCost(ci,'RMB');
-    const batches=query('SELECT id,total_freight,freight_currency FROM logistics_batches WHERE related_ci_id=?',[ci.id]).rows;
+    const batches=query('SELECT id,batch_no,transport_mode,total_freight,freight_currency FROM logistics_batches WHERE related_ci_id=? ORDER BY batch_no',[ci.id]).rows;
     const batch_totals_rmb={};
     batches.forEach(b=>{
       const own=ownFreightInRmb(b);
-      batch_totals_rmb[b.id]={total_minor:own.error?null:Number(own.amount_minor),errors:own.error?[own.error]:[]};
+      batch_totals_rmb[b.id]={
+        batch_no:b.batch_no,
+        transport_mode:b.transport_mode,
+        total_minor:own.error?null:Number(own.amount_minor),
+        errors:own.error?[own.error]:[]
+      };
     });
     const {splitConvertedMinor}=require('./shared-logistics-fee-core');
     fees.forEach(f=>{
@@ -152,9 +157,24 @@ function installSharedLogisticsFeeRoutes(app,ctx) {
         if(b.total_minor!==null)b.total_minor+=part.amount_minor;
       }
     });
+    const batchTotals=Object.values(batch_totals_rmb);
+    const totalFreightHasError=batchTotals.some(b=>b.total_minor==null);
+    const totalFreightMinor=totalFreightHasError?null:
+      batchTotals.reduce((sum,b)=>sum+Number(b.total_minor||0),0);
+    const transportModes=[...new Set(batches.map(b=>String(b.transport_mode||'').trim().toLowerCase()).filter(Boolean))]
+      .sort((a,b)=>({sea:0,air:1}[a]??9)-({sea:0,air:1}[b]??9)||a.localeCompare(b));
     const availableCurrencies=query("SELECT code FROM currencies WHERE status='active' ORDER BY sort_order,code").rows
       .map(c=>normalize(c.code)).filter(validCurrency);
-    res.json({ci_currency:ci.currency,fees,batch_totals_rmb,currency_options:[...new Set(availableCurrencies)]});
+    res.json({
+      ci_currency:ci.currency,
+      fees,
+      batch_totals_rmb,
+      transport_modes:transportModes,
+      total_freight_currency:'RMB',
+      total_freight_rmb:totalFreightMinor==null?null:totalFreightMinor/100,
+      total_freight_errors:batchTotals.flatMap(b=>b.errors||[]),
+      currency_options:[...new Set(availableCurrencies)]
+    });
   }));
   // CI list RMB freight = sum of distinct batch freight plus actual shared bill ONCE.
   // Unknown FX is shown as pending, never added as if it were RMB.
