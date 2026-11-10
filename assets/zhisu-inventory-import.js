@@ -326,6 +326,120 @@
     };
   }
 
+  // Build WAC original quantities from a Zhisu post-inbound stock snapshot.
+  // This is a read-only WAC import calculation: it never writes inventory rows.
+  function deriveWacOldQtyFromZhisu(parsed, options) {
+    options = options || {};
+    var country = normalizeText(options.country);
+    var warehouse = normalizeText(options.warehouse);
+    var arrivalDate = normalizeText(options.actualArrivalDate);
+    var items = Array.isArray(options.items) ? options.items : [];
+    var result = {
+      ready: false,
+      sourceWarehouse: "",
+      country: country,
+      warehouse: warehouse,
+      snapshotDate: normalizeText(parsed && parsed.snapshotDate),
+      arrivalDate: arrivalDate,
+      rows: [],
+      missing: [],
+      duplicate: [],
+      invalid: [],
+      negative: [],
+      errors: []
+    };
+
+    if (!parsed || !Array.isArray(parsed.records) || !items.length) {
+      result.errors.push("至速库存文件没有有效记录，或当前 WAC 批次没有 SKU");
+      return result;
+    }
+    if (warehouse !== TARGET_WAREHOUSE_NAME) {
+      result.errors.push("当前 WAC 目标仓库不是至速仓，不能使用至速仓库存文件反算");
+      return result;
+    }
+    var sourceNames = Object.keys(SOURCE_COUNTRIES).filter(function (source) {
+      return SOURCE_COUNTRIES[source] === country;
+    });
+    if (sourceNames.length !== 1) {
+      result.errors.push("无法根据当前 WAC 目标国家唯一识别至速源仓：" + country);
+      return result;
+    }
+    var sourceWarehouse = sourceNames[0];
+    result.sourceWarehouse = sourceWarehouse;
+    if (arrivalDate && result.snapshotDate && result.snapshotDate < arrivalDate) {
+      result.errors.push("库存文件快照日期 " + result.snapshotDate + " 早于本批次实际到货日期 " + arrivalDate + "，不能用于反算入库前库存");
+      return result;
+    }
+
+    var sourceRows = parsed.records.filter(function (record) {
+      return normalizeText(record && record._sourceWarehouse) === sourceWarehouse;
+    });
+    if (!sourceRows.length) {
+      result.errors.push("文件中没有找到当前目标仓对应的源仓「" + sourceWarehouse + "」");
+      return result;
+    }
+
+    var bySku = new Map();
+    sourceRows.forEach(function (record) {
+      var sku = normalizeText(record && record.sku_code);
+      if (!sku) return;
+      if (!bySku.has(sku)) bySku.set(sku, []);
+      bySku.get(sku).push(record);
+    });
+
+    items.forEach(function (item) {
+      var sku = normalizeText(item && item.sku_code);
+      if (!sku) {
+        result.invalid.push("(空 SKU)");
+        return;
+      }
+      var batchQty = Number(item.batch_qty);
+      if (!Number.isFinite(batchQty) || !Number.isInteger(batchQty) || batchQty < 0) {
+        result.invalid.push(sku + "（本批次到货数量无效）");
+        return;
+      }
+      var matches = bySku.get(sku) || [];
+      if (!matches.length) {
+        result.missing.push(sku);
+        return;
+      }
+      if (matches.length > 1) {
+        result.duplicate.push(sku);
+        return;
+      }
+      var record = matches[0];
+      if (Array.isArray(record._errors) && record._errors.length) {
+        result.invalid.push(sku + "（" + record._errors.join("；") + "）");
+        return;
+      }
+      var postInboundQty = Number(record.available_qty);
+      if (!Number.isFinite(postInboundQty) || !Number.isInteger(postInboundQty) || postInboundQty < 0) {
+        result.invalid.push(sku + "（可用库存数不是有效的非负整数）");
+        return;
+      }
+      var oldQty = postInboundQty - batchQty;
+      if (oldQty < 0) {
+        result.negative.push(sku + "（快照库存 " + postInboundQty + " < 本批到货 " + batchQty + "）");
+        return;
+      }
+      result.rows.push({
+        sku_code: sku,
+        post_inbound_qty: postInboundQty,
+        batch_qty: batchQty,
+        old_qty: oldQty,
+        source_row: record._rowNum || null
+      });
+    });
+
+    result.ready = result.errors.length === 0 &&
+      result.missing.length === 0 &&
+      result.duplicate.length === 0 &&
+      result.invalid.length === 0 &&
+      result.negative.length === 0 &&
+      result.rows.length === items.length;
+    return result;
+  }
+
   function escapeHtml(value) {
     return String(value == null ? "" : value).replace(/[&<>"']/g, function (ch) {
       return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" })[ch];
@@ -337,6 +451,12 @@
   function installTranslations(win) {
     var dict = win.I18N && win.I18N.dict;
     if (!dict) return;
+    var en = {
+      "wac.old_qty_hint": "⚠️ For ordinary warehouses, use the old-stock template. For Zhisu, upload the post-receipt stock export; original stock is calculated as available stock minus this batch's inbound quantity. Confirm there were no other stock movements between receipt and the snapshot.",
+      "wac.zhisu_import_confirm": "Zhisu stock file detected.\n\nTarget: {country} / {warehouse}\nStock snapshot date: {snapshot}\nBatch actual arrival date: {arrival}\nMatched SKUs: {count}\n\nThe system will calculate each original quantity as Zhisu available stock minus this batch's actual inbound quantity.\n\nPlease confirm this file is a post-receipt snapshot and that no sales, transfers, stocktake adjustments, or other inventory movements occurred between receipt completion and the snapshot date. Otherwise the derived quantity will be inaccurate. Continue?",
+      "wac.zhisu_import_summary": "Zhisu stock imported: original quantities automatically derived for {count} SKUs (snapshot: {snapshot}).",
+      "wac.zhisu_import_errors": "This Zhisu stock file cannot be used for this batch: {errors}"
+    };
     var en = {
       "inv.zhisu.detected": "Zhisu stock export detected: sheet “{sheet}” will be read.",
       "inv.zhisu.summary": "{total} source rows; {valid} rows ready for import; {excluded} Fake Order rows excluded.",
@@ -353,6 +473,12 @@
       "inv.zhisu.file_parse_failed": "Could not read this Zhisu stock file: {message}"
     };
     var id = {
+      "wac.old_qty_hint": "⚠️ Untuk gudang biasa, gunakan template stok lama. Untuk Zhisu, unggah ekspor stok setelah penerimaan; stok awal dihitung dari stok tersedia dikurangi jumlah masuk batch ini. Pastikan tidak ada pergerakan stok lain antara penerimaan dan tanggal snapshot.",
+      "wac.zhisu_import_confirm": "File stok Zhisu terdeteksi.\n\nTujuan: {country} / {warehouse}\nTanggal snapshot stok: {snapshot}\nTanggal kedatangan aktual batch: {arrival}\nSKU cocok: {count}\n\nSistem menghitung stok awal setiap SKU = stok tersedia Zhisu - jumlah masuk aktual batch ini.\n\nKonfirmasi bahwa file ini adalah snapshot setelah penerimaan dan tidak ada penjualan keluar, transfer, penyesuaian stok, atau pergerakan lain antara penerimaan dan tanggal snapshot. Jika ada, hasil perhitungan tidak akurat. Lanjutkan?",
+      "wac.zhisu_import_summary": "Stok Zhisu berhasil dibaca: stok awal {count} SKU dihitung otomatis (snapshot: {snapshot}).",
+      "wac.zhisu_import_errors": "File stok Zhisu tidak dapat digunakan untuk batch ini: {errors}"
+    };
+    var id = {
       "inv.zhisu.detected": "Ekspor stok Zhisu terdeteksi: sheet “{sheet}” akan dibaca.",
       "inv.zhisu.summary": "{total} baris sumber; {valid} baris siap diimpor; {excluded} baris Fake Order dikecualikan.",
       "inv.zhisu.source_warehouse": "Gudang sumber Zhisu",
@@ -367,6 +493,7 @@
       "inv.zhisu.warehouse_load_failed": "Data master gudang PSI gagal dimuat. Impor diblokir demi keamanan.",
       "inv.zhisu.file_parse_failed": "Gagal membaca file stok Zhisu ini: {message}"
     };
+    Object.keys(zh).forEach(function (key) { dict.zh[key] = zh[key]; });
     Object.keys(en).forEach(function (key) { dict.en[key] = en[key]; });
     Object.keys(id).forEach(function (key) { dict.id[key] = id[key]; });
   }
@@ -641,6 +768,7 @@
     resolveZhisuDestinations: resolveZhisuDestinations,
     duplicateGroups: duplicateGroups,
     buildZhisuRecords: buildZhisuRecords,
+    deriveWacOldQtyFromZhisu: deriveWacOldQtyFromZhisu,
     install: install
   };
 });
