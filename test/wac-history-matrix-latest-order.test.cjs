@@ -26,11 +26,14 @@ test('WAC history matrix Latest WAC follows newest confirmation timestamp, not l
       fx_rate_date: '2026-11-09', rmb_to_local_rate: 5.009638
     }
   ];
-  const model = vm.runInNewContext(fnSource + '\n_wacHistoryMatrixExportModel(' + JSON.stringify(rows) + ', {});');
+  const start2 = appSource.indexOf('function _wacHistoryMatrixExportModel(');
+  const end2 = appSource.indexOf('\nasync function exportWacHistoryMatrix', start2);
+  const fnSource2 = appSource.slice(start2, end2);
+  const model = vm.runInNewContext(fnSource2 + '\n_wacHistoryMatrixExportModel(' + JSON.stringify(rows) + ', {});');
   assert.equal(model.rows.length, 1);
   assert.match(model.rows[0][4], /^79,816\.81 IDR$/);
   assert.equal(model.rows[0][6], '2026-11-02');
-  assert.deepEqual(Array.from(model.dates), ['2026-11-09']);
+  assert.deepEqual(Array.from(model.dates), ['2026-11-09','2026-08-12']);
   const latestDateHeader = model.headers.find(header => String(header).includes('2026-11-09'));
   assert.ok(latestDateHeader.includes('1 RMB = 5.009638 IDR'));
   assert.ok(!latestDateHeader.includes('汇率日'));
