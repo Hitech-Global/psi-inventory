@@ -32,6 +32,8 @@ assert.ok(ciSrc.includes('data-ci-logi-wac-confirm'), 'pending batches must expo
 assert.ok(ciSrc.includes('data-ci-logi-wac-exclude'), 'pending batches must expose no-calculation action');
 assert.ok(ciSrc.includes('data-ci-logi-wac-restore'), 'excluded batches must expose restore action');
 assert.ok(ciSrc.includes('data-ci-logi-wac-cc'), 'confirmed batches must retain the supplemental CC action');
+assert.ok(ciSrc.includes("status === 'not_ready'"), 'not-ready logistics batches must still display a WAC status');
+assert.ok(ciSrc.includes("wacUiText('missingPl')"), 'arrived batches without PL quantity must explain why WAC is unavailable');
 assert.ok(ciSrc.includes('data-ci-logi-row'), 'clicking a logistics row must open the combined detail');
 assert.ok(ciSrc.includes('refreshCIListLogistics'), 'CI logistics panel must support a targeted refresh');
 
