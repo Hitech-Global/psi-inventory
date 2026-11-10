@@ -8481,7 +8481,6 @@ async function loadRp(){
     });
     addHistoricalColsToActive(activeKeys,Cols,totals,data);
     // 渲染
-    var th=activeKeys.map(function(k){return Cols[k].th;}).join('');
     var salesOnlyView=data.length>0&&data.every(function(r){return r._sales_only===true;});
     if(salesOnlyView){
       var salesVisible={sku:true,model:true};
@@ -8489,6 +8488,7 @@ async function loadRp(){
       activeKeys=activeKeys.filter(function(k){return !!salesVisible[k];});
       if(activeKeys.indexOf('sku')<0) activeKeys.unshift('sku');
     }
+    var th=activeKeys.map(function(k){return Cols[k].th;}).join('');
     var rows=data.map(function(r){
       var rowCtx=r._sales_only?r._totalC:rpGetRowCtx(rpTab,r);
       return '<tr data-rid="'+r.id+'">' + activeKeys.map(function(k){
