@@ -189,6 +189,7 @@
       sourceRows: countDataRows(rows, sheet.headerRowIndex),
       excludedBlankPaymentRows: 0,
       excludedUnpaidRows: 0,
+      excludedBlankSkuRows: 0,
       exactDuplicateRows: 0,
       duplicateOrderItemRows: 0,
       conflictGroups: 0,
@@ -204,6 +205,12 @@
     for (var i = sheet.headerRowIndex + 1; i < rows.length; i++) {
       var row = rows[i] || [];
       if (isBlankRow(row)) continue;
+
+      var skuCode = text(row[c.sku]);
+      if (!skuCode) {
+        stats.excludedBlankSkuRows++;
+        continue;
+      }
 
       var paymentMethod = text(row[c.paymentMethod]);
       if (!paymentMethod) {
@@ -227,7 +234,6 @@
       var country = countryFromStore(store) || countryFromWarehouse(warehouse);
       var orderDateRaw = row[c.orderDate];
       var orderDate = normalizeOrderDate(orderDateRaw);
-      var skuCode = text(row[c.sku]);
       var quantity = parseQuantity(row[c.quantity]);
       var platform = c.platform >= 0 ? text(row[c.platform]) : '';
       var packageNo = c.packageNo >= 0 ? text(row[c.packageNo]) : '';
@@ -406,6 +412,7 @@
       '</div>' +
       '<div style="color:#666">支付方式为空排除：' + Number(stats.excludedBlankPaymentRows || 0).toLocaleString('en-US') +
       ' 条；未支付排除：' + Number(stats.excludedUnpaidRows || 0).toLocaleString('en-US') +
+      ' 条；SKU 为空排除：' + Number(stats.excludedBlankSkuRows || 0).toLocaleString('en-US') +
       ' 条；完全重复去重：' + Number(stats.exactDuplicateRows || 0).toLocaleString('en-US') +
       ' 条；同订单商品去重：' + Number(stats.duplicateOrderItemRows || 0).toLocaleString('en-US') +
       ' 条；校验失败：' + Number(stats.validationErrorRows || 0).toLocaleString('en-US') + ' 条。</div>' +
@@ -496,7 +503,7 @@
           var button = win.document.getElementById('sales-import-btn');
           if (button) button.disabled = true;
           if (!parsed.records.length && typeof win.showToast === 'function') {
-            win.showToast('没有符合支付方式和线上状态规则的至速仓销售记录。', 'warning');
+            win.showToast('没有符合支付方式、订单状态及 SKU 规则的至速仓销售记录。', 'warning');
           }
           if ((parsed.stats.unknownWarehouseRows || 0) > 0 && typeof win.showToast === 'function') {
             win.showToast('部分至速仓订单的销售国家或仓库组合无法识别，相关行已阻止导入。', 'warning');
