@@ -377,6 +377,10 @@ test('WAC history import validates master data, syncs current WAC, skips exact d
   assert.equal(Number(correctedHistory.rmb_to_local_rate),5.123456,
     'matrix must prefer the latest append-only FX correction over the immutable WAC snapshot');
   assert.equal(correctedHistory.fx_rate_date,'2026-11-10');
+  const immutableBase = one('SELECT rmb_to_local_rate,fx_rate_date FROM wac_history WHERE id=?',[correctionTarget.id]);
+  assert.equal(Number(immutableBase.rmb_to_local_rate),5.009638);
+  assert.equal(immutableBase.fx_rate_date,'2026-11-09',
+    'the correction overlay must not mutate the locked WAC history row');
   assert.equal(query('SELECT id FROM inventory WHERE sku_code = ?', ['NT-HISTORY-02']).rows.length,0,
     'historical WAC sync must not create a missing inventory row');
   assert.equal(Number(importedWithFx.rmb_to_local_rate),2724.7956);
@@ -513,6 +517,11 @@ test('WAC history matrix keeps the agreed dimensions, left alignment, sticky hea
   assert.equal((serverSource.match(/wc\.last_inbound_date AS wc_li/g)||[]).length,2,
     'both PostgreSQL refresh paths must carry WAC history inbound dates');
   // PostgreSQL production uses db.js worker_threads migrations, not db-pg.js initDatabase.
+  assert.ok(dbAdapterSource.includes('CREATE TABLE IF NOT EXISTS wac_fx_snapshot_corrections'),
+    'PostgreSQL worker migration must create the append-only WAC FX correction table');
+  const sqliteDbSource = fs.readFileSync(require('node:path').join(__dirname, '..', 'db-sqlite.js'), 'utf8');
+  assert.ok(sqliteDbSource.includes('CREATE TABLE IF NOT EXISTS wac_fx_snapshot_corrections'),
+    'SQLite migration must create the append-only WAC FX correction table');
   ['last_inbound_date','effective_end_date','local_currency','rmb_to_local_rate','fx_rate_date','source_type','import_batch_id'].forEach(function(column) {
     assert.ok(dbAdapterSource.includes('ALTER TABLE wac_history ADD COLUMN IF NOT EXISTS ' + column),
       'worker_threads startup migration missing: ' + column);
