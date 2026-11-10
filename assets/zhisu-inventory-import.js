@@ -328,9 +328,9 @@
 
   function normalizeWacCountry(value) {
     var text = normalizeText(value).toLowerCase();
-    if (/^(?:my|malaysia|马来西亚|马来)$/.test(text)) return "马来西亚";
-    if (/^(?:th|thailand|泰国)$/.test(text)) return "泰国";
-    if (/^(?:id|indonesia|印尼|印度尼西亚)$/.test(text)) return "印尼";
+    if (/(?:malaysia|马来西亚|马来)/i.test(text) || /(^|[\\s/_-])my($|[\\s/_-])/i.test(text)) return "马来西亚";
+    if (/(?:thailand|泰国)/i.test(text) || /(^|[\\s/_-])th($|[\\s/_-])/i.test(text)) return "泰国";
+    if (/(?:indonesia|印尼|印度尼西亚)/i.test(text) || /(^|[\\s/_-])id($|[\\s/_-])/i.test(text)) return "印尼";
     return "";
   }
 
@@ -356,7 +356,8 @@
         recognized: true,
         targetCountry: country,
         sourceWarehouses: sourceWarehouses,
-        sourceWarehouse: sourceWarehouse,
+        sourceWarehouse: "",
+        expectedSourceWarehouse: sourceWarehouse,
         countryMismatch: knownOther,
         sourceWarehouseUnresolved: !knownOther,
         filled: [],
@@ -473,7 +474,8 @@
       "wac.zhisu.country_unresolved": "The CI target country could not be identified. Automatic calculation was blocked.",
       "wac.zhisu.source_unresolved": "The source warehouse in this file could not be matched to the CI country.",
       "wac.zhisu.success": "Zhisu stock recognized. Original quantities derived for {count} SKUs.",
-      "wac.zhisu.partial": "Zhisu stock recognized. {matched} SKU(s) were derived; {missing} need manual review."
+      "wac.zhisu.partial": "Zhisu stock recognized. {matched} SKU(s) were derived; {missing} need manual review.",
+      "wac.old_qty_hint": "For Indonesia, import BigSeller inventory-change history. For Malaysia/Thailand, import the current Zhisu stock export to derive original stock as max(current stock − CI inbound quantity, 0). You can also use the manual template."
     };
     var id = {
       "inv.zhisu.detected": "Ekspor stok Zhisu terdeteksi: sheet “{sheet}” akan dibaca.",
@@ -499,7 +501,8 @@
       "wac.zhisu.country_unresolved": "Negara tujuan CI tidak dapat dikenali. Perhitungan otomatis diblokir.",
       "wac.zhisu.source_unresolved": "Gudang sumber dalam file tidak dapat dicocokkan dengan negara CI.",
       "wac.zhisu.success": "Stok Zhisu dikenali. Stok awal berhasil dihitung untuk {count} SKU.",
-      "wac.zhisu.partial": "Stok Zhisu dikenali. {matched} SKU berhasil dihitung; {missing} perlu diperiksa manual."
+      "wac.zhisu.partial": "Stok Zhisu dikenali. {matched} SKU berhasil dihitung; {missing} perlu diperiksa manual.",
+      "wac.old_qty_hint": "Untuk Indonesia, impor riwayat perubahan stok BigSeller. Untuk Malaysia/Thailand, impor ekspor stok Zhisu saat ini untuk menghitung stok awal = max(stok saat ini − jumlah masuk CI, 0). Template manual juga tetap tersedia."
     };
     Object.keys(en).forEach(function (key) { dict.en[key] = en[key]; });
     Object.keys(id).forEach(function (key) { dict.id[key] = id[key]; });
