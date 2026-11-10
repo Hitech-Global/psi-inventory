@@ -41,7 +41,7 @@
 
   function normalizeDateValue(value) {
     var raw = String(value == null ? '' : value).trim();
-    var match = raw.match(/^(\\d{4}-\\d{2}-\\d{2})/);
+    var match = raw.match(/^(\d{4}-\d{2}-\d{2})/);
     return match ? match[1] : '';
   }
 
