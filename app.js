@@ -15611,6 +15611,7 @@ const WAC_HISTORY_IMPORT_COLUMNS = [
   {key:'last_inbound_date',aliases:['最后入库日期','last_inbound_date','开始时间','开始日期','*开始时间','WAC生效日期']},
   {key:'effective_end_date',aliases:['结束日期','结束时间','*结束时间','effective_end_date','valid_to']},
   {key:'local_currency',aliases:['本币币种','local_currency','currency']},
+  {key:'fx_rate_date',aliases:['历史汇率日期','汇率日期','fx_rate_date','rate_date']},
   {key:'rmb_to_local_rate',aliases:['1 RMB = 本币汇率','人民币汇率','rmb_to_local_rate','fx_rate']}
 ];
 
@@ -15619,7 +15620,7 @@ function openWacHistoryImport() {
     '<b>导入范围：</b>新增锁定的历史WAC记录，并按 SKU + 国家 + 仓库自动同步最新有效WAC和最后入库日期到库存总表。<b>不会修改</b>库存数量和库存货值，也不会覆盖已有历史记录。' +
     '<br>必填：SKU、国家、仓库、历史WAC（本币）、最后入库日期。品牌可留空；系统自动按SKU主数据匹配品牌。' +
     '<br>结束日期选填；如果源数据有成本有效期，请填写，系统会校验区间是否重叠。' +
-    '<br>人民币汇率为选填；系统按最后入库日期匹配历史汇率。留空时不会拿今天汇率代替。' +
+    '<br>历史汇率日期为选填；若成本按不同于最后入库日期的汇率结算，请填写实际汇率日期。留空时默认按最后入库日期匹配，不会拿今天汇率代替。' +
     '</div>' +
     '<div id="wac-history-import-drop" class="wac-history-import-drop" onclick="document.getElementById(\'wac-history-import-file\').click()" ' +
       'ondragover="event.preventDefault();this.style.borderColor=\'#007aff\';this.style.background=\'#f5f9ff\'" ' +
