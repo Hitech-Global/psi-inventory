@@ -151,8 +151,12 @@ test("the WAC importer is wired to the parser and the parser is loaded by index.
   assert.match(app, /WacBigSellerOldInventory\.parseBigSellerWorkbook/);
   assert.match(app, /selectWacBigSellerCandidate/);
   assert.ok(app.includes("matchCandidates(history,batchItems,(p.meta||{}).actual_arrival_date||'',(p.meta||{}).country||'')"));
-  assert.match(html, /app\.js\?v=20261110-2/);
+  assert.match(app, /ZhisuInventoryImport\.parseZhisuWorkbook/);
+  assert.match(app, /deriveWacOriginalStock/);
+  assert.match(app, /wac-zhisu-derived-panel/);
+  assert.match(html, /app\.js\?v=20261110-3/);
   assert.match(html, /assets\/wac-bigseller-old-inventory\.js/);
+  assert.match(html, /assets\/zhisu-inventory-import\.js\?v=20261110-2/);
 });
 
 test("non-BigSeller workbook is not captured", () => {
