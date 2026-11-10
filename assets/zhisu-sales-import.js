@@ -408,13 +408,8 @@
       precheckHtml = '<div style="margin-top:8px;padding:9px 11px;border-radius:7px;background:#f0fdf4;color:#15803d">✓ SKU / 品牌后台预检查通过，可以开始导入。</div>';
     } else if (blocking.length) {
       precheckHtml = '<div style="margin-top:8px;padding:10px 11px;border-radius:7px;background:#fff1f0;border:1px solid #ffccc7;color:#b91c1c">' +
-        '<b>SKU / 品牌后台预检查未通过：' + blocking.length + ' 条，暂不能导入。</b>' +
-        blocking.slice(0, 20).map(function (item) {
-          return '<div style="margin-top:5px">第 ' + escapeHtml(item.row || '-') + ' 行 · ' +
-            escapeHtml(item.sku_code || '') + '：' + escapeHtml(item.reason || 'SKU / 品牌校验失败') + '</div>';
-        }).join('') +
-        (blocking.length > 20 ? '<div style="margin-top:5px">还有 ' + (blocking.length - 20) + ' 条，请下载错误清单。</div>' : '') +
-        '</div>';
+        '<b>SKU / 品牌后台预检查未通过：' + blocking.length + ' 条，整批暂不能导入。</b>' +
+        '<div style="margin-top:5px">请查看下方后台预检查错误明细并下载错误清单。</div></div>';
     } else if (previewError) {
       precheckHtml = '<div style="margin-top:8px;padding:10px 11px;border-radius:7px;background:#fff1f0;border:1px solid #ffccc7;color:#b91c1c">' +
         '<b>SKU / 品牌后台预检查请求失败，暂不能导入。</b><div style="margin-top:5px">' +
