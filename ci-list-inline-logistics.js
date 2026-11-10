@@ -48,7 +48,9 @@
       confirmed: { zh: 'WAC 已确认', en: 'WAC confirmed', id: 'WAC dikonfirmasi' },
       excluded: { zh: '无需计算', en: 'WAC skipped', id: 'WAC dilewati' },
       restore: { zh: '恢复', en: 'Restore', id: 'Pulihkan' },
-      cc: { zh: 'CC', en: 'CC', id: 'CC' }
+      cc: { zh: 'CC', en: 'CC', id: 'CC' },
+      notReady: { zh: '待到仓', en: 'Awaiting warehouse arrival', id: 'Menunggu barang tiba di gudang' },
+      missingPl: { zh: '待补PL数量', en: 'PL quantity missing', id: 'Jumlah PL belum tersedia' }
     };
     return (labels[key] && (labels[key][lang] || labels[key].zh)) || key;
   }
@@ -75,7 +77,16 @@
       return statusBadge(wacUiText('excluded'), 'excluded') +
         (hasPermission('ci_edit') ? '<button type="button" class="btn btn-secondary btn-sm ci-list-wac-action" data-ci-logi-wac-restore="' + id + '" data-ci-id="' + esc(ciId) + '" data-batch-no="' + batchNo + '">' + esc(wacUiText('restore')) + '</button>' : '');
     }
-    return '';
+    // Always expose the WAC state. Batches that have not arrived, or do not yet
+    // have positive PL quantities, are visible but cannot be confirmed.
+    if (status === 'not_ready') {
+      var rawLogisticsStatus = String(batch && batch.logistics_status || '').trim();
+      var notReadyLabel = rawLogisticsStatus === 'completed'
+        ? wacUiText('missingPl')
+        : wacUiText('notReady');
+      return statusBadge(notReadyLabel, 'not-ready');
+    }
+    return statusBadge(wacUiText('notReady'), 'not-ready');
   }
 
   var LOGISTICS_INLINE_STATUS_OPTIONS = [
@@ -253,6 +264,7 @@
       '.content-inner:has(#ci-source-mode) #ci-table .ci-list-wac-badge-pending{background:#fff4e5;color:#9a5b00}',
       '.content-inner:has(#ci-source-mode) #ci-table .ci-list-wac-badge-confirmed{background:#eaf7ef;color:#217a43}',
       '.content-inner:has(#ci-source-mode) #ci-table .ci-list-wac-badge-excluded{background:#f1f1f4;color:#62626a}',
+      '.content-inner:has(#ci-source-mode) #ci-table .ci-list-wac-badge-not-ready{background:#f1f1f4;color:#777780}',
       '.content-inner:has(#ci-source-mode) #ci-table .ci-list-wac-action{min-height:25px;padding:3px 8px;border-radius:7px;font-size:10px;white-space:nowrap}',
       '.content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-owners{max-width:220px;overflow:hidden;text-overflow:ellipsis}',
       '.content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-table .cell-actions{position:sticky;right:0;background:#fff!important;box-shadow:-6px 0 10px rgba(0,0,0,.04)}',
