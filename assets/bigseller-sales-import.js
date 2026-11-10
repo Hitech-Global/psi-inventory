@@ -528,16 +528,10 @@
         if (isBigSeller) {
           var blocked = Array.isArray(win._salesImportBlocking) && win._salesImportBlocking.length > 0;
           var ready = win._salesImportPreviewReady === true;
+          renderSummary(win, win._salesImportSkippedStats, win._salesImportCountry);
           setImportProgress(win,
             ready ? 'SKU / 品牌校验完成，可以开始导入。' : blocked ? 'SKU / 品牌校验未通过，请先处理异常。' : '后台校验尚未完成，暂不能导入。',
             100, ready ? 'done' : 'blocked');
-          renderSummary(win, win._salesImportSkippedStats, win._salesImportCountry);
-          var progressEl = win.document && win.document.getElementById('sales-preview-stats');
-          if (progressEl) {
-            var progress = progressEl.querySelector('#bigseller-sales-progress');
-            if (progress) progress.remove();
-            setImportProgress(win, ready ? 'SKU / 品牌校验完成，可以开始导入。' : 'SKU / 品牌校验未通过，请先处理异常。', 100, ready ? 'done' : 'blocked');
-          }
         }
         return result;
       } catch (error) {
