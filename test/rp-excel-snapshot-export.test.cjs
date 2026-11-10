@@ -176,9 +176,9 @@ test('browser XLSX bundle is served from the installed local package, not an ext
  const pkg=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'));
  const bundle=path.join(root,'node_modules','xlsx','dist','xlsx.full.min.js');
 
- assert.match(html,/<script src="\\/node_modules\\/xlsx\\/dist\\/xlsx\\.full\\.min\\.js"><\\/script>/);
- assert.doesNotMatch(html,/cdn\\.sheetjs\\.com/);
+ assert.ok(html.includes('<script src="/node_modules/xlsx/dist/xlsx.full.min.js"></script>'),'index must load the same-origin XLSX bundle');
+ assert.ok(!html.includes('cdn.sheetjs.com'),'browser export must not depend on the external SheetJS CDN');
  assert.ok(pkg.dependencies&&pkg.dependencies.xlsx,'xlsx must remain a pinned project dependency');
  assert.ok(fs.existsSync(bundle),'the local browser bundle must exist after npm install');
- assert.match(server,/app\\.use\\(express\\.static\\(path\\.join\\(__dirname\\),/,'Express must serve the project root containing node_modules');
+ assert.ok(server.includes('app.use(express.static(path.join(__dirname),'),'Express must serve the project root containing node_modules');
 });
