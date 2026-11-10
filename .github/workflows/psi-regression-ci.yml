@@ -29,6 +29,10 @@ on:
       - 'test/pi-deposit-payable-date.test.cjs'
       - 'index.html'
       - 'ci-list-inline-logistics.js'
+      - 'assets/ci-wac-integration.js'
+      - 'scripts/ci-wac-summary-hotfix.cjs'
+      - 'test/ci-wac-integration-static.test.cjs'
+      - 'test/ci-list-inline-logistics-static.test.cjs'
       - 'test/ci-list-inline-logistics-dates.test.cjs'
       - 'assets/ci-summary-compact.js'
       - 'test/ci-summary-compact.test.cjs'
@@ -114,11 +118,17 @@ jobs:
           npm rebuild better-sqlite3
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=moderate
+      - name: Apply CI WAC summary projection patch
+        run: node scripts/ci-wac-summary-hotfix.cjs
       - name: Check frontend and backend syntax
         run: |
           node --check app.js
           node --check test/modal-page-navigation.test.cjs
           node --check ci-list-inline-logistics.js
+          node --check assets/ci-wac-integration.js
+          node --check scripts/ci-wac-summary-hotfix.cjs
+          node --check test/ci-wac-integration-static.test.cjs
+          node --check test/ci-list-inline-logistics-static.test.cjs
           node --check test/ci-list-inline-logistics-dates.test.cjs
           node --check assets/ci-list-freight.js
           node --check assets/ci-shared-freight-display.js
@@ -219,6 +229,8 @@ jobs:
         run: node test/ci-unified-data-binding-hotfix.test.cjs
       - name: Test inline logistics batch date editing
         run: node --test test/ci-list-inline-logistics-dates.test.cjs
+      - name: Test CI inline WAC integration
+        run: node test/ci-list-inline-logistics-static.test.cjs && node test/ci-wac-integration-static.test.cjs
       - name: Test CI edit entry and supplier column removal
         run: node test/ci-edit-entry-supplier-column.test.cjs
       - name: Test opt-in page and API performance diagnostics

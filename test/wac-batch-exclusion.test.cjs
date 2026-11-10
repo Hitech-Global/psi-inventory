@@ -59,10 +59,11 @@ function setupSchema(){
       id TEXT PRIMARY KEY,pl_id TEXT DEFAULT '',total_qty REAL DEFAULT 0
     );
     CREATE TABLE commercial_invoices(
-      id TEXT PRIMARY KEY,ci_no TEXT DEFAULT '',goods_amount REAL DEFAULT 0,currency TEXT DEFAULT 'RMB',brand TEXT DEFAULT ''
+      id TEXT PRIMARY KEY,ci_no TEXT DEFAULT '',goods_amount REAL DEFAULT 0,currency TEXT DEFAULT 'RMB',brand TEXT DEFAULT '',
+      wac_confirmed INTEGER DEFAULT 0,wac_confirmed_at TEXT DEFAULT '',wac_confirmed_by TEXT DEFAULT ''
     );
     CREATE TABLE wac_history(
-      id TEXT PRIMARY KEY,logistics_batch_id TEXT,sku_code TEXT DEFAULT ''
+      id TEXT PRIMARY KEY,logistics_batch_id TEXT,sku_code TEXT DEFAULT '',confirmed_at TEXT DEFAULT '',confirmed_by TEXT DEFAULT ''
     );
     CREATE TABLE wac_batch_exclusions(
       id TEXT PRIMARY KEY,logistics_batch_id TEXT NOT NULL UNIQUE,batch_no TEXT DEFAULT '',reason TEXT DEFAULT '',
@@ -100,7 +101,7 @@ function setupSchema(){
 
   const batches=[
     ['lb1','LOG-001','ci1','CI-001','Forwarder A','印度尼西亚','Bekasi Warehouse','completed','2026-11-01'],
-    ['lb2','LOG-002','ci2','CI-002','Forwarder B','印度尼西亚','Bekasi Warehouse','completed','2026-10-30'],
+    ['lb2','LOG-002','ci1','CI-001','Forwarder B','印度尼西亚','Bekasi Warehouse','completed','2026-10-30'],
     ['lb3','LOG-003','ci3','CI-003','Forwarder C','泰国','Bangkok Warehouse','completed','2026-10-29']
   ];
   batches.forEach(b=>run('INSERT INTO logistics_batches (id,batch_no,related_ci_id,related_ci_no,forwarder_name,target_country,target_warehouse,logistics_status,actual_arrival_date,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)',b.concat(['2026-11-04 00:00:00'])));
@@ -117,7 +118,7 @@ function setupSchema(){
     run('INSERT INTO packing_lists(id,pl_no,logistics_batch_id,status,total_qty) VALUES(?,?,?,?,?)',[pl[0],pl[1],pl[2],'completed',pl[3]]);
     run('INSERT INTO packing_list_items(id,pl_id,total_qty) VALUES(?,?,?)',['pli-'+pl[0],pl[0],pl[3]]);
   });
-  run('INSERT INTO wac_history(id,logistics_batch_id,sku_code) VALUES(?,?,?)',['wh3','lb3','SKU-3']);
+  run('INSERT INTO wac_history(id,logistics_batch_id,sku_code,confirmed_at,confirmed_by) VALUES(?,?,?,?,?)',['wh3','lb3','SKU-3','2026-10-29 10:00:00','u1']);
   run('INSERT INTO inventory(id,sku_code,country,warehouse,available_qty,weighted_avg_cost,inventory_value) VALUES(?,?,?,?,?,?,?)',
     ['inv1','SKU-1','印度尼西亚','Bekasi Warehouse',12,456,5472]);
 }
@@ -147,11 +148,21 @@ test('WAC batch exclusion is reversible, atomic, and never deletes or mutates bu
   assert.equal(initial.status,200);
   assert.deepEqual(ids(initial.body),['lb1','lb2']);
 
+  const excludedFirst=await request('/api/wac/batches/exclude','POST',{
+    batch_ids:['lb1'],reason:'之前已手动核算'
+  });
+  assert.equal(excludedFirst.status,200);
+  assert.equal(excludedFirst.body.excluded_count,1);
+  assert.equal(Number(query('SELECT wac_confirmed FROM commercial_invoices WHERE id=?',['ci1']).rows[0].wac_confirmed),0,
+    'CI must remain incomplete while its second WAC-relevant logistics batch is unresolved');
+
   const excluded=await request('/api/wac/batches/exclude','POST',{
-    batch_ids:['lb1','lb2'],reason:'之前已手动核算'
+    batch_ids:['lb2'],reason:'之前已手动核算'
   });
   assert.equal(excluded.status,200);
-  assert.equal(excluded.body.excluded_count,2);
+  assert.equal(excluded.body.excluded_count,1);
+  assert.equal(Number(query('SELECT wac_confirmed FROM commercial_invoices WHERE id=?',['ci1']).rows[0].wac_confirmed),1,
+    'CI becomes complete only after every WAC-relevant batch is confirmed or excluded');
 
   const pendingAfter=await request('/api/wac/pending-batches');
   assert.equal(pendingAfter.status,200);
@@ -177,6 +188,8 @@ test('WAC batch exclusion is reversible, atomic, and never deletes or mutates bu
   assert.equal(restored.body.restored,true);
   const pendingRestored=await request('/api/wac/pending-batches');
   assert.deepEqual(ids(pendingRestored.body),['lb1']);
+  assert.equal(Number(query('SELECT wac_confirmed FROM commercial_invoices WHERE id=?',['ci1']).rows[0].wac_confirmed),0,
+    'restoring an excluded batch makes the CI WAC summary incomplete again');
   const excludedRemaining=await request('/api/wac/excluded-batches');
   assert.deepEqual(ids(excludedRemaining.body),['lb2']);
 
@@ -196,6 +209,7 @@ test('WAC batch exclusion is reversible, atomic, and never deletes or mutates bu
   assert.deepEqual(ids((await request('/api/wac/pending-batches')).body),['lb1','lb2']);
   assert.equal((await request('/api/wac/excluded-batches')).body.length,0);
   assert.equal(query("SELECT status FROM wac_batch_exclusions WHERE logistics_batch_id='lb2'").rows[0].status,'restored');
+  assert.equal(Number(query('SELECT wac_confirmed FROM commercial_invoices WHERE id=?',['ci1']).rows[0].wac_confirmed),0);
 });
 
 test('WAC batch exclusion UI and all database drivers include the reversible exclusion contract',()=>{

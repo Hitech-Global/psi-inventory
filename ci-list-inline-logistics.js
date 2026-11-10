@@ -39,6 +39,45 @@
     return tr('logistics.listing_status.' + key, key);
   }
 
+  function wacUiText(key) {
+    var lang = typeof global.getLang === 'function' ? String(global.getLang() || 'zh').toLowerCase().slice(0, 2) : 'zh';
+    var labels = {
+      pending: { zh: '待确认 WAC', en: 'WAC pending', id: 'WAC menunggu konfirmasi' },
+      confirm: { zh: '确认 WAC', en: 'Confirm WAC', id: 'Konfirmasi WAC' },
+      skip: { zh: '无需计算', en: 'Skip WAC', id: 'Lewati WAC' },
+      confirmed: { zh: 'WAC 已确认', en: 'WAC confirmed', id: 'WAC dikonfirmasi' },
+      excluded: { zh: '无需计算', en: 'WAC skipped', id: 'WAC dilewati' },
+      restore: { zh: '恢复', en: 'Restore', id: 'Pulihkan' },
+      cc: { zh: 'CC', en: 'CC', id: 'CC' }
+    };
+    return (labels[key] && (labels[key][lang] || labels[key].zh)) || key;
+  }
+
+  function wacActionsHtml(batch, ciId) {
+    var status = String(batch && batch.wac_status || 'not_ready');
+    var id = esc(batch && batch.id || '');
+    var batchNo = esc(batch && batch.batch_no || '');
+    var statusBadge = function (label, tone) {
+      return '<span class="ci-list-wac-badge ci-list-wac-badge-' + tone + '">' + esc(label) + '</span>';
+    };
+    if (status === 'pending') {
+      var badge = statusBadge(wacUiText('pending'), 'pending');
+      if (!hasPermission('ci_edit')) return badge;
+      return badge +
+        '<button type="button" class="btn btn-primary btn-sm ci-list-wac-action" data-ci-logi-wac-confirm="' + id + '" data-ci-id="' + esc(ciId) + '" data-batch-no="' + batchNo + '">' + esc(wacUiText('confirm')) + '</button>' +
+        '<button type="button" class="btn btn-secondary btn-sm ci-list-wac-action" data-ci-logi-wac-exclude="' + id + '" data-ci-id="' + esc(ciId) + '" data-batch-no="' + batchNo + '">' + esc(wacUiText('skip')) + '</button>';
+    }
+    if (status === 'confirmed') {
+      return statusBadge(wacUiText('confirmed'), 'confirmed') +
+        (hasPermission('ci_edit') ? '<button type="button" class="btn btn-secondary btn-sm ci-list-wac-action" data-ci-logi-wac-cc="' + id + '" data-ci-id="' + esc(ciId) + '" data-batch-no="' + batchNo + '">' + esc(wacUiText('cc')) + '</button>' : '');
+    }
+    if (status === 'excluded') {
+      return statusBadge(wacUiText('excluded'), 'excluded') +
+        (hasPermission('ci_edit') ? '<button type="button" class="btn btn-secondary btn-sm ci-list-wac-action" data-ci-logi-wac-restore="' + id + '" data-ci-id="' + esc(ciId) + '" data-batch-no="' + batchNo + '">' + esc(wacUiText('restore')) + '</button>' : '');
+    }
+    return '';
+  }
+
   var LOGISTICS_INLINE_STATUS_OPTIONS = [
     { value: 'pending_shipment', raw: 'pending', labelKey: 'logistics.status.pending_shipment', fallback: '待出运' },
     { value: 'in_transit', raw: 'in_transit', labelKey: 'logistics.status.in_transit', fallback: '运输中' },
@@ -208,6 +247,13 @@
       ".content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-status-inline:disabled{opacity:.65;cursor:not-allowed}",
       ".content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-status-inline.is-saving{opacity:.65;cursor:wait}",
       '.content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-table tbody tr:hover td{background:#fafafa!important}',
+      '.content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-table tbody tr.ci-list-logi-clickable-row{cursor:pointer}',
+      '.content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-table tbody tr.ci-list-logi-clickable-row:hover td{background:#f3f6fb!important}',
+      '.content-inner:has(#ci-source-mode) #ci-table .ci-list-wac-badge{display:inline-flex;align-items:center;min-height:22px;padding:2px 7px;border-radius:7px;font-size:10px;font-weight:650;white-space:nowrap}',
+      '.content-inner:has(#ci-source-mode) #ci-table .ci-list-wac-badge-pending{background:#fff4e5;color:#9a5b00}',
+      '.content-inner:has(#ci-source-mode) #ci-table .ci-list-wac-badge-confirmed{background:#eaf7ef;color:#217a43}',
+      '.content-inner:has(#ci-source-mode) #ci-table .ci-list-wac-badge-excluded{background:#f1f1f4;color:#62626a}',
+      '.content-inner:has(#ci-source-mode) #ci-table .ci-list-wac-action{min-height:25px;padding:3px 8px;border-radius:7px;font-size:10px;white-space:nowrap}',
       '.content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-owners{max-width:220px;overflow:hidden;text-overflow:ellipsis}',
       '.content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-table .cell-actions{position:sticky;right:0;background:#fff!important;box-shadow:-6px 0 10px rgba(0,0,0,.04)}',
       '.content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-actions{padding-top:10px}',
@@ -320,7 +366,7 @@
         var cbm = cbmFromPl > 0 ? cbmFromPl : (Number(b.total_cbm) || 0);
         var ratio = b.freight_value_ratio == null ? '—' : (Number(b.freight_value_ratio).toFixed(2) + '%');
         var cargoCur = b.ci_currency || b.freight_currency || '';
-        return '<tr>' +
+        return '<tr class="ci-list-logi-clickable-row" data-ci-logi-row="' + esc(b.id || '') + '" data-ci-id="' + esc(ciId) + '" data-batch-no="' + esc(b.batch_no || '') + '" data-wac-status="' + esc(b.wac_status || 'not_ready') + '" data-wac-exclusion-reason="' + esc(b.wac_exclusion_reason || '') + '" title="' + esc(tr('common.view', '查看详情')) + '">' +
           '<td class="cell-id">' + esc(b.batch_no || '') + '</td>' +
           '<td>' + esc(b.forwarder_name || '—') + '</td>' +
           '<td>' + esc(tr('logistics.mode.' + (b.transport_mode || ''), b.transport_mode || '—')) + '</td>' +
@@ -339,6 +385,7 @@
           '<td class="ci-list-logi-owners">' + (b.listing_owner_names && b.listing_owner_names.length ? esc(b.listing_owner_names.join('、')) : '—') + '</td>' +
           '<td class="cell-actions"><div class="ci-list-logi-export-actions">' +
             (hasPermission('logistics_edit') ? '<button class="action-btn" data-ci-logi-edit="' + esc(b.id) + '" data-ci-id="' + esc(ciId) + '" title="' + esc(tr('common.edit', '编辑')) + '">✏️</button> ' : '') +
+            wacActionsHtml(b, ciId) +
             '<button class="btn btn-secondary btn-sm" data-ci-logi-export-pl="' + esc(b.id) + '">' + esc(tr('export.pl_only', '导出PL')) + '</button>' +
             (canViewAmounts() ? '<button class="btn btn-secondary btn-sm" data-ci-logi-export-ci-pl="' + esc(b.id) + '">' + esc(tr('export.ci_and_pl', '导出CI&PL')) + '</button>' : '') +
           '</div></td>' +
@@ -635,7 +682,7 @@
   }
 
   document.addEventListener('click', function (event) {
-    var el = event.target.closest('[data-ci-logi-toggle],[data-ci-logi-collapse],[data-ci-logi-create],[data-ci-logi-edit],[data-ci-logi-retry],[data-ci-logi-export-pl],[data-ci-logi-export-ci-pl]');
+    var el = event.target.closest('[data-ci-logi-toggle],[data-ci-logi-collapse],[data-ci-logi-create],[data-ci-logi-edit],[data-ci-logi-retry],[data-ci-logi-export-pl],[data-ci-logi-export-ci-pl],[data-ci-logi-wac-confirm],[data-ci-logi-wac-exclude],[data-ci-logi-wac-restore],[data-ci-logi-wac-cc]');
     if (!el) return;
 
     event.preventDefault();
@@ -646,8 +693,28 @@
     if (el.hasAttribute('data-ci-logi-retry')) return void togglePanel(el.getAttribute('data-ci-logi-retry'), true);
     if (el.hasAttribute('data-ci-logi-create')) return void openCreate(el.getAttribute('data-ci-logi-create'));
     if (el.hasAttribute('data-ci-logi-edit')) return void openEdit(el.getAttribute('data-ci-logi-edit'), el.getAttribute('data-ci-id'));
+    if (el.hasAttribute('data-ci-logi-wac-confirm') && typeof global.viewLogWacDetail === 'function') return void global.viewLogWacDetail(el.getAttribute('data-ci-logi-wac-confirm'), el.getAttribute('data-ci-id'), 'pending');
+    if (el.hasAttribute('data-ci-logi-wac-exclude') && typeof global.openCIWacExclude === 'function') return void global.openCIWacExclude(el.getAttribute('data-ci-logi-wac-exclude'), el.getAttribute('data-ci-id'), el.getAttribute('data-batch-no'));
+    if (el.hasAttribute('data-ci-logi-wac-restore') && typeof global.openCIWacRestore === 'function') return void global.openCIWacRestore(el.getAttribute('data-ci-logi-wac-restore'), el.getAttribute('data-ci-id'), el.getAttribute('data-batch-no'));
+    if (el.hasAttribute('data-ci-logi-wac-cc') && typeof global.openWacCcFromCI === 'function') return void global.openWacCcFromCI(el.getAttribute('data-ci-logi-wac-cc'), el.getAttribute('data-ci-id'), el.getAttribute('data-batch-no'));
     if (el.hasAttribute('data-ci-logi-export-pl') && typeof global.exportBatchPL === 'function') return void global.exportBatchPL(el.getAttribute('data-ci-logi-export-pl'));
     if (el.hasAttribute('data-ci-logi-export-ci-pl') && typeof global.exportBatchCIAndPL === 'function') return void global.exportBatchCIAndPL(el.getAttribute('data-ci-logi-export-ci-pl'));
+  });
+
+  // Clicking any non-control area of a logistics batch row opens the combined logistics + WAC detail.
+  document.addEventListener('click', function (event) {
+    var row = event.target.closest('[data-ci-logi-row]');
+    if (!row) return;
+    if (event.target.closest('button,input,select,textarea,a,label,[data-ci-logi-inline-ignore]')) return;
+    if (typeof global.viewLogWacDetail !== 'function') return;
+    event.preventDefault();
+    event.stopPropagation();
+    global.viewLogWacDetail(
+      row.getAttribute('data-ci-logi-row'),
+      row.getAttribute('data-ci-id'),
+      row.getAttribute('data-wac-status'),
+      row.getAttribute('data-wac-exclusion-reason')
+    );
   });
 
   injectStyle();
@@ -656,4 +723,9 @@
   wrapSave('saveEditLog');
 
   global.toggleCIListLogistics = togglePanel;
+  global.refreshCIListLogistics = function (ciId) {
+    if (!ciId) return Promise.resolve();
+    invalidateCache(ciId);
+    return togglePanel(ciId, true);
+  };
 })(typeof window !== 'undefined' ? window : globalThis);
