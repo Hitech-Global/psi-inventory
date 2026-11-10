@@ -15,11 +15,18 @@
   'use strict';
 
   var SOURCE_SYSTEM = '至速仓';
-  // Zhisu fulfillment is used only by Malaysia and Thailand.
-  // Singapore (and every other warehouse) must never be inferred as Zhisu.
+  // This export is from Zhisu. Singapore storefront orders may be fulfilled
+  // through the Malaysia-side Zhisu operation; the storefront determines the
+  // sales country, while the warehouse is validated independently.
   var SOURCE_COUNTRIES = Object.freeze({
     '吉隆坡一号仓': '马来西亚',
-    '泰国一号仓': '泰国'
+    '泰国一号仓': '泰国',
+    '新加坡仓': '新加坡'
+  });
+  var WAREHOUSE_COUNTRIES = Object.freeze({
+    '吉隆坡一号仓': ['马来西亚', '新加坡'],
+    '泰国一号仓': ['泰国'],
+    '新加坡仓': ['新加坡']
   });
 
   function text(value) {
@@ -84,6 +91,20 @@
     var warehouse = text(value);
     return Object.prototype.hasOwnProperty.call(SOURCE_COUNTRIES, warehouse)
       ? SOURCE_COUNTRIES[warehouse] : '';
+  }
+
+  function countryFromStore(value) {
+    var store = text(value);
+    if (/(?:\(\s*sg\s*\)|\bsg\b|singapore|新加坡)/i.test(store)) return '新加坡';
+    if (/(?:\(\s*my\s*\)|\bmy\b|malaysia|马来西亚)/i.test(store)) return '马来西亚';
+    if (/(?:\(\s*th\s*\)|\bth\b|thailand|泰国)/i.test(store)) return '泰国';
+    return '';
+  }
+
+  function warehouseSupportsCountry(warehouseValue, country) {
+    var warehouse = text(warehouseValue);
+    var countries = WAREHOUSE_COUNTRIES[warehouse];
+    return Array.isArray(countries) && countries.indexOf(country) >= 0;
   }
 
   function isUnpaidStatus(value) {
@@ -200,25 +221,27 @@
       var platformOrderNo = text(row[c.platformOrderNo]);
       var orderNo = platformOrderNo || systemOrderNo;
       var warehouse = text(row[c.warehouse]);
-      var country = countryFromWarehouse(warehouse);
+      var store = c.store >= 0 ? text(row[c.store]) : '';
+      // Store country is the sales destination. This is essential for
+      // Singapore orders fulfilled from the Malaysia Zhisu warehouse.
+      var country = countryFromStore(store) || countryFromWarehouse(warehouse);
       var orderDateRaw = row[c.orderDate];
       var orderDate = normalizeOrderDate(orderDateRaw);
       var skuCode = text(row[c.sku]);
       var quantity = parseQuantity(row[c.quantity]);
       var platform = c.platform >= 0 ? text(row[c.platform]) : '';
-      var store = c.store >= 0 ? text(row[c.store]) : '';
       var packageNo = c.packageNo >= 0 ? text(row[c.packageNo]) : '';
       var waybill = c.waybill >= 0 ? text(row[c.waybill]) : '';
       var validOrder = isFalseStatus(status) ? 0 : 1;
 
-      if (warehouse) warehouseCounts[warehouse] = (warehouseCounts[warehouse] || 0) + 1;
+      if (warehouse) warehouseCounts['至速仓'] = (warehouseCounts['至速仓'] || 0) + 1;
       if (country) countryCounts[country] = (countryCounts[country] || 0) + 1;
 
-      var remarkParts = ['来源=至速仓'];
+      var remarkParts = ['来源=至速仓', '仓库=至速仓'];
       if (systemOrderNo) remarkParts.push('系统单号=' + systemOrderNo);
       if (platform) remarkParts.push('平台=' + platform);
       if (store) remarkParts.push('店铺=' + store);
-      if (warehouse) remarkParts.push('仓库=' + warehouse);
+      if (warehouse) remarkParts.push('源文件仓库=' + warehouse);
       remarkParts.push('支付方式=' + paymentMethod);
       if (packageNo) remarkParts.push('包裹编号=' + packageNo);
       if (waybill) remarkParts.push('运单号=' + waybill);
@@ -228,9 +251,10 @@
       if (!orderDate) errors.push('下单时间格式无法识别：' + text(orderDateRaw));
       if (!skuCode) errors.push('SKU 为空，无法匹配 PSI SKU 主数据');
       if (!quantity.valid) errors.push('发货数量必须为正整数');
-      if (!country) {
+      if (!country || !warehouseSupportsCountry(warehouse, country)) {
         stats.unknownWarehouseRows++;
-        errors.push('无法根据仓库名称识别国家：' + (warehouse || '（空）'));
+        errors.push('无法识别至速仓发货仓库与销售国家：国家=' +
+          (country || '（未知）') + '，源文件仓库=' + (warehouse || '（空）'));
       }
 
       var record = {
@@ -346,7 +370,7 @@
 
   function downloadConflictReport(win, stats) {
     if (!win || !win.XLSX || !stats || !Array.isArray(stats.conflictDetails) || !stats.conflictDetails.length) return;
-    var rows = [['平台单号', 'SKU', '原始行号', '系统单号', '数量', '线上状态', '仓库']];
+    var rows = [['平台单号', 'SKU', '原始行号', '系统单号', '数量', '线上状态', '源文件仓库']];
     stats.conflictDetails.forEach(function (group) {
       (group.records || []).forEach(function (record) {
         rows.push([
@@ -389,7 +413,7 @@
         Number(stats.conflictGroups || 0) + ' 组，共 ' + Number(stats.conflictRows || 0) +
         ' 行暂不导入。请下载异常明细核对。</div>' +
         '<button type="button" id="zhisu-sales-conflict-download" style="margin-top:7px;padding:5px 10px;border:1px solid #d1d5db;border-radius:7px;background:#fff;color:#333;cursor:pointer">下载冲突明细</button>' : '') +
-      '<div style="color:#888;margin-top:4px">支付方式为空、线上状态为未支付的记录不导入；买方要求退回、已取消记为 False，其余状态记为 True。品牌由 PSI SKU 主数据匹配。</div>' +
+      '<div style="color:#888;margin-top:4px">本文件全部按线上渠道导入；仓库统一识别为至速仓，销售国家优先按店铺国家识别。支付方式为空、未支付的记录不导入；买方要求退回、已取消记为 False，其余状态记为 True。品牌由 PSI SKU 主数据匹配。</div>' +
       '</div>';
     el.innerHTML = '';
     el.insertAdjacentHTML('beforeend', html);
@@ -475,7 +499,7 @@
             win.showToast('没有符合支付方式和线上状态规则的至速仓销售记录。', 'warning');
           }
           if ((parsed.stats.unknownWarehouseRows || 0) > 0 && typeof win.showToast === 'function') {
-            win.showToast('部分至速仓订单无法根据仓库名称识别国家，相关行已阻止导入。', 'warning');
+            win.showToast('部分至速仓订单的销售国家或仓库组合无法识别，相关行已阻止导入。', 'warning');
           }
         } catch (error) {
           if (typeof win.showToast === 'function') {
@@ -497,6 +521,8 @@
     normalizeOrderDate: normalizeOrderDate,
     parseQuantity: parseQuantity,
     countryFromWarehouse: countryFromWarehouse,
+    countryFromStore: countryFromStore,
+    warehouseSupportsCountry: warehouseSupportsCountry,
     isUnpaidStatus: isUnpaidStatus,
     isFalseStatus: isFalseStatus,
     parseZhisuWorkbook: parseZhisuWorkbook,

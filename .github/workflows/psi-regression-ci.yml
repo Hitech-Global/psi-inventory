@@ -223,7 +223,7 @@ jobs:
         run: node --test test/bigseller-inventory-import.test.cjs test/inventory-import-precheck.test.cjs
       - name: Test BigSeller sales import marker / status rules
         run: node --test test/bigseller-sales-import.test.cjs
-      - name: Test Zhisu sales import payment / status / warehouse rules
+      - name: Test Zhisu sales import payment / status / country / warehouse rules
         run: node --test test/zhisu-sales-import.test.cjs
       - name: Test supplier original PL workbook import and CBM allocation
         run: node --test test/pl-smart-import.test.cjs
