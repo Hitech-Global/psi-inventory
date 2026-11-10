@@ -234,6 +234,18 @@
     else global.showToast('当前版本未加载WAC CC功能，请刷新页面后重试', 'warning');
   }
 
+  // Replace the legacy empty-history hint: the standalone WAC queue is retired; CC now starts from CI.
+  var originalRenderWacNotificationHistory = global.renderWacNotificationHistory;
+  if (typeof originalRenderWacNotificationHistory === 'function' && !originalRenderWacNotificationHistory.__ciWacWrapped) {
+    var wrappedRenderWacNotificationHistory = function () {
+      return originalRenderWacNotificationHistory.apply(this, arguments)
+        .replace('可以在WAC物流批次列表点击 CC 补充发送。', '可以在CI列表对应物流批次行点击 CC 补充发送。');
+    };
+    wrappedRenderWacNotificationHistory.__ciWacWrapped = true;
+    wrappedRenderWacNotificationHistory.__original = originalRenderWacNotificationHistory;
+    global.renderWacNotificationHistory = wrappedRenderWacNotificationHistory;
+  }
+
   var originalSubmitWacConfirm = global.submitWacConfirm;
   if (typeof originalSubmitWacConfirm === 'function' && !originalSubmitWacConfirm.__ciWacWrapped) {
     var wrappedSubmitWacConfirm = async function (batchId) {
