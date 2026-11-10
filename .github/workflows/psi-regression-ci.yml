@@ -88,6 +88,7 @@ on:
       - 'inventory-asset-values.js'
       - 'test/inventory-asset-values.test.cjs'
       - 'test/inventory-overview-export.test.cjs'
+      - 'test/rp-excel-snapshot-export.test.cjs'
       - 'test/inventory-onhand-local-currency-kpi.test.cjs'
       - 'i18n.js'
       - '.github/workflows/psi-regression-ci.yml'
@@ -182,6 +183,7 @@ jobs:
           node --check inventory-asset-values.js
           node --check test/inventory-asset-values.test.cjs
           node --check test/inventory-overview-export.test.cjs
+          node --check test/rp-excel-snapshot-export.test.cjs
           node --check test/inventory-onhand-local-currency-kpi.test.cjs
           node --check test/wac-history-import.test.cjs
           node --check test/wac-batch-exclusion.test.cjs
@@ -237,6 +239,8 @@ jobs:
         run: node test/inventory-asset-values.test.cjs
       - name: Test inventory overview export fields
         run: node --test test/inventory-overview-export.test.cjs
+      - name: Test forecast Excel export and local XLSX bundle
+        run: node --test test/rp-excel-snapshot-export.test.cjs
       - name: Test inventory on-hand local currency KPI
         run: node --test test/inventory-onhand-local-currency-kpi.test.cjs
       - name: Test WAC calculation and transport-basis rules
