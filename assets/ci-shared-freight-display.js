@@ -5,8 +5,8 @@
 
   var requestSequence = 0;
 
-  function text(value) { return String(value == null ? '' : value).replace(/\\s+/g, ' ').trim(); }
-  function key(value) { return text(value).toLowerCase().replace(/[\\s\\u3000]+/g, ''); }
+  function text(value) { return String(value == null ? '' : value).replace(/\s+/g, ' ').trim(); }
+  function key(value) { return text(value).toLowerCase().replace(/[\s\u3000]+/g, ''); }
   function lang() {
     return typeof global.getLang === 'function'
       ? String(global.getLang() || 'zh').toLowerCase().slice(0, 2) : 'zh';
@@ -92,7 +92,7 @@
       freightValue.textContent = total == null
         ? (lang() === 'en' ? 'Pending FX' : (lang() === 'id' ? 'Menunggu kurs' : '待折算'))
         : money(total, data.total_freight_currency || 'RMB');
-      freightValue.title = (data.total_freight_errors || []).join('\\n');
+      freightValue.title = (data.total_freight_errors || []).join('\n');
     }
   }
 
@@ -104,7 +104,7 @@
   }
   function parseAmount(value) {
     var raw = text(value);
-    var match = raw.match(/-?[\\d,]+(?:\\.\\d+)?/);
+    var match = raw.match(/-?[\d,]+(?:\.\d+)?/);
     if (!match) return null;
     var amount = Number(match[0].replace(/,/g, ''));
     return Number.isFinite(amount) ? amount : null;
@@ -139,7 +139,7 @@
           cells[freightIndex].textContent = item.total_minor == null
             ? (lang() === 'en' ? 'Pending FX' : (lang() === 'id' ? 'Menunggu kurs' : '待折算'))
             : money(Number(item.total_minor) / 100, 'RMB');
-          cells[freightIndex].title = (item.errors || []).join('\\n');
+          cells[freightIndex].title = (item.errors || []).join('\n');
         }
         if (ratioIndex >= 0 && cells[ratioIndex]) {
           var goods = goodsIndex >= 0 && cells[goodsIndex] ? parseAmount(cells[goodsIndex].textContent) : null;
