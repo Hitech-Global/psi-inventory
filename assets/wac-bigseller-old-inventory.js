@@ -15,6 +15,14 @@
   function normalizeSku(value) {
     return normalizeText(value).toUpperCase();
   }
+  function normalizeCountry(value) {
+    var text = normalizeText(value).toLowerCase();
+    if (!text) return "";
+    if (/(?:indonesia|印尼|印度尼西亚)/i.test(text) || /(^|[\s/_-])id($|[\s/_-])/i.test(text)) return "Indonesia";
+    if (/(?:malaysia|马来西亚|马来)/i.test(text) || /(^|[\s/_-])my($|[\s/_-])/i.test(text)) return "Malaysia";
+    if (/(?:thailand|泰国)/i.test(text) || /(^|[\s/_-])th($|[\s/_-])/i.test(text)) return "Thailand";
+    return "";
+  }
   function findColumn(headers, aliases) {
     var normalized = (headers || []).map(normalizeHeader);
     for (var i = 0; i < aliases.length; i++) {
@@ -178,6 +186,10 @@
 
     return {
       recognized: true,
+      sourceSystem: "BigSeller",
+      // BigSeller inventory-change history currently belongs to Indonesia/Bekasi only.
+      // Thailand and Malaysia use Zishucang and must use their own history source.
+      sourceCountry: "Indonesia",
       sheetName: detected.sheetName,
       headerRowIndex: detected.headerRowIndex,
       totalRows: totalRows,
@@ -195,7 +207,7 @@
     var b = Date.parse(targetDate + "T00:00:00Z");
     return Number.isFinite(a) && Number.isFinite(b) ? Math.round(Math.abs(a - b) / 86400000) : Number.MAX_SAFE_INTEGER;
   }
-  function matchCandidates(parsed, batchItems, arrivalDate) {
+  function matchCandidates(parsed, batchItems, arrivalDate, targetCountry) {
     var batchMap = Object.create(null);
     (batchItems || []).forEach(function (item) {
       var skuKey = normalizeSku(item && item.sku_code);
@@ -207,6 +219,20 @@
       };
     });
     var batchSkus = Object.keys(batchMap);
+    var sourceCountry = normalizeCountry(parsed && parsed.sourceCountry);
+    var requestedCountry = normalizeCountry(targetCountry);
+    // Fail closed: do not match a source whose country differs from the CI target country.
+    if (!sourceCountry || !requestedCountry || sourceCountry !== requestedCountry) {
+      return {
+        candidates: [],
+        batchSkuCount: batchSkus.length,
+        autoCandidateIndex: -1,
+        sourceCountry: sourceCountry,
+        targetCountry: requestedCountry,
+        countryMismatch: !!(sourceCountry && requestedCountry && sourceCountry !== requestedCountry),
+        countryUnresolved: !sourceCountry || !requestedCountry
+      };
+    }
     var candidates = (parsed && parsed.groups ? parsed.groups : []).map(function (group) {
       var matched = [];
       var missing = [];
@@ -269,7 +295,11 @@
     return {
       candidates: candidates,
       batchSkuCount: batchSkus.length,
-      autoCandidateIndex: exactCandidates.length === 1 ? candidates.indexOf(exactCandidates[0]) : -1
+      autoCandidateIndex: exactCandidates.length === 1 ? candidates.indexOf(exactCandidates[0]) : -1,
+      sourceCountry: sourceCountry,
+      targetCountry: requestedCountry,
+      countryMismatch: false,
+      countryUnresolved: false
     };
   }
 
@@ -314,6 +344,7 @@
     normalizeHeader: normalizeHeader,
     parseInteger: parseInteger,
     normalizeDateTime: normalizeDateTime,
+    normalizeCountry: normalizeCountry,
     parseBigSellerWorkbook: parseBigSellerWorkbook,
     matchCandidates: matchCandidates,
     applyCandidate: applyCandidate

@@ -16588,7 +16588,7 @@ async function importWacOldInventory(){
           const history=window.WacBigSellerOldInventory.parseBigSellerWorkbook(wb,XLSX);
           if(history&&history.recognized){
             const batchItems=(p.items||[]).map(it=>({sku_code:it.sku_code,batch_qty:it.batch_qty}));
-            const matched=window.WacBigSellerOldInventory.matchCandidates(history,batchItems,(p.meta||{}).actual_arrival_date||'');
+            const matched=window.WacBigSellerOldInventory.matchCandidates(history,batchItems,(p.meta||{}).actual_arrival_date||'',(p.meta||{}).country||'');
             // A newly selected BigSeller history file replaces any prior import; never leave stale old_qty values active.
             (p.items||[]).forEach((it,i)=>{
               const el=document.getElementById('wac-old-'+i);
@@ -16622,6 +16622,10 @@ async function importWacOldInventory(){
               showToast(t('wac.bigseller_auto','找到唯一完整匹配的入库单，系统已自动回填。'),'success');
             }else if(matched.candidates.length){
               showToast(t('wac.bigseller_choose','已识别 BigSeller 入库记录，请选择与当前 CI 匹配的入库单。'),'warning');
+            }else if(matched.countryMismatch){
+              showToast(t('wac.bigseller_country_mismatch','当前 CI 目标国家与 BigSeller 数据来源国家不一致。BigSeller 对应印尼 Bekasi；泰国/马来西亚请使用至速仓历史记录。'),'warning');
+            }else if(matched.countryUnresolved){
+              showToast(t('wac.bigseller_country_unresolved','无法确认当前 CI 国家，已禁止自动匹配。请检查目标仓库与国家主数据。'),'warning');
             }else{
               showToast(t('wac.bigseller_no_candidates','没有找到与当前 CI SKU 相匹配的入库记录。请检查文件范围，或改用旧库存模板。'),'warning');
             }
