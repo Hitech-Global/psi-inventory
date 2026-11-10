@@ -51,7 +51,8 @@ test('detects the native Zhisu export and maps its columns into PSI sales record
   assert.equal(record.is_valid_order, 1);
   assert.equal(record.brand, '');
   assert.match(record.remark, /系统单号=EC-MY-20261101000001/);
-  assert.match(record.remark, /仓库=吉隆坡一号仓/);
+  assert.match(record.remark, /仓库=至速仓/);
+  assert.match(record.remark, /源文件仓库=吉隆坡一号仓/);
   assert.match(record.remark, /支付方式=Credit \/ Debit Card/);
 });
 
@@ -80,15 +81,24 @@ test('maps cancelled and buyer-return statuses to False; every other status is T
   assert.equal(parsed.stats.trueRows, 3);
 });
 
-test('warehouse country identifies Zhisu only for Malaysia and Thailand', () => {
+test('storefront determines sales country and Singapore can ship via Malaysia Zhisu', () => {
   const parsed = Zhisu.parseZhisuWorkbook(workbook([
     row({ 2: 'MY-1', 6: '吉隆坡一号仓' }),
-    row({ 2: 'TH-1', 6: '泰国一号仓', 0: 'EC-TH-1' }),
-    row({ 2: 'SG-1', 6: '新加坡仓', 0: 'EC-SG-1' })
+    row({ 2: 'TH-1', 5: 'Redragon TH OS(TH)', 6: '泰国一号仓', 0: 'EC-TH-1' }),
+    row({ 2: 'SG-VIA-MY', 5: 'Shopee Redragon Store SG(SG)', 6: '吉隆坡一号仓', 0: 'EC-SG-1' }),
+    row({ 2: 'SG-LOGICAL-WH', 5: 'Shopee Redragon Store SG(SG)', 6: '新加坡仓', 0: 'EC-SG-2' }),
+    row({ 2: 'UNKNOWN-WH', 5: 'Unknown Store', 6: '未知仓库', 0: 'EC-UNKNOWN-1' })
   ]), 'orders.xlsx', fakeXlsx());
-  assert.deepEqual(parsed.records.map(record => record.country), ['马来西亚', '泰国', '']);
-  assert.ok(parsed.records[2]._errors.some(error => error.includes('无法根据仓库名称识别国家')));
+  assert.deepEqual(parsed.records.map(record => record.country), ['马来西亚', '泰国', '新加坡', '新加坡', '']);
+  assert.equal(parsed.records[2].source_system, '至速仓');
+  assert.equal(parsed.records[2].shop_platform, '线上渠道');
+  assert.match(parsed.records[2].remark, /仓库=至速仓/);
+  assert.match(parsed.records[2].remark, /源文件仓库=吉隆坡一号仓/);
+  assert.match(parsed.records[3].remark, /源文件仓库=新加坡仓/);
+  assert.ok(parsed.records[4]._errors.some(error => error.includes('无法识别至速仓发货仓库与销售国家')));
   assert.equal(parsed.stats.unknownWarehouseRows, 1);
+  assert.deepEqual(parsed.warehouseCounts, { '至速仓': 5 });
+  assert.deepEqual(parsed.countryCounts, { '马来西亚': 1, '泰国': 1, '新加坡': 2 });
 });
 
 test('multiple SKUs under one order remain separate sales lines', () => {
@@ -124,7 +134,7 @@ test('unknown warehouse, missing SKU and invalid quantity remain visible as bloc
   ]), 'orders.xlsx', fakeXlsx());
   assert.equal(parsed.stats.unknownWarehouseRows, 1);
   assert.equal(parsed.stats.validationErrorRows, 3);
-  assert.ok(parsed.records[0]._errors.some(error => error.includes('无法根据仓库名称识别国家')));
+  assert.ok(parsed.records[0]._errors.some(error => error.includes('无法识别至速仓发货仓库与销售国家')));
   assert.ok(parsed.records[1]._errors.some(error => error.includes('SKU 为空')));
   assert.ok(parsed.records[2]._errors.some(error => error.includes('发货数量')));
 });
