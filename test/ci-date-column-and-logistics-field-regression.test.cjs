@@ -23,7 +23,7 @@ test('final postinstall-patched operational CI list displays ci_date, never actu
   const end = effectiveApp.indexOf('function addHistoricalRow(srcTable,sourceRow,h){', start);
   assert.ok(start >= 0 && end > start, 'effective unified operational row renderer must exist');
   const renderer = effectiveApp.slice(start, end);
-  assert.match(renderer, /textCell\\(fmtDate\\(c\\.ci_date\\)\\)/,
+  assert.match(renderer, /textCell\(fmtDate\(c\.ci_date\)\)/,
     'the CI Date cell must bind directly to commercial_invoices.ci_date');
   assert.doesNotMatch(renderer, /actual_ship_date/,
     'actual shipment / pickup date must never replace the CI Date');
