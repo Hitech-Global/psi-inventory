@@ -8,7 +8,7 @@ const path = require('node:path');
 
 const appSource = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
 const matrixStart = appSource.indexOf('function _wacHistoryMatrixExportModel(');
-const matrixEnd = appSource.indexOf('\nasync function exportWacHistoryMatrix', matrixStart);
+const matrixEnd = appSource.indexOf('async function exportWacHistoryMatrix', matrixStart);
 const fnSource = appSource.slice(matrixStart, matrixEnd);
 
 test('WAC history matrix Latest WAC follows newest confirmation timestamp, not largest version number', () => {
@@ -60,7 +60,7 @@ test('matrix date axis collapses inbound dates sharing one actual freight FX dat
       confirmed_at:'2026-09-15 12:00:00', last_inbound_date:'2026-09-15', fx_rate_date:'2026-09-13',
       new_avg_cost:110, local_currency:'THB', rmb_to_local_rate:4.9 }
   ];
-  const model = vm.runInNewContext(fnSource + '\\n_wacHistoryMatrixExportModel(' + JSON.stringify(rows) + ', {});');
+  const model = vm.runInNewContext(fnSource + String.fromCharCode(10) + '_wacHistoryMatrixExportModel(' + JSON.stringify(rows) + ', {});');
   assert.deepEqual(Array.from(model.dates), ['2026-09-13']);
   assert.equal(model.rows[0][6], '2026-09-15');
   assert.match(model.headers[7], /1 RMB = 4.9 THB/);
