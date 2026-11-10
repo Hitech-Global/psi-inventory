@@ -16227,7 +16227,7 @@ async function wacConfirm(batchId){
       const formulaHint='<div style="background:#fffbe6;padding:10px 14px;border-radius:6px;margin-bottom:12px;font-size:12px;color:#666">'+
         t('wac.formula_hint','移动加权公式：新WAC = (旧库存数量 × 当前WAC + 本批次数量 × 单位落地成本) ÷ (旧库存数量 + 本批次数量)')+'<br>'+
         t('wac.landing_cost_hint_v2','单位落地成本 = (SKU级采购成本 + 按成本比例分摊的物流/其他费用 + 按税率权重分摊的关税) ÷ SKU数量')+'<br>'+
-        t('wac.old_qty_hint','可直接导入 BigSeller 库存更新记录自动识别入库前原库存；也可继续使用旧库存模板。')+
+        t('wac.old_qty_hint','印尼可导入 BigSeller 库存更新记录；马来西亚/泰国可导入至速仓当前库存，按 max(当前库存−本批到货数量,0) 倒推原库存；也可使用旧库存模板。')+
       '</div>';
 
       skuTableHtml=formulaHint+opBar+
@@ -16571,6 +16571,121 @@ function selectWacBigSellerCandidate(index){
   }
 }
 
+function renderWacZhisuDerivedPanel(){
+  const ctx=window._wacZhisuContext;
+  const opbar=document.querySelector('#modal-content .wac-opbar');
+  if(!ctx||!opbar){
+    const stale=document.getElementById('wac-zhisu-derived-panel');
+    if(stale)stale.remove();
+    return;
+  }
+  let panel=document.getElementById('wac-zhisu-derived-panel');
+  if(!panel){
+    panel=document.createElement('div');
+    panel.id='wac-zhisu-derived-panel';
+    opbar.insertAdjacentElement('afterend',panel);
+  }
+  const result=ctx.result||{};
+  const filled=result.filled||[];
+  const clamped=result.clampedSkus||[];
+  const unresolved=result.unresolved||[];
+  let html='<div style="margin:10px 0 12px;padding:12px 14px;border:1px solid var(--border,#d9dde5);background:var(--surface-secondary,#f7f8fa);border-radius:10px;font-size:12px;color:var(--text-primary,#333)">';
+  html+='<div style="font-size:13px;font-weight:650;margin-bottom:5px">📦 '+esc(t('wac.zhisu.title','已识别至速仓当前库存'))+'</div>';
+  html+='<div style="color:var(--text-secondary,#666);margin-bottom:7px">'+esc(t('wac.zhisu.desc','原库存 = max(至速仓当前可用库存 − CI 本批到货数量, 0)。文件中没有出现的 SKU，按当前库存 0 处理。'))+'</div>';
+  if(result.sourceWarehouse){
+    html+='<div style="color:var(--text-secondary,#666);margin-bottom:7px">'+esc(t('wac.zhisu.summary','仓库：{warehouse} · 快照日期：{snapshot} · 已自动计算：{matched} 个 SKU',{
+      warehouse:result.sourceWarehouse,
+      snapshot:ctx.parsed&&ctx.parsed.snapshotDate||'-',
+      matched:filled.length
+    }))+'</div>';
+  }
+  if(result.countryUnresolved){
+    html+='<div style="color:#b42318;margin-top:6px">'+esc(t('wac.zhisu.country_unresolved','无法识别 CI 目标国家，已阻止自动计算。'))+'</div>';
+  }else if(result.countryUnsupported){
+    html+='<div style="color:#b42318;margin-top:6px">'+esc(t('wac.zhisu.country_unsupported','至速仓原库存倒推仅支持马来西亚和泰国。'))+'</div>';
+  }else if(result.countryMismatch){
+    html+='<div style="color:#b42318;margin-top:6px">'+esc(t('wac.zhisu.country_mismatch','CI 国家与文件中的至速仓不一致。'))+'</div>';
+  }else if(result.sourceWarehouseUnresolved){
+    html+='<div style="color:#b42318;margin-top:6px">'+esc(t('wac.zhisu.source_unresolved','无法识别文件中的至速源仓。'))+'</div>';
+  }
+  if(clamped.length){
+    html+='<div style="color:#ad6800;margin-top:6px">'+esc(t('wac.zhisu.clamped','有 {count} 个 SKU 的当前库存低于本批 CI 数量，原库存按 0 处理：{skus}',{
+      count:clamped.length,skus:clamped.slice(0,12).join(', ')+(clamped.length>12?' …':'')
+    }))+'</div>';
+  }
+  if(unresolved.length){
+    html+='<div style="color:#ad6800;margin-top:6px">'+esc(t('wac.zhisu.unresolved','有 {count} 个 SKU 因重复或非法库存记录无法自动计算，请手动填写：{skus}',{
+      count:unresolved.length,skus:unresolved.slice(0,12).join(', ')+(unresolved.length>12?' …':'')
+    }))+'</div>';
+  }
+  if(result.missingSnapshotSkus&&result.missingSnapshotSkus.length){
+    html+='<div style="color:var(--text-secondary,#666);margin-top:6px">文件未列出的 SKU 已按当前库存 0 计算：'+esc(result.missingSnapshotSkus.slice(0,12).join(', '))+(result.missingSnapshotSkus.length>12?' …':'')+'</div>';
+  }
+  html+='</div>';
+  panel.innerHTML=html;
+}
+
+function applyWacZhisuOriginalStock(parsed,fileName,batchItems){
+  const p=window._wacPreview;
+  if(!p||!window.ZhisuInventoryImport||typeof window.ZhisuInventoryImport.deriveWacOriginalStock!=='function')return null;
+  const result=window.ZhisuInventoryImport.deriveWacOriginalStock(parsed,batchItems,(p.meta||{}).country||'');
+  (p.items||[]).forEach((it,i)=>{
+    const el=document.getElementById('wac-old-'+i);
+    if(el){el.value='';recalcWacRow(i);}
+  });
+  const st=window._wacImport||{};
+  const blockedByCountry=!!(result.countryMismatch||result.countryUnsupported||result.countryUnresolved||result.sourceWarehouseUnresolved);
+  const filledMap=Object.create(null);
+  (result.filled||[]).forEach(row=>{filledMap[String(row.sku_code||'').trim().toUpperCase()]=row;});
+  if(!blockedByCountry){
+    (p.items||[]).forEach((it,i)=>{
+      const sku=String(it.sku_code||'').trim().toUpperCase();
+      const row=filledMap[sku];
+      const el=document.getElementById('wac-old-'+i);
+      if(row&&el){el.value=String(row.old_qty);recalcWacRow(i);}
+    });
+  }
+  st.uploaded=!blockedByCountry;
+  st.matched=blockedByCountry?[]:(result.matched||[]).slice();
+  st.missing=blockedByCountry
+    ? (batchItems||[]).map(it=>String(it.sku_code||'').trim()).filter(Boolean)
+    : (result.unresolved||[]).slice();
+  st.unknown=[];
+  // Duplicate / invalid source rows remain manually correctable in the WAC table.
+  st.duplicate=[];
+  st.invalid=[];
+  st.source=blockedByCountry?'zhisu_current_stock_blocked':'zhisu_current_stock_derived';
+  st.sourceDocumentNo='';
+  st.sourceWarehouse=result.sourceWarehouse||'';
+  st.sourceTime=parsed.snapshotDate||'';
+  window._wacImport=st;
+  window._wacZhisuContext={parsed:parsed,result:result,fileName:fileName||''};
+  renderWacZhisuDerivedPanel();
+  wacValidateInputs();
+  if(result.countryUnresolved){
+    showToast(t('wac.zhisu.country_unresolved','无法识别 CI 目标国家，已阻止自动计算。'),'danger');
+  }else if(result.countryUnsupported){
+    showToast(t('wac.zhisu.country_unsupported','至速仓原库存倒推仅支持马来西亚和泰国。'),'danger');
+  }else if(result.countryMismatch){
+    showToast(t('wac.zhisu.country_mismatch','CI 国家与文件中的至速仓不一致。'),'danger');
+  }else if(result.sourceWarehouseUnresolved){
+    showToast(t('wac.zhisu.source_unresolved','无法识别文件中的至速源仓。'),'danger');
+  }else if((result.unresolved||[]).length){
+    showToast(t('wac.zhisu.partial','至速库存已识别，已计算 {matched} 个 SKU，另有 {missing} 个需要手动核对。',{
+      matched:(result.matched||[]).length,missing:result.unresolved.length
+    }),'warning');
+  }else if((result.clampedSkus||[]).length){
+    showToast(t('wac.zhisu.clamped','有 {count} 个 SKU 的当前库存低于本批 CI 数量，原库存按 0 处理：{skus}',{
+      count:result.clampedSkus.length,skus:result.clampedSkus.slice(0,8).join(', ')
+    }),'warning');
+  }else{
+    showToast(t('wac.zhisu.success','已根据至速仓当前库存倒推出 {count} 个 SKU 的原库存。',{
+      count:(result.matched||[]).length
+    }),'success');
+  }
+  return result;
+}
+
 // 导入旧库存：兼容原模板，并支持直接识别 BigSeller 库存更新记录。
 async function importWacOldInventory(){
   const p=window._wacPreview; const st=window._wacImport;
@@ -16587,6 +16702,8 @@ async function importWacOldInventory(){
         if(window.WacBigSellerOldInventory&&typeof window.WacBigSellerOldInventory.parseBigSellerWorkbook==='function'){
           const history=window.WacBigSellerOldInventory.parseBigSellerWorkbook(wb,XLSX);
           if(history&&history.recognized){
+            window._wacZhisuContext=null;
+            renderWacZhisuDerivedPanel();
             const batchItems=(p.items||[]).map(it=>({sku_code:it.sku_code,batch_qty:it.batch_qty}));
             const matched=window.WacBigSellerOldInventory.matchCandidates(history,batchItems,(p.meta||{}).actual_arrival_date||'',(p.meta||{}).country||'');
             // A newly selected BigSeller history file replaces any prior import; never leave stale old_qty values active.
@@ -16632,6 +16749,18 @@ async function importWacOldInventory(){
             return;
           }
         }
+        if(window.ZhisuInventoryImport&&typeof window.ZhisuInventoryImport.parseZhisuWorkbook==='function'){
+          const zhisu=window.ZhisuInventoryImport.parseZhisuWorkbook(wb,file.name||'',(p.meta||{}).actual_arrival_date||'',XLSX);
+          if(zhisu){
+            window._wacBigSellerContext=null;
+            renderWacBigSellerCandidatePanel();
+            const batchItems=(p.items||[]).map(it=>({sku_code:it.sku_code,batch_qty:it.batch_qty}));
+            applyWacZhisuOriginalStock(zhisu,file.name||'',batchItems);
+            return;
+          }
+        }
+        window._wacZhisuContext=null;
+        renderWacZhisuDerivedPanel();
         window._wacBigSellerContext=null;
         const oldPanel=document.getElementById('wac-bigseller-candidate-panel');
         if(oldPanel)oldPanel.remove();
