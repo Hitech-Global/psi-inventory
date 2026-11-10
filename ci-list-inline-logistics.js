@@ -39,6 +39,90 @@
     return tr('logistics.listing_status.' + key, key);
   }
 
+  var LOGISTICS_INLINE_STATUS_OPTIONS = [
+    { value: 'pending_shipment', raw: 'pending', labelKey: 'logistics.status.pending_shipment', fallback: '待出运' },
+    { value: 'in_transit', raw: 'in_transit', labelKey: 'logistics.status.in_transit', fallback: '运输中' },
+    { value: 'customs_clearing', raw: 'customs', labelKey: 'logistics.status.customs_clearing', fallback: '清关中' },
+    { value: 'awaiting_delivery', raw: 'delivering', labelKey: 'logistics.status.awaiting_delivery', fallback: '待派送' },
+    { value: 'warehouse_arrived', raw: 'completed', labelKey: 'logistics.status.warehouse_arrived', fallback: '已到仓' }
+  ];
+
+  var LISTING_INLINE_STATUS_OPTIONS = [
+    'pending_plan', 'preparing', 'ready', 'listed'
+  ];
+
+  function logisticsDisplayStatusValue(batch) {
+    var display = String((batch && batch.logistics_display_status) || '').trim();
+    if (LOGISTICS_INLINE_STATUS_OPTIONS.some(function (option) { return option.value === display; })) return display;
+    var raw = String((batch && batch.logistics_status) || '').trim();
+    var map = {
+      pending: 'pending_shipment',
+      picked_up: 'pending_shipment',
+      in_transit: 'in_transit',
+      arrived: 'customs_clearing',
+      customs: 'customs_clearing',
+      cleared: 'awaiting_delivery',
+      delivering: 'awaiting_delivery',
+      completed: 'warehouse_arrived'
+    };
+    return map[raw] || 'pending_shipment';
+  }
+
+  function statusCellHtml(batch, field, ciId) {
+    var isLogistics = field === 'logistics_status';
+    var value = isLogistics
+      ? logisticsDisplayStatusValue(batch)
+      : String((batch && batch.listing_status) || 'pending_plan');
+    var label = isLogistics
+      ? tr('logistics.col.status', '状态')
+      : tr('logistics.col.listing_status', 'Listing状态');
+    var options = isLogistics
+      ? LOGISTICS_INLINE_STATUS_OPTIONS.map(function (option) {
+          return { value: option.value, label: tr(option.labelKey, option.fallback) };
+        })
+      : LISTING_INLINE_STATUS_OPTIONS.map(function (key) {
+          return { value: key, label: listingStatusLabel(key) };
+        });
+
+    if (!hasPermission('logistics_edit')) {
+      var displayLabel = isLogistics
+        ? logisticsStatusLabel(value)
+        : listingStatusLabel(value);
+      return '<td>' + esc(displayLabel || '—') + '</td>';
+    }
+
+    var optionHtml = options.map(function (option) {
+      return '<option value="' + esc(option.value) + '"' +
+        (option.value === value ? ' selected' : '') + '>' + esc(option.label) + '</option>';
+    }).join('');
+
+    return '<td><select class="ci-list-logi-status-inline" data-ci-logi-status-field="' + esc(field) +
+      '" data-ci-logi-status-batch="' + esc(batch && batch.id || '') +
+      '" data-ci-logi-status-ci="' + esc(ciId) +
+      '" data-saved-value="' + esc(value) +
+      '" data-original-value="' + esc(value) +
+      '" aria-label="' + esc(label) + '" title="' + esc(label) +
+      '" onclick="event.stopPropagation()" onchange="updateCILogisticsStatusInline(this)">' +
+      optionHtml + '</select></td>';
+  }
+
+  function statusToastText(field, success) {
+    var lang = typeof global.getLang === 'function' ? String(global.getLang() || 'zh').toLowerCase().slice(0, 2) : 'zh';
+    var labels = {
+      logistics_status: { zh: '物流状态', en: 'Logistics status', id: 'Status logistik' },
+      listing_status: { zh: '上架状态', en: 'Listing status', id: 'Status listing' }
+    };
+    var label = (labels[field] || labels.logistics_status)[lang] || (labels[field] || labels.logistics_status).zh;
+    if (success) {
+      if (lang === 'en') return label + ' updated';
+      if (lang === 'id') return label + ' diperbarui';
+      return label + '已更新';
+    }
+    if (lang === 'en') return 'Failed to save ' + label.toLowerCase();
+    if (lang === 'id') return 'Gagal menyimpan ' + label.toLowerCase();
+    return label + '保存失败';
+  }
+
   function normalizeDateValue(value) {
     var raw = String(value == null ? '' : value).trim();
     var match = raw.match(/^(\d{4}-\d{2}-\d{2})/);
@@ -117,6 +201,12 @@
       ".content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-date-inline:focus{background:#fff;border-color:#007aff;box-shadow:0 0 0 3px rgba(0,122,255,.12);outline:none}",
       ".content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-date-inline:disabled{opacity:.65;cursor:not-allowed}",
       ".content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-date-inline.is-saving{opacity:.65;cursor:wait}",
+      ".content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-status-inline{box-sizing:border-box;min-width:132px;height:28px;padding:0 25px 0 8px;border:1px solid transparent;border-radius:8px;background-color:#f2f2f7;color:#1d1d1f;font:500 12px -apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif;cursor:pointer;transition:background .15s,border-color .15s,box-shadow .15s}",
+      ".content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-status-inline[data-ci-logi-status-field=\"listing_status\"]{min-width:168px}",
+      ".content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-status-inline:hover{background-color:#e9e9ef;border-color:#d2d2d7}",
+      ".content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-status-inline:focus{background-color:#fff;border-color:#007aff;box-shadow:0 0 0 3px rgba(0,122,255,.12);outline:none}",
+      ".content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-status-inline:disabled{opacity:.65;cursor:not-allowed}",
+      ".content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-status-inline.is-saving{opacity:.65;cursor:wait}",
       '.content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-table tbody tr:hover td{background:#fafafa!important}',
       '.content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-owners{max-width:220px;overflow:hidden;text-overflow:ellipsis}',
       '.content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-table .cell-actions{position:sticky;right:0;background:#fff!important;box-shadow:-6px 0 10px rgba(0,0,0,.04)}',
@@ -244,8 +334,8 @@
               '<td>' + esc(fmtMoney(b.total_freight || 0, b.freight_currency)) + '</td>' +
               '<td>' + esc(ratio) + '</td>'
             : '') +
-          '<td>' + esc(logisticsStatusLabel(b.logistics_display_status || b.logistics_status)) + '</td>' +
-          '<td>' + esc(listingStatusLabel(b.listing_status)) + '</td>' +
+          statusCellHtml(b, 'logistics_status', ciId) +
+          statusCellHtml(b, 'listing_status', ciId) +
           '<td class="ci-list-logi-owners">' + (b.listing_owner_names && b.listing_owner_names.length ? esc(b.listing_owner_names.join('、')) : '—') + '</td>' +
           '<td class="cell-actions"><div class="ci-list-logi-export-actions">' +
             (hasPermission('logistics_edit') ? '<button class="action-btn" data-ci-logi-edit="' + esc(b.id) + '" data-ci-id="' + esc(ciId) + '" title="' + esc(tr('common.edit', '编辑')) + '">✏️</button> ' : '') +
@@ -288,17 +378,23 @@
     return tableHtml + createBtn;
   }
 
-  function patchCachedBatchDate(ciId, batchId, field, value) {
+  function patchCachedBatchFields(ciId, batchId, fields) {
     var cached = cacheEntry(ciId);
     if (!cached || !Array.isArray(cached.data)) return null;
     var patched = cached.data.map(function (batch) {
       if (!batch || String(batch.id) !== String(batchId)) return batch;
       var copy = Object.assign({}, batch);
-      copy[field] = value;
+      Object.keys(fields || {}).forEach(function (field) { copy[field] = fields[field]; });
       return copy;
     });
     setCache(ciId, patched);
     return patched;
+  }
+
+  function patchCachedBatchDate(ciId, batchId, field, value) {
+    var patch = {};
+    patch[field] = value;
+    return patchCachedBatchFields(ciId, batchId, patch);
   }
 
   async function refreshInlineDatePanel(ciId, fallbackRows) {
@@ -357,6 +453,60 @@
       input.disabled = !hasPermission('logistics_edit');
       if (typeof global.showToast === 'function') {
         global.showToast((e && e.message) || dateToastText(field, false), 'danger');
+      }
+    }
+  };
+
+  global.updateCILogisticsStatusInline = async function (select) {
+    if (!select || select.disabled) return;
+    var field = select.getAttribute('data-ci-logi-status-field') || '';
+    var batchId = select.getAttribute('data-ci-logi-status-batch') || '';
+    var ciId = select.getAttribute('data-ci-logi-status-ci') || '';
+    if (!batchId || !ciId || (field !== 'logistics_status' && field !== 'listing_status')) return;
+
+    var oldValue = String(select.getAttribute('data-saved-value') || '');
+    var nextValue = String(select.value || '');
+    if (nextValue === oldValue) return;
+    if (!hasPermission('logistics_edit')) {
+      select.value = oldValue;
+      return;
+    }
+
+    select.disabled = true;
+    if (select.classList) select.classList.add('is-saving');
+    try {
+      var fallbackRows;
+      if (field === 'logistics_status') {
+        var option = LOGISTICS_INLINE_STATUS_OPTIONS.filter(function (item) {
+          return item.value === nextValue;
+        })[0];
+        if (!option) throw new Error('Invalid logistics status');
+        await global.api('/api/logistics-batches/' + encodeURIComponent(batchId), 'PUT', {
+          logistics_status: option.raw
+        });
+        fallbackRows = patchCachedBatchFields(ciId, batchId, {
+          logistics_status: option.raw,
+          logistics_display_status: option.value
+        });
+      } else {
+        await global.api('/api/logistics-batches/' + encodeURIComponent(batchId) + '/listing', 'POST', {
+          listing_status: nextValue
+        });
+        fallbackRows = patchCachedBatchFields(ciId, batchId, { listing_status: nextValue });
+      }
+
+      select.setAttribute('data-saved-value', nextValue);
+      select.setAttribute('data-original-value', nextValue);
+      if (select.classList) select.classList.remove('is-saving');
+      select.disabled = !hasPermission('logistics_edit');
+      if (typeof global.showToast === 'function') global.showToast(statusToastText(field, true), 'success');
+      await refreshInlineDatePanel(ciId, fallbackRows);
+    } catch (e) {
+      select.value = oldValue;
+      if (select.classList) select.classList.remove('is-saving');
+      select.disabled = !hasPermission('logistics_edit');
+      if (typeof global.showToast === 'function') {
+        global.showToast((e && e.message) || statusToastText(field, false), 'danger');
       }
     }
   };
