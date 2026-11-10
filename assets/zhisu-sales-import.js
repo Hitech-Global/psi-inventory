@@ -495,7 +495,7 @@
         Number(stats.conflictGroups || 0) + ' 组，共 ' + Number(stats.conflictRows || 0) +
         ' 行暂不导入。请下载异常明细核对。</div>' +
         '<button type="button" id="zhisu-sales-conflict-download" style="margin-top:7px;padding:5px 10px;border:1px solid #d1d5db;border-radius:7px;background:#fff;color:#333;cursor:pointer">下载冲突明细</button>' : '') +
-      '<div style="color:#888;margin-top:4px">本文件全部按线上渠道导入；仓库统一识别为至速仓，销售国家优先按店铺国家识别。FO SKU、支付方式为空、未支付的记录不导入；K686WB-RGB-PRO-RS / BS 自动转换为 PSI 标准 SKU。买方要求退回、已取消记为 False，其余状态记为 True。品牌由 PSI SKU 主数据匹配。</div>' +
+      '<div style="color:#888;margin-top:4px">本文件全部按线上渠道导入；仓库统一识别为至速仓，销售国家优先按店铺国家识别。FO SKU、支付方式为空、未支付的记录不导入；K686WB-RGB-PRO-RS / BS 分别转换为 RDK686WBRGBPRORS / RDK686WBRGBPROBS，H888 转换为 RDH888。买方要求退回、已取消记为 False，其余状态记为 True。品牌由 PSI SKU 主数据匹配。</div>' +
       precheckHtml + '</div>';
     var oldSummary = el.querySelector && el.querySelector('#zhisu-sales-summary');
     if (oldSummary && typeof oldSummary.remove === 'function') oldSummary.remove();
