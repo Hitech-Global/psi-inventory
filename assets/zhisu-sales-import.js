@@ -28,6 +28,12 @@
     '泰国一号仓': ['泰国'],
     '新加坡仓': ['新加坡']
   });
+  // Zhisu uses alternate product codes for these two PSI master-data SKUs.
+  // Normalize before deduplication and before the existing SKU/brand precheck.
+  var SKU_ALIASES = Object.freeze({
+    'K686WB-RGB-PRO-RS': 'RDK686WBRGBPRORS',
+    'K686WB-RGB-PRO-BS': 'RDK686WBRGBPROBS'
+  });
 
   function text(value) {
     return String(value == null ? '' : value).replace(/\u00a0/g, ' ').trim();
@@ -35,6 +41,15 @@
 
   function normalizeHeader(value) {
     return text(value).replace(/[\uFEFF\s\u3000]+/g, '').toLowerCase();
+  }
+
+  function normalizeSkuCode(value) {
+    var sku = text(value);
+    return SKU_ALIASES[sku.toUpperCase()] || sku;
+  }
+
+  function isExcludedSku(value) {
+    return text(value).toUpperCase() === 'FO';
   }
 
   function findColumn(headers, aliases) {
@@ -190,6 +205,7 @@
       excludedBlankPaymentRows: 0,
       excludedUnpaidRows: 0,
       excludedBlankSkuRows: 0,
+      excludedFoSkuRows: 0,
       exactDuplicateRows: 0,
       duplicateOrderItemRows: 0,
       conflictGroups: 0,
@@ -206,11 +222,18 @@
       var row = rows[i] || [];
       if (isBlankRow(row)) continue;
 
-      var skuCode = text(row[c.sku]);
-      if (!skuCode) {
+      var rawSkuCode = text(row[c.sku]);
+      if (!rawSkuCode) {
         stats.excludedBlankSkuRows++;
         continue;
       }
+      if (isExcludedSku(rawSkuCode)) {
+        stats.excludedFoSkuRows++;
+        continue;
+      }
+      // Always carry the PSI master SKU downstream; this also makes duplicate
+      // order-item detection consistent when Zhisu exports an alias SKU.
+      var skuCode = normalizeSkuCode(rawSkuCode);
 
       var paymentMethod = text(row[c.paymentMethod]);
       if (!paymentMethod) {
@@ -427,7 +450,8 @@
       '<span>True：' + Number(stats.trueRows || 0).toLocaleString('en-US') + '</span>' +
       '<span>False：' + Number(stats.falseRows || 0).toLocaleString('en-US') + '</span>' +
       '</div>' +
-      '<div style="color:#666">支付方式为空排除：' + Number(stats.excludedBlankPaymentRows || 0).toLocaleString('en-US') +
+      '<div style="color:#666">FO SKU 排除：' + Number(stats.excludedFoSkuRows || 0).toLocaleString('en-US') +
+      ' 条；支付方式为空排除：' + Number(stats.excludedBlankPaymentRows || 0).toLocaleString('en-US') +
       ' 条；未支付排除：' + Number(stats.excludedUnpaidRows || 0).toLocaleString('en-US') +
       ' 条；SKU 为空排除：' + Number(stats.excludedBlankSkuRows || 0).toLocaleString('en-US') +
       ' 条；完全重复去重：' + Number(stats.exactDuplicateRows || 0).toLocaleString('en-US') +
@@ -437,7 +461,7 @@
         Number(stats.conflictGroups || 0) + ' 组，共 ' + Number(stats.conflictRows || 0) +
         ' 行暂不导入。请下载异常明细核对。</div>' +
         '<button type="button" id="zhisu-sales-conflict-download" style="margin-top:7px;padding:5px 10px;border:1px solid #d1d5db;border-radius:7px;background:#fff;color:#333;cursor:pointer">下载冲突明细</button>' : '') +
-      '<div style="color:#888;margin-top:4px">本文件全部按线上渠道导入；仓库统一识别为至速仓，销售国家优先按店铺国家识别。支付方式为空、未支付的记录不导入；买方要求退回、已取消记为 False，其余状态记为 True。品牌由 PSI SKU 主数据匹配。</div>' +
+      '<div style="color:#888;margin-top:4px">本文件全部按线上渠道导入；仓库统一识别为至速仓，销售国家优先按店铺国家识别。FO SKU、支付方式为空、未支付的记录不导入；K686WB-RGB-PRO-RS / BS 自动转换为 PSI 标准 SKU。买方要求退回、已取消记为 False，其余状态记为 True。品牌由 PSI SKU 主数据匹配。</div>' +
       precheckHtml + '</div>';
     var oldSummary = el.querySelector && el.querySelector('#zhisu-sales-summary');
     if (oldSummary && typeof oldSummary.remove === 'function') oldSummary.remove();
@@ -564,6 +588,8 @@
     SOURCE_SYSTEM: SOURCE_SYSTEM,
     SOURCE_COUNTRIES: SOURCE_COUNTRIES,
     normalizeHeader: normalizeHeader,
+    normalizeSkuCode: normalizeSkuCode,
+    isExcludedSku: isExcludedSku,
     normalizeOrderDate: normalizeOrderDate,
     parseQuantity: parseQuantity,
     countryFromWarehouse: countryFromWarehouse,
