@@ -174,3 +174,108 @@ test("date parser accepts valid filename snapshot dates and rejects invalid date
   assert.equal(Zhisu.dateFromFilename("stock_2026-11-05.xls"), "2026-11-05");
   assert.equal(Zhisu.dateFromFilename("stock_20261340.xls"), "");
 });
+
+
+test("derives WAC original stock from Malaysia Zhisu available stock and CI quantity", () => {
+  const parsed = Zhisu.parseZhisuWorkbook(workbook([
+    headers,
+    ["1", "吉隆坡一号仓", "SKU A", "SKU-A", "160", "10", "150"],
+    ["2", "吉隆坡一号仓", "SKU B", "SKU-B", "80", "0", "80"],
+    ["3", "吉隆坡一号仓", "K686 black", "K686WB-RGB-PRO-BS", "10", "0", "10"],
+    ["4", "泰国一号仓", "SKU A Thailand", "SKU-A", "999", "0", "999"]
+  ]), "仓库库存商品表_20261110.xls", "2026-11-10", fakeXlsx());
+
+  const result = Zhisu.deriveWacOriginalStock(parsed, [
+    { sku_code: "SKU-A", batch_qty: 100 },
+    { sku_code: "SKU-B", batch_qty: 100 },
+    { sku_code: "RDK686WBRGBPROBS", batch_qty: 20 },
+    { sku_code: "SKU-MISSING", batch_qty: 15 }
+  ], "Malaysia");
+
+  assert.equal(result.recognized, true);
+  assert.equal(result.targetCountry, "马来西亚");
+  assert.equal(result.sourceWarehouse, "吉隆坡一号仓");
+  assert.deepEqual(result.filled.map((row) => row.old_qty), [50, 0, 0, 0]);
+  assert.deepEqual(result.filled.map((row) => row.current_qty), [150, 80, 10, 0]);
+  assert.deepEqual(result.matched, ["SKU-A", "SKU-B", "RDK686WBRGBPROBS", "SKU-MISSING"]);
+  assert.deepEqual(result.clampedSkus, ["SKU-B", "RDK686WBRGBPROBS", "SKU-MISSING"]);
+  assert.deepEqual(result.missingSnapshotSkus, ["SKU-MISSING"]);
+  assert.deepEqual(result.unresolved, []);
+});
+
+test("derives Thailand only from 泰国一号仓 when a workbook contains both Zhisu countries", () => {
+  const parsed = Zhisu.parseZhisuWorkbook(workbook([
+    headers,
+    ["1", "吉隆坡一号仓", "SKU A Malaysia", "SKU-A", "200", "0", "200"],
+    ["2", "泰国一号仓", "SKU A Thailand", "SKU-A", "75", "0", "75"]
+  ]), "仓库库存商品表.xls", "2026-11-10", fakeXlsx());
+
+  const result = Zhisu.deriveWacOriginalStock(parsed, [
+    { sku_code: "SKU-A", batch_qty: 50 }
+  ], "泰国");
+
+  assert.equal(result.sourceWarehouse, "泰国一号仓");
+  assert.equal(result.filled[0].current_qty, 75);
+  assert.equal(result.filled[0].old_qty, 25);
+  assert.deepEqual(result.clampedSkus, []);
+});
+
+test("blocks a Zhisu snapshot when its country does not match the CI country", () => {
+  const parsed = Zhisu.parseZhisuWorkbook(workbook([
+    headers,
+    ["1", "泰国一号仓", "SKU A", "SKU-A", "150", "0", "150"]
+  ]), "stock.xls", "2026-11-10", fakeXlsx());
+
+  const result = Zhisu.deriveWacOriginalStock(parsed, [
+    { sku_code: "SKU-A", batch_qty: 100 }
+  ], "Malaysia");
+
+  assert.equal(result.countryMismatch, true);
+  assert.deepEqual(result.filled, []);
+  assert.deepEqual(result.unresolved, ["SKU-A"]);
+});
+
+test("does not apply Zhisu stock derivation to Indonesia or an unresolved CI country", () => {
+  const parsed = Zhisu.parseZhisuWorkbook(workbook([
+    headers,
+    ["1", "吉隆坡一号仓", "SKU A", "SKU-A", "150", "0", "150"]
+  ]), "stock.xls", "2026-11-10", fakeXlsx());
+
+  const indonesia = Zhisu.deriveWacOriginalStock(parsed, [{ sku_code: "SKU-A", batch_qty: 100 }], "印尼");
+  const unknown = Zhisu.deriveWacOriginalStock(parsed, [{ sku_code: "SKU-A", batch_qty: 100 }], "");
+
+  assert.equal(indonesia.countryUnsupported, true);
+  assert.equal(unknown.countryUnresolved, true);
+  assert.deepEqual(indonesia.filled, []);
+  assert.deepEqual(unknown.filled, []);
+});
+
+test("duplicate or invalid Zhisu stock rows stay unresolved for manual correction", () => {
+  const parsed = Zhisu.parseZhisuWorkbook(workbook([
+    headers,
+    ["1", "吉隆坡一号仓", "duplicate 1", "SKU-DUP", "10", "0", "10"],
+    ["2", "吉隆坡一号仓", "duplicate 2", "SKU-DUP", "20", "0", "20"],
+    ["3", "吉隆坡一号仓", "invalid qty", "SKU-BAD", "10", "0", "1.5"],
+    ["4", "吉隆坡一号仓", "valid", "SKU-OK", "30", "0", "30"]
+  ]), "stock.xls", "2026-11-10", fakeXlsx());
+
+  const result = Zhisu.deriveWacOriginalStock(parsed, [
+    { sku_code: "SKU-DUP", batch_qty: 5 },
+    { sku_code: "SKU-BAD", batch_qty: 5 },
+    { sku_code: "SKU-OK", batch_qty: 10 }
+  ], "马来西亚");
+
+  assert.deepEqual(result.matched, ["SKU-OK"]);
+  assert.deepEqual(result.unresolved, ["SKU-DUP", "SKU-BAD"]);
+  assert.deepEqual(result.duplicate, ["SKU-DUP"]);
+  assert.deepEqual(result.invalid, ["SKU-BAD"]);
+  assert.equal(result.filled[0].old_qty, 20);
+});
+
+test("normalizes English and Chinese country aliases for WAC stock derivation", () => {
+  assert.equal(Zhisu.normalizeWacCountry("Malaysia"), "马来西亚");
+  assert.equal(Zhisu.normalizeWacCountry("MY"), "马来西亚");
+  assert.equal(Zhisu.normalizeWacCountry("Thailand"), "泰国");
+  assert.equal(Zhisu.normalizeWacCountry("TH"), "泰国");
+  assert.equal(Zhisu.normalizeWacCountry("Indonesia"), "印尼");
+});
