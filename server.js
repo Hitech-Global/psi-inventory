@@ -8059,7 +8059,11 @@ app.get('/api/replenishment-suggestions/monthly-sales', requireApiPermission('re
       LEFT JOIN skus s ON sr.sku_code = s.sku_code
       WHERE sr.sku_code IS NOT NULL AND sr.sku_code != ''
         AND sr.is_valid_order = 1
-        AND ${salesDate} >= ? AND ${salesDate} <= ?`;
+        AND ${salesDate} >= ? AND ${salesDate} <= ?
+        AND NOT EXISTS (
+          SELECT 1 FROM replenishment_suggestions rs
+          WHERE rs.sku_code = sr.sku_code AND COALESCE(rs.country, '') = COALESCE(sr.country, '')
+        )`;
     const salesSkuParams = [rangeStart, rangeEnd];
     if (country) { salesSkuSql += ' AND COALESCE(sr.country, \'\') = ?'; salesSkuParams.push(country); }
     if (brand) { salesSkuSql += ' AND COALESCE(NULLIF(TRIM(s.brand), \'\'), NULLIF(TRIM(sr.brand), \'\'), \'\') = ?'; salesSkuParams.push(brand); }
