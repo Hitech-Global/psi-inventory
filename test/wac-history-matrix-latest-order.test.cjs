@@ -7,6 +7,9 @@ const vm = require('node:vm');
 const path = require('node:path');
 
 const appSource = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
+const matrixStart = appSource.indexOf('function _wacHistoryMatrixExportModel(');
+const matrixEnd = appSource.indexOf('\\nasync function exportWacHistoryMatrix', matrixStart);
+const fnSource = appSource.slice(matrixStart, matrixEnd);
 
 test('WAC history matrix Latest WAC follows newest confirmation timestamp, not largest version number', () => {
   const start = appSource.indexOf('function _wacHistoryMatrixExportModel(');
