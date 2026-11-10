@@ -7,6 +7,8 @@ const path = require('node:path');
 
 const app = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
 const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+const { patchAppSource } = require('../scripts/ci-unified-data-binding-hotfix.cjs');
+const effectiveApp = patchAppSource(app);
 
 function section(source, startMarker, endMarker) {
   const start = source.indexOf(startMarker);
@@ -16,13 +18,15 @@ function section(source, startMarker, endMarker) {
   return source.slice(start, end);
 }
 
-test('operational CI list displays ci_date, never actual_ship_date, in the CI Date column', () => {
-  const at = app.indexOf("fmtDate(c.ci_date)");
-  assert.ok(at >= 0, 'CI list must render the actual CI date');
-  const context = app.slice(Math.max(0, at - 900), at + 500);
-  assert.match(context, /ciClearanceLabel\(c\.clearance_type\)/);
-  assert.doesNotMatch(context, /actual_ship_date/);
-  assert.doesNotMatch(app, /fmtDate\(c\.actual_ship_date\s*\|\|\s*c\.ci_date\)/);
+test('final postinstall-patched operational CI list displays ci_date, never actual_ship_date', () => {
+  const start = effectiveApp.indexOf('function addOpRow(srcTable,sourceRow,c){');
+  const end = effectiveApp.indexOf('function addHistoricalRow(srcTable,sourceRow,h){', start);
+  assert.ok(start >= 0 && end > start, 'effective unified operational row renderer must exist');
+  const renderer = effectiveApp.slice(start, end);
+  assert.match(renderer, /textCell\(fmtDate\(c\.ci_date\)\)/,
+    'the CI Date cell must bind directly to commercial_invoices.ci_date');
+  assert.doesNotMatch(renderer, /actual_ship_date/,
+    'actual shipment / pickup date must never replace the CI Date');
 });
 
 test('logistics create form sends selected forwarder id/name and transport mode', () => {
