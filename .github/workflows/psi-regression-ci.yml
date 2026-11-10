@@ -55,6 +55,8 @@ on:
       - 'package-lock.json'
       - 'po-number.js'
       - 'wac-calculator.js'
+      - 'assets/wac-bigseller-old-inventory.js'
+      - 'test/wac-bigseller-old-inventory.test.cjs'
       - 'wac-calculator.test.cjs'
       - 'wac-notification.js'
       - 'wac-notification-ui.js'
@@ -145,6 +147,8 @@ jobs:
           node --check test/po-plan-quotation-pricing.test.cjs
           node --check po-number.js
           node --check wac-calculator.js
+          node --check assets/wac-bigseller-old-inventory.js
+          node --check test/wac-bigseller-old-inventory.test.cjs
           node --check wac-notification.js
           node --check quotation-server.js
           node --check quotation-import-fast.js
@@ -219,6 +223,8 @@ jobs:
         run: node --test test/inventory-onhand-local-currency-kpi.test.cjs
       - name: Test WAC calculation and transport-basis rules
         run: node --test wac-calculator.test.cjs
+      - name: Test BigSeller original inventory matching for WAC
+        run: node --test test/wac-bigseller-old-inventory.test.cjs
       - name: Test WAC cost-change Feishu notification reports
         run: node --test test/wac-cost-change-notification.test.cjs
       - name: Test WAC settlement date remains separate from actual inbound date
