@@ -16589,6 +16589,24 @@ async function importWacOldInventory(){
           if(history&&history.recognized){
             const batchItems=(p.items||[]).map(it=>({sku_code:it.sku_code,batch_qty:it.batch_qty}));
             const matched=window.WacBigSellerOldInventory.matchCandidates(history,batchItems,(p.meta||{}).actual_arrival_date||'');
+            // A newly selected BigSeller history file replaces any prior import; never leave stale old_qty values active.
+            (p.items||[]).forEach((it,i)=>{
+              const el=document.getElementById('wac-old-'+i);
+              if(el){el.value='';recalcWacRow(i);}
+            });
+            const pendingState=window._wacImport||{};
+            pendingState.uploaded=false;
+            pendingState.matched=[];
+            pendingState.missing=batchItems.map(it=>it.sku_code);
+            pendingState.unknown=[];
+            pendingState.duplicate=[];
+            pendingState.invalid=[];
+            pendingState.source='bigseller_history_pending';
+            pendingState.sourceDocumentNo='';
+            pendingState.sourceWarehouse='';
+            pendingState.sourceTime='';
+            window._wacImport=pendingState;
+            wacValidateInputs();
             window._wacBigSellerContext={
               parsed:history,
               candidates:matched.candidates,
