@@ -167,3 +167,18 @@ test('real XLSX library writes a readable workbook with all three forecast sheet
   }
  }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
+
+
+test('browser XLSX bundle is served from the installed local package, not an external CDN',()=>{
+ const root=path.join(__dirname,'..');
+ const html=fs.readFileSync(path.join(root,'index.html'),'utf8');
+ const server=fs.readFileSync(path.join(root,'server.js'),'utf8');
+ const pkg=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'));
+ const bundle=path.join(root,'node_modules','xlsx','dist','xlsx.full.min.js');
+
+ assert.ok(html.includes('<script src="/node_modules/xlsx/dist/xlsx.full.min.js"></script>'),'index must load the same-origin XLSX bundle');
+ assert.ok(!html.includes('cdn.sheetjs.com'),'browser export must not depend on the external SheetJS CDN');
+ assert.ok(pkg.dependencies&&pkg.dependencies.xlsx,'xlsx must remain a pinned project dependency');
+ assert.ok(fs.existsSync(bundle),'the local browser bundle must exist after npm install');
+ assert.ok(server.includes('app.use(express.static(path.join(__dirname),'),'Express must serve the project root containing node_modules');
+});
