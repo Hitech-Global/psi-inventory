@@ -76,3 +76,10 @@ test('inventory overview table aligns all data columns and headers left while ke
   assert.match(source, /#inv-table \.inv-head-table thead th:not\(:first-child\),#inv-table \.inv-body-table tbody td:not\(:first-child\)\{text-align:left!important\}/);
   assert.match(source, /#inv-table \.inv-head-table thead th:first-child,#inv-table \.inv-body-table tbody td:first-child\{text-align:center!important\}/);
 });
+
+test('inventory overview starts core data request before waiting for filter options', () => {
+  assert.match(source, /const initialInventoryLoad = loadInv\(savedFilters \|\| undefined\)/);
+  assert.match(source, /async function loadInv\(filterOverride\)/);
+  assert.match(source, /const ratePromise = api\('\/api\/inventory\/currency-rates'/);
+  assert.match(source, /正在加载库存数据/);
+});

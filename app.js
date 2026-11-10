@@ -4884,27 +4884,34 @@ async function renderInventory(){
   invDataCache = []; invAllFilteredIds = []; invSelectAllMode = false;
   document.getElementById('content-inner').innerHTML=
     t('html.renderInventory', `<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>国家</label><select id="inv-c" onchange="onInvFilterChange('country')"><option value="">全部</option></select></div><div class="filter-group"><label>仓库</label><select id="inv-w" onchange="onInvFilterChange('warehouse')"><option value="">全部</option></select></div><div class="filter-group"><label>品牌</label><select id="inv-b" onchange="onInvFilterChange('brand')"><option value="">全部</option></select></div><div class="filter-group"><label>关键词</label><input type="text" id="inv-k" placeholder="SKU/产品名" oninput="debouncedInvKeyword()"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadInv()">搜索</button><button class="btn btn-secondary btn-sm" onclick="resetInvFilters()">重置</button>{v1}</div></div></div><div id="inv-batch-bar" style="display:none;background:var(--bg-card,#fff);border:1px solid var(--border,#e0e0e0);border-radius:8px;padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span id="inv-batch-count" style="font-weight:600;margin-right:8px"></span><button class="btn btn-sm btn-secondary" onclick="invBatchAction('export')">📊 导出</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_status')">🏷️ 库存状态</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_focused')">⭐ 重点关注</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_safety_stock')">🛡️ 安全库存</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_turnover')">🎯 目标周转</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_replenish_rule')">📋 补货规则</button><button class="btn btn-sm btn-secondary" onclick="invBatchAction('set_remark')">📝 库存备注</button><button class="btn btn-sm btn-warning" onclick="invBatchAction('inventory_adjust')">🔧 发起调整单</button><button class="btn btn-sm btn-danger" onclick="invBatchAction('delete')" style="background:#ff4d4f;color:#fff;border:none">🗑️ 删除</button><button class="btn btn-sm btn-secondary" onclick="invClearSelection()" style="margin-left:auto">取消选择</button></div><div id="inv-cards" class="stats-grid"><div class="empty-state" style="padding:24px;color:var(--text-secondary)">正在加载库存指标…</div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">📦 库存总表</div><div class="table-section-title-right" id="inv-rate-display" style="font-size:12px;color:#666;display:flex;gap:12px;align-items:center"></div></div><div id="inv-table"><div class="empty-state" style="padding:28px;color:var(--text-secondary)">正在加载库存数据…</div></div></div>`, {v1: hasPermission('inventory_import')?(t('gen.L2829.1','<button class="btn btn-secondary btn-sm" onclick="openInvBatchImport()">📥 导入库存</button>')):''});
+  // 先读取已保存筛选并立即启动库存主数据请求；筛选选项请求在后台并行执行。
+  // 这样首屏不再被 refreshInvFilterOptions 阻塞，仍保持原有筛选条件。
+  let savedFilters = null;
+  try{ savedFilters=JSON.parse(localStorage.getItem('psi_inv_filters_v1')||'null'); }catch(e){}
+  const initialInventoryLoad = loadInv(savedFilters || undefined);
   // 筛选级联：根据当前已选条件动态刷新下拉可选项（仅库存总表页面）
   try{ await refreshInvFilterOptions(); }catch(e){console.warn('filter-options load failed',e)}
   // 恢复库存总表保存的筛选状态（仅本页面 localStorage，不影响其他页面）
   try{
-    const saved=JSON.parse(localStorage.getItem('psi_inv_filters_v1')||'null');
-    if(saved){
+    if(savedFilters){
       const fc=document.getElementById('inv-c'), fw=document.getElementById('inv-w'), fb=document.getElementById('inv-b'), fk=document.getElementById('inv-k');
-      if(fc && saved.c) fc.value=saved.c;
-      if(fw && saved.w) fw.value=saved.w;
-      if(fb && saved.b) fb.value=saved.b;
-      if(fk && saved.k!=null) fk.value=saved.k;
+      if(fc && savedFilters.c) fc.value=savedFilters.c;
+      if(fw && savedFilters.w) fw.value=savedFilters.w;
+      if(fb && savedFilters.b) fb.value=savedFilters.b;
+      if(fk && savedFilters.k!=null) fk.value=savedFilters.k;
     }
   }catch(e){}
   // 性能层：注册库存总表后台刷新重渲染器（mutation 失效后 / TTL 到期后台刷新即时重绘当前页）
   try{ if(window.AppStore) AppStore.page.onRefresh('inventory', function(){ try{ loadInv(); }catch(e){} }); }catch(e){}
-  loadInv();
+  // initialInventoryLoad 已并行启动，不在此处重复请求
 }
 
-async function loadInv(){
+async function loadInv(filterOverride){
   try{
-    const c=document.getElementById('inv-c')?.value||'',w=document.getElementById('inv-w')?.value||'',b=document.getElementById('inv-b')?.value||'',k=document.getElementById('inv-k')?.value||'';
+    const c=filterOverride && Object.prototype.hasOwnProperty.call(filterOverride,'c') ? String(filterOverride.c||'') : (document.getElementById('inv-c')?.value||'');
+    const w=filterOverride && Object.prototype.hasOwnProperty.call(filterOverride,'w') ? String(filterOverride.w||'') : (document.getElementById('inv-w')?.value||'');
+    const b=filterOverride && Object.prototype.hasOwnProperty.call(filterOverride,'b') ? String(filterOverride.b||'') : (document.getElementById('inv-b')?.value||'');
+    const k=filterOverride && Object.prototype.hasOwnProperty.call(filterOverride,'k') ? String(filterOverride.k||'') : (document.getElementById('inv-k')?.value||'');
     // 保存库存总表筛选状态（仅本页面 localStorage，不写数据库、不影响其他页面）
     try{ localStorage.setItem('psi_inv_filters_v1', JSON.stringify({c,w,b,k})); }catch(e){}
     const mySeq = ++_invLoadSeq;
