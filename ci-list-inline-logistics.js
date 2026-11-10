@@ -38,6 +38,47 @@
     var key = value || 'pending_plan';
     return tr('logistics.listing_status.' + key, key);
   }
+
+  function normalizeDateValue(value) {
+    var raw = String(value == null ? '' : value).trim();
+    var match = raw.match(/^(\\d{4}-\\d{2}-\\d{2})/);
+    return match ? match[1] : '';
+  }
+
+  function dateCellHtml(batch, field, ciId) {
+    var value = normalizeDateValue(batch && batch[field]);
+    var label = field === 'eta_date'
+      ? tr('logistics.col.eta', '预计到港')
+      : tr('logistics.col.arrival', '到货日期');
+    if (!hasPermission('logistics_edit')) {
+      return '<td class="cell-date">' + esc(fmtDate(value) || '—') + '</td>';
+    }
+    return '<td class="cell-date"><input type="date" class="ci-list-logi-date-inline" value="' + esc(value) +
+      '" data-ci-logi-date-field="' + esc(field) +
+      '" data-ci-logi-date-batch="' + esc(batch && batch.id || '') +
+      '" data-ci-logi-date-ci="' + esc(ciId) +
+      '" data-saved-value="' + esc(value) +
+      '" data-original-value="' + esc(value) +
+      '" aria-label="' + esc(label) + '" title="' + esc(label) +
+      '" onclick="event.stopPropagation()" onchange="updateCILogisticsDateInline(this)"></td>';
+  }
+
+  function dateToastText(field, success) {
+    var lang = typeof global.getLang === 'function' ? String(global.getLang() || 'zh').toLowerCase().slice(0, 2) : 'zh';
+    var labels = {
+      eta_date: { zh: '预计到港日期', en: 'Estimated arrival date', id: 'Tanggal perkiraan tiba' },
+      actual_arrival_date: { zh: '到货日期', en: 'Actual arrival date', id: 'Tanggal kedatangan aktual' }
+    };
+    var label = (labels[field] || labels.eta_date)[lang] || (labels[field] || labels.eta_date).zh;
+    if (success) {
+      if (lang === 'en') return label + ' updated';
+      if (lang === 'id') return label + ' diperbarui';
+      return label + '已更新';
+    }
+    if (lang === 'en') return 'Failed to save ' + label.toLowerCase();
+    if (lang === 'id') return 'Gagal menyimpan ' + label.toLowerCase();
+    return label + '保存失败';
+  }
   function isModalOpen() {
     if (typeof global.isModalOpen === 'function') return global.isModalOpen();
     var ov = document.getElementById('modal-overlay');
@@ -71,6 +112,11 @@
       '.content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-table th{padding:8px 9px!important;background:#f2f2f4!important;color:#6e6e73!important;font-size:11px!important;font-weight:650!important;text-align:left!important;white-space:nowrap!important}',
       '.content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-table td{padding:8px 9px!important;background:#fff!important;color:#3a3a3c!important;text-align:left!important;white-space:nowrap!important;border-bottom:1px solid #ededf0!important}',
       '.content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-table .text-right{text-align:left!important}',
+      ".content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-date-inline{appearance:none;-webkit-appearance:none;box-sizing:border-box;width:132px;min-width:132px;height:28px;padding:0 8px;border:1px solid transparent;border-radius:8px;background:#f2f2f7;color:#1d1d1f;font:500 12px -apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif;cursor:pointer;color-scheme:light;transition:background .15s,border-color .15s,box-shadow .15s}",
+      ".content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-date-inline:hover{background:#e9e9ef;border-color:#d2d2d7}",
+      ".content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-date-inline:focus{background:#fff;border-color:#007aff;box-shadow:0 0 0 3px rgba(0,122,255,.12);outline:none}",
+      ".content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-date-inline:disabled{opacity:.65;cursor:not-allowed}",
+      ".content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-date-inline.is-saving{opacity:.65;cursor:wait}",
       '.content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-table tbody tr:hover td{background:#fafafa!important}',
       '.content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-owners{max-width:220px;overflow:hidden;text-overflow:ellipsis}',
       '.content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-table .cell-actions{position:sticky;right:0;background:#fff!important;box-shadow:-6px 0 10px rgba(0,0,0,.04)}',
@@ -188,8 +234,8 @@
           '<td class="cell-id">' + esc(b.batch_no || '') + '</td>' +
           '<td>' + esc(b.forwarder_name || '—') + '</td>' +
           '<td>' + esc(tr('logistics.mode.' + (b.transport_mode || ''), b.transport_mode || '—')) + '</td>' +
-          '<td class="cell-date">' + esc(fmtDate(b.eta_date) || '—') + '</td>' +
-          '<td class="cell-date">' + esc(fmtDate(b.actual_arrival_date) || '—') + '</td>' +
+          dateCellHtml(b, 'eta_date', ciId) +
+          dateCellHtml(b, 'actual_arrival_date', ciId) +
           '<td>' + (b.actual_transit_days != null ? esc(b.actual_transit_days) : '—') + '</td>' +
           '<td>' + (b.total_cartons != null ? esc(b.total_cartons) : '0') + '</td>' +
           '<td>' + cbm.toFixed(2) + '</td>' +
@@ -241,6 +287,79 @@
 
     return tableHtml + createBtn;
   }
+
+  function patchCachedBatchDate(ciId, batchId, field, value) {
+    var cached = cacheEntry(ciId);
+    if (!cached || !Array.isArray(cached.data)) return null;
+    var patched = cached.data.map(function (batch) {
+      if (!batch || String(batch.id) !== String(batchId)) return batch;
+      var copy = Object.assign({}, batch);
+      copy[field] = value;
+      return copy;
+    });
+    setCache(ciId, patched);
+    return patched;
+  }
+
+  async function refreshInlineDatePanel(ciId, fallbackRows) {
+    if (!ciId) return;
+    invalidateCache(ciId);
+    try {
+      var rows = await global.api('/api/commercial-invoices/' + encodeURIComponent(ciId) + '/logistics-batches');
+      setCache(ciId, rows);
+      if (state.openId === ciId) {
+        var body = document.getElementById('ci-list-logi-body-' + ciId);
+        if (body) body.innerHTML = renderPanel(rows || [], ciId);
+      }
+    } catch (e) {
+      if (Array.isArray(fallbackRows)) {
+        setCache(ciId, fallbackRows);
+        if (state.openId === ciId) {
+          var fallbackBody = document.getElementById('ci-list-logi-body-' + ciId);
+          if (fallbackBody) fallbackBody.innerHTML = renderPanel(fallbackRows, ciId);
+        }
+      }
+    }
+  }
+
+  global.updateCILogisticsDateInline = async function (input) {
+    if (!input || input.disabled) return;
+    var field = input.getAttribute('data-ci-logi-date-field') || '';
+    var batchId = input.getAttribute('data-ci-logi-date-batch') || '';
+    var ciId = input.getAttribute('data-ci-logi-date-ci') || '';
+    if (!batchId || !ciId || (field !== 'eta_date' && field !== 'actual_arrival_date')) return;
+
+    var oldValue = normalizeDateValue(input.getAttribute('data-saved-value'));
+    var nextValue = normalizeDateValue(input.value);
+    if (nextValue === oldValue) return;
+    if (!hasPermission('logistics_edit')) {
+      input.value = oldValue;
+      return;
+    }
+
+    input.disabled = true;
+    if (input.classList) input.classList.add('is-saving');
+    try {
+      var payload = {};
+      payload[field] = nextValue;
+      await global.api('/api/logistics-batches/' + encodeURIComponent(batchId), 'PUT', payload);
+      input.setAttribute('data-saved-value', nextValue);
+      input.setAttribute('data-original-value', nextValue);
+      if (input.classList) input.classList.remove('is-saving');
+      input.disabled = !hasPermission('logistics_edit');
+
+      var fallbackRows = patchCachedBatchDate(ciId, batchId, field, nextValue);
+      if (typeof global.showToast === 'function') global.showToast(dateToastText(field, true), 'success');
+      await refreshInlineDatePanel(ciId, fallbackRows);
+    } catch (e) {
+      input.value = oldValue;
+      if (input.classList) input.classList.remove('is-saving');
+      input.disabled = !hasPermission('logistics_edit');
+      if (typeof global.showToast === 'function') {
+        global.showToast((e && e.message) || dateToastText(field, false), 'danger');
+      }
+    }
+  };
 
   async function togglePanel(ciId, forceOpen) {
     var row = document.getElementById('ci-list-logi-row-' + ciId);
