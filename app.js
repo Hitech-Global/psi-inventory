@@ -524,9 +524,9 @@ function showPage(page){
     showToast(t('toast.no_page_permission','无权限访问该页面'), 'danger');
     return;
   }
-  // CI-DETAIL-UX：切换页面时关闭 CI 详情/编辑 modal，避免弹窗残留（不影响其他 modal）
+  // 页面切换时关闭页面专属弹窗，避免 CI/WAC 弹窗残留并遮挡新页面；不触发弹窗业务提交。
   const _ov=document.getElementById('modal-overlay');
-  if(_ov&&_ov.classList.contains('ci-mode')) closeModal();
+  if(_ov&&(_ov.classList.contains('ci-mode')||_ov.classList.contains('wac-mode'))) closeModal();
   currentPage=page;
   // 自动切换到页面所属的模块
   const pageModule=PAGE_TO_MODULE[page];
