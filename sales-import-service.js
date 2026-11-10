@@ -210,12 +210,17 @@ function isBigSellerSource(record) {
   return String(record && record.source_system || '').trim().toLowerCase() === 'bigseller';
 }
 
+function isSnapshotSalesSource(record) {
+  const source = String(record && record.source_system || '').trim();
+  return isBigSellerSource(record) || source === '至速仓' || source.toLowerCase() === 'zhisu';
+}
+
 function hasSalesChanges(existing, row) {
   const old = normalizedExisting(existing);
   // BigSeller exports are repeated snapshots of the same order, not new sales.
   // For an existing BigSeller order item, only status fields are authoritative
   // on re-import; never rewrite its original date, SKU, quantity, brand or notes.
-  if (isBigSellerSource(old) && isBigSellerSource(row)) {
+  if (isSnapshotSalesSource(old) && isSnapshotSalesSource(row) && sourceSystemIdentity(old.source_system) === sourceSystemIdentity(row.source_system)) {
     return old.is_valid_order !== row.is_valid_order ||
       old.original_order_status !== row.original_order_status;
   }
@@ -243,7 +248,7 @@ function mutableValues(row, importBatchId) {
 }
 
 function applyMutableValues(existing, row, importBatchId) {
-  if (isBigSellerSource(existing) && isBigSellerSource(row)) {
+  if (isSnapshotSalesSource(existing) && isSnapshotSalesSource(row) && sourceSystemIdentity(existing.source_system) === sourceSystemIdentity(row.source_system)) {
     existing.is_valid_order = row.is_valid_order;
     existing.original_order_status = row.original_order_status;
     return existing;
@@ -311,7 +316,7 @@ function findExisting(records, row, indexes = null) {
 function hasBusinessConflict(records, existing, row, indexes = null) {
   // BigSeller re-imports only change status; the existing business identity is
   // deliberately retained, so a status sync cannot create a new key conflict.
-  if (isBigSellerSource(existing) && isBigSellerSource(row)) return false;
+  if (isSnapshotSalesSource(existing) && isSnapshotSalesSource(row) && sourceSystemIdentity(existing.source_system) === sourceSystemIdentity(row.source_system)) return false;
   const next = { ...normalizedExisting(existing), ...mutableValues(row, existing.import_batch_id) };
   if (indexes) {
     const businessRows = indexes.business.get(businessIdentity(next)) || [];
