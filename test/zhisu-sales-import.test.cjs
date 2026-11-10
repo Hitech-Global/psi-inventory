@@ -151,28 +151,31 @@ test('FO SKU rows are excluded and Zhisu K686WB aliases normalize to PSI master 
     row({ 2: 'ORDER-FO-UPPER', 22: 'FO' }),
     row({ 2: 'ORDER-FO-LOWER', 22: 'fo', 0: 'EC-MY-FO-2' }),
     row({ 2: 'ORDER-K686-RS', 22: 'K686WB-RGB-PRO-RS', 0: 'EC-MY-RS' }),
-    row({ 2: 'ORDER-K686-BS', 22: 'K686WB-RGB-PRO-BS', 0: 'EC-MY-BS' })
+    row({ 2: 'ORDER-K686-BS', 22: 'K686WB-RGB-PRO-BS', 0: 'EC-MY-BS' }),
+    row({ 2: 'ORDER-H888', 22: 'H888', 0: 'EC-MY-H888' })
   ]), 'orders.xlsx', fakeXlsx());
 
-  assert.equal(parsed.stats.sourceRows, 4);
+  assert.equal(parsed.stats.sourceRows, 5);
   assert.equal(parsed.stats.excludedFoSkuRows, 2);
-  assert.equal(parsed.stats.includedRows, 2);
-  assert.equal(parsed.records.length, 2);
+  assert.equal(parsed.stats.includedRows, 3);
+  assert.equal(parsed.records.length, 3);
   assert.deepEqual(parsed.records.map(record => record.sku_code), [
     'RDK686WBRGBPRORS',
-    'RDK686WBRGBPROBS'
+    'RDK686WBRGBPROBS',
+    'RDH888'
   ]);
 
   const rows = SalesImport.normalizeSalesRows(parsed.records);
   const result = await SalesImport.validateSalesBrandRows({
     loadSkuBrands: async () => new Map([
       ['RDK686WBRGBPRORS', { sku_code: 'RDK686WBRGBPRORS', brand: 'Redragon' }],
-      ['RDK686WBRGBPROBS', { sku_code: 'RDK686WBRGBPROBS', brand: 'Redragon' }]
+      ['RDK686WBRGBPROBS', { sku_code: 'RDK686WBRGBPROBS', brand: 'Redragon' }],
+      ['RDH888', { sku_code: 'RDH888', brand: 'Redragon' }]
     ])
   }, rows);
 
   assert.equal(result.failures.length, 0);
-  assert.deepEqual(rows.map(record => record.brand), ['Redragon', 'Redragon']);
+  assert.deepEqual(rows.map(record => record.brand), ['Redragon', 'Redragon', 'Redragon']);
 });
 
 test('brand is resolved by the existing PSI SKU-master validation, not source category text', async () => {
@@ -365,4 +368,88 @@ test('Zhisu preview displays backend preview request failures instead of hiding 
   assert.equal(harness.importButton.disabled, true);
   assert.ok(harness.statsElement.innerHTML.includes('SKU / 品牌后台预检查请求失败'));
   assert.ok(harness.statsElement.innerHTML.includes('HTTP 500'));
+});
+
+
+function createZhisuFileImportHarness(precheck) {
+  const statsElement = {
+    innerHTML: '',
+    querySelector: () => null,
+    insertAdjacentHTML(position, html) {
+      this.innerHTML = position === 'afterbegin' ? html + this.innerHTML : this.innerHTML + html;
+    }
+  };
+  const importButton = { disabled: true };
+  const calls = [];
+  class FakeFileReader {
+    readAsArrayBuffer() {
+      if (this.onprogress) this.onprogress({ lengthComputable: true, loaded: 50, total: 100 });
+      if (this.onload) this.onload({ target: { result: new ArrayBuffer(8) } });
+    }
+  }
+  const win = {
+    handleSalesFile() {},
+    openSalesBatchImport() {},
+    showToast() {},
+    document: {
+      getElementById(id) {
+        if (id === 'sales-preview-stats') return statsElement;
+        if (id === 'sales-import-btn') return importButton;
+        return null;
+      }
+    },
+    FileReader: FakeFileReader,
+    XLSX: Object.assign(fakeXlsx(), { read: () => workbook([row({ 2: 'ORDER-AUTO-PRECHECK' })]) }),
+    renderSalesPreview() {},
+    requestSalesPreview: async function () {
+      calls.push('started');
+      if (precheck.gate) await precheck.gate;
+      if (precheck.error) {
+        win.showToast(precheck.error, 'danger');
+        win._salesImportPreviewReady = false;
+        win._salesImportBlocking = precheck.blocking || [];
+        return;
+      }
+      win._salesImportPreviewReady = !!precheck.ready;
+      win._salesImportBlocking = precheck.blocking || [];
+      win._lastSalesImportErrors = (precheck.blocking || []).map(item => ({
+        row: item.row, reason: item.reason
+      }));
+    }
+  };
+  Zhisu.install(win);
+  return { win, statsElement, importButton, calls };
+}
+
+test('Zhisu file upload automatically runs SKU/brand precheck and unlocks import only after success', async () => {
+  let releasePrecheck;
+  const gate = new Promise(resolve => { releasePrecheck = resolve; });
+  const harness = createZhisuFileImportHarness({ ready: true, gate });
+  const upload = harness.win.handleSalesFile({ name: 'orders.xlsx' });
+
+  await new Promise(resolve => setTimeout(resolve, 5));
+  assert.deepEqual(harness.calls, ['started']);
+  assert.equal(harness.importButton.disabled, true);
+  assert.ok(harness.statsElement.innerHTML.includes('正在校验 SKU 与品牌主数据'));
+  assert.ok(harness.statsElement.innerHTML.includes('role="progressbar"'));
+
+  releasePrecheck();
+  await upload;
+
+  assert.equal(harness.importButton.disabled, false);
+  assert.ok(harness.statsElement.innerHTML.includes('SKU / 品牌校验完成，可以开始导入。'));
+  assert.ok(harness.statsElement.innerHTML.includes('SKU / 品牌后台预检查通过'));
+});
+
+test('Zhisu file upload keeps import disabled and displays blockers after automatic precheck', async () => {
+  const harness = createZhisuFileImportHarness({
+    ready: false,
+    blocking: [{ row: 2, sku_code: 'UNKNOWN', reason: 'SKU 主数据不存在：UNKNOWN' }]
+  });
+  await harness.win.handleSalesFile({ name: 'orders.xlsx' });
+
+  assert.deepEqual(harness.calls, ['started']);
+  assert.equal(harness.importButton.disabled, true);
+  assert.ok(harness.statsElement.innerHTML.includes('SKU / 品牌校验未通过'));
+  assert.ok(harness.statsElement.innerHTML.includes('SKU / 品牌后台预检查未通过：1 条'));
 });

@@ -32,7 +32,8 @@
   // Normalize before deduplication and before the existing SKU/brand precheck.
   var SKU_ALIASES = Object.freeze({
     'K686WB-RGB-PRO-RS': 'RDK686WBRGBPRORS',
-    'K686WB-RGB-PRO-BS': 'RDK686WBRGBPROBS'
+    'K686WB-RGB-PRO-BS': 'RDK686WBRGBPROBS',
+    'H888': 'RDH888'
   });
 
   function text(value) {
@@ -414,6 +415,39 @@
     win.XLSX.writeFile(book, '至速仓销售导入冲突明细.xlsx');
   }
 
+  function setImportProgress(win, message, percent, options) {
+    if (!win) return;
+    options = options || {};
+    var progress = {
+      message: String(message || ''),
+      percent: Math.max(0, Math.min(100, Number(percent) || 0)),
+      indeterminate: !!options.indeterminate,
+      state: options.state || 'loading'
+    };
+    win._salesImportZhisuProgress = progress;
+    var el = win.document && win.document.getElementById('sales-preview-stats');
+    if (!el) return;
+    var old = el.querySelector && el.querySelector('#zhisu-sales-progress');
+    if (old && typeof old.remove === 'function') old.remove();
+    var bar = progress.indeterminate
+      ? '<div style="position:absolute;left:0;top:0;bottom:0;width:34%;border-radius:99px;background:#2563eb;animation:zhisuSalesProgress 1.25s ease-in-out infinite"></div>'
+      : '<div style="height:100%;width:' + progress.percent + '%;border-radius:99px;background:' +
+        (progress.state === 'error' ? '#dc2626' : progress.state === 'blocked' ? '#d97706' : '#2563eb') +
+        ';transition:width .2s ease"></div>';
+    var color = progress.state === 'error' ? '#b91c1c' :
+      progress.state === 'blocked' ? '#92400e' :
+      progress.state === 'done' ? '#15803d' : '#475569';
+    var html = '<style>@keyframes zhisuSalesProgress{0%{transform:translateX(-120%)}100%{transform:translateX(330%)}}</style>' +
+      '<div id="zhisu-sales-progress" role="status" aria-live="polite" style="margin:0 0 10px;padding:10px 13px;border:1px solid #dbeafe;background:#f8fbff;border-radius:9px">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:7px">' +
+      '<span style="font-size:12px;font-weight:600;color:' + color + '">' + escapeHtml(progress.message) + '</span>' +
+      '<span style="font-size:11px;color:#64748b;white-space:nowrap">' +
+      (progress.indeterminate ? '处理中' : progress.percent + '%') + '</span></div>' +
+      '<div role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + progress.percent +
+      '" style="height:6px;position:relative;overflow:hidden;background:#e5e7eb;border-radius:99px">' + bar + '</div></div>';
+    el.insertAdjacentHTML('afterbegin', html);
+  }
+
   function renderSummary(win, stats, warehouseCounts, countryCounts) {
     var el = win.document && win.document.getElementById('sales-preview-stats');
     if (!el) return;
@@ -461,7 +495,7 @@
         Number(stats.conflictGroups || 0) + ' 组，共 ' + Number(stats.conflictRows || 0) +
         ' 行暂不导入。请下载异常明细核对。</div>' +
         '<button type="button" id="zhisu-sales-conflict-download" style="margin-top:7px;padding:5px 10px;border:1px solid #d1d5db;border-radius:7px;background:#fff;color:#333;cursor:pointer">下载冲突明细</button>' : '') +
-      '<div style="color:#888;margin-top:4px">本文件全部按线上渠道导入；仓库统一识别为至速仓，销售国家优先按店铺国家识别。FO SKU、支付方式为空、未支付的记录不导入；K686WB-RGB-PRO-RS / BS 自动转换为 PSI 标准 SKU。买方要求退回、已取消记为 False，其余状态记为 True。品牌由 PSI SKU 主数据匹配。</div>' +
+      '<div style="color:#888;margin-top:4px">本文件全部按线上渠道导入；仓库统一识别为至速仓，销售国家优先按店铺国家识别。FO SKU、支付方式为空、未支付的记录不导入；K686WB-RGB-PRO-RS / BS 分别转换为 RDK686WBRGBPRORS / RDK686WBRGBPROBS，H888 转换为 RDH888。买方要求退回、已取消记为 False，其余状态记为 True。品牌由 PSI SKU 主数据匹配。</div>' +
       precheckHtml + '</div>';
     var oldSummary = el.querySelector && el.querySelector('#zhisu-sales-summary');
     if (oldSummary && typeof oldSummary.remove === 'function') oldSummary.remove();
@@ -491,6 +525,8 @@
       win._salesImportPreviewReady = false;
       win._salesImportBlocking = [];
       win._salesImportPreviewError = '';
+      win._salesImportZhisuProgress = null;
+      win._salesImportZhisuRunId = (Number(win._salesImportZhisuRunId) || 0) + 1;
       win._lastSalesImportErrors = [];
       var stats = win.document && win.document.getElementById('sales-preview-stats');
       if (stats) stats.innerHTML = '';
@@ -505,7 +541,14 @@
     };
 
     win.requestSalesPreview = async function () {
-      win._salesImportPreviewError = '';
+      var isZhisu = win._salesImportSourceMode === 'zhisu' && !!win._salesImportZhisuStats;
+      var requestRunId = Number(win._salesImportZhisuRunId) || 0;
+      if (isZhisu) {
+        win._salesImportPreviewError = '';
+        win._salesImportPreviewReady = false;
+        win._salesImportBlocking = [];
+        setImportProgress(win, '正在校验 SKU 与品牌主数据，请稍候…', 76, { indeterminate: true });
+      }
       var originalToast = win.showToast;
       var capturedPreviewError = '';
       if (typeof originalToast === 'function') {
@@ -518,18 +561,46 @@
       }
       try {
         var result = await originalRequestSalesPreview.apply(this, arguments);
+        if (!isZhisu || requestRunId !== (Number(win._salesImportZhisuRunId) || 0)) return result;
         if (capturedPreviewError) win._salesImportPreviewError = capturedPreviewError;
-        if (win._salesImportSourceMode === 'zhisu' && win._salesImportZhisuStats) {
+        var blocking = Array.isArray(win._salesImportBlocking) ? win._salesImportBlocking : [];
+        if (win._salesImportPreviewReady === true) {
+          setImportProgress(win, 'SKU / 品牌校验完成，可以开始导入。', 100, { state: 'done' });
+        } else if (blocking.length) {
+          setImportProgress(win, 'SKU / 品牌校验未通过，请先处理异常记录。', 100, { state: 'blocked' });
+        } else if (win._salesImportPreviewError) {
+          setImportProgress(win, '后台预检查失败，请检查网络后重新上传。', 100, { state: 'error' });
+        } else {
+          win._salesImportPreviewError = '后台预检查未返回完成状态，请重新上传文件或刷新页面后重试。';
+          setImportProgress(win, '后台预检查未完成，暂不能导入。', 100, { state: 'error' });
+        }
+        renderSummary(
+          win,
+          win._salesImportZhisuStats,
+          win._salesImportZhisuWarehouseCounts,
+          win._salesImportZhisuCountryCounts
+        );
+        var button = win.document && win.document.getElementById('sales-import-btn');
+        if (button) button.disabled = win._salesImportPreviewReady !== true;
+        return result;
+      } catch (error) {
+        if (isZhisu && requestRunId === (Number(win._salesImportZhisuRunId) || 0)) {
+          win._salesImportPreviewReady = false;
+          win._salesImportPreviewError = '后台预检查请求失败：' + (error && error.message ? error.message : String(error || '未知错误'));
+          setImportProgress(win, '后台预检查失败，暂不能导入。', 100, { state: 'error' });
           renderSummary(
             win,
             win._salesImportZhisuStats,
             win._salesImportZhisuWarehouseCounts,
             win._salesImportZhisuCountryCounts
           );
-          var button = win.document && win.document.getElementById('sales-import-btn');
-          if (button) button.disabled = !win._salesImportPreviewReady;
+          var failedButton = win.document && win.document.getElementById('sales-import-btn');
+          if (failedButton) failedButton.disabled = true;
+          if (typeof originalToast === 'function') {
+            originalToast.call(win, win._salesImportPreviewError, 'danger');
+          }
         }
-        return result;
+        return null;
       } finally {
         if (typeof originalToast === 'function') win.showToast = originalToast;
       }
@@ -544,43 +615,109 @@
       }
 
       var self = this;
-      var reader = new win.FileReader();
-      reader.onload = function (event) {
-        try {
-          var workbook = win.XLSX.read(new Uint8Array(event.target.result), {
-            type: 'array', cellDates: true
-          });
-          var parsed = parseZhisuWorkbook(workbook, file.name, win.XLSX);
-          if (!parsed) {
-            resetState();
-            originalHandleSalesFile.call(self, file);
-            return;
-          }
-
-          win._salesImportSourceMode = 'zhisu';
-          win._salesImportZhisuStats = parsed.stats;
-          win._salesImportZhisuWarehouseCounts = parsed.warehouseCounts;
-          win._salesImportZhisuCountryCounts = parsed.countryCounts;
-          win._salesImportData = parsed.records;
-          win.renderSalesPreview(parsed.records);
-          var button = win.document.getElementById('sales-import-btn');
-          if (button) button.disabled = true;
-          if (!parsed.records.length && typeof win.showToast === 'function') {
-            win.showToast('没有符合支付方式、订单状态及 SKU 规则的至速仓销售记录。', 'warning');
-          }
-          if ((parsed.stats.unknownWarehouseRows || 0) > 0 && typeof win.showToast === 'function') {
-            win.showToast('部分至速仓订单的销售国家或仓库组合无法识别，相关行已阻止导入。', 'warning');
-          }
-        } catch (error) {
-          if (typeof win.showToast === 'function') {
-            win.showToast('至速仓销售文件解析失败：' + (error && error.message ? error.message : ''), 'danger');
-          }
+      var runId = Number(win._salesImportZhisuRunId) || 0;
+      setImportProgress(win, '正在读取至速仓销售文件…', 3);
+      return new Promise(function (resolve) {
+        var reader = new win.FileReader();
+        var settled = false;
+        function finish() {
+          if (settled) return;
+          settled = true;
+          resolve();
         }
-      };
-      reader.onerror = function () {
-        if (typeof win.showToast === 'function') win.showToast('至速仓销售文件读取失败，请重新上传。', 'danger');
-      };
-      reader.readAsArrayBuffer(file);
+        reader.onprogress = function (event) {
+          if (runId !== (Number(win._salesImportZhisuRunId) || 0)) return;
+          var percent = event && event.lengthComputable && event.total > 0
+            ? 5 + Math.round(event.loaded / event.total * 28) : 18;
+          setImportProgress(win, '正在读取至速仓销售文件…', percent);
+        };
+        reader.onload = async function (event) {
+          try {
+            if (runId !== (Number(win._salesImportZhisuRunId) || 0)) return finish();
+            setImportProgress(win, '文件读取完成，正在解析 Excel 与识别订单 SKU…', 38, { indeterminate: true });
+            // Yield once so the loading state is painted before the synchronous XLSX parser runs.
+            await new Promise(function (resolvePaint) { setTimeout(resolvePaint, 0); });
+            if (runId !== (Number(win._salesImportZhisuRunId) || 0)) return finish();
+            var workbook = win.XLSX.read(new Uint8Array(event.target.result), {
+              type: 'array', cellDates: true
+            });
+            var parsed = parseZhisuWorkbook(workbook, file.name, win.XLSX);
+            if (!parsed) {
+              resetState();
+              originalHandleSalesFile.call(self, file);
+              return finish();
+            }
+
+            win._salesImportSourceMode = 'zhisu';
+            win._salesImportZhisuStats = parsed.stats;
+            win._salesImportZhisuWarehouseCounts = parsed.warehouseCounts;
+            win._salesImportZhisuCountryCounts = parsed.countryCounts;
+            win._salesImportData = parsed.records;
+            win._salesImportPreviewReady = false;
+            win._salesImportBlocking = [];
+            win._salesImportPreviewError = '';
+            var button = win.document && win.document.getElementById('sales-import-btn');
+            if (button) button.disabled = true;
+            setImportProgress(win, '订单识别完成，正在生成导入预览…', 64, { indeterminate: true });
+            win.renderSalesPreview(parsed.records);
+
+            if (!parsed.records.length) {
+              setImportProgress(win, '识别完成，但没有符合规则的可导入记录。', 100, { state: 'blocked' });
+              renderSummary(win, parsed.stats, parsed.warehouseCounts, parsed.countryCounts);
+              if (typeof win.showToast === 'function') {
+                win.showToast('没有符合支付方式、订单状态及 SKU 规则的至速仓销售记录。', 'warning');
+              }
+              return finish();
+            }
+            if ((parsed.stats.unknownWarehouseRows || 0) > 0 && typeof win.showToast === 'function') {
+              win.showToast('部分至速仓订单的销售国家或仓库组合无法识别，相关行已阻止导入。', 'warning');
+            }
+
+            setImportProgress(win, '正在进行后台 SKU / 品牌预检查…', 76, { indeterminate: true });
+            // Match the inventory importer: parsing is followed immediately by the server precheck.
+            await win.requestSalesPreview();
+            finish();
+          } catch (error) {
+            if (runId === (Number(win._salesImportZhisuRunId) || 0)) {
+              win._salesImportPreviewReady = false;
+              win._salesImportPreviewError = '至速仓销售文件解析或预检查失败：' +
+                (error && error.message ? error.message : String(error || '未知错误'));
+              setImportProgress(win, win._salesImportPreviewError, 100, { state: 'error' });
+              if (win._salesImportZhisuStats) {
+                renderSummary(
+                  win,
+                  win._salesImportZhisuStats,
+                  win._salesImportZhisuWarehouseCounts,
+                  win._salesImportZhisuCountryCounts
+                );
+              }
+              var failedButton = win.document && win.document.getElementById('sales-import-btn');
+              if (failedButton) failedButton.disabled = true;
+              if (typeof win.showToast === 'function') {
+                win.showToast(win._salesImportPreviewError, 'danger');
+              }
+            }
+            finish();
+          }
+        };
+        reader.onerror = function () {
+          if (runId === (Number(win._salesImportZhisuRunId) || 0)) {
+            win._salesImportPreviewReady = false;
+            win._salesImportPreviewError = '至速仓销售文件读取失败，请重新上传。';
+            setImportProgress(win, win._salesImportPreviewError, 100, { state: 'error' });
+            if (typeof win.showToast === 'function') win.showToast(win._salesImportPreviewError, 'danger');
+          }
+          finish();
+        };
+        try {
+          reader.readAsArrayBuffer(file);
+        } catch (error) {
+          win._salesImportPreviewError = '至速仓销售文件读取失败：' + (error && error.message ? error.message : '');
+          setImportProgress(win, win._salesImportPreviewError, 100, { state: 'error' });
+          if (typeof win.showToast === 'function') win.showToast(win._salesImportPreviewError, 'danger');
+          finish();
+        }
+      });
     };
   }
 
@@ -588,6 +725,7 @@
     SOURCE_SYSTEM: SOURCE_SYSTEM,
     SOURCE_COUNTRIES: SOURCE_COUNTRIES,
     normalizeHeader: normalizeHeader,
+    SKU_ALIASES: SKU_ALIASES,
     normalizeSkuCode: normalizeSkuCode,
     isExcludedSku: isExcludedSku,
     normalizeOrderDate: normalizeOrderDate,
