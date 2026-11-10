@@ -326,6 +326,118 @@
     };
   }
 
+  function normalizeWacCountry(value) {
+    var text = normalizeText(value).toLowerCase();
+    if (/^(?:my|malaysia|马来西亚|马来)$/.test(text)) return "马来西亚";
+    if (/^(?:th|thailand|泰国)$/.test(text)) return "泰国";
+    if (/^(?:id|indonesia|印尼|印度尼西亚)$/.test(text)) return "印尼";
+    return "";
+  }
+
+  // Derive WAC pre-inbound stock from the latest Zhisu available-stock export.
+  // Business rule: old_qty = max(current available_qty - this CI batch_qty, 0).
+  // A SKU absent from a complete country warehouse snapshot is treated as zero current stock.
+  function deriveWacOriginalStock(parsed, batchItems, targetCountry) {
+    if (!parsed || !Array.isArray(parsed.records)) return { recognized: false };
+    var country = normalizeWacCountry(targetCountry);
+    if (!country) {
+      return { recognized: true, countryUnresolved: true, filled: [], matched: [], unresolved: (batchItems || []).map(function (it) { return normalizeText(it && it.sku_code); }).filter(Boolean), clampedSkus: [] };
+    }
+    if (country !== "马来西亚" && country !== "泰国") {
+      return { recognized: true, countryUnsupported: true, targetCountry: country, filled: [], matched: [], unresolved: (batchItems || []).map(function (it) { return normalizeText(it && it.sku_code); }).filter(Boolean), clampedSkus: [] };
+    }
+    var sourceWarehouse = country === "马来西亚" ? "吉隆坡一号仓" : "泰国一号仓";
+    var sourceWarehouses = (parsed.sourceWarehouses || []).map(normalizeText).filter(Boolean);
+    var knownSourceCountries = sourceWarehouses.map(function (name) { return SOURCE_COUNTRIES[name] || ""; }).filter(Boolean);
+    if (sourceWarehouses.indexOf(sourceWarehouse) < 0) {
+      var knownOther = knownSourceCountries.some(function (name) { return name !== country; });
+      var unresolvedRows = (batchItems || []).map(function (it) { return normalizeText(it && it.sku_code); }).filter(Boolean);
+      return {
+        recognized: true,
+        targetCountry: country,
+        sourceWarehouses: sourceWarehouses,
+        sourceWarehouse: sourceWarehouse,
+        countryMismatch: knownOther,
+        sourceWarehouseUnresolved: !knownOther,
+        filled: [],
+        matched: [],
+        unresolved: unresolvedRows,
+        clampedSkus: []
+      };
+    }
+
+    var rowsBySku = Object.create(null);
+    (parsed.records || []).forEach(function (record) {
+      if (!record || normalizeText(record._sourceWarehouse) !== sourceWarehouse) return;
+      var sku = normalizeText(record.sku_code).toUpperCase();
+      if (!sku) return;
+      if (!rowsBySku[sku]) rowsBySku[sku] = [];
+      rowsBySku[sku].push(record);
+    });
+
+    var filled = [];
+    var matched = [];
+    var unresolved = [];
+    var duplicate = [];
+    var invalid = [];
+    var clampedSkus = [];
+    (batchItems || []).forEach(function (item) {
+      var sku = normalizeText(item && item.sku_code).toUpperCase();
+      var batchQty = Number(item && item.batch_qty);
+      if (!sku || !Number.isFinite(batchQty) || !Number.isInteger(batchQty) || batchQty < 0) {
+        if (sku) { invalid.push(sku); unresolved.push(sku); }
+        return;
+      }
+      var entries = rowsBySku[sku] || [];
+      if (entries.length > 1) {
+        duplicate.push(sku);
+        unresolved.push(sku);
+        return;
+      }
+      var currentQty = 0;
+      if (entries.length === 1) {
+        var record = entries[0];
+        var errors = Array.isArray(record._errors) ? record._errors : [];
+        var parsedQty = Number(record.available_qty);
+        if (errors.length || !Number.isFinite(parsedQty) || !Number.isInteger(parsedQty) || parsedQty < 0) {
+          invalid.push(sku);
+          unresolved.push(sku);
+          return;
+        }
+        currentQty = parsedQty;
+      }
+      var oldQty = Math.max(currentQty - batchQty, 0);
+      var clamped = currentQty < batchQty;
+      if (clamped) clampedSkus.push(sku);
+      filled.push({
+        sku_code: sku,
+        current_qty: currentQty,
+        batch_qty: batchQty,
+        old_qty: oldQty,
+        clamped_to_zero: clamped,
+        missing_from_snapshot: entries.length === 0
+      });
+      matched.push(sku);
+    });
+
+    return {
+      recognized: true,
+      targetCountry: country,
+      sourceWarehouse: sourceWarehouse,
+      snapshotDate: parsed.snapshotDate || "",
+      sourceRows: (parsed.records || []).filter(function (record) {
+        return normalizeText(record && record._sourceWarehouse) === sourceWarehouse;
+      }).length,
+      filled: filled,
+      matched: matched,
+      unresolved: unresolved.filter(function (sku, index, all) { return all.indexOf(sku) === index; }),
+      duplicate: duplicate.filter(function (sku, index, all) { return all.indexOf(sku) === index; }),
+      invalid: invalid.filter(function (sku, index, all) { return all.indexOf(sku) === index; }),
+      clampedSkus: clampedSkus.filter(function (sku, index, all) { return all.indexOf(sku) === index; }),
+      missingSnapshotSkus: filled.filter(function (row) { return row.missing_from_snapshot; }).map(function (row) { return row.sku_code; })
+    };
+  }
+
   function escapeHtml(value) {
     return String(value == null ? "" : value).replace(/[&<>"']/g, function (ch) {
       return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" })[ch];
@@ -350,7 +462,18 @@
       "inv.zhisu.excluded_title": "Automatically excluded Fake Order rows",
       "inv.zhisu.excluded_reason": "Fake Order is not a real inventory SKU and will not be imported.",
       "inv.zhisu.warehouse_load_failed": "Could not load PSI warehouse master data. Import is blocked for safety.",
-      "inv.zhisu.file_parse_failed": "Could not read this Zhisu stock file: {message}"
+      "inv.zhisu.file_parse_failed": "Could not read this Zhisu stock file: {message}",
+      "wac.zhisu.title": "Zhisu current inventory recognized",
+      "wac.zhisu.desc": "Original stock = max(current available stock − CI inbound quantity, 0). A SKU absent from this country warehouse export is treated as zero current stock.",
+      "wac.zhisu.summary": "Warehouse: {warehouse} · Snapshot: {snapshot} · Auto-filled: {matched} SKUs",
+      "wac.zhisu.clamped": "{count} SKU(s) had current stock below this CI quantity; original stock was set to 0: {skus}",
+      "wac.zhisu.unresolved": "Could not auto-fill {count} SKU(s) because their source rows are duplicated or invalid. Enter those quantities manually or use the template: {skus}",
+      "wac.zhisu.country_mismatch": "The CI country does not match the Zhisu warehouse in this file. Malaysia uses 吉隆坡一号仓; Thailand uses 泰国一号仓.",
+      "wac.zhisu.country_unsupported": "Zhisu stock derivation is supported only for Malaysia and Thailand.",
+      "wac.zhisu.country_unresolved": "The CI target country could not be identified. Automatic calculation was blocked.",
+      "wac.zhisu.source_unresolved": "The source warehouse in this file could not be matched to the CI country.",
+      "wac.zhisu.success": "Zhisu stock recognized. Original quantities derived for {count} SKUs.",
+      "wac.zhisu.partial": "Zhisu stock recognized. {matched} SKU(s) were derived; {missing} need manual review."
     };
     var id = {
       "inv.zhisu.detected": "Ekspor stok Zhisu terdeteksi: sheet “{sheet}” akan dibaca.",
@@ -365,7 +488,18 @@
       "inv.zhisu.excluded_title": "Baris Fake Order otomatis dikecualikan",
       "inv.zhisu.excluded_reason": "Fake Order bukan SKU persediaan nyata dan tidak akan diimpor.",
       "inv.zhisu.warehouse_load_failed": "Data master gudang PSI gagal dimuat. Impor diblokir demi keamanan.",
-      "inv.zhisu.file_parse_failed": "Gagal membaca file stok Zhisu ini: {message}"
+      "inv.zhisu.file_parse_failed": "Gagal membaca file stok Zhisu ini: {message}",
+      "wac.zhisu.title": "Stok saat ini dari gudang Zhisu terdeteksi",
+      "wac.zhisu.desc": "Stok awal = max(stok tersedia saat ini − jumlah masuk CI, 0). SKU yang tidak ada di ekspor gudang negara ini dianggap memiliki stok saat ini nol.",
+      "wac.zhisu.summary": "Gudang: {warehouse} · Snapshot: {snapshot} · Terisi otomatis: {matched} SKU",
+      "wac.zhisu.clamped": "{count} SKU memiliki stok saat ini di bawah jumlah CI; stok awal ditetapkan 0: {skus}",
+      "wac.zhisu.unresolved": "{count} SKU tidak dapat diisi otomatis karena baris sumber duplikat atau tidak valid. Isi manual atau gunakan template: {skus}",
+      "wac.zhisu.country_mismatch": "Negara CI tidak cocok dengan gudang Zhisu di file ini. Malaysia menggunakan 吉隆坡一号仓; Thailand menggunakan 泰国一号仓.",
+      "wac.zhisu.country_unsupported": "Perhitungan stok Zhisu hanya didukung untuk Malaysia dan Thailand.",
+      "wac.zhisu.country_unresolved": "Negara tujuan CI tidak dapat dikenali. Perhitungan otomatis diblokir.",
+      "wac.zhisu.source_unresolved": "Gudang sumber dalam file tidak dapat dicocokkan dengan negara CI.",
+      "wac.zhisu.success": "Stok Zhisu dikenali. Stok awal berhasil dihitung untuk {count} SKU.",
+      "wac.zhisu.partial": "Stok Zhisu dikenali. {matched} SKU berhasil dihitung; {missing} perlu diperiksa manual."
     };
     Object.keys(en).forEach(function (key) { dict.en[key] = en[key]; });
     Object.keys(id).forEach(function (key) { dict.id[key] = id[key]; });
@@ -641,6 +775,8 @@
     resolveZhisuDestinations: resolveZhisuDestinations,
     duplicateGroups: duplicateGroups,
     buildZhisuRecords: buildZhisuRecords,
+    normalizeWacCountry: normalizeWacCountry,
+    deriveWacOriginalStock: deriveWacOriginalStock,
     install: install
   };
 });
