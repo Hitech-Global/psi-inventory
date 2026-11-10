@@ -78,6 +78,7 @@ function setup({ canEdit = true, failPut = false, failRefresh = false } = {}) {
       if (method === 'PUT') {
         if (failPut) throw new Error('date update rejected');
         Object.assign(batch, payload);
+        if (payload.actual_arrival_date !== undefined) batch.actual_transit_days = 10;
         return { success: true };
       }
       if (url === '/api/commercial-invoices/ci-1/logistics-batches') {
@@ -130,6 +131,7 @@ test('actual arrival date saves independently and refreshes derived transit days
   assert.equal(JSON.stringify(put.payload), JSON.stringify({ actual_arrival_date: '2026-11-20' }));
   assert.equal(input.getAttribute('data-saved-value'), '2026-11-20');
   assert.match(x.body.innerHTML, /value="2026-11-20"/);
+  assert.match(x.body.innerHTML, /<td>10<\\/td>/, 'transit days must be refreshed from the updated arrival date');
 });
 
 test('clearing a logistics date persists an empty value', async () => {
