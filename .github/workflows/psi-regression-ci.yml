@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'app.js'
+      - 'test/modal-page-navigation.test.cjs'
       - 'test/ci-logistics-status-filter.test.cjs'
       - 'test/ci-date-column-and-logistics-field-regression.test.cjs'
       - 'scripts/ci-edit-before-pl-hotfix.cjs'
@@ -112,6 +113,7 @@ jobs:
       - name: Check frontend and backend syntax
         run: |
           node --check app.js
+          node --check test/modal-page-navigation.test.cjs
           node --check ci-list-inline-logistics.js
           node --check test/ci-list-inline-logistics-dates.test.cjs
           node --check assets/ci-list-freight.js
@@ -183,6 +185,8 @@ jobs:
           node --check test/inventory-onhand-local-currency-kpi.test.cjs
           node --check test/wac-history-import.test.cjs
           node --check test/wac-batch-exclusion.test.cjs
+      - name: Test page-scoped modal cleanup on navigation
+        run: node --test test/modal-page-navigation.test.cjs
       - name: Test supplier PI import preview table alignment
         run: node --test test/supplier-pi-preview-alignment.test.cjs
       - name: Test compact CI procurement summary layout
