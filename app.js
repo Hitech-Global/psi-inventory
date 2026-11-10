@@ -7126,7 +7126,7 @@ async function loadRpFilterOptions(){
     let countries=null;
     var _snapC=await rpGetWarehouseMaster();
     if(_snapC){
-      countries=_snapC.countries||rpDeriveCountriesFallback(_snapC.warehouseMaster||[]);
+      countries=_snapC.countries||rpDeriveCountriesFallback(_snapC.warehouseMaster||[],_snapC.salesOnlyRows||[]);
     }else{
       countries=await api('/api/warehouses/countries');
     }
@@ -7169,7 +7169,7 @@ async function onRpCountryChange(skipDataReload){
       else if(prevWarehouse && (whs||[]).some(w=>w.name===prevWarehouse)) wSel.value=prevWarehouse;
       else wSel.value='';
     }
-    // 从仓库的 brands 字段提取品牌列表
+    // 品牌列表优先取仓库配置，并补充当前销售市场中有销售记录的 SKU 品牌。
     const brandSet=new Set();
     (whs||[]).forEach(w=>{
       if(w.brands){
@@ -7179,7 +7179,10 @@ async function onRpCountryChange(skipDataReload){
         });
       }
     });
-    const brands=Array.from(brandSet).sort();
+    (_snapW&&_snapW.salesOnlyRows||[]).forEach(function(r){
+      if((!country||r.country===country) && r.brand) brandSet.add(String(r.brand).trim());
+    });
+    const brands=Array.from(brandSet).filter(Boolean).sort();
     const bSel=document.getElementById('rp-b');
     if(bSel){
       bSel.innerHTML=t('html.onRpCountryChange.2', '<option value="">全部</option>{v1}', {v1: brands.map(b=>'<option value="'+esc(b)+'">'+esc(b)+'</option>').join('')});
@@ -7520,6 +7523,7 @@ window._rpSnapshot={
   status:'idle',            // idle | loading | ready | error
   rows:[],                  // 无筛选 GET /api/replenishment-suggestions（服务端已排序：stopped/discontinued 沉底 → sku_code）
   monthlySales:{},          // 无筛选 GET /monthly-sales（rpMonthColRange 口径 24 个月）
+  salesOnlyRows:[],         // 有销售但没有对应国家库存预测行的展示数据（不参与采购计算）
   warehouseMaster:null,     // /api/warehouses/by-country（无参=全部 active 非寄售仓，服务端已按 sort_order,name 排序）
   countries:null,           // /api/warehouses/countries（保持服务端 ORDER BY country_name 语义）
   loadedAt:null,
@@ -7535,7 +7539,8 @@ function rpVal(id){ var el=document.getElementById(id); return el?String(el.valu
 //   - keyword → sku_code 或 product_name 子串（indexOf，区分大小写，与生产 PG `LIKE '%kw%'` 一致；不做 trim，server 也不 trim）
 //   - 不重排：无筛选 GET 已按 ORDER BY 排序，filter 保序 ⇒ 与「带筛选的服务端查询」顺序逐行一致
 function rpLocalSnapshotRows(){
-  var rows=(window._rpSnapshot&&window._rpSnapshot.rows)||[];
+  var snapshot=window._rpSnapshot||{};
+  var rows=snapshot.rows||[];
   var c=rpVal('rp-c'), w=rpVal('rp-w'), b=rpVal('rp-b'), k=rpVal('rp-s'), ss=rpVal('rp-status'), ls=rpVal('rp-lifecycle');
   var _t0=RP_PERF?performance.now():0;
   var out=[];
@@ -7548,6 +7553,32 @@ function rpLocalSnapshotRows(){
     if(ls && r.lifecycle_status!==ls) continue;
     if(k && (r.sku_code||'').indexOf(k)<0 && (r.product_name||'').indexOf(k)<0) continue;
     out.push(r);
+  }
+  // 销售市场没有独立库存预测行时，按所选国家补充只读销售行。
+  // 不跨市场分摊库存，不计算周转或采购建议；本轮先在总预测视图展示。
+  if(c && !w && !ss && !ls && rpTab==='total'){
+    var existing={};
+    out.forEach(function(r){ existing[(r.sku_code||'')+'|'+(r.country||'')]=true; });
+    (snapshot.salesOnlyRows||[]).forEach(function(sr){
+      var key=(sr.sku_code||'')+'|'+(sr.country||'');
+      if(sr.country!==c || existing[key]) return;
+      if(b && sr.brand!==b) return;
+      if(k && String(sr.sku_code||'').indexOf(k)<0 && String(sr.product_name||'').indexOf(k)<0) return;
+      out.push({
+        id:'sales-only-'+String(sr.country||'')+'-'+String(sr.sku_code||''),
+        sku_code:sr.sku_code, country:sr.country, brand:sr.brand,
+        product_name:sr.product_name, model:sr.model, category:sr.category,
+        target_warehouse:'', available_qty:0, in_transit_qty:0,
+        pi_confirmed_unshipped_qty:0, po_unconfirmed_pi_qty:0,
+        online_avg_sales_4m:0, offline_avg_sales_4m:0, avg_sales_4m:0,
+        online_avg_sales_period:0, offline_avg_sales_period:0, avg_sales_period:0,
+        total_inventory_pool:0, online_target_turnover:0, offline_target_turnover:0,
+        online_target_stock:0, offline_target_stock:0, other_target_stock:0,
+        suggested_qty:0, sales_status:'', lifecycle_status:'',
+        _sales_only:true
+      });
+      existing[key]=true;
+    });
   }
   if(RP_PERF&&window._rpPerfP) rpPerfSet(window._rpPerfP,'local_filter_ms',Math.round((performance.now()-_t0)*100)/100);
   return out;
@@ -7567,10 +7598,11 @@ function rpPatchSnapshotRow(authRow){
 //   countries          → 优先用 bootstrap 并行拉取的 /api/warehouses/countries（服务端 ORDER BY country_name）
 //   warehouses(country)→ master.filter(country_name===country)，保序=服务端 ORDER BY sort_order,name
 //   warehouses(c+b)    → 追加 (brands==='' || brands 含 brand)，复刻 by-country-brand 的 `brands='' OR LIKE '%brand%'`
-function rpDeriveCountriesFallback(master){
+function rpDeriveCountriesFallback(master,salesRows){
   var seen={}, out=[];
   (master||[]).forEach(function(w){ var c=w&&w.country_name; if(c&&!seen[c]){seen[c]=true;out.push(c);} });
-  return out;
+  (salesRows||[]).forEach(function(r){ var c=r&&r.country; if(c&&!seen[c]){seen[c]=true;out.push(c);} });
+  return out.sort();
 }
 function rpFilterWarehousesByCountry(master,country){
   if(!country) return (master||[]).slice();
@@ -7671,7 +7703,7 @@ function rpRetrySnapshot(){
 }
 function rpInvalidateSnapshot(){
   var s=window._rpSnapshot; if(!s) return;
-  s.status='idle'; s.rows=[]; s.monthlySales={}; s.warehouseMaster=null; s.countries=null;
+  s.status='idle'; s.rows=[]; s.monthlySales={}; s.salesOnlyRows=[]; s.warehouseMaster=null; s.countries=null;
   s.loadedAt=null; s.error=null; s._promise=null;
 }
 // bootstrap：并行拉取 4 个现有接口（不新增后端）
@@ -7697,10 +7729,12 @@ async function rpBootstrapSnapshot(){
     var rows=res[0];
     if(!Array.isArray(rows)) throw new Error('replenishment-suggestions: unexpected response');
     var _pt=RP_PERF?performance.now():0;
-    var monthly=(res[1]&&res[1].success)?(res[1].data||{}):{};
+    var monthlyPayload=(res[1]&&res[1].success)?res[1]:null;
+    var monthly=monthlyPayload?(monthlyPayload.data||{}):{};
+    var salesOnlyRows=monthlyPayload&&Array.isArray(monthlyPayload.salesOnlyRows)?monthlyPayload.salesOnlyRows:[];
     var master=Array.isArray(res[2])?res[2]:null;
-    var countries=Array.isArray(res[3])?res[3]:(master?rpDeriveCountriesFallback(master):null);
-    s.rows=rows; s.monthlySales=monthly; s.warehouseMaster=master; s.countries=countries;
+    var countries=Array.isArray(res[3])?res[3]:rpDeriveCountriesFallback(master||[],salesOnlyRows);
+    s.rows=rows; s.monthlySales=monthly; s.salesOnlyRows=salesOnlyRows; s.warehouseMaster=master; s.countries=countries;
     s.status='ready'; s.loadedAt=Date.now(); s._promise=null;
     if(RP_PERF&&window._rpPerfP) rpPerfSet(window._rpPerfP,'snapshot','MISS');
     rpPerfLogSnapshot({snapshot_bootstrap_total:Math.round((performance.now()-_bt)*100)/100,
@@ -8447,16 +8481,31 @@ async function loadRp(){
     });
     addHistoricalColsToActive(activeKeys,Cols,totals,data);
     // 渲染
+    var salesOnlyView=data.length>0&&data.every(function(r){return r._sales_only===true;});
+    if(salesOnlyView){
+      var salesVisible={sku:true,model:true};
+      rpMonthDefs.forEach(function(md){salesVisible[md.key]=true;});
+      activeKeys=activeKeys.filter(function(k){return !!salesVisible[k];});
+      if(activeKeys.indexOf('sku')<0) activeKeys.unshift('sku');
+    }
     var th=activeKeys.map(function(k){return Cols[k].th;}).join('');
     var rows=data.map(function(r){
-      return '<tr data-rid="'+r.id+'">' + activeKeys.map(function(k){return Cols[k].td(r, rpGetRowCtx(rpTab, r));}).join('') + '</tr>';
+      var rowCtx=r._sales_only?r._totalC:rpGetRowCtx(rpTab,r);
+      return '<tr data-rid="'+r.id+'">' + activeKeys.map(function(k){
+        if(!r._sales_only) return Cols[k].td(r,rowCtx);
+        if(k==='sku') return '<td class="cell-id rp-sku-cell" style="min-width:120px;max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="'+esc(r.sku_code||'')+'">'+esc(r.sku_code||'')+'<div style="font-size:10px;color:#888;font-weight:400">仅销售数据</div></td>';
+        if(k==='model') return Cols[k].td(r,rowCtx);
+        if(k.indexOf('ms_')===0) return Cols[k].td(r,rowCtx);
+        return '<td class="text-muted text-center">-</td>';
+      }).join('') + '</tr>';
     }).join('');
     var sum='<tr class="rp-summary-row">' + activeKeys.map(function(k){return Cols[k].sum(totals);}).join('') + '</tr>';
     var colCount=activeKeys.length;
     var tableFoot=!data.length
       ? '<tr><td colspan="'+colCount+t('gen.L4175.1','" style="text-align:center;padding:40px 20px;color:#999;background:#fafbfc">💡 当前筛选条件下暂无建议，请调整国家/仓库/品牌或点击"重新计算"</td></tr>')
       : '';
-    var html='<div class="table-container" style="box-shadow:none;border-radius:0;overflow:auto;max-height:70vh"><table class="data-table rp-monthly-table" style="width:'+rpColWidthTotal(activeKeys)+'px;min-width:'+rpColWidthTotal(activeKeys)+'px">'+rpColgroupHtml(activeKeys)+'<thead><tr style="height:34px">'+th+'</tr>'+sum+'</thead><tbody>'+rows+tableFoot+'</tbody></table></div>';
+    var salesOnlyNotice=salesOnlyView?'<div style="padding:8px 12px;margin:0 0 8px;background:#f7f8fa;border-radius:6px;color:#666;font-size:12px">当前仅展示所选国家的有效销售记录；库存、周转及建议采购数量暂不计算。</div>':'';
+    var html=salesOnlyNotice+'<div class="table-container" style="box-shadow:none;border-radius:0;overflow:auto;max-height:70vh"><table class="data-table rp-monthly-table" style="width:'+rpColWidthTotal(activeKeys)+'px;min-width:'+rpColWidthTotal(activeKeys)+'px">'+rpColgroupHtml(activeKeys)+'<thead><tr style="height:34px">'+th+'</tr>'+sum+'</thead><tbody>'+rows+tableFoot+'</tbody></table></div>';
     var _rStart=performance.now();
     var container=rpEnsureContainer(myViewKey);
     if(RP_PERF&&window._rpPerfP){ rpPerfSet(window._rpPerfP,'html_build_ms', Math.round((performance.now()-_rStart)*100)/100); }

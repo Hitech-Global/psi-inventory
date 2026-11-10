@@ -2501,27 +2501,26 @@ app.post('/api/warehouses', requireApiPermission('system_config'), asyncHandler(
 // 获取仓库所属国家列表（用于下拉联动，数据来源为 warehouses 表）
 // DATA-SCOPE: 根据角色数据权限过滤可见国家
 app.get('/api/warehouses/countries', requireLogin, asyncHandler((req, res) => {
+  // 订单预测国家筛选：仓库国家 + 有效销售记录国家并集。
+  // 销售市场可能没有独立库存仓（例如新加坡订单由马来西亚至速仓发货），
+  // 因此不能只依赖 warehouses.country_name。
   let sql = "SELECT DISTINCT country_name FROM warehouses WHERE status = 'active' AND country_name IS NOT NULL AND country_name != ''";
   const params = [];
   if (needsDataScopeFilter(req)) {
     const scope = req.currentUserDataScope;
     const conditions = [];
-    // 国家维度：解析 country_ids → country_name 列表
     let effectiveCountryIds = [];
     if (scope.countries && scope.countries.length > 0) {
       effectiveCountryIds = effectiveCountryIds.concat(scope.countries);
     }
-    // 仓库维度：解析 warehouse_ids → country_id，追加到国家过滤
     if (scope.warehouses && scope.warehouses.length > 0) {
       const whRows = query('SELECT DISTINCT country_id FROM warehouses WHERE id IN (' +
         scope.warehouses.map(() => '?').join(',') + ") AND country_id != ''", scope.warehouses).rows;
       whRows.forEach(r => { if (r.country_id && effectiveCountryIds.indexOf(r.country_id) < 0) effectiveCountryIds.push(r.country_id); });
-      // 同时直接限制 warehouse id
       conditions.push('id IN (' + scope.warehouses.map(() => '?').join(',') + ')');
       params.push(...scope.warehouses);
     }
     if (effectiveCountryIds.length > 0) {
-      // 解析 country_ids → country_name，与 warehouses.country_name 匹配
       const countryRows = query('SELECT name FROM countries WHERE id IN (' +
         effectiveCountryIds.map(() => '?').join(',') + ')', effectiveCountryIds).rows;
       const countryNames = countryRows.map(r => r.name).filter(n => n);
@@ -2534,9 +2533,15 @@ app.get('/api/warehouses/countries', requireLogin, asyncHandler((req, res) => {
       sql += ' AND (' + conditions.join(' OR ') + ')';
     }
   }
-  sql += ' ORDER BY country_name';
-  const rows = query(sql, params).rows.map(r => r.country_name);
-  res.json(rows);
+  const warehouseCountries = query(sql, params).rows.map(r => String(r.country_name || '').trim()).filter(Boolean);
+  const salesScope = buildSalesDataScopeFilter(req, 'sr');
+  const salesCountries = query(
+    "SELECT DISTINCT TRIM(sr.country) AS country_name FROM sales_records sr WHERE sr.is_valid_order = 1 AND sr.country IS NOT NULL AND TRIM(sr.country) != ''" +
+      salesScope.sql + " ORDER BY country_name",
+    salesScope.params
+  ).rows.map(r => String(r.country_name || '').trim()).filter(Boolean);
+  const countrySet = new Set(warehouseCountries.concat(salesCountries));
+  res.json(Array.from(countrySet).sort((a, b) => a.localeCompare(b)));
 }));
 // 寄售仓权威清单：直接来自 consignment_inventory_lots.warehouse_name（寄售库存投影进 inventory 的仓库名）。
 // 不写死任何仓库名，也不新增 warehouse_type / is_consignment 等 schema（仅解除寄售仓与订单预测的关联）。
@@ -8019,7 +8024,6 @@ app.get('/api/replenishment-suggestions/monthly-sales', requireApiPermission('re
     return res.status(400).json({ error: 'Invalid month range' });
   }
 
-  // 月份列（YYYY-MM）
   const columns = [];
   const cursor = new Date(sy, sm - 1, 1);
   const lastMonthDate = new Date(ey, em - 1, 1);
@@ -8027,8 +8031,12 @@ app.get('/api/replenishment-suggestions/monthly-sales', requireApiPermission('re
     columns.push(`${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}`);
     cursor.setMonth(cursor.getMonth() + 1);
   }
+  const rangeStart = `${columns[0]}-01`;
+  const [ly, lm] = columns[columns.length - 1].split('-').map(Number);
+  const rangeEnd = `${columns[columns.length - 1]}-${String(new Date(ly, lm, 0).getDate()).padStart(2, '0')}`;
+  const salesDate = salesOrderDateExpr('sr.order_date');
 
-  // 与当前筛选条件一致的 SKU 范围（与 historical-sales 保持同样的筛选口径）
+  // 预测行 SKU：保持原有库存预测筛选口径。
   let skuSql = `SELECT DISTINCT rs.sku_code FROM replenishment_suggestions rs LEFT JOIN skus s ON rs.sku_code = s.sku_code WHERE 1=1`;
   const skuParams = [];
   if (country) { skuSql += ' AND rs.country = ?'; skuParams.push(country); }
@@ -8037,35 +8045,79 @@ app.get('/api/replenishment-suggestions/monthly-sales', requireApiPermission('re
   if (keyword) { skuSql += ' AND (rs.sku_code LIKE ? OR s.product_name LIKE ?)'; skuParams.push(`%${keyword}%`, `%${keyword}%`); }
   if (sales_status) { skuSql += ' AND rs.sales_status = ?'; skuParams.push(sales_status); }
   if (lifecycle_status) { skuSql += ' AND rs.lifecycle_status = ?'; skuParams.push(lifecycle_status); }
-  // DATA-SCOPE: 应用数据权限过滤（国家/品牌/仓库）
   const msRsScopeFilter = buildReplenishmentDataScopeFilter(req);
   if (msRsScopeFilter.sql) { skuSql += msRsScopeFilter.sql; skuParams.push(...msRsScopeFilter.params); }
-  const skuCodes = query(skuSql, skuParams).rows.map(r => r.sku_code);
+  const forecastSkuCodes = query(skuSql, skuParams).rows.map(r => r.sku_code);
+
+  // 销售市场 SKU：补充没有独立 replenishment_suggestions 行的销售 SKU。
+  // 有仓库/动销状态/生命周期筛选时不补入，避免把没有库存预测维度的数据误当成仓库预测行。
+  const msSalesScopeFilter = buildSalesDataScopeFilter(req, 'sr');
+  let salesSkuCodes = [];
+  if (!warehouse && !sales_status && !lifecycle_status) {
+    let salesSkuSql = `SELECT DISTINCT sr.sku_code
+      FROM sales_records sr
+      LEFT JOIN skus s ON sr.sku_code = s.sku_code
+      WHERE sr.sku_code IS NOT NULL AND sr.sku_code != ''
+        AND sr.is_valid_order = 1
+        AND ${salesDate} >= ? AND ${salesDate} <= ?
+        AND NOT EXISTS (
+          SELECT 1 FROM replenishment_suggestions rs
+          WHERE rs.sku_code = sr.sku_code AND COALESCE(rs.country, '') = COALESCE(sr.country, '')
+        )`;
+    const salesSkuParams = [rangeStart, rangeEnd];
+    if (country) { salesSkuSql += ' AND COALESCE(sr.country, \'\') = ?'; salesSkuParams.push(country); }
+    if (brand) { salesSkuSql += ' AND COALESCE(NULLIF(TRIM(s.brand), \'\'), NULLIF(TRIM(sr.brand), \'\'), \'\') = ?'; salesSkuParams.push(brand); }
+    if (keyword) { salesSkuSql += ' AND (sr.sku_code LIKE ? OR s.product_name LIKE ?)'; salesSkuParams.push(`%${keyword}%`, `%${keyword}%`); }
+    salesSkuSql += msSalesScopeFilter.sql;
+    salesSkuCodes = query(salesSkuSql, salesSkuParams.concat(msSalesScopeFilter.params)).rows.map(r => r.sku_code);
+  }
+  const skuCodes = Array.from(new Set(forecastSkuCodes.concat(salesSkuCodes).filter(Boolean)));
   if (skuCodes.length === 0) {
-    return res.json({ success: true, range: { start, end }, columns, data: {} });
+    return res.json({ success: true, range: { start, end }, columns, data: {}, salesOnlyRows: [] });
   }
 
-  const salesDate = salesOrderDateExpr('order_date');
   const placeholders = skuCodes.map(() => '?').join(',');
-  const rangeStart = `${columns[0]}-01`;
-  const [ly, lm] = columns[columns.length - 1].split('-').map(Number);
-  const rangeEnd = `${columns[columns.length - 1]}-${String(new Date(ly, lm, 0).getDate()).padStart(2, '0')}`;
-
-  // DATA-SCOPE: 销售记录数据权限过滤
-  const msSalesScopeFilter = buildSalesDataScopeFilter(req, '');
   const rows = query(
-    `SELECT sku_code,
-            COALESCE(country, '') AS country,
+    `SELECT sr.sku_code,
+            COALESCE(sr.country, '') AS country,
             substr(${salesDate}, 1, 4) AS y,
             substr(${salesDate}, 6, 2) AS mo,
-            COALESCE(SUM(quantity), 0) AS total
-     FROM sales_records
-     WHERE sku_code IN (${placeholders}) AND ${salesDate} >= ? AND ${salesDate} <= ? AND is_valid_order = 1${msSalesScopeFilter.sql}
-     GROUP BY sku_code, COALESCE(country, ''), y, mo`,
+            COALESCE(SUM(sr.quantity), 0) AS total
+     FROM sales_records sr
+     WHERE sr.sku_code IN (${placeholders}) AND ${salesDate} >= ? AND ${salesDate} <= ? AND sr.is_valid_order = 1${msSalesScopeFilter.sql}
+     GROUP BY sr.sku_code, COALESCE(sr.country, ''), y, mo`,
     skuCodes.concat([rangeStart, rangeEnd]).concat(msSalesScopeFilter.params)
   ).rows;
 
-  // 按 sku_code|country 组织，与总预测行粒度一致
+  // 仅销售市场行：有有效销量，但没有对应国家的独立库存预测行。
+  // 这些行只用于展示 SKU + 月销量，不参与库存、周转、采购建议计算。
+  let salesOnlyRows = [];
+  if (!warehouse && !sales_status && !lifecycle_status) {
+    let salesOnlySql = `SELECT DISTINCT
+        sr.sku_code,
+        COALESCE(sr.country, '') AS country,
+        COALESCE(NULLIF(TRIM(s.brand), ''), NULLIF(TRIM(sr.brand), ''), '') AS brand,
+        COALESCE(s.product_name, '') AS product_name,
+        COALESCE(s.model, '') AS model,
+        COALESCE(s.category, '') AS category
+      FROM sales_records sr
+      LEFT JOIN skus s ON sr.sku_code = s.sku_code
+      WHERE sr.sku_code IS NOT NULL AND sr.sku_code != ''
+        AND sr.is_valid_order = 1
+        AND sr.country IS NOT NULL AND TRIM(sr.country) != ''
+        AND ${salesDate} >= ? AND ${salesDate} <= ?
+        AND NOT EXISTS (
+          SELECT 1 FROM replenishment_suggestions rs
+          WHERE rs.sku_code = sr.sku_code AND COALESCE(rs.country, '') = COALESCE(sr.country, '')
+        )`;
+    const salesOnlyParams = [rangeStart, rangeEnd];
+    if (country) { salesOnlySql += ' AND COALESCE(sr.country, \'\') = ?'; salesOnlyParams.push(country); }
+    if (brand) { salesOnlySql += ' AND COALESCE(NULLIF(TRIM(s.brand), \'\'), NULLIF(TRIM(sr.brand), \'\'), \'\') = ?'; salesOnlyParams.push(brand); }
+    if (keyword) { salesOnlySql += ' AND (sr.sku_code LIKE ? OR s.product_name LIKE ?)'; salesOnlyParams.push(`%${keyword}%`, `%${keyword}%`); }
+    salesOnlySql += msSalesScopeFilter.sql + ' ORDER BY sr.sku_code';
+    salesOnlyRows = query(salesOnlySql, salesOnlyParams.concat(msSalesScopeFilter.params)).rows;
+  }
+
   const data = {};
   const columnSet = {};
   columns.forEach(c => { columnSet[c] = true; });
@@ -8077,16 +8129,7 @@ app.get('/api/replenishment-suggestions/monthly-sales', requireApiPermission('re
     data[mapKey][ym] = Number(r.total) || 0;
   });
 
-  return res.json({ success: true, range: { start, end }, columns, data });
-}));
-
-// Wave 0B: 管理员兜底端点——手动触发在途数据全量重算。
-// 原生 async 实现（pg-async 池 + 单事务），await 期间事件循环自由，
-// 不占用 db 同步桥、不冻结其他请求；与 GET replenishment 自愈移除后的
-// 「确定性校正」语义对接（mutation 后台刷新失败时的最终兜底）。
-app.post('/api/admin/refresh-transit', requireApiPermission('user_manage'), asyncHandler(async (req, res) => {
-  const r = await updateInventoryTransitDataAsync();
-  res.json({ success: true, ...r });
+  res.json({ success: true, range: { start, end }, columns, data, salesOnlyRows });
 }));
 
 app.get('/api/replenishment-suggestions', requireApiPermission('replenishment_view'), asyncHandler(async (req, res) => {
