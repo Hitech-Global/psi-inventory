@@ -505,13 +505,16 @@ test('WAC history matrix keeps the agreed dimensions, left alignment, sticky hea
   const importConfig = appSource.slice(importColumnsStart, importPayloadStart);
   assert.match(importConfig,/last_inbound_date/);
   assert.match(importConfig,/effective_end_date/);
-  assert.doesNotMatch(importConfig,/确认日期|汇率日期|confirmed_at|fx_rate_date/);
+  assert.match(importConfig,/fx_rate_date/);
+  assert.match(importConfig,/历史汇率日期/);
+  assert.doesNotMatch(importConfig,/确认日期|confirmed_at/);
   const templateStart = serverSource.indexOf("app.get('/api/wac/history-import/template'");
   const templateEnd = serverSource.indexOf("app.post('/api/wac/history-import/precheck'",templateStart);
   assert.ok(templateStart >= 0 && templateEnd > templateStart);
   const templateRoute = serverSource.slice(templateStart,templateEnd);
-  assert.match(templateRoute,/columns: \['SKU', '品牌', '国家', '仓库', '历史WAC（本币）', '最后入库日期', '结束日期', '本币币种', '1 RMB = 本币汇率'\]/);
-  assert.doesNotMatch(templateRoute,/确认日期|汇率日期/);
+  assert.match(templateRoute,/columns: \['SKU', '品牌', '国家', '仓库', '历史WAC（本币）', '最后入库日期', '结束日期', '本币币种', '历史汇率日期', '1 RMB = 本币汇率'\]/);
+  assert.match(templateRoute,/历史汇率日期/);
+  assert.doesNotMatch(templateRoute,/确认日期/);
 
 });
 
