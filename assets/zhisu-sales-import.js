@@ -15,10 +15,11 @@
   'use strict';
 
   var SOURCE_SYSTEM = '至速仓';
+  // Zhisu fulfillment is used only by Malaysia and Thailand.
+  // Singapore (and every other warehouse) must never be inferred as Zhisu.
   var SOURCE_COUNTRIES = Object.freeze({
     '吉隆坡一号仓': '马来西亚',
-    '泰国一号仓': '泰国',
-    '新加坡仓': '新加坡'
+    '泰国一号仓': '泰国'
   });
 
   function text(value) {
